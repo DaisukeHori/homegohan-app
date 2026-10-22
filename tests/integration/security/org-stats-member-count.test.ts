@@ -1,7 +1,7 @@
 /**
  * #1325 GET /api/org/stats の member_count が、組織の実際の人数になることの回帰テスト
  *
- * 組織ダッシュボードの「Total Members」は、GET /api/org/stats の member_count を表示する。
+ * 組織ダッシュボードの「メンバー数」は、GET /api/org/stats の member_count を表示する。
  * user_profiles の SELECT ポリシーは「本人の行だけ」(Users can view own profile) で、
  * 組織の管理者が使える、他のメンバーの行を読むポリシーは無い。
  * 以前の route は利用者本人の権限で数えていたため、組織に何人いても、管理者自身の 1 になっていた。

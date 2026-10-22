@@ -58,6 +58,10 @@ const { default: OrgDashboardPage } = await import('@/app/(org)/org/dashboard/pa
 const PAGE_SOURCE_PATH = path.resolve(__dirname, '../src/app/(org)/org/dashboard/page.tsx');
 /** #1911 で取り除いた「準備中」の案内 (未完成の集計の区切りは画面に出さない) */
 const REMOVED_NOTICE = '組織の集計・部署別の表示は準備中です';
+/** メンバー数の表示 (数 + 単位「名」。組織メンバーの一覧と同じ単位) */
+const MEMBER_COUNT_TEXT = /\d+\s*名/;
+/** 以前の固定の英語の文言 (日本語の画面に英語が出ていた。日本語に置き換えた) */
+const REMOVED_ENGLISH_COPY = ['Health Cockpit', 'Total Members', 'users'];
 
 let container: HTMLDivElement;
 let root: Root;
@@ -117,7 +121,7 @@ async function renderDashboard() {
   });
   await until(() => fetchMock.mock.calls.length >= 1, 'メンバー数の取得の開始');
   await until(
-    () => /users/.test(container.textContent ?? '') || /取得できませんでした/.test(container.textContent ?? ''),
+    () => MEMBER_COUNT_TEXT.test(container.textContent ?? '') || /取得できませんでした/.test(container.textContent ?? ''),
     'メンバー数の取得の完了',
   );
 }
@@ -130,8 +134,12 @@ describe('組織ダッシュボード: 集計を止め、その区切りも出�
 
     expect(text()).not.toContain(REMOVED_NOTICE);
     expect(text()).not.toContain('準備中');
-    expect(text()).toContain('Total Members');
-    expect(text()).toMatch(/7\s*users/);
+    expect(text()).toContain('ダッシュボード');
+    expect(text()).toContain('メンバー数');
+    expect(text()).toMatch(/7\s*名/);
+    for (const english of REMOVED_ENGLISH_COPY) {
+      expect(text(), `英語の「${english}」が残っている`).not.toContain(english);
+    }
   });
 
   it('DR-2: 「Refresh Data」ボタンが無い。ボタンは 1 つも無く、更新を促す文言も無い', async () => {
@@ -193,7 +201,7 @@ describe('組織ダッシュボード: 集計を止め、その区切りも出�
 
     expect(text()).not.toContain('準備中');
     expect(text()).toContain('メンバー数を取得できませんでした');
-    expect(text()).not.toMatch(/\d+\s*users/);
+    expect(text()).not.toMatch(MEMBER_COUNT_TEXT);
     expect(text()).toContain('—');
     expect(alertSpy).not.toHaveBeenCalled();
   });

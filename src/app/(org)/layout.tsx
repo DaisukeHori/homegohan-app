@@ -124,7 +124,7 @@ export default function OrgLayout({
             className="w-full justify-start text-gray-500 hover:bg-red-50 hover:text-red-500 p-3 rounded-xl flex items-center gap-3 transition-colors"
           >
             <span className="text-xl">🚪</span>
-            <span className="font-bold text-sm">Sign Out</span>
+            <span className="font-bold text-sm">ログアウト</span>
           </button>
         </div>
       </motion.aside>
