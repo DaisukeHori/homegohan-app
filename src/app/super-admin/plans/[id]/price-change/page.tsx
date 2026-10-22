@@ -171,7 +171,7 @@ export default function PriceChangePage() {
         <h1 className="text-xl font-bold text-slate-900">価格変更</h1>
       </div>
 
-      {/* #1912: 組織のプランの行 (org_*) は組織の段階とは無関係で、価格を変えても組織の利用者には影響しない。組織の件数は出さず、注記を出す */}
+      {/* #1912: 組織のプランの行 (org_*) は組織の段階とは無関係で、組織の利用者の判定に使われない。組織の件数は出さず、注記を出す */}
       {!countsOrganizationsFor(plan) && (
         <p
           data-testid="org-subscription-plan-row-note"
