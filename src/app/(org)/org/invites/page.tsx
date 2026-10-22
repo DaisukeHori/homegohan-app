@@ -6,6 +6,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
+import { ORG_UNKNOWN_VALUE_LABEL } from "@/lib/org-plans";
 
 interface Invite {
   id: string;
@@ -125,7 +126,8 @@ export default function OrgInvitesPage() {
       case "rejected":  return { label: "拒否済",    className: "bg-gray-100 text-gray-600" };
       case "expired":   return { label: "期限切れ",  className: "bg-red-100 text-red-700" };
       case "revoked":   return { label: "取消済",    className: "bg-orange-100 text-orange-700" };
-      default:          return { label: status,       className: "bg-gray-100 text-gray-600" };
+      // 表に無い状態は内部の値を出さずに「-」 (#1912。組織の設定の画面のプランと状態の表示と同じ)
+      default:          return { label: ORG_UNKNOWN_VALUE_LABEL, className: "bg-gray-100 text-gray-600" };
     }
   };
 
