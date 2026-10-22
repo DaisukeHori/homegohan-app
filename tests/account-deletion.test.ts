@@ -10,7 +10,9 @@
  *   - 削除の実行記録: 本人の退会は executor 'self' / 理由 'user_request'、運営の削除は 'operator' と運営者の id。
  *     記録を始められなければ削除しない。済んだ印の失敗は退会の結果を変えない (アカウントはもう消えている)
  *   - 失敗の扱い: prepare / Storage / deleteUser の失敗はそこで止めて ACCOUNT_DELETE_FAILED (deleteUser より前なら deleteUser を呼ばない)。
- *     ライセンス解放 (release_user_membership) の失敗だけは続ける
+ *     ライセンス解放 (release_user_membership) の失敗だけは続ける。ただし、確認のあとにオーナーになったので DB 関数が所属を外さずに
+ *     IS_ORG_OWNER で止めたときは確認をやり直して 409、所属の組織が途中で変わって CONFLICT_RETRY で止めたときは削除しない
+ *     (supabase/migrations/20261022160000_release_membership_owner_race.sql)
  *   - 失敗の結果に、DB・Storage の生のエラー文を入れない。request_id と段階を持つ (HTTP の応答は route が #1172 の internalError で返す)
  *   - すでに消えているユーザーの deleteUser (404) は成功として扱う (やり直せる)
  *   - ログにメールアドレスを載せない。削除後のログに user_id を付けない
@@ -71,6 +73,8 @@ interface World {
   deleteUser: { error?: { message: string; status?: number; code?: string } | null };
   /** 退会の段階 billing / billing_recheck (billing/01 §11) で投げるもの */
   billingThrows?: Partial<Record<AccountDeletionBillingPhase, Error>>;
+  /** rpc(name) が返したあとに世界を変える (同時に走った処理の代わり。例: 所属の解放の前にオーナーになっていた) */
+  afterRpc?: Record<string, (target: World) => void>;
 }
 
 function makeWorld(overrides: Partial<World> = {}): World {
@@ -127,6 +131,7 @@ function makeAdmin(world: World): AccountDeletionAdmin {
       world.calls.push(`rpc:${name}`);
       world.rpcArgs[name] = args;
       const entry = world.rpc[name] ?? { data: null };
+      world.afterRpc?.[name]?.(world);
       if (entry.throws) throw new Error('network down');
       return { data: entry.data ?? null, error: entry.error ?? null };
     },
@@ -416,6 +421,62 @@ describe('deleteAccount: 失敗の扱い', () => {
     world.rpc.release_user_membership = { throws: true };
     expect(await run()).toEqual({ ok: true });
     expect(world.calls).toContain('auth.deleteUser');
+  });
+
+  it('確認のあとにオーナーになっていた (release_user_membership が P0001 IS_ORG_OWNER): 確認をやり直して従来と同じ 409。Storage・記録・deleteUser は呼ばない', async () => {
+    world.rpc.release_user_membership = { error: { message: 'IS_ORG_OWNER', code: 'P0001' } };
+    // 確認 (1 回目) のあと、所属の解放までの間に譲渡の承諾が commit した
+    world.afterRpc = {
+      prepare_account_deletion: (target) => {
+        target.tables.organizations = { data: [{ id: 'org-2', name: '譲渡された組織' }] };
+      },
+    };
+    const result = await run();
+
+    expect(result).toEqual({
+      ok: false,
+      status: 409,
+      error: 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER',
+      message: '組織のオーナーです。先にオーナーを譲渡するか組織を解散してください。',
+      organization: { id: 'org-2', name: '譲渡された組織' },
+    });
+    expect(world.calls).toEqual([
+      'from:organizations',
+      'from:family_groups',
+      'billing:billing',
+      'rpc:prepare_account_deletion',
+      'rpc:release_user_membership',
+      'from:organizations',
+    ]);
+    expect(httpOf(result).status).toBe(409);
+  });
+
+  it('IS_ORG_OWNER のあと確認をやり直してもオーナーでなければ (同時の譲渡がもう一度あった)、消さずに ACCOUNT_DELETE_FAILED (step: release_membership)', async () => {
+    world.rpc.release_user_membership = { error: { message: 'IS_ORG_OWNER', code: 'P0001' } };
+    const result = await run();
+
+    expect(result).toEqual(accountDeletionFailure(REQUEST_ID, 'release_membership'));
+    expect(world.calls).not.toContain('auth.deleteUser');
+    expect(world.calls).not.toContain('rpc:begin_account_deletion_record');
+    expect(world.calls.filter((call) => call === 'from:organizations')).toHaveLength(2);
+  });
+
+  it('所属の組織が途中で変わった (release_user_membership が P0001 CONFLICT_RETRY): 席を残したまま消さず ACCOUNT_DELETE_FAILED (step: release_membership)', async () => {
+    world.rpc.release_user_membership = { error: { message: 'CONFLICT_RETRY', code: 'P0001' } };
+    const result = await run();
+
+    expect(result).toEqual(accountDeletionFailure(REQUEST_ID, 'release_membership'));
+    expect(world.calls).not.toContain('auth.deleteUser');
+    expect(world.calls.some((call) => call.startsWith('storage.'))).toBe(false);
+    const failure = logs.entries.find((entry) => entry.level === 'error');
+    expect(failure?.metadata).toMatchObject({ step: 'release_membership', error_code: 'P0001' });
+  });
+
+  it('コードの文字列が同じでも P0001 でなければ (DB 関数が RAISE したものでなければ)、従来どおりライセンス解放の失敗として続ける', async () => {
+    world.rpc.release_user_membership = { error: { message: 'IS_ORG_OWNER', code: 'XX000' } };
+    expect(await run()).toEqual({ ok: true });
+    expect(world.calls).toContain('auth.deleteUser');
+    expect(world.calls.filter((call) => call === 'from:organizations')).toHaveLength(1);
   });
 
   it('すでに消えているユーザー (deleteUser が 404 user_not_found) は成功として扱う (やり直せる)', async () => {

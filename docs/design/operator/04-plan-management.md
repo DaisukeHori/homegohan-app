@@ -23,6 +23,7 @@
 **バリデーション規則**:
 - `plan_key`: 英数字 + アンダースコアのみ、50 文字以内、UNIQUE
 - `plan_type`: `personal` | `family` | `org` (変更不可)
+- `plan_key` と `plan_type` の組み合わせ (#1912): `personal` / `family` は組織のプランの値 (`isOrgPlanKey` = `standard` / `premium` / `enterprise`・`org_` で始まる key) を使えない。`org` は `org_` で始まる key にする (`PlanCreateSchema` の refine。違反は 400 `OP_INVALID_INPUT`)
 - `monthly_price_jpy`: 0 以上の整数 (NULL = カスタム/無料)
 - `org` 型は `trial_days = 0` を強制 (組織プランに試用なし)
 - `family_addon` は `plan_type = 'family'` でも `applicable_to = 'org'` フラグを持つ特殊プラン

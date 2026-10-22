@@ -874,6 +874,9 @@ CREATE POLICY family_invites_select_adult ON family_invites
         AND fm.role IN ('representative','adult') AND fm.status = 'active'
     )
   );
+-- family_invites の書き込み (INSERT / UPDATE / DELETE) のポリシーは置かず、anon / authenticated の書き込みの権限も外す
+-- (#1912 C36。migration 20261022150000_family_invites_rpc_only_writes.sql)。招待の作成・取り消し・拒否・承諾は SECURITY DEFINER の
+-- RPC (create_family_invite / revoke_family_invite / reject_family_invite / accept_family_invite) だけが書く
 ```
 
 ### 3.6 family 操作 RPC (主要分のみ抜粋、残りは org と同パターン)
