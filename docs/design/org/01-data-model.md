@@ -50,6 +50,8 @@ ALTER TABLE organizations ADD COLUMN IF NOT EXISTS settings            JSONB NOT
 -- }
 ```
 
+> 注 (`subscription_status`): 本番の列は `text`・既定 `'trial'`・CHECK なし (`supabase/baseline/prod_schema.sql`)。上の DDL の `subscription_status` の行 (`VARCHAR(20) NOT NULL DEFAULT 'trialing'` と 5 値の CHECK) は採らなかった案。読む側の値の一覧は `src/lib/org-plans.ts` の `ORG_SUBSCRIPTION_STATUS_VALUES`。
+
 #### `user_profiles` 拡張 (組織属性)
 
 ```sql

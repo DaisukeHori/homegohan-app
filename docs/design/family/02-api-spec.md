@@ -589,6 +589,8 @@ UC-ORG-17 シナリオ。
 
 ### 6.1 `POST /api/family/invites` — 招待送信
 
+> 注: この節は初期の設計である。実装の正本は `src/app/api/family/invites/route.ts` と billing/03 §9.5 (認証・Turnstile の有無・期限・役割の判定などの動作はこの節と違う)。
+
 **認証**: 必須 (owner / admin のみ)
 
 **リクエスト**:
@@ -606,6 +608,9 @@ UC-ORG-17 シナリオ。
 3. `family_invites` INSERT (`expires_at = NOW() + 7 days`)
 4. Resend 経由で招待メール送信
 5. `family_activity_log` に `invite_sent` 記録
+
+**エラー**:
+- `402 FAMILY_PLAN_REQUIRED` (家族プランの無いグループ。billing/03 §9.5)
 
 **レスポンス 201**:
 ```json
@@ -689,6 +694,7 @@ UC-ORG-17 シナリオ。
 ```
 
 **エラー**:
+- `402 FAMILY_PLAN_REQUIRED` (家族プランの無いグループ。billing/03 §9.5)
 - `409 FAM_USER_ALREADY_IN_GROUP`
 - `410 FAM_INVITE_EXPIRED`
 

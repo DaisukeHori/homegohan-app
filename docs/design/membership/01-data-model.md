@@ -363,8 +363,9 @@ REVOKE EXECUTE ON FUNCTION public.create_org_invite FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.create_org_invite TO authenticated;
 
 -- 招待受諾 (token 持ちユーザが呼ぶ)
--- 注: 下は初版の下書き。本番の正は supabase/migrations/20261017160000_org_invite_same_org_member.sql (#1799):
+-- 注: 下は初版の下書き。本番の正は supabase/migrations/20261022100000_org_invite_dissolved.sql (その前は 20261017160000_org_invite_same_org_member.sql。#1799):
 --     同じ組織の在籍者と招待の組織の持ち主も ALREADY_IN_ORG で断り、書き込みは所属が空の行だけ (org_role を招待の役割で上書きしない)。
+--     宛先のメールの判定のあと、招待の組織の行を FOR NO KEY UPDATE でロックし (:99)、組織が active でなければ ORG_ALREADY_DISSOLVED で止める (:104)。
 --     流れは 02-flow-spec.md §1
 CREATE OR REPLACE FUNCTION public.accept_org_invite(p_token TEXT)
 RETURNS user_profiles
