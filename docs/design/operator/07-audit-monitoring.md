@@ -155,6 +155,8 @@ admin.organization.suspend          - 組織停止 (記録なし)
 admin.organization.restore          - 組織復旧 (記録なし)
 admin.organization.delete           - 組織削除 (記録なし)
 admin.organization.plan_change      - 組織プラン変更 (手動) (PATCH /api/admin/organizations/{id}。details は変える前と後のプラン。今と同じプランなら記録しない)
+                                      更新は直前に読んだプランのままのときだけ書く (読んでから書くまでに別の運営が変えていたら書かず記録もしない。
+                                      今の値が送られたプランと同じなら 200、違えば 409 CONFLICT_STALE_DATA)。from は書いた時点の実際の直前の値
 create_coupon                       - クーポン作成 (POST /api/super-admin/coupons。旧名 admin.coupon.create)
 update_coupon                       - クーポンの編集・一時停止・有効化 (PATCH /api/super-admin/coupons/{id}。一時停止・有効化は status の変更で、
                                       専用の action は無い。旧名 admin.coupon.pause / admin.coupon.activate)
