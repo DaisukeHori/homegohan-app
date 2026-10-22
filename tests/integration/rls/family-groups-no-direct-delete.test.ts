@@ -17,6 +17,10 @@
  *   - G-6: 解散から 90 日の purge (purge_dissolved_family_groups。service_role) は今までどおり、同意の記録を持たない家族を消し
  *          (招待・メンバーは CASCADE)、同意の記録を持つ家族と同意の行は残す
  *   - G-7: service_role の直接の DELETE (運営の手作業・テストと e2e の後片付け) は今までどおり通る
+ *   - G-8: 戻し口 (supabase/rollbacks/) を 1 つのトランザクションで流して巻き戻す (DB には残らない):
+ *          本冊の戻し口だけ → DELETE のポリシーと anon / authenticated の DELETE が戻り、TRUNCATE は付かない (本冊の直前は
+ *          20261022190000 が外していて無い)。新しい順 (本冊 → 190000) に戻す → DELETE と TRUNCATE が戻る (190000 の直前 = ベースライン)。
+ *          190000 の戻し口だけ (順序外) → family_groups には DELETE も TRUNCATE も付かない
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh)。Next の開発サーバーは要らない (RPC と PostgREST を直接呼ぶ)。
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
@@ -25,6 +29,8 @@
  */
 
 import { randomBytes } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
@@ -90,6 +96,62 @@ async function pgRequest(query: string): Promise<{ ok: boolean; status: number; 
     body: JSON.stringify({ query }),
   });
   return { ok: res.ok, status: res.status, body: await res.json().catch(() => null) };
+}
+
+const ROOT = path.resolve(__dirname, '../../..');
+const readRollback = (stem: string) => fs.readFileSync(path.join(ROOT, 'supabase', 'rollbacks', `${stem}.down.sql`), 'utf-8');
+/** 本冊の戻し口 (family_groups の DELETE のポリシーと権限を戻す) */
+const OWN_ROLLBACK = readRollback('20261022200000_family_groups_no_direct_delete');
+/** 本冊の直前の migration の戻し口 (public の全部の表の anon / authenticated の TRUNCATE を付け直す) */
+const HARDENING_ROLLBACK = readRollback('20261022190000_db_privilege_hardening');
+/** 巻き戻すトランザクションの結果を例外の文に載せる目印 */
+const ROLLBACK_RESULT_MARKER = 'FAMILY_GROUPS_ROLLBACK_RESULT:';
+
+interface RollbackOutcome {
+  deletePolicy: boolean;
+  anonDelete: boolean;
+  anonTruncate: boolean;
+  authenticatedDelete: boolean;
+  authenticatedTruncate: boolean;
+}
+
+/** 応答の本文の中から、目印を含む文字列を探す (postgres-meta の失敗の本文の形が版で違っても拾えるように、値を順に見る) */
+function findMarkedText(body: unknown): string | null {
+  if (typeof body === 'string') return body.includes(ROLLBACK_RESULT_MARKER) ? body : null;
+  if (body && typeof body === 'object') {
+    for (const value of Object.values(body as Record<string, unknown>)) {
+      const found = findMarkedText(value);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * sql (戻し口) を流し、family_groups のポリシーと anon / authenticated の権限を返す。全部が 1 つのトランザクションで、
+ * 最後の例外 (結果を載せる) で巻き戻る (DB には何も残らない)
+ */
+async function familyGroupsAfterRolledBack(sql: string): Promise<RollbackOutcome> {
+  const report = `
+DO $report$
+BEGIN
+  RAISE EXCEPTION '${ROLLBACK_RESULT_MARKER}%', json_build_object(
+    'deletePolicy', EXISTS (SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'family_groups'
+                              AND policyname = 'family_groups_delete_representative'),
+    'anonDelete', has_table_privilege('anon', 'public.family_groups', 'DELETE'),
+    'anonTruncate', has_table_privilege('anon', 'public.family_groups', 'TRUNCATE'),
+    'authenticatedDelete', has_table_privilege('authenticated', 'public.family_groups', 'DELETE'),
+    'authenticatedTruncate', has_table_privilege('authenticated', 'public.family_groups', 'TRUNCATE')
+  )::text;
+END
+$report$;`;
+  const res = await pgRequest(`${sql}\n${report}`);
+  expect(res.ok, '結果の例外が返らなかった (トランザクションが巻き戻っていない恐れ)').toBe(false);
+  const text = findMarkedText(res.body);
+  if (text === null) throw new Error(`戻し口が例外で止まった: ${JSON.stringify(res.body)}`);
+  const json = text.slice(text.indexOf(ROLLBACK_RESULT_MARKER) + ROLLBACK_RESULT_MARKER.length);
+  // 結果は入れ子の無い 1 つのオブジェクト (値は真偽だけ) なので、最初の } までが結果 (後ろに CONTEXT などの文が続くことがある)
+  return JSON.parse(json.slice(0, json.indexOf('}') + 1)) as RollbackOutcome;
 }
 
 async function pgQuery<T = Record<string, unknown>>(query: string): Promise<T[]> {
@@ -400,5 +462,39 @@ describe('#1917 解散の仕組みは今までどおり動く', () => {
     expect(error).toBeNull();
     expect(data).toEqual([{ id: srFamily }]);
     expect(await familyRow(srFamily)).toBeNull();
+  }, TEST_TIMEOUT_MS);
+});
+
+describe('#1917 戻し口を流したときの family_groups の権限 (1 つのトランザクションで流して巻き戻す)', () => {
+  it('G-8: 本冊の戻し口は DELETE のポリシーと DELETE を戻し、TRUNCATE は付けない。新しい順に 190000 まで戻すと TRUNCATE も戻る。190000 だけを先に戻しても family_groups に TRUNCATE は付かない', async () => {
+    // 本冊だけを戻す: 本冊の直前の状態 (DELETE はあり・TRUNCATE は 20261022190000 が外していて無い)
+    expect(await familyGroupsAfterRolledBack(OWN_ROLLBACK)).toEqual({
+      deletePolicy: true,
+      anonDelete: true,
+      anonTruncate: false,
+      authenticatedDelete: true,
+      authenticatedTruncate: false,
+    });
+    // 新しい順 (本冊 → 190000) に戻す: 190000 の直前 (ベースラインの DELETE・TRUNCATE) に戻る
+    expect(await familyGroupsAfterRolledBack(`${OWN_ROLLBACK}\n${HARDENING_ROLLBACK}`)).toEqual({
+      deletePolicy: true,
+      anonDelete: true,
+      anonTruncate: true,
+      authenticatedDelete: true,
+      authenticatedTruncate: true,
+    });
+    // 順序外 (本冊を残したまま 190000 だけを戻す): 本冊が外した DELETE・TRUNCATE はどちらも付かない
+    expect(await familyGroupsAfterRolledBack(HARDENING_ROLLBACK)).toEqual({
+      deletePolicy: false,
+      anonDelete: false,
+      anonTruncate: false,
+      authenticatedDelete: false,
+      authenticatedTruncate: false,
+    });
+    // 巻き戻ったこと: いまの DB は本冊が当たったまま (G-3 と同じ)
+    const now = await pgQuery<{ anon_truncate: boolean; auth_delete: boolean }>(`
+      SELECT has_table_privilege('anon', 'public.family_groups', 'TRUNCATE') AS anon_truncate,
+             has_table_privilege('authenticated', 'public.family_groups', 'DELETE') AS auth_delete;`);
+    expect(now).toEqual([{ anon_truncate: false, auth_delete: false }]);
   }, TEST_TIMEOUT_MS);
 });

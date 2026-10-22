@@ -1,4 +1,8 @@
 -- rollback: 20261022150000_family_invites_rpc_only_writes.sql
+-- 戻す順: 戻し口は新しい順に流す (後の 20261022190000_db_privilege_hardening.sql を先に戻す)。ここで anon / authenticated に
+--   付け直す TRUNCATE は、190000 が public の全部の表で利用者に持たせないとしたもの。190000 の戻し口はこの表の
+--   TRUNCATE を付け直さず、この戻し口が付け直す前提でできている。190000 が残ったままこの戻し口だけを流すと、RLS の効かない
+--   TRUNCATE が利用者に戻る (190000 の不変条件を破る)。
 -- #1912 (C36) で外した、family_invites への利用者 (anon / authenticated) からの書き込みのポリシーと権限を、元に戻す。
 -- ポリシーの名前・種類・対象のロール・式は、本番のベースライン (20251126124224_create_meal_planner_tables.sql:10367・:10375) と同じ。
 -- 権限は、同じベースラインの :13592-13593 が anon / authenticated に付けていた書き込みの権限 (INSERT・UPDATE・DELETE・TRUNCATE) を付け直す。

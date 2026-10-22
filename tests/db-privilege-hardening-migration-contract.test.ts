@@ -12,7 +12,11 @@
  *      どれも SECURITY DEFINER か、利用者が実行できない関数。この migration より後の migration が、anon / authenticated / PUBLIC へ
  *      表の TRUNCATE (ALL を含む) を付け直していない (既定の権限も)
  *   4. ロールバック: ガードをベースラインの定義に逐語で戻し、既定の権限と表の TRUNCATE を付け直す。
- *      付け直す表の選び方 (REFERENCES と TRIGGER を持つ・個別に TRUNCATE を外した表を除く) の前提が、migration の履歴で成り立つ
+ *      付け直す表の選び方 (REFERENCES と TRIGGER を持つ・個別に TRUNCATE を外した表を除く・後の 20261022200000 が残っている間の
+ *      family_groups を除く) の前提が、migration の履歴で成り立つ
+ *   5. 同じ型の機械検査 (戻し口): この migration より後の戻し口は、利用者へ表の TRUNCATE (ALL を含む) を付けない。
+ *      前の戻し口のうち利用者へ表の TRUNCATE (ALL を含む) を付けるものは決まった 6 本で、付ける表は、ロールバックが除く 5 表か、
+ *      その戻し口の migration が REVOKE ALL で外した表 (ロールバックの a で対象にならない) だけ。どれも「新しい順に戻す」を冒頭に書く
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -40,6 +44,28 @@ const ROLLBACK_EXCLUDED_TABLES = [
   'family_invites',
   'org_license_pools',
   'organization_invites',
+] as const;
+
+/**
+ * ロールバックが、そのロールが DELETE を持たない間は TRUNCATE を付けない表 (後の migration が DELETE と TRUNCATE を外した表)。
+ * その migration の戻し口は DELETE だけを付け直すので、新しい順に戻したときは、ロールバックがこの表の TRUNCATE を付け直す
+ */
+const LATER_DELETE_TRUNCATE_CLOSED_TABLE = 'family_groups';
+const LATER_DELETE_TRUNCATE_CLOSED_MIGRATION = '20261022200000_family_groups_no_direct_delete';
+const ROLLBACKS_DIR = path.join(ROOT, 'supabase', 'rollbacks');
+/** 戻し口のファイル名 (<14 桁の version>_<名前>.down.sql。version の無い掃除の SQL は対象にしない) */
+const VERSIONED_ROLLBACK = /^(\d{14}_[A-Za-z0-9_]+)\.down\.sql$/;
+/**
+ * この migration より前の戻し口のうち、利用者 (anon / authenticated / PUBLIC) へ表の TRUNCATE (ALL を含む) を付け直すもの。
+ * どれも、新しい順に戻したときだけ (この migration を先に戻したときだけ)、その migration の直前の状態に戻る
+ */
+const EARLIER_ROLLBACKS_GRANTING_TRUNCATE = [
+  '20261010090000_ai_consent_policy_version',
+  '20261011010000_ai_queue_service_role_writes',
+  '20261016190000_deletion_record_and_invite_email_hash',
+  '20261016243000_auth_history_sessions',
+  '20261022150000_family_invites_rpc_only_writes',
+  '20261022180000_org_tables_rpc_only_writes',
 ] as const;
 
 /**
@@ -333,6 +359,25 @@ describe('#1917 ロールバック', () => {
     expect(block).toContain("EXECUTE pg_catalog.format('GRANT TRUNCATE ON TABLE %s TO %I', v_rel, v_role);");
   });
 
+  it('c: 後の 20261022200000 が残っている間 (そのロールが family_groups の DELETE を持たない間) は、family_groups に TRUNCATE を付けない', () => {
+    const block = onlyDoBlockBody(rollbackSql);
+    expect(block).toContain(
+      `AND NOT (c.relname = '${LATER_DELETE_TRUNCATE_CLOSED_TABLE}' AND NOT pg_catalog.has_table_privilege(v_role, c.oid, 'DELETE'))`,
+    );
+  });
+
+  it('c の前提: 20261022200000 は family_groups の DELETE と TRUNCATE を利用者から外し、その戻し口は DELETE だけを付け直す (TRUNCATE は付けない)', () => {
+    const laterFile = `${LATER_DELETE_TRUNCATE_CLOSED_MIGRATION}.sql`;
+    expect(migrationFiles).toContain(laterFile);
+    expect(laterFile > MIGRATION_FILE).toBe(true);
+    const onTable = new RegExp(String.raw`\bON\s+(?:TABLE\s+)?(?:"?public"?\.)?"?${LATER_DELETE_TRUNCATE_CLOSED_TABLE}"?\s+(?:TO|FROM)\b`, 'i');
+    const revokes = statements(readMigration(laterFile)).filter((st) => /^REVOKE\b/i.test(st) && onTable.test(st));
+    expect(revokes).toEqual([`REVOKE DELETE, TRUNCATE ON TABLE public.${LATER_DELETE_TRUNCATE_CLOSED_TABLE} FROM anon, authenticated`]);
+    const laterRollback = statements(fs.readFileSync(path.join(ROLLBACKS_DIR, `${LATER_DELETE_TRUNCATE_CLOSED_MIGRATION}.down.sql`), 'utf8'));
+    const grants = laterRollback.filter((st) => /^GRANT\b/i.test(st) && onTable.test(st));
+    expect(grants).toEqual([`GRANT DELETE ON TABLE public.${LATER_DELETE_TRUNCATE_CLOSED_TABLE} TO anon, authenticated`]);
+  });
+
   it('前提 b: 除く 5 表は、この migration より前に TRUNCATE だけを個別に外した (REVOKE ALL でない) 表と一致する', () => {
     const earlier = migrationFiles.filter((file) => file < MIGRATION_FILE);
     const revoked = new Set<string>();
@@ -366,5 +411,84 @@ describe('#1917 ロールバック', () => {
     // 見つけ方が空振りしていないこと (ベースラインの表の GRANT を数える)
     expect(checked).toBeGreaterThan(0);
     expect(offenders).toEqual([]);
+  });
+});
+
+/** 戻し口の文 (statements) のうち、利用者へ表の TRUNCATE (ALL を含む) を付ける GRANT の対象の表の名前 (スキーマと引用符を除く) */
+function tablesGrantedTruncateToUsers(sql: string): string[] {
+  return statements(sql).flatMap((st) => {
+    const grant = /^ALTER\s+DEFAULT\b/i.test(st) ? null : parseGrant(st);
+    if (grant === null || !isTableTarget(grant.target) || !toUsers(grant.grantees)) return [];
+    if (!grant.privileges.some((p) => p === 'ALL' || p === 'ALL PRIVILEGES' || p === 'TRUNCATE')) return [];
+    return grant.target
+      .replace(/^TABLE\s+/i, '')
+      .split(',')
+      .map((t) => t.trim().replace(/^"?public"?\./i, '').replace(/"/g, ''));
+  });
+}
+
+/** migration の文で、利用者 (anon / authenticated) から REVOKE ALL で外した表の名前 */
+function tablesRevokedAllFromUsers(sql: string): Set<string> {
+  const out = new Set<string>();
+  for (const st of statements(sql)) {
+    const m = /^REVOKE\s+ALL(?:\s+PRIVILEGES)?\s+ON\s+(?:TABLE\s+)?([\s\S]*?)\s+FROM\s+([\s\S]*)$/i.exec(st);
+    if (!m || !/\b(?:anon|authenticated)\b/i.test(m[2]) || /^(?:ALL\s+)?(?:FUNCTIONS?|ROUTINES?|PROCEDURES?|SEQUENCES?|SCHEMA)\b/i.test(m[1])) continue;
+    for (const t of m[1].split(',')) out.add(t.trim().replace(/^"?public"?\./i, '').replace(/"/g, ''));
+  }
+  return out;
+}
+
+describe('#1917 同じ型の機械検査 (戻し口が、後の migration が外した TRUNCATE を付け直さない)', () => {
+  const rollbackStems = fs
+    .readdirSync(ROLLBACKS_DIR)
+    .map((file) => VERSIONED_ROLLBACK.exec(file)?.[1])
+    .filter((stem): stem is string => stem !== undefined)
+    .sort();
+  const readRollback = (stem: string) => fs.readFileSync(path.join(ROLLBACKS_DIR, `${stem}.down.sql`), 'utf8');
+
+  it('番兵: 戻し口の一覧に、この migration と後の 20261022200000 の戻し口がある', () => {
+    expect(rollbackStems).toEqual(expect.arrayContaining([MIGRATION_STEM, LATER_DELETE_TRUNCATE_CLOSED_MIGRATION]));
+  });
+
+  it('この migration より後の戻し口は、利用者 (anon / authenticated / PUBLIC) へ表の TRUNCATE (ALL を含む) を付けない (既定の権限も)', () => {
+    const later = rollbackStems.filter((stem) => `${stem}.sql` > MIGRATION_FILE);
+    expect(later).toContain(LATER_DELETE_TRUNCATE_CLOSED_MIGRATION);
+    const offenders = later.flatMap((stem) =>
+      statements(readRollback(stem))
+        .filter((st) => {
+          const grant = parseGrant(st);
+          return (
+            grant !== null &&
+            isTableTarget(grant.target) &&
+            toUsers(grant.grantees) &&
+            grant.privileges.some((p) => p === 'ALL' || p === 'ALL PRIVILEGES' || p === 'TRUNCATE')
+          );
+        })
+        .map((st) => `${stem}.down.sql: ${st.slice(0, 160)}`),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it('前の戻し口のうち利用者へ表の TRUNCATE (ALL を含む) を付けるものは決まった 6 本で、付ける表は除く 5 表か、その migration が REVOKE ALL で外した表だけ', () => {
+    const earlier = rollbackStems.filter((stem) => `${stem}.sql` < MIGRATION_FILE);
+    const granting = earlier.filter((stem) => tablesGrantedTruncateToUsers(readRollback(stem)).length > 0);
+    expect(granting).toEqual([...EARLIER_ROLLBACKS_GRANTING_TRUNCATE]);
+    for (const stem of granting) {
+      const revokedAll = tablesRevokedAllFromUsers(readMigration(`${stem}.sql`));
+      const stray = tablesGrantedTruncateToUsers(readRollback(stem)).filter(
+        (table) => !(ROLLBACK_EXCLUDED_TABLES as readonly string[]).includes(table) && !revokedAll.has(table),
+      );
+      expect(stray, `${stem}.down.sql`).toEqual([]);
+    }
+  });
+
+  it('その 6 本は、冒頭のコメントに「新しい順に戻す (この migration を先に戻す)」ことを書いている', () => {
+    for (const stem of EARLIER_ROLLBACKS_GRANTING_TRUNCATE) {
+      const header = readRollback(stem)
+        .split('\n')
+        .filter((line) => line.startsWith('--'))
+        .join('\n');
+      expect(header, `${stem}.down.sql`).toContain(`戻す順: 戻し口は新しい順に流す (後の ${MIGRATION_FILE} を先に戻す)`);
+    }
   });
 });
