@@ -58,6 +58,34 @@ export const CreateOrgInviteResponseSchema = apiResponse(z.object({
   invite_url: z.string().url(),  // クライアントがコピー/メール表示するための URL
 }));
 
+// ---- GET /api/org/invites の応答 (組織の管理画面の招待の一覧 src/app/(org)/org/invites/page.tsx が読む) ----
+// role は招待で付ける役割 (organization_invites.invited_role。create_org_invite が書く列)。
+// 旧い role 列 (既定 'member') は create_org_invite が書かないので使わない (管理者の招待が「メンバー」と出ていた)。
+// status は表示用の状態: 期限を過ぎた pending は 'expired' (DB の status が 'expired' になるのは承諾を試みたときだけのため)。
+// それ以外は DB の status (取り消し・退会で伏せた招待は 'revoked'、拒否は 'rejected')。
+// 表に無い値は画面が「-」で出す (#1912) ので、型は文字列のまま受ける。
+export const OrgInviteListItemSchema = z.object({
+  id: z.string(),
+  email: z.string(),
+  role: OrgRoleSchema,
+  status: z.string(),
+  departmentId: z.string().nullable(),
+  departmentName: z.string().nullable(),
+  token: z.string(),
+  expiresAt: z.string(),
+  acceptedAt: z.string().nullable(),
+  createdAt: z.string().nullable(),
+  isExpired: z.boolean(),
+  isAccepted: z.boolean(),
+});
+
+export const OrgInviteListResponseSchema = z.object({
+  invites: z.array(OrgInviteListItemSchema),
+});
+
+export type OrgInviteListItem = z.infer<typeof OrgInviteListItemSchema>;
+export type OrgInviteListResponse = z.infer<typeof OrgInviteListResponseSchema>;
+
 export type OrgRole = z.infer<typeof OrgRoleSchema>;
 export type OrgInviteStatus = z.infer<typeof OrgInviteStatusSchema>;
 export type CreateOrgInviteBody = z.infer<typeof CreateOrgInviteBodySchema>;
