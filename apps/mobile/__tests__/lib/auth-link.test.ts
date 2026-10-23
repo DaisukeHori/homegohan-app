@@ -159,7 +159,8 @@ describe('completeAuthLink — 同じリンクは 1 回だけ処理する', () =
     const first = await completeAuthLink({ code: 'broken' });
     const second = await completeAuthLink({ code: 'broken' });
 
-    expect(first).toEqual({ status: 'failed', message: 'expired' });
+    // Supabase の英語の文 ('expired') は出さず、固定の文 (#1917 の続き)
+    expect(first).toEqual({ status: 'failed', message: '確認に失敗しました。' });
     expect(second).toEqual(first);
     expect(mockExchangeCodeForSession).toHaveBeenCalledTimes(1);
   });

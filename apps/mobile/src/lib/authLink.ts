@@ -16,14 +16,10 @@
  * code は 1 回しか交換できないので、同じリンクの処理は 1 回だけ行い、結果を共有する。
  */
 
-import { AUTH_LINK_ERROR_MESSAGE, isEmailChangeAwaitingOtherMessage } from "@homegohan/shared";
-
+import { AUTH_LINK_ERROR_MESSAGE, AUTH_LINK_FAILED_MESSAGE, isEmailChangeAwaitingOtherMessage } from "@homegohan/shared";
 import { getJapaneseApiErrorMessage } from "./api-error";
 import type { SupabaseLinkParams } from "./deeplink";
 import { supabase } from "./supabase";
-
-/** code の交換・OTP の確認・setSession が失敗したときに出す文 (例外の文が日本語でないとき) */
-export const AUTH_LINK_FAILED_MESSAGE = "確認に失敗しました。";
 
 export type AuthLinkOutcome =
   /** セッションを作れた */

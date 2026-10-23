@@ -11,3 +11,6 @@
  */
 export const AUTH_LINK_ERROR_MESSAGE =
   'ログインの手続きを完了できませんでした。メールのリンクから開いた場合は、リンクの期限が切れている可能性があります。もう一度お試しください。';
+
+/** モバイルで、リンクの code の交換・OTP の確認・setSession が失敗したときに出す文 (例外の文が日本語でないとき。apps/mobile/src/lib/authLink.ts) */
+export const AUTH_LINK_FAILED_MESSAGE = '確認に失敗しました。';

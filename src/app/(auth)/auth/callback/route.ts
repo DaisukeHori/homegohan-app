@@ -43,12 +43,14 @@ export async function GET(request: Request) {
       description: error_description,
       code: error_code
     })
-    // エラーページにリダイレクト（エラー情報付き）
-    // provider・GoTrue の英文 (error_description・error の値) は画面に出さず、日本語の固定の文にする (英文は上の console.error にだけ残す)。
-    // Apple (?provider=apple) は Apple 向けの固定の文 (docs/design/mobile/08-sign-in-with-apple.md §12.3・S-34)、
-    // ほかの provider (Google など) とメールのリンクは AUTH_LINK_ERROR_MESSAGE (#1917 の続き)
+    // エラーページにリダイレクト（エラー情報付き。provider・GoTrue の英文は画面に出さず、上の console.error にだけ残す）
+    // Apple (?provider=apple) は Apple 向けの固定の文 (docs/design/mobile/08-sign-in-with-apple.md §12.3・S-34)。
+    // ほかの provider (Google など) とメールのリンクも英文を出さず、固定の文 AUTH_LINK_ERROR_MESSAGE (#1917 の続き)
     const loginUrl = new URL('/login', requestUrl.origin)
-    loginUrl.searchParams.set('error', appleCallbackErrorMessage(requestUrl.searchParams.get('provider')) ?? AUTH_LINK_ERROR_MESSAGE)
+    loginUrl.searchParams.set(
+      'error',
+      appleCallbackErrorMessage(requestUrl.searchParams.get('provider')) ?? AUTH_LINK_ERROR_MESSAGE,
+    )
     return NextResponse.redirect(loginUrl)
   }
 

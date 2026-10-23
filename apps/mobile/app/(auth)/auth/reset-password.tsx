@@ -39,9 +39,7 @@ export default function ResetPasswordPage() {
 
       if (!params) return;
       if (params.error) {
-        // GoTrue の英文 (error_description・error の値) は出さず、固定の文にする (#1917 の続き。authLink の link_error と同じ)
-        console.warn("[reset-password] link error:", params.error, params.error_description ?? "");
-        Alert.alert("エラー", AUTH_LINK_ERROR_MESSAGE);
+        Alert.alert("エラー", AUTH_LINK_ERROR_MESSAGE); // GoTrue の英文 (error_description・error の値) は出さない (#1917 の続き)
         return;
       }
 

@@ -12,9 +12,7 @@
  *
  * AI 相談の緊急停止・メンテナンス中の 503 は、本文の文字列ではなく、code から決めた固定の文を返す (#1457)。
  *
- * HTTP のエラー (`HTTP <status> …: <本文>`) で本文から文を取り出せないとき (ゲートウェイの HTML の 502 など本文が JSON でない・
- * 本文に文が無い) は fallback を返す (`HTTP 502 Bad Gateway: <html>…` の生の文字列を画面に出さない。#1917 の続き)。
- * HTTP のエラーでない例外は、Error の message、それも無ければ fallback を返す。
+ * 取り出せないとき: HTTP のエラー (本文が JSON でない 502 の HTML など) は fallback、それ以外は Error の message か fallback (#1917 の続き)。
  */
 
 import { isHttpNetworkError, type HttpNetworkErrorKind } from "@homegohan/core";
@@ -65,10 +63,8 @@ export function getApiErrorMessage(error: unknown, fallback: string): string {
     } catch {
       // 本文が JSON ではない (ゲートウェイの HTML の 502 など): 下で fallback を返す
     }
-    // HTTP のエラーで本文から文を取れない: 生の `HTTP <status> …` の文字列は出さない (#1917 の続き)
-    return fallback;
   }
-  return raw;
+  return match ? fallback : raw; // HTTP のエラーで本文から文を取れない: 生の `HTTP <status> …` を出さない (#1917 の続き)
 }
 
 /** 日本語の文字 (ひらがな・カタカナ・漢字・全角の記号) */
