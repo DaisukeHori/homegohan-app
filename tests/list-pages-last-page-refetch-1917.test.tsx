@@ -19,8 +19,10 @@ import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
 // 画面を丸ごと読み込んで描画するので、負荷の高い機械で既定の時間切れ (テスト 5 秒) を超えうる (#1605 の同じ型)。テストとフックを定義する前に置く
 applyHeavyUnitTestTimeout();
 
+// 描画のたびに同じ router を返す (画面の useCallback が router に依存するので、毎回別の値を返すと読み込みが止まらない)
+const router = vi.hoisted(() => ({ push: () => undefined, replace: () => undefined, refresh: () => undefined }));
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  useRouter: () => router,
 }));
 
 // React に「テスト環境 (act で包む)」であることを伝える
