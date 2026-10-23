@@ -17,6 +17,7 @@ import { formatLocalDate, todayLocal } from "@homegohan/shared";
 
 import { Button, EmptyState, LoadingState } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
+import { getJapaneseApiErrorMessage } from "../../src/lib/api-error";
 import { colors, radius, shadows, spacing } from "../../src/theme";
 import { aiSkippedReasonOf, handleAiConsentRequiredError, type AiSkippedReason } from "../../src/lib/ai-consent";
 import { AiSkippedNotice } from "../../src/components/ai/AiSkippedNotice";
@@ -302,7 +303,8 @@ export default function BloodTestsPage() {
     } catch (e: any) {
       // 同意が必要で止められた (T15 / #1154): 同意画面への案内を出したので、ここのエラー表示は出さない
       if (handleAiConsentRequiredError(e)) return;
-      Alert.alert("OCRエラー", e?.message ?? "画像の読み取りに失敗しました。手動で入力してください。");
+      // 本文の文だけを出す (`HTTP 422 …: {"error":…,"code":"mode_mismatch"}` の生の文字列を出さない。#1917)
+      Alert.alert("OCRエラー", getJapaneseApiErrorMessage(e, "画像の読み取りに失敗しました。手動で入力してください。"));
     } finally {
       setIsOcrProcessing(false);
     }

@@ -72,7 +72,23 @@ describe('AIDayMenuModal: 作成の失敗', () => {
     await expect(fireEvent.press(screen.getByText('作成する'))).resolves.toBeUndefined();
 
     await waitFor(() => expect(alertTitles()).toEqual(['エラー']));
-    expect(alertMock).toHaveBeenCalledWith('エラー', 'HTTP 500 Internal Server Error');
+    // 本文の無い生の "HTTP ..." の文字列は出さず、汎用の文にする (#1917)
+    expect(alertMock).toHaveBeenCalledWith('エラー', '生成に失敗しました');
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('失敗の本文 (500 INTERNAL_ERROR) は、本文の日本語の文だけを「エラー」に出す (#1917)', async () => {
+    mockPost.mockRejectedValue(
+      new Error(`HTTP 500 Internal Server Error: ${JSON.stringify({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' })}`),
+    );
+    const onClose = jest.fn();
+    const onAiConsentRequired = jest.fn();
+    render(<AIDayMenuModal visible onClose={onClose} onAiConsentRequired={onAiConsentRequired} />);
+
+    await expect(fireEvent.press(screen.getByText('作成する'))).resolves.toBeUndefined();
+
+    await waitFor(() => expect(alertTitles()).toEqual(['エラー']));
+    expect(alertMock).toHaveBeenCalledWith('エラー', '処理中にエラーが発生しました');
     expect(onClose).not.toHaveBeenCalled();
     expect(onAiConsentRequired).not.toHaveBeenCalled();
   });

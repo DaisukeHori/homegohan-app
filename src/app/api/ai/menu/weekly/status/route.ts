@@ -15,6 +15,8 @@ import {
   WEEKLY_MENU_REQUEST_WEEKLY_ORIGIN_SELECT,
   isWeeklyMenuRequestWeeklyOrigin,
 } from '@/lib/ai/weekly-menu-request-origin';
+import { API_UNAUTHENTICATED_MESSAGE, API_INVALID_JSON_MESSAGE } from '@/lib/api/error-responses';
+import { aiRequiredFieldMessage, AI_MENU_REQUEST_NOT_FOUND_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 // #1203: stale 判定時の復元（スナップショットの書き戻し）が打ち切られないよう、実行時間の上限を明示する。
 export const maxDuration = 60; // Vercel Pro: 60s OK
@@ -23,12 +25,12 @@ export const maxDuration = 60; // Vercel Pro: 60s OK
 export async function GET(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   const { searchParams } = new URL(request.url);
   const requestId = searchParams.get('requestId');
   if (!requestId) {
-    return NextResponse.json({ error: 'requestId is required' }, { status: 400 });
+    return NextResponse.json({ error: aiRequiredFieldMessage('献立の生成の受付の ID') }, { status: 400 });
   }
 
   try {
@@ -150,18 +152,18 @@ export async function POST(request: Request) {
   if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   let body: { requestId?: string };
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
   }
 
   const { requestId } = body;
   if (!requestId) {
-    return NextResponse.json({ error: 'requestId is required' }, { status: 400 });
+    return NextResponse.json({ error: aiRequiredFieldMessage('献立の生成の受付の ID') }, { status: 400 });
   }
 
   try {
@@ -174,7 +176,7 @@ export async function POST(request: Request) {
 
     if (fetchError) throw fetchError;
     if (!existing) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      return NextResponse.json({ error: AI_MENU_REQUEST_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     // 既に確定済み（completed/failed）の場合は上書きしない

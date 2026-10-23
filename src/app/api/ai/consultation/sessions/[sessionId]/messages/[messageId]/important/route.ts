@@ -2,6 +2,8 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE, AI_CONSULTATION_MESSAGE_NOT_FOUND_MESSAGE, AI_CONSULTATION_IMPORTANT_LIST_MOVED_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 // 重要マークのトグル
 export async function POST(
@@ -14,7 +16,7 @@ export async function POST(
   const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
     // セッション所有者確認
@@ -25,7 +27,7 @@ export async function POST(
       .single();
 
     if (!session || session.user_id !== user.id) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      return NextResponse.json({ error: AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     // メッセージ確認
@@ -37,7 +39,7 @@ export async function POST(
       .single();
 
     if (!message) {
-      return NextResponse.json({ error: 'Message not found' }, { status: 404 });
+      return NextResponse.json({ error: AI_CONSULTATION_MESSAGE_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     const body = await request.json();
@@ -71,9 +73,9 @@ export async function POST(
 export async function GET() {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   // このエンドポイントは個別メッセージ用なので、一覧は別で実装
-  return NextResponse.json({ error: 'Use /api/ai/consultation/important-messages instead' }, { status: 400 });
+  return NextResponse.json({ error: AI_CONSULTATION_IMPORTANT_LIST_MOVED_MESSAGE }, { status: 400 });
 }
 

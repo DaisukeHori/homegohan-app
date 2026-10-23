@@ -7,6 +7,8 @@ import { isWeeklyMenuRequestStale, markWeeklyMenuRequestStaleIfUnchanged } from 
 import { WEEKLY_MENU_REQUEST_ULTIMATE_MODE_SELECT } from '@/lib/ai/weekly-menu-request-ultimate';
 // 究極モードの判定は Web とモバイルで同じ基準にするため @homegohan/shared に置く (#1609)
 import { isUltimateModeWeeklyMenuRequest } from '@homegohan/shared';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { aiRequiredFieldMessage } from '@/lib/ai/ai-api-messages';
 
 // #1203: stale 判定時の復元（スナップショットの書き戻し）が打ち切られないよう、実行時間の上限を明示する。
 export const maxDuration = 60; // Vercel Pro: 60s OK
@@ -15,12 +17,12 @@ export const maxDuration = 60; // Vercel Pro: 60s OK
 export async function GET(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   const { searchParams } = new URL(request.url);
   const date = searchParams.get('date');
   if (!date) {
-    return NextResponse.json({ error: 'date is required' }, { status: 400 });
+    return NextResponse.json({ error: aiRequiredFieldMessage('日付') }, { status: 400 });
   }
 
   try {
