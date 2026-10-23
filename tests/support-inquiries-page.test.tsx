@@ -14,7 +14,9 @@
  *   - 更新に失敗したら詳細パネルにエラーを出し、ステータス表示は変えず、一覧も取り直さない
  *   - 更新している間は、別の問い合わせへ切り替えたり詳細パネルを閉じたりできない (更新の結果を別のパネルに書き込まないため)
  *   - 更新が 409 CONFLICT_STALE_DATA (別の運営が先に更新していた) で断られたら、一覧と開いている問い合わせの詳細を読み直して
- *     今の状態を出し、その旨を出す。書きかけの管理者メモは消さず、保存されているメモと違えば入力欄の下に出す (#1917)
+ *     今の状態を出し、その旨を出す。書きかけの管理者メモは消さず、保存されているメモと違えば入力欄の下に出す。
+ *     書きかけでなければ (開いたときのメモに手を付けていなければ)、入力欄を読み直したメモにする
+ *     (開いたときの古いメモを次の更新で送り、別の運営のメモを上書きしないため) (#1917)
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
@@ -739,14 +741,25 @@ describe('更新が 409 CONFLICT_STALE_DATA で断られたとき (#1917)', () =
   });
 
   /** PUT が 409 を返した時点で、別の運営の変更 (解決済 + メモ) が入ったことにする API */
-  function staleApi(options: { otherNotes?: string | null; put?: (n: number, body: Record<string, unknown>) => Response } = {}) {
+  function staleApi(
+    options: {
+      /** 開いたときに保存されている管理者メモ (既定は無し) */
+      initialNotes?: string | null;
+      /** 409 の時点で別の運営が保存した管理者メモ */
+      otherNotes?: string | null;
+      put?: (n: number, body: Record<string, unknown>) => Response;
+    } = {},
+  ) {
     const otherNotes = options.otherNotes === undefined ? '別の運営のメモ' : options.otherNotes;
+    const initialNotes = options.initialNotes ?? null;
     const state = { changed: false, puts: 0 };
     mockApi({
       list: () => jsonResponse(200, listBody([summary(1, state.changed ? { status: 'resolved' } : {}), summary(2)])),
       detail: (id) =>
         id === 'inq-1'
-          ? jsonResponse(200, { inquiry: detail(1, state.changed ? { status: 'resolved', adminNotes: otherNotes } : {}) })
+          ? jsonResponse(200, {
+              inquiry: detail(1, state.changed ? { status: 'resolved', adminNotes: otherNotes } : { adminNotes: initialNotes }),
+            })
           : jsonResponse(200, { inquiry: detail(2) }),
       put: (_id, body) => {
         state.puts += 1;
@@ -790,6 +803,8 @@ describe('更新が 409 CONFLICT_STALE_DATA で断られたとき (#1917)', () =
     expect(textarea().value).toBe('書きかけのメモ');
     expect(textarea().disabled).toBe(false);
     expect(savedNotes()?.textContent).toContain('別の運営のメモ');
+    expect(savedNotes()?.textContent).toContain('書きかけのまま残しています');
+    expect(alerts()[0]).toContain('書きかけの管理者メモはそのまま残しています');
 
     await click(findButton('完了'), '「完了」ボタン');
     expect(putBody('inq-1', 1)).toEqual({ status: 'closed', adminNotes: '書きかけのメモ' });
@@ -798,14 +813,62 @@ describe('更新が 409 CONFLICT_STALE_DATA で断られたとき (#1917)', () =
     expect(alerts()).toEqual([]);
   });
 
-  it('メモを書いていなくても、別の運営が保存したメモがあれば入力欄の下に出す (入力欄は空のまま)', async () => {
+  it('メモを書いていなければ、入力欄を別の運営が保存したメモにする (書きかけの表示も「残しています」の文も出さない)', async () => {
     staleApi();
     await renderPage();
     await click(findRow('件名1'), '一覧の行');
     await click(findButton('対応中'), '「対応中」ボタン');
 
-    expect(textarea().value).toBe('');
+    expect(textarea().value).toBe('別の運営のメモ');
+    expect(textarea().disabled).toBe(false);
+    expect(savedNotes()).toBeNull();
+    expect(alerts()).toHaveLength(1);
+    expect(alerts()[0]).toContain('読み込み直した');
+    expect(alerts()[0]).not.toContain('書きかけ');
+  });
+
+  it('開いたときのメモに手を付けていなければ、入力欄を読み直したメモにし、次の更新で開いたときの古いメモを送らない', async () => {
+    staleApi({
+      initialNotes: '調査中',
+      put: () => jsonResponse(200, { inquiry: detail(1, { status: 'closed', adminNotes: '別の運営のメモ' }) }),
+    });
+    await renderPage();
+    await click(findRow('件名1'), '一覧の行');
+    expect(textarea().value).toBe('調査中');
+
+    await click(findButton('対応中'), '「対応中」ボタン');
+
+    expect(textarea().value).toBe('別の運営のメモ');
+    expect(savedNotes()).toBeNull();
+    expect(alerts()[0]).not.toContain('書きかけ');
+
+    await click(findButton('完了'), '「完了」ボタン');
+    expect(putBody('inq-1', 1)).toEqual({ status: 'closed', adminNotes: '別の運営のメモ' });
+    expect(putBody('inq-1', 1).adminNotes).not.toBe('調査中');
+  });
+
+  it('開いたときのメモを書き換えていれば、書きかけとして残し、保存されているメモを入力欄の下に出す', async () => {
+    staleApi({ initialNotes: '調査中' });
+    await renderPage();
+    await click(findRow('件名1'), '一覧の行');
+    await typeNote('調査中 (追記)');
+
+    await click(findButton('対応中'), '「対応中」ボタン');
+
+    expect(textarea().value).toBe('調査中 (追記)');
     expect(savedNotes()?.textContent).toContain('別の運営のメモ');
+    expect(alerts()[0]).toContain('書きかけの管理者メモはそのまま残しています');
+  });
+
+  it('書きかけでない読み直しのあとに書き始めても、保存されているメモの「書きかけのまま残しています」の表示は出さない', async () => {
+    staleApi();
+    await renderPage();
+    await click(findRow('件名1'), '一覧の行');
+    await click(findButton('対応中'), '「対応中」ボタン');
+    expect(textarea().value).toBe('別の運営のメモ');
+
+    await typeNote('別の運営のメモ に追記');
+    expect(savedNotes()).toBeNull();
   });
 
   it('書きかけのメモと保存されているメモが同じなら、保存されているメモは出さない', async () => {
@@ -866,6 +929,34 @@ describe('更新が 409 CONFLICT_STALE_DATA で断られたとき (#1917)', () =
     expect(textarea().disabled).toBe(false);
     expect(findButton('解決済')!.disabled).toBe(true);
     expect(savedNotes()?.textContent).toContain('別の運営のメモ');
+  });
+
+  it('読み直しに失敗したあとの「再試行」でも、メモを書いていなければ入力欄を読み直したメモにする', async () => {
+    const state = { changed: false, details: 0 };
+    mockApi({
+      list: () => jsonResponse(200, listBody([summary(1, state.changed ? { status: 'resolved' } : {})])),
+      detail: () => {
+        state.details += 1;
+        if (state.details === 2) return jsonResponse(500, errorBody('INTERNAL_ERROR', '問い合わせの取得に失敗しました'));
+        return jsonResponse(200, {
+          inquiry: detail(1, state.changed ? { status: 'resolved', adminNotes: '別の運営のメモ' } : { adminNotes: '調査中' }),
+        });
+      },
+      put: () => {
+        state.changed = true;
+        return staleResponse();
+      },
+    });
+    await renderPage();
+    await click(findRow('件名1'), '一覧の行');
+    await click(findButton('対応中'), '「対応中」ボタン');
+    expect(textarea().value).toBe('調査中');
+    expect(textarea().disabled).toBe(true);
+
+    await click(findButton('再試行'), '「再試行」ボタン');
+    expect(detailCalls('inq-1')).toHaveLength(3);
+    expect(textarea().value).toBe('別の運営のメモ');
+    expect(savedNotes()).toBeNull();
   });
 
   it('同じ 409 でも code が CONFLICT_STALE_DATA でなければ読み直さず、理由つきのエラーだけを出す', async () => {
