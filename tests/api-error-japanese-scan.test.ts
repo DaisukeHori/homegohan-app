@@ -28,8 +28,13 @@ import {
   API_MFA_REQUIRED_MESSAGE,
   API_NOT_FOUND_MESSAGE,
   API_NOT_ORG_MEMBER_MESSAGE,
+  API_OP_PERMISSION_DENIED_CODE,
+  API_UNAUTHENTICATED_CODE,
   API_UNAUTHENTICATED_MESSAGE,
+  AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED,
+  AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED,
   DEFAULT_FORBIDDEN_MESSAGES,
+  type AuthFailureCodeSource,
   authFailureFlat,
   authFailureNested,
   forbiddenMessageOf,
@@ -147,6 +152,78 @@ describe('共通の関数は、例外の文面に関わらず日本語の固定�
     expect(await authFailureFlat(denied, { forbiddenMessages: table })?.json()).toEqual({ error: '運営の権限が必要です' });
     expect(await authFailureNested(frozen, { forbiddenMessages: table })?.json()).toEqual({
       error: { code: 'FORBIDDEN', message: API_FORBIDDEN_MESSAGE },
+    });
+  });
+
+  describe('nested の code を 401 と 403 で別々に選べる (admin の route の従来の code を保てる)', () => {
+    const unauthenticated = new AuthError('AUTH_UNAUTHENTICATED', 'Not authenticated');
+    const roleDenied = new ForbiddenError('PERM_DENIED', ENGLISH_ROLE_DETAIL);
+    const frozen = new ForbiddenError('AUTH_ACCOUNT_FROZEN', 'Account frozen');
+
+    async function bodyTextOf(err: unknown, code: AuthFailureCodeSource): Promise<{ status: number | undefined; text: string }> {
+      const res = authFailureNested(err, { code });
+      return { status: res?.status, text: (await res?.text()) ?? '' };
+    }
+
+    it('admin の営業・問い合わせの形: 401 = 例外の code・403 = OP_PERMISSION_DENIED (src/app/api/admin/sales/leads/route.ts の従来の code)', async () => {
+      const r401 = await bodyTextOf(unauthenticated, AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED);
+      const r403 = await bodyTextOf(roleDenied, AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED);
+      const rFrozen = await bodyTextOf(frozen, AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED);
+      expect(r401.status).toBe(HTTP_UNAUTHORIZED);
+      expect(JSON.parse(r401.text)).toEqual({ error: { code: 'AUTH_UNAUTHENTICATED', message: API_UNAUTHENTICATED_MESSAGE } });
+      expect(r403.status).toBe(HTTP_FORBIDDEN);
+      expect(JSON.parse(r403.text)).toEqual({ error: { code: 'OP_PERMISSION_DENIED', message: API_FORBIDDEN_MESSAGE } });
+      expect(JSON.parse(rFrozen.text)).toEqual({ error: { code: 'OP_PERMISSION_DENIED', message: API_ACCOUNT_FROZEN_MESSAGE } });
+      // 例外の文面は入らない
+      expect(r401.text).not.toContain('Not authenticated');
+      expect(r403.text).not.toContain(ENGLISH_ROLE_DETAIL);
+      expect(rFrozen.text).not.toContain('Account frozen');
+    });
+
+    it('admin の会計の形: 401 = UNAUTHENTICATED・403 = OP_PERMISSION_DENIED (src/app/api/admin/finance/revenue/route.ts の従来の code)', async () => {
+      const r401 = await bodyTextOf(unauthenticated, AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED);
+      const r403 = await bodyTextOf(roleDenied, AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED);
+      expect(r401.status).toBe(HTTP_UNAUTHORIZED);
+      expect(JSON.parse(r401.text)).toEqual({ error: { code: 'UNAUTHENTICATED', message: API_UNAUTHENTICATED_MESSAGE } });
+      expect(r403.status).toBe(HTTP_FORBIDDEN);
+      expect(JSON.parse(r403.text)).toEqual({ error: { code: 'OP_PERMISSION_DENIED', message: API_FORBIDDEN_MESSAGE } });
+      expect(r401.text).not.toContain('Not authenticated');
+      expect(r403.text).not.toContain(ENGLISH_ROLE_DETAIL);
+    });
+
+    it('固定の code の定数は従来の route が書いていた文字列と同じ', () => {
+      expect(API_UNAUTHENTICATED_CODE).toBe('UNAUTHENTICATED');
+      expect(API_OP_PERMISSION_DENIED_CODE).toBe('OP_PERMISSION_DENIED');
+    });
+
+    it('どの組み合わせでも 401 と 403 は独立に決まる (http / error / 固定)', async () => {
+      const rules: ReadonlyArray<readonly [AuthFailureCodeSource, string, string]> = [
+        [{ unauthorized: 'http', forbidden: 'error' }, 'UNAUTHORIZED', 'PERM_DENIED'],
+        [{ unauthorized: 'error', forbidden: 'http' }, 'AUTH_UNAUTHENTICATED', 'FORBIDDEN'],
+        [{ unauthorized: { fixed: 'X_401' }, forbidden: 'http' }, 'X_401', 'FORBIDDEN'],
+        [{ fixed: 'SAME_CODE' }, 'SAME_CODE', 'SAME_CODE'],
+        ['error', 'AUTH_UNAUTHENTICATED', 'PERM_DENIED'],
+        ['http', 'UNAUTHORIZED', 'FORBIDDEN'],
+      ];
+      for (const [code, expected401, expected403] of rules) {
+        expect(JSON.parse((await bodyTextOf(unauthenticated, code)).text)).toEqual({
+          error: { code: expected401, message: API_UNAUTHENTICATED_MESSAGE },
+        });
+        expect(JSON.parse((await bodyTextOf(roleDenied, code)).text)).toEqual({
+          error: { code: expected403, message: API_FORBIDDEN_MESSAGE },
+        });
+      }
+    });
+
+    it('固定の code は素の文字列では渡せない ({ fixed } で包む。\'http\' / \'error\' と型の上で混ざらない)', () => {
+      // @ts-expect-error 素の文字列の固定の code は型で拒む
+      const wrong: AuthFailureCodeSource = 'OP_PERMISSION_DENIED';
+      expect(wrong).toBe('OP_PERMISSION_DENIED');
+    });
+
+    it('認可の失敗でなければ、どの選び方でも null', () => {
+      expect(authFailureNested(new Error('boom'), { code: AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED })).toBeNull();
+      expect(authFailureNested(null, { code: AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED })).toBeNull();
     });
   });
 

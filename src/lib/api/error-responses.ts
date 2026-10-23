@@ -14,10 +14,15 @@
  *   - 本文の形と code は route ごとの従来の形のまま変えない (画面・モバイル・設計書 cross/04 §5.2 が読む)
  *       flat:   { error: '<文>' }
  *       nested: { error: { code: '<コード>', message: '<文>' } }
- *     nested の code は、従来の route が書いていたものに合わせて選ぶ:
- *       'http'  = 'UNAUTHORIZED' / 'FORBIDDEN' (多くの route の従来の形)
- *       'error' = 例外の code ('AUTH_UNAUTHENTICATED'・'PERM_DENIED'・'AUTH_2FA_REQUIRED' など。
- *                 画面が code を見て分岐する route (二段階認証の画面の AUTH_2FA_REQUIRED など) の従来の形)
+ *     nested の code は、従来の route が書いていたものに合わせて選ぶ (401 と 403 で別々に選べる。AuthFailureCodeSource):
+ *       'http'           = 'UNAUTHORIZED' / 'FORBIDDEN' (多くの route の従来の形)
+ *       'error'          = 例外の code ('AUTH_UNAUTHENTICATED'・'PERM_DENIED'・'AUTH_2FA_REQUIRED' など。
+ *                          画面が code を見て分岐する route (二段階認証の画面の AUTH_2FA_REQUIRED など) の従来の形)
+ *       { fixed: '<コード>' } = route が決めて書いていた固定の code ('UNAUTHENTICATED'・'OP_PERMISSION_DENIED' など)
+ *       { unauthorized, forbidden } = 401 と 403 で上の 3 つを別々に選ぶ。admin の営業 (sales/leads)・問い合わせ (support/tickets) の
+ *                          route は 401 = 例外の code・403 = 'OP_PERMISSION_DENIED' (AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED)、
+ *                          admin の会計 (finance) の route は 401 = 'UNAUTHENTICATED'・403 = 'OP_PERMISSION_DENIED'
+ *                          (AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED)
  *   - 500 は src/lib/api/errors.ts の internalError を使う (原因は構造化ログにだけ残す)
  *   - 英語の文が入っていないことは、tests/helpers/api-error-text-scan.ts の走査が「直し終えた配下」の route を見張る
  *     (tests/api-error-japanese-scan.test.ts。配下の一覧は tests/helpers/api-error-japanese-scope.ts)
@@ -50,6 +55,10 @@ export const API_INTERNAL_ERROR_MESSAGE = INTERNAL_ERROR_MESSAGE;
 /** nested の形の本文の code ('http' を選んだとき) */
 export const API_UNAUTHORIZED_CODE = 'UNAUTHORIZED';
 export const API_FORBIDDEN_CODE = 'FORBIDDEN';
+/** nested の形の本文の 401 の固定の code (admin の会計 (finance) の route の従来の code) */
+export const API_UNAUTHENTICATED_CODE = 'UNAUTHENTICATED';
+/** nested の形の本文の 403 の固定の code (admin・super-admin の運営の route の従来の code。設計書 cross/12・15・16 が既存の 403 の code として読む) */
+export const API_OP_PERMISSION_DENIED_CODE = 'OP_PERMISSION_DENIED';
 
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
@@ -68,8 +77,37 @@ export const DEFAULT_FORBIDDEN_MESSAGES: ForbiddenMessageTable = new Map([
   ['AUTH_2FA_ENROLLMENT_REQUIRED', API_MFA_ENROLLMENT_REQUIRED_MESSAGE],
 ]);
 
-/** nested の本文の code の選び方 (上のコメント参照) */
-export type AuthFailureCodeSource = 'http' | 'error';
+/**
+ * 1 つの状態 (401 か 403) の nested の code の選び方 (上のコメント参照)。
+ * 固定の code を素の文字列にしないのは、'http' / 'error' と型の上で混ざらないようにするため
+ */
+export type AuthFailureCodeRule = 'http' | 'error' | { readonly fixed: string };
+
+/** 401 と 403 で別々に選ぶときの nested の code の選び方 */
+export interface AuthFailureCodeRules {
+  /** 401 (AuthError) の code */
+  readonly unauthorized: AuthFailureCodeRule;
+  /** 403 (ForbiddenError) の code */
+  readonly forbidden: AuthFailureCodeRule;
+}
+
+/** nested の本文の code の選び方。1 つの選び方を渡すと 401 と 403 の両方に当てる */
+export type AuthFailureCodeSource = AuthFailureCodeRule | AuthFailureCodeRules;
+
+/**
+ * admin の営業 (sales/leads)・問い合わせ (support/tickets) の route の従来の code: 401 = 例外の code・403 = OP_PERMISSION_DENIED
+ * (多くの route が共有するので freeze して、どこかの route が書き換えても他の route の code が変わらないようにする)
+ */
+export const AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED: AuthFailureCodeRules = Object.freeze({
+  unauthorized: 'error',
+  forbidden: Object.freeze({ fixed: API_OP_PERMISSION_DENIED_CODE }),
+});
+
+/** admin の会計 (finance) の route の従来の code: 401 = UNAUTHENTICATED・403 = OP_PERMISSION_DENIED */
+export const AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED: AuthFailureCodeRules = Object.freeze({
+  unauthorized: Object.freeze({ fixed: API_UNAUTHENTICATED_CODE }),
+  forbidden: Object.freeze({ fixed: API_OP_PERMISSION_DENIED_CODE }),
+});
 
 export interface AuthFailureOptions {
   /** 403 の文の表。省略すると DEFAULT_FORBIDDEN_MESSAGES */
@@ -79,7 +117,7 @@ export interface AuthFailureOptions {
 }
 
 export interface AuthFailureNestedOptions extends AuthFailureOptions {
-  /** nested の code。省略すると 'http' */
+  /** nested の code の選び方。省略すると 'http' */
   code?: AuthFailureCodeSource;
 }
 
@@ -117,16 +155,30 @@ export function authFailureFlat(err: unknown, options: AuthFailureOptions = {}):
   return null;
 }
 
+function isCodeRules(source: AuthFailureCodeSource): source is AuthFailureCodeRules {
+  return typeof source === 'object' && 'unauthorized' in source;
+}
+
+/** 選び方と例外から code を決める。httpCode は 'http' を選んだときの code */
+function codeOf(rule: AuthFailureCodeRule, err: AuthError | ForbiddenError, httpCode: string): string {
+  if (rule === 'http') return httpCode;
+  if (rule === 'error') return err.code;
+  return rule.fixed;
+}
+
 /**
  * 認可の失敗を nested の形 `{ error: { code, message: '<文>' } }` で返す。
- * code は options.code が 'http' (既定) なら 'UNAUTHORIZED' / 'FORBIDDEN'、'error' なら例外の code。
+ * code は options.code で選ぶ (省略すると 'http' = 'UNAUTHORIZED' / 'FORBIDDEN'。'error' なら例外の code、
+ * { fixed } なら固定の code、{ unauthorized, forbidden } なら 401 と 403 で別々)。文はどの選び方でも日本語の固定の文。
  * 認可の失敗でなければ null
  */
 export function authFailureNested(err: unknown, options: AuthFailureNestedOptions = {}): NextResponse<ApiNestedErrorBody> | null {
-  const useErrorCode = options.code === 'error';
+  const source = options.code ?? 'http';
+  const unauthorizedRule = isCodeRules(source) ? source.unauthorized : source;
+  const forbiddenRule = isCodeRules(source) ? source.forbidden : source;
   if (err instanceof AuthError) {
     return NextResponse.json(
-      { error: { code: useErrorCode ? err.code : API_UNAUTHORIZED_CODE, message: API_UNAUTHENTICATED_MESSAGE } },
+      { error: { code: codeOf(unauthorizedRule, err, API_UNAUTHORIZED_CODE), message: API_UNAUTHENTICATED_MESSAGE } },
       responseInit(HTTP_UNAUTHORIZED, options.headers),
     );
   }
@@ -134,7 +186,7 @@ export function authFailureNested(err: unknown, options: AuthFailureNestedOption
     return NextResponse.json(
       {
         error: {
-          code: useErrorCode ? err.code : API_FORBIDDEN_CODE,
+          code: codeOf(forbiddenRule, err, API_FORBIDDEN_CODE),
           message: forbiddenMessageOf(err, options.forbiddenMessages),
         },
       },
