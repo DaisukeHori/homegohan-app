@@ -49,7 +49,7 @@ import {
   type BackupStatusSource,
   type DrTestRecordBody,
 } from '@/lib/backups/core';
-import { invalidInputBody, invalidJsonBodyBody } from '@/lib/super-admin/validation-errors';
+import { SUPER_ADMIN_INVALID_INPUT_FALLBACK_MESSAGE, invalidInputBody, invalidJsonBodyBody } from '@/lib/super-admin/validation-errors';
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const MIGRATIONS_DIR = path.join(REPO_ROOT, 'supabase/migrations');
@@ -489,7 +489,9 @@ describe('drTestErrorsFromResponse', () => {
     const issues = issuesOf(validBody({ extra: 1 }));
     const errors = drTestErrorsFromResponse(JSON.parse(JSON.stringify(invalidInputBody(issues))));
     expect(errors.fields).toEqual({});
-    expect(errors.form).toEqual([issues[0].message]);
+    // #1917: Zod の既定の英語の文 ('Unrecognized key: "extra"') は本文に入れず、日本語の固定の文にする (path が空なので項目の名前は添えない)
+    expect(issues[0].message).toBe('Unrecognized key: "extra"');
+    expect(errors.form).toEqual([SUPER_ADMIN_INVALID_INPUT_FALLBACK_MESSAGE]);
     const unknownField = drTestErrorsFromResponse({
       error: { code: 'OP_INVALID_INPUT', message: 'x', details: [{ path: ['other'], message: '知らない項目' }] },
     });
