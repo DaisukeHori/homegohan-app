@@ -8,6 +8,7 @@ import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { notifyMemberRemoved, readOrganizationNotice } from '@/lib/membership/exit-notification';
 import { INTERNAL_ERROR_MESSAGE, internalError } from '@/lib/api/errors';
+import { ORG_API_REMOVE_ADMIN_ONLY_MESSAGE } from '@/lib/org-api-errors';
 
 export async function POST(request: Request, props: { params: Promise<{ user_id: string }> }) {
   const params = await props.params;
@@ -24,7 +25,7 @@ export async function POST(request: Request, props: { params: Promise<{ user_id:
     }
     if (error instanceof ForbiddenError) {
       return NextResponse.json(
-        { error: { code: 'INSUFFICIENT_PERMISSION', message: 'owner/admin のみ除名可能です' } },
+        { error: { code: 'INSUFFICIENT_PERMISSION', message: ORG_API_REMOVE_ADMIN_ONLY_MESSAGE } },
         { status: 403 },
       );
     }
@@ -40,7 +41,7 @@ export async function POST(request: Request, props: { params: Promise<{ user_id:
   const targetUserId = params.user_id;
   if (!targetUserId) {
     return NextResponse.json(
-      { error: { code: 'INVALID_BODY', message: 'user_id が必要です' } },
+      { error: { code: 'INVALID_BODY', message: '除名するメンバーを指定してください' } },
       { status: 400 },
     );
   }
