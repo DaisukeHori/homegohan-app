@@ -301,6 +301,8 @@ export const ACCOUNT_EXPORT_EXCLUDED: Readonly<Record<string, string>> = {
     'チャレンジの順位表を伏せる印 (組織の管理者になった記録)。守りの内部の記録で、本人が入力したデータではない',
   gdpr_deletion_requests:
     '削除の実行記録 (#1562。退会した利用者の id の HMAC・日時・理由・実行者。利用者の id を持たず、本人が読める RLS ポリシーも無い。service_role だけが読み書きする)',
+  account_deletion_guards:
+    '退会の印 (#1917 の続き。退会を始めた日時だけ。退会の途中の人を運営がオーナーにして組織を作らないための守りの内部の記録で、本人が入力したデータではない。誰も直接は読み書きせず、退会が済むと消える)',
   experiment_assignments: 'A/B テストの内部割り当て',
   app_logs: 'アプリの動作ログ (内部のエラー記録)',
   ai_content_logs: 'AI 生成の内部ログ (費用・モデレーション用の列を含む)',

@@ -165,6 +165,8 @@ const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   'parental_consents.parent_user_id': 'SET NULL',
   // org/10 §5.1 (#1688): チャレンジの順位表を伏せる「管理者だった印」は本人に付く守りの記録なので、退会で本人と一緒に消す
   'organization_challenge_ranking_exclusions.user_id': 'CASCADE',
+  // #1917 の続き (D73。20261023130000): 退会の印は退会の途中だけに意味があるので、退会が済んだら本人と一緒に消す
+  'account_deletion_guards.user_id': 'CASCADE',
 
   // ここから下は #1175 で張り直していない外部キー (初めから ON DELETE が付いていたもの。#1714 で一覧に加えた)
   // 初期スキーマ (20251126124224) の CASCADE: 本人の記録は本人と一緒に消す
