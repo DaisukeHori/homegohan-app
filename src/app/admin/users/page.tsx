@@ -8,11 +8,13 @@
 export const dynamic = 'force-dynamic';
 
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
 import { canViewUserEmail } from '@/lib/admin/user-emails';
 import { normalizeProfileName } from '@/lib/profile-name';
 import type { UserListItem, UsersListResponse } from '@/lib/admin/users-schemas';
+import { lastPageToRefetch } from '@/lib/list-pagination';
 
 interface PageProps {
   searchParams: Promise<{ q?: string; status?: string; page?: string }>;
@@ -53,6 +55,17 @@ export default async function AdminUsersPage(props: PageProps) {
     }
   } catch (err) {
     console.error('[admin/users page] fetch failed:', err);
+  }
+
+  // 件数より後ろのページ (最後のページの唯一の行が消えたあと・URL のページ番号) は、空のページを見せずに最後のページへ移す (#1917)。
+  // redirect は例外で抜けるので、上の try の外で呼ぶ
+  const refetchPage = lastPageToRefetch({ rows: users.length, page, total, perPage });
+  if (refetchPage !== null) {
+    const lastPageParams = new URLSearchParams();
+    if (q) lastPageParams.set('q', q);
+    if (status) lastPageParams.set('status', status);
+    lastPageParams.set('page', String(refetchPage));
+    redirect(`/admin/users?${lastPageParams.toString()}`);
   }
 
   const totalPages = Math.ceil(total / perPage);
