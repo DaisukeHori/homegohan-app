@@ -360,7 +360,7 @@ POST /api/operator/membership/family/{id}/dissolve body: { reason }
 **transfer (譲渡) の注意: 旧オーナー / 旧代表者は RPC が行のロックの下で読んで返した値を使う (#1209・#1917)**
 
 `operator_force_owner_transfer` / `operator_force_representative_transfer` は `owner_id` / `representative_id` を
-新オーナーへ書き換えた後の行と、組織 / 家族の行を `FOR NO KEY UPDATE` でロックして読んだ旧オーナー / 旧代表者を jsonb で返す (`{"organization": 行, "old_owner_id": 旧オーナー}` / `{"family_group": 行, "old_rep_id": 旧代表者}`。membership_audit の `old_owner_id` / `old_rep_id` と同じ値。`supabase/migrations/20261023120000_operator_transfer_return_old_owner.sql`。#1917)。実行後に読み直す (または返った行の `owner_id` を使う) と「旧オーナー」が新オーナー自身になり、
+新オーナーへ書き換えた後の行と、組織 / 家族の行を `FOR NO KEY UPDATE` でロックして読んだ旧オーナー / 旧代表者を jsonb で返す (`{"organization": 行, "old_owner_id": 旧オーナー}` / `{"family_group": 行, "old_rep_id": 旧代表者}`。membership_audit の `old_owner_id` / `old_rep_id` と同じ値。`supabase/migrations/20261023140000_operator_transfer_return_old_owner.sql`。#1917)。実行後に読み直す (または返った行の `owner_id` を使う) と「旧オーナー」が新オーナー自身になり、
 本当の旧オーナーに「権限が移譲されました」通知が届かず、新オーナー宛の「旧オーナー」欄も自分のアドレスになる。RPC の前にロックの外で読んだ値は、運営 2 人がほぼ同時に同じ組織 / 家族を譲渡すると、この譲渡の直前のオーナー (先の譲渡の相手) と食い違う。
 そのため route は戻り値の旧オーナー / 旧代表者と、返った行の scope 名で、監査 (`from_user_id`) と通知を出す。RPC の前に service-role で読む控えは、戻り値が古い形 (migration の前の DB) のときだけ使い、食い違いうることを構造化ログに残す
 (dissolve が実行前にメンバーを取得するのと同じ考え方)。
