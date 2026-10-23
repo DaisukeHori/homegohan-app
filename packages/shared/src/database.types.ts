@@ -8418,6 +8418,7 @@ export type Database = {
         Args: { p_roles: string[]; p_user_id: string }
         Returns: {
           id: string
+          previous_roles: string[]
           roles: string[]
         }[]
       }
