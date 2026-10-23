@@ -120,9 +120,12 @@ function adminQuery(table: string) {
         db.limitReads += 1;
         if (db.limitReads > 1 && db.rereadError) return { data: null, error: db.rereadError };
       }
-      return { data: rows()[0] ?? null, error: db.readError[table] ?? null };
+      // PostgREST と同じく、返すのは行の写し (あとで行が書き換わっても、読んだ値は変わらない)
+      const found = rows()[0];
+      return { data: found ? { ...found } : null, error: db.readError[table] ?? null };
     },
-    then: (resolve: (value: unknown) => unknown) => resolve({ data: rows(), error: db.readError[table] ?? null }),
+    then: (resolve: (value: unknown) => unknown) =>
+      resolve({ data: rows().map((row) => ({ ...row })), error: db.readError[table] ?? null }),
   };
   return builder;
 }
@@ -488,7 +491,6 @@ describe('PATCH /api/super-admin/llm/quotas: 同時の保存 (読んでから書
   it('続けて送り直すと、読み直した今の値 (先の運営の変更) を before として記録する', async () => {
     db.beforeWrite = otherOperatorSets('free', 30);
     expect((await PATCH(patch({ plan_key: 'free', daily_limit: 20, reason: 'x' }))).status).toBe(409);
-    db.limitReads = 0;
     expect((await PATCH(patch({ plan_key: 'free', daily_limit: 20, reason: 'y' }))).status).toBe(200);
     expect(limitOf('free')?.daily_limit).toBe(20);
     expect(db.audits.map((audit) => audit.details)).toEqual([
