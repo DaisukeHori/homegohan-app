@@ -28,7 +28,7 @@
 import { NextResponse } from 'next/server';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { authFailureNested } from '@/lib/api/error-responses';
 import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import {
@@ -66,12 +66,8 @@ const STALE_LIMIT_RESPONSE = {
 } as const;
 
 function authErrorResponse(err: unknown): NextResponse | null {
-  if (err instanceof AuthError) {
-    return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-  }
-  if (err instanceof ForbiddenError) {
-    return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-  }
+  const authFailure = authFailureNested(err);
+  if (authFailure) return authFailure;
   return null;
 }
 

@@ -26,7 +26,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { getSupabaseServiceConfig, isMissingEnvError } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { authFailureNested } from '@/lib/api/error-responses';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { createClient } from '@/lib/supabase/server';
@@ -48,8 +48,20 @@ interface EdgeFunctionResult {
   nextOffset?: number;
   totalCount?: number | null;
   hasMore?: boolean;
+  /** 英語の文。本文には入れない (regenerateResultMessage) */
   message?: string;
   error?: string;
+}
+
+/**
+ * 成功の本文の message (#1917)。Edge Function の message は英語の文 ('Processed 42 rows. Call again with offset=42' など) なので
+ * 本文に入れず、処理した件数と続きの有無から日本語の文を作る (Edge Function の文は使わない)
+ */
+function regenerateResultMessage(processed: number, hasMore: boolean, nextOffset: number | undefined): string {
+  if (!hasMore) return `${processed} 件を再生成しました。残りはありません`;
+  return nextOffset === undefined
+    ? `${processed} 件を再生成しました。続きがあります`
+    : `${processed} 件を再生成しました。続きは offset ${nextOffset} から実行してください`;
 }
 
 export async function POST(request: NextRequest) {
@@ -180,15 +192,11 @@ export async function POST(request: NextRequest) {
       nextOffset: edgeData.nextOffset,
       totalCount: edgeData.totalCount ?? null,
       hasMore: edgeData.hasMore ?? false,
-      message: edgeData.message ?? '再生成ジョブを実行しました',
+      message: regenerateResultMessage(edgeData.processed ?? 0, edgeData.hasMore ?? false, edgeData.nextOffset),
     });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-    }
+    const authFailure = authFailureNested(err);
+    if (authFailure) return authFailure;
     // 本文は汎用メッセージだけにし、元のエラーは構造化ログに残す (#1172)
     return internalError(ROUTE_NAME, err, {}, { shape: 'nested' });
   }
