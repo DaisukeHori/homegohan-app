@@ -535,7 +535,7 @@ gateway_check() {
   if [ "$count" = 0 ]; then
     record "$stage:gateway" GREEN - 0 - - - 0 "Kong の 502: 0 件 (ログ: $kong_log)"
   else
-    record "$stage:gateway" RED - "$count" - - - 0 "Kong の 502: $count 件 (理由: $reasons。ログ: $kong_log。#1779)"
+    record "$stage:gateway" RED - "$count" - - - 0 "Kong の 502: $count 件 (理由: ${reasons}。ログ: $kong_log。#1779)"
   fi
 }
 
@@ -1128,9 +1128,9 @@ clear_own_stack() {
   for x in $v; do in_list "$x" "$mine_v" || foreign="$foreign${foreign:+ }$x"; done
   OWN_STACK_NOTE="残っているコンテナ: ${c:-なし} / ボリューム: ${v:-なし}"
   if [ -n "$foreign" ]; then
-    OWN_STACK_NOTE="$OWN_STACK_NOTE。うち $foreign はこの実行が控えたものではないので消していない。持ち主を確かめる"
+    OWN_STACK_NOTE="${OWN_STACK_NOTE}。うち $foreign はこの実行が控えたものではないので消していない。持ち主を確かめる"
   else
-    OWN_STACK_NOTE="$OWN_STACK_NOTE。どれもこの実行が起動したスタックのもので、docker rm / docker volume rm で消せなかった"
+    OWN_STACK_NOTE="${OWN_STACK_NOTE}。どれもこの実行が起動したスタックのもので、docker rm / docker volume rm で消せなかった"
   fi
   say "枠 $SLOT ($SLOT_PROJECT_ID): $OWN_STACK_NOTE"
   return 1
