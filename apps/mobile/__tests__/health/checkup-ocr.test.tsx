@@ -312,18 +312,18 @@ describe('BloodTestsPage — OCR flow', () => {
     await waitFor(() => expect(screen.getByText('検査結果票を撮影して自動入力')).toBeTruthy());
     fireEvent.press(screen.getByText('検査結果票を撮影して自動入力'));
 
-    const ocrAlertCall = alertSpy.mock.calls.find((c: any[]) => c[0] === '画像から取込');
+    const ocrAlertCall = alertSpy.mock.calls.find((call) => call[0] === '画像から取込');
     expect(ocrAlertCall).toBeDefined();
-    const buttons: any[] = ocrAlertCall![2] as any[];
-    const libraryBtn = buttons.find((b: any) => b.text === '写真を選択');
+    const buttons = (ocrAlertCall?.[2] ?? []) as Array<{ text?: string; onPress?: () => void | Promise<void> }>;
+    const libraryBtn = buttons.find((button) => button.text === '写真を選択');
     await act(async () => {
-      await libraryBtn.onPress();
+      await libraryBtn?.onPress?.();
     });
 
     await waitFor(() => {
       expect(alertSpy).toHaveBeenCalledWith('OCRエラー', text);
     });
-    const shown = alertSpy.mock.calls.find((c: any[]) => c[0] === 'OCRエラー')![1] as string;
+    const shown = String(alertSpy.mock.calls.find((call) => call[0] === 'OCRエラー')?.[1]);
     expect(shown).not.toContain('HTTP');
     expect(shown).not.toContain('mode_mismatch');
   });
