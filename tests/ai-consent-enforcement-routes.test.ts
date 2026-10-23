@@ -463,6 +463,10 @@ const ROUTE_CASES: RouteCase[] = [
     file: 'src/app/api/ai/nutrition-analysis/route.ts',
     kind: 'reject',
     refundOnInsertFailure: { table: 'weekly_menu_requests', feature: 'menu_generation' },
+    setup: () => {
+      // 対象の食事は、その日のその区分の行がちょうど 1 件のときだけ変える (#1917。.limit() で読んで件数を見る)
+      h.state.rows.planned_meals = [{ id: MEAL_ID }];
+    },
     call: async () => (await import('@/app/api/ai/nutrition-analysis/route')).POST(
       json('http://localhost/api/ai/nutrition-analysis', { targetDate: TODAY, targetMealType: 'dinner', prompt: '野菜を増やす' }),
     ),

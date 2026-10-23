@@ -18,6 +18,7 @@ import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE } from '@/lib/super-admin/plan-subscribe
 
 /** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする */
 const PLAN_ID = '88888888-8888-4888-8888-888888888884';
+const MISSING_PLAN_ID = '88888888-8888-4888-8888-88888888888f';
 
 const mockRequireRole = vi.fn();
 
@@ -200,9 +201,10 @@ describe('GET /api/super-admin/plans/[id]/price-impact (#1102: new_only 以外�
 
 describe('GET /api/super-admin/plans/[id]/price-impact (#1102: 権限とプラン取得)', () => {
   it('プランが存在しなければ 404 を返す', async () => {
-    fakeSupabase = createImpactSupabase({ plan: { data: null, error: { message: 'not found' } } });
+    // maybeSingle は行が無いと data: null・error: null を返す (#1917。DB の失敗は 404 ではなく 500)。id は UUID の形 (形の違う id は DB に渡さない)
+    fakeSupabase = createImpactSupabase({ plan: { data: null, error: null } });
 
-    const res = await GET(impactRequest('new_monthly_price_jpy=2000'), { params: { id: 'missing' } });
+    const res = await GET(impactRequest('new_monthly_price_jpy=2000'), { params: { id: MISSING_PLAN_ID } });
 
     expect(res.status).toBe(404);
     const json = (await res.json()) as { error: { code: string } };

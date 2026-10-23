@@ -235,7 +235,8 @@ describe('止めないもの (AI を呼ばない API)', () => {
 
   it('DELETE /api/ai/consultation/actions/[actionId]/execute (提案の却下) は、OFF でも使える', async () => {
     h.isFeatureEnabled.mockResolvedValue(false);
-    h.from.mockImplementation(() => chain({ data: null, error: { message: 'not found' } }));
+    // maybeSingle は行が無いと data: null・error: null を返す (#1917。DB の失敗は 404 ではなく 500)
+    h.from.mockImplementation(() => chain({ data: null, error: null }));
     const { DELETE } = await import('@/app/api/ai/consultation/actions/[actionId]/execute/route');
 
     const res = await DELETE(new Request(`http://localhost/api/ai/consultation/actions/${ACTION_ID}/execute`, { method: 'DELETE' }), {
