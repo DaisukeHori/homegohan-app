@@ -214,7 +214,7 @@ describe.each(handlers)('認可: $name', ({ run }) => {
     const res = await run();
 
     expect(res.status).toBe(401);
-    expect(await json(res)).toEqual({ error: 'Unauthorized' });
+    expect(await json(res)).toEqual({ error: 'ログインが必要です' });
     expectNothingRead();
   });
 
@@ -224,7 +224,7 @@ describe.each(handlers)('認可: $name', ({ run }) => {
     const res = await run();
 
     expect(res.status).toBe(403);
-    expect(await json(res)).toEqual({ error: 'Forbidden' });
+    expect(await json(res)).toEqual({ error: 'この操作を行う権限がありません' });
     expectNothingRead();
     expect(sessionDb.rows('admin_audit_logs')).toHaveLength(0);
     expect(sessionDb.rows('admin_user_notes')).toHaveLength(3);
@@ -398,7 +398,7 @@ describe('GET /api/support/users/[id]', () => {
     const res = await call.user(MISSING_ID);
 
     expect(res.status).toBe(404);
-    expect(await json(res)).toEqual({ error: 'User not found' });
+    expect(await json(res)).toEqual({ error: 'ユーザーが見つかりません' });
     expect(sessionDb.rows('admin_audit_logs')).toHaveLength(0);
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
@@ -418,7 +418,7 @@ describe('GET /api/support/users/[id]', () => {
     const text = await res.text();
 
     expect(res.status).toBe(500);
-    expect(JSON.parse(text)).toEqual({ error: 'Internal server error' });
+    expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました' });
     expect(text).not.toContain('ai_consultation_sessions');
     expect(text).not.toContain('secret');
     expect(mockLoggerError).toHaveBeenCalledTimes(1);
@@ -435,7 +435,7 @@ describe('GET /api/support/users/[id]', () => {
     const res = await call.user();
 
     expect(res.status).toBe(500);
-    expect(await json(res)).toEqual({ error: 'Internal server error' });
+    expect(await json(res)).toEqual({ error: '処理中にエラーが発生しました' });
   });
 });
 
@@ -536,7 +536,7 @@ describe('GET /api/support/users/[id]/notes', () => {
     const text = await res.text();
 
     expect(res.status).toBe(500);
-    expect(JSON.parse(text)).toEqual({ error: 'Internal server error' });
+    expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました' });
     expect(text).not.toContain('admin_user_notes_pkey');
     expect((mockLoggerError.mock.calls[0][2] as Error).message).toBe(raw);
   });
@@ -610,7 +610,7 @@ describe('POST /api/support/users/[id]/notes', () => {
     const res = await call.notesPost(body);
 
     expect(res.status).toBe(400);
-    expect(await json(res)).toEqual({ error: 'Note content is required' });
+    expect(await json(res)).toEqual({ error: 'メモの内容を入力してください' });
     expect(sessionDb.recorded('admin_user_notes')).toHaveLength(0);
     expect(sessionDb.rows('admin_audit_logs')).toHaveLength(0);
   });
@@ -619,7 +619,7 @@ describe('POST /api/support/users/[id]/notes', () => {
     const res = await call.notesPost('{ not json');
 
     expect(res.status).toBe(400);
-    expect(await json(res)).toEqual({ error: 'Invalid JSON' });
+    expect(await json(res)).toEqual({ error: 'リクエストボディが不正です' });
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
@@ -627,7 +627,7 @@ describe('POST /api/support/users/[id]/notes', () => {
     const res = await call.notesPost({ note: 'メモ' }, MISSING_ID);
 
     expect(res.status).toBe(404);
-    expect(await json(res)).toEqual({ error: 'User not found' });
+    expect(await json(res)).toEqual({ error: 'ユーザーが見つかりません' });
     expect(sessionDb.recorded('admin_user_notes')).toHaveLength(0);
     expect(sessionDb.rows('admin_audit_logs')).toHaveLength(0);
   });
@@ -647,7 +647,7 @@ describe('POST /api/support/users/[id]/notes', () => {
     const text = await res.text();
 
     expect(res.status).toBe(500);
-    expect(JSON.parse(text)).toEqual({ error: 'Internal server error' });
+    expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました' });
     expect(text).not.toContain('foreign key');
     expect((mockLoggerError.mock.calls[0][2] as Error).message).toBe(raw);
     expect(sessionDb.rows('admin_audit_logs')).toHaveLength(0);
@@ -745,7 +745,7 @@ describe('GET /api/support/stats', () => {
     const text = await res.text();
 
     expect(res.status).toBe(500);
-    expect(JSON.parse(text)).toEqual({ error: 'Internal server error' });
+    expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました' });
     expect(text).not.toContain('statement timeout');
     expect(mockLoggerError).toHaveBeenCalledTimes(1);
     const [routeName, , error, metadata] = mockLoggerError.mock.calls[0];
@@ -792,6 +792,6 @@ describe('GET /api/support/stats', () => {
     const res = await call.stats();
 
     expect(res.status).toBe(500);
-    expect(await json(res)).toEqual({ error: 'Internal server error' });
+    expect(await json(res)).toEqual({ error: '処理中にエラーが発生しました' });
   });
 });

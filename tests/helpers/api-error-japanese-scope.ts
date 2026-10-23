@@ -16,6 +16,17 @@ export const JAPANESE_ERROR_API_DIRS: readonly string[] = [
   'src/app/api/health',
   'src/app/api/cron',
   'src/app/api/e2e',
+  'src/app/api/admin',
+  'src/app/api/support',
+  // super_admin・運営の操作 (operator は、別の PR が直している途中の membership/{org,family}/[id]/transfer を除いた配下)
+  'src/app/api/super-admin',
+  'src/app/api/operator/membership/audit',
+  'src/app/api/operator/membership/families',
+  'src/app/api/operator/membership/orgs',
+  'src/app/api/operator/membership/family/[id]/candidates',
+  'src/app/api/operator/membership/family/[id]/dissolve',
+  'src/app/api/operator/membership/org/[id]/candidates',
+  'src/app/api/operator/membership/org/[id]/dissolve',
 ];
 
 /** route が本文を作るのに使う共通の関数のファイル (ここも違反 0 件を見張る) */
@@ -23,6 +34,8 @@ export const JAPANESE_ERROR_SHARED_BODY_FILES: readonly string[] = [
   'src/lib/api/error-responses.ts',
   'src/lib/org-api-errors.ts',
   'src/lib/org-challenge-api.ts',
+  'src/lib/super-admin/validation-errors.ts',
+  'src/lib/admin/not-supported.ts',
 ];
 
 /** 英字の機械向けの code のまま残す配下・ファイルと、その理由 */
@@ -61,11 +74,8 @@ export const MACHINE_FACING_ERROR_TEXT_PATHS: readonly MachineFacingErrorTextPat
  * その PR がマージされたら、ここから行を消し、UNFIXED_VIOLATION_BASELINE をその時点の件数に数え直す
  */
 export const SENTINEL_EXCLUDED_ROUTE_FILES: readonly string[] = [
-  'src/app/api/admin/organizations/route.ts',
-  'src/app/api/admin/users/[id]/freeze/route.ts',
   'src/app/api/operator/membership/family/[id]/transfer/route.ts',
   'src/app/api/operator/membership/org/[id]/transfer/route.ts',
-  'src/app/api/super-admin/plans/[id]/route.ts',
 ];
 
 /**
@@ -74,7 +84,6 @@ export const SENTINEL_EXCLUDED_ROUTE_FILES: readonly string[] = [
  */
 export const UNFIXED_VIOLATION_BASELINE: Readonly<Record<string, number>> = {
   'src/app/api/account': 3,
-  'src/app/api/admin': 74,
   'src/app/api/ai': 112,
   'src/app/api/announcements': 6,
   'src/app/api/auth': 1,
@@ -93,7 +102,6 @@ export const UNFIXED_VIOLATION_BASELINE: Readonly<Record<string, number>> = {
   'src/app/api/nutrition': 2,
   'src/app/api/nutrition-targets': 2,
   'src/app/api/onboarding': 7,
-  'src/app/api/operator': 14,
   'src/app/api/pantry': 9,
   'src/app/api/performance': 11,
   'src/app/api/profile': 4,
@@ -101,7 +109,5 @@ export const UNFIXED_VIOLATION_BASELINE: Readonly<Record<string, number>> = {
   'src/app/api/recipes': 12,
   'src/app/api/shopping-list': 22,
   'src/app/api/storage': 2,
-  'src/app/api/super-admin': 46,
-  'src/app/api/support': 18,
   'src/app/api/upload': 7,
 };

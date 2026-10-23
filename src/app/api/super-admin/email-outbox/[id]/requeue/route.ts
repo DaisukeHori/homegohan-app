@@ -20,7 +20,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { authFailureNested } from '@/lib/api/error-responses';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { internalError } from '@/lib/api/errors';
@@ -134,12 +134,9 @@ export async function POST(request: NextRequest, props: RouteContext) {
 
     return NextResponse.json({ data: { id: row.id, status: 'queued' } }, { headers: NO_STORE });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return errorResponse(401, 'UNAUTHORIZED', err.message);
-    }
-    if (err instanceof ForbiddenError) {
-      return errorResponse(403, 'FORBIDDEN', err.message);
-    }
+    // 認可の失敗の文は日本語の固定の文 (例外の文面は本文に出さない #1917)。code は UNAUTHORIZED / FORBIDDEN のまま
+    const authFailure = authFailureNested(err, { headers: NO_STORE });
+    if (authFailure) return authFailure;
     return internalError(ROUTE_NAME, err, { outbox_id: rawId }, { shape: 'nested' });
   }
 }

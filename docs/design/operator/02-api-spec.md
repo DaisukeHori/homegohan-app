@@ -1541,7 +1541,7 @@ deprecated → private にロールバック (緊急用)
 ```json
 { "error": { "code": "OP_INVALID_INPUT", "message": "最初の issue の文", "details": [ { "path": ["valid_until"], "message": "最初の issue の文", "code": "custom" } ] } }
 ```
-- `message` は `details` の先頭 (最初の issue) の `message` そのもの (issues を JSON にした文字列ではない)。画面は `message` をそのまま出す
+- `message` は `details` の先頭 (最初の issue) の `message` そのもの (issues を JSON にした文字列ではない)。画面は `message` をそのまま出す。#1917: issue の文が日本語でない (Zod の既定の英語の文) ときは、`message` と `details[].message` を「入力値が不正です (<path>)」/「クエリパラメータが不正です (<path>)」にする (path が空なら括弧を付けない。`src/lib/super-admin/validation-errors.ts` の `validationMessageOf`。schema に書いた日本語の文はそのまま)
 - `details` は Zod の issues の全件 (`path` は誤りのある欄)
 - 本文は `src/lib/super-admin/coupon-errors.ts` の `couponInvalidInputResponse` / `couponInvalidQueryResponse` が作る。`OP_INVALID_QUERY` も `code` 以外は同じ形
 
@@ -1846,7 +1846,7 @@ Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#113
 | `CONFLICT_PRECONDITION_REQUIRED` / `CONFLICT_OPTIMISTIC_LOCK` / `CONFLICT_STALE_DATA` | 428 / 412 / 409 | 楽観的ロック (cross/04 §4.2)。`PATCH /api/admin/data-requests/{id}` で、`If-Unmodified-Since` が無い / GET が返した `updated_at` と違う / 条件つきの UPDATE が 0 行。`CONFLICT_STALE_DATA` は組織のプランの変更 (`PATCH /api/admin/organizations/{id}`) でも使う: 直前に読んだ `plan` のままなら書く条件つきの UPDATE が 0 行で、読み直した `plan` が送られたプランと違う (同じなら 200 で書かず記録もしない。#1912)。同じ形で、問い合わせの更新 (`PATCH` / `PUT /api/admin/inquiries/{id}`。条件は読んだ `status` と `updated_at`)・AI の 1 日の上限の保存 (`PATCH /api/super-admin/llm/quotas`。条件は読んだ `daily_limit`、行が無かったときは作るだけ)・リードのステージの変更 (`PATCH /api/admin/sales/leads/{id}`。条件は読んだ `stage`。読み直してリードがあれば常に 409)・プランの編集と削除 (`PATCH` / `DELETE /api/super-admin/plans/{id}`。条件は読んだ `status` (削除は `draft`)、廃止で既存の `ends_at` に頼るときは `ends_at` が NULL でないことも。編集は送った変更がもう入っていれば 200)・利用者の凍結 (`POST /api/admin/users/{id}/freeze`。条件は読んだ時点の super_admin でない状態のまま。読み直して対象があれば常に 409) でも使う。送った値が今の値と同じだったときの扱いは違う: 組織のプランと AI の 1 日の上限は 200 で書かず記録もしないが、問い合わせの更新は 200 で書かずに今の行 (本文を含む) を返すので、`changed: false` として記録する (:984) |
 | `OP_EMAIL_OUTBOX_NOT_FOUND` | 404 | [NEW] 再送 (`POST /api/super-admin/email-outbox/{id}/requeue`) の行が無い (`10-logs-and-mail-retry.md` §11) |
 | `OP_EMAIL_OUTBOX_NOT_REQUEUEABLE` | 409 | [NEW] 再送できない行。`details.reason` が `not_dead` (届けられなかった行でない) か `redacted` (宛先を伏せた行) (`10-logs-and-mail-retry.md` §11) |
-| `AUTH_2FA_REQUIRED` | 403 | 二段階認証の確認が要る (必須ロールで認証アプリを登録済み・セッションが aal1)。`requireRole` が `MfaRequiredError` (`ForbiddenError` の派生) を投げ、運営の API は route の既存の 403 の code (`FORBIDDEN` / `OP_PERMISSION_DENIED` / `PERM_DENIED`) で返す (本文の message は「二段階認証の確認が必要です」)。この code を本文に出すのは自己サービスの `/api/auth/mfa/*` だけ。画面 (layout / page) は `requireRoleForPage` が MFA の画面へ回す (`cross/12-operator-mfa.md` §13.4・§19.3) |
+| `AUTH_2FA_REQUIRED` | 403 | 二段階認証の確認が要る (必須ロールで認証アプリを登録済み・セッションが aal1)。`requireRole` が `MfaRequiredError` (`ForbiddenError` の派生) を投げ、運営の API は route の既存の 403 の code (`FORBIDDEN` / `OP_PERMISSION_DENIED` / `PERM_DENIED`) で返す (本文の message は、`authFailureNested` を通す route では「二段階認証の確認が必要です」、403 を固定のリテラルで返す route では「権限がありません」、例外の文面をそのまま返すまだ直していない route では例外の文面の「二段階認証の確認が必要です」。`cross/12-operator-mfa.md` §19.3)。この code を本文に出すのは自己サービスの `/api/auth/mfa/*` だけ。画面 (layout / page) は `requireRoleForPage` が MFA の画面へ回す (`cross/12-operator-mfa.md` §13.4・§19.3) |
 | `AUTH_2FA_ENROLLMENT_REQUIRED` | 403 | [NEW] 二段階認証の登録が要る (必須ロールで未登録・猶予なし・セッションが aal1)。扱いは `AUTH_2FA_REQUIRED` と同じ (`cross/12-operator-mfa.md` §19) |
 
 ## 24. テスト方針

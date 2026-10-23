@@ -406,7 +406,13 @@ describe('番兵: 一覧の外の配下の違反の件数は基線と同じ', ()
     expect(unfixedFiles.length).toBe(
       ALL_ROUTE_FILES.filter((file) => !isDone(file) && !isMachineFacing(file)).length - SENTINEL_EXCLUDED_ROUTE_FILES.length,
     );
-    expect(unfixedFiles).toContain('src/app/api/super-admin/llm/quotas/route.ts');
+    for (const file of unfixedFiles) {
+      expect(isDone(file), file).toBe(false);
+      expect(excluded.has(file), file).toBe(false);
+    }
+    // 直し終えた配下の route (super-admin の llm/quotas・operator の dissolve) は番兵の数に入らず、上の「違反が無い」の見張りに移る
+    expect(unfixedFiles).not.toContain('src/app/api/super-admin/llm/quotas/route.ts');
+    expect(unfixedFiles).not.toContain('src/app/api/operator/membership/org/[id]/dissolve/route.ts');
   });
 
   it('配下ごとの件数が UNFIXED_VIOLATION_BASELINE と一致する (増えた = 英語の文を足した / 減った = 直したら scope の一覧と基線を更新する)', () => {

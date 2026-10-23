@@ -29,10 +29,16 @@ class FakeCouponApplyError extends Error {
   }
 }
 
-vi.mock('@/lib/plan/coupon', () => ({
-  applyCoupon: (...args: unknown[]) => mockApplyCoupon(...args),
-  CouponApplyError: FakeCouponApplyError,
-}));
+vi.mock('@/lib/plan/coupon', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/plan/coupon')>();
+  return {
+    applyCoupon: (...args: unknown[]) => mockApplyCoupon(...args),
+    CouponApplyError: FakeCouponApplyError,
+    // 本文の文の選び方は実物を使う (#1917。業務エラーの日本語の固定の文だけを本文に出す)
+    couponApplyErrorMessageOf: actual.couponApplyErrorMessageOf,
+    COUPON_APPLY_FAILED_MESSAGE: actual.COUPON_APPLY_FAILED_MESSAGE,
+  };
+});
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: (...args: unknown[]) => mockCreateClient(...args),
@@ -118,22 +124,35 @@ describe('POST /api/super-admin/coupons/[id]/apply (#1041 round-2 E)', () => {
  */
 describe('POST /api/super-admin/coupons/[id]/apply (#1224 エラーコードと HTTP ステータスは従来どおり)', () => {
   it.each([
-    ['OP_COUPON_NOT_FOUND', 404],
-    ['OP_SUBSCRIPTION_NOT_FOUND', 404],
-    ['OP_COUPON_INVALID', 422],
-    ['OP_COUPON_NOT_YET_VALID', 422],
-    ['OP_COUPON_EXPIRED', 422],
-    ['OP_COUPON_NOT_APPLICABLE', 422],
-    ['OP_PLAN_NOT_FOUND', 422],
-    ['OP_COUPON_LIMIT_REACHED', 422],
-  ])('%s は %i', async (code, status) => {
-    mockApplyCoupon.mockRejectedValue(new FakeCouponApplyError(code, `message of ${code}`));
+    ['OP_COUPON_NOT_FOUND', 404, 'クーポンが見つかりません'],
+    ['OP_SUBSCRIPTION_NOT_FOUND', 404, '契約 (組織) が見つかりません'],
+    ['OP_COUPON_INVALID', 422, 'クーポンが有効な状態ではありません'],
+    ['OP_COUPON_NOT_YET_VALID', 422, 'クーポンの有効開始日前です'],
+    ['OP_COUPON_EXPIRED', 422, 'クーポンの有効期限が切れています'],
+    ['OP_COUPON_NOT_APPLICABLE', 422, 'このクーポンは対象プランに適用できません'],
+    ['OP_PLAN_NOT_FOUND', 422, '組織に契約プランが設定されていません'],
+    ['OP_COUPON_LIMIT_REACHED', 422, 'この組織はクーポンの利用上限に達しています'],
+  ])('%s は %i (文は業務エラーの日本語の固定の文のまま)', async (code, status, message) => {
+    mockApplyCoupon.mockRejectedValue(new FakeCouponApplyError(code, message));
 
     const res = await POST(postRequest({}), { params: { id: 'coupon-1' } });
 
     expect(res.status).toBe(status);
     const json = (await res.json()) as { error: { code: string; message: string } };
-    expect(json.error).toEqual({ code, message: `message of ${code}` });
+    expect(json.error).toEqual({ code, message });
+  });
+
+  it('#1917: CouponApplyError の文面が業務エラーの表の外 (英語の文など) なら、本文には日本語の固定の文だけを出す', async () => {
+    const { COUPON_APPLY_FAILED_MESSAGE } = await import('@/lib/plan/coupon');
+    mockApplyCoupon.mockRejectedValue(new FakeCouponApplyError('OP_COUPON_INVALID', 'Coupon is not active'));
+
+    const res = await POST(postRequest({}), { params: { id: 'coupon-1' } });
+
+    expect(res.status).toBe(422);
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({ error: { code: 'OP_COUPON_INVALID', message: COUPON_APPLY_FAILED_MESSAGE } });
+    expect(COUPON_APPLY_FAILED_MESSAGE).toBe('クーポンを適用できませんでした');
+    expect(text).not.toContain('Coupon is not active');
   });
 
   it('CouponApplyError 以外 (外部キー違反など DB のエラー) は 500 OP_INTERNAL_ERROR。監査ログは書かない', async () => {

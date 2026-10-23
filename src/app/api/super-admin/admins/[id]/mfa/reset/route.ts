@@ -7,7 +7,7 @@
  * 本文の形は運営 API (nested): 失敗は { error: { code, message } }・成功は { data: {...} } (MfaResetResponseSchema)。
  * 手順 (この順。どこかで止まったら後ろは何もしない):
  *   1. 別オリジン → 403 FORBIDDEN_ORIGIN
- *   2. 認可 (AuthError → 401 UNAUTHORIZED・ForbiddenError → 403 FORBIDDEN。message は例外の message) / 自分 → 403 OP_SELF_MODIFY
+ *   2. 認可 (AuthError → 401 UNAUTHORIZED・ForbiddenError → 403 FORBIDDEN。message は日本語の固定の文で、例外の文面は出さない (src/lib/api/error-responses.ts)) / 自分 → 403 OP_SELF_MODIFY
  *   3. 本文 (MfaResetBodySchema) → 400 OP_INVALID_INPUT (src/lib/super-admin/validation-errors.ts の形)
  *   4. 対象の user_profiles (無ければ 404 NOT_FOUND・読み取りの失敗は 500)
  *   5. 消す前の数 (admin.mfa.listFactors・countRemainingBackupCodes)。読めなければ監査を書かず何も消さずに 500
@@ -28,7 +28,7 @@
  */
 import { NextResponse, type NextRequest } from 'next/server';
 import { internalError } from '@/lib/api/errors';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { authFailureNested } from '@/lib/api/error-responses';
 import { requireRole } from '@/lib/auth/helpers';
 import { MFA_AUDIT_ACTIONS, recordMfaAudit } from '@/lib/auth/mfa/audit';
 import { countRemainingBackupCodes, deleteBackupCodes } from '@/lib/auth/mfa/backup-codes';
@@ -45,7 +45,6 @@ export const dynamic = 'force-dynamic';
 const ROUTE_NAME = 'POST /api/super-admin/admins/[id]/mfa/reset';
 const HTTP_OK = 200;
 const HTTP_BAD_REQUEST = 400;
-const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
 const HTTP_NOT_FOUND = 404;
 
@@ -84,9 +83,9 @@ export async function POST(request: NextRequest, { params }: Params) {
   try {
     actorId = (await requireRole(['super_admin'])).id;
   } catch (err) {
-    // 既存の src/app/api/super-admin/admins/route.ts と同じ形。err.code は本文に出さない (§14.8.2・§19.3)
-    if (err instanceof AuthError) return errorJson('UNAUTHORIZED', err.message, HTTP_UNAUTHORIZED);
-    if (err instanceof ForbiddenError) return errorJson('FORBIDDEN', err.message, HTTP_FORBIDDEN);
+    // 既存の src/app/api/super-admin/admins/route.ts と同じ形 (code は UNAUTHORIZED / FORBIDDEN)。err.code・例外の文面は本文に出さない (§14.8.2・§19.3)
+    const authFailure = authFailureNested(err, { headers: MFA_NO_STORE_HEADERS });
+    if (authFailure) return authFailure;
     return internalErrorResponse(err, {});
   }
 
