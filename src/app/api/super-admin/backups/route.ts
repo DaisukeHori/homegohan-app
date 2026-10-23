@@ -15,7 +15,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { authFailureNested } from '@/lib/api/error-responses';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import {
@@ -208,12 +208,8 @@ export async function GET() {
 
     return NextResponse.json(body, { headers: NO_STORE });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401, headers: NO_STORE });
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403, headers: NO_STORE });
-    }
+    const authFailure = authFailureNested(err, { headers: NO_STORE });
+    if (authFailure) return authFailure;
     return internalError(ROUTE_NAME, err, {}, { shape: 'nested' });
   }
 }
