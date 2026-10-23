@@ -11,6 +11,11 @@
  * 一覧の行のプランの欄 (PATCH /api/admin/organizations/{id})。
  * 変更が 409 CONFLICT_STALE_DATA (別の運営が先にプランを変えた) か 404 NOT_FOUND (組織がもう無い) で断られたときは、
  * 行の表示が古いので、今の条件のまま一覧を読み直し、理由の文を一覧の上に出す (運営が手で読み直さなくてよいように)。
+ * プランの変更の結果の文 (通知・読み直しの文) は、その一覧の行についての文なので、運営が別の一覧へ移る操作 (検索・ページ送り・
+ * 組織の作成の開始) でも消す (#1912 の続き。前の一覧の行についての文を、別の一覧の上に残さない)。
+ *
+ * 読み直した一覧の件数が今のページより少ない (最後のページの唯一の行が消えたあとに同じページで読み直したときなど) ときは、
+ * 空のページを「組織はまだありません」と見せずに、件数から最後のページへ取り直す (GET は範囲外のページで空の一覧と本当の件数を返す)。
  *
  * API が返すのは id・組織名・プラン・作成/更新日時だけ。設計書 §7 にある Seat 数・期限・売上/月・担当営業は、
  * まだ出せない。
@@ -190,6 +195,11 @@ function OrgPlanCell({
   );
 }
 
+/** 件数と 1 ページの件数から、最後のページの番号 (0 件でも 1) */
+function lastPageOf(total: number, perPage: number): number {
+  return Math.max(1, Math.ceil(total / perPage));
+}
+
 function parseListBody(body: unknown, query: Query): ListResult | null {
   if (typeof body !== 'object' || body === null) return null;
   const { organizations, meta } = body as {
@@ -233,6 +243,8 @@ export default function OrganizationsManager() {
 
   const load = useCallback(async (target: Query) => {
     const loadId = ++latestLoad.current;
+    /** 範囲外のページだったので最後のページへ取り直した (読み込み中のまま次の取得に引き継ぐ) */
+    let redirected = false;
     setLoading(true);
     setLoadError(null);
     try {
@@ -256,11 +268,19 @@ export default function OrganizationsManager() {
         setLoadError(LOAD_ERROR);
         return;
       }
+      const lastPage = lastPageOf(parsed.total, parsed.perPage);
+      if (parsed.organizations.length === 0 && target.page > lastPage) {
+        // 今のページが件数より後ろ (最後のページの唯一の行が消えたあとの読み直しなど)。空のページを「組織はまだありません」と
+        // 見せず、同じ条件で最後のページを取り直す。page は 1 以上で毎回小さくなるので、取り直しは必ず止まる
+        redirected = true;
+        setQuery({ ...target, page: lastPage });
+        return;
+      }
       setResult(parsed);
     } catch {
       if (loadId === latestLoad.current) setLoadError(LOAD_ERROR);
     } finally {
-      if (loadId === latestLoad.current) setLoading(false);
+      if (loadId === latestLoad.current && !redirected) setLoading(false);
     }
   }, []);
 
@@ -269,9 +289,26 @@ export default function OrganizationsManager() {
     void load(query);
   }, [load, query]);
 
+  /**
+   * プランの変更の結果の表示 (通知・読み直しの文) を消す。どちらも、そのとき出ていた一覧の行についての文なので、
+   * 別の一覧へ移る操作 (検索・ページ送り・組織の作成の開始) と、次の変更の開始で消す。
+   * 同じ一覧を取り直すだけの操作 (「再読み込み」・読み直し・範囲外のページからの取り直し) では消さない
+   */
+  const clearPlanMessages = useCallback(() => {
+    setPlanNotice(null);
+    setPlanStaleError(null);
+  }, []);
+
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    clearPlanMessages();
     setQuery({ q: qDraft.trim(), plan: planDraft, page: 1 });
+  }
+
+  /** ページ送り (前へ: -1・次へ: +1)。別のページの一覧へ移るので、前のページの行についての文を消す */
+  function handlePageMove(step: -1 | 1) {
+    clearPlanMessages();
+    setQuery((current) => ({ ...current, page: current.page + step }));
   }
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
@@ -280,6 +317,8 @@ export default function OrganizationsManager() {
 
     setCreateError(null);
     setNotice(null);
+    // 作成すると 1 ページ目から取り直す (別の一覧へ移る) ので、前の一覧の行についてのプランの変更の文も消す
+    clearPlanMessages();
 
     const trimmedName = name.trim();
     const trimmedOwnerId = ownerId.trim();
@@ -327,10 +366,7 @@ export default function OrganizationsManager() {
   }
 
   /** 行のプランの変更を始めたら、前の変更の結果の表示 (通知・読み直しの文) を消す */
-  const handlePlanChangeStart = useCallback(() => {
-    setPlanNotice(null);
-    setPlanStaleError(null);
-  }, []);
+  const handlePlanChangeStart = clearPlanMessages;
 
   /**
    * 行の表示が古くて断られた (別の運営が先にプランを変えた・組織が消えた) ときは、今の条件 (ページ・検索) のまま一覧を
@@ -353,7 +389,7 @@ export default function OrganizationsManager() {
   }, []);
 
   const showList = !loading && !loadError && result !== null;
-  const totalPages = result ? Math.max(1, Math.ceil(result.total / result.perPage)) : 1;
+  const totalPages = result ? lastPageOf(result.total, result.perPage) : 1;
   const currentPage = result?.query.page ?? 1;
 
   return (
@@ -586,7 +622,7 @@ export default function OrganizationsManager() {
                   <div className="flex gap-2">
                     <button
                       type="button"
-                      onClick={() => setQuery((current) => ({ ...current, page: current.page - 1 }))}
+                      onClick={() => handlePageMove(-1)}
                       disabled={currentPage <= 1}
                       className="rounded border border-gray-300 px-3 py-1 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
                     >
@@ -594,7 +630,7 @@ export default function OrganizationsManager() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setQuery((current) => ({ ...current, page: current.page + 1 }))}
+                      onClick={() => handlePageMove(1)}
                       disabled={currentPage >= totalPages}
                       className="rounded border border-gray-300 px-3 py-1 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
                     >
