@@ -21,7 +21,7 @@
  *   - 設定の不足 (Supabase の URL・service role の鍵が未設定) は src/lib/env-required.ts の MissingEnvError で止め、
  *     変数名は本文にも例外の文にも出さない (サーバーのログと構造化ログにだけ残す。#1182)
  *   - #1571: 関数が 200 を返したら (集計が走ったら)、監査ログ (admin_audit_logs) に super_admin.cron.run_now を本人の権限の client で
- *     1 行残す (target_type 'cron_job'・details は job と period_type だけ・ip_address は利用者の IP)。
+ *     1 行残す (severity warn・target_type 'cron_job'・details は job_name と period_type だけ・ip_address は利用者の IP)。
  *     401 / 403 / 400 と関数を呼べなかった・関数が失敗した 500 は記録しない。記録に失敗しても応答は変えない (fail-open)
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -367,8 +367,8 @@ describe('POST /api/comparison/trigger: 監査ログ (super_admin.cron.run_now) 
         action_type: 'super_admin.cron.run_now',
         target_id: null,
         target_type: 'cron_job',
-        details: { job: 'calculate-segment-stats', period_type: periodType },
-        severity: 'info',
+        details: { job_name: 'calculate-segment-stats', period_type: periodType },
+        severity: 'warn',
         ip_address: CLIENT_IP,
         user_agent: USER_AGENT,
       });
@@ -382,7 +382,7 @@ describe('POST /api/comparison/trigger: 監査ログ (super_admin.cron.run_now) 
     await POST(requestFromBrowser({}));
 
     expect(auditInserts).toHaveLength(1);
-    expect(auditInserts[0].row.details).toEqual({ job: 'calculate-segment-stats', period_type: 'weekly' });
+    expect(auditInserts[0].row.details).toEqual({ job_name: 'calculate-segment-stats', period_type: 'weekly' });
   });
 
   it('関数が 200 で本文が JSON でなくても、集計は走っているので記録する (応答は 500)', async () => {

@@ -44,8 +44,13 @@ export const maxDuration = 300;
 
 const ROUTE_NAME = 'POST /api/comparison/trigger';
 const EDGE_FUNCTION_NAME = 'calculate-segment-stats';
-/** 監査ログ (admin_audit_logs) の action_type。定期実行 (pg_cron) を待たずに手で走らせる操作 (operator/07 §4.2 の cron 手動実行) */
+/**
+ * 監査ログ (admin_audit_logs) の action_type。定期実行 (pg_cron) を待たずに手で走らせる操作
+ * (operator/07 §4.2 の cron 手動実行。details と severity は operator/08 §7.2 の手動実行 API と同じ形)
+ */
 const CRON_RUN_NOW_AUDIT_ACTION = 'super_admin.cron.run_now';
+/** 手で走らせた定期実行の pg_cron のジョブ名 (supabase/migrations/20261009100000_schedule_calculate_segment_stats.sql の cron.schedule) */
+const CRON_JOB_NAME = 'calculate-segment-stats';
 /** 監査ログの target_type。対象は定期処理そのもので、uuid の id は無い (target_id は null) */
 const CRON_RUN_NOW_AUDIT_TARGET_TYPE = 'cron_job';
 
@@ -103,7 +108,8 @@ async function recordRunNowAudit(
     actorId,
     actionType: CRON_RUN_NOW_AUDIT_ACTION,
     targetType: CRON_RUN_NOW_AUDIT_TARGET_TYPE,
-    details: { job: EDGE_FUNCTION_NAME, period_type: periodType },
+    details: { job_name: CRON_JOB_NAME, period_type: periodType },
+    severity: 'warn',
     request,
     routeName: ROUTE_NAME,
   });
