@@ -18,6 +18,7 @@ export const JAPANESE_ERROR_API_DIRS: readonly string[] = [
   'src/app/api/e2e',
   'src/app/api/admin',
   'src/app/api/support',
+  'src/app/api/ai',
   // super_admin・運営の操作 (operator は、別の PR が直している途中の membership/{org,family}/[id]/transfer を除いた配下)
   'src/app/api/super-admin',
   'src/app/api/operator/membership/audit',
@@ -27,7 +28,6 @@ export const JAPANESE_ERROR_API_DIRS: readonly string[] = [
   'src/app/api/operator/membership/family/[id]/dissolve',
   'src/app/api/operator/membership/org/[id]/candidates',
   'src/app/api/operator/membership/org/[id]/dissolve',
-  'src/app/api/ai',
 ];
 
 /** route が本文を作るのに使う共通の関数のファイル (ここも違反 0 件を見張る) */
