@@ -18,7 +18,7 @@
  */
 import { NextResponse } from 'next/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE } from '@/lib/api/errors';
+import { INTERNAL_ERROR_MESSAGE } from '@/lib/api/errors';
 
 /** 401: ログインしていない・セッションが切れた (組織チャレンジのメンバー向けの API が以前から返している文) */
 export const ORG_API_UNAUTHENTICATED_MESSAGE = 'ログインが必要です';
@@ -34,7 +34,6 @@ export const ORG_API_INTERNAL_ERROR_MESSAGE = INTERNAL_ERROR_MESSAGE;
 /** nested の形の本文の code (従来のまま) */
 export const ORG_API_UNAUTHORIZED_CODE = 'UNAUTHORIZED';
 export const ORG_API_FORBIDDEN_CODE = 'FORBIDDEN';
-export const ORG_API_INTERNAL_ERROR_CODE = INTERNAL_ERROR_CODE;
 
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
