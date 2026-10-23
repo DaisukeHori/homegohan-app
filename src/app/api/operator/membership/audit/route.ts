@@ -15,6 +15,7 @@ import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
 import { authFailureNested } from '@/lib/api/error-responses';
 import { z } from 'zod';
 import { internalError } from '@/lib/api/errors';
+import { resolveBeyondLastPage } from '@/lib/api/list-range';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,6 +28,9 @@ const QuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
   page: z.coerce.number().int().min(1).default(1),
 });
+
+/** 一覧の構造化ログの function_name */
+const LIST_ROUTE_NAME = 'GET /api/operator/membership/audit';
 
 export async function GET(request: NextRequest) {
   try {
@@ -44,23 +48,32 @@ export async function GET(request: NextRequest) {
 
     const { scope, action, from, to, limit, page } = parsed.data;
 
-    let query = supabase
-      .from('membership_audit')
-      .select('*', { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range((page - 1) * limit, page * limit - 1);
+    // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectMembershipAudit) から作る
+    const selectMembershipAudit = (options: { head?: boolean } = {}) => {
+      let query = supabase
+        .from('membership_audit')
+        .select('*', { count: 'exact', head: options.head === true });
 
-    if (scope) query = query.eq('scope', scope);
-    if (action) query = query.ilike('action', `%${action}%`);
-    // 開始日の JST 0 時から、終了日の翌日の JST 0 時の手前まで (#1433)
-    const { fromTimestamp, toTimestampExclusive } = jstOptionalDayRangeTimestamps(from, to);
-    if (fromTimestamp) query = query.gte('created_at', fromTimestamp);
-    if (toTimestampExclusive) query = query.lt('created_at', toTimestampExclusive);
+      if (scope) query = query.eq('scope', scope);
+      if (action) query = query.ilike('action', `%${action}%`);
+      // 開始日の JST 0 時から、終了日の翌日の JST 0 時の手前まで (#1433)
+      const { fromTimestamp, toTimestampExclusive } = jstOptionalDayRangeTimestamps(from, to);
+      if (fromTimestamp) query = query.gte('created_at', fromTimestamp);
+      if (toTimestampExclusive) query = query.lt('created_at', toTimestampExclusive);
 
-    const { data, error, count } = await query;
+      return query;
+    };
+
+    const { data, error, count } = await resolveBeyondLastPage(
+      await selectMembershipAudit()
+        .order('created_at', { ascending: false })
+        .range((page - 1) * limit, page * limit - 1),
+      () => selectMembershipAudit({ head: true }),
+      LIST_ROUTE_NAME,
+    );
 
     if (error) {
-      return internalError('GET /api/operator/membership/audit', error, {}, { shape: 'nested' });
+      return internalError(LIST_ROUTE_NAME, error, {}, { shape: 'nested' });
     }
 
     return NextResponse.json({

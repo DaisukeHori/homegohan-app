@@ -10,8 +10,12 @@ import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
 import { InvoiceQuerySchema } from '@/lib/admin/finance-schemas';
+import { resolveBeyondLastPage } from '@/lib/api/list-range';
 
 export const dynamic = 'force-dynamic';
+
+/** 一覧の構造化ログの function_name */
+const LIST_ROUTE_NAME = 'GET /api/admin/finance/invoices';
 
 export async function GET(request: NextRequest) {
   try {
@@ -27,27 +31,34 @@ export async function GET(request: NextRequest) {
       to: searchParams.get('to') ?? undefined,
     });
 
-    // stripe_webhook_events テーブルから invoice 関連イベントを取得
-    let dbQuery = supabase
-      .from('stripe_webhook_events')
-      .select('*', { count: 'exact' })
-      .in('event_type', ['invoice.paid', 'invoice.payment_failed', 'invoice.upcoming'])
-      .order('received_at', { ascending: false });
+    // stripe_webhook_events テーブルから invoice 関連イベントを取得。
+    // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectInvoiceEvents) から作る
+    const selectInvoiceEvents = (options: { head?: boolean } = {}) => {
+      let dbQuery = supabase
+        .from('stripe_webhook_events')
+        .select('*', { count: 'exact', head: options.head === true })
+        .in('event_type', ['invoice.paid', 'invoice.payment_failed', 'invoice.upcoming']);
 
-    if (query.status) {
-      dbQuery = dbQuery.eq('processing_status', query.status);
-    }
-    if (query.from) {
-      dbQuery = dbQuery.gte('received_at', query.from);
-    }
-    if (query.to) {
-      dbQuery = dbQuery.lte('received_at', query.to);
-    }
+      if (query.status) {
+        dbQuery = dbQuery.eq('processing_status', query.status);
+      }
+      if (query.from) {
+        dbQuery = dbQuery.gte('received_at', query.from);
+      }
+      if (query.to) {
+        dbQuery = dbQuery.lte('received_at', query.to);
+      }
+      return dbQuery;
+    };
 
     const offset = (query.page - 1) * query.per_page;
-    dbQuery = dbQuery.range(offset, offset + query.per_page - 1);
-
-    const { data: events, count, error } = await dbQuery;
+    const { data: events, count, error } = await resolveBeyondLastPage(
+      await selectInvoiceEvents()
+        .order('received_at', { ascending: false })
+        .range(offset, offset + query.per_page - 1),
+      () => selectInvoiceEvents({ head: true }),
+      LIST_ROUTE_NAME,
+    );
 
     if (error) {
       throw new Error(error.message);

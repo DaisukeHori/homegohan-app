@@ -18,7 +18,8 @@ import { requireRole, type UserProfile } from '@/lib/auth/helpers';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { internalError } from '@/lib/api/errors';
-import { AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
+import { AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED, authFailureNested, invalidJsonNested } from '@/lib/api/error-responses';
+import { readJsonBody } from '@/lib/http-params';
 import { ExportRequestSchema } from '@/lib/admin/finance-schemas';
 import { jstOptionalDayRangeTimestamps } from '@/lib/jst-day-ranges';
 import { recordAdminAudit } from '@/lib/admin/audit';
@@ -88,8 +89,10 @@ export async function POST(request: NextRequest) {
     const user = await requireRole(['admin', 'super_admin', 'finance']);
     const supabase = await createClient();
 
-    const body = await request.json() as unknown;
-    const parsed = ExportRequestSchema.safeParse(body);
+    // 壊れた JSON は 400 INVALID_JSON (外側の catch の 500 に落とさない。#1917)
+    const bodyResult = await readJsonBody(request);
+    if (!bodyResult.ok) return invalidJsonNested();
+    const parsed = ExportRequestSchema.safeParse(bodyResult.body);
     // 存在しない日付・時刻つきの期間・知らない種別などは 400。DB は読まず、監査ログも作らない (#1433)
     if (!parsed.success) {
       return NextResponse.json(

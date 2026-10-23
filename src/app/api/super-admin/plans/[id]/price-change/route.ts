@@ -61,8 +61,12 @@ import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { invalidInputResponse, invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
+import { isUuid } from '@/lib/http-params';
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+/** プランが無い (UUID の形でない id を含む) */
+const PLAN_NOT_FOUND_RESPONSE = { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } } as const;
 
 /** Edge Function stripe-price-sync が interval ごとに返す結果 (変えなかった interval は null / 省略) */
 type StripeSyncIntervalResult = {
@@ -114,18 +118,25 @@ export async function POST(request: NextRequest, props: RouteContext) {
 
     const input = parseResult.data;
 
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)。
+    // 入力の検査 (400) のあとに置き、行が無い UUID と同じ順にそろえる
+    if (!isUuid(params.id)) {
+      return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
+    }
+
     // プランを取得
     const { data: plan, error: planErr } = await supabase
       .from('subscription_plans')
       .select('*')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
-    if (planErr || !plan) {
-      return NextResponse.json(
-        { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } },
-        { status: 404 }
-      );
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で消えたように見せない。#1917)
+    if (planErr) {
+      return internalError('POST /api/super-admin/plans/[id]/price-change', planErr, { userId: user.id, table: 'subscription_plans' }, { shape: 'nested' });
+    }
+    if (!plan) {
+      return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     // draft は価格変更 API を使う必要なし (PATCH で対応)

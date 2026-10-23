@@ -13,11 +13,15 @@
  * #1571: メッセージの追加は運営の操作でチケットの状態を変えるので、保存できたら admin.support.ticket.message_add を
  * 監査ログに 1 行残す。対象はチケットを作ったユーザー (07-audit-monitoring.md §4.1.1 のチケットの閲覧と同じ)。
  * ユーザーが分からないチケットはチケット自体を対象にする。本文は入れない (ticket_id・message_id・is_internal だけ)。
+ *
+ * POST のチケットの読み込みの DB の失敗 (#1917): 500 INTERNAL_ERROR にし、チケットの行が無いときだけ 404 にする
+ * (一時的な失敗でチケットが消えたように見せない)。UUID の形でない id は DB に渡さず 404。壊れた JSON の本文は 400 INVALID_JSON。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
+import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested, invalidJsonNested } from '@/lib/api/error-responses';
+import { isUuid, readJsonBody } from '@/lib/http-params';
 import { createMessageSchema } from '@/lib/admin/support-schemas';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
@@ -30,6 +34,9 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 const VALIDATION_ERROR_MESSAGE = '入力内容を確認してください';
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+/** チケットが無い (UUID の形でない id を含む) */
+const TICKET_NOT_FOUND_RESPONSE = { error: { code: 'NOT_FOUND', message: 'チケットが見つかりません' } } as const;
 
 export async function GET(request: NextRequest, props: RouteContext) {
   const params = await props.params;
@@ -107,8 +114,10 @@ export async function POST(request: NextRequest, props: RouteContext) {
   try {
     const currentUser = await requireRole(['support', 'admin', 'super_admin']);
 
-    const body = await request.json();
-    const parseResult = createMessageSchema.safeParse(body);
+    // 壊れた JSON は 400 INVALID_JSON (外側の catch の 500 に落とさない)
+    const bodyResult = await readJsonBody(request);
+    if (!bodyResult.ok) return invalidJsonNested();
+    const parseResult = createMessageSchema.safeParse(bodyResult.body);
     if (!parseResult.success) {
       return NextResponse.json(
         { error: { code: 'VALIDATION_ERROR', message: VALIDATION_ERROR_MESSAGE, details: parseResult.error.flatten() } },
@@ -131,20 +140,25 @@ export async function POST(request: NextRequest, props: RouteContext) {
       }
     }
 
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(TICKET_NOT_FOUND_RESPONSE, { status: 404 });
+    }
+
     const supabase = await createClient();
 
-    // チケット存在確認 (subject は顧客へのメールに載せる)
+    // チケット存在確認 (subject は顧客へのメールに載せる)。読めなかったときは 404 にしない (行が無いときだけ 404)
     const { data: ticket, error: ticketError } = await supabase
       .from('support_tickets')
       .select('id, status, user_id, subject')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
-    if (ticketError || !ticket) {
-      return NextResponse.json(
-        { error: { code: 'NOT_FOUND', message: 'チケットが見つかりません' } },
-        { status: 404 },
-      );
+    if (ticketError) {
+      return internalError('POST /api/admin/support/tickets/[id]/messages', ticketError, { userId: currentUser.id, table: 'support_tickets' }, { shape: 'nested' });
+    }
+    if (!ticket) {
+      return NextResponse.json(TICKET_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     const { data: message, error: msgError } = await supabase

@@ -11,14 +11,59 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
+import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested, invalidJsonNested } from '@/lib/api/error-responses';
+import { readJsonBody } from '@/lib/http-params';
 import { ticketListQuerySchema, createTicketSchema } from '@/lib/admin/support-schemas';
 import { internalError } from '@/lib/api/errors';
 import { buildListViewDetails, recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { resolveBeyondLastPage } from '@/lib/api/list-range';
 
 /** 400: 本文・クエリの検証の失敗の文 (項目ごとの理由は details に添える。message は画面がそのまま出す文なので文字列にする) */
 const VALIDATION_ERROR_MESSAGE = '入力内容を確認してください';
+
+/** 一覧の構造化ログの function_name */
+const LIST_ROUTE_NAME = 'GET /api/admin/support/tickets';
+
+/** 一覧の列 */
+const TICKET_LIST_COLUMNS = `
+        id,
+        user_id,
+        subject,
+        category,
+        priority,
+        status,
+        assignee_id,
+        first_response_at,
+        resolved_at,
+        closed_at,
+        organization_id,
+        created_at,
+        updated_at
+      `;
+
+/** 一覧の絞り込み (GET のクエリの status・priority・assignee_id) */
+interface TicketListFilters {
+  status?: string;
+  priority?: string;
+  assignee_id?: string;
+}
+
+type SessionClient = Awaited<ReturnType<typeof createClient>>;
+
+/**
+ * support_tickets を一覧の列で読み、絞り込みを付ける。件数は exact で数える。
+ * head: true のときは行を返さず件数だけを数える (範囲外のページのときの件数の数え直し)
+ */
+function selectTickets(supabase: SessionClient, filters: TicketListFilters, options: { head?: boolean } = {}) {
+  let query = supabase
+    .from('support_tickets')
+    .select(TICKET_LIST_COLUMNS, { count: 'exact', head: options.head === true });
+  if (filters.status) query = query.eq('status', filters.status);
+  if (filters.priority) query = query.eq('priority', filters.priority);
+  if (filters.assignee_id) query = query.eq('assignee_id', filters.assignee_id);
+  return query;
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -43,37 +88,18 @@ export async function GET(request: NextRequest) {
     const { status, priority, assignee_id, page, per_page } = queryResult.data;
     const supabase = await createClient();
 
-    let query = supabase
-      .from('support_tickets')
-      .select(
-        `
-        id,
-        user_id,
-        subject,
-        category,
-        priority,
-        status,
-        assignee_id,
-        first_response_at,
-        resolved_at,
-        closed_at,
-        organization_id,
-        created_at,
-        updated_at
-      `,
-        { count: 'exact' },
-      )
-      .order('created_at', { ascending: false })
-      .range((page - 1) * per_page, page * per_page - 1);
-
-    if (status) query = query.eq('status', status);
-    if (priority) query = query.eq('priority', priority);
-    if (assignee_id) query = query.eq('assignee_id', assignee_id);
-
-    const { data, error, count } = await query;
+    // 一覧と、範囲外のページのときの件数の数え直しは、同じ絞り込み (selectTickets) から作る (src/lib/api/list-range.ts)
+    const filters: TicketListFilters = { status, priority, assignee_id };
+    const { data, error, count } = await resolveBeyondLastPage(
+      await selectTickets(supabase, filters)
+        .order('created_at', { ascending: false })
+        .range((page - 1) * per_page, page * per_page - 1),
+      () => selectTickets(supabase, filters, { head: true }),
+      LIST_ROUTE_NAME,
+    );
 
     if (error) {
-      return internalError('GET /api/admin/support/tickets', error, { userId: currentUser.id }, { shape: 'nested' });
+      return internalError(LIST_ROUTE_NAME, error, { userId: currentUser.id }, { shape: 'nested' });
     }
 
     const rows = data ?? [];
@@ -109,8 +135,10 @@ export async function POST(request: NextRequest) {
   try {
     const currentUser = await requireRole(['support', 'admin', 'super_admin']);
 
-    const body = await request.json();
-    const parseResult = createTicketSchema.safeParse(body);
+    // 壊れた JSON は 400 INVALID_JSON (外側の catch の 500 に落とさない)
+    const bodyResult = await readJsonBody(request);
+    if (!bodyResult.ok) return invalidJsonNested();
+    const parseResult = createTicketSchema.safeParse(bodyResult.body);
     if (!parseResult.success) {
       return NextResponse.json(
         { error: { code: 'VALIDATION_ERROR', message: VALIDATION_ERROR_MESSAGE, details: parseResult.error.flatten() } },

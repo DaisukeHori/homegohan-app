@@ -14,6 +14,10 @@ import { requireRole } from '@/lib/auth/helpers';
 import { authFailureNested } from '@/lib/api/error-responses';
 import { AuditLogQuerySchema } from '@/lib/super-admin/audit-logs-schemas';
 import { internalError } from '@/lib/api/errors';
+import { resolveBeyondLastPage } from '@/lib/api/list-range';
+
+/** 一覧の構造化ログの function_name */
+const LIST_ROUTE_NAME = 'GET /api/super-admin/audit-logs';
 
 export async function GET(request: NextRequest) {
   try {
@@ -32,25 +36,34 @@ export async function GET(request: NextRequest) {
 
     const { actor_id, target_id, action_type, severity, from, to, page, per_page } = parsed.data;
 
-    let query = supabase
-      .from('admin_audit_logs')
-      .select('*', { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range((page - 1) * per_page, page * per_page - 1);
+    // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectAuditLogs) から作る
+    const selectAuditLogs = (options: { head?: boolean } = {}) => {
+      let query = supabase
+        .from('admin_audit_logs')
+        .select('*', { count: 'exact', head: options.head === true });
 
-    if (actor_id) query = query.eq('actor_id', actor_id);
-    if (target_id) query = query.eq('target_id', target_id);
-    if (action_type) query = query.ilike('action_type', `%${action_type}%`);
-    if (severity) query = query.eq('severity', severity);
-    // 開始日の JST 0 時から、終了日の翌日の JST 0 時の手前まで (#1433)
-    const { fromTimestamp, toTimestampExclusive } = jstOptionalDayRangeTimestamps(from, to);
-    if (fromTimestamp) query = query.gte('created_at', fromTimestamp);
-    if (toTimestampExclusive) query = query.lt('created_at', toTimestampExclusive);
+      if (actor_id) query = query.eq('actor_id', actor_id);
+      if (target_id) query = query.eq('target_id', target_id);
+      if (action_type) query = query.ilike('action_type', `%${action_type}%`);
+      if (severity) query = query.eq('severity', severity);
+      // 開始日の JST 0 時から、終了日の翌日の JST 0 時の手前まで (#1433)
+      const { fromTimestamp, toTimestampExclusive } = jstOptionalDayRangeTimestamps(from, to);
+      if (fromTimestamp) query = query.gte('created_at', fromTimestamp);
+      if (toTimestampExclusive) query = query.lt('created_at', toTimestampExclusive);
 
-    const { data, error, count } = await query;
+      return query;
+    };
+
+    const { data, error, count } = await resolveBeyondLastPage(
+      await selectAuditLogs()
+        .order('created_at', { ascending: false })
+        .range((page - 1) * per_page, page * per_page - 1),
+      () => selectAuditLogs({ head: true }),
+      LIST_ROUTE_NAME,
+    );
 
     if (error) {
-      return internalError('GET /api/super-admin/audit-logs', error, {}, { shape: 'nested' });
+      return internalError(LIST_ROUTE_NAME, error, {}, { shape: 'nested' });
     }
 
     // CSV エクスポートモード

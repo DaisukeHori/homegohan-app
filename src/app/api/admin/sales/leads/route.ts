@@ -11,14 +11,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
+import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested, invalidJsonNested } from '@/lib/api/error-responses';
+import { readJsonBody } from '@/lib/http-params';
 import { leadListQuerySchema, createLeadSchema } from '@/lib/admin/sales-schemas';
 import { internalError } from '@/lib/api/errors';
+import { resolveBeyondLastPage } from '@/lib/api/list-range';
 import { buildListViewDetails, recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 /** 400: 本文・クエリの検証の失敗の文 (項目ごとの理由は details に添える。message は画面がそのまま出す文なので文字列にする) */
 const VALIDATION_ERROR_MESSAGE = '入力内容を確認してください';
+
+/** 一覧の構造化ログの function_name */
+const LIST_ROUTE_NAME = 'GET /api/admin/sales/leads';
 
 export async function GET(request: NextRequest) {
   try {
@@ -42,38 +47,47 @@ export async function GET(request: NextRequest) {
     const { stage, assigned_to, page, per_page } = queryResult.data;
     const supabase = await createClient();
 
-    let query = supabase
-      .from('sales_leads')
-      .select(
-        `
-        id,
-        company_name,
-        industry,
-        employee_count,
-        contact_name,
-        contact_email,
-        contact_phone,
-        source,
-        stage,
-        assigned_to,
-        estimated_acv,
-        notes,
-        converted_org_id,
-        created_at,
-        updated_at
-      `,
-        { count: 'exact' },
-      )
-      .order('updated_at', { ascending: false })
-      .range((page - 1) * per_page, page * per_page - 1);
+    // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectLeads) から作る
+    const selectLeads = (options: { head?: boolean } = {}) => {
+      let query = supabase
+        .from('sales_leads')
+        .select(
+          `
+          id,
+          company_name,
+          industry,
+          employee_count,
+          contact_name,
+          contact_email,
+          contact_phone,
+          source,
+          stage,
+          assigned_to,
+          estimated_acv,
+          notes,
+          converted_org_id,
+          created_at,
+          updated_at
+        `,
+          { count: 'exact', head: options.head === true },
+        );
 
-    if (stage) query = query.eq('stage', stage);
-    if (assigned_to) query = query.eq('assigned_to', assigned_to);
+      if (stage) query = query.eq('stage', stage);
+      if (assigned_to) query = query.eq('assigned_to', assigned_to);
 
-    const { data, error, count } = await query;
+      return query;
+    };
+
+    const { data, error, count } = await resolveBeyondLastPage(
+      await selectLeads()
+        .order('updated_at', { ascending: false })
+        .range((page - 1) * per_page, page * per_page - 1),
+      () => selectLeads({ head: true }),
+      LIST_ROUTE_NAME,
+    );
 
     if (error) {
-      return internalError('GET /api/admin/sales/leads', error, { userId: currentUser.id }, { shape: 'nested' });
+      return internalError(LIST_ROUTE_NAME, error, { userId: currentUser.id }, { shape: 'nested' });
     }
 
     const rows = data ?? [];
@@ -109,8 +123,10 @@ export async function POST(request: NextRequest) {
   try {
     const currentUser = await requireRole(['sales', 'admin', 'super_admin']);
 
-    const body = await request.json();
-    const parseResult = createLeadSchema.safeParse(body);
+    // 壊れた JSON は 400 INVALID_JSON (外側の catch の 500 に落とさない)
+    const bodyResult = await readJsonBody(request);
+    if (!bodyResult.ok) return invalidJsonNested();
+    const parseResult = createLeadSchema.safeParse(bodyResult.body);
     if (!parseResult.success) {
       return NextResponse.json(
         { error: { code: 'VALIDATION_ERROR', message: VALIDATION_ERROR_MESSAGE, details: parseResult.error.flatten() } },

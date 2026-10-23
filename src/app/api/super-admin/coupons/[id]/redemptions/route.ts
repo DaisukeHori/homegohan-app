@@ -14,10 +14,18 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient } from '@/lib/supabase/server';
 import { CouponRedemptionsQuerySchema } from '@/lib/super-admin/coupons-schemas';
 import { internalError } from '@/lib/api/errors';
+import { resolveBeyondLastPage } from '@/lib/api/list-range';
+import { isUuid } from '@/lib/http-params';
 import { buildListViewDetails, recordAdminAudit } from '@/lib/admin/audit';
 import { couponInvalidQueryResponse } from '@/lib/super-admin/coupon-errors';
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+/** 構造化ログの function_name */
+const LIST_ROUTE_NAME = 'GET /api/super-admin/coupons/[id]/redemptions';
+
+/** クーポンが無い (UUID の形でない id を含む) */
+const COUPON_NOT_FOUND_RESPONSE = { error: { code: 'OP_COUPON_NOT_FOUND', message: 'クーポンが見つかりません' } } as const;
 
 export async function GET(request: NextRequest, props: RouteContext) {
   const params = await props.params;
@@ -25,18 +33,23 @@ export async function GET(request: NextRequest, props: RouteContext) {
     const actor = await requireRole(['super_admin']);
     const supabase = await createClient();
 
-    // クーポン ID(UUID)で取得
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(COUPON_NOT_FOUND_RESPONSE, { status: 404 });
+    }
+
+    // クーポン ID(UUID)で取得。読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗でクーポンが消えたように見せない)
     const { data: coupon, error: couponErr } = await supabase
       .from('coupons')
       .select('id, code')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
-    if (couponErr || !coupon) {
-      return NextResponse.json(
-        { error: { code: 'OP_COUPON_NOT_FOUND', message: 'クーポンが見つかりません' } },
-        { status: 404 }
-      );
+    if (couponErr) {
+      return internalError(LIST_ROUTE_NAME, couponErr, { userId: actor.id, table: 'coupons' }, { shape: 'nested' });
+    }
+    if (!coupon) {
+      return NextResponse.json(COUPON_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     const { searchParams } = request.nextUrl;
@@ -53,15 +66,24 @@ export async function GET(request: NextRequest, props: RouteContext) {
     const { page, per_page } = queryResult.data;
     const offset = (page - 1) * per_page;
 
-    const { data: redemptions, error, count } = await supabase
-      .from('coupon_redemptions')
-      .select('*', { count: 'exact' })
-      .eq('coupon_id', coupon.id)
-      .order('redeemed_at', { ascending: false })
-      .range(offset, offset + per_page - 1);
+    // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectRedemptions) から作る
+    const couponId = coupon.id;
+    const selectRedemptions = (options: { head?: boolean } = {}) =>
+      supabase
+        .from('coupon_redemptions')
+        .select('*', { count: 'exact', head: options.head === true })
+        .eq('coupon_id', couponId);
+
+    const { data: redemptions, error, count } = await resolveBeyondLastPage(
+      await selectRedemptions()
+        .order('redeemed_at', { ascending: false })
+        .range(offset, offset + per_page - 1),
+      () => selectRedemptions({ head: true }),
+      LIST_ROUTE_NAME,
+    );
 
     if (error) {
-      return internalError('GET /api/super-admin/coupons/[id]/redemptions', error, {}, { shape: 'nested' });
+      return internalError(LIST_ROUTE_NAME, error, {}, { shape: 'nested' });
     }
 
     const rows = redemptions ?? [];

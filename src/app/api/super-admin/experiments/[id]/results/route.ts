@@ -7,24 +7,35 @@ import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { authFailureNested } from '@/lib/api/error-responses';
 import { internalError } from '@/lib/api/errors';
+import { isUuid } from '@/lib/http-params';
 
 type Params = { params: Promise<{ id: string }> };
+
+/** 実験が無い (UUID の形でない id を含む) */
+const EXPERIMENT_NOT_FOUND_RESPONSE = { error: { code: 'NOT_FOUND', message: '実験が見つかりません' } } as const;
 
 export async function GET(_request: NextRequest, props: Params) {
   const params = await props.params;
   try {
     await requireRole(['super_admin']);
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(EXPERIMENT_NOT_FOUND_RESPONSE, { status: 404 });
+    }
     const supabase = await createClient();
 
-    // 実験の存在確認
+    // 実験の存在確認。読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で実験が消えたように見せない。#1917)
     const { data: experiment, error: expError } = await supabase
       .from('experiments')
       .select('id, key, name, variants, status, result')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
-    if (expError || !experiment) {
-      return NextResponse.json({ error: { code: 'NOT_FOUND', message: '実験が見つかりません' } }, { status: 404 });
+    if (expError) {
+      return internalError('GET /api/super-admin/experiments/[id]/results', expError, { table: 'experiments' }, { shape: 'nested' });
+    }
+    if (!experiment) {
+      return NextResponse.json(EXPERIMENT_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     // バリアント別の割当数を集計

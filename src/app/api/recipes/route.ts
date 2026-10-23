@@ -6,6 +6,11 @@ import { internalError } from '@/lib/api/errors';
 import { recipeAuthorName } from '@/lib/recipes/author-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { resolveBeyondLastPage } from '@/lib/api/list-range';
+import { escapeLikePattern, quotePostgrestValue } from '@/lib/admin/users-search';
+
+/** 一覧の構造化ログの function_name */
+const LIST_ROUTE_NAME = 'GET /api/recipes';
 
 // レシピ一覧取得
 export async function GET(request: Request) {
@@ -33,45 +38,52 @@ export async function GET(request: Request) {
     ? `*, user_profiles(nickname), recipe_likes(user_id)`
     : `*`;
 
-  let dbQuery = supabase
-    .from('recipes')
-    .select(selectClause, { count: 'exact' });
+  // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectRecipes) から作る
+  const selectRecipes = (options: { head?: boolean } = {}) => {
+    let dbQuery = supabase
+      .from('recipes')
+      .select(selectClause, { count: 'exact', head: options.head === true });
 
-  // 公開レシピ、または自分のレシピ
-  if (user) {
-    dbQuery = dbQuery.or(`is_public.eq.true,user_id.eq.${user.id}`);
-  } else {
-    dbQuery = dbQuery.eq('is_public', true);
-  }
+    // 公開レシピ、または自分のレシピ
+    if (user) {
+      dbQuery = dbQuery.or(`is_public.eq.true,user_id.eq.${user.id}`);
+    } else {
+      dbQuery = dbQuery.eq('is_public', true);
+    }
 
-  // フィルター
-  if (query) {
-    dbQuery = dbQuery.or(`name.ilike.%${query}%,description.ilike.%${query}%`);
-  }
-  if (category) {
-    dbQuery = dbQuery.eq('category', category);
-  }
-  if (cuisineType) {
-    dbQuery = dbQuery.eq('cuisine_type', cuisineType);
-  }
-  if (difficulty) {
-    dbQuery = dbQuery.eq('difficulty', difficulty);
-  }
-  if (maxTime > 0) {
-    dbQuery = dbQuery.lte('cooking_time_minutes', maxTime);
-  }
+    // フィルター。検索語は引用符と LIKE のワイルドカードをエスケープして or=(...) に入れる
+    // ("," ")" を含む検索語が or=(...) の構文を壊して DB の失敗 (500) にならないように。"%" "_" も文字どおりに一致させる)
+    if (query) {
+      const pattern = quotePostgrestValue(`%${escapeLikePattern(query)}%`);
+      dbQuery = dbQuery.or(`name.ilike.${pattern},description.ilike.${pattern}`);
+    }
+    if (category) {
+      dbQuery = dbQuery.eq('category', category);
+    }
+    if (cuisineType) {
+      dbQuery = dbQuery.eq('cuisine_type', cuisineType);
+    }
+    if (difficulty) {
+      dbQuery = dbQuery.eq('difficulty', difficulty);
+    }
+    if (maxTime > 0) {
+      dbQuery = dbQuery.lte('cooking_time_minutes', maxTime);
+    }
+    return dbQuery;
+  };
 
-  const { data, error, count } = await dbQuery
-    .order('created_at', { ascending: false })
-    .range(offset, offset + limit - 1);
+  const { data, error, count } = await resolveBeyondLastPage(
+    await selectRecipes()
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1),
+    () => selectRecipes({ head: true }),
+    LIST_ROUTE_NAME,
+  );
 
+  // DB の失敗は 200 の空の一覧にしない (「0 件」と失敗を見分けられるように 500。DB の生の文面は本文に出さない)。
+  // 件数より後ろのページは、上で空のページと本当の件数にしてある
   if (error) {
-    // DBエラー: 詳細をログに残しつつ空リストで 200 を返す（テスト 2-1/2-2 の 500 BUG 回避）
-    console.error('[GET /api/recipes] DB error:', error.message);
-    return NextResponse.json({
-      recipes: [],
-      pagination: { page, limit, total: 0, totalPages: 0 },
-    });
+    return internalError(LIST_ROUTE_NAME, error, { userId: user?.id });
   }
 
   // キャメルケース変換
