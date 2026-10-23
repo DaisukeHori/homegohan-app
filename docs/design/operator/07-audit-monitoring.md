@@ -153,9 +153,9 @@ admin.user.role_change              - ロール変更 (PATCH / PUT /api/admin/us
                                       (戻り値の previous_roles。同時の変更があっても、その UPDATE の直前の値。route が先に読んだ値は使わない。#1917)
 admin.user.note_add                 - 管理ノート追加 (PATCH /api/admin/users/{id}・POST /api/support/users/{id}/notes)
 admin.organization.create           - 組織作成 (POST /api/admin/organizations)
-admin.organization.suspend          - 組織停止 (記録なし)
-admin.organization.restore          - 組織復旧 (記録なし)
-admin.organization.delete           - 組織削除 (記録なし)
+admin.organization.suspend          - 組織停止 (記録なし: 組織を停止する API が無い)
+admin.organization.restore          - 組織復旧 (記録なし: 組織を復旧する API が無い)
+admin.organization.delete           - 組織削除 (記録なし: 組織を削除する API が無い。運営の緊急解散 POST /api/operator/membership/org/{id}/dissolve は 4.2 の super_admin.organization.dissolve)
 admin.organization.plan_change      - 組織プラン変更 (手動) (PATCH /api/admin/organizations/{id}。details は変える前と後のプラン。今と同じプランなら記録しない)
                                       更新は直前に読んだプランのままのときだけ書く (読んでから書くまでに別の運営が変えていたら書かず記録もしない。
                                       今の値が送られたプランと同じなら 200、違えば 409 CONFLICT_STALE_DATA)。from は書いた時点の実際の直前の値
@@ -167,13 +167,13 @@ apply_coupon                        - 契約へのクーポンの適用 (遡及�
 admin.refund.issue                  - 返金指示 (Stripe Dashboard 誘導) (POST /api/admin/finance/refunds)
 admin.finance.export                - 財務データの CSV 書き出し (POST /api/admin/finance/exports。旧名 admin.export.request)
 admin.catalog.import                - 商品カタログの取り込み (POST /api/admin/catalog/import)
-admin.notification.campaign_send    - 通知キャンペーン送信 (記録なし)
+admin.notification.campaign_send    - 通知キャンペーン送信 (記録なし: キャンペーンを送る API が無い)
 admin.moderation.<action>           - モデレーションの判定 (POST / PUT /api/admin/moderation/{type}/{id})。<action> は
                                       approve / delete_only / delete_and_warn / delete_and_temp_ban / delete_and_perm_ban / escalate
                                       (src/lib/admin/moderation-schemas.ts の ModerationActions。旧名 admin.moderation.resolve)
 admin.moderation.restore            - 隠したコンテンツを戻す (POST /api/admin/moderation/{type}/{id}/restore) (#1538)
-admin.announcement.create           - お知らせ作成 (POST /api/announcements は記録していない。#1571 の範囲の外)
-admin.announcement.delete           - お知らせ削除 (記録なし)
+admin.announcement.create           - お知らせ作成 (POST /api/announcements。作成できたときだけ。対象はお知らせ (target_type 'announcement')。details: announcement_id / is_public / published_at。タイトル・本文は入れない。fail-open) (#1571)
+admin.announcement.delete           - お知らせ削除 (記録なし: お知らせを削除する API が無い)
 admin.support.ticket.create         - チケット作成 (POST /api/admin/support/tickets)
 admin.support.ticket.update         - チケットの状態・優先度などの更新 (PATCH /api/admin/support/tickets/{id})
 admin.support.ticket.assign         - チケット担当者変更 (POST /api/admin/support/tickets/{id}/assign。旧名 admin.support.ticket_assign)
@@ -210,7 +210,7 @@ super_admin.mfa.reset               - 別の super_admin による運営の二�
 - **fail-open**。ただし監査の起点 (取り消せない操作: verify の成功・コードの消費・unenroll の成功・再発行の呼び出し) の後は、
   続く手順が途中で失敗しても、止まった手順の名前を `failed_step` に入れて **必ず 1 行書いてから** 応答する (起点より前の失敗は書かない)。
 - ログインごとの 6 桁の確認 (verified な factor の verify) は記録しない (ログインの一部。Supabase の auth 監査に残る)。
-- 自己サービスの `/api/auth/mfa/*` は `tests/admin-mutation-audit-coverage-1571.test.ts` の走査の 4 つのディレクトリの外にあるが、上の 4 種を記録する。
+- 自己サービスの `/api/auth/mfa/*` は `tests/admin-mutation-audit-coverage-1571.test.ts` の走査の 4 つのディレクトリの外にあるが、上の 4 種を記録する (同じテストが、4 つのディレクトリの外の運営ロールの確認に届く変更系として表に載せる。記録は別のファイルの `recordMfaAudit()` なので `exempt` に理由を書く)。
 
 #### 4.1.1 ユーザー PII 閲覧系操作 (#1200)
 
@@ -274,7 +274,7 @@ super_admin.app_logs.list           - アプリログの一覧・本文の検索
 `tests/admin-mutation-audit-coverage-1571.test.ts` が持ち、実コードと突き合わせる (handler が増えたら表に足す)。
 同じテストが、`recordAdminAudit()` の呼び出しがすべて `request` を渡していることも見る。
 - 運営の二段階認証の解除 (`POST /api/super-admin/admins/{id}/mfa/reset`。cross/12 §14.7) は、`super_admin.mfa.reset` を `recordMfaAudit()` (`src/lib/auth/mfa/audit.ts`) の中の `recordAdminAudit()` で書くので、表には `exempt` に理由を書いて載せる (別のファイルの関数なので、走査では audited と判定できない。cross/12 §23 N-38)。
-- 自己サービスの `/api/auth/mfa/*` は走査の 4 つのディレクトリの外にあるが、4 種 (`admin.mfa.*`) を記録する (上の 4.1 の記録のルール)。
+- 自己サービスの `/api/auth/mfa/*` は走査の 4 つのディレクトリの外にあるが、4 種 (`admin.mfa.*`) を記録する (上の 4.1 の記録のルール)。4 つのディレクトリの外の route は、変更系の handler が運営ロールの確認 (`requireRole` / `requireSuperAdmin`) に届くものを同じ表に載せる (お知らせの作成 `admin.announcement.create`・比較ランキングの集計の手動実行 `super_admin.cron.run_now`・`/api/auth/mfa/*`) (#1571)。
 
 記録のルール:
 - `target_id` は **情報を見られた本人 (ユーザー)** の id、`target_type` は `'user'`。チケットの閲覧も、チケットではなくチケットを作ったユーザーを対象にする。
@@ -345,7 +345,7 @@ super_admin.feature_package.update  - 機能パッケージ更新
 super_admin.feature_package.delete  - 機能パッケージ削除
 super_admin.feature_flag.toggle     - 機能フラグ切替
 super_admin.feature_flag.rollout    - ロールアウト戦略変更
-super_admin.cron.run_now            - cron 手動実行
+super_admin.cron.run_now            - cron 手動実行 (実装は POST /api/comparison/trigger の比較ランキングの集計だけ。関数を呼ぶ前に記録する (operator/08 §7.2 と同じ順。関数の失敗・通信の失敗・打ち切りでも 1 行残る。認可・本文・設定の確認で止めたときは記録しない)。target_type 'cron_job'・severity=warn・details: job_name ('calculate-segment-stats') / period_type。fail-open) (#1571)
 super_admin.cron.pause              - cron 一時停止
 super_admin.organization.transfer_admin - org_admin 緊急転送
 super_admin.gdpr_delete.execute     - GDPR 削除実行
