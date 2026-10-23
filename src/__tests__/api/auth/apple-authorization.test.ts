@@ -107,7 +107,8 @@ describe('POST /api/auth/apple/authorization', () => {
   });
 
   it('本文に NULL 文字があれば 400 INVALID_CHARACTER (Supabase を作らない)', async () => {
-    const res = await POST(makeRequest(`{"authorization_code":"abc${String.fromCharCode(0)}def"}`));
+    // JSON.stringify は U+0000 を \u0000 に書く (JSON として読める本文。rejectNullCharacterBody はこの形を断る)
+    const res = await POST(makeRequest({ authorization_code: `abc${String.fromCharCode(0)}def` }));
     expect(res.status).toBe(HTTP_BAD_REQUEST);
     expect((await res.json()).code).toBe('INVALID_CHARACTER');
     expect(mocks.createClient).not.toHaveBeenCalled();

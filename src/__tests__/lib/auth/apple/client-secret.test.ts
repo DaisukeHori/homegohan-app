@@ -3,7 +3,7 @@
  * Apple の client_secret (ES256 の JWT) の作成 (docs/design/mobile/08-sign-in-with-apple.md §11.2)
  * 鍵はテストの中で作った P-256 の使い捨て (本物の Apple の鍵ではない)。
  */
-import { createPublicKey, generateKeyPairSync, verify } from 'node:crypto';
+import { generateKeyPairSync, verify } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { createAppleClientSecret } from '@/lib/auth/apple/client-secret';
 import { APPLE_CLIENT_SECRET_AUDIENCE, APPLE_CLIENT_SECRET_TTL_SECONDS } from '@/lib/auth/apple/config';
@@ -57,7 +57,7 @@ describe('createAppleClientSecret', () => {
     const [header, payload, signature] = make().split('.');
     const raw = Buffer.from(signature, 'base64url');
     expect(raw.length).toBe(64);
-    const verifyKey = createPublicKey(publicKey);
+    const verifyKey = publicKey;
     expect(verify('sha256', Buffer.from(`${header}.${payload}`), { key: verifyKey, dsaEncoding: 'ieee-p1363' }, raw)).toBe(true);
     expect(verify('sha256', Buffer.from(`${header}.${payload}x`), { key: verifyKey, dsaEncoding: 'ieee-p1363' }, raw)).toBe(false);
   });
