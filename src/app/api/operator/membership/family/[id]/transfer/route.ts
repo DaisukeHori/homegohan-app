@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
-import { API_FORBIDDEN_CODE, API_FORBIDDEN_MESSAGE, authFailureNested } from '@/lib/api/error-responses';
+import { API_FORBIDDEN_CODE, API_FORBIDDEN_MESSAGE, authFailureNested, operatorMfaRequiredNested } from '@/lib/api/error-responses';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { internalError } from '@/lib/api/errors';
 import { ErrorStatusMap, MembershipErrorCode } from '@/lib/errors/membership-errors';
@@ -113,6 +113,10 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         // 文は認可の失敗 (下の catch の authFailureNested) の 403 と同じ日本語の固定の文 (#1917)
         return NextResponse.json({ error: { code: API_FORBIDDEN_CODE, message: API_FORBIDDEN_MESSAGE } }, { status: 403 });
       }
+      // DB の二段階認証の判定 (OPERATOR_MFA_REQUIRED。cross/12 §11.4) で止まったら、ゲート (requireSuperAdmin) が二段階認証で止めたときと
+      // 同じ 403 と日本語の固定の文にする (汎用の 500 にしない。#1917)
+      const mfaRequired = operatorMfaRequiredNested(rpcError);
+      if (mfaRequired) return mfaRequired;
       return internalError(ROUTE_NAME, rpcError, { userId: operatorId }, { shape: 'nested' });
     }
 
