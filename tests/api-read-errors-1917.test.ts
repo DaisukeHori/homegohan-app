@@ -37,6 +37,8 @@ const state = {
   failTable: null as string | null,
   /** 行が無いテーブル */
   missingTable: null as string | null,
+  /** このテーブルは、ここに決めた回数だけ読んだあとから行が無くなる (読んでから書くまでに消された、を作る) */
+  vanishAfter: null as { table: string; reads: number } | null,
   /** from() に渡されたテーブル (呼んだ順) */
   fromTables: [] as string[],
 };
@@ -73,9 +75,11 @@ function rowOf(table: string): Record<string, unknown> {
 }
 
 function resultOf(table: string, many: boolean) {
+  const readsBefore = state.fromTables.filter((t) => t === table).length;
   state.fromTables.push(table);
   if (state.failTable === table) return { data: null, error: DB_FAILURE, count: null, status: 503 };
-  if (state.missingTable === table) return { data: many ? [] : null, error: null, count: 0, status: 200 };
+  const vanished = state.vanishAfter?.table === table && readsBefore >= state.vanishAfter.reads;
+  if (state.missingTable === table || vanished) return { data: many ? [] : null, error: null, count: 0, status: 200 };
   return { data: many ? [rowOf(table)] : rowOf(table), error: null, count: 1, status: 200 };
 }
 
@@ -326,6 +330,20 @@ const CASES: ReadCase[] = [
     checksUuid: false,
   },
   {
+    // 所有権の確認を error を受けずに maybeSingle で読み、DB の失敗を 404 にしていた (goals/[id] の兄弟。R1 で見つかった)
+    name: 'PUT /api/health/checkups/[id]',
+    table: 'health_checkups',
+    call: async (id) => (await import('@/app/api/health/checkups/[id]/route')).PUT(json(`${BASE}/api/health/checkups/${id}`, 'PUT', { weight: 60 }), ctx({ id })),
+    // UUID の形でない id は以前から 400 (#1478)
+    checksUuid: false,
+  },
+  {
+    name: 'DELETE /api/health/checkups/[id]',
+    table: 'health_checkups',
+    call: async (id) => (await import('@/app/api/health/checkups/[id]/route')).DELETE(new NextRequest(`${BASE}/api/health/checkups/${id}`, { method: 'DELETE' }), ctx({ id })),
+    checksUuid: false,
+  },
+  {
     name: 'GET /api/meals/[id]',
     table: 'planned_meals',
     call: async (id) => (await import('@/app/api/meals/[id]/route')).GET(new Request(`${BASE}/api/meals/${id}`), ctx({ id })),
@@ -454,6 +472,7 @@ const CASES: ReadCase[] = [
 beforeEach(() => {
   state.failTable = null;
   state.missingTable = null;
+  state.vanishAfter = null;
   state.fromTables = [];
 });
 
@@ -480,4 +499,27 @@ describe.each(CASES)('$name', ({ table, call, missingStatus = 404, checksUuid = 
       expect(state.fromTables).not.toContain(table);
     });
   }
+});
+
+// 所有権の確認で行を読めたあと、更新するまでに消された (更新した行が無い) ときは 404。
+// 更新を .single() で受けると PGRST116 の失敗になり 500 になっていた (#1917)
+describe.each([
+  {
+    name: 'PUT /api/health/goals/[id]',
+    table: 'health_goals',
+    call: async () => (await import('@/app/api/health/goals/[id]/route')).PUT(json(`${BASE}/api/health/goals/${ROW_ID}`, 'PUT', { current_value: 64 }), ctx({ id: ROW_ID })),
+  },
+  {
+    name: 'PUT /api/health/checkups/[id]',
+    table: 'health_checkups',
+    call: async () => (await import('@/app/api/health/checkups/[id]/route')).PUT(json(`${BASE}/api/health/checkups/${ROW_ID}`, 'PUT', { weight: 60 }), ctx({ id: ROW_ID })),
+  },
+])('$name', ({ table, call }) => {
+  it('読んでから書くまでに消されたときは 404 (500 にしない)', async () => {
+    state.vanishAfter = { table, reads: 1 };
+    const res = await call();
+    expect(res.status).toBe(404);
+    // 所有権の確認と更新の 2 回読んでいる (更新まで届いている)
+    expect(state.fromTables.filter((t) => t === table)).toHaveLength(2);
+  });
 });

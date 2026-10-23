@@ -18,6 +18,10 @@
  *       then の側が 404 を返すもの (`if (error || !row) return NextResponse.json(..., { status: 404 })`)
  *   (B) `.single()` で読んだ文のすぐ後ろ (同じブロックの次の FOLLOWING_STATEMENTS 文) の if が 404 を返すもの
  *       (error を見ずに `if (!row) return 404` と書く形。`.single()` は行が無いと PGRST116 の失敗になる)
+ *   (C) `.maybeSingle()` の結果を `const { data: row } = ...` と error を受けずに分割代入し、すぐ後ろ
+ *       (同じブロックの次の FOLLOWING_STATEMENTS 文) の if が 404 を返すもの
+ *       (maybeSingle は行が無いと data が null で error も null だが、DB の失敗でも data は null になる。
+ *       error を受けないと失敗が「無い」と見分けられず 404 になる。health/checkups/[id] の PUT・DELETE で見つかった形)
  *   どちらも、その if の条件か then の側で PGRST116 を見分けているもの (`if (error.code === 'PGRST116') return 404`) は数えない
  *   (行が無い失敗だけを 404 にし、ほかの失敗を 500 にする書き方)。
  *
@@ -25,6 +29,8 @@
  *   - 404 を返す関数を呼ぶだけで、then の側に 404 の数字が出てこないもの (`if (error || !row) return notFound()`)
  *   - エラーらしくない名前の値 (`const { data, error: failure } = ...; if (failure || !data)`)
  *   - `.single()` の結果を変数に入れてから、FOLLOWING_STATEMENTS 文より後ろで 404 にするもの
+ *   - `.maybeSingle()` の結果を分割代入せずに変数に入れるもの (`const res = ...; if (!res.data) return 404`)、
+ *     error を受けていても 404 の if より後ろで見るもの (`if (!row) return 404; if (error) ...`)
  *   - src/app/api の外 (src/lib) のヘルパーの中で、DB の失敗を「無い」と同じに扱うもの
  *     (例: src/lib/handson-tour/sandbox-eligibility.ts は読めないときも profile_not_found にする fail-closed の判定)
  *
@@ -50,7 +56,7 @@ const POSTGREST_NO_ROWS_CODE = 'PGRST116';
 interface Finding {
   file: string;
   line: number;
-  rule: 'A' | 'B';
+  rule: 'A' | 'B' | 'C';
   text: string;
 }
 
@@ -123,6 +129,48 @@ function isSingleCall(node: ts.Node): boolean {
   );
 }
 
+/** `X.maybeSingle()` の呼び出しか */
+function isMaybeSingleCall(node: ts.Node): boolean {
+  return (
+    ts.isCallExpression(node) &&
+    node.arguments.length === 0 &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === 'maybeSingle'
+  );
+}
+
+/** 分割代入の項の、元のプロパティの名前 (`{ data: row }` の data・`{ error }` の error) */
+function bindingPropertyName(element: ts.BindingElement): string | null {
+  const name = element.propertyName ?? element.name;
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name)) return name.text;
+  return null;
+}
+
+/** 文が `const { data..., (error なし) } = ...` の形の変数宣言か (data を受けて error を受けない) */
+function destructuresDataWithoutError(statement: ts.Statement): boolean {
+  if (!ts.isVariableStatement(statement)) return false;
+  return statement.declarationList.declarations.some((declaration) => {
+    if (!ts.isObjectBindingPattern(declaration.name)) return false;
+    const names = declaration.name.elements.map(bindingPropertyName);
+    return names.includes('data') && !names.includes('error');
+  });
+}
+
+/** 文の後ろ FOLLOWING_STATEMENTS 文のうち、404 を返す if (PGRST116 を見分けているものを除く) */
+function notFoundIfsAfter(statement: ts.Statement): ts.IfStatement[] {
+  const siblings = siblingStatements(statement);
+  const index = siblings.indexOf(statement);
+  return siblings
+    .slice(index + 1, index + 1 + FOLLOWING_STATEMENTS)
+    .filter(
+      (next): next is ts.IfStatement =>
+        ts.isIfStatement(next) &&
+        returnsNotFound(next.thenStatement) &&
+        !mentionsNoRowsCode(next.expression) &&
+        !mentionsNoRowsCode(next.thenStatement),
+    );
+}
+
 /** ノードを含む文 (親がブロック・ファイルの文) */
 function enclosingStatement(node: ts.Node): ts.Statement | null {
   let current: ts.Node | undefined = node;
@@ -170,17 +218,18 @@ function scanSource(text: string, relative: string): Finding[] {
     if (isSingleCall(node)) {
       const statement = enclosingStatement(node);
       if (statement) {
-        const siblings = siblingStatements(statement);
-        const index = siblings.indexOf(statement);
-        for (const next of siblings.slice(index + 1, index + 1 + FOLLOWING_STATEMENTS)) {
-          if (
-            ts.isIfStatement(next) &&
-            returnsNotFound(next.thenStatement) &&
-            !mentionsNoRowsCode(next.expression) &&
-            !mentionsNoRowsCode(next.thenStatement)
-          ) {
-            findings.push({ file: relative, line: lineOf(next), rule: 'B', text: next.expression.getText(source) });
-          }
+        for (const next of notFoundIfsAfter(statement)) {
+          findings.push({ file: relative, line: lineOf(next), rule: 'B', text: next.expression.getText(source) });
+        }
+      }
+    }
+
+    // (C) .maybeSingle() を error を受けずに分割代入し、すぐ後ろの if が 404 を返す
+    if (isMaybeSingleCall(node)) {
+      const statement = enclosingStatement(node);
+      if (statement && destructuresDataWithoutError(statement)) {
+        for (const next of notFoundIfsAfter(statement)) {
+          findings.push({ file: relative, line: lineOf(next), rule: 'C', text: next.expression.getText(source) });
         }
       }
     }
@@ -229,6 +278,36 @@ describe('API の route が DB の読み込みの失敗を 404 にしない (#19
       }
     `);
     expect(findings.map((f) => f.rule)).toEqual(['B']);
+  });
+
+  it('(C) .maybeSingle() の error を受けずに、行が無いときに 404 にする書き方を見つける', () => {
+    const findings = scanSnippet(`
+      export async function PUT() {
+        const { data: existing } = await db.from('t').select('id').eq('id', id).maybeSingle();
+
+        if (!existing) {
+          return NextResponse.json({ error: 'x' }, { status: 404 });
+        }
+        return NextResponse.json(existing);
+      }
+    `);
+    expect(findings.map((f) => f.rule)).toEqual(['C']);
+  });
+
+  it('(C) .maybeSingle() の error を別の名前で受けて先に 500 にする書き方は数えない', () => {
+    const findings = scanSnippet(`
+      export async function DELETE() {
+        const { data: existing, error: existingError } = await db.from('t').select('id').eq('id', id).maybeSingle();
+        if (existingError) {
+          return internalError('DELETE /x', existingError);
+        }
+        if (!existing) {
+          return NextResponse.json({ error: 'x' }, { status: 404 });
+        }
+        return NextResponse.json(existing);
+      }
+    `);
+    expect(findings).toEqual([]);
   });
 
   it('maybeSingle で読み、error は 500・行が無いときだけ 404 にする書き方は数えない', () => {
