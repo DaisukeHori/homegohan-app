@@ -319,9 +319,11 @@ const JAPANESE_TEXT_PATTERN = /[\u3040-\u30ff\u3400-\u9fff\uff00-\uffef]/;
  * 検証 (サニタイザ) が返した失敗の文 (errors) から、result.error を作る (#1917)。
  *
  * result.error は応答の本文 (execute の { result }・messages の SSE と JSON の actionResult) と ai_action_logs.result に入る。
- * 健康の記録・健康の目標の検証 (src/lib/health-payloads.ts。/api/health/** と共有) は 'weight must be a finite number or null' のような
- * 英語の文も返すので、そのままつなぐと本文に英語の文が出る。日本語の文 (範囲の文など) はそのまま残し、
+ * 健康の記録・健康の目標の検証 (src/lib/health-payloads.ts。/api/health/** と共有) は、以前は 'weight must be a finite number or null'
+ * のような英語の文を返していた。#1983 (health) の直しで今は日本語の文 (src/lib/health-api-messages.ts) を返すが、
+ * 検証に英語の文が入り直しても本文に出ないよう、守りとしてこの置き換えを残す。日本語の文 (範囲の文など) はそのまま残し、
  * 日本語でない文は 1 つの固定の文 (AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE) に置き換える。元の文は構造化ログにだけ残す
+ * (守りの道は tests/consultation-action-validation-messages.test.ts が英語の文を返すスタブで確かめる)
  */
 function validationFailureResult(
   user: { id: string },

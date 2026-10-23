@@ -6,14 +6,16 @@
  *   提案の実行の結果 (result) は、そのまま応答の本文 (POST /api/ai/consultation/actions/[actionId]/execute の { result }・
  *   messages の route の actionResult) と ai_action_logs.result に入る。値の検証 (サニタイザ) が積む失敗の文が
  *   'dish_name must be a non-empty string (max 200 chars)' のような英語だったので、result.error に英語の文が出ていた。
- *   健康の記録・目標の検証 (src/lib/health-payloads.ts。/api/health/** と共有) も 'weight must be a finite number or null' のような
- *   英語の文を返す。
+ *   健康の記録・目標の検証 (src/lib/health-payloads.ts。/api/health/** と共有) も以前は 'weight must be a finite number or null' のような
+ *   英語の文を返していた (#1983 の health の直しで、今は日本語の文を返す)。
  *
  * 決まり (このテストが固定する):
  *   1. 提案の実行の中の検証 (献立・買い物リスト・栄養目標の更新) の文は、項目の名前と上限の数を入れた日本語の固定の文
- *   2. health-payloads の検証が返す文のうち、日本語の文 (範囲の文) はそのまま残し、英語の文は 1 つの固定の文
- *      (AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE) に置き換える。元の英語の文は構造化ログ (warn) にだけ残す
- *   3. どの道でも result.error に英語だけの文 ('must be' の文) が出ない。検証に通らなければ DB を更新しない
+ *   2. health-payloads の検証が返す日本語の文は、そのまま result.error に入れる (置き換えもログも足さない)
+ *   3. 検証が日本語でない文を返したとき (health-payloads に将来英語の文が入ったときの守り) は、英語の文を 1 つの固定の文
+ *      (AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE) に置き換え、元の英語の文は構造化ログ (warn) にだけ残す。
+ *      health-payloads はもう英語を返さないので、この道は英語の文を返すスタブで確かめる
+ *   4. どの道でも result.error に英語だけの文 ('must be' の文) が出ない。検証に通らなければ DB を更新しない
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -33,9 +35,24 @@ vi.mock('@/lib/rate-limit', () => ({ checkRateLimit: vi.fn() }));
 const logger = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }));
 vi.mock('@/lib/db-logger', () => ({ createLogger: () => ({ ...logger, withUser: () => logger }) }));
 vi.mock('@/lib/health-streaks', () => ({ updateHealthStreak: vi.fn() }));
+// 実物の検証をそのまま使い、守りの道 (英語の文) を確かめるテストだけが 1 回分の戻り値を英語の文に差し替える
+vi.mock('@/lib/health-payloads', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/health-payloads')>();
+  return {
+    ...actual,
+    sanitizeHealthRecordPayload: vi.fn(actual.sanitizeHealthRecordPayload),
+    sanitizeHealthGoalCreate: vi.fn(actual.sanitizeHealthGoalCreate),
+    sanitizeHealthGoalUpdate: vi.fn(actual.sanitizeHealthGoalUpdate),
+  };
+});
 
 import { runConsultationAction } from '@/lib/ai/consultation-action-executor';
 import { AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE } from '@/lib/ai/ai-api-messages';
+import {
+  sanitizeHealthGoalCreate,
+  sanitizeHealthGoalUpdate,
+  sanitizeHealthRecordPayload,
+} from '@/lib/health-payloads';
 import { isEnglishOnly, JAPANESE } from './helpers/api-error-text-scan';
 import { createRecordingSupabase, type RecordedQuery } from './helpers/recording-supabase';
 
@@ -109,61 +126,146 @@ describe('提案の実行の中の検証の文は、日本語の固定の文', (
   });
 });
 
-/** health-payloads の検証が返す文 (英語の文は固定の文に置き換わる) */
-const SHARED_VALIDATION_CASES: Array<{
-  name: string;
-  actionType: string;
-  params: Record<string, unknown>;
-  error: string;
-  /** 構造化ログにだけ残る元の英語の文 */
-  logged: string[];
-}> = [
+/** health-payloads の検証が返す文 (#1983 で日本語の文になった。そのまま result.error に入る) */
+const SHARED_VALIDATION_CASES: Array<{ name: string; actionType: string; params: Record<string, unknown>; error: string }> = [
   {
     name: 'add_health_record: 体脂肪率が数値でない',
     actionType: 'add_health_record',
     params: { date: '2026-10-10', bodyFatPercentage: 'abc' },
-    error: AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE,
-    logged: ['body_fat_percentage must be a finite number or null'],
+    error: '体脂肪率 (%) は数値で指定してください',
   },
   {
-    name: 'add_health_record: 範囲の外の体重 (日本語の文) と数値でない体脂肪率 (英語の文) は、日本語の文を残して固定の文を足す',
+    name: 'add_health_record: 範囲の外の体重と数値でない体脂肪率は、両方の日本語の文をつなぐ',
     actionType: 'add_health_record',
     params: { date: '2026-10-10', weight: 500, bodyFatPercentage: 'abc' },
-    error: `体重 (kg) は 300 以下の値を入力してください, ${AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE}`,
-    logged: ['body_fat_percentage must be a finite number or null'],
+    error: '体重 (kg) は 300 以下の値を入力してください, 体脂肪率 (%) は数値で指定してください',
+  },
+  {
+    name: 'add_health_record: 範囲の外の体重だけ',
+    actionType: 'add_health_record',
+    params: { date: '2026-10-10', weight: 500 },
+    error: '体重 (kg) は 300 以下の値を入力してください',
   },
   {
     name: 'update_health_record: 更新の内容がオブジェクトでない',
     actionType: 'update_health_record',
     params: { date: '2026-10-10', updates: 'weight' },
-    error: AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE,
-    logged: ['Body must be a JSON object'],
+    error: 'リクエストボディが不正です',
   },
   {
-    name: 'update_health_record: 英語の文が 2 つでも固定の文は 1 つ',
+    name: 'update_health_record: 2 つの項目の誤りは両方の文をつなぐ',
     actionType: 'update_health_record',
     params: { date: '2026-10-10', updates: { weight: 'abc', step_count: 1.5 } },
-    error: AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE,
-    logged: ['weight must be a finite number or null', 'step_count must be an integer or null'],
+    error: '体重 (kg) は数値で指定してください, 歩数 は整数で指定してください',
   },
   {
     name: 'set_health_goal: 目標値が無い',
     actionType: 'set_health_goal',
     params: { goalType: 'weight' },
-    error: AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE,
-    logged: ['goal_type, target_value, and target_unit are required'],
+    error: '目標の種類 (goal_type)・目標値 (target_value)・単位 (target_unit) を指定してください',
   },
   {
     name: 'update_health_goal: 期日が日付でない',
     actionType: 'update_health_goal',
     params: { goalId: 'goal-1', updates: { target_date: '2026/10/10' } },
+    error: 'target_date は YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください',
+  },
+];
+
+describe('健康の記録・目標の検証 (health-payloads と共有) の日本語の文は、そのまま返し、固定の文もログも足さない', () => {
+  it.each(SHARED_VALIDATION_CASES)('$name', async ({ actionType, params, error }) => {
+    const { out, writes } = await run(actionType, params);
+    expect(out.success).toBe(false);
+    expect(out.result).toEqual({ error });
+    expect(writes).toEqual([]);
+    expect(logger.warn).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 守りの道: 検証が日本語でない文を返したとき (health-payloads はもう英語を返さないので、1 回分の戻り値を英語の文に差し替える)。
+ * 英語の文は固定の文に置き換わり、元の文は構造化ログにだけ残る
+ */
+const NON_JAPANESE_GUARD_CASES: Array<{
+  name: string;
+  actionType: string;
+  params: Record<string, unknown>;
+  /** 検証の戻り値を 1 回分だけ差し替える */
+  stub: () => void;
+  error: string;
+  /** 構造化ログにだけ残る元の英語の文 */
+  logged: string[];
+}> = [
+  {
+    name: 'add_health_record: 英語の文は固定の文に置き換える',
+    actionType: 'add_health_record',
+    params: { date: '2026-10-10', bodyFatPercentage: 'abc' },
+    stub: () => {
+      vi.mocked(sanitizeHealthRecordPayload).mockReturnValueOnce({
+        data: {},
+        errors: ['body_fat_percentage must be a finite number or null'],
+      });
+    },
+    error: AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE,
+    logged: ['body_fat_percentage must be a finite number or null'],
+  },
+  {
+    name: 'add_health_record: 日本語の文と英語の文が混ざると、日本語の文を残して固定の文を足す',
+    actionType: 'add_health_record',
+    params: { date: '2026-10-10', weight: 500, bodyFatPercentage: 'abc' },
+    stub: () => {
+      vi.mocked(sanitizeHealthRecordPayload).mockReturnValueOnce({
+        data: {},
+        errors: ['体重 (kg) は 300 以下の値を入力してください', 'body_fat_percentage must be a finite number or null'],
+      });
+    },
+    error: `体重 (kg) は 300 以下の値を入力してください, ${AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE}`,
+    logged: ['body_fat_percentage must be a finite number or null'],
+  },
+  {
+    name: 'update_health_record: 英語の文が 2 つでも固定の文は 1 つ',
+    actionType: 'update_health_record',
+    params: { date: '2026-10-10', updates: { weight: 'abc', step_count: 1.5 } },
+    stub: () => {
+      vi.mocked(sanitizeHealthRecordPayload).mockReturnValueOnce({
+        data: {},
+        errors: ['weight must be a finite number or null', 'step_count must be an integer or null'],
+      });
+    },
+    error: AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE,
+    logged: ['weight must be a finite number or null', 'step_count must be an integer or null'],
+  },
+  {
+    name: 'set_health_goal: 英語の文は固定の文に置き換える',
+    actionType: 'set_health_goal',
+    params: { goalType: 'weight' },
+    stub: () => {
+      vi.mocked(sanitizeHealthGoalCreate).mockReturnValueOnce({
+        data: null,
+        errors: ['goal_type, target_value, and target_unit are required'],
+      });
+    },
+    error: AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE,
+    logged: ['goal_type, target_value, and target_unit are required'],
+  },
+  {
+    name: 'update_health_goal: 英語の文は固定の文に置き換える',
+    actionType: 'update_health_goal',
+    params: { goalId: 'goal-1', updates: { target_date: '2026/10/10' } },
+    stub: () => {
+      vi.mocked(sanitizeHealthGoalUpdate).mockReturnValueOnce({
+        data: {},
+        errors: ['target_date must be a date in YYYY-MM-DD format'],
+      });
+    },
     error: AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE,
     logged: ['target_date must be a date in YYYY-MM-DD format'],
   },
 ];
 
-describe('健康の記録・目標の検証 (health-payloads と共有) の英語の文は、固定の文に置き換え、元の文はログにだけ残す', () => {
-  it.each(SHARED_VALIDATION_CASES)('$name', async ({ actionType, params, error, logged }) => {
+describe('検証が日本語でない文を返したときは、固定の文に置き換え、元の文はログにだけ残す (守りの道)', () => {
+  it.each(NON_JAPANESE_GUARD_CASES)('$name', async ({ actionType, params, stub, error, logged }) => {
+    stub();
     const { out, writes } = await run(actionType, params);
     expect(out.success).toBe(false);
     expect(out.result).toEqual({ error });
@@ -176,17 +278,16 @@ describe('健康の記録・目標の検証 (health-payloads と共有) の英�
       validation_errors: logged,
     });
   });
-
-  it('日本語の文 (範囲の文) だけのときは、そのまま返し、固定の文もログも足さない', async () => {
-    const { out, writes } = await run('add_health_record', { date: '2026-10-10', weight: 500 });
-    expect(out.result).toEqual({ error: '体重 (kg) は 300 以下の値を入力してください' });
-    expect(writes).toEqual([]);
-    expect(logger.warn).not.toHaveBeenCalled();
-  });
 });
 
 describe('どの検証の失敗でも、result.error に英語だけの文が出ない', () => {
-  it.each([...OWN_VALIDATION_CASES, ...SHARED_VALIDATION_CASES])('$name', async ({ actionType, params }) => {
+  const ALL_CASES: Array<{ name: string; actionType: string; params: Record<string, unknown>; stub?: () => void }> = [
+    ...OWN_VALIDATION_CASES,
+    ...SHARED_VALIDATION_CASES,
+    ...NON_JAPANESE_GUARD_CASES,
+  ];
+  it.each(ALL_CASES)('$name', async ({ actionType, params, stub }) => {
+    stub?.();
     const { out } = await run(actionType, params);
     const text = (out.result as { error: string }).error;
     for (const part of text.split(', ')) {

@@ -137,8 +137,9 @@ export const AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE = 'この操作は
 /** 400: AI が提案した操作の種類に対応していない (ai_action_logs の result にも入る) */
 export const AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE = 'この種類の操作には対応していません';
 /**
- * AI が提案した操作の値が検証を通らなかった (ai_action_logs の result にも入る)。検証が英語の文を返したとき
- * (健康の記録・目標の検証 src/lib/health-payloads.ts は /api/health/** と共有で英語の文も返す)、その文の代わりに出す。元の文はログにだけ残す
+ * AI が提案した操作の値が検証を通らなかった (ai_action_logs の result にも入る)。検証が日本語でない文を返したとき、
+ * その文の代わりに出す。元の文はログにだけ残す (健康の記録・目標の検証 src/lib/health-payloads.ts は /api/health/** と共有で、
+ * 以前は英語の文を返していた。#1983 で日本語の文になったが、英語の文が入り直したときの守りとして残す)
  */
 export const AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE = '提案された値の形が正しくないため、保存できませんでした';
 
