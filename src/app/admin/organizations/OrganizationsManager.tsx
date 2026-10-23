@@ -11,6 +11,8 @@
  * 一覧の行のプランの欄 (PATCH /api/admin/organizations/{id})。
  * 変更が 409 CONFLICT_STALE_DATA (別の運営が先にプランを変えた) か 404 NOT_FOUND (組織がもう無い) で断られたときは、
  * 行の表示が古いので、今の条件のまま一覧を読み直し、理由の文を一覧の上に出す (運営が手で読み直さなくてよいように)。
+ * その文の「読み込み直した」かどうかは、一覧の読み込みの状態 (読み込み中・失敗・読めた) から描画のたびに決める
+ * (読み直しに失敗したのに「読み込み直した」と出さない。「再読み込み」で読めたら「読み込み直した」文になる。#1917)。
  * プランの変更の結果の文 (通知・読み直しの文) は、その一覧の行についての文なので、運営が別の一覧へ移る操作 (検索・ページ送り・
  * 組織の作成の開始) でも消す (#1912 の続き。前の一覧の行についての文を、別の一覧の上に残さない)。
  * 変更の応答を待つ間に運営が別の一覧へ移ったら、遅れて届いた結果 (成功・409・404) では文を出さず、一覧も触らない
@@ -53,14 +55,45 @@ function isStaleRowErrorCode(code: string | null): code is StaleRowErrorCode {
   return code !== null && (STALE_ROW_ERROR_CODES as readonly string[]).includes(code);
 }
 
-/** 一覧を読み直したあとに一覧の上に出す文 (サーバーの文は「一覧を読み込み直して」と頼む文なので使わない) */
-function staleRowMessage(code: StaleRowErrorCode, orgName: string): string {
+/** 行の表示が古いことで断られたプランの変更 (一覧の上に出す文の元。#1917) */
+interface PlanStale {
+  code: StaleRowErrorCode;
+  orgName: string;
+}
+
+/** 断られたあとの一覧の読み直しの状態 (一覧の読み込みの状態から決める。#1917) */
+type ListReloadState = 'reloading' | 'reloaded' | 'failed';
+
+/** 行の表示が古いことで断られた理由の文 */
+function staleRowReason(code: StaleRowErrorCode, orgName: string): string {
   switch (code) {
     case 'CONFLICT_STALE_DATA':
-      return `組織「${orgName}」のプランは、別の運営が先に変えていました。一覧を読み込み直したので、今のプランを確かめてから、もう一度変更してください。`;
+      return `組織「${orgName}」のプランは、別の運営が先に変えていました。`;
     case 'NOT_FOUND':
-      return `組織「${orgName}」が見つかりませんでした (解散などで消えた可能性があります)。一覧を読み込み直しました。`;
+      return `組織「${orgName}」が見つかりませんでした (解散などで消えた可能性があります)。`;
   }
+}
+
+/** 理由の文に続ける、一覧の読み直しの状態ごとの文 */
+const STALE_ROW_RELOAD_TEXTS: Record<StaleRowErrorCode, Record<ListReloadState, string>> = {
+  CONFLICT_STALE_DATA: {
+    reloading: '一覧を読み込み直しています。',
+    reloaded: '一覧を読み込み直したので、今のプランを確かめてから、もう一度変更してください。',
+    failed: '一覧を読み込み直せなかったので、「再読み込み」で読み込み直し、今のプランを確かめてから、もう一度変更してください。',
+  },
+  NOT_FOUND: {
+    reloading: '一覧を読み込み直しています。',
+    reloaded: '一覧を読み込み直しました。',
+    failed: '一覧を読み込み直せなかったので、「再読み込み」で読み込み直してください。',
+  },
+};
+
+/**
+ * 行の表示が古いことで断られたときに一覧の上に出す文 (サーバーの文は「一覧を読み込み直して」と頼む文なので使わない)。
+ * 読み直しの状態に合わせる: 読み直せていないのに「読み込み直した」とは言わない (#1917)
+ */
+function staleRowMessage({ code, orgName }: PlanStale, reload: ListReloadState): string {
+  return `${staleRowReason(code, orgName)}${STALE_ROW_RELOAD_TEXTS[code][reload]}`;
 }
 
 /** GET /api/admin/organizations が返す 1 件 */
@@ -117,7 +150,7 @@ function OrgPlanCell({
   /** 変更を始める。戻り値は、そのときの一覧の世代 (onChanged / onStale に渡し返す。#1917) */
   onStart: () => number;
   onChanged: (org: Organization, listGeneration: number) => void;
-  onStale: (message: string, listGeneration: number) => void;
+  onStale: (stale: PlanStale, listGeneration: number) => void;
 }) {
   const current = isOrgPlan(org.plan) ? org.plan : '';
   const [draft, setDraft] = useState<'' | OrgPlan>(current);
@@ -140,7 +173,7 @@ function OrgPlanCell({
       if (!res.ok) {
         const code = extractApiErrorCode(body);
         if (isStaleRowErrorCode(code)) {
-          onStale(staleRowMessage(code, org.name), listGeneration);
+          onStale({ code, orgName: org.name }, listGeneration);
           return;
         }
         setError(extractApiErrorMessage(body) ?? PLAN_CHANGE_ERROR);
@@ -237,8 +270,11 @@ export default function OrganizationsManager() {
 
   // 一覧の行のプランの変更 (#1912)
   const [planNotice, setPlanNotice] = useState<string | null>(null);
-  /** 行の表示が古くて断られ、一覧を読み直したときの文 (409 CONFLICT_STALE_DATA・404 NOT_FOUND) */
-  const [planStaleError, setPlanStaleError] = useState<string | null>(null);
+  /**
+   * 行の表示が古くて断られ、一覧を読み直した変更 (409 CONFLICT_STALE_DATA・404 NOT_FOUND)。文は一覧の読み込みの状態から
+   * 描画のたびに決める (staleRowMessage。読み直しに失敗しているあいだは「読み込み直した」と出さない。#1917)
+   */
+  const [planStale, setPlanStale] = useState<PlanStale | null>(null);
 
   // 一覧を読み込むたびに増やす通し番号。条件を素早く切り替えたとき、遅れて届いた古い応答で
   // 新しい一覧を上書きしないために使う
@@ -305,7 +341,7 @@ export default function OrganizationsManager() {
    */
   const clearPlanMessages = useCallback(() => {
     setPlanNotice(null);
-    setPlanStaleError(null);
+    setPlanStale(null);
   }, []);
 
   /** 別の一覧へ移る操作の始まり: 前の一覧の行についての文を消し、一覧の世代を進める (#1917) */
@@ -394,9 +430,12 @@ export default function OrganizationsManager() {
    * 前の変更の通知は、変更を始めたとき (handlePlanChangeStart) に消している。
    * 応答を待つ間に別の一覧へ移っていたら (世代が違う)、文も読み直しも出さない (#1917)
    */
-  const handlePlanStale = useCallback((message: string, generation: number) => {
+  const handlePlanStale = useCallback((stale: PlanStale, generation: number) => {
     if (generation !== listGeneration.current) return;
-    setPlanStaleError(message);
+    setPlanStale(stale);
+    // 読み直しの取得 (load) は描画のあとの effect で始まるので、文が先に「読み込み直した」に見えないよう、ここで読み込み中にする
+    setLoading(true);
+    setLoadError(null);
     setQuery((current) => ({ ...current }));
   }, []);
 
@@ -564,9 +603,9 @@ export default function OrganizationsManager() {
           </p>
         )}
 
-        {planStaleError && (
+        {planStale && (
           <p role="alert" className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {planStaleError}
+            {staleRowMessage(planStale, loadError !== null ? 'failed' : loading ? 'reloading' : 'reloaded')}
           </p>
         )}
 

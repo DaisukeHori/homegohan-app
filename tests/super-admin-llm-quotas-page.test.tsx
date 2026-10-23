@@ -14,7 +14,8 @@
  *     行に画面の文を出す。書きかけの行 (新しい上限・理由) は残し、書きかけの無い行は読み直した値にする。409 PLAN_READ_ONLY は読み直さない
  *   - #1917: 表を出したあとの読み直し (保存のあと・409 のあと) は表を外さずに行い (入力欄の要素もフォーカスも入れ替えない)、
  *     失敗しても表と書きかけを残して、表の上に文と「再試行」を出す。409 のあとの読み直しに失敗したら行の文も「読み込み直せなかった」にし、
- *     「再試行」で読み直せたら「読み込み直した」文に変える
+ *     どの経路の読み直し (「再試行」・ほかの行の保存のあとの読み直し) でも、読み直せたら「読み込み直した」文に変える。
+ *     409 の文の出ている行 (「入力した値と理由は残しています」と伝えている行) の書きかけは、ほかの行の保存のあとの読み直しでも消さない
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
@@ -432,6 +433,71 @@ describe('/super-admin/llm/quotas (AI の利用上限)', () => {
       expect(inputsOf('premium').map((input) => input.value)).toEqual(['10', '書きかけの理由']);
     });
 
+    it('「再試行」でなく、ほかの行の保存のあとの読み直しで読み直せたときも、行の文を「読み込み直した」文にする。409 の行の書きかけは残す', async () => {
+      // GET: 1 = 初回・2 = 409 のあとの読み直し (失敗)・3 = premium の保存のあとの読み直し (成功)
+      mockStaleWithFailingReload([2]);
+      await render();
+      await save('pro', '20', '有料の検証');
+      expect(row('pro').textContent).toContain('読み込み直せなかった');
+      expect(reloadError()).not.toBeNull();
+
+      await save('premium', '12', '組織の理由');
+
+      expect(getCalls()).toBe(3);
+      expect(row('premium').textContent).toContain('保存しました（12 回）');
+      // 表の上の文と「再試行」は消える。pro の行の文も、もう「読み込み直せなかった」「再試行」とは言わない
+      expect(reloadError()).toBeNull();
+      expect(row('pro').textContent).toContain('50 回');
+      expect(row('pro').textContent).toContain('一覧を読み込み直したので');
+      expect(row('pro').textContent).not.toContain('読み込み直せなかった');
+      expect(row('pro').textContent).not.toContain('「再試行」');
+      // 文が「入力した値と理由は残しています」と伝えているので、pro の書きかけは残す。保存した premium は読み直した値にする
+      expect(row('pro').textContent).toContain('入力した値と理由は残しています');
+      expect(inputsOf('pro').map((input) => input.value)).toEqual(['20', '有料の検証']);
+      expect(inputsOf('premium').map((input) => input.value)).toEqual(['10', '']);
+    });
+
+    it('409 のあとに読み直せた行の書きかけは、ほかの行の保存のあとの読み直しでも消さない (文の「残しています」のとおり)', async () => {
+      mockStaleWithFailingReload([]);
+      await render();
+      await type(inputsOf('free')[1], '書きかけの理由');
+      await save('pro', '20', '有料の検証');
+      expect(row('pro').textContent).toContain('一覧を読み込み直したので');
+
+      await save('premium', '12', '組織の理由');
+
+      expect(getCalls()).toBe(3);
+      expect(row('pro').textContent).toContain('一覧を読み込み直したので');
+      expect(row('pro').textContent).toContain('入力した値と理由は残しています');
+      expect(inputsOf('pro').map((input) => input.value)).toEqual(['20', '有料の検証']);
+      // 409 の文の無い行は、これまでどおり保存のあとの読み直しで読んだ値にする
+      expect(inputsOf('free').map((input) => input.value)).toEqual(['10', '']);
+      expect(inputsOf('premium').map((input) => input.value)).toEqual(['10', '']);
+
+      // 409 の行をもう一度保存して通れば、その行も読んだ値に戻す (もう残すと伝えていない)
+      await act(async () => {
+        (row('pro').querySelector('button') as HTMLButtonElement).click();
+      });
+      await flush();
+      expect(row('pro').textContent).toContain('保存しました（20 回）');
+      expect(inputsOf('pro').map((input) => input.value)).toEqual(['50', '']);
+    });
+
+    it('409 のあとに読み直せた行の文は、そのあとのほかの行の保存のあとの読み直しに失敗しても「読み込み直せなかった」にしない', async () => {
+      // GET: 1 = 初回・2 = 409 のあとの読み直し (成功)・3 = premium の保存のあとの読み直し (失敗)
+      mockStaleWithFailingReload([3]);
+      await render();
+      await save('pro', '20', '有料の検証');
+      expect(row('pro').textContent).toContain('一覧を読み込み直したので');
+
+      await save('premium', '12', '組織の理由');
+
+      expect(getCalls()).toBe(3);
+      expect(reloadError()?.textContent).toContain('最新の上限を読み込めませんでした');
+      expect(row('pro').textContent).toContain('一覧を読み込み直したので');
+      expect(row('pro').textContent).not.toContain('読み込み直せなかった');
+    });
+
     it('読み直しの最中も表 (入力欄の要素) を外さず、保存のボタンは止める', async () => {
       let releaseReload!: () => void;
       const reloadGate = new Promise<void>((resolve) => {
@@ -455,8 +521,12 @@ describe('/super-admin/llm/quotas (AI の利用上限)', () => {
       });
       await flush();
 
-      // 読み直しの応答待ち: 表はそのまま (同じ入力欄の要素)。保存のボタンは押せない
+      // 読み直しの応答待ち: 表はそのまま (同じ入力欄の要素)。保存のボタンは押せない。行の文は「読み込み直している」
+      // (結果が出る前に「読み込み直した」とも「読み込み直せなかった」とも言わない)
       expect(gets).toBe(2);
+      expect(row('pro').textContent).toContain('一覧を読み込み直しています');
+      expect(row('pro').textContent).not.toContain('一覧を読み込み直したので');
+      expect(row('pro').textContent).not.toContain('読み込み直せなかった');
       expect(inputsOf('pro')[0]).toBe(proLimitInput);
       expect(container.querySelector('.animate-spin')).toBeNull();
       expect((row('free').querySelector('button') as HTMLButtonElement).disabled).toBe(true);
@@ -467,6 +537,7 @@ describe('/super-admin/llm/quotas (AI の利用上限)', () => {
       await flush();
       expect(inputsOf('pro')[0]).toBe(proLimitInput);
       expect((row('free').querySelector('button') as HTMLButtonElement).disabled).toBe(false);
+      expect(row('pro').textContent).toContain('一覧を読み込み直したので');
     });
 
     it('同じ 409 でも PLAN_READ_ONLY は読み直さず、API の文を出す', async () => {

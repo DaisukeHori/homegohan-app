@@ -13,7 +13,9 @@
 //   - 保存が 409 CONFLICT_STALE_DATA (読んでから書くまでに別の運営が先に同じプランの上限を変えた) で断られたら、一覧を読み直して
 //     いまの上限を出し、行にその旨を出す。入力欄 (新しい上限・理由) の書きかけは読み直しで消さない (#1917)
 //   - 一度表を出したあとの読み直し (保存のあと・409 のあと) は表を外さずに行い (入力欄のフォーカスも外さない)、失敗しても表と
-//     書きかけを残して、表の上に文と「再試行」を出す。409 のあとの読み直しに失敗したら、行の文も「読み込み直せなかった」にする (#1917)
+//     書きかけを残して、表の上に文と「再試行」を出す。409 のあとの読み直しに失敗したら、行の文も「読み込み直せなかった」にする。
+//     その行の文は、どの経路の読み直し (「再試行」・ほかの行の保存のあとの読み直し) でも、読み直せたら「読み込み直した」文に変える。
+//     409 の文の出ている行は「入力した値と理由は残しています」と伝えているので、その行の入力欄はどの読み直しでも上書きしない (#1917)
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -51,6 +53,10 @@ function limitLabel(limit: number | null): string {
 const STALE_LIMIT_MESSAGE =
   "別の運営が先にこのプランの上限を変えていました。一覧を読み込み直したので、いまの上限を確かめてから、もう一度保存してください（入力した値と理由は残しています）";
 
+/** 保存が 409 CONFLICT_STALE_DATA で断られ、一覧を読み直している最中に行に出す文 (#1917) */
+const STALE_LIMIT_RELOADING_MESSAGE =
+  "別の運営が先にこのプランの上限を変えていました。一覧を読み込み直しています（入力した値と理由は残しています）";
+
 /** 保存が 409 CONFLICT_STALE_DATA で断られ、一覧の読み直しにも失敗したときに行に出す文 (#1917) */
 const STALE_LIMIT_RELOAD_FAILED_MESSAGE =
   "別の運営が先にこのプランの上限を変えていました。一覧を読み込み直せなかったので、表の上の「再試行」で読み込み直し、いまの上限を確かめてから、もう一度保存してください（入力した値と理由は残しています）";
@@ -59,13 +65,45 @@ const STALE_LIMIT_RELOAD_FAILED_MESSAGE =
 const RELOAD_FAILED_MESSAGE = "最新の上限を読み込めませんでした。表の値は古いかもしれません";
 
 /**
- * 行に出す文。staleReloadFailed は、409 のあとの読み直しに失敗した文 (STALE_LIMIT_RELOAD_FAILED_MESSAGE) か
- * (「再試行」で読み直せたら、読み込み直した文 STALE_LIMIT_MESSAGE に変える。#1917)
+ * 保存が 409 CONFLICT_STALE_DATA で断られた行の文の段階 (#1917)。
+ *   - reloading    : 一覧を読み直している
+ *   - reloaded     : 409 のあとに一覧を読み直せた
+ *   - reload-failed: 一覧の読み直しに失敗した (表の上に「再試行」が出ている)
+ * 段階は一覧の読み込み (load) が結果に合わせて進める。どの経路の読み込みでも、読めたら reloaded にし、
+ * 失敗したら reloading を reload-failed にする (「再試行」だけでなく、ほかの行の保存のあとの読み直しで読めたときも、
+ * 「読み込み直せなかった」の文を残さない)
  */
+type StaleStage = "reloading" | "reloaded" | "reload-failed";
+
+const STALE_LIMIT_MESSAGES: Record<StaleStage, string> = {
+  reloading: STALE_LIMIT_RELOADING_MESSAGE,
+  reloaded: STALE_LIMIT_MESSAGE,
+  "reload-failed": STALE_LIMIT_RELOAD_FAILED_MESSAGE,
+};
+
+/** 行に出す文。staleStage は、保存が 409 CONFLICT_STALE_DATA で断られた行の文の段階 (それ以外の文には無い) */
 interface RowMessage {
   ok: boolean;
   text: string;
-  staleReloadFailed?: boolean;
+  staleStage?: StaleStage;
+}
+
+/** 保存が 409 CONFLICT_STALE_DATA で断られた行の、段階 stage の文 */
+function staleRowMessage(stage: StaleStage): RowMessage {
+  return { ok: false, text: STALE_LIMIT_MESSAGES[stage], staleStage: stage };
+}
+
+/** 409 の文の出ている行の文の段階を、advance で進める (ほかの行の文はそのまま) */
+function advanceStaleMessages(
+  messages: Record<string, RowMessage>,
+  advance: (stage: StaleStage) => StaleStage,
+): Record<string, RowMessage> {
+  return Object.fromEntries(
+    Object.entries(messages).map(([planKey, message]) => [
+      planKey,
+      message.staleStage === undefined ? message : staleRowMessage(advance(message.staleStage)),
+    ]),
+  );
 }
 
 /** 一覧の読み込みの結果。superseded は、読み込みの最中に新しい読み込みが始まったので結果を捨てた */
@@ -112,12 +150,26 @@ export default function LLMQuotasPage() {
   const loadSeq = useRef(0);
   const [savingPlan, setSavingPlan] = useState<string | null>(null);
   const [rowMessage, setRowMessage] = useState<Record<string, RowMessage>>({});
+  // 行の文のいまの値 (描画を待たずに読むための写し。行の文は updateRowMessages でだけ変える)。
+  // 一覧の読み込みが、409 の文の出ている行を見分けて入力欄を残し、文の段階を進めるために読む (#1917)
+  const rowMessagesRef = useRef<Record<string, RowMessage>>({});
   // 最後に読んだ一覧から作った入力欄の初めの値 (読み直しのとき、書きかけの行を見分ける。#1917)
   const loadedDrafts = useRef<Record<string, Draft>>({});
 
+  const updateRowMessages = useCallback(
+    (update: (prev: Record<string, RowMessage>) => Record<string, RowMessage>) => {
+      const next = update(rowMessagesRef.current);
+      rowMessagesRef.current = next;
+      setRowMessage(next);
+    },
+    [],
+  );
+
   /**
    * 一覧を読む。keepDrafts のときは、入力欄の書きかけ (新しい上限・理由) を残し、書きかけの無い行だけを読んだ値にする
-   * (保存が 409 CONFLICT_STALE_DATA で断られたあとの読み直し。#1917)
+   * (保存が 409 CONFLICT_STALE_DATA で断られたあとの読み直し。#1917)。
+   * 409 の文の出ている行は、keepDrafts でなくても (ほかの行の保存のあとの読み直しでも) 入力欄を残す (文が「入力した値と理由は
+   * 残しています」と伝えているため)。その行の文の段階もここで進める (読めたら reloaded、失敗したら reloading を reload-failed。#1917)
    */
   const load = useCallback(async (options: { keepDrafts?: boolean } = {}): Promise<LoadOutcome> => {
     const keepDrafts = options.keepDrafts === true;
@@ -136,6 +188,12 @@ export default function LLMQuotasPage() {
       const json = (await res.json()) as QuotaListResponse;
       if (seq !== loadSeq.current) return "superseded";
       hasLoadedRef.current = true;
+      // 409 の文の出ている行 (入力欄を残すと伝えている行)
+      const staleRows = new Set(
+        Object.entries(rowMessagesRef.current)
+          .filter(([, message]) => message.staleStage !== undefined)
+          .map(([planKey]) => planKey),
+      );
       setReloadError(null);
       setError(null);
       setRows(json.data);
@@ -150,11 +208,14 @@ export default function LLMQuotasPage() {
         Object.fromEntries(
           json.data.map((row) => {
             const current = prev[row.plan_key];
-            const keep = keepDrafts && isDraftEdited(current, previouslyLoaded[row.plan_key]);
+            const keep =
+              staleRows.has(row.plan_key) || (keepDrafts && isDraftEdited(current, previouslyLoaded[row.plan_key]));
             return [row.plan_key, keep && current !== undefined ? current : initialDrafts[row.plan_key]];
           }),
         ),
       );
+      // 読み直せたので、409 の文の出ている行の文を「読み込み直した」文にする (どの経路の読み直しでも。#1917)
+      updateRowMessages((prev) => advanceStaleMessages(prev, () => "reloaded"));
       return "loaded";
     } catch (err) {
       if (seq !== loadSeq.current) return "superseded";
@@ -166,6 +227,11 @@ export default function LLMQuotasPage() {
       } else {
         setError(message);
       }
+      // 409 のあとの読み直しの最中だった行の文を「読み込み直せなかった」文にする。すでに読み直せた行 (reloaded) は、
+      // 409 のあとに一度読み直せているのでそのまま (#1917)
+      updateRowMessages((prev) =>
+        advanceStaleMessages(prev, (stage) => (stage === "reloading" ? "reload-failed" : stage)),
+      );
       return "failed";
     } finally {
       if (seq === loadSeq.current) {
@@ -173,27 +239,18 @@ export default function LLMQuotasPage() {
         setIsReloading(false);
       }
     }
-  }, []);
+  }, [updateRowMessages]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   /**
-   * 表の上の「再試行」: 失敗した読み直しを同じ条件でやり直す。読み直せたら、409 のあとの読み直しに失敗した行の文を
-   * 「読み込み直した」文に変える (#1917)
+   * 表の上の「再試行」: 失敗した読み直しを同じ条件でやり直す。409 のあとの読み直しに失敗した行の文は、
+   * 読み直せたら load が「読み込み直した」文に変える (#1917)
    */
   const retryReload = async () => {
-    const outcome = await load(failedReloadOptions.current);
-    if (outcome !== "loaded") return;
-    setRowMessage((prev) =>
-      Object.fromEntries(
-        Object.entries(prev).map(([key, message]) => [
-          key,
-          message.staleReloadFailed === true ? { ok: false, text: STALE_LIMIT_MESSAGE } : message,
-        ]),
-      ),
-    );
+    await load(failedReloadOptions.current);
   };
 
   const updateDraft = (planKey: string, patch: Partial<Draft>) => {
@@ -204,11 +261,11 @@ export default function LLMQuotasPage() {
     const draft = drafts[planKey] ?? { limit: "", reason: "" };
     const dailyLimit = parseLimitInput(draft.limit);
     if (dailyLimit === undefined) {
-      setRowMessage((prev) => ({ ...prev, [planKey]: { ok: false, text: `上限は 0〜${AI_DAILY_LIMIT_MAX.toLocaleString()} の整数で入力してください（空欄は無制限）` } }));
+      updateRowMessages((prev) => ({ ...prev, [planKey]: { ok: false, text: `上限は 0〜${AI_DAILY_LIMIT_MAX.toLocaleString()} の整数で入力してください（空欄は無制限）` } }));
       return;
     }
     if (draft.reason.trim() === "") {
-      setRowMessage((prev) => ({ ...prev, [planKey]: { ok: false, text: "変更の理由を入力してください" } }));
+      updateRowMessages((prev) => ({ ...prev, [planKey]: { ok: false, text: "変更の理由を入力してください" } }));
       return;
     }
     setSavingPlan(planKey);
@@ -223,24 +280,18 @@ export default function LLMQuotasPage() {
         if (isStaleDataConflict(res.status, body)) {
           // 別の運営が先にこのプランの上限を変えていた (API は書いていない)。いまの上限を出すために一覧を読み直し、
           // その旨を行に出す (運営が手で読み直さなくてよいように。#1917)。入力欄の書きかけは消さない。
-          // 文は読み直しの結果を待ってから決める (読み直せなかったのに「読み込み直した」と出さない)
-          const outcome = await load({ keepDrafts: true });
-          if (outcome === "superseded") return;
-          setRowMessage((prev) => ({
-            ...prev,
-            [planKey]:
-              outcome === "loaded"
-                ? { ok: false, text: STALE_LIMIT_MESSAGE }
-                : { ok: false, text: STALE_LIMIT_RELOAD_FAILED_MESSAGE, staleReloadFailed: true },
-          }));
+          // 行の文は「読み直している」にしておき、読み直しの結果で load が進める (読み直せなかったのに「読み込み直した」と出さない。
+          // この読み直しが新しい読み込みに追い越されても、その読み込みが進める)
+          updateRowMessages((prev) => ({ ...prev, [planKey]: staleRowMessage("reloading") }));
+          await load({ keepDrafts: true });
           return;
         }
         throw new Error(errorMessageOfBody(body, res.status));
       }
-      setRowMessage((prev) => ({ ...prev, [planKey]: { ok: true, text: `保存しました（${limitLabel(dailyLimit)}）` } }));
+      updateRowMessages((prev) => ({ ...prev, [planKey]: { ok: true, text: `保存しました（${limitLabel(dailyLimit)}）` } }));
       await load();
     } catch (err) {
-      setRowMessage((prev) => ({
+      updateRowMessages((prev) => ({
         ...prev,
         [planKey]: { ok: false, text: err instanceof Error ? err.message : "保存に失敗しました" },
       }));

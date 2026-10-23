@@ -14,7 +14,8 @@
  *     PATCH /api/admin/organizations/{id} に { plan } を送り、成功したらその行だけを返ってきた値に置き換える。
  *     今と同じプランのあいだは「変更」を押せない。失敗したら API のメッセージを出し、行は変えない。
  *     ただし行の表示が古いことで断られた (409 CONFLICT_STALE_DATA・404 NOT_FOUND) ときは、今の条件のまま一覧を読み直し、
- *     理由の文を一覧の上に出す (運営が手で読み直さなくてよい)
+ *     理由の文を一覧の上に出す (運営が手で読み直さなくてよい)。その文は読み直しの状態に合わせる (読み直している・読み直せた・
+ *     失敗した。失敗しているあいだは「読み込み直した」と言わず、「再読み込み」で読めたら言う。#1917)
  *   - プランの変更の応答を待つ間に別の一覧へ移った (検索・ページ送り・組織の作成) ら、遅れて届いた結果 (成功・409・404) の文は
  *     新しい一覧の上に出さず、新しい一覧も触らない (#1917)
  *   - 入力欄はラベルと結びつき、ボタンには type がある
@@ -1065,6 +1066,9 @@ describe('別の一覧へ移ると、前の一覧の行についてのプラン�
   const TOTAL = 65; // 30 件ずつで 3 ページ (30 + 30 + 5)
   const STALE_MESSAGE =
     '組織「組織1」のプランは、別の運営が先に変えていました。一覧を読み込み直したので、今のプランを確かめてから、もう一度変更してください。';
+  /** 409 のあとの一覧の読み直しに失敗したときの文 (#1917) */
+  const STALE_RELOAD_FAILED_MESSAGE =
+    '組織「組織1」のプランは、別の運営が先に変えていました。一覧を読み込み直せなかったので、「再読み込み」で読み込み直し、今のプランを確かめてから、もう一度変更してください。';
 
   const planSelect = (id: string) => container.querySelector(`#org-plan-${id}`) as HTMLSelectElement;
   const changeButton = (id: string) =>
@@ -1273,7 +1277,7 @@ describe('別の一覧へ移ると、前の一覧の行についてのプラン�
     });
   });
 
-  it('同じ一覧を取り直すだけの「再読み込み」では、読み直しの文を消さない', async () => {
+  it('同じ一覧を取り直すだけの「再読み込み」では、読み直しの文を消さない。読み直しに失敗しているあいだは「読み込み直した」と言わない (#1917)', async () => {
     let failReload = false;
     mockApi({
       list: (url) => {
@@ -1292,11 +1296,71 @@ describe('別の一覧へ移ると、前の一覧の行についてのプラン�
     await renderPage();
     await choose(planSelect(org(1).id), 'premium');
     await click(changeButton(org(1).id), '変更ボタン');
-    expect(alerts()).toEqual([STALE_MESSAGE, '組織の一覧を取得できませんでした再読み込み']);
+    expect(alerts()).toEqual([STALE_RELOAD_FAILED_MESSAGE, '組織の一覧を取得できませんでした再読み込み']);
+    expect(alerts()[0]).not.toContain('読み込み直したので');
 
     await click(findButton('再読み込み'), '再読み込みボタン');
     expect(alerts()).toEqual([STALE_MESSAGE]);
     expect(names()[0]).toBe('組織1');
+  });
+
+  it.each([
+    ['CONFLICT_STALE_DATA', 409, STALE_MESSAGE],
+    ['NOT_FOUND', 404, '組織「組織1」が見つかりませんでした (解散などで消えた可能性があります)。一覧を読み込み直しました。'],
+  ] as const)(
+    '%s のあとの読み直しの応答を待つあいだは「読み込み直している」と出し、読めたら「読み込み直した」文にする (#1917)',
+    async (code, status, reloaded) => {
+      const reloadGate = deferred<Response>();
+      let rejected = false;
+      mockApi({
+        list: (url) => (rejected ? reloadGate.promise : pageOf(url)),
+        changePlan: () => {
+          rejected = true;
+          return jsonResponse(status, errorBody(code, 'サーバーの文'));
+        },
+      });
+      await renderPage();
+      await choose(planSelect(org(1).id), 'premium');
+      await click(changeButton(org(1).id), '変更ボタン');
+
+      expect(alerts()).toHaveLength(1);
+      expect(alerts()[0]).toContain('一覧を読み込み直しています。');
+      expect(alerts()[0]).not.toContain('読み込み直したので');
+      expect(alerts()[0]).not.toContain('読み込み直しました');
+
+      await act(async () => {
+        reloadGate.resolve(pageOf(new URL('http://localhost/api/admin/organizations?page=1')));
+      });
+      await settle();
+      expect(alerts()).toEqual([reloaded]);
+    },
+  );
+
+  it('404 のあとの読み直しに失敗したら「読み込み直しました」と言わず、「再読み込み」で読めたら言う (#1917)', async () => {
+    let failReload = false;
+    mockApi({
+      list: (url) => {
+        if (failReload) {
+          failReload = false;
+          return jsonResponse(500, errorBody('INTERNAL_ERROR', '組織の一覧を取得できませんでした'));
+        }
+        return pageOf(url);
+      },
+      changePlan: () => {
+        failReload = true;
+        return jsonResponse(404, errorBody('NOT_FOUND', '組織が見つかりません'));
+      },
+    });
+    await renderPage();
+    await choose(planSelect(org(1).id), 'premium');
+    await click(changeButton(org(1).id), '変更ボタン');
+    expect(alerts()).toEqual([
+      '組織「組織1」が見つかりませんでした (解散などで消えた可能性があります)。一覧を読み込み直せなかったので、「再読み込み」で読み込み直してください。',
+      '組織の一覧を取得できませんでした再読み込み',
+    ]);
+
+    await click(findButton('再読み込み'), '再読み込みボタン');
+    expect(alerts()).toEqual(['組織「組織1」が見つかりませんでした (解散などで消えた可能性があります)。一覧を読み込み直しました。']);
   });
 });
 
