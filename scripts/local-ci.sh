@@ -535,7 +535,7 @@ gateway_check() {
   if [ "$count" = 0 ]; then
     record "$stage:gateway" GREEN - 0 - - - 0 "Kong の 502: 0 件 (ログ: $kong_log)"
   else
-    record "$stage:gateway" RED - "$count" - - - 0 "Kong の 502: $count 件 (理由: ${reasons}。ログ: $kong_log。#1779)"
+    record "$stage:gateway" RED - "$count" - - - 0 "Kong の 502: $count 件 (理由: ${reasons}。ログ: ${kong_log}。#1779)"
   fi
 }
 
