@@ -3,7 +3,7 @@
  * POST /api/admin/organizations — 組織作成
  * 権限: admin, super_admin
  *
- * operator/02-api-spec.md §6 準拠
+ * operator/02-api-spec.md §4 (GET /api/admin/organizations :330・POST /api/admin/organizations :341) 準拠
  * E2E: w5-12-admin-adversarial C-14, C-14b, C-15, C-15b, C-16
  */
 
