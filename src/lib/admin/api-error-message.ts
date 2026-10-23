@@ -20,3 +20,17 @@ export function extractApiErrorMessage(body: unknown): string | null {
   }
   return null;
 }
+
+/**
+ * 管理系 API の失敗応答 ({ error: { code, message } }) から、エラーの code を取り出す。
+ * 画面が code で動きを変える (例: 組織のプランの変更で 409 CONFLICT_STALE_DATA なら一覧を読み直す) ときに使う。
+ * code が文字列で無い・空・本文の形が違う (お知らせ API の { error: '文字列' } など) ときは null。
+ */
+export function extractApiErrorCode(body: unknown): string | null {
+  if (typeof body !== 'object' || body === null) return null;
+
+  const error = (body as { error?: unknown }).error;
+  if (typeof error !== 'object' || error === null) return null;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' && code.trim() !== '' ? code : null;
+}
