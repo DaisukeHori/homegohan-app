@@ -6,6 +6,7 @@ import { aiDailyLimitResponse, consumeAiUsage } from '@/lib/plan/entitlements';
 import { userScopedStoragePath } from '@/lib/storage-paths';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
+import { MissingEnvError } from '@/lib/env-required';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AI_IMAGE_PROMPT_REQUIRED_MESSAGE } from '@/lib/ai/ai-api-messages';
@@ -67,8 +68,8 @@ export async function POST(request: Request) {
 
     const apiKey = process.env.GOOGLE_AI_STUDIO_API_KEY || process.env.GOOGLE_GEN_AI_API_KEY;
     if (!apiKey) {
-      // 鍵の名前は構造化ログにだけ残す (本文は汎用の文)
-      return internalError('POST /api/ai/image/generate', new Error('GOOGLE_AI_STUDIO_API_KEY / GOOGLE_GEN_AI_API_KEY が設定されていません'), { userId: user.id });
+      // 鍵が無い: 本文は汎用の文。変数名は MissingEnvError の envName として構造化ログにだけ残す (#1182・#1490)
+      return internalError('POST /api/ai/image/generate', new MissingEnvError('GOOGLE_AI_STUDIO_API_KEY'), { userId: user.id });
     }
 
     const modelName = process.env.GEMINI_IMAGE_MODEL || DEFAULT_IMAGE_GENERATION_MODEL;

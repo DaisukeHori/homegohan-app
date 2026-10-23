@@ -662,6 +662,32 @@ describe('image route contracts', () => {
     });
   });
 
+  describe('#1917 image-generate の失敗の本文は日本語の固定の文', () => {
+    async function postImageGenerate(body: unknown): Promise<Response> {
+      const { POST } = await import('../src/app/api/ai/image/generate/route');
+      return POST(new Request('http://localhost/api/ai/image/generate', { method: 'POST', body: JSON.stringify(body) }));
+    }
+
+    it('作る画像の内容が無い: 400 で日本語の文', async () => {
+      const res = await postImageGenerate({});
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: '作る画像の内容を指定してください' });
+      expect(mockGenerateContent).not.toHaveBeenCalled();
+    });
+
+    it('API の鍵が無い: 500 で汎用の日本語の文 (変数名は本文に出さない)', async () => {
+      delete process.env.GOOGLE_AI_STUDIO_API_KEY;
+      delete process.env.GOOGLE_GEN_AI_API_KEY;
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const res = await postImageGenerate({ prompt: 'banana curry' });
+      expect(res.status).toBe(500);
+      const text = await res.text();
+      expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
+      expect(text).not.toContain('GOOGLE');
+      expect(mockGenerateContent).not.toHaveBeenCalled();
+    });
+  });
+
   it('image-generate uses Nano Banana 2 and accepts multiple reference images', async () => {
     mockGenerateContent.mockResolvedValue({
       candidates: [
