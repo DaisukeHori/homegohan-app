@@ -427,6 +427,36 @@ const RELEASE_HOLDERS_TIMEOUT_MS = 60_000;
 // テストが途中で落ちたときに残った接続を、作った順に放す (通ったテストでは全部放し終わっているので何もしない)
 afterEach(() => holders.releaseOpenHolders(), RELEASE_HOLDERS_TIMEOUT_MS);
 
+/**
+ * RATE_LIMITED の形を確かめる: message はコード 1 語、SQLSTATE は P0001、DETAIL に上限名、HINT に再試行までの秒数。
+ * approxSec を渡すと、秒数が「最古の対象行 + 24 時間 − 今」付近 (誤差 ±120 秒) であることも確かめる。
+ */
+function expectRateLimited(error: PostgrestError | null, rule: string, approxSec?: number) {
+  expect(error, `RATE_LIMITED になるはず (${rule})`).not.toBeNull();
+  expect(error!.message).toBe('RATE_LIMITED');
+  expect(error!.code).toBe('P0001');
+  expect(error!.details).toBe(rule);
+  expect(error!.hint).toMatch(/^retry_after_sec=\d+$/);
+  const sec = Number(error!.hint!.split('=')[1]);
+  expect(sec).toBeGreaterThanOrEqual(1);
+  expect(sec).toBeLessThanOrEqual(24 * 3600);
+  if (approxSec !== undefined) {
+    expect(Math.abs(sec - approxSec)).toBeLessThanOrEqual(120);
+  }
+}
+
+/** 上限と無関係の既存エラーで失敗したこと (RATE_LIMITED ではないこと) を確かめる */
+function expectNotRateLimited(error: PostgrestError | null, code: string) {
+  expect(error, `${code} で失敗するはず`).not.toBeNull();
+  expect(error!.message).toBe(code);
+  expect(error!.message).not.toBe('RATE_LIMITED');
+}
+
+const rateLimited = (r: RpcResult) => r.error?.message === 'RATE_LIMITED';
+
+// ────────────────────────────────────────────────────────────────
+// 後片付け
+// ────────────────────────────────────────────────────────────────
 afterAll(async () => {
   await holders.settle();
   // 監査行: 種まき分 (印) / 作った家族・組織の分 / 作った利用者が操作者の分
