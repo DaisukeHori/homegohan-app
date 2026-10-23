@@ -4,14 +4,19 @@
  * 欠陥の型 (#1917): 鍵も条件も無く先に読んだ値を、監査・履歴の「変更前の値」として書く。
  * 2 人の運営がほぼ同時に同じ行を変えると、あとの変更の記録の「変更前の値」が、実際の直前の値 (先の変更の後の値) と食い違う。
  * 直し方は 2 通り: DB の関数が対象の行をロックして読んだ値を返す (locked_rpc) か、読んだ値を条件にして更新し 0 行なら書かない (cas)。
+ * DB の鍵をまたげない操作 (Auth の管理 API) の前に fail-closed で書く記録は、値を「操作の前に数えた値」と定義して扱う (counted_before)。
  *
  * (a) src の .ts / .tsx (src/types/database.types.ts・__tests__ のディレクトリ・*.test.ts(x) を除く) で、監査・履歴を書く呼び出し
  *     (record...Audit(...) と .insert(...) / .upsert(...)) の引数の中の、変更前の値に見える名前のキー (PRIOR_KEY_PATTERN) を
  *     構文木で集め、下の表 (INVENTORY) と両向きに突き合わせる。
  *     表に無いキーが増えたら赤 (値をどこから取るかを決めて、表に 1 行足す)。表にあって見つからないキーも赤 (表を直す)。
  * (b) locked_rpc / cas の行は、同時の変更の振る舞いを確かめるテスト (guardedBy) があり、そのテストがキーの名前を見ていること。
+ * (b') counted_before の行 (取り消せない操作の前に書く記録の「操作の前に数えた値」) は、手順の順と記録の値を確かめるテスト (guardedBy) があり、
+ *     そのテストがキーの名前を見ていること。
  * (c) open (直していない) の行は理由がある。open にしてよいのは OPEN_FILES_AT_1917 のファイルだけ
  *     (ほかのファイルを open にするときは、理由を書いて OPEN_FILES_AT_1917 にも足す)。
+ *     #1917 の続きで、価格の変更 (予約の行と DB の関数で直した) と MFA のリセット (記録の定義を「削除の前に数えた値」と明記した) を片付け、
+ *     いまは open の行は無い。
  *
  * 限界 (このテストは見張りであって、証明ではない):
  *  - オブジェクトのリテラルに書いたキーだけを見る。変数に入れたオブジェクト (例: details: updates) の中は見えない。
@@ -43,23 +48,40 @@ type PriorValueSource =
   | { kind: 'locked_rpc'; how: string; guardedBy: string }
   /** 読んだ値を条件にした更新 (0 行なら書かない・記録しない)。guardedBy は 0 行の振る舞いを確かめるテスト */
   | { kind: 'cas'; how: string; guardedBy: string }
+  /**
+   * 取り消せない操作 (DB の鍵をまたげない Auth の管理 API の削除など) より先に fail-closed で書く記録で、値は「操作の前に数えた値」と
+   * 記録の定義 (設計書) に明記してあるもの。how は定義の場所、guardedBy は手順の順と記録の値を確かめるテスト
+   */
+  | { kind: 'counted_before'; how: string; guardedBy: string }
   /** 名前は似ているが、変更前の値ではない (期間の始まり・一覧の条件など) */
   | { kind: 'not_prior'; why: string }
   /** 直していない (#1917 の範囲の外)。理由 */
   | { kind: 'open'; why: string };
 
-const PRICE_CHANGE_OPEN: PriorValueSource = {
-  kind: 'open',
-  why:
-    '#1917 の範囲の外 (別 Issue)。subscription_plans をロックも条件も無く読み、その値を plan_price_history と監査の old_* に書き、' +
-    '価格の UPDATE は .eq(id) だけ。読んでから書くまでの間に Edge Function (stripe-price-sync) で Stripe の Price の作成と旧 Price の無効化をするので、' +
-    'DB の鍵をまたげない (条件つきの UPDATE と 409、または Stripe を呼ぶ前に予約の行を取る形が要る)',
+/**
+ * 価格の変更の監査の old_* (#1917 の続き)。route は、プランごとの予約 (begin_plan_price_change) で価格の変更を 1 本ずつにし、
+ * 履歴と価格を apply_plan_price_change が 1 つのトランザクションで書く (履歴の old_* は DB の関数の中で書くので、ここの走査には出ない)。
+ * 監査の old_* は apply の戻り値 previous (プランの行を FOR NO KEY UPDATE でロックして読んだ、この更新の直前の値)
+ */
+const PRICE_CHANGE_LOCKED: PriorValueSource = {
+  kind: 'locked_rpc',
+  how:
+    'apply_plan_price_change がプランの行を FOR NO KEY UPDATE でロックして読んだ、この更新の直前の値 (戻り値の previous)。' +
+    '予約 (begin_plan_price_change) が自分のもののままのときだけ書くので、Stripe を呼ぶのは 1 本だけで、その間に別の価格の変更は入らない',
+  guardedBy: 'tests/price-change-reservation-route.test.ts',
 };
-const MFA_RESET_OPEN: PriorValueSource = {
-  kind: 'open',
-  why:
-    '#1917 の範囲の外 (別 Issue)。消す前の数を Auth の管理 API (listFactors) と backup codes の件数で数え、監査を削除より先に書く ' +
-    '(fail-closed の設計 cross/12-operator-mfa.md §14.7)。Auth の API の呼び出しは DB の鍵をまたげない',
+/** 価格の変更の監査の old_stripe_*_deactivated / *_skipped_reason: 変更前の値ではなく、Edge Function が旧 Price を無効化したかの結果 */
+const PRICE_CHANGE_DEACTIVATION_RESULT: PriorValueSource = {
+  kind: 'not_prior',
+  why: 'Edge Function stripe-price-sync が旧 Price を無効化したか (と、しなかった理由) の結果。変更前の値ではない',
+};
+/** MFA のリセットの監査の消す前の数 (#1917 の続き) */
+const MFA_RESET_COUNTED_BEFORE: PriorValueSource = {
+  kind: 'counted_before',
+  how:
+    'docs/design/cross/12-operator-mfa.md §17 の details の表が「削除の前に数えた値」と定義する (§14.7 の fail-closed: 監査を削除より先に書く)。' +
+    'Auth の管理 API (listFactors / deleteFactor) は DB の鍵をまたげない。route は数えた factor そのものを消す (src/app/api/super-admin/admins/[id]/mfa/reset/route.ts の冒頭の注記)',
+  guardedBy: 'tests/super-admin-mfa-reset-route.test.ts',
 };
 
 /**
@@ -142,27 +164,26 @@ const INVENTORY: Record<string, PriorValueSource> = {
   'src/app/api/super-admin/coupons/route.ts insert valid_from': { kind: 'not_prior', why: 'クーポンの有効期間の始まり' },
   'src/app/api/super-admin/coupons/route.ts recordAdminAudit valid_from': { kind: 'not_prior', why: 'クーポンの有効期間の始まり' },
 
-  'src/app/api/super-admin/plans/[id]/price-change/route.ts insert old_monthly_price_jpy': PRICE_CHANGE_OPEN,
-  'src/app/api/super-admin/plans/[id]/price-change/route.ts insert old_yearly_price_jpy': PRICE_CHANGE_OPEN,
-  'src/app/api/super-admin/plans/[id]/price-change/route.ts insert old_stripe_price_id': PRICE_CHANGE_OPEN,
-  'src/app/api/super-admin/plans/[id]/price-change/route.ts recordAdminAudit old_monthly_price_jpy': PRICE_CHANGE_OPEN,
-  'src/app/api/super-admin/plans/[id]/price-change/route.ts recordAdminAudit old_yearly_price_jpy': PRICE_CHANGE_OPEN,
-  'src/app/api/super-admin/plans/[id]/price-change/route.ts recordAdminAudit old_stripe_price_id': PRICE_CHANGE_OPEN,
-  'src/app/api/super-admin/plans/[id]/price-change/route.ts recordAdminAudit old_stripe_yearly_price_id': PRICE_CHANGE_OPEN,
-  'src/app/api/super-admin/plans/[id]/price-change/route.ts recordAdminAudit old_stripe_price_deactivated': PRICE_CHANGE_OPEN,
-  'src/app/api/super-admin/plans/[id]/price-change/route.ts recordAdminAudit old_stripe_price_deactivation_skipped_reason': PRICE_CHANGE_OPEN,
-  'src/app/api/super-admin/plans/[id]/price-change/route.ts recordAdminAudit old_stripe_yearly_price_deactivated': PRICE_CHANGE_OPEN,
+  'src/app/api/super-admin/plans/[id]/price-change/route.ts recordAdminAudit old_monthly_price_jpy': PRICE_CHANGE_LOCKED,
+  'src/app/api/super-admin/plans/[id]/price-change/route.ts recordAdminAudit old_yearly_price_jpy': PRICE_CHANGE_LOCKED,
+  'src/app/api/super-admin/plans/[id]/price-change/route.ts recordAdminAudit old_stripe_price_id': PRICE_CHANGE_LOCKED,
+  'src/app/api/super-admin/plans/[id]/price-change/route.ts recordAdminAudit old_stripe_yearly_price_id': PRICE_CHANGE_LOCKED,
+  'src/app/api/super-admin/plans/[id]/price-change/route.ts recordAdminAudit old_stripe_price_deactivated': PRICE_CHANGE_DEACTIVATION_RESULT,
+  'src/app/api/super-admin/plans/[id]/price-change/route.ts recordAdminAudit old_stripe_price_deactivation_skipped_reason':
+    PRICE_CHANGE_DEACTIVATION_RESULT,
+  'src/app/api/super-admin/plans/[id]/price-change/route.ts recordAdminAudit old_stripe_yearly_price_deactivated':
+    PRICE_CHANGE_DEACTIVATION_RESULT,
   'src/app/api/super-admin/plans/[id]/price-change/route.ts recordAdminAudit old_stripe_yearly_price_deactivation_skipped_reason':
-    PRICE_CHANGE_OPEN,
-  'src/app/api/super-admin/admins/[id]/mfa/reset/route.ts recordMfaAudit factors_before': MFA_RESET_OPEN,
-  'src/app/api/super-admin/admins/[id]/mfa/reset/route.ts recordMfaAudit backup_codes_before': MFA_RESET_OPEN,
+    PRICE_CHANGE_DEACTIVATION_RESULT,
+  'src/app/api/super-admin/admins/[id]/mfa/reset/route.ts recordMfaAudit factors_before': MFA_RESET_COUNTED_BEFORE,
+  'src/app/api/super-admin/admins/[id]/mfa/reset/route.ts recordMfaAudit backup_codes_before': MFA_RESET_COUNTED_BEFORE,
 };
 
-/** #1917 の時点で範囲の外にした open のファイル (open を増やすときは、ここにも足して理由を書く) */
-const OPEN_FILES_AT_1917 = new Set([
-  'src/app/api/super-admin/plans/[id]/price-change/route.ts',
-  'src/app/api/super-admin/admins/[id]/mfa/reset/route.ts',
-]);
+/**
+ * 範囲の外にした open のファイル (open を増やすときは、ここにも足して理由を書く)。
+ * #1917 の時点の 2 本 (価格の変更・MFA のリセット) は #1917 の続きで片付けたので、いまは無い
+ */
+const OPEN_FILES_AT_1917: ReadonlySet<string> = new Set<string>();
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 構文木の走査
@@ -292,13 +313,13 @@ describe('(a) 監査・履歴の「変更前の値」の出どころの表 (#191
 // (b) (c) 表の各行
 // ─────────────────────────────────────────────────────────────────────────────
 
-type GuardedSource = Extract<PriorValueSource, { kind: 'locked_rpc' | 'cas' }>;
+type GuardedSource = Extract<PriorValueSource, { kind: 'locked_rpc' | 'cas' | 'counted_before' }>;
 
 function isGuarded(source: PriorValueSource): source is GuardedSource {
-  return source.kind === 'locked_rpc' || source.kind === 'cas';
+  return source.kind === 'locked_rpc' || source.kind === 'cas' || source.kind === 'counted_before';
 }
 
-describe('(b) locked_rpc / cas の行は、同時の変更を確かめるテストがキーの名前を見ている', () => {
+describe('(b) locked_rpc / cas / counted_before の行は、確かめるテストがキーの名前を見ている', () => {
   const guarded = Object.entries(INVENTORY).flatMap(([entry, source]) =>
     isGuarded(source) ? [{ entry, key: entry.slice(entry.lastIndexOf(' ') + 1), source }] : [],
   );
@@ -316,9 +337,19 @@ describe('(b) locked_rpc / cas の行は、同時の変更を確かめるテス�
 });
 
 describe('(c) open (直していない) の行', () => {
-  it('理由があり、#1917 の時点で範囲の外にしたファイルだけ', () => {
-    const open = Object.entries(INVENTORY).filter(([, source]) => source.kind === 'open');
-    expect(open.length).toBeGreaterThan(0);
+  const open = Object.entries(INVENTORY).filter(([, source]) => source.kind === 'open');
+
+  it('#1917 の続きの後、open の行は無い (価格の変更と MFA のリセットを片付けた)', () => {
+    expect(open.map(([entry]) => entry)).toEqual([]);
+  });
+
+  it('OPEN_FILES_AT_1917 のファイルには open の行がある (片付けたファイルは一覧から外す)', () => {
+    for (const file of OPEN_FILES_AT_1917) {
+      expect(open.some(([entry]) => entry.startsWith(`${file} `)), file).toBe(true);
+    }
+  });
+
+  it('理由があり、範囲の外にしたファイル (OPEN_FILES_AT_1917) だけ', () => {
     for (const [entry, source] of open) {
       if (source.kind !== 'open') continue;
       expect(source.why.trim().length, entry).toBeGreaterThan(0);

@@ -426,3 +426,76 @@ describe('組織のプランの行 (org_*) の廃止では、組織の件数を�
     expect(family.json.error.organizations_note).toBeUndefined();
   });
 });
+
+describe('数えてから書くまでの間に入った契約は、書く文の中の DB のトリガーが止め、同じ 409 にする (#1917)', () => {
+  /** 数え上げは 0 件で通り、UPDATE が DB のトリガー guard_plan_deprecate_subscribers の RAISE で失敗する */
+  async function patchRaisedByTrigger(details: unknown, plan = existingPlan()) {
+    fakeSupabase = createFakeSupabase({
+      subscription_plans: [
+        { data: plan, error: null },
+        { data: null, error: { message: 'OP_PLAN_HAS_SUBSCRIBERS', code: 'P0001', details, hint: null } },
+      ],
+      admin_audit_logs: [{ data: null, error: null }],
+    });
+    subscribersDb = createFakePlanSubscribersDb({});
+    const res = await PATCH(patchRequest(DEPRECATE), { params: { id: 'plan-1' } });
+    return { res, json: (await res.json()) as ErrorBody };
+  }
+
+  it('トリガーの内訳 (DETAIL の JSON) で 409 OP_PLAN_HAS_SUBSCRIBERS を返し、監査ログを書かない', async () => {
+    const { res, json } = await patchRaisedByTrigger('{"family_groups": 0, "organizations": 0, "personal_subscriptions": 1}');
+
+    expect(res.status).toBe(409);
+    expect(json.error.code).toBe('OP_PLAN_HAS_SUBSCRIBERS');
+    expect(json.error.counts).toEqual({ personal_subscriptions: 1, family_groups: 0, organizations: 0 });
+    expect(json.error.message).toContain('個人契約 1 件');
+    // 公開中のプランなので「非公開にする」を案内する (数え上げの 409 と同じ文面)
+    expect(json.error.message).toContain('非公開にする');
+    expect(json.error.organizations_note).toBeUndefined();
+    expect(tablesTouched()).toEqual(['subscription_plans', 'subscription_plans']);
+  });
+
+  it('組織のプランの行 (org_*) では、内訳に組織の欄が無く、注記 (organizations_note) を返す', async () => {
+    const { res, json } = await patchRaisedByTrigger(
+      '{"family_groups": 2, "personal_subscriptions": 0}',
+      existingPlan({ plan_key: 'org_starter', plan_type: 'org' }),
+    );
+
+    expect(res.status).toBe(409);
+    expect(json.error.counts).toEqual({ personal_subscriptions: 0, family_groups: 2 });
+    expect(json.error.organizations_note).toBe(ORG_SUBSCRIPTION_PLAN_ROW_NOTE);
+  });
+
+  it.each([
+    ['JSON でない', 'not json'],
+    ['キーが足りない', '{"personal_subscriptions": 1}'],
+    ['知らないキーがある', '{"personal_subscriptions": 1, "family_groups": 0, "extra": 1}'],
+    ['文字列でない', null],
+  ])('内訳が %s ときは、廃止していない (トリガーが止めた) ので 500 OP_PLAN_SUBSCRIBER_CHECK_FAILED にし、ログに残す', async (_label, details) => {
+    const { res, json } = await patchRaisedByTrigger(details);
+
+    expect(res.status).toBe(500);
+    expect(json.error.code).toBe('OP_PLAN_SUBSCRIBER_CHECK_FAILED');
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      expect.stringContaining('廃止のトリガー'),
+      expect.objectContaining({ message: 'OP_PLAN_HAS_SUBSCRIBERS' }),
+      { plan_id: 'plan-1', plan_key: 'pro' },
+    );
+    expect(tablesTouched()).toEqual(['subscription_plans', 'subscription_plans']);
+  });
+
+  it('トリガー以外の UPDATE の失敗は、これまでどおり汎用の 500 (INTERNAL_ERROR)', async () => {
+    fakeSupabase = createFakeSupabase({
+      subscription_plans: [
+        { data: existingPlan(), error: null },
+        { data: null, error: { message: 'deadlock detected', code: '40P01', details: null, hint: null } },
+      ],
+    });
+    subscribersDb = createFakePlanSubscribersDb({});
+    const res = await PATCH(patchRequest(DEPRECATE), { params: { id: 'plan-1' } });
+    const json = (await res.json()) as ErrorBody;
+
+    expect(res.status).toBe(500);
+    expect(json.error.code).toBe('INTERNAL_ERROR');
+  });
+});

@@ -12,6 +12,10 @@
  * 入っていなければ 409 CONFLICT_STALE_DATA (cross/04 §4.2)。これで遷移表に無い遷移 (例: private を読んで public に戻す間に別の運営が deprecated にすると、書けば deprecated → public になる) は書かれず、
  * 監査の status_from は書いた時点の実際の直前の値と必ず一致する。
  * 削除 (DELETE) も同じで、draft のままのときだけ消す (0 行なら読み直して、無ければ 404、あれば 409 CONFLICT_STALE_DATA)。
+ *
+ * 廃止の安全弁 (#1127・#1912) は、書く前に route が契約者を数え (countPlanSubscribers)、さらに書く文の中で DB のトリガー
+ * guard_plan_deprecate_subscribers がプランの行を FOR UPDATE でロックし直し、commit 前の契約の作成を待ってから数え直す (#1917)。
+ * 数えてから書くまでの間に契約が入ったときは、トリガーが OP_PLAN_HAS_SUBSCRIBERS で止め、route は数え上げと同じ 409 を返す。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -25,6 +29,8 @@ import {
   PlanSubscriberCountError,
   countPlanSubscribers,
   isOrganizationsCounted,
+  isPlanHasSubscribersDbError,
+  parsePlanSubscriberCountsDetail,
   planHasSubscribersMessage,
   totalPlanSubscribers,
   type PlanSubscriberCounts,
@@ -40,6 +46,30 @@ type RouteContext = { params: Promise<{ id: string }> };
 const STALE_PLAN_RESPONSE = {
   error: { code: 'CONFLICT_STALE_DATA', message: '別の運営が先にこのプランを変えました。画面を読み込み直して、もう一度確認してください' },
 } as const;
+
+/** 契約者を数えられなかったので廃止を止めたとき (500)。DB の生のエラー文は返さない (#1172) */
+const SUBSCRIBER_CHECK_FAILED_RESPONSE = {
+  error: {
+    code: 'OP_PLAN_SUBSCRIBER_CHECK_FAILED',
+    message: '契約者数を確認できなかったため、廃止を中止しました。時間をおいて、もう一度お試しください。',
+  },
+} as const;
+
+/** 契約者がいるので廃止を止めたとき (409)。route の数え上げと、DB のトリガー (書く文の中の数え上げ。#1917) の両方で同じ本文にする */
+function planHasSubscribersResponse(counts: PlanSubscriberCounts, canUnpublish: boolean): NextResponse {
+  return NextResponse.json(
+    {
+      error: {
+        code: 'OP_PLAN_HAS_SUBSCRIBERS',
+        message: planHasSubscribersMessage(counts, { canUnpublish }),
+        counts,
+        // 組織の件数を数えていないときは、件数の欄 (counts.organizations) の代わりに注記を返す (#1912)
+        ...(isOrganizationsCounted(counts) ? {} : { organizations_note: ORG_SUBSCRIPTION_PLAN_ROW_NOTE }),
+      },
+    },
+    { status: 409 }
+  );
+}
 
 /** 列の値が送った値と同じか (配列は要素ごと、ends_at は時刻として比べる。DB は timestamptz を別の書式で返すため) */
 function sameColumnValue(column: string, current: unknown, requested: unknown): boolean {
@@ -188,32 +218,13 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
             plan_key: existing.plan_key,
             ...(countErr instanceof PlanSubscriberCountError ? { table: countErr.table, pg_code: countErr.pgCode } : {}),
           });
-          return NextResponse.json(
-            {
-              error: {
-                code: 'OP_PLAN_SUBSCRIBER_CHECK_FAILED',
-                message: '契約者数を確認できなかったため、廃止を中止しました。時間をおいて、もう一度お試しください。',
-              },
-            },
-            { status: 500 }
-          );
+          return NextResponse.json(SUBSCRIBER_CHECK_FAILED_RESPONSE, { status: 500 });
         }
 
         // 組織のプランの行では、組織の件数を「0 件」として判定に入れない (数えていないので counts に organizations が無い)。
         // 個人・家族の契約者がいれば、これまでどおり止める (#1912)
         if (totalPlanSubscribers(counts) > 0) {
-          return NextResponse.json(
-            {
-              error: {
-                code: 'OP_PLAN_HAS_SUBSCRIBERS',
-                message: planHasSubscribersMessage(counts, { canUnpublish: existing.status === 'public' }),
-                counts,
-                // 組織の件数を数えていないときは、件数の欄 (counts.organizations) の代わりに注記を返す (#1912)
-                ...(isOrganizationsCounted(counts) ? {} : { organizations_note: ORG_SUBSCRIPTION_PLAN_ROW_NOTE }),
-              },
-            },
-            { status: 409 }
-          );
+          return planHasSubscribersResponse(counts, existing.status === 'public');
         }
       }
     }
@@ -290,6 +301,18 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
     const { data: updated, error: updateErr } = await updateQuery.select().maybeSingle();
 
     if (updateErr) {
+      // #1917: 上の数え上げから書くまでの間に契約が入った (DB のトリガー guard_plan_deprecate_subscribers が、書く文の中で
+      // commit 前の契約を待ってから数え直して止めた)。上の数え上げと同じ 409 にする (内訳はトリガーの DETAIL)
+      if (isPlanHasSubscribersDbError(updateErr)) {
+        const dbCounts = parsePlanSubscriberCountsDetail(updateErr.details);
+        if (dbCounts) return planHasSubscribersResponse(dbCounts, existing.status === 'public');
+        // 内訳を読めなかった: 廃止はしていない (トリガーが止めた) ので、数えられなかったときと同じ 500 にする
+        logger.withUser(user.id).error('廃止のトリガーの契約者の内訳を読めませんでした (廃止はしていません)', updateErr, {
+          plan_id: params.id,
+          plan_key: existing.plan_key,
+        });
+        return NextResponse.json(SUBSCRIBER_CHECK_FAILED_RESPONSE, { status: 500 });
+      }
       return internalError('PATCH /api/super-admin/plans/[id]', updateErr, { userId: user.id }, { shape: 'nested' });
     }
 
