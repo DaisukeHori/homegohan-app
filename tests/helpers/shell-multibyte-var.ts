@@ -265,7 +265,8 @@ const indentOf = (l: string): number => /^[ \t]*/.exec(l)?.[0].length ?? 0;
 
 /**
  * workflow の YAML から run: の中身を取り出す (YAML を完全には解かない。このリポジトリの書き方 (`run: |` のブロックと
- * 1 行の run:) を読む)。ブロックの本文は、run の字の位置より深く字下げされた行 (と空行) が続く範囲。
+ * 1 行の run:) を読む)。ブロックの本文は、run の字の位置より深く字下げされた行 (と空行) が続く範囲で、
+ * 最初の空でない行の字下げを全行から外す (YAML のブロックの記法と同じ)。
  * 1 行の値が引用符で囲まれていれば、YAML の引用を外す ('' → ')。
  */
 export function extractWorkflowRunBlocks(yamlText: string): WorkflowRunBlock[] {
@@ -283,7 +284,10 @@ export function extractWorkflowRunBlocks(yamlText: string): WorkflowRunBlock[] {
         body.push(lines[k]);
         k += 1;
       }
-      blocks.push({ line: n + 1, scriptLine: n + 2, script: body.join("\n") });
+      // YAML と同じく、本文の最初の空でない行の字下げを全行から外す (外さないと、字下げされたヒアドキュメントの区切りの行を区切りと読めない)
+      const firstText = body.find((l) => l.trim() !== "");
+      const strip = firstText === undefined ? 0 : indentOf(firstText);
+      blocks.push({ line: n + 1, scriptLine: n + 2, script: body.map((l) => l.slice(Math.min(strip, indentOf(l)))).join("\n") });
       n = k - 1;
       continue;
     }

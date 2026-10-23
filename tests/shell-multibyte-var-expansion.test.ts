@@ -151,11 +151,29 @@ describe("workflow の run: の取り出し", () => {
       [14, 14],
       [16, 16],
     ]);
-    expect(blocks[0].script).toBe(['          echo ok', '          echo "$x。"', "", "          echo tail"].join("\n"));
+    expect(blocks[0].script).toBe(["echo ok", 'echo "$x。"', "", "echo tail"].join("\n"));
     expect(blocks[0].script).not.toContain("shell:");
-    expect(blocks[1].script).toBe('          echo "$y。"');
+    expect(blocks[1].script).toBe('echo "$y。"');
     expect(blocks[2].script).toBe("echo $z。");
     expect(blocks[3].script).toBe("echo $w。 it's");
+  });
+
+  it("ブロックの字下げを YAML と同じく外す (字下げされたヒアドキュメントの区切りの行を、区切りとして読める)", () => {
+    const withHeredoc = [
+      "steps:",
+      "  - run: |",
+      "      python3 - <<'PY'",
+      "      print('$x。')",
+      "      PY",
+      '      echo "$x。"',
+      "        echo deeper",
+    ].join("\n");
+    const [block] = extractWorkflowRunBlocks(withHeredoc);
+    expect(block.script).toBe(["python3 - <<'PY'", "print('$x。')", "PY", 'echo "$x。"', "  echo deeper"].join("\n"));
+    expect(scanShellMultibyteVars(block.script)).toEqual({
+      findings: [{ line: 4, name: "x", next: "。", text: 'echo "$x。"' }],
+      problems: [],
+    });
   });
 
   it("取り出した中身を走査すると、run: の中だけを見つける (env の値は見ない)", () => {
@@ -267,8 +285,9 @@ function runBash32(script: string) {
 
 describe.runIf(bash32Available())("bash 3.2 の実際の壊れ方と突き合わせる (macOS)", () => {
   it.each(BAD_CASES)("壊れる: $title", ({ script }) => {
+    // $( … ) とバッククォートの中で壊れたときは、子のシェルだけが落ち、外の echo の終了コードは 0 のまま
+    // (2026-10-23 に M2 の /bin/bash 3.2.57 で確かめた)。壊れたことは標準エラーの unbound variable で見る
     const r = runBash32(script);
-    expect(r.status).not.toBe(0);
     expect(r.stderr).toContain("unbound variable");
   });
 
