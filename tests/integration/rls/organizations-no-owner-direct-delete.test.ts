@@ -34,6 +34,11 @@
  *   - O-7: 運営の削除のポリシーは 20261017130000 の形 (TO authenticated・super_admin・operator_mfa_satisfied()) のまま残り、
  *          運営 (MFA 前・MFA 済み) の PostgREST の DELETE の結果は修正の前と同じ (所属していない組織は 0 行)
  *   - O-8: service_role の直接の DELETE (テストと e2e の後片付け) は今までどおり通る
+ *   - O-9: 組織の行の DELETE (運営・service_role に残る経路) のロックの順。DELETE 文は最初に組織の行を取り、そのあとで CASCADE が
+ *          招待の行 (organization_invites) を消すので、組織の行を持ったまま招待の行を待つ。CLAUDE.md の「組織 (organizations) を
+ *          変える関数のロック順」の段の順 ((1) 招待の行 → (2) 組織の行) と逆で、招待の行を先に取る招待の承諾 (accept_org_invite) と
+ *          同時に走ると、まれにどちらかが 40P01 で失敗する (既知)。その前提 (DELETE が段の順のとおりではないこと) を、
+ *          招待の行を持つ接続を pg_sleep で止めて、タイミングに頼らずに確かめる (org-transfer-toctou.test.ts と同じ道具)
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh)。Next の開発サーバーは要らない (RPC と PostgREST を直接呼ぶ)。
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
@@ -86,6 +91,18 @@ const CHALLENGE_END_IN_DAYS = 37;
 /** 結合テストの準備と後片付けの時間の上限 (ミリ秒。利用者・組織を複数作る) */
 const SETUP_TIMEOUT_MS = 180_000;
 const TEST_TIMEOUT_MS = 120_000;
+/**
+ * O-9: 招待の行を持つ接続がコミット前のまま待つ秒数。そのあいだに DELETE を投げ、待ちに入ったこと・組織の行を持っていることを
+ * 確かめ終えなければならないので、org-transfer-toctou.test.ts の ORDER_HOLD_SECONDS と同じ長さを取る (結合テストが混んでいても間に合う)
+ */
+const HOLD_SECONDS = 5;
+/** O-9: 接続が pg_sleep / ロックの待ちに入るのを待つ上限 (ミリ秒) と確かめる間隔 (org-transfer-toctou.test.ts と同じ) */
+const BACKEND_STATE_DEADLINE_MS = 20_000;
+const BACKEND_STATE_POLL_MS = 50;
+/** 行のロックを NOWAIT で取れなかったときの SQLSTATE (lock_not_available) */
+const LOCK_NOT_AVAILABLE = '55P03';
+/** O-9: 接続を pg_stat_activity で見分ける目印の乱数のバイト数 (hex で 12 文字。org-transfer-toctou.test.ts と同じ) */
+const MARKER_BYTES = 6;
 
 type OrgRole = 'owner' | 'admin' | 'member';
 
@@ -116,6 +133,39 @@ async function pgQuery<T = Record<string, unknown>>(query: string): Promise<T[]>
   const res = await pgRequest(query);
   if (!res.ok) throw new Error(`pg/query ${res.status}: ${JSON.stringify(res.body)}`);
   return res.body as T[];
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * SQL に marker を埋めた接続が、state の条件 (pg_stat_activity の列の条件) に入るまで待ち、その接続の pid を返す。
+ * 先に request が終わってしまったら (条件に入る前に失敗・成功した)、競合の再現にならないので理由を示して止める
+ */
+async function waitForBackend(
+  marker: string,
+  state: string,
+  request: { settled: () => boolean; describe: () => string },
+): Promise<number> {
+  const deadline = Date.now() + BACKEND_STATE_DEADLINE_MS;
+  while (Date.now() < deadline) {
+    if (request.settled()) throw new Error(`接続が ${state} に入る前に終わりました: ${request.describe()}`);
+    const rows = await pgQuery<{ pid: number }>(`
+      SELECT pid FROM pg_stat_activity
+      WHERE ${state} AND query LIKE '%${marker}%' AND pid <> pg_backend_pid()`);
+    if (rows.length === 1 && rows[0]) return rows[0].pid;
+    await sleep(BACKEND_STATE_POLL_MS);
+  }
+  throw new Error(`接続が ${state} に入りませんでした (遅すぎます)`);
+}
+
+/** pg/query を投げ (終わりを待たない)、終わったかと結果を後から見られるようにする */
+function startPgRequest(query: string) {
+  const state: { result: Awaited<ReturnType<typeof pgRequest>> | null } = { result: null };
+  const done = pgRequest(query).then((res) => {
+    state.result = res;
+    return res;
+  });
+  return { done, settled: () => state.result !== null, describe: () => JSON.stringify(state.result) };
 }
 
 async function signIn(email: string): Promise<{ client: SupabaseClient; jwt: string }> {
@@ -480,5 +530,46 @@ describe('#1917 の続き: 解散の仕組みと運営・service_role の削除�
     expect(data).toEqual([{ id: srOrg.orgId }]);
     expect(await orgRow(srOrg.orgId)).toBeNull();
     expect(await childCounts(srOrg.orgId, srOrg.children)).toEqual(ALL_CHILDREN_GONE);
+  }, TEST_TIMEOUT_MS);
+});
+
+describe('#1917 の続き: 組織の行の DELETE のロックの順 (CLAUDE.md の「組織 (organizations) を変える関数のロック順」)', () => {
+  it('O-9: 組織の行の DELETE は組織の行 (段 2) を持ったまま、CASCADE で招待の行 (段 1) を待つ (段の順と逆)', async () => {
+    const lockOwner = await createUser('o9-owner');
+    const target = await createOrg(lockOwner, 'o9', false);
+    const holderMarker = `org-no-direct-delete-invite-holder-${randomBytes(MARKER_BYTES).toString('hex')}`;
+    const deleteMarker = `org-no-direct-delete-org-delete-${randomBytes(MARKER_BYTES).toString('hex')}`;
+
+    // 招待の行を、招待の承諾 (accept_org_invite) の最初のロックと同じ FOR UPDATE で取り、コミット前のまま待つ
+    const holder = startPgRequest(`/* ${holderMarker} */
+      SELECT 1 FROM public.organization_invites WHERE id = '${target.children.inviteId}'::uuid FOR UPDATE;
+      SELECT pg_sleep(${HOLD_SECONDS});
+      SELECT 'held' AS result;`);
+    const holderPid = await waitForBackend(holderMarker, "wait_event = 'PgSleep'", holder);
+
+    // 組織の行の DELETE (postgres の権限。service_role・運営の DELETE と同じ文の性質)
+    const deletion = startPgRequest(`/* ${deleteMarker} */
+      DELETE FROM public.organizations WHERE id = '${target.orgId}'::uuid;`);
+    const deletePid = await waitForBackend(deleteMarker, "wait_event_type = 'Lock'", deletion);
+
+    // DELETE を止めているのは、招待の行を持つ接続だけ
+    const [blocking] = await pgQuery<{ blocked_by: number[] }>(`SELECT pg_blocking_pids(${deletePid}) AS blocked_by;`);
+    expect(blocking?.blocked_by).toEqual([holderPid]);
+    // 待っているあいだ、DELETE は組織の行を持っている (招待の承諾の 2 つめのロックと同じ FOR NO KEY UPDATE は NOWAIT で取れない)
+    const orgLock = await pgRequest(`SELECT 1 FROM public.organizations WHERE id = '${target.orgId}'::uuid FOR NO KEY UPDATE NOWAIT;`);
+    expect(orgLock.ok, JSON.stringify(orgLock.body)).toBe(false);
+    expect((orgLock.body as { code?: unknown } | null)?.code).toBe(LOCK_NOT_AVAILABLE);
+    // 番兵: 上の確かめは招待の行を放す前に済んだ (放したあとなら DELETE は終わっていて、NOWAIT のロックは取れてしまう)。
+    // DELETE はまだコミットしていないので、ほかの接続からは組織の行も子の記録もまだ見える
+    expect(holder.settled()).toBe(false);
+    expect(await orgRow(target.orgId)).not.toBeNull();
+    expect(await childCounts(target.orgId, target.children)).toEqual(ALL_CHILDREN_PRESENT);
+
+    // 招待の行が放されると、DELETE が続きを済ませて組織の行と子の記録が消える
+    const [holderRes, deleteRes] = await Promise.all([holder.done, deletion.done]);
+    expect(holderRes.ok, JSON.stringify(holderRes.body)).toBe(true);
+    expect(deleteRes.ok, JSON.stringify(deleteRes.body)).toBe(true);
+    expect(await orgRow(target.orgId)).toBeNull();
+    expect(await childCounts(target.orgId, target.children)).toEqual(ALL_CHILDREN_GONE);
   }, TEST_TIMEOUT_MS);
 });
