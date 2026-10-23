@@ -55,13 +55,6 @@ const PRICE_CHANGE_OPEN: PriorValueSource = {
     '価格の UPDATE は .eq(id) だけ。読んでから書くまでの間に Edge Function (stripe-price-sync) で Stripe の Price の作成と旧 Price の無効化をするので、' +
     'DB の鍵をまたげない (条件つきの UPDATE と 409、または Stripe を呼ぶ前に予約の行を取る形が要る)',
 };
-const TRANSFER_OPEN: PriorValueSource = {
-  kind: 'open',
-  why:
-    '#1917 の範囲の外 (別 Issue)。from_user_id は RPC の前にロックの外で読んだ旧オーナー / 旧代表者 (旧オーナー / 旧代表者への知らせの宛先にも使う)。' +
-    'RPC は更新した後の行を返すので、ロックの下で読んだ旧オーナー / 旧代表者を返すように RPC と migration を変える必要がある ' +
-    '(RPC の中の membership_audit の old_owner_id / old_rep_id はロックの下で読んでいる)',
-};
 const MFA_RESET_OPEN: PriorValueSource = {
   kind: 'open',
   why:
@@ -74,6 +67,16 @@ const MFA_RESET_OPEN: PriorValueSource = {
  * 新しく書いたら 1 行足す。
  */
 const INVENTORY: Record<string, PriorValueSource> = {
+  'src/app/api/operator/membership/org/[id]/transfer/route.ts recordAdminAudit from_user_id': {
+    kind: 'locked_rpc',
+    how: 'operator_force_owner_transfer が組織の行を FOR NO KEY UPDATE でロックして読んだ旧オーナー (戻り値の old_owner_id。membership_audit の old_owner_id と同じ値)。戻り値が古い形 (migration の前の DB) のときだけ RPC の前の控えで記録してログに残す',
+    guardedBy: 'src/__tests__/api/operator/membership/org-transfer.test.ts',
+  },
+  'src/app/api/operator/membership/family/[id]/transfer/route.ts recordAdminAudit from_user_id': {
+    kind: 'locked_rpc',
+    how: 'operator_force_representative_transfer が家族の行を FOR NO KEY UPDATE でロックして読んだ旧代表者 (戻り値の old_rep_id。membership_audit の old_rep_id と同じ値)。戻り値が古い形 (migration の前の DB) のときだけ RPC の前の控えで記録してログに残す',
+    guardedBy: 'src/__tests__/api/operator/membership/family-transfer.test.ts',
+  },
   'src/app/api/admin/users/[id]/role/route.ts recordAdminAudit previous_roles': {
     kind: 'locked_rpc',
     how: 'admin_set_user_roles が対象の行を FOR NO KEY UPDATE でロックして読んだ、変える前の roles (戻り値の previous_roles)',
@@ -151,8 +154,6 @@ const INVENTORY: Record<string, PriorValueSource> = {
   'src/app/api/super-admin/plans/[id]/price-change/route.ts recordAdminAudit old_stripe_yearly_price_deactivated': PRICE_CHANGE_OPEN,
   'src/app/api/super-admin/plans/[id]/price-change/route.ts recordAdminAudit old_stripe_yearly_price_deactivation_skipped_reason':
     PRICE_CHANGE_OPEN,
-  'src/app/api/operator/membership/org/[id]/transfer/route.ts recordAdminAudit from_user_id': TRANSFER_OPEN,
-  'src/app/api/operator/membership/family/[id]/transfer/route.ts recordAdminAudit from_user_id': TRANSFER_OPEN,
   'src/app/api/super-admin/admins/[id]/mfa/reset/route.ts recordMfaAudit factors_before': MFA_RESET_OPEN,
   'src/app/api/super-admin/admins/[id]/mfa/reset/route.ts recordMfaAudit backup_codes_before': MFA_RESET_OPEN,
 };
@@ -160,8 +161,6 @@ const INVENTORY: Record<string, PriorValueSource> = {
 /** #1917 の時点で範囲の外にした open のファイル (open を増やすときは、ここにも足して理由を書く) */
 const OPEN_FILES_AT_1917 = new Set([
   'src/app/api/super-admin/plans/[id]/price-change/route.ts',
-  'src/app/api/operator/membership/org/[id]/transfer/route.ts',
-  'src/app/api/operator/membership/family/[id]/transfer/route.ts',
   'src/app/api/super-admin/admins/[id]/mfa/reset/route.ts',
 ]);
 
