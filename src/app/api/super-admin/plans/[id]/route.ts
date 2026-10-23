@@ -11,6 +11,7 @@
  * 読んでから書くまでに別の運営が変えていたら 0 行で、読み直した行に送った変更がもう入っていれば 200 (書かず記録もしない)、
  * 入っていなければ 409 CONFLICT_STALE_DATA (cross/04 §4.2)。これで遷移表に無い遷移 (例: private を読んで public に戻す間に別の運営が deprecated にすると、書けば deprecated → public になる) は書かれず、
  * 監査の status_from は書いた時点の実際の直前の値と必ず一致する。
+ * 削除 (DELETE) も同じで、draft のままのときだけ消す (0 行なら読み直して、無ければ 404、あれば 409 CONFLICT_STALE_DATA)。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -372,13 +373,36 @@ export async function DELETE(request: NextRequest, props: RouteContext) {
       );
     }
 
-    const { error: deleteErr } = await supabase
+    // draft のままのときだけ消す (読んでから消すまでに別の運営が公開していたら 0 行。公開したプランを消さない)
+    const { data: deleted, error: deleteErr } = await supabase
       .from('subscription_plans')
       .delete()
-      .eq('id', params.id);
+      .eq('id', params.id)
+      .eq('status', 'draft')
+      .select('id')
+      .maybeSingle();
 
     if (deleteErr) {
       return internalError('DELETE /api/super-admin/plans/[id]', deleteErr, { userId: user.id }, { shape: 'nested' });
+    }
+
+    if (!deleted) {
+      // 0 行: 読み直して、消えていれば 404、残っていれば (draft でなくなった) 409。どちらも記録しない
+      const { data: current, error: rereadErr } = await supabase
+        .from('subscription_plans')
+        .select('id')
+        .eq('id', params.id)
+        .maybeSingle();
+      if (rereadErr) {
+        return internalError('DELETE /api/super-admin/plans/[id]', rereadErr, { userId: user.id }, { shape: 'nested' });
+      }
+      if (!current) {
+        return NextResponse.json(
+          { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } },
+          { status: 404 }
+        );
+      }
+      return NextResponse.json(STALE_PLAN_RESPONSE, { status: 409 });
     }
 
     // 監査ログ記録

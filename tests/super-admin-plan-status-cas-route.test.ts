@@ -7,6 +7,7 @@
  *   - 入っていなければ 409 CONFLICT_STALE_DATA (書かず、監査も残さない)
  *   - 行が消えていれば 404 OP_PLAN_NOT_FOUND
  * 遷移表に無い遷移 (deprecated → public など) は書かれず、監査の status_from は書いた時点の実際の直前の status と一致する。
+ * DELETE も同じく、draft のままのときだけ消す (読んでから消すまでに公開されていたら 409、消えていたら 404。どちらも記録しない)。
  *
  * 別の運営の操作は、route が subscription_plans の更新を DB に送る直前に割り込ませて再現する
  * (schema-checked-db は route が付けた .eq / .not の条件を実際に当てるので、条件の付け忘れは 200 と書き込みで見える)。
@@ -29,7 +30,7 @@ vi.mock('@/lib/db-logger', () => ({
 /** 運営 (super_admin) のセッションの client が見る DB (プランと監査ログ) */
 let db: SchemaDb;
 
-/** 読んでから書くまでの間に割り込む処理 (別の運営の操作)。route が subscription_plans の更新を送る直前に 1 回だけ実行する */
+/** 読んでから書くまでの間に割り込む処理 (別の運営の操作)。route が subscription_plans の更新 (または削除) を送る直前に 1 回だけ実行する */
 let beforePlanUpdate: (() => PromiseLike<unknown>) | null = null;
 
 function interleavingFrom(table: string) {
@@ -40,6 +41,11 @@ function interleavingFrom(table: string) {
   query.update = (values) => {
     isUpdate = true;
     return update(values);
+  };
+  const remove = query.delete.bind(query);
+  query.delete = () => {
+    isUpdate = true;
+    return remove();
   };
   type Result = Awaited<ReturnType<typeof query.single>>;
   const wrap = (terminal: () => Promise<Result>) => async (): Promise<Result> => {
@@ -61,7 +67,7 @@ vi.mock('@/lib/supabase/server', () => ({
   getSupabaseAdmin: () => createFakePlanSubscribersDb().client,
 }));
 
-const { PATCH } = await import('@/app/api/super-admin/plans/[id]/route');
+const { PATCH, DELETE } = await import('@/app/api/super-admin/plans/[id]/route');
 
 const PLAN_ID = '00000000-0000-4000-8000-000000000101';
 const ACTOR = { id: '00000000-0000-4000-8000-000000000001', email: 'sa@example.com', roles: ['super_admin'], organization_id: null };
@@ -222,6 +228,44 @@ describe('読んでから書くまでに別の運営が変えた', () => {
     setup(planRow({ status: 'draft' }));
     beforePlanUpdate = () => db.from('subscription_plans').delete().eq('id', PLAN_ID);
     const res = await patch({ display_name: '新しい名前' });
+    expect(res.status).toBe(404);
+    expect((await json(res)).error.code).toBe('OP_PLAN_NOT_FOUND');
+    expect(auditRows()).toHaveLength(0);
+  });
+});
+
+describe('DELETE: draft のままのときだけ消す', () => {
+  const remove = () =>
+    DELETE(new Request(`http://localhost/api/super-admin/plans/${PLAN_ID}`, { method: 'DELETE' }) as never, {
+      params: Promise.resolve({ id: PLAN_ID }),
+    });
+
+  it('割り込みが無いとき: 204 で消し、監査 delete_plan を 1 行残す。削除は status = draft を条件にする', async () => {
+    setup(planRow({ status: 'draft' }));
+    const res = await remove();
+    expect(res.status).toBe(204);
+    expect(planNow()).toBeUndefined();
+    expect(auditRows().map((row) => row.action_type)).toEqual(['delete_plan']);
+    expect(db.recorded('subscription_plans', 'delete')[0].eq).toEqual([
+      ['id', PLAN_ID],
+      ['status', 'draft'],
+    ]);
+  });
+
+  it('読んでから消すまでに別の運営が公開した: 409 CONFLICT_STALE_DATA。公開したプランは消えず、監査も残らない', async () => {
+    setup(planRow({ status: 'draft' }));
+    beforePlanUpdate = otherOperatorUpdates({ status: 'public' });
+    const res = await remove();
+    expect(res.status).toBe(409);
+    expect((await json(res)).error.code).toBe('CONFLICT_STALE_DATA');
+    expect(planNow()?.status).toBe('public');
+    expect(auditRows()).toHaveLength(0);
+  });
+
+  it('読んでから消すまでに別の運営が消した: 404 OP_PLAN_NOT_FOUND で、監査も残さない', async () => {
+    setup(planRow({ status: 'draft' }));
+    beforePlanUpdate = () => db.from('subscription_plans').delete().eq('id', PLAN_ID);
+    const res = await remove();
     expect(res.status).toBe(404);
     expect((await json(res)).error.code).toBe('OP_PLAN_NOT_FOUND');
     expect(auditRows()).toHaveLength(0);
