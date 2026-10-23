@@ -6,8 +6,9 @@
  *   1. release_user_membership: 所属をロックを取らずに読む → 組織の行 (FOR NO KEY UPDATE) → 本人の user_profiles (FOR NO KEY UPDATE) →
  *      所属が変わっていれば CONFLICT_RETRY / 何もしない → 本人が組織の行の owner_id なら IS_ORG_OWNER → 所属を外す の順。
  *      所属を外す書き込み (UPDATE・席数・監査) は前の定義と逐語で同じ。組織の行は 1 回だけ取り、取り直しのループは無い
- *   2. operator_force_owner_transfer: 前の定義 (20261022140000) の、旧オーナーの行への UPDATE に AND organization_id = p_organization_id を
- *      足しただけ (権限・MFA・ロック・判定・エラーとその順番・監査・戻り値は同じ)
+ *   2. operator_force_owner_transfer: この migration の定義は、前の定義 (20261022140000) の、旧オーナーの行への UPDATE に
+ *      AND organization_id = p_organization_id を足しただけ (権限・MFA・ロック・判定・エラーとその順番・監査・戻り値は同じ)。
+ *      最新の定義 (20261023120000 が戻り値を jsonb にした。#1917) でも、在籍の条件つきの UPDATE が残っていること
  *   3. この migration は権限 (GRANT / REVOKE) を変えない
  *   4. 戻し口が実在し、2 つの関数を前の定義に逐語で戻す
  * 実際の挙動 (退会の所属の解放と譲渡の同時の実行) は tests/integration/security/org-transfer-toctou-release-membership.test.ts (実 DB) が確かめる。
@@ -162,26 +163,32 @@ describe('release_user_membership の最新の定義', () => {
   });
 });
 
-describe('operator_force_owner_transfer の最新の定義', () => {
-  const { file, header, body: rawBody } = latestOf('operator_force_owner_transfer');
+describe('operator_force_owner_transfer: この migration の定義と最新の定義', () => {
+  const ownDefinitions = definitionsIn(
+    `${MIGRATION}.sql`,
+    fs.readFileSync(path.join(MIGRATIONS_DIR, `${MIGRATION}.sql`), 'utf-8'),
+    'operator_force_owner_transfer',
+  );
+  const latest = latestOf('operator_force_owner_transfer');
   const previous = previousOf('operator_force_owner_transfer');
   const oldOwnerWrite = "UPDATE user_profiles SET org_role = 'admin' WHERE id = v_old_owner_id;";
   const guardedOldOwnerWrite = "UPDATE user_profiles SET org_role = 'admin' WHERE id = v_old_owner_id AND organization_id = p_organization_id;";
 
-  it('最新の定義はこの migration で、前の定義 (20261022140000) と見出しが同じ', () => {
-    expect(file).toBe(`${MIGRATION}.sql`);
+  it('この migration の定義は 1 つで、前の定義 (20261022140000) と見出しが同じ。最新の定義はこの migration かそれより後 (20261023120000 が戻り値を jsonb にした。#1917)', () => {
+    expect(ownDefinitions).toHaveLength(1);
     expect(previous.file).toBe('20261022140000_org_transfer_toctou.sql');
-    expect(squash(header)).toBe(squash(previous.header));
+    expect(squash(ownDefinitions[0].header)).toBe(squash(previous.header));
+    expect(latest.file >= `${MIGRATION}.sql`, latest.file).toBe(true);
   });
 
-  it('コメントを除くと、前の定義の旧オーナーの行への UPDATE に AND organization_id = p_organization_id を足しただけ', () => {
+  it('コメントを除くと、この migration の定義は前の定義の旧オーナーの行への UPDATE に AND organization_id = p_organization_id を足しただけ', () => {
     const previousBody = squash(stripLineComments(previous.body));
     expect(previousBody).toContain(oldOwnerWrite);
-    expect(squash(stripLineComments(rawBody))).toBe(previousBody.replace(oldOwnerWrite, guardedOldOwnerWrite));
+    expect(squash(stripLineComments(ownDefinitions[0].body))).toBe(previousBody.replace(oldOwnerWrite, guardedOldOwnerWrite));
   });
 
-  it('旧オーナーの org_role を書く文は、在籍の条件つきの 1 つだけ (条件の無い UPDATE は残っていない)', () => {
-    const flat = squash(stripLineComments(rawBody));
+  it('最新の定義でも、旧オーナーの org_role を書く文は、在籍の条件つきの 1 つだけ (条件の無い UPDATE は残っていない)', () => {
+    const flat = squash(stripLineComments(latest.body));
     expect(flat.split(guardedOldOwnerWrite)).toHaveLength(2);
     expect(flat).not.toContain(oldOwnerWrite);
   });

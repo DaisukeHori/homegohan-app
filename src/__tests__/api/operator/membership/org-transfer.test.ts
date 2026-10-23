@@ -3,12 +3,13 @@ import { EmailSendError } from '@/lib/emails/send-result';
 import { NextRequest } from 'next/server';
 import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE } from '@/lib/api/errors';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { createFakeServiceRole, leadingUsers, valueUnder, type FakeServiceRole } from './fake-service-role';
+import { createFakeServiceRole, leadingUsers, valueUnder, type FakeServiceRole, type Row } from './fake-service-role';
 
 // 外部との境界はすべてモックにする。通知の宛先・本文を決める本体 (route と renderForceTransferEmail) は実物を通す
 const mocks = vi.hoisted(() => ({
   requireSuperAdmin: vi.fn(),
   rpc: vi.fn(),
+  auditInsert: vi.fn(),
   createServiceRoleClient: vi.fn(),
   sendEmail: vi.fn(),
   logError: vi.fn(),
@@ -20,13 +21,19 @@ vi.mock('@/lib/auth/operator-permissions', () => ({
   requireSuperAdmin: mocks.requireSuperAdmin,
 }));
 
-// RPC は運営者本人のセッションで実行される (cookies() を使う本物の createClient は使わない)。
+// RPC と監査 (admin_audit_logs への insert) は運営者本人のセッションで実行される (cookies() を使う本物の createClient は使わない)。
 // service-role のクライアントは本物の getSupabaseAdmin を通す (#1162。接続情報は env-required の getter で取り出し、
 // 下で差し替えた @supabase/supabase-js の createClient で作る)。呼ばれた回数を数える
 vi.mock('@/lib/supabase/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/supabase/server')>();
   return {
-    createClient: () => ({ rpc: mocks.rpc }),
+    createClient: () => ({
+      rpc: mocks.rpc,
+      from: (table: string) => {
+        if (table !== 'admin_audit_logs') throw new Error(`unexpected table on the session client: ${table}`);
+        return { insert: mocks.auditInsert };
+      },
+    }),
     getSupabaseAdmin: vi.fn(actual.getSupabaseAdmin),
   };
 });
@@ -113,28 +120,51 @@ function buildFake(leadingUserCount = 0): FakeServiceRole {
   });
 }
 
+/** organizations の行の owner_id を書き換える (ロックの下の書き換え: 旧オーナーを admin に、新オーナーを owner に)。書き換える前の owner_id を返す */
+function reassignOwner(fake: FakeServiceRole, org: Row, newOwnerId: unknown): unknown {
+  const profiles = fake.tables.user_profiles;
+  const previousOwnerId = org.owner_id;
+  const oldOwner = profiles.find((p) => p.id === previousOwnerId);
+  if (oldOwner) oldOwner.org_role = 'admin';
+  const target = profiles.find((p) => p.id === newOwnerId);
+  if (target) target.org_role = 'owner';
+  org.owner_id = newOwnerId;
+  return previousOwnerId;
+}
+
 /**
- * operator_force_owner_transfer の挙動 (supabase/baseline/prod_schema.sql) を再現する。
- * ★organizations.owner_id を新オーナーへ書き換えた「後の」行を返す。ここが #1209 の原因そのもの。
+ * operator_force_owner_transfer の挙動 (最新の定義は supabase/migrations/20261023120000_operator_transfer_return_old_owner.sql) を再現する。
+ * 組織の行をロックしてから owner_id (旧オーナー) を読み、owner_id を新オーナーへ書き換え、
+ * {"organization": 書き換えた「後の」行, "old_owner_id": ロックの下で読んだ旧オーナー} を返す (#1917)。
+ * 書き換えた後の行の owner_id は新オーナーなので、それを旧オーナーとして使う実装は #1209 と同じ理由で壊れる。
  * 新オーナーの id は Postgres の uuid と同じく大文字小文字を区別せずに比べ、保存するのは行の id (小文字) にする (#1790)。
  * そのため大文字の to_user_id をそのまま RPC に渡しても譲渡は成り立ち、route の側の突き合わせのずれだけがテストに出る
  */
 function simulateOwnerTransfer(fake: FakeServiceRole, args: RpcArgs) {
   fake.events.push(`rpc:${RPC_NAME}`);
-  const profiles = fake.tables.user_profiles;
-  const target = profiles.find(
+  const target = fake.tables.user_profiles.find(
     (p) =>
       String(p.id).toLowerCase() === args.p_new_owner_id.toLowerCase() && p.organization_id === args.p_organization_id,
   );
   const org = fake.tables.organizations.find((o) => o.id === args.p_organization_id);
   if (!target || !org) return { data: null, error: { message: 'TARGET_NOT_IN_ORG', code: 'P0001' } };
 
-  const oldOwner = profiles.find((p) => p.id === org.owner_id);
-  if (oldOwner) oldOwner.org_role = 'admin';
-  target.org_role = 'owner';
-  org.owner_id = target.id;
-  return { data: { ...org }, error: null };
+  const oldOwnerId = reassignOwner(fake, org, target.id);
+  return { data: { organization: { ...org }, old_owner_id: oldOwnerId }, error: null };
 }
+
+/**
+ * #1917 の migration の前の定義 (20261022160000_release_membership_owner_race.sql) の RPC: 書き換えた後の行だけを返し、旧オーナーを返さない。
+ * migration を当てる前の DB に新しい route が当たったときの形
+ */
+function simulateOwnerTransferBeforeMigration(fake: FakeServiceRole, args: RpcArgs) {
+  const result = simulateOwnerTransfer(fake, args);
+  if (result.error) return result;
+  return { data: result.data.organization, error: null };
+}
+
+/** admin_audit_logs に書いた行 (recordAdminAudit の insert の引数) */
+const auditRows = () => mocks.auditInsert.mock.calls.map(([row]) => row as { details: Record<string, unknown> });
 
 let fake: FakeServiceRole;
 
@@ -152,6 +182,7 @@ beforeEach(() => {
     return simulateOwnerTransfer(fake, args);
   });
   mocks.sendEmail.mockResolvedValue({ id: 'email-1' });
+  mocks.auditInsert.mockResolvedValue({ error: null });
   mocks.withUser.mockImplementation(() => ({
     debug: vi.fn(),
     info: vi.fn(),
@@ -393,9 +424,25 @@ describe('POST /api/operator/membership/org/[id]/transfer: 通知メールの宛
     });
   });
 
-  it('譲渡前の組織情報を読めなかったときも譲渡は完了させ、誤った宛先・本文を送らずに構造化ログへ残す', async () => {
+  it('RPC の前の控えを読めなくても、RPC が返した旧オーナー・組織名で、旧オーナー・新オーナー・メンバーに通知し、監査にも残す (#1917)', async () => {
+    fake.readErrors.organizations = { message: 'connection reset by peer', code: '08006' };
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    const roleOf = (address: string) => renderedVars().find((vars) => vars.recipient_email === address)?.recipient_role;
+    expect(roleOf(OLD_EMAIL)).toBe('old_owner');
+    expect(roleOf(NEW_EMAIL)).toBe('new_owner');
+    expect(roleOf(MEMBER_EMAIL)).toBe('member');
+    expect(renderedVars().every((vars) => vars.scope_name === 'ほめゴハン株式会社')).toBe(true);
+    expect(auditRows().map((row) => row.details.from_user_id)).toEqual([OLD_OWNER_ID]);
+    expect(mocks.logError).not.toHaveBeenCalled();
+  });
+
+  it('戻り値が古い形 (migration の前の DB) で、譲渡前の組織情報も読めなかったときは、譲渡は完了させ、誤った宛先・本文を送らずに構造化ログへ残す', async () => {
     const readError = { message: 'connection reset by peer', code: '08006' };
     fake.readErrors.organizations = readError;
+    mocks.rpc.mockImplementation(async (_name: string, args: RpcArgs) => simulateOwnerTransferBeforeMigration(fake, args));
 
     const res = await call();
 
@@ -409,6 +456,8 @@ describe('POST /api/operator/membership/org/[id]/transfer: 通知メールの宛
       organization_id: ORG_ID,
       to_user_id: NEW_OWNER_ID,
     });
+    // 旧オーナーが分からないので、監査の from_user_id は null (推測で埋めない)
+    expect(auditRows().map((row) => row.details.from_user_id)).toEqual([null]);
   });
 
   it('service-role の環境変数が無くても譲渡は止めず、通知だけを省いて構造化ログへ残す', async () => {
@@ -426,6 +475,137 @@ describe('POST /api/operator/membership/org/[id]/transfer: 通知メールの宛
       expect.objectContaining({ name: 'MissingEnvError', envName: 'SUPABASE_SERVICE_ROLE_KEY' }),
       { organization_id: ORG_ID, to_user_id: NEW_OWNER_ID },
     );
+  });
+});
+
+describe('POST /api/operator/membership/org/[id]/transfer: 監査の from_user_id と旧オーナーへの知らせは、RPC が組織の行のロックの下で読んだ旧オーナー (#1917)', () => {
+  /**
+   * 運営 A が RPC の前に組織を読んだ (owner_id = OLD_OWNER_ID) あと、A の RPC が組織の行のロックを取る前に、運営 B の譲渡
+   * (OLD_OWNER_ID → MEMBER_ID) が commit した状況。A の RPC はロックの下で MEMBER_ID を旧オーナーとして読み、MEMBER_ID → NEW_OWNER_ID に譲渡する。
+   * makeRpc で、戻り値の形 (新しい定義 / migration の前の定義) を選ぶ
+   */
+  function racedByAnotherOperator(makeRpc: (fake: FakeServiceRole, args: RpcArgs) => unknown) {
+    mocks.rpc.mockImplementation(async (_name: string, args: RpcArgs) => {
+      const org = fake.tables.organizations.find((o) => o.id === ORG_ID);
+      if (!org) throw new Error('組織の行が無い');
+      reassignOwner(fake, org, MEMBER_ID);
+      return makeRpc(fake, args);
+    });
+  }
+
+  const roleOf = (address: string) => renderedVars().find((vars) => vars.recipient_email === address)?.recipient_role;
+
+  it('監査 (admin_audit_logs) の details は reason・to_user_id と、RPC が返した旧オーナーの from_user_id', async () => {
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(mocks.auditInsert).toHaveBeenCalledTimes(1);
+    expect(auditRows()[0]).toMatchObject({
+      actor_id: OPERATOR_ID,
+      action_type: 'super_admin.organization.transfer_admin',
+      target_id: ORG_ID,
+      target_type: 'organization',
+      severity: 'warn',
+      details: { reason: REASON, to_user_id: NEW_OWNER_ID, from_user_id: OLD_OWNER_ID },
+    });
+  });
+
+  it('RPC の前に読んだあとで別の運営が先に譲渡していたら、監査の from_user_id は RPC がロックの下で読んだ直前のオーナー (先に読んだ人ではない)', async () => {
+    racedByAnotherOperator(simulateOwnerTransfer);
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(fake.tables.organizations[0].owner_id).toBe(NEW_OWNER_ID);
+    expect(auditRows().map((row) => row.details.from_user_id)).toEqual([MEMBER_ID]);
+    expect(mocks.logError).not.toHaveBeenCalled();
+  });
+
+  it('同じ状況で、旧オーナー向けの知らせは直前のオーナー (MEMBER_ID) に送り、先に読んだ人 (OLD_OWNER_ID) には一般メンバー向けを送る。新オーナー宛の「旧オーナー」欄も直前のオーナー', async () => {
+    racedByAnotherOperator(simulateOwnerTransfer);
+
+    await call();
+
+    expect(roleOf(MEMBER_EMAIL)).toBe('old_owner');
+    expect(roleOf(OLD_EMAIL)).toBe('member');
+    expect(roleOf(NEW_EMAIL)).toBe('new_owner');
+    expect(renderedVars().every((vars) => vars.old_owner_email === MEMBER_EMAIL)).toBe(true);
+    expect(sentTo(MEMBER_EMAIL)).toHaveLength(1);
+    expect(sentTo(OLD_EMAIL)).toHaveLength(1);
+  });
+
+  it('応答の data は更新した後の組織の行だけ (RPC の戻り値の old_owner_id は載せない)', async () => {
+    const res = await call();
+    const json = await res.json();
+
+    expect(json.data).toEqual({ id: ORG_ID, name: 'ほめゴハン株式会社', owner_id: NEW_OWNER_ID });
+  });
+
+  it('組織名は RPC が返した行の名前を使う (RPC の前の控えと違っていても)', async () => {
+    mocks.rpc.mockImplementation(async (_name: string, args: RpcArgs) => {
+      const org = fake.tables.organizations.find((o) => o.id === ORG_ID);
+      if (!org) throw new Error('組織の行が無い');
+      org.name = 'ほめゴハン株式会社 (改称後)';
+      return simulateOwnerTransfer(fake, args);
+    });
+
+    await call();
+
+    expect(renderedVars().length).toBeGreaterThan(0);
+    expect(renderedVars().every((vars) => vars.scope_name === 'ほめゴハン株式会社 (改称後)')).toBe(true);
+  });
+
+  it('戻り値が古い形 (migration の前の DB): 譲渡は 200 のまま、RPC の前に読んだ旧オーナーで監査と知らせを出し、食い違いうることを構造化ログに残す', async () => {
+    mocks.rpc.mockImplementation(async (_name: string, args: RpcArgs) => simulateOwnerTransferBeforeMigration(fake, args));
+
+    const res = await call();
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.data).toMatchObject({ id: ORG_ID, owner_id: NEW_OWNER_ID });
+    expect(auditRows().map((row) => row.details.from_user_id)).toEqual([OLD_OWNER_ID]);
+    expect(roleOf(OLD_EMAIL)).toBe('old_owner');
+    expect(roleOf(NEW_EMAIL)).toBe('new_owner');
+    expect(roleOf(MEMBER_EMAIL)).toBe('member');
+    expect(mocks.logError).toHaveBeenCalledTimes(1);
+    expect(mocks.logError).toHaveBeenCalledWith(expect.stringContaining('old_owner_id'), expect.any(Error), {
+      organization_id: ORG_ID,
+      to_user_id: NEW_OWNER_ID,
+    });
+  });
+
+  it('戻り値が古い形で別の運営と競ったときは、先に読んだ人で記録する (#1917 の前の動き。migration を当てれば直る食い違いで、ログに残る)', async () => {
+    racedByAnotherOperator(simulateOwnerTransferBeforeMigration);
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(auditRows().map((row) => row.details.from_user_id)).toEqual([OLD_OWNER_ID]);
+    expect(mocks.logError).toHaveBeenCalledWith(expect.stringContaining('old_owner_id'), expect.any(Error), {
+      organization_id: ORG_ID,
+      to_user_id: NEW_OWNER_ID,
+    });
+  });
+
+  it.each([
+    ['organization のキーが無い', { old_owner_id: OLD_OWNER_ID }],
+    ['old_owner_id のキーが無い', { organization: { id: ORG_ID, name: 'ほめゴハン株式会社', owner_id: NEW_OWNER_ID } }],
+    ['old_owner_id が文字列でない', { organization: { id: ORG_ID, name: 'ほめゴハン株式会社', owner_id: NEW_OWNER_ID }, old_owner_id: 1 }],
+    ['null', null],
+  ])('戻り値の形が合わない (%s) ときも 500 にせず、RPC の前の控えで記録する', async (_label, data) => {
+    mocks.rpc.mockImplementation(async (_name: string, args: RpcArgs) => {
+      simulateOwnerTransfer(fake, args);
+      return { data, error: null };
+    });
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(auditRows().map((row) => row.details.from_user_id)).toEqual([OLD_OWNER_ID]);
+    expect(mocks.logError).toHaveBeenCalledWith(expect.stringContaining('old_owner_id'), expect.any(Error), {
+      organization_id: ORG_ID,
+      to_user_id: NEW_OWNER_ID,
+    });
   });
 });
 
