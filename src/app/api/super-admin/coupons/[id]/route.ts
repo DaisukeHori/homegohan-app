@@ -178,7 +178,7 @@ export async function DELETE(request: NextRequest, props: RouteContext) {
     // 利用中 (uses_count > 0) のクーポンは削除不可
     if (existing.uses_count > 0) {
       return NextResponse.json(
-        { error: { code: 'OP_COUPON_IN_USE', message: '利用実績があるクーポンは削除できません。paused に変更してください。' } },
+        { error: { code: 'OP_COUPON_IN_USE', message: '利用実績があるクーポンは削除できません。一時停止 (paused) に変更してください。' } },
         { status: 409 }
       );
     }

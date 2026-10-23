@@ -131,7 +131,7 @@ export async function POST(request: NextRequest, props: RouteContext) {
     // draft は価格変更 API を使う必要なし (PATCH で対応)
     if (plan.status === 'draft') {
       return NextResponse.json(
-        { error: { code: 'OP_PLAN_DRAFT_USE_PATCH', message: 'draft プランは PATCH API で価格変更してください' } },
+        { error: { code: 'OP_PLAN_DRAFT_USE_PATCH', message: '下書き (draft) のプランは PATCH API で価格を変更してください' } },
         { status: 422 }
       );
     }

@@ -137,7 +137,7 @@ export async function GET(request: Request, props: Params) {
 
   if (!MODERATION_TYPES.includes(type as ModerationType)) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: `type は ${MODERATION_TYPES.join(', ')} のいずれかである必要があります` } },
+      { error: { code: 'VALIDATION_ERROR', message: `種類 (type) は ${MODERATION_TYPES.join(', ')} のいずれかである必要があります` } },
       { status: 400 },
     );
   }
@@ -230,7 +230,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
   // type バリデーション
   if (!MODERATION_TYPES.includes(type as ModerationType)) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: `type は ${MODERATION_TYPES.join(', ')} のいずれかである必要があります` } },
+      { error: { code: 'VALIDATION_ERROR', message: `種類 (type) は ${MODERATION_TYPES.join(', ')} のいずれかである必要があります` } },
       { status: 400 },
     );
   }
@@ -266,7 +266,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
   // delete_and_temp_ban は ban_duration_days 必須
   if (action === 'delete_and_temp_ban' && !ban_duration_days) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'delete_and_temp_ban の場合は ban_duration_days が必須です' } },
+      { error: { code: 'VALIDATION_ERROR', message: '削除と一時 BAN (delete_and_temp_ban) の場合は BAN の日数 (ban_duration_days) が必須です' } },
       { status: 400 },
     );
   }
@@ -274,7 +274,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
   // delete_and_perm_ban は super_admin のみ
   if (action === 'delete_and_perm_ban' && !actor.roles.includes('super_admin')) {
     return NextResponse.json(
-      { error: { code: 'OP_PERMISSION_DENIED', message: '永久 BAN は super_admin のみ実行可能です' } },
+      { error: { code: 'OP_PERMISSION_DENIED', message: '永久 BAN はスーパー管理者 (super_admin) のみ実行可能です' } },
       { status: 403 },
     );
   }

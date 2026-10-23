@@ -125,7 +125,7 @@ export async function POST(request: NextRequest, props: RouteContext) {
       );
       if (!canSendInternal) {
         return NextResponse.json(
-          { error: { code: 'OP_PERMISSION_DENIED', message: '内部メモは support 以上のロールが必要です' } },
+          { error: { code: 'OP_PERMISSION_DENIED', message: '内部メモはサポート担当 (support) 以上のロールが必要です' } },
           { status: 403 },
         );
       }

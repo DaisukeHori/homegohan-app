@@ -26,7 +26,17 @@ import {
 } from '@/lib/onboarding-api-errors';
 import { DSR_UNAUTHENTICATED_BODY } from '@/lib/data-subject-requests/requester-http';
 import { CALENDAR_DATE_MAX, CALENDAR_DATE_MIN } from '@/lib/date-utils';
-import { isEnglishOnly, JAPANESE } from '../helpers/api-error-text-scan';
+import { CalendarDateSchema } from '@/lib/calendar-date-schema';
+import { aiInvalidDateMessage, aiTargetSlotDateInvalidMessage, AI_CALENDAR_DATE_REQUIREMENT_JA } from '@/lib/ai/ai-api-messages';
+import { healthDateInvalidMessage, HEALTH_DATE_PARAM_INVALID_MESSAGE } from '@/lib/health-api-messages';
+import { isEnglishOnly, JAPANESE, textPartsOf, walkFiles } from '../helpers/api-error-text-scan';
+
+/** 受け付ける日付の説明の文を持ってよい、ただ 1 つのファイル */
+const CALENDAR_DATE_REQUIREMENT_SOURCE = 'src/lib/api/user-api-error-messages.ts';
+/** 日付の説明の文の目印 (説明を自前で書くと、この語を含む文字列になる) */
+const CALENDAR_DATE_REQUIREMENT_MARKER = '実在する日付';
+/** 走査する配下 (API の本文の文を作る route と src/lib) */
+const DATE_TEXT_SCAN_DIRS = ['src/app/api', 'src/lib'] as const;
 
 describe('日付の 400 の文', () => {
   it('受け付ける範囲は isCalendarDate と同じ (CALENDAR_DATE_MIN〜CALENDAR_DATE_MAX)', () => {
@@ -42,6 +52,26 @@ describe('日付の 400 の文', () => {
     const message = invalidCalendarDateMessage(CALENDAR_DATE_PARAM_LABELS[name]);
     expect(message).toBe(`${head}${CALENDAR_DATE_REQUIREMENT_JA}で指定してください`);
     expect(isEnglishOnly(message)).toBe(false);
+  });
+});
+
+describe('日付の 400 の文を作る所は 1 つ (#1917。健康の記録・AI・Zod の日付の文の作り手が別々の形を持っていた)', () => {
+  it('健康の記録・AI の API・Zod の日付の文は、同じ説明 (CALENDAR_DATE_REQUIREMENT_JA) と同じ形 (「名前は説明で指定してください」)', () => {
+    expect(healthDateInvalidMessage('record_date')).toBe(invalidCalendarDateMessage('記録の日付 (record_date)'));
+    expect(HEALTH_DATE_PARAM_INVALID_MESSAGE).toBe(invalidCalendarDateMessage(CALENDAR_DATE_PARAM_LABELS.date));
+    expect(AI_CALENDAR_DATE_REQUIREMENT_JA).toBe(CALENDAR_DATE_REQUIREMENT_JA);
+    expect(aiInvalidDateMessage('開始日')).toBe(invalidCalendarDateMessage('開始日'));
+    expect(aiTargetSlotDateInvalidMessage(0)).toBe(invalidCalendarDateMessage('1 番目の枠の日付'));
+    const parsed = CalendarDateSchema.safeParse('2026-02-30');
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues[0]?.message).toBe(`${CALENDAR_DATE_REQUIREMENT_JA}を指定してください`);
+  });
+
+  it(`src/app/api と src/lib の文字列 (コメントは見ない) で「${CALENDAR_DATE_REQUIREMENT_MARKER}」を書くのは ${CALENDAR_DATE_REQUIREMENT_SOURCE} だけ`, () => {
+    const files = DATE_TEXT_SCAN_DIRS.flatMap((dir) => walkFiles(dir, (name) => /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name)));
+    expect(files).toContain(CALENDAR_DATE_REQUIREMENT_SOURCE);
+    const writers = files.filter((file) => textPartsOf(file).some((text) => text.includes(CALENDAR_DATE_REQUIREMENT_MARKER)));
+    expect(writers).toEqual([CALENDAR_DATE_REQUIREMENT_SOURCE]);
   });
 });
 

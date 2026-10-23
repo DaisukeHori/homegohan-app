@@ -161,7 +161,7 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
           {
             error: {
               code: 'OP_PLAN_DEPRECATE_ENDS_AT_REQUIRED',
-              message: '廃止移行には ends_at (廃止予定日) の指定が必要です',
+              message: '廃止移行には廃止予定日 (ends_at) の指定が必要です',
             },
           },
           { status: 400 }
@@ -368,7 +368,7 @@ export async function DELETE(request: NextRequest, props: RouteContext) {
     // draft のみ削除可能
     if (existing.status !== 'draft') {
       return NextResponse.json(
-        { error: { code: 'OP_PLAN_NOT_DRAFT', message: 'draft 状態のプランのみ削除できます' } },
+        { error: { code: 'OP_PLAN_NOT_DRAFT', message: '下書き (draft) 状態のプランのみ削除できます' } },
         { status: 422 }
       );
     }

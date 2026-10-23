@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
     if (error) {
       if (error.code === '23505') {
         return NextResponse.json(
-          { error: { code: 'OP_PLAN_KEY_DUPLICATE', message: 'plan_key が既に存在します' } },
+          { error: { code: 'OP_PLAN_KEY_DUPLICATE', message: 'プランのキー (plan_key) は既に存在します' } },
           { status: 409 }
         );
       }

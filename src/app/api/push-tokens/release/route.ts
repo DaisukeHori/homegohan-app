@@ -49,13 +49,13 @@ export async function POST(request: NextRequest) {
   const secret = record.install_secret;
   const userId = record.user_id;
   if (!isExpoPushToken(token)) {
-    return badRequest('expo_push_token が Expo の push token の形ではありません');
+    return badRequest('通知のトークン (expo_push_token) が Expo の通知のトークンの形ではありません');
   }
   if (!isPushInstallSecret(secret)) {
-    return badRequest('install_secret が端末の秘密の値の形ではありません');
+    return badRequest('端末の秘密の値 (install_secret) の形が正しくありません');
   }
   if (typeof userId !== 'string' || !UUID_PATTERN.test(userId)) {
-    return badRequest('user_id が UUID の形ではありません');
+    return badRequest('利用者の ID (user_id) が UUID の形ではありません');
   }
 
   try {

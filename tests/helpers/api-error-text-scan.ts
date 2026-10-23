@@ -53,6 +53,37 @@ export function isEnglishOnly(text: string): boolean {
   return LATIN.test(text) && !JAPANESE.test(text);
 }
 
+/**
+ * 英字の項目名・役割名として拾う語 (英小文字で始まり、英小文字・数字を _ でつなぐ。'family_id'・'owner'・'id')。
+ * 大文字で始まる語 ('ID'・'BAN'・'Expo')・形式の名前 ('YYYY-MM-DD')・URL やパスの一部 ('/api/x'・'example.com') は拾わない
+ */
+const ENGLISH_IDENTIFIER = /(?<![A-Za-z0-9_\-./:@])[a-z][a-z0-9]*(?:_[a-z0-9]+)*(?![A-Za-z0-9_\-./])/g;
+/**
+ * 括弧の外にあっても項目名ではない語: JSON の値として API を呼ぶ人が送るもの ('文字列か null で'・'true か false で')
+ */
+const ALLOWED_ENGLISH_WORDS: ReadonlySet<string> = new Set(['null', 'true', 'false']);
+
+/** 括弧 (半角・全角) の中身を取り除く (入れ子も、変わらなくなるまで繰り返す) */
+function withoutParenthesized(text: string): string {
+  let current = text;
+  for (;;) {
+    const next = current.replace(/\([^()]*\)/g, '').replace(/（[^（）]*）/g, '');
+    if (next === current) return current;
+    current = next;
+  }
+}
+
+/**
+ * 日本語を含む文の、括弧の外にある英字の項目名・役割名 (#1917)。
+ * 項目名は「日本語の名前 (英字の項目名)」の形で括弧に入れて添える (src/lib/health-api-messages.ts の healthFieldLabel)。
+ * 'family_id は必須です'・'永久 BAN は super_admin のみ' のように括弧の外に英字の項目名・役割名だけが出る文を拾う。
+ * 日本語を含まない文は対象外 (英語だけの文は isEnglishOnly が拾う)
+ */
+export function englishIdentifiersOutsideParentheses(text: string): string[] {
+  if (!JAPANESE.test(text)) return [];
+  return (withoutParenthesized(text).match(ENGLISH_IDENTIFIER) ?? []).filter((word) => !ALLOWED_ENGLISH_WORDS.has(word));
+}
+
 function parse(file: string, source: string): ts.SourceFile {
   return ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
 }
@@ -169,8 +200,11 @@ function collectBodyTexts(sf: ts.SourceFile, body: ts.Expression, out: Collected
   }
 }
 
-/** 本文を作る呼び出しなら、文の入る引数と、それが本文のオブジェクトか文そのものか */
-function bodyArgumentOf(node: ts.CallExpression): { arg: ts.Expression; isObjectBody: boolean } | null {
+/** 本文を作る呼び出しなら、文の入る引数と、それが本文のオブジェクトか文そのものか (textCalls = 文を引数で受け取る関数と引数の位置) */
+function bodyArgumentOf(
+  node: ts.CallExpression,
+  textCalls: ReadonlyMap<string, number> = BODY_TEXT_CALLS,
+): { arg: ts.Expression; isObjectBody: boolean } | null {
   const callee = node.expression;
   if (
     ts.isPropertyAccessExpression(callee) &&
@@ -182,11 +216,41 @@ function bodyArgumentOf(node: ts.CallExpression): { arg: ts.Expression; isObject
     return arg ? { arg, isObjectBody: true } : null;
   }
   if (ts.isIdentifier(callee)) {
-    const index = BODY_TEXT_CALLS.get(callee.text);
+    const index = textCalls.get(callee.text);
     const arg = index === undefined ? undefined : node.arguments[index];
     return arg ? { arg, isObjectBody: false } : null;
   }
   return null;
+}
+
+/** 本文の 1 つの呼び出しから集めた文 (空白をつめたもの) と、例外の文面の数 */
+interface BodyTextsAt {
+  line: number;
+  texts: string[];
+  exceptionMessages: number;
+}
+
+/** ファイルの失敗の本文を作る呼び出しごとに、本文の文を集める */
+function bodyTextsOf(sf: ts.SourceFile, textCalls: ReadonlyMap<string, number>): BodyTextsAt[] {
+  const found: BodyTextsAt[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node)) {
+      const body = bodyArgumentOf(node, textCalls);
+      if (body) {
+        const out: CollectedTexts = { texts: [], exceptionMessages: 0 };
+        if (body.isObjectBody) collectBodyTexts(sf, body.arg, out);
+        else collectTexts(sf, body.arg, 0, out);
+        found.push({
+          line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1,
+          texts: out.texts.map((t) => t.replace(/\s+/g, ' ').trim()).filter((t) => t.length > 0),
+          exceptionMessages: out.exceptionMessages,
+        });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return found;
 }
 
 /**
@@ -196,27 +260,36 @@ function bodyArgumentOf(node: ts.CallExpression): { arg: ts.Expression; isObject
 export function findErrorTextViolations(file: string, text?: string): ErrorTextViolation[] {
   const sf = text === undefined ? sourceOf(file) : parse(file, text);
   const findings: ErrorTextViolation[] = [];
-  const visit = (node: ts.Node) => {
-    if (ts.isCallExpression(node)) {
-      const body = bodyArgumentOf(node);
-      if (body) {
-        const out: CollectedTexts = { texts: [], exceptionMessages: 0 };
-        if (body.isObjectBody) collectBodyTexts(sf, body.arg, out);
-        else collectTexts(sf, body.arg, 0, out);
-        const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
-        for (const t of out.texts) {
-          const trimmed = t.replace(/\s+/g, ' ').trim();
-          if (trimmed && isEnglishOnly(trimmed)) findings.push({ file, line, text: trimmed, kind: 'english' });
-        }
-        for (let i = 0; i < out.exceptionMessages; i += 1) {
-          findings.push({ file, line, text: '<X.message>', kind: 'exception-message' });
-        }
-      }
+  for (const { line, texts, exceptionMessages } of bodyTextsOf(sf, BODY_TEXT_CALLS)) {
+    for (const t of texts) {
+      if (isEnglishOnly(t)) findings.push({ file, line, text: t, kind: 'english' });
     }
-    ts.forEachChild(node, visit);
-  };
-  visit(sf);
+    for (let i = 0; i < exceptionMessages; i += 1) {
+      findings.push({ file, line, text: '<X.message>', kind: 'exception-message' });
+    }
+  }
   return findings;
+}
+
+/** 失敗の本文の 1 つの文の場所と中身 */
+export interface ErrorTextAt {
+  file: string;
+  line: number;
+  text: string;
+}
+
+/**
+ * 1 つのファイルの失敗の本文の文を、全部集める (違反かどうかは見ない)。
+ * extraTextCalls を渡すと、BODY_TEXT_CALLS に加えて、その関数 (名前 → 文の引数の位置) の文も集める
+ * (route の中の errorResponse(status, code, 文) のような、本文を作る自前の関数)。text は fixture 用 (findErrorTextViolations と同じ)
+ */
+export function findErrorTexts(
+  file: string,
+  options: { extraTextCalls?: ReadonlyMap<string, number>; text?: string } = {},
+): ErrorTextAt[] {
+  const sf = options.text === undefined ? sourceOf(file) : parse(file, options.text);
+  const textCalls = new Map([...BODY_TEXT_CALLS, ...(options.extraTextCalls ?? [])]);
+  return bodyTextsOf(sf, textCalls).flatMap(({ line, texts }) => texts.map((text) => ({ file, line, text })));
 }
 
 /** dir の下のファイルのうち accept(名前) が真のもの (リポジトリの根からの相対パス。並べて返す) */
@@ -291,4 +364,17 @@ export function stringLiteralsOf(file: string): string[] {
   };
   visit(sf);
   return literals;
+}
+
+/** ファイルの文字列の文字の部分 (文字列リテラルと、テンプレートの式の外の部分。コメントは含まない) */
+export function textPartsOf(file: string): string[] {
+  const sf = sourceOf(file);
+  const parts: string[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) parts.push(node.text);
+    else if (ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node)) parts.push(node.text);
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return parts;
 }

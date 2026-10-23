@@ -32,19 +32,19 @@ function parseClaimBody(body: unknown): { token: string; mode: SecretMode } | { 
   const record = (typeof body === 'object' && body !== null ? body : {}) as Record<string, unknown>;
   const token = record.expo_push_token;
   if (!isExpoPushToken(token)) {
-    return { error: badRequest('expo_push_token が Expo の push token の形ではありません') };
+    return { error: badRequest('通知のトークン (expo_push_token) が Expo の通知のトークンの形ではありません') };
   }
   const secret = record.install_secret;
   const issue = record.issue_install_secret;
   if (issue !== undefined && issue !== true) {
-    return { error: badRequest('issue_install_secret は true だけを受け付けます') };
+    return { error: badRequest('端末の秘密の値の発行 (issue_install_secret) は true だけを受け付けます') };
   }
   if (secret !== undefined && issue === true) {
-    return { error: badRequest('install_secret と issue_install_secret は同時に送れません') };
+    return { error: badRequest('端末の秘密の値 (install_secret) と端末の秘密の値の発行 (issue_install_secret) は同時に送れません') };
   }
   if (secret !== undefined) {
     if (!isPushInstallSecret(secret)) {
-      return { error: badRequest('install_secret が端末の秘密の値の形ではありません') };
+      return { error: badRequest('端末の秘密の値 (install_secret) の形が正しくありません') };
     }
     return { token, mode: { kind: 'provided', secret } };
   }

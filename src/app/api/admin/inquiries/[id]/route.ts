@@ -66,7 +66,7 @@ export async function GET(request: Request, props: RouteContext) {
 
   const idResult = inquiryIdSchema.safeParse(params.id);
   if (!idResult.success) {
-    return errorResponse(400, 'VALIDATION_ERROR', 'id が不正です', idResult.error.flatten());
+    return errorResponse(400, 'VALIDATION_ERROR', '問い合わせの ID (id) が正しくありません', idResult.error.flatten());
   }
   const id = idResult.data;
 
@@ -129,7 +129,7 @@ async function updateInquiry(request: Request, { params }: RouteContext, method:
 
   const idResult = inquiryIdSchema.safeParse((await params).id);
   if (!idResult.success) {
-    return errorResponse(400, 'VALIDATION_ERROR', 'id が不正です', idResult.error.flatten());
+    return errorResponse(400, 'VALIDATION_ERROR', '問い合わせの ID (id) が正しくありません', idResult.error.flatten());
   }
   const id = idResult.data;
 

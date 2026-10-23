@@ -67,7 +67,7 @@ export async function POST(request: Request) {
         {
           error: {
             code: 'invalid_date_offset_days',
-            message: `date_offset_days は -${maxOffsetDays}〜${maxOffsetDays} の数で指定してください`,
+            message: `開始日のずれの日数 (date_offset_days) は -${maxOffsetDays}〜${maxOffsetDays} の数で指定してください`,
           },
         },
         { status: 400 },

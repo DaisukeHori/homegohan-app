@@ -53,7 +53,7 @@ export async function POST(request: Request) {
 
   if (!parsed.family_id || !parsed.to_user_id) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'family_id と to_user_id は必須です' } },
+      { error: { code: 'VALIDATION_ERROR', message: '家族のグループ (family_id) と譲渡先の利用者 (to_user_id) は必須です' } },
       { status: 400 },
     );
   }

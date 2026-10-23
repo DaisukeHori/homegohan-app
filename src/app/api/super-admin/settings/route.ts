@@ -74,14 +74,14 @@ export async function PUT(request: NextRequest) {
 
     const { key, value, description } = (body as Record<string, unknown>) ?? {};
     if (!key || typeof key !== 'string' || key.trim() === '') {
-      return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: 'key は必須です' } }, { status: 400 });
+      return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: '設定のキー (key) は必須です' } }, { status: 400 });
     }
     if (value === undefined) {
-      return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: 'value は必須です' } }, { status: 400 });
+      return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: '設定の値 (value) は必須です' } }, { status: 400 });
     }
     if (description !== undefined && description !== null && typeof description !== 'string') {
       return NextResponse.json(
-        { error: { code: 'VALIDATION_ERROR', message: 'description は文字列か null にしてください' } },
+        { error: { code: 'VALIDATION_ERROR', message: '説明 (description) は文字列か null にしてください' } },
         { status: 400 },
       );
     }

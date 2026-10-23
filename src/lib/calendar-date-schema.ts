@@ -8,10 +8,12 @@
  * (CALENDAR_DATE_MIN 〜 CALENDAR_DATE_MAX。前後 1 年の余白つき) の外は 400 にする。
  */
 import { z } from 'zod';
-import { CALENDAR_DATE_MAX, CALENDAR_DATE_MIN, isCalendarDate } from '@/lib/date-utils';
+import { CALENDAR_DATE_REQUIREMENT_JA } from '@/lib/api/user-api-error-messages';
+import { isCalendarDate } from '@/lib/date-utils';
 
 export const CalendarDateSchema = z.string().refine(isCalendarDate, {
-  message: `YYYY-MM-DD の実在する日付 (${CALENDAR_DATE_MIN}〜${CALENDAR_DATE_MAX}) を指定してください`,
+  // 受け付ける日付の説明は利用者向けの API の 400 の文と同じ (#1917 で 1 つにそろえた)
+  message: `${CALENDAR_DATE_REQUIREMENT_JA}を指定してください`,
 });
 
 /**

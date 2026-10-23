@@ -83,12 +83,12 @@ export async function POST(request: NextRequest) {
     const { table, onlyMissing, offset, limit } = (body as Record<string, unknown>) ?? {};
 
     if (!table || typeof table !== 'string') {
-      return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: 'table は必須です' } }, { status: 400 });
+      return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: '対象の表 (table) は必須です' } }, { status: 400 });
     }
 
     if (!(ALLOWED_TABLES as readonly string[]).includes(table)) {
       return NextResponse.json(
-        { error: { code: 'VALIDATION_ERROR', message: `table は ${ALLOWED_TABLES.join(' / ')} のいずれかである必要があります` } },
+        { error: { code: 'VALIDATION_ERROR', message: `対象の表 (table) は ${ALLOWED_TABLES.join(' / ')} のいずれかである必要があります` } },
         { status: 400 },
       );
     }

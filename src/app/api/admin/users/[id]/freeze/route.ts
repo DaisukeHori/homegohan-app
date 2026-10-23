@@ -80,7 +80,7 @@ export async function POST(request: Request, props: Params) {
   // permanent BAN は super_admin のみ可能
   if (freezeData.ban_type === 'permanent' && !actor.roles.includes('super_admin')) {
     return NextResponse.json(
-      { error: { code: 'OP_PERMISSION_DENIED', message: '永久 BAN は super_admin のみ実行可能です' } },
+      { error: { code: 'OP_PERMISSION_DENIED', message: '永久 BAN はスーパー管理者 (super_admin) のみ実行可能です' } },
       { status: 403 },
     );
   }
@@ -88,7 +88,7 @@ export async function POST(request: Request, props: Params) {
   // temporary BAN は duration_days 必須
   if (freezeData.ban_type === 'temporary' && !freezeData.duration_days) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: '一時 BAN の場合は duration_days が必須です' } },
+      { error: { code: 'VALIDATION_ERROR', message: '一時 BAN の場合は日数 (duration_days) が必須です' } },
       { status: 400 },
     );
   }
@@ -115,7 +115,7 @@ export async function POST(request: Request, props: Params) {
   // super_admin を凍結しようとした場合は拒否
   if (Array.isArray(profile.roles) && profile.roles.includes('super_admin')) {
     return NextResponse.json(
-      { error: { code: 'OP_TARGET_PROTECTED', message: 'super_admin ユーザーを凍結することはできません' } },
+      { error: { code: 'OP_TARGET_PROTECTED', message: 'スーパー管理者 (super_admin) のユーザーを凍結することはできません' } },
       { status: 403 },
     );
   }

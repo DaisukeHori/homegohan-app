@@ -24,7 +24,7 @@ import { isEnglishOnly, JAPANESE, routeFilesUnder, sourceOf } from './helpers/ap
 const API_AI_ROUTES_ROOT = 'src/app/api/ai';
 
 /** 受け付ける日付の範囲 (手で書いた期待値。isCalendarDate の範囲と同じ) */
-const DATE_RANGE_JA = 'YYYY-MM-DD の形の実在する日付 (0101-01-02〜9998-12-30)';
+const DATE_RANGE_JA = 'YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付';
 
 describe('ai-api-messages.ts の文は日本語', () => {
   const stringEntries = Object.entries(messages).filter((entry): entry is [string, string] => typeof entry[1] === 'string');
@@ -45,7 +45,7 @@ describe('ai-api-messages.ts の文は日本語', () => {
 
   it('日付の条件は、受け付ける範囲を書いた日本語の文', () => {
     expect(messages.AI_CALENDAR_DATE_REQUIREMENT_JA).toBe(DATE_RANGE_JA);
-    expect(messages.aiInvalidDateMessage('開始日')).toBe(`開始日は ${DATE_RANGE_JA} で指定してください`);
+    expect(messages.aiInvalidDateMessage('開始日')).toBe(`開始日は${DATE_RANGE_JA}で指定してください`);
     expect(messages.aiRequiredFieldMessage('日付')).toBe('日付を指定してください');
   });
 
@@ -53,7 +53,7 @@ describe('ai-api-messages.ts の文は日本語', () => {
     expect(messages.aiTargetSlotsTooManyMessage(93, 31, 3)).toBe('献立を作る枠は 93 個 (31 日 × 3 食) までです');
     expect(messages.aiTargetSlotsSpanTooLongMessage(31)).toBe('献立を作る期間は、最初の日から最後の日まで含めて 31 日以内にしてください');
     expect(messages.aiTargetSlotNotObjectMessage(0)).toBe('1 番目の枠の指定が正しくありません');
-    expect(messages.aiTargetSlotDateInvalidMessage(2)).toBe(`3 番目の枠の日付は ${DATE_RANGE_JA} で指定してください`);
+    expect(messages.aiTargetSlotDateInvalidMessage(2)).toBe(`3 番目の枠の日付は${DATE_RANGE_JA}で指定してください`);
     expect(messages.aiTargetSlotMealTypeInvalidMessage(1, ['breakfast', 'lunch'])).toBe(
       '2 番目の枠の食事の区分は breakfast・lunch のどれかにしてください',
     );

@@ -45,7 +45,7 @@ export async function POST(
 
   if (!parsed.family_id) {
     return NextResponse.json(
-      { error: { code: MembershipErrorCode.VALIDATION_ERROR, message: 'family_id は必須です' } },
+      { error: { code: MembershipErrorCode.VALIDATION_ERROR, message: '家族のグループ (family_id) は必須です' } },
       { status: 400 },
     );
   }

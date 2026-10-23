@@ -16,6 +16,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { API_INVALID_JSON_MESSAGE } from '@/lib/api/error-responses';
+import { CALENDAR_DATE_PARAM_LABELS, CALENDAR_DATE_REQUIREMENT_JA, invalidCalendarDateMessage } from '@/lib/api/user-api-error-messages';
 import * as messages from '@/lib/health-api-messages';
 import {
   sanitizeBloodTestPayload,
@@ -25,7 +26,7 @@ import {
   sanitizeHealthRecordPayload,
   sanitizeNotificationPreferences,
 } from '@/lib/health-payloads';
-import { JAPANESE, isEnglishOnly } from './helpers/api-error-text-scan';
+import { JAPANESE, englishIdentifiersOutsideParentheses, isEnglishOnly } from './helpers/api-error-text-scan';
 
 /** 項目名を入れて作る文の関数に渡す、英語の項目名 (項目名だけが英語でも、文は日本語になること) */
 const SAMPLE_FIELD = 'record_date';
@@ -71,7 +72,7 @@ const MESSAGE_KINDS: ReadonlyArray<readonly [string, RegExp]> = [
   ['数値', /は数値で指定してください$/],
   ['整数', /は整数で指定してください$/],
   ['選択肢', /のいずれかを指定してください$/],
-  ['日付', /は YYYY-MM-DD の形の、.+までの実在する日付で指定してください$/],
+  ['日付', /\)はYYYY-MM-DD の形の、.+までの実在する日付で指定してください$/],
   ['下限', /以上の値を入力してください$/],
   ['上限', /以下の値を入力してください$/],
   ['本文の形', /^リクエストボディが不正です$/],
@@ -121,6 +122,7 @@ describe('健康の記録の API の文 (src/lib/health-api-messages.ts)', () =>
         'healthBooleanMessage',
         'healthDateInvalidMessage',
         'healthEnumMessage',
+        'healthFieldLabel',
         'healthIntegerMessage',
         'healthNumberMessage',
         'healthStringMessage',
@@ -132,23 +134,42 @@ describe('健康の記録の API の文 (src/lib/health-api-messages.ts)', () =>
       messages.healthBooleanMessage(SAMPLE_FIELD),
       messages.healthDateInvalidMessage(SAMPLE_FIELD),
       messages.healthEnumMessage(SAMPLE_FIELD, SAMPLE_CHOICES),
-      messages.healthIntegerMessage(SAMPLE_FIELD),
-      messages.healthNumberMessage(SAMPLE_FIELD),
+      // 数値・整数の文は画面の項目名 (label) を受け取る。label の無い項目は healthFieldLabel の名前を渡す (src/lib/health-payloads.ts)
+      messages.healthIntegerMessage(messages.healthFieldLabel(SAMPLE_FIELD)),
+      messages.healthNumberMessage(messages.healthFieldLabel(SAMPLE_FIELD)),
       messages.healthStringMessage(SAMPLE_FIELD),
       messages.healthStringOrNullMessage(SAMPLE_FIELD),
       messages.healthTimeMessage(SAMPLE_FIELD),
     ];
     for (const text of built) {
-      expect(text.startsWith(`${SAMPLE_FIELD} `), text).toBe(true);
+      // 項目名は「日本語の名前 (英字の項目名)」の形で出す (英字の項目名だけの文にしない)
+      expect(text.startsWith(`${messages.healthFieldLabel(SAMPLE_FIELD)} `) || text.startsWith(`${messages.healthFieldLabel(SAMPLE_FIELD)}は`), text).toBe(true);
+      expect(englishIdentifiersOutsideParentheses(text), text).toEqual([]);
       expect(JAPANESE.test(text), text).toBe(true);
       expect(isEnglishOnly(text), text).toBe(false);
     }
     expect(messages.healthEnumMessage(SAMPLE_FIELD, SAMPLE_CHOICES)).toBe(
-      'record_date は standard, minimal のいずれかを指定してください',
+      '記録の日付 (record_date) は standard, minimal のいずれかを指定してください',
     );
     expect(messages.healthDateInvalidMessage(SAMPLE_FIELD)).toBe(
-      'record_date は YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください',
+      '記録の日付 (record_date)はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください',
     );
+  });
+
+  it('項目の名前は「日本語の名前 (英字の項目名)」。表に無いキー・プロトタイプのキーは「項目 (キー)」', () => {
+    expect(messages.healthFieldLabel('record_date')).toBe('記録の日付 (record_date)');
+    expect(messages.healthFieldLabel('vacation_until')).toBe('お休みモードの終わりの日 (vacation_until)');
+    expect(messages.healthFieldLabel('unknown_key')).toBe('項目 (unknown_key)');
+    expect(messages.healthFieldLabel('constructor')).toBe('項目 (constructor)');
+  });
+
+  it('日付の文は利用者向けの API の文 (invalidCalendarDateMessage) と同じ形 (#1917 で 1 つにそろえた)', () => {
+    expect(messages.healthDateInvalidMessage('target_date')).toBe(invalidCalendarDateMessage('目標の日付 (target_date)'));
+    expect(messages.HEALTH_DATE_PARAM_INVALID_MESSAGE).toBe(invalidCalendarDateMessage(CALENDAR_DATE_PARAM_LABELS.date));
+    expect(messages.HEALTH_RECORD_DATE_INVALID_MESSAGE).toBe(invalidCalendarDateMessage('記録の日付 (record_date)'));
+    for (const text of [messages.HEALTH_DATE_PARAM_INVALID_MESSAGE, messages.HEALTH_RECORD_DATE_INVALID_MESSAGE]) {
+      expect(text, text).toContain(CALENDAR_DATE_REQUIREMENT_JA);
+    }
   });
 
   it('本文が JSON のオブジェクトでないときの文は、共通の関数の文と同じ', () => {
@@ -163,6 +184,10 @@ describe('入力の検証 (src/lib/health-payloads.ts) が返す文は、英語�
   it('どの誤りの文も日本語を含み、英語だけの文ではない', () => {
     expect(distinct.length).toBeGreaterThan(0);
     expect(distinct.filter((text) => isEnglishOnly(text) || !JAPANESE.test(text))).toEqual([]);
+  });
+
+  it('どの誤りの文も、英字の項目名を括弧の外に出さない (「日本語の名前 (英字の項目名)」の形。#1917)', () => {
+    expect(distinct.filter((text) => englishIdentifiersOutsideParentheses(text).length > 0)).toEqual([]);
   });
 
   it.each(MESSAGE_KINDS)('誤りの種類「%s」を通っている (走らせた入力が、その種類の文を作っている)', (_kind, pattern) => {

@@ -119,7 +119,7 @@ export async function POST(request: Request, props: Params) {
 
   const { type, id } = params;
   if (!MODERATION_TYPES.includes(type as ModerationType)) {
-    return errorResponse(400, 'VALIDATION_ERROR', `type は ${MODERATION_TYPES.join(', ')} のいずれかである必要があります`);
+    return errorResponse(400, 'VALIDATION_ERROR', `種類 (type) は ${MODERATION_TYPES.join(', ')} のいずれかである必要があります`);
   }
   const moderationType = type as ModerationType;
   // ai_content は準備中 (未対応)。本文の検証より前に 501 (#1128)
