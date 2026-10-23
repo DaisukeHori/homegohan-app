@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { API_FORBIDDEN_CODE, API_FORBIDDEN_MESSAGE, authFailureNested } from '@/lib/api/error-responses';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { internalError } from '@/lib/api/errors';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
@@ -92,7 +92,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         );
       }
       if (rpcError.message.includes('NOT_OPERATOR')) {
-        return NextResponse.json({ error: { code: 'FORBIDDEN', message: '権限がありません' } }, { status: 403 });
+        // 文は認可の失敗 (下の catch の authFailureNested) の 403 と同じ日本語の固定の文 (#1917)
+        return NextResponse.json({ error: { code: API_FORBIDDEN_CODE, message: API_FORBIDDEN_MESSAGE } }, { status: 403 });
       }
       return internalError(ROUTE_NAME, rpcError, { userId: operatorId }, { shape: 'nested' });
     }
@@ -220,12 +221,10 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
     return NextResponse.json({ data: org });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-    }
+    // 認可の失敗 (AuthError → 401 UNAUTHORIZED・ForbiddenError (MfaRequiredError を含む) → 403 FORBIDDEN) は、
+    // 例外の文面 (err.message) を入れず日本語の固定の文で返す (#1917。code と nested の形は従来のまま)
+    const authFailure = authFailureNested(err);
+    if (authFailure) return authFailure;
     // 本文は汎用メッセージだけにし、元のエラーは構造化ログに残す (#1172)
     return internalError(ROUTE_NAME, err, {}, { shape: 'nested' });
   }

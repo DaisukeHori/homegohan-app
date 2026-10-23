@@ -16,6 +16,9 @@ export const JAPANESE_ERROR_API_DIRS: readonly string[] = [
   'src/app/api/health',
   'src/app/api/cron',
   'src/app/api/e2e',
+  // 運営の強制の譲渡の 2 route (#1981 のマージの後に直した。operator の残りの配下は UNFIXED_VIOLATION_BASELINE の operator の行で数える)
+  'src/app/api/operator/membership/org/[id]/transfer',
+  'src/app/api/operator/membership/family/[id]/transfer',
 ];
 
 /** route が本文を作るのに使う共通の関数のファイル (ここも違反 0 件を見張る) */
@@ -63,8 +66,6 @@ export const MACHINE_FACING_ERROR_TEXT_PATHS: readonly MachineFacingErrorTextPat
 export const SENTINEL_EXCLUDED_ROUTE_FILES: readonly string[] = [
   'src/app/api/admin/organizations/route.ts',
   'src/app/api/admin/users/[id]/freeze/route.ts',
-  'src/app/api/operator/membership/family/[id]/transfer/route.ts',
-  'src/app/api/operator/membership/org/[id]/transfer/route.ts',
   'src/app/api/super-admin/plans/[id]/route.ts',
 ];
 
