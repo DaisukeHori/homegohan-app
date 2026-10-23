@@ -146,7 +146,7 @@ actor_id NULL・action_type `system.*` で書く。読んで判断する側は a
 `(記録なし)` の行は、設計で予定していたが API が無い (操作そのものが未実装) ため、記録する箇所も無いもの。
 
 ```
-admin.user.ban                      - ユーザー BAN (POST /api/admin/users/{id}/freeze)
+admin.user.ban                      - ユーザー BAN (POST /api/admin/users/{id}/freeze。凍結の更新は読んだ時点の super_admin でない状態のままのときだけ書く。読んでから書くまでに super_admin になっていたら 409 CONFLICT_STALE_DATA で、書かず記録もしない)
 admin.user.unban                    - BAN 解除 (DELETE /api/admin/users/{id}/freeze)
 admin.user.role_change              - ロール変更 (PATCH / PUT /api/admin/users/{id}/role。details は previous_roles と new_roles)
                                       previous_roles は admin_set_user_roles が対象の行を FOR NO KEY UPDATE でロックして読んだ変える前の roles
@@ -316,7 +316,7 @@ super_admin.app_logs.list           - アプリログの一覧・本文の検索
 
 実コードの名前が下の一覧と違うもの (#1571 の時点。名前は変えていない):
 - プランの作成・更新・削除は `create_plan` / `update_plan` / `delete_plan` (POST /api/super-admin/plans・PATCH / DELETE /api/super-admin/plans/{id})。
-  公開・非公開・廃止・廃止の取り消しは `update_plan` の中の変更として記録する。価格変更は `change_price` (POST /api/super-admin/plans/{id}/price-change)。
+  公開・非公開・廃止・廃止の取り消しは `update_plan` の中の変更として記録する (status を変えたときは details に `status_from` / `status_to` も入れる。更新は直前に読んだ status のままのとき、削除は draft のままのときだけ行い、読んでから書くまでに別の運営が変えていたら書かず記録もしない。編集は送った変更がもう入っていれば 200、それ以外は 409 CONFLICT_STALE_DATA。status_from は書いた時点の実際の直前の値)。価格変更は `change_price` (POST /api/super-admin/plans/{id}/price-change)。
 - A/B テスト (/api/super-admin/experiments) の作成・更新・削除は `super_admin.plan.create` / `super_admin.plan.update` を使っている。
 - 機能パッケージは `create_feature_package` / `update_feature_package` / `delete_feature_package`。
 - 機能フラグの作成・更新・削除は、すべて `super_admin.feature_flag.toggle`。
