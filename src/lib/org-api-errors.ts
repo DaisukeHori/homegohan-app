@@ -15,62 +15,64 @@
  *       nested: { error: { code: '<コード>', message: '<文>' } } (`/api/org/settings`・`/api/org/departments`・`/api/org/stats`・`/api/org/stats/refresh`・
  *               組織チャレンジのメンバー向けの API (src/lib/org-challenge-api.ts の handleMemberError))
  *   - 英語の文が入っていないことは tests/org-api-error-japanese.test.ts が /api/org の全 route を走査して見張る
+ *     (走査の部品は tests/helpers/api-error-text-scan.ts)
+ *   - 文と本文を作る仕組みは全 API の共通の関数 src/lib/api/error-responses.ts に載せている (#1917)。ここは /api/org の
+ *     従来の文 (403 の文の表は PERM_NOT_ORG_MEMBER だけ) を保つための薄い包み
  */
-import { NextResponse } from 'next/server';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { INTERNAL_ERROR_MESSAGE } from '@/lib/api/errors';
+import type { NextResponse } from 'next/server';
+import type { ForbiddenError } from '@/lib/auth/errors';
+import {
+  API_FORBIDDEN_CODE,
+  API_FORBIDDEN_MESSAGE,
+  API_INTERNAL_ERROR_MESSAGE,
+  API_INVALID_JSON_MESSAGE,
+  API_NOT_ORG_MEMBER_MESSAGE,
+  API_UNAUTHENTICATED_MESSAGE,
+  API_UNAUTHORIZED_CODE,
+  authFailureFlat,
+  authFailureNested,
+  forbiddenMessageOf,
+  type ApiFlatErrorBody,
+  type ApiNestedErrorBody,
+  type ForbiddenMessageTable,
+} from '@/lib/api/error-responses';
 
 /** 401: ログインしていない・セッションが切れた (組織チャレンジのメンバー向けの API が以前から返している文) */
-export const ORG_API_UNAUTHENTICATED_MESSAGE = 'ログインが必要です';
+export const ORG_API_UNAUTHENTICATED_MESSAGE = API_UNAUTHENTICATED_MESSAGE;
 /** 403: 所属組織の管理者 (owner / admin) でない・組織に所属していない */
-export const ORG_API_FORBIDDEN_MESSAGE = 'この操作を行う権限がありません';
+export const ORG_API_FORBIDDEN_MESSAGE = API_FORBIDDEN_MESSAGE;
 /** 403: 組織に所属していない (requireOrgMember の PERM_NOT_ORG_MEMBER)。メンバー向けの API が返す */
-export const ORG_API_NOT_ORG_MEMBER_MESSAGE = '組織に所属していません';
+export const ORG_API_NOT_ORG_MEMBER_MESSAGE = API_NOT_ORG_MEMBER_MESSAGE;
 /** 400: 本文が JSON として読めない */
-export const ORG_API_INVALID_JSON_MESSAGE = 'リクエストボディが不正です';
+export const ORG_API_INVALID_JSON_MESSAGE = API_INVALID_JSON_MESSAGE;
 /** 500: 内部エラー。原因は構造化ログにだけ残す (src/lib/api/errors.ts と同じ文) */
-export const ORG_API_INTERNAL_ERROR_MESSAGE = INTERNAL_ERROR_MESSAGE;
+export const ORG_API_INTERNAL_ERROR_MESSAGE = API_INTERNAL_ERROR_MESSAGE;
 
 /** nested の形の本文の code (従来のまま) */
-export const ORG_API_UNAUTHORIZED_CODE = 'UNAUTHORIZED';
-export const ORG_API_FORBIDDEN_CODE = 'FORBIDDEN';
-
-const HTTP_UNAUTHORIZED = 401;
-const HTTP_FORBIDDEN = 403;
+export const ORG_API_UNAUTHORIZED_CODE = API_UNAUTHORIZED_CODE;
+export const ORG_API_FORBIDDEN_CODE = API_FORBIDDEN_CODE;
 
 /**
- * ForbiddenError の code ごとの文。ここに無い code は ORG_API_FORBIDDEN_MESSAGE にする。
- * 例外の文面 (err.message) は使わない (文面をこちらで書いていない ForbiddenError が来ても英語を出さないため)
+ * /api/org の 403 の文の表。ここに無い code は ORG_API_FORBIDDEN_MESSAGE にする (従来のまま。凍結・二段階認証も
+ * 「この操作を行う権限がありません」)。例外の文面 (err.message) は使わない
  */
-const FORBIDDEN_MESSAGES_BY_CODE: ReadonlyMap<string, string> = new Map([
-  ['PERM_NOT_ORG_MEMBER', ORG_API_NOT_ORG_MEMBER_MESSAGE],
-]);
+const ORG_FORBIDDEN_MESSAGES: ForbiddenMessageTable = new Map([['PERM_NOT_ORG_MEMBER', ORG_API_NOT_ORG_MEMBER_MESSAGE]]);
 
 /** 403 の本文の文 */
 export function orgForbiddenMessage(err: ForbiddenError): string {
-  return FORBIDDEN_MESSAGES_BY_CODE.get(err.code) ?? ORG_API_FORBIDDEN_MESSAGE;
+  return forbiddenMessageOf(err, ORG_FORBIDDEN_MESSAGES);
 }
 
-export interface OrgApiFlatErrorBody {
-  error: string;
-}
+export type OrgApiFlatErrorBody = ApiFlatErrorBody;
 
-export interface OrgApiNestedErrorBody {
-  error: { code: string; message: string };
-}
+export type OrgApiNestedErrorBody = ApiNestedErrorBody;
 
 /**
  * 認可の失敗 (AuthError → 401・ForbiddenError → 403) を flat の形 `{ error: '<文>' }` で返す。
  * 認可の失敗でなければ null (呼び出し側が 500 などにする)
  */
 export function orgAuthFailureFlat(err: unknown): NextResponse<OrgApiFlatErrorBody> | null {
-  if (err instanceof AuthError) {
-    return NextResponse.json({ error: ORG_API_UNAUTHENTICATED_MESSAGE }, { status: HTTP_UNAUTHORIZED });
-  }
-  if (err instanceof ForbiddenError) {
-    return NextResponse.json({ error: orgForbiddenMessage(err) }, { status: HTTP_FORBIDDEN });
-  }
-  return null;
+  return authFailureFlat(err, { forbiddenMessages: ORG_FORBIDDEN_MESSAGES });
 }
 
 /**
@@ -78,17 +80,5 @@ export function orgAuthFailureFlat(err: unknown): NextResponse<OrgApiFlatErrorBo
  * 認可の失敗でなければ null
  */
 export function orgAuthFailureNested(err: unknown): NextResponse<OrgApiNestedErrorBody> | null {
-  if (err instanceof AuthError) {
-    return NextResponse.json(
-      { error: { code: ORG_API_UNAUTHORIZED_CODE, message: ORG_API_UNAUTHENTICATED_MESSAGE } },
-      { status: HTTP_UNAUTHORIZED },
-    );
-  }
-  if (err instanceof ForbiddenError) {
-    return NextResponse.json(
-      { error: { code: ORG_API_FORBIDDEN_CODE, message: orgForbiddenMessage(err) } },
-      { status: HTTP_FORBIDDEN },
-    );
-  }
-  return null;
+  return authFailureNested(err, { code: 'http', forbiddenMessages: ORG_FORBIDDEN_MESSAGES });
 }

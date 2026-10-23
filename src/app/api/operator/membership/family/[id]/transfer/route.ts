@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { normalizeUuid } from '@/lib/http-params';
+import { OperatorForceRepresentativeTransferResultSchema } from '@/lib/membership/operator-force-transfer-result';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,11 +54,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     // 新しいオーナーに一般メンバー向けの通知が届き、新オーナー欄のアドレスも空になる
     const to_user_id = normalizeUuid(parsed.data.to_user_id);
 
-    // 通知メール用に、RPC 実行"前"の旧代表者と家族名を控えておく (#1209)。
-    // operator_force_representative_transfer は family_groups.representative_id を新代表者へ
-    // 書き換えてから戻るため、RPC の後に読み直すと「旧代表者」が新代表者自身になってしまう。
-    // その結果、本当の旧代表者に旧オーナー向けの通知が届かず、新代表者宛の「旧オーナー」欄も
-    // 新代表者自身のアドレスになる。
+    // RPC 実行"前"の旧代表者と家族名の控え (#1209)。監査・通知に使うのは、RPC が家族の行をロックして読んだ旧代表者
+    // (戻り値の old_rep_id。#1917) で、この控えは戻り値が古い形 (#1917 の migration の前の定義の DB。更新した後の行だけを返す) の
+    // ときだけ使う。RPC の後に読み直すと「旧代表者」が新代表者自身になり、本当の旧代表者に旧オーナー向けの通知が届かず、
+    // 新代表者宛の「旧オーナー」欄も新代表者自身のアドレスになる。
+    // 控えはロックの外で読むので、運営 2 人がほぼ同時に同じ家族を譲渡すると、この譲渡の直前の代表者 (先の譲渡の相手) と食い違いうる。
     // 通知は best-effort (設計 §8) なので、ここで失敗しても譲渡は止めず、後段で通知だけを省く。
     // representative_id は active な行では NOT NULL (CHECK family_groups_active_has_representative)。解散した行は NULL (#1917) なので、型は NULL も受ける
     let preFg: { name: string | null; representative_id: string | null } | null = null;
@@ -77,7 +78,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     const supabase = await createClient();
 
     // RPC 実行
-    const { data: family, error: rpcError } = await supabase.rpc('operator_force_representative_transfer', {
+    const { data: rpcData, error: rpcError } = await supabase.rpc('operator_force_representative_transfer', {
       p_family_id: familyId,
       p_new_rep_id: to_user_id,
       p_reason: reason,
@@ -97,6 +98,28 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       return internalError(ROUTE_NAME, rpcError, { userId: operatorId }, { shape: 'nested' });
     }
 
+    const log = logger.withUser(operatorId);
+
+    // 旧代表者と家族名 (#1917): RPC が家族の行を FOR NO KEY UPDATE でロックして読んだ旧代表者 (戻り値の old_rep_id。
+    // membership_audit の old_rep_id と同じ値) と、更新した後の行の家族名。同時の譲渡があっても、この譲渡の直前の代表者になる。
+    // 戻り値が古い形 (migration の前の定義の DB) のときだけ RPC の前の控えを使い、食い違いうることをログに残す
+    // (譲渡は済んでいるので 500 にしない)。どちらも無ければ null (= 旧代表者が分からない。通知を省く)
+    const rpcResult = OperatorForceRepresentativeTransferResultSchema.safeParse(rpcData);
+    if (!rpcResult.success) {
+      log.error(
+        'operator_force_representative_transfer の戻り値に旧代表者 (old_rep_id) が無いため、RPC の前に読んだ旧代表者で監査と通知を出します (同時の譲渡では直前の代表者と食い違いうる)',
+        rpcResult.error,
+        { family_id: familyId, to_user_id },
+      );
+    }
+    const beforeTransfer: { representativeId: string | null; name: string | null } | null = rpcResult.success
+      ? { representativeId: rpcResult.data.old_rep_id, name: rpcResult.data.family_group.name }
+      : preFg
+        ? { representativeId: preFg.representative_id, name: preFg.name }
+        : null;
+    // 応答の data は従来どおり、更新した後の家族の行
+    const family = rpcResult.success ? rpcResult.data.family_group : rpcData;
+
     // 監査ログ (#1571)。RPC が書く membership_audit とは別に、運営の操作として admin_audit_logs にも 1 行残す
     // (操作した人の IP・User-Agent はこちらにだけ残る)。記録に失敗しても操作は完了のまま (失敗は db-logger に残る)
     await recordAdminAudit({
@@ -105,7 +128,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       actionType: 'super_admin.family.transfer_representative',
       targetId: familyId,
       targetType: 'family_group',
-      details: { reason, to_user_id, from_user_id: preFg?.representative_id ?? null },
+      details: { reason, to_user_id, from_user_id: beforeTransfer?.representativeId ?? null },
       severity: 'warn',
       request: req,
       routeName: ROUTE_NAME,
@@ -113,8 +136,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
     // 通知メール (best-effort)。譲渡はすでに完了しているので、失敗しても 200 を返し、ログに残す。
     // ログには宛先のメールアドレスを残さない。
-    const log = logger.withUser(operatorId);
-    if (!preFg) {
+    if (!beforeTransfer) {
       // 旧代表者が分からないまま送ると、旧代表者に一般メンバー向けの本文が届いてしまう。
       // 誤った宛先・本文で送るより、送らずにログへ残す (譲渡自体は完了している)。
       log.error(
@@ -141,10 +163,10 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         .map((m) => m.user_id)
         .filter((id): id is string => typeof id === 'string' && id.length > 0);
 
-      // 旧代表者・家族名は RPC 実行前に控えた値を使う (RPC 後の representative_id は新代表者)
-      const familyName = preFg.name ?? '';
+      // 旧代表者・家族名は上で決めた値を使う (RPC が家族の行のロックの下で読んだ旧代表者。更新した後の representative_id は新代表者)
+      const familyName = beforeTransfer.name ?? '';
       // 旧代表者が分からない (解散した行は NULL。#1917) ときは null (= old_owner 役の宛先なし)
-      const oldRepId = preFg.representative_id ?? null;
+      const oldRepId = beforeTransfer.representativeId ?? null;
 
       // auth.users のメールアドレス。listUsers() は先頭 50 件しか返さないため、通知先と
       // 旧・新代表者の分だけを引く (#1204)。取得できなかった人は警告ログに残り、その人には送らない

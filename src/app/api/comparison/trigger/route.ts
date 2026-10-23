@@ -19,17 +19,27 @@
  *   - 今の期間 (進行中) の集計なので、比較のバッジは判定しない。バッジは、pg_cron が期間の切り替わった直後に
  *     直前の期間を集計し直す回 (previousPeriod: true) だけが付ける (#1491。暫定の順位で取り消されないバッジを付けないため)
  *   - 500 の本文は汎用メッセージだけ (src/lib/api/errors.ts の internalError)。原因は構造化ログにだけ残す
+ *   - 関数を呼ぶ直前 (認可・本文・設定の確認を通ったあと) に、監査ログに super_admin.cron.run_now を 1 行残す (#1571。
+ *     運営の変更系はすべて記録する。docs/design/operator/07-audit-monitoring.md §4.2。記録してから実行する順は
+ *     operator/08 §7.2 の手動実行 API と同じ)。関数の結果を待ってから書かないのは、関数が途中まで書き換えてから失敗する (500。
+ *     user_metrics を書いた後に統計・順位の段で落ちる) ときや、応答を待つ間に通信が切れる・maxDuration で打ち切られるときも、
+ *     運営が集計を走らせた事実を残すため。記録するのは「走らせた操作」で、関数の成否は記録しない (成否は構造化ログに残る)。
+ *     401 / 403 / 400 と設定の不足 (関数を呼ばない 500) は記録しない。本人の権限の client で書き、
+ *     記録の失敗で関数の呼び出しと応答は変えない (fail-open。失敗は recordAdminAudit が db-logger に残す)
  *
  * エラー本文の形は運営 API と同じ { error: { code, message } } (docs/design/cross/04-api-conventions.md §5.2)。
  */
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
+import { recordAdminAudit } from '@/lib/admin/audit';
 import { internalError } from '@/lib/api/errors';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { requireRole } from '@/lib/auth/helpers';
+import { createLogger } from '@/lib/db-logger';
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { createClient } from '@/lib/supabase/server';
 
 export const dynamic = 'force-dynamic';
 // 集計の Edge Function の応答を待つ上限 (秒)。他の重い API (AI の献立生成など) と同じ値。
@@ -38,6 +48,15 @@ export const maxDuration = 300;
 
 const ROUTE_NAME = 'POST /api/comparison/trigger';
 const EDGE_FUNCTION_NAME = 'calculate-segment-stats';
+/**
+ * 監査ログ (admin_audit_logs) の action_type。定期実行 (pg_cron) を待たずに手で走らせる操作
+ * (operator/07 §4.2 の cron 手動実行。details と severity は operator/08 §7.2 の手動実行 API と同じ形)
+ */
+const CRON_RUN_NOW_AUDIT_ACTION = 'super_admin.cron.run_now';
+/** 手で走らせた定期実行の pg_cron のジョブ名 (supabase/migrations/20261009100000_schedule_calculate_segment_stats.sql の cron.schedule) */
+const CRON_JOB_NAME = 'calculate-segment-stats';
+/** 監査ログの target_type。対象は定期処理そのもので、uuid の id は無い (target_id は null) */
+const CRON_RUN_NOW_AUDIT_TARGET_TYPE = 'cron_job';
 
 /**
  * 集計できる期間の種類。pg_cron の定期実行 (public.invoke_calculate_segment_stats) が呼ぶ 3 種類と同じで、
@@ -65,6 +84,39 @@ async function readBody(request: Request): Promise<unknown> {
   } catch {
     return null;
   }
+}
+
+/**
+ * 手動の集計を監査ログに 1 行残す (#1571)。関数を呼ぶ前に呼ぶ。fail-open: 記録できなくても例外を投げず、関数の呼び出しと応答は変えない。
+ * 本人の権限の client が作れないとき (RLS の audit_logs_insert_admins は actor_id = auth.uid() を求める) も、
+ * その失敗を構造化ログに残して戻る (INSERT の失敗は recordAdminAudit が構造化ログに残す)。
+ */
+async function recordRunNowAudit(
+  request: Request,
+  actorId: string,
+  periodType: (typeof PERIOD_TYPES)[number],
+): Promise<void> {
+  let supabase: Awaited<ReturnType<typeof createClient>>;
+  try {
+    supabase = await createClient();
+  } catch (err) {
+    createLogger(ROUTE_NAME).error('監査ログ (admin_audit_logs) への記録に失敗しました', err, {
+      action_type: CRON_RUN_NOW_AUDIT_ACTION,
+      actor_id: actorId,
+      stage: 'client',
+    });
+    return;
+  }
+  await recordAdminAudit({
+    supabase,
+    actorId,
+    actionType: CRON_RUN_NOW_AUDIT_ACTION,
+    targetType: CRON_RUN_NOW_AUDIT_TARGET_TYPE,
+    details: { job_name: CRON_JOB_NAME, period_type: periodType },
+    severity: 'warn',
+    request,
+    routeName: ROUTE_NAME,
+  });
 }
 
 export async function POST(request: Request) {
@@ -103,6 +155,9 @@ export async function POST(request: Request) {
     return internalError(ROUTE_NAME, err, { userId: actorId, periodType, stage: 'env' }, { shape: 'nested' });
   }
   const { url: supabaseUrl, serviceRoleKey } = serviceConfig;
+
+  // 関数を呼ぶ前に記録する。関数が途中まで書き換えてから失敗しても、応答を待つ間に打ち切られても記録が残る (operator/08 §7.2 と同じ順)
+  await recordRunNowAudit(request, actorId, periodType);
 
   let edgeRes: Response;
   try {
