@@ -253,7 +253,7 @@ export const LEGAL_CLAIMS: readonly LegalClaim[] = [
   { id: 'privacy-3#13', section: 'privacy-3', fragment: 'お問い合わせ・サポート・請求', chars: 60, basis: 'product', evidence: 'F-36・F-42 (inquiries・support_tickets・support_ticket_messages・data_subject_requests)' },
   { id: 'privacy-3#14', section: 'privacy-3', fragment: '同意の記録 | 利用規約とプ', chars: 146, basis: 'product', evidence: 'F-17・F-26・F-30・F-37' },
   { id: 'privacy-3#15', section: 'privacy-3', fragment: '端末・利用状況・ログ | I', chars: 183, basis: 'product', evidence: 'F-17・F-37・F-46・F-42 (user_sessions_metadata・user_push_tokens・native_bridge_codes・notification_preferences・app_logs・ai_usage_counters・ai_usage_grant_claims・llm_usage_logs・email_outbox・push_outbox・experiment_assignments)' },
-  { id: 'privacy-3#16', section: 'privacy-3', fragment: '運営の記録 | 運営担当者が', chars: 65, basis: 'product', evidence: 'F-36・F-46・F-42 (admin_user_notes・membership_audit・meal_nutrition_debug_logs・gdpr_deletion_requests)' },
+  { id: 'privacy-3#16', section: 'privacy-3', fragment: '運営の記録 | 運営担当者が', chars: 65, basis: 'product', evidence: 'F-36・F-46・F-42 (admin_user_notes・membership_audit・meal_nutrition_debug_logs・gdpr_deletion_requests・account_deletion_guards)' },
   { id: 'privacy-3#17', section: 'privacy-3', fragment: 'Cookie 等 | 第10', chars: 19, basis: 'contract', evidence: '第10条の参照' },
   { id: 'privacy-3#18', section: 'privacy-3', fragment: 'アプリは、ユーザーが写真を撮', chars: 84, basis: 'product', evidence: 'F-25' },
   { id: 'privacy-3#19', section: 'privacy-3', fragment: '許可は、端末の設定から取り消', chars: 17, basis: 'product', evidence: 'F-25' },
