@@ -270,6 +270,44 @@ describe('createLockHolderKit: 後の処理が並んだのを確かめてから�
     await holder.release();
   });
 
+  it('waitForLockWaitersUnlessSettled は、count 本並んだら queued、並ぶ前に呼び出しが終わったら settled を返す (並んだかを数えてから終わったかを見る。両方なら queued)', async () => {
+    const db = fakeDb();
+    const kit = kitOn(db);
+    const holder = kit.startHolder('先の処理', 'SELECT 1;');
+    await holder.sleeping;
+
+    db.state.lockWaiters = 1;
+    await expect(kit.waitForLockWaitersUnlessSettled('some_fn', 1, { step: '並んだ', blockedBy: holder }, () => false)).resolves.toBe('queued');
+    await expect(kit.waitForLockWaitersUnlessSettled('some_fn', 1, { step: '並んでから終わった', blockedBy: holder }, () => true)).resolves.toBe(
+      'queued',
+    );
+    const scoped = db.log.filter((line) => line.startsWith('wait ')).at(-1);
+    expect(scoped).toContain(`AND ${FIRST_PID} = ANY(pg_blocking_pids(pid))`);
+
+    db.state.lockWaiters = 0;
+    const waitsBefore = db.log.filter((line) => line.startsWith('wait ')).length;
+    const checks: number[] = [];
+    const settled = () => {
+      checks.push(db.log.filter((line) => line.startsWith('wait ')).length - waitsBefore);
+      return checks.length >= 2;
+    };
+    await expect(kit.waitForLockWaitersUnlessSettled('some_fn', 1, { step: '先に終わった', blockedBy: holder }, settled)).resolves.toBe('settled');
+    // 終わったかは、毎回の数えのあとに見る (数える前に見て、数えた回より前の状態で settled にしない)
+    expect(checks).toEqual([1, 2]);
+    await holder.release();
+  });
+
+  it('waitForLockWaitersUnlessSettled は、並ばず終わりもしなければ、waitForLockWaiters と同じ文で落ちる', async () => {
+    const db = fakeDb();
+    const kit = kitOn(db);
+    const holder = kit.startHolder('先の処理', 'SELECT 1;');
+    await holder.sleeping;
+    await expect(kit.waitForLockWaitersUnlessSettled('some_fn', 1, { step: "(4') 並ばない", blockedBy: holder }, () => false)).rejects.toThrow(
+      `手順「(4') 並ばない」: some_fn の呼び出しが ${FAST_TIMINGS.deadlineMs} ミリ秒のうちに先の処理 の後ろの行のロックの待ちに 1 本並びませんでした (並んだのは 0 本)`,
+    );
+    await holder.release();
+  });
+
   it('runBehindHolder は、接続が pg_sleep に入ってから後の処理を呼び、後の処理が並んだのを確かめてから放し、両方の結果を返す', async () => {
     const db = fakeDb();
     const kit = kitOn(db);
