@@ -33,6 +33,41 @@ export const SENTINEL_EXCLUDED_ROUTE_FILES: readonly string[] = [
 
 /**
  * 一覧の外 (まだ直していない配下) の違反の件数の基線。キー = `src/app/api/<最初の区切り>`、値 = 英語だけの文と例外の文面の件数の合計。
- * 件数が 0 の配下は書かない
+ * 件数が 0 の配下は書かない。数えたのは 2026-10-23 の origin/main (509ccf36) の上
  */
-export const UNFIXED_VIOLATION_BASELINE: Readonly<Record<string, number>> = {};
+export const UNFIXED_VIOLATION_BASELINE: Readonly<Record<string, number>> = {
+  'src/app/api/account': 3,
+  'src/app/api/admin': 74,
+  'src/app/api/ai': 112,
+  'src/app/api/announcements': 6,
+  'src/app/api/auth': 1,
+  'src/app/api/badges': 2,
+  'src/app/api/catalog': 4,
+  'src/app/api/comparison': 1,
+  'src/app/api/contact': 1,
+  'src/app/api/e2e': 2,
+  'src/app/api/export': 3,
+  'src/app/api/family': 1,
+  'src/app/api/favorites': 1,
+  'src/app/api/health': 59,
+  'src/app/api/legal': 1,
+  'src/app/api/log': 7,
+  'src/app/api/meal-plans': 16,
+  'src/app/api/meals': 9,
+  'src/app/api/notification-preferences': 5,
+  'src/app/api/nutrition': 2,
+  'src/app/api/nutrition-targets': 2,
+  'src/app/api/onboarding': 7,
+  'src/app/api/operator': 14,
+  'src/app/api/pantry': 9,
+  'src/app/api/performance': 11,
+  'src/app/api/profile': 4,
+  'src/app/api/push-tokens': 1,
+  'src/app/api/recipes': 12,
+  'src/app/api/shopping-list': 22,
+  'src/app/api/storage': 2,
+  'src/app/api/super-admin': 46,
+  'src/app/api/support': 18,
+  'src/app/api/upload': 7,
+  'src/app/api/webhooks': 22,
+};
