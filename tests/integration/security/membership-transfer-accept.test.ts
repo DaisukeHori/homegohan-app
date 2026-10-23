@@ -204,7 +204,7 @@ describe('#1236 accept_org_owner_transfer: 承諾時点の所属を再検証す�
     expect(await orgOwnerId(orgA)).toBe(owner.id);
     expect(await proposalStatus(proposalId)).toBe('pending');
 
-    // 影響: 組織の削除もできない (owner_id を奪取されていないため DELETE ポリシーを通らない)
+    // 影響: 組織の削除もできない (組織の行を直接 DELETE できるポリシーは利用者に無い (20261023100000) ので 0 行)
     const { data: deleted } = await asUser(leaver.jwt).from('organizations').delete().eq('id', orgA).select('id');
     expect(deleted ?? []).toEqual([]);
     expect(await orgOwnerId(orgA)).toBe(owner.id);

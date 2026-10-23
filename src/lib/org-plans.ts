@@ -16,7 +16,7 @@
  * consume_ai_usage_at は ai_daily_limits に行の無いプランを free の行で判定する。そのため、この一覧のすべての値に
  * ai_daily_limits の行 (組織の上限) が要る ('standard' = 20261021100000_billing_paid_plans_iap.sql の (5a)、
  * 'premium' / 'enterprise' = 20261021110000_org_plan_ai_daily_limits.sql)。
- * 値を足すときは、同じ PR で ai_daily_limits の行を足し、トリガー関数の許す値を同じにする migration も足す
+ * 値を足すときに要るのは、同じ PR で ai_daily_limits の行を足す migration (と契約テスト) だけ (トリガー関数 guard_organizations_plan_value は値の一覧を持たない。20261022170000)
  * (tests/org-plan-ai-daily-limits-contract.test.ts と tests/integration/rls/ai-plan-feature-caps-rpc.test.ts が突き合わせる)。
  */
 export const ORG_PLAN_VALUES = ['standard', 'premium', 'enterprise'] as const;

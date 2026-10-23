@@ -107,6 +107,8 @@
 | **匿名化集計** | 個人を特定できない形での集計値 (例: 部署平均、最低でも 10 名以上の集計) |
 | **同意** | 個別ユーザーが組織への詳細データ提供に同意 (オプトイン) |
 
+> 注: 上の表の「プラン変更」について、組織のプランの段階は運営の `PATCH /api/admin/organizations/{id}` だけが変える (#1952。`20261022170000_org_plan_operator_only.sql`)。組織の管理者によるプランの変更の API・操作は未実装 (要件の文は当初のまま残す)。
+
 ---
 
 ## 3. ペルソナ
@@ -471,6 +473,7 @@ yamada@example.com,org_manager,営業部,山田花子,EMP002
 - 作成: 運営側 (`super_admin`) のみ
 - 編集 (基本情報): `org_admin`
 - 編集 (プラン変更): `org_admin` (再認証必須)
+  - 注: 組織のプランの段階は運営の `PATCH /api/admin/organizations/{id}` だけが変える (#1952。`20261022170000_org_plan_operator_only.sql`)。組織の管理者によるプランの変更の API・操作は未実装 (要件の文は当初のまま残す)。
 - 削除: 運営側のみ (契約終了時)
 - 一時停止: 運営側 (未払い等)
 
@@ -503,6 +506,8 @@ yamada@example.com,org_manager,営業部,山田花子,EMP002
 | **org_viewer** | 閲覧者 | 集計のみ (HR 担当者用) |
 | **org_industrial_doctor** | 産業医 | 同意済メンバーの個別健康データ |
 
+> 注: 上の表の org_admin の「プラン変更」について、組織のプランの段階は運営の `PATCH /api/admin/organizations/{id}` だけが変える (#1952。`20261022170000_org_plan_operator_only.sql`)。組織の管理者によるプランの変更の API・操作は未実装 (要件の文は当初のまま残す)。
+
 #### 5.3.2 権限マトリクス
 
 | 操作 | org_admin | org_manager | org_member | org_viewer | org_industrial_doctor |
@@ -525,6 +530,8 @@ yamada@example.com,org_manager,営業部,山田花子,EMP002
 | ライセンス購入 | ✅ | ❌ | ❌ | ❌ | ❌ |
 | ライセンス割当 | ✅ | ✅ | ❌ | ❌ | ❌ |
 | ライセンス閲覧 | ✅ | ✅ | ❌ | ✅ | ❌ |
+
+> 注: 「プラン変更 / 請求」の行について、組織のプランの段階は運営の `PATCH /api/admin/organizations/{id}` だけが変える (#1952。`20261022170000_org_plan_operator_only.sql`)。組織の管理者によるプランの変更の API・操作は未実装 (要件の文は当初のまま残す)。
 
 > **`org_viewer` の典型ユースケース**: 人事・労務担当者が組織契約状況・利用率レポート等を「読むだけ」で済む役割。個人データ (食事生データ・健康スコアの個別値) には一切アクセス不可。
 
