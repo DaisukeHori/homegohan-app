@@ -4,7 +4,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { authFailureNested } from '@/lib/api/error-responses';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 
@@ -25,12 +25,8 @@ export async function GET() {
 
     return NextResponse.json({ admins: data ?? [] });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-    }
+    const authFailure = authFailureNested(err);
+    if (authFailure) return authFailure;
     return internalError('GET /api/super-admin/admins', err, {}, { shape: 'nested' });
   }
 }

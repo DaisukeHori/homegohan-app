@@ -9,7 +9,18 @@
  */
 
 /** 直し終えた配下 (この下の route.ts の失敗の本文に、英語だけの文と例外の文面が 1 件も無いことを見張る) */
-export const JAPANESE_ERROR_API_DIRS: readonly string[] = ['src/app/api/org'];
+export const JAPANESE_ERROR_API_DIRS: readonly string[] = [
+  'src/app/api/org',
+  // super_admin・運営の操作 (operator は、別の PR が直している途中の membership/{org,family}/[id]/transfer を除いた配下)
+  'src/app/api/super-admin',
+  'src/app/api/operator/membership/audit',
+  'src/app/api/operator/membership/families',
+  'src/app/api/operator/membership/orgs',
+  'src/app/api/operator/membership/family/[id]/candidates',
+  'src/app/api/operator/membership/family/[id]/dissolve',
+  'src/app/api/operator/membership/org/[id]/candidates',
+  'src/app/api/operator/membership/org/[id]/dissolve',
+];
 
 /** route が本文を作るのに使う共通の関数のファイル (ここも違反 0 件を見張る) */
 export const JAPANESE_ERROR_SHARED_BODY_FILES: readonly string[] = [
@@ -28,7 +39,6 @@ export const SENTINEL_EXCLUDED_ROUTE_FILES: readonly string[] = [
   'src/app/api/admin/users/[id]/freeze/route.ts',
   'src/app/api/operator/membership/family/[id]/transfer/route.ts',
   'src/app/api/operator/membership/org/[id]/transfer/route.ts',
-  'src/app/api/super-admin/plans/[id]/route.ts',
 ];
 
 /**
@@ -58,7 +68,6 @@ export const UNFIXED_VIOLATION_BASELINE: Readonly<Record<string, number>> = {
   'src/app/api/nutrition': 2,
   'src/app/api/nutrition-targets': 2,
   'src/app/api/onboarding': 7,
-  'src/app/api/operator': 14,
   'src/app/api/pantry': 9,
   'src/app/api/performance': 11,
   'src/app/api/profile': 4,
@@ -66,7 +75,6 @@ export const UNFIXED_VIOLATION_BASELINE: Readonly<Record<string, number>> = {
   'src/app/api/recipes': 12,
   'src/app/api/shopping-list': 22,
   'src/app/api/storage': 2,
-  'src/app/api/super-admin': 46,
   'src/app/api/support': 18,
   'src/app/api/upload': 7,
   'src/app/api/webhooks': 22,

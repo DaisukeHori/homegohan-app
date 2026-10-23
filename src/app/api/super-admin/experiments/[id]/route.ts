@@ -7,7 +7,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { authFailureNested } from '@/lib/api/error-responses';
 import { UpdateExperimentSchema } from '@/lib/super-admin/experiments-schemas';
 import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
@@ -34,12 +34,8 @@ export async function GET(_request: NextRequest, props: Params) {
 
     return NextResponse.json({ data });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-    }
+    const authFailure = authFailureNested(err);
+    if (authFailure) return authFailure;
     return internalError('GET /api/super-admin/experiments/[id]', err, {}, { shape: 'nested' });
   }
 }
@@ -96,12 +92,8 @@ export async function PATCH(request: NextRequest, props: Params) {
 
     return NextResponse.json({ data });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-    }
+    const authFailure = authFailureNested(err);
+    if (authFailure) return authFailure;
     return internalError('PATCH /api/super-admin/experiments/[id]', err, {}, { shape: 'nested' });
   }
 }
@@ -153,12 +145,8 @@ export async function DELETE(request: NextRequest, props: Params) {
 
     return NextResponse.json({ data: { id: params.id, deleted: true } });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-    }
+    const authFailure = authFailureNested(err);
+    if (authFailure) return authFailure;
     return internalError('DELETE /api/super-admin/experiments/[id]', err, {}, { shape: 'nested' });
   }
 }

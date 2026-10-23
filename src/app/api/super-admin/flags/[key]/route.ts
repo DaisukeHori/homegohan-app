@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { authFailureNested } from '@/lib/api/error-responses';
 import { invalidateFeatureFlag } from '@/lib/feature-flags';
 import { UpdateFeatureFlagSchema } from '@/lib/super-admin/flags-schemas';
 import { internalError } from '@/lib/api/errors';
@@ -82,12 +82,8 @@ export async function PATCH(request: NextRequest, props: Params) {
 
     return NextResponse.json({ data: updated });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-    }
+    const authFailure = authFailureNested(err);
+    if (authFailure) return authFailure;
     return internalError('PATCH /api/super-admin/flags/[key]', err, {}, { shape: 'nested' });
   }
 }
@@ -147,12 +143,8 @@ export async function DELETE(request: NextRequest, props: Params) {
 
     return NextResponse.json({ data: { key: flagKey, deleted: true } });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-    }
+    const authFailure = authFailureNested(err);
+    if (authFailure) return authFailure;
     return internalError('DELETE /api/super-admin/flags/[key]', err, {}, { shape: 'nested' });
   }
 }

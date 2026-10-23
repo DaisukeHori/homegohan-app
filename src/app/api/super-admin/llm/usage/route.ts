@@ -24,7 +24,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { jstDayRangeTimestamps, llmUsageRange } from '@/lib/jst-day-ranges';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { authFailureNested } from '@/lib/api/error-responses';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { LLM_USAGE_FROM_AFTER_TO_MESSAGE, LLMUsageQuerySchema } from '@/lib/super-admin/llm-schemas';
 import {
@@ -107,12 +107,8 @@ export async function GET(request: NextRequest) {
       data: toLlmUsageResponseData(parsedSummary.data, { from: fromDate, to: toDate }),
     });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-    }
+    const authFailure = authFailureNested(err);
+    if (authFailure) return authFailure;
     // 想定外の例外は内容を記録し、画面には中身を出さない
     logger.error('LLM 使用量 API で予期しないエラー', err);
     return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: 'サーバーエラーが発生しました' } }, { status: 500 });

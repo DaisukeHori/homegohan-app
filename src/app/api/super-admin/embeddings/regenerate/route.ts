@@ -26,7 +26,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { getSupabaseServiceConfig, isMissingEnvError } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { authFailureNested } from '@/lib/api/error-responses';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { createClient } from '@/lib/supabase/server';
@@ -183,12 +183,8 @@ export async function POST(request: NextRequest) {
       message: edgeData.message ?? '再生成ジョブを実行しました',
     });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-    }
+    const authFailure = authFailureNested(err);
+    if (authFailure) return authFailure;
     // 本文は汎用メッセージだけにし、元のエラーは構造化ログに残す (#1172)
     return internalError(ROUTE_NAME, err, {}, { shape: 'nested' });
   }
