@@ -17,6 +17,8 @@ import { CANONICAL_GOAL_TYPES, describeGoalRangesForPrompt } from '@/lib/health-
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { normalizeProfileName } from '@/lib/profile-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE, AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 /**
  * AI に渡す日付 (過去の相談の日・重要なメッセージの日・今日) を書くタイムゾーン (#1433)。
@@ -70,7 +72,7 @@ async function executeAndFinalizeAction(
     // unknown action type も含めて必ず ai_action_logs のステータスを確定させる。
     const success = executionResult.unknownActionType ? false : executionResult.success;
     const result = executionResult.unknownActionType
-      ? { error: 'Unknown action type' }
+      ? { error: AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE }
       : executionResult.result;
 
     await supabase
@@ -94,7 +96,7 @@ export async function GET(request: Request, props: { params: Promise<{ sessionId
   const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   // セッション所有者確認
   const { data: session } = await supabase
@@ -104,7 +106,7 @@ export async function GET(request: Request, props: { params: Promise<{ sessionId
     .single();
 
   if (!session || session.user_id !== user.id) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    return NextResponse.json({ error: AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE }, { status: 404 });
   }
 
   const { data, error } = await supabase
@@ -980,7 +982,7 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
   const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   // #1148: AI 相談の緊急停止スイッチ (feature_flags の ai_chat_enabled。通常は ON)。回数の枠を使わせないよう、レート制限より前に見る
   const unavailable = await aiChatDisabledResponse(user.id);
@@ -1007,7 +1009,7 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
       .single();
 
     if (!session || session.user_id !== user.id) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      return NextResponse.json({ error: AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     const body = await request.json();

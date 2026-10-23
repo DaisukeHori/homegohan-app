@@ -246,7 +246,7 @@ describe('#1149 写真の「オート」: 判別の数え済みの印を、続�
   it('判別できなかった (422) あと、種類を手で選んだ: その解析にも判別の印を入れる', async () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (url === '/api/ai/classify-photo') {
-        return jsonResponse({ error: 'unknown_type', message: '判定できませんでした', type: 'unknown', confidence: 0, aiUsageGrant: GRANT }, 422);
+        return jsonResponse({ error: '判定できませんでした', code: 'unknown_type', message: '判定できませんでした', type: 'unknown', confidence: 0, aiUsageGrant: GRANT }, 422);
       }
       if (url === '/api/ai/analyze-weight-scale') return jsonResponse({ weight: AI_READ_WEIGHT, confidence: CONFIDENT });
       if (url.startsWith('/api/health/records/history')) return jsonResponse([]);

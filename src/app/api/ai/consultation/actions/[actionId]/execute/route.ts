@@ -6,6 +6,8 @@ import { AI_SENDING_ACTION_TYPES, runConsultationAction } from '@/lib/ai/consult
 import { aiDailyLimitResponse } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
+import { API_UNAUTHENTICATED_MESSAGE, API_FORBIDDEN_MESSAGE } from '@/lib/api/error-responses';
+import { AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE, AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE, AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 // 指定日付の user_daily_meals を取得または作成するヘルパー関数
 // NOTE: 現状このファイル内では未使用（resolveExistingTargetSlots が同等の処理を担う）。
@@ -42,7 +44,7 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
   const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   // #1148: AI 相談の緊急停止スイッチ (feature_flags の ai_chat_enabled。通常は ON)。回数の枠を使わせないよう、レート制限より前に見る
   const unavailable = await aiChatDisabledResponse(user.id);
@@ -79,21 +81,21 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
         .single();
       
       if (msgError || !actionByMessage) {
-        return NextResponse.json({ error: 'Action not found' }, { status: 404 });
+        return NextResponse.json({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE }, { status: 404 });
       }
       action = actionByMessage;
     }
 
     if (!action) {
-      return NextResponse.json({ error: 'Action not found' }, { status: 404 });
+      return NextResponse.json({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     if (action.ai_consultation_sessions.user_id !== user.id) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      return NextResponse.json({ error: API_FORBIDDEN_MESSAGE }, { status: 403 });
     }
 
     if (action.status !== 'pending') {
-      return NextResponse.json({ error: 'Action already processed' }, { status: 400 });
+      return NextResponse.json({ error: AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE }, { status: 400 });
     }
 
     // 献立の生成のアクションは、利用者のデータを外国の AI 事業者へ送る。同意が無ければ送らずに止める
@@ -108,7 +110,7 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
     const executionResult = await runConsultationAction(supabase, user, action);
 
     if (executionResult.unknownActionType) {
-      return NextResponse.json({ error: 'Unknown action type' }, { status: 400 });
+      return NextResponse.json({ error: AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE }, { status: 400 });
     }
 
     // 今日の AI の利用回数の上限 (#1149) に達して、献立の生成をしなかった。アクションは pending のまま残す
@@ -145,7 +147,7 @@ export async function DELETE(request: Request, props: { params: Promise<{ action
   const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
     // actionIdはメッセージIDまたはアクションログIDの可能性がある（POSTと同じ探索順・同じ所有権検証）
@@ -173,19 +175,19 @@ export async function DELETE(request: Request, props: { params: Promise<{ action
         .single();
 
       if (msgError || !actionByMessage) {
-        return NextResponse.json({ error: 'Action not found' }, { status: 404 });
+        return NextResponse.json({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE }, { status: 404 });
       }
       action = actionByMessage;
     }
 
     if (!action) {
-      return NextResponse.json({ error: 'Action not found' }, { status: 404 });
+      return NextResponse.json({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     // セキュリティ: 却下対象アクションが自分のセッションに属することを確認
     // （不一致/不存在いずれも404とし、他ユーザーのactionId存在有無を推測させない）
     if (action.ai_consultation_sessions.user_id !== user.id) {
-      return NextResponse.json({ error: 'Action not found' }, { status: 404 });
+      return NextResponse.json({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     const { error } = await supabase

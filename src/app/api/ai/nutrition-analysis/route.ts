@@ -8,9 +8,11 @@ import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, aiDailyLimitSkippedField, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
-import { CALENDAR_DATE_REQUIREMENT, isCalendarDate, nutritionAnalysisRange } from '@/lib/jst-day-ranges';
+import { isCalendarDate, nutritionAnalysisRange } from '@/lib/jst-day-ranges';
 import { aiConsentSkippedField, checkUserAiConsent, requireAiConsent } from '@/lib/ai/consent-guard';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { AI_MENU_CHANGE_INPUT_REQUIRED_MESSAGE, aiInvalidDateMessage, AI_MENU_DAY_NOT_FOUND_MESSAGE, AI_MENU_MEAL_NOT_FOUND_MESSAGE, AI_MENU_REQUEST_CREATE_FAILED_MESSAGE, AI_MENU_REGENERATE_FAILED_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 // 栄養目標が未設定のときの既定値（g/日）。
 // 糖質は「炭水化物 − 食物繊維」で計算しているので、目標も同じ定義（炭水化物の目標 − 食物繊維の目標）で導く (#1146)。
@@ -32,7 +34,7 @@ export async function GET(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
@@ -355,7 +357,7 @@ export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
@@ -370,13 +372,13 @@ export async function POST(request: Request) {
     const { targetDate, targetMealType, prompt } = body;
 
     if (!targetDate || !targetMealType || !prompt) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+      return NextResponse.json({ error: AI_MENU_CHANGE_INPUT_REQUIRED_MESSAGE }, { status: 400 });
     }
 
     // targetDate は YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433)。DB の date 型は 2026/10/10 なども日付として読むが、
     // そのまま target_slots に入ると、献立生成 (Edge Function) が日付を前後にずらすところで RangeError になる
     if (!isCalendarDate(targetDate)) {
-      return NextResponse.json({ error: `targetDate must be ${CALENDAR_DATE_REQUIREMENT}` }, { status: 400 });
+      return NextResponse.json({ error: aiInvalidDateMessage('日付') }, { status: 400 });
     }
 
     // 該当日付の user_daily_meals を取得（日付ベースモデル）
@@ -388,7 +390,7 @@ export async function POST(request: Request) {
       .single();
 
     if (!dailyMeal) {
-      return NextResponse.json({ error: 'Day not found' }, { status: 404 });
+      return NextResponse.json({ error: AI_MENU_DAY_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     // 対象の食事を取得
@@ -400,7 +402,7 @@ export async function POST(request: Request) {
       .single();
 
     if (!meal) {
-      return NextResponse.json({ error: 'Meal not found' }, { status: 404 });
+      return NextResponse.json({ error: AI_MENU_MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     // generate-menu-v4を呼び出す（同期呼び出し）
@@ -437,7 +439,7 @@ export async function POST(request: Request) {
       console.error('Failed to create request:', requestError);
       // 献立の変更を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
       await refundAiUsage(user.id, 'menu_generation', aiUsage);
-      return NextResponse.json({ error: 'Failed to create request' }, { status: 500 });
+      return NextResponse.json({ error: AI_MENU_REQUEST_CREATE_FAILED_MESSAGE }, { status: 500 });
     }
 
     const regenerateResult = await callGenerateMenuV4WithRetry({
@@ -459,7 +461,7 @@ export async function POST(request: Request) {
         requestId: requestData.id,
         errorMessage: regenerateResult.errorMessage,
       });
-      return NextResponse.json({ error: 'Failed to regenerate meal' }, { status: 500 });
+      return NextResponse.json({ error: AI_MENU_REGENERATE_FAILED_MESSAGE }, { status: 500 });
     }
 
     const responseText = await regenerateResult.response.text().catch(() => '');

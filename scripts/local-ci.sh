@@ -56,6 +56,9 @@
 #   INTEGRATION_SETUP_RETRY_ATTEMPTS / INTEGRATION_SETUP_RETRY_BASE_DELAY_MS
 #                                  結合テストの準備 (service_role の REST の select・upsert) がゲートウェイの一時的な失敗をやり直す回数と最初の間隔の上書き
 #                                  (tests/integration/helpers/setup-transient-retry.ts。既定のままなら CI と同じ)
+#   INTEGRATION_HOLDER_MAX_HOLD_SECONDS / INTEGRATION_HOLDER_DEADLINE_MS
+#                                  結合テストの「先の処理をコミット前のまま開いておく接続」を放さないまま持つ秒数の上限と、後の処理が
+#                                  ロックの待ちに並ぶのを待つ上限 (ミリ秒) の上書き (tests/integration/helpers/lock-holder.ts。既定のままなら CI と同じ)
 #   MOBILE_JEST_TEST_TIMEOUT_MS / MOBILE_JEST_ASYNC_UTIL_TIMEOUT_MS
 #                                  mobile の Jest のテストの時間切れと RNTL の待ちの既定の上書き (apps/mobile/jest.timeouts.js。既定のままなら CI と同じ)
 #   UNIT_SLOT_TEST_TIMEOUT_MS      unit の段の tests/local-ci-slot*.test.ts と tests/mobile-easignore-bundle-inputs.test.ts (bash・git を起動する) の 1 件のテストの時間切れの上書き
@@ -205,11 +208,13 @@ PW_CONSENT_ARGS=(--trace off tests/e2e/legal-consent-gate.spec.ts)
 # (502 / 503 / 504・接続の失敗) をやり直す回数と最初の間隔の上書き (tests/integration/helpers/auth-transient-retry.ts)。
 # INTEGRATION_SETUP_RETRY_ATTEMPTS / INTEGRATION_SETUP_RETRY_BASE_DELAY_MS は、結合テストの準備の REST の問い合わせが
 # ゲートウェイの一時的な失敗 (502 / 503 / 504・Kong の upstream の文) をやり直す回数と最初の間隔の上書き (tests/integration/helpers/setup-transient-retry.ts)。
+# INTEGRATION_HOLDER_MAX_HOLD_SECONDS / INTEGRATION_HOLDER_DEADLINE_MS は、結合テストの「先の処理をコミット前のまま開いておく接続」を
+# 放さないまま持つ秒数の上限と、後の処理がロックの待ちに並ぶのを待つ上限の上書き (tests/integration/helpers/lock-holder.ts)。
 # MOBILE_JEST_TEST_TIMEOUT_MS / MOBILE_JEST_ASYNC_UTIL_TIMEOUT_MS は mobile の Jest の時間切れの上書き (apps/mobile/jest.timeouts.js)。
 # UNIT_SLOT_TEST_TIMEOUT_MS は unit の段の tests/local-ci-slot*.test.ts と tests/mobile-easignore-bundle-inputs.test.ts の時間切れの上書き (tests/helpers/local-ci-slot-test-timeout.ts)。
 # UNIT_HEAVY_TEST_TIMEOUT_MS / UNIT_HEAVY_HOOK_TIMEOUT_MS は unit の段の重いファイルの時間切れの上書き (tests/helpers/heavy-unit-test-timeout.ts)。
 # UNIT_TEST_FILE_BUDGET_MS は unit の段のあとで一覧にする 1 ファイルの時間の予算の上書き (scripts/test-speed-ratchet.mjs)
-readonly ENV_ALLOWLIST="PATH HOME USER LOGNAME SHELL TMPDIR TERM XDG_CACHE_HOME XDG_CONFIG_HOME DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG PLAYWRIGHT_BROWSERS_PATH HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SUPABASE_CLI SUPABASE_LOCAL_EXCLUDE SUPABASE_LOCAL_REALTIME_VERSION SUPABASE_LOCAL_RETRY_WAIT_UNIT SUPABASE_LOCAL_STOP_RETRY_ATTEMPTS SUPABASE_LOCAL_STOP_RETRY_WAIT_UNIT SUPABASE_LOCAL_KONG_UPSTREAM_KEEPALIVE_POOL_SIZE SUPABASE_IMAGE_REGISTRIES SUPABASE_IMAGE_PULL_ROUNDS SUPABASE_INTERNAL_IMAGE_REGISTRY INTEGRATION_TEST_TIMEOUT_MS INTEGRATION_HOOK_TIMEOUT_MS INTEGRATION_AUTH_RETRY_ATTEMPTS INTEGRATION_AUTH_RETRY_BASE_DELAY_MS INTEGRATION_SETUP_RETRY_ATTEMPTS INTEGRATION_SETUP_RETRY_BASE_DELAY_MS MOBILE_JEST_TEST_TIMEOUT_MS MOBILE_JEST_ASYNC_UTIL_TIMEOUT_MS UNIT_SLOT_TEST_TIMEOUT_MS UNIT_HEAVY_TEST_TIMEOUT_MS UNIT_HEAVY_HOOK_TIMEOUT_MS UNIT_TEST_FILE_BUDGET_MS"
+readonly ENV_ALLOWLIST="PATH HOME USER LOGNAME SHELL TMPDIR TERM XDG_CACHE_HOME XDG_CONFIG_HOME DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG PLAYWRIGHT_BROWSERS_PATH HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SUPABASE_CLI SUPABASE_LOCAL_EXCLUDE SUPABASE_LOCAL_REALTIME_VERSION SUPABASE_LOCAL_RETRY_WAIT_UNIT SUPABASE_LOCAL_STOP_RETRY_ATTEMPTS SUPABASE_LOCAL_STOP_RETRY_WAIT_UNIT SUPABASE_LOCAL_KONG_UPSTREAM_KEEPALIVE_POOL_SIZE SUPABASE_IMAGE_REGISTRIES SUPABASE_IMAGE_PULL_ROUNDS SUPABASE_INTERNAL_IMAGE_REGISTRY INTEGRATION_TEST_TIMEOUT_MS INTEGRATION_HOOK_TIMEOUT_MS INTEGRATION_AUTH_RETRY_ATTEMPTS INTEGRATION_AUTH_RETRY_BASE_DELAY_MS INTEGRATION_SETUP_RETRY_ATTEMPTS INTEGRATION_SETUP_RETRY_BASE_DELAY_MS INTEGRATION_HOLDER_MAX_HOLD_SECONDS INTEGRATION_HOLDER_DEADLINE_MS MOBILE_JEST_TEST_TIMEOUT_MS MOBILE_JEST_ASYNC_UTIL_TIMEOUT_MS UNIT_SLOT_TEST_TIMEOUT_MS UNIT_HEAVY_TEST_TIMEOUT_MS UNIT_HEAVY_HOOK_TIMEOUT_MS UNIT_TEST_FILE_BUDGET_MS"
 # 段の中だけで追加で持ち込む変数名 (e2e のパスワード)
 ENV_EXTRA=""
 # 枠を取ったあとに持ち込む変数名 (apply_slot が決める。supabase-local.sh が読む枠と、結合テストが叩くアプリの URL)

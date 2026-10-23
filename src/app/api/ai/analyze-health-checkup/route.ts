@@ -12,6 +12,8 @@ import { aiDailyLimitResponse, consumeAiUsage, AI_USAGE_COVERED_BY_GRANT, redeem
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { AI_IMAGE_REQUIRED_MESSAGE, AI_PHOTO_MODE_MISMATCH_CODE } from '@/lib/ai/ai-api-messages';
 
 function buildPrompt(): string {
   return `この健康診断結果の画像から、読み取れる検査値を抽出してください。
@@ -25,13 +27,16 @@ function buildPrompt(): string {
 - confidence は画像全体の読み取り確実性を 0.0 から 1.0 で返してください`;
 }
 
+/** 422: 健康診断の結果票の写真から項目が読み取れなかった */
+const HEALTH_CHECKUP_NOT_READABLE_MESSAGE = '健康診断結果が読み取れませんでした。健康診断書がはっきり写った写真を撮り直してください。';
+
 export async function POST(request: Request) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
   const nullCharacterRejection = await rejectNullCharacterBody(request);
   if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
   const aiConsentDenied = await requireAiConsent(supabase, user.id);
@@ -45,7 +50,7 @@ export async function POST(request: Request) {
     const { imageBase64, mimeType } = body;
 
     if (!imageBase64) {
-      return NextResponse.json({ error: 'Image Base64 is required' }, { status: 400 });
+      return NextResponse.json({ error: AI_IMAGE_REQUIRED_MESSAGE }, { status: 400 });
     }
 
     // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える。
@@ -71,7 +76,7 @@ export async function POST(request: Request) {
 
     if (fieldCount === 0) {
       return NextResponse.json(
-        { error: 'mode_mismatch', message: '健康診断結果が読み取れませんでした。健康診断書がはっきり写った写真を撮り直してください。' },
+        { error: HEALTH_CHECKUP_NOT_READABLE_MESSAGE, code: AI_PHOTO_MODE_MISMATCH_CODE, message: HEALTH_CHECKUP_NOT_READABLE_MESSAGE },
         { status: 422 },
       );
     }
