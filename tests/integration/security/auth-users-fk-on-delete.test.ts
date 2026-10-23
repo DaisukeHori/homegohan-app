@@ -260,6 +260,8 @@ const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   'email_outbox.user_id': 'SET NULL',
   // mobile/06 §5.1 (20261016237000): Push 通知の送信待ちは本人の端末宛ての運用の記録なので、本人と一緒に消す (S-12)
   'push_outbox.user_id': 'CASCADE',
+  // mobile/08-sign-in-with-apple §8.1: Sign in with Apple の refresh token は退会のときの失効にだけ使う値なので、本人と一緒に消す
+  'apple_sign_in_tokens.user_id': 'CASCADE',
 };
 
 let fks: AuthUsersFk[];
