@@ -960,6 +960,7 @@ describe('プランの変更', () => {
   it('次の変更を始めると、前の結果の表示 (変更の通知・読み直しの文) は消える', async () => {
     let patches = 0;
     let listCalls = 0;
+    const slowThird = deferred<Response>();
     mockApi({
       list: () => {
         listCalls += 1;
@@ -973,7 +974,6 @@ describe('プランの変更', () => {
         return slowThird.promise;
       },
     });
-    const slowThird = deferred<Response>();
     await renderPage();
 
     await choose(planSelect(ORG_1.id), 'premium');

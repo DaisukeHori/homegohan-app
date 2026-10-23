@@ -334,10 +334,10 @@ export default function OrganizationsManager() {
 
   /**
    * 行の表示が古くて断られた (別の運営が先にプランを変えた・組織が消えた) ときは、今の条件 (ページ・検索) のまま一覧を
-   * 読み直す。setQuery に新しいオブジェクトを渡すと、条件が同じでも取り直す (古い応答の上書きは latestLoad が防ぐ)
+   * 読み直す。setQuery に新しいオブジェクトを渡すと、条件が同じでも取り直す (古い応答の上書きは latestLoad が防ぐ)。
+   * 前の変更の通知は、変更を始めたとき (handlePlanChangeStart) に消している
    */
   const handlePlanStale = useCallback((message: string) => {
-    setPlanNotice(null);
     setPlanStaleError(message);
     setQuery((current) => ({ ...current }));
   }, []);
