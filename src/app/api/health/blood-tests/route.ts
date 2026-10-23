@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { jstToday } from '@/lib/jst-day-ranges';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { HEALTH_BLOOD_TEST_DATE_REQUIRED_MESSAGE } from '@/lib/health-api-messages';
 import { sanitizeBloodTestPayload } from '@/lib/health-payloads';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { aiConsentSkippedField, checkUserAiConsent } from '@/lib/ai/consent-guard';
@@ -16,7 +18,7 @@ export async function GET(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
@@ -56,7 +58,7 @@ export async function POST(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   // #1022 個別レビュー + 経年レビューで LLM を2回叩くため generation カテゴリで制限する
@@ -71,7 +73,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (!resultData.test_date) {
-    return NextResponse.json({ error: 'test_date is required' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_BLOOD_TEST_DATE_REQUIRED_MESSAGE }, { status: 400 });
   }
 
   const { data, error } = await supabase

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { jstToday } from '@/lib/jst-day-ranges';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { HEALTH_CHECKUP_DATE_REQUIRED_MESSAGE } from '@/lib/health-api-messages';
 import { sanitizeHealthCheckupPayload } from '@/lib/health-payloads';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { aiConsentSkippedField, checkUserAiConsent } from '@/lib/ai/consent-guard';
@@ -16,7 +18,7 @@ export async function GET(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
@@ -57,7 +59,7 @@ export async function POST(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   // #1022 個別レビュー + 経年レビューで LLM を2回叩くため generation カテゴリで制限する
@@ -66,13 +68,13 @@ export async function POST(request: NextRequest) {
 
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== 'object') {
-    return NextResponse.json({ error: 'Request body must be a JSON object' }, { status: 400 });
+    return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
   }
 
   const rawBody = body as Record<string, unknown>;
 
   if (typeof rawBody.checkup_date !== 'string' || !rawBody.checkup_date.trim()) {
-    return NextResponse.json({ error: 'checkup_date is required' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_CHECKUP_DATE_REQUIRED_MESSAGE }, { status: 400 });
   }
 
   // UI 経由の OCR 結果を信頼する。サーバー側で画像再解析しない。
@@ -83,7 +85,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (!checkupData.checkup_date) {
-    return NextResponse.json({ error: 'checkup_date is required' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_CHECKUP_DATE_REQUIRED_MESSAGE }, { status: 400 });
   }
 
   // #264: 健康診断を保存（UNIQUE 制約に対応するため upsert を使用）

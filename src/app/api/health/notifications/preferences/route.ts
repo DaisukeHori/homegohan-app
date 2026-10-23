@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { HEALTH_PREFERENCES_NO_FIELDS_MESSAGE } from '@/lib/health-api-messages';
 import {
   mergeNotificationPreferences,
   sanitizeNotificationPreferences,
@@ -27,7 +29,7 @@ export async function GET(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { data, error } = await supabase
@@ -58,7 +60,7 @@ export async function PUT(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const body = await request.json().catch(() => null);
@@ -69,7 +71,7 @@ export async function PUT(request: NextRequest) {
   }
 
   if (Object.keys(preferences).length === 0) {
-    return NextResponse.json({ error: 'No valid preference fields were provided' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_PREFERENCES_NO_FIELDS_MESSAGE }, { status: 400 });
   }
 
   // 既存設定を確認
