@@ -2,10 +2,10 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v1.7 (2026-10-23) |
+| 版 | v1.8 (2026-10-23) |
 | 状態 | 設計ゲート審査中 (実装着手は通過後) |
 | 範囲の正本 | Issue #1139 と、その本文が該当箇所に挙げる `MOBILE_TODO.md`。Issue の本文は「EAS Build / Submit・本番審査の提出・Pass1〜10 の品質検証が未完了」を述べ、該当箇所に `MOBILE_TODO.md:159-217` を挙げる (本文に Sign in with Apple の語は無く、コメントは無い)。Sign in with Apple を求めているのは `MOBILE_TODO.md` の Pass 3「認証/セッション」(`:186`)・Pass 10「ストア要件 (iOS)」(`:193`) と「提出前に片付けるブロッカー」の 5 (`:41`。作業計画 T43)。本書はこの 3 か所の Sign in with Apple の部分を扱う |
-| 土台 | origin/main `9575aa99` (2026-10-23)。本文の file:line はこの版の事実 (v1.2 の時点の origin/main `b6fa5d65` までの差分は、本書が名指すコードとテストに触れていない。v1.4 の時点の origin/main `0c86c3dd` までの差分も同じで、設計書の差分 (cross/20 の F-19・F-51、billing/01 の追随表の行番号、billing/03) は本書が指す行ではない。v1.6 の時点の origin/main `62425ec8` までの差分 (組織の一覧の API と画面・Edge Function 1 本・設計書の行の置き換え) も、本書が名指すコード・テスト・設計書の行に触れておらず、行の数も変えていない) |
+| 土台 | origin/main `9575aa99` (2026-10-23)。本文の file:line はこの版の事実 (v1.2 の時点の origin/main `b6fa5d65` までの差分は、本書が名指すコードとテストに触れていない。v1.4 の時点の origin/main `0c86c3dd` までの差分も同じで、設計書の差分 (cross/20 の F-19・F-51、billing/01 の追随表の行番号、billing/03) は本書が指す行ではない。v1.6 の時点の origin/main `62425ec8` までの差分 (組織の一覧の API と画面・Edge Function 1 本・設計書の行の置き換え) も、本書が名指すコード・テスト・設計書の行に触れておらず、行の数も変えていない。v1.8 の時点の origin/main `86427394` までの差分 (通知の行き先の関数 `apps/mobile/src/lib/notificationRoute.ts` とそのテスト・`docs/design/mobile/03-push-notification.md` の 1 行) も同じで、`apps/mobile/app/(auth)/`・`apps/mobile/src/components/`・`apps/mobile/src/theme/`・`apps/mobile/__tests__/auth/` には差分が無い) |
 | 関連の正典 | `docs/design/cross/01-auth-session.md` §3.1 (Apple Sign In = Phase 1・iOS App Store 必須)・§3.3 (退会のときの IdP 側の revoke)・`docs/design/mobile/05-auth-session.md` (Google ログイン・セッションの保管)・`docs/design/cross/16-auth-history-sessions.md` §11.5 (パスワードの無い利用者 = Google / Apple だけ)・`docs/design/cross/13b-legal-consent-mobile.md` (ログインの後の同意のゲート)・`docs/design/cross/20-terms-privacy-text.md` (委託先の表・主張の表・版) |
 | 実装の範囲 | 段 A1 サーバ (表・交換と失効の lib・API・退会の段階)・段 A2 モバイル (iOS のネイティブのシート)・段 B Web (OAuth)・段 D 法務 (プライバシーポリシーの委託先と版)。§15 |
 
@@ -21,6 +21,7 @@
 | v1.5 | 2026-10-23 | 周 3 の網羅性の反映: (1) §4 にシナリオ S-26〜S-31 (退会・行あり・秘密なし / 秘密鍵が壊れている、Web・provider 無効、Web・refresh token を保管できない (Services ID 無し・`provider_refresh_token` 無し)、`identityToken` が無い、名前の保存の失敗) を足し 31 本にし、§5.2 のトレースに足した。§4 S-12 の参照を S-16 (行なしの退会) に直し、§5.2 S-13 の順の記述 (名前 → 登録 → 振り分け) を直した (2) §7.1 に シートの取り消し (S-7)・`identityToken` 無し・名前の保存の失敗・Web の provider 無効・Web の Services ID 無し / `provider_refresh_token` 無し・WebView のタブ (S-21)・中継のアドレスへのメール (S-22) の行を足した (3) §7.3 (a) に名前の保存の成否の行、§7.3 (b) の `none` に Web の保管しない条件の行を足した (4) §14.2 に `packages/shared/src/apple-sign-in.test.ts`・`src/__tests__/lib/auth/apple/schemas.test.ts` (段 A1)・`src/__tests__/lib/auth/apple-sign-in-flag.test.ts` (段 B) を足し、§15・§16 の本数を直した (5) §17 に設定画面のテスト 2 本 (確認だけ) を足した (6) §18 に `marketing/01`・`cross/08`・`mobile/02`・`cross/12` の行を足し、`ENV_SETUP.md` をリポジトリ直下のものと明記した。§21 に Q-14 を足した |
 | v1.6 | 2026-10-23 | 周 3 の審査の反映: 退会の段階 `apple_revoke` に段階全体の時間の上限 `APPLE_REVOKE_TOTAL_BUDGET_MS` (3 秒) を置いた。退会の route の `maxDuration` 60 秒から Storage の掃除の上限 45 秒と完了メールの待ちの上限 5 秒を引いた 10 秒のうち 3 秒を Apple に充てる (§13.1 の計算。`config.test.ts` が和を確かめる)。締め切りは段階の入口で決め、試行ごとの待ちは `APPLE_API_TIMEOUT_MS` と残りの短いほう (`revokeAppleRefreshToken` に `timeoutMs` を足した)。締め切りを過ぎた行は Apple を呼ばずに `failed` に数えて `warn` を 1 回出す。§0.5・§3 R-8・§4 S-15 とシナリオ S-32 (2 行・Apple が応答しない。32 本)・§5.1・§5.2・§6 裁定 2 と帰結・§7.1・§7.3 (b)・§9.3・§11.2・§11.3・§11.4・§12.4・§13.1・§14.2・§16・§21 Q-2 を追随させた。`APPLE_REVOKE_ATTEMPTS` の注と §13.1 の根拠 (「5xx ならもう 1 回」「応答を待たせない」) を、コードの事実 (失敗の種類を区別せずやり直す・やり直しも上限の中だけ) に合わせた。波及の掃除: §7.3 (b) に既存の挙動の行 (秘密なし S-26・表を読めない) とガード (締め切りの前) を足し、§7.1 に表を読めないの行を足した。§9.3 の既定の名前 `defaultAccountDeletionAppleRevocation` (正典コードに無い) を `createAccountDeletionAppleRevocation({ admin: () => admin })` に直した |
 | v1.7 | 2026-10-23 | 周 4 の網羅性の反映: (1) §7.1 に Web 新規登録の行 (スイッチ無し・provider 無効・同じメールの `email` / `google`・同じ `sub` の `apple`) を足した (2) §13.1 に `APPLE_LOGO_SRC`・`APPLE_SIGN_IN_TITLES`・`APPLE_CALLBACK_PROVIDER` (§16 の新設と一致させた) と、`MS_PER_SECOND`・テストの中の `PNG_SIGNATURE`・`IHDR_WIDTH_OFFSET` / `IHDR_HEIGHT_OFFSET` を足した (3) §14.1 に S-31 (名前の保存の失敗でも `signed_in`) の it、§14.2 の route のテストに `store_failed` (500・`step: 'store'`) の it、`tests/signup-legal-consent.test.tsx` にスイッチ無しの it を足した (4) §14.4 (新しい it を置かないシナリオと確かめ方: S-2・S-4〜S-6・S-21・S-22・S-25・S-28) を新設し、§20 に 9 (Web のスイッチの後に Apple の画面へ行く。S-28) を足した (5) §16 に migration と対の戻し口の行を足した (6) §5.2 S-25 の出典を `src/app/api/announcements/route.ts:89-91` (`is_public`・`published_at`) と行の中身まで書いた。波及の掃除: §10.2 の部品の節の参照を §11.6 に、§11.2 の注の `tests/apple-sign-in-config.test.ts` (§14 に無い名前) を `src/__tests__/lib/auth/apple/config.test.ts` に直した |
+| v1.8 | 2026-10-23 | 周 4 の審査の反映: iOS の Apple のボタンの高さ 48pt は、Google のボタンの高さの見積もり (`paddingVertical` 14 × 2 + 文字 20) が枠 (`borderWidth` 1 × 2) を数え落としたもので、実際の Google のボタン (中身なりで約 50〜52pt) より低く、R-1 (Google と同じ大きさ以上) を満たしていなかった。見積もりに頼らない形に改めた: (1) 定数を `AUTH_PROVIDER_BUTTON_MIN_HEIGHT` = 56 (Apple と Google のボタンの下限の高さ) に改め、Google のボタン 2 つ (`login.tsx`・`signup.tsx`) に `minHeight` として足す (2) Apple のボタンの高さは、同じ画面の Google のボタンの `onLayout` で測った高さ (下限 56) にする (`useAuthProviderButtonHeight`。端末の文字の大きさの設定で Google のボタンが伸びたときも同じ高さ)。§0.2 に F-17 (Google のボタンの組み立てと文字の大きさの設定) を足し、§1・§3 R-1・§4 S-33 (33 本)・§5.2・§7.1・§7.2・§7.3 (e) (新設)・§10.1・§11.5 (部品・`login.tsx` と `signup.tsx` の差分)・§13.1・§14.1 (it の追加・改名と「props を写す偽物」のモック)・§14.4・§16・§20 の 1 を追随させた。同じ型 (利用者の文字の大きさの設定で Apple のボタンが Google より低くなる) を Web にも見つけて直した: Google のボタンを `h-14` (rem。ブラウザの文字の大きさの設定で変わる) にする案をやめ、Apple と同じ px の定数 `APPLE_SIGN_IN_BUTTON_HEIGHT_PX` を `style.height` に渡し、`py-6` を `py-0` にする (§7.1・§7.2・§10.2・§11.6・§13.1・§14.2・§20 の 5)。波及の掃除: §10.2 の Apple のボタンの高さの記述 (`h-14` ではなく `style` の px)・F-6 の `signup/page.tsx` の行 (367-390・545-556 はファイルの外。正しくは 47-69・223-236) と `login/page.tsx` の行を直した |
 
 ## 0. 範囲・前提・分冊判定
 
@@ -39,7 +40,7 @@
 | F-3 | モバイルの Supabase client は `storage: secureSessionStorage`・`detectSessionInUrl: false`。セッションを作れば `AuthProvider` が `onAuthStateChange` で受け取り、`identifyPurchases`・端末名の登録が動く | `apps/mobile/src/lib/supabase.ts`・`apps/mobile/src/providers/AuthProvider.tsx` |
 | F-4 | モバイルの依存は Expo SDK 58 (`expo ~58.0.14`・`expo-web-browser ~58.0.6`・`expo-secure-store ~58.0.2`・`expo-linking ~58.0.13`)。`expo-apple-authentication`・`expo-crypto` は無い。Expo の SDK 58 の版の表 (`expo@58.0.14` の `bundledNativeModules.json`) は `expo-apple-authentication` = `~58.0.2`・`expo-crypto` = `~58.0.7` | `apps/mobile/package.json:24-50`・`tests/mobile-toolchain-contract.test.ts` |
 | F-5 | `app.json` は `ios.bundleIdentifier` = `com.homegohan.app`・`infoPlist.CFBundleLocalizations` = `["ja", "en"]`・`plugins` に `expo-apple-authentication` は無く `ios.usesAppleSignIn` も無い。`runtimeVersion.policy` = `fingerprint` (ネイティブのモジュールを足すと指紋が変わる = 新しいビルドが要る) | `apps/mobile/app.json` |
-| F-6 | Web のログインは `signInWithOAuth({ provider: 'google', options: { redirectTo: `${origin}/auth/callback?next=…` } })`。コールバック `/auth/callback` は `code` を `exchangeCodeForSession` で交換し、初めての人は同意画面へ回す (#1435)。新規登録は同意のチェック (`agreedToLegal`) を入れるまで Google のボタンを押せない (#1174) | `src/app/(auth)/login/page.tsx:71-91, 209-231`・`signup/page.tsx:367-390, 545-556`・`src/app/(auth)/auth/callback/route.ts:72-83, 194-203` |
+| F-6 | Web のログインは `signInWithOAuth({ provider: 'google', options: { redirectTo: `${origin}/auth/callback?next=…` } })`。コールバック `/auth/callback` は `code` を `exchangeCodeForSession` で交換し、初めての人は同意画面へ回す (#1435)。新規登録は同意のチェック (`agreedToLegal`) を入れるまで Google のボタンを押せない (#1174) | `src/app/(auth)/login/page.tsx:70-91, 207-231`・`signup/page.tsx:47-69, 223-236`・`src/app/(auth)/auth/callback/route.ts:72-83, 194-203` |
 | F-7 | 設定画面のアカウントは `user.app_metadata.provider` (最初に登録した provider) が `email` のときだけパスワード・メールの変更のフォームを出し、`google` / `apple` は案内 (`ExternalProviderGuidance`) だけ。`apple` の表示名「Apple」は既にある | `src/app/(main)/settings/account/page.tsx:57-60, 408-429`・`apps/mobile/src/components/settings/AccountCredentialsSection.tsx:28-31, 228-250, 281-282`・`src/__tests__/app/settings/account-page.test.ts:298` |
 | F-8 | 退会 `deleteAccount` の段階は `check_blockers` → `billing` → `prepare` → `release_membership` → `storage` → `record` → `billing_recheck` → `delete_user` (→ 完了メール)。Stripe の処理は差し替え口 `params.billing` (`AccountDeletionBilling`) で入れ、テストは偽物を渡す。Apple・`identities`・revoke の語は 0 件 | `src/lib/account-deletion.ts:9-35, 50-60, 122-135, 310-415`・`tests/account-deletion.test.ts` |
 | F-9 | 利用者の API の認証は `requireSessionUser(supabase, authorization)` (Cookie / Bearer。`user_profiles` の行が無くても通る)。失敗の応答は `sessionsFailure` (AuthError → 401・ForbiddenError → 403・ほか 500)。本文を読む route は最初に `rejectNullCharacterBody` を呼び、`src/__tests__/api/null-character-routes.test.ts` の表に載る。500 は `internalError` だけ | `src/lib/auth/sessions/session-claims.ts:82-103`・`src/lib/auth/sessions/route-support.ts:71-78`・`src/app/api/auth/password/change/route.ts` |
@@ -50,6 +51,7 @@
 | F-14 | Apple (一次情報): 4.8 の本文 (§0.1)。5.1.1(v) は退会をアプリの中で提供すること。Apple Developer News (2022-05-24)「If your app offers Sign in with Apple, you'll need to use the Sign in with Apple REST API to revoke user tokens when deleting an account」。失効の API は `POST https://appleid.apple.com/auth/revoke` (`client_id`・`client_secret`・`token`・`token_type_hint`。200 で本文なし。既に無効な token でも 200)。交換の API は `POST https://appleid.apple.com/auth/token` (`client_id`・`client_secret`・`code`・`grant_type=authorization_code`。`redirect_uri` は最初の認可で渡したときだけ。応答に `refresh_token`)。`client_secret` は ES256 の JWT (`kid` = Key ID・`iss` = Team ID・`aud` = `https://appleid.apple.com`・`sub` = `client_id`・`exp` は 6 か月 = 15,777,000 秒以内)。HIG: ボタンはほかのログインのボタンより小さくしない・スクロールしないと見えない位置に置かない・最小 140×30pt・題名は Sign in / Sign up / Continue with Apple だけ・自作のボタンは Apple Design Resources のロゴだけを使い題名の文字の大きさはボタンの高さの 43%。メールの中継 (`@privaterelay.appleid.com`) へ送るには送信ドメインを「Sign in with Apple for Email Communication」に登録し SPF (と DKIM) を通す。中継のアドレスは 1 日 100 通まで。自作のボタンに使う画像は Apple が URL で配る: ロゴだけのボタンは `https://appleid.cdn-apple.com/appleid/button/logo` (`size` (pt)・`color` = `white` / `black`・`border`・`border_radius` (0〜50)・`scale` (1〜6))。応答は PNG で、URL を開くと画像が落ちてくる (「Incorporating Sign in with Apple into other platforms」の「Add a custom Sign in with Apple button」)。2026-10-23 に `size=56&color=black&border=false&border_radius=0&scale=3` を 2 回取得して、どちらも 200・`image/png`・168×168 の RGBA・1,748 バイト・同じ内容 (黒の正方形の中央に白い Apple のロゴ) | developer.apple.com (guidelines・news・HIG・REST API・private email relay・Sign in with Apple JS / other platforms の各ページ) |
 | F-15 | Supabase (一次情報): ネイティブは `expo-apple-authentication` の `signInAsync` → `identityToken` を `signInWithIdToken({ provider: 'apple', token })`。Dashboard の Client IDs は「Services ID を先頭、続けて bundle ID」(Web の OAuth は先頭の ID を使う。ネイティブはどれでもよい)。Secret Key (Web の OAuth 用) は 6 か月で切れるので入れ替える。名前は identity token に無く Apple が初回だけ返す (OAuth の経路は GoTrue が `user` パラメータから `full_name` に入れる。ネイティブは `updateUser` で保存する)。メールの中継は「Sign in with Apple for Email Communication」に送信元を登録。GoTrue: `id_token` の `aud` は Client IDs のどれか・nonce は「両方あるか両方無いか」で、あるときは raw の SHA-256 (小文字の hex) と `id_token` の `nonce` を比べる・provider が無効なら 400 `provider_disabled`。Apple の `id_token` の `email` は常に `Verified: true` として扱い、同じメールの既存の利用者に自動で結び付く (`DetermineAccountLinking`。既存の `email` / `google` の identity と同じ linking domain)。PKCE の交換 (`exchangeCodeForSession`) は flow state の `provider_refresh_token` を返す (provider が返したときだけ) | supabase.com/docs (auth-apple・auth-identity-linking)・github.com/supabase/auth (`token_oidc.go`・`provider/oidc.go`・`provider/apple.go`・`external.go`・`token.go`・`models/linking.go`) |
 | F-16 | `expo-apple-authentication` (SDK 58): iOS だけ (Android・web は未対応)。`app.json` の `ios.usesAppleSignIn: true` で EAS Build が capability を入れる。`signInAsync({ requestedScopes, nonce, state })`・`isAvailableAsync()`・`AppleAuthenticationButton` (`buttonType` SIGN_IN / CONTINUE / SIGN_UP・`buttonStyle` WHITE / WHITE_OUTLINE / BLACK・`cornerRadius`・`style` に width と height が要る)。取り消しは `ERR_REQUEST_CANCELED`。`expo-crypto`: `randomUUID()`・`digestStringAsync(CryptoDigestAlgorithm.SHA256, data)` (既定は hex) | docs.expo.dev (apple-authentication・crypto) |
+| F-17 | モバイルの Google のボタンは高さを指定していない `Pressable` で、高さは中身なり: `paddingVertical: 14` (上下で 28)・`borderWidth: 1` (上下で 2。Yoga は枠を高さに足す)・中身は `GoogleIcon` (20 × 20) と題名 (`Text`・`fontSize: 15`・太字) の横並び (`flexDirection: "row"`・`alignItems: "center"`) で、中身の高さはアイコンの 20 と題名の行の高さの大きいほう。題名の書体は Noto Sans JP (`Text` が字形を置き換える。字形を読み込む前はシステムの字形) で、行の高さは書体の値で決まり、15pt で約 22 (システムの字形で約 18) の見積もり。よって標準の文字の大きさで約 50〜52pt (少なくとも 28 + 2 + 20 = 50)。`apps/mobile` に `allowFontScaling`・`maxFontSizeMultiplier` の指定は 0 件で、RN の `Text` は既定で端末の文字の大きさの設定に従うので、設定を大きくすると題名とボタンが伸びる。ボタンは縦の並び (`login.tsx:296`・`signup.tsx:166` の `gap: spacing.md` の `View`) の中で幅いっぱい | `apps/mobile/app/(auth)/login.tsx:22-31` (`GoogleIcon`)・`:394-412` (Google のボタン)・`signup.tsx:16-25`・`:253-271`・`apps/mobile/src/components/ui/Text.tsx`・`apps/mobile/src/theme/fonts.ts` |
 
 ### 0.3 分冊判定
 
@@ -81,7 +83,7 @@
 
 ## 1. 目的・スコープ
 
-iOS のアプリに Sign in with Apple を足し、App Store の審査 (4.8) を通す。同じ利用者が Web でも Apple で入れるようにし (段 B)、退会のときに Apple 側の認可を失効させる (5.1.1(v) と Apple の要求)。既存の Google ログイン・メールとパスワードのログイン・セッションの保管・WebView のブリッジ・同意のゲートは変えない。
+iOS のアプリに Sign in with Apple を足し、App Store の審査 (4.8) を通す。同じ利用者が Web でも Apple で入れるようにし (段 B)、退会のときに Apple 側の認可を失効させる (5.1.1(v) と Apple の要求)。既存の Google ログインの流れ・メールとパスワードのログイン・セッションの保管・WebView のブリッジ・同意のゲートは変えない (Google のボタンは、Apple のボタンと高さをそろえるための見た目の変更だけをする。§10.1・§10.2)。
 
 ## 2. 関連要件
 
@@ -94,7 +96,7 @@ iOS のアプリに Sign in with Apple を足し、App Store の審査 (4.8) を
 
 | # | 要件 | 根拠 | 本書の答え |
 |---|---|---|---|
-| R-1 | iOS のログイン画面と新規登録画面に、Google と同等 (同じ大きさ以上・スクロール無しで見える) の Apple のボタンを置く | 4.8・HIG | §10.1: Google の上に同じ高さ (48pt) の `AppleAuthenticationButton` |
+| R-1 | iOS のログイン画面と新規登録画面に、Google と同等 (同じ大きさ以上・スクロール無しで見える) の Apple のボタンを置く | 4.8・HIG | §10.1: Google の上に、Google のボタンと同じ高さの `AppleAuthenticationButton`。2 つとも下限 `AUTH_PROVIDER_BUTTON_MIN_HEIGHT` = 56pt (Google には `minHeight`)、Apple の高さは Google のボタンの測った高さに合わせる (`useAuthProviderButtonHeight`。文字の大きさの設定で Google が伸びても同じ。S-33) |
 | R-2 | 取得するのは名前とメールだけ (`requestedScopes` = FULL_NAME・EMAIL) | 4.8 | §11.4 `signInWithApple` |
 | R-3 | メールを隠す選択 (中継のアドレス) を受け入れ、別のメールを求めない | 4.8・HIG | §9.4: 中継のアドレスをそのまま登録のメールにする。設定画面はそのアドレスを表示 (F-7) |
 | R-4 | ネイティブでは nonce で identity token の使い回しを防ぐ | GoTrue の nonce の規則 (F-15) | §11.4: raw = `randomUUID()`、Apple へ SHA-256 hex、Supabase へ raw |
@@ -113,7 +115,7 @@ iOS のアプリに Sign in with Apple を足し、App Store の審査 (4.8) を
 | R-17 | メールの中継のアドレスへ届くメール (確認・退会の完了・通知) のために送信ドメインを Apple に登録する | F-14 | §19.1 (オーナー) |
 | R-18 | 新しい表・route・環境変数・依存は、既存の番兵 (契約テスト・走査テスト) が反応する形で足す | 既存の規律 | §17 |
 
-## 4. ユーザーシナリオ (32 本)
+## 4. ユーザーシナリオ (33 本)
 
 | # | シナリオ | 期待する結果 |
 |---|---|---|
@@ -149,6 +151,7 @@ iOS のアプリに Sign in with Apple を足し、App Store の審査 (4.8) を
 | S-30 | iPhone・シートは通ったが Apple が `identityToken` を返さない | Supabase を呼ばない。固定の文 `APPLE_SIGN_IN_MESSAGES.noIdentityToken` のアラート。ログイン画面のまま |
 | S-31 | iPhone・初めての人のログインで、名前の保存 (`updateUser`) が失敗する | ログインは成功し、振り分けへ進む (`console.warn` だけ)。名前は保存されない (次に Apple が名前を返すのは S-23 の停止の後だけ。ニックネームは初期設定で入れる) |
 | S-32 | iPhone と Web の両方で Apple で入った人 (refresh token の行が 2 つ) が、Apple の API が応答しない (時間切れになる) 間に退会する | 1 行目の 1 回目を段階の時間の上限 (3 秒) の残りで打ち切り、やり直さずに `failed` (`warn`)。2 行目は Apple を呼ばずに `failed` (上限を過ぎた行の `warn` 1 回)。`apple_revoke` は約 3 秒で終わり、退会は完了する (退会の route の 60 秒を Apple の障害で超えない) |
+| S-33 | iPhone・Apple のボタンが出る状態 (スイッチ on・対応端末) で、端末の文字の大きさの設定を標準より大きくしてから、ログイン画面 (または新規登録画面) を開く。そのあと標準に戻す | Google のボタンの題名が大きくなる。中身が 56pt に収まるうちは 2 つとも 56pt (Google の `minHeight`)。収まらなくなると Google のボタンは 56pt を超えて伸び、Apple のボタンも同じ高さになる (Google より低くならない)。標準に戻すと 2 つとも 56pt |
 
 ## 5. 構想とトレース (相 2)
 
@@ -214,6 +217,7 @@ iOS (ネイティブの画面)                              Web (Next.js)
 | S-30 | `signInAsync` が credential を返す → `credential.identityToken` が null → `{ status: 'failed', message: APPLE_SIGN_IN_MESSAGES.noIdentityToken }` (`signInWithIdToken` を呼ばない) → `Alert.alert("Appleログイン失敗", message)` | 一致 |
 | S-31 | S-1 の `signInWithIdToken` 200 の後 → `saveAppleFullName`: `fullName` あり・`full_name` 無し → `updateUser` が `{ error }` → `console.warn` (投げない) → `registerAppleAuthorization` → `signed_in` → `routeAfterSignIn` | 一致 |
 | S-32 | `deleteAccount`: … `billing_recheck` → `step = 'apple_revoke'` → 締め切り = 入口 + 3,000 ms → `listAppleRefreshTokens` 2 行 (bundle ID・Services ID) → config → 1 行目: 残りあり → `client_secret` → `revokeAppleRefreshToken` (`timeoutMs` = min(5,000, 残り) = 残り) が時間切れ (`{ ok: false, status: null, error: null }`) → 残り ≤ 0 なのでやり直さない → `warn` (`attempts: 1`・`budget_exhausted: true`) → 2 行目: 残り ≤ 0 → `not_attempted` (`client_secret` も作らず Apple を呼ばない) → `warn` 1 回 (`not_attempted: 1`・`budget_ms: 3000`) → `{ tokens: 2, revoked: 0, failed: 2, skipped: null }` → `delete_user` → CASCADE で 2 行とも消える | 一致 |
+| S-33 | `LoginScreen` (`SignupScreen` も同じ) の `useAuthProviderButtonHeight()` → 初めの `height` = `AUTH_PROVIDER_BUTTON_MIN_HEIGHT` (56) → `AppleSignInButton` (available) の `style.height` = 56 → Google の `Pressable` (`minHeight` 56) が題名の大きさなりに 56 を超えて並ぶ → `onLayout` が測った高さ (例 64) → `onGoogleButtonLayout` → `setHeight(Math.max(56, 64))` = 64 → 描き直しで Apple の `style.height` = 64。標準に戻す → Google の `minHeight` で 56 → `onLayout` 56 → `Math.max(56, 56)` = 56 → Apple も 56 | 一致 |
 
 ## 6. 構造裁定 (相 3。1 回だけ)
 
@@ -273,6 +277,9 @@ F1 を採る。
 | iOS ログイン | on | iOS・Apple が `identityToken` を返さない | — | — | Supabase を呼ばない。固定の文 `APPLE_SIGN_IN_MESSAGES.noIdentityToken`。ログイン画面のまま (S-30) |
 | iOS ログイン | on | iOS・名前の保存 (`updateUser`) の失敗 | 有効 | 無し (初回) | ログインは成功。名前は保存されない (`console.warn`)。認可コードの登録と振り分けは続ける (S-31) |
 | iOS 新規登録 | (上の iOS ログインと同じ行) | | | | 同じ (S-11) |
+| iOS ログイン・新規登録 (ボタンの高さ) | on | iOS・文字の大きさの設定が標準 (Apple のボタンが出る状態) | — | — | Apple と Google のボタンはどちらも `AUTH_PROVIDER_BUTTON_MIN_HEIGHT` (56pt)。Google は `minHeight`、Apple は `useAuthProviderButtonHeight` の初めの値と Google の `onLayout` の測った高さ (56) |
+| iOS ログイン・新規登録 (ボタンの高さ) | on | iOS・文字の大きさの設定を大きくした (Google のボタンが 56pt を超えて伸びる) | — | — | Apple のボタンは Google のボタンの `onLayout` の測った高さと同じ (S-33) |
+| iOS / Android ログイン・新規登録 (ボタンの高さ) | 無し (または Android・非対応端末) | — | — | — | Apple のボタンは無い。Google のボタンは `minHeight` 56pt (標準の文字の大きさで現行の約 50〜52pt から 56pt になる。F-17) |
 | Android | どれでも | Android | — | — | ボタン無し (S-10) |
 | Web ログイン | 無し | — | — | — | ボタン無し (S-19) |
 | Web ログイン | on | — | 無効 | — | Apple の画面へ行かず Supabase が 400 の JSON を出す (スイッチは provider を有効にしてから入れる。§19.3) (S-28) |
@@ -287,6 +294,7 @@ F1 を採る。
 | Web 新規登録 | on | 同意のチェックあり | 有効 | 無し | S-17 と同じ |
 | Web 新規登録 | on | 同意のチェックあり | 有効 | 同じメールの `email` / `google` | Web ログインの同じ行と同じ: 結び付け (GoTrue。新しい利用者は作らない。`app_metadata.provider` はそのまま)。振り分けは既存の `/auth/callback` の分岐 (`redirectTo` は `buildCallbackUrl()` に `provider=apple` を足した URL。§11.6)。`provider_refresh_token` があれば Services ID の行を保管 (S-4・S-5 の Web 版) |
 | Web 新規登録 | on | 同意のチェックあり | 有効 | 同じ `sub` の `apple` | Web ログインの 2 回目の行と同じ (既存の利用者・Services ID の行を上書き。S-20) |
+| Web ログイン・新規登録 (ボタンの高さ) | on | ブラウザの文字の大きさの設定を変えた・拡大した | — | — | Apple と Google のボタンはどちらも `style.height` = `APPLE_SIGN_IN_BUTTON_HEIGHT_PX` (56px) で同じ高さ (拡大では 2 つとも同じ比で大きくなる。§10.2) |
 | 退会 | — | 行あり・秘密あり | — | — | 失効 → 削除 (S-14) |
 | 退会 | — | 行あり・Apple が落ちている (すぐ失敗が返る) | — | — | 段階の時間の上限 (3 秒) の中で 2 回失敗 → warn → 削除 (S-15) |
 | 退会 | — | 行あり (2 つ)・Apple が応答しない (時間切れ) | — | — | 1 行目は上限の残りで打ち切って warn (やり直さない)・2 行目は Apple を呼ばずに `failed` (warn 1 回) → 削除。段階は約 3 秒 (S-32) |
@@ -305,11 +313,14 @@ F1 を採る。
 |---|---|---|
 | iOS ログイン画面のボタン | メールとパスワード・Google | メールとパスワード・**Apple (Google の上)**・Google。スイッチ無し / Android / 非対応端末では現行と同じ |
 | iOS 新規登録画面のボタン | アカウント作成・Google で登録 | アカウント作成・**Apple で登録**・Google で登録 |
+| モバイルの Google のボタンの高さ (`login.tsx`・`signup.tsx`。iOS・Android) | 中身なり: `paddingVertical` 14 × 2 + `borderWidth` 1 × 2 + 中身 (アイコン 20 と 15pt の題名の行の高さの大きいほう) = 標準の文字の大きさで約 50〜52pt。文字の大きさの設定で伸びる (F-17) | `minHeight: AUTH_PROVIDER_BUTTON_MIN_HEIGHT` (56pt) を足す: 標準の文字の大きさでは 56pt。文字の大きさの設定で伸びるのは今までどおり。`onLayout` に `onGoogleButtonLayout` を渡す (スイッチの有無・端末によらない) |
+| iOS の Apple のボタンの高さ | — | Google のボタンの `onLayout` で測った高さと同じ。下限と初めの値は 56pt (`useAuthProviderButtonHeight`)。Google より低くならない (R-1) |
 | ログインの後の振り分け | `login.tsx` の中の `routeAfterSignIn` | `apps/mobile/src/lib/routeAfterSignIn.ts` に移し `login.tsx`・`signup.tsx` (Apple) から呼ぶ。中身は同じ |
 | モバイルの依存 | SDK 58 の 15 モジュール | + `expo-apple-authentication ~58.0.2`・`expo-crypto ~58.0.7` |
 | `app.json` | `usesAppleSignIn` 無し | `ios.usesAppleSignIn: true`・`infoPlist.CFBundleAllowMixedLocalizations: true` |
 | Web ログイン画面 | 「Googleで続ける」+ 案内 + メール | 「**Appleで続ける**」(スイッチ on) + 「Googleで続ける」+ 案内 (文は同じ) + メール |
 | Web 新規登録画面 | 同意のチェック → 「Googleで登録」 | 同意のチェック → 「**Appleで登録**」(スイッチ on) + 「Googleで登録」 |
+| Web の Google のボタンの高さ (`login/page.tsx`・`signup/page.tsx`) | `Button` の既定の `h-10` と className の `py-6` (どちらも rem。ブラウザの文字の大きさの設定で変わる) | `style.height` = `APPLE_SIGN_IN_BUTTON_HEIGHT_PX` (56px)・className は `py-0`。Apple のボタンと同じ px の高さ (スイッチの有無によらない) |
 | `/auth/callback` | `code` の交換 → 振り分け | 同じ。`?provider=apple` のときだけ `provider_refresh_token` を保管 (失敗しても振り分けを変えない) |
 | DB | — | 表 `apple_sign_in_tokens` (RLS 有効・利用者の権限なし) |
 | API | — | `POST /api/auth/apple/authorization` |
@@ -379,6 +390,17 @@ F1 を採る。
 | `published` | Vercel に `NEXT_PUBLIC_APPLE_SIGN_IN=on` (段 B の後) / EAS に `EXPO_PUBLIC_APPLE_SIGN_IN=on` を入れたビルド | `apple_public` | §19.2 の 1〜3 (Web)・1〜2 (iOS) が済んでいる | Apple のボタンが出る |
 | `apple_public` | ストアへ提出 | (審査) | — | §19.5 |
 | `d_passed` / `notice_planned` / `notice_public` / `ready_to_publish` | スイッチを on にする | (遷移しない。行わない) | 段 D のデプロイ (施行日) の前は on にしない (R-16) | — |
+
+(e) iOS の Apple のボタンの高さ (`useAuthProviderButtonHeight` の `height`。ログイン画面と新規登録画面でそれぞれ 1 つ)
+
+| 状態 | 操作 / 出来事 | 遷移先 | ガード | 副作用 |
+|---|---|---|---|---|
+| (画面を開く前) | 画面を描く | `min` (`height` = 56) | — | Google のボタンは `minHeight` 56。Apple のボタンは出す条件を満たせば `style.height` = 56 で描く |
+| `min` | Google のボタンの `onLayout` (測った高さ h ≤ 56。標準の文字の大きさ) | `min` | — | `setHeight(56)` (同じ値なので描き直さない) |
+| `min` | Google のボタンの `onLayout` (h > 56。文字の大きさの設定を大きくした) | `grown(h)` | — | Apple のボタンの `style.height` = h (S-33) |
+| `grown(h)` | Google のボタンの `onLayout` (h' > 56) | `grown(h')` | — | Apple のボタンの `style.height` = h' |
+| `grown(h)` | Google のボタンの `onLayout` (h' ≤ 56。標準に戻した) | `min` | — | Apple のボタンの `style.height` = 56 (S-33) |
+| `min` / `grown(h)` | Apple のボタンを出さない (スイッチ無し・Android・非対応端末) | (同じ) | — | `height` は使われない。Google のボタンは `minHeight` 56 のまま |
 
 ## 8. データモデル
 
@@ -580,7 +602,8 @@ sequenceDiagram
 | 置き場所 | 「または」の区切りの下、Google のボタンの上 (HIG: 積むときは Apple を上に。R-1) |
 | 部品 | `apps/mobile/src/components/auth/AppleSignInButton.tsx` (§11.5)。`AppleAuthentication.AppleAuthenticationButton` を使う (Apple の見た目・OS の言語の題名・VoiceOver の読み上げが付く) |
 | 種類 | ログイン画面 `SIGN_IN` (題名は OS が「Apple でサインイン」)・新規登録画面 `SIGN_UP` (「Apple で登録」) |
-| 見た目 | `buttonStyle` = `WHITE_OUTLINE` (白い背景 `colors.bg` の上。Google のボタンと同じ白の枠)・`cornerRadius` = `radius.lg`・高さ `APPLE_SIGN_IN_BUTTON_HEIGHT` = 48 (Google のボタンの実測の高さ 48 = `paddingVertical` 14 × 2 + 文字 20 と同じ。最小 30pt を満たす)・幅 100% (最小 140pt を満たす) |
+| 見た目 | `buttonStyle` = `WHITE_OUTLINE` (白い背景 `colors.bg` の上。Google のボタンと同じ白の枠)・`cornerRadius` = `radius.lg`・幅 100% (Google のボタンと同じ幅。最小 140pt を満たす) |
+| 高さ (Apple と Google をそろえる) | Apple のボタンの高さ = 同じ画面の Google のボタンの実際の高さ (`useAuthProviderButtonHeight`。Google の `Pressable` の `onLayout` で測り、下限と初めの値は `AUTH_PROVIDER_BUTTON_MIN_HEIGHT` = 56)。Google のボタンには `minHeight: AUTH_PROVIDER_BUTTON_MIN_HEIGHT` を足す (`paddingVertical: 14`・`borderWidth: 1` は残す)。Google のボタンの中身なりの高さは標準の文字の大きさで約 50〜52pt (F-17) なので、標準では 2 つともちょうど 56pt で並ぶ (Apple のボタンが測った高さを待たずに同じ高さで出る)。文字の大きさの設定で Google が伸びたら Apple も同じ高さになる (S-33・§7.3 (e))。OS が描く Apple のボタンの高さは `style` でしか決まらない (F-16) ので、測った高さを渡す。56 は Web のボタンの高さ (§10.2) と HIG の例と同じで、最小 30pt を満たす |
 | 出す条件 | `isAppleSignInEnabled()` (iOS かつスイッチ `on`) かつ `isAvailableAsync()` = true。満たさないときは何も描かない (余白も出さない) |
 | 押せない条件 | `isSubmitting` (Google・メールと同じ。`pointerEvents="none"` + `opacity 0.7`) |
 | 失敗の表示 | `Alert.alert("Appleログイン失敗", message)` / `Alert.alert("Apple登録失敗", message)` (Google の `"Googleログイン失敗"` と同じ形)。取り消しは何も出さない |
@@ -593,7 +616,8 @@ sequenceDiagram
 | 置き場所 | Google のボタンの上 (同じ `space-y-4` の中) |
 | 部品 | `src/components/auth/AppleSignInButton.tsx` (§11.6)。自作のボタン (Apple の JS のボタンは Apple 自身の認可の流れに結び付くので使わない) |
 | 題名 | ログイン画面「Appleで続ける」・新規登録画面「Appleで登録」(HIG の Continue / Sign up に当たる日本語。Google の「Googleで続ける」「Googleで登録」と対) |
-| 見た目 | 黒い背景・白いロゴと文字 (HIG の Black。白い背景の上)。高さ 56px (`h-14`)・文字 24px (高さの 43%。HIG の例 56pt / 24pt)・太字・角丸 `rounded-xl` (Google と同じ)。ロゴは Apple が URL で配る「ロゴだけのボタン」の画像 (F-14。黒の正方形の中央に白いロゴ・余白つきの PNG) を `public/auth/apple-logo-on-black.png` に置き、ボタンの高さと同じ 56px の正方形で描く (切らない・上下の余白を足さない。画像の黒はボタンの黒と同じなので境目は見えない)。取り方は §11.6 (実装者がコマンド 1 つで取る。オーナーの作業は要らない)。Google のボタンは `py-6` を `h-14` に変えて高さをそろえる (Apple のボタンをほかより小さくしない) |
+| 見た目 | 黒い背景・白いロゴと文字 (HIG の Black。白い背景の上)。高さ 56px (`APPLE_SIGN_IN_BUTTON_HEIGHT_PX`。`style` の px)・文字 24px (高さの 43%。HIG の例 56pt / 24pt)・太字・角丸 `rounded-xl` (Google と同じ)。ロゴは Apple が URL で配る「ロゴだけのボタン」の画像 (F-14。黒の正方形の中央に白いロゴ・余白つきの PNG) を `public/auth/apple-logo-on-black.png` に置き、ボタンの高さと同じ 56px の正方形で描く (切らない・上下の余白を足さない。画像の黒はボタンの黒と同じなので境目は見えない)。取り方は §11.6 (実装者がコマンド 1 つで取る。オーナーの作業は要らない)。Google のボタンは className の `py-6` を `py-0` に替え、`style={{ height: APPLE_SIGN_IN_BUTTON_HEIGHT_PX }}` を足して高さをそろえる (Apple のボタンをほかより小さくしない)。2 つとも同じ px の定数にするのは、Tailwind の高さ・余白のクラス (`h-14`・`py-6` など) が rem で、ブラウザの文字の大きさの設定 (ルートの文字の大きさ。本アプリの CSS は決めていない: `src/app/globals.css`) で変わり、px の Apple のボタンと高さがずれるため (拡大は 2 つとも同じ比で大きくなる)。`py-0` は、文字の大きさの設定を大きくしても Google の中身 (アイコン `w-5 h-5` と `text-sm` の題名。どちらも rem) が 56px に収まるようにするため |
+
 | 出す条件 | `isAppleSignInEnabled()` (スイッチ `on`)。無ければ描かない |
 | 押せない条件 | ログイン画面: `isLoading`。新規登録画面: `isLoading` または `!agreedToLegal` (Google と同じ。R-14) |
 | 失敗の表示 | 既存の赤いバナー (`setError` / `setFormError`)。文は「Apple でのログインに失敗しました。しばらくしてからお試しください。」「Apple での登録に失敗しました。しばらくしてからお試しください。」 |
@@ -1482,16 +1506,27 @@ export async function signInWithApple(): Promise<AppleSignInOutcome> {
 /**
  * Apple のログインのボタン (docs/design/mobile/06-sign-in-with-apple.md §10.1)。
  * OS が描く AppleAuthenticationButton (Apple の見た目・言語・VoiceOver) を使う。出す条件 (iOS・スイッチ・端末の対応) を満たさないときは何も描かない。
+ * 高さは同じ画面の Google のボタンと同じにする (HIG: ほかのログインのボタンより小さくしない。R-1)。画面は useAuthProviderButtonHeight の
+ * height をこの部品の height に、onGoogleButtonLayout を Google のボタンの onLayout に渡し、Google のボタンの style に
+ * minHeight: AUTH_PROVIDER_BUTTON_MIN_HEIGHT を足す。
  */
 import * as AppleAuthentication from "expo-apple-authentication";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { View } from "react-native";
+import type { LayoutChangeEvent } from "react-native";
 
 import { isAppleSignInAvailable } from "../../lib/appleSignIn";
 import { radius } from "../../theme";
 
-/** ボタンの高さ (pt)。Google のボタン (paddingVertical 14 × 2 + 文字 20) と同じ。HIG の最小 30pt を満たす */
-export const APPLE_SIGN_IN_BUTTON_HEIGHT = 48;
+/**
+ * ログイン・新規登録の画面の Apple と Google のボタンの下限の高さ (pt)。Google のボタンには minHeight として、Apple のボタンには
+ * useAuthProviderButtonHeight の初めの値と下限として使う。
+ * 根拠: Google のボタンの中身なりの高さ (paddingVertical 14 × 2 + 枠 1 × 2 + アイコン 20 と 15pt の題名の行の高さの大きいほう) は
+ * 標準の文字の大きさで約 50〜52 (行の高さは書体の値で決まる見積もり。設計書 §0.2 F-17) なので、それより大きい 56 にして、標準では
+ * 2 つのボタンがちょうどこの高さで並ぶようにする (Apple のボタンが測った高さを待たずに同じ高さで出る)。56 は Web のボタンの高さと
+ * HIG の例 (56pt) と同じ。HIG の最小 30pt を満たす。見た目の値で、運用で変える値ではないので環境変数にしない。
+ */
+export const AUTH_PROVIDER_BUTTON_MIN_HEIGHT = 56;
 /** 押せないときの薄さ (Google のボタンの pressed / isSubmitting と同じ 0.7) */
 const DISABLED_OPACITY = 0.7;
 
@@ -1502,7 +1537,21 @@ const BUTTON_TYPE: Record<AppleSignInButtonKind, AppleAuthentication.AppleAuthen
   sign_up: AppleAuthentication.AppleAuthenticationButtonType.SIGN_UP,
 };
 
-export function AppleSignInButton(props: { kind: AppleSignInButtonKind; onPress: () => void; disabled: boolean; testID: string }) {
+/**
+ * Apple のボタンの高さを、同じ画面の Google のボタンの実際の高さに合わせる (R-1)。
+ * 端末の文字の大きさの設定で Google の題名が大きくなりボタンが伸びたときも (RN の Text は既定で設定に従う。設計書 §0.2 F-17)、
+ * Apple のボタンを同じ高さにする (OS が描く Apple のボタンの高さは style でしか決まらない。F-16)。
+ * height の初めの値と下限は AUTH_PROVIDER_BUTTON_MIN_HEIGHT (Google のボタンの minHeight と同じ)。
+ */
+export function useAuthProviderButtonHeight(): { height: number; onGoogleButtonLayout: (event: LayoutChangeEvent) => void } {
+  const [height, setHeight] = useState<number>(AUTH_PROVIDER_BUTTON_MIN_HEIGHT);
+  const onGoogleButtonLayout = useCallback((event: LayoutChangeEvent) => {
+    setHeight(Math.max(AUTH_PROVIDER_BUTTON_MIN_HEIGHT, event.nativeEvent.layout.height));
+  }, []);
+  return { height, onGoogleButtonLayout };
+}
+
+export function AppleSignInButton(props: { kind: AppleSignInButtonKind; onPress: () => void; disabled: boolean; testID: string; height: number }) {
   const [available, setAvailable] = useState(false);
   useEffect(() => {
     let alive = true;
@@ -1518,7 +1567,7 @@ export function AppleSignInButton(props: { kind: AppleSignInButtonKind; onPress:
         buttonType={BUTTON_TYPE[props.kind]}
         buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE_OUTLINE}
         cornerRadius={radius.lg}
-        style={{ width: "100%", height: APPLE_SIGN_IN_BUTTON_HEIGHT }}
+        style={{ width: "100%", height: props.height }}
         onPress={props.onPress}
       />
     </View>
@@ -1531,10 +1580,13 @@ export function AppleSignInButton(props: { kind: AppleSignInButtonKind; onPress:
 ```tsx
 // tsc:skip
 // place=apps/mobile/app/(auth)/login.tsx (差分)
-import { AppleSignInButton } from "../../src/components/auth/AppleSignInButton";
+import { AppleSignInButton, AUTH_PROVIDER_BUTTON_MIN_HEIGHT, useAuthProviderButtonHeight } from "../../src/components/auth/AppleSignInButton";
 import { signInWithApple } from "../../src/lib/appleSignIn";
 import { routeAfterSignIn } from "../../src/lib/routeAfterSignIn";
 // 画面の中の routeAfterSignIn (76-100 行) は消し、呼ぶ所 (Google の 118 行・メールの 221 行) を routeAfterSignIn(next) に替える
+
+// LoginScreen の中・const captcha = useTurnstile(); (43 行) の次に置く (フックなので条件の中に入れない)
+const { height: providerButtonHeight, onGoogleButtonLayout } = useAuthProviderButtonHeight();
 
 async function onAppleLogin() {
   setIsSubmitting(true);
@@ -1552,10 +1604,27 @@ async function onAppleLogin() {
 }
 
 // JSX: 「または」の区切りの直後・Google のボタンの前
-<AppleSignInButton kind="sign_in" onPress={onAppleLogin} disabled={isSubmitting} testID="login-apple-button" />
+<AppleSignInButton kind="sign_in" onPress={onAppleLogin} disabled={isSubmitting} testID="login-apple-button" height={providerButtonHeight} />
+
+// Google のボタン (394-412 行) の Pressable に onLayout を足し、style の paddingVertical: 14 の次に minHeight を足す。ほかは変えない
+<Pressable
+  testID="login-google-button"
+  onPress={onGoogleLogin}
+  onLayout={onGoogleButtonLayout}
+  disabled={isSubmitting}
+  style={({ pressed }) => ({
+    flexDirection: "row", alignItems: "center", justifyContent: "center",
+    gap: spacing.sm,
+    backgroundColor: colors.card,
+    borderRadius: radius.lg, paddingVertical: 14, minHeight: AUTH_PROVIDER_BUTTON_MIN_HEIGHT,
+    borderWidth: 1, borderColor: colors.border,
+    ...shadows.sm,
+    opacity: pressed || isSubmitting ? 0.7 : 1,
+  })}
+>
 ```
 
-`apps/mobile/app/(auth)/signup.tsx` の差分: 同じ import と `onAppleSignup` (Alert の題は `"Apple登録失敗"`、失敗の文は `outcome.message` のまま)。`signInWithApple` の失敗の文はログイン・登録で共通 (`APPLE_SIGN_IN_MESSAGES.failed`)。`routeAfterSignIn(undefined)` を呼ぶ (新規登録画面には `?next=` が無い)。JSX は `<AppleSignInButton kind="sign_up" onPress={onAppleSignup} disabled={isSubmitting} testID="signup-apple-button" />` を Google の前に置く。Google 登録の既存の処理 (`router.replace("/auth/verify")`) は変えない。
+`apps/mobile/app/(auth)/signup.tsx` の差分: 同じ import と `onAppleSignup` (Alert の題は `"Apple登録失敗"`、失敗の文は `outcome.message` のまま)。`signInWithApple` の失敗の文はログイン・登録で共通 (`APPLE_SIGN_IN_MESSAGES.failed`)。`routeAfterSignIn(undefined)` を呼ぶ (新規登録画面には `?next=` が無い)。`SignupScreen` の中・`const captcha = useTurnstile();` (34 行) の次に `const { height: providerButtonHeight, onGoogleButtonLayout } = useAuthProviderButtonHeight();` を置く。JSX は `<AppleSignInButton kind="sign_up" onPress={onAppleSignup} disabled={isSubmitting} testID="signup-apple-button" height={providerButtonHeight} />` を Google の前に置く。Google 登録のボタン (253-271 行の `Pressable`) は `login.tsx` と同じく `onLayout={onGoogleButtonLayout}` を足し、style の `paddingVertical: 14` の次に `minHeight: AUTH_PROVIDER_BUTTON_MIN_HEIGHT` を足す (ほかは変えない)。Google 登録の既存の処理 (`router.replace("/auth/verify")`) は変えない。
 
 `apps/mobile/package.json`: `"expo-apple-authentication": "~58.0.2"`・`"expo-crypto": "~58.0.7"` を `dependencies` に足す (アルファベット順。版は SDK 58 の表のとおり。`tests/mobile-toolchain-contract.test.ts`)。`package-lock.json` はテスト用の機械で作り直して持ち帰る (05 §9.13 の段 1 と同じ形: `offload --no-install --fetch apps/mobile/package.json --fetch package-lock.json -- bash -c 'npm install --package-lock-only --ignore-scripts --no-audit --no-fund -w apps/mobile expo-apple-authentication@58.0.2 expo-crypto@58.0.7'`。2 つはルートに巻き上がる (入れ子は react と @types/react だけ、の契約のまま))。
 
@@ -1598,7 +1667,10 @@ export function isAppleSignInEnabled(): boolean {
  */
 import Image from 'next/image';
 
-/** ボタンの高さ (px)。Google のボタンも同じ高さにそろえる (Apple のボタンをほかより小さくしない) */
+/**
+ * ボタンの高さ (px)。Google のボタンの style の height にも同じ値を渡してそろえる (Apple のボタンをほかより小さくしない)。
+ * 2 つとも px にする (Tailwind の h-14 などは rem で、ブラウザの文字の大きさの設定で変わり、px の高さとずれる。設計書 §10.2)
+ */
 export const APPLE_SIGN_IN_BUTTON_HEIGHT_PX = 56;
 /** 題名の文字の大きさ (px) = 高さの 43% (HIG の例: 56pt / 24pt) */
 export const APPLE_SIGN_IN_BUTTON_FONT_PX = 24;
@@ -1655,7 +1727,7 @@ file public/auth/apple-logo-on-black.png   # PNG image data, 168 x 168
 ```tsx
 // tsc:skip
 // place=src/app/(auth)/login/page.tsx (差分)
-import { AppleSignInButton } from '@/components/auth/AppleSignInButton';
+import { AppleSignInButton, APPLE_SIGN_IN_BUTTON_HEIGHT_PX } from '@/components/auth/AppleSignInButton';
 import { isAppleSignInEnabled } from '@/lib/auth/apple-sign-in-flag';
 
 /** Apple のログインの失敗の文 (固定) */
@@ -1687,10 +1759,10 @@ const handleAppleLogin = async () => {
 {isAppleSignInEnabled() && (
   <AppleSignInButton kind="continue" onClick={handleAppleLogin} disabled={isLoading} loading={isLoading} testId="login-apple-button" />
 )}
-// Google のボタンの className の py-6 を h-14 に替える (高さ 56px)
+// Google のボタン (207-221 行の Button): className の py-6 を py-0 に替え、style={{ height: APPLE_SIGN_IN_BUTTON_HEIGHT_PX }} を足す (Apple と同じ 56px の px。ほかは変えない)
 ```
 
-`src/app/(auth)/signup/page.tsx` の差分: `handleAppleSignup` (先頭に `if (!agreedToLegal) { setFormError(LEGAL_AGREEMENT_REQUIRED_MESSAGE); return; }`。`redirectTo` は `buildCallbackUrl()` に `provider=apple` を足した URL。失敗の文は `'Apple での登録に失敗しました。しばらくしてからお試しください。'`)。JSX は Google のボタンの前に `<AppleSignInButton kind="sign_up" onClick={handleAppleSignup} disabled={isLoading || !agreedToLegal} loading={isLoading} testId="signup-apple-button" />` (スイッチが on のときだけ)。Google のボタンの `py-6` を `h-14` に替える。
+`src/app/(auth)/signup/page.tsx` の差分: `handleAppleSignup` (先頭に `if (!agreedToLegal) { setFormError(LEGAL_AGREEMENT_REQUIRED_MESSAGE); return; }`。`redirectTo` は `buildCallbackUrl()` に `provider=apple` を足した URL。失敗の文は `'Apple での登録に失敗しました。しばらくしてからお試しください。'`)。JSX は Google のボタンの前に `<AppleSignInButton kind="sign_up" onClick={handleAppleSignup} disabled={isLoading || !agreedToLegal} loading={isLoading} testId="signup-apple-button" />` (スイッチが on のときだけ)。import は `login/page.tsx` と同じ (`AppleSignInButton`・`APPLE_SIGN_IN_BUTTON_HEIGHT_PX`・`isAppleSignInEnabled`)。Google のボタン (223-236 行の `Button`) は className の `py-6` を `py-0` に替え、`style={{ height: APPLE_SIGN_IN_BUTTON_HEIGHT_PX }}` を足す (`login/page.tsx` と同じ。ほかは変えない)。
 
 ```ts
 // tsc:skip
@@ -1902,8 +1974,8 @@ T-34 の `PRIVACY_DATA_TABLES` に `apple_sign_in_tokens` → `'アカウント'
 | `APPLE_API_TIMEOUT_MS` | 5000 | 同上 | Turnstile の確認と同じ。運用で変える想定が無いので環境変数にしない。交換はこの値、失効はこの値と締め切りまでの残りの短いほう |
 | `APPLE_REVOKE_ATTEMPTS` | 2 | 同上 | 一時の失敗を 1 回だけ吸収する (失敗の種類は区別しない)。2 回目も `APPLE_REVOKE_TOTAL_BUDGET_MS` の締め切りの前だけ |
 | `APPLE_REVOKE_TOTAL_BUDGET_MS` | 3000 | 同上 | 退会の route の `maxDuration` 60 秒 (`src/app/api/account/delete/route.ts:9`) − Storage の掃除の上限 45 秒 (`DEFAULT_MAX_DURATION_MS`。`src/lib/account-deletion-storage.ts:55`) − 完了メールの待ちの上限 5 秒 (`ACCOUNT_DELETED_EMAIL_TIMEOUT_MS`。`src/lib/account-deletion-notification.ts:34`) = 10 秒が、段階全体の上限をコードに持たない段階 (`check_blockers`・`billing`・`prepare`・`release_membership`・`record`・`billing_recheck`・`delete_user`・完了の記録。Stripe の段階は 1 回の呼び出しに 10 秒の上限 (`src/lib/billing/stripe-gateway.ts:33`) があるが、段階全体の上限は無い) と `apple_revoke` の分。そのうち 3 秒を Apple に充て、ほかの段階に 7 秒を残す (45 + 5 + 3 = 53 < 60。`src/__tests__/lib/auth/apple/config.test.ts` が和を確かめる)。Apple のふだんの応答 (1 秒以内) なら 2 行でも収まる。Apple が応答しないときは 1 行目の 1 回目で使い切り、段階は約 3 秒で終わる (S-32)。環境変数にしない (3 つの上限と組で決まる値で、これだけを上げるとほかの段階の分 (7 秒) が減り、60 秒を超えうる) |
-| `APPLE_SIGN_IN_BUTTON_HEIGHT` | 48 (pt) | `apps/mobile/src/components/auth/AppleSignInButton.tsx` | Google のボタンの高さと同じ。HIG の最小 30pt |
-| `APPLE_SIGN_IN_BUTTON_HEIGHT_PX` / `APPLE_SIGN_IN_BUTTON_FONT_PX` | 56 / 24 | `src/components/auth/AppleSignInButton.tsx` | HIG の 43% (56pt / 24pt の例) |
+| `AUTH_PROVIDER_BUTTON_MIN_HEIGHT` | 56 (pt) | `apps/mobile/src/components/auth/AppleSignInButton.tsx` (`login.tsx`・`signup.tsx` が Google のボタンの `minHeight` に import する) | ログイン・新規登録の画面の Apple と Google のボタンの下限の高さ。Google のボタンの中身なりの高さ (`paddingVertical` 14 × 2 + `borderWidth` 1 × 2 + アイコン 20 と 15pt の題名の行の高さの大きいほう = 標準の文字の大きさで約 50〜52pt。F-17) より大きくして、標準では 2 つともちょうどこの高さで並ぶ。それより高くなる (文字の大きさの設定) ときは Apple が Google の測った高さに合わせる (`useAuthProviderButtonHeight`)。Web のボタン (`APPLE_SIGN_IN_BUTTON_HEIGHT_PX` = 56) と HIG の例 (56pt) と同じ。HIG の最小 30pt を満たす。見た目の値で、運用で変える値ではないので環境変数にしない |
+| `APPLE_SIGN_IN_BUTTON_HEIGHT_PX` / `APPLE_SIGN_IN_BUTTON_FONT_PX` | 56 / 24 | `src/components/auth/AppleSignInButton.tsx` (高さは `login/page.tsx`・`signup/page.tsx` が Google のボタンの `style.height` に import する) | HIG の 43% (56pt / 24pt の例)。高さは Apple と Google のボタンで同じ px にする (rem のクラスはブラウザの文字の大きさの設定でずれる。§10.2) |
 | `APPLE_LOGO_IMAGE_SCALE` | 3 | 同上 | ロゴの画像を Apple の URL から取るときの `scale` (1〜6)。高解像度の画面 (devicePixelRatio 3 まで) で滲まない。画像の一辺 = 56 × 3 = 168 画素 (§11.6) |
 | `APPLE_LOGO_SRC` | `'/auth/apple-logo-on-black.png'` | 同上 | ロゴの画像の置き場 (`public/` からの道)。画像は Apple の URL から取った PNG (F-14・§11.6)。`tests/apple-sign-in-logo-asset.test.ts` がファイルの実在を確かめる |
 | `APPLE_SIGN_IN_TITLES` | `{ continue: 'Appleで続ける', sign_up: 'Appleで登録' }` | 同上 | HIG の題名 (Continue / Sign up with Apple) に当たる日本語。Google の「Googleで続ける」「Googleで登録」と対 (§10.2・R-13) |
@@ -1934,12 +2006,12 @@ T-34 の `PRIVACY_DATA_TABLES` に `apple_sign_in_tokens` → `'アカウント'
 |---|---|
 | `lib/appleSignIn.test.ts` (新設) | `isAppleSignInEnabled: iOS かつ EXPO_PUBLIC_APPLE_SIGN_IN=on のときだけ true (ON・空白つきも true。空・off・Android は false)` / `isAppleSignInAvailable: 有効でも isAvailableAsync が false・投げたら false` / `signInWithApple: nonce は randomUUID を SHA-256 (hex) にして Apple へ、raw を Supabase へ渡す` / `requestedScopes は FULL_NAME と EMAIL` / `ERR_REQUEST_CANCELED は cancelled (Supabase を呼ばない・アラートの文を持たない)` / `ほかの Apple の失敗は failed (APPLE_SIGN_IN_MESSAGES.failed)` / `identityToken が無ければ failed (noIdentityToken)` / `signInWithIdToken の error は failed` / `初回 (fullName あり・user_metadata.full_name 無し) は updateUser({ data: { full_name, given_name, family_name } })` / `full_name が既にあれば updateUser を呼ばない` / `fullName が null なら updateUser を呼ばない` / `updateUser が error を返しても signed_in (console.warn だけ・投げない・認可コードの登録は続けて呼ぶ。S-31)` / `認可コードを POST /api/auth/apple/authorization に送る (Bearer は getApi が付ける)` / `登録の API が失敗しても signed_in (console.warn だけ)` / `authorizationCode が null なら API を呼ばない` |
 | `lib/routeAfterSignIn.test.ts` (新設。login.test.tsx の 4-3 の振り分けの検査をこの関数に対して) | `?next= が / 始まりならそこへ` / `完了 → /(tabs)/home・開始済み → /onboarding/resume・未開始 → /onboarding/welcome` / `admin も同じ振り分け (#1122)` / `user が無ければ何もしない` |
-| `components/AppleSignInButton.test.tsx` (新設) | `isAppleSignInAvailable が true なら AppleAuthenticationButton を描く (SIGN_IN / SIGN_UP・WHITE_OUTLINE・高さ 48)` / `false なら何も描かない` / `disabled のとき押せない (pointerEvents none)` |
-| `auth/login.test.tsx` (追記) | `5-1. スイッチ on・iOS: Apple のボタン (login-apple-button) が Google の前にある` / `5-2. 押すと signInWithApple → signed_in → routeAfterSignIn (ホームへ)` / `5-3. cancelled はアラートを出さず画面に留まる` / `5-4. failed は Alert("Appleログイン失敗", 文)` / `5-5. スイッチ無し: ボタンが無い` / `5-6. ?next= は Apple でも効く`。既存の 4-1〜4-3 は `routeAfterSignIn` の移動後も緑のまま (`mockFrom` の形は同じ) |
-| `auth/signup.test.tsx` (追記) | `4. スイッチ on: Apple で登録 (signup-apple-button) がある。押すと signInWithApple → routeAfterSignIn` / `5. failed は Alert("Apple登録失敗", 文)` / `6. スイッチ無し: 無い` |
+| `components/AppleSignInButton.test.tsx` (新設) | `isAppleSignInAvailable が true なら AppleAuthenticationButton を描く (SIGN_IN / SIGN_UP・WHITE_OUTLINE・cornerRadius は radius.lg・幅 100%・高さは props の height)` / `false なら何も描かない` / `disabled のとき押せない (pointerEvents none)` / `useAuthProviderButtonHeight: 初めの height は AUTH_PROVIDER_BUTTON_MIN_HEIGHT (56)` / `useAuthProviderButtonHeight: Google の onLayout の高さが AUTH_PROVIDER_BUTTON_MIN_HEIGHT より大きければその高さ、以下なら AUTH_PROVIDER_BUTTON_MIN_HEIGHT (大きくしたあと標準に戻しても下限に戻る。S-33)` |
+| `auth/login.test.tsx` (追記) | `5-1. スイッチ on・iOS: Apple のボタン (login-apple-button) が Google の前にある` / `5-2. 押すと signInWithApple → signed_in → routeAfterSignIn (ホームへ)` / `5-3. cancelled はアラートを出さず画面に留まる` / `5-4. failed は Alert("Appleログイン失敗", 文)` / `5-5. スイッチ無し: ボタンが無い` / `5-6. ?next= は Apple でも効く` / `5-7. Apple のボタンの高さは Google のボタンと同じ: Google のボタンの style の minHeight は AUTH_PROVIDER_BUTTON_MIN_HEIGHT、Apple の高さは初め AUTH_PROVIDER_BUTTON_MIN_HEIGHT、Google の onLayout (高さ 70) のあとは 70 (S-33)`。既存の 4-1〜4-3 は `routeAfterSignIn` の移動後も緑のまま (`mockFrom` の形は同じ) |
+| `auth/signup.test.tsx` (追記) | `4. スイッチ on: Apple で登録 (signup-apple-button) がある。押すと signInWithApple → routeAfterSignIn` / `5. failed は Alert("Apple登録失敗", 文)` / `6. スイッチ無し: 無い` / `7. Apple で登録のボタンの高さは Google で登録のボタンと同じ (login の 5-7 と同じ検査。S-33)` |
 | `lib/env-example.test.ts` (既存。自動) | `EXPO_PUBLIC_APPLE_SIGN_IN` が `env.example` にあること |
 
-`expo-apple-authentication`・`expo-crypto` の正典のモック。`login.tsx`・`signup.tsx` を描くテストは、`AppleSignInButton.tsx` が読み込みのときに `AppleAuthenticationButtonType` を読む (`BUTTON_TYPE`) ので、スイッチ無しの画面のテストでもこの 2 つを `jest.mock` する (jest の native module の扱いに結果を依存させない)。`auth/turnstile-screens.test.tsx` はこの形のまま足す (期待値は変えない)。`auth/login.test.tsx`・`auth/signup.test.tsx`・`lib/appleSignIn.test.ts`・`components/AppleSignInButton.test.tsx` はこの形を土台に、it ごとに `mockResolvedValue` などで上書きする (部品のテストは `AppleAuthenticationButton` を props を描く偽物に替える)。列挙の値は文字列にする (本物の数値に意味は無く、テストは名前で比べる)。
+`expo-apple-authentication`・`expo-crypto` の正典のモック。`login.tsx`・`signup.tsx` を描くテストは、`AppleSignInButton.tsx` が読み込みのときに `AppleAuthenticationButtonType` を読む (`BUTTON_TYPE`) ので、スイッチ無しの画面のテストでもこの 2 つを `jest.mock` する (jest の native module の扱いに結果を依存させない)。`auth/turnstile-screens.test.tsx` はこの形のまま足す (期待値は変えない)。`auth/login.test.tsx`・`auth/signup.test.tsx`・`lib/appleSignIn.test.ts`・`components/AppleSignInButton.test.tsx` はこの形を土台に、it ごとに `mockResolvedValue` などで上書きする。Apple のボタンを描く冊 (`components/AppleSignInButton.test.tsx`・`auth/login.test.tsx`・`auth/signup.test.tsx`) は `AppleAuthenticationButton` だけを下の 2 つ目のブロックの「props を写す偽物」に替える (押す・高さを読むため。既存の `apps/mobile/__tests__/app/frozen-screen.test.tsx:11-21` と同じ、`mock` で始まる配列に props を残して host の要素を返す形)。列挙の値は文字列にする (本物の数値に意味は無く、テストは名前で比べる)。
 
 ```ts
 // tsc:skip
@@ -1957,6 +2029,33 @@ jest.mock('expo-crypto', () => ({
   digestStringAsync: jest.fn(async () => 'hashed-nonce'),
   CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
 }));
+```
+
+```ts
+// tsc:skip
+// place=apps/mobile/__tests__/components/AppleSignInButton.test.tsx (auth/login.test.tsx・auth/signup.test.tsx も同じ形。上の正典のモックの AppleAuthenticationButton だけを替える)
+const mockAppleButtonProps: Array<{ buttonType: string; buttonStyle: string; cornerRadius: number; style: { width: string; height: number }; onPress: () => void }> = [];
+jest.mock('expo-apple-authentication', () => {
+  const ReactActual = require('react');
+  const { Pressable } = require('react-native');
+  return {
+    isAvailableAsync: jest.fn().mockResolvedValue(false),
+    signInAsync: jest.fn(),
+    // 受けた props を残し、押せる host の要素を返す (testID で押す。高さは mockAppleButtonProps.at(-1).style.height で読む)
+    AppleAuthenticationButton: (props: (typeof mockAppleButtonProps)[number]) => {
+      mockAppleButtonProps.push(props);
+      return ReactActual.createElement(Pressable, { testID: 'apple-authentication-button', style: props.style, onPress: props.onPress });
+    },
+    AppleAuthenticationButtonType: { SIGN_IN: 'SIGN_IN', CONTINUE: 'CONTINUE', SIGN_UP: 'SIGN_UP' },
+    AppleAuthenticationButtonStyle: { WHITE: 'WHITE', WHITE_OUTLINE: 'WHITE_OUTLINE', BLACK: 'BLACK' },
+    AppleAuthenticationScope: { FULL_NAME: 'FULL_NAME', EMAIL: 'EMAIL' },
+  };
+});
+// beforeEach で mockAppleButtonProps.length = 0 に戻す。
+// Google のボタンの onLayout は RNTL の fireEvent で起こす (RNTL は 'layout' を onLayout に当てる):
+//   fireEvent(getByTestId('login-google-button'), 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 70 } } });
+// Google のボタンの minHeight は StyleSheet.flatten(getByTestId('login-google-button').props.style).minHeight で読む。
+// useAuthProviderButtonHeight の it は renderHook (@testing-library/react-native) と act で onGoogleButtonLayout を呼ぶ。
 ```
 
 ### 14.2 サーバ (vitest)
@@ -1979,8 +2078,8 @@ jest.mock('expo-crypto', () => ({
 | `tests/auth-callback-apple-token.test.ts` (新設) | `?provider=apple で code の交換が成功すると storeAppleRefreshTokenFromWebCallback を session と user で呼ぶ` / `provider 無し (Google) では呼んでも skipped で、振り分けは変わらない` / `保管の失敗でも同意画面 / next への redirect は同じ` |
 | `tests/apple-sign-in-logo-asset.test.ts` (新設。段 B) | `public/auth/apple-logo-on-black.png が APPLE_LOGO_SRC の置き場にある` / `先頭 8 バイトが PNG の署名 (89 50 4E 47 0D 0A 1A 0A)` / `IHDR の幅と高さが APPLE_SIGN_IN_BUTTON_HEIGHT_PX × APPLE_LOGO_IMAGE_SCALE (168)`。読む位置は名前付きの定数にする (`PNG_SIGNATURE`・`IHDR_WIDTH_OFFSET` = 16・`IHDR_HEIGHT_OFFSET` = 20。PNG の仕様の固定の位置) |
 | `src/__tests__/lib/auth/apple-sign-in-flag.test.ts` (新設。段 B) | `isAppleSignInEnabled: NEXT_PUBLIC_APPLE_SIGN_IN が 'on'・'ON'・' on ' なら true、未設定・空・'off' なら false (vi.stubEnv)` / `スイッチの読み方は 1 つ: src/ と apps/mobile/src/ (どちらも __tests__ を除く) で process.env.NEXT_PUBLIC_APPLE_SIGN_IN・process.env.EXPO_PUBLIC_APPLE_SIGN_IN を書いているファイルは src/lib/auth/apple-sign-in-flag.ts と apps/mobile/src/lib/appleSignIn.ts の 2 つだけで、その行はどちらも isAppleSignInFlagOn( の引数になっている (ファイルの文字列を読む走査。コメントを除いた行で数える。src/lib/env.ts の一覧のキー `NEXT_PUBLIC_APPLE_SIGN_IN:` は process.env を伴わないので数えない)` |
-| `tests/login-apple-button.test.tsx` (新設) | `NEXT_PUBLIC_APPLE_SIGN_IN=on: 「Appleで続ける」が Google の前にある (login-apple-button)` / `押すと signInWithOAuth({ provider: 'apple', redirectTo: …/auth/callback?provider=apple })` / `?next= は redirectTo の next に入る` / `スイッチ無し: 無い` / `error のとき固定の文のバナー` / `login-google-legal-note は 1 つで文は変わらない (tests/login-google-legal-note.test.tsx も緑)` |
-| `tests/signup-legal-consent.test.tsx` (追記) | `同意のチェック無し: Apple のボタンも disabled で、押しても signInWithOAuth を呼ばない` / `チェックあり: provider apple で呼ぶ` / `スイッチ無し: Apple のボタン (signup-apple-button) が無く、「Googleで登録」と同意のチェックは今までどおり (S-19)` |
+| `tests/login-apple-button.test.tsx` (新設) | `NEXT_PUBLIC_APPLE_SIGN_IN=on: 「Appleで続ける」が Google の前にある (login-apple-button)` / `押すと signInWithOAuth({ provider: 'apple', redirectTo: …/auth/callback?provider=apple })` / `?next= は redirectTo の next に入る` / `スイッチ無し: 無い` / `error のとき固定の文のバナー` / `login-google-legal-note は 1 つで文は変わらない (tests/login-google-legal-note.test.tsx も緑)` / `Google のボタンの style の height は APPLE_SIGN_IN_BUTTON_HEIGHT_PX で、Apple のボタンの style の height と同じ (className に py-6・h-14 が無い)` |
+| `tests/signup-legal-consent.test.tsx` (追記) | `同意のチェック無し: Apple のボタンも disabled で、押しても signInWithOAuth を呼ばない` / `チェックあり: provider apple で呼ぶ` / `スイッチ無し: Apple のボタン (signup-apple-button) が無く、「Googleで登録」と同意のチェックは今までどおり (S-19)` / `「Googleで登録」のボタンの style の height は APPLE_SIGN_IN_BUTTON_HEIGHT_PX (スイッチ on の Apple のボタンと同じ)` |
 | `src/__tests__/lib/env.test.ts` (追記。段 A1) | `Sign in with Apple の 5 つ (公開の NEXT_PUBLIC_APPLE_SIGN_IN・サーバの APPLE_SIGN_IN_TEAM_ID / KEY_ID / PRIVATE_KEY / SERVICES_ID) はどれも任意として一覧にあり、公開の 1 つは PUBLIC_ENV_VARS・サーバの 4 つは SERVER_ENV_VARS にある` (新しい it を 1 つ足すだけ。既存の `publicNames` の it は `Object.keys(publicEnvSchema.shape)` からの導出で、足す一覧は無い) |
 | `tests/legal-text-1901.test.ts` (段 D で改める) | T-33 の置き換え (§11.8 (e))・T-7 (evidence の実在)・T-24 (行数)・T-34 (`apple_sign_in_tokens` → アカウント)・T-35 (`LEGAL_CLAIM_COUNT` = 426) |
 
@@ -1990,7 +2089,7 @@ jest.mock('expo-crypto', () => ({
 
 ### 14.4 新しい it を置かないシナリオと、その確かめ方
 
-本書のコードを通らない (既存の経路のまま・Supabase や Apple の側の挙動・運用の工程) ので単体の it を足さないシナリオ。ほかのシナリオ (S-1・S-3・S-7〜S-20・S-23・S-24・S-26・S-27・S-29〜S-32) は §14.1・§14.2 の it が受け持つ。
+本書のコードを通らない (既存の経路のまま・Supabase や Apple の側の挙動・運用の工程) ので単体の it を足さないシナリオ。ほかのシナリオ (S-1・S-3・S-7〜S-20・S-23・S-24・S-26・S-27・S-29〜S-33) は §14.1・§14.2 の it が受け持つ。
 
 | # | 新しい it を置かない理由 | 確かめ方 |
 |---|---|---|
@@ -2028,7 +2127,7 @@ jest.mock('expo-crypto', () => ({
 | 共有 | `APPLE_SIGN_IN_FLAG_ON`・`isAppleSignInFlagOn`・`APPLE_AUTHORIZATION_CODE_MAX_LENGTH`・`APPLE_SIGN_IN_MESSAGES` | `packages/shared/src/apple-sign-in.ts` | A1 |
 | 環境変数 | `NEXT_PUBLIC_APPLE_SIGN_IN`・`APPLE_SIGN_IN_TEAM_ID`・`APPLE_SIGN_IN_KEY_ID`・`APPLE_SIGN_IN_PRIVATE_KEY`・`APPLE_SIGN_IN_SERVICES_ID` (5 つとも A1) / `EXPO_PUBLIC_APPLE_SIGN_IN` (A2) | `src/lib/env.ts`・`.env.example` / `apps/mobile/env.example` | A1 / A2 |
 | 関数 (モバイル) | `isAppleSignInEnabled`・`isAppleSignInAvailable`・`signInWithApple`・`routeAfterSignIn` (移動) | `apps/mobile/src/lib/appleSignIn.ts`・`routeAfterSignIn.ts` | A2 |
-| 部品 (モバイル) | `AppleSignInButton`・`APPLE_SIGN_IN_BUTTON_HEIGHT`・testID `login-apple-button`・`signup-apple-button` | `apps/mobile/src/components/auth/AppleSignInButton.tsx` | A2 |
+| 部品 (モバイル) | `AppleSignInButton`・`AUTH_PROVIDER_BUTTON_MIN_HEIGHT`・`useAuthProviderButtonHeight`・testID `login-apple-button`・`signup-apple-button` | `apps/mobile/src/components/auth/AppleSignInButton.tsx` | A2 |
 | 依存 (モバイル) | `expo-apple-authentication ~58.0.2`・`expo-crypto ~58.0.7` | `apps/mobile/package.json` | A2 |
 | 設定 (モバイル) | `ios.usesAppleSignIn`・`ios.infoPlist.CFBundleAllowMixedLocalizations` | `apps/mobile/app.json` | A2 |
 | 関数・部品 (Web) | `isAppleSignInEnabled`・`AppleSignInButton`・`APPLE_SIGN_IN_TITLES`・`APPLE_SIGN_IN_BUTTON_HEIGHT_PX`・`APPLE_SIGN_IN_BUTTON_FONT_PX`・`APPLE_LOGO_SRC`・`APPLE_LOGO_IMAGE_SCALE`・testID `login-apple-button`・`signup-apple-button` | `src/lib/auth/apple-sign-in-flag.ts`・`src/components/auth/AppleSignInButton.tsx` | B |
@@ -2161,11 +2260,11 @@ jest.mock('expo-crypto', () => ({
 
 ## 20. 受入 (デプロイ後整合ゲート) の項目
 
-1. 本番の実機 (iOS) のログイン画面に Apple のボタンが Google の上に同じ高さで出て、Face ID の認可のあとホーム (または初期設定・同意画面) に入る。設定 → アカウントに「Apple アカウントでログインしています」とメール (中継を選んだときは `@privaterelay.appleid.com`) が出る。
+1. 本番の実機 (iOS) のログイン画面に Apple のボタンが Google の上に同じ高さで出て (iPhone の設定 → 画面表示と明るさ → テキストサイズを変更 で文字を最大にしても、Apple のボタンが Google のボタンより低くならない。S-33)、Face ID の認可のあとホーム (または初期設定・同意画面) に入る。設定 → アカウントに「Apple アカウントでログインしています」とメール (中継を選んだときは `@privaterelay.appleid.com`) が出る。
 2. 本番の `auth.identities` に `provider = 'apple'` の行と、`apple_sign_in_tokens` に `client_id = 'com.homegohan.app'` の行が 1 つできている (SELECT。値は読まない・載せない)。
 3. 同じ利用者で退会 → `app_logs` の `account deleted` の metadata に `apple.revoked = 1`、Apple の `/auth/revoke` が 200 (warn が無い)。iPhone の設定 → Apple アカウント → Apple でサインイン の一覧からこのアプリが消えている。
 4. シートで取り消し → 何も出ない。スイッチ無しの preview ビルドではボタンが無い。
-5. Web (段 B のあと): 「Appleで続ける」で同意画面 → ホーム。`apple_sign_in_tokens` に Services ID の行ができる (`provider_refresh_token` が返っていれば。返らなければ Q-6 を記録)。
+5. Web (段 B のあと): 「Appleで続ける」と「Googleで続ける」が同じ高さで並ぶ (ブラウザの文字の大きさの設定を大きくしても同じ。§10.2)。「Appleで続ける」で同意画面 → ホーム。`apple_sign_in_tokens` に Services ID の行ができる (`provider_refresh_token` が返っていれば。返らなければ Q-6 を記録)。
 6. プライバシーポリシー `/privacy` の第7条に Apple の行、版 `v2026.4`、施行日 = 段 D のデプロイ日。既存の利用者に再同意が出る。Q-13 で (a) なら、施行日より前に予告のお知らせが公開されていた (`announcements` の `is_public` = true・`published_at` が施行日 (JST) より前。SELECT で題と日時だけを見る)。(b) なら cross/20 §9.3 の除外の行に `v2026.4` がある。
 7. Vercel のランタイムログに `apple authorization` の `warn` / 500 が無い (`not_configured` の `info` は秘密を入れる前だけ)。
 8. 中継のアドレスの利用者に退会の完了メールが届く (19.1 の 4 が済んでいること)。
