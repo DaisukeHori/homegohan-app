@@ -40,7 +40,13 @@ import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import ws from 'ws';
 import { apiCall } from '../helpers/api';
 import { promoteToAal2 } from '../helpers/mfa';
-import { actAsAuthenticatedSql, createLockHolderKit, type Holder, type QueuedCall as LockQueuedCall } from '../helpers/lock-holder';
+import {
+  actAsAuthenticatedSql,
+  createLockHolderKit,
+  type Holder,
+  type LockWaitOutcome,
+  type QueuedCall as LockQueuedCall,
+} from '../helpers/lock-holder';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -378,7 +384,7 @@ function holdProfileRow(userId: string): Holder {
   return holders.startHolder('user_profiles の行を持つ接続', `SELECT 1 FROM public.user_profiles WHERE id = '${userId}'::uuid FOR NO KEY UPDATE;`);
 }
 
-const { waitForLockWaiters, runBehindHolder } = holders;
+const { waitForLockWaiters, waitForLockWaitersUnlessSettled, runBehindHolder } = holders;
 
 /** 呼び出し 1 本 (待ちを見分けるための関数名と、本物の経路での呼び出し) */
 type QueuedCall = LockQueuedCall<Outcome>;
@@ -814,49 +820,90 @@ describe('オーナーでない人が解散を呼んでも、解散は組織の�
 //  ループが X の行を持ったまま Y の行を待ち、Y の行を先に取った処理が X の行を待つ順のデッドロック (40P01) も既知として書いていた)
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * OT-25 の並びを作り直す回数の上限。承諾の commit で、X の行を待っていた (2) の接続と、組織の行を待っていた (3) の強制解散が同時に
+ * 起こされ、承諾が書き換えた X の行の新しい版を取り合う (下の (4') の注記)。(2) が先に取るのが普通の順で、強制解散が先に取った回
+ * (CI で 1 回あった) は「強制解散が組織の行を持ったまま X の行で待つ間に Y が解散を呼ぶ」並びにならない。その回の結果も同じ assert で
+ * 確かめたうえで並びを作り直し、上限の回数のうちに 1 回は (2) が先に取った並びで確かめる
+ */
+const OT25_MAX_ATTEMPTS = 5;
+
+/** 呼び出しが終わったか (並ぶ前に終わったのを waitForLockWaitersUnlessSettled で見分ける) を覚える */
+function trackSettled<T>(promise: Promise<T>): { done: Promise<T>; settled: () => boolean } {
+  let isSettled = false;
+  const done = promise.finally(() => {
+    isSettled = true;
+  });
+  // 待つ前にテストが落ちたときの未処理の reject にしない (await した側には reject のまま届く)
+  done.catch(() => undefined);
+  return { done, settled: () => isSettled };
+}
+
+/**
+ * OT-25 の 1 回。どちらの並びでも、デッドロックせず、先に並んだ強制解散が通り、Y は ORG_ALREADY_DISSOLVED であることを確かめ、
+ * 並び (強制解散が (2) の接続に待たされた 'queued' / (2) より先に X の行を取って終わった 'settled') を返す
+ */
+async function runOt25Once(operatorJwt: string, label: string): Promise<LockWaitOutcome> {
+  const { owner, admin, orgId, proposalId } = await setupTransfer(label);
+
+  // 各手順は、前の手順の呼び出しが行のロックの待ちに並んだのを pg_stat_activity で確かめてから進め、持っている接続は
+  // 並んだのを確かめてから release() で放す (決まった秒数の窓で「並んだはず」と仮定しない。#1917)
+  // (1) 承諾 (X → Y) をコミット前のまま開く (提案の行・組織の行・Y の行・X の行を持ち、組織の行と X・Y の行を書き換える)
+  const accept = holdCall(admin, `public.accept_org_owner_transfer('${proposalId}'::uuid)`);
+  await accept.sleeping;
+  // (2) X の行だけを取る処理を、承諾の後ろに並ばせる (承諾の commit のあとは、この接続が X の行を放されるまで持つ)
+  const ownerRow = holdProfileRow(owner.id);
+  await waitForLockWaiters(ownerRow.marker, 1, { step: '(2) X の行だけを取る接続が承諾の後ろに並ぶ', blockedBy: accept });
+  // (3) 運営の強制解散を並ばせる (組織の行で待つ。取り直しのループなら、ループの最初の X の行で (2) の後ろに待つ)
+  const forced = trackSettled(operatorDissolveOrg(operatorJwt, orgId));
+  await waitForLockWaiters('operator_force_dissolve_org', 1, { step: '(3) 運営の強制解散が承諾の commit を待つ' });
+  // (4) 承諾を放して commit させる (オーナーは Y)。X の行は (2) の接続が取る
+  await accept.release();
+  const accepted = await accept.done;
+  expect(accepted.ok, JSON.stringify(accepted)).toBe(true);
+  await ownerRow.sleeping;
+  // (4') 強制解散が、承諾の commit のあと X の行を持つ (2) の接続に待たされるまで待つ (直した形では組織の行を取ったあと、後始末
+  //      (org_dissolve_apply) の user_profiles の UPDATE が X の行で待つ。取り直しのループの形ではループの最初の X の行で待つ)。
+  //      ただし (2) の接続も強制解散も承諾の commit で同時に起こされ、承諾が書き換えた X の行の新しい版を取り合う ((2) が待っていた
+  //      tuple のロックは古い版のもので、新しい版の順は決めない)。強制解散が組織の行を取ってから後始末で X の行に着くのが (2) より
+  //      先なら、強制解散は (2) を待たずに終わり、(2) は強制解散の commit のあとに X の行を取る ('settled')。その回は Y の解散が
+  //      強制解散の後ろに並ぶ並びにならないので、並ぶのを待たずに結果だけを確かめる
+  const arrangement = await waitForLockWaitersUnlessSettled(
+    'operator_force_dissolve_org',
+    1,
+    { step: "(4') 強制解散が承諾の commit のあと X の行を持つ接続の後ろに並ぶ", blockedBy: ownerRow },
+    forced.settled,
+  );
+  // (5) 新しいオーナー Y が解散を呼ぶ ('queued' なら、組織の行を持ったまま X の行で待つ (3) の後ろに組織の行で待つ。取り直しの
+  //     ループの形なら、(3) はまだ組織の行を取っていないので、Y の解散は Y の行と組織の行を先に取れ、(3) を追い越す)
+  const dissolveDone = dissolveOrg(admin, orgId);
+  if (arrangement === 'queued') {
+    await waitForLockWaiters('dissolve_org_by_owner', 1, { step: '(5) 新しいオーナー Y の解散が行のロックの待ちに並ぶ' });
+  }
+  // (6) X の行を放す ('queued' なら Y の解散が並んだのを確かめてから。並ぶ前に接続が終わっていれば release() が失敗する)
+  await ownerRow.release();
+
+  const [held, forcedOutcome, dissolve] = await Promise.all([ownerRow.done, forced.done, dissolveDone]);
+  expect(held.ok, JSON.stringify(held)).toBe(true);
+  expect(isDeadlock(forcedOutcome) || isDeadlock(dissolve), JSON.stringify({ arrangement, forcedOutcome, dissolve })).toBe(false);
+  expect(forcedOutcome.ok, JSON.stringify({ arrangement, forcedOutcome })).toBe(true);
+  expectRaised(dissolve, 'ORG_ALREADY_DISSOLVED');
+  expect(await orgRow(orgId)).toMatchObject({ status: 'dissolved', owner_id: null });
+  expect(await orgMemberCount(orgId)).toBe(0);
+  expect(await proposalStatus(proposalId)).toBe('accepted');
+  return arrangement;
+}
+
 describe('譲渡の commit をまたいで運営の強制解散と新しいオーナーの解散が重なっても、デッドロックせず、組織の行に並んだ順に通る', () => {
   it('OT-25: 旧オーナー X → admin Y の承諾をコミット前のまま開き、X の行だけを持つ処理と運営の強制解散をその後ろに並ばせ、承諾の commit のあとに Y が解散を呼んでも、デッドロックせず、先に並んだ強制解散が通り、Y は ORG_ALREADY_DISSOLVED (取り直しのループの形では、強制解散が X の行で待つ間に Y の解散が追い越して通り、強制解散が ORG_ALREADY_DISSOLVED になった)', async () => {
     const op = await operator();
-    const { owner, admin, orgId, proposalId } = await setupTransfer('ot25');
-
-    // 各手順は、前の手順の呼び出しが行のロックの待ちに並んだのを pg_stat_activity で確かめてから進め、持っている接続は
-    // 並んだのを確かめてから release() で放す (決まった秒数の窓で「並んだはず」と仮定しない。#1917)
-    // (1) 承諾 (X → Y) をコミット前のまま開く (提案の行・組織の行・Y の行・X の行を持つ)
-    const accept = holdCall(admin, `public.accept_org_owner_transfer('${proposalId}'::uuid)`);
-    await accept.sleeping;
-    // (2) X の行だけを取る処理を、承諾の後ろに並ばせる (承諾の commit のあとは、この接続が X の行を放されるまで持つ)
-    const ownerRow = holdProfileRow(owner.id);
-    await waitForLockWaiters(ownerRow.marker, 1, { step: '(2) X の行だけを取る接続が承諾の後ろに並ぶ', blockedBy: accept });
-    // (3) 運営の強制解散を並ばせる (組織の行で待つ。取り直しのループなら、ループの最初の X の行で (2) の後ろに待つ)
-    const forcedDone = operatorDissolveOrg(op.jwt, orgId);
-    await waitForLockWaiters('operator_force_dissolve_org', 1, { step: '(3) 運営の強制解散が承諾の commit を待つ' });
-    // (4) 承諾を放して commit させる (オーナーは Y)。X の行は (2) の接続が取る
-    await accept.release();
-    const accepted = await accept.done;
-    expect(accepted.ok, JSON.stringify(accepted)).toBe(true);
-    await ownerRow.sleeping;
-    // (4') 強制解散が、承諾の commit のあと X の行を持つ (2) の接続に待たされるまで待つ (直した形では組織の行を取ったあと
-    //      X の行で、取り直しのループの形ではループの最初の X の行で待つ。どちらの形でも (2) が X の行を放すまで終われない)
-    await waitForLockWaiters('operator_force_dissolve_org', 1, {
-      step: "(4') 強制解散が承諾の commit のあと X の行を持つ接続の後ろに並ぶ",
-      blockedBy: ownerRow,
-    });
-    // (5) 新しいオーナー Y が解散を呼ぶ (組織の行で (3) の後ろに待つ。取り直しのループの形なら、(3) はまだ組織の行を取っていない
-    //     ので、Y の解散は Y の行と組織の行を先に取れ、(3) を追い越す)
-    const dissolveDone = dissolveOrg(admin, orgId);
-    await waitForLockWaiters('dissolve_org_by_owner', 1, { step: '(5) 新しいオーナー Y の解散が行のロックの待ちに並ぶ' });
-    // (6) Y の解散が並んだのを確かめてから X の行を放す (並ぶ前に接続が終わっていれば release() が失敗する)
-    await ownerRow.release();
-
-    const [held, forced, dissolve] = await Promise.all([ownerRow.done, forcedDone, dissolveDone]);
-    expect(held.ok, JSON.stringify(held)).toBe(true);
-    expect(isDeadlock(forced) || isDeadlock(dissolve), JSON.stringify({ forced, dissolve })).toBe(false);
-    expect(forced.ok, JSON.stringify(forced)).toBe(true);
-    expectRaised(dissolve, 'ORG_ALREADY_DISSOLVED');
-    expect(await orgRow(orgId)).toMatchObject({ status: 'dissolved', owner_id: null });
-    expect(await orgMemberCount(orgId)).toBe(0);
-    expect(await proposalStatus(proposalId)).toBe('accepted');
-  }, TEST_TIMEOUT_MS);
+    const arrangements: LockWaitOutcome[] = [];
+    for (let attempt = 1; attempt <= OT25_MAX_ATTEMPTS && !arrangements.includes('queued'); attempt++) {
+      arrangements.push(await runOt25Once(op.jwt, `ot25-${attempt}`));
+    }
+    // 強制解散が組織の行を持ったまま X の行で待つ間に Y が解散を呼ぶ並びを、少なくとも 1 回は確かめた
+    expect(arrangements, `${OT25_MAX_ATTEMPTS} 回とも強制解散が (2) の接続より先に X の行を取った`).toContain('queued');
+  }, RACE_TIMEOUT_MS);
 });
 
 // ---------------------------------------------------------------------------------------------
