@@ -7,7 +7,7 @@ import { requireOrgAdmin, type OrgAdminContext } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { notifyMemberRemoved, readOrganizationNotice } from '@/lib/membership/exit-notification';
-import { internalError } from '@/lib/api/errors';
+import { INTERNAL_ERROR_MESSAGE, internalError } from '@/lib/api/errors';
 
 export async function POST(request: Request, props: { params: Promise<{ user_id: string }> }) {
   const params = await props.params;
@@ -30,7 +30,7 @@ export async function POST(request: Request, props: { params: Promise<{ user_id:
     }
     logger.error('組織管理者の確認に失敗しました', error);
     return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
+      { error: { code: 'INTERNAL_ERROR', message: INTERNAL_ERROR_MESSAGE } },
       { status: 500 },
     );
   }

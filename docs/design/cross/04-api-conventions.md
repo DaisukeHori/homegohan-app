@@ -245,7 +245,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
   - `INVALID_PERIOD` (400): 作成の開始日・終了日が `YYYY-MM-DD` の形でない・開始日が終了日より後・タイトルが文字列でない (`route.ts:167`〜`:171`)
   - `INVALID_TARGET` (400): 作成で目標値を指定したとき、数でない・種類ごとの範囲 (`ORG_CHALLENGE_TYPE_META` の `targetMin`〜`targetMax`) の外 (`route.ts:177`)
   - `INVALID_STATUS` (400): 更新の status が DB の受け付けない値・NULL (`route.ts:256`)
-  - このほかの 4xx・5xx (未ログインの 401・管理者でないときの 403・`Invalid JSON` などの 400・500) は `code` の無い `{ error }` だけ (`route.ts:42`〜`:50` の `handleError` ほか)
+  - このほかの 4xx・5xx (未ログインの 401・管理者でないときの 403・本文が JSON として読めないときなどの 400・500) は `code` の無い `{ error }` だけ (`route.ts:42`〜`:50` の `handleError` ほか)。`error` は日本語の固定の文 (401 / 403 / 500 は `src/lib/org-api-errors.ts` の `orgAuthFailureFlat` と定数。例外の文面は入れない)
 - メンバー向けの route (`[id]/route.ts`・`[id]/join/route.ts`。nested の形 `{ error: { code, message } }`):
   - `PERM_DEPARTMENT_MISMATCH` (403): 別の部署の人向けのチャレンジへの参加 (`[id]/join/route.ts:52`)
   - `FORBIDDEN` (403): 参加の INSERT が行レベルセキュリティに拒否された (42501。確認のあとで所属・部署・状態が変わったとき。`[id]/join/route.ts:75`)
@@ -354,7 +354,7 @@ interface ErrorResponse {
 { "error": "利用規約・プライバシーポリシーへの同意が必要です。同意の画面から内容をご確認ください。", "code": "LEGAL_CONSENT_REQUIRED" }
 ```
 
-**(b) nested**: `error.message` を読むクライアント向け。運営 API (`/api/super-admin/**` など) は `internalError(..., { shape: 'nested' })` でこの形の 500 を返す。組織・家族の所属の操作の API (招待の承諾・辞退・取り消し・脱退・除名・代表者やオーナーの譲渡など。`/api/org/**`・`/api/family/**` のうち `MembershipErrorCode` を返すもの) の 4xx もこの形で、`code` は `MembershipErrorCode` (`src/lib/errors/membership-errors.ts`) の値 (同じ配下でも、一覧の取得などは (a) flat の `{ error: 'Forbidden' }` などを返す route がある)。`message` は操作ごとの固定の文なので、画面は `membershipErrorMessageOfBody` で `code` から理由の文を引く。
+**(b) nested**: `error.message` を読むクライアント向け。運営 API (`/api/super-admin/**` など) は `internalError(..., { shape: 'nested' })` でこの形の 500 を返す。組織・家族の所属の操作の API (招待の承諾・辞退・取り消し・脱退・除名・代表者やオーナーの譲渡など。`/api/org/**`・`/api/family/**` のうち `MembershipErrorCode` を返すもの) の 4xx もこの形で、`code` は `MembershipErrorCode` (`src/lib/errors/membership-errors.ts`) の値 (同じ配下でも、一覧の取得などは (a) flat の `{ error: 'この操作を行う権限がありません' }` などを返す route がある。`/api/org/**` の失敗の文はどちらの形でも日本語の固定の文で、英語の文・例外の文面 (`err.message`) を入れない。401 / 403 / 500 の文は `src/lib/org-api-errors.ts`、見張りは `tests/org-api-error-japanese.test.ts`)。`message` は操作ごとの固定の文なので、画面は `membershipErrorMessageOfBody` で `code` から理由の文を引く。
 
 ```typescript
 interface NestedErrorResponse {

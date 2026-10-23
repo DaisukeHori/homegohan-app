@@ -270,9 +270,9 @@ const endpoints: Endpoint[] = [
 function expectedUnauthenticatedBody(endpoint: Endpoint) {
   switch (endpoint.flavor) {
     case 'plain':
-      return { error: 'Unauthorized' };
+      return { error: 'ログインが必要です' };
     case 'coded':
-      return { error: { code: 'UNAUTHORIZED', message: 'AUTH_UNAUTHENTICATED' } };
+      return { error: { code: 'UNAUTHORIZED', message: 'ログインが必要です' } };
     case 'invite':
       return { error: { code: 'NOT_AUTHENTICATED', message: '認証が必要です' } };
   }
@@ -281,9 +281,9 @@ function expectedUnauthenticatedBody(endpoint: Endpoint) {
 function expectedForbiddenBody(endpoint: Endpoint) {
   switch (endpoint.flavor) {
     case 'plain':
-      return { error: 'Forbidden' };
+      return { error: 'この操作を行う権限がありません' };
     case 'coded':
-      return { error: { code: 'FORBIDDEN', message: 'owner/admin role required' } };
+      return { error: { code: 'FORBIDDEN', message: 'この操作を行う権限がありません' } };
     case 'invite':
       return { error: { code: 'INSUFFICIENT_PERMISSION', message: endpoint.forbiddenMessage } };
   }
@@ -722,11 +722,11 @@ describe('組織チャレンジ (#1132): 作成・開始できるのは食事の
     },
   );
 
-  it('POST: 種類・タイトル・日付が欠けていれば 400 (Required fields missing)', async () => {
+  it('POST: 種類・タイトル・日付が欠けていれば 400 (タイトル・種類・開始日・終了日を入力してください)', async () => {
     for (const missing of ['title', 'challengeType', 'startDate', 'endDate']) {
       const res = await create({ [missing]: undefined });
       expect(res.status, missing).toBe(400);
-      expect(await json(res)).toEqual({ error: 'Required fields missing' });
+      expect(await json(res)).toEqual({ error: 'タイトル・種類・開始日・終了日を入力してください' });
     }
     expect(inserts()).toHaveLength(0);
   });
@@ -792,7 +792,7 @@ describe('組織チャレンジ (#1132): 作成・開始できるのは食事の
     const res = await update({ id: 'not-a-uuid', status: 'active' });
 
     expect(res.status).toBe(400);
-    expect(await json(res)).toEqual({ error: 'Invalid challenge ID' });
+    expect(await json(res)).toEqual({ error: 'チャレンジの ID の形式が正しくありません' });
     expect(updates()).toHaveLength(0);
   });
 
@@ -930,7 +930,7 @@ describe('組織チャレンジ (#1132): 作成・開始できるのは食事の
     const text = await res.text();
 
     expect(res.status).toBe(500);
-    expect(JSON.parse(text)).toEqual({ error: 'Internal server error' });
+    expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました' });
     expect(text).not.toContain('abc123');
     expect(mockLoggerError).toHaveBeenCalledTimes(1);
   });
@@ -953,7 +953,7 @@ describe('組織チャレンジ (#1132): 作成・開始できるのは食事の
     const text = await res.text();
 
     expect(res.status).toBe(500);
-    expect(JSON.parse(text)).toEqual({ error: 'Internal server error' });
+    expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました' });
     expect(text).not.toContain('abc123');
     expect(mockLoggerError).toHaveBeenCalledTimes(1);
     expect(mockLoggerError.mock.calls[0][0]).toBe('GET /api/org/challenges');
@@ -967,7 +967,7 @@ describe('組織チャレンジ (#1132): 作成・開始できるのは食事の
 
 describe('500 の本文は汎用メッセージだけ (生のエラー文は db-logger にだけ残す)', () => {
   const RAW = 'duplicate key value violates unique constraint "x_pkey": Key (email)=(secret@example.com) already exists';
-  const GENERIC_CODED = { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } };
+  const GENERIC_CODED = { error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました' } };
 
   async function expectGeneric(res: Response, shape: unknown, routeName: string) {
     const text = await res.text();
@@ -1038,13 +1038,13 @@ describe('500 の本文は汎用メッセージだけ (生のエラー文は db-
   ])('challenges %s: DB の失敗', async (_method, run, routeName) => {
     setup({ errors: { organization_challenges: { message: RAW, code: '23505' } } });
 
-    await expectGeneric(await run(), { error: 'Internal server error' }, routeName);
+    await expectGeneric(await run(), { error: '処理中にエラーが発生しました' }, routeName);
   });
 
   it('members GET: 認可の後の想定外の例外', async () => {
     failAfterAuthorization(RAW);
 
-    await expectGeneric(await members.GET(new Request(url('/api/org/members'))), { error: 'Internal server error' }, 'GET /api/org/members');
+    await expectGeneric(await members.GET(new Request(url('/api/org/members'))), { error: '処理中にエラーが発生しました' }, 'GET /api/org/members');
   });
 
   it.each([
@@ -1053,7 +1053,7 @@ describe('500 の本文は汎用メッセージだけ (生のエラー文は db-
   ])('invites %s: DB の失敗', async (_method, run, routeName) => {
     setup({ errors: { organization_invites: { message: RAW, code: '23505' } } });
 
-    await expectGeneric(await run(), { error: 'Internal server error' }, routeName);
+    await expectGeneric(await run(), { error: '処理中にエラーが発生しました' }, routeName);
   });
 
   it('401 / 403 の本文に内部のエラー文は混ざらない (認可の失敗は 500 にしない)', async () => {
@@ -1089,7 +1089,7 @@ describe('壊れた JSON は 500 ではなく 400', () => {
     const res = await run();
 
     expect(res.status).toBe(400);
-    expect(await json(res)).toEqual({ error: 'Invalid JSON' });
+    expect(await json(res)).toEqual({ error: 'リクエストボディが不正です' });
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 });
