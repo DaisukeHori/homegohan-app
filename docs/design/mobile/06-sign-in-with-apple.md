@@ -2,7 +2,7 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v1.6 (2026-10-23) |
+| 版 | v1.7 (2026-10-23) |
 | 状態 | 設計ゲート審査中 (実装着手は通過後) |
 | 範囲の正本 | Issue #1139 と、その本文が該当箇所に挙げる `MOBILE_TODO.md`。Issue の本文は「EAS Build / Submit・本番審査の提出・Pass1〜10 の品質検証が未完了」を述べ、該当箇所に `MOBILE_TODO.md:159-217` を挙げる (本文に Sign in with Apple の語は無く、コメントは無い)。Sign in with Apple を求めているのは `MOBILE_TODO.md` の Pass 3「認証/セッション」(`:186`)・Pass 10「ストア要件 (iOS)」(`:193`) と「提出前に片付けるブロッカー」の 5 (`:41`。作業計画 T43)。本書はこの 3 か所の Sign in with Apple の部分を扱う |
 | 土台 | origin/main `9575aa99` (2026-10-23)。本文の file:line はこの版の事実 (v1.2 の時点の origin/main `b6fa5d65` までの差分は、本書が名指すコードとテストに触れていない。v1.4 の時点の origin/main `0c86c3dd` までの差分も同じで、設計書の差分 (cross/20 の F-19・F-51、billing/01 の追随表の行番号、billing/03) は本書が指す行ではない。v1.6 の時点の origin/main `62425ec8` までの差分 (組織の一覧の API と画面・Edge Function 1 本・設計書の行の置き換え) も、本書が名指すコード・テスト・設計書の行に触れておらず、行の数も変えていない) |
@@ -20,6 +20,7 @@
 | v1.4 | 2026-10-23 | 周 2 の審査の反映: 段 D (版 `v2026.4`) は版を上げる改定なので、cross/20 §9.3 の「版を上げる改定すべて」の行が求める §9.4 の 2 (施行日の前に運営のお知らせに改定の予告を載せる) の工程を入れた (公開中のプライバシーポリシー第18条 1 項・利用規約第24条 1 項が施行日の前の掲載を約束している)。§21 に Q-13 (選択式。予告して施行日を待つ / 予告なしで公開し cross/20 §9.3 の除外に `v2026.4` を書き足す) を足し、§11.8 に (i) 改定の予告を新設し、§0.4・§0.5・§3 R-16・§4 S-25 (シナリオ 25 本)・§5.2・§7.1・§7.2・§7.3 (d) (段 D の公開の工程)・§9.6・§11.8 (f)・§15 の公開の順と段 D の行・§18 の cross/20 の行・§19.3・§19.4・§20 の 6 を追随させた |
 | v1.5 | 2026-10-23 | 周 3 の網羅性の反映: (1) §4 にシナリオ S-26〜S-31 (退会・行あり・秘密なし / 秘密鍵が壊れている、Web・provider 無効、Web・refresh token を保管できない (Services ID 無し・`provider_refresh_token` 無し)、`identityToken` が無い、名前の保存の失敗) を足し 31 本にし、§5.2 のトレースに足した。§4 S-12 の参照を S-16 (行なしの退会) に直し、§5.2 S-13 の順の記述 (名前 → 登録 → 振り分け) を直した (2) §7.1 に シートの取り消し (S-7)・`identityToken` 無し・名前の保存の失敗・Web の provider 無効・Web の Services ID 無し / `provider_refresh_token` 無し・WebView のタブ (S-21)・中継のアドレスへのメール (S-22) の行を足した (3) §7.3 (a) に名前の保存の成否の行、§7.3 (b) の `none` に Web の保管しない条件の行を足した (4) §14.2 に `packages/shared/src/apple-sign-in.test.ts`・`src/__tests__/lib/auth/apple/schemas.test.ts` (段 A1)・`src/__tests__/lib/auth/apple-sign-in-flag.test.ts` (段 B) を足し、§15・§16 の本数を直した (5) §17 に設定画面のテスト 2 本 (確認だけ) を足した (6) §18 に `marketing/01`・`cross/08`・`mobile/02`・`cross/12` の行を足し、`ENV_SETUP.md` をリポジトリ直下のものと明記した。§21 に Q-14 を足した |
 | v1.6 | 2026-10-23 | 周 3 の審査の反映: 退会の段階 `apple_revoke` に段階全体の時間の上限 `APPLE_REVOKE_TOTAL_BUDGET_MS` (3 秒) を置いた。退会の route の `maxDuration` 60 秒から Storage の掃除の上限 45 秒と完了メールの待ちの上限 5 秒を引いた 10 秒のうち 3 秒を Apple に充てる (§13.1 の計算。`config.test.ts` が和を確かめる)。締め切りは段階の入口で決め、試行ごとの待ちは `APPLE_API_TIMEOUT_MS` と残りの短いほう (`revokeAppleRefreshToken` に `timeoutMs` を足した)。締め切りを過ぎた行は Apple を呼ばずに `failed` に数えて `warn` を 1 回出す。§0.5・§3 R-8・§4 S-15 とシナリオ S-32 (2 行・Apple が応答しない。32 本)・§5.1・§5.2・§6 裁定 2 と帰結・§7.1・§7.3 (b)・§9.3・§11.2・§11.3・§11.4・§12.4・§13.1・§14.2・§16・§21 Q-2 を追随させた。`APPLE_REVOKE_ATTEMPTS` の注と §13.1 の根拠 (「5xx ならもう 1 回」「応答を待たせない」) を、コードの事実 (失敗の種類を区別せずやり直す・やり直しも上限の中だけ) に合わせた。波及の掃除: §7.3 (b) に既存の挙動の行 (秘密なし S-26・表を読めない) とガード (締め切りの前) を足し、§7.1 に表を読めないの行を足した。§9.3 の既定の名前 `defaultAccountDeletionAppleRevocation` (正典コードに無い) を `createAccountDeletionAppleRevocation({ admin: () => admin })` に直した |
+| v1.7 | 2026-10-23 | 周 4 の網羅性の反映: (1) §7.1 に Web 新規登録の行 (スイッチ無し・provider 無効・同じメールの `email` / `google`・同じ `sub` の `apple`) を足した (2) §13.1 に `APPLE_LOGO_SRC`・`APPLE_SIGN_IN_TITLES`・`APPLE_CALLBACK_PROVIDER` (§16 の新設と一致させた) と、`MS_PER_SECOND`・テストの中の `PNG_SIGNATURE`・`IHDR_WIDTH_OFFSET` / `IHDR_HEIGHT_OFFSET` を足した (3) §14.1 に S-31 (名前の保存の失敗でも `signed_in`) の it、§14.2 の route のテストに `store_failed` (500・`step: 'store'`) の it、`tests/signup-legal-consent.test.tsx` にスイッチ無しの it を足した (4) §14.4 (新しい it を置かないシナリオと確かめ方: S-2・S-4〜S-6・S-21・S-22・S-25・S-28) を新設し、§20 に 9 (Web のスイッチの後に Apple の画面へ行く。S-28) を足した (5) §16 に migration と対の戻し口の行を足した (6) §5.2 S-25 の出典を `src/app/api/announcements/route.ts:89-91` (`is_public`・`published_at`) と行の中身まで書いた。波及の掃除: §10.2 の部品の節の参照を §11.6 に、§11.2 の注の `tests/apple-sign-in-config.test.ts` (§14 に無い名前) を `src/__tests__/lib/auth/apple/config.test.ts` に直した |
 
 ## 0. 範囲・前提・分冊判定
 
@@ -205,7 +206,7 @@ iOS (ネイティブの画面)                              Web (Next.js)
 | S-22 | 送信は既存の `email_outbox` (Resend)。Apple の中継が受け取るかは送信ドメインの登録次第 (§19.1) | 一致 |
 | S-23 | Apple が `fullName` を返す → `user_metadata.full_name` は既にある → 上書きしない。認可コードは新しい → upsert で上書き | 一致 |
 | S-24 | GoTrue が `invalid nonce` (Nonces mismatch) → `signInWithIdToken` の `error` → `failed` | 一致 |
-| S-25 | 予告: オーケストレーターが `/admin/announcements` でお知らせを公開 (`is_public` = true。`published_at` が入る: `src/app/api/announcements/route.ts:91`) → `GET /api/announcements?mode=public` → Web とアプリのホームに出る (cross/20 F-31)。この間 `LEGAL_DOCUMENTS` は `v2026.3` のままなので同意のゲートは動かない。施行日: 段 D のデプロイで 2 文書が `v2026.4` → `user_profiles.terms_version_accepted` / `privacy_version_accepted` (`v2026.3`) と違う (`packages/shared/src/legal-versions.ts:106-109`) → 既存の同意のゲートが同意の画面へ (cross/20 §9.2。本書は変えない) | 一致 |
+| S-25 | 予告: オーケストレーターが `/admin/announcements` でお知らせを公開 (`is_public` = true。`published_at` が入る: `src/app/api/announcements/route.ts:89-91` の `is_public: isPublic`・`published_at: isPublic ? new Date().toISOString() : null`) → `GET /api/announcements?mode=public` → Web とアプリのホームに出る (cross/20 F-31)。この間 `LEGAL_DOCUMENTS` は `v2026.3` のままなので同意のゲートは動かない。施行日: 段 D のデプロイで 2 文書が `v2026.4` → `user_profiles.terms_version_accepted` / `privacy_version_accepted` (`v2026.3`) と違う (`packages/shared/src/legal-versions.ts:106-109`) → 既存の同意のゲートが同意の画面へ (cross/20 §9.2。本書は変えない) | 一致 |
 | S-26 | `deleteAccount`: … `billing_recheck` → `step = 'apple_revoke'` → `revokeForAccountDeletion`: `listAppleRefreshTokens` 1 行 → `readAppleSignInServerConfig()` = null → `{ tokens: 1, revoked: 0, failed: 0, skipped: 'not_configured' }` と `warn` → `delete_user` → CASCADE | 一致 |
 | S-27 | S-26 と同じ入口 → config あり → 行ごとの `try` の中で `createAppleClientSecret` が投げる (`createPrivateKey` が PEM を読めない) → `catch` で `failed` に数えて `warn` (`client_id`・`error_name`)・`revokeAppleRefreshToken` を呼ばない → `{ tokens: 1, revoked: 0, failed: 1, skipped: null }` → `delete_user` | 一致 |
 | S-28 | `handleAppleLogin` → `signInWithOAuth({ provider: 'apple' })` は URL を作ってブラウザを `/auth/v1/authorize?provider=apple` へ送る (`error` は返らない) → GoTrue が provider 無効の 400 を返す。アプリのコードは通らない (§7.1・§19.3 の運用) | 一致 |
@@ -280,8 +281,12 @@ F1 を採る。
 | Web ログイン | on | — | 有効 | 同じ `sub` の `apple` (2 回目) | `next` (既定 `/home`) へ。`provider_refresh_token` があれば Services ID の行を上書き (S-20) |
 | Web ログイン | on | サーバに Services ID (`APPLE_SIGN_IN_SERVICES_ID`) が無い | 有効 | どれでも | ログインと振り分けは上の行と同じ。refresh token は保管しない (`info`)。退会では Web の行の失効をスキップ (S-29) |
 | Web ログイン | on | Supabase が `provider_refresh_token` を返さない (§21 Q-6) | 有効 | どれでも | 同上 (S-29) |
+| Web 新規登録 | 無し | — | — | — | ボタン無し。同意のチェックと「Googleで登録」は今までどおり (S-19) |
 | Web 新規登録 | on | 同意のチェック無し | — | — | 押せない (S-18) |
+| Web 新規登録 | on | 同意のチェックあり | 無効 | — | Web ログインの無効の行と同じ (Supabase が 400 の JSON。S-28) |
 | Web 新規登録 | on | 同意のチェックあり | 有効 | 無し | S-17 と同じ |
+| Web 新規登録 | on | 同意のチェックあり | 有効 | 同じメールの `email` / `google` | Web ログインの同じ行と同じ: 結び付け (GoTrue。新しい利用者は作らない。`app_metadata.provider` はそのまま)。振り分けは既存の `/auth/callback` の分岐 (`redirectTo` は `buildCallbackUrl()` に `provider=apple` を足した URL。§11.6)。`provider_refresh_token` があれば Services ID の行を保管 (S-4・S-5 の Web 版) |
+| Web 新規登録 | on | 同意のチェックあり | 有効 | 同じ `sub` の `apple` | Web ログインの 2 回目の行と同じ (既存の利用者・Services ID の行を上書き。S-20) |
 | 退会 | — | 行あり・秘密あり | — | — | 失効 → 削除 (S-14) |
 | 退会 | — | 行あり・Apple が落ちている (すぐ失敗が返る) | — | — | 段階の時間の上限 (3 秒) の中で 2 回失敗 → warn → 削除 (S-15) |
 | 退会 | — | 行あり (2 つ)・Apple が応答しない (時間切れ) | — | — | 1 行目は上限の残りで打ち切って warn (やり直さない)・2 行目は Apple を呼ばずに `failed` (warn 1 回) → 削除。段階は約 3 秒 (S-32) |
@@ -586,7 +591,7 @@ sequenceDiagram
 | 項目 | 内容 |
 |---|---|
 | 置き場所 | Google のボタンの上 (同じ `space-y-4` の中) |
-| 部品 | `src/components/auth/AppleSignInButton.tsx` (§11.7)。自作のボタン (Apple の JS のボタンは Apple 自身の認可の流れに結び付くので使わない) |
+| 部品 | `src/components/auth/AppleSignInButton.tsx` (§11.6)。自作のボタン (Apple の JS のボタンは Apple 自身の認可の流れに結び付くので使わない) |
 | 題名 | ログイン画面「Appleで続ける」・新規登録画面「Appleで登録」(HIG の Continue / Sign up に当たる日本語。Google の「Googleで続ける」「Googleで登録」と対) |
 | 見た目 | 黒い背景・白いロゴと文字 (HIG の Black。白い背景の上)。高さ 56px (`h-14`)・文字 24px (高さの 43%。HIG の例 56pt / 24pt)・太字・角丸 `rounded-xl` (Google と同じ)。ロゴは Apple が URL で配る「ロゴだけのボタン」の画像 (F-14。黒の正方形の中央に白いロゴ・余白つきの PNG) を `public/auth/apple-logo-on-black.png` に置き、ボタンの高さと同じ 56px の正方形で描く (切らない・上下の余白を足さない。画像の黒はボタンの黒と同じなので境目は見えない)。取り方は §11.6 (実装者がコマンド 1 つで取る。オーナーの作業は要らない)。Google のボタンは `py-6` を `h-14` に変えて高さをそろえる (Apple のボタンをほかより小さくしない) |
 | 出す条件 | `isAppleSignInEnabled()` (スイッチ `on`)。無ければ描かない |
@@ -652,7 +657,7 @@ export const APPLE_SIGN_IN_MESSAGES = {
  */
 import { getOptionalEnv } from '@/lib/env';
 
-/** iOS のアプリの client_id (= apps/mobile/app.json の ios.bundleIdentifier。tests/apple-sign-in-config.test.ts が突き合わせる) */
+/** iOS のアプリの client_id (= apps/mobile/app.json の ios.bundleIdentifier。src/__tests__/lib/auth/apple/config.test.ts が突き合わせる) */
 export const APPLE_SIGN_IN_NATIVE_CLIENT_ID = 'com.homegohan.app';
 /** 交換の API (F-14) */
 export const APPLE_TOKEN_ENDPOINT = 'https://appleid.apple.com/auth/token';
@@ -1900,6 +1905,12 @@ T-34 の `PRIVACY_DATA_TABLES` に `apple_sign_in_tokens` → `'アカウント'
 | `APPLE_SIGN_IN_BUTTON_HEIGHT` | 48 (pt) | `apps/mobile/src/components/auth/AppleSignInButton.tsx` | Google のボタンの高さと同じ。HIG の最小 30pt |
 | `APPLE_SIGN_IN_BUTTON_HEIGHT_PX` / `APPLE_SIGN_IN_BUTTON_FONT_PX` | 56 / 24 | `src/components/auth/AppleSignInButton.tsx` | HIG の 43% (56pt / 24pt の例) |
 | `APPLE_LOGO_IMAGE_SCALE` | 3 | 同上 | ロゴの画像を Apple の URL から取るときの `scale` (1〜6)。高解像度の画面 (devicePixelRatio 3 まで) で滲まない。画像の一辺 = 56 × 3 = 168 画素 (§11.6) |
+| `APPLE_LOGO_SRC` | `'/auth/apple-logo-on-black.png'` | 同上 | ロゴの画像の置き場 (`public/` からの道)。画像は Apple の URL から取った PNG (F-14・§11.6)。`tests/apple-sign-in-logo-asset.test.ts` がファイルの実在を確かめる |
+| `APPLE_SIGN_IN_TITLES` | `{ continue: 'Appleで続ける', sign_up: 'Appleで登録' }` | 同上 | HIG の題名 (Continue / Sign up with Apple) に当たる日本語。Google の「Googleで続ける」「Googleで登録」と対 (§10.2・R-13) |
+| `APPLE_CALLBACK_PROVIDER` | `'apple'` | `src/lib/auth/apple/web-callback.ts` | `/auth/callback` の `?provider=` のうち refresh token の保管の対象。Web の Apple のボタンだけが `redirectTo` に足す値 (§9.5)。Supabase の provider の名前と同じ |
+| `MS_PER_SECOND` | 1000 | `src/lib/auth/apple/authorization.ts`・`revocation.ts` (どちらもモジュールの中だけ。export しない)・`src/__tests__/lib/auth/apple/config.test.ts` | 秒とミリ秒の換算 (JWT の `iat` は秒・`Date` はミリ秒・退会の route の `maxDuration` は秒)。単位の換算で、運用で変える値ではない |
+| `PNG_SIGNATURE` | `[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]` | `tests/apple-sign-in-logo-asset.test.ts` (テストの中だけ) | PNG の仕様の先頭 8 バイトの署名 |
+| `IHDR_WIDTH_OFFSET` / `IHDR_HEIGHT_OFFSET` | 16 / 20 | 同上 | PNG の仕様の固定の位置: 署名 8 バイト + IHDR の長さ 4 バイト + 種類 `IHDR` 4 バイト = 16 から幅 (4 バイトのビッグエンディアン)、その次の 20 から高さ |
 | レート制限 `auth-apple-authorization` | 5 回 / 10 分 (利用者ごと) | `src/lib/rate-limit.ts` | `auth-password-change` と同じ。ログイン 1 回につき 1 回 |
 
 ### 13.2 環境変数
@@ -1921,7 +1932,7 @@ T-34 の `PRIVACY_DATA_TABLES` に `apple_sign_in_tokens` → `'アカウント'
 
 | ファイル | it |
 |---|---|
-| `lib/appleSignIn.test.ts` (新設) | `isAppleSignInEnabled: iOS かつ EXPO_PUBLIC_APPLE_SIGN_IN=on のときだけ true (ON・空白つきも true。空・off・Android は false)` / `isAppleSignInAvailable: 有効でも isAvailableAsync が false・投げたら false` / `signInWithApple: nonce は randomUUID を SHA-256 (hex) にして Apple へ、raw を Supabase へ渡す` / `requestedScopes は FULL_NAME と EMAIL` / `ERR_REQUEST_CANCELED は cancelled (Supabase を呼ばない・アラートの文を持たない)` / `ほかの Apple の失敗は failed (APPLE_SIGN_IN_MESSAGES.failed)` / `identityToken が無ければ failed (noIdentityToken)` / `signInWithIdToken の error は failed` / `初回 (fullName あり・user_metadata.full_name 無し) は updateUser({ data: { full_name, given_name, family_name } })` / `full_name が既にあれば updateUser を呼ばない` / `fullName が null なら updateUser を呼ばない` / `認可コードを POST /api/auth/apple/authorization に送る (Bearer は getApi が付ける)` / `登録の API が失敗しても signed_in (console.warn だけ)` / `authorizationCode が null なら API を呼ばない` |
+| `lib/appleSignIn.test.ts` (新設) | `isAppleSignInEnabled: iOS かつ EXPO_PUBLIC_APPLE_SIGN_IN=on のときだけ true (ON・空白つきも true。空・off・Android は false)` / `isAppleSignInAvailable: 有効でも isAvailableAsync が false・投げたら false` / `signInWithApple: nonce は randomUUID を SHA-256 (hex) にして Apple へ、raw を Supabase へ渡す` / `requestedScopes は FULL_NAME と EMAIL` / `ERR_REQUEST_CANCELED は cancelled (Supabase を呼ばない・アラートの文を持たない)` / `ほかの Apple の失敗は failed (APPLE_SIGN_IN_MESSAGES.failed)` / `identityToken が無ければ failed (noIdentityToken)` / `signInWithIdToken の error は failed` / `初回 (fullName あり・user_metadata.full_name 無し) は updateUser({ data: { full_name, given_name, family_name } })` / `full_name が既にあれば updateUser を呼ばない` / `fullName が null なら updateUser を呼ばない` / `updateUser が error を返しても signed_in (console.warn だけ・投げない・認可コードの登録は続けて呼ぶ。S-31)` / `認可コードを POST /api/auth/apple/authorization に送る (Bearer は getApi が付ける)` / `登録の API が失敗しても signed_in (console.warn だけ)` / `authorizationCode が null なら API を呼ばない` |
 | `lib/routeAfterSignIn.test.ts` (新設。login.test.tsx の 4-3 の振り分けの検査をこの関数に対して) | `?next= が / 始まりならそこへ` / `完了 → /(tabs)/home・開始済み → /onboarding/resume・未開始 → /onboarding/welcome` / `admin も同じ振り分け (#1122)` / `user が無ければ何もしない` |
 | `components/AppleSignInButton.test.tsx` (新設) | `isAppleSignInAvailable が true なら AppleAuthenticationButton を描く (SIGN_IN / SIGN_UP・WHITE_OUTLINE・高さ 48)` / `false なら何も描かない` / `disabled のとき押せない (pointerEvents none)` |
 | `auth/login.test.tsx` (追記) | `5-1. スイッチ on・iOS: Apple のボタン (login-apple-button) が Google の前にある` / `5-2. 押すと signInWithApple → signed_in → routeAfterSignIn (ホームへ)` / `5-3. cancelled はアラートを出さず画面に留まる` / `5-4. failed は Alert("Appleログイン失敗", 文)` / `5-5. スイッチ無し: ボタンが無い` / `5-6. ?next= は Apple でも効く`。既存の 4-1〜4-3 は `routeAfterSignIn` の移動後も緑のまま (`mockFrom` の形は同じ) |
@@ -1961,7 +1972,7 @@ jest.mock('expo-crypto', () => ({
 | `src/__tests__/lib/auth/apple/authorization.test.ts` (新設) | `not_configured なら Apple を呼ばない` / `secret の sub と client_id は bundle ID` / `invalid_code → status invalid_code` / `unavailable → unavailable` / `store の失敗 → store_failed (error を持つ)` / `秘密鍵が壊れていれば secret_failed (投げない・Apple を呼ばない)` / `成功 → stored (upsert の行)` / `hasAppleIdentity: provider apple があれば true` |
 | `src/__tests__/lib/auth/apple/revocation.test.ts` (新設) | `行が無ければ Apple を呼ばず tokens 0` / `秘密が無ければ skipped not_configured と warn` / `行ごとに client_id を sub にした secret で revoke` / `締め切りの前なら失敗は 2 回まで試し、2 回目も失敗なら failed に数えて warn (attempts 2。投げない)` / `秘密鍵が壊れていても投げず、行ごとに failed に数えて warn (Apple を呼ばない。PEM を warn に出さない)` / `表の読み取りの失敗は warn して tokens 0` / `予算を超えたら残りの行を呼ばずに failed にして投げない: 2 行・偽の fetch が偽の時計を budgetMs 進めて時間切れ (例外) を返す → fetch は 1 回だけ (1 行目の 1 回目)・2 行目は呼ばない・{ tokens: 2, revoked: 0, failed: 2 }・warn は 1 行目 (attempts 1・budget_exhausted true) と締め切り (not_attempted 1・budget_ms) の 2 つ` / `1 回目の失敗で締め切りを過ぎたらやり直さない (1 行・fetch 1 回・attempts 1)` / `試行の待ちは APPLE_API_TIMEOUT_MS と締め切りまでの残りの短いほう (budgetMs 3000 で 1 回目は 3000、budgetMs 10000 で 1 回目は 5000。vi.spyOn(AbortSignal, 'timeout') の引数で見る)` / `budgetMs を省略すると APPLE_REVOKE_TOTAL_BUDGET_MS (偽の時計を APPLE_REVOKE_TOTAL_BUDGET_MS 進める fetch で、2 行目を呼ばない)`。偽の時計は fetch の中でだけ進める (`now` は呼ぶたびに同じ値を返す) |
 | `src/__tests__/lib/auth/apple/web-callback.test.ts` (新設) | `provider が apple でなければ skipped (何も読まない)` / `identities に apple が無ければ skipped` / `provider_refresh_token が無ければ info で skipped` / `Services ID が無ければ skipped` / `そろえば Services ID の行として store` / `store の失敗は warn で skipped (投げない)` |
-| `src/__tests__/api/auth/apple-authorization.test.ts` (新設) | `本文の形が違えば 400 VALIDATION_ERROR (Supabase を作らない)` / `1,025 文字は 400` / `未認証は 401` / `凍結は 403` / `レート制限は 429` / `apple の identity が無ければ 409 APPLE_IDENTITY_NOT_LINKED (Apple を呼ばない)` / `not_configured は 200 { stored: false, reason }` / `invalid_code は 400 APPLE_AUTHORIZATION_CODE_INVALID` / `unavailable は 500 (本文は固定の文。ログに step exchange)` / `secret_failed は 500 (本文は固定の文。ログに step client_secret)` / `stored は 200 { stored: true }` / `Cache-Control: private, no-store` / `認可コードが応答・ログに出ない` |
+| `src/__tests__/api/auth/apple-authorization.test.ts` (新設) | `本文の形が違えば 400 VALIDATION_ERROR (Supabase を作らない)` / `1,025 文字は 400` / `未認証は 401` / `凍結は 403` / `レート制限は 429` / `apple の identity が無ければ 409 APPLE_IDENTITY_NOT_LINKED (Apple を呼ばない)` / `not_configured は 200 { stored: false, reason }` / `invalid_code は 400 APPLE_AUTHORIZATION_CODE_INVALID` / `unavailable は 500 (本文は固定の文。ログに step exchange)` / `secret_failed は 500 (本文は固定の文。ログに step client_secret)` / `store_failed は 500 (本文は固定の文。ログに step store)` / `stored は 200 { stored: true }` / `Cache-Control: private, no-store` / `認可コードが応答・ログに出ない` |
 | `tests/account-deletion.test.ts` (追記) | `apple_revoke は billing_recheck のあと deleteUser の前に 1 回呼ぶ (呼ぶ順の検査に足す)` / `失効の報告は成功のログの apple に載る` / `既定の実装で秘密鍵が壊れていても退会は ok (段階 apple_revoke で失敗にならず deleteUser まで進む)` / `appleRevocation が無いときの既定の実装は params.admin で表を読む (偽の admin の from が返す行)`。既存の it は `appleRevocation` に偽物 (`{ revokeForAccountDeletion: async () => ({ tokens: 0, revoked: 0, failed: 0, skipped: null }) }`) を渡す共通の引数に足して緑のまま |
 | `tests/integration/security/auth-users-fk-on-delete.test.ts` (追記。段 A1。結合テストの枠 `vitest.integration.config.ts`) | `EXPECTED_ACTIONS` に `'apple_sign_in_tokens.user_id': 'CASCADE'` の 1 行 (§8.1 の注つき) を足すだけ。新しい it は足さない: 既存の `D0` (カタログと一覧の両方向の一致) と、一覧から作る `${key} は ON DELETE ${expected}` が新しい行を検査する |
 | `tests/apple-sign-in-tokens-migration-contract.test.ts` (新設) | `CREATE TABLE IF NOT EXISTS public.apple_sign_in_tokens (PK (user_id, client_id)・user_id は auth.users ON DELETE CASCADE)` / `ENABLE ROW LEVEL SECURITY と REVOKE ALL FROM PUBLIC, anon, authenticated がある` / `ポリシー・GRANT・UPDATE/INSERT が無い` / `SET LOCAL lock_timeout がある` / `戻し口は DROP TABLE IF EXISTS だけ` / `コメントに記録の無い決定の帰属の語が無い (tests/account-deletion-migration-contract.test.ts の規則 7 と同じ)` |
@@ -1969,13 +1980,25 @@ jest.mock('expo-crypto', () => ({
 | `tests/apple-sign-in-logo-asset.test.ts` (新設。段 B) | `public/auth/apple-logo-on-black.png が APPLE_LOGO_SRC の置き場にある` / `先頭 8 バイトが PNG の署名 (89 50 4E 47 0D 0A 1A 0A)` / `IHDR の幅と高さが APPLE_SIGN_IN_BUTTON_HEIGHT_PX × APPLE_LOGO_IMAGE_SCALE (168)`。読む位置は名前付きの定数にする (`PNG_SIGNATURE`・`IHDR_WIDTH_OFFSET` = 16・`IHDR_HEIGHT_OFFSET` = 20。PNG の仕様の固定の位置) |
 | `src/__tests__/lib/auth/apple-sign-in-flag.test.ts` (新設。段 B) | `isAppleSignInEnabled: NEXT_PUBLIC_APPLE_SIGN_IN が 'on'・'ON'・' on ' なら true、未設定・空・'off' なら false (vi.stubEnv)` / `スイッチの読み方は 1 つ: src/ と apps/mobile/src/ (どちらも __tests__ を除く) で process.env.NEXT_PUBLIC_APPLE_SIGN_IN・process.env.EXPO_PUBLIC_APPLE_SIGN_IN を書いているファイルは src/lib/auth/apple-sign-in-flag.ts と apps/mobile/src/lib/appleSignIn.ts の 2 つだけで、その行はどちらも isAppleSignInFlagOn( の引数になっている (ファイルの文字列を読む走査。コメントを除いた行で数える。src/lib/env.ts の一覧のキー `NEXT_PUBLIC_APPLE_SIGN_IN:` は process.env を伴わないので数えない)` |
 | `tests/login-apple-button.test.tsx` (新設) | `NEXT_PUBLIC_APPLE_SIGN_IN=on: 「Appleで続ける」が Google の前にある (login-apple-button)` / `押すと signInWithOAuth({ provider: 'apple', redirectTo: …/auth/callback?provider=apple })` / `?next= は redirectTo の next に入る` / `スイッチ無し: 無い` / `error のとき固定の文のバナー` / `login-google-legal-note は 1 つで文は変わらない (tests/login-google-legal-note.test.tsx も緑)` |
-| `tests/signup-legal-consent.test.tsx` (追記) | `同意のチェック無し: Apple のボタンも disabled で、押しても signInWithOAuth を呼ばない` / `チェックあり: provider apple で呼ぶ` |
+| `tests/signup-legal-consent.test.tsx` (追記) | `同意のチェック無し: Apple のボタンも disabled で、押しても signInWithOAuth を呼ばない` / `チェックあり: provider apple で呼ぶ` / `スイッチ無し: Apple のボタン (signup-apple-button) が無く、「Googleで登録」と同意のチェックは今までどおり (S-19)` |
 | `src/__tests__/lib/env.test.ts` (追記。段 A1) | `Sign in with Apple の 5 つ (公開の NEXT_PUBLIC_APPLE_SIGN_IN・サーバの APPLE_SIGN_IN_TEAM_ID / KEY_ID / PRIVATE_KEY / SERVICES_ID) はどれも任意として一覧にあり、公開の 1 つは PUBLIC_ENV_VARS・サーバの 4 つは SERVER_ENV_VARS にある` (新しい it を 1 つ足すだけ。既存の `publicNames` の it は `Object.keys(publicEnvSchema.shape)` からの導出で、足す一覧は無い) |
 | `tests/legal-text-1901.test.ts` (段 D で改める) | T-33 の置き換え (§11.8 (e))・T-7 (evidence の実在)・T-24 (行数)・T-34 (`apple_sign_in_tokens` → アカウント)・T-35 (`LEGAL_CLAIM_COUNT` = 426) |
 
 ### 14.3 実機 (オーナー・オーケストレーター。§20)
 
 シミュレータは `getCredentialStateAsync` で投げ、名前・メールの初回の挙動も実機と違う。Apple のシートは実機 (TestFlight か内部配布) で確かめる。
+
+### 14.4 新しい it を置かないシナリオと、その確かめ方
+
+本書のコードを通らない (既存の経路のまま・Supabase や Apple の側の挙動・運用の工程) ので単体の it を足さないシナリオ。ほかのシナリオ (S-1・S-3・S-7〜S-20・S-23・S-24・S-26・S-27・S-29〜S-32) は §14.1・§14.2 の it が受け持つ。
+
+| # | 新しい it を置かない理由 | 確かめ方 |
+|---|---|---|
+| S-2・S-4・S-5・S-6 (中継のメール・既存のアカウントとの結び付け) | 新しい利用者にするか既存の利用者に結び付けるか、`auth.users.email` に何を入れるかは GoTrue が決める (F-15)。本書のコードはメールも identity の結び付けも扱わず、設定画面の分岐 (`app_metadata.provider`) も変えない | 設定画面の既存のテストが緑のまま (§17 の `apps/mobile/__tests__/settings/account-credentials.test.tsx`・`src/__tests__/app/settings/account-page.test.ts`。確認だけ)。§20 の 1 (中継のアドレスが設定画面に出る) |
+| S-21 (WebView のタブ) | 既存のブリッジ (`/auth/native-bridge`) を変えない (§7.1)。Apple の利用者でもセッションの形は同じ | 既存のテストが緑のまま: `apps/mobile/__tests__/components/WebViewScreen.bridge.test.tsx`・`apps/mobile/__tests__/lib/webViewBridge.test.ts`・`src/__tests__/api/auth/native-bridge-code.test.ts`・`src/__tests__/lib/auth/native-bridge-code.test.ts` (段 A2 の全件) |
+| S-22 (中継のアドレスへのメール) | 送信 (`email_outbox` → Resend) を変えない。届くかは送信ドメインの Apple への登録 (§19.1 の 4。オーナーの作業) で決まり、コードで確かめられない | §20 の 8 (中継のアドレスの利用者に退会の完了メールが届く) |
+| S-25 (予告と再同意) | 予告は `/admin/announcements` の運用の工程 (§7.3 (d))。施行日の後の再同意は既存の同意のゲートが版の不一致で動く (本書は変えない) | 予告: §20 の 6 (`announcements` の `is_public`・`published_at` を SELECT)。再同意: 既存の `packages/shared/src/legal-versions.test.ts` (古い版なら再同意の対象)・`tests/legal-consent-gate.test.ts` (`resolveLegalConsent`) が緑のまま、段 D の `tests/legal-text-1901.test.ts` の T-17 (2 文書の版がそろう) が緑 |
+| S-28 (Web・provider 無効) | `signInWithOAuth` はブラウザを `/auth/v1/authorize` へ送るだけで、400 は Supabase が返す (アプリのコードを通らない。§5.2 S-28) | §19.3 の順 (provider を有効にしてからスイッチを入れる) と §20 の 9 (スイッチを on にした後、「Appleで続ける」が Apple の画面へ行く) |
 
 ## 15. 段分けと触るファイル
 
@@ -1993,6 +2016,7 @@ jest.mock('expo-crypto', () => ({
 | 種類 | 名前 | 場所 | 段 |
 |---|---|---|---|
 | 表 | `public.apple_sign_in_tokens` (列 `user_id`・`client_id`・`refresh_token`・`created_at`・`updated_at`。PK `(user_id, client_id)`) | migration (§8.1) | A1 |
+| migration と戻し口 | `<番号はマージ時に確定>_apple_sign_in_tokens.sql` と対の `<番号はマージ時に確定>_apple_sign_in_tokens.down.sql` (`DROP TABLE IF EXISTS` だけ) | `supabase/migrations/`・`supabase/rollbacks/` (§8.1・§15) | A1 |
 | route | `POST /api/auth/apple/authorization` | `src/app/api/auth/apple/authorization/route.ts` | A1 |
 | エラーコード | `APPLE_AUTHORIZATION_CODE_INVALID` (400)・`APPLE_IDENTITY_NOT_LINKED` (409) | route | A1 |
 | 退会の段階 | `apple_revoke` (`AccountDeletionStep`) | `src/lib/account-deletion.ts` | A1 |
@@ -2145,6 +2169,7 @@ jest.mock('expo-crypto', () => ({
 6. プライバシーポリシー `/privacy` の第7条に Apple の行、版 `v2026.4`、施行日 = 段 D のデプロイ日。既存の利用者に再同意が出る。Q-13 で (a) なら、施行日より前に予告のお知らせが公開されていた (`announcements` の `is_public` = true・`published_at` が施行日 (JST) より前。SELECT で題と日時だけを見る)。(b) なら cross/20 §9.3 の除外の行に `v2026.4` がある。
 7. Vercel のランタイムログに `apple authorization` の `warn` / 500 が無い (`not_configured` の `info` は秘密を入れる前だけ)。
 8. 中継のアドレスの利用者に退会の完了メールが届く (19.1 の 4 が済んでいること)。
+9. Web のスイッチ (`NEXT_PUBLIC_APPLE_SIGN_IN=on`) を入れた後、ログイン画面と新規登録画面の Apple のボタンが Apple の画面へ行く (Supabase の `/auth/v1/authorize` の 400 の JSON にならない。S-28)。
 
 ## 21. 未解決事項・選択肢
 
