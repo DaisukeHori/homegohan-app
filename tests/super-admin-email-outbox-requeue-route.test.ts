@@ -221,6 +221,20 @@ describe('POST /api/super-admin/email-outbox/[id]/requeue: 再送', () => {
     });
   });
 
+  it('#1917: 読んだときの status が dead でなくても (読んでから RPC までの間に dead になった)、監査の前の状態は RPC がロックの下で確かめた dead', async () => {
+    // 先の読み取りは queued (送信中) だったが、worker が送れずに dead にした後で requeue_email_outbox が FOR UPDATE で行を取った
+    state.row = { id: OUTBOX_ID, template: 'family_invite', user_id: USER_A, status: 'queued' };
+    state.rpcResult = { data: 'requeued', error: null };
+
+    const { res } = await post();
+
+    expect(res.status).toBe(200);
+    expect(state.auditInserts).toHaveLength(1);
+    expect(state.auditInserts[0]).toMatchObject({
+      details: { outbox_id: OUTBOX_ID, template: 'family_invite', previous_status: 'dead' },
+    });
+  });
+
   it('行に user_id が無ければ、target は行の id (target_type email_outbox)', async () => {
     state.row = { id: OUTBOX_ID, template: 'contact_admin_notification', user_id: null, status: 'dead' };
 

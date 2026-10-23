@@ -42,6 +42,13 @@ const REQUEUE_RESULT = {
   redacted: 'redacted',
 } as const;
 
+/**
+ * 再送できる行の状態 (requeue_email_outbox は FOR UPDATE でロックした行がこの状態のときだけ queued に戻し 'requeued' を返す)。
+ * 監査の previous_status はこの値を残す (#1917): 先に読んだ row.status はロックの外で読んだ値で、読んでから RPC までの間に
+ * 行が dead になった (worker が送れずに dead にした) ときは、再送の直前の状態 (dead) と食い違う
+ */
+const REQUEUEABLE_STATUS = 'dead';
+
 /** 新しいエラーコード (§11。cross/04-api-conventions.md §4.2 OP 系) */
 const NOT_FOUND_CODE = 'OP_EMAIL_OUTBOX_NOT_FOUND';
 const NOT_REQUEUEABLE_CODE = 'OP_EMAIL_OUTBOX_NOT_REQUEUEABLE';
@@ -85,7 +92,8 @@ export async function POST(request: NextRequest, props: RouteContext) {
 
     const admin = getSupabaseAdmin();
 
-    // 監査に残す文面の名前・利用者・状態を先に読む (本文・宛先は読まない)
+    // 監査に残す文面の名前・利用者を先に読む (本文・宛先は読まない)。status は select に残すが監査には使わない
+    // (前の状態は RPC がロックの下で確かめた REQUEUEABLE_STATUS。#1917)
     const { data: row, error: readError } = await admin
       .from('email_outbox')
       .select('id, template, user_id, status')
@@ -119,7 +127,7 @@ export async function POST(request: NextRequest, props: RouteContext) {
       actionType: AUDIT_ACTION_TYPE,
       targetId: row.user_id ?? row.id,
       targetType: row.user_id ? AUDIT_TARGET_TYPE_USER : AUDIT_TARGET_TYPE_OUTBOX,
-      details: { outbox_id: row.id, template: row.template, previous_status: row.status },
+      details: { outbox_id: row.id, template: row.template, previous_status: REQUEUEABLE_STATUS },
       request,
       routeName: ROUTE_NAME,
     });
