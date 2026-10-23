@@ -13,6 +13,8 @@
  *     問い合わせを素早く選び直したり閉じたりしても、古い詳細・古い失敗でパネルを上書きしない
  *   - 更新に失敗したら詳細パネルにエラーを出し、ステータス表示は変えず、一覧も取り直さない
  *   - 更新している間は、別の問い合わせへ切り替えたり詳細パネルを閉じたりできない (更新の結果を別のパネルに書き込まないため)
+ *   - 更新が 409 CONFLICT_STALE_DATA (別の運営が先に更新していた) で断られたら、一覧と開いている問い合わせの詳細を読み直して
+ *     今の状態を出し、その旨を出す。書きかけの管理者メモは消さず、保存されているメモと違えば入力欄の下に出す (#1917)
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
@@ -720,5 +722,167 @@ describe('ステータスの更新 (PUT)', () => {
     await click(findButton('解決済'), '「解決済」ボタン');
 
     expect(putBody('inq-1')).toEqual({ status: 'resolved', adminNotes: '調査中' });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 409 CONFLICT_STALE_DATA (別の運営が先に更新していた) のあとの読み直し (#1917)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('更新が 409 CONFLICT_STALE_DATA で断られたとき (#1917)', () => {
+  const SERVER_STALE_MESSAGE = '別の運営が先にこの問い合わせを更新しました。画面を開き直して、もう一度確認してください';
+  const staleResponse = () => jsonResponse(409, errorBody('CONFLICT_STALE_DATA', SERVER_STALE_MESSAGE));
+  const savedNotes = () => container.querySelector('[data-testid="inquiry-saved-notes"]');
+
+  beforeEach(() => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  /** PUT が 409 を返した時点で、別の運営の変更 (解決済 + メモ) が入ったことにする API */
+  function staleApi(options: { otherNotes?: string | null; put?: (n: number, body: Record<string, unknown>) => Response } = {}) {
+    const otherNotes = options.otherNotes === undefined ? '別の運営のメモ' : options.otherNotes;
+    const state = { changed: false, puts: 0 };
+    mockApi({
+      list: () => jsonResponse(200, listBody([summary(1, state.changed ? { status: 'resolved' } : {}), summary(2)])),
+      detail: (id) =>
+        id === 'inq-1'
+          ? jsonResponse(200, { inquiry: detail(1, state.changed ? { status: 'resolved', adminNotes: otherNotes } : {}) })
+          : jsonResponse(200, { inquiry: detail(2) }),
+      put: (_id, body) => {
+        state.puts += 1;
+        if (options.put && state.puts > 1) return options.put(state.puts, body);
+        state.changed = true;
+        return staleResponse();
+      },
+    });
+    return state;
+  }
+
+  it('一覧と開いている問い合わせの詳細を読み直して今のステータスを出し、画面の文を出す (サーバーの「開き直して」は出さない)', async () => {
+    staleApi();
+    await renderPage();
+    await click(findRow('件名1'), '一覧の行');
+    await typeNote('書きかけのメモ');
+
+    await click(findButton('対応中'), '「対応中」ボタン');
+
+    expect(putCalls('inq-1')).toHaveLength(1);
+    expect(listCalls()).toHaveLength(2); // 初回 + 読み直し
+    expect(detailCalls('inq-1')).toHaveLength(2); // 開いたとき + 読み直し
+    // 詳細パネルは今のステータス (解決済) になる
+    expect(findButton('解決済')!.disabled).toBe(true);
+    expect(findButton('対応中')!.disabled).toBe(false);
+    // 一覧の行も今のステータス
+    expect(findRow('件名1')!.textContent).toContain('解決済');
+    expect(alerts()).toHaveLength(1);
+    expect(alerts()[0]).toContain('別の運営が先にこの問い合わせを更新していました');
+    expect(alerts()[0]).toContain('読み込み直した');
+    expect(alerts()[0]).not.toContain('画面を開き直して');
+  });
+
+  it('書きかけの管理者メモは読み直しで消さず、保存されているメモが違えば入力欄の下に出す。次の更新は書きかけのメモを送る', async () => {
+    staleApi({ put: () => jsonResponse(200, { inquiry: detail(1, { status: 'closed', adminNotes: '書きかけのメモ' }) }) });
+    await renderPage();
+    await click(findRow('件名1'), '一覧の行');
+    await typeNote('書きかけのメモ');
+    await click(findButton('対応中'), '「対応中」ボタン');
+
+    expect(textarea().value).toBe('書きかけのメモ');
+    expect(textarea().disabled).toBe(false);
+    expect(savedNotes()?.textContent).toContain('別の運営のメモ');
+
+    await click(findButton('完了'), '「完了」ボタン');
+    expect(putBody('inq-1', 1)).toEqual({ status: 'closed', adminNotes: '書きかけのメモ' });
+    // 更新に成功したら、保存されているメモの表示と 409 の文は消える
+    expect(savedNotes()).toBeNull();
+    expect(alerts()).toEqual([]);
+  });
+
+  it('メモを書いていなくても、別の運営が保存したメモがあれば入力欄の下に出す (入力欄は空のまま)', async () => {
+    staleApi();
+    await renderPage();
+    await click(findRow('件名1'), '一覧の行');
+    await click(findButton('対応中'), '「対応中」ボタン');
+
+    expect(textarea().value).toBe('');
+    expect(savedNotes()?.textContent).toContain('別の運営のメモ');
+  });
+
+  it('書きかけのメモと保存されているメモが同じなら、保存されているメモは出さない', async () => {
+    staleApi({ otherNotes: null });
+    await renderPage();
+    await click(findRow('件名1'), '一覧の行');
+    await click(findButton('対応中'), '「対応中」ボタン');
+
+    expect(detailCalls('inq-1')).toHaveLength(2);
+    expect(findButton('解決済')!.disabled).toBe(true);
+    expect(savedNotes()).toBeNull();
+  });
+
+  it('別の問い合わせを開いて戻ると、保存されているメモを入力欄に入れ、書きかけの表示は出さない', async () => {
+    staleApi();
+    await renderPage();
+    await click(findRow('件名1'), '1 件目');
+    await typeNote('書きかけのメモ');
+    await click(findButton('対応中'), '「対応中」ボタン');
+    expect(savedNotes()).not.toBeNull();
+
+    await click(findRow('件名2'), '2 件目');
+    expect(savedNotes()).toBeNull();
+    expect(alerts()).toEqual([]);
+
+    await click(findRow('件名1'), '1 件目');
+    expect(textarea().value).toBe('別の運営のメモ');
+    expect(savedNotes()).toBeNull();
+  });
+
+  it('詳細の読み直しに失敗したら、エラーを出してメモの編集を止める。「再試行」は書きかけのメモを残したまま詳細だけを取り直す', async () => {
+    const state = { changed: false, details: 0 };
+    mockApi({
+      list: () => jsonResponse(200, listBody([summary(1, state.changed ? { status: 'resolved' } : {})])),
+      detail: () => {
+        state.details += 1;
+        if (state.details === 2) return jsonResponse(500, errorBody('INTERNAL_ERROR', '問い合わせの取得に失敗しました'));
+        return jsonResponse(200, { inquiry: detail(1, state.changed ? { status: 'resolved', adminNotes: '別の運営のメモ' } : {}) });
+      },
+      put: () => {
+        state.changed = true;
+        return staleResponse();
+      },
+    });
+    await renderPage();
+    await click(findRow('件名1'), '一覧の行');
+    await typeNote('書きかけのメモ');
+    await click(findButton('対応中'), '「対応中」ボタン');
+
+    expect(alerts().some((a) => a.includes('問い合わせの内容を取得できませんでした'))).toBe(true);
+    expect(textarea().disabled).toBe(true);
+    expect(findButton('完了')!.disabled).toBe(true);
+    expect(textarea().value).toBe('書きかけのメモ');
+
+    await click(findButton('再試行'), '「再試行」ボタン');
+    expect(detailCalls('inq-1')).toHaveLength(3);
+    expect(textarea().value).toBe('書きかけのメモ');
+    expect(textarea().disabled).toBe(false);
+    expect(findButton('解決済')!.disabled).toBe(true);
+    expect(savedNotes()?.textContent).toContain('別の運営のメモ');
+  });
+
+  it('同じ 409 でも code が CONFLICT_STALE_DATA でなければ読み直さず、理由つきのエラーだけを出す', async () => {
+    mockApi({
+      list: () => jsonResponse(200, listBody([summary(1)])),
+      detail: () => jsonResponse(200, { inquiry: detail(1) }),
+      put: () => jsonResponse(409, errorBody('SOME_OTHER_CONFLICT', '別の理由で断られました')),
+    });
+    await renderPage();
+    await click(findRow('件名1'), '一覧の行');
+    await click(findButton('対応中'), '「対応中」ボタン');
+
+    expect(listCalls()).toHaveLength(1);
+    expect(detailCalls('inq-1')).toHaveLength(1);
+    expect(alerts()).toHaveLength(1);
+    expect(alerts()[0]).toContain('更新に失敗しました');
+    expect(alerts()[0]).toContain('別の理由で断られました');
+    expect(savedNotes()).toBeNull();
   });
 });
