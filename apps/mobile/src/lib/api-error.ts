@@ -67,6 +67,22 @@ export function getApiErrorMessage(error: unknown, fallback: string): string {
   return raw;
 }
 
+/** 日本語の文字 (ひらがな・カタカナ・漢字・全角の記号) */
+const JAPANESE_TEXT_PATTERN = /[\u3040-\u30ff\u3400-\u9fff\uff00-\uffef]/;
+
+/**
+ * getApiErrorMessage と同じく本文の文 (または固定の文) を取り出し、それが日本語の文でなければ fallback を返す (#1917)。
+ *
+ * getApiErrorMessage は、本文から文を取り出せないとき (本文が JSON でない・本文に文が無い) に
+ * `HTTP 500 Internal Server Error: <html>…` のような生の文字列を返し、生の fetch の通信の失敗 ('Network request failed') もそのまま返す。
+ * AI の API (/api/ai/**) の失敗の本文の文は日本語の固定の文なので、日本語でない文は利用者に見せる文ではない。
+ * AI の API の失敗を Alert に出す画面 (健康診断の読み取り・1 日の献立の生成・AI 相談の送信) はこちらを使う
+ */
+export function getJapaneseApiErrorMessage(error: unknown, fallback: string): string {
+  const message = getApiErrorMessage(error, fallback);
+  return JAPANESE_TEXT_PATTERN.test(message) ? message : fallback;
+}
+
 /** API のエラー応答 (`HTTP <status> <statusText>: <本文>`。@homegohan/core の createHttpClient) の状態の数字 */
 const API_ERROR_STATUS_PATTERN = /^HTTP (\d{3})\b/;
 

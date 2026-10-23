@@ -13,6 +13,8 @@
  *     `error` も日本語の文にして、code は `code` に移した (Web の画面・モバイルに `error` の code で分岐している所は無い)
  *   - 英語の文が入っていないことは、tests/api-error-japanese-scan.test.ts が src/app/api/ai の全 route を走査して見張る
  *     (配下の一覧は tests/helpers/api-error-japanese-scope.ts)
+ *   - route の外の文 (この文の定数と関数・相談の提案の実行の結果 src/lib/ai/consultation-action-executor.ts の result.error と
+ *     検証の失敗の文 (errors.push / errors: [...])) は tests/ai-api-error-messages.test.ts が見張る
  */
 import { CALENDAR_DATE_MAX, CALENDAR_DATE_MIN } from '@/lib/date-utils';
 
@@ -134,6 +136,11 @@ export const AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE = '提案された操作�
 export const AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE = 'この操作はすでに処理されています';
 /** 400: AI が提案した操作の種類に対応していない (ai_action_logs の result にも入る) */
 export const AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE = 'この種類の操作には対応していません';
+/**
+ * AI が提案した操作の値が検証を通らなかった (ai_action_logs の result にも入る)。検証が英語の文を返したとき
+ * (健康の記録・目標の検証 src/lib/health-payloads.ts は /api/health/** と共有で英語の文も返す)、その文の代わりに出す。元の文はログにだけ残す
+ */
+export const AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE = '提案された値の形が正しくないため、保存できませんでした';
 
 // ===== 画像の生成 (image/generate) =====
 

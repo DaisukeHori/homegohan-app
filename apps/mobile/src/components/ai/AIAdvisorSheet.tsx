@@ -26,6 +26,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Text, TextInput } from "../ui/Text";
 
 import { getApi, getApiBaseUrl } from "../../lib/api";
+import { getJapaneseApiErrorMessage } from "../../lib/api-error";
 import {
   AI_CHAT_STREAM_TIMEOUT_MS,
   TIMEOUT_DELIVERED_NO_REPLY_MESSAGE,
@@ -590,7 +591,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
           Alert.alert("タイムアウト", TIMEOUT_NOTICE_MESSAGE);
         }
       } else {
-        Alert.alert("エラー", e?.message ?? "送信に失敗しました。");
+        // 本文の文だけを出す (`HTTP 404: {"error":…}` の生の文字列を出さない。#1917)
+        Alert.alert("エラー", getJapaneseApiErrorMessage(e, "送信に失敗しました。"));
       }
       setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
     } finally {

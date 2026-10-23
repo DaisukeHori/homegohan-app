@@ -10,7 +10,7 @@ import type { TargetSlot } from '@/types/domain';
 import { isMealType, MEAL_ORDER, type MealType } from '@homegohan/shared';
 import { addDaysToDate } from '@/lib/date-utils';
 import { isCalendarDate } from '@/lib/jst-day-ranges';
-import { aiInvalidDateMessage } from '@/lib/ai/ai-api-messages';
+import { AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE, aiInvalidDateMessage } from '@/lib/ai/ai-api-messages';
 import {
   sanitizeHealthGoalCreate,
   sanitizeHealthGoalUpdate,
@@ -87,6 +87,30 @@ export const AI_ALLOWED_MEAL_TYPES: readonly MealType[] = MEAL_ORDER;
 
 type PlainRecord = Record<string, unknown>;
 
+/**
+ * AI 相談の更新 (update_meal / update_shopping_item) で受け付ける文字列の項目の長さの上限 (文字数)。
+ * 以前からこの下の関数の条件に直接書いていた値を名前にしたもの (値は変えていない)。検証の失敗の文にも同じ値を入れる
+ */
+const CONSULTATION_TEXT_FIELD_MAX_LENGTH = {
+  dish_name: 200,
+  memo: 1000,
+  mode: 50,
+  item_name: 200,
+  quantity: 100,
+  category: 100,
+} as const;
+
+/**
+ * 検証の失敗の文 (errors) は result.error として応答の本文 (execute の { result }・messages の actionResult) と
+ * ai_action_logs.result に入る (#1917)。ここの文は日本語の固定の文にする (項目の名前 (key) と上限の数だけを埋める)
+ */
+function nonEmptyTextMaxMessage(field: string, maxLength: number): string {
+  return `${field} は 1〜${maxLength} 文字の文字列で指定してください`;
+}
+function optionalTextMaxMessage(field: string, maxLength: number): string {
+  return `${field} は ${maxLength} 文字以内の文字列か null で指定してください`;
+}
+
 function isPlainObject(value: unknown): value is PlainRecord {
   return value != null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -112,14 +136,14 @@ function sanitizeNutritionTargetUpdate(input: unknown): { data: Record<string, n
   const errors: string[] = [];
 
   if (!isPlainObject(input)) {
-    return { data, errors: ['targets must be an object'] };
+    return { data, errors: ['栄養目標の指定が正しくありません'] };
   }
 
   for (const [key, range] of Object.entries(NUTRITION_TARGET_RANGES)) {
     if (!Object.prototype.hasOwnProperty.call(input, key)) continue;
     const value = input[key];
     if (!isFiniteNumber(value)) {
-      errors.push(`${key} must be a finite number`);
+      errors.push(`${key} は数値で指定してください`);
       continue;
     }
     if (value < range.min || value > range.max) {
@@ -140,15 +164,15 @@ function sanitizeMealUpdate(input: unknown): { data: PlainRecord; errors: string
   const errors: string[] = [];
 
   if (!isPlainObject(input)) {
-    return { data, errors: ['updates must be an object'] };
+    return { data, errors: ['更新する内容の指定が正しくありません'] };
   }
 
   if (Object.prototype.hasOwnProperty.call(input, 'dish_name')) {
     const value = input.dish_name;
-    if (typeof value === 'string' && value.trim().length > 0 && value.length <= 200) {
+    if (typeof value === 'string' && value.trim().length > 0 && value.length <= CONSULTATION_TEXT_FIELD_MAX_LENGTH.dish_name) {
       data.dish_name = value;
     } else {
-      errors.push('dish_name must be a non-empty string (max 200 chars)');
+      errors.push(nonEmptyTextMaxMessage('dish_name', CONSULTATION_TEXT_FIELD_MAX_LENGTH.dish_name));
     }
   }
 
@@ -168,19 +192,19 @@ function sanitizeMealUpdate(input: unknown): { data: PlainRecord; errors: string
     const value = input.memo;
     if (value === null) {
       data.memo = null;
-    } else if (typeof value === 'string' && value.length <= 1000) {
+    } else if (typeof value === 'string' && value.length <= CONSULTATION_TEXT_FIELD_MAX_LENGTH.memo) {
       data.memo = value;
     } else {
-      errors.push('memo must be a string (max 1000 chars) or null');
+      errors.push(optionalTextMaxMessage('memo', CONSULTATION_TEXT_FIELD_MAX_LENGTH.memo));
     }
   }
 
   if (Object.prototype.hasOwnProperty.call(input, 'mode')) {
     const value = input.mode;
-    if (typeof value === 'string' && value.trim().length > 0 && value.length <= 50) {
+    if (typeof value === 'string' && value.trim().length > 0 && value.length <= CONSULTATION_TEXT_FIELD_MAX_LENGTH.mode) {
       data.mode = value;
     } else {
-      errors.push('mode must be a non-empty string (max 50 chars)');
+      errors.push(nonEmptyTextMaxMessage('mode', CONSULTATION_TEXT_FIELD_MAX_LENGTH.mode));
     }
   }
 
@@ -189,7 +213,7 @@ function sanitizeMealUpdate(input: unknown): { data: PlainRecord; errors: string
     if (Array.isArray(value)) {
       data.dishes = value;
     } else {
-      errors.push('dishes must be an array');
+      errors.push('dishes は配列で指定してください');
     }
   }
 
@@ -198,7 +222,7 @@ function sanitizeMealUpdate(input: unknown): { data: PlainRecord; errors: string
     if (typeof value === 'string') {
       data.image_url = value;
     } else {
-      errors.push('image_url must be a string');
+      errors.push('image_url は文字列で指定してください');
     }
   }
 
@@ -212,15 +236,15 @@ function sanitizeShoppingItemUpdate(input: unknown): { data: PlainRecord; errors
   const errors: string[] = [];
 
   if (!isPlainObject(input)) {
-    return { data, errors: ['updates must be an object'] };
+    return { data, errors: ['更新する内容の指定が正しくありません'] };
   }
 
   if (Object.prototype.hasOwnProperty.call(input, 'item_name')) {
     const value = input.item_name;
-    if (typeof value === 'string' && value.trim().length > 0 && value.length <= 200) {
+    if (typeof value === 'string' && value.trim().length > 0 && value.length <= CONSULTATION_TEXT_FIELD_MAX_LENGTH.item_name) {
       data.item_name = value;
     } else {
-      errors.push('item_name must be a non-empty string (max 200 chars)');
+      errors.push(nonEmptyTextMaxMessage('item_name', CONSULTATION_TEXT_FIELD_MAX_LENGTH.item_name));
     }
   }
 
@@ -228,19 +252,19 @@ function sanitizeShoppingItemUpdate(input: unknown): { data: PlainRecord; errors
     const value = input.quantity;
     if (value === null) {
       data.quantity = null;
-    } else if (typeof value === 'string' && value.length <= 100) {
+    } else if (typeof value === 'string' && value.length <= CONSULTATION_TEXT_FIELD_MAX_LENGTH.quantity) {
       data.quantity = value;
     } else {
-      errors.push('quantity must be a string (max 100 chars) or null');
+      errors.push(optionalTextMaxMessage('quantity', CONSULTATION_TEXT_FIELD_MAX_LENGTH.quantity));
     }
   }
 
   if (Object.prototype.hasOwnProperty.call(input, 'category')) {
     const value = input.category;
-    if (typeof value === 'string' && value.trim().length > 0 && value.length <= 100) {
+    if (typeof value === 'string' && value.trim().length > 0 && value.length <= CONSULTATION_TEXT_FIELD_MAX_LENGTH.category) {
       data.category = value;
     } else {
-      errors.push('category must be a non-empty string (max 100 chars)');
+      errors.push(nonEmptyTextMaxMessage('category', CONSULTATION_TEXT_FIELD_MAX_LENGTH.category));
     }
   }
 
@@ -286,6 +310,43 @@ function logActionDbFailure(
       operation,
       ...(errorCode ? { error_code: errorCode } : {}),
     });
+}
+
+/** 日本語の文字 (ひらがな・カタカナ・漢字・全角の記号) を含む文か (tests/helpers/api-error-text-scan.ts の JAPANESE と同じ範囲) */
+const JAPANESE_TEXT_PATTERN = /[\u3040-\u30ff\u3400-\u9fff\uff00-\uffef]/;
+
+/**
+ * 検証 (サニタイザ) が返した失敗の文 (errors) から、result.error を作る (#1917)。
+ *
+ * result.error は応答の本文 (execute の { result }・messages の SSE と JSON の actionResult) と ai_action_logs.result に入る。
+ * 健康の記録・健康の目標の検証 (src/lib/health-payloads.ts。/api/health/** と共有) は 'weight must be a finite number or null' のような
+ * 英語の文も返すので、そのままつなぐと本文に英語の文が出る。日本語の文 (範囲の文など) はそのまま残し、
+ * 日本語でない文は 1 つの固定の文 (AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE) に置き換える。元の文は構造化ログにだけ残す
+ */
+function validationFailureResult(
+  user: { id: string },
+  action: Pick<ConsultationActionRow, 'id' | 'action_type'>,
+  errors: readonly string[],
+): { error: string } {
+  const shown: string[] = [];
+  const rawNonJapanese: string[] = [];
+  for (const text of errors) {
+    if (JAPANESE_TEXT_PATTERN.test(text)) {
+      shown.push(text);
+    } else {
+      rawNonJapanese.push(text);
+    }
+  }
+  if (rawNonJapanese.length > 0) {
+    createLogger(ACTION_EXECUTOR_LOG_NAME).warn('AI 相談のアクションの値が検証を通りませんでした', {
+      userId: user.id,
+      action_id: action.id,
+      action_type: action.action_type,
+      validation_errors: rawNonJapanese,
+    });
+    shown.push(AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE);
+  }
+  return { error: shown.join(', ') };
 }
 
 export interface ConsultationActionRow {
@@ -764,7 +825,7 @@ export async function runConsultationAction(
       // mass assignment対策: 許可キーのみ抽出（プロンプトインジェクション経由の任意列書き込みを防止）
       const { data: safeMealUpdates, errors: mealUpdateErrors } = sanitizeMealUpdate(updates);
       if (mealUpdateErrors.length > 0) {
-        result = { error: mealUpdateErrors.join(', ') };
+        result = validationFailureResult(user, action, mealUpdateErrors);
         break;
       }
       if (Object.keys(safeMealUpdates).length === 0) {
@@ -1046,7 +1107,7 @@ export async function runConsultationAction(
       // mass assignment対策: 許可キーのみ抽出（プロンプトインジェクション経由の任意列書き込みを防止）
       const { data: safeShoppingItemUpdates, errors: shoppingItemUpdateErrors } = sanitizeShoppingItemUpdate(updates);
       if (shoppingItemUpdateErrors.length > 0) {
-        result = { error: shoppingItemUpdateErrors.join(', ') };
+        result = validationFailureResult(user, action, shoppingItemUpdateErrors);
         break;
       }
       if (Object.keys(safeShoppingItemUpdates).length === 0) {
@@ -1335,7 +1396,7 @@ export async function runConsultationAction(
       // targets.user_id による上書き（他人の栄養目標の改ざん）を防止する
       const { data: safeTargets, errors: targetErrors } = sanitizeNutritionTargetUpdate(targets);
       if (targetErrors.length > 0) {
-        result = { error: targetErrors.join(', ') };
+        result = validationFailureResult(user, action, targetErrors);
         break;
       }
       if (Object.keys(safeTargets).length === 0) {
@@ -1373,7 +1434,7 @@ export async function runConsultationAction(
         { defaultUnit: true },
       );
       if (!safeGoal) {
-        result = { error: goalErrors.join(', ') };
+        result = validationFailureResult(user, action, goalErrors);
         break;
       }
 
@@ -1413,7 +1474,7 @@ export async function runConsultationAction(
       // #1229: 目標値の範囲は goal_type ごとに違うため、対象の行の goal_type を渡して検証する
       const { data: safeUpdates, errors } = sanitizeHealthGoalUpdate(updates, { goalType: goal.goal_type });
       if (errors.length > 0) {
-        result = { error: errors.join(', ') };
+        result = validationFailureResult(user, action, errors);
         break;
       }
       if (Object.keys(safeUpdates).length === 0) {
@@ -1494,7 +1555,7 @@ export async function runConsultationAction(
       );
 
       if (recordErrors.length > 0) {
-        result = { error: recordErrors.join(', ') };
+        result = validationFailureResult(user, action, recordErrors);
         break;
       }
       if (Object.keys(safeRecord).length === 0) {
@@ -1544,7 +1605,7 @@ export async function runConsultationAction(
         acceptLegacyNotes: true,
       });
       if (errors.length > 0) {
-        result = { error: errors.join(', ') };
+        result = validationFailureResult(user, action, errors);
         break;
       }
       if (Object.keys(safeUpdates).length === 0) {

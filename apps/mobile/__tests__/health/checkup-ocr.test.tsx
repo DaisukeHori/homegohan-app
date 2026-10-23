@@ -296,4 +296,35 @@ describe('BloodTestsPage — OCR flow', () => {
     });
     expect(mockPost).not.toHaveBeenCalled();
   });
+
+  it('6. 読み取れなかった (422 mode_mismatch) ときは、本文の日本語の文だけを Alert(OCRエラー) に出す (#1917)', async () => {
+    const text = '健康診断結果が読み取れませんでした。健康診断書がはっきり写った写真を撮り直してください。';
+    mockLaunchImageLibraryAsync.mockResolvedValueOnce({
+      canceled: false,
+      assets: [{ base64: 'fakebase64data', mimeType: 'image/jpeg' }],
+    });
+    // getApi() (@homegohan/core の createHttpClient) が投げるのと同じ形の Error
+    mockPost.mockRejectedValueOnce(
+      new Error(`HTTP 422 Unprocessable Entity: ${JSON.stringify({ error: text, code: 'mode_mismatch', message: text })}`),
+    );
+
+    await navigateToForm();
+    await waitFor(() => expect(screen.getByText('検査結果票を撮影して自動入力')).toBeTruthy());
+    fireEvent.press(screen.getByText('検査結果票を撮影して自動入力'));
+
+    const ocrAlertCall = alertSpy.mock.calls.find((c: any[]) => c[0] === '画像から取込');
+    expect(ocrAlertCall).toBeDefined();
+    const buttons: any[] = ocrAlertCall![2] as any[];
+    const libraryBtn = buttons.find((b: any) => b.text === '写真を選択');
+    await act(async () => {
+      await libraryBtn.onPress();
+    });
+
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith('OCRエラー', text);
+    });
+    const shown = alertSpy.mock.calls.find((c: any[]) => c[0] === 'OCRエラー')![1] as string;
+    expect(shown).not.toContain('HTTP');
+    expect(shown).not.toContain('mode_mismatch');
+  });
 });
