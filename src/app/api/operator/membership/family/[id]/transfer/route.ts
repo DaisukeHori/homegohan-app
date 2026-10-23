@@ -10,6 +10,7 @@ import { API_FORBIDDEN_CODE, API_FORBIDDEN_MESSAGE, authFailureNested } from '@/
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { internalError } from '@/lib/api/errors';
 import { ErrorStatusMap, MembershipErrorCode } from '@/lib/errors/membership-errors';
+import { dbErrorMentionsCode, isRaisedExceptionWithCode } from '@/lib/errors/db-raised-code';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail } from '@/lib/emails/send';
 import { emailFailureReasons, logEmailFailures } from '@/lib/emails/send-result';
@@ -24,18 +25,6 @@ import { OperatorForceRepresentativeTransferResultSchema } from '@/lib/membershi
 export const dynamic = 'force-dynamic';
 
 const ROUTE_NAME = 'POST /api/operator/membership/family/[id]/transfer';
-
-/** DB 関数・トリガーが RAISE EXCEPTION ... USING ERRCODE = 'P0001' で止めたときの SQLSTATE */
-const PG_RAISE_EXCEPTION = 'P0001';
-
-/**
- * 譲渡先が退会の手続き中 (退会の印 account_deletion_guards が新しい) なので、家族の行のトリガー family_groups_representative_not_deleting
- * (supabase/migrations/20261023150000_account_deletion_family_representative_guard.sql) が代表者の変更を止めたか
- * (P0001 で、メッセージがそのコード)。#1917 の続き
- */
-function isRepresentativeAccountDeletingError(error: { code?: string; message?: string } | null): boolean {
-  return error?.code === PG_RAISE_EXCEPTION && error.message === MembershipErrorCode.REPRESENTATIVE_ACCOUNT_DELETING;
-}
 
 const BodySchema = z.object({
   to_user_id: z.string().uuid(),
@@ -99,8 +88,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
     if (rpcError) {
       // RPC の生のエラー文は本文に出さない (#1172)。分かるものは固定の文、それ以外は汎用の 500 にして構造化ログに残す
-      // 譲渡先が退会の手続き中なら 409 (代表者にすると、その退会の最後のアカウントの削除が代表者の外部キーで失敗する。#1917 の続き)
-      if (isRepresentativeAccountDeletingError(rpcError)) {
+      // 譲渡先が退会の手続き中なら 409 (代表者にすると、その退会の最後のアカウントの削除が代表者の外部キーで失敗する。#1917 の続き)。
+      // 家族の行のトリガー family_groups_representative_not_deleting
+      // (supabase/migrations/20261023150000_account_deletion_family_representative_guard.sql) が P0001 + このコードの完全一致で止めた形だけを拾う。
+      // エラーのコードの判定は共通の関数で行い、route では `.message` を読まない (#1917)
+      if (isRaisedExceptionWithCode(rpcError, MembershipErrorCode.REPRESENTATIVE_ACCOUNT_DELETING)) {
         return NextResponse.json(
           {
             error: {
@@ -111,13 +103,13 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
           { status: ErrorStatusMap[MembershipErrorCode.REPRESENTATIVE_ACCOUNT_DELETING] },
         );
       }
-      if (rpcError.message.includes('TARGET_NOT_IN_FAMILY')) {
+      if (dbErrorMentionsCode(rpcError, 'TARGET_NOT_IN_FAMILY')) {
         return NextResponse.json(
           { error: { code: 'TARGET_NOT_IN_FAMILY', message: '譲渡先のユーザーはこの家族グループに所属していません' } },
           { status: 400 },
         );
       }
-      if (rpcError.message.includes('NOT_OPERATOR')) {
+      if (dbErrorMentionsCode(rpcError, 'NOT_OPERATOR')) {
         // 文は認可の失敗 (下の catch の authFailureNested) の 403 と同じ日本語の固定の文 (#1917)
         return NextResponse.json({ error: { code: API_FORBIDDEN_CODE, message: API_FORBIDDEN_MESSAGE } }, { status: 403 });
       }

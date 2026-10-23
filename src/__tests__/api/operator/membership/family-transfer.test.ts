@@ -718,6 +718,42 @@ describe('POST /api/operator/membership/family/[id]/transfer: RPC のエラー',
     expect(fake.tables.family_groups[0].representative_id).toBe(OLD_REP_ID);
     expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
+
+  // RPC のエラーのコードの判定は src/lib/errors/db-raised-code.ts の関数で行う (#1917。route では `.message` を読まない)
+  it('譲渡先が退会の手続き中 (トリガーが P0001 + REPRESENTATIVE_ACCOUNT_DELETING で止めた): 409 と固定の文を返し、通知メールは送らない', async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'REPRESENTATIVE_ACCOUNT_DELETING', code: 'P0001' } });
+
+    const res = await call();
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: { code: 'REPRESENTATIVE_ACCOUNT_DELETING', message: '譲渡先のユーザーは退会の手続き中です' },
+    });
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(mocks.logError).not.toHaveBeenCalled();
+  });
+
+  it('文面が REPRESENTATIVE_ACCOUNT_DELETING でも P0001 でなければ 409 にせず、汎用の 500 にして構造化ログに残す', async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'REPRESENTATIVE_ACCOUNT_DELETING', code: '23505' } });
+
+    const res = await call();
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: { code: INTERNAL_ERROR_CODE, message: INTERNAL_ERROR_MESSAGE } });
+    expect(mocks.logError).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['ERROR: TARGET_NOT_IN_FAMILY', 400, 'TARGET_NOT_IN_FAMILY'],
+    ['ERROR: NOT_OPERATOR', 403, 'FORBIDDEN'],
+  ])('RPC の文面 (%s) の前に何かが付いていても、コードを語として含めば同じ応答 (%i %s)', async (message, status, code) => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message, code: 'P0001' } });
+
+    const res = await call();
+
+    expect(res.status).toBe(status);
+    expect((await res.json()).error.code).toBe(code);
+  });
 });
 
 describe('POST /api/operator/membership/family/[id]/transfer: 認可と入力検証', () => {
