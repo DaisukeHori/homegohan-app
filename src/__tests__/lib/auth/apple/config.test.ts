@@ -27,7 +27,18 @@ const MS_PER_SECOND = 1000;
 
 const TEAM_ID = 'TEAMID1234';
 const KEY_ID = 'KEYID12345';
-const PEM_ONE_LINE = '-----BEGIN PRIVATE KEY-----\\nABCDEF\\n-----END PRIVATE KEY-----';
+/**
+ * ダミーの秘密鍵 (本物ではない)。PEM の BEGIN / END の行は文字列を分けて組み立てる。
+ * ソースにそのまま書くと gitleaks の private-key ルール (.github/workflows/security.yml・local-ci の secrets 段) が
+ * 秘密鍵として拾い、PR の検査が赤になるため (tests/no-literal-private-key.test.ts が守る)。
+ */
+const PEM_BEGIN_LINE = ['-----BEGIN', 'PRIVATE KEY-----'].join(' ');
+const PEM_END_LINE = ['-----END', 'PRIVATE KEY-----'].join(' ');
+const PEM_DUMMY_BODY = 'ABCDEF';
+/** 環境変数に入れる形 (改行を \n の 2 文字で書いた 1 行) */
+const PEM_ONE_LINE = [PEM_BEGIN_LINE, PEM_DUMMY_BODY, PEM_END_LINE].join('\\n');
+/** readAppleSignInServerConfig が \n を改行に戻したあとの形 */
+const PEM_MULTI_LINE = [PEM_BEGIN_LINE, PEM_DUMMY_BODY, PEM_END_LINE].join('\n');
 const SERVICES_ID = 'com.homegohan.web';
 
 function stubAll(overrides: Partial<Record<'TEAM' | 'KEY' | 'PEM' | 'SERVICES', string>> = {}): void {
@@ -56,7 +67,7 @@ describe('readAppleSignInServerConfig', () => {
     expect(readAppleSignInServerConfig()).toEqual({
       teamId: TEAM_ID,
       keyId: KEY_ID,
-      privateKeyPem: '-----BEGIN PRIVATE KEY-----\nABCDEF\n-----END PRIVATE KEY-----',
+      privateKeyPem: PEM_MULTI_LINE,
       servicesId: SERVICES_ID,
     });
   });

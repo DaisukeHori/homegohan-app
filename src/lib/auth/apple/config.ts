@@ -42,7 +42,7 @@ export const APPLE_REVOKE_TOTAL_BUDGET_MS = 3000;
 export interface AppleSignInServerConfig {
   readonly teamId: string;
   readonly keyId: string;
-  /** PEM (-----BEGIN PRIVATE KEY----- …)。環境変数には改行を \n と書いて入れる (ここで戻す) */
+  /** PEM 形式の PKCS#8 の秘密鍵 (BEGIN / END PRIVATE KEY の行で囲んだもの)。環境変数には改行を \n と書いて入れる (ここで戻す) */
   readonly privateKeyPem: string;
   /** Web の OAuth の client_id (Services ID)。無ければ null (Web の行は保管・失効しない) */
   readonly servicesId: string | null;
