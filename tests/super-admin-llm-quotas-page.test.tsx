@@ -10,6 +10,8 @@
  *     どちらにも無いキーの行 (plan_source: 'unknown') は、入力欄と保存のボタンを止めて案内を出す (PATCH が 404 で断るため)
  *   - #1912: subscription_plans の組織のプランの行 (plan_type: 'org' の org_*) も、入力欄と保存のボタンを止め、
  *     「組織の上限は standard / premium / enterprise の行で決まります」と案内する (PATCH が 409 PLAN_READ_ONLY で断るため)
+ *   - #1917: 保存が 409 CONFLICT_STALE_DATA (別の運営が先に同じプランの上限を変えた) で断られたら、一覧を読み直していまの上限を出し、
+ *     行に画面の文を出す。書きかけの行 (新しい上限・理由) は残し、書きかけの無い行は読み直した値にする。409 PLAN_READ_ONLY は読み直さない
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
@@ -227,5 +229,91 @@ describe('/super-admin/llm/quotas (AI の利用上限)', () => {
     await save('pro', '20', '理由');
 
     expect(row('pro').textContent).toContain('指定したプランはありません');
+  });
+
+  describe('保存が 409 CONFLICT_STALE_DATA で断られたとき (#1917)', () => {
+    const SERVER_STALE_MESSAGE = '別の運営が先にこのプランの上限を変えました。画面を読み込み直して、もう一度確認してください';
+    type ListRow = (typeof LIST.data)[number];
+    const listWith = (overrides: Record<string, Partial<ListRow>>) => ({
+      ...LIST,
+      data: LIST.data.map((r) => ({ ...r, ...(overrides[r.plan_key] ?? {}) })),
+    });
+    const getCalls = () => fetchMock.mock.calls.filter(([, init]) => !(init as RequestInit | undefined)?.method).length;
+    const inputsOf = (planKey: string) => Array.from(row(planKey).querySelectorAll('input')) as HTMLInputElement[];
+
+    /** PATCH が 1 回目は 409 (code は引数) を返し、その時点で別の運営の変更 (pro = 50 回・free = 7 回) が入ったことにする */
+    function mockStale(code: string, message: string) {
+      let changed = false;
+      let patches = 0;
+      fetchMock.mockImplementation(async (_input: unknown, init?: RequestInit) => {
+        if (init?.method === 'PATCH') {
+          patches += 1;
+          if (patches > 1) return { ok: true, status: 200, json: async () => ({ data: { plan_key: 'pro', daily_limit: 20 } }) };
+          if (code === 'CONFLICT_STALE_DATA') changed = true;
+          return { ok: false, status: 409, json: async () => ({ error: { code, message } }) };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () =>
+            changed
+              ? listWith({
+                  pro: { daily_limit: 50, configured: true, effective_daily_limit: 50 },
+                  free: { daily_limit: 7, effective_daily_limit: 7 },
+                })
+              : LIST,
+        };
+      });
+    }
+
+    it('一覧を読み直していまの上限を出し、行に画面の文を出す (サーバーの「読み込み直して」は出さない)', async () => {
+      mockStale('CONFLICT_STALE_DATA', SERVER_STALE_MESSAGE);
+      await render();
+      await save('pro', '20', '有料の検証');
+
+      expect(patchBodies()).toEqual([{ plan_key: 'pro', daily_limit: 20, reason: '有料の検証' }]);
+      expect(getCalls()).toBe(2); // 初回 + 読み直し
+      expect(row('pro').textContent).toContain('50 回');
+      expect(row('pro').textContent).not.toContain('free の値');
+      expect(row('pro').textContent).toContain('別の運営が先にこのプランの上限を変えていました');
+      expect(row('pro').textContent).toContain('一覧を読み込み直した');
+      expect(row('pro').textContent).not.toContain('画面を読み込み直して');
+      expect(row('pro').textContent).not.toContain('保存しました');
+      // 保存のボタンは押せる状態に戻る
+      expect((row('pro').querySelector('button') as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it('書きかけの行 (新しい上限・理由) は読み直しで消さず、書きかけの無い行は読み直した値にする。もう一度保存すると書きかけの値を送る', async () => {
+      mockStale('CONFLICT_STALE_DATA', SERVER_STALE_MESSAGE);
+      await render();
+      await type(inputsOf('premium')[1], '書きかけの理由');
+      await save('pro', '20', '有料の検証');
+
+      expect(inputsOf('pro').map((input) => input.value)).toEqual(['20', '有料の検証']);
+      expect(inputsOf('premium').map((input) => input.value)).toEqual(['10', '書きかけの理由']);
+      // free は書きかけが無いので、読み直した値 (7) にする
+      expect(inputsOf('free').map((input) => input.value)).toEqual(['7', '']);
+
+      await act(async () => {
+        (row('pro').querySelector('button') as HTMLButtonElement).click();
+      });
+      await flush();
+      expect(patchBodies()).toEqual([
+        { plan_key: 'pro', daily_limit: 20, reason: '有料の検証' },
+        { plan_key: 'pro', daily_limit: 20, reason: '有料の検証' },
+      ]);
+      expect(row('pro').textContent).toContain('保存しました（20 回）');
+    });
+
+    it('同じ 409 でも PLAN_READ_ONLY は読み直さず、API の文を出す', async () => {
+      mockStale('PLAN_READ_ONLY', '組織の上限は standard / premium / enterprise の行で決まります');
+      await render();
+      await save('pro', '20', '理由');
+
+      expect(getCalls()).toBe(1);
+      expect(row('pro').textContent).toContain('組織の上限は standard / premium / enterprise の行で決まります');
+      expect(row('pro').textContent).not.toContain('別の運営が先に');
+      expect(inputsOf('pro').map((input) => input.value)).toEqual(['20', '理由']);
+    });
   });
 });
