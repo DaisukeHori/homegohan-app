@@ -55,6 +55,12 @@ vi.mock('@/lib/ai/consultation-action-executor', () => ({
 import { AI_CHAT_DISABLED_MESSAGE } from '@/lib/ai/ai-chat-unavailable';
 import { applyHeavyUnitTestTimeout } from '../../../../../tests/helpers/heavy-unit-test-timeout';
 
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする */
+const ACTION_ID = '99999999-9999-4999-8999-999999999995';
+
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする */
+const SESSION_ID = '99999999-9999-4999-8999-999999999994';
+
 // 1 件のテストの中で route を丸ごと読み込むので、負荷の高い機械で vitest の既定の時間切れ (テスト 5 秒) を超えうる (#1605 の同じ型)。
 // このファイルだけ延ばす (根拠と環境変数での上書きは tests/helpers/heavy-unit-test-timeout.ts。#1488・#1605)。テストとフックを定義する前に置く
 applyHeavyUnitTestTimeout();
@@ -85,30 +91,30 @@ const GATED: GatedRoute[] = [
     name: 'POST .../sessions/[sessionId]/messages (メッセージ送信)',
     load: async () =>
       (await import('@/app/api/ai/consultation/sessions/[sessionId]/messages/route')).POST as Handler,
-    url: 'http://localhost/api/ai/consultation/sessions/s1/messages',
-    context: { params: { sessionId: 's1' } },
+    url: `http://localhost/api/ai/consultation/sessions/${SESSION_ID}/messages`,
+    context: { params: { sessionId: SESSION_ID } },
     rateLimited: true,
   },
   {
     name: 'POST .../sessions/[sessionId]/summarize (要約の生成)',
     load: async () =>
       (await import('@/app/api/ai/consultation/sessions/[sessionId]/summarize/route')).POST as Handler,
-    url: 'http://localhost/api/ai/consultation/sessions/s1/summarize',
-    context: { params: { sessionId: 's1' } },
+    url: `http://localhost/api/ai/consultation/sessions/${SESSION_ID}/summarize`,
+    context: { params: { sessionId: SESSION_ID } },
     rateLimited: true,
   },
   {
     name: 'POST .../sessions/[sessionId]/close (相談の終了)',
     load: async () => (await import('@/app/api/ai/consultation/sessions/[sessionId]/close/route')).POST as Handler,
-    url: 'http://localhost/api/ai/consultation/sessions/s1/close',
-    context: { params: { sessionId: 's1' } },
+    url: `http://localhost/api/ai/consultation/sessions/${SESSION_ID}/close`,
+    context: { params: { sessionId: SESSION_ID } },
     rateLimited: true,
   },
   {
     name: 'POST .../actions/[actionId]/execute (提案された操作の実行)',
     load: async () => (await import('@/app/api/ai/consultation/actions/[actionId]/execute/route')).POST as Handler,
-    url: 'http://localhost/api/ai/consultation/actions/a1/execute',
-    context: { params: { actionId: 'a1' } },
+    url: `http://localhost/api/ai/consultation/actions/${ACTION_ID}/execute`,
+    context: { params: { actionId: ACTION_ID } },
     rateLimited: true,
   },
 ];
@@ -232,8 +238,8 @@ describe('止めないもの (AI を呼ばない API)', () => {
     h.from.mockImplementation(() => chain({ data: null, error: { message: 'not found' } }));
     const { DELETE } = await import('@/app/api/ai/consultation/actions/[actionId]/execute/route');
 
-    const res = await DELETE(new Request('http://localhost/api/ai/consultation/actions/a1/execute', { method: 'DELETE' }), {
-      params: Promise.resolve({ actionId: 'a1' }),
+    const res = await DELETE(new Request(`http://localhost/api/ai/consultation/actions/${ACTION_ID}/execute`, { method: 'DELETE' }), {
+      params: Promise.resolve({ actionId: ACTION_ID }),
     });
 
     expect(res.status).toBe(404); // フラグではなく、対象が無いことで返っている

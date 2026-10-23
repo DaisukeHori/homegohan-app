@@ -20,6 +20,15 @@ applyHeavyUnitTestTimeout();
 const mockGetUser = vi.fn();
 const mockFrom = vi.fn();
 
+// 構造化ログ (#1172): DB エラーのとき internalError() が app_logs へ記録する。このテストでは DB へ書かない
+vi.mock('@/lib/db-logger', () => {
+  const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+  return {
+    createLogger: vi.fn(() => ({ ...logger, withUser: vi.fn(() => logger) })),
+    generateRequestId: vi.fn(() => 'req_test'),
+  };
+});
+
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => ({
     auth: { getUser: mockGetUser },
@@ -253,18 +262,24 @@ describe('GET /api/recipes: クランプ以外の挙動は変えない', () => {
     expect(builder.eq).toHaveBeenCalledWith('difficulty', 'easy');
   });
 
-  it('DB エラーのときは従来どおり空の 200 を返し、pagination には丸めた値を入れる', async () => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+  it('DB エラーのときは 200 の空の一覧 (total 0) にせず、汎用の 500 を返す (#1917。失敗と「0 件」を見分けられるように)', async () => {
     setupRecipesQuery({ data: null, error: { message: 'boom' }, count: null });
 
     const { res, json } = await callGet('?page=abc&limit=100000');
 
-    expect(res.status).toBe(200);
-    expect(json).toEqual({
-      recipes: [],
-      pagination: { page: 1, limit: 100, total: 0, totalPages: 0 },
-    });
-    expect(consoleError).toHaveBeenCalled();
+    expect(res.status).toBe(500);
+    expect(json).toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
+    expect(JSON.stringify(json)).not.toContain('boom');
+  });
+
+  it('検索語の "," ")" "%" は or=(...) の構文を壊さず、文字どおりに部分一致させる (#1917。構文エラーで 500 にしない)', async () => {
+    const builder = setupRecipesQuery();
+
+    await callGet(`?q=${encodeURIComponent('a,b)%_')}`);
+
+    // 1 回目の or は公開レシピの絞り込み、2 回目が検索語
+    const searchFilter = builder.or.mock.calls.map((call) => call[0] as string).find((f) => f.startsWith('name.ilike.'));
+    expect(searchFilter).toBe('name.ilike."%a,b)\\\\%\\\\_%",description.ilike."%a,b)\\\\%\\\\_%"');
   });
 
   it('取得した行を camelCase に変換し、自分のいいねを isLiked に反映する', async () => {

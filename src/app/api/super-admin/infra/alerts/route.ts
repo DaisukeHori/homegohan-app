@@ -13,7 +13,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { authFailureNested } from '@/lib/api/error-responses';
 import { InfraAlertsQuerySchema } from '@/lib/super-admin/infra-schemas';
 import { internalError } from '@/lib/api/errors';
-import { resolveBeyondLastPage } from '@/lib/api/list-range';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 
 /** 一覧の構造化ログの function_name */
 const LIST_ROUTE_NAME = 'GET /api/super-admin/infra/alerts';
@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
     const selectAlerts = (options: { head?: boolean } = {}) => {
       let query = supabase
         .from('infra_alerts')
-        .select('*', { count: 'exact', head: options.head === true });
+        .select('*', listCountOptions(options.head));
 
       if (resolved === 'true') {
         query = query.not('resolved_at', 'is', null);

@@ -14,7 +14,7 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient } from '@/lib/supabase/server';
 import { CouponRedemptionsQuerySchema } from '@/lib/super-admin/coupons-schemas';
 import { internalError } from '@/lib/api/errors';
-import { resolveBeyondLastPage } from '@/lib/api/list-range';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { isUuid } from '@/lib/http-params';
 import { buildListViewDetails, recordAdminAudit } from '@/lib/admin/audit';
 import { couponInvalidQueryResponse } from '@/lib/super-admin/coupon-errors';
@@ -71,7 +71,7 @@ export async function GET(request: NextRequest, props: RouteContext) {
     const selectRedemptions = (options: { head?: boolean } = {}) =>
       supabase
         .from('coupon_redemptions')
-        .select('*', { count: 'exact', head: options.head === true })
+        .select('*', listCountOptions(options.head))
         .eq('coupon_id', couponId);
 
     const { data: redemptions, error, count } = await resolveBeyondLastPage(

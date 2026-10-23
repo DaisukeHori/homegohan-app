@@ -23,6 +23,9 @@ import {
   type FakeRow,
 } from './helpers/fake-plan-subscribers-db';
 
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする */
+const PLAN_ID = '88888888-8888-4888-8888-888888888881';
+
 const mockRequireRole = vi.fn();
 
 vi.mock('@/lib/auth/helpers', () => ({
@@ -66,7 +69,7 @@ interface ErrorBody {
 
 function existingPlan(overrides: Record<string, unknown> = {}) {
   return {
-    id: 'plan-1',
+    id: PLAN_ID,
     plan_key: 'pro',
     display_name: 'Pro',
     plan_type: 'personal',
@@ -77,7 +80,7 @@ function existingPlan(overrides: Record<string, unknown> = {}) {
 }
 
 function patchRequest(body: Record<string, unknown>) {
-  return new Request('http://localhost/api/super-admin/plans/plan-1', {
+  return new Request(`http://localhost/api/super-admin/plans/${PLAN_ID}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -100,7 +103,7 @@ async function patch(
     admin_audit_logs: [{ data: null, error: null }],
   });
   subscribersDb = createFakePlanSubscribersDb(subscribers);
-  const res = await PATCH(patchRequest(body), { params: { id: 'plan-1' } });
+  const res = await PATCH(patchRequest(body), { params: { id: PLAN_ID } });
   return { res, json: (await res.json()) as ErrorBody & { data?: Record<string, unknown> } };
 }
 
@@ -308,7 +311,7 @@ describe('契約者数を数えられなかったときは、廃止を止める 
     const [message, error, metadata] = mockLoggerError.mock.calls[0]!;
     expect(message).toContain('契約者数を確認できなかった');
     expect((error as Error).message).toContain(table);
-    expect(metadata).toEqual({ plan_id: 'plan-1', plan_key: 'pro', table, pg_code: code });
+    expect(metadata).toEqual({ plan_id: PLAN_ID, plan_key: 'pro', table, pg_code: code });
   });
 
   it('件数が返らない (count が null) ときも 500。プランを更新しない', async () => {
@@ -346,7 +349,7 @@ describe('認可の前に service_role を使わない (#1127)', () => {
   it('未認証 (401) では、service_role のクライアントを作らない', async () => {
     mockRequireRole.mockRejectedValueOnce(new AuthError('AUTH_UNAUTHENTICATED'));
 
-    const res = await PATCH(patchRequest(DEPRECATE), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest(DEPRECATE), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(401);
     expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
@@ -355,7 +358,7 @@ describe('認可の前に service_role を使わない (#1127)', () => {
   it('super_admin 以外 (403) では、service_role のクライアントを作らない', async () => {
     mockRequireRole.mockRejectedValueOnce(new ForbiddenError('FORBIDDEN_ROLE'));
 
-    const res = await PATCH(patchRequest(DEPRECATE), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest(DEPRECATE), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(403);
     expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();

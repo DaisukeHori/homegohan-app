@@ -6,7 +6,7 @@ import { internalError } from '@/lib/api/errors';
 import { recipeAuthorName } from '@/lib/recipes/author-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
-import { resolveBeyondLastPage } from '@/lib/api/list-range';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { escapeLikePattern, quotePostgrestValue } from '@/lib/admin/users-search';
 
 /** 一覧の構造化ログの function_name */
@@ -42,7 +42,7 @@ export async function GET(request: Request) {
   const selectRecipes = (options: { head?: boolean } = {}) => {
     let dbQuery = supabase
       .from('recipes')
-      .select(selectClause, { count: 'exact', head: options.head === true });
+      .select(selectClause, listCountOptions(options.head));
 
     // 公開レシピ、または自分のレシピ
     if (user) {

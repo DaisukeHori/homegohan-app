@@ -15,7 +15,7 @@ import {
   PlansQuerySchema,
 } from '@/lib/super-admin/plans-schemas';
 import { internalError } from '@/lib/api/errors';
-import { resolveBeyondLastPage } from '@/lib/api/list-range';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { invalidInputResponse, invalidJsonBodyResponse, invalidQueryResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
     const selectPlans = (options: { head?: boolean } = {}) => {
       let query = supabase
         .from('subscription_plans')
-        .select('*', { count: 'exact', head: options.head === true });
+        .select('*', listCountOptions(options.head));
 
       if (type) query = query.eq('plan_type', type);
       if (status) query = query.eq('status', status);

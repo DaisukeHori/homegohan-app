@@ -15,7 +15,7 @@ import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested, invalidJs
 import { readJsonBody } from '@/lib/http-params';
 import { leadListQuerySchema, createLeadSchema } from '@/lib/admin/sales-schemas';
 import { internalError } from '@/lib/api/errors';
-import { resolveBeyondLastPage } from '@/lib/api/list-range';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { buildListViewDetails, recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
           created_at,
           updated_at
         `,
-          { count: 'exact', head: options.head === true },
+          listCountOptions(options.head),
         );
 
       if (stage) query = query.eq('stage', stage);

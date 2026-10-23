@@ -10,7 +10,7 @@ import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
 import { InvoiceQuerySchema } from '@/lib/admin/finance-schemas';
-import { resolveBeyondLastPage } from '@/lib/api/list-range';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 
 export const dynamic = 'force-dynamic';
 
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
     const selectInvoiceEvents = (options: { head?: boolean } = {}) => {
       let dbQuery = supabase
         .from('stripe_webhook_events')
-        .select('*', { count: 'exact', head: options.head === true })
+        .select('*', listCountOptions(options.head))
         .in('event_type', ['invoice.paid', 'invoice.payment_failed', 'invoice.upcoming']);
 
       if (query.status) {

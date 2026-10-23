@@ -21,7 +21,8 @@ const mocks = vi.hoisted(() => {
     from: vi.fn(() => ({
       select: () => ({
         eq: (...args: [string, string]) => ({
-          single: async () => ({ data: { id: args[1], roles: state.preReadRoles }, error: null }),
+          // 対象の存在の確認は maybeSingle で読む (#1917。DB の失敗は 404 ではなく 500)
+          maybeSingle: async () => ({ data: { id: args[1], roles: state.preReadRoles }, error: null }),
         }),
       }),
     })),

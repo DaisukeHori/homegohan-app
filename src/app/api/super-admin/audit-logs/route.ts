@@ -14,7 +14,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { authFailureNested } from '@/lib/api/error-responses';
 import { AuditLogQuerySchema } from '@/lib/super-admin/audit-logs-schemas';
 import { internalError } from '@/lib/api/errors';
-import { resolveBeyondLastPage } from '@/lib/api/list-range';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 
 /** 一覧の構造化ログの function_name */
 const LIST_ROUTE_NAME = 'GET /api/super-admin/audit-logs';
@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
     const selectAuditLogs = (options: { head?: boolean } = {}) => {
       let query = supabase
         .from('admin_audit_logs')
-        .select('*', { count: 'exact', head: options.head === true });
+        .select('*', listCountOptions(options.head));
 
       if (actor_id) query = query.eq('actor_id', actor_id);
       if (target_id) query = query.eq('target_id', target_id);

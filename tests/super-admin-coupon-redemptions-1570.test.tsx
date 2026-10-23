@@ -93,7 +93,7 @@ type Insert = { table: string; row: Row };
 
 /**
  * テーブルの行を持ち、.eq(列, 値) の条件で実際に絞り込む簡易 Supabase モック。
- * single() は 1 行に絞れたときだけその行を返し、それ以外は PostgREST と同じく error を返す。
+ * single() は 1 行に絞れたときだけその行を返し、それ以外は PostgREST と同じく error を返す。maybeSingle() は 0 行なら data: null。
  * insert は引数を記録する。order / range などほかのメソッドは受け付けるだけ。
  */
 function makeClient(tables: Record<string, Row[]>) {
@@ -123,6 +123,17 @@ function makeClient(tables: Record<string, Row[]>) {
             return (row: Row) => {
               inserts.push({ table, row });
               return Promise.resolve({ data: null, error: null });
+            };
+          }
+          if (prop === 'maybeSingle') {
+            // 行が無いときは失敗にせず data: null (PostgREST の maybeSingle と同じ。2 行以上は失敗)
+            return () => {
+              const rows = matched();
+              return Promise.resolve(
+                rows.length <= 1
+                  ? { data: rows[0] ?? null, error: null }
+                  : { data: null, error: { code: 'PGRST116', message: 'JSON object requested, multiple (or no) rows returned' } },
+              );
             };
           }
           if (prop === 'single') {
@@ -281,7 +292,8 @@ describe('#1570 GET /api/super-admin/coupons/[id]/redemptions: id で引く', ()
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe('OP_COUPON_NOT_FOUND');
-    expect(userScopedClient.eqCalls).toContainEqual({ table: 'coupons', column: 'id', value: COUPON_CODE });
+    // コードは UUID の形でないので、DB に渡さずに 404 (#1917。uuid 型の列に渡すと 22P02 の失敗になり、500 に入ってしまうため)
+    expect(userScopedClient.eqCalls.filter((call) => call.table === 'coupons')).toEqual([]);
     expect(userScopedClient.auditRows()).toHaveLength(0);
   });
 });

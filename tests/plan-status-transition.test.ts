@@ -11,6 +11,9 @@ import { isAllowedPlanStatusTransition } from '@/lib/super-admin/plans-schemas';
 import { createFakeSupabase } from './helpers/fake-supabase';
 import { createFakePlanSubscribersDb } from './helpers/fake-plan-subscribers-db';
 
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする */
+const PLAN_ID = '88888888-8888-4888-8888-888888888882';
+
 describe('isAllowedPlanStatusTransition', () => {
   it('draft --> public / private を許可する', () => {
     expect(isAllowedPlanStatusTransition('draft', 'public')).toBe(true);
@@ -62,7 +65,7 @@ const { PATCH } = await import('@/app/api/super-admin/plans/[id]/route');
 const actor = { id: 'sa-1', email: 'sa@example.com', roles: ['super_admin'], organization_id: null };
 
 function patchRequest(body: Record<string, unknown>) {
-  return new Request('http://localhost/api/super-admin/plans/plan-1', {
+  return new Request(`http://localhost/api/super-admin/plans/${PLAN_ID}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -71,7 +74,7 @@ function patchRequest(body: Record<string, unknown>) {
 
 function existingPlan(overrides: Record<string, unknown>) {
   return {
-    id: 'plan-1',
+    id: PLAN_ID,
     plan_key: 'pro',
     display_name: 'Pro',
     plan_type: 'personal',
@@ -96,7 +99,7 @@ describe('PATCH /api/super-admin/plans/[id] (#1041 状態遷移一方向ロッ�
       admin_audit_logs: [{ data: null, error: null }],
     });
 
-    const res = await PATCH(patchRequest({ status: 'private' }), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest({ status: 'private' }), { params: { id: PLAN_ID } });
     expect(res.status).toBe(200);
   });
 
@@ -109,7 +112,7 @@ describe('PATCH /api/super-admin/plans/[id] (#1041 状態遷移一方向ロッ�
       admin_audit_logs: [{ data: null, error: null }],
     });
 
-    const res = await PATCH(patchRequest({ status: 'public' }), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest({ status: 'public' }), { params: { id: PLAN_ID } });
     expect(res.status).toBe(200);
   });
 
@@ -124,7 +127,7 @@ describe('PATCH /api/super-admin/plans/[id] (#1041 状態遷移一方向ロッ�
 
     const res = await PATCH(
       patchRequest({ status: 'deprecated', ends_at: '2027-01-01T00:00:00.000Z' }),
-      { params: { id: 'plan-1' } },
+      { params: { id: PLAN_ID } },
     );
     expect(res.status).toBe(200);
   });
@@ -134,7 +137,7 @@ describe('PATCH /api/super-admin/plans/[id] (#1041 状態遷移一方向ロッ�
       subscription_plans: [{ data: existingPlan({ status: 'public', ends_at: null }), error: null }],
     });
 
-    const res = await PATCH(patchRequest({ status: 'deprecated' }), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest({ status: 'deprecated' }), { params: { id: PLAN_ID } });
     expect(res.status).toBe(400);
     const json = (await res.json()) as { error: { code: string } };
     expect(json.error.code).toBe('OP_PLAN_DEPRECATE_ENDS_AT_REQUIRED');
@@ -145,7 +148,7 @@ describe('PATCH /api/super-admin/plans/[id] (#1041 状態遷移一方向ロッ�
       subscription_plans: [{ data: existingPlan({ status: 'deprecated' }), error: null }],
     });
 
-    const res = await PATCH(patchRequest({ status: 'public' }), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest({ status: 'public' }), { params: { id: PLAN_ID } });
     expect(res.status).toBe(422);
     const json = (await res.json()) as { error: { code: string } };
     expect(json.error.code).toBe('OP_PLAN_INVALID_TRANSITION');
@@ -160,7 +163,7 @@ describe('PATCH /api/super-admin/plans/[id] (#1041 状態遷移一方向ロッ�
       admin_audit_logs: [{ data: null, error: null }],
     });
 
-    const res = await PATCH(patchRequest({ status: 'private' }), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest({ status: 'private' }), { params: { id: PLAN_ID } });
     expect(res.status).toBe(200);
   });
 
@@ -169,7 +172,7 @@ describe('PATCH /api/super-admin/plans/[id] (#1041 状態遷移一方向ロッ�
       subscription_plans: [{ data: existingPlan({ status: 'public' }), error: null }],
     });
 
-    const res = await PATCH(patchRequest({ stripe_product_id: 'prod_x' }), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest({ stripe_product_id: 'prod_x' }), { params: { id: PLAN_ID } });
     expect(res.status).toBe(422);
     const json = (await res.json()) as { error: { code: string } };
     expect(json.error.code).toBe('OP_PLAN_STATUS_LOCKED');
@@ -180,7 +183,7 @@ describe('PATCH /api/super-admin/plans/[id] (#1041 状態遷移一方向ロッ�
       subscription_plans: [{ data: existingPlan({ status: 'deprecated' }), error: null }],
     });
 
-    const res = await PATCH(patchRequest({ display_name: 'New Name' }), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest({ display_name: 'New Name' }), { params: { id: PLAN_ID } });
     expect(res.status).toBe(422);
     const json = (await res.json()) as { error: { code: string } };
     expect(json.error.code).toBe('OP_PLAN_DEPRECATED_LOCKED');

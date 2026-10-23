@@ -15,7 +15,7 @@ import {
   FeaturePackagesQuerySchema,
 } from '@/lib/super-admin/feature-packages-schemas';
 import { internalError } from '@/lib/api/errors';
-import { resolveBeyondLastPage } from '@/lib/api/list-range';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { invalidInputResponse, invalidJsonBodyResponse, invalidQueryResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
     const selectFeaturePackages = (options: { head?: boolean } = {}) => {
       let query = supabase
         .from('feature_packages')
-        .select('*', { count: 'exact', head: options.head === true });
+        .select('*', listCountOptions(options.head));
 
       if (status) query = query.eq('status', status);
 

@@ -12,11 +12,6 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
-  // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る。#1917)
-  if (!isUuid(params.id)) {
-    return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
-  }
-
   // 閲覧数インクリメントは認証ユーザーのみ (未認証アクセスによる水増しを防ぐ)
   // #257: SELECT+UPDATE の race を排除するため単一アトミック UPDATE で実施
   if (user) {

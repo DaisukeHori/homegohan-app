@@ -17,6 +17,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createFakeSupabase } from './helpers/fake-supabase';
 
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする */
+const PLAN_ID = '88888888-8888-4888-8888-888888888883';
+
 const mockRequireRole = vi.fn();
 
 vi.mock('@/lib/auth/helpers', () => ({
@@ -40,7 +43,7 @@ const actor = { id: 'sa-1', email: 'sa@example.com', roles: ['super_admin'], org
 
 function existingPlan() {
   return {
-    id: 'plan-1',
+    id: PLAN_ID,
     plan_key: 'pro',
     status: 'public',
     stripe_product_id: 'prod_123',
@@ -54,7 +57,7 @@ function existingPlan() {
 }
 
 function priceChangeRequest(body: Record<string, unknown>) {
-  return new Request('http://localhost/api/super-admin/plans/plan-1/price-change', {
+  return new Request(`http://localhost/api/super-admin/plans/${PLAN_ID}/price-change`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -141,7 +144,7 @@ describe('POST /api/super-admin/plans/[id]/price-change: 接続情報と DB の�
       const fetchMock = stubEdge(edgeOk({}));
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-      const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+      const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
       const text = await res.text();
       consoleError.mockRestore();
 
@@ -166,7 +169,7 @@ describe('POST /api/super-admin/plans/[id]/price-change: 接続情報と DB の�
     });
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
     const text = await res.text();
     consoleError.mockRestore();
 
@@ -184,7 +187,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1041 F4-06)', () => {
     });
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network error')));
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(502);
     const json = (await res.json()) as { error: { code: string } };
@@ -200,7 +203,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1041 F4-06)', () => {
     });
     stubEdge({ ok: false, status: 404, text: () => Promise.resolve('function not found') });
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(503);
     const json = (await res.json()) as { error: { code: string } };
@@ -216,7 +219,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1041 F4-06)', () => {
     });
     stubEdge({ ok: false, status: 500, text: () => Promise.resolve('edge failed') });
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
     expect(res.status).toBe(502);
     expect(fakeSupabase.from).toHaveBeenCalledTimes(1);
   });
@@ -228,7 +231,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1041 F4-06)', () => {
     });
     stubEdge({ ok: true, json: () => Promise.resolve({}) });
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
     expect(res.status).toBe(502);
     const json = (await res.json()) as { error: { code: string } };
     expect(json.error.code).toBe('OP_STRIPE_SYNC_FAILED');
@@ -242,7 +245,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1041 F4-06)', () => {
     });
     stubEdge({ ok: true, json: () => Promise.reject(new Error('invalid json')) });
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
     expect(res.status).toBe(502);
     expect(fakeSupabase.from).toHaveBeenCalledTimes(1);
   });
@@ -252,7 +255,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1041 F4-06)', () => {
     fakeSupabase = successSupabase();
     stubEdge(edgeOk({ month: { new_stripe_price_id: 'price_new', deactivated: true } }));
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
     expect(res.status).toBe(200);
     const json = (await res.json()) as {
       data: { new_stripe_price_id: string; new_stripe_yearly_price_id: string | null; stripe_mock: boolean };
@@ -269,7 +272,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1041 F4-06)', () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
     expect(res.status).toBe(200);
     const json = (await res.json()) as {
       data: { stripe_mock: boolean; new_stripe_price_id: string | null; new_stripe_yearly_price_id: string | null };
@@ -289,7 +292,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1041 round-3 C1: plan_
       plan_price_history: [{ data: null, error: { message: 'permission denied for table plan_price_history' } }],
     });
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(500);
     const json = (await res.json()) as { error: { code: string } };
@@ -307,7 +310,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1041 round-3 C1: plan_
     delete process.env.STRIPE_SECRET_KEY;
     fakeSupabase = successSupabase();
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(200);
     expect(mockGetSupabaseAdmin).toHaveBeenCalled();
@@ -333,7 +336,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1102: 月額・年額�
 
     const res = await POST(
       priceChangeRequest({ new_monthly_price_jpy: 1200, new_yearly_price_jpy: 12000 }),
-      { params: { id: 'plan-1' } },
+      { params: { id: PLAN_ID } },
     );
 
     expect(res.status).toBe(200);
@@ -360,7 +363,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1102: 月額・年額�
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]![0])).toBe('https://example.supabase.co/functions/v1/stripe-price-sync');
     expect(edgeRequestBody(fetchMock)).toMatchObject({
-      plan_id: 'plan-1',
+      plan_id: PLAN_ID,
       plan_key: 'pro',
       stripe_product_id: 'prod_123',
       new_monthly_price_jpy: 1200,
@@ -380,7 +383,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1102: 月額・年額�
 
     // 履歴: old/new_stripe_price_id は月額の Price ID
     expect(historyInsertPayload(fakeSupabase)).toMatchObject({
-      plan_id: 'plan-1',
+      plan_id: PLAN_ID,
       old_monthly_price_jpy: 1000,
       new_monthly_price_jpy: 1200,
       old_yearly_price_jpy: 10000,
@@ -400,7 +403,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1102: 月額・年額�
 
     const res = await POST(
       priceChangeRequest({ new_monthly_price_jpy: null, new_yearly_price_jpy: 12000 }),
-      { params: { id: 'plan-1' } },
+      { params: { id: PLAN_ID } },
     );
 
     expect(res.status).toBe(200);
@@ -432,7 +435,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1102: 月額・年額�
     fakeSupabase = successSupabase();
     stubEdge(edgeOk({ month: { new_stripe_price_id: 'price_month_new', deactivated: true } }));
 
-    const res = await POST(priceChangeRequest({ new_monthly_price_jpy: 1200 }), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({ new_monthly_price_jpy: 1200 }), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(200);
     const update = planUpdatePayload(fakeSupabase)!;
@@ -450,7 +453,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1102: 月額・年額�
 
     const res = await POST(
       priceChangeRequest({ new_monthly_price_jpy: 1200, new_yearly_price_jpy: 12000 }),
-      { params: { id: 'plan-1' } },
+      { params: { id: PLAN_ID } },
     );
 
     expect(res.status).toBe(502);
@@ -470,7 +473,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1102: 月額・年額�
 
     const res = await POST(
       priceChangeRequest({ new_monthly_price_jpy: 1200, new_yearly_price_jpy: 12000 }),
-      { params: { id: 'plan-1' } },
+      { params: { id: PLAN_ID } },
     );
 
     expect(res.status).toBe(502);
@@ -488,7 +491,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1102: 月額・年額�
 
     const res = await POST(
       priceChangeRequest({ new_monthly_price_jpy: null, new_yearly_price_jpy: 12000 }),
-      { params: { id: 'plan-1' } },
+      { params: { id: PLAN_ID } },
     );
 
     expect(res.status).toBe(502);
@@ -503,7 +506,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1102: 月額・年額�
 
     const res = await POST(
       priceChangeRequest({ new_monthly_price_jpy: 1200, new_yearly_price_jpy: 12000 }),
-      { params: { id: 'plan-1' } },
+      { params: { id: PLAN_ID } },
     );
 
     expect(res.status).toBe(200);
@@ -526,7 +529,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1102: 月額・年額�
 
     const res = await POST(
       priceChangeRequest({ new_monthly_price_jpy: 1200, new_yearly_price_jpy: 12000 }),
-      { params: { id: 'plan-1' } },
+      { params: { id: PLAN_ID } },
     );
 
     expect(res.status).toBe(200);
@@ -545,7 +548,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1102: 価格変更は�
       const fetchMock = vi.fn();
       vi.stubGlobal('fetch', fetchMock);
 
-      const res = await POST(priceChangeRequest({ applies_to: appliesTo }), { params: { id: 'plan-1' } });
+      const res = await POST(priceChangeRequest({ applies_to: appliesTo }), { params: { id: PLAN_ID } });
 
       expect(res.status).toBe(400);
       const json = (await res.json()) as { error: { code: string; message: string; details: unknown } };
@@ -564,7 +567,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1102: 価格変更は�
     fakeSupabase = successSupabase();
 
     for (const bad of ['everyone', '', null]) {
-      const res = await POST(priceChangeRequest({ applies_to: bad }), { params: { id: 'plan-1' } });
+      const res = await POST(priceChangeRequest({ applies_to: bad }), { params: { id: PLAN_ID } });
       expect(res.status).toBe(400);
     }
     expect(fakeSupabase.from).not.toHaveBeenCalled();
@@ -576,7 +579,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1102: 価格変更は�
     const fetchMock = stubEdge(edgeOk({ month: { new_stripe_price_id: 'price_month_new', deactivated: true } }));
 
     // priceChangeRequest は applies_to を既定で入れるので、本文を直接組み立てる
-    const request = new Request('http://localhost/api/super-admin/plans/plan-1/price-change', {
+    const request = new Request(`http://localhost/api/super-admin/plans/${PLAN_ID}/price-change`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -585,7 +588,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1102: 価格変更は�
         effective_at: '2026-08-01T00:00:00.000Z',
       }),
     }) as never;
-    const res = await POST(request, { params: { id: 'plan-1' } });
+    const res = await POST(request, { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(200);
     const json = (await res.json()) as { data: { applies_to: string } };
@@ -605,7 +608,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1041 round-4 W1: OP_IN
     // 月額・年額どちらも null → refine エラー (「月額または年額のいずれかを指定してください」)
     const res = await POST(
       priceChangeRequest({ new_monthly_price_jpy: null, new_yearly_price_jpy: null }),
-      { params: { id: 'plan-1' } },
+      { params: { id: PLAN_ID } },
     );
 
     expect(res.status).toBe(400);
@@ -625,7 +628,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1041 round-4 C / #1102
     fakeSupabase = successSupabase();
     stubEdge(edgeOk({ month: { new_stripe_price_id: 'price_new', deactivated: true } }));
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
     expect(res.status).toBe(200);
 
     const details = auditLogInsertPayload(fakeSupabase)!.details as Record<string, unknown>;
@@ -654,7 +657,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1041 round-4 C / #1102
 
     const res = await POST(
       priceChangeRequest({ new_monthly_price_jpy: null, new_yearly_price_jpy: 12000 }),
-      { params: { id: 'plan-1' } },
+      { params: { id: PLAN_ID } },
     );
     expect(res.status).toBe(200);
 
@@ -685,7 +688,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1041 round-4 C / #1102
 
     const res = await POST(
       priceChangeRequest({ new_monthly_price_jpy: 1200, new_yearly_price_jpy: 12000 }),
-      { params: { id: 'plan-1' } },
+      { params: { id: PLAN_ID } },
     );
     expect(res.status).toBe(200);
 
@@ -710,7 +713,7 @@ describe('POST /api/super-admin/plans/[id]/price-change (#1041 round-4 C / #1102
 
     const res = await POST(
       priceChangeRequest({ new_monthly_price_jpy: 1200, new_yearly_price_jpy: 12000 }),
-      { params: { id: 'plan-1' } },
+      { params: { id: PLAN_ID } },
     );
     expect(res.status).toBe(200);
 

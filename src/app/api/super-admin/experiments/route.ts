@@ -9,7 +9,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { authFailureNested } from '@/lib/api/error-responses';
 import { CreateExperimentSchema } from '@/lib/super-admin/experiments-schemas';
 import { internalError } from '@/lib/api/errors';
-import { resolveBeyondLastPage } from '@/lib/api/list-range';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { readJsonBody, SUPER_ADMIN_INVALID_JSON_BODY_MESSAGE } from '@/lib/super-admin/validation-errors';
@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
     const selectExperiments = (options: { head?: boolean } = {}) => {
       let query = supabase
         .from('experiments')
-        .select('*', { count: 'exact', head: options.head === true });
+        .select('*', listCountOptions(options.head));
 
       if (status) {
         query = query.eq('status', status);

@@ -11,7 +11,7 @@ import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
 import { RevenueQuerySchema } from '@/lib/admin/finance-schemas';
-import { resolveBeyondLastPage } from '@/lib/api/list-range';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 
 export const dynamic = 'force-dynamic';
 
@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
     const selectSnapshots = (options: { head?: boolean } = {}) => {
       let dbQuery = supabase
         .from('revenue_snapshots')
-        .select('*', { count: 'exact', head: options.head === true });
+        .select('*', listCountOptions(options.head));
 
       if (query.from) {
         dbQuery = dbQuery.gte('date', query.from);

@@ -50,7 +50,8 @@ vi.mock('@/lib/supabase/server', () => ({
   },
 }));
 
-const PLAN_ID = 'plan-1';
+// route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする
+const PLAN_ID = '88888888-8888-4888-8888-888888888887';
 const BANNER_URL = 'https://cdn.example.com/plans/pro-banner.png';
 const EDITED_DISPLAY_NAME = 'Pro (改定後)';
 

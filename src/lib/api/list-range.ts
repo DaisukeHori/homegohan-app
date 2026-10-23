@@ -51,6 +51,14 @@ export interface CountReadResult {
   error: unknown;
 }
 
+/**
+ * 一覧の select の options。件数は exact で数え、head のときは行を取らずに件数だけを数える (範囲外のページのときの数え直し)。
+ * 一覧の読み出しの options は従来どおり `{ count: 'exact' }` のまま (head: false を足さない)
+ */
+export function listCountOptions(head: boolean | undefined): { count: 'exact'; head?: true } {
+  return head === true ? { count: 'exact', head: true } : { count: 'exact' };
+}
+
 /** 読み出しの失敗が「件数より後ろのページ」(416 / PGRST103) か */
 export function isBeyondLastPage(error: unknown, status: number | null | undefined): boolean {
   if (!error) return false;

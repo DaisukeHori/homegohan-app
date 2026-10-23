@@ -60,6 +60,11 @@ function makeBuilder(table: string) {
     return builder;
   });
   builder.single = vi.fn(() => Promise.resolve(resolveResult(table, op, payload)));
+  // maybeSingle は行が無いと失敗にせず data: null・error: null を返す (#1917。route は目標の読み込みを maybeSingle にした)
+  builder.maybeSingle = vi.fn(() => {
+    const result = resolveResult(table, op, payload);
+    return Promise.resolve(result.data === null && op === 'select' ? { data: null, error: null } : result);
+  });
   // await supabase.from(...).update(...).eq(...) のように single() 無しで待たれる場合
   builder.then = (onFulfilled: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
     Promise.resolve(resolveResult(table, op, payload)).then(onFulfilled, onRejected);

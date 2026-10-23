@@ -10,7 +10,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
-import { resolveBeyondLastPage } from '@/lib/api/list-range';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 
 export const dynamic = 'force-dynamic';
 
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
     const selectDiscrepancyLogs = (options: { head?: boolean } = {}) => {
       let logsQuery = supabase
         .from('admin_audit_logs')
-        .select('*', { count: 'exact', head: options.head === true })
+        .select('*', listCountOptions(options.head))
         .eq('action_type', 'system.stripe.reconcile_discrepancy');
 
       if (from) logsQuery = logsQuery.gte('created_at', from);

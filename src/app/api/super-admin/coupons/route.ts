@@ -15,7 +15,7 @@ import {
   CouponsQuerySchema,
 } from '@/lib/super-admin/coupons-schemas';
 import { internalError } from '@/lib/api/errors';
-import { resolveBeyondLastPage } from '@/lib/api/list-range';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { couponValidFromTimestamp, couponValidUntilTimestamp } from '@/lib/super-admin/coupon-validity';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { couponInvalidInputResponse, couponInvalidQueryResponse } from '@/lib/super-admin/coupon-errors';
@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
     const selectCoupons = (options: { head?: boolean } = {}) => {
       let query = supabase
         .from('coupons')
-        .select('*', { count: 'exact', head: options.head === true });
+        .select('*', listCountOptions(options.head));
 
       if (status) query = query.eq('status', status);
       if (applicable_to) query = query.eq('applicable_to', applicable_to);

@@ -17,7 +17,7 @@ import { ticketListQuerySchema, createTicketSchema } from '@/lib/admin/support-s
 import { internalError } from '@/lib/api/errors';
 import { buildListViewDetails, recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { resolveBeyondLastPage } from '@/lib/api/list-range';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 
 /** 400: 本文・クエリの検証の失敗の文 (項目ごとの理由は details に添える。message は画面がそのまま出す文なので文字列にする) */
 const VALIDATION_ERROR_MESSAGE = '入力内容を確認してください';
@@ -58,7 +58,7 @@ type SessionClient = Awaited<ReturnType<typeof createClient>>;
 function selectTickets(supabase: SessionClient, filters: TicketListFilters, options: { head?: boolean } = {}) {
   let query = supabase
     .from('support_tickets')
-    .select(TICKET_LIST_COLUMNS, { count: 'exact', head: options.head === true });
+    .select(TICKET_LIST_COLUMNS, listCountOptions(options.head));
   if (filters.status) query = query.eq('status', filters.status);
   if (filters.priority) query = query.eq('priority', filters.priority);
   if (filters.assignee_id) query = query.eq('assignee_id', filters.assignee_id);

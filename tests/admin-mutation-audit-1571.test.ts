@@ -344,7 +344,8 @@ describe('POST /api/admin/support/tickets/[id]/messages -> admin.support.ticket.
   });
 
   it('チケットが無いとき (404) は記録しない', async () => {
-    userScopedClient = makeClient({ support_tickets: [{ data: null, error: { message: 'not found' } }] });
+    // maybeSingle は行が無いと data: null・error: null を返す (#1917。DB の失敗は 404 ではなく 500)
+    userScopedClient = makeClient({ support_tickets: [{ data: null, error: null }] });
 
     const res = await messagesRoute.POST(
       jsonRequest(`/api/admin/support/tickets/${TICKET_ID}/messages`, 'POST', { body: 'x' }),

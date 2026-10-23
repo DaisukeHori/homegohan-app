@@ -17,7 +17,7 @@ import { buildUserSearchFilter } from '@/lib/admin/users-search';
 import { isAccountFrozen } from '@/lib/auth/frozen';
 import { jstDayStartTimestamp } from '@/lib/date-utils';
 import { jstOptionalDayRangeTimestamps } from '@/lib/jst-day-ranges';
-import { resolveBeyondLastPage } from '@/lib/api/list-range';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 
 export const dynamic = 'force-dynamic';
 
@@ -95,7 +95,7 @@ export async function GET(request: Request) {
       frozen_by,
       unban_at
     `,
-        { count: 'exact', head: options.head === true },
+        listCountOptions(options.head),
       );
 
     if (searchFilter) {

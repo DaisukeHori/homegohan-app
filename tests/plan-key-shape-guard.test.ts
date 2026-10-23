@@ -26,6 +26,9 @@ import {
 } from '@/lib/super-admin/plans-schemas';
 import { createFakeSupabase } from './helpers/fake-supabase';
 
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする */
+const PLAN_ID = '88888888-8888-4888-8888-888888888885';
+
 type PlanType = (typeof PLAN_TYPES)[number];
 
 /** 今ある行 (operator/01-data-model.md §3.2 の seed・src/app/super-admin/plans/new/page.tsx の OFFICIAL_PLANS) の plan_key と種別 */
@@ -206,7 +209,7 @@ describe('POST /api/super-admin/plans: plan_key の形 (#1912)', () => {
 
 describe('PATCH /api/super-admin/plans/[id]: plan_key / plan_type は変えられない (#1912)', () => {
   it('下書きのプランに plan_key / plan_type を送っても、更新の値に入らない (送った他の項目だけを書く)', async () => {
-    const existing = { id: 'plan-1', plan_key: 'pro_2027', display_name: 'Pro 2027', plan_type: 'personal', status: 'draft', ends_at: null };
+    const existing = { id: PLAN_ID, plan_key: 'pro_2027', display_name: 'Pro 2027', plan_type: 'personal', status: 'draft', ends_at: null };
     fakeSupabase = createFakeSupabase({
       subscription_plans: [
         { data: existing, error: null },
@@ -214,12 +217,12 @@ describe('PATCH /api/super-admin/plans/[id]: plan_key / plan_type は変えら�
       ],
     });
     const res = await PATCH(
-      jsonRequest('PATCH', 'http://localhost/api/super-admin/plans/plan-1', {
+      jsonRequest('PATCH', `http://localhost/api/super-admin/plans/${PLAN_ID}`, {
         plan_key: 'org_pro_2027',
         plan_type: 'org',
         display_name: '新しい名前',
       }),
-      { params: Promise.resolve({ id: 'plan-1' }) },
+      { params: Promise.resolve({ id: PLAN_ID }) },
     );
     expect(res.status).toBe(200);
     const updateBuilder = fakeSupabase.from.mock.results[1]?.value as { update: ReturnType<typeof vi.fn> };

@@ -11,12 +11,16 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする */
+const REQUEST_ID = '99999999-9999-4999-8999-999999999993';
+
 const mockGetUser = vi.fn();
 
 type SingleResult = { data: Record<string, unknown> | null; error: { message: string; code?: string } | null };
 const singleResultQueue: SingleResult[] = [];
-const mockSingle = vi.fn(() => Promise.resolve(singleResultQueue.shift() ?? { data: null, error: { message: 'no rows' } }));
-const mockEq2 = vi.fn((..._args: unknown[]) => ({ single: mockSingle }));
+// 要求の行は maybeSingle で読む (#1917。行が無いときは data: null・error: null。DB の失敗は 404 ではなく 500)
+const mockMaybeSingle = vi.fn(() => Promise.resolve(singleResultQueue.shift() ?? { data: null, error: null }));
+const mockEq2 = vi.fn((..._args: unknown[]) => ({ maybeSingle: mockMaybeSingle }));
 const mockEq1 = vi.fn((..._args: unknown[]) => ({ eq: mockEq2 }));
 const mockSelect = vi.fn((..._args: unknown[]) => ({ eq: mockEq1 }));
 
@@ -42,7 +46,7 @@ const makeRequest = (requestId: string) =>
 /** Edge Function の markFailed が書く失敗の行 */
 function failedRow(result: unknown) {
   return {
-    id: 'req-1',
+    id: REQUEST_ID,
     status: 'failed',
     progress: { phase: 'failed', message: 'エラーが発生しました', percentage: 0 },
     result,
@@ -70,13 +74,13 @@ describe('GET /api/shopping-list/regenerate/status: 失敗の文 (#1172)', () =>
   ])('%s は返さず、固定の文を返す', async (_label, stored) => {
     singleResultQueue.push({ data: failedRow({ error: stored }), error: null });
 
-    const res = await GET(makeRequest('req-1'));
+    const res = await GET(makeRequest(REQUEST_ID));
     const text = await res.text();
     const json = JSON.parse(text);
 
     expect(res.status).toBe(200);
     expect(json).toEqual({
-      requestId: 'req-1',
+      requestId: REQUEST_ID,
       status: 'failed',
       progress: { phase: 'failed', message: 'エラーが発生しました', percentage: 0 },
       result: { error: SHOPPING_LIST_REQUEST_FAILED_MESSAGE },
@@ -90,7 +94,7 @@ describe('GET /api/shopping-list/regenerate/status: 失敗の文 (#1172)', () =>
       error: null,
     });
 
-    const res = await GET(makeRequest('req-1'));
+    const res = await GET(makeRequest(REQUEST_ID));
     const text = await res.text();
 
     expect(JSON.parse(text).result).toEqual({ error: SHOPPING_LIST_REQUEST_FAILED_MESSAGE });
@@ -105,7 +109,7 @@ describe('GET /api/shopping-list/regenerate/status: 失敗の文 (#1172)', () =>
   ])('こちらで書いた文 (%s) は、画面が見分けられるようそのまま返す', async (_label, stored) => {
     singleResultQueue.push({ data: failedRow({ error: stored }), error: null });
 
-    const json = await (await GET(makeRequest('req-1'))).json();
+    const json = await (await GET(makeRequest(REQUEST_ID))).json();
 
     expect(json.status).toBe('failed');
     expect(json.result).toEqual({ error: stored });
@@ -115,7 +119,7 @@ describe('GET /api/shopping-list/regenerate/status: 失敗の文 (#1172)', () =>
     const stats = { inputCount: 12, outputCount: 8, mergedCount: 4, totalServings: 21 };
     singleResultQueue.push({
       data: {
-        id: 'req-1',
+        id: REQUEST_ID,
         status: 'completed',
         progress: { phase: 'completed', message: '完了！', percentage: 100 },
         result: { stats },
@@ -123,10 +127,10 @@ describe('GET /api/shopping-list/regenerate/status: 失敗の文 (#1172)', () =>
       error: null,
     });
 
-    const json = await (await GET(makeRequest('req-1'))).json();
+    const json = await (await GET(makeRequest(REQUEST_ID))).json();
 
     expect(json).toEqual({
-      requestId: 'req-1',
+      requestId: REQUEST_ID,
       status: 'completed',
       progress: { phase: 'completed', message: '完了！', percentage: 100 },
       result: { stats },
@@ -136,7 +140,7 @@ describe('GET /api/shopping-list/regenerate/status: 失敗の文 (#1172)', () =>
   it('処理中で result がまだ無い (null) ときは null のまま返す', async () => {
     singleResultQueue.push({
       data: {
-        id: 'req-1',
+        id: REQUEST_ID,
         status: 'processing',
         progress: { phase: 'starting', message: '開始中...', percentage: 0 },
         result: null,
@@ -144,7 +148,7 @@ describe('GET /api/shopping-list/regenerate/status: 失敗の文 (#1172)', () =>
       error: null,
     });
 
-    const json = await (await GET(makeRequest('req-1'))).json();
+    const json = await (await GET(makeRequest(REQUEST_ID))).json();
 
     expect(json.status).toBe('processing');
     expect(json.result).toBeNull();
@@ -154,7 +158,7 @@ describe('GET /api/shopping-list/regenerate/status: 失敗の文 (#1172)', () =>
   it('オブジェクトでない result (文字列) は中身を返さず null にする', async () => {
     singleResultQueue.push({ data: failedRow('relation "shopping_list_requests" does not exist'), error: null });
 
-    const res = await GET(makeRequest('req-1'));
+    const res = await GET(makeRequest(REQUEST_ID));
     const text = await res.text();
 
     expect(JSON.parse(text).result).toBeNull();
@@ -164,10 +168,10 @@ describe('GET /api/shopping-list/regenerate/status: 失敗の文 (#1172)', () =>
   it('本人の行だけを引く (user_id で絞る)', async () => {
     singleResultQueue.push({ data: failedRow({ error: AI_CONSENT_REQUIRED_MESSAGE }), error: null });
 
-    await GET(makeRequest('req-1'));
+    await GET(makeRequest(REQUEST_ID));
 
     expect(mockSelect).toHaveBeenCalledWith('id, status, progress, result');
-    expect(mockEq1).toHaveBeenCalledWith('id', 'req-1');
+    expect(mockEq1).toHaveBeenCalledWith('id', REQUEST_ID);
     expect(mockEq2).toHaveBeenCalledWith('user_id', user.id);
   });
 });

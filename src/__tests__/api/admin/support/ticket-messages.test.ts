@@ -478,7 +478,8 @@ describe('POST /api/admin/support/tickets/[id]/messages: 認可・入力検証�
 
   it('チケットが存在しない: 404。メールは送らない', async () => {
     userDb = createUserClientFake({
-      ticket: { data: null, error: { message: 'no rows' } },
+      // maybeSingle は行が無いと data: null・error: null を返す (#1917。DB の失敗は 404 ではなく 500)
+      ticket: { data: null, error: null },
       message: { data: null, error: null },
       ticketUpdate: { data: null, error: null },
       thread: [],

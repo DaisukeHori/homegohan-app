@@ -15,7 +15,7 @@ import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
 import { authFailureNested } from '@/lib/api/error-responses';
 import { z } from 'zod';
 import { internalError } from '@/lib/api/errors';
-import { resolveBeyondLastPage } from '@/lib/api/list-range';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 
 export const dynamic = 'force-dynamic';
 
@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
     const selectMembershipAudit = (options: { head?: boolean } = {}) => {
       let query = supabase
         .from('membership_audit')
-        .select('*', { count: 'exact', head: options.head === true });
+        .select('*', listCountOptions(options.head));
 
       if (scope) query = query.eq('scope', scope);
       if (action) query = query.ilike('action', `%${action}%`);
