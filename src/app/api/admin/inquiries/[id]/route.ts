@@ -10,6 +10,13 @@
  * 詳細は問い合わせ本文と管理者メモを返すため、返すたびに admin_audit_logs へ記録する
  * (admin.inquiry.view。#1200 の方針: 対象は情報を見られた本人、details は項目名だけ、記録に失敗しても返す)。
  * 更新も、更新後の問い合わせ (本文を含む) を返すので、変更が無い更新を含めて毎回記録する (admin.inquiry.update)。
+ *
+ * 同時の更新: 更新は「直前に読んだ status と updated_at のままなら書く」条件つきにする (読んでから書くまでに
+ * 別の運営が変えていたら 0 行。updated_at は inquiries の UPDATE のたびにトリガー trigger_inquiries_updated_at が進める)。
+ * 0 行なら読み直し、送られた変更がすでに入っていれば書かずに今の行を返し (変更なしとして記録する)、
+ * 入っていなければ 409 CONFLICT_STALE_DATA (cross/04 §4.2)。これで監査の status_from と resolved_at の元にした値は、
+ * 書いた時点の実際の直前の値と必ず一致し、別の運営が書いた管理者メモを古い画面のメモで黙って上書きしない。
+ * (管理者メモ自体を条件にしないのは、最大 5000 文字のメモが PostgREST の URL に入ってしまうため。updated_at で足りる)
  */
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
@@ -25,6 +32,7 @@ import {
   fetchNicknames,
   inquiryAuditTarget,
   inquiryIdSchema,
+  inquiryUpdateAlreadyApplied,
   inquiryUpdateBodySchema,
   nextResolvedAt,
   normalizeAdminNotes,
@@ -36,6 +44,9 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 export const dynamic = 'force-dynamic';
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+/** 読んでから書くまでに別の運営がこの問い合わせを変えていた (条件つきの更新が 0 行で、送られた変更が入っていない) */
+const STALE_INQUIRY_MESSAGE = '別の運営が先にこの問い合わせを更新しました。画面を開き直して、もう一度確認してください';
 
 export async function GET(request: Request, props: RouteContext) {
   const params = await props.params;
@@ -171,11 +182,20 @@ async function updateInquiry(request: Request, { params }: RouteContext, method:
 
   // 変更が無いときは書き込まない (updated_at を動かさない)
   let row = current;
+  // 監査の status_from: この要求が書いた直前の値 (書かなかったときは返す行の値)
+  let statusFrom = current.status;
   if (statusChanged || notesChanged) {
-    const { data: updatedData, error: updateError } = await supabase
+    // 直前に読んだ status と updated_at のままのときだけ書く (読んでから書くまでに別の運営が変えていたら 0 行)。
+    // updated_at の列は NULL を許すので、読んだ値が NULL なら .eq ではなく .is で比べる (PostgREST の eq.null は NULL に一致しない)
+    const updateQuery = supabase
       .from('inquiries')
       .update(update)
       .eq('id', id)
+      .eq('status', current.status);
+    const { data: updatedData, error: updateError } = await (current.updated_at === null
+      ? updateQuery.is('updated_at', null)
+      : updateQuery.eq('updated_at', current.updated_at)
+    )
       .select(INQUIRY_COLUMNS)
       .maybeSingle();
 
@@ -183,11 +203,33 @@ async function updateInquiry(request: Request, { params }: RouteContext, method:
       log.error('問い合わせの更新に失敗しました', updateError, { inquiry_id: id });
       return errorResponse(500, 'INTERNAL_ERROR', '問い合わせの更新に失敗しました');
     }
-    if (!updatedData) {
-      // 読み込みから更新までの間に削除された
-      return errorResponse(404, 'NOT_FOUND', '問い合わせが見つかりません');
+    if (updatedData) {
+      row = updatedData as InquiryRow;
+    } else {
+      // 0 行: 読んでから書くまでに、別の運営がこの問い合わせを変えた (または消えた)。読み直して決める
+      const { data: rereadData, error: rereadError } = await supabase
+        .from('inquiries')
+        .select(INQUIRY_COLUMNS)
+        .eq('id', id)
+        .maybeSingle();
+      if (rereadError) {
+        log.error('問い合わせの読み直しに失敗しました', rereadError, { inquiry_id: id });
+        return errorResponse(500, 'INTERNAL_ERROR', '問い合わせの更新に失敗しました');
+      }
+      if (!rereadData) {
+        return errorResponse(404, 'NOT_FOUND', '問い合わせが見つかりません');
+      }
+      const reread = rereadData as InquiryRow;
+      if (!inquiryUpdateAlreadyApplied(reread, input)) {
+        // 書いていないので記録もしない (先の運営の変更は、その運営の監査に残っている)
+        return errorResponse(409, 'CONFLICT_STALE_DATA', STALE_INQUIRY_MESSAGE);
+      }
+      // 別の運営が同じ変更を先にしていた: 書かずに今の行を返す。本文を返すので、変更なしとして記録する
+      row = reread;
+      statusFrom = reread.status;
+      statusChanged = false;
+      notesChanged = false;
     }
-    row = updatedData as InquiryRow;
   }
 
   const { targetId, targetType } = inquiryAuditTarget(row);
@@ -205,7 +247,7 @@ async function updateInquiry(request: Request, { params }: RouteContext, method:
       // ステータスの前後と、メモを変えたかどうかだけ。メモの中身は入れない
       details: {
         inquiry_id: id,
-        status_from: current.status,
+        status_from: statusFrom,
         status_to: row.status,
         admin_notes_changed: notesChanged,
         changed: statusChanged || notesChanged,
