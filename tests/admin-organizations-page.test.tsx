@@ -12,7 +12,9 @@
  *     API のエラーメッセージ (同じユーザーが別の組織に所属している、など) をそのまま出す
  *   - プランの変更 (#1912: 組織のプランの段階は運営だけが変える): 一覧の行のプランを選び直して「変更」を押すと
  *     PATCH /api/admin/organizations/{id} に { plan } を送り、成功したらその行だけを返ってきた値に置き換える。
- *     今と同じプランのあいだは「変更」を押せない。失敗したら API のメッセージを出し、行は変えない
+ *     今と同じプランのあいだは「変更」を押せない。失敗したら API のメッセージを出し、行は変えない。
+ *     ただし行の表示が古いことで断られた (409 CONFLICT_STALE_DATA・404 NOT_FOUND) ときは、今の条件のまま一覧を読み直し、
+ *     理由の文を一覧の上に出す (運営が手で読み直さなくてよい)
  *   - 入力欄はラベルと結びつき、ボタンには type がある
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
@@ -856,13 +858,14 @@ describe('プランの変更', () => {
     expect(alerts()).toEqual([]);
   });
 
-  it('API のエラー (404 など) はそのメッセージを出し、行のプランは変えない。通信エラーは汎用の日本語のメッセージ', async () => {
+  it('API のエラー (500・400 など、行が古いこと以外) はそのメッセージを欄に出し、行のプランは変えず、一覧も取り直さない。通信エラーは汎用の日本語のメッセージ', async () => {
     let calls = 0;
     mockApi({
       list: () => jsonResponse(200, listBody([ORG_1])),
       changePlan: () => {
         calls += 1;
-        if (calls === 1) return jsonResponse(404, errorBody('NOT_FOUND', '組織が見つかりません'));
+        if (calls === 1) return jsonResponse(500, errorBody('INTERNAL_ERROR', '組織のプランを変更できませんでした'));
+        if (calls === 2) return jsonResponse(400, errorBody('VALIDATION_ERROR', 'バリデーションエラー'));
         throw new TypeError('Failed to fetch');
       },
     });
@@ -870,14 +873,130 @@ describe('プランの変更', () => {
 
     await choose(planSelect(ORG_1.id), 'premium');
     await click(changeButton(ORG_1.id), '変更ボタン');
-    expect(alerts()).toEqual(['組織が見つかりません']);
+    expect(alerts()).toEqual(['組織のプランを変更できませんでした']);
     expect(rows()[0][1]).toBe('standard');
     expect(planSelect(ORG_1.id).value).toBe('premium');
+
+    await click(changeButton(ORG_1.id), '変更ボタン');
+    expect(alerts()).toEqual(['バリデーションエラー']);
+    expect(rows()[0][1]).toBe('standard');
 
     await click(changeButton(ORG_1.id), '変更ボタン');
     expect(alerts()).toEqual(['プランを変更できませんでした。しばらくしてから、もう一度お試しください。']);
     expect(rows()[0][1]).toBe('standard');
     expect(statuses()).toEqual([]);
+    expect(callsOf('GET')).toHaveLength(1);
+  });
+
+  it('409 CONFLICT_STALE_DATA (別の運営が先に変えた) なら、今の条件のまま一覧を読み直して行を今のプランにし、理由の文を一覧の上に出す', async () => {
+    const SEARCHED = org(1, { name: '株式会社エー', plan: 'standard' });
+    let listCalls = 0;
+    mockApi({
+      list: () => {
+        listCalls += 1;
+        // 2 回目 (検索) は古い standard、3 回目 (読み直し) は別の運営が変えた後の enterprise
+        return jsonResponse(200, listBody([listCalls <= 2 ? SEARCHED : { ...SEARCHED, plan: 'enterprise' }]));
+      },
+      changePlan: () =>
+        jsonResponse(
+          409,
+          errorBody('CONFLICT_STALE_DATA', '別の運営が先にこの組織のプランを変えました。一覧を読み込み直して、もう一度確認してください'),
+        ),
+    });
+    await renderPage();
+    await search('エー', 'standard');
+    expect(callsOf('GET')).toHaveLength(2);
+
+    await choose(planSelect(SEARCHED.id), 'premium');
+    await click(changeButton(SEARCHED.id), '変更ボタン');
+
+    expect(patchCalls()).toHaveLength(1);
+    // 読み直しは、検索の条件 (組織名・プラン・ページ) を変えない
+    expect(callsOf('GET')).toHaveLength(3);
+    expect(listParams(2)).toEqual(listParams(1));
+    expect(rows().map((cells) => cells.slice(0, 2))).toEqual([['株式会社エー', 'enterprise']]);
+    expect(planSelect(SEARCHED.id).value).toBe('enterprise');
+    expect(changeButton(SEARCHED.id)?.disabled).toBe(true);
+    expect(alerts()).toEqual([
+      '組織「株式会社エー」のプランは、別の運営が先に変えていました。一覧を読み込み直したので、今のプランを確かめてから、もう一度変更してください。',
+    ]);
+    expect(statuses()).toEqual([]);
+  });
+
+  it('404 NOT_FOUND (組織がもう無い) なら、一覧を読み直して消えた行を外し、理由の文を一覧の上に出す', async () => {
+    let listCalls = 0;
+    mockApi({
+      list: () => {
+        listCalls += 1;
+        return jsonResponse(200, listBody(listCalls === 1 ? [ORG_1, ORG_2] : [ORG_2]));
+      },
+      changePlan: () => jsonResponse(404, errorBody('NOT_FOUND', '組織が見つかりません')),
+    });
+    await renderPage();
+
+    await choose(planSelect(ORG_1.id), 'premium');
+    await click(changeButton(ORG_1.id), '変更ボタン');
+
+    expect(callsOf('GET')).toHaveLength(2);
+    expect(names()).toEqual(['株式会社ビー']);
+    expect(alerts()).toEqual(['組織「株式会社エー」が見つかりませんでした (解散などで消えた可能性があります)。一覧を読み込み直しました。']);
+  });
+
+  it('404 でも本文に code が無い (ルートが無いなどの HTML の 404) ときは、読み直さずに汎用のエラーを欄に出す', async () => {
+    mockApi({
+      list: () => jsonResponse(200, listBody([ORG_1])),
+      changePlan: () => new Response('<html>Not Found</html>', { status: 404, headers: { 'content-type': 'text/html' } }),
+    });
+    await renderPage();
+
+    await choose(planSelect(ORG_1.id), 'premium');
+    await click(changeButton(ORG_1.id), '変更ボタン');
+
+    expect(callsOf('GET')).toHaveLength(1);
+    expect(alerts()).toEqual(['プランを変更できませんでした。しばらくしてから、もう一度お試しください。']);
+    expect(rows()[0][1]).toBe('standard');
+  });
+
+  it('次の変更を始めると、前の結果の表示 (変更の通知・読み直しの文) は消える', async () => {
+    let patches = 0;
+    let listCalls = 0;
+    const slowThird = deferred<Response>();
+    mockApi({
+      list: () => {
+        listCalls += 1;
+        return jsonResponse(200, listBody([listCalls === 1 ? ORG_1 : { ...ORG_1, plan: 'enterprise' }, ORG_2]));
+      },
+      changePlan: (id) => {
+        patches += 1;
+        if (patches === 1) return jsonResponse(409, errorBody('CONFLICT_STALE_DATA', '別の運営が先にこの組織のプランを変えました。'));
+        if (patches === 2) return jsonResponse(200, { organization: { ...ORG_2, plan: 'standard' } });
+        expect(id).toBe(ORG_2.id);
+        return slowThird.promise;
+      },
+    });
+    await renderPage();
+
+    await choose(planSelect(ORG_1.id), 'premium');
+    await click(changeButton(ORG_1.id), '変更ボタン');
+    expect(alerts()).toHaveLength(1);
+
+    // 次の変更 (成功) を始めると、読み直しの文は消え、成功の通知だけになる
+    await choose(planSelect(ORG_2.id), 'standard');
+    await click(changeButton(ORG_2.id), '変更ボタン');
+    expect(alerts()).toEqual([]);
+    expect(statuses()).toEqual(['組織「株式会社ビー」のプランを standard に変更しました。']);
+
+    // さらに次の変更を始めた時点で、前の成功の通知も消える
+    await choose(planSelect(ORG_2.id), 'enterprise');
+    await click(changeButton(ORG_2.id), '変更ボタン');
+    expect(statuses()).toEqual([]);
+    expect(alerts()).toEqual([]);
+
+    await act(async () => {
+      slowThird.resolve(jsonResponse(200, { organization: { ...ORG_2, plan: 'enterprise' } }));
+    });
+    await settle();
+    expect(statuses()).toEqual(['組織「株式会社ビー」のプランを enterprise に変更しました。']);
   });
 
   it('想定外の形の応答 (organization が無い) は成功と見せず、汎用のエラーにする', async () => {
