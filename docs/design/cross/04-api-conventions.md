@@ -650,7 +650,7 @@ import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
 
 export async function GET() {
-  // ... 認証 (401 は { error: 'Unauthorized' } などこちらで決めた文)
+  // ... 認証 (401 は { error: API_UNAUTHENTICATED_MESSAGE } (src/lib/api/error-responses.ts の「ログインが必要です」) などこちらで決めた日本語の固定の文。#1917)
   const { data, error } = await supabase.from('health_goals').select('*').eq('user_id', user.id); // (抜粋)
   if (error) {
     // 本文は { error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' }。DB の生のエラー文はログにだけ残る

@@ -116,6 +116,15 @@ describe("mapPgErrorToHttp", () => {
     expect(MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.ORG_ALREADY_DISSOLVED]).toBe("この組織はすでに解散しています。");
   });
 
+  it("#1917 の続き: REPRESENTATIVE_ACCOUNT_DELETING (家族の行のトリガーが退会の手続き中の人を代表者にしない) は 409 で検出され、日本語の固定の文を持つ", () => {
+    const r = mapPgErrorToHttp("REPRESENTATIVE_ACCOUNT_DELETING", "P0001");
+    expect(r.code).toBe(MembershipErrorCode.REPRESENTATIVE_ACCOUNT_DELETING);
+    expect(r.status).toBe(409);
+    expect(MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.REPRESENTATIVE_ACCOUNT_DELETING]).toBe(
+      "退会の手続き中のため、家族グループの作成や家族の代表者の引き受けはできません。",
+    );
+  });
+
   // #1232: 子供メンバー昇格の本人同意フロー
   it("#1232: 40P01 (deadlock_detected) は CONFLICT_RETRY/409 に正規化される", () => {
     const r = mapPgErrorToHttp("deadlock detected", "40P01");
