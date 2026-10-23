@@ -7,22 +7,59 @@
  *
  * #1571: 活動の記録は運営の操作で状態 (営業リードの活動履歴) を変えるので、
  * 追加できたときに admin.sales.lead.activity_add を監査ログに 1 行残す (対象はリード。details は活動の種類と ID だけ)。
+ *
+ * 読み込みの DB の失敗 (#1917 の整合の候補 C19 と同じ型): 追加の前のリードの存在の確認は、DB の失敗を 500 INTERNAL_ERROR にし、
+ * リードの行が無いときだけ 404 にする (一時的な失敗でリードが消えたように見せない)。
+ * UUID の形でない id は、DB に渡す前に 404 NOT_FOUND で断る (GET・POST とも)。uuid 型の列に渡すと 22P02 で失敗し、
+ * 「DB の失敗は 500」に入ってしまうため (形の違う id は「そのリードは無い」と同じに扱う)。
+ * 追加のあとのリードの updated_at の更新に失敗しても、活動は追加できているので 201 のまま (fail-open)。失敗は db-logger に error で残す。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createActivitySchema } from '@/lib/admin/sales-schemas';
-import { internalError } from '@/lib/api/errors';
+import { errorCodeOf, internalError, toLoggableError } from '@/lib/api/errors';
+import { createLogger } from '@/lib/db-logger';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { recordAdminAudit } from '@/lib/admin/audit';
+import { isUuid } from '@/lib/http-params';
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+const LEAD_NOT_FOUND_RESPONSE = { error: { code: 'NOT_FOUND', message: 'Lead not found' } } as const;
+
+/** 構造化ログ (app_logs.function_name) に出す名前 */
+const POST_ROUTE_NAME = 'POST /api/admin/sales/leads/[id]/activities';
+
+/** 活動の追加のあとのリードの updated_at の更新の失敗を db-logger に error で残す (応答は変えない) */
+const LEAD_TOUCH_FAILURE_MESSAGE = '活動の追加のあとのリード (sales_leads) の updated_at の更新に失敗しました';
+
+function logLeadTouchFailure(error: unknown, context: { userId: string; leadId: string; activityId: string }): void {
+  try {
+    const errorCode = errorCodeOf(error);
+    createLogger(POST_ROUTE_NAME)
+      .withUser(context.userId)
+      .error(LEAD_TOUCH_FAILURE_MESSAGE, toLoggableError(error), {
+        ...(errorCode ? { error_code: errorCode } : {}),
+        lead_id: context.leadId,
+        activity_id: context.activityId,
+      });
+  } catch {
+    // ログ出力の失敗で、追加の応答を止めない
+  }
+}
 
 export async function GET(_request: NextRequest, props: RouteContext) {
   const params = await props.params;
   try {
     await requireRole(['sales', 'admin', 'super_admin']);
+
+    // UUID の形でない id は DB に渡さず 404 (渡すと 22P02 で下の「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(LEAD_NOT_FOUND_RESPONSE, { status: 404 });
+    }
+
     const supabase = await createClient();
 
     const { data, error } = await supabase
@@ -74,21 +111,27 @@ export async function POST(request: NextRequest, props: RouteContext) {
       );
     }
 
+    // UUID の形でない id は DB に渡さず 404 (渡すと 22P02 で下の「読み込みの DB の失敗は 500」に入る)。
+    // 本文の検査のあとに置くのは、行が無い UUID と同じ順 (400 → 404) にそろえるため
+    if (!isUuid(params.id)) {
+      return NextResponse.json(LEAD_NOT_FOUND_RESPONSE, { status: 404 });
+    }
+
     const { activity_type, details } = parseResult.data;
     const supabase = await createClient();
 
-    // リード存在確認
+    // リード存在確認。読めなかったときは 404 にしない (行が無いときだけ 404)
     const { data: lead, error: leadError } = await supabase
       .from('sales_leads')
       .select('id')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
-    if (leadError || !lead) {
-      return NextResponse.json(
-        { error: { code: 'NOT_FOUND', message: 'Lead not found' } },
-        { status: 404 },
-      );
+    if (leadError) {
+      return internalError(POST_ROUTE_NAME, leadError, { userId: currentUser.id, table: 'sales_leads' }, { shape: 'nested' });
+    }
+    if (!lead) {
+      return NextResponse.json(LEAD_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     const { data: activity, error: activityError } = await supabase
@@ -103,14 +146,17 @@ export async function POST(request: NextRequest, props: RouteContext) {
       .single();
 
     if (activityError || !activity) {
-      return internalError('POST /api/admin/sales/leads/[id]/activities', activityError, { userId: currentUser.id }, { shape: 'nested' });
+      return internalError(POST_ROUTE_NAME, activityError, { userId: currentUser.id }, { shape: 'nested' });
     }
 
-    // リードの updated_at を更新
-    await supabase
+    // リードの updated_at を更新。失敗しても活動は追加できているので 201 のまま (失敗は db-logger に error で残す)
+    const { error: touchError } = await supabase
       .from('sales_leads')
       .update({ updated_at: new Date().toISOString() })
       .eq('id', params.id);
+    if (touchError) {
+      logLeadTouchFailure(touchError, { userId: currentUser.id, leadId: params.id, activityId: activity.id });
+    }
 
     // 監査ログ (#1571)。活動の本文 (details) は営業メモで連絡先などを含みうるので入れない。記録に失敗しても追加は成功のまま (失敗は db-logger に残る)
     await recordAdminAudit({
