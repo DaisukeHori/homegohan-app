@@ -3,6 +3,15 @@ import { createClient } from "@/lib/supabase/server";
 import { createLogger, generateRequestId } from "@/lib/db-logger";
 import { checkRateLimit, rateLimitExceededResponse } from "@/lib/rate-limit";
 import { userScopedStoragePath } from "@/lib/storage-paths";
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+
+// 失敗の本文の文 (#1917。画面とモバイルがそのまま出すので日本語の固定の文にする)
+/** 400: ファイルが無い */
+const FILE_REQUIRED_MESSAGE = 'ファイルを選んでください';
+/** 400: 許可していない種類のファイル (宣言の MIME タイプ・中身の magic bytes のどちらかが合わない) */
+const FILE_TYPE_NOT_ALLOWED_MESSAGE = 'このファイルの種類はアップロードできません。JPEG・PNG・WebP の画像か PDF を選んでください';
+/** 500: 保存に失敗した (原因はサーバーのログにだけ残す) */
+const UPLOAD_FAILED_MESSAGE = 'アップロードできませんでした。時間をおいて、もう一度お試しください';
 
 
 // magic bytes の 1 区間: ファイル先頭から offset バイト目以降に bytes がそのまま並んでいること
@@ -30,7 +39,9 @@ const ALLOWED_MIME_TYPES: Record<string, MagicBytesPart[][]> = {
     [{ offset: 0, bytes: [0x25, 0x50, 0x44, 0x46, 0x2D] }], // %PDF-
   ],
 };
-const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
+/** 1MB のバイト数 (上限の文で MB に直すため) */
+const BYTES_PER_MEGABYTE = 1024 * 1024;
+const MAX_FILE_SIZE_BYTES = 10 * BYTES_PER_MEGABYTE; // 10MB
 
 // 全区間が一致するか。ファイルが短くて区間が収まらない場合は範囲外を読まずに不一致とする
 function matchesMagicBytes(buffer: Uint8Array, parts: MagicBytesPart[]): boolean {
@@ -58,7 +69,7 @@ export async function POST(request: Request) {
   try {
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
     log = logger.withUser(user.id);
 
@@ -76,13 +87,13 @@ export async function POST(request: Request) {
     const folder = formData.get('folder') as string || 'uploads';
 
     if (!file) {
-      return NextResponse.json({ error: 'File is required' }, { status: 400 });
+      return NextResponse.json({ error: FILE_REQUIRED_MESSAGE }, { status: 400 });
     }
 
     // サイズ検証
     if (file.size > MAX_FILE_SIZE_BYTES) {
       return NextResponse.json(
-        { error: `File size exceeds limit of ${MAX_FILE_SIZE_BYTES / 1024 / 1024}MB` },
+        { error: `ファイルの大きさは ${MAX_FILE_SIZE_BYTES / BYTES_PER_MEGABYTE}MB までです` },
         { status: 400 }
       );
     }
@@ -94,14 +105,14 @@ export async function POST(request: Request) {
     // MIME タイプ検証 (宣言値 + magic bytes 両方チェック)
     if (!Object.keys(ALLOWED_MIME_TYPES).includes(file.type)) {
       return NextResponse.json(
-        { error: `File type '${file.type}' is not allowed` },
+        { error: FILE_TYPE_NOT_ALLOWED_MESSAGE },
         { status: 400 }
       );
     }
     const detectedMime = detectMimeByMagicBytes(buffer);
     if (!detectedMime) {
       return NextResponse.json(
-        { error: 'File content does not match an allowed type' },
+        { error: FILE_TYPE_NOT_ALLOWED_MESSAGE },
         { status: 400 }
       );
     }
@@ -136,7 +147,7 @@ export async function POST(request: Request) {
         content_type: detectedMime,
         size: file.size,
       });
-      return NextResponse.json({ error: 'Upload failed' }, { status: 500 });
+      return NextResponse.json({ error: UPLOAD_FAILED_MESSAGE }, { status: 500 });
     }
 
     // 保存形 (公開 URL と同じ形の識別子。バケットは非公開なので、そのままでは読めない。表示は署名付き URL)
@@ -149,6 +160,6 @@ export async function POST(request: Request) {
   } catch (error) {
     // 回数制限の判定に失敗した例外 (Redis 障害など) もここに届く。内部のエラー文はレスポンスに載せない (#1172)
     log.error('Upload API error', error);
-    return NextResponse.json({ error: 'Upload failed' }, { status: 500 });
+    return NextResponse.json({ error: UPLOAD_FAILED_MESSAGE }, { status: 500 });
   }
 }

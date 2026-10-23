@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { NO_FIELDS_TO_UPDATE_MESSAGE } from '@/lib/api/user-api-error-messages';
 
 // data_share_enabled (旧「トレーナーと共有」) について (#1144):
 //   Web とアプリの設定画面からは、この項目を外した。トレーナーなどに共有する機能は無く、この値を読んで何かをするコードも無い。
@@ -26,7 +28,7 @@ export async function GET(_request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { data, error } = await supabase
@@ -59,14 +61,14 @@ export async function PATCH(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   let body: Record<string, unknown>;
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+    return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
   }
 
   // data_share_enabled は旧ビルドのアプリ向けに受け付けるだけ (上のコメント参照。値は同意ではない)
@@ -76,14 +78,14 @@ export async function PATCH(request: NextRequest) {
   for (const key of allowed) {
     if (key in body) {
       if (typeof body[key] !== 'boolean') {
-        return NextResponse.json({ error: `${key} must be boolean` }, { status: 400 });
+        return NextResponse.json({ error: `${key} はオン (true) かオフ (false) で指定してください` }, { status: 400 });
       }
       patch[key] = body[key] as boolean;
     }
   }
 
   if (Object.keys(patch).length === 0) {
-    return NextResponse.json({ error: 'No valid fields provided' }, { status: 400 });
+    return NextResponse.json({ error: NO_FIELDS_TO_UPDATE_MESSAGE }, { status: 400 });
   }
 
   // upsertでselect→分岐を1クエリに集約し、並列アクセス時の競合とレイテンシを解消

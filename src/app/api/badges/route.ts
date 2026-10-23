@@ -9,6 +9,11 @@ import {
 import { toBadgePeriodAwardsByBadgeId, type BadgePeriodAwards } from '@homegohan/shared';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+
+
+/** 500: バッジの一覧を読めなかった (原因はサーバーのログにだけ残す) */
+const BADGES_LOAD_FAILED_MESSAGE = 'バッジの一覧を読み込めませんでした。時間をおいて、もう一度お試しください';
 
 export async function GET(request: Request) {
   const supabase = await createClient();
@@ -17,7 +22,7 @@ export async function GET(request: Request) {
   try {
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
     // 1〜3. 互いに独立な 6 クエリを並列に取得する (#1215。#1528 で 6 本目を足した)。
@@ -89,7 +94,7 @@ export async function GET(request: Request) {
       logger.withUser(user.id).error('badges API query failed', failedQueries[0].error, {
         failed_queries: failedQueries.map((q) => q.query),
       });
-      return NextResponse.json({ error: 'Failed to load badges' }, { status: 500 });
+      return NextResponse.json({ error: BADGES_LOAD_FAILED_MESSAGE }, { status: 500 });
     }
 
     // 取った期間は、獲得済みのバッジに添える飾りで、獲得・未獲得の判定には使わない。読めなかったときは 500 にせず、

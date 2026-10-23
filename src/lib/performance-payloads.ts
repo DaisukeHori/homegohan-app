@@ -15,6 +15,9 @@ type ValidationResult<T extends object> = {
 
 type PlainObject = Record<string, unknown>;
 
+/** 400: 本文が JSON のオブジェクトでない (route の 400 の本文の error に入る。#1917 で日本語にした) */
+export const CHECKIN_BODY_NOT_OBJECT_MESSAGE = '本文は JSON のオブジェクトで送ってください';
+
 // PerformanceCheckin (types/domain.ts) の各フィールドは null を許容しないため、
 // このペイロードも同じ形（値 or 未設定＝undefined）に揃える。
 // 空値/null が送られた場合は「未設定」（フィールドを省略しキーごと保存しない）として扱う。
@@ -55,8 +58,10 @@ function parseNullableNumber(
   // （フィールド自体を省略し、既存値を変更しない）。
   if (value == null || value === '') return undefined;
 
+  // 400 の本文の error にそのまま入る文なので日本語にする (#1917)
+  const label = opts.label ?? key;
   if (typeof value === 'string' && !/^-?\d+(\.\d+)?$/.test(value.trim())) {
-    errors.push(`${key} must be a finite number or null`);
+    errors.push(`${label} は数値で入力してください`);
     return undefined;
   }
 
@@ -68,16 +73,15 @@ function parseNullableNumber(
         : Number.NaN;
 
   if (!Number.isFinite(numeric)) {
-    errors.push(`${key} must be a finite number or null`);
+    errors.push(`${label} は数値で入力してください`);
     return undefined;
   }
 
   if (opts.integer && !Number.isInteger(numeric)) {
-    errors.push(`${key} must be an integer or null`);
+    errors.push(`${label} は整数で入力してください`);
     return undefined;
   }
 
-  const label = opts.label ?? key;
   if (opts.min !== undefined && numeric < opts.min) {
     errors.push(`${label} は ${opts.min} 以上の値を入力してください`);
     return undefined;
@@ -90,19 +94,19 @@ function parseNullableNumber(
   return numeric;
 }
 
-function parseNullableString(input: PlainObject, key: string, errors: string[], maxLen = 2000): string | undefined {
+function parseNullableString(input: PlainObject, key: string, errors: string[], label: string, maxLen = 2000): string | undefined {
   if (!hasOwn(input, key)) return undefined;
 
   const value = input[key];
   if (value == null) return undefined;
   if (typeof value !== 'string') {
-    errors.push(`${key} must be a string or null`);
+    errors.push(`${label} は文字列で入力してください`);
     return undefined;
   }
 
   const trimmed = value.trim();
   if (trimmed.length > maxLen) {
-    errors.push(`${key} は ${maxLen} 文字以内で入力してください`);
+    errors.push(`${label} は ${maxLen} 文字以内で入力してください`);
     return undefined;
   }
 
@@ -121,7 +125,7 @@ const SCALE_1_5_FIELDS: Record<string, string> = {
 
 export function sanitizePerformanceCheckinPayload(input: unknown): ValidationResult<PerformanceCheckinInputPayload> {
   if (!isPlainObject(input)) {
-    return { data: {}, errors: ['Body must be a JSON object'] };
+    return { data: {}, errors: [CHECKIN_BODY_NOT_OBJECT_MESSAGE] };
   }
 
   const errors: string[] = [];
@@ -177,7 +181,7 @@ export function sanitizePerformanceCheckinPayload(input: unknown): ValidationRes
   });
   if (restingHeartRate !== undefined) data.restingHeartRate = restingHeartRate;
 
-  const note = parseNullableString(input, 'note', errors);
+  const note = parseNullableString(input, 'note', errors, 'メモ (note)');
   if (note !== undefined) data.note = note;
 
   return { data, errors };

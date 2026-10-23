@@ -5,6 +5,8 @@ import { internalError } from '@/lib/api/errors';
 import type { MealType } from '@homegohan/shared';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { normalizeUuid } from '@/lib/http-params';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { MEAL_NOT_FOUND_MESSAGE, REQUIRED_FIELDS_MISSING_MESSAGE } from '@/lib/api/user-api-error-messages';
 
 // 食事タイプのカテゴリ（順序変更の制約用）
 const MEAL_CATEGORIES: Record<MealType, number> = {
@@ -21,13 +23,13 @@ export async function POST(request: Request) {
   if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
     const { mealId: rawMealId, direction, dayId: rawDayId } = await request.json();
     
     if (!rawMealId || !direction || !rawDayId) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+      return NextResponse.json({ error: REQUIRED_FIELDS_MISSING_MESSAGE }, { status: 400 });
     }
     // DB の id は小文字。大文字・混在で送られた mealId が findIndex の === で 404 にならないよう、受け取った直後にそろえ、
     // 以後 (照合・DB) はそろえた値だけを使う (#1793。文字列でない値はそのまま = 今までどおり見つからない)
@@ -43,13 +45,13 @@ export async function POST(request: Request) {
 
     if (fetchError) throw fetchError;
     if (!meals || meals.length === 0) {
-      return NextResponse.json({ error: 'No meals found' }, { status: 404 });
+      return NextResponse.json({ error: MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     // 現在の食事を見つける
     const currentIndex = meals.findIndex(m => m.id === mealId);
     if (currentIndex === -1) {
-      return NextResponse.json({ error: 'Meal not found' }, { status: 404 });
+      return NextResponse.json({ error: MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     const currentMeal = meals[currentIndex];

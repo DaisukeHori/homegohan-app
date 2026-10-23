@@ -125,15 +125,16 @@ export async function POST(request: Request) {
       p_birth_date: birth_date ?? null,
     });
     if (error) {
-      const message = error.message ?? '';
+      // 判定にだけ使う DB の文。本文には入れない (名前を本文の message と分けて、走査 (#1917) が本文の文と取り違えないようにする)
+      const rpcErrorText = error.message ?? '';
       // #1173: 関数が断った理由のうち、利用者が直せるもの。本文は固定の文 (DB の生の文は出さない)
-      if (message.includes(LEGAL_MINOR_SELF_SIGNUP_REFUSED)) {
+      if (rpcErrorText.includes(LEGAL_MINOR_SELF_SIGNUP_REFUSED)) {
         return errorResponse(403, LEGAL_MINOR_SELF_SIGNUP_REFUSED, LEGAL_CONSENT_BIRTH_DATE_COPY.minorRefusedHeading);
       }
-      if (message.includes(LEGAL_BIRTH_DATE_REQUIRED)) {
+      if (rpcErrorText.includes(LEGAL_BIRTH_DATE_REQUIRED)) {
         return errorResponse(400, LEGAL_BIRTH_DATE_REQUIRED, LEGAL_CONSENT_BIRTH_DATE_COPY.invalid);
       }
-      if (message.includes(LEGAL_BIRTH_DATE_INVALID)) {
+      if (rpcErrorText.includes(LEGAL_BIRTH_DATE_INVALID)) {
         return errorResponse(400, LEGAL_BIRTH_DATE_INVALID, LEGAL_CONSENT_BIRTH_DATE_COPY.invalid);
       }
       // 元のエラーは構造化ログにだけ残し、利用者には汎用メッセージの 500 を返す (本文の形は、この route の 4xx と同じ nested)

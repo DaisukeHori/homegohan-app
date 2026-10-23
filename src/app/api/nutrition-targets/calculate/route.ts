@@ -3,6 +3,11 @@ import { NextResponse } from 'next/server';
 import { calculateNutritionTargets } from '@homegohan/core';
 import { buildNutritionCalculatorInput } from '@/lib/build-nutrition-input';
 import { internalError } from '@/lib/api/errors';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+
+
+/** 404: プロフィールが無い (栄養の目標はプロフィールから計算する) */
+const PROFILE_NOT_FOUND_MESSAGE = 'プロフィールが見つかりません。先にプロフィールを登録してください';
 
 /**
  * 栄養目標を計算・保存するAPI
@@ -17,7 +22,7 @@ export async function POST() {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   try {
@@ -29,7 +34,7 @@ export async function POST() {
       .single();
 
     if (profileError || !profile) {
-      return NextResponse.json({ error: 'Profile not found' }, { status: 404 });
+      return NextResponse.json({ error: PROFILE_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     // 共通ヘルパーで入力を組み立て（4ルート一致保証）

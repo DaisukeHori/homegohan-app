@@ -4,6 +4,12 @@ import type { Tables } from '@homegohan/shared';
 import { addDaysToDate, todayLocal } from '@/lib/date-utils';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+
+/** 400: 食材の一覧 (ingredients) が無い・空 */
+const INGREDIENTS_REQUIRED_MESSAGE = '登録する食材を 1 つ以上指定してください';
+/** 500: 置き換えの前の冷蔵庫の中身を読めない・消せない (原因はサーバーのログにだけ残す) */
+const PANTRY_REPLACE_FAILED_MESSAGE = '冷蔵庫の中身を置き換えられませんでした。時間をおいて、もう一度お試しください';
 
 /**
  * 冷蔵庫写真解析結果をpantry_itemsに保存
@@ -67,7 +73,7 @@ export async function POST(request: Request) {
   if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
     const body = await request.json();
@@ -78,7 +84,7 @@ export async function POST(request: Request) {
     };
 
     if (!ingredients || !Array.isArray(ingredients) || ingredients.length === 0) {
-      return NextResponse.json({ error: 'Ingredients array is required' }, { status: 400 });
+      return NextResponse.json({ error: INGREDIENTS_REQUIRED_MESSAGE }, { status: 400 });
     }
 
     // mode='replace' の場合、既存アイテムを全削除
@@ -93,7 +99,7 @@ export async function POST(request: Request) {
 
       if (snapshotError) {
         console.error('Failed to snapshot existing pantry items:', snapshotError);
-        return NextResponse.json({ error: 'Failed to prepare pantry replace' }, { status: 500 });
+        return NextResponse.json({ error: PANTRY_REPLACE_FAILED_MESSAGE }, { status: 500 });
       }
       previousPantryItems = snapshotItems ?? [];
 
@@ -104,7 +110,7 @@ export async function POST(request: Request) {
 
       if (deleteError) {
         console.error('Failed to delete existing pantry items:', deleteError);
-        return NextResponse.json({ error: 'Failed to clear pantry' }, { status: 500 });
+        return NextResponse.json({ error: PANTRY_REPLACE_FAILED_MESSAGE }, { status: 500 });
       }
     }
 

@@ -21,6 +21,7 @@ import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { photoSignedUrlTtlSeconds, signOwnedPhotoUrls } from '@/lib/photo-storage-signing';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 const ROUTE_NAME = 'POST /api/storage/signed-urls';
 
@@ -45,14 +46,14 @@ export async function POST(request: Request) {
     error: authError,
   } = await supabase.auth.getUser();
   if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   let body: unknown;
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
   }
   const urls = parseUrls(body);
   if (!urls) {

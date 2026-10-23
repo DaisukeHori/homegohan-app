@@ -3,6 +3,15 @@ import { NextResponse } from 'next/server';
 import { toShoppingListItem, toShoppingList } from '@/lib/converter';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+
+
+/** 400: 追加先の買い物リスト (shoppingListId) が無い */
+const SHOPPING_LIST_ID_REQUIRED_MESSAGE = '買い物リスト (shoppingListId) を指定してください';
+/** 400: 品目の名前 (itemName) が無い */
+const ITEM_NAME_REQUIRED_MESSAGE = '品目の名前を入力してください';
+/** 400: 対象の品目 (itemIds) が無い・空 */
+const ITEM_IDS_REQUIRED_MESSAGE = '対象の品目 (itemIds) を 1 つ以上指定してください';
 
 /**
  * 買い物リスト取得API（日付ベースモデル: shopping_lists → shopping_list_items）
@@ -10,7 +19,7 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 export async function GET(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   const { searchParams } = new URL(request.url);
   const shoppingListId = searchParams.get('shoppingListId');
@@ -68,20 +77,20 @@ export async function POST(request: Request) {
   if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
     const json = await request.json();
     const { shoppingListId, itemName, category, quantity } = json;
 
     if (!shoppingListId) {
-      return NextResponse.json({ error: 'shoppingListId is required' }, { status: 400 });
+      return NextResponse.json({ error: SHOPPING_LIST_ID_REQUIRED_MESSAGE }, { status: 400 });
     }
 
     // #262: itemName が null/undefined/空文字の場合は 400
     const name = (itemName ?? '').trim();
     if (!name) {
-      return NextResponse.json({ error: 'itemName is required' }, { status: 400 });
+      return NextResponse.json({ error: ITEM_NAME_REQUIRED_MESSAGE }, { status: 400 });
     }
 
     const { data, error } = await supabase
@@ -117,14 +126,14 @@ export async function DELETE(request: Request) {
   if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
     const json = await request.json();
     const { itemIds } = json;
 
     if (!itemIds || !Array.isArray(itemIds) || itemIds.length === 0) {
-      return NextResponse.json({ error: 'itemIds is required and must be a non-empty array' }, { status: 400 });
+      return NextResponse.json({ error: ITEM_IDS_REQUIRED_MESSAGE }, { status: 400 });
     }
 
     const { error } = await supabase

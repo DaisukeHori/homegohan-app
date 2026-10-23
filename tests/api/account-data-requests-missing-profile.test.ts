@@ -288,7 +288,7 @@ describe('行が無いのと読み取りの失敗は区別する', () => {
     const res = await call(row);
 
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: 'Unauthorized', code: 'AUTH_UNAUTHENTICATED' });
+    expect(await res.json()).toEqual({ error: 'ログインが必要です', code: 'AUTH_UNAUTHENTICATED' });
     expect(profileReads).toEqual([]);
   });
 });
