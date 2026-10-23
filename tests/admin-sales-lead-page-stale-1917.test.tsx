@@ -86,11 +86,21 @@ async function settle() {
   }
 }
 
+/**
+ * 解決済みの params。React の use() は status が fulfilled の thenable なら止まらずに value を返すので、
+ * 描画を Suspense で止めずに済む (毎回の描画で新しい Promise を作ると、解決を待つ間に止まり続けるため)
+ */
+function fulfilledParams(): Promise<{ id: string }> {
+  const value = { id: LEAD_ID };
+  return Object.assign(Promise.resolve(value), { status: 'fulfilled' as const, value });
+}
+
 async function renderPage() {
+  const params = fulfilledParams();
   await act(async () => {
     root.render(
       <Suspense fallback={null}>
-        <LeadDetailPage params={Promise.resolve({ id: LEAD_ID })} />
+        <LeadDetailPage params={params} />
       </Suspense>,
     );
   });
