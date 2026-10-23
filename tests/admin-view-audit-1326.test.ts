@@ -476,14 +476,25 @@ describe('GET /api/admin/sales/leads と [id] -> admin.sales.lead.list / admin.s
     expectNoValuesIn(rows[0].details, SECRET_CONTACT);
   });
 
-  it('詳細が 404 のときは記録しない', async () => {
-    userScopedClient = makeClient({ sales_leads: [{ data: null, error: { message: 'not found' } }], admin_audit_logs: [INSERT_OK] });
+  it('詳細が 404 (リードの行が無い) のときは記録しない', async () => {
+    userScopedClient = makeClient({ sales_leads: [{ data: null, error: null }], admin_audit_logs: [INSERT_OK] });
 
     const res = await leadRoute.GET((await nextGet(`http://localhost/api/admin/sales/leads/${LEAD_ID}`)) as never, {
       params: { id: LEAD_ID },
     });
 
     expect(res.status).toBe(404);
+    expect(userScopedClient.auditRows()).toHaveLength(0);
+  });
+
+  it('リードの読み込みが DB の失敗なら 500 (404 にしない) で、記録しない (#1917)', async () => {
+    userScopedClient = makeClient({ sales_leads: [{ data: null, error: { message: 'timeout', code: '57014' } }], admin_audit_logs: [INSERT_OK] });
+
+    const res = await leadRoute.GET((await nextGet(`http://localhost/api/admin/sales/leads/${LEAD_ID}`)) as never, {
+      params: { id: LEAD_ID },
+    });
+
+    expect(res.status).toBe(500);
     expect(userScopedClient.auditRows()).toHaveLength(0);
   });
 });
