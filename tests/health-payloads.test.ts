@@ -307,8 +307,8 @@ describe('sanitizeHealthGoalCreate (#1229)', () => {
     }
   });
 
-  it('keeps the legacy "required" message when goal_type / target_value / target_unit is missing', () => {
-    const REQUIRED = 'goal_type, target_value, and target_unit are required';
+  it('reports the "required" message (Japanese) when goal_type / target_value / target_unit is missing', () => {
+    const REQUIRED = '目標の種類 (goal_type)・目標値 (target_value)・単位 (target_unit) を指定してください';
     for (const body of [
       { ...WEB_BODY, goal_type: undefined },
       { ...WEB_BODY, goal_type: '' },
@@ -330,7 +330,7 @@ describe('sanitizeHealthGoalCreate (#1229)', () => {
   it('reports format and range errors before the "required" message (same order as the old route)', () => {
     const result = sanitizeHealthGoalCreate({ goal_type: undefined, target_value: 'abc', target_unit: 'kg' });
     expect(result.data).toBeNull();
-    expect(result.errors).toEqual(['target_value must be a finite number or null']);
+    expect(result.errors).toEqual(['目標値 は数値で指定してください']);
   });
 
   it.each([
@@ -348,7 +348,7 @@ describe('sanitizeHealthGoalCreate (#1229)', () => {
   });
 
   it('defaultUnit fills in the unit for the goal type when it is omitted (AI consultation: targetUnit is optional)', () => {
-    const REQUIRED = 'goal_type, target_value, and target_unit are required';
+    const REQUIRED = '目標の種類 (goal_type)・目標値 (target_value)・単位 (target_unit) を指定してください';
     // 既定では必須のまま (API)
     expect(sanitizeHealthGoalCreate({ goal_type: 'weight', target_value: 60 }).errors).toEqual([REQUIRED]);
     expect(sanitizeHealthGoalCreate({ goal_type: 'weight', target_value: 60 }, { defaultUnit: true }).data?.target_unit).toBe('kg');
@@ -386,7 +386,7 @@ describe('sanitizeHealthGoalCreate (#1229)', () => {
     for (const body of [null, undefined, 'weight', 5, ['weight']]) {
       const result = sanitizeHealthGoalCreate(body);
       expect(result.data).toBeNull();
-      expect(result.errors).toEqual(['Body must be a JSON object']);
+      expect(result.errors).toEqual(['リクエストボディが不正です']);
     }
   });
 });
