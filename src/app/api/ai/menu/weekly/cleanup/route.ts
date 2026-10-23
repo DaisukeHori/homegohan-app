@@ -8,6 +8,8 @@ import {
   isWeeklyMenuRequestStale,
   markWeeklyMenuRequestStaleIfUnchanged,
 } from '@/lib/weekly-menu-request-stale';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { AI_MENU_NO_STUCK_REQUESTS_MESSAGE, AI_MENU_STUCK_REQUESTS_CLEANED_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 // #1203: 復元（スナップショットの書き戻し）が途中で打ち切られないよう、実行時間の上限を明示する。
 // 復元は 1 リクエストあたり DB 2 往復前後だが、failed 確定後に復元へ入る順序のため余裕を持たせる。
@@ -44,7 +46,7 @@ export async function POST() {
   // 認証チェック
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   // 自分の生成中の行を読む (止まったかの判定は生存信号で行うので、ここでは時刻で絞らない。
@@ -63,7 +65,7 @@ export async function POST() {
   const stuckRequests = (inFlightRequests ?? []).filter((row) => isWeeklyMenuRequestStale(row, nowMs));
 
   if (stuckRequests.length === 0) {
-    return NextResponse.json({ message: 'No stuck requests found', cleaned: 0 });
+    return NextResponse.json({ message: AI_MENU_NO_STUCK_REQUESTS_MESSAGE, cleaned: 0 });
   }
 
   // スタックしているリクエストをfailedに更新
@@ -127,7 +129,7 @@ export async function POST() {
     });
   }
   return NextResponse.json({
-    message: cleanedIds.length > 0 ? 'Cleaned up stuck requests' : 'No stuck requests found',
+    message: cleanedIds.length > 0 ? AI_MENU_STUCK_REQUESTS_CLEANED_MESSAGE : AI_MENU_NO_STUCK_REQUESTS_MESSAGE,
     cleaned: cleanedIds.length,
     ids: cleanedIds,
     restoredMeals,
@@ -142,7 +144,7 @@ export async function GET() {
   
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { data: requests, error } = await supabase

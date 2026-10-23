@@ -272,7 +272,7 @@ describe.each([
     const res = await post(generateRequest(dates));
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
-      error: 'targetSlots dates must span at most 31 days (from the earliest date to the latest date, inclusive)',
+      error: '献立を作る期間は、最初の日から最後の日まで含めて 31 日以内にしてください',
     });
     expect(h.getUser).not.toHaveBeenCalled();
     expect(queries).toEqual([]);
@@ -290,7 +290,7 @@ describe.each([
     expect(h.getUser).toHaveBeenCalledTimes(1);
   });
 
-  it('slot の数の上限 (93 = 31 日 × 3 食) の文は以前のまま', async () => {
+  it('slot の数の上限 (93 = 31 日 × 3 食) の文は、上限の数を入れた日本語の文', async () => {
     const dates = Array.from({ length: 94 }, (_, i) => `2026-10-${String((i % 31) + 1).padStart(2, '0')}`);
     const res = await post(
       new Request('http://localhost/api/ai/menu/generate', {
@@ -300,6 +300,6 @@ describe.each([
       }),
     );
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: 'targetSlots exceeds maximum of 93 (31 days × 3 meals)' });
+    expect(await res.json()).toEqual({ error: '献立を作る枠は 93 個 (31 日 × 3 食) までです' });
   });
 });

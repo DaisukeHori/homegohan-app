@@ -7,7 +7,7 @@
  */
 import { createHttpClient, HttpNetworkError } from '@homegohan/core';
 
-import { getApiErrorMessage, NETWORK_ERROR_MESSAGES } from '../../src/lib/api-error';
+import { getApiErrorMessage, getJapaneseApiErrorMessage, NETWORK_ERROR_MESSAGES } from '../../src/lib/api-error';
 
 const originalFetch = global.fetch;
 
@@ -199,5 +199,59 @@ describe('getApiErrorMessage — 取り出せないとき', () => {
     expect(getApiErrorMessage(new Error(''), 'fallback')).toBe('fallback');
     expect(getApiErrorMessage('   ', 'fallback')).toBe('fallback');
     expect(getApiErrorMessage({ message: 42 }, 'fallback')).toBe('fallback');
+  });
+});
+
+describe('getJapaneseApiErrorMessage — AI の API の失敗を Alert に出す画面の文 (#1917)', () => {
+  const FALLBACK = '送信に失敗しました。';
+
+  it('写真の読み取りの 422 ({ error: 文, code: mode_mismatch, message: 文 }) は本文の日本語の文だけを返す', async () => {
+    const text = '健康診断結果が読み取れませんでした。健康診断書がはっきり写った写真を撮り直してください。';
+    const api = clientRespondingWith(422, 'Unprocessable Entity', JSON.stringify({ error: text, code: 'mode_mismatch', message: text }));
+    const error = await rejectionOf(api.post('/api/ai/analyze-health-checkup', {}));
+
+    const shown = getJapaneseApiErrorMessage(error, FALLBACK);
+    expect(shown).toBe(text);
+    expect(shown).not.toContain('HTTP');
+    expect(shown).not.toContain('mode_mismatch');
+  });
+
+  it('500 の汎用の本文 ({ error: 文, code: INTERNAL_ERROR }) は本文の日本語の文だけを返す', async () => {
+    const api = clientRespondingWith(500, 'Internal Server Error', JSON.stringify({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' }));
+    const error = await rejectionOf(api.post('/api/ai/menu/v4/generate', {}));
+
+    const shown = getJapaneseApiErrorMessage(error, FALLBACK);
+    expect(shown).toBe('処理中にエラーが発生しました');
+    expect(shown).not.toContain('INTERNAL_ERROR');
+  });
+
+  it('本文から文を取り出せない (JSON でない・本文に文が無い) ときは、生の "HTTP ..." の文字列ではなく fallback を返す', async () => {
+    const html = clientRespondingWith(504, 'Gateway Timeout', '<!DOCTYPE html><html><body>An error occurred</body></html>');
+    const htmlError = await rejectionOf(html.post('/api/ai/menu/v4/generate', {}));
+    expect(getJapaneseApiErrorMessage(htmlError, FALLBACK)).toBe(FALLBACK);
+
+    const noText = clientRespondingWith(500, 'Internal Server Error', JSON.stringify({ error: { code: 'INTERNAL_ERROR' } }));
+    const noTextError = await rejectionOf(noText.post('/api/ai/menu/v4/generate', {}));
+    expect(getJapaneseApiErrorMessage(noTextError, FALLBACK)).toBe(FALLBACK);
+
+    expect(getJapaneseApiErrorMessage(new Error('HTTP 500 Internal Server Error'), FALLBACK)).toBe(FALLBACK);
+  });
+
+  it('英語の文 (生の fetch の通信の失敗など) は fallback を返す', () => {
+    expect(getJapaneseApiErrorMessage(new TypeError('Network request failed'), FALLBACK)).toBe(FALLBACK);
+    expect(getJapaneseApiErrorMessage(new Error('HTTP 404: {"error":"Not found"}'), FALLBACK)).toBe(FALLBACK);
+  });
+
+  it('日本語の文 (固定の文の例外・通信できないときの文) はそのまま返す', () => {
+    expect(getJapaneseApiErrorMessage(new Error('HTTP 404: {"error":"相談が見つかりません"}'), FALLBACK)).toBe('相談が見つかりません');
+    expect(getJapaneseApiErrorMessage(new Error('今日の AI の利用回数の上限に達しました'), FALLBACK)).toBe('今日の AI の利用回数の上限に達しました');
+    expect(getJapaneseApiErrorMessage(new HttpNetworkError('offline', NETWORK_ERROR_MESSAGES.offline), FALLBACK)).toBe(
+      NETWORK_ERROR_MESSAGES.offline,
+    );
+  });
+
+  it('message が無いときは fallback を返す', () => {
+    expect(getJapaneseApiErrorMessage(undefined, FALLBACK)).toBe(FALLBACK);
+    expect(getJapaneseApiErrorMessage(new Error(''), FALLBACK)).toBe(FALLBACK);
   });
 });

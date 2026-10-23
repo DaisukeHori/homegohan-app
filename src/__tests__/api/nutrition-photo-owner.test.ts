@@ -136,7 +136,7 @@ describe('POST /api/ai/nutrition (写真の URL)', () => {
   it('imageUrl が文字列でなければ 400 で、AI を呼ばず回数も数えない', async () => {
     const res = await POST(request({ plannedMealId: MEAL_ID, imageUrl: 12345 }));
     expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({ error: 'imageUrl must be a string' });
+    expect(await res.json()).toMatchObject({ error: '写真の指定が正しくありません。写真を選び直してください' });
     expect(mocks.createCompletion).not.toHaveBeenCalled();
     expect(mocks.consumeAiUsage).not.toHaveBeenCalled();
     expect(mocks.signCalls).toEqual([]);

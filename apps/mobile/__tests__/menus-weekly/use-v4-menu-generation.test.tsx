@@ -109,8 +109,37 @@ describe('useV4MenuGeneration.generate', () => {
     });
 
     expect(onError).toHaveBeenCalledTimes(1);
-    expect(onError).toHaveBeenCalledWith('HTTP 500 Internal Server Error');
+    // 本文の無い生の "HTTP ..." の文字列は画面に出さず、汎用の文にする (#1917)
+    expect(onError).toHaveBeenCalledWith('生成に失敗しました');
     expect(result.current.isGenerating).toBe(false);
+  });
+
+  it.each([
+    {
+      name: '500 INTERNAL_ERROR',
+      error: `HTTP 500 Internal Server Error: ${JSON.stringify({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' })}`,
+      shown: '処理中にエラーが発生しました',
+      hidden: ['HTTP', 'INTERNAL_ERROR'],
+    },
+    {
+      name: '400 の枠の検証',
+      error: `HTTP 400 Bad Request: ${JSON.stringify({ error: '献立を作る枠を 1 つ以上指定してください' })}`,
+      shown: '献立を作る枠を 1 つ以上指定してください',
+      hidden: ['HTTP', '{'],
+    },
+  ])('失敗の本文 ($name) は、本文の日本語の文だけを onError に渡す (#1917)', async ({ error, shown, hidden }) => {
+    mockPost.mockRejectedValue(new Error(error));
+    const onError = jest.fn();
+    const { result } = renderHook(() => useV4MenuGeneration({ onError }));
+
+    await act(async () => {
+      await expect(result.current.generate(params)).rejects.toThrow('HTTP');
+    });
+
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(shown);
+    for (const text of hidden) expect(onError.mock.calls[0][0]).not.toContain(text);
+    expect(result.current.error).toBe(shown);
   });
 
   it('silent 指定の失敗は onError に通知せず、例外だけを投げる', async () => {

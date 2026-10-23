@@ -38,7 +38,7 @@
  *          招待の行 (organization_invites) を消すので、組織の行を持ったまま招待の行を待つ。CLAUDE.md の「組織 (organizations) を
  *          変える関数のロック順」の段の順 ((1) 招待の行 → (2) 組織の行) と逆で、招待の行を先に取る招待の承諾 (accept_org_invite) と
  *          同時に走ると、まれにどちらかが 40P01 で失敗する (既知)。その前提 (DELETE が段の順のとおりではないこと) を、
- *          招待の行を持つ接続を pg_sleep で止めて、タイミングに頼らずに確かめる (org-transfer-toctou.test.ts と同じ道具)
+ *          招待の行を持つ接続を放すまで止めて、タイミングに頼らずに確かめる (tests/integration/helpers/lock-holder.ts)
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh)。Next の開発サーバーは要らない (RPC と PostgREST を直接呼ぶ)。
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
@@ -48,9 +48,10 @@
 
 import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
 import { jstDaysAgo } from '../helpers/jst-days';
+import { createLockHolderKit } from '../helpers/lock-holder';
 import { promoteToAal2 } from '../helpers/mfa';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
@@ -91,12 +92,7 @@ const CHALLENGE_END_IN_DAYS = 37;
 /** 結合テストの準備と後片付けの時間の上限 (ミリ秒。利用者・組織を複数作る) */
 const SETUP_TIMEOUT_MS = 180_000;
 const TEST_TIMEOUT_MS = 120_000;
-/**
- * O-9: 招待の行を持つ接続がコミット前のまま待つ秒数。そのあいだに DELETE を投げ、待ちに入ったこと・組織の行を持っていることを
- * 確かめ終えなければならないので、org-transfer-toctou.test.ts の ORDER_HOLD_SECONDS と同じ長さを取る (結合テストが混んでいても間に合う)
- */
-const HOLD_SECONDS = 5;
-/** O-9: 接続が pg_sleep / ロックの待ちに入るのを待つ上限 (ミリ秒) と確かめる間隔 (org-transfer-toctou.test.ts と同じ) */
+/** O-9: DELETE の接続がロックの待ちに入るのを待つ上限 (ミリ秒) と確かめる間隔 (tests/integration/helpers/lock-holder.ts と同じ) */
 const BACKEND_STATE_DEADLINE_MS = 20_000;
 const BACKEND_STATE_POLL_MS = 50;
 /** 行のロックを NOWAIT で取れなかったときの SQLSTATE (lock_not_available) */
@@ -157,6 +153,15 @@ async function waitForBackend(
   }
   throw new Error(`接続が ${state} に入りませんでした (遅すぎます)`);
 }
+
+/**
+ * O-9: 招待の行を持つ接続 (放されるまでコミット前のまま待つ)。DELETE が待ちに入ったこと・組織の行を持っていることを確かめ終えてから
+ * 放す (決まった秒数の窓で「確かめ終えたはず」と仮定しない。#1917)
+ */
+const holders = createLockHolderKit({ pgRequest, markerPrefix: 'org-no-direct-delete' });
+
+// テストが途中で落ちたときに残った接続を、作った順に放す (通ったテストでは全部放し終わっているので何もしない)
+afterEach(() => holders.releaseOpenHolders(), TEST_TIMEOUT_MS);
 
 /** pg/query を投げ (終わりを待たない)、終わったかと結果を後から見られるようにする */
 function startPgRequest(query: string) {
@@ -376,6 +381,7 @@ beforeAll(async () => {
 }, SETUP_TIMEOUT_MS);
 
 afterAll(async () => {
+  await holders.settle();
   if (createdUserIds.length > 0) {
     await srAdmin.from('membership_audit').delete().in('actor_id', createdUserIds);
     await srAdmin.from('membership_audit').delete().in('target_user_id', createdUserIds);
@@ -537,15 +543,15 @@ describe('#1917 の続き: 組織の行の DELETE のロックの順 (CLAUDE.md 
   it('O-9: 組織の行の DELETE は組織の行 (段 2) を持ったまま、CASCADE で招待の行 (段 1) を待つ (段の順と逆)', async () => {
     const lockOwner = await createUser('o9-owner');
     const target = await createOrg(lockOwner, 'o9', false);
-    const holderMarker = `org-no-direct-delete-invite-holder-${randomBytes(MARKER_BYTES).toString('hex')}`;
     const deleteMarker = `org-no-direct-delete-org-delete-${randomBytes(MARKER_BYTES).toString('hex')}`;
 
     // 招待の行を、招待の承諾 (accept_org_invite) の最初のロックと同じ FOR UPDATE で取り、コミット前のまま待つ
-    const holder = startPgRequest(`/* ${holderMarker} */
-      SELECT 1 FROM public.organization_invites WHERE id = '${target.children.inviteId}'::uuid FOR UPDATE;
-      SELECT pg_sleep(${HOLD_SECONDS});
-      SELECT 'held' AS result;`);
-    const holderPid = await waitForBackend(holderMarker, "wait_event = 'PgSleep'", holder);
+    const holder = holders.startHolder(
+      '招待の行を持つ接続',
+      `SELECT 1 FROM public.organization_invites WHERE id = '${target.children.inviteId}'::uuid FOR UPDATE;`,
+    );
+    await holder.sleeping;
+    const holderPid = holder.pid();
 
     // 組織の行の DELETE (postgres の権限。service_role・運営の DELETE と同じ文の性質)
     const deletion = startPgRequest(`/* ${deleteMarker} */
@@ -561,11 +567,12 @@ describe('#1917 の続き: 組織の行の DELETE のロックの順 (CLAUDE.md 
     expect((orgLock.body as { code?: unknown } | null)?.code).toBe(LOCK_NOT_AVAILABLE);
     // 番兵: 上の確かめは招待の行を放す前に済んだ (放したあとなら DELETE は終わっていて、NOWAIT のロックは取れてしまう)。
     // DELETE はまだコミットしていないので、ほかの接続からは組織の行も子の記録もまだ見える
-    expect(holder.settled()).toBe(false);
+    expect(holder.finished()).toBe(false);
     expect(await orgRow(target.orgId)).not.toBeNull();
     expect(await childCounts(target.orgId, target.children)).toEqual(ALL_CHILDREN_PRESENT);
 
-    // 招待の行が放されると、DELETE が続きを済ませて組織の行と子の記録が消える
+    // 招待の行を放すと、DELETE が続きを済ませて組織の行と子の記録が消える (放す前に接続が終わっていれば release() が失敗する)
+    await holder.release();
     const [holderRes, deleteRes] = await Promise.all([holder.done, deletion.done]);
     expect(holderRes.ok, JSON.stringify(holderRes.body)).toBe(true);
     expect(deleteRes.ok, JSON.stringify(deleteRes.body)).toBe(true);

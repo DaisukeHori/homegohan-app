@@ -27,9 +27,10 @@
 
 import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import ws from 'ws';
 import { apiCall } from '../helpers/api';
+import { actAsAuthenticatedSql, createLockHolderKit, type Holder } from '../helpers/lock-holder';
 import { promoteToAal2 } from '../helpers/mfa';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 import { grantFamilyPlan } from '../helpers/family-plan';
@@ -117,17 +118,6 @@ const ADULT_BIRTH_DATE = '1990-01-01';
 const ORG_TOTAL_LICENSES = 20;
 /** 家族の人数の上限 (テストで足りる数。family-lock-order-race.test.ts と同じ) */
 const FAMILY_MEMBER_LIMIT = 8;
-/** 先の譲渡をコミット前のまま開いておく秒数 (RPC 同士の並び) */
-const HOLD_SECONDS = 3;
-/**
- * route を通す並び (OTO-3・OTO-6) で先の譲渡を開いておく秒数。route が RPC の前の読み取りを終えて RPC が行のロックの待ちに
- * 入るまで待つので HOLD_SECONDS より長く取る。待っている RPC は authenticated の文の時間切れ (Supabase の既定の
- * statement_timeout 8 秒) より短く終わるようにする
- */
-const ROUTE_HOLD_SECONDS = 5;
-/** pg_sleep・行のロックの待ちに入るのを待つ上限 (ミリ秒) と確かめる間隔 */
-const HOLDER_DEADLINE_MS = 20_000;
-const HOLDER_POLL_MS = 50;
 const TEST_TIMEOUT_MS = 120_000;
 const CLEANUP_TIMEOUT_MS = 180_000;
 const AAL2_CLAIMS = { aal: 'aal2' } as const;
@@ -137,7 +127,6 @@ const FAMILY_ACTION = 'super_admin.family.transfer_representative';
 const createdUserIds: string[] = [];
 const createdOrgIds: string[] = [];
 const createdFamilyIds: string[] = [];
-const pendingHolders: Array<Promise<unknown>> = [];
 
 async function signIn(email: string): Promise<{ client: SupabaseClient; jwt: string }> {
   // サインインは使い捨てのクライアントで行う (srAdmin でサインインすると service_role でなくなる)
@@ -304,69 +293,22 @@ const orgTransferSql = (orgId: string, newOwnerId: string) =>
 const familyTransferSql = (familyId: string, newRepId: string) =>
   `public.operator_force_representative_transfer('${familyId}'::uuid, '${newRepId}'::uuid, 'op-transfer-old-owner hold')`;
 
-interface Holder {
-  sleeping: Promise<void>;
-  done: Promise<Outcome>;
+/**
+ * 運営 actor (aal2) として callSql を呼び、コミット前のまま開いておく接続 (終わりを待たない。tests/integration/helpers/lock-holder.ts)。
+ * 後の譲渡が行のロックの待ちに並んだのを確かめてから放す (決まった秒数の窓で「並んだはず」と仮定しない。#1917)
+ */
+const holders = createLockHolderKit({ pgRequest, markerPrefix: 'op-transfer-old-owner' });
+
+function holdCall(actor: TestUser, callSql: string): Holder {
+  return holders.startHolder(callSql, `${actAsAuthenticatedSql(actor.id, AAL2_CLAIMS)}
+    SELECT * FROM ${callSql};`);
 }
 
-/** 運営 actor (aal2) として callSql を呼び、コミット前のまま holdSeconds 秒開いておく接続 (終わりを待たない) */
-function holdCall(actor: TestUser, callSql: string, holdSeconds: number): Holder {
-  const marker = `op-transfer-old-owner-holder-${randomBytes(6).toString('hex')}`;
-  const claims = JSON.stringify({ sub: actor.id, role: 'authenticated', ...AAL2_CLAIMS });
-  const state: { outcome: Outcome | null } = { outcome: null };
-  const done = pgRequest(
-    `/* ${marker} */
-    SELECT set_config('request.jwt.claims', '${claims}', true);
-    SET LOCAL ROLE authenticated;
-    SELECT * FROM ${callSql};
-    SELECT pg_sleep(${holdSeconds});
-    SELECT 'held' AS result;`,
-  ).then((res): Outcome => {
-    const body = res.body as { error?: unknown; code?: unknown } | null;
-    const outcome: Outcome = res.ok
-      ? { ok: true, data: null, message: null, code: null }
-      : {
-          ok: false,
-          data: null,
-          message: typeof body?.error === 'string' ? body.error : JSON.stringify(body),
-          code: typeof body?.code === 'string' ? body.code : null,
-        };
-    state.outcome = outcome;
-    return outcome;
-  });
-  pendingHolders.push(done);
-
-  const sleeping = (async () => {
-    const deadline = Date.now() + HOLDER_DEADLINE_MS;
-    while (Date.now() < deadline) {
-      if (state.outcome) throw new Error(`先に呼んだ接続が pg_sleep に入る前に終わりました: ${JSON.stringify(state.outcome)}`);
-      const rows = await pgQuery<{ n: number }>(`
-        SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE wait_event = 'PgSleep' AND query LIKE '%${marker}%' AND pid <> pg_backend_pid()`);
-      if (rows[0]?.n === 1) return;
-      await sleep(HOLDER_POLL_MS);
-    }
-    throw new Error('先に呼んだ接続が pg_sleep に入りませんでした (遅すぎます)');
-  })();
-
-  return { sleeping, done };
-}
-
-/** 関数 fnName を本物の経路で呼んだ接続が、行のロックの待ち (pg_stat_activity の wait_event_type = 'Lock') に入るまで待つ */
-async function waitForLockWaiter(fnName: string): Promise<void> {
-  const deadline = Date.now() + HOLDER_DEADLINE_MS;
-  while (Date.now() < deadline) {
-    const rows = await pgQuery<{ n: number }>(`
-      SELECT count(*)::int AS n FROM pg_stat_activity
-      WHERE wait_event_type = 'Lock' AND query LIKE '%${fnName}%' AND pid <> pg_backend_pid()`);
-    if ((rows[0]?.n ?? 0) >= 1) return;
-    await sleep(HOLDER_POLL_MS);
-  }
-  throw new Error(`${fnName} の呼び出しが行のロックの待ちに入りませんでした (遅すぎます)`);
-}
+// テストが途中で落ちたときに残った接続を、作った順に放す (通ったテストでは全部放し終わっているので何もしない)
+afterEach(() => holders.releaseOpenHolders(), CLEANUP_TIMEOUT_MS);
 
 afterAll(async () => {
-  await Promise.allSettled(pendingHolders);
+  await holders.settle();
   if (createdUserIds.length > 0) {
     // admin_audit_logs.actor_id には ON DELETE の指定が無い外部キーもあるので、利用者より先に消す
     await srAdmin.from('admin_audit_logs').delete().in('actor_id', createdUserIds);
@@ -409,10 +351,11 @@ describe('operator_force_owner_transfer: 戻り値の旧オーナーは、組織
     const [a, b, c] = await createUsers('oto2', 3);
     const orgId = await createOrg(a, [b, c], 'oto2');
 
-    const holder = holdCall(op.user, orgTransferSql(orgId, b.id), HOLD_SECONDS);
-    await holder.sleeping;
-    const later = await transferOrg(op.jwt, orgId, c.id);
-    const held = await holder.done;
+    const holder = holdCall(op.user, orgTransferSql(orgId, b.id));
+    const [held, later] = await holders.runBehindHolder(holder, {
+      fn: 'operator_force_owner_transfer',
+      call: () => transferOrg(op.jwt, orgId, c.id),
+    });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expect(later.ok, JSON.stringify(later)).toBe(true);
@@ -429,13 +372,13 @@ describe('operator_force_owner_transfer: 戻り値の旧オーナーは、組織
     // route を先に一度呼んでおき (入力の誤りで 400。何も書かない)、開発サーバーの初回のコンパイルを先の譲渡を開く前に済ませる
     expect((await apiCall('POST', routePath, op.jwt, {})).status).toBe(HTTP_BAD_REQUEST);
 
-    const holder = holdCall(op.user, orgTransferSql(orgId, b.id), ROUTE_HOLD_SECONDS);
-    await holder.sleeping;
-    const routeCall = apiCall<{ data: Record<string, unknown> }>('POST', routePath, op.jwt, { to_user_id: c.id, reason: 'oto3' });
-    // route の RPC が組織の行のロックの待ちに入った = route の RPC の前の読み取りは、先の譲渡の commit より前 (owner_id = A を読んだ)
-    await waitForLockWaiter('operator_force_owner_transfer');
-    const held = await holder.done;
-    const res = await routeCall;
+    const holder = holdCall(op.user, orgTransferSql(orgId, b.id));
+    // route の RPC が先の譲渡に待たされて組織の行のロックの待ちに入った = route の RPC の前の読み取りは、先の譲渡の commit より前
+    // (owner_id = A を読んだ)。待ちに入ったのを確かめてから先の譲渡を放す
+    const [held, res] = await holders.runBehindHolder(holder, {
+      fn: 'operator_force_owner_transfer',
+      call: () => apiCall<{ data: Record<string, unknown> }>('POST', routePath, op.jwt, { to_user_id: c.id, reason: 'oto3' }),
+    });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expect(res.status, JSON.stringify(res.body)).toBe(HTTP_OK);
@@ -470,10 +413,11 @@ describe('operator_force_representative_transfer: 戻り値の旧代表者は、
     const [a, b, c] = await createUsers('oto5', 3);
     const familyId = await createFamily(a, [b, c], 'oto5');
 
-    const holder = holdCall(op.user, familyTransferSql(familyId, b.id), HOLD_SECONDS);
-    await holder.sleeping;
-    const later = await transferFamily(op.jwt, familyId, c.id);
-    const held = await holder.done;
+    const holder = holdCall(op.user, familyTransferSql(familyId, b.id));
+    const [held, later] = await holders.runBehindHolder(holder, {
+      fn: 'operator_force_representative_transfer',
+      call: () => transferFamily(op.jwt, familyId, c.id),
+    });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expect(later.ok, JSON.stringify(later)).toBe(true);
@@ -490,13 +434,13 @@ describe('operator_force_representative_transfer: 戻り値の旧代表者は、
     // route を先に一度呼んでおき (入力の誤りで 400。何も書かない)、開発サーバーの初回のコンパイルを先の譲渡を開く前に済ませる
     expect((await apiCall('POST', routePath, op.jwt, {})).status).toBe(HTTP_BAD_REQUEST);
 
-    const holder = holdCall(op.user, familyTransferSql(familyId, b.id), ROUTE_HOLD_SECONDS);
-    await holder.sleeping;
-    const routeCall = apiCall<{ data: Record<string, unknown> }>('POST', routePath, op.jwt, { to_user_id: c.id, reason: 'oto6' });
-    // route の RPC が家族の行のロックの待ちに入った = route の RPC の前の読み取りは、先の譲渡の commit より前 (representative_id = A を読んだ)
-    await waitForLockWaiter('operator_force_representative_transfer');
-    const held = await holder.done;
-    const res = await routeCall;
+    const holder = holdCall(op.user, familyTransferSql(familyId, b.id));
+    // route の RPC が先の譲渡に待たされて家族の行のロックの待ちに入った = route の RPC の前の読み取りは、先の譲渡の commit より前
+    // (representative_id = A を読んだ)。待ちに入ったのを確かめてから先の譲渡を放す
+    const [held, res] = await holders.runBehindHolder(holder, {
+      fn: 'operator_force_representative_transfer',
+      call: () => apiCall<{ data: Record<string, unknown> }>('POST', routePath, op.jwt, { to_user_id: c.id, reason: 'oto6' }),
+    });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expect(res.status, JSON.stringify(res.body)).toBe(HTTP_OK);

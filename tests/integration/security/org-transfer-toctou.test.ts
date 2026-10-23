@@ -40,6 +40,7 @@ import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import ws from 'ws';
 import { apiCall } from '../helpers/api';
 import { promoteToAal2 } from '../helpers/mfa';
+import { actAsAuthenticatedSql, createLockHolderKit, type Holder, type QueuedCall as LockQueuedCall } from '../helpers/lock-holder';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -125,23 +126,10 @@ const ORG_TOTAL_LICENSES = 20;
 const SEEDED_USED_LICENSES = 2;
 /** 本物の経路で同時に呼ぶ回数 (org-invite-dissolved.test.ts・self-dissolve.test.ts と同じ) */
 const ITERATIONS = 8;
-/**
- * 先の処理をコミット前のまま開いておく接続 (holdCall・holdOrgRow・holdProfileRow) を、テストが放さないまま持ち続ける秒数の上限。
- * 接続は、後から呼んだ処理が行のロックの待ちに並んだのを pg_stat_activity で確かめてから release() で放す
- * (決まった秒数の窓で「並んだはず」と仮定しない。負荷が高いと並ぶまでが窓より長くなり、並ぶ前に放して揺らいだ。#1917)。
- * この上限は放し忘れの安全弁で、上限に達した接続は HOLDER_NOT_RELEASED で失敗する (黙って commit しない)。
- * 並ぶのを待つ上限 (HOLDER_DEADLINE_MS の 20 秒) より長く、Kong が奥 (postgres-meta) の応答を待つ既定の上限 (60 秒) より短くする
- */
-const HOLDER_MAX_HOLD_SECONDS = 30;
-/** 放されないまま HOLDER_MAX_HOLD_SECONDS に達した接続が RAISE する文 (pg/query の応答の error にこの文が出る) */
-const HOLDER_NOT_RELEASED = 'HOLDER_NOT_RELEASED';
 /** 招待のトークンのバイト数 (hex で 64 文字。create_org_invite と同じ形。org-invite-dissolved.test.ts と同じ) */
 const TOKEN_BYTES = 32;
 /** 招待の期限 (14 日。create_org_invite と同じ) */
 const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
-/** 接続が pg_sleep に入る・呼び出しが行のロックの待ちに並ぶのを待つ上限 (ミリ秒) と、確かめる間隔 */
-const HOLDER_DEADLINE_MS = 20_000;
-const HOLDER_POLL_MS = 50;
 const TEST_TIMEOUT_MS = 120_000;
 const RACE_TIMEOUT_MS = 240_000;
 /** CHECK 違反の SQLSTATE (修正前の承諾・強制譲渡が返していたもの) */
@@ -149,7 +137,6 @@ const PG_CHECK_VIOLATION = '23514';
 
 const createdUserIds: string[] = [];
 const createdOrgIds: string[] = [];
-const pendingHolders: Array<Promise<unknown>> = [];
 
 async function signIn(email: string): Promise<{ client: SupabaseClient; jwt: string }> {
   // サインインは使い捨てのクライアントで行う (srAdmin でサインインすると service_role でなくなる)
@@ -359,60 +346,19 @@ async function operator(): Promise<Operator> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 先の処理をコミット前のまま開いておく接続 (org-invite-dissolved.test.ts の形に、後ろに並んだのを確かめてから放す release() を足したもの。
-// 運営の呼び出しは aal2 のクレームを足す)
+// 先の処理をコミット前のまま開いておく接続 (tests/integration/helpers/lock-holder.ts。運営の呼び出しは aal2 のクレームを足す)
 // ---------------------------------------------------------------------------------------------
 
-interface Holder {
-  /** 失敗の文に出す名前 (どの接続を放せなかったか・どの接続の後ろに並ばなかったか) */
-  label: string;
-  /** その接続の SQL に埋めた目印 (pg_stat_activity.query で見分ける) */
-  marker: string;
-  /** 接続が持つ処理を終え、放されるのを待つ pg_sleep に入るまで (入ったらその接続の pid を覚える) */
-  sleeping: Promise<void>;
-  done: Promise<Outcome>;
-  /** 先の接続がもう終わったか (pg_sleep を抜けて、持っていた行を放したか) */
-  finished: () => boolean;
-  /** pg_sleep に入った接続の pid (まだ入っていなければ null) */
-  pid: () => number | null;
-  /**
-   * 接続を放す (commit させる)。pg_sleep の途中にいることを確かめてから取り消し (pg_cancel_backend) を送る。
-   * 取り消しは HOLD_UNTIL_RELEASED_SQL の pg_sleep の文だけを抜けさせ、持っていた処理は commit する。
-   * もう pg_sleep にいなければ (放す前に終わっていれば) 失敗する
-   */
-  release: () => Promise<void>;
-}
-
 /**
- * 放されるまで持つ文。pg_sleep の途中で release() の取り消しを受けたら、例外のブロック (サブトランザクション) の中の pg_sleep だけを
- * 抜けて、それより前の文 (呼び出し・行のロック) はそのまま commit する。放されないまま HOLDER_MAX_HOLD_SECONDS に達したら
- * HOLDER_NOT_RELEASED を RAISE して全体を失敗させる (時間で黙って放さない)
+ * 先の処理をコミット前のまま開いておく接続 (holdCall・holdOrgRow・holdProfileRow)。後から呼んだ処理が行のロックの待ちに並んだのを
+ * pg_stat_activity で確かめてから release() で放す (決まった秒数の窓で「並んだはず」と仮定しない。負荷が高いと並ぶまでが窓より長くなり、
+ * 並ぶ前に放して揺らいだ。#1917)。放されないまま持ち続ける上限・並ぶのを待つ上限は tests/integration/helpers/lock-holder.ts
  */
-const HOLD_UNTIL_RELEASED_SQL = `DO $hold$
-    BEGIN
-      PERFORM pg_sleep(${HOLDER_MAX_HOLD_SECONDS});
-      RAISE EXCEPTION '${HOLDER_NOT_RELEASED}';
-    EXCEPTION WHEN query_canceled THEN
-      NULL;
-    END
-    $hold$;`;
-
-/** このテストで作り、まだ放していないかもしれない接続 (テストが途中で落ちたときに afterEach で放す) */
-const openHolders: Holder[] = [];
+const holders = createLockHolderKit({ pgRequest, markerPrefix: 'org-transfer-toctou' });
 
 function holdCall(actor: TestUser, callSql: string, extraClaims: Record<string, string> = {}): Holder {
-  const marker = `org-transfer-toctou-holder-${randomBytes(6).toString('hex')}`;
-  const claims = JSON.stringify({ sub: actor.id, role: 'authenticated', ...extraClaims });
-  return startHolder(
-    callSql,
-    marker,
-    `/* ${marker} */
-    SELECT set_config('request.jwt.claims', '${claims}', true);
-    SET LOCAL ROLE authenticated;
-    SELECT * FROM ${callSql};
-    ${HOLD_UNTIL_RELEASED_SQL}
-    SELECT 'held' AS result;`,
-  );
+  return holders.startHolder(callSql, `${actAsAuthenticatedSql(actor.id, extraClaims)}
+    SELECT * FROM ${callSql};`);
 }
 
 /**
@@ -420,15 +366,7 @@ function holdCall(actor: TestUser, callSql: string, extraClaims: Record<string, 
  * そのあとに呼んだ関数を組織の行の手前 (またはその前のロック) で待たせ、呼んだ順に並ばせる
  */
 function holdOrgRow(orgId: string): Holder {
-  const marker = `org-transfer-toctou-org-row-${randomBytes(6).toString('hex')}`;
-  return startHolder(
-    '組織の行を持つ接続',
-    marker,
-    `/* ${marker} */
-    SELECT 1 FROM public.organizations WHERE id = '${orgId}'::uuid FOR NO KEY UPDATE;
-    ${HOLD_UNTIL_RELEASED_SQL}
-    SELECT 'held' AS result;`,
-  );
+  return holders.startHolder('組織の行を持つ接続', `SELECT 1 FROM public.organizations WHERE id = '${orgId}'::uuid FOR NO KEY UPDATE;`);
 }
 
 /**
@@ -437,134 +375,21 @@ function holdOrgRow(orgId: string): Holder {
  * 行が持たれていれば、放されるまで待ってから取る (待っている間は pg_stat_activity の wait_event_type = 'Lock')
  */
 function holdProfileRow(userId: string): Holder {
-  const marker = `org-transfer-toctou-profile-row-${randomBytes(6).toString('hex')}`;
-  return startHolder(
-    'user_profiles の行を持つ接続',
-    marker,
-    `/* ${marker} */
-    SELECT 1 FROM public.user_profiles WHERE id = '${userId}'::uuid FOR NO KEY UPDATE;
-    ${HOLD_UNTIL_RELEASED_SQL}
-    SELECT 'held' AS result;`,
-  );
+  return holders.startHolder('user_profiles の行を持つ接続', `SELECT 1 FROM public.user_profiles WHERE id = '${userId}'::uuid FOR NO KEY UPDATE;`);
 }
 
-/** marker を含む sql を pg/query に投げ (終わりを待たない)、その接続が pg_sleep に入るまでを sleeping で待て、release() で放せるようにする */
-function startHolder(label: string, marker: string, sql: string): Holder {
-  const state: { outcome: Outcome | null; pid: number | null } = { outcome: null, pid: null };
-  const done = pgRequest(sql).then((res): Outcome => {
-    const body = res.body as { error?: unknown; code?: unknown } | null;
-    const outcome: Outcome = res.ok
-      ? { ok: true, data: null, message: null, code: null }
-      : {
-          ok: false,
-          data: null,
-          message: typeof body?.error === 'string' ? body.error : JSON.stringify(body),
-          code: typeof body?.code === 'string' ? body.code : null,
-        };
-    state.outcome = outcome;
-    return outcome;
-  });
-  pendingHolders.push(done);
-
-  const sleeping = (async () => {
-    const deadline = Date.now() + HOLDER_DEADLINE_MS;
-    while (Date.now() < deadline) {
-      if (state.outcome) throw new Error(`${label} が pg_sleep に入る前に終わりました: ${JSON.stringify(state.outcome)}`);
-      const rows = await pgQuery<{ pid: number }>(`
-        SELECT pid FROM pg_stat_activity
-        WHERE wait_event = 'PgSleep' AND query LIKE '%${marker}%' AND pid <> pg_backend_pid()`);
-      if (rows.length === 1) {
-        state.pid = rows[0].pid;
-        return;
-      }
-      await sleep(HOLDER_POLL_MS);
-    }
-    throw new Error(`${label} が ${HOLDER_DEADLINE_MS} ミリ秒のうちに pg_sleep に入りませんでした (持つ行の手前で待ったままです)`);
-  })();
-  // 待つ前にテストが落ちたときの未処理の reject にしない (await した側には reject のまま届く)
-  sleeping.catch(() => undefined);
-
-  const release = async (): Promise<void> => {
-    await sleeping;
-    const rows = await pgQuery<{ cancelled: boolean }>(`
-      SELECT pg_cancel_backend(pid) AS cancelled FROM pg_stat_activity
-      WHERE pid = ${state.pid} AND wait_event = 'PgSleep' AND query LIKE '%${marker}%'`);
-    if (rows.length !== 1 || rows[0].cancelled !== true) {
-      throw new Error(`${label} を放す前に、その接続が pg_sleep を抜けていました: ${JSON.stringify({ rows, outcome: state.outcome })}`);
-    }
-  };
-
-  const holder: Holder = { label, marker, sleeping, done, finished: () => state.outcome !== null, pid: () => state.pid, release };
-  openHolders.push(holder);
-  return holder;
-}
-
-interface LockWaitOptions {
-  /** 失敗の文に出す手順の名前 (どの手順で並ばなかったか) */
-  step: string;
-  /** 待ちの相手がこの接続であること (pg_blocking_pids に holder の pid が入っていること) まで確かめる */
-  blockedBy?: Holder;
-}
-
-/**
- * 関数 fnName (または接続の目印) を含む呼び出しが、行のロックの待ち (pg_stat_activity の wait_event_type = 'Lock') に count 本以上
- * 入るまで待つ。blockedBy があれば、その接続に待たされている (pg_blocking_pids に pid が入っている) ものだけを数える。
- * HOLDER_DEADLINE_MS のうちに並ばなければ、手順の名前を付けて失敗する
- */
-async function waitForLockWaiters(fnName: string, count: number, { step, blockedBy }: LockWaitOptions): Promise<void> {
-  const blockerPid = blockedBy ? blockedBy.pid() : null;
-  if (blockedBy && blockerPid === null) throw new Error(`手順「${step}」: ${blockedBy.label} がまだ pg_sleep に入っていません`);
-  const blockedByClause = blockerPid === null ? '' : `AND ${blockerPid} = ANY(pg_blocking_pids(pid))`;
-  const deadline = Date.now() + HOLDER_DEADLINE_MS;
-  let seen = 0;
-  while (Date.now() < deadline) {
-    const rows = await pgQuery<{ n: number }>(`
-      SELECT count(*)::int AS n FROM pg_stat_activity
-      WHERE wait_event_type = 'Lock' AND query LIKE '%${fnName}%' AND pid <> pg_backend_pid() ${blockedByClause}`);
-    seen = rows[0]?.n ?? 0;
-    if (seen >= count) return;
-    await sleep(HOLDER_POLL_MS);
-  }
-  const behind = blockedBy ? `${blockedBy.label} の後ろの` : '';
-  throw new Error(
-    `手順「${step}」: ${fnName} の呼び出しが ${HOLDER_DEADLINE_MS} ミリ秒のうちに${behind}行のロックの待ちに ${count} 本並びませんでした (並んだのは ${seen} 本)`,
-  );
-}
+const { waitForLockWaiters, runBehindHolder } = holders;
 
 /** 呼び出し 1 本 (待ちを見分けるための関数名と、本物の経路での呼び出し) */
-interface QueuedCall {
-  fn: string;
-  call: () => Promise<Outcome>;
-}
-
-/**
- * holder が持っている間に waiter を呼び、waiter が holder に待たされて行のロックの待ちに並んだのを確かめてから holder を放す
- * (waiter は holder の commit を待ってから判定する。並ぶ前に放して、commit のあとに呼んだのと同じになるのを防ぐ)
- */
-async function runBehindHolder(holder: Holder, waiter: QueuedCall): Promise<[Outcome, Outcome]> {
-  await holder.sleeping;
-  const waiterDone = waiter.call();
-  await waitForLockWaiters(waiter.fn, 1, { step: `${waiter.fn} が ${holder.label} の commit を待つ`, blockedBy: holder });
-  await holder.release();
-  return Promise.all([holder.done, waiterDone]);
-}
+type QueuedCall = LockQueuedCall<Outcome>;
 
 const AAL2_CLAIMS = { aal: 'aal2' } as const;
 
-/**
- * テストが途中で落ちたときに残った接続を、作った順に放す (先に作った接続を放さないと、その後ろで待つ接続が pg_sleep に入れない)。
- * 通ったテストでは全部放し終わっているので何もしない。放せなかったものは HOLDER_MAX_HOLD_SECONDS で自分で終わる
- */
-afterEach(async () => {
-  const holders = openHolders.splice(0);
-  for (const holder of holders) {
-    if (holder.finished()) continue;
-    await holder.release().catch(() => undefined);
-  }
-}, RACE_TIMEOUT_MS);
+// テストが途中で落ちたときに残った接続を、作った順に放す (通ったテストでは全部放し終わっているので何もしない)
+afterEach(() => holders.releaseOpenHolders(), RACE_TIMEOUT_MS);
 
 afterAll(async () => {
-  await Promise.allSettled(pendingHolders);
+  await holders.settle();
   if (createdUserIds.length > 0) {
     await srAdmin.from('membership_audit').delete().in('actor_id', createdUserIds);
     await srAdmin.from('ownership_transfer_proposals').delete().in('from_user_id', createdUserIds);
