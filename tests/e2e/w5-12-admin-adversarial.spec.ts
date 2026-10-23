@@ -1136,7 +1136,8 @@ test("[admin][adversarial] J-42: admin で sourceCode='invalid_source' → 400",
     body: { sourceCode: "invalid_source" },
   });
   expect(result.status).toBe(400);
-  expect((result.body as any)?.error).toBe("invalid_source");
+  // 失敗の本文は nested の形 { error: { code, message } } (#1917。code は従来の値のまま)
+  expect((result.body as { error?: { code?: string } } | null)?.error?.code).toBe("invalid_source");
 });
 
 test("[admin][adversarial] J-42b: admin で sourceCode 省略 → 400", async ({
