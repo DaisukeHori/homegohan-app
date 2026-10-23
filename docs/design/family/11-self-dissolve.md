@@ -2242,7 +2242,7 @@ origin/main `2ba5b3b3` では目印が無い (F-28) ので、v2026.1 は公開�
 | 家族の代表者・大人が REST で `family_groups` の `status` / `dissolved_at` を変える (`representative_id` / `plan_key` / `member_limit` も同じ) | 42501 `CANNOT_MODIFY_PRIVILEGED_COLUMN` | 403 (PostgREST) | — (画面からは呼ばない) | `guard_family_groups_privileged` (§11.1 の 6。S-31) |
 | 組織のオーナー・admin が REST で `organizations` の `status` / `owner_id` を変える | 42501 `CANNOT_MODIFY_PRIVILEGED_COLUMN` | 403 (PostgREST) | — | `guard_organizations_privileged` (既存。変えない。F-13) |
 | active の行の `representative_id` / `owner_id` を NULL にする UPDATE | 23514 (`family_groups_active_has_representative` / `organizations_active_has_owner`) | — | — | CHECK (§11.1) |
-| active な家族の代表者 / 組織のオーナーの `auth.users` を消す (退会の 409 を迂回) | 23503 (`family_groups_representative_id_fkey` / `organizations_owner_id_fkey`) | — | — | RESTRICT (変えない。F-6) |
+| active な家族の代表者 / 組織のオーナーの `auth.users` を消す (退会の 409 を迂回) | 23503 (`family_groups_representative_id_fkey` / `organizations_owner_id_fkey`) | — | — | RESTRICT (変えない。F-6)。退会の途中 (findBlocker のあと) に運営がその人をオーナーにして組織を作る経路は、退会の印とトリガー `organizations_owner_not_deleting` が止める (`20261023130000_account_deletion_owner_guard.sql`。#1917 の続き)。家族の代表者になる型は `src/lib/account-deletion.ts` の段 5 の例外のまま |
 | 代表者・オーナーが退会 | `ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE` / `ACCOUNT_DELETE_BLOCKED_ORG_OWNER` | 409 | 家族グループの代表者です。先に代表者を譲渡するか家族グループを解散してください。/ 組織のオーナーです。先にオーナーを譲渡するか組織を解散してください。(変えない) + 案内 (§13.6・§15.3〜§15.5。凍結中の画面は `FROZEN_DISSOLVE_GUIDANCE`、同意の前の画面は `LEGAL_CONSENT_COPY.accountDeleteBlockedGuidance`) | `findBlocker` |
 
 ---

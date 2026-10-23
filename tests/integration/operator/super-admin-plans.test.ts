@@ -216,4 +216,43 @@ describe('PATCH /api/super-admin/plans/[id]', () => {
     });
     expect(res.status).toBe(401);
   });
+
+  // 更新は読んだ status (廃止で既存の ends_at に頼るときは ends_at が NULL でないことも) を条件にする。
+  // 本物の PostgREST で条件つきの UPDATE が 1 行に当たり、監査の status_from が直前の status になることを確かめる
+  // (割り込みの再現は tests/super-admin-plan-status-cas-route.test.ts)
+  it('status の遷移 (draft → private → 既存の ends_at で廃止 → private) が 200 で書け、監査に status_from が残る', async () => {
+    const endsAt = '2099-01-01T00:00:00.000Z';
+    try {
+      const toPrivate = await apiCall('PATCH', `/api/super-admin/plans/${testPlanId}`, superAdminUser.jwt, { status: 'private' });
+      expect(toPrivate.status).toBe(200);
+      const withEndsAt = await apiCall('PATCH', `/api/super-admin/plans/${testPlanId}`, superAdminUser.jwt, { ends_at: endsAt });
+      expect(withEndsAt.status).toBe(200);
+      const deprecated = await apiCall('PATCH', `/api/super-admin/plans/${testPlanId}`, superAdminUser.jwt, { status: 'deprecated' });
+      expect(deprecated.status).toBe(200);
+      expect((deprecated.body as { data: { status: string } }).data.status).toBe('deprecated');
+      const back = await apiCall('PATCH', `/api/super-admin/plans/${testPlanId}`, superAdminUser.jwt, { status: 'private' });
+      expect(back.status).toBe(200);
+
+      const { data: logs, error } = await supabaseAdmin
+        .from('admin_audit_logs')
+        .select('details')
+        .eq('actor_id', superAdminUser.userId)
+        .eq('action_type', 'update_plan')
+        .eq('target_id', testPlanId)
+        .order('created_at', { ascending: true });
+      expect(error).toBeNull();
+      const transitions = (logs ?? [])
+        .map((log) => log.details as { status_from?: string; status_to?: string } | null)
+        .filter((details) => details?.status_from !== undefined)
+        .map((details) => [details?.status_from, details?.status_to]);
+      expect(transitions).toEqual([
+        ['draft', 'private'],
+        ['private', 'deprecated'],
+        ['deprecated', 'private'],
+      ]);
+    } finally {
+      // afterAll は draft の行だけを消すので、下書きに戻しておく
+      await supabaseAdmin.from('subscription_plans').update({ status: 'draft', ends_at: null }).eq('id', testPlanId);
+    }
+  });
 });

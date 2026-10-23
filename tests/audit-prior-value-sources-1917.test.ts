@@ -107,6 +107,13 @@ const INVENTORY: Record<string, PriorValueSource> = {
     how: '読んだ plan を条件にした UPDATE。0 行なら読み直して 409 か、同じプランなら記録しない',
     guardedBy: 'tests/admin-organization-plan-change-route.test.ts',
   },
+  'src/app/api/super-admin/plans/[id]/route.ts recordAdminAudit status_from': {
+    kind: 'cas',
+    how:
+      '読んだ status (廃止で既存の ends_at に頼るときは ends_at が NULL でないことも) を条件にした UPDATE。' +
+      '0 行なら読み直し、送った変更がもう入っていれば 200 で書かず記録しない・入っていなければ 409 CONFLICT_STALE_DATA',
+    guardedBy: 'tests/super-admin-plan-status-cas-route.test.ts',
+  },
   'src/app/api/admin/data-requests/[id]/route.ts recordAdminAudit status_from': {
     kind: 'cas',
     how: 'updateDsrByOperator が読んだ updated_at (If-Unmodified-Since) を条件にした UPDATE。0 行なら 409 CONFLICT_STALE_DATA',
