@@ -11,6 +11,8 @@
  *
  * 直したあとの不変条件:
  *  - リード・活動履歴の読み込みの DB の失敗は 500 INTERNAL_ERROR (DB の生の文面は本文に出さない)。404 は行が無いときだけ
+ *  - UUID の形でない id は DB に渡さず 404 NOT_FOUND (GET・PATCH・活動の GET・POST)。uuid 型の列に渡すと 22P02 で失敗し、
+ *    「DB の失敗は 500」に入ってしまうため (形の違う id は「そのリードは無い」と同じ)。PATCH・POST は本文の検査 (400) が先
  *  - 500 / 404 のときは、監査ログも活動も書かない
  *  - 記録の書き込み (stage_change・updated_at) の失敗は、本体 (リードの更新・活動の追加) が書けているので応答は成功のまま
  *    (監査ログと同じ fail-open)。失敗は db-logger に error で残す
@@ -141,6 +143,12 @@ function patchLead(body: unknown, id = LEAD_ID) {
   });
 }
 
+function listActivities(id = LEAD_ID) {
+  return activitiesRoute.GET(new NextRequest(`http://localhost/api/admin/sales/leads/${id}/activities`), {
+    params: Promise.resolve({ id }),
+  });
+}
+
 function addActivity(id = LEAD_ID) {
   return activitiesRoute.POST(
     new NextRequest(
@@ -267,5 +275,71 @@ describe('PATCH /api/admin/sales/leads/[id]: ステージの変更の活動履�
     expect(mockLoggerError.mock.calls[0][2]).toMatchObject({ lead_id: LEAD_ID, from_stage: 'approach', to_stage: 'meeting' });
     expect(auditRows()).toHaveLength(1);
     expect(auditRows()[0]).toMatchObject({ action_type: 'admin.sales.lead.update', target_id: LEAD_ID });
+  });
+});
+
+describe('UUID の形でない id: DB に渡さず 404 NOT_FOUND (22P02 を「DB の失敗」の 500 にしない)', () => {
+  const NOT_A_UUID = 'not-a-uuid';
+  /** 本物の Postgres が uuid 型の列に UUID でない文字列を渡されたときに返すエラー */
+  const INVALID_UUID_FAILURE: DbError = { message: `invalid input syntax for type uuid: "${NOT_A_UUID}"`, code: '22P02' };
+
+  beforeEach(() => {
+    // DB に渡れば 22P02 で失敗する状態にする (守りが外れると 500 になる)
+    setup({ sales_leads: INVALID_UUID_FAILURE, sales_lead_activities: INVALID_UUID_FAILURE });
+  });
+
+  /** リード・活動履歴のテーブルに 1 回も問い合わせていない */
+  function expectNoLeadQueries() {
+    expect(sessionDb.recorded('sales_leads')).toHaveLength(0);
+    expect(sessionDb.recorded('sales_lead_activities')).toHaveLength(0);
+  }
+
+  it('GET /[id] は 404 NOT_FOUND で、DB に問い合わせず、記録しない', async () => {
+    const res = await getLead(NOT_A_UUID);
+    expect(res.status).toBe(404);
+    expect((await json(res)).error).toEqual({ code: 'NOT_FOUND', message: 'Lead not found' });
+    expectNoLeadQueries();
+    expect(auditRows()).toEqual([]);
+    expect(mockLoggerError).not.toHaveBeenCalled();
+  });
+
+  it('PATCH /[id] は 404 NOT_FOUND で、DB に問い合わせず、書かず、記録しない', async () => {
+    const res = await patchLead({ stage: 'meeting' }, NOT_A_UUID);
+    expect(res.status).toBe(404);
+    expect((await json(res)).error).toEqual({ code: 'NOT_FOUND', message: 'Lead not found' });
+    expectNoLeadQueries();
+    expect(sessionDb.rows('sales_leads')[0].stage).toBe('approach');
+    expect(auditRows()).toEqual([]);
+  });
+
+  it('PATCH /[id] は本文の検査が先 (行が無い UUID と同じく 400 → 404 の順)', async () => {
+    const res = await patchLead({ stage: 'INVALID_STAGE' }, NOT_A_UUID);
+    expect(res.status).toBe(400);
+    expect((await json(res)).error?.code).toBe('VALIDATION_ERROR');
+    expectNoLeadQueries();
+  });
+
+  it('GET /[id]/activities は 404 NOT_FOUND で、DB に問い合わせない', async () => {
+    const res = await listActivities(NOT_A_UUID);
+    expect(res.status).toBe(404);
+    expect((await json(res)).error).toEqual({ code: 'NOT_FOUND', message: 'Lead not found' });
+    expectNoLeadQueries();
+  });
+
+  it('POST /[id]/activities は 404 NOT_FOUND で、活動を書かず、記録しない', async () => {
+    const res = await addActivity(NOT_A_UUID);
+    expect(res.status).toBe(404);
+    expect((await json(res)).error).toEqual({ code: 'NOT_FOUND', message: 'Lead not found' });
+    expectNoLeadQueries();
+    expect(activityRows()).toEqual([EXISTING_ACTIVITY]);
+    expect(auditRows()).toEqual([]);
+    expect(mockLoggerError).not.toHaveBeenCalled();
+  });
+
+  it('UUID の形の id は守りを通って DB に届き、DB の失敗は従来どおり 500 INTERNAL_ERROR', async () => {
+    const res = await getLead(LEAD_ID);
+    expect(res.status).toBe(500);
+    expect((await json(res)).error?.code).toBe('INTERNAL_ERROR');
+    expect(sessionDb.recorded('sales_leads')).toHaveLength(1);
   });
 });

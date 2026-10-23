@@ -10,6 +10,8 @@
  *
  * 読み込みの DB の失敗 (#1917 の整合の候補 C19 と同じ型): 追加の前のリードの存在の確認は、DB の失敗を 500 INTERNAL_ERROR にし、
  * リードの行が無いときだけ 404 にする (一時的な失敗でリードが消えたように見せない)。
+ * UUID の形でない id は、DB に渡す前に 404 NOT_FOUND で断る (GET・POST とも)。uuid 型の列に渡すと 22P02 で失敗し、
+ * 「DB の失敗は 500」に入ってしまうため (形の違う id は「そのリードは無い」と同じに扱う)。
  * 追加のあとのリードの updated_at の更新に失敗しても、活動は追加できているので 201 のまま (fail-open)。失敗は db-logger に error で残す。
  */
 import { NextRequest, NextResponse } from 'next/server';
@@ -21,8 +23,11 @@ import { errorCodeOf, internalError, toLoggableError } from '@/lib/api/errors';
 import { createLogger } from '@/lib/db-logger';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { recordAdminAudit } from '@/lib/admin/audit';
+import { isUuid } from '@/lib/http-params';
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+const LEAD_NOT_FOUND_RESPONSE = { error: { code: 'NOT_FOUND', message: 'Lead not found' } } as const;
 
 /** 構造化ログ (app_logs.function_name) に出す名前 */
 const POST_ROUTE_NAME = 'POST /api/admin/sales/leads/[id]/activities';
@@ -49,6 +54,12 @@ export async function GET(_request: NextRequest, props: RouteContext) {
   const params = await props.params;
   try {
     await requireRole(['sales', 'admin', 'super_admin']);
+
+    // UUID の形でない id は DB に渡さず 404 (渡すと 22P02 で下の「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(LEAD_NOT_FOUND_RESPONSE, { status: 404 });
+    }
+
     const supabase = await createClient();
 
     const { data, error } = await supabase
@@ -100,6 +111,12 @@ export async function POST(request: NextRequest, props: RouteContext) {
       );
     }
 
+    // UUID の形でない id は DB に渡さず 404 (渡すと 22P02 で下の「読み込みの DB の失敗は 500」に入る)。
+    // 本文の検査のあとに置くのは、行が無い UUID と同じ順 (400 → 404) にそろえるため
+    if (!isUuid(params.id)) {
+      return NextResponse.json(LEAD_NOT_FOUND_RESPONSE, { status: 404 });
+    }
+
     const { activity_type, details } = parseResult.data;
     const supabase = await createClient();
 
@@ -114,10 +131,7 @@ export async function POST(request: NextRequest, props: RouteContext) {
       return internalError(POST_ROUTE_NAME, leadError, { userId: currentUser.id, table: 'sales_leads' }, { shape: 'nested' });
     }
     if (!lead) {
-      return NextResponse.json(
-        { error: { code: 'NOT_FOUND', message: 'Lead not found' } },
-        { status: 404 },
-      );
+      return NextResponse.json(LEAD_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     const { data: activity, error: activityError } = await supabase

@@ -11,6 +11,8 @@
  * 読み込みの DB の失敗 (#1917 の整合の候補 C19): GET のリードの読み込みと活動履歴の読み込みは、DB の失敗を 500 INTERNAL_ERROR にし、
  * リードの行が無いときだけ 404 にする (一時的な失敗でリードが消えたように見せない。PATCH の「読み込みの失敗は 500」と同じ)。
  * 活動履歴の読み込みの失敗も空の履歴にせず 500 にする (履歴が無いように見せない)。
+ * UUID の形でない id は、DB に渡す前に 404 NOT_FOUND で断る (GET・PATCH とも)。uuid 型の列に渡すと 22P02 で失敗し、
+ * 上の「DB の失敗は 500」に入ってしまうため (形の違う id は「そのリードは無い」と同じに扱う)。
  *
  * ステージの変更の活動履歴 (#1917 の整合の候補 C20): stage_change の書き込みに失敗しても、リードの更新は書けているので応答は 200 のまま
  * (監査ログと同じ fail-open)。失敗は db-logger に error で残す (黙って捨てない)。
@@ -29,6 +31,7 @@ import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { errorCodeOf, internalError, toLoggableError } from '@/lib/api/errors';
 import { createLogger } from '@/lib/db-logger';
+import { isUuid } from '@/lib/http-params';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -69,6 +72,12 @@ export async function GET(request: NextRequest, props: RouteContext) {
   const params = await props.params;
   try {
     const currentUser = await requireRole(['sales', 'admin', 'super_admin']);
+
+    // UUID の形でない id は DB に渡さず 404 (渡すと 22P02 で下の「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(LEAD_NOT_FOUND_RESPONSE, { status: 404 });
+    }
+
     const supabase = await createClient();
 
     const { data: lead, error } = await supabase
@@ -167,6 +176,12 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
         { error: { code: 'VALIDATION_ERROR', message: parseResult.error.flatten() } },
         { status: 400 },
       );
+    }
+
+    // UUID の形でない id は DB に渡さず 404 (渡すと 22P02 で下の「読み込みの DB の失敗は 500」に入る)。
+    // 本文の検査のあとに置くのは、行が無い UUID と同じ順 (400 → 404) にそろえるため
+    if (!isUuid(params.id)) {
+      return NextResponse.json(LEAD_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     const supabase = await createClient();
