@@ -144,6 +144,13 @@ export default function LeadDetailPage(props: PageProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ stage: newStage }),
       });
+      if (res.status === 409) {
+        // 別の担当者が先にステージを変えていた (API は書かずに 409 CONFLICT_STALE_DATA を返す)。今のステージを読み直して、その旨を出す
+        const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+        await fetchLead();
+        setError(body?.error?.message ?? 'ステージ変更に失敗しました');
+        return;
+      }
       if (!res.ok) throw new Error('ステージ変更失敗');
       await fetchLead();
     } catch (e: unknown) {

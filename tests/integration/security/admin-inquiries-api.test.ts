@@ -13,6 +13,9 @@
  *   - 監査ログ (#1200): 詳細の閲覧と更新を記録する (対象は閲覧された本人。ゲストは問い合わせそのもの)。
  *     プロキシ経由の x-forwarded-for (複数ホップ) でも inet 列に入る。値 (メール・本文・メモ) は入れない。一覧は記録しない
  *   - RLS: 運営ロール以外は、直接 PostgREST を叩いても他人の問い合わせを読めず、更新もできない
+ *   - 同時の更新: 更新は直前に読んだ status と updated_at を条件にする。PostgREST が返した updated_at の文字列で
+ *     条件が一致すること (秒未満まで)、ずれた値では 0 行になること、運営が同時に更新しても監査の status_from が
+ *     実際の直前の値とつながること (200 か 409 CONFLICT_STALE_DATA だけ)
  *
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
  *   npm run dev &
@@ -548,6 +551,126 @@ describe('PATCH / PUT /api/admin/inquiries/[id]', () => {
     expect(badId.status).toBe(400);
 
     expect(await dbRow(seeded.guestResolved)).toEqual(before);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 同時の更新 (条件つきの更新。監査の status_from と resolved_at を取り違えない)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('同時の更新', () => {
+  /** このブロック専用の問い合わせを作る (ほかのテストの行の状態に依らない) */
+  async function createInquiry(label: string): Promise<string> {
+    const { data, error } = await srAdmin
+      .from('inquiries')
+      .insert({
+        user_id: null,
+        inquiry_type: 'general',
+        email: `race-${label}-${TS}@homegohan.test`,
+        subject: `${MARK} 同時の更新 ${label}`,
+        message: '同時の更新の確認',
+        status: 'pending',
+      })
+      .select('id')
+      .single();
+    if (error || !data) throw new Error(`seed inquiries (${label}): ${error?.message}`);
+    createdInquiryIds.push(data.id as string);
+    return data.id as string;
+  }
+
+  it('route が条件に使う updated_at は、PostgREST が返した文字列で一致し (秒未満まで)、別の更新で進んだあとは 0 行になる', async () => {
+    const id = await createInquiry('stale');
+    const supportClient = client(anonKey, support.jwt);
+    const first = await supportClient.from('inquiries').select('status, updated_at').eq('id', id).single();
+    expect(first.error).toBeNull();
+    const staleUpdatedAt = first.data!.updated_at as string;
+
+    // 別の運営の更新 (API 経由)。updated_at はトリガーで進む
+    const res = await apiCall<{ inquiry: InquiryDto }>('PUT', `/api/admin/inquiries/${id}`, admin.jwt, { status: 'in_progress' });
+    expect(res.status).toBe(200);
+
+    // 古い updated_at を条件にした更新は 0 行 (route の 409 の元)
+    const stale = await supportClient
+      .from('inquiries')
+      .update({ status: 'resolved' })
+      .eq('id', id)
+      .eq('status', 'pending')
+      .eq('updated_at', staleUpdatedAt)
+      .select('id');
+    expect(stale.error).toBeNull();
+    expect(stale.data).toEqual([]);
+
+    // 読み直した updated_at の文字列そのままなら一致する (秒未満が丸められて毎回 0 行にならない)
+    const current = await supportClient.from('inquiries').select('status, updated_at').eq('id', id).single();
+    const fresh = await supportClient
+      .from('inquiries')
+      .update({ admin_notes: '条件つきの更新' })
+      .eq('id', id)
+      .eq('status', current.data!.status as string)
+      .eq('updated_at', current.data!.updated_at as string)
+      .select('id');
+    expect(fresh.error).toBeNull();
+    expect(fresh.data).toHaveLength(1);
+  });
+
+  it('運営 3 人が同時にステータスを変えても、応答は 200 か 409 CONFLICT_STALE_DATA だけで、監査の status_from は実際の直前の値とつながる', async () => {
+    const id = await createInquiry('parallel');
+    const operators = [support, admin, superAdmin];
+    const targets = ['in_progress', 'resolved', 'closed', 'pending', 'resolved', 'in_progress'] as const;
+
+    const responses = await Promise.all(
+      targets.map((status, i) =>
+        apiCall<{ inquiry?: InquiryDto; error?: { code: string } }>(
+          'PUT',
+          `/api/admin/inquiries/${id}`,
+          operators[i % operators.length].jwt,
+          { status },
+        ),
+      ),
+    );
+    for (const res of responses) {
+      expect([200, 409]).toContain(res.status);
+      if (res.status === 409) expect(res.body.error?.code).toBe('CONFLICT_STALE_DATA');
+    }
+    expect(responses.some((r) => r.status === 200)).toBe(true);
+
+    const { data: logs, error } = await srAdmin
+      .from('admin_audit_logs')
+      .select('details')
+      .eq('action_type', 'admin.inquiry.update')
+      .eq('target_id', id);
+    expect(error).toBeNull();
+    // 監査は 200 の応答と同じ数だけ (409 は記録しない)
+    expect(logs ?? []).toHaveLength(responses.filter((r) => r.status === 200).length);
+
+    // 実際に書いた更新 (changed) の from → to は、pending から今の status への 1 本の道になる。
+    // 条件なしで古い current を使うと、同じ from から 2 本出る (例: pending → in_progress と pending → resolved) ので、出入りの数が合わない
+    const edges = (logs ?? [])
+      .map((l) => l.details as { status_from: string; status_to: string; changed: boolean })
+      .filter((d) => d.changed && d.status_from !== d.status_to);
+    const finalRow = await dbRow(id);
+    const balance = new Map<string, number>();
+    for (const e of edges) {
+      balance.set(e.status_from, (balance.get(e.status_from) ?? 0) + 1);
+      balance.set(e.status_to, (balance.get(e.status_to) ?? 0) - 1);
+    }
+    const start = 'pending';
+    const end = finalRow.status as string;
+    if (start !== end) {
+      expect(balance.get(start), `pending から出る更新 (${JSON.stringify(edges)})`).toBe(1);
+      expect(balance.get(end), `${end} に入る更新 (${JSON.stringify(edges)})`).toBe(-1);
+    }
+    for (const [status, net] of balance) {
+      const expected = start === end ? 0 : status === start ? 1 : status === end ? -1 : 0;
+      expect(net, `${status} の出入り (${JSON.stringify(edges)})`).toBe(expected);
+    }
+
+    // resolved_at は今の status に合う (解決済み・完了なら入り、それ以外は null)
+    if (end === 'resolved' || end === 'closed') {
+      expect(finalRow.resolved_at).not.toBeNull();
+    } else {
+      expect(finalRow.resolved_at).toBeNull();
+    }
   });
 });
 

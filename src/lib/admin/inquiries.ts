@@ -69,6 +69,9 @@ export const inquiryUpdateBodySchema = z
     message: 'status か adminNotes のどちらかを指定してください',
   });
 
+/** 更新のボディ (inquiryUpdateBodySchema を通したもの) */
+export type InquiryUpdateBody = z.infer<typeof inquiryUpdateBodySchema>;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 行と応答の形
 // ─────────────────────────────────────────────────────────────────────────────
@@ -162,6 +165,20 @@ export function nextResolvedAt(
   if (!RESOLVED_STATUSES.includes(nextStatus)) return null;
   if (RESOLVED_STATUSES.includes(current.status) && current.resolved_at) return current.resolved_at;
   return nowIso;
+}
+
+/**
+ * 条件つきの更新が 0 行だったあとで読み直した行に、送られた変更がすでに入っているか。
+ * 送られた項目 (status / adminNotes) がどれも読み直した値と同じなら true (別の運営が同じ変更を先にした)。
+ * このときは書かずに今の行を返す。違えば 409 CONFLICT_STALE_DATA (route を参照)。
+ */
+export function inquiryUpdateAlreadyApplied(
+  row: Pick<InquiryRow, 'status' | 'admin_notes'>,
+  input: InquiryUpdateBody,
+): boolean {
+  if (input.status !== undefined && input.status !== row.status) return false;
+  if (input.adminNotes !== undefined && normalizeAdminNotes(input.adminNotes) !== row.admin_notes) return false;
+  return true;
 }
 
 /** 空白だけのメモは「メモなし」(null) として保存する */

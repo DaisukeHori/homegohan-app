@@ -13,6 +13,8 @@
  *    対象は情報を見られた本人 (ゲストは問い合わせ自体)、details は項目名と id だけで、本文・メールアドレス・メモの中身は入れない。
  *    情報を返さなかったとき (400 / 404 / 500 / 401 / 403) は記録しない。記録に失敗しても応答は返す (fail-open)
  *  - service_role: ニックネームの解決にだけ使い、inquiries / admin_audit_logs には使わない
+ *  - 同時の更新: 更新は直前に読んだ status と updated_at を条件にする。読んでから書くまでに別の運営が変えていたら
+ *    409 CONFLICT_STALE_DATA で、書かず記録もしない。同じ変更が先に入っていたら 200 で書かず、変更なしとして記録する
  *
  * 認可は本物の requireRole、監査ログの記録は本物の recordAdminAudit を通す。外との境界である Supabase だけを、
  * 関係する RLS (supabase/baseline/prod_schema.sql) を真似たメモリ上の偽物に置き換える。
@@ -46,9 +48,20 @@ interface World {
   /** `${table}.${select|update|insert}` (または `${session|admin}:${table}.${...}`) ごとに、強制的に返すエラー */
   failures: Record<string, { code?: string; message: string; status?: number }>;
   calls: Call[];
+  /**
+   * inquiries の次の読み取り (select) が結果を返した直後に 1 回だけ呼ぶ。
+   * route が読んでから書くまでの間に、別の運営が同じ問い合わせを変えた状態を作る
+   */
+  afterNextInquiryRead: (() => void) | null;
 }
 
-const world: World = { actor: null, tables: { inquiries: [], user_profiles: [], admin_audit_logs: [] }, failures: {}, calls: [] };
+const world: World = {
+  actor: null,
+  tables: { inquiries: [], user_profiles: [], admin_audit_logs: [] },
+  failures: {},
+  calls: [],
+  afterNextInquiryRead: null,
+};
 
 const FAKE_TRIGGER_UPDATED_AT = '2026-10-08T03:00:00.000Z';
 
@@ -139,6 +152,12 @@ function createBuilder(client: ClientKind, table: keyof World['tables']) {
     }
 
     const data = rows.map((row) => ({ ...row }));
+    if (table === 'inquiries' && q.kind === 'select' && world.afterNextInquiryRead) {
+      // 返す値は上で写し終えているので、ここで行を変えても今回の結果には入らない (読んだあとの別の運営の変更)
+      const interleave = world.afterNextInquiryRead;
+      world.afterNextInquiryRead = null;
+      interleave();
+    }
     if (mode === 'many') return { data, error: null, count: q.countExact ? total : null };
     if (data.length > 1) {
       return { data: null, error: { code: 'PGRST116', message: 'multiple rows returned' }, count: null };
@@ -156,8 +175,14 @@ function createBuilder(client: ClientKind, table: keyof World['tables']) {
       return builder;
     },
     eq: (column: string, value: unknown) => {
-      q.filters.push((row) => row[column] === value);
+      // PostgREST の eq は NULL に一致しない (NULL と比べるには .is を使う)
+      q.filters.push((row) => row[column] !== null && row[column] === value);
       q.filterLog.push([column, 'eq', value]);
+      return builder;
+    },
+    is: (column: string, value: null) => {
+      q.filters.push((row) => row[column] === value);
+      q.filterLog.push([column, 'is', value]);
       return builder;
     },
     in: (column: string, values: unknown[]) => {
@@ -235,6 +260,7 @@ import { GET as detailGET, PATCH, PUT } from '@/app/api/admin/inquiries/[id]/rou
 import {
   ADMIN_NOTES_MAX_LENGTH,
   inquiryAuditTarget,
+  inquiryUpdateAlreadyApplied,
   inquiryUpdateBodySchema,
   nextResolvedAt,
   normalizeAdminNotes,
@@ -326,6 +352,7 @@ function seed() {
   world.tables.admin_audit_logs = [];
   world.failures = {};
   world.calls = [];
+  world.afterNextInquiryRead = null;
 }
 
 /** ログイン中のユーザーを切り替える。ロール・凍結は user_profiles に反映する (requireRole が読む) */
@@ -865,7 +892,12 @@ describe.each([
 
     const update = world.calls.find((c) => c.table === 'inquiries' && c.kind === 'update')!;
     expect(update.payload).toEqual({ status: 'resolved', resolved_at: NOW_ISO, admin_notes: '対応済み' });
-    expect(update.filters).toEqual([['id', 'eq', I2]]);
+    // 直前に読んだ status と updated_at のままのときだけ書く (同時の更新で監査の status_from と resolved_at を取り違えない)
+    expect(update.filters).toEqual([
+      ['id', 'eq', I2],
+      ['status', 'eq', 'in_progress'],
+      ['updated_at', 'eq', '2026-10-05T00:00:00.000Z'],
+    ]);
     expect(stored(I2)).toMatchObject({
       id: I2,
       user_id: before.user_id,
@@ -1005,6 +1037,155 @@ describe.each([
     expect(res.status).toBe(200);
     expect((stored(I1).admin_notes as string).length).toBe(ADMIN_NOTES_MAX_LENGTH);
   });
+
+  describe('同時の更新 (読んでから書くまでに別の運営が変えた)', () => {
+    /** 別の運営の変更。updated_at はトリガーで進む (FAKE_TRIGGER_UPDATED_AT とも元の値とも違う時刻) */
+    const OTHER_OPERATOR_UPDATED_AT = '2026-10-08T02:59:00.000Z';
+    const changeByOtherOperator = (id: string, changes: Row) => {
+      world.afterNextInquiryRead = () => {
+        Object.assign(stored(id), changes, { updated_at: OTHER_OPERATOR_UPDATED_AT });
+      };
+    };
+    const updateCalls = () => world.calls.filter((c) => c.table === 'inquiries' && c.kind === 'update');
+
+    it('別の運営がステータスを変えていたら 409 CONFLICT_STALE_DATA。書かず、記録もしない (監査の status_from を古い値にしない)', async () => {
+      changeByOtherOperator(I1, { status: 'in_progress' });
+      const res = await send(I1, { status: 'resolved' });
+      expect(res.status).toBe(409);
+      const body = await json(res);
+      expect(body.error.code).toBe('CONFLICT_STALE_DATA');
+      expect(body.error.message).toContain('画面を開き直して');
+      expect(body).not.toHaveProperty('inquiry');
+      expect(res.headers.get('cache-control')).toBe('private, no-store');
+      // 条件つきの更新は 0 行で、別の運営の変更がそのまま残る
+      expect(updateCalls()).toHaveLength(1);
+      expect(updateCalls()[0].filters).toEqual([
+        ['id', 'eq', I1],
+        ['status', 'eq', 'pending'],
+        ['updated_at', 'eq', '2026-10-05T00:00:00.000Z'],
+      ]);
+      expect(stored(I1)).toMatchObject({ status: 'in_progress', resolved_at: null, updated_at: OTHER_OPERATOR_UPDATED_AT });
+      expect(world.tables.admin_audit_logs).toEqual([]);
+    });
+
+    it('解決済みを別の運営が開き直して解決し直していたら、古い解決時刻で完了 (closed) にしない (409)', async () => {
+      // 読んだ時点: resolved (2026-10-03T12:00)。書く前に、別の運営が再オープン → 解決し直した (status は同じ resolved)
+      const reResolvedAt = '2026-10-08T02:58:00.000Z';
+      changeByOtherOperator(I3, { status: 'resolved', resolved_at: reResolvedAt });
+      const res = await send(I3, { status: 'closed' });
+      expect(res.status).toBe(409);
+      expect((await json(res)).error.code).toBe('CONFLICT_STALE_DATA');
+      expect(stored(I3)).toMatchObject({ status: 'resolved', resolved_at: reResolvedAt });
+      expect(world.tables.admin_audit_logs).toEqual([]);
+    });
+
+    it('読んでから書くまでに別の運営が管理者メモを書いていたら、上書きしない (409)', async () => {
+      changeByOtherOperator(I2, { admin_notes: '別の運営の追記' });
+      const res = await send(I2, { adminNotes: 'こちらのメモ' });
+      expect(res.status).toBe(409);
+      expect((await json(res)).error.code).toBe('CONFLICT_STALE_DATA');
+      expect(stored(I2).admin_notes).toBe('別の運営の追記');
+      expect(world.tables.admin_audit_logs).toEqual([]);
+    });
+
+    it('送った変更の一部だけが先に入っていても、残りを書かずに 409 にする', async () => {
+      // ステータスは同じ値に先に変わったが、メモは違う
+      changeByOtherOperator(I1, { status: 'resolved', resolved_at: '2026-10-08T02:58:00.000Z', admin_notes: '別の運営のメモ' });
+      const res = await send(I1, { status: 'resolved', adminNotes: '私のメモ' });
+      expect(res.status).toBe(409);
+      expect(stored(I1).admin_notes).toBe('別の運営のメモ');
+      expect(world.tables.admin_audit_logs).toEqual([]);
+    });
+
+    it('別の運営が同じ変更を先にしていたら 200 で今の行を返し、書かずに「変更なし」として記録する', async () => {
+      const otherResolvedAt = '2026-10-08T02:58:00.000Z';
+      changeByOtherOperator(I1, { status: 'resolved', resolved_at: otherResolvedAt, admin_notes: '対応済み' });
+      const res = await send(I1, { status: 'resolved', adminNotes: '対応済み' });
+      expect(res.status).toBe(200);
+      const body = await json(res);
+      // 先の運営が書いた行そのもの (解決時刻も先の運営のもの)
+      expect(body.inquiry).toMatchObject({
+        id: I1,
+        status: 'resolved',
+        resolvedAt: otherResolvedAt,
+        adminNotes: '対応済み',
+        updatedAt: OTHER_OPERATOR_UPDATED_AT,
+      });
+      expect(stored(I1)).toMatchObject({ resolved_at: otherResolvedAt, updated_at: OTHER_OPERATOR_UPDATED_AT });
+      // 本文を返すので記録は残す。この要求は何も変えていないので status_from = status_to・changed は false
+      expect(world.tables.admin_audit_logs).toHaveLength(1);
+      expect(world.tables.admin_audit_logs[0]).toMatchObject({ action_type: 'admin.inquiry.update', target_id: I1 });
+      expect(world.tables.admin_audit_logs[0].details).toEqual({
+        inquiry_id: I1,
+        status_from: 'resolved',
+        status_to: 'resolved',
+        admin_notes_changed: false,
+        changed: false,
+      });
+    });
+
+    it('空白だけのメモは null として比べる (先に消されていれば 200 で変更なし)', async () => {
+      changeByOtherOperator(I2, { admin_notes: null });
+      const res = await send(I2, { adminNotes: '   ' });
+      expect(res.status).toBe(200);
+      expect((await json(res)).inquiry.adminNotes).toBeNull();
+      expect(world.tables.admin_audit_logs[0].details).toMatchObject({ admin_notes_changed: false, changed: false });
+    });
+
+    it('読んでから書くまでに問い合わせが消えたら 404 で、記録しない', async () => {
+      world.afterNextInquiryRead = () => {
+        world.tables.inquiries = world.tables.inquiries.filter((r) => r.id !== I1);
+      };
+      const res = await send(I1, { status: 'resolved' });
+      expect(res.status).toBe(404);
+      expect((await json(res)).error.code).toBe('NOT_FOUND');
+      expect(world.tables.admin_audit_logs).toEqual([]);
+    });
+
+    it('読み直しに失敗したら 500 (409 や 404 にしない) で、記録しない', async () => {
+      world.afterNextInquiryRead = () => {
+        Object.assign(stored(I1), { status: 'in_progress', updated_at: OTHER_OPERATOR_UPDATED_AT });
+        world.failures['inquiries.select'] = { code: '57014', message: 'canceling statement due to statement timeout' };
+      };
+      const res = await send(I1, { status: 'resolved' });
+      expect(res.status).toBe(500);
+      expect((await json(res)).error.code).toBe('INTERNAL_ERROR');
+      expect(mocks.logError).toHaveBeenCalledWith(
+        expect.stringContaining('読み直し'),
+        expect.objectContaining({ code: '57014' }),
+        { inquiry_id: I1 },
+      );
+      expect(world.tables.admin_audit_logs).toEqual([]);
+    });
+
+    it('updated_at が NULL の行は .is で比べて書ける (eq.null は NULL に一致しない)', async () => {
+      stored(I1).updated_at = null;
+      const res = await send(I1, { status: 'resolved' });
+      expect(res.status).toBe(200);
+      expect(updateCalls()[0].filters).toEqual([
+        ['id', 'eq', I1],
+        ['status', 'eq', 'pending'],
+        ['updated_at', 'is', null],
+      ]);
+      expect(stored(I1)).toMatchObject({ status: 'resolved', resolved_at: NOW_ISO });
+      expect(world.tables.admin_audit_logs[0].details).toMatchObject({ status_from: 'pending', status_to: 'resolved', changed: true });
+    });
+
+    it('続けて 2 回更新しても、2 回目は 1 回目が進めた updated_at を条件にして書ける', async () => {
+      expect((await send(I1, { status: 'in_progress' })).status).toBe(200);
+      const second = await send(I1, { status: 'resolved' });
+      expect(second.status).toBe(200);
+      expect(updateCalls()[1].filters).toEqual([
+        ['id', 'eq', I1],
+        ['status', 'eq', 'in_progress'],
+        ['updated_at', 'eq', FAKE_TRIGGER_UPDATED_AT],
+      ]);
+      expect(world.tables.admin_audit_logs.map((l) => l.details)).toEqual([
+        expect.objectContaining({ status_from: 'pending', status_to: 'in_progress', changed: true }),
+        expect.objectContaining({ status_from: 'in_progress', status_to: 'resolved', changed: true }),
+      ]);
+    });
+  });
 });
 
 describe('PATCH と PUT は同じ結果になる (Web は PUT、モバイルは PATCH)', () => {
@@ -1066,6 +1247,28 @@ describe('inquiryAuditTarget (#1200: 閲覧された本人を対象にする)', 
 
   it('ゲスト (user_id なし。会員が退会して user_id が外れた問い合わせも同じ) は問い合わせそのものを対象にする', () => {
     expect(inquiryAuditTarget({ id: I1, user_id: null })).toEqual({ targetId: I1, targetType: 'inquiry' });
+  });
+});
+
+describe('inquiryUpdateAlreadyApplied (条件つきの更新が 0 行のあとの判定)', () => {
+  const row = { status: 'resolved', admin_notes: 'メモ' };
+  it('送った項目がどれも今の値と同じなら true', () => {
+    expect(inquiryUpdateAlreadyApplied(row, { status: 'resolved' })).toBe(true);
+    expect(inquiryUpdateAlreadyApplied(row, { adminNotes: 'メモ' })).toBe(true);
+    expect(inquiryUpdateAlreadyApplied(row, { status: 'resolved', adminNotes: 'メモ' })).toBe(true);
+  });
+  it('どれか 1 つでも違えば false', () => {
+    expect(inquiryUpdateAlreadyApplied(row, { status: 'closed' })).toBe(false);
+    expect(inquiryUpdateAlreadyApplied(row, { adminNotes: '別のメモ' })).toBe(false);
+    expect(inquiryUpdateAlreadyApplied(row, { status: 'resolved', adminNotes: '別のメモ' })).toBe(false);
+    expect(inquiryUpdateAlreadyApplied(row, { status: 'closed', adminNotes: 'メモ' })).toBe(false);
+  });
+  it('メモは保存するときと同じく正規化して比べる (空・空白だけ・null は null)', () => {
+    const noNotes = { status: 'pending', admin_notes: null };
+    expect(inquiryUpdateAlreadyApplied(noNotes, { adminNotes: '' })).toBe(true);
+    expect(inquiryUpdateAlreadyApplied(noNotes, { adminNotes: '  ' })).toBe(true);
+    expect(inquiryUpdateAlreadyApplied(noNotes, { adminNotes: null })).toBe(true);
+    expect(inquiryUpdateAlreadyApplied(row, { adminNotes: null })).toBe(false);
   });
 });
 
