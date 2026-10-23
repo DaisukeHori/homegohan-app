@@ -65,7 +65,7 @@ export interface PrivacyProcessor {
  * 委託先 (法 27 条 5 項 1 号) の一覧。実コードで実際にデータを渡している事業者だけを載せる。
  * 事業者を足したら、ここと tests/legal-text-1901.test.ts の両方に足し、プライバシーポリシーの版を上げる。
  * AI 事業者 (xai / google / openai / perplexity / aimlapi) はここではなく第6条 (ctx.aiProviders)。
- * 有料プランの決済の事業者 (Stripe) とアプリ内課金の購入の確認 (RevenueCat) は billing/03 §11.2 が足した。ストアの事業者 (Apple・Google) は委託先ではないので載せない (第3条に書く。billing/03 Q-17)。
+ * 有料プランの決済の事業者 (Stripe) とアプリ内課金の購入の確認 (RevenueCat) は billing/03 §11.2 が足した。ストアの決済の事業者としての Apple・Google は委託先ではないので載せない (第3条に書く。billing/03 Q-17)。ログインの事業者としての Google・Apple は載せる (mobile/08 §11.8)。
  */
 export const PRIVACY_PROCESSORS: readonly PrivacyProcessor[] = [
   {
@@ -88,6 +88,13 @@ export const PRIVACY_PROCESSORS: readonly PrivacyProcessor[] = [
     purpose: 'Google アカウントでのログイン',
     data: 'ログインのときに Google と当社の間でやりとりする、Google アカウントの識別子、メールアドレス、名前、プロフィール画像（AI 機能での利用は第6条）',
     evidence: { file: 'src/app/(auth)/login/page.tsx', needle: "provider: 'google'" },
+  },
+  {
+    name: 'Apple',
+    country: 'アメリカ合衆国',
+    purpose: 'Apple アカウントでのログイン',
+    data: 'ログインのときに Apple と当社の間でやりとりする、Apple アカウントの識別子、メールアドレス（メールアドレスを隠す選択をした場合は Apple が発行する転送用のアドレス）、名前（初回のログインのときだけ）、退会のときに Apple でのログインを解除するためのトークン',
+    evidence: { file: 'apps/mobile/src/lib/appleSignIn.ts', needle: 'provider: "apple"' },
   },
   {
     name: 'Resend',
@@ -206,7 +213,7 @@ export function privacyText(ctx: LegalTextContext): LegalDocumentText {
                 kind: 'table',
                 headers: ['区分', '主な内容'],
                 rows: [
-                  ['アカウント', 'メールアドレス、パスワード（ハッシュ化して保存します）、Google アカウントで登録した場合に Google から受け取る情報、生年月日、ニックネーム、ご利用のプラン'],
+                  ['アカウント', 'メールアドレス、パスワード（ハッシュ化して保存します）、Google アカウントまたは Apple アカウントで登録した場合に Google または Apple から受け取る情報（Apple でメールアドレスを隠す選択をした場合は転送用のアドレス、Apple でのログインを退会のときに解除するためのトークンを含みます）、生年月日、ニックネーム、ご利用のプラン'],
                   ['有料プラン', '申し込んだ有料プランとその契約の状態・期間・無料体験の利用の有無、申し込んだ場所（Web・App Store・Google Play）、決済の事業者（Stripe）と RevenueCat が付ける顧客と契約の識別子、クーポンの利用の記録。App Store または Google Play で申し込んだ場合は、Apple または Google が各ストアの規約に従って決済を行い、当社は RevenueCat を通じて購入の情報（商品、購入と期限の日時、契約の状態）を受け取ります。クレジットカードの番号は、当社は受け取りません'],
                   ['プロフィール', '身長・体重などの身体の情報、生活習慣、食の好みとアレルギー、目標、健康上の注意点（持病、服薬、妊娠の有無など。要配慮個人情報を含みます）、栄養の目標'],
                   ['食事と献立', '食事の写真と、そこから推定した料理と栄養の値、食事の記録、献立と献立の作成の依頼の内容、冷蔵庫の写真と食材、買い物リスト'],
@@ -380,6 +387,7 @@ export function privacyText(ctx: LegalTextContext): LegalDocumentText {
                   ['Vercel（表示速度の計測）', 'ページの URL（個人に関わる部分は送る前に消します）、表示速度の計測値、ブラウザの種類', '画面の表示速度の改善'],
                   ['Cloudflare（ボットの判定）', 'ブラウザや端末の情報、IP アドレス', 'ログインや登録などの画面でのボットの判定'],
                   ['Google（ログインの画面）', 'Google のログイン画面で Google が取得する情報', 'Google アカウントでのログイン'],
+                  ['Apple（ログインの画面）', 'Apple のログイン画面で Apple が取得する情報', 'Apple アカウントでのログイン'],
                   [`GitHub（GitHub Pages の祝日の一覧。${HOLIDAYS_API_HOST}）`, '取得する年、IP アドレス、ブラウザの種類（ユーザーの記録は送りません）', '献立のカレンダーに日本の祝日を表示するため'],
                   ['Expo（プッシュ通知）', '端末のプッシュ通知のトークン', 'アプリへの通知の配信'],
                   ['Stripe（Web のお支払いの画面）', 'お支払いの画面で入力するカードの情報、メールアドレス、IP アドレス、ブラウザの種類', 'Web での有料プランのお支払い'],
