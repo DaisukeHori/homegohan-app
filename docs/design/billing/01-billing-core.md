@@ -2856,10 +2856,10 @@ import { BILLING_ERROR_HTTP_STATUS, BILLING_ERROR_MESSAGES, BillingError, Stripe
 
 const NO_STORE = { 'Cache-Control': 'no-store' } as const;
 
-/** 400 の本文 (super-admin の validation-errors と同じ形: message は最初の issue の文、details は issues の全件) */
+/** 400 の本文。message は日本語の固定の文 (BILLING_ERROR_MESSAGES.BILL_INVALID_INPUT。#1917: schema の issue の文は Zod の既定の英語なので message に入れない)、details は issues の全件 */
 export function billingInvalidInputResponse(issues: readonly z.core.$ZodIssue[]): NextResponse {
   return NextResponse.json(
-    { error: { code: 'BILL_INVALID_INPUT', message: issues[0]?.message ?? BILLING_ERROR_MESSAGES.BILL_INVALID_INPUT, details: issues } },
+    { error: { code: 'BILL_INVALID_INPUT', message: BILLING_ERROR_MESSAGES.BILL_INVALID_INPUT, details: issues } },
     { status: BILLING_ERROR_HTTP_STATUS.BILL_INVALID_INPUT, headers: NO_STORE },
   );
 }
@@ -3454,7 +3454,7 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 
 | コード | HTTP | 出どころ | 文 (`BILLING_ERROR_MESSAGES`) |
 |---|---|---|---|
-| `BILL_INVALID_INPUT` [NEW] | 400 | Zod | 最初の issue の文 (details に全件) |
+| `BILL_INVALID_INPUT` [NEW] | 400 | Zod | 入力値が不正です (固定の文。Zod の既定の英語の issue の文は message に入れず、details に全件。#1917) |
 | `AUTH_UNAUTHENTICATED` | 401 | `requireUser` | 認証が必要です |
 | `AUTH_ACCOUNT_FROZEN` | 403 | middleware (凍結中の `/api/*`。`code` は同じで文は「アカウントが凍結されています」)・`requireUser` | 権限がありません。凍結中も通す 3 本 (`GET /api/billing/subscription`・`POST /api/billing/subscription/cancel`・`POST /api/billing/portal`。§9.8) は返さない |
 | `BILL_CHECKOUT_SESSION_MISMATCH` [NEW] | 403 | sync | このお申し込みは確認できません |
