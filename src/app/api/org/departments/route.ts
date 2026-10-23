@@ -70,7 +70,7 @@ function validateName(name: unknown): string | null {
 
 function invalidNameResponse() {
   return NextResponse.json(
-    { error: { code: 'VALIDATION_ERROR', message: `name は必須です (${MAX_NAME_LENGTH} 文字以内)` } },
+    { error: { code: 'VALIDATION_ERROR', message: `部署の名前を入力してください (${MAX_NAME_LENGTH} 文字以内)` } },
     { status: 400 },
   );
 }
@@ -156,7 +156,7 @@ export async function PUT(request: NextRequest) {
     const body = (parsed.body ?? {}) as { id?: unknown; name?: unknown };
     const rawId = body.id;
     if (!rawId || typeof rawId !== 'string') {
-      return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: 'id は必須です' } }, { status: 400 });
+      return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: '部署を指定してください' } }, { status: 400 });
     }
     // UUID の形なら小文字にそろえてから使う (#1790)。Postgres の uuid は大文字小文字を区別せずに比べるので、大文字の id でも
     // 更新は自組織の部署に当たるが、人数の集計 (counts。キーは DB から読んだ小文字の department_id) の get が外れて人数が 0 になる
@@ -191,7 +191,7 @@ export async function DELETE(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get('id');
     if (!id) {
-      return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: 'id は必須です' } }, { status: 400 });
+      return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: '部署を指定してください' } }, { status: 400 });
     }
     const supabase = await createClient();
     const { data, error } = await supabase

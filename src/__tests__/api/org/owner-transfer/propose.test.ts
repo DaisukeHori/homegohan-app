@@ -291,6 +291,10 @@ describe('POST /api/org/owner-transfer/propose: 既存の挙動 (退行確認)',
     const res = await POST(postRequest(validBody));
 
     expect(res.status).toBe(403);
+    // 本文の文は日本語の役割名 (以前の 'owner のみ譲渡提案が可能です' の英字の役割名は出さない。#1917)。code は従来のまま
+    expect(await res.json()).toEqual({
+      error: { code: 'INSUFFICIENT_PERMISSION', message: 'オーナーだけが譲渡を提案できます' },
+    });
     expect(mockRpc).not.toHaveBeenCalled();
     expect(mockSendEmail).not.toHaveBeenCalled();
   });
