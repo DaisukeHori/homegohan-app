@@ -110,7 +110,7 @@ describe('BROCHURE の組織の機能の行 (#1917 docs-1023b の R1 指摘 1)',
 describe('BROCHURE が「無い」と書く組織の機能の実装の事実 (#1917 docs-1023b の R1 指摘 1)', () => {
   it('メンバーの所属の部門 (user_profiles.department_id) を値で書く処理が src に無い (department_id を値で持つのはチャレンジの作成と、読んだ所属を返す DTO だけ)', () => {
     // 型の注釈 (`department_id: string | null`) は数えない。値を置く `department_id: <式>` だけを拾う
-    const writesDepartment = /\bdepartment_id\??\s*:\s*(?!string\b)/;
+    const writesDepartment = /\bdepartment_id\??\s*:(?!\s*string\b)/;
     const hits = listFiles('src', SOURCE_EXTS)
       .filter((file) => !isTestFile(file) && !file.startsWith(path.join('src', 'types')))
       .filter((file) => writesDepartment.test(stripComments(read(file))))
