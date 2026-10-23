@@ -233,7 +233,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_org_invites_token
 ```sql
 -- migration: 20260511000003_membership_org_rls.sql
 
--- organizations: メンバ自身は SELECT 可、owner/admin は UPDATE 可、owner だけ DELETE 可
+-- organizations: メンバ自身は SELECT 可、owner/admin は UPDATE 可。DELETE は運営 (organizations_delete_super_admin) だけ
 ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS organizations_select_member ON organizations;
@@ -256,9 +256,10 @@ CREATE POLICY organizations_update_admin ON organizations
     )
   );
 
-DROP POLICY IF EXISTS organizations_delete_owner ON organizations;
-CREATE POLICY organizations_delete_owner ON organizations
-  FOR DELETE USING (organizations.owner_id = auth.uid());
+-- オーナーの DELETE のポリシーは置かない。#1917 の続き (20261023100000_organizations_no_owner_direct_delete.sql) で
+-- organizations_delete_owner を消し、anon から DELETE の権限を外した (直接の DELETE は部署・招待・チャレンジ・席数を CASCADE で消し、
+-- 解散の知らせ・監査も通らないため)。authenticated の DELETE の権限は運営のポリシー organizations_delete_super_admin のために残す
+-- (オーナー・管理者・メンバーの直接の DELETE は 0 行で終わる)。オーナーは解散の RPC (dissolve_org_by_owner) で組織をやめる
 
 -- organization_invites: pending 確認は token 持ちなら誰でも (受諾画面で表示するため)
 -- 一覧は admin/owner のみ
