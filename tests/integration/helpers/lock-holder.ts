@@ -158,6 +158,8 @@ export interface LockWaitOptions {
   step: string;
   /** 待ちの相手がこの接続であること (pg_blocking_pids に holder の pid が入っていること) まで確かめる */
   blockedBy?: Holder;
+  /** 待ちの種類 (pg_stat_activity.wait_event。例: advisory lock なら 'advisory') まで確かめる。無ければ種類を問わない */
+  waitEvent?: string;
 }
 
 /** 後から呼ぶ処理 1 本 (待ちを見分けるための文字列と、その呼び出し) */
@@ -167,6 +169,8 @@ export interface QueuedCall<T> {
   call: () => Promise<T>;
   /** 並ばなかったときの文に出す手順の名前 (無ければ「fn が holder の commit を待つ」) */
   step?: string;
+  /** 待ちの種類 (LockWaitOptions.waitEvent) */
+  waitEvent?: string;
 }
 
 export interface LockHolderKitOptions {
@@ -279,23 +283,25 @@ export function createLockHolderKit(options: LockHolderKitOptions): LockHolderKi
     return holder;
   }
 
-  async function waitForLockWaiters(match: string, count: number, { step, blockedBy }: LockWaitOptions): Promise<void> {
+  async function waitForLockWaiters(match: string, count: number, { step, blockedBy, waitEvent }: LockWaitOptions): Promise<void> {
     const blockerPid = blockedBy ? blockedBy.pid() : null;
     if (blockedBy && blockerPid === null) throw new Error(`手順「${step}」: ${blockedBy.label} がまだ pg_sleep に入っていません`);
     const blockedByClause = blockerPid === null ? '' : `AND ${blockerPid} = ANY(pg_blocking_pids(pid))`;
+    const waitEventClause = waitEvent === undefined ? '' : `AND wait_event = '${waitEvent}'`;
     const deadline = Date.now() + timings.deadlineMs;
     let seen = 0;
     while (Date.now() < deadline) {
       const rows = await pgQuery<{ n: number }>(`
       SELECT count(*)::int AS n FROM pg_stat_activity
-      WHERE wait_event_type = 'Lock' AND query LIKE '%${match}%' AND pid <> pg_backend_pid() ${blockedByClause}`);
+      WHERE wait_event_type = 'Lock' ${waitEventClause} AND query LIKE '%${match}%' AND pid <> pg_backend_pid() ${blockedByClause}`);
       seen = rows[0]?.n ?? 0;
       if (seen >= count) return;
       await sleep(timings.pollMs);
     }
     const behind = blockedBy ? `${blockedBy.label} の後ろの` : '';
+    const kind = waitEvent === undefined ? '' : ` (${waitEvent})`;
     throw new Error(
-      `手順「${step}」: ${match} の呼び出しが ${timings.deadlineMs} ミリ秒のうちに${behind}行のロックの待ちに ${count} 本並びませんでした (並んだのは ${seen} 本)`,
+      `手順「${step}」: ${match} の呼び出しが ${timings.deadlineMs} ミリ秒のうちに${behind}行のロックの待ち${kind}に ${count} 本並びませんでした (並んだのは ${seen} 本)`,
     );
   }
 
@@ -304,7 +310,11 @@ export function createLockHolderKit(options: LockHolderKitOptions): LockHolderKi
     const waiterDone = waiter.call();
     // 並ばずに落ちたときの未処理の reject にしない (下の Promise.all には reject のまま届く)
     waiterDone.catch(() => undefined);
-    await waitForLockWaiters(waiter.fn, 1, { step: waiter.step ?? `${waiter.fn} が ${holder.label} の commit を待つ`, blockedBy: holder });
+    await waitForLockWaiters(waiter.fn, 1, {
+      step: waiter.step ?? `${waiter.fn} が ${holder.label} の commit を待つ`,
+      blockedBy: holder,
+      waitEvent: waiter.waitEvent,
+    });
     await holder.release();
     return Promise.all([holder.done, waiterDone]);
   }
