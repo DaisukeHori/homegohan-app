@@ -29,6 +29,7 @@ import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
+import { createLockHolderKit, type Holder } from '../helpers/lock-holder';
 import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
@@ -53,7 +54,6 @@ function client(key: string, accessToken?: string): SupabaseClient {
 const srAdmin = client(serviceKey);
 const anon = () => client(anonKey);
 const asUser = (jwt: string) => client(anonKey, jwt);
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** ローカルスタックの postgres-meta で SQL を実行する (postgres として 1 つのトランザクション) */
 async function pgRequest(query: string): Promise<{ ok: boolean; status: number; body: unknown }> {
@@ -77,11 +77,6 @@ async function pgQuery<T = Record<string, unknown>>(query: string): Promise<T[]>
 
 /** 集計の最小人数 (#1600。要件書 §6.4 の匿名化集計の最低人数) */
 const MIN = 10;
-/** 並行の確定 (V) で、先の接続がトランザクションを開いたまま待つ秒数 */
-const HOLD_SECONDS = 4;
-/** pg_stat_activity を見に行く間隔と上限 (ミリ秒) */
-const POLL_INTERVAL_MS = 50;
-const POLL_DEADLINE_MS = 20_000;
 /** 本件の migration の名前の末尾 (N で埋め戻しの節を読む) */
 const MIGRATION_SUFFIX = '_org_challenge_diff_privacy.sql';
 const BACKFILL_HEADING = '-- 11. 既存のチャレンジの埋め戻し';
@@ -108,7 +103,6 @@ const TS = Date.now();
 const PASSWORD = `${randomBytes(18).toString('base64url')}Aa1!`; // 使い捨てユーザー用。実行のたびに変わる
 const createdUserIds: string[] = [];
 const createdChallengeIds: string[] = [];
-const pendingHolders: Array<Promise<unknown>> = [];
 
 let orgA = '';
 let orgB = '';
@@ -338,59 +332,19 @@ async function leaveOrg(user: TestUser) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 並行の確定 (V)。tests/integration/rls/billing-apply-subscription-rpc.test.ts の startHolder / waitForLockWaiter と同じ作り方
+// 並行の確定 (V)。先の接続は放されるまでトランザクションを開いたままにし、後の確定が鍵の待ちに並んだのを確かめてから
+// (または後の確定が済んでから) 放す (tests/integration/helpers/lock-holder.ts。決まった秒数の窓に頼らない。#1917)
 // ---------------------------------------------------------------------------------------------
 
-interface Holder {
-  /** 先の処理が済み、pg_sleep に入った (= トランザクションを開いたまま) 状態になると解決する */
-  sleeping: Promise<void>;
-  /** トランザクションが終わったときに解決する */
-  done: Promise<{ ok: boolean; body: unknown }>;
-  /** トランザクションが終わったか */
-  finished: () => boolean;
+const holders = createLockHolderKit({ pgRequest, markerPrefix: 'it1688' });
+
+/** before を流してから放されるまで開いておき、放されたら after を流してコミットする接続 */
+function startHolder(before: string, after: string): Holder {
+  return holders.startHolder('先に開いた確定の接続', before, after);
 }
 
-function startHolder(before: string, after: string, holdSeconds = HOLD_SECONDS): Holder {
-  const marker = `it1688-holder-${randomBytes(6).toString('hex')}`;
-  const sql = `/* ${marker} */
-    ${before}
-    SELECT pg_sleep(${holdSeconds});
-    ${after}
-    SELECT 'held' AS result;`;
-  const state: { finished: boolean } = { finished: false };
-  const done = pgRequest(sql).then((res) => {
-    state.finished = true;
-    return { ok: res.ok, body: res.body };
-  });
-  pendingHolders.push(done);
-  const sleeping = (async () => {
-    const deadline = Date.now() + POLL_DEADLINE_MS;
-    while (Date.now() < deadline) {
-      if (state.finished) throw new Error('先に呼んだ接続が pg_sleep に入る前に終わりました');
-      const rows = await pgQuery<{ n: number }>(`
-        SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE wait_event = 'PgSleep' AND query LIKE '%${marker}%' AND pid <> pg_backend_pid()`);
-      if (rows[0]?.n === 1) return;
-      await sleep(POLL_INTERVAL_MS);
-    }
-    throw new Error('先に呼んだ接続が pg_sleep に入りませんでした');
-  })();
-  return { sleeping, done, finished: () => state.finished };
-}
-
-/** ほかの接続が、ロックの待ち (wait_event_type = 'Lock') に入ったのを確かめる。waitEvent で待ちの種類 (advisory など) に絞る */
-async function waitForLockWaiter(queryLike: string, waitEvent?: string): Promise<void> {
-  const deadline = Date.now() + POLL_DEADLINE_MS;
-  while (Date.now() < deadline) {
-    const rows = await pgQuery<{ n: number }>(`
-      SELECT count(*)::int AS n FROM pg_stat_activity
-      WHERE wait_event_type = 'Lock' ${waitEvent ? `AND wait_event = '${waitEvent}'` : ''}
-        AND query ILIKE '%${queryLike}%' AND pid <> pg_backend_pid()`);
-    if ((rows[0]?.n ?? 0) >= 1) return;
-    await sleep(POLL_INTERVAL_MS);
-  }
-  throw new Error(`ロックの待ちに入った接続が見つかりません: ${queryLike}`);
-}
+/** advisory lock の待ち (pg_stat_activity の wait_event)。同じ組織の確定が鍵で 1 本ずつ進むことを、待ちそのもので確かめる */
+const ADVISORY_WAIT_EVENT = 'advisory';
 
 /** 集計の控えの (finalized_at, challenge_id) の順で、先に確定したチャレンジ */
 async function firstFinalized(ids: string[]): Promise<string> {
@@ -442,9 +396,9 @@ beforeAll(async () => {
 }, 180_000);
 
 afterEach(async () => {
-  // 並行の確定のトランザクションが終わってから消す
-  await Promise.allSettled(pendingHolders);
-  pendingHolders.length = 0;
+  // 並行の確定のトランザクションが終わってから消す (テストが途中で落ちて残った接続は、作った順に放す)
+  await holders.releaseOpenHolders();
+  await holders.settle();
   if (createdChallengeIds.length > 0) {
     await srAdmin.from('organization_challenges').delete().in('id', createdChallengeIds);
     createdChallengeIds.length = 0;
@@ -453,7 +407,7 @@ afterEach(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  await Promise.allSettled(pendingHolders);
+  await holders.settle();
   for (const orgId of [orgA, orgB].filter(Boolean)) {
     await srAdmin.from('organization_challenges').delete().eq('organization_id', orgId);
     await srAdmin.from('organization_invites').delete().eq('organization_id', orgId);
@@ -1155,16 +1109,16 @@ describe('#1688 V. 並行の確定: 確定の時刻の順はコミットの順',
     await joinRanked(a, eleven());
     await joinRanked(b, eleven());
 
-    // 先にトランザクションを開き (now() はこの時刻)、待ってから A を completed にする
+    // 先にトランザクションを開き (now() はこの時刻)、B を確定させてから放して A を completed にする
     const holder = startHolder('', `UPDATE public.organization_challenges SET status = 'completed' WHERE id = '${a}'::uuid;`);
-    await holder.sleeping;
-    expect(await adminUpdate(b, { status: 'completed' })).toBeNull();
+    const [held, shownB] = await holders.whileHolding(holder, async () => {
+      expect(await adminUpdate(b, { status: 'completed' })).toBeNull();
+      const shown = (await aggregateOf(b)).average_value;
+      expect(shown).not.toBeNull();
+      expect((await aggregateOf(a)).average_value).toBeNull();
+      return shown;
+    });
 
-    const shownB = (await aggregateOf(b)).average_value;
-    expect(shownB).not.toBeNull();
-    expect((await aggregateOf(a)).average_value).toBeNull();
-
-    const held = await holder.done;
     expect(held.ok, JSON.stringify(held.body)).toBe(true);
     expect((await aggregateOf(b)).average_value).toBe(shownB);
     expect((await aggregateOf(a)).average_value).toBeNull();
@@ -1178,12 +1132,12 @@ describe('#1688 V. 並行の確定: 確定の時刻の順はコミットの順',
     await joinRanked(b, eleven());
 
     const holder = startHolder(`UPDATE public.organization_challenges SET status = 'completed' WHERE id = '${a}'::uuid;`, '');
-    await holder.sleeping;
-    const updateB = adminUpdate(b, { status: 'completed' });
-    await waitForLockWaiter('organization_challenges', 'advisory');
-    expect(holder.finished()).toBe(false);
-
-    const [held, errorB] = await Promise.all([holder.done, updateB]);
+    // 後の確定 (B) が先の確定 (A) の鍵 (advisory) を待つのを確かめてから A を放す
+    const [held, errorB] = await holders.runBehindHolder(holder, {
+      fn: 'organization_challenges',
+      waitEvent: ADVISORY_WAIT_EVENT,
+      call: () => adminUpdate(b, { status: 'completed' }),
+    });
     expect(held.ok, JSON.stringify(held.body)).toBe(true);
     expect(errorB).toBeNull();
     expect(await firstFinalized([a, b])).toBe(a);
@@ -1197,12 +1151,14 @@ describe('#1688 V. 並行の確定: 確定の時刻の順はコミットの順',
     await joinRanked(a, eleven());
 
     const holder = startHolder(`UPDATE public.organization_challenges SET status = 'completed' WHERE id = '${a}'::uuid;`, '');
-    await holder.sleeping;
-    const { error } = await srAdmin.from('organization_challenges').update({ status: 'completed' }).eq('id', other);
-    expect(error).toBeNull();
-    expect(holder.finished(), '別の組織の確定は、保持している接続が終わる前に終わる').toBe(false);
-    expect((await controlRow(other))!.finalized_at).not.toBeNull();
+    // 別の組織の確定は、保持している接続を放す前に終わる (待たされるなら放されるまで返らず、先の接続は上限で終わって下の確かめが落ちる)
+    const [held] = await holders.whileHolding(holder, async () => {
+      const { error } = await srAdmin.from('organization_challenges').update({ status: 'completed' }).eq('id', other);
+      expect(error).toBeNull();
+      expect(holder.finished(), '別の組織の確定は、保持している接続が終わる前に終わる').toBe(false);
+      expect((await controlRow(other))!.finalized_at).not.toBeNull();
+    });
 
-    expect((await holder.done).ok).toBe(true);
+    expect(held.ok, JSON.stringify(held.body)).toBe(true);
   });
 });

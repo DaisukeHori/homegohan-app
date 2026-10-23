@@ -17,8 +17,9 @@
  *   - どちらも、ロックを取らない書き込み (デプロイ途中の古い add-recipe など) が先にコミットしても 23505 にならない
  *
  * 競合の再現のしかた (タイミングに頼らない):
- *   postgres-meta (/pg/query) で「トランザクションを開いたまま pg_sleep する」接続を 1 本作り (= ロックを持った状態を作り)、
- *   pg_sleep に入ったのを pg_stat_activity で確かめてから、もう一方の処理を本物の経路 (PostgREST) で呼ぶ。
+ *   postgres-meta (/pg/query) で「放されるまでトランザクションを開いたままにする」接続を 1 本作り (= ロックを持った状態を作り)、
+ *   もう一方の処理を本物の経路 (PostgREST) で呼ぶ。それが先の接続に待たされてロックの待ちに並んだのを pg_stat_activity /
+ *   pg_blocking_pids で確かめてから先の接続を放す (tests/integration/helpers/lock-holder.ts。決まった秒数の窓に頼らない。#1917)。
  *   待たされること (ロックが効いていること) と、待ったあとに失敗せず正しい結果になることを確かめる。
  *   これとは別に、20 回の反復で再生成と add-recipe を一斉に走らせる素直な並行テストも置く (C-7)。再生成は Edge Function が
  *   呼ぶ共有モジュール (supabase/functions/_shared/shopping-list-replace.ts)、add-recipe は route が呼ぶ
@@ -39,10 +40,11 @@
 
 import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import ws from 'ws';
 import { getOrCreateActiveShoppingList } from '../../../src/lib/shopping-list/active-list';
 import { replaceActiveShoppingList } from '../../../supabase/functions/_shared/shopping-list-replace';
+import { createLockHolderKit, type Holder } from '../helpers/lock-holder';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -101,7 +103,6 @@ interface TestUser {
 const TS = Date.now();
 const PASSWORD = `${randomBytes(18).toString('base64url')}Aa1!`;
 const createdUserIds: string[] = [];
-const pendingHolders: Array<Promise<unknown>> = [];
 
 async function createUser(label: string): Promise<TestUser> {
   const email = `sec-slist-lock-${label}-${TS}@homegohan.test`;
@@ -254,59 +255,18 @@ function getOrCreate(api: SupabaseClient, userId: string, title = 'add-recipe-li
 // ---------------------------------------------------------------
 // ロックを持った状態の再現
 // ---------------------------------------------------------------
-const HOLD_SECONDS = 6;
-/** 待たされていることを確かめるまでの時間。HOLD_SECONDS より十分短くする */
-const PENDING_CHECK_MS = 1500;
+const holders = createLockHolderKit({ pgRequest, markerPrefix: 'slist' });
+/** 残った接続を放す後片付けの時間の上限 (放せなかった接続は持つ上限 (既定 30 秒) で自分で終わるので、それより長く取る) */
+const RELEASE_HOLDERS_TIMEOUT_MS = 120_000;
 
-interface Outcome {
-  ok: boolean;
-  message: string | null;
+/** 別の接続で statements を実行し、そのあと放されるまでトランザクションを開いたままにする */
+function holdOpen(statements: string): Holder {
+  return holders.startHolder('先に開いた接続', statements);
 }
 
-interface Holder {
-  /** statements の実行が済み、pg_sleep に入った (= ロックやコミット前の行を持ったまま開いている) と解決する */
-  sleeping: Promise<void>;
-  /** トランザクションが終わった (コミットされた) と解決する */
-  done: Promise<Outcome>;
-  isDone: () => boolean;
-}
-
-/** 別の接続で statements を実行し、そのあと holdSeconds 秒 pg_sleep してトランザクションを開いたままにする */
-function holdOpen(statements: string, holdSeconds = HOLD_SECONDS): Holder {
-  const marker = `slist-holder-${randomBytes(6).toString('hex')}`;
-  const sql = `/* ${marker} */
-    ${statements}
-    SELECT pg_sleep(${holdSeconds});
-    SELECT 'held' AS result;`;
-
-  const state: { outcome: Outcome | null } = { outcome: null };
-  const done = pgRequest(sql).then((res): Outcome => {
-    const body = res.body as { error?: unknown } | null;
-    const outcome: Outcome = res.ok
-      ? { ok: true, message: null }
-      : { ok: false, message: typeof body?.error === 'string' ? body.error : JSON.stringify(body) };
-    state.outcome = outcome;
-    return outcome;
-  });
-  pendingHolders.push(done);
-
-  const sleeping = (async () => {
-    const deadline = Date.now() + 20_000;
-    while (Date.now() < deadline) {
-      if (state.outcome) {
-        // pg_sleep に入る前に終わった = statements が失敗している (理由を示して止める)
-        throw new Error(`先に開いた接続が pg_sleep に入る前に終わりました: ${JSON.stringify(state.outcome)}`);
-      }
-      const rows = await pgQuery<{ n: number }>(`
-        SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE wait_event = 'PgSleep' AND query LIKE '%${marker}%' AND pid <> pg_backend_pid()`);
-      if (rows[0]?.n === 1) return;
-      await sleep(50);
-    }
-    throw new Error('先に開いた接続が pg_sleep に入りませんでした (遅すぎます)');
-  })();
-
-  return { sleeping, done, isDone: () => state.outcome !== null };
+/** call (本物の経路の呼び出し) が holder に待たされて、ロックの待ち (advisory lock・未コミットの行との衝突) に並ぶまで待つ */
+async function waitBehind(holder: Holder, fn: string, step: string): Promise<void> {
+  await holders.waitForLockWaiters(fn, 1, { step, blockedBy: holder });
 }
 
 /** 利用者本人になりすまして SQL を実行する (PostgREST が JWT から作る状態と同じ) */
@@ -333,8 +293,11 @@ function track<T>(pending: PromiseLike<T>) {
   return { state, promise };
 }
 
+// テストが途中で落ちたときに残った接続を、作った順に放す (通ったテストでは全部放し終わっているので何もしない)
+afterEach(() => holders.releaseOpenHolders(), RELEASE_HOLDERS_TIMEOUT_MS);
+
 afterAll(async () => {
-  await Promise.allSettled(pendingHolders);
+  await holders.settle();
   for (const id of createdUserIds) {
     await srAdmin.from('shopping_lists').delete().eq('user_id', id);
   }
@@ -691,10 +654,11 @@ describe('#1312 C: 再生成と「レシピから追加」の競合', () => {
     await holder.sleeping;
 
     const regen = track(replaceList(user.id, { title: 'regen-list' }));
-    await sleep(PENDING_CHECK_MS);
-    expect(holder.isDone(), '前提: add-recipe 側のトランザクションがまだ開いている').toBe(false);
+    await waitBehind(holder, 'replace_active_shopping_list', '再生成が add-recipe のロックを待つ');
+    expect(holder.finished(), '前提: add-recipe 側のトランザクションがまだ開いている').toBe(false);
     expect(regen.state.settled, '再生成は add-recipe のロックを待っている').toBe(false);
 
+    await holder.release();
     expect((await holder.done).ok).toBe(true);
     const res = await regen.promise;
 
@@ -712,10 +676,11 @@ describe('#1312 C: 再生成と「レシピから追加」の競合', () => {
     await holder.sleeping;
 
     const addRecipe = track(getOrCreate(asUser(user.jwt), user.id));
-    await sleep(PENDING_CHECK_MS);
-    expect(holder.isDone(), '前提: 再生成側のトランザクションがまだ開いている').toBe(false);
+    await waitBehind(holder, 'get_or_create_active_shopping_list', 'add-recipe が再生成のロックを待つ');
+    expect(holder.finished(), '前提: 再生成側のトランザクションがまだ開いている').toBe(false);
     expect(addRecipe.state.settled, 'add-recipe は再生成のロックを待っている').toBe(false);
 
+    await holder.release();
     expect((await holder.done).ok).toBe(true);
     const res = await addRecipe.promise;
 
@@ -734,12 +699,14 @@ describe('#1312 C: 再生成と「レシピから追加」の競合', () => {
     await holder.sleeping;
 
     // 再生成はまだコミットしていないので、今のアクティブなリストは old-list のまま見える
+    // (待たされるなら放されるまで返らず、先の接続は放されないまま上限で終わるので、下の finished と release が落ちる)
     const res = await getOrCreate(asUser(user.jwt), user.id);
-    expect(holder.isDone(), '前提: 再生成側のトランザクションがまだ開いている').toBe(false);
+    expect(holder.finished(), '前提: 再生成側のトランザクションがまだ開いている').toBe(false);
     expect(res.error).toBeNull();
     expect(res.data).toBe(oldId);
     await addItem(asUser(user.jwt), oldId, 'added-during-regen');
 
+    await holder.release();
     expect((await holder.done).ok).toBe(true);
     const lists = await listsOf(user.id);
     expect(lists).toHaveLength(2);
@@ -759,18 +726,21 @@ describe('#1312 C: 再生成と「レシピから追加」の競合', () => {
     await holder.sleeping;
 
     // 別のユーザーは待たされない
+    // (待たされるなら放されるまで返らず、先の接続は放されないまま上限で終わるので、下の finished と release が落ちる)
     const forB = await getOrCreate(asUser(userB.jwt), userB.id);
     expect(forB.error).toBeNull();
-    expect(holder.isDone(), '前提: ロックを持った接続がまだ開いている').toBe(false);
+    expect(holder.finished(), '前提: ロックを持った接続がまだ開いている').toBe(false);
 
     // 同じユーザーは、get_or_create も replace も待たされる
     const addRecipe = track(getOrCreate(asUser(userA.jwt), userA.id));
     const regen = track(replaceList(userA.id, { title: 'regen-list' }));
-    await sleep(PENDING_CHECK_MS);
-    expect(holder.isDone(), '前提: ロックを持った接続がまだ開いている').toBe(false);
+    await waitBehind(holder, 'get_or_create_active_shopping_list', 'get_or_create がロックを持った接続を待つ');
+    await waitBehind(holder, 'replace_active_shopping_list', 'replace がロックを持った接続を待つ');
+    expect(holder.finished(), '前提: ロックを持った接続がまだ開いている').toBe(false);
     expect(addRecipe.state.settled, 'get_or_create はロックを待っている').toBe(false);
     expect(regen.state.settled, 'replace はロックを待っている').toBe(false);
 
+    await holder.release();
     expect((await holder.done).ok).toBe(true);
     const [addRes, regenRes] = await Promise.all([addRecipe.promise, regen.promise]);
 
@@ -789,10 +759,11 @@ describe('#1312 C: 再生成と「レシピから追加」の競合', () => {
     await holder.sleeping;
 
     const regen = track(replaceList(user.id, { title: 'regen-list' }));
-    await sleep(PENDING_CHECK_MS);
-    expect(holder.isDone(), '前提: ロックを取らない書き込みがまだ開いている').toBe(false);
+    await waitBehind(holder, 'replace_active_shopping_list', '再生成が未コミットの行との衝突を待つ');
+    expect(holder.finished(), '前提: ロックを取らない書き込みがまだ開いている').toBe(false);
     expect(regen.state.settled, '再生成は未コミットの行との衝突を待っている').toBe(false);
 
+    await holder.release();
     expect((await holder.done).ok).toBe(true);
     const res = await regen.promise;
 
@@ -811,10 +782,11 @@ describe('#1312 C: 再生成と「レシピから追加」の競合', () => {
     await holder.sleeping;
 
     const addRecipe = track(getOrCreate(asUser(user.jwt), user.id));
-    await sleep(PENDING_CHECK_MS);
-    expect(holder.isDone(), '前提: ロックを取らない書き込みがまだ開いている').toBe(false);
+    await waitBehind(holder, 'get_or_create_active_shopping_list', 'add-recipe が未コミットの行との衝突を待つ');
+    expect(holder.finished(), '前提: ロックを取らない書き込みがまだ開いている').toBe(false);
     expect(addRecipe.state.settled, 'add-recipe は未コミットの行との衝突を待っている').toBe(false);
 
+    await holder.release();
     expect((await holder.done).ok).toBe(true);
     const res = await addRecipe.promise;
 

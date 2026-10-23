@@ -13,11 +13,12 @@
 
 import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import ws from 'ws';
 import { PARENTAL_CONSENT_DOCUMENT, todayLocal } from '@homegohan/shared';
 import { deleteAccount } from '../../../src/lib/account-deletion';
 import { grantFamilyPlan } from '../helpers/family-plan';
+import { actAsAuthenticatedSql, createLockHolderKit, type Holder } from '../helpers/lock-holder';
 import { promoteToAal2 } from '../helpers/mfa';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
@@ -107,18 +108,12 @@ const TOKEN_BYTES = 32;
 const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 /** 本物の経路で同時に呼ぶ回数 (設計 §21.2 D-8・D-9・D-15) */
 const ITERATIONS = 8;
-/** 先の処理をコミット前のまま開いておく秒数 */
-const HOLD_SECONDS = 3;
-/** pg_sleep に入るのを待つ上限 (ミリ秒) と確かめる間隔 */
-const HOLDER_DEADLINE_MS = 20_000;
-const HOLDER_POLL_MS = 50;
 const TEST_TIMEOUT_MS = 120_000;
 const RACE_TIMEOUT_MS = 240_000;
 
 const createdUserIds: string[] = [];
 const createdFamilyIds: string[] = [];
 const createdOrgIds: string[] = [];
-const pendingHolders: Array<Promise<unknown>> = [];
 
 function yearsAgo(years: number): string {
   const today = todayLocal();
@@ -382,58 +377,23 @@ function expectRaised(outcome: Outcome, code: string): void {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 先の処理をコミット前のまま開いておく接続 (family-lock-order-race.test.ts と同じ形)
+// 先の処理をコミット前のまま開いておく接続 (tests/integration/helpers/lock-holder.ts。後から呼んだ処理が行のロックの待ちに
+// 並んだのを確かめてから放す。決まった秒数の窓で「並んだはず」と仮定しない。#1917)
 // ---------------------------------------------------------------------------------------------
 
-interface Holder {
-  sleeping: Promise<void>;
-  done: Promise<Outcome>;
-}
+const holders = createLockHolderKit({ pgRequest, markerPrefix: 'self-dissolve' });
 
+/** 本人 (actor) の JWT のクレームで callSql を呼び、コミット前のまま開いておく */
 function holdCall(actor: TestUser, callSql: string): Holder {
-  const marker = `self-dissolve-holder-${randomBytes(6).toString('hex')}`;
-  const claims = JSON.stringify({ sub: actor.id, role: 'authenticated' });
-  const sql = `/* ${marker} */
-    SELECT set_config('request.jwt.claims', '${claims}', true);
-    SET LOCAL ROLE authenticated;
-    SELECT * FROM ${callSql};
-    SELECT pg_sleep(${HOLD_SECONDS});
-    SELECT 'held' AS result;`;
-
-  const state: { outcome: Outcome | null } = { outcome: null };
-  const done = pgRequest(sql).then((res): Outcome => {
-    const body = res.body as { error?: unknown; code?: unknown } | null;
-    const outcome: Outcome = res.ok
-      ? { ok: true, data: null, message: null, code: null }
-      : {
-          ok: false,
-          data: null,
-          message: typeof body?.error === 'string' ? body.error : JSON.stringify(body),
-          code: typeof body?.code === 'string' ? body.code : null,
-        };
-    state.outcome = outcome;
-    return outcome;
-  });
-  pendingHolders.push(done);
-
-  const sleeping = (async () => {
-    const deadline = Date.now() + HOLDER_DEADLINE_MS;
-    while (Date.now() < deadline) {
-      if (state.outcome) throw new Error(`先に呼んだ接続が pg_sleep に入る前に終わりました: ${JSON.stringify(state.outcome)}`);
-      const rows = await pgQuery<{ n: number }>(`
-        SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE wait_event = 'PgSleep' AND query LIKE '%${marker}%' AND pid <> pg_backend_pid()`);
-      if (rows[0]?.n === 1) return;
-      await sleep(HOLDER_POLL_MS);
-    }
-    throw new Error('先に呼んだ接続が pg_sleep に入りませんでした (遅すぎます)');
-  })();
-
-  return { sleeping, done };
+  return holders.startHolder(callSql, `${actAsAuthenticatedSql(actor.id)}
+    SELECT * FROM ${callSql};`);
 }
+
+// テストが途中で落ちたときに残った接続を、作った順に放す (通ったテストでは全部放し終わっているので何もしない)
+afterEach(() => holders.releaseOpenHolders(), RACE_TIMEOUT_MS);
 
 afterAll(async () => {
-  await Promise.allSettled(pendingHolders);
+  await holders.settle();
   if (createdUserIds.length > 0) {
     await srAdmin.from('membership_audit').delete().in('actor_id', createdUserIds);
     await srAdmin.from('user_profiles').update({ organization_id: null, org_role: null, is_active_in_org: false, family_id: null }).in('id', createdUserIds);
@@ -583,9 +543,11 @@ describe('#1917 家族の代表者が自分で解散する (dissolve_family_by_r
       const { data: proposalId, error } = await asUser(rep.jwt).rpc('propose_family_representative_transfer', { p_family_id: familyId, p_to_user_id: adult.id });
       expect(error).toBeNull();
       const holder = holdCall(adult, `public.accept_family_representative_transfer('${String(proposalId)}'::uuid)`);
-      await holder.sleeping;
-      const dissolve = await dissolveFamily(rep, familyId);
-      expect((await holder.done).ok).toBe(true);
+      const [held, dissolve] = await holders.runBehindHolder(holder, {
+        fn: 'dissolve_family_by_representative',
+        call: () => dissolveFamily(rep, familyId),
+      });
+      expect(held.ok, JSON.stringify(held)).toBe(true);
       expectRaised(dissolve, 'NOT_FAMILY_REPRESENTATIVE');
       expect(await familyRow(familyId)).toMatchObject({ status: 'active', representative_id: adult.id });
     }
@@ -597,9 +559,11 @@ describe('#1917 家族の代表者が自分で解散する (dissolve_family_by_r
       const { data: proposalId, error } = await asUser(rep.jwt).rpc('propose_family_representative_transfer', { p_family_id: familyId, p_to_user_id: adult.id });
       expect(error).toBeNull();
       const holder = holdCall(rep, `public.dissolve_family_by_representative('${familyId}'::uuid)`);
-      await holder.sleeping;
-      const { error: acceptError } = await asUser(adult.jwt).rpc('accept_family_representative_transfer', { p_proposal_id: proposalId });
-      expect((await holder.done).ok).toBe(true);
+      const [held, { error: acceptError }] = await holders.runBehindHolder(holder, {
+        fn: 'accept_family_representative_transfer',
+        call: async () => asUser(adult.jwt).rpc('accept_family_representative_transfer', { p_proposal_id: proposalId }),
+      });
+      expect(held.ok, JSON.stringify(held)).toBe(true);
       expect(acceptError?.message ?? '').toContain('TRANSFER_ACCEPTOR_NOT_IN_FAMILY');
       expect(await familyRow(familyId)).toMatchObject({ status: 'dissolved', representative_id: null });
     }
