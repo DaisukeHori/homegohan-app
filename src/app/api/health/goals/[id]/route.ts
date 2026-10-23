@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { HEALTH_GOAL_NOT_FOUND_MESSAGE, HEALTH_GOAL_NO_FIELDS_MESSAGE, HEALTH_GOAL_TARGET_UNIT_NULL_MESSAGE, HEALTH_GOAL_TARGET_VALUE_NULL_MESSAGE } from '@/lib/health-api-messages';
 import { INVALID_ID_PARAM_CODE, INVALID_ID_PARAM_MESSAGE, isUuid } from '@/lib/http-params';
 import { sanitizeHealthGoalUpdate } from '@/lib/health-payloads';
 import { calculateGoalProgressPercentage } from '@/lib/health-goal-progress';
@@ -15,7 +17,7 @@ export async function GET(
   const { data: { user } } = await supabase.auth.getUser();
   
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { id } = await params;
@@ -50,7 +52,7 @@ export async function PUT(
   const { data: { user } } = await supabase.auth.getUser();
   
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { id } = await params;
@@ -70,7 +72,7 @@ export async function PUT(
     .single();
 
   if (!existing) {
-    return NextResponse.json({ error: 'Goal not found' }, { status: 404 });
+    return NextResponse.json({ error: HEALTH_GOAL_NOT_FOUND_MESSAGE }, { status: 404 });
   }
 
   const { data: updates, errors } = sanitizeHealthGoalUpdate(body, { goalType: existing.goal_type });
@@ -80,15 +82,15 @@ export async function PUT(
   }
 
   if (Object.keys(updates).length === 0) {
-    return NextResponse.json({ error: 'No valid goal fields were provided' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_GOAL_NO_FIELDS_MESSAGE }, { status: 400 });
   }
 
   if (updates.target_value === null) {
-    return NextResponse.json({ error: 'target_value cannot be null' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_GOAL_TARGET_VALUE_NULL_MESSAGE }, { status: 400 });
   }
 
   if (updates.target_unit === null) {
-    return NextResponse.json({ error: 'target_unit cannot be null' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_GOAL_TARGET_UNIT_NULL_MESSAGE }, { status: 400 });
   }
 
   // current_valueが更新された場合、進捗率を再計算
@@ -181,7 +183,7 @@ export async function DELETE(
   const { data: { user } } = await supabase.auth.getUser();
   
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { id } = await params;

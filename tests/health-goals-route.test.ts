@@ -181,10 +181,10 @@ describe('POST /api/health/goals (#1229)', () => {
     expect(state.updates).toEqual([]);
   });
 
-  it('400 with the legacy message when a required field is missing', async () => {
+  it('400 with the Japanese message when a required field is missing', async () => {
     const res = await POST(jsonRequest('POST', { goal_type: 'weight', target_value: 60 }));
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: 'goal_type, target_value, and target_unit are required' });
+    expect(await res.json()).toEqual({ error: '目標の種類 (goal_type)・目標値 (target_value)・単位 (target_unit) を指定してください' });
   });
 
   it('tells the user what is wrong with the value (shown in the web modal as-is)', async () => {
@@ -340,15 +340,15 @@ describe('PUT /api/health/goals/[id] (#1229)', () => {
     state.existing = existingGoal();
     const empty = await PUT(jsonRequest('PUT', { status: 'achieved', user_id: 'x' }), ctx);
     expect(empty.status).toBe(400);
-    expect(await empty.json()).toEqual({ error: 'No valid goal fields were provided' });
+    expect(await empty.json()).toEqual({ error: '更新する目標の項目がありません' });
 
     const nullTarget = await PUT(jsonRequest('PUT', { target_value: null }), ctx);
     expect(nullTarget.status).toBe(400);
-    expect(await nullTarget.json()).toEqual({ error: 'target_value cannot be null' });
+    expect(await nullTarget.json()).toEqual({ error: '目標値 (target_value) は空にできません' });
 
     const nullUnit = await PUT(jsonRequest('PUT', { target_unit: null }), ctx);
     expect(nullUnit.status).toBe(400);
-    expect(await nullUnit.json()).toEqual({ error: 'target_unit cannot be null' });
+    expect(await nullUnit.json()).toEqual({ error: '単位 (target_unit) は空にできません' });
     expect(state.updates).toEqual([]);
   });
 
@@ -356,7 +356,7 @@ describe('PUT /api/health/goals/[id] (#1229)', () => {
     state.existing = existingGoal();
     const notObject = await PUT(jsonRequest('PUT', 'null'), ctx);
     expect(notObject.status).toBe(400);
-    expect(await notObject.json()).toEqual({ error: 'Body must be a JSON object' });
+    expect(await notObject.json()).toEqual({ error: 'リクエストボディが不正です' });
 
     state.user = null;
     expect((await PUT(jsonRequest('PUT', { target_value: 60 }), ctx)).status).toBe(401);

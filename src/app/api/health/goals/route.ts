@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { sanitizeHealthGoalCreate } from '@/lib/health-payloads';
 import { calculateGoalProgressPercentage } from '@/lib/health-goal-progress';
 import { findGoalTypeDef, isWithinGoalRange } from '@/lib/health-goal-types';
@@ -12,7 +13,7 @@ export async function GET(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
@@ -46,12 +47,12 @@ export async function POST(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== 'object') {
-    return NextResponse.json({ error: 'Request body must be a JSON object' }, { status: 400 });
+    return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
   }
 
   // #1229: goal_type は受け付ける種類 (weight / body_fat / steps / step_count / sleep_hours) だけ、
