@@ -9,7 +9,10 @@
  */
 
 /** 直し終えた配下 (この下の route.ts の失敗の本文に、英語だけの文と例外の文面が 1 件も無いことを見張る) */
-export const JAPANESE_ERROR_API_DIRS: readonly string[] = ['src/app/api/org'];
+export const JAPANESE_ERROR_API_DIRS: readonly string[] = [
+  'src/app/api/ai',
+  'src/app/api/org',
+];
 
 /** route が本文を作るのに使う共通の関数のファイル (ここも違反 0 件を見張る) */
 export const JAPANESE_ERROR_SHARED_BODY_FILES: readonly string[] = [
@@ -38,7 +41,6 @@ export const SENTINEL_EXCLUDED_ROUTE_FILES: readonly string[] = [
 export const UNFIXED_VIOLATION_BASELINE: Readonly<Record<string, number>> = {
   'src/app/api/account': 3,
   'src/app/api/admin': 74,
-  'src/app/api/ai': 112,
   'src/app/api/announcements': 6,
   'src/app/api/auth': 1,
   'src/app/api/badges': 2,

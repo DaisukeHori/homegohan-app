@@ -164,6 +164,60 @@ describe('image route contracts', () => {
     });
   });
 
+  // #1917 AI の API の失敗の本文は日本語の固定の文。画面 (食事の記録) は `message || error` をそのまま出すので、どちらも日本語にし、
+  // 読み取れなかった理由の code は `code` に置く (以前は error に 'mode_mismatch' の code が入っていた)
+  describe('#1917 analyze-weight-scale の失敗の本文は日本語の固定の文', () => {
+    const WEIGHT_NOT_READABLE = '体重計の表示が読み取れませんでした。数値が鮮明に写った写真を撮り直してください。';
+
+    async function postWeightScale(body: unknown): Promise<Response> {
+      const { POST } = await import('../src/app/api/ai/analyze-weight-scale/route');
+      return POST(new Request('http://localhost/api/ai/analyze-weight-scale', { method: 'POST', body: JSON.stringify(body) }));
+    }
+
+    it('体重が読み取れない: 422 で error と message は同じ日本語の文・code は mode_mismatch', async () => {
+      mockInvoke.mockResolvedValue({ data: { success: true, result: { type: 'weight_scale', values: {}, confidence: 0.1 } }, error: null });
+      const res = await postWeightScale({ image: 'base64-image' });
+      expect(res.status).toBe(422);
+      expect(await res.json()).toEqual({ error: WEIGHT_NOT_READABLE, code: 'mode_mismatch', message: WEIGHT_NOT_READABLE });
+    });
+
+    it('Edge Function の失敗: 500 で日本語の固定の文 (Edge Function の英語の文面は出さない)', async () => {
+      mockInvoke.mockResolvedValue({ data: null, error: { message: 'FunctionsHttpError: Edge Function returned a non-2xx status code' } });
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const res = await postWeightScale({ image: 'base64-image' });
+      expect(res.status).toBe(500);
+      const text = await res.text();
+      expect(JSON.parse(text)).toEqual({ error: '写真を解析できませんでした。時間をおいてもう一度お試しください' });
+      expect(text).not.toContain('FunctionsHttpError');
+    });
+
+    it('写真が無い: 400 で日本語の文', async () => {
+      const res = await postWeightScale({});
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: '写真が送られていません。写真を選び直してください' });
+      expect(mockInvoke).not.toHaveBeenCalled();
+    });
+
+    it('未ログイン: 401 で日本語の文', async () => {
+      mockGetUser.mockResolvedValue({ data: { user: null }, error: { message: 'Auth session missing' } });
+      const res = await postWeightScale({ image: 'base64-image' });
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: 'ログインが必要です' });
+    });
+  });
+
+  it('#1917 analyze-meal-photo: 料理が読み取れない 422 は、error と message が日本語の文・code は mode_mismatch', async () => {
+    mockInvoke.mockResolvedValue({ data: { dishes: [] }, error: null });
+    const { POST } = await import('../src/app/api/ai/analyze-meal-photo/route');
+    const res = await POST(new Request('http://localhost/api/ai/analyze-meal-photo', {
+      method: 'POST',
+      body: JSON.stringify({ images: [{ base64: 'abc', mimeType: 'image/jpeg' }], mealType: 'dinner' }),
+    }));
+    const notReadable = '料理が読み取れませんでした。食事が鮮明に写った写真を撮り直してください。';
+    expect(res.status).toBe(422);
+    expect(await res.json()).toEqual({ error: notReadable, code: 'mode_mismatch', message: notReadable });
+  });
+
   it('analyze-meal-photo sync path delegates to the edge function', async () => {
     mockInvoke.mockResolvedValue({
       data: {
@@ -723,12 +777,14 @@ describe('image route contracts', () => {
     }));
 
     // #779 で「結果が空(unknown)のときも200で返し画面が真っ白になる」問題を修正し、
-    // unknown 判定は 422 + error: 'unknown_type' を返す契約に変更された。
+    // unknown 判定は 422 + code: 'unknown_type' を返す契約に変更された (#1917 で error は日本語の文にし、code を code に移した)。
     // 非食品画像は unknown を返す（meal への強制変換が行われていないことを確認）
     expect(response.status).toBe(422);
     const payload = await response.json();
     expect(payload.type).toBe('unknown');
-    expect(payload.error).toBe('unknown_type');
+    expect(payload.code).toBe('unknown_type');
+    expect(payload.error).toBe('写真の種類を判定できませんでした。食事・冷蔵庫・健診結果・体重計のいずれかが鮮明に写った写真を撮り直してください。');
+    expect(payload.message).toBe(payload.error);
   });
 
   // #151: 1px ブランク JPEG が type:meal, confidence:1.0 で誤判別される問題の repro
@@ -777,6 +833,8 @@ describe('image route contracts', () => {
     const afterInvoke = new Date().toISOString();
 
     expect(response.status).toBe(200);
+    // Edge Function の英語の文 (data.message) をそのまま返さず、日本語の固定の文にする (#1917)
+    expect((await response.json()).message).toBe('写真の解析を始めました');
     expect(mockInvoke).toHaveBeenCalledWith('analyze-meal-photo', {
       body: expect.objectContaining({
         mealId: 'meal-123',

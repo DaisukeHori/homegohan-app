@@ -11,8 +11,10 @@ import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
-import { CALENDAR_DATE_REQUIREMENT, isCalendarDate } from '@/lib/date-utils';
+import { isCalendarDate } from '@/lib/date-utils';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { aiRequiredFieldMessage, aiInvalidDateMessage, AI_MENU_MEAL_ALREADY_EXISTS_MESSAGE, AI_MENU_GENERATION_STARTED_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -28,19 +30,19 @@ export async function POST(request: Request) {
     const { dayDate, mealType, preferences, note } = await request.json();
 
     if (!dayDate || !mealType) {
-      return NextResponse.json({ error: 'dayDate and mealType are required' }, { status: 400 });
+      return NextResponse.json({ error: aiRequiredFieldMessage('日付と食事の区分') }, { status: 400 });
     }
 
     // dayDate は YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433)。DB の date 型は 2026/10/10 なども日付として読むが、
     // そのまま target_slots に入ると、献立生成 (Edge Function) が日付を前後にずらすところで RangeError になる
     if (!isCalendarDate(dayDate)) {
-      return NextResponse.json({ error: `dayDate must be ${CALENDAR_DATE_REQUIREMENT}` }, { status: 400 });
+      return NextResponse.json({ error: aiInvalidDateMessage('日付') }, { status: 400 });
     }
 
     // 1. ユーザー認証
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
     // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
@@ -90,7 +92,7 @@ export async function POST(request: Request) {
 
     if (targetSlots[0]?.plannedMealId) {
       return NextResponse.json(
-        { error: 'Meal already exists for this slot. Use regenerate instead.' },
+        { error: AI_MENU_MEAL_ALREADY_EXISTS_MESSAGE },
         { status: 409 },
       );
     }
@@ -173,7 +175,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ 
       success: true,
-      message: 'Meal generation started in background',
+      message: AI_MENU_GENERATION_STARTED_MESSAGE,
       status: 'processing',
       requestId: requestData.id,
     });

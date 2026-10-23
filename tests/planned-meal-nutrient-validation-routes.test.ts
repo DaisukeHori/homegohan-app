@@ -175,10 +175,10 @@ describe('POST /api/meals (#1205)', () => {
     await expectRejectedWithoutDb(response, ['meal_type', 'calories_kcal']);
   });
 
-  it('必須項目が無いときは従来どおり 400 "Missing required fields"', async () => {
+  it('必須項目が無いときは従来どおり 400 (文は日本語の固定の文)', async () => {
     const response = await post({ mealType: 'lunch' });
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: 'Missing required fields' });
+    await expect(response.json()).resolves.toEqual({ error: '日付・食事の区分・変更の内容を指定してください' });
     expect(mockFrom).not.toHaveBeenCalled();
   });
 
@@ -339,7 +339,7 @@ describe('POST /api/meal-plans/meals (#1205)', () => {
   it('必須項目が無いときは従来どおり 400', async () => {
     const response = await post({ dayDate: '2026-10-07' });
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: 'dayDate and mealType are required' });
+    await expect(response.json()).resolves.toEqual({ error: '日付と食事の区分を指定してください' });
   });
 
   it('正当な入力は、整数に丸めた calories_kcal で INSERT される', async () => {

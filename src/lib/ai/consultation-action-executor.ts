@@ -10,6 +10,7 @@ import type { TargetSlot } from '@/types/domain';
 import { isMealType, MEAL_ORDER, type MealType } from '@homegohan/shared';
 import { addDaysToDate } from '@/lib/date-utils';
 import { isCalendarDate } from '@/lib/jst-day-ranges';
+import { aiInvalidDateMessage } from '@/lib/ai/ai-api-messages';
 import {
   sanitizeHealthGoalCreate,
   sanitizeHealthGoalUpdate,
@@ -347,7 +348,7 @@ export async function runConsultationAction(
       // 日付は YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433。generate_week_menu の startDate と同じ確認)。
       // AI が 2026/10/10 などを返すと、献立生成 (Edge Function) が日付を前後にずらすところで RangeError になる
       if (!isCalendarDate(date)) {
-        result = { error: 'date must be in YYYY-MM-DD format' };
+        result = { error: aiInvalidDateMessage('日付') };
         break;
       }
 
@@ -465,7 +466,7 @@ export async function runConsultationAction(
       }
       // 日付は暦の計算 (addDaysToDate) でずらすので、YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433)
       if (typeof startDate !== 'string' || !isCalendarDate(startDate)) {
-        result = { error: 'startDate must be in YYYY-MM-DD format' };
+        result = { error: aiInvalidDateMessage('開始日') };
         break;
       }
 
@@ -603,7 +604,7 @@ export async function runConsultationAction(
 
       // 日付は YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433。generate_week_menu の startDate と同じ確認)
       if (!isCalendarDate(date)) {
-        result = { error: 'date must be in YYYY-MM-DD format' };
+        result = { error: aiInvalidDateMessage('日付') };
         break;
       }
 
@@ -1467,7 +1468,7 @@ export async function runConsultationAction(
       // 形だけを見ていると 2026-02-30 のような存在しない日付が通り、DB の date 型への変換で失敗する (#1482)。
       // 実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける
       if (!isCalendarDate(recordDate)) {
-        result = { error: 'date must be in YYYY-MM-DD format' };
+        result = { error: aiInvalidDateMessage('日付') };
         break;
       }
 
@@ -1536,7 +1537,7 @@ export async function runConsultationAction(
       // add_health_record と同じく、前後の空白を除いた実在する日付 (isCalendarDate の範囲の中) だけを受け付ける
       const date = typeof rawDate === 'string' ? rawDate.trim() : '';
       if (!isCalendarDate(date)) {
-        result = { error: 'date must be in YYYY-MM-DD format' };
+        result = { error: aiInvalidDateMessage('日付') };
         break;
       }
       const { data: safeUpdates, errors } = sanitizeHealthRecordPayload(updates, {

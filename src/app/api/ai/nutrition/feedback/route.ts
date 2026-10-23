@@ -7,6 +7,8 @@ import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { AI_NUTRITION_FEEDBACK_INPUT_REQUIRED_MESSAGE, AI_NUTRITION_FEEDBACK_QUERY_REQUIRED_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
@@ -163,7 +165,7 @@ export async function POST(request: Request) {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
     const rateLimitResult = await checkRateLimit(user.id, 'analysis');
@@ -173,7 +175,7 @@ export async function POST(request: Request) {
     const { date, nutrition, mealCount, weekData, forceRefresh } = body;
 
     if (!nutrition || !date) {
-      return NextResponse.json({ error: 'Nutrition data and date required' }, { status: 400 });
+      return NextResponse.json({ error: AI_NUTRITION_FEEDBACK_INPUT_REQUIRED_MESSAGE }, { status: 400 });
     }
 
     const nutritionHash = generateHash(nutrition, weekData);
@@ -328,7 +330,7 @@ export async function GET(request: Request) {
     const { data: { user }, error: authError } = await supabase.auth.getUser();
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
     const { searchParams } = new URL(request.url);
@@ -336,7 +338,7 @@ export async function GET(request: Request) {
     const cacheId = searchParams.get('cacheId');
 
     if (!date && !cacheId) {
-      return NextResponse.json({ error: 'date or cacheId required' }, { status: 400 });
+      return NextResponse.json({ error: AI_NUTRITION_FEEDBACK_QUERY_REQUIRED_MESSAGE }, { status: 400 });
     }
 
     let query = supabase

@@ -7,6 +7,8 @@ import { userScopedStoragePath } from '@/lib/storage-paths';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { AI_IMAGE_PROMPT_REQUIRED_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 interface ReferenceImageInput {
   base64: string;
@@ -48,12 +50,12 @@ export async function POST(request: Request) {
     const { prompt, images } = await request.json();
 
     if (!prompt || typeof prompt !== 'string') {
-      return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
+      return NextResponse.json({ error: AI_IMAGE_PROMPT_REQUIRED_MESSAGE }, { status: 400 });
     }
 
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
     // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
@@ -65,7 +67,8 @@ export async function POST(request: Request) {
 
     const apiKey = process.env.GOOGLE_AI_STUDIO_API_KEY || process.env.GOOGLE_GEN_AI_API_KEY;
     if (!apiKey) {
-      return NextResponse.json({ error: 'Google AI API Key is missing' }, { status: 500 });
+      // 鍵の名前は構造化ログにだけ残す (本文は汎用の文)
+      return internalError('POST /api/ai/image/generate', new Error('GOOGLE_AI_STUDIO_API_KEY / GOOGLE_GEN_AI_API_KEY が設定されていません'), { userId: user.id });
     }
 
     const modelName = process.env.GEMINI_IMAGE_MODEL || DEFAULT_IMAGE_GENERATION_MODEL;
