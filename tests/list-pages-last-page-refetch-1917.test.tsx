@@ -14,6 +14,10 @@ import { act, type ComponentType } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { lastPageOf, lastPageToRefetch } from '@/lib/list-pagination';
+import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
+
+// 画面を丸ごと読み込んで描画するので、負荷の高い機械で既定の時間切れ (テスト 5 秒) を超えうる (#1605 の同じ型)。テストとフックを定義する前に置く
+applyHeavyUnitTestTimeout();
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
