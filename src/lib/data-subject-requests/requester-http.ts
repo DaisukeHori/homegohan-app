@@ -12,6 +12,7 @@ import { NextResponse } from 'next/server';
 import type { User } from '@supabase/supabase-js';
 import type { ZodError } from 'zod';
 import { internalError } from '@/lib/api/errors';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { requireUserAllowingMissingProfile } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
@@ -43,8 +44,8 @@ const DSR_REQUESTER_ERROR_MESSAGES: Record<Exclude<DsrServiceFailureCode, 'INTER
   CONFLICT_PRECONDITION_REQUIRED: 'If-Unmodified-Since ヘッダが必要です',
 };
 
-/** 未ログイン (AuthError) の 401 の本文 (§7.1) */
-export const DSR_UNAUTHENTICATED_BODY = { error: 'Unauthorized', code: 'AUTH_UNAUTHENTICATED' } as const;
+/** 未ログイン (AuthError) の 401 の本文 (§7.1。文は全 API の共通の日本語の固定の文。#1917 で英語の 'Unauthorized' から変えた。code は従来のまま) */
+export const DSR_UNAUTHENTICATED_BODY = { error: API_UNAUTHENTICATED_MESSAGE, code: 'AUTH_UNAUTHENTICATED' } as const;
 /** 凍結中 (ForbiddenError) の 403 の本文 (§7.1。実際には middleware が先に止める。二重の守り) */
 export const DSR_FROZEN_BODY = { error: 'アカウントが凍結されています', code: 'AUTH_ACCOUNT_FROZEN' } as const;
 /** 本文が JSON として読めないときの 400 の文 (§13) */

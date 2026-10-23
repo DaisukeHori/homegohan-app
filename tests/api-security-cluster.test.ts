@@ -81,7 +81,7 @@ describe('#163 /api/log POST', () => {
     });
     const res = await logPOST(req as any);
     expect(res.status).toBe(401);
-    await expect(res.json()).resolves.toMatchObject({ error: 'Unauthorized' });
+    await expect(res.json()).resolves.toMatchObject({ error: 'ログインが必要です' });
   });
 
   it('必須フィールド不足で 400 を返す', async () => {
@@ -378,7 +378,9 @@ describe('#186 /api/upload POST', () => {
     const file = new File([makeJpegBuffer()], 'script.exe', { type: 'application/x-msdownload' });
     const res = await uploadPOST(makeUploadRequest(file));
     expect(res.status).toBe(400);
-    await expect(res.json()).resolves.toMatchObject({ error: expect.stringContaining('not allowed') });
+    await expect(res.json()).resolves.toMatchObject({
+      error: 'このファイルの種類はアップロードできません。JPEG・PNG・WebP の画像か PDF を選んでください',
+    });
   });
 
   it('magic bytes が合わないファイルを 400 で拒否する', async () => {
@@ -387,7 +389,9 @@ describe('#186 /api/upload POST', () => {
     const file = new File([makeFakeBuffer()], 'fake.jpg', { type: 'image/jpeg' });
     const res = await uploadPOST(makeUploadRequest(file));
     expect(res.status).toBe(400);
-    await expect(res.json()).resolves.toMatchObject({ error: expect.stringContaining('does not match') });
+    await expect(res.json()).resolves.toMatchObject({
+      error: 'ファイルの中身が、アップロードできる種類 (JPEG・PNG・WebP の画像か PDF) と一致しません',
+    });
   });
 
   it('10MB 超ファイルを 400 で拒否する', async () => {
@@ -398,7 +402,7 @@ describe('#186 /api/upload POST', () => {
     const file = new File([large], 'big.jpg', { type: 'image/jpeg' });
     const res = await uploadPOST(makeUploadRequest(file));
     expect(res.status).toBe(400);
-    await expect(res.json()).resolves.toMatchObject({ error: expect.stringContaining('exceeds limit') });
+    await expect(res.json()).resolves.toMatchObject({ error: 'ファイルの大きさは 10MB までです' });
   });
 
   it('正常な JPEG ファイルは 200 を返す', async () => {
@@ -443,7 +447,9 @@ describe('#186 /api/upload POST', () => {
       mockGetUser.mockResolvedValue({ data: { user: { id: 'uid-1' } }, error: null });
       const res = await uploadPOST(makeUploadRequest(file));
       expect(res.status).toBe(400);
-      await expect(res.json()).resolves.toMatchObject({ error: expect.stringContaining('does not match') });
+      await expect(res.json()).resolves.toMatchObject({
+        error: 'ファイルの中身が、アップロードできる種類 (JPEG・PNG・WebP の画像か PDF) と一致しません',
+      });
       expect(mockStorageFrom).not.toHaveBeenCalled();
     }
 

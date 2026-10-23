@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { internalError } from '@/lib/api/errors'
 import { normalizeProfileName } from '@homegohan/shared'
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
 
 // オンボーディング状態取得API (OB-API-03)
 export async function GET() {
@@ -10,7 +11,7 @@ export async function GET() {
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
     const { data: profile, error: fetchError } = await supabase
@@ -64,7 +65,7 @@ export async function DELETE() {
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
     const { error: updateError } = await supabase

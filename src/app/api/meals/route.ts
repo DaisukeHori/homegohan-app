@@ -17,6 +17,8 @@ import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/
 import { internalError } from '@/lib/api/errors';
 import { uuidOrNull } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { REQUIRED_FIELDS_MISSING_MESSAGE } from '@/lib/api/user-api-error-messages';
 
 /**
  * 食事一覧取得（日付ベースモデル: user_daily_meals → planned_meals）
@@ -28,7 +30,7 @@ export async function GET(request: Request) {
   try {
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
     const { searchParams } = new URL(request.url);
@@ -84,7 +86,7 @@ export async function POST(request: Request) {
   try {
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
     const body = await request.json();
@@ -103,7 +105,7 @@ export async function POST(request: Request) {
     } = body;
 
     if (!date || !mealType || !dishName) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+      return NextResponse.json({ error: REQUIRED_FIELDS_MISSING_MESSAGE }, { status: 400 });
     }
 
     // #1205: meal_type と栄養素の型・範囲を、DB に触れる前に確認する（不正なら 400）

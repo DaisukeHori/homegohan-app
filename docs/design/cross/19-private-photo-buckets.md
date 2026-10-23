@@ -988,7 +988,7 @@ export function isOwnedObjectPath(path: string, userId: string, ownedPlannedMeal
 | 場面 | 応答 | 出どころ |
 |---|---|---|
 | 匿名・他人が公開 URL を読む | Storage API の 4xx (本文は Storage のもの。アプリは関与しない) | `public = false` |
-| 未ログインで `POST /api/storage/signed-urls` | 401 `{ error: 'Unauthorized' }` | 段 1 |
+| 未ログインで `POST /api/storage/signed-urls` | 401 `{ error: 'ログインが必要です' }` (#1917 で英語の 'Unauthorized' から変えた) | 段 1 |
 | 本人の写真でない・ファイルが無い・署名に失敗 | `signedUrls[url] = null` (200) | 段 1 |
 | AI の route に他人の写真の URL | 403 `PHOTO_NOT_READABLE` | 段 1 |
 | migration の適用でバケットが無い | `RAISE EXCEPTION 'private_photo_buckets: …'` (適用が失敗して止まる) | 9.1 |

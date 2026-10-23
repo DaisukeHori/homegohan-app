@@ -5,7 +5,7 @@
  * 隠したレシピは RLS ("Users can view public recipes" の hidden_at IS NULL OR 本人) で本人以外には 0 行になる。
  * route が .single() で読んでいたので、0 行は PostgREST のエラー (PGRST116) になり、internalError (500) で返していた。
  * 存在しないレシピ・本人以外から見た非公開のレシピも同じ (どれも RLS で 0 行)。
- * 修正後は .maybeSingle() で読み、0 行は 404 { error: 'Not found' } にする。DB の本当のエラーは今までどおり 500。
+ * 修正後は .maybeSingle() で読み、0 行は 404 { error: 'Not found' } (#1917 から日本語の「対象が見つかりません」) にする。DB の本当のエラーは今までどおり 500。
  *
  * Supabase には接続しない (createClient をモック)。モックの .single() は本物の PostgREST と同じく、
  * 0 行のときに PGRST116 のエラーを返す (修正前の route をこのモックで動かすと 500 になる)。
@@ -107,7 +107,7 @@ describe('GET /api/recipes/[id]: 見えないレシピは 404 (#1445)', () => {
     const res = await call('recipe-hidden');
 
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: 'Not found' });
+    expect(await res.json()).toEqual({ error: '対象が見つかりません' });
     expect(h.logError).not.toHaveBeenCalled();
   });
 

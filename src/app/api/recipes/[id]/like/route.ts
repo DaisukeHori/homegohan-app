@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 /**
  * like_count を共通で再集計するヘルパー。
@@ -34,7 +35,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   const { data } = await supabase
     .from('recipe_likes')
@@ -51,7 +52,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
     // UPSERT で冪等化（重複 insert を防ぐ）
@@ -78,7 +79,7 @@ export async function DELETE(request: Request, props: { params: Promise<{ id: st
   const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
     const { error } = await supabase

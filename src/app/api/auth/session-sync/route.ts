@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { internalError } from '@/lib/api/errors'
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
 
 export async function POST() {
   try {
@@ -36,7 +37,7 @@ export async function POST() {
         error: sessionError?.message ?? null,
         hadSession: Boolean(existingSession?.access_token),
       })
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
     console.info('Session sync succeeded', {

@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { API_INTERNAL_ERROR_MESSAGE, API_INVALID_JSON_MESSAGE, authFailureFlat } from '@/lib/api/error-responses';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { readJsonBody } from '@/lib/http-params';
 import { NextResponse } from 'next/server';
@@ -12,19 +12,20 @@ const ANNOUNCEMENT_CREATE_AUDIT_ACTION = 'admin.announcement.create';
 /** 監査ログの失敗を db-logger (app_logs.function_name) に出すときの名前 */
 const POST_ROUTE_NAME = 'POST /api/announcements';
 
+/** 400: title / content が空 */
+const TITLE_AND_CONTENT_REQUIRED_MESSAGE = 'タイトルと本文を入力してください';
+/** 400: isPublic が真偽値でない */
+const IS_PUBLIC_INVALID_MESSAGE = '公開の設定が正しくありません';
+
 /**
- * 認可エラー (401 / 403) はそのまま返し、それ以外は 500 の汎用メッセージにする。
+ * 認可エラー (401 / 403) は日本語の固定の文で返し (#1917)、それ以外は 500 の汎用メッセージにする。
  * 生のエラー文は返さず (#1172)、詳細は db-logger (app_logs) にだけ残す。
  */
 function handleError(method: 'GET' | 'POST', error: unknown) {
-  if (error instanceof AuthError) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-  if (error instanceof ForbiddenError) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  const authFailure = authFailureFlat(error);
+  if (authFailure) return authFailure;
   createLogger(`${method} /api/announcements`, generateRequestId()).error('お知らせの処理に失敗しました', error);
-  return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  return NextResponse.json({ error: API_INTERNAL_ERROR_MESSAGE }, { status: 500 });
 }
 
 // お知らせ一覧
@@ -70,7 +71,7 @@ export async function POST(request: Request) {
     // 2. 作成
     const parsedBody = await readJsonBody(request);
     if (!parsedBody.ok) {
-      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
     }
     const { title, content, isPublic } = (parsedBody.body ?? {}) as {
       title?: unknown;
@@ -80,10 +81,10 @@ export async function POST(request: Request) {
 
     // title / content は NOT NULL 列。未入力のまま DB に渡すと制約違反が 500 になるため、先に 400 で返す
     if (typeof title !== 'string' || title.trim() === '' || typeof content !== 'string' || content.trim() === '') {
-      return NextResponse.json({ error: 'title and content are required' }, { status: 400 });
+      return NextResponse.json({ error: TITLE_AND_CONTENT_REQUIRED_MESSAGE }, { status: 400 });
     }
     if (isPublic !== undefined && typeof isPublic !== 'boolean') {
-      return NextResponse.json({ error: 'isPublic must be a boolean' }, { status: 400 });
+      return NextResponse.json({ error: IS_PUBLIC_INVALID_MESSAGE }, { status: 400 });
     }
 
     const supabase = await createClient();

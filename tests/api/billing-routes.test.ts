@@ -150,6 +150,8 @@ describe('POST /api/billing/checkout', () => {
       expect(bad.status, JSON.stringify(body)).toBe(400);
       const json = await bad.json();
       expect(json.error.code).toBe('BILL_INVALID_INPUT');
+      // message は日本語の固定の文 (Zod の既定の英語の issue の文を入れない。#1917)
+      expect(json.error.message, JSON.stringify(body)).toBe('入力値が不正です');
       expect(Array.isArray(json.error.details)).toBe(true);
     }
     expect(mocks.startCheckout).not.toHaveBeenCalled();
@@ -171,6 +173,33 @@ describe('POST /api/billing/checkout', () => {
 });
 
 describe('課金の route 共通', () => {
+  it('the 400 BILL_INVALID_INPUT of POST checkout, GET checkout/preview and POST checkout/sync has the fixed Japanese message 入力値が不正です (not the Zod default English issue message) and keeps every issue in details (#1917)', async () => {
+    const cases: Array<{ name: string; call: () => Promise<Response> }> = [
+      { name: 'checkout interval=week', call: () => checkoutPOST(jsonPost('/api/billing/checkout', { plan_key: 'pro', interval: 'week' })) },
+      { name: 'checkout plan_key empty', call: () => checkoutPOST(jsonPost('/api/billing/checkout', { plan_key: '', interval: 'month' })) },
+      { name: 'preview interval=foo', call: () => previewGET(new NextRequest('http://localhost/api/billing/checkout/preview?plan_key=x&interval=foo')) },
+      { name: 'preview without interval', call: () => previewGET(new NextRequest('http://localhost/api/billing/checkout/preview?plan_key=pro')) },
+      { name: 'sync without session_id', call: () => syncPOST(jsonPost('/api/billing/checkout/sync', {})) },
+      { name: 'sync session_id not cs_', call: () => syncPOST(jsonPost('/api/billing/checkout/sync', { session_id: 'pi_1' })) },
+    ];
+    for (const { name, call } of cases) {
+      const res = await call();
+      expect(res.status, name).toBe(400);
+      expect(res.headers.get('Cache-Control'), name).toBe('no-store');
+      const json = await res.json();
+      expect(json.error.code, name).toBe('BILL_INVALID_INPUT');
+      expect(json.error.message, name).toBe(BILLING_ERROR_MESSAGES.BILL_INVALID_INPUT);
+      expect(json.error.message, name).toBe('入力値が不正です');
+      // details には Zod の issues を全件そのまま残す (形は変えない)
+      expect(Array.isArray(json.error.details), name).toBe(true);
+      expect(json.error.details.length, name).toBeGreaterThan(0);
+      expect(json.error.details.map((issue: { message: string }) => issue.message), name).not.toContain(json.error.message);
+    }
+    expect(mocks.startCheckout).not.toHaveBeenCalled();
+    expect(mocks.previewCheckout).not.toHaveBeenCalled();
+    expect(mocks.syncCheckoutSession).not.toHaveBeenCalled();
+  });
+
   it('every billing route maps BillingError/StripeApiError/StripeNotConfiguredError to the table and returns fixed messages', async () => {
     const codes = Object.keys(BILLING_ERROR_HTTP_STATUS) as BillingErrorCode[];
     for (const route of ROUTES) {
@@ -265,6 +294,7 @@ describe('課金の route 共通', () => {
     // 確認画面の入力の誤りは 400
     const bad = await previewGET(new NextRequest('http://localhost/api/billing/checkout/preview?plan_key=pro'));
     expect(bad.status).toBe(400);
+    expect((await bad.json()).error).toMatchObject({ code: 'BILL_INVALID_INPUT', message: '入力値が不正です' });
     // 2 本のソースは stripe-gateway を import しない
     for (const file of ['src/app/api/billing/subscription/route.ts', 'src/app/api/billing/checkout/preview/route.ts']) {
       const specifiers = [...fs.readFileSync(path.join(process.cwd(), file), 'utf8').matchAll(/^import\s[^;]*?from\s+'([^']+)'/gm)].map((m) => m[1]);

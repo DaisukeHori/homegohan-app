@@ -10,6 +10,7 @@ import type {
   SegmentDefinition,
 } from '@/types/comparison';
 import { internalError } from '@/lib/api/errors';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -19,7 +20,7 @@ export async function GET(request: Request) {
     const supabase = await createClient();
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
     // 期間を計算 (JST の暦。集計の Edge Function calculate-segment-stats が保存する period_start と同じ値 #1211)

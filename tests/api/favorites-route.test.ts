@@ -274,7 +274,7 @@ describe('GET /api/favorites: 変えていない挙動', () => {
     const { res, json } = await callGet('?limit=abc');
 
     expect(res.status).toBe(401);
-    expect(json).toEqual({ error: 'Unauthorized' });
+    expect(json).toEqual({ error: 'ログインが必要です' });
     expect(mocks.from).not.toHaveBeenCalled();
   });
 

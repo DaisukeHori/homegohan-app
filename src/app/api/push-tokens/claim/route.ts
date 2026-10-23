@@ -5,6 +5,7 @@ import { PUSH_TOKEN_CLAIM_ERROR_CODES, isExpoPushToken } from '@/lib/push-tokens
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { generatePushInstallSecret, hashPushInstallSecret } from '@/lib/push-token-install-secret';
 import { isPushInstallSecret, type PushTokenClaimResponseBody } from '@homegohan/shared';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 const ROUTE_NAME = 'POST /api/push-tokens/claim';
 
@@ -85,7 +86,7 @@ export async function POST(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   let body: unknown;

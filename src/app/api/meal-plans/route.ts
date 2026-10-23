@@ -3,9 +3,11 @@ import { NextResponse } from 'next/server';
 import type { DailyMeal, PlannedMeal, ShoppingListItem } from '@/types/domain';
 import { toDailyMeal, toPlannedMeal, toShoppingListItem } from '@/lib/converter';
 import type { Tables } from '@homegohan/shared';
-import { CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } from '@/lib/date-utils';
+import { isCalendarDate, todayLocal } from '@/lib/date-utils';
+import { CALENDAR_DATE_PARAM_LABELS, invalidCalendarDateMessage } from '@/lib/api/user-api-error-messages';
 import { mondayWeekRange } from '@/lib/jst-day-ranges';
 import { internalError } from '@/lib/api/errors';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 /**
  * Get meals for a date range (日付ベースモデル対応)
@@ -18,7 +20,7 @@ export async function GET(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
@@ -30,7 +32,7 @@ export async function GET(request: Request) {
   // 形を見ずに渡すと、2026-02-30 のような日付が DB の date 型への変換で失敗して 500 になる。空欄 (?date=) は以前どおり「指定なし」
   for (const [name, value] of [['date', date], ['startDate', startDate], ['endDate', endDate]] as const) {
     if (value && !isCalendarDate(value)) {
-      return NextResponse.json({ error: `${name} must be ${CALENDAR_DATE_REQUIREMENT}` }, { status: 400 });
+      return NextResponse.json({ error: invalidCalendarDateMessage(CALENDAR_DATE_PARAM_LABELS[name]) }, { status: 400 });
     }
   }
 

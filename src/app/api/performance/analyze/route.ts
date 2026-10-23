@@ -11,6 +11,13 @@ import {
 import type { NutritionGoal } from '@homegohan/core'
 import { internalError } from '@/lib/api/errors'
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character'
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
+
+
+/** 404: プロフィールが無い (分析はプロフィールの体重・目標から行う) */
+const ANALYSIS_PROFILE_NOT_FOUND_MESSAGE = 'プロフィールが見つかりません。先にプロフィールを登録してください'
+/** 404: 栄養の目標が無い (分析は今の目標と比べて提案する) */
+const ANALYSIS_TARGETS_NOT_FOUND_MESSAGE = '栄養の目標が見つかりません。先に栄養の目標を設定してください'
 
 type SupabaseLike = Awaited<ReturnType<typeof createClient>>
 
@@ -42,7 +49,7 @@ async function runAnalysis(supabase: SupabaseLike, userId: string, date: string)
     .single()
 
   if (profileError || !profileData) {
-    return { ok: false, kind: 'client', status: 404, error: 'Profile not found' }
+    return { ok: false, kind: 'client', status: 404, error: ANALYSIS_PROFILE_NOT_FOUND_MESSAGE }
   }
 
   // 2. 現在の栄養目標を取得
@@ -53,7 +60,7 @@ async function runAnalysis(supabase: SupabaseLike, userId: string, date: string)
     .single()
 
   if (targetsError || !targetsData) {
-    return { ok: false, kind: 'client', status: 404, error: 'Nutrition targets not found' }
+    return { ok: false, kind: 'client', status: 404, error: ANALYSIS_TARGETS_NOT_FOUND_MESSAGE }
   }
 
   const currentTargets = {
@@ -131,7 +138,7 @@ export async function GET(request: NextRequest) {
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
     const { searchParams } = new URL(request.url)
@@ -192,7 +199,7 @@ export async function POST(request: NextRequest) {
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
     const body = await request.json().catch(() => ({}))

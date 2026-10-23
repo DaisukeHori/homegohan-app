@@ -228,7 +228,7 @@ describe('PATCH /api/notification-preferences', () => {
       const res = await PATCH(makeRequest('PATCH', { data_share_enabled: value }));
       expect(res.status).toBe(400);
       const body = await res.json();
-      expect(body.error).toBe('data_share_enabled must be boolean');
+      expect(body.error).toBe('data_share_enabled はオン (true) かオフ (false) で指定してください');
     }
     expect(mockUpsert).not.toHaveBeenCalled();
   });

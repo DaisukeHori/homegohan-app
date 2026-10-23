@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { sanitizePerformanceCheckinPayload } from '../src/lib/performance-payloads';
+import { CHECKIN_BODY_NOT_OBJECT_MESSAGE, sanitizePerformanceCheckinPayload } from '../src/lib/performance-payloads';
+import { isEnglishOnly } from './helpers/api-error-text-scan';
 
 /**
  * #1048 F2-18: performance 系 POST の入力検証欠如(weight 汚染・nutrition_targets 無制限変更)
@@ -111,5 +112,30 @@ describe('sanitizePerformanceCheckinPayload', () => {
     const result = sanitizePerformanceCheckinPayload({ weight: 'abc' });
     expect(result.data.weight).toBeUndefined();
     expect(result.errors.length).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * #1917: errors は POST /api/performance/checkins の 400 の本文の error に `, ` で繋いでそのまま入り、
+ * 画面とモバイルが出す。英語の文 ('weight must be a finite number or null' など) を返さない
+ */
+describe('sanitizePerformanceCheckinPayload の文は日本語 (#1917)', () => {
+  it.each([
+    ['数値でない文字列', { weight: 'abc' }, ['体重 (kg) は数値で入力してください']],
+    ['数値でない値', { sleepHours: true }, ['睡眠時間 (h) は数値で入力してください']],
+    ['整数でない', { mood: 3.5 }, ['気分 (1-5) は整数で入力してください']],
+    ['下限より小さい', { weight: 19.9 }, ['体重 (kg) は 20 以上の値を入力してください']],
+    ['上限より大きい', { restingHeartRate: 500 }, ['安静時心拍数 (bpm) は 300 以下の値を入力してください']],
+    ['メモが文字列でない', { note: 5 }, ['メモ (note) は文字列で入力してください']],
+    ['メモが長すぎる', { note: 'あ'.repeat(2001) }, ['メモ (note) は 2000 文字以内で入力してください']],
+    ['本文がオブジェクトでない', ['x'], [CHECKIN_BODY_NOT_OBJECT_MESSAGE]],
+  ])('%s', (_label, input, expected) => {
+    const { errors } = sanitizePerformanceCheckinPayload(input);
+    expect(errors).toEqual(expected);
+    for (const message of errors) expect(isEnglishOnly(message), message).toBe(false);
+  });
+
+  it('本文がオブジェクトでないときの文は日本語の固定の文', () => {
+    expect(CHECKIN_BODY_NOT_OBJECT_MESSAGE).toBe('本文は JSON のオブジェクトで送ってください');
   });
 });

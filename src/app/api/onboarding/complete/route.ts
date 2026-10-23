@@ -4,6 +4,7 @@ import { calculateNutritionTargets } from '@homegohan/core'
 import { buildNutritionCalculatorInput } from '@/lib/build-nutrition-input'
 import { getHandsonTourStatusInternal } from '@/lib/handson-tour/getStatus'
 import { internalError } from '@/lib/api/errors'
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
 
 /**
  * オンボーディング完了API (OB-API-02)
@@ -17,7 +18,7 @@ export async function POST() {
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
     const now = new Date().toISOString()

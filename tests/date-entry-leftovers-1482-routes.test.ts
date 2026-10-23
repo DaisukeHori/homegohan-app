@@ -63,6 +63,13 @@ const INVALID_DATES = ['2026-02-30', '2027-02-29', '2026-13-01', '2026/10/10', '
 
 /** 400 の文の「受け付ける日付」の説明 (手で書いた期待値。CALENDAR_DATE_REQUIREMENT と同じ文) */
 const DATE_REQUIREMENT = 'YYYY-MM-DD format (an existing calendar date from 0101-01-02 to 9998-12-30)';
+/**
+ * 利用者向けの API (/api/performance/checkins・/api/meal-plans) の 400 の日本語の文 (#1917。手で書いた期待値。
+ * src/lib/api/user-api-error-messages.ts の invalidCalendarDateMessage と同じ文)
+ */
+const DATE_REQUIREMENT_JA = 'YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付';
+const DATE_PARAM_LABELS_JA: Record<string, string> = { date: '日付 (date)', startDate: '開始日 (startDate)', endDate: '終了日 (endDate)' };
+const invalidDateMessageJa = (label: string) => `${label}は${DATE_REQUIREMENT_JA}で指定してください`;
 
 /** JST 2026-10-14 (水) 0:30。UTC ではまだ 10/13 */
 const NOW_JST = '2026-10-13T15:30:00.000Z';
@@ -100,7 +107,7 @@ describe('1. GET /api/performance/checkins: date / startDate / endDate は実在
       const res = await getCheckins(new NextRequest(`http://localhost/api/performance/checkins?${query}`));
       expect(res.status, query).toBe(400);
       const name = query.split('=')[0];
-      expect(await res.json(), query).toEqual({ error: `${name} must be ${DATE_REQUIREMENT}` });
+      expect(await res.json(), query).toEqual({ error: invalidDateMessageJa(DATE_PARAM_LABELS_JA[name]) });
     }
     expect(queries).toEqual([]);
     expect(h.rpc).not.toHaveBeenCalled();
@@ -142,7 +149,7 @@ describe('1. POST /api/performance/checkins: checkinDate は実在する日付�
       jsonRequest('http://localhost/api/performance/checkins', 'POST', { checkinDate, sleepHours: 7 }),
     );
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: 'checkinDate must be in YYYY-MM-DD format' });
+    expect(await res.json()).toEqual({ error: invalidDateMessageJa('記録日 (checkinDate)') });
     expect(queries).toEqual([]);
   });
 
@@ -197,7 +204,7 @@ describe('1. GET /api/meal-plans: date / startDate / endDate は実在する日�
     for (const name of ['date', 'startDate', 'endDate']) {
       const res = await getMealPlans(new Request(`http://localhost/api/meal-plans?${name}=${date}`));
       expect(res.status, name).toBe(400);
-      expect(await res.json(), name).toEqual({ error: `${name} must be ${DATE_REQUIREMENT}` });
+      expect(await res.json(), name).toEqual({ error: invalidDateMessageJa(DATE_PARAM_LABELS_JA[name]) });
     }
     expect(queries).toEqual([]);
   });

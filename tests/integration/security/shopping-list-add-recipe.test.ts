@@ -241,9 +241,9 @@ describe('C: 入力の検証と認証', () => {
     });
 
     expect(notArray.status).toBe(400);
-    expect(notArray.body.error).toBe('ingredients must be an array');
+    expect(notArray.body.error).toBe('食材 (ingredients) は一覧で指定してください');
     expect(badName.status).toBe(400);
-    expect(badName.body.error).toBe('each ingredient must have a string name');
+    expect(badName.body.error).toBe('どの食材にも名前を指定してください');
     expect(await listsOf(user.id)).toHaveLength(0);
   });
 

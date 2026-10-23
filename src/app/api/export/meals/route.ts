@@ -3,6 +3,12 @@ import { NextResponse } from 'next/server';
 import type { Tables } from '@homegohan/shared';
 import { internalError } from '@/lib/api/errors';
 import { isCalendarDate } from '@/lib/jst-day-ranges';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { invalidCalendarDateMessage } from '@/lib/api/user-api-error-messages';
+
+/** 400 の文での期間の始まりと終わりの名前 (query の start_date / end_date) */
+const START_DATE_LABEL = '開始日 (start_date)';
+const END_DATE_LABEL = '終了日 (end_date)';
 
 /**
  * #133 CSV エクスポート
@@ -30,7 +36,7 @@ export async function GET(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
@@ -40,10 +46,10 @@ export async function GET(request: Request) {
   // 日付形式バリデーション: YYYY-MM-DD の実在する日付 (受け付ける範囲の中) だけを許可する。
   // 以前は new Date(s) で確かめていたので、2026-02-30 が 3/2 に繰り上がって通り、DB の date 型への変換で 500 になっていた (#1463)
   if (startDate && !isCalendarDate(startDate)) {
-    return NextResponse.json({ error: 'Invalid start_date' }, { status: 400 });
+    return NextResponse.json({ error: invalidCalendarDateMessage(START_DATE_LABEL) }, { status: 400 });
   }
   if (endDate && !isCalendarDate(endDate)) {
-    return NextResponse.json({ error: 'Invalid end_date' }, { status: 400 });
+    return NextResponse.json({ error: invalidCalendarDateMessage(END_DATE_LABEL) }, { status: 400 });
   }
 
   // user_daily_meals → planned_meals を JOIN

@@ -176,7 +176,7 @@ describe('POST /api/upload: 未ログイン (401)', () => {
     const res = await POST(request);
 
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: 'Unauthorized' });
+    expect(await res.json()).toEqual({ error: 'ログインが必要です' });
     expect(mocks.checkRateLimit).not.toHaveBeenCalled();
     expect(formData).not.toHaveBeenCalled();
     expect(mocks.storageFrom).not.toHaveBeenCalled();
@@ -293,7 +293,7 @@ describe('POST /api/upload: 判定できないとき (fail-closed)', () => {
 
     // fail-open (通してしまう) にはしない。レスポンスは汎用メッセージだけ (#1172)
     expect(res.status).toBe(500);
-    expect(JSON.parse(text)).toEqual({ error: 'Upload failed' });
+    expect(JSON.parse(text)).toEqual({ error: 'アップロードできませんでした。時間をおいて、もう一度お試しください' });
     expect(text).not.toContain('upstash');
     expect(formData).not.toHaveBeenCalled();
     expect(mocks.upload).not.toHaveBeenCalled();
@@ -318,7 +318,7 @@ describe('POST /api/upload: 判定できないとき (fail-closed)', () => {
     const res = await POST(makeRequest().request);
 
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: 'Upload failed' });
+    expect(await res.json()).toEqual({ error: 'アップロードできませんでした。時間をおいて、もう一度お試しください' });
     expect(mocks.checkRateLimit).not.toHaveBeenCalled();
     expect(mocks.withUser).not.toHaveBeenCalled();
     expect(mocks.logError).toHaveBeenCalledWith('Upload API error', failure);
@@ -349,7 +349,7 @@ describe('POST /api/upload: レスポンスとログ (回帰)', () => {
     const text = await res.text();
 
     expect(res.status).toBe(500);
-    expect(JSON.parse(text)).toEqual({ error: 'Upload failed' });
+    expect(JSON.parse(text)).toEqual({ error: 'アップロードできませんでした。時間をおいて、もう一度お試しください' });
     expect(text).not.toContain('row-level security');
     expect(mocks.userLogError).toHaveBeenCalledTimes(1);
     expect(mocks.userLogError).toHaveBeenCalledWith(
@@ -373,7 +373,7 @@ describe('POST /api/upload: レスポンスとログ (回帰)', () => {
     const text = await res.text();
 
     expect(res.status).toBe(500);
-    expect(JSON.parse(text)).toEqual({ error: 'Upload failed' });
+    expect(JSON.parse(text)).toEqual({ error: 'アップロードできませんでした。時間をおいて、もう一度お試しください' });
     expect(text).not.toContain('Content-Type');
     expect(mocks.userLogError).toHaveBeenCalledWith('Upload API error', failure);
     expect(consoleError).not.toHaveBeenCalled();

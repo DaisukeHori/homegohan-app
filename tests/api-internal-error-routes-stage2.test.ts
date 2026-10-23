@@ -221,7 +221,7 @@ describe('#1172 第 2 段: /api/performance/analyze は、内部の関数が受�
     const res = await performanceAnalyze.GET(get('/api/performance/analyze?date=2026-10-01'));
 
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: 'Profile not found' });
+    expect(await res.json()).toEqual({ error: 'プロフィールが見つかりません。先にプロフィールを登録してください' });
     expect(h.logCalls).toEqual([]);
   });
 });

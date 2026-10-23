@@ -4,6 +4,13 @@ import { toShoppingListItem } from '@/lib/converter';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+
+
+/** 400: 食材 (ingredients) が配列でない */
+const INGREDIENTS_NOT_ARRAY_MESSAGE = '食材 (ingredients) は一覧で指定してください';
+/** 400: 名前が文字列でない食材がある */
+const INGREDIENT_NAME_INVALID_MESSAGE = 'どの食材にも名前を指定してください';
 
 type IngredientInput = { name: string; amount: string | null };
 
@@ -39,22 +46,22 @@ export async function POST(request: Request) {
 
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   let body: unknown;
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+    return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
   }
 
   const rawIngredients = (body as { ingredients?: unknown } | null)?.ingredients;
   if (!Array.isArray(rawIngredients)) {
-    return NextResponse.json({ error: 'ingredients must be an array' }, { status: 400 });
+    return NextResponse.json({ error: INGREDIENTS_NOT_ARRAY_MESSAGE }, { status: 400 });
   }
   const ingredients = parseIngredients(rawIngredients);
   if (!ingredients) {
-    return NextResponse.json({ error: 'each ingredient must have a string name' }, { status: 400 });
+    return NextResponse.json({ error: INGREDIENT_NAME_INVALID_MESSAGE }, { status: 400 });
   }
 
   // 追加する食材が無ければ DB に触れない (空の買い物リストを作らない)

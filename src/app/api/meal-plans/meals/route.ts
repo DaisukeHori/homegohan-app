@@ -16,6 +16,10 @@ import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/
 import { internalError } from '@/lib/api/errors';
 import { uuidOrNull } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+
+/** 400: 日付 (dayDate) と食事の種類 (mealType) が無い */
+const DAY_DATE_AND_MEAL_TYPE_REQUIRED_MESSAGE = '日付 (dayDate) と食事の種類 (mealType) を指定してください';
 
 export async function POST(request: Request) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
@@ -23,7 +27,7 @@ export async function POST(request: Request) {
   if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
     const {
@@ -42,7 +46,7 @@ export async function POST(request: Request) {
     } = await request.json();
 
     if (!dayDate || !mealType) {
-      return NextResponse.json({ error: 'dayDate and mealType are required' }, { status: 400 });
+      return NextResponse.json({ error: DAY_DATE_AND_MEAL_TYPE_REQUIRED_MESSAGE }, { status: 400 });
     }
 
     // #1205: meal_type と栄養素の型・範囲を、DB に触れる前に確認する（不正なら 400）

@@ -20,6 +20,8 @@ import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/
 import { internalError } from '@/lib/api/errors';
 import { uuidOrNull } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { MEAL_NOT_FOUND_MESSAGE } from '@/lib/api/user-api-error-messages';
 
 /**
  * 特定の食事を取得（planned_mealsベース）
@@ -31,7 +33,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     const { data: { user }, error: authError } = await supabase.auth.getUser();
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
     // planned_mealsとuser_daily_mealsをJOINして取得
@@ -53,7 +55,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     }
 
     if (!data) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     return NextResponse.json(data);
@@ -75,7 +77,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     const { data: { user }, error: authError } = await supabase.auth.getUser();
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
     const body = await request.json();
@@ -130,7 +132,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       .single();
 
     if (!existing) {
-      return NextResponse.json({ error: 'Not found or unauthorized' }, { status: 404 });
+      return NextResponse.json({ error: MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     if (body.catalogProductId) {
@@ -305,7 +307,7 @@ export async function DELETE(request: Request, props: { params: Promise<{ id: st
     const { data: { user }, error: authError } = await supabase.auth.getUser();
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
     // まずユーザーの所有確認
@@ -320,7 +322,7 @@ export async function DELETE(request: Request, props: { params: Promise<{ id: st
       .single();
 
     if (!existing) {
-      return NextResponse.json({ error: 'Not found or unauthorized' }, { status: 404 });
+      return NextResponse.json({ error: MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。本人の行に絞って service role で取り消す

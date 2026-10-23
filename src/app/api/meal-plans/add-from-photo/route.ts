@@ -13,6 +13,8 @@ import {
 } from "@/lib/planned-meal-validation";
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { MEAL_SAVE_FAILED_MESSAGE } from '@/lib/api/user-api-error-messages';
 
 export async function POST(request: Request) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
@@ -37,7 +39,7 @@ export async function POST(request: Request) {
 
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
     const isSandbox = sandbox === true;
@@ -76,7 +78,7 @@ export async function POST(request: Request) {
       });
       if (!saved.ok) {
         console.error(`Failed to save sandbox meal (${saved.stage}):`, saved.error);
-        return NextResponse.json({ error: 'Failed to save sandbox meal' }, { status: 500 });
+        return NextResponse.json({ error: MEAL_SAVE_FAILED_MESSAGE }, { status: 500 });
       }
       return NextResponse.json({ success: true, sandbox: true, mealId: saved.mealId });
     }
@@ -108,7 +110,7 @@ export async function POST(request: Request) {
       
       if (dayError || !newDay) {
         console.error('Failed to create user_daily_meals:', dayError);
-        return NextResponse.json({ error: 'Failed to create daily meal' }, { status: 500 });
+        return NextResponse.json({ error: MEAL_SAVE_FAILED_MESSAGE }, { status: 500 });
       }
       dailyMealId = newDay.id;
     }
@@ -122,7 +124,7 @@ export async function POST(request: Request) {
 
     if (existingMealsError) {
       console.error('Failed to load existing meal for photo insert:', existingMealsError);
-      return NextResponse.json({ error: 'Failed to replace existing meal' }, { status: 500 });
+      return NextResponse.json({ error: MEAL_SAVE_FAILED_MESSAGE }, { status: 500 });
     }
 
     if (Array.isArray(existingMeals) && existingMeals.length > 0) {
@@ -194,7 +196,7 @@ export async function POST(request: Request) {
     
     if (mealError) {
       console.error('Failed to create planned_meal:', mealError);
-      return NextResponse.json({ error: 'Failed to create planned meal' }, { status: 500 });
+      return NextResponse.json({ error: MEAL_SAVE_FAILED_MESSAGE }, { status: 500 });
     }
     
     return NextResponse.json({ 

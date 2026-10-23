@@ -189,7 +189,7 @@ describe('6 handler 共通: 認証と id の形式 (§7.1・§7.2)', () => {
     const res = await call(String(row.id));
 
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: 'Unauthorized', code: 'AUTH_UNAUTHENTICATED' });
+    expect(await res.json()).toEqual({ error: 'ログインが必要です', code: 'AUTH_UNAUTHENTICATED' });
     expect(res.headers.get('Cache-Control')).toBe('private, no-store');
     expect(db.calls).toHaveLength(0);
     expect(mocks.createClient).not.toHaveBeenCalled();
