@@ -13,9 +13,10 @@
  *   - 関数の属性と実行権限は変わらない
  *
  * 競合の再現のしかた (タイミングに頼らない):
- *   postgres-meta (/pg/query) で「本人になりすまして RPC を呼び、そのあと pg_sleep でトランザクションを開いたままにする」
- *   接続を 1 本作る (= 人数を数えて INSERT したが、まだコミットしていない状態を作る)。pg_sleep に入ったのを
- *   pg_stat_activity で確かめてから、もう 1 件を本物の経路 (PostgREST + 本人の JWT) で呼ぶ。
+ *   postgres-meta (/pg/query) で「本人になりすまして RPC を呼び、そのあと放されるまでトランザクションを開いたままにする」
+ *   接続を 1 本作る (= 人数を数えて INSERT したが、まだコミットしていない状態を作る)。もう 1 件を本物の経路 (PostgREST + 本人の JWT)
+ *   で呼び、それが先の接続に待たされて行のロックの待ちに並んだのを pg_stat_activity / pg_blocking_pids で確かめてから先の接続を放す
+ *   (tests/integration/helpers/lock-holder.ts。決まった秒数の窓に頼らない。#1917)。
  *   修正前: 後から呼んだ側は何も待たず、先の INSERT が見えないまま人数を数えて上限を通過する (両方成功する)。
  *   修正後: 後から呼んだ側は家族の行のロックで待たされ、先のコミット後に数え直して MEMBER_LIMIT_EXCEEDED になる。
  *   これとは別に、PostgREST で複数を一斉に呼ぶ素直な並行テストも置く (R5 / R6)。
@@ -30,8 +31,9 @@
 
 import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import ws from 'ws';
+import { actAsAuthenticatedSql, createLockHolderKit, type Holder, type HolderOutcome } from '../helpers/lock-holder';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 import { grantFamilyPlan } from '../helpers/family-plan';
 
@@ -78,8 +80,6 @@ async function pgQuery<T = Record<string, unknown>>(query: string): Promise<T[]>
   return res.body as T[];
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 interface TestUser {
   id: string;
   email: string;
@@ -90,7 +90,6 @@ const TS = Date.now();
 const PASSWORD = `${randomBytes(18).toString('base64url')}Aa1!`;
 const createdUserIds: string[] = [];
 const createdFamilyIds: string[] = [];
-const pendingHolders: Array<Promise<unknown>> = [];
 const TOKEN_RE = /^[a-f0-9]{64}$/;
 
 async function createUser(label: string): Promise<TestUser> {
@@ -211,57 +210,30 @@ function callSql(call: Call): string {
     : `public.add_family_child('${call.familyId}'::uuid, '${call.name}', '{"note":"#1213"}'::jsonb, '1990-01-01'::date)`;
 }
 
+const holders = createLockHolderKit({ pgRequest, markerPrefix: 'race' });
+
+/** call が呼ぶ関数の名前 (後から呼んだ側が行のロックの待ちに並んだのを pg_stat_activity で見分ける) */
+function callFn(call: Call): string {
+  return call.kind === 'accept' ? 'accept_family_invite' : 'add_family_child';
+}
+
 /**
- * 別の接続で call を実行し、そのあと holdSeconds 秒 pg_sleep してトランザクションを開いたままにする。
+ * 別の接続で call を実行し、そのあと放されるまでトランザクションを開いたままにする。
  * sleeping は「call の実行が済み、pg_sleep に入った」(= 人数を数えて INSERT したがコミット前の) 状態になると解決する。
  * done はトランザクションが終わった (コミットされた) ときに解決する。
  */
-function holdOpen(call: Call, holdSeconds: number): { sleeping: Promise<void>; done: Promise<Outcome> } {
-  const marker = `race-holder-${randomBytes(6).toString('hex')}`;
-  const claims = JSON.stringify({ sub: call.user.id, role: 'authenticated' });
-  const sql = `/* ${marker} */
-    SELECT set_config('request.jwt.claims', '${claims}', true);
-    SET LOCAL ROLE authenticated;
-    SELECT * FROM ${callSql(call)};
-    SELECT pg_sleep(${holdSeconds});
-    SELECT 'held' AS result;`;
-
-  const state: { outcome: Outcome | null } = { outcome: null };
-  const done = pgRequest(sql).then((res): Outcome => {
-    const body = res.body as { error?: unknown } | null;
-    const outcome: Outcome = res.ok
-      ? { ok: true, message: null }
-      : { ok: false, message: typeof body?.error === 'string' ? body.error : JSON.stringify(body) };
-    state.outcome = outcome;
-    return outcome;
-  });
-  pendingHolders.push(done);
-
-  const sleeping = (async () => {
-    const deadline = Date.now() + 20_000;
-    while (Date.now() < deadline) {
-      if (state.outcome) {
-        // pg_sleep に入る前に終わった = 先の RPC が失敗している (競合の再現にならないので、理由を示して止める)
-        throw new Error(`先に呼んだ接続が pg_sleep に入る前に終わりました: ${JSON.stringify(state.outcome)}`);
-      }
-      const rows = await pgQuery<{ n: number }>(`
-        SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE wait_event = 'PgSleep' AND query LIKE '%${marker}%' AND pid <> pg_backend_pid()`);
-      if (rows[0]?.n === 1) return;
-      await sleep(50);
-    }
-    throw new Error('先に呼んだ接続が pg_sleep に入りませんでした (遅すぎます)');
-  })();
-
-  return { sleeping, done };
+function holdOpen(call: Call): Holder {
+  return holders.startHolder(callSql(call), `${actAsAuthenticatedSql(call.user.id)}
+    SELECT * FROM ${callSql(call)};`);
 }
 
-/** 先に first を呼んでトランザクションを開いたままにし、その間に second を本物の経路で呼ぶ */
-async function race(first: Call, second: Call, holdSeconds = 3): Promise<{ first: Outcome; second: Outcome }> {
-  const holder = holdOpen(first, holdSeconds);
-  await holder.sleeping;
-  const secondOutcome = await callViaApi(second);
-  return { first: await holder.done, second: secondOutcome };
+/**
+ * 先に first を呼んでトランザクションを開いたままにし、その間に second を本物の経路で呼ぶ。second が first に待たされて
+ * 家族の行のロックの待ちに並んだのを確かめてから first を放す (並ばなければ手順の名前を付けて落ちる)
+ */
+async function race(first: Call, second: Call): Promise<{ first: HolderOutcome; second: Outcome }> {
+  const [held, secondOutcome] = await holders.runBehindHolder(holdOpen(first), { fn: callFn(second), call: () => callViaApi(second) });
+  return { first: held, second: secondOutcome };
 }
 
 function expectLimitExceeded(outcome: Outcome) {
@@ -269,8 +241,11 @@ function expectLimitExceeded(outcome: Outcome) {
   expect(outcome.message).toContain('MEMBER_LIMIT_EXCEEDED');
 }
 
+// テストが途中で落ちたときに残った接続を、作った順に放す (通ったテストでは全部放し終わっているので何もしない)
+afterEach(() => holders.releaseOpenHolders());
+
 afterAll(async () => {
-  await Promise.allSettled(pendingHolders);
+  await holders.settle();
   for (const id of createdFamilyIds) {
     await srAdmin.from('membership_audit').delete().eq('scope_id', id);
     await srAdmin.from('family_groups').delete().eq('id', id); // family_members / family_invites は CASCADE
@@ -410,20 +385,17 @@ describe('#1213 PostgREST から複数を一斉に呼ぶ場合と、ロックの
     const tokenA = await inviteToken(repA, familyA, a.email);
     const tokenB = await inviteToken(repB, familyB, b.email);
 
-    // 家族 A の承諾を 4 秒間コミットしないで開いておく
-    const holder = holdOpen({ kind: 'accept', user: a, token: tokenA }, 4);
-    let holderSettled = false;
-    void holder.done.then(() => {
-      holderSettled = true;
+    // 家族 A の承諾をコミットしないで開いておき、その間に家族 B の承諾を済ませてから放す
+    const holder = holdOpen({ kind: 'accept', user: a, token: tokenA });
+    const [held, second] = await holders.whileHolding(holder, async () => {
+      const outcome = await callViaApi({ kind: 'accept', user: b, token: tokenB });
+      // 家族 A のトランザクションはまだ開いている (= 家族 B の承諾は、それを待たずに終わった。待たされるなら放されるまで返らない)
+      expect(holder.finished()).toBe(false);
+      return outcome;
     });
-    await holder.sleeping;
-
-    const second = await callViaApi({ kind: 'accept', user: b, token: tokenB });
     expect(second.ok).toBe(true);
-    // 家族 A のトランザクションはまだ開いている (= 家族 B の承諾は、それを待たずに終わった)
-    expect(holderSettled).toBe(false);
 
-    expect((await holder.done).ok).toBe(true);
+    expect(held.ok).toBe(true);
     expect(await activeMembers(familyA)).toHaveLength(2);
     expect(await activeMembers(familyB)).toHaveLength(2);
   });

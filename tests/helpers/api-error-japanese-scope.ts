@@ -18,6 +18,7 @@ export const JAPANESE_ERROR_API_DIRS: readonly string[] = [
   'src/app/api/e2e',
   'src/app/api/admin',
   'src/app/api/support',
+  'src/app/api/ai',
   // super_admin・運営の操作 (operator は membership の配下ごと。強制の譲渡の 2 route は #1981 のマージの後に直した)
   'src/app/api/super-admin',
   'src/app/api/operator/membership/audit',
@@ -83,7 +84,6 @@ export const SENTINEL_EXCLUDED_ROUTE_FILES: readonly string[] = [];
  */
 export const UNFIXED_VIOLATION_BASELINE: Readonly<Record<string, number>> = {
   'src/app/api/account': 3,
-  'src/app/api/ai': 112,
   'src/app/api/announcements': 6,
   'src/app/api/auth': 1,
   'src/app/api/badges': 2,

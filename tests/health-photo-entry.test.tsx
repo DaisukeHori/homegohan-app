@@ -405,7 +405,7 @@ describe('#1141 D: AI が読み取った値は、利用者が確認して押す�
   it('解析に失敗したら、何も保存しない', async () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (url === '/api/ai/analyze-weight-scale') {
-        return jsonResponse({ error: 'mode_mismatch', message: '体重計の表示が読み取れませんでした。' }, 422);
+        return jsonResponse({ error: '体重計の表示が読み取れませんでした。', code: 'mode_mismatch', message: '体重計の表示が読み取れませんでした。' }, 422);
       }
       throw new Error(`想定外の fetch: ${url}`);
     });

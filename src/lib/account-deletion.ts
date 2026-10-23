@@ -24,6 +24,8 @@
  *      記録を書けなければ削除しない (記録の無い削除を作らない)。
  *   4''. 段階 billing_recheck (billing/01 §11): 1' と同じ処理をもう一度 (1' のあとに完了した Checkout の契約・作られた顧客を閉じる)。
  *      失敗したら 5 に進まない (アカウントは残り、もう一度の退会で片付く)。
+ *   4'''. 段階 apple_revoke: Sign in with Apple の refresh token を失効させる (docs/design/mobile/08-sign-in-with-apple.md §9.3)。
+ *      失敗しても退会は続ける (warn)。時間は APPLE_REVOKE_TOTAL_BUDGET_MS (3 秒) まで (退会の route の maxDuration に収める。過ぎた行は Apple を呼ばない)。
  *   5. auth.admin.deleteUser。public 側の個人データは外部キーの CASCADE / SET NULL で消える・匿名化される
  *      (20261010000100_auth_users_fk_on_delete.sql)。findBlocker のあとに組織のオーナー・家族の代表者になって、deleteUser が
  *      organizations.owner_id / family_groups.representative_id の RESTRICT で失敗する型は残らない: 組織の運営の作成は 1 の印で止まり
@@ -50,6 +52,11 @@ import { removeAccountStorage } from '@/lib/account-deletion-storage';
 import { notifyAccountDeleted, readAccountDeletionEmail } from '@/lib/account-deletion-notification';
 // billing/account-deletion.ts は account-deletion.ts から型だけを import するので、実行時の循環は無い
 import { defaultAccountDeletionBilling } from '@/lib/billing/account-deletion';
+import {
+  createAccountDeletionAppleRevocation,
+  type AccountDeletionAppleRevocation,
+  type AppleRevocationReport,
+} from '@/lib/auth/apple/revocation';
 import { MembershipErrorCode } from '@/lib/errors/membership-errors';
 
 /** どの段階で失敗したか (ログ用。応答には出さない) */
@@ -62,6 +69,7 @@ export type AccountDeletionStep =
   | 'storage'
   | 'record'
   | 'billing_recheck'
+  | 'apple_revoke'
   | 'delete_user';
 
 /**
@@ -141,6 +149,8 @@ export interface DeleteAccountParams {
   executor?: AccountDeletionExecutor;
   /** テストで差し替える。既定は src/lib/billing/account-deletion.ts の実装 (billing/01 §11) */
   billing?: AccountDeletionBilling;
+  /** Sign in with Apple の refresh token の失効 (mobile/08 §9.3)。省略時は params.admin で表を読む既定の実装 */
+  appleRevocation?: AccountDeletionAppleRevocation;
 }
 
 const LOG_NAME = 'lib/account-deletion';
@@ -387,6 +397,12 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
     step = 'billing_recheck';
     const billingRecheckReport = await billing.cancelForAccountDeletion(userId, userLog, 'billing_recheck');
 
+    // mobile/08 §9.3: Sign in with Apple の refresh token を Apple に失効させる。投げない (失敗は warn で退会は続く)。
+    // 段階の時間は revocation.ts の中で APPLE_REVOKE_TOTAL_BUDGET_MS まで (deleteAccount は時間を渡さない)
+    step = 'apple_revoke';
+    const appleRevocation = params.appleRevocation ?? createAccountDeletionAppleRevocation({ admin: () => admin });
+    const appleReport: AppleRevocationReport = await appleRevocation.revokeForAccountDeletion(userId, userLog, requestId);
+
     step = 'delete_user';
     const { error: deleteError } = await admin.auth.admin.deleteUser(userId);
     if (deleteError) {
@@ -402,7 +418,7 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
     await completeDeletionRecord(admin, recordId, log, requestId);
 
     // 削除後なので withUser は使わない。メールアドレスも user_id も載せない
-    log.info('account deleted', { request_id: requestId, deletion_record_id: recordId, prepare: prepareReport ?? null, storage, billing: billingReport, billing_recheck: billingRecheckReport });
+    log.info('account deleted', { request_id: requestId, deletion_record_id: recordId, prepare: prepareReport ?? null, storage, billing: billingReport, billing_recheck: billingRecheckReport, apple: appleReport });
   } catch (error) {
     userLog.error(`account deletion failed at step: ${step}`, toError(error), {
       step,

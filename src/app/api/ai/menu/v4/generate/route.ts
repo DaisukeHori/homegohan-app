@@ -25,11 +25,13 @@ import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/
 import { isUltimateModeRequested } from '@/lib/ai/ultimate-mode';
 import { weeklyMenuRequestUltimateModeData } from '@/lib/ai/weekly-menu-request-ultimate';
 import { weeklyMenuRequestWeeklyOriginDataForDates } from '@/lib/ai/weekly-menu-request-origin';
-import { addDaysToDate, CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } from '@/lib/date-utils';
+import { addDaysToDate, isCalendarDate, todayLocal } from '@/lib/date-utils';
 import { isMealType, isWithinMenuGenerationRange, MEAL_ORDER, MENU_GENERATION_RANGE_MAX_DAYS } from '@homegohan/shared';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { normalizeUuid } from '@/lib/http-params';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { AI_TARGET_SLOTS_REQUIRED_MESSAGE, aiTargetSlotsTooManyMessage, aiTargetSlotNotObjectMessage, aiTargetSlotDateInvalidMessage, aiTargetSlotMealTypeInvalidMessage, aiTargetSlotPlannedMealIdInvalidMessage, aiTargetSlotDuplicateMessage, aiTargetSlotsSpanTooLongMessage, AI_MENU_PLANNED_MEAL_TYPE_MISMATCH_MESSAGE, AI_MENU_PLANNED_MEAL_DATE_MISMATCH_MESSAGE, AI_MENU_GENERATION_STARTED_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -47,11 +49,11 @@ const MAX_TARGET_SLOTS = MENU_GENERATION_RANGE_MAX_DAYS * MAIN_MEALS_PER_DAY;
 
 function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlot[]; error?: string } {
   if (!Array.isArray(slots) || slots.length === 0) {
-    return { valid: false, slots: [], error: 'targetSlots must be a non-empty array' };
+    return { valid: false, slots: [], error: AI_TARGET_SLOTS_REQUIRED_MESSAGE };
   }
   
   if (slots.length > MAX_TARGET_SLOTS) {
-    return { valid: false, slots: [], error: `targetSlots exceeds maximum of ${MAX_TARGET_SLOTS} (${MENU_GENERATION_RANGE_MAX_DAYS} days × ${MAIN_MEALS_PER_DAY} meals)` };
+    return { valid: false, slots: [], error: aiTargetSlotsTooManyMessage(MAX_TARGET_SLOTS, MENU_GENERATION_RANGE_MAX_DAYS, MAIN_MEALS_PER_DAY) };
   }
   
   const validated: TargetSlot[] = [];
@@ -61,7 +63,7 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
     const slot = slots[i];
     
     if (!slot || typeof slot !== 'object') {
-      return { valid: false, slots: [], error: `targetSlots[${i}] is not an object` };
+      return { valid: false, slots: [], error: aiTargetSlotNotObjectMessage(i) };
     }
     
     const slotObj = slot as Record<string, unknown>;
@@ -73,18 +75,18 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
     // YYYY-MM-DD の形で、実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを通す (#1433)。形だけを見ていると 2026-02-30 のような日付が通り、
     // 後ろの addDaysToDate (前後 7 日の文脈の期間) が RangeError を投げて 500 になる
     if (!isCalendarDate(date)) {
-      return { valid: false, slots: [], error: `targetSlots[${i}].date must be ${CALENDAR_DATE_REQUIREMENT}` };
+      return { valid: false, slots: [], error: aiTargetSlotDateInvalidMessage(i) };
     }
 
     // mealType validation
     if (!mealType || typeof mealType !== 'string' || !isMealType(mealType)) {
-      return { valid: false, slots: [], error: `targetSlots[${i}].mealType must be one of: ${VALID_MEAL_TYPES.join(', ')}` };
+      return { valid: false, slots: [], error: aiTargetSlotMealTypeInvalidMessage(i, VALID_MEAL_TYPES) };
     }
 
     // plannedMealId validation (optional, but if present must be valid UUID)
     if (plannedMealId !== undefined && plannedMealId !== null) {
       if (typeof plannedMealId !== 'string' || !/^[0-9a-f-]{36}$/i.test(plannedMealId)) {
-        return { valid: false, slots: [], error: `targetSlots[${i}].plannedMealId must be a valid UUID` };
+        return { valid: false, slots: [], error: aiTargetSlotPlannedMealIdInvalidMessage(i) };
       }
     }
 
@@ -95,7 +97,7 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
     const normalizedPlannedMealId = typeof plannedMealId === 'string' ? normalizeUuid(plannedMealId) : undefined;
     const key = normalizedPlannedMealId || `${date}:${mealType}`;
     if (seenKeys.has(key)) {
-      return { valid: false, slots: [], error: `Duplicate slot at ${date}/${mealType}` };
+      return { valid: false, slots: [], error: aiTargetSlotDuplicateMessage(String(date), mealType) };
     }
     seenKeys.add(key);
     
@@ -112,7 +114,7 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
     return {
       valid: false,
       slots: [],
-      error: `targetSlots dates must span at most ${MENU_GENERATION_RANGE_MAX_DAYS} days (from the earliest date to the latest date, inclusive)`,
+      error: aiTargetSlotsSpanTooLongMessage(MENU_GENERATION_RANGE_MAX_DAYS),
     };
   }
 
@@ -152,7 +154,7 @@ export async function POST(request: Request) {
     // 2. ユーザー確認
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
     // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
@@ -226,10 +228,10 @@ export async function POST(request: Request) {
         }
         const day = (pm.user_daily_meals as Pick<Tables<"user_daily_meals">, "day_date"> | null) ?? { day_date: '' };
         if (String(pm.meal_type) !== String(slot.mealType)) {
-          return NextResponse.json({ error: 'plannedMealId mealType mismatch' }, { status: 400 });
+          return NextResponse.json({ error: AI_MENU_PLANNED_MEAL_TYPE_MISMATCH_MESSAGE }, { status: 400 });
         }
         if (String(day.day_date) !== String(slot.date)) {
-          return NextResponse.json({ error: 'plannedMealId date mismatch' }, { status: 400 });
+          return NextResponse.json({ error: AI_MENU_PLANNED_MEAL_DATE_MISMATCH_MESSAGE }, { status: 400 });
         }
       }
     }
@@ -426,7 +428,7 @@ export async function POST(request: Request) {
     // 12. Return immediately
     return NextResponse.json({ 
       status: 'processing',
-      message: `${engine.toUpperCase()} generation started`,
+      message: AI_MENU_GENERATION_STARTED_MESSAGE,
       requestId: requestData.id,
       totalSlots: targetSlots.length,
     });

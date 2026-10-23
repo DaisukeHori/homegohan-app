@@ -7,7 +7,7 @@
  * そろえないと、DB から読んだ id (小文字) との突き合わせ (foundIds / byId) が外れて plannedMealId が「見つからない」として消され、
  * 区分・日付の確認も飛ばして既存の食事を置き換えない生成に進んでいた。
  *   - .in('id', ...) に渡す id は小文字
- *   - DB から読んだ食事と突き合わせが成り立つ (区分が違えば 400 plannedMealId mealType mismatch になる = 突き合わせた印)
+ *   - DB から読んだ食事と突き合わせが成り立つ (区分が違えば 400「指定した献立の食事の区分が、選んだ枠と一致しません」になる = 突き合わせた印)
  *   - 同じ食事を大文字小文字だけ変えて 2 回送ると、DB に触れる前に重複として 400
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -124,7 +124,7 @@ describe.each([
     expect(h.plannedMealsIn).toHaveBeenCalledWith('id', [PLANNED_MEAL_ID]);
     // 突き合わせが外れて plannedMealId を消していたら、区分の確認を飛ばして先 (user_daily_meals など) へ進んでいた
     expect(res.status).toBe(HTTP_BAD_REQUEST);
-    expect(await res.json()).toEqual({ error: 'plannedMealId mealType mismatch' });
+    expect(await res.json()).toEqual({ error: '指定した献立の食事の区分が、選んだ枠と一致しません' });
     expect(h.callV4).not.toHaveBeenCalled();
     expect(h.callV5).not.toHaveBeenCalled();
   });
@@ -140,7 +140,7 @@ describe.each([
     );
 
     expect(res.status).toBe(HTTP_BAD_REQUEST);
-    expect(await res.json()).toEqual({ error: `Duplicate slot at ${NEXT_DATE}/dinner` });
+    expect(await res.json()).toEqual({ error: `同じ枠 (${NEXT_DATE} の dinner) が 2 回指定されています` });
     expect(h.getUser).not.toHaveBeenCalled();
     expect(h.from).not.toHaveBeenCalled();
   });

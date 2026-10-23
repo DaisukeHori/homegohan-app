@@ -11,6 +11,8 @@ import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { aiRequiredFieldMessage, AI_MENU_DAY_NOT_FOUND_MESSAGE, AI_MENU_REQUEST_CREATE_FAILED_MESSAGE, AI_MENU_DAY_REGENERATION_STARTED_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -25,13 +27,13 @@ export async function POST(request: Request) {
     const { dailyMealId, dayDate, preferences, includeCompleted } = await request.json();
 
     if (!dailyMealId && !dayDate) {
-      return NextResponse.json({ error: 'Either dailyMealId or dayDate is required' }, { status: 400 });
+      return NextResponse.json({ error: aiRequiredFieldMessage('日付') }, { status: 400 });
     }
 
     // 1. ユーザー認証
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
     // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
@@ -61,7 +63,7 @@ export async function POST(request: Request) {
         .single();
 
       if (dayError || !dayData) {
-        return NextResponse.json({ error: 'Day not found' }, { status: 404 });
+        return NextResponse.json({ error: AI_MENU_DAY_NOT_FOUND_MESSAGE }, { status: 404 });
       }
       targetDayId = dayData.id;
     }
@@ -75,7 +77,7 @@ export async function POST(request: Request) {
       .single();
 
     if (dailyMealError || !dailyMeal) {
-      return NextResponse.json({ error: 'Daily meal not found' }, { status: 404 });
+      return NextResponse.json({ error: AI_MENU_DAY_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     const { data: meals, error: mealsError } = await supabase
@@ -142,7 +144,7 @@ export async function POST(request: Request) {
       console.error('Failed to create request:', insertError);
       // 生成を始める前に止まった (AI へは何も送っていない) ので、数えた 1 回を戻す (#1149)
       await refundAiUsage(user.id, 'menu_generation', aiUsage);
-      return NextResponse.json({ error: 'Failed to create request' }, { status: 500 });
+      return NextResponse.json({ error: AI_MENU_REQUEST_CREATE_FAILED_MESSAGE }, { status: 500 });
     }
 
     // 6. Edge Functionを呼び出し（V5/V4をfeature flagで切り替え）
@@ -172,7 +174,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: 'Day regeneration started in background',
+      message: AI_MENU_DAY_REGENERATION_STARTED_MESSAGE,
       status: 'processing',
       requestId: requestData.id,
       mealsCount: targetSlots.length

@@ -12,8 +12,12 @@ import { aiDailyLimitResponse, consumeAiUsage, AI_USAGE_COVERED_BY_GRANT, redeem
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { AI_IMAGE_REQUIRED_MESSAGE, AI_PHOTO_MODE_MISMATCH_CODE } from '@/lib/ai/ai-api-messages';
 
 /** 送られた写真の URL が、本人の写真として読めないとき (他人の写真・消えた写真) の文面 (#1365) */
+/** 422: 冷蔵庫の写真から食材が読み取れなかった */
+const FRIDGE_NOT_READABLE_MESSAGE = '食材が読み取れませんでした。冷蔵庫の中身が見える写真を撮り直してください。';
 const PHOTO_NOT_READABLE_MESSAGE = '写真を読み込めませんでした。もう一度撮影するか、写真を選び直してください。';
 
 function buildPrompt(imageCount: number): string {
@@ -35,7 +39,7 @@ export async function POST(request: Request) {
   if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
   const aiConsentDenied = await requireAiConsent(supabase, user.id);
@@ -68,7 +72,7 @@ export async function POST(request: Request) {
     }
 
     if (images.length === 0) {
-      return NextResponse.json({ error: 'Image URL or Base64 is required' }, { status: 400 });
+      return NextResponse.json({ error: AI_IMAGE_REQUIRED_MESSAGE }, { status: 400 });
     }
 
     // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える。
@@ -93,7 +97,7 @@ export async function POST(request: Request) {
 
     if (!analysisResult.ingredients?.length) {
       return NextResponse.json(
-        { error: 'mode_mismatch', message: '食材が読み取れませんでした。冷蔵庫の中身が見える写真を撮り直してください。' },
+        { error: FRIDGE_NOT_READABLE_MESSAGE, code: AI_PHOTO_MODE_MISMATCH_CODE, message: FRIDGE_NOT_READABLE_MESSAGE },
         { status: 422 },
       );
     }

@@ -187,7 +187,7 @@ describe.each(CASES)('$name: 大文字・混在の plannedMealId (#1793)', (test
     const res = await POST(post({ targetSlots: [{ date: DAY, mealType: 'lunch', plannedMealId: MEAL_ID.toUpperCase() }] }));
 
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: 'plannedMealId mealType mismatch' });
+    expect(await res.json()).toEqual({ error: '指定した献立の食事の区分が、選んだ枠と一致しません' });
     expect(queueInsert()).toBeUndefined();
   });
 
@@ -204,7 +204,7 @@ describe.each(CASES)('$name: 大文字・混在の plannedMealId (#1793)', (test
     );
 
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: `Duplicate slot at ${DAY}/lunch` });
+    expect(await res.json()).toEqual({ error: `同じ枠 (${DAY} の lunch) が 2 回指定されています` });
     expect(h.getUser).not.toHaveBeenCalled();
     expect(h.inCalls).toEqual([]);
   });

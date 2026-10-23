@@ -4,12 +4,14 @@ import { isCalendarDate, sundayWeekRange } from '@/lib/jst-day-ranges';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
 import { isWeeklyMenuRequestStale, markWeeklyMenuRequestStaleIfUnchanged } from '@/lib/weekly-menu-request-stale';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { aiInvalidDateMessage } from '@/lib/ai/ai-api-messages';
 
 // 単一食事の生成中リクエストがあるか確認
 export async function GET(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   const { searchParams } = new URL(request.url);
   const weekStartDate = searchParams.get('date'); // 週の開始日
@@ -22,7 +24,7 @@ export async function GET(request: Request) {
     if (weekStartDate) {
       // 日曜日から土曜日までの週を、暦の計算だけで求める (#1433。実行環境のタイムゾーンに左右されない)
       if (!isCalendarDate(weekStartDate)) {
-        return NextResponse.json({ error: 'date must be YYYY-MM-DD' }, { status: 400 });
+        return NextResponse.json({ error: aiInvalidDateMessage('日付') }, { status: 400 });
       }
       ({ startDate, endDate } = sundayWeekRange(weekStartDate));
     }
