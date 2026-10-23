@@ -13,6 +13,9 @@ import { notifyNativeSessionExpired } from "@/lib/native-auth-bridge";
 import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle } from "lucide-react";
+import { AppleSignInButton, APPLE_SIGN_IN_BUTTON_HEIGHT_PX } from "@/components/auth/AppleSignInButton";
+import { isAppleSignInEnabled } from "@/lib/auth/apple-sign-in-flag";
+import { APPLE_SIGN_IN_MESSAGES } from "@homegohan/shared";
 
 // #287: rate limit 検知用の定数
 const RATE_LIMIT_KEY_PREFIX = 'auth_last_fail_ts';
@@ -85,6 +88,28 @@ function LoginContent() {
     } catch (error) {
       console.error('Error logging in with Google:', error);
       setError('Googleログインに失敗しました。しばらくしてからお試しください。');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleAppleLogin = async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      const safeNext = getSafeRedirectPath(rawRedirectParam);
+      // provider=apple は /auth/callback が provider_refresh_token を保管する目印 (Google には付けない)
+      const callback = new URL('/auth/callback', window.location.origin);
+      callback.searchParams.set('provider', 'apple');
+      if (safeNext) callback.searchParams.set('next', safeNext);
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'apple',
+        options: { redirectTo: callback.toString() },
+      });
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error logging in with Apple:', error);
+      setError(APPLE_SIGN_IN_MESSAGES.failed);
     } finally {
       setIsLoading(false);
     }
@@ -204,11 +229,15 @@ function LoginContent() {
       )}
 
       <div className="space-y-4">
+        {isAppleSignInEnabled() && (
+          <AppleSignInButton kind="continue" onClick={handleAppleLogin} disabled={isLoading} loading={isLoading} testId="login-apple-button" />
+        )}
         <Button 
           variant="outline" 
           onClick={handleGoogleLogin}
           disabled={isLoading}
-          className="w-full py-6 rounded-xl border-gray-200 hover:bg-gray-50 hover:border-gray-300 transition-all font-bold text-gray-700 flex items-center gap-3 relative overflow-hidden group"
+          style={{ height: APPLE_SIGN_IN_BUTTON_HEIGHT_PX }}
+          className="w-full py-0 rounded-xl border-gray-200 hover:bg-gray-50 hover:border-gray-300 transition-all font-bold text-gray-700 flex items-center gap-3 relative overflow-hidden group"
         >
            {/* Google Icon SVG */}
            <svg className="w-5 h-5" viewBox="0 0 24 24">
@@ -219,7 +248,7 @@ function LoginContent() {
            </svg>
            {isLoading ? '処理中...' : 'Googleで続ける'}
         </Button>
-        {/* #1435: 「Googleで続ける」は、初めての人には新しいアカウントを作る。初回は /auth/callback が必ず同意画面
+        {/* #1435: 「Googleで続ける」「Appleで続ける」は、初めての人には新しいアカウントを作る。初回は /auth/callback が必ず同意画面
             (/legal-consent) を通す (みなし同意はしない。#1174)。ここではその流れを先に知らせ、文面へのリンクを出す */}
         <p data-testid="login-google-legal-note" className="text-center text-xs text-gray-500">
           はじめての方は、続けたあとに

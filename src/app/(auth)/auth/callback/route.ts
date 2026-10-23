@@ -6,12 +6,15 @@ import { resolveFirstSignInDestination } from '@/lib/legal-consent'
 import { recordWebLoginContextFromRequest } from '@/lib/auth/sessions/web-login-context'
 import { isEmailChangeAwaitingOtherMessage } from '@homegohan/shared'
 import { buildLinkNoticePath, LINK_NOTICE_EMAIL_CHANGE_AWAITING_OTHER } from '@/lib/auth/link-notice'
+import { createLogger, generateRequestId } from '@/lib/db-logger'
+import { appleCallbackErrorMessage, storeAppleRefreshTokenFromWebCallback } from '@/lib/auth/apple/web-callback'
 
 /** メールアドレス変更の確認リンクの OTP の種類 (メールの雛形が token_hash の形のときに届く。#1574) */
 const EMAIL_CHANGE_OTP_TYPE = 'email_change'
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url)
+  const requestId = generateRequestId()
 
   // #1043: token_hash/code/email 等の実値をログに出さないよう、
   // URL 全体・パラメータ値ではなくパスとパラメータの有無(boolean)のみを記録する
@@ -41,8 +44,13 @@ export async function GET(request: Request) {
       code: error_code
     })
     // エラーページにリダイレクト（エラー情報付き）
+    // Apple (?provider=apple) は Apple・GoTrue の英文を出さず、日本語の固定の文にする (docs/design/mobile/08-sign-in-with-apple.md §12.3・S-34)。
+    // ほかの provider は今までどおり error_description (無ければ error)
     const loginUrl = new URL('/login', requestUrl.origin)
-    loginUrl.searchParams.set('error', error_description || error_param || 'Authentication failed')
+    loginUrl.searchParams.set(
+      'error',
+      appleCallbackErrorMessage(requestUrl.searchParams.get('provider')) ?? (error_description || error_param || 'Authentication failed'),
+    )
     return NextResponse.redirect(loginUrl)
   }
 
@@ -74,6 +82,17 @@ export async function GET(request: Request) {
       const { data, error } = await supabase.auth.exchangeCodeForSession(code)
       authSuccess = !error
       if (!error) await recordWebLoginContextFromRequest(supabase.auth, request.headers, data.session)
+      // Web の Apple のログイン (?provider=apple) は、Apple の refresh token を保管する (退会のときの失効用。§9.5)。
+      // 失敗は warn で、振り分けを変えない。Google など provider 無しでは何もしない
+      if (!error) {
+        await storeAppleRefreshTokenFromWebCallback({
+          provider: requestUrl.searchParams.get('provider'),
+          user: data.user,
+          session: data.session,
+          log: createLogger('GET /auth/callback', requestId),
+          requestId,
+        })
+      }
       if (error) {
         console.error('[auth/callback] Code exchange error:', error.message, error)
       } else {
@@ -191,7 +210,7 @@ export async function GET(request: Request) {
       next = '/onboarding/welcome'
     }
 
-    // #1435: 初回の作成 (サインアップ画面の Google 登録・メール確認・ログイン画面の「Googleで続ける」で初めて入った人) は、
+    // #1435: 初回の作成 (サインアップ画面の Google 登録・メール確認・ログイン画面の「Googleで続ける」「Appleで続ける」で初めて入った人) は、
     // LEGAL_CONSENT_ENFORCE の値に関わらず、必ず同意画面を通す (同意の記録が残るのは同意画面だけ)。
     // 戻り先は上で決めた遷移先。判定は lib/legal-consent.ts の resolveFirstSignInDestination。
     // 管理者は従来どおり管理画面へ。プロフィールを読めなかったときは判定できないので回さない
