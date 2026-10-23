@@ -13,8 +13,9 @@
  */
 
 import React from 'react';
-import { Alert } from 'react-native';
-import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import { Alert, StyleSheet } from 'react-native';
+import { APPLE_SIGN_IN_MESSAGES } from '@homegohan/shared';
+import { act, render, fireEvent, waitFor } from '@testing-library/react-native';
 
 // ---- Mocks (before any component imports) ----
 
@@ -24,6 +25,8 @@ const mockSignInWithOAuth = jest.fn();
 const mockExchangeCodeForSession = jest.fn();
 const mockSetSession = jest.fn();
 const mockVerifyOtp = jest.fn();
+const mockSignInWithIdToken = jest.fn();
+const mockUpdateUser = jest.fn();
 const mockGetUser = jest.fn();
 const mockFrom = jest.fn();
 
@@ -36,6 +39,8 @@ jest.mock('../../src/lib/supabase', () => ({
       exchangeCodeForSession: (...args: any[]) => mockExchangeCodeForSession(...args),
       setSession: (...args: any[]) => mockSetSession(...args),
       verifyOtp: (...args: any[]) => mockVerifyOtp(...args),
+      signInWithIdToken: (...args: any[]) => mockSignInWithIdToken(...args),
+      updateUser: (...args: any[]) => mockUpdateUser(...args),
     },
     from: (...args: any[]) => mockFrom(...args),
   },
@@ -62,6 +67,36 @@ jest.mock('expo-linking', () => ({
 const mockOpenAuthSessionAsync = jest.fn();
 jest.mock('expo-web-browser', () => ({
   openAuthSessionAsync: (...args: any[]) => mockOpenAuthSessionAsync(...args),
+}));
+
+// ---- Sign in with Apple (docs/design/mobile/08-sign-in-with-apple.md §14.1) ----
+// AppleAuthenticationButton だけを「props を写す偽物」にする (押す・高さを読むため)。列挙の値は文字列
+const mockAppleButtonProps: Array<{ buttonType: string; buttonStyle: string; cornerRadius: number; style: { width: string; height: number }; onPress: () => void }> = [];
+const mockSignInAsync = jest.fn();
+const mockIsAvailableAsync = jest.fn();
+jest.mock('expo-apple-authentication', () => {
+  const ReactActual = require('react');
+  const { Pressable } = require('react-native');
+  return {
+    isAvailableAsync: (...args: any[]) => mockIsAvailableAsync(...args),
+    signInAsync: (...args: any[]) => mockSignInAsync(...args),
+    AppleAuthenticationButton: (props: (typeof mockAppleButtonProps)[number]) => {
+      mockAppleButtonProps.push(props);
+      return ReactActual.createElement(Pressable, { testID: 'apple-authentication-button', style: props.style, onPress: props.onPress });
+    },
+    AppleAuthenticationButtonType: { SIGN_IN: 'SIGN_IN', CONTINUE: 'CONTINUE', SIGN_UP: 'SIGN_UP' },
+    AppleAuthenticationButtonStyle: { WHITE: 'WHITE', WHITE_OUTLINE: 'WHITE_OUTLINE', BLACK: 'BLACK' },
+    AppleAuthenticationScope: { FULL_NAME: 'FULL_NAME', EMAIL: 'EMAIL' },
+  };
+});
+jest.mock('expo-crypto', () => ({
+  randomUUID: jest.fn(() => 'raw-nonce'),
+  digestStringAsync: jest.fn(async () => 'hashed-nonce'),
+  CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
+}));
+const mockApiPost = jest.fn();
+jest.mock('../../src/lib/api', () => ({
+  getApi: () => ({ post: (...args: any[]) => mockApiPost(...args) }),
 }));
 
 // react-native-svg mock
@@ -94,6 +129,7 @@ import LoginScreen from '../../app/(auth)/login';
 // ---- AsyncStorage reference (mocked globally in jest.setup.js) ----
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { resetAuthLinkResultsForTests } from '../../src/lib/authLink';
+import { AUTH_PROVIDER_BUTTON_MIN_HEIGHT } from '../../src/components/auth/AppleSignInButton';
 
 // ---- Helpers ----
 
@@ -133,10 +169,22 @@ async function loginAndWaitForRouting() {
   });
 }
 
+const originalAppleFlag = process.env.EXPO_PUBLIC_APPLE_SIGN_IN;
+
 beforeEach(() => {
   jest.clearAllMocks();
   resetAuthLinkResultsForTests();
   mockSearchParams = {};
+  mockAppleButtonProps.length = 0;
+  // Apple のボタンはスイッチ (EXPO_PUBLIC_APPLE_SIGN_IN) を on にしたテストだけが出す
+  delete process.env.EXPO_PUBLIC_APPLE_SIGN_IN;
+  mockIsAvailableAsync.mockResolvedValue(true);
+  mockSignInAsync.mockResolvedValue({
+    user: 'apple-user-1', identityToken: 'id-token-1', authorizationCode: 'auth-code-1', fullName: null, email: null,
+  });
+  mockSignInWithIdToken.mockResolvedValue({ data: { user: { user_metadata: {} } }, error: null });
+  mockUpdateUser.mockResolvedValue({ error: null });
+  mockApiPost.mockResolvedValue({ ok: true });
   // Re-apply spy since clearAllMocks resets mock implementations
   jest.spyOn(Alert, 'alert').mockImplementation(() => {});
   (AsyncStorage.getItem as jest.Mock).mockResolvedValue(null);
@@ -145,6 +193,11 @@ beforeEach(() => {
   mockExchangeCodeForSession.mockResolvedValue({ error: null });
   mockSetSession.mockResolvedValue({ error: null });
   mockVerifyOtp.mockResolvedValue({ error: null });
+});
+
+afterEach(() => {
+  if (originalAppleFlag === undefined) delete process.env.EXPO_PUBLIC_APPLE_SIGN_IN;
+  else process.env.EXPO_PUBLIC_APPLE_SIGN_IN = originalAppleFlag;
 });
 
 // ---- Tests ----
@@ -389,5 +442,128 @@ describe('ログイン後の振り分け: ?next= の安全確認', () => {
 
     expect(mockReplace).toHaveBeenCalledTimes(1);
     expect(mockReplace).toHaveBeenCalledWith('/(tabs)/home');
+  });
+});
+
+
+// ---- 5-x. Sign in with Apple (docs/design/mobile/08-sign-in-with-apple.md §10.1・§14.1) ----
+// Apple の流れ (signInWithApple) と振り分け (routeAfterSignIn) は実物を通し、その先の expo-apple-authentication・supabase・API をモックにする。
+
+describe('LoginScreen — Apple でログイン (スイッチ EXPO_PUBLIC_APPLE_SIGN_IN)', () => {
+  const COMPLETED = { roles: [], onboarding_completed_at: '2026-01-01T00:00:00Z', onboarding_started_at: '2026-01-01T00:00:00Z' };
+
+  it('5-1. スイッチ on・iOS: Apple のボタン (login-apple-button) が Google のボタンの前にある', async () => {
+    process.env.EXPO_PUBLIC_APPLE_SIGN_IN = 'on';
+    const api = render(<LoginScreen />);
+
+    expect(await api.findByTestId('login-apple-button')).toBeTruthy();
+    const tree = JSON.stringify(api.toJSON());
+    expect(tree.indexOf('login-apple-button')).toBeGreaterThan(-1);
+    expect(tree.indexOf('login-apple-button')).toBeLessThan(tree.indexOf('login-google-button'));
+    // 種類はログイン (SIGN_IN)
+    expect(mockAppleButtonProps[mockAppleButtonProps.length - 1].buttonType).toBe('SIGN_IN');
+  });
+
+  it('5-2. 押すと signInWithApple → signed_in → routeAfterSignIn (ホームへ)。認可コードもサーバへ渡す', async () => {
+    process.env.EXPO_PUBLIC_APPLE_SIGN_IN = 'on';
+    setupProfile(COMPLETED);
+    const api = render(<LoginScreen />);
+
+    fireEvent.press(await api.findByTestId('apple-authentication-button'));
+
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/(tabs)/home'));
+    expect(mockSignInAsync).toHaveBeenCalledTimes(1);
+    expect(mockSignInWithIdToken).toHaveBeenCalledWith({ provider: 'apple', token: 'id-token-1', nonce: 'raw-nonce' });
+    expect(mockApiPost).toHaveBeenCalledWith('/api/auth/apple/authorization', { authorization_code: 'auth-code-1' });
+    expect(Alert.alert).not.toHaveBeenCalled();
+  });
+
+  it('5-3. cancelled (シートを閉じた) はアラートを出さず画面に留まる。ボタンはまた押せる', async () => {
+    process.env.EXPO_PUBLIC_APPLE_SIGN_IN = 'on';
+    mockSignInAsync.mockRejectedValue({ code: 'ERR_REQUEST_CANCELED' });
+    const api = render(<LoginScreen />);
+
+    fireEvent.press(await api.findByTestId('apple-authentication-button'));
+
+    await waitFor(() => expect(mockSignInAsync).toHaveBeenCalled());
+    await waitFor(() => expect(api.getByTestId('login-apple-button').props.pointerEvents).toBe('auto'));
+    expect(Alert.alert).not.toHaveBeenCalled();
+    expect(mockSignInWithIdToken).not.toHaveBeenCalled();
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it('5-4. failed は Alert("Appleログイン失敗", 文)・遷移しない', async () => {
+    process.env.EXPO_PUBLIC_APPLE_SIGN_IN = 'on';
+    mockSignInWithIdToken.mockResolvedValue({ data: { user: null }, error: { name: 'AuthApiError', message: 'provider is not enabled' } });
+    const api = render(<LoginScreen />);
+
+    fireEvent.press(await api.findByTestId('apple-authentication-button'));
+
+    await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Appleログイン失敗', APPLE_SIGN_IN_MESSAGES.failed));
+    expect(mockReplace).not.toHaveBeenCalled();
+    expect(mockApiPost).not.toHaveBeenCalled();
+  });
+
+  it('5-5. スイッチ無し (未設定・off): Apple のボタンが無く、Apple の端末確認もしない。Google のボタンは今までどおり', async () => {
+    const api = render(<LoginScreen />);
+    await act(async () => {});
+    expect(api.queryByTestId('login-apple-button')).toBeNull();
+    expect(api.getByTestId('login-google-button')).toBeTruthy();
+
+    process.env.EXPO_PUBLIC_APPLE_SIGN_IN = 'off';
+    api.unmount();
+    const off = render(<LoginScreen />);
+    await act(async () => {});
+    expect(off.queryByTestId('login-apple-button')).toBeNull();
+    expect(mockIsAvailableAsync).not.toHaveBeenCalled();
+  });
+
+  it('5-6. ?next= は Apple でも効く', async () => {
+    process.env.EXPO_PUBLIC_APPLE_SIGN_IN = 'on';
+    mockSearchParams = { next: '/meals/new' };
+    setupProfile({ roles: [], onboarding_completed_at: null, onboarding_started_at: null });
+    const api = render(<LoginScreen />);
+
+    fireEvent.press(await api.findByTestId('apple-authentication-button'));
+
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/meals/new'));
+    expect(mockReplace).toHaveBeenCalledTimes(1);
+  });
+
+  it('5-7. Apple のボタンの高さは Google のボタンと同じ: Google の minHeight は AUTH_PROVIDER_BUTTON_MIN_HEIGHT、Apple の高さは初め AUTH_PROVIDER_BUTTON_MIN_HEIGHT、Google の onLayout (高さ 70) のあとは 70 (S-33)', async () => {
+    process.env.EXPO_PUBLIC_APPLE_SIGN_IN = 'on';
+    const api = render(<LoginScreen />);
+    await api.findByTestId('login-apple-button');
+    const latestHeight = () => mockAppleButtonProps[mockAppleButtonProps.length - 1].style.height;
+    const googleMinHeight = () => {
+      const style = api.getByTestId('login-google-button').props.style;
+      // Pressable の style は関数 (pressed) か配列か値。画面の定義は関数
+      return StyleSheet.flatten(typeof style === 'function' ? style({ pressed: false }) : style).minHeight;
+    };
+
+    expect(googleMinHeight()).toBe(AUTH_PROVIDER_BUTTON_MIN_HEIGHT);
+    expect(latestHeight()).toBe(AUTH_PROVIDER_BUTTON_MIN_HEIGHT);
+
+    fireEvent(api.getByTestId('login-google-button'), 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 70 } } });
+    await waitFor(() => expect(latestHeight()).toBe(70));
+
+    // 文字の大きさを標準に戻したら、下限に戻る
+    fireEvent(api.getByTestId('login-google-button'), 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 320, height: AUTH_PROVIDER_BUTTON_MIN_HEIGHT } } });
+    await waitFor(() => expect(latestHeight()).toBe(AUTH_PROVIDER_BUTTON_MIN_HEIGHT));
+  });
+
+  it('5-8. Apple のサインイン中は Apple のボタンを押せない (isSubmitting。Google・メールと同じ)', async () => {
+    process.env.EXPO_PUBLIC_APPLE_SIGN_IN = 'on';
+    let finishSheet: (value: unknown) => void = () => {};
+    mockSignInAsync.mockReturnValue(new Promise((resolve) => { finishSheet = resolve; }));
+    const api = render(<LoginScreen />);
+
+    fireEvent.press(await api.findByTestId('apple-authentication-button'));
+
+    await waitFor(() => expect(api.getByTestId('login-apple-button').props.pointerEvents).toBe('none'));
+    await act(async () => { finishSheet({ user: 'u', identityToken: null, authorizationCode: null, fullName: null, email: null }); });
+    // identityToken が無い → failed (noIdentityToken) → ボタンは戻る
+    await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Appleログイン失敗', APPLE_SIGN_IN_MESSAGES.noIdentityToken));
+    await waitFor(() => expect(api.getByTestId('login-apple-button').props.pointerEvents).toBe('auto'));
   });
 });
