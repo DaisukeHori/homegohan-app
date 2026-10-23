@@ -540,6 +540,49 @@ export function sanitizeHealthGoalCreate(
     : { data: result.data as HealthGoalCreatePayload, errors: [] };
 }
 
+/** 新しいチャレンジ (POST /api/health/challenges) の本文のうち、検証した項目 */
+export interface HealthChallengeCreatePayload {
+  /** チャレンジのテンプレートの ID (テンプレートに有るかは route が確かめる)。文字列でなければ undefined */
+  template_id: string | undefined;
+  /** 目標値の上書き。送らない・null・空のときは null (テンプレートの既定の目標値を使う) */
+  custom_target: number | null;
+}
+
+/**
+ * 新しいチャレンジ (POST /api/health/challenges) の本文を検証する (#1917)。
+ *
+ * - 本文が JSON のオブジェクトでない (null・配列・数値など) ときは errors に HEALTH_INVALID_BODY_MESSAGE
+ * - custom_target は、送るなら数値 (十進数の文字列も可)。health_challenges.target_value は health_goals.target_value と同じ
+ *   numeric(10,2) なので、目標の既定の範囲 (FALLBACK_GOAL_RANGES.target: 0 より大きく、桁あふれしない) に収める
+ *   (以前は型も範囲も見ずに insert し、文字列・負の値・桁あふれの値が DB の失敗 (500) や不正な目標になった)
+ */
+export function sanitizeHealthChallengeCreate(input: unknown): {
+  data: HealthChallengeCreatePayload | null;
+  errors: string[];
+} {
+  const result = parseKnownFields<HealthChallengeCreatePayload>(input, (body, errors) => {
+    const customTarget = parseNullableNumber(body, 'custom_target', errors, {
+      min: FALLBACK_GOAL_RANGES.target.min,
+      max: FALLBACK_GOAL_RANGES.target.max,
+      label: '目標値 (custom_target)',
+    });
+    return {
+      template_id: typeof body.template_id === 'string' ? body.template_id : undefined,
+      custom_target: customTarget ?? null,
+    };
+  });
+
+  return result.errors.length > 0
+    ? { data: null, errors: result.errors }
+    : {
+        data: {
+          template_id: result.data.template_id,
+          custom_target: result.data.custom_target ?? null,
+        },
+        errors: [],
+      };
+}
+
 export function sanitizeHealthCheckupPayload(input: unknown): ValidationResult<HealthCheckupPayload> {
   return parseKnownFields(input, (body, errors) => {
     const data: Record<string, unknown> = {};

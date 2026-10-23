@@ -5,6 +5,7 @@ import { internalError } from '@/lib/api/errors';
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { HEALTH_CHALLENGE_TEMPLATE_INVALID_MESSAGE } from '@/lib/health-api-messages';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { sanitizeHealthChallengeCreate } from '@/lib/health-payloads';
 
 // チャレンジ一覧の取得
 export async function GET(request: NextRequest) {
@@ -55,12 +56,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
-  const body = await request.json();
-  const { template_id, custom_target } = body;
+  // 壊れた JSON・JSON の null などは、例外 (Next の既定の 500) にせず 400 にする (#1917。goals など兄弟の route と同じ形)。
+  // custom_target は型と範囲を確かめてから使う (src/lib/health-payloads.ts の sanitizeHealthChallengeCreate)
+  const body = await request.json().catch(() => null);
+  const { data: input, errors } = sanitizeHealthChallengeCreate(body);
+  if (!input) {
+    return NextResponse.json({ error: errors.join(', ') }, { status: 400 });
+  }
 
   // テンプレートからチャレンジを生成
   const templates = getAvailableChallenges();
-  const template = templates.find(t => t.id === template_id);
+  const template = templates.find(t => t.id === input.template_id);
 
   if (!template) {
     return NextResponse.json({ error: HEALTH_CHALLENGE_TEMPLATE_INVALID_MESSAGE }, { status: 400 });
@@ -79,7 +85,7 @@ export async function POST(request: NextRequest) {
       start_date: startDate,
       end_date: endDate,
       target_metric: template.metric,
-      target_value: custom_target || template.default_target,
+      target_value: input.custom_target ?? template.default_target,
       target_unit: template.unit,
       current_value: 0,
       daily_progress: [],

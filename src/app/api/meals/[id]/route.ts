@@ -18,7 +18,7 @@ import { checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { createLogger } from '@/lib/db-logger';
 import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/planned-meal-validation';
 import { internalError } from '@/lib/api/errors';
-import { uuidOrNull } from '@/lib/http-params';
+import { isUuid, uuidOrNull } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { MEAL_NOT_FOUND_MESSAGE } from '@/lib/api/user-api-error-messages';
@@ -36,6 +36,11 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
       return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
+    }
+
     // planned_mealsとuser_daily_mealsをJOINして取得
     const { data, error } = await supabase
       .from('planned_meals')
@@ -48,8 +53,9 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
       `)
       .eq('id', params.id)
       .eq('user_daily_meals.user_id', user.id)
-      .single();
+      .maybeSingle();
 
+    // 他人の食事・消された食事は行が無い。DB の失敗だけを 500 にし、行が無いときは 404 (#1917。.single() は行が無いと PGRST116 の失敗で 500 になっていた)
     if (error) {
       return internalError('GET /api/meals/[id]', error, { userId: user.id });
     }
@@ -114,8 +120,13 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     updateData.updated_at = new Date().toISOString();
     const manualImageUrl = typeof body.image_url === 'string' ? body.image_url : undefined;
 
-    // まずユーザーの所有確認
-    const { data: existing } = await supabase
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json({ error: MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
+    }
+
+    // まずユーザーの所有確認。読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で食事が消えたように見せない。#1917)
+    const { data: existing, error: existingError } = await supabase
       .from('planned_meals')
       .select(`
         id,
@@ -129,8 +140,11 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       `)
       .eq('id', params.id)
       .eq('user_daily_meals.user_id', user.id)
-      .single();
+      .maybeSingle();
 
+    if (existingError) {
+      return internalError('PATCH /api/meals/[id]', existingError, { userId: user.id });
+    }
     if (!existing) {
       return NextResponse.json({ error: MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
     }
@@ -310,8 +324,13 @@ export async function DELETE(request: Request, props: { params: Promise<{ id: st
       return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
-    // まずユーザーの所有確認
-    const { data: existing } = await supabase
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json({ error: MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
+    }
+
+    // まずユーザーの所有確認。読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で食事が消えたように見せない。#1917)
+    const { data: existing, error: existingError } = await supabase
       .from('planned_meals')
       .select(`
         id,
@@ -319,8 +338,11 @@ export async function DELETE(request: Request, props: { params: Promise<{ id: st
       `)
       .eq('id', params.id)
       .eq('user_daily_meals.user_id', user.id)
-      .single();
+      .maybeSingle();
 
+    if (existingError) {
+      return internalError('DELETE /api/meals/[id]', existingError, { userId: user.id });
+    }
     if (!existing) {
       return NextResponse.json({ error: MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
     }

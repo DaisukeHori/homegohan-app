@@ -20,9 +20,13 @@ export async function POST() {
       .from('user_profiles')
       .select('roles, handson_tour_completed_at')
       .eq('id', user.id)
-      .single();
+      .maybeSingle();
 
-    if (profileError || !profile) {
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗でプロファイルが無いように見せない。#1917)
+    if (profileError) {
+      return internalError('POST /api/handson-tour/complete', profileError, { userId: user.id, table: 'user_profiles' }, { shape: 'nested' });
+    }
+    if (!profile) {
       return NextResponse.json(
         { error: { code: 'profile_not_found', message: 'プロファイルが見つかりません' } },
         { status: 404 },

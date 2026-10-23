@@ -4,12 +4,18 @@ import { internalError } from '@/lib/api/errors';
 import { recipeAuthorName } from '@/lib/recipes/author-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_FORBIDDEN_MESSAGE, API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { isUuid } from '@/lib/http-params';
 
 // レシピ詳細取得
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
+
+  // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る。#1917)
+  if (!isUuid(params.id)) {
+    return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
+  }
 
   // 閲覧数インクリメントは認証ユーザーのみ (未認証アクセスによる水増しを防ぐ)
   // #257: SELECT+UPDATE の race を排除するため単一アトミック UPDATE で実施
@@ -98,13 +104,21 @@ export async function PUT(request: Request, props: { params: Promise<{ id: strin
   if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
-    // 所有者確認
-    const { data: existing } = await supabase
+    // UUID の形でない id は DB に渡さない (行が無い id と同じ 403。uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json({ error: API_FORBIDDEN_MESSAGE }, { status: 403 });
+    }
+
+    // 所有者確認。読めなかったときは 403 にしない (DB の失敗は 500。行が無い・他人のレシピのときだけ 403。#1917)
+    const { data: existing, error: existingError } = await supabase
       .from('recipes')
       .select('user_id')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
+    if (existingError) {
+      return internalError('PUT /api/recipes/[id]', existingError, { userId: user.id, table: 'recipes' });
+    }
     if (!existing || existing.user_id !== user.id) {
       return NextResponse.json({ error: API_FORBIDDEN_MESSAGE }, { status: 403 });
     }
@@ -153,13 +167,21 @@ export async function DELETE(request: Request, props: { params: Promise<{ id: st
   if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
-    // 所有者確認
-    const { data: existing } = await supabase
+    // UUID の形でない id は DB に渡さない (行が無い id と同じ 403。uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json({ error: API_FORBIDDEN_MESSAGE }, { status: 403 });
+    }
+
+    // 所有者確認。読めなかったときは 403 にしない (DB の失敗は 500。行が無い・他人のレシピのときだけ 403。#1917)
+    const { data: existing, error: existingError } = await supabase
       .from('recipes')
       .select('user_id')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
+    if (existingError) {
+      return internalError('DELETE /api/recipes/[id]', existingError, { userId: user.id, table: 'recipes' });
+    }
     if (!existing || existing.user_id !== user.id) {
       return NextResponse.json({ error: API_FORBIDDEN_MESSAGE }, { status: 403 });
     }
