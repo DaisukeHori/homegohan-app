@@ -148,7 +148,9 @@ actor_id NULL・action_type `system.*` で書く。読んで判断する側は a
 ```
 admin.user.ban                      - ユーザー BAN (POST /api/admin/users/{id}/freeze)
 admin.user.unban                    - BAN 解除 (DELETE /api/admin/users/{id}/freeze)
-admin.user.role_change              - ロール変更 (PATCH / PUT /api/admin/users/{id}/role)
+admin.user.role_change              - ロール変更 (PATCH / PUT /api/admin/users/{id}/role。details は previous_roles と new_roles)
+                                      previous_roles は admin_set_user_roles が対象の行を FOR NO KEY UPDATE でロックして読んだ変える前の roles
+                                      (戻り値の previous_roles。同時の変更があっても、その UPDATE の直前の値。route が先に読んだ値は使わない。#1917)
 admin.user.note_add                 - 管理ノート追加 (PATCH /api/admin/users/{id}・POST /api/support/users/{id}/notes)
 admin.organization.create           - 組織作成 (POST /api/admin/organizations)
 admin.organization.suspend          - 組織停止 (記録なし)
@@ -252,7 +254,8 @@ super_admin.app_logs.list           - アプリログの一覧・本文の検索
 - メールの送信待ちの一覧 (`GET /api/super-admin/email-outbox`) は記録しない (宛先はマスク済みで、件名・本文を返さない)。
   再送 (`POST /api/super-admin/email-outbox/{id}/requeue`) は変更系として `super_admin.email_outbox.requeue` を記録する
   (再送できたときだけ。対象は行の `user_id` (`target_type = 'user'`)、無ければ行の id (`target_type = 'email_outbox'`)。
-  `details` は `outbox_id` / `template` / `previous_status`。404 / 409 / 500 は記録しない。fail-open。#1708・`10-logs-and-mail-retry.md` §10)。
+  `details` は `outbox_id` / `template` / `previous_status` (`'dead'` 固定: `requeue_email_outbox` がロックした行が dead のときだけ再送するので、
+  先に読んだ行の status ではなくこの値を残す。#1917)。404 / 409 / 500 は記録しない。fail-open。#1708・`10-logs-and-mail-retry.md` §10)。
 
 - `admin.moderation.restore`: 対象は通報 (`target_type = 'moderation_item:<type>'`)。`details`: `moderation_type` / `flag_id` / `content_id` / `content_user_id` / `restore_note` / `hidden_at_before` / `hidden_by_before` / `hidden_reason_before` / `target_ids` / `restored_ids` / `restored` / `restore_error` / `approved_flag_ids` / `status_saved` / `status_error` / `restore_window_days`。状態を変えた操作と DB の失敗で 1 行。成功 info・失敗と書いたあとの 0 行は warn。何も書かずに断った 409 / 410 は記録しない。
 
