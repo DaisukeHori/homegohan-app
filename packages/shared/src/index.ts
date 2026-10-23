@@ -21,6 +21,7 @@ export * from './data-subject-requests';
 export * from './membership-settings';
 export * from './password-policy';
 export * from './auth-captcha';
+export * from './apple-sign-in';
 export * from './account-change-errors';
 export * from './account-change-input';
 export * from './email-change-link';

@@ -62,7 +62,8 @@ export type RateLimitCategory =
   | 'billing'
   | 'csp-report'
   | 'auth-password-change'
-  | 'auth-password-reset';
+  | 'auth-password-reset'
+  | 'auth-apple-authorization';
 
 /** 1 つの制限ルール。name は Upstash の prefix / in-memory の名前空間に使う (既存キーを変えないこと) */
 interface RateRule {
@@ -136,6 +137,9 @@ const HOUR_SEC = 60 * MINUTE_SEC;
 //   (GoTrue のログインの制限を通らない経路なので、ここで数える)。本人が打ち間違えても 10 分 5 回あれば足りる
 // - auth-password-reset: メールのリンク / コードで作ったセッションによるパスワードの再設定 (#1198。POST /api/auth/password/reset、key = user.id)。
 //   同上の理由で、再設定のセッションでも 10 分 5 回に絞る (本人が弱いパスワードの案内を受けて打ち直しても足りる回数)
+// - auth-apple-authorization: iOS の Sign in with Apple の認可コードの交換と refresh token の保管
+//   (POST /api/auth/apple/authorization、key = 認証で確定した user.id。docs/design/mobile/08-sign-in-with-apple.md §11.4)。
+//   ログイン 1 回につき 1 回呼ぶ。auth-password-change と同じ 10 分 5 回 (やり直しを含めても本人の操作では届かない)
 const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
   // 課金の操作 (Checkout の作成・Portal・解約の予約と取り消し・戻り画面の同期)。利用者ごと。
   // Stripe の API を 1〜2 回呼ぶ操作なので、連打で Stripe 側のレート制限や顧客の重複を起こさない値
@@ -201,6 +205,7 @@ const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
   ],
   'auth-password-change': [{ name: 'auth-password-change', max: 5, windowSec: 10 * MINUTE_SEC }],
   'auth-password-reset': [{ name: 'auth-password-reset', max: 5, windowSec: 10 * MINUTE_SEC }],
+  'auth-apple-authorization': [{ name: 'auth-apple-authorization', max: 5, windowSec: 10 * MINUTE_SEC }],
 };
 
 export interface RateLimitResult {
