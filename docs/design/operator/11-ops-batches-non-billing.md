@@ -73,7 +73,7 @@ Status: 設計ゲート通過 (2026-10-17・R2 で Opus 5.5 と Sonnet 5.5 の 2
 
 ### 1.2 対象外 (本書では決めない・変えない)
 
-- (A) の課金のもの (§冒頭)。`data_integrity_check` は課金の表を読むが、制約が守るので作らない (§2.2)。
+- (A) の課金のもの (§冒頭)。`data_integrity_check` は課金の表を読むが、制約が守るので作らない (§2.2)。08 §3.1 の `infra_metrics_cleanup`・`failed_invite_lookups_cleanup` も (B) の 9 項目に無く、要らない: 2 つの表 (`infra_metrics`・`failed_invite_lookups`) に書き込む処理が main に無く (前者は `GET /api/super-admin/infra/metrics` が読むだけで、RLS は super_admin の SELECT の 1 本。後者は RLS が `USING (false)` の 1 本だけで、読み書きするコードも無い)、行が増えないので消す対象が無い (08 §3.1 の注記)。書き込む処理を足す冊が、掃除のジョブも一緒に足す。
 - 08 §7 の手動実行 UI (`/super-admin/cron-jobs`) と §7.2 の API。本番に無く、(B) の一覧にも無い。09 §5.2 の「方法 A」が指すが、本書では触らない (§15 で「無い」ことを注記する行だけ)。
 - Vercel Cron の route を増やすこと (`vercel.json` は変えない)。失敗の監視は既存の `app-log-alerts` の回で行う。
 - 急増通知の既存の 3 種類 (server / client / email_dead_letter) のしきい値・窓・抑止・文面は変えない。

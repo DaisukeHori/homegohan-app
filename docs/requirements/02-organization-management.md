@@ -462,7 +462,7 @@ yamada@example.com,org_manager,営業部,山田花子,EMP002
 
 #### 5.1.1 属性
 - `id`, `name`, `industry` (業種)、`employee_count`、`plan_key` (`subscription_plans.plan_key` 参照、03 §7.2.7)
-- `subscription_status` (active / suspended / cancelled / trialing)
+- `subscription_status` (active / suspended / cancelled / trialing。要件の値。本番の列は text・既定 'trial'・CHECK 無しで、書く処理は無い: docs/design/org/01-data-model.md §3.1・org/09 §4)
 - `subscription_expires_at`, `billing_email`
 - `logo_url`, `primary_color` (カラーカスタマイズ Pro 以上)
 - `settings` JSONB (各種設定)

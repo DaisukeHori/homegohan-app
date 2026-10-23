@@ -245,7 +245,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
   - `INVALID_PERIOD` (400): 作成の開始日・終了日が `YYYY-MM-DD` の形でない・開始日が終了日より後・タイトルが文字列でない (`route.ts:167`〜`:171`)
   - `INVALID_TARGET` (400): 作成で目標値を指定したとき、数でない・種類ごとの範囲 (`ORG_CHALLENGE_TYPE_META` の `targetMin`〜`targetMax`) の外 (`route.ts:177`)
   - `INVALID_STATUS` (400): 更新の status が DB の受け付けない値・NULL (`route.ts:256`)
-  - このほかの 4xx・5xx (未ログインの 401・管理者でないときの 403・本文が JSON として読めないときなどの 400・500) は `code` の無い `{ error }` だけ (`route.ts:42`〜`:50` の `handleError` ほか)。`error` は日本語の固定の文 (401 / 403 / 500 は `src/lib/org-api-errors.ts` の `orgAuthFailureFlat` と定数。例外の文面は入れない)
+  - このほかの 4xx・5xx (未ログインの 401・管理者でないときの 403・本文が JSON として読めないときなどの 400・500) は `code` の無い `{ error }` だけ (`route.ts:42`〜`:51` の `handleError` ほか)。`error` は日本語の固定の文 (401 / 403 / 500 は `src/lib/org-api-errors.ts` の `orgAuthFailureFlat` と定数。例外の文面は入れない)
 - メンバー向けの route (`[id]/route.ts`・`[id]/join/route.ts`。nested の形 `{ error: { code, message } }`):
   - `PERM_DEPARTMENT_MISMATCH` (403): 別の部署の人向けのチャレンジへの参加 (`[id]/join/route.ts:52`)
   - `FORBIDDEN` (403): 参加の INSERT が行レベルセキュリティに拒否された (42501。確認のあとで所属・部署・状態が変わったとき。`[id]/join/route.ts:75`)

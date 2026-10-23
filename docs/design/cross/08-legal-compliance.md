@@ -888,7 +888,7 @@ $$);
 | 送信待ちの宛先 (`email_outbox.to_email`) | 削除または匿名化 | 実装済み (#1193)。RPC `prepare_account_deletion` が本人の行の宛先・件名・本文を伏せ (queued は dead)、他人宛の行の件名・本文・返信先の中の本人のアドレスだけを伏せる。退会の完了メールは送れたあと・届けられなかったあとに伏せる |
 | DB バックアップ (R2) の中の個人情報 | 復旧の目的でだけ、暗号化して保管する | 実装済み (cross/17-backup-automation.md §9.1)。daily 30 日・weekly 366 日・annual 2,557 日 (7 年) 残り、退会した利用者の行も取得の時点の分は含まれる。開けるのは age の秘密鍵を持つオーナーだけで、復元以外の目的で開かない。プライバシーポリシーに追記した (cross/20 §7 第12条) |
 | 送信待ちの送信元 (`email_outbox.from_email`) | 伏せない | 送信元はアプリのアドレス (`EMAIL_FROM`・運用メールも同じ) で、利用者のものではない |
-| 途中で失敗したとき | 半端な状態を残さず、やり直せる | 実装済み (#1175)。後始末 (手順 4) の失敗は 500 (internalError) で止めて `deleteUser` を呼ばない。ライセンス席の解放 (`release_user_membership`) だけは失敗しても続けるが、`IS_ORG_OWNER` (確認のあとにオーナーになっていた) は確認をやり直して 409 で止め (オーナーでなくなっていたら削除せず 500)、`CONFLICT_RETRY` (所属の組織が途中で変わった) は削除せず 500 にする (`src/lib/account-deletion.ts:345-361`)。外部キー違反で `deleteUser` が失敗する経路は、確認 (手順 3 の 409) のあとに家族の代表者になった人の `family_groups.representative_id` (ON DELETE RESTRICT) だけで、500 になる (もう一度の退会で 409 になる。`supabase/migrations/20261022160000_release_membership_owner_race.sql` の見出し) |
+| 途中で失敗したとき | 半端な状態を残さず、やり直せる | 実装済み (#1175)。後始末 (手順 4) の失敗は 500 (internalError) で止めて `deleteUser` を呼ばない。ライセンス席の解放 (`release_user_membership`) だけは失敗しても続けるが、`IS_ORG_OWNER` (確認のあとにオーナーになっていた) は確認をやり直して 409 で止め (オーナーでなくなっていたら削除せず 500)、`CONFLICT_RETRY` (所属の組織が途中で変わった) は削除せず 500 にする (`src/lib/account-deletion.ts:349-365`)。外部キー違反で `deleteUser` が失敗する経路は、確認 (手順 3 の 409) のあとに家族の代表者になった人の `family_groups.representative_id` (ON DELETE RESTRICT) だけで、500 になる (もう一度の退会で 409 になる。`supabase/migrations/20261022160000_release_membership_owner_race.sql` の見出し) |
 
 ### 16.4 `gdpr_deletion_requests` テーブルの扱い (削除の実行記録)
 

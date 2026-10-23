@@ -178,7 +178,7 @@ export async function POST(request: Request) {
     .single();
 
   if (insertError || !org) {
-    // 退会の途中の人はオーナーにしない (#1917 の続き。DB のトリガー organizations_owner_not_deleting が INSERT を止める。
+    // 退会の途中の人はオーナーにしない (#1917 の続き。DB のトリガー trg_organizations_owner_not_deleting (関数 organizations_owner_not_deleting()) が INSERT を止める。
     // supabase/migrations/20261023130000_account_deletion_owner_guard.sql)。作らずに 409 で返す。
     // トリガーが P0001 + このコードの完全一致で止めた形だけを拾う。コードの判定は共通の関数で行い、route では (ログのほかに) `.message` を読まない (#1917)
     if (isRaisedExceptionWithCode(insertError, OWNER_ACCOUNT_DELETING)) {
@@ -311,7 +311,7 @@ function listFailedResponse() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * 作る組織のオーナーが退会の途中 (退会の印 account_deletion_guards が新しい) のときに、トリガー organizations_owner_not_deleting が
+ * 作る組織のオーナーが退会の途中 (退会の印 account_deletion_guards が新しい) のときに、トリガー trg_organizations_owner_not_deleting (関数 organizations_owner_not_deleting()) が
  * RAISE するコード (supabase/migrations/20261023130000_account_deletion_owner_guard.sql)。応答の code にもそのまま使う
  */
 const OWNER_ACCOUNT_DELETING = 'OWNER_ACCOUNT_DELETING';
