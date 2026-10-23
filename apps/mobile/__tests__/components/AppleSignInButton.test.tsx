@@ -4,8 +4,8 @@
  */
 
 import React from 'react';
-import { StyleSheet } from 'react-native';
-import { act, fireEvent, render, renderHook, waitFor } from '@testing-library/react-native';
+import { StyleSheet, View } from 'react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 // ---- Mocks (before any component imports) ----
 
@@ -51,8 +51,16 @@ import {
 
 const originalFlag = process.env.EXPO_PUBLIC_APPLE_SIGN_IN;
 
-function layoutEvent(height: number) {
-  return { nativeEvent: { layout: { x: 0, y: 0, width: 320, height } } } as any;
+/** useAuthProviderButtonHeight を使う画面の最小の形: Google のボタンに見立てた View に onLayout を渡す (本物の画面と同じ渡し方) */
+function HeightProbe(props: { onHeight: (height: number) => void }) {
+  const { height, onGoogleButtonLayout } = useAuthProviderButtonHeight();
+  props.onHeight(height);
+  return <View testID="google-probe" onLayout={onGoogleButtonLayout} />;
+}
+
+/** 「Google のボタンの高さが height になった」測定を起こす (RNTL は 'layout' を onLayout に当てる) */
+function measureGoogleButton(probe: ReturnType<typeof render>, height: number) {
+  fireEvent(probe.getByTestId('google-probe'), 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 320, height } } });
 }
 
 beforeEach(() => {
@@ -148,23 +156,26 @@ describe('useAuthProviderButtonHeight', () => {
   });
 
   it('初めの height は AUTH_PROVIDER_BUTTON_MIN_HEIGHT (56)', () => {
-    const { result } = renderHook(() => useAuthProviderButtonHeight());
-    expect(result.current.height).toBe(AUTH_PROVIDER_BUTTON_MIN_HEIGHT);
+    const heights: number[] = [];
+    render(<HeightProbe onHeight={(height) => heights.push(height)} />);
+    expect(heights[heights.length - 1]).toBe(AUTH_PROVIDER_BUTTON_MIN_HEIGHT);
   });
 
   it('Google の onLayout の高さが AUTH_PROVIDER_BUTTON_MIN_HEIGHT より大きければその高さ、以下なら AUTH_PROVIDER_BUTTON_MIN_HEIGHT (大きくしたあと標準に戻しても下限に戻る。S-33)', () => {
-    const { result } = renderHook(() => useAuthProviderButtonHeight());
+    const heights: number[] = [];
+    const probe = render(<HeightProbe onHeight={(height) => heights.push(height)} />);
+    const latest = () => heights[heights.length - 1];
 
-    act(() => result.current.onGoogleButtonLayout(layoutEvent(70)));
-    expect(result.current.height).toBe(70);
+    act(() => measureGoogleButton(probe, 70));
+    expect(latest()).toBe(70);
 
     // 標準の高さ (下限と同じ) に戻る
-    act(() => result.current.onGoogleButtonLayout(layoutEvent(AUTH_PROVIDER_BUTTON_MIN_HEIGHT)));
-    expect(result.current.height).toBe(AUTH_PROVIDER_BUTTON_MIN_HEIGHT);
+    act(() => measureGoogleButton(probe, AUTH_PROVIDER_BUTTON_MIN_HEIGHT));
+    expect(latest()).toBe(AUTH_PROVIDER_BUTTON_MIN_HEIGHT);
 
     // 下限より低い測定値 (文字を小さくした・測りはじめの値) は下限のまま
-    act(() => result.current.onGoogleButtonLayout(layoutEvent(70)));
-    act(() => result.current.onGoogleButtonLayout(layoutEvent(40)));
-    expect(result.current.height).toBe(AUTH_PROVIDER_BUTTON_MIN_HEIGHT);
+    act(() => measureGoogleButton(probe, 70));
+    act(() => measureGoogleButton(probe, 40));
+    expect(latest()).toBe(AUTH_PROVIDER_BUTTON_MIN_HEIGHT);
   });
 });

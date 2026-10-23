@@ -22,10 +22,10 @@ jest.mock('expo-apple-authentication', () => ({
 }));
 
 const mockRandomUUID = jest.fn(() => 'raw-nonce');
-const mockDigestStringAsync = jest.fn(async () => 'hashed-nonce');
+const mockDigestStringAsync = jest.fn<(algorithm: string, value: string) => Promise<string>>();
 jest.mock('expo-crypto', () => ({
   randomUUID: () => mockRandomUUID(),
-  digestStringAsync: (...args: any[]) => (mockDigestStringAsync as any)(...args),
+  digestStringAsync: (algorithm: string, value: string) => mockDigestStringAsync(algorithm, value),
   CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
 }));
 
