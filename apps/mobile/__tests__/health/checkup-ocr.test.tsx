@@ -299,6 +299,9 @@ describe('BloodTestsPage — OCR flow', () => {
 
   it('6. 読み取れなかった (422 mode_mismatch) ときは、本文の日本語の文だけを Alert(OCRエラー) に出す (#1917)', async () => {
     const text = '健康診断結果が読み取れませんでした。健康診断書がはっきり写った写真を撮り直してください。';
+    // ほかのテストが積んだまま使われなかった 1 回分の応答 (mockResolvedValueOnce) は clearAllMocks では消えないので、ここで消す
+    mockPost.mockReset();
+    mockLaunchImageLibraryAsync.mockReset();
     mockLaunchImageLibraryAsync.mockResolvedValueOnce({
       canceled: false,
       assets: [{ base64: 'fakebase64data', mimeType: 'image/jpeg' }],
