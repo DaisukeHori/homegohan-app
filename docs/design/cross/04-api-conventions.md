@@ -354,7 +354,7 @@ interface ErrorResponse {
 { "error": "利用規約・プライバシーポリシーへの同意が必要です。同意の画面から内容をご確認ください。", "code": "LEGAL_CONSENT_REQUIRED" }
 ```
 
-**(b) nested**: `error.message` を読むクライアント向け。運営 API (`/api/super-admin/**` など) は `internalError(..., { shape: 'nested' })` でこの形の 500 を返す。組織・家族の所属の操作の API (招待の承諾・辞退・取り消し・脱退・除名・代表者やオーナーの譲渡など。`/api/org/**`・`/api/family/**` のうち `MembershipErrorCode` を返すもの) の 4xx もこの形で、`code` は `MembershipErrorCode` (`src/lib/errors/membership-errors.ts`) の値 (同じ配下でも、一覧の取得などは (a) flat の `{ error: 'この操作を行う権限がありません' }` などを返す route がある。`/api/org/**` の失敗の文はどちらの形でも日本語の固定の文で、英語の文・例外の文面 (`err.message`) を入れない。401 / 403 / 500 の文は `src/lib/org-api-errors.ts`、見張りは `tests/org-api-error-japanese.test.ts`)。`message` は操作ごとの固定の文なので、画面は `membershipErrorMessageOfBody` で `code` から理由の文を引く。
+**(b) nested**: `error.message` を読むクライアント向け。運営 API (`/api/super-admin/**` など) は `internalError(..., { shape: 'nested' })` でこの形の 500 を返す。組織・家族の所属の操作の API (招待の承諾・辞退・取り消し・脱退・除名・代表者やオーナーの譲渡など。`/api/org/**`・`/api/family/**` のうち `MembershipErrorCode` を返すもの) の 4xx もこの形で、`code` は `MembershipErrorCode` (`src/lib/errors/membership-errors.ts`) の値 (同じ配下でも、一覧の取得などは (a) flat の `{ error: 'この操作を行う権限がありません' }` などを返す route がある。`/api/org/**` の失敗の文はどちらの形でも日本語の固定の文で、英語の文・例外の文面 (`err.message`) を入れない。一覧の取得などの route (flat・nested の両方) は 401 / 403 / 500 の文を `src/lib/org-api-errors.ts` から取る。招待の作成・取り消し・除名など所属の操作の route (`src/app/api/org/invites/route.ts:84`・`:88`・`invites/[id]/revoke/route.ts:25`・`:31`・`members/route.ts:57`・`:61`・`members/[user_id]/remove/route.ts:21`・`:27`) は、401 `NOT_AUTHENTICATED`「認証が必要です」・403 `INSUFFICIENT_PERMISSION` (操作ごとの文) を route に直書きし、`org-api-errors.ts` を通らない (500 の文はどちらも同じ汎用の文。`src/lib/api/errors.ts` の `INTERNAL_ERROR_MESSAGE`)。見張りは `tests/org-api-error-japanese.test.ts`)。`message` は操作ごとの固定の文なので、画面は `membershipErrorMessageOfBody` で `code` から理由の文を引く。
 
 ```typescript
 interface NestedErrorResponse {
@@ -374,6 +374,8 @@ interface NestedErrorResponse {
 ```
 
 どちらの形でも、本文に DB の生のエラー文・捕まえた例外の文面・`details`・`hint`・スタックを入れない (500 は汎用の文だけにし、元のエラーは構造化ログに残す)。
+
+認可の失敗 (401 / 403) の本文で例外の文面 (`err.message`) や英語の文を返している route は、直すときに共通の関数 `authFailureFlat` / `authFailureNested` (`src/lib/api/error-responses.ts`。#1917) で作る (既に日本語の固定の文を返している route (`OP_PERMISSION_DENIED` に `権限がありません` など) はそのままでよい。`message` / `error` は日本語の固定の文で、`AuthError` / `ForbiddenError` の文面 (`requireRole` の `Requires one of: …` など) は入れない。403 の文は `ForbiddenError` の `code` ごとの表で決め、既定の表は凍結・二段階認証・組織に所属していないの文を持つ。nested の `code` は従来の route の code を変えないように、401 と 403 で別々に `'http'` (`UNAUTHORIZED` / `FORBIDDEN`)・`'error'` (例外の `code`)・`{ fixed: '<コード>' }` (`UNAUTHENTICATED`・`OP_PERMISSION_DENIED` など) から選ぶ (admin の営業・問い合わせの形 = 401 は例外の `code`・403 は `OP_PERMISSION_DENIED`、会計の形 = 401 は `UNAUTHENTICATED`・403 は `OP_PERMISSION_DENIED` は同じファイルの定数)。400 (JSON が読めない)・404・409・500 の固定の文の定数も同じファイル。`src/lib/org-api-errors.ts` はこの上に載せた /api/org の包み)。英語だけの文・例外の文面が本文に無いことは、`tests/api-error-japanese-scan.test.ts` が直し終えた配下 (`tests/helpers/api-error-japanese-scope.ts` の `JAPANESE_ERROR_API_DIRS`) の route を走査して見張り、一覧の外の配下の違反の件数は同じファイルの基線と一致することを番兵が確かめる (走査の部品は `tests/helpers/api-error-text-scan.ts`)。
 
 ### 5.3 TypeScript 型定義
 
@@ -648,7 +650,7 @@ import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
 
 export async function GET() {
-  // ... 認証 (401 は { error: 'Unauthorized' } などこちらで決めた文)
+  // ... 認証 (401 は { error: API_UNAUTHENTICATED_MESSAGE } (src/lib/api/error-responses.ts の「ログインが必要です」) などこちらで決めた日本語の固定の文。#1917)
   const { data, error } = await supabase.from('health_goals').select('*').eq('user_id', user.id); // (抜粋)
   if (error) {
     // 本文は { error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' }。DB の生のエラー文はログにだけ残る

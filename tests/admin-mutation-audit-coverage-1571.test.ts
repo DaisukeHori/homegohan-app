@@ -3,7 +3,8 @@
  *
  * 判断の基準: 運営の操作で状態を変えるもの (POST / PUT / PATCH / DELETE) は、すべて admin_audit_logs に記録する。
  * #1571 で、記録の無かった変更系 (営業リードの活動の追加・システム設定・埋め込みの再生成・チケットのメッセージの追加・
- * 運営の家族 / 組織の強制解散と譲渡) に記録を足した。
+ * 運営の家族 / 組織の強制解散と譲渡) に記録を足した。4 つのディレクトリの外の運営ロール専用の変更系
+ * (お知らせの作成・比較ランキングの集計の手動実行) にも記録を足し、走査に入れた (#1571 の残り)。
  *
  * (a) src/app/api/{admin,super-admin,support,operator} の全 route の変更系の handler を構文木で数え、
  *     下の表 (EXPECTED) と突き合わせる。表に無い handler が増えたら赤 (記録するか、記録しない理由を表に書くかを決める)。
@@ -18,8 +19,10 @@
  *    「audited」と判定できないので、そうするときは表に理由を書いて「delegated」にする。
  *  - handler が `export async function POST` / `export const POST =` / `export { x as POST }` のどれかで書かれていることを前提にする。
  *  - (b) は呼び出しの引数がオブジェクトのリテラルのときだけ見る (変数に入れたオブジェクトを渡すと見えない。そう書かないこと)。
- *  - 走査は上の 4 つのディレクトリだけ。その外にある運営ロール専用の変更系 (2026-10-15 時点: POST /api/announcements・
- *    POST /api/comparison/trigger。どちらも記録が無い) は見ていない (#1571 の範囲の外。別の Issue で扱う)。
+ *  - 4 つのディレクトリの外の route は、変更系の handler が運営ロールの確認 (requireRole / requireSuperAdmin。同じファイルの関数の中も)
+ *    に届くものだけを表に載せる (POST /api/announcements・POST /api/comparison/trigger・/api/auth/mfa/*)。
+ *    requireRole を別のファイルの関数の中で呼ぶ handler は見えない。requireRole は運営ロール以外 (org_admin など) にも使えるので、
+ *    届いたものが運営の操作でなければ、表に理由を書いて外す。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -30,8 +33,17 @@ const ROOT = path.resolve(__dirname, '..');
 const SCANNED_DIRS = ['src/app/api/admin', 'src/app/api/super-admin', 'src/app/api/support', 'src/app/api/operator'];
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const AUDIT_FUNCTION = 'recordAdminAudit';
+/** 4 つのディレクトリの外で、これに届く変更系の handler を運営ロール専用とみなして表に載せる */
+const OPERATOR_GATE_FUNCTIONS = ['requireRole', 'requireSuperAdmin'];
 
 type Expectation = 'audited' | { exempt: string };
+
+/** 運営の二段階認証の自己サービス。記録は別のファイルの recordMfaAudit (src/lib/auth/mfa/audit.ts) の中の recordAdminAudit */
+const MFA_SELF_SERVICE_DELEGATED: Expectation = {
+  exempt:
+    'admin.mfa.* を recordMfaAudit (src/lib/auth/mfa/audit.ts) の中の recordAdminAudit で書く (docs/design/operator/07-audit-monitoring.md §4.1 の 4 種の記録のルール)。' +
+    '別のファイルの関数なので、この走査では audited と判定できない',
+};
 
 /** 501 (準備中) を返すだけで、DB に触れない */
 const NOT_SUPPORTED_STUB: Expectation = { exempt: '501 (準備中・未対応) を返すだけで、何も保存しない (#1126)' };
@@ -64,6 +76,17 @@ const EXPECTED: Record<string, Expectation> = {
   'src/app/api/admin/users/[id]/role/route.ts PATCH': 'audited',
   'src/app/api/admin/users/[id]/role/route.ts PUT': 'audited',
   'src/app/api/admin/users/[id]/route.ts PATCH': 'audited',
+  // ここから 4 つのディレクトリの外 (運営ロールの確認に届く変更系だけ)
+  'src/app/api/announcements/route.ts POST': 'audited',
+  'src/app/api/auth/mfa/backup-codes/route.ts POST': MFA_SELF_SERVICE_DELEGATED,
+  'src/app/api/auth/mfa/enroll/route.ts POST': {
+    exempt: '登録を始めるだけ (まだ使えない factor を作る)。登録の完了 = verify の成功で admin.mfa.enroll を書く (docs/design/cross/12-operator-mfa.md §17)',
+  },
+  'src/app/api/auth/mfa/factors/[id]/route.ts DELETE': MFA_SELF_SERVICE_DELEGATED,
+  'src/app/api/auth/mfa/recover/route.ts POST': MFA_SELF_SERVICE_DELEGATED,
+  'src/app/api/auth/mfa/verify/route.ts POST': MFA_SELF_SERVICE_DELEGATED,
+  'src/app/api/comparison/trigger/route.ts POST': 'audited',
+  // ここから 4 つのディレクトリの中
   'src/app/api/operator/membership/family/[id]/dissolve/route.ts POST': 'audited',
   'src/app/api/operator/membership/family/[id]/transfer/route.ts POST': 'audited',
   'src/app/api/operator/membership/org/[id]/dissolve/route.ts POST': 'audited',
@@ -173,21 +196,26 @@ function mutatingHandlers(sf: ts.SourceFile): Map<string, ts.Node> {
   return handlers;
 }
 
-/** node の中で recordAdminAudit を呼ぶか (同じファイルの関数を呼んでいれば、その中もたどる) */
-function reachesAudit(node: ts.Node, functions: Map<string, ts.Node>, visited = new Set<string>()): boolean {
+/** node の中で targets のどれかを呼ぶか (同じファイルの関数を呼んでいれば、その中もたどる) */
+function reachesCall(
+  node: ts.Node,
+  functions: Map<string, ts.Node>,
+  targets: readonly string[],
+  visited = new Set<string>(),
+): boolean {
   let found = false;
   const visit = (current: ts.Node) => {
     if (found) return;
     if (ts.isCallExpression(current) && ts.isIdentifier(current.expression)) {
       const callee = current.expression.text;
-      if (callee === AUDIT_FUNCTION) {
+      if (targets.includes(callee)) {
         found = true;
         return;
       }
       const local = functions.get(callee);
       if (local && !visited.has(callee)) {
         visited.add(callee);
-        if (reachesAudit(local, functions, visited)) {
+        if (reachesCall(local, functions, targets, visited)) {
           found = true;
           return;
         }
@@ -196,7 +224,7 @@ function reachesAudit(node: ts.Node, functions: Map<string, ts.Node>, visited = 
     // handler の中で関数を値として渡す書き方 (`withAuth(handle)`) もたどる
     if (ts.isIdentifier(current) && !ts.isCallExpression(current.parent) && functions.has(current.text) && !visited.has(current.text)) {
       visited.add(current.text);
-      if (reachesAudit(functions.get(current.text) as ts.Node, functions, visited)) {
+      if (reachesCall(functions.get(current.text) as ts.Node, functions, targets, visited)) {
         found = true;
         return;
       }
@@ -209,11 +237,19 @@ function reachesAudit(node: ts.Node, functions: Map<string, ts.Node>, visited = 
 
 /** 変更系の handler ごとに、recordAdminAudit に届くか */
 function scanHandlers(fileName: string, source: string): Map<string, boolean> {
+  return new Map([...scanHandlerReach(fileName, source)].map(([method, reach]) => [method, reach.audited]));
+}
+
+/** 変更系の handler ごとに、recordAdminAudit に届くか (audited) と、運営ロールの確認に届くか (gated) */
+function scanHandlerReach(fileName: string, source: string): Map<string, { audited: boolean; gated: boolean }> {
   const sf = parse(fileName, source);
   const functions = topLevelFunctions(sf);
-  const result = new Map<string, boolean>();
+  const result = new Map<string, { audited: boolean; gated: boolean }>();
   for (const [method, body] of mutatingHandlers(sf)) {
-    result.set(method, reachesAudit(body, functions));
+    result.set(method, {
+      audited: reachesCall(body, functions, [AUDIT_FUNCTION]),
+      gated: reachesCall(body, functions, OPERATOR_GATE_FUNCTIONS),
+    });
   }
   return result;
 }
@@ -260,6 +296,20 @@ describe('検出器', () => {
     expect(Object.fromEntries(scanHandlers('route.ts', source))).toEqual({ POST: true, PUT: false, PATCH: true, DELETE: false });
   });
 
+  it('運営ロールの確認 (requireRole / requireSuperAdmin) に届く handler を見つける (同じファイルの関数の中も)', () => {
+    const source = `
+      async function gate() { await requireSuperAdmin(); }
+      export async function POST() { await requireRole(['admin', 'super_admin']); }
+      export async function PUT() { await gate(); }
+      export async function PATCH() { await requireUser(); }
+      export async function DELETE() { // requireRole(['admin']) はコメントなので数えない
+        return 1;
+      }
+    `;
+    const gated = Object.fromEntries([...scanHandlerReach('route.ts', source)].map(([method, reach]) => [method, reach.gated]));
+    expect(gated).toEqual({ POST: true, PUT: true, PATCH: false, DELETE: false });
+  });
+
   it('request を渡していない recordAdminAudit の呼び出しを見つける (省略記法と request: req は渡しているとみなす)', () => {
     const source = `
       await recordAdminAudit({ supabase, actorId, actionType: 'a', request });
@@ -277,11 +327,22 @@ describe('検出器', () => {
 
 describe('(a) 運営の変更系の handler は監査ログを残す (#1571)', () => {
   const files = SCANNED_DIRS.flatMap((dir) => listFiles(path.join(ROOT, dir), /^route\.tsx?$/));
+  const insideScannedDirs = (file: string) => SCANNED_DIRS.some((dir) => file.startsWith(path.join(ROOT, dir) + path.sep));
+  const outsideFiles = listFiles(path.join(ROOT, 'src/app/api'), /^route\.tsx?$/).filter((file) => !insideScannedDirs(file));
 
   it('走査が空振りしていない (4 つのディレクトリのどれにも route がある)', () => {
     for (const dir of SCANNED_DIRS) {
       expect(files.some((f) => f.startsWith(path.join(ROOT, dir) + path.sep)), dir).toBe(true);
     }
+  });
+
+  it('4 つのディレクトリの外の走査が空振りしていない (運営ロールの確認に届く変更系が見つかる)', () => {
+    const gatedOutside = outsideFiles.filter((file) =>
+      [...scanHandlerReach(file, fs.readFileSync(file, 'utf8')).values()].some((reach) => reach.gated),
+    );
+    const rel = gatedOutside.map((file) => path.relative(ROOT, file).split(path.sep).join('/'));
+    expect(rel).toContain('src/app/api/announcements/route.ts');
+    expect(rel).toContain('src/app/api/comparison/trigger/route.ts');
   });
 
   it('変更系の handler の一覧が表 (EXPECTED) と一致し、「audited」はすべて recordAdminAudit に届く', () => {
@@ -290,6 +351,13 @@ describe('(a) 運営の変更系の handler は監査ログを残す (#1571)', (
       const rel = path.relative(ROOT, file).split(path.sep).join('/');
       for (const [method, audited] of scanHandlers(file, fs.readFileSync(file, 'utf8'))) {
         actual[`${rel} ${method}`] = audited;
+      }
+    }
+    // 4 つのディレクトリの外は、運営ロールの確認に届く変更系の handler だけ
+    for (const file of outsideFiles) {
+      const rel = path.relative(ROOT, file).split(path.sep).join('/');
+      for (const [method, reach] of scanHandlerReach(file, fs.readFileSync(file, 'utf8'))) {
+        if (reach.gated) actual[`${rel} ${method}`] = reach.audited;
       }
     }
 

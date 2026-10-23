@@ -20,6 +20,11 @@
  *   - 関数の失敗・通信の失敗・設定の不足は 500 で、本文は汎用メッセージだけ (関数が返した文面や原因は出さない)
  *   - 設定の不足 (Supabase の URL・service role の鍵が未設定) は src/lib/env-required.ts の MissingEnvError で止め、
  *     変数名は本文にも例外の文にも出さない (サーバーのログと構造化ログにだけ残す。#1182)
+ *   - #1571: 関数を呼ぶ前に、監査ログ (admin_audit_logs) に super_admin.cron.run_now を本人の権限の client で
+ *     1 行残す (severity warn・target_type 'cron_job'・details は job_name と period_type だけ・ip_address は利用者の IP)。
+ *     関数が途中まで書き換えてから失敗した (500)・通信が失敗した・応答を待つ間に打ち切られたときも記録は残る
+ *     (operator/08 §7.2 と同じく、記録してから実行する)。401 / 403 / 400 と設定の不足 (関数を呼ばない 500) は記録しない。
+ *     記録に失敗しても関数の呼び出しと応答は変えない (fail-open)
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -35,10 +40,16 @@ import {
 const mocks = vi.hoisted(() => ({
   requireRole: vi.fn(),
   loggerError: vi.fn(),
+  createClient: vi.fn(),
 }));
 
 vi.mock('@/lib/auth/helpers', () => ({
   requireRole: mocks.requireRole,
+}));
+
+// 監査ログ (#1571) を書く本人の権限の client
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: mocks.createClient,
 }));
 
 // internalError() の構造化ログ (app_logs への書き込み) を差し替える
@@ -75,6 +86,22 @@ const EDGE_OK_BODY = {
 
 const fetchMock = vi.fn();
 
+/** 監査ログの INSERT (table と行) */
+let auditInserts: Array<{ table: string; row: Record<string, unknown> }> = [];
+/** 監査ログの INSERT が返すエラー (null なら成功) */
+let auditInsertError: { message: string; code?: string } | null = null;
+
+function makeAuditClient() {
+  return {
+    from: (table: string) => ({
+      insert: async (row: Record<string, unknown>) => {
+        auditInserts.push({ table, row });
+        return { data: null, error: auditInsertError };
+      },
+    }),
+  };
+}
+
 function request(body?: unknown, raw?: string): Request {
   return new Request('http://localhost/api/comparison/trigger', {
     method: 'POST',
@@ -100,6 +127,10 @@ function expectGenericInternalError(json: unknown) {
 beforeEach(() => {
   mocks.requireRole.mockReset();
   mocks.loggerError.mockReset();
+  mocks.createClient.mockReset();
+  mocks.createClient.mockImplementation(async () => makeAuditClient());
+  auditInserts = [];
+  auditInsertError = null;
   fetchMock.mockReset();
   vi.stubGlobal('fetch', fetchMock);
   vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', SUPABASE_URL);
@@ -304,4 +335,163 @@ describe('POST /api/comparison/trigger: 失敗しても原因を本文に出さ�
       }
     },
   );
+});
+
+describe('POST /api/comparison/trigger: 監査ログ (super_admin.cron.run_now) (#1571)', () => {
+  const CLIENT_IP = '203.0.113.52';
+  const PROXY_IP = '10.0.0.1';
+  const USER_AGENT = 'vitest-comparison-trigger';
+
+  function requestFromBrowser(body: unknown): Request {
+    return new Request('http://localhost/api/comparison/trigger', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': `${CLIENT_IP}, ${PROXY_IP}`, 'user-agent': USER_AGENT },
+      body: JSON.stringify(body),
+    });
+  }
+
+  beforeEach(() => {
+    mocks.requireRole.mockResolvedValue(SUPER_ADMIN);
+  });
+
+  it.each(['daily', 'weekly', 'monthly'] as const)(
+    'periodType=%s: 関数が 200 なら、本人を actor にして 1 行だけ記録する',
+    async (periodType) => {
+      fetchMock.mockResolvedValue(jsonResponse(200, { ...EDGE_OK_BODY, periodType }));
+
+      const res = await POST(requestFromBrowser({ periodType }));
+
+      expect(res.status).toBe(200);
+      expect(auditInserts).toHaveLength(1);
+      expect(auditInserts[0].table).toBe('admin_audit_logs');
+      expect(auditInserts[0].row).toEqual({
+        actor_id: SUPER_ADMIN.id,
+        action_type: 'super_admin.cron.run_now',
+        target_id: null,
+        target_type: 'cron_job',
+        details: { job_name: 'calculate-segment-stats', period_type: periodType },
+        severity: 'warn',
+        ip_address: CLIENT_IP,
+        user_agent: USER_AGENT,
+      });
+      expect(mocks.loggerError).not.toHaveBeenCalled();
+    },
+  );
+
+  it('periodType を省略したら、既定の weekly を period_type に残す', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, EDGE_OK_BODY));
+
+    await POST(requestFromBrowser({}));
+
+    expect(auditInserts).toHaveLength(1);
+    expect(auditInserts[0].row.details).toEqual({ job_name: 'calculate-segment-stats', period_type: 'weekly' });
+  });
+
+  it('関数が 200 で本文が JSON でなくても、集計は走っているので記録する (応答は 500)', async () => {
+    fetchMock.mockResolvedValue(new Response('<html>gateway</html>', { status: 200 }));
+
+    const res = await POST(requestFromBrowser({ periodType: 'daily' }));
+
+    expect(res.status).toBe(500);
+    expect(auditInserts).toHaveLength(1);
+    expect(auditInserts[0].row.action_type).toBe('super_admin.cron.run_now');
+  });
+
+  it('未ログイン (401)・super_admin でない (403) は記録しない', async () => {
+    mocks.requireRole.mockRejectedValueOnce(new AuthError('AUTH_UNAUTHENTICATED'));
+    expect((await POST(requestFromBrowser({ periodType: 'weekly' }))).status).toBe(401);
+
+    mocks.requireRole.mockRejectedValueOnce(new ForbiddenError('PERM_DENIED', 'Requires one of: super_admin'));
+    expect((await POST(requestFromBrowser({ periodType: 'weekly' }))).status).toBe(403);
+
+    expect(auditInserts).toHaveLength(0);
+    expect(mocks.createClient).not.toHaveBeenCalled();
+  });
+
+  it('400 (periodType の誤り) は記録しない', async () => {
+    const res = await POST(requestFromBrowser({ periodType: 'yearly' }));
+
+    expect(res.status).toBe(400);
+    expect(auditInserts).toHaveLength(0);
+  });
+
+  it.each([
+    ['関数が HTTP 500 を返した (途中まで書き換えてから失敗しうる)', () => fetchMock.mockResolvedValue(jsonResponse(500, { error: 'boom' }))],
+    ['関数への通信が失敗した', () => fetchMock.mockRejectedValue(new TypeError('fetch failed'))],
+  ])('%s (500) ときも、関数を呼んでいるので 1 行記録する', async (_label, arrange) => {
+    arrange();
+
+    const res = await POST(requestFromBrowser({ periodType: 'monthly' }));
+
+    expect(res.status).toBe(500);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(auditInserts).toHaveLength(1);
+    expect(auditInserts[0].row).toMatchObject({
+      actor_id: SUPER_ADMIN.id,
+      action_type: 'super_admin.cron.run_now',
+      target_type: 'cron_job',
+      details: { job_name: 'calculate-segment-stats', period_type: 'monthly' },
+      severity: 'warn',
+    });
+  });
+
+  it('関数を呼ぶ前に記録する (関数の応答を待つ間に打ち切られても、記録は残っている)', async () => {
+    let insertsWhenCalled: number | null = null;
+    // 応答を返さない関数 (maxDuration で打ち切られるまで待つ形)。POST は終わらないので await しない
+    fetchMock.mockImplementation(() => {
+      insertsWhenCalled = auditInserts.length;
+      return new Promise<Response>(() => undefined);
+    });
+
+    void POST(requestFromBrowser({ periodType: 'weekly' }));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    expect(insertsWhenCalled).toBe(1);
+    expect(auditInserts).toHaveLength(1);
+    expect(auditInserts[0].row.details).toEqual({ job_name: 'calculate-segment-stats', period_type: 'weekly' });
+  });
+
+  it('設定が足りない (関数を呼ばない 500) ときは記録しない', async () => {
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', '');
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      const res = await POST(requestFromBrowser({ periodType: 'weekly' }));
+
+      expect(res.status).toBe(500);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(auditInserts).toHaveLength(0);
+      expect(mocks.createClient).not.toHaveBeenCalled();
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it('記録 (INSERT) に失敗しても応答は変えない (fail-open)。失敗は構造化ログに残る', async () => {
+    auditInsertError = { message: 'new row violates row-level security policy', code: '42501' };
+    fetchMock.mockResolvedValue(jsonResponse(200, EDGE_OK_BODY));
+
+    const res = await POST(requestFromBrowser({ periodType: 'weekly' }));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(EDGE_OK_BODY);
+    expect(auditInserts).toHaveLength(1);
+    expect(mocks.loggerError).toHaveBeenCalledTimes(1);
+    expect(mocks.loggerError.mock.calls[0][0]).toBe('監査ログ (admin_audit_logs) への記録に失敗しました');
+  });
+
+  it('本人の権限の client を作れなくても応答は変えない (fail-open)。失敗は構造化ログに残る', async () => {
+    mocks.createClient.mockRejectedValue(new Error('cookies was called outside a request scope'));
+    fetchMock.mockResolvedValue(jsonResponse(200, EDGE_OK_BODY));
+
+    const res = await POST(requestFromBrowser({ periodType: 'weekly' }));
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(EDGE_OK_BODY);
+    expect(auditInserts).toHaveLength(0);
+    expect(mocks.loggerError).toHaveBeenCalledTimes(1);
+    const [message, , metadata] = mocks.loggerError.mock.calls[0] as [string, unknown, Record<string, unknown>];
+    expect(message).toBe('監査ログ (admin_audit_logs) への記録に失敗しました');
+    expect(metadata).toMatchObject({ action_type: 'super_admin.cron.run_now', actor_id: SUPER_ADMIN.id, stage: 'client' });
+  });
 });

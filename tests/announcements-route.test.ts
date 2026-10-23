@@ -6,6 +6,9 @@
  *    未ログインは 401、それ以外 (support を含む) は 403
  *  - POST は created_by に操作した人を入れ、公開するときだけ published_at を入れる。壊れた入力は 400
  *  - 500 の本文は汎用メッセージだけ。DB の生のエラー文は db-logger にだけ残す (#1172)
+ *  - #1571: POST で作成できたときだけ、監査ログ (admin_audit_logs) に admin.announcement.create を本人の権限の client で 1 行残す
+ *    (対象はお知らせ・details はお知らせの id と公開の状態だけで、タイトル・本文は入れない・ip_address は利用者の IP)。
+ *    401 / 403 / 400 / 500 は記録しない。記録に失敗しても作成の応答は変えない (fail-open。失敗は db-logger に残る)
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSchemaDb, type DbError, type Row, type SchemaDb } from './helpers/schema-checked-db';
@@ -53,6 +56,7 @@ function setup(options: { roles?: string[] | null; errors?: Record<string, DbErr
     tables: {
       user_profiles: roles === null ? [] : [profileRow(ACTOR_ID, { roles })],
       announcements: options.announcements ?? [PUBLIC_ANNOUNCEMENT, DRAFT_ANNOUNCEMENT],
+      admin_audit_logs: [],
     },
     errors: options.errors,
   });
@@ -232,5 +236,117 @@ describe('POST /api/announcements', () => {
     expect(text).not.toContain('secret detail');
     expect(mockLoggerError.mock.calls[0][0]).toBe('POST /api/announcements');
     expect((mockLoggerError.mock.calls[0][2] as Error).message).toBe(raw);
+  });
+});
+
+describe('POST /api/announcements: 監査ログ (admin.announcement.create) (#1571)', () => {
+  const CLIENT_IP = '203.0.113.15';
+  const PROXY_IP = '10.0.0.1';
+  const USER_AGENT = 'vitest-announcement-admin';
+  const TITLE = 'audit-title-1571-do-not-log';
+  const CONTENT = 'audit-content-1571-do-not-log';
+
+  const postWithClient = (body: unknown) =>
+    route.POST(
+      jsonRequest('http://localhost/api/announcements', 'POST', body, {
+        'x-forwarded-for': `${CLIENT_IP}, ${PROXY_IP}`,
+        'user-agent': USER_AGENT,
+      }),
+    );
+  const auditRows = () => db.rows('admin_audit_logs');
+
+  it.each(ALLOWED_ROLES)('%s ロールで作成できたら、本人を actor にして 1 行だけ記録する (公開)', async (role) => {
+    setup({ roles: [role] });
+
+    const res = await postWithClient({ title: TITLE, content: CONTENT, isPublic: true });
+    const created = (await json(res)).announcement;
+
+    expect(res.status).toBe(200);
+    expect(auditRows()).toHaveLength(1);
+    expect(auditRows()[0]).toMatchObject({
+      actor_id: ACTOR_ID,
+      action_type: 'admin.announcement.create',
+      target_id: created.id,
+      target_type: 'announcement',
+      severity: 'info',
+      ip_address: CLIENT_IP,
+      user_agent: USER_AGENT,
+    });
+    expect(auditRows()[0].details).toEqual({
+      announcement_id: created.id,
+      is_public: true,
+      published_at: created.published_at,
+    });
+    expect(created.published_at).toEqual(expect.any(String));
+  });
+
+  it('公開しないお知らせは is_public: false・published_at: null で記録する', async () => {
+    const res = await postWithClient({ title: TITLE, content: CONTENT, isPublic: false });
+    const created = (await json(res)).announcement;
+
+    expect(res.status).toBe(200);
+    expect(auditRows()).toHaveLength(1);
+    expect(auditRows()[0].details).toEqual({ announcement_id: created.id, is_public: false, published_at: null });
+  });
+
+  it('タイトル・本文の中身は監査ログに入れない', async () => {
+    await postWithClient({ title: TITLE, content: CONTENT, isPublic: true });
+
+    const serialized = JSON.stringify(auditRows());
+    expect(serialized).not.toContain(TITLE);
+    expect(serialized).not.toContain(CONTENT);
+  });
+
+  it('401: 未ログインは記録しない', async () => {
+    setup({ roles: null });
+
+    const res = await postWithClient({ title: TITLE, content: CONTENT });
+
+    expect(res.status).toBe(401);
+    expect(auditRows()).toHaveLength(0);
+  });
+
+  it.each(DENIED_ROLES)('403: %s ロールは記録しない', async (role) => {
+    setup({ roles: [role] });
+
+    const res = await postWithClient({ title: TITLE, content: CONTENT });
+
+    expect(res.status).toBe(403);
+    expect(auditRows()).toHaveLength(0);
+  });
+
+  it.each([
+    ['必須項目が足りない', { title: TITLE }],
+    ['isPublic が真偽値でない', { title: TITLE, content: CONTENT, isPublic: 'yes' }],
+    ['JSON が壊れている', '{ not json'],
+  ])('400: %s ときは記録しない', async (_label, invalid) => {
+    const res = await postWithClient(invalid);
+
+    expect(res.status).toBe(400);
+    expect(auditRows()).toHaveLength(0);
+  });
+
+  it('500: お知らせの保存に失敗したら記録しない', async () => {
+    setup({ errors: { announcements: { message: 'insert failed', code: '23514' } } });
+
+    const res = await postWithClient({ title: TITLE, content: CONTENT });
+
+    expect(res.status).toBe(500);
+    expect(db.recorded('admin_audit_logs', 'insert')).toHaveLength(0);
+  });
+
+  it('記録に失敗しても作成の応答は変えない (fail-open)。失敗は db-logger に残る', async () => {
+    setup({ errors: { admin_audit_logs: { message: 'audit insert failed', code: '42501' } } });
+
+    const res = await postWithClient({ title: TITLE, content: CONTENT, isPublic: true });
+    const body = await json(res);
+
+    expect(res.status).toBe(200);
+    expect(body.announcement).toMatchObject({ title: TITLE, content: CONTENT, created_by: ACTOR_ID });
+    expect(db.rows('announcements')).toHaveLength(3);
+    expect(db.recorded('admin_audit_logs', 'insert')).toHaveLength(1);
+    expect(mockLoggerError).toHaveBeenCalledTimes(1);
+    expect(mockLoggerError.mock.calls[0][0]).toBe('POST /api/announcements');
+    expect(mockLoggerError.mock.calls[0][1]).toBe('監査ログ (admin_audit_logs) への記録に失敗しました');
   });
 });

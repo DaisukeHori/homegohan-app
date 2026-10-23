@@ -376,7 +376,7 @@ describe('500 以外の応答は変えていない', () => {
     const res = await goals.GET(req('GET', '/api/health/goals'));
 
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: 'Unauthorized' });
+    expect(await res.json()).toEqual({ error: 'ログインが必要です' });
     expect(h.logCalls).toEqual([]);
   });
 

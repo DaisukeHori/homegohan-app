@@ -440,3 +440,23 @@ describe('POST /api/family/representative-transfer/[id]/accept: 18 歳未満の�
     expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 });
+
+describe('POST /api/family/representative-transfer/[id]/accept: 退会の手続き中の本人 (#1917 の続き)', () => {
+  it('RPC が REPRESENTATIVE_ACCOUNT_DELETING (P0001) を返したら 409 (message は MEMBERSHIP_ERROR_MESSAGES の文。汎用の文にならない)。メールは送らない', async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'REPRESENTATIVE_ACCOUNT_DELETING', code: 'P0001' } });
+
+    const res = await call();
+    const text = await res.text();
+
+    expect(res.status).toBe(409);
+    expect(JSON.parse(text)).toEqual({
+      error: {
+        code: 'REPRESENTATIVE_ACCOUNT_DELETING',
+        message: MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.REPRESENTATIVE_ACCOUNT_DELETING],
+      },
+    });
+    expect(text).not.toContain('代表者譲渡の承諾に失敗しました');
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(fake.auth.admin.getUserById).not.toHaveBeenCalled();
+  });
+});
