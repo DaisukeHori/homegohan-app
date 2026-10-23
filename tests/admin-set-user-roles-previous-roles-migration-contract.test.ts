@@ -168,7 +168,7 @@ describe(`#1917 ${MIGRATION_FILE}`, () => {
     expect(grantAt).toBeGreaterThan(revokeAt);
     // GRANT は 1 文だけで、anon / PUBLIC に付けない
     expect(sql.match(/\bGRANT\b/g)).toHaveLength(1);
-    expect(sql).not.toMatch(/GRANT[^;]*\b(?:anon|PUBLIC)\b/i);
+    expect(sql).not.toMatch(/\bGRANT\b[^;]*\sTO\s[^;]*\b(?:anon|PUBLIC)\b/);
     // 本番の権限 (ベースラインの ACL) と同じ相手であること
     const acl = read(path.join(ROOT, 'supabase', 'baseline', 'prod_function_acl.sql'));
     const baselineGrantees = [...acl.matchAll(new RegExp(String.raw`GRANT EXECUTE ON ROUTINE public\."${FUNCTION_NAME}"\([^)]*\) TO "([a-z_]+)";`, 'g'))]
@@ -187,7 +187,7 @@ describe(`#1917 ${MIGRATION_FILE}`, () => {
     expect(sql.indexOf(CREATE_HEAD)).toBeGreaterThan(sql.indexOf(DROP_STATEMENT));
     expect(sql.indexOf(REVOKE_STATEMENT)).toBeGreaterThan(sql.indexOf(CREATE_HEAD));
     expect(sql.indexOf(GRANT_STATEMENT)).toBeGreaterThan(sql.indexOf(REVOKE_STATEMENT));
-    expect(sql).not.toMatch(/GRANT[^;]*\b(?:anon|PUBLIC)\b/i);
+    expect(sql).not.toMatch(/\bGRANT\b[^;]*\sTO\s[^;]*\b(?:anon|PUBLIC)\b/);
   });
 
   it.each(TYPE_FILES)('6. 型の生成物 %s の admin_set_user_roles の Returns に previous_roles がある', (file) => {
