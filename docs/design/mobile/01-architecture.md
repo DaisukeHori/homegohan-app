@@ -606,7 +606,7 @@ Maestro flow を `apps/mobile/maestro/flows/tour/` 配下に 12 件追加(family
 
 - アプリ内課金の購入の画面 (`app/settings/plan.tsx`。billing/03 §10.6)。設定タブの「プランとお支払い」の行から開く。購入・購入の復元・ストアの購読の管理はこの画面で行う。依存は `react-native-purchases` 10.14.0 と `expo-dev-client` ~58.0.14 (開発ビルドが要る。Expo Go では購入が動かない)。
 - Web の購入のページへの誘導は引き続き出さない。アプリ内 (ネイティブの画面と、アプリが開く WebView のページの両方) に、Web の有料プランの価格・購入ボタン・Web での購入への誘導 (リンク・文言) を出さない。Web で申し込んだ契約は、購入の画面に「Web の「プランとお支払い」から行えます」の文だけを出す (リンクは出さない)。
-- 例外 (法定表示): 購入の画面 (`app/settings/plan.tsx:487`) は「特定商取引法に基づく表記」の `/legal` を外部のブラウザ (`Linking.openURL`) で開く。`/legal` は法定表示として Web の支払方法・Web の無料体験の文を含み (`src/app/legal/page.tsx:53`・`:80`)、ヘッダのロゴから紹介ページ経由で `/pricing` に届く (`src/components/marketing/landing-copy.ts:789`)。`/legal` に購入への CTA は置かない。
+- 例外 (法定表示): 購入の画面 (`app/settings/plan.tsx:494`) は「特定商取引法に基づく表記」の `/legal` を外部のブラウザ (`Linking.openURL`) で開く。`/legal` は法定表示として Web の支払方法・Web の無料体験の文を含み (`src/app/legal/page.tsx:53`・`:80`)、ヘッダのロゴから紹介ページ経由で `/pricing` に届く (`src/components/marketing/landing-copy.ts:789`)。`/legal` に購入への CTA は置かない。
 - ネイティブの料金の画面 `app/(public)/pricing.tsx` (Web の `/pricing` を外部のブラウザで開いていた) と、入口の画面 `app/index.tsx` の「料金」のリンクは削除した (外部のブラウザには `is_native_app` の Cookie が無く、Web の `/pricing` が価格と購入の CTA を描くため)。`apps/mobile/__tests__/app/no-web-purchase-links.test.ts` が、`app/` と `src/` に `/pricing`・`/account/billing` を開くコードが無いことを見張る。
 - Web の `/pricing`・`/account/billing`・`/account/billing/checkout` は `is_native_app` の Cookie (`cookies()` / `useNativeAppMode`) で購入導線を描かない。`/frozen/billing` はアプリの WebView (`isInNativeWebView()`) では解約と Billing Portal のボタンを描かない。API には制限を付けない (認可は同じ。制限は表示の規則)。
 - 配布の順: 料金の画面を消した版のアプリを配布してから、Web で販売を始める (billing/01 §17.3)。ストアの規約の最新の文面と審査での判断は billing/01 §18 の 2。

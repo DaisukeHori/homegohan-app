@@ -1207,7 +1207,7 @@ describe('billing/01 §6.4 (9) の 3.・(10)・§7.1: 同時に走る処理', ()
     expect(await mustFamily((inserted.data as { id: string }).id)).toMatchObject({ plan_key: 'family_pro', member_limit: 8 });
   });
 
-  it('the apply for a family-plan representative locks family_groups before user_profiles: with a connection that holds the family row (FOR NO KEY UPDATE) and then updates user_profiles by family_id like operator_force_dissolve_family, and with operator_force_dissolve_family / the representative DELETE of the group running while the apply transaction is held open, nothing fails with 40P01 and the group ends dissolved / deleted with plan_key_cached synced', async () => {
+  it('the apply for a family-plan representative locks family_groups before user_profiles: with a connection that holds the family row (FOR NO KEY UPDATE) and then updates user_profiles by family_id like operator_force_dissolve_family, and with operator_force_dissolve_family / a service_role DELETE of the group running while the apply transaction is held open, nothing fails with 40P01 and the group ends dissolved / deleted with plan_key_cached synced', async () => {
     // (a) 家族の行を持った接続 (強制解散と同じ順: family_groups → family_members → user_profiles) の途中に、写像が来る
     const repA = await createUser('order-a', { jwt: true });
     const familyA = await createFamilyViaRpcBeforeContract(repA);

@@ -225,7 +225,7 @@ UPDATE org_license_assignments ola
 
 ### 3.8 アップグレード・ダウングレード
 
-**全員一括アップグレード (Standard → Pro)**:
+**全員一括アップグレード (Standard → Pro)** (**未実装の旧案**。下の「個別プラン変更」も同じ。組織のプランの段階は運営の `PATCH /api/admin/organizations/{id}` だけが変える (#1952。`20261022170000_org_plan_operator_only.sql`)。組織の管理者によるプランの一括変更・個別変更の操作は未実装):
 ```
 1. POST /api/org/licenses (新規 Pro プール購入, quantity=現在 Standard 人数)
 2. POST /api/org/licenses/{newPoolId}/assignments/bulk (全 Standard 割当ユーザーを対象に CSV)

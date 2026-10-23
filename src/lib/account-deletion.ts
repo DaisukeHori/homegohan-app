@@ -23,7 +23,7 @@
  *   4''. 段階 billing_recheck (billing/01 §11): 1' と同じ処理をもう一度 (1' のあとに完了した Checkout の契約・作られた顧客を閉じる)。
  *      失敗したら 5 に進まない (アカウントは残り、もう一度の退会で片付く)。
  *   5. auth.admin.deleteUser。public 側の個人データは外部キーの CASCADE / SET NULL で消える・匿名化される
- *      (20261010000100_auth_users_fk_on_delete.sql。外部キーで失敗する経路は無い)。
+ *      (20261010000100_auth_users_fk_on_delete.sql。ただし findBlocker のあとに家族の代表者になった人だけは family_groups.representative_id の RESTRICT で deleteUser が失敗する (ACCOUNT_DELETE_FAILED。もう一度の退会で 409 になる。20261022160000 の見出し))。
  *      削除が済んだら (すでに消えていたときも)、記録に削除の日時を入れる (complete_account_deletion_record)。
  *      これに失敗しても退会の結果は変えない (アカウントはもう消えている)。失敗はログに残す (記録は executed_at が空のまま残る)。
  *   6. 本人に退会の完了メールを 1 通送る (#1152。src/lib/account-deletion-notification.ts)。

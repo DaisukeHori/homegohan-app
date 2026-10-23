@@ -121,7 +121,7 @@ UI: 「招待を拒否しました」
 
 [admin] org/invites 一覧 → 該当 invite 行 → [取り消す]
 POST /api/org/invites/{id}/revoke
-server → UPDATE organization_invites SET status='revoked', revoked_at=NOW(), revoked_by=auth.uid()
+server → rpc('revoke_org_invite', { p_invite_id }) (SECURITY DEFINER。利用者の UPDATE の権限は外してある: 20261022180000)
         → 監査ログ
 ```
 

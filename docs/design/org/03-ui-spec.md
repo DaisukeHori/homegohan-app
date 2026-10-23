@@ -181,14 +181,14 @@ AddDepartmentModal
 
 ```
 InvitesPage
-├── TabBar (Pending / Accepted / Expired / Cancelled)
+├── TabBar (Pending / Accepted / Expired / Cancelled) — 未実装の旧案 (いまの `src/app/(org)/org/invites/page.tsx` は全件を 1 つの表に出す)
 ├── InviteTable
 │   └── InviteRow
 │       ├── Email, ロール, 部署, 期限, 状態 (状態は日本語の名前。表に無い状態は「-」で、内部の値を出さない)
-│       └── ActionMenu (リンクコピー/再送/取消)
+│       └── ActionMenu (リンクコピー/取消。`pending` の招待だけ。再送は未実装の旧案)
 └── ActionButtons
     ├── InviteButton → InviteModal
-    └── BulkInviteButton → /org/invites/bulk
+    └── BulkInviteButton → /org/invites/bulk (未実装。一括招待の画面は無い)
 ```
 
 ### 8.2 個別招待モーダル
@@ -305,10 +305,10 @@ LicenseManagementPage
 ## 12. `/org/licenses/purchase` — ライセンス購入
 
 ### 12.1 コンポーネント構成
-
+**未実装の旧案**: `src/app/(org)/org/` に `licenses` の画面は無い。組織のプランの段階は `standard` / `premium` / `enterprise` (`ORG_PLAN_VALUES`。`src/lib/org-plans.ts:22`) で、変えるのは運営の `PATCH /api/admin/organizations/{id}` だけ (#1952。`20261022170000_org_plan_operator_only.sql`。組織の管理者は段階を選べない)。下の構成は旧案の記録として残す。
 ```
 LicensePurchasePage (5 ステップウィザード)
-├── Step1: PlanSelect (Org Standard / Pro / Enterprise)
+├── Step1: PlanSelect (standard / premium / enterprise)
 ├── Step2: QuantityInput (数量入力 + 単価計算)
 ├── Step3: FamilyAddonOption
 │   ├── 同梱有無トグル

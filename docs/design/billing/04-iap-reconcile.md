@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 版 | v1.5 (2026-10-22) |
+| 版 | v1.6 (2026-10-23) |
 | Status | 設計ゲート通過。段 A (#1941 4c8c8d31)・段 B (#1944 c95d114e) は main に実装済み |
 | Issue | #1912 (有料プランの販売を始める: 価格・有料と無料の線引き・アプリ内課金)。本冊はその配線の残りの冊のうち「日次の reconcile」(billing/03 §0.5 Q-11・§5.2 の縁の発生源 (2)・§18 の 4) に当たる。関連: billing/03 の整合ゲートの候補 (Webhook が落ちたまま期限を過ぎた購読が有料の権利を持ち続ける) |
 | 範囲の正本 | Issue #1912 の本文。本冊の §0.4 に、前提とする Issue の記述を逐語で写す。本冊が決める範囲は §0.2 |
@@ -31,7 +31,7 @@
 | 期限 (`current_period_end`) を過ぎたままの live なストアの行 (`iap_store IS NOT NULL`) を、定期に RevenueCat から取り直して `personal_subscriptions` に写す処理 (Vercel Cron の route `GET /api/cron/iap-reconcile`。§8・§9) | Stripe (Web) の契約の reconcile (`stripe_integrity_check`。billing/01 §12・operator/08 §3.2 の未作成の行。本冊は触れない) |
 | 候補の選び方 (status・期限・最後の同期の時刻) と順番 (最後に試した時刻の古い順。取り直せない利用者が後ろの利用者を止めない) を、読むだけの DB の関数 1 本 (`billing_iap_reconcile_candidates`)・試した利用者に回の終わりに時刻を書く関数 1 本 (`billing_iap_reconcile_mark_attempted`)・印の表 `iap_reconcile_attempts` で確定し (§6.2)、1 回の件数の上限と RevenueCat への間隔を定数と環境変数で持つ (§8.1) | 手動付与 (M 行) の失効 (billing/02 の `expire-manual-plan-grants`)・Webhook の受け口と同期の API と遅延の再同期そのもの (billing/03。本冊は変えない) |
 | 鍵が無いときの止め方・RevenueCat の失敗 (回全体の失敗と、利用者 1 人の失敗を分ける)・率の制限 (429) のときの止め方と、失敗の監視 (既存の `app-log-alerts` の `cron_failure`) への乗せ方 (§8.3・§11) | 新しい運用アラートの種類 (取り直せない行の滞留の通知)。§16 の 3 |
-| 期限の後も取り直せないときに有料を止める「猶予」の扱い (Q-2。推奨は「猶予を置かず、取り直せるまで権利を続ける」) | 権利の判定 (`get_effective_plan`・`consume_ai_usage_at`) の変更 (§5.1 の案 E で退ける) |
+| 期限の後も取り直せないときに有料を止める「猶予」の扱い (Q-2。確定:「猶予を置かず、取り直せるまで権利を続ける」) | 権利の判定 (`get_effective_plan`・`consume_ai_usage_at`) の変更 (§5.1 の案 E で退ける) |
 | 既存の番兵 (cron の本数・入口の一覧・環境変数の一覧) の追随 (§14) | 運営の画面 (Finance 画面での一覧) |
 
 ### 0.3 読み方
@@ -76,7 +76,7 @@ Q-1・Q-2 は発注者の選択 (2026-10-22・選択式): 取り直しの間隔�
 
 | 文書 | 本冊との関係 |
 |---|---|
-| billing/03 §0.5 Q-11・§3.2 S12・§5.2 の縁の発生源 (2)・§18 の 4 | 「日次の reconcile は配線の残りの冊」。本冊がその冊。RevenueCat の全契約の列挙は API に無い (P5) ので、`personal_subscriptions` のストアの live 行を 1 人ずつ取り直す、と仮置きされている (§18 の 4)。本冊もその形 |
+| billing/03 §0.5 Q-11・§3.2 S12・§5.2 の縁の発生源 (2)・§18 の 4 | 「日次の reconcile は配線の残りの冊」。本冊がその冊。RevenueCat の全契約の列挙は API に無い (P5) ので、`personal_subscriptions` のストアの live 行を 1 人ずつ取り直す、と確定している (billing/03 §18 の 4)。本冊もその形 |
 | billing/03 §8.4 `syncStoreSubscriber` / `lazyResyncStoreSubscription`・§8.1 `needsLazyResync` | 写しの入口と、遅延の再同期の判定 (期限を過ぎた行・5 分より古い取り直し)。本冊は入口をそのまま呼び、遅延の再同期は変えない (§7.2) |
 | billing/03 §6.4 `billing_apply_store_subscription` | `p_fetched_at` で単調・advisory lock `billing-user:<uuid>` と `iap-subscription:<store>:<product>` で直列。Webhook・同期・遅延の再同期・本冊の取り直しが同時でも、新しい取り直しだけが写る (§4.2 S5・S6) |
 | billing/03 §7.3 | ストアの行の状態遷移。本冊の取り直しは「取り直しの合図」の 1 つで、遷移先は取り直した姿 (`deriveStoreStatus`) で決まる (§7.3 (a)) |
@@ -1613,3 +1613,4 @@ grep の語 = 本冊が足す・変える名前: `api/cron`・`vercel.json`・`c
 | v1.3 | 2026-10-22 | 設計ゲート R3 の指摘 2 件を反映。(1) §14.2 の operator/11 §11.1 の行で、引用の末尾のバッククォートがセルの間の `|` をコードの span に飲み込み、`tests/docs-table-column-count.test.ts` が赤になる点: 引用から末尾の閉じの記号を外した (本書の表の列の食い違いは 0)。(2) 候補の印を「選んだとき」に書いていたため、1 回に試せる数を超えて選んだ回 (環境変数で上限を上げた・遅い応答・429・回全体の失敗) で、試さなかった利用者まで後ろに回り、期限の古い同じ利用者が毎回先に試されて後ろが永久に試されない欠陥: 候補の関数を読むだけの `billing_iap_reconcile_candidates` (STABLE。advisory lock を外す) に戻し、印はループの後に、その回に `syncStoreSubscriber` を呼んだ利用者だけに 1 回の RPC `billing_iap_reconcile_mark_attempted(uuid[], timestamptz)` (`GREATEST`・`auth.users` に無い利用者は飛ばす) で書く形にした。ポートを `listReconcileCandidates`・`markReconcileAttempted` (`IapReconcileAttemptMark`) にした。あわせて `IAP_RECONCILE_BATCH_SIZE_MAX` を 1 回に試せる数 (予算 ÷ 間隔 = 40) にし (環境変数は下げる向きだけ)、DB の上限は `c_max_users` (200。TS の上限以下をテスト 10 が見る) にした。シナリオ S18 を足し、§0.2・§0.5 Q-1・§1・§3.1 R3・R4・§4・§5.2 (退けた代わり (iv)〜(vi))・§5.3・§6・§7・§8・§9.1・§11・§12 (テスト 2・4・10・11・13〜19・32〜36・42・44 と新しい 45。受け入れは 46)・§12.5・§13・§14.1・§15 の 3・§16 の 9 と 11 を揃えた。土台を origin/main `c1ecc93b` で再確認した |
 | v1.4 | 2026-10-22 | 設計ゲート R4 の指摘 1 件を反映。§12.3 の結合テストが「固定の過去の `p_now` を 1 つ」と afterAll だけの片付けを指定していたため、前の it が残した期限切れ・印なしの利用者がテスト 44 の候補で A より前に並び、`p_limit` 3 の結果から A が抜けて必ず赤になる点: 時刻を固定の過去の年 (`RECONCILE_NOW_MS` = 2000-01-01Z、`p_now` はその前後 24 時間の中) に置き、it ごとの片付け (`afterEach` で利用者を消し、`service_role` が消せない印の行は `auth.users` の ON DELETE CASCADE で消して、残っていないことを読み直す) と it ごとの新しい利用者を逐語で決めた (`tests/integration/rls/org-challenge-diff-privacy.test.ts` と同じ型)。38〜41・43・44 は返る配列をその it の利用者だけの期待と丸ごと比べる。行の作り方 (ストアの行の列と、41 の 2 本目の商品 ID) と、39 の行と `p_now` の組を具体の値で書いた。土台を origin/main `7532a77c` (#1935) で再確認し、§14.2 の billing/03 §18 の 4 の行の番号を `:5206` → `:5250` に直した |
 | v1.5 | 2026-10-22 | 周 5 の網羅性の反映。(1) §7.1 に、核の CHECK が許すがストアの行の 5 値に無い `paused` / `grace` / `incomplete` の行を足した (候補に出ない。写像 `billing_apply_store_subscription` が 5 値以外を拒むので起きない)。F10 に根拠の行 (`20261021100000:250-251`・`20261016210000:39`・`:291-300`) を足し、§7.2 に同じ面の行、§7.3 (a) に「現在」が 3 値だけである注を足した。(2) §0.4 の 2 の `get_effective_plan` の集合 (`trialing`・`active`・`grace`・`past_due`) は `20261010140000_ai_usage_foundation.sql:115` の逐語で正しく、変えない (`20261021100000:292`・`:356` の `paused` を含む集合は写像の中の「別の live 行」と家族グループの判定で、権利の判定ではない)。(3) §14.1 の母集合 7 の `billing_customers` の 13 本を全部分け (表の一覧を持つ 4 本・生成物 1 本・自分の migration 1 本・名指しで使うだけの 7 本)、7 本の行を表に足した |
+| v1.6 | 2026-10-23 | 記録の追い付き (#1955 c385b06c の本冊の変更と、その取りこぼし。製品の挙動は変えない): 表紙の Status を「設計ゲート通過。段 A (#1941)・段 B (#1944) は main に実装済み」にした。§0.5 を確定の値 (毎時 41 分・猶予なし・期限の後の行だけ) にし、§2.2 に土台 (origin/main `0fb02e52`) の時点の事実である注を足し、§16 の表の 1 を確定にした。§8.5 の印の表の分類の文を「最後に取り直しを試した時刻」に、§13.1 の段 A の行の分類を 4 か所 (`jst-today-source-scan` を含む) にした。§0.2 の表の Q-2 を「推奨は」から「確定:」に、billing/03 §18 の 4 の扱いを「仮置きされている」から「確定している」にした |
