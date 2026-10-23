@@ -179,10 +179,14 @@ admin.support.ticket.message_add    - チケットへのメッセージ (返信�
                                       (対象は 4.1.1 のチケットの閲覧と同じくチケットを作ったユーザー。details: ticket_id / message_id / is_internal。本文は入れない)
 admin.sales.lead.create             - 営業リード作成 (POST /api/admin/sales/leads)
 admin.sales.lead.update             - 営業リード更新 (PATCH /api/admin/sales/leads/{id})
+                                      ステージを送った更新は直前に読んだ stage のままのときだけ書く (読んでから書くまでに別の担当者が変えていたら 409 CONFLICT_STALE_DATA で、
+                                      書かず、この記録も活動履歴の stage_change も残さない)。stage_change の from_stage は書いた時点の実際の直前の値
 admin.sales.lead.activity_add       - 営業リードへの活動の記録 (POST /api/admin/sales/leads/{id}/activities) (#1571)
                                       (対象はリード (target_type = 'sales_lead')。details: activity_id / activity_type。活動の本文 details は入れない)
 admin.inquiry.update                - 問い合わせのステータス・管理者メモ更新 (PATCH / PUT /api/admin/inquiries/{id})。更新後の本文を返すので、変更が無い更新も記録する
                                       (details: inquiry_id / status_from / status_to / admin_notes_changed / changed。メモの中身は入れない。対象は 4.1.1 と同じ)
+                                      更新は直前に読んだ status と updated_at のままのときだけ書く (読んでから書くまでに別の運営が変えていたら書かず記録もしない。
+                                      送った変更がすでに入っていれば 200 で changed: false として記録し、入っていなければ 409 CONFLICT_STALE_DATA)。status_from は書いた時点の実際の直前の値
 admin.mfa.enroll                    - 運営ロールの二段階認証 (TOTP) の登録 (POST /api/auth/mfa/verify で unverified の factor の verify が成功したとき。#1176)
                                       (severity: info。details: factor_id / backup_codes_issued / failed_step)
 admin.mfa.backup_codes_regenerate   - バックアップコードの再発行 (POST /api/auth/mfa/backup-codes。段 B。#1176)
@@ -314,6 +318,8 @@ super_admin.app_logs.list           - アプリログの一覧・本文の検索
 - 機能パッケージは `create_feature_package` / `update_feature_package` / `delete_feature_package`。
 - 機能フラグの作成・更新・削除は、すべて `super_admin.feature_flag.toggle`。
 - LLM クォータの変更は `super_admin.llm_quota.update` (`src/lib/super-admin/ai-daily-limits.ts` の LLM_QUOTA_AUDIT_ACTION)。
+  保存は読んだ `daily_limit` のままのときだけ書く (行が無かったときは作るだけ)。読んでから書くまでに別の運営が変えていたら書かず記録もしない
+  (今の値が送られた値と同じなら 200、違えば 409 CONFLICT_STALE_DATA)。details の before は書いた時点の実際の直前の値。
 
 #1571 で記録を足したもの:
 - `super_admin.setting.change` (下の一覧のとおり): PUT /api/super-admin/settings。details: key / value / description_changed。severity は warn。
