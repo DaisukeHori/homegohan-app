@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { authFailureNested } from '@/lib/api/error-responses';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { internalError } from '@/lib/api/errors';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
@@ -138,12 +138,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
     return NextResponse.json({ data: org });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-    }
+    const authFailure = authFailureNested(err);
+    if (authFailure) return authFailure;
     // 本文は汎用メッセージだけにし、元のエラーは構造化ログに残す (#1172)
     return internalError(ROUTE_NAME, err, {}, { shape: 'nested' });
   }

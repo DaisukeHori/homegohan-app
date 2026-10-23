@@ -175,9 +175,35 @@ describe('POST /api/super-admin/embeddings/regenerate (#1041 F4-12)', () => {
 
     const res = await POST(postRequest({ table: 'dataset_ingredients', onlyMissing: true }));
     expect(res.status).toBe(200);
-    const json = (await res.json()) as { ok: boolean; processed: number; hasMore: boolean };
+    const json = (await res.json()) as { ok: boolean; processed: number; hasMore: boolean; message: string };
     expect(json.ok).toBe(true);
     expect(json.processed).toBe(42);
     expect(json.hasMore).toBe(true);
+    // #1917: Edge Function の英語の文 ('Processed 42 rows') は本文に入れず、件数と続きから作った日本語の文にする
+    expect(json.message).toBe('42 件を再生成しました。続きは offset 42 から実行してください');
+  });
+
+  it.each([
+    {
+      label: '残りが無い',
+      edge: { success: true, message: 'Completed! All 7 rows processed.', processed: 7, offset: 0, nextOffset: 7, totalCount: 7, hasMore: false },
+      message: '7 件を再生成しました。残りはありません',
+    },
+    {
+      label: '続きがあるが次の offset が無い',
+      edge: { success: true, message: 'No rows fetched', processed: 0, offset: 0, hasMore: true },
+      message: '0 件を再生成しました。続きがあります',
+    },
+  ])('#1917: 成功の本文の message は日本語の文 ($label。Edge Function の英語の文は入れない)', async ({ edge, message }) => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://example.supabase.co';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-role-key';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => Promise.resolve(edge) }));
+
+    const res = await POST(postRequest({ table: 'dataset_ingredients' }));
+    const raw = await res.text();
+
+    expect(res.status).toBe(200);
+    expect((JSON.parse(raw) as { message: string }).message).toBe(message);
+    expect(raw).not.toContain(edge.message);
   });
 });

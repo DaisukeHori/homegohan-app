@@ -12,7 +12,7 @@ import { CalendarDateSchema } from '@/lib/calendar-date-schema';
 import { jstOptionalDayRangeTimestamps } from '@/lib/jst-day-ranges';
 import { createClient } from '@/lib/supabase/server';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { authFailureNested } from '@/lib/api/error-responses';
 import { z } from 'zod';
 import { internalError } from '@/lib/api/errors';
 
@@ -68,12 +68,8 @@ export async function GET(request: NextRequest) {
       meta: { total: count ?? 0, page, limit },
     });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-    }
+    const authFailure = authFailureNested(err);
+    if (authFailure) return authFailure;
     return internalError('GET /api/operator/membership/audit', err, {}, { shape: 'nested' });
   }
 }

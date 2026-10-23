@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { authFailureNested } from '@/lib/api/error-responses';
 import { createLogger } from '@/lib/db-logger';
 import { invalidateFeatureFlag } from '@/lib/feature-flags';
 import { CreateFeatureFlagSchema } from '@/lib/super-admin/flags-schemas';
@@ -61,12 +61,8 @@ export async function GET() {
       meta: { total: flags.length, page: 1, per_page: flags.length },
     });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-    }
+    const authFailure = authFailureNested(err);
+    if (authFailure) return authFailure;
     return internalError('GET /api/super-admin/flags', err, {}, { shape: 'nested' });
   }
 }
@@ -163,12 +159,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ data: created }, { status: 201 });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-    }
+    const authFailure = authFailureNested(err);
+    if (authFailure) return authFailure;
     return internalError('POST /api/super-admin/flags', err, {}, { shape: 'nested' });
   }
 }

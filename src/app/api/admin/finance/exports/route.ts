@@ -17,6 +17,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole, type UserProfile } from '@/lib/auth/helpers';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { internalError } from '@/lib/api/errors';
+import { AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
 import { ExportRequestSchema } from '@/lib/admin/finance-schemas';
 import { jstOptionalDayRangeTimestamps } from '@/lib/jst-day-ranges';
 import { recordAdminAudit } from '@/lib/admin/audit';
@@ -180,22 +182,8 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json(
-        { error: { code: 'UNAUTHENTICATED', message: err.message } },
-        { status: 401 },
-      );
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json(
-        { error: { code: 'OP_PERMISSION_DENIED', message: err.message } },
-        { status: 403 },
-      );
-    }
-    console.error('[finance/exports] unexpected error:', err);
-    return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
-      { status: 500 },
-    );
+    const authFailure = authFailureNested(err, { code: AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED });
+    if (authFailure) return authFailure;
+    return internalError('POST /api/admin/finance/exports', err, { log_context: '[finance/exports] unexpected error' }, { shape: 'nested' });
   }
 }
