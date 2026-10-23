@@ -2416,5 +2416,4 @@ jest.mock('expo-apple-authentication', () => {
 - **Q-14 (選択式) 紹介ページと FAQ の「登録はメールか Google で」**: 紹介ページの主張 `signup-methods` (`docs/design/marketing/01-landing-site.md:516`。文は `src/components/marketing/landing-copy.ts:810`・`:901`) と公開の FAQ (`src/app/faq/page.tsx:48`) は、登録の方法をメールと Google だけ挙げる。Web のスイッチが off の間は事実のまま。on にした後は Apple でも登録できるのに挙げない文になる (誤りではないが、方法の列挙として欠ける)。確かめる時期は Web のスイッチを on にする前 (§18)。
   - (a) 既定: Apple を足す。スイッチを on にするのと同じ時期に、主張の表・要点・FAQ と 2 つのコードの文を同じ PR で直す (marketing/01 の手順。本書の段 A1・A2・B・D には含めない)。
   - (b) 足さない: 文は今のまま (メールか Google で登録できる、は事実のまま)。
-
   - **オーナーの選択 (2026-10-23)**: (a) Apple を足す (Web のスイッチを on にするのと同じ時期の別の PR)。
