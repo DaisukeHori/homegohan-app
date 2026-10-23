@@ -9,6 +9,7 @@ import { requireOrgAdmin } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { INTERNAL_ERROR_MESSAGE, internalError } from '@/lib/api/errors';
+import { ORG_API_REVOKE_ADMIN_ONLY_MESSAGE } from '@/lib/org-api-errors';
 
 export async function POST(
   _req: Request,
@@ -28,7 +29,7 @@ export async function POST(
     }
     if (error instanceof ForbiddenError) {
       return NextResponse.json(
-        { error: { code: 'INSUFFICIENT_PERMISSION', message: 'owner/admin のみ取消可能です' } },
+        { error: { code: 'INSUFFICIENT_PERMISSION', message: ORG_API_REVOKE_ADMIN_ONLY_MESSAGE } },
         { status: 403 },
       );
     }

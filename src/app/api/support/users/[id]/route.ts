@@ -1,10 +1,13 @@
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { API_INTERNAL_ERROR_MESSAGE, authFailureFlat } from '@/lib/api/error-responses';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { isUuid } from '@/lib/http-params';
 import { NextResponse } from 'next/server';
+
+/** 404: 対象の利用者がいない (UUID の形でない id を含む) */
+const USER_NOT_FOUND_MESSAGE = 'ユーザーが見つかりません';
 
 /**
  * 500 の本文は汎用メッセージだけにする (#1172: Supabase / Postgres の生のエラー文を返さない)。
@@ -12,7 +15,7 @@ import { NextResponse } from 'next/server';
  */
 function internalError(err: unknown, metadata?: Record<string, unknown>) {
   createLogger('GET /api/support/users/[id]', generateRequestId()).error('サポート用ユーザー詳細の取得に失敗しました', err, metadata);
-  return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  return NextResponse.json({ error: API_INTERNAL_ERROR_MESSAGE }, { status: 500 });
 }
 
 // ユーザー詳細取得（サポート用 - 限定情報）
@@ -25,7 +28,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
 
     // uuid 型の列に UUID でない文字列を渡すと 22P02 になり、存在しない id なのに 500 になる
     if (!isUuid(params.id)) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+      return NextResponse.json({ error: USER_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     // 認可を通したあとだけ service_role で読む (認可の前に使うと権限昇格になる)。
@@ -62,7 +65,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
       });
     }
     if (!targetUser) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+      return NextResponse.json({ error: USER_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     // 最近のAIセッション数の起点
@@ -170,12 +173,8 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     return NextResponse.json(body);
 
   } catch (error) {
-    if (error instanceof AuthError) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    if (error instanceof ForbiddenError) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
+    const authFailure = authFailureFlat(error);
+    if (authFailure) return authFailure;
     return internalError(error);
   }
 }

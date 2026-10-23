@@ -472,7 +472,7 @@ describe('invalidOrgInviteBodyResponse', () => {
     );
     expect(await messageFor(CreateOrgInviteRequestBodySchema, {})).toBe('メールアドレスを正しい形式で入力してください');
     expect(await messageFor(CreateOrgInviteRequestBodySchema, { email: 'a@example.com', role: 'owner' })).toBe(
-      'role は admin または member のみ指定できます',
+      '役割は「管理者」か「メンバー」を指定してください',
     );
     expect(
       await messageFor(CreateOrgInviteRequestBodySchema, { email: 'a@example.com', custom_message: 'x'.repeat(501) }),

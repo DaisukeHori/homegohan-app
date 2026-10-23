@@ -48,6 +48,15 @@ export const ORG_API_INVALID_JSON_MESSAGE = API_INVALID_JSON_MESSAGE;
 /** 500: 内部エラー。原因は構造化ログにだけ残す (src/lib/api/errors.ts と同じ文) */
 export const ORG_API_INTERNAL_ERROR_MESSAGE = API_INTERNAL_ERROR_MESSAGE;
 
+/**
+ * 403: 役割が足りない (招待・除名・招待の取消・オーナーの譲渡の提案)。code は従来のまま 'INSUFFICIENT_PERMISSION' で、文だけを
+ * 英字の役割名 ('owner/admin のみ招待可能です' など) から日本語の役割名 (オーナー・管理者) にした (#1917)
+ */
+export const ORG_API_INVITE_ADMIN_ONLY_MESSAGE = 'オーナー・管理者だけが招待できます';
+export const ORG_API_REMOVE_ADMIN_ONLY_MESSAGE = 'オーナー・管理者だけがメンバーを除名できます';
+export const ORG_API_REVOKE_ADMIN_ONLY_MESSAGE = 'オーナー・管理者だけが招待を取り消せます';
+export const ORG_API_TRANSFER_OWNER_ONLY_MESSAGE = 'オーナーだけが譲渡を提案できます';
+
 /** nested の形の本文の code (従来のまま) */
 export const ORG_API_UNAUTHORIZED_CODE = API_UNAUTHORIZED_CODE;
 export const ORG_API_FORBIDDEN_CODE = API_FORBIDDEN_CODE;
