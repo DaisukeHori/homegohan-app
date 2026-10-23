@@ -16,7 +16,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { authFailureNested } from '@/lib/api/error-responses';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import {
@@ -29,12 +29,8 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { recordAdminAudit } from '@/lib/admin/audit';
 
 function handleError(method: 'GET' | 'PUT', err: unknown) {
-  if (err instanceof AuthError) {
-    return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-  }
-  if (err instanceof ForbiddenError) {
-    return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-  }
+  const authFailure = authFailureNested(err);
+  if (authFailure) return authFailure;
   return internalError(`${method} /api/super-admin/settings`, err, {}, { shape: 'nested' });
 }
 

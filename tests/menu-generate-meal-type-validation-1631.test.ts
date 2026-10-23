@@ -46,7 +46,7 @@ import { POST as postV5Generate } from '../src/app/api/ai/menu/v5/generate/route
 const DATE = '2026-10-10';
 
 /** 400 の本文の「受け付ける区分」(手で書いた期待値。正本 MEAL_ORDER の並び) */
-const MEAL_TYPE_REQUIREMENT = 'breakfast, lunch, dinner, snack, midnight_snack';
+const MEAL_TYPE_REQUIREMENT = 'breakfast・lunch・dinner・snack・midnight_snack';
 
 /** 区分の確認を通らない値 */
 const INVALID_MEAL_TYPES: Array<[string, unknown]> = [
@@ -112,7 +112,7 @@ describe.each([
       );
       expect(res.status).toBe(HTTP_BAD_REQUEST);
       expect(await res.json()).toEqual({
-        error: `targetSlots[1].mealType must be one of: ${MEAL_TYPE_REQUIREMENT}`,
+        error: `2 番目の枠の食事の区分は ${MEAL_TYPE_REQUIREMENT} のどれかにしてください`,
       });
       expect(h.getUser).not.toHaveBeenCalled();
       expect(h.from).not.toHaveBeenCalled();

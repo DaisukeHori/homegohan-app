@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { HEALTH_QUICK_METRIC_REQUIRED_MESSAGE, HEALTH_QUICK_SOURCE_INVALID_MESSAGE, HEALTH_RECORD_DATE_INVALID_MESSAGE } from '@/lib/health-api-messages';
 import { RECORD_DATE_PATTERN, sanitizeHealthRecordPayload, stripUndefined } from '@/lib/health-payloads';
 import { addDaysToDate, isCalendarDate, todayLocal } from '@/lib/date-utils';
 import { updateHealthStreak } from '@/lib/health-streaks';
@@ -17,12 +19,12 @@ export async function POST(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== 'object') {
-    return NextResponse.json({ error: 'Request body must be a JSON object' }, { status: 400 });
+    return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
   }
 
   const recordDate =
@@ -33,11 +35,11 @@ export async function POST(request: NextRequest) {
   // 存在しない日付 (2026-02-30 など) は DB の date 型への変換で 500 になり、受け付ける範囲の外の日付は前日を求める
   // addDaysToDate が RangeError を投げるので、形に加えて isCalendarDate でも確かめる (#1463)
   if (!DATE_PATTERN.test(recordDate) || !isCalendarDate(recordDate)) {
-    return NextResponse.json({ error: 'record_date must be in YYYY-MM-DD format' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_RECORD_DATE_INVALID_MESSAGE }, { status: 400 });
   }
 
   if (body.source !== undefined && typeof body.source !== 'string') {
-    return NextResponse.json({ error: 'source must be a string' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_QUICK_SOURCE_INVALID_MESSAGE }, { status: 400 });
   }
 
   const dataSource = body.source === 'photo' ? 'photo' : 'quick';
@@ -66,9 +68,7 @@ export async function POST(request: NextRequest) {
   );
 
   if (!hasMetric) {
-    return NextResponse.json({
-      error: 'At least one quick health metric is required'
-    }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_QUICK_METRIC_REQUIRED_MESSAGE }, { status: 400 });
   }
 
   const updateData: Record<string, unknown> = {

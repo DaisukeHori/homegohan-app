@@ -13,6 +13,8 @@ import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { AI_MENU_MEAL_ID_INVALID_MESSAGE, AI_MENU_MEAL_NOT_FOUND_MESSAGE, AI_MENU_MEAL_REGENERATION_STARTED_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -31,7 +33,7 @@ export async function POST(request: Request) {
     // 1. ユーザー認証
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
     // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
@@ -50,7 +52,7 @@ export async function POST(request: Request) {
 
     // 2. mealIdが必須 + UUID形式チェック
     if (!mealId || typeof mealId !== 'string' || !UUID_RE.test(mealId)) {
-      return NextResponse.json({ error: 'mealId must be a valid UUID' }, { status: 400 });
+      return NextResponse.json({ error: AI_MENU_MEAL_ID_INVALID_MESSAGE }, { status: 400 });
     }
 
     // 2.5 所有権検証（IDOR対策）: 自分が所有する planned_meal かどうかを確認し、
@@ -73,7 +75,7 @@ export async function POST(request: Request) {
 
     const day = (plannedMeal?.user_daily_meals as unknown as Pick<Tables<'user_daily_meals'>, 'day_date'> | null) ?? null;
     if (!plannedMeal || !day?.day_date || !plannedMeal.meal_type) {
-      return NextResponse.json({ error: 'Meal not found' }, { status: 404 });
+      return NextResponse.json({ error: AI_MENU_MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     const dayDate = day.day_date;
@@ -162,7 +164,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ 
       success: true,
-      message: 'Meal regeneration started in background',
+      message: AI_MENU_MEAL_REGENERATION_STARTED_MESSAGE,
       status: 'processing',
       requestId: requestData.id,
       regeneratingMealId: mealId,

@@ -108,6 +108,14 @@ export const PUBLIC_ENV_VARS = {
       'ビルド時に埋め込まれるので、変えたら再デプロイする',
     whenMissing: 'Turnstile を出さない (今までどおり)。ログインの失敗が 3 回を超えても、ボットの確認は求めない',
   },
+  NEXT_PUBLIC_APPLE_SIGN_IN: {
+    required: false,
+    description:
+      "Web のログイン・新規登録の画面に Apple のボタンを出すスイッチ (docs/design/mobile/08-sign-in-with-apple.md)。'on' のときだけ出す。" +
+      'Supabase の Apple provider と Apple Developer の Services ID の設定が済み、サーバの 4 つ (APPLE_SIGN_IN_*) が本番で効いていることを確かめてから入れる (設計書 §19.3)。' +
+      'ビルド時に埋め込まれるので、変えたら再デプロイする',
+    whenMissing: 'Apple のボタンを出さない (今までどおり)',
+  },
 } as const satisfies Record<`NEXT_PUBLIC_${string}`, EnvVarSpec>;
 
 /** サーバー専用。ブラウザには出さない */
@@ -489,6 +497,26 @@ export const SERVER_ENV_VARS = {
       '必須ロールの運営は、未登録なら次のアクセスから登録を求められる (猶予なし)。不正な値 (形の違い・存在しない日時・範囲外の時差) も無視して即時にし、warn ログを残す',
     // 解釈 (形・実在する日時の確認) は同じファイルの resolveMfaEnforceFrom。値を読むのは readMfaEnforceFromEnv だけ
     readOnlyBy: 'src/lib/auth/mfa/policy.ts',
+  },
+  APPLE_SIGN_IN_TEAM_ID: {
+    required: false,
+    description: 'Apple Developer の Team ID (10 文字)。Sign in with Apple の client_secret の iss (docs/design/mobile/08-sign-in-with-apple.md §11.2)',
+    whenMissing: 'Apple の refresh token の交換と失効を行わない (ログインはできる。退会のときに Apple 側の失効をスキップする)',
+  },
+  APPLE_SIGN_IN_KEY_ID: {
+    required: false,
+    description: 'Sign in with Apple の Key の Key ID (10 文字)。client_secret の kid',
+    whenMissing: 'APPLE_SIGN_IN_TEAM_ID と同じ',
+  },
+  APPLE_SIGN_IN_PRIVATE_KEY: {
+    required: false,
+    description: 'Sign in with Apple の Key の秘密鍵 (.p8 の中身の PEM。改行は \\n と書く)。client_secret の署名に使う秘密の値',
+    whenMissing: 'APPLE_SIGN_IN_TEAM_ID と同じ',
+  },
+  APPLE_SIGN_IN_SERVICES_ID: {
+    required: false,
+    description: 'Web の Sign in with Apple の Services ID (Supabase の Apple provider の Client IDs の先頭と同じ値)。Web で入った人の refresh token の client_id',
+    whenMissing: 'Web で入った人の refresh token を保管しない (iOS で入った人の分は bundle ID の定数で扱うので影響しない)',
   },
 } as const satisfies Record<string, EnvVarSpec>;
 

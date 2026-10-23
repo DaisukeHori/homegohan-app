@@ -20,6 +20,8 @@ import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { isMealType, MEAL_LABELS } from '@homegohan/shared';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { AI_IMAGE_REQUIRED_MESSAGE, AI_PHOTO_UNKNOWN_TYPE_CODE } from '@/lib/ai/ai-api-messages';
 
 interface ImageInput {
   base64: string;
@@ -251,13 +253,16 @@ async function requestMealAnalysis(
   return normalized.dishes.length > 0 ? normalized : undefined;
 }
 
+/** 422: 写真の種類 (食事・冷蔵庫・健康診断・体重計) を判定できなかった */
+const PHOTO_TYPE_UNKNOWN_MESSAGE = '写真の種類を判定できませんでした。食事・冷蔵庫・健診結果・体重計のいずれかが鮮明に写った写真を撮り直してください。';
+
 export async function POST(request: Request) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
   const nullCharacterRejection = await rejectNullCharacterBody(request);
   if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
   const aiConsentDenied = await requireAiConsent(supabase, user.id);
@@ -281,7 +286,7 @@ export async function POST(request: Request) {
         : [];
 
     if (images.length === 0) {
-      return NextResponse.json({ error: 'Image Base64 is required' }, { status: 400 });
+      return NextResponse.json({ error: AI_IMAGE_REQUIRED_MESSAGE }, { status: 400 });
     }
 
     // #151: 極小・空白画像（例: 1px ブランク JPEG）は AI に送らず unknown を返す
@@ -369,9 +374,10 @@ export async function POST(request: Request) {
     if (!result.type || result.type === 'unknown' || (result.confidence ?? 0) < 0.3) {
       return NextResponse.json(
         {
-          error: 'unknown_type',
-          message: '写真の種類を判定できませんでした。食事・冷蔵庫・健診結果・体重計のいずれかが鮮明に写った写真を撮り直してください。',
           ...result,
+          error: PHOTO_TYPE_UNKNOWN_MESSAGE,
+          code: AI_PHOTO_UNKNOWN_TYPE_CODE,
+          message: PHOTO_TYPE_UNKNOWN_MESSAGE,
           modelUsed: model,
           ...aiUsageGrantField,
         },

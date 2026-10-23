@@ -529,6 +529,30 @@ export type Database = {
         }
         Relationships: []
       }
+      apple_sign_in_tokens: {
+        Row: {
+          client_id: string
+          created_at: string
+          refresh_token: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          client_id: string
+          created_at?: string
+          refresh_token: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          client_id?: string
+          created_at?: string
+          refresh_token?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       auth_login_failures: {
         Row: {
           created_at: string
@@ -9538,50 +9562,11 @@ export type Database = {
           p_organization_id: string
           p_reason: string
         }
-        Returns: {
-          contact_email: string | null
-          contact_name: string | null
-          created_at: string | null
-          dissolved_at: string | null
-          employee_count: number | null
-          id: string
-          industry: string | null
-          logo_url: string | null
-          name: string
-          owner_id: string | null
-          plan: string | null
-          settings: Json | null
-          status: string
-          subscription_expires_at: string | null
-          subscription_status: string | null
-          updated_at: string | null
-        }
-        SetofOptions: {
-          from: "*"
-          to: "organizations"
-          isOneToOne: true
-          isSetofReturn: false
-        }
+        Returns: Json
       }
       operator_force_representative_transfer: {
         Args: { p_family_id: string; p_new_rep_id: string; p_reason: string }
-        Returns: {
-          created_at: string
-          dissolved_at: string | null
-          id: string
-          member_limit: number
-          name: string
-          plan_key: string
-          representative_id: string | null
-          status: string
-          updated_at: string
-        }
-        SetofOptions: {
-          from: "*"
-          to: "family_groups"
-          isOneToOne: true
-          isSetofReturn: false
-        }
+        Returns: Json
       }
       operator_mfa_end_sessions: {
         Args: { p_user_id: string }

@@ -250,7 +250,7 @@ describe('POST /api/admin/finance/exports — NPS の書き出しは admin / sup
     expect(res.headers.get('Content-Disposition')).toBeNull();
     const text = await res.text();
     expect(JSON.parse(text)).toEqual({
-      error: { code: 'OP_PERMISSION_DENIED', message: 'Requires one of: admin, super_admin' },
+      error: { code: 'OP_PERMISSION_DENIED', message: 'この操作を行う権限がありません' },
     });
     // DB が行を返す状態 (RLS の設定ミスなど) でも、中身は本文に出ない
     expect(text).not.toContain(NPS_COMMENT);

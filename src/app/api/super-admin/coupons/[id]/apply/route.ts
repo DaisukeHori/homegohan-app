@@ -21,7 +21,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { CouponApplySchema } from '@/lib/super-admin/coupons-schemas';
-import { applyCoupon, CouponApplyError } from '@/lib/plan/coupon';
+import { applyCoupon, CouponApplyError, couponApplyErrorMessageOf } from '@/lib/plan/coupon';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { couponInvalidInputResponse } from '@/lib/super-admin/coupon-errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
@@ -69,7 +69,8 @@ export async function POST(request: NextRequest, props: RouteContext) {
     } catch (err) {
       if (err instanceof CouponApplyError) {
         const status = err.code === 'OP_SUBSCRIPTION_NOT_FOUND' || err.code === 'OP_COUPON_NOT_FOUND' ? 404 : 422;
-        return NextResponse.json({ error: { code: err.code, message: err.message } }, { status });
+        // 文は業務エラーの日本語の固定の文だけ (例外の文面をそのまま本文に入れない #1917)
+        return NextResponse.json({ error: { code: err.code, message: couponApplyErrorMessageOf(err) } }, { status });
       }
       throw err;
     }

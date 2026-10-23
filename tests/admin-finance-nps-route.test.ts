@@ -651,7 +651,7 @@ describe('GET /api/admin/finance/nps — 認可', () => {
     expect(res.status).toBe(403);
     const text = await res.text();
     expect(JSON.parse(text)).toEqual({
-      error: { code: 'OP_PERMISSION_DENIED', message: 'Requires one of: admin, super_admin' },
+      error: { code: 'OP_PERMISSION_DENIED', message: 'この操作を行う権限がありません' },
     });
     // 本文にデータが混ざっていない
     expect(text).not.toContain('recent_comments');
@@ -679,7 +679,7 @@ describe('GET /api/admin/finance/nps — 認可', () => {
     mocks.requireRole.mockRejectedValue(new AuthError('AUTH_UNAUTHENTICATED'));
     const res = await GET(req());
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: { code: 'UNAUTHENTICATED', message: 'AUTH_UNAUTHENTICATED' } });
+    expect(await res.json()).toEqual({ error: { code: 'UNAUTHENTICATED', message: 'ログインが必要です' } });
     expect(mocks.rpc).not.toHaveBeenCalled();
     expect(mocks.chains).toHaveLength(0);
     expect(mocks.loggerError).not.toHaveBeenCalled();
@@ -690,7 +690,7 @@ describe('GET /api/admin/finance/nps — 認可', () => {
     const res = await GET(req());
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({
-      error: { code: 'OP_PERMISSION_DENIED', message: 'Requires one of: admin, super_admin' },
+      error: { code: 'OP_PERMISSION_DENIED', message: 'この操作を行う権限がありません' },
     });
     expect(mocks.rpc).not.toHaveBeenCalled();
     expect(mocks.chains).toHaveLength(0);
@@ -703,7 +703,7 @@ describe('GET /api/admin/finance/nps — 認可', () => {
 // ═════════════════════════════════════════════════════════════════════════════
 
 describe('GET /api/admin/finance/nps — 失敗時', () => {
-  const INTERNAL = { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } };
+  const INTERNAL = { error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました' } };
 
   it('NPS の関数が失敗したら 500。ログに残し、DB のエラー文はレスポンスに出さない', async () => {
     const dbError = new Error('permission denied for function get_nps_summary');

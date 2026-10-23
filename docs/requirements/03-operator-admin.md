@@ -2269,9 +2269,9 @@ CREATE TABLE gdpr_deletion_requests (
 [admin 系]
 - admin.user.ban / unban / role_change (impersonate は提供しない: §17.11, #1124)
 - admin.organization.create / suspend / restore / delete
-- admin.coupon.create / pause / activate / retroactive_apply
+- admin.coupon.create / pause / activate / retroactive_apply (実コードの名前は create_coupon / update_coupon (一時停止・有効化を含む) / delete_coupon / apply_coupon。operator/07 §4.1)
 - admin.refund.issue
-- admin.export.request
+- admin.export.request (実コードの名前は admin.finance.export。operator/07 §4.1)
 
 [super_admin 系]
 - super_admin.plan.create / update / publish / deprecate / un_deprecate / price_change

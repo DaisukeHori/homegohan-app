@@ -20,7 +20,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { authFailureNested } from '@/lib/api/error-responses';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { encodeAppLogCursor, olderThanCursorFilter } from '@/lib/super-admin/app-logs';
@@ -114,12 +114,9 @@ export async function GET(request: NextRequest) {
     };
     return NextResponse.json(body, { headers: NO_STORE });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return errorResponse(401, 'UNAUTHORIZED', err.message);
-    }
-    if (err instanceof ForbiddenError) {
-      return errorResponse(403, 'FORBIDDEN', err.message);
-    }
+    // 認可の失敗の文は日本語の固定の文 (例外の文面は本文に出さない #1917)。code は UNAUTHORIZED / FORBIDDEN のまま
+    const authFailure = authFailureNested(err, { headers: NO_STORE });
+    if (authFailure) return authFailure;
     // 想定外の例外は内容を記録し、画面には中身を出さない
     logger.error('メールの送信待ちの一覧 API で予期しないエラー', err);
     return errorResponse(500, 'INTERNAL_ERROR', 'サーバーエラーが発生しました');

@@ -103,6 +103,7 @@ const ENTRIES: Entry[] = [
   { file: 'ai/nutrition/feedback/route.ts', method: 'POST', load: async () => (await import('@/app/api/ai/nutrition/feedback/route')).POST },
   { file: 'ai/nutrition/route.ts', method: 'POST', load: async () => (await import('@/app/api/ai/nutrition/route')).POST },
   { file: 'announcements/route.ts', method: 'POST', load: async () => (await import('@/app/api/announcements/route')).POST },
+  { file: 'auth/apple/authorization/route.ts', method: 'POST', load: async () => (await import('@/app/api/auth/apple/authorization/route')).POST },
   { file: 'auth/password/change/route.ts', method: 'POST', load: async () => (await import('@/app/api/auth/password/change/route')).POST },
   { file: 'auth/password/reset/route.ts', method: 'POST', load: async () => (await import('@/app/api/auth/password/reset/route')).POST },
   { file: 'auth/sessions/current/route.ts', method: 'PATCH', load: async () => (await import('@/app/api/auth/sessions/current/route')).PATCH },

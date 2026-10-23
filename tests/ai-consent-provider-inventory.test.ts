@@ -44,6 +44,8 @@ const NON_AI_HOSTS: Record<string, string> = {
   'apps.apple.com': 'App Store の定期購読の管理のページへのリンク (billing/03 §8.9)。送信先ではない',
   'play.google.com': 'Google Play の定期購読の管理のページへのリンク (billing/03 §8.9)。送信先ではない',
   'api.resend.com': 'メールの送信 (Resend)',
+  'appleid.apple.com':
+    'Sign in with Apple の認可コードの交換 (/auth/token) と、退会のときの refresh token の失効 (/auth/revoke)。client_secret の aud にも同じホストを書く (docs/design/mobile/08-sign-in-with-apple.md §11.2)。送るのは認可コード・refresh token・client_id・client_secret だけで、AI の送信先ではない',
   'exp.host':
     'Push 通知の送信 (Expo Push Service。#1136)。送るのは端末の token・固定の文面・画面のパス・依頼 ID だけで、利用者のデータは送らない',
   'challenges.cloudflare.com':

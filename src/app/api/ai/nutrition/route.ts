@@ -17,6 +17,8 @@ import {
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { aiRequiredFieldMessage, AI_MENU_MEAL_NOT_FOUND_MESSAGE, AI_IMAGE_URL_INVALID_MESSAGE, AI_NUTRITION_ESTIMATE_FAILED_MESSAGE, AI_NUTRITION_INPUT_REQUIRED_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 /**
  * 献立の栄養情報を更新
@@ -36,14 +38,14 @@ export async function POST(request: Request) {
     // 1. ユーザー確認
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
     const rateLimitResult = await checkRateLimit(user.id, 'analysis');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
     if (!plannedMealId) {
-      return NextResponse.json({ error: 'plannedMealId is required' }, { status: 400 });
+      return NextResponse.json({ error: aiRequiredFieldMessage('献立') }, { status: 400 });
     }
 
     // 2. 所有権確認（日付ベースモデル）
@@ -60,7 +62,7 @@ export async function POST(request: Request) {
       .single();
 
     if (existError || !existing) {
-      return NextResponse.json({ error: 'Meal not found or unauthorized' }, { status: 404 });
+      return NextResponse.json({ error: AI_MENU_MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     // 3. 栄養データが直接提供された場合はそれを使用
@@ -106,7 +108,7 @@ export async function POST(request: Request) {
       // 食事写真・冷蔵庫写真のバケットの URL は、公開 URL のまま AI 事業者に渡さず、本人の写真であることを確かめて
       // 署名した URL を渡す (#1365)。他人の写真の URL は AI に渡さない (回数も数えない)。保存するのは送られた URL のまま
       if (typeof imageUrl !== 'string') {
-        return NextResponse.json({ error: 'imageUrl must be a string' }, { status: 400 });
+        return NextResponse.json({ error: AI_IMAGE_URL_INVALID_MESSAGE }, { status: 400 });
       }
       const readable = await resolvePhotoUrlForOwnerRead(getSupabaseAdmin(), user.id, imageUrl);
       if (!readable.ok) {
@@ -155,7 +157,7 @@ export async function POST(request: Request) {
         const content = completion.choices?.[0]?.message?.content;
         
         if (!content) {
-          return NextResponse.json({ error: 'AI analysis failed' }, { status: 500 });
+          return NextResponse.json({ error: AI_NUTRITION_ESTIMATE_FAILED_MESSAGE }, { status: 500 });
         }
 
         // JSONを抽出してパース
@@ -163,7 +165,7 @@ export async function POST(request: Request) {
         const result = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
 
         if (!result) {
-          return NextResponse.json({ error: 'Failed to parse AI response' }, { status: 500 });
+          return NextResponse.json({ error: AI_NUTRITION_ESTIMATE_FAILED_MESSAGE }, { status: 500 });
         }
 
         // DBを更新
@@ -222,7 +224,7 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ error: 'Either nutritionData or imageUrl is required' }, { status: 400 });
+    return NextResponse.json({ error: AI_NUTRITION_INPUT_REQUIRED_MESSAGE }, { status: 400 });
 
   } catch (error: any) {
     return internalError('POST /api/ai/nutrition', error);

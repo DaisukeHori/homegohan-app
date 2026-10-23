@@ -22,9 +22,10 @@
  *   家族の行の削除は DELETE 文が最初に家族の行を取るので、もともとこの順番で、コードは変えない (#1917 以降は purge・service_role の DELETE)。
  *
  * 競合の再現のしかた (タイミングに頼らない。family-member-limit-race.test.ts と同じ考え方):
- *   postgres-meta (/pg/query) で「本人になりすまして先に処理を呼び、そのあと pg_sleep でトランザクションを開いたままにする」
- *   接続を 1 本作り (= ロックを取ったがコミット前の状態)、pg_sleep に入ったのを pg_stat_activity で確かめてから、
- *   もう 1 件を本物の経路 (PostgREST + 本人の JWT) で呼ぶ。
+ *   postgres-meta (/pg/query) で「本人になりすまして先に処理を呼び、そのあと放されるまでトランザクションを開いたままにする」
+ *   接続を 1 本作り (= ロックを取ったがコミット前の状態)、もう 1 件を本物の経路 (PostgREST + 本人の JWT) で呼んで、それが先の接続に
+ *   待たされて行のロックの待ちに並んだのを pg_stat_activity / pg_blocking_pids で確かめてから先の接続を放す
+ *   (tests/integration/helpers/lock-holder.ts。決まった秒数の窓に頼らない。#1917)。
  *   - 解散と承諾など「先の処理の途中に、後の処理が割り込む」競合は、先の処理を開いたままにして後の処理を呼ぶ。
  *   - 家族の行の削除は、「家族の行を FOR UPDATE でロックしたまま待ち、そのあと DELETE する」接続 (postgres。purge と同じ権限) で表す
  *     (DELETE 文は先に家族の行を取ってから CASCADE で子の行を消すので、その 2 段階の間に他の処理が割り込む状況の再現)。
@@ -43,8 +44,9 @@
 
 import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import ws from 'ws';
+import { actAsAuthenticatedSql, createLockHolderKit, type Holder } from '../helpers/lock-holder';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 import { grantFamilyPlan } from '../helpers/family-plan';
 
@@ -131,7 +133,6 @@ const TS = Date.now();
 const PASSWORD = `${randomBytes(18).toString('base64url')}Aa1!`;
 const createdUserIds: string[] = [];
 const createdFamilyIds: string[] = [];
-const pendingHolders: Array<Promise<unknown>> = [];
 const TOKEN_RE = /^[a-f0-9]{64}$/;
 
 async function createUser(label: string, roles?: string[]): Promise<TestUser> {
@@ -386,83 +387,35 @@ async function acceptPromotionViaApi(user: TestUser, token: string): Promise<Out
 // 先の処理をコミット前のまま開いておく接続 (postgres-meta)
 // ---------------------------------------------------------------------------------------------
 
-interface Holder {
-  /** 先の処理が済み、pg_sleep に入った (= ロックを持ったままコミット前の) 状態になると解決する */
-  sleeping: Promise<void>;
-  /** トランザクションが終わった (コミットされた / 失敗した) ときに解決する */
-  done: Promise<Outcome>;
-}
+const holders = createLockHolderKit({ pgRequest, markerPrefix: 'lockorder' });
 
 /**
- * 別の接続で、actor になりすまして before を実行し、holdSeconds 秒 pg_sleep してから after を実行して、コミットする。
+ * 別の接続で、actor になりすまして before を実行し、放されるまで開いておいてから after を実行して、コミットする。
  * before / after は末尾に ; を付けた SQL (空でもよい)。
  * actorId が null のときは、なりすまさず postgres のまま実行する (RLS を通さずに、関数の中と同じ行ロックの取り方を再現するとき)。
  */
-function startHolder(actorId: string | null, before: string, after: string, holdSeconds: number): Holder {
-  const marker = `lockorder-holder-${randomBytes(6).toString('hex')}`;
-  const claims = JSON.stringify({ sub: actorId, role: 'authenticated' });
-  const impersonate =
-    actorId === null
-      ? ''
-      : `SELECT set_config('request.jwt.claims', '${claims}', true);
-    SET LOCAL ROLE authenticated;`;
-  const sql = `/* ${marker} */
-    ${impersonate}
-    ${before}
-    SELECT pg_sleep(${holdSeconds});
-    ${after}
-    SELECT 'held' AS result;`;
-
-  const state: { outcome: Outcome | null } = { outcome: null };
-  const done = pgRequest(sql).then((res): Outcome => {
-    const body = res.body as { error?: unknown; code?: unknown } | null;
-    const outcome: Outcome = res.ok
-      ? { ok: true, message: null, code: null }
-      : {
-          ok: false,
-          message: typeof body?.error === 'string' ? body.error : JSON.stringify(body),
-          code: typeof body?.code === 'string' ? body.code : null,
-        };
-    state.outcome = outcome;
-    return outcome;
-  });
-  pendingHolders.push(done);
-
-  const sleeping = (async () => {
-    const deadline = Date.now() + 20_000;
-    while (Date.now() < deadline) {
-      if (state.outcome) {
-        // pg_sleep に入る前に終わった = 先の処理が失敗している (競合の再現にならないので、理由を示して止める)
-        throw new Error(`先に呼んだ接続が pg_sleep に入る前に終わりました: ${JSON.stringify(state.outcome)}`);
-      }
-      const rows = await pgQuery<{ n: number }>(`
-        SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE wait_event = 'PgSleep' AND query LIKE '%${marker}%' AND pid <> pg_backend_pid()`);
-      if (rows[0]?.n === 1) return;
-      await sleep(50);
-    }
-    throw new Error('先に呼んだ接続が pg_sleep に入りませんでした (遅すぎます)');
-  })();
-
-  return { sleeping, done };
+function startHolder(actorId: string | null, label: string, before: string, after: string): Holder {
+  const impersonate = actorId === null ? '' : actAsAuthenticatedSql(actorId);
+  return holders.startHolder(label, `${impersonate}
+    ${before}`, after);
 }
 
-/** actor として RPC (SQL の式) を 1 回呼び、そのあと holdSeconds 秒トランザクションを開いたままにする */
-function holdCall(actor: TestUser, callSql: string, holdSeconds = 3): Holder {
-  return startHolder(actor.id, `SELECT * FROM ${callSql};`, '', holdSeconds);
+/** actor として RPC (SQL の式) を 1 回呼び、そのあと放されるまでトランザクションを開いたままにする */
+function holdCall(actor: TestUser, callSql: string): Holder {
+  return startHolder(actor.id, callSql, `SELECT * FROM ${callSql};`, '');
 }
 
 /**
- * postgres (purge と同じ権限) で家族の行を FOR UPDATE でロックしたまま待ち、そのあと家族を DELETE する (#1917 から利用者は消せない)。
+ * postgres (purge と同じ権限) で家族の行を FOR UPDATE でロックしたまま待ち、放されたら家族を DELETE する (#1917 から利用者は消せない)。
  * DELETE 文は最初に家族の行を取り、そのあと CASCADE で子の行 (招待・メンバーなど) を消す。その 2 段階の間に
  * 他の処理が割り込んだ状況 (= 割り込んだ処理が、先に子の行を持ってから家族の行を待つ向きだとデッドロックする) を再現する。
  */
-function holdFamilyLockThenDelete(familyId: string, holdSeconds = 3): Holder {
+function holdFamilyLockThenDelete(familyId: string): Holder {
   return startHolder(
     null,
+    '家族の行を持ってから DELETE する接続',
     `SELECT 1 FROM public.family_groups WHERE id = '${familyId}'::uuid FOR UPDATE;`,
     `DELETE FROM public.family_groups WHERE id = '${familyId}'::uuid;`,
-    holdSeconds,
   );
 }
 
@@ -479,8 +432,11 @@ async function inBatches<T>(items: T[], run: (item: T) => Promise<unknown>, size
   }
 }
 
+// テストが途中で落ちたときに残った接続を、作った順に放す (通ったテストでは全部放し終わっているので何もしない)
+afterEach(() => holders.releaseOpenHolders());
+
 afterAll(async () => {
-  await Promise.allSettled(pendingHolders);
+  await holders.settle();
   await inBatches(createdFamilyIds, async (id) => {
     await srAdmin.from('membership_audit').delete().eq('scope_id', id);
     // family_members / family_invites / family_promotion_requests は CASCADE。削除済みの家族は何も起きない
@@ -513,9 +469,7 @@ describe('#1310 運営の強制解散と、家族に入る処理が同時に走�
     const token = await inviteToken(rep, familyId, invitee.email);
 
     const holder = holdCall(invitee, acceptSql(token));
-    await holder.sleeping;
-    const dissolve = await dissolveViaApi(familyId);
-    const held = await holder.done;
+    const [held, dissolve] = await holders.runBehindHolder(holder, { fn: 'operator_force_dissolve_family', call: () => dissolveViaApi(familyId) });
 
     expect(held.ok).toBe(true); // 承諾は先にロックを取っていたので成功する
     expect(dissolve.message).toBeNull();
@@ -529,9 +483,7 @@ describe('#1310 運営の強制解散と、家族に入る処理が同時に走�
     const { rep, familyId } = await buildFamily('a2', 0);
 
     const holder = holdCall(rep, addChildSql(familyId, 'a2-child'));
-    await holder.sleeping;
-    const dissolve = await dissolveViaApi(familyId);
-    const held = await holder.done;
+    const [held, dissolve] = await holders.runBehindHolder(holder, { fn: 'operator_force_dissolve_family', call: () => dissolveViaApi(familyId) });
 
     expect(held.ok).toBe(true);
     expect(dissolve.message).toBeNull();
@@ -545,9 +497,8 @@ describe('#1310 運営の強制解散と、家族に入る処理が同時に走�
     const token = await inviteToken(rep, familyId, invitee.email);
 
     const holder = holdCall(operator, dissolveSql(familyId));
-    await holder.sleeping;
-    const accept = await acceptViaApi(invitee, token);
-    expect((await holder.done).ok).toBe(true);
+    const [held, accept] = await holders.runBehindHolder(holder, { fn: 'accept_family_invite', call: () => acceptViaApi(invitee, token) });
+    expect(held.ok, JSON.stringify(held)).toBe(true);
 
     expect(accept.ok).toBe(false);
     expect(accept.message).toBe('FAMILY_NOT_FOUND');
@@ -561,9 +512,8 @@ describe('#1310 運営の強制解散と、家族に入る処理が同時に走�
     const { rep, familyId } = await buildFamily('a4', 0);
 
     const holder = holdCall(operator, dissolveSql(familyId));
-    await holder.sleeping;
-    const child = await addChildViaApi(rep, familyId, 'a4-child');
-    expect((await holder.done).ok).toBe(true);
+    const [held, child] = await holders.runBehindHolder(holder, { fn: 'add_family_child', call: () => addChildViaApi(rep, familyId, 'a4-child') });
+    expect(held.ok, JSON.stringify(held)).toBe(true);
 
     expect(child.ok).toBe(false);
     expect(child.message).toMatch(/FAMILY_NOT_FOUND|NOT_FAMILY_ADULT/);
@@ -622,9 +572,7 @@ describe('#1310 家族の行の削除 (家族の行を先に取る) の途中に
     const token = await inviteToken(rep, familyId, invitee.email);
 
     const holder = holdFamilyLockThenDelete(familyId);
-    await holder.sleeping;
-    const accept = await acceptViaApi(invitee, token);
-    const deletion = await holder.done;
+    const [deletion, accept] = await holders.runBehindHolder(holder, { fn: 'accept_family_invite', call: () => acceptViaApi(invitee, token) });
 
     expectNoDeadlock(accept, deletion);
     expect(deletion.ok).toBe(true);
@@ -639,9 +587,7 @@ describe('#1310 家族の行の削除 (家族の行を先に取る) の途中に
     const { familyId } = await buildFamily('b2', 1);
 
     const holder = holdFamilyLockThenDelete(familyId);
-    await holder.sleeping;
-    const dissolve = await dissolveViaApi(familyId);
-    const deletion = await holder.done;
+    const [deletion, dissolve] = await holders.runBehindHolder(holder, { fn: 'operator_force_dissolve_family', call: () => dissolveViaApi(familyId) });
 
     expectNoDeadlock(dissolve, deletion);
     expect(deletion.ok).toBe(true);
@@ -654,9 +600,7 @@ describe('#1310 家族の行の削除 (家族の行を先に取る) の途中に
     const proposalId = await proposeTransfer(rep, familyId, adult.id);
 
     const holder = holdFamilyLockThenDelete(familyId);
-    await holder.sleeping;
-    const accept = await transferAcceptViaApi(adult, proposalId);
-    const deletion = await holder.done;
+    const [deletion, accept] = await holders.runBehindHolder(holder, { fn: 'accept_family_representative_transfer', call: () => transferAcceptViaApi(adult, proposalId) });
 
     expectNoDeadlock(accept, deletion);
     expect(deletion.ok).toBe(true);
@@ -669,9 +613,7 @@ describe('#1310 家族の行の削除 (家族の行を先に取る) の途中に
     const [adult] = adults;
 
     const holder = holdFamilyLockThenDelete(familyId);
-    await holder.sleeping;
-    const transfer = await forceTransferViaApi(familyId, adult.id);
-    const deletion = await holder.done;
+    const [deletion, transfer] = await holders.runBehindHolder(holder, { fn: 'operator_force_representative_transfer', call: () => forceTransferViaApi(familyId, adult.id) });
 
     expectNoDeadlock(transfer, deletion);
     expect(deletion.ok).toBe(true);
@@ -686,9 +628,7 @@ describe('#1310 家族の行の削除 (家族の行を先に取る) の途中に
     const promotionToken = await requestPromotion(rep, childId, target.email);
 
     const holder = holdFamilyLockThenDelete(familyId);
-    await holder.sleeping;
-    const accept = await acceptPromotionViaApi(target, promotionToken);
-    const deletion = await holder.done;
+    const [deletion, accept] = await holders.runBehindHolder(holder, { fn: 'accept_child_promotion', call: () => acceptPromotionViaApi(target, promotionToken) });
 
     expectNoDeadlock(accept, deletion);
     expect(deletion.ok).toBe(true);
@@ -703,9 +643,7 @@ describe('#1310 家族の行の削除 (家族の行を先に取る) の途中に
     const [adult] = adults;
 
     const holder = holdFamilyLockThenDelete(familyId);
-    await holder.sleeping;
-    const leave = await leaveViaApi(adult);
-    const deletion = await holder.done;
+    const [deletion, leave] = await holders.runBehindHolder(holder, { fn: 'leave_family', call: () => leaveViaApi(adult) });
 
     expectNoDeadlock(leave, deletion);
     expect(deletion.ok).toBe(true);
@@ -720,9 +658,7 @@ describe('#1310 家族の行の削除 (家族の行を先に取る) の途中に
     const target = await memberOf(familyId, adults[0].id);
 
     const holder = holdFamilyLockThenDelete(familyId);
-    await holder.sleeping;
-    const removal = await removeViaApi(rep, familyId, target.id);
-    const deletion = await holder.done;
+    const [deletion, removal] = await holders.runBehindHolder(holder, { fn: 'remove_family_member', call: () => removeViaApi(rep, familyId, target.id) });
 
     expectNoDeadlock(removal, deletion);
     expect(deletion.ok).toBe(true);
@@ -767,9 +703,8 @@ describe('#1310 運営の強制解散 (コミット前) に、移譲・脱退・
     const proposalId = await proposeTransfer(rep, familyId, adult.id);
 
     const holder = holdCall(operator, dissolveSql(familyId));
-    await holder.sleeping;
-    const accept = await transferAcceptViaApi(adult, proposalId);
-    expect((await holder.done).ok).toBe(true);
+    const [held, accept] = await holders.runBehindHolder(holder, { fn: 'accept_family_representative_transfer', call: () => transferAcceptViaApi(adult, proposalId) });
+    expect(held.ok, JSON.stringify(held)).toBe(true);
 
     expect(accept.ok).toBe(false);
     expect(accept.message).toContain('TRANSFER_ACCEPTOR_NOT_IN_FAMILY');
@@ -786,9 +721,8 @@ describe('#1310 運営の強制解散 (コミット前) に、移譲・脱退・
     const [adult] = adults;
 
     const holder = holdCall(operator, dissolveSql(familyId));
-    await holder.sleeping;
-    const transfer = await forceTransferViaApi(familyId, adult.id);
-    expect((await holder.done).ok).toBe(true);
+    const [held, transfer] = await holders.runBehindHolder(holder, { fn: 'operator_force_representative_transfer', call: () => forceTransferViaApi(familyId, adult.id) });
+    expect(held.ok, JSON.stringify(held)).toBe(true);
 
     expect(transfer.ok).toBe(false);
     expect(transfer.message).toContain('TARGET_NOT_IN_FAMILY');
@@ -803,9 +737,8 @@ describe('#1310 運営の強制解散 (コミット前) に、移譲・脱退・
     const [adult] = adults;
 
     const holder = holdCall(operator, dissolveSql(familyId));
-    await holder.sleeping;
-    const leave = await leaveViaApi(adult);
-    expect((await holder.done).ok).toBe(true);
+    const [held, leave] = await holders.runBehindHolder(holder, { fn: 'leave_family', call: () => leaveViaApi(adult) });
+    expect(held.ok, JSON.stringify(held)).toBe(true);
 
     expect(leave.ok).toBe(false);
     expect(leave.message).toContain('NOT_IN_FAMILY');
@@ -819,9 +752,8 @@ describe('#1310 運営の強制解散 (コミット前) に、移譲・脱退・
     const target = await memberOf(familyId, adult.id);
 
     const holder = holdCall(operator, dissolveSql(familyId));
-    await holder.sleeping;
-    const removal = await removeViaApi(rep, familyId, target.id);
-    expect((await holder.done).ok).toBe(true);
+    const [held, removal] = await holders.runBehindHolder(holder, { fn: 'remove_family_member', call: () => removeViaApi(rep, familyId, target.id) });
+    expect(held.ok, JSON.stringify(held)).toBe(true);
 
     expect(removal.ok).toBe(false);
     expect(removal.message).toContain('NOT_FAMILY_ADULT');
@@ -835,9 +767,7 @@ describe('#1310 運営の強制解散 (コミット前) に、移譲・脱退・
     const [adult] = adults;
 
     const holder = holdCall(operator, dissolveSql(familyId));
-    await holder.sleeping;
-    const second = await dissolveViaApi(familyId);
-    const first = await holder.done;
+    const [first, second] = await holders.runBehindHolder(holder, { fn: 'operator_force_dissolve_family', call: () => dissolveViaApi(familyId) });
 
     expectNoDeadlock(first, second);
     expect(first.ok).toBe(true);
@@ -853,9 +783,7 @@ describe('#1310 代表者の移譲の承諾 (コミット前) に、強制解散
     const proposalId = await proposeTransfer(rep, familyId, adult.id);
 
     const holder = holdCall(adult, transferAcceptSql(proposalId));
-    await holder.sleeping;
-    const dissolve = await dissolveViaApi(familyId);
-    const transfer = await holder.done;
+    const [transfer, dissolve] = await holders.runBehindHolder(holder, { fn: 'operator_force_dissolve_family', call: () => dissolveViaApi(familyId) });
 
     expectNoDeadlock(dissolve, transfer);
     expect(transfer.ok).toBe(true);
@@ -948,19 +876,20 @@ describe('#1310 家族の行のロックは外部キーの確認と衝突しな�
 });
 
 describe('#1310 家族の行を FOR UPDATE にすると詰まる並びを、順番を固定して再現する (家族の行のロックは FOR NO KEY UPDATE でなければならない)', () => {
-  // N5 / N6 は 8 回呼んでも、ロックを取る瞬間が重なる確率は低い。ここでは、子の行を持った接続を pg_sleep で止めてから、
-  // 家族の行を先に取る処理を呼ぶ。止めた接続は、起きたあとで家族の行に外部キーの確認 (FOR KEY SHARE) を取りに行く。
+  // N5 / N6 は 8 回呼んでも、ロックを取る瞬間が重なる確率は低い。ここでは、子の行を持った接続を止めておき、
+  // 家族の行を先に取る処理を呼んで、それが子の行の待ちに並んだのを確かめてから放す。放された接続は、家族の行に外部キーの確認
+  // (FOR KEY SHARE) を取りに行く。
   // 家族の行のロックが FOR UPDATE だと、この FOR KEY SHARE が待たされて、子の行を待つ側と待ち合ってデッドロックする。
 
   /** create_family_invite と同じ順番でロックを取る: 既存の招待の行を revoke (行ロック) → 新しい招待を INSERT (家族の行に FOR KEY SHARE) */
   function holdReinvite(rep: TestUser, familyId: string, oldToken: string, email: string, newToken: string): Holder {
     return startHolder(
       null,
+      '招待の行を持つ再招待',
       `UPDATE public.family_invites SET status = 'revoked', revoked_at = now(), revoked_by = '${rep.id}'::uuid
          WHERE token = '${oldToken}';`,
       `INSERT INTO public.family_invites (family_id, email, token, invited_role, status, expires_at, invited_by)
          VALUES ('${familyId}'::uuid, '${email}', '${newToken}', 'adult', 'pending', now() + interval '14 days', '${rep.id}'::uuid);`,
-      3,
     );
   }
 
@@ -971,12 +900,12 @@ describe('#1310 家族の行を FOR UPDATE にすると詰まる並びを、順�
   function holdPromotionRequest(rep: TestUser, familyId: string, childId: string, email: string, newToken: string): Holder {
     return startHolder(
       null,
+      '子供のメンバーの行を持つ昇格のリクエスト',
       `SELECT 1 FROM public.family_members WHERE id = '${childId}'::uuid FOR UPDATE;
        UPDATE public.family_promotion_requests SET status = 'revoked', resolved_at = now(), resolved_by = '${rep.id}'::uuid
          WHERE member_id = '${childId}'::uuid AND status = 'pending';`,
       `INSERT INTO public.family_promotion_requests (family_id, member_id, email, token, status, requested_by, expires_at)
          VALUES ('${familyId}'::uuid, '${childId}'::uuid, '${email}', '${newToken}', 'pending', '${rep.id}'::uuid, now() + interval '14 days');`,
-      3,
     );
   }
 
@@ -987,9 +916,7 @@ describe('#1310 家族の行を FOR UPDATE にすると詰まる並びを、順�
     const newToken = randomBytes(32).toString('hex');
 
     const holder = holdReinvite(rep, familyId, oldToken, invitee.email, newToken);
-    await holder.sleeping;
-    const accept = await acceptViaApi(invitee, oldToken);
-    const held = await holder.done;
+    const [held, accept] = await holders.runBehindHolder(holder, { fn: 'accept_family_invite', call: () => acceptViaApi(invitee, oldToken) });
 
     expectNoDeadlock(accept, held);
     expect(held.ok).toBe(true);
@@ -1008,9 +935,7 @@ describe('#1310 家族の行を FOR UPDATE にすると詰まる並びを、順�
     const newToken = randomBytes(32).toString('hex');
 
     const holder = holdPromotionRequest(rep, familyId, childId, target.email, newToken);
-    await holder.sleeping;
-    const accept = await acceptPromotionViaApi(target, oldToken);
-    const held = await holder.done;
+    const [held, accept] = await holders.runBehindHolder(holder, { fn: 'accept_child_promotion', call: () => acceptPromotionViaApi(target, oldToken) });
 
     expectNoDeadlock(accept, held);
     expect(held.ok).toBe(true);
@@ -1028,9 +953,7 @@ describe('#1310 家族の行を FOR UPDATE にすると詰まる並びを、順�
     const newToken = randomBytes(32).toString('hex');
 
     const holder = holdPromotionRequest(rep, familyId, childId, target.email, newToken);
-    await holder.sleeping;
-    const dissolve = await dissolveViaApi(familyId);
-    const held = await holder.done;
+    const [held, dissolve] = await holders.runBehindHolder(holder, { fn: 'operator_force_dissolve_family', call: () => dissolveViaApi(familyId) });
 
     expectNoDeadlock(dissolve, held);
     expect(held.ok).toBe(true);
@@ -1115,7 +1038,8 @@ describe('#1310 通常の流れ (順番に呼ぶ) は従来どおり動く', () 
       p_reason: '#1310 r1',
     });
     expect(forced.error).toBeNull();
-    expect(forced.data).toMatchObject({ id: familyId, representative_id: d.id });
+    // 戻り値は更新した後の行と、家族の行のロックの下で読んだ旧代表者 (#1917。20261023140000_operator_transfer_return_old_owner.sql)
+    expect(forced.data).toMatchObject({ family_group: { id: familyId, representative_id: d.id }, old_rep_id: b.id });
     expect((await memberOf(familyId, d.id)).role).toBe('representative');
     expect((await memberOf(familyId, b.id)).role).toBe('adult');
     expect(await auditCount(familyId, 'operator_force_representative_transfer')).toBe(1);

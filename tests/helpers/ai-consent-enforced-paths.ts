@@ -262,6 +262,12 @@ export const EXEMPT_ROUTES: Record<string, AiRouteEntry> = {
     consent: 'ログイン (メールアドレスとパスワード)。AI へは送らない (env.ts の一覧に届くだけ)',
     handlers: { POST: { noAi: 'ログイン。送る先は Supabase Auth と Turnstile だけ' } },
   },
+  // Sign in with Apple (docs/design/mobile/08-sign-in-with-apple.md §9.2)。import を辿ると環境変数の一覧 (src/lib/env.ts) に届くだけで、
+  // 送る先は Apple の認可コードの交換 API (appleid.apple.com) と DB (apple_sign_in_tokens) だけ。利用者のデータを AI へ送らない
+  'src/app/api/auth/apple/authorization/route.ts': {
+    consent: 'Sign in with Apple の認可コードの交換と refresh token の保管。AI へは送らない (env.ts の一覧に届くだけ)',
+    handlers: { POST: { noAi: '認可コードを Apple の /auth/token に送り、返った refresh token を DB に書くだけ。送る先は Apple と DB だけ' } },
+  },
   // #1184 Resend の Webhook の受け口。署名の秘密を getOptionalEnv で読むため、import を辿ると環境変数の一覧 (src/lib/env.ts) に届くだけで、
   // 書く先は DB の宛先停止リスト (email_blacklist) だけ。利用者のデータを AI へ送らない
   'src/app/api/webhooks/resend/route.ts': {

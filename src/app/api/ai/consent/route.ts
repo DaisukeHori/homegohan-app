@@ -11,6 +11,7 @@ import {
   grantAiConsent,
 } from '@/lib/ai/consent';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 /**
  * T15 (#1154) 外国の AI 事業者への提供の同意: 状況の確認と、同意の記録
@@ -38,7 +39,7 @@ export async function GET() {
     error: userError,
   } = await supabase.auth.getUser();
   if (userError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: NO_STORE });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401, headers: NO_STORE });
   }
 
   const logger = createLogger('GET /api/ai/consent', generateRequestId()).withUser(user.id);
@@ -66,7 +67,7 @@ export async function POST(request: Request) {
     error: userError,
   } = await supabase.auth.getUser();
   if (userError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: NO_STORE });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401, headers: NO_STORE });
   }
 
   const logger = createLogger('POST /api/ai/consent', generateRequestId()).withUser(user.id);

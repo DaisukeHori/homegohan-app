@@ -2,6 +2,7 @@ import { useState, useCallback } from "react";
 
 import type { TargetSlot, MenuGenerationConstraints } from "../../../../types/domain";
 import { getApi } from "../lib/api";
+import { getJapaneseApiErrorMessage } from "../lib/api-error";
 import { supabase } from "../lib/supabase";
 import { handleStoredAiConsentFailure, isAiConsentRequiredError, promptAiConsentRequired } from "../lib/ai-consent";
 import { menuRequestErrorMessageForDisplay } from "../lib/menu-request-error";
@@ -103,7 +104,8 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
           notifyAiConsentRequired();
           return null;
         }
-        const errorMessage = err.message || "生成に失敗しました";
+        // 本文の文だけを渡す (`HTTP 500 …: {"error":…,"code":"INTERNAL_ERROR"}` の生の文字列を画面に出さない。#1917)
+        const errorMessage = getJapaneseApiErrorMessage(err, "生成に失敗しました");
         setError(errorMessage);
         // リクエストが受け付けられなかったので、進行中の生成は無い (生成中のまま残さない)
         setIsGenerating(false);

@@ -21,6 +21,8 @@ import { isCalendarDate } from '@/lib/jst-day-ranges';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { aiConsentReasonOfStoredError } from '@/lib/ai/consent-config';
 import { weeklyMenuRequestWeeklyOriginData } from '@/lib/ai/weekly-menu-request-origin';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { aiRequiredFieldMessage, aiInvalidDateMessage, AI_MENU_GENERATION_STARTED_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -139,17 +141,17 @@ export async function POST(request: Request) {
     });
 
     if (!startDate) {
-      return NextResponse.json({ error: 'startDate is required' }, { status: 400 });
+      return NextResponse.json({ error: aiRequiredFieldMessage('開始日') }, { status: 400 });
     }
     // 日付は暦の計算 (addDaysToDate) でずらすので、YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433)
     if (typeof startDate !== 'string' || !isCalendarDate(startDate)) {
-      return NextResponse.json({ error: 'startDate must be YYYY-MM-DD' }, { status: 400 });
+      return NextResponse.json({ error: aiInvalidDateMessage('開始日') }, { status: 400 });
     }
 
     // 1. ユーザー確認
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
     _userId = user.id;
 
@@ -335,7 +337,7 @@ export async function POST(request: Request) {
     // 生成開始を即座に返す（プレースホルダーは作成しない、ポーリングで状態を監視）
     return NextResponse.json({ 
       status: 'processing',
-      message: 'Generation started',
+      message: AI_MENU_GENERATION_STARTED_MESSAGE,
       requestId: requestData.id,
     });
 

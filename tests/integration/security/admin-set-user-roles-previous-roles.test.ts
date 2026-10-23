@@ -15,9 +15,10 @@
  *        無い利用者は USER_NOT_FOUND。どれも行を変えない
  *   PR-5 EXECUTE は authenticated と service_role だけ (anon・PUBLIC に無い。DROP して作り直したので付け直したこと)
  *
- * 競合の再現は family-lock-order-race.test.ts と同じ (タイミングに頼らない): postgres-meta (/pg/query) で
- * 本人になりすまして先に関数を呼び、そのあと pg_sleep でトランザクションを開いたままにする接続を作り、
- * pg_sleep に入ったのを pg_stat_activity で確かめてから、後の変更を本物の経路 (PostgREST + 本人の JWT) で呼ぶ。
+ * 競合の再現はタイミングに頼らない (tests/integration/helpers/lock-holder.ts): postgres-meta (/pg/query) で
+ * 本人になりすまして先に関数を呼び、そのあと放されるまでトランザクションを開いたままにする接続を作り、
+ * 後の変更を本物の経路 (PostgREST + 本人の JWT) で呼んで、それが先の接続に待たされて行のロックの待ちに並んだのを
+ * pg_stat_activity / pg_blocking_pids で確かめてから先の接続を放す (#1917)。
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh)。Next の開発サーバーは要らない (RPC を直接呼ぶ)。
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
@@ -27,8 +28,9 @@
 
 import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
+import { actAsAuthenticatedSql, createLockHolderKit, type Holder } from '../helpers/lock-holder';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -44,19 +46,8 @@ if (!url || !anonKey || !serviceKey) {
 const RPC = 'admin_set_user_roles';
 /** 準備と後片付けの時間の上限 (利用者 5 人の作成・削除) */
 const SETUP_TIMEOUT_MS = 120_000;
-/** 競合のテストの時間の上限 (先の接続を HOLD_SECONDS 開いておき、後の変更がその間待つ) */
+/** 競合のテストの時間の上限 (先の接続を開いておき、後の変更が並んだのを確かめてから放す) */
 const RACE_TIMEOUT_MS = 60_000;
-/** 先の変更をコミット前のまま開いておく秒数 (後の変更がこの間ロックで待つことを見る) */
-const HOLD_SECONDS = 3;
-/** 先の接続が pg_sleep に入るのを待つ上限 */
-const HOLDER_START_DEADLINE_MS = 20_000;
-/** pg_sleep に入ったかを見る間隔 */
-const HOLDER_POLL_MS = 50;
-/**
- * 後の変更が、先の接続のコミット (pg_sleep の終わり) より前に返っていないことを見るときの余裕。
- * 後の変更の応答の時刻は先の接続の応答の時刻と HTTP の往復の分だけずれるので、その分を差し引く
- */
-const COMMIT_ORDER_SLACK_MS = 500;
 /** ローカルスタックの Kong → PostgREST の接続が切られていたときの 502 のやり直しの回数 (family-lock-order-race.test.ts と同じ) */
 const GATEWAY_RETRIES = 3;
 /** 502 のやり直しの待ちの単位 */
@@ -121,7 +112,6 @@ interface TestUser {
 const TS = Date.now();
 const PASSWORD = `${randomBytes(18).toString('base64url')}Aa1!`;
 const createdUserIds: string[] = [];
-const pendingHolders: Array<Promise<unknown>> = [];
 
 async function createUser(label: string, roles: string[] | null): Promise<TestUser> {
   const email = `sec-rolecas-${label}-${TS}@homegohan.test`;
@@ -150,49 +140,13 @@ async function setRolesDirect(userId: string, roles: string[] | null): Promise<v
   if (error) throw new Error(`setRolesDirect ${userId}: ${error.message}`);
 }
 
-interface Holder {
-  /** 先の変更が済み、pg_sleep に入った (= ロックを持ったままコミット前の) 状態になると解決する */
-  sleeping: Promise<void>;
-  /** トランザクションが終わった時刻 (ミリ秒) と成否 */
-  done: Promise<{ ok: boolean; finishedAt: number; body: unknown }>;
-}
+const holders = createLockHolderKit({ pgRequest, markerPrefix: 'rolecas' });
 
-/** 別の接続で actor になりすまして admin_set_user_roles を呼び、HOLD_SECONDS 秒トランザクションを開いたままにしてからコミットする */
+/** 別の接続で actor になりすまして admin_set_user_roles を呼び、放されるまでトランザクションを開いたままにしてからコミットする */
 function holdRoleChange(actor: TestUser, targetId: string, roles: readonly string[]): Holder {
-  const marker = `rolecas-holder-${randomBytes(6).toString('hex')}`;
-  const claims = JSON.stringify({ sub: actor.id, role: 'authenticated' });
   const rolesSql = `ARRAY[${roles.map((r) => `'${r}'`).join(', ')}]::text[]`;
-  const sql = `/* ${marker} */
-    SELECT set_config('request.jwt.claims', '${claims}', true);
-    SET LOCAL ROLE authenticated;
-    SELECT * FROM public.${RPC}('${targetId}'::uuid, ${rolesSql});
-    SELECT pg_sleep(${HOLD_SECONDS});
-    SELECT 'held' AS result;`;
-
-  const state: { finished: boolean; body: unknown } = { finished: false, body: null };
-  const done = pgRequest(sql).then((res) => {
-    state.finished = true;
-    state.body = res.body;
-    return { ok: res.ok, finishedAt: Date.now(), body: res.body };
-  });
-  pendingHolders.push(done);
-
-  const sleeping = (async () => {
-    const deadline = Date.now() + HOLDER_START_DEADLINE_MS;
-    while (Date.now() < deadline) {
-      if (state.finished) {
-        throw new Error(`先に呼んだ接続が pg_sleep に入る前に終わりました: ${JSON.stringify(state.body)}`);
-      }
-      const rows = await pgQuery<{ n: number }>(`
-        SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE wait_event = 'PgSleep' AND query LIKE '%${marker}%' AND pid <> pg_backend_pid()`);
-      if (rows[0]?.n === 1) return;
-      await sleep(HOLDER_POLL_MS);
-    }
-    throw new Error('先に呼んだ接続が pg_sleep に入りませんでした (遅すぎます)');
-  })();
-
-  return { sleeping, done };
+  return holders.startHolder(`先の ${RPC}`, `${actAsAuthenticatedSql(actor.id)}
+    SELECT * FROM public.${RPC}('${targetId}'::uuid, ${rolesSql});`);
 }
 
 type RpcRow = { id: string; roles: string[]; previous_roles: string[] | null };
@@ -211,8 +165,11 @@ beforeAll(async () => {
   ]);
 }, SETUP_TIMEOUT_MS);
 
+// テストが途中で落ちたときに残った接続を、作った順に放す (通ったテストでは全部放し終わっているので何もしない)
+afterEach(() => holders.releaseOpenHolders(), RACE_TIMEOUT_MS);
+
 afterAll(async () => {
-  await Promise.allSettled(pendingHolders);
+  await holders.settle();
   await Promise.allSettled(createdUserIds.map((id) => srAdmin.auth.admin.deleteUser(id))); // user_profiles は CASCADE
 }, SETUP_TIMEOUT_MS);
 
@@ -243,16 +200,15 @@ describe('#1917 admin_set_user_roles の previous_roles (実 DB)', () => {
       // 先の変更はまだコミットしていないので、別の接続からは元の roles が見える (ロックを取らずに読むとこの値になる)
       expect(await rolesOf(target.id)).toEqual(['user']);
 
-      const later = asUser(operatorB.jwt)
-        .rpc(RPC, { p_user_id: target.id, p_roles: ['user', 'finance'] })
-        .then((res) => ({ ...res, finishedAt: Date.now() }));
-
-      const [held, after] = await Promise.all([holder.done, later]);
+      // 後の変更は先の変更に待たされて行のロックの待ちに並ぶ。並んだのを確かめてから先の変更を放す
+      // (= 後の変更は先の変更のコミットを待ってから返る。並ぶ前に放さないので、先のコミットの後に呼んだのと同じにはならない)
+      const [held, after] = await holders.runBehindHolder(holder, {
+        fn: RPC,
+        call: async () => asUser(operatorB.jwt).rpc(RPC, { p_user_id: target.id, p_roles: ['user', 'finance'] }),
+      });
 
       expect(held.ok, JSON.stringify(held.body)).toBe(true);
       expect(after.error).toBeNull();
-      // 後の変更は先の変更のコミットを待ってから返った (ロックで並んだ)
-      expect(after.finishedAt).toBeGreaterThanOrEqual(held.finishedAt - COMMIT_ORDER_SLACK_MS);
       // 後の変更の直前の値は、先の変更の後の roles (コミット前に見えていた元の ['user'] ではない)
       expect(after.data as RpcRow[]).toEqual([{ id: target.id, roles: ['user', 'finance'], previous_roles: ['user', 'admin'] }]);
       expect(await rolesOf(target.id)).toEqual(['user', 'finance']);

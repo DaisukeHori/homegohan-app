@@ -375,7 +375,7 @@ interface NestedErrorResponse {
 
 どちらの形でも、本文に DB の生のエラー文・捕まえた例外の文面・`details`・`hint`・スタックを入れない (500 は汎用の文だけにし、元のエラーは構造化ログに残す)。
 
-認可の失敗 (401 / 403) の本文で例外の文面 (`err.message`) や英語の文を返している route は、直すときに共通の関数 `authFailureFlat` / `authFailureNested` (`src/lib/api/error-responses.ts`。#1917) で作る (既に日本語の固定の文を返している route (`OP_PERMISSION_DENIED` に `権限がありません` など) はそのままでよい。`message` / `error` は日本語の固定の文で、`AuthError` / `ForbiddenError` の文面 (`requireRole` の `Requires one of: …` など) は入れない。403 の文は `ForbiddenError` の `code` ごとの表で決め、既定の表は凍結・二段階認証・組織に所属していないの文を持つ。nested の `code` は従来の route の code を変えないように、401 と 403 で別々に `'http'` (`UNAUTHORIZED` / `FORBIDDEN`)・`'error'` (例外の `code`)・`{ fixed: '<コード>' }` (`UNAUTHENTICATED`・`OP_PERMISSION_DENIED` など) から選ぶ (admin の営業・問い合わせの形 = 401 は例外の `code`・403 は `OP_PERMISSION_DENIED`、会計の形 = 401 は `UNAUTHENTICATED`・403 は `OP_PERMISSION_DENIED` は同じファイルの定数)。400 (JSON が読めない)・404・409・500 の固定の文の定数も同じファイル。`src/lib/org-api-errors.ts` はこの上に載せた /api/org の包み)。英語だけの文・例外の文面が本文に無いことは、`tests/api-error-japanese-scan.test.ts` が直し終えた配下 (`tests/helpers/api-error-japanese-scope.ts` の `JAPANESE_ERROR_API_DIRS`) の route を走査して見張り、一覧の外の配下の違反の件数は同じファイルの基線と一致することを番兵が確かめる (走査の部品は `tests/helpers/api-error-text-scan.ts`)。
+認可の失敗 (401 / 403) の本文で例外の文面 (`err.message`) や英語の文を返している route は、直すときに共通の関数 `authFailureFlat` / `authFailureNested` (`src/lib/api/error-responses.ts`。#1917) で作る (既に日本語の固定の文を返している route (`OP_PERMISSION_DENIED` に `権限がありません` など) はそのままでよい。`message` / `error` は日本語の固定の文で、`AuthError` / `ForbiddenError` の文面 (`requireRole` の `Requires one of: …` など) は入れない。403 の文は `ForbiddenError` の `code` ごとの表で決め、既定の表は凍結・二段階認証・組織に所属していないの文を持つ。nested の `code` は従来の route の code を変えないように、401 と 403 で別々に `'http'` (`UNAUTHORIZED` / `FORBIDDEN`)・`'error'` (例外の `code`)・`{ fixed: '<コード>' }` (`UNAUTHENTICATED`・`OP_PERMISSION_DENIED` など) から選ぶ (admin の営業・問い合わせの形 = 401 は例外の `code`・403 は `OP_PERMISSION_DENIED`、会計の形 = 401 は `UNAUTHENTICATED`・403 は `OP_PERMISSION_DENIED` は同じファイルの定数)。400 (JSON が読めない)・404・409・500 の固定の文の定数も同じファイル。`src/lib/org-api-errors.ts` はこの上に載せた /api/org の包み)。英語だけの文・例外の文面が本文に無いことは、`tests/api-error-japanese-scan.test.ts` が直し終えた配下 (`tests/helpers/api-error-japanese-scope.ts` の `JAPANESE_ERROR_API_DIRS`) の route を走査して見張り、一覧の外の配下の違反の件数は同じファイルの基線と一致することを番兵が確かめる (走査の部品は `tests/helpers/api-error-text-scan.ts`)。 利用者の画面に出ず相手が機械の route・ファイル (外部のサービスの Webhook の受け口 `src/app/api/webhooks`・Vercel Cron の認証 `src/lib/cron-auth.ts`) の本文は、英字の機械向けの code (英小文字と `_`。`payload_too_large`・`cron_disabled` など) のまま残し、同じファイルの `MACHINE_FACING_ERROR_TEXT_PATHS` に理由つきで載せる (番兵の数から外れ、本文の文が機械向けの code だけで英語の文と例外の文面が無いことを見張る)。
 
 ### 5.3 TypeScript 型定義
 
@@ -650,7 +650,7 @@ import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
 
 export async function GET() {
-  // ... 認証 (401 は { error: 'Unauthorized' } などこちらで決めた文)
+  // ... 認証 (401 は { error: API_UNAUTHENTICATED_MESSAGE } (src/lib/api/error-responses.ts の「ログインが必要です」) などこちらで決めた日本語の固定の文。#1917)
   const { data, error } = await supabase.from('health_goals').select('*').eq('user_id', user.id); // (抜粋)
   if (error) {
     // 本文は { error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' }。DB の生のエラー文はログにだけ残る
