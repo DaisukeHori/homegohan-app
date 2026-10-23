@@ -57,7 +57,7 @@ describe('GET /api/health/records/[date]: 範囲の外の日付は 400 (前日�
       params: Promise.resolve({ date }),
     });
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: 'date must be in YYYY-MM-DD format' });
+    expect(await res.json()).toEqual({ error: '日付 (date) は YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください' });
     expect(h.from).not.toHaveBeenCalled();
   });
 });

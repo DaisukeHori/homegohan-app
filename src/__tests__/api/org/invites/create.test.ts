@@ -333,7 +333,7 @@ describe('POST /api/org/invites: 入力の検証 (#1163)', () => {
 
       expect(res.status).toBe(400);
       expect(json.error.code).toBe('INVALID_BODY');
-      expect(json.error.message).toBe('role は admin または member のみ指定できます');
+      expect(json.error.message).toBe('役割は「管理者」か「メンバー」を指定してください');
       expect(mockRpc).not.toHaveBeenCalled();
       expect(mockCheckRateLimit).not.toHaveBeenCalled();
     },

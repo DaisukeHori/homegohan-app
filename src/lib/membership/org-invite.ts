@@ -234,7 +234,7 @@ export function orgInviteFailureResponse(failure: CreateOrgInviteFailure, log: O
 // リクエストボディのどの項目が不正だったかで出し分ける UI 向けの文言
 const INVALID_BODY_MESSAGES: Record<string, string> = {
   email: 'メールアドレスを正しい形式で入力してください',
-  role: 'role は admin または member のみ指定できます',
+  role: '役割は「管理者」か「メンバー」を指定してください',
   custom_message: 'メッセージは 500 文字以内の文字列で入力してください',
   nickname: 'ニックネームは 50 文字以内の文字列で入力してください',
 };

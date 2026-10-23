@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { HEALTH_STREAK_TYPE_INVALID_MESSAGE } from '@/lib/health-api-messages';
 import { addDaysToDate, todayLocal } from '@/lib/date-utils';
 
 /** 「週間の記録状況」の日数 (JST の今日を含む) */
@@ -12,7 +14,7 @@ export async function GET(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
@@ -21,7 +23,7 @@ export async function GET(request: NextRequest) {
   const ALLOWED_STREAK_TYPES = ['daily_record', 'meal_record', 'health_record', 'exercise_record'] as const;
   type StreakType = (typeof ALLOWED_STREAK_TYPES)[number];
   if (!ALLOWED_STREAK_TYPES.includes(rawType as StreakType)) {
-    return NextResponse.json({ error: 'Invalid streak type' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_STREAK_TYPE_INVALID_MESSAGE }, { status: 400 });
   }
   const streakType = rawType;
 
@@ -109,7 +111,7 @@ export async function DELETE(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
@@ -118,7 +120,7 @@ export async function DELETE(request: NextRequest) {
   const ALLOWED_STREAK_TYPES_DELETE = ['daily_record', 'meal_record', 'health_record', 'exercise_record'] as const;
   type StreakTypeDelete = (typeof ALLOWED_STREAK_TYPES_DELETE)[number];
   if (!ALLOWED_STREAK_TYPES_DELETE.includes(rawTypeDelete as StreakTypeDelete)) {
-    return NextResponse.json({ error: 'Invalid streak type' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_STREAK_TYPE_INVALID_MESSAGE }, { status: 400 });
   }
   const streakType = rawTypeDelete;
 

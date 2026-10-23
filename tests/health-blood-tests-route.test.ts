@@ -221,7 +221,7 @@ describe('GET /api/health/blood-tests: クランプ以外の挙動は変えな�
     const { res, json } = await callGet('?limit=abc');
 
     expect(res.status).toBe(401);
-    expect(json).toEqual({ error: 'Unauthorized' });
+    expect(json).toEqual({ error: 'ログインが必要です' });
     expect(mockFrom).not.toHaveBeenCalled();
   });
 

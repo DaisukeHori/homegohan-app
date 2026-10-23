@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { challengePeriod } from '@/lib/jst-day-ranges';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { HEALTH_CHALLENGE_TEMPLATE_INVALID_MESSAGE } from '@/lib/health-api-messages';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // チャレンジ一覧の取得
@@ -10,7 +12,7 @@ export async function GET(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
@@ -50,7 +52,7 @@ export async function POST(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const body = await request.json();
@@ -61,7 +63,7 @@ export async function POST(request: NextRequest) {
   const template = templates.find(t => t.id === template_id);
 
   if (!template) {
-    return NextResponse.json({ error: 'Invalid template' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_CHALLENGE_TEMPLATE_INVALID_MESSAGE }, { status: 400 });
   }
 
   // 開始日は JST の今日、終了日はその duration_days 日後 (#1433)
