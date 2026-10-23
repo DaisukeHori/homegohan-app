@@ -88,8 +88,9 @@ function planRow(overrides: Partial<PlanRow> = {}): PlanRow {
 
 /**
  * subscription_plans の 1 行だけを持つフェイクの DB。
- * select().eq().single() でいまの行を返し、update(values).eq().select().single() で values を行に重ねる
- * (Supabase の update と同じく、渡されなかった列はそのまま残る)。
+ * select().eq().single() でいまの行を返し、update(values).eq().select().maybeSingle() で values を行に重ねる
+ * (Supabase の update と同じく、渡されなかった列はそのまま残る)。route の PATCH は読んだ status を条件にした更新
+ * (.eq('status', …)) だが、この画面のテストでは割り込みが無いので、条件はいつも合う (割り込みは tests/super-admin-plan-status-cas-route.test.ts)。
  */
 function createPlanDb(initial: PlanRow) {
   const state = { row: { ...initial } as PlanRow, updates: [] as Record<string, unknown>[] };
@@ -103,14 +104,16 @@ function createPlanDb(initial: PlanRow) {
         pendingUpdate = values;
         return builder;
       },
-      single: async () => {
-        if (pendingUpdate) {
-          state.updates.push(pendingUpdate);
-          state.row = { ...state.row, ...pendingUpdate };
-        }
-        return { data: { ...state.row }, error: null };
-      },
+      single: async () => terminal(),
+      maybeSingle: async () => terminal(),
     };
+    function terminal() {
+      if (pendingUpdate) {
+        state.updates.push(pendingUpdate);
+        state.row = { ...state.row, ...pendingUpdate };
+      }
+      return { data: { ...state.row }, error: null };
+    }
     return builder;
   }
 
