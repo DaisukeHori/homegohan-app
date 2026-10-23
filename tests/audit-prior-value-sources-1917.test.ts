@@ -125,6 +125,7 @@ const INVENTORY: Record<string, PriorValueSource> = {
   'src/app/api/admin/finance/exports/route.ts recordAdminAudit from': { kind: 'not_prior', why: '書き出す期間の始まり (本文の from)' },
   'src/app/api/admin/users/route.ts recordAdminAudit last_login_before': { kind: 'not_prior', why: '一覧の絞り込みの条件' },
   'src/app/api/admin/users/route.ts recordAdminAudit registered_from': { kind: 'not_prior', why: '一覧の絞り込みの条件' },
+  'src/app/api/super-admin/logs/route.ts recordAdminAudit from': { kind: 'not_prior', why: 'アプリログの検索の期間の始まり (一覧の絞り込みの条件)' },
   'src/app/api/super-admin/coupons/route.ts insert valid_from': { kind: 'not_prior', why: 'クーポンの有効期間の始まり' },
   'src/app/api/super-admin/coupons/route.ts recordAdminAudit valid_from': { kind: 'not_prior', why: 'クーポンの有効期間の始まり' },
 
