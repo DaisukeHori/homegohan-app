@@ -650,7 +650,7 @@ sequenceDiagram
 | Vercel Cron 全般 | route が 500 を返すと `internalError` が `app_logs` に error を残す → `app-log-alerts` の回が 1 件から検知 → 運用メール (operator/11 §4) |
 | `hr_revoke_jobs_processor` | 未実装 (HR 連携の冊に同梱: operator/11 §2.2)。リトライの方針は HR 連携の冊が決める |
 | `stripe_integrity_check` | 不一致検出 → 自動修復しない → Slack + 監査ログ |
-| `iap_reconcile` | RevenueCat の失敗 (429 以外)・RPC の失敗 → route が 500 → `app-log-alerts` の `cron_failure` (上の Vercel Cron 全般の行)。429 と予算は 200 で止めて次の回 (billing/04 §11) |
+| `iap_reconcile` | RevenueCat の失敗 (429 以外)・RPC の失敗 (ただし運営の処置で解消する `BILL_LIVE_ROW_CONFLICT`・`BILL_IAP_UNKNOWN_PRODUCT` (`IAP_RECONCILE_REJECTED_CODES`。`src/lib/billing/iap-reconcile-core.ts:156`) は `rejected` に数え、回は失敗にしない。billing/04) → route が 500 → `app-log-alerts` の `cron_failure` (上の Vercel Cron 全般の行)。429 と予算は 200 で止めて次の回 (billing/04 §11) |
 | `purge-dissolved-family-groups` | 乾いた実行 (dry run) を持つ (`SELECT * FROM public.purge_dissolved_family_groups(true);` は件数だけ返す)。1 回に消すのは 500 件まで (operator/11 §5.4) |
 
 ## 10. テスト方針

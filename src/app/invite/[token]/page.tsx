@@ -12,7 +12,7 @@ import { InviteLayout } from '@/components/membership/InviteLayout';
 
 interface InviteDetails {
   status: 'pending' | 'accepted' | 'rejected' | 'expired' | 'revoked';
-  // get_invite_details RPC (supabase/migrations/20260511000133_membership_remaining_rpcs.sql) の実返却キーに合わせる
+  // get_invite_details RPC (最新の定義は supabase/migrations/20261016200000_rpc_profile_name_placeholder.sql:62) の実返却キーに合わせる
   scope: 'family' | 'organization';
   email: string;
   scope_name: string;
