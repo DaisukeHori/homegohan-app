@@ -11,7 +11,7 @@ import {
 } from '@/lib/membership/org-invite';
 import { AddOrgMemberRequestBodySchema } from '@/schemas/membership/organization-invite';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-
+import { ORG_API_INTERNAL_ERROR_MESSAGE, orgAuthFailureFlat } from '@/lib/org-api-errors';
 // メンバー一覧取得 (所属組織の owner / admin のみ。判定は共通の requireOrgAdmin()、#1161)
 export async function GET(_request: Request) {
   try {
@@ -29,15 +29,12 @@ export async function GET(_request: Request) {
     return NextResponse.json({ members });
 
   } catch (error) {
-    if (error instanceof AuthError) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    if (error instanceof ForbiddenError) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
+    // 401 / 403 は日本語の固定の文 (src/lib/org-api-errors.ts)。例外の文面は本文に入れない
+    const authFailure = orgAuthFailureFlat(error);
+    if (authFailure) return authFailure;
     // 500 の本文は汎用メッセージだけ (#1172)。詳細は db-logger にだけ残す
     createLogger('GET /api/org/members', generateRequestId()).error('組織メンバー一覧の取得に失敗しました', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ error: ORG_API_INTERNAL_ERROR_MESSAGE }, { status: 500 });
   }
 }
 
@@ -67,7 +64,7 @@ export async function POST(request: Request) {
     }
     createLogger('POST /api/org/members', generateRequestId()).error('組織管理者の確認に失敗しました', error);
     return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
+      { error: { code: 'INTERNAL_ERROR', message: ORG_API_INTERNAL_ERROR_MESSAGE } },
       { status: 500 },
     );
   }
