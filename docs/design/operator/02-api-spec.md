@@ -1541,7 +1541,7 @@ deprecated → private にロールバック (緊急用)
 ```json
 { "error": { "code": "OP_INVALID_INPUT", "message": "最初の issue の文", "details": [ { "path": ["valid_until"], "message": "最初の issue の文", "code": "custom" } ] } }
 ```
-- `message` は `details` の先頭 (最初の issue) の `message` そのもの (issues を JSON にした文字列ではない)。画面は `message` をそのまま出す
+- `message` は `details` の先頭 (最初の issue) の `message` そのもの (issues を JSON にした文字列ではない)。画面は `message` をそのまま出す。#1917: issue の文が日本語でない (Zod の既定の英語の文) ときは、`message` と `details[].message` を「入力値が不正です (<path>)」/「クエリパラメータが不正です (<path>)」にする (`src/lib/super-admin/validation-errors.ts` の `validationMessageOf`。schema に書いた日本語の文はそのまま)
 - `details` は Zod の issues の全件 (`path` は誤りのある欄)
 - 本文は `src/lib/super-admin/coupon-errors.ts` の `couponInvalidInputResponse` / `couponInvalidQueryResponse` が作る。`OP_INVALID_QUERY` も `code` 以外は同じ形
 

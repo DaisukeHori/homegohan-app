@@ -1183,7 +1183,7 @@ export async function requireRole(
 
 - `UserProfile` (`src/lib/auth/types.ts`) に `assurance?: OperatorAssuranceSummary` を足す (任意。`assurance: 'session'` のときと、テストで作るリテラルは undefined のまま)。
 - `requireOrgRole` は変えない。ゲートを持たないので **新しい呼び出しを走査が禁止する** (§20 ③)。
-- `respondNotSupported` (`src/lib/admin/not-supported.ts`) は変えない。`requireRole(options.roles)` を既定 (`assurance` 無し = aal2) で呼ぶので、経由する 2 route にもゲートが付く。`MfaRequiredError` は既存の `catch (err instanceof ForbiddenError)` の枝で 403 `{ error: { code: 'FORBIDDEN', message: err.message } }` になる (§19.3)。走査では `GATED_HELPER_FUNCTIONS` (§20) に登録した入口として扱う。
+- `respondNotSupported` (`src/lib/admin/not-supported.ts`) はゲートの点では変えない (#1917 で 401 / 403 の本文だけ `authFailureNested` の日本語の固定の文にした)。`requireRole(options.roles)` を既定 (`assurance` 無し = aal2) で呼ぶので、経由する 2 route にもゲートが付く。`MfaRequiredError` は catch の `authFailureNested` (`src/lib/api/error-responses.ts`。#1917) で 403 `{ error: { code: 'FORBIDDEN', message: '二段階認証の確認が必要です' } }` になる (§19.3。登録が要るときは「二段階認証の登録が必要です」。例外の文面は入れない)。走査では `GATED_HELPER_FUNCTIONS` (§20) に登録した入口として扱う。
 - `requireUser` は変えない (一般の API はゲートの対象でない)。
 
 ### 13.2 `src/lib/auth/mfa/assurance.ts` — claims の読み取りと判定の結合
@@ -1711,7 +1711,7 @@ export type MfaResetResponse = z.infer<typeof MfaResetResponseSchema>;
 
 #### 14.8.2 `POST /api/super-admin/admins/{id}/mfa/reset` (§14.7)
 
-`requireRole` の例外は、既存の `src/app/api/super-admin/admins/route.ts:28-32` と同じ形 (`AuthError` → 401 `UNAUTHORIZED`・`ForbiddenError` → 403 `FORBIDDEN`。`message` は `err.message`) で返す。`err.code` は本文に出さない (§19.3 の既存の運営 route と同じ扱い)。
+`requireRole` の例外は、既存の `src/app/api/super-admin/admins/route.ts:28-29` と同じ形 (`AuthError` → 401 `UNAUTHORIZED`・`ForbiddenError` → 403 `FORBIDDEN`。#1917 から `message` は `authFailureNested` の日本語の固定の文で、`err.message` は入れない) で返す。`err.code` は本文に出さない (§19.3 の既存の運営 route と同じ扱い)。
 
 | 状況 | HTTP | code |
 |---|---|---|
@@ -2549,7 +2549,7 @@ sequenceDiagram
 
 ### 19.3 既存の運営 route の 403 (変えない)
 
-既存の route は `catch (err instanceof ForbiddenError)` で自分の code (`PERM_DENIED` / `OP_PERMISSION_DENIED` / `FORBIDDEN`) と `err.message` を返している。`MfaRequiredError` は `ForbiddenError` の派生なので、**route を変えずに** 403 になる。lib の認可ヘルパー `respondNotSupported` (`src/lib/admin/not-supported.ts`) を経由する 2 route (`src/app/api/super-admin/exports/route.ts`・`exports/[id]/route.ts`) も同じで、ヘルパーの catch が 403 `FORBIDDEN` + `err.message` を返す (ヘルパーは変えない §13.1・§22.3)。`err.message` を本文に出す route では「二段階認証の確認が必要です」が見える。code まで揃えるのは本書の範囲外 (§27 Q-5)。画面経由の利用者は先に TOTP を求められる (Web の運営の区画は page-guard で MFA の画面へ回る。(support) 区画も §13.4.1 の server layout で同じ。アプリの WebView で開いた運営画面も同じ page-guard で回り、6 桁はネイティブの確認画面で入れる §16.4。ネイティブの運営の区画は 2026-10-16 に削除したので、アプリの運営画面はこの WebView だけ §16) ので、この 403 を見るのは、画面のゲートを通らずに API を直接呼ぶ経路 (テスト・curl など) だけ。
+既存の route は `catch (err instanceof ForbiddenError)` で自分の code (`PERM_DENIED` / `OP_PERMISSION_DENIED` / `FORBIDDEN`) と `err.message` を返している (#1917 から `/api/super-admin/**`・`/api/operator/**` (譲渡の 2 route を除く) と `respondNotSupported` は `err.message` の代わりに `authFailureNested` の日本語の固定の文を返す。code は変えていない)。`MfaRequiredError` は `ForbiddenError` の派生なので、**route を変えずに** 403 になる。lib の認可ヘルパー `respondNotSupported` (`src/lib/admin/not-supported.ts`) を経由する 2 route (`src/app/api/super-admin/exports/route.ts`・`exports/[id]/route.ts`) も同じで、ヘルパーの catch が 403 `FORBIDDEN` + 日本語の固定の文を返す (ゲートの点ではヘルパーは変えない §13.1・§22.3)。どちらの形の route でも、本文には「二段階認証の確認が必要です」が見える。code まで揃えるのは本書の範囲外 (§27 Q-5)。画面経由の利用者は先に TOTP を求められる (Web の運営の区画は page-guard で MFA の画面へ回る。(support) 区画も §13.4.1 の server layout で同じ。アプリの WebView で開いた運営画面も同じ page-guard で回り、6 桁はネイティブの確認画面で入れる §16.4。ネイティブの運営の区画は 2026-10-16 に削除したので、アプリの運営画面はこの WebView だけ §16) ので、この 403 を見るのは、画面のゲートを通らずに API を直接呼ぶ経路 (テスト・curl など) だけ。
 
 ---
 
@@ -3044,7 +3044,7 @@ R-1 の 4 ロールとシナリオの対応: `super_admin` (S-1・S-7・S-8・S-
 | B | `src/lib/auth/__tests__/mfa-client.test.ts`・`tests/mfa-pages-browser.test.tsx` (段 A で新設) | §21.1 の (B) の it を足す |
 | B | `scripts/supabase-local.sh` | `prepare()` が組み立てる config.toml の「ローカル専用」の並び (`[auth.rate_limit]` の後) に、`echo '[auth.mfa.totp]'`・`echo 'enroll_enabled = true'`・`echo 'verify_enabled = true'` の 3 行と、その前に理由のコメントの `echo` を 1 行 (「ローカル専用: 運営の MFA (docs/design/cross/12-operator-mfa.md) の結合テストが TOTP の登録と確認を使う。CLI の既定に依らないよう明示する」) を足す (枠 0 でも枠 1 以上でも足す。`slot_config` の外) |
 | B | `tests/local-ci-slot.test.ts` | §21.3 の it を 1 つ足す (§23 N-29) |
-| — | `src/lib/admin/not-supported.ts` (`respondNotSupported`) | **変えない**。既定 (aal2) の `requireRole` を呼ぶのでゲートが付き、`MfaRequiredError` は catch の `ForbiddenError` 枝で 403 `FORBIDDEN` + `err.message` になる (§19.3)。§20 の `GATED_HELPER_FUNCTIONS` に登録して ①⑤ で見張る |
+| — | `src/lib/admin/not-supported.ts` (`respondNotSupported`) | **変えない** (ゲートの点。#1917 で 401 / 403 の本文だけ `authFailureNested` にした)。既定 (aal2) の `requireRole` を呼ぶのでゲートが付き、`MfaRequiredError` は catch の `authFailureNested` で 403 `FORBIDDEN` + 二段階認証の日本語の固定の文になる (§19.3。例外の文面は入れない)。§20 の `GATED_HELPER_FUNCTIONS` に登録して ①⑤ で見張る |
 | — | `src/app/(support)/layout.tsx` (client) | **変えない** (§13.4.1。内側に server layout を足す) |
 | B | 運営の layout 3 + page 11 (§3.2 の一覧) | `requireRole` + try/catch → `requireRoleForPage(roles, { next, forbiddenPath? })`。ファイルごとの `next`・`forbiddenPath`・バナーの `next` と、動的なページの `params` の分割代入の移し方は §13.4.2 の表 (import は `@/lib/auth/page-guard` から。barrel の `@/lib/auth` からは取らない §23 N-27)。layout 3 つに `MfaGraceBanner` |
 | B | `tests/integration/helpers/users.ts` | `createTestUserWithRoles` のサインインを `signInForIntegration` (§22.4.1) に置き換える (必須ロールなら aal2 の JWT。`TestUserPool` も一緒に直る) |
