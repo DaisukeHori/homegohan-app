@@ -23,7 +23,10 @@ const mocks = vi.hoisted(() => {
     })),
   };
   const userClient = {
-    rpc: vi.fn<(fn: string, args: Record<string, unknown>) => Promise<{ data: null; error: null }>>(async () => ({ data: null, error: null })),
+    // admin_set_user_roles の戻り値は 1 行 (#1917: 変える前の roles を previous_roles で返す)
+    rpc: vi.fn<(fn: string, args: Record<string, unknown>) => Promise<{ data: Array<{ previous_roles: string[] }>; error: null }>>(
+      async () => ({ data: [{ previous_roles: ['user'] }], error: null }),
+    ),
   };
   return {
     adminClient,
