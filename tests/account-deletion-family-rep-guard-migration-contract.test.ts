@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { ErrorStatusMap, MEMBERSHIP_ERROR_MESSAGES, MembershipErrorCode } from '@/lib/errors/membership-errors';
+import { isRaisedExceptionWithCode } from '@/lib/errors/db-raised-code';
 
 const ROOT = path.resolve(__dirname, '..');
 const MIGRATIONS_DIR = path.join(ROOT, 'supabase', 'migrations');
@@ -228,12 +229,14 @@ describe(`${MIGRATION}: route とエラーの表`, () => {
 
   it('運営の強制譲渡の route は、P0001 + このコードの完全一致だけを 409 にする', () => {
     const route = squash(stripTsComments(read(OPERATOR_ROUTE)));
-    expect(route).toContain("const PG_RAISE_EXCEPTION = 'P0001';");
-    expect(route).toContain(
-      'return error?.code === PG_RAISE_EXCEPTION && error.message === MembershipErrorCode.REPRESENTATIVE_ACCOUNT_DELETING;',
-    );
+    // P0001 + コードの完全一致の判定は共通の関数 (src/lib/errors/db-raised-code.ts) で行う (#1917。route では `.message` を読まない)
+    expect(route).toContain("import { dbErrorMentionsCode, isRaisedExceptionWithCode } from '@/lib/errors/db-raised-code';");
+    // その関数は、トリガーと同じ P0001 + このコードの完全一致だけを拾う
+    expect(isRaisedExceptionWithCode({ code: 'P0001', message: RAISE_CODE }, RAISE_CODE)).toBe(true);
+    expect(isRaisedExceptionWithCode({ code: '23505', message: RAISE_CODE }, RAISE_CODE)).toBe(false);
+    expect(isRaisedExceptionWithCode({ code: 'P0001', message: `ERROR: ${RAISE_CODE}` }, RAISE_CODE)).toBe(false);
     expect(route).toMatch(
-      /if \(isRepresentativeAccountDeletingError\(rpcError\)\) \{ return NextResponse\.json\( \{ error: \{ code: MembershipErrorCode\.REPRESENTATIVE_ACCOUNT_DELETING, message: '[^']+', \}, \}, \{ status: ErrorStatusMap\[MembershipErrorCode\.REPRESENTATIVE_ACCOUNT_DELETING\] \}, \); \}/,
+      /if \(isRaisedExceptionWithCode\(rpcError, MembershipErrorCode\.REPRESENTATIVE_ACCOUNT_DELETING\)\) \{ return NextResponse\.json\( \{ error: \{ code: MembershipErrorCode\.REPRESENTATIVE_ACCOUNT_DELETING, message: '[^']+', \}, \}, \{ status: ErrorStatusMap\[MembershipErrorCode\.REPRESENTATIVE_ACCOUNT_DELETING\] \}, \); \}/,
     );
   });
 });

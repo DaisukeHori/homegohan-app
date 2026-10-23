@@ -141,4 +141,22 @@ describe.each([
     expect(res.body.error?.code).toBe('NOT_FOUND');
     expect(mocks.recordAdminAudit).not.toHaveBeenCalled();
   });
+
+  // RPC が RAISE EXCEPTION したコードの判定は src/lib/errors/db-raised-code.ts の dbErrorMentionsCode で行う (#1917)
+  it.each([
+    ['FORBIDDEN', 403, 'OP_PERMISSION_DENIED'],
+    ['CANNOT_MODIFY_OWN_ROLES', 403, 'OP_PERMISSION_DENIED'],
+    ['ERROR: USER_NOT_FOUND', 404, 'NOT_FOUND'],
+    // 分かるコードを含まない RAISE (二段階認証の確認が要る) は、汎用の 500
+    ['OPERATOR_MFA_REQUIRED', 500, 'INTERNAL_ERROR'],
+  ])('RPC が %s で失敗: %i %s を返し、RPC の文面を本文に入れず、監査を残さない', async (message, status, code) => {
+    mocks.state.rpcResult = { data: null, error: { message } };
+
+    const res = await call(handler);
+
+    expect(res.status).toBe(status);
+    expect(res.body.error?.code).toBe(code);
+    expect(JSON.stringify(res.body)).not.toContain(message);
+    expect(mocks.recordAdminAudit).not.toHaveBeenCalled();
+  });
 });
