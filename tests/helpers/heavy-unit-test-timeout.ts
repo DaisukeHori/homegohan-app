@@ -39,6 +39,9 @@
  *
  * #1792 で足したもの: tests/local-ci-dev-server-ready.test.ts は、同じ型 (テストの中で、local-ci の dev サーバの確かめを bash と curl で動かす)。
  *
+ * tests/shell-multibyte-var-expansion.test.ts は、同じ型 (bash 3.2 の機械 (macOS) では、テストの中で fixture ごとに /bin/bash を起こす。
+ *   Linux では起こさない)。
+ *
  * #1779 で足したもの: tests/local-ci-gateway-502.test.ts と tests/supabase-local-kong-keepalive.test.ts は、同じ型 (テストの中で、
  *   local-ci の Kong の 502 の数え方と、supabase-local.sh の Kong の入れ直しを bash で動かす)。
  *
@@ -105,6 +108,7 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/recipes-route.test.ts",
   "tests/route-error-boundaries.test.tsx",
   "tests/security-workflow.test.ts",
+  "tests/shell-multibyte-var-expansion.test.ts",
   "tests/supabase-local-kong-keepalive.test.ts",
   "tests/use-ai-consent.test.tsx",
   "tests/use-revoke-blob-urls.test.ts",
