@@ -5,10 +5,15 @@
  * (クーポンは #1534 / #1641 で直し、feature-packages と plans は #1654 で直した)。画面は `error.message` をそのまま出す。
  *
  * ここでは、どの 400 も `error.message` を「最初の issue の文」にし、`details` に issues を全件入れる
- * (src/app/api/super-admin/plans/[id]/price-change/route.ts の firstIssueMessage と同じ形)。
+ * (src/app/api/super-admin/plans/[id]/price-change/route.ts・price-impact/route.ts もここの invalidInputResponse / invalidQueryResponse を使う)。
  *
  * もとはクーポンの route だけの置き場 (src/lib/super-admin/coupon-errors.ts) にあった。
  * coupon-errors.ts はここを再公開しているだけで、クーポンの route の応答は変わらない。
+ *
+ * #1917: `error.message` に入れるのは日本語の文だけにする。schema に書いた日本語の文 (custom の message) はそのまま使い、
+ * Zod の既定の文 (英語。'Invalid input: expected number, received string' など) は、code ごとの日本語の固定の文に
+ * 項目の名前 (issue の path) を添えた文にする (validationMessageOf)。画面は `error.message` をそのまま出すため。
+ * `details` は従来どおり issues の全件 (項目ごとに見る呼び出し側のため。形は変えない) で、各 issue の文も同じ規則で日本語にする。
  *
  * 本文が JSON として読めないとき (#1654) も 400 OP_INVALID_INPUT にする。以前は `await request.json()` の例外が
  * route の外側の catch に落ち、500 OP_INTERNAL_ERROR になっていた。
@@ -44,6 +49,29 @@ const FALLBACK_MESSAGES: Readonly<Record<SuperAdminValidationErrorCode, string>>
 
 const HTTP_BAD_REQUEST = 400;
 
+/**
+ * 日本語の文の判定 (ひらがな・カタカナ・CJK 統合漢字 (拡張 A を含む)・全角の英数記号を 1 文字でも含む)。
+ * tests/helpers/api-error-text-scan.ts の JAPANESE と同じ範囲
+ */
+const JAPANESE_TEXT = /[぀-ヿ㐀-鿿＀-￯]/;
+
+/** 項目の名前 (issue の path) をつなぐ区切り */
+const ISSUE_PATH_SEPARATOR = '.';
+
+/**
+ * 400 の本文の `message` にする文 (#1917)。
+ * - issue が無い → code ごとの日本語の固定の文
+ * - issue の文が日本語 (schema に書いた custom の message) → その文のまま
+ * - issue の文が日本語でない (Zod の既定の英語の文) → code ごとの日本語の固定の文に、項目の名前を `(項目)` で添えた文
+ */
+export function validationMessageOf(code: SuperAdminValidationErrorCode, issue: z.core.$ZodIssue | undefined): string {
+  const fallback = FALLBACK_MESSAGES[code];
+  if (!issue) return fallback;
+  if (JAPANESE_TEXT.test(issue.message)) return issue.message;
+  const field = issue.path.map((segment) => String(segment)).join(ISSUE_PATH_SEPARATOR);
+  return field ? `${fallback} (${field})` : fallback;
+}
+
 export interface SuperAdminValidationErrorBody<C extends SuperAdminValidationErrorCode = SuperAdminValidationErrorCode> {
   error: {
     code: C;
@@ -58,16 +86,21 @@ export type SuperAdminInvalidInputBody = SuperAdminValidationErrorBody<typeof SU
 /** 400 OP_INVALID_QUERY の本文の型 */
 export type SuperAdminInvalidQueryBody = SuperAdminValidationErrorBody<typeof SUPER_ADMIN_INVALID_QUERY_CODE>;
 
-/** 400 の本文。`message` は最初の issue の文、`details` は issues の全件 */
+/**
+ * 400 の本文。`details` は issues の全件で、各 issue の文も validationMessageOf の日本語の文に置き換える
+ * (項目の下に issue の文を出す画面 (src/lib/backups/core.ts の drTestErrorsFromResponse) にも英語を出さないため)。
+ * `message` は最初の issue の文 (= details[0].message)
+ */
 export function validationErrorBody<C extends SuperAdminValidationErrorCode>(
   code: C,
   issues: readonly z.core.$ZodIssue[],
 ): SuperAdminValidationErrorBody<C> {
+  const details = issues.map((issue): z.core.$ZodIssue => ({ ...issue, message: validationMessageOf(code, issue) }));
   return {
     error: {
       code,
-      message: issues[0]?.message ?? FALLBACK_MESSAGES[code],
-      details: issues,
+      message: validationMessageOf(code, issues[0]),
+      details,
     },
   };
 }

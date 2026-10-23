@@ -11,7 +11,7 @@
  * apply (#1641) とクエリの 400 (#1641) も同じく直列化した文字列を入れ、クエリの 400 は `details` も付けていなかった。
  *
  * ここでは、どの 400 も `error.message` を「最初の issue の文」にし、`details` に issues を全件入れる
- * (src/app/api/super-admin/plans/[id]/price-change/route.ts の firstIssueMessage と同じ形)。
+ * (src/lib/super-admin/validation-errors.ts の validationErrorBody と同じ形。#1917 から、Zod の既定の英語の文は日本語の固定の文にする)。
  *
  * #1654: 実体は super-admin 全体で使う src/lib/super-admin/validation-errors.ts に移した。
  * ここはクーポン向けの名前で再公開しているだけで、本文の形・文・コードは変わらない。

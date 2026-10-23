@@ -10,7 +10,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireRole, type RoleName } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { authFailureNested } from '@/lib/api/error-responses';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 
 /** 未対応 (準備中) の機能を呼ばれたときのエラーコード。HTTP 501 */
@@ -23,7 +23,7 @@ export function notSupportedResponse(message: string) {
 
 /**
  * 認可 (requireRole) を通った人にだけ 501 を返す。
- *   - 未認証は 401、ロール不足は 403 (従来の運営 API と同じコード)
+ *   - 未認証は 401、ロール不足は 403 (従来の運営 API と同じコード UNAUTHORIZED / FORBIDDEN。文は日本語の固定の文で、例外の文面は出さない #1917)
  *   - 想定外の例外は createLogger で記録し、本文は汎用メッセージだけにする (#1172)
  */
 export async function respondNotSupported(options: {
@@ -36,12 +36,8 @@ export async function respondNotSupported(options: {
     await requireRole(options.roles);
     return notSupportedResponse(options.message);
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-    }
+    const authFailure = authFailureNested(err);
+    if (authFailure) return authFailure;
     createLogger(options.routeName, generateRequestId()).error('未対応 API の認可で予期しないエラー', err);
     return NextResponse.json(
       { error: { code: 'INTERNAL_ERROR', message: 'サーバーエラーが発生しました' } },

@@ -27,6 +27,8 @@ export const JAPANESE_ERROR_SHARED_BODY_FILES: readonly string[] = [
   'src/lib/api/error-responses.ts',
   'src/lib/org-api-errors.ts',
   'src/lib/org-challenge-api.ts',
+  'src/lib/super-admin/validation-errors.ts',
+  'src/lib/admin/not-supported.ts',
 ];
 
 /**
