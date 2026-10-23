@@ -7,7 +7,7 @@
  *   (operator_force_owner_transfer / operator_force_representative_transfer) は更新した後の行だけを返した。
  *   運営 2 人がほぼ同時に同じ組織 / 家族を譲渡すると、後の譲渡の直前のオーナーは先の譲渡の相手なのに、後の route は
  *   先に読んだ (先の譲渡の前の) 人を from_user_id に残した (membership_audit の old_owner_id / old_rep_id とも食い違う)。
- * 修正後 (supabase/migrations/20261023120000_operator_transfer_return_old_owner.sql): RPC は jsonb で、更新した後の行と、
+ * 修正後 (supabase/migrations/20261023140000_operator_transfer_return_old_owner.sql): RPC は jsonb で、更新した後の行と、
  *   ロックの下で読んだ旧オーナー / 旧代表者 (membership_audit に書くのと同じ値) を返し、route はその値で監査と知らせを出す。
  *
  *   OTO-1 / OTO-4: 戻り値の形と値 (旧オーナー / 旧代表者は membership_audit の値と同じ)

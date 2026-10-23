@@ -1115,7 +1115,7 @@ describe('#1310 通常の流れ (順番に呼ぶ) は従来どおり動く', () 
       p_reason: '#1310 r1',
     });
     expect(forced.error).toBeNull();
-    // 戻り値は更新した後の行と、家族の行のロックの下で読んだ旧代表者 (#1917。20261023120000_operator_transfer_return_old_owner.sql)
+    // 戻り値は更新した後の行と、家族の行のロックの下で読んだ旧代表者 (#1917。20261023140000_operator_transfer_return_old_owner.sql)
     expect(forced.data).toMatchObject({ family_group: { id: familyId, representative_id: d.id }, old_rep_id: b.id });
     expect((await memberOf(familyId, d.id)).role).toBe('representative');
     expect((await memberOf(familyId, b.id)).role).toBe('adult');

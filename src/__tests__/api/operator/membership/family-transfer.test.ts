@@ -142,7 +142,7 @@ function reassignRepresentative(fake: FakeServiceRole, family: Row, newRepId: un
 }
 
 /**
- * operator_force_representative_transfer の挙動 (最新の定義は supabase/migrations/20261023120000_operator_transfer_return_old_owner.sql) を再現する。
+ * operator_force_representative_transfer の挙動 (最新の定義は supabase/migrations/20261023140000_operator_transfer_return_old_owner.sql) を再現する。
  * 家族の行をロックしてから representative_id (旧代表者) を読み、representative_id を新代表者へ書き換え、
  * {"family_group": 書き換えた「後の」行, "old_rep_id": ロックの下で読んだ旧代表者} を返す (#1917)。
  * 書き換えた後の行の representative_id は新代表者なので、それを旧代表者として使う実装は #1209 と同じ理由で壊れる。

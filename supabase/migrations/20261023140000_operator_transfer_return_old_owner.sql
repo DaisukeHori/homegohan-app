@@ -1,5 +1,5 @@
--- migration: 20261023120000_operator_transfer_return_old_owner.sql
--- 戻し方: supabase/rollbacks/20261023120000_operator_transfer_return_old_owner.down.sql
+-- migration: 20261023140000_operator_transfer_return_old_owner.sql
+-- 戻し方: supabase/rollbacks/20261023140000_operator_transfer_return_old_owner.down.sql
 -- #1917 の続き: 運営の強制譲渡 (POST /api/operator/membership/org/{id}/transfer・family/{id}/transfer) の監査
 -- (admin_audit_logs の super_admin.organization.transfer_admin / super_admin.family.transfer_representative) の details.from_user_id と、
 -- 旧オーナー / 旧代表者への知らせの宛先が、同時の譲渡で実際の直前の値と食い違いうる既存の欠陥を直す。

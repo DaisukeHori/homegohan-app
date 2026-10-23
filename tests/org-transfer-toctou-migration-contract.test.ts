@@ -256,7 +256,7 @@ describe('operator_force_owner_transfer の最新の定義', () => {
   const { file, header, body: rawBody } = latestOf('operator_force_owner_transfer');
   const body = stripLineComments(rawBody);
 
-  it('最新の定義はこの migration かそれより後 (20261022160000 が旧オーナーの行の UPDATE に在籍の条件を足し、20261023120000 が戻り値を jsonb (更新した後の行 + ロックの下で読んだ旧オーナー。#1917) にした) で、SECURITY DEFINER・search_path = public', () => {
+  it('最新の定義はこの migration かそれより後 (20261022160000 が旧オーナーの行の UPDATE に在籍の条件を足し、20261023140000 が戻り値を jsonb (更新した後の行 + ロックの下で読んだ旧オーナー。#1917) にした) で、SECURITY DEFINER・search_path = public', () => {
     expect(file >= `${MIGRATION}.sql`, file).toBe(true);
     expect(header, file).toMatch(/RETURNS\s+"jsonb"/i);
     expect(header, file).toMatch(/SECURITY\s+DEFINER/i);

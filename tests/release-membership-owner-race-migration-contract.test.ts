@@ -8,7 +8,7 @@
  *      所属を外す書き込み (UPDATE・席数・監査) は前の定義と逐語で同じ。組織の行は 1 回だけ取り、取り直しのループは無い
  *   2. operator_force_owner_transfer: この migration の定義は、前の定義 (20261022140000) の、旧オーナーの行への UPDATE に
  *      AND organization_id = p_organization_id を足しただけ (権限・MFA・ロック・判定・エラーとその順番・監査・戻り値は同じ)。
- *      最新の定義 (20261023120000 が戻り値を jsonb にした。#1917) でも、在籍の条件つきの UPDATE が残っていること
+ *      最新の定義 (20261023140000 が戻り値を jsonb にした。#1917) でも、在籍の条件つきの UPDATE が残っていること
  *   3. この migration は権限 (GRANT / REVOKE) を変えない
  *   4. 戻し口が実在し、2 つの関数を前の定義に逐語で戻す
  * 実際の挙動 (退会の所属の解放と譲渡の同時の実行) は tests/integration/security/org-transfer-toctou-release-membership.test.ts (実 DB) が確かめる。
@@ -174,7 +174,7 @@ describe('operator_force_owner_transfer: この migration の定義と最新の�
   const oldOwnerWrite = "UPDATE user_profiles SET org_role = 'admin' WHERE id = v_old_owner_id;";
   const guardedOldOwnerWrite = "UPDATE user_profiles SET org_role = 'admin' WHERE id = v_old_owner_id AND organization_id = p_organization_id;";
 
-  it('この migration の定義は 1 つで、前の定義 (20261022140000) と見出しが同じ。最新の定義はこの migration かそれより後 (20261023120000 が戻り値を jsonb にした。#1917)', () => {
+  it('この migration の定義は 1 つで、前の定義 (20261022140000) と見出しが同じ。最新の定義はこの migration かそれより後 (20261023140000 が戻り値を jsonb にした。#1917)', () => {
     expect(ownDefinitions).toHaveLength(1);
     expect(previous.file).toBe('20261022140000_org_transfer_toctou.sql');
     expect(squash(ownDefinitions[0].header)).toBe(squash(previous.header));

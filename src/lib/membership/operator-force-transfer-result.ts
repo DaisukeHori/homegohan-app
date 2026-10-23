@@ -1,5 +1,5 @@
 /**
- * 運営の強制譲渡の RPC の戻り値 (#1917。supabase/migrations/20261023120000_operator_transfer_return_old_owner.sql)。
+ * 運営の強制譲渡の RPC の戻り値 (#1917。supabase/migrations/20261023140000_operator_transfer_return_old_owner.sql)。
  *
  * operator_force_owner_transfer / operator_force_representative_transfer は、組織 / 家族の行を FOR NO KEY UPDATE でロックしてから
  * 旧オーナー / 旧代表者を読み、更新した後の行と一緒に jsonb で返す。route はこの旧オーナー / 旧代表者を、監査

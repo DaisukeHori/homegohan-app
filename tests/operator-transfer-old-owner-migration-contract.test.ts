@@ -1,6 +1,6 @@
 /**
  * #1917 の続き: 運営の強制譲渡の RPC が、ロックの下で読んだ旧オーナー / 旧代表者を返すようにした migration
- * (supabase/migrations/20261023120000_operator_transfer_return_old_owner.sql) を、ファイルどうしの突き合わせで確かめる (DB には接続しない)。
+ * (supabase/migrations/20261023140000_operator_transfer_return_old_owner.sql) を、ファイルどうしの突き合わせで確かめる (DB には接続しない)。
  *
  *   1. 2 つの関数 (operator_force_owner_transfer / operator_force_representative_transfer) の本文は、前の定義の逐語に
  *      RETURNS (jsonb) と最後の RETURN (更新した後の行 + ロックの下で読んだ旧オーナー / 旧代表者) だけを変えたもの
@@ -22,7 +22,7 @@ import {
 
 const ROOT = path.resolve(__dirname, '..');
 const MIGRATIONS_DIR = path.join(ROOT, 'supabase', 'migrations');
-const MIGRATION = '20261023120000_operator_transfer_return_old_owner';
+const MIGRATION = '20261023140000_operator_transfer_return_old_owner';
 const MIGRATION_PATH = path.join(MIGRATIONS_DIR, `${MIGRATION}.sql`);
 const ROLLBACK_PATH = path.join(ROOT, 'supabase', 'rollbacks', `${MIGRATION}.down.sql`);
 const PROD_FUNCTION_ACL_PATH = path.join(ROOT, 'supabase', 'baseline', 'prod_function_acl.sql');

@@ -1,4 +1,4 @@
--- rollback: 20261023120000_operator_transfer_return_old_owner.sql
+-- rollback: 20261023140000_operator_transfer_return_old_owner.sql
 -- #1917 で戻り値を jsonb (更新した後の行 + ロックの下で読んだ旧オーナー / 旧代表者) にした 2 つの関数を、本冊の直前の定義に戻す。
 --   - operator_force_owner_transfer: 20261022160000_release_membership_owner_race.sql の定義 (:118-165。戻り値は organizations の行)
 --   - operator_force_representative_transfer: 20261017130000_operator_mfa_db_gate.sql の定義 (:322-369。戻り値は family_groups の行)
