@@ -263,8 +263,9 @@ describe('POST /api/admin/users/[id]/freeze', () => {
     });
   });
 
-  // 凍結の UPDATE は「super_admin でない」条件つき (NOT_SUPER_ADMIN_ROLES_FILTER = roles が NULL か super_admin を含まない)。
-  // 本物の PostgREST で、roles が NULL の利用者にも条件が当たる (凍結できる) ことと、super_admin は凍結されないことを確かめる
+  // 凍結の UPDATE は「読んだ時点の super_admin でない状態のまま」の条件つき (roles が NULL なら roles IS NULL、そうでなければ
+  // roles が super_admin を含まない)。本物の PostgREST で、どちらの条件も 1 行に当たる (凍結できる) ことと、super_admin は凍結されないことを確かめる
+  // (上の『200 for admin』が roles = ['user'] の条件を通る)
   // (読んでから書くまでに super_admin になる割り込みの再現は tests/user-freeze-super-admin-race.test.ts)
   it('roles が NULL の利用者も凍結できる (200)', async () => {
     const { error: nullError } = await supabaseAdmin.from('user_profiles').update({ roles: null }).eq('id', targetUser.userId);

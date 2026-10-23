@@ -15,8 +15,7 @@
  * 再現する範囲 (テストが使う部分だけ):
  *   - select(columns, { count: 'exact', head: true })  列 / 'rel(cols)' / 'rel!inner(cols)' / 'alias:rel(cols)' の埋め込み
  *   - insert / update / delete (+ .select() で返す列)
- *   - eq / in / gte / is(col, null) / not(col, 'is', null) / order / limit。'rel.col' 形式の埋め込み先の絞り込みを含む
- *   - or('a.is.null,a.not.cs.{x}') (中の条件は col.is.null / col.eq.v / col.cs.{…} / col.not.cs.{…} だけ。埋め込み先の列は不可)
+ *   - eq / in / gte / is(col, null) / not(col, 'is', null) / not(col, 'cs', '{a,b}') / order / limit。'rel.col' 形式の埋め込み先の絞り込みを含む
  *   - single() / maybeSingle()
  * 埋め込みは「このテーブルが外部キーで親を指す」向き (to-one) だけ。親から子 (to-many) は未対応。
  * 外部キーの参照先の列は常に id とみなす。RLS は再現しない (RLS で見える行だけを tables に入れて再現する)。
@@ -51,8 +50,8 @@ export interface RecordedQuery {
   gte: Array<[string, unknown]>;
   /** .is(col, null) で付けた絞り込みの列 */
   isNull: string[];
-  /** .or(...) に渡した文字列 */
-  or: string[];
+  /** .not(col, op, value) で付けた絞り込み */
+  not: Array<[string, string, unknown]>;
   /** insert / update に渡した値 */
   values: unknown;
 }
@@ -111,76 +110,10 @@ class PostgrestFailure extends Error {
   }
 }
 
-/** .or(...) の中の 1 つの条件 */
-interface OrCondition {
-  column: string;
-  operator: 'is-null' | 'eq' | 'cs' | 'not-cs';
-  value: unknown;
-}
-
 interface Filter {
-  kind: 'eq' | 'in' | 'gte' | 'is-null' | 'not-null' | 'or';
+  kind: 'eq' | 'in' | 'gte' | 'is-null' | 'not-null' | 'not-contains';
   column: string;
   value: unknown;
-  /** kind が 'or' のときの中の条件 */
-  conditions?: OrCondition[];
-}
-
-/** 括弧・波括弧の外のカンマで分ける (PostgREST の or の中の条件の区切り) */
-function splitOrConditions(filter: string): string[] {
-  const parts: string[] = [];
-  let depth = 0;
-  let current = '';
-  for (const ch of filter) {
-    if (ch === '{' || ch === '(') depth += 1;
-    if (ch === '}' || ch === ')') depth -= 1;
-    if (ch === ',' && depth === 0) {
-      parts.push(current);
-      current = '';
-    } else {
-      current += ch;
-    }
-  }
-  parts.push(current);
-  return parts;
-}
-
-/** '{a,b}' (PostgREST の配列の値) を要素の配列にする */
-function parseArrayLiteral(literal: string): string[] {
-  const m = /^\{(.*)\}$/.exec(literal);
-  if (!m) throw new Error(`schema-checked-db: or: expected an array literal like {a,b}, got "${literal}"`);
-  return m[1] === '' ? [] : m[1].split(',');
-}
-
-function parseOrCondition(part: string): OrCondition {
-  const m = /^([a-z_][a-z0-9_]*)\.(not\.cs|cs|is|eq)\.(.*)$/.exec(part.trim());
-  if (!m) throw new Error(`schema-checked-db: unsupported or condition "${part}"`);
-  const [, column, operator, raw] = m;
-  switch (operator) {
-    case 'is':
-      if (raw !== 'null') throw new Error(`schema-checked-db: only col.is.null is supported in or (got "${part}")`);
-      return { column, operator: 'is-null', value: null };
-    case 'eq':
-      return { column, operator: 'eq', value: raw };
-    case 'cs':
-      return { column, operator: 'cs', value: parseArrayLiteral(raw) };
-    default:
-      return { column, operator: 'not-cs', value: parseArrayLiteral(raw) };
-  }
-}
-
-/** SQL と同じく、NULL の列は is.null 以外のどの条件にも合わない (NOT (NULL @> …) も NULL) */
-function matchesOrCondition(condition: OrCondition, actual: unknown): boolean {
-  if (condition.operator === 'is-null') return actual === null || actual === undefined;
-  if (actual === null || actual === undefined) return false;
-  switch (condition.operator) {
-    case 'eq':
-      return String(actual) === condition.value;
-    case 'cs':
-      return Array.isArray(actual) && (condition.value as string[]).every((v) => actual.includes(v));
-    case 'not-cs':
-      return Array.isArray(actual) && !(condition.value as string[]).every((v) => actual.includes(v));
-  }
 }
 
 export function createSchemaDb(options: SchemaDbOptions = {}) {
@@ -257,7 +190,7 @@ export function createSchemaDb(options: SchemaDbOptions = {}) {
     private cardinality: 'many' | 'single' | 'maybe' = 'many';
 
     constructor(private readonly table: string) {
-      this.rec = { table, op: 'select', select: null, count: false, head: false, eq: [], in: [], gte: [], isNull: [], or: [], values: undefined };
+      this.rec = { table, op: 'select', select: null, count: false, head: false, eq: [], in: [], gte: [], isNull: [], not: [], values: undefined };
       queries.push(this.rec);
     }
 
@@ -305,14 +238,15 @@ export function createSchemaDb(options: SchemaDbOptions = {}) {
       return this;
     }
     not(column: string, operator: string, value: unknown) {
-      if (operator !== 'is' || value !== null) throw new Error('schema-checked-db: only .not(col, "is", null) is supported');
-      this.filters.push({ kind: 'not-null', column, value: null });
-      return this;
-    }
-    or(filter: string) {
-      this.rec.or.push(filter);
-      const conditions = splitOrConditions(filter).map(parseOrCondition);
-      this.filters.push({ kind: 'or', column: conditions[0]?.column ?? '', value: filter, conditions });
+      this.rec.not.push([column, operator, value]);
+      if (operator === 'is' && value === null) {
+        this.filters.push({ kind: 'not-null', column, value: null });
+        return this;
+      }
+      // not.cs.{a,b}: 配列の列が a, b を全部は含まない (SQL の NOT (col @> '{a,b}'))。NULL の列は合わない (NOT NULL も NULL)
+      const m = operator === 'cs' && typeof value === 'string' ? /^\{(.*)\}$/.exec(value) : null;
+      if (!m) throw new Error('schema-checked-db: only .not(col, "is", null) and .not(col, "cs", "{a,b}") are supported');
+      this.filters.push({ kind: 'not-contains', column, value: m[1] === '' ? [] : m[1].split(',') });
       return this;
     }
     order(column: string, opts?: { ascending?: boolean }) {
@@ -362,10 +296,6 @@ export function createSchemaDb(options: SchemaDbOptions = {}) {
     /** 絞り込みの列を、行が 1 件も無くても検査する ('rel.col' は、select で埋め込んでいる関係だけに使える) */
     private validateFilters(embeds: Map<string, Embed>) {
       for (const f of this.filters) {
-        if (f.kind === 'or') {
-          for (const c of f.conditions ?? []) assertColumn(this.table, c.column);
-          continue;
-        }
         if (!f.column.includes('.')) {
           assertColumn(this.table, f.column);
           continue;
@@ -382,7 +312,6 @@ export function createSchemaDb(options: SchemaDbOptions = {}) {
 
     private matches(row: Row, embeds: Map<string, Embed>): boolean {
       return this.filters.every((f) => {
-        if (f.kind === 'or') return (f.conditions ?? []).some((c) => matchesOrCondition(c, row[c.column]));
         let target = row;
         let column = f.column;
         if (column.includes('.')) {
@@ -407,8 +336,8 @@ export function createSchemaDb(options: SchemaDbOptions = {}) {
             return actual === null || actual === undefined;
           case 'not-null':
             return actual !== null && actual !== undefined;
-          default:
-            return false;
+          case 'not-contains':
+            return Array.isArray(actual) && !(f.value as unknown[]).every((v) => actual.includes(v));
         }
       });
     }

@@ -14,7 +14,7 @@
  *  - #1172: DB エラー時の error は固定の文 (kind: 'internal')。DB の生のエラー文は cause にだけ入る
  */
 import { describe, expect, it, vi } from 'vitest';
-import { applyUserBan, BAN_INTERNAL_ERROR_MESSAGE, NOT_SUPER_ADMIN_ROLES_FILTER } from '@/lib/admin/user-ban';
+import { applyUserBan, BAN_INTERNAL_ERROR_MESSAGE, SUPER_ADMIN_ROLES_LITERAL } from '@/lib/admin/user-ban';
 
 interface FakeProfile {
   id: string;
@@ -28,7 +28,7 @@ function createBanTestSupabase(opts: {
 }) {
   const updateCalls: unknown[] = [];
   const eqCallsAfterUpdate: unknown[][] = [];
-  const orCallsAfterUpdate: string[] = [];
+  const conditionsAfterUpdate: unknown[][] = [];
 
   const from = vi.fn((table: string) => {
     if (table !== 'user_profiles') {
@@ -47,21 +47,26 @@ function createBanTestSupabase(opts: {
         return {
           eq: vi.fn((...args: unknown[]) => {
             eqCallsAfterUpdate.push(args);
+            // 凍結は「読んだ時点の super_admin でない状態のまま」の条件つき (roles が NULL なら .is、そうでなければ .not cs)。
+            // ここでは条件に合って 1 行を返す (読んでから書くまでに super_admin になった場面は tests/user-freeze-super-admin-race.test.ts)
+            const conditioned = {
+              select: vi.fn(() => ({
+                maybeSingle: vi.fn(() =>
+                  Promise.resolve({
+                    data: opts.updateError ? null : { id: args[1] },
+                    error: opts.updateError ?? null,
+                  }),
+                ),
+              })),
+            };
             return {
-              // 凍結は「super_admin でない」条件つき (NOT_SUPER_ADMIN_ROLES_FILTER)。ここでは条件に合って 1 行を返す
-              // (読んでから書くまでに super_admin になった場面は tests/user-freeze-super-admin-race.test.ts)
-              or: vi.fn((filter: string) => {
-                orCallsAfterUpdate.push(filter);
-                return {
-                  select: vi.fn(() => ({
-                    maybeSingle: vi.fn(() =>
-                      Promise.resolve({
-                        data: opts.updateError ? null : { id: args[1] },
-                        error: opts.updateError ?? null,
-                      }),
-                    ),
-                  })),
-                };
+              is: vi.fn((...condition: unknown[]) => {
+                conditionsAfterUpdate.push(['is', ...condition]);
+                return conditioned;
+              }),
+              not: vi.fn((...condition: unknown[]) => {
+                conditionsAfterUpdate.push(['not', ...condition]);
+                return conditioned;
               }),
             };
           }),
@@ -70,7 +75,7 @@ function createBanTestSupabase(opts: {
     };
   });
 
-  return { from, updateCalls, eqCallsAfterUpdate, orCallsAfterUpdate };
+  return { from, updateCalls, eqCallsAfterUpdate, conditionsAfterUpdate };
 }
 
 describe('applyUserBan (#1041 round-2 D)', () => {
@@ -99,8 +104,8 @@ describe('applyUserBan (#1041 round-2 D)', () => {
     expect(payload.unban_at).toBe(result.unbanAt);
     // 対象ユーザーの id にスコープされていること
     expect(supabase.eqCallsAfterUpdate[0]).toEqual(['id', 'owner-1']);
-    // 読んで確かめた「super_admin でない」のままのときだけ書く条件つき
-    expect(supabase.orCallsAfterUpdate).toEqual([NOT_SUPER_ADMIN_ROLES_FILTER]);
+    // 読んで確かめた「super_admin でない」のままのときだけ書く条件つき (roles を読めたので、super_admin を含まないまま)
+    expect(supabase.conditionsAfterUpdate).toEqual([['not', 'roles', 'cs', SUPER_ADMIN_ROLES_LITERAL]]);
   });
 
   it('permanent BAN: unbanAt は null (無期限)', async () => {

@@ -50,11 +50,18 @@ export type ApplyUserBanFailureKind = 'internal' | 'not_found' | 'super_admin';
 export const BAN_INTERNAL_ERROR_MESSAGE = 'BAN の適用に失敗しました';
 
 /**
- * 凍結の UPDATE に付ける条件 (PostgREST の or): 対象が super_admin でないこと。roles は NULL を許す列なので、NULL も「super_admin でない」に入れる。
- * super_admin でないことを読んで確かめてから書くまでに、別の運営が対象を super_admin にしていたら 0 行になり、凍結しない
- * (applyUserBan と POST /api/admin/users/{id}/freeze が使う)
+ * 凍結の UPDATE の条件に使う、super_admin だけを持つ roles の配列のリテラル (PostgREST の cs の値)。
+ * 凍結は「読んで確かめた、super_admin でない」のままのときだけ書く: 読んだ roles が NULL なら roles が NULL のまま (.is('roles', null))、
+ * そうでなければ roles が super_admin を含まないまま (.not('roles', 'cs', SUPER_ADMIN_ROLES_LITERAL))。読んでから書くまでに別の運営が
+ * 対象を super_admin にしていたら 0 行になり、凍結しない (applyUserBan と POST /api/admin/users/{id}/freeze が使う)。
+ * PostgREST の or (roles.is.null,roles.not.cs.{…}) は UPDATE で 42703 (column user_profiles.roles does not exist) になるので使わない
  */
-export const NOT_SUPER_ADMIN_ROLES_FILTER = 'roles.is.null,roles.not.cs.{super_admin}';
+export const SUPER_ADMIN_ROLES_LITERAL = '{super_admin}';
+
+/** 読んだ roles が NULL か (NULL なら、凍結の条件は roles が NULL のまま) */
+export function isNullRoles(roles: unknown): boolean {
+  return roles === null || roles === undefined;
+}
 
 function hasSuperAdminRole(roles: unknown): boolean {
   return Array.isArray(roles) && roles.includes('super_admin');
@@ -86,7 +93,7 @@ export interface ApplyUserBanResult {
 /**
  * 対象ユーザーの frozen_at/frozen_reason/frozen_by を更新して BAN を適用する。
  * super_admin ユーザーは BAN 対象から除外する (freeze route と同じ保護)。読んで確かめた後で super_admin に
- * なっていたら書かない (更新を NOT_SUPER_ADMIN_ROLES_FILTER の条件つきにし、0 行なら読み直して kind を決める)。
+ * なっていたら書かない (更新を SUPER_ADMIN_ROLES_LITERAL の説明の条件つきにし、0 行なら読み直して kind を決める)。
  *
  * @param supabaseAdmin service-role クライアント (呼び出し側で authz 済みであること)
  */
@@ -109,7 +116,8 @@ export async function applyUserBan(
     return { success: false, unbanAt: null, error: BAN_TARGET_NOT_FOUND_MESSAGE, kind: 'not_found' };
   }
 
-  if (hasSuperAdminRole((profile as { roles?: unknown }).roles)) {
+  const readRoles = (profile as { roles?: unknown }).roles;
+  if (hasSuperAdminRole(readRoles)) {
     return { success: false, unbanAt: null, error: SUPER_ADMIN_BAN_REJECTED_MESSAGE, kind: 'super_admin' };
   }
 
@@ -120,8 +128,8 @@ export async function applyUserBan(
     unbanAt = unbanDate.toISOString();
   }
 
-  // super_admin でないままのときだけ書く (NOT_SUPER_ADMIN_ROLES_FILTER)
-  const { data: frozen, error: updateError } = await supabaseAdmin
+  // 読んで確かめた「super_admin でない」のままのときだけ書く (SUPER_ADMIN_ROLES_LITERAL の説明)
+  const freezeUpdate = supabaseAdmin
     .from('user_profiles')
     .update({
       frozen_at: new Date().toISOString(),
@@ -129,8 +137,11 @@ export async function applyUserBan(
       frozen_by: actorId,
       unban_at: unbanAt,
     } as Record<string, unknown>)
-    .eq('id', userId)
-    .or(NOT_SUPER_ADMIN_ROLES_FILTER)
+    .eq('id', userId);
+  const { data: frozen, error: updateError } = await (isNullRoles(readRoles)
+    ? freezeUpdate.is('roles', null)
+    : freezeUpdate.not('roles', 'cs', SUPER_ADMIN_ROLES_LITERAL)
+  )
     .select('id')
     .maybeSingle();
 
@@ -154,7 +165,8 @@ export async function applyUserBan(
     if (hasSuperAdminRole((current as { roles?: unknown }).roles)) {
       return { success: false, unbanAt: null, error: SUPER_ADMIN_BAN_REJECTED_MESSAGE, kind: 'super_admin' };
     }
-    // 読み直すと書ける状態に戻っている (super_admin にされてから外された等)。書いていないので失敗として返す
+    // super_admin ではないが、読んでから roles が変わった (NULL だった roles に値が入った・super_admin にされてから外された等)。
+    // 書いていないので失敗として返す
     return {
       success: false,
       unbanAt: null,

@@ -6,7 +6,7 @@
  * ('banned' は公式 12 ロール外のため使用禁止: cross/CLAUDE.md §B)
  *
  * 同時の変更 (POST): 対象が super_admin でないことを読んで確かめてから書くまでに、別の運営が対象を super_admin にすることがある。
- * 凍結の UPDATE は「super_admin でないままなら書く」条件つきにし (NOT_SUPER_ADMIN_ROLES_FILTER)、0 行なら読み直して、
+ * 凍結の UPDATE は「読んだ時点の super_admin でない状態のままなら書く」条件つきにし (src/lib/admin/user-ban.ts の SUPER_ADMIN_ROLES_LITERAL)、0 行なら読み直して、
  * 対象が無ければ 404、あれば 409 CONFLICT_STALE_DATA (書かず、監査も残さない。cross/04 §4.2)。
  */
 
@@ -16,7 +16,7 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { FreezeBodySchema, UnfreezeBodySchema } from '@/lib/admin/users-schemas';
 import { recordAdminAudit } from '@/lib/admin/audit';
-import { NOT_SUPER_ADMIN_ROLES_FILTER } from '@/lib/admin/user-ban';
+import { SUPER_ADMIN_ROLES_LITERAL, isNullRoles } from '@/lib/admin/user-ban';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 export const dynamic = 'force-dynamic';
@@ -131,8 +131,8 @@ export async function POST(request: Request, props: Params) {
   // frozen_at / frozen_reason / frozen_by / unban_at を UPDATE (roles には手を加えない)
   // #1030: unban_at を永続化することで、判定時比較 (requireUser/requireRole/middleware)
   // による一時 BAN の自動解除が可能になる。
-  // 上で確かめた「super_admin でない」のままのときだけ書く (冒頭のコメント)
-  const { data: frozen, error: updateError } = await supabaseAdmin
+  // 上で確かめた「super_admin でない」のままのときだけ書く (冒頭のコメント。読んだ roles が NULL なら NULL のまま)
+  const freezeUpdate = supabaseAdmin
     .from('user_profiles')
     .update({
       frozen_at: new Date().toISOString(),
@@ -140,8 +140,11 @@ export async function POST(request: Request, props: Params) {
       frozen_by: actor.id,
       unban_at: unbanAt,
     } as Record<string, unknown>)
-    .eq('id', id)
-    .or(NOT_SUPER_ADMIN_ROLES_FILTER)
+    .eq('id', id);
+  const { data: frozen, error: updateError } = await (isNullRoles(profile.roles)
+    ? freezeUpdate.is('roles', null)
+    : freezeUpdate.not('roles', 'cs', SUPER_ADMIN_ROLES_LITERAL)
+  )
     .select('id')
     .maybeSingle();
 
@@ -154,7 +157,7 @@ export async function POST(request: Request, props: Params) {
   }
 
   if (!frozen) {
-    // 0 行: 読んでから書くまでに、対象が super_admin になった (または消えた)。読み直して決める
+    // 0 行: 読んでから書くまでに、対象の roles が変わった (super_admin になった等) か、対象が消えた。読み直して決める
     const { data: current, error: rereadError } = await supabaseAdmin
       .from('user_profiles')
       .select('id')

@@ -2,20 +2,21 @@
  * 利用者の凍結の同時の変更 (#1917 の範囲の外として 10/23 の整合で挙がった候補 (b))
  *
  * 凍結の前に「対象が super_admin でない」ことを読んで確かめる。読んでから書くまでに別の運営が対象を super_admin にすると、
- * 以前は条件なしの UPDATE で super_admin を凍結できた。いまは凍結の UPDATE を「super_admin でないままなら書く」条件つきにする
- * (NOT_SUPER_ADMIN_ROLES_FILTER。roles が NULL の利用者は super_admin でないので凍結できる)。
+ * 以前は条件なしの UPDATE で super_admin を凍結できた。いまは凍結の UPDATE を「読んだ時点の super_admin でない状態のままなら書く」
+ * 条件つきにする (読んだ roles が NULL なら .is('roles', null)、そうでなければ .not('roles', 'cs', SUPER_ADMIN_ROLES_LITERAL)。
+ * roles が NULL の利用者は super_admin でないので凍結できる。NULL を読んだあとで roles に値が入ったときは、念のため書かない)。
  *
  *  - POST /api/admin/users/{id}/freeze: 0 行なら読み直して、対象が無ければ 404、あれば 409 CONFLICT_STALE_DATA (書かず、監査も残さない)
  *  - applyUserBan (モデレーションの BAN): 0 行なら読み直して、無ければ kind 'not_found'、super_admin なら kind 'super_admin'、
  *    どちらでもなければ kind 'internal' (書いていないので成功にしない)
  *
  * 別の運営の操作は、user_profiles の更新が DB に送られる直前 (と直後) に割り込ませて再現する。
- * schema-checked-db は route が付けた .or の条件を実際に当てる (NULL の roles は is.null だけに合う。SQL と同じ)。
+ * schema-checked-db は route が付けた .is / .not の条件を実際に当てる (NULL の roles は not.cs に合わない。SQL と同じ)。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSchemaDb, type Row, type SchemaDb } from './helpers/schema-checked-db';
 import { profileRow, uuid } from './helpers/route-world';
-import { applyUserBan, NOT_SUPER_ADMIN_ROLES_FILTER } from '@/lib/admin/user-ban';
+import { applyUserBan, SUPER_ADMIN_ROLES_LITERAL } from '@/lib/admin/user-ban';
 
 const mockRequireRole = vi.fn();
 
@@ -118,15 +119,28 @@ describe('POST /api/admin/users/{id}/freeze', () => {
     expect(auditRows()[0].action_type).toBe('admin.user.ban');
     const updates = serviceDb.recorded('user_profiles', 'update');
     expect(updates).toHaveLength(1);
-    expect(updates[0].or).toEqual([NOT_SUPER_ADMIN_ROLES_FILTER]);
+    expect(updates[0].not).toEqual([['roles', 'cs', SUPER_ADMIN_ROLES_LITERAL]]);
+    expect(updates[0].isNull).toEqual([]);
   });
 
-  it('roles が NULL の利用者は super_admin でないので凍結できる (200)', async () => {
+  it('roles が NULL の利用者は super_admin でないので凍結できる (200。条件は roles が NULL のまま)', async () => {
     setup(profileRow(TARGET_ID, { roles: null }));
     const res = await freeze();
     expect(res.status).toBe(200);
     expect(targetNow()?.frozen_at).toEqual(expect.any(String));
     expect(auditRows()).toHaveLength(1);
+    const updates = serviceDb.recorded('user_profiles', 'update');
+    expect(updates[0].isNull).toEqual(['roles']);
+    expect(updates[0].not).toEqual([]);
+  });
+
+  it('NULL の roles を読んだあとで super_admin でないロールが入った: 念のため書かず 409 (監査も残さない)', async () => {
+    setup(profileRow(TARGET_ID, { roles: null }));
+    beforeProfileUpdate = otherOperatorSetsRoles(['user']);
+    const res = await freeze();
+    expect(res.status).toBe(409);
+    expect(targetNow()?.frozen_at).toBeNull();
+    expect(auditRows()).toHaveLength(0);
   });
 
   it('読んだ時点で super_admin なら 403 OP_TARGET_PROTECTED (書かない)', async () => {
@@ -192,7 +206,7 @@ describe('applyUserBan (モデレーションの BAN)', () => {
     const result = await ban();
     expect(result.success).toBe(true);
     expect(targetNow()?.frozen_at).toEqual(expect.any(String));
-    expect(serviceDb.recorded('user_profiles', 'update')[0].or).toEqual([NOT_SUPER_ADMIN_ROLES_FILTER]);
+    expect(serviceDb.recorded('user_profiles', 'update')[0].not).toEqual([['roles', 'cs', SUPER_ADMIN_ROLES_LITERAL]]);
   });
 
   it('roles が NULL の利用者も BAN できる', async () => {
