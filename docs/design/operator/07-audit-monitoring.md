@@ -330,7 +330,7 @@ super_admin.app_logs.list           - アプリログの一覧・本文の検索
 - 運営の家族・組織の緊急操作 (/api/operator/membership/*。RPC が書く membership_audit とは別に記録する):
   `super_admin.organization.dissolve` (severity=critical) / `super_admin.organization.transfer_admin` (warn。下の一覧の名前) /
   `super_admin.family.dissolve` (critical) / `super_admin.family.transfer_representative` (warn)。
-  details: reason (譲渡は to_user_id / from_user_id も)。
+  details: reason (譲渡は to_user_id / from_user_id も。from_user_id は RPC が組織 / 家族の行を FOR NO KEY UPDATE でロックして読んだ旧オーナー / 旧代表者 (戻り値の old_owner_id / old_rep_id。membership_audit と同じ値。同時の譲渡があっても、その譲渡の直前の値。route が RPC の前に読んだ値は、戻り値が古い形 (migration の前の DB) のときだけ使う。#1917))。
 
 ```
 super_admin.plan.create             - プラン作成
