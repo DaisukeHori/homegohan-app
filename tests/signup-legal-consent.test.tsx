@@ -271,6 +271,7 @@ describe('サインアップ画面: Apple の登録 (段 B。docs/design/mobile/
   });
 
   it('signInWithOAuth が error を返すと、赤いバナーに固定の文', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
     mocks.signInWithOAuth.mockResolvedValue({ error: new Error('provider is not enabled') });
     await remountWithAppleSwitchOn();
     await act(async () => {
