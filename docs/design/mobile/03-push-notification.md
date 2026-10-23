@@ -452,7 +452,7 @@ sequenceDiagram
 | テスト | ファイル | 内容 |
 |--------|---------|------|
 | フォアグラウンドの表示と通知のタップ (#1049 F7-11) | `__tests__/components/NotificationRouter.test.tsx` | `setNotificationHandler` の表示の設定と、外したときの解除。タップ (起動中・終了からの起動) で `resolveNotificationHref` の行き先へ遷移する |
-| 通知の行き先 (#1049 F7-11) | `__tests__/lib/notification-route.test.ts` | `data.path` / `data.deep_link` の許す形・上位の画面への置き換え・`NOTIFICATION_ROUTES` の画面が `app/` に実在すること |
+| 通知の行き先 (#1049 F7-11) | `__tests__/lib/notification-route.test.ts` | `data.path` / `data.deep_link` の許す形・上位の画面への置き換え・`NOTIFICATION_ROUTES` の画面が `app/` に実在すること・静的な区間を動的な区間 (`:name`) より優先して当て、動的な区間の画面が飲み込む `app/` の静的な兄弟は `NOTIFICATION_ROUTES` か `NOTIFICATION_CLOSED_STATIC_ROUTES` に載っていること (#1612) |
 | Quiet Hours ロジック (サーバー) | `src/__tests__/lib/push/outbox.test.ts` (リポジトリの根からの相対。06 §10) | 22:00〜07:00 をまたぐ判定・`defer` の種類だけ延期し `send` の種類は夜でも送る |
 
 ### Manual テスト (必須)
