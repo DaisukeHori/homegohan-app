@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { isStaleDataConflict } from "@/lib/admin/api-error-message";
 
 // 一覧の 1 件 (概要)。問い合わせ本文と管理者メモは、詳細 (GET /api/admin/inquiries/[id]) でだけ返る
 interface InquirySummary {
@@ -43,16 +44,38 @@ const PAGE_SIZE = 50;
 // 管理者メモの最大文字数 (API の検証と同じ。超えると API が 400 を返す)
 const ADMIN_NOTES_MAX_LENGTH = 5000;
 
-// 失敗の理由 (API の error.message) があれば添えて、なければ HTTP ステータスを添える
-async function describeFailure(res: Response, summary: string): Promise<string> {
+/**
+ * ステータスの更新が 409 CONFLICT_STALE_DATA (読んでから書くまでに別の運営が先にこの問い合わせを変えた) で断られ、
+ * 一覧と開いている問い合わせの詳細を読み直したときの文 (#1917)。
+ * サーバーの文は「画面を開き直して」と頼む文なので使わない (画面が自分で読み直すため)。
+ * 管理者メモの入力欄が書きかけでなければ、入力欄も読み直した (いま保存されている) メモにする
+ */
+const STALE_UPDATE_MESSAGE =
+  "別の運営が先にこの問い合わせを更新していました。最新の内容を読み込み直したので、ステータスとメモを確かめてから、もう一度操作してください";
+
+/** STALE_UPDATE_MESSAGE の、管理者メモの入力欄が書きかけ (読み直しで消さずに残す) のときの文 (#1917) */
+const STALE_UPDATE_MESSAGE_DRAFT_KEPT = `${STALE_UPDATE_MESSAGE}（書きかけの管理者メモはそのまま残しています）`;
+
+// 失敗の応答の本文 (JSON でなければ null)
+async function readFailureBody(res: Response): Promise<unknown> {
   try {
-    const body = await res.json();
-    const message = body?.error?.message;
-    if (typeof message === "string" && message) return `${summary}（${message}）`;
+    return await res.json();
   } catch {
     // 本文が JSON でなければ HTTP ステータスで知らせる
+    return null;
   }
-  return `${summary}（HTTP ${res.status}）`;
+}
+
+// 失敗の理由 (API の error.message) があれば添えて、なければ HTTP ステータスを添える
+function failureMessageOf(body: unknown, status: number, summary: string): string {
+  const message =
+    typeof body === "object" && body !== null ? (body as { error?: { message?: unknown } }).error?.message : undefined;
+  if (typeof message === "string" && message) return `${summary}（${message}）`;
+  return `${summary}（HTTP ${status}）`;
+}
+
+async function describeFailure(res: Response, summary: string): Promise<string> {
+  return failureMessageOf(await readFailureBody(res), res.status, summary);
 }
 
 export default function SupportInquiriesPage() {
@@ -70,10 +93,37 @@ export default function SupportInquiriesPage() {
   const [adminNote, setAdminNote] = useState("");
   const [updating, setUpdating] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  // 更新が 409 CONFLICT_STALE_DATA で断られ、詳細を読み直した問い合わせの id (#1917)。
+  // 選び直す・閉じる・更新に成功すると消す
+  const [staleReloadedId, setStaleReloadedId] = useState<string | null>(null);
+  // その読み直しで、管理者メモの入力欄が書きかけだったので残したか (#1917)。
+  // 残したときだけ、書きかけのメモと保存されているメモが違えば、保存されているメモを入力欄の下に出す。
+  // 書きかけでなければ入力欄は読み直したメモになるので出さない
+  const [staleDraftKept, setStaleDraftKept] = useState(false);
+  // 管理者メモの入力欄のいまの値 (描画を待たずに読むための写し。入力欄は changeAdminNote / resetAdminNote でだけ変える)
+  const adminNoteRef = useRef("");
+  // 管理者メモの入力欄の初めの値 = 最後に読んだ (開いた・読み直した・保存した) メモ。
+  // 入力欄がこれと違えば書きかけ (409 のあとの読み直しで、書きかけのメモだけを残す。#1917)
+  const loadedNoteRef = useRef("");
   // 絞り込みを素早く切り替えたとき、古いリクエストの結果で一覧を上書きしないための連番
   const requestSeq = useRef(0);
   // 問い合わせを素早く選び直したとき、古い詳細の結果でパネルを上書きしないための連番
   const detailSeq = useRef(0);
+
+  // 管理者メモの入力欄を変える (運営の入力。初めの値は変えない = 書きかけになる)
+  const changeAdminNote = useCallback((value: string) => {
+    adminNoteRef.current = value;
+    setAdminNote(value);
+  }, []);
+
+  // 管理者メモの入力欄を読んだ (保存されている) メモにし、それを初めの値にする (書きかけでなくなる)
+  const resetAdminNote = useCallback(
+    (value: string) => {
+      loadedNoteRef.current = value;
+      changeAdminNote(value);
+    },
+    [changeAdminNote],
+  );
 
   // nextPage = 1 は一覧の取り直し、2 以降は「さらに読み込む」(末尾に追加)
   const fetchInquiries = useCallback(async (nextPage = 1) => {
@@ -134,9 +184,11 @@ export default function SupportInquiriesPage() {
   const openInquiry = useCallback(async (summary: InquirySummary) => {
     const seq = ++detailSeq.current;
     setSelectedInquiry({ ...summary, message: null, adminNotes: null });
-    setAdminNote("");
+    resetAdminNote("");
     setUpdateError(null);
     setDetailError(null);
+    setStaleReloadedId(null);
+    setStaleDraftKept(false);
     setDetailLoading(true);
     try {
       const res = await fetch(`/api/admin/inquiries/${summary.id}`);
@@ -150,7 +202,7 @@ export default function SupportInquiriesPage() {
       const data = await res.json();
       if (seq !== detailSeq.current) return;
       setSelectedInquiry(data.inquiry);
-      setAdminNote(data.inquiry.adminNotes || "");
+      resetAdminNote(data.inquiry.adminNotes || "");
     } catch (error) {
       console.error("Failed to fetch inquiry:", error);
       if (seq !== detailSeq.current) return;
@@ -158,7 +210,45 @@ export default function SupportInquiriesPage() {
     } finally {
       if (seq === detailSeq.current) setDetailLoading(false);
     }
-  }, []);
+  }, [resetAdminNote]);
+
+  // 開いている問い合わせの詳細だけを取り直す。更新が 409 CONFLICT_STALE_DATA で断られたあと (と、そのあとの「再試行」) に使う (#1917)。
+  // 管理者メモの入力欄は、書きかけ (初めの値から変えている) なら消さずに残し、書きかけでなければ読み直したメモにする
+  // (開いたときの古いメモを残すと、次の更新でそれを送り、別の運営が書いたメモを上書きしてしまうため)。
+  // 取得した時点で、API が閲覧を監査ログに残す (表示が古いまま操作させないために読み直す)
+  const reloadInquiryDetail = useCallback(async (inquiryId: string) => {
+    const seq = ++detailSeq.current;
+    setDetailError(null);
+    setDetailLoading(true);
+    try {
+      const res = await fetch(`/api/admin/inquiries/${inquiryId}`);
+      if (seq !== detailSeq.current) return;
+      if (!res.ok) {
+        const message = await describeFailure(res, "問い合わせの内容を取得できませんでした");
+        if (seq !== detailSeq.current) return; // 本文を読んでいる間に選び直し・閉じられていたら、古い失敗は捨てる
+        setDetailError(message);
+        return;
+      }
+      const data = await res.json();
+      if (seq !== detailSeq.current) return;
+      setSelectedInquiry(data.inquiry);
+      const savedNote: string = data.inquiry.adminNotes || "";
+      const draftKept = adminNoteRef.current !== loadedNoteRef.current;
+      setStaleDraftKept(draftKept);
+      if (draftKept) {
+        // 書きかけは残し、初めの値だけをいま保存されているメモにする (書きかけをそのメモと同じに直せば、書きかけでなくなる)
+        loadedNoteRef.current = savedNote;
+      } else {
+        resetAdminNote(savedNote);
+      }
+    } catch (error) {
+      console.error("Failed to reload inquiry:", error);
+      if (seq !== detailSeq.current) return;
+      setDetailError("問い合わせの内容を取得できませんでした（通信エラー）");
+    } finally {
+      if (seq === detailSeq.current) setDetailLoading(false);
+    }
+  }, [resetAdminNote]);
 
   const closeInquiry = () => {
     detailSeq.current += 1; // 取得中の詳細があっても、閉じたあとの結果は捨てる
@@ -166,6 +256,8 @@ export default function SupportInquiriesPage() {
     setDetailLoading(false);
     setDetailError(null);
     setUpdateError(null);
+    setStaleReloadedId(null);
+    setStaleDraftKept(false);
   };
 
   const handleStatusUpdate = async (inquiryId: string, newStatus: string) => {
@@ -182,12 +274,29 @@ export default function SupportInquiriesPage() {
       });
 
       if (!res.ok) {
+        const body = await readFailureBody(res);
+        if (isStaleDataConflict(res.status, body)) {
+          // 別の運営が先に変えていた (API は書いていない)。表示が古いので、一覧と開いている問い合わせの詳細を読み直し、
+          // その旨を出す (運営が手で読み直さなくてよいように。#1917)。書きかけの管理者メモは読み直しで消さない
+          // (書きかけでなければ、入力欄は読み直したメモになる。文もそれに合わせる)
+          const draftEdited = adminNoteRef.current !== loadedNoteRef.current;
+          setUpdateError(draftEdited ? STALE_UPDATE_MESSAGE_DRAFT_KEPT : STALE_UPDATE_MESSAGE);
+          const reloads: Promise<void>[] = [fetchInquiries()];
+          if (selectedInquiry?.id === inquiryId) {
+            setStaleReloadedId(inquiryId);
+            reloads.push(reloadInquiryDetail(inquiryId));
+          }
+          await Promise.all(reloads);
+          return;
+        }
         // 更新できていないのに、画面だけ新しいステータスに見えないようにする (#1121)
-        setUpdateError(await describeFailure(res, "更新に失敗しました"));
+        setUpdateError(failureMessageOf(body, res.status, "更新に失敗しました"));
         return;
       }
 
       const data = await res.json().catch(() => null);
+      setStaleReloadedId(null);
+      setStaleDraftKept(false);
       await fetchInquiries();
       if (selectedInquiry?.id === inquiryId) {
         setSelectedInquiry(prev => {
@@ -196,8 +305,8 @@ export default function SupportInquiriesPage() {
           if (data?.inquiry) return { ...prev, ...data.inquiry };
           return { ...prev, status: newStatus, adminNotes: adminNote || prev.adminNotes };
         });
-        // 管理者メモの入力欄は、保存された内容に合わせる
-        setAdminNote(data?.inquiry ? (data.inquiry.adminNotes || "") : adminNote);
+        // 管理者メモの入力欄は、保存された内容に合わせる (書きかけでなくなる)
+        resetAdminNote(data?.inquiry ? (data.inquiry.adminNotes || "") : adminNote);
       }
     } catch (error) {
       console.error("Failed to update inquiry:", error);
@@ -217,6 +326,13 @@ export default function SupportInquiriesPage() {
 
   // 本文と管理者メモを取得できている (メモの編集・ステータス変更をしてよい) 状態
   const detailReady = !detailLoading && !detailError;
+  // 409 のあとで詳細を読み直した問い合わせで、残した書きかけのメモが保存されているメモと違う (保存されているメモも見せる。#1917)
+  const savedNotesDiffer =
+    selectedInquiry !== null &&
+    staleReloadedId === selectedInquiry.id &&
+    staleDraftKept &&
+    detailReady &&
+    (selectedInquiry.adminNotes ?? "") !== adminNote;
 
   return (
     <div className="space-y-6">
@@ -361,7 +477,12 @@ export default function SupportInquiriesPage() {
                   >
                     <span>{detailError}</span>
                     <button
-                      onClick={() => openInquiry(selectedInquiry)}
+                      onClick={() =>
+                        // 409 のあとの読み直しに失敗したときは、詳細だけを取り直す (書きかけのメモは残す。#1917)
+                        staleReloadedId === selectedInquiry.id
+                          ? reloadInquiryDetail(selectedInquiry.id)
+                          : openInquiry(selectedInquiry)
+                      }
                       className="underline whitespace-nowrap hover:text-red-900"
                     >
                       再試行
@@ -381,13 +502,19 @@ export default function SupportInquiriesPage() {
                 {/* 既存のメモを読み込むまでは入力させない (見えていないメモを上書きしないため) */}
                 <textarea
                   value={adminNote}
-                  onChange={(e) => setAdminNote(e.target.value)}
+                  onChange={(e) => changeAdminNote(e.target.value)}
                   disabled={!detailReady}
                   className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-700 resize-none focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:opacity-50"
                   rows={3}
                   maxLength={ADMIN_NOTES_MAX_LENGTH}
                   placeholder="対応メモを入力..."
                 />
+                {savedNotesDiffer && (
+                  <div data-testid="inquiry-saved-notes" className="mt-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-sm">
+                    <p className="text-xs text-amber-700 mb-1">いま保存されている管理者メモ（入力欄は書きかけのまま残しています）</p>
+                    <p className="text-gray-700 whitespace-pre-wrap">{selectedInquiry.adminNotes || "（なし）"}</p>
+                  </div>
+                )}
               </div>
 
               <div>

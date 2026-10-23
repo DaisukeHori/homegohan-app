@@ -14,6 +14,21 @@ export type Database = {
   }
   public: {
     Tables: {
+      account_deletion_guards: {
+        Row: {
+          started_at: string
+          user_id: string
+        }
+        Insert: {
+          started_at?: string
+          user_id: string
+        }
+        Update: {
+          started_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       admin_audit_logs: {
         Row: {
           action_type: string
@@ -8486,6 +8501,10 @@ export type Database = {
         Returns: string
       }
       auth_session_revoke: { Args: { p_session_id: string }; Returns: string }
+      begin_account_deletion_guard: {
+        Args: { p_user_id: string }
+        Returns: undefined
+      }
       begin_account_deletion_record: {
         Args: {
           p_executor_type: string

@@ -177,6 +177,14 @@ export async function POST(request: Request) {
     .single();
 
   if (insertError || !org) {
+    // 退会の途中の人はオーナーにしない (#1917 の続き。DB のトリガー organizations_owner_not_deleting が INSERT を止める。
+    // supabase/migrations/20261023130000_account_deletion_owner_guard.sql)。作らずに 409 で返す
+    if (isOwnerAccountDeletingError(insertError)) {
+      return NextResponse.json(
+        { error: { code: OWNER_ACCOUNT_DELETING, message: '指定した owner は退会の手続き中です' } },
+        { status: 409 },
+      );
+    }
     console.error('[api/admin/organizations] POST insert error:', insertError?.message);
     return NextResponse.json(
       { error: { code: 'INTERNAL_ERROR', message: '組織の作成に失敗しました' } },
@@ -294,4 +302,21 @@ function listFailedResponse() {
     { error: { code: 'INTERNAL_ERROR', message: '組織の一覧を取得できませんでした' } },
     { status: 500 },
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// POST の道具
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** DB 関数・トリガーが RAISE EXCEPTION '<コード>' USING ERRCODE = 'P0001' で止めたときの SQLSTATE */
+const PG_RAISE_EXCEPTION = 'P0001';
+/**
+ * 作る組織のオーナーが退会の途中 (退会の印 account_deletion_guards が新しい) のときに、トリガー organizations_owner_not_deleting が
+ * RAISE するコード (supabase/migrations/20261023130000_account_deletion_owner_guard.sql)。応答の code にもそのまま使う
+ */
+const OWNER_ACCOUNT_DELETING = 'OWNER_ACCOUNT_DELETING';
+
+/** 組織の INSERT が、オーナーが退会の途中なので止められたか (P0001 で、メッセージがそのコード) */
+function isOwnerAccountDeletingError(error: { code?: string; message?: string } | null): boolean {
+  return error?.code === PG_RAISE_EXCEPTION && error.message === OWNER_ACCOUNT_DELETING;
 }

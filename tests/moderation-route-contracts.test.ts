@@ -321,7 +321,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
       meals: [{ data: { paste_group_id: null, photo_url: null, memo: null }, error: null }, { data: [{ id: 'meal-1' }], error: null }],
       user_profiles: [
         { data: { id: 'owner-x', roles: ['user'] }, error: null }, // applyUserBan: 存在確認
-        { data: null, error: null }, // applyUserBan: frozen_at 更新
+        { data: { id: 'owner-x' }, error: null }, // applyUserBan: frozen_at 更新 (super_admin でない条件つき。1 行を返す)
       ],
       admin_audit_logs: [{ data: null, error: null }],
     });
@@ -479,7 +479,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
       ],
       user_profiles: [
         { data: { id: 'owner-y', roles: ['user'] }, error: null },
-        { data: null, error: null },
+        { data: { id: 'owner-y' }, error: null },
       ],
       admin_audit_logs: [{ data: null, error: null }],
     });
@@ -585,7 +585,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
       ],
       user_profiles: [
         { data: { id: 'owner-x', roles: ['user'] }, error: null },
-        { data: null, error: null },
+        { data: { id: 'owner-x' }, error: null },
       ],
       admin_audit_logs: [{ data: null, error: null }],
     });
@@ -733,7 +733,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
     fakeSupabase = createFakeSupabase({
       moderation_flags: [{ data: foodFlagRow(), error: null }, ok],
       meals: [mealLookup, mealHidden],
-      user_profiles: [{ data: { id: 'owner-x', roles: ['user'] }, error: null }, ok],
+      user_profiles: [{ data: { id: 'owner-x', roles: ['user'] }, error: null }, { data: { id: 'owner-x' }, error: null }],
       admin_audit_logs: [ok],
     });
 

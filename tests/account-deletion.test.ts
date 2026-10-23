@@ -5,7 +5,7 @@
  *
  * 確認すること:
  *   - 組織のオーナー / 家族の代表者は、従来と同じ 409 の形で止まり、何も呼ばない
- *   - 順序: 確認 → prepare_account_deletion → release_user_membership → Storage → 削除の実行記録を始める
+ *   - 順序: 退会の印 (begin_account_deletion_guard。#1917 の続き) → 確認 → prepare_account_deletion → release_user_membership → Storage → 削除の実行記録を始める
  *     (begin_account_deletion_record) → auth.admin.deleteUser → 記録に済んだ印 (complete_account_deletion_record) (#1562)
  *   - 削除の実行記録: 本人の退会は executor 'self' / 理由 'user_request'、運営の削除は 'operator' と運営者の id。
  *     記録を始められなければ削除しない。済んだ印の失敗は退会の結果を変えない (アカウントはもう消えている)
@@ -82,6 +82,7 @@ function makeWorld(overrides: Partial<World> = {}): World {
     calls: [],
     tables: { organizations: { data: [] }, family_groups: { data: [] } },
     rpc: {
+      begin_account_deletion_guard: { data: null },
       prepare_account_deletion: { data: { email_delivery_logs: 1 } },
       release_user_membership: { data: null },
       begin_account_deletion_record: { data: RECORD_ID },
@@ -188,7 +189,7 @@ const run = (extra: Record<string, unknown> = {}) =>
   deleteAccount({ userId: USER, admin: makeAdmin(world), requestId: REQUEST_ID, logger: logs.logger, billing: makeBilling(world), ...extra });
 
 describe('deleteAccount: 409 (従来と同じ形)', () => {
-  it('組織のオーナーは ACCOUNT_DELETE_BLOCKED_ORG_OWNER。何も呼ばない', async () => {
+  it('組織のオーナーは ACCOUNT_DELETE_BLOCKED_ORG_OWNER。退会の印のほかは何も呼ばない', async () => {
     world.tables.organizations = { data: [{ id: 'org-1', name: '株式会社テスト' }] };
     const result = await run();
 
@@ -199,7 +200,7 @@ describe('deleteAccount: 409 (従来と同じ形)', () => {
       message: '組織のオーナーです。先にオーナーを譲渡するか組織を解散してください。',
       organization: { id: 'org-1', name: '株式会社テスト' },
     });
-    expect(world.calls).toEqual(['from:organizations']);
+    expect(world.calls).toEqual(['rpc:begin_account_deletion_guard', 'from:organizations']);
     expect(httpOf(result)).toEqual({
       status: 409,
       body: {
@@ -210,7 +211,7 @@ describe('deleteAccount: 409 (従来と同じ形)', () => {
     });
   });
 
-  it('家族グループの代表者は ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE。何も呼ばない', async () => {
+  it('家族グループの代表者は ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE。退会の印のほかは何も呼ばない', async () => {
     world.tables.family_groups = { data: [{ id: 'fg-1', name: 'うちの家族' }] };
     const result = await run();
 
@@ -221,7 +222,7 @@ describe('deleteAccount: 409 (従来と同じ形)', () => {
       message: '家族グループの代表者です。先に代表者を譲渡するか家族グループを解散してください。',
       family_group: { id: 'fg-1', name: 'うちの家族' },
     });
-    expect(world.calls).toEqual(['from:organizations', 'from:family_groups']);
+    expect(world.calls).toEqual(['rpc:begin_account_deletion_guard', 'from:organizations', 'from:family_groups']);
     expect(httpOf(result).body).toEqual({
       error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE',
       message: '家族グループの代表者です。先に代表者を譲渡するか家族グループを解散してください。',
@@ -233,12 +234,53 @@ describe('deleteAccount: 409 (従来と同じ形)', () => {
     world.tables.organizations = { error: { message: SECRET_DB_MESSAGE } };
     const result = await run();
     expect(result).toMatchObject({ ok: false, status: 500, error: 'ACCOUNT_DELETE_FAILED', step: 'check_blockers' });
-    expect(world.calls).toEqual(['from:organizations']);
+    expect(world.calls).toEqual(['rpc:begin_account_deletion_guard', 'from:organizations']);
 
     world = makeWorld({ tables: { organizations: { data: [] }, family_groups: { error: { message: SECRET_DB_MESSAGE } } } });
     const second = await run();
     expect(second).toMatchObject({ ok: false, error: 'ACCOUNT_DELETE_FAILED', step: 'check_blockers' });
     expect(world.calls).not.toContain('auth.deleteUser');
+  });
+});
+
+describe('deleteAccount: 退会の印 (#1917 の続き。supabase/migrations/20261023130000_account_deletion_owner_guard.sql)', () => {
+  it('印は findBlocker より先に、本人の id で付ける (印のあとに運営が作る組織は DB が止め、印より先に作られた組織は findBlocker が読む)', async () => {
+    const result = await run();
+
+    expect(result).toEqual({ ok: true });
+    expect(world.calls[0]).toBe('rpc:begin_account_deletion_guard');
+    expect(world.calls.indexOf('rpc:begin_account_deletion_guard')).toBeLessThan(world.calls.indexOf('from:organizations'));
+    expect(world.calls.filter((call) => call === 'rpc:begin_account_deletion_guard')).toHaveLength(1);
+    expect(world.rpcArgs.begin_account_deletion_guard).toEqual({ p_user_id: USER });
+  });
+
+  it('印のあと findBlocker までに運営が組織を作っていた (印が作成の commit を待った): 409 で止め、取り消せない段へ進まない', async () => {
+    world.afterRpc = {
+      begin_account_deletion_guard: (target) => {
+        target.tables.organizations = { data: [{ id: 'org-3', name: '運営が作った組織' }] };
+      },
+    };
+    const result = await run();
+
+    expect(result).toMatchObject({ ok: false, status: 409, error: 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER', organization: { id: 'org-3' } });
+    expect(world.calls).toEqual(['rpc:begin_account_deletion_guard', 'from:organizations']);
+  });
+
+  it('印を付けられなければ (DB の失敗)、確かめないまま進まず ACCOUNT_DELETE_FAILED (step: check_blockers)。生のエラー文を結果に入れない', async () => {
+    world.rpc.begin_account_deletion_guard = { error: { message: SECRET_DB_MESSAGE, code: '42883' } };
+    const result = await run();
+
+    expect(result).toEqual(accountDeletionFailure(REQUEST_ID, 'check_blockers'));
+    expect(JSON.stringify(result)).not.toContain('secret_constraint');
+    expect(world.calls).toEqual(['rpc:begin_account_deletion_guard']);
+  });
+
+  it('印の呼び出しが例外を投げても ACCOUNT_DELETE_FAILED (step: check_blockers)。billing・prepare・deleteUser を呼ばない', async () => {
+    world.rpc.begin_account_deletion_guard = { throws: true };
+    const result = await run();
+
+    expect(result).toEqual(accountDeletionFailure(REQUEST_ID, 'check_blockers'));
+    expect(world.calls).toEqual(['rpc:begin_account_deletion_guard']);
   });
 });
 
@@ -249,7 +291,8 @@ describe('deleteAccount: 成功', () => {
 
     expect(result).toEqual({ ok: true });
     const order = world.calls.filter((call) => !call.startsWith('storage.list'));
-    expect(order.slice(0, 5)).toEqual([
+    expect(order.slice(0, 6)).toEqual([
+      'rpc:begin_account_deletion_guard',
       'from:organizations',
       'from:family_groups',
       'billing:billing',
@@ -441,6 +484,7 @@ describe('deleteAccount: 失敗の扱い', () => {
       organization: { id: 'org-2', name: '譲渡された組織' },
     });
     expect(world.calls).toEqual([
+      'rpc:begin_account_deletion_guard',
       'from:organizations',
       'from:family_groups',
       'billing:billing',
