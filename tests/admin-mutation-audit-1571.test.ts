@@ -197,11 +197,20 @@ describe('POST /api/admin/sales/leads/[id]/activities -> admin.sales.lead.activi
   });
 
   it('リードが無いとき (404) は記録しない', async () => {
-    userScopedClient = makeClient({ sales_leads: [{ data: null, error: { message: 'not found' } }] });
+    userScopedClient = makeClient({ sales_leads: [{ data: null, error: null }] });
 
     const res = await activitiesRoute.POST(jsonRequest(`/api/admin/sales/leads/${LEAD_ID}/activities`, 'POST', body), paramsOf(LEAD_ID));
 
     expect(res.status).toBe(404);
+    expect(userScopedClient.auditRows()).toHaveLength(0);
+  });
+
+  it('リードの読み込みが DB の失敗なら 500 (404 にしない) で、記録しない (#1917)', async () => {
+    userScopedClient = makeClient({ sales_leads: [{ data: null, error: { message: 'timeout', code: '57014' } }] });
+
+    const res = await activitiesRoute.POST(jsonRequest(`/api/admin/sales/leads/${LEAD_ID}/activities`, 'POST', body), paramsOf(LEAD_ID));
+
+    expect(res.status).toBe(500);
     expect(userScopedClient.auditRows()).toHaveLength(0);
   });
 

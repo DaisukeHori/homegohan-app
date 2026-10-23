@@ -339,7 +339,7 @@ BAN 解除
 ---
 
 ### POST /api/admin/organizations
-組織の作成 (運営)。実装は `src/app/api/admin/organizations/route.ts:109-234`
+組織の作成 (運営)。実装は `src/app/api/admin/organizations/route.ts:109-242`
 
 **リクエスト**:
 ```json
@@ -349,7 +349,7 @@ BAN 解除
 - `plan`: `ORG_PLAN_VALUES` (`standard` / `premium` / `enterprise`) のどれか。省略すると `ORG_PLAN_DEFAULT` (`standard`)
 - `owner_id`: 省略すると呼び出した運営をオーナーにする (作る組織は active なので `organizations.owner_id` は NOT NULL)
 
-**処理**: service_role (`getSupabaseAdmin`) で、organizations の行・`org_license_pools` の行 (`total_licenses` = NULL・`used_licenses` = 0。失敗してもログだけで続ける)・オーナーの `user_profiles` (`organization_id` と `org_role = 'owner'`) を書く
+**処理**: service_role (`getSupabaseAdmin`) で、organizations の行・`org_license_pools` の行 (`total_licenses` = NULL・`used_licenses` = 0。失敗してもログだけで続ける)・オーナーの `user_profiles` (`organization_id` と `org_role = 'owner'`) を書く。オーナーにする人が退会の途中 (退会の本体が findBlocker の前に付ける退会の印が新しい) なら、organizations の行の INSERT を DB のトリガー `organizations_owner_not_deleting` が止め、何も書かずに 409 `OWNER_ACCOUNT_DELETING` を返す (#1917 の続き。退会の最後の `deleteUser` が `organizations_owner_id_fkey` (RESTRICT) で失敗しないように)
 
 **レスポンス**: `{ "organization": { "id", "name", "plan", "owner_id", "created_at", "updated_at" } }`
 
@@ -362,8 +362,8 @@ BAN 解除
 | 400 | `VALIDATION_ERROR` / `INVALID_JSON` / `INVALID_CHARACTER` | 本文が JSON でない (:136-139)・Zod の検査に通らない (:144-147)・本文に NULL 文字がある (:111-112) |
 | 401 | `AUTH_UNAUTHENTICATED` | 未ログイン (:119) |
 | 403 | `OP_PERMISSION_DENIED` | `admin` / `super_admin` でない (:125) |
-| 409 | `OWNER_ALREADY_IN_ORG` | オーナーにする人がすでに別の組織に所属している (:167-170) |
-| 500 | `INTERNAL_ERROR` | 組織の行の作成 (:181-184)・オーナーの `user_profiles` の更新 (:214-217) に失敗 |
+| 409 | `OWNER_ALREADY_IN_ORG` / `OWNER_ACCOUNT_DELETING` | オーナーにする人がすでに別の組織に所属している (:167-170) / オーナーにする人が退会の手続き中 (退会の印 `account_deletion_guards` があり、DB のトリガー `organizations_owner_not_deleting` が組織の行の INSERT を止めた。`supabase/migrations/20261023130000_account_deletion_owner_guard.sql`。:181-186。文は「指定した owner は退会の手続き中です」。#1917 の続き) |
+| 500 | `INTERNAL_ERROR` | 組織の行の作成 (:189-192)・オーナーの `user_profiles` の更新 (:222-225) に失敗 |
 
 **権限**: `admin`, `super_admin`
 
@@ -767,7 +767,7 @@ LLM 使用量ダッシュボード (super_admin のみ)
 - `daily_limit`: 0 以上 10,000 以下の整数。`null` は無制限
 - `reason`: 変更の理由 (監査ログに残す)
 - 同時の保存: 監査ログの `before` は保存の前に読んだ値なので、保存は「読んだ値のままなら書く」条件つきにする (行があれば読んだ `daily_limit` のままのときだけ更新、無ければ作るだけ = 同じキーの行が先にできていたら何もしない)。
-  0 行なら読み直し、今の値が送られた値と同じなら 200 (書かず、監査ログも残さない)、違えば 409 `CONFLICT_STALE_DATA` (cross/04 §4.2)。`before` は書いた時点の実際の直前の値と必ず一致する
+  0 行なら読み直し、今の値が送られた値と同じなら 200 (書かず、監査ログも残さない)、違えば 409 `CONFLICT_STALE_DATA` (cross/04 §4.2)。`before` は書いた時点の実際の直前の値と必ず一致する。画面 (`/super-admin/llm/quotas`) は 409 `CONFLICT_STALE_DATA` を受けたら一覧を読み直していまの上限を出し、行に画面の文を出す (書きかけの行は残す。#1917)
 
 ---
 
@@ -983,7 +983,7 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 - 同時の更新: 書くときは「直前に読んだ `status` と `updated_at` のままなら書く」条件つきにする (`updated_at` は UPDATE のたびにトリガーで進む。`NULL` なら `.is` で比べる)。
   0 行なら読み直し、送った項目 (`status` / 正規化した `adminNotes`) がどれも今の値と同じなら 200 で今の行を返し (書かない。本文を返すので `changed: false` として記録する)、
   違えば 409 `CONFLICT_STALE_DATA` (書かず、記録もしない)。監査の `status_from` と `resolved_at` の元にした値は、書いた時点の実際の直前の値と必ず一致し、
-  読んでから書くまでの間に別の運営が書いた管理者メモを上書きしない (条件は API が読んだ値で、画面を開いてから保存するまでの変更は見分けない)。読み直しの失敗は 500、行が消えていれば 404
+  読んでから書くまでの間に別の運営が書いた管理者メモを上書きしない (条件は API が読んだ値で、画面を開いてから保存するまでの変更は見分けない)。読み直しの失敗は 500、行が消えていれば 404。Web の画面 (`/support/inquiries`) は 409 `CONFLICT_STALE_DATA` を受けたら一覧と開いている問い合わせの詳細を読み直し、画面の文 (読み込み直した旨) を出す。管理者メモの入力欄は、書きかけ (開いた・読み直した・保存したときのメモから変えている) なら読み直しで消さず、保存されているメモと違えば入力欄の下に出す。書きかけでなければ入力欄を読み直したメモにする (開いたときの古いメモを次の更新で送り、別の運営が書いたメモを上書きしないため。#1917。`src/app/(support)/support/inquiries/page.tsx`)
 
 エラーコードは `VALIDATION_ERROR` / `INVALID_JSON` (400)、`AUTH_UNAUTHENTICATED` (401)、`OP_PERMISSION_DENIED` (403)、`NOT_FOUND` (404)、`CONFLICT_STALE_DATA` (409)、`INTERNAL_ERROR` (500)。
 
@@ -1221,15 +1221,15 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 ### PATCH /api/admin/sales/leads/{id}
 リード更新 (ステージ変更含む)
 
-- ステージを変えると、活動履歴 (`sales_lead_activities`) に `stage_change` (`details: { from_stage, to_stage }`) を残す
+- ステージを変えると、活動履歴 (`sales_lead_activities`) に `stage_change` (`details: { from_stage, to_stage }`) を残す (この書き込みに失敗しても、リードは更新できているので 200 のまま (監査ログと同じ fail-open)。失敗は db-logger に error で残す。#1917)
 - 同時の更新: 本文に `stage` があるときは「直前に読んだ `stage` のままなら書く」条件つきにする。0 行なら読み直し、リードがあれば 409 `CONFLICT_STALE_DATA`
   (書かず、活動履歴も監査ログも残さない)、無ければ 404。`from_stage` は書いた時点の実際の直前のステージと必ず一致する。`stage` が無い更新には条件を付けない
-- 読み込み・更新・読み直しの DB の失敗は 500 `INTERNAL_ERROR` (404 にしない)
+- 読み込み・更新・読み直しの DB の失敗は 500 `INTERNAL_ERROR` (404 にしない)。UUID の形でない id は DB に渡さず 404 `NOT_FOUND` (本文の検査の 400 のあと。uuid 型の列に渡すと 22P02 で「DB の失敗」に入るため。#1917)。詳細の `GET /api/admin/sales/leads/{id}` も同じで、リード・活動履歴の読み込みの DB の失敗は 500 (404 は行が無いとき (UUID の形でない id を含む) だけ。活動履歴の読み込みの失敗を空の履歴にしない。#1917)
 
 ---
 
 ### POST /api/admin/sales/leads/{id}/activities
-活動記録追加
+活動記録追加。リードの読み込みの DB の失敗は 500 `INTERNAL_ERROR` (404 は行が無いとき (UUID の形でない id を含む。DB に渡さず、本文の検査の 400 のあとに 404) だけ)。追加のあとのリードの `updated_at` の更新に失敗しても、活動は追加できているので 201 のまま (失敗は db-logger に error で残す。#1917)
 
 **リクエスト**:
 ```json

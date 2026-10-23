@@ -829,7 +829,7 @@ $$);
      ブリッジのコードは /api/auth の prefix の行 (auth_flow) で止めない。
      凍結中は同意の画面に進めないため。凍結の判定で通るパスがすべて同意の許可リストにあることは
      lib/supabase/__tests__/middleware-legal-consent-api.test.ts が全 route で確かめる)
-3. 削除をブロックする条件 (409):
+3. 削除をブロックする条件 (409。判定の前に退会の印を付ける: RPC begin_account_deletion_guard。印のある人を運営がオーナーにして組織を作ろうとすると DB のトリガーが止める。supabase/migrations/20261023130000_account_deletion_owner_guard.sql。#1917 の続き):
    - 組織の owner → ACCOUNT_DELETE_BLOCKED_ORG_OWNER
      (先に owner を譲渡するか、組織を解散する)
    - 家族グループの代表者 → ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE
@@ -842,7 +842,7 @@ $$);
      (メール配信ログ・問い合わせ・組織/家族の招待・家族の昇格リクエスト。pending の招待は revoked にする。失敗したら削除しない)
      送信待ち (email_outbox。#1193・docs/design/operator/10-logs-and-mail-retry.md §5.3 の 1b・1c): 本人の行 (user_id か宛先が本人) は
      宛先・件名・本文を伏せ、queued は dead (recipient_deleted) にする。他人宛の行は、件名・本文・返信先の中の本人のアドレスの部分だけを伏せ、状態は変えない
-   - ライセンス席の解放: RPC release_user_membership (失敗しても削除は続ける。ただし IS_ORG_OWNER (直前にオーナーになっていた) は確認をやり直して 409 で止め (オーナーでなくなっていたら削除せず失敗にする)、CONFLICT_RETRY (所属の組織が途中で変わった) は削除せず失敗にする。src/lib/account-deletion.ts:345-361)
+   - ライセンス席の解放: RPC release_user_membership (失敗しても削除は続ける。ただし IS_ORG_OWNER (直前にオーナーになっていた) は確認をやり直して 409 で止め (オーナーでなくなっていたら削除せず失敗にする)、CONFLICT_RETRY (所属の組織が途中で変わった) は削除せず失敗にする。src/lib/account-deletion.ts:349-365)
    - Storage のファイル削除: meal_photos / fridge-images / health-checkups の `<user_id>/` 以下、旧パス、
      DB の URL が指す本人のファイル (失敗したら削除しない)
    - 削除の実行記録を始める (#1562): RPC begin_account_deletion_record。`gdpr_deletion_requests` に、利用者の id の
