@@ -15,8 +15,9 @@
  * 別の運営が変えていたら 0 行。updated_at は inquiries の UPDATE のたびにトリガー trigger_inquiries_updated_at が進める)。
  * 0 行なら読み直し、送られた変更がすでに入っていれば書かずに今の行を返し (変更なしとして記録する)、
  * 入っていなければ 409 CONFLICT_STALE_DATA (cross/04 §4.2)。これで監査の status_from と resolved_at の元にした値は、
- * 書いた時点の実際の直前の値と必ず一致し、別の運営が書いた管理者メモを古い画面のメモで黙って上書きしない。
+ * 書いた時点の実際の直前の値と必ず一致し、読んでから書くまでの間に別の運営が書いた管理者メモを黙って上書きしない。
  * (管理者メモ自体を条件にしないのは、最大 5000 文字のメモが PostgREST の URL に入ってしまうため。updated_at で足りる)
+ * 条件はこの要求の中で読んだ値なので、画面を開いてから保存するまでの間の変更は見分けない (画面が読んだ updated_at を送る形にはしていない)。
  */
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';

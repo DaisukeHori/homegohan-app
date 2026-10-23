@@ -1079,9 +1079,9 @@ describe.each([
       expect(world.tables.admin_audit_logs).toEqual([]);
     });
 
-    it('別の運営が管理者メモを書いていたら、古い画面のメモで上書きしない (409)', async () => {
+    it('読んでから書くまでに別の運営が管理者メモを書いていたら、上書きしない (409)', async () => {
       changeByOtherOperator(I2, { admin_notes: '別の運営の追記' });
-      const res = await send(I2, { adminNotes: '古い画面からのメモ' });
+      const res = await send(I2, { adminNotes: 'こちらのメモ' });
       expect(res.status).toBe(409);
       expect((await json(res)).error.code).toBe('CONFLICT_STALE_DATA');
       expect(stored(I2).admin_notes).toBe('別の運営の追記');
