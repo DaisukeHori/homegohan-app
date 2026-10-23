@@ -224,15 +224,18 @@ describe('Zod の検証の文に、括弧の外の英字の項目名が無い (s
     (file) => !isMachineFacing(file) && !/(^|\/)__tests__\//.test(file),
   );
 
-  it('走査するファイルに、以前に違反があったファイルを含む (配下の取り違えで空振りしない)', () => {
-    expect(files).toEqual(
-      expect.arrayContaining([
-        'src/lib/super-admin/plans-schemas.ts',
-        'src/lib/data-subject-requests/core.ts',
-        'src/lib/admin/inquiries.ts',
-        'src/app/api/contact/route.ts',
-      ]),
-    );
+  /** 以前に違反があったファイルと、直したあとの文 (走査が実のファイルの Zod の文に届いていることを確かめる。import 元の const も含む) */
+  const FIXED_TEXTS: ReadonlyArray<readonly [string, string]> = [
+    ['src/lib/super-admin/plans-schemas.ts', PRICE_APPLIES_TO_MESSAGE],
+    ['src/lib/data-subject-requests/core.ts', '請求の種類 (request_type) の値が不正です'],
+    ['src/lib/admin/inquiries.ts', '対応の状態 (status) か管理者メモ (adminNotes) のどちらかを指定してください'],
+    ['src/lib/super-admin/app-logs.ts', '開始の日時 (from) は終了の日時 (to) 以前の日時にしてください'],
+    ['src/app/api/contact/route.ts', 'お問い合わせの種類 (inquiryType) の値が不正です'],
+  ];
+
+  it.each(FIXED_TEXTS)('走査は %s の Zod の文「%s」を集める (配下の取り違え・読み落としで空振りしない)', (file, text) => {
+    expect(files).toContain(file);
+    expect(findValidationMessageTexts(file).map((found) => found.text)).toContain(text);
   });
 
   it('見ないファイルの一覧は実在し、Zod の文を持つ (古くなった一覧を残さない)', () => {
