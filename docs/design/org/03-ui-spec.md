@@ -42,7 +42,7 @@ invite/
 (org)/ の共通のレイアウト (`src/app/(org)/layout.tsx`) のサイドバーの見出しは、組織の名前と組織のプラン (organizations.plan) を出す。プランは `src/lib/org-plans.ts` の `orgPlanLabel` を通した日本語の名前で出し、表に無い値・null は「-」 (内部の値や固定の英語を出さない。§20 の PlanSummary と同じ)。
 
 ## 4. `/org` — ダッシュボード
-
+**未実装の旧案** (§4.1〜§4.3 の全部): いまの `src/app/(org)/org/dashboard/page.tsx` は、見出し「ダッシュボード」・副題「組織のメンバー数」・メンバー数 (`GET /api/org/stats`。所属組織の org_role が owner / admin のときだけ。`requireOrgAdmin`) だけを出すクライアントの画面 (`"use client"`) で、開いたときに 1 回読む。組織の集計 (活力スコアなど) と部署別の表示は止めている (#1325 / #1120)。期間セレクタ・KPI カード・推移のグラフ・部署のヒートマップ・アラート・最近の動き・月次レポートのボタンは無く、`src/app/api/org` に reports の route も無い (Upstash のキャッシュ・`?period=` も無い)。下の構成は旧案の記録として残す。
 ### 4.1 画面概要
 
 - **アクセス**: `org_admin`, `org_manager`, `org_viewer`
@@ -503,12 +503,12 @@ OrgSettingsPage
 | D11 産業医招待 | `/org/invites` → role=org_industrial_doctor |
 | D12 部署マスター登録 + 50 人配属 | `/org/departments` + move-members |
 | D13 チャレンジ開催 1 ヶ月 | `/org/challenges` → 新規作成ウィザード |
-| D14 月次レポート PDF | `/org/dashboard` → MonthlyReportButton |
+| D14 月次レポート PDF | `/org/dashboard` → MonthlyReportButton (未実装の旧案。いまの `/org/dashboard` はメンバー数だけで、月次レポートの route も無い。§4) |
 | D15 全社員 Slack 通知 | `/org/settings` → Slack Webhook 設定 |
 | E1 個人 family_group 同梱 | 自動付与 (通知のみ) |
 | E2 副業 2 社所属 | `GET /api/org/me` で複数組織情報返却 |
 | E3 個人 Pro + 組織 Pro 重複 | `/account/billing` に一時停止モーダル表示 |
-| E4 部署別レポート確認 | `/org/dashboard` 部署フィルタ |
+| E4 部署別レポート確認 | `/org/dashboard` 部署フィルタ (未実装の旧案。部署別の表示は止めている (#1325 / #1120)。§4) |
 | E5 org_viewer CSV エクスポート | `/org/licenses/usage-report` → ExportButtons |
 | E6 産業医健康指導 | `/org/health/{userId}` → AiAdviceButton |
 | E7 産業医別組織アクセス試行 | `403 ORG_PERMISSION_DENIED` バナー表示 |
