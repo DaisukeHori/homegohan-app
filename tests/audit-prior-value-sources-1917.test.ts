@@ -5,18 +5,20 @@
  * 2 人の運営がほぼ同時に同じ行を変えると、あとの変更の記録の「変更前の値」が、実際の直前の値 (先の変更の後の値) と食い違う。
  * 直し方は 2 通り: DB の関数が対象の行をロックして読んだ値を返す (locked_rpc) か、読んだ値を条件にして更新し 0 行なら書かない (cas)。
  *
- * (a) src の .ts / .tsx (src/types/database.types.ts・__tests__ を除く) で、監査・履歴を書く呼び出し
+ * (a) src の .ts / .tsx (src/types/database.types.ts・__tests__ のディレクトリ・*.test.ts(x) を除く) で、監査・履歴を書く呼び出し
  *     (record...Audit(...) と .insert(...) / .upsert(...)) の引数の中の、変更前の値に見える名前のキー (PRIOR_KEY_PATTERN) を
  *     構文木で集め、下の表 (INVENTORY) と両向きに突き合わせる。
  *     表に無いキーが増えたら赤 (値をどこから取るかを決めて、表に 1 行足す)。表にあって見つからないキーも赤 (表を直す)。
  * (b) locked_rpc / cas の行は、同時の変更の振る舞いを確かめるテスト (guardedBy) があり、そのテストがキーの名前を見ていること。
- * (c) open (直していない) の行は理由がある。open は #1917 の時点で範囲の外にしたものだけ (増やすときは理由と追う先を書く)。
+ * (c) open (直していない) の行は理由がある。open にしてよいのは OPEN_FILES_AT_1917 のファイルだけ
+ *     (ほかのファイルを open にするときは、理由を書いて OPEN_FILES_AT_1917 にも足す)。
  *
  * 限界 (このテストは見張りであって、証明ではない):
  *  - オブジェクトのリテラルに書いたキーだけを見る。変数に入れたオブジェクト (例: details: updates) の中は見えない。
  *  - キーの名前でだけ拾う。変更前の値を別の名前で書くと見えない (名前は PRIOR_KEY_PATTERN に合わせること)。
  *  - 値の取り方 (ロック・条件つきの更新) が正しいかは見ない。それは guardedBy のテストの受け持ち。
- *  - SQL の関数の中で書く監査 (membership_audit など) は見ない。
+ *  - SQL の関数の中で書く監査 (membership_audit など) と、src の外 (supabase/functions・apps/mobile) は見ない
+ *    (#1917 の時点で手で見た範囲では同じ型は無い。calculate-segment-stats の previous_value は前の期間の指標で、変更前の値ではない)。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -50,14 +52,15 @@ const PRICE_CHANGE_OPEN: PriorValueSource = {
   kind: 'open',
   why:
     '#1917 の範囲の外 (別 Issue)。subscription_plans をロックも条件も無く読み、その値を plan_price_history と監査の old_* に書き、' +
-    '価格の UPDATE は .eq(id) だけ。読んでから書くまでの間に Stripe の Price の作成・無効化を呼ぶので、DB の鍵をまたげない ' +
-    '(条件つきの UPDATE と 409、または Stripe を呼ぶ前に予約の行を取る形が要る)',
+    '価格の UPDATE は .eq(id) だけ。読んでから書くまでの間に Edge Function (stripe-price-sync) で Stripe の Price の作成と旧 Price の無効化をするので、' +
+    'DB の鍵をまたげない (条件つきの UPDATE と 409、または Stripe を呼ぶ前に予約の行を取る形が要る)',
 };
 const TRANSFER_OPEN: PriorValueSource = {
   kind: 'open',
   why:
-    '#1917 の範囲の外 (別 Issue)。from_user_id は RPC の前にロックの外で読んだ旧オーナー / 旧代表者。RPC は更新した後の行を返すので、' +
-    'ロックの下で読んだ旧オーナーを返すように RPC と migration を変える必要がある (RPC の中の membership_audit の old_* はロックの下で読んでいる)',
+    '#1917 の範囲の外 (別 Issue)。from_user_id は RPC の前にロックの外で読んだ旧オーナー / 旧代表者 (旧オーナー / 旧代表者への知らせの宛先にも使う)。' +
+    'RPC は更新した後の行を返すので、ロックの下で読んだ旧オーナー / 旧代表者を返すように RPC と migration を変える必要がある ' +
+    '(RPC の中の membership_audit の old_owner_id / old_rep_id はロックの下で読んでいる)',
 };
 const MFA_RESET_OPEN: PriorValueSource = {
   kind: 'open',
