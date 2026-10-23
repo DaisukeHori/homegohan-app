@@ -12,6 +12,8 @@
 //     「組織の上限は standard / premium / enterprise の行で決まります」と案内する (PATCH も 409 PLAN_READ_ONLY で断る。#1912)
 //   - 保存が 409 CONFLICT_STALE_DATA (読んでから書くまでに別の運営が先に同じプランの上限を変えた) で断られたら、一覧を読み直して
 //     いまの上限を出し、行にその旨を出す。入力欄 (新しい上限・理由) の書きかけは読み直しで消さない (#1917)
+//   - 一度表を出したあとの読み直し (保存のあと・409 のあと) は表を外さずに行い (入力欄のフォーカスも外さない)、失敗しても表と
+//     書きかけを残して、表の上に文と「再試行」を出す。409 のあとの読み直しに失敗したら、行の文も「読み込み直せなかった」にする (#1917)
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -49,6 +51,26 @@ function limitLabel(limit: number | null): string {
 const STALE_LIMIT_MESSAGE =
   "別の運営が先にこのプランの上限を変えていました。一覧を読み込み直したので、いまの上限を確かめてから、もう一度保存してください（入力した値と理由は残しています）";
 
+/** 保存が 409 CONFLICT_STALE_DATA で断られ、一覧の読み直しにも失敗したときに行に出す文 (#1917) */
+const STALE_LIMIT_RELOAD_FAILED_MESSAGE =
+  "別の運営が先にこのプランの上限を変えていました。一覧を読み込み直せなかったので、表の上の「再試行」で読み込み直し、いまの上限を確かめてから、もう一度保存してください（入力した値と理由は残しています）";
+
+/** 表を出したあとの読み直しに失敗したときに、表の上に出す文 (#1917) */
+const RELOAD_FAILED_MESSAGE = "最新の上限を読み込めませんでした。表の値は古いかもしれません";
+
+/**
+ * 行に出す文。staleReloadFailed は、409 のあとの読み直しに失敗した文 (STALE_LIMIT_RELOAD_FAILED_MESSAGE) か
+ * (「再試行」で読み直せたら、読み込み直した文 STALE_LIMIT_MESSAGE に変える。#1917)
+ */
+interface RowMessage {
+  ok: boolean;
+  text: string;
+  staleReloadFailed?: boolean;
+}
+
+/** 一覧の読み込みの結果。superseded は、読み込みの最中に新しい読み込みが始まったので結果を捨てた */
+type LoadOutcome = "loaded" | "failed" | "superseded";
+
 /** 一覧の行から作る入力欄の初めの値 (保存されている上限。無制限・自分の行が無いときは空欄) */
 function initialDraftOf(row: QuotaRow): Draft {
   return { limit: row.configured && row.daily_limit !== null ? String(row.daily_limit) : "", reason: "" };
@@ -79,8 +101,17 @@ export default function LLMQuotasPage() {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // 一度表を出したあとの読み直しの最中か・失敗したか (表は外さない。#1917)
+  const [isReloading, setIsReloading] = useState(false);
+  const [reloadError, setReloadError] = useState<string | null>(null);
+  // 一度一覧を読めたか (読めたあとの読み直しは表を外さない。#1917)
+  const hasLoadedRef = useRef(false);
+  // 最後に失敗した読み直しの条件 (「再試行」は同じ条件で読み直す。#1917)
+  const failedReloadOptions = useRef<{ keepDrafts?: boolean }>({});
+  // 読み込みを重ねたとき、古い読み込みの結果で上書きしないための連番
+  const loadSeq = useRef(0);
   const [savingPlan, setSavingPlan] = useState<string | null>(null);
-  const [rowMessage, setRowMessage] = useState<Record<string, { ok: boolean; text: string }>>({});
+  const [rowMessage, setRowMessage] = useState<Record<string, RowMessage>>({});
   // 最後に読んだ一覧から作った入力欄の初めの値 (読み直しのとき、書きかけの行を見分ける。#1917)
   const loadedDrafts = useRef<Record<string, Draft>>({});
 
@@ -88,14 +119,25 @@ export default function LLMQuotasPage() {
    * 一覧を読む。keepDrafts のときは、入力欄の書きかけ (新しい上限・理由) を残し、書きかけの無い行だけを読んだ値にする
    * (保存が 409 CONFLICT_STALE_DATA で断られたあとの読み直し。#1917)
    */
-  const load = useCallback(async (options: { keepDrafts?: boolean } = {}) => {
+  const load = useCallback(async (options: { keepDrafts?: boolean } = {}): Promise<LoadOutcome> => {
     const keepDrafts = options.keepDrafts === true;
-    setIsLoading(true);
-    setError(null);
+    const seq = ++loadSeq.current;
+    const isReload = hasLoadedRef.current;
+    if (isReload) {
+      // 表を出したあとの読み直しは、表を外さずに行う (入力欄のフォーカスも書きかけも残す。#1917)
+      setIsReloading(true);
+    } else {
+      setIsLoading(true);
+      setError(null);
+    }
     try {
       const res = await fetch("/api/super-admin/llm/quotas");
       if (!res.ok) throw new Error(await errorMessageOf(res));
       const json = (await res.json()) as QuotaListResponse;
+      if (seq !== loadSeq.current) return "superseded";
+      hasLoadedRef.current = true;
+      setReloadError(null);
+      setError(null);
       setRows(json.data);
       setNote(json.note);
       setDefaultPlanKey(json.default_plan_key);
@@ -113,16 +155,46 @@ export default function LLMQuotasPage() {
           }),
         ),
       );
+      return "loaded";
     } catch (err) {
-      setError(err instanceof Error ? err.message : "読み込みに失敗しました");
+      if (seq !== loadSeq.current) return "superseded";
+      const message = err instanceof Error ? err.message : "読み込みに失敗しました";
+      if (isReload) {
+        // 表と書きかけは残し、表の上に文と「再試行」を出す (#1917)
+        failedReloadOptions.current = options;
+        setReloadError(`${RELOAD_FAILED_MESSAGE}（${message}）`);
+      } else {
+        setError(message);
+      }
+      return "failed";
     } finally {
-      setIsLoading(false);
+      if (seq === loadSeq.current) {
+        setIsLoading(false);
+        setIsReloading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  /**
+   * 表の上の「再試行」: 失敗した読み直しを同じ条件でやり直す。読み直せたら、409 のあとの読み直しに失敗した行の文を
+   * 「読み込み直した」文に変える (#1917)
+   */
+  const retryReload = async () => {
+    const outcome = await load(failedReloadOptions.current);
+    if (outcome !== "loaded") return;
+    setRowMessage((prev) =>
+      Object.fromEntries(
+        Object.entries(prev).map(([key, message]) => [
+          key,
+          message.staleReloadFailed === true ? { ok: false, text: STALE_LIMIT_MESSAGE } : message,
+        ]),
+      ),
+    );
+  };
 
   const updateDraft = (planKey: string, patch: Partial<Draft>) => {
     setDrafts((prev) => ({ ...prev, [planKey]: { ...(prev[planKey] ?? { limit: "", reason: "" }), ...patch } }));
@@ -150,9 +222,17 @@ export default function LLMQuotasPage() {
         const body: unknown = await res.json().catch(() => null);
         if (isStaleDataConflict(res.status, body)) {
           // 別の運営が先にこのプランの上限を変えていた (API は書いていない)。いまの上限を出すために一覧を読み直し、
-          // その旨を行に出す (運営が手で読み直さなくてよいように。#1917)。入力欄の書きかけは消さない
-          setRowMessage((prev) => ({ ...prev, [planKey]: { ok: false, text: STALE_LIMIT_MESSAGE } }));
-          await load({ keepDrafts: true });
+          // その旨を行に出す (運営が手で読み直さなくてよいように。#1917)。入力欄の書きかけは消さない。
+          // 文は読み直しの結果を待ってから決める (読み直せなかったのに「読み込み直した」と出さない)
+          const outcome = await load({ keepDrafts: true });
+          if (outcome === "superseded") return;
+          setRowMessage((prev) => ({
+            ...prev,
+            [planKey]:
+              outcome === "loaded"
+                ? { ok: false, text: STALE_LIMIT_MESSAGE }
+                : { ok: false, text: STALE_LIMIT_RELOAD_FAILED_MESSAGE, staleReloadFailed: true },
+          }));
           return;
         }
         throw new Error(errorMessageOfBody(body, res.status));
@@ -190,11 +270,35 @@ export default function LLMQuotasPage() {
           <div className="w-10 h-10 border-4 border-purple-500 border-t-transparent rounded-full animate-spin" />
         </div>
       ) : error ? (
-        <div role="alert" className="bg-red-900/50 border border-red-500 rounded-xl p-4 text-red-300">
-          {error}
+        <div role="alert" className="bg-red-900/50 border border-red-500 rounded-xl p-4 text-red-300 flex items-center justify-between gap-4">
+          <span>{error}</span>
+          <button
+            type="button"
+            onClick={() => void load()}
+            className="shrink-0 px-3 py-1 rounded-lg text-sm font-medium border border-red-400 text-red-200 hover:bg-red-900"
+          >
+            再試行
+          </button>
         </div>
       ) : (
         <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
+          {reloadError && (
+            <div
+              role="alert"
+              data-testid="quota-reload-error"
+              className="mb-4 bg-red-900/50 border border-red-500 rounded-lg px-4 py-3 text-red-300 text-sm flex items-center justify-between gap-4"
+            >
+              <span>{reloadError}</span>
+              <button
+                type="button"
+                onClick={() => void retryReload()}
+                disabled={isReloading}
+                className="shrink-0 px-3 py-1 rounded-lg text-sm font-medium border border-red-400 text-red-200 hover:bg-red-900 disabled:opacity-50"
+              >
+                {isReloading ? "読み込み中…" : "再試行"}
+              </button>
+            </div>
+          )}
           <table className="w-full">
             <thead>
               <tr className="text-slate-400 text-sm border-b border-slate-700">
@@ -258,7 +362,8 @@ export default function LLMQuotasPage() {
                       <button
                         type="button"
                         onClick={() => void save(row.plan_key)}
-                        disabled={!editable || savingPlan !== null}
+                        // 読み直しの最中は保存しない (読み直しで変わる前の行の値を見て保存させないため。#1917)
+                        disabled={!editable || savingPlan !== null || isReloading}
                         className="px-4 py-1.5 rounded-lg text-sm font-medium bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50"
                       >
                         {savingPlan === row.plan_key ? "保存中…" : "保存"}

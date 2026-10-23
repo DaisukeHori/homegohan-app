@@ -13,6 +13,8 @@
  * 行の表示が古いので、今の条件のまま一覧を読み直し、理由の文を一覧の上に出す (運営が手で読み直さなくてよいように)。
  * プランの変更の結果の文 (通知・読み直しの文) は、その一覧の行についての文なので、運営が別の一覧へ移る操作 (検索・ページ送り・
  * 組織の作成の開始) でも消す (#1912 の続き。前の一覧の行についての文を、別の一覧の上に残さない)。
+ * 変更の応答を待つ間に運営が別の一覧へ移ったら、遅れて届いた結果 (成功・409・404) では文を出さず、一覧も触らない
+ * (変更を始めたときの一覧の世代を覚え、応答のときに違えば捨てる。世代は検索・ページ送り・組織の作成の成功で進む。#1917)。
  *
  * 読み直した一覧の件数が今のページより少ない (最後のページの唯一の行が消えたあとに同じページで読み直したときなど) ときは、
  * 空のページを「組織はまだありません」と見せずに、件数から最後のページへ取り直す (GET は範囲外のページで空の一覧と本当の件数を返す)。
@@ -112,9 +114,10 @@ function OrgPlanCell({
   onStale,
 }: {
   org: Organization;
-  onStart: () => void;
-  onChanged: (org: Organization) => void;
-  onStale: (message: string) => void;
+  /** 変更を始める。戻り値は、そのときの一覧の世代 (onChanged / onStale に渡し返す。#1917) */
+  onStart: () => number;
+  onChanged: (org: Organization, listGeneration: number) => void;
+  onStale: (message: string, listGeneration: number) => void;
 }) {
   const current = isOrgPlan(org.plan) ? org.plan : '';
   const [draft, setDraft] = useState<'' | OrgPlan>(current);
@@ -126,7 +129,7 @@ function OrgPlanCell({
     if (saving || draft === '' || draft === current) return;
     setSaving(true);
     setError(null);
-    onStart();
+    const listGeneration = onStart();
     try {
       const res = await fetch(`/api/admin/organizations/${encodeURIComponent(org.id)}`, {
         method: 'PATCH',
@@ -137,7 +140,7 @@ function OrgPlanCell({
       if (!res.ok) {
         const code = extractApiErrorCode(body);
         if (isStaleRowErrorCode(code)) {
-          onStale(staleRowMessage(code, org.name));
+          onStale(staleRowMessage(code, org.name), listGeneration);
           return;
         }
         setError(extractApiErrorMessage(body) ?? PLAN_CHANGE_ERROR);
@@ -148,7 +151,7 @@ function OrgPlanCell({
         setError(PLAN_CHANGE_ERROR);
         return;
       }
-      onChanged(updated);
+      onChanged(updated, listGeneration);
     } catch {
       setError(PLAN_CHANGE_ERROR);
     } finally {
@@ -241,6 +244,12 @@ export default function OrganizationsManager() {
   // 新しい一覧を上書きしないために使う
   const latestLoad = useRef(0);
 
+  // 一覧の世代: 運営が別の一覧へ移る操作 (検索・ページ送り・組織の作成で 1 ページ目から取り直すとき) のたびに増やす。
+  // 同じ一覧を取り直すだけ (「再読み込み」・読み直し・範囲外のページからの取り直し) では増やさない。
+  // プランの変更は始めたときの世代を覚え、応答のときに違えば (応答を待つ間に別の一覧へ移った)、前の一覧の行についての
+  // 文を新しい一覧の上に出さない (#1917)
+  const listGeneration = useRef(0);
+
   const load = useCallback(async (target: Query) => {
     const loadId = ++latestLoad.current;
     /** 範囲外のページだったので最後のページへ取り直した (読み込み中のまま次の取得に引き継ぐ) */
@@ -299,15 +308,21 @@ export default function OrganizationsManager() {
     setPlanStaleError(null);
   }, []);
 
+  /** 別の一覧へ移る操作の始まり: 前の一覧の行についての文を消し、一覧の世代を進める (#1917) */
+  const moveToAnotherList = useCallback(() => {
+    listGeneration.current += 1;
+    clearPlanMessages();
+  }, [clearPlanMessages]);
+
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    clearPlanMessages();
+    moveToAnotherList();
     setQuery({ q: qDraft.trim(), plan: planDraft, page: 1 });
   }
 
   /** ページ送り (前へ: -1・次へ: +1)。別のページの一覧へ移るので、前のページの行についての文を消す */
   function handlePageMove(step: -1 | 1) {
-    clearPlanMessages();
+    moveToAnotherList();
     setQuery((current) => ({ ...current, page: current.page + step }));
   }
 
@@ -360,26 +375,37 @@ export default function OrganizationsManager() {
       setPlan('standard');
       setOwnerId('');
       setNotice(`組織「${trimmedName}」を作成しました。`);
-      // 一覧は作成が新しい順なので、1 ページ目から取り直す (今の検索条件は残す)
+      // 一覧は作成が新しい順なので、1 ページ目から取り直す (今の検索条件は残す)。別の一覧へ移るので、一覧の世代を進める
+      // (作成の応答を待つ間に届いたプランの変更の文も消す。#1917)
+      moveToAnotherList();
       setQuery((current) => ({ ...current, page: 1 }));
     }
   }
 
-  /** 行のプランの変更を始めたら、前の変更の結果の表示 (通知・読み直しの文) を消す */
-  const handlePlanChangeStart = clearPlanMessages;
+  /** 行のプランの変更を始めたら、前の変更の結果の表示 (通知・読み直しの文) を消し、いまの一覧の世代を返す */
+  const handlePlanChangeStart = useCallback(() => {
+    clearPlanMessages();
+    return listGeneration.current;
+  }, [clearPlanMessages]);
 
   /**
    * 行の表示が古くて断られた (別の運営が先にプランを変えた・組織が消えた) ときは、今の条件 (ページ・検索) のまま一覧を
    * 読み直す。setQuery に新しいオブジェクトを渡すと、条件が同じでも取り直す (古い応答の上書きは latestLoad が防ぐ)。
-   * 前の変更の通知は、変更を始めたとき (handlePlanChangeStart) に消している
+   * 前の変更の通知は、変更を始めたとき (handlePlanChangeStart) に消している。
+   * 応答を待つ間に別の一覧へ移っていたら (世代が違う)、文も読み直しも出さない (#1917)
    */
-  const handlePlanStale = useCallback((message: string) => {
+  const handlePlanStale = useCallback((message: string, generation: number) => {
+    if (generation !== listGeneration.current) return;
     setPlanStaleError(message);
     setQuery((current) => ({ ...current }));
   }, []);
 
-  /** 行のプランを変えたら、その行だけを返ってきた値に置き換える (一覧は取り直さない) */
-  const handlePlanChanged = useCallback((updated: Organization) => {
+  /**
+   * 行のプランを変えたら、その行だけを返ってきた値に置き換える (一覧は取り直さない)。
+   * 応答を待つ間に別の一覧へ移っていたら (世代が違う)、通知を出さず、新しい一覧も触らない (#1917)
+   */
+  const handlePlanChanged = useCallback((updated: Organization, generation: number) => {
+    if (generation !== listGeneration.current) return;
     setResult((current) =>
       current
         ? { ...current, organizations: current.organizations.map((org) => (org.id === updated.id ? updated : org)) }
