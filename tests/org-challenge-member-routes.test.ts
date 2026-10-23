@@ -410,7 +410,7 @@ describe('GET /api/org/my-challenges', () => {
     const text = await res.text();
 
     expect(res.status).toBe(500);
-    expect(JSON.parse(text)).toEqual({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } });
+    expect(JSON.parse(text)).toEqual({ error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました' } });
     expect(text).not.toContain('hunter2');
     expect(mockLoggerError).toHaveBeenCalledTimes(1);
     expect(mockLoggerError.mock.calls[0][0]).toBe('GET /api/org/my-challenges');
@@ -638,7 +638,7 @@ describe('GET /api/org/challenges/[id]', () => {
     const text = await res.text();
 
     expect(res.status).toBe(500);
-    expect(JSON.parse(text)).toEqual({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } });
+    expect(JSON.parse(text)).toEqual({ error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました' } });
     expect(text).not.toContain('abc123');
     expect(mockLoggerError).toHaveBeenCalledTimes(1);
     expect(mockLoggerError.mock.calls[0][0]).toBe('GET /api/org/challenges/[id]');
@@ -703,7 +703,7 @@ describe('GET /api/org/challenges/[id]', () => {
     const text = await res.text();
 
     expect(res.status).toBe(500);
-    expect(JSON.parse(text)).toEqual({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } });
+    expect(JSON.parse(text)).toEqual({ error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました' } });
     expect(text).not.toContain('abc123');
     expect(mockLoggerError).toHaveBeenCalledTimes(1);
     expect(mockLoggerError.mock.calls[0][0]).toBe('GET /api/org/challenges/[id]');
@@ -857,7 +857,7 @@ describe('POST /api/org/challenges/[id]/join (参加する)', () => {
     const text = await res.text();
 
     expect(res.status).toBe(500);
-    expect(JSON.parse(text)).toEqual({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } });
+    expect(JSON.parse(text)).toEqual({ error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました' } });
     expect(text).not.toContain('hunter2');
     expect(mockLoggerError).toHaveBeenCalledTimes(1);
     expect(mockLoggerError.mock.calls[0][0]).toBe('POST /api/org/challenges/[id]/join');
@@ -926,7 +926,7 @@ describe('DELETE /api/org/challenges/[id]/join (参加をやめる)', () => {
     const text = await res.text();
 
     expect(res.status).toBe(500);
-    expect(JSON.parse(text)).toEqual({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } });
+    expect(JSON.parse(text)).toEqual({ error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました' } });
     expect(text).not.toContain('hunter2');
     expect(mockLoggerError.mock.calls[0][0]).toBe('DELETE /api/org/challenges/[id]/join');
   });

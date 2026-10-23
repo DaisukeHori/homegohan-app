@@ -6,7 +6,7 @@
  */
 import { NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { ORG_API_INTERNAL_ERROR_MESSAGE, orgAuthFailureNested } from '@/lib/org-api-errors';
 import { requireOrgAdmin } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 
@@ -31,16 +31,13 @@ export async function GET() {
       },
     });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-    }
+    // 401 / 403 は日本語の固定の文 (src/lib/org-api-errors.ts)。例外の文面 (err.message) は本文に入れない
+    const authFailure = orgAuthFailureNested(err);
+    if (authFailure) return authFailure;
     // 500 の本文は汎用メッセージだけ (#1172)。詳細は db-logger にだけ残す
     createLogger('GET /api/org/stats', generateRequestId()).error('組織統計の取得に失敗しました', err);
     return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
+      { error: { code: 'INTERNAL_ERROR', message: ORG_API_INTERNAL_ERROR_MESSAGE } },
       { status: 500 },
     );
   }

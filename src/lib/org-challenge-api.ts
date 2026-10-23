@@ -9,7 +9,7 @@
 
 import { type SupabaseClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { ORG_API_INTERNAL_ERROR_MESSAGE, orgAuthFailureNested } from '@/lib/org-api-errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { normalizeProfileName } from '@/lib/profile-name';
 import {
@@ -203,16 +203,16 @@ export function challengeError(code: string, message: string, status: number) {
 }
 
 /**
- * 認可エラー (401 / 403) はそのまま返し、それ以外は 500 の汎用メッセージにする。
+ * 認可エラーは 401 UNAUTHORIZED / 403 FORBIDDEN、それ以外は 500 の汎用メッセージにする。
  * 生のエラー文は返さず (#1172)、詳細は db-logger (app_logs) にだけ残す。
  */
 export function handleMemberError(routeName: string, error: unknown) {
-  if (error instanceof AuthError) {
-    return challengeError('UNAUTHORIZED', 'ログインが必要です', 401);
-  }
-  if (error instanceof ForbiddenError) {
-    return challengeError('FORBIDDEN', error.message, 403);
+  // 401 / 403 の本文 { error: { code, message } } は src/lib/org-api-errors.ts の日本語の固定の文
+  // (403 の組織に所属していない (PERM_NOT_ORG_MEMBER) は「組織に所属していません」)。例外の文面は本文に入れない
+  const authFailure = orgAuthFailureNested(error);
+  if (authFailure) {
+    return authFailure;
   }
   createLogger(routeName, generateRequestId()).error('組織チャレンジの処理に失敗しました', error);
-  return challengeError('INTERNAL_ERROR', 'Internal server error', 500);
+  return challengeError('INTERNAL_ERROR', ORG_API_INTERNAL_ERROR_MESSAGE, 500);
 }

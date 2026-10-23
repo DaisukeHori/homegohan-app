@@ -691,6 +691,8 @@ LLM 使用量ダッシュボード (super_admin のみ)
   (保存しない・監査ログを残さない。判定の `src/lib/super-admin/ai-daily-limits.ts` の `isOrgSubscriptionPlanRow`。#1912)。`ORG_PLAN_VALUES` の行は保存できる
 - `daily_limit`: 0 以上 10,000 以下の整数。`null` は無制限
 - `reason`: 変更の理由 (監査ログに残す)
+- 同時の保存: 監査ログの `before` は保存の前に読んだ値なので、保存は「読んだ値のままなら書く」条件つきにする (行があれば読んだ `daily_limit` のままのときだけ更新、無ければ作るだけ = 同じキーの行が先にできていたら何もしない)。
+  0 行なら読み直し、今の値が送られた値と同じなら 200 (書かず、監査ログも残さない)、違えば 409 `CONFLICT_STALE_DATA` (cross/04 §4.2)。`before` は書いた時点の実際の直前の値と必ず一致する
 
 ---
 
@@ -903,8 +905,12 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 - 書き込む列は `status` / `admin_notes` / `resolved_at` だけ。本文・メールアドレス・問い合わせ者などがボディに入っていても無視する。変更が無いときは書き込まない (`updated_at` を動かさない)
 - レスポンスは更新後の `{ "inquiry": InquiryDetail }`
 - 更新後の問い合わせ (本文を含む) を返すので、変更が無い更新を含めて毎回 `admin.inquiry.update` を記録する
+- 同時の更新: 書くときは「直前に読んだ `status` と `updated_at` のままなら書く」条件つきにする (`updated_at` は UPDATE のたびにトリガーで進む。`NULL` なら `.is` で比べる)。
+  0 行なら読み直し、送った項目 (`status` / 正規化した `adminNotes`) がどれも今の値と同じなら 200 で今の行を返し (書かない。本文を返すので `changed: false` として記録する)、
+  違えば 409 `CONFLICT_STALE_DATA` (書かず、記録もしない)。監査の `status_from` と `resolved_at` の元にした値は、書いた時点の実際の直前の値と必ず一致し、
+  読んでから書くまでの間に別の運営が書いた管理者メモを上書きしない (条件は API が読んだ値で、画面を開いてから保存するまでの変更は見分けない)。読み直しの失敗は 500、行が消えていれば 404
 
-エラーコードは `VALIDATION_ERROR` / `INVALID_JSON` (400)、`AUTH_UNAUTHENTICATED` (401)、`OP_PERMISSION_DENIED` (403)、`NOT_FOUND` (404)、`INTERNAL_ERROR` (500)。
+エラーコードは `VALIDATION_ERROR` / `INVALID_JSON` (400)、`AUTH_UNAUTHENTICATED` (401)、`OP_PERMISSION_DENIED` (403)、`NOT_FOUND` (404)、`CONFLICT_STALE_DATA` (409)、`INTERNAL_ERROR` (500)。
 
 ---
 
@@ -1139,6 +1145,11 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 
 ### PATCH /api/admin/sales/leads/{id}
 リード更新 (ステージ変更含む)
+
+- ステージを変えると、活動履歴 (`sales_lead_activities`) に `stage_change` (`details: { from_stage, to_stage }`) を残す
+- 同時の更新: 本文に `stage` があるときは「直前に読んだ `stage` のままなら書く」条件つきにする。0 行なら読み直し、リードがあれば 409 `CONFLICT_STALE_DATA`
+  (書かず、活動履歴も監査ログも残さない)、無ければ 404。`from_stage` は書いた時点の実際の直前のステージと必ず一致する。`stage` が無い更新には条件を付けない
+- 読み込み・更新・読み直しの DB の失敗は 500 `INTERNAL_ERROR` (404 にしない)
 
 ---
 
@@ -1757,7 +1768,7 @@ Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#113
 | `OP_NOT_SUPPORTED` | 501 | [NEW] 未対応の機能 (本文は予定を書かず、いまの事実だけを言う。#1911)。認可を通った人にだけ返す (データエクスポート・AI コンテンツの審査) |
 | `DSR_INVALID_TRANSITION` | 409 | [NEW] 個人情報の請求の更新 (`PATCH /api/admin/data-requests/{id}`) が状態遷移表に無い (同じ状態の指定・本人確認待ち / 終わった請求への更新を含む。cross/15 §7.4・§13) |
 | `DSR_RESPONSE_NOTE_REQUIRED` | 422 | [NEW] 個人情報の請求を対応済み・対応できずにするのに本人への応答が空 (`PATCH /api/admin/data-requests/{id}`。cross/15 §13) |
-| `CONFLICT_PRECONDITION_REQUIRED` / `CONFLICT_OPTIMISTIC_LOCK` / `CONFLICT_STALE_DATA` | 428 / 412 / 409 | 楽観的ロック (cross/04 §4.2)。`PATCH /api/admin/data-requests/{id}` で、`If-Unmodified-Since` が無い / GET が返した `updated_at` と違う / 条件つきの UPDATE が 0 行。`CONFLICT_STALE_DATA` は組織のプランの変更 (`PATCH /api/admin/organizations/{id}`) でも使う: 直前に読んだ `plan` のままなら書く条件つきの UPDATE が 0 行で、読み直した `plan` が送られたプランと違う (同じなら 200 で書かず記録もしない。#1912) |
+| `CONFLICT_PRECONDITION_REQUIRED` / `CONFLICT_OPTIMISTIC_LOCK` / `CONFLICT_STALE_DATA` | 428 / 412 / 409 | 楽観的ロック (cross/04 §4.2)。`PATCH /api/admin/data-requests/{id}` で、`If-Unmodified-Since` が無い / GET が返した `updated_at` と違う / 条件つきの UPDATE が 0 行。`CONFLICT_STALE_DATA` は組織のプランの変更 (`PATCH /api/admin/organizations/{id}`) でも使う: 直前に読んだ `plan` のままなら書く条件つきの UPDATE が 0 行で、読み直した `plan` が送られたプランと違う (同じなら 200 で書かず記録もしない。#1912)。同じ形で、問い合わせの更新 (`PATCH` / `PUT /api/admin/inquiries/{id}`。条件は読んだ `status` と `updated_at`)・AI の 1 日の上限の保存 (`PATCH /api/super-admin/llm/quotas`。条件は読んだ `daily_limit`、行が無かったときは作るだけ)・リードのステージの変更 (`PATCH /api/admin/sales/leads/{id}`。条件は読んだ `stage`。読み直してリードがあれば常に 409) でも使う |
 | `OP_EMAIL_OUTBOX_NOT_FOUND` | 404 | [NEW] 再送 (`POST /api/super-admin/email-outbox/{id}/requeue`) の行が無い (`10-logs-and-mail-retry.md` §11) |
 | `OP_EMAIL_OUTBOX_NOT_REQUEUEABLE` | 409 | [NEW] 再送できない行。`details.reason` が `not_dead` (届けられなかった行でない) か `redacted` (宛先を伏せた行) (`10-logs-and-mail-retry.md` §11) |
 | `AUTH_2FA_REQUIRED` | 403 | 二段階認証の確認が要る (必須ロールで認証アプリを登録済み・セッションが aal1)。`requireRole` が `MfaRequiredError` (`ForbiddenError` の派生) を投げ、運営の API は route の既存の 403 の code (`FORBIDDEN` / `OP_PERMISSION_DENIED` / `PERM_DENIED`) で返す (本文の message は「二段階認証の確認が必要です」)。この code を本文に出すのは自己サービスの `/api/auth/mfa/*` だけ。画面 (layout / page) は `requireRoleForPage` が MFA の画面へ回す (`cross/12-operator-mfa.md` §13.4・§19.3) |
