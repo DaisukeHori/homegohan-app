@@ -1,6 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { internalError } from '@/lib/api/errors'
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
+
+/** 本番では使えない (403)。E2E の道具 (Maestro の reset-onboarding.js) がログに出す文 */
+const E2E_NOT_AVAILABLE_IN_PRODUCTION_MESSAGE = '本番環境では使えません'
 
 /**
  * E2E テスト用: オンボーディング状態リセットAPI
@@ -13,7 +17,7 @@ import { internalError } from '@/lib/api/errors'
  */
 export async function POST() {
   if (process.env.NODE_ENV === 'production') {
-    return NextResponse.json({ error: 'Not available in production' }, { status: 403 })
+    return NextResponse.json({ error: E2E_NOT_AVAILABLE_IN_PRODUCTION_MESSAGE }, { status: 403 })
   }
 
   try {
@@ -21,7 +25,7 @@ export async function POST() {
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
     const { error } = await supabase
@@ -39,7 +43,7 @@ export async function POST() {
     }
 
     return NextResponse.json({ ok: true })
-  } catch (e: any) {
+  } catch (e: unknown) {
     return internalError('POST /api/e2e/reset-onboarding', e)
   }
 }

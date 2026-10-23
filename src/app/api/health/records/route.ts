@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { HEALTH_RECORD_DATE_INVALID_MESSAGE, HEALTH_RECORD_DATE_REQUIRED_MESSAGE, HEALTH_RECORD_NO_FIELDS_MESSAGE, healthDateInvalidMessage } from '@/lib/health-api-messages';
 import { RECORD_DATE_PATTERN, sanitizeHealthRecordPayload } from '@/lib/health-payloads';
-import { CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } from '@/lib/date-utils';
+import { isCalendarDate, todayLocal } from '@/lib/date-utils';
 import { updateHealthStreak } from '@/lib/health-streaks';
 import { clampIntParam } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
@@ -13,7 +15,7 @@ export async function GET(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { searchParams } = new URL(request.url);
@@ -28,7 +30,7 @@ export async function GET(request: NextRequest) {
   // 形を見ずに渡すと、2026-02-30 のような日付が DB の date 型への変換で失敗して 500 になる。空欄 (?start_date=) は以前どおり「指定なし」
   for (const [name, value] of [['start_date', startDate], ['end_date', endDate]] as const) {
     if (value && !isCalendarDate(value)) {
-      return NextResponse.json({ error: `${name} must be ${CALENDAR_DATE_REQUIREMENT}` }, { status: 400 });
+      return NextResponse.json({ error: healthDateInvalidMessage(name) }, { status: 400 });
     }
   }
 
@@ -64,18 +66,18 @@ export async function POST(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== 'object') {
-    return NextResponse.json({ error: 'Request body must be a JSON object' }, { status: 400 });
+    return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
   }
 
   const { record_date, ...recordData } = body;
 
   if (typeof record_date !== 'string' || !record_date.trim()) {
-    return NextResponse.json({ error: 'record_date is required' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_RECORD_DATE_REQUIRED_MESSAGE }, { status: 400 });
   }
 
   // #256: record_date フォーマット検証（YYYY-MM-DD のみ許可）
@@ -84,7 +86,7 @@ export async function POST(request: NextRequest) {
   // 以前は trim する前の値を渡していて、前後に空白があると連続記録を黙って更新せず、今日の体重もプロフィールに写さなかった)
   const recordDate = record_date.trim();
   if (!RECORD_DATE_PATTERN.test(recordDate) || !isCalendarDate(recordDate)) {
-    return NextResponse.json({ error: 'record_date must be in YYYY-MM-DD format' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_RECORD_DATE_INVALID_MESSAGE }, { status: 400 });
   }
 
   const { data: sanitizedRecordData, errors } = sanitizeHealthRecordPayload(recordData, {
@@ -96,7 +98,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (Object.keys(sanitizedRecordData).length === 0) {
-    return NextResponse.json({ error: 'No valid health record fields were provided' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_RECORD_NO_FIELDS_MESSAGE }, { status: 400 });
   }
 
   // #1048 F2-19: 確認してから insert/update する check-then-act は同時リクエストで

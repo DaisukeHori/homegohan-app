@@ -21,6 +21,9 @@ const TRANSFER_ACCEPT_MESSAGES: Partial<Record<MembershipErrorCode | 'UNKNOWN', 
   [MembershipErrorCode.TRANSFER_PROPOSAL_EXPIRED]: '譲渡提案の有効期限が切れています。',
   // #1173: 18 歳未満の本人は代表者を引き受けない (DB の関数が先頭で断る)
   [MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED]: MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED],
+  // #1917 の続き: 退会の手続き中の本人は代表者を引き受けない (家族の行のトリガー family_groups_representative_not_deleting が止める)
+  [MembershipErrorCode.REPRESENTATIVE_ACCOUNT_DELETING]:
+    MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.REPRESENTATIVE_ACCOUNT_DELETING],
 };
 
 export async function POST(

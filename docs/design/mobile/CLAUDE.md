@@ -13,6 +13,7 @@
 | `05-auth-session.md` | セッションの保管 (SecureStore) / 起動時の復元 / Google ログイン / push token / WebView とネイティブのログアウト・セッション失効の同期 | #1038 |
 | `06-push-send.md` | サーバーからの Push 通知の送信: 送信待ち `push_outbox` / worker `GET /api/cron/push-outbox` / receipt / 種類の一覧 (`PUSH_NOTIFICATION_KINDS`) | 01 §15.3-4・#1136 |
 | `07-toolchain-upgrade.md` | ツールチェーンの更新 (Expo SDK 58 / RN 0.88 / Jest 30)・`runtimeVersion` の方針・設定の画面 (隠しタブ) の隠し方・同意画面の止め (`usePreventRemove`) | #1591 |
+| `08-sign-in-with-apple.md` | Sign in with Apple: iOS のネイティブのシート (`expo-apple-authentication` → `signInWithIdToken`)・Web の OAuth・refresh token の保管 (`apple_sign_in_tokens`) と退会のときの失効・段 A1 / A2 / B / D | #1139 |
 
 ## ドメインの役割
 

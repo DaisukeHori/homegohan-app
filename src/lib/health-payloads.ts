@@ -5,6 +5,18 @@ import {
   type GoalTypeDef,
 } from '@/lib/health-goal-types';
 import { isCalendarDate } from '@/lib/date-utils';
+import {
+  HEALTH_GOAL_REQUIRED_FIELDS_MESSAGE,
+  HEALTH_INVALID_BODY_MESSAGE,
+  healthBooleanMessage,
+  healthDateInvalidMessage,
+  healthEnumMessage,
+  healthIntegerMessage,
+  healthNumberMessage,
+  healthStringMessage,
+  healthStringOrNullMessage,
+  healthTimeMessage,
+} from '@/lib/health-api-messages';
 
 type ValidationResult<T extends object> = {
   data: Partial<T>;
@@ -173,7 +185,7 @@ function parseNullableString(
   const value = input[key];
   if (value == null) return null;
   if (typeof value !== 'string') {
-    errors.push(`${key} must be a string or null`);
+    errors.push(healthStringOrNullMessage(key));
     return undefined;
   }
 
@@ -181,7 +193,7 @@ function parseNullableString(
   if (!trimmed) return null;
   // 形だけでなく実在する日付か (isCalendarDate) も見る。2026-02-30 のような日付は DB の date 型への変換で失敗して 500 になる (#1482)
   if (opts.date && (!DATE_PATTERN.test(trimmed) || !isCalendarDate(trimmed))) {
-    errors.push(`${key} must be a date in YYYY-MM-DD format`);
+    errors.push(healthDateInvalidMessage(key));
     return undefined;
   }
 
@@ -193,13 +205,13 @@ function parseNullableTime(input: PlainObject, key: string, errors: string[]): s
 
   const value = input[key];
   if (typeof value !== 'string') {
-    errors.push(`${key} must be a string`);
+    errors.push(healthStringMessage(key));
     return undefined;
   }
 
   const trimmed = value.trim();
   if (!TIME_PATTERN.test(trimmed)) {
-    errors.push(`${key} must be a time in HH:MM format`);
+    errors.push(healthTimeMessage(key));
     return undefined;
   }
 
@@ -211,7 +223,7 @@ function parseBoolean(input: PlainObject, key: string, errors: string[]): boolea
 
   const value = input[key];
   if (typeof value !== 'boolean') {
-    errors.push(`${key} must be a boolean`);
+    errors.push(healthBooleanMessage(key));
     return undefined;
   }
 
@@ -229,9 +241,12 @@ function parseNullableNumber(
   const value = input[key];
   if (value == null || value === '') return null;
 
+  // 失敗の文の項目名は画面の項目名 (label) にする。無ければ項目のキー
+  const label = opts.label ?? key;
+
   // #267: 16進数 (0x...) や指数表記を含む文字列を除外し、十進数のみ許可
   if (typeof value === 'string' && !/^-?\d+(\.\d+)?$/.test(value.trim())) {
-    errors.push(`${key} must be a finite number or null`);
+    errors.push(healthNumberMessage(label));
     return undefined;
   }
 
@@ -243,16 +258,15 @@ function parseNullableNumber(
         : Number.NaN;
 
   if (!Number.isFinite(numeric)) {
-    errors.push(`${key} must be a finite number or null`);
+    errors.push(healthNumberMessage(label));
     return undefined;
   }
 
   if (opts.integer && !Number.isInteger(numeric)) {
-    errors.push(`${key} must be an integer or null`);
+    errors.push(healthIntegerMessage(label));
     return undefined;
   }
 
-  const label = opts.label ?? key;
   if (opts.min !== undefined && numeric < opts.min) {
     errors.push(`${label} は ${opts.min} 以上の値を入力してください`);
     return undefined;
@@ -275,13 +289,13 @@ function parseEnum(
 
   const value = input[key];
   if (typeof value !== 'string') {
-    errors.push(`${key} must be a string`);
+    errors.push(healthStringMessage(key));
     return undefined;
   }
 
   const trimmed = value.trim();
   if (!allowed.has(trimmed)) {
-    errors.push(`${key} must be one of: ${Array.from(allowed).join(', ')}`);
+    errors.push(healthEnumMessage(key, Array.from(allowed)));
     return undefined;
   }
 
@@ -295,7 +309,7 @@ function parseKnownFields<T extends object>(
   if (!isPlainObject(input)) {
     return {
       data: {},
-      errors: ['Body must be a JSON object'],
+      errors: [HEALTH_INVALID_BODY_MESSAGE],
     };
   }
 
@@ -508,7 +522,7 @@ export function sanitizeHealthGoalCreate(
 
     // 形式や範囲の誤りが無いときだけ、必須項目の不足を報告する (従来の POST と同じ順序・同じ文言)
     if (errors.length === 0 && (!def || targetValue == null || !targetUnit)) {
-      errors.push('goal_type, target_value, and target_unit are required');
+      errors.push(HEALTH_GOAL_REQUIRED_FIELDS_MESSAGE);
     }
     if (errors.length > 0 || !def || targetValue == null || !targetUnit) return {};
 
