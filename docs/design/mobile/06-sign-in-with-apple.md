@@ -2015,7 +2015,7 @@ T-34 の `PRIVACY_DATA_TABLES` に `apple_sign_in_tokens` → `'アカウント'
 |---|---|---|
 | `signInWithOAuth` が error を返した (まれ。URL を作れない) | 赤いバナー | Apple でのログインに失敗しました。しばらくしてからお試しください。 / Apple での登録に失敗しました。しばらくしてからお試しください。 |
 | Apple の画面で取り消した・拒否した、Apple / GoTrue の失敗 (`user_cancelled_authorize`・`access_denied`・`server_error` など。値で分けない) | Supabase → `/auth/callback?provider=apple&…&error=…` (F-18) → `/login?error=<固定の文>` → ログイン画面の赤いバナー (新規登録画面から始めてもログイン画面。S-34) | `APPLE_WEB_CALLBACK_ERROR_MESSAGE`: Apple でのログインを完了できませんでした。もう一度お試しください。(§21 Q-7 の既定 (a)) |
-| Supabase が flow state を読めない (期限切れ・使用済み) | Supabase が Site URL へ送る (`/auth/callback` を通らない。既存。F-18) | — (本書は変えない) |
+| Supabase が flow state を読めない (期限切れ・使用済み) | Supabase が Site URL へ送る (`/auth/callback` を通らない。既存。F-18) | — (本書は変えない。トップの画面 `src/app/page.tsx` は `?error=` を読まないので、英文は画面に出ない) |
 | `code` の交換の失敗 | 既存 (`/login`) | — |
 | refresh token の保管の失敗 | 影響なし (振り分けは既存のまま) | — (`warn`) |
 
