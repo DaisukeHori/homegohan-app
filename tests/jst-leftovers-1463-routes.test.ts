@@ -187,7 +187,9 @@ describe('5. 存在しない日付・範囲の外の日付は、DB に触れる�
     ]) {
       const res = await regenerateShoppingList(jsonRequest('http://localhost/api/shopping-list/regenerate', 'POST', body));
       expect(res.status, JSON.stringify(body)).toBe(400);
-      expect(await res.json()).toEqual({ error: 'startDate and endDate must be in YYYY-MM-DD format' });
+      expect(await res.json()).toEqual({
+        error: '開始日 (startDate) と終了日 (endDate) は YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください',
+      });
     }
     expect(h.queries).toEqual([]);
     expect(h.fetch).not.toHaveBeenCalled();
@@ -198,13 +200,13 @@ describe('5. 存在しない日付・範囲の外の日付は、DB に触れる�
       jsonRequest('http://localhost/api/shopping-list/regenerate', 'POST', { startDate: '2026-12-20', endDate: '2027-01-04' }),
     );
     expect(tooLong.status).toBe(400);
-    expect(await tooLong.json()).toEqual({ error: 'Date range must be 14 days or less' });
+    expect(await tooLong.json()).toEqual({ error: '期間は 14 日以内にしてください' });
 
     const reversed = await regenerateShoppingList(
       jsonRequest('http://localhost/api/shopping-list/regenerate', 'POST', { startDate: '2026-10-15', endDate: '2026-10-14' }),
     );
     expect(reversed.status).toBe(400);
-    expect(await reversed.json()).toEqual({ error: 'startDate must be before or equal to endDate' });
+    expect(await reversed.json()).toEqual({ error: '開始日 (startDate) は終了日 (endDate) 以前の日付にしてください' });
     expect(h.queries).toEqual([]);
 
     setup((query) => (query.table === 'shopping_list_requests' ? { data: { id: 'req-1' } } : {}));

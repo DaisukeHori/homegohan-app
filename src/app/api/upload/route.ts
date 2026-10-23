@@ -8,8 +8,10 @@ import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 // 失敗の本文の文 (#1917。画面とモバイルがそのまま出すので日本語の固定の文にする)
 /** 400: ファイルが無い */
 const FILE_REQUIRED_MESSAGE = 'ファイルを選んでください';
-/** 400: 許可していない種類のファイル (宣言の MIME タイプ・中身の magic bytes のどちらかが合わない) */
+/** 400: 許可していない種類のファイル (宣言の MIME タイプが許可の一覧に無い) */
 const FILE_TYPE_NOT_ALLOWED_MESSAGE = 'このファイルの種類はアップロードできません。JPEG・PNG・WebP の画像か PDF を選んでください';
+/** 400: 中身 (magic bytes) が許可した種類のどれとも一致しない (名乗った種類と中身が違う) */
+const FILE_CONTENT_MISMATCH_MESSAGE = 'ファイルの中身が、アップロードできる種類 (JPEG・PNG・WebP の画像か PDF) と一致しません';
 /** 500: 保存に失敗した (原因はサーバーのログにだけ残す) */
 const UPLOAD_FAILED_MESSAGE = 'アップロードできませんでした。時間をおいて、もう一度お試しください';
 
@@ -112,7 +114,7 @@ export async function POST(request: Request) {
     const detectedMime = detectMimeByMagicBytes(buffer);
     if (!detectedMime) {
       return NextResponse.json(
-        { error: FILE_TYPE_NOT_ALLOWED_MESSAGE },
+        { error: FILE_CONTENT_MISMATCH_MESSAGE },
         { status: 400 }
       );
     }

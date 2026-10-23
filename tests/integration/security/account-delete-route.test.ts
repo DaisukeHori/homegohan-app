@@ -159,7 +159,7 @@ describe('#1175 POST /api/account/delete: 入口', () => {
   it('A-2: confirm が無ければ 400。アカウントも行も残る', async () => {
     const res = await apiCall('POST', '/api/account/delete', member.jwt, {});
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: 'confirm is required' });
+    expect(res.body).toEqual({ error: 'アカウントの削除の確認が必要です' });
     expect(await userExists(member.id)).toBe(true);
     expect(await count('support_tickets', `id = ${q(ids.ticket)} and user_id = ${q(member.id)}`)).toBe(1);
   }, 60_000);

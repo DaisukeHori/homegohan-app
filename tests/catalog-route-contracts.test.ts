@@ -54,7 +54,7 @@ describe('catalog product routes', () => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
     const response = await catalogSearchGET(new Request('http://localhost/api/catalog/products?q=abc'));
     expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' });
+    await expect(response.json()).resolves.toEqual({ error: 'ログインが必要です' });
   });
 
   it('search returns empty array for queries shorter than two characters', async () => {
@@ -80,7 +80,7 @@ describe('catalog product routes', () => {
       params: { id: VALID_PRODUCT_ID },
     });
     expect(response.status).toBe(401);
-    await expect(response.json()).resolves.toEqual({ error: 'Unauthorized' });
+    await expect(response.json()).resolves.toEqual({ error: 'ログインが必要です' });
   });
 
   it('detail returns 404 when product is missing', async () => {
@@ -90,7 +90,7 @@ describe('catalog product routes', () => {
       params: { id: MISSING_PRODUCT_ID },
     });
     expect(response.status).toBe(404);
-    await expect(response.json()).resolves.toEqual({ error: 'Not found' });
+    await expect(response.json()).resolves.toEqual({ error: '対象が見つかりません' });
   });
 
   it('detail returns product data when found', async () => {

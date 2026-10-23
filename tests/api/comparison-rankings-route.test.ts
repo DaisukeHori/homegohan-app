@@ -379,7 +379,7 @@ describe('GET /api/comparison/rankings: 認証', () => {
     const res = await GET(makeRequest());
 
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: 'Unauthorized' });
+    expect(await res.json()).toEqual({ error: 'ログインが必要です' });
     expect(issued).toEqual([]);
   });
 

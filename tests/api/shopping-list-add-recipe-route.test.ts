@@ -217,11 +217,11 @@ describe('POST /api/shopping-list/add-recipe: 入力の検証', () => {
     ['ingredients が配列でない', { ingredients: 'キャベツ' }],
     ['ingredients が null', { ingredients: null }],
     ['リクエスト本文が null', null],
-  ])('%s → 400 (ingredients must be an array)', async (_label, body) => {
+  ])('%s → 400 (食材は一覧で指定する)', async (_label, body) => {
     const res = await POST(post(body));
 
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toBe('ingredients must be an array');
+    expect((await res.json()).error).toBe('食材 (ingredients) は一覧で指定してください');
     expect(db.calls).toHaveLength(0);
   });
 
@@ -236,7 +236,7 @@ describe('POST /api/shopping-list/add-recipe: 入力の検証', () => {
     const res = await POST(post({ ingredients }));
 
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toBe('each ingredient must have a string name');
+    expect((await res.json()).error).toBe('どの食材にも名前を指定してください');
     expect(db.calls).toHaveLength(0);
     expect(db.lists).toHaveLength(0);
     expect(db.items).toHaveLength(0);
@@ -266,7 +266,7 @@ describe('POST /api/shopping-list/add-recipe: 入力の検証', () => {
     const res = await POST(post('{not json'));
 
     expect(res.status).toBe(400);
-    expect((await res.json()).error).toBe('Invalid JSON body');
+    expect((await res.json()).error).toBe('リクエストボディが不正です');
     expect(db.calls).toHaveLength(0);
   });
 

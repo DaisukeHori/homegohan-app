@@ -90,7 +90,7 @@ describe('GET /api/account/export', () => {
     const res = await GET();
 
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: 'Unauthorized' });
+    expect(await res.json()).toEqual({ error: 'ログインが必要です' });
     expect(res.headers.get('Cache-Control')).toBe('no-store');
     expect(db.queries).toHaveLength(0);
     expect(checkRateLimit).not.toHaveBeenCalled();
