@@ -17,7 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
 import { createActivitySchema } from '@/lib/admin/sales-schemas';
 import { errorCodeOf, internalError, toLoggableError } from '@/lib/api/errors';
 import { createLogger } from '@/lib/db-logger';
@@ -25,9 +25,12 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { isUuid } from '@/lib/http-params';
 
+/** 400: 本文・クエリの検証の失敗の文 (項目ごとの理由は details に添える。message は画面がそのまま出す文なので文字列にする) */
+const VALIDATION_ERROR_MESSAGE = '入力内容を確認してください';
+
 type RouteContext = { params: Promise<{ id: string }> };
 
-const LEAD_NOT_FOUND_RESPONSE = { error: { code: 'NOT_FOUND', message: 'Lead not found' } } as const;
+const LEAD_NOT_FOUND_RESPONSE = { error: { code: 'NOT_FOUND', message: 'リードが見つかりません' } } as const;
 
 /** 構造化ログ (app_logs.function_name) に出す名前 */
 const POST_ROUTE_NAME = 'POST /api/admin/sales/leads/[id]/activities';
@@ -74,23 +77,9 @@ export async function GET(_request: NextRequest, props: RouteContext) {
 
     return NextResponse.json({ data: data ?? [] });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json(
-        { error: { code: err.code, message: err.message } },
-        { status: 401 },
-      );
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json(
-        { error: { code: 'OP_PERMISSION_DENIED', message: err.message } },
-        { status: 403 },
-      );
-    }
-    console.error('[sales/leads/[id]/activities] GET error:', err);
-    return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
-      { status: 500 },
-    );
+    const authFailure = authFailureNested(err, { code: AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED });
+    if (authFailure) return authFailure;
+    return internalError('GET /api/admin/sales/leads/[id]/activities', err, { log_context: '[sales/leads/[id]/activities] GET error' }, { shape: 'nested' });
   }
 }
 
@@ -106,7 +95,7 @@ export async function POST(request: NextRequest, props: RouteContext) {
     const parseResult = createActivitySchema.safeParse(body);
     if (!parseResult.success) {
       return NextResponse.json(
-        { error: { code: 'VALIDATION_ERROR', message: parseResult.error.flatten() } },
+        { error: { code: 'VALIDATION_ERROR', message: VALIDATION_ERROR_MESSAGE, details: parseResult.error.flatten() } },
         { status: 400 },
       );
     }
@@ -172,22 +161,8 @@ export async function POST(request: NextRequest, props: RouteContext) {
 
     return NextResponse.json({ data: activity }, { status: 201 });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json(
-        { error: { code: err.code, message: err.message } },
-        { status: 401 },
-      );
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json(
-        { error: { code: 'OP_PERMISSION_DENIED', message: err.message } },
-        { status: 403 },
-      );
-    }
-    console.error('[sales/leads/[id]/activities] POST error:', err);
-    return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
-      { status: 500 },
-    );
+    const authFailure = authFailureNested(err, { code: AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED });
+    if (authFailure) return authFailure;
+    return internalError('POST /api/admin/sales/leads/[id]/activities', err, { log_context: '[sales/leads/[id]/activities] POST error' }, { shape: 'nested' });
   }
 }

@@ -205,7 +205,7 @@ const endpoints: Endpoint[] = [
     call: () => members.POST(jsonRequest(url('/api/org/members'), 'POST', { email: 'new@example.com' })),
     success: 201,
     flavor: 'invite',
-    forbiddenMessage: 'owner/admin のみ招待可能です',
+    forbiddenMessage: 'オーナー・管理者だけが招待できます',
   },
   { name: 'GET /api/org/settings', call: () => settings.GET(), success: 200, flavor: 'coded' },
   {
@@ -242,7 +242,7 @@ const endpoints: Endpoint[] = [
     call: () => invites.POST(jsonRequest(url('/api/org/invites'), 'POST', { email: 'new@example.com', role: 'member' })),
     success: 200,
     flavor: 'invite',
-    forbiddenMessage: 'owner/admin のみ招待可能です',
+    forbiddenMessage: 'オーナー・管理者だけが招待できます',
   },
   {
     name: 'DELETE /api/org/invites',
@@ -255,7 +255,7 @@ const endpoints: Endpoint[] = [
     call: () => revoke.POST(jsonRequest(url(`/api/org/invites/${INVITE_A}/revoke`), 'POST'), { params: Promise.resolve({ id: INVITE_A }) }),
     success: 200,
     flavor: 'invite',
-    forbiddenMessage: 'owner/admin のみ取消可能です',
+    forbiddenMessage: 'オーナー・管理者だけが招待を取り消せます',
   },
   {
     name: 'POST /api/org/members/[user_id]/remove',
@@ -263,7 +263,7 @@ const endpoints: Endpoint[] = [
       removeMember.POST(jsonRequest(url(`/api/org/members/${MEMBER_A}/remove`), 'POST'), { params: { user_id: MEMBER_A } }),
     success: 200,
     flavor: 'invite',
-    forbiddenMessage: 'owner/admin のみ除名可能です',
+    forbiddenMessage: 'オーナー・管理者だけがメンバーを除名できます',
   },
 ];
 
@@ -1063,6 +1063,42 @@ describe('500 の本文は汎用メッセージだけ (生のエラー文は db-
 
     expect(res.status).toBe(403);
     expect(mockLoggerError).not.toHaveBeenCalled();
+  });
+});
+
+describe('入力の誤りの 400 の文は日本語 (英字の項目名 name / id / user_id を出さない。#1917)', () => {
+  it.each([
+    ['POST: 名前が空', () => departments.POST(jsonRequest(url('/api/org/departments'), 'POST', { name: '' }) as never)],
+    ['PUT: 名前が空', () => departments.PUT(jsonRequest(url('/api/org/departments'), 'PUT', { id: DEPT_A, name: '   ' }) as never)],
+  ])('departments %s: 「部署の名前を入力してください (… 文字以内)」。何も書き込まない', async (_label, run) => {
+    const before = sessionDb.rows('departments').length;
+    const res = await run();
+
+    expect(res.status).toBe(400);
+    const body = await json(res);
+    expect(body.error.code).toBe('VALIDATION_ERROR');
+    expect(body.error.message).toMatch(/^部署の名前を入力してください \(\d+ 文字以内\)$/);
+    expect(sessionDb.rows('departments').length).toBe(before);
+    expect(sessionDb.rows('departments').find((d) => d.id === DEPT_A)?.name).not.toBe('   ');
+  });
+
+  it.each([
+    ['PUT', () => departments.PUT(jsonRequest(url('/api/org/departments'), 'PUT', { name: '改名' }) as never)],
+    ['DELETE', () => departments.DELETE(jsonRequest(url('/api/org/departments'), 'DELETE') as never)],
+  ])('departments %s: 部署の id が無ければ「部署を指定してください」', async (_label, run) => {
+    const res = await run();
+
+    expect(res.status).toBe(400);
+    expect(await json(res)).toEqual({ error: { code: 'VALIDATION_ERROR', message: '部署を指定してください' } });
+    expect(sessionDb.rows('departments').some((d) => d.id === DEPT_A)).toBe(true);
+  });
+
+  it('members/[user_id]/remove: 除名する人の id が空なら「除名するメンバーを指定してください」。RPC は呼ばない', async () => {
+    const res = await removeMember.POST(jsonRequest(url('/api/org/members//remove'), 'POST'), { params: { user_id: '' } });
+
+    expect(res.status).toBe(400);
+    expect(await json(res)).toEqual({ error: { code: 'INVALID_BODY', message: '除名するメンバーを指定してください' } });
+    expect(mockRpc).not.toHaveBeenCalled();
   });
 });
 

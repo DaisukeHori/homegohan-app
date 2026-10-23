@@ -216,7 +216,7 @@ describe('1. GET /api/health/records: start_date / end_date は実在する日�
     for (const name of ['start_date', 'end_date']) {
       const res = await getHealthRecords(new NextRequest(`http://localhost/api/health/records?${name}=${date}`));
       expect(res.status, name).toBe(400);
-      expect(await res.json(), name).toEqual({ error: `${name} must be ${DATE_REQUIREMENT}` });
+      expect(await res.json(), name).toEqual({ error: `${name} は YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください` });
     }
     expect(queries).toEqual([]);
   });

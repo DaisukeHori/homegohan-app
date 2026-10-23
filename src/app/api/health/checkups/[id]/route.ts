@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { HEALTH_CHECKUP_DATE_NULL_MESSAGE, HEALTH_CHECKUP_NOT_FOUND_MESSAGE, HEALTH_CHECKUP_NO_FIELDS_MESSAGE } from '@/lib/health-api-messages';
 import { INVALID_ID_PARAM_CODE, INVALID_ID_PARAM_MESSAGE, isUuid } from '@/lib/http-params';
 import { sanitizeHealthCheckupPayload } from '@/lib/health-payloads';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
@@ -14,7 +16,7 @@ export async function GET(
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { id } = await params;
@@ -35,7 +37,7 @@ export async function GET(
   }
 
   if (!data) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    return NextResponse.json({ error: HEALTH_CHECKUP_NOT_FOUND_MESSAGE }, { status: 404 });
   }
 
   return NextResponse.json({ checkup: data });
@@ -53,7 +55,7 @@ export async function PUT(
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { id } = await params;
@@ -69,11 +71,11 @@ export async function PUT(
   }
 
   if (Object.keys(checkupData).length === 0) {
-    return NextResponse.json({ error: 'No valid checkup fields were provided' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_CHECKUP_NO_FIELDS_MESSAGE }, { status: 400 });
   }
 
   if (checkupData.checkup_date === null) {
-    return NextResponse.json({ error: 'checkup_date cannot be null' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_CHECKUP_DATE_NULL_MESSAGE }, { status: 400 });
   }
 
   // 所有権確認
@@ -85,7 +87,7 @@ export async function PUT(
     .maybeSingle();
 
   if (!existing) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    return NextResponse.json({ error: HEALTH_CHECKUP_NOT_FOUND_MESSAGE }, { status: 404 });
   }
 
   // 更新
@@ -115,7 +117,7 @@ export async function DELETE(
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { id } = await params;
@@ -133,7 +135,7 @@ export async function DELETE(
     .maybeSingle();
 
   if (!existing) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    return NextResponse.json({ error: HEALTH_CHECKUP_NOT_FOUND_MESSAGE }, { status: 404 });
   }
 
   // 画像があれば削除
