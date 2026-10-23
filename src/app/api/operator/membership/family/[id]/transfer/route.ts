@@ -89,7 +89,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     if (rpcError) {
       // RPC の生のエラー文は本文に出さない (#1172)。分かるものは固定の文、それ以外は汎用の 500 にして構造化ログに残す
       // 譲渡先が退会の手続き中なら 409 (代表者にすると、その退会の最後のアカウントの削除が代表者の外部キーで失敗する。#1917 の続き)。
-      // 家族の行のトリガー family_groups_representative_not_deleting
+      // 家族の行のトリガー trg_representative_not_deleting (関数 family_groups_representative_not_deleting)
       // (supabase/migrations/20261023150000_account_deletion_family_representative_guard.sql) が P0001 + このコードの完全一致で止めた形だけを拾う。
       // エラーのコードの判定は共通の関数で行い、route では `.message` を読まない (#1917)
       if (isRaisedExceptionWithCode(rpcError, MembershipErrorCode.REPRESENTATIVE_ACCOUNT_DELETING)) {
