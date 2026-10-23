@@ -15,6 +15,7 @@ import {
 } from '@/lib/membership/invite-throttle';
 import { z } from 'zod';
 import { internalError } from '@/lib/api/errors';
+import { ORG_API_TRANSFER_OWNER_ONLY_MESSAGE } from '@/lib/org-api-errors';
 import { normalizeProfileName } from '@/lib/profile-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { normalizeUuid } from '@/lib/http-params';
@@ -80,7 +81,7 @@ export async function POST(request: Request) {
     profile?.organization_id !== body.organization_id
   ) {
     return NextResponse.json(
-      { error: { code: 'INSUFFICIENT_PERMISSION', message: 'owner のみ譲渡提案が可能です' } },
+      { error: { code: 'INSUFFICIENT_PERMISSION', message: ORG_API_TRANSFER_OWNER_ONLY_MESSAGE } },
       { status: 403 },
     );
   }

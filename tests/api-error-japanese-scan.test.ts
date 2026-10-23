@@ -12,6 +12,7 @@
  *   2. 走査の部品 (tests/helpers/api-error-text-scan.ts) が、わざと悪い fixture の英語の文と例外の文面を行つきで拾い、日本語の文は拾わない
  *   3. 直し終えた配下 (tests/helpers/api-error-japanese-scope.ts の JAPANESE_ERROR_API_DIRS) の route と共通の関数のファイルに、違反が 0 件
  *   4. 番兵: 一覧の外の配下の違反の件数が、基線 (UNFIXED_VIOLATION_BASELINE) と同じ (増えたら赤・減ったら一覧と基線の更新を求めて赤)
+ *   5. 対象外 (MACHINE_FACING_ERROR_TEXT_PATHS。Webhook の受け口・cron の認証) の本文の文は、機械向けの code (英小文字と _) だけ
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -52,6 +53,7 @@ import {
 import {
   JAPANESE_ERROR_API_DIRS,
   JAPANESE_ERROR_SHARED_BODY_FILES,
+  MACHINE_FACING_ERROR_TEXT_PATHS,
   SENTINEL_EXCLUDED_ROUTE_FILES,
   UNFIXED_VIOLATION_BASELINE,
 } from './helpers/api-error-japanese-scope';
@@ -302,6 +304,11 @@ describe('走査の部品: 英語の文と例外の文面を見つけられる',
 
 const ALL_ROUTE_FILES = routeFilesUnder(API_ROUTES_ROOT);
 const isDone = (file: string) => JAPANESE_ERROR_API_DIRS.some((dir) => isUnderDir(file, dir));
+/** 対象外 (英字の機械向けの code のまま残す) の配下・ファイルか */
+const isMachineFacing = (file: string) =>
+  MACHINE_FACING_ERROR_TEXT_PATHS.some(({ path: p }) => file === p || isUnderDir(file, p));
+/** 機械向けの code (英小文字と数字を _ でつなぐ。'unauthorized'・'payload_too_large') */
+const MACHINE_CODE = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
 
 describe('見張りの範囲 (tests/helpers/api-error-japanese-scope.ts) が実在する', () => {
   it('直し終えた配下は、どれも route を持つディレクトリ (初めは /api/org を含む)', () => {
@@ -316,6 +323,57 @@ describe('見張りの範囲 (tests/helpers/api-error-japanese-scope.ts) が実�
       expect(fs.existsSync(path.join(REPO_ROOT, file)), file).toBe(true);
     }
     for (const file of SENTINEL_EXCLUDED_ROUTE_FILES) expect(isDone(file), file).toBe(false);
+  });
+
+  it('対象外 (機械向けの code のまま残す) の配下・ファイルは実在し、理由が日本語で書かれ、直し終えた配下・外す route と重ならない', () => {
+    expect(MACHINE_FACING_ERROR_TEXT_PATHS.map(({ path: p }) => p)).toEqual(
+      expect.arrayContaining(['src/app/api/webhooks', 'src/lib/cron-auth.ts']),
+    );
+    for (const { path: p, reason } of MACHINE_FACING_ERROR_TEXT_PATHS) {
+      expect(fs.existsSync(path.join(REPO_ROOT, p)), p).toBe(true);
+      if (isUnderDir(p, API_ROUTES_ROOT)) expect(ALL_ROUTE_FILES.filter((file) => isUnderDir(file, p)).length, p).toBeGreaterThan(0);
+      expect(JAPANESE.test(reason), p).toBe(true);
+      expect(JAPANESE_ERROR_API_DIRS.some((dir) => p === dir || isUnderDir(p, dir) || isUnderDir(dir, p)), p).toBe(false);
+      expect(JAPANESE_ERROR_SHARED_BODY_FILES.includes(p), p).toBe(false);
+    }
+    for (const file of SENTINEL_EXCLUDED_ROUTE_FILES) expect(isMachineFacing(file), file).toBe(false);
+  });
+});
+
+describe('対象外の配下・ファイルの失敗の本文は、機械向けの code だけ (英語の文と例外の文面が無い)', () => {
+  const files = [
+    ...ALL_ROUTE_FILES.filter(isMachineFacing),
+    ...MACHINE_FACING_ERROR_TEXT_PATHS.map(({ path: p }) => p).filter((p) => !isUnderDir(p, API_ROUTES_ROOT)),
+  ];
+  const findings = files.flatMap((file) => findErrorTextViolations(file));
+
+  it('走査するファイルがある (Webhook の受け口 3 本と cron の認証)', () => {
+    expect(files).toEqual(
+      expect.arrayContaining([
+        'src/app/api/webhooks/stripe/route.ts',
+        'src/app/api/webhooks/revenuecat/route.ts',
+        'src/app/api/webhooks/resend/route.ts',
+        'src/lib/cron-auth.ts',
+      ]),
+    );
+  });
+
+  it('英字の文は、どれも機械向けの code の形 (英語の文 \'Unauthorized\' などは入れない)', () => {
+    const english = findings.filter((f) => f.kind === 'english');
+    // 対象外にした理由 (機械向けの code) が今も成り立つこと: 走査が code を拾えている
+    expect(english.length).toBeGreaterThan(0);
+    expect(english.filter((f) => !MACHINE_CODE.test(f.text)).map((f) => `${f.file}:${f.line} 「${f.text}」`)).toEqual([]);
+  });
+
+  it('例外の文面 (X.message) を本文の文に入れていない', () => {
+    expect(findings.filter((f) => f.kind === 'exception-message').map((f) => `${f.file}:${f.line}`)).toEqual([]);
+  });
+
+  it('機械向けの code の判定は、英語の文・大文字の code を通さない', () => {
+    for (const ok of ['unauthorized', 'payload_too_large', 'cron_disabled', 'event_in_progress']) expect(MACHINE_CODE.test(ok), ok).toBe(true);
+    for (const ng of ['Unauthorized', 'Internal server error', 'Not available in production', 'UNAUTHORIZED', 'invalid-payload', '_x', 'x_']) {
+      expect(MACHINE_CODE.test(ng), ng).toBe(false);
+    }
   });
 });
 
@@ -335,7 +393,7 @@ describe('直し終えた配下と共通の関数のファイルの失敗の本�
 describe('番兵: 一覧の外の配下の違反の件数は基線と同じ', () => {
   // 全 route の構文木の走査は、テストの時間切れに掛からないよう、収集のときに 1 回だけ行う (上の describe と同じ)
   const excluded = new Set(SENTINEL_EXCLUDED_ROUTE_FILES);
-  const unfixedFiles = ALL_ROUTE_FILES.filter((file) => !isDone(file) && !excluded.has(file));
+  const unfixedFiles = ALL_ROUTE_FILES.filter((file) => !isDone(file) && !isMachineFacing(file) && !excluded.has(file));
   const counts: Record<string, number> = {};
   for (const file of unfixedFiles) {
     const n = findErrorTextViolations(file).length;
@@ -344,8 +402,10 @@ describe('番兵: 一覧の外の配下の違反の件数は基線と同じ', ()
     counts[key] = (counts[key] ?? 0) + n;
   }
 
-  it('一覧の外の route を走査している (直し終えた配下と外す route を除いた残り)', () => {
-    expect(unfixedFiles.length).toBe(ALL_ROUTE_FILES.filter((file) => !isDone(file)).length - SENTINEL_EXCLUDED_ROUTE_FILES.length);
+  it('一覧の外の route を走査している (直し終えた配下・対象外の配下と外す route を除いた残り)', () => {
+    expect(unfixedFiles.length).toBe(
+      ALL_ROUTE_FILES.filter((file) => !isDone(file) && !isMachineFacing(file)).length - SENTINEL_EXCLUDED_ROUTE_FILES.length,
+    );
     for (const file of unfixedFiles) {
       expect(isDone(file), file).toBe(false);
       expect(excluded.has(file), file).toBe(false);

@@ -829,7 +829,7 @@ $$);
      ブリッジのコードは /api/auth の prefix の行 (auth_flow) で止めない。
      凍結中は同意の画面に進めないため。凍結の判定で通るパスがすべて同意の許可リストにあることは
      lib/supabase/__tests__/middleware-legal-consent-api.test.ts が全 route で確かめる)
-3. 削除をブロックする条件 (409。判定の前に退会の印を付ける: RPC begin_account_deletion_guard。印のある人を運営がオーナーにして組織を作ろうとすると DB のトリガーが止める。supabase/migrations/20261023130000_account_deletion_owner_guard.sql。#1917 の続き):
+3. 削除をブロックする条件 (409。判定の前に退会の印を付ける: RPC begin_account_deletion_guard。印のある人を運営がオーナーにして組織を作ろうとすると DB のトリガーが止める。supabase/migrations/20261023130000_account_deletion_owner_guard.sql。印のある人を家族の代表者にする作成・譲渡の承諾・運営の強制譲渡も DB のトリガーが REPRESENTATIVE_ACCOUNT_DELETING で止める。20261023150000_account_deletion_family_representative_guard.sql。#1917 の続き):
    - 組織の owner → ACCOUNT_DELETE_BLOCKED_ORG_OWNER
      (先に owner を譲渡するか、組織を解散する)
    - 家族グループの代表者 → ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE

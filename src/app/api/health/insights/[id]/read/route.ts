@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { INVALID_ID_PARAM_CODE, INVALID_ID_PARAM_MESSAGE, isUuid } from '@/lib/http-params';
 
 // インサイトを既読にする
@@ -12,7 +13,7 @@ export async function POST(
   const { data: { user } } = await supabase.auth.getUser();
   
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { id } = await params;

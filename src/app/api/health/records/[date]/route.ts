@@ -3,6 +3,8 @@ import { isCalendarDate } from '@/lib/jst-day-ranges';
 import { addDaysToDate } from '@/lib/date-utils';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { HEALTH_DATE_PARAM_INVALID_MESSAGE, HEALTH_RECORD_NO_FIELDS_MESSAGE } from '@/lib/health-api-messages';
 import { RECORD_DATE_PATTERN, sanitizeHealthRecordPayload } from '@/lib/health-payloads';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
@@ -15,7 +17,7 @@ export async function GET(
   const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { date } = await params;
@@ -24,7 +26,7 @@ export async function GET(
   // 意図しないクエリになり得るため、事前にフォーマット検証して400を返す。
   // 前日を暦の計算で求めるので、存在しない日付 (2026-02-30 など) もここで弾く (#1433)
   if (!RECORD_DATE_PATTERN.test(date) || !isCalendarDate(date)) {
-    return NextResponse.json({ error: 'date must be in YYYY-MM-DD format' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_DATE_PARAM_INVALID_MESSAGE }, { status: 400 });
   }
 
   const { data, error } = await supabase
@@ -67,7 +69,7 @@ export async function PUT(
   const { data: { user } } = await supabase.auth.getUser();
   
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { date } = await params;
@@ -76,7 +78,7 @@ export async function PUT(
   // 事前にフォーマット検証して400を返す。存在しない日付 (2026-02-30 など) も、形だけでは通って DB の date 型への変換で
   // 500 になるので、GET と同じく isCalendarDate で弾く (#1463)
   if (!RECORD_DATE_PATTERN.test(date) || !isCalendarDate(date)) {
-    return NextResponse.json({ error: 'date must be in YYYY-MM-DD format' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_DATE_PARAM_INVALID_MESSAGE }, { status: 400 });
   }
 
   const body = await request.json().catch(() => null);
@@ -89,7 +91,7 @@ export async function PUT(
   }
 
   if (Object.keys(recordData).length === 0) {
-    return NextResponse.json({ error: 'No valid health record fields were provided' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_RECORD_NO_FIELDS_MESSAGE }, { status: 400 });
   }
 
   // #1048 F2-19: 確認してから insert/update する check-then-act は同時リクエストで
@@ -124,14 +126,14 @@ export async function DELETE(
   const { data: { user } } = await supabase.auth.getUser();
   
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { date } = await params;
 
   // 存在しない日付は DB の date 型への変換で 500 になるので、GET・PUT と同じく 400 にする (#1463)
   if (!RECORD_DATE_PATTERN.test(date) || !isCalendarDate(date)) {
-    return NextResponse.json({ error: 'date must be in YYYY-MM-DD format' }, { status: 400 });
+    return NextResponse.json({ error: HEALTH_DATE_PARAM_INVALID_MESSAGE }, { status: 400 });
   }
 
   const { error } = await supabase

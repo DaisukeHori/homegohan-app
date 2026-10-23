@@ -297,7 +297,7 @@ describe('UUID の形でない id: DB に渡さず 404 NOT_FOUND (22P02 を「DB
   it('GET /[id] は 404 NOT_FOUND で、DB に問い合わせず、記録しない', async () => {
     const res = await getLead(NOT_A_UUID);
     expect(res.status).toBe(404);
-    expect((await json(res)).error).toEqual({ code: 'NOT_FOUND', message: 'Lead not found' });
+    expect((await json(res)).error).toEqual({ code: 'NOT_FOUND', message: 'リードが見つかりません' });
     expectNoLeadQueries();
     expect(auditRows()).toEqual([]);
     expect(mockLoggerError).not.toHaveBeenCalled();
@@ -306,7 +306,7 @@ describe('UUID の形でない id: DB に渡さず 404 NOT_FOUND (22P02 を「DB
   it('PATCH /[id] は 404 NOT_FOUND で、DB に問い合わせず、書かず、記録しない', async () => {
     const res = await patchLead({ stage: 'meeting' }, NOT_A_UUID);
     expect(res.status).toBe(404);
-    expect((await json(res)).error).toEqual({ code: 'NOT_FOUND', message: 'Lead not found' });
+    expect((await json(res)).error).toEqual({ code: 'NOT_FOUND', message: 'リードが見つかりません' });
     expectNoLeadQueries();
     expect(sessionDb.rows('sales_leads')[0].stage).toBe('approach');
     expect(auditRows()).toEqual([]);
@@ -322,14 +322,14 @@ describe('UUID の形でない id: DB に渡さず 404 NOT_FOUND (22P02 を「DB
   it('GET /[id]/activities は 404 NOT_FOUND で、DB に問い合わせない', async () => {
     const res = await listActivities(NOT_A_UUID);
     expect(res.status).toBe(404);
-    expect((await json(res)).error).toEqual({ code: 'NOT_FOUND', message: 'Lead not found' });
+    expect((await json(res)).error).toEqual({ code: 'NOT_FOUND', message: 'リードが見つかりません' });
     expectNoLeadQueries();
   });
 
   it('POST /[id]/activities は 404 NOT_FOUND で、活動を書かず、記録しない', async () => {
     const res = await addActivity(NOT_A_UUID);
     expect(res.status).toBe(404);
-    expect((await json(res)).error).toEqual({ code: 'NOT_FOUND', message: 'Lead not found' });
+    expect((await json(res)).error).toEqual({ code: 'NOT_FOUND', message: 'リードが見つかりません' });
     expectNoLeadQueries();
     expect(activityRows()).toEqual([EXISTING_ACTIVITY]);
     expect(auditRows()).toEqual([]);

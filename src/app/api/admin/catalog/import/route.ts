@@ -6,11 +6,16 @@
  * Edge Function が未デプロイの場合は 500 を返す (E2E J-43 許容)。
  *
  * E2E: w5-12-admin-adversarial J-41, J-41b, J-42, J-42b, J-42c, J-43
+ *
+ * 失敗の本文は nested の形 { error: { code, message } } (同じ route の 401 / 403 と同じ形)。
+ * code は従来の値 (invalid_json / invalid_source / INTERNAL_ERROR / EDGE_FUNCTION_ERROR) のまま、message は日本語の固定の文 (#1917)。
+ * 以前は { error: '<code>', message: '<文>' } の形で、error に英字の code が入っていた
  */
 
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { API_INVALID_JSON_MESSAGE } from '@/lib/api/error-responses';
 import { z } from 'zod';
 import { getSupabaseServiceConfig, isMissingEnvError } from '@/lib/env-required';
 import { recordAdminAudit } from '@/lib/admin/audit';
@@ -119,7 +124,7 @@ export async function POST(request: Request) {
     body = await request.json();
   } catch {
     return NextResponse.json(
-      { error: 'invalid_json', message: 'リクエストボディが不正です' },
+      { error: { code: 'invalid_json', message: API_INVALID_JSON_MESSAGE } },
       { status: 400 },
     );
   }
@@ -127,7 +132,7 @@ export async function POST(request: Request) {
   const parseResult = ImportBodySchema.safeParse(body);
   if (!parseResult.success) {
     return NextResponse.json(
-      { error: 'invalid_source', message: 'sourceCode が不正です', details: parseResult.error.flatten() },
+      { error: { code: 'invalid_source', message: 'sourceCode が不正です' }, details: parseResult.error.flatten() },
       { status: 400 },
     );
   }
@@ -143,7 +148,7 @@ export async function POST(request: Request) {
   } catch (err) {
     if (!isMissingEnvError(err)) throw err;
     return NextResponse.json(
-      { error: 'INTERNAL_ERROR', message: 'サーバー設定エラー' },
+      { error: { code: 'INTERNAL_ERROR', message: 'サーバー設定エラー' } },
       { status: 500 },
     );
   }
@@ -164,7 +169,7 @@ export async function POST(request: Request) {
       const errorText = await edgeResponse.text().catch(() => 'unknown');
       console.error(`[api/admin/catalog/import] Edge Function error (${edgeResponse.status}): ${errorText}`);
       return NextResponse.json(
-        { error: 'EDGE_FUNCTION_ERROR', message: `Edge Function がエラーを返しました (${edgeResponse.status})` },
+        { error: { code: 'EDGE_FUNCTION_ERROR', message: `Edge Function がエラーを返しました (${edgeResponse.status})` } },
         { status: 500 },
       );
     }
@@ -190,7 +195,7 @@ export async function POST(request: Request) {
   } catch (err) {
     console.error('[api/admin/catalog/import] fetch error:', err);
     return NextResponse.json(
-      { error: 'INTERNAL_ERROR', message: 'Edge Function 呼び出しに失敗しました' },
+      { error: { code: 'INTERNAL_ERROR', message: 'Edge Function 呼び出しに失敗しました' } },
       { status: 500 },
     );
   }

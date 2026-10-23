@@ -25,13 +25,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
 import { updateLeadSchema } from '@/lib/admin/sales-schemas';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { errorCodeOf, internalError, toLoggableError } from '@/lib/api/errors';
 import { createLogger } from '@/lib/db-logger';
 import { isUuid } from '@/lib/http-params';
+
+/** 400: 本文・クエリの検証の失敗の文 (項目ごとの理由は details に添える。message は画面がそのまま出す文なので文字列にする) */
+const VALIDATION_ERROR_MESSAGE = '入力内容を確認してください';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -40,7 +43,7 @@ const STALE_LEAD_RESPONSE = {
   error: { code: 'CONFLICT_STALE_DATA', message: '別の担当者が先にこのリードのステージを変えました。画面を開き直して、もう一度確認してください' },
 } as const;
 
-const LEAD_NOT_FOUND_RESPONSE = { error: { code: 'NOT_FOUND', message: 'Lead not found' } } as const;
+const LEAD_NOT_FOUND_RESPONSE = { error: { code: 'NOT_FOUND', message: 'リードが見つかりません' } } as const;
 
 /** 構造化ログ (app_logs.function_name) に出す名前 */
 const GET_ROUTE_NAME = 'GET /api/admin/sales/leads/[id]';
@@ -141,23 +144,9 @@ export async function GET(request: NextRequest, props: RouteContext) {
 
     return NextResponse.json({ data: body });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json(
-        { error: { code: err.code, message: err.message } },
-        { status: 401 },
-      );
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json(
-        { error: { code: 'OP_PERMISSION_DENIED', message: err.message } },
-        { status: 403 },
-      );
-    }
-    console.error('[sales/leads/[id]] GET error:', err);
-    return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
-      { status: 500 },
-    );
+    const authFailure = authFailureNested(err, { code: AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED });
+    if (authFailure) return authFailure;
+    return internalError('GET /api/admin/sales/leads/[id]', err, { log_context: '[sales/leads/[id]] GET error' }, { shape: 'nested' });
   }
 }
 
@@ -173,7 +162,7 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
     const parseResult = updateLeadSchema.safeParse(body);
     if (!parseResult.success) {
       return NextResponse.json(
-        { error: { code: 'VALIDATION_ERROR', message: parseResult.error.flatten() } },
+        { error: { code: 'VALIDATION_ERROR', message: VALIDATION_ERROR_MESSAGE, details: parseResult.error.flatten() } },
         { status: 400 },
       );
     }
@@ -195,11 +184,7 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
       .maybeSingle();
 
     if (readError) {
-      console.error('[sales/leads/[id]] PATCH read error:', readError.message);
-      return NextResponse.json(
-        { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
-        { status: 500 },
-      );
+      return internalError('PATCH /api/admin/sales/leads/[id]', readError, { log_context: '[sales/leads/[id]] PATCH read error' }, { shape: 'nested' });
     }
     if (!existingLead) {
       return NextResponse.json(LEAD_NOT_FOUND_RESPONSE, { status: 404 });
@@ -218,11 +203,7 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
       .maybeSingle();
 
     if (error) {
-      console.error('[sales/leads/[id]] PATCH update error:', error.message);
-      return NextResponse.json(
-        { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
-        { status: 500 },
-      );
+      return internalError('PATCH /api/admin/sales/leads/[id]', error, { log_context: '[sales/leads/[id]] PATCH update error' }, { shape: 'nested' });
     }
     if (!lead) {
       if (updates.stage === undefined) {
@@ -236,11 +217,7 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
         .eq('id', params.id)
         .maybeSingle();
       if (rereadError) {
-        console.error('[sales/leads/[id]] PATCH reread error:', rereadError.message);
-        return NextResponse.json(
-          { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
-          { status: 500 },
-        );
+        return internalError('PATCH /api/admin/sales/leads/[id]', rereadError, { log_context: '[sales/leads/[id]] PATCH reread error' }, { shape: 'nested' });
       }
       if (!currentLead) {
         return NextResponse.json(LEAD_NOT_FOUND_RESPONSE, { status: 404 });
@@ -286,22 +263,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
 
     return NextResponse.json({ data: lead });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json(
-        { error: { code: err.code, message: err.message } },
-        { status: 401 },
-      );
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json(
-        { error: { code: 'OP_PERMISSION_DENIED', message: err.message } },
-        { status: 403 },
-      );
-    }
-    console.error('[sales/leads/[id]] PATCH error:', err);
-    return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
-      { status: 500 },
-    );
+    const authFailure = authFailureNested(err, { code: AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED });
+    if (authFailure) return authFailure;
+    return internalError('PATCH /api/admin/sales/leads/[id]', err, { log_context: '[sales/leads/[id]] PATCH error' }, { shape: 'nested' });
   }
 }

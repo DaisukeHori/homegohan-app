@@ -11,7 +11,7 @@ import {
 } from '@/lib/membership/org-invite';
 import { AddOrgMemberRequestBodySchema } from '@/schemas/membership/organization-invite';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { ORG_API_INTERNAL_ERROR_MESSAGE, orgAuthFailureFlat } from '@/lib/org-api-errors';
+import { ORG_API_INTERNAL_ERROR_MESSAGE, ORG_API_INVITE_ADMIN_ONLY_MESSAGE, orgAuthFailureFlat } from '@/lib/org-api-errors';
 // メンバー一覧取得 (所属組織の owner / admin のみ。判定は共通の requireOrgAdmin()、#1161)
 export async function GET(_request: Request) {
   try {
@@ -58,7 +58,7 @@ export async function POST(request: Request) {
     }
     if (error instanceof ForbiddenError) {
       return NextResponse.json(
-        { error: { code: 'INSUFFICIENT_PERMISSION', message: 'owner/admin のみ招待可能です' } },
+        { error: { code: 'INSUFFICIENT_PERMISSION', message: ORG_API_INVITE_ADMIN_ONLY_MESSAGE } },
         { status: 403 },
       );
     }

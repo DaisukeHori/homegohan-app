@@ -1,6 +1,6 @@
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { API_INVALID_JSON_MESSAGE, API_INTERNAL_ERROR_MESSAGE, authFailureFlat } from '@/lib/api/error-responses';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { isUuid, readJsonBody } from '@/lib/http-params';
@@ -9,6 +9,12 @@ import { NextResponse } from 'next/server';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // 権限: support / admin / super_admin (共通の requireRole()、#1161)
+
+/** 404: 対象の利用者がいない (UUID の形でない id を含む) */
+const USER_NOT_FOUND_MESSAGE = 'ユーザーが見つかりません';
+
+/** 400: メモの本文が空 (空白だけを含む) */
+const NOTE_REQUIRED_MESSAGE = 'メモの内容を入力してください';
 
 /**
  * 500 の本文は汎用メッセージだけにする (#1172: Supabase / Postgres の生のエラー文を返さない)。
@@ -20,7 +26,7 @@ function internalError(method: 'GET' | 'POST', err: unknown, metadata?: Record<s
     err,
     metadata,
   );
-  return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  return NextResponse.json({ error: API_INTERNAL_ERROR_MESSAGE }, { status: 500 });
 }
 
 // ユーザーノート追加
@@ -34,18 +40,18 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
 
     // uuid 型の列に UUID でない文字列を渡すと 22P02 になり、存在しない id なのに 500 になる
     if (!isUuid(params.id)) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+      return NextResponse.json({ error: USER_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     const parsedBody = await readJsonBody(request);
     if (!parsedBody.ok) {
-      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
     }
     const rawNote = (parsedBody.body as { note?: unknown } | null)?.note;
     const note = typeof rawNote === 'string' ? rawNote.trim() : '';
 
     if (note.length === 0) {
-      return NextResponse.json({ error: 'Note content is required' }, { status: 400 });
+      return NextResponse.json({ error: NOTE_REQUIRED_MESSAGE }, { status: 400 });
     }
 
     // ターゲットユーザーの存在確認
@@ -63,7 +69,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
       });
     }
     if (!targetUser) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+      return NextResponse.json({ error: USER_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     // ノート追加 (admin_user_notes の RLS は運営ロールに許しているので、本人のセッションの client で書く)
@@ -110,12 +116,8 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     });
 
   } catch (error) {
-    if (error instanceof AuthError) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    if (error instanceof ForbiddenError) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
+    const authFailure = authFailureFlat(error);
+    if (authFailure) return authFailure;
     return internalError('POST', error);
   }
 }
@@ -128,7 +130,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     const actor = await requireRole(['support', 'admin', 'super_admin']);
 
     if (!isUuid(params.id)) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 });
+      return NextResponse.json({ error: USER_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     // 認可を通したあとだけ service_role で読む (user_profiles は RLS で本人の行しか見えない)
@@ -206,12 +208,8 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     return NextResponse.json({ notes: responseNotes });
 
   } catch (error) {
-    if (error instanceof AuthError) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    if (error instanceof ForbiddenError) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
+    const authFailure = authFailureFlat(error);
+    if (authFailure) return authFailure;
     return internalError('GET', error);
   }
 }

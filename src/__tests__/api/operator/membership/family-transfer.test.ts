@@ -3,12 +3,13 @@ import { EmailSendError } from '@/lib/emails/send-result';
 import { NextRequest } from 'next/server';
 import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE } from '@/lib/api/errors';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { createFakeServiceRole, leadingUsers, valueUnder, type FakeServiceRole } from './fake-service-role';
+import { createFakeServiceRole, leadingUsers, valueUnder, type FakeServiceRole, type Row } from './fake-service-role';
 
 // 外部との境界はすべてモックにする。通知の宛先・本文を決める本体 (route と renderForceTransferEmail) は実物を通す
 const mocks = vi.hoisted(() => ({
   requireSuperAdmin: vi.fn(),
   rpc: vi.fn(),
+  auditInsert: vi.fn(),
   createServiceRoleClient: vi.fn(),
   sendEmail: vi.fn(),
   logError: vi.fn(),
@@ -20,13 +21,19 @@ vi.mock('@/lib/auth/operator-permissions', () => ({
   requireSuperAdmin: mocks.requireSuperAdmin,
 }));
 
-// RPC は運営者本人のセッションで実行される (cookies() を使う本物の createClient は使わない)。
+// RPC と監査 (admin_audit_logs への insert) は運営者本人のセッションで実行される (cookies() を使う本物の createClient は使わない)。
 // service-role のクライアントは本物の getSupabaseAdmin を通す (#1162。接続情報は env-required の getter で取り出し、
 // 下で差し替えた @supabase/supabase-js の createClient で作る)。呼ばれた回数を数える
 vi.mock('@/lib/supabase/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/supabase/server')>();
   return {
-    createClient: () => ({ rpc: mocks.rpc }),
+    createClient: () => ({
+      rpc: mocks.rpc,
+      from: (table: string) => {
+        if (table !== 'admin_audit_logs') throw new Error(`unexpected table on the session client: ${table}`);
+        return { insert: mocks.auditInsert };
+      },
+    }),
     getSupabaseAdmin: vi.fn(actual.getSupabaseAdmin),
   };
 });
@@ -122,9 +129,23 @@ function buildFake(leadingUserCount = 0): FakeServiceRole {
   });
 }
 
+/** family_groups の行の representative_id を書き換える (ロックの下の書き換え: 旧代表者を adult に、新代表者を representative に)。書き換える前の representative_id を返す */
+function reassignRepresentative(fake: FakeServiceRole, family: Row, newRepId: unknown): unknown {
+  const previousRepId = family.representative_id;
+  for (const m of fake.tables.family_members) {
+    if (m.family_id !== family.id || m.status !== 'active') continue;
+    if (m.user_id === previousRepId) m.role = 'adult';
+    if (m.user_id === newRepId) m.role = 'representative';
+  }
+  family.representative_id = newRepId;
+  return previousRepId;
+}
+
 /**
- * operator_force_representative_transfer の挙動 (supabase/baseline/prod_schema.sql) を再現する。
- * ★representative_id を新代表者へ書き換えた「後の」行を返す。ここが #1209 の原因そのもの。
+ * operator_force_representative_transfer の挙動 (最新の定義は supabase/migrations/20261023140000_operator_transfer_return_old_owner.sql) を再現する。
+ * 家族の行をロックしてから representative_id (旧代表者) を読み、representative_id を新代表者へ書き換え、
+ * {"family_group": 書き換えた「後の」行, "old_rep_id": ロックの下で読んだ旧代表者} を返す (#1917)。
+ * 書き換えた後の行の representative_id は新代表者なので、それを旧代表者として使う実装は #1209 と同じ理由で壊れる。
  * 新代表者の id は Postgres の uuid と同じく大文字小文字を区別せずに比べ、保存するのは行の user_id (小文字) にする (#1790)。
  * そのため大文字の to_user_id をそのまま RPC に渡しても譲渡は成り立ち、route の側の突き合わせのずれだけがテストに出る
  */
@@ -144,14 +165,26 @@ function simulateRepresentativeTransfer(fake: FakeServiceRole, args: RpcArgs) {
   const family = fake.tables.family_groups.find((f) => f.id === args.p_family_id);
   if (!family) return { data: null, error: { message: 'TARGET_NOT_IN_FAMILY', code: 'P0001' } };
 
-  const oldRepId = family.representative_id;
-  for (const m of members) {
-    if (m.family_id === args.p_family_id && m.user_id === oldRepId && m.status === 'active') m.role = 'adult';
-  }
-  target.role = 'representative';
-  family.representative_id = target.user_id;
-  return { data: { ...family }, error: null };
+  const oldRepId = reassignRepresentative(fake, family, target.user_id);
+  return { data: { family_group: { ...family }, old_rep_id: oldRepId }, error: null };
 }
+
+/**
+ * #1917 の migration の前の定義 (20261017130000_operator_mfa_db_gate.sql) の RPC: 書き換えた後の行だけを返し、旧代表者を返さない。
+ * migration を当てる前の DB に新しい route が当たったときの形
+ */
+function simulateRepresentativeTransferBeforeMigration(fake: FakeServiceRole, args: RpcArgs) {
+  const result = simulateRepresentativeTransfer(fake, args);
+  if (result.error) return result;
+  return { data: result.data.family_group, error: null };
+}
+
+/** admin_audit_logs に書いた行 (recordAdminAudit の insert の引数) */
+const auditRows = () => mocks.auditInsert.mock.calls.map(([row]) => row as { details: Record<string, unknown> });
+/** renderForceTransferEmail に渡した、宛先ごとの立場 (old_owner / new_owner / member) */
+const recipientRoleOf = (address: string) =>
+  vi.mocked(renderForceTransferEmail).mock.calls.map(([vars]) => vars).find((vars) => vars.recipient_email === address)?.recipient_role;
+const renderedTransferVars = () => vi.mocked(renderForceTransferEmail).mock.calls.map(([vars]) => vars);
 
 let fake: FakeServiceRole;
 
@@ -169,6 +202,7 @@ beforeEach(() => {
     return simulateRepresentativeTransfer(fake, args);
   });
   mocks.sendEmail.mockResolvedValue({ id: 'email-1' });
+  mocks.auditInsert.mockResolvedValue({ error: null });
   mocks.withUser.mockImplementation(() => ({
     debug: vi.fn(),
     info: vi.fn(),
@@ -397,9 +431,24 @@ describe('POST /api/operator/membership/family/[id]/transfer: 通知メールの
     });
   });
 
-  it('譲渡前の家族情報を読めなかったときも譲渡は完了させ、誤った宛先・本文を送らずに構造化ログへ残す', async () => {
+  it('RPC の前の控えを読めなくても、RPC が返した旧代表者・家族名で、旧代表者・新代表者・メンバーに通知し、監査にも残す (#1917)', async () => {
+    fake.readErrors.family_groups = { message: 'connection reset by peer', code: '08006' };
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(recipientRoleOf(OLD_EMAIL)).toBe('old_owner');
+    expect(recipientRoleOf(NEW_EMAIL)).toBe('new_owner');
+    expect(recipientRoleOf(MEMBER_EMAIL)).toBe('member');
+    expect(renderedTransferVars().every((vars) => vars.scope_name === '山田家')).toBe(true);
+    expect(auditRows().map((row) => row.details.from_user_id)).toEqual([OLD_REP_ID]);
+    expect(mocks.logError).not.toHaveBeenCalled();
+  });
+
+  it('戻り値が古い形 (migration の前の DB) で、譲渡前の家族情報も読めなかったときは、譲渡は完了させ、誤った宛先・本文を送らずに構造化ログへ残す', async () => {
     const readError = { message: 'connection reset by peer', code: '08006' };
     fake.readErrors.family_groups = readError;
+    mocks.rpc.mockImplementation(async (_name: string, args: RpcArgs) => simulateRepresentativeTransferBeforeMigration(fake, args));
 
     const res = await call();
 
@@ -413,6 +462,8 @@ describe('POST /api/operator/membership/family/[id]/transfer: 通知メールの
       family_id: FAMILY_ID,
       to_user_id: NEW_REP_ID,
     });
+    // 旧代表者が分からないので、監査の from_user_id は null (推測で埋めない)
+    expect(auditRows().map((row) => row.details.from_user_id)).toEqual([null]);
   });
 
   it('service-role の環境変数が無くても譲渡は止めず、通知だけを省いて構造化ログへ残す', async () => {
@@ -430,6 +481,135 @@ describe('POST /api/operator/membership/family/[id]/transfer: 通知メールの
       expect.objectContaining({ name: 'MissingEnvError', envName: 'SUPABASE_SERVICE_ROLE_KEY' }),
       { family_id: FAMILY_ID, to_user_id: NEW_REP_ID },
     );
+  });
+});
+
+describe('POST /api/operator/membership/family/[id]/transfer: 監査の from_user_id と旧代表者への知らせは、RPC が家族の行のロックの下で読んだ旧代表者 (#1917)', () => {
+  /**
+   * 運営 A が RPC の前に家族を読んだ (representative_id = OLD_REP_ID) あと、A の RPC が家族の行のロックを取る前に、運営 B の譲渡
+   * (OLD_REP_ID → MEMBER_ID) が commit した状況。A の RPC はロックの下で MEMBER_ID を旧代表者として読み、MEMBER_ID → NEW_REP_ID に譲渡する。
+   * makeRpc で、戻り値の形 (新しい定義 / migration の前の定義) を選ぶ
+   */
+  function racedByAnotherOperator(makeRpc: (fake: FakeServiceRole, args: RpcArgs) => unknown) {
+    mocks.rpc.mockImplementation(async (_name: string, args: RpcArgs) => {
+      const family = fake.tables.family_groups.find((f) => f.id === FAMILY_ID);
+      if (!family) throw new Error('家族の行が無い');
+      reassignRepresentative(fake, family, MEMBER_ID);
+      return makeRpc(fake, args);
+    });
+  }
+
+  it('監査 (admin_audit_logs) の details は reason・to_user_id と、RPC が返した旧代表者の from_user_id', async () => {
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(mocks.auditInsert).toHaveBeenCalledTimes(1);
+    expect(auditRows()[0]).toMatchObject({
+      actor_id: OPERATOR_ID,
+      action_type: 'super_admin.family.transfer_representative',
+      target_id: FAMILY_ID,
+      target_type: 'family_group',
+      severity: 'warn',
+      details: { reason: REASON, to_user_id: NEW_REP_ID, from_user_id: OLD_REP_ID },
+    });
+  });
+
+  it('RPC の前に読んだあとで別の運営が先に譲渡していたら、監査の from_user_id は RPC がロックの下で読んだ直前の代表者 (先に読んだ人ではない)', async () => {
+    racedByAnotherOperator(simulateRepresentativeTransfer);
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(fake.tables.family_groups[0].representative_id).toBe(NEW_REP_ID);
+    expect(auditRows().map((row) => row.details.from_user_id)).toEqual([MEMBER_ID]);
+    expect(mocks.logError).not.toHaveBeenCalled();
+  });
+
+  it('同じ状況で、旧代表者向けの知らせは直前の代表者 (MEMBER_ID) に送り、先に読んだ人 (OLD_REP_ID) には一般メンバー向けを送る。新代表者宛の「旧オーナー」欄も直前の代表者', async () => {
+    racedByAnotherOperator(simulateRepresentativeTransfer);
+
+    await call();
+
+    expect(recipientRoleOf(MEMBER_EMAIL)).toBe('old_owner');
+    expect(recipientRoleOf(OLD_EMAIL)).toBe('member');
+    expect(recipientRoleOf(NEW_EMAIL)).toBe('new_owner');
+    expect(renderedTransferVars().every((vars) => vars.old_owner_email === MEMBER_EMAIL)).toBe(true);
+    expect(sentTo(MEMBER_EMAIL)).toHaveLength(1);
+    expect(sentTo(OLD_EMAIL)).toHaveLength(1);
+  });
+
+  it('応答の data は更新した後の家族の行だけ (RPC の戻り値の old_rep_id は載せない)', async () => {
+    const res = await call();
+    const json = await res.json();
+
+    expect(json.data).toEqual({ id: FAMILY_ID, name: '山田家', representative_id: NEW_REP_ID });
+  });
+
+  it('家族名は RPC が返した行の名前を使う (RPC の前の控えと違っていても)', async () => {
+    mocks.rpc.mockImplementation(async (_name: string, args: RpcArgs) => {
+      const family = fake.tables.family_groups.find((f) => f.id === FAMILY_ID);
+      if (!family) throw new Error('家族の行が無い');
+      family.name = '山田家 (改称後)';
+      return simulateRepresentativeTransfer(fake, args);
+    });
+
+    await call();
+
+    expect(renderedTransferVars().length).toBeGreaterThan(0);
+    expect(renderedTransferVars().every((vars) => vars.scope_name === '山田家 (改称後)')).toBe(true);
+  });
+
+  it('戻り値が古い形 (migration の前の DB): 譲渡は 200 のまま、RPC の前に読んだ旧代表者で監査と知らせを出し、食い違いうることを構造化ログに残す', async () => {
+    mocks.rpc.mockImplementation(async (_name: string, args: RpcArgs) => simulateRepresentativeTransferBeforeMigration(fake, args));
+
+    const res = await call();
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.data).toMatchObject({ id: FAMILY_ID, representative_id: NEW_REP_ID });
+    expect(auditRows().map((row) => row.details.from_user_id)).toEqual([OLD_REP_ID]);
+    expect(recipientRoleOf(OLD_EMAIL)).toBe('old_owner');
+    expect(recipientRoleOf(NEW_EMAIL)).toBe('new_owner');
+    expect(recipientRoleOf(MEMBER_EMAIL)).toBe('member');
+    expect(mocks.logError).toHaveBeenCalledTimes(1);
+    expect(mocks.logError).toHaveBeenCalledWith(expect.stringContaining('old_rep_id'), expect.any(Error), {
+      family_id: FAMILY_ID,
+      to_user_id: NEW_REP_ID,
+    });
+  });
+
+  it('戻り値が古い形で別の運営と競ったときは、先に読んだ人で記録する (#1917 の前の動き。migration を当てれば直る食い違いで、ログに残る)', async () => {
+    racedByAnotherOperator(simulateRepresentativeTransferBeforeMigration);
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(auditRows().map((row) => row.details.from_user_id)).toEqual([OLD_REP_ID]);
+    expect(mocks.logError).toHaveBeenCalledWith(expect.stringContaining('old_rep_id'), expect.any(Error), {
+      family_id: FAMILY_ID,
+      to_user_id: NEW_REP_ID,
+    });
+  });
+
+  it.each([
+    ['family_group のキーが無い', { old_rep_id: OLD_REP_ID }],
+    ['old_rep_id のキーが無い', { family_group: { id: FAMILY_ID, name: '山田家', representative_id: NEW_REP_ID } }],
+    ['old_rep_id が文字列でない', { family_group: { id: FAMILY_ID, name: '山田家', representative_id: NEW_REP_ID }, old_rep_id: 1 }],
+    ['null', null],
+  ])('戻り値の形が合わない (%s) ときも 500 にせず、RPC の前の控えで記録する', async (_label, data) => {
+    mocks.rpc.mockImplementation(async (_name: string, args: RpcArgs) => {
+      simulateRepresentativeTransfer(fake, args);
+      return { data, error: null };
+    });
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(auditRows().map((row) => row.details.from_user_id)).toEqual([OLD_REP_ID]);
+    expect(mocks.logError).toHaveBeenCalledWith(expect.stringContaining('old_rep_id'), expect.any(Error), {
+      family_id: FAMILY_ID,
+      to_user_id: NEW_REP_ID,
+    });
   });
 });
 
