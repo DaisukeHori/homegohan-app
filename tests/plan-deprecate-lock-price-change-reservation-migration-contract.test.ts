@@ -4,17 +4,22 @@
  *
  * (1) 廃止の安全弁のトリガー guard_plan_deprecate_subscribers
  *   1. BEFORE UPDATE OF status で、status が deprecated 以外から deprecated に変わる行だけに効く
- *   2. 数える前に、プランの行を FOR UPDATE でロックし直す (契約の作成の外部キーの確認 = FOR KEY SHARE と衝突する強さ)
+ *   2. 数える前に、プランの行を FOR UPDATE でロックし直す (契約者が増える書き込みの FOR KEY SHARE (trg_subscriber_plan_key_share・外部キーの確認) と衝突する強さ)
  *   3. 数え方が src/lib/super-admin/plan-subscribers.ts と同じ: 個人の live の status の一覧 (ACTIVE_PERSONAL_SUBSCRIPTION_STATUSES)・
  *      家族と組織は active・組織のプランの行の判定に使う組織の段階の一覧 (ORG_PLAN_VALUES)
  *   4. RAISE の文は route が見分ける PLAN_HAS_SUBSCRIBERS_DB_ERROR、DETAIL は内訳の JSON (キーは PlanSubscriberCounts と同じ)
+ * (1b) 契約者が増える書き込みのロック trg_subscriber_plan_key_share (personal_subscriptions・family_groups・organizations)
+ *   4b. 3 表とも BEFORE INSERT OR UPDATE (列を限らない) で、WHEN は書いた後の行が数えられる行 (個人 = live の status の一覧・家族と組織 = active)
+ *   4c. 関数は、書く前も数えられていた UPDATE (数えられる status のまま・plan_key (組織は plan) も同じ) だけを飛ばし、
+ *       ほかはプランの行を FOR KEY SHARE でロックする (FOR UPDATE / FOR NO KEY UPDATE ではない: 価格の変更・プランの編集と待ち合わない)。
+ *       SECURITY DEFINER・search_path = ''・利用者から EXECUTE を外す
  * (2) 価格の変更の予約
  *   5. 関数の名前は src の PLAN_PRICE_CHANGE_RPC と同じ。3 本とも SECURITY DEFINER・search_path = ''・service_role だけに EXECUTE
- *   6. begin / apply はプランの行を FOR NO KEY UPDATE でロックする (FOR UPDATE ではない: 契約の作成の外部キーの確認と待ち合わない)。
+ *   6. begin / apply はプランの行を FOR NO KEY UPDATE でロックする (FOR UPDATE ではない: 契約者が増える書き込みの FOR KEY SHARE と待ち合わない)。
  *      apply は予約の token を確かめてから、ロックの下で読んだ値 (v_plan) を履歴の old_* にする
  *   7. 予約の表は RLS を有効にし、anon / authenticated から権限を外す
  * (3) 戻し口・型・同じ型の機械検査
- *   8. 戻し口は、トリガー・関数 4 本・表をすべて外す
+ *   8. 戻し口は、トリガー 4 本・関数 7 本・表をすべて外す
  *   9. 型の生成物 2 ファイルに、表と関数 3 本 (引数の名前) がある
  *  10. plan_price_history を書く src のコードは無い (履歴は apply_plan_price_change の中だけで書く)。
  *      価格の変更の route は subscription_plans を直接書かない (予約を通らない書き込みが増えたら、ここで止めて見直す)
@@ -97,6 +102,72 @@ describe('(1) 廃止の安全弁のトリガー', () => {
   });
 });
 
+describe('(1b) 契約者が増える書き込みのロック trg_subscriber_plan_key_share', () => {
+  /** 表ごとの関数・数えられる行の WHEN・書く前も数えられていたかの条件・ロックするプランの列 */
+  const HOLDERS = [
+    {
+      table: 'personal_subscriptions',
+      fn: 'personal_subscription_hold_plan_key_share',
+      when: /WHEN \(NEW\.status IN \(([^)]*)\)\)/,
+      alreadyCounted: /IF TG_OP = 'UPDATE'\s+AND COALESCE\(OLD\.status IN \(([^)]*)\), false\)\s+AND OLD\.plan_key IS NOT DISTINCT FROM NEW\.plan_key THEN\s+RETURN NEW;\s+END IF;/,
+      lock: 'PERFORM 1 FROM public.subscription_plans AS p WHERE p.plan_key = NEW.plan_key FOR KEY SHARE;',
+    },
+    {
+      table: 'family_groups',
+      fn: 'family_group_hold_plan_key_share',
+      when: /WHEN \(NEW\.status = 'active'\)/,
+      alreadyCounted: /IF TG_OP = 'UPDATE'\s+AND OLD\.status IS NOT DISTINCT FROM 'active'\s+AND OLD\.plan_key IS NOT DISTINCT FROM NEW\.plan_key THEN\s+RETURN NEW;\s+END IF;/,
+      lock: 'PERFORM 1 FROM public.subscription_plans AS p WHERE p.plan_key = NEW.plan_key FOR KEY SHARE;',
+    },
+    {
+      table: 'organizations',
+      fn: 'organization_hold_plan_key_share',
+      when: /WHEN \(NEW\.status = 'active'\)/,
+      alreadyCounted: /IF TG_OP = 'UPDATE'\s+AND OLD\.status IS NOT DISTINCT FROM 'active'\s+AND OLD\.plan IS NOT DISTINCT FROM NEW\.plan THEN\s+RETURN NEW;\s+END IF;/,
+      lock: 'PERFORM 1 FROM public.subscription_plans AS p WHERE p.plan_key = NEW.plan FOR KEY SHARE;',
+    },
+  ] as const;
+
+  /** CREATE TRIGGER trg_subscriber_plan_key_share ... ON public.<table> から EXECUTE FUNCTION ...; まで */
+  function triggerStatement(table: string): string {
+    const match = migration.match(
+      new RegExp(`CREATE TRIGGER trg_subscriber_plan_key_share\\s+[^;]*?ON public\\.${table}\\s[^;]*;`),
+    );
+    expect(match, table).not.toBeNull();
+    return match![0];
+  }
+
+  it.each(HOLDERS)('4b. $table: BEFORE INSERT OR UPDATE (列を限らない) で、WHEN は数えられる行', ({ table, fn, when }) => {
+    const statement = triggerStatement(table);
+    expect(statement).toMatch(
+      new RegExp(`BEFORE INSERT OR UPDATE ON public\\.${table}\\s+FOR EACH ROW\\s+WHEN \\(.*\\)\\s+EXECUTE FUNCTION public\\.${fn}\\(\\);`),
+    );
+    expect(statement).not.toMatch(/UPDATE OF/);
+    const whenMatch = statement.match(when);
+    expect(whenMatch, table).not.toBeNull();
+    if (table === 'personal_subscriptions') {
+      expect(quotedList(whenMatch![1])).toEqual([...ACTIVE_PERSONAL_SUBSCRIPTION_STATUSES]);
+    }
+    expect(migration).toContain(`DROP TRIGGER IF EXISTS trg_subscriber_plan_key_share ON public.${table};`);
+  });
+
+  it.each(HOLDERS)('4c. $table: 書く前も数えられていた UPDATE だけを飛ばし、ほかはプランの行を FOR KEY SHARE でロックする', ({ table, fn, alreadyCounted, lock }) => {
+    // 関数の本文 (END $$; まで。後ろの COMMENT ON の文は含めない)
+    const block = functionBlock(fn).split('END $$;')[0];
+    expect(block).toMatch(/RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''/);
+    const skip = block.match(alreadyCounted);
+    expect(skip, table).not.toBeNull();
+    if (table === 'personal_subscriptions') {
+      expect(quotedList(skip![1])).toEqual([...ACTIVE_PERSONAL_SUBSCRIPTION_STATUSES]);
+    }
+    const lockAt = block.indexOf(lock);
+    expect(lockAt, table).toBeGreaterThan(block.indexOf('RETURN NEW;'));
+    // 衝突するのは廃止の FOR UPDATE だけにする (価格の変更の begin / apply の FOR NO KEY UPDATE と待ち合わない)
+    expect(block).not.toMatch(/FOR (NO KEY )?UPDATE/);
+    expect(migration).toContain(`REVOKE ALL ON FUNCTION public.${fn}() FROM PUBLIC, anon, authenticated, service_role;`);
+  });
+});
+
 describe('(2) 価格の変更の予約', () => {
   it('5. 関数の名前は PLAN_PRICE_CHANGE_RPC と同じで、SECURITY DEFINER・search_path = \'\'・service_role だけに EXECUTE', () => {
     const signatures: Record<string, string> = {
@@ -143,9 +214,20 @@ describe('(2) 価格の変更の予約', () => {
 });
 
 describe('(3) 戻し口・型・同じ型の機械検査', () => {
-  it('8. 戻し口は、トリガー・関数 4 本・表をすべて外す', () => {
+  it('8. 戻し口は、トリガー 4 本・関数 7 本・表をすべて外す', () => {
     expect(rollback).toContain('DROP TRIGGER IF EXISTS trg_guard_plan_deprecate_subscribers ON public.subscription_plans;');
     expect(rollback).toContain('DROP FUNCTION IF EXISTS public.guard_plan_deprecate_subscribers();');
+    for (const [table, fn] of [
+      ['personal_subscriptions', 'personal_subscription_hold_plan_key_share'],
+      ['family_groups', 'family_group_hold_plan_key_share'],
+      ['organizations', 'organization_hold_plan_key_share'],
+    ]) {
+      expect(rollback).toContain(`DROP TRIGGER IF EXISTS trg_subscriber_plan_key_share ON public.${table};`);
+      expect(rollback).toContain(`DROP FUNCTION IF EXISTS public.${fn}();`);
+    }
+    // 移行で作るトリガーと関数の数と、戻し口で外す数が同じ
+    expect((migration.match(/CREATE TRIGGER /g) ?? []).length).toBe((rollback.match(/DROP TRIGGER IF EXISTS /g) ?? []).length);
+    expect((migration.match(/CREATE OR REPLACE FUNCTION /g) ?? []).length).toBe((rollback.match(/DROP FUNCTION IF EXISTS /g) ?? []).length);
     expect(rollback).toContain(`DROP FUNCTION IF EXISTS public.${PLAN_PRICE_CHANGE_RPC.begin}(uuid, integer);`);
     expect(rollback).toContain(
       `DROP FUNCTION IF EXISTS public.${PLAN_PRICE_CHANGE_RPC.apply}(uuid, uuid, integer, integer, text, text, uuid, text, timestamptz, text);`,

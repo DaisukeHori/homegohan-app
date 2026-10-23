@@ -12,6 +12,13 @@
  *   DL-5 組織のプランの行 (plan_type = 'org' の org_*) では組織を数えない (active の組織がいても止めない)。個人契約がいれば止め、
  *        DETAIL に organizations のキーが無い。個人のプランでは organizations を数える
  *   DL-6 トリガーの関数は、利用者 (anon / authenticated / PUBLIC) から EXECUTE できない
+ *   DL-7 plan_key を変えずに status だけを live にする個人契約の UPDATE (incomplete / expired → active。外部キーの確認が走らない) を
+ *        コミット前のまま開いておいても、廃止の UPDATE は契約者が増える書き込みのロック trg_subscriber_plan_key_share で待ってから止める
+ *   DL-8 家族のグループの dissolved → active (plan_key はそのまま) も同じく止める
+ *   DL-9 組織の作成 (organizations には subscription_plans への外部キーが無い) も同じく止める
+ *   DL-10 契約者が増える書き込みのロック (FOR KEY SHARE) は、価格の変更の予約 (FOR NO KEY UPDATE) を待たせない
+ *   DL-11 trg_subscriber_plan_key_share の関数 3 本は利用者から EXECUTE できず、トリガーは 3 表とも BEFORE の行トリガーの最後に並ぶ
+ *         (ほかのトリガーが変えた後の NEW を見る)
  * (2) 価格の変更の予約 begin / apply / release_plan_price_change
  *   PR-1 begin は予約を取ってロックの下で読んだプランの値を返す。予約中のもう 1 本は in_progress。期限より古い予約は取り直せ、
  *        取り直された元の token の apply は lost で何も書かない
@@ -419,6 +426,165 @@ describe('(1) 廃止の安全弁のトリガー guard_plan_deprecate_subscribers
       WHERE t.tgrelid = 'public.subscription_plans'::regclass AND t.tgname = 'trg_guard_plan_deprecate_subscribers'`);
     expect(triggers).toHaveLength(1);
     expect(triggers[0].definition).toContain('BEFORE UPDATE OF status ON public.subscription_plans');
+  });
+
+  it.each(['incomplete', 'expired'] as const)(
+    'DL-7: plan_key を変えずに status だけを %s → active にする個人契約の UPDATE がコミット前の間も、廃止の UPDATE は待ってから止める',
+    async (fromStatus) => {
+      const plan = await createPlan(`dl7-${fromStatus}`);
+      const { data: row, error } = await srAdmin
+        .from('personal_subscriptions')
+        .insert({ user_id: subscriber.userId, plan_key: plan.planKey, status: fromStatus })
+        .select('id')
+        .single();
+      if (error || !row) throw new Error(`personal_subscriptions insert: ${error?.message}`);
+
+      const holder = holders.startHolder(
+        `個人契約の ${fromStatus} → active (plan_key はそのまま)`,
+        `UPDATE public.personal_subscriptions SET status = 'active' WHERE id = '${row.id as string}'::uuid;`,
+      );
+      await holder.sleeping;
+
+      const [held, deprecated] = await holders.runBehindHolder(holder, {
+        fn: 'subscription_plans',
+        step: '廃止の UPDATE が個人契約の live への切り替えのコミットを待つ',
+        call: async () => deprecateDirect(plan.id),
+      });
+
+      expect(held.ok, JSON.stringify(held.body)).toBe(true);
+      expect(deprecated.error?.message).toBe(PLAN_HAS_SUBSCRIBERS_DB_ERROR);
+      expect(parsePlanSubscriberCountsDetail(deprecated.error?.details)).toEqual({
+        personal_subscriptions: 1,
+        family_groups: 0,
+        organizations: 0,
+      });
+      expect((await planRow(plan.id)).status).toBe('public');
+    },
+    RACE_TIMEOUT_MS,
+  );
+
+  it(
+    'DL-8: 家族のグループの dissolved → active (plan_key はそのまま) がコミット前の間も、廃止の UPDATE は待ってから止める',
+    async () => {
+      const plan = await createPlan('dl8');
+      const familyId = await createFamily();
+      // プランを付けてから解散の状態にする (代表者は残す。dissolved の行は代表者が無くてもよいだけ)
+      const { error: planError } = await srAdmin.from('family_groups').update({ plan_key: plan.planKey }).eq('id', familyId);
+      expect(planError).toBeNull();
+      const { error: dissolveError } = await srAdmin.from('family_groups').update({ status: 'dissolved' }).eq('id', familyId);
+      expect(dissolveError).toBeNull();
+
+      const holder = holders.startHolder(
+        '家族のグループの dissolved → active (plan_key はそのまま)',
+        `UPDATE public.family_groups SET status = 'active' WHERE id = '${familyId}'::uuid;`,
+      );
+      await holder.sleeping;
+
+      const [held, deprecated] = await holders.runBehindHolder(holder, {
+        fn: 'subscription_plans',
+        step: '廃止の UPDATE が家族のグループの active への切り替えのコミットを待つ',
+        call: async () => deprecateDirect(plan.id),
+      });
+
+      expect(held.ok, JSON.stringify(held.body)).toBe(true);
+      expect(deprecated.error?.message).toBe(PLAN_HAS_SUBSCRIBERS_DB_ERROR);
+      expect(parsePlanSubscriberCountsDetail(deprecated.error?.details)).toEqual({
+        personal_subscriptions: 0,
+        family_groups: 1,
+        organizations: 0,
+      });
+      expect((await planRow(plan.id)).status).toBe('public');
+
+      await srAdmin.from('family_groups').delete().eq('id', familyId);
+    },
+    RACE_TIMEOUT_MS,
+  );
+
+  it(
+    'DL-9: 組織の作成 (プランへの外部キーが無い) がコミット前の間も、廃止の UPDATE は待ってから止める',
+    async () => {
+      const plan = await createPlan('dl9');
+
+      const holder = holders.startHolder(
+        '組織の作成 (organizations の INSERT)',
+        `INSERT INTO public.organizations (name, owner_id, plan, status) VALUES ('it-1917 dl9 ${TS}', '${subscriber.userId}'::uuid, '${plan.planKey}', 'active');`,
+      );
+      await holder.sleeping;
+
+      const [held, deprecated] = await holders.runBehindHolder(holder, {
+        fn: 'subscription_plans',
+        step: '廃止の UPDATE が組織の作成のコミットを待つ',
+        call: async () => deprecateDirect(plan.id),
+      });
+
+      expect(held.ok, JSON.stringify(held.body)).toBe(true);
+      expect(deprecated.error?.message).toBe(PLAN_HAS_SUBSCRIBERS_DB_ERROR);
+      expect(parsePlanSubscriberCountsDetail(deprecated.error?.details)).toEqual({
+        personal_subscriptions: 0,
+        family_groups: 0,
+        organizations: 1,
+      });
+      expect((await planRow(plan.id)).status).toBe('public');
+    },
+    RACE_TIMEOUT_MS,
+  );
+
+  it(
+    'DL-10: 契約者が増える書き込みのロック (FOR KEY SHARE) がコミット前の間も、価格の変更の予約 (FOR NO KEY UPDATE) は待たずに取れる',
+    async () => {
+      const plan = await createPlan('dl10');
+      const { data: row, error } = await srAdmin
+        .from('personal_subscriptions')
+        .insert({ user_id: subscriber.userId, plan_key: plan.planKey, status: 'incomplete' })
+        .select('id')
+        .single();
+      if (error || !row) throw new Error(`personal_subscriptions insert: ${error?.message}`);
+
+      const holder = holders.startHolder(
+        '個人契約の incomplete → active (プランの行に FOR KEY SHARE)',
+        `UPDATE public.personal_subscriptions SET status = 'active' WHERE id = '${row.id as string}'::uuid;`,
+      );
+
+      const [held, reservation] = await holders.whileHolding(holder, async () => begin(plan.id));
+
+      expect(held.ok, JSON.stringify(held.body)).toBe(true);
+      expect(reservation.result).toBe('reserved');
+      if (reservation.result === 'reserved') {
+        await srAdmin.rpc(PLAN_PRICE_CHANGE_RPC.release, { p_plan_id: plan.id, p_token: reservation.token });
+      }
+    },
+    RACE_TIMEOUT_MS,
+  );
+
+  it('DL-11: trg_subscriber_plan_key_share の関数は利用者から EXECUTE できず、トリガーは 3 表とも BEFORE の行トリガーの最後に並ぶ', async () => {
+    const holdersByTable = [
+      ['personal_subscriptions', 'personal_subscription_hold_plan_key_share'],
+      ['family_groups', 'family_group_hold_plan_key_share'],
+      ['organizations', 'organization_hold_plan_key_share'],
+    ] as const;
+    for (const [table, fn] of holdersByTable) {
+      const grants = await holders.pgQuery<{ grantee: string }>(`
+        SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END AS grantee
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        CROSS JOIN LATERAL aclexplode(p.proacl) a
+        WHERE n.nspname = 'public' AND p.proname = '${fn}' AND a.privilege_type = 'EXECUTE'`);
+      const grantees = grants.map((row) => row.grantee);
+      expect(grantees, fn).not.toContain('PUBLIC');
+      expect(grantees, fn).not.toContain('anon');
+      expect(grantees, fn).not.toContain('authenticated');
+
+      // 同じ時機の行トリガーは名前の順 (バイト順) に動く。BEFORE (tgtype の 2) かつ行 (1) のものを並べる
+      const beforeRowTriggers = await holders.pgQuery<{ tgname: string; definition: string }>(`
+        SELECT t.tgname, pg_get_triggerdef(t.oid) AS definition FROM pg_trigger t
+        WHERE t.tgrelid = 'public.${table}'::regclass AND NOT t.tgisinternal AND (t.tgtype & 3) = 3
+        ORDER BY t.tgname COLLATE "C"`);
+      const last = beforeRowTriggers[beforeRowTriggers.length - 1];
+      expect(last?.tgname, table).toBe('trg_subscriber_plan_key_share');
+      expect(last?.definition, table).toContain(`BEFORE INSERT OR UPDATE ON public.${table} FOR EACH ROW`);
+      // 関数の名前は search_path に public があれば修飾されない
+      expect(last?.definition, table).toMatch(new RegExp(`EXECUTE FUNCTION (public\\.)?${fn}\\(\\)`));
+    }
   });
 });
 

@@ -5,24 +5,36 @@
 -- (1) プランの廃止の安全弁 (#1127・#1912) を、書く文と同じトランザクションの中でも確かめる
 --   背景: PATCH /api/super-admin/plans/{id} は、廃止 (status → 'deprecated') の前に契約者を数え (src/lib/super-admin/plan-subscribers.ts の
 --   countPlanSubscribers)、0 件なら status を条件にした UPDATE を流す。数えてから書くまでは別の文 (別の接続) なので、その間に
---   契約が作られる (personal_subscriptions の INSERT・家族のグループのプランの付け替え) と、契約者のいるプランを廃止できてしまう。
+--   契約者が増える (personal_subscriptions の INSERT・live でない status から live への切り替え・plan_key の付け替え、
+--   家族のグループの active への切り替え・プランの付け替え、組織の作成・active への切り替え・plan の付け替え) と、契約者のいるプランを廃止できてしまう。
 --   super_admin は PostgREST から subscription_plans を直接書けるので (ポリシー subscription_plans_mutate_super_admin)、route の確認を通らない経路もある。
 --   変更: subscription_plans の BEFORE UPDATE OF status のトリガー guard_plan_deprecate_subscribers を足す。status が
 --   'deprecated' 以外から 'deprecated' に変わる行で、
---     a. 自分の行を FOR UPDATE でロックし直す。契約の行の作成・付け替えは、外部キー (personal_subscriptions_plan_key_fkey・
---        family_groups_plan_key_fkey → subscription_plans.plan_key) の確認でこの行に FOR KEY SHARE を取り、commit まで持つ。
+--     a. 自分の行を FOR UPDATE でロックし直す。契約者が増える書き込みは、下の (1b) のトリガー trg_subscriber_plan_key_share で
+--        この行に FOR KEY SHARE を取り、commit まで持つ。外部キー (personal_subscriptions_plan_key_fkey・family_groups_plan_key_fkey →
+--        subscription_plans.plan_key) の確認だけでは足りない: 外部キーの確認は INSERT と plan_key を変えた UPDATE にしか走らず
+--        (plan_key を変えずに status だけを live にする UPDATE はプランの行をロックしない。例: billing_apply_stripe_subscription の
+--        incomplete → active・billing_apply_store_subscription の expired / cancelled → active)、組織 (organizations.plan) には外部キーが無い。
 --        UPDATE が取るロック (FOR NO KEY UPDATE) は FOR KEY SHARE と衝突しないので、そのままでは commit 前の契約を待たない。
---        FOR UPDATE は衝突するので、ここで commit (か取り消し) まで待つ。逆に、このロックを取った後に来た契約の作成は、
---        外部キーの確認でこの UPDATE の commit を待つ (廃止の後に作られる契約。数えた後に「間に」入ることは無い)
+--        FOR UPDATE は衝突するので、ここで commit (か取り消し) まで待つ。逆に、このロックを取った後に来た契約者が増える書き込みは、
+--        (1b) の FOR KEY SHARE でこの UPDATE の commit を待つ (廃止の後に入る契約になる。数えてから書くまでの間に入った契約を見落とすことは無い)
 --     b. ロックの後に契約者を数える (plpgsql の文ごとに新しいスナップショットなので、待った相手の commit が見える)。数え方は
 --        countPlanSubscribers と同じ (個人 = live 5 値・家族 = active・組織 = plan が一致し active。組織のプランの行
 --        (plan_type = 'org' で plan_key が組織の段階 standard / premium / enterprise でない行) では組織を数えず、内訳にもキーを入れない)
 --     c. 1 件でもあれば RAISE 'OP_PLAN_HAS_SUBSCRIBERS' (P0001)。DETAIL に内訳の JSON (route が 409 の counts に使う) を入れる
---   ロック順: このトリガーがロックするのは対象のプランの 1 行だけで、契約・家族・組織の行は読むだけ (ロックしない)。契約を作る側は
---   契約の行 → プランの行 (外部キーの確認) の順に取るので、待ち合いは一方向で循環しない。
---   組織 (organizations.plan) には subscription_plans への外部キーが無いので、組織のプランの変更とはロックで並ばない
---   (commit 前の組織のプランの変更は数えに入らない)。organizations.plan に書けるのは組織の段階 (standard / premium / enterprise) だけで、
---   本番の subscription_plans にその plan_key の行は無いので、組織の件数は実際には 0 件のまま。
+--   ロック順: このトリガーがロックするのは対象のプランの 1 行だけで、契約・家族・組織の行は読むだけ (ロックしない)。契約者を増やす側は
+--   契約の行 → プランの行 ((1b) と外部キーの確認) の順に取るので、待ち合いは一方向で循環しない。
+--
+-- (1b) 契約者が増える書き込みは、プランの行に FOR KEY SHARE を取る (a の待ち合いの相手)
+--   personal_subscriptions・family_groups・organizations の BEFORE INSERT OR UPDATE のトリガー trg_subscriber_plan_key_share を足す
+--   (関数 personal_subscription_hold_plan_key_share・family_group_hold_plan_key_share・organization_hold_plan_key_share)。
+--   書いた後の行が b で数えられる行 (個人 = live 5 値・家族 = active・組織 = active) で、書く前は数えられていなかった
+--   (INSERT・書く前の status が数えられない値・plan_key (組織は plan) を変えた) ときだけ、そのプランの行を FOR KEY SHARE でロックする
+--   (プランの行が無ければ何もしない。組織の段階の plan は本番の subscription_plans に行が無いので、組織の書き込みは実際には何もロックしない)。
+--   列を限らない UPDATE にする (UPDATE OF ... は SET に書いた列でしか動かず、ほかのトリガーが NEW を変えた行を取りこぼす)。
+--   名前は各表の BEFORE のトリガーの最後に並ぶ (同じ BEFORE は名前の順に動く。ほかのトリガーが変えた後の NEW を見る)。
+--   FOR KEY SHARE は FOR NO KEY UPDATE (価格の変更の begin / apply・ふつうのプランの UPDATE) と衝突しないので、プランの編集は待たせない。
+--   廃止の FOR UPDATE とだけ待ち合う。
 --
 -- (2) 価格の変更 (POST /api/super-admin/plans/{id}/price-change) を、プランごとの予約の行で 1 本ずつにし、履歴と価格の更新を 1 つのトランザクションにする
 --   背景: route はプランをロックも条件も無く読み、Edge Function stripe-price-sync (Stripe の新しい Price の作成と、その時点の DB の旧 Price の無効化) を
@@ -44,7 +56,7 @@
 --   同じトランザクションがそのプランの行を FOR NO KEY UPDATE で持っているので待たない。
 --   読み書きは service_role の関数だけ。表は RLS を有効にし、利用者 (anon / authenticated) の権限を外す (#1039/#1020 の定型)。
 --
--- 既存データへの影響: なし (トリガーは今後の UPDATE にだけ効く。表は空で作る)。
+-- 既存データへの影響: なし (トリガーは今後の INSERT / UPDATE にだけ効く。表は空で作る)。
 -- 冪等: CREATE TABLE IF NOT EXISTS・CREATE OR REPLACE FUNCTION・DROP TRIGGER IF EXISTS → CREATE TRIGGER・REVOKE / GRANT は何度流しても同じ。
 -- 確かめるテスト: tests/plan-deprecate-lock-price-change-reservation-migration-contract.test.ts (文面)・
 --   tests/integration/security/plan-deprecate-lock-price-change-reservation.test.ts (実 DB。待ち合いと結果)・
@@ -66,7 +78,7 @@ DECLARE
   v_counts_organizations boolean;
   v_counts jsonb;
 BEGIN
-  -- a. 契約の作成・付け替え (外部キーの確認の FOR KEY SHARE) が commit するまで待つ
+  -- a. 契約者が増える書き込み ((1b) のトリガーと外部キーの確認の FOR KEY SHARE) が commit するまで待つ
   PERFORM 1 FROM public.subscription_plans AS p WHERE p.id = OLD.id FOR UPDATE;
 
   -- b. 契約が終わっていない契約者を数える (src/lib/super-admin/plan-subscribers.ts の countPlanSubscribers と同じ数え方)
@@ -99,7 +111,7 @@ END $$;
 REVOKE ALL ON FUNCTION public.guard_plan_deprecate_subscribers() FROM PUBLIC, anon, authenticated, service_role;
 
 COMMENT ON FUNCTION public.guard_plan_deprecate_subscribers() IS
-  '#1917: プランを廃止 (status → deprecated) する UPDATE の中で、行を FOR UPDATE でロックし直して commit 前の契約の作成を待ってから契約者を数え、1 件でもあれば OP_PLAN_HAS_SUBSCRIBERS (P0001。DETAIL は内訳の JSON) で止める。数え方は countPlanSubscribers と同じ';
+  '#1917: プランを廃止 (status → deprecated) する UPDATE の中で、行を FOR UPDATE でロックし直して commit 前の契約者が増える書き込み (trg_subscriber_plan_key_share と外部キーの確認の FOR KEY SHARE) を待ってから契約者を数え、1 件でもあれば OP_PLAN_HAS_SUBSCRIBERS (P0001。DETAIL は内訳の JSON) で止める。数え方は countPlanSubscribers と同じ';
 
 DROP TRIGGER IF EXISTS trg_guard_plan_deprecate_subscribers ON public.subscription_plans;
 CREATE TRIGGER trg_guard_plan_deprecate_subscribers
@@ -107,6 +119,91 @@ CREATE TRIGGER trg_guard_plan_deprecate_subscribers
   FOR EACH ROW
   WHEN (NEW.status = 'deprecated' AND OLD.status IS DISTINCT FROM 'deprecated')
   EXECUTE FUNCTION public.guard_plan_deprecate_subscribers();
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- (1b) 契約者が増える書き込みは、プランの行に FOR KEY SHARE を取る
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- 個人契約: live 5 値 (src/lib/super-admin/plan-subscribers.ts の ACTIVE_PERSONAL_SUBSCRIPTION_STATUSES・guard_plan_deprecate_subscribers の b と同じ)
+CREATE OR REPLACE FUNCTION public.personal_subscription_hold_plan_key_share()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $$
+BEGIN
+  -- 書く前は数えられていなかった行だけ (live のまま plan_key も変えない UPDATE は、契約者を増やさないのでロックしない)
+  IF TG_OP = 'UPDATE'
+     AND COALESCE(OLD.status IN ('trialing', 'active', 'paused', 'past_due', 'grace'), false)
+     AND OLD.plan_key IS NOT DISTINCT FROM NEW.plan_key THEN
+    RETURN NEW;
+  END IF;
+  PERFORM 1 FROM public.subscription_plans AS p WHERE p.plan_key = NEW.plan_key FOR KEY SHARE;
+  RETURN NEW;
+END $$;
+
+REVOKE ALL ON FUNCTION public.personal_subscription_hold_plan_key_share() FROM PUBLIC, anon, authenticated, service_role;
+
+COMMENT ON FUNCTION public.personal_subscription_hold_plan_key_share() IS
+  '#1917: 個人契約が数えられる行 (live 5 値) になる INSERT / UPDATE (書く前は live でない・plan_key を変えた) で、プランの行を FOR KEY SHARE でロックする。廃止のトリガー guard_plan_deprecate_subscribers の FOR UPDATE と待ち合い、数えてから書くまでの間の契約を見落とさない (plan_key を変えない UPDATE は外部キーの確認でロックを取らないため)';
+
+DROP TRIGGER IF EXISTS trg_subscriber_plan_key_share ON public.personal_subscriptions;
+CREATE TRIGGER trg_subscriber_plan_key_share
+  BEFORE INSERT OR UPDATE ON public.personal_subscriptions
+  FOR EACH ROW
+  WHEN (NEW.status IN ('trialing', 'active', 'paused', 'past_due', 'grace'))
+  EXECUTE FUNCTION public.personal_subscription_hold_plan_key_share();
+
+-- 家族のグループ: active
+CREATE OR REPLACE FUNCTION public.family_group_hold_plan_key_share()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $$
+BEGIN
+  -- 書く前は数えられていなかった行だけ (active のまま plan_key も変えない UPDATE はロックしない)
+  IF TG_OP = 'UPDATE'
+     AND OLD.status IS NOT DISTINCT FROM 'active'
+     AND OLD.plan_key IS NOT DISTINCT FROM NEW.plan_key THEN
+    RETURN NEW;
+  END IF;
+  PERFORM 1 FROM public.subscription_plans AS p WHERE p.plan_key = NEW.plan_key FOR KEY SHARE;
+  RETURN NEW;
+END $$;
+
+REVOKE ALL ON FUNCTION public.family_group_hold_plan_key_share() FROM PUBLIC, anon, authenticated, service_role;
+
+COMMENT ON FUNCTION public.family_group_hold_plan_key_share() IS
+  '#1917: 家族のグループが数えられる行 (active) になる INSERT / UPDATE (書く前は active でない・plan_key を変えた) で、プランの行を FOR KEY SHARE でロックする。廃止のトリガー guard_plan_deprecate_subscribers の FOR UPDATE と待ち合う';
+
+DROP TRIGGER IF EXISTS trg_subscriber_plan_key_share ON public.family_groups;
+CREATE TRIGGER trg_subscriber_plan_key_share
+  BEFORE INSERT OR UPDATE ON public.family_groups
+  FOR EACH ROW
+  WHEN (NEW.status = 'active')
+  EXECUTE FUNCTION public.family_group_hold_plan_key_share();
+
+-- 組織: active (organizations.plan には subscription_plans への外部キーが無いので、INSERT もここでロックを取る)
+CREATE OR REPLACE FUNCTION public.organization_hold_plan_key_share()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $$
+BEGIN
+  -- 書く前は数えられていなかった行だけ (active のまま plan も変えない UPDATE はロックしない)
+  IF TG_OP = 'UPDATE'
+     AND OLD.status IS NOT DISTINCT FROM 'active'
+     AND OLD.plan IS NOT DISTINCT FROM NEW.plan THEN
+    RETURN NEW;
+  END IF;
+  PERFORM 1 FROM public.subscription_plans AS p WHERE p.plan_key = NEW.plan FOR KEY SHARE;
+  RETURN NEW;
+END $$;
+
+REVOKE ALL ON FUNCTION public.organization_hold_plan_key_share() FROM PUBLIC, anon, authenticated, service_role;
+
+COMMENT ON FUNCTION public.organization_hold_plan_key_share() IS
+  '#1917: 組織が数えられる行 (active) になる INSERT / UPDATE (書く前は active でない・plan を変えた) で、plan と同じ plan_key のプランの行を FOR KEY SHARE でロックする (行が無ければ何もしない)。廃止のトリガー guard_plan_deprecate_subscribers の FOR UPDATE と待ち合う';
+
+DROP TRIGGER IF EXISTS trg_subscriber_plan_key_share ON public.organizations;
+CREATE TRIGGER trg_subscriber_plan_key_share
+  BEFORE INSERT OR UPDATE ON public.organizations
+  FOR EACH ROW
+  WHEN (NEW.status = 'active')
+  EXECUTE FUNCTION public.organization_hold_plan_key_share();
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- (2) 価格の変更の予約
