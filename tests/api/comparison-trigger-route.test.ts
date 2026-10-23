@@ -20,9 +20,11 @@
  *   - 関数の失敗・通信の失敗・設定の不足は 500 で、本文は汎用メッセージだけ (関数が返した文面や原因は出さない)
  *   - 設定の不足 (Supabase の URL・service role の鍵が未設定) は src/lib/env-required.ts の MissingEnvError で止め、
  *     変数名は本文にも例外の文にも出さない (サーバーのログと構造化ログにだけ残す。#1182)
- *   - #1571: 関数が 200 を返したら (集計が走ったら)、監査ログ (admin_audit_logs) に super_admin.cron.run_now を本人の権限の client で
+ *   - #1571: 関数を呼ぶ前に、監査ログ (admin_audit_logs) に super_admin.cron.run_now を本人の権限の client で
  *     1 行残す (severity warn・target_type 'cron_job'・details は job_name と period_type だけ・ip_address は利用者の IP)。
- *     401 / 403 / 400 と関数を呼べなかった・関数が失敗した 500 は記録しない。記録に失敗しても応答は変えない (fail-open)
+ *     関数が途中まで書き換えてから失敗した (500)・通信が失敗した・応答を待つ間に打ち切られたときも記録は残る
+ *     (operator/08 §7.2 と同じく、記録してから実行する)。401 / 403 / 400 と設定の不足 (関数を呼ばない 500) は記録しない。
+ *     記録に失敗しても関数の呼び出しと応答は変えない (fail-open)
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -414,18 +416,52 @@ describe('POST /api/comparison/trigger: 監査ログ (super_admin.cron.run_now) 
   });
 
   it.each([
-    ['関数が HTTP 500 を返した', () => fetchMock.mockResolvedValue(jsonResponse(500, { error: 'boom' }))],
+    ['関数が HTTP 500 を返した (途中まで書き換えてから失敗しうる)', () => fetchMock.mockResolvedValue(jsonResponse(500, { error: 'boom' }))],
     ['関数への通信が失敗した', () => fetchMock.mockRejectedValue(new TypeError('fetch failed'))],
-    ['設定が足りない', () => vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', '')],
-  ])('%s (500) ときは集計が走っていないので記録しない', async (_label, arrange) => {
+  ])('%s (500) ときも、関数を呼んでいるので 1 行記録する', async (_label, arrange) => {
     arrange();
+
+    const res = await POST(requestFromBrowser({ periodType: 'monthly' }));
+
+    expect(res.status).toBe(500);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(auditInserts).toHaveLength(1);
+    expect(auditInserts[0].row).toMatchObject({
+      actor_id: SUPER_ADMIN.id,
+      action_type: 'super_admin.cron.run_now',
+      target_type: 'cron_job',
+      details: { job_name: 'calculate-segment-stats', period_type: 'monthly' },
+      severity: 'warn',
+    });
+  });
+
+  it('関数を呼ぶ前に記録する (関数の応答を待つ間に打ち切られても、記録は残っている)', async () => {
+    let insertsWhenCalled: number | null = null;
+    // 応答を返さない関数 (maxDuration で打ち切られるまで待つ形)。POST は終わらないので await しない
+    fetchMock.mockImplementation(() => {
+      insertsWhenCalled = auditInserts.length;
+      return new Promise<Response>(() => undefined);
+    });
+
+    void POST(requestFromBrowser({ periodType: 'weekly' }));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    expect(insertsWhenCalled).toBe(1);
+    expect(auditInserts).toHaveLength(1);
+    expect(auditInserts[0].row.details).toEqual({ job_name: 'calculate-segment-stats', period_type: 'weekly' });
+  });
+
+  it('設定が足りない (関数を呼ばない 500) ときは記録しない', async () => {
+    vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', '');
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
 
     try {
       const res = await POST(requestFromBrowser({ periodType: 'weekly' }));
 
       expect(res.status).toBe(500);
+      expect(fetchMock).not.toHaveBeenCalled();
       expect(auditInserts).toHaveLength(0);
+      expect(mocks.createClient).not.toHaveBeenCalled();
     } finally {
       consoleError.mockRestore();
     }

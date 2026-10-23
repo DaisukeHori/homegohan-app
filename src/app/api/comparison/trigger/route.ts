@@ -19,9 +19,13 @@
  *   - 今の期間 (進行中) の集計なので、比較のバッジは判定しない。バッジは、pg_cron が期間の切り替わった直後に
  *     直前の期間を集計し直す回 (previousPeriod: true) だけが付ける (#1491。暫定の順位で取り消されないバッジを付けないため)
  *   - 500 の本文は汎用メッセージだけ (src/lib/api/errors.ts の internalError)。原因は構造化ログにだけ残す
- *   - 集計を走らせられた (関数が 200 を返した) ときだけ、監査ログに super_admin.cron.run_now を 1 行残す (#1571。
- *     運営の変更系はすべて記録する。docs/design/operator/07-audit-monitoring.md §4.2)。本人の権限の client で書き、
- *     記録の失敗で応答は変えない (fail-open。失敗は recordAdminAudit が db-logger に残す)
+ *   - 関数を呼ぶ直前 (認可・本文・設定の確認を通ったあと) に、監査ログに super_admin.cron.run_now を 1 行残す (#1571。
+ *     運営の変更系はすべて記録する。docs/design/operator/07-audit-monitoring.md §4.2。記録してから実行する順は
+ *     operator/08 §7.2 の手動実行 API と同じ)。関数の結果を待ってから書かないのは、関数が途中まで書き換えてから失敗する (500。
+ *     user_metrics を書いた後に統計・順位の段で落ちる) ときや、応答を待つ間に通信が切れる・maxDuration で打ち切られるときも、
+ *     運営が集計を走らせた事実を残すため。記録するのは「走らせた操作」で、関数の成否は記録しない (成否は構造化ログに残る)。
+ *     401 / 403 / 400 と設定の不足 (関数を呼ばない 500) は記録しない。本人の権限の client で書き、
+ *     記録の失敗で関数の呼び出しと応答は変えない (fail-open。失敗は recordAdminAudit が db-logger に残す)
  *
  * エラー本文の形は運営 API と同じ { error: { code, message } } (docs/design/cross/04-api-conventions.md §5.2)。
  */
@@ -83,7 +87,7 @@ async function readBody(request: Request): Promise<unknown> {
 }
 
 /**
- * 手動の集計を監査ログに 1 行残す (#1571)。fail-open: 記録できなくても例外を投げず、応答は変えない。
+ * 手動の集計を監査ログに 1 行残す (#1571)。関数を呼ぶ前に呼ぶ。fail-open: 記録できなくても例外を投げず、関数の呼び出しと応答は変えない。
  * 本人の権限の client が作れないとき (RLS の audit_logs_insert_admins は actor_id = auth.uid() を求める) も、
  * その失敗を構造化ログに残して戻る (INSERT の失敗は recordAdminAudit が構造化ログに残す)。
  */
@@ -152,6 +156,9 @@ export async function POST(request: Request) {
   }
   const { url: supabaseUrl, serviceRoleKey } = serviceConfig;
 
+  // 関数を呼ぶ前に記録する。関数が途中まで書き換えてから失敗しても、応答を待つ間に打ち切られても記録が残る (operator/08 §7.2 と同じ順)
+  await recordRunNowAudit(request, actorId, periodType);
+
   let edgeRes: Response;
   try {
     edgeRes = await fetch(`${supabaseUrl}/functions/v1/${EDGE_FUNCTION_NAME}`, {
@@ -176,9 +183,6 @@ export async function POST(request: Request) {
       { shape: 'nested' },
     );
   }
-
-  // 関数が 200 を返した時点で集計は走っている (取り消せない) ので、本文が読めるかどうかの前に記録する
-  await recordRunNowAudit(request, actorId, periodType);
 
   let edgeData: unknown;
   try {
