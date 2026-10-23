@@ -103,6 +103,23 @@ const BUSINESS_ERRORS: ReadonlyMap<string, BusinessErrorSpec> = new Map<string, 
   ],
 ]);
 
+/** 業務エラーの文として本文に出してよい文 (上の BUSINESS_ERRORS の日本語の固定の文だけ) */
+const BUSINESS_ERROR_MESSAGES: ReadonlySet<string> = new Set(
+  [...BUSINESS_ERRORS.values()].flatMap((spec) => [spec.message, ...Object.values(spec.byDetail ?? {})]),
+);
+
+/** CouponApplyError の文が上の表に無いとき (表の外で作られた例外) に本文に出す文 */
+export const COUPON_APPLY_FAILED_MESSAGE = 'クーポンを適用できませんでした';
+
+/**
+ * CouponApplyError を応答の本文に入れるときの文 (#1917)。
+ * 例外の文面をそのまま本文に入れず、BUSINESS_ERRORS の日本語の固定の文と一致するときだけその文を返す
+ * (表の外の文面 = 英語の文や DB の生の文が来ても、本文には COUPON_APPLY_FAILED_MESSAGE だけが出る)
+ */
+export function couponApplyErrorMessageOf(err: CouponApplyError): string {
+  return BUSINESS_ERROR_MESSAGES.has(err.message) ? err.message : COUPON_APPLY_FAILED_MESSAGE;
+}
+
 interface RpcError {
   code?: string;
   message?: string;

@@ -24,6 +24,7 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient } from '@/lib/supabase/server';
 import { PriceImpactQuerySchema } from '@/lib/super-admin/plans-schemas';
 import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE, countsOrganizationsFor } from '@/lib/super-admin/plan-subscribers';
+import { invalidQueryResponse } from '@/lib/super-admin/validation-errors';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -40,12 +41,9 @@ export async function GET(request: NextRequest, props: RouteContext) {
     });
 
     if (!queryResult.success) {
-      // issues 配列の生 JSON ではなく、最初の issue の message だけを返す (price-change と同じ。details には全 issues を含める)
-      const firstIssueMessage = queryResult.error.issues[0]?.message ?? 'クエリが不正です';
-      return NextResponse.json(
-        { error: { code: 'OP_INVALID_QUERY', message: firstIssueMessage, details: queryResult.error.issues } },
-        { status: 400 }
-      );
+      // issues 配列の生 JSON ではなく、最初の issue の日本語の文を返す (price-change と同じ。details には全 issues を含める)。
+      // Zod の既定の英語の文は本文の message に入れない (#1917。src/lib/super-admin/validation-errors.ts)
+      return invalidQueryResponse(queryResult.error.issues);
     }
 
     // プランを取得 (存在確認と、現行の月額を返すため)

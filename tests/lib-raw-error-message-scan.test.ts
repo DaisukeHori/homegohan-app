@@ -58,10 +58,6 @@ const ALLOWED: Record<string, { count: number; reason: string }> = {
     reason:
       'recordAdminAudit の戻り値 { ok: false, error }。呼び出し側 (admin/finance/refunds) は ok だけを見て固定の文 (AUDIT_FAILED_MESSAGE) を返す。失敗は logAuditFailure で構造化ログに残している',
   },
-  'src/lib/admin/not-supported.ts': {
-    count: 2,
-    reason: 'AuthError / ForbiddenError の文面 (こちらが書いた固定の文) を 401 / 403 で返す。DB のエラー文ではない',
-  },
   'src/lib/emails/outbox.ts': {
     count: 3,
     reason:

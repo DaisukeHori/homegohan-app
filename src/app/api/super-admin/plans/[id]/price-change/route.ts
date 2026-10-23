@@ -60,7 +60,7 @@ import { PriceChangeSchema } from '@/lib/super-admin/plans-schemas';
 import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
+import { invalidInputResponse, invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -107,11 +107,9 @@ export async function POST(request: NextRequest, props: RouteContext) {
       // message のみを抽出して返す (details には引き続き全 issues を含める)。
       // #1102: applies_to が on_renewal / immediately のときも、ここで 400 になる
       // (DB・Stripe のどちらにも触れる前に拒否する)。
-      const firstIssueMessage = parseResult.error.issues[0]?.message ?? '入力値が不正です';
-      return NextResponse.json(
-        { error: { code: 'OP_INVALID_INPUT', message: firstIssueMessage, details: parseResult.error.issues } },
-        { status: 400 }
-      );
+      // #1917: 文は src/lib/super-admin/validation-errors.ts の invalidInputResponse で作る
+      // (schema に書いた日本語の文はそのまま、Zod の既定の英語の文は日本語の固定の文にする。details は従来どおり issues の全件)
+      return invalidInputResponse(parseResult.error.issues);
     }
 
     const input = parseResult.data;
