@@ -332,7 +332,7 @@ BAN 解除
 
 **クエリパラメータ**: `q` (組織名の部分一致)・`plan` (`ORG_PLAN_VALUES` のどれか。`src/lib/org-plans.ts:22`)・`page` (default: 1)・`per_page` (default: 30, max: 100)。不正なら 400 `VALIDATION_ERROR` (:60-65)
 
-**レスポンス**: `{ "organizations": [{ "id", "name", "plan", "created_at", "updated_at" }], "meta": { "total", "page", "per_page" } }` (新しい順)。読み出しに失敗したときも 200 で空の一覧を返す (:88-106)
+**レスポンス**: `{ "organizations": [{ "id", "name", "plan", "created_at", "updated_at" }], "meta": { "total", "page", "per_page" } }` (新しい順)。件数より後ろのページ (PostgREST の 416 / PGRST103) は、同じ絞り込みで件数だけを数え直して、空の一覧と本当の件数 (`meta.total`) を 200 で返す (画面は件数から最後のページへ取り直す。:80-89・:271-289)。それ以外の読み出しの失敗・想定外の例外と、件数を数え直せないときは 500 `INTERNAL_ERROR` (空の一覧にしない。:91-96・:102-106・:291-297)
 
 **権限**: `admin`, `super_admin` (未ログインは 401 `AUTH_UNAUTHENTICATED` :43・ほかの利用者は 403 `OP_PERMISSION_DENIED` :49)
 
