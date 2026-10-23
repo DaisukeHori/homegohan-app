@@ -52,6 +52,8 @@ ALTER TABLE organizations ADD COLUMN IF NOT EXISTS settings            JSONB NOT
 
 > 注 (`subscription_status`): 本番の列は `text`・既定 `'trial'`・CHECK なし (`supabase/baseline/prod_schema.sql`)。上の DDL の `subscription_status` の行 (`VARCHAR(20) NOT NULL DEFAULT 'trialing'` と 5 値の CHECK) は採らなかった案。読む側の値の一覧は `src/lib/org-plans.ts` の `ORG_SUBSCRIPTION_STATUS_VALUES`。
 
+> 注 (組織の行の削除): `organizations` を参照する `departments`・`org_daily_stats`・`org_license_pools`・`organization_challenges`・`organization_invites`・`organization_reports` は ON DELETE CASCADE、`user_profiles.organization_id` は ON DELETE SET NULL。利用者は組織の行を直接 DELETE できない (#1917 の続き・`20261023100000_organizations_no_owner_direct_delete.sql`。ポリシーと権限は [09-rls-policies.md §4](./09-rls-policies.md))。組織をやめるのは解散の RPC (`dissolve_org_by_owner`・`operator_force_dissolve_org`) で、行は消さず `status = 'dissolved'` にする。行を消すのは運営 (super_admin・MFA 済み) と service_role だけ。
+
 #### `user_profiles` 拡張 (組織属性)
 
 ```sql

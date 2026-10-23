@@ -99,6 +99,19 @@ CREATE POLICY "organizations_delete" ON organizations
 
 確認: `tests/integration/security/db-privilege-hardening.test.ts` (実 DB)・`tests/db-privilege-hardening-migration-contract.test.ts` (3 列を書く関数の最新の定義がどれも SECURITY DEFINER か利用者が実行できない関数であることを、migration の文面から機械で見る)。
 
+実装 (migration `20261023100000_organizations_no_owner_direct_delete.sql`・#1917 の続き): DELETE のポリシーは運営の `organizations_delete_super_admin` (TO authenticated・`user_profiles.roles` に `super_admin` があり `operator_mfa_satisfied()`。`20261017130000`) だけ。ベースラインのオーナーの DELETE のポリシー `organizations_delete_owner` (`owner_id = auth.uid()`) は消した。オーナーの DELETE は RLS を通り、列を読まない WHERE の DELETE なら所属の列を持つ人がいない組織を消せた (PostgREST の DELETE は SELECT のポリシーにも当たる必要があり、所属しているオーナーは 23514 で止まっていた)。そのときの直接の DELETE は、部署・招待・チャレンジ・席数・日次の集計・レポート (`departments` / `organization_invites` / `organization_challenges` / `org_license_pools` / `org_daily_stats` / `organization_reports`) を外部キーの CASCADE で消し、解散の RPC の知らせ・監査を通らなかったため (家族の同じ欠陥は `20261022200000_family_groups_no_direct_delete.sql` で塞いだ)。オーナーの選択 (2026-10-23・選択式): 「オーナーの直接の削除を塞ぐ (推奨)」。選択肢の説明の文は「家族と同じ扱いにします。組織を消すのは解散の仕組みだけで、オーナーが解散する操作は今どおりできます。運営 (super_admin) の削除のポリシーは残します。」
+
+| 呼び出し元 | 直接の DELETE の結果 |
+|---|---|
+| オーナー・管理者・メンバー・別の組織の利用者・解散した組織の元のオーナー | 0 行 (エラーなし)。当たる DELETE のポリシーが無い (列を読まない WHERE の DELETE でも 0 行) |
+| 未認証 (anon) | 42501 (DELETE の権限を外した) |
+| 運営 (super_admin・MFA 済み) | 今までどおり。PostgREST の DELETE は WHERE で列を読むので SELECT のポリシー `organizations_select_member` (所属している人だけ) にも当たる必要があり、所属していない組織は 0 行・所属している組織は CHECK `user_profiles_org_consistency` (23514) で止まる |
+| service_role | 消える (テストと e2e の後片付け) |
+
+権限: anon の DELETE は外した。authenticated の DELETE は運営のポリシーが効くために残す。TRUNCATE は `20261022190000_db_privilege_hardening.sql` が anon / authenticated から外してある。組織をやめるのは解散の RPC (`dissolve_org_by_owner` (POST /api/org/dissolve)・`operator_force_dissolve_org`) だけで、どちらも後始末 `org_dissolve_apply` で行を dissolved にする (DELETE しない)。アプリ (Web・モバイル・Edge Function) は利用者のセッションで organizations を DELETE しない。
+
+確認: `tests/integration/rls/organizations-no-owner-direct-delete.test.ts` (実 DB)・`tests/organizations-no-owner-direct-delete-migration-contract.test.ts` (migration の文面・戻し口・アプリのコードの走査)。
+
 ## 5. departments
 
 ```sql
