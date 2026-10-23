@@ -144,7 +144,8 @@ describe('billing/01 §16.2 の追随表が org/04・org/05 を指す行番号 (
 });
 
 describe('billing/01 §16.2 の追随表が operator/02 を指す行番号 (#1917 docs-1023b)', () => {
-  // #1967 (f9ad46fc) が operator/02 に行を足し、追随表の行番号 (:570-573・:1739-1746 など) が古い位置のままだった
+  // 追随表の operator/02 の 2 行の行番号が古い位置のままだった。:1739-1746 は #1967 (f9ad46fc) が operator/02 に 11 行を足す前の番号、
+  // :570-573・:1411-1433・:1534-1535・:1545-1627・:1632 はそれより前から operator/02 に足された行の分だけずれていた番号
   it('operator/02 の行の §9 の注・§21・§24・§25 の行番号が、Stripe の Webhook の注・節・テスト・見本・関連の行を指す', () => {
     const { row } = billing01Row('| `docs/design/operator/02-api-spec.md` |');
     expectAnchors(OPERATOR02, anchorNumbers(cell(row, 2)), {
