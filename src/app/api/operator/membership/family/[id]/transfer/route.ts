@@ -9,6 +9,7 @@ import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { internalError } from '@/lib/api/errors';
+import { ErrorStatusMap, MembershipErrorCode } from '@/lib/errors/membership-errors';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail } from '@/lib/emails/send';
 import { emailFailureReasons, logEmailFailures } from '@/lib/emails/send-result';
@@ -22,6 +23,18 @@ import { normalizeUuid } from '@/lib/http-params';
 export const dynamic = 'force-dynamic';
 
 const ROUTE_NAME = 'POST /api/operator/membership/family/[id]/transfer';
+
+/** DB 関数・トリガーが RAISE EXCEPTION ... USING ERRCODE = 'P0001' で止めたときの SQLSTATE */
+const PG_RAISE_EXCEPTION = 'P0001';
+
+/**
+ * 譲渡先が退会の手続き中 (退会の印 account_deletion_guards が新しい) なので、家族の行のトリガー family_groups_representative_not_deleting
+ * (supabase/migrations/20261023150000_account_deletion_family_representative_guard.sql) が代表者の変更を止めたか
+ * (P0001 で、メッセージがそのコード)。#1917 の続き
+ */
+function isRepresentativeAccountDeletingError(error: { code?: string; message?: string } | null): boolean {
+  return error?.code === PG_RAISE_EXCEPTION && error.message === MembershipErrorCode.REPRESENTATIVE_ACCOUNT_DELETING;
+}
 
 const BodySchema = z.object({
   to_user_id: z.string().uuid(),
@@ -85,6 +98,18 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
     if (rpcError) {
       // RPC の生のエラー文は本文に出さない (#1172)。分かるものは固定の文、それ以外は汎用の 500 にして構造化ログに残す
+      // 譲渡先が退会の手続き中なら 409 (代表者にすると、その退会の最後のアカウントの削除が代表者の外部キーで失敗する。#1917 の続き)
+      if (isRepresentativeAccountDeletingError(rpcError)) {
+        return NextResponse.json(
+          {
+            error: {
+              code: MembershipErrorCode.REPRESENTATIVE_ACCOUNT_DELETING,
+              message: '譲渡先のユーザーは退会の手続き中です',
+            },
+          },
+          { status: ErrorStatusMap[MembershipErrorCode.REPRESENTATIVE_ACCOUNT_DELETING] },
+        );
+      }
       if (rpcError.message.includes('TARGET_NOT_IN_FAMILY')) {
         return NextResponse.json(
           { error: { code: 'TARGET_NOT_IN_FAMILY', message: '譲渡先のユーザーはこの家族グループに所属していません' } },

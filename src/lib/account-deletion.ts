@@ -7,7 +7,9 @@
  *   - confirm の確認 (`confirm: true`) など、入口の検証。
  *
  * 流れ (どの段階も、やり直して何度流しても同じ結果になる。途中で失敗したら、そこで止めて ACCOUNT_DELETE_FAILED を返す):
- *   1. 退会の印を付けてから (DB 関数 begin_account_deletion_guard。印のある人を運営がオーナーにして組織を作れない。supabase/migrations/20261023130000_account_deletion_owner_guard.sql)、組織のオーナー / 家族の代表者なら 409 で止める (譲渡か解散が先)。
+ *   1. 退会の印を付けてから (DB 関数 begin_account_deletion_guard。印のある人を運営がオーナーにして組織を作れない。supabase/migrations/20261023130000_account_deletion_owner_guard.sql。
+ *      印のある人は家族の代表者にもなれない (家族の作成・代表者の譲渡の承諾・運営の強制譲渡。20261023150000_account_deletion_family_representative_guard.sql))、
+ *      組織のオーナー / 家族の代表者なら 409 で止める (譲渡か解散が先)。
  *   1'. 段階 billing (billing/01 §11。src/lib/billing/account-deletion.ts): 顧客の開いたままの Stripe Checkout Session を閉じ、
  *      Stripe の契約 (顧客の全契約と DB の行の和) のうち終端でないものを即時解約し、Stripe の顧客を匿名化する。
  *      顧客も契約の行も無ければ Stripe を呼ばない。失敗したらここで止める (まだ何も変えていないのでやり直せる)。
@@ -23,7 +25,11 @@
  *   4''. 段階 billing_recheck (billing/01 §11): 1' と同じ処理をもう一度 (1' のあとに完了した Checkout の契約・作られた顧客を閉じる)。
  *      失敗したら 5 に進まない (アカウントは残り、もう一度の退会で片付く)。
  *   5. auth.admin.deleteUser。public 側の個人データは外部キーの CASCADE / SET NULL で消える・匿名化される
- *      (20261010000100_auth_users_fk_on_delete.sql。ただし findBlocker のあとに家族の代表者になった人だけは family_groups.representative_id の RESTRICT で deleteUser が失敗する (ACCOUNT_DELETE_FAILED。もう一度の退会で 409 になる。20261022160000 の見出し)。組織のオーナーになる型は残らない: 運営の作成は 1 の印で止まり (OWNER_ACCOUNT_DELETING。20261023130000 の見出し)、譲渡は 3 が止める)。
+ *      (20261010000100_auth_users_fk_on_delete.sql)。findBlocker のあとに組織のオーナー・家族の代表者になって、deleteUser が
+ *      organizations.owner_id / family_groups.representative_id の RESTRICT で失敗する型は残らない: 組織の運営の作成は 1 の印で止まり
+ *      (OWNER_ACCOUNT_DELETING。20261023130000 の見出し)、組織の譲渡は 3 が止める。家族の代表者になる 3 つの経路 (作成・譲渡の承諾・
+ *      運営の強制譲渡) は 1 の印で止まる (REPRESENTATIVE_ACCOUNT_DELETING。20261023150000 の見出し)。印は退会の route の
+ *      maxDuration より長く効くので、1 回の退会の実行の間は外れない。
  *      削除が済んだら (すでに消えていたときも)、記録に削除の日時を入れる (complete_account_deletion_record)。
  *      これに失敗しても退会の結果は変えない (アカウントはもう消えている)。失敗はログに残す (記録は executed_at が空のまま残る)。
  *   6. 本人に退会の完了メールを 1 通送る (#1152。src/lib/account-deletion-notification.ts)。
@@ -321,8 +327,9 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
   let deletedNow = false;
   let deletedAt: Date | null = null;
   try {
-    // 退会の印 (#1917 の続き。20261023130000): findBlocker より先に付ける。印のあとに運営がこの人をオーナーにして組織を作ろうとすると
-    // DB のトリガーが止める。印より先に作られた組織は、下の findBlocker が読んで 409 にする (印は作成の commit を待つ)
+    // 退会の印 (#1917 の続き。20261023130000・20261023150000): findBlocker より先に付ける。印のあとに運営がこの人をオーナーにして
+    // 組織を作ろうとすると、またはこの人を家族の代表者にしようとすると (家族の作成・代表者の譲渡の承諾・運営の強制譲渡)、DB のトリガーが止める。
+    // 印より先に作られた組織・印より先に代わった代表者は、下の findBlocker が読んで 409 にする (印は作成・変更の commit を待つ)
     const { error: guardError } = await admin.rpc('begin_account_deletion_guard', { p_user_id: userId });
     if (guardError) throw guardError;
     const blocker = await findBlocker(admin, userId);
