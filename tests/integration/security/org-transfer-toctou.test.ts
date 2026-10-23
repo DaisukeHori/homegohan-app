@@ -36,7 +36,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import ws from 'ws';
 import { apiCall } from '../helpers/api';
 import { promoteToAal2 } from '../helpers/mfa';
@@ -125,19 +125,21 @@ const ORG_TOTAL_LICENSES = 20;
 const SEEDED_USED_LICENSES = 2;
 /** 本物の経路で同時に呼ぶ回数 (org-invite-dissolved.test.ts・self-dissolve.test.ts と同じ) */
 const ITERATIONS = 8;
-/** 先の処理をコミット前のまま開いておく秒数 */
-const HOLD_SECONDS = 3;
 /**
- * 組織の行だけを持つ接続 (holdOrgRow) が行を持つ秒数。そのあいだに 2 本の呼び出しを本物の経路 (Kong → PostgREST) で投げ、
- * どちらも行のロックの待ちに並ぶまで待つので HOLD_SECONDS より長く取る。並んだ呼び出しは放すまで待つので、
- * authenticated の文の時間切れ (Supabase の既定の statement_timeout 8 秒) より短くする
+ * 先の処理をコミット前のまま開いておく接続 (holdCall・holdOrgRow・holdProfileRow) を、テストが放さないまま持ち続ける秒数の上限。
+ * 接続は、後から呼んだ処理が行のロックの待ちに並んだのを pg_stat_activity で確かめてから release() で放す
+ * (決まった秒数の窓で「並んだはず」と仮定しない。負荷が高いと並ぶまでが窓より長くなり、並ぶ前に放して揺らいだ。#1917)。
+ * この上限は放し忘れの安全弁で、上限に達した接続は HOLDER_NOT_RELEASED で失敗する (黙って commit しない)。
+ * 並ぶのを待つ上限 (HOLDER_DEADLINE_MS の 20 秒) より長く、Kong が奥 (postgres-meta) の応答を待つ既定の上限 (60 秒) より短くする
  */
-const ORDER_HOLD_SECONDS = 5;
+const HOLDER_MAX_HOLD_SECONDS = 30;
+/** 放されないまま HOLDER_MAX_HOLD_SECONDS に達した接続が RAISE する文 (pg/query の応答の error にこの文が出る) */
+const HOLDER_NOT_RELEASED = 'HOLDER_NOT_RELEASED';
 /** 招待のトークンのバイト数 (hex で 64 文字。create_org_invite と同じ形。org-invite-dissolved.test.ts と同じ) */
 const TOKEN_BYTES = 32;
 /** 招待の期限 (14 日。create_org_invite と同じ) */
 const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
-/** pg_sleep に入るのを待つ上限 (ミリ秒) と確かめる間隔 */
+/** 接続が pg_sleep に入る・呼び出しが行のロックの待ちに並ぶのを待つ上限 (ミリ秒) と、確かめる間隔 */
 const HOLDER_DEADLINE_MS = 20_000;
 const HOLDER_POLL_MS = 50;
 const TEST_TIMEOUT_MS = 120_000;
@@ -357,66 +359,98 @@ async function operator(): Promise<Operator> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 先の処理をコミット前のまま開いておく接続 (org-invite-dissolved.test.ts と同じ形。運営の呼び出しは aal2 のクレームを足す)
+// 先の処理をコミット前のまま開いておく接続 (org-invite-dissolved.test.ts の形に、後ろに並んだのを確かめてから放す release() を足したもの。
+// 運営の呼び出しは aal2 のクレームを足す)
 // ---------------------------------------------------------------------------------------------
 
 interface Holder {
+  /** 失敗の文に出す名前 (どの接続を放せなかったか・どの接続の後ろに並ばなかったか) */
+  label: string;
   /** その接続の SQL に埋めた目印 (pg_stat_activity.query で見分ける) */
   marker: string;
+  /** 接続が持つ処理を終え、放されるのを待つ pg_sleep に入るまで (入ったらその接続の pid を覚える) */
   sleeping: Promise<void>;
   done: Promise<Outcome>;
   /** 先の接続がもう終わったか (pg_sleep を抜けて、持っていた行を放したか) */
   finished: () => boolean;
+  /** pg_sleep に入った接続の pid (まだ入っていなければ null) */
+  pid: () => number | null;
+  /**
+   * 接続を放す (commit させる)。pg_sleep の途中にいることを確かめてから取り消し (pg_cancel_backend) を送る。
+   * 取り消しは HOLD_UNTIL_RELEASED_SQL の pg_sleep の文だけを抜けさせ、持っていた処理は commit する。
+   * もう pg_sleep にいなければ (放す前に終わっていれば) 失敗する
+   */
+  release: () => Promise<void>;
 }
+
+/**
+ * 放されるまで持つ文。pg_sleep の途中で release() の取り消しを受けたら、例外のブロック (サブトランザクション) の中の pg_sleep だけを
+ * 抜けて、それより前の文 (呼び出し・行のロック) はそのまま commit する。放されないまま HOLDER_MAX_HOLD_SECONDS に達したら
+ * HOLDER_NOT_RELEASED を RAISE して全体を失敗させる (時間で黙って放さない)
+ */
+const HOLD_UNTIL_RELEASED_SQL = `DO $hold$
+    BEGIN
+      PERFORM pg_sleep(${HOLDER_MAX_HOLD_SECONDS});
+      RAISE EXCEPTION '${HOLDER_NOT_RELEASED}';
+    EXCEPTION WHEN query_canceled THEN
+      NULL;
+    END
+    $hold$;`;
+
+/** このテストで作り、まだ放していないかもしれない接続 (テストが途中で落ちたときに afterEach で放す) */
+const openHolders: Holder[] = [];
 
 function holdCall(actor: TestUser, callSql: string, extraClaims: Record<string, string> = {}): Holder {
   const marker = `org-transfer-toctou-holder-${randomBytes(6).toString('hex')}`;
   const claims = JSON.stringify({ sub: actor.id, role: 'authenticated', ...extraClaims });
   return startHolder(
+    callSql,
     marker,
     `/* ${marker} */
     SELECT set_config('request.jwt.claims', '${claims}', true);
     SET LOCAL ROLE authenticated;
     SELECT * FROM ${callSql};
-    SELECT pg_sleep(${HOLD_SECONDS});
+    ${HOLD_UNTIL_RELEASED_SQL}
     SELECT 'held' AS result;`,
   );
 }
 
 /**
- * 組織の行だけを FOR NO KEY UPDATE で ORDER_HOLD_SECONDS 秒持つ接続 (pg/query の権限。user_profiles の行は 1 つも持たない)。
+ * 組織の行だけを FOR NO KEY UPDATE で取り、放されるまで持つ接続 (pg/query の権限。user_profiles の行は 1 つも持たない)。
  * そのあとに呼んだ関数を組織の行の手前 (またはその前のロック) で待たせ、呼んだ順に並ばせる
  */
 function holdOrgRow(orgId: string): Holder {
   const marker = `org-transfer-toctou-org-row-${randomBytes(6).toString('hex')}`;
   return startHolder(
+    '組織の行を持つ接続',
     marker,
     `/* ${marker} */
     SELECT 1 FROM public.organizations WHERE id = '${orgId}'::uuid FOR NO KEY UPDATE;
-    SELECT pg_sleep(${ORDER_HOLD_SECONDS});
+    ${HOLD_UNTIL_RELEASED_SQL}
     SELECT 'held' AS result;`,
   );
 }
 
 /**
- * user_profiles の 1 行だけを FOR NO KEY UPDATE で取り、取れてから HOLD_SECONDS 秒持つ接続 (pg/query の権限。組織の行は持たない)。
+ * user_profiles の 1 行だけを FOR NO KEY UPDATE で取り、取れてから放されるまで持つ接続 (pg/query の権限。組織の行は持たない)。
  * 組織の行を取らずに user_profiles の行を 1 つ取る処理 (脱退・除名・release_user_membership) の代わり。
  * 行が持たれていれば、放されるまで待ってから取る (待っている間は pg_stat_activity の wait_event_type = 'Lock')
  */
 function holdProfileRow(userId: string): Holder {
   const marker = `org-transfer-toctou-profile-row-${randomBytes(6).toString('hex')}`;
   return startHolder(
+    'user_profiles の行を持つ接続',
     marker,
     `/* ${marker} */
     SELECT 1 FROM public.user_profiles WHERE id = '${userId}'::uuid FOR NO KEY UPDATE;
-    SELECT pg_sleep(${HOLD_SECONDS});
+    ${HOLD_UNTIL_RELEASED_SQL}
     SELECT 'held' AS result;`,
   );
 }
 
-/** marker を含む sql を pg/query に投げ (終わりを待たない)、その接続が pg_sleep に入るまでを sleeping で待てるようにする */
-function startHolder(marker: string, sql: string): Holder {
-  const state: { outcome: Outcome | null } = { outcome: null };
+/** marker を含む sql を pg/query に投げ (終わりを待たない)、その接続が pg_sleep に入るまでを sleeping で待て、release() で放せるようにする */
+function startHolder(label: string, marker: string, sql: string): Holder {
+  const state: { outcome: Outcome | null; pid: number | null } = { outcome: null, pid: null };
   const done = pgRequest(sql).then((res): Outcome => {
     const body = res.body as { error?: unknown; code?: unknown } | null;
     const outcome: Outcome = res.ok
@@ -435,33 +469,99 @@ function startHolder(marker: string, sql: string): Holder {
   const sleeping = (async () => {
     const deadline = Date.now() + HOLDER_DEADLINE_MS;
     while (Date.now() < deadline) {
-      if (state.outcome) throw new Error(`先に呼んだ接続が pg_sleep に入る前に終わりました: ${JSON.stringify(state.outcome)}`);
-      const rows = await pgQuery<{ n: number }>(`
-        SELECT count(*)::int AS n FROM pg_stat_activity
+      if (state.outcome) throw new Error(`${label} が pg_sleep に入る前に終わりました: ${JSON.stringify(state.outcome)}`);
+      const rows = await pgQuery<{ pid: number }>(`
+        SELECT pid FROM pg_stat_activity
         WHERE wait_event = 'PgSleep' AND query LIKE '%${marker}%' AND pid <> pg_backend_pid()`);
-      if (rows[0]?.n === 1) return;
+      if (rows.length === 1) {
+        state.pid = rows[0].pid;
+        return;
+      }
       await sleep(HOLDER_POLL_MS);
     }
-    throw new Error('先に呼んだ接続が pg_sleep に入りませんでした (遅すぎます)');
+    throw new Error(`${label} が ${HOLDER_DEADLINE_MS} ミリ秒のうちに pg_sleep に入りませんでした (持つ行の手前で待ったままです)`);
   })();
+  // 待つ前にテストが落ちたときの未処理の reject にしない (await した側には reject のまま届く)
+  sleeping.catch(() => undefined);
 
-  return { marker, sleeping, done, finished: () => state.outcome !== null };
+  const release = async (): Promise<void> => {
+    await sleeping;
+    const rows = await pgQuery<{ cancelled: boolean }>(`
+      SELECT pg_cancel_backend(pid) AS cancelled FROM pg_stat_activity
+      WHERE pid = ${state.pid} AND wait_event = 'PgSleep' AND query LIKE '%${marker}%'`);
+    if (rows.length !== 1 || rows[0].cancelled !== true) {
+      throw new Error(`${label} を放す前に、その接続が pg_sleep を抜けていました: ${JSON.stringify({ rows, outcome: state.outcome })}`);
+    }
+  };
+
+  const holder: Holder = { label, marker, sleeping, done, finished: () => state.outcome !== null, pid: () => state.pid, release };
+  openHolders.push(holder);
+  return holder;
 }
 
-/** 関数 fnName を本物の経路で呼んだ接続が、行のロックの待ち (pg_stat_activity の wait_event_type = 'Lock') に count 本以上入るまで待つ */
-async function waitForLockWaiters(fnName: string, count: number): Promise<void> {
+interface LockWaitOptions {
+  /** 失敗の文に出す手順の名前 (どの手順で並ばなかったか) */
+  step: string;
+  /** 待ちの相手がこの接続であること (pg_blocking_pids に holder の pid が入っていること) まで確かめる */
+  blockedBy?: Holder;
+}
+
+/**
+ * 関数 fnName (または接続の目印) を含む呼び出しが、行のロックの待ち (pg_stat_activity の wait_event_type = 'Lock') に count 本以上
+ * 入るまで待つ。blockedBy があれば、その接続に待たされている (pg_blocking_pids に pid が入っている) ものだけを数える。
+ * HOLDER_DEADLINE_MS のうちに並ばなければ、手順の名前を付けて失敗する
+ */
+async function waitForLockWaiters(fnName: string, count: number, { step, blockedBy }: LockWaitOptions): Promise<void> {
+  const blockerPid = blockedBy ? blockedBy.pid() : null;
+  if (blockedBy && blockerPid === null) throw new Error(`手順「${step}」: ${blockedBy.label} がまだ pg_sleep に入っていません`);
+  const blockedByClause = blockerPid === null ? '' : `AND ${blockerPid} = ANY(pg_blocking_pids(pid))`;
   const deadline = Date.now() + HOLDER_DEADLINE_MS;
+  let seen = 0;
   while (Date.now() < deadline) {
     const rows = await pgQuery<{ n: number }>(`
       SELECT count(*)::int AS n FROM pg_stat_activity
-      WHERE wait_event_type = 'Lock' AND query LIKE '%${fnName}%' AND pid <> pg_backend_pid()`);
-    if ((rows[0]?.n ?? 0) >= count) return;
+      WHERE wait_event_type = 'Lock' AND query LIKE '%${fnName}%' AND pid <> pg_backend_pid() ${blockedByClause}`);
+    seen = rows[0]?.n ?? 0;
+    if (seen >= count) return;
     await sleep(HOLDER_POLL_MS);
   }
-  throw new Error(`${fnName} の呼び出しが行のロックの待ちに入りませんでした (遅すぎます)`);
+  const behind = blockedBy ? `${blockedBy.label} の後ろの` : '';
+  throw new Error(
+    `手順「${step}」: ${fnName} の呼び出しが ${HOLDER_DEADLINE_MS} ミリ秒のうちに${behind}行のロックの待ちに ${count} 本並びませんでした (並んだのは ${seen} 本)`,
+  );
+}
+
+/** 呼び出し 1 本 (待ちを見分けるための関数名と、本物の経路での呼び出し) */
+interface QueuedCall {
+  fn: string;
+  call: () => Promise<Outcome>;
+}
+
+/**
+ * holder が持っている間に waiter を呼び、waiter が holder に待たされて行のロックの待ちに並んだのを確かめてから holder を放す
+ * (waiter は holder の commit を待ってから判定する。並ぶ前に放して、commit のあとに呼んだのと同じになるのを防ぐ)
+ */
+async function runBehindHolder(holder: Holder, waiter: QueuedCall): Promise<[Outcome, Outcome]> {
+  await holder.sleeping;
+  const waiterDone = waiter.call();
+  await waitForLockWaiters(waiter.fn, 1, { step: `${waiter.fn} が ${holder.label} の commit を待つ`, blockedBy: holder });
+  await holder.release();
+  return Promise.all([holder.done, waiterDone]);
 }
 
 const AAL2_CLAIMS = { aal: 'aal2' } as const;
+
+/**
+ * テストが途中で落ちたときに残った接続を、作った順に放す (先に作った接続を放さないと、その後ろで待つ接続が pg_sleep に入れない)。
+ * 通ったテストでは全部放し終わっているので何もしない。放せなかったものは HOLDER_MAX_HOLD_SECONDS で自分で終わる
+ */
+afterEach(async () => {
+  const holders = openHolders.splice(0);
+  for (const holder of holders) {
+    if (holder.finished()) continue;
+    await holder.release().catch(() => undefined);
+  }
+}, RACE_TIMEOUT_MS);
 
 afterAll(async () => {
   await Promise.allSettled(pendingHolders);
@@ -539,9 +639,10 @@ describe('解散と譲渡の承諾が同時に走っても、23514 にならず�
     const { owner, admin, orgId, proposalId } = await setupTransfer('ot4');
 
     const holder = holdCall(owner, `public.dissolve_org_by_owner('${orgId}'::uuid)`);
-    await holder.sleeping;
-    const accept = await acceptTransfer(admin, proposalId);
-    const held = await holder.done;
+    const [held, accept] = await runBehindHolder(holder, {
+      fn: 'accept_org_owner_transfer',
+      call: () => acceptTransfer(admin, proposalId),
+    });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expect(accept.code, JSON.stringify(accept)).not.toBe(PG_CHECK_VIOLATION);
@@ -556,9 +657,10 @@ describe('解散と譲渡の承諾が同時に走っても、23514 にならず�
     const { admin, orgId, proposalId } = await setupTransfer('ot5');
 
     const holder = holdCall(op.user, `public.operator_force_dissolve_org('${orgId}'::uuid, 'toctou')`, AAL2_CLAIMS);
-    await holder.sleeping;
-    const accept = await acceptTransfer(admin, proposalId);
-    const held = await holder.done;
+    const [held, accept] = await runBehindHolder(holder, {
+      fn: 'accept_org_owner_transfer',
+      call: () => acceptTransfer(admin, proposalId),
+    });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expectRaised(accept, 'ORG_ALREADY_DISSOLVED');
@@ -570,9 +672,7 @@ describe('解散と譲渡の承諾が同時に走っても、23514 にならず�
     const { owner, admin, orgId, proposalId } = await setupTransfer('ot6');
 
     const holder = holdCall(admin, `public.accept_org_owner_transfer('${proposalId}'::uuid)`);
-    await holder.sleeping;
-    const dissolve = await dissolveOrg(owner, orgId);
-    const held = await holder.done;
+    const [held, dissolve] = await runBehindHolder(holder, { fn: 'dissolve_org_by_owner', call: () => dissolveOrg(owner, orgId) });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expectRaised(dissolve, 'NOT_ORG_OWNER');
@@ -586,9 +686,10 @@ describe('解散と譲渡の承諾が同時に走っても、23514 にならず�
     const { admin, orgId, proposalId } = await setupTransfer('ot7');
 
     const holder = holdCall(admin, `public.accept_org_owner_transfer('${proposalId}'::uuid)`);
-    await holder.sleeping;
-    const dissolve = await operatorDissolveOrg(op.jwt, orgId);
-    const held = await holder.done;
+    const [held, dissolve] = await runBehindHolder(holder, {
+      fn: 'operator_force_dissolve_org',
+      call: () => operatorDissolveOrg(op.jwt, orgId),
+    });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expect(dissolve.ok, JSON.stringify(dissolve)).toBe(true);
@@ -650,9 +751,10 @@ describe('運営の強制譲渡 (operator_force_owner_transfer) と解散が同�
     const orgId = await createOrg(owner, admin, 'ot10');
 
     const holder = holdCall(owner, `public.dissolve_org_by_owner('${orgId}'::uuid)`);
-    await holder.sleeping;
-    const forced = await operatorTransfer(op.jwt, orgId, admin.id);
-    const held = await holder.done;
+    const [held, forced] = await runBehindHolder(holder, {
+      fn: 'operator_force_owner_transfer',
+      call: () => operatorTransfer(op.jwt, orgId, admin.id),
+    });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expectRaised(forced, 'TARGET_NOT_IN_ORG');
@@ -692,10 +794,13 @@ describe('脱退・除名と譲渡の承諾が同時に走っても、オーナ�
     const { admin, orgId, proposalId } = await setupTransfer('ot12');
 
     const holder = holdCall(admin, `public.accept_org_owner_transfer('${proposalId}'::uuid)`);
-    await holder.sleeping;
-    const { data, error } = await asUser(admin.jwt).rpc('leave_org');
-    const left = toOutcome(data, error);
-    const held = await holder.done;
+    const [held, left] = await runBehindHolder(holder, {
+      fn: 'leave_org',
+      call: async () => {
+        const { data, error } = await asUser(admin.jwt).rpc('leave_org');
+        return toOutcome(data, error);
+      },
+    });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expectRaised(left, 'IS_ORG_OWNER');
@@ -707,9 +812,10 @@ describe('脱退・除名と譲渡の承諾が同時に走っても、オーナ�
     const { owner, admin, orgId, proposalId } = await setupTransfer('ot13');
 
     const holder = holdCall(admin, 'public.leave_org()');
-    await holder.sleeping;
-    const accept = await acceptTransfer(admin, proposalId);
-    const held = await holder.done;
+    const [held, accept] = await runBehindHolder(holder, {
+      fn: 'accept_org_owner_transfer',
+      call: () => acceptTransfer(admin, proposalId),
+    });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expectRaised(accept, 'TRANSFER_ACCEPTOR_NOT_IN_ORG');
@@ -722,10 +828,13 @@ describe('脱退・除名と譲渡の承諾が同時に走っても、オーナ�
     const { owner, admin, orgId, proposalId } = await setupTransfer('ot14');
 
     const holder = holdCall(admin, `public.accept_org_owner_transfer('${proposalId}'::uuid)`);
-    await holder.sleeping;
-    const { data, error } = await asUser(owner.jwt).rpc('remove_org_member', { p_organization_id: orgId, p_user_id: admin.id });
-    const removed = toOutcome(data, error);
-    const held = await holder.done;
+    const [held, removed] = await runBehindHolder(holder, {
+      fn: 'remove_org_member',
+      call: async () => {
+        const { data, error } = await asUser(owner.jwt).rpc('remove_org_member', { p_organization_id: orgId, p_user_id: admin.id });
+        return toOutcome(data, error);
+      },
+    });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expectRaised(removed, 'CANNOT_REMOVE_OWNER');
@@ -739,14 +848,8 @@ describe('脱退・除名と譲渡の承諾が同時に走っても、オーナ�
 // (修正前は解散が呼び出した本人の行 → 組織の行 の順に取り、逆向きになってデッドロック (40P01) した)
 // ---------------------------------------------------------------------------------------------
 
-/** 呼び出し 1 本 (待ちを見分けるための関数名と、本物の経路での呼び出し) */
-interface QueuedCall {
-  fn: string;
-  call: () => Promise<Outcome>;
-}
-
 /**
- * 組織の行を holdOrgRow で持っている間に first → second の順に呼び、2 本とも行のロックの待ちに並んでから組織の行を放す。
+ * 組織の行を holdOrgRow で持っている間に first → second の順に呼び、2 本とも行のロックの待ちに並んだのを確かめてから組織の行を放す。
  * first は組織の行の手前で待ち (それより前の行 (提案・招待の行) は取ったまま)、先に組織の行を取る。修正前は second の解散が
  * 呼び出した本人の行を持ったまま組織の行を待ち、組織の行を取った first がその本人の行を待って 40P01 になった。修正後は second の
  * 解散も組織の行を最初に取る (user_profiles の行を 1 つも持たずに組織の行を待つ) ので、待ちの輪ができない
@@ -755,11 +858,13 @@ async function runQueuedBehindOrgRow(orgId: string, first: QueuedCall, second: Q
   const holder = holdOrgRow(orgId);
   await holder.sleeping;
   const firstDone = first.call();
-  await waitForLockWaiters(first.fn, 1);
+  await waitForLockWaiters(first.fn, 1, { step: `1 本目の ${first.fn} が組織の行の手前に並ぶ`, blockedBy: holder });
   const secondDone = second.call();
-  await waitForLockWaiters(second.fn, first.fn === second.fn ? 2 : 1);
-  // 2 本が並んだ時点で組織の行はまだ持たれている (並べた順で結果が決まる。放したあとに並んだのでは、この順を確かめていない)
-  expect(holder.finished(), '組織の行を放す前に 2 本が並びませんでした (遅すぎます)').toBe(false);
+  // 2 本目は組織の行を持つ接続か、その手前で先に並んだ 1 本目に待たされる (どちらに待たされるかは決めない)
+  await waitForLockWaiters(second.fn, first.fn === second.fn ? 2 : 1, { step: `2 本目の ${second.fn} が 1 本目の後ろに並ぶ` });
+  // 2 本が並んだのを確かめてから組織の行を放す (並べた順で結果が決まる。放したあとに並んだのでは、この順を確かめていない)。
+  // 並ぶ前に接続が終わっていれば release() が失敗する
+  await holder.release();
   const [held, firstOutcome, secondOutcome] = await Promise.all([holder.done, firstDone, secondDone]);
   expect(held.ok, JSON.stringify(held)).toBe(true);
   return [firstOutcome, secondOutcome];
@@ -889,24 +994,34 @@ describe('譲渡の commit をまたいで運営の強制解散と新しいオ�
     const op = await operator();
     const { owner, admin, orgId, proposalId } = await setupTransfer('ot25');
 
+    // 各手順は、前の手順の呼び出しが行のロックの待ちに並んだのを pg_stat_activity で確かめてから進め、持っている接続は
+    // 並んだのを確かめてから release() で放す (決まった秒数の窓で「並んだはず」と仮定しない。#1917)
     // (1) 承諾 (X → Y) をコミット前のまま開く (提案の行・組織の行・Y の行・X の行を持つ)
     const accept = holdCall(admin, `public.accept_org_owner_transfer('${proposalId}'::uuid)`);
     await accept.sleeping;
-    // (2) X の行だけを取る処理を、承諾の後ろに並ばせる (承諾の commit のあとは、この接続が X の行を HOLD_SECONDS 秒持つ)
+    // (2) X の行だけを取る処理を、承諾の後ろに並ばせる (承諾の commit のあとは、この接続が X の行を放されるまで持つ)
     const ownerRow = holdProfileRow(owner.id);
-    await waitForLockWaiters(ownerRow.marker, 1);
+    await waitForLockWaiters(ownerRow.marker, 1, { step: '(2) X の行だけを取る接続が承諾の後ろに並ぶ', blockedBy: accept });
     // (3) 運営の強制解散を並ばせる (組織の行で待つ。取り直しのループなら、ループの最初の X の行で (2) の後ろに待つ)
     const forcedDone = operatorDissolveOrg(op.jwt, orgId);
-    await waitForLockWaiters('operator_force_dissolve_org', 1);
-    // (4) 承諾が commit する (オーナーは Y)。X の行は (2) の接続が取る
+    await waitForLockWaiters('operator_force_dissolve_org', 1, { step: '(3) 運営の強制解散が承諾の commit を待つ' });
+    // (4) 承諾を放して commit させる (オーナーは Y)。X の行は (2) の接続が取る
+    await accept.release();
     const accepted = await accept.done;
     expect(accepted.ok, JSON.stringify(accepted)).toBe(true);
     await ownerRow.sleeping;
+    // (4') 強制解散が、承諾の commit のあと X の行を持つ (2) の接続に待たされるまで待つ (直した形では組織の行を取ったあと
+    //      X の行で、取り直しのループの形ではループの最初の X の行で待つ。どちらの形でも (2) が X の行を放すまで終われない)
+    await waitForLockWaiters('operator_force_dissolve_org', 1, {
+      step: "(4') 強制解散が承諾の commit のあと X の行を持つ接続の後ろに並ぶ",
+      blockedBy: ownerRow,
+    });
     // (5) 新しいオーナー Y が解散を呼ぶ (組織の行で (3) の後ろに待つ。取り直しのループの形なら、(3) はまだ組織の行を取っていない
     //     ので、Y の解散は Y の行と組織の行を先に取れ、(3) を追い越す)
     const dissolveDone = dissolveOrg(admin, orgId);
-    await waitForLockWaiters('dissolve_org_by_owner', 1);
-    expect(ownerRow.finished(), 'X の行を放す前に Y の解散が並びませんでした (遅すぎます)').toBe(false);
+    await waitForLockWaiters('dissolve_org_by_owner', 1, { step: '(5) 新しいオーナー Y の解散が行のロックの待ちに並ぶ' });
+    // (6) Y の解散が並んだのを確かめてから X の行を放す (並ぶ前に接続が終わっていれば release() が失敗する)
+    await ownerRow.release();
 
     const [held, forced, dissolve] = await Promise.all([ownerRow.done, forcedDone, dissolveDone]);
     expect(held.ok, JSON.stringify(held)).toBe(true);
