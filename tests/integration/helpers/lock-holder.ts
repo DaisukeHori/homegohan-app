@@ -299,7 +299,7 @@ export function createLockHolderKit(options: LockHolderKitOptions): LockHolderKi
       await sleep(timings.pollMs);
     }
     const behind = blockedBy ? `${blockedBy.label} の後ろの` : '';
-    const kind = waitEvent === undefined ? '' : ` (${waitEvent})`;
+    const kind = waitEvent === undefined ? '' : ` (${waitEvent}) `;
     throw new Error(
       `手順「${step}」: ${match} の呼び出しが ${timings.deadlineMs} ミリ秒のうちに${behind}行のロックの待ち${kind}に ${count} 本並びませんでした (並んだのは ${seen} 本)`,
     );
