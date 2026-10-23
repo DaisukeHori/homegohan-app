@@ -384,26 +384,26 @@ yamada@example.com,org_member,営業部,山田太郎,EMP001,2024-04-01
 
 ### `GET /api/org/invites`
 
-**認証**: `org_admin` | `org_manager`
+**認証**: 組織の `org_role` が `owner` / `admin` (`requireOrgAdmin`。`src/lib/auth/helpers.ts`)
 
-**クエリパラメータ**: `status` (pending|accepted|expired|cancelled), `limit`, `offset`
+**クエリパラメータ**: なし (`src/app/api/org/invites/route.ts:39-71` はクエリを読まない。自分の組織の招待を全件、作成の新しい順に返す)
 
-**レスポンス 200**:
+**レスポンス 200** (`OrgInviteListResponseSchema`。件数の `total` は無い):
 ```json
 {
   "invites": [
     {
       "id": "uuid",
       "email": "new@example.com",
-      "role": "org_member",
-      "department": { "name": "営業部" },
+      "role": "member",
       "status": "pending",
-      "expires_at": "2026-05-20T12:00:00Z",
-      "invited_by": { "display_name": "田中太郎" },
-      "created_at": "2026-05-06T10:00:00Z"
+      "departmentId": "uuid", "departmentName": "営業部",
+      "token": "…",
+      "expiresAt": "2026-05-20T12:00:00Z", "acceptedAt": null,
+      "createdAt": "2026-05-06T10:00:00Z",
+      "isExpired": false, "isAccepted": false
     }
-  ],
-  "total": 25
+  ]
 }
 ```
 
@@ -753,7 +753,7 @@ yamada@example.com,org_member,営業部,山田太郎,EMP001,2024-04-01
 
 ### `POST /api/org/subscription/upgrade`
 
-**認証**: `org_admin`
+**認証**: `org_admin` (**未実装**: 組織のプランの段階は運営の `PATCH /api/admin/organizations/{id}` だけが変える (#1952。`20261022170000_org_plan_operator_only.sql`)。この API は未実装 (`src/app/api/org/subscription` は無い)。この節は旧案の記録)
 
 **リクエスト**:
 ```json

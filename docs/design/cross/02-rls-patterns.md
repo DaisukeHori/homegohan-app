@@ -468,7 +468,7 @@ COMMIT;
 |---------|------------|------|
 | `family_groups` | same_family_group (owner のみ UPDATE) | status 変更は特定 API のみ |
 | `family_members` | same_family_group | owner が CRUD、メンバーは自分の行のみ DELETE |
-| `family_invites` | self_ownership + 公開 SELECT (token 突合) | 招待受諾は token 検索 |
+| `family_invites` | SELECT は家族の大人 (`family_invites_select_adult`)。利用者の書き込みのポリシーと権限は無く、作成・取り消し・拒否・承諾は SECURITY DEFINER の RPC だけ (`20261022150000_family_invites_rpc_only_writes.sql`) | 招待の承諾は RPC が token で引く |
 | `family_activity_log` | immutable_audit_log | 家族全員 SELECT、INSERT は本人 |
 | `family_shopping_items` | same_family_group | チェック済みフラグは全員 UPDATE 可 |
 | `family_shared_menus` | same_family_group | 作成者のみ DELETE |
@@ -480,7 +480,7 @@ COMMIT;
 |---------|------------|------|
 | `organizations` | self_ownership (org_admin) + admin_read | org_admin は自組織のみ |
 | `user_profiles` | self_ownership + same_organization (一部列のみ) | org 内メンバー一覧は制限付き |
-| `org_license_pools` | same_organization (org_admin INSERT) | |
+| `org_license_pools` | same_organization の SELECT だけ。席数は service_role と SECURITY DEFINER の RPC だけが書く (`20261022180000_org_tables_rpc_only_writes.sql`) | |
 | `org_license_assignments` | same_organization | 本人の行は本人も SELECT |
 | `org_license_audit_log` | immutable_audit_log | org_admin + admin が SELECT |
 | `org_health_notes` | industrial_doctor_read | 本人 + 産業医 + admin のみ |

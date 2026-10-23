@@ -327,6 +327,81 @@ BAN 解除
 
 ---
 
+### GET /api/admin/organizations
+組織の一覧 (運営)。実装は `src/app/api/admin/organizations/route.ts:36-107`
+
+**クエリパラメータ**: `q` (組織名の部分一致)・`plan` (`ORG_PLAN_VALUES` のどれか。`src/lib/org-plans.ts:22`)・`page` (default: 1)・`per_page` (default: 30, max: 100)。不正なら 400 `VALIDATION_ERROR` (:60-65)
+
+**レスポンス**: `{ "organizations": [{ "id", "name", "plan", "created_at", "updated_at" }], "meta": { "total", "page", "per_page" } }` (新しい順)。読み出しに失敗したときも 200 で空の一覧を返す (:88-106)
+
+**権限**: `admin`, `super_admin` (未ログインは 401 `AUTH_UNAUTHENTICATED` :43・ほかの利用者は 403 `OP_PERMISSION_DENIED` :49)
+
+---
+
+### POST /api/admin/organizations
+組織の作成 (運営)。実装は `src/app/api/admin/organizations/route.ts:109-234`
+
+**リクエスト**:
+```json
+{ "name": "株式会社〇〇", "plan": "standard", "owner_id": "uuid" }
+```
+- `name`: 1〜200 文字 (必須)
+- `plan`: `ORG_PLAN_VALUES` (`standard` / `premium` / `enterprise`) のどれか。省略すると `ORG_PLAN_DEFAULT` (`standard`)
+- `owner_id`: 省略すると呼び出した運営をオーナーにする (作る組織は active なので `organizations.owner_id` は NOT NULL)
+
+**処理**: service_role (`getSupabaseAdmin`) で、organizations の行・`org_license_pools` の行 (`total_licenses` = NULL・`used_licenses` = 0。失敗してもログだけで続ける)・オーナーの `user_profiles` (`organization_id` と `org_role = 'owner'`) を書く
+
+**レスポンス**: `{ "organization": { "id", "name", "plan", "owner_id", "created_at", "updated_at" } }`
+
+**監査ログ**: `admin.organization.create` (details は `{ name, plan }`。operator/07 §4.1)
+
+**エラー**:
+
+| ステータス | コード | 場合 (route.ts の行) |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` / `INVALID_JSON` / `INVALID_CHARACTER` | 本文が JSON でない (:136-139)・Zod の検査に通らない (:144-147)・本文に NULL 文字がある (:111-112) |
+| 401 | `AUTH_UNAUTHENTICATED` | 未ログイン (:119) |
+| 403 | `OP_PERMISSION_DENIED` | `admin` / `super_admin` でない (:125) |
+| 409 | `OWNER_ALREADY_IN_ORG` | オーナーにする人がすでに別の組織に所属している (:167-170) |
+| 500 | `INTERNAL_ERROR` | 組織の行の作成 (:181-184)・オーナーの `user_profiles` の更新 (:214-217) に失敗 |
+
+**権限**: `admin`, `super_admin`
+
+---
+
+### PATCH /api/admin/organizations/{id}
+組織のプラン (`organizations.plan`) の変更 (運営)。実装は `src/app/api/admin/organizations/[id]/route.ts`。組織のプランの段階は運営だけが変える (#1912。組織の管理者の `PUT /api/org/settings` は `plan` を受け取らず、`authenticated` / `anon` の `plan` の変更は DB のトリガー `guard_organizations_plan_value` が `ORG_PLAN_OPERATOR_ONLY` (42501) で拒む。`20261022170000_org_plan_operator_only.sql`)
+
+**リクエスト**:
+```json
+{ "plan": "premium" }
+```
+- 本文は `plan` だけ (`ORG_PLAN_VALUES` のどれか。ほかのキーは 400。`.strict()` :46-50)
+
+**処理**:
+- service_role (`getSupabaseAdmin`) で書く (運営の JWT も `authenticated` なので、利用者の client ではトリガーに止められる)
+- 書く前に今の行を読み (:107-111)、送られたプランが今と同じなら書かず、記録もしない (200 で今の行を返す :129-131)
+- 更新は「直前に読んだ `plan` のままなら書く」条件つきの UPDATE (:135-144。読んだ値が NULL なら `.is('plan', null)`)。0 行なら読み直し (:156-160)、今の値が送られたプランと同じなら書かず記録もしない (200 :175-177)、違えば 409 `CONFLICT_STALE_DATA` (:178。cross/04 §4.2)
+
+**レスポンス**: `{ "organization": { "id", "name", "plan", "created_at", "updated_at" } }`
+
+**監査ログ**: `admin.organization.plan_change` (details は `{ from, to }` = 変える前と後のプラン。severity `warn`。今と同じプランなら記録しない。operator/07 §4.1)
+
+**エラー**:
+
+| ステータス | コード | 場合 (route.ts の行) |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` / `INVALID_JSON` / `INVALID_CHARACTER` | `{id}` が UUID でない (:80)・本文が JSON でない (:91)・Zod の検査に通らない (:99)・本文に NULL 文字がある (:56-57) |
+| 401 | `AUTH_UNAUTHENTICATED` | 未ログイン (:64) |
+| 403 | `OP_PERMISSION_DENIED` | `admin` / `super_admin` でない (:70) |
+| 404 | `NOT_FOUND` | 組織が無い (:123)・読み直したときに組織が無い (:170) |
+| 409 | `CONFLICT_STALE_DATA` | 読んでから書くまでに別の運営が別のプランへ変えた (:40・:178) |
+| 500 | `INTERNAL_ERROR` | 読み出し (:117)・更新 (:149)・読み直し (:164) に失敗 |
+
+**権限**: `admin`, `super_admin`
+
+---
+
 ## 5. モデレーション API
 
 ### GET /api/admin/moderation/{type}

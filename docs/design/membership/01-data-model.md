@@ -302,7 +302,7 @@ CREATE POLICY org_invites_update_admin ON organization_invites
 
 注: 上の org_invites_insert_admin / org_invites_update_admin は初版の下書き。本番の正は migration `20261022180000_org_tables_rpc_only_writes.sql` (#1917):
 organization_invites の INSERT / UPDATE のポリシーは置かず、anon / authenticated の INSERT / UPDATE / TRUNCATE の権限も外す (招待の作成・作り直し・承諾・拒否・取り消しは SECURITY DEFINER の RPC だけが書く)。
-DELETE は `"Org admins can delete invites"` (TO authenticated・同じ組織の org_role が owner / admin。DELETE /api/org/invites) だけで、SELECT は org_invites_select_admin と `"Org admins can view invites"`。
+DELETE は `"Org admins can delete invites"` (TO authenticated・同じ組織の利用者で、org_role が owner / admin か、`roles` に admin / super_admin があり `operator_mfa_satisfied()` (運営・MFA 済み)。DELETE /api/org/invites) だけで、SELECT は org_invites_select_admin と `"Org admins can view invites"`。
 org_license_pools も利用者の書き込みのポリシーと権限を外し (SELECT の org_license_pools_select_member だけ)、席数は service_role と SECURITY DEFINER の RPC だけが書く。
 
 ### 2.5 organizations 操作 RPC
