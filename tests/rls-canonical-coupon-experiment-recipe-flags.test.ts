@@ -9,6 +9,7 @@
  *   - 期待するポリシーが、期待するコマンド (SELECT / INSERT / UPDATE / DELETE) で定義され、後から DROP されていない
  *   - coupon_redemptions と experiment_assignments には、書き込み (INSERT / UPDATE、coupon_redemptions は DELETE も) の
  *     ポリシーを足していない。書き込みは service_role (apply_coupon RPC #1224・割り当て処理 #1041) だけが行う。
+ *   - recipe_flags の書き込みのポリシーは利用者の通報 (INSERT) だけ。通報の判定 (UPDATE) は運営の API が service_role で書く。
  * 実際に PostgREST から何ができるかは tests/integration/rls/coupon-experiment-recipe-flags-rls.test.ts が確かめる。
  */
 import { readdirSync, readFileSync } from 'node:fs';
@@ -89,11 +90,10 @@ describe('#1103 RLS の正本が supabase/migrations にある', () => {
     });
   });
 
-  it('recipe_flags: 本人の INSERT・本人と admin の SELECT・admin の UPDATE (DELETE は無い)', () => {
+  it('recipe_flags: 本人の INSERT・本人と admin の SELECT だけ (UPDATE / DELETE は無い。運営の UPDATE は 20261024110000 で消した。#1917 の続き)', () => {
     expect(Object.fromEntries(policiesOf('recipe_flags'))).toEqual({
       'Anyone can create recipe flags': 'INSERT',
       'Users and admins can view recipe flags': 'SELECT',
-      'Admins can update recipe flags': 'UPDATE',
     });
   });
 

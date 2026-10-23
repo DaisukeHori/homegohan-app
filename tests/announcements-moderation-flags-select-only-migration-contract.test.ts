@@ -1,17 +1,18 @@
 /**
  * #1917 の続き: 運営 (admin / super_admin) の announcements (お知らせ) と moderation_flags (食事の通報) の FOR ALL のポリシーを
- * SELECT だけにし、anon / authenticated の書き込みの権限を外した migration
- * (supabase/migrations/20261024110000_announcements_moderation_flags_select_only.sql) を、ファイルの読み取りで確かめる (DB には接続しない)。
- * 運営は PostgREST の直接の書き込みで、運営の API と監査ログ (admin_audit_logs) を通らずにお知らせ・通報を書けた。
+ * SELECT だけにし、recipe_flags (レシピの通報) の運営の FOR UPDATE のポリシーを消し、anon / authenticated の書き込みの権限を外した
+ * migration (supabase/migrations/20261024110000_announcements_moderation_flags_select_only.sql) を、ファイルの読み取りで確かめる
+ * (DB には接続しない)。運営は PostgREST の直接の書き込みで、運営の API と監査ログ (admin_audit_logs) を通らずにお知らせ・通報を書けた。
  *
- *   1. migration を version 順にすべて流したときの 2 つの表のポリシーは SELECT だけ (INSERT / UPDATE / DELETE / ALL のポリシーが無い)。
- *      anon と authenticated は INSERT / UPDATE / DELETE / TRUNCATE の権限を持たず、SELECT は持つ。service_role の権限は変わらない
+ *   1. migration を version 順にすべて流したときの 3 つの表のポリシーに、UPDATE / DELETE / ALL のものが無い。INSERT のポリシーは
+ *      recipe_flags の利用者の通報 ("Anyone can create recipe flags") だけ。anon と authenticated は UPDATE / DELETE / TRUNCATE の
+ *      権限を持たず、INSERT は recipe_flags の authenticated だけが持ち、SELECT は持つ。service_role の権限は変わらない
  *   2. 本冊の migration が作る運営の SELECT のポリシーは、20261017130000_operator_mfa_db_gate.sql が付けた式 (TO authenticated・
  *      運営の MFA の判定) と USING の式が逐語で同じ (ロールの集合・MFA の判定を変えていない)
  *   3. 戻し口が実在し、流すと本冊の直前の状態 (ポリシーの名前と種類・権限) に戻る。作り直すポリシーの式は 20261017130000 の文と逐語で同じ
  *      (TRUNCATE は 20261022190000 が外してあるので付け直さない)
- *   4. アプリのコード (Web・モバイル・Edge Function・共有のライブラリ) で 2 つの表に書くのは、決まったファイルだけで、どれも
- *      requireRole の後の service_role の client で書く。DB の関数の本文は 2 つの表に書かない
+ *   4. アプリのコード (Web・モバイル・Edge Function・共有のライブラリ) で 3 つの表に書くのは、決まったファイルだけで、どれも
+ *      requireRole の後の service_role の client で書く。DB の関数の本文は 3 つの表に書かない
  *   5. 本冊の migration のコメントが挙げる行番号が、ファイルの事実と合う
  * 実際の挙動は tests/integration/rls/announcements-moderation-flags-select-only.test.ts (実 DB) が確かめる。
  */
@@ -33,10 +34,14 @@ const TRUNCATE_HARDENING_FILE = '20261022190000_db_privilege_hardening.sql';
 /** 退会の外部キーを ON DELETE SET NULL にした migration */
 const FK_ON_DELETE_FILE = '20261010000100_auth_users_fk_on_delete.sql';
 
-/** 書き込みの権限 (本冊が anon / authenticated から外す) */
+/** 書き込みの権限 (本冊が anon / authenticated から外す。表ごとに残すものは TableSpec.keptUserWrites) */
 const WRITE_PRIVILEGES = ['INSERT', 'UPDATE', 'DELETE'] as const;
+type WritePrivilege = (typeof WRITE_PRIVILEGES)[number];
 /** 利用者のロール (PostgREST の JWT のロール) */
 const USER_ROLES = ['anon', 'authenticated'] as const;
+type UserRole = (typeof USER_ROLES)[number];
+/** 本冊の後に残すポリシーで、書き込みを許すもの (利用者の通報。運営の API を迂回する書き込みではない) */
+const USER_REPORT_INSERT_POLICY = 'Anyone can create recipe flags';
 /** GRANT ALL / REVOKE ALL が表す表の権限 (PostgreSQL 17 の表の権限の全部) */
 const ALL_TABLE_PRIVILEGES = ['INSERT', 'SELECT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN'] as const;
 /** 20261022190000 の動的な REVOKE (public の全部の表から anon / authenticated の TRUNCATE を外す) */
@@ -44,35 +49,62 @@ const DYNAMIC_TRUNCATE_REVOKE = "format('REVOKE TRUNCATE ON TABLE %s FROM anon, 
 
 interface TableSpec {
   table: string;
-  /** 本冊が消す運営の FOR ALL のポリシー */
+  /** 本冊が消す運営の書き込みのポリシー */
   removedPolicy: string;
-  /** 本冊が作る運営の SELECT のポリシー */
-  addedPolicy: string;
+  /** 消すポリシーの種類 (FOR の無い形 = ALL) */
+  removedCommand: 'ALL' | 'UPDATE';
+  /** 本冊が作る運営の SELECT のポリシー (作り直さない表は null。recipe_flags は運営の SELECT をもともと持つ) */
+  addedPolicy: string | null;
   /** 本冊の後に残るポリシー (名前 → 種類) */
   finalPolicies: ReadonlyArray<readonly [string, string]>;
+  /** 本冊の後も利用者のロールに残す書き込みの権限 (残さないロールは空) */
+  keptUserWrites: Readonly<Record<UserRole, readonly WritePrivilege[]>>;
   /** 20261017130000 の ALTER POLICY の行番号 (1 始まり) */
   mfaGateLine: number;
 }
+
+const NO_USER_WRITES: Readonly<Record<UserRole, readonly WritePrivilege[]>> = { anon: [], authenticated: [] };
 
 const TABLES: readonly TableSpec[] = [
   {
     table: 'announcements',
     removedPolicy: 'Admins can manage announcements',
+    removedCommand: 'ALL',
     addedPolicy: 'Admins can view announcements',
     finalPolicies: [
       ['Admins can view announcements', 'SELECT'],
       ['Public announcements are viewable by everyone', 'SELECT'],
     ],
+    keptUserWrites: NO_USER_WRITES,
     mfaGateLine: 379,
   },
   {
     table: 'moderation_flags',
     removedPolicy: 'moderation_flags_admin_all',
+    removedCommand: 'ALL',
     addedPolicy: 'moderation_flags_admin_select',
     finalPolicies: [['moderation_flags_admin_select', 'SELECT']],
+    keptUserWrites: NO_USER_WRITES,
     mfaGateLine: 402,
   },
+  {
+    table: 'recipe_flags',
+    removedPolicy: 'Admins can update recipe flags',
+    removedCommand: 'UPDATE',
+    addedPolicy: null,
+    finalPolicies: [
+      [USER_REPORT_INSERT_POLICY, 'INSERT'],
+      ['Users and admins can view recipe flags', 'SELECT'],
+    ],
+    keptUserWrites: { anon: [], authenticated: ['INSERT'] },
+    mfaGateLine: 413,
+  },
 ];
+/** 本冊が運営の SELECT のポリシーを作り直す表 */
+const TABLES_WITH_ADDED_POLICY = TABLES.filter((spec): spec is TableSpec & { addedPolicy: string } => spec.addedPolicy !== null);
+/** 本冊の後に、ロール role が表 spec で持つべき書き込みの権限か */
+const keeps = (spec: TableSpec, role: UserRole, privilege: string): boolean =>
+  (spec.keptUserWrites[role] as readonly string[]).includes(privilege);
 
 /** SQL の行コメント (-- ...) を取り除く (コメントの中の語に反応しないため) */
 const stripLineComments = (sql: string): string => sql.replace(/--.*$/gm, '');
@@ -184,29 +216,42 @@ function createStatement(sql: string, table: string, name: string): string {
   return lines.length === 1 ? lines[0] : '';
 }
 
-describe('#1917 の続き: migration を全部流した後の、2 つの表のポリシーと権限', () => {
-  it.each(TABLES)('$table: ポリシーは SELECT だけ (INSERT / UPDATE / DELETE / ALL のポリシーが無い)', ({ table, finalPolicies }) => {
+describe('#1917 の続き: migration を全部流した後の、3 つの表のポリシーと権限', () => {
+  it.each(TABLES)('$table: UPDATE / DELETE / ALL のポリシーが無い。INSERT のポリシーは利用者の通報だけ', ({ table, finalPolicies }) => {
     const finalState = stateAfter(table, migrations);
     expect(sortedPolicies(finalState)).toEqual(byName(finalPolicies));
-    for (const [, command] of finalState.policies) expect(command).toBe('SELECT');
+    for (const [name, command] of finalState.policies) {
+      if (name === USER_REPORT_INSERT_POLICY) expect(command, name).toBe('INSERT');
+      else expect(command, name).toBe('SELECT');
+    }
   });
 
-  it.each(TABLES)('$table: anon と authenticated は書き込み (INSERT / UPDATE / DELETE / TRUNCATE) の権限を持たず、SELECT は持つ', ({ table }) => {
-    const finalState = stateAfter(table, migrations);
+  it.each(TABLES)('$table: anon と authenticated は UPDATE / DELETE / TRUNCATE の権限を持たず、INSERT は keptUserWrites のものだけ、SELECT は持つ', (spec) => {
+    const finalState = stateAfter(spec.table, migrations);
     for (const role of USER_ROLES) {
-      for (const privilege of [...WRITE_PRIVILEGES, 'TRUNCATE']) expect(has(finalState, role, privilege), `${role} ${privilege}`).toBe(false);
+      for (const privilege of WRITE_PRIVILEGES) expect(has(finalState, role, privilege), `${role} ${privilege}`).toBe(keeps(spec, role, privilege));
+      expect(has(finalState, role, 'TRUNCATE'), `${role} TRUNCATE`).toBe(false);
       expect(has(finalState, role, 'SELECT'), `${role} SELECT`).toBe(true);
     }
+  });
+
+  it('recipe_flags: 残る利用者の INSERT のポリシーは TO authenticated で reporter_id = auth.uid() の行だけを許す (運営の枝を持たない)', () => {
+    const create = migrations
+      .flatMap(({ sql }) => sql.split('\n'))
+      .filter((line) => line.startsWith(`CREATE POLICY "${USER_REPORT_INSERT_POLICY}" ON "public"."recipe_flags" `));
+    expect(create).toEqual([
+      'CREATE POLICY "Anyone can create recipe flags" ON "public"."recipe_flags" FOR INSERT TO "authenticated" WITH CHECK (("reporter_id" = "auth"."uid"()));',
+    ]);
   });
 
   it.each(TABLES)('$table: service_role は全部の権限を持ったまま (API・Edge Function・テストの後片付けが使う)', ({ table }) => {
     expect(sortedGrants(stateAfter(table, migrations), 'service_role')).toEqual([...ALL_TABLE_PRIVILEGES].sort());
   });
 
-  it.each(TABLES)('番兵: $table の読み取りが、本冊の直前の FOR ALL のポリシーと書き込みの権限を拾っている', ({ table, removedPolicy, finalPolicies, addedPolicy }) => {
+  it.each(TABLES)('番兵: $table の読み取りが、本冊の直前の運営の書き込みのポリシーと書き込みの権限を拾っている', ({ table, removedPolicy, removedCommand, finalPolicies, addedPolicy }) => {
     expect(migrationIndex, `${MIGRATION_FILE} が supabase/migrations に無い`).toBeGreaterThan(0);
     const before = stateAfter(table, migrations.slice(0, migrationIndex));
-    const expectedBefore = finalPolicies.filter(([name]) => name !== addedPolicy).concat([[removedPolicy, 'ALL']]);
+    const expectedBefore = finalPolicies.filter(([name]) => name !== addedPolicy).concat([[removedPolicy, removedCommand]]);
     expect(sortedPolicies(before)).toEqual(byName(expectedBefore));
     for (const role of USER_ROLES) {
       for (const privilege of WRITE_PRIVILEGES) expect(has(before, role, privilege), `${role} ${privilege} (本冊の直前)`).toBe(true);
@@ -221,18 +266,23 @@ describe('#1917 の続き: migration を全部流した後の、2 つの表の�
 });
 
 describe('#1917 の続き: 本冊の migration', () => {
-  it.each(TABLES)('$table: 本冊だけを流すと、FOR ALL のポリシーが SELECT に替わり、anon / authenticated の書き込みの権限だけが外れる', ({ table, removedPolicy, addedPolicy }) => {
+  it.each(TABLES)('$table: 本冊だけを流すと、運営の書き込みのポリシーが消え (SELECT を作り直す表は SELECT に替わり)、anon / authenticated の書き込みの権限だけが外れる', (spec) => {
+    const { table, removedPolicy, addedPolicy } = spec;
     const before = stateAfter(table, migrations.slice(0, migrationIndex));
     const own = applySql(stateAfter(table, migrations.slice(0, migrationIndex)), table, migrationSql);
     expect(own.policies.has(removedPolicy)).toBe(false);
-    expect(own.policies.get(addedPolicy)).toBe('SELECT');
+    if (addedPolicy !== null) expect(own.policies.get(addedPolicy)).toBe('SELECT');
+    // 消す・作る以外のポリシーには触れない
+    const untouched = (state: TableState) => sortedPolicies(state).filter(([name]) => name !== removedPolicy && name !== addedPolicy);
+    expect(untouched(own)).toEqual(untouched(before));
     for (const role of USER_ROLES) {
-      expect(sortedGrants(own, role), role).toEqual(sortedGrants(before, role).filter((p) => !(WRITE_PRIVILEGES as readonly string[]).includes(p)));
+      const removed = (p: string) => (WRITE_PRIVILEGES as readonly string[]).includes(p) && !keeps(spec, role, p);
+      expect(sortedGrants(own, role), role).toEqual(sortedGrants(before, role).filter((p) => !removed(p)));
     }
     expect(sortedGrants(own, 'service_role')).toEqual(sortedGrants(before, 'service_role'));
   });
 
-  it.each(TABLES)('$table: 作る SELECT のポリシーは TO authenticated で、USING の式は 20261017130000 の式と逐語で同じ (運営の MFA の判定つき)', (spec) => {
+  it.each(TABLES_WITH_ADDED_POLICY)('$table: 作る SELECT のポリシーは TO authenticated で、USING の式は 20261017130000 の式と逐語で同じ (運営の MFA の判定つき)', (spec) => {
     const statement = createStatement(migrationSql, spec.table, spec.addedPolicy);
     expect(statement, `${spec.addedPolicy} を作る文が 1 行だけある`).not.toBe('');
     expect(statement).toMatch(/\bFOR SELECT TO authenticated USING\b/);
@@ -251,6 +301,11 @@ describe('#1917 の続き: 本冊の migration', () => {
     );
     expect([...touched].sort()).toEqual(TABLES.map((t) => t.table).sort());
   });
+
+  it('recipe_flags: 運営の UPDATE のポリシーは作り直さない (CREATE POLICY は announcements と moderation_flags の 2 本だけ)', () => {
+    const created = [...migrationSql.matchAll(/\bCREATE\s+POLICY\s+(?:"([^"]+)"|(\w+))\s+ON\s+public\.(\w+)/gi)].map((m) => `${m[3]} ${m[1] ?? m[2]}`);
+    expect(created.sort()).toEqual(TABLES_WITH_ADDED_POLICY.map((t) => `${t.table} ${t.addedPolicy}`).sort());
+  });
 });
 
 describe('#1917 の続き: 戻し口', () => {
@@ -266,14 +321,18 @@ describe('#1917 の続き: 戻し口', () => {
     for (const role of [...USER_ROLES, 'service_role']) expect(sortedGrants(restored, role), role).toEqual(sortedGrants(before, role));
   });
 
-  it.each(TABLES)('$table: 作り直す FOR ALL のポリシーは、20261017130000 の ALTER POLICY と同じ TO と式 (USING と WITH CHECK)', (spec) => {
+  it.each(TABLES)('$table: 作り直すポリシーは、本冊の直前と同じ種類 (FOR) で、20261017130000 の ALTER POLICY と同じ TO と式 (USING と WITH CHECK)', (spec) => {
     const statement = createStatement(rollbackSql, spec.table, spec.removedPolicy);
     expect(statement, `${spec.removedPolicy} を作る文が 1 行だけある`).not.toBe('');
     const gate = mfaGateLines[spec.mfaGateLine - 1] ?? '';
     const quoted = /^[a-z_][a-z0-9_]*$/.test(spec.removedPolicy) ? spec.removedPolicy : `"${spec.removedPolicy}"`;
     const gatePrefix = `ALTER POLICY ${quoted} ON public.${spec.table} `;
     expect(gate.startsWith(gatePrefix), `${MFA_GATE_FILE}:${spec.mfaGateLine}`).toBe(true);
-    expect(statement.slice(`CREATE POLICY ${quoted} ON public.${spec.table} `.length)).toBe(gate.slice(gatePrefix.length));
+    // ALTER POLICY は種類 (FOR) を持たないので、FOR ALL 以外のポリシーは CREATE POLICY の側に FOR を書く
+    const forClause = spec.removedCommand === 'ALL' ? '' : `FOR ${spec.removedCommand} `;
+    const createPrefix = `CREATE POLICY ${quoted} ON public.${spec.table} ${forClause}`;
+    expect(statement.startsWith(createPrefix), createPrefix).toBe(true);
+    expect(statement.slice(createPrefix.length)).toBe(gate.slice(gatePrefix.length));
   });
 });
 
@@ -283,37 +342,47 @@ const isSource = (name: string) => /\.(ts|tsx)$/.test(name) && !/\.d\.ts$/.test(
 const isTestPath = (file: string) => /(__tests__|\.test\.|\.spec\.)/.test(file);
 
 /**
- * 2 つの表に書く (insert / update / upsert / delete) 場所の一覧と理由。キーは「ファイル 表」。
- * ここに無い場所で書くと赤になる (本人のセッションの client で書く新しい経路は、本冊の後は 42501 で失敗する)
+ * 3 つの表に書く (insert / update / upsert / delete) 場所の一覧と理由。キーは「ファイル 表」。
+ * ここに無い場所で書くと赤になる (本人のセッションの client で書く新しい経路は、本冊の後は 42501 で失敗する。
+ * recipe_flags の利用者の通報の INSERT だけは本人のセッションで書けるが、いまアプリにその経路は無い)
  */
 const WRITE_SITES: Readonly<Record<string, string>> = {
   'src/app/api/announcements/route.ts announcements': 'POST: requireRole の後に getSupabaseAdmin() で INSERT (下の別の検査が receiver を見る)',
   'src/lib/admin/moderation-backend.ts moderation_flags': 'resolveModerationItem: 呼び出し側 (運営の route) が requireRole の後の service_role の client を渡す',
   'src/lib/admin/hidden-content-restore.ts moderation_flags': '戻す操作: 呼び出し側 (restore の route) が requireRole の後の service_role の client を渡す',
+  'src/lib/admin/moderation-backend.ts recipe_flags': 'resolveModerationItem: moderation_flags と同じ関数 (呼び出し側が requireRole の後の service_role の client を渡す)',
+  'src/lib/admin/hidden-content-restore.ts recipe_flags': '戻す操作: moderation_flags と同じ関数 (MODERATION_FLAG_TABLE_OF で表を選ぶ)',
 };
+/** 表の名前を引数・定数から選ぶ書き方 (hidden-content-restore.ts の MODERATION_FLAG_TABLE_OF・moderation-backend.ts の backingTable) */
+const INDIRECT_FLAG_TABLE_RESOLVERS = ['MODERATION_FLAG_TABLE_OF', 'backingTable'] as const;
+/** 間接の書き方が選びうる表 */
+const INDIRECT_FLAG_TABLES = ['moderation_flags', 'recipe_flags'] as const;
 
-/** 2 つの表に書く呼び出しを、ファイルごとに見つける (from('表') から 1 つの式の中で insert / update / upsert / delete を呼ぶ) */
+/** 3 つの表に書く呼び出しを、ファイルごとに見つける (from('表') から 1 つの式の中で insert / update / upsert / delete を呼ぶ) */
 function writeSitesIn(file: string): string[] {
   const code = stripComments(fs.readFileSync(file, 'utf-8'));
-  const found: string[] = [];
+  const found = new Set<string>();
   for (const { table } of TABLES) {
     const pattern = new RegExp(String.raw`\.from\(\s*['"\`]${table}['"\`]\s*\)[^;]*?\.(insert|update|upsert|delete)\(`, 'g');
-    if (pattern.test(code)) found.push(table);
+    if (pattern.test(code)) found.add(table);
   }
-  // 表の名前を定数から引く書き方 (hidden-content-restore.ts の MODERATION_FLAG_TABLE_OF) も拾う
-  if (/MODERATION_FLAG_TABLE_OF\b[\s\S]*?\.(insert|update|upsert|delete)\(/.test(code) && /['"]moderation_flags['"]/.test(code)) {
-    if (!found.includes('moderation_flags')) found.push('moderation_flags');
+  // 表の名前を定数・関数から引く書き方 (.from(MODERATION_FLAG_TABLE_OF[type]) / .from(backingTable(type)) の後の書き込み) も拾う。
+  // 選びうる表は、そのファイルに名前の文字列がある通報の表
+  for (const resolver of INDIRECT_FLAG_TABLE_RESOLVERS) {
+    const pattern = new RegExp(String.raw`\.from\(\s*${resolver}\b[^;]*?\.(insert|update|upsert|delete)\(`);
+    if (!pattern.test(code)) continue;
+    for (const table of INDIRECT_FLAG_TABLES) if (new RegExp(String.raw`['"]${table}['"]`).test(code)) found.add(table);
   }
-  return found;
+  return [...found];
 }
 
-describe('#1917 の続き: アプリのコードは 2 つの表に service_role でだけ書く', () => {
+describe('#1917 の続き: アプリのコードは 3 つの表に service_role でだけ書く', () => {
   const files = APP_DIRS.flatMap((dir) => {
     const abs = path.join(ROOT, dir);
     return fs.existsSync(abs) ? listFiles(abs, isSource) : [];
   }).filter((file) => !isTestPath(rel(file)));
 
-  it('2 つの表に書く場所は WRITE_SITES の一覧と同じ (増えたら、本人のセッションで書いていないかを確かめて一覧に足す)', () => {
+  it('3 つの表に書く場所は WRITE_SITES の一覧と同じ (増えたら、本人のセッションで書いていないかを確かめて一覧に足す)', () => {
     expect(files.length).toBeGreaterThan(0);
     const actual = files.flatMap((file) => writeSitesIn(file).map((table) => `${rel(file)} ${table}`)).sort();
     expect(actual).toEqual(Object.keys(WRITE_SITES).sort());
@@ -344,7 +413,7 @@ describe('#1917 の続き: アプリのコードは 2 つの表に service_role 
     }
   });
 
-  it('DB の関数の本文は 2 つの表に INSERT / UPDATE / DELETE しない (本人の権限で動く関数が書けなくなることは無い)', () => {
+  it('DB の関数の本文は 3 つの表に INSERT / UPDATE / DELETE しない (本人の権限で動く関数が書けなくなることは無い)', () => {
     for (const { file, sql } of migrations) {
       for (const body of sql.matchAll(/\bAS\s+(\$[A-Za-z_]*\$)([\s\S]*?)\1/g)) {
         for (const { table } of TABLES) {
@@ -367,16 +436,24 @@ describe('#1917 の続き: 本冊のコメントが挙げる行番号', () => {
     [BASELINE_FILE, 13461, 'GRANT INSERT, SELECT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE public."announcements" TO "authenticated";'],
     [BASELINE_FILE, 13726, 'GRANT INSERT, SELECT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE public."moderation_flags" TO "anon";'],
     [BASELINE_FILE, 13727, 'GRANT INSERT, SELECT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE public."moderation_flags" TO "authenticated";'],
+    [BASELINE_FILE, 9536, 'CREATE POLICY "Admins can update recipe flags" ON "public"."recipe_flags" FOR UPDATE USING'],
+    [BASELINE_FILE, 9594, 'CREATE POLICY "Anyone can create recipe flags" ON "public"."recipe_flags" FOR INSERT TO "authenticated"'],
+    [BASELINE_FILE, 9713, 'CREATE POLICY "Users and admins can view recipe flags" ON "public"."recipe_flags" FOR SELECT'],
+    [BASELINE_FILE, 13814, 'GRANT INSERT, SELECT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE public."recipe_flags" TO "anon";'],
+    [BASELINE_FILE, 13815, 'GRANT INSERT, SELECT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON TABLE public."recipe_flags" TO "authenticated";'],
     [MFA_GATE_FILE, 379, 'ALTER POLICY "Admins can manage announcements" ON public.announcements TO authenticated USING'],
     [MFA_GATE_FILE, 402, 'ALTER POLICY moderation_flags_admin_all ON public.moderation_flags TO authenticated USING'],
+    [MFA_GATE_FILE, 413, 'ALTER POLICY "Admins can update recipe flags" ON public.recipe_flags TO authenticated USING'],
     [FK_ON_DELETE_FILE, 238, 'ALTER TABLE public.announcements'],
     [FK_ON_DELETE_FILE, 292, 'ALTER TABLE public.moderation_flags'],
+    [FK_ON_DELETE_FILE, 318, 'ALTER TABLE public.recipe_flags'],
+    [FK_ON_DELETE_FILE, 323, 'ALTER TABLE public.recipe_flags'],
   ] as const)('%s:%i は「%s」で始まる', (file, line, prefix) => {
     expect(lineOf(file, line).startsWith(prefix)).toBe(true);
   });
 
   it('本冊のコメントが、上の行番号を挙げている', () => {
-    for (const ref of [':9518', ':9675', ':10605', ':13460-13461', ':13726-13727', '20261017130000_operator_mfa_db_gate.sql:379', '20261017130000:402', '20261010000100_auth_users_fk_on_delete.sql:238', '(:292)']) {
+    for (const ref of [':9518', ':9675', ':10605', ':13460-13461', ':13726-13727', ':9536', ':9594', ':9713', ':13814-13815', '20261017130000_operator_mfa_db_gate.sql:379', '20261017130000:402', '20261017130000:413', '20261010000100_auth_users_fk_on_delete.sql:238', '(:292)', '(:318・:323)']) {
       expect(migrationRaw, ref).toContain(ref);
     }
   });
