@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { SIGNUP_MINOR_NOTICE } from "@homegohan/shared";
+import { APPLE_SIGN_IN_MESSAGES, SIGNUP_MINOR_NOTICE } from "@homegohan/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,6 +11,8 @@ import { createClient } from "@/lib/supabase/client";
 import { getSafeRedirectPath } from "@/lib/auth/safe-redirect";
 import { CAPTCHA_FAILED_MESSAGE, isCaptchaFailure } from "@/lib/auth/turnstile";
 import { validatePassword, PASSWORD_HINT_TEXT } from "@/lib/auth/validate-password";
+import { AppleSignInButton, APPLE_SIGN_IN_BUTTON_HEIGHT_PX } from "@/components/auth/AppleSignInButton";
+import { isAppleSignInEnabled } from "@/lib/auth/apple-sign-in-flag";
 import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -23,9 +25,9 @@ function SignupContent() {
   // #1174: 利用規約・プライバシーポリシーへの明示的な同意 (チェックするまで、どの登録方法のボタンも押せない)。
   // 「続行することで同意したものとみなされる」というみなし同意をやめた。
   // このチェックは登録のボタンを押せるようにするだけで、同意の記録 (版・日時) は残さない。記録は同意画面
-  // /legal-consent で同意したとき (POST /api/legal/accept) だけ残る。登録 (Google 登録・メール確認) のあとは、
+  // /legal-consent で同意したとき (POST /api/legal/accept) だけ残る。登録 (Google 登録・Apple 登録・メール確認) のあとは、
   // /auth/callback が、初期設定を始めていない未同意の人を、LEGAL_CONSENT_ENFORCE の値に関わらず同意画面へ回す (#1435)。
-  // ログイン画面の「Googleで続ける」で初めて入った人も、同じ /auth/callback を通る。
+  // ログイン画面の「Googleで続ける」「Appleで続ける」で初めて入った人も、同じ /auth/callback を通る。
   // 初期設定を始めたあとの人を止めるかは、これまでどおり同意ゲート (lib/supabase/middleware.ts) の
   // 強制 (環境変数 LEGAL_CONSENT_ENFORCE=on) で決まり、アプリ (WebView) から始めた登録もそのゲートを通る。
   const [agreedToLegal, setAgreedToLegal] = useState(false);
@@ -43,6 +45,30 @@ function SignupContent() {
 
   const buildCallbackUrl = () =>
     `${window.location.origin}/auth/callback${safeRedirect ? `?next=${encodeURIComponent(safeRedirect)}` : ''}`;
+
+  const handleAppleSignup = async () => {
+    if (!agreedToLegal) {
+      setFormError(LEGAL_AGREEMENT_REQUIRED_MESSAGE);
+      return;
+    }
+    try {
+      setIsLoading(true);
+      setFormError(null);
+      // provider=apple は /auth/callback が provider_refresh_token を保管する目印 (Google には付けない)
+      const callback = new URL(buildCallbackUrl());
+      callback.searchParams.set('provider', 'apple');
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'apple',
+        options: { redirectTo: callback.toString() },
+      });
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error signing up with Apple:', error);
+      setFormError(APPLE_SIGN_IN_MESSAGES.signupFailed);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleGoogleSignup = async () => {
     if (!agreedToLegal) {
@@ -220,11 +246,21 @@ function SignupContent() {
           <p className="mt-2 pl-8 text-xs text-gray-500">{SIGNUP_MINOR_NOTICE}</p>
         </div>
 
+        {isAppleSignInEnabled() && (
+          <AppleSignInButton
+            kind="sign_up"
+            onClick={handleAppleSignup}
+            disabled={isLoading || !agreedToLegal}
+            loading={isLoading}
+            testId="signup-apple-button"
+          />
+        )}
         <Button
           variant="outline"
           onClick={handleGoogleSignup}
           disabled={isLoading || !agreedToLegal}
-          className="w-full py-6 rounded-xl border-gray-200 hover:bg-gray-50 hover:border-gray-300 transition-all font-bold text-gray-700 flex items-center gap-3 relative overflow-hidden group"
+          style={{ height: APPLE_SIGN_IN_BUTTON_HEIGHT_PX }}
+          className="w-full py-0 rounded-xl border-gray-200 hover:bg-gray-50 hover:border-gray-300 transition-all font-bold text-gray-700 flex items-center gap-3 relative overflow-hidden group"
         >
            <svg className="w-5 h-5" viewBox="0 0 24 24">
              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />

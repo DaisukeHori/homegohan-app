@@ -46,6 +46,7 @@ vi.mock('@/lib/supabase/client', () => ({
 }));
 
 const { default: SignupPage } = await import('@/app/(auth)/signup/page');
+const { APPLE_SIGN_IN_BUTTON_HEIGHT_PX } = await import('@/components/auth/AppleSignInButton');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -70,11 +71,24 @@ afterEach(async () => {
     root.unmount();
   });
   container.remove();
+  vi.unstubAllEnvs();
 });
 
 const consentBox = () => container.querySelector<HTMLInputElement>('input#agree-legal')!;
 const googleButton = () =>
   Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.includes('Googleで登録'))!;
+const appleButton = () => container.querySelector<HTMLButtonElement>('[data-testid="signup-apple-button"]');
+/** スイッチ NEXT_PUBLIC_APPLE_SIGN_IN を on にして、画面を描き直す (スイッチは描画のたびに読む) */
+async function remountWithAppleSwitchOn() {
+  vi.stubEnv('NEXT_PUBLIC_APPLE_SIGN_IN', 'on');
+  await act(async () => {
+    root.unmount();
+  });
+  root = createRoot(container);
+  await act(async () => {
+    root.render(<SignupPage />);
+  });
+}
 const submitButton = () => container.querySelector<HTMLButtonElement>('form button[type="submit"]')!;
 
 describe('サインアップ画面: 明示的な同意 (#1174)', () => {
@@ -198,5 +212,84 @@ describe('サインアップ画面: 明示的な同意 (#1174)', () => {
       consentBox().click();
     });
     expect(container.querySelector('p[role="alert"]')).toBeNull();
+  });
+});
+
+describe('サインアップ画面: Apple の登録 (段 B。docs/design/mobile/08-sign-in-with-apple.md §10.2)', () => {
+  it('スイッチ無し: Apple のボタン (signup-apple-button) が無く、「Googleで登録」と同意のチェックは今までどおり (S-19)', () => {
+    expect(appleButton()).toBeNull();
+    expect(container.textContent).not.toContain('Appleで登録');
+    expect(googleButton()).toBeDefined();
+    expect(googleButton().disabled).toBe(true);
+    expect(consentBox().checked).toBe(false);
+  });
+
+  it('同意のチェック無し: Apple のボタンも disabled で、押しても signInWithOAuth を呼ばない', async () => {
+    await remountWithAppleSwitchOn();
+
+    expect(appleButton()).not.toBeNull();
+    expect(appleButton()!.textContent).toBe('Appleで登録');
+    expect(appleButton()!.disabled).toBe(true);
+
+    await act(async () => {
+      appleButton()!.click();
+    });
+    expect(mocks.signInWithOAuth).not.toHaveBeenCalled();
+  });
+
+  it('チェックあり: provider apple で呼ぶ (redirectTo は /auth/callback?provider=apple)', async () => {
+    await remountWithAppleSwitchOn();
+    await act(async () => {
+      consentBox().click();
+    });
+    expect(appleButton()!.disabled).toBe(false);
+
+    await act(async () => {
+      appleButton()!.click();
+    });
+
+    expect(mocks.signInWithOAuth).toHaveBeenCalledTimes(1);
+    const arg = mocks.signInWithOAuth.mock.calls[0][0];
+    expect(arg.provider).toBe('apple');
+    const redirectTo = new URL(arg.options.redirectTo);
+    expect(redirectTo.pathname).toBe('/auth/callback');
+    expect(redirectTo.searchParams.get('provider')).toBe('apple');
+  });
+
+  it('Google の登録のボタンは provider=apple を付けない', async () => {
+    await remountWithAppleSwitchOn();
+    await act(async () => {
+      consentBox().click();
+    });
+    await act(async () => {
+      googleButton().click();
+    });
+
+    const arg = mocks.signInWithOAuth.mock.calls[0][0];
+    expect(arg.provider).toBe('google');
+    expect(new URL(arg.options.redirectTo).searchParams.has('provider')).toBe(false);
+  });
+
+  it('signInWithOAuth が error を返すと、赤いバナーに固定の文', async () => {
+    mocks.signInWithOAuth.mockResolvedValue({ error: new Error('provider is not enabled') });
+    await remountWithAppleSwitchOn();
+    await act(async () => {
+      consentBox().click();
+    });
+    await act(async () => {
+      appleButton()!.click();
+    });
+
+    const alert = container.querySelector('p[role="alert"]');
+    expect(alert?.textContent).toBe('Apple での登録に失敗しました。しばらくしてからお試しください。');
+  });
+
+  it('「Googleで登録」のボタンの style の height は APPLE_SIGN_IN_BUTTON_HEIGHT_PX (スイッチ on の Apple のボタンと同じ)', async () => {
+    await remountWithAppleSwitchOn();
+
+    const heightPx = `${APPLE_SIGN_IN_BUTTON_HEIGHT_PX}px`;
+    expect(googleButton().style.height).toBe(heightPx);
+    expect(appleButton()!.style.height).toBe(heightPx);
+    expect(googleButton().className.split(/\s+/)).not.toContain('py-6');
   });
 });
