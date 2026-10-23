@@ -462,6 +462,7 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 - `EXPO_PUBLIC_APP_ENV` - `development | preview | production`
 - `EXPO_PUBLIC_WEB_URL` - WebView が開く Web のオリジン（未設定なら `https://homegohan-app.vercel.app`）。設定画面の「利用規約」「プライバシーポリシー」も、このオリジンの `/terms` `/privacy` を開く
 - `EXPO_PUBLIC_SUPPORT_EMAIL` - 設定画面・プロフィール画面の「お問い合わせ」の宛先（未設定なら従来のアドレス。`apps/mobile/src/lib/siteConfig.ts`）
+- `EXPO_PUBLIC_APPLE_SIGN_IN` - `on` のときだけ、iOS のログイン・新規登録の画面に Apple のボタンを出す（大文字小文字と前後の空白は区別しない。未設定・ほかの値なら出さない。Android には効かない。ビルドのときに埋め込まれるので、変えたら新しいビルドが要る。入れる前の確認は `docs/design/mobile/08-sign-in-with-apple.md` §19.3）
 
 サンプルは `apps/mobile/env.example` を参照してください。
 

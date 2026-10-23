@@ -36,6 +36,8 @@ EXPO_PUBLIC_API_BASE_URL=https://homegohan-app.vercel.app
 EXPO_PUBLIC_APP_ENV=development
 ```
 
+任意の変数: `EXPO_PUBLIC_APPLE_SIGN_IN`（`on` のときだけ、iOS のログイン・新規登録の画面に「Apple でサインイン」のボタンを出す。未設定なら出さない。ビルドのときに埋め込まれる。設計は `docs/design/mobile/08-sign-in-with-apple.md`、設定の順は同 §19）。
+
 ### 3) 起動
 
 ```bash
