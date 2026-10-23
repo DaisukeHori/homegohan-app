@@ -15,6 +15,8 @@
  *     今と同じプランのあいだは「変更」を押せない。失敗したら API のメッセージを出し、行は変えない。
  *     ただし行の表示が古いことで断られた (409 CONFLICT_STALE_DATA・404 NOT_FOUND) ときは、今の条件のまま一覧を読み直し、
  *     理由の文を一覧の上に出す (運営が手で読み直さなくてよい)
+ *   - プランの変更の応答を待つ間に別の一覧へ移った (検索・ページ送り・組織の作成) ら、遅れて届いた結果 (成功・409・404) の文は
+ *     新しい一覧の上に出さず、新しい一覧も触らない (#1917)
  *   - 入力欄はラベルと結びつき、ボタンには type がある
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
@@ -1166,6 +1168,109 @@ describe('別の一覧へ移ると、前の一覧の行についてのプラン�
     expect(callsOf('POST')).toHaveLength(1);
     expect(statuses()).toEqual([]);
     expect(alerts()).toEqual(['組織名を入力してください。']);
+  });
+
+  describe('プランの変更の応答を待つ間に別の一覧へ移ったら、遅れて届いた結果の文を出さない (#1917)', () => {
+    /** プランの変更の応答を、resolve を呼ぶまで返さない API */
+    function pendingChangeApi() {
+      const pending = deferred<Response>();
+      const api: Api = {
+        list: pageOf,
+        changePlan: () => pending.promise,
+        create: () => jsonResponse(200, { organization: org(99) }),
+      };
+      return { api, pending };
+    }
+
+    async function startChange(target: number, plan: string) {
+      await choose(planSelect(org(target).id), plan);
+      await click(changeButton(org(target).id), '変更ボタン');
+    }
+
+    async function resolveWith(pending: { resolve: (value: Response) => void }, response: Response) {
+      await act(async () => {
+        pending.resolve(response);
+      });
+      await settle();
+    }
+
+    it('次のページへ送ったあとに届いた 409 では、読み直しの文を出さず、一覧も読み直さない', async () => {
+      const { api, pending } = pendingChangeApi();
+      mockApi(api);
+      await renderPage();
+      await startChange(1, 'premium');
+
+      await click(findButton('次へ'), '次へ');
+      expect(lastListParams()).toEqual({ page: '2', per_page: '30' });
+      const getsAfterMove = callsOf('GET').length;
+
+      await resolveWith(pending, jsonResponse(409, errorBody('CONFLICT_STALE_DATA', '別の運営が先にこの組織のプランを変えました。')));
+      expect(alerts()).toEqual([]);
+      expect(callsOf('GET')).toHaveLength(getsAfterMove);
+      expect(names()[0]).toBe('組織31');
+    });
+
+    it('検索したあとに届いた成功では、変更の通知を出さず、新しい一覧の行も置き換えない', async () => {
+      const { api, pending } = pendingChangeApi();
+      mockApi(api);
+      await renderPage();
+      await startChange(1, 'enterprise');
+
+      await search('組織');
+      expect(lastListParams()).toEqual({ q: '組織', page: '1', per_page: '30' });
+
+      await resolveWith(pending, jsonResponse(200, { organization: org(1, { plan: 'enterprise' }) }));
+      expect(statuses()).toEqual([]);
+      expect(alerts()).toEqual([]);
+      // 新しい一覧は取得したときの値のまま (遅れて届いた応答で書き換えない)
+      expect(rows()[0].slice(0, 2)).toEqual(['組織1', 'standard']);
+    });
+
+    it('組織を作成して 1 ページ目から取り直したあとに届いた 404 では、読み直しの文を出さない', async () => {
+      const { api, pending } = pendingChangeApi();
+      mockApi(api);
+      await renderPage();
+      await click(findButton('次へ'), '次へ');
+      await startChange(31, 'premium');
+
+      await type(createName(), '株式会社テスト');
+      await click(findButton('作成する'), '作成ボタン');
+      expect(lastListParams()).toEqual({ page: '1', per_page: '30' });
+      const getsAfterCreate = callsOf('GET').length;
+
+      await resolveWith(pending, jsonResponse(404, errorBody('NOT_FOUND', '組織が見つかりません')));
+      expect(alerts()).toEqual([]);
+      expect(callsOf('GET')).toHaveLength(getsAfterCreate);
+      expect(statuses()).toEqual(['組織「株式会社テスト」を作成しました。']);
+    });
+
+    it('別の一覧へ移っていなければ (送る前に断られた作成を挟んでも)、届いた成功の通知を出し、行を置き換える', async () => {
+      const { api, pending } = pendingChangeApi();
+      mockApi(api);
+      await renderPage();
+      await startChange(1, 'enterprise');
+
+      // 組織名が空白だけの作成は送らずに断る (一覧は変わらない)
+      await type(createName(), '   ');
+      await click(findButton('作成する'), '作成ボタン');
+      expect(callsOf('POST')).toHaveLength(0);
+
+      await resolveWith(pending, jsonResponse(200, { organization: org(1, { plan: 'enterprise' }) }));
+      expect(statuses()).toContain('組織「組織1」のプランを enterprise に変更しました。');
+      expect(rows()[0].slice(0, 2)).toEqual(['組織1', 'enterprise']);
+    });
+
+    it('別の一覧へ移っていなければ、届いた 409 で読み直しの文を出して一覧を読み直す (移ったときだけ捨てる)', async () => {
+      const { api, pending } = pendingChangeApi();
+      mockApi(api);
+      await renderPage();
+      await startChange(1, 'premium');
+      const getsBefore = callsOf('GET').length;
+
+      await resolveWith(pending, jsonResponse(409, errorBody('CONFLICT_STALE_DATA', '別の運営が先にこの組織のプランを変えました。')));
+      expect(alerts()).toEqual([STALE_MESSAGE]);
+      expect(callsOf('GET')).toHaveLength(getsBefore + 1);
+    });
   });
 
   it('同じ一覧を取り直すだけの「再読み込み」では、読み直しの文を消さない', async () => {
