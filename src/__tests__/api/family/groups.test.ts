@@ -166,3 +166,26 @@ describe('POST /api/family/groups: 18 歳未満の本人 (#1173 T-MN1)', () => {
     expect(text).not.toContain('birth_date');
   });
 });
+
+describe('POST /api/family/groups: 退会の手続き中の本人 (#1917 の続き)', () => {
+  it('RPC が REPRESENTATIVE_ACCOUNT_DELETING (P0001) を返したら 409 { error: { code, message: MEMBERSHIP_ERROR_MESSAGES の文 } } で、DB の生の文を本文に出さない', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: validUser }, error: null });
+    mockRpc.mockResolvedValue({ data: null, error: { message: 'REPRESENTATIVE_ACCOUNT_DELETING', code: 'P0001' } });
+
+    const res = await POST(
+      new Request('http://localhost/api/family/groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(validBody),
+      }),
+    );
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      error: {
+        code: 'REPRESENTATIVE_ACCOUNT_DELETING',
+        message: MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.REPRESENTATIVE_ACCOUNT_DELETING],
+      },
+    });
+  });
+});
