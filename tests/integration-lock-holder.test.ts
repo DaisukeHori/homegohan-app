@@ -340,6 +340,21 @@ describe('createLockHolderKit: 後の処理が並んだのを確かめてから�
   });
 });
 
+describe('上書きの環境変数の持ち込みと説明', () => {
+  it('scripts/local-ci.sh は、接続を持つ上限・並ぶのを待つ上限の環境変数を子プロセスに持ち込み、CONTRIBUTING.md の表に載っている', () => {
+    const localCi = fs.readFileSync(path.join(ROOT, 'scripts', 'local-ci.sh'), 'utf8');
+    const names = (/^readonly ENV_ALLOWLIST="([^"]*)"$/m.exec(localCi)?.[1] ?? '').split(/\s+/);
+    const rows = fs
+      .readFileSync(path.join(ROOT, 'CONTRIBUTING.md'), 'utf8')
+      .split('\n')
+      .filter((line) => line.startsWith('| `'));
+    for (const name of [HOLDER_MAX_HOLD_SECONDS_ENV, HOLDER_DEADLINE_MS_ENV]) {
+      expect(names, name).toContain(name);
+      expect(rows.some((row) => row.includes(`\`${name}\``)), name).toBe(true);
+    }
+  });
+});
+
 describe('番兵: 結合テストは決まった秒数の pg_sleep で行を持たない (#1917)', () => {
   /** tests/integration の *.test.ts を全部集める */
   function integrationTestFiles(dir: string): string[] {
