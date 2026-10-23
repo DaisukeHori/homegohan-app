@@ -12,6 +12,9 @@ import { colors, spacing, radius, shadows } from "../../src/theme";
 import { supabase } from "../../src/lib/supabase";
 import { TurnstileWidget, useTurnstile } from "../../src/components/auth/TurnstileWidget";
 import { CAPTCHA_FAILED_MESSAGE, isCaptchaFailure } from "../../src/lib/turnstile";
+import { AppleSignInButton, AUTH_PROVIDER_BUTTON_MIN_HEIGHT, useAuthProviderButtonHeight } from "../../src/components/auth/AppleSignInButton";
+import { signInWithApple } from "../../src/lib/appleSignIn";
+import { routeAfterSignIn } from "../../src/lib/routeAfterSignIn";
 
 function GoogleIcon() {
   return (
@@ -32,6 +35,24 @@ export default function SignupScreen() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // #1165: bot 対策 (Cloudflare Turnstile)。サイトキーが未設定なら無効で、今までどおりに動く
   const captcha = useTurnstile();
+  // Apple のボタンの高さを Google のボタンの実際の高さに合わせる (docs/design/mobile/08-sign-in-with-apple.md §10.1)
+  const { height: providerButtonHeight, onGoogleButtonLayout } = useAuthProviderButtonHeight();
+
+  async function onAppleSignup() {
+    setIsSubmitting(true);
+    try {
+      const outcome = await signInWithApple();
+      if (outcome.status === "signed_in") {
+        // 新規登録画面には ?next= が無い
+        await routeAfterSignIn(undefined);
+      } else if (outcome.status === "failed") {
+        Alert.alert("Apple登録失敗", outcome.message);
+      }
+      // cancelled: 何も出さない
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
 
   async function onGoogleSignup() {
     setIsSubmitting(true);
@@ -249,16 +270,20 @@ export default function SignupScreen() {
             <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
           </View>
 
+          {/* Apple 登録ボタン (Google の上。HIG: 積むときは Apple を上に)。スイッチが on の iOS だけ描かれる */}
+          <AppleSignInButton kind="sign_up" onPress={onAppleSignup} disabled={isSubmitting} testID="signup-apple-button" height={providerButtonHeight} />
+
           {/* Google 登録ボタン */}
           <Pressable
             testID="signup-google-button"
             onPress={onGoogleSignup}
+            onLayout={onGoogleButtonLayout}
             disabled={isSubmitting}
             style={({ pressed }) => ({
               flexDirection: "row", alignItems: "center", justifyContent: "center",
               gap: spacing.sm,
               backgroundColor: colors.card,
-              borderRadius: radius.lg, paddingVertical: 14,
+              borderRadius: radius.lg, paddingVertical: 14, minHeight: AUTH_PROVIDER_BUTTON_MIN_HEIGHT,
               borderWidth: 1, borderColor: colors.border,
               ...shadows.sm,
               opacity: pressed || isSubmitting ? 0.7 : 1,
