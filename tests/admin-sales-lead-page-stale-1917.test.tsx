@@ -16,8 +16,10 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const routerPush = vi.fn();
+// useRouter は毎回同じものを返す (画面は router を useCallback の依存に入れているので、毎回新しいと取得が止まらない。Next.js の useRouter も同じものを返す)
+const router = { push: routerPush };
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: routerPush }),
+  useRouter: () => router,
 }));
 
 vi.mock('next/link', () => ({
