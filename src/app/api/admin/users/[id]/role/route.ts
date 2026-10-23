@@ -14,7 +14,7 @@ import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
-import { RoleChangeBodySchema } from '@/lib/admin/users-schemas';
+import { AdminSetUserRolesResultSchema, RoleChangeBodySchema } from '@/lib/admin/users-schemas';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { normalizeUuid } from '@/lib/http-params';
@@ -84,7 +84,7 @@ async function handleRoleChange(request: Request, params: Params) {
   // (service_role で呼ぶと auth.uid() が NULL になり常に FORBIDDEN になる)。
   const supabase = await createClient();
 
-  // 対象ユーザー存在確認
+  // 対象ユーザー存在確認 (404 を RPC より前に返すためだけに読む。監査の previous_roles には使わない: 下の RPC の戻り値を参照。#1917)
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('user_profiles')
     .select('id, roles')
@@ -99,7 +99,7 @@ async function handleRoleChange(request: Request, params: Params) {
   }
 
   // ロール更新 (auth.uid() 依存の SECURITY DEFINER 関数のため session client で呼ぶ)
-  const { error: updateError } = await supabase
+  const { data: updated, error: updateError } = await supabase
     .rpc('admin_set_user_roles', { p_user_id: id, p_roles: roles });
 
   if (updateError) {
@@ -125,6 +125,19 @@ async function handleRoleChange(request: Request, params: Params) {
     );
   }
 
+  // 監査の previous_roles は、RPC が対象の行をロックして読んだ変える前の roles (#1917)。上で先に読んだ profile.roles は、
+  // super_admin 2 人がほぼ同時に同じ利用者のロールを変えると、この UPDATE の直前の値 (先の変更の後の値) と食い違う。
+  // 戻り値の形が違う (previous_roles を返さない、#1917 の migration の前の定義の DB) ときだけ先に読んだ値で記録し、
+  // 食い違いうることをログに残す (ロールの変更は済んでいるので 500 にしない)
+  const rpcResult = AdminSetUserRolesResultSchema.safeParse(updated);
+  if (!rpcResult.success) {
+    console.error(
+      '[api/admin/users/[id]/role] admin_set_user_roles の戻り値に previous_roles が無い。先に読んだ roles を監査に残す:',
+      rpcResult.error.message,
+    );
+  }
+  const previousRoles = rpcResult.success ? rpcResult.data[0].previous_roles : profile.roles;
+
   // 監査ログ
   await recordAdminAudit({
     supabase,
@@ -133,7 +146,7 @@ async function handleRoleChange(request: Request, params: Params) {
     targetId: id,
     targetType: 'user',
     details: {
-      previous_roles: profile.roles,
+      previous_roles: previousRoles,
       new_roles: roles,
     },
     severity: 'warn',

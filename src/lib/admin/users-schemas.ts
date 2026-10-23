@@ -145,6 +145,16 @@ export const RoleChangeBodySchema = z.object({
 
 export type RoleChangeBody = z.infer<typeof RoleChangeBodySchema>;
 
+/**
+ * admin_set_user_roles の戻り値 (#1917。supabase/migrations/20261023110000_admin_set_user_roles_previous_roles.sql)。
+ * 1 行だけで、previous_roles は関数が対象の行を FOR NO KEY UPDATE でロックして読んだ、変える前の roles
+ * (同時の変更があっても、この呼び出しの UPDATE の直前の値)。user_profiles.roles は NULL を許すので nullable。
+ * route はこの値を監査 admin.user.role_change の details.previous_roles に残す。
+ */
+export const AdminSetUserRolesResultSchema = z
+  .array(z.object({ previous_roles: z.array(z.string()).nullable() }))
+  .length(1);
+
 // ─── 凍結 (BAN) ───────────────────────────────────────────────────────────────
 
 export const FreezeBodySchema = z.object({
