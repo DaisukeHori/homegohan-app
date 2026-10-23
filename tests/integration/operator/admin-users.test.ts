@@ -263,6 +263,50 @@ describe('POST /api/admin/users/[id]/freeze', () => {
     });
   });
 
+  // 凍結の UPDATE は「super_admin でない」条件つき (NOT_SUPER_ADMIN_ROLES_FILTER = roles が NULL か super_admin を含まない)。
+  // 本物の PostgREST で、roles が NULL の利用者にも条件が当たる (凍結できる) ことと、super_admin は凍結されないことを確かめる
+  // (読んでから書くまでに super_admin になる割り込みの再現は tests/user-freeze-super-admin-race.test.ts)
+  it('roles が NULL の利用者も凍結できる (200)', async () => {
+    const { error: nullError } = await supabaseAdmin.from('user_profiles').update({ roles: null }).eq('id', targetUser.userId);
+    expect(nullError).toBeNull();
+    try {
+      const res = await apiCall('POST', `/api/admin/users/${targetUser.userId}/freeze`, adminUser.jwt, {
+        ban_type: 'temporary',
+        reason_category: 'spam',
+        reason_detail: 'Integration test freeze (roles NULL)',
+        duration_days: 1,
+        notify_user: false,
+      });
+      expect(res.status).toBe(200);
+      const { data: profile } = await supabaseAdmin
+        .from('user_profiles')
+        .select('frozen_at')
+        .eq('id', targetUser.userId)
+        .single();
+      expect(profile?.frozen_at).not.toBeNull();
+    } finally {
+      await supabaseAdmin.from('user_profiles').update({ roles: ['user'] }).eq('id', targetUser.userId);
+    }
+  });
+
+  it('super_admin は凍結しない (403 OP_TARGET_PROTECTED。frozen_at は NULL のまま)', async () => {
+    const res = await apiCall('POST', `/api/admin/users/${superAdminUser.userId}/freeze`, adminUser.jwt, {
+      ban_type: 'temporary',
+      reason_category: 'spam',
+      reason_detail: 'Should not freeze a super_admin',
+      duration_days: 1,
+      notify_user: false,
+    });
+    expect(res.status).toBe(403);
+    expect((res.body as { error: { code: string } }).error.code).toBe('OP_TARGET_PROTECTED');
+    const { data: profile } = await supabaseAdmin
+      .from('user_profiles')
+      .select('frozen_at')
+      .eq('id', superAdminUser.userId)
+      .single();
+    expect(profile?.frozen_at).toBeNull();
+  });
+
   it('403 for general user', async () => {
     const res = await apiCall(
       'POST',

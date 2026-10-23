@@ -49,6 +49,20 @@ export type ApplyUserBanFailureKind = 'internal' | 'not_found' | 'super_admin';
 /** DB の読み書きに失敗したときの error (固定の文)。DB の生のエラー文は応答の本文に出さない (#1172) */
 export const BAN_INTERNAL_ERROR_MESSAGE = 'BAN の適用に失敗しました';
 
+/**
+ * 凍結の UPDATE に付ける条件 (PostgREST の or): 対象が super_admin でないこと。roles は NULL を許す列なので、NULL も「super_admin でない」に入れる。
+ * super_admin でないことを読んで確かめてから書くまでに、別の運営が対象を super_admin にしていたら 0 行になり、凍結しない
+ * (applyUserBan と POST /api/admin/users/{id}/freeze が使う)
+ */
+export const NOT_SUPER_ADMIN_ROLES_FILTER = 'roles.is.null,roles.not.cs.{super_admin}';
+
+function hasSuperAdminRole(roles: unknown): boolean {
+  return Array.isArray(roles) && roles.includes('super_admin');
+}
+
+const SUPER_ADMIN_BAN_REJECTED_MESSAGE = 'super_admin ユーザーを BAN することはできません';
+const BAN_TARGET_NOT_FOUND_MESSAGE = 'BAN 対象ユーザーが見つかりません';
+
 export interface ApplyUserBanResult {
   success: boolean;
   /**
@@ -71,7 +85,8 @@ export interface ApplyUserBanResult {
 
 /**
  * 対象ユーザーの frozen_at/frozen_reason/frozen_by を更新して BAN を適用する。
- * super_admin ユーザーは BAN 対象から除外する (freeze route と同じ保護)。
+ * super_admin ユーザーは BAN 対象から除外する (freeze route と同じ保護)。読んで確かめた後で super_admin に
+ * なっていたら書かない (更新を NOT_SUPER_ADMIN_ROLES_FILTER の条件つきにし、0 行なら読み直して kind を決める)。
  *
  * @param supabaseAdmin service-role クライアント (呼び出し側で authz 済みであること)
  */
@@ -91,17 +106,11 @@ export async function applyUserBan(
     return { success: false, unbanAt: null, error: BAN_INTERNAL_ERROR_MESSAGE, kind: 'internal', cause: profileError };
   }
   if (!profile) {
-    return { success: false, unbanAt: null, error: 'BAN 対象ユーザーが見つかりません', kind: 'not_found' };
+    return { success: false, unbanAt: null, error: BAN_TARGET_NOT_FOUND_MESSAGE, kind: 'not_found' };
   }
 
-  const roles = (profile as { roles?: unknown }).roles;
-  if (Array.isArray(roles) && roles.includes('super_admin')) {
-    return {
-      success: false,
-      unbanAt: null,
-      error: 'super_admin ユーザーを BAN することはできません',
-      kind: 'super_admin',
-    };
+  if (hasSuperAdminRole((profile as { roles?: unknown }).roles)) {
+    return { success: false, unbanAt: null, error: SUPER_ADMIN_BAN_REJECTED_MESSAGE, kind: 'super_admin' };
   }
 
   let unbanAt: string | null = null;
@@ -111,7 +120,8 @@ export async function applyUserBan(
     unbanAt = unbanDate.toISOString();
   }
 
-  const { error: updateError } = await supabaseAdmin
+  // super_admin でないままのときだけ書く (NOT_SUPER_ADMIN_ROLES_FILTER)
+  const { data: frozen, error: updateError } = await supabaseAdmin
     .from('user_profiles')
     .update({
       frozen_at: new Date().toISOString(),
@@ -119,10 +129,39 @@ export async function applyUserBan(
       frozen_by: actorId,
       unban_at: unbanAt,
     } as Record<string, unknown>)
-    .eq('id', userId);
+    .eq('id', userId)
+    .or(NOT_SUPER_ADMIN_ROLES_FILTER)
+    .select('id')
+    .maybeSingle();
 
   if (updateError) {
     return { success: false, unbanAt: null, error: BAN_INTERNAL_ERROR_MESSAGE, kind: 'internal', cause: updateError };
+  }
+
+  if (!frozen) {
+    // 0 行: 読んでから書くまでに、対象が super_admin になった (または消えた)。読み直して理由を決める
+    const { data: current, error: rereadError } = await supabaseAdmin
+      .from('user_profiles')
+      .select('id, roles')
+      .eq('id', userId)
+      .maybeSingle();
+    if (rereadError) {
+      return { success: false, unbanAt: null, error: BAN_INTERNAL_ERROR_MESSAGE, kind: 'internal', cause: rereadError };
+    }
+    if (!current) {
+      return { success: false, unbanAt: null, error: BAN_TARGET_NOT_FOUND_MESSAGE, kind: 'not_found' };
+    }
+    if (hasSuperAdminRole((current as { roles?: unknown }).roles)) {
+      return { success: false, unbanAt: null, error: SUPER_ADMIN_BAN_REJECTED_MESSAGE, kind: 'super_admin' };
+    }
+    // 読み直すと書ける状態に戻っている (super_admin にされてから外された等)。書いていないので失敗として返す
+    return {
+      success: false,
+      unbanAt: null,
+      error: BAN_INTERNAL_ERROR_MESSAGE,
+      kind: 'internal',
+      cause: new Error('凍結の条件つきの更新が 0 行で、読み直した対象は super_admin ではなかった (読んでから書くまでに roles が変わった)'),
+    };
   }
 
   return { success: true, unbanAt };
