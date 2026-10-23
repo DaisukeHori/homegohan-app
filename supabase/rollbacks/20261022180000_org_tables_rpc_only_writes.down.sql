@@ -1,4 +1,8 @@
 -- rollback: 20261022180000_org_tables_rpc_only_writes.sql
+-- 戻す順: 戻し口は新しい順に流す (後の 20261022190000_db_privilege_hardening.sql を先に戻す)。ここで anon / authenticated に
+--   付け直す TRUNCATE は、190000 が public の全部の表で利用者に持たせないとしたもの。190000 の戻し口はこの表の
+--   TRUNCATE を付け直さず、この戻し口が付け直す前提でできている。190000 が残ったままこの戻し口だけを流すと、RLS の効かない
+--   TRUNCATE が利用者に戻る (190000 の不変条件を破る)。
 -- #1917 で外した、org_license_pools と organization_invites への利用者 (anon / authenticated) からの書き込みのポリシーと権限を
 -- 元に戻し、create_org_invite を SECURITY INVOKER の定義 (20261017160000_org_invite_same_org_member.sql) に戻す。
 -- ポリシーの名前・種類・対象のロール・式は、次の定義と同じ:

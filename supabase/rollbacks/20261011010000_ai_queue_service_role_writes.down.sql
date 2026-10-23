@@ -1,4 +1,8 @@
 -- rollback: 20261011010000_ai_queue_service_role_writes.sql
+-- 戻す順: 戻し口は新しい順に流す (後の 20261022190000_db_privilege_hardening.sql を先に戻す)。ここで anon / authenticated に
+--   付け直す TRUNCATE は、190000 が public の全部の表で利用者に持たせないとしたもの。190000 の戻し口はこの表の
+--   TRUNCATE を付け直さず、この戻し口が付け直す前提でできている。190000 が残ったままこの戻し口だけを流すと、RLS の効かない
+--   TRUNCATE が利用者に戻る (190000 の不変条件を破る)。
 -- #1465 で外した、AI のキュー (weekly_menu_requests / meal_image_jobs) への利用者からの書き込みのポリシーと権限を、元に戻す。
 -- ポリシーの名前・対象のロール・式は、本番のベースライン (20251126124224_create_meal_planner_tables.sql) と同じ。
 --

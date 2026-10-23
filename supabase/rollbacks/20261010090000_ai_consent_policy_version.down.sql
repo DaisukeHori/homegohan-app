@@ -1,4 +1,8 @@
 -- rollback: 20261010090000_ai_consent_policy_version.sql
+-- 戻す順: 戻し口は新しい順に流す (後の 20261022190000_db_privilege_hardening.sql を先に戻す)。ここで anon / authenticated に
+--   付け直す TRUNCATE (GRANT ALL に含まれる) は、190000 が public の全部の表で利用者に持たせないとしたもの。190000 の戻し口はこの表の
+--   TRUNCATE を付け直さず、この戻し口が付け直す前提でできている。190000 が残ったままこの戻し口だけを流すと、RLS の効かない
+--   TRUNCATE が利用者に戻る (190000 の不変条件を破る)。
 -- ⚠️ 戻すと次のことが起きる。緊急時の切り戻し専用。先に Web のデプロイ (同意画面・同意の API) を戻してから流すこと。
 --    - policy_version の列が消え、記録済みの「同意した文面の版」が失われる。
 --    - provider の CHECK が元の 4 つ (xai / anthropic / google / openai) に戻る。perplexity / aimlapi の行は消さない (監査のため)。
