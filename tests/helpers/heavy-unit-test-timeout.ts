@@ -102,7 +102,6 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/edge-function-deploy-use-api.test.ts",
   "tests/fast-llm-missing-env.test.ts",
   "tests/image-route-contracts.test.ts",
-  "tests/list-pages-last-page-refetch-1917.test.tsx",
   "tests/local-ci-dev-server-ready.test.ts",
   "tests/local-ci-gateway-502.test.ts",
   "tests/local-ci-workflow-sync.test.ts",
