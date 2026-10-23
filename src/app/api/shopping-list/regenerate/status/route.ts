@@ -1,6 +1,11 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { shoppingListRequestResultForResponse } from '@/lib/shopping-list-request-error';
+import { API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+
+
+/** 400: 確かめる要求 (requestId) が無い */
+const REQUEST_ID_REQUIRED_MESSAGE = '確認する要求 (requestId) を指定してください';
 
 /**
  * 買い物リスト再生成リクエストのステータス確認API
@@ -8,13 +13,13 @@ import { shoppingListRequestResultForResponse } from '@/lib/shopping-list-reques
 export async function GET(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   const { searchParams } = new URL(request.url);
   const requestId = searchParams.get('requestId');
 
   if (!requestId) {
-    return NextResponse.json({ error: 'requestId is required' }, { status: 400 });
+    return NextResponse.json({ error: REQUEST_ID_REQUIRED_MESSAGE }, { status: 400 });
   }
 
   const { data, error } = await supabase
@@ -26,7 +31,7 @@ export async function GET(request: Request) {
 
   if (error) {
     console.error('Failed to get shopping list request status:', error);
-    return NextResponse.json({ error: 'Request not found' }, { status: 404 });
+    return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
   }
 
   // result.error には、Edge Function (regenerate-shopping-list-v2) が catch で捕まえた例外の文面がそのまま入っている

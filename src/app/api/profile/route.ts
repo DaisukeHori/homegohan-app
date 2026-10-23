@@ -6,6 +6,7 @@ import { fromUserProfile } from '@/lib/converter'
 import { calculateNutritionTargets } from '@homegohan/core'
 import { buildNutritionCalculatorInput } from '@/lib/build-nutrition-input'
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character'
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
 
 /**
  * プロフィールAPI
@@ -40,7 +41,7 @@ export async function GET() {
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
     const { data, error } = await supabase
@@ -70,7 +71,7 @@ export async function POST(request: Request) {
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
     const body = await request.json()
@@ -151,14 +152,14 @@ export async function PUT(request: Request) {
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
     let body: Record<string, unknown> = {};
     try {
       body = await request.json();
     } catch {
-      return NextResponse.json({ error: 'Invalid JSON body' }, { status: 400 });
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
     }
 
     // fromUserProfile を使用して camelCase -> snake_case 変換

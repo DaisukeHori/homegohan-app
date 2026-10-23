@@ -7,6 +7,7 @@ import { Text } from "../../src/components/ui/Text";
 import { Button, Card, LoadingState, PageHeader, SectionHeader } from "../../src/components/ui";
 import { colors, spacing, radius } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
+import { getApiErrorMessage } from "../../src/lib/api-error";
 import { supabase } from "../../src/lib/supabase";
 
 interface NutritionTargets {
@@ -118,8 +119,9 @@ export default function NutritionTargetsPage() {
         if (data) setTargets(data as NutritionTargets);
       }
       Alert.alert("完了", "栄養目標を再計算しました。");
-    } catch (e: any) {
-      Alert.alert("エラー", e?.message ?? "再計算に失敗しました。");
+    } catch (e: unknown) {
+      // getApi の失敗の message は `HTTP 404 Not Found: {"error":"…"}` の形なので、そのまま出さず本文の文だけを出す (#1917)
+      Alert.alert("エラー", getApiErrorMessage(e, "再計算に失敗しました。"));
     } finally {
       setIsRecalculating(false);
     }

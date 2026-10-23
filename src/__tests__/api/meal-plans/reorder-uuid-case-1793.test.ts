@@ -107,7 +107,7 @@ describe('POST /api/meal-plans/meals/reorder: 大文字・混在の UUID (#1793)
     const res = await POST(postRequest({ mealId: otherMealId.toUpperCase(), direction: 'down', dayId: DAY_ID }));
 
     expect(res.status).toBe(404);
-    expect(await res.json()).toEqual({ error: 'Meal not found' });
+    expect(await res.json()).toEqual({ error: '食事が見つかりません' });
     expect(updates).toEqual([]);
   });
 });

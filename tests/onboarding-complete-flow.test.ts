@@ -23,6 +23,13 @@ import {
   KNOWN_CLIENT_ERROR_MESSAGES,
   type FinalizeResponseLike,
 } from "../src/app/onboarding/questions/complete-flow";
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from "../src/lib/api/error-responses";
+import {
+  ONBOARDING_INVALID_ANSWERS_MESSAGE,
+  ONBOARDING_INVALID_JSON_MESSAGE,
+  ONBOARDING_INVALID_REQUEST_BODY_MESSAGE,
+  ONBOARDING_UNAUTHENTICATED_MESSAGE,
+} from "../src/lib/onboarding-api-errors";
 
 // #1045 round-4: 許可リストのコードは日本語メッセージにマッピングされるため、
 // 期待値は KNOWN_CLIENT_ERROR_MESSAGES から取得し、マッピング内容の変更と
@@ -43,7 +50,7 @@ function makeResponse(ok: boolean, body: unknown = {}): FinalizeResponseLike {
 describe("finalizeOnboarding — fail-closed 動作", () => {
   it("progress 保存が 400 を返した場合、complete は呼ばれず success:false を返す (回答喪失+偽の完了成功を防ぐ)", async () => {
     const saveProgress = vi.fn().mockResolvedValue(
-      makeResponse(false, { error: "Invalid answers" }),
+      makeResponse(false, { error: ONBOARDING_INVALID_ANSWERS_MESSAGE }),
     );
     const completeOnboarding = vi.fn().mockResolvedValue(makeResponse(true, { next_route: "/home" }));
 
@@ -53,7 +60,7 @@ describe("finalizeOnboarding — fail-closed 動作", () => {
     if (!result.success) {
       expect(result.stage).toBe("progress");
       // #1045 round-4: 許可リストのコードは日本語メッセージにマッピングされて返る
-      expect(result.message).toBe(mappedMessage("Invalid answers"));
+      expect(result.message).toBe(mappedMessage(ONBOARDING_INVALID_ANSWERS_MESSAGE));
     }
     // #1045 round-2: progress が失敗した時点で complete を呼んではいけない
     // (呼んでしまうと profile 不在時にデフォルト値で upsert され、回答が失われる)
@@ -122,21 +129,40 @@ describe("finalizeOnboarding — fail-closed 動作", () => {
 });
 
 describe("parseErrorMessage", () => {
-  // #1045 round-4 (Fable Suggestion): 許可リストのコードは英語のまま素通りせず、
-  // 対応する日本語メッセージにマッピングされる (progress/route.ts の4種 +
-  // complete/route.ts の "Failed to initialize profile" の計5種)。
-  it("error フィールドが既知のエラーコード (API が意図的に返すもの) の場合は対応する日本語メッセージを返す", async () => {
-    const res = makeResponse(false, { error: "Invalid answers" });
-    await expect(parseErrorMessage(res)).resolves.toBe(mappedMessage("Invalid answers"));
+  // #1045 round-4 (Fable Suggestion): 許可リストの文は対応する画面向けの日本語メッセージにマッピングされる
+  // (progress/route.ts が返す 4 種)。#1917: API は英語の固定コードをやめ、日本語の固定の文を返す
+  // (src/lib/onboarding-api-errors.ts と src/lib/api/error-responses.ts)。鍵はその文。
+  it("error フィールドが既知の文 (API が意図的に返すもの) の場合は対応する日本語メッセージを返す", async () => {
+    const res = makeResponse(false, { error: ONBOARDING_INVALID_ANSWERS_MESSAGE });
+    await expect(parseErrorMessage(res)).resolves.toBe(mappedMessage(ONBOARDING_INVALID_ANSWERS_MESSAGE));
+    expect(mappedMessage(ONBOARDING_INVALID_ANSWERS_MESSAGE)).toBe("入力内容に誤りがあります。ご確認のうえもう一度お試しください。");
   });
 
-  it("既知のエラーコード5種すべてが日本語メッセージにマッピングされている", async () => {
+  it("対応表の鍵は、progress/route.ts が返す 4 種の文と同じ (401・JSON は全 API の共通の文)", () => {
+    expect(ONBOARDING_UNAUTHENTICATED_MESSAGE).toBe(API_UNAUTHENTICATED_MESSAGE);
+    expect(ONBOARDING_INVALID_JSON_MESSAGE).toBe(API_INVALID_JSON_MESSAGE);
+    expect([...KNOWN_CLIENT_ERROR_MESSAGES.keys()].sort()).toEqual(
+      [
+        API_UNAUTHENTICATED_MESSAGE,
+        API_INVALID_JSON_MESSAGE,
+        ONBOARDING_INVALID_REQUEST_BODY_MESSAGE,
+        ONBOARDING_INVALID_ANSWERS_MESSAGE,
+      ].sort(),
+    );
+  });
+
+  it("以前の英語の固定コードは、もう鍵ではない (API が返さないので汎用メッセージ)", async () => {
+    for (const code of ["Unauthorized", "Invalid JSON", "Invalid request body", "Invalid answers", "Failed to initialize profile"]) {
+      await expect(parseErrorMessage(makeResponse(false, { error: code }))).resolves.toBe(GENERIC_SAVE_ERROR_MESSAGE);
+    }
+  });
+
+  it("既知の文 4 種すべてが画面向けの日本語メッセージにマッピングされている", async () => {
     for (const code of [
-      "Unauthorized",
-      "Invalid JSON",
-      "Invalid request body",
-      "Invalid answers",
-      "Failed to initialize profile",
+      API_UNAUTHENTICATED_MESSAGE,
+      API_INVALID_JSON_MESSAGE,
+      ONBOARDING_INVALID_REQUEST_BODY_MESSAGE,
+      ONBOARDING_INVALID_ANSWERS_MESSAGE,
     ]) {
       const res = makeResponse(false, { error: code });
       const message = await parseErrorMessage(res);

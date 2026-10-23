@@ -1,13 +1,18 @@
 import { createClient } from '@/lib/supabase/server'
-import { CALENDAR_DATE_REQUIREMENT, isCalendarDate, jstDayOffset, jstToday } from '@/lib/jst-day-ranges'
+import { isCalendarDate, jstDayOffset, jstToday } from '@/lib/jst-day-ranges'
+import { CALENDAR_DATE_PARAM_LABELS, invalidCalendarDateMessage } from '@/lib/api/user-api-error-messages'
 import { NextRequest, NextResponse } from 'next/server'
 import { toPerformanceCheckin, fromPerformanceCheckin, toCheckinAverages } from '@/lib/converter'
 import { sanitizePerformanceCheckinPayload } from '@/lib/performance-payloads'
 import { internalError } from '@/lib/api/errors'
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character'
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
 
 /** 期間の指定が無いときに返す、直近の日数 (JST の今日から何日前までか) */
 const DEFAULT_CHECKIN_LOOKBACK_DAYS = 30
+
+/** POST の本文の記録日の、400 の文での名前 */
+const CHECKIN_DATE_LABEL = '記録日 (checkinDate)'
 
 /**
  * GET /api/performance/checkins
@@ -24,7 +29,7 @@ export async function GET(request: NextRequest) {
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
     const { searchParams } = new URL(request.url)
@@ -38,7 +43,7 @@ export async function GET(request: NextRequest) {
     // 空欄 (?date=) は以前どおり「指定なし」として扱う
     for (const [name, value] of [['date', date], ['startDate', startDate], ['endDate', endDate]] as const) {
       if (value && !isCalendarDate(value)) {
-        return NextResponse.json({ error: `${name} must be ${CALENDAR_DATE_REQUIREMENT}` }, { status: 400 })
+        return NextResponse.json({ error: invalidCalendarDateMessage(CALENDAR_DATE_PARAM_LABELS[name]) }, { status: 400 })
       }
     }
 
@@ -129,7 +134,7 @@ export async function POST(request: NextRequest) {
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
     const body = await request.json()
@@ -138,7 +143,7 @@ export async function POST(request: NextRequest) {
     // 形だけを見ていると、2026-02-30 のような存在しない日付が通り、DB の date 型への変換で 500 になる (#1482)
     const trimmedCheckinDate = typeof checkinDate === 'string' ? checkinDate.trim() : ''
     if (!isCalendarDate(trimmedCheckinDate)) {
-      return NextResponse.json({ error: 'checkinDate must be in YYYY-MM-DD format' }, { status: 400 })
+      return NextResponse.json({ error: invalidCalendarDateMessage(CHECKIN_DATE_LABEL) }, { status: 400 })
     }
 
     // #1048 F2-18: weight や resting_heart_rate 等は DB に CHECK 制約が無く、

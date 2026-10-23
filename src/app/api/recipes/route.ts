@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
 import { recipeAuthorName } from '@/lib/recipes/author-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 // レシピ一覧取得
 export async function GET(request: Request) {
@@ -120,7 +121,7 @@ export async function POST(request: Request) {
   const requestId = generateRequestId();
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
     const body = await request.json();

@@ -75,7 +75,7 @@ describe('POST /api/account/delete: 入口の確認', () => {
     mocks.getUser.mockResolvedValue({ data: { user: null }, error: { message: 'Auth session missing!' } });
     const res = await POST(request({ confirm: true }));
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: 'Unauthorized' });
+    expect(await res.json()).toEqual({ error: 'ログインが必要です' });
     expect(mocks.getSupabaseAdmin).not.toHaveBeenCalled();
     expect(mocks.deleteAccount).not.toHaveBeenCalled();
   });
@@ -90,7 +90,7 @@ describe('POST /api/account/delete: 入口の確認', () => {
     for (const body of [{}, { confirm: false }, 'not json', undefined]) {
       const res = await POST(request(body));
       expect(res.status).toBe(400);
-      expect(await res.json()).toEqual({ error: 'confirm is required' });
+      expect(await res.json()).toEqual({ error: 'アカウントの削除の確認が必要です' });
     }
     expect(mocks.getSupabaseAdmin).not.toHaveBeenCalled();
     expect(mocks.deleteAccount).not.toHaveBeenCalled();

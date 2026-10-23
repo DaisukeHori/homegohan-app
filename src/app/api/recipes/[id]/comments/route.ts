@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
 import { recipeAuthorName } from '@/lib/recipes/author-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 // コメント一覧取得 (user_id は公開しない)
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
@@ -12,7 +13,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   // 未認証は 401
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   const { data, error } = await supabase
@@ -48,7 +49,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
     const body = await request.json();

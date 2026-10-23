@@ -4,6 +4,8 @@ import { NextResponse } from 'next/server'
 import { OnboardingAnswersSchema } from '@/schemas/onboarding'
 import { internalError } from '@/lib/api/errors'
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character'
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
+import { ONBOARDING_INVALID_ANSWERS_MESSAGE, ONBOARDING_INVALID_REQUEST_BODY_MESSAGE } from '@/lib/onboarding-api-errors'
 
 // #1045 (F6-12): ニックネームは HTML エスケープせず raw のまま保存する。
 // 画面表示は必ず React の JSX テキストノード経由 (dangerouslySetInnerHTML は不使用) のため
@@ -25,19 +27,19 @@ export async function POST(request: Request) {
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
     let body: any
     try {
       body = await request.json()
     } catch {
-      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 })
     }
     const { currentStep, answers, totalQuestions } = body
 
     if (typeof currentStep !== 'number' || !answers || typeof totalQuestions !== 'number') {
-      return NextResponse.json({ error: 'Invalid request body' }, { status: 400 })
+      return NextResponse.json({ error: ONBOARDING_INVALID_REQUEST_BODY_MESSAGE }, { status: 400 })
     }
 
     // #1045 (F6-12): age="abc" のような型崩れ・許可されていない enum 値を保存前に弾く。
@@ -45,7 +47,7 @@ export async function POST(request: Request) {
     const answersValidation = OnboardingAnswersSchema.safeParse(answers)
     if (!answersValidation.success) {
       return NextResponse.json(
-        { error: 'Invalid answers', details: answersValidation.error.flatten() },
+        { error: ONBOARDING_INVALID_ANSWERS_MESSAGE, details: answersValidation.error.flatten() },
         { status: 400 },
       )
     }

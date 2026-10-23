@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { searchCatalogProducts } from "@/lib/catalog-products";
 import { internalError } from '@/lib/api/errors';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 const DEFAULT_LIMIT = 8;
 const MAX_LIMIT = 20;
@@ -16,7 +17,7 @@ export async function GET(request: Request) {
     } = await supabase.auth.getUser();
 
     if (userError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
     const { searchParams } = new URL(request.url);

@@ -2,11 +2,15 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+
+/** 400: 食材の名前が空 */
+const PANTRY_NAME_REQUIRED_MESSAGE = '食材の名前を入力してください';
 
 export async function GET(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   const { data, error } = await supabase
     .from('pantry_items')
@@ -35,14 +39,14 @@ export async function POST(request: Request) {
   if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
     const json = await request.json();
     const { name, amount, category, expirationDate } = json;
 
     if (!name?.trim()) {
-      return NextResponse.json({ error: 'name is required' }, { status: 400 });
+      return NextResponse.json({ error: PANTRY_NAME_REQUIRED_MESSAGE }, { status: 400 });
     }
 
     const { data, error } = await supabase

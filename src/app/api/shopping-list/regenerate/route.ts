@@ -7,6 +7,13 @@ import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
 import { addDaysToDate, isCalendarDate } from '@/lib/date-utils';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { CALENDAR_DATE_REQUIREMENT_JA } from '@/lib/api/user-api-error-messages';
+
+/** 400: 開始日・終了日が無い */
+const DATE_RANGE_REQUIRED_MESSAGE = '開始日 (startDate) と終了日 (endDate) を指定してください';
+/** 400: 開始日が終了日より後 */
+const DATE_RANGE_ORDER_MESSAGE = '開始日 (startDate) は終了日 (endDate) 以前の日付にしてください';
 
 const ROUTE_NAME = 'POST /api/shopping-list/regenerate';
 
@@ -28,7 +35,7 @@ export async function POST(request: Request) {
   if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
   const aiConsentDenied = await requireAiConsent(supabase, user.id);
@@ -42,22 +49,22 @@ export async function POST(request: Request) {
     const { startDate, endDate, servingsConfig } = await request.json();
 
     if (!startDate || !endDate) {
-      return NextResponse.json({ error: 'startDate and endDate are required' }, { status: 400 });
+      return NextResponse.json({ error: DATE_RANGE_REQUIRED_MESSAGE }, { status: 400 });
     }
 
     // #261: 日付フォーマット・範囲 validation
     // YYYY-MM-DD の実在する日付 (受け付ける範囲の中) だけを通す。以前は new Date で確かめていたので、2026-02-30 が 3/2 に
     // 繰り上がって通り、リクエストの行 (start_date / end_date は date 型) を作るところで 500 になっていた (#1463)
     if (!isCalendarDate(startDate) || !isCalendarDate(endDate)) {
-      return NextResponse.json({ error: 'startDate and endDate must be in YYYY-MM-DD format' }, { status: 400 });
+      return NextResponse.json({ error: `開始日 (startDate) と終了日 (endDate) は${CALENDAR_DATE_REQUIREMENT_JA}で指定してください` }, { status: 400 });
     }
     // 4 桁の年の YYYY-MM-DD どうしは、文字列の大小が日付の前後と同じ
     if (startDate > endDate) {
-      return NextResponse.json({ error: 'startDate must be before or equal to endDate' }, { status: 400 });
+      return NextResponse.json({ error: DATE_RANGE_ORDER_MESSAGE }, { status: 400 });
     }
     // 開始日から MAX_RANGE_DAYS 日後より後の終了日は、期間が長すぎる (日数は暦の計算で数える)
     if (endDate > addDaysToDate(startDate, MAX_RANGE_DAYS)) {
-      return NextResponse.json({ error: `Date range must be ${MAX_RANGE_DAYS} days or less` }, { status: 400 });
+      return NextResponse.json({ error: `期間は ${MAX_RANGE_DAYS} 日以内にしてください` }, { status: 400 });
     }
 
     // Edge Function を呼ぶための接続情報は、DB に書き込む前 (AI 利用回数の記録・リクエストの行の作成より前) に

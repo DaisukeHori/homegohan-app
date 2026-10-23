@@ -4,6 +4,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { toPerformancePlan, fromPerformancePlan } from '@/lib/converter'
 import { internalError } from '@/lib/api/errors'
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character'
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
+
+/** 400: 調整の種類 (adjustmentType) と理由 (rationale) が無い */
+const ADJUSTMENT_FIELDS_REQUIRED_MESSAGE = '調整の種類 (adjustmentType) と理由 (rationale) を指定してください'
+/** 400: 更新する計画 (planId) が無い */
+const PLAN_ID_REQUIRED_MESSAGE = '計画 (planId) を指定してください'
 
 /**
  * GET /api/performance/plans
@@ -19,7 +25,7 @@ export async function GET(request: NextRequest) {
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
     const { searchParams } = new URL(request.url)
@@ -65,7 +71,7 @@ export async function POST(request: NextRequest) {
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
     const body = await request.json()
@@ -81,7 +87,7 @@ export async function POST(request: NextRequest) {
 
     if (!adjustmentType || !rationale) {
       return NextResponse.json(
-        { error: 'adjustmentType and rationale are required' },
+        { error: ADJUSTMENT_FIELDS_REQUIRED_MESSAGE },
         { status: 400 }
       )
     }
@@ -150,14 +156,14 @@ export async function PATCH(request: NextRequest) {
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
     if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
     const body = await request.json()
     const { planId, status, endDate } = body
 
     if (!planId) {
-      return NextResponse.json({ error: 'planId is required' }, { status: 400 })
+      return NextResponse.json({ error: PLAN_ID_REQUIRED_MESSAGE }, { status: 400 })
     }
 
     const updates: Record<string, any> = {

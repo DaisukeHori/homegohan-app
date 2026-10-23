@@ -100,7 +100,7 @@ describe('GET /api/announcements (管理用)', () => {
     const res = await get(query);
 
     expect(res.status).toBe(401);
-    expect(await json(res)).toEqual({ error: 'Unauthorized' });
+    expect(await json(res)).toEqual({ error: 'ログインが必要です' });
     expect(db.recorded('announcements')).toHaveLength(0);
   });
 
@@ -110,7 +110,7 @@ describe('GET /api/announcements (管理用)', () => {
     const res = await get();
 
     expect(res.status).toBe(403);
-    expect(await json(res)).toEqual({ error: 'Forbidden' });
+    expect(await json(res)).toEqual({ error: 'この操作を行う権限がありません' });
     expect(db.recorded('announcements')).toHaveLength(0);
   });
 
@@ -140,7 +140,7 @@ describe('GET /api/announcements (管理用)', () => {
     const text = await res.text();
 
     expect(res.status).toBe(500);
-    expect(JSON.parse(text)).toEqual({ error: 'Internal server error' });
+    expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました' });
     expect(text).not.toContain('secret detail');
     expect(mockLoggerError).toHaveBeenCalledTimes(1);
     expect(mockLoggerError.mock.calls[0][0]).toBe('GET /api/announcements');
@@ -157,7 +157,7 @@ describe('POST /api/announcements', () => {
     const res = await post(body);
 
     expect(res.status).toBe(401);
-    expect(await json(res)).toEqual({ error: 'Unauthorized' });
+    expect(await json(res)).toEqual({ error: 'ログインが必要です' });
     expect(db.recorded('announcements')).toHaveLength(0);
   });
 
@@ -167,7 +167,7 @@ describe('POST /api/announcements', () => {
     const res = await post(body);
 
     expect(res.status).toBe(403);
-    expect(await json(res)).toEqual({ error: 'Forbidden' });
+    expect(await json(res)).toEqual({ error: 'この操作を行う権限がありません' });
     expect(db.recorded('announcements')).toHaveLength(0);
   });
 
@@ -204,7 +204,7 @@ describe('POST /api/announcements', () => {
     const res = await post(invalid);
 
     expect(res.status).toBe(400);
-    expect(await json(res)).toEqual({ error: 'title and content are required' });
+    expect(await json(res)).toEqual({ error: 'タイトルと本文を入力してください' });
     expect(db.recorded('announcements', 'insert')).toHaveLength(0);
   });
 
@@ -212,7 +212,7 @@ describe('POST /api/announcements', () => {
     const res = await post({ title: 't', content: 'c', isPublic: 'yes' });
 
     expect(res.status).toBe(400);
-    expect(await json(res)).toEqual({ error: 'isPublic must be a boolean' });
+    expect(await json(res)).toEqual({ error: '公開の設定が正しくありません' });
     expect(db.recorded('announcements', 'insert')).toHaveLength(0);
   });
 
@@ -220,7 +220,7 @@ describe('POST /api/announcements', () => {
     const res = await post('{ not json');
 
     expect(res.status).toBe(400);
-    expect(await json(res)).toEqual({ error: 'Invalid JSON' });
+    expect(await json(res)).toEqual({ error: 'リクエストボディが不正です' });
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
@@ -232,7 +232,7 @@ describe('POST /api/announcements', () => {
     const text = await res.text();
 
     expect(res.status).toBe(500);
-    expect(JSON.parse(text)).toEqual({ error: 'Internal server error' });
+    expect(JSON.parse(text)).toEqual({ error: '処理中にエラーが発生しました' });
     expect(text).not.toContain('secret detail');
     expect(mockLoggerError.mock.calls[0][0]).toBe('POST /api/announcements');
     expect((mockLoggerError.mock.calls[0][2] as Error).message).toBe(raw);

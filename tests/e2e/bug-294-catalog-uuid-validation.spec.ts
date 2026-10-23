@@ -44,7 +44,7 @@ test.describe("#294 /api/catalog/products/[id] UUID バリデーション", () =
     expect(result.status).toBe(404);
   });
 
-  test("invalid_id エラーボディが返る", async ({ tourPendingUser }) => {
+  test("ID の形が違うときの日本語のエラーボディが返る (#1917 で invalid_id から変えた)", async ({ tourPendingUser }) => {
     await tourPendingUser.goto("/");
 
     const result = await tourPendingUser.evaluate(async () => {
@@ -53,6 +53,6 @@ test.describe("#294 /api/catalog/products/[id] UUID バリデーション", () =
     });
 
     expect(result.status).toBe(400);
-    expect(result.body).toMatchObject({ error: "invalid_id" });
+    expect(result.body).toMatchObject({ error: "商品の指定が正しくありません" });
   });
 });

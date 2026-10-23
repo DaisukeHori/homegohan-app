@@ -13,6 +13,13 @@
 // fail-closed な状態遷移だけを DOM 非依存で単体テストできるようにする。
 // (question-flow.ts の pruneStaleAnswers と同じ設計方針)
 
+import {
+  ONBOARDING_INVALID_ANSWERS_MESSAGE,
+  ONBOARDING_INVALID_JSON_MESSAGE,
+  ONBOARDING_INVALID_REQUEST_BODY_MESSAGE,
+  ONBOARDING_UNAUTHENTICATED_MESSAGE,
+} from '@/lib/onboarding-api-errors';
+
 export interface FinalizeResponseLike {
   ok: boolean;
   json: () => Promise<any>;
@@ -45,12 +52,15 @@ export const GENERIC_SAVE_ERROR_MESSAGE =
 // Invalid request body / Invalid answers) と complete/route.ts (Failed to
 // initialize profile) が意図的に返す固定コードすべてを日本語化する。
 // 未知の文字列 (Supabase の生エラー等) は従来どおり汎用メッセージにフォールバック。
+//
+// #1917: API の失敗の本文は英語の固定コードをやめ、日本語の固定の文 (src/lib/onboarding-api-errors.ts) を返す。
+// 鍵をその文にして、画面向けの言い回しは従来のまま保つ。complete/route.ts は 'Failed to initialize profile' を
+// もう返さない (プロフィールの作成の失敗は internalError の 500 = 汎用メッセージ) ので鍵から外した。
 export const KNOWN_CLIENT_ERROR_MESSAGES: ReadonlyMap<string, string> = new Map([
-  ['Unauthorized', 'セッションが切れました。お手数ですが再度ログインしてください。'],
-  ['Invalid JSON', '送信内容の読み込みに失敗しました。ページを再読み込みしてもう一度お試しください。'],
-  ['Invalid request body', '送信内容が正しくありません。ページを再読み込みしてもう一度お試しください。'],
-  ['Invalid answers', '入力内容に誤りがあります。ご確認のうえもう一度お試しください。'],
-  ['Failed to initialize profile', 'プロフィールの初期化に失敗しました。もう一度お試しください。'],
+  [ONBOARDING_UNAUTHENTICATED_MESSAGE, 'セッションが切れました。お手数ですが再度ログインしてください。'],
+  [ONBOARDING_INVALID_JSON_MESSAGE, '送信内容の読み込みに失敗しました。ページを再読み込みしてもう一度お試しください。'],
+  [ONBOARDING_INVALID_REQUEST_BODY_MESSAGE, '送信内容が正しくありません。ページを再読み込みしてもう一度お試しください。'],
+  [ONBOARDING_INVALID_ANSWERS_MESSAGE, '入力内容に誤りがあります。ご確認のうえもう一度お試しください。'],
 ]);
 
 /**

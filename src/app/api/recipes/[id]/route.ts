@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
 import { recipeAuthorName } from '@/lib/recipes/author-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_FORBIDDEN_MESSAGE, API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 // レシピ詳細取得
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
@@ -40,11 +41,11 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     .maybeSingle();
 
   if (error) return internalError('GET /api/recipes/[id]', error, { userId: user?.id });
-  if (!data) return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  if (!data) return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
 
   // 非公開レシピは作成者のみ閲覧可能
   if (!data.is_public && data.user_id !== user?.id) {
-    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+    return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
   }
 
   const recipe = {
@@ -94,7 +95,7 @@ export async function PUT(request: Request, props: { params: Promise<{ id: strin
   const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
     // 所有者確認
@@ -105,7 +106,7 @@ export async function PUT(request: Request, props: { params: Promise<{ id: strin
       .single();
 
     if (!existing || existing.user_id !== user.id) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      return NextResponse.json({ error: API_FORBIDDEN_MESSAGE }, { status: 403 });
     }
 
     const body = await request.json();
@@ -149,7 +150,7 @@ export async function DELETE(request: Request, props: { params: Promise<{ id: st
   const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
     // 所有者確認
@@ -160,7 +161,7 @@ export async function DELETE(request: Request, props: { params: Promise<{ id: st
       .single();
 
     if (!existing || existing.user_id !== user.id) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      return NextResponse.json({ error: API_FORBIDDEN_MESSAGE }, { status: 403 });
     }
 
     const { error } = await supabase

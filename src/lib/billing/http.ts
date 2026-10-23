@@ -9,10 +9,13 @@ import { IAP_ERROR_HTTP_STATUS, IAP_ERROR_MESSAGES, IapError, RevenueCatApiError
 
 const NO_STORE = { 'Cache-Control': 'no-store' } as const;
 
-/** 400 の本文 (super-admin の validation-errors と同じ形: message は最初の issue の文、details は issues の全件) */
+/**
+ * 400 の本文。message は日本語の固定の文 (BILLING_ERROR_MESSAGES.BILL_INVALID_INPUT)、details は issues の全件。
+ * 課金の schema の issue の文は Zod の既定の英語なので、最初の issue の文を message に入れない (#1917)
+ */
 export function billingInvalidInputResponse(issues: readonly z.core.$ZodIssue[]): NextResponse {
   return NextResponse.json(
-    { error: { code: 'BILL_INVALID_INPUT', message: issues[0]?.message ?? BILLING_ERROR_MESSAGES.BILL_INVALID_INPUT, details: issues } },
+    { error: { code: 'BILL_INVALID_INPUT', message: BILLING_ERROR_MESSAGES.BILL_INVALID_INPUT, details: issues } },
     { status: BILLING_ERROR_HTTP_STATUS.BILL_INVALID_INPUT, headers: NO_STORE },
   );
 }

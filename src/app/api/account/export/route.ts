@@ -7,6 +7,7 @@ import {
   generateAccountExport,
   type ExportSummary,
 } from '@/lib/account-export';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 /**
  * #1131 個人データエクスポート (GDPR データポータビリティ)
@@ -31,7 +32,7 @@ export async function GET() {
     error: userError,
   } = await supabase.auth.getUser();
   if (userError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: NO_STORE });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401, headers: NO_STORE });
   }
 
   const logger = createLogger('GET /api/account/export', generateRequestId()).withUser(user.id);

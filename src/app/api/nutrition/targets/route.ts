@@ -4,6 +4,7 @@ import { calculateNutritionTargets } from '@homegohan/core';
 import { buildNutritionCalculatorInput } from '@/lib/build-nutrition-input';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 /**
  * 栄養目標の取得・更新API
@@ -18,7 +19,7 @@ export async function GET() {
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   
   if (userError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   try {
@@ -132,7 +133,7 @@ export async function PUT(request: Request) {
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   
   if (userError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   try {

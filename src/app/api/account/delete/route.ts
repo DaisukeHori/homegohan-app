@@ -4,12 +4,16 @@ import { internalError } from '@/lib/api/errors';
 import { accountDeletionHttp, deleteAccount, isAccountDeletionFailure } from '@/lib/account-deletion';
 import { NextResponse } from 'next/server';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 // Storage のファイル削除に時間がかかることがある (src/lib/account-deletion-storage.ts の上限 45 秒より長くしておく)
 export const maxDuration = 60;
 
 /** 構造化ログの function_name */
 const ROUTE_NAME = 'POST /api/account/delete';
+
+/** 400: 削除の確認 (confirm) が無い */
+const CONFIRM_REQUIRED_MESSAGE = 'アカウントの削除の確認が必要です';
 
 /**
  * POST /api/account/delete
@@ -23,11 +27,11 @@ export async function POST(request: Request) {
   if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   const body = await request.json().catch(() => ({}));
   if (!body?.confirm) {
-    return NextResponse.json({ error: 'confirm is required' }, { status: 400 });
+    return NextResponse.json({ error: CONFIRM_REQUIRED_MESSAGE }, { status: 400 });
   }
 
   const requestId = generateRequestId();

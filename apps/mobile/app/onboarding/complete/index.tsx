@@ -14,6 +14,7 @@ import { Text, TextInput } from "../../../src/components/ui/Text";
 
 import { Card, SectionHeader } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
+import { getApiErrorMessage } from "../../../src/lib/api-error";
 import { supabase } from "../../../src/lib/supabase";
 import { colors, radius, shadows, spacing } from "../../../src/theme";
 import { deriveMacroTargets } from "@homegohan/shared";
@@ -171,8 +172,9 @@ export default function OnboardingComplete() {
         autoCalculate ? "自動計算の目標に設定しました。" : "手動調整した栄養目標を保存しました。",
         [{ text: "OK" }],
       );
-    } catch (e: any) {
-      Alert.alert("エラー", e?.message ?? "保存に失敗しました。");
+    } catch (e: unknown) {
+      // getApi の失敗の message は `HTTP 404 Not Found: {"error":"…"}` の形なので、そのまま出さず本文の文だけを出す (#1917)
+      Alert.alert("エラー", getApiErrorMessage(e, "保存に失敗しました。"));
     } finally {
       setSaving(false);
     }

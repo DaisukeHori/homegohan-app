@@ -9,6 +9,7 @@ import { sendEmail } from '@/lib/emails/send';
 import { isEmailFailure } from '@/lib/emails/send-result';
 import { maskEmailAddress } from '@/lib/emails/outbox';
 import { renderContactAdminNotificationEmail } from '@/lib/emails/support/contact-admin-notification';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 // #1044 (F6-19): 入力を Zod で厳密検証する
 const contactInquirySchema = z.object({
@@ -157,7 +158,7 @@ export async function GET() {
   const { data: { user }, error: userError } = await supabase.auth.getUser();
 
   if (userError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   try {
