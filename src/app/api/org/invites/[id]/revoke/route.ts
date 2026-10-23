@@ -8,7 +8,7 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { requireOrgAdmin } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
-import { internalError } from '@/lib/api/errors';
+import { INTERNAL_ERROR_MESSAGE, internalError } from '@/lib/api/errors';
 
 export async function POST(
   _req: Request,
@@ -34,7 +34,7 @@ export async function POST(
     }
     createLogger('POST /api/org/invites/[id]/revoke', generateRequestId()).error('組織管理者の確認に失敗しました', error);
     return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
+      { error: { code: 'INTERNAL_ERROR', message: INTERNAL_ERROR_MESSAGE } },
       { status: 500 },
     );
   }

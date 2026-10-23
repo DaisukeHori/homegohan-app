@@ -15,22 +15,22 @@ import {
   type OrgInviteListResponse,
 } from '@/schemas/membership/organization-invite';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { ORG_API_INTERNAL_ERROR_MESSAGE, orgAuthFailureFlat } from '@/lib/org-api-errors';
 
 // 権限: 所属組織の org_role が owner / admin。判定は共通の requireOrgAdmin() (#1161)
 
 /**
- * GET / DELETE の失敗応答。認可エラー (401 / 403) はそのまま返し、それ以外は 500 の汎用メッセージにする。
- * 生のエラー文は返さず (#1172)、詳細は db-logger (app_logs) にだけ残す。
+ * GET / DELETE の失敗応答。認可エラー (401 / 403) は日本語の固定の文で返し、それ以外は 500 の汎用メッセージにする。
+ * 生のエラー文・例外の文面は返さず (#1172)、詳細は db-logger (app_logs) にだけ残す。
+ * 文は src/lib/org-api-errors.ts (画面は本文の error をそのまま見せるため、英語の文を返さない)。
+ * 本文の形は従来どおり flat の { error } (code は付けない)。POST は下で nested の形を返す
+ * (POST の 401 / 403 は組織の所属の操作のコード NOT_AUTHENTICATED / INSUFFICIENT_PERMISSION)
  */
 function handleError(method: string, error: unknown) {
-  if (error instanceof AuthError) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-  if (error instanceof ForbiddenError) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  const authFailure = orgAuthFailureFlat(error);
+  if (authFailure) return authFailure;
   createLogger(`${method} /api/org/invites`, generateRequestId()).error('組織の招待の処理に失敗しました', error);
-  return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  return NextResponse.json({ error: ORG_API_INTERNAL_ERROR_MESSAGE }, { status: 500 });
 }
 
 // 招待一覧取得
@@ -91,7 +91,7 @@ export async function POST(request: Request) {
     }
     createLogger('POST /api/org/invites', generateRequestId()).error('組織管理者の確認に失敗しました', error);
     return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
+      { error: { code: 'INTERNAL_ERROR', message: ORG_API_INTERNAL_ERROR_MESSAGE } },
       { status: 500 },
     );
   }
@@ -137,7 +137,7 @@ export async function DELETE(request: Request) {
     const inviteId = searchParams.get('id');
 
     if (!inviteId) {
-      return NextResponse.json({ error: 'Invite ID is required' }, { status: 400 });
+      return NextResponse.json({ error: '招待の ID を指定してください' }, { status: 400 });
     }
 
     const { error } = await supabase
