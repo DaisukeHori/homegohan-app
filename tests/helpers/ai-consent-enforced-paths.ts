@@ -268,6 +268,12 @@ export const EXEMPT_ROUTES: Record<string, AiRouteEntry> = {
     consent: 'Sign in with Apple の認可コードの交換と refresh token の保管。AI へは送らない (env.ts の一覧に届くだけ)',
     handlers: { POST: { noAi: '認可コードを Apple の /auth/token に送り、返った refresh token を DB に書くだけ。送る先は Apple と DB だけ' } },
   },
+  // Sign in with Apple 段 B (docs/design/mobile/08-sign-in-with-apple.md §9.5)。/auth/callback は web-callback.ts を通して環境変数の一覧
+  // (src/lib/env.ts) に届くだけで、送る先は Supabase Auth (code の交換) と DB (apple_sign_in_tokens) だけ。利用者のデータを AI へ送らない
+  'src/app/(auth)/auth/callback/route.ts': {
+    consent: 'OAuth・メール確認のコールバック。AI へは送らない (env.ts の一覧に届くだけ)',
+    handlers: { GET: { noAi: 'code の交換とログイン後の振り分け。送る先は Supabase Auth と DB だけ' } },
+  },
   // #1184 Resend の Webhook の受け口。署名の秘密を getOptionalEnv で読むため、import を辿ると環境変数の一覧 (src/lib/env.ts) に届くだけで、
   // 書く先は DB の宛先停止リスト (email_blacklist) だけ。利用者のデータを AI へ送らない
   'src/app/api/webhooks/resend/route.ts': {
