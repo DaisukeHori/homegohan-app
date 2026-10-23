@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * 追随表などが行番号で指す先 (要件 02・org/04・org/05) が、指している文を指し続けることの contract テスト (ソース走査)
+ * 追随表などが行番号で指す先 (要件 02・org/04・org/05・operator/02) が、指している文を指し続けることの contract テスト (ソース走査)
  *
  * #1917 の続き (docs-1023a) で、要件 02・org/04・org/05 に注記を足したとき、注記が行を増やしたせいで
  * billing/01 §16.2 の追随表の生きた行 (期日が「配線の残りの冊」「migrate-to-personal を実装するとき」
@@ -22,6 +22,7 @@ const REQ02 = 'docs/requirements/02-organization-management.md';
 const ORG04 = 'docs/design/org/04-license-management.md';
 const ORG05 = 'docs/design/org/05-offboarding-flow.md';
 const ORG10 = 'docs/design/org/10-challenge-diff-privacy.md';
+const OPERATOR02 = 'docs/design/operator/02-api-spec.md';
 const FAMILY11 = 'docs/design/family/11-self-dissolve.md';
 
 /** 文書の n 行目 (1 始まり) */
@@ -138,6 +139,33 @@ describe('billing/01 §16.2 の追随表が org/04・org/05 を指す行番号 (
     expectAnchors(ORG04, anchorNumbers(`${org04Part?.[1] ?? ''} ${org04Part?.[2] ?? ''}`), {
       233: '4. Stripe で Standard サブスク解約 + Pro サブスク開始',
       531: '| `pool_purchased` |',
+    });
+  });
+});
+
+describe('billing/01 §16.2 の追随表が operator/02 を指す行番号 (#1917 docs-1023b)', () => {
+  // #1967 (f9ad46fc) が operator/02 に行を足し、追随表の行番号 (:570-573・:1739-1746 など) が古い位置のままだった
+  it('operator/02 の行の §9 の注・§21・§24・§25 の行番号が、Stripe の Webhook の注・節・テスト・見本・関連の行を指す', () => {
+    const { row } = billing01Row('| `docs/design/operator/02-api-spec.md` |');
+    expectAnchors(OPERATOR02, anchorNumbers(cell(row, 2)), {
+      776: 'Stripe の Webhook の受け口と契約の写しは billing/01',
+      780: '#1911: 未完成の機能は画面に出さない',
+      1695: '### POST /api/webhooks/stripe',
+      1713: '試用終了のリマインダー (`trial_will_end`)',
+      1856: "it('rejects webhook with invalid Stripe signature')",
+      1857: "it('returns already_processed on second webhook with same event_id')",
+      1867: '```typescript',
+      1918: /^```$/,
+      1923: 'Stripe webhook ハンドラ (`/api/webhooks/stripe`) の実装は billing/01',
+    });
+  });
+
+  it('次の「同」の行の §22 の :1750-1757 が stripe-reconcile の見出しと「自動修復禁止」の行を指す', () => {
+    const { next } = billing01Row('| `docs/design/operator/02-api-spec.md` |');
+    expect(cell(next, 1), 'operator/02 の行の次は「同」の行').toBe('同');
+    expectAnchors(OPERATOR02, anchorNumbers(cell(next, 2)), {
+      1750: '### POST /api/cron/stripe-reconcile',
+      1757: '4. 自動修復禁止',
     });
   });
 });
