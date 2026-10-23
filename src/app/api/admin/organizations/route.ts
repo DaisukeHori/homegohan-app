@@ -68,29 +68,31 @@ export async function GET(request: Request) {
   const supabase = await createClient();
 
   try {
-    let query = supabase
-      .from('organizations')
-      .select('id, name, plan, created_at, updated_at', { count: 'exact' });
-
-    if (q) {
-      query = query.ilike('name', `%${q}%`);
-    }
-    if (plan) {
-      query = query.eq('plan', plan);
-    }
-
+    // 一覧と、範囲外のページのときの件数の取り直し (countOrganizations) は、同じ絞り込み (selectOrganizations) を使う。
+    // 絞り込みを 2 か所に書くと、片方だけ直したときに件数と一覧がずれるため
+    const filters: OrgListFilters = { q, plan };
     const from = (page - 1) * per_page;
     const to = from + per_page - 1;
-    query = query.range(from, to).order('created_at', { ascending: false });
+    const { data, error, count, status } = await selectOrganizations(supabase, filters)
+      .range(from, to)
+      .order('created_at', { ascending: false });
 
-    const { data, error, count } = await query;
+    // 件数より後ろのページ (最後のページの唯一の行が消えたあと、同じページで読み直したときなど) は、PostgREST が
+    // 416 (PGRST103) を返す。これを失敗にも「0 件」にもせず、空のページと本当の件数を返す (画面は件数から最後のページへ
+    // 取り直す)。ローカルの Supabase では 416 の本文が途中で切れて error.code が取れないことがあるので、HTTP の
+    // ステータスでも判定する (src/app/api/admin/inquiries/route.ts と同じ)。件数も取れなければ下の 500 にする
+    if (error && isBeyondLastPage(error, status)) {
+      const total = await countOrganizations(supabase, filters);
+      if (total !== null) {
+        return NextResponse.json({ organizations: [], meta: { total, page, per_page } });
+      }
+    }
 
     if (error) {
+      // 読み出しの失敗を 200 の空の一覧 (total 0) で返すと、画面は「組織はまだありません」と見せてしまい、
+      // 本当に 0 件なのか失敗なのかを見分けられない。失敗は 500 で返す (画面は取得の失敗と「再読み込み」を出す)
       console.error('[api/admin/organizations] GET error:', error.message);
-      return NextResponse.json({
-        organizations: [],
-        meta: { total: 0, page, per_page },
-      });
+      return listFailedResponse();
     }
 
     return NextResponse.json({
@@ -99,10 +101,8 @@ export async function GET(request: Request) {
     });
   } catch (err) {
     console.error('[api/admin/organizations] GET unexpected error:', err);
-    return NextResponse.json({
-      organizations: [],
-      meta: { total: 0, page, per_page },
-    });
+    // 想定外の例外も、空の一覧にせず 500 で返す (上の error と同じ理由)
+    return listFailedResponse();
   }
 }
 
@@ -231,4 +231,67 @@ export async function POST(request: Request) {
   });
 
   return NextResponse.json({ organization: org });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET の道具 (行番号を参照する設計書があるので、GET と POST の本体の行はずらさず、ここ (ファイルの末尾) に置く)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** PostgREST が「件数より後ろのページ」(Range Not Satisfiable) で返す HTTP ステータス */
+const HTTP_RANGE_NOT_SATISFIABLE = 416;
+/** 同じときに PostgREST が返す error.code */
+const POSTGREST_RANGE_NOT_SATISFIABLE_CODE = 'PGRST103';
+
+/** 一覧の絞り込み (GET のクエリの q・plan) */
+interface OrgListFilters {
+  q?: string;
+  plan?: OrgSearchInput['plan'];
+}
+
+type OrgSearchInput = z.infer<typeof OrgSearchSchema>;
+type SessionClient = Awaited<ReturnType<typeof createClient>>;
+
+/**
+ * organizations を一覧の列で読み、絞り込み (組織名の部分一致・プラン) を付ける。件数は exact で数える。
+ * head: true のときは行を返さず件数だけを数える (範囲外のページのときの件数の取り直し)
+ */
+function selectOrganizations(supabase: SessionClient, filters: OrgListFilters, options: { head?: boolean } = {}) {
+  let query = supabase
+    .from('organizations')
+    .select('id, name, plan, created_at, updated_at', { count: 'exact', head: options.head === true });
+  if (filters.q) {
+    query = query.ilike('name', `%${filters.q}%`);
+  }
+  if (filters.plan) {
+    query = query.eq('plan', filters.plan);
+  }
+  return query;
+}
+
+/** 読み出しの失敗が「件数より後ろのページ」(416 / PGRST103) か */
+function isBeyondLastPage(error: { code?: string | null }, status: number): boolean {
+  return status === HTTP_RANGE_NOT_SATISFIABLE || error.code === POSTGREST_RANGE_NOT_SATISFIABLE_CODE;
+}
+
+/** 同じ絞り込みの件数だけを数え直す。数えられなければ null (呼び出し側は 500 にする) */
+async function countOrganizations(supabase: SessionClient, filters: OrgListFilters): Promise<number | null> {
+  try {
+    const { count, error } = await selectOrganizations(supabase, filters, { head: true });
+    if (error || count === null) {
+      console.error('[api/admin/organizations] GET count error:', error?.message ?? 'count is null');
+      return null;
+    }
+    return count;
+  } catch (err) {
+    console.error('[api/admin/organizations] GET count unexpected error:', err);
+    return null;
+  }
+}
+
+/** 一覧を読み出せなかったときの 500 (画面は API の文をそのまま出す) */
+function listFailedResponse() {
+  return NextResponse.json(
+    { error: { code: 'INTERNAL_ERROR', message: '組織の一覧を取得できませんでした' } },
+    { status: 500 },
+  );
 }
