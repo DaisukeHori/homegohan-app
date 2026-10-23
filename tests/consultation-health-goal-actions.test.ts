@@ -157,7 +157,7 @@ describe('set_health_goal (#1229)', () => {
 
   it('explains the allowed goal types when the AI picks another one', async () => {
     const out = await run('set_health_goal', { goalType: 'exercise', targetValue: 3 });
-    expect(out.result.error).toBe('目標の種類 (goal_type) は weight, body_fat, steps, step_count, sleep_hours のいずれかを指定してください');
+    expect(out.result.error).toBe('目標の種類 (goal_type) は次のいずれかを指定してください (weight, body_fat, steps, step_count, sleep_hours)');
   });
 
   it('never lets the AI choose user_id or status', async () => {

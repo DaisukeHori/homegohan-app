@@ -34,7 +34,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: { code: MembershipErrorCode.INVALID_REQUEST, message: `開始日 (startDate) と終了日 (endDate) は${CALENDAR_DATE_REQUIREMENT_JA}で指定してください` } }, { status: 400 });
   }
   if (!isFamilyMenuRangeAllowed(startDate, endDate)) {
-    return NextResponse.json({ error: { code: MembershipErrorCode.INVALID_REQUEST, message: `範囲は startDate 以上 endDate 以下で、${FAMILY_MENU_RANGE_MAX_DAYS} 日以内にしてください` } }, { status: 400 });
+    return NextResponse.json({ error: { code: MembershipErrorCode.INVALID_REQUEST, message: `範囲は開始日 (startDate) 以上、終了日 (endDate) 以下で、${FAMILY_MENU_RANGE_MAX_DAYS} 日以内にしてください` } }, { status: 400 });
   }
 
   const { data: profile, error: profileError } = await supabase.from('user_profiles').select('family_id').eq('id', user.id).maybeSingle();

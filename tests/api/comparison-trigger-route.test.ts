@@ -247,7 +247,7 @@ describe('POST /api/comparison/trigger: 関数の呼び方 (#1406)', () => {
     expect(res.status).toBe(400);
     const json = await res.json();
     expect(json.error.code).toBe('VALIDATION_ERROR');
-    expect(json.error.message).toBe('periodType は daily / weekly / monthly のいずれかを指定してください');
+    expect(json.error.message).toBe('比べる期間の種類 (periodType) は daily / weekly / monthly のいずれかを指定してください');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

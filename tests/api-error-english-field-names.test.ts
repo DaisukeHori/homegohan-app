@@ -66,6 +66,9 @@ describe('判定: 括弧の外の英字の項目名・役割名', () => {
     expect(englishIdentifiersOutsideParentheses('指定した owner は退会の手続き中です')).toEqual(['owner']);
     expect(englishIdentifiersOutsideParentheses('ratingは1〜5の整数で入力してください')).toEqual(['rating']);
     expect(englishIdentifiersOutsideParentheses('daily_note は文字列か null で指定してください')).toEqual(['daily_note']);
+    // camelCase の項目名も拾う
+    expect(englishIdentifiersOutsideParentheses('periodType は daily のいずれかを指定してください')).toEqual(['periodType', 'daily']);
+    expect(englishIdentifiersOutsideParentheses('sourceCode が不正です')).toEqual(['sourceCode']);
   });
 
   it('括弧に入れた項目名・大文字の語・形式の名前・JSON の値・日本語を含まない文は拾わない', () => {
@@ -80,6 +83,7 @@ describe('判定: 括弧の外の英字の項目名・役割名', () => {
       '通知のトークン (expo_push_token) が Expo の通知のトークンの形ではありません',
       '全角の括弧の中（family_id）も括弧の中',
       '入れ子 (外 (family_id) の中) も括弧の中',
+      'eGFR (mL/min/1.73m²) は数値で指定してください',
       'Unauthorized',
     ]) {
       expect(englishIdentifiersOutsideParentheses(ok), ok).toEqual([]);
@@ -120,18 +124,19 @@ describe('走査: 自前の本文の関数の文も集める', () => {
 describe('自前の本文の関数の一覧 (ROUTE_ERROR_TEXT_CALLS) は実在する', () => {
   const files = TEXT_CALL_SOURCE_DIRS.flatMap((dir) => walkFiles(dir, (name) => /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name)));
 
+  // 同じ名前で文を受け取らない関数もある (csp-report の badRequest(status, code) など。文の位置に文字列が来ないので走査に影響しない)。
+  // 文を受け取る宣言 (message の引数を持つもの) は、どれも一覧の位置に message を持つ
   it.each([...ROUTE_ERROR_TEXT_CALLS])('%s は、%i 番目 (0 から) の引数が message の関数として宣言されている', (name, index) => {
-    const declarations: ts.FunctionDeclaration[] = [];
+    const messagePositions: number[] = [];
     for (const file of files) {
       for (const statement of sourceOf(file).statements) {
-        if (ts.isFunctionDeclaration(statement) && statement.name?.text === name) declarations.push(statement);
+        if (!ts.isFunctionDeclaration(statement) || statement.name?.text !== name) continue;
+        const position = statement.parameters.findIndex((p) => ts.isIdentifier(p.name) && p.name.text === MESSAGE_PARAMETER_NAME);
+        if (position >= 0) messagePositions.push(position);
       }
     }
-    expect(declarations.length, name).toBeGreaterThan(0);
-    for (const declaration of declarations) {
-      const parameter = declaration.parameters[index];
-      expect(parameter && ts.isIdentifier(parameter.name) ? parameter.name.text : null, name).toBe(MESSAGE_PARAMETER_NAME);
-    }
+    expect(messagePositions.length, name).toBeGreaterThan(0);
+    expect(messagePositions.every((position) => position === index), `${name}: ${messagePositions.join(', ')}`).toBe(true);
   });
 });
 

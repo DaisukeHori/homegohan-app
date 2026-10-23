@@ -36,7 +36,7 @@ function badRequest(message: string) {
  */
 export async function POST(request: NextRequest) {
   // 本文の文字列に NULL 文字 (U+0000) があれば、DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   let body: unknown;
   try {

@@ -71,7 +71,7 @@ const MESSAGE_KINDS: ReadonlyArray<readonly [string, RegExp]> = [
   ['真偽値', /は true か false で指定してください$/],
   ['数値', /は数値で指定してください$/],
   ['整数', /は整数で指定してください$/],
-  ['選択肢', /のいずれかを指定してください$/],
+  ['選択肢', /は次のいずれかを指定してください \(.+\)$/],
   ['日付', /\)はYYYY-MM-DD の形の、.+までの実在する日付で指定してください$/],
   ['下限', /以上の値を入力してください$/],
   ['上限', /以下の値を入力してください$/],
@@ -149,7 +149,7 @@ describe('健康の記録の API の文 (src/lib/health-api-messages.ts)', () =>
       expect(isEnglishOnly(text), text).toBe(false);
     }
     expect(messages.healthEnumMessage(SAMPLE_FIELD, SAMPLE_CHOICES)).toBe(
-      '記録の日付 (record_date) は standard, minimal のいずれかを指定してください',
+      '記録の日付 (record_date) は次のいずれかを指定してください (standard, minimal)',
     );
     expect(messages.healthDateInvalidMessage(SAMPLE_FIELD)).toBe(
       '記録の日付 (record_date)はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください',

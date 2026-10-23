@@ -54,14 +54,15 @@ export function isEnglishOnly(text: string): boolean {
 }
 
 /**
- * 英字の項目名・役割名として拾う語 (英小文字で始まり、英小文字・数字を _ でつなぐ。'family_id'・'owner'・'id')。
+ * 英字の項目名・役割名として拾う語 (英小文字で始まる snake_case・camelCase。'family_id'・'owner'・'id'・'periodType')。
  * 大文字で始まる語 ('ID'・'BAN'・'Expo')・形式の名前 ('YYYY-MM-DD')・URL やパスの一部 ('/api/x'・'example.com') は拾わない
  */
-const ENGLISH_IDENTIFIER = /(?<![A-Za-z0-9_\-./:@])[a-z][a-z0-9]*(?:_[a-z0-9]+)*(?![A-Za-z0-9_\-./])/g;
+const ENGLISH_IDENTIFIER = /(?<![A-Za-z0-9_\-./:@])[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)*(?:_[A-Za-z0-9]+)*(?![A-Za-z0-9_\-./])/g;
 /**
- * 括弧の外にあっても項目名ではない語: JSON の値として API を呼ぶ人が送るもの ('文字列か null で'・'true か false で')
+ * 括弧の外にあっても項目名ではない語: JSON の値として API を呼ぶ人が送るもの ('文字列か null で'・'true か false で') と、
+ * 小文字で始まる検査の名前 (健康診断の 'eGFR'。画面の項目名そのもの)
  */
-const ALLOWED_ENGLISH_WORDS: ReadonlySet<string> = new Set(['null', 'true', 'false']);
+const ALLOWED_ENGLISH_WORDS: ReadonlySet<string> = new Set(['null', 'true', 'false', 'eGFR']);
 
 /** 括弧 (半角・全角) の中身を取り除く (入れ子も、変わらなくなるまで繰り返す) */
 function withoutParenthesized(text: string): string {

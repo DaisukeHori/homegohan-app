@@ -156,7 +156,10 @@ export function healthIntegerMessage(label: string): string {
   return `${label} は整数で指定してください`;
 }
 
-/** 項目の値が、受け付ける値のどれでもない (field は項目のキー) */
+/**
+ * 項目の値が、受け付ける値のどれでもない (field は項目のキー)。
+ * 受け付ける値 (API に送る英字の値) は、項目名と同じく括弧に入れて添える (英字の語を括弧の外に出さない。#1917)
+ */
 export function healthEnumMessage(field: string, allowed: readonly string[]): string {
-  return `${healthFieldLabel(field)} は ${allowed.join(', ')} のいずれかを指定してください`;
+  return `${healthFieldLabel(field)} は次のいずれかを指定してください (${allowed.join(', ')})`;
 }

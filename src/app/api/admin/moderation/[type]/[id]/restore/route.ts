@@ -100,7 +100,7 @@ const RACED_RESTORE_ERROR: Record<HiddenContentRestorability['kind'], string> = 
 
 export async function POST(request: Request, props: Params) {
   // 本文の NULL 文字は、認証・DB に触れる前に 400 で断る (#1657)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
 

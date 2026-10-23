@@ -175,7 +175,7 @@ export async function GET(request: Request, props: RouteContext): Promise<NextRe
 
 export async function PATCH(request: Request, context: RouteContext): Promise<NextResponse> {
   // 本文に NULL 文字 (U+0000) があれば、認証・DB に触れる前に 400 INVALID_CHARACTER (#1657。§7.1 の形)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
 
   const requestId = generateRequestId();

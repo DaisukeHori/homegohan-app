@@ -316,7 +316,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore', () => {
     expectError(await restoreVia(adminUser.jwt, 'food', flagId, {}), 400, 'VALIDATION_ERROR');
     const nullChar = await restoreVia(adminUser.jwt, 'food', flagId, { restore_note: 'a\u0000b' });
     expect(nullChar.status).toBe(400);
-    expect((nullChar.body as { code?: string }).code).toBe('INVALID_CHARACTER');
+    expect((nullChar.body as { error?: { code?: string } }).error?.code).toBe('INVALID_CHARACTER');
     expect((await readHidden('meals', mealId)).hidden_at).not.toBeNull();
     expect(await restoreAuditLogs(flagId)).toEqual([]);
   });
