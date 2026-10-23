@@ -17,7 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
 import { createMessageSchema } from '@/lib/admin/support-schemas';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
@@ -25,6 +25,9 @@ import { sendTicketReplyEmail } from '@/lib/admin/send-ticket-reply-email';
 import type { ReplyEmailOutcome } from '@/lib/admin/support-reply-email-status';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+
+/** 400: 本文・クエリの検証の失敗の文 (項目ごとの理由は details に添える。message は画面がそのまま出す文なので文字列にする) */
+const VALIDATION_ERROR_MESSAGE = '入力内容を確認してください';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -88,23 +91,9 @@ export async function GET(request: NextRequest, props: RouteContext) {
 
     return NextResponse.json({ data: messages });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json(
-        { error: { code: err.code, message: err.message } },
-        { status: 401 },
-      );
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json(
-        { error: { code: 'OP_PERMISSION_DENIED', message: err.message } },
-        { status: 403 },
-      );
-    }
-    console.error('[support/tickets/[id]/messages] GET error:', err);
-    return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
-      { status: 500 },
-    );
+    const authFailure = authFailureNested(err, { code: AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED });
+    if (authFailure) return authFailure;
+    return internalError('GET /api/admin/support/tickets/[id]/messages', err, { log_context: '[support/tickets/[id]/messages] GET error' }, { shape: 'nested' });
   }
 }
 
@@ -122,7 +111,7 @@ export async function POST(request: NextRequest, props: RouteContext) {
     const parseResult = createMessageSchema.safeParse(body);
     if (!parseResult.success) {
       return NextResponse.json(
-        { error: { code: 'VALIDATION_ERROR', message: parseResult.error.flatten() } },
+        { error: { code: 'VALIDATION_ERROR', message: VALIDATION_ERROR_MESSAGE, details: parseResult.error.flatten() } },
         { status: 400 },
       );
     }
@@ -153,7 +142,7 @@ export async function POST(request: NextRequest, props: RouteContext) {
 
     if (ticketError || !ticket) {
       return NextResponse.json(
-        { error: { code: 'NOT_FOUND', message: 'Ticket not found' } },
+        { error: { code: 'NOT_FOUND', message: 'チケットが見つかりません' } },
         { status: 404 },
       );
     }
@@ -216,22 +205,8 @@ export async function POST(request: NextRequest, props: RouteContext) {
 
     return NextResponse.json({ data: message, email }, { status: 201 });
   } catch (err) {
-    if (err instanceof AuthError) {
-      return NextResponse.json(
-        { error: { code: err.code, message: err.message } },
-        { status: 401 },
-      );
-    }
-    if (err instanceof ForbiddenError) {
-      return NextResponse.json(
-        { error: { code: 'OP_PERMISSION_DENIED', message: err.message } },
-        { status: 403 },
-      );
-    }
-    console.error('[support/tickets/[id]/messages] POST error:', err);
-    return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
-      { status: 500 },
-    );
+    const authFailure = authFailureNested(err, { code: AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED });
+    if (authFailure) return authFailure;
+    return internalError('POST /api/admin/support/tickets/[id]/messages', err, { log_context: '[support/tickets/[id]/messages] POST error' }, { shape: 'nested' });
   }
 }

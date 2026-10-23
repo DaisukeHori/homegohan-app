@@ -16,6 +16,8 @@ export const JAPANESE_ERROR_API_DIRS: readonly string[] = [
   'src/app/api/health',
   'src/app/api/cron',
   'src/app/api/e2e',
+  'src/app/api/admin',
+  'src/app/api/support',
 ];
 
 /** route が本文を作るのに使う共通の関数のファイル (ここも違反 0 件を見張る) */
@@ -61,8 +63,6 @@ export const MACHINE_FACING_ERROR_TEXT_PATHS: readonly MachineFacingErrorTextPat
  * その PR がマージされたら、ここから行を消し、UNFIXED_VIOLATION_BASELINE をその時点の件数に数え直す
  */
 export const SENTINEL_EXCLUDED_ROUTE_FILES: readonly string[] = [
-  'src/app/api/admin/organizations/route.ts',
-  'src/app/api/admin/users/[id]/freeze/route.ts',
   'src/app/api/operator/membership/family/[id]/transfer/route.ts',
   'src/app/api/operator/membership/org/[id]/transfer/route.ts',
   'src/app/api/super-admin/plans/[id]/route.ts',
@@ -74,7 +74,6 @@ export const SENTINEL_EXCLUDED_ROUTE_FILES: readonly string[] = [
  */
 export const UNFIXED_VIOLATION_BASELINE: Readonly<Record<string, number>> = {
   'src/app/api/account': 3,
-  'src/app/api/admin': 74,
   'src/app/api/ai': 112,
   'src/app/api/announcements': 6,
   'src/app/api/auth': 1,
@@ -102,6 +101,5 @@ export const UNFIXED_VIOLATION_BASELINE: Readonly<Record<string, number>> = {
   'src/app/api/shopping-list': 22,
   'src/app/api/storage': 2,
   'src/app/api/super-admin': 46,
-  'src/app/api/support': 18,
   'src/app/api/upload': 7,
 };

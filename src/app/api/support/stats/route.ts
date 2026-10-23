@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { jstToday } from '@/lib/jst-day-ranges';
 import { jstDayStartTimestamp } from '@/lib/date-utils';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { API_INTERNAL_ERROR_MESSAGE, authFailureFlat } from '@/lib/api/error-responses';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { normalizeProfileName } from '@/lib/profile-name';
@@ -13,7 +13,7 @@ import { normalizeProfileName } from '@/lib/profile-name';
  */
 function internalError(err: unknown, metadata?: Record<string, unknown>) {
   createLogger('GET /api/support/stats', generateRequestId()).error('サポート統計の取得に失敗しました', err, metadata);
-  return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  return NextResponse.json({ error: API_INTERNAL_ERROR_MESSAGE }, { status: 500 });
 }
 
 /** 「自分が対応した件数（今週）」の日数 */
@@ -151,12 +151,8 @@ export async function GET(_request: Request) {
     });
 
   } catch (error) {
-    if (error instanceof AuthError) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-    if (error instanceof ForbiddenError) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
+    const authFailure = authFailureFlat(error);
+    if (authFailure) return authFailure;
     return internalError(error);
   }
 }
