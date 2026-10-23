@@ -19,7 +19,7 @@ npm run check:env -- --strict                      # 任意の変数の「値の
 | 種類 | 変数 | 足りないとき |
 |---|---|---|
 | **必須** | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` | アプリが動きません。コードは、使う場面でエラー（`MissingEnvError`）を出します。状態コードは場面ごとに次のとおりです。URL か anon キーが無いと、middleware がページと API（`/api/health` を除く）を汎用の 500 で止めます。`/api/health` は middleware を通らず、`?deep=1` のときだけ 503（`status: "degraded"`）を返します（`?deep=1` が無ければ DB を見ないので 200 のままです）。`SUPABASE_SERVICE_ROLE_KEY` だけが無いと、それを使う API はほとんどが 500 になります。ただし `POST /api/super-admin/embeddings/regenerate` は 503（`OP_EMBEDDING_JOB_UNAVAILABLE`）を返します。`POST /api/org/owner-transfer/propose` は提案の作成は成功のまま、通知メールだけを送りません。献立の画像生成ワーカーの起動（`lib/meal-image-jobs.ts`）と、AI の利用記録の署名ヘッダー（`src/lib/plan/entitlements.ts`）は、エラーにせずに飛ばします。応答（本文・ヘッダ・エラーページ）には変数名も値も出しません。本文は API によって、汎用の文（「処理中にエラーが発生しました」）・`MissingEnvError` の固定の文（変数名は入りません）・Next.js の既定のエラーのどれかです。どの変数が足りないかは、サーバーのログの `[env] missing required env: <変数名>` の行（どの経路でも出ます）と、`npm run check:env` で分かります。500 を `internalError()` で返す API と middleware では、構造化ログの `missing_env_name` にも残ります（console に出る構造化ログには必ず入ります。`app_logs` に書けるのは URL と `SUPABASE_SERVICE_ROLE_KEY` がそろっているとき、つまり anon キーだけが無いときです）。コマンドは終了コード 1 |
-| **任意** | メール（`RESEND_API_KEY`）・レート制限（`UPSTASH_REDIS_REST_*`）・課金（`STRIPE_SECRET_KEY`・`STRIPE_WEBHOOK_SECRET`・`REVENUECAT_SECRET_API_KEY`・`REVENUECAT_WEBHOOK_SECRET`）・AI（`GOOGLE_AI_STUDIO_API_KEY`・`XAI_API_KEY`・`OPENAI_API_KEY`）・`CRON_SECRET`・モバイル認証ブリッジのスイッチ（`NATIVE_BRIDGE_*`）・規約の再同意のスイッチ（`LEGAL_CONSENT_*`）など | アプリは動きますが、その機能が使えなくなったり弱くなったりします。コマンドは「未設定です。…が起きます」と表示するだけです |
+| **任意** | メール（`RESEND_API_KEY`）・レート制限（`UPSTASH_REDIS_REST_*`）・課金（`STRIPE_SECRET_KEY`・`STRIPE_WEBHOOK_SECRET`・`REVENUECAT_SECRET_API_KEY`・`REVENUECAT_WEBHOOK_SECRET`）・AI（`GOOGLE_AI_STUDIO_API_KEY`・`XAI_API_KEY`・`OPENAI_API_KEY`）・`CRON_SECRET`・モバイル認証ブリッジのスイッチ（`NATIVE_BRIDGE_*`）・規約の再同意のスイッチ（`LEGAL_CONSENT_*`）・Sign in with Apple（Web のスイッチ `NEXT_PUBLIC_APPLE_SIGN_IN` と、退会のときの失効に使うサーバの秘密 `APPLE_SIGN_IN_TEAM_ID`・`APPLE_SIGN_IN_KEY_ID`・`APPLE_SIGN_IN_PRIVATE_KEY`・`APPLE_SIGN_IN_SERVICES_ID`。値の意味は `src/lib/env.ts` の一覧）など | アプリは動きますが、その機能が使えなくなったり弱くなったりします。コマンドは「未設定です。…が起きます」と表示するだけです |
 
 - 任意の変数が足りないことで、本番を止めてはいけません。任意の変数を読む共通の関数（`getOptionalEnv()`。`src/lib/env.ts`）は、変数が無いときに例外を投げず、`undefined` を返して、プロセスごとに 1 回だけ警告をログに残します。メール送信・レート制限・Stripe・AI など、いまは各機能が `process.env` を直接読んでいる箇所が残っていて、ほかの作業と重ならないところから順にこの関数へ置き換えていきます。
 - 下の「必須の環境変数」は `src/lib/env.ts` の必須（`required: true`）と同じ 3 つだけです。`CRON_SECRET`・Google AI（Gemini）・OpenAI は、その下の「機能ごとに要る環境変数」に分けてあります。`check:env` ではどれも任意です（無くてもアプリ本体は動き、cron の API が 503 を返す・その AI の機能が使えない、になるだけのため）。本番では、使う機能の分を設定してください。
@@ -462,6 +462,7 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 - `EXPO_PUBLIC_APP_ENV` - `development | preview | production`
 - `EXPO_PUBLIC_WEB_URL` - WebView が開く Web のオリジン（未設定なら `https://homegohan-app.vercel.app`）。設定画面の「利用規約」「プライバシーポリシー」も、このオリジンの `/terms` `/privacy` を開く
 - `EXPO_PUBLIC_SUPPORT_EMAIL` - 設定画面・プロフィール画面の「お問い合わせ」の宛先（未設定なら従来のアドレス。`apps/mobile/src/lib/siteConfig.ts`）
+- `EXPO_PUBLIC_APPLE_SIGN_IN` - `on` のときだけ、iOS のログイン・新規登録の画面に Apple のボタンを出す（大文字小文字と前後の空白は区別しない。未設定・ほかの値なら出さない。Android には効かない。ビルドのときに埋め込まれるので、変えたら新しいビルドが要る。入れる前の確認は `docs/design/mobile/08-sign-in-with-apple.md` §19.3）
 
 サンプルは `apps/mobile/env.example` を参照してください。
 

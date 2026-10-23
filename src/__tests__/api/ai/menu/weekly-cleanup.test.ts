@@ -144,14 +144,14 @@ afterEach(() => {
 });
 
 describe('POST /api/ai/menu/weekly/cleanup', () => {
-  it('stuck リクエストが無い場合は復元を呼ばず No stuck requests found を返す', async () => {
+  it('stuck リクエストが無い場合は復元を呼ばず「進まなくなった献立の生成はありません」を返す', async () => {
     fetchResultQueue.push({ data: [], error: null });
 
     const res = await POST();
     const json = await res.json();
 
     expect(res.status).toBe(200);
-    expect(json.message).toBe('No stuck requests found');
+    expect(json.message).toBe('進まなくなった献立の生成はありません');
     expect(json.cleaned).toBe(0);
     expect(mockUpdate).not.toHaveBeenCalled();
     expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
@@ -174,7 +174,7 @@ describe('POST /api/ai/menu/weekly/cleanup', () => {
     const json = await res.json();
 
     expect(res.status).toBe(200);
-    expect(json.message).toBe('Cleaned up stuck requests');
+    expect(json.message).toBe('進まなくなった献立の生成を片付けました');
     expect(json.cleaned).toBe(2);
     expect(json.ids).toEqual(['req-1', 'req-2']);
     expect(json.restoredMeals).toBe(1);
@@ -387,14 +387,14 @@ describe('POST /api/ai/menu/weekly/cleanup', () => {
       expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledTimes(1);
     });
 
-    it('すべての行が読んでから書くまでに進んだときは No stuck requests found を返す', async () => {
+    it('すべての行が読んでから書くまでに進んだときは「進まなくなった献立の生成はありません」を返す', async () => {
       fetchResultQueue.push({ data: [stuckProcessing('raced')], error: null });
       updateResultQueue.push({ data: [], error: null });
 
       const res = await POST();
       const json = await res.json();
 
-      expect(json.message).toBe('No stuck requests found');
+      expect(json.message).toBe('進まなくなった献立の生成はありません');
       expect(json.cleaned).toBe(0);
       expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
     });

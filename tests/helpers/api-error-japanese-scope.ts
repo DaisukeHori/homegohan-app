@@ -18,7 +18,8 @@ export const JAPANESE_ERROR_API_DIRS: readonly string[] = [
   'src/app/api/e2e',
   'src/app/api/admin',
   'src/app/api/support',
-  // super_admin・運営の操作 (operator は、別の PR が直している途中の membership/{org,family}/[id]/transfer を除いた配下)
+  'src/app/api/ai',
+  // super_admin・運営の操作 (operator は membership の配下ごと。強制の譲渡の 2 route は #1981 のマージの後に直した)
   'src/app/api/super-admin',
   'src/app/api/operator/membership/audit',
   'src/app/api/operator/membership/families',
@@ -27,6 +28,8 @@ export const JAPANESE_ERROR_API_DIRS: readonly string[] = [
   'src/app/api/operator/membership/family/[id]/dissolve',
   'src/app/api/operator/membership/org/[id]/candidates',
   'src/app/api/operator/membership/org/[id]/dissolve',
+  'src/app/api/operator/membership/org/[id]/transfer',
+  'src/app/api/operator/membership/family/[id]/transfer',
 ];
 
 /** route が本文を作るのに使う共通の関数のファイル (ここも違反 0 件を見張る) */
@@ -73,10 +76,7 @@ export const MACHINE_FACING_ERROR_TEXT_PATHS: readonly MachineFacingErrorTextPat
  * その PR のマージで件数が動いても main が赤くならないよう、ここで外しておく。
  * その PR がマージされたら、ここから行を消し、UNFIXED_VIOLATION_BASELINE をその時点の件数に数え直す
  */
-export const SENTINEL_EXCLUDED_ROUTE_FILES: readonly string[] = [
-  'src/app/api/operator/membership/family/[id]/transfer/route.ts',
-  'src/app/api/operator/membership/org/[id]/transfer/route.ts',
-];
+export const SENTINEL_EXCLUDED_ROUTE_FILES: readonly string[] = [];
 
 /**
  * 一覧の外 (まだ直していない配下) の違反の件数の基線。キー = `src/app/api/<最初の区切り>`、値 = 英語だけの文と例外の文面の件数の合計。
@@ -84,7 +84,6 @@ export const SENTINEL_EXCLUDED_ROUTE_FILES: readonly string[] = [
  */
 export const UNFIXED_VIOLATION_BASELINE: Readonly<Record<string, number>> = {
   'src/app/api/account': 3,
-  'src/app/api/ai': 112,
   'src/app/api/announcements': 6,
   'src/app/api/auth': 1,
   'src/app/api/badges': 2,

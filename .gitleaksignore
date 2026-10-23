@@ -1,0 +1,12 @@
+# gitleaks の「この 1 件だけ」の除外 (指摘の指紋 = <コミット>:<ファイル>:<ルール>:<行>)
+#
+# .gitleaks.toml の allowlist (値や形で除外する) では扱いにくい、特定のコミットの 1 件の誤検知だけをここに書く。
+# 決まり (tests/no-literal-private-key.test.ts が確かめる):
+#   - 必ずコミットの完全な SHA を付けた指紋で書く (コミットの無い「<ファイル>:<ルール>:<行>」は、
+#     そのファイルのその行を今後のすべてのコミットで除外してしまうので書かない)。ファイルやディレクトリごとは除外しない。
+#   - 本物のキーが見つかったときは、ここに足さない。そのキーを無効にして、新しく発行し直す。
+#
+# 5f0cdb9479996d8bdb8b719d78f3e7f6255c9d9f (Sign in with Apple 段 A1 #1139) の private-key:
+#   src/__tests__/lib/auth/apple/config.test.ts の 30 行目のダミーの PEM (本文は ABCDEF。本物の鍵ではない) を拾ったもの。
+#   後のコミットでヘッダを分けて組み立てる形に直したので、このコミットの差分にだけ残る (PR の検査範囲に入る)。
+5f0cdb9479996d8bdb8b719d78f3e7f6255c9d9f:src/__tests__/lib/auth/apple/config.test.ts:private-key:30

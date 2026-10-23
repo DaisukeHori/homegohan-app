@@ -27,8 +27,9 @@
 
 import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import ws from 'ws';
+import { actAsAuthenticatedSql, createLockHolderKit, type Holder } from '../helpers/lock-holder';
 import { promoteToAal2 } from '../helpers/mfa';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
@@ -117,21 +118,10 @@ const SEEDED_USED_LICENSES = 2;
 const ONE_SEAT = 1;
 /** 本物の経路で同時に呼ぶ回数 (org-transfer-toctou.test.ts と同じ) */
 const ITERATIONS = 8;
-/** 先の処理をコミット前のまま開いておく秒数 */
-const HOLD_SECONDS = 3;
-/**
- * 組織の行だけを持つ接続 (holdOrgRow) が行を持つ秒数。そのあいだに所属の解放を組織の行の待ちに並ばせ、脱退と別の組織の招待の承諾を
- * 済ませるので HOLD_SECONDS より長く取る。並んだ呼び出しは放すまで待つので、authenticated の文の時間切れ
- * (Supabase の既定の statement_timeout 8 秒) より短くする
- */
-const ORDER_HOLD_SECONDS = 6;
 /** 招待のトークンのバイト数 (hex で 64 文字。create_org_invite と同じ形) */
 const TOKEN_BYTES = 32;
 /** 招待の期限 (14 日。create_org_invite と同じ) */
 const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
-/** pg_sleep に入るのを待つ上限 (ミリ秒) と確かめる間隔 */
-const HOLDER_DEADLINE_MS = 20_000;
-const HOLDER_POLL_MS = 50;
 const TEST_TIMEOUT_MS = 120_000;
 const RACE_TIMEOUT_MS = 240_000;
 /** CHECK 違反の SQLSTATE (修正前の強制譲渡が返していたもの) */
@@ -139,7 +129,6 @@ const PG_CHECK_VIOLATION = '23514';
 
 const createdUserIds: string[] = [];
 const createdOrgIds: string[] = [];
-const pendingHolders: Array<Promise<unknown>> = [];
 
 async function signIn(email: string): Promise<{ client: SupabaseClient; jwt: string }> {
   // サインインは使い捨てのクライアントで行う (srAdmin でサインインすると service_role でなくなる)
@@ -363,108 +352,38 @@ async function operator(): Promise<Operator> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 先の処理をコミット前のまま開いておく接続 (org-transfer-toctou.test.ts と同じ形)
+// 先の処理をコミット前のまま開いておく接続 (tests/integration/helpers/lock-holder.ts。後から呼んだ処理が行のロックの待ちに
+// 並んだのを確かめてから放す。決まった秒数の窓で「並んだはず」と仮定しない。#1917)
 // ---------------------------------------------------------------------------------------------
 
-interface Holder {
-  /** その接続の SQL に埋めた目印 (pg_stat_activity.query で見分ける) */
-  marker: string;
-  sleeping: Promise<void>;
-  done: Promise<Outcome>;
-  /** 先の接続がもう終わったか (pg_sleep を抜けて、持っていた行を放したか) */
-  finished: () => boolean;
-}
+const holders = createLockHolderKit({ pgRequest, markerPrefix: 'release-owner-race' });
 
 const AAL2_CLAIMS = { aal: 'aal2' } as const;
 
-/** 本人 (actor) の JWT のクレームで callSql を呼び、コミット前のまま HOLD_SECONDS 秒開いておく */
+/** 本人 (actor) の JWT のクレームで callSql を呼び、コミット前のまま開いておく */
 function holdCall(actor: TestUser, callSql: string, extraClaims: Record<string, string> = {}): Holder {
-  const marker = `release-owner-race-holder-${randomBytes(6).toString('hex')}`;
-  const claims = JSON.stringify({ sub: actor.id, role: 'authenticated', ...extraClaims });
-  return startHolder(
-    marker,
-    `/* ${marker} */
-    SELECT set_config('request.jwt.claims', '${claims}', true);
-    SET LOCAL ROLE authenticated;
-    SELECT * FROM ${callSql};
-    SELECT pg_sleep(${HOLD_SECONDS});
-    SELECT 'held' AS result;`,
-  );
+  return holders.startHolder(callSql, `${actAsAuthenticatedSql(actor.id, extraClaims)}
+    SELECT * FROM ${callSql};`);
 }
 
-/** 退会の所属の解放 (release_user_membership) をコミット前のまま HOLD_SECONDS 秒開いておく (pg/query の権限。service_role と同じく関数を呼べる) */
+/** 退会の所属の解放 (release_user_membership) をコミット前のまま開いておく (pg/query の権限。service_role と同じく関数を呼べる) */
 function holdRelease(userId: string): Holder {
-  const marker = `release-owner-race-release-${randomBytes(6).toString('hex')}`;
-  return startHolder(
-    marker,
-    `/* ${marker} */
-    SELECT public.release_user_membership('${userId}'::uuid);
-    SELECT pg_sleep(${HOLD_SECONDS});
-    SELECT 'held' AS result;`,
-  );
+  return holders.startHolder('所属の解放 (release_user_membership)', `SELECT public.release_user_membership('${userId}'::uuid);`);
 }
 
-/** 組織の行だけを FOR NO KEY UPDATE で ORDER_HOLD_SECONDS 秒持つ接続 (pg/query の権限。user_profiles の行は 1 つも持たない) */
+/**
+ * 組織の行だけを FOR NO KEY UPDATE で持つ接続 (pg/query の権限。user_profiles の行は 1 つも持たない)。そのあいだに所属の解放を
+ * 組織の行の待ちに並ばせ、脱退と別の組織の招待の承諾を済ませてから放す
+ */
 function holdOrgRow(orgId: string): Holder {
-  const marker = `release-owner-race-org-row-${randomBytes(6).toString('hex')}`;
-  return startHolder(
-    marker,
-    `/* ${marker} */
-    SELECT 1 FROM public.organizations WHERE id = '${orgId}'::uuid FOR NO KEY UPDATE;
-    SELECT pg_sleep(${ORDER_HOLD_SECONDS});
-    SELECT 'held' AS result;`,
-  );
+  return holders.startHolder('組織の行を持つ接続', `SELECT 1 FROM public.organizations WHERE id = '${orgId}'::uuid FOR NO KEY UPDATE;`);
 }
 
-/** marker を含む sql を pg/query に投げ (終わりを待たない)、その接続が pg_sleep に入るまでを sleeping で待てるようにする */
-function startHolder(marker: string, sql: string): Holder {
-  const state: { outcome: Outcome | null } = { outcome: null };
-  const done = pgRequest(sql).then((res): Outcome => {
-    const body = res.body as { error?: unknown; code?: unknown } | null;
-    const outcome: Outcome = res.ok
-      ? { ok: true, data: null, message: null, code: null }
-      : {
-          ok: false,
-          data: null,
-          message: typeof body?.error === 'string' ? body.error : JSON.stringify(body),
-          code: typeof body?.code === 'string' ? body.code : null,
-        };
-    state.outcome = outcome;
-    return outcome;
-  });
-  pendingHolders.push(done);
-
-  const sleeping = (async () => {
-    const deadline = Date.now() + HOLDER_DEADLINE_MS;
-    while (Date.now() < deadline) {
-      if (state.outcome) throw new Error(`先に呼んだ接続が pg_sleep に入る前に終わりました: ${JSON.stringify(state.outcome)}`);
-      const rows = await pgQuery<{ n: number }>(`
-        SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE wait_event = 'PgSleep' AND query LIKE '%${marker}%' AND pid <> pg_backend_pid()`);
-      if (rows[0]?.n === 1) return;
-      await sleep(HOLDER_POLL_MS);
-    }
-    throw new Error('先に呼んだ接続が pg_sleep に入りませんでした (遅すぎます)');
-  })();
-
-  return { marker, sleeping, done, finished: () => state.outcome !== null };
-}
-
-/** 関数 fnName を本物の経路で呼んだ接続が、行のロックの待ち (pg_stat_activity の wait_event_type = 'Lock') に count 本以上入るまで待つ */
-async function waitForLockWaiters(fnName: string, count: number): Promise<void> {
-  const deadline = Date.now() + HOLDER_DEADLINE_MS;
-  while (Date.now() < deadline) {
-    const rows = await pgQuery<{ n: number }>(`
-      SELECT count(*)::int AS n FROM pg_stat_activity
-      WHERE wait_event_type = 'Lock' AND query LIKE '%${fnName}%' AND pid <> pg_backend_pid()`);
-    if ((rows[0]?.n ?? 0) >= count) return;
-    await sleep(HOLDER_POLL_MS);
-  }
-  throw new Error(`${fnName} の呼び出しが行のロックの待ちに入りませんでした (遅すぎます)`);
-}
+// テストが途中で落ちたときに残った接続を、作った順に放す (通ったテストでは全部放し終わっているので何もしない)
+afterEach(() => holders.releaseOpenHolders(), RACE_TIMEOUT_MS);
 
 afterAll(async () => {
-  await Promise.allSettled(pendingHolders);
+  await holders.settle();
   if (createdUserIds.length > 0) {
     await srAdmin.from('membership_audit').delete().in('actor_id', createdUserIds);
     await srAdmin.from('membership_audit').delete().in('target_user_id', createdUserIds);
@@ -527,9 +446,10 @@ describe('譲渡と所属の解放が同時に走っても、所属の無い人�
     const { owner, admin, orgId, proposalId } = await setupTransfer('rm1');
 
     const holder = holdCall(admin, `public.accept_org_owner_transfer('${proposalId}'::uuid)`);
-    await holder.sleeping;
-    const released = await releaseMembership(admin.id);
-    const held = await holder.done;
+    const [held, released] = await holders.runBehindHolder(holder, {
+      fn: 'release_user_membership',
+      call: () => releaseMembership(admin.id),
+    });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expectRaised(released, 'IS_ORG_OWNER');
@@ -548,9 +468,10 @@ describe('譲渡と所属の解放が同時に走っても、所属の無い人�
     await setOrgMembership(member, orgId, 'member');
 
     const holder = holdCall(op.user, `public.operator_force_owner_transfer('${orgId}'::uuid, '${member.id}'::uuid, 'rm2')`, AAL2_CLAIMS);
-    await holder.sleeping;
-    const released = await releaseMembership(member.id);
-    const held = await holder.done;
+    const [held, released] = await holders.runBehindHolder(holder, {
+      fn: 'release_user_membership',
+      call: () => releaseMembership(member.id),
+    });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expectRaised(released, 'IS_ORG_OWNER');
@@ -563,9 +484,10 @@ describe('譲渡と所属の解放が同時に走っても、所属の無い人�
     const { owner, admin, orgId, proposalId } = await setupTransfer('rm3');
 
     const holder = holdRelease(admin.id);
-    await holder.sleeping;
-    const accept = await acceptTransfer(admin, proposalId);
-    const held = await holder.done;
+    const [held, accept] = await holders.runBehindHolder(holder, {
+      fn: 'accept_org_owner_transfer',
+      call: () => acceptTransfer(admin, proposalId),
+    });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expect(accept.code, JSON.stringify(accept)).not.toBe(PG_CHECK_VIOLATION);
@@ -583,9 +505,10 @@ describe('譲渡と所属の解放が同時に走っても、所属の無い人�
     await setOrgMembership(member, orgId, 'member');
 
     const holder = holdRelease(member.id);
-    await holder.sleeping;
-    const forced = await operatorTransfer(op.jwt, orgId, member.id);
-    const held = await holder.done;
+    const [held, forced] = await holders.runBehindHolder(holder, {
+      fn: 'operator_force_owner_transfer',
+      call: () => operatorTransfer(op.jwt, orgId, member.id),
+    });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expect(forced.code, JSON.stringify(forced)).not.toBe(PG_CHECK_VIOLATION);
@@ -643,9 +566,10 @@ describe('所属の解放が組織の行を待つ間に所属が変わっても�
     const orgId = await createOrg(owner, admin, 'rm10');
 
     const holder = holdCall(owner, `public.dissolve_org_by_owner('${orgId}'::uuid)`);
-    await holder.sleeping;
-    const released = await releaseMembership(admin.id);
-    const held = await holder.done;
+    const [held, released] = await holders.runBehindHolder(holder, {
+      fn: 'release_user_membership',
+      call: () => releaseMembership(admin.id),
+    });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expect(released.ok, JSON.stringify(released)).toBe(true);
@@ -665,7 +589,7 @@ describe('所属の解放が組織の行を待つ間に所属が変わっても�
     const holder = holdOrgRow(orgA);
     await holder.sleeping;
     const releaseDone = releaseMembership(mover.id);
-    await waitForLockWaiters('release_user_membership', 1);
+    await holders.waitForLockWaiters('release_user_membership', 1, { step: '所属の解放が組織 A の行の手前に並ぶ', blockedBy: holder });
 
     const { data: leftData, error: leftError } = await asUser(mover.jwt).rpc('leave_org');
     const left = toOutcome(leftData, leftError);
@@ -673,7 +597,9 @@ describe('所属の解放が組織の行を待つ間に所属が変わっても�
     const { data: acceptedData, error: acceptedError } = await asUser(mover.jwt).rpc('accept_org_invite', { p_token: token });
     const accepted = toOutcome(acceptedData, acceptedError);
     expect(accepted.ok, JSON.stringify(accepted)).toBe(true);
-    expect(holder.finished(), '組織 A の行を放す前に脱退と招待の承諾が済みませんでした (遅すぎます)').toBe(false);
+    expect(holder.finished(), '脱退と招待の承諾が済む前に、組織 A の行を持つ接続が終わりました').toBe(false);
+    // 脱退と招待の承諾が済んだのを確かめてから組織 A の行を放す (放す前に接続が終わっていれば release() が失敗する)
+    await holder.release();
 
     const [held, released] = await Promise.all([holder.done, releaseDone]);
     expect(held.ok, JSON.stringify(held)).toBe(true);

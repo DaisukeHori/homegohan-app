@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { getAiConsentStatus, revokeAiConsent } from '@/lib/ai/consent';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 /**
  * T15 (#1154) 外国の AI 事業者への提供の同意: 撤回
@@ -27,7 +28,7 @@ export async function POST() {
     error: userError,
   } = await supabase.auth.getUser();
   if (userError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: NO_STORE });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401, headers: NO_STORE });
   }
 
   const logger = createLogger('POST /api/ai/consent/revoke', generateRequestId()).withUser(user.id);

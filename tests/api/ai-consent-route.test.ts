@@ -112,7 +112,7 @@ describe('GET /api/ai/consent', () => {
     const res = await GET();
 
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: 'Unauthorized' });
+    expect(await res.json()).toEqual({ error: 'ログインが必要です' });
     expect(res.headers.get('Cache-Control')).toBe('no-store');
     expect(db.calls).toHaveLength(0);
   });

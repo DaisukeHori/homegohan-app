@@ -89,7 +89,7 @@ describe('POST /api/ai/hint: 認証 (#1327)', () => {
     const res = await POST(makeRequest());
 
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: 'Unauthorized' });
+    expect(await res.json()).toEqual({ error: 'ログインが必要です' });
     expect(mocks.invoke).not.toHaveBeenCalled();
   });
 
@@ -99,7 +99,7 @@ describe('POST /api/ai/hint: 認証 (#1327)', () => {
     const res = await POST(makeRequest());
 
     expect(res.status).toBe(401);
-    expect(await res.json()).toEqual({ error: 'Unauthorized' });
+    expect(await res.json()).toEqual({ error: 'ログインが必要です' });
     expect(mocks.invoke).not.toHaveBeenCalled();
   });
 });

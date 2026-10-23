@@ -24,8 +24,9 @@
 
 import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import ws from 'ws';
+import { actAsAuthenticatedSql, createLockHolderKit, type Holder } from '../helpers/lock-holder';
 import { promoteToAal2 } from '../helpers/mfa';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
@@ -114,17 +115,11 @@ const TOKEN_BYTES = 32;
 const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 /** 本物の経路で同時に呼ぶ回数 (self-dissolve.test.ts の D-15 と同じ) */
 const ITERATIONS = 8;
-/** 先の処理をコミット前のまま開いておく秒数 */
-const HOLD_SECONDS = 3;
-/** pg_sleep に入るのを待つ上限 (ミリ秒) と確かめる間隔 */
-const HOLDER_DEADLINE_MS = 20_000;
-const HOLDER_POLL_MS = 50;
 const TEST_TIMEOUT_MS = 120_000;
 const RACE_TIMEOUT_MS = 240_000;
 
 const createdUserIds: string[] = [];
 const createdOrgIds: string[] = [];
-const pendingHolders: Array<Promise<unknown>> = [];
 
 async function signIn(email: string): Promise<{ client: SupabaseClient; jwt: string }> {
   // サインインは使い捨てのクライアントで行う (srAdmin でサインインすると service_role でなくなる)
@@ -290,58 +285,23 @@ async function operatorJwt(): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 先の処理をコミット前のまま開いておく接続 (self-dissolve.test.ts と同じ形)
+// 先の処理をコミット前のまま開いておく接続 (tests/integration/helpers/lock-holder.ts。後から呼んだ処理が行のロックの待ちに
+// 並んだのを確かめてから放す。決まった秒数の窓で「並んだはず」と仮定しない。#1917)
 // ---------------------------------------------------------------------------------------------
 
-interface Holder {
-  sleeping: Promise<void>;
-  done: Promise<Outcome>;
-}
+const holders = createLockHolderKit({ pgRequest, markerPrefix: 'org-invite-dissolved' });
 
+/** 本人 (actor) の JWT のクレームで callSql を呼び、コミット前のまま開いておく */
 function holdCall(actor: TestUser, callSql: string): Holder {
-  const marker = `org-invite-dissolved-holder-${randomBytes(6).toString('hex')}`;
-  const claims = JSON.stringify({ sub: actor.id, role: 'authenticated' });
-  const sql = `/* ${marker} */
-    SELECT set_config('request.jwt.claims', '${claims}', true);
-    SET LOCAL ROLE authenticated;
-    SELECT * FROM ${callSql};
-    SELECT pg_sleep(${HOLD_SECONDS});
-    SELECT 'held' AS result;`;
-
-  const state: { outcome: Outcome | null } = { outcome: null };
-  const done = pgRequest(sql).then((res): Outcome => {
-    const body = res.body as { error?: unknown; code?: unknown } | null;
-    const outcome: Outcome = res.ok
-      ? { ok: true, data: null, message: null, code: null }
-      : {
-          ok: false,
-          data: null,
-          message: typeof body?.error === 'string' ? body.error : JSON.stringify(body),
-          code: typeof body?.code === 'string' ? body.code : null,
-        };
-    state.outcome = outcome;
-    return outcome;
-  });
-  pendingHolders.push(done);
-
-  const sleeping = (async () => {
-    const deadline = Date.now() + HOLDER_DEADLINE_MS;
-    while (Date.now() < deadline) {
-      if (state.outcome) throw new Error(`先に呼んだ接続が pg_sleep に入る前に終わりました: ${JSON.stringify(state.outcome)}`);
-      const rows = await pgQuery<{ n: number }>(`
-        SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE wait_event = 'PgSleep' AND query LIKE '%${marker}%' AND pid <> pg_backend_pid()`);
-      if (rows[0]?.n === 1) return;
-      await sleep(HOLDER_POLL_MS);
-    }
-    throw new Error('先に呼んだ接続が pg_sleep に入りませんでした (遅すぎます)');
-  })();
-
-  return { sleeping, done };
+  return holders.startHolder(callSql, `${actAsAuthenticatedSql(actor.id)}
+    SELECT * FROM ${callSql};`);
 }
+
+// テストが途中で落ちたときに残った接続を、作った順に放す (通ったテストでは全部放し終わっているので何もしない)
+afterEach(() => holders.releaseOpenHolders(), RACE_TIMEOUT_MS);
 
 afterAll(async () => {
-  await Promise.allSettled(pendingHolders);
+  await holders.settle();
   if (createdUserIds.length > 0) {
     await srAdmin.from('membership_audit').delete().in('actor_id', createdUserIds);
     await srAdmin.from('user_profiles').update({ organization_id: null, org_role: null, is_active_in_org: false }).in('id', createdUserIds);
@@ -423,9 +383,7 @@ describe('Q-4 解散と招待の承諾が同時に走っても、解散した組
     const token = await insertPendingOrgInvite(orgId, invitee.email, owner.id);
 
     const holder = holdCall(invitee, `public.accept_org_invite('${token}')`);
-    await holder.sleeping;
-    const dissolve = await dissolveOrg(owner, orgId);
-    const held = await holder.done;
+    const [held, dissolve] = await holders.runBehindHolder(holder, { fn: 'dissolve_org_by_owner', call: () => dissolveOrg(owner, orgId) });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expect(dissolve.ok, JSON.stringify(dissolve)).toBe(true);
@@ -442,9 +400,7 @@ describe('Q-4 解散と招待の承諾が同時に走っても、解散した組
     const token = await insertPendingOrgInvite(orgId, invitee.email, owner.id);
 
     const holder = holdCall(owner, `public.dissolve_org_by_owner('${orgId}'::uuid)`);
-    await holder.sleeping;
-    const accept = await acceptInvite(invitee, token);
-    const held = await holder.done;
+    const [held, accept] = await holders.runBehindHolder(holder, { fn: 'accept_org_invite', call: () => acceptInvite(invitee, token) });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expectRaised(accept, 'ORG_ALREADY_DISSOLVED');
@@ -461,9 +417,10 @@ describe('Q-4 解散と招待の承諾が同時に走っても、解散した組
     const token = await insertPendingOrgInvite(orgId, invitee.email, owner.id);
 
     const holder = holdCall(invitee, `public.accept_org_invite('${token}')`);
-    await holder.sleeping;
-    const dissolve = await operatorDissolveOrg(jwt, orgId);
-    const held = await holder.done;
+    const [held, dissolve] = await holders.runBehindHolder(holder, {
+      fn: 'operator_force_dissolve_org',
+      call: () => operatorDissolveOrg(jwt, orgId),
+    });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expect(dissolve.ok, JSON.stringify(dissolve)).toBe(true);

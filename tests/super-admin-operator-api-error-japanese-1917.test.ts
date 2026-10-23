@@ -67,10 +67,13 @@ const ROUTE_IMPORT_HOOK_TIMEOUT_MS = resolveHeavyUnitTimeouts(process.env).hookT
 
 /** このテストが受け持つ配下 (super-admin と operator のうち、直し終えた配下) */
 const OWN_ROOTS = ['src/app/api/super-admin', 'src/app/api/operator'];
-/** 受け持つ route の例 (super-admin と operator の両方) */
-const SAMPLE_OWN_ROUTES = ['src/app/api/super-admin/llm/quotas/route.ts', 'src/app/api/operator/membership/orgs/inactive/route.ts'];
-/** 別の PR が直している途中で、受け持たない譲渡の route */
-const TRANSFER_ROUTES = [
+/**
+ * 受け持つ route の例 (super-admin と operator の両方)。運営の強制の譲渡の 2 route も直し終えた配下に入っている
+ * (本文の 401 / 403 は authFailureNested の固定の文・RPC のエラーのコードは src/lib/errors/db-raised-code.ts で判定する)
+ */
+const SAMPLE_OWN_ROUTES = [
+  'src/app/api/super-admin/llm/quotas/route.ts',
+  'src/app/api/operator/membership/orgs/inactive/route.ts',
   'src/app/api/operator/membership/org/[id]/transfer/route.ts',
   'src/app/api/operator/membership/family/[id]/transfer/route.ts',
 ];
@@ -132,8 +135,8 @@ describe('直し終えた super-admin・operator の配下の route', () => {
     expect(OWN_DIRS).toContain('src/app/api/super-admin');
     expect(OWN_DIRS.some((dir) => isUnderDir(dir, 'src/app/api/operator'))).toBe(true);
     for (const file of SAMPLE_OWN_ROUTES) expect(OWN_ROUTE_FILES).toContain(file);
-    // 別の PR が直している途中の譲渡の route は受け持たない
-    for (const file of TRANSFER_ROUTES) expect(OWN_ROUTE_FILES).not.toContain(file);
+    // 受け持つ route は、どれも 401 / 403 の確かめ (下の it) に handler が入る
+    for (const file of SAMPLE_OWN_ROUTES) expect(cases.some((c) => c.label.endsWith(` ${file}`))).toBe(true);
   });
 
   it('どの handler も、未ログイン (英語の文面の AuthError) を 401 の日本語の文で返し、例外の文面を本文に入れない', async () => {

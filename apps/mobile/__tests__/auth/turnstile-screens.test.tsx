@@ -60,6 +60,23 @@ jest.mock('expo-web-browser', () => ({
   openAuthSessionAsync: jest.fn().mockResolvedValue({ type: 'cancel' }),
 }));
 
+// Sign in with Apple (docs/design/mobile/08-sign-in-with-apple.md §14.1 の正典のモック)。login.tsx・signup.tsx が
+// AppleSignInButton.tsx と appleSignIn.ts を読み、読み込みのときに AppleAuthenticationButtonType を読むため。
+// スイッチ (EXPO_PUBLIC_APPLE_SIGN_IN) 無しなので Apple のボタンは描かれず、Turnstile の検査は同じ
+jest.mock('expo-apple-authentication', () => ({
+  isAvailableAsync: jest.fn().mockResolvedValue(false),
+  signInAsync: jest.fn(),
+  AppleAuthenticationButton: () => null,
+  AppleAuthenticationButtonType: { SIGN_IN: 'SIGN_IN', CONTINUE: 'CONTINUE', SIGN_UP: 'SIGN_UP' },
+  AppleAuthenticationButtonStyle: { WHITE: 'WHITE', WHITE_OUTLINE: 'WHITE_OUTLINE', BLACK: 'BLACK' },
+  AppleAuthenticationScope: { FULL_NAME: 'FULL_NAME', EMAIL: 'EMAIL' },
+}));
+jest.mock('expo-crypto', () => ({
+  randomUUID: jest.fn(() => 'raw-nonce'),
+  digestStringAsync: jest.fn(async () => 'hashed-nonce'),
+  CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
+}));
+
 jest.mock('react-native-svg', () => {
   const ReactInner = require('react');
   const Svg = ({ children }: any) => ReactInner.createElement('View', null, children);

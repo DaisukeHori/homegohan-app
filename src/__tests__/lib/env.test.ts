@@ -372,6 +372,26 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
     expect(Object.keys(SERVER_ENV_VARS)).toEqual(serverNames);
   });
 
+  it('Sign in with Apple の 5 つ (公開の NEXT_PUBLIC_APPLE_SIGN_IN・サーバの APPLE_SIGN_IN_TEAM_ID / KEY_ID / PRIVATE_KEY / SERVICES_ID) はどれも任意として一覧にあり、公開の 1 つは PUBLIC_ENV_VARS・サーバの 4 つは SERVER_ENV_VARS にある (mobile/08 §11.7)', () => {
+    const publicApple = ['NEXT_PUBLIC_APPLE_SIGN_IN'] as const;
+    const serverApple = ['APPLE_SIGN_IN_TEAM_ID', 'APPLE_SIGN_IN_KEY_ID', 'APPLE_SIGN_IN_PRIVATE_KEY', 'APPLE_SIGN_IN_SERVICES_ID'] as const;
+    for (const name of publicApple) {
+      expect(Object.keys(PUBLIC_ENV_VARS), name).toContain(name);
+      expect(Object.keys(SERVER_ENV_VARS), name).not.toContain(name);
+    }
+    for (const name of serverApple) {
+      expect(Object.keys(SERVER_ENV_VARS), name).toContain(name);
+      expect(Object.keys(PUBLIC_ENV_VARS), name).not.toContain(name);
+    }
+    for (const name of [...publicApple, ...serverApple]) {
+      const entry = ENV_VARS.find((candidate) => candidate.name === name);
+      expect(entry, name).toBeDefined();
+      expect(entry?.required, name).toBe(false);
+      // 任意の変数は、無いと何が起きるかを書く
+      expect(entry?.whenMissing, name).toBeTruthy();
+    }
+  });
+
   it('必須は Supabase の接続情報の 3 つだけ。スキーマの必須/任意と env-required の分類が一致する', () => {
     const requiredFromList = ENV_VARS.filter((entry) => entry.required).map((entry) => entry.name);
     const requiredFromSchema = [

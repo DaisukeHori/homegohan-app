@@ -18,8 +18,10 @@
  *   - ログにメールアドレスを載せない。削除後のログに user_id を付けない
  *   - billing/01 §11: 段階 billing (check_blockers のあと・prepare の前) と billing_recheck (記録を始めたあと・deleteUser の直前)。
  *     どちらの失敗もそこで止める。顧客も Stripe の契約の行も無ければ、既定の実装は Stripe を呼ばない
+ *   - mobile/08 §9.3: 段階 apple_revoke (billing_recheck のあと・deleteUser の前)。失効の報告は成功のログの apple に載る。
+ *     既定の実装は params.admin で表 apple_sign_in_tokens を読み、秘密鍵が壊れていても・表がまだ無くても (42P01) 退会を止めない
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // 既定の退会の段階 billing (src/lib/billing/account-deletion.ts) が使う DB と Stripe を偽物にする (テスト 43)。
 // ほかの it は deleteAccount に偽の billing を渡すので、これには届かない
@@ -48,6 +50,7 @@ import {
   type AccountDeletionBilling,
   type AccountDeletionBillingPhase,
 } from '../src/lib/account-deletion';
+import type { AccountDeletionAppleRevocation } from '../src/lib/auth/apple/revocation';
 
 const USER = '11111111-1111-4111-8111-111111111111';
 const REQUEST_ID = 'req_test_1';
@@ -185,8 +188,28 @@ function makeBilling(target: World): AccountDeletionBilling {
   };
 }
 
+/** 偽の退会の段階 apple_revoke。呼ばれたことを world.calls に "apple:revoke" で残す (Apple には繋がない) */
+function makeAppleRevocation(target: World): AccountDeletionAppleRevocation {
+  return {
+    revokeForAccountDeletion: async (userId, _log, requestId) => {
+      target.calls.push('apple:revoke');
+      expect(userId).toBe(USER);
+      expect(requestId).toBe(REQUEST_ID);
+      return { tokens: 0, revoked: 0, failed: 0, skipped: null };
+    },
+  };
+}
+
 const run = (extra: Record<string, unknown> = {}) =>
-  deleteAccount({ userId: USER, admin: makeAdmin(world), requestId: REQUEST_ID, logger: logs.logger, billing: makeBilling(world), ...extra });
+  deleteAccount({
+    userId: USER,
+    admin: makeAdmin(world),
+    requestId: REQUEST_ID,
+    logger: logs.logger,
+    billing: makeBilling(world),
+    appleRevocation: makeAppleRevocation(world),
+    ...extra,
+  });
 
 describe('deleteAccount: 409 (従来と同じ形)', () => {
   it('組織のオーナーは ACCOUNT_DELETE_BLOCKED_ORG_OWNER。退会の印のほかは何も呼ばない', async () => {
@@ -300,9 +323,10 @@ describe('deleteAccount: 成功', () => {
       'rpc:release_user_membership',
     ]);
     expect(world.calls.indexOf('storage.remove:fridge-images')).toBeGreaterThan(world.calls.indexOf('rpc:release_user_membership'));
-    expect(world.calls.slice(-4)).toEqual([
+    expect(world.calls.slice(-5)).toEqual([
       'rpc:begin_account_deletion_record',
       'billing:billing_recheck',
+      'apple:revoke',
       'auth.deleteUser',
       'rpc:complete_account_deletion_record',
     ]);
@@ -551,7 +575,8 @@ describe('deleteAccount: 退会の段階 billing / billing_recheck (billing/01 �
     expect(at('billing:billing')).toBeGreaterThan(at('from:family_groups'));
     expect(at('billing:billing')).toBeLessThan(at('rpc:prepare_account_deletion'));
     expect(at('billing:billing_recheck')).toBeGreaterThan(at('storage.remove:fridge-images'));
-    expect(at('auth.deleteUser')).toBe(at('billing:billing_recheck') + 1);
+    expect(at('apple:revoke')).toBe(at('billing:billing_recheck') + 1);
+    expect(at('auth.deleteUser')).toBe(at('apple:revoke') + 1);
     // 成功のログに 2 つの段階の結果が載る
     const info = logs.entries.find((entry) => entry.message === 'account deleted');
     expect(info?.metadata).toMatchObject({
@@ -582,7 +607,13 @@ describe('deleteAccount: 退会の段階 billing / billing_recheck (billing/01 �
     mockListStripeBackedSubscriptions.mockResolvedValue([]);
     mockCreateStripeGateway.mockClear();
     // billing を渡さない = 既定の defaultAccountDeletionBilling
-    const result = await deleteAccount({ userId: USER, admin: makeAdmin(world), requestId: REQUEST_ID, logger: logs.logger });
+    const result = await deleteAccount({
+      userId: USER,
+      admin: makeAdmin(world),
+      requestId: REQUEST_ID,
+      logger: logs.logger,
+      appleRevocation: makeAppleRevocation(world),
+    });
 
     expect(result).toEqual({ ok: true });
     expect(mockFindCustomer).toHaveBeenCalledTimes(2);
@@ -595,6 +626,113 @@ describe('deleteAccount: 退会の段階 billing / billing_recheck (billing/01 �
       billing: { cancelled_subscriptions: 0, expired_checkout_sessions: 0, customer: 'none' },
       billing_recheck: { cancelled_subscriptions: 0, expired_checkout_sessions: 0, customer: 'none' },
     });
+  });
+});
+
+describe('deleteAccount: 退会の段階 apple_revoke (mobile/08 §9.3)', () => {
+  const APPLE_ENV_NAMES = ['APPLE_SIGN_IN_TEAM_ID', 'APPLE_SIGN_IN_KEY_ID', 'APPLE_SIGN_IN_PRIVATE_KEY', 'APPLE_SIGN_IN_SERVICES_ID'] as const;
+  const BROKEN_PEM = 'not-a-pem-key-material-SECRET_PEM_BODY';
+  const NATIVE_CLIENT_ID = 'com.homegohan.app';
+  const REFRESH_TOKEN = 'refresh-token-value-SECRET';
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it('apple_revoke は billing_recheck のあと deleteUser の前に 1 回呼ぶ (呼ぶ順の検査)', async () => {
+    expect(await run()).toEqual({ ok: true });
+    const appleCalls = world.calls.filter((call) => call === 'apple:revoke');
+    expect(appleCalls).toHaveLength(1);
+    expect(world.calls.indexOf('apple:revoke')).toBeGreaterThan(world.calls.indexOf('billing:billing_recheck'));
+    expect(world.calls.indexOf('apple:revoke')).toBeLessThan(world.calls.indexOf('auth.deleteUser'));
+  });
+
+  it('失効の報告は成功のログの apple に載る', async () => {
+    const report = { tokens: 2, revoked: 1, failed: 1, skipped: null } as const;
+    const appleRevocation: AccountDeletionAppleRevocation = { revokeForAccountDeletion: async () => report };
+    expect(await run({ appleRevocation })).toEqual({ ok: true });
+    const info = logs.entries.find((entry) => entry.message === 'account deleted');
+    expect(info?.metadata).toMatchObject({ apple: report });
+  });
+
+  it('既定の実装は params.admin で表 apple_sign_in_tokens を読む。秘密が無ければ Apple を呼ばず、報告は skipped not_configured で退会は続く', async () => {
+    for (const name of APPLE_ENV_NAMES) vi.stubEnv(name, '');
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    world.tables.apple_sign_in_tokens = { data: [{ client_id: NATIVE_CLIENT_ID, refresh_token: REFRESH_TOKEN }] };
+
+    const result = await deleteAccount({
+      userId: USER,
+      admin: makeAdmin(world),
+      requestId: REQUEST_ID,
+      logger: logs.logger,
+      billing: makeBilling(world),
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(world.calls).toContain('from:apple_sign_in_tokens');
+    expect(world.calls.indexOf('from:apple_sign_in_tokens')).toBeGreaterThan(world.calls.indexOf('billing:billing_recheck'));
+    expect(world.calls.indexOf('from:apple_sign_in_tokens')).toBeLessThan(world.calls.indexOf('auth.deleteUser'));
+    expect(fetchSpy).not.toHaveBeenCalled();
+    const info = logs.entries.find((entry) => entry.message === 'account deleted');
+    expect(info?.metadata).toMatchObject({ apple: { tokens: 1, revoked: 0, failed: 0, skipped: 'not_configured' } });
+    expect(JSON.stringify(logs.entries)).not.toContain(REFRESH_TOKEN);
+  });
+
+  it('既定の実装で秘密鍵が壊れていても退会は ok (段階 apple_revoke で失敗にならず deleteUser まで進む。PEM も token もログに出ない)', async () => {
+    vi.stubEnv('APPLE_SIGN_IN_TEAM_ID', 'TEAMID1234');
+    vi.stubEnv('APPLE_SIGN_IN_KEY_ID', 'KEYID12345');
+    vi.stubEnv('APPLE_SIGN_IN_PRIVATE_KEY', BROKEN_PEM);
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    world.tables.apple_sign_in_tokens = { data: [{ client_id: NATIVE_CLIENT_ID, refresh_token: REFRESH_TOKEN }] };
+
+    const result = await deleteAccount({
+      userId: USER,
+      admin: makeAdmin(world),
+      requestId: REQUEST_ID,
+      logger: logs.logger,
+      billing: makeBilling(world),
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(world.calls).toContain('auth.deleteUser');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    const info = logs.entries.find((entry) => entry.message === 'account deleted');
+    expect(info?.metadata).toMatchObject({ apple: { tokens: 1, revoked: 0, failed: 1, skipped: null } });
+    const warned = logs.entries.find((entry) => entry.level === 'warn' && /could not revoke the apple token/.test(entry.message));
+    expect(warned?.metadata).toMatchObject({ step: 'apple_revoke', client_id: NATIVE_CLIENT_ID });
+    const serialized = JSON.stringify(logs.entries);
+    expect(serialized).not.toContain('SECRET_PEM_BODY');
+    expect(serialized).not.toContain(REFRESH_TOKEN);
+  });
+
+  it.each([
+    ['42P01 (migration がまだ当たっていない窓。Postgres の「表が無い」)', { message: 'relation "public.apple_sign_in_tokens" does not exist', code: '42P01' }],
+    ['PGRST205 (PostgREST のスキーマキャッシュに表が無い)', { message: "Could not find the table 'public.apple_sign_in_tokens' in the schema cache", code: 'PGRST205' }],
+  ])('表 apple_sign_in_tokens がまだ無い (%s) ときも、退会は止まらず deleteUser まで進む', async (_label, error) => {
+    world.tables.apple_sign_in_tokens = { data: null, error };
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const result = await deleteAccount({
+      userId: USER,
+      admin: makeAdmin(world),
+      requestId: REQUEST_ID,
+      logger: logs.logger,
+      billing: makeBilling(world),
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(world.calls).toContain('from:apple_sign_in_tokens');
+    expect(world.calls).toContain('auth.deleteUser');
+    expect(world.calls).toContain('rpc:complete_account_deletion_record');
+    expect(fetchSpy).not.toHaveBeenCalled();
+    const warned = logs.entries.find((entry) => entry.level === 'warn' && /could not read apple refresh tokens/.test(entry.message));
+    expect(warned?.metadata).toMatchObject({ step: 'apple_revoke', request_id: REQUEST_ID });
+    const info = logs.entries.find((entry) => entry.message === 'account deleted');
+    expect(info?.metadata).toMatchObject({ apple: { tokens: 0, revoked: 0, failed: 0, skipped: null } });
   });
 });
 

@@ -5,6 +5,8 @@ import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage } from '@/lib/plan/entitlements';
 import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 function stripMarkdownCodeBlock(text: string): string {
   let cleaned = text.trim();
@@ -83,7 +85,7 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
   const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
-  if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   // #1148: AI 相談の緊急停止スイッチ (feature_flags の ai_chat_enabled。通常は ON)。回数の枠を使わせないよう、レート制限より前に見る
   const unavailable = await aiChatDisabledResponse(user.id);
@@ -107,7 +109,7 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
       .single();
 
     if (!session || session.user_id !== user.id) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 });
+      return NextResponse.json({ error: AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     existingSummary = buildExistingSummary(session);

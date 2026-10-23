@@ -14,6 +14,9 @@ import { extractSupabaseLinkParams } from "../../src/lib/deeplink";
 import { supabase } from "../../src/lib/supabase";
 import { TurnstileWidget, useTurnstile } from "../../src/components/auth/TurnstileWidget";
 import { CAPTCHA_FAILED_MESSAGE, isCaptchaFailure } from "../../src/lib/turnstile";
+import { AppleSignInButton, AUTH_PROVIDER_BUTTON_MIN_HEIGHT, useAuthProviderButtonHeight } from "../../src/components/auth/AppleSignInButton";
+import { signInWithApple } from "../../src/lib/appleSignIn";
+import { routeAfterSignIn } from "../../src/lib/routeAfterSignIn";
 
 // #532: client-side rate limit 定数
 const RATE_LIMIT_KEY = "auth_last_fail_ts";
@@ -41,6 +44,8 @@ export default function LoginScreen() {
   const [rateLimitRemaining, setRateLimitRemaining] = useState(0);
   // #1165: bot 対策 (Cloudflare Turnstile)。サイトキーが未設定なら無効で、今までどおりに動く
   const captcha = useTurnstile();
+  // Apple のボタンの高さを Google のボタンの実際の高さに合わせる (docs/design/mobile/08-sign-in-with-apple.md §10.1)
+  const { height: providerButtonHeight, onGoogleButtonLayout } = useAuthProviderButtonHeight();
 
   // #532: アプリ起動時に AsyncStorage から残り制限時間を復元
   useEffect(() => {
@@ -70,33 +75,18 @@ export default function LoginScreen() {
     return () => clearTimeout(timer);
   }, [rateLimitRemaining]);
 
-  // ログイン成功後の振り分け: user_profiles から onboarding 状態を取得して遷移先を決める
-  // (メール・パスワードのログインと Google ログインで共通)
-  // (#1122: アプリの管理者画面は廃止した。運営作業は Web に一本化したので、admin / super_admin も他の人と同じ振り分けにする)
-  async function routeAfterSignIn() {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-
-    const { data: profile } = await supabase
-      .from('user_profiles')
-      .select('onboarding_started_at, onboarding_completed_at')
-      .eq('id', user.id)
-      .single();
-
-    // ?next= クエリパラメータがある場合はそのパスへ復帰 (/ 始まりのみ許可)
-    const safeNext = typeof next === 'string' && next.startsWith('/') ? next : null;
-
-    if (safeNext) {
-      router.replace(safeNext as any);
-    } else if (profile?.onboarding_completed_at) {
-      // オンボーディング完了済み → ホームへ
-      router.replace('/(tabs)/home');
-    } else if (profile?.onboarding_started_at) {
-      // オンボーディング進行中 → 再開ページへ
-      router.replace('/onboarding/resume');
-    } else {
-      // 未開始 → 初回ウェルカムへ
-      router.replace('/onboarding/welcome');
+  async function onAppleLogin() {
+    setIsSubmitting(true);
+    try {
+      const outcome = await signInWithApple();
+      if (outcome.status === "signed_in") {
+        await routeAfterSignIn(next);
+      } else if (outcome.status === "failed") {
+        Alert.alert("Appleログイン失敗", outcome.message);
+      }
+      // cancelled: 何も出さない
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
@@ -122,7 +112,7 @@ export default function LoginScreen() {
         // セッションが作られないまま「確認が完了しました」と表示されていた。
         const outcome = await completeAuthLink(extractSupabaseLinkParams(result.url));
         if (outcome.status === "signed_in") {
-          await routeAfterSignIn();
+          await routeAfterSignIn(next);
         } else if (outcome.status === "empty" || outcome.status === "awaiting_other_confirmation") {
           // awaiting_other_confirmation はメールアドレス変更の確認リンクでしか届かない (#1187)。ログインの戻りでは情報が無いのと同じ
           throw new Error("ログイン情報を受け取れませんでした。もう一度お試しください。");
@@ -218,7 +208,7 @@ export default function LoginScreen() {
       setRateLimitRemaining(0);
 
       // user_profiles から onboarding 状態を取得して振り分け
-      await routeAfterSignIn();
+      await routeAfterSignIn(next);
     } catch (e: any) {
       const msg = e?.message ?? "ログインに失敗しました。";
       setErrorMessage(msg);
@@ -390,16 +380,20 @@ export default function LoginScreen() {
             <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
           </View>
 
+          {/* Apple ログインボタン (Google の上。HIG: 積むときは Apple を上に)。スイッチが on の iOS だけ描かれる */}
+          <AppleSignInButton kind="sign_in" onPress={onAppleLogin} disabled={isSubmitting} testID="login-apple-button" height={providerButtonHeight} />
+
           {/* Google ログインボタン */}
           <Pressable
             testID="login-google-button"
             onPress={onGoogleLogin}
+            onLayout={onGoogleButtonLayout}
             disabled={isSubmitting}
             style={({ pressed }) => ({
               flexDirection: "row", alignItems: "center", justifyContent: "center",
               gap: spacing.sm,
               backgroundColor: colors.card,
-              borderRadius: radius.lg, paddingVertical: 14,
+              borderRadius: radius.lg, paddingVertical: 14, minHeight: AUTH_PROVIDER_BUTTON_MIN_HEIGHT,
               borderWidth: 1, borderColor: colors.border,
               ...shadows.sm,
               opacity: pressed || isSubmitting ? 0.7 : 1,

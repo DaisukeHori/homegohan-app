@@ -22,10 +22,11 @@
 
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { describe, it, expect, afterAll } from 'vitest';
+import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import ws from 'ws';
 import { deleteAccount } from '@/lib/account-deletion';
 import { apiCall } from '../helpers/api';
+import { createLockHolderKit, type Holder } from '../helpers/lock-holder';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 import { createTestUserWithRoles, cleanupAuditLogs, testEmail, type TestUser as OperatorUser } from '../helpers/users';
 
@@ -110,11 +111,6 @@ const GUARD_WINDOW_MINUTES = 15;
 /** 効く長さの内側・外側に置く印の古さ (分) */
 const FRESH_GUARD_AGE_MINUTES = GUARD_WINDOW_MINUTES - 1;
 const STALE_GUARD_AGE_MINUTES = GUARD_WINDOW_MINUTES + 1;
-/** 先の処理をコミット前のまま開いておく秒数 */
-const HOLD_SECONDS = 3;
-/** pg_sleep に入るのを待つ上限 (ミリ秒) と確かめる間隔 */
-const HOLDER_DEADLINE_MS = 20_000;
-const HOLDER_POLL_MS = 50;
 const TEST_TIMEOUT_MS = 120_000;
 const CLEANUP_TIMEOUT_MS = 240_000;
 /** 権限が無いときの SQLSTATE */
@@ -124,7 +120,6 @@ const RAISE_CODE = 'OWNER_ACCOUNT_DELETING';
 const createdUserIds: string[] = [];
 const createdOrgIds: string[] = [];
 const operatorUsers: OperatorUser[] = [];
-const pendingHolders: Array<Promise<unknown>> = [];
 
 async function createUser(label: string): Promise<TestUser> {
   const email = `sec-deletion-owner-guard-${label}-${TS}@homegohan.test`;
@@ -195,72 +190,25 @@ async function ageGuard(userId: string, minutes: number): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// 先の処理をコミット前のまま開いておく接続 (org-transfer-toctou-release-membership.test.ts と同じ形)
+// 先の処理をコミット前のまま開いておく接続 (tests/integration/helpers/lock-holder.ts。後から呼んだ処理が advisory lock の待ちに
+// 並んだのを確かめてから放す。決まった秒数の窓で「並んだはず」と仮定しない。#1917)
 // ---------------------------------------------------------------------------------------------
 
-interface Holder {
-  sleeping: Promise<void>;
-  done: Promise<Outcome>;
-  /** 先の接続がもう終わったか (pg_sleep を抜けて commit したか) */
-  finished: () => boolean;
-}
+const holders = createLockHolderKit({ pgRequest, markerPrefix: 'deletion-owner-guard' });
 
+/** advisory lock の待ち (pg_stat_activity の wait_event)。印と作成が同じキーで直列になっていることを、待ちそのもので確かめる */
+const ADVISORY_WAIT_EVENT = 'advisory';
+
+/** statement を流してから、コミット前のまま開いておく */
 function startHolder(label: string, statement: string): Holder {
-  const marker = `deletion-owner-guard-${label}-${randomBytes(6).toString('hex')}`;
-  const sql = `/* ${marker} */
-    ${statement};
-    SELECT pg_sleep(${HOLD_SECONDS});
-    SELECT 'held' AS result;`;
-  const state: { outcome: Outcome | null } = { outcome: null };
-  const done = pgRequest(sql).then((res): Outcome => {
-    const body = res.body as { error?: unknown; code?: unknown } | null;
-    const outcome: Outcome = res.ok
-      ? { ok: true, data: null, message: null, code: null }
-      : {
-          ok: false,
-          data: null,
-          message: typeof body?.error === 'string' ? body.error : JSON.stringify(body),
-          code: typeof body?.code === 'string' ? body.code : null,
-        };
-    state.outcome = outcome;
-    return outcome;
-  });
-  pendingHolders.push(done);
-
-  const sleeping = (async () => {
-    const deadline = Date.now() + HOLDER_DEADLINE_MS;
-    while (Date.now() < deadline) {
-      if (state.outcome) throw new Error(`先に呼んだ接続が pg_sleep に入る前に終わりました: ${JSON.stringify(state.outcome)}`);
-      const rows = await pgQuery<{ n: number }>(`
-        SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE wait_event = 'PgSleep' AND query LIKE '%${marker}%' AND pid <> pg_backend_pid()`);
-      if (rows[0]?.n === 1) return;
-      await sleep(HOLDER_POLL_MS);
-    }
-    throw new Error('先に呼んだ接続が pg_sleep に入りませんでした (遅すぎます)');
-  })();
-
-  return { sleeping, done, finished: () => state.outcome !== null };
+  return holders.startHolder(label, `${statement};`);
 }
 
-/**
- * text を含む文を実行している接続が、advisory lock の待ち (pg_stat_activity の wait_event = 'advisory') に入るまで待つ
- * (印と作成が同じキーで直列になっていることを、待ちそのもので確かめる)
- */
-async function waitForAdvisoryWaiter(text: string): Promise<void> {
-  const deadline = Date.now() + HOLDER_DEADLINE_MS;
-  while (Date.now() < deadline) {
-    const rows = await pgQuery<{ n: number }>(`
-      SELECT count(*)::int AS n FROM pg_stat_activity
-      WHERE wait_event_type = 'Lock' AND wait_event = 'advisory' AND query LIKE '%${text}%' AND pid <> pg_backend_pid()`);
-    if ((rows[0]?.n ?? 0) >= 1) return;
-    await sleep(HOLDER_POLL_MS);
-  }
-  throw new Error(`${text} の呼び出しが advisory lock の待ちに入りませんでした`);
-}
+// テストが途中で落ちたときに残った接続を、作った順に放す (通ったテストでは全部放し終わっているので何もしない)
+afterEach(() => holders.releaseOpenHolders(), CLEANUP_TIMEOUT_MS);
 
 afterAll(async () => {
-  await Promise.allSettled(pendingHolders);
+  await holders.settle();
   // pg/query の接続が作った組織も拾う (owner_id で探す)
   if (createdUserIds.length > 0) {
     const { data } = await srAdmin.from('organizations').select('id').in('owner_id', createdUserIds);
@@ -372,13 +320,12 @@ describe('印と作成が同時に走ったとき (advisory lock で直列にな
     const user = await createUser('gd8');
 
     const holder = startHolder('guard-first', `SELECT public.begin_account_deletion_guard('${user.id}'::uuid)`);
-    await holder.sleeping;
-    const creating = insertOrg(user.id, 'gd8');
-    // 作成は印の advisory lock を待つ (待ちに入ったことを確かめてから、印の commit を待つ)
-    await waitForAdvisoryWaiter('organizations');
-    expect(holder.finished()).toBe(false);
-    const held = await holder.done;
-    const created = await creating;
+    // 作成は印の advisory lock を待つ (待ちに入ったことを確かめてから印を放し、印の commit を待たせる)
+    const [held, created] = await holders.runBehindHolder(holder, {
+      fn: 'organizations',
+      waitEvent: ADVISORY_WAIT_EVENT,
+      call: () => insertOrg(user.id, 'gd8'),
+    });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expectRaised(created, RAISE_CODE);
@@ -392,13 +339,12 @@ describe('印と作成が同時に走ったとき (advisory lock で直列にな
       'create-first',
       `INSERT INTO public.organizations (name, owner_id) VALUES ('deletion-owner-guard gd9-holder ${TS}', '${user.id}'::uuid)`,
     );
-    await holder.sleeping;
-    const guarding = beginGuard(user.id);
-    // 印は作成のトリガーが持つ advisory lock を待つ
-    await waitForAdvisoryWaiter('begin_account_deletion_guard');
-    expect(holder.finished()).toBe(false);
-    const held = await holder.done;
-    const guarded = await guarding;
+    // 印は作成のトリガーが持つ advisory lock を待つ (待ちに入ったことを確かめてから作成を放す)
+    const [held, guarded] = await holders.runBehindHolder(holder, {
+      fn: 'begin_account_deletion_guard',
+      waitEvent: ADVISORY_WAIT_EVENT,
+      call: () => beginGuard(user.id),
+    });
 
     expect(held.ok, JSON.stringify(held)).toBe(true);
     expect(guarded.ok, JSON.stringify(guarded)).toBe(true);

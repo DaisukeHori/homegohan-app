@@ -11,6 +11,7 @@ import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
+import { isRaisedExceptionWithCode } from '@/lib/errors/db-raised-code';
 import { z } from 'zod';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
@@ -178,8 +179,9 @@ export async function POST(request: Request) {
 
   if (insertError || !org) {
     // 退会の途中の人はオーナーにしない (#1917 の続き。DB のトリガー trg_organizations_owner_not_deleting (関数 organizations_owner_not_deleting()) が INSERT を止める。
-    // supabase/migrations/20261023130000_account_deletion_owner_guard.sql)。作らずに 409 で返す
-    if (isOwnerAccountDeletingError(insertError)) {
+    // supabase/migrations/20261023130000_account_deletion_owner_guard.sql)。作らずに 409 で返す。
+    // トリガーが P0001 + このコードの完全一致で止めた形だけを拾う。コードの判定は共通の関数で行い、route では (ログのほかに) `.message` を読まない (#1917)
+    if (isRaisedExceptionWithCode(insertError, OWNER_ACCOUNT_DELETING)) {
       return NextResponse.json(
         { error: { code: OWNER_ACCOUNT_DELETING, message: '指定した owner は退会の手続き中です' } },
         { status: 409 },
@@ -308,15 +310,8 @@ function listFailedResponse() {
 // POST の道具
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** DB 関数・トリガーが RAISE EXCEPTION '<コード>' USING ERRCODE = 'P0001' で止めたときの SQLSTATE */
-const PG_RAISE_EXCEPTION = 'P0001';
 /**
  * 作る組織のオーナーが退会の途中 (退会の印 account_deletion_guards が新しい) のときに、トリガー trg_organizations_owner_not_deleting (関数 organizations_owner_not_deleting()) が
  * RAISE するコード (supabase/migrations/20261023130000_account_deletion_owner_guard.sql)。応答の code にもそのまま使う
  */
 const OWNER_ACCOUNT_DELETING = 'OWNER_ACCOUNT_DELETING';
-
-/** 組織の INSERT が、オーナーが退会の途中なので止められたか (P0001 で、メッセージがそのコード) */
-function isOwnerAccountDeletingError(error: { code?: string; message?: string } | null): boolean {
-  return error?.code === PG_RAISE_EXCEPTION && error.message === OWNER_ACCOUNT_DELETING;
-}

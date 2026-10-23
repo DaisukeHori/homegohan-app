@@ -19,8 +19,9 @@
  *      (#1917 で create_org_invite は SECURITY DEFINER になり、利用者の直接の INSERT は 42501 で止まる)。
  *   C. 24 時間のローリングウィンドウ: 24 時間より前の作成は数えない。Retry-After は最古の対象行が窓から出るまでの秒数。
  *   D. 同時実行: 上限の 1 つ手前で複数の呼び出しが同時に来ても、通るのはちょうど 1 件 (23505 などの別のエラーも出ない)。
- *      タイミングに頼らない確かめ方も置く: 別の接続で先の処理を「上限を数えて記録を書いた後・コミット前」で止め (pg_sleep)、
- *      その間に来た後の処理が、ロックで待たされてコミット後に数え直し、拒否されること (ロックを外すと必ず落ちる)。
+ *      タイミングに頼らない確かめ方も置く: 別の接続で先の処理を「上限を数えて記録を書いた後・コミット前」で止め (放されるまで開いておく)、
+ *      その間に来た後の処理が先の接続に待たされてロックの待ちに並んだのを確かめてから先の接続を放し、後の処理がコミット後に数え直して
+ *      拒否されること (ロックを外すと必ず落ちる。tests/integration/helpers/lock-holder.ts)。
  *   E. テナント分離: 別の家族・組織・利用者の件数は影響しない。helper を /rpc で直接呼んでも他テナントの件数は覗けず、書き込みもしない。
  *   F. 既存の挙動: 認可・人数/席数の上限・対象の確認が、上限の判定より先に評価される。
  *   G. API: POST /api/family/invites ほか 6 本が、DB の上限に達したときにアプリ層と同じ 429 (本文 + Retry-After) を返す。
@@ -32,10 +33,11 @@
 
 import { randomBytes } from 'node:crypto';
 import { createClient, type PostgrestError, type SupabaseClient } from '@supabase/supabase-js';
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import ws from 'ws';
 import { apiCall } from '../helpers/api';
 import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
+import { actAsAuthenticatedSql, createLockHolderKit, type Holder, type HolderOutcome, type QueuedCall } from '../helpers/lock-holder';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 import { grantFamilyPlan } from '../helpers/family-plan';
 
@@ -378,12 +380,8 @@ const callHelper = (
 };
 
 // ────────────────────────────────────────────────────────────────
-// 競合の確定的な再現 (タイミングに頼らない。family-member-limit-race.test.ts と同じ方法)
+// 競合の確定的な再現 (タイミングに頼らない。tests/integration/helpers/lock-holder.ts)
 // ────────────────────────────────────────────────────────────────
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-/** 開いたままにしている接続。後片付けの前にすべて終わらせる */
-const pendingHolders: Array<Promise<unknown>> = [];
-
 /** ローカルスタックの postgres-meta (/pg/query、service_role キーが必要) で SQL を実行する。複数の文は 1 つのトランザクションで実行される */
 async function pgRequest(query: string): Promise<{ ok: boolean; status: number; body: unknown }> {
   const res = await fetch(`${url}/pg/query`, {
@@ -398,76 +396,36 @@ async function pgRequest(query: string): Promise<{ ok: boolean; status: number; 
   return { ok: res.ok, status: res.status, body: await res.json() };
 }
 
-/** 競合の観測 (pg_stat_activity の読み取り) だけに使う */
-async function pgQuery<T = Record<string, unknown>>(query: string): Promise<T[]> {
-  const res = await pgRequest(query);
-  if (!res.ok) throw new Error(`pg/query ${res.status}: ${JSON.stringify(res.body)}`);
-  return res.body as T[];
-}
-
-interface HeldOutcome {
-  ok: boolean;
-  message: string | null;
-}
+/** 先の処理をコミット前のまま開いておく接続 (後の処理がロックの待ちに並んだのを確かめてから放す。#1917) */
+const holders = createLockHolderKit({ pgRequest, markerPrefix: 'dbcap' });
 
 /**
- * 別の接続で、user になりすまして RPC (rpcSql) を呼び、そのあと holdSeconds 秒 pg_sleep してトランザクションを開いたままにする。
+ * 別の接続で、user になりすまして RPC (rpcSql) を呼び、そのあと放されるまでトランザクションを開いたままにする。
  * sleeping は「RPC の実行が済み、pg_sleep に入った」(= 上限を数えて記録を書いたが、まだコミットしていない) 状態になると解決する。
  * done はトランザクションが終わった (コミットされた) ときに解決する。
  */
-function holdOpen(user: TestUser, rpcSql: string, holdSeconds: number): { sleeping: Promise<void>; done: Promise<HeldOutcome> } {
-  const marker = `dbcap-holder-${randomBytes(6).toString('hex')}`;
-  const claims = JSON.stringify({ sub: user.id, role: 'authenticated' });
-  const sql = `/* ${marker} */
-    SELECT set_config('request.jwt.claims', '${claims}', true);
-    SET LOCAL ROLE authenticated;
-    SELECT * FROM ${rpcSql};
-    SELECT pg_sleep(${holdSeconds});
-    SELECT 'held' AS result;`;
-
-  const state: { outcome: HeldOutcome | null } = { outcome: null };
-  const done = pgRequest(sql).then((res): HeldOutcome => {
-    const body = res.body as { error?: unknown } | null;
-    const outcome: HeldOutcome = res.ok
-      ? { ok: true, message: null }
-      : { ok: false, message: typeof body?.error === 'string' ? body.error : JSON.stringify(body) };
-    state.outcome = outcome;
-    return outcome;
-  });
-  pendingHolders.push(done);
-
-  const sleeping = (async () => {
-    const deadline = Date.now() + 20_000;
-    while (Date.now() < deadline) {
-      if (state.outcome) {
-        // pg_sleep に入る前に終わった = 先の RPC が失敗している (競合の再現にならないので、理由を示して止める)
-        throw new Error(`先に呼んだ接続が pg_sleep に入る前に終わりました: ${JSON.stringify(state.outcome)}`);
-      }
-      const rows = await pgQuery<{ n: number }>(`
-        SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE wait_event = 'PgSleep' AND query LIKE '%${marker}%' AND pid <> pg_backend_pid()`);
-      if (rows[0]?.n === 1) return;
-      await sleep(50);
-    }
-    throw new Error('先に呼んだ接続が pg_sleep に入りませんでした (遅すぎます)');
-  })();
-
-  return { sleeping, done };
+function holdOpen(user: TestUser, rpcSql: string): Holder {
+  return holders.startHolder(rpcSql, `${actAsAuthenticatedSql(user.id)}
+    SELECT * FROM ${rpcSql};`);
 }
 
-/** 先に first を呼んでトランザクションを開いたままにし、その間に second を本物の経路 (PostgREST + 本人の JWT) で呼ぶ */
-async function raceAfterHold(
+/**
+ * 先に first を呼んでトランザクションを開いたままにし、その間に second を本物の経路 (PostgREST + 本人の JWT) で呼ぶ。
+ * second が first に待たされてロックの待ちに並んだのを確かめてから first を放す (= second は first のコミットを待ってから数え直す)
+ */
+async function raceBehindHold(
   first: { user: TestUser; rpcSql: string },
-  second: () => Promise<RpcResult>,
-  holdSeconds = 3,
-): Promise<{ first: HeldOutcome; second: RpcResult; secondMs: number }> {
-  const holder = holdOpen(first.user, first.rpcSql, holdSeconds);
-  await holder.sleeping;
-  const startedAt = Date.now();
-  const secondResult = await second();
-  const secondMs = Date.now() - startedAt;
-  return { first: await holder.done, second: secondResult, secondMs };
+  second: QueuedCall<RpcResult>,
+): Promise<{ first: HolderOutcome; second: RpcResult }> {
+  const [held, secondResult] = await holders.runBehindHolder(holdOpen(first.user, first.rpcSql), second);
+  return { first: held, second: secondResult };
 }
+
+/** 残った接続を放す後片付けの時間の上限 (放せなかった接続は持つ上限 (既定 30 秒) で自分で終わるので、それより長く取る) */
+const RELEASE_HOLDERS_TIMEOUT_MS = 60_000;
+
+// テストが途中で落ちたときに残った接続を、作った順に放す (通ったテストでは全部放し終わっているので何もしない)
+afterEach(() => holders.releaseOpenHolders(), RELEASE_HOLDERS_TIMEOUT_MS);
 
 /**
  * RATE_LIMITED の形を確かめる: message はコード 1 語、SQLSTATE は P0001、DETAIL に上限名、HINT に再試行までの秒数。
@@ -500,7 +458,7 @@ const rateLimited = (r: RpcResult) => r.error?.message === 'RATE_LIMITED';
 // 後片付け
 // ────────────────────────────────────────────────────────────────
 afterAll(async () => {
-  await Promise.allSettled(pendingHolders);
+  await holders.settle();
   // 監査行: 種まき分 (印) / 作った家族・組織の分 / 作った利用者が操作者の分
   await srAdmin.from('membership_audit').delete().contains('metadata', { seed: SEED_TAG });
   if (createdFamilyIds.length > 0) await srAdmin.from('membership_audit').delete().in('scope_id', createdFamilyIds);
@@ -1056,26 +1014,21 @@ describe('#1163 同時実行: 上限の 1 つ手前で同時に来た呼び出�
 // D'. 同時実行 (確定的): 先の処理がコミット前でも、後の処理は待たされて、コミット後に数え直す
 // ================================================================
 describe('#1163 同時実行 (確定的): 先の処理が上限を数えて記録を書いた後・コミット前でも、後の処理は待たされて上限を超えて通らない', () => {
-  // 別の接続で先の RPC を実行して pg_sleep でトランザクションを開いたままにし (= 記録を書いたがコミット前)、
-  // pg_sleep に入ったのを確かめてから、もう 1 件を本物の経路で呼ぶ。
-  // ロックが無いと、後の処理は先の記録が見えないまま数えて通ってしまう (両方成功する)。ロックがあれば先のコミットを待ち、拒否される。
-  const HOLD_SECONDS = 3;
-  const waitedForCommit = (ms: number) =>
-    expect(ms, '先の処理のコミットを待っているはず').toBeGreaterThanOrEqual(HOLD_SECONDS * 500);
+  // 別の接続で先の RPC を実行してトランザクションを開いたままにし (= 記録を書いたがコミット前)、もう 1 件を本物の経路で呼んで、
+  // それが先の接続に待たされてロックの待ちに並んだのを確かめてから先の接続を放す (並ばなければ手順の名前を付けて落ちる)。
+  // ロックが無いと、後の処理は先の記録が見えないまま数えて通ってしまう (両方成功する。並ばない)。ロックがあれば先のコミットを待ち、拒否される。
 
   it('DR-1: 家族の招待 (招待者ごと 20 の 1 つ手前): 同じ招待者の 2 件目は待たされ、family_invite:per_actor で拒否される', async () => {
     const fam = await createFamily('dr-fi');
     await seedAudit({ scope: 'family', scopeId: fam.familyId, action: 'invite_created', actorId: fam.rep.id, count: 19 });
 
-    const r = await raceAfterHold(
+    const r = await raceBehindHold(
       { user: fam.rep, rpcSql: `public.create_family_invite('${fam.familyId}'::uuid, '${target('dr-fi-1')}')` },
-      () => inviteToFamily(fam.rep, fam.familyId, target('dr-fi-2')),
-      HOLD_SECONDS,
+      { fn: 'create_family_invite', call: () => inviteToFamily(fam.rep, fam.familyId, target('dr-fi-2')) },
     );
 
     expect(r.first.ok, JSON.stringify(r.first)).toBe(true);
     expectRateLimited(r.second.error, 'family_invite:per_actor');
-    waitedForCommit(r.secondMs);
     expect(await auditCount({ action: 'invite_created', scopeId: fam.familyId, actorId: fam.rep.id })).toBe(20);
     expect(await familyInviteRows(fam.familyId, target('dr-fi-2'))).toHaveLength(0);
   }, 60_000);
@@ -1085,15 +1038,13 @@ describe('#1163 同時実行 (確定的): 先の処理が上限を数えて記�
     const email = target('dr-fi-same');
     await seedAudit({ scope: 'family', scopeId: fam.familyId, action: 'invite_created', actorId: null, count: 2, email });
 
-    const r = await raceAfterHold(
+    const r = await raceBehindHold(
       { user: fam.rep, rpcSql: `public.create_family_invite('${fam.familyId}'::uuid, '${email}')` },
-      () => inviteToFamily(fam.adult!, fam.familyId, email),
-      HOLD_SECONDS,
+      { fn: 'create_family_invite', call: () => inviteToFamily(fam.adult!, fam.familyId, email) },
     );
 
     expect(r.first.ok, JSON.stringify(r.first)).toBe(true);
     expectRateLimited(r.second.error, 'family_invite:per_target');
-    waitedForCommit(r.secondMs);
     expect(await auditCount({ action: 'invite_created', scopeId: fam.familyId, email })).toBe(3);
   }, 60_000);
 
@@ -1101,18 +1052,16 @@ describe('#1163 同時実行 (確定的): 先の処理が上限を数えて記�
     const org = await createOrg('dr-oi');
     await seedAudit({ scope: 'organization', scopeId: org.orgId, action: 'invite_created', actorId: null, count: 499 });
 
-    const r = await raceAfterHold(
+    const r = await raceBehindHold(
       {
         user: org.owner,
         rpcSql: `public.create_org_invite('${org.orgId}'::uuid, '${target('dr-oi-1')}', 'member'::public.org_role_enum)`,
       },
-      () => inviteToOrg(org.admin, org.orgId, target('dr-oi-2')),
-      HOLD_SECONDS,
+      { fn: 'create_org_invite', call: () => inviteToOrg(org.admin, org.orgId, target('dr-oi-2')) },
     );
 
     expect(r.first.ok, JSON.stringify(r.first)).toBe(true);
     expectRateLimited(r.second.error, 'org_invite:per_org');
-    waitedForCommit(r.secondMs);
     expect(await auditCount({ action: 'invite_created', scopeId: org.orgId })).toBe(500);
   }, 60_000);
 
@@ -1122,15 +1071,13 @@ describe('#1163 同時実行 (確定的): 先の処理が上限を数えて記�
     const child2 = await addChild(fam, 'D2');
     await seedAudit({ scope: 'family', scopeId: fam.familyId, action: 'child_promotion_requested', actorId: fam.rep.id, count: 9 });
 
-    const r = await raceAfterHold(
+    const r = await raceBehindHold(
       { user: fam.rep, rpcSql: `public.request_child_promotion('${child1}'::uuid, '${target('dr-cp-1')}')` },
-      () => requestPromotion(fam.rep, child2, target('dr-cp-2')),
-      HOLD_SECONDS,
+      { fn: 'request_child_promotion', call: () => requestPromotion(fam.rep, child2, target('dr-cp-2')) },
     );
 
     expect(r.first.ok, JSON.stringify(r.first)).toBe(true);
     expectRateLimited(r.second.error, 'child_promotion:per_actor');
-    waitedForCommit(r.secondMs);
     expect(await promotionRows(child2, target('dr-cp-2'))).toHaveLength(0);
   }, 60_000);
 
@@ -1139,34 +1086,29 @@ describe('#1163 同時実行 (確定的): 先の処理が上限を数えて記�
     await seedAudit({ scope: 'family', scopeId: family.familyId, action: 'representative_transfer_proposed', actorId: family.rep.id, count: 5 });
     await seedAudit({ scope: 'organization', scopeId: org.orgId, action: 'owner_transfer_proposed', actorId: family.rep.id, count: 4 });
 
-    const r = await raceAfterHold(
+    const r = await raceBehindHold(
       {
         user: family.rep,
         rpcSql: `public.propose_family_representative_transfer('${family.familyId}'::uuid, '${family.adult!.id}'::uuid)`,
       },
-      () => proposeOrgTransfer(family.rep, org.orgId, org.member!.id),
-      HOLD_SECONDS,
+      { fn: 'propose_org_owner_transfer', call: () => proposeOrgTransfer(family.rep, org.orgId, org.member!.id) },
     );
 
     expect(r.first.ok, JSON.stringify(r.first)).toBe(true);
     expectRateLimited(r.second.error, 'transfer_propose:per_actor');
-    waitedForCommit(r.secondMs);
     expect(await proposalRows(org.orgId, family.rep.id)).toHaveLength(0);
   }, 60_000);
 
   it('DR-6: ロックは招待者・家族ごと。無関係の家族の招待は、先の処理のコミットを待たずに通る', async () => {
     const [famA, famB] = await Promise.all([createFamily('dr-iso-a'), createFamily('dr-iso-b')]);
-    const holdSeconds = 4;
 
-    const r = await raceAfterHold(
-      { user: famA.rep, rpcSql: `public.create_family_invite('${famA.familyId}'::uuid, '${target('dr-iso-a')}')` },
-      () => inviteToFamily(famB.rep, famB.familyId, target('dr-iso-b')),
-      holdSeconds,
-    );
+    // 先の処理を開いたまま、別の家族の招待を済ませてから先の処理を放す。別の家族の処理が先の処理に待たされるなら、放されるまで返らず、
+    // 先の接続は放されないまま上限で HOLDER_NOT_RELEASED になる (whileHolding の release が「pg_sleep を抜けていました」で落ちる)
+    const holder = holdOpen(famA.rep, `public.create_family_invite('${famA.familyId}'::uuid, '${target('dr-iso-a')}')`);
+    const [first, second] = await holders.whileHolding(holder, () => inviteToFamily(famB.rep, famB.familyId, target('dr-iso-b')));
 
-    expect(r.first.ok, JSON.stringify(r.first)).toBe(true);
-    expect(r.second.error).toBeNull();
-    expect(r.secondMs, '別の家族の処理は待たされないはず').toBeLessThan(holdSeconds * 750);
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    expect(second.error).toBeNull();
   }, 60_000);
 });
 

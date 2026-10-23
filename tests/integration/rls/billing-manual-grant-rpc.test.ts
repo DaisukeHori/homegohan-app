@@ -8,9 +8,10 @@
  * p_snapshot->>'…' で読むキーの JSON をこのファイルで組み、期待値はリテラルで書く。
  *
  * 競合の再現のしかた (47・57。tests/integration/rls/billing-apply-subscription-rpc.test.ts と同じ考え方):
- *   postgres-meta (/pg/query) で「先に処理を流し、pg_sleep でトランザクションを開いたままにする」接続を 1 本作り、
- *   pg_sleep に入ったのを pg_stat_activity で確かめてから、もう 1 件を呼ぶ。後の処理がロックの待ちに入ったことも
- *   pg_stat_activity で確かめる (タイミングに頼らない)。
+ *   postgres-meta (/pg/query) で「先に処理を流し、放されるまでトランザクションを開いたままにする」接続を 1 本作り、
+ *   pg_sleep に入ったのを pg_stat_activity で確かめてから、もう 1 件を呼ぶ。後の処理が先の接続に待たされてロックの待ちに入ったのを
+ *   pg_stat_activity / pg_blocking_pids で確かめてから先の接続を放す (tests/integration/helpers/lock-holder.ts。
+ *   決まった秒数の窓に頼らない。#1917)。
  *
  * 期限切れのプロシージャ (CALL) は、1 つの要求に 1 文だけで送る: 複数の文は 1 つのトランザクションのブロックになり、
  * プロシージャの COMMIT が 2D000 になる (§6.4・F26)。
@@ -23,8 +24,9 @@
 
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import ws from 'ws';
+import { createLockHolderKit, type Holder } from '../helpers/lock-holder';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -113,7 +115,6 @@ const CUSTOMER_PREFIX = `cus_it_mg_${RUN}_`;
 const createdUserIds: string[] = [];
 const createdPlanKeys: string[] = [];
 const createdCouponIds: string[] = [];
-const pendingHolders: Array<Promise<unknown>> = [];
 let seq = 0;
 
 const nextSub = () => `${SUB_PREFIX}${++seq}`;
@@ -137,11 +138,6 @@ const ms = (value: string | null) => (value === null ? null : new Date(value).ge
 const futureExpiry = () => new Date(Date.now() + FUTURE_DAYS * DAY_MS).toISOString();
 const pastExpiry = () => new Date(Date.now() - PAST_HOURS * HOUR_MS).toISOString();
 
-/** pg_sleep でトランザクションを開いたままにする秒数 */
-const HOLD_SECONDS = 4;
-/** pg_stat_activity を見に行く間隔と上限 (ミリ秒) */
-const POLL_INTERVAL_MS = 50;
-const POLL_DEADLINE_MS = 20_000;
 /** 写像の取り直しの時刻の許容 (starts_at / current_period_start が「いま」であることの確認。ミリ秒) */
 const NOW_TOLERANCE_MS = 60_000;
 
@@ -534,67 +530,20 @@ interface Outcome {
   code: string | null;
 }
 
-interface Holder {
-  /** 先の処理が済み、pg_sleep に入った (= ロックを持ったままコミット前の) 状態になると解決する */
-  sleeping: Promise<void>;
-  /** トランザクションが終わったときに解決する */
-  done: Promise<Outcome>;
-}
+const holders = createLockHolderKit({ pgRequest, markerPrefix: 'manual-grant' });
 
-/** postgres-meta の接続で before を実行し、holdSeconds 秒 pg_sleep してから after を実行して、コミットする */
-function startHolder(before: string, after: string, holdSeconds = HOLD_SECONDS): Holder {
-  const marker = `manual-grant-holder-${randomBytes(6).toString('hex')}`;
-  const sql = `/* ${marker} */
-    ${before}
-    SELECT pg_sleep(${holdSeconds});
-    ${after}
-    SELECT 'held' AS result;`;
-  const state: { outcome: Outcome | null } = { outcome: null };
-  const done = pgRequest(sql).then((res): Outcome => {
-    const body = res.body as { error?: unknown; code?: unknown } | null;
-    const outcome: Outcome = res.ok
-      ? { ok: true, message: null, code: null }
-      : {
-          ok: false,
-          message: typeof body?.error === 'string' ? body.error : JSON.stringify(body),
-          code: typeof body?.code === 'string' ? body.code : null,
-        };
-    state.outcome = outcome;
-    return outcome;
-  });
-  pendingHolders.push(done);
-  const sleeping = (async () => {
-    const deadline = Date.now() + POLL_DEADLINE_MS;
-    while (Date.now() < deadline) {
-      if (state.outcome) {
-        throw new Error(`先に呼んだ接続が pg_sleep に入る前に終わりました: ${JSON.stringify(state.outcome)}`);
-      }
-      const rows = await pgQuery<{ n: number }>(`
-        SELECT count(*)::int AS n FROM pg_stat_activity
-        WHERE wait_event = 'PgSleep' AND query LIKE '%${marker}%' AND pid <> pg_backend_pid()`);
-      if (rows[0]?.n === 1) return;
-      await sleep(POLL_INTERVAL_MS);
-    }
-    throw new Error('先に呼んだ接続が pg_sleep に入りませんでした');
-  })();
-  return { sleeping, done };
+/** postgres-meta の接続で before を実行し、放されるまで開いておいてから after を実行して、コミットする */
+function startHolder(before: string, after: string): Holder {
+  return holders.startHolder('先の処理を開いておく接続', before, after);
 }
 
 /**
- * ほかの接続が、ロックの待ち (wait_event_type = 'Lock') に入ったのを確かめる。queryLike はその接続の SQL に含まれる語。
- * waitEvent を渡すと、その待ちの種類 (advisory / transactionid / tuple) に絞る
+ * 後の処理 (queryLike を含む SQL の接続) が holder に待たされてロックの待ち (wait_event_type = 'Lock') に入ったのを確かめてから
+ * holder を放す。waitEvent を渡すと、その待ちの種類 (advisory / transactionid / tuple) に絞る
  */
-async function waitForLockWaiter(queryLike: string, waitEvent?: string): Promise<void> {
-  const deadline = Date.now() + POLL_DEADLINE_MS;
-  while (Date.now() < deadline) {
-    const rows = await pgQuery<{ n: number }>(`
-      SELECT count(*)::int AS n FROM pg_stat_activity
-      WHERE wait_event_type = 'Lock' ${waitEvent ? `AND wait_event = '${waitEvent}'` : ''}
-        AND query ILIKE '%${queryLike}%' AND pid <> pg_backend_pid()`);
-    if ((rows[0]?.n ?? 0) >= 1) return;
-    await sleep(POLL_INTERVAL_MS);
-  }
-  throw new Error(`ロックの待ちに入った接続が見つかりません: ${queryLike}`);
+async function releaseAfterWaiter(holder: Holder, queryLike: string, waitEvent?: string): Promise<void> {
+  await holders.waitForLockWaiters(queryLike, 1, { step: `${queryLike} の接続が ${holder.label} の commit を待つ`, blockedBy: holder, waitEvent });
+  await holder.release();
 }
 
 /** デッドロック (40P01) */
@@ -708,8 +657,11 @@ beforeAll(async () => {
   operator = await createUser('operator', { jwt: true, roles: ['user', 'super_admin'] });
 }, 60_000);
 
+// テストが途中で落ちたときに残った接続を、作った順に放す (通ったテストでは全部放し終わっているので何もしない)
+afterEach(() => holders.releaseOpenHolders());
+
 afterAll(async () => {
-  await Promise.allSettled(pendingHolders);
+  await holders.settle();
   if (createdUserIds.length > 0) {
     const { data: families } = await srAdmin.from('family_groups').select('id').in('representative_id', createdUserIds);
     const familyIds = ((families ?? []) as Array<{ id: string }>).map((f) => f.id);
@@ -1397,7 +1349,7 @@ describe('billing/02 §7.3・§4.2: 写像との衝突と同時の処理', () =>
     const holder = startHolder(`SELECT ${grantSql(user.id, 'pro')};`, '');
     await holder.sleeping;
     const second = tryGrant(user.id, 'family_basic');
-    await waitForLockWaiter('billing_grant_manual_subscription', 'advisory');
+    await releaseAfterWaiter(holder, 'billing_grant_manual_subscription', 'advisory');
     const [held, secondResult] = await Promise.all([holder.done, second]);
     expect(held.ok).toBe(true);
     expect(secondResult.data).toBeNull();
@@ -1411,7 +1363,7 @@ describe('billing/02 §7.3・§4.2: 写像との衝突と同時の処理', () =>
     const grantHolder = startHolder(`SELECT ${grantSql(grantFirst.id, 'pro')};`, '');
     await grantHolder.sleeping;
     const lateApply = tryApply({ sub: nextSub(), customer: nextCustomer(), status: 'active', userId: grantFirst.id, planKey: 'pro' });
-    await waitForLockWaiter('billing_apply_stripe_subscription', 'advisory');
+    await releaseAfterWaiter(grantHolder, 'billing_apply_stripe_subscription', 'advisory');
     const [grantHeld, applied] = await Promise.all([grantHolder.done, lateApply]);
     expect(grantHeld.ok).toBe(true);
     expect(applied.error).toMatchObject({ code: 'P0001', message: 'BILL_LIVE_ROW_CONFLICT' });
@@ -1427,7 +1379,7 @@ describe('billing/02 §7.3・§4.2: 写像との衝突と同時の処理', () =>
     );
     await applyHolder.sleeping;
     const lateGrant = tryGrant(applyFirst.id, 'pro');
-    await waitForLockWaiter('billing_grant_manual_subscription', 'advisory');
+    await releaseAfterWaiter(applyHolder, 'billing_grant_manual_subscription', 'advisory');
     const [applyHeld, lateGrantResult] = await Promise.all([applyHolder.done, lateGrant]);
     expect(applyHeld.ok).toBe(true);
     expect(lateGrantResult.error).toMatchObject({ code: 'P0001', message: 'BILL_LIVE_ROW_CONFLICT' });
@@ -1548,7 +1500,7 @@ describe('billing/02 §6.4: 利用者ごとに COMMIT するプロシージャ',
     );
     await holderA.sleeping;
     const callA = pgRequest('CALL public.billing_expire_manual_subscriptions();');
-    await waitForLockWaiter('billing_expire_manual_subscriptions');
+    await releaseAfterWaiter(holderA, 'billing_expire_manual_subscriptions');
     const [heldA, calledA] = await Promise.all([holderA.done, callA]);
     const calledAOutcome: Outcome = { ok: calledA.ok, message: calledA.ok ? null : JSON.stringify(calledA.body), code: null };
     expectNoDeadlock(heldA, calledAOutcome);
@@ -1565,7 +1517,7 @@ describe('billing/02 §6.4: 利用者ごとに COMMIT するプロシージャ',
     );
     await holderB.sleeping;
     const callB = pgRequest('CALL public.billing_expire_manual_subscriptions();');
-    await waitForLockWaiter('billing_expire_manual_subscriptions');
+    await releaseAfterWaiter(holderB, 'billing_expire_manual_subscriptions');
     const [heldB, calledB] = await Promise.all([holderB.done, callB]);
     const calledBOutcome: Outcome = { ok: calledB.ok, message: calledB.ok ? null : JSON.stringify(calledB.body), code: null };
     expectNoDeadlock(heldB, calledBOutcome);

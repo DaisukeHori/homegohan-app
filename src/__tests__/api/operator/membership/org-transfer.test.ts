@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EmailSendError } from '@/lib/emails/send-result';
 import { NextRequest } from 'next/server';
 import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE } from '@/lib/api/errors';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { AuthError, ForbiddenError, MfaRequiredError } from '@/lib/auth/errors';
 import { createFakeServiceRole, leadingUsers, valueUnder, type FakeServiceRole, type Row } from './fake-service-role';
 
 // 外部との境界はすべてモックにする。通知の宛先・本文を決める本体 (route と renderForceTransferEmail) は実物を通す
@@ -661,7 +661,8 @@ describe('POST /api/operator/membership/org/[id]/transfer: 登録ユーザーが
 describe('POST /api/operator/membership/org/[id]/transfer: RPC のエラー', () => {
   it.each([
     ['TARGET_NOT_IN_ORG', 'TARGET_NOT_IN_ORG', 400, '譲渡先のユーザーはこの組織に所属していません'],
-    ['NOT_OPERATOR', 'FORBIDDEN', 403, '権限がありません'],
+    // 認可の失敗 (catch の authFailureNested) の 403 と同じ日本語の固定の文 (#1917)
+    ['NOT_OPERATOR', 'FORBIDDEN', 403, 'この操作を行う権限がありません'],
   ])('RPC が %s で失敗: %s (%i) と固定の文を返し、通知メールは送らない', async (message, code, status, fixedMessage) => {
     mocks.rpc.mockResolvedValue({ data: null, error: { message, code: 'P0001' } });
 
@@ -714,6 +715,30 @@ describe('POST /api/operator/membership/org/[id]/transfer: RPC のエラー', ()
 });
 
 describe('POST /api/operator/membership/org/[id]/transfer: 認可と入力検証', () => {
+  // 401 / 403 の本文は例外の文面 (err.message) を入れず、日本語の固定の文にする (#1917)。
+  // requireRole が投げる ForbiddenError の文面は英語 ('Requires one of: super_admin') なので、そのまま返すと画面に英語が出る。
+  // code (UNAUTHORIZED / FORBIDDEN) と nested の形は従来のまま
+  it.each([
+    ['未ログイン (英語の文面)', new AuthError('AUTH_UNAUTHENTICATED', 'Not authenticated'), 401, 'UNAUTHORIZED', 'ログインが必要です'],
+    ['プロフィールが無い (英語の文面)', new AuthError('AUTH_PROFILE_NOT_FOUND', 'Profile not found'), 401, 'UNAUTHORIZED', 'ログインが必要です'],
+    ['super_admin 以外 (requireRole の英語の文面)', new ForbiddenError('PERM_DENIED', 'Requires one of: super_admin'), 403, 'FORBIDDEN', 'この操作を行う権限がありません'],
+    ['凍結 (英語の文面)', new ForbiddenError('AUTH_ACCOUNT_FROZEN', 'Account frozen'), 403, 'FORBIDDEN', 'アカウントが凍結されています'],
+    ['二段階認証の確認が要る (MfaRequiredError)', new MfaRequiredError('AUTH_2FA_REQUIRED', 'MFA verification required'), 403, 'FORBIDDEN', '二段階認証の確認が必要です'],
+    ['二段階認証の登録が要る (MfaRequiredError)', new MfaRequiredError('AUTH_2FA_ENROLLMENT_REQUIRED', 'MFA enrollment required'), 403, 'FORBIDDEN', '二段階認証の登録が必要です'],
+  ])('認可の失敗 (%s): 従来の code と日本語の固定の文を返し、例外の文面を入れない', async (_label, err, status, code, message) => {
+    mocks.requireSuperAdmin.mockRejectedValue(err);
+
+    const res = await call();
+    const text = await res.text();
+
+    expect(res.status).toBe(status);
+    expect(JSON.parse(text)).toEqual({ error: { code, message } });
+    expect(text).not.toContain(err.message);
+    expect(fake.events).toEqual([]);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
   it('未認証: 401 を返し、事前取得も RPC も行わない', async () => {
     mocks.requireSuperAdmin.mockRejectedValue(new AuthError('AUTH_UNAUTHENTICATED', '認証が必要です'));
 

@@ -6,6 +6,11 @@ import { aiUsageRecordedHeaders, aiDailyLimitResponse, consumeAiUsage, AI_USAGE_
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { AI_IMAGE_REQUIRED_MESSAGE, AI_PHOTO_ANALYSIS_FAILED_MESSAGE, AI_PHOTO_MODE_MISMATCH_CODE } from '@/lib/ai/ai-api-messages';
+
+/** 422: 体重計の写真から体重が読み取れなかった */
+const WEIGHT_SCALE_NOT_READABLE_MESSAGE = '体重計の表示が読み取れませんでした。数値が鮮明に写った写真を撮り直してください。';
 
 export async function POST(request: Request) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
@@ -14,7 +19,7 @@ export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
   // 外国の AI 事業者への提供の同意が無ければ、AI へ送らずに止める (T15 / #1154。403 AI_CONSENT_REQUIRED)
@@ -29,7 +34,7 @@ export async function POST(request: Request) {
     const { image, mimeType } = body;
 
     if (!image) {
-      return NextResponse.json({ error: 'Image is required' }, { status: 400 });
+      return NextResponse.json({ error: AI_IMAGE_REQUIRED_MESSAGE }, { status: 400 });
     }
 
     // #1149 AI の利用回数の上限の判定と記録 (#1177)。AI へ送る直前 (入力の検証・同意などの判定のあと) に、操作 1 回につき 1 回数える。
@@ -64,7 +69,7 @@ export async function POST(request: Request) {
 
     if (error) {
       console.error('Edge Function error:', error);
-      return NextResponse.json({ error: 'Analysis failed' }, { status: 500 });
+      return NextResponse.json({ error: AI_PHOTO_ANALYSIS_FAILED_MESSAGE }, { status: 500 });
     }
 
     // 結果を整形
@@ -73,7 +78,7 @@ export async function POST(request: Request) {
     // 体重が取得できなかった場合
     if (!result.weight || result.weight <= 0) {
       return NextResponse.json(
-        { error: 'mode_mismatch', message: '体重計の表示が読み取れませんでした。数値が鮮明に写った写真を撮り直してください。' },
+        { error: WEIGHT_SCALE_NOT_READABLE_MESSAGE, code: AI_PHOTO_MODE_MISMATCH_CODE, message: WEIGHT_SCALE_NOT_READABLE_MESSAGE },
         { status: 422 },
       );
     }

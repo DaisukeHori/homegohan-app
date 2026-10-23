@@ -127,6 +127,7 @@ const TEST_FILE_PATTERN = /(__tests__|__mocks__|\.test\.|\.spec\.)/;
 /** T-34: 利用者に紐づく表 → プライバシーポリシー第3条の表の行 (1 列目の値)。根拠: 設計書 cross/20 F-42 */
 const PRIVACY_DATA_TABLES: Readonly<Record<string, string>> = {
   password_history: 'アカウント',
+  apple_sign_in_tokens: 'アカウント',
   personal_subscriptions: '有料プラン',
   billing_customers: '有料プラン',
   coupon_redemptions: '有料プラン',
