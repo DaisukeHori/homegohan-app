@@ -14,8 +14,8 @@ pg_cron (Supabase DB 内) および Vercel Cron (HTTP トリガー) の全ジョ
 
 ### 3.0 実装状況 (2026-10-22 更新)
 
-§3.1 以降の表と各節は、設計時の計画であり、**ほとんどは実装されていない**。§4 の pg_cron 用の関数 (`process_license_expire()` など 7 本) は本番に無く (`supabase/baseline/catalog/catalog_functions.csv`)、`vercel.json` に登録されている Vercel Cron は `process-menu-queue`・`app-log-alerts` (§3.2 の `app_log_alerts`。#1157)・`email-outbox` (毎分。メールの送信待ちを送る worker。#1193・`10-logs-and-mail-retry.md` §6.5)・`push-outbox` (毎分。Push 通知の送信待ちを送る worker。#1136・`mobile/06-push-send.md` §6.6)・`backup-freshness` (§3.2 の `backup_freshness`。#1129)・`login-alerts` (毎分。新しい端末・地域からのログインを本人にメールで知らせる worker。#1190・`cross/16-auth-history-sessions.md` §14.8)・`iap-reconcile` (毎時 41 分。期限を過ぎたストアの購読の行を RevenueCat から取り直して写す。#1912・`billing/04-iap-reconcile.md` §9) の 7 本である。
-Stripe Webhook・収益スナップショット・ライセンス系のバッチは、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
+§3.1 以降の表と各節は、設計時の計画であり、**ほとんどは実装されていない**。§4 の pg_cron 用の関数 (`process_license_expire()`・`reconcile_license_used_count()`・`process_stripe_event_stuck()` の 3 本。家族・食事リクエスト・整合の 4 本は operator/11 §2.2 で計画から外した) は本番に無く (`supabase/baseline/catalog/catalog_functions.csv`)、`vercel.json` に登録されている Vercel Cron は `process-menu-queue`・`app-log-alerts` (§3.2 の `app_log_alerts`。#1157)・`email-outbox` (毎分。メールの送信待ちを送る worker。#1193・`10-logs-and-mail-retry.md` §6.5)・`push-outbox` (毎分。Push 通知の送信待ちを送る worker。#1136・`mobile/06-push-send.md` §6.6)・`backup-freshness` (§3.2 の `backup_freshness`。#1129)・`login-alerts` (毎分。新しい端末・地域からのログインを本人にメールで知らせる worker。#1190・`cross/16-auth-history-sessions.md` §14.8)・`iap-reconcile` (毎時 41 分。期限を過ぎたストアの購読の行を RevenueCat から取り直して写す。#1912・`billing/04-iap-reconcile.md` §9) の 7 本である。
+Stripe の Webhook の受け口 (`/api/webhooks/stripe`。billing/01 の段 A・B: #1711・#1726) と RevenueCat の Webhook の受け口 (`/api/webhooks/revenuecat`。billing/03 の段 B: #1928) は main にある。収益スナップショット・ライセンス系のバッチは、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
 いま、このリポジトリの migration が pg_cron に登録しているジョブは 14 つある。この節で扱うのは、#1125 の第 1 段で足した次の 2 つ (migration `20261010150000_schedule_log_cleanup_and_dau_snapshot.sql`)。残りの 12 つ `calculate-segment-stats`・`calculate-segment-stats-finalize-retry`・`cleanup-stale-login-failures-and-grant-claims`・`update-org-challenge-progress`・`requeue-stale-meal-image-jobs`・`process-pending-meal-image-jobs`・`purge-hidden-content`・`cleanup-email-outbox`・`cleanup-auth-sessions-and-login-history`・`expire-manual-plan-grants`・`purge-dissolved-family-groups`・`cleanup-cron-run-history` は、下の箇条書きの「そのほか」に書く。
 
 | ジョブ名 | 実行時刻 | 実行する SQL | 内容 |
@@ -155,7 +155,7 @@ SELECT * FROM public.snapshot_daily_active_users(DATE '2026-10-07');
 > **2026-10-16 時点の状態**: 上の 6 本のうち `update-org-challenge-progress` (#1132。migration `20261014100100_org_challenge_progress.sql`) のほかの 5 本は、どれも migration で登録していない (§4 の関数 3 本は本番に無い)。
 > `family_freeze_grace_batch`・`family_archive_purge_batch`・`meal_request_expire_batch`・`data_integrity_check` の 4 本は、operator/11 §2.2 で 08 の計画から外した (発生源が無い・制約が守る)。解散した家族の物理削除は `purge-dissolved-family-groups` (§3.0。operator/11 §5.4)。
 > `infra_metrics_cleanup` と `failed_invite_lookups_cleanup` は、それぞれの表に書き込む処理がまだ無く (表が常に空)、消す対象が無いため、この段では足さない。
-> `stripe_event_stuck_check` (Stripe Webhook) と、ライセンス系の `license_expire_batch`・`license_used_count_reconcile` は、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
+> `stripe_event_stuck_check` (Stripe Webhook の受け口そのものは billing/01 で main にある。#1711・#1726) と、ライセンス系の `license_expire_batch`・`license_used_count_reconcile` は、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
 > migration が pg_cron に登録しているのは、この表の `update-org-challenge-progress` と、この表に無い `cleanup-old-app-logs`・`snapshot-daily-active-users`・`calculate-segment-stats`・`calculate-segment-stats-finalize-retry`・`cleanup-stale-login-failures-and-grant-claims`・`requeue-stale-meal-image-jobs`・`process-pending-meal-image-jobs`・`purge-hidden-content`・`cleanup-email-outbox`・`cleanup-auth-sessions-and-login-history`・`expire-manual-plan-grants`・`purge-dissolved-family-groups`・`cleanup-cron-run-history` の 14 つ (§3.0)。
 
 ### 3.2 Vercel Cron ジョブ (HTTP)
@@ -676,4 +676,4 @@ sequenceDiagram
 
 - `purge-dissolved-family-groups` の dry run → `purge_dissolved_family_groups(true)` (operator/11 §5.4)
 - `revenue_snapshot` の `calculate_daily_mrr` RPC: Stripe データと DB の差異をどう調整するか → stripe reconcile 後に実行するよう依存順序を設定 (`revenue_snapshot` は、オーナーの選択「課金は無料のまま計測」により、#1125 の第 1 段では足さない (#1125 の残り)。この論点は、`revenue_snapshot` を足すときまで保留)
-- pg_cron の失敗ログ長期保管: `cron.job_run_details` は自動では消えない。`cleanup-cron-run-history` が 30 日で消す (operator/11 §5.3) ため、重要な失敗は `admin_audit_logs` に都度 INSERT する設計で対応
+- pg_cron の失敗ログ長期保管: `cron.job_run_details` は自動では消えない。`cleanup-cron-run-history` が 30 日で消す (operator/11 §5.3)。失敗は消える前に `app-log-alerts` の回の `cron_failure` が知らせ、知らせた失敗は台帳 `cron_failure_alerts` に残る (§6・operator/11 §4・§5.1。台帳の行も 30 日で消える)

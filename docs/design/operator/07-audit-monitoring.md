@@ -146,11 +146,11 @@ actor_id NULL・action_type `system.*` で書く。読んで判断する側は a
 `(記録なし)` の行は、設計で予定していたが API が無い (操作そのものが未実装) ため、記録する箇所も無いもの。
 
 ```
-admin.user.ban                      - ユーザー BAN (POST /api/admin/users/{id}/freeze。凍結の更新は読んだ時点の super_admin でない状態のままのときだけ書く。読んでから書くまでに super_admin になっていたら 409 CONFLICT_STALE_DATA で、書かず記録もしない)
+admin.user.ban                      - ユーザー BAN (POST /api/admin/users/{id}/freeze。凍結の更新は読んだ時点の super_admin でない状態のままのときだけ書く。0 行なら読み直し、対象が無ければ 404、あれば (読んでから書くまでに super_admin になった等) 常に 409 CONFLICT_STALE_DATA で、どちらも書かず記録もしない)
 admin.user.unban                    - BAN 解除 (DELETE /api/admin/users/{id}/freeze)
 admin.user.role_change              - ロール変更 (PATCH / PUT /api/admin/users/{id}/role。details は previous_roles と new_roles)
                                       previous_roles は admin_set_user_roles が対象の行を FOR NO KEY UPDATE でロックして読んだ変える前の roles
-                                      (戻り値の previous_roles。同時の変更があっても、その UPDATE の直前の値。route が先に読んだ値は使わない。#1917)
+                                      (戻り値の previous_roles。同時の変更があっても、その UPDATE の直前の値。route が先に読んだ値は使わない。#1917。例外: 戻り値に previous_roles が無い #1917 の migration (20261023110000) の前の DB では、先に読んだ値で記録し、食い違いうることをログに残す)
 admin.user.note_add                 - 管理ノート追加 (PATCH /api/admin/users/{id}・POST /api/support/users/{id}/notes)
 admin.organization.create           - 組織作成 (POST /api/admin/organizations)
 admin.organization.suspend          - 組織停止 (記録なし)
@@ -158,7 +158,7 @@ admin.organization.restore          - 組織復旧 (記録なし)
 admin.organization.delete           - 組織削除 (記録なし)
 admin.organization.plan_change      - 組織プラン変更 (手動) (PATCH /api/admin/organizations/{id}。details は変える前と後のプラン。今と同じプランなら記録しない)
                                       更新は直前に読んだプランのままのときだけ書く (読んでから書くまでに別の運営が変えていたら書かず記録もしない。
-                                      今の値が送られたプランと同じなら 200、違えば 409 CONFLICT_STALE_DATA)。from は書いた時点の実際の直前の値
+                                      今の値が送られたプランと同じなら 200、違えば 409 CONFLICT_STALE_DATA、読み直したときに組織が無ければ 404)。from は書いた時点の実際の直前の値
 create_coupon                       - クーポン作成 (POST /api/super-admin/coupons。旧名 admin.coupon.create)
 update_coupon                       - クーポンの編集・一時停止・有効化 (PATCH /api/super-admin/coupons/{id}。一時停止・有効化は status の変更で、
                                       専用の action は無い。旧名 admin.coupon.pause / admin.coupon.activate)
@@ -316,7 +316,7 @@ super_admin.app_logs.list           - アプリログの一覧・本文の検索
 
 実コードの名前が下の一覧と違うもの (#1571 の時点。名前は変えていない):
 - プランの作成・更新・削除は `create_plan` / `update_plan` / `delete_plan` (POST /api/super-admin/plans・PATCH / DELETE /api/super-admin/plans/{id})。
-  公開・非公開・廃止・廃止の取り消しは `update_plan` の中の変更として記録する (status を変えたときは details に `status_from` / `status_to` も入れる。更新は直前に読んだ status のままのとき、削除は draft のままのときだけ行い、読んでから書くまでに別の運営が変えていたら書かず記録もしない。編集は送った変更がもう入っていれば 200、それ以外は 409 CONFLICT_STALE_DATA。status_from は書いた時点の実際の直前の値)。価格変更は `change_price` (POST /api/super-admin/plans/{id}/price-change)。
+  公開・非公開・廃止・廃止の取り消しは `update_plan` の中の変更として記録する (status を変えたときは details に `status_from` / `status_to` も入れる。更新は直前に読んだ status のまま (廃止で既存の ends_at に頼るときは ends_at が NULL でないことも) のとき、削除は draft のままのときだけ行い、読んでから書くまでに別の運営が変えていたら書かず記録もしない。0 行なら読み直し、プランが無ければ 404、編集は送った変更がもう入っていれば 200、それ以外は 409 CONFLICT_STALE_DATA。status_from は書いた時点の実際の直前の値)。価格変更は `change_price` (POST /api/super-admin/plans/{id}/price-change)。
 - A/B テスト (/api/super-admin/experiments) の作成・更新・削除は `super_admin.plan.create` / `super_admin.plan.update` を使っている。
 - 機能パッケージは `create_feature_package` / `update_feature_package` / `delete_feature_package`。
 - 機能フラグの作成・更新・削除は、すべて `super_admin.feature_flag.toggle`。

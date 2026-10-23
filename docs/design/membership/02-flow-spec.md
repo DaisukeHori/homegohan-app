@@ -295,7 +295,7 @@ POST /api/family/promotions/{token}/reject → rpc('reject_child_promotion')
 
 org owner 譲渡と同パターン。`propose_family_representative_transfer` / `accept_family_representative_transfer`。代表は他の adult にしか譲渡できない (child は不可)。提案時に宛先へ提案メール、承諾後に旧代表者と新代表者へ完了メールを送る (§5 と同じ。宛先のメールアドレスは `auth.users` から引く。04 §5)。
 
-**承諾時の不変条件 (#1237):** 承諾 RPC は承諾時点で、承諾者がその家族の `status = 'active'` かつ `role IN ('representative', 'adult')` のメンバーであることを再検証し、満たさなければ何も変更せずに [NEW] `TRANSFER_ACCEPTOR_NOT_IN_FAMILY` (403) を返す (脱退・除名済みのユーザーが古い提案で代表者になり、家族グループを DELETE CASCADE できてしまうのを防ぐ)。二重承諾の防止とその他のエラーコードは §5 と同じ。
+**承諾時の不変条件 (#1237):** 承諾 RPC は承諾時点で、承諾者がその家族の `status = 'active'` かつ `role IN ('representative', 'adult')` のメンバーであることを再検証し、満たさなければ何も変更せずに [NEW] `TRANSFER_ACCEPTOR_NOT_IN_FAMILY` (403) を返す (脱退・除名済みのユーザーが古い提案で代表者になり、家族グループを DELETE CASCADE できてしまうのを防ぐ。いまは利用者による家族の行の直接の DELETE そのものが無い: `20261022200000_family_groups_no_direct_delete.sql`・#1961)。二重承諾の防止とその他のエラーコードは §5 と同じ。
 
 **未成年 (#1173):** `accept_family_representative_transfer` は、本人の `user_profiles.birth_date` が 18 歳未満なら `MINOR_ACCOUNT_NOT_ALLOWED` (403。設計書 `cross/14-parental-consent.md` §6.4 の 12)。18 歳未満の本人が家族に入るのは昇格 (§9) だけで、家族の代表者・組織のオーナーは引き受けない (保護者の同意とのつながりが切れたときの退会を 409 で塞がない)。
 

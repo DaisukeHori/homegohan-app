@@ -183,7 +183,7 @@ stateDiagram-v2
 
 いまの廃止は `PATCH /api/super-admin/plans/{id}` の `status: 'deprecated'` で行い、廃止の前に契約が終わっていない契約者を数えて 1 件でもいれば 409 `OP_PLAN_HAS_SUBSCRIBERS` で止める (`src/lib/super-admin/plan-subscribers.ts`。API の形は `02-api-spec.md` の `PATCH /api/super-admin/plans/{id}`)。
 
-| プラン | 個人契約 | 家族グループ | 組織 (`organizations.plan`) | 廃止の画面・価格変更の画面 |
+| プラン | 個人契約 (`plan_key` が一致し `status` が trialing / active / paused / past_due / grace) | 家族グループ (`plan_key` が一致し `status = 'active'`) | 組織 (`organizations.plan` が一致し `status = 'active'`) | 廃止の画面・価格変更の画面 |
 |---|---|---|---|---|
 | 個人・家族のプラン | 数える | 数える | 数える | 注記なし |
 | 組織のプランの行 (`plan_type = 'org'` の `org_*`) | 数える | 数える | **数えない** (件数の欄を出さない) | 注記 `ORG_SUBSCRIPTION_PLAN_ROW_NOTE` を出す |

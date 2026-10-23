@@ -206,23 +206,23 @@ BAN 解除
 
 ---
 
-### PUT /api/admin/users/{id}/roles
-ロール付与・剥奪
+### PATCH / PUT /api/admin/users/{id}/role
+ロール付与・剥奪 (実装は `src/app/api/admin/users/[id]/role/route.ts`。PUT は PATCH と同じ (E2E 互換)。応答は `{ data: { success: true, roles } }`)
 
 **リクエスト**:
 ```json
 {
   "roles": ["admin", "support"],
-  "reauth_token": "one_time_token_from_reauth"
+  "reauth_token": "(任意。受け取るが検証しない)"
 }
 ```
 
 **バリデーション**:
-- `super_admin` ロールは `super_admin` のみ付与可能
-- 付与可能ロール: 公式 12 種のみ
-- パスワード再認証必須 (`reauth_token`)
+- 呼べるのは `super_admin` だけ (`admin` は 403 `OP_PERMISSION_DENIED`)。自分自身のロールは変えられない (403 `OP_SELF_MODIFY`)。対象が無ければ 404 `NOT_FOUND`
+- 付与可能ロール: `ALLOWED_ROLES` の 11 種 (`src/lib/admin/users-schemas.ts`)。1 つ以上
+- 更新は RPC `admin_set_user_roles` (本人の client)。監査 `admin.user.role_change` の `previous_roles` は、RPC が対象の行をロックして読んだ変える前の roles (戻り値。#1917。operator/07 §4.1)。パスワードの再認証はしない
 
-**権限**: `admin` (super_admin 以外), `super_admin` (全ロール)
+**権限**: `super_admin` だけ
 
 ---
 
@@ -349,7 +349,7 @@ BAN 解除
 - `plan`: `ORG_PLAN_VALUES` (`standard` / `premium` / `enterprise`) のどれか。省略すると `ORG_PLAN_DEFAULT` (`standard`)
 - `owner_id`: 省略すると呼び出した運営をオーナーにする (作る組織は active なので `organizations.owner_id` は NOT NULL)
 
-**処理**: service_role (`getSupabaseAdmin`) で、organizations の行・`org_license_pools` の行 (`total_licenses` = NULL・`used_licenses` = 0。失敗してもログだけで続ける)・オーナーの `user_profiles` (`organization_id` と `org_role = 'owner'`) を書く。オーナーにする人が退会の途中 (退会の本体が findBlocker の前に付ける退会の印が新しい) なら、organizations の行の INSERT を DB のトリガー `organizations_owner_not_deleting` が止め、何も書かずに 409 `OWNER_ACCOUNT_DELETING` を返す (#1917 の続き。退会の最後の `deleteUser` が `organizations_owner_id_fkey` (RESTRICT) で失敗しないように)
+**処理**: service_role (`getSupabaseAdmin`) で、organizations の行・`org_license_pools` の行 (`total_licenses` = NULL・`used_licenses` = 0。失敗してもログだけで続ける)・オーナーの `user_profiles` (`organization_id` と `org_role = 'owner'`) を書く。オーナーにする人が退会の途中 (退会の本体が findBlocker の前に付ける退会の印が新しい) なら、organizations の行の INSERT を DB のトリガー `trg_organizations_owner_not_deleting` (関数 `organizations_owner_not_deleting()`) が止め、何も書かずに 409 `OWNER_ACCOUNT_DELETING` を返す (#1917 の続き。退会の最後の `deleteUser` が `organizations_owner_id_fkey` (RESTRICT) で失敗しないように)
 
 **レスポンス**: `{ "organization": { "id", "name", "plan", "owner_id", "created_at", "updated_at" } }`
 
@@ -362,7 +362,7 @@ BAN 解除
 | 400 | `VALIDATION_ERROR` / `INVALID_JSON` / `INVALID_CHARACTER` | 本文が JSON でない (:136-139)・Zod の検査に通らない (:144-147)・本文に NULL 文字がある (:111-112) |
 | 401 | `AUTH_UNAUTHENTICATED` | 未ログイン (:119) |
 | 403 | `OP_PERMISSION_DENIED` | `admin` / `super_admin` でない (:125) |
-| 409 | `OWNER_ALREADY_IN_ORG` / `OWNER_ACCOUNT_DELETING` | オーナーにする人がすでに別の組織に所属している (:167-170) / オーナーにする人が退会の手続き中 (退会の印 `account_deletion_guards` があり、DB のトリガー `organizations_owner_not_deleting` が組織の行の INSERT を止めた。`supabase/migrations/20261023130000_account_deletion_owner_guard.sql`。:181-186。文は「指定した owner は退会の手続き中です」。#1917 の続き) |
+| 409 | `OWNER_ALREADY_IN_ORG` / `OWNER_ACCOUNT_DELETING` | オーナーにする人がすでに別の組織に所属している (:167-170) / オーナーにする人が退会の手続き中 (退会の印 `account_deletion_guards` があり、DB のトリガー `trg_organizations_owner_not_deleting` (関数 `organizations_owner_not_deleting()`) が組織の行の INSERT を止めた。`supabase/migrations/20261023130000_account_deletion_owner_guard.sql`。:182-187。文は「指定した owner は退会の手続き中です」。#1917 の続き) |
 | 500 | `INTERNAL_ERROR` | 組織の行の作成 (:189-192)・オーナーの `user_profiles` の更新 (:222-225) に失敗 |
 
 **権限**: `admin`, `super_admin`
@@ -1228,8 +1228,8 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 
 ---
 
-### POST /api/admin/sales/leads/{id}/activities
-活動記録追加。リードの読み込みの DB の失敗は 500 `INTERNAL_ERROR` (404 は行が無いとき (UUID の形でない id を含む。DB に渡さず、本文の検査の 400 のあとに 404) だけ)。追加のあとのリードの `updated_at` の更新に失敗しても、活動は追加できているので 201 のまま (失敗は db-logger に error で残す。#1917)
+### GET / POST /api/admin/sales/leads/{id}/activities
+`GET` は活動履歴の一覧 (`{ data: [{ id, lead_id, actor_id, activity_type, details, created_at }] }`。新しい順。権限は `sales` / `admin` / `super_admin`。UUID の形でない id は DB に渡さず 404 `NOT_FOUND`、読み込みの DB の失敗は 500 `INTERNAL_ERROR`。監査ログは残さない。`src/app/api/admin/sales/leads/[id]/activities/route.ts:53-95`)。`POST` は活動記録追加。リードの読み込みの DB の失敗は 500 `INTERNAL_ERROR` (404 は行が無いとき (UUID の形でない id を含む。DB に渡さず、本文の検査の 400 のあとに 404) だけ)。追加のあとのリードの `updated_at` の更新に失敗しても、活動は追加できているので 201 のまま (失敗は db-logger に error で残す。#1917)
 
 **リクエスト**:
 ```json
@@ -1843,7 +1843,7 @@ Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#113
 | `OP_NOT_SUPPORTED` | 501 | [NEW] 未対応の機能 (本文は予定を書かず、いまの事実だけを言う。#1911)。認可を通った人にだけ返す (データエクスポート・AI コンテンツの審査) |
 | `DSR_INVALID_TRANSITION` | 409 | [NEW] 個人情報の請求の更新 (`PATCH /api/admin/data-requests/{id}`) が状態遷移表に無い (同じ状態の指定・本人確認待ち / 終わった請求への更新を含む。cross/15 §7.4・§13) |
 | `DSR_RESPONSE_NOTE_REQUIRED` | 422 | [NEW] 個人情報の請求を対応済み・対応できずにするのに本人への応答が空 (`PATCH /api/admin/data-requests/{id}`。cross/15 §13) |
-| `CONFLICT_PRECONDITION_REQUIRED` / `CONFLICT_OPTIMISTIC_LOCK` / `CONFLICT_STALE_DATA` | 428 / 412 / 409 | 楽観的ロック (cross/04 §4.2)。`PATCH /api/admin/data-requests/{id}` で、`If-Unmodified-Since` が無い / GET が返した `updated_at` と違う / 条件つきの UPDATE が 0 行。`CONFLICT_STALE_DATA` は組織のプランの変更 (`PATCH /api/admin/organizations/{id}`) でも使う: 直前に読んだ `plan` のままなら書く条件つきの UPDATE が 0 行で、読み直した `plan` が送られたプランと違う (同じなら 200 で書かず記録もしない。#1912)。同じ形で、問い合わせの更新 (`PATCH` / `PUT /api/admin/inquiries/{id}`。条件は読んだ `status` と `updated_at`)・AI の 1 日の上限の保存 (`PATCH /api/super-admin/llm/quotas`。条件は読んだ `daily_limit`、行が無かったときは作るだけ)・リードのステージの変更 (`PATCH /api/admin/sales/leads/{id}`。条件は読んだ `stage`。読み直してリードがあれば常に 409)・プランの編集と削除 (`PATCH` / `DELETE /api/super-admin/plans/{id}`。条件は読んだ `status` (削除は `draft`)、廃止で既存の `ends_at` に頼るときは `ends_at` が NULL でないことも。編集は送った変更がもう入っていれば 200)・利用者の凍結 (`POST /api/admin/users/{id}/freeze`。条件は読んだ時点の super_admin でない状態のまま。読み直して対象があれば常に 409) でも使う。送った値が今の値と同じだったときの扱いは違う: 組織のプランと AI の 1 日の上限は 200 で書かず記録もしないが、問い合わせの更新は 200 で書かずに今の行 (本文を含む) を返すので、`changed: false` として記録する (:984) |
+| `CONFLICT_PRECONDITION_REQUIRED` / `CONFLICT_OPTIMISTIC_LOCK` / `CONFLICT_STALE_DATA` | 428 / 412 / 409 | 楽観的ロック (cross/04 §4.2)。`PATCH /api/admin/data-requests/{id}` で、`If-Unmodified-Since` が無い / GET が返した `updated_at` と違う / 条件つきの UPDATE が 0 行。`CONFLICT_STALE_DATA` は組織のプランの変更 (`PATCH /api/admin/organizations/{id}`) でも使う: 直前に読んだ `plan` のままなら書く条件つきの UPDATE が 0 行で、読み直した `plan` が送られたプランと違う (同じなら 200 で書かず記録もしない。#1912)。同じ形で、問い合わせの更新 (`PATCH` / `PUT /api/admin/inquiries/{id}`。条件は読んだ `status` と `updated_at`)・AI の 1 日の上限の保存 (`PATCH /api/super-admin/llm/quotas`。条件は読んだ `daily_limit`、行が無かったときは作るだけ)・リードのステージの変更 (`PATCH /api/admin/sales/leads/{id}`。条件は読んだ `stage`。読み直してリードがあれば常に 409)・プランの編集と削除 (`PATCH` / `DELETE /api/super-admin/plans/{id}`。条件は読んだ `status` (削除は `draft`)、廃止で既存の `ends_at` に頼るときは `ends_at` が NULL でないことも。編集は送った変更がもう入っていれば 200)・利用者の凍結 (`POST /api/admin/users/{id}/freeze`。条件は読んだ時点の super_admin でない状態のまま。読み直して対象があれば常に 409) でも使う。送った値が今の値と同じだったときの扱いは違う: 組織のプラン・AI の 1 日の上限・プランの編集 (読み直した行に送った変更がもう入っていたとき) は 200 で書かず記録もしないが、問い合わせの更新は 200 で書かずに今の行 (本文を含む) を返すので、`changed: false` として記録する (:984) |
 | `OP_EMAIL_OUTBOX_NOT_FOUND` | 404 | [NEW] 再送 (`POST /api/super-admin/email-outbox/{id}/requeue`) の行が無い (`10-logs-and-mail-retry.md` §11) |
 | `OP_EMAIL_OUTBOX_NOT_REQUEUEABLE` | 409 | [NEW] 再送できない行。`details.reason` が `not_dead` (届けられなかった行でない) か `redacted` (宛先を伏せた行) (`10-logs-and-mail-retry.md` §11) |
 | `AUTH_2FA_REQUIRED` | 403 | 二段階認証の確認が要る (必須ロールで認証アプリを登録済み・セッションが aal1)。`requireRole` が `MfaRequiredError` (`ForbiddenError` の派生) を投げ、運営の API は route の既存の 403 の code (`FORBIDDEN` / `OP_PERMISSION_DENIED` / `PERM_DENIED`) で返す (本文の message は「二段階認証の確認が必要です」)。この code を本文に出すのは自己サービスの `/api/auth/mfa/*` だけ。画面 (layout / page) は `requireRoleForPage` が MFA の画面へ回す (`cross/12-operator-mfa.md` §13.4・§19.3) |
