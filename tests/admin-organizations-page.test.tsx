@@ -10,6 +10,11 @@
  *   - ページ送り: 前へ / 次へで page を変え、検索条件は引き継ぐ。範囲と総件数を出す
  *   - 作成: 組織名・プラン・(任意で) オーナーのユーザー ID を POST し、成功したら 1 ページ目から取り直す。
  *     API のエラーメッセージ (同じユーザーが別の組織に所属している、など) をそのまま出す
+ *   - プランの変更 (#1912: 組織のプランの段階は運営だけが変える): 一覧の行のプランを選び直して「変更」を押すと
+ *     PATCH /api/admin/organizations/{id} に { plan } を送り、成功したらその行だけを返ってきた値に置き換える。
+ *     今と同じプランのあいだは「変更」を押せない。失敗したら API のメッセージを出し、行は変えない。
+ *     ただし行の表示が古いことで断られた (409 CONFLICT_STALE_DATA・404 NOT_FOUND) ときは、今の条件のまま一覧を読み直し、
+ *     理由の文を一覧の上に出す (運営が手で読み直さなくてよい)
  *   - 入力欄はラベルと結びつき、ボタンには type がある
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
@@ -68,6 +73,7 @@ let fetchMock: ReturnType<typeof vi.fn>;
 interface Api {
   list?: (url: URL) => Response | Promise<Response>;
   create?: (body: Record<string, unknown>) => Response | Promise<Response>;
+  changePlan?: (id: string, body: Record<string, unknown>) => Response | Promise<Response>;
 }
 
 /** API ごとの応答を決める。想定外の呼び出しはテストを失敗させる */
@@ -79,6 +85,10 @@ function mockApi(api: Api) {
     if (url.pathname === '/api/admin/organizations' && method === 'POST' && api.create) {
       return api.create(JSON.parse(String(init?.body)));
     }
+    const changePlanPath = url.pathname.match(/^\/api\/admin\/organizations\/([^/]+)$/);
+    if (changePlanPath && method === 'PATCH' && api.changePlan) {
+      return api.changePlan(decodeURIComponent(changePlanPath[1]), JSON.parse(String(init?.body)));
+    }
     throw new Error(`想定していない fetch: ${method} ${input}`);
   });
 }
@@ -87,10 +97,14 @@ const text = () => container.textContent ?? '';
 const alerts = () => Array.from(container.querySelectorAll('[role="alert"]')).map((el) => el.textContent ?? '');
 const statuses = () => Array.from(container.querySelectorAll('[role="status"]')).map((el) => el.textContent ?? '');
 
-/** 一覧の各行のセルの文字 */
+/** 一覧の各行のセルの表示の文字 (プランの欄の変更の部品 (ラベル・選択肢・ボタン・エラー) は除く) */
 const rows = () =>
   Array.from(container.querySelectorAll('tbody tr')).map((tr) =>
-    Array.from(tr.querySelectorAll('td')).map((td) => td.textContent?.trim() ?? ''),
+    Array.from(tr.querySelectorAll('td')).map((td) => {
+      const copy = td.cloneNode(true) as HTMLElement;
+      copy.querySelectorAll('label, select, button, [role="alert"]').forEach((el) => el.remove());
+      return copy.textContent?.trim() ?? '';
+    }),
   );
 const names = () => rows().map((cells) => cells[0]);
 
@@ -779,5 +793,524 @@ describe('アクセシビリティ', () => {
     const help = container.querySelector(`#${describedBy}`);
     expect(help?.textContent).toContain('空欄のときは');
     expect(help?.textContent).toContain('あなた自身がオーナー');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// プランの変更 (#1912: 組織のプランの段階は運営だけが変える)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('プランの変更', () => {
+  const ORG_1 = org(1, { name: '株式会社エー', plan: 'standard' });
+  const ORG_2 = org(2, { name: '株式会社ビー', plan: 'premium' });
+
+  const planSelect = (id: string) => container.querySelector(`#org-plan-${id}`) as HTMLSelectElement;
+  const changeButton = (id: string) =>
+    planSelect(id).closest('td')?.querySelector('button') as HTMLButtonElement | undefined;
+  const patchCalls = () => callsOf('PATCH');
+
+  it('行のプランの欄は、今のプランを選んだ状態の選択肢 (standard / premium / enterprise) と「変更」で、ラベルは組織名を含む', async () => {
+    mockApi({ list: () => jsonResponse(200, listBody([ORG_1, ORG_2])) });
+    await renderPage();
+
+    expect(planSelect(ORG_1.id).value).toBe('standard');
+    expect(planSelect(ORG_2.id).value).toBe('premium');
+    expect(Array.from(planSelect(ORG_1.id).options).map((o) => o.value)).toEqual(['standard', 'premium', 'enterprise']);
+    expect(container.querySelector(`label[for="org-plan-${ORG_1.id}"]`)?.textContent).toBe('株式会社エー のプラン');
+    expect(changeButton(ORG_1.id)?.textContent).toBe('変更');
+  });
+
+  it('今と同じプランのあいだは「変更」を押せない (送らない)', async () => {
+    mockApi({ list: () => jsonResponse(200, listBody([ORG_1])) });
+    await renderPage();
+
+    expect(changeButton(ORG_1.id)?.disabled).toBe(true);
+    await choose(planSelect(ORG_1.id), 'premium');
+    expect(changeButton(ORG_1.id)?.disabled).toBe(false);
+    await choose(planSelect(ORG_1.id), 'standard');
+    expect(changeButton(ORG_1.id)?.disabled).toBe(true);
+    expect(patchCalls()).toHaveLength(0);
+  });
+
+  it('選び直して「変更」を押すと PATCH /api/admin/organizations/{id} に { plan } だけを送り、成功したらその行だけを置き換えて知らせる (一覧は取り直さない)', async () => {
+    const changed: Array<[string, Record<string, unknown>]> = [];
+    mockApi({
+      list: () => jsonResponse(200, listBody([ORG_1, ORG_2])),
+      changePlan: (id, body) => {
+        changed.push([id, body]);
+        return jsonResponse(200, { organization: { ...ORG_1, plan: 'enterprise', updated_at: '2026-10-22T08:00:00.000Z' } });
+      },
+    });
+    await renderPage();
+
+    await choose(planSelect(ORG_1.id), 'enterprise');
+    await click(changeButton(ORG_1.id), '変更ボタン');
+
+    expect(changed).toEqual([[ORG_1.id, { plan: 'enterprise' }]]);
+    expect(callsOf('GET')).toHaveLength(1);
+    expect(rows().map((cells) => cells.slice(0, 2))).toEqual([
+      ['株式会社エー', 'enterprise'],
+      ['株式会社ビー', 'premium'],
+    ]);
+    expect(planSelect(ORG_1.id).value).toBe('enterprise');
+    expect(changeButton(ORG_1.id)?.disabled).toBe(true);
+    expect(statuses()).toContain('組織「株式会社エー」のプランを enterprise に変更しました。');
+    expect(alerts()).toEqual([]);
+  });
+
+  it('API のエラー (500・400 など、行が古いこと以外) はそのメッセージを欄に出し、行のプランは変えず、一覧も取り直さない。通信エラーは汎用の日本語のメッセージ', async () => {
+    let calls = 0;
+    mockApi({
+      list: () => jsonResponse(200, listBody([ORG_1])),
+      changePlan: () => {
+        calls += 1;
+        if (calls === 1) return jsonResponse(500, errorBody('INTERNAL_ERROR', '組織のプランを変更できませんでした'));
+        if (calls === 2) return jsonResponse(400, errorBody('VALIDATION_ERROR', 'バリデーションエラー'));
+        throw new TypeError('Failed to fetch');
+      },
+    });
+    await renderPage();
+
+    await choose(planSelect(ORG_1.id), 'premium');
+    await click(changeButton(ORG_1.id), '変更ボタン');
+    expect(alerts()).toEqual(['組織のプランを変更できませんでした']);
+    expect(rows()[0][1]).toBe('standard');
+    expect(planSelect(ORG_1.id).value).toBe('premium');
+
+    await click(changeButton(ORG_1.id), '変更ボタン');
+    expect(alerts()).toEqual(['バリデーションエラー']);
+    expect(rows()[0][1]).toBe('standard');
+
+    await click(changeButton(ORG_1.id), '変更ボタン');
+    expect(alerts()).toEqual(['プランを変更できませんでした。しばらくしてから、もう一度お試しください。']);
+    expect(rows()[0][1]).toBe('standard');
+    expect(statuses()).toEqual([]);
+    expect(callsOf('GET')).toHaveLength(1);
+  });
+
+  it('409 CONFLICT_STALE_DATA (別の運営が先に変えた) なら、今の条件のまま一覧を読み直して行を今のプランにし、理由の文を一覧の上に出す', async () => {
+    const SEARCHED = org(1, { name: '株式会社エー', plan: 'standard' });
+    let listCalls = 0;
+    mockApi({
+      list: () => {
+        listCalls += 1;
+        // 2 回目 (検索) は古い standard、3 回目 (読み直し) は別の運営が変えた後の enterprise
+        return jsonResponse(200, listBody([listCalls <= 2 ? SEARCHED : { ...SEARCHED, plan: 'enterprise' }]));
+      },
+      changePlan: () =>
+        jsonResponse(
+          409,
+          errorBody('CONFLICT_STALE_DATA', '別の運営が先にこの組織のプランを変えました。一覧を読み込み直して、もう一度確認してください'),
+        ),
+    });
+    await renderPage();
+    await search('エー', 'standard');
+    expect(callsOf('GET')).toHaveLength(2);
+
+    await choose(planSelect(SEARCHED.id), 'premium');
+    await click(changeButton(SEARCHED.id), '変更ボタン');
+
+    expect(patchCalls()).toHaveLength(1);
+    // 読み直しは、検索の条件 (組織名・プラン・ページ) を変えない
+    expect(callsOf('GET')).toHaveLength(3);
+    expect(listParams(2)).toEqual(listParams(1));
+    expect(rows().map((cells) => cells.slice(0, 2))).toEqual([['株式会社エー', 'enterprise']]);
+    expect(planSelect(SEARCHED.id).value).toBe('enterprise');
+    expect(changeButton(SEARCHED.id)?.disabled).toBe(true);
+    expect(alerts()).toEqual([
+      '組織「株式会社エー」のプランは、別の運営が先に変えていました。一覧を読み込み直したので、今のプランを確かめてから、もう一度変更してください。',
+    ]);
+    expect(statuses()).toEqual([]);
+  });
+
+  it('404 NOT_FOUND (組織がもう無い) なら、一覧を読み直して消えた行を外し、理由の文を一覧の上に出す', async () => {
+    let listCalls = 0;
+    mockApi({
+      list: () => {
+        listCalls += 1;
+        return jsonResponse(200, listBody(listCalls === 1 ? [ORG_1, ORG_2] : [ORG_2]));
+      },
+      changePlan: () => jsonResponse(404, errorBody('NOT_FOUND', '組織が見つかりません')),
+    });
+    await renderPage();
+
+    await choose(planSelect(ORG_1.id), 'premium');
+    await click(changeButton(ORG_1.id), '変更ボタン');
+
+    expect(callsOf('GET')).toHaveLength(2);
+    expect(names()).toEqual(['株式会社ビー']);
+    expect(alerts()).toEqual(['組織「株式会社エー」が見つかりませんでした (解散などで消えた可能性があります)。一覧を読み込み直しました。']);
+  });
+
+  it('404 でも本文に code が無い (ルートが無いなどの HTML の 404) ときは、読み直さずに汎用のエラーを欄に出す', async () => {
+    mockApi({
+      list: () => jsonResponse(200, listBody([ORG_1])),
+      changePlan: () => new Response('<html>Not Found</html>', { status: 404, headers: { 'content-type': 'text/html' } }),
+    });
+    await renderPage();
+
+    await choose(planSelect(ORG_1.id), 'premium');
+    await click(changeButton(ORG_1.id), '変更ボタン');
+
+    expect(callsOf('GET')).toHaveLength(1);
+    expect(alerts()).toEqual(['プランを変更できませんでした。しばらくしてから、もう一度お試しください。']);
+    expect(rows()[0][1]).toBe('standard');
+  });
+
+  it('次の変更を始めると、前の結果の表示 (変更の通知・読み直しの文) は消える', async () => {
+    let patches = 0;
+    let listCalls = 0;
+    const slowThird = deferred<Response>();
+    mockApi({
+      list: () => {
+        listCalls += 1;
+        return jsonResponse(200, listBody([listCalls === 1 ? ORG_1 : { ...ORG_1, plan: 'enterprise' }, ORG_2]));
+      },
+      changePlan: (id) => {
+        patches += 1;
+        if (patches === 1) return jsonResponse(409, errorBody('CONFLICT_STALE_DATA', '別の運営が先にこの組織のプランを変えました。'));
+        if (patches === 2) return jsonResponse(200, { organization: { ...ORG_2, plan: 'standard' } });
+        expect(id).toBe(ORG_2.id);
+        return slowThird.promise;
+      },
+    });
+    await renderPage();
+
+    await choose(planSelect(ORG_1.id), 'premium');
+    await click(changeButton(ORG_1.id), '変更ボタン');
+    expect(alerts()).toHaveLength(1);
+
+    // 次の変更 (成功) を始めると、読み直しの文は消え、成功の通知だけになる
+    await choose(planSelect(ORG_2.id), 'standard');
+    await click(changeButton(ORG_2.id), '変更ボタン');
+    expect(alerts()).toEqual([]);
+    expect(statuses()).toEqual(['組織「株式会社ビー」のプランを standard に変更しました。']);
+
+    // さらに次の変更を始めた時点で、前の成功の通知も消える
+    await choose(planSelect(ORG_2.id), 'enterprise');
+    await click(changeButton(ORG_2.id), '変更ボタン');
+    expect(statuses()).toEqual([]);
+    expect(alerts()).toEqual([]);
+
+    await act(async () => {
+      slowThird.resolve(jsonResponse(200, { organization: { ...ORG_2, plan: 'enterprise' } }));
+    });
+    await settle();
+    expect(statuses()).toEqual(['組織「株式会社ビー」のプランを enterprise に変更しました。']);
+  });
+
+  it('想定外の形の応答 (organization が無い) は成功と見せず、汎用のエラーにする', async () => {
+    mockApi({
+      list: () => jsonResponse(200, listBody([ORG_1])),
+      changePlan: () => jsonResponse(200, { ok: true }),
+    });
+    await renderPage();
+
+    await choose(planSelect(ORG_1.id), 'premium');
+    await click(changeButton(ORG_1.id), '変更ボタン');
+    expect(alerts()).toEqual(['プランを変更できませんでした。しばらくしてから、もう一度お試しください。']);
+    expect(rows()[0][1]).toBe('standard');
+    expect(statuses()).toEqual([]);
+  });
+
+  it('変更している間は選択肢とボタンを止め、二重に送らない', async () => {
+    const slow = deferred<Response>();
+    mockApi({
+      list: () => jsonResponse(200, listBody([ORG_1])),
+      changePlan: () => slow.promise,
+    });
+    await renderPage();
+
+    await choose(planSelect(ORG_1.id), 'premium');
+    await click(changeButton(ORG_1.id), '変更ボタン');
+    expect(planSelect(ORG_1.id).disabled).toBe(true);
+    expect(changeButton(ORG_1.id)?.disabled).toBe(true);
+    expect(changeButton(ORG_1.id)?.textContent).toBe('変更中...');
+    await click(changeButton(ORG_1.id), '変更ボタン');
+    expect(patchCalls()).toHaveLength(1);
+
+    await act(async () => {
+      slow.resolve(jsonResponse(200, { organization: { ...ORG_1, plan: 'premium' } }));
+    });
+    await settle();
+    expect(rows()[0][1]).toBe('premium');
+    expect(planSelect(ORG_1.id).disabled).toBe(false);
+  });
+
+  it('一覧に無い値のプラン (null・内部の値) は、その値のまま出し、選択肢の先頭は「選ぶ」で「変更」は押せない', async () => {
+    const odd = org(3, { name: '内部の値の組織', plan: 'org_pro' });
+    const none = org(4, { name: 'プラン未設定', plan: null });
+    mockApi({ list: () => jsonResponse(200, listBody([odd, none])) });
+    await renderPage();
+
+    expect(rows().map((cells) => cells.slice(0, 2))).toEqual([
+      ['内部の値の組織', 'org_pro'],
+      ['プラン未設定', '-'],
+    ]);
+    for (const id of [odd.id, none.id]) {
+      expect(planSelect(id).value).toBe('');
+      expect(Array.from(planSelect(id).options).map((o) => o.value)).toEqual(['', 'standard', 'premium', 'enterprise']);
+      expect(changeButton(id)?.disabled).toBe(true);
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 別の一覧へ移ったときのプランの変更の文 (#1912 の続き)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('別の一覧へ移ると、前の一覧の行についてのプランの変更の文を消す', () => {
+  const TOTAL = 65; // 30 件ずつで 3 ページ (30 + 30 + 5)
+  const STALE_MESSAGE =
+    '組織「組織1」のプランは、別の運営が先に変えていました。一覧を読み込み直したので、今のプランを確かめてから、もう一度変更してください。';
+
+  const planSelect = (id: string) => container.querySelector(`#org-plan-${id}`) as HTMLSelectElement;
+  const changeButton = (id: string) =>
+    planSelect(id).closest('td')?.querySelector('button') as HTMLButtonElement | undefined;
+
+  /** page ページ目の組織 (65 件・3 ページ) */
+  function pageOf(url: URL) {
+    const page = Number(url.searchParams.get('page'));
+    const count = page === 3 ? 5 : 30;
+    return jsonResponse(
+      200,
+      listBody(
+        Array.from({ length: count }, (_, i) => org((page - 1) * 30 + i + 1)),
+        TOTAL,
+        page,
+      ),
+    );
+  }
+
+  /** 1 行目 (組織1) のプランの変更を 409 で断らせ、読み直しの文を出す */
+  async function showStaleMessage() {
+    await choose(planSelect(org(1).id), 'premium');
+    await click(changeButton(org(1).id), '変更ボタン');
+    expect(alerts()).toEqual([STALE_MESSAGE]);
+  }
+
+  /** 1 行目 (組織1) のプランの変更を成功させ、通知を出す */
+  async function showChangedNotice() {
+    await choose(planSelect(org(1).id), 'enterprise');
+    await click(changeButton(org(1).id), '変更ボタン');
+    expect(statuses()).toContain('組織「組織1」のプランを enterprise に変更しました。');
+  }
+
+  const staleApi = (): Api => ({
+    list: pageOf,
+    changePlan: () => jsonResponse(409, errorBody('CONFLICT_STALE_DATA', '別の運営が先にこの組織のプランを変えました。')),
+  });
+  const okApi = (): Api => ({
+    list: pageOf,
+    changePlan: () => jsonResponse(200, { organization: org(1, { plan: 'enterprise' }) }),
+    create: () => jsonResponse(200, { organization: org(99) }),
+  });
+
+  it('検索すると、読み直しの文と変更の通知が消える', async () => {
+    mockApi(staleApi());
+    await renderPage();
+    await showStaleMessage();
+
+    await search('組織');
+    expect(lastListParams()).toEqual({ q: '組織', page: '1', per_page: '30' });
+    expect(alerts()).toEqual([]);
+
+    mockApi(okApi());
+    await showChangedNotice();
+    await search('');
+    expect(statuses()).toEqual([]);
+    expect(alerts()).toEqual([]);
+  });
+
+  it('ページを送ると (次へ・前へ)、読み直しの文と変更の通知が消える', async () => {
+    mockApi(staleApi());
+    await renderPage();
+    await showStaleMessage();
+
+    // 次へ
+    await click(findButton('次へ'), '次へ');
+    expect(lastListParams()).toEqual({ page: '2', per_page: '30' });
+    expect(alerts()).toEqual([]);
+
+    // 前へ (2 ページ目の組織31 の読み直しの文は、1 ページ目へ戻ると消える)
+    await choose(planSelect(org(31).id), 'premium');
+    await click(changeButton(org(31).id), '変更ボタン');
+    expect(alerts()).toEqual([STALE_MESSAGE.replace('組織1', '組織31')]);
+    await click(findButton('前へ'), '前へ');
+    expect(lastListParams()).toEqual({ page: '1', per_page: '30' });
+    expect(alerts()).toEqual([]);
+
+    // 変更の通知も消える
+    mockApi(okApi());
+    await showChangedNotice();
+    await click(findButton('次へ'), '次へ');
+    expect(statuses()).toEqual([]);
+    expect(alerts()).toEqual([]);
+  });
+
+  it('組織の作成を始めると (送る前に断る入力の誤りでも)、読み直しの文と変更の通知が消える', async () => {
+    mockApi({ ...staleApi(), create: () => jsonResponse(200, { organization: org(99) }) });
+    await renderPage();
+    await showStaleMessage();
+
+    await type(createName(), '株式会社テスト');
+    await click(findButton('作成する'), '作成ボタン');
+    expect(alerts()).toEqual([]);
+    expect(statuses()).toEqual(['組織「株式会社テスト」を作成しました。']);
+
+    mockApi(okApi());
+    await showChangedNotice();
+    // 組織名が空白だけ (送らずに断る) でも、作成を始めた時点で消える
+    await type(createName(), '   ');
+    await click(findButton('作成する'), '作成ボタン');
+    expect(callsOf('POST')).toHaveLength(1);
+    expect(statuses()).toEqual([]);
+    expect(alerts()).toEqual(['組織名を入力してください。']);
+  });
+
+  it('同じ一覧を取り直すだけの「再読み込み」では、読み直しの文を消さない', async () => {
+    let failReload = false;
+    mockApi({
+      list: (url) => {
+        if (failReload) {
+          failReload = false;
+          return jsonResponse(500, errorBody('INTERNAL_ERROR', '組織の一覧を取得できませんでした'));
+        }
+        return pageOf(url);
+      },
+      changePlan: () => {
+        // 断ったあとの読み直しを 1 回だけ失敗させる
+        failReload = true;
+        return jsonResponse(409, errorBody('CONFLICT_STALE_DATA', '別の運営が先にこの組織のプランを変えました。'));
+      },
+    });
+    await renderPage();
+    await choose(planSelect(org(1).id), 'premium');
+    await click(changeButton(org(1).id), '変更ボタン');
+    expect(alerts()).toEqual([STALE_MESSAGE, '組織の一覧を取得できませんでした再読み込み']);
+
+    await click(findButton('再読み込み'), '再読み込みボタン');
+    expect(alerts()).toEqual([STALE_MESSAGE]);
+    expect(names()[0]).toBe('組織1');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 件数より後ろのページになったとき (#1912 の続き)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('読み直した件数が今のページより少ないときは、最後のページへ取り直す', () => {
+  const planSelect = (id: string) => container.querySelector(`#org-plan-${id}`) as HTMLSelectElement;
+  const changeButton = (id: string) =>
+    planSelect(id).closest('td')?.querySelector('button') as HTMLButtonElement | undefined;
+
+  it('最後のページの唯一の行が消えた (404) あとの読み直しでは、1 つ前のページを出し、読み直しの文は残す (前のページの表を出し直さない)', async () => {
+    const LAST = org(31, { name: '解散した組織' });
+    let dissolved = false;
+    mockApi({
+      list: (url) => {
+        const page = Number(url.searchParams.get('page'));
+        const total = dissolved ? 30 : 31;
+        if (page === 2) return jsonResponse(200, listBody(dissolved ? [] : [LAST], total, 2));
+        return jsonResponse(200, listBody(Array.from({ length: 30 }, (_, i) => org(i + 1)), total, 1));
+      },
+      changePlan: () => {
+        dissolved = true;
+        return jsonResponse(404, errorBody('NOT_FOUND', '組織が見つかりません'));
+      },
+    });
+    await renderPage();
+    await click(findButton('次へ'), '次へ');
+    expect(names()).toEqual(['解散した組織']);
+
+    // 404 のあとに出た表を記録する (古いページ 2 の表が一瞬でも出し直されないこと)
+    const addedTables: string[] = [];
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        record.addedNodes.forEach((node) => {
+          if (node instanceof HTMLElement && (node.matches('table') || node.querySelector('table'))) {
+            addedTables.push(node.textContent ?? '');
+          }
+        });
+      }
+    });
+    observer.observe(container, { childList: true, subtree: true });
+
+    await choose(planSelect(LAST.id), 'premium');
+    await click(changeButton(LAST.id), '変更ボタン');
+    await settle();
+    observer.disconnect();
+
+    // 同じページ (2) で読み直し、範囲外なので最後のページ (1) を取り直す
+    expect(callsOf('GET').map((_, i) => listParams(i).page)).toEqual(['1', '2', '2', '1']);
+    expect(names()).toHaveLength(30);
+    expect(names()[0]).toBe('組織1');
+    expect(text()).not.toContain('組織はまだありません');
+    expect(addedTables.some((t) => t.includes('解散した組織'))).toBe(false);
+    expect(alerts()).toEqual(['組織「解散した組織」が見つかりませんでした (解散などで消えた可能性があります)。一覧を読み込み直しました。']);
+  });
+
+  it('件数が 0 になったときは 1 ページ目を取り直して「組織はまだありません」を出す (取り直しは止まる)', async () => {
+    let dissolved = false;
+    mockApi({
+      list: (url) => {
+        const page = Number(url.searchParams.get('page'));
+        if (dissolved) return jsonResponse(200, listBody([], 0, page));
+        return jsonResponse(200, listBody(page === 1 ? Array.from({ length: 30 }, (_, i) => org(i + 1)) : [org(31)], 31, page));
+      },
+      changePlan: () => {
+        dissolved = true;
+        return jsonResponse(404, errorBody('NOT_FOUND', '組織が見つかりません'));
+      },
+    });
+    await renderPage();
+    await click(findButton('次へ'), '次へ');
+
+    await choose(planSelect(org(31).id), 'premium');
+    await click(changeButton(org(31).id), '変更ボタン');
+    await settle();
+
+    expect(callsOf('GET').map((_, i) => listParams(i).page)).toEqual(['1', '2', '2', '1']);
+    expect(text()).toContain('組織はまだありません');
+  });
+
+  it('検索の条件は保ったまま最後のページへ取り直す。3 ページ目から 2 ページ分減ったときは 1 ページ目まで一度に戻る', async () => {
+    let shrunk = false;
+    mockApi({
+      list: (url) => {
+        const page = Number(url.searchParams.get('page'));
+        if (shrunk) return jsonResponse(200, listBody(page === 1 ? [org(1)] : [], 1, page));
+        const count = page === 3 ? 5 : 30;
+        return jsonResponse(200, listBody(Array.from({ length: count }, (_, i) => org((page - 1) * 30 + i + 1)), 65, page));
+      },
+      changePlan: () => {
+        shrunk = true;
+        return jsonResponse(404, errorBody('NOT_FOUND', '組織が見つかりません'));
+      },
+    });
+    await renderPage();
+    await search('組織', 'standard');
+    await click(findButton('次へ'), '次へ');
+    await click(findButton('次へ'), '次へ');
+    expect(lastListParams().page).toBe('3');
+
+    await choose(planSelect(org(61).id), 'premium');
+    await click(changeButton(org(61).id), '変更ボタン');
+    await settle();
+
+    const pages = callsOf('GET').map((_, i) => listParams(i));
+    expect(pages.slice(-2)).toEqual([
+      { q: '組織', plan: 'standard', page: '3', per_page: '30' },
+      { q: '組織', plan: 'standard', page: '1', per_page: '30' },
+    ]);
+    expect(names()).toEqual(['組織1']);
+  });
+
+  it('範囲の中のページが空のとき (1 ページ目で 0 件) は取り直さない', async () => {
+    mockApi({ list: () => jsonResponse(200, listBody([], 0, 1)) });
+    await renderPage();
+    await settle();
+    expect(callsOf('GET')).toHaveLength(1);
+    expect(text()).toContain('組織はまだありません');
   });
 });

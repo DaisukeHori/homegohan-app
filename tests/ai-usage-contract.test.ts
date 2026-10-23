@@ -321,6 +321,8 @@ const CRON_ENTRYPOINTS: Record<string, string> = {
   'vercel:/api/cron/backup-freshness': 'DB バックアップが古くなったことを運用メールで知らせる (AI を使わない)',
   // #1190 新しい端末・地域からのログインを本人にメールで知らせる worker。import は cron の認証・ログ・Supabase・メールの送信待ちへの登録だけ
   'vercel:/api/cron/login-alerts': '新しい端末からのログインを本人にメールで知らせる (AI を使わない)',
+  // #1912 billing/04 期限を過ぎたストアの購読の行を RevenueCat から取り直して写す。import は cron の認証・ログ・Supabase・RevenueCat への fetch だけ
+  'vercel:/api/cron/iap-reconcile': 'ストアの購読の期限切れ・更新を RevenueCat から取り直して写す (AI を使わない)',
   'pg_cron:calculate-segment-stats': 'セグメント統計の集計 (AI を使わない)',
   // #1538 運営が隠してから 90 日を過ぎた食事・レシピと画像を消す。import は認証・ログ・Supabase と完全削除の本体だけ
   'pg_cron:purge-hidden-content': '運営が隠したコンテンツの完全削除 (AI を使わない)',
@@ -654,7 +656,7 @@ describe('AI 利用回数の記録 (#1177): 機能名の定義', () => {
     for (const [label, usage] of entries) {
       if (!usage || !('record' in usage)) continue;
       expect(['reject', 'skipAi', 'skipImage'], label).toContain(usage.onLimit);
-      // 料理画像の副作用は、1 日の上限 (10 回) に数えない meal_image_auto で数える (安全弁で画像だけ見送る。#1149)
+      // 料理画像の副作用は、1 日の上限の回数に数えない meal_image_auto で数える (安全弁で画像だけ見送る。#1149)
       if (usage.onLimit === 'skipImage') expect([...usage.record], label).toEqual(['meal_image_auto']);
     }
     // Edge Function は、どれも 429 で止める (保存と AI を一緒にする関数は無い)
@@ -704,7 +706,7 @@ describe('AI 利用回数の記録 (#1177): 機能名の定義', () => {
     for (const usage of ultimateEntries) expect(usage && 'record' in usage ? [...usage.record] : []).toContain('menu_generation');
   });
 
-  it('(#1142) migration の consume_ai_usage_capped_at は、consume_ai_usage_at と同じ鍵のロックを取ってから、consume_ai_usage_at に渡す', () => {
+  it('(#1142・billing/03 §6.5) migration の consume_ai_usage_capped_at は、consume_ai_usage_at と同じ鍵のロックを取ってから、プラン × 機能の行 (ai_plan_feature_caps) のあるプランは回数を数える前に consume_ai_usage_at に任せ、行の無いプランはその機能の回数を数えてから consume_ai_usage_at に渡す', () => {
     const definitions = migrationSqls()
       .map(({ sql }) => sql.match(/CREATE\s+OR\s+REPLACE\s+FUNCTION\s+public\.consume_ai_usage_capped_at\([\s\S]*?\$\$([\s\S]*?)\$\$/i)?.[1])
       .filter((body): body is string => Boolean(body));
@@ -713,10 +715,16 @@ describe('AI 利用回数の記録 (#1177): 機能名の定義', () => {
     const lockKey = /pg_advisory_xact_lock\(\s*pg_catalog\.hashtextextended\('ai_usage:' \|\| p_user_id::TEXT \|\| ':' \|\| v_date::TEXT, 0\)\s*\)/;
     const lockAt = body.search(lockKey);
     const countAt = body.search(/FROM\s+public\.ai_usage_counters/);
-    const delegateAt = body.search(/public\.consume_ai_usage_at\(p_user_id, p_feature, p_at\)/);
+    const planRowAt = body.search(/FROM\s+public\.ai_plan_feature_caps/);
+    const delegateAts = [...body.matchAll(/public\.consume_ai_usage_at\(p_user_id, p_feature, p_at\)/g)].map((match) => match.index ?? -1);
     expect(lockAt, 'consume_ai_usage_at と同じ鍵のロックが無い').toBeGreaterThanOrEqual(0);
     expect(countAt).toBeGreaterThan(lockAt);
-    expect(delegateAt).toBeGreaterThan(countAt);
+    expect(planRowAt, 'プラン × 機能の行をロックの後に見ていない').toBeGreaterThan(lockAt);
+    expect(countAt, '行の無いプランの回数は、行を見た後に数える').toBeGreaterThan(planRowAt);
+    expect(delegateAts, '委譲は 2 か所 (行のあるプランの早期の委譲と、行の無いプランの最後の委譲)').toHaveLength(2);
+    expect(delegateAts[0]).toBeGreaterThan(planRowAt);
+    expect(delegateAts[0]).toBeLessThan(countAt);
+    expect(delegateAts[1]).toBeGreaterThan(countAt);
   });
 
   it('すべての機能が、どこか (route・ライブラリ・Edge Function) で使われている', () => {

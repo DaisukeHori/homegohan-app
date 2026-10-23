@@ -416,7 +416,7 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
     }
   });
 
-  it('値を読む場所が決まっている変数 (AI_ULTIMATE_MODE_DAILY_LIMIT・AUTH_LOGIN_ALERT・AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・CSP_REPORT_ONLY・DSR_RESPONSE_DUE_DAYS・EMAIL_OUTBOX_*・EXPO_ACCESS_TOKEN・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・FEATURE_FLAG_CACHE_TTL_MS・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・OPERATOR_MFA_ENFORCE_FROM・OPS_ALERT_*・ORG_CHALLENGE_SHOW_NAMES・PHOTO_SIGNED_URL_TTL_SECONDS・PUSH_OUTBOX_*) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
+  it('値を読む場所が決まっている変数 (AI_ULTIMATE_MODE_DAILY_LIMIT・AUTH_LOGIN_ALERT・AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・CSP_REPORT_ONLY・DSR_RESPONSE_DUE_DAYS・EMAIL_OUTBOX_*・EXPO_ACCESS_TOKEN・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・FEATURE_FLAG_CACHE_TTL_MS・IAP_RECONCILE_*・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・OPERATOR_MFA_ENFORCE_FROM・OPS_ALERT_*・ORG_CHALLENGE_SHOW_NAMES・PHOTO_SIGNED_URL_TTL_SECONDS・PUSH_OUTBOX_*) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
     const sealed = ENV_VARS.filter((entry) => entry.readOnlyBy !== undefined);
 
     expect(sealed.map((entry) => [entry.name, entry.readOnlyBy]).sort()).toEqual([
@@ -442,6 +442,9 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       ['FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT', 'src/lib/super-admin/flag-active-users.ts'],
       // #1496 機能フラグの行をメモリに覚える時間。proxy (src/proxy.ts) も読むので、何も import しないファイル 1 か所で読む
       ['FEATURE_FLAG_CACHE_TTL_MS', 'src/lib/feature-flag-cache-ttl.ts'],
+      // #1912 billing/04 ストアの購読の定期の取り直しの 1 回の件数と再確認の間隔。不正な値の扱い (既定値に戻して warn) を cron の route 1 か所に置く
+      ['IAP_RECONCILE_BATCH_SIZE', 'src/app/api/cron/iap-reconcile/route.ts'],
+      ['IAP_RECONCILE_RECHECK_HOURS', 'src/app/api/cron/iap-reconcile/route.ts'],
       // #1174 の同意ゲートのフラグ。proxy (src/proxy.ts) が lib/legal-consent.ts の isLegalConsentFlagOn で読む
       ['LEGAL_CONSENT_ENFORCE', 'lib/legal-consent.ts'],
       ['LEGAL_CONSENT_NOTICE', 'lib/legal-consent.ts'],
@@ -520,6 +523,10 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       getOptionalEnv('PUSH_OUTBOX_MAX_ATTEMPTS');
       // @ts-expect-error PUSH_OUTBOX_BATCH_SIZE も同じ
       getOptionalEnv('PUSH_OUTBOX_BATCH_SIZE');
+      // @ts-expect-error IAP_RECONCILE_BATCH_SIZE の値を読むのは cron の route (src/app/api/cron/iap-reconcile/route.ts) だけ (#1912 billing/04)
+      getOptionalEnv('IAP_RECONCILE_BATCH_SIZE');
+      // @ts-expect-error IAP_RECONCILE_RECHECK_HOURS も同じ
+      getOptionalEnv('IAP_RECONCILE_RECHECK_HOURS');
       getOptionalEnv('RESEND_API_KEY'); // 値を読む場所が決まっていない任意の変数は渡せる
     };
     expect(typeof typeOnly).toBe('function');

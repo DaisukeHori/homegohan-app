@@ -18,7 +18,7 @@
 - 要件定義 02 §15.5 (bulk-revoke)
 
 ## 3. 共通エラーコード
-
+**旧案の体系** (下の表は記録として残す。いまの route が返す code の一覧ではない): いまの `/api/org` の code は、認可の失敗が `UNAUTHORIZED`・`FORBIDDEN` (`src/lib/org-api-errors.ts`。一覧の取得などの route)、所属の操作の route (招待の作成・取り消し・除名など) が直書きする `NOT_AUTHENTICATED`・`INSUFFICIENT_PERMISSION`、業務のエラーが `MembershipErrorCode` (`src/lib/errors/membership-errors.ts`)。形と使い分けは `docs/design/cross/04-api-conventions.md` §5.2。
 | コード | HTTP | 意味 |
 |--------|------|------|
 | `ORG_NOT_FOUND` | 404 | 組織が存在しない |
@@ -384,41 +384,46 @@ yamada@example.com,org_member,営業部,山田太郎,EMP001,2024-04-01
 
 ### `GET /api/org/invites`
 
-**認証**: `org_admin` | `org_manager`
+**認証**: 組織の `org_role` が `owner` / `admin` (`requireOrgAdmin`。`src/lib/auth/helpers.ts`)
 
-**クエリパラメータ**: `status` (pending|accepted|expired|cancelled), `limit`, `offset`
+**クエリパラメータ**: なし (`src/app/api/org/invites/route.ts:39-72` はクエリを読まない。自分の組織の招待を全件、作成の新しい順に返す)
 
-**レスポンス 200**:
+**レスポンス 200** (`OrgInviteListResponseSchema`。件数の `total` は無い):
 ```json
 {
   "invites": [
     {
       "id": "uuid",
       "email": "new@example.com",
-      "role": "org_member",
-      "department": { "name": "営業部" },
+      "role": "member",
       "status": "pending",
-      "expires_at": "2026-05-20T12:00:00Z",
-      "invited_by": { "display_name": "田中太郎" },
-      "created_at": "2026-05-06T10:00:00Z"
+      "departmentId": "uuid", "departmentName": "営業部",
+      "token": "…",
+      "expiresAt": "2026-05-20T12:00:00Z", "acceptedAt": null,
+      "createdAt": "2026-05-06T10:00:00Z",
+      "isExpired": false, "isAccepted": false
     }
-  ],
-  "total": 25
+  ]
 }
 ```
+
+**実装の応答 (現行)**: `src/app/api/org/invites/route.ts` の GET。形は `src/schemas/membership/organization-invite.ts` の `OrgInviteListResponseSchema`。
+- `role` は招待で付ける役割 = `organization_invites.invited_role` (`create_org_invite` が書く列。値は `owner` / `admin` / `member`)。旧い `role` 列 (既定 `'member'`) は書かれないので読まない。
+- `status` は `organization_invites.status` (`pending` / `accepted` / `rejected` / `expired` / `revoked`)。ただし期限を過ぎた `pending` は `expired` として返す (DB の `status` が `expired` になるのは承諾を試みたときだけのため)。取り消し (`revoke_org_invite`)・退会で伏せた招待 (`prepare_account_deletion`) は `revoked`。
+- 画面 (`03-ui-spec.md` §8.1) は `status` が `pending` の招待にだけリンクのコピーと取消を出す。
 
 ---
 
 ### `POST /api/org/invites`
 
 **説明**: 個別招待
-**認証**: `org_admin` | `org_manager`
+**認証**: 組織の `org_role` が `owner` / `admin` (`requireOrgAdmin`。`src/app/api/org/invites/route.ts:79-97`。未ログインは 401 `NOT_AUTHENTICATED`・それ以外は 403 `INSUFFICIENT_PERMISSION`)
 
-**リクエスト**:
+**リクエスト** (いまの route が受け取るのは `email`・`role` (`admin` / `member`。既定 `member`)・`custom_message` だけ。`CreateOrgInviteRequestBodySchema` (`src/schemas/membership/organization-invite.ts`)・`route.ts:107-111`。下の `department_id`・`nickname`・`employee_id` は旧案で、受け取らない (未知のキーは取り除く)):
 ```json
 {
   "email": "newmember@example.com",
-  "role": "org_member",
+  "role": "member",
   "department_id": "uuid",
   "nickname": "山田花子",
   "employee_id": "EMP050",
@@ -426,7 +431,7 @@ yamada@example.com,org_member,営業部,山田太郎,EMP001,2024-04-01
 }
 ```
 
-**レスポンス 201**:
+**レスポンス 201** (旧案。いまは 200 で `{ ok: true, invite }` を返す。`route.ts:127`):
 ```json
 {
   "invite_id": "uuid",
@@ -435,7 +440,7 @@ yamada@example.com,org_member,営業部,山田太郎,EMP001,2024-04-01
 }
 ```
 
-**エラー**:
+**エラー** (旧案。いまの失敗の応答は `orgInviteFailureResponse` (`src/lib/membership/org-invite.ts:214`) が作る):
 - `422 ORG_INVITE_DOMAIN_NOT_ALLOWED`
 - `409 ORG_MEMBER_LIMIT_EXCEEDED`
 
@@ -443,7 +448,7 @@ yamada@example.com,org_member,営業部,山田太郎,EMP001,2024-04-01
 
 ### `POST /api/org/invites/bulk`
 
-**説明**: CSV 一括招待
+**説明**: CSV 一括招待 — **未実装の旧案** (`src/app/api/org/invites/bulk` の route は無い)
 **認証**: `org_admin` | `org_manager`
 **Content-Type**: `multipart/form-data`
 
@@ -453,7 +458,7 @@ yamada@example.com,org_member,営業部,山田太郎,EMP001,2024-04-01
 
 ### `POST /api/org/invites/{id}/resend`
 
-**説明**: 招待メール再送
+**説明**: 招待メール再送 — **未実装の旧案** (`src/app/api/org/invites/[id]/resend` の route は無い。`[id]` の下は `accept`・`reject`・`revoke` だけ)
 **認証**: `org_admin` | `org_manager`
 
 **レート制限**: 1 招待あたり 1 日 3 回
@@ -748,7 +753,7 @@ yamada@example.com,org_member,営業部,山田太郎,EMP001,2024-04-01
 
 ### `POST /api/org/subscription/upgrade`
 
-**認証**: `org_admin`
+**認証**: `org_admin` (**未実装**: 組織のプランの段階は運営の `PATCH /api/admin/organizations/{id}` だけが変える (#1952。`20261022170000_org_plan_operator_only.sql`)。この API は未実装 (`src/app/api/org/subscription` は無い)。この節は旧案の記録)
 
 **リクエスト**:
 ```json
@@ -1081,7 +1086,7 @@ describe('GET /api/org/members - 権限テスト', () => {
     );
     expect(res.status).toBe(403);
     const body = await res.json();
-    expect(body.error.code).toBe('ORG_FORBIDDEN');
+    expect(body.error.code).toBe('ORG_FORBIDDEN'); // 旧案の code (§3)。PATCH /api/org/members/{id} の route も無い。いまの /api/org の 403 の code は FORBIDDEN (src/lib/org-api-errors.ts) か、所属の操作の route が直書きする INSUFFICIENT_PERMISSION
   });
 
   it('returns 403 when industrial doctor accesses other org patient', async () => {

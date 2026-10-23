@@ -1878,6 +1878,7 @@ html:has(.lp) {
 }
 
 /* ─── 料金 (§4.17・§8.3 の PricingSection) ─── */
+/* カードは無料プランと有料プランの 2 枚 (billing/03 §10.5) */
 .lp .lp-plans {
   display: grid;
   gap: 1rem;
@@ -1905,10 +1906,6 @@ html:has(.lp) {
     linear-gradient(var(--lp-surface), var(--lp-surface)) padding-box,
     linear-gradient(135deg, var(--lp-accent), var(--lp-accent-soft) 45%, var(--lp-green)) border-box;
   box-shadow: var(--lp-shadow-card-hover);
-}
-.lp .lp-plan--paid {
-  border: 1px dashed var(--lp-line);
-  box-shadow: none;
 }
 .lp .lp-plan-head {
   display: flex;

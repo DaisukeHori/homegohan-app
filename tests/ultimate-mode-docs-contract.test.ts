@@ -2,7 +2,9 @@
 /**
  * #1142 究極モードの開放を書いた文 (docs の追記・e2e の spec の説明) の contract テスト (ソース走査)
  *
- * 究極モードは全員に開放したうえで、1 日の AI の上限とは別に、利用者ごと・1 日 (JST の暦日) に 1 回までにしている。
+ * 究極モードは #1142 で全員に開放したうえで、1 日の AI の上限とは別に、利用者ごと・1 日 (JST の暦日) に 1 回までにした。
+ * いまは billing/03 §6.5 で有料プランの機能になり、1 日の回数は ai_plan_feature_caps の行の値 (free 0 / pro 2 / family_basic 2 / family_pro 3)。
+ * 既定の 1 回と環境変数は、行の無いプラン (組織のプランなど) にだけ効く (docs の追記もそう書く。下の 1)。
  * 「開放した」とだけ書いて上限を書き落とした文や、出どころが確かめられない帰属 (日付つきの「判断」) が戻らないよう、次を確かめる。
  *
  *   1. 開放を書いた文は、1 日 1 回の上限と、その定数・環境変数の名前を書く (名前は実装の export と一致する)
@@ -89,5 +91,101 @@ describe('究極モードの開放を書いた文に、出どころが確かめ�
     const header = e2eHeader();
     expect(header).not.toContain(UNVERIFIED_ATTRIBUTION);
     expect(header).not.toContain(UNVERIFIED_DATE);
+  });
+});
+
+// ---------------------------------------------------------------
+// billing/03 §6.5 (#1912) の後: 究極モードの回数はプランの行 (ai_plan_feature_caps) で決まる
+// ---------------------------------------------------------------
+//
+// 「究極モードは全員が使え、上限は環境変数の 1 回だけで DB に値を持たない」という #1142 の時点の書き方が、
+// 有料プランの販売 (#1912) の後も残っていた (10/22 の審査の指摘)。上限の既定・環境変数を書いた文は、行のあるプランでは
+// 行の値で決まることと、その値 (migration の既定の行から作る) を書く。
+
+/** 究極モードの、プランごとの既定の行を入れる migration (billing/03 §6.5 の (5')) */
+const PLAN_FEATURE_CAPS_MIGRATION = 'supabase/migrations/20261021100000_billing_paid_plans_iap.sql';
+const ULTIMATE_FEATURE = 'menu_generation_ultimate';
+
+/** migration の INSERT から「free 0 / pro 2 / …」の並びを作る (行の順のまま) */
+function ultimateCapsSummaryFromMigration(): string {
+  const sql = read(PLAN_FEATURE_CAPS_MIGRATION);
+  const rows = [...sql.matchAll(/\('([a-z_]+)',\s*'menu_generation_ultimate',\s*(\d+)\)/g)].map(
+    ([, plan, cap]) => `${plan} ${cap}`,
+  );
+  expect(rows.length, `${PLAN_FEATURE_CAPS_MIGRATION} に ${ULTIMATE_FEATURE} の既定の行がある`).toBeGreaterThan(0);
+  return rows.join(' / ');
+}
+
+/** start を含む位置から end の手前までを切り出す (どちらも 1 つだけあること) */
+function sliceBetween(source: string, start: string, end: string, label: string): string {
+  const from = source.indexOf(start);
+  expect(from, `${label} に「${start}」がある`).toBeGreaterThanOrEqual(0);
+  expect(source.indexOf(start, from + 1), `${label} の「${start}」は 1 つだけ`).toBe(-1);
+  const to = source.indexOf(end, from);
+  expect(to, `${label} の「${start}」の後に「${end}」がある`).toBeGreaterThan(from);
+  return source.slice(from, to);
+}
+
+/** 究極モードの上限の既定・環境変数を書いた文 (docs/design の外。設計書は design-doc の patch の側で直す) */
+const ULTIMATE_CAP_TEXTS: ReadonlyArray<readonly [label: string, text: () => string]> = [
+  ['CLAUDE.md の究極モードの箇条', () => sliceBetween(read('CLAUDE.md'), '- 究極モード (#1142):', '\n', 'CLAUDE.md')],
+  [
+    '.env.example の AI_ULTIMATE_MODE_DAILY_LIMIT の節',
+    () => sliceBetween(read('.env.example'), '# ---- 献立生成の究極モードの 1 日の上限', `# ${AI_ULTIMATE_MODE_DAILY_LIMIT_ENV}=`, '.env.example'),
+  ],
+  [
+    '_shared/ai-usage-core.ts の機能ごとの上限の注',
+    () =>
+      sliceBetween(
+        read('supabase/functions/_shared/ai-usage-core.ts'),
+        '// 機能ごとの 1 日の上限',
+        'export const AI_ULTIMATE_MODE_FEATURE',
+        'ai-usage-core.ts',
+      ),
+  ],
+  ...OPENING_ADDENDUM_DOCS.map((doc) => [`${doc} の #1142 の追記`, () => openingAddendum(doc)] as const),
+  [`${OPENING_E2E_SPEC} の説明`, () => e2eHeader()],
+];
+
+/** #1142 の時点の書き方で、いまは事実と違うもの */
+const STALE_ULTIMATE_PHRASES = ['全員に開放されている', '全員 (free を含む) が使える', '上限の値は DB に置かず'] as const;
+
+/** 究極モードの開放 (#1142) を書いたテストの説明 (先頭のコメント) */
+const OPENING_TEST_HEADERS = [
+  'apps/mobile/__tests__/menus-weekly/ultimate-mode-toggle.test.tsx',
+  OPENING_E2E_SPEC,
+  'supabase/functions/_shared/ai-usage-core.ts',
+] as const;
+
+describe('究極モードの上限を書いた文は、プランの行 (ai_plan_feature_caps) で決まることも書く (#1912・billing/03 §6.5)', () => {
+  it('migration の既定の行は free 0 / pro 2 / family_basic 2 / family_pro 3 (下の文が写す値)', () => {
+    expect(ultimateCapsSummaryFromMigration()).toBe('free 0 / pro 2 / family_basic 2 / family_pro 3');
+  });
+
+  it.each(ULTIMATE_CAP_TEXTS)('%s は ai_plan_feature_caps と、migration の行の値を書く', (_label, text) => {
+    const body = text();
+    expect(body).toContain('ai_plan_feature_caps');
+    expect(body).toContain(ultimateCapsSummaryFromMigration());
+    // 既定の 1 回・環境変数は、行の無いプランにだけ効くと書く
+    expect(body).toContain('行の無いプラン');
+  });
+
+  it('supabase/functions/README.md の AI の上限の段落は、行のあるプランは行の値・既定は行の無いプランにだけ効くと書く', () => {
+    const paragraph = sliceBetween(
+      read('supabase/functions/README.md'),
+      'AI を使う処理は、利用回数を数え',
+      '\n',
+      'supabase/functions/README.md',
+    );
+    expect(paragraph).toContain('ai_plan_feature_caps');
+    expect(paragraph).toContain('行の無いプラン');
+    expect(paragraph).toContain(AI_ULTIMATE_MODE_DAILY_LIMIT_ENV);
+  });
+
+  it.each(OPENING_TEST_HEADERS)('%s に、#1142 の時点の書き方 (全員が使える・値を DB に置かない) が残っていない', (file) => {
+    const source = read(file);
+    for (const phrase of STALE_ULTIMATE_PHRASES) {
+      expect(source, `${file} に「${phrase}」`).not.toContain(phrase);
+    }
   });
 });

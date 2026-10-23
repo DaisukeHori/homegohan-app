@@ -19,7 +19,7 @@ import type { AiFeature } from '../../supabase/functions/_shared/ai-usage-core';
 import type { HttpMethod } from './ai-reach';
 
 /**
- * 上限 (#1149。1 日 10 回・全機能の合計) に達したときの止め方。入口ごとに決める。
+ * 上限 (#1149。1 日の上限・全機能の合計。値はプランごと (ai_daily_limits)) に達したときの止め方。入口ごとに決める。
  *
  * | 止め方      | 応答                                                         | 入口                                                         |
  * |-------------|--------------------------------------------------------------|--------------------------------------------------------------|
@@ -27,7 +27,7 @@ import type { HttpMethod } from './ai-reach';
  * | skipAi      | 200。保存・集計はして、AI の部分だけ省く (aiSkipped: AI_DAILY_LIMIT) | 保存と AI の分析を一緒にする操作 (健康診断・血液検査の保存、相談を閉じる)。ホームの栄養の集計 (下の unmetered の機能。自動の分だけの安全弁に達したときに止まる) |
  * | skipImage   | 200。保存・更新はして、料理画像だけ見送る (ジョブを積まない。aiSkipped: AI_DAILY_LIMIT) | 献立の保存・更新が付ける料理画像 (meals / meal-plans の 4 本。下の unmetered の機能 meal_image_auto。料理画像の安全弁に達したときに止まる) |
  *
- * 上限に数えない機能 (AI_UNMETERED_FEATURES = nutrition_advice_auto / meal_image_auto) は、1 日の上限 (10 回) の合計に入れず、
+ * 上限に数えない機能 (AI_UNMETERED_FEATURES = nutrition_advice_auto / meal_image_auto) は、1 日の上限の合計に入れず、
  * その上限に達していても止めない。画面を開く・保存するだけで呼ばれる AI (ホームの栄養のアドバイス・栄養の詳細を開いたときの栄養士のコメント・
  * 料理を保存したときの料理画像) が使う (開く・記録するだけで今日の回数が減らないように)。そのかわり機能ごとの 1 日の安全弁
  * (DB の ai_unmetered_daily_caps。既定は自動のアドバイス 30 回・料理画像 20 回) で止める (どの機能名で数えるかの材料はクライアントが送る値なので、
@@ -301,6 +301,23 @@ export const EXEMPT_ROUTES: Record<string, AiRouteEntry> = {
     consent: '退会。AI へは送らない (退会の段階 billing が Stripe の鍵を読む env.ts の一覧に届くだけ)',
     handlers: { POST: { noAi: '退会 (Stripe の契約の解約と顧客の匿名化・本人のデータの削除)。送る先は Stripe と Supabase だけ' } },
   },
+  // billing/03 (アプリ内課金)。RevenueCat の鍵と署名の秘密を getOptionalEnv で読むため環境変数の一覧 (src/lib/env.ts) に届くだけで、送る先は RevenueCat と DB だけ
+  'src/app/api/webhooks/revenuecat/route.ts': {
+    consent: 'RevenueCat からのストアの契約の知らせ。AI へは送らない (署名の秘密と鍵を読む env.ts の一覧に届くだけ)',
+    handlers: { POST: { noAi: 'RevenueCat から契約を取り直して DB に写すだけ。送る先は RevenueCat' } },
+  },
+  'src/app/api/billing/iap/sync/route.ts': {
+    consent: '本人のストアの契約の同期。AI へは送らない (env.ts の一覧に届くだけ)',
+    handlers: { POST: { noAi: 'RevenueCat から契約を取り直して DB に写すだけ' } },
+  },
+  'src/app/api/billing/subscription/route.ts': {
+    consent: '契約の要約。期限を過ぎたストアの行だけ RevenueCat から取り直す (env.ts の一覧に届くだけ)。AI へは送らない',
+    handlers: { GET: { noAi: 'DB の契約の要約を返すだけ (必要なときだけ RevenueCat から取り直す)' } },
+  },
+  'src/app/api/cron/iap-reconcile/route.ts': {
+    consent: 'cron: 期限を過ぎたストアの購読の行を RevenueCat から取り直して写す。AI へは送らない (鍵を読む env.ts の一覧に届くだけ)',
+    handlers: { GET: { noAi: 'RevenueCat から契約を取り直して DB に写すだけ。送る先は RevenueCat と DB' } },
+  },
   // #1178 / #1702 個人情報の請求 (DSR) の本人向けの API。メール (src/lib/data-subject-requests/notifications.ts) が運営への知らせの宛先を
   // getOptionalEnv('ADMIN_NOTIFICATION_EMAIL') で読むため、import を辿ると環境変数の一覧 (src/lib/env.ts) に届くだけで、
   // 送る先は DB (data_subject_requests) とメール (Resend) だけ。利用者のデータを AI へ送らない
@@ -387,7 +404,9 @@ export const ENFORCED_EDGE: Record<string, AiEdgeEntry> = {
   },
   'normalize-shopping-list': { consent: '利用者の JWT の直後', usage: record('reject', 'shopping_list') },
   'process-meal-image-jobs': {
-    consent: 'ジョブごとに、献立の持ち主 (meal_image_jobs.user_id) で判定。未同意なら取り消す',
+    consent:
+      'ジョブごとに、献立の持ち主 (meal_image_jobs.user_id) で判定。未同意なら取り消す。' +
+      '同意のあとに、ジョブの持ち主のプランの門 (ai_plan_feature_caps の meal_image_auto = 0 なら取り消す。billing/03 §8.8) も見る',
     usage: {
       recordedBy:
         '料理画像の生成ジョブの実行。献立の保存・更新の route (meal_image_auto) と、献立生成 (menu_generation の一部) が積んだジョブを、service role で処理する。' +

@@ -9,6 +9,8 @@ import { Resend } from 'resend';
 import {
   parseStripeSignatureHeader,
   verifyResendWebhook,
+  verifyRevenueCatSignature,
+  verifyRevenueCatWebhook,
   verifyStripeSignature,
   verifyStripeWebhook,
   verifySvixSignature,
@@ -258,6 +260,77 @@ describe('verifyStripeWebhook (billing/01 §8.3)', () => {
     vi.stubEnv('STRIPE_WEBHOOK_SECRET', `  ${STRIPE_SECRET}  `);
     expect(verifyStripeWebhook(STRIPE_PAYLOAD, header, nowMs)).toEqual({ ok: true });
     expect(verifyStripeWebhook(STRIPE_PAYLOAD, `t=${ts},v1=${stripeSign(STRIPE_PAYLOAD, ts, 'whsec_other')}`, nowMs)).toEqual({
+      ok: false,
+      reason: 'signature_mismatch',
+    });
+  });
+});
+
+describe('RevenueCat の Webhook の署名 (billing/03 §8.2・テスト 14〜16)', () => {
+  /** RevenueCat の署名の秘密 (テスト用のダミー。本物の書式にしない) */
+  const RC_SECRET = 'rc-unit-test-signing-secret'; // gitleaks:allow
+  const RC_PAYLOAD = JSON.stringify({ api_version: '1.0', event: { id: 'evt_rc_1', type: 'RENEWAL', event_timestamp_ms: 1 } });
+  /** 期待の署名は設計 (§14.1 テスト 15) のとおりテストの中で作る: HMAC-SHA256(秘密そのまま, "<t>.<本文>") の hex */
+  const rcSign = (body: string, t: string, secret = RC_SECRET): string => crypto.createHmac('sha256', secret).update(`${t}.${body}`).digest('hex');
+
+  it('verifyRevenueCatSignature returns missing_headers for a null or malformed header and invalid_timestamp for a non-numeric t', () => {
+    const nowMs = Date.UTC(2026, 9, 21, 0, 0, 0);
+    expect(verifyRevenueCatSignature(RC_PAYLOAD, null, RC_SECRET, nowMs)).toEqual({ ok: false, reason: 'missing_headers' });
+    expect(verifyRevenueCatSignature(RC_PAYLOAD, '', RC_SECRET, nowMs)).toEqual({ ok: false, reason: 'missing_headers' });
+    expect(verifyRevenueCatSignature(RC_PAYLOAD, 'garbage', RC_SECRET, nowMs)).toEqual({ ok: false, reason: 'missing_headers' });
+    expect(verifyRevenueCatSignature(RC_PAYLOAD, 't=123', RC_SECRET, nowMs)).toEqual({ ok: false, reason: 'missing_headers' });
+    expect(verifyRevenueCatSignature(RC_PAYLOAD, 'v1=abcd', RC_SECRET, nowMs)).toEqual({ ok: false, reason: 'missing_headers' });
+    expect(verifyRevenueCatSignature(RC_PAYLOAD, `t=abc,v1=${rcSign(RC_PAYLOAD, 'abc')}`, RC_SECRET, nowMs)).toEqual({ ok: false, reason: 'invalid_timestamp' });
+  });
+
+  it('verifyRevenueCatSignature accepts HMAC-SHA256 hex of "<t>.<body>" keyed by the raw secret within WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS and rejects mismatch / stale timestamp', () => {
+    const nowMs = Date.UTC(2026, 9, 21, 0, 0, 0);
+    const ts = String(nowMs / MS_PER_SECOND);
+    expect(verifyRevenueCatSignature(RC_PAYLOAD, `t=${ts},v1=${rcSign(RC_PAYLOAD, ts)}`, RC_SECRET, nowMs)).toEqual({ ok: true });
+    // 許容の端 (ちょうど 5 分) は通り、それを 1 秒超えると通らない (前後どちらも)
+    const edge = String(nowMs / MS_PER_SECOND - WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS);
+    expect(verifyRevenueCatSignature(RC_PAYLOAD, `t=${edge},v1=${rcSign(RC_PAYLOAD, edge)}`, RC_SECRET, nowMs)).toEqual({ ok: true });
+    for (const offset of [-(WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS + 1), WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS + 1]) {
+      const stale = String(nowMs / MS_PER_SECOND + offset);
+      expect(verifyRevenueCatSignature(RC_PAYLOAD, `t=${stale},v1=${rcSign(RC_PAYLOAD, stale)}`, RC_SECRET, nowMs)).toEqual({
+        ok: false,
+        reason: 'timestamp_out_of_tolerance',
+      });
+    }
+    // 違う秘密・違う本文・違う時刻の署名は合わない
+    expect(verifyRevenueCatSignature(RC_PAYLOAD, `t=${ts},v1=${rcSign(RC_PAYLOAD, ts, 'other-secret')}`, RC_SECRET, nowMs)).toEqual({
+      ok: false,
+      reason: 'signature_mismatch',
+    });
+    expect(verifyRevenueCatSignature(`${RC_PAYLOAD} `, `t=${ts},v1=${rcSign(RC_PAYLOAD, ts)}`, RC_SECRET, nowMs)).toEqual({
+      ok: false,
+      reason: 'signature_mismatch',
+    });
+    // 鍵は秘密の文字列そのまま (base64 で戻さない): Svix の形で base64 を戻した鍵の署名は合わない
+    const decodedKeySig = crypto.createHmac('sha256', Buffer.from(RC_SECRET, 'base64')).update(`${ts}.${RC_PAYLOAD}`).digest('hex');
+    expect(verifyRevenueCatSignature(RC_PAYLOAD, `t=${ts},v1=${decodedKeySig}`, RC_SECRET, nowMs)).toEqual({ ok: false, reason: 'signature_mismatch' });
+  });
+
+  it('verifyRevenueCatWebhook throws WebhookSecretMissingError when REVENUECAT_WEBHOOK_SECRET is missing', () => {
+    const nowMs = Date.UTC(2026, 9, 21, 0, 0, 0);
+    const ts = String(nowMs / MS_PER_SECOND);
+    const header = `t=${ts},v1=${rcSign(RC_PAYLOAD, ts)}`;
+    for (const value of ['', '   ']) {
+      vi.stubEnv('REVENUECAT_WEBHOOK_SECRET', value);
+      expect(() => verifyRevenueCatWebhook(RC_PAYLOAD, header, nowMs)).toThrow(WebhookSecretMissingError);
+      try {
+        verifyRevenueCatWebhook(RC_PAYLOAD, header, nowMs);
+      } catch (error) {
+        expect((error as Error).message).not.toContain('REVENUECAT_WEBHOOK_SECRET');
+      }
+    }
+    vi.unstubAllEnvs();
+    delete process.env.REVENUECAT_WEBHOOK_SECRET;
+    expect(() => verifyRevenueCatWebhook(RC_PAYLOAD, header, nowMs)).toThrow(WebhookSecretMissingError);
+    // 秘密があれば、その文字列 (前後の空白を除く) で確かめる
+    vi.stubEnv('REVENUECAT_WEBHOOK_SECRET', `  ${RC_SECRET}  `);
+    expect(verifyRevenueCatWebhook(RC_PAYLOAD, header, nowMs)).toEqual({ ok: true });
+    expect(verifyRevenueCatWebhook(RC_PAYLOAD, `t=${ts},v1=${rcSign(RC_PAYLOAD, ts, 'other-secret')}`, nowMs)).toEqual({
       ok: false,
       reason: 'signature_mismatch',
     });

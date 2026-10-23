@@ -53,6 +53,7 @@ npm run mobile:android
 
 ### A) 実機（Expo Go）で確認（推奨）
 > SDK 58 の Expo Go は公開待ちで、push 通知は SDK 55 から Expo Go では例外になるため、SDK 58 の動作と push 通知は preview のビルド（`eas build --profile preview`）で確かめてください。
+> アプリ内課金の購入の画面（設定 → プランとお支払い。RevenueCat の `react-native-purchases`）は Expo Go では動きません。購入を確かめるときは `expo-dev-client` を入れた開発ビルド（`eas build --profile development`）を使ってください（billing/03 §8.10）。
 
 1. iOS/Android 端末に **Expo Go** をインストール
 2. 端末とPCを同じネットワークに接続

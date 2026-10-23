@@ -4,6 +4,8 @@
  * 使う画面:
  *   - 設定画面 (src/app/(main)/settings/page.tsx)
  *   - 凍結中の利用者の画面 (src/app/frozen/account/page.tsx。#1445: 凍結中でも退会と書き出しをできるようにする)
+ *   - 規約にまだ同意していない人の画面 (src/app/legal-consent/account/page.tsx。#1901 cross/20 Q-23: 同意しなくても退会と書き出しをできるようにする)。
+ *     この 2 つは共通の部品 src/components/account/AccountSelfServicePanel.tsx から呼ぶ
  * 2 つの画面で、API の呼び方・ファイルの保存のしかた・退会のあとのログアウトの順番を食い違わせないために、ここにまとめる。
  *
  * API の契約:
@@ -11,6 +13,7 @@
  *   - POST /api/account/delete (#1175): 本文 { confirm: true } で即時に退会する。組織のオーナー・家族の代表者は 409
  */
 
+import { MEMBERSHIP_SETTINGS_PATH } from '@homegohan/shared';
 import { ACCOUNT_DELETE_API_PATH, ACCOUNT_EXPORT_API_PATH } from '@/lib/auth/frozen';
 // 保存するファイル名は、API が Content-Disposition に付ける名前と同じ関数で作る (UTC の日付。tests/account-export.test.ts が固定)
 import { buildExportFilename } from '@/lib/account-export';
@@ -105,13 +108,26 @@ const BLOCKER_OF_ERROR_CODE: ReadonlyMap<string, AccountDeletionBlocker> = new M
 ]);
 
 /**
- * 退会できなかった (409) ときに案内する、譲渡の画面 (#1562)。
- * 解散は利用者の画面が無い (運営が行う) ので、譲渡の画面へ案内する。凍結中の画面 (/frozen/account) は譲渡もできないので使わない
+ * 退会できなかった (409) ときに案内する画面 (#1562 → #1917)。
+ * メンバーシップ設定 (/settings/membership) に、代表者・オーナーの譲渡へのリンクと解散の区画がある (docs/design/family/11-self-dissolve.md §15.1)。
+ * 凍結中の画面 (/frozen/account) と同意の前の画面 (/legal-consent/account) は設定を開けないので、共通の枠 (AccountSelfServicePanel) がその場で解散の区画を出す (同 §15.4)
  */
-export const ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE: Readonly<Record<AccountDeletionBlocker, { path: string; prompt: string }>> = {
-  organization: { path: '/org/settings/owner-transfer', prompt: 'オーナーの譲渡の画面を開きますか？' },
-  family_group: { path: '/family/representative-transfer', prompt: '代表者の譲渡の画面を開きますか？' },
+export const ACCOUNT_DELETE_BLOCKED_GUIDE: Readonly<Record<AccountDeletionBlocker, { path: string; prompt: string }>> = {
+  organization: {
+    path: MEMBERSHIP_SETTINGS_PATH,
+    prompt: 'メンバーシップ設定の画面を開きますか？（オーナーの譲渡か、組織の解散ができます）',
+  },
+  family_group: {
+    path: MEMBERSHIP_SETTINGS_PATH,
+    prompt: 'メンバーシップ設定の画面を開きますか？（代表者の譲渡か、家族グループの解散ができます）',
+  },
 };
+
+/** 409 の本文の family_group / organization (id と名前)。退会と書き出しの枠 (凍結中の画面・同意の前の画面) がその場で解散するのに使う */
+export interface AccountDeletionBlockedScope {
+  id: string;
+  name: string;
+}
 
 export type AccountDeletionResult =
   | { kind: 'deleted' }
@@ -120,10 +136,25 @@ export type AccountDeletionResult =
    * 組織のオーナー・家族の代表者なので、先に譲渡や解散が要る (409)。
    * message はサーバーが書いた固定の文 (src/lib/account-deletion.ts の findBlocker の 2 つの文。利用者向けの日本語で、
    * DB などの生のエラー文は入らない)。画面はこの文をそのまま出してよい (#1447)。本文に無ければ null。
-   * blocker は本文の error から分かる立場 (#1562。譲渡の画面への案内に使う)。分からなければ null
+   * blocker は本文の error から分かる立場 (#1562 → #1917。メンバーシップ設定への案内に使う)。分からなければ null。
+   * scope は本文の立場の id と名前 (#1917。凍結中の画面・同意の前の画面がその場で解散するのに使う)。blocker が null か、本文の形が違えば null
    */
-  | { kind: 'blocked'; message: string | null; blocker: AccountDeletionBlocker | null }
+  | { kind: 'blocked'; message: string | null; blocker: AccountDeletionBlocker | null; scope: AccountDeletionBlockedScope | null }
   | { kind: 'failed' };
+
+/**
+ * 409 の本文から、退会を止めている家族グループ / 組織の id と名前を読む (#1917)。
+ * findBlocker は、組織のオーナーなら本文の organization に、家族の代表者なら family_group に { id, name } を入れる。
+ * 本文の鍵の名前は AccountDeletionBlocker の値と同じ ('organization' / 'family_group') なので、立場をそのまま鍵に使う。
+ * 立場が分からない・鍵が無い・id か name が文字列でなければ null
+ */
+function blockedScopeOfBody(body: unknown, blocker: AccountDeletionBlocker | null): AccountDeletionBlockedScope | null {
+  if (blocker === null || typeof body !== 'object' || body === null) return null;
+  const raw: unknown = (body as Record<string, unknown>)[blocker];
+  if (typeof raw !== 'object' || raw === null) return null;
+  const { id, name } = raw as { id?: unknown; name?: unknown };
+  return typeof id === 'string' && typeof name === 'string' ? { id, name } : null;
+}
 
 /** 退会に失敗したとき (409 以外の失敗・通信の失敗) に出す文 */
 export const ACCOUNT_DELETE_FAILED_MESSAGE = 'アカウントの削除に失敗しました。時間をおいて再度お試しください。';
@@ -164,7 +195,8 @@ export async function deleteOwnAccount(): Promise<AccountDeletionResult> {
           ? (body as { error: string }).error
           : null;
       const blocker = errorCode !== null ? (BLOCKER_OF_ERROR_CODE.get(errorCode) ?? null) : null;
-      return { kind: 'blocked', message, blocker };
+      const scope = blockedScopeOfBody(body, blocker);
+      return { kind: 'blocked', message, blocker, scope };
     }
     console.error(`[delete account] failed: ${res.status}`);
     return { kind: 'failed' };

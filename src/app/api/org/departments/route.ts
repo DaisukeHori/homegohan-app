@@ -12,7 +12,7 @@
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { ORG_API_INTERNAL_ERROR_MESSAGE, orgAuthFailureNested } from '@/lib/org-api-errors';
 import { requireOrgAdmin } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { normalizeUuid, readJsonBody } from '@/lib/http-params';
@@ -36,16 +36,16 @@ interface DepartmentRow {
  */
 function internalError(method: string, message: string, err: unknown) {
   createLogger(`${method} /api/org/departments`, generateRequestId()).error(message, err);
-  return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } }, { status: 500 });
+  return NextResponse.json({ error: { code: 'INTERNAL_ERROR', message: ORG_API_INTERNAL_ERROR_MESSAGE } }, { status: 500 });
 }
 
 function handleError(method: string, err: unknown) {
-  if (err instanceof AuthError) {
-    return NextResponse.json({ error: { code: 'UNAUTHORIZED', message: err.message } }, { status: 401 });
-  }
-  if (err instanceof ForbiddenError) {
-    return NextResponse.json({ error: { code: 'FORBIDDEN', message: err.message } }, { status: 403 });
-  }
+  // 401 / 403 は日本語の固定の文 (src/lib/org-api-errors.ts)。例外の文面 (err.message) は本文に入れない
+  const authFailure = orgAuthFailureNested(err);
+  if (authFailure) return authFailure;
+  // 500 は汎用の文だけ (上の internalError)。
+  // 部署の画面は失敗の本文を表示しないが、ほかの組織の API とそろえる
+  // (code は従来どおり UNAUTHORIZED / FORBIDDEN / INTERNAL_ERROR)
   return internalError(method, '部署 API の処理に失敗しました', err);
 }
 

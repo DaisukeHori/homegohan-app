@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const { AI_DAILY_LIMIT_EVENT, aiDailyLimitMessageOfResponse, notifyAiDailyLimit } = await import('@/lib/ai/daily-limit-client');
 const { AI_CONSENT_REQUIRED_EVENT, aiFetch } = await import('@/lib/ai/consent-required');
 const { AiDailyLimitHost } = await import('@/components/consent/AiDailyLimitHost');
-const { aiDailyLimitMessage, AI_DAILY_LIMIT_FALLBACK_MESSAGE } = await import('../supabase/functions/_shared/ai-daily-limit');
+const { aiDailyLimitMessage, AI_DAILY_LIMIT_FALLBACK_MESSAGE, aiFeatureNotInPlanMessage } = await import('../supabase/functions/_shared/ai-daily-limit');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -42,6 +42,22 @@ describe('aiDailyLimitMessageOfResponse', () => {
     await expect(aiDailyLimitMessageOfResponse(json(403, { code: 'AI_DAILY_LIMIT', limit: 10 }))).resolves.toBeNull();
     await expect(aiDailyLimitMessageOfResponse(json(200, { ok: true }))).resolves.toBeNull();
     await expect(aiDailyLimitMessageOfResponse(new Response('Too Many Requests', { status: 429 }))).resolves.toBeNull();
+  });
+});
+
+describe('billing/03 §8.8: そのプランでは使えない機能 (403 AI_FEATURE_NOT_IN_PLAN)', () => {
+  it('aiDailyLimitMessageOfResponse returns the not-in-plan message for 403 AI_FEATURE_NOT_IN_PLAN (flat and nested) and null for 403 AI_CONSENT_REQUIRED and 429 with an AI_FEATURE_NOT_IN_PLAN body', async () => {
+    const flat = json(403, { error: '<b>本文の文</b>', code: 'AI_FEATURE_NOT_IN_PLAN', feature: 'menu_generation_ultimate' });
+    await expect(aiDailyLimitMessageOfResponse(flat)).resolves.toBe(aiFeatureNotInPlanMessage('menu_generation_ultimate'));
+    // 本文はあとで読める
+    await expect(flat.json()).resolves.toMatchObject({ code: 'AI_FEATURE_NOT_IN_PLAN' });
+    await expect(
+      aiDailyLimitMessageOfResponse(json(403, { error: { code: 'AI_FEATURE_NOT_IN_PLAN', feature: 'image_generation' } })),
+    ).resolves.toBe(aiFeatureNotInPlanMessage('image_generation'));
+    await expect(aiDailyLimitMessageOfResponse(json(403, { error: 'x', code: 'AI_CONSENT_REQUIRED' }))).resolves.toBeNull();
+    await expect(
+      aiDailyLimitMessageOfResponse(json(429, { error: 'x', code: 'AI_FEATURE_NOT_IN_PLAN', feature: 'image_generation' })),
+    ).resolves.toBeNull();
   });
 });
 

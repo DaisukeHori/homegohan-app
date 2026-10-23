@@ -175,6 +175,11 @@ async function seedGroup(options: SeedOptions): Promise<SeededGroup> {
   `);
   const id = rows[0].id;
   seededGroupIds.push(id);
+  if (options.status === 'active') {
+    // billing/03 §6.6: active で plan_key = free のグループには代表者以外のメンバーを足せない (family_members_billing_plan_gate)。
+    // グループの INSERT ではトリガーが代表者の契約から plan_key を決める (契約が無いので free) ので、メンバーを足す前に家族プランにする
+    await asPostgres(`UPDATE public.family_groups SET plan_key = 'family_basic' WHERE id = ${lit(id)};`);
+  }
   const childMemberIds: string[] = [];
   if (options.withDependents || options.withConsent) {
     // 解散の RPC (operator_force_dissolve_family) が残す形: メンバーは全員 left

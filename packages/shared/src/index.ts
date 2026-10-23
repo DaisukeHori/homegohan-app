@@ -18,6 +18,7 @@ export * from './account-frozen';
 export * from './user-scoped-storage';
 export * from './native-app-tabs';
 export * from './data-subject-requests';
+export * from './membership-settings';
 export * from './password-policy';
 export * from './auth-captcha';
 export * from './account-change-errors';
@@ -33,6 +34,7 @@ export * from './badge-period-awards';
 export * from './handson-tour-nickname';
 export * from './push-token-claim';
 export * from './push-notification-kinds';
+export * from './billing-plans';
 export type {
   Json,
   Database,

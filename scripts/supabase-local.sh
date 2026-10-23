@@ -449,7 +449,7 @@ stop_with_retry() {
   done
   rm -f "$err"
   if [ "$status" -ne 0 ]; then
-    log "supabase stop が失敗しました (終了コード $status。$attempt 回打った)。枠 $SLOT ($PROJECT_ID) のコンテナ / ボリュームが残っているかもしれません"
+    log "supabase stop が失敗しました (終了コード ${status}。$attempt 回打った)。枠 $SLOT ($PROJECT_ID) のコンテナ / ボリュームが残っているかもしれません"
   fi
   return "$status"
 }

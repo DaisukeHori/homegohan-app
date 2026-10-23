@@ -1,4 +1,8 @@
 -- rollback: 20261016243000_auth_history_sessions.sql
+-- 戻す順: 戻し口は新しい順に流す (後の 20261022190000_db_privilege_hardening.sql を先に戻す)。ここで anon / authenticated に
+--   付け直す TRUNCATE (GRANT ALL に含まれる) は、190000 が public の全部の表で利用者に持たせないとしたもの。190000 の戻し口はこの表の
+--   TRUNCATE を付け直さず、この戻し口が付け直す前提でできている。190000 が残ったままこの戻し口だけを流すと、RLS の効かない
+--   TRUNCATE が利用者に戻る (190000 の不変条件を破る)。
 -- 設計 docs/design/cross/16-auth-history-sessions.md §11.7 の写し。
 -- auth.sessions / auth.users のトリガー 4 本は表の所有者 (supabase_auth_admin) でないと消せない (DROP TRIGGER も DISABLE TRIGGER も)。
 -- 代わりにトリガー関数 4 本の本体を「何もしない」に置き換えて残す。写した行・トリガーが書いた行は消さない (残る列は既存のものだけ)。

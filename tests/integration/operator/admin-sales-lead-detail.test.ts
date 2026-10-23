@@ -469,6 +469,13 @@ describe('PATCH /api/admin/sales/leads/[id]', () => {
     expectError(res, 404, 'NOT_FOUND');
   });
 
+  it('404 for an id that is not a UUID (the uuid column would reject it with 22P02, which is not a DB failure)', async () => {
+    const res = await apiCall('PATCH', '/api/admin/sales/leads/not-a-uuid', salesUser.jwt, {
+      stage: 'meeting',
+    });
+    expectError(res, 404, 'NOT_FOUND');
+  });
+
   it('403 for general user and leaves the lead untouched', async () => {
     const leadId = await seedLead({ stage: 'approach' });
     const res = await apiCall('PATCH', `/api/admin/sales/leads/${leadId}`, generalUser.jwt, {
@@ -548,6 +555,11 @@ describe('GET /api/admin/sales/leads/[id]/activities', () => {
       salesUser.jwt,
     );
     expect(dataOf<unknown[]>(res)).toEqual([]);
+  });
+
+  it('404 for an id that is not a UUID (the uuid column would reject it with 22P02, which is not a DB failure)', async () => {
+    const res = await apiCall('GET', '/api/admin/sales/leads/not-a-uuid/activities', salesUser.jwt);
+    expectError(res, 404, 'NOT_FOUND');
   });
 
   it('200 for admin role', async () => {
@@ -672,6 +684,16 @@ describe('POST /api/admin/sales/leads/[id]/activities', () => {
     const res = await apiCall(
       'POST',
       `/api/admin/sales/leads/${randomUuid()}/activities`,
+      salesUser.jwt,
+      { activity_type: 'call', details: {} },
+    );
+    expectError(res, 404, 'NOT_FOUND');
+  });
+
+  it('404 for an id that is not a UUID (the uuid column would reject it with 22P02, which is not a DB failure)', async () => {
+    const res = await apiCall(
+      'POST',
+      '/api/admin/sales/leads/not-a-uuid/activities',
       salesUser.jwt,
       { activity_type: 'call', details: {} },
     );

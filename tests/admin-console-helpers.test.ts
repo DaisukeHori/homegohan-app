@@ -1,10 +1,18 @@
 /**
  * 運営コンソール (お知らせ管理・組織管理) の画面で共通に使う小さな関数のテスト
  *   - extractApiErrorMessage: 管理 API の失敗の本文から、画面に出すメッセージを取り出す
+ *   - extractApiErrorCode   : 管理 API の失敗の本文から、エラーの code を取り出す (画面が code で動きを変えるとき)
+ *   - isStaleDataConflict   : 失敗が 409 CONFLICT_STALE_DATA (表示が古い) か (画面が表示を読み直すとき。#1917)
  *   - formatJstDateTime     : 一覧に出す日時を日本時間の「年/月/日 時:分」にする
  */
 import { describe, expect, it } from 'vitest';
-import { extractApiErrorMessage } from '@/lib/admin/api-error-message';
+import {
+  STALE_DATA_ERROR_CODE,
+  STALE_DATA_HTTP_STATUS,
+  extractApiErrorCode,
+  extractApiErrorMessage,
+  isStaleDataConflict,
+} from '@/lib/admin/api-error-message';
 import { formatJstDateTime } from '@/lib/admin/format-datetime';
 
 describe('extractApiErrorMessage', () => {
@@ -42,6 +50,59 @@ describe('extractApiErrorMessage', () => {
   ])('メッセージが読み取れない形 (%s) は null を返す (呼び出し側が汎用の文言を出す)', (_label, body) => {
     expect(extractApiErrorMessage(body)).toBeNull();
   });
+});
+
+describe('extractApiErrorCode', () => {
+  it('管理系 API の形 ({ error: { code, message } }) から code を取り出す', () => {
+    expect(
+      extractApiErrorCode({
+        error: { code: 'CONFLICT_STALE_DATA', message: '別の運営が先にこの組織のプランを変えました。' },
+      }),
+    ).toBe('CONFLICT_STALE_DATA');
+    expect(extractApiErrorCode({ error: { code: 'NOT_FOUND' } })).toBe('NOT_FOUND');
+  });
+
+  it.each([
+    ['null', null],
+    ['undefined', undefined],
+    ['文字列', 'Conflict'],
+    ['数値', 409],
+    ['error が無い', { code: 'CONFLICT_STALE_DATA' }],
+    ['error が null', { error: null }],
+    ['お知らせ API の形 (error が文字列)', { error: 'CONFLICT_STALE_DATA' }],
+    ['error.code が無い', { error: { message: 'x' } }],
+    ['error.code が空', { error: { code: '' } }],
+    ['error.code が空白だけ', { error: { code: '  ' } }],
+    ['error.code が文字列でない', { error: { code: 409 } }],
+  ])('code が読み取れない形 (%s) は null を返す', (_label, body) => {
+    expect(extractApiErrorCode(body)).toBeNull();
+  });
+});
+
+describe('isStaleDataConflict (#1917)', () => {
+  const staleBody = { error: { code: 'CONFLICT_STALE_DATA', message: '別の運営が先に変えました' } };
+
+  it('409 で code が CONFLICT_STALE_DATA のときだけ true (画面が表示を読み直す)', () => {
+    expect(STALE_DATA_ERROR_CODE).toBe('CONFLICT_STALE_DATA');
+    expect(STALE_DATA_HTTP_STATUS).toBe(409);
+    expect(isStaleDataConflict(409, staleBody)).toBe(true);
+  });
+
+  it('同じ 409 でも別の code (AI の上限の PLAN_READ_ONLY など) は false', () => {
+    expect(isStaleDataConflict(409, { error: { code: 'PLAN_READ_ONLY', message: '読み取りだけです' } })).toBe(false);
+  });
+
+  it('code が CONFLICT_STALE_DATA でも 409 でなければ false', () => {
+    expect(isStaleDataConflict(412, staleBody)).toBe(false);
+    expect(isStaleDataConflict(500, staleBody)).toBe(false);
+  });
+
+  it.each([null, undefined, 'CONFLICT_STALE_DATA', { error: 'CONFLICT_STALE_DATA' }, { code: 'CONFLICT_STALE_DATA' }])(
+    '本文の形が違う (%j) ときは false',
+    (body) => {
+      expect(isStaleDataConflict(409, body)).toBe(false);
+    },
+  );
 });
 
 describe('formatJstDateTime', () => {

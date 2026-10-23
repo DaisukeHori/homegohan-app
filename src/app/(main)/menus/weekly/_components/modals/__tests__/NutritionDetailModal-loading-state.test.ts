@@ -69,7 +69,7 @@ describe('NutritionDetailModal: 献立改善ボタン領域の状態分岐 (#105
         })
       );
     });
-    expect(container.textContent).toContain('分析を準備中...');
+    expect(container.textContent).toContain('分析しています...');
     expect(container.querySelector('[data-testid="nutrition-feedback-retry"]')).toBeNull();
   });
 
@@ -86,7 +86,7 @@ describe('NutritionDetailModal: 献立改善ボタン領域の状態分岐 (#105
       );
     });
     // 旧実装はここで「分析を準備中...」のスピナーが出続けていた
-    expect(container.textContent).not.toContain('分析を準備中...');
+    expect(container.textContent).not.toContain('分析しています...');
     const retryButton = container.querySelector('[data-testid="nutrition-feedback-retry"]');
     expect(retryButton, '再試行ボタンが表示されていません').not.toBeNull();
   });

@@ -21,11 +21,18 @@
  *   npx vitest run --config vitest.integration.config.ts tests/integration/rls/ai-usage-feature-cap-rpc.test.ts
  * 時刻を指定する本体とカタログの確認は、ローカルスタックの postgres-meta (/pg/query、service_role キーが必要) で行う。
  * 本番には接続しない。ai_daily_limits (free の行) は変えない。
+ *
+ * billing/03 §6.5 の後の前提: プラン × 機能の行 (ai_plan_feature_caps) のあるプラン (free・pro・家族の 2 つ) の究極モードは、引数の上限
+ * (p_feature_daily_cap = 環境変数の既定) を使わず行の値で判定する (tests/integration/rls/ai-plan-feature-caps-rpc.test.ts)。
+ * 引数の上限で判定するのは、行の無いプラン (組織の plan) だけになった。このファイルはその経路を確かめるので、利用者を
+ * 行の無い組織のプラン (org_standard) の組織のメンバーにする。組織の plan の 1 日の上限は、billing/03 の migration が
+ * free を 3 にする前の free の値 (10) を写した行 ((5a)。組織の利用者の上限は変えない)。
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
+import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -92,8 +99,16 @@ async function pgQuery<T = Record<string, unknown>>(query: string): Promise<T[]>
 // ---------------------------------------------------------------
 const TS = Date.now();
 const PASSWORD = 'TestPass!2026-rls';
-/** 既定の free の 1 日の上限 (20261011020000_ai_daily_limits.sql の既定の行) */
-const FREE_LIMIT = 10;
+/**
+ * 利用者のプラン: プラン × 機能の行 (ai_plan_feature_caps) の無い組織のプラン (subscription_plans の plan_type = org。
+ * 引数の上限 = 環境変数の既定で判定する経路。billing/03 §6.5)
+ */
+const ORG_PLAN = 'org_standard';
+/**
+ * 組織のプランの 1 日の上限: billing/03 の migration ((5a)) が、free を 3 にする前の free の値 (20261011020000_ai_daily_limits.sql の
+ * 既定の行 = 10) を組織の plan の行に写したもの (組織の利用者の上限は変えない)
+ */
+const ORG_LIMIT = 10;
 /** 究極モードの機能名 (_shared/ai-usage-core.ts の AI_ULTIMATE_MODE_FEATURE) */
 const ULTIMATE = 'menu_generation_ultimate';
 /** 究極モードの 1 日の上限の既定 (_shared/ai-usage-core.ts の AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT) */
@@ -103,6 +118,20 @@ const CONCURRENT_CALLS = 5;
 
 const createdUserIds: string[] = [];
 let seq = 0;
+/** 利用者を入れる組織 (beforeAll で作り、afterAll で利用者の後に消す) と、その持ち主 (owner_id は NOT NULL) */
+let orgId: string | null = null;
+let orgOwnerId: string | null = null;
+
+beforeAll(async () => {
+  orgOwnerId = await createPlaceholderOrgOwner(srAdmin, '1142');
+  const { data, error } = await srAdmin
+    .from('organizations')
+    .insert({ name: `T1142 org ${TS}`, plan: ORG_PLAN, owner_id: orgOwnerId })
+    .select('id')
+    .single();
+  if (error || !data) throw new Error(`organizations: ${error?.message}`);
+  orgId = data.id as string;
+});
 
 interface TestUser {
   userId: string;
@@ -119,6 +148,9 @@ async function createUser(label: string, options: { withJwt?: boolean } = {}): P
     db.from('user_profiles')
       .upsert({ id: userId, nickname: `ultimate-${label}`, age_group: '30s', gender: 'other' }, { onConflict: 'id' }));
   if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
+  // 組織のメンバーにする (get_effective_plan が ORG_PLAN を返す。service_role は特権列のガードに当たらない)
+  const { error: orgError } = await srAdmin.from('user_profiles').update({ organization_id: orgId, org_role: 'member' }).eq('id', userId);
+  if (orgError) throw new Error(`user_profiles.organization_id ${label}: ${orgError.message}`);
   if (!options.withJwt) return { userId, jwt: null };
   const signIn = await anon().auth.signInWithPassword({ email, password: PASSWORD });
   if (signIn.error || !signIn.data.session) throw new Error(`signIn ${label}: ${signIn.error?.message}`);
@@ -176,6 +208,18 @@ afterAll(async () => {
     const { error } = await srAdmin.auth.admin.deleteUser(id);
     if (error) failures.push(`auth.users ${id}: ${error.message}`);
   }
+  // 組織 → 持ち主の順 (organizations.owner_id は ON DELETE RESTRICT)
+  if (orgId) {
+    const { error } = await srAdmin.from('organizations').delete().eq('id', orgId);
+    if (error) failures.push(`organizations ${orgId}: ${error.message}`);
+  }
+  if (orgOwnerId) {
+    try {
+      await deletePlaceholderOrgOwner(srAdmin, orgOwnerId);
+    } catch (e) {
+      failures.push(e instanceof Error ? e.message : String(e));
+    }
+  }
   if (failures.length > 0) throw new Error(`テストが作った行を消せませんでした: ${failures.join(' / ')}`);
 }, 120_000);
 
@@ -228,11 +272,11 @@ describe('#1142 A. 関数の定義と権限 (カタログ)', () => {
 // ---------------------------------------------------------------
 // B. 2 回目の究極モードが止まる
 // ---------------------------------------------------------------
-describe('#1142 B. 究極モードは 1 日 1 回まで', () => {
+describe('#1142 B. 行の無いプラン (組織のプラン) の究極モードは 1 日 1 回まで (引数の上限)', () => {
   it('1 回目は許可して記録する (1 日の上限の合計にも 1 回入る)。2 回目は capped_feature 付きの止めで、記録しない', async () => {
     const user = await createUser('second');
     const first = await consumeCapped(user.userId);
-    expect(first).toMatchObject({ allowed: true, metered: true, plan: 'free', limit: FREE_LIMIT, used: 1 });
+    expect(first).toMatchObject({ allowed: true, metered: true, plan: ORG_PLAN, limit: ORG_LIMIT, used: 1 });
     expect(first.capped_feature).toBeUndefined();
 
     const second = await consumeCapped(user.userId);
@@ -284,17 +328,17 @@ describe('#1142 C. JST の 0 時 (= UTC の 15 時) で究極モードの上限�
 // D. 通常のモードは影響を受けない
 // ---------------------------------------------------------------
 describe('#1142 D. 通常のモードは影響を受けない', () => {
-  it('究極モードの上限に達していても、通常の献立生成とほかの機能は 1 日の上限 (合計 10 回) まで使える', async () => {
+  it('究極モードの上限に達していても、通常の献立生成とほかの機能は 1 日の上限 (合計) まで使える', async () => {
     const user = await createUser('normal');
     expect((await consumeCapped(user.userId)).allowed).toBe(true);
     expect((await consumeCapped(user.userId)).allowed).toBe(false);
 
-    // 究極モードの 1 回を含めて、合計 10 回まで
-    for (let used = 2; used <= FREE_LIMIT; used++) {
+    // 究極モードの 1 回を含めて、1 日の上限 (合計) まで
+    for (let used = 2; used <= ORG_LIMIT; used++) {
       expect(await consume(user.userId, used % 2 === 0 ? 'menu_generation' : 'consultation'), `${used} 回目`).toMatchObject({ allowed: true, used });
     }
-    expect(await consume(user.userId, 'menu_generation')).toMatchObject({ allowed: false, limit: FREE_LIMIT, used: FREE_LIMIT });
-    expect(totalOf(await counters(user.userId))).toBe(FREE_LIMIT);
+    expect(await consume(user.userId, 'menu_generation')).toMatchObject({ allowed: false, limit: ORG_LIMIT, used: ORG_LIMIT });
+    expect(totalOf(await counters(user.userId))).toBe(ORG_LIMIT);
   });
 });
 
@@ -302,12 +346,12 @@ describe('#1142 D. 通常のモードは影響を受けない', () => {
 // E. 1 日の上限にも数える
 // ---------------------------------------------------------------
 describe('#1142 E. 1 日の上限に達していたら、究極モードの上限の内でも止める', () => {
-  it('1 日の上限 (10 回) を使い切ったあとの究極モードは、1 日の上限の止め (capped_feature なし)。記録しない', async () => {
+  it('1 日の上限を使い切ったあとの究極モードは、1 日の上限の止め (capped_feature なし)。記録しない', async () => {
     const user = await createUser('total');
-    for (let i = 0; i < FREE_LIMIT; i++) expect((await consume(user.userId, 'photo_analysis')).allowed).toBe(true);
+    for (let i = 0; i < ORG_LIMIT; i++) expect((await consume(user.userId, 'photo_analysis')).allowed).toBe(true);
 
     const result = await consumeCapped(user.userId);
-    expect(result).toMatchObject({ allowed: false, metered: true, plan: 'free', limit: FREE_LIMIT, used: FREE_LIMIT });
+    expect(result).toMatchObject({ allowed: false, metered: true, plan: ORG_PLAN, limit: ORG_LIMIT, used: ORG_LIMIT });
     expect(result.capped_feature).toBeUndefined();
     expect(await countOf(user.userId, ULTIMATE)).toBe(0);
   });

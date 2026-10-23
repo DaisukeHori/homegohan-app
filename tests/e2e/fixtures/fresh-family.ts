@@ -21,6 +21,7 @@ import {
   type FreshUserInfo,
 } from "./fresh-user";
 import { birthDateForAge, insertParentalConsentForChild } from "../helpers/membership-family";
+import { E2E_FAMILY_PLAN_KEY, grantManualPlanForE2e } from "../helpers/billing-plan";
 
 /** E2E の大人の生年月日の placeholder (#1173。18 歳未満の子供の同意に署名する代表者の年齢の検査を通し、強制ありのサーバーで生年月日の同意画面に回されない) */
 const ADULT_BIRTH_DATE = "1990-01-01";
@@ -152,9 +153,14 @@ async function upsertUserProfile(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 内部ヘルパー: family_groups + 最初のメンバ (representative) を直接 INSERT
+// 内部ヘルパー: family_groups を直接 INSERT
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * family_groups の行を service_role で INSERT する。plan_key は送らない:
+ * billing/01 のトリガー family_groups_billing_plan_follow_representative が作成時に代表者の契約から plan_key / member_limit を決める
+ * (家族プランの契約が無ければ free)。代表者には buildFamilyFixture が先に家族プランを手動付与する (billing/03 §6.6 の家族の門)
+ */
 async function createFamilyGroupDirect(
   familyName: string,
   representativeUserId: string,
@@ -174,7 +180,6 @@ async function createFamilyGroupDirect(
     body: JSON.stringify({
       name: familyName,
       representative_id: representativeUserId,
-      plan_key: "free",
     }),
   });
 
@@ -303,7 +308,12 @@ async function buildFamilyFixture(opts: {
   // 2. onboarding 完了プロファイルを作成
   await upsertUserProfile(ownerUser.id, { nickname: "E2E Family Owner" });
 
-  // 3. family_groups を直接 INSERT
+  // 2b. 代表者に家族プランを手動付与する (グループの作成の前。手動付与には user_profiles の行が要る)。
+  //     billing/03 §6.6 の家族の門は、家族プランの契約の無い代表者のグループ (free) に代表者以外のメンバーを足せない
+  //     (下の adult / child の INSERT と、招待の承諾が FAMILY_PLAN_REQUIRED になる)
+  await grantManualPlanForE2e(ownerUser.id, E2E_FAMILY_PLAN_KEY);
+
+  // 3. family_groups を直接 INSERT (plan_key は代表者の契約から family_basic になる)
   const familyId = await createFamilyGroupDirect(familyName, ownerUser.id);
 
   // 4. representative メンバ行を INSERT

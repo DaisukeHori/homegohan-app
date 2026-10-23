@@ -3,7 +3,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { CreateFamilyInviteBodySchema } from '@/schemas/membership/family-invite';
-import { MembershipErrorCode } from '@/lib/errors/membership-errors';
+import { ErrorStatusMap, MEMBERSHIP_ERROR_MESSAGES, MembershipErrorCode } from '@/lib/errors/membership-errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { sendEmail } from '@/lib/emails/send';
 import { isEmailFailure } from '@/lib/emails/send-result';
@@ -165,6 +165,19 @@ export async function POST(request: Request) {
     const dbThrottle = inviteThrottleFailureFromRpcError(rpcError, { flow: 'family-invite', userId: user.id });
     if (dbThrottle) {
       return inviteThrottleResponse(dbThrottle);
+    }
+    // billing/03 §6.6・§9.5 (#1912): 家族プランの無い (plan_key = free の) グループには招待を作れない (DB の門が FAMILY_PLAN_REQUIRED を RAISE する)。
+    // groups/route.ts と同じ 402 と固定の文。DB の生の文 (DETAIL の家族の id) は出さない。招待の行は作られていないのでメールも送らない
+    if ((rpcError.message ?? '').includes(MembershipErrorCode.FAMILY_PLAN_REQUIRED)) {
+      return NextResponse.json(
+        {
+          error: {
+            code: MembershipErrorCode.FAMILY_PLAN_REQUIRED,
+            message: MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.FAMILY_PLAN_REQUIRED],
+          },
+        },
+        { status: ErrorStatusMap[MembershipErrorCode.FAMILY_PLAN_REQUIRED] },
+      );
     }
     if (rpcError.message?.includes('ALREADY_IN_FAMILY')) {
       return NextResponse.json(

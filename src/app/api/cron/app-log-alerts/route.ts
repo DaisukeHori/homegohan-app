@@ -73,7 +73,6 @@
  *   DB の失敗 (数える・権利を取る) は 500。本文は汎用メッセージだけで、詳細は app_logs に残す (#1172)。
  */
 import { NextResponse } from 'next/server';
-import { waitUntil } from '@vercel/functions';
 import { describeCronSecretRotationState, requireCronAuth } from '@/lib/cron-auth';
 import { internalError } from '@/lib/api/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
@@ -141,13 +140,6 @@ export const maxDuration = 60; // Vercel Pro: 60s OK (メールは送信待ち�
 
 /** 構造化ログ (app_logs.function_name) の名前。cron/process-menu-queue と同じ付け方 */
 const ROUTE_NAME = 'cron/app-log-alerts';
-
-/**
- * 応答を返したあとも関数を延命する時間 (ミリ秒)。
- * createLogger の書き込みは待たずに進む (非同期)。応答を返した直後に関数が止められると、書き込み中のログが失われることがある。
- * この route の最後のログ (送れなかったときの件数と関数名) は、メールが届かない間の唯一の手がかりなので、少しだけ延命して書き切らせる。
- */
-const LOG_FLUSH_GRACE_MS = 1000;
 
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
 type Logger = ReturnType<typeof createLogger>;
@@ -813,8 +805,7 @@ export async function GET(req: Request) {
   const authError = await requireCronAuth(req);
   if (authError) return authError;
 
-  const response = await checkAppLogErrors();
-  // ログの書き込み (待たずに進む) が、応答の返却で止められないようにする。認証で断った要求にはログが無いので、ここまで来たものだけ
-  waitUntil(new Promise<void>((resolve) => setTimeout(resolve, LOG_FLUSH_GRACE_MS)));
-  return response;
+  // この route の最後のログ (送れなかったときの件数と関数名) は、メールが届かない間の唯一の手がかり。
+  // その保存は createLogger が 1 行ごとに、終わるまで関数を止めさせない (#1909)。route では延命しない
+  return checkAppLogErrors();
 }

@@ -14,8 +14,9 @@
  * 確かめること:
  *   A. 各上限: 上限ちょうど (N 件目) までは成功し、N+1 件目は RATE_LIMITED。失敗した呼び出しは行も監査行も残さない。
  *      上限の手前までは service role で membership_audit に種まきして積む (数百回の RPC を呼ばない)。
- *   B. 数えた元を消しても戻らない: 組織の招待を物理削除しても、家族を消して作り直しても、監査行は残るので上限は戻らない。
- *      組織の招待は create_org_invite が監査行を書かない (SECURITY INVOKER) ため、トリガーが 'invite_created' を書く。
+ *   B. 数えた元を消しても戻らない: 組織の招待を物理削除しても、家族を解散して作り直しても、監査行は残るので上限は戻らない。
+ *      組織の招待は create_org_invite が監査行を書かないため、トリガーが 'invite_created' を書く
+ *      (#1917 で create_org_invite は SECURITY DEFINER になり、利用者の直接の INSERT は 42501 で止まる)。
  *   C. 24 時間のローリングウィンドウ: 24 時間より前の作成は数えない。Retry-After は最古の対象行が窓から出るまでの秒数。
  *   D. 同時実行: 上限の 1 つ手前で複数の呼び出しが同時に来ても、通るのはちょうど 1 件 (23505 などの別のエラーも出ない)。
  *      タイミングに頼らない確かめ方も置く: 別の接続で先の処理を「上限を数えて記録を書いた後・コミット前」で止め (pg_sleep)、
@@ -36,6 +37,7 @@ import ws from 'ws';
 import { apiCall } from '../helpers/api';
 import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import { grantFamilyPlan } from '../helpers/family-plan';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -126,6 +128,8 @@ async function createFamily(
   options: { adult?: boolean; memberLimit?: number } = {},
 ): Promise<TestFamily> {
   const rep = await createUser(`rep-${label}`);
+  // billing/03 §6.6: 家族グループは家族プランの契約者だけが作れるので、作る前に家族プランを手動付与する
+  await grantFamilyPlan(srAdmin, rep.id);
   const { data, error } = await asUser(rep.jwt).rpc('create_family_group', {
     p_name: `#1163 db-cap ${label} ${TS}`,
     p_plan_key: 'free',
@@ -614,18 +618,19 @@ describe('#1163 家族の招待 (create_family_invite): 招待者ごと 20 / 同
     expectRateLimited(over.error, 'family_invite:per_actor', 5 * 60);
   });
 
-  it('FI-5: 家族を消して作り直しても上限は戻らない (監査行は家族と無関係に残り、招待者ごとに数える)', async () => {
+  it('FI-5: 家族を解散して作り直しても上限は戻らない (監査行は家族と無関係に残り、招待者ごとに数える)', async () => {
     const rep = await createUser('rep-fi-recreate');
+    // billing/03 §6.6: 家族グループは家族プランの契約者だけが作れるので、作る前に家族プランを手動付与する
+    await grantFamilyPlan(srAdmin, rep.id);
     const created = await asUser(rep.jwt).rpc('create_family_group', { p_name: `#1163 recreate-1 ${TS}`, p_plan_key: 'free' });
     const firstFamilyId = (created.data as { id: string }).id;
     createdFamilyIds.push(firstFamilyId);
     await seedAudit({ scope: 'family', scopeId: firstFamilyId, action: 'invite_created', actorId: rep.id, count: 20 });
     expectRateLimited((await inviteToFamily(rep, firstFamilyId, target('fi-re-1'))).error, 'family_invite:per_actor');
 
-    // 代表者は家族を丸ごと削除できる (family_groups_delete_representative)。招待の行は CASCADE で消える
-    const deleted = await asUser(rep.jwt).from('family_groups').delete().eq('id', firstFamilyId).select('id');
-    expect(deleted.error).toBeNull();
-    expect(deleted.data).toHaveLength(1);
+    // 代表者が家族をやめるのは解散の RPC だけ (#1917 から家族の行を直接 DELETE できない)。解散のあと作り直せる
+    const dissolved = await asUser(rep.jwt).rpc('dissolve_family_by_representative', { p_family_id: firstFamilyId });
+    expect(dissolved.error).toBeNull();
 
     const recreated = await asUser(rep.jwt).rpc('create_family_group', { p_name: `#1163 recreate-2 ${TS}`, p_plan_key: 'free' });
     expect(recreated.error).toBeNull();
@@ -695,7 +700,7 @@ describe('#1163 組織の招待 (create_org_invite): 招待者ごと 200 / 組�
     }
     expect(await orgInviteRows(orgId, email)).toHaveLength(3);
 
-    // 組織の管理者は招待を DELETE できる (ポリシー "Org admins can manage invites"。DELETE /api/org/invites と同じ)
+    // 組織の管理者は招待を DELETE できる (ポリシー "Org admins can delete invites"。#1917 で FOR ALL から分けた。DELETE /api/org/invites と同じ)
     const deleted = await asUser(admin.jwt).from('organization_invites').delete().eq('organization_id', orgId).select('id');
     expect(deleted.error).toBeNull();
     expect(deleted.data).toHaveLength(3);
@@ -750,7 +755,7 @@ describe('#1163 組織の招待 (create_org_invite): 招待者ごと 200 / 組�
     expect(JSON.stringify(data![0].metadata).toLowerCase()).not.toContain(mixed.toLowerCase());
   });
 
-  it('OI-5: 管理者が organization_invites へ直接 INSERT しても監査行ができ、上限に数えられる (RPC を通さない回避を許さない)', async () => {
+  it('OI-5: 管理者は organization_invites へ直接 INSERT できない (42501。RPC を通さない回避を許さない。#1917 で書き込みの権限を外した)', async () => {
     const { orgId, admin } = orgActor;
     const email = target('oi-direct');
     const inserted = await asUser(admin.jwt)
@@ -766,14 +771,11 @@ describe('#1163 組織の招待 (create_org_invite): 招待者ごと 200 / 組�
       })
       .select('id')
       .single();
-    expect(inserted.error).toBeNull();
+    expect(inserted.error?.code).toBe('42501');
 
-    const { data } = await srAdmin
-      .from('membership_audit')
-      .select('actor_id, scope, scope_id')
-      .eq('action', 'invite_created')
-      .contains('metadata', { invite_id: (inserted.data as { id: string }).id });
-    expect(data).toEqual([{ actor_id: admin.id, scope: 'organization', scope_id: orgId }]);
+    // 行も監査行もできない (上限に数える元は、RPC が作った招待の監査行だけ)
+    expect(await orgInviteRows(orgId, email)).toHaveLength(0);
+    expect(await auditCount({ action: 'invite_created', scopeId: orgId, email })).toBe(0);
   });
 
   it('OI-6: service role が INSERT した招待 (auth.uid() が無い) は、invited_by を操作者にして監査行を書く', async () => {

@@ -83,6 +83,10 @@ const EXEMPT_EMAIL_SENDERS: Record<string, string> = {
     '宛先は、除名された本人、または脱退先の家族の代表者 / 組織のオーナーの auth.users 上の登録アドレス (resolveAuthEmails) に固定で、' +
     '利用者はアドレスを指定できない。宛先になるのは本人の同意 (招待の承諾) でメンバーになった人と、その所属先の責任者だけなので、' +
     '任意のアドレスへ送り付けることはできない',
+  // #1917 利用者の解散の通知。送る入口は POST /api/family/dissolve・POST /api/org/dissolve だが、送信はこのモジュールだけが行う
+  'src/lib/membership/self-dissolve-notification.ts':
+    '宛先は本人が指定できず (RPC が集めた所属メンバーの登録アドレスに固定)、送るのは解散の RPC が成功した直後の 1 回だけ ' +
+    '(同じ家族・組織は 2 回解散できない。FAMILY_ALREADY_DISSOLVED / ORG_ALREADY_DISSOLVED)',
   // #1152 退会の完了メール。送る入口は POST /api/account/delete (deleteAccount) だが、送信はこのモジュールだけが行う
   'src/lib/account-deletion-notification.ts':
     '退会 (deleteAccount) で auth.admin.deleteUser が実際にアカウントを削除した直後に、1 回だけ送る ' +

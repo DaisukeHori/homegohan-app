@@ -67,6 +67,9 @@ jobs:
           E2E_USER_PASSWORD: ${{ secrets.E2E_USER_PASSWORD }}
           # global-setup でログインできなければ、全テストを走らせずに止める
           E2E_REQUIRE_LOGIN: "1"
+          # 本物の AI を呼ぶ手順 (AI 相談の送信・食事写真の解析) は手動の実行のときだけ流す。PR の実行では本番の AI の回数と原価を
+          # 消費しない (以前は PR のたびに 03-ai-advisor が本番の AI 相談へ送っていた。#1909・tests/e2e/helpers/ai-calls.ts)
+          E2E_ALLOW_AI_CALLS: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
           # 失敗時のページスナップショット (error-context) は入力欄の値を平文で含み、パスワードが
           # artifact に残るため取らない (Playwright 1.59 で確認。トレースも同じ理由で --trace off)
           PLAYWRIGHT_NO_COPY_PROMPT: "1"

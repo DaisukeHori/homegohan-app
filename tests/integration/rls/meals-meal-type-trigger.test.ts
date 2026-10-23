@@ -44,6 +44,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
 import { PLANNED_MEAL_TYPES } from '../../../src/lib/planned-meal-validation';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import { setFamilyGroupPlan } from '../helpers/family-plan';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -568,6 +569,8 @@ describe('#1103 E. 家族へのペースト (paste_meal_to_family)', () => {
       .single();
     if (familyError || !family) throw new Error(`family_groups: ${familyError?.message}`);
     familyId = (family as { id: string }).id;
+    // billing/03 §6.6: free のグループにはメンバーを足せないので、メンバーを足す前に家族プランにする
+    await setFamilyGroupPlan(srAdmin, [familyId]);
     const { error: memberError } = await srAdmin.from('family_members').insert([
       { family_id: familyId, user_id: userId, role: 'representative', status: 'active', share_meals: true },
       { family_id: familyId, user_id: adultId, role: 'adult', status: 'active', share_meals: true },

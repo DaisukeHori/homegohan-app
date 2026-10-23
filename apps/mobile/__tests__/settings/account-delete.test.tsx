@@ -67,8 +67,9 @@ jest.mock('../../src/providers/AuthProvider', () => ({
 }));
 
 const mockReplace = jest.fn();
+const mockPush = jest.fn();
 jest.mock('expo-router', () => ({
-  router: { replace: (...args: any[]) => mockReplace(...args) },
+  router: { replace: (...args: any[]) => mockReplace(...args), push: (...args: unknown[]) => mockPush(...args) },
 }));
 
 jest.mock('@expo/vector-icons', () => ({
@@ -114,6 +115,7 @@ import {
 } from '../../src/lib/account-deletion-error';
 import { NETWORK_ERROR_MESSAGES } from '../../src/lib/api-error';
 import { ServiceUnavailableError } from '../../src/lib/service-unavailable';
+import { MEMBERSHIP_SETTINGS_SCREEN_ROUTE } from '../../src/lib/membership-settings';
 import {
   readPendingWebViewUserScopedStorageClear,
   resetWebViewUserStorageCleanupForTests,
@@ -336,6 +338,18 @@ describe('AccountSettingsPage — 退会できない・失敗したときの文 
     return { title: failures[0][0], message: failures[0][1] };
   }
 
+  /** 削除を押して、出た Alert (確認のダイアログ以外) のボタンを返す (ボタンが無ければ undefined) */
+  async function pressDeleteAndGetFailureButtons() {
+    render(<AccountSettingsPage />);
+    fireEvent.press(screen.getByTestId('account-delete-button'));
+    await waitFor(() => {
+      expect(alertSpy.mock.calls.some(([title]) => title !== 'アカウント削除')).toBe(true);
+    });
+    const failures = alertSpy.mock.calls.filter(([title]) => title !== 'アカウント削除');
+    expect(failures).toHaveLength(1);
+    return failures[0][2];
+  }
+
   it.each([
     ['組織のオーナー', 'HTTP 409 Conflict', 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER', ORG_OWNER_MESSAGE],
     // HTTP/2 では statusText が空になる
@@ -346,6 +360,29 @@ describe('AccountSettingsPage — 退会できない・失敗したときの文 
     );
     const alert = await pressDeleteAndGetFailureAlert();
     expect(alert).toEqual({ title: '退会できません', message });
+  });
+
+  it('409: Alert に「閉じる」と「メンバーシップ設定を開く」があり、押すと MEMBERSHIP_SETTINGS_SCREEN_ROUTE へ router.push する (#1917)', async () => {
+    mockPost.mockRejectedValueOnce(
+      new Error(`HTTP 409 Conflict: ${JSON.stringify({ error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE', message: FAMILY_REPRESENTATIVE_MESSAGE })}`),
+    );
+    const buttons = await pressDeleteAndGetFailureButtons();
+    expect(buttons?.map((b) => b.text)).toEqual(['閉じる', 'メンバーシップ設定を開く']);
+    expect(buttons?.[0].style).toBe('cancel');
+    expect(mockPush).not.toHaveBeenCalled();
+    buttons?.[1].onPress?.();
+    expect(mockPush).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledWith(MEMBERSHIP_SETTINGS_SCREEN_ROUTE);
+    expect(MEMBERSHIP_SETTINGS_SCREEN_ROUTE).toBe('/settings/membership');
+  });
+
+  it.each([
+    ['500', new Error('HTTP 500 Internal Server Error: {}')],
+    ['通信の失敗', new HttpNetworkError('offline', 'raw offline')],
+  ])('%s の Alert にはボタンが無い (文だけ)', async (_label, error) => {
+    mockPost.mockRejectedValueOnce(error);
+    const buttons = await pressDeleteAndGetFailureButtons();
+    expect(buttons).toBeUndefined();
   });
 
   it('409 で本文に文が無いときは、定型の案内の文を出す', async () => {
@@ -399,6 +436,8 @@ describe('AccountSettingsPage — ログインが切れていて退会できな�
     expect(failures[0][0]).toBe('ログインが必要です');
     expect(failures[0][1]).toBe(ACCOUNT_DELETE_SESSION_EXPIRED_MESSAGE);
     expect(failures[0][1]).not.toBe(ACCOUNT_DELETE_FAILED_MESSAGE);
+    // #1917: 401 の Alert にはボタンが無い (メンバーシップ設定へのボタンは 409 だけ)
+    expect(failures[0][2]).toBeUndefined();
     // アカウントは消えていないので、通常のログアウト (push token の削除 → 端末のデータの削除 → サインアウト)
     expect(mockUnregisterExpoPushToken).toHaveBeenCalledWith('uid-1', expect.anything());
     expect(mockClearUserScopedAsyncStorage).toHaveBeenCalledWith('uid-1');
@@ -455,5 +494,53 @@ describe('AccountSettingsPage — ログインが切れていて退会できな�
     });
     const failures = alertSpy.mock.calls.filter(([title]) => title !== 'アカウント削除');
     expect(failures.map(([title, message]) => [title, message])).toEqual([['ログインが必要です', ACCOUNT_DELETE_SESSION_EXPIRED_MESSAGE]]);
+  });
+});
+
+describe('AccountSettingsPage — 退会の確認とストアの購読 (billing/03 §10.4・S35)', () => {
+  it('the アカウント削除 confirmation shows the irreversible text followed by STORE_SUBSCRIPTION_DELETION_NOTICE with キャンセル / 定期購読の管理を開く / 削除, and 定期購読の管理を開く opens STORE_SUBSCRIPTION_MANAGEMENT_URL for the platform (play_store on android, app_store otherwise) without calling the delete API', async () => {
+    const { Linking, Platform } = require('react-native');
+    const { STORE_SUBSCRIPTION_DELETION_NOTICE, STORE_SUBSCRIPTION_MANAGEMENT_URL } = require('@homegohan/shared');
+    const openURLSpy = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+    // この it の中だけ、確認のダイアログで「定期購読の管理を開く」を押す
+    alertSpy.mockImplementation((title, _message, buttons) => {
+      if (title === 'アカウント削除') {
+        buttons?.find((b) => b.text === '定期購読の管理を開く')?.onPress?.();
+      }
+    });
+    try {
+      render(<AccountSettingsPage />);
+      fireEvent.press(screen.getByTestId('account-delete-button'));
+
+      await waitFor(() => {
+        expect(openURLSpy).toHaveBeenCalledTimes(1);
+      });
+      const confirmCalls = alertSpy.mock.calls.filter(([title]) => title === 'アカウント削除');
+      expect(confirmCalls).toHaveLength(1);
+      const [, message, buttons] = confirmCalls[0];
+      expect(message).toBe(`アカウントとデータを削除します。取り消しできません。\n\n${STORE_SUBSCRIPTION_DELETION_NOTICE}`);
+      expect((buttons ?? []).map((b) => b.text)).toEqual(['キャンセル', '定期購読の管理を開く', '削除']);
+
+      const expectedStore = Platform.OS === 'android' ? 'play_store' : 'app_store';
+      expect(openURLSpy).toHaveBeenCalledWith(STORE_SUBSCRIPTION_MANAGEMENT_URL[expectedStore]);
+      // 退会はしない (削除の API を呼ばず、ログアウトもしない)。ボタンは押せる状態に戻る
+      expect(mockPost).not.toHaveBeenCalledWith('/api/account/delete', expect.anything());
+      expect(mockSignOut).not.toHaveBeenCalled();
+      expect(mockReplace).not.toHaveBeenCalled();
+      // 多重実行のガードが戻っているので、もう一度押すと確認のダイアログがまた出る
+      fireEvent.press(screen.getByTestId('account-delete-button'));
+      await waitFor(() => {
+        expect(openURLSpy).toHaveBeenCalledTimes(2);
+      });
+      expect(alertSpy.mock.calls.filter(([title]) => title === 'アカウント削除')).toHaveLength(2);
+      expect(mockPost).not.toHaveBeenCalledWith('/api/account/delete', expect.anything());
+    } finally {
+      openURLSpy.mockRestore();
+      alertSpy.mockImplementation((title, _message, buttons) => {
+        if (title === 'アカウント削除') {
+          buttons?.find((b) => b.text === '削除')?.onPress?.();
+        }
+      });
+    }
   });
 });

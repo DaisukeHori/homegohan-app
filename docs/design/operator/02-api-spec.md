@@ -46,7 +46,7 @@ const user = await requireRole(['admin', 'super_admin', 'sales']);
 { "data": { ... }, "meta": { "total": 100, "page": 1, "per_page": 50 } }
 ```
 
-エラー:
+エラー (例外: 本文の NULL 文字 (U+0000) で断る 400 `INVALID_CHARACTER` は、認証の前に `rejectNullCharacterBody` が flat の `{ "error": "<文>", "code": "INVALID_CHARACTER" }` で返す。`src/lib/api/reject-null-character.ts:32-35`):
 ```json
 { "error": { "code": "OP_PERMISSION_DENIED", "message": "...", "details": {} } }
 ```
@@ -193,7 +193,7 @@ await supabase.from('admin_audit_logs').insert({
 
 **レスポンス**: `200 { "data": { "ban_id": "uuid", "unban_at": "2026-05-13T00:00:00Z" } }`
 
-**副作用**: `admin_audit_logs` INSERT (severity='warn')
+**副作用**: `admin_audit_logs` INSERT (severity='warn')。実装は `POST /api/admin/users/{id}/freeze`。対象が super_admin なら 403 `OP_TARGET_PROTECTED`。凍結の UPDATE は読んだ時点の「super_admin でない」状態のままのときだけ書く条件つき (読んだ `roles` が NULL なら `roles IS NULL`、そうでなければ `roles` が `super_admin` を含まない。`src/lib/admin/user-ban.ts` の `SUPER_ADMIN_ROLES_LITERAL`。PostgREST の or は UPDATE で 42703 になるので使わない)。読んでから書くまでに変わっていたら 0 行 → 読み直して、無ければ 404 `NOT_FOUND`、あれば 409 `CONFLICT_STALE_DATA` (書かず、監査も残さない)。モデレーションの BAN (`applyUserBan`) も同じ条件で、0 行なら読み直して kind `not_found` / `super_admin` / `internal`
 
 ---
 
@@ -327,6 +327,81 @@ BAN 解除
 
 ---
 
+### GET /api/admin/organizations
+組織の一覧 (運営)。実装は `src/app/api/admin/organizations/route.ts:36-107`
+
+**クエリパラメータ**: `q` (組織名の部分一致)・`plan` (`ORG_PLAN_VALUES` のどれか。`src/lib/org-plans.ts:22`)・`page` (default: 1)・`per_page` (default: 30, max: 100)。不正なら 400 `VALIDATION_ERROR` (:60-65)
+
+**レスポンス**: `{ "organizations": [{ "id", "name", "plan", "created_at", "updated_at" }], "meta": { "total", "page", "per_page" } }` (新しい順)。件数より後ろのページ (PostgREST の 416 / PGRST103) は、同じ絞り込みで件数だけを数え直して、空の一覧と本当の件数 (`meta.total`) を 200 で返す (画面は件数から最後のページへ取り直す。:80-89・:279-297)。それ以外の読み出しの失敗・想定外の例外と、件数を数え直せないときは 500 `INTERNAL_ERROR` (空の一覧にしない。:91-96・:102-106・:299-305)
+
+**権限**: `admin`, `super_admin` (未ログインは 401 `AUTH_UNAUTHENTICATED` :43・ほかの利用者は 403 `OP_PERMISSION_DENIED` :49)
+
+---
+
+### POST /api/admin/organizations
+組織の作成 (運営)。実装は `src/app/api/admin/organizations/route.ts:109-242`
+
+**リクエスト**:
+```json
+{ "name": "株式会社〇〇", "plan": "standard", "owner_id": "uuid" }
+```
+- `name`: 1〜200 文字 (必須)
+- `plan`: `ORG_PLAN_VALUES` (`standard` / `premium` / `enterprise`) のどれか。省略すると `ORG_PLAN_DEFAULT` (`standard`)
+- `owner_id`: 省略すると呼び出した運営をオーナーにする (作る組織は active なので `organizations.owner_id` は NOT NULL)
+
+**処理**: service_role (`getSupabaseAdmin`) で、organizations の行・`org_license_pools` の行 (`total_licenses` = NULL・`used_licenses` = 0。失敗してもログだけで続ける)・オーナーの `user_profiles` (`organization_id` と `org_role = 'owner'`) を書く。オーナーにする人が退会の途中 (退会の本体が findBlocker の前に付ける退会の印が新しい) なら、organizations の行の INSERT を DB のトリガー `organizations_owner_not_deleting` が止め、何も書かずに 409 `OWNER_ACCOUNT_DELETING` を返す (#1917 の続き。退会の最後の `deleteUser` が `organizations_owner_id_fkey` (RESTRICT) で失敗しないように)
+
+**レスポンス**: `{ "organization": { "id", "name", "plan", "owner_id", "created_at", "updated_at" } }`
+
+**監査ログ**: `admin.organization.create` (details は `{ name, plan }`。operator/07 §4.1)
+
+**エラー**:
+
+| ステータス | コード | 場合 (route.ts の行) |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` / `INVALID_JSON` / `INVALID_CHARACTER` | 本文が JSON でない (:136-139)・Zod の検査に通らない (:144-147)・本文に NULL 文字がある (:111-112) |
+| 401 | `AUTH_UNAUTHENTICATED` | 未ログイン (:119) |
+| 403 | `OP_PERMISSION_DENIED` | `admin` / `super_admin` でない (:125) |
+| 409 | `OWNER_ALREADY_IN_ORG` / `OWNER_ACCOUNT_DELETING` | オーナーにする人がすでに別の組織に所属している (:167-170) / オーナーにする人が退会の手続き中 (退会の印 `account_deletion_guards` があり、DB のトリガー `organizations_owner_not_deleting` が組織の行の INSERT を止めた。`supabase/migrations/20261023130000_account_deletion_owner_guard.sql`。:181-186。文は「指定した owner は退会の手続き中です」。#1917 の続き) |
+| 500 | `INTERNAL_ERROR` | 組織の行の作成 (:189-192)・オーナーの `user_profiles` の更新 (:222-225) に失敗 |
+
+**権限**: `admin`, `super_admin`
+
+---
+
+### PATCH /api/admin/organizations/{id}
+組織のプラン (`organizations.plan`) の変更 (運営)。実装は `src/app/api/admin/organizations/[id]/route.ts`。組織のプランの段階は運営だけが変える (#1912。組織の管理者の `PUT /api/org/settings` は `plan` を受け取らず、`authenticated` / `anon` の `plan` の変更は DB のトリガー `guard_organizations_plan_value` が `ORG_PLAN_OPERATOR_ONLY` (42501) で拒む。`20261022170000_org_plan_operator_only.sql`)
+
+**リクエスト**:
+```json
+{ "plan": "premium" }
+```
+- 本文は `plan` だけ (`ORG_PLAN_VALUES` のどれか。ほかのキーは 400。`.strict()` :46-50)
+
+**処理**:
+- service_role (`getSupabaseAdmin`) で書く (運営の JWT も `authenticated` なので、利用者の client ではトリガーに止められる)
+- 書く前に今の行を読み (:107-111)、送られたプランが今と同じなら書かず、記録もしない (200 で今の行を返す :129-131)
+- 更新は「直前に読んだ `plan` のままなら書く」条件つきの UPDATE (:135-144。読んだ値が NULL なら `.is('plan', null)`)。0 行なら読み直し (:156-160)、今の値が送られたプランと同じなら書かず記録もしない (200 :175-177)、違えば 409 `CONFLICT_STALE_DATA` (:178。cross/04 §4.2)
+
+**レスポンス**: `{ "organization": { "id", "name", "plan", "created_at", "updated_at" } }`
+
+**監査ログ**: `admin.organization.plan_change` (details は `{ from, to }` = 変える前と後のプラン。severity `warn`。今と同じプランなら記録しない。operator/07 §4.1)
+
+**エラー**:
+
+| ステータス | コード | 場合 (route.ts の行) |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` / `INVALID_JSON` / `INVALID_CHARACTER` | `{id}` が UUID でない (:80)・本文が JSON でない (:91)・Zod の検査に通らない (:99)・本文に NULL 文字がある (:56-57) |
+| 401 | `AUTH_UNAUTHENTICATED` | 未ログイン (:64) |
+| 403 | `OP_PERMISSION_DENIED` | `admin` / `super_admin` でない (:70) |
+| 404 | `NOT_FOUND` | 組織が無い (:123)・読み直したときに組織が無い (:170) |
+| 409 | `CONFLICT_STALE_DATA` | 読んでから書くまでに別の運営が別のプランへ変えた (:40・:178) |
+| 500 | `INTERNAL_ERROR` | 読み出し (:117)・更新 (:149)・読み直し (:164) に失敗 |
+
+**権限**: `admin`, `super_admin`
+
+---
+
 ## 5. モデレーション API
 
 ### GET /api/admin/moderation/{type}
@@ -334,9 +409,10 @@ BAN 解除
 
 `type`: `food` | `recipe` | `ai_content`
 
-> **現状 (2026-10, #1128)**: `ai_content` (AI コンテンツ) の審査は**準備中 (未対応)**。バックエンドのテーブルが無いため、
+> **現状 (2026-10, #1128・#1911)**: `ai_content` (AI コンテンツ) の審査は**できない (未対応)**。バックエンドのテーブルが無いため、
 > `ai_content` を指定した一覧 (`/queue?type=ai_content`)・個別取得・解決 (`PUT` / `POST` `/{type}/{id}`) は
-> 空や 404 ではなく **501 `OP_NOT_SUPPORTED`** を返す。画面の「AIコンテンツ（未対応）」は選べない。
+> 空や 404 ではなく **501 `OP_NOT_SUPPORTED`** を返す。画面 (`/admin/moderation`) の絞り込みに `ai_content` の選択肢は出さず
+> (#1911: 未完成の機能は画面に出さない)、URL で `ai_content` を指定されたときは種類を絞らない一覧として扱う。
 > 集約 API `GET /api/admin/moderation` の `aiFlags` は空配列のままで、`aiFlagsSupported: false` を添える
 > (空は「通報 0 件」ではなく「未対応」の意味。配布済みの古いモバイルアプリの運営画面 (リポジトリからは #1389 で削除済み) が
 > `...(res.aiFlags ?? [])` と配列として展開するため、形は変えない)。
@@ -667,7 +743,11 @@ LLM 使用量ダッシュボード (super_admin のみ)
 > **現状 (2026-10, #1149)**: プランごとの AI の 1 日の上限 (全機能の合計・JST の暦日) は、`/api/super-admin/llm/quotas` で読み書きする
 > (見出しの `POST /api/super-admin/llm-usage/quota-update` というパスは無い)。保存先は DB の `ai_daily_limits` で、保存した値は次の AI の利用の判定 (`consume_ai_usage`) から効く
 > (詳細は operator/06-ai-llm.md §5)。super_admin のみ。
->   - `GET`: プランごとの行 (`subscription_plans` と `ai_daily_limits` を合わせたもの)・`default_plan_key` (`free`)・`enforced: true`・`note`
+>   - `GET`: プランごとの行 (`subscription_plans` と `ai_daily_limits` を合わせたもの)・`default_plan_key` (`free`)・`enforced: true`・`note`。
+>     組織のプランの値 (`organizations.plan` に書ける `standard` / `premium` / `enterprise`。`src/lib/org-plans.ts` の `ORG_PLAN_VALUES`) の行も出す
+>     (`plan_source: 'org_plan'`・表示名「<値>（組織のプラン）」。#1912)。どちらにも無いキーの行は `plan_source: 'unknown'` で、画面は保存させない。
+>     `subscription_plans` の組織のプランの行 (`plan_type = 'org'` の `org_starter` / `org_standard` / `org_pro` / `org_enterprise`) も一覧に出すが、
+>     その値は判定に使われない (組織の利用者の上限は `organizations.plan` の値の行で決まる。`get_effective_plan` がその値を返す) ので、画面は保存させない (#1912)
 >   - `PATCH`: 1 つのプランの上限を保存する。保存すると監査ログ `super_admin.llm_quota.update` を残す
 >   - 上限に達した AI の呼び出しは 429 `AI_DAILY_LIMIT` (§23)
 >   - 利用者ごとの上限と月次の上限は無い。上限に数えない機能の安全弁 (`ai_unmetered_daily_caps`) は DB の行で変える (API・画面は無い)
@@ -681,9 +761,13 @@ LLM 使用量ダッシュボード (super_admin のみ)
   "reason": "1 日の上限の見直し"
 }
 ```
-- `plan_key`: `subscription_plans` にあるプラン (無ければ 404 `PLAN_NOT_FOUND`)
+- `plan_key`: `subscription_plans` にあるプラン、または組織のプランの値 (`ORG_PLAN_VALUES`。行が無ければ作る。#1912)。どちらでもなければ 404 `PLAN_NOT_FOUND`。
+  `subscription_plans` の組織のプランの行 (`plan_type = 'org'` で、`ORG_PLAN_VALUES` でないキー = `org_*`) は 409 `PLAN_READ_ONLY` で断る
+  (保存しない・監査ログを残さない。判定の `src/lib/super-admin/ai-daily-limits.ts` の `isOrgSubscriptionPlanRow`。#1912)。`ORG_PLAN_VALUES` の行は保存できる
 - `daily_limit`: 0 以上 10,000 以下の整数。`null` は無制限
 - `reason`: 変更の理由 (監査ログに残す)
+- 同時の保存: 監査ログの `before` は保存の前に読んだ値なので、保存は「読んだ値のままなら書く」条件つきにする (行があれば読んだ `daily_limit` のままのときだけ更新、無ければ作るだけ = 同じキーの行が先にできていたら何もしない)。
+  0 行なら読み直し、今の値が送られた値と同じなら 200 (書かず、監査ログも残さない)、違えば 409 `CONFLICT_STALE_DATA` (cross/04 §4.2)。`before` は書いた時点の実際の直前の値と必ず一致する。画面 (`/super-admin/llm/quotas`) は 409 `CONFLICT_STALE_DATA` を受けたら一覧を読み直していまの上限を出し、行に画面の文を出す (書きかけの行は残す。#1917)
 
 ---
 
@@ -691,9 +775,9 @@ LLM 使用量ダッシュボード (super_admin のみ)
 
 > **現状 (2026-10, #1125)**: Stripe の Webhook の受け口と契約の写しは billing/01 (`docs/design/billing/01-billing-core.md`) で入った。
 > 収益の日次スナップショットなどの集計バッチと、請求書・収益推移・Stripe 整合チェックの画面の実データ化は配線の冊で作る。
-> それまで画面 (`/admin/finance/invoices` `/revenue` `/reconciliation`) は「課金は未開始のため準備中」と表示し、
-> 売上ダッシュボードの MRR / ARR / Churn Rate / LTV / 契約数は「準備中」とする
-> (MAU は `daily_active_users` の実データなのでそのまま出す)。API は残してある。
+> それまで画面 (`/admin/finance/invoices` `/revenue` `/reconciliation`) は出さない: URL で開かれたら 404 にし、
+> 売上・経理のクイックリンクにも並べない。売上ダッシュボードの MRR / ARR / Churn Rate / LTV / 契約数のカードも出さない
+> (#1911: 未完成の機能は画面に出さない。「準備中」とも出さない。MAU は `daily_active_users` の実データなのでそのまま出す)。API は残してある。
 
 ### GET /api/admin/finance/dashboard
 売上ダッシュボード
@@ -896,8 +980,12 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 - 書き込む列は `status` / `admin_notes` / `resolved_at` だけ。本文・メールアドレス・問い合わせ者などがボディに入っていても無視する。変更が無いときは書き込まない (`updated_at` を動かさない)
 - レスポンスは更新後の `{ "inquiry": InquiryDetail }`
 - 更新後の問い合わせ (本文を含む) を返すので、変更が無い更新を含めて毎回 `admin.inquiry.update` を記録する
+- 同時の更新: 書くときは「直前に読んだ `status` と `updated_at` のままなら書く」条件つきにする (`updated_at` は UPDATE のたびにトリガーで進む。`NULL` なら `.is` で比べる)。
+  0 行なら読み直し、送った項目 (`status` / 正規化した `adminNotes`) がどれも今の値と同じなら 200 で今の行を返し (書かない。本文を返すので `changed: false` として記録する)、
+  違えば 409 `CONFLICT_STALE_DATA` (書かず、記録もしない)。監査の `status_from` と `resolved_at` の元にした値は、書いた時点の実際の直前の値と必ず一致し、
+  読んでから書くまでの間に別の運営が書いた管理者メモを上書きしない (条件は API が読んだ値で、画面を開いてから保存するまでの変更は見分けない)。読み直しの失敗は 500、行が消えていれば 404。Web の画面 (`/support/inquiries`) は 409 `CONFLICT_STALE_DATA` を受けたら一覧と開いている問い合わせの詳細を読み直し、画面の文 (読み込み直した旨) を出す。管理者メモの入力欄は、書きかけ (開いた・読み直した・保存したときのメモから変えている) なら読み直しで消さず、保存されているメモと違えば入力欄の下に出す。書きかけでなければ入力欄を読み直したメモにする (開いたときの古いメモを次の更新で送り、別の運営が書いたメモを上書きしないため。#1917。`src/app/(support)/support/inquiries/page.tsx`)
 
-エラーコードは `VALIDATION_ERROR` / `INVALID_JSON` (400)、`AUTH_UNAUTHENTICATED` (401)、`OP_PERMISSION_DENIED` (403)、`NOT_FOUND` (404)、`INTERNAL_ERROR` (500)。
+エラーコードは `VALIDATION_ERROR` / `INVALID_JSON` (400)、`AUTH_UNAUTHENTICATED` (401)、`OP_PERMISSION_DENIED` (403)、`NOT_FOUND` (404)、`CONFLICT_STALE_DATA` (409)、`INTERNAL_ERROR` (500)。
 
 ---
 
@@ -1133,10 +1221,15 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 ### PATCH /api/admin/sales/leads/{id}
 リード更新 (ステージ変更含む)
 
+- ステージを変えると、活動履歴 (`sales_lead_activities`) に `stage_change` (`details: { from_stage, to_stage }`) を残す (この書き込みに失敗しても、リードは更新できているので 200 のまま (監査ログと同じ fail-open)。失敗は db-logger に error で残す。#1917)
+- 同時の更新: 本文に `stage` があるときは「直前に読んだ `stage` のままなら書く」条件つきにする。0 行なら読み直し、リードがあれば 409 `CONFLICT_STALE_DATA`
+  (書かず、活動履歴も監査ログも残さない)、無ければ 404。`from_stage` は書いた時点の実際の直前のステージと必ず一致する。`stage` が無い更新には条件を付けず、更新が 0 行 (読んでから書くまでにリードが消えた) なら 404 (`src/app/api/admin/sales/leads/[id]/route.ts:228-231`)
+- 読み込み・更新・読み直しの DB の失敗は 500 `INTERNAL_ERROR` (404 にしない)。UUID の形でない id は DB に渡さず 404 `NOT_FOUND` (本文の検査の 400 のあと。uuid 型の列に渡すと 22P02 で「DB の失敗」に入るため。#1917)。詳細の `GET /api/admin/sales/leads/{id}` も同じで、リード・活動履歴の読み込みの DB の失敗は 500 (404 は行が無いとき (UUID の形でない id を含む) だけ。活動履歴の読み込みの失敗を空の履歴にしない。#1917)
+
 ---
 
 ### POST /api/admin/sales/leads/{id}/activities
-活動記録追加
+活動記録追加。リードの読み込みの DB の失敗は 500 `INTERNAL_ERROR` (404 は行が無いとき (UUID の形でない id を含む。DB に渡さず、本文の検査の 400 のあとに 404) だけ)。追加のあとのリードの `updated_at` の更新に失敗しても、活動は追加できているので 201 のまま (失敗は db-logger に error で残す。#1917)
 
 **リクエスト**:
 ```json
@@ -1200,9 +1293,10 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 
 ## 16. データエクスポート API
 
-> **現状 (2026-10, #1126)**: データエクスポートは**準備中 (未対応)**。ファイルを作る処理 (cron / worker) と専用の
+> **現状 (2026-10, #1126・#1911)**: データエクスポートは**使えない (未対応)**。ファイルを作る処理 (cron / worker) と専用の
 > `exports` テーブルが無いため、`/api/super-admin/exports` と `/exports/{id}` は全メソッドが 501 `OP_NOT_SUPPORTED` を返し、
-> DB には触れない。画面 (`/super-admin/exports`, `/new`) は「準備中（未対応）」だけを出し、依頼フォームは無い。
+> DB には触れない。画面 (`/super-admin/exports`, `/new`) は出さない: サイドバーに並べず、URL で開かれたら 404 にする
+> (#1911: 未完成の機能は画面に出さない。「準備中」とも出さない)。依頼フォームは無い。
 > 以前は、利用者本人の GDPR 削除要求の表 (`gdpr_deletion_requests`) を代用していたが、これは本人の削除要求を
 > 取り消す事故につながるため止めた。実装するときは、専用テーブルを先に用意すること。
 
@@ -1259,13 +1353,26 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 }
 ```
 
+**バリデーション** (`src/lib/super-admin/plans-schemas.ts` の `PlanCreateSchema`): `plan_key` の形を `plan_type` に揃える (#1912)。`personal` / `family` は組織のプランの値 (`isOrgPlanKey` = `standard` / `premium` / `enterprise`・`org_` で始まる key) を使えず、`org` は `org_` で始まる key にする。食い違いは 400 `OP_INVALID_INPUT` (利用者の画面の表示名 `planDisplayName` は key の形だけで「組織のプラン」/「有料プラン」を決めるため)。`PATCH /api/super-admin/plans/{id}` は `plan_key` / `plan_type` を受けない (送っても行は変わらない)
+
 ---
 
 ### GET /api/super-admin/plans/{id}
 プラン詳細
 
 ### PATCH /api/super-admin/plans/{id}
-プラン編集 (draft のみ自由編集、public 以降は価格変更 API 経由)
+プラン編集 (draft のみ自由編集、public 以降は価格変更 API 経由)。同時の変更: 遷移の可否・status ごとに変えてよい項目・廃止の `ends_at` の要否は直前に読んだ `status` (と `ends_at`) で決め、更新はその `status` のまま (廃止で既存の `ends_at` に頼るときは `ends_at` が NULL でないことも) のときだけ書く条件つき。0 行なら読み直し、送った変更がもう入っていれば 200 (書かず記録もしない)、入っていなければ 409 `CONFLICT_STALE_DATA`、行が無ければ 404 `OP_PLAN_NOT_FOUND` (cross/04 §4.2)。廃止の `ends_at` の要否は書いた後の値で決める (本文の `ends_at: null` は既存の値があっても 400 `OP_PLAN_DEPRECATE_ENDS_AT_REQUIRED`)。監査 `update_plan` は `status` を変えたときだけ `status_from` / `status_to` を持ち、`status_from` は書いた時点の実際の直前の値。削除 (`DELETE /api/super-admin/plans/{id}`。draft のみ・それ以外は 422 `OP_PLAN_NOT_DRAFT`) も `status = 'draft'` のままのときだけ消し、0 行なら読み直して、無ければ 404 `OP_PLAN_NOT_FOUND`、あれば 409 `CONFLICT_STALE_DATA` (どちらも記録しない)
+
+**廃止の安全弁** (`status: 'deprecated'` への遷移。#1127・#1912。実装 `src/lib/super-admin/plan-subscribers.ts` の `countPlanSubscribers`): 廃止の前に、契約が終わっていない契約者を service_role で数え、1 件でもいれば 409 `OP_PLAN_HAS_SUBSCRIBERS` で止める (数えられなかったときは 500 `OP_PLAN_SUBSCRIBER_CHECK_FAILED`)。
+
+| 内訳 (`error.counts` のキー) | 数える行 | 組織のプランの行 (`plan_type = 'org'` の `org_*`) |
+|---|---|---|
+| `personal_subscriptions` | `plan_key` が一致し、status が trialing / active / paused / past_due / grace | 数える |
+| `family_groups` | `plan_key` が一致し、status = active | 数える |
+| `organizations` | `plan` が `plan_key` と一致し、status = active | **数えない** (キーを出さない。0 件として判定にも入れない) |
+
+- 組織のプランの行 (`isOrgSubscriptionPlanRow`: `plan_type = 'org'` かつ `plan_key` が組織の段階 (`ORG_PLAN_VALUES` = standard / premium / enterprise) でない行) は、組織の段階とは無関係で、組織の利用者の判定 (`get_effective_plan` は `organizations.plan` を使う) に使われない。`organizations.plan` が `org_*` と一致することは無く、数えると常に 0 件になって「組織の契約者は 0 件だから廃止してよい」と読めてしまうため、組織の件数は数えない (#1912。オーナーの選択 (2026-10-22・選択式)「org_* は数えないと明記 (推奨)」)
+- この行の 409 は `error.counts` に `organizations` を入れず、`error.organizations_note` に注記 (`ORG_SUBSCRIPTION_PLAN_ROW_NOTE`) を返す。`error.message` にも同じ注記を入れ、組織の件数は書かない。個人・家族のプランの数え方・判定・応答は変えない (`organizations` を数え、`organizations_note` は返さない)
 
 ---
 
@@ -1369,6 +1476,7 @@ deprecated → private にロールバック (緊急用)
 | `new_only` | なし (既存契約は現行価格のまま) | 件数 0、MRR 変化 0。`affected_user_sample` は空配列 | `none` |
 
 - 返す形は #1212 のときのまま (画面の型と互換)。#1212 では `on_renewal` / `immediately` で既存契約を集計して MRR 変化を返していたが、既存サブスクリプションへの反映が実装されていなかったため、#1102 で廃止した。
+- 組織のプランの行 (`plan_type = 'org'` の `org_*`) では、`data.organizations_note` に注記 (`ORG_SUBSCRIPTION_PLAN_ROW_NOTE`。組織の段階とは無関係で、組織の利用者の判定に使われないので組織の件数は数えない) を足す (#1912)。個人・家族のプランには付けない。ほかのキーは変えない
 
 ---
 
@@ -1716,7 +1824,8 @@ Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#113
 | `OP_TARGET_PROTECTED` | 403 | 保護ユーザーへの操作不可 (super_admin BAN 等) |
 | `OP_AUDIT_LOG_IMMUTABLE` | 403 | 監査ログ書き換え不可 |
 | `OP_FEATURE_FLAG_IN_USE` | 409 | 削除しようとしたフラグが利用中 |
-| `PLAN_NOT_FOUND` | 404 | AI の利用上限の保存 (`PATCH /api/super-admin/llm/quotas`) で、`plan_key` のプランが `subscription_plans` に無い (§8) |
+| `PLAN_NOT_FOUND` | 404 | AI の利用上限の保存 (`PATCH /api/super-admin/llm/quotas`) で、`plan_key` のプランが `subscription_plans` に無く、組織のプランの値 (`ORG_PLAN_VALUES`) でもない (§8) |
+| `PLAN_READ_ONLY` | 409 | AI の利用上限の保存 (`PATCH /api/super-admin/llm/quotas`) で、`plan_key` が `subscription_plans` の組織のプランの行 (`plan_type = 'org'` の `org_*`)。組織の上限は `standard` / `premium` / `enterprise` の行で決まり、`org_*` の行の値は判定に使われない (§8。#1912) |
 | `SETTING_READ_ONLY` | 409 | システム設定の保存 (`PUT /api/super-admin/settings`) で、使われていない key (旧 `feature_flags` 行) を書き換えようとした (§7。#1457) |
 | `OP_PACKAGE_IN_USE` | 409 | 削除しようとしたパッケージが利用中 |
 | `AI_DAILY_LIMIT` | 429 | 今日の AI の利用回数の上限に達した (利用者の AI の呼び出し。本文は `{ error, code, limit, retryAfter }`、`Retry-After` は次の JST 0 時までの秒数。operator/06-ai-llm.md §5) |
@@ -1731,10 +1840,10 @@ Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#113
 | `OP_STRIPE_SYNC_FAILED` | 502 | Stripe API 呼び出し失敗 |
 | `OP_COUPON_EXPIRED` | 422 | クーポン期限切れ |
 | `OP_TRIAL_ALREADY_USED` | 422 | 同一プランの試用は 1 回のみ |
-| `OP_NOT_SUPPORTED` | 501 | [NEW] 未対応 (準備中) の機能。認可を通った人にだけ返す (データエクスポート・AI コンテンツの審査) |
+| `OP_NOT_SUPPORTED` | 501 | [NEW] 未対応の機能 (本文は予定を書かず、いまの事実だけを言う。#1911)。認可を通った人にだけ返す (データエクスポート・AI コンテンツの審査) |
 | `DSR_INVALID_TRANSITION` | 409 | [NEW] 個人情報の請求の更新 (`PATCH /api/admin/data-requests/{id}`) が状態遷移表に無い (同じ状態の指定・本人確認待ち / 終わった請求への更新を含む。cross/15 §7.4・§13) |
 | `DSR_RESPONSE_NOTE_REQUIRED` | 422 | [NEW] 個人情報の請求を対応済み・対応できずにするのに本人への応答が空 (`PATCH /api/admin/data-requests/{id}`。cross/15 §13) |
-| `CONFLICT_PRECONDITION_REQUIRED` / `CONFLICT_OPTIMISTIC_LOCK` / `CONFLICT_STALE_DATA` | 428 / 412 / 409 | 楽観的ロック (cross/04 §4.2)。`PATCH /api/admin/data-requests/{id}` で、`If-Unmodified-Since` が無い / GET が返した `updated_at` と違う / 条件つきの UPDATE が 0 行 |
+| `CONFLICT_PRECONDITION_REQUIRED` / `CONFLICT_OPTIMISTIC_LOCK` / `CONFLICT_STALE_DATA` | 428 / 412 / 409 | 楽観的ロック (cross/04 §4.2)。`PATCH /api/admin/data-requests/{id}` で、`If-Unmodified-Since` が無い / GET が返した `updated_at` と違う / 条件つきの UPDATE が 0 行。`CONFLICT_STALE_DATA` は組織のプランの変更 (`PATCH /api/admin/organizations/{id}`) でも使う: 直前に読んだ `plan` のままなら書く条件つきの UPDATE が 0 行で、読み直した `plan` が送られたプランと違う (同じなら 200 で書かず記録もしない。#1912)。同じ形で、問い合わせの更新 (`PATCH` / `PUT /api/admin/inquiries/{id}`。条件は読んだ `status` と `updated_at`)・AI の 1 日の上限の保存 (`PATCH /api/super-admin/llm/quotas`。条件は読んだ `daily_limit`、行が無かったときは作るだけ)・リードのステージの変更 (`PATCH /api/admin/sales/leads/{id}`。条件は読んだ `stage`。読み直してリードがあれば常に 409)・プランの編集と削除 (`PATCH` / `DELETE /api/super-admin/plans/{id}`。条件は読んだ `status` (削除は `draft`)、廃止で既存の `ends_at` に頼るときは `ends_at` が NULL でないことも。編集は送った変更がもう入っていれば 200)・利用者の凍結 (`POST /api/admin/users/{id}/freeze`。条件は読んだ時点の super_admin でない状態のまま。読み直して対象があれば常に 409) でも使う。送った値が今の値と同じだったときの扱いは違う: 組織のプランと AI の 1 日の上限は 200 で書かず記録もしないが、問い合わせの更新は 200 で書かずに今の行 (本文を含む) を返すので、`changed: false` として記録する (:984) |
 | `OP_EMAIL_OUTBOX_NOT_FOUND` | 404 | [NEW] 再送 (`POST /api/super-admin/email-outbox/{id}/requeue`) の行が無い (`10-logs-and-mail-retry.md` §11) |
 | `OP_EMAIL_OUTBOX_NOT_REQUEUEABLE` | 409 | [NEW] 再送できない行。`details.reason` が `not_dead` (届けられなかった行でない) か `redacted` (宛先を伏せた行) (`10-logs-and-mail-retry.md` §11) |
 | `AUTH_2FA_REQUIRED` | 403 | 二段階認証の確認が要る (必須ロールで認証アプリを登録済み・セッションが aal1)。`requireRole` が `MfaRequiredError` (`ForbiddenError` の派生) を投げ、運営の API は route の既存の 403 の code (`FORBIDDEN` / `OP_PERMISSION_DENIED` / `PERM_DENIED`) で返す (本文の message は「二段階認証の確認が必要です」)。この code を本文に出すのは自己サービスの `/api/auth/mfa/*` だけ。画面 (layout / page) は `requireRoleForPage` が MFA の画面へ回す (`cross/12-operator-mfa.md` §13.4・§19.3) |

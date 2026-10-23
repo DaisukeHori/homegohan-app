@@ -249,6 +249,8 @@ describe('updateSession — /api の同意ゲート (#1442): 全 route の表 (�
       { path: '/api/billing/subscription', match: 'exact', reason: 'leave_service' },
       { path: '/api/billing/subscription/cancel', match: 'exact', reason: 'leave_service' },
       { path: '/api/billing/portal', match: 'exact', reason: 'leave_service' },
+      { path: '/api/family/dissolve', match: 'exact', reason: 'leave_service' },
+      { path: '/api/org/dissolve', match: 'exact', reason: 'leave_service' },
       { path: '/api/account/data-requests', match: 'prefix', reason: 'data_subject_rights' },
       { path: '/api/push-tokens/claim', match: 'exact', reason: 'device_cleanup' },
       { path: '/api/contact', match: 'exact', reason: 'contact' },
@@ -707,4 +709,66 @@ describe('updateSession — /api の同意ゲート (#1442): 本人の権利の�
       await expectLegalConsentRequired(await updateSession(apiRequest(path, { method: 'POST' })));
     },
   );
+});
+
+describe('updateSession — 同意の前の退会と書き出し (#1901 cross/20 Q-23)', () => {
+  beforeEach(() => setUp('on'));
+  afterEach(() => vi.unstubAllEnvs());
+
+  /** 同意の前でも本人が使える退会と書き出しの API (画面 /legal-consent/account が呼ぶ 2 本) */
+  const ACCOUNT_SELF_SERVICE_APIS: ReadonlyArray<readonly [string, string]> = [
+    ['POST', '/api/account/delete'],
+    ['GET', '/api/account/export'],
+  ];
+  /** 同意の前は今までどおり止める API (家族・組織の譲渡と退出・AI の同意の撤回・プロフィール・食事の記録) */
+  const STILL_DENIED_APIS: ReadonlyArray<readonly [string, string]> = [
+    ['POST', '/api/family/representative-transfer/propose'],
+    ['POST', '/api/family/leave'],
+    ['POST', '/api/org/owner-transfer/propose'],
+    ['POST', '/api/org/leave'],
+    ['POST', '/api/ai/consent/revoke'],
+    ['GET', '/api/profile'],
+    ['GET', '/api/meals'],
+  ];
+  /** 未同意の 3 通り (同意した版が無い・旧版に同意・user_profiles の行が無い) */
+  const UNCONSENTED_PROFILES = [
+    ['同意した版が無い', () => consentProfile(NOT_ACCEPTED)],
+    ['旧版に同意', () => consentProfile({ terms: OLD_VERSION, privacy: OLD_VERSION })],
+    ['user_profiles の行が無い', () => ({ data: null, error: null })],
+  ] as const;
+
+  it.each(UNCONSENTED_PROFILES)('%s × ENFORCE=on: 退会と書き出しの API は route へ通し、ほかの API は 403 LEGAL_CONSENT_REQUIRED のまま', async (_name, profile) => {
+    mockMaybeSingle.mockResolvedValue(profile());
+
+    for (const [method, path] of ACCOUNT_SELF_SERVICE_APIS) {
+      const res = await updateSession(apiRequest(path, { method }));
+      expect(res.status, `${method} ${path}`).toBe(200);
+      expect(res.headers.get('location'), `${method} ${path}`).toBeNull();
+      expect(isLegalConsentExemptApiPath(path), path).toBe(true);
+    }
+    for (const [method, path] of STILL_DENIED_APIS) {
+      await expectLegalConsentRequired(await updateSession(apiRequest(path, { method })));
+      expect(isLegalConsentExemptApiPath(path), path).toBe(false);
+    }
+  });
+
+  it.each(UNCONSENTED_PROFILES)('%s × ENFORCE=on: 画面の /legal-consent/account は同意画面へ回さずに開く。設定画面 /settings は今までどおり同意画面へ回す', async (_name, profile) => {
+    mockMaybeSingle.mockResolvedValue(profile());
+
+    const accountPage = await updateSession(apiRequest('/legal-consent/account'));
+    expect(accountPage.status).toBe(200);
+    expect(accountPage.headers.get('location')).toBeNull();
+
+    const settings = await updateSession(apiRequest('/settings'));
+    expect(settings.status).toBe(307);
+    expect(settings.headers.get('location')).toBe('http://localhost/legal-consent?next=%2Fsettings');
+  });
+
+  it('凍結中は同意の前でも /legal-consent/account を開けず /frozen へ回す (凍結の扱いは変えない。凍結中の退会と書き出しは /frozen/account)', async () => {
+    mockMaybeSingle.mockResolvedValue(consentProfile(NOT_ACCEPTED, { frozen_at: FROZEN_AT }));
+
+    const res = await updateSession(apiRequest('/legal-consent/account'));
+    expect(res.status).toBe(307);
+    expect(new URL(res.headers.get('location') ?? '').pathname).toBe('/frozen');
+  });
 });

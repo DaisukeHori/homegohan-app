@@ -161,8 +161,8 @@ const SHOPPING_ITEMS: Array<{ category: string; name: string; quantity: string }
 
 /** アカウントの無い子どものメンバーの年齢 (18 歳未満なので、代表者が署名した保護者の同意の行も入れる) */
 const FAMILY_CHILD_AGE_YEARS = 7;
-/** 家族のグループのプラン (family_groups.plan_key。e2e の fresh-family と同じ) */
-const FAMILY_PLAN_KEY = 'free';
+/** 家族のグループのプラン (代表者に手動付与で入れる家族プラン。billing/03 §6.6 の家族の門は、家族プランの契約の無い代表者のグループにメンバーを足せない。e2e の fresh-family と同じ family_basic) */
+const FAMILY_PLAN_KEY = 'family_basic';
 
 function requireLocalEnv(): { url: string; serviceRole: string } {
   if (!SUPABASE_URL || !SERVICE_ROLE) throw new Error('.env.local に NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY が無い');
@@ -444,6 +444,7 @@ async function seedFamily(admin: SupabaseClient) {
   await deleteFamiliesOf(admin, GUIDE_USERS.familyRep.email);
   const repId = await recreateUser(admin, 'familyRep');
   await completeProfile(admin, repId, GUIDE_USERS.familyRep.nickname, LANDING_USER_WEIGHT_KG);
+  must('billing_grant_manual_subscription', await admin.rpc('billing_grant_manual_subscription', { p_user_id: repId, p_plan_key: FAMILY_PLAN_KEY }));
   const adultId = await recreateUser(admin, 'familyAdult');
   await completeProfile(admin, adultId, GUIDE_USERS.familyAdult.nickname, LANDING_USER_WEIGHT_KG);
 

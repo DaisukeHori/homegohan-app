@@ -5,6 +5,12 @@ import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { readJsonBody } from '@/lib/http-params';
 import { NextResponse } from 'next/server';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { recordAdminAudit } from '@/lib/admin/audit';
+
+/** 監査ログ (admin_audit_logs) の action_type。docs/design/operator/07-audit-monitoring.md §4.1 */
+const ANNOUNCEMENT_CREATE_AUDIT_ACTION = 'admin.announcement.create';
+/** 監査ログの失敗を db-logger (app_logs.function_name) に出すときの名前 */
+const POST_ROUTE_NAME = 'POST /api/announcements';
 
 /**
  * 認可エラー (401 / 403) はそのまま返し、それ以外は 500 の汎用メッセージにする。
@@ -94,6 +100,24 @@ export async function POST(request: Request) {
       .single();
 
     if (error) throw error;
+
+    // 運営の変更系はすべて監査ログに残す (#1571)。作成できたときだけ 1 行。
+    // 記録の失敗で作成の応答は変えない (fail-open。失敗は recordAdminAudit が db-logger に残す)。
+    // タイトル・本文の中身は details に入れない (公開の状態だけ)
+    await recordAdminAudit({
+      supabase,
+      actorId: actor.id,
+      actionType: ANNOUNCEMENT_CREATE_AUDIT_ACTION,
+      targetId: data.id,
+      targetType: 'announcement',
+      details: {
+        announcement_id: data.id,
+        is_public: data.is_public,
+        published_at: data.published_at,
+      },
+      request,
+      routeName: POST_ROUTE_NAME,
+    });
 
     return NextResponse.json({ announcement: data });
 

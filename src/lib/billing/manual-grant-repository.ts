@@ -37,7 +37,7 @@ function toManualGrantRpcError(error: { code?: string; message?: string; details
 }
 
 const PLAN_COLUMNS = 'plan_key, display_name, plan_type, status, max_members';
-const SUBSCRIPTION_COLUMNS = 'id, plan_key, status, stripe_subscription_id, starts_at, current_period_end';
+const SUBSCRIPTION_COLUMNS = 'id, plan_key, status, stripe_subscription_id, iap_store, starts_at, current_period_end';
 const HISTORY_COLUMNS = 'id, action_type, actor_id, created_at, details';
 
 export interface ManualGrantRepository {
@@ -98,7 +98,8 @@ export function createManualGrantRepository(admin: Admin = getSupabaseAdmin()): 
         subscription_id: data.id,
         plan_key: data.plan_key,
         status: data.status,
-        source: data.stripe_subscription_id === null ? 'manual' : 'stripe',
+        // ストアの契約 (アプリ内課金の I 行。billing/03 §8.6) は手動付与 (M 行) と見分ける
+        source: data.stripe_subscription_id === null ? (data.iap_store === null ? 'manual' : 'store') : 'stripe',
         starts_at: data.starts_at,
         expires_at: data.current_period_end,
       };

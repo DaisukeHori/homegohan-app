@@ -7,12 +7,15 @@
  *   - confirm の確認 (`confirm: true`) など、入口の検証。
  *
  * 流れ (どの段階も、やり直して何度流しても同じ結果になる。途中で失敗したら、そこで止めて ACCOUNT_DELETE_FAILED を返す):
- *   1. 組織のオーナー / 家族の代表者なら 409 で止める (譲渡か解散が先)。
+ *   1. 退会の印を付けてから (DB 関数 begin_account_deletion_guard。印のある人を運営がオーナーにして組織を作れない。supabase/migrations/20261023130000_account_deletion_owner_guard.sql)、組織のオーナー / 家族の代表者なら 409 で止める (譲渡か解散が先)。
  *   1'. 段階 billing (billing/01 §11。src/lib/billing/account-deletion.ts): 顧客の開いたままの Stripe Checkout Session を閉じ、
  *      Stripe の契約 (顧客の全契約と DB の行の和) のうち終端でないものを即時解約し、Stripe の顧客を匿名化する。
  *      顧客も契約の行も無ければ Stripe を呼ばない。失敗したらここで止める (まだ何も変えていないのでやり直せる)。
  *   2. prepare_account_deletion (DB 関数): 本人の生のメールアドレスを残す記録 (メール配信ログ・問い合わせ・招待) を伏せる。
  *   3. release_user_membership (DB 関数): 組織のライセンス席を解放する。失敗しても削除は続ける (要手動リコンサイル)。
+ *      ただし、1 のあとに譲渡の承諾・運営の強制譲渡で本人がオーナーになっていたら、DB 関数は所属を外さずに IS_ORG_OWNER で止まる
+ *      (supabase/migrations/20261022160000_release_membership_owner_race.sql)。そのときは 1 をやり直して 409 で止める。
+ *      所属の組織が途中で変わっていたら CONFLICT_RETRY で止まる。そのときは削除しない (ACCOUNT_DELETE_FAILED。もう一度の退会で片付く)。
  *   4. Storage のファイルを消す (src/lib/account-deletion-storage.ts)。
  *   4'. 削除の実行記録を始める (#1562。DB 関数 begin_account_deletion_record)。gdpr_deletion_requests に、利用者の id の
  *      HMAC (subject_hash)・実行者 (本人 / 運営)・理由のコード・request_id を書く。利用者の id そのものは残さない。
@@ -20,7 +23,7 @@
  *   4''. 段階 billing_recheck (billing/01 §11): 1' と同じ処理をもう一度 (1' のあとに完了した Checkout の契約・作られた顧客を閉じる)。
  *      失敗したら 5 に進まない (アカウントは残り、もう一度の退会で片付く)。
  *   5. auth.admin.deleteUser。public 側の個人データは外部キーの CASCADE / SET NULL で消える・匿名化される
- *      (20261010000100_auth_users_fk_on_delete.sql。外部キーで失敗する経路は無い)。
+ *      (20261010000100_auth_users_fk_on_delete.sql。ただし findBlocker のあとに家族の代表者になった人だけは family_groups.representative_id の RESTRICT で deleteUser が失敗する (ACCOUNT_DELETE_FAILED。もう一度の退会で 409 になる。20261022160000 の見出し)。組織のオーナーになる型は残らない: 運営の作成は 1 の印で止まり (OWNER_ACCOUNT_DELETING。20261023130000 の見出し)、譲渡は 3 が止める)。
  *      削除が済んだら (すでに消えていたときも)、記録に削除の日時を入れる (complete_account_deletion_record)。
  *      これに失敗しても退会の結果は変えない (アカウントはもう消えている)。失敗はログに残す (記録は executed_at が空のまま残る)。
  *   6. 本人に退会の完了メールを 1 通送る (#1152。src/lib/account-deletion-notification.ts)。
@@ -41,6 +44,7 @@ import { removeAccountStorage } from '@/lib/account-deletion-storage';
 import { notifyAccountDeleted, readAccountDeletionEmail } from '@/lib/account-deletion-notification';
 // billing/account-deletion.ts は account-deletion.ts から型だけを import するので、実行時の循環は無い
 import { defaultAccountDeletionBilling } from '@/lib/billing/account-deletion';
+import { MembershipErrorCode } from '@/lib/errors/membership-errors';
 
 /** どの段階で失敗したか (ログ用。応答には出さない) */
 export type AccountDeletionStep =
@@ -192,6 +196,20 @@ function errorHints(error: unknown): Record<string, unknown> {
   return hints;
 }
 
+/** DB 関数が RAISE EXCEPTION '<コード>' USING ERRCODE = 'P0001' で止めたときの SQLSTATE */
+const PG_RAISE_EXCEPTION = 'P0001';
+/** release_user_membership が、本人がオーナーなので所属を外さずに止めたときのコード (leave_org と同じ) */
+const RELEASE_MEMBERSHIP_OWNER_CODE = MembershipErrorCode.IS_ORG_OWNER;
+/** release_user_membership が、所属の組織が途中で変わったので所属を外さずに止めたときのコード (既存のコード) */
+const RELEASE_MEMBERSHIP_RETRY_CODE = MembershipErrorCode.CONFLICT_RETRY;
+
+/** DB 関数が RAISE した決まったコード (P0001 で、メッセージがそのコード) か */
+function isRaisedCode(error: unknown, code: string): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const { code: sqlState, message } = error as { code?: unknown; message?: unknown };
+  return sqlState === PG_RAISE_EXCEPTION && message === code;
+}
+
 /** 削除済みのユーザーに対する deleteUser の失敗 (404 / user_not_found)。すでに消えているので成功と同じ */
 function isUserAlreadyGone(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
@@ -247,6 +265,7 @@ async function completeDeletionRecord(
 /** 組織のオーナー / 家族の代表者なら、削除をブロックする結果を返す (問い合わせ自体の失敗は例外) */
 async function findBlocker(admin: AccountDeletionAdmin, userId: string): Promise<DeleteAccountResult | null> {
   // P0 Critical Fix F12: 削除前に owner/representative チェック
+  // 解散した行は representative_id / owner_id が NULL なので当たらない (#1917。docs/design/family/11-self-dissolve.md §11.1)
   // organizations の owner であれば削除不可 (譲渡または解散が必要)
   const { data: ownedOrgs, error: orgError } = await admin
     .from('organizations')
@@ -302,6 +321,10 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
   let deletedNow = false;
   let deletedAt: Date | null = null;
   try {
+    // 退会の印 (#1917 の続き。20261023130000): findBlocker より先に付ける。印のあとに運営がこの人をオーナーにして組織を作ろうとすると
+    // DB のトリガーが止める。印より先に作られた組織は、下の findBlocker が読んで 409 にする (印は作成の commit を待つ)
+    const { error: guardError } = await admin.rpc('begin_account_deletion_guard', { p_user_id: userId });
+    if (guardError) throw guardError;
     const blocker = await findBlocker(admin, userId);
     if (blocker) return blocker;
 
@@ -326,6 +349,15 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
       const { error: releaseError } = await admin.rpc('release_user_membership', { p_user_id: userId });
       if (releaseError) throw releaseError;
     } catch (releaseError) {
+      // 1 のあとにオーナーになった (所属は外れていない)。1 をやり直して、従来と同じ 409 で止める。
+      // やり直しでオーナーでなくなっていたら (同時の譲渡がもう一度あった)、確かめられないまま消さずに失敗にする (もう一度の退会で片付く)
+      if (isRaisedCode(releaseError, RELEASE_MEMBERSHIP_OWNER_CODE)) {
+        const blocker = await findBlocker(admin, userId);
+        if (blocker) return blocker;
+        throw releaseError;
+      }
+      // 所属の組織が途中で変わった (所属は外れていない)。その組織の席を残したまま消さないよう、失敗にする
+      if (isRaisedCode(releaseError, RELEASE_MEMBERSHIP_RETRY_CODE)) throw releaseError;
       // ライセンス解放の失敗でアカウント削除自体は止めない (ベストエフォート、要手動リコンサイル)
       userLog.error('account deletion: release_user_membership failed (continuing; needs manual reconcile)', toError(releaseError), {
         step,

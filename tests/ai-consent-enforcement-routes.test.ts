@@ -1006,7 +1006,7 @@ describe.each(ROUTE_CASES.filter((c) => c.unmetered))('画面を開くと自動�
     const onLimit = usageOf(c)!.onLimit;
     if (onLimit === 'reject') {
       expect(res.status).toBe(429);
-      // 安全弁の回数 (30) は明示の上限 (10 回) と別のもの。回数を出さない固定の文にし、本文に limit を入れない (#1487)
+      // 安全弁の回数 (30) は明示の 1 日の上限と別のもの。回数を出さない固定の文にし、本文に limit を入れない (#1487)
       expect(body).toMatchObject({ code: 'AI_DAILY_LIMIT', safetyCap: true, error: AI_AUTO_SAFETY_CAP_MESSAGE });
       expect(body).not.toHaveProperty('limit');
       expect(String(body.error)).not.toContain(String(CONSUME_UNMETERED_CAPPED_ROW.limit));
@@ -1097,7 +1097,7 @@ const ULTIMATE_ROUTES = [
   },
 ] as const;
 
-describe('究極モード (#1142): 1 人 1 日 1 回まで。1 日の AI の上限にも 1 回と数える', () => {
+describe('究極モード (#1142): 環境変数の上限 (既定 1 回。ai_plan_feature_caps に行の無いプランに効く) を consume_ai_usage_capped に渡す。1 日の AI の上限にも 1 回と数える', () => {
   beforeEach(() => {
     h.state.consentMode = 'granted';
     h.state.rpc.consume_ai_usage_capped = CONSUME_ALLOWED_ROW;

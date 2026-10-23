@@ -23,7 +23,7 @@ Status: 設計ゲート通過 (2026-10-17・R2 で Opus 5.5 と Sonnet 5.5 の 2
 | D-1 | (B) の 9 項目の仕分け (作る / 不要 = 08 から外す / 済み = 08 を現在形に / 当面は送らない) | §2.2 の表。作る = B-9 ジョブの失敗の監視 (pg_cron の失敗・Vercel Cron の route の失敗・pg_cron の停止。その土台の実行履歴の保持 (段 D) を含む) と、B-2 解散した家族のグループの物理削除の 2 件 (9 項目の数え方。実装の単位は §0.2 の 3 件 = 失敗の監視・実行履歴の掃除・解散した家族の物理削除)。不要 = `family_freeze_grace_batch`・`meal_request_expire_batch`・`data_integrity_check`・`hr_revoke_jobs_processor` の 4 件。済み = `logical_backup`。当面は送らない (Q-5) = `re_engagement_email`・`nps_survey_sender` | §2.2 §8 |
 | D-2 | ジョブの失敗をどう知るか | 既存の運用アラート (`GET /api/cron/app-log-alerts`・15 分おき・`OPS_ALERT_EMAIL`・`claim_ops_alert`) に **4 つ目の種類 `cron_failure`** (pg_cron の失敗した実行 + Vercel Cron の route の 500) と **5 つ目の種類 `pg_cron_stalled`** (pg_cron が一定時間 1 つも動いていない) を足す。失敗は「まだ知らせていないもの」を数え、知らせた失敗を台帳 `cron_failure_alerts` に記録する (10 §8 の `dead_alerted_at` と同じ考え方。窓で数えない) | §4 §5 §6 |
 | D-3 | 実行履歴 (`cron.job_run_details`) の保持 | Supabase は自動では消さない (本番で 2026-05-01 からの行が残っている)。pg_cron のジョブ `cleanup-cron-run-history` (毎日 03:35 JST) が 30 日より古い実行履歴と台帳の行を消す。既存の行を消すので、段 A から切り出した段 D に置いた (Q-3 はオーナーの確認 (2026-10-17) で確定) | §5.3 §12 |
-| D-4 | 解散した家族のグループ (`family_groups.status = 'dissolved'`) の物理削除 | 08 §4.4 の `family_archive_purge_batch` は `archived` 状態を前提にするが、実装の状態は `active` / `dissolved` だけ。解散から 90 日 (保存期間) を過ぎた行を、pg_cron のジョブ `purge-dissolved-family-groups` (毎日 03:40 JST) が 1 回 500 件まで物理削除する (`purge_dissolved_family_groups(p_dry_run)`)。保護者の同意の記録 (`parental_consents`) を持つグループは消さずに数だけ報告する。消す範囲と保存期間はオーナーの確認点 (§0.4) | §5.4 |
+| D-4 | 解散した家族のグループ (`family_groups.status = 'dissolved'`。解散は運営の強制解散と利用者の解散 (family/11) の 2 つ) の物理削除 | 08 §4.4 の `family_archive_purge_batch` は `archived` 状態を前提にするが、実装の状態は `active` / `dissolved` だけ。解散から 90 日 (保存期間) を過ぎた行を、pg_cron のジョブ `purge-dissolved-family-groups` (毎日 03:40 JST) が 1 回 500 件まで物理削除する (`purge_dissolved_family_groups(p_dry_run)`)。保護者の同意の記録 (`parental_consents`) を持つグループは消さずに数だけ報告する。消す範囲と保存期間はオーナーの確認点 (§0.4) | §5.4 |
 | D-5 | 凍結 (`frozen`) 系・食事リクエスト・HR 連携のバッチ | 発生源 (ライセンスの失効 = (A)・HR の Webhook・`family_meal_requests`) がどれも main に無く、バッチだけ先に作ると「何も対象の無い処理」になる。08 の「いま」の計画から外し、発生源を作る冊に同梱する (08 の記述の外し方は §15) | §2.2 §15 |
 | D-6 | 利用者へ送るメール 2 本 | 2 本とも当面は送らない (オーナーの選択 (2026-10-17)。§8)。実装しない。08 からは「当面は送らない」として外す | §8 |
 
@@ -94,7 +94,7 @@ Status: 設計ゲート通過 (2026-10-17・R2 で Opus 5.5 と Sonnet 5.5 の 2
   - `src/lib/ops-alerts/app-log-error-spike.ts`: `AppLogAlertScope = 'server' | 'client' | 'email_dead_letter'`、`APP_LOG_ALERT_COUNT_RPC` (as const satisfies Record)、`APP_LOG_ALERT_KEYS`、`resolveAppLogAlertSettings` (3 つの環境変数)、`parseErrorCountRows` / `normalizeDeadCountRows` / `summarizeErrorCounts` / `exceedsErrorThreshold` / `sanitizeFunctionNameForAlert`。
   - `src/lib/emails/ops/app-log-error-spike.ts`・`src/lib/emails/ops/email-dead-letter.ts`: 文面 (`template` は `ops_` で始まる。`email_outbox_dead_counts` が数えない)。
   - migration `20261010123500_ops_alert_state.sql`: `ops_alert_state`・`claim_ops_alert(TEXT, INTEGER)`・`release_ops_alert(TEXT, TIMESTAMPTZ)`。`20261016234000_email_outbox.sql`: `email_outbox_dead_counts(INTEGER)`・`mark_email_outbox_dead_alerted`・`unmark_email_outbox_dead_alerted` (印を付ける・外す)。
-  - `src/lib/api/errors.ts:44`: `const INTERNAL_ERROR_LOG_MESSAGE = '内部エラーのため 500 を返しました'` (export されていない)。`internalError(routeName, …)` が `createLogger(routeName)` でこの文を `level = 'error'` で書く。cron の route の名前: `cron/app-log-alerts`・`cron/email-outbox`・`cron/push-outbox`・`cron/backup-freshness` (各 route の `ROUTE_NAME`)・`GET /api/cron/process-menu-queue` (`internalError` の第 1 引数)。5 本とも `vercel.json` の 5 本と 1 対 1 (調査時点 8f8dc1d6。いまは #1720 段 B の `cron/login-alerts` (`ROUTE_NAME`) を足した 6 本で、どれも 1 対 1)。
+  - `src/lib/api/errors.ts:44`: `const INTERNAL_ERROR_LOG_MESSAGE = '内部エラーのため 500 を返しました'` (export されていない)。`internalError(routeName, …)` が `createLogger(routeName)` でこの文を `level = 'error'` で書く。cron の route の名前: `cron/app-log-alerts`・`cron/email-outbox`・`cron/push-outbox`・`cron/backup-freshness` (各 route の `ROUTE_NAME`)・`GET /api/cron/process-menu-queue` (`internalError` の第 1 引数)。5 本とも `vercel.json` の 5 本と 1 対 1 (調査時点 8f8dc1d6。いまは #1720 段 B の `cron/login-alerts` (`ROUTE_NAME`) と #1912 billing/04 の `cron/iap-reconcile` (`ROUTE_NAME`) を足した 7 本で、どれも 1 対 1)。
   - `email-outbox` の worker は届けられなかった 1 通ごとに `error` を書く (`src/lib/emails/outbox.ts:280`。文は「メールを届けられませんでした (dead)」)。この行は `internalError` の文ではないので、本書の「失敗した実行」に入らない (届けられなかったメールの通知が受け持つ)。
   - `POST /api/log` はログインした人なら `source = 'client'` の行を書ける (#1493)。`function_name` も送り手が決めるので、client の行は失敗に数えない。
   - 本番の `cron.job`: 17 本 (全部 `username = postgres`・`active`)。`cron.job_run_details`: 1,096 行、最古 2026-05-01、`failed` 0 行、`succeeded` / `failed` 以外の status 0 行。pg_cron 1.6.4。`cleanup-email-outbox`・`cleanup-auth-sessions-and-login-history` は登録直後で実行 0 回。
@@ -185,7 +185,7 @@ Status: 設計ゲート通過 (2026-10-17・R2 で Opus 5.5 と Sonnet 5.5 の 2
 ```mermaid
 flowchart LR
   J[pg_cron のジョブ 17 本] -->|失敗| D[(cron.job_run_details)]
-  V[Vercel Cron の route 6 本] -->|500 = internalError| L[(app_logs)]
+  V[Vercel Cron の route 7 本] -->|500 = internalError| L[(app_logs)]
   A[GET /api/cron/app-log-alerts<br/>15 分おき] -->|cron_failure_counts| C{{cron_failure_candidates<br/>D ∪ L − 台帳}}
   A -->|claim_ops_alert cron_failure| O[(ops_alert_state)]
   A -->|mark_cron_failures_alerted| T[(cron_failure_alerts 台帳)]
@@ -220,7 +220,7 @@ flowchart LR
 | A: 08 §6.1 のまま (pg_cron のジョブが 6 時間ごとに `cron.job_run_details` を集計して `admin_audit_logs` に `system.cron.failure_detected` を書く + `pg_notify`) | DB だけで完結 | **退ける**。メールに届く経路が無い (`pg_notify` を聞く Edge Function は無い。Slack は使っていない)。監査ログは super_admin しか読めず、誰も見ない。6 時間の遅れ。「3 回以上」の条件は 1 日 1 回のジョブの失敗を落とす |
 | B: `app-log-alerts` で 15 分の窓で数える (server の急増と同じ形) | 台帳が要らない | **退ける**。10 §8.1 と同じ理由: 抑止の間と発火の遅れの隙間の失敗を取りこぼす。「1 件から知らせる」と窓は両立しない。窓を 2 倍にすると、クールダウンを短く設定したときに同じ失敗を 2 回知らせる |
 | C: `app-log-alerts` に 4 つ目の種類を足し、知らせた失敗を台帳に記録する (本書) | 10 §8 の `dead_alerted_at` と同じ形 (印は台帳の行) | **採る**。既存の仕組み (`claim_ops_alert`・`sendEmail`・`OPS_ALERT_EMAIL`・15 分の回) をそのまま使い、取りこぼしが無い。`cron.job_run_details` には列を足せないので、印を別の表 (台帳) に置く |
-| D: Vercel Cron の失敗に `withCronMonitoring` (08 §6.2) のラッパー | route ごとに try-catch | **退ける**。既存の 6 本 (`backup-freshness`・`login-alerts` を含む) はどれも `internalError` で 500 を返し、固定の文で `app_logs` に error を 1 行残している。それを数えれば足りる。Slack / Sentry は不採用 |
+| D: Vercel Cron の失敗に `withCronMonitoring` (08 §6.2) のラッパー | route ごとに try-catch | **退ける**。既存の 7 本 (`backup-freshness`・`login-alerts`・`iap-reconcile` を含む) はどれも `internalError` で 500 を返し、固定の文で `app_logs` に error を 1 行残している。それを数えれば足りる。Slack / Sentry は不採用 |
 | E: `cron.job_run_details` の掃除は Supabase に任せる (08 §12) | 何もしない | **退ける**。本番で 2026-05-01 からの行が残っている (事実)。5 分おきのジョブで 1 日 576 行増える |
 | F: pg_cron の停止は見ない | 失敗だけ | **退ける** (ただし最小に)。止まると失敗の行も増えないので、失敗の監視だけでは静かに止まる。最新の実行の時刻を 1 本の RPC で読むだけで判定でき、5 分おきのジョブが 2 本あるので 60 分で判定できる |
 | G: 解散した家族を消さない (永久に残す) | 何もしない | **退ける** (Q-1 で変えうる)。名前・メンバーの履歴・招待が永久に残る。org/05 §7.3 の設計の意図は 90 日後の削除 |
@@ -1304,7 +1304,8 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
 
 | 状態 | 操作 | 遷移先 | ガード | 副作用 |
 |---|---|---|---|---|
-| `active` | `operator_force_dissolve_family` (家族の冊) | `dissolved` (dissolved_at = now) | super_admin | members → left・profiles.family_id → NULL・membership_audit |
+| `active` | `operator_force_dissolve_family` (家族の冊) | `dissolved` (dissolved_at = now) | super_admin | members → left・profiles.family_id → NULL・`representative_id` → NULL (family/11 §11.1 の 4)・membership_audit |
+| `active` | `dissolve_family_by_representative` (家族の冊。family/11) | `dissolved` (dissolved_at = now) | 本人が代表者 (行のロック下) | members → left・profiles.family_id → NULL・`representative_id` → NULL・membership_audit (`group_dissolved`) |
 | `dissolved` (< 90 日) | `purge-dissolved-family-groups` | 同じ | — | — |
 | `dissolved` (≥ 90 日・同意の記録なし) | 同上 | 行が消える (CASCADE: members / invites / promotion_requests) | 古い順に 500 件まで | 監査ログ 1 行 (消した回ごと) |
 | `dissolved` (≥ 90 日・同意の記録あり) | 同上 | 同じ | Q-2 | 戻り値の `skipped_with_consents_count` に数える。同じ回に消したものがあれば、その回の監査ログにも載る (P-20)。消したものが無い回は監査ログなし (P-27) |
@@ -1403,7 +1404,7 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
 - `it('候補は source <> client・level = error・cron の route 名の形だけを数え、見る範囲は 7 日')`
 - `it('段 A の migration は cron.schedule を呼ばず、UPDATE を含まず、DELETE は台帳 public.cron_failure_alerts への 1 か所 (unmark_cron_failures_alerted) だけ (既存の行を変えない・消さない。§12)')`
 - `it('migration が登録するジョブに、1 時間以内の間隔のもの (5 分おき・毎時) がある (PG_CRON_STALL_MINUTES = 60 の前提)')`
-- `it('src/app/api/cron/*/route.ts が createLogger / internalError に渡す名前は cron/<名前> か <METHOD> /api/cron/<名前> の形 (候補の LIKE と一致する)。vercel.json の crons の 6 本 (backup-freshness・login-alerts を含む) のどれもこの走査に入る')`
+- `it('src/app/api/cron/*/route.ts が createLogger / internalError に渡す名前は cron/<名前> か <METHOD> /api/cron/<名前> の形 (候補の LIKE と一致する)。vercel.json の crons の 7 本 (backup-freshness・login-alerts・iap-reconcile を含む) のどれもこの走査に入る')`
 - `it('src/lib/ops-alerts/cron-failure.ts の CRON_FAILURE_SOURCES は、台帳 cron_failure_alerts.source の CHECK の 2 つと同じ')`
 - `it('rollback が関数 5 本の DROP・台帳の DROP を行い、pg_cron のジョブと ops_alert_state には触れない')`
 
@@ -1724,7 +1725,7 @@ const PG_CRON_STALLED_QUIET = { status: 'below_threshold', total: 0, threshold: 
 | 17 | `docs/design/mobile/06-push-send.md` §3.2 | `family_freeze_warning` / `family_frozen` の行の理由を「発火元の pg_cron が未実装 (`08` §3.0)」から「凍結の機能そのものが未実装 (operator/11 §2.2)」に | B |
 | 18 | `docs/design/operator/02-api-spec.md` | `POST /api/cron/re-engagement-email`・`POST /api/cron/nps-survey-sender` の節に「(当面は送らない。operator/11 §8)」を足す | B |
 | 19 | `docs/design/cross/17-backup-automation.md` | 変えない (鮮度の cron は cross/17 が正)。本書 §0.5 で参照するだけ | — |
-| 20 | `docs/design/cross/14-parental-consent.md` §0.3・§6.1・§6.3 | 家族の行が消える経路の主体として「代表者のポリシー `family_groups_delete_representative`・service_role」だけを挙げている 3 か所 (§0.3 の表の「家族グループの削除」の行・①全パターン表の P24b・③状態遷移表の「任意 \| 家族の行の DELETE」の行) に、「pg_cron の `purge-dissolved-family-groups` (operator/11 §5.4。解散から 90 日を過ぎ、同意の記録 (`parental_consents`) を持たない家族だけを消す。同意の記録を持つ家族は消さないので、この経路で同意の行は消えない)」を足す。「アプリの route に家族の行の DELETE は無い」と、R-7 の「家族の行の削除と一緒に消える」は事実のまま (変えない) | C |
+| 20 | `docs/design/cross/14-parental-consent.md` §0.3・§6.1・§6.3 | 済み: e5a80176 (#1961) が cross/14 を現在形に直した (§0.3 の表の「家族グループの削除」の行など)。利用者 (anon / authenticated) は家族の行を直接 DELETE できず (ポリシー `family_groups_delete_representative` は `20261022200000_family_groups_no_direct_delete.sql` で消えた。代表者の直接の DELETE は無い)、家族の行を消すのは pg_cron の `purge-dissolved-family-groups` (本書 §5.4。解散から 90 日を過ぎ、同意の記録 (`parental_consents`) を持たない家族だけを消す) と service_role だけ。「アプリの route に家族の行の DELETE は無い」と、R-7 の「家族の行の削除と一緒に消える」は事実のまま (変えない) | C |
 | 21 | `docs/design/operator/10-logs-and-mail-retry.md` §8.1 | 表の「キー / クールダウン」の行の「3 種類で同じ値・抑止は別々」と「宛先」の行の「未設定なら 3 種類とも何もしない」の 2 か所に、「(#1125 の B の 4 つ目 `cron_failure`・5 つ目 `pg_cron_stalled` を含めて 5 種類。operator/11 §4〜§6)」を足す。10 §8 は email_dead_letter の正本のまま (4 つ目・5 つ目の正本は本書と 07 §8.3 (行 10)) | B |
 
 ---

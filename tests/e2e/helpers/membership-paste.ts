@@ -8,6 +8,7 @@
 import { createClient } from "@supabase/supabase-js";
 import * as path from "path";
 import { config as dotenvConfig } from "dotenv";
+import { E2E_FAMILY_PLAN_KEY, grantManualPlanForE2e } from "./billing-plan";
 
 // worktree 環境でも .env.local を読み込む (3段フォールバック)
 // helpers/ から worktree root は 3 段上、main repo は 6 段上
@@ -71,7 +72,10 @@ export interface FamilySetup {
  * 2 名の fresh family を service_role で組み立てる。
  *   - ownerId: 代表者 (representative)
  *   - memberId: adult メンバー
- * user_profiles は既に作成済みであることを前提とする。
+ * user_profiles は既に作成済みであることを前提とする (代表者への家族プランの手動付与に user_profiles の行が要る)。
+ * 代表者には、グループを作る前に家族プラン (family_basic) を手動付与する (billing/03 §6.6 の家族の門。
+ * 家族プランの契約の無い代表者のグループ (free) には、代表者以外のメンバーの INSERT が FAMILY_PLAN_REQUIRED で断られる)。
+ * plan_key は送らない (billing/01 のトリガー family_groups_billing_plan_follow_representative が代表者の契約から決める)。
  */
 export async function setupFamilyWithTwoMembers(params: {
   ownerId: string;
@@ -86,7 +90,10 @@ export async function setupFamilyWithTwoMembers(params: {
   const { ownerId, ownerEmail, memberId, memberEmail, familyName } = params;
   const name = familyName ?? `E2E Family ${Date.now()}`;
 
-  // 1. family_groups を INSERT
+  // 0. 代表者に家族プランを手動付与 (グループの作成の前)
+  await grantManualPlanForE2e(ownerId, E2E_FAMILY_PLAN_KEY);
+
+  // 1. family_groups を INSERT (plan_key は代表者の契約から family_basic になる)
   const fgResp = await fetch(`${supabaseUrl}/rest/v1/family_groups`, {
     method: "POST",
     headers: {
@@ -97,7 +104,6 @@ export async function setupFamilyWithTwoMembers(params: {
     },
     body: JSON.stringify({
       name,
-      plan_key: "free",
       representative_id: ownerId,
       status: "active",
     }),

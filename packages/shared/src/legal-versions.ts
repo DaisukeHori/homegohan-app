@@ -14,8 +14,12 @@
  * 施行日 (effectiveDate) は、画面に出すだけの値。再同意を求め始める時点は決めない。再同意は、版を書き換えたコードを
  * 公開した (デプロイした) 時点から始まる。施行日の前から求めたくないときは、施行日に合わせてデプロイすること。
  *
- * ⚠ 版・施行日・同意文言は弁護士の確認を経て決める (オーナー判断。T30)。
- *   いまの値は「現在公開している文面 (最終更新日 2025年1月1日)」を指す仮置きで、文面を改定するときに新しい値へ置き換える。
+ * v2026.1 は #1901 (docs/design/cross/20-terms-privacy-text.md) で作り込んだ文面の版。
+ *   弁護士の確認で文面を変えるときは、内容が変わるなら次の版 (v2026.2 など) に上げる (cross/20 §9.3)。
+ *   改定前の版 (v2025.1) の文面は docs/legal/archive/v2025.1/ に控えてある。
+ * v2026.2 は #1917 (docs/design/family/11-self-dissolve.md §18) で、退会の条件 (譲渡するか解散するまで) を改めた版。
+ *   改定前の版 (v2026.1) の文面は docs/legal/archive/v2026.1/ に控えてある。
+ * v2026.3 は billing/03 (#1912) で有料プランの条文を足した版。改定前の版 (v2026.2) の文面は docs/legal/archive/v2026.2/ に控えてある。
  *
  * version の形式:
  *   DB の terms_acceptances.document_version は varchar(20)。同意を記録する DB 関数 accept_legal_documents も同じ形式
@@ -36,9 +40,24 @@ export interface LegalDocumentInfo {
   effectiveDate: string;
 }
 
+/**
+ * #1901 (cross/20): 本文を作り込んだ改定。内容が変わる (利用目的・第三者提供・AI の扱い・責任の範囲・未成年 ほか) ので
+ * 両文書の版を v2025.1 → v2026.1 に上げる。上げるとサインイン中の全員に再同意が求められる (ファイル先頭のコメントのとおり)。
+ * 施行日は公開 (デプロイ) の日で、2026-10-19 に公開した (#1918。cross/20 §9.4 の 3)。
+ * 施行日は YYYY-MM-DD の形の実在する日付にする (形を外すと /api/legal/status が 500 を返し、同意画面とテストが壊れる)。
+ *
+ * #1917 (docs/design/family/11-self-dissolve.md §18): 代表者・オーナーが解散してから退会できるようになり、利用規約第11条 4 項・第12条 4 項・第17条 2 項と
+ * プライバシーポリシー第13条 9 項の退会の条件が変わるので、両文書を v2026.2 に上げる。
+ * v2026.2 の施行日は公開 (デプロイ) の日の 2026-10-21 (cross/20 §9.4 の 3・family/11 §18.4)。
+ *
+ * billing/03 (#1912。docs/design/billing/03-paid-plans-and-iap.md §11): 有料プランの条文 (料金・自動更新・解約・返金・無料体験・
+ * アプリ内課金・家族プラン、決済の事業者 (Stripe) と RevenueCat への提供と外部送信、保存期間) を利用規約第10条・第11条 1 項・
+ * 第16条 2 項・第17条・第24条とプライバシーポリシー第3条・第4条・第7条・第10条・第12条に足すので、両文書を v2026.3 に上げる。
+ * v2026.3 の施行日は公開 (デプロイ) の日 (cross/20 §9.4 の 3・billing/03 §11.6)。
+ */
 export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentInfo>> = {
-  terms_of_service: { version: 'v2025.1', effectiveDate: '2025-01-01' },
-  privacy_policy: { version: 'v2025.1', effectiveDate: '2025-01-01' },
+  terms_of_service: { version: 'v2026.3', effectiveDate: '2026-10-22' },
+  privacy_policy: { version: 'v2026.3', effectiveDate: '2026-10-22' },
 };
 
 /** 画面に出す文書名 */

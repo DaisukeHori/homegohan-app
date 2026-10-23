@@ -7,21 +7,24 @@
 //   - 上限は 1 日 (日本時間の暦日) の、全機能の合計の回数。空欄で保存すると無制限
 //   - 自分の行が無いプランは free の値を使う (「free の値」と表示する)
 //   - 変更の理由は必須 (監査ログに残す)
+//   - 組織のプランの値 (standard / premium / enterprise) の行も保存できる。どちらにも無いキーの行は入力欄と保存を止める (#1912)
+//   - subscription_plans の組織のプランの行 (org_*) は値が判定に使われないので、入力欄と保存を止め、
+//     「組織の上限は standard / premium / enterprise の行で決まります」と案内する (PATCH も 409 PLAN_READ_ONLY で断る。#1912)
+//   - 保存が 409 CONFLICT_STALE_DATA (読んでから書くまでに別の運営が先に同じプランの上限を変えた) で断られたら、一覧を読み直して
+//     いまの上限を出し、行にその旨を出す。入力欄 (新しい上限・理由) の書きかけは読み直しで消さない (#1917)
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { parseLimitInput } from "@/lib/super-admin/ai-daily-limits";
-import { AI_DAILY_LIMIT_MAX } from "@/lib/super-admin/llm-schemas";
+import { isStaleDataConflict } from "@/lib/admin/api-error-message";
+import {
+  AI_DAILY_LIMIT_READ_ONLY_NOTES,
+  aiDailyLimitRowReadOnlyReason,
+  parseLimitInput,
+} from "@/lib/super-admin/ai-daily-limits";
+import { AI_DAILY_LIMIT_MAX, type AiDailyLimitRow } from "@/lib/super-admin/llm-schemas";
 
-interface QuotaRow {
-  plan_key: string;
-  display_name: string | null;
-  plan_type: string | null;
-  daily_limit: number | null;
-  configured: boolean;
-  effective_daily_limit: number | null;
-  updated_at: string | null;
-}
+/** 一覧の 1 行 (API の型そのもの) */
+type QuotaRow = AiDailyLimitRow;
 
 interface QuotaListResponse {
   data: QuotaRow[];
@@ -39,9 +42,34 @@ function limitLabel(limit: number | null): string {
   return limit === null ? "無制限" : `${limit.toLocaleString()} 回`;
 }
 
+/**
+ * 保存が 409 CONFLICT_STALE_DATA で断られ、一覧を読み直したときに行に出す文 (#1917)。
+ * サーバーの文は「画面を読み込み直して」と頼む文なので使わない (画面が自分で読み直すため)
+ */
+const STALE_LIMIT_MESSAGE =
+  "別の運営が先にこのプランの上限を変えていました。一覧を読み込み直したので、いまの上限を確かめてから、もう一度保存してください（入力した値と理由は残しています）";
+
+/** 一覧の行から作る入力欄の初めの値 (保存されている上限。無制限・自分の行が無いときは空欄) */
+function initialDraftOf(row: QuotaRow): Draft {
+  return { limit: row.configured && row.daily_limit !== null ? String(row.daily_limit) : "", reason: "" };
+}
+
+/** 入力欄が書きかけか (最後に読んだ一覧から作った初めの値から、上限か理由を変えている) */
+function isDraftEdited(draft: Draft | undefined, loaded: Draft | undefined): boolean {
+  if (draft === undefined) return false;
+  if (loaded === undefined) return true;
+  return draft.limit !== loaded.limit || draft.reason !== loaded.reason;
+}
+
+/** 失敗の応答の本文から、画面に出す文 (API の error.message。無ければ HTTP ステータス) */
+function errorMessageOfBody(body: unknown, status: number): string {
+  const message =
+    typeof body === "object" && body !== null ? (body as { error?: { message?: unknown } }).error?.message : undefined;
+  return typeof message === "string" ? message : `HTTP ${status}`;
+}
+
 async function errorMessageOf(res: Response): Promise<string> {
-  const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-  return body?.error?.message ?? `HTTP ${res.status}`;
+  return errorMessageOfBody(await res.json().catch(() => null), res.status);
 }
 
 export default function LLMQuotasPage() {
@@ -53,8 +81,15 @@ export default function LLMQuotasPage() {
   const [error, setError] = useState<string | null>(null);
   const [savingPlan, setSavingPlan] = useState<string | null>(null);
   const [rowMessage, setRowMessage] = useState<Record<string, { ok: boolean; text: string }>>({});
+  // 最後に読んだ一覧から作った入力欄の初めの値 (読み直しのとき、書きかけの行を見分ける。#1917)
+  const loadedDrafts = useRef<Record<string, Draft>>({});
 
-  const load = useCallback(async () => {
+  /**
+   * 一覧を読む。keepDrafts のときは、入力欄の書きかけ (新しい上限・理由) を残し、書きかけの無い行だけを読んだ値にする
+   * (保存が 409 CONFLICT_STALE_DATA で断られたあとの読み直し。#1917)
+   */
+  const load = useCallback(async (options: { keepDrafts?: boolean } = {}) => {
+    const keepDrafts = options.keepDrafts === true;
     setIsLoading(true);
     setError(null);
     try {
@@ -64,12 +99,18 @@ export default function LLMQuotasPage() {
       setRows(json.data);
       setNote(json.note);
       setDefaultPlanKey(json.default_plan_key);
-      setDrafts(
+      const previouslyLoaded = loadedDrafts.current;
+      const initialDrafts: Record<string, Draft> = Object.fromEntries(
+        json.data.map((row) => [row.plan_key, initialDraftOf(row)]),
+      );
+      loadedDrafts.current = initialDrafts;
+      setDrafts((prev) =>
         Object.fromEntries(
-          json.data.map((row) => [
-            row.plan_key,
-            { limit: row.configured && row.daily_limit !== null ? String(row.daily_limit) : "", reason: "" },
-          ]),
+          json.data.map((row) => {
+            const current = prev[row.plan_key];
+            const keep = keepDrafts && isDraftEdited(current, previouslyLoaded[row.plan_key]);
+            return [row.plan_key, keep && current !== undefined ? current : initialDrafts[row.plan_key]];
+          }),
         ),
       );
     } catch (err) {
@@ -105,7 +146,17 @@ export default function LLMQuotasPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ plan_key: planKey, daily_limit: dailyLimit, reason: draft.reason.trim() }),
       });
-      if (!res.ok) throw new Error(await errorMessageOf(res));
+      if (!res.ok) {
+        const body: unknown = await res.json().catch(() => null);
+        if (isStaleDataConflict(res.status, body)) {
+          // 別の運営が先にこのプランの上限を変えていた (API は書いていない)。いまの上限を出すために一覧を読み直し、
+          // その旨を行に出す (運営が手で読み直さなくてよいように。#1917)。入力欄の書きかけは消さない
+          setRowMessage((prev) => ({ ...prev, [planKey]: { ok: false, text: STALE_LIMIT_MESSAGE } }));
+          await load({ keepDrafts: true });
+          return;
+        }
+        throw new Error(errorMessageOfBody(body, res.status));
+      }
       setRowMessage((prev) => ({ ...prev, [planKey]: { ok: true, text: `保存しました（${limitLabel(dailyLimit)}）` } }));
       await load();
     } catch (err) {
@@ -158,6 +209,8 @@ export default function LLMQuotasPage() {
               {rows.map((row) => {
                 const draft = drafts[row.plan_key] ?? { limit: "", reason: "" };
                 const message = rowMessage[row.plan_key];
+                const readOnlyReason = aiDailyLimitRowReadOnlyReason(row);
+                const editable = readOnlyReason === null;
                 return (
                   <tr key={row.plan_key} data-testid={`quota-row-${row.plan_key}`}>
                     <td className="py-3">
@@ -176,8 +229,9 @@ export default function LLMQuotasPage() {
                         inputMode="numeric"
                         aria-label={`${row.plan_key} の新しい上限`}
                         value={draft.limit}
+                        disabled={!editable}
                         onChange={(e) => updateDraft(row.plan_key, { limit: e.target.value })}
-                        className="w-28 bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-white text-sm"
+                        className="w-28 bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-white text-sm disabled:opacity-50"
                       />
                     </td>
                     <td className="py-3">
@@ -185,9 +239,15 @@ export default function LLMQuotasPage() {
                         type="text"
                         aria-label={`${row.plan_key} の変更の理由`}
                         value={draft.reason}
+                        disabled={!editable}
                         onChange={(e) => updateDraft(row.plan_key, { reason: e.target.value })}
-                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-white text-sm"
+                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-white text-sm disabled:opacity-50"
                       />
+                      {readOnlyReason !== null && (
+                        <div className="text-slate-500 text-xs mt-1" data-testid={`quota-not-editable-${row.plan_key}`}>
+                          {AI_DAILY_LIMIT_READ_ONLY_NOTES[readOnlyReason]}
+                        </div>
+                      )}
                       {message && (
                         <div className={`text-xs mt-1 ${message.ok ? "text-green-400" : "text-red-400"}`} role="status">
                           {message.text}
@@ -198,7 +258,7 @@ export default function LLMQuotasPage() {
                       <button
                         type="button"
                         onClick={() => void save(row.plan_key)}
-                        disabled={savingPlan !== null}
+                        disabled={!editable || savingPlan !== null}
                         className="px-4 py-1.5 rounded-lg text-sm font-medium bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50"
                       >
                         {savingPlan === row.plan_key ? "保存中…" : "保存"}

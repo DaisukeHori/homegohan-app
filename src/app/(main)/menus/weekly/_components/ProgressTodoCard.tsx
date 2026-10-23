@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ChevronUp, ChevronDown, Check, X } from "lucide-react";
 import type { PhaseDefinition } from "@homegohan/shared";
 import { PROGRESS_PHASES } from "@homegohan/shared";
+import { requestProgressForDisplay } from "@/lib/request-progress-display";
 
 interface ProgressTodoCardProps {
   progress: { phase: string; message: string; percentage: number; totalSlots?: number; completedSlots?: number } | null;
@@ -18,7 +19,7 @@ interface ProgressTodoCardProps {
 }
 
 export const ProgressTodoCard = ({
-  progress,
+  progress: rawProgress,
   colors: cardColors,
   phases = PROGRESS_PHASES,
   defaultMessage = 'AIが献立を生成中...',
@@ -26,6 +27,8 @@ export const ProgressTodoCard = ({
   testId,
 }: ProgressTodoCardProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
+  // DB の既定値の progress (ワーカーがまだ進捗を書いていない行) の文は出さず、置き換える (#1911)
+  const progress = rawProgress ? requestProgressForDisplay(rawProgress) : null;
 
   const currentPercentage = progress?.percentage ?? 0;
   const currentPhase = progress?.phase ?? '';

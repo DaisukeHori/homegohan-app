@@ -19,7 +19,6 @@ const mocks = vi.hoisted(() => ({
   createOutboxStore: vi.fn(),
   emailsSend: vi.fn(),
   lookupEmailSuppression: vi.fn(),
-  waitUntil: vi.fn(),
   logInfo: vi.fn(),
   logWarn: vi.fn(),
   logError: vi.fn(),
@@ -51,9 +50,8 @@ vi.mock('@/lib/db-logger', () => ({
   generateRequestId: () => 'req_test',
 }));
 
-vi.mock('@vercel/functions', () => ({
-  waitUntil: mocks.waitUntil,
-}));
+// ログの保存を待つ延命 (waitUntil) は createLogger が行い、route は延命しない (#1909)。
+// 本物の createLogger を通した確認は cron-log-keepalive-1909.test.ts
 
 const routeModule = await import('@/app/api/cron/email-outbox/route');
 const { GET } = routeModule;
@@ -128,7 +126,6 @@ describe('GET /api/cron/email-outbox: 認証 (app-log-alerts と同じ)', () => 
     expect(mocks.logInfo).not.toHaveBeenCalled();
     expect(mocks.logWarn).not.toHaveBeenCalled();
     expect(mocks.logError).not.toHaveBeenCalled();
-    expect(mocks.waitUntil).not.toHaveBeenCalled();
   });
 
   it('A-2: 誤ったシークレット (同じ長さ・短い・長い・Bearer なし) は 401', async () => {
@@ -315,18 +312,6 @@ describe('GET /api/cron/email-outbox: 処理と応答', () => {
     mocks.fail.mockRejectedValueOnce(new Error('fail_email_outbox failed: 57014'));
     const failFailed = await GET(authed());
     expect(failFailed.status).toBe(500);
-  });
-
-  it('応答のあと延命する (認証で断った要求と、鍵が無い回は対象外)', async () => {
-    await GET(makeRequest());
-    vi.stubEnv('RESEND_API_KEY', undefined);
-    await GET(authed());
-    expect(mocks.waitUntil).not.toHaveBeenCalled();
-
-    vi.stubEnv('RESEND_API_KEY', API_KEY);
-    await GET(authed());
-    expect(mocks.waitUntil).toHaveBeenCalledTimes(1);
-    expect(mocks.waitUntil.mock.calls[0][0]).toBeInstanceOf(Promise);
   });
 });
 

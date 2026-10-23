@@ -207,7 +207,12 @@ SELECT * FROM public.purge_dissolved_family_groups(true);
 # CRON_SECRET を使って HTTP で呼び出す
 curl -X POST https://homegohan.app/api/cron/trial-ending-reminder \
   -H "Authorization: Bearer ${CRON_SECRET}"
+
+# ストアの購読の定期の取り直し (GET。billing/04 §9.1)
+curl -H "Authorization: Bearer ${CRON_SECRET}" https://homegohan.app/api/cron/iap-reconcile
 ```
+
+`/api/cron/iap-reconcile` の応答 (billing/04 §9.1) の読み方: `status` は `maintenance` (メンテナンス中で何もしない)・`not_configured` (RevenueCat の鍵が無い。販売開始前の正常な状態)・`idle` (候補 0)・`processed` (取り直した) のどれか。`stopped_early` が `budget` (処理の予算 40 秒) か `rate_limited` (RevenueCat の 429) なら、その回は途中で止めて残りを次の回 (毎時 41 分) に回した。`oldest_period_end` は、その回の候補のうち期限がいちばん古いもので、毎時の回をまたいで同じ古い値のまま動かないなら取り直しが滞っている。取り直せなかった利用者がいた回は 500 になり、`app-log-alerts` の `cron_failure` で運用メールが届く。
 
 ### 5.4 届けられなかったメールの再送 (#1193・#1708)
 
@@ -391,13 +396,13 @@ Step 5: org_admin に手順案内
 削除の実行 (即時):
   ユーザー: 設定画面「アカウントを削除する」→ 確認 (Web は「削除します」入力 / モバイルは確認アラート)
   → POST /api/account/delete { confirm: true }
-  → 削除をブロックする条件 (409。先に譲渡または解散してもらう):
+  → 削除をブロックする条件 (409。先に譲渡または解散してもらう。判定の前に退会の印を付ける (RPC begin_account_deletion_guard。印のある人を運営がオーナーにして組織を作れない。20261023130000)):
      - 組織の owner         → ACCOUNT_DELETE_BLOCKED_ORG_OWNER
      - 家族グループの代表者  → ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE
   → Stripe の後始末 (段階 billing。billing/01 §11): 顧客の開いたままの Checkout を閉じ、終端でない契約を即時解約し、Stripe の顧客を匿名化する
      (顧客も契約の行も無ければ Stripe を呼ばない。失敗したら削除しない。まだ何も変えていないので再実行できる)
   → 生のメールアドレスを残す記録を伏せ、本人の非公開レシピを消す (RPC prepare_account_deletion。メール配信ログ・問い合わせ・招待)
-  → ライセンス席を解放 (RPC release_user_membership。失敗しても続ける)
+  → ライセンス席を解放 (RPC release_user_membership。失敗しても続ける。ただし IS_ORG_OWNER (直前にオーナーになっていた) は確認をやり直して 409 で止め (オーナーでなくなっていたら削除せず失敗にする)、CONFLICT_RETRY (所属の組織が途中で変わった) は削除せず失敗にする。src/lib/account-deletion.ts:349-365)
   → Storage のファイルを削除 (meal_photos / fridge-images / health-checkups の <user_id>/ 以下など)
   → Stripe の後始末をもう一度 (段階 billing_recheck。deleteUser の直前。段階 billing のあとに完了した Checkout の契約・作られた顧客を閉じる。
      失敗したら削除しない。アカウントは残り、もう一度の退会で片付く)
@@ -433,6 +438,12 @@ Step 2: 本人に設定画面から削除してもらう
     ログインを回復してから削除してもらう
   - 409 で止まった場合 (組織の owner / 家族グループの代表者):
     先に譲渡または解散してもらう (運営の強制操作は membership/05-operator-emergency-ui.md)
+    譲渡できる相手がいない代表者・オーナーは、本人がメンバーシップ設定 (凍結中は /frozen/account、同意の前は /legal-consent/account) から
+    家族グループ・組織を解散してから退会できるので、それを案内する (family/11)
+  - 規約・プライバシーポリシーの改定の後、まだ同意していない人からの削除の依頼:
+    運営が代わりに削除する経路は無い。同意の前でも本人が /legal-consent/account (同意画面の下の案内。
+    ログアウトした人はログインの後に同じ画面へ進める) で退会とデータの書き出しを行えるので、それを案内する (利用規約第24条 2 項)。
+    開示などの請求は同意の前でも /settings/data-requests から出せる
 
 Step 3: 削除完了の確認
   SELECT COUNT(*) FROM auth.users WHERE id = '{user_id}';
@@ -491,7 +502,7 @@ Step 4: 応答して閉じる
 | 開示 | 利用者詳細 (`/admin/users/{user_id}`) で保有している情報を確かめ、開示する内容を「本人への応答」に書く。登録した記録は本人が設定の「データをエクスポート」から自分で書き出せるので、案内として応答に添える (凍結中の本人は凍結の画面の「退会・データの書き出し」= `/frozen/account` から書き出せる。§9.3.5)。応答は本文だけ (ファイルの添付は無い。cross/15 §21) |
 | 訂正 | プロフィールなど本人が直せる項目は、その画面を案内する。運営が直す項目は利用者詳細で直し、何を直したかを応答に書く |
 | 利用停止 | 請求の内容から止める利用の範囲を確かめ、止めた内容・本人が設定で止められる項目 (AI の外部送信の同意・通知の設定)・全体を止めたいときは退会 (消去の請求) できることを応答に書く。**凍結 (BAN) は利用停止の手段に使わない**: 凍結は規約違反への措置で、凍結すると本人は `/settings` にも `/api/account/data-requests` にも入れず (画面は `/frozen` へ回り、API は 403)、応答を読めなくなる (cross/15 §8.1・§9.2) |
-| 消去 | 本人に設定画面からの退会 (アカウントの削除。§9.1) を案内する (凍結中の本人は凍結の画面の「退会・データの書き出し」= `/frozen/account` から退会できる。§9.3.5)。運営が代わりに退会させる画面・API は無い (§9.2・cross/15 §21)。本人が退会すると請求者が「退会済み」になるので、そのあとで対応済みにする (§9.3.4) |
+| 消去 | 本人に設定画面からの退会 (アカウントの削除。§9.1) を案内する (凍結中の本人は凍結の画面の「退会・データの書き出し」= `/frozen/account` から退会できる。§9.3.5)。運営が代わりに退会させる画面・API は無い (§9.2・cross/15 §21)。本人が退会すると請求者が「退会済み」になるので、そのあとで対応済みにする (§9.3.4)。案内の前に、請求者のストアの購読の有無を確かめる (`SELECT iap_store, status FROM personal_subscriptions WHERE user_id = '{user_id}' AND iap_store IS NOT NULL AND status IN ('trialing', 'active', 'paused', 'past_due', 'grace');`)。行があれば、退会しても App Store / Google Play の購読は自動では解約されない (`STORE_SUBSCRIPTION_DELETION_NOTICE`。billing/03 §10.4) ので、先に各ストアの定期購読の管理から解約するよう案内に添える |
 
 #### 9.3.3 応答期限
 

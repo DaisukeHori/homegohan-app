@@ -1,13 +1,15 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useRef, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { STORE_SUBSCRIPTION_DELETION_NOTICE, STORE_SUBSCRIPTION_MANAGEMENT_URL, type PurchaseStore } from "@homegohan/shared";
 import { Text } from "../../src/components/ui/Text";
 
 import { AccountCredentialsSection } from "../../src/components/settings/AccountCredentialsSection";
 import { Button, Card, PageHeader, SectionHeader } from "../../src/components/ui";
 import { accountDeletionErrorOf } from "../../src/lib/account-deletion-error";
 import { DSR_SCREEN_ROUTE, DSR_SETTINGS_ENTRY_DESCRIPTION, DSR_SETTINGS_ENTRY_TITLE } from "../../src/lib/data-subject-requests";
+import { MEMBERSHIP_SETTINGS_SCREEN_ROUTE } from "../../src/lib/membership-settings";
 import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
 import { signOutAfterAccountDeletion, signOutOnDevice } from "../../src/lib/signOut";
@@ -19,6 +21,10 @@ import { typography } from "../../src/theme/typography";
 const ACCOUNT_DELETE_FAILED_TITLE = "削除失敗";
 /** 組織のオーナー・家族の代表者 (409) で退会できないときの Alert の見出し */
 const ACCOUNT_DELETE_BLOCKED_TITLE = "退会できません";
+/** 409 の Alert の、メンバーシップ設定 (譲渡と解散。Web の画面を WebView で開く) へ移るボタン (#1917) */
+const ACCOUNT_DELETE_BLOCKED_OPEN_MEMBERSHIP = "メンバーシップ設定を開く";
+/** 409 の Alert の、閉じるボタン */
+const ACCOUNT_DELETE_BLOCKED_CLOSE = "閉じる";
 /** ログインが切れていて (401) 退会できなかったときの Alert の見出し (#1562) */
 const ACCOUNT_DELETE_UNAUTHORIZED_TITLE = "ログインが必要です";
 /** 削除は済んだが、端末のログアウトに失敗したときの文 */
@@ -26,6 +32,12 @@ const ACCOUNT_DELETED_SIGN_OUT_FAILED_MESSAGE =
   "アカウントの削除は完了しましたが、端末側のログアウト処理に失敗しました。お手数ですが、アプリを再起動してください。";
 /** 請求の項目の右の矢印の大きさ (退会のボタンのアイコンと同じ大きさにそろえる) */
 const DATA_REQUESTS_CHEVRON_SIZE = 18;
+/** 退会の確認の本文 (取り消せないことと、ストアの購読は退会で解約されないこと。billing/03 §10.4) */
+const ACCOUNT_DELETE_CONFIRM_MESSAGE = `アカウントとデータを削除します。取り消しできません。\n\n${STORE_SUBSCRIPTION_DELETION_NOTICE}`;
+/** 退会の確認から購読の管理を開くボタン (購入の画面 (billing/03 §10.6 の 2) のボタンと同じ文) */
+const STORE_SUBSCRIPTION_MANAGE_BUTTON_LABEL = "定期購読の管理を開く";
+/** この端末のストア (Android は Google Play、それ以外 (iOS) は App Store)。購読の管理のページの行き先を選ぶ */
+const DEVICE_PURCHASE_STORE: PurchaseStore = Platform.OS === "android" ? "play_store" : "app_store";
 
 export default function AccountSettingsPage() {
   const { clearSession } = useAuth();
@@ -47,8 +59,16 @@ export default function AccountSettingsPage() {
     setDeleting(true);
 
     const ok = await new Promise<boolean>((resolve) => {
-      Alert.alert("アカウント削除", "アカウントとデータを削除します。取り消しできません。", [
+      Alert.alert("アカウント削除", ACCOUNT_DELETE_CONFIRM_MESSAGE, [
         { text: "キャンセル", style: "cancel", onPress: () => resolve(false) },
+        {
+          text: STORE_SUBSCRIPTION_MANAGE_BUTTON_LABEL,
+          // 購読の管理を開き、退会はしない (解約してから、もう一度「アカウント削除」を押す)。開けなかったときも退会しない
+          onPress: () => {
+            Linking.openURL(STORE_SUBSCRIPTION_MANAGEMENT_URL[DEVICE_PURCHASE_STORE]).catch(() => undefined);
+            resolve(false);
+          },
+        },
         { text: "削除", style: "destructive", onPress: () => resolve(true) },
       ]);
     });
@@ -82,7 +102,16 @@ export default function AccountSettingsPage() {
         router.replace("/");
         return;
       }
-      Alert.alert(failure.kind === "blocked" ? ACCOUNT_DELETE_BLOCKED_TITLE : ACCOUNT_DELETE_FAILED_TITLE, failure.message);
+      if (failure.kind === "blocked") {
+        // 組織のオーナー・家族の代表者 (409)。譲渡か解散ができるメンバーシップ設定 (Web) を開けるようにする
+        // (#1917。docs/design/family/11-self-dissolve.md §15.5)
+        Alert.alert(ACCOUNT_DELETE_BLOCKED_TITLE, failure.message, [
+          { text: ACCOUNT_DELETE_BLOCKED_CLOSE, style: "cancel" },
+          { text: ACCOUNT_DELETE_BLOCKED_OPEN_MEMBERSHIP, onPress: () => router.push(MEMBERSHIP_SETTINGS_SCREEN_ROUTE) },
+        ]);
+      } else {
+        Alert.alert(ACCOUNT_DELETE_FAILED_TITLE, failure.message);
+      }
       deletingRef.current = false;
       setDeleting(false);
       return;

@@ -34,7 +34,7 @@
 | 上げ先で壊れる所 (API・設定・テスト) の全列挙と直し方 (§7) | `@testing-library/react-native` 14 への移行 (`render` / `fireEvent` / `act` が Promise を返すようになり、`render(` を使うテスト 67 ファイルの書き換えになる。§5.1 の C) |
 | `runtimeVersion` の方針 (fingerprint) と、OTA を使わない現状の固定 (§11) | OTA (EAS Update) を使い始めること (`mobile/01` §13 の「大型変更時に検討」のまま) |
 | Jest 29 → 30 への追随と、Reanimated 4 (worklets) の Jest の設定 (§7.3) | `expo-file-system` の新しい API (`File` / `Directory`) への移行 (`/legacy` の入口を使い続ける。§7.1 の A-3) |
-| 使っていない依存 3 つの削除 (§6.3) | `expo-dev-client` の導入 (`eas.json` の `development` プロファイルは、いまも入っていない。変えない) |
+| 使っていない依存 3 つの削除 (§6.3) | `expo-dev-client` の導入 (本冊では導入しなかった。`expo-dev-client` ~58.0.14 は billing/03 段 D (#1931) で入った。下の「本冊のマージの後に足した依存」) |
 | 検証 (tsc・local-ci の mobile:jest / mobile:core・npm audit・expo-doctor・`expo install --check`) と合格の数 (§10) | ネイティブのビルド・提出・実機の確認 (オーナー作業。§16 に手順と確認の表を置く) |
 | 番兵 (版の組・lockfile の置き場・`runtimeVersion`・`/legacy` の入口) の新設 (§9.7) | `react-native-web` / `expo start --web` の整備 (`react-dom` を宣言していない現状のまま。既知の制約として §17) |
 
@@ -404,6 +404,8 @@ jest-expo が Jest 30 の依存で組まれているのは 58 系だけ。Jest �
 | `expo.install.exclude: ["typescript"]` | 新規。`expo install --check` (V-6) から `typescript` だけを外す。SDK 58 の `--check` は `bundledNativeModules.json` に加えて Expo の API の `relatedPackages` (`sdkVersions['58.0.0'].relatedPackages.typescript` = `~6.0.3`) とも突き合わせ、5.9.3 をずれとして報告する。ルートと同じ 5.9.3 に据え置く (§6.4) ため外す。ほかの依存は外さない (番兵 §9.7 が `exclude` を `["typescript"]` に固定する) |
 | `@testing-library/react-native ^13.3.3`・`@testing-library/jest-native ^5.4.3`・`@types/jest ^30.0.0`・`resolve-from`・`zod`・`@supabase/supabase-js`・`@homegohan/*`・`lucide-react-native`・`@expo-google-fonts/noto-sans-jp`・`react-native-url-polyfill ^2.0.0` | 変えない (zod はルートと同じ範囲でないと `tests/zod-single-copy-1444.test.ts` が赤。`react-native-url-polyfill` は `src/lib/supabase.ts` と `src/lib/webViewBridge.ts` が読む) |
 | 消す行 | `@react-native-community/slider` / `expo-haptics` / `expo-image-manipulator` (§6.3) |
+
+本冊のマージの後に足した依存 (billing/03 §8.10 の「依存の追加と `package-lock.json` の作り直し」): `react-native-purchases` 10.14.0 (RevenueCat。版を固定) と `expo-dev-client` ~58.0.14 (`bundledNativeModules.json` の値)。アプリ内課金の購入は Expo Go では動かない (Preview API Mode)。開発ビルド (`eas.json` の `development` の profile) が要る。lockfile の置き場 (§2.4) は変わらない: 足した 2 つとその依存はルートに置かれ、`apps/mobile/node_modules` の入れ子は `react` と `@types/react` の 2 つのまま。
 
 ### 6.2 ルート `package.json` の `overrides` (逐語)
 

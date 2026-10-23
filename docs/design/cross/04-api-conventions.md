@@ -122,6 +122,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `PERM_NO_ORG` | 組織未所属 | 403 |
 | `PERM_FAMILY_NOT_MEMBER` | 家族グループ非メンバー | 403 |
 | `PERM_FAMILY_OWNER_REQUIRED` | 家族 owner 権限が必要 | 403 |
+| `AI_FEATURE_NOT_IN_PLAN` | **[NEW]** ご利用中のプランでは使えない AI の機能 (`ai_plan_feature_caps` の daily_cap = 0。本文は平たい `{ error, code, feature }`・Retry-After なし。`docs/design/billing/03-paid-plans-and-iap.md` §13.1) | 403 |
 
 #### VALID 系
 
@@ -166,7 +167,9 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `EXT_STRIPE_WEBHOOK_FAILED` | Stripe Webhook 処理失敗 | 502 |
 | `EXT_STRIPE_CHARGE_FAILED` | Stripe 課金失敗 | 502 |
 | `EXT_STRIPE_API_FAILED` | **[NEW]** Stripe の API の呼び出しに失敗した (課金の自己サービスの API。`docs/design/billing/01-billing-core.md` §13.1) | 502 |
-| `EXT_STRIPE_NOT_CONFIGURED` | **[NEW]** Stripe の秘密鍵 (`STRIPE_SECRET_KEY`) が未設定で、Stripe を呼ぶ課金の API を受け付けない (`docs/design/billing/01-billing-core.md` §13.1) | 503 |
+| `EXT_STRIPE_NOT_CONFIGURED` | **[NEW]** Stripe の秘密鍵 (`STRIPE_SECRET_KEY`) が未設定で、Stripe を呼ぶ課金の API を受け付けない (`docs/design/billing/01-billing-core.md` §13.1)。文は「お支払いを受け付けていません」(#1911) | 503 |
+| `EXT_REVENUECAT_API_FAILED` | **[NEW]** RevenueCat の REST の呼び出しに失敗した (2xx 以外・応答の形の違い・時間切れ・接続の失敗。`POST /api/billing/iap/sync`。`docs/design/billing/03-paid-plans-and-iap.md` §13.1) | 502 |
+| `EXT_REVENUECAT_NOT_CONFIGURED` | **[NEW]** RevenueCat の秘密の API キー (`REVENUECAT_SECRET_API_KEY`) が未設定で、ストアの契約を取り直せない (`POST /api/billing/iap/sync`。billing/03 §13.1) | 503 |
 | `EXT_LLM_TIMEOUT` | LLM API タイムアウト | 504 |
 | `EXT_LLM_CONTENT_POLICY` | LLM コンテンツポリシー拒否 | 422 |
 | `EXT_RESEND_FAILED` | Resend メール送信失敗 | 502 |
@@ -187,7 +190,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `FAM_PARENTAL_CONSENT_REQUIRED` | 保護者同意が必要 | 403 |
 | `FAM_CHILD_PROMOTE_AUTH_REQUIRED` | 子供アカウント独立化には親の再認証が必要 | 401 |
 
-注: 家族の API の実コードは接頭辞なしの `MembershipErrorCode` (`src/lib/errors/membership-errors.ts`) を使う。保護者の同意は `PARENTAL_CONSENT_REQUIRED` (403)。ほかに `CHILD_BIRTH_DATE_REQUIRED` / `CHILD_BIRTH_DATE_INVALID` (400)・`PARENTAL_CONSENT_VERSION_MISMATCH` (409)・`PARENTAL_CONSENT_SIGNER_NOT_ADULT` (403)・`PROMOTION_UNDER_COPPA_AGE` (403)・`MINOR_ACCOUNT_NOT_ALLOWED` (403。家族と組織の API) (設計書 `docs/design/cross/14-parental-consent.md`)。
+注: 家族の API の実コードは接頭辞なしの `MembershipErrorCode` (`src/lib/errors/membership-errors.ts`) を使う。保護者の同意は `PARENTAL_CONSENT_REQUIRED` (403)。ほかに `CHILD_BIRTH_DATE_REQUIRED` / `CHILD_BIRTH_DATE_INVALID` (400)・`PARENTAL_CONSENT_VERSION_MISMATCH` (409)・`PARENTAL_CONSENT_SIGNER_NOT_ADULT` (403)・`PROMOTION_UNDER_COPPA_AGE` (403)・`MINOR_ACCOUNT_NOT_ALLOWED` (403。家族と組織の API) (設計書 `docs/design/cross/14-parental-consent.md`)。家族プランの契約の無い代表者のグループの作成・メンバーの追加は `FAMILY_PLAN_REQUIRED` (**[NEW]** 402。`POST /api/family/groups`・`POST /api/family/invites/[id]/accept`・`POST /api/family/members/child`。`docs/design/billing/03-paid-plans-and-iap.md` §9.5・§13.1)。
 
 #### LEGAL 系
 
@@ -242,7 +245,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
   - `INVALID_PERIOD` (400): 作成の開始日・終了日が `YYYY-MM-DD` の形でない・開始日が終了日より後・タイトルが文字列でない (`route.ts:167`〜`:171`)
   - `INVALID_TARGET` (400): 作成で目標値を指定したとき、数でない・種類ごとの範囲 (`ORG_CHALLENGE_TYPE_META` の `targetMin`〜`targetMax`) の外 (`route.ts:177`)
   - `INVALID_STATUS` (400): 更新の status が DB の受け付けない値・NULL (`route.ts:256`)
-  - このほかの 4xx・5xx (未ログインの 401・管理者でないときの 403・`Invalid JSON` などの 400・500) は `code` の無い `{ error }` だけ (`route.ts:42`〜`:50` の `handleError` ほか)
+  - このほかの 4xx・5xx (未ログインの 401・管理者でないときの 403・本文が JSON として読めないときなどの 400・500) は `code` の無い `{ error }` だけ (`route.ts:42`〜`:50` の `handleError` ほか)。`error` は日本語の固定の文 (401 / 403 / 500 は `src/lib/org-api-errors.ts` の `orgAuthFailureFlat` と定数。例外の文面は入れない)
 - メンバー向けの route (`[id]/route.ts`・`[id]/join/route.ts`。nested の形 `{ error: { code, message } }`):
   - `PERM_DEPARTMENT_MISMATCH` (403): 別の部署の人向けのチャレンジへの参加 (`[id]/join/route.ts:52`)
   - `FORBIDDEN` (403): 参加の INSERT が行レベルセキュリティに拒否された (42501。確認のあとで所属・部署・状態が変わったとき。`[id]/join/route.ts:75`)
@@ -279,6 +282,9 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `BILL_NO_LIVE_SUBSCRIPTION` | **[NEW]** 解約の予約・取り消しの対象になる、有効で Stripe の契約がある行が無い (`POST /api/billing/subscription/cancel` / `resume`) | 409 |
 | `BILL_CANCEL_NOT_SCHEDULED` | **[NEW]** 解約が予約されていないのに取り消そうとした (`POST /api/billing/subscription/resume`) | 409 |
 | `BILL_PLAN_NOT_PURCHASABLE` | **[NEW]** 買えないプラン (無い・公開でない・個人 / 家族でない・free・その期間の Price が無い・金額 0。`POST /api/billing/checkout`・`GET /api/billing/checkout/preview`) | 422 |
+| `BILL_IAP_INVALID_INPUT` | **[NEW]** アプリ内課金のカタログのクエリ `store` が無い・`app_store` / `play_store` 以外 (`GET /api/billing/iap/catalog`。`docs/design/billing/03-paid-plans-and-iap.md` §13.1) | 400 |
+| `BILL_IAP_SYNC_CONFLICT` | **[NEW]** ストアの契約を写そうとしたが、同じ利用者に別の live な契約 (Stripe・手動付与・別のストア) がある (`POST /api/billing/iap/sync`。DB の `BILL_LIVE_ROW_CONFLICT` の写し。billing/03 §13.1) | 409 |
+| `BILL_IAP_UNKNOWN_PRODUCT` | **[NEW]** ストアの live な商品が `plan_store_products` に無く、利用者の行も無い (`POST /api/billing/iap/sync`。billing/03 §13.1) | 422 |
 
 #### DSR 系
 
@@ -348,7 +354,7 @@ interface ErrorResponse {
 { "error": "利用規約・プライバシーポリシーへの同意が必要です。同意の画面から内容をご確認ください。", "code": "LEGAL_CONSENT_REQUIRED" }
 ```
 
-**(b) nested**: `error.message` を読むクライアント向け。運営 API (`/api/super-admin/**` など) は `internalError(..., { shape: 'nested' })` でこの形の 500 を返す。組織・家族の所属の操作の API (招待の承諾・辞退・取り消し・脱退・除名・代表者やオーナーの譲渡など。`/api/org/**`・`/api/family/**` のうち `MembershipErrorCode` を返すもの) の 4xx もこの形で、`code` は `MembershipErrorCode` (`src/lib/errors/membership-errors.ts`) の値 (同じ配下でも、一覧の取得などは (a) flat の `{ error: 'Forbidden' }` などを返す route がある)。`message` は操作ごとの固定の文なので、画面は `membershipErrorMessageOfBody` で `code` から理由の文を引く。
+**(b) nested**: `error.message` を読むクライアント向け。運営 API (`/api/super-admin/**` など) は `internalError(..., { shape: 'nested' })` でこの形の 500 を返す。組織・家族の所属の操作の API (招待の承諾・辞退・取り消し・脱退・除名・代表者やオーナーの譲渡など。`/api/org/**`・`/api/family/**` のうち `MembershipErrorCode` を返すもの) の 4xx もこの形で、`code` は `MembershipErrorCode` (`src/lib/errors/membership-errors.ts`) の値 (同じ配下でも、一覧の取得などは (a) flat の `{ error: 'この操作を行う権限がありません' }` などを返す route がある。`/api/org/**` の失敗の文はどちらの形でも日本語の固定の文で、英語の文・例外の文面 (`err.message`) を入れない。一覧の取得などの route (flat・nested の両方) は 401 / 403 / 500 の文を `src/lib/org-api-errors.ts` から取る。招待の作成・取り消し・除名など所属の操作の route (`src/app/api/org/invites/route.ts:84`・`:88`・`invites/[id]/revoke/route.ts:25`・`:31`・`members/route.ts:57`・`:61`・`members/[user_id]/remove/route.ts:21`・`:27`) は、401 `NOT_AUTHENTICATED`「認証が必要です」・403 `INSUFFICIENT_PERMISSION` (操作ごとの文) を route に直書きし、`org-api-errors.ts` を通らない (500 の文はどちらも同じ汎用の文。`src/lib/api/errors.ts` の `INTERNAL_ERROR_MESSAGE`)。見張りは `tests/org-api-error-japanese.test.ts`)。`message` は操作ごとの固定の文なので、画面は `membershipErrorMessageOfBody` で `code` から理由の文を引く。
 
 ```typescript
 interface NestedErrorResponse {
@@ -368,6 +374,8 @@ interface NestedErrorResponse {
 ```
 
 どちらの形でも、本文に DB の生のエラー文・捕まえた例外の文面・`details`・`hint`・スタックを入れない (500 は汎用の文だけにし、元のエラーは構造化ログに残す)。
+
+認可の失敗 (401 / 403) の本文で例外の文面 (`err.message`) や英語の文を返している route は、直すときに共通の関数 `authFailureFlat` / `authFailureNested` (`src/lib/api/error-responses.ts`。#1917) で作る (既に日本語の固定の文を返している route (`OP_PERMISSION_DENIED` に `権限がありません` など) はそのままでよい。`message` / `error` は日本語の固定の文で、`AuthError` / `ForbiddenError` の文面 (`requireRole` の `Requires one of: …` など) は入れない。403 の文は `ForbiddenError` の `code` ごとの表で決め、既定の表は凍結・二段階認証・組織に所属していないの文を持つ。nested の `code` は従来の route の code を変えないように、401 と 403 で別々に `'http'` (`UNAUTHORIZED` / `FORBIDDEN`)・`'error'` (例外の `code`)・`{ fixed: '<コード>' }` (`UNAUTHENTICATED`・`OP_PERMISSION_DENIED` など) から選ぶ (admin の営業・問い合わせの形 = 401 は例外の `code`・403 は `OP_PERMISSION_DENIED`、会計の形 = 401 は `UNAUTHENTICATED`・403 は `OP_PERMISSION_DENIED` は同じファイルの定数)。400 (JSON が読めない)・404・409・500 の固定の文の定数も同じファイル。`src/lib/org-api-errors.ts` はこの上に載せた /api/org の包み)。英語だけの文・例外の文面が本文に無いことは、`tests/api-error-japanese-scan.test.ts` が直し終えた配下 (`tests/helpers/api-error-japanese-scope.ts` の `JAPANESE_ERROR_API_DIRS`) の route を走査して見張り、一覧の外の配下の違反の件数は同じファイルの基線と一致することを番兵が確かめる (走査の部品は `tests/helpers/api-error-text-scan.ts`)。
 
 ### 5.3 TypeScript 型定義
 

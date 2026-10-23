@@ -23,6 +23,7 @@
 **バリデーション規則**:
 - `plan_key`: 英数字 + アンダースコアのみ、50 文字以内、UNIQUE
 - `plan_type`: `personal` | `family` | `org` (変更不可)
+- `plan_key` と `plan_type` の組み合わせ (#1912): `personal` / `family` は組織のプランの値 (`isOrgPlanKey` = `standard` / `premium` / `enterprise`・`org_` で始まる key) を使えない。`org` は `org_` で始まる key にする (`PlanCreateSchema` の refine。違反は 400 `OP_INVALID_INPUT`)
 - `monthly_price_jpy`: 0 以上の整数 (NULL = カスタム/無料)
 - `org` 型は `trial_days = 0` を強制 (組織プランに試用なし)
 - `family_addon` は `plan_type = 'family'` でも `applicable_to = 'org'` フラグを持つ特殊プラン
@@ -122,6 +123,7 @@ export async function syncPlanPrices(request: SyncRequest, deps: SyncDeps) {
 | `new_only` | なし (新規契約のみ新価格。既存契約は現行価格のまま) | 件数 0、MRR 変化 0、`affected_user_sample` は空 (`personal_subscriptions` は集計しない) | `none` |
 
 - 返す形は #1212 のときのまま (画面の型と互換)。画面は常に「既存契約への影響なし」を表示する。
+- 組織のプランの行 (`plan_type = 'org'` の `org_*`) では、応答に `organizations_note` (`ORG_SUBSCRIPTION_PLAN_ROW_NOTE`) を足し、価格変更の画面 (`/super-admin/plans/[id]/price-change`) は同じ注記を出す (#1912。§3.5a)。
 - 経緯: #1212 では `applies_to` ごとに既存契約 (`personal_subscriptions`) を集計し、`on_renewal` / `immediately` で MRR 変化 `(新月額 − 現月額) × 件数` を返していた。ただし既存サブスクリプションへ新価格を反映する処理 (Stripe subscription items の更新) は作られておらず、選んでも請求額は変わらなかったため、#1102 で選択肢ごと廃止した。
 
 ### 3.4 プランライフサイクル
@@ -176,6 +178,19 @@ stateDiagram-v2
      ) AND ends_at <= NOW()
    );
    ```
+
+### 3.5a 廃止の安全弁と組織のプランの行 (#1127・#1912)
+
+いまの廃止は `PATCH /api/super-admin/plans/{id}` の `status: 'deprecated'` で行い、廃止の前に契約が終わっていない契約者を数えて 1 件でもいれば 409 `OP_PLAN_HAS_SUBSCRIBERS` で止める (`src/lib/super-admin/plan-subscribers.ts`。API の形は `02-api-spec.md` の `PATCH /api/super-admin/plans/{id}`)。
+
+| プラン | 個人契約 | 家族グループ | 組織 (`organizations.plan`) | 廃止の画面・価格変更の画面 |
+|---|---|---|---|---|
+| 個人・家族のプラン | 数える | 数える | 数える | 注記なし |
+| 組織のプランの行 (`plan_type = 'org'` の `org_*`) | 数える | 数える | **数えない** (件数の欄を出さない) | 注記 `ORG_SUBSCRIPTION_PLAN_ROW_NOTE` を出す |
+
+- 組織の利用者の判定 (`get_effective_plan`) は `organizations.plan` (組織の段階 = standard / premium / enterprise。`src/lib/org-plans.ts` の `ORG_PLAN_VALUES`) を使い、`org_*` の行を使わない。`org_*` の行は組織の段階とは無関係なので、組織の件数は数えず (数えると常に 0 件で「0 件だから廃止してよい」と読めるため)、判定にも 0 件として入れない。オーナーの選択 (2026-10-22・選択式)「org_* は数えないと明記 (推奨)」
+- プランの詳細の画面 (`/super-admin/plans/[id]`) は `org_*` の行で注記を出し、「廃止する」の確認の文にも添える。409 の文面 (`error.message`) にも同じ注記が入る
+- 判定の述語は `isOrgSubscriptionPlanRow` (`src/lib/super-admin/ai-daily-limits.ts`。AI の上限の画面で `org_*` の行を保存させない判定と同じ)。`plan_type = 'org'` でも `plan_key` が組織の段階と同じ行は、組織の利用者の判定に使われるので数える
 
 ### 3.6 deprecated ロールバック手順 (F5 シナリオ)
 

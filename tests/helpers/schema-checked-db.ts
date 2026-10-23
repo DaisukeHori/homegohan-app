@@ -15,7 +15,7 @@
  * 再現する範囲 (テストが使う部分だけ):
  *   - select(columns, { count: 'exact', head: true })  列 / 'rel(cols)' / 'rel!inner(cols)' / 'alias:rel(cols)' の埋め込み
  *   - insert / update / delete (+ .select() で返す列)
- *   - eq / in / gte / not(col, 'is', null) / order / limit。'rel.col' 形式の埋め込み先の絞り込みを含む
+ *   - eq / in / gte / is(col, null) / not(col, 'is', null) / not(col, 'cs', '{a,b}') / order / limit。'rel.col' 形式の埋め込み先の絞り込みを含む
  *   - single() / maybeSingle()
  * 埋め込みは「このテーブルが外部キーで親を指す」向き (to-one) だけ。親から子 (to-many) は未対応。
  * 外部キーの参照先の列は常に id とみなす。RLS は再現しない (RLS で見える行だけを tables に入れて再現する)。
@@ -48,6 +48,10 @@ export interface RecordedQuery {
   eq: Array<[string, unknown]>;
   in: Array<[string, unknown[]]>;
   gte: Array<[string, unknown]>;
+  /** .is(col, null) で付けた絞り込みの列 */
+  isNull: string[];
+  /** .not(col, op, value) で付けた絞り込み */
+  not: Array<[string, string, unknown]>;
   /** insert / update に渡した値 */
   values: unknown;
 }
@@ -107,7 +111,7 @@ class PostgrestFailure extends Error {
 }
 
 interface Filter {
-  kind: 'eq' | 'in' | 'gte' | 'not-null';
+  kind: 'eq' | 'in' | 'gte' | 'is-null' | 'not-null' | 'not-contains';
   column: string;
   value: unknown;
 }
@@ -186,7 +190,7 @@ export function createSchemaDb(options: SchemaDbOptions = {}) {
     private cardinality: 'many' | 'single' | 'maybe' = 'many';
 
     constructor(private readonly table: string) {
-      this.rec = { table, op: 'select', select: null, count: false, head: false, eq: [], in: [], gte: [], values: undefined };
+      this.rec = { table, op: 'select', select: null, count: false, head: false, eq: [], in: [], gte: [], isNull: [], not: [], values: undefined };
       queries.push(this.rec);
     }
 
@@ -227,9 +231,22 @@ export function createSchemaDb(options: SchemaDbOptions = {}) {
       this.filters.push({ kind: 'gte', column, value });
       return this;
     }
+    is(column: string, value: unknown) {
+      if (value !== null) throw new Error('schema-checked-db: only .is(col, null) is supported');
+      this.rec.isNull.push(column);
+      this.filters.push({ kind: 'is-null', column, value: null });
+      return this;
+    }
     not(column: string, operator: string, value: unknown) {
-      if (operator !== 'is' || value !== null) throw new Error('schema-checked-db: only .not(col, "is", null) is supported');
-      this.filters.push({ kind: 'not-null', column, value: null });
+      this.rec.not.push([column, operator, value]);
+      if (operator === 'is' && value === null) {
+        this.filters.push({ kind: 'not-null', column, value: null });
+        return this;
+      }
+      // not.cs.{a,b}: 配列の列が a, b を全部は含まない (SQL の NOT (col @> '{a,b}'))。NULL の列は合わない (NOT NULL も NULL)
+      const m = operator === 'cs' && typeof value === 'string' ? /^\{(.*)\}$/.exec(value) : null;
+      if (!m) throw new Error('schema-checked-db: only .not(col, "is", null) and .not(col, "cs", "{a,b}") are supported');
+      this.filters.push({ kind: 'not-contains', column, value: m[1] === '' ? [] : m[1].split(',') });
       return this;
     }
     order(column: string, opts?: { ascending?: boolean }) {
@@ -315,8 +332,12 @@ export function createSchemaDb(options: SchemaDbOptions = {}) {
             return (f.value as unknown[]).includes(actual);
           case 'gte':
             return actual !== null && actual !== undefined && (actual as string | number) >= (f.value as string | number);
+          case 'is-null':
+            return actual === null || actual === undefined;
           case 'not-null':
             return actual !== null && actual !== undefined;
+          case 'not-contains':
+            return Array.isArray(actual) && !(f.value as unknown[]).every((v) => actual.includes(v));
         }
       });
     }

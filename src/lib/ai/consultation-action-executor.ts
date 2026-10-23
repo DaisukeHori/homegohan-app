@@ -20,7 +20,13 @@ import { updateHealthStreak } from '@/lib/health-streaks';
 import { todayLocal } from '@/lib/date-utils';
 import { invokeGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { isFeatureEnabled } from '@/lib/feature-flags';
-import { countMealImageJobsToProcess, isCatalogProductMeal, markDishImagesSkipped, type MealImageJobSeed } from '@/lib/meal-image';
+import {
+  countMealImageJobsToProcess,
+  isCatalogProductMeal,
+  markDishImagesSkipped,
+  mealImageSkipReasonOf,
+  type MealImageJobSeed,
+} from '@/lib/meal-image';
 import {
   buildDishImagePayload,
   cancelPendingMealImageJobs,
@@ -36,7 +42,12 @@ import {
   type AiUsageDenied,
   type AiUsageResult,
 } from '@/lib/plan/entitlements';
-import { AI_DAILY_LIMIT_CODE, aiDailyLimitMessageOfDenied } from '../../../supabase/functions/_shared/ai-daily-limit';
+import {
+  AI_DAILY_LIMIT_CODE,
+  AI_FEATURE_NOT_IN_PLAN_CODE,
+  aiDailyLimitMessageOfDenied,
+  aiDailyLimitSkippedField,
+} from '../../../supabase/functions/_shared/ai-daily-limit';
 import { checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { isUltimateModeRequested } from '@/lib/ai/ultimate-mode';
 import { weeklyMenuRequestUltimateModeData } from '@/lib/ai/weekly-menu-request-ultimate';
@@ -296,9 +307,16 @@ export interface ConsultationActionExecutionResult {
 }
 
 /** 上限 (#1149) に達して生成しなかったときの結果 (ai_action_logs.result と、会話の中の自動実行の結果に残る。人向けの文) */
-function dailyLimitResult(denied: AiUsageDenied): { error: string; code: typeof AI_DAILY_LIMIT_CODE } {
-  // 究極モードの 1 日の上限 (#1142) で止めたときは、究極モードの文 (1 日の上限の文と同じ形)
-  return { error: aiDailyLimitMessageOfDenied(denied), code: AI_DAILY_LIMIT_CODE };
+function dailyLimitResult(denied: AiUsageDenied): {
+  error: string;
+  code: typeof AI_DAILY_LIMIT_CODE | typeof AI_FEATURE_NOT_IN_PLAN_CODE;
+} {
+  // 究極モードの 1 日の上限 (#1142) で止めたときは、究極モードの文 (1 日の上限の文と同じ形)。
+  // ご利用中のプランでは使えない機能 (planLocked。billing/03 §8.8) は、使えない機能の文と AI_FEATURE_NOT_IN_PLAN
+  return {
+    error: aiDailyLimitMessageOfDenied(denied),
+    code: denied.planLocked === true ? AI_FEATURE_NOT_IN_PLAN_CODE : AI_DAILY_LIMIT_CODE,
+  };
 }
 
 export async function runConsultationAction(
@@ -814,7 +832,7 @@ export async function runConsultationAction(
             // (同意の判定 → 上限の判定と記録 → AI への送信の順)。ジョブを積むかどうかは、同意の有無では変えない (止めるのは処理する側)
             const imageConsent = await checkUserAiConsent(supabase, user.id);
             if (imageConsent.allowed) {
-              // #1149 料理画像は更新の自動の副作用なので、明示の 1 日の上限 (10 回) には数えない ('meal_image_auto'。記録だけ。
+              // #1149 料理画像は更新の自動の副作用なので、明示の 1 日の上限には数えない ('meal_image_auto'。記録だけ。
               // 食事を記録するだけで AI 相談や写真の解析が止まらないように)。そのかわり料理画像だけの安全弁 (DB の ai_unmetered_daily_caps。
               // 既定は 1 日 20 回) があり、達していれば画像だけ見送る (ジョブを積まない。献立の更新はそのまま。結果の aiSkipped: AI_DAILY_LIMIT)。
               // 操作 1 回で 1 回 (積む画像のジョブの数によらない)。判定に失敗したときは止めない
@@ -835,7 +853,7 @@ export async function runConsultationAction(
         }
 
         if (!imageAllowed) {
-          const skipReason = imageUsage?.allowed === false ? 'ai_limit' : 'rate_limit';
+          const skipReason = mealImageSkipReasonOf(imageUsage);
           if (skipReason === 'rate_limit') {
             // レート制限で見送った (上限 #1149 で見送ったときは、結果の aiSkipped で知らせる)
             imageGenerationThrottled = true;
@@ -892,8 +910,8 @@ export async function runConsultationAction(
         newDishName: updatedMeal?.dish_name,
         // #1022 (Suggestion): 画像生成がスロットルされた場合のみ additive にフラグを付与する
         ...(imageGenerationThrottled ? { imageGenerationThrottled: true } : {}),
-        // #1149 今日の AI の利用回数の上限に達して、料理画像だけを見送ったとき
-        ...(imageUsage && !imageUsage.allowed ? { aiSkipped: AI_DAILY_LIMIT_CODE } : {}),
+        // #1149 今日の AI の利用回数の上限に達して、料理画像だけを見送ったとき (ご利用中のプランで作らない planLocked は付けない。billing/03 §8.8)
+        ...aiDailyLimitSkippedField(imageUsage),
       };
       break;
     }

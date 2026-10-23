@@ -14,6 +14,21 @@ export type Database = {
   }
   public: {
     Tables: {
+      account_deletion_guards: {
+        Row: {
+          started_at: string
+          user_id: string
+        }
+        Insert: {
+          started_at?: string
+          user_id: string
+        }
+        Update: {
+          started_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       admin_audit_logs: {
         Row: {
           action_type: string
@@ -305,6 +320,38 @@ export type Database = {
           updated_by?: string | null
         }
         Relationships: []
+      }
+      ai_plan_feature_caps: {
+        Row: {
+          daily_cap: number | null
+          feature: string
+          plan_key: string
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: {
+          daily_cap?: number | null
+          feature: string
+          plan_key: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Update: {
+          daily_cap?: number | null
+          feature?: string
+          plan_key?: string
+          updated_at?: string
+          updated_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_plan_feature_caps_plan_key_fkey"
+            columns: ["plan_key"]
+            isOneToOne: false
+            referencedRelation: "subscription_plans"
+            referencedColumns: ["plan_key"]
+          },
+        ]
       }
       ai_unmetered_daily_caps: {
         Row: {
@@ -1309,41 +1356,6 @@ export type Database = {
         }
         Relationships: []
       }
-      csat_feedbacks: {
-        Row: {
-          comment: string | null
-          created_at: string
-          id: string
-          score: number
-          ticket_id: string | null
-          user_id: string
-        }
-        Insert: {
-          comment?: string | null
-          created_at?: string
-          id?: string
-          score: number
-          ticket_id?: string | null
-          user_id: string
-        }
-        Update: {
-          comment?: string | null
-          created_at?: string
-          id?: string
-          score?: number
-          ticket_id?: string | null
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "csat_feedbacks_ticket_id_fkey"
-            columns: ["ticket_id"]
-            isOneToOne: false
-            referencedRelation: "support_tickets"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       cron_failure_alerts: {
         Row: {
           alerted_at: string
@@ -1388,6 +1400,41 @@ export type Database = {
           send_state?: string
         }
         Relationships: []
+      }
+      csat_feedbacks: {
+        Row: {
+          comment: string | null
+          created_at: string
+          id: string
+          score: number
+          ticket_id: string | null
+          user_id: string
+        }
+        Insert: {
+          comment?: string | null
+          created_at?: string
+          id?: string
+          score: number
+          ticket_id?: string | null
+          user_id: string
+        }
+        Update: {
+          comment?: string | null
+          created_at?: string
+          id?: string
+          score?: number
+          ticket_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "csat_feedbacks_ticket_id_fkey"
+            columns: ["ticket_id"]
+            isOneToOne: false
+            referencedRelation: "support_tickets"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       daily_active_users: {
         Row: {
@@ -2562,7 +2609,7 @@ export type Database = {
           member_limit: number
           name: string
           plan_key: string
-          representative_id: string
+          representative_id: string | null
           status: string
           updated_at: string
         }
@@ -2573,7 +2620,7 @@ export type Database = {
           member_limit?: number
           name: string
           plan_key?: string
-          representative_id: string
+          representative_id?: string | null
           status?: string
           updated_at?: string
         }
@@ -2584,7 +2631,7 @@ export type Database = {
           member_limit?: number
           name?: string
           plan_key?: string
-          representative_id?: string
+          representative_id?: string | null
           status?: string
           updated_at?: string
         }
@@ -3496,6 +3543,21 @@ export type Database = {
           title?: string
           updated_at?: string
           view_count?: number
+        }
+        Relationships: []
+      }
+      iap_reconcile_attempts: {
+        Row: {
+          attempted_at: string
+          user_id: string
+        }
+        Insert: {
+          attempted_at: string
+          user_id: string
+        }
+        Update: {
+          attempted_at?: string
+          user_id?: string
         }
         Relationships: []
       }
@@ -5167,7 +5229,7 @@ export type Database = {
           industry: string | null
           logo_url: string | null
           name: string
-          owner_id: string
+          owner_id: string | null
           plan: string | null
           settings: Json | null
           status: string
@@ -5185,7 +5247,7 @@ export type Database = {
           industry?: string | null
           logo_url?: string | null
           name: string
-          owner_id: string
+          owner_id?: string | null
           plan?: string | null
           settings?: Json | null
           status?: string
@@ -5203,7 +5265,7 @@ export type Database = {
           industry?: string | null
           logo_url?: string | null
           name?: string
-          owner_id?: string
+          owner_id?: string | null
           plan?: string | null
           settings?: Json | null
           status?: string
@@ -5425,6 +5487,10 @@ export type Database = {
           current_period_end: string | null
           current_period_start: string | null
           grace_started_at: string | null
+          iap_is_sandbox: boolean
+          iap_product_id: string | null
+          iap_store: string | null
+          iap_synced_at: string | null
           id: string
           notes: string | null
           past_due_since: string | null
@@ -5455,6 +5521,10 @@ export type Database = {
           current_period_end?: string | null
           current_period_start?: string | null
           grace_started_at?: string | null
+          iap_is_sandbox?: boolean
+          iap_product_id?: string | null
+          iap_store?: string | null
+          iap_synced_at?: string | null
           id?: string
           notes?: string | null
           past_due_since?: string | null
@@ -5485,6 +5555,10 @@ export type Database = {
           current_period_end?: string | null
           current_period_start?: string | null
           grace_started_at?: string | null
+          iap_is_sandbox?: boolean
+          iap_product_id?: string | null
+          iap_store?: string | null
+          iap_synced_at?: string | null
           id?: string
           notes?: string | null
           past_due_since?: string | null
@@ -5578,6 +5652,44 @@ export type Database = {
             isOneToOne: false
             referencedRelation: "subscription_plans"
             referencedColumns: ["id"]
+          },
+        ]
+      }
+      plan_store_products: {
+        Row: {
+          billing_interval: string
+          created_at: string
+          offered: boolean
+          plan_key: string
+          product_id: string
+          store: string
+          updated_at: string
+        }
+        Insert: {
+          billing_interval: string
+          created_at?: string
+          offered?: boolean
+          plan_key: string
+          product_id: string
+          store: string
+          updated_at?: string
+        }
+        Update: {
+          billing_interval?: string
+          created_at?: string
+          offered?: boolean
+          plan_key?: string
+          product_id?: string
+          store?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "plan_store_products_plan_key_fkey"
+            columns: ["plan_key"]
+            isOneToOne: false
+            referencedRelation: "subscription_plans"
+            referencedColumns: ["plan_key"]
           },
         ]
       }
@@ -6280,6 +6392,42 @@ export type Database = {
           trial_conversions?: number
           trial_starts?: number
           upgrade_count?: number
+        }
+        Relationships: []
+      }
+      revenuecat_webhook_events: {
+        Row: {
+          attempt_count: number
+          error_message: string | null
+          event_type: string
+          id: string
+          payload: Json
+          processed_at: string | null
+          processing_started_at: string | null
+          processing_status: string
+          received_at: string
+        }
+        Insert: {
+          attempt_count?: number
+          error_message?: string | null
+          event_type: string
+          id: string
+          payload: Json
+          processed_at?: string | null
+          processing_started_at?: string | null
+          processing_status?: string
+          received_at?: string
+        }
+        Update: {
+          attempt_count?: number
+          error_message?: string | null
+          event_type?: string
+          id?: string
+          payload?: Json
+          processed_at?: string | null
+          processing_started_at?: string | null
+          processing_status?: string
+          received_at?: string
         }
         Relationships: []
       }
@@ -8044,7 +8192,7 @@ export type Database = {
           member_limit: number
           name: string
           plan_key: string
-          representative_id: string
+          representative_id: string | null
           status: string
           updated_at: string
         }
@@ -8225,7 +8373,7 @@ export type Database = {
           industry: string | null
           logo_url: string | null
           name: string
-          owner_id: string
+          owner_id: string | null
           plan: string | null
           settings: Json | null
           status: string
@@ -8285,6 +8433,7 @@ export type Database = {
         Args: { p_roles: string[]; p_user_id: string }
         Returns: {
           id: string
+          previous_roles: string[]
           roles: string[]
         }[]
       }
@@ -8296,6 +8445,10 @@ export type Database = {
         }[]
       }
       age_years_jst: { Args: { p_birth_date: string }; Returns: number }
+      ai_plan_feature_daily_cap: {
+        Args: { p_feature: string; p_user_id: string }
+        Returns: number
+      }
       app_log_client_error_counts: {
         Args: { p_limit?: number; p_window_minutes?: number }
         Returns: {
@@ -8348,6 +8501,10 @@ export type Database = {
         Returns: string
       }
       auth_session_revoke: { Args: { p_session_id: string }; Returns: string }
+      begin_account_deletion_guard: {
+        Args: { p_user_id: string }
+        Returns: undefined
+      }
       begin_account_deletion_record: {
         Args: {
           p_executor_type: string
@@ -8358,9 +8515,22 @@ export type Database = {
         }
         Returns: string
       }
+      billing_apply_store_subscription: {
+        Args: { p_fetched_at: string; p_snapshot: Json; p_source: string }
+        Returns: Json
+      }
       billing_apply_stripe_subscription: {
         Args: { p_fetched_at: string; p_snapshot: Json; p_source: string }
         Returns: Json
+      }
+      billing_claim_revenuecat_event: {
+        Args: {
+          p_event_id: string
+          p_event_type: string
+          p_payload: Json
+          p_stuck_after?: unknown
+        }
+        Returns: string
       }
       billing_claim_stripe_event: {
         Args: {
@@ -8375,6 +8545,10 @@ export type Database = {
         Args: { p_user_id: string }
         Returns: number
       }
+      billing_finish_revenuecat_event: {
+        Args: { p_error?: string; p_event_id: string; p_ok: boolean }
+        Returns: undefined
+      }
       billing_finish_stripe_event: {
         Args: { p_error?: string; p_event_id: string; p_ok: boolean }
         Returns: undefined
@@ -8382,6 +8556,22 @@ export type Database = {
       billing_grant_manual_subscription: {
         Args: { p_expires_at?: string; p_plan_key: string; p_user_id: string }
         Returns: Json
+      }
+      billing_has_live_family_plan: {
+        Args: { p_user_id: string }
+        Returns: boolean
+      }
+      billing_iap_reconcile_candidates: {
+        Args: { p_limit: number; p_now: string; p_recheck_after: unknown }
+        Returns: {
+          period_end: string
+          synced_at: string
+          user_id: string
+        }[]
+      }
+      billing_iap_reconcile_mark_attempted: {
+        Args: { p_attempted_at: string; p_user_ids: string[] }
+        Returns: undefined
       }
       billing_manual_subscription_sync_after_end: {
         Args: { p_plan_key: string; p_user_id: string }
@@ -8681,7 +8871,7 @@ export type Database = {
           member_limit: number
           name: string
           plan_key: string
-          representative_id: string
+          representative_id: string | null
           status: string
           updated_at: string
         }
@@ -8774,7 +8964,10 @@ export type Database = {
           total_count: number
         }[]
       }
-      cron_secret_probe_body_json: { Args: { p_content: string }; Returns: Json }
+      cron_secret_probe_body_json: {
+        Args: { p_content: string }
+        Returns: Json
+      }
       cron_secret_probe_results: {
         Args: { p_limit?: number; p_lookback_minutes?: number }
         Returns: {
@@ -8840,6 +9033,14 @@ export type Database = {
         Args: { p_id: string; p_until: string; p_worker_id: string }
         Returns: boolean
       }
+      dissolve_family_by_representative: {
+        Args: { p_family_id: string }
+        Returns: Json
+      }
+      dissolve_org_by_owner: {
+        Args: { p_organization_id: string }
+        Returns: Json
+      }
       email_outbox_dead_counts: {
         Args: { p_limit?: number }
         Returns: {
@@ -8887,6 +9088,26 @@ export type Database = {
           p_worker_id: string
         }
         Returns: string
+      }
+      family_dissolve_apply: {
+        Args: { p_family_id: string }
+        Returns: {
+          created_at: string
+          dissolved_at: string | null
+          id: string
+          member_limit: number
+          name: string
+          plan_key: string
+          representative_id: string | null
+          status: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "family_groups"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       family_menu_planned_meals: {
         Args: { p_end_date: string; p_start_date: string }
@@ -9273,7 +9494,7 @@ export type Database = {
           member_limit: number
           name: string
           plan_key: string
-          representative_id: string
+          representative_id: string | null
           status: string
           updated_at: string
         }
@@ -9296,7 +9517,7 @@ export type Database = {
           industry: string | null
           logo_url: string | null
           name: string
-          owner_id: string
+          owner_id: string | null
           plan: string | null
           settings: Json | null
           status: string
@@ -9317,6 +9538,19 @@ export type Database = {
           p_organization_id: string
           p_reason: string
         }
+        Returns: Json
+      }
+      operator_force_representative_transfer: {
+        Args: { p_family_id: string; p_new_rep_id: string; p_reason: string }
+        Returns: Json
+      }
+      operator_mfa_end_sessions: {
+        Args: { p_user_id: string }
+        Returns: number
+      }
+      operator_mfa_satisfied: { Args: never; Returns: boolean }
+      org_dissolve_apply: {
+        Args: { p_organization_id: string }
         Returns: {
           contact_email: string | null
           contact_name: string | null
@@ -9327,7 +9561,7 @@ export type Database = {
           industry: string | null
           logo_url: string | null
           name: string
-          owner_id: string
+          owner_id: string | null
           plan: string | null
           settings: Json | null
           status: string
@@ -9342,31 +9576,6 @@ export type Database = {
           isSetofReturn: false
         }
       }
-      operator_force_representative_transfer: {
-        Args: { p_family_id: string; p_new_rep_id: string; p_reason: string }
-        Returns: {
-          created_at: string
-          dissolved_at: string | null
-          id: string
-          member_limit: number
-          name: string
-          plan_key: string
-          representative_id: string
-          status: string
-          updated_at: string
-        }
-        SetofOptions: {
-          from: "*"
-          to: "family_groups"
-          isOneToOne: true
-          isSetofReturn: false
-        }
-      }
-      operator_mfa_end_sessions: {
-        Args: { p_user_id: string }
-        Returns: number
-      }
-      operator_mfa_satisfied: { Args: never; Returns: boolean }
       organizations_owner_id_unchanged: {
         Args: { p_new_owner_id: string; p_org_id: string }
         Returns: boolean

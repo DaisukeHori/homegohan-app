@@ -2,7 +2,7 @@
 
 | 項目 | 値 |
 |---|---|
-| Status | 設計ゲート審査中 (v1.10) |
+| Status | 実装済み (#1758 12649661・2026-10-16)。設計ゲート通過 (v1.10・#1712)。同意書の文と版は #1901 (#1918 2ba5b3b3・2026-10-19。cross/20 Q-27) で v2026.2 に改めた (§6 の正典の写し・§8 の 14) |
 | Issue | #1173 (要件 03 §17.10。先例: #1174 の規約の同意 (`accept_legal_documents`)・#1232 の子供の昇格 (本人同意)・#1154 の AI 同意 (`external_data_consents.revoked_at`)) |
 | 分冊 | 1 冊・2 段 (段 A = DB + `packages/shared` + 書き出しの分類 / 段 B = Web + API + メール + モバイルの注記)。§0.2 |
 | 正典の関係 | `cross/01-auth-session.md` §12〜§13.2 (子供アカウント保護の方針・草案) と `family/01-data-model.md` §4.13 (`parental_consents` の草案 DDL) を**本冊が置き換える** (マージ後に両節は本冊への参照に現在形化する。§6.18)。`cross/08-legal-compliance.md` §7.2 の同意ゲート (#1174) に「生年月日の確認」を畳む。13a (#1442) は実装まで main に着地済み (#1697)・13b は設計書が main に着地済み。両冊との契約は §0.5 |
@@ -79,11 +79,11 @@
 | 同意画面の文面の置き場所 (13a): `packages/shared/src/legal-consent-copy.ts` の `LEGAL_CONSENT_COPY` (見出し・導入 2 通り・改定の印・ボタン・409 / 失敗の文) と関数 3 つ (チェックの文・全文リンクの文・版の行)。Web のフォームが使う (13b はネイティブの同意画面を作らず、Web の同意画面を WebView で開く)。`tests/legal-consent-copy.test.ts` の T-C1 は、フォームの文字列リテラル・JSX のテキスト (構文木。コメントは拾わない) が `LEGAL_CONSENT_COPY` のどの値も含まないことと、8 つのキーをフォームが参照することを固定し、走査の空振りの番兵として `'記録しています...'`・`'ログアウトしています...'` のリテラルがフォームにあることを求める | `packages/shared/src/legal-consent-copy.ts:8-44`、`tests/legal-consent-copy.test.ts:61-96` |
 | 本人を家族の行・代表者にする関数は年齢を見ない: `create_family_group(p_name text, p_plan_key text DEFAULT 'free')` の最新の定義は #1678 (#1700) の `20261016200000` (NOT_AUTHENTICATED → ALREADY_IN_FAMILY → `family_groups` と `family_members` (role `'representative'`) の INSERT。baseline (`20251126124224:1199-1226`) の本文の、代表者の `display_name` に写す式だけを `(SELECT public.normalize_profile_name(nickname) FROM user_profiles WHERE id = auth.uid())` にし、その上に `-- #1678: …` のコメント 1 行を足したもの。見出しは baseline と同じ引用符つきの書き方)。`accept_family_invite(p_token, p_share_meals, p_share_health, p_share_menu)` の最新の定義は #1584 (NOT_AUTHENTICATED → 招待の family_id → 家族の行のロック → 招待のロック → 期限・使用済み → メールの一致 → ALREADY_IN_FAMILY → 家族の status → 上限 → INSERT (role `'adult'`))。どちらも生年月日・年齢を見ない | `supabase/migrations/20261016200000_rpc_profile_name_placeholder.sql:205-233`、`20261015170000:37-144` |
 | 役割の譲渡の承諾も年齢を見ない: `accept_family_representative_transfer(p_proposal_id)` (宛先が本人の pending の提案 → 期限 → 家族の行のロック → 承諾者が家族の active な大人 / 代表者 → 提案を accepted → `family_members.role` と `family_groups.representative_id` の入れ替え)、`accept_org_owner_transfer(p_proposal_id)` (宛先が本人の pending の提案 → 期限 → 承諾者が組織の所属 → 提案を accepted → `org_role` と `organizations.owner_id` の入れ替え。baseline の定義のまま)。提案の表 `ownership_transfer_proposals` (scope `'family'` / `'organization'`、status の既定 `'pending'`、expires_at の既定 7 日後)。運営の `operator_force_representative_transfer`・`operator_force_owner_transfer` と、組織の作成 (`POST /api/admin/organizations` が body の `owner_id` を入れる) も年齢を見ない | `20261008090100:224, 269-339`、`20251126124224:811-869, 1390-1402, 2328-2364`、`src/app/api/admin/organizations/route.ts` |
-| 退会の 409 の判定 `findBlocker`: `organizations.owner_id` が本人の行、または `family_groups.representative_id` が本人の行が 1 つでもあれば 409 (`ACCOUNT_DELETE_BLOCKED_ORG_OWNER` / `ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE`)。家族の status (解散済み) は見ない。運営の強制解散 `operator_force_dissolve_family` はメンバーを left・家族を dissolved にするが `representative_id` は残す | `src/lib/account-deletion.ts:237-274`、`20261008090100:188-222` |
+| 退会の 409 の判定 `findBlocker`: `organizations.owner_id` が本人の行、または `family_groups.representative_id` が本人の行が 1 つでもあれば 409 (`ACCOUNT_DELETE_BLOCKED_ORG_OWNER` / `ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE`)。家族の status (解散済み) は見ない。運営の強制解散・利用者の解散 (family/11) はどちらも `representative_id` を NULL にするので、解散した家族は `findBlocker` に当たらない | `src/lib/account-deletion.ts:237-274`、`20261008090100:188-222` |
 | 画面の退会の呼び出し `deleteOwnAccount()` の結果は `AccountDeletionResult` = `{ kind: 'deleted' } \| { kind: 'unauthorized' } \| { kind: 'blocked'; message; blocker } \| { kind: 'failed' }` (`ok` のキーは無い)。409 の文は `accountDeletionBlockedMessage(message)` (サーバーの文、無ければ定型の文)、それ以外の失敗の文は `ACCOUNT_DELETE_FAILED_MESSAGE`。`blocker` (`'organization'` / `'family_group'` / null) は設定の画面が譲渡の画面 (`ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE`) へ案内するためのもの (#1562。解散は利用者の画面が無く運営が行う) | `src/lib/account-self-service.ts:99-175` |
 | 家族・組織の役割の 4 route の失敗の扱い: `POST /api/family/groups` は `ALREADY_IN_FAMILY` だけを 409 にし、それ以外は 500 `RPC_FAILED`。`POST /api/family/invites/[id]/accept` は `msg.includes(…)` の並びで、知らない文は 500。`POST /api/family/representative-transfer/[id]/accept` と `POST /api/org/owner-transfer/[id]/accept` は `mapPgErrorToHttp` の code と、route の中の文の表 `TRANSFER_ACCEPT_MESSAGES` (無い code は固定の文) を返す。画面 (`/family/setup`・`FamilyInviteAcceptModal`・家族と組織の `transfer-accept` の画面) は、個別に扱わない code では本文の `error.message` をそのまま出す | `src/app/api/family/groups/route.ts:58-70`、`src/app/api/family/invites/[id]/accept/route.ts:66-136`、`src/app/api/family/representative-transfer/[id]/accept/route.ts:15-21, 54-60`、`src/app/api/org/owner-transfer/[id]/accept/route.ts:13-19, 48-52`、`src/app/(main)/family/setup/page.tsx:39-42`、`src/components/membership/FamilyInviteAcceptModal.tsx:55-73`、`src/app/(main)/family/transfer-accept/[proposal_id]/page.tsx:94`、`src/app/(org)/org/transfer-accept/[proposal_id]/page.tsx:99` |
 | E2E の `tests/e2e/legal-consent-gate.spec.ts`: spec の中の `signInAsNewUser` (`profile: true` で `user_profiles` を insert。`legal` は版の 2 列だけ) と `acceptOnConsentPage` (チェック 2 つの外し入れで押せる / 押せないを確かめてから押す。呼び出しは `:273, 315, 331, 365, 406, 474, 506, 545, 657` の 9 か所)、API の同意の it (`profile: true` の人が版 2 つだけを POST して 200 を期待)。E2E で同意済みの版を入れるのはこのファイルだけ (`git grep terms_version_accepted -- tests/e2e`)。`tests/e2e/fixtures/fresh-user.ts`・`tests/e2e/global-setup.ts` は版も生年月日も入れず、同意画面に回されたら共通の helper `acceptLegalConsentIfShown` を呼ぶ | `tests/e2e/legal-consent-gate.spec.ts:82-117, 174-190, 622-635`、`tests/e2e/fixtures/fresh-user.ts:466`、`tests/e2e/global-setup.ts:240, 282` |
-| 家族グループの削除: ポリシー `family_groups_delete_representative` で代表者は自分の家族の行を DELETE でき、`family_members` (と本冊の `parental_consents`) は CASCADE で消える。家族の行を消す経路はほかに、pg_cron の `purge-dissolved-family-groups` (operator/11 §5.4。解散から 90 日を過ぎ、同意の記録 (`parental_consents`) を持たない家族だけを消す。同意の記録を持つ家族は消さないので、この経路で同意の行は消えない)。アプリの route に家族の行の DELETE は無い (`src`・`lib` に `from('family_groups')` の `.delete(` は無い) | `20251126124224:10352` |
+| 家族グループの削除: 家族の行を DELETE すると `family_members` (と本冊の `parental_consents`) は CASCADE で消える。利用者 (anon / authenticated) は家族の行を直接 DELETE できない (#1917 の続きでポリシー `family_groups_delete_representative` を消し、DELETE・TRUNCATE の権限を外した)。家族の行を消すのは、pg_cron の `purge-dissolved-family-groups` (operator/11 §5.4。解散から 90 日を過ぎ、同意の記録 (`parental_consents`) を持たない家族だけを消す。同意の記録を持つ家族は消さないので、この経路で同意の行は消えない) と service_role (運営の手作業) だけ。代表者が家族をやめるのは解散 (`dissolve_family_by_representative`。family/11) で、同意の行は取り消し済みとして残る。アプリの route に家族の行の DELETE は無い (`src`・`lib` に `from('family_groups')` の `.delete(` は無い) | `20251126124224:10352`、`20261022200000_family_groups_no_direct_delete.sql` |
 | 本人の退会で本人の `family_members` の行が消える: 外部キー `family_members_user_id_fkey1` は `REFERENCES auth.users(id) ON DELETE CASCADE` (`20261010000100` は張り直していない)。退会の掃除 (`prepare_account_deletion`・`src/lib/account-deletion.ts`) は `family_members` に触れず、`auth.admin.deleteUser` の CASCADE で行が消える (結合テストは退会した大人の行が 0 件になることを固定する)。昇格した本人の行 (`user_id` あり・role `'adult'`) も同じ。`family_members` に DELETE のポリシーは無く (SELECT と UPDATE だけ)、行が消えるのはこの CASCADE・家族の行の DELETE の CASCADE・service_role の手作業だけ。`membership_audit.actor_id` は `auth.users` を指す SET NULL の外部キー。`auth-users-fk-on-delete.test.ts` の E は、退会で消える表 (CASCADE でたどれる表 = `family_members` を含む) を指す SET NULL の外部キーの列が NULL を許すことを求める | `20251126124224:8933, 9068, 10385, 10389`、`20261010000100:363-477`、`src/lib/account-deletion.ts:237-274`、`tests/integration/security/account-deletion.test.ts:571`、`tests/integration/security/auth-users-fk-on-delete.test.ts:290` |
 | #1678 の番兵と結合テスト: `tests/rpc-profile-name-placeholder-migration-contract.test.ts` の `it.each(RPCS)('%s を最後に定義する migration が本 migration で、1 つ前はベースライン')` (`:138-145`) は、`RPCS` (`:49` = `get_invite_details`・`get_promotion_details`・`create_family_group`) を最後に定義する migration (`definesPattern` = `CREATE OR REPLACE FUNCTION` の見出し。行コメントを除いて走査) が `_rpc_profile_name_placeholder.sql` で、1 つ前が baseline であることを求める。ほかの it は、本 migration (`ours[0]`) と baseline のファイルどうし・本 migration の戻し口を比べるだけで、`normalize_profile_name` を定義する migration は本 migration だけであることも固定する (`:147-152`)。結合テスト `tests/integration/security/rpc-profile-name-placeholder.test.ts` は、helper `promotionRequesterName` (`:161-182`) で `add_family_child` を 3 引数 (`p_child_profile: { age: 12 }`) で呼んでから `request_child_promotion` を呼び、`create_family_group` の `display_name` を `:289` 以降で確かめる (利用者の `user_profiles` は nickname だけで、生年月日は入れない) | `tests/rpc-profile-name-placeholder-migration-contract.test.ts:49, 138-152`、`tests/integration/security/rpc-profile-name-placeholder.test.ts:77-113, 161-182, 289` |
 
@@ -313,11 +313,11 @@
 | P18 | 同 | あり | 13〜17 | = true | 従来どおり pending を作る |
 | P19 | 同 | あり | ≥ 18 | — | 従来どおり |
 | P20 | `accept_child_promotion` | 同 P16〜P19 (P17b を含む) の検査を承諾時にもう一度 (年齢も承諾の日で数え直す) | | | 通れば `user_profiles.birth_date` ← メンバーの値 (上書き)。P17 の承諾時 = T-DB26、P17b = T-DB34 (依頼は service_role で作る。製品の経路では依頼の時点で断られる)、P18 = T-DB25、P19 = T-DB30、P16 = T-MIG4 |
-| P21 | メンバーの status が active → removed (除名 `remove_family_member`) / left (運営の強制解散 `operator_force_dissolve_family`、昇格済みの本人の脱退 `leave_family`) | — | — | 有効な同意あり (子供の行、または昇格して role = adult になった行) | `revoked_at` + `revoked_reason` (removed → `member_removed`、left → `member_left`) + 監査 |
+| P21 | メンバーの status が active → removed (除名 `remove_family_member`) / left (運営の強制解散 `operator_force_dissolve_family`・利用者の解散 `dissolve_family_by_representative` (→ `family_dissolve_apply`。family/11)、昇格済みの本人の脱退 `leave_family`) | — | — | 有効な同意あり (子供の行、または昇格して role = adult になった行) | `revoked_at` + `revoked_reason` (removed → `member_removed`、left → `member_left`) + 監査 |
 | P22 | 同 | — | — | 同意なし (≥ 18 の子供・同意の無い大人) | 何もしない |
 | P23 | 署名者の退会 | — | — | — | `parent_user_id` → NULL。行は残る |
 | P24 | 子供の行・昇格した本人の行の DELETE (昇格した本人の退会で `auth.users` から CASCADE・service_role の削除) | — | — | 有効な同意あり / 取り消し済み | 有効な同意は BEFORE DELETE のトリガーが `revoked_at` + `revoked_reason='member_deleted'` + 監査 (取り消し済みは変えない)。外部キーの SET NULL で `family_member_id` が NULL。同意の行は残る |
-| P24b | 家族の行の DELETE (代表者のポリシー・service_role・pg_cron の `purge-dissolved-family-groups` (operator/11 §5.4。解散から 90 日を過ぎ、同意の記録 (`parental_consents`) を持たない家族だけを消す。同意の記録を持つ家族は消さないので、この経路で同意の行は消えない)) | — | — | — | 子供の行・同意の行とも消える (`family_members` と `parental_consents.family_id` の CASCADE) |
+| P24b | 家族の行の DELETE (service_role・pg_cron の `purge-dissolved-family-groups` (operator/11 §5.4。解散から 90 日を過ぎ、同意の記録 (`parental_consents`) を持たない家族だけを消す。同意の記録を持つ家族は消さないので、この経路で同意の行は消えない)) | — | — | — | 子供の行・同意の行とも消える (`family_members` と `parental_consents.family_id` の CASCADE) |
 | P25 | authenticated が `parental_consents` を INSERT / UPDATE / DELETE | — | — | — | 42501 (GRANT なし・ポリシーなし) |
 | P26 | authenticated が `family_members.birth_date` / `user_profiles.birth_date` を直接 UPDATE | — | — | — | 42501 `CANNOT_MODIFY_PRIVILEGED_COLUMN` (guard) |
 | P27 | service_role (テスト・運営の手作業) が `role = 'child'` ∧ `user_id IS NULL` の行を `birth_date` なしで INSERT / `birth_date` を NULL に UPDATE | 無し | — | — | 23514 (`family_members_child_birth_date_required`) |
@@ -389,7 +389,7 @@
 | 行あり・版一致・birth あり・18 歳未満・つながりあり | 画面の GET | 通す (gaps = []) | middleware の `withMinorGuardianStatus` が `legal_minor_has_guardian_path()` = true を受ける | DB への問い合わせ 1 回 (18 歳未満の本人のリクエストだけ) |
 | 同 (② = S11 の途中。自分宛の pending の依頼) | `accept_child_promotion` (本人) | 同 (① = 自分の行に有効な同意) | §6.4 の 11 | birth をメンバーの値で上書き |
 | 同 (②) | 本人が `reject_child_promotion` で断る / 親が `revoke_child_promotion` で取り消す / 依頼の `expires_at` を過ぎる (時刻) | 行あり・版一致・birth あり・18 歳未満・つながりなし | — | 本人の行は何も変わらない (状態を DB に写さない。次のゲートで数え直す。S17) |
-| 同 (① = 昇格済み) | `leave_family` (本人) / `remove_family_member` / `operator_force_dissolve_family` / 家族の行の DELETE (代表者のポリシー・service_role。P24b) | 同 (つながりなし) | 各関数の既存のガード | (b) の表のトリガーが同意を revoked (家族の行の DELETE なら本人の行と同意の行ごと消える)。`leave_family` / `remove_family_member` では本人の `user_profiles` は `family_id` が NULL になるだけで、`birth_date` は変わらない (S18) |
+| 同 (① = 昇格済み) | `leave_family` (本人) / `remove_family_member` / `operator_force_dissolve_family` / 利用者の解散 `dissolve_family_by_representative` (→ `family_dissolve_apply`。family/11) / 家族の行の DELETE (service_role・purge。P24b) | 同 (つながりなし) | 各関数の既存のガード | (b) の表のトリガーが同意を revoked (家族の行の DELETE なら本人の行と同意の行ごと消える)。`leave_family` / `remove_family_member` では本人の `user_profiles` は `family_id` が NULL になるだけで、`birth_date` は変わらない (S18) |
 | 同 (① / ②) | 本人が `create_family_group` / `accept_family_invite` | 不変 | — | RAISE `MINOR_ACCOUNT_NOT_ALLOWED` (403)。何も作らない (P36・S21)。② のままなので、このあとの `accept_child_promotion` は `ALREADY_IN_FAMILY` にならない |
 | 同 (① / ②) | 本人が `accept_family_representative_transfer` / `accept_org_owner_transfer` | 不変 | — | RAISE `MINOR_ACCOUNT_NOT_ALLOWED` (403)。代表者・オーナーにならない (P37・S21) |
 | 同 (① = 昇格済み・つながりあり) | 本人が設定から退会 (`POST /api/account/delete`) | `auth.users` なし (本人の `family_members` の行も CASCADE で消える) | 本人が家族の代表者・組織のオーナーでない (`findBlocker`。本人の操作では 18 歳未満はどちらにもならない。P36・P37) | 既存の退会。(b) の表の BEFORE DELETE のトリガーが有効な同意を `member_deleted` で取り消し、監査を残し、同意の行は `family_member_id` NULL で残る (P24・S22) |
@@ -421,6 +421,7 @@
 | active・同意なし (≥ 18) | `accept_child_promotion` (本人) | active (adult・user_id あり) | メール一致・期限 (年齢・同意の検査は飛ぶ) | プロフィールへ birth を写す。監査 (P19 の承諾時・T-DB30) |
 | active・同意 active | 除名 `remove_family_member` (status → removed) | removed・同意 revoked (`member_removed`) | — | トリガー: `revoked_at`・監査 |
 | active・同意 active | 運営の強制解散 `operator_force_dissolve_family` (status → left) | left・同意 revoked (`member_left`) | — | 同 |
+| active・同意 active | 代表者の解散 `dissolve_family_by_representative` (status → left) | left・同意 revoked (`member_left`) | — | 同 (トリガーは関数を問わないので、運営の強制解散と同じ。family/11 F-9・§10.1) |
 | active (子供の行)・同意 active | `leave_family` (本人の脱退) | 到達しない | 子供の行は `user_id` が NULL。`leave_family` は `user_id = auth.uid()` の行だけを動かす | — |
 | active (昇格済み = adult・user_id あり・本人が 18 歳未満)・同意 active | 本人が代表者の譲渡の提案を承諾 (`accept_family_representative_transfer`) | 不変 (adult のまま) | — | RAISE `MINOR_ACCOUNT_NOT_ALLOWED` (403。P37)。提案は pending のまま |
 | active (昇格済み = adult・user_id あり)・同意 active | `leave_family` (本人の脱退。status → left) / 除名 (status → removed) | left / removed・同意 revoked (`member_left` / `member_removed`) | `leave_family` の既存のガード (代表者は不可) | トリガー: `revoked_at`・監査 (トリガーは role を問わない。§6.4 の 6)。本人が 18 歳未満なら、本人のアカウントは (a) の「つながりなし」に入り、ゲートが止める (S18) |
@@ -430,7 +431,7 @@
 | active・同意 active | 時間の経過 (署名からの年数・子供の 18 歳到達) | 不変 (同意 active のまま) | — | 何もしない (期限で失効させるバッチ・トリガーは無い。P31) |
 | removed / left・同意 revoked | 再び追加したい | 新しい行 (新しい同意) | — | 古い行・同意はそのまま残る |
 | 任意 | 家族の大人が `birth_date` を直接 UPDATE | 不変 | — | 42501 |
-| 任意 | 家族の行の DELETE (代表者のポリシー `family_groups_delete_representative`・service_role・pg_cron の `purge-dissolved-family-groups` (operator/11 §5.4。解散から 90 日を過ぎ、同意の記録 (`parental_consents`) を持たない家族だけを消す。同意の記録を持つ家族は消さないので、この経路で同意の行は消えない)) | 無し (子供の行・同意の行とも消える) | — | `family_members` と `parental_consents.family_id` の CASCADE (P24b)。その途中で、子供の行の BEFORE DELETE のトリガーが有効な同意を取り消して監査を書くことがある (同意の行は必ず消える。監査の行が残るかは外部キーの動作の順で決まるので、テストで固定しない) |
+| 任意 | 家族の行の DELETE (service_role・pg_cron の `purge-dissolved-family-groups` (operator/11 §5.4。解散から 90 日を過ぎ、同意の記録 (`parental_consents`) を持たない家族だけを消す。同意の記録を持つ家族は消さないので、この経路で同意の行は消えない)) | 無し (子供の行・同意の行とも消える) | — | `family_members` と `parental_consents.family_id` の CASCADE (P24b)。その途中で、子供の行の BEFORE DELETE のトリガーが有効な同意を取り消して監査を書くことがある (同意の行は必ず消える。監査の行が残るかは外部キーの動作の順で決まるので、テストで固定しない) |
 | active / removed / left (子供の行)・同意 active / revoked | service_role が子供の行だけを DELETE | 無し・同意は revoked (有効だったものは `member_deleted`。取り消し済みは理由を変えない)・`family_member_id` NULL で残る | — | BEFORE DELETE のトリガー: 有効な同意なら `revoked_at`・監査 (actor は NULL) → 外部キーの SET NULL (P24・T-DB19) |
 | 任意 | 署名者の退会 | 不変 (parent_user_id NULL) | — | FK SET NULL |
 | 任意 | 署名者がアカウントのデータを書き出す (家族を抜けたあとも) | 不変 | 署名者 = 本人 (RLS の `parent_user_id = auth.uid()`) | 自分が署名した同意の行が書き出しに入る |
@@ -602,7 +603,7 @@ REVOKE ALL ON FUNCTION public.revoke_parental_consent_on_member_inactive() FROM 
 DROP TRIGGER IF EXISTS trg_family_members_revoke_parental_consent ON public.family_members;
 -- role は条件にしない: 昇格した本人の行 (role = adult。同意の行は残っている) が脱退・除名されたときも失効させる。
 -- 同意の行が無いメンバー (大人・18 歳以上の子供) では UPDATE が 0 行で終わり、監査も書かない。
--- left になるのは leave_family (本人の行) と operator_force_dissolve_family (家族の全員)、removed は remove_family_member。
+-- left になるのは leave_family (本人の行) と operator_force_dissolve_family・dissolve_family_by_representative (家族の全員。どちらも family_dissolve_apply。family/11)、removed は remove_family_member。
 CREATE TRIGGER trg_family_members_revoke_parental_consent
   AFTER UPDATE OF status ON public.family_members
   FOR EACH ROW
@@ -930,10 +931,17 @@ export interface ParentalConsentDocumentInfo {
   /** 施行日 (日本時間) YYYY-MM-DD。画面に出すだけ */
   effectiveDate: string;
 }
-/** ⚠ 版・施行日・文面は弁護士の確認を経て決める (§8)。いまの値は仮置き */
+/**
+ * ⚠ 文面は弁護士の確認を経て決める (§8)。
+ * v2026.2 (#1901 cross/20 Q-27): 同意書の文から実装に無い約束 (保護者が代わりに記録する・AI の解析と献立の提案に子どもの記録を使う・
+ * お問い合わせからの削除の依頼) を消し、登録できる情報 (名前・生年月日・性別) だけを書いたので版を上げた。
+ * v2026.1 で記録した同意は失効しない (parental_consent_active は版を見ない。cross/14 S15)。新しい子どもの追加は v2026.2 で記録する。
+ * 施行日は公開 (デプロイ) の日。利用規約・プライバシーポリシーの施行日 (legal-versions.ts の LEGAL_DOCUMENTS) と同じ
+ * 2026-10-19 に公開した (#1918。cross/20 §9.4 の 3)。
+ */
 export const PARENTAL_CONSENT_DOCUMENT: Readonly<ParentalConsentDocumentInfo> = {
-  version: 'v2026.1',
-  effectiveDate: '2026-11-01',
+  version: 'v2026.2',
+  effectiveDate: '2026-10-19',
 };
 /** 同意文書の全文を公開するパス (未ログインで読める。同意ゲートの対象外 /legal 以下) */
 export const PARENTAL_CONSENT_DOCUMENT_PATH = '/legal/parental-consent';
@@ -1029,7 +1037,7 @@ export const LEGAL_CONSENT_BIRTH_DATE_COPY = {
   invalid: '生年月日を正しく入力してください（未来の日付、120年より前の日付は登録できません）。',
   minorRefusedHeading: '18歳未満の方はご自身では登録できません',
   minorRefusedBody:
-    '入力された生年月日では18歳未満のため、ご自身では登録できません。13歳以上の方は、保護者の方がほめゴハンの家族にあなたを追加し、保護者の同意をしたあと、保護者から届く「アカウントをつなぐ」案内のメールから登録してください。13歳未満の方のアカウントは作れません（保護者の方が家族の記録として代わりに記録します）。生年月日を間違えた場合は「生年月日を直す」を押してください。',
+    '入力された生年月日では18歳未満のため、ご自身では登録できません。13歳以上の方は、保護者の方がほめゴハンの家族にあなたを追加し、保護者の同意をしたあと、保護者から届く「アカウントをつなぐ」案内のメールから登録してください。13歳未満の方のアカウントは作れません。生年月日を間違えた場合は「生年月日を直す」を押してください。',
   fixButton: '生年月日を直す',
   withdrawButton: '登録をやめる（アカウントを削除する）',
   withdrawnHeading: '登録をやめました',
@@ -1058,17 +1066,23 @@ export const PARENTAL_CONSENT_COPY = {
     '保護者の同意が記録されていないため、この操作はできません。保護者の方がお子さまを家族に追加し直して、同意を記録してください。',
   /** 同じ 2 つの画面で、403 PROMOTION_UNDER_COPPA_AGE (13 歳未満の子供の昇格) のときに出す */
   promotionUnderCoppaAge:
-    '13歳未満のお子さまは、ご本人のアカウントとつなげません。保護者の方が家族の記録として代わりに記録してください。13歳になると、つなぐことができます。',
+    '13歳未満のお子さまは、ご本人のアカウントとつなげません。13歳になると、つなぐことができます。',
 } as const;
 
-/** 同意文書の本文 (仮。弁護士の確認前)。公開ページ /legal/parental-consent と子供の追加画面の要約が使う */
+/**
+ * 同意文書の本文 (弁護士の確認前)。公開ページ /legal/parental-consent と子供の追加画面の要約が使う。
+ * v2026.2 (#1901 cross/20 Q-27): 実装にあることだけを書く。本人のアカウントが無い子どもの行が持つのは名前・生年月日・性別と
+ * 保護者の同意の記録で、食事・健康の記録を家族の誰かが代わりに付ける経路は無い (cross/20 F-33)。子どもの情報は AI 事業者へ送らない
+ * (送る情報はプライバシーポリシー第6条)。運営が代わりに削除する経路も無いので、削除の依頼の約束は書かず、
+ * 保存の期間と消去の請求はプライバシーポリシー (第12条・第14条) に委ねる
+ */
 export const PARENTAL_CONSENT_DOCUMENT_COPY = {
   title: '保護者の同意書',
   paragraphs: [
-    'ほめゴハンは、18歳未満のお子さまの情報（お名前・生年月日・性別・食事の記録・アレルギーなどの健康に関する情報）を、保護者の方の同意に基づいて取り扱います。',
-    '同意する方は、お子さまの親権者または法定保護者であること、お子さまの情報を家族グループの大人のメンバーと共有すること、および AI による食事の解析・献立の提案にお子さまの記録が使われることに同意します（AI への送信は、保護者ご自身の「AI へのデータ提供の同意」が別途必要です）。',
-    '13歳未満のお子さまには、プッシュ通知などお子さま本人に向けた連絡を行いません。お子さま本人のアカウントは作成せず、保護者の方が代わりに記録します。',
-    '同意はいつでも取り消せます。取り消すには、家族のメンバー管理画面からお子さまを家族から外してください。外した時点で、お子さまの新しい記録と共有は止まります（お子さまご本人のアカウントをつないでいる場合は、そのアカウントも18歳になるまで使えなくなります）。保存済みの情報の削除は、お問い合わせからご依頼ください。',
+    'ほめゴハンは、18歳未満のお子さまの情報を、保護者の方の同意に基づいて取り扱います。ご本人のアカウントが無いお子さまについて、保護者の方が家族グループに登録できるのは、お名前・生年月日・性別（任意）です。',
+    '同意する方は、お子さまの親権者または法定保護者であることと、登録したお子さまの情報と保護者の同意の記録を、家族グループのメンバーが閲覧できる状態になることに同意します。',
+    '13歳未満のお子さまには、プッシュ通知などお子さま本人に向けた連絡を行いません。お子さま本人のアカウントは作成せず、ほめゴハンに登録するお子さまの情報は、第1段落の情報だけです。13歳以上のお子さまは、ご本人が承諾すると、ご本人のアカウントを家族グループにつなぐことができます。',
+    '同意はいつでも取り消せます。取り消すには、家族のメンバー管理画面からお子さまを家族から外してください（お子さまご本人のアカウントをつないでいる場合は、そのアカウントも18歳になるまで使えなくなります）。登録した情報の保存の期間と、消去の請求の方法は、プライバシーポリシーのとおりです。',
     '同意の記録（署名した方の氏名・日時・この文書の版・お子さまの生年月日と同意の時点の年齢・同意の操作をした端末の接続元の情報（IPアドレスとブラウザなどの種類））は、同意の証跡として保存します。お子さまを家族から外して同意を取り消したあとも、お子さまご本人のアカウントをつないでいてそのアカウントが削除されたあとも、取り消した日時とあわせて保存します。署名した方が退会したあとも記録は残ります。家族グループを削除したときは、お子さまの情報とあわせて削除します。',
   ],
 } as const;
@@ -1358,7 +1372,7 @@ export async function withMinorGuardianStatus<P extends LegalConsentProfile>(
 | `BIRTH_DATE_MAX_AGE_YEARS` | 120 | shared | 要件 01 行 1720。SQL の `INTERVAL '120 years'` と同値 |
 | `SIGNED_NAME_MAX_LENGTH` | 100 | shared | `parental_consents_signed_name_length` と同値 |
 | (新設しない) JST の今日・暦日の検査 | 既存の `todayLocal()`・`isCalendarDate()` | shared (`date-utils.ts`) | 時差・ミリ秒・ISO の文字数の定数は本冊では作らない (既存の関数が `timeZone: 'Asia/Tokyo'` で持つ。§0.3) |
-| `PARENTAL_CONSENT_DOCUMENT` | `{ version: 'v2026.1', effectiveDate: '2026-11-01' }` (仮) | shared | 改定は版を上げる (§8) |
+| `PARENTAL_CONSENT_DOCUMENT` | `{ version: 'v2026.2', effectiveDate: '2026-10-19' }` (施行日は公開日。#1918 で 2026-10-19 に公開した。cross/20 §9.4 の 3。v2026.1 → v2026.2 は cross/20 Q-27 で文を実装に合わせたため) | shared | 改定は版を上げる (§8) |
 | `PARENTAL_CONSENT_DOCUMENT_PATH` | `/legal/parental-consent` | shared | ゲートの対象外 (`/legal` prefix) |
 | `BIRTH_DATE_PATTERN` / `PARENTAL_CONSENT_VERSION_PATTERN` | 正規表現 | shared | DB の CHECK・`LEGAL_VERSION_PATTERN` と同じ |
 | 512 (UA の切り詰め) | 既存 `MAX_USER_AGENT_LENGTH` (accept route) と同値。child route にも同じ名前の定数を置く | SQL / route | `accept_legal_documents` と同じ |
@@ -1416,8 +1430,8 @@ export async function withMinorGuardianStatus<P extends LegalConsentProfile>(
 |---|---|---|
 | `/legal-consent` (Web。アプリの WebView でも同じ) | `needsBirthDate` | 生年月日の欄 (必須) + チェック 2 (初期値はどちらもオフ。同意済みの版の人 (S3) も改めてチェックする) |
 | 同 | 改定の再同意・生年月日あり | 従来どおり (欄は出ない) |
-| 同 | `minor_refused` | 見出し・本文・「生年月日を直す」・「登録をやめる（アカウントを削除する）」 |
-| 同 | `guardian_missing` (gaps に `'guardian_consent'`。18 歳未満で保護者の同意とのつながりが無い) | 見出し `guardianMissingHeading`・本文 `guardianMissingBody`・「登録をやめる（アカウントを削除する）」だけ (生年月日の欄・チェック・「同意しない」は出さない) |
+| 同 | `minor_refused` | 見出し・本文 (本文の下に `STORE_SUBSCRIPTION_DELETION_NOTICE` の文 = ストアの購読は退会で解約されない。billing/03 §10.4)・「生年月日を直す」・「登録をやめる（アカウントを削除する）」 |
+| 同 | `guardian_missing` (gaps に `'guardian_consent'`。18 歳未満で保護者の同意とのつながりが無い) | 見出し `guardianMissingHeading`・本文 `guardianMissingBody`・`STORE_SUBSCRIPTION_DELETION_NOTICE` の文 (billing/03 §10.4)・「登録をやめる（アカウントを削除する）」だけ (生年月日の欄・チェック・「同意しない」は出さない) |
 | 同 | `withdrawn` | 「登録をやめました」+ 本文 + `/signup` へのリンク |
 | `/signup` (Web) / `(auth)/signup.tsx` (モバイル) | 常時 | `SIGNUP_MINOR_NOTICE` 1 行 |
 | `/family/members/child/new` | 生年月日 < 18 | 同意の枠 (要約・全文リンク・チェック 2・氏名) |
@@ -1819,7 +1833,7 @@ E2E (3 サーバー) は `scripts/local-ci.sh` が流す。`account-export-scope
 ## 8. 未解決事項 (openQuestions。オーナーの確認が要るもの)
 
 1. **同意文書の文面・版・施行日** (`PARENTAL_CONSENT_DOCUMENT` / `PARENTAL_CONSENT_DOCUMENT_COPY`) は仮。弁護士の確認後に値を書き換える。電子署名の方式 (氏名の入力 + 2 つのチェック + ログイン済みの本人) が COPPA の「verifiable parental consent」として十分かも同じ確認に含める。第 5 段落 (記録する項目と保存の仕方) は 2 の保持の方針と同じ確認で決め、どちらかを変えるときは両方を同じコミットで直す (§6.11)。
-2. **保持期間**: 本冊は「子供を外して取り消したあとも行を残す (`revoked_at`)・子供の行が消えても (昇格した本人の退会の CASCADE・service_role の削除) 取り消し済みとして残す (`family_member_id` だけ NULL。有効だった同意は `member_deleted` で取り消す)・署名者の退会では紐づけだけ外す・家族の行の削除 (CASCADE) で消える」で、公開する同意書の第 5 段落もこのとおりに書いた (§6.5.1・§6.11)。子供の行が消えても残すのは、取り消し・署名者の退会のあとも残す方針と、`20261010000100` の方針 (行を残して本人との紐づけだけ外す) に揃えるため (昇格した本人の退会で、署名した親の同意の記録が親の書き出しからも消えないようにする)。家族の行は代表者が消せる (ポリシー `family_groups_delete_representative`。アプリの画面には無い。§0.3) ので、同意の記録も一緒に消える。証跡として一定期間残す要否 (消えないように別表へ写すか)・取り消しのあと一定期間で消すかはオーナー判断。変えるときは第 5 段落と T-SH9・T-DB19・T-DB20・T-DB38 を同じコミットで直す。
+2. **保持期間**: 本冊は「子供を外して取り消したあとも行を残す (`revoked_at`)・子供の行が消えても (昇格した本人の退会の CASCADE・service_role の削除) 取り消し済みとして残す (`family_member_id` だけ NULL。有効だった同意は `member_deleted` で取り消す)・署名者の退会では紐づけだけ外す・家族の行の削除 (CASCADE) で消える」で、公開する同意書の第 5 段落もこのとおりに書いた (§6.5.1・§6.11)。子供の行が消えても残すのは、取り消し・署名者の退会のあとも残す方針と、`20261010000100` の方針 (行を残して本人との紐づけだけ外す) に揃えるため (昇格した本人の退会で、署名した親の同意の記録が親の書き出しからも消えないようにする)。家族の行は利用者からは消せない (#1917 の続きでポリシー `family_groups_delete_representative` と DELETE の権限を外した。§0.3)。解散から 90 日の purge は同意の記録を持つ家族を残すので、同意の記録が家族の行と一緒に消えるのは service_role の手作業で家族の行を消したときだけ。証跡として一定期間残す要否 (消えないように別表へ写すか)・取り消しのあと一定期間で消すかはオーナー判断。変えるときは第 5 段落と T-SH9・T-DB19・T-DB20・T-DB38 を同じコミットで直す。
 3. **同意文書の改定時の再同意**: 本冊は「既存の同意は失効しない」(S15)。内容が変わる改定で既存の子供にも再同意を求めるなら、`parental_consent_active` に版の一致を足す設計 (同意待ちの状態が復活する) が要るので、別冊。
 4. **18 歳以上の「アカウント無しのメンバー」**: 本冊は従来どおり許す (祖父母など。同意不要)。禁じる (招待に限る) なら `add_family_child` に `v_age >= 18 → CHILD_NOT_MINOR` を足すだけ。
 5. **自己登録を断った未成年のアカウントの自動削除**: 本冊は本人の「登録をやめる」に任せ、放置された `auth.users` の行 (プロフィール無し) は消さない。一定時間後に運営が消す運用にするかはオーナー判断。
@@ -1831,7 +1845,7 @@ E2E (3 サーバー) は `scripts/local-ci.sh` が流す。`account-export-scope
 11. **同意の有効期限**: 本冊は期限を設けない (子供を外すまで有効。§6.2 の「同意の有効期限」・P31)。定期の再同意 (例: 一定年数ごと・13 歳になったとき) を求めるなら、3 と同じく `parental_consent_active` に条件を足す設計 (同意待ちの状態が復活する) が要るので、別冊。要否はオーナーの確認。
 12. **署名者の範囲 (要件との違い)**: 要件 03 §17.10 は 13 歳未満の同意の署名者を「親 (家族 owner)」と書く。本冊は、家族の大人 (代表者または大人の役割) のうち自分の `user_profiles.birth_date` で 18 歳以上と確かめられる人なら署名できる形にした (§6.4 の 9・P12〜P14b)。理由: 代表者が親権者とは限らない (祖父母が代表者で、親が大人のメンバーのことがある)。親権者であることは署名の「私はこのお子さまの親権者または法定保護者です」の確認で本人に宣言させる。18 歳未満 (昇格した本人) と生年月日の無い人は署名できない。代表者だけに絞るなら、§6.4 の 9 の署名者の検査に `v_caller_role = 'representative'` の条件を足すだけ (エラーの code は同じ)。どちらにするかはオーナーの確認。
 13. **保護者の同意とのつながりが切れた 18 歳未満の本人のアカウント**: 本冊は同意ゲートで止め、退会の道だけを出す (アカウントと記録は残り、保護者が家族に追加し直して依頼し直すか、18 歳になれば使える。§6.3 (a))。一定期間後に自動で退会させる・記録を消す運用にするかは、5 と同じくオーナーの確認。
-14. **13 歳未満の本人のアカウント**: 本冊は作らない (昇格 2 本が `PROMOTION_UNDER_COPPA_AGE` で、`accept_legal_documents` が昇格の経路があっても `LEGAL_MINOR_SELF_SIGNUP_REFUSED` で断る。§6.4 の 10・11)。理由: 公開する同意書の第 3 段落 (仮) が「お子さま本人のアカウントは作成せず、保護者の方が代わりに記録します」と書いており、要件 03 §17.10 も「子供アカウント自体は `auth.users` を持たない」「13 歳未満には Push 通知送信不可」と書くので、動作を文面と要件の側に揃えた (現行の昇格 #1232 は年齢を見ないので、13 歳未満の昇格は本冊から断るようになる。本番の `family_members` は 0 行で、影響を受ける人はいない)。13 歳未満でも保護者の依頼で本人のアカウントとつなげる形にするなら、3 つの IF (`accept_legal_documents` の `v_age < 13`・昇格 2 本の `< 13`) と `PROMOTION_UNDER_COPPA_AGE` を外し、同意書の第 3 段落・`SIGNUP_MINOR_NOTICE`・`minorRefusedBody`・`withdrawnBody` の「13歳以上」の文を直す (1 の弁護士の確認にも含める)。どちらにするかはオーナーの確認。
+14. **13 歳未満の本人のアカウント**: 本冊は作らない (昇格 2 本が `PROMOTION_UNDER_COPPA_AGE` で、`accept_legal_documents` が昇格の経路があっても `LEGAL_MINOR_SELF_SIGNUP_REFUSED` で断る。§6.4 の 10・11)。理由: 公開している同意書 (v2026.2) の第 3 段落が「お子さま本人のアカウントは作成せず、ほめゴハンに登録するお子さまの情報は、第1段落の情報だけです」と書いており (v2026.1 の「保護者の方が代わりに記録します」は実装に無いので v2026.2 で外した。cross/20 Q-27)、要件 03 §17.10 も「子供アカウント自体は `auth.users` を持たない」「13 歳未満には Push 通知送信不可」と書くので、動作を文面と要件の側に揃えた (現行の昇格 #1232 は年齢を見ないので、13 歳未満の昇格は本冊から断るようになる。本番の `family_members` は 0 行で、影響を受ける人はいない)。13 歳未満でも保護者の依頼で本人のアカウントとつなげる形にするなら、3 つの IF (`accept_legal_documents` の `v_age < 13`・昇格 2 本の `< 13`) と `PROMOTION_UNDER_COPPA_AGE` を外し、同意書の第 3 段落・`SIGNUP_MINOR_NOTICE`・`minorRefusedBody`・`withdrawnBody` の「13歳以上」の文を直す (1 の弁護士の確認にも含める)。どちらにするかはオーナーの確認。
 15. **18 歳未満の本人の家族・組織の役割の例外**: 本冊は本人の操作 (家族の作成・招待の承諾・代表者 / オーナーの譲渡の承諾) だけを `MINOR_ACCOUNT_NOT_ALLOWED` で断り (§6.4 の 12)、運営の操作 (`operator_force_representative_transfer`・`operator_force_owner_transfer`・組織の作成 `POST /api/admin/organizations`) は年齢を見ない (運営の判断を止めない)。運営が 18 歳未満を代表者・オーナーにしたあとで保護者の同意とのつながりが切れると、本人の「登録をやめる」は 409 になり、同意画面は 409 の文 (`accountDeletionBlockedMessage`) を出す (§6.5.6 の 6)。運営が譲渡で解く (強制解散は `representative_id` を残すので、解散済みの家族の代表者も 409 のまま。これは本冊より前からの `findBlocker` の動作)。生年月日の無い人 (同意ゲートを通る前) は年齢が分からないので止めない (強制ありでは画面と `/api` が先に同意画面へ回す)。運営の操作も止めるなら、運営の 2 関数に譲渡先 (`p_new_rep_id` / `p_new_owner_id`) の生年月日を見る IF を足し (`caller_is_minor_jst()` は呼び出した本人 = 運営を見るので使えない)、組織の作成の route に owner の生年月日の検査を足し、運営の 2 route と組織の作成の route に失敗の扱いを足す。どちらにするかはオーナーの確認。
 
 ---

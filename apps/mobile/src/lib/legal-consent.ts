@@ -210,8 +210,8 @@ const COLLAPSED_STACK_INDEX = 0;
 /**
  * 同意画面の route (app/legal-consent.tsx) の今の扱い。
  *   awaiting-consent   サインイン中で同意が要る (required)。取り除く操作を全部止める (ゲートの畳み直しは同意画面の route を key ごと再利用するので、取り除かれない)
- *   signed-out-notice  同意を待っていた間にログアウトした (Web の「同意しない」「登録をやめる」の後)。Web の案内 (削除の依頼先・
- *                      請求の画面・「登録をやめました」) を出したまま残し、「閉じる」で入口へ移る。取り除く操作は全部止める
+ *   signed-out-notice  同意を待っていた間にログアウトした (Web の「同意しない」「登録をやめる」・同意の前の退会 (Web の /legal-consent/account。#1901) の後)。
+ *                      Web の案内 (退会と書き出しの画面へのログイン・請求の画面・「登録をやめました」・「退会しました」) を出したまま残し、「閉じる」で入口へ移る。取り除く操作は全部止める
  *   free               それ以外 (同意が済んだ・required でない・未ログインのまま開いた)。何も止めない (ゲートか同意画面自身が入口へ移す)
  */
 export type LegalConsentScreenMode = "awaiting-consent" | "signed-out-notice" | "free";

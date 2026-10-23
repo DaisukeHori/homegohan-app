@@ -29,9 +29,17 @@ vi.mock('@/lib/db-logger', () => ({ createLogger: () => ({ warn: vi.fn(), error:
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
+  AUTO_IMAGE_DISH_ROLES,
+  AUTO_IMAGE_FALLBACK_DISH_INDEX,
   CATALOG_PRODUCT_MEAL_SOURCE_TYPE,
   MEAL_IMAGE_ENQUEUE_FAILED_ERROR,
   MEAL_IMAGE_SKIPPED_ERRORS,
+  autoImageDishHandoverIndexOf,
+  autoImageDishIndexOf,
+  isMealImagePlanSkippedError,
+  mealCoverRepresentsDish,
+  mealImageJobPlanDecision,
+  mealImageSkipReasonOf,
   asCatalogMealDish,
   buildDishImageSubjectHash,
   applyGeneratedDishImage,
@@ -634,14 +642,15 @@ describe('#1487 の整合ゲート R1: 商品の献立の古い商品の料理�
     expect(coverAfterWorker(result)).toBe(PHOTO_URL);
   });
 
-  it('写真の料理 (1 つ・料理に写真あり) に料理を足したときは、今までどおり足した料理に積む (画像の処理のあともカバーは写真の料理の写真)', async () => {
+  it('写真の料理 (1 つ・料理に写真あり・主菜) に料理を足したときは、足した料理は主菜でないので積まず、画像の無い状態にする (billing/03 Q-16。画像の処理のあともカバーは写真の料理の写真)', async () => {
     const previous = buildPhotoDishList([{ name: '親子丼', role: 'main' }], PHOTO_URL);
     const result = await reconcileDishImages({ previousDishes: previous, nextDishes: [...unchanged(previous), { name: '味噌汁', role: 'soup' }], triggerSource: 'edit', fallbackMealImageUrl: PHOTO_URL });
-    expect(result.jobs.map((job) => job.dishIndex)).toEqual([1]);
+    expect(result.jobs).toEqual([]);
+    expect(result.dishes[1]).toMatchObject({ image_url: null, image_source: null, image_status: null, image_subject_hash: null });
     expect(coverAfterWorker(result)).toBe(PHOTO_URL);
   });
 
-  it('商品の料理 (catalog・商品の画像あり) に料理を足したときは、今までどおり足した料理に積む (カバーは商品の料理の画像)', async () => {
+  it('商品の料理 (catalog・商品の画像あり・主菜) に料理を足したときは、足した料理は主菜でないので積まず、画像の無い状態にする (billing/03 Q-16。カバーは商品の料理の画像)', async () => {
     const { buildCatalogMealFields } = await import('../lib/catalog-products');
     const fields = buildCatalogMealFields(PRODUCT);
     const previous = fields.dishes as MealImageDish[];
@@ -652,7 +661,8 @@ describe('#1487 の整合ゲート R1: 商品の献立の古い商品の料理�
       fallbackMealImageUrl: fields.image_url,
       previousMealIsCatalog: isCatalogProductMeal(fields),
     });
-    expect(result.jobs.map((job) => job.dishIndex)).toEqual([1]);
+    expect(result.jobs).toEqual([]);
+    expect(result.dishes[1]).toMatchObject({ image_url: null, image_source: null, image_status: null, image_subject_hash: null });
     expect(coverAfterWorker(result)).toBe(PRODUCT_URL);
   });
 
@@ -689,3 +699,200 @@ describe('#1487 の整合ゲート R1: 商品の献立の古い商品の料理�
   });
 });
 
+
+describe('billing/03 §8.8: 料理画像のプランの見送り (skipped_plan) とプランの門', () => {
+  it('mealImageSkipReasonOf returns plan for planLocked denials, ai_limit for other denials and rate_limit for null / allowed; MEAL_IMAGE_SKIPPED_ERRORS.plan is skipped_plan and isMealImagePlanSkippedError matches only it', () => {
+    expect(mealImageSkipReasonOf({ ...AI_USAGE_DENIED, cappedFeature: 'meal_image_auto', planLocked: true })).toBe('plan');
+    expect(mealImageSkipReasonOf(AI_USAGE_DENIED)).toBe('ai_limit');
+    expect(mealImageSkipReasonOf({ ...AI_USAGE_DENIED, safetyCap: true })).toBe('ai_limit');
+    expect(mealImageSkipReasonOf(null)).toBe('rate_limit');
+    expect(mealImageSkipReasonOf(AI_USAGE_ALLOWED)).toBe('rate_limit');
+    expect(MEAL_IMAGE_SKIPPED_ERRORS).toEqual({ ai_limit: 'skipped_ai_limit', rate_limit: 'skipped_rate_limit', plan: 'skipped_plan' });
+    expect(isMealImagePlanSkippedError('skipped_plan')).toBe(true);
+    for (const other of ['skipped_ai_limit', 'skipped_rate_limit', 'enqueue_failed', 'AI_CONSENT_REQUIRED', null, undefined, 0]) {
+      expect(isMealImagePlanSkippedError(other), String(other)).toBe(false);
+    }
+    // 見送り (3 つの理由) はどれも isMealImageSkippedError
+    expect(Object.values(MEAL_IMAGE_SKIPPED_ERRORS).every((value) => isMealImageSkippedError(value))).toBe(true);
+    // markDishImagesSkipped は plan の理由を skipped_plan で書く
+    const [dish] = markDishImagesSkipped([{ ...CURRY, image_source: 'generated_ai', image_status: 'pending' }], [seed(0)], 'plan');
+    expect(dish).toMatchObject({ image_status: 'failed', image_error: 'skipped_plan' });
+  });
+
+  it('mealImageJobPlanDecision returns locked only for a cap of 0 and allowed for null, a positive cap or an unreadable value', () => {
+    expect(mealImageJobPlanDecision(0)).toBe('locked');
+    for (const cap of [null, undefined, 1, 20, '0', -1, Number.NaN, {}, 'x']) {
+      expect(mealImageJobPlanDecision(cap), String(cap)).toBe('allowed');
+    }
+  });
+});
+
+describe('billing/03 Q-16: 自動の料理画像は献立の主菜の 1 品だけ', () => {
+  const MAIN = { name: '鮭の塩焼き', role: 'main', ingredients: ['鮭'] };
+  const SIDE = { name: 'おひたし', role: 'side', ingredients: ['ほうれん草'] };
+  const SOUP = { name: '味噌汁', role: 'soup', ingredients: ['豆腐'] };
+  const RICE = { name: 'ご飯', role: 'rice', ingredients: ['米'] };
+  const NO_IMAGE_STATE = { image_url: null, image_source: null, image_status: null, image_subject_hash: null, image_generated_at: null, image_error: null };
+  const ready = async (dish: MealImageDish, index: number): Promise<MealImageDish> => ({
+    ...dish,
+    image_subject_hash: await buildDishImageSubjectHash(dish, index),
+    image_source: 'generated_ai',
+    image_status: 'ready',
+    image_url: `https://example.com/ready-${index}.png`,
+  });
+  const waiting = async (dish: MealImageDish, index: number, status: 'pending' | 'stale' | 'failed'): Promise<MealImageDish> => ({
+    ...dish,
+    image_subject_hash: await buildDishImageSubjectHash(dish, index),
+    image_source: 'generated_ai',
+    image_status: status,
+    image_url: null,
+  });
+
+  it('autoImageDishIndexOf returns the first dish whose role is main or 主菜 (ignoring surrounding spaces and letter case), AUTO_IMAGE_FALLBACK_DISH_INDEX when no dish is a main dish (rice + soup, other only, no role), and null for no dishes', () => {
+    expect([...AUTO_IMAGE_DISH_ROLES]).toEqual(['main', '主菜']);
+    expect(AUTO_IMAGE_FALLBACK_DISH_INDEX).toBe(0);
+    expect(autoImageDishIndexOf([RICE, SOUP, MAIN, SIDE])).toBe(2);
+    expect(autoImageDishIndexOf([SOUP, { role: '主菜' }, MAIN])).toBe(1);
+    expect(autoImageDishIndexOf([SOUP, { role: '  MAIN ' }])).toBe(1);
+    expect(autoImageDishIndexOf([RICE, SOUP])).toBe(AUTO_IMAGE_FALLBACK_DISH_INDEX);
+    expect(autoImageDishIndexOf([{ role: 'other' }, { role: 'other' }])).toBe(AUTO_IMAGE_FALLBACK_DISH_INDEX);
+    expect(autoImageDishIndexOf([{ name: 'A' }, { name: 'B', role: null }])).toBe(AUTO_IMAGE_FALLBACK_DISH_INDEX);
+    // 主食 (ご飯の役割) は主菜にしない
+    expect(autoImageDishIndexOf([{ role: '主食' }, { role: '主菜' }])).toBe(1);
+    expect(autoImageDishIndexOf([])).toBeNull();
+  });
+
+  it('reconcileDishImages enqueues only the main dish of a new main + side + soup + rice meal and leaves the other dishes with no image state (image_source, image_status, image_subject_hash, image_url, image_generated_at and image_error null), keeping image_prompt and image_model', async () => {
+    const result = await reconcileDishImages({ previousDishes: [], nextDishes: [MAIN, SIDE, SOUP, RICE], triggerSource: 'generate' });
+    expect(result.jobs.map((job) => job.dishIndex)).toEqual([0]);
+    expect(result.dishes[0]).toMatchObject({ image_source: 'generated_ai', image_status: 'pending', image_url: null });
+    expect(result.dishes[0].image_subject_hash).toBe(await buildDishImageSubjectHash(MAIN, 0));
+    for (const index of [1, 2, 3]) {
+      expect(result.dishes[index], String(index)).toMatchObject(NO_IMAGE_STATE);
+      expect(typeof result.dishes[index].image_prompt, String(index)).toBe('string');
+      expect(result.dishes[index].image_prompt, String(index)).not.toBe('');
+      expect(typeof result.dishes[index].image_model, String(index)).toBe('string');
+    }
+  });
+
+  it('reconcileDishImages enqueues the first dish when no dish is a main dish and the main dish at a later position (side, main), and only the first of two main dishes', async () => {
+    const noMain = await reconcileDishImages({ previousDishes: [], nextDishes: [RICE, SOUP], triggerSource: 'generate' });
+    expect(noMain.jobs.map((job) => job.dishIndex)).toEqual([0]);
+    expect(noMain.dishes[1]).toMatchObject(NO_IMAGE_STATE);
+    const laterMain = await reconcileDishImages({ previousDishes: [], nextDishes: [SIDE, MAIN], triggerSource: 'generate' });
+    expect(laterMain.jobs.map((job) => job.dishIndex)).toEqual([1]);
+    expect(laterMain.dishes[0]).toMatchObject(NO_IMAGE_STATE);
+    const twoMains = await reconcileDishImages({ previousDishes: [], nextDishes: [MAIN, { ...CURRY }], triggerSource: 'edit' });
+    expect(twoMains.jobs.map((job) => job.dishIndex)).toEqual([0]);
+    expect(twoMains.dishes[1]).toMatchObject(NO_IMAGE_STATE);
+  });
+
+  it('reconcileDishImages keeps the ready AI image of an unchanged non-main dish without a job, and turns a changed non-main dish into no image state without a job', async () => {
+    // 段 B の前に作られた献立: 主菜と副菜の両方が AI の画像を持つ
+    const previous = [await ready(MAIN, 0), await ready(SIDE, 1)];
+    const same = await reconcileDishImages({ previousDishes: previous, nextDishes: previous.map((dish) => ({ ...dish })), triggerSource: 'toggle' });
+    expect(same.jobs).toEqual([]);
+    expect(same.dishes[1]).toMatchObject({ image_source: 'generated_ai', image_status: 'ready', image_url: 'https://example.com/ready-1.png' });
+    const changed = await reconcileDishImages({
+      previousDishes: previous,
+      nextDishes: [{ ...previous[0] }, { name: '白和え', role: 'side', ingredients: ['豆腐'] }],
+      triggerSource: 'edit',
+    });
+    expect(changed.jobs).toEqual([]);
+    expect(changed.dishes[1]).toMatchObject(NO_IMAGE_STATE);
+    expect(changed.dishes[0]).toMatchObject({ image_status: 'ready', image_url: 'https://example.com/ready-0.png' });
+  });
+
+  it('reconcileDishImages turns a waiting (pending / stale / failed) non-main dish saved unchanged into no image state without a job, and a second unchanged save keeps it without a job; a non-main-only change of a meal whose main dish is ready yields no job', async () => {
+    for (const status of ['pending', 'stale', 'failed'] as const) {
+      const previous = [await ready(MAIN, 0), await waiting(SOUP, 1, status)];
+      const first = await reconcileDishImages({ previousDishes: previous, nextDishes: previous.map((dish) => ({ ...dish })), triggerSource: 'toggle' });
+      expect(first.jobs, status).toEqual([]);
+      expect(first.dishes[1], status).toMatchObject(NO_IMAGE_STATE);
+      const second = await reconcileDishImages({ previousDishes: first.dishes, nextDishes: first.dishes.map((dish) => ({ ...dish })), triggerSource: 'toggle' });
+      expect(second.jobs, status).toEqual([]);
+      expect(second.dishes[1], status).toMatchObject(NO_IMAGE_STATE);
+    }
+    const previous = [await ready(MAIN, 0), await ready(SOUP, 1)];
+    const soupOnly = await reconcileDishImages({
+      previousDishes: previous,
+      nextDishes: [{ ...previous[0] }, { name: 'すまし汁', role: 'soup', ingredients: ['三つ葉'] }],
+      triggerSource: 'edit',
+    });
+    expect(soupOnly.jobs).toEqual([]);
+  });
+
+  it('mealCoverRepresentsDish is true for a single-dish meal, the auto image dish and meal_photo / catalog / manual_override dishes, and false for other dishes of a multi-dish meal and for an index without a dish', () => {
+    expect(mealCoverRepresentsDish([SOUP], 0)).toBe(true);
+    const dishes: MealImageDish[] = [RICE, MAIN, SOUP, { ...SIDE, image_source: 'meal_photo' }, { name: '弁当', image_source: 'catalog' }, { name: 'X', image_source: 'manual_override' }];
+    expect(mealCoverRepresentsDish(dishes, 1)).toBe(true);
+    expect(mealCoverRepresentsDish(dishes, 3)).toBe(true);
+    expect(mealCoverRepresentsDish(dishes, 4)).toBe(true);
+    expect(mealCoverRepresentsDish(dishes, 5)).toBe(true);
+    expect(mealCoverRepresentsDish(dishes, 0)).toBe(false);
+    expect(mealCoverRepresentsDish(dishes, 2)).toBe(false);
+    expect(mealCoverRepresentsDish(dishes, 6)).toBe(false);
+    // 主菜の無い献立は先頭の料理
+    expect(mealCoverRepresentsDish([RICE, SOUP], 0)).toBe(true);
+    expect(mealCoverRepresentsDish([RICE, SOUP], 1)).toBe(false);
+    expect(mealCoverRepresentsDish([], 0)).toBe(false);
+  });
+
+  it('autoImageDishHandoverIndexOf returns the new auto image dish index only when it differs from the previous one, the dish there has no job and no image state (no image_url, image_source or image_subject_hash), and returns null for no previous dishes, an unchanged role order, a seeded index, a ready / pending / meal_photo / catalog / manual_override dish, and treats a non-object previous dish as a dish without a role', async () => {
+    // [ご飯 (N), 主菜] → [ご飯 (N)]: 位置 1 → 0
+    expect(autoImageDishHandoverIndexOf({ previousDishes: [RICE, MAIN], dishes: [{ ...RICE }], seededDishIndexes: [] })).toBe(0);
+    // 前回の料理が無い・位置が移っていない・種がある
+    expect(autoImageDishHandoverIndexOf({ previousDishes: [], dishes: [{ ...RICE }], seededDishIndexes: [] })).toBeNull();
+    expect(autoImageDishHandoverIndexOf({ previousDishes: [RICE, SOUP], dishes: [{ ...RICE }, { ...SOUP }], seededDishIndexes: [] })).toBeNull();
+    expect(autoImageDishHandoverIndexOf({ previousDishes: [RICE, MAIN], dishes: [{ ...RICE }], seededDishIndexes: [0] })).toBeNull();
+    // 移った先が画像を持つ・待ち・写真・商品・手の画像
+    for (const dish of [
+      await ready(RICE, 0),
+      await waiting(RICE, 0, 'pending'),
+      { ...RICE, image_source: 'meal_photo' as const, image_status: 'stale' as const },
+      { ...RICE, image_source: 'catalog' as const, image_url: 'https://example.com/c.png' },
+      { ...RICE, image_source: 'manual_override' as const, image_url: 'https://example.com/m.png' },
+      { ...RICE, image_subject_hash: 'h' },
+    ]) {
+      expect(autoImageDishHandoverIndexOf({ previousDishes: [RICE, MAIN], dishes: [dish], seededDishIndexes: [] }), JSON.stringify(dish)).toBeNull();
+    }
+    // 料理でない前回の値は役割の無い料理として位置を数える ([null, 主菜] → 主菜の位置 1。いまの [ご飯, 汁物] は先頭 0)
+    expect(autoImageDishHandoverIndexOf({ previousDishes: [null, MAIN], dishes: [{ ...RICE }, { ...SOUP }], seededDishIndexes: [] })).toBe(0);
+    expect(autoImageDishHandoverIndexOf({ previousDishes: [undefined, SOUP], dishes: [{ ...RICE }, { ...SOUP }], seededDishIndexes: [] })).toBeNull();
+  });
+
+  it('reconcileDishImages hands the auto image over to an unchanged no-image dish: deleting the ready main of [rice, main] enqueues one pending job for the rice (dish 0), changing the first of two main dishes to side enqueues only the second main (dish 2) and clears the first, and an unchanged re-save of a meal with no-image dishes enqueues nothing', async () => {
+    // (1) [ご飯 (画像の無い状態), 主菜 (ready)] から主菜を消す
+    const riceMain = [{ ...RICE }, await ready(MAIN, 1)];
+    const deleted = await reconcileDishImages({ previousDishes: riceMain, nextDishes: [{ ...RICE }], triggerSource: 'edit', fallbackMealImageUrl: 'https://example.com/ready-1.png' });
+    expect(deleted.jobs.map((job) => [job.dishIndex, job.subjectHash])).toEqual([[0, await buildDishImageSubjectHash(RICE, 0)]]);
+    expect(deleted.dishes[0]).toMatchObject({ image_source: 'generated_ai', image_status: 'pending', image_url: null });
+    // (2) [副菜 (N), 主菜 1 (ready), 主菜 2 (N)] で主菜 1 の役割を副菜にする
+    const SECOND_MAIN = { name: 'ハンバーグ', role: 'main', ingredients: ['ひき肉'] };
+    const twoMains = [{ ...SIDE }, await ready(MAIN, 1), { ...SECOND_MAIN }];
+    const demoted = await reconcileDishImages({
+      previousDishes: twoMains,
+      nextDishes: [{ ...SIDE }, { ...MAIN, role: 'side', image_subject_hash: twoMains[1].image_subject_hash, image_source: 'generated_ai', image_status: 'ready', image_url: twoMains[1].image_url }, { ...SECOND_MAIN }],
+      triggerSource: 'edit',
+    });
+    expect(demoted.jobs.map((job) => job.dishIndex)).toEqual([2]);
+    expect(demoted.dishes[2]).toMatchObject({ image_source: 'generated_ai', image_status: 'pending', image_url: null });
+    expect(demoted.dishes[1]).toMatchObject(NO_IMAGE_STATE);
+    // (3) 画像の無い料理だけの献立を変えずに保存し直しても積まない
+    const noImage = [{ ...RICE }, { ...SOUP }];
+    const resaved = await reconcileDishImages({ previousDishes: noImage, nextDishes: noImage.map((dish) => ({ ...dish })), triggerSource: 'toggle' });
+    expect(resaved.jobs).toEqual([]);
+    expect(resaved.dishes).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'ご飯', image_source: null })]));
+    // (4) 献立のカバーが写真の料理のもの (料理ごとの画像の無い写真の料理がある) なら、引き継いだ料理も画像の無い状態に戻して積まない
+    const PHOTO_COVER = 'https://example.com/storage/meal-photos/user-1/photo.jpg';
+    const withPhoto = [{ ...RICE }, await ready(MAIN, 1), { ...SOUP, image_source: 'meal_photo' as const, image_status: 'stale' as const, image_url: null }];
+    const covered = await reconcileDishImages({
+      previousDishes: withPhoto,
+      nextDishes: [{ ...RICE }, { ...withPhoto[1], role: 'side' }, { ...withPhoto[2] }],
+      triggerSource: 'edit',
+      fallbackMealImageUrl: PHOTO_COVER,
+    });
+    expect(covered.jobs).toEqual([]);
+    expect(covered.dishes[0]).toMatchObject(NO_IMAGE_STATE);
+  });
+});

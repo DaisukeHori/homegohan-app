@@ -19,7 +19,7 @@ npm run check:env -- --strict                      # 任意の変数の「値の
 | 種類 | 変数 | 足りないとき |
 |---|---|---|
 | **必須** | `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` | アプリが動きません。コードは、使う場面でエラー（`MissingEnvError`）を出します。状態コードは場面ごとに次のとおりです。URL か anon キーが無いと、middleware がページと API（`/api/health` を除く）を汎用の 500 で止めます。`/api/health` は middleware を通らず、`?deep=1` のときだけ 503（`status: "degraded"`）を返します（`?deep=1` が無ければ DB を見ないので 200 のままです）。`SUPABASE_SERVICE_ROLE_KEY` だけが無いと、それを使う API はほとんどが 500 になります。ただし `POST /api/super-admin/embeddings/regenerate` は 503（`OP_EMBEDDING_JOB_UNAVAILABLE`）を返します。`POST /api/org/owner-transfer/propose` は提案の作成は成功のまま、通知メールだけを送りません。献立の画像生成ワーカーの起動（`lib/meal-image-jobs.ts`）と、AI の利用記録の署名ヘッダー（`src/lib/plan/entitlements.ts`）は、エラーにせずに飛ばします。応答（本文・ヘッダ・エラーページ）には変数名も値も出しません。本文は API によって、汎用の文（「処理中にエラーが発生しました」）・`MissingEnvError` の固定の文（変数名は入りません）・Next.js の既定のエラーのどれかです。どの変数が足りないかは、サーバーのログの `[env] missing required env: <変数名>` の行（どの経路でも出ます）と、`npm run check:env` で分かります。500 を `internalError()` で返す API と middleware では、構造化ログの `missing_env_name` にも残ります（console に出る構造化ログには必ず入ります。`app_logs` に書けるのは URL と `SUPABASE_SERVICE_ROLE_KEY` がそろっているとき、つまり anon キーだけが無いときです）。コマンドは終了コード 1 |
-| **任意** | メール（`RESEND_API_KEY`）・レート制限（`UPSTASH_REDIS_REST_*`）・課金（`STRIPE_SECRET_KEY`・`STRIPE_WEBHOOK_SECRET`）・AI（`GOOGLE_AI_STUDIO_API_KEY`・`XAI_API_KEY`・`OPENAI_API_KEY`）・`CRON_SECRET`・モバイル認証ブリッジのスイッチ（`NATIVE_BRIDGE_*`）・規約の再同意のスイッチ（`LEGAL_CONSENT_*`）など | アプリは動きますが、その機能が使えなくなったり弱くなったりします。コマンドは「未設定です。…が起きます」と表示するだけです |
+| **任意** | メール（`RESEND_API_KEY`）・レート制限（`UPSTASH_REDIS_REST_*`）・課金（`STRIPE_SECRET_KEY`・`STRIPE_WEBHOOK_SECRET`・`REVENUECAT_SECRET_API_KEY`・`REVENUECAT_WEBHOOK_SECRET`）・AI（`GOOGLE_AI_STUDIO_API_KEY`・`XAI_API_KEY`・`OPENAI_API_KEY`）・`CRON_SECRET`・モバイル認証ブリッジのスイッチ（`NATIVE_BRIDGE_*`）・規約の再同意のスイッチ（`LEGAL_CONSENT_*`）など | アプリは動きますが、その機能が使えなくなったり弱くなったりします。コマンドは「未設定です。…が起きます」と表示するだけです |
 
 - 任意の変数が足りないことで、本番を止めてはいけません。任意の変数を読む共通の関数（`getOptionalEnv()`。`src/lib/env.ts`）は、変数が無いときに例外を投げず、`undefined` を返して、プロセスごとに 1 回だけ警告をログに残します。メール送信・レート制限・Stripe・AI など、いまは各機能が `process.env` を直接読んでいる箇所が残っていて、ほかの作業と重ならないところから順にこの関数へ置き換えていきます。
 - 下の「必須の環境変数」は `src/lib/env.ts` の必須（`required: true`）と同じ 3 つだけです。`CRON_SECRET`・Google AI（Gemini）・OpenAI は、その下の「機能ごとに要る環境変数」に分けてあります。`check:env` ではどれも任意です（無くてもアプリ本体は動き、cron の API が 503 を返す・その AI の機能が使えない、になるだけのため）。本番では、使う機能の分を設定してください。
@@ -59,6 +59,8 @@ npm run check:env -- --strict                      # 任意の変数の「値の
 4. **Stripe (課金) 関連**（無いと、有料プランの購入・管理が動かない。手順は `docs/design/billing/01-billing-core.md` §17）
    - `STRIPE_SECRET_KEY` - Stripe の秘密鍵（`sk_live_…` / `sk_test_…`）。Checkout・Billing Portal・解約の予約と取り消し・退会での解約に使う。無いと、これらの API は 503（契約の要約と確認画面の内容は 200 のまま）
    - `STRIPE_WEBHOOK_SECRET` - Stripe の Webhook の署名の秘密（`whsec_…`。Stripe の Dashboard で Webhook のエンドポイントを登録すると出る）。`POST /api/webhooks/stripe` が署名を確かめるのに使う。無いと Webhook は 503
+   - `REVENUECAT_SECRET_API_KEY` - RevenueCat の秘密の API キー（`sk_…`。RevenueCat の Project Settings → API keys の secret key）。App Store / Google Play の購入（アプリ内課金）を RevenueCat から取り直して `personal_subscriptions` に写すのに使う（手順は `docs/design/billing/03-paid-plans-and-iap.md` §17）。無いと `POST /api/webhooks/revenuecat` と `POST /api/billing/iap/sync` は 503（アプリの購入の画面は開ける）
+   - `REVENUECAT_WEBHOOK_SECRET` - RevenueCat の Webhook の署名の秘密（RevenueCat の Integrations → Webhooks で署名を有効にすると 1 回だけ表示される）。`POST /api/webhooks/revenuecat` が署名を確かめるのに使う。無いと Webhook は 503
 
 ### Catalog cron secret (Supabase Vault)
 
@@ -89,7 +91,7 @@ cron から呼ばれる API や Edge Function は、リクエストの `Authoriz
 
 | 保管場所 | 名前 | 役割 | 他と値を合わせる必要 |
 |---|---|---|---|
-| Vercel の環境変数 | `CRON_SECRET` | 送る側も受ける側も Vercel の中で完結します。Vercel Cron が `/api/cron/process-menu-queue`・`/api/cron/app-log-alerts`・`/api/cron/email-outbox`・`/api/cron/push-outbox`・`/api/cron/backup-freshness`・`/api/cron/login-alerts`（どれも `vercel.json` の `crons`）を呼ぶとき、この値を自動で `Authorization: Bearer ...` に付けます。受ける側の Next.js（`src/lib/cron-auth.ts`）が、同じ環境変数と照らし合わせます | **不要**。他の 2 か所と別の値にしてかまいません（別の値にしておくと、片方が漏れてももう片方は守られます） |
+| Vercel の環境変数 | `CRON_SECRET` | 送る側も受ける側も Vercel の中で完結します。Vercel Cron が `/api/cron/process-menu-queue`・`/api/cron/app-log-alerts`・`/api/cron/email-outbox`・`/api/cron/push-outbox`・`/api/cron/backup-freshness`・`/api/cron/login-alerts`・`/api/cron/iap-reconcile`（どれも `vercel.json` の `crons`）を呼ぶとき、この値を自動で `Authorization: Bearer ...` に付けます。受ける側の Next.js（`src/lib/cron-auth.ts`）が、同じ環境変数と照らし合わせます | **不要**。他の 2 か所と別の値にしてかまいません（別の値にしておくと、片方が漏れてももう片方は守られます） |
 | Supabase の Edge Function secrets | `CRON_SECRET`（別名 `SERVICE_ROLE_SECRET`。`CRON_SECRET` が無いときだけ代わりに使われます） | **受ける側**。`supabase/functions/_shared/auth.ts` の `requireServiceRole` が、次の Edge Function でこの値と照らし合わせます: コンビニカタログ取り込み 5 本（`import-seven-eleven-catalog` / `import-familymart-catalog` / `import-lawson-catalog` / `import-natural-lawson-catalog` / `import-ministop-catalog`）、`aggregate-org-stats`（停止中。認証だけ行い 410 を返します。#1325）、`calculate-segment-stats`、`purge-hidden-content`（運営が隠したコンテンツの完全削除。#1538）、`process-meal-image-jobs`（料理画像のジョブの処理。#1561）、`cron-secret-probe`（cron の共有シークレットの確認。#1560）、`regenerate-embeddings`、`stripe-price-sync`（最後の 3 本は service role key でも呼べます） | Vault の `app_cron_secret` と **同じ値にする** |
 | Supabase Vault | `app_cron_secret` | **送る側**。pg_cron が定期実行する次の関数がこの値を読み、`Authorization: Bearer ...` に付けて Edge Function を呼びます: `public.invoke_catalog_import()`（コンビニカタログ取り込みの Edge Function 5 本。登録時のスケジュールは、毎日 UTC 3:00〜4:00 に 15 分おき）、`public.invoke_calculate_segment_stats()`（比較ランキングの集計 `calculate-segment-stats` を daily / weekly / monthly の 3 回。期間が切り替わった直後の回は直前の期間の分も。ジョブ `calculate-segment-stats`、1 時間ごと（毎時 5 分）。#1406）、`public.invoke_calculate_segment_stats_finalize_retry()`（その直前の期間の分の再試行。ジョブ `calculate-segment-stats-finalize-retry`、毎日 JST 0:20 と 0:35。#1500）、`public.invoke_process_meal_image_jobs()`（料理画像の待ちのジョブがあれば `process-meal-image-jobs` を 1 回。ジョブ `process-pending-meal-image-jobs`、5 分ごと。#1561）、`public.invoke_purge_hidden_content()`（運営が隠してから 90 日を過ぎた食事・レシピと画像を消す `purge-hidden-content`。ジョブ `purge-hidden-content`、毎日 JST 3:25。#1538）、`public.send_cron_secret_probe()`（`GET /api/cron/app-log-alerts` が 15 分おきに呼ぶ確認。Edge Function `cron-secret-probe` を 1 回。#1560） | Edge Function secrets の `CRON_SECRET` と **同じ値にする** |
 
@@ -430,6 +432,15 @@ Resend から「届かなかった（ハードバウンス）」「迷惑メー�
 - `app_logs`（`/super-admin/logs` で `function_name` に `cron/push-outbox` を指定）に、処理した回の件数と、届けられなかった行の理由（種類・利用者 ID・token の末尾 4 文字）が残る。通知の文面と token の全体は残さない。
 - Android の端末へ届くには、EAS に FCM V1 の資格情報を登録する必要がある（未登録の間は Android だけ `InvalidCredentials` で届かず、iOS には届く）。
 - 認証は他の cron と同じ `CRON_SECRET`。
+
+### ストアの購読の定期の取り直し（`GET /api/cron/iap-reconcile`。毎時 41 分。billing/04）
+
+RevenueCat の Webhook の再送が尽きて写らなかった、ストアの購読の失効・更新を、期限を過ぎた行だけ RevenueCat から取り直して `personal_subscriptions` に写します（設計は [`docs/design/billing/04-iap-reconcile.md`](docs/design/billing/04-iap-reconcile.md)）。`REVENUECAT_SECRET_API_KEY` が無い間は何もしません（200 `not_configured`）。
+
+| 環境変数 | 例 | 役割 | 未設定のときの動き |
+|---|---|---|---|
+| `IAP_RECONCILE_BATCH_SIZE`（任意） | `20` | 1 回の cron（毎時）で取り直す利用者の数。1〜40 の整数。40 より上げられない（下げる向きだけ） | 既定の 40 人。不正な値は既定値に戻し、`cron/iap-reconcile` の warn ログに変数名だけを残す |
+| `IAP_RECONCILE_RECHECK_HOURS`（任意） | `12` | 期限の後に取り直しても有料のままの行（ストアの猶予期間など）を、次に取り直すまでの間隔。1〜168 の整数（時間） | 既定の 6 時間。不正な値は既定値に戻す（上と同じ） |
 
 ---
 

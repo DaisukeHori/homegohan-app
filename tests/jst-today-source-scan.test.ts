@@ -264,6 +264,7 @@ const TIMESTAMPTZ_COLUMNS_WITHOUT_AT_SUFFIX: ReadonlySet<string> = new Set([
   'owner_last_sign_in',
   'past_due_since',
   'paused_until',
+  'period_end',
   'start_time',
   'valid_from',
   'valid_until',
@@ -645,7 +646,7 @@ const ALLOWLIST: ReadonlyArray<{ file: string; rule: Rule; count: number; reason
     rule: 'G',
     count: 2,
     reason:
-      '請求書の一覧 (received_at)。画面 (src/app/admin/finance/invoices/page.tsx) は「課金は未開始のため準備中」で、この API を呼ばない。' +
+      '請求書の一覧 (received_at)。画面 (src/app/admin/finance/invoices/page.tsx) は 404 で (#1911。未完成の機能は画面に出さない)、この API を呼ばない。' +
       '画面を作るときに、CSV の書き出し (finance/exports の invoices) と同じく jstOptionalDayRangeTimestamps で直す',
   },
   {
@@ -654,7 +655,7 @@ const ALLOWLIST: ReadonlyArray<{ file: string; rule: Rule; count: number; reason
     count: 2,
     reason:
       'Stripe の整合チェックの一覧 (admin_audit_logs.created_at)。画面 (src/app/admin/finance/reconciliation/page.tsx) は' +
-      '「課金は未開始のため準備中」で、この API を呼ばない。画面を作るときに jstOptionalDayRangeTimestamps で直す',
+      '404 で (#1911。未完成の機能は画面に出さない)、この API を呼ばない。画面を作るときに jstOptionalDayRangeTimestamps で直す',
   },
   {
     file: 'src/app/api/super-admin/email-outbox/route.ts',

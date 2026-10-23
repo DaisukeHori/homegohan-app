@@ -88,6 +88,30 @@ CREATE POLICY "organizations_delete" ON organizations
   );
 ```
 
+実装 (migration `20261022190000_db_privilege_hardening.sql`): UPDATE はポリシー `organizations_update_admin` (同じ組織の owner / admin) で列を限らずに許すが、ログインユーザー (current_user が authenticated / anon) は次の列を変えられない。値を変えない UPDATE (組織名の変更・同じ値を書く UPDATE) は止めない。service_role と SECURITY DEFINER の関数の中 (current_user が関数の所有者) は書ける。
+
+| 列 | 止めるトリガー関数 | 拒否 | 書く経路 |
+|---|---|---|---|
+| `owner_id`・`status` | `guard_organizations_privileged` | `CANNOT_MODIFY_PRIVILEGED_COLUMN` (42501) | 譲渡・解散の RPC (SECURITY DEFINER) |
+| `subscription_status`・`subscription_expires_at` | `guard_organizations_privileged` | `CANNOT_MODIFY_PRIVILEGED_COLUMN` (42501) | 無い (表示用。運営が直すときは service_role) |
+| `dissolved_at` | `guard_organizations_privileged` | `CANNOT_MODIFY_PRIVILEGED_COLUMN` (42501) | 解散の後始末 `org_dissolve_apply` (service_role だけが実行でき、SECURITY DEFINER の `dissolve_org_by_owner` / `operator_force_dissolve_org` が呼ぶ) |
+| `plan` | `guard_organizations_plan_value` | `ORG_PLAN_OPERATOR_ONLY` (42501) | 運営の画面 (service_role) |
+
+確認: `tests/integration/security/db-privilege-hardening.test.ts` (実 DB)・`tests/db-privilege-hardening-migration-contract.test.ts` (3 列を書く関数の最新の定義がどれも SECURITY DEFINER か利用者が実行できない関数であることを、migration の文面から機械で見る)。
+
+実装 (migration `20261023100000_organizations_no_owner_direct_delete.sql`・#1917 の続き): DELETE のポリシーは運営の `organizations_delete_super_admin` (TO authenticated・`user_profiles.roles` に `super_admin` があり `operator_mfa_satisfied()`。`20261017130000`) だけ。ベースラインのオーナーの DELETE のポリシー `organizations_delete_owner` (`owner_id = auth.uid()`) は消した。オーナーの DELETE は RLS を通り、列を読まない WHERE の DELETE なら所属の列を持つ人がいない組織を消せた (PostgREST の DELETE は SELECT のポリシーにも当たる必要があり、所属しているオーナーは 23514 で止まっていた)。そのときの直接の DELETE は、部署・招待・チャレンジ・席数・日次の集計・レポート (`departments` / `organization_invites` / `organization_challenges` / `org_license_pools` / `org_daily_stats` / `organization_reports`) を外部キーの CASCADE で消し、解散の RPC の知らせ・監査を通らなかったため (家族の同じ欠陥は `20261022200000_family_groups_no_direct_delete.sql` で塞いだ)。オーナーの選択 (2026-10-23・選択式): 「オーナーの直接の削除を塞ぐ (推奨)」。選択肢の説明の文は「家族と同じ扱いにします。組織を消すのは解散の仕組みだけで、オーナーが解散する操作は今どおりできます。運営 (super_admin) の削除のポリシーは残します。」
+
+| 呼び出し元 | 直接の DELETE の結果 |
+|---|---|
+| オーナー・管理者・メンバー・別の組織の利用者・解散した組織の元のオーナー | 0 行 (エラーなし)。当たる DELETE のポリシーが無い (列を読まない WHERE の DELETE でも 0 行) |
+| 未認証 (anon) | 42501 (DELETE の権限を外した) |
+| 運営 (super_admin・MFA 済み) | 今までどおり。PostgREST の DELETE は WHERE で列を読むので SELECT のポリシー `organizations_select_member` (所属している人だけ) にも当たる必要があり、所属していない組織は 0 行・所属している組織は CHECK `user_profiles_org_consistency` (23514) で止まる |
+| service_role | 消える (テストと e2e の後片付け) |
+
+権限: anon の DELETE は外した。authenticated の DELETE は運営のポリシーが効くために残す。TRUNCATE は `20261022190000_db_privilege_hardening.sql` が anon / authenticated から外してある。組織をやめるのは解散の RPC (`dissolve_org_by_owner` (POST /api/org/dissolve)・`operator_force_dissolve_org`) だけで、どちらも後始末 `org_dissolve_apply` で行を dissolved にする (DELETE しない)。アプリ (Web・モバイル・Edge Function) は利用者のセッションで organizations を DELETE しない。
+
+確認: `tests/integration/rls/organizations-no-owner-direct-delete.test.ts` (実 DB)・`tests/organizations-no-owner-direct-delete-migration-contract.test.ts` (migration の文面・戻し口・アプリのコードの走査)。
+
 ## 5. departments
 
 ```sql
@@ -214,6 +238,8 @@ CREATE POLICY "org_license_pools_update" ON org_license_pools
 CREATE POLICY "org_license_pools_no_delete" ON org_license_pools
   FOR DELETE USING (false);
 ```
+
+実装 (migration `20261022180000_org_tables_rpc_only_writes.sql`・#1917): 利用者 (anon / authenticated) の書き込みのポリシーは置かず、INSERT / UPDATE / DELETE / TRUNCATE の権限も外してある。SELECT はポリシー `org_license_pools_select_member` (同じ組織のメンバー)。席数 (`total_licenses` / `used_licenses`) を書くのは service_role と SECURITY DEFINER の RPC (`accept_org_invite`・`leave_org`・`remove_org_member`・`release_user_membership`・解散の後始末 `org_dissolve_apply` (service_role だけが実行できる)) だけ。
 
 ## 9. org_license_assignments
 
@@ -396,6 +422,8 @@ CREATE POLICY "org_invites_delete" ON organization_invites
   );
 ```
 
+実装 (migration `20261022180000_org_tables_rpc_only_writes.sql`・#1917): 利用者 (anon / authenticated) の INSERT / UPDATE のポリシーは置かず、INSERT / UPDATE / TRUNCATE の権限も外してある。招待の作成は SECURITY DEFINER の RPC `create_org_invite` だけ (所属組織の owner / admin の判定・`p_role` が `owner` なら `INSUFFICIENT_PERMISSION`・宛先の在籍 `ALREADY_IN_ORG`・席数 `SEAT_LIMIT_EXCEEDED`・24 時間の上限 `RATE_LIMITED`)。承諾・拒否・取り消しも SECURITY DEFINER の RPC (`accept_org_invite` / `reject_org_invite` / `revoke_org_invite`)。DELETE はポリシー `"Org admins can delete invites"` (TO authenticated・同じ組織の利用者で、org_role が owner / admin か、`roles` に admin / super_admin があり `operator_mfa_satisfied()` (運営・MFA 済み)。DELETE /api/org/invites が使う) で、権限は authenticated だけ。SELECT は `org_invites_select_admin` と `"Org admins can view invites"`。
+
 ## 14. organization_challenges / org_challenge_participants
 
 ```sql
@@ -542,16 +570,16 @@ CREATE POLICY "meals_industrial_doctor" ON user_daily_meals
 
 | テーブル | RLS 有効 | INSERT | SELECT | UPDATE | DELETE |
 |---------|---------|--------|--------|--------|--------|
-| `organizations` | ✅ | super_admin | 同組織 org ロール | org_admin + 運営 | super_admin |
+| `organizations` | ✅ | super_admin | 同組織 org ロール | org_admin + 運営 (owner_id・status・plan・subscription_status・subscription_expires_at・dissolved_at はトリガーで不可。§4) | super_admin |
 | `departments` | ✅ | org_admin/manager | 同組織全員 | org_admin/manager | org_admin |
 | `department_history` | ✅ | org_admin/manager | 本人 + org_admin/manager | ❌ | ❌ |
 | `org_subscriptions` | ✅ | service_role | org_admin | service_role | ❌ |
-| `org_license_pools` | ✅ | service_role | org_admin/manager/viewer | service_role | ❌ |
+| `org_license_pools` | ✅ | service_role (+ SECURITY DEFINER の RPC) | 同組織のメンバー | service_role (+ SECURITY DEFINER の RPC。利用者の権限なし。#1917) | ❌ (利用者の権限なし) |
 | `org_license_assignments` | ✅ | org_admin/manager | 本人 + admin/manager/viewer | org_admin/manager + service | ❌ |
 | `org_license_audit_log` | ✅ | org_admin/manager + service | org_admin/manager/viewer | ❌ | ❌ |
 | `org_health_access_logs` | ✅ | service_role | 産業医(自分) + org_admin | ❌ | ❌ |
 | `org_health_notes` | ✅ | org_industrial_doctor | org_industrial_doctor | org_industrial_doctor (非AI) | ❌ |
-| `organization_invites` | ✅ | org_admin/manager | org_admin/manager | service_role + admin/manager | org_admin |
+| `organization_invites` | ✅ | RPC `create_org_invite` だけ (SECURITY DEFINER。利用者の権限なし。#1917) | owner/admin | RPC だけ (承諾・拒否・取り消し・作り直し。利用者の権限なし。#1917) | owner/admin |
 | `organization_challenges` | ✅ | org_admin/manager | 同組織全員 | org_admin/manager | org_admin (draft / cancelled だけ。#1688) |
 | `org_challenge_participants` | ✅ | 本人 + service | 本人 + admin/manager | service_role | ❌ |
 | `organization_challenge_aggregates` | ✅ | service_role | service_role | service_role | service_role |

@@ -13,6 +13,15 @@ import { describe, expect, it } from 'vitest';
 import {
   AI_AUTO_SAFETY_CAP_MESSAGE,
   AI_DAILY_CAPPED_FEATURES,
+  AI_FEATURE_NOT_IN_PLAN_CODE,
+  AI_FEATURE_NOT_IN_PLAN_FALLBACK_MESSAGE,
+  AI_FEATURE_NOT_IN_PLAN_STATUS,
+  AI_PLAN_CAPPED_FEATURES,
+  AI_PLAN_CAPPED_FEATURE_LABELS,
+  aiDailyLimitMessageOfStatusAndBody,
+  aiFeatureDailyLimitMessage,
+  aiFeatureNotInPlanMessage,
+  isAiDailyLimitMessage,
   AI_DAILY_LIMIT_CODE,
   AI_DAILY_LIMIT_FALLBACK_MESSAGE,
   AI_DAILY_LIMIT_STATUS,
@@ -242,5 +251,122 @@ describe('上限に数えない機能', () => {
     }
     expect(AI_UNMETERED_DAILY_CAP_DEFAULTS).toEqual({ nutrition_advice_auto: 30, meal_image_auto: 20 });
     expect(AI_UNMETERED_DAILY_CAP_FALLBACK).toBe(Math.min(...Object.values(AI_UNMETERED_DAILY_CAP_DEFAULTS)));
+  });
+});
+
+describe('billing/03 §8.8 プランごとの機能の上限 (ai_plan_feature_caps) と使えない機能 (plan_locked)', () => {
+  const DENIED_ROW = { allowed: false, metered: true, plan: 'free', limit: 0, used: 0, usage_date: '2026-10-21' };
+
+  it('parseConsumeAiUsageResult reads capped_feature for the 4 plan-capped features, sets planLocked only with plan_locked true and a known feature, and ignores unknown feature names', () => {
+    expect([...AI_PLAN_CAPPED_FEATURES]).toEqual(['menu_generation_ultimate', 'menu_generation', 'image_generation', 'meal_image_auto']);
+    for (const feature of AI_PLAN_CAPPED_FEATURES) {
+      expect(parseConsumeAiUsageResult({ ...DENIED_ROW, capped_feature: feature, plan_locked: true }), feature).toEqual({
+        allowed: false, limit: 0, used: 0, usageDate: '2026-10-21', cappedFeature: feature, planLocked: true,
+      });
+      expect(parseConsumeAiUsageResult({ ...DENIED_ROW, limit: 3, used: 3, capped_feature: feature, plan_locked: false }), feature).toEqual({
+        allowed: false, limit: 3, used: 3, usageDate: '2026-10-21', cappedFeature: feature,
+      });
+    }
+    // plan_locked が true でも、知らない機能名なら付けない (文に機能名が要るため)
+    expect(parseConsumeAiUsageResult({ ...DENIED_ROW, capped_feature: 'consultation', plan_locked: true })).toEqual({
+      allowed: false, limit: 0, used: 0, usageDate: '2026-10-21',
+    });
+    // capped_feature が無い plan_locked は無視する
+    expect(parseConsumeAiUsageResult({ ...DENIED_ROW, plan_locked: true })).toEqual({ allowed: false, limit: 0, used: 0, usageDate: '2026-10-21' });
+    // 'true' の文字列は真として読まない
+    expect(parseConsumeAiUsageResult({ ...DENIED_ROW, capped_feature: 'meal_image_auto', plan_locked: 'true' })).toEqual({
+      allowed: false, limit: 0, used: 0, usageDate: '2026-10-21', cappedFeature: 'meal_image_auto',
+    });
+  });
+
+  it('aiDailyLimitPayload returns 403 AI_FEATURE_NOT_IN_PLAN { error, code, feature } without Retry-After when planLocked, 429 with aiFeatureDailyLimitMessage when a cap > 0 is reached, and the unchanged ultimate-mode text', () => {
+    const now = Date.UTC(2026, 9, 21, 14, 0, 0); // JST 23:00
+    expect(AI_FEATURE_NOT_IN_PLAN_STATUS).toBe(403);
+    expect(AI_FEATURE_NOT_IN_PLAN_CODE).toBe('AI_FEATURE_NOT_IN_PLAN');
+    for (const feature of AI_PLAN_CAPPED_FEATURES) {
+      expect(aiDailyLimitPayload({ limit: 0, cappedFeature: feature, planLocked: true }, now), feature).toEqual({
+        status: 403,
+        headers: {},
+        body: { error: aiFeatureNotInPlanMessage(feature), code: 'AI_FEATURE_NOT_IN_PLAN', feature },
+      });
+    }
+    expect(aiFeatureNotInPlanMessage('menu_generation_ultimate')).toBe('究極モードは、有料プランでお使いいただけます。');
+    expect(aiFeatureNotInPlanMessage('image_generation')).toBe('料理画像の作成は、有料プランでお使いいただけます。');
+    expect(aiDailyLimitPayload({ limit: 3, cappedFeature: 'menu_generation' }, now)).toEqual({
+      status: 429,
+      headers: { 'Retry-After': '3600' },
+      body: {
+        error: '今日の献立の作成の利用回数の上限 (3 回) に達しました。明日 0 時から使えます。',
+        code: 'AI_DAILY_LIMIT',
+        limit: 3,
+        cappedFeature: 'menu_generation',
+        retryAfter: 3600,
+      },
+    });
+    expect(aiFeatureDailyLimitMessage('menu_generation', 3)).toBe('今日の献立の作成の利用回数の上限 (3 回) に達しました。明日 0 時から使えます。');
+    // 究極モードの文は変えない
+    expect(aiFeatureDailyLimitMessage('menu_generation_ultimate', 2)).toBe('今日の究極モードの利用回数の上限 (2 回) に達しました。明日 0 時から使えます。');
+    expect(aiUltimateModeDailyLimitMessage(2)).toBe(aiFeatureDailyLimitMessage('menu_generation_ultimate', 2));
+    // 安全弁は使えない機能より先 (回数を出さない固定の文の 429)
+    expect(aiDailyLimitPayload({ limit: 20, safetyCap: true, cappedFeature: 'meal_image_auto', planLocked: true }, now).status).toBe(429);
+    expect(AI_PLAN_CAPPED_FEATURE_LABELS).toEqual({
+      menu_generation_ultimate: '究極モード',
+      menu_generation: '献立の作成',
+      image_generation: '料理画像の作成',
+      meal_image_auto: '料理画像の作成',
+    });
+  });
+
+  it('isAiDailyLimitMessage accepts the feature-not-in-plan messages (all 4 features and the fallback) and the feature-limit messages, and aiDailyLimitMessageOfBody reads both 403 and 429 bodies (flat and nested)', () => {
+    for (const feature of AI_PLAN_CAPPED_FEATURES) {
+      expect(isAiDailyLimitMessage(aiFeatureNotInPlanMessage(feature)), feature).toBe(true);
+      expect(isAiDailyLimitMessage(aiFeatureDailyLimitMessage(feature, 15)), feature).toBe(true);
+      // 403 の本文 (平らと入れ子)
+      expect(aiDailyLimitMessageOfBody({ error: '<x>', code: 'AI_FEATURE_NOT_IN_PLAN', feature })).toBe(aiFeatureNotInPlanMessage(feature));
+      expect(aiDailyLimitMessageOfBody({ error: { code: 'AI_FEATURE_NOT_IN_PLAN', feature } })).toBe(aiFeatureNotInPlanMessage(feature));
+      // 429 の機能ごとの上限の本文 (平らと入れ子)
+      expect(aiDailyLimitMessageOfBody({ code: 'AI_DAILY_LIMIT', limit: 15, cappedFeature: feature })).toBe(aiFeatureDailyLimitMessage(feature, 15));
+      expect(aiDailyLimitMessageOfBody({ error: { code: 'AI_DAILY_LIMIT', limit: 15, cappedFeature: feature } })).toBe(aiFeatureDailyLimitMessage(feature, 15));
+    }
+    expect(isAiDailyLimitMessage(AI_FEATURE_NOT_IN_PLAN_FALLBACK_MESSAGE)).toBe(true);
+    // 機能名が分からない 403 の本文はフォールバックの文
+    expect(aiDailyLimitMessageOfBody({ code: 'AI_FEATURE_NOT_IN_PLAN', feature: 'consultation' })).toBe(AI_FEATURE_NOT_IN_PLAN_FALLBACK_MESSAGE);
+    // 形だけ合う文・数を書き換えた文・ほかの機能名の文は通さない
+    expect(isAiDailyLimitMessage('今日の写真の解析の利用回数の上限 (3 回) に達しました。明日 0 時から使えます。')).toBe(false);
+    expect(isAiDailyLimitMessage('今日の献立の作成の利用回数の上限 (3 回) に達しました。')).toBe(false);
+    expect(isAiDailyLimitMessage('写真の解析は、有料プランでお使いいただけます。')).toBe(false);
+    expect(isAiDailyLimitMessage(null)).toBe(false);
+  });
+
+  it('aiDailyLimitMessageOfStatusAndBody returns a message only for 429 with an AI_DAILY_LIMIT body and 403 with an AI_FEATURE_NOT_IN_PLAN body (flat and nested), and null for 403 with an AI_DAILY_LIMIT body, 429 with an AI_FEATURE_NOT_IN_PLAN body, 429 RATE_LIMITED, 403 AI_CONSENT_REQUIRED, 200 and non-object bodies', () => {
+    const daily = { code: 'AI_DAILY_LIMIT', limit: 3 };
+    const locked = { code: 'AI_FEATURE_NOT_IN_PLAN', feature: 'image_generation' };
+    expect(aiDailyLimitMessageOfStatusAndBody(429, daily)).toBe(aiDailyLimitMessage(3));
+    expect(aiDailyLimitMessageOfStatusAndBody(429, { error: daily })).toBe(aiDailyLimitMessage(3));
+    expect(aiDailyLimitMessageOfStatusAndBody(403, locked)).toBe(aiFeatureNotInPlanMessage('image_generation'));
+    expect(aiDailyLimitMessageOfStatusAndBody(403, { error: locked })).toBe(aiFeatureNotInPlanMessage('image_generation'));
+    expect(aiDailyLimitMessageOfStatusAndBody(403, daily)).toBeNull();
+    expect(aiDailyLimitMessageOfStatusAndBody(429, locked)).toBeNull();
+    expect(aiDailyLimitMessageOfStatusAndBody(429, { code: 'RATE_LIMITED', error: 'x' })).toBeNull();
+    expect(aiDailyLimitMessageOfStatusAndBody(403, { code: 'AI_CONSENT_REQUIRED', error: 'x' })).toBeNull();
+    expect(aiDailyLimitMessageOfStatusAndBody(403, { error: { code: 'LEGAL_CONSENT_REQUIRED' } })).toBeNull();
+    expect(aiDailyLimitMessageOfStatusAndBody(200, daily)).toBeNull();
+    expect(aiDailyLimitMessageOfStatusAndBody(200, locked)).toBeNull();
+    for (const body of [null, undefined, 'AI_DAILY_LIMIT', 429, []]) expect(aiDailyLimitMessageOfStatusAndBody(429, body), String(body)).toBeNull();
+  });
+
+  it('aiDailyLimitMessageOfDenied returns the not-in-plan message for planLocked denials, so the Edge row error_message and the consultation action result carry it, and aiDailyLimitSkippedField returns {} for planLocked', () => {
+    for (const feature of AI_PLAN_CAPPED_FEATURES) {
+      const denied = { allowed: false as const, limit: 0, used: 0, usageDate: '2026-10-21', cappedFeature: feature, planLocked: true as const };
+      expect(aiDailyLimitMessageOfDenied(denied), feature).toBe(aiFeatureNotInPlanMessage(feature));
+      // 行の失敗の欄に書かれた文を、画面がそのまま出せる
+      expect(isAiDailyLimitMessage(aiDailyLimitMessageOfDenied(denied)), feature).toBe(true);
+      expect(aiDailyLimitSkippedField(denied), feature).toEqual({});
+    }
+    // 回数の上限 (planLocked なし) は今までどおり aiSkipped を付ける
+    expect(aiDailyLimitSkippedField({ allowed: false, limit: 20, used: 20, usageDate: '2026-10-21', safetyCap: true, cappedFeature: 'meal_image_auto' })).toEqual({
+      aiSkipped: AI_DAILY_LIMIT_CODE,
+    });
+    expect(aiDailyLimitMessageOfDenied({ limit: 3, cappedFeature: 'menu_generation' })).toBe(aiFeatureDailyLimitMessage('menu_generation', 3));
   });
 });

@@ -10,7 +10,8 @@
  * ので、次を確かめる。
  *   1. コード (テスト・コメントを除く) に旧い事業者名が残っていない
  *   2. 4 つのページが出す事業者名は src/lib/business-info.ts の BUSINESS_NAME の 1 種類だけ
- *   3. 特定商取引法の表記の各項目に、空欄・仮置き・ダミーの値が無い
+ *   3. 特定商取引法の表記の各項目に、空欄・仮置き・ダミーの値が無い。所在地・メールアドレス・営業時間は business-info.ts の値
+ *      (株式会社MHD医健の公開の会社情報。#1911)、電話番号は載せずに「請求があれば遅滞なく開示します」と書く
  *   4. プライバシーポリシーの AI の送信先の一覧が、同意を取る事業者の一覧 (= 実際の送信先。
  *      tests/ai-consent-provider-inventory.test.ts が突き合わせている) と一致する
  */
@@ -20,7 +21,25 @@ import { createElement, type ComponentType, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { AI_CONSENT_PROVIDERS, AI_CONSENT_PROVIDER_INFO } from '@/lib/ai/consent-config';
-import { BUSINESS_NAME, BUSINESS_REPRESENTATIVE, DISCLOSED_ON_REQUEST } from '@/lib/business-info';
+import {
+  BUSINESS_ADDRESS,
+  BUSINESS_EMAIL,
+  BUSINESS_HOURS,
+  BUSINESS_NAME,
+  BUSINESS_REPRESENTATIVE,
+  PHONE_DISCLOSED_ON_REQUEST,
+} from '@/lib/business-info';
+
+/** タグを取り除く (1 回の置き換えでは「<scr<x>ipt>」のような入れ子が残るので、変わらなくなるまで繰り返す。CodeQL js/incomplete-multi-character-sanitization) */
+function stripAllTags(html: string): string {
+  let prev: string;
+  let out = html;
+  do {
+    prev = out;
+    out = out.replace(/<[^>]*>/g, '');
+  } while (out !== prev);
+  return out;
+}
 
 vi.mock('next/link', async () => {
   const react = await import('react');
@@ -106,22 +125,38 @@ describe('#1155 事業者名は 1 種類だけ', () => {
 describe('#1155 特定商取引法に基づく表記 (/legal) に、空欄・仮置き・ダミーの値が無い', () => {
   const html = renderHtml(LegalPage);
   const rows = [...html.matchAll(/<th[^>]*>([\s\S]*?)<\/th>\s*<td[^>]*>([\s\S]*?)<\/td>/g)].map((m) => ({
-    label: m[1].replace(/<[^>]*>/g, '').trim(),
-    value: m[2].replace(/<[^>]*>/g, '').trim(),
+    label: stripAllTags(m[1]).trim(),
+    value: stripAllTags(m[2]).trim(),
   }));
 
-  it('表が読み取れている (販売事業者・代表者・所在地・電話番号・メールアドレスの行がある)', () => {
+  it('表が読み取れている (販売事業者・代表者・所在地・電話番号・メールアドレス・営業時間の行がある)', () => {
     const labels = rows.map((r) => r.label);
-    for (const label of ['販売事業者', '代表者', '所在地', '電話番号', 'メールアドレス']) expect(labels).toContain(label);
+    for (const label of ['販売事業者', '代表者', '所在地', '電話番号', 'メールアドレス', '営業時間']) expect(labels).toContain(label);
   });
 
-  it('代表者は確定した名前、所在地・電話番号は「請求があった場合に遅滞なく開示します」', () => {
+  it('代表者・所在地・メールアドレス・営業時間は business-info.ts の値、電話番号は「請求があれば遅滞なく開示します」と請求の窓口 (#1911)', () => {
     const value = (label: string) => rows.find((r) => r.label === label)?.value;
     expect(value('販売事業者')).toBe(BUSINESS_NAME);
     expect(value('代表者')).toBe(BUSINESS_REPRESENTATIVE);
-    expect(value('所在地')).toBe(DISCLOSED_ON_REQUEST);
-    expect(value('電話番号')).toBe(DISCLOSED_ON_REQUEST);
+    expect(value('所在地')).toBe(BUSINESS_ADDRESS);
+    expect(value('メールアドレス')).toBe(BUSINESS_EMAIL);
     expect(value('メールアドレス')).toMatch(/^[^\s@]+@[^\s@]+\.[^\s@]+$/);
+    expect(value('営業時間')).toBe(BUSINESS_HOURS);
+    expect(value('電話番号')).toBe(`${PHONE_DISCLOSED_ON_REQUEST}。ご請求は、${BUSINESS_EMAIL} またはお問い合わせフォームからお願いします。`);
+  });
+
+  it('運営会社 (/company) と特定商取引法の表記 (/legal) で、所在地・代表者・メールアドレス・営業時間・電話番号の欄が同じ値 (#1911)', () => {
+    const companyHtml = renderHtml(CompanyPage);
+    const companyRows = [...companyHtml.matchAll(/<th[^>]*>([\s\S]*?)<\/th>\s*<td[^>]*>([\s\S]*?)<\/td>/g)].map((m) => ({
+      label: stripAllTags(m[1]).trim(),
+      value: stripAllTags(m[2]).trim(),
+    }));
+    const legalValue = (label: string) => rows.find((r) => r.label === label)?.value;
+    const companyValue = (label: string) => companyRows.find((r) => r.label === label)?.value;
+    for (const label of ['代表者', '所在地', 'メールアドレス', '営業時間', '電話番号']) {
+      expect(companyValue(label), `/company の「${label}」`).toBeDefined();
+      expect(companyValue(label), `「${label}」が /company と /legal で食い違う`).toBe(legalValue(label));
+    }
   });
 
   it.each(['確定次第掲載', 'XXX', 'xxx', '○○', '〇〇', 'ダミー', 'TODO', '03-1234-5678', '山田 太郎', 'ほめゴハンビル'])(
@@ -139,7 +174,7 @@ describe('#1155 特定商取引法に基づく表記 (/legal) に、空欄・仮
 describe('#1366 プライバシーポリシーの AI の送信先の一覧', () => {
   const html = renderHtml(PrivacyPage);
   const list = /<ul[^>]*data-testid="privacy-ai-providers"[^>]*>([\s\S]*?)<\/ul>/.exec(html);
-  const items = list ? [...list[1].matchAll(/<li[^>]*>([\s\S]*?)<\/li>/g)].map((m) => m[1].replace(/<[^>]*>/g, '')) : [];
+  const items = list ? [...list[1].matchAll(/<li[^>]*>([\s\S]*?)<\/li>/g)].map((m) => stripAllTags(m[1])) : [];
 
   it('同意を取る事業者 (AI_CONSENT_PROVIDERS) と同じ数・同じ順に並ぶ', () => {
     expect(list, '送信先の一覧が無い').not.toBeNull();

@@ -4,6 +4,7 @@
  */
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import {
+  FREE_PLAN_KEY,
   STRIPE_EVENT_STUCK_MINUTES,
   LIVE_SUBSCRIPTION_STATUSES,
   isStripeEventClaim,
@@ -11,6 +12,7 @@ import {
   type BillingAuditEntry,
   type BillingCustomerRow,
   type BillingRepository,
+  type PlanFeatures,
   type PurchasablePlan,
   type StoredStripeEventPayload,
   type StripeEventClaim,
@@ -20,7 +22,12 @@ import {
 
 /** DB の RPC が RAISE EXCEPTION '<コード>' USING ERRCODE='P0001' で返す業務エラー (apply_coupon と同じ流儀) */
 export class BillingRpcError extends Error {
-  readonly code: 'BILL_UNKNOWN_USER' | 'BILL_UNKNOWN_PLAN' | 'BILL_UNKNOWN_STRIPE_STATUS' | 'BILL_LIVE_ROW_CONFLICT';
+  readonly code:
+    | 'BILL_UNKNOWN_USER'
+    | 'BILL_UNKNOWN_PLAN'
+    | 'BILL_UNKNOWN_STRIPE_STATUS'
+    | 'BILL_UNKNOWN_IAP_STATUS'
+    | 'BILL_LIVE_ROW_CONFLICT';
   readonly detail: string | null;
   constructor(code: BillingRpcError['code'], detail: string | null) {
     super(code);
@@ -29,14 +36,20 @@ export class BillingRpcError extends Error {
     this.detail = detail;
   }
 }
-const BILLING_RPC_ERROR_CODES = new Set(['BILL_UNKNOWN_USER', 'BILL_UNKNOWN_PLAN', 'BILL_UNKNOWN_STRIPE_STATUS', 'BILL_LIVE_ROW_CONFLICT']);
+const BILLING_RPC_ERROR_CODES = new Set([
+  'BILL_UNKNOWN_USER',
+  'BILL_UNKNOWN_PLAN',
+  'BILL_UNKNOWN_STRIPE_STATUS',
+  'BILL_UNKNOWN_IAP_STATUS',
+  'BILL_LIVE_ROW_CONFLICT',
+]);
 function toBillingRpcError(error: { code?: string; message?: string; details?: string | null }): BillingRpcError | null {
   if (error.code !== 'P0001' || typeof error.message !== 'string' || !BILLING_RPC_ERROR_CODES.has(error.message)) return null;
   return new BillingRpcError(error.message as BillingRpcError['code'], typeof error.details === 'string' ? error.details : null);
 }
 
 const PLAN_COLUMNS = 'plan_key, display_name, plan_type, status, monthly_price_jpy, yearly_price_jpy, trial_days, stripe_price_id, stripe_yearly_price_id';
-const SUBSCRIPTION_VIEW_COLUMNS = 'id, plan_key, status, stripe_subscription_id, billing_interval, current_period_end, trial_ends_at, cancel_at_period_end, cancel_at';
+const SUBSCRIPTION_VIEW_COLUMNS = 'id, plan_key, status, stripe_subscription_id, billing_interval, current_period_end, trial_ends_at, cancel_at_period_end, cancel_at, iap_store, iap_synced_at';
 
 type Admin = ReturnType<typeof getSupabaseAdmin>;
 
@@ -78,6 +91,27 @@ export function createBillingRepository(admin: Admin = getSupabaseAdmin()): Bill
         .not('trial_started_at', 'is', null);
       if (error) throw error;
       return (count ?? 0) > 0;
+    },
+    async findPlanFeatures(planKey: string): Promise<PlanFeatures> {
+      // 1 日の上限: プランの行、無ければ free の行 (consume_ai_usage_at の「そのプランの行。無ければ 'free' の行 (それも無ければ NULL =
+      // 無制限)」と同じ。行があって daily_limit が NULL なら無制限のまま)
+      const { data: limitRows, error: limitError } = await admin
+        .from('ai_daily_limits')
+        .select('plan_key, daily_limit')
+        .in('plan_key', [planKey, FREE_PLAN_KEY]);
+      if (limitError) throw limitError;
+      const ownLimit = (limitRows ?? []).find((row) => row.plan_key === planKey);
+      const freeLimit = (limitRows ?? []).find((row) => row.plan_key === FREE_PLAN_KEY);
+      // 機能ごとの上限: そのプランの行だけ。free の行には倒さない (consume_ai_usage_at と ai_plan_feature_daily_cap は c.plan_key = いまのプランだけを
+      // 見るので、行の無いプランは機能ごとの上限なし。組織の plan (standard など) の究極モードは環境変数の既定で使える。S26)
+      const { data: capRows, error: capError } = await admin
+        .from('ai_plan_feature_caps')
+        .select('feature, daily_cap')
+        .eq('plan_key', planKey);
+      if (capError) throw capError;
+      const aiFeatureCaps: Record<string, number | null> = {};
+      for (const row of capRows ?? []) aiFeatureCaps[row.feature] = row.daily_cap;
+      return { ai_daily_limit: (ownLimit ?? freeLimit)?.daily_limit ?? null, ai_feature_caps: aiFeatureCaps };
     },
     async findCustomer(userId) {
       const { data, error } = await admin.from('billing_customers').select('stripe_customer_id, user_id, anonymized_at').eq('user_id', userId).maybeSingle();

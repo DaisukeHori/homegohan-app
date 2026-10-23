@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { normalizeUuid } from '@/lib/http-params';
+import { OperatorForceOwnerTransferResultSchema } from '@/lib/membership/operator-force-transfer-result';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,11 +54,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     // 新しいオーナーに一般メンバー向けの通知が届き、新オーナー欄のアドレスも空になる
     const to_user_id = normalizeUuid(parsed.data.to_user_id);
 
-    // 通知メール用に、RPC 実行"前"の旧オーナーと組織名を控えておく (#1209)。
-    // operator_force_owner_transfer は organizations.owner_id を新オーナーへ書き換えた後の行を返すため、
-    // その戻り値 (org.owner_id) や RPC 後の読み直しでは「旧オーナー」が新オーナー自身になってしまう。
-    // その結果、本当の旧オーナーに旧オーナー向けの通知が届かず、新オーナー宛の「旧オーナー」欄も
-    // 新オーナー自身のアドレスになる。
+    // RPC 実行"前"の旧オーナーと組織名の控え (#1209)。監査・通知に使うのは、RPC が組織の行をロックして読んだ旧オーナー
+    // (戻り値の old_owner_id。#1917) で、この控えは戻り値が古い形 (#1917 の migration の前の定義の DB。更新した後の行だけを返す) の
+    // ときだけ使う。RPC 後の読み直しや更新した後の行の owner_id では「旧オーナー」が新オーナー自身になり、本当の旧オーナーに
+    // 旧オーナー向けの通知が届かず、新オーナー宛の「旧オーナー」欄も新オーナー自身のアドレスになる。
+    // 控えはロックの外で読むので、運営 2 人がほぼ同時に同じ組織を譲渡すると、この譲渡の直前のオーナー (先の譲渡の相手) と食い違いうる。
     // 通知は best-effort (設計 §8) なので、ここで失敗しても譲渡は止めず、後段で通知だけを省く。
     let preOrg: { name: string | null; owner_id: string | null } | null = null;
     let preOrgError: unknown = null;
@@ -76,7 +77,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     const supabase = await createClient();
 
     // RPC 実行
-    const { data: org, error: rpcError } = await supabase.rpc('operator_force_owner_transfer', {
+    const { data: rpcData, error: rpcError } = await supabase.rpc('operator_force_owner_transfer', {
       p_organization_id: orgId,
       p_new_owner_id: to_user_id,
       p_reason: reason,
@@ -96,6 +97,28 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       return internalError(ROUTE_NAME, rpcError, { userId: operatorId }, { shape: 'nested' });
     }
 
+    const log = logger.withUser(operatorId);
+
+    // 旧オーナーと組織名 (#1917): RPC が組織の行を FOR NO KEY UPDATE でロックして読んだ旧オーナー (戻り値の old_owner_id。
+    // membership_audit の old_owner_id と同じ値) と、更新した後の行の組織名。同時の譲渡があっても、この譲渡の直前のオーナーになる。
+    // 戻り値が古い形 (migration の前の定義の DB) のときだけ RPC の前の控えを使い、食い違いうることをログに残す
+    // (譲渡は済んでいるので 500 にしない)。どちらも無ければ null (= 旧オーナーが分からない。通知を省く)
+    const rpcResult = OperatorForceOwnerTransferResultSchema.safeParse(rpcData);
+    if (!rpcResult.success) {
+      log.error(
+        'operator_force_owner_transfer の戻り値に旧オーナー (old_owner_id) が無いため、RPC の前に読んだ旧オーナーで監査と通知を出します (同時の譲渡では直前のオーナーと食い違いうる)',
+        rpcResult.error,
+        { organization_id: orgId, to_user_id },
+      );
+    }
+    const beforeTransfer: { ownerId: string | null; name: string | null } | null = rpcResult.success
+      ? { ownerId: rpcResult.data.old_owner_id, name: rpcResult.data.organization.name }
+      : preOrg
+        ? { ownerId: preOrg.owner_id, name: preOrg.name }
+        : null;
+    // 応答の data は従来どおり、更新した後の組織の行
+    const org = rpcResult.success ? rpcResult.data.organization : rpcData;
+
     // 監査ログ (#1571)。RPC が書く membership_audit とは別に、運営の操作として admin_audit_logs にも 1 行残す
     // (操作した人の IP・User-Agent はこちらにだけ残る)。記録に失敗しても操作は完了のまま (失敗は db-logger に残る)
     await recordAdminAudit({
@@ -104,7 +127,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       actionType: 'super_admin.organization.transfer_admin',
       targetId: orgId,
       targetType: 'organization',
-      details: { reason, to_user_id, from_user_id: preOrg?.owner_id ?? null },
+      details: { reason, to_user_id, from_user_id: beforeTransfer?.ownerId ?? null },
       severity: 'warn',
       request: req,
       routeName: ROUTE_NAME,
@@ -112,8 +135,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
     // 通知メール (best-effort)。譲渡はすでに完了しているので、失敗しても 200 を返し、ログに残す。
     // ログには宛先のメールアドレスを残さない。
-    const log = logger.withUser(operatorId);
-    if (!preOrg) {
+    if (!beforeTransfer) {
       // 旧オーナーが分からないまま送ると、旧オーナーに一般メンバー向けの本文が届いてしまう。
       // 誤った宛先・本文で送るより、送らずにログへ残す (譲渡自体は完了している)。
       log.error(
@@ -143,11 +165,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         if (name) nicknameMap[m.id] = name;
       }
 
-      // 旧 owner・組織名は RPC 実行前に控えた値を使う (RPC の戻り値の owner_id は新 owner)。
-      // owner_id の列は NOT NULL (#1103 項目 10 / migration 20261017100000) だが、控えの型は NULL も受ける (防御)。
+      // 旧 owner・組織名は上で決めた値を使う (RPC が組織の行のロックの下で読んだ旧 owner。更新した後の行の owner_id は新 owner)。
+      // owner_id の列は active な行では NOT NULL (CHECK organizations_active_has_owner。#1103 項目 10 → #1917)。解散した行は NULL なので、型は NULL も受ける。
       // 旧 owner が分からないときは null (= old_owner 役の宛先なし)
-      const oldOwnerId = preOrg.owner_id;
-      const orgName = preOrg.name ?? '';
+      const oldOwnerId = beforeTransfer.ownerId;
+      const orgName = beforeTransfer.name ?? '';
 
       // auth.users のメールアドレス。listUsers() は先頭 50 件しか返さないため、通知先と
       // 旧・新オーナーの分だけを引く (#1204)。取得できなかった人は警告ログに残り、その人には送らない

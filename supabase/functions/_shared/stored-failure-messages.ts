@@ -10,8 +10,9 @@
  * 元の文は、書く側が console と構造化ログ (_shared/db-logger.ts の app_logs) にだけ残す。
  *
  * 行に書いてよい文は、ここの定型の文と、同意の判定で止めたときの文 (_shared/ai-consent.ts の aiConsentDeniedStoredMessage)・
- * 上限で止めたときの文 (_shared/ai-daily-limit.ts の aiDailyLimitMessageOfDenied が作る文。1 日の上限の aiDailyLimitMessage・
- * 究極モードの 1 日の上限 (#1142) の aiUltimateModeDailyLimitMessage など。読む側は isAiDailyLimitMessage で見分ける) だけ。
+ * 上限 (1 日・機能ごと) とそのプランでは使えない機能 (billing/03) の文 (_shared/ai-daily-limit.ts の aiDailyLimitMessageOfDenied が作る文。
+ * 1 日の上限の aiDailyLimitMessage・機能ごとの上限の aiFeatureDailyLimitMessage・使えない機能の aiFeatureNotInPlanMessage など。
+ * 読む側は isAiDailyLimitMessage で見分ける) だけ。
  * 読む側の絞り込み (既知の文だけをそのまま出し、それ以外は汎用の文にする) は、Web は src/lib/weekly-menu-request-error.ts と
  * src/lib/shopping-list-request-error.ts、アプリは apps/mobile/src/lib/menu-request-error.ts。
  *
@@ -58,7 +59,7 @@ export const MENU_REQUEST_INVALID_TARGET_SLOTS_MESSAGE =
 export const MENU_REQUEST_CANCELLED_MESSAGE = "中止しました";
 
 /**
- * weekly_menu_requests.error_message に書く、こちらで書いた定型の文の一覧 (同意・上限 (1 日・究極モード) の文を除く)。
+ * weekly_menu_requests.error_message に書く、こちらで書いた定型の文の一覧 (同意・上限 (1 日・機能ごと) とそのプランでは使えない機能 (billing/03) の文を除く)。
  * 読む側は、これと同意の文 (aiConsentReasonOfStoredError)・上限の文 (isAiDailyLimitMessage) だけをそのまま出す
  */
 export const MENU_REQUEST_FIXED_MESSAGES: readonly string[] = Object.freeze([

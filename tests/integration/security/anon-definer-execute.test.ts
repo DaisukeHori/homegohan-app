@@ -39,6 +39,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import { setFamilyGroupPlan } from '../helpers/family-plan';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -336,6 +337,21 @@ const EXPECTED_ACL: Array<{
     serviceRole: true,
     why: '運営の枝のポリシー (TO authenticated) と運営の関数 7 本が呼ぶ判定。anon は呼ばない (cross/12 §11.4)',
   },
+  // ---- #1917 家族グループ・組織の解散 (docs/design/family/11-self-dissolve.md §11.1・§23) ----
+  {
+    sig: 'dissolve_family_by_representative(uuid)',
+    anon: false,
+    authenticated: true,
+    serviceRole: true,
+    why: '利用者本人が自分の家族 / 組織を解散する RPC (#1917)',
+  },
+  {
+    sig: 'dissolve_org_by_owner(uuid)',
+    anon: false,
+    authenticated: true,
+    serviceRole: true,
+    why: '利用者本人が自分の家族 / 組織を解散する RPC (#1917)',
+  },
 ];
 
 describe('#1103 (7) B: 関数ごとの EXECUTE 権限 (決定表)', () => {
@@ -454,6 +470,8 @@ async function createFixture(): Promise<void> {
     .single();
   if (familyError || !family) throw new Error(`family_groups: ${familyError?.message}`);
   familyId = family.id as string;
+  // billing/03 §6.6: free のグループにはメンバーを足せないので、メンバーを足す前に家族プランにする
+  await setFamilyGroupPlan(srAdmin, [familyId]);
   const { data: members, error: memberError } = await srAdmin
     .from('family_members')
     .insert([

@@ -2,7 +2,8 @@
  * アカウントの凍結 (BAN) (#1861): アプリ側の共通の部品 (純粋な関数と定数だけ。RN の API は使わない)。
  *
  * サーバー (lib/supabase/middleware.ts の /api の分岐) は、凍結中の利用者の /api を、凍結中も呼べる API
- * (src/lib/auth/frozen.ts の FROZEN_ALLOWED_API_PATHS = 退会・書き出し・有料プランの解約の 5 本と、それとは別に判定する
+ * (src/lib/auth/frozen.ts の FROZEN_ALLOWED_API_PATHS = 退会・書き出し・有料プランの解約の 3 本・家族グループ / 組織の解散の 2 本
+ * (docs/design/family/11-self-dissolve.md §13.5) の 7 本と、それとは別に判定する
  * 通知のトークンの claim (src/lib/push-tokens.ts の isPushTokenClaimApiPath)・ネイティブ認証ブリッジのコード
  * (src/lib/auth/frozen.ts の isNativeBridgeCodeApiPath)・お問い合わせの送信 (POST /api/contact。src/lib/auth/frozen.ts の
  * isFrozenContactSubmitRequest。#1871)) を除いて 403 AUTH_ACCOUNT_FROZEN で止める。本文と状態は packages/shared の account-frozen.ts。

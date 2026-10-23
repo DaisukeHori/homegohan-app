@@ -26,6 +26,7 @@ WebView ハイブリッド設計・セッション同期・ビルド設定・強
 | ルーティング | Expo Router 58 (file-based) | `app/` ディレクトリ構成 |
 | UI ライブラリ | RN 標準 + `react-native-safe-area-context` | Tailwind 非採用 (Web 側のみ) |
 | WebView | `react-native-webview` | WebView ハイブリッドの核 |
+| アプリ内課金 | `react-native-purchases` 10.14.0 (RevenueCat)・`expo-dev-client` ~58.0.14 | 有料プランの購入の画面 (billing/03 §8.10・§10.6)。Expo Go では購入が動かない (開発ビルドが要る) |
 | ストレージ | `expo-secure-store` (セッション) / `@react-native-async-storage/async-storage` (設定) | |
 | 通知 | `expo-notifications` | APNs / FCM 自動振り分け |
 | カメラ | `expo-image-picker` | iOS 18 カメラバグ回避のためネイティブ必須 |
@@ -599,11 +600,13 @@ Maestro flow を `apps/mobile/maestro/flows/tour/` 配下に 12 件追加(family
 | Biometric 認証 (Face ID / Touch ID) | 中 | `cross/01-auth-session.md` Phase 2 予定 |
 | OTA Update (expo-updates) | 低 | `app.json` で `enabled: false` のまま。`runtimeVersion` は fingerprint (mobile/07 §11)。番兵 `tests/mobile-toolchain-contract.test.ts` |
 
-## 14. 課金 (アプリ内課金をしない)
+## 14. 課金 (アプリ内課金の購入の画面。Web の購入のページへは誘導しない)
 
-正典は `docs/design/billing/01-billing-core.md` §10.4。
+正典は `docs/design/billing/03-paid-plans-and-iap.md` §8.10・§10.6 (`docs/design/billing/01-billing-core.md` §10.4 を改めたもの)。
 
-- アプリ内 (ネイティブの画面と、アプリが開く WebView のページの両方) に、有料プランの価格・購入ボタン・Web での購入への誘導 (リンク・文言) を出さない。既存の契約の状態 (プラン名・次回更新日・解約予約) を読み取り専用で出すのは可 (ネイティブの画面での表示は billing の配線の冊)。
+- アプリ内課金の購入の画面 (`app/settings/plan.tsx`。billing/03 §10.6)。設定タブの「プランとお支払い」の行から開く。購入・購入の復元・ストアの購読の管理はこの画面で行う。依存は `react-native-purchases` 10.14.0 と `expo-dev-client` ~58.0.14 (開発ビルドが要る。Expo Go では購入が動かない)。
+- Web の購入のページへの誘導は引き続き出さない。アプリ内 (ネイティブの画面と、アプリが開く WebView のページの両方) に、Web の有料プランの価格・購入ボタン・Web での購入への誘導 (リンク・文言) を出さない。Web で申し込んだ契約は、購入の画面に「Web の「プランとお支払い」から行えます」の文だけを出す (リンクは出さない)。
+- 例外 (法定表示): 購入の画面 (`app/settings/plan.tsx:494`) は「特定商取引法に基づく表記」の `/legal` を外部のブラウザ (`Linking.openURL`) で開く。`/legal` は法定表示として Web の支払方法・Web の無料体験の文を含み (`src/app/legal/page.tsx:53`・`:80`)、ヘッダのロゴから紹介ページ経由で `/pricing` に届く (`src/components/marketing/landing-copy.ts:789`)。`/legal` に購入への CTA は置かない。
 - ネイティブの料金の画面 `app/(public)/pricing.tsx` (Web の `/pricing` を外部のブラウザで開いていた) と、入口の画面 `app/index.tsx` の「料金」のリンクは削除した (外部のブラウザには `is_native_app` の Cookie が無く、Web の `/pricing` が価格と購入の CTA を描くため)。`apps/mobile/__tests__/app/no-web-purchase-links.test.ts` が、`app/` と `src/` に `/pricing`・`/account/billing` を開くコードが無いことを見張る。
 - Web の `/pricing`・`/account/billing`・`/account/billing/checkout` は `is_native_app` の Cookie (`cookies()` / `useNativeAppMode`) で購入導線を描かない。`/frozen/billing` はアプリの WebView (`isInNativeWebView()`) では解約と Billing Portal のボタンを描かない。API には制限を付けない (認可は同じ。制限は表示の規則)。
 - 配布の順: 料金の画面を消した版のアプリを配布してから、Web で販売を始める (billing/01 §17.3)。ストアの規約の最新の文面と審査での判断は billing/01 §18 の 2。

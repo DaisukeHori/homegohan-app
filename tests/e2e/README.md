@@ -202,8 +202,8 @@ npm run test:e2e:install    # Chromium インストール (初回のみ)
 | ファイル | カバーするフロー |
 |---|---|
 | `01-login.spec.ts` | ログイン基本動作 |
-| `02-meal-photo.spec.ts` | 食事画像認識 (fixture 画像が必要: `fixtures/karaage.jpg`) |
-| `03-ai-advisor.spec.ts` | AI Advisor チャット送受信 |
+| `02-meal-photo.spec.ts` | 食事画像認識 (fixture 画像が必要: `fixtures/karaage.jpg`。`E2E_ALLOW_AI_CALLS=1` のときだけ) |
+| `03-ai-advisor.spec.ts` | AI Advisor チャット送受信 (送信は `E2E_ALLOW_AI_CALLS=1` のときだけ。それ以外は送信ボタンが押せるところまで) |
 | `04-menu-page.spec.ts` | 献立週間表示 |
 | `05-shopping-list.spec.ts` | 買い物リストモーダル URL |
 
@@ -215,6 +215,12 @@ cp ~/Downloads/karaage.jpg tests/e2e/fixtures/karaage.jpg
 ```
 
 画像が存在しない場合、`02-meal-photo.spec.ts` は自動的にスキップされます。
+
+### 本物の AI を呼ぶ手順 (`E2E_ALLOW_AI_CALLS`)
+
+AI 相談の送信 (03) と食事写真の解析 (02) は本物の AI を呼び、AI の回数と原価を消費する。
+`E2E_ALLOW_AI_CALLS=1` のときだけ流す (`helpers/ai-calls.ts`)。`.github/workflows/e2e.yml` は手動の実行 (workflow_dispatch) の
+ときだけ `1` にし、PR のたびの本番向けの実行では AI を呼ばない (以前は PR のたびに 03 が本番の AI 相談へ「こんにちは」を送っていた。#1909)。
 
 ## バグ回帰スペック
 

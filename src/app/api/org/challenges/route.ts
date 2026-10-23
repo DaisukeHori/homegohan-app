@@ -1,6 +1,6 @@
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { ORG_API_INTERNAL_ERROR_MESSAGE, ORG_API_INVALID_JSON_MESSAGE, orgAuthFailureFlat } from '@/lib/org-api-errors';
 import { requireOrgAdmin } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { isUuid, readJsonBody } from '@/lib/http-params';
@@ -40,14 +40,14 @@ const CHALLENGE_LOCKED_MESSAGE = 'このチャレンジの状態は変えられ�
  * 生のエラー文は返さず (#1172)、詳細は db-logger (app_logs) にだけ残す。
  */
 function handleError(method: string, error: unknown) {
-  if (error instanceof AuthError) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  // 401 / 403 の文は日本語の固定の文 (src/lib/org-api-errors.ts)。例外の文面は本文に入れない
+  const authFailure = orgAuthFailureFlat(error);
+  if (authFailure) {
+    return authFailure;
   }
-  if (error instanceof ForbiddenError) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-  }
+  // 500 は汎用の文だけ
   createLogger(`${method} /api/org/challenges`, generateRequestId()).error('組織チャレンジの処理に失敗しました', error);
-  return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  return NextResponse.json({ error: ORG_API_INTERNAL_ERROR_MESSAGE }, { status: 500 });
 }
 
 // チャレンジ一覧取得
@@ -139,7 +139,7 @@ export async function POST(request: Request) {
 
     const parsed = await readJsonBody(request);
     if (!parsed.ok) {
-      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+      return NextResponse.json({ error: ORG_API_INVALID_JSON_MESSAGE }, { status: 400 });
     }
     const {
       title,
@@ -154,13 +154,13 @@ export async function POST(request: Request) {
     } = (parsed.body ?? {}) as Record<string, any>;
 
     if (!title || !challengeType || !startDate || !endDate) {
-      return NextResponse.json({ error: 'Required fields missing' }, { status: 400 });
+      return NextResponse.json({ error: 'タイトル・種類・開始日・終了日を入力してください' }, { status: 400 });
     }
 
     // #1132: 作成できるのは、食事の記録から計算できる種類だけ (歩数・体重・カスタムは、同意の仕組みができるまで止める)
     if (!isOrgChallengeType(challengeType)) {
       return NextResponse.json(
-        { error: 'この種類のチャレンジは、まだ作成できません', code: 'CHALLENGE_TYPE_DISABLED' },
+        { error: 'この種類のチャレンジは作成できません', code: 'CHALLENGE_TYPE_DISABLED' },
         { status: 400 },
       );
     }
@@ -191,7 +191,7 @@ export async function POST(request: Request) {
       // 22P02: departmentId が uuid の形式でない
       if (departmentError && departmentError.code !== '22P02') throw departmentError;
       if (!department) {
-        return NextResponse.json({ error: 'Invalid departmentId' }, { status: 400 });
+        return NextResponse.json({ error: '指定した部署が見つかりません' }, { status: 400 });
       }
     }
 
@@ -241,19 +241,19 @@ export async function PUT(request: Request) {
 
     const parsed = await readJsonBody(request);
     if (!parsed.ok) {
-      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+      return NextResponse.json({ error: ORG_API_INVALID_JSON_MESSAGE }, { status: 400 });
     }
     const { id, ...updates } = (parsed.body ?? {}) as Record<string, any>;
 
     if (!id) {
-      return NextResponse.json({ error: 'Challenge ID is required' }, { status: 400 });
+      return NextResponse.json({ error: 'チャレンジの ID を指定してください' }, { status: 400 });
     }
     // uuid でない文字列は、DB に渡すと 22P02 で 500 になる
     if (!isUuid(id)) {
-      return NextResponse.json({ error: 'Invalid challenge ID' }, { status: 400 });
+      return NextResponse.json({ error: 'チャレンジの ID の形式が正しくありません' }, { status: 400 });
     }
     if (updates.status !== undefined && !isOrgChallengeStatus(updates.status)) {
-      return NextResponse.json({ error: 'Invalid status', code: 'INVALID_STATUS' }, { status: 400 });
+      return NextResponse.json({ error: 'チャレンジの状態の値が正しくありません', code: 'INVALID_STATUS' }, { status: 400 });
     }
 
     // #1688: 状態を変えるときは、現在の行 (状態・種類) を 1 回だけ読み、遷移表 (src/lib/org-challenge-privacy.ts) に無い変更を
@@ -281,7 +281,7 @@ export async function PUT(request: Request) {
       // #1132: 開始 (active) にできるのは、食事の記録から計算できる種類だけ。歩数・体重・カスタムは、同意の仕組みができるまで止める
       if (updates.status === 'active' && currentRow && !isOrgChallengeType(currentRow.challenge_type)) {
         return NextResponse.json(
-          { error: 'この種類のチャレンジは、まだ開始できません', code: 'CHALLENGE_TYPE_DISABLED' },
+          { error: 'この種類のチャレンジは開始できません', code: 'CHALLENGE_TYPE_DISABLED' },
           { status: 400 },
         );
       }

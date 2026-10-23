@@ -321,14 +321,17 @@ function BadgesPageInner() {
               </div>
 
               <div className="mt-6 space-y-4">
-                <div>
-                  <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">
-                    取得条件
-                  </p>
-                  <p className="text-sm text-gray-700 leading-relaxed">
-                    {selectedBadge.description || '条件は近日公開予定です。'}
-                  </p>
-                </div>
+                {/* 説明の無いバッジは、取得条件の欄を出さない (#1911: 予定の文は書かない) */}
+                {selectedBadge.description ? (
+                  <div>
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">
+                      取得条件
+                    </p>
+                    <p className="text-sm text-gray-700 leading-relaxed">
+                      {selectedBadge.description}
+                    </p>
+                  </div>
+                ) : null}
 
                 {/* #1528: 確定した期間に取ったバッジは、最新の期間とその判定の文・取った回数を出す */}
                 {selectedBadge.earned && selectedBadge.periodAwards && (

@@ -414,6 +414,32 @@ describe('refundAiUsage: 数えた 1 回を戻す (#1149)', () => {
   });
 });
 
+describe('billing/03 §8.8: そのプランでは使えない機能 (plan_locked)', () => {
+  it('consumeAiUsage passes through plan_locked denials unchanged (403 is decided by aiDailyLimitPayload)', async () => {
+    const lockedRow = { allowed: false, metered: true, plan: 'free', limit: 0, used: 0, usage_date: TODAY_JST, capped_feature: 'image_generation', plan_locked: true };
+    const { rpc, client } = clientReturning({ data: lockedRow, error: null });
+    const result = await consumeAiUsage(USER_ID, 'image_generation', { client });
+    expect(result).toEqual({ allowed: false, limit: 0, used: 0, usageDate: TODAY_JST, cappedFeature: 'image_generation', planLocked: true });
+    // 判定は consume_ai_usage の 1 回だけ (究極モード以外)
+    expect(rpc.mock.calls.map((call) => call[0])).toEqual(['consume_ai_usage']);
+    // 応答の 403 は aiDailyLimitPayload が決める
+    if (result.allowed) throw new Error('expected a denial');
+    const res = aiDailyLimitResponse(result);
+    expect(res.status).toBe(403);
+    expect(res.headers.get('Retry-After')).toBeNull();
+    expect(await res.json()).toEqual({
+      error: '料理画像の作成は、有料プランでお使いいただけます。',
+      code: 'AI_FEATURE_NOT_IN_PLAN',
+      feature: 'image_generation',
+    });
+    // 究極モードの使えない機能も consume_ai_usage_capped の結果をそのまま返す
+    const { client: cappedClient } = clientReturning({ data: { ...lockedRow, capped_feature: 'menu_generation_ultimate' }, error: null });
+    expect(await consumeAiUsage(USER_ID, 'menu_generation_ultimate', { client: cappedClient })).toEqual({
+      allowed: false, limit: 0, used: 0, usageDate: TODAY_JST, cappedFeature: 'menu_generation_ultimate', planLocked: true,
+    });
+  });
+});
+
 describe('aiDailyLimitResponse: 上限に達したときの応答 (#1149)', () => {
   it('429 と固定の文・コード・上限の回数・次の JST 0 時までの秒数 (本文と Retry-After)', async () => {
     // JST 2026-10-11 23:59:30 (= UTC 14:59:30) → 次の JST 0 時まで 30 秒

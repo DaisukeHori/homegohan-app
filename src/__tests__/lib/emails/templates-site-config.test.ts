@@ -20,6 +20,7 @@ import { renderOrgInviteExistingEmail } from '@/lib/emails/membership/org-invite
 import { renderOrgInviteNewEmail } from '@/lib/emails/membership/org-invite-new';
 import { renderOrgTransferCompletedEmail } from '@/lib/emails/membership/org-transfer-completed';
 import { renderOrgTransferProposedEmail } from '@/lib/emails/membership/org-transfer-proposed';
+import { renderSelfDissolveEmail } from '@/lib/emails/membership/self-dissolve';
 import { renderTicketReplyEmail } from '@/lib/emails/support/ticket-reply';
 import { renderDsrVerificationEmail } from '@/lib/emails/dsr/verification';
 import { renderDsrReceivedEmail } from '@/lib/emails/dsr/received';
@@ -27,7 +28,7 @@ import { renderDsrOperatorNoticeEmail } from '@/lib/emails/dsr/operator-notice';
 import { renderDsrResolvedEmail } from '@/lib/emails/dsr/resolved';
 import { DEFAULT_EMAIL_FROM, DEFAULT_SITE_URL, DEFAULT_SUPPORT_EMAIL } from '@/lib/site-config';
 
-// #1194 メールの文面 (membership/*, support/*) は、送信元・問い合わせ先・サイトの URL を直接書かず、
+// #1194 メールの文面 (account/*, dsr/*, membership/*, support/*) は、送信元・問い合わせ先・サイトの URL を直接書かず、
 // src/lib/site-config.ts の設定 (EMAIL_FROM / NEXT_PUBLIC_SUPPORT_EMAIL / NEXT_PUBLIC_APP_URL) に従う。
 // homegohan.com への切り替えを環境変数だけで行えることを、全テンプレートで確かめる。
 
@@ -183,6 +184,12 @@ const TEMPLATES: TemplateCase[] = [
     file: 'membership/operator-force-transfer',
     name: 'operator-force-transfer (メンバー宛)',
     render: () => renderForceTransferEmail({ ...forceTransferBase, recipient_role: 'member' }),
+    mentionsSupport: true,
+  },
+  {
+    file: 'membership/self-dissolve',
+    name: 'self-dissolve',
+    render: () => renderSelfDissolveEmail({ to_email: 'taro@example.com', to_name: null, scope: 'family', scope_name: '山田家' }),
     mentionsSupport: true,
   },
   { file: 'membership/org-invite-existing', name: 'org-invite-existing', render: () => renderOrgInviteExistingEmail(inviteVars), mentionsSupport: true },

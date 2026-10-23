@@ -1,19 +1,19 @@
 /**
- * #1325 / #1120 組織ダッシュボード: 集計と部署別の表示を止め、「準備中」にする
+ * #1325 / #1120 組織ダッシュボード: 集計と部署別の表示を止める (#1911 で「準備中」の案内も取り除いた)
  *
  * 以前のダッシュボード (#1167) は、次のものを出していた。
  *   - org_daily_stats (組織の日次統計) を直接読む 4 枚のスコアカード (活力スコア・朝食摂取率・深夜食率・活動率)
  *   - 「↻ Refresh Data」ボタン (POST /api/org/stats/refresh で再集計を依頼する)
  *   - 部署ランキング (Sales Team 88 など、コードに直接書いたダミーの数字)
  * オーナー判断 (#1325 / #1120) で、組織の集計は止め、ダミーのランキングは取り除いた。
- * いまのダッシュボードが出すのは、メンバー数 (GET /api/org/stats の member_count) と「準備中」の案内だけ。
+ * いまのダッシュボードが出すのは、メンバー数 (GET /api/org/stats の member_count) だけ (#1911 で「準備中」の案内は取り除いた)。
  * このテストは、ページを実際に描画して次を確かめる。
- *   - 「準備中」の案内とメンバー数が出る
+ *   - メンバー数が出て、「準備中」の案内は出ない
  *   - 「Refresh Data」ボタンが無い (ボタンは 1 つも無い)
  *   - 通信は GET /api/org/stats だけ。再集計の API・Edge Function は呼ばない
  *   - org_daily_stats を読まない (ブラウザ用 Supabase クライアントを使わない)
  *   - ダミーの部署ランキングやスコアカードが出ない
- *   - メンバー数が取れなくても、案内は出る (失敗は「—」と短い文で伝える)
+ *   - メンバー数が取れないときは、失敗を「—」と短い文で伝える (「準備中」は出さない)
  * ソースにも、取り除いたものの名前が残っていないことを確かめる。
  *
  * ファイル名は #1167 のときのまま (ボタンから再集計 API を呼ぶテストだった)。
@@ -56,7 +56,12 @@ const { default: OrgDashboardPage } = await import('@/app/(org)/org/dashboard/pa
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const PAGE_SOURCE_PATH = path.resolve(__dirname, '../src/app/(org)/org/dashboard/page.tsx');
-const NOTICE = '組織の集計・部署別の表示は準備中です';
+/** #1911 で取り除いた「準備中」の案内 (未完成の集計の区切りは画面に出さない) */
+const REMOVED_NOTICE = '組織の集計・部署別の表示は準備中です';
+/** メンバー数の表示 (数 + 単位「名」。組織メンバーの一覧と同じ単位) */
+const MEMBER_COUNT_TEXT = /\d+\s*名/;
+/** 以前の固定の英語の文言 (日本語の画面に英語が出ていた。日本語に置き換えた) */
+const REMOVED_ENGLISH_COPY = ['Health Cockpit', 'Total Members', 'users'];
 
 let container: HTMLDivElement;
 let root: Root;
@@ -116,20 +121,25 @@ async function renderDashboard() {
   });
   await until(() => fetchMock.mock.calls.length >= 1, 'メンバー数の取得の開始');
   await until(
-    () => /users/.test(container.textContent ?? '') || /取得できませんでした/.test(container.textContent ?? ''),
+    () => MEMBER_COUNT_TEXT.test(container.textContent ?? '') || /取得できませんでした/.test(container.textContent ?? ''),
     'メンバー数の取得の完了',
   );
 }
 
 const text = () => container.textContent ?? '';
 
-describe('組織ダッシュボード: 集計を止めて「準備中」にする (#1325 / #1120)', () => {
-  it('DR-1: 「準備中」の案内と、GET /api/org/stats のメンバー数が出る', async () => {
+describe('組織ダッシュボード: 集計を止め、その区切りも出さない (#1325 / #1120 / #1911)', () => {
+  it('DR-1: GET /api/org/stats のメンバー数が出る。止めている集計の「準備中」の案内は出さない', async () => {
     await renderDashboard();
 
-    expect(text()).toContain(NOTICE);
-    expect(text()).toContain('Total Members');
-    expect(text()).toMatch(/7\s*users/);
+    expect(text()).not.toContain(REMOVED_NOTICE);
+    expect(text()).not.toContain('準備中');
+    expect(text()).toContain('ダッシュボード');
+    expect(text()).toContain('メンバー数');
+    expect(text()).toMatch(/7\s*名/);
+    for (const english of REMOVED_ENGLISH_COPY) {
+      expect(text(), `英語の「${english}」が残っている`).not.toContain(english);
+    }
   });
 
   it('DR-2: 「Refresh Data」ボタンが無い。ボタンは 1 つも無く、更新を促す文言も無い', async () => {
@@ -184,24 +194,24 @@ describe('組織ダッシュボード: 集計を止めて「準備中」にす�
     ['権限が無い (HTTP 403)', () => jsonResponse({ error: { code: 'FORBIDDEN' } }, 403)],
     ['サーバーの失敗 (HTTP 500)', () => jsonResponse({ error: { code: 'INTERNAL_ERROR' } }, 500)],
     ['形式が違う応答 (member_count が無い)', () => jsonResponse({ stats: {} })],
-  ])('DR-6: メンバー数が取れない (%s) ときも、案内は出る。数は「—」にして、失敗を短く伝える', async (_label, respond) => {
+  ])('DR-6: メンバー数が取れない (%s) ときは、数を「—」にして、失敗を短く伝える (「準備中」は出さない)', async (_label, respond) => {
     fetchMock.mockImplementation(async () => respond());
 
     await renderDashboard();
 
-    expect(text()).toContain(NOTICE);
+    expect(text()).not.toContain('準備中');
     expect(text()).toContain('メンバー数を取得できませんでした');
-    expect(text()).not.toMatch(/\d+\s*users/);
+    expect(text()).not.toMatch(MEMBER_COUNT_TEXT);
     expect(text()).toContain('—');
     expect(alertSpy).not.toHaveBeenCalled();
   });
 
-  it('DR-7: 通信自体が失敗しても、同じように案内と失敗の表示が出る', async () => {
+  it('DR-7: 通信自体が失敗しても、同じように失敗の表示が出る', async () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
 
     await renderDashboard();
 
-    expect(text()).toContain(NOTICE);
+    expect(text()).not.toContain('準備中');
     expect(text()).toContain('メンバー数を取得できませんでした');
   });
 });
@@ -227,8 +237,8 @@ describe('組織ダッシュボードのソース: 取り除いたものが残�
     expect(source).not.toContain(banned);
   });
 
-  it('DR-9: 案内の文言と、メンバー数の取得先 (GET /api/org/stats) がソースにある', () => {
-    expect(source).toContain(NOTICE);
+  it('DR-9: メンバー数の取得先 (GET /api/org/stats) がソースにあり、取り除いた「準備中」の案内は無い', () => {
+    expect(source).not.toContain(REMOVED_NOTICE);
     expect(source).toContain('"/api/org/stats"');
   });
 });

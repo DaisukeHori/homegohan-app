@@ -321,7 +321,7 @@ describe('メンバー向け API のエラー応答', () => {
 
     expect(res.status).toBe(500);
     const text = await res.text();
-    expect(JSON.parse(text)).toEqual({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } });
+    expect(JSON.parse(text)).toEqual({ error: { code: 'INTERNAL_ERROR', message: '処理中にエラーが発生しました' } });
     expect(text).not.toContain('hunter2');
     expect(text).not.toContain('organization_challenge_participants');
     expect(mockLoggerError).toHaveBeenCalledTimes(1);

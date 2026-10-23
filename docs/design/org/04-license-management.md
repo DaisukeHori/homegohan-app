@@ -225,7 +225,7 @@ UPDATE org_license_assignments ola
 
 ### 3.8 アップグレード・ダウングレード
 
-**全員一括アップグレード (Standard → Pro)**:
+**全員一括アップグレード (Standard → Pro)** (**未実装の旧案**。下の「個別プラン変更」も同じ。組織のプランの段階は運営の `PATCH /api/admin/organizations/{id}` だけが変える (#1952。`20261022170000_org_plan_operator_only.sql`)。組織の管理者によるプランの一括変更・個別変更の操作は未実装):
 ```
 1. POST /api/org/licenses (新規 Pro プール購入, quantity=現在 Standard 人数)
 2. POST /api/org/licenses/{newPoolId}/assignments/bulk (全 Standard 割当ユーザーを対象に CSV)
@@ -292,7 +292,7 @@ CREATE TRIGGER trg_update_family_seats_used
 |-----------|------|
 | **個人プランへ移行** | `family_groups.source_org_assignment_id = NULL`、`status = 'active'` に戻す + Stripe 個人プラン開始 |
 | **オーナー譲渡** | `family_groups.owner_id` を変更 (譲渡先が個人プランで課金) |
-| **解散** | `family_groups.status = 'archived'` + 全メンバーへ通知 + 90 日後物理削除 (dissolved は archived に統一) |
+| **解散** | `family_groups.status = 'dissolved'` + 全メンバーへ通知 + 90 日後物理削除 (operator/11 §5.4)。組織の物理削除のジョブは無い (family/11 Q-3) |
 
 30 日猶予期間中は:
 - 食事記録の新規作成: 不可

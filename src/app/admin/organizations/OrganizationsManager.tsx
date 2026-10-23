@@ -1,30 +1,65 @@
 'use client';
 
 /**
- * 組織管理の本体 (一覧・検索・ページ送り + 新規作成)
+ * 組織管理の本体 (一覧・検索・ページ送り + 新規作成 + プランの変更)
  * operator/03-ui-spec.md §7 準拠
  *
  * 権限 (admin / super_admin) の確認は、同じフォルダの page.tsx (サーバー) で行う。
- * API (GET / POST /api/admin/organizations) も、同じロールだけを通す。
+ * API (GET / POST /api/admin/organizations・PATCH /api/admin/organizations/{id}) も、同じロールだけを通す。
+ *
+ * プランの変更: 組織のプランの段階は運営だけが変える (#1912)。組織の管理者の設定画面は表示だけで、変えるのはこの画面の
+ * 一覧の行のプランの欄 (PATCH /api/admin/organizations/{id})。
+ * 変更が 409 CONFLICT_STALE_DATA (別の運営が先にプランを変えた) か 404 NOT_FOUND (組織がもう無い) で断られたときは、
+ * 行の表示が古いので、今の条件のまま一覧を読み直し、理由の文を一覧の上に出す (運営が手で読み直さなくてよいように)。
+ * プランの変更の結果の文 (通知・読み直しの文) は、その一覧の行についての文なので、運営が別の一覧へ移る操作 (検索・ページ送り・
+ * 組織の作成の開始) でも消す (#1912 の続き。前の一覧の行についての文を、別の一覧の上に残さない)。
+ *
+ * 読み直した一覧の件数が今のページより少ない (最後のページの唯一の行が消えたあとに同じページで読み直したときなど) ときは、
+ * 空のページを「組織はまだありません」と見せずに、件数から最後のページへ取り直す (GET は範囲外のページで空の一覧と本当の件数を返す)。
  *
  * API が返すのは id・組織名・プラン・作成/更新日時だけ。設計書 §7 にある Seat 数・期限・売上/月・担当営業は、
  * まだ出せない。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { extractApiErrorMessage } from '@/lib/admin/api-error-message';
+import { extractApiErrorCode, extractApiErrorMessage } from '@/lib/admin/api-error-message';
 import { formatJstDateTime } from '@/lib/admin/format-datetime';
 import { isUuid } from '@/lib/http-params';
+import { ORG_PLAN_VALUES, type OrgPlanValue } from '@/lib/org-plans';
 
-/** API (OrgSearchSchema / OrgCreateSchema) が受け付けるプラン */
-const PLANS = ['standard', 'premium', 'enterprise'] as const;
-type OrgPlan = (typeof PLANS)[number];
+/** API (OrgSearchSchema / OrgCreateSchema) が受け付けるプラン (organizations.plan に書ける値) */
+const PLANS = ORG_PLAN_VALUES;
+type OrgPlan = OrgPlanValue;
 
 /** 1 ページに出す件数 (API の既定値) */
 const PER_PAGE = 30;
 
 const LOAD_ERROR = '組織の一覧を取得できませんでした。しばらくしてから、もう一度お試しください。';
 const CREATE_ERROR = '組織を作成できませんでした。しばらくしてから、もう一度お試しください。';
+const PLAN_CHANGE_ERROR = 'プランを変更できませんでした。しばらくしてから、もう一度お試しください。';
+
+/**
+ * プランの変更が「行の表示が古い」ことで断られたときの、エラーの code (PATCH /api/admin/organizations/{id})。
+ * このときは一覧を読み直す (一覧の行は古い値のままなので)。
+ *   - CONFLICT_STALE_DATA (409): 読んでから書くまでに、別の運営が先にプランを変えた
+ *   - NOT_FOUND (404)          : 組織がもう無い (解散などで消えた)
+ */
+const STALE_ROW_ERROR_CODES = ['CONFLICT_STALE_DATA', 'NOT_FOUND'] as const;
+type StaleRowErrorCode = (typeof STALE_ROW_ERROR_CODES)[number];
+
+function isStaleRowErrorCode(code: string | null): code is StaleRowErrorCode {
+  return code !== null && (STALE_ROW_ERROR_CODES as readonly string[]).includes(code);
+}
+
+/** 一覧を読み直したあとに一覧の上に出す文 (サーバーの文は「一覧を読み込み直して」と頼む文なので使わない) */
+function staleRowMessage(code: StaleRowErrorCode, orgName: string): string {
+  switch (code) {
+    case 'CONFLICT_STALE_DATA':
+      return `組織「${orgName}」のプランは、別の運営が先に変えていました。一覧を読み込み直したので、今のプランを確かめてから、もう一度変更してください。`;
+    case 'NOT_FOUND':
+      return `組織「${orgName}」が見つかりませんでした (解散などで消えた可能性があります)。一覧を読み込み直しました。`;
+  }
+}
 
 /** GET /api/admin/organizations が返す 1 件 */
 interface Organization {
@@ -48,6 +83,121 @@ interface ListResult {
   total: number;
   perPage: number;
   query: Query;
+}
+
+/** PATCH /api/admin/organizations/{id} が返す { organization } */
+function parseOrganizationBody(body: unknown): Organization | null {
+  if (typeof body !== 'object' || body === null) return null;
+  const { organization } = body as { organization?: unknown };
+  if (typeof organization !== 'object' || organization === null) return null;
+  const candidate = organization as Partial<Organization>;
+  if (typeof candidate.id !== 'string' || typeof candidate.name !== 'string') return null;
+  return organization as Organization;
+}
+
+function isOrgPlan(value: string | null): value is OrgPlan {
+  return value !== null && (PLANS as readonly string[]).includes(value);
+}
+
+/**
+ * 一覧の行のプランの欄: 今のプランを出し、選び直して「変更」でプランを変える (運営だけ。#1912)。
+ * 今のプランが一覧 (ORG_PLAN_VALUES) に無い値のときは、その値をそのまま出し、選択肢の先頭は「選ぶ」にする。
+ * 行の表示が古いことで断られた (STALE_ROW_ERROR_CODES) ときは、欄にエラーを出さずに onStale を呼ぶ
+ * (親が一覧を読み直し、文は一覧の上に出す。読み直すとこの欄は作り直されるので、欄のエラーは残らない)
+ */
+function OrgPlanCell({
+  org,
+  onStart,
+  onChanged,
+  onStale,
+}: {
+  org: Organization;
+  onStart: () => void;
+  onChanged: (org: Organization) => void;
+  onStale: (message: string) => void;
+}) {
+  const current = isOrgPlan(org.plan) ? org.plan : '';
+  const [draft, setDraft] = useState<'' | OrgPlan>(current);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const selectId = `org-plan-${org.id}`;
+
+  async function handleChange() {
+    if (saving || draft === '' || draft === current) return;
+    setSaving(true);
+    setError(null);
+    onStart();
+    try {
+      const res = await fetch(`/api/admin/organizations/${encodeURIComponent(org.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: draft }),
+      });
+      const body: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const code = extractApiErrorCode(body);
+        if (isStaleRowErrorCode(code)) {
+          onStale(staleRowMessage(code, org.name));
+          return;
+        }
+        setError(extractApiErrorMessage(body) ?? PLAN_CHANGE_ERROR);
+        return;
+      }
+      const updated = parseOrganizationBody(body);
+      if (!updated) {
+        setError(PLAN_CHANGE_ERROR);
+        return;
+      }
+      onChanged(updated);
+    } catch {
+      setError(PLAN_CHANGE_ERROR);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <span className="inline-block rounded bg-blue-50 px-2 py-0.5 font-mono text-xs text-blue-800">{org.plan ?? '-'}</span>
+        <label htmlFor={selectId} className="sr-only">
+          {`${org.name} のプラン`}
+        </label>
+        <select
+          id={selectId}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value as '' | OrgPlan)}
+          disabled={saving}
+          className="rounded border border-gray-300 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100"
+        >
+          {current === '' && <option value="">選ぶ</option>}
+          {PLANS.map((value) => (
+            <option key={value} value={value}>
+              {value}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={() => void handleChange()}
+          disabled={saving || draft === '' || draft === current}
+          className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {saving ? '変更中...' : '変更'}
+        </button>
+      </div>
+      {error && (
+        <p role="alert" className="mt-1 text-xs text-red-700">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** 件数と 1 ページの件数から、最後のページの番号 (0 件でも 1) */
+function lastPageOf(total: number, perPage: number): number {
+  return Math.max(1, Math.ceil(total / perPage));
 }
 
 function parseListBody(body: unknown, query: Query): ListResult | null {
@@ -82,12 +232,19 @@ export default function OrganizationsManager() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // 一覧の行のプランの変更 (#1912)
+  const [planNotice, setPlanNotice] = useState<string | null>(null);
+  /** 行の表示が古くて断られ、一覧を読み直したときの文 (409 CONFLICT_STALE_DATA・404 NOT_FOUND) */
+  const [planStaleError, setPlanStaleError] = useState<string | null>(null);
+
   // 一覧を読み込むたびに増やす通し番号。条件を素早く切り替えたとき、遅れて届いた古い応答で
   // 新しい一覧を上書きしないために使う
   const latestLoad = useRef(0);
 
   const load = useCallback(async (target: Query) => {
     const loadId = ++latestLoad.current;
+    /** 範囲外のページだったので最後のページへ取り直した (読み込み中のまま次の取得に引き継ぐ) */
+    let redirected = false;
     setLoading(true);
     setLoadError(null);
     try {
@@ -111,11 +268,19 @@ export default function OrganizationsManager() {
         setLoadError(LOAD_ERROR);
         return;
       }
+      const lastPage = lastPageOf(parsed.total, parsed.perPage);
+      if (parsed.organizations.length === 0 && target.page > lastPage) {
+        // 今のページが件数より後ろ (最後のページの唯一の行が消えたあとの読み直しなど)。空のページを「組織はまだありません」と
+        // 見せず、同じ条件で最後のページを取り直す。page は 1 以上で毎回小さくなるので、取り直しは必ず止まる
+        redirected = true;
+        setQuery({ ...target, page: lastPage });
+        return;
+      }
       setResult(parsed);
     } catch {
       if (loadId === latestLoad.current) setLoadError(LOAD_ERROR);
     } finally {
-      if (loadId === latestLoad.current) setLoading(false);
+      if (loadId === latestLoad.current && !redirected) setLoading(false);
     }
   }, []);
 
@@ -124,9 +289,26 @@ export default function OrganizationsManager() {
     void load(query);
   }, [load, query]);
 
+  /**
+   * プランの変更の結果の表示 (通知・読み直しの文) を消す。どちらも、そのとき出ていた一覧の行についての文なので、
+   * 別の一覧へ移る操作 (検索・ページ送り・組織の作成の開始) と、次の変更の開始で消す。
+   * 同じ一覧を取り直すだけの操作 (「再読み込み」・読み直し・範囲外のページからの取り直し) では消さない
+   */
+  const clearPlanMessages = useCallback(() => {
+    setPlanNotice(null);
+    setPlanStaleError(null);
+  }, []);
+
   function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    clearPlanMessages();
     setQuery({ q: qDraft.trim(), plan: planDraft, page: 1 });
+  }
+
+  /** ページ送り (前へ: -1・次へ: +1)。別のページの一覧へ移るので、前のページの行についての文を消す */
+  function handlePageMove(step: -1 | 1) {
+    clearPlanMessages();
+    setQuery((current) => ({ ...current, page: current.page + step }));
   }
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
@@ -135,6 +317,8 @@ export default function OrganizationsManager() {
 
     setCreateError(null);
     setNotice(null);
+    // 作成すると 1 ページ目から取り直す (別の一覧へ移る) ので、前の一覧の行についてのプランの変更の文も消す
+    clearPlanMessages();
 
     const trimmedName = name.trim();
     const trimmedOwnerId = ownerId.trim();
@@ -181,8 +365,31 @@ export default function OrganizationsManager() {
     }
   }
 
+  /** 行のプランの変更を始めたら、前の変更の結果の表示 (通知・読み直しの文) を消す */
+  const handlePlanChangeStart = clearPlanMessages;
+
+  /**
+   * 行の表示が古くて断られた (別の運営が先にプランを変えた・組織が消えた) ときは、今の条件 (ページ・検索) のまま一覧を
+   * 読み直す。setQuery に新しいオブジェクトを渡すと、条件が同じでも取り直す (古い応答の上書きは latestLoad が防ぐ)。
+   * 前の変更の通知は、変更を始めたとき (handlePlanChangeStart) に消している
+   */
+  const handlePlanStale = useCallback((message: string) => {
+    setPlanStaleError(message);
+    setQuery((current) => ({ ...current }));
+  }, []);
+
+  /** 行のプランを変えたら、その行だけを返ってきた値に置き換える (一覧は取り直さない) */
+  const handlePlanChanged = useCallback((updated: Organization) => {
+    setResult((current) =>
+      current
+        ? { ...current, organizations: current.organizations.map((org) => (org.id === updated.id ? updated : org)) }
+        : current,
+    );
+    setPlanNotice(`組織「${updated.name}」のプランを ${updated.plan ?? '-'} に変更しました。`);
+  }, []);
+
   const showList = !loading && !loadError && result !== null;
-  const totalPages = result ? Math.max(1, Math.ceil(result.total / result.perPage)) : 1;
+  const totalPages = result ? lastPageOf(result.total, result.perPage) : 1;
   const currentPage = result?.query.page ?? 1;
 
   return (
@@ -325,6 +532,18 @@ export default function OrganizationsManager() {
           </button>
         </form>
 
+        {planNotice && (
+          <p role="status" className="mb-4 rounded border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+            {planNotice}
+          </p>
+        )}
+
+        {planStaleError && (
+          <p role="alert" className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {planStaleError}
+          </p>
+        )}
+
         {loadError && (
           <div
             role="alert"
@@ -378,9 +597,13 @@ export default function OrganizationsManager() {
                       <tr key={org.id}>
                         <td className="px-4 py-3 font-medium text-gray-900">{org.name}</td>
                         <td className="px-4 py-3">
-                          <span className="inline-block rounded bg-blue-50 px-2 py-0.5 font-mono text-xs text-blue-800">
-                            {org.plan ?? '-'}
-                          </span>
+                          <OrgPlanCell
+                            key={`${org.id}:${org.plan ?? ''}`}
+                            org={org}
+                            onStart={handlePlanChangeStart}
+                            onChanged={handlePlanChanged}
+                            onStale={handlePlanStale}
+                          />
                         </td>
                         <td className="px-4 py-3 text-xs text-gray-600">{formatJstDateTime(org.created_at)}</td>
                         <td className="px-4 py-3 font-mono text-xs text-gray-500">{org.id.slice(0, 8)}...</td>
@@ -399,7 +622,7 @@ export default function OrganizationsManager() {
                   <div className="flex gap-2">
                     <button
                       type="button"
-                      onClick={() => setQuery((current) => ({ ...current, page: current.page - 1 }))}
+                      onClick={() => handlePageMove(-1)}
                       disabled={currentPage <= 1}
                       className="rounded border border-gray-300 px-3 py-1 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
                     >
@@ -407,7 +630,7 @@ export default function OrganizationsManager() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setQuery((current) => ({ ...current, page: current.page + 1 }))}
+                      onClick={() => handlePageMove(1)}
                       disabled={currentPage >= totalPages}
                       className="rounded border border-gray-300 px-3 py-1 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
                     >

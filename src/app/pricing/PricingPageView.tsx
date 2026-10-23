@@ -1,25 +1,26 @@
 "use client";
 
 /**
- * /pricing の見た目 (billing/01 §10.1)。page.tsx (Server Component) が「買えるプラン」と、アプリの WebView で開いたか (is_native_app) を渡す。
+ * /pricing の見た目 (billing/01 §10.1・billing/03 §10.1)。page.tsx (Server Component) が公開のプランと、アプリの WebView で開いたか (is_native_app) を渡す。
  * この部品は Supabase も Cookie も読まない。
  *
- * - 買えるプランが 0 件 → 販売開始前の「準備中」の表示 (案内の段落・準備中のカード・FAQ)
- * - 1 件以上 → 買えるプランごとにカードを 1 枚。カードの中は買える間隔 (isPurchasable が真) ごとに 1 行ずつ、金額と CTA
- *   (買えない間隔は金額も CTA も出さない。間隔の切替は置かない)
- * - アプリの WebView (isNativeApp) では有料プランのカードと CTA を描かない (アプリ内に価格・購入の導線を出さない。§10.4)
+ * - 公開のプラン (listPublicPlans) ごとに有料のカードを 1 枚。カードの中は金額のある間隔 (月額・年額) の金額を常に出し、
+ *   CTA は買える間隔 (isPurchasable が真) だけ。買える間隔が 1 つも無いカード (Stripe の Price を入れる前) は CTA を置かない
+ * - 読み取りに失敗して 0 件のときはフリーのカードだけ
+ * - アプリの WebView (isNativeApp) では有料のカードと注記を描かない (アプリ内に Web の価格・購入の導線を出さない。billing/01 §10.4)
  */
 
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Check, Sparkles, Crown, ArrowRight, HelpCircle } from "lucide-react";
+import { Check, Sparkles, Crown, ArrowRight } from "lucide-react";
+import { FREE_PLAN_AI_LIMIT_NOTE, FREE_PLAN_FEATURES, PLAN_CATALOG } from "@homegohan/shared";
 import {
   BILLING_CHECKOUT_PAGE_PATH,
   BILLING_INTERVALS,
   amountJpyFor,
   isPurchasable,
   type BillingInterval,
-  type PurchasablePlan,
+  type PublicPlan,
 } from "@/lib/billing/core";
 
 const colors = {
@@ -38,39 +39,8 @@ const colors = {
   border: '#E8E8E8',
 };
 
-/** カードが順に出てくるときの 1 枚ごとの遅れ (秒)。いまの準備中のカードの delay と同じ */
+/** カードが順に出てくるときの 1 枚ごとの遅れ (秒) */
 const CARD_DELAY_STEP_SEC = 0.1;
-
-// 有料プランは販売開始前。価格・機能・支払条件はまだ決まっていないので載せない。
-const PAID_PLAN_PENDING = '有料プランは準備中です（販売開始前）';
-
-// 現在ご利用いただける機能。実際にある機能だけを載せ、紹介ページ (src/components/marketing/landing-copy.ts の claims) と同じ言い方にする (#1867)。
-// - 写真の記録のコメントは定型の文 (supabase/functions/_shared/nutrition-pipeline.ts の buildTemplatePraiseAndTip) なので、
-//   AI が書くコメントのようには書かず、食事の記録の画面の見出し「記録コメント」で言う (claims の praise の行)
-// - 週ごとのレポートの機能は無い (API も画面も無い) ので載せない
-// - 期間の上限・広告など、実際には無い制限は書かない。実際にある制限は、AI を使う機能の 1 日の利用回数の上限 (#1149) だけで、
-//   それは AI_DAILY_LIMIT_NOTE で書く
-const freeFeatures = [
-  "写真で食事の記録（AIが料理を認識して栄養を推定）",
-  "記録をほめるひと言（記録コメント）と栄養メモ",
-  "献立の提案",
-  "健康の記録",
-  "バッジ",
-  "過去の記録の閲覧",
-];
-
-/**
- * AI を使う機能の 1 日の利用回数の上限 (#1149)。数える: src/lib/plan/entitlements.ts の consumeAiUsage・
- * 上限に達したときの文: supabase/functions/_shared/ai-daily-limit.ts。回数の数字は運営画面で変えられるので書かない
- * (紹介ページの claims の ai-daily-limit の行と同じ扱い)
- */
-const AI_DAILY_LIMIT_NOTE =
-  "AIを使う機能（写真の解析や献立の提案など）は、1日にご利用いただける回数に上限があり、上限に達した日は翌日0時からまたお使いいただけます。";
-
-const faqs = [
-  { q: "現在、料金はかかりますか？", a: `現在ご提供している機能は無料でご利用いただけます。${AI_DAILY_LIMIT_NOTE}` },
-  { q: "有料プランはありますか？", a: `${PAID_PLAN_PENDING}。内容・料金・開始時期が決まりましたら、このページでご案内します。` },
-];
 
 /** 買える間隔ごとの金額の単位と CTA の文 (billing/01 §10.1 の表) */
 const INTERVAL_DISPLAY: Readonly<Record<BillingInterval, { unit: string; cta: string }>> = {
@@ -78,29 +48,37 @@ const INTERVAL_DISPLAY: Readonly<Record<BillingInterval, { unit: string; cta: st
   year: { unit: "/ 年（税込）", cta: "年額で始める" },
 };
 
+/** 有料のカードの下の注記 (Web の Stripe とアプリ内課金。アプリ内課金の価格がストアで違うときの説明を兼ねる。billing/03 §10.1・Q-1) */
+const PAID_PLAN_PAYMENT_NOTE =
+  "お支払いはクレジットカード (Stripe) のほか、iOS / Android アプリでは App Store / Google Play のアプリ内課金でもお申し込みいただけます。アプリ内課金の価格は各ストアの表示が正となります。";
+
 /** 金額の書き方の言語 (「1,480」のような桁区切り) */
 const PRICE_LOCALE = "ja-JP";
 
 /** 確認画面 (/account/billing/checkout) への行き先 */
-function checkoutHref(plan: PurchasablePlan, interval: BillingInterval): string {
+function checkoutHref(plan: PublicPlan, interval: BillingInterval): string {
   return `${BILLING_CHECKOUT_PAGE_PATH}?plan_key=${encodeURIComponent(plan.plan_key)}&interval=${interval}`;
 }
 
 export interface PricingPageViewProps {
-  /** 公開のプランのうち月額の Price のあるもの (listPurchasablePlans。並びは display_order) */
-  plans: PurchasablePlan[];
+  /** 公開のプラン (listPublicPlans。並びは display_order。Price の有無で絞らない) */
+  plans: PublicPlan[];
   /** アプリの WebView で開いた (Cookie is_native_app=1) */
   isNativeApp: boolean;
 }
 
 export default function PricingPageView({ plans, isNativeApp }: PricingPageViewProps) {
-  // 買えるプラン = 買える間隔が 1 つ以上あるもの (金額が NULL か 0 の間隔は買えないので、ここで外す)
-  const purchasable = plans
-    .map((plan) => ({ plan, intervals: BILLING_INTERVALS.filter((interval) => isPurchasable(plan, interval)) }))
-    .filter(({ intervals }) => intervals.length > 0);
-  const onSale = purchasable.length > 0;
-  // アプリの WebView では有料プランのカードと CTA を描かない (§10.4)
-  const showPaidCards = onSale && !isNativeApp;
+  // 有料のカード = 公開のプランごとに 1 枚。amounts は金額のある間隔 (金額は常に出す)、purchasable は CTA を置く間隔 (Price のある間隔)。
+  // 金額が 1 つも無いプランはカードにしない (billing/03 §10.1)
+  const cards = plans
+    .map((plan) => ({
+      plan,
+      amounts: BILLING_INTERVALS.filter((interval) => (amountJpyFor(plan, interval) ?? 0) > 0),
+      purchasable: BILLING_INTERVALS.filter((interval) => isPurchasable(plan, interval)),
+    }))
+    .filter(({ amounts }) => amounts.length > 0);
+  // アプリの WebView では有料のカードと注記を描かない (billing/01 §10.4)
+  const showPaidCards = !isNativeApp && cards.length > 0;
 
   return (
     <div className="min-h-screen" style={{ background: colors.bg }}>
@@ -124,16 +102,10 @@ export default function PricingPageView({ plans, isNativeApp }: PricingPageViewP
           <h1 className="text-4xl md:text-5xl font-bold mb-4" style={{ color: colors.text }}>
             シンプルな<span style={{ color: colors.primary }}>料金プラン</span>
           </h1>
-          {!onSale && (
-            <p className="text-lg" style={{ color: colors.textLight }}>
-              現在は無料でご利用いただけます。<br />
-              {PAID_PLAN_PENDING}。
-            </p>
-          )}
         </div>
 
-        {/* プランカード */}
-        <div className="grid md:grid-cols-2 gap-6 max-w-3xl mx-auto mb-20">
+        {/* プランカード (有料プランのカードを描かないときは、フリーのカード 1 枚を中央に置く) */}
+        <div className={`grid gap-6 mx-auto mb-20 ${showPaidCards ? "md:grid-cols-2 max-w-3xl" : "max-w-md"}`}>
           {/* フリープラン */}
           <motion.div
             className="relative p-6 rounded-3xl"
@@ -149,12 +121,11 @@ export default function PricingPageView({ plans, isNativeApp }: PricingPageViewP
               <p className="text-sm mb-4" style={{ color: colors.textMuted }}>まずは試してみたい方に</p>
               <div className="flex items-baseline justify-center gap-1">
                 <span className="text-4xl font-bold" style={{ color: colors.text }}>¥0</span>
-                <span className="text-sm" style={{ color: colors.textMuted }}>現在は無料</span>
               </div>
             </div>
 
             <ul className="space-y-3 mb-6">
-              {freeFeatures.map((feature) => (
+              {FREE_PLAN_FEATURES.map((feature) => (
                 <li key={feature} className="flex items-center gap-3 text-sm">
                   <Check size={18} style={{ color: colors.success }} />
                   <span style={{ color: colors.textLight }}>{feature}</span>
@@ -163,7 +134,7 @@ export default function PricingPageView({ plans, isNativeApp }: PricingPageViewP
             </ul>
 
             <p className="text-xs leading-relaxed mb-6" style={{ color: colors.textMuted }}>
-              {AI_DAILY_LIMIT_NOTE}
+              {FREE_PLAN_AI_LIMIT_NOTE}
             </p>
 
             <Link href="/signup">
@@ -178,96 +149,72 @@ export default function PricingPageView({ plans, isNativeApp }: PricingPageViewP
             </Link>
           </motion.div>
 
-          {/* 有料プラン (買える間隔ごとに金額と CTA。§10.1) */}
+          {/* 有料プラン (金額のある間隔ごとに金額、CTA は買える間隔だけ。billing/03 §10.1) */}
           {showPaidCards &&
-            purchasable.map(({ plan, intervals }, index) => (
-              <motion.div
-                key={plan.plan_key}
-                className="relative p-6 rounded-3xl flex flex-col"
-                style={{ background: colors.card, border: `1px solid ${colors.border}` }}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: CARD_DELAY_STEP_SEC * (index + 1) }}
-              >
-                <div className="text-center mb-6">
-                  <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center" style={{ background: `${colors.primary}15`, color: colors.primary }}>
-                    <Crown size={24} />
+            cards.map(({ plan, amounts, purchasable }, index) => {
+              const catalogFeatures = PLAN_CATALOG.find((entry) => entry.plan_key === plan.plan_key)?.features ?? [];
+              return (
+                <motion.div
+                  key={plan.plan_key}
+                  className="relative p-6 rounded-3xl flex flex-col"
+                  style={{ background: colors.card, border: `1px solid ${colors.border}` }}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: CARD_DELAY_STEP_SEC * (index + 1) }}
+                >
+                  <div className="text-center mb-6">
+                    <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center" style={{ background: `${colors.primary}15`, color: colors.primary }}>
+                      <Crown size={24} />
+                    </div>
+                    <h3 className="text-xl font-bold mb-1" style={{ color: colors.text }}>{plan.display_name}</h3>
+                    {plan.trial_days > 0 && (
+                      <p className="text-sm" style={{ color: colors.textMuted }}>{plan.trial_days}日間無料</p>
+                    )}
                   </div>
-                  <h3 className="text-xl font-bold mb-1" style={{ color: colors.text }}>{plan.display_name}</h3>
-                  {plan.trial_days > 0 && (
-                    <p className="text-sm" style={{ color: colors.textMuted }}>{plan.trial_days}日間無料</p>
+
+                  {catalogFeatures.length > 0 && (
+                    <ul className="space-y-3 mb-6">
+                      {catalogFeatures.map((feature) => (
+                        <li key={feature} className="flex items-center gap-3 text-sm">
+                          <Check size={18} style={{ color: colors.success }} />
+                          <span style={{ color: colors.textLight }}>{feature}</span>
+                        </li>
+                      ))}
+                    </ul>
                   )}
-                </div>
 
-                <div className="space-y-4 mt-auto">
-                  {intervals.map((interval) => {
-                    const amount = amountJpyFor(plan, interval) ?? 0;
-                    return (
-                      <div key={interval} className="space-y-2">
-                        <div className="flex items-baseline justify-center gap-1">
-                          <span className="text-3xl font-bold" style={{ color: colors.text }}>¥{amount.toLocaleString(PRICE_LOCALE)}</span>
-                          <span className="text-sm" style={{ color: colors.textMuted }}>{INTERVAL_DISPLAY[interval].unit}</span>
+                  <div className="space-y-4 mt-auto">
+                    {amounts.map((interval) => {
+                      const amount = amountJpyFor(plan, interval) ?? 0;
+                      return (
+                        <div key={interval} className="space-y-2">
+                          <div className="flex items-baseline justify-center gap-1">
+                            <span className="text-3xl font-bold" style={{ color: colors.text }}>¥{amount.toLocaleString(PRICE_LOCALE)}</span>
+                            <span className="text-sm" style={{ color: colors.textMuted }}>{INTERVAL_DISPLAY[interval].unit}</span>
+                          </div>
+                          {purchasable.includes(interval) && (
+                            <Link
+                              href={checkoutHref(plan, interval)}
+                              className="block w-full py-3 rounded-full font-bold text-sm text-center text-white"
+                              style={{ background: colors.primary }}
+                            >
+                              {INTERVAL_DISPLAY[interval].cta}
+                            </Link>
+                          )}
                         </div>
-                        <Link
-                          href={checkoutHref(plan, interval)}
-                          className="block w-full py-3 rounded-full font-bold text-sm text-center text-white"
-                          style={{ background: colors.primary }}
-                        >
-                          {INTERVAL_DISPLAY[interval].cta}
-                        </Link>
-                      </div>
-                    );
-                  })}
-                </div>
-              </motion.div>
-            ))}
-
-          {/* 有料プラン (準備中) */}
-          {!onSale && (
-          <motion.div
-            className="relative p-6 rounded-3xl flex flex-col"
-            style={{ background: colors.card, border: `2px dashed ${colors.border}` }}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: CARD_DELAY_STEP_SEC }}
-          >
-            <div className="text-center mb-6">
-              <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center" style={{ background: `${colors.textMuted}15`, color: colors.textMuted }}>
-                <Crown size={24} />
-              </div>
-              <h3 className="text-xl font-bold mb-1" style={{ color: colors.text }}>有料プラン</h3>
-              <p className="text-sm mb-4" style={{ color: colors.textMuted }}>販売開始前</p>
-              <div className="flex items-baseline justify-center gap-1">
-                <span className="text-4xl font-bold" style={{ color: colors.textMuted }}>準備中</span>
-              </div>
-            </div>
-
-            <p className="text-sm leading-relaxed text-center flex-1" style={{ color: colors.textLight }}>
-              {PAID_PLAN_PENDING}。<br />
-              内容・料金・開始時期が決まりましたら、このページでご案内します。
-            </p>
-          </motion.div>
-          )}
-        </div>
-
-        {/* FAQ (販売開始前の案内。買えるプランがあるときは描かない) */}
-        {!onSale && (
-        <div className="max-w-2xl mx-auto">
-          <h2 className="text-2xl font-bold text-center mb-8" style={{ color: colors.text }}>よくある質問</h2>
-          <div className="space-y-4">
-            {faqs.map((faq, i) => (
-              <div key={i} className="p-5 rounded-2xl" style={{ background: colors.card, border: `1px solid ${colors.border}` }}>
-                <div className="flex items-start gap-3">
-                  <HelpCircle size={20} style={{ color: colors.primary }} className="flex-shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-bold mb-2" style={{ color: colors.text }}>{faq.q}</p>
-                    <p className="text-sm" style={{ color: colors.textLight }}>{faq.a}</p>
+                      );
+                    })}
                   </div>
-                </div>
-              </div>
-            ))}
-          </div>
+                </motion.div>
+              );
+            })}
         </div>
+
+        {/* お支払いの方法の注記 (有料のカードを描くときだけ。アプリ内課金の価格はストアの表示が正。billing/03 §10.1・Q-1) */}
+        {showPaidCards && (
+          <p className="max-w-3xl mx-auto -mt-12 mb-8 text-xs leading-relaxed text-center" style={{ color: colors.textMuted }}>
+            {PAID_PLAN_PAYMENT_NOTE}
+          </p>
         )}
 
         {/* CTA */}

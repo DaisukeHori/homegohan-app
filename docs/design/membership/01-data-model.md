@@ -154,6 +154,7 @@ WHERE owner_id IS NULL;
 
 ALTER TABLE organizations
   ALTER COLUMN owner_id SET NOT NULL;
+-- #1917 で NULL 許容 + CHECK (organizations_active_has_owner。active な行では NOT NULL) に改めた。解散した行は NULL (family/11 §11.1)
 
 -- 検索用 index
 CREATE INDEX IF NOT EXISTS idx_organizations_owner_id ON organizations(owner_id);
@@ -232,7 +233,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uniq_org_invites_token
 ```sql
 -- migration: 20260511000003_membership_org_rls.sql
 
--- organizations: メンバ自身は SELECT 可、owner/admin は UPDATE 可、owner だけ DELETE 可
+-- organizations: メンバ自身は SELECT 可、owner/admin は UPDATE 可。DELETE は運営 (organizations_delete_super_admin) だけ
 ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS organizations_select_member ON organizations;
@@ -255,9 +256,10 @@ CREATE POLICY organizations_update_admin ON organizations
     )
   );
 
-DROP POLICY IF EXISTS organizations_delete_owner ON organizations;
-CREATE POLICY organizations_delete_owner ON organizations
-  FOR DELETE USING (organizations.owner_id = auth.uid());
+-- オーナーの DELETE のポリシーは置かない。#1917 の続き (20261023100000_organizations_no_owner_direct_delete.sql) で
+-- organizations_delete_owner を消し、anon から DELETE の権限を外した (直接の DELETE は部署・招待・チャレンジ・席数を CASCADE で消し、
+-- 解散の知らせ・監査も通らないため)。authenticated の DELETE の権限は運営のポリシー organizations_delete_super_admin のために残す
+-- (オーナー・管理者・メンバーの直接の DELETE は 0 行で終わる)。オーナーは解散の RPC (dissolve_org_by_owner) で組織をやめる
 
 -- organization_invites: pending 確認は token 持ちなら誰でも (受諾画面で表示するため)
 -- 一覧は admin/owner のみ
@@ -298,11 +300,18 @@ CREATE POLICY org_invites_update_admin ON organization_invites
   );
 ```
 
+注: 上の org_invites_insert_admin / org_invites_update_admin は初版の下書き。本番の正は migration `20261022180000_org_tables_rpc_only_writes.sql` (#1917):
+organization_invites の INSERT / UPDATE のポリシーは置かず、anon / authenticated の INSERT / UPDATE / TRUNCATE の権限も外す (招待の作成・作り直し・承諾・拒否・取り消しは SECURITY DEFINER の RPC だけが書く)。
+DELETE は `"Org admins can delete invites"` (TO authenticated・同じ組織の利用者で、org_role が owner / admin か、`roles` に admin / super_admin があり `operator_mfa_satisfied()` (運営・MFA 済み)。DELETE /api/org/invites) だけで、SELECT は org_invites_select_admin と `"Org admins can view invites"`。
+org_license_pools も利用者の書き込みのポリシーと権限を外し (SELECT の org_license_pools_select_member だけ)、席数は service_role と SECURITY DEFINER の RPC だけが書く。
+
 ### 2.5 organizations 操作 RPC
 ```sql
 -- migration: 20260511000004_membership_org_rpc.sql
 
 -- 招待発行 (server-side でのみ呼ぶ前提、SECURITY DEFINER)
+-- 注: 下は初版の下書き。本番の正は supabase/migrations/20261022180000_org_tables_rpc_only_writes.sql (#1917): SECURITY DEFINER・search_path = public。
+--     認可 (NOT_ORG_ADMIN) の直後に p_role = 'owner' を INSUFFICIENT_PERMISSION で断り、宛先の在籍 (ALREADY_IN_ORG)・席数・24 時間の上限の判定がある
 CREATE OR REPLACE FUNCTION public.create_org_invite(
   p_organization_id UUID,
   p_email TEXT,
@@ -362,8 +371,9 @@ REVOKE EXECUTE ON FUNCTION public.create_org_invite FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.create_org_invite TO authenticated;
 
 -- 招待受諾 (token 持ちユーザが呼ぶ)
--- 注: 下は初版の下書き。本番の正は supabase/migrations/20261017160000_org_invite_same_org_member.sql (#1799):
+-- 注: 下は初版の下書き。本番の正は supabase/migrations/20261022100000_org_invite_dissolved.sql (その前は 20261017160000_org_invite_same_org_member.sql。#1799):
 --     同じ組織の在籍者と招待の組織の持ち主も ALREADY_IN_ORG で断り、書き込みは所属が空の行だけ (org_role を招待の役割で上書きしない)。
+--     宛先のメールの判定のあと、招待の組織の行を FOR NO KEY UPDATE でロックし (:99)、組織が active でなければ ORG_ALREADY_DISSOLVED で止める (:104)。
 --     流れは 02-flow-spec.md §1
 CREATE OR REPLACE FUNCTION public.accept_org_invite(p_token TEXT)
 RETURNS user_profiles
@@ -830,9 +840,10 @@ CREATE POLICY family_groups_update_adult ON family_groups
     )
   );
 
-DROP POLICY IF EXISTS family_groups_delete_representative ON family_groups;
-CREATE POLICY family_groups_delete_representative ON family_groups
-  FOR DELETE USING (family_groups.representative_id = auth.uid());
+-- DELETE のポリシーは置かない。#1917 の続き (20261022200000_family_groups_no_direct_delete.sql) で
+-- family_groups_delete_representative を消し、anon / authenticated から DELETE・TRUNCATE の権限を外した
+-- (直接の DELETE は保護者の同意の記録 parental_consents を CASCADE で消し、解散の通知・監査も通らないため)。
+-- 家族の行を消すのは解散から 90 日の purge (purge_dissolved_family_groups) と service_role だけ。代表者は解散の RPC で家族をやめる
 
 -- family_members
 DROP POLICY IF EXISTS family_members_select_self_or_family ON family_members;
@@ -866,6 +877,9 @@ CREATE POLICY family_invites_select_adult ON family_invites
         AND fm.role IN ('representative','adult') AND fm.status = 'active'
     )
   );
+-- family_invites の書き込み (INSERT / UPDATE / DELETE) のポリシーは置かず、anon / authenticated の書き込みの権限も外す
+-- (#1912 C36。migration 20261022150000_family_invites_rpc_only_writes.sql)。招待の作成・取り消し・拒否・承諾は SECURITY DEFINER の
+-- RPC (create_family_invite / revoke_family_invite / reject_family_invite / accept_family_invite) だけが書く
 ```
 
 ### 3.6 family 操作 RPC (主要分のみ抜粋、残りは org と同パターン)

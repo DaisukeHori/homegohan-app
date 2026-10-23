@@ -282,9 +282,11 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | `/api/billing/subscription` | exact | `leave_service` | 有料プランの契約の要約。凍結中も通す (billing/01 §9.8)。凍結中は同意の画面に進めないので、ここにも入れる |
 | `/api/billing/subscription/cancel` | exact | `leave_service` | 有料プランの解約の予約 (期間末)。サービスから離れる操作。凍結中も通す (billing/01 §9.8)。解約の予約は新しい版への同意を求めない |
 | `/api/billing/portal` | exact | `leave_service` | Stripe の Billing Portal (支払い方法・請求書・解約)。解約の前提。凍結中も通す (billing/01 §9.8) |
+| `/api/family/dissolve` | exact | `leave_service` | 家族グループの解散 (本人)。退会の前提 (凍結中も通す)。family/11 §13.5 |
+| `/api/org/dissolve` | exact | `leave_service` | 組織の解散 (本人)。退会の前提 (凍結中も通す)。family/11 §13.5 |
 | `/api/account/data-requests` | prefix | `data_subject_rights` | 開示・訂正・利用停止・消去の請求 (#1702・cross/15)。規約への同意を条件にできない本人の権利 (#1751)。一覧・作成・詳細・本人確認 (`[id]/verify`)・確認のメールの再送 (`[id]/resend-verification`)・取り下げ (`[id]/withdraw`) の 6 route。凍結中は通さない (`FROZEN_ALLOWED_API_PATHS` に入れない。cross/15 S-13)。呼ぶ画面 `/settings/data-requests` (確認の画面 `/settings/data-requests/verify` を含む) も画面の判定の対象外 (`lib/legal-consent.ts`) |
 | `/api/push-tokens/claim` | exact | `device_cleanup` | 通知のトークンの claim (#1636)。利用者のデータの読み書きではなく端末の後片付け (同じ端末の前の利用者の行を外す)。凍結中・メンテナンス中も middleware が通す (`src/lib/push-tokens.ts` の `isPushTokenClaimApiPath`) のと同じ理由。凍結中・メンテナンス中は同意できないので、ここで止めると前の利用者の行が外れず、前の利用者宛ての通知がこの端末に届き続ける。release (`/api/push-tokens/release`) は載せない (セッション無しで route が端末の秘密の値で認可するので、同意の判定に来ない) |
-| `/api/contact` | exact | `contact` | 同意しない人の連絡の窓口 (データの削除の依頼もここから)。Web の同意画面の「同意しない」が案内する先。POST は未ログインでも送れる route。POST は凍結中も middleware が通す (`isFrozenContactSubmitRequest`。#1871。cross/08 §16.2) |
+| `/api/contact` | exact | `contact` | 同意しない人の連絡の窓口 (同意の前の退会と書き出しは、本人が `/legal-consent/account` で行う。cross/20 Q-23)。Web の同意画面の「同意しない」が案内する先。POST は未ログインでも送れる route。POST は凍結中も middleware が通す (`isFrozenContactSubmitRequest`。#1871。cross/08 §16.2) |
 | `/api/log` | exact | `telemetry` | 画面・端末の失敗の報告の受け口 (`error-report.ts` → `POST /api/log`)。利用者のデータの利用ではなく運用のログ。未同意の人の失敗も残す |
 | `/api/csp-report` | exact | `telemetry` | ブラウザが送る CSP の違反の報告の受け口 (cross/18 §9.10)。利用者のデータではなく運用のログ。未同意の人の画面の違反も残す |
 | `/api/feature-flags` | exact | `client_status` | 画面が前もって状態を知る窓口 (メンテナンス中も通す `isMaintenanceExemptPath` と同じ扱い)。未ログインでも答える |
@@ -292,6 +294,8 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | `/api/cron` | prefix | `no_user_session` | `CRON_SECRET` (JWT ではない Bearer)。利用者のセッションが無く `getUser` は null |
 | `/api/webhooks` | prefix | `no_user_session` | 外部 (Resend) からの通知。署名で認証。利用者のセッションが無い |
 | `/api/e2e` | prefix | `test_only` | テスト基盤 (`e2e/reset-onboarding`。本番は `NODE_ENV` で 403)。e2e の共通ユーザーの初期化を同意に左右させない |
+
+注 (billing/03): アプリ内課金の `/api/billing/iap/catalog`・`/api/billing/iap/sync` は許可リストに入れない (同意の前は購入の画面を開かない。凍結中も通さない)。RevenueCat の Webhook `/api/webhooks/revenuecat` はセッションを持たない受け口で、上の `/api/webhooks` (prefix・`no_user_session`) が通す (Stripe の受け口と同じ形)。
 
 載せない (= 止める) ことを決めたもの (既定 deny なので、この表に無い route もすべて止まる。この表は、止めるか通すかの判断が分かれうる候補と、その判断の理由を書いたもの):
 
@@ -426,8 +430,8 @@ export const LEGAL_CONSENT_EXEMPT_API_PATHS: readonly LegalConsentExemptApiEntry
   { path: LEGAL_CONSENT_ACCEPT_API_PATH, match: 'exact', reason: 'consent_itself', note: '同意の記録そのもの。止めると同意できない' },
   { path: LEGAL_CONSENT_STATUS_API_PATH, match: 'exact', reason: 'consent_itself', note: '同意の状況。止めるとアプリが状態を知れない' },
   { path: '/api/auth', match: 'prefix', reason: 'auth_flow', note: 'ログイン・Cookie の同期・ネイティブ認証ブリッジのコード。認証の途中' },
-  { path: '/api/account/delete', match: 'exact', reason: 'leave_service', note: '退会。同意を取り下げる権利 (凍結中も通す API と同じ)' },
-  { path: '/api/account/export', match: 'exact', reason: 'leave_service', note: '個人データの書き出し。同上' },
+  { path: '/api/account/delete', match: 'exact', reason: 'leave_service', note: '退会。同意を取り下げる権利。同意の前でも本人が自分で行える (同意画面の下の退会と書き出しの画面。#1901 cross/20 Q-23。凍結中も通す API と同じ)' },
+  { path: '/api/account/export', match: 'exact', reason: 'leave_service', note: '個人データの書き出し。同上 (同意の前でも本人が自分で行える)' },
   // billing/01 §9.8: 凍結中も通す有料プランの解約の 3 本 (凍結中は同意の画面に進めないので、ここにも入れる。解約の予約は新しい版への同意を求めない)
   { path: '/api/billing/subscription', match: 'exact', reason: 'leave_service', note: '有料プランの契約の要約。解約できる契約か・解約の予約の日付を読む (凍結中も通す)' },
   { path: '/api/billing/subscription/cancel', match: 'exact', reason: 'leave_service', note: '有料プランの解約の予約 (期間末)。サービスから離れる操作 (凍結中も通す)' },
@@ -444,7 +448,7 @@ export const LEGAL_CONSENT_EXEMPT_API_PATHS: readonly LegalConsentExemptApiEntry
     reason: 'device_cleanup',
     note: '通知のトークンの claim。利用者のデータの読み書きではなく端末の後片付け (同じ端末の前の利用者の行を外す)。止めると前の利用者宛ての通知がこの端末に届き続ける (凍結中・メンテナンス中も通すのと同じ理由)',
   },
-  { path: '/api/contact', match: 'exact', reason: 'contact', note: '同意しない人の連絡の窓口 (データの削除の依頼もここから)' },
+  { path: '/api/contact', match: 'exact', reason: 'contact', note: '同意しない人の連絡の窓口' },
   { path: '/api/log', match: 'exact', reason: 'telemetry', note: '画面・端末の失敗の報告の受け口。運用のログ' },
   { path: '/api/csp-report', match: 'exact', reason: 'telemetry', note: 'ブラウザが送る CSP の違反の報告の受け口。利用者のデータではなく運用のログ。未同意の人の画面の違反も残す' },
   { path: '/api/feature-flags', match: 'exact', reason: 'client_status', note: '画面が前もって状態を知る窓口 (メンテナンス中も通す)' },

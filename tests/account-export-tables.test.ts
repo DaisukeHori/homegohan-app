@@ -508,6 +508,21 @@ describe('設計上の不変条件', () => {
     expect(exported).toContain('billing_interval');
   });
 
+  // billing/03 §6.4・§16.1: RevenueCat から取り直した時刻 (iap_synced_at) はストアとの同期の内部の記録なので出さず、
+  // どのストアのどの商品か (iap_store・iap_product_id) とテストの購入の印 (iap_is_sandbox) は本人の契約の内容なので出す
+  it('personal_subscriptions omits iap_synced_at and exports iap_store, iap_product_id and iap_is_sandbox (billing/03 §6.4)', () => {
+    const spec = ACCOUNT_EXPORT_TABLES.find((t) => t.table === 'personal_subscriptions')!;
+    const exported = selectedColumns(spec).filter((c) => !(spec.omit ?? []).includes(c));
+    // 前提: 列は billing/03 の migration が足したもので、スキーマに実在する
+    for (const column of ['iap_store', 'iap_product_id', 'iap_synced_at', 'iap_is_sandbox']) {
+      expect(tableOf('personal_subscriptions').columns, column).toContain(column);
+    }
+    expect(exported).not.toContain('iap_synced_at');
+    expect(exported).toContain('iap_store');
+    expect(exported).toContain('iap_product_id');
+    expect(exported).toContain('iap_is_sandbox');
+  });
+
   // billing/01 §6.3: 利用者と Stripe Customer の対応表は、決済の内部の識別子なので出さない
   it('billing_customers is in ACCOUNT_EXPORT_EXCLUDED with a reason (billing/01 §6.3)', () => {
     expect(exportedNames.has('billing_customers')).toBe(false);

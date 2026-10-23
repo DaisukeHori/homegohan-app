@@ -52,7 +52,7 @@ export async function POST(_request: Request, props: { params: Promise<{ id: str
       return challengeError('PERM_DEPARTMENT_MISMATCH', 'このチャレンジは、別の部署の人向けです', 403);
     }
     if (!isOrgChallengeType(challenge.challenge_type)) {
-      return challengeError('CHALLENGE_TYPE_DISABLED', 'この種類のチャレンジには、まだ参加できません', 409);
+      return challengeError('CHALLENGE_TYPE_DISABLED', 'この種類のチャレンジには参加できません', 409);
     }
     if (challenge.status !== 'active') {
       return challengeError('CHALLENGE_NOT_ACTIVE', '開催中のチャレンジではないため、参加できません', 409);

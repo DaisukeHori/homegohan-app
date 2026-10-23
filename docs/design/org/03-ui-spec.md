@@ -39,8 +39,10 @@ invite/
 └── org/[token]/            招待受諾 (認証不要)
 ```
 
-## 4. `/org` — ダッシュボード
+(org)/ の共通のレイアウト (`src/app/(org)/layout.tsx`) のサイドバーの見出しは、組織の名前と組織のプラン (organizations.plan) を出す。プランは `src/lib/org-plans.ts` の `orgPlanLabel` を通した日本語の名前で出し、表に無い値・null は「-」 (内部の値や固定の英語を出さない。§20 の PlanSummary と同じ)。
 
+## 4. `/org` — ダッシュボード
+**未実装の旧案** (§4.1〜§4.3 の全部): いまの `src/app/(org)/org/dashboard/page.tsx` は、見出し「ダッシュボード」・副題「組織のメンバー数」・メンバー数 (`GET /api/org/stats`。所属組織の org_role が owner / admin のときだけ。`requireOrgAdmin`) だけを出すクライアントの画面 (`"use client"`) で、開いたときに 1 回読む。組織の集計 (活力スコアなど) と部署別の表示は止めている (#1325 / #1120)。期間セレクタ・KPI カード・推移のグラフ・部署のヒートマップ・アラート・最近の動き・月次レポートのボタンは無く、`src/app/api/org` に reports の route も無い (Upstash のキャッシュ・`?period=` も無い)。下の構成は旧案の記録として残す。
 ### 4.1 画面概要
 
 - **アクセス**: `org_admin`, `org_manager`, `org_viewer`
@@ -179,14 +181,14 @@ AddDepartmentModal
 
 ```
 InvitesPage
-├── TabBar (Pending / Accepted / Expired / Cancelled)
+├── TabBar (Pending / Accepted / Expired / Cancelled) — 未実装の旧案 (いまの `src/app/(org)/org/invites/page.tsx` は全件を 1 つの表に出す)
 ├── InviteTable
 │   └── InviteRow
-│       ├── Email, ロール, 部署, 期限, 状態
-│       └── ActionMenu (リンクコピー/再送/取消)
+│       ├── Email, ロール, 部署, 期限, 状態 (状態は日本語の名前。表に無い状態は「-」で、内部の値を出さない)
+│       └── ActionMenu (リンクコピー/取消。`pending` の招待だけ。再送は未実装の旧案)
 └── ActionButtons
     ├── InviteButton → InviteModal
-    └── BulkInviteButton → /org/invites/bulk
+    └── BulkInviteButton → /org/invites/bulk (未実装。一括招待の画面は無い)
 ```
 
 ### 8.2 個別招待モーダル
@@ -303,10 +305,10 @@ LicenseManagementPage
 ## 12. `/org/licenses/purchase` — ライセンス購入
 
 ### 12.1 コンポーネント構成
-
+**未実装の旧案**: `src/app/(org)/org/` に `licenses` の画面は無い。組織のプランの段階は `standard` / `premium` / `enterprise` (`ORG_PLAN_VALUES`。`src/lib/org-plans.ts:22`) で、変えるのは運営の `PATCH /api/admin/organizations/{id}` だけ (#1952。`20261022170000_org_plan_operator_only.sql`。組織の管理者は段階を選べない)。下の構成は旧案の記録として残す。
 ```
 LicensePurchasePage (5 ステップウィザード)
-├── Step1: PlanSelect (Org Standard / Pro / Enterprise)
+├── Step1: PlanSelect (standard / premium / enterprise)
 ├── Step2: QuantityInput (数量入力 + 単価計算)
 ├── Step3: FamilyAddonOption
 │   ├── 同梱有無トグル
@@ -467,6 +469,7 @@ BillingPage
 
 ```
 OrgSettingsPage
+├── PlanSummary (プラン / ステータス / 有効期限。プランと状態は src/lib/org-plans.ts の対応表 (ORG_PLAN_LABELS / ORG_SUBSCRIPTION_STATUS_LABELS) を通した日本語の名前で出し、表に無い値は「-」 (内部の値を出さない)。プランは表示だけで、欄に「プランの変更は運営が行います」(ORG_PLAN_OPERATOR_ONLY_NOTE) を添える。組織の段階は運営だけが変える (#1912): PUT /api/org/settings は本文に plan があれば 400 VALIDATION_ERROR、変更は運営の /admin/organizations (PATCH /api/admin/organizations/{id}))
 ├── BasicInfoForm (組織名/業種/従業員数/ロゴ/連絡先)
 ├── AppearanceSection (カスタムカラー - Pro 以上)
 ├── NotificationSettings
@@ -500,12 +503,12 @@ OrgSettingsPage
 | D11 産業医招待 | `/org/invites` → role=org_industrial_doctor |
 | D12 部署マスター登録 + 50 人配属 | `/org/departments` + move-members |
 | D13 チャレンジ開催 1 ヶ月 | `/org/challenges` → 新規作成ウィザード |
-| D14 月次レポート PDF | `/org/dashboard` → MonthlyReportButton |
+| D14 月次レポート PDF | `/org/dashboard` → MonthlyReportButton (未実装の旧案。いまの `/org/dashboard` はメンバー数だけで、月次レポートの route も無い。§4) |
 | D15 全社員 Slack 通知 | `/org/settings` → Slack Webhook 設定 |
 | E1 個人 family_group 同梱 | 自動付与 (通知のみ) |
 | E2 副業 2 社所属 | `GET /api/org/me` で複数組織情報返却 |
 | E3 個人 Pro + 組織 Pro 重複 | `/account/billing` に一時停止モーダル表示 |
-| E4 部署別レポート確認 | `/org/dashboard` 部署フィルタ |
+| E4 部署別レポート確認 | `/org/dashboard` 部署フィルタ (未実装の旧案。部署別の表示は止めている (#1325 / #1120)。§4) |
 | E5 org_viewer CSV エクスポート | `/org/licenses/usage-report` → ExportButtons |
 | E6 産業医健康指導 | `/org/health/{userId}` → AiAdviceButton |
 | E7 産業医別組織アクセス試行 | `403 ORG_PERMISSION_DENIED` バナー表示 |

@@ -22,6 +22,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import { grantFamilyPlan } from '../helpers/family-plan';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -384,6 +385,23 @@ async function createFamilyViaRpc(rep: TestUser, planKey: string): Promise<{ id:
   });
   if (error || !data) throw new Error(`create_family_group: ${error?.message}`);
   return data as { id: string; plan_key: string; member_limit: number };
+}
+
+/**
+ * 契約の無い代表者の家族 (グループは free / 4) を RPC で作る。billing/03 §6.6 から create_family_group は家族プランの契約者だけが
+ * 作れるので、家族プランを手動付与してから作り、すぐに取り消す (billing_revoke_manual_subscription。グループは free / 4 に戻り、
+ * 代表者に live な契約は残らない)。そのあとの Stripe の写像は、live な行の衝突なしに代表者の契約として入る
+ */
+async function createFamilyViaRpcBeforeContract(rep: TestUser): Promise<string> {
+  await grantFamilyPlan(srAdmin, rep.id);
+  const created = await createFamilyViaRpc(rep, 'free');
+  const { error } = await srAdmin.rpc('billing_revoke_manual_subscription', { p_user_id: rep.id });
+  if (error) throw new Error(`billing_revoke_manual_subscription: ${error.message}`);
+  const family = await mustFamily(created.id);
+  if (family.plan_key !== 'free' || family.member_limit !== 4) {
+    throw new Error(`取り消しの後のグループが free / 4 でない: ${JSON.stringify(family)}`);
+  }
+  return created.id;
 }
 
 /** 手動付与の行 (stripe_subscription_id が NULL) を service_role で作る */
@@ -1065,7 +1083,7 @@ describe('billing/01 §6.4 (9)(10): 家族のグループ', () => {
     expect(await mustFamily(familyC)).toMatchObject({ representative_id: newC.id, plan_key: 'family_pro', member_limit: 8 });
   });
 
-  it('create_family_group ignores p_plan_key: the new group gets the representative live family plan and limit, or free without a contract', async () => {
+  it('create_family_group ignores p_plan_key: the new group gets the representative live family plan and limit; without a live family plan it raises FAMILY_PLAN_REQUIRED (billing/03 §6.6) and creates no group', async () => {
     const [withContract, withoutContract] = await Promise.all([
       createUser('create-with', { jwt: true }),
       createUser('create-without', { jwt: true }),
@@ -1076,9 +1094,12 @@ describe('billing/01 §6.4 (9)(10): 家族のグループ', () => {
     expect(created).toMatchObject({ plan_key: 'family_basic', member_limit: 4 });
     expect(await mustFamily(created.id)).toMatchObject({ plan_key: 'family_basic', member_limit: 4 });
 
-    const free = await createFamilyViaRpc(withoutContract, 'family_pro');
-    expect(free).toMatchObject({ plan_key: 'free', member_limit: 4 });
-    expect(await mustFamily(free.id)).toMatchObject({ plan_key: 'free', member_limit: 4 });
+    const refused = await asUser(jwtOf(withoutContract)).rpc('create_family_group', { p_name: `billing ${RUN} ${++seq}`, p_plan_key: 'family_pro' });
+    expect(refused.data).toBeNull();
+    expect(refused.error).toMatchObject({ code: 'P0001', message: 'FAMILY_PLAN_REQUIRED' });
+    const { data: groups, error: groupsError } = await srAdmin.from('family_groups').select('id').eq('representative_id', withoutContract.id);
+    expect(groupsError).toBeNull();
+    expect(groups).toEqual([]);
   });
 });
 
@@ -1186,10 +1207,10 @@ describe('billing/01 §6.4 (9) の 3.・(10)・§7.1: 同時に走る処理', ()
     expect(await mustFamily((inserted.data as { id: string }).id)).toMatchObject({ plan_key: 'family_pro', member_limit: 8 });
   });
 
-  it('the apply for a family-plan representative locks family_groups before user_profiles: with a connection that holds the family row (FOR NO KEY UPDATE) and then updates user_profiles by family_id like operator_force_dissolve_family, and with operator_force_dissolve_family / the representative DELETE of the group running while the apply transaction is held open, nothing fails with 40P01 and the group ends dissolved / deleted with plan_key_cached synced', async () => {
+  it('the apply for a family-plan representative locks family_groups before user_profiles: with a connection that holds the family row (FOR NO KEY UPDATE) and then updates user_profiles by family_id like operator_force_dissolve_family, and with operator_force_dissolve_family / a service_role DELETE of the group running while the apply transaction is held open, nothing fails with 40P01 and the group ends dissolved / deleted with plan_key_cached synced', async () => {
     // (a) 家族の行を持った接続 (強制解散と同じ順: family_groups → family_members → user_profiles) の途中に、写像が来る
     const repA = await createUser('order-a', { jwt: true });
-    const familyA = (await createFamilyViaRpc(repA, 'free')).id;
+    const familyA = await createFamilyViaRpcBeforeContract(repA);
     const holderA = startHolder(
       `SELECT 1 FROM public.family_groups WHERE id = '${familyA}'::uuid FOR NO KEY UPDATE;`,
       `UPDATE public.family_members SET status = 'left' WHERE family_id = '${familyA}'::uuid AND status = 'active';
@@ -1208,7 +1229,7 @@ describe('billing/01 §6.4 (9) の 3.・(10)・§7.1: 同時に走る処理', ()
 
     // (b) 写像がコミット前のところへ、運営の強制解散が来る
     const repB = await createUser('order-b', { jwt: true });
-    const familyB = (await createFamilyViaRpc(repB, 'free')).id;
+    const familyB = await createFamilyViaRpcBeforeContract(repB);
     const holderB = startHolder(
       `SELECT ${applySql({ sub: nextSub(), customer: nextCustomer(), status: 'active', userId: repB.id, planKey: 'family_basic' }, nextFetchedAt())};`,
       '',
@@ -1225,15 +1246,15 @@ describe('billing/01 §6.4 (9) の 3.・(10)・§7.1: 同時に走る処理', ()
     expect((await mustFamily(familyB)).status).toBe('dissolved');
     expect(await planKeyCached(repB.id)).toBe('family_basic');
 
-    // (b') 写像がコミット前のところへ、代表者の家族の削除が来る
+    // (b') 写像がコミット前のところへ、家族の行の削除が来る (#1917 から利用者は直接消せないので、purge と同じく service_role で消す)
     const repC = await createUser('order-c', { jwt: true });
-    const familyC = (await createFamilyViaRpc(repC, 'free')).id;
+    const familyC = await createFamilyViaRpcBeforeContract(repC);
     const holderC = startHolder(
       `SELECT ${applySql({ sub: nextSub(), customer: nextCustomer(), status: 'active', userId: repC.id, planKey: 'family_basic' }, nextFetchedAt())};`,
       '',
     );
     await holderC.sleeping;
-    const deletion = Promise.resolve(asUser(jwtOf(repC)).from('family_groups').delete().eq('id', familyC).select('id'));
+    const deletion = Promise.resolve(srAdmin.from('family_groups').delete().eq('id', familyC).select('id'));
     await waitForLockWaiter('family_groups');
     const [heldC, deleted] = await Promise.all([holderC.done, deletion]);
     expectNoDeadlock(heldC, toOutcome(deleted.error));

@@ -250,8 +250,10 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
     scope: self('user_id'),
     // Stripe の顧客 / 契約 / 価格 ID と運営の備考は外部サービスの識別子・内部メモ。
     // stripe_status (Stripe の素の状態) と stripe_synced_at (Stripe から取り直した時刻) は Stripe との同期の内部の記録 (billing/01 §7.1)。
-    // cancel_at_period_end・billing_interval は本人の契約の内容なので出力する
-    omit: ['stripe_customer_id', 'stripe_subscription_id', 'stripe_price_id', 'notes', 'stripe_status', 'stripe_synced_at'],
+    // cancel_at_period_end・billing_interval は本人の契約の内容なので出力する。
+    // iap_synced_at (RevenueCat から取り直した時刻) はストアとの同期の内部の記録 (billing/03 §6.4)。
+    // iap_store・iap_product_id・iap_is_sandbox は本人の契約の内容 (どのストアのどの商品か・テストの購入か) なので出力する
+    omit: ['stripe_customer_id', 'stripe_subscription_id', 'stripe_price_id', 'notes', 'stripe_status', 'stripe_synced_at', 'iap_synced_at'],
   },
   { table: 'coupon_redemptions', scope: self('user_id'), omit: ['approved_by'] },
   {
@@ -299,6 +301,8 @@ export const ACCOUNT_EXPORT_EXCLUDED: Readonly<Record<string, string>> = {
     'チャレンジの順位表を伏せる印 (組織の管理者になった記録)。守りの内部の記録で、本人が入力したデータではない',
   gdpr_deletion_requests:
     '削除の実行記録 (#1562。退会した利用者の id の HMAC・日時・理由・実行者。利用者の id を持たず、本人が読める RLS ポリシーも無い。service_role だけが読み書きする)',
+  account_deletion_guards:
+    '退会の印 (#1917 の続き。退会を始めた日時だけ。退会の途中の人を運営がオーナーにして組織を作らないための守りの内部の記録で、本人が入力したデータではない。誰も直接は読み書きせず、退会が済むと消える)',
   experiment_assignments: 'A/B テストの内部割り当て',
   app_logs: 'アプリの動作ログ (内部のエラー記録)',
   ai_content_logs: 'AI 生成の内部ログ (費用・モデレーション用の列を含む)',
@@ -316,6 +320,8 @@ export const ACCOUNT_EXPORT_EXCLUDED: Readonly<Record<string, string>> = {
   push_outbox: 'Push 通知の送信待ちの運用の記録 (端末の token と依頼 ID)。本人のデータの写しではない',
   billing_customers:
     'Stripe の顧客 ID (cus_) と利用者の対応表 (決済の内部の識別子。本人が読める RLS ポリシーが無く、service_role だけが読み書きする)',
+  iap_reconcile_attempts:
+    'ストアの購読の定期の取り直しで、利用者に最後に取り直しを試した時刻 (候補の順番を回す内部の印。billing/04 §6.2)。本人が入力したデータではなく、本人が読める RLS ポリシーも無い。service_role だけが読み、退会で消える',
 
   // 再生成できる・システムが算出した派生データ
   nutrition_feedback_cache: 'AI フィードバックのキャッシュ (再生成できる)',

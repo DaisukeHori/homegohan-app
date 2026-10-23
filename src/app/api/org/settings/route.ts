@@ -3,13 +3,14 @@
  * PUT /api/org/settings — 組織設定更新
  * 権限: 所属組織の org_role が owner / admin (自組織のみ、#1235)。判定は共通の requireOrgAdmin() (#1161)
  * 受け取るキー・返す列は src/lib/org-settings-api.ts (組織の設定の画面が送るキーを全部受け取る。#1735)
+ * プラン (plan) は返すが受け取らない: 本文に plan があれば 400 VALIDATION_ERROR (変えるのは運営の PATCH /api/admin/organizations/{id} だけ。#1912)
  *
  * E2E: w5-13-new-features-adversarial A-1, A-4, A-7
  */
 
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { ORG_API_INTERNAL_ERROR_MESSAGE, orgAuthFailureNested } from '@/lib/org-api-errors';
 import { requireOrgAdmin } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
@@ -28,23 +29,21 @@ export const dynamic = 'force-dynamic';
 function internalError(method: string, message: string, err: unknown) {
   createLogger(`${method} /api/org/settings`, generateRequestId()).error(message, err);
   return NextResponse.json(
-    { error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } },
+    { error: { code: 'INTERNAL_ERROR', message: ORG_API_INTERNAL_ERROR_MESSAGE } },
     { status: 500 },
   );
 }
 
+/**
+ * 401 / 403 は日本語の固定の文で返す (src/lib/org-api-errors.ts)。code は従来どおり UNAUTHORIZED / FORBIDDEN。
+ * 例外の文面 (err.message。'AUTH_UNAUTHENTICATED'・'owner/admin role required' など) は本文に入れない
+ * (組織の設定の画面は本文の error.message をそのまま見せるため、英語が出ていた)。
+ * それ以外は 500 の汎用メッセージ
+ */
 function handleError(method: string, err: unknown) {
-  if (err instanceof AuthError) {
-    return NextResponse.json(
-      { error: { code: 'UNAUTHORIZED', message: err.message } },
-      { status: 401 },
-    );
-  }
-  if (err instanceof ForbiddenError) {
-    return NextResponse.json(
-      { error: { code: 'FORBIDDEN', message: err.message } },
-      { status: 403 },
-    );
+  const authFailure = orgAuthFailureNested(err);
+  if (authFailure) {
+    return authFailure;
   }
   return internalError(method, '組織設定の処理に失敗しました', err);
 }

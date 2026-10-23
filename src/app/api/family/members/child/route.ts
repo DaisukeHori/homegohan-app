@@ -16,7 +16,7 @@ import {
 import { createClient } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { extractClientIp } from '@/lib/admin/audit';
-import { MEMBERSHIP_ERROR_MESSAGES, MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
+import { ErrorStatusMap, mapPgErrorToHttp, MEMBERSHIP_ERROR_MESSAGES, MembershipErrorCode } from '@/lib/errors/membership-errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { sendEmail } from '@/lib/emails/send';
 import { isEmailFailure, logEmailFailures } from '@/lib/emails/send-result';
@@ -104,6 +104,18 @@ export async function POST(request: Request) {
   });
 
   if (error) {
+    // billing/03 §9.5: 家族プランの契約が無い代表者のグループにはメンバーを足せない (DB の門が FAMILY_PLAN_REQUIRED を RAISE する)。DB の生の文は出さない
+    if ((error.message ?? '').includes(MembershipErrorCode.FAMILY_PLAN_REQUIRED)) {
+      return NextResponse.json(
+        {
+          error: {
+            code: MembershipErrorCode.FAMILY_PLAN_REQUIRED,
+            message: MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.FAMILY_PLAN_REQUIRED],
+          },
+        },
+        { status: ErrorStatusMap[MembershipErrorCode.FAMILY_PLAN_REQUIRED] },
+      );
+    }
     if (error.message?.includes('MEMBER_LIMIT_EXCEEDED')) {
       return NextResponse.json(
         { error: { code: MembershipErrorCode.MEMBER_LIMIT_EXCEEDED, message: 'メンバー数の上限に達しています' } },

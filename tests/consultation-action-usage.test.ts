@@ -10,7 +10,7 @@
  *
  *   1. 献立の生成 3 種 (generate_day_menu / generate_week_menu / generate_single_meal): menu_generation を 1 回記録し、
  *      それが Edge Function (generate-menu-v4 / v5。AI へ送る) の呼び出しより前。呼び出しには記録済みの印を付ける (二重に記録しない)
- *   2. update_meal が付ける料理画像: 同意済みなら meal_image_auto (1 日の上限 10 回に数えず、料理画像の安全弁で止める) を 1 回、
+ *   2. update_meal が付ける料理画像: 同意済みなら meal_image_auto (1 日の上限の回数に数えず、料理画像の安全弁で止める) を 1 回、
  *      画像のジョブを積む前に記録する。
  *      未同意・判定の失敗なら記録しない (ジョブを積むかどうかは変えない。止めるのは処理する Edge Function)
  *   3. 回帰 (R3 指摘 5): 記録を Edge Function の呼び出しのあとへ動かした写しでは、1 の順番の検査が落ちる
@@ -22,7 +22,14 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { removeMutants, writeMutant } from './helpers/mutant-module';
 import { AI_USAGE_ALLOWED, AI_USAGE_DENIED } from './helpers/ai-usage-mock';
-import { AI_DAILY_LIMIT_CODE, aiDailyLimitMessage, type AiUsageResult } from '../supabase/functions/_shared/ai-daily-limit';
+import {
+  AI_DAILY_LIMIT_CODE,
+  AI_FEATURE_NOT_IN_PLAN_CODE,
+  aiDailyLimitMessage,
+  aiFeatureDailyLimitMessage,
+  aiFeatureNotInPlanMessage,
+  type AiUsageResult,
+} from '../supabase/functions/_shared/ai-daily-limit';
 
 const m = vi.hoisted(() => ({
   consumeAiUsage: vi.fn(async (_userId: string, _feature: string): Promise<AiUsageResult> => ({
@@ -252,6 +259,22 @@ describe('(#1142) 究極モード: 引数の ultimateMode が true なら menu_g
     expect(out.result).toEqual({ error: '今日の究極モードの利用回数の上限 (1 回) に達しました。明日 0 時から使えます。', code: AI_DAILY_LIMIT_CODE });
     expect(db.functions.invoke).not.toHaveBeenCalled();
     expect(m.refundAiUsage).not.toHaveBeenCalled();
+  });
+
+  it.each(MENU_ACTIONS)('$type: dailyLimitResult returns code AI_FEATURE_NOT_IN_PLAN with the not-in-plan message for planLocked denials and AI_DAILY_LIMIT otherwise', async ({ type, params }) => {
+    // billing/03 §8.8: 無料プランの究極モード (ai_plan_feature_caps = 0) は使えない機能の文と AI_FEATURE_NOT_IN_PLAN
+    const locked = { ...AI_USAGE_DENIED, limit: 0, used: 0, cappedFeature: 'menu_generation_ultimate' as const, planLocked: true as const };
+    m.consumeAiUsage.mockResolvedValue(locked);
+    const lockedRun = await runMenu(runConsultationAction, type, { ...params, ultimateMode: true });
+    expect(lockedRun.out.success).toBe(false);
+    expect(lockedRun.out.aiDailyLimit).toEqual(locked);
+    expect(lockedRun.out.result).toEqual({ error: aiFeatureNotInPlanMessage('menu_generation_ultimate'), code: AI_FEATURE_NOT_IN_PLAN_CODE });
+    expect(lockedRun.db.functions.invoke).not.toHaveBeenCalled();
+    // 献立の作成の上限 (cap > 0) は回数の文と AI_DAILY_LIMIT
+    const capped = { ...AI_USAGE_DENIED, limit: 3, used: 3, cappedFeature: 'menu_generation' as const };
+    m.consumeAiUsage.mockResolvedValue(capped);
+    const cappedRun = await runMenu(runConsultationAction, type, params);
+    expect(cappedRun.out.result).toEqual({ error: aiFeatureDailyLimitMessage('menu_generation', 3), code: AI_DAILY_LIMIT_CODE });
   });
 
   it.each(MENU_ACTIONS)('$type: 生成のリクエストの行を作れなかったら、menu_generation_ultimate で 1 回戻す', async ({ type, params }) => {

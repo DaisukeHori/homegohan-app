@@ -15,7 +15,7 @@
  * 上限の判定の結果の読み取りと、上限に達したときの応答 (429 AI_DAILY_LIMIT) の形・文面は _shared/ai-daily-limit.ts
  * (モバイルのアプリも読むので、署名の部品 (crypto.subtle・TextEncoder) を持たない別のファイルに分けた)。
  *
- * 【上限】 (#1149。値は DB の ai_daily_limits。既定は free = 1 日 10 回)
+ * 【上限】 (#1149。値は DB の ai_daily_limits (プランごと)。機能ごとの上限は ai_plan_feature_caps。billing/03 §6.5)
  *  - 1 日 (JST の暦日) の、上限に数える機能の合計の回数で数える。ユーザーの 1 回の操作を 1 回と数える (究極モードも 1 回)。
  *  - 判定と記録は DB の consume_ai_usage が 1 回の呼び出しで行う (同じ利用者・同じ日は 1 本ずつ判定するので、同時に来ても上限を超えない)。
  *  - 上限に達していれば、記録せずに止める。止め方は入口ごとに決める (tests/helpers/ai-consent-enforced-paths.ts の usage の列):
@@ -72,13 +72,13 @@ export const AI_FEATURES = [
   "image_generation",
   /**
    * 画面を開くと自動で呼ばれる AI (ホームの栄養のアドバイス・栄養の詳細を開いたときの栄養士のコメント)。
-   * 利用者が押した操作ではないので、1 日の上限 (10 回) に数えない (AI_UNMETERED_FEATURES)。記録は残し、
+   * 利用者が押した操作ではないので、1 日の上限の回数に数えない (AI_UNMETERED_FEATURES)。記録は残し、
    * 自動の分だけの安全弁 (AI_UNMETERED_DAILY_CAP_DEFAULTS) で止める (API を直接呼んで上限と無関係に使えないように)
    */
   "nutrition_advice_auto",
   /**
    * 料理を保存・更新したときに自動で付ける料理画像 (献立・食事の保存の副作用。AI 相談の update_meal も同じ)。
-   * 利用者が「画像を作る」を押した操作ではないので、1 日の上限 (10 回) に数えない (食事を記録するだけで、AI 相談や写真の解析が
+   * 利用者が「画像を作る」を押した操作ではないので、1 日の上限の回数に数えない (食事を記録するだけで、AI 相談や写真の解析が
    * 止まらないように)。記録は残し、自動の分だけの安全弁 (AI_UNMETERED_DAILY_CAP_DEFAULTS) で止める (画像だけ見送る)。
    * 利用者が押して画像を作る操作 (POST /api/ai/image/generate) は image_generation (上限に数える)
    */
@@ -88,7 +88,7 @@ export const AI_FEATURES = [
 export type AiFeature = (typeof AI_FEATURES)[number];
 
 /**
- * 上限に数えない機能 (#1149)。記録はするが、1 日の回数 (明示の 10 回) の合計に入れず、その上限に達していても止めない。
+ * 上限に数えない機能 (#1149)。記録はするが、1 日の回数 (プランごとの明示の上限) の合計に入れず、その上限に達していても止めない。
  * そのかわり、機能ごとの 1 日の安全弁 (AI_UNMETERED_DAILY_CAP_DEFAULTS) を超えたら止める。
  * DB の consume_ai_usage_at の c_unmetered と同じ一覧 (tests/ai-usage-contract.test.ts が migration と突き合わせる)。
  * 足すのは「利用者が押さなくても、画面を開く・保存するだけで呼ばれる AI」だけ (押した操作を足すと、上限をすり抜ける)。
@@ -124,13 +124,15 @@ export function isMeteredAiFeature(feature: AiFeature): boolean {
 }
 
 // ---------------------------------------------------------------
-// 機能ごとの 1 日の上限 (#1142: 究極モードは 1 人 1 日 1 回まで)
+// 機能ごとの 1 日の上限 (#1142 で究極モードを 1 人 1 日 1 回までにした。billing/03 §6.5 の後は、回数はプランで決まる)
 // ---------------------------------------------------------------
 //
 // 1 日の AI の上限 (DB の ai_daily_limits。上限に数える機能の合計) とは別に、機能ごとに 1 日 (JST の暦日) の上限を持つ機能。
 // いまは究極モード (menu_generation_ultimate) だけ。判定と記録は DB の consume_ai_usage_capped が 1 回の呼び出しで行う
 // (機能ごとの上限 → 1 日の上限の順に判定し、どちらかに達していれば記録せずに止める。同じ利用者・同じ日は 1 本ずつ判定する)。
-// 上限の値は DB に置かず、ここの既定の値 (環境変数で上書きできる) を呼び出し側が DB の関数に引数で渡す。
+// 上限の値は、DB の ai_plan_feature_caps に行のあるプラン (free 0 / pro 2 / family_basic 2 / family_pro 3。0 = そのプランでは使えず 403 AI_FEATURE_NOT_IN_PLAN)
+// では行の値 (consume_ai_usage_capped が引数の上限を使わず consume_ai_usage_at に任せる。migration 20261021100000_billing_paid_plans_iap.sql)。
+// 行の無いプラン (組織のプランなど) にだけ、ここの既定の値 (環境変数で上書きできる) を呼び出し側が DB の関数に引数で渡したものが効く。
 // 呼び出し側 (src/lib/plan/entitlements.ts の consumeAiUsage / _shared/ai-usage.ts の consumeEdgeAiUsage) は、
 // 機能名が上限を持つ機能なら consume_ai_usage_capped を、そうでなければ consume_ai_usage を呼ぶ (aiFeatureDailyCap で決める)。
 
@@ -141,7 +143,7 @@ export const AI_ULTIMATE_MODE_FEATURE = "menu_generation_ultimate" satisfies AiF
 export const AI_CAPPED_FEATURES: readonly AiFeature[] = [AI_ULTIMATE_MODE_FEATURE];
 
 /**
- * 究極モードの、利用者ごと・1 日 (JST の暦日) の上限の既定の回数 (#1142)。
+ * 究極モードの、利用者ごと・1 日 (JST の暦日) の上限の既定の回数 (#1142)。billing/03 §6.5 の後は、ai_plan_feature_caps に行の無いプランにだけ効く。
  * オーナーの選択 (2026-10-14): 「究極モードを全員に開放する。ただし、1 日の AI の上限 (#1480・#1149) とは別に、究極モードだけ
  * 1 人 1 日 1 回 (JST の暦日) までにする。」
  * 運用で変えるときは環境変数 AI_ULTIMATE_MODE_DAILY_LIMIT (0 以上の整数。0 はその日は 1 回も使えない) を、

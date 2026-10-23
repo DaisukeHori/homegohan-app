@@ -4,9 +4,9 @@
  *
  * DB 直叩きを廃止し GET /api/admin/moderation/queue 経由に統一。
  *
- * #1128: AI コンテンツ (ai_content) の審査は準備中 (未対応)。バックエンドのテーブルが無く、
- * 以前は「AI コンテンツ」を選ぶと必ず「審査待ちのアイテムはありません」と出て、通報 0 件に見えた。
- * 選択肢は無効にして「AIコンテンツ（未対応）」と出し、URL で ai_content を指定されても API は呼ばず案内を出す。
+ * #1128: AI コンテンツ (ai_content) にはバックエンドのテーブルが無く、API は 501 を返す。
+ * #1911: 未完成の機能は画面に出さない。絞り込みの選択肢は審査できる種類 (食事画像・レシピ) だけにし、
+ * URL で ai_content (やほかの知らない種類) を指定されたときは、種類を絞らない一覧 (全タイプ) として扱う。
  */
 
 export const dynamic = 'force-dynamic';
@@ -14,7 +14,8 @@ export const dynamic = 'force-dynamic';
 import Link from 'next/link';
 import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
-import { PreparingNotice } from '@/components/operator/PreparingNotice';
+import { MODERATION_TYPES, type ModerationType } from '@/lib/admin/moderation-schemas';
+import { isModerationBacked } from '@/lib/admin/moderation-backend';
 
 interface PageProps {
   searchParams: Promise<{ status?: string; type?: string; page?: string }>;
@@ -47,7 +48,12 @@ export default async function AdminModerationPage(props: PageProps) {
   await requireRoleForPage(['admin', 'super_admin', 'content_moderator'], { next: '/admin/moderation' });
 
   const status = searchParams.status ?? 'pending';
-  const type = searchParams.type ?? '';
+  // 審査できる種類 (食事画像・レシピ) だけを絞り込みに使う。それ以外は絞らない (全タイプ)
+  const requestedType = searchParams.type ?? '';
+  const type =
+    MODERATION_TYPES.includes(requestedType as ModerationType) && isModerationBacked(requestedType as ModerationType)
+      ? requestedType
+      : '';
   const page = Math.max(1, parseInt(searchParams.page ?? '1', 10));
   const perPage = 30;
 
@@ -61,19 +67,14 @@ export default async function AdminModerationPage(props: PageProps) {
   let items: ModerationItem[] = [];
   let total = 0;
 
-  // AI コンテンツは準備中 (未対応)。API は 501 を返すので呼ばず、一覧の位置に案内を出す
-  const aiContentSelected = type === 'ai_content';
-
   try {
-    if (!aiContentSelected) {
-      const res = await adminFetch(`/api/admin/moderation/queue?${params.toString()}`);
-      if (res.ok) {
-        const json = (await res.json()) as ModerationApiResponse;
-        items = json.data ?? [];
-        total = json.meta?.total ?? 0;
-      } else {
-        console.error('[admin/moderation page] API error:', res.status);
-      }
+    const res = await adminFetch(`/api/admin/moderation/queue?${params.toString()}`);
+    if (res.ok) {
+      const json = (await res.json()) as ModerationApiResponse;
+      items = json.data ?? [];
+      total = json.meta?.total ?? 0;
+    } else {
+      console.error('[admin/moderation page] API error:', res.status);
     }
   } catch (err) {
     console.error('[admin/moderation page] fetch failed:', err);
@@ -86,7 +87,7 @@ export default async function AdminModerationPage(props: PageProps) {
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">モデレーション</h1>
         <span className="text-sm text-gray-500">
-          {status === 'pending' ? '未審査' : status} 件数: {aiContentSelected ? '—' : total.toLocaleString()}
+          {status === 'pending' ? '未審査' : status} 件数: {total.toLocaleString()}
         </span>
       </div>
 
@@ -110,10 +111,6 @@ export default async function AdminModerationPage(props: PageProps) {
           <option value="">全タイプ</option>
           <option value="food">食事画像</option>
           <option value="recipe">レシピ</option>
-          {/* 準備中 (未対応)。選べないようにして、選ぶと「通報 0 件」に見える状態を避ける (#1128) */}
-          <option value="ai_content" disabled>
-            AIコンテンツ（未対応）
-          </option>
         </select>
         <button
           type="submit"
@@ -122,10 +119,6 @@ export default async function AdminModerationPage(props: PageProps) {
           絞り込み
         </button>
       </form>
-
-      <p className="mb-4 text-xs text-gray-500">
-        ※ AIコンテンツの審査は準備中（未対応）です。この一覧に出るのは、食事画像とレシピの通報だけです。
-      </p>
 
       {/* キューテーブル */}
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
@@ -141,17 +134,7 @@ export default async function AdminModerationPage(props: PageProps) {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {aiContentSelected ? (
-              // 「審査待ちのアイテムはありません」(通報 0 件に見える) ではなく、未対応と伝える
-              <tr>
-                <td colSpan={6} className="p-4">
-                  <PreparingNotice title="AIコンテンツの審査は準備中（未対応）です" tone="light">
-                    <p>AI が作った内容に対する通報・審査の仕組みは、まだ作られていません。</p>
-                    <p>この画面で審査できるのは、食事画像とレシピの通報だけです。</p>
-                  </PreparingNotice>
-                </td>
-              </tr>
-            ) : items.length === 0 ? (
+            {items.length === 0 ? (
               <tr>
                 <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
                   {status === 'pending' ? '審査待ちのアイテムはありません' : 'アイテムが見つかりません'}

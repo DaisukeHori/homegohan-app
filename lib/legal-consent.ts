@@ -37,6 +37,14 @@ import {
 export { LEGAL_CONSENT_PATH };
 
 /**
+ * 同意の前の退会とデータの書き出しの画面 (#1901 cross/20 Q-23: 規約に同意しなくても、本人が退会と書き出しをできるようにする)。
+ * 同意画面の下のパスに置くので、同意ゲート (isLegalConsentPath) と初期設定の差し戻しの両方の対象外になる。
+ * 凍結中は凍結の差し戻し (/frozen) が先に効くので開けない (凍結中の人は /frozen/account を使う)。
+ * 呼ぶ API (/api/account/delete・/api/account/export と、409 のときの /api/family/dissolve・/api/org/dissolve) は同意の許可リスト (LEGAL_CONSENT_EXEMPT_API_PATHS) にある。
+ */
+export const LEGAL_CONSENT_ACCOUNT_PATH = `${LEGAL_CONSENT_PATH}/account`;
+
+/**
  * middleware が、未同意 (かつ強制しておらず、お知らせを有効にしている) のときに、サーバー側の画面 (layout) へ渡すリクエストヘッダー。
  * 値が '1' のときだけ「同意のお願い」のお知らせを出す。クライアントから送られてきた同名のヘッダーは
  * middleware が毎回捨ててから、必要なときだけ付け直す (利用者が自分の画面に出すお知らせを偽装できても害は無いが、
@@ -91,7 +99,7 @@ function matchesPrefix(pathname: string, prefix: string): boolean {
 const EXEMPT_PREFIXES = [
   // 特定商取引法に基づく表記。同意の根拠になる文面 (/terms・/privacy) と同じく、読めないと困る公開の文面
   '/legal',
-  // 同意しない人が運営に連絡する窓口 (データの削除の依頼もここから)。凍結中の人も同じ扱い
+  // 同意しない人が運営に連絡する窓口。凍結中の人も同じ扱い (同意の前の退会と書き出しは LEGAL_CONSENT_ACCOUNT_PATH の画面で本人が行う)
   '/contact',
   '/frozen',
   // API は画面ではない。API の同意ゲートは middleware の /api の分岐 (判定は packages/shared の resolveLegalConsentApiDecision。#1442)

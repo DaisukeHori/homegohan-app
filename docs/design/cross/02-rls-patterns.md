@@ -47,6 +47,13 @@ ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;
 - **コードレビュー必須**: `service_role` が使われる PR は security ラベルを付与、実装リーダーがレビュー
 - Edge Function での service_role 使用時は必ず `admin_audit_logs` に記録
 
+### 3.4 表の TRUNCATE の権限
+
+- `TRUNCATE` は RLS の効かない書き込み (全行の削除) で、どの表でも利用者に要らない。public スキーマの表・ビューは、anon と authenticated に `TRUNCATE` を持たせない (migration `20261022190000_db_privilege_hardening.sql`。service_role の権限と、SELECT・INSERT・UPDATE・DELETE などのほかの権限は変えていない)。
+- 今後 postgres が public に作る表も、既定の権限 (`ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public`) から anon / authenticated の `TRUNCATE` を外してあるので、`CREATE TABLE` だけでは付かない。表を作る migration で anon / authenticated に `GRANT ALL` や `GRANT TRUNCATE` を書かない。
+- 確認: `tests/integration/security/db-privilege-hardening.test.ts` (全部の表・ビューと既定の権限)・`tests/db-privilege-hardening-migration-contract.test.ts` (後の migration が利用者へ表の TRUNCATE (ALL を含む) を付け直していないか)。
+- 戻し口 (`supabase/rollbacks/`) も同じ: `20261022190000` より後の migration の戻し口は、anon / authenticated に表の `TRUNCATE` (`GRANT ALL` を含む) を付け直さない (その migration の適用の直前にも無いため。例: `20261022200000_family_groups_no_direct_delete.down.sql` は DELETE だけを付け直す)。`20261022190000` より前の戻し口のうち `TRUNCATE` を付け直すもの (6 本) は、新しい順に戻したとき (`20261022190000` を先に戻したとき) だけ直前の状態に戻る。`20261022190000` の戻し口は、`20261022200000` が残っている間は `family_groups` に `TRUNCATE` を付けない。確認: `tests/db-privilege-hardening-migration-contract.test.ts` (戻し口の文面)・`tests/integration/rls/family-groups-no-direct-delete.test.ts` の G-8 (戻し口を流して巻き戻す)。
+
 ---
 
 ## 4. RLS ポリシーテンプレート集
@@ -461,7 +468,7 @@ COMMIT;
 |---------|------------|------|
 | `family_groups` | same_family_group (owner のみ UPDATE) | status 変更は特定 API のみ |
 | `family_members` | same_family_group | owner が CRUD、メンバーは自分の行のみ DELETE |
-| `family_invites` | self_ownership + 公開 SELECT (token 突合) | 招待受諾は token 検索 |
+| `family_invites` | SELECT は家族の大人 (`family_invites_select_adult`)。利用者の書き込みのポリシーと権限は無く、作成・取り消し・拒否・承諾は SECURITY DEFINER の RPC だけ (`20261022150000_family_invites_rpc_only_writes.sql`) | 招待の承諾は RPC が token で引く |
 | `family_activity_log` | immutable_audit_log | 家族全員 SELECT、INSERT は本人 |
 | `family_shopping_items` | same_family_group | チェック済みフラグは全員 UPDATE 可 |
 | `family_shared_menus` | same_family_group | 作成者のみ DELETE |
@@ -473,7 +480,7 @@ COMMIT;
 |---------|------------|------|
 | `organizations` | self_ownership (org_admin) + admin_read | org_admin は自組織のみ |
 | `user_profiles` | self_ownership + same_organization (一部列のみ) | org 内メンバー一覧は制限付き |
-| `org_license_pools` | same_organization (org_admin INSERT) | |
+| `org_license_pools` | same_organization の SELECT だけ。席数は service_role と SECURITY DEFINER の RPC だけが書く (`20261022180000_org_tables_rpc_only_writes.sql`) | |
 | `org_license_assignments` | same_organization | 本人の行は本人も SELECT |
 | `org_license_audit_log` | immutable_audit_log | org_admin + admin が SELECT |
 | `org_health_notes` | industrial_doctor_read | 本人 + 産業医 + admin のみ |
@@ -576,6 +583,7 @@ COMMIT;
 | Security | 別ユーザーが他人の行を読めないことを確認 | Vitest + Supabase Local |
 | Security | 監査ログの UPDATE / DELETE が拒否されることを確認 | Vitest + Supabase Local |
 | Security | public の関数 (SECURITY DEFINER / SECURITY INVOKER) のうち anon が EXECUTE できるものが、理由つきの許可一覧のものだけか (Supabase の既定の権限と PUBLIC の EXECUTE が残らないか。INVOKER のトリガー関数は除外の条件で外す) | Vitest + Supabase Local (`tests/integration/security/anon-definer-execute.test.ts`・`anon-invoker-execute.test.ts`) |
+| Security | public の表・ビューに、anon / authenticated の TRUNCATE が無いか (既定の権限も。§3.4) | Vitest + Supabase Local (`tests/integration/security/db-privilege-hardening.test.ts`) |
 
 ### 10.1 RLS テストの基本パターン
 

@@ -17,6 +17,9 @@
  *        SIGNED_OUT の掃除は push token の値 (1 で読む) を残すので、1 は控えた値で行を消せる (AuthProvider.tsx の先頭の表)
  *   3. サインアウト (保管庫のセッションを消す)
  *
+ * 1 の前に、ストアの購入 (RevenueCat) の利用者を外す (resetPurchasesOnSignOut。billing/03 §8.10)。次にログインした別の利用者に
+ * 購入を引き継がないため。失敗しても投げない (次の identify が logIn で切り替える)。退会のあとの signOutAfterAccountDeletion も同じ。
+ *
  * 1 の削除が失敗した・0 件だったときは、2 の掃除が値 (push_token_value_v1:<利用者>) を消す前に、その行を release の宛先として控える
  * (#1706。pushTokenRelease.ts の recordPushTokenRelease。通信はしない)。セッションが既に失効している経路 (退会の API が 401 を返したときの
  * ログアウトなど) では、RLS の削除が 0 件・失敗になりうる。控えないと、あとに届く SIGNED_OUT の release (releasePushTokenAfterSignedOut) は
@@ -33,6 +36,7 @@
  * 呼び出し側が処理の最初に控えた userId と accessToken を渡す。accessToken があれば、削除はそのトークンで認可される。
  */
 
+import { resetPurchasesOnSignOut } from "./purchases";
 import { type UnregisterPushTokenResult, unregisterExpoPushToken } from "./pushNotifications";
 import { recordPushTokenRelease } from "./pushTokenRelease";
 import { secureSessionStorage } from "./secureSessionStorage";
@@ -124,6 +128,7 @@ export async function signOutWithCleanup(
   userId: string | null | undefined,
   options: SignOutOptions = {},
 ): Promise<{ error: unknown | null }> {
+  await resetPurchasesOnSignOut();
   await unregisterPushTokenOrRecordRelease(userId, options.accessToken);
   await clearUserScopedLocalData(userId);
 
@@ -148,6 +153,7 @@ export async function signOutOnDevice(
   userId: string | null | undefined,
   options: ForgetSessionOptions & SignOutOptions,
 ): Promise<{ error: unknown | null }> {
+  await resetPurchasesOnSignOut();
   await unregisterPushTokenOrRecordRelease(userId, options.accessToken);
   await clearUserScopedLocalData(userId);
   return signOutOrForgetLocally(options);
@@ -168,6 +174,7 @@ export async function signOutAfterAccountDeletion(
   userId: string | null | undefined,
   options: ForgetSessionOptions,
 ): Promise<{ error: unknown | null }> {
+  await resetPurchasesOnSignOut();
   await clearUserScopedLocalData(userId);
   return signOutOrForgetLocally(options);
 }

@@ -16,6 +16,7 @@ import { useAuth } from "../../src/providers/AuthProvider";
 import { colors, spacing, radius, shadows } from "../../src/theme";
 import { signOutOnDevice } from "../../src/lib/signOut";
 import { AI_CONSENT_SCREEN_PATH, AI_CONSENT_SETTINGS_ENTRY_TITLE } from "../../src/lib/ai-consent";
+import { PLAN_SCREEN_PATH } from "../../src/lib/plan-screen";
 
 type WeekStartDay = "sunday" | "monday";
 
@@ -339,6 +340,14 @@ export default function SettingsTab() {
               subtitle="計算根拠を見ながら目標カロリーを調整"
               testID="settings-nutrition-targets-row"
               onPress={() => router.push("/profile/nutrition-targets")}
+            />
+            <SettingRow
+              icon="💳"
+              iconBg="#FFF7ED"
+              title="プランとお支払い"
+              subtitle="有料プランの購入・復元・購読の管理"
+              testID="settings-plan-row"
+              onPress={() => router.push(PLAN_SCREEN_PATH)}
               last
             />
           </View>

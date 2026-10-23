@@ -1,5 +1,7 @@
 // src/components/ai-assistant/__tests__/V4GenerateModal-ultimate-mode.test.ts
-// #1142 回帰防止: 献立生成モーダル (V4GenerateModal) の「究極モード」は全員に開放されている。
+// #1142 回帰防止: 献立生成モーダル (V4GenerateModal) の「究極モード」のスイッチ。
+// 有料プランで使える (billing/03 §10.3): 無料プランでは錠 (契約の要約の features.ai_feature_caps.menu_generation_ultimate が 0) を掛ける。
+// 要約は useBillingSummary で読むので、ここでは vi.mock で差し替える。既存の it は要約が null (錠なし) のときの挙動を見る。
 //
 // 以前は Premium プラン向けとして、スイッチが disabled、押すと alert('…準備中です') が出るだけの飾りだった
 // (プラン自体が未提供で、有効にする方法がコードのどこにも無かった)。
@@ -14,6 +16,17 @@
 import React, { act } from 'react';
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
+
+import type { BillingSummaryWire } from '@homegohan/shared';
+
+const billingMocks = vi.hoisted(() => ({ summary: null as BillingSummaryWire | null, enabledCalls: [] as boolean[] }));
+vi.mock('@/hooks/useBillingSummary', () => ({
+  BILLING_SUBSCRIPTION_API_PATH: '/api/billing/subscription',
+  useBillingSummary: (enabled: boolean) => {
+    billingMocks.enabledCalls.push(enabled);
+    return billingMocks.summary;
+  },
+}));
 
 import { V4GenerateModal } from '../V4GenerateModal';
 
@@ -40,6 +53,8 @@ beforeEach(() => {
     root = createRoot(container);
   });
   localStorage.clear();
+  billingMocks.summary = null;
+  billingMocks.enabledCalls = [];
 });
 
 afterEach(() => {
@@ -120,7 +135,7 @@ async function generateSingleDay() {
   });
 }
 
-describe('V4GenerateModal: 究極モードは全員に開放されている (#1142)', () => {
+describe('V4GenerateModal: 究極モードのスイッチ (契約の要約が無いときは錠を掛けない。#1142)', () => {
   it('スイッチが表示され、無効化されていない', () => {
     renderModal();
 
@@ -227,6 +242,86 @@ describe('V4GenerateModal: 究極モードは全員に開放されている (#11
 
     // 開き直す
     renderModal({ isOpen: true });
+    expect(getToggle().getAttribute('aria-checked')).toBe('false');
+  });
+});
+
+/** 契約の要約 (GET /api/billing/subscription の data)。ai_feature_caps は引数で渡す */
+function summaryWithCaps(aiFeatureCaps: Record<string, number | null>): BillingSummaryWire {
+  return {
+    plan_key: 'free',
+    effective_plan_key: 'free',
+    status: null,
+    source: null,
+    manage_in_store: null,
+    billing_interval: null,
+    current_period_end: null,
+    trial_ends_at: null,
+    cancel_at_period_end: false,
+    cancel_at: null,
+    has_customer: false,
+    can_purchase: true,
+    can_cancel: false,
+    can_resume: false,
+    features: { ai_daily_limit: 3, ai_feature_caps: aiFeatureCaps },
+  };
+}
+
+describe('V4GenerateModal: 究極モードの錠 (billing/03 §10.3)', () => {
+  it('locks the ultimate-mode toggle with aria-disabled and the paid-plan wording when features.ai_feature_caps.menu_generation_ultimate is 0, and leaves it operable when the summary is null or the cap is above 0', async () => {
+    const PLAN_REQUIRED_TEXT = '究極モードは有料プランでお使いいただけます';
+
+    // 無料プラン (cap = 0): 錠。押しても ON にならず、生成でも ultimateMode: false
+    billingMocks.summary = summaryWithCaps({ menu_generation_ultimate: 0, menu_generation: 3 });
+    const onGenerate = vi.fn().mockResolvedValue(undefined);
+    renderModal({ onGenerate });
+    // 開いているときに要約を読む
+    expect(billingMocks.enabledCalls).toContain(true);
+    let toggle = getToggle();
+    expect(toggle.getAttribute('aria-disabled')).toBe('true');
+    expect(container.querySelector('[data-testid="ultimate-mode-lock"]')).not.toBeNull();
+    const describedBy = toggle.getAttribute('aria-describedby');
+    expect(document.getElementById(describedBy as string)?.textContent).toContain(PLAN_REQUIRED_TEXT);
+    click(toggle);
+    expect(getToggle().getAttribute('aria-checked')).toBe('false');
+    await generateSingleDay();
+    expect(onGenerate).toHaveBeenCalledTimes(1);
+    expect(onGenerate.mock.calls[0][0].ultimateMode).toBe(false);
+
+    // 要約が読めない (null): 錠を出さず、ON にできる
+    for (const [label, summary] of [
+      ['要約なし', null],
+      ['有料プラン (cap = 2)', summaryWithCaps({ menu_generation_ultimate: 2 })],
+      ['上限なし (cap = null)', summaryWithCaps({ menu_generation_ultimate: null })],
+      ['キーの無いプラン (組織のプラン)', summaryWithCaps({})],
+    ] as const) {
+      act(() => {
+        root.unmount();
+      });
+      act(() => {
+        root = createRoot(container);
+      });
+      billingMocks.summary = summary;
+      renderModal();
+      toggle = getToggle();
+      expect(toggle.getAttribute('aria-disabled'), label).toBeNull();
+      expect(container.querySelector('[data-testid="ultimate-mode-lock"]'), label).toBeNull();
+      expect(container.textContent, label).not.toContain(PLAN_REQUIRED_TEXT);
+      click(toggle);
+      expect(getToggle().getAttribute('aria-checked'), label).toBe('true');
+    }
+  });
+
+  it('turns the toggle off when the lock arrives after it was switched on (the summary loads after the modal opens)', () => {
+    billingMocks.summary = null;
+    renderModal();
+    click(getToggle());
+    expect(getToggle().getAttribute('aria-checked')).toBe('true');
+
+    // 要約が届いて錠が掛かる (無料プラン)
+    billingMocks.summary = summaryWithCaps({ menu_generation_ultimate: 0 });
+    renderModal();
+    expect(getToggle().getAttribute('aria-disabled')).toBe('true');
     expect(getToggle().getAttribute('aria-checked')).toBe('false');
   });
 });

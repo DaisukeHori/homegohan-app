@@ -212,7 +212,7 @@ describe('/api/super-admin/exports (準備中。全メソッド 501。本人の 
 
     expect(res.status).toBe(501);
     expect(res.body.error?.code).toBe('OP_NOT_SUPPORTED');
-    expect(res.body.error?.message).toContain('準備中（未対応）');
+    expect(res.body.error?.message).toContain('データのエクスポートは利用できません');
     // 成功に見える応答 (種別・形式・状態を持つエクスポートの行) を返さない
     expect(res.body.data).toBeUndefined();
 

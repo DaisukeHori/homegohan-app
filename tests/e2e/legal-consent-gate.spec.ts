@@ -458,7 +458,7 @@ test.describe("再同意ゲート: 強制あり (LEGAL_CONSENT_ENFORCE=on) (#117
     expect(rows).toContain(`privacy_policy:${CURRENT_PRIVACY}`);
   });
 
-  test("★「同意しない」: ログアウトされ、ご利用いただけないことと削除の依頼先 (お問い合わせ) が案内される。同意は記録されない", async ({ page }) => {
+  test("★「同意しない」: ログアウトされ、ご利用いただけないことと、もう一度ログインすれば同意しなくても退会と書き出しができること (#1901 Q-23) が案内される。同意は記録されない", async ({ page }) => {
     const user = await signInAsNewUser(page, { profile: true });
 
     await page.goto("/home");
@@ -471,6 +471,12 @@ test.describe("再同意ゲート: 強制あり (LEGAL_CONSENT_ENFORCE=on) (#117
     await expect(declined).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
     await expect(declined).toContainText("ご利用いただけません");
     await expect(declined.getByRole("link", { name: "お問い合わせフォームへ" })).toHaveAttribute("href", "/contact");
+    // #1901 (cross/20 Q-23): お問い合わせによる削除は約束せず、ログインの後に同意しなくても使える退会と書き出しの画面へ案内する
+    await expect(declined).not.toContainText("ご本人であることを確認のうえ");
+    await expect(declined.getByRole("link", { name: "ログインして、退会・データの書き出しの画面へ" })).toHaveAttribute(
+      "href",
+      `/login?next=${encodeURIComponent("/legal-consent/account")}`,
+    );
 
     // ログアウトされている: 保護ページはログイン画面へ回る
     await page.goto("/home");

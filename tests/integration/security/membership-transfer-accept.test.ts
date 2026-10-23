@@ -23,6 +23,7 @@ import ws from 'ws';
 import { apiCall } from '../helpers/api';
 import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import { grantFamilyPlan } from '../helpers/family-plan';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -203,7 +204,7 @@ describe('#1236 accept_org_owner_transfer: 承諾時点の所属を再検証す�
     expect(await orgOwnerId(orgA)).toBe(owner.id);
     expect(await proposalStatus(proposalId)).toBe('pending');
 
-    // 影響: 組織の削除もできない (owner_id を奪取されていないため DELETE ポリシーを通らない)
+    // 影響: 組織の削除もできない (組織の行を直接 DELETE できるポリシーは利用者に無い (20261023100000) ので 0 行)
     const { data: deleted } = await asUser(leaver.jwt).from('organizations').delete().eq('id', orgA).select('id');
     expect(deleted ?? []).toEqual([]);
     expect(await orgOwnerId(orgA)).toBe(owner.id);
@@ -354,6 +355,8 @@ describe('#1237 accept_family_representative_transfer: 承諾時点の所属を�
     expiring = await createUser('fam-expiring');
     legit = await createUser('fam-legit');
 
+    // billing/03 §6.6: 家族グループは家族プランの契約者だけが作れるので、作る前に家族プランを手動付与する
+    await grantFamilyPlan(srAdmin, rep.id);
     const { data, error } = await asUser(rep.jwt).rpc('create_family_group', {
       p_name: `#1237 Family ${TS}`,
       p_plan_key: 'free',
@@ -381,7 +384,7 @@ describe('#1237 accept_family_representative_transfer: 承諾時点の所属を�
     expect(res.body.error?.code).toBe('TRANSFER_ACCEPTOR_NOT_IN_FAMILY');
     expect(res.body.error?.message).not.toContain('TRANSFER_ACCEPTOR');
 
-    // 何も奪取されていない (representative_id が奪われると DELETE CASCADE で家族ごと消せる)
+    // 何も奪取されていない (representative_id が奪われると、家族の解散 (dissolve_family_by_representative) ができてしまう)
     expect(await representativeId()).toBe(rep.id);
     expect(await memberRole(rep.id)).toBe('representative');
     expect(await proposalStatus(proposalId)).toBe('pending');

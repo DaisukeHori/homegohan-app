@@ -146,15 +146,19 @@ actor_id NULL・action_type `system.*` で書く。読んで判断する側は a
 `(記録なし)` の行は、設計で予定していたが API が無い (操作そのものが未実装) ため、記録する箇所も無いもの。
 
 ```
-admin.user.ban                      - ユーザー BAN (POST /api/admin/users/{id}/freeze)
+admin.user.ban                      - ユーザー BAN (POST /api/admin/users/{id}/freeze。凍結の更新は読んだ時点の super_admin でない状態のままのときだけ書く。読んでから書くまでに super_admin になっていたら 409 CONFLICT_STALE_DATA で、書かず記録もしない)
 admin.user.unban                    - BAN 解除 (DELETE /api/admin/users/{id}/freeze)
-admin.user.role_change              - ロール変更 (PATCH / PUT /api/admin/users/{id}/role)
+admin.user.role_change              - ロール変更 (PATCH / PUT /api/admin/users/{id}/role。details は previous_roles と new_roles)
+                                      previous_roles は admin_set_user_roles が対象の行を FOR NO KEY UPDATE でロックして読んだ変える前の roles
+                                      (戻り値の previous_roles。同時の変更があっても、その UPDATE の直前の値。route が先に読んだ値は使わない。#1917)
 admin.user.note_add                 - 管理ノート追加 (PATCH /api/admin/users/{id}・POST /api/support/users/{id}/notes)
 admin.organization.create           - 組織作成 (POST /api/admin/organizations)
-admin.organization.suspend          - 組織停止 (記録なし)
-admin.organization.restore          - 組織復旧 (記録なし)
-admin.organization.delete           - 組織削除 (記録なし)
-admin.organization.plan_change      - 組織プラン変更 (手動) (記録なし)
+admin.organization.suspend          - 組織停止 (記録なし: 組織を停止する API が無い)
+admin.organization.restore          - 組織復旧 (記録なし: 組織を復旧する API が無い)
+admin.organization.delete           - 組織削除 (記録なし: 組織を削除する API が無い。運営の緊急解散 POST /api/operator/membership/org/{id}/dissolve は 4.2 の super_admin.organization.dissolve)
+admin.organization.plan_change      - 組織プラン変更 (手動) (PATCH /api/admin/organizations/{id}。details は変える前と後のプラン。今と同じプランなら記録しない)
+                                      更新は直前に読んだプランのままのときだけ書く (読んでから書くまでに別の運営が変えていたら書かず記録もしない。
+                                      今の値が送られたプランと同じなら 200、違えば 409 CONFLICT_STALE_DATA)。from は書いた時点の実際の直前の値
 create_coupon                       - クーポン作成 (POST /api/super-admin/coupons。旧名 admin.coupon.create)
 update_coupon                       - クーポンの編集・一時停止・有効化 (PATCH /api/super-admin/coupons/{id}。一時停止・有効化は status の変更で、
                                       専用の action は無い。旧名 admin.coupon.pause / admin.coupon.activate)
@@ -163,13 +167,13 @@ apply_coupon                        - 契約へのクーポンの適用 (遡及�
 admin.refund.issue                  - 返金指示 (Stripe Dashboard 誘導) (POST /api/admin/finance/refunds)
 admin.finance.export                - 財務データの CSV 書き出し (POST /api/admin/finance/exports。旧名 admin.export.request)
 admin.catalog.import                - 商品カタログの取り込み (POST /api/admin/catalog/import)
-admin.notification.campaign_send    - 通知キャンペーン送信 (記録なし)
+admin.notification.campaign_send    - 通知キャンペーン送信 (記録なし: キャンペーンを送る API が無い)
 admin.moderation.<action>           - モデレーションの判定 (POST / PUT /api/admin/moderation/{type}/{id})。<action> は
                                       approve / delete_only / delete_and_warn / delete_and_temp_ban / delete_and_perm_ban / escalate
                                       (src/lib/admin/moderation-schemas.ts の ModerationActions。旧名 admin.moderation.resolve)
 admin.moderation.restore            - 隠したコンテンツを戻す (POST /api/admin/moderation/{type}/{id}/restore) (#1538)
-admin.announcement.create           - お知らせ作成 (POST /api/announcements は記録していない。#1571 の範囲の外)
-admin.announcement.delete           - お知らせ削除 (記録なし)
+admin.announcement.create           - お知らせ作成 (POST /api/announcements。作成できたときだけ。対象はお知らせ (target_type 'announcement')。details: announcement_id / is_public / published_at。タイトル・本文は入れない。fail-open) (#1571)
+admin.announcement.delete           - お知らせ削除 (記録なし: お知らせを削除する API が無い)
 admin.support.ticket.create         - チケット作成 (POST /api/admin/support/tickets)
 admin.support.ticket.update         - チケットの状態・優先度などの更新 (PATCH /api/admin/support/tickets/{id})
 admin.support.ticket.assign         - チケット担当者変更 (POST /api/admin/support/tickets/{id}/assign。旧名 admin.support.ticket_assign)
@@ -177,10 +181,14 @@ admin.support.ticket.message_add    - チケットへのメッセージ (返信�
                                       (対象は 4.1.1 のチケットの閲覧と同じくチケットを作ったユーザー。details: ticket_id / message_id / is_internal。本文は入れない)
 admin.sales.lead.create             - 営業リード作成 (POST /api/admin/sales/leads)
 admin.sales.lead.update             - 営業リード更新 (PATCH /api/admin/sales/leads/{id})
+                                      ステージを送った更新は直前に読んだ stage のままのときだけ書く (読んでから書くまでに別の担当者が変えていたら 409 CONFLICT_STALE_DATA で、
+                                      書かず、この記録も活動履歴の stage_change も残さない)。stage_change の from_stage は書いた時点の実際の直前の値
 admin.sales.lead.activity_add       - 営業リードへの活動の記録 (POST /api/admin/sales/leads/{id}/activities) (#1571)
                                       (対象はリード (target_type = 'sales_lead')。details: activity_id / activity_type。活動の本文 details は入れない)
 admin.inquiry.update                - 問い合わせのステータス・管理者メモ更新 (PATCH / PUT /api/admin/inquiries/{id})。更新後の本文を返すので、変更が無い更新も記録する
                                       (details: inquiry_id / status_from / status_to / admin_notes_changed / changed。メモの中身は入れない。対象は 4.1.1 と同じ)
+                                      更新は直前に読んだ status と updated_at のままのときだけ書く (読んでから書くまでに別の運営が変えていたら書かず記録もしない。
+                                      送った変更がすでに入っていれば 200 で changed: false として記録し、入っていなければ 409 CONFLICT_STALE_DATA)。status_from は書いた時点の実際の直前の値
 admin.mfa.enroll                    - 運営ロールの二段階認証 (TOTP) の登録 (POST /api/auth/mfa/verify で unverified の factor の verify が成功したとき。#1176)
                                       (severity: info。details: factor_id / backup_codes_issued / failed_step)
 admin.mfa.backup_codes_regenerate   - バックアップコードの再発行 (POST /api/auth/mfa/backup-codes。段 B。#1176)
@@ -202,7 +210,7 @@ super_admin.mfa.reset               - 別の super_admin による運営の二�
 - **fail-open**。ただし監査の起点 (取り消せない操作: verify の成功・コードの消費・unenroll の成功・再発行の呼び出し) の後は、
   続く手順が途中で失敗しても、止まった手順の名前を `failed_step` に入れて **必ず 1 行書いてから** 応答する (起点より前の失敗は書かない)。
 - ログインごとの 6 桁の確認 (verified な factor の verify) は記録しない (ログインの一部。Supabase の auth 監査に残る)。
-- 自己サービスの `/api/auth/mfa/*` は `tests/admin-mutation-audit-coverage-1571.test.ts` の走査の 4 つのディレクトリの外にあるが、上の 4 種を記録する。
+- 自己サービスの `/api/auth/mfa/*` は `tests/admin-mutation-audit-coverage-1571.test.ts` の走査の 4 つのディレクトリの外にあるが、上の 4 種を記録する (同じテストが、4 つのディレクトリの外の運営ロールの確認に届く変更系として表に載せる。記録は別のファイルの `recordMfaAudit()` なので `exempt` に理由を書く)。
 
 #### 4.1.1 ユーザー PII 閲覧系操作 (#1200)
 
@@ -246,7 +254,8 @@ super_admin.app_logs.list           - アプリログの一覧・本文の検索
 - メールの送信待ちの一覧 (`GET /api/super-admin/email-outbox`) は記録しない (宛先はマスク済みで、件名・本文を返さない)。
   再送 (`POST /api/super-admin/email-outbox/{id}/requeue`) は変更系として `super_admin.email_outbox.requeue` を記録する
   (再送できたときだけ。対象は行の `user_id` (`target_type = 'user'`)、無ければ行の id (`target_type = 'email_outbox'`)。
-  `details` は `outbox_id` / `template` / `previous_status`。404 / 409 / 500 は記録しない。fail-open。#1708・`10-logs-and-mail-retry.md` §10)。
+  `details` は `outbox_id` / `template` / `previous_status` (`'dead'` 固定: `requeue_email_outbox` がロックした行が dead のときだけ再送するので、
+  先に読んだ行の status ではなくこの値を残す。#1917)。404 / 409 / 500 は記録しない。fail-open。#1708・`10-logs-and-mail-retry.md` §10)。
 
 - `admin.moderation.restore`: 対象は通報 (`target_type = 'moderation_item:<type>'`)。`details`: `moderation_type` / `flag_id` / `content_id` / `content_user_id` / `restore_note` / `hidden_at_before` / `hidden_by_before` / `hidden_reason_before` / `target_ids` / `restored_ids` / `restored` / `restore_error` / `approved_flag_ids` / `status_saved` / `status_error` / `restore_window_days`。状態を変えた操作と DB の失敗で 1 行。成功 info・失敗と書いたあとの 0 行は warn。何も書かずに断った 409 / 410 は記録しない。
 
@@ -265,7 +274,7 @@ super_admin.app_logs.list           - アプリログの一覧・本文の検索
 `tests/admin-mutation-audit-coverage-1571.test.ts` が持ち、実コードと突き合わせる (handler が増えたら表に足す)。
 同じテストが、`recordAdminAudit()` の呼び出しがすべて `request` を渡していることも見る。
 - 運営の二段階認証の解除 (`POST /api/super-admin/admins/{id}/mfa/reset`。cross/12 §14.7) は、`super_admin.mfa.reset` を `recordMfaAudit()` (`src/lib/auth/mfa/audit.ts`) の中の `recordAdminAudit()` で書くので、表には `exempt` に理由を書いて載せる (別のファイルの関数なので、走査では audited と判定できない。cross/12 §23 N-38)。
-- 自己サービスの `/api/auth/mfa/*` は走査の 4 つのディレクトリの外にあるが、4 種 (`admin.mfa.*`) を記録する (上の 4.1 の記録のルール)。
+- 自己サービスの `/api/auth/mfa/*` は走査の 4 つのディレクトリの外にあるが、4 種 (`admin.mfa.*`) を記録する (上の 4.1 の記録のルール)。4 つのディレクトリの外の route は、変更系の handler が運営ロールの確認 (`requireRole` / `requireSuperAdmin`) に届くものを同じ表に載せる (お知らせの作成 `admin.announcement.create`・比較ランキングの集計の手動実行 `super_admin.cron.run_now`・`/api/auth/mfa/*`) (#1571)。
 
 記録のルール:
 - `target_id` は **情報を見られた本人 (ユーザー)** の id、`target_type` は `'user'`。チケットの閲覧も、チケットではなくチケットを作ったユーザーを対象にする。
@@ -307,11 +316,13 @@ super_admin.app_logs.list           - アプリログの一覧・本文の検索
 
 実コードの名前が下の一覧と違うもの (#1571 の時点。名前は変えていない):
 - プランの作成・更新・削除は `create_plan` / `update_plan` / `delete_plan` (POST /api/super-admin/plans・PATCH / DELETE /api/super-admin/plans/{id})。
-  公開・非公開・廃止・廃止の取り消しは `update_plan` の中の変更として記録する。価格変更は `change_price` (POST /api/super-admin/plans/{id}/price-change)。
+  公開・非公開・廃止・廃止の取り消しは `update_plan` の中の変更として記録する (status を変えたときは details に `status_from` / `status_to` も入れる。更新は直前に読んだ status のままのとき、削除は draft のままのときだけ行い、読んでから書くまでに別の運営が変えていたら書かず記録もしない。編集は送った変更がもう入っていれば 200、それ以外は 409 CONFLICT_STALE_DATA。status_from は書いた時点の実際の直前の値)。価格変更は `change_price` (POST /api/super-admin/plans/{id}/price-change)。
 - A/B テスト (/api/super-admin/experiments) の作成・更新・削除は `super_admin.plan.create` / `super_admin.plan.update` を使っている。
 - 機能パッケージは `create_feature_package` / `update_feature_package` / `delete_feature_package`。
 - 機能フラグの作成・更新・削除は、すべて `super_admin.feature_flag.toggle`。
 - LLM クォータの変更は `super_admin.llm_quota.update` (`src/lib/super-admin/ai-daily-limits.ts` の LLM_QUOTA_AUDIT_ACTION)。
+  保存は読んだ `daily_limit` のままのときだけ書く (行が無かったときは作るだけ)。読んでから書くまでに別の運営が変えていたら書かず記録もしない
+  (今の値が送られた値と同じなら 200、違えば 409 CONFLICT_STALE_DATA)。details の before は書いた時点の実際の直前の値。
 
 #1571 で記録を足したもの:
 - `super_admin.setting.change` (下の一覧のとおり): PUT /api/super-admin/settings。details: key / value / description_changed。severity は warn。
@@ -319,7 +330,7 @@ super_admin.app_logs.list           - アプリログの一覧・本文の検索
 - 運営の家族・組織の緊急操作 (/api/operator/membership/*。RPC が書く membership_audit とは別に記録する):
   `super_admin.organization.dissolve` (severity=critical) / `super_admin.organization.transfer_admin` (warn。下の一覧の名前) /
   `super_admin.family.dissolve` (critical) / `super_admin.family.transfer_representative` (warn)。
-  details: reason (譲渡は to_user_id / from_user_id も)。
+  details: reason (譲渡は to_user_id / from_user_id も。from_user_id は RPC が組織 / 家族の行を FOR NO KEY UPDATE でロックして読んだ旧オーナー / 旧代表者 (戻り値の old_owner_id / old_rep_id。membership_audit と同じ値。同時の譲渡があっても、その譲渡の直前の値。route が RPC の前に読んだ値は、戻り値が古い形 (migration の前の DB) のときだけ使う。#1917))。
 
 ```
 super_admin.plan.create             - プラン作成
@@ -334,7 +345,7 @@ super_admin.feature_package.update  - 機能パッケージ更新
 super_admin.feature_package.delete  - 機能パッケージ削除
 super_admin.feature_flag.toggle     - 機能フラグ切替
 super_admin.feature_flag.rollout    - ロールアウト戦略変更
-super_admin.cron.run_now            - cron 手動実行
+super_admin.cron.run_now            - cron 手動実行 (実装は POST /api/comparison/trigger の比較ランキングの集計だけ。関数を呼ぶ前に記録する (operator/08 §7.2 と同じ順。関数の失敗・通信の失敗・打ち切りでも 1 行残る。認可・本文・設定の確認で止めたときは記録しない)。target_type 'cron_job'・severity=warn・details: job_name ('calculate-segment-stats') / period_type。fail-open) (#1571)
 super_admin.cron.pause              - cron 一時停止
 super_admin.organization.transfer_admin - org_admin 緊急転送
 super_admin.gdpr_delete.execute     - GDPR 削除実行
@@ -376,6 +387,7 @@ system.payment.failed               - 支払失敗 (Stripe webhook)
 system.billing.subscription_created - 個人の契約の行ができた (写像 billing_apply_stripe_subscription。billing/01)
 system.billing.subscription_status_changed - 個人の契約の status が変わった (写像。past_due / grace になったときは severity=warn)
 system.stripe.event_failed          - Stripe の Webhook のイベントの処理に失敗した (severity=warn。target_type='stripe_event'・target_id は NULL)
+system.revenuecat.event_failed      - RevenueCat の Webhook のイベントの処理に失敗した (severity=warn。target_type='revenuecat_event'・target_id は NULL。details は event_id・event_type・error_code だけ。billing/03 §8.1)
 system.billing.account_deletion_stripe_cancelled - 退会で Stripe の Checkout を閉じ・契約を即時解約し・顧客を匿名化した (退会の段階 billing / billing_recheck)
 system.billing.orphan_subscription_cancelled - 退会した利用者の顧客に残った契約を即時解約した (severity=warn。target_type='stripe_subscription'・target_id は NULL)
 system.billing.manual_grant_expired - 運営者が手動で付与した個人の契約が有効期限を過ぎて expired になった (DB 関数 billing_expire_manual_subscription_for_user。日次のプロシージャ billing_expire_manual_subscriptions が利用者ごとに呼ぶ。severity=info。target は利用者。billing/02 §6.4)

@@ -165,6 +165,8 @@ const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   'parental_consents.parent_user_id': 'SET NULL',
   // org/10 §5.1 (#1688): チャレンジの順位表を伏せる「管理者だった印」は本人に付く守りの記録なので、退会で本人と一緒に消す
   'organization_challenge_ranking_exclusions.user_id': 'CASCADE',
+  // #1917 の続き (D73。20261023130000): 退会の印は退会の途中だけに意味があるので、退会が済んだら本人と一緒に消す
+  'account_deletion_guards.user_id': 'CASCADE',
 
   // ここから下は #1175 で張り直していない外部キー (初めから ON DELETE が付いていたもの。#1714 で一覧に加えた)
   // 初期スキーマ (20251126124224) の CASCADE: 本人の記録は本人と一緒に消す
@@ -189,6 +191,7 @@ const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   'health_insights.user_id': 'CASCADE',
   'health_records.user_id': 'CASCADE',
   'health_streaks.user_id': 'CASCADE',
+  'iap_reconcile_attempts.user_id': 'CASCADE',
   'legacy_family_groups.owner_id': 'CASCADE',
   'meals.user_id': 'CASCADE',
   'notification_preferences.user_id': 'CASCADE',
@@ -247,6 +250,8 @@ const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   'ai_usage_counters.user_id': 'CASCADE',
   // 20261011020000 (AI の 1 日の上限): 上限を変えた運営者の紐づけだけ外す
   'ai_daily_limits.updated_by': 'SET NULL',
+  // billing/03 (プラン × AI の機能の上限): 上限を変えた運営者の紐づけだけ外す
+  'ai_plan_feature_caps.updated_by': 'SET NULL',
   // 20261011030000 (AI の回数の付与の受け取り): 本人の受け取りの記録は本人と一緒に消す
   'ai_usage_grant_claims.user_id': 'CASCADE',
   // 20261015130000 (期間のバッジ): 本人のバッジは本人と一緒に消す

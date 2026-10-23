@@ -11,7 +11,7 @@
  *   2. 後の migration が古いポリシーを作り直したり、audit_logs_insert_admins を定義し直したりしていない
  *   3. ロールバックは 2 本を本番の定義 (roles=public) に戻す
  *   4. アプリのコードで admin_audit_logs に直接 INSERT するのは recordAdminAudit (src/lib/admin/audit.ts) と
- *      課金の repository (service_role) だけ。recordAdminAudit に渡す action_type の文字列に system.* が無い
+ *      課金の repository 2 本 (src/lib/billing/repository.ts と iap-repository.ts。service_role) だけ。recordAdminAudit に渡す action_type の文字列に system.* が無い
  *      (system.* は本人の JWT では書けないので、本人の client で渡すと記録が黙って落ちる)
  */
 import fs from 'node:fs';
@@ -31,8 +31,8 @@ const RESERVED_SYSTEM_PREFIX = 'system.';
 /** 運営の 6 ロール (operator/07 §3.2) */
 const OPERATOR_ROLES = ['admin', 'super_admin', 'support', 'sales', 'finance', 'content_moderator'];
 
-/** アプリのコードで admin_audit_logs に直接 INSERT してよいファイル (書き手の全数。#1736 の表) */
-const DIRECT_INSERT_ALLOWED = ['src/lib/admin/audit.ts', 'src/lib/billing/repository.ts'];
+/** アプリのコードで admin_audit_logs に直接 INSERT してよいファイル (書き手の全数。#1736 の表と、billing/03 §8.3 の iap-repository.ts) */
+const DIRECT_INSERT_ALLOWED = ['src/lib/admin/audit.ts', 'src/lib/billing/repository.ts', 'src/lib/billing/iap-repository.ts'];
 
 /** recordAdminAudit( の呼び出しから actionType を探す行数 (呼び出しのオブジェクトのリテラルの中に収まる範囲) */
 const ACTION_TYPE_LOOKAHEAD_LINES = 14;
@@ -139,9 +139,10 @@ describe('#1736 admin_audit_logs の書き手 (アプリのコード)', () => {
   it('src を読めている (読み取りが壊れて素通りしない)', () => {
     expect(sourceFiles).toContain('src/lib/admin/audit.ts');
     expect(sourceFiles).toContain('src/lib/billing/repository.ts');
+    expect(sourceFiles).toContain('src/lib/billing/iap-repository.ts');
   });
 
-  it('admin_audit_logs に直接 INSERT するのは recordAdminAudit と課金の repository (service_role) だけ', () => {
+  it('admin_audit_logs に直接 INSERT するのは recordAdminAudit と課金の repository 2 本 (billing/01 の repository.ts・billing/03 の iap-repository.ts。service_role) だけ', () => {
     const writers = sourceFiles.filter((file) => {
       const text = fs.readFileSync(path.join(ROOT, file), 'utf8');
       return /from\(\s*['"`]admin_audit_logs['"`]\s*\)\s*\.insert\(/.test(text);

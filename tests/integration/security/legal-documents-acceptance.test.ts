@@ -37,6 +37,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, afterAll } from 'vitest';
 import { PARENTAL_CONSENT_DOCUMENT, addDaysToDate, todayLocal } from '@homegohan/shared';
 import ws from 'ws';
+import { grantFamilyPlan } from '../helpers/family-plan';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -713,6 +714,8 @@ async function guardianPathFor(label: string, minorEmail: string, childBirthDate
   const rep = await createUser(`guardian-${label}`, { withProfile: true });
   const { error: birthError } = await srAdmin.from('user_profiles').update({ birth_date: ADULT_BIRTH_DATE }).eq('id', rep.id);
   if (birthError) throw new Error(`rep birth ${label}: ${birthError.message}`);
+  // billing/03 §6.6: 家族グループは家族プランの契約者だけが作れるので、作る前に家族プランを手動付与する
+  await grantFamilyPlan(srAdmin, rep.id);
   const group = await asUser(rep.jwt).rpc('create_family_group', { p_name: `#1173 legal ${label} ${TS}`, p_plan_key: 'free' });
   if (group.error || !group.data) throw new Error(`create_family_group ${label}: ${group.error?.message}`);
   const familyId = (group.data as { id: string }).id;

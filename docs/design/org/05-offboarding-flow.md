@@ -251,10 +251,8 @@ async function migrateToPersonal(groupId: string, actorId: string, ifUnmodifiedS
 
 ### 7.3 `POST /api/family/groups/{id}/dissolve`
 
-- パスワード再認証必須
-- `status = 'archived'` に変更 (dissolved は archived に統一)
-- さらに 90 日後に物理削除 (pg_cron)
-- (実装は `dissolved` のまま 90 日で物理削除: operator/11 §5.4)
+- この入口は作らなかった。家族グループの解散は family/11 (`docs/design/family/11-self-dissolve.md`) の `POST /api/family/dissolve` (代表者本人。キーワードの確認。`status = 'dissolved'`) で実装した。パスワード再認証と `archived` は使わない
+- 解散した家族のグループは `dissolved` のまま 90 日で物理削除 (operator/11 §5.4)
 
 ### 7.4 advisory lock の実装
 
@@ -280,9 +278,9 @@ cron 登録および `process_family_freeze_grace_to_archive()` 関数の実装�
 - カード未登録の場合は Free に降格
 - pg_notify 経由での通知送信 (Edge Function がメール/Push を処理)
 
-90 日後の物理削除:
+90 日後の物理削除: いまの実装は `supabase/migrations/20261018010000_purge_dissolved_family_groups.sql` の `purge_dissolved_family_groups` (#1125。operator/11 §5.4)。解散した家族 (`status = 'dissolved'`) を解散から 90 日で物理削除し、保護者の同意の記録 (`parental_consents`) を持つ家族は消さずに残す。pg_cron のジョブ `purge-dissolved-family-groups` (毎日 03:40 JST) が 1 回 500 件まで消す。いまの状態機械は active / dissolved だけで、下の archived の例は使わない。
 ```sql
--- 別の日次バッチで archived から 90 日経過したグループを削除
+-- 旧案 (未実装。archived の状態は無い。上の purge_dissolved_family_groups が置き換えた)
 DELETE FROM family_groups
   WHERE status = 'archived'
     AND archived_at < NOW() - INTERVAL '90 days';

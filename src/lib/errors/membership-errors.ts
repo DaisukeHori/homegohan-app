@@ -33,6 +33,12 @@ export enum MembershipErrorCode {
   MEMBER_NOT_FOUND = 'MEMBER_NOT_FOUND',
   IS_FAMILY_REPRESENTATIVE = 'IS_FAMILY_REPRESENTATIVE',
   NOT_FAMILY_REPRESENTATIVE = 'NOT_FAMILY_REPRESENTATIVE',
+  // #1917: 利用者の解散 (dissolve_family_by_representative / dissolve_org_by_owner) が RAISE する。ORG_ALREADY_DISSOLVED は
+  // operator_force_dissolve_org も前から RAISE している (運営の route は internalError で返すので、これまで表に無かった)。
+  // ORG_ALREADY_DISSOLVED は accept_org_invite (20261022100000_org_invite_dissolved.sql) と
+  // accept_org_owner_transfer (20261022140000_org_transfer_toctou.sql) も RAISE する
+  FAMILY_ALREADY_DISSOLVED = 'FAMILY_ALREADY_DISSOLVED',
+  ORG_ALREADY_DISSOLVED = 'ORG_ALREADY_DISSOLVED',
   CANNOT_TRANSFER_TO_CHILD = 'CANNOT_TRANSFER_TO_CHILD',
   // #1576: /api/family/members/[member_id]/remove が、RPC のエラー文にこのコードが含まれるときにだけ返す古い守り。
   // remove_family_member は代表者を外そうとすると IS_FAMILY_REPRESENTATIVE を RAISE する (このコードを RAISE する SQL は無い)。
@@ -54,6 +60,9 @@ export enum MembershipErrorCode {
   PROMOTION_UNDER_COPPA_AGE = 'PROMOTION_UNDER_COPPA_AGE', // request_child_promotion / accept_child_promotion だけが RAISE する
   // create_family_group / accept_family_invite / accept_family_representative_transfer / accept_org_owner_transfer だけが RAISE する
   MINOR_ACCOUNT_NOT_ALLOWED = 'MINOR_ACCOUNT_NOT_ALLOWED',
+  // billing/03 §6.6・§9.5: create_family_group と family_members のトリガー (family_members_billing_plan_gate) が RAISE する。
+  // 家族グループの作成とメンバーの追加は、家族プランの契約がある代表者のグループだけ
+  FAMILY_PLAN_REQUIRED = 'FAMILY_PLAN_REQUIRED',
   // invite
   INVITE_NOT_FOUND = 'INVITE_NOT_FOUND',
   INVITE_EXPIRED = 'INVITE_EXPIRED',
@@ -111,6 +120,8 @@ export const ErrorStatusMap: Record<MembershipErrorCode, number> = {
   [MembershipErrorCode.MEMBER_NOT_FOUND]: 404,
   [MembershipErrorCode.IS_FAMILY_REPRESENTATIVE]: 409,
   [MembershipErrorCode.NOT_FAMILY_REPRESENTATIVE]: 403,
+  [MembershipErrorCode.FAMILY_ALREADY_DISSOLVED]: 409,
+  [MembershipErrorCode.ORG_ALREADY_DISSOLVED]: 409,
   [MembershipErrorCode.CANNOT_TRANSFER_TO_CHILD]: 409,
   [MembershipErrorCode.CANNOT_REMOVE_REPRESENTATIVE]: 409,
   [MembershipErrorCode.PROMOTION_REQUEST_NOT_FOUND]: 404,
@@ -126,6 +137,7 @@ export const ErrorStatusMap: Record<MembershipErrorCode, number> = {
   [MembershipErrorCode.PARENTAL_CONSENT_SIGNER_NOT_ADULT]: 403,
   [MembershipErrorCode.PROMOTION_UNDER_COPPA_AGE]: 403,
   [MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED]: 403,
+  [MembershipErrorCode.FAMILY_PLAN_REQUIRED]: 402,
   [MembershipErrorCode.INVITE_NOT_FOUND]: 404,
   [MembershipErrorCode.INVITE_EXPIRED]: 410,
   [MembershipErrorCode.INVITE_ALREADY_USED]: 409,
@@ -208,6 +220,8 @@ export const MEMBERSHIP_ERROR_MESSAGES: Record<MembershipErrorCode, string> = {
   [MembershipErrorCode.MEMBER_NOT_FOUND]: 'メンバーが見つかりません。',
   [MembershipErrorCode.IS_FAMILY_REPRESENTATIVE]: '代表者はこの操作をできません。先に代表者を譲ってください。',
   [MembershipErrorCode.NOT_FAMILY_REPRESENTATIVE]: '家族の代表者だけが操作できます。',
+  [MembershipErrorCode.FAMILY_ALREADY_DISSOLVED]: 'この家族グループはすでに解散しています。',
+  [MembershipErrorCode.ORG_ALREADY_DISSOLVED]: 'この組織はすでに解散しています。',
   [MembershipErrorCode.CANNOT_TRANSFER_TO_CHILD]: '子どものメンバーには代表者を譲れません。',
   [MembershipErrorCode.CANNOT_REMOVE_REPRESENTATIVE]: '代表者は家族から外せません。先に代表者を譲ってください。',
   [MembershipErrorCode.PROMOTION_REQUEST_NOT_FOUND]: '昇格の依頼が見つかりません。',
@@ -228,6 +242,7 @@ export const MEMBERSHIP_ERROR_MESSAGES: Record<MembershipErrorCode, string> = {
   [MembershipErrorCode.PROMOTION_UNDER_COPPA_AGE]: '13歳未満のお子さまは、ご本人のアカウントとつなげません。',
   [MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED]:
     '18歳未満の方は、家族グループの作成・家族の招待からの参加・家族の代表者や組織のオーナーの引き受けはできません。保護者の方の家族には、保護者から届く「アカウントをつなぐ」案内から参加できます。',
+  [MembershipErrorCode.FAMILY_PLAN_REQUIRED]: '家族プランのご契約が必要です。',
   [MembershipErrorCode.INVITE_NOT_FOUND]: '招待が見つかりません。',
   [MembershipErrorCode.INVITE_EXPIRED]: '招待の期限が切れています。',
   [MembershipErrorCode.INVITE_ALREADY_USED]: 'この招待はすでに使われています。',

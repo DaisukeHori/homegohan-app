@@ -621,8 +621,9 @@ export async function saveMealToDb(
     model: DEFAULT_MEAL_IMAGE_MODEL,
     // 商品の献立の古い商品の料理 (画像の項目なし) を、作り直しても AI の画像で置き換えない (#1487 の整合ゲート。写真・商品の料理と同じ扱い)
     previousMealIsCatalog: isCatalogProductMeal(existingMeal),
-    // AI の作り直し: 料理が変わったら、前回の写真・手で付けた画像と利用者のカバーを外し、新しい料理の AI の画像を作る (#1553)。
-    // カバーに頼っていた画像の無い写真の料理 (写真の複数の料理の、同じまま残った料理) も AI の画像に回す。
+    // AI の作り直し: 料理が変わったら、前回の写真・手で付けた画像と利用者のカバーを外し、新しい主菜の AI の画像を作る (#1553)。
+    // カバーに頼っていた画像の無い写真の料理 (写真の複数の料理の、同じまま残った料理) も、献立の主菜なら AI の画像に回す。
+    // 自動の料理画像は、作り直しでも献立の主菜の 1 品だけ (reconcileDishImages の最後の絞り込み。billing/03 Q-16)。ほかの料理は画像の無い状態になる
     // 料理が同じまま (前回と同じ数・同じ中身) なら外さない。商品の献立は外さない (reconcileDishImages の regeneration)
     regeneration: true,
   });

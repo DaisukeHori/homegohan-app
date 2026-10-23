@@ -396,7 +396,7 @@ describe('GET /api/admin/moderation/queue', () => {
       adminUser.jwt,
     );
     expectError(res, 501, 'OP_NOT_SUPPORTED');
-    expect(res.body.error?.message).toContain('準備中（未対応）');
+    expect(res.body.error?.message).toContain('AIコンテンツの審査はできません');
     expect(res.body.data).toBeUndefined();
   });
 

@@ -74,6 +74,29 @@ const OWNED_EDITS: readonly OwnedEdit[] = [
     owner: 'docs/design/mobile/07-toolchain-upgrade.md',
     target: 'docs/design/00-architecture.md',
     pattern: /「React Native \((Expo SDK 53)\)」 \| `(Expo SDK 58)` に/,
+  },  {
+    // family/11 §18.1: cross/20 §6・§7 の 4 文。オーケストレーターの専権の差分が段 C の PR で書き換える
+    owner: 'docs/design/family/11-self-dissolve.md',
+    target: 'docs/design/cross/20-terms-privacy-text.md',
+    pattern: /「(代表者以外のメンバーは、家族グループから退出できます。[^」]*)」→「([^」]*)」/,
+  },
+  {
+    // family/11 §18.1: cross/20 §6・§7 の 4 文。オーケストレーターの専権の差分が段 C の PR で書き換える
+    owner: 'docs/design/family/11-self-dissolve.md',
+    target: 'docs/design/cross/20-terms-privacy-text.md',
+    pattern: /「(組織のオーナーは、オーナーを組織のほかのメンバーへ譲渡するまで[^」]*)」→「([^」]*)」/,
+  },
+  {
+    // family/11 §18.1: cross/20 §6・§7 の 4 文。オーケストレーターの専権の差分が段 C の PR で書き換える
+    owner: 'docs/design/family/11-self-dissolve.md',
+    target: 'docs/design/cross/20-terms-privacy-text.md',
+    pattern: /「(組織のオーナーと家族グループの代表者は、第11条4項と第12条4項のとおり[^」]*)」→「([^」]*)」/,
+  },
+  {
+    // family/11 §18.1: cross/20 §6・§7 の 4 文。オーケストレーターの専権の差分が段 C の PR で書き換える
+    owner: 'docs/design/family/11-self-dissolve.md',
+    target: 'docs/design/cross/20-terms-privacy-text.md',
+    pattern: /「(組織のオーナーと家族グループの代表者は、オーナーまたは代表者を譲渡するまで[^」]*)」→「([^」]*)」/,
   },
 ];
 

@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { AcceptFamilyInviteBodySchema } from '@/schemas/membership/family-invite-action';
-import { MEMBERSHIP_ERROR_MESSAGES, MembershipErrorCode } from '@/lib/errors/membership-errors';
+import { ErrorStatusMap, MEMBERSHIP_ERROR_MESSAGES, MembershipErrorCode } from '@/lib/errors/membership-errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 export async function POST(
@@ -112,6 +112,18 @@ export async function POST(
       return NextResponse.json(
         { error: { code: MembershipErrorCode.INVITE_EMAIL_MISMATCH, message: '招待のメールアドレスと一致しません' } },
         { status: 403 },
+      );
+    }
+    // billing/03 §9.5: 家族プランの契約が無い代表者のグループにはメンバーを足せない (DB の門が FAMILY_PLAN_REQUIRED を RAISE する)。DB の生の文は出さない
+    if (msg.includes(MembershipErrorCode.FAMILY_PLAN_REQUIRED)) {
+      return NextResponse.json(
+        {
+          error: {
+            code: MembershipErrorCode.FAMILY_PLAN_REQUIRED,
+            message: MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.FAMILY_PLAN_REQUIRED],
+          },
+        },
+        { status: ErrorStatusMap[MembershipErrorCode.FAMILY_PLAN_REQUIRED] },
       );
     }
     // #1213: 家族の人数が上限に達している。RPC は上限の確認を家族の行のロック下で行うため、

@@ -100,7 +100,7 @@ pg_cron やサーバーの内部から、利用者の JWT でない Bearer（秘
 | `aggregate-org-stats` | リポジトリ内に無い（停止中 #1325。本番に古い pg_cron のジョブが残っていれば `app_cron_secret`） | （`app_cron_secret`） | `requireServiceRole`（そのあと 410） | `false` |
 | `regenerate-embeddings` | `POST /api/super-admin/embeddings/regenerate` | service role key（`CRON_SECRET` でも可） | service role key の完全一致、または `requireServiceRole` | `false` |
 | `stripe-price-sync` | `POST /api/super-admin/plans/[id]/price-change` | service role key（`CRON_SECRET` でも可） | service role key の完全一致、または `requireServiceRole` | `false` |
-| `knowledge-gpt` | 相談 AI の API（`/api/ai/consultation/sessions/[sessionId]/messages`） | service role key / 利用者の JWT | service role key の完全一致、または `auth.getUser` | `false`（以前から） |
+| `knowledge-gpt` | 相談 AI の API（`/api/ai/consultation/sessions/[sessionId]/messages`） | service role key / 利用者の JWT | service role key の完全一致（`SERVICE_ROLE_JWT` / `SUPABASE_SERVICE_ROLE_KEY` のどちらでも。#1910）、または `auth.getUser` | `false`（以前から） |
 | `generate-menu-v5` / `generate-menu-v4` | 献立生成の API・`/api/cron/process-menu-queue`・関数自身の続きの呼び出し | service role key / 利用者の JWT | 関数の中で service role key の完全一致、または `auth.getUser` | 既定（`true`）。JWT しか受け付けないので変えない |
 | `regenerate-shopping-list-v2` | `POST /api/shopping-list/regenerate` | service role key / 利用者の JWT | service role key の完全一致、または `requireAuth` | 既定（`true`）。同上 |
 
@@ -289,7 +289,7 @@ CORS はブラウザだけが強制する仕組みです。Next.js の API ル�
 
 ### AI 利用回数の上限と記録
 
-AI を使う処理は、利用回数を数え、1 日の上限を超えたら止めます (#1177 / #1149)。上限はプランごとの DB の `ai_daily_limits`（既定は free = 1 日 10 回。全機能の合計・JST の暦日・究極モードも 1 回）。判定と記録は DB の `consume_ai_usage` が 1 回の呼び出しで原子的に行い（上限に達していれば記録せずに `{ allowed: false }`、達していなければ +1）、service role だけが実行できます。画面を開く・保存するだけで呼ばれる AI（`nutrition_advice_auto`・`meal_image_auto`。`_shared/ai-usage-core.ts` の `AI_UNMETERED_FEATURES`）は 1 日の上限の合計に入れず、機能ごとの 1 日の安全弁（DB の `ai_unmetered_daily_caps`。既定は 30 回・20 回）を超えたら止めます。究極モード（`menu_generation_ultimate`。#1142）は 1 日の上限にも 1 回入り、そのうえ 1 日 1 回まで（環境変数 `AI_ULTIMATE_MODE_DAILY_LIMIT` で上書き。Vercel と同じ値を secrets に入れる）で、`consumeEdgeAiUsage` が DB の `consume_ai_usage_capped` で判定します。
+AI を使う処理は、利用回数を数え、1 日の上限を超えたら止めます (#1177 / #1149)。上限はプランごとの DB の `ai_daily_limits`（全機能の合計・JST の暦日・究極モードも 1 回。行の無いプランは free の行の値）と、プラン × 機能ごとの DB の `ai_plan_feature_caps`（0 = そのプランでは使えない。無料プランは究極モード・画像の作成・自動の料理画像が 0。billing/03 §6.5）。判定と記録は DB の `consume_ai_usage` が 1 回の呼び出しで原子的に行い（上限に達していれば記録せずに `{ allowed: false }`、達していなければ +1）、service role だけが実行できます。画面を開く・保存するだけで呼ばれる AI（`nutrition_advice_auto`・`meal_image_auto`。`_shared/ai-usage-core.ts` の `AI_UNMETERED_FEATURES`）は 1 日の上限の合計に入れず、機能ごとの 1 日の安全弁（DB の `ai_unmetered_daily_caps`。既定は 30 回・20 回）を超えたら止めます。究極モード（`menu_generation_ultimate`。#1142）は 1 日の上限にも 1 回入り、そのうえ `ai_plan_feature_caps` に行のあるプランはその値まで、行の無いプラン（組織の plan）は 1 日 1 回まで（環境変数 `AI_ULTIMATE_MODE_DAILY_LIMIT` で上書き。Vercel と同じ値を secrets に入れる）で、`consumeEdgeAiUsage` が DB の `consume_ai_usage_capped` で判定します。
 
 - **ユーザーの JWT を確かめる関数**（`requireAuth` / `auth.getUser`）は、確かめた経路で `const aiUsage = await consumeEdgeAiUsage(req, userId, feature)`（`_shared/ai-usage.ts`）を呼び、`if (!aiUsage.allowed) return aiDailyLimitEdgeResponse(aiUsage, corsHeaders)` で止めます（429 `AI_DAILY_LIMIT`。本文と文面は `_shared/ai-daily-limit.ts`）。Next.js の API ルートを経由せず、ユーザーの JWT で直接呼ばれた場合に、上限がすり抜けないようにするためです（#1153）。リクエストの行を持つ関数（`generate-menu-v4` / `v5`・`regenerate-shopping-list-v2`）は、止めるときに行を失敗にし、画面がそのまま出す人向けの文を書きます。
 - **service role / cron で呼ばれる経路では呼びません。** Next.js の API ルートが数え済みです（献立生成・AI 相談・買い物リスト・料理画像）。献立生成のキュー（`weekly_menu_requests`）は、積む時点（`POST /api/ai/menu/v5/generate`）で数えます。

@@ -68,6 +68,7 @@ const ENTRIES: Entry[] = [
   { file: 'admin/moderation/[type]/[id]/restore/route.ts', method: 'POST', load: async () => (await import('@/app/api/admin/moderation/[type]/[id]/restore/route')).POST },
   { file: 'admin/moderation/[type]/[id]/route.ts', method: 'POST', load: async () => (await import('@/app/api/admin/moderation/[type]/[id]/route')).POST },
   { file: 'admin/moderation/[type]/[id]/route.ts', method: 'PUT', load: async () => (await import('@/app/api/admin/moderation/[type]/[id]/route')).PUT },
+  { file: 'admin/organizations/[id]/route.ts', method: 'PATCH', load: async () => (await import('@/app/api/admin/organizations/[id]/route')).PATCH },
   { file: 'admin/organizations/route.ts', method: 'POST', load: async () => (await import('@/app/api/admin/organizations/route')).POST },
   { file: 'admin/sales/leads/[id]/activities/route.ts', method: 'POST', load: async () => (await import('@/app/api/admin/sales/leads/[id]/activities/route')).POST },
   { file: 'admin/sales/leads/[id]/route.ts', method: 'PATCH', load: async () => (await import('@/app/api/admin/sales/leads/[id]/route')).PATCH },
@@ -110,6 +111,7 @@ const ENTRIES: Entry[] = [
   { file: 'comparison/trigger/route.ts', method: 'POST', load: async () => (await import('@/app/api/comparison/trigger/route')).POST },
   { file: 'contact/route.ts', method: 'POST', load: async () => (await import('@/app/api/contact/route')).POST },
   { file: 'csp-report/route.ts', method: 'POST', load: async () => (await import('@/app/api/csp-report/route')).POST },
+  { file: 'family/dissolve/route.ts', method: 'POST', load: async () => (await import('@/app/api/family/dissolve/route')).POST },
   { file: 'family/groups/route.ts', method: 'POST', load: async () => (await import('@/app/api/family/groups/route')).POST },
   { file: 'family/invites/[id]/accept/route.ts', method: 'POST', load: async () => (await import('@/app/api/family/invites/[id]/accept/route')).POST },
   { file: 'family/invites/route.ts', method: 'POST', load: async () => (await import('@/app/api/family/invites/route')).POST },
@@ -150,6 +152,7 @@ const ENTRIES: Entry[] = [
   { file: 'org/challenges/route.ts', method: 'PUT', load: async () => (await import('@/app/api/org/challenges/route')).PUT },
   { file: 'org/departments/route.ts', method: 'POST', load: async () => (await import('@/app/api/org/departments/route')).POST },
   { file: 'org/departments/route.ts', method: 'PUT', load: async () => (await import('@/app/api/org/departments/route')).PUT },
+  { file: 'org/dissolve/route.ts', method: 'POST', load: async () => (await import('@/app/api/org/dissolve/route')).POST },
   { file: 'org/invites/route.ts', method: 'POST', load: async () => (await import('@/app/api/org/invites/route')).POST },
   { file: 'org/members/route.ts', method: 'POST', load: async () => (await import('@/app/api/org/members/route')).POST },
   { file: 'org/owner-transfer/propose/route.ts', method: 'POST', load: async () => (await import('@/app/api/org/owner-transfer/propose/route')).POST },
@@ -220,6 +223,8 @@ const EXCLUDED: Readonly<Record<string, string>> = {
     '本文は multipart/form-data で JSON ではない (rejectNullCharacterBody は JSON として読めない本文を確かめない)。ファイルは Storage に置き、DB の text / jsonb には書かない',
   'POST webhooks/stripe/route.ts':
     '本文は Stripe が署名して送るもので、利用者は書けない。大きさの上限と署名の確認より前に本文を JSON として読まない作り (billing/01 §9.6)',
+  'POST webhooks/revenuecat/route.ts':
+    '本文は RevenueCat が署名して送るもので、利用者は書けない。大きさの上限と署名の確認より前に本文を JSON として読まない作り (billing/03 §9.1)',
   'POST webhooks/resend/route.ts':
     '本文は Resend が署名して送るもので、利用者は書けない。大きさの上限と署名の確認より前に本文を JSON として読まない作り (route の冒頭のコメント)',
 };

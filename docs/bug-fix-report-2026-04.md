@@ -242,7 +242,7 @@ Vision API の応答が非決定的なため、bug-64 spec は `skip` 指定で�
 
 Bug-27 対応で「究極モードを Premium プラン準備中としてロック」したが、実際の Stripe Checkout / サブスクリプション確認ロジックは未実装。
 
-> **追記 (#1142)**: 究極モードは、プランによる制限をかけずに全員へ開放した。そのうえで、1 日の AI の上限 (#1480・#1149) とは別に、究極モードだけ利用者ごと・1 日 (JST の暦日) に 1 回までにしている (既定 `AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT` = 1。環境変数 `AI_ULTIMATE_MODE_DAILY_LIMIT` で上書き。2 回目は 429 `AI_DAILY_LIMIT`。1 回の究極モードは 1 日の上限の合計にも 1 回入る)。ここに書いた「ロック」は外れている。`bug-27-ultimate-mode-locked.spec.ts` は「開放されていること」を確かめる内容に書き換えてある (ファイル名は経緯が追えるよう据え置き)。
+> **追記 (#1142)**: 究極モードは、プランによる制限をかけずに全員へ開放した。そのうえで、1 日の AI の上限 (#1480・#1149) とは別に、究極モードだけ利用者ごと・1 日 (JST の暦日) に 1 回までにしている (既定 `AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT` = 1。環境変数 `AI_ULTIMATE_MODE_DAILY_LIMIT` で上書き。2 回目は 429 `AI_DAILY_LIMIT`。1 回の究極モードは 1 日の上限の合計にも 1 回入る)。ここに書いた「ロック」は外れている。`bug-27-ultimate-mode-locked.spec.ts` は「開放されていること」を確かめる内容に書き換えてある (ファイル名は経緯が追えるよう据え置き)。 その後、billing/03 (#1912) で究極モードは有料プランの機能になった: 1 日の回数は DB の `ai_plan_feature_caps` の行の値 (free 0 / pro 2 / family_basic 2 / family_pro 3。無料プランは錠で、API は 403 `AI_FEATURE_NOT_IN_PLAN`) で、上の既定の 1 回と環境変数は行の無いプラン (組織のプランなど) にだけ効く。`bug-27-ultimate-mode-locked.spec.ts` は有料の利用者で確かめる。
 
 ### 7-6. Observability の logger を残りのマイナー Edge Function には配線していない
 

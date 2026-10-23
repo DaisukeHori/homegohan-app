@@ -11,15 +11,21 @@
 import { describe, expect, it } from 'vitest';
 import {
   ACTIVE_PERSONAL_SUBSCRIPTION_STATUSES,
+  ORG_SUBSCRIPTION_PLAN_ROW_NOTE,
   PlanSubscriberCountError,
   countPlanSubscribers,
+  countsOrganizationsFor,
+  isOrganizationsCounted,
   planHasSubscribersMessage,
   totalPlanSubscribers,
   type SubscriberCountClient,
 } from '@/lib/super-admin/plan-subscribers';
+import { ORG_PLAN_VALUES } from '@/lib/org-plans';
 import { createFakePlanSubscribersDb, queryOf, type FakePlanSubscribersDbOptions } from './helpers/fake-plan-subscribers-db';
 
 const PLAN_KEY = 'pro';
+/** 数える対象のプラン (個人の pro。組織の件数も数える) */
+const PLAN = { plan_key: PLAN_KEY, plan_type: 'personal' } as const;
 
 function clientOf(options: FakePlanSubscribersDbOptions = {}) {
   const db = createFakePlanSubscribersDb(options);
@@ -29,7 +35,7 @@ function clientOf(options: FakePlanSubscribersDbOptions = {}) {
 describe('countPlanSubscribers: 数える対象 (#1127)', () => {
   it('契約者が 1 人もいなければ、3 種類とも 0 件', async () => {
     const { admin } = clientOf();
-    await expect(countPlanSubscribers(admin, PLAN_KEY)).resolves.toEqual({
+    await expect(countPlanSubscribers(admin, PLAN)).resolves.toEqual({
       personal_subscriptions: 0,
       family_groups: 0,
       organizations: 0,
@@ -42,7 +48,7 @@ describe('countPlanSubscribers: 数える対象 (#1127)', () => {
         personal_subscriptions: ACTIVE_PERSONAL_SUBSCRIPTION_STATUSES.map((status) => ({ plan_key: PLAN_KEY, status })),
       },
     });
-    const counts = await countPlanSubscribers(admin, PLAN_KEY);
+    const counts = await countPlanSubscribers(admin, PLAN);
     expect(counts.personal_subscriptions).toBe(5);
     expect([...ACTIVE_PERSONAL_SUBSCRIPTION_STATUSES].sort()).toEqual(['active', 'grace', 'past_due', 'paused', 'trialing']);
   });
@@ -58,7 +64,7 @@ describe('countPlanSubscribers: 数える対象 (#1127)', () => {
         ],
       },
     });
-    expect((await countPlanSubscribers(admin, PLAN_KEY)).personal_subscriptions).toBe(1);
+    expect((await countPlanSubscribers(admin, PLAN)).personal_subscriptions).toBe(1);
   });
 
   it('家族グループ: active だけを数える。解散済み (dissolved) と別プランは数えない', async () => {
@@ -72,7 +78,7 @@ describe('countPlanSubscribers: 数える対象 (#1127)', () => {
         ],
       },
     });
-    expect((await countPlanSubscribers(admin, PLAN_KEY)).family_groups).toBe(2);
+    expect((await countPlanSubscribers(admin, PLAN)).family_groups).toBe(2);
   });
 
   it('組織: plan 列が plan_key と一致する active だけを数える。解散済みと別プランは数えない', async () => {
@@ -87,7 +93,7 @@ describe('countPlanSubscribers: 数える対象 (#1127)', () => {
         ],
       },
     });
-    expect((await countPlanSubscribers(admin, PLAN_KEY)).organizations).toBe(2);
+    expect((await countPlanSubscribers(admin, PLAN)).organizations).toBe(2);
   });
 
   it('3 種類の契約者をテーブルごとに別々に数える', async () => {
@@ -105,7 +111,7 @@ describe('countPlanSubscribers: 数える対象 (#1127)', () => {
         ],
       },
     });
-    await expect(countPlanSubscribers(admin, PLAN_KEY)).resolves.toEqual({
+    await expect(countPlanSubscribers(admin, PLAN)).resolves.toEqual({
       personal_subscriptions: 2,
       family_groups: 1,
       organizations: 3,
@@ -116,7 +122,7 @@ describe('countPlanSubscribers: 数える対象 (#1127)', () => {
     const { admin, queries } = clientOf({
       tables: { personal_subscriptions: [{ plan_key: PLAN_KEY, status: 'active', user_id: 'u-1' }] },
     });
-    await countPlanSubscribers(admin, PLAN_KEY);
+    await countPlanSubscribers(admin, PLAN);
 
     expect(queries.map((q) => q.table).sort()).toEqual(['family_groups', 'organizations', 'personal_subscriptions']);
     for (const query of queries) {
@@ -127,7 +133,7 @@ describe('countPlanSubscribers: 数える対象 (#1127)', () => {
 
   it('plan_key で絞る (個人契約・家族は plan_key 列、組織は plan 列)。終了済みを外す絞り込みも付ける', async () => {
     const { admin, queries } = clientOf();
-    await countPlanSubscribers(admin, PLAN_KEY);
+    await countPlanSubscribers(admin, PLAN);
 
     const personal = queryOf(queries, 'personal_subscriptions');
     expect(personal.eq).toEqual([['plan_key', PLAN_KEY]]);
@@ -151,7 +157,7 @@ describe('countPlanSubscribers: 数えられなかったとき (確認できな�
   ] as const)('%s の取得が DB エラーなら、テーブルとエラーコードを持つ PlanSubscriberCountError を投げる', async (table, code) => {
     const { admin } = clientOf({ errors: { [table]: { message: 'boom: secret detail', code } } });
 
-    const error = await countPlanSubscribers(admin, PLAN_KEY).catch((e: unknown) => e);
+    const error = await countPlanSubscribers(admin, PLAN).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(PlanSubscriberCountError);
     expect((error as PlanSubscriberCountError).table).toBe(table);
@@ -161,7 +167,7 @@ describe('countPlanSubscribers: 数えられなかったとき (確認できな�
   it('件数が返らない (count が null) ときも、0 件にせず投げる', async () => {
     const { admin } = clientOf({ nullCount: ['family_groups'] });
 
-    const error = await countPlanSubscribers(admin, PLAN_KEY).catch((e: unknown) => e);
+    const error = await countPlanSubscribers(admin, PLAN).catch((e: unknown) => e);
 
     expect(error).toBeInstanceOf(PlanSubscriberCountError);
     expect((error as PlanSubscriberCountError).table).toBe('family_groups');
@@ -172,7 +178,7 @@ describe('countPlanSubscribers: 数えられなかったとき (確認できな�
     async (_label, planKey) => {
       const { admin, from } = clientOf();
 
-      await expect(countPlanSubscribers(admin, planKey as unknown as string)).rejects.toBeInstanceOf(PlanSubscriberCountError);
+      await expect(countPlanSubscribers(admin, { plan_key: planKey as unknown as string, plan_type: 'personal' })).rejects.toBeInstanceOf(PlanSubscriberCountError);
       expect(from).not.toHaveBeenCalled();
     },
   );
@@ -205,5 +211,94 @@ describe('totalPlanSubscribers / planHasSubscribersMessage', () => {
     for (const canUnpublish of [true, false]) {
       expect(planHasSubscribersMessage(counts, { canUnpublish })).toMatch(/契約がすべて終了してから、もう一度廃止してください。$/);
     }
+  });
+});
+
+describe('組織のプランの行 (plan_type = org の org_*) では、組織の件数を数えない (#1912)', () => {
+  /** 組織のプランの行。organizations.plan (standard / premium / enterprise) とは一致しないので、数えると常に 0 件になる */
+  const ORG_ROW = { plan_key: 'org_starter', plan_type: 'org' } as const;
+
+  it('countsOrganizationsFor: org_* の行だけ数えない。個人・家族と、組織の段階と同じ key の行は数える', () => {
+    expect(countsOrganizationsFor(ORG_ROW)).toBe(false);
+    expect(countsOrganizationsFor({ plan_key: 'org_enterprise', plan_type: 'org' })).toBe(false);
+    expect(countsOrganizationsFor({ plan_key: 'pro', plan_type: 'personal' })).toBe(true);
+    expect(countsOrganizationsFor({ plan_key: 'family_basic', plan_type: 'family' })).toBe(true);
+    for (const orgPlanValue of ORG_PLAN_VALUES) {
+      // organizations.plan と同じ値の行は、組織の利用者の判定に使われるので数える
+      expect(countsOrganizationsFor({ plan_key: orgPlanValue, plan_type: 'org' })).toBe(true);
+    }
+  });
+
+  it('org_* の行では organizations を読まず、内訳に organizations のキーを入れない (0 と見せない)', async () => {
+    const { admin, queries } = clientOf({
+      tables: { organizations: [{ plan: ORG_ROW.plan_key, status: 'active' }] },
+    });
+
+    const counts = await countPlanSubscribers(admin, ORG_ROW);
+
+    expect(queries.map((q) => q.table).sort()).toEqual(['family_groups', 'personal_subscriptions']);
+    expect(counts).toEqual({ personal_subscriptions: 0, family_groups: 0 });
+    expect('organizations' in counts).toBe(false);
+    expect(isOrganizationsCounted(counts)).toBe(false);
+  });
+
+  it('org_* の行でも、個人契約と家族グループはこれまでどおり数える', async () => {
+    const { admin } = clientOf({
+      tables: {
+        personal_subscriptions: [{ plan_key: ORG_ROW.plan_key, status: 'active' }],
+        family_groups: [
+          { plan_key: ORG_ROW.plan_key, status: 'active' },
+          { plan_key: ORG_ROW.plan_key, status: 'dissolved' },
+        ],
+      },
+    });
+
+    await expect(countPlanSubscribers(admin, ORG_ROW)).resolves.toEqual({ personal_subscriptions: 1, family_groups: 1 });
+  });
+
+  it('org_* の行では organizations を読まないので、organizations の DB エラーで止まらない', async () => {
+    const { admin } = clientOf({ errors: { organizations: { message: 'boom', code: '42P01' } } });
+
+    await expect(countPlanSubscribers(admin, ORG_ROW)).resolves.toEqual({ personal_subscriptions: 0, family_groups: 0 });
+  });
+
+  it('個人・家族のプランは、これまでどおり organizations も数える (キーがあり 0 件も数値)', async () => {
+    for (const plan of [PLAN, { plan_key: 'family_basic', plan_type: 'family' }]) {
+      const { admin, queries } = clientOf();
+      const counts = await countPlanSubscribers(admin, plan);
+      expect(counts.organizations).toBe(0);
+      expect(isOrganizationsCounted(counts)).toBe(true);
+      expect(queries.map((q) => q.table).sort()).toEqual(['family_groups', 'organizations', 'personal_subscriptions']);
+    }
+  });
+
+  it('合計は、数えていない組織を足さない (個人と家族だけ)', () => {
+    expect(totalPlanSubscribers({ personal_subscriptions: 2, family_groups: 1 })).toBe(3);
+    expect(totalPlanSubscribers({ personal_subscriptions: 0, family_groups: 0 })).toBe(0);
+  });
+
+  it('止める文面: 組織の件数を出さず、注記を出す', () => {
+    const message = planHasSubscribersMessage({ personal_subscriptions: 1, family_groups: 0 }, { canUnpublish: true });
+
+    expect(message).toContain('個人契約 1 件');
+    expect(message).not.toMatch(/組織 \d+ 件/);
+    expect(message).toContain(ORG_SUBSCRIPTION_PLAN_ROW_NOTE);
+    expect(message).toMatch(/契約がすべて終了してから、もう一度廃止してください。$/);
+  });
+
+  it('個人・家族のプランの文面には、注記を出さない', () => {
+    const message = planHasSubscribersMessage(
+      { personal_subscriptions: 1, family_groups: 0, organizations: 0 },
+      { canUnpublish: false },
+    );
+    expect(message).not.toContain(ORG_SUBSCRIPTION_PLAN_ROW_NOTE);
+  });
+
+  it('注記は、組織の段階 (standard / premium / enterprise) とは無関係で、組織の利用者の判定に使われないことを書く', () => {
+    for (const orgPlanValue of ORG_PLAN_VALUES) {
+      expect(ORG_SUBSCRIPTION_PLAN_ROW_NOTE).toContain(orgPlanValue);
+    }
+    expect(ORG_SUBSCRIPTION_PLAN_ROW_NOTE).toContain('とは無関係');
+    expect(ORG_SUBSCRIPTION_PLAN_ROW_NOTE).toContain('組織の利用者の判定に使われません');
   });
 });

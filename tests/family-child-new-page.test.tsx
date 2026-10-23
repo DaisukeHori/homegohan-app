@@ -112,6 +112,11 @@ afterEach(async () => {
 });
 
 describe('子供の追加画面の生年月日と保護者の同意 (#1173)', () => {
+  it('#1901 (cross/20 Q-27): 注意書きは実装に無い約束 (親が代わりに記録する) をせず、登録するのは名前・生年月日・性別だけと書く', async () => {
+    expect(container.textContent).toContain('登録するのは、名前・生年月日・性別だけです。');
+    expect(container.textContent).not.toContain('代わりに');
+  });
+
   it('T-CN1: 生年月日が必須で、未入力・未来の日付では押せない', async () => {
     expect(birthInput().required).toBe(true);
     expect(birthInput().max).toBe('2026-10-16');

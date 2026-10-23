@@ -68,6 +68,7 @@ import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
 import { useAiConsent } from "@/hooks/useAiConsent";
 import { AiConsentRequiredError, aiFetch, handleStoredAiConsentFailure, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import { aiDailyLimitMessageOfResponse } from "@/lib/ai/daily-limit-client";
+import { mealCoverRepresentsDish } from "@/lib/meal-image";
 import { AI_CONSENT_COPY } from "@/lib/ai/consent-config";
 import { weeklyMenuRequestErrorMessageForDisplay } from "@/lib/weekly-menu-request-error";
 import { shoppingListRequestErrorMessageForDisplay } from "@/lib/shopping-list-request-error";
@@ -2604,7 +2605,7 @@ export default function WeeklyMenuPage() {
         setIsLoadingFeedback(false);
         return;
       }
-      // 今日の AI の利用回数の上限に達した (429 AI_DAILY_LIMIT。#1149)。「再分析」(forceRefresh) は 1 日の上限 (10 回) で、
+      // 今日の AI の利用回数の上限に達した (429 AI_DAILY_LIMIT。#1149)。「再分析」(forceRefresh) は 1 日の上限 (プランごと) に数え、
       // 画面を開いたときの自動の取得は上限に数えないが、自動の分だけの安全弁 (既定は 1 日 30 回) に達したときもここに来る
       const dailyLimitMessage = await aiDailyLimitMessageOfResponse(res);
       if (dailyLimitMessage) {
@@ -2654,7 +2655,7 @@ export default function WeeklyMenuPage() {
           // UX2-03: 「キャッシュ済み」でも「生成中」でもない想定外のレスポンス形状
           // (例: cached=true だが feedback/praiseComment が空、status が想定外の値等) に
           // フォールスルーすると setIsLoadingFeedback(false) が一度も呼ばれず
-          // 「分析を準備中...」のスピナーが永久に止まらなかった。
+          // 読み込み中 (「分析しています...」) のスピナーが永久に止まらなかった。
           // 他の失敗経路 (!res.ok / catch) と同じ文言・挙動に揃えて解除する
           // （これにより既存の「再分析」ボタンが再試行導線として機能する）。
           setNutritionFeedback('分析結果を取得できませんでした。');
@@ -5461,7 +5462,8 @@ export default function WeeklyMenuPage() {
                     };
                     setSelectedRecipeData({
                       ...normalizedDish,
-                      imageUrl: dish.image_url ?? meal.imageUrl ?? null,
+                      // 自分の画像の無い料理に献立のカバーを出すのは、カバーがその料理を表すときだけ (1 品の献立・主菜・写真や商品の料理。billing/03 §10.3・Q-16)
+                      imageUrl: dish.image_url ?? (mealCoverRepresentsDish(dishesArray, idx) ? meal.imageUrl : null) ?? null,
                       // この料理だけを配列に入れる（UIの互換性のため）
                       dishes: [normalizedDish],
                       // 全料理の材料（買い物リスト用）

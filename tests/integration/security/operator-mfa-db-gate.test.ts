@@ -25,6 +25,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
 import { promoteToAal2 } from '../helpers/mfa';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import { grantFamilyPlan } from '../helpers/family-plan';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -296,6 +297,8 @@ async function createFixture(): Promise<void> {
   ]);
 
   // DB-5: 家族は代表者の rpc('create_family_group') で作る (family-member-status-guard.test.ts と同じ形)
+  // billing/03 §6.6: 家族グループは家族プランの契約者だけが作れるので、作る前に家族プランを手動付与する
+  await grantFamilyPlan(srAdmin, familyRep.id);
   const { data: family, error: familyError } = await asUser(familyRep.jwt).rpc('create_family_group', {
     p_name: `#1707 mfa-db-gate ${TS}`,
     p_plan_key: 'free',

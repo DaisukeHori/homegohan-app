@@ -15,6 +15,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE, countsOrganizationsFor } from '@/lib/super-admin/plan-subscribers';
 
 type ImpactData = {
   /** 新規契約のみなので常に 0 (既存契約は現行価格のまま) */
@@ -29,6 +30,8 @@ type ImpactData = {
 type Plan = {
   id: string;
   plan_key: string;
+  /** 組織のプランの行 (org_*) かの判定に使う (#1912) */
+  plan_type: string | null;
   display_name: string;
   monthly_price_jpy: number | null;
   yearly_price_jpy: number | null;
@@ -167,6 +170,16 @@ export default function PriceChangePage() {
         <span className="text-slate-300">/</span>
         <h1 className="text-xl font-bold text-slate-900">価格変更</h1>
       </div>
+
+      {/* #1912: 組織のプランの行 (org_*) は組織の段階とは無関係で、組織の利用者の判定に使われない。組織の件数は出さず、注記を出す */}
+      {!countsOrganizationsFor(plan) && (
+        <p
+          data-testid="org-subscription-plan-row-note"
+          className="mb-6 bg-slate-50 border border-slate-200 text-slate-600 px-4 py-3 rounded-lg text-xs"
+        >
+          {ORG_SUBSCRIPTION_PLAN_ROW_NOTE}
+        </p>
+      )}
 
       {/* Step 1: 価格入力 + シミュレーション */}
       {step === 1 && (
