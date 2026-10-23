@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Card, LoadingState } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
+import { getApiErrorMessage } from "../../src/lib/api-error";
 import { supabase } from "../../src/lib/supabase";
 import { useProfile } from "../../src/providers/ProfileProvider";
 import { colors, radius, shadows, spacing } from "../../src/theme";
@@ -643,6 +644,11 @@ function toDbProfileUpdates(body: any, userId: string) {
   return updates;
 }
 
+/** 完了の保存に失敗したときの文 (API の本文の文が取り出せないとき・DB の保存の失敗) */
+const ONBOARDING_SAVE_FAILED_MESSAGE = "保存に失敗しました。";
+/** 完了の保存のときにログインが切れていたときの文 */
+const ONBOARDING_LOGIN_REQUIRED_MESSAGE = "ログインが必要です。もう一度ログインしてください。";
+
 // モバイル版: 質問フロー (OB-UI-05)
 export default function OnboardingQuestions() {
   const { refresh: refreshProfile, profile } = useProfile();
@@ -929,7 +935,8 @@ export default function OnboardingQuestions() {
     setIsCalculating(true);
     try {
       const { data: auth } = await supabase.auth.getUser();
-      if (!auth.user) throw new Error("Unauthorized");
+      // 下の catch が文を画面に出すので、英語の文 ('Unauthorized') や DB の生の文面を投げない (#1917)
+      if (!auth.user) throw new Error(ONBOARDING_LOGIN_REQUIRED_MESSAGE);
 
       const profileBody = transformAnswersToProfile(newAnswers);
       const updates = toDbProfileUpdates(profileBody, auth.user.id);
@@ -937,7 +944,11 @@ export default function OnboardingQuestions() {
       const { error: profileError } = await supabase
         .from("user_profiles")
         .upsert(updates);
-      if (profileError) throw profileError;
+      if (profileError) {
+        // DB の生の文面 (英語) は画面に出さず、ログにだけ残す
+        console.error("[onboarding] user_profiles save error:", profileError);
+        throw new Error(ONBOARDING_SAVE_FAILED_MESSAGE);
+      }
 
       // サーバーサイドで performance_profile 構築・fitness_goals/goal_text/
       // weekly_exercise_minutes 計算・nutrition_targets 保存を一括実行
@@ -946,9 +957,10 @@ export default function OnboardingQuestions() {
 
       await refreshProfile();
       router.replace("/onboarding/complete");
-    } catch (e: any) {
+    } catch (e: unknown) {
       setIsCalculating(false);
-      Alert.alert("保存失敗", e?.message ?? "保存に失敗しました。");
+      // getApi の失敗の message は `HTTP 401 Unauthorized: {"error":"…"}` の形なので、そのまま出さず本文の文だけを出す (#1917)
+      Alert.alert("保存失敗", getApiErrorMessage(e, ONBOARDING_SAVE_FAILED_MESSAGE));
     } finally {
       setIsSubmitting(false);
     }
