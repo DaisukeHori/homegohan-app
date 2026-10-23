@@ -3,12 +3,12 @@ import * as Linking from "expo-linking";
 import { Link, router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from "react-native";
-import { validatePassword } from "@homegohan/shared";
+import { AUTH_LINK_ERROR_MESSAGE, validatePassword } from "@homegohan/shared";
 import { Text, TextInput } from "../../../src/components/ui/Text";
 
 import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { getApi } from "../../../src/lib/api";
-import { getApiErrorMessage } from "../../../src/lib/api-error";
+import { getApiErrorMessage, getJapaneseApiErrorMessage } from "../../../src/lib/api-error";
 import { extractSupabaseLinkParams } from "../../../src/lib/deeplink";
 import { signOutWithCleanup } from "../../../src/lib/signOut";
 import { supabase } from "../../../src/lib/supabase";
@@ -39,7 +39,9 @@ export default function ResetPasswordPage() {
 
       if (!params) return;
       if (params.error) {
-        Alert.alert("エラー", params.error_description ?? params.error);
+        // GoTrue の英文 (error_description・error の値) は出さず、固定の文にする (#1917 の続き。authLink の link_error と同じ)
+        console.warn("[reset-password] link error:", params.error, params.error_description ?? "");
+        Alert.alert("エラー", AUTH_LINK_ERROR_MESSAGE);
         return;
       }
 
@@ -59,7 +61,7 @@ export default function ResetPasswordPage() {
         const { data: after } = await supabase.auth.getSession();
         if (!cancelled) setSessionReady(!!after.session);
       } catch (e: any) {
-        Alert.alert("セッションエラー", e?.message ?? "セッションの確立に失敗しました。");
+        Alert.alert("セッションエラー", getJapaneseApiErrorMessage(e, "セッションの確立に失敗しました。"));
       } finally {
         if (!cancelled) setIsSettingSession(false);
       }

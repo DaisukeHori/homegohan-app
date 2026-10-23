@@ -12,7 +12,9 @@
  *
  * AI 相談の緊急停止・メンテナンス中の 503 は、本文の文字列ではなく、code から決めた固定の文を返す (#1457)。
  *
- * 取り出せないとき (JSON 以外の本文など) は、Error の message、それも無ければ fallback を返す。
+ * HTTP のエラー (`HTTP <status> …: <本文>`) で本文から文を取り出せないとき (ゲートウェイの HTML の 502 など本文が JSON でない・
+ * 本文に文が無い) は fallback を返す (`HTTP 502 Bad Gateway: <html>…` の生の文字列を画面に出さない。#1917 の続き)。
+ * HTTP のエラーでない例外は、Error の message、それも無ければ fallback を返す。
  */
 
 import { isHttpNetworkError, type HttpNetworkErrorKind } from "@homegohan/core";
@@ -61,8 +63,10 @@ export function getApiErrorMessage(error: unknown, fallback: string): string {
       const fromBody = messageFromBody(JSON.parse(match[1]));
       if (fromBody) return fromBody;
     } catch {
-      // 本文が JSON ではない: 下で Error の message をそのまま返す
+      // 本文が JSON ではない (ゲートウェイの HTML の 502 など): 下で fallback を返す
     }
+    // HTTP のエラーで本文から文を取れない: 生の `HTTP <status> …` の文字列は出さない (#1917 の続き)
+    return fallback;
   }
   return raw;
 }
@@ -73,10 +77,9 @@ const JAPANESE_TEXT_PATTERN = /[\u3040-\u30ff\u3400-\u9fff\uff00-\uffef]/;
 /**
  * getApiErrorMessage と同じく本文の文 (または固定の文) を取り出し、それが日本語の文でなければ fallback を返す (#1917)。
  *
- * getApiErrorMessage は、本文から文を取り出せないとき (本文が JSON でない・本文に文が無い) に
- * `HTTP 500 Internal Server Error: <html>…` のような生の文字列を返し、生の fetch の通信の失敗 ('Network request failed') もそのまま返す。
- * AI の API (/api/ai/**) の失敗の本文の文は日本語の固定の文なので、日本語でない文は利用者に見せる文ではない。
- * AI の API の失敗を Alert に出す画面 (健康診断の読み取り・1 日の献立の生成・AI 相談の送信) はこちらを使う
+ * getApiErrorMessage は、HTTP のエラーでない例外の文 (生の fetch の通信の失敗 'Network request failed'・Supabase Auth (GoTrue) の
+ * 英語の文 'Invalid login credentials' など) をそのまま返す。API の失敗の本文の文は日本語の固定の文なので、日本語でない文は利用者に見せる文ではない。
+ * API・Supabase Auth の失敗を Alert に出す画面 (健康の記録・ログイン・登録・パスワードの再設定など) はこちらを使う (#1917 の続き)
  */
 export function getJapaneseApiErrorMessage(error: unknown, fallback: string): string {
   const message = getApiErrorMessage(error, fallback);

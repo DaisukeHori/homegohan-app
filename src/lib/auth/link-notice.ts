@@ -14,7 +14,7 @@
  * /auth/link-notice は resolveLinkNotice で行き先を決める。知らせが無ければ、そのまま本来の遷移先へ移る。
  */
 
-import { isEmailChangeAwaitingOtherMessage } from '@homegohan/shared';
+import { AUTH_LINK_ERROR_MESSAGE, isEmailChangeAwaitingOtherMessage } from '@homegohan/shared';
 import { getSafeRedirectPath } from './safe-redirect';
 
 /** ハッシュを読む画面のパス (/auth/* は未ログインでも開ける。lib/supabase/middleware.ts の publicPaths) */
@@ -43,7 +43,7 @@ export function buildLinkNoticePath(next: string, notice?: LinkNoticeKind): stri
 export type LinkNoticeResolution =
   /** メールアドレス変更の 1 通目を受け付けた。知らせを出し、利用者が押したら next へ移る */
   | { kind: 'email_change_awaiting_other'; next: string }
-  /** リンク自体がエラーを運んできた (期限切れなど)。ログイン画面へエラーつきで移る */
+  /** リンク自体がエラーを運んできた (期限切れなど)。ログイン画面へ固定の文 (AUTH_LINK_ERROR_MESSAGE) つきで移る */
   | { kind: 'link_error'; redirectTo: string }
   /** 知らせは無い。そのまま next へ移る */
   | { kind: 'continue'; next: string };
@@ -64,8 +64,9 @@ export function resolveLinkNotice({ search, hash }: { search: string; hash: stri
   const error = fragment.get('error');
   const errorDescription = fragment.get('error_description');
   if (error || errorDescription) {
+    // GoTrue の英文 (error_description・error の値) は画面に出さず、日本語の固定の文にする (#1917 の続き。/auth/callback と同じ)
     const params = new URLSearchParams();
-    params.set('error', errorDescription || error || '');
+    params.set('error', AUTH_LINK_ERROR_MESSAGE);
     return { kind: 'link_error', redirectTo: `${LINK_ERROR_PATH}?${params.toString()}` };
   }
 

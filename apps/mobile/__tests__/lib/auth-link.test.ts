@@ -22,6 +22,7 @@ jest.mock('../../src/lib/supabase', () => ({
 
 import { completeAuthLink, resetAuthLinkResultsForTests } from '../../src/lib/authLink';
 import { extractSupabaseLinkParams } from '../../src/lib/deeplink';
+import { AUTH_LINK_ERROR_MESSAGE } from '@homegohan/shared';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -72,12 +73,13 @@ describe('completeAuthLink — リンクの種類ごとの処理', () => {
 });
 
 describe('completeAuthLink — 失敗・情報なし', () => {
-  it('リンクが error を運んできたら、Supabase を呼ばずに link_error (説明があればそれを使う)', async () => {
+  it('リンクが error を運んできたら、Supabase を呼ばずに link_error。文は GoTrue の英文ではなく固定の文 (#1917 の続き)', async () => {
     expect(await completeAuthLink({ error: 'access_denied', error_description: 'Token expired' })).toEqual({
       status: 'link_error',
-      message: 'Token expired',
+      message: AUTH_LINK_ERROR_MESSAGE,
     });
-    expect(await completeAuthLink({ error: 'access_denied' })).toEqual({ status: 'link_error', message: 'access_denied' });
+    expect(await completeAuthLink({ error: 'access_denied' })).toEqual({ status: 'link_error', message: AUTH_LINK_ERROR_MESSAGE });
+    expect(AUTH_LINK_ERROR_MESSAGE).toBe('ログインの手続きを完了できませんでした。メールのリンクから開いた場合は、リンクの期限が切れている可能性があります。もう一度お試しください。');
     expect(mockExchangeCodeForSession).not.toHaveBeenCalled();
     expect(mockVerifyOtp).not.toHaveBeenCalled();
     expect(mockSetSession).not.toHaveBeenCalled();
@@ -93,12 +95,21 @@ describe('completeAuthLink — 失敗・情報なし', () => {
     expect(await completeAuthLink(extractSupabaseLinkParams('homegohan:///auth/verify'))).toEqual({ status: 'empty' });
   });
 
-  it('交換に失敗したら failed (Supabase のメッセージをそのまま返す)', async () => {
+  it('交換に失敗したら failed。Supabase の英語のメッセージは出さず、固定の文 (#1917 の続き)', async () => {
     mockExchangeCodeForSession.mockResolvedValue({ error: new Error('invalid flow state, no valid flow state found') });
 
     expect(await completeAuthLink({ code: 'bad' })).toEqual({
       status: 'failed',
-      message: 'invalid flow state, no valid flow state found',
+      message: '確認に失敗しました。',
+    });
+  });
+
+  it('例外の文が日本語ならそのまま failed の文にする', async () => {
+    mockVerifyOtp.mockRejectedValue(new Error('確認の期限が切れています'));
+
+    expect(await completeAuthLink({ token_hash: 'h-ja', type: 'email' })).toEqual({
+      status: 'failed',
+      message: '確認の期限が切れています',
     });
   });
 

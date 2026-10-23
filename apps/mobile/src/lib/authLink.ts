@@ -16,15 +16,19 @@
  * code は 1 回しか交換できないので、同じリンクの処理は 1 回だけ行い、結果を共有する。
  */
 
-import { isEmailChangeAwaitingOtherMessage } from "@homegohan/shared";
+import { AUTH_LINK_ERROR_MESSAGE, isEmailChangeAwaitingOtherMessage } from "@homegohan/shared";
 
+import { getJapaneseApiErrorMessage } from "./api-error";
 import type { SupabaseLinkParams } from "./deeplink";
 import { supabase } from "./supabase";
+
+/** code の交換・OTP の確認・setSession が失敗したときに出す文 (例外の文が日本語でないとき) */
+export const AUTH_LINK_FAILED_MESSAGE = "確認に失敗しました。";
 
 export type AuthLinkOutcome =
   /** セッションを作れた */
   | { status: "signed_in" }
-  /** リンク自体がエラーを運んできた (access_denied など)。message は利用者に見せてよい説明 */
+  /** リンク自体がエラーを運んできた (access_denied など)。message は固定の文 AUTH_LINK_ERROR_MESSAGE (GoTrue・provider の英文は出さない) */
   | { status: "link_error"; message: string }
   /** code の交換・OTP の確認・setSession のどれかが失敗した */
   | { status: "failed"; message: string }
@@ -72,8 +76,8 @@ async function processLink(params: SupabaseLinkParams): Promise<AuthLinkOutcome>
     }
     return { status: "signed_in" };
   } catch (e) {
-    const message = (e as { message?: unknown } | null)?.message;
-    return { status: "failed", message: typeof message === "string" && message ? message : "確認に失敗しました。" };
+    // Supabase Auth (GoTrue) の英語の文 ('invalid flow state' など) は出さず、固定の文にする (#1917 の続き)
+    return { status: "failed", message: getJapaneseApiErrorMessage(e, AUTH_LINK_FAILED_MESSAGE) };
   }
 }
 
@@ -85,7 +89,9 @@ export function completeAuthLink(params: SupabaseLinkParams | null | undefined):
   if (!params) return Promise.resolve({ status: "empty" });
 
   if (params.error) {
-    return Promise.resolve({ status: "link_error", message: params.error_description ?? params.error });
+    // GoTrue・provider の英文 (error_description・error の値) は端末のログにだけ残し、画面には固定の文を出す (#1917 の続き。Web の /auth/callback と同じ)
+    console.warn("[authLink] link error:", params.error, params.error_description ?? "");
+    return Promise.resolve({ status: "link_error", message: AUTH_LINK_ERROR_MESSAGE });
   }
 
   const key = linkKey(params);

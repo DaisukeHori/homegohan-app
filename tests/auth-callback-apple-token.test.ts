@@ -42,6 +42,7 @@ vi.mock('@/lib/auth/apple/web-callback', async (importOriginal) => {
 
 const { GET } = await import('@/app/(auth)/auth/callback/route');
 const { APPLE_WEB_CALLBACK_ERROR_MESSAGE } = await import('@/lib/auth/apple/web-callback');
+const { AUTH_LINK_ERROR_MESSAGE } = await import('@homegohan/shared');
 
 const ORIGIN = 'http://localhost:3000';
 const USER = { id: 'user-1', email: 'a@example.com', identities: [{ provider: 'apple' }] };
@@ -149,17 +150,25 @@ describe('/auth/callback: ?error= (S-34)', () => {
     expect(mocks.exchangeCodeForSession).not.toHaveBeenCalled();
   });
 
-  it('?provider= 無し (Google) の ?error=access_denied&error_description=<英文> は今までどおり /login?error=<英文>', async () => {
+  it('?provider= 無し (Google・メールのリンク) の ?error=access_denied&error_description=<英文> は /login?error=<固定の文>。英文を Location に含まない (#1917 の続き)', async () => {
     const description = 'Access denied by the provider';
     const location = await callback(`?error=access_denied&error_description=${encodeURIComponent(description)}`);
 
     expect(location.pathname).toBe('/login');
-    expect(location.searchParams.get('error')).toBe(description);
+    expect(location.searchParams.get('error')).toBe(AUTH_LINK_ERROR_MESSAGE);
+    const raw = decodeURIComponent(location.search.replace(/\+/g, ' '));
+    expect(raw).not.toContain(description);
+    expect(raw).not.toContain('access_denied');
   });
 
-  it('?provider=google の ?error= も今までどおり (error_description が無ければ error の値)', async () => {
+  it('?provider=google の ?error= (error_description 無し) も固定の文 (error の値を出さない)', async () => {
     const location = await callback('?provider=google&error=access_denied');
 
-    expect(location.searchParams.get('error')).toBe('access_denied');
+    expect(location.searchParams.get('error')).toBe(AUTH_LINK_ERROR_MESSAGE);
+  });
+
+  it('固定の文は日本語で、% を含まない (ログイン画面がもう 1 回 decodeURIComponent する)', () => {
+    expect(AUTH_LINK_ERROR_MESSAGE).toMatch(/[ぁ-んァ-ン一-龥]/);
+    expect(AUTH_LINK_ERROR_MESSAGE).not.toContain('%');
   });
 });
