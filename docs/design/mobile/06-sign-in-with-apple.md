@@ -2,10 +2,10 @@
 
 | 項目 | 内容 |
 |---|---|
-| 版 | v1.5 (2026-10-23) |
+| 版 | v1.6 (2026-10-23) |
 | 状態 | 設計ゲート審査中 (実装着手は通過後) |
 | 範囲の正本 | Issue #1139 と、その本文が該当箇所に挙げる `MOBILE_TODO.md`。Issue の本文は「EAS Build / Submit・本番審査の提出・Pass1〜10 の品質検証が未完了」を述べ、該当箇所に `MOBILE_TODO.md:159-217` を挙げる (本文に Sign in with Apple の語は無く、コメントは無い)。Sign in with Apple を求めているのは `MOBILE_TODO.md` の Pass 3「認証/セッション」(`:186`)・Pass 10「ストア要件 (iOS)」(`:193`) と「提出前に片付けるブロッカー」の 5 (`:41`。作業計画 T43)。本書はこの 3 か所の Sign in with Apple の部分を扱う |
-| 土台 | origin/main `9575aa99` (2026-10-23)。本文の file:line はこの版の事実 (v1.2 の時点の origin/main `b6fa5d65` までの差分は、本書が名指すコードとテストに触れていない。v1.4 の時点の origin/main `0c86c3dd` までの差分も同じで、設計書の差分 (cross/20 の F-19・F-51、billing/01 の追随表の行番号、billing/03) は本書が指す行ではない) |
+| 土台 | origin/main `9575aa99` (2026-10-23)。本文の file:line はこの版の事実 (v1.2 の時点の origin/main `b6fa5d65` までの差分は、本書が名指すコードとテストに触れていない。v1.4 の時点の origin/main `0c86c3dd` までの差分も同じで、設計書の差分 (cross/20 の F-19・F-51、billing/01 の追随表の行番号、billing/03) は本書が指す行ではない。v1.6 の時点の origin/main `62425ec8` までの差分 (組織の一覧の API と画面・Edge Function 1 本・設計書の行の置き換え) も、本書が名指すコード・テスト・設計書の行に触れておらず、行の数も変えていない) |
 | 関連の正典 | `docs/design/cross/01-auth-session.md` §3.1 (Apple Sign In = Phase 1・iOS App Store 必須)・§3.3 (退会のときの IdP 側の revoke)・`docs/design/mobile/05-auth-session.md` (Google ログイン・セッションの保管)・`docs/design/cross/16-auth-history-sessions.md` §11.5 (パスワードの無い利用者 = Google / Apple だけ)・`docs/design/cross/13b-legal-consent-mobile.md` (ログインの後の同意のゲート)・`docs/design/cross/20-terms-privacy-text.md` (委託先の表・主張の表・版) |
 | 実装の範囲 | 段 A1 サーバ (表・交換と失効の lib・API・退会の段階)・段 A2 モバイル (iOS のネイティブのシート)・段 B Web (OAuth)・段 D 法務 (プライバシーポリシーの委託先と版)。§15 |
 
@@ -19,6 +19,7 @@
 | v1.3 | 2026-10-23 | 周 2 の網羅性の反映: (1) §17・§8.1・§14.2・§15 の段 A1 に `tests/integration/security/auth-users-fk-on-delete.test.ts` (D0。auth.users を指す外部キーの「表.列」と `EXPECTED_ACTIONS` の一致) を足し、`EXPECTED_ACTIONS` に `apple_sign_in_tokens.user_id` → `CASCADE` を足す直し方を書いた。同じ型の結合テスト (`db-privilege-hardening` の T-1・`select-columns-exist`) を「確認だけ」の行で足した。(2) §7.1 全パターン表に S-12 (サーバの秘密なし)・S-13 (交換の失敗)・S-24 (nonce の不一致)・S-23 (iPhone の設定で停止したあとの再ログイン)・S-20 (Web の 2 回目) の行を足し、Web の「同じメール」の行を `email` / `google` と名指した (S-4・S-5 の Web 版)。(3) 表紙の「範囲の正本」・§2・§3 の R-11 / R-12 の根拠・§18 の `mobile/CLAUDE.md` の行・§21 Q-12 を、Issue #1139 の本文が Sign in with Apple を名指しておらず、名指しているのは本文が該当箇所に挙げる `MOBILE_TODO.md` の Pass 3・Pass 10・ブロッカー 5 である事実に合わせた |
 | v1.4 | 2026-10-23 | 周 2 の審査の反映: 段 D (版 `v2026.4`) は版を上げる改定なので、cross/20 §9.3 の「版を上げる改定すべて」の行が求める §9.4 の 2 (施行日の前に運営のお知らせに改定の予告を載せる) の工程を入れた (公開中のプライバシーポリシー第18条 1 項・利用規約第24条 1 項が施行日の前の掲載を約束している)。§21 に Q-13 (選択式。予告して施行日を待つ / 予告なしで公開し cross/20 §9.3 の除外に `v2026.4` を書き足す) を足し、§11.8 に (i) 改定の予告を新設し、§0.4・§0.5・§3 R-16・§4 S-25 (シナリオ 25 本)・§5.2・§7.1・§7.2・§7.3 (d) (段 D の公開の工程)・§9.6・§11.8 (f)・§15 の公開の順と段 D の行・§18 の cross/20 の行・§19.3・§19.4・§20 の 6 を追随させた |
 | v1.5 | 2026-10-23 | 周 3 の網羅性の反映: (1) §4 にシナリオ S-26〜S-31 (退会・行あり・秘密なし / 秘密鍵が壊れている、Web・provider 無効、Web・refresh token を保管できない (Services ID 無し・`provider_refresh_token` 無し)、`identityToken` が無い、名前の保存の失敗) を足し 31 本にし、§5.2 のトレースに足した。§4 S-12 の参照を S-16 (行なしの退会) に直し、§5.2 S-13 の順の記述 (名前 → 登録 → 振り分け) を直した (2) §7.1 に シートの取り消し (S-7)・`identityToken` 無し・名前の保存の失敗・Web の provider 無効・Web の Services ID 無し / `provider_refresh_token` 無し・WebView のタブ (S-21)・中継のアドレスへのメール (S-22) の行を足した (3) §7.3 (a) に名前の保存の成否の行、§7.3 (b) の `none` に Web の保管しない条件の行を足した (4) §14.2 に `packages/shared/src/apple-sign-in.test.ts`・`src/__tests__/lib/auth/apple/schemas.test.ts` (段 A1)・`src/__tests__/lib/auth/apple-sign-in-flag.test.ts` (段 B) を足し、§15・§16 の本数を直した (5) §17 に設定画面のテスト 2 本 (確認だけ) を足した (6) §18 に `marketing/01`・`cross/08`・`mobile/02`・`cross/12` の行を足し、`ENV_SETUP.md` をリポジトリ直下のものと明記した。§21 に Q-14 を足した |
+| v1.6 | 2026-10-23 | 周 3 の審査の反映: 退会の段階 `apple_revoke` に段階全体の時間の上限 `APPLE_REVOKE_TOTAL_BUDGET_MS` (3 秒) を置いた。退会の route の `maxDuration` 60 秒から Storage の掃除の上限 45 秒と完了メールの待ちの上限 5 秒を引いた 10 秒のうち 3 秒を Apple に充てる (§13.1 の計算。`config.test.ts` が和を確かめる)。締め切りは段階の入口で決め、試行ごとの待ちは `APPLE_API_TIMEOUT_MS` と残りの短いほう (`revokeAppleRefreshToken` に `timeoutMs` を足した)。締め切りを過ぎた行は Apple を呼ばずに `failed` に数えて `warn` を 1 回出す。§0.5・§3 R-8・§4 S-15 とシナリオ S-32 (2 行・Apple が応答しない。32 本)・§5.1・§5.2・§6 裁定 2 と帰結・§7.1・§7.3 (b)・§9.3・§11.2・§11.3・§11.4・§12.4・§13.1・§14.2・§16・§21 Q-2 を追随させた。`APPLE_REVOKE_ATTEMPTS` の注と §13.1 の根拠 (「5xx ならもう 1 回」「応答を待たせない」) を、コードの事実 (失敗の種類を区別せずやり直す・やり直しも上限の中だけ) に合わせた。波及の掃除: §7.3 (b) に既存の挙動の行 (秘密なし S-26・表を読めない) とガード (締め切りの前) を足し、§7.1 に表を読めないの行を足した。§9.3 の既定の名前 `defaultAccountDeletionAppleRevocation` (正典コードに無い) を `createAccountDeletionAppleRevocation({ admin: () => admin })` に直した |
 
 ## 0. 範囲・前提・分冊判定
 
@@ -73,7 +74,7 @@
 | iOS の入口 | ネイティブのシート (`expo-apple-authentication`) + `signInWithIdToken` (§6 裁定 1) | ブラウザの OAuth (Google と同じ経路) |
 | Android | 出さない (§6 裁定 1) | Web と同じ OAuth をブラウザで (Q-3) |
 | Web | 出す (段 B。`signInWithOAuth({ provider: 'apple' })`) | アプリだけ (Q-1) |
-| 退会のときの Apple のトークンの失効 | 行う。失敗しても退会は止めない (§6 裁定 2) | 失敗したら退会を止める・やり直しの列を持つ (Q-2) |
+| 退会のときの Apple のトークンの失効 | 行う。失敗しても退会は止めない。段階の時間は `APPLE_REVOKE_TOTAL_BUDGET_MS` (3 秒) まで (§6 裁定 2・§13.1) | 失敗したら退会を止める・やり直しの列を持つ (Q-2) |
 | 設定が無いとき | スイッチ (`EXPO_PUBLIC_APPLE_SIGN_IN` / `NEXT_PUBLIC_APPLE_SIGN_IN` = `on`) が無ければボタンを出さない (§6 裁定 3) | — |
 | プライバシーポリシー | Apple を委託先の表に足し版を上げる (段 D)。施行日の前に運営のお知らせに改定の予告を載せ (cross/20 §9.4 の 2)、施行日に段 D をデプロイする。アプリと Web で Apple のログインを出すのは施行日の後 | 予告なしで公開し、cross/20 §9.3 の除外の行に `v2026.4` を書き足す (Q-13) |
 
@@ -99,7 +100,7 @@ iOS のアプリに Sign in with Apple を足し、App Store の審査 (4.8) を
 | R-5 | Supabase のセッションにしたあとは、既存のログインと同じ振り分け・同意のゲート・購入の結び付け・端末名の登録が動く | F-2・F-3・cross/13b | §9.1: `routeAfterSignIn` を共有の関数に移して両画面から呼ぶ。`AuthProvider` は変えない |
 | R-6 | 初回だけ来る名前を失わない | F-15 | §9.4: ネイティブは `updateUser({ data: { full_name, given_name, family_name } })` (既に `full_name` があれば上書きしない)。Web は GoTrue が `user` から入れる |
 | R-7 | 同じメールの既存のアカウント (メール / Google) と自動で結び付く挙動を前提にし、壊さない | F-15 | §9.4・§7.1: 結び付いた利用者の `app_metadata.provider` は最初の provider のまま (設定画面の分岐は変えない) |
-| R-8 | 退会のとき Apple のトークンを失効させる | 5.1.1(v)・Apple News・cross/01 §3.3 | §9.3: サーバが保管した refresh token を `/auth/revoke` へ。段階 `apple_revoke` を `delete_user` の直前に置く |
+| R-8 | 退会のとき Apple のトークンを失効させる | 5.1.1(v)・Apple News・cross/01 §3.3 | §9.3: サーバが保管した refresh token を `/auth/revoke` へ。段階 `apple_revoke` を `delete_user` の直前に置く。段階の時間は `APPLE_REVOKE_TOTAL_BUDGET_MS` まで (退会の route の 60 秒に収める。§13.1) |
 | R-9 | 失効に使う refresh token を得る: ネイティブは認可コードをサーバで交換、Web はコールバックの `provider_refresh_token` | F-14・F-15 | §9.2 `POST /api/auth/apple/authorization`・§9.5 コールバック |
 | R-10 | 秘密 (.p8・Team ID・Key ID) はサーバだけが持ち、ログ・応答に出さない。refresh token は service_role だけが読める表に置く | 既存の規律 (#1172・#1182) | §8・§11.1〜11.3・§12 |
 | R-11 | 設定が無いとき (Apple Developer・Supabase の作業の前) はボタンを出さない。案内もしない | 本書の範囲 (§0.1 の (6)) | §6 裁定 3・§10 |
@@ -111,7 +112,7 @@ iOS のアプリに Sign in with Apple を足し、App Store の審査 (4.8) を
 | R-17 | メールの中継のアドレスへ届くメール (確認・退会の完了・通知) のために送信ドメインを Apple に登録する | F-14 | §19.1 (オーナー) |
 | R-18 | 新しい表・route・環境変数・依存は、既存の番兵 (契約テスト・走査テスト) が反応する形で足す | 既存の規律 | §17 |
 
-## 4. ユーザーシナリオ (31 本)
+## 4. ユーザーシナリオ (32 本)
 
 | # | シナリオ | 期待する結果 |
 |---|---|---|
@@ -129,7 +130,7 @@ iOS のアプリに Sign in with Apple を足し、App Store の審査 (4.8) を
 | S-12 | ログインは成功したが、サーバの秘密 (Team ID など) が未設定 | ログインは成功。`POST /api/auth/apple/authorization` は 200 `{ stored: false, reason: 'not_configured' }`。refresh token は保管されない (退会のときは行が無いので Apple を呼ばない。S-16) |
 | S-13 | ログインは成功したが、交換の API が 5 分を過ぎた・通信できない | ログインは成功。route は 400 `APPLE_AUTHORIZATION_CODE_INVALID` または 500。アプリは `console.warn` だけで画面は進む |
 | S-14 | Apple でログインした人が退会する (refresh token の行がある) | `apple_revoke`: 行ごとに `client_secret` を作り `/auth/revoke` を呼ぶ (200)。行は `deleteUser` の CASCADE で消える。退会は完了 (完了メール) |
-| S-15 | 退会・Apple の API が落ちている | 2 回試して失敗 → `warn` のログ (request_id・段階)。退会は続けて完了する |
+| S-15 | 退会・Apple の API が落ちている (すぐ失敗が返る: 通信の失敗・5xx) | 段階の時間の上限 (`APPLE_REVOKE_TOTAL_BUDGET_MS` = 3 秒) の中で 2 回試して失敗 → `warn` のログ (request_id・段階)。退会は続けて完了する |
 | S-16 | 退会・行が無い (S-12 の人・Google だけの人) | Apple を呼ばずに `delete_user` へ |
 | S-17 | Web のログイン画面で「Appleで続ける」(初めての人) | `/auth/v1/authorize?provider=apple` → Apple → Supabase → `/auth/callback?provider=apple&code=…` → `exchangeCodeForSession` → 初めてなので同意画面 (#1435)。`provider_refresh_token` があり identity に `apple` があれば Services ID の行として保管 |
 | S-18 | Web の新規登録画面・同意のチェック無しで Apple のボタン | 押せない (`disabled`)。`signInWithOAuth` は呼ばれない |
@@ -146,6 +147,7 @@ iOS のアプリに Sign in with Apple を足し、App Store の審査 (4.8) を
 | S-29 | Web・Apple で入ったが、サーバに Services ID (`APPLE_SIGN_IN_SERVICES_ID`) が無い、または Supabase が `provider_refresh_token` を返さない | ログインと振り分けは S-17・S-20 と同じ。refresh token は保管しない (`info`)。退会のときは Web の行が無いので、その入口の失効はスキップになる (iOS で入ったことがあれば iOS の行で失効する。§21 Q-6) |
 | S-30 | iPhone・シートは通ったが Apple が `identityToken` を返さない | Supabase を呼ばない。固定の文 `APPLE_SIGN_IN_MESSAGES.noIdentityToken` のアラート。ログイン画面のまま |
 | S-31 | iPhone・初めての人のログインで、名前の保存 (`updateUser`) が失敗する | ログインは成功し、振り分けへ進む (`console.warn` だけ)。名前は保存されない (次に Apple が名前を返すのは S-23 の停止の後だけ。ニックネームは初期設定で入れる) |
+| S-32 | iPhone と Web の両方で Apple で入った人 (refresh token の行が 2 つ) が、Apple の API が応答しない (時間切れになる) 間に退会する | 1 行目の 1 回目を段階の時間の上限 (3 秒) の残りで打ち切り、やり直さずに `failed` (`warn`)。2 行目は Apple を呼ばずに `failed` (上限を過ぎた行の `warn` 1 回)。`apple_revoke` は約 3 秒で終わり、退会は完了する (退会の route の 60 秒を Apple の障害で超えない) |
 
 ## 5. 構想とトレース (相 2)
 
@@ -168,7 +170,7 @@ iOS (ネイティブの画面)                              Web (Next.js)
     rest.ts        … /auth/token (交換)・/auth/revoke (失効)                                      │
     tokens.ts      … 表 apple_sign_in_tokens の upsert / 一覧 / 削除 (service_role)  ◄────────────┘
     authorization.ts … route の本体 (交換 → 保管)
-    revocation.ts  … 退会の段階 apple_revoke (差し替え口 AccountDeletionAppleRevocation)
+    revocation.ts  … 退会の段階 apple_revoke (差し替え口 AccountDeletionAppleRevocation。段階の時間の上限 3 秒)
   退会 deleteAccount: … billing_recheck → apple_revoke → delete_user (CASCADE で行も消える)
 ```
 
@@ -193,7 +195,7 @@ iOS (ネイティブの画面)                              Web (Next.js)
 | S-12 | route: `readAppleSignInServerConfig()` = null → 200 `{ stored: false, reason: 'not_configured' }` (ログは `warn` 1 回。`getOptionalEnv` の 1 回だけの警告と重ならないよう route は `info`) → アプリは結果を読まない | 一致 |
 | S-13 | `/auth/token` が 400 `invalid_grant` → `{ ok: false, reason: 'invalid_code' }` → route 400 `APPLE_AUTHORIZATION_CODE_INVALID`。通信の失敗 (timeout) → `{ ok: false, reason: 'unavailable' }` → `internalError` 500。アプリ: `registerAppleAuthorization` の `catch` → `console.warn` → `signed_in` を返す → 画面が `routeAfterSignIn` (順は 名前 → 登録 → 振り分け。登録の失敗で振り分けを止めない) | 一致 |
 | S-14 | `deleteAccount`: … `billing_recheck` → `step = 'apple_revoke'` → `appleRevocation.revokeForAccountDeletion(userId, userLog, requestId)`: `listAppleRefreshTokens` 1 行 → config → `client_secret` (sub = 行の client_id) → `/auth/revoke` 200 → `{ tokens: 1, revoked: 1, failed: 0 }` → `delete_user` → CASCADE で行が消える → 完了メール | 一致 |
-| S-15 | `/auth/revoke` が timeout ×2 → `failed: 1` → `warn` → `delete_user` へ (投げない) | 一致 |
+| S-15 | `apple_revoke` の入口で締め切り = 今 + `APPLE_REVOKE_TOTAL_BUDGET_MS` → `listAppleRefreshTokens` 1 行 → config → `client_secret` → `/auth/revoke` が 503 (または通信の失敗) をすぐ返す (`timeoutMs` = min(`APPLE_API_TIMEOUT_MS`, 残り)) → 残りがあるので 2 回目 → また失敗 → `warn` (`attempts: 2`) → `{ tokens: 1, revoked: 0, failed: 1, skipped: null }` → `delete_user` へ (投げない) | 一致 |
 | S-16 | `listAppleRefreshTokens` 0 行 → `{ tokens: 0, … }` → Apple を呼ばない | 一致 |
 | S-17 | `handleAppleLogin` → `signInWithOAuth({ provider: 'apple', redirectTo })` → ブラウザが Supabase → Apple → Supabase → `/auth/callback?provider=apple&code=` → `exchangeCodeForSession` 200 → `storeAppleRefreshTokenFromWebCallback`: `provider === 'apple'` かつ `session.provider_refresh_token` かつ identities に `apple` かつ Services ID あり → upsert (user_id, Services ID) → 既存の分岐 (profile 無し → `resolveFirstSignInDestination` → `/legal-consent`) | 一致 |
 | S-18 | `disabled={isLoading \|\| !agreedToLegal}` と `handleAppleSignup` の先頭の `if (!agreedToLegal)` の 2 重 | 一致 |
@@ -210,6 +212,7 @@ iOS (ネイティブの画面)                              Web (Next.js)
 | S-29 | S-17 の `exchangeCodeForSession` 200 の後 → `storeAppleRefreshTokenFromWebCallback`: `session.provider_refresh_token` 無し → `info` で `skipped` / または `readAppleSignInServerConfig()?.servicesId` が null → `info` で `skipped` → 既存の分岐 (振り分けは同じ) | 一致 |
 | S-30 | `signInAsync` が credential を返す → `credential.identityToken` が null → `{ status: 'failed', message: APPLE_SIGN_IN_MESSAGES.noIdentityToken }` (`signInWithIdToken` を呼ばない) → `Alert.alert("Appleログイン失敗", message)` | 一致 |
 | S-31 | S-1 の `signInWithIdToken` 200 の後 → `saveAppleFullName`: `fullName` あり・`full_name` 無し → `updateUser` が `{ error }` → `console.warn` (投げない) → `registerAppleAuthorization` → `signed_in` → `routeAfterSignIn` | 一致 |
+| S-32 | `deleteAccount`: … `billing_recheck` → `step = 'apple_revoke'` → 締め切り = 入口 + 3,000 ms → `listAppleRefreshTokens` 2 行 (bundle ID・Services ID) → config → 1 行目: 残りあり → `client_secret` → `revokeAppleRefreshToken` (`timeoutMs` = min(5,000, 残り) = 残り) が時間切れ (`{ ok: false, status: null, error: null }`) → 残り ≤ 0 なのでやり直さない → `warn` (`attempts: 1`・`budget_exhausted: true`) → 2 行目: 残り ≤ 0 → `not_attempted` (`client_secret` も作らず Apple を呼ばない) → `warn` 1 回 (`not_attempted: 1`・`budget_ms: 3000`) → `{ tokens: 2, revoked: 0, failed: 2, skipped: null }` → `delete_user` → CASCADE で 2 行とも消える | 一致 |
 
 ## 6. 構造裁定 (相 3。1 回だけ)
 
@@ -227,7 +230,7 @@ iOS (ネイティブの画面)                              Web (Next.js)
 
 | 案 | 中身 | 利点 | 欠点 |
 |---|---|---|---|
-| R1 (採用) | ログインのとき (iOS: 認可コードの交換 / Web: `provider_refresh_token`) にサーバが refresh token を `apple_sign_in_tokens` に保管し、退会の `delete_user` の直前に `/auth/revoke` を呼ぶ。失敗は `warn` で続ける | Apple の要求 (F-14) を満たす。退会 (5.1.1(v)) を Apple の障害で止めない。表は CASCADE で消える | 失敗したトークンはそのまま消える (利用者は iPhone の設定から自分で停止できる。Apple の中継の停止も同じ場所) |
+| R1 (採用) | ログインのとき (iOS: 認可コードの交換 / Web: `provider_refresh_token`) にサーバが refresh token を `apple_sign_in_tokens` に保管し、退会の `delete_user` の直前に `/auth/revoke` を呼ぶ。失敗は `warn` で続ける。段階の時間に上限 (`APPLE_REVOKE_TOTAL_BUDGET_MS`。§13.1) を置き、上限を過ぎた行は呼ばずに失敗に数える (Apple が応答しなくても退会の route の 60 秒を超えない) | Apple の要求 (F-14) を満たす。退会 (5.1.1(v)) を Apple の障害で止めない。表は CASCADE で消える | 失敗したトークンはそのまま消える (利用者は iPhone の設定から自分で停止できる。Apple の中継の停止も同じ場所) |
 | R2 | 失効しない | 実装が無い | Apple の要求に反する (審査の指摘の元) |
 | R3 | R1 + 失敗した失効を列 (表 + cron) に残してやり直す | 取りこぼしが無い | cron の route・`CRON_SECRET` の契約・列の表と番兵が増える。退会は利用者がゼロの今、量が無い |
 
@@ -245,7 +248,7 @@ F1 を採る。
 ### 裁定の帰結 (以後の相で蒸し返さない)
 
 - iOS はネイティブ (A)・Android は出さない・Web は OAuth (段 B)。
-- refresh token の保管は 1 表 (`apple_sign_in_tokens`。PK = `(user_id, client_id)`)・失効は退会の段階 1 つ・失敗は止めない。
+- refresh token の保管は 1 表 (`apple_sign_in_tokens`。PK = `(user_id, client_id)`)・失効は退会の段階 1 つ・失敗は止めない・段階の時間に上限を置く (§13.1)。
 - スイッチは 2 つ・読み方は 1 つ。
 
 ## 7. 表 3 点
@@ -280,10 +283,12 @@ F1 を採る。
 | Web 新規登録 | on | 同意のチェック無し | — | — | 押せない (S-18) |
 | Web 新規登録 | on | 同意のチェックあり | 有効 | 無し | S-17 と同じ |
 | 退会 | — | 行あり・秘密あり | — | — | 失効 → 削除 (S-14) |
-| 退会 | — | 行あり・Apple が落ちている | — | — | 2 回失敗 → warn → 削除 (S-15) |
+| 退会 | — | 行あり・Apple が落ちている (すぐ失敗が返る) | — | — | 段階の時間の上限 (3 秒) の中で 2 回失敗 → warn → 削除 (S-15) |
+| 退会 | — | 行あり (2 つ)・Apple が応答しない (時間切れ) | — | — | 1 行目は上限の残りで打ち切って warn (やり直さない)・2 行目は Apple を呼ばずに `failed` (warn 1 回) → 削除。段階は約 3 秒 (S-32) |
 | 退会 | — | 行あり・秘密なし | — | — | 失効をスキップ (warn) → 削除 (S-26) |
 | 退会 | — | 行あり・秘密鍵が壊れている (`client_secret` を作れない) | — | — | 行ごとに warn・`failed` に数える (Apple を呼ばない) → 削除 (S-27) |
 | 退会 | — | 行なし | — | — | Apple を呼ばずに削除 (S-16) |
+| 退会 | — | 表を読めない (`listAppleRefreshTokens` が投げた) | — | — | warn (`error_name`) → Apple を呼ばずに削除 (§12.4) |
 | iOS で Apple のログインの後に WebView のタブを開く | — | iOS | — | どれでも | 既存のブリッジ (`/auth/native-bridge`) でそのまま入れる。本書は変えない (S-21) |
 | メールの送信 (確認・退会の完了・通知の控え) | — | 宛先が中継のアドレス (`@privaterelay.appleid.com`) | — | — | 既存の送信 (`email_outbox` → Resend) のまま。送信ドメインを Apple に登録していれば届き、未登録なら Apple が拒む (§19.1 の 4。オーナーの作業) (S-22) |
 | 既存の利用者が開く (Web / アプリ) | — | 段 D の施行日の前・予告の公開の後 (Q-13 (a)) | — | どれでも | ホームにお知らせ (改定の予告)。同意の画面は出ない (S-25) |
@@ -337,9 +342,12 @@ F1 を採る。
 | `none` | iOS のログイン → route: 秘密なし / 秘密鍵が壊れている (`client_secret` を作れない。route は 500 `step: 'client_secret'`) / 交換の失敗 / 表に書けない | `none` | — | ログ (秘密なしは `info`・`invalid_grant` は `warn`・ほかは `internalError`。S-12・S-13) |
 | `none` | Web のコールバック: `?provider=` が `apple` でない (Google のコールバック) / `user` が無い / identities に `apple` が無い / `provider_refresh_token` なし / Services ID なし / 表に書けない | `none` | — | 前の 3 つはログ無しで `skipped`。`provider_refresh_token` なし・Services ID なしは `info`、書けないは `warn` (振り分けは変えない。S-29) |
 | `stored` | 同じ入口でもう一度ログイン | `stored` | — | `refresh_token`・`updated_at` を上書き |
-| `stored` | 退会 `apple_revoke` の成功 | `revoked` | 秘密あり | `/auth/revoke` 200 |
-| `stored` | 退会 `apple_revoke` の失敗 (2 回) | `stored` (直後に消える) | — | `warn` |
-| `stored` | 退会 `apple_revoke` で秘密鍵が壊れている (`client_secret` を作れない) | `stored` (直後に消える) | — | `warn` (`client_id`・`error_name`)。Apple を呼ばない。退会は続く |
+| `stored` | 退会 `apple_revoke` の成功 | `revoked` | 秘密あり・締め切りの前 | `/auth/revoke` 200 |
+| `stored` | 退会 `apple_revoke` の失敗 (段階の時間の上限の中で最大 2 回。1 回目の時間切れで上限を使い切ったら 1 回) | `stored` (直後に消える) | 秘密あり・締め切りの前 (1 回目) | `warn` (`client_id`・`attempts`・`apple_status`・`apple_error`・`budget_exhausted`) |
+| `stored` | 退会 `apple_revoke` で締め切りを過ぎた (前の行が上限を使い切った) | `stored` (直後に消える) | 締め切り ≤ 今 | Apple を呼ばない (`client_secret` も作らない)。`failed` に数える。`warn` 1 回 (`not_attempted`・`budget_ms`)。退会は続く (S-32) |
+| `stored` | 退会 `apple_revoke` で秘密鍵が壊れている (`client_secret` を作れない) | `stored` (直後に消える) | 締め切りの前 | `warn` (`client_id`・`error_name`)。Apple を呼ばない。退会は続く (S-27) |
+| `stored` | 退会 `apple_revoke` で秘密なし (`readAppleSignInServerConfig()` = null) | `stored` (直後に消える) | — | Apple を呼ばない。`warn` 1 回 (行数)。報告は `skipped: 'not_configured'`。退会は続く (S-26) |
+| `stored` | 退会 `apple_revoke` で表を読めない (`listAppleRefreshTokens` が投げた) | `stored` (直後に消える) | — | Apple を呼ばない。`warn` (`error_name`)。報告は `tokens: 0`。退会は続く (§12.4) |
 | `stored` / `revoked` | `delete_user` | (行なし) | — | `auth.users` の CASCADE |
 
 (c) 利用者のアカウント (Supabase の identity)
@@ -482,7 +490,7 @@ iOS が `signInWithIdToken` のあとに呼ぶ。認可コードを Apple の交
 
 ### 9.3 退会の段階 `apple_revoke`
 
-`deleteAccount` (`src/lib/account-deletion.ts`) の `billing_recheck` の後・`delete_user` の前に置く。差し替え口は Stripe (`params.billing`) と同じ形で `params.appleRevocation` (`AccountDeletionAppleRevocation`。既定は `defaultAccountDeletionAppleRevocation`)。
+`deleteAccount` (`src/lib/account-deletion.ts`) の `billing_recheck` の後・`delete_user` の前に置く。差し替え口は Stripe (`params.billing`) と同じ形で `params.appleRevocation` (`AccountDeletionAppleRevocation`。省略時の既定は `createAccountDeletionAppleRevocation({ admin: () => admin })` で、`deleteAccount` に渡された `admin` で表を読む。§11.4)。
 
 ```mermaid
 sequenceDiagram
@@ -492,6 +500,7 @@ sequenceDiagram
     participant A as Apple /auth/revoke
 
     D->>R: revokeForAccountDeletion(userId, log, requestId)
+    Note over R: 締め切り = 今 + APPLE_REVOKE_TOTAL_BUDGET_MS (3 秒。§13.1)
     R->>DB: 行を全部読む (user_id)
     alt 行が無い
         R-->>D: { tokens: 0, revoked: 0, failed: 0, skipped: null }
@@ -499,15 +508,20 @@ sequenceDiagram
         R-->>D: { tokens: n, revoked: 0, failed: 0, skipped: 'not_configured' } (warn)
     else
         loop 行ごと (行ごとの処理は try の中。client_secret を作れなければ Apple を呼ばず failed に数えて warn)
-            R->>A: POST (client_id = 行の client_id, client_secret(sub = client_id), token, token_type_hint = refresh_token)
-            A-->>R: 200 (既に無効でも 200) / 失敗 → 1 回だけやり直し
+            alt 締め切りを過ぎた
+                R->>R: Apple を呼ばず failed に数える (not_attempted)
+            else
+                R->>A: POST (client_id = 行の client_id, client_secret(sub = client_id), token, token_type_hint = refresh_token。待ちは min(APPLE_API_TIMEOUT_MS, 残り))
+                A-->>R: 200 (既に無効でも 200) / 失敗 → 締め切りの前なら 1 回だけやり直し
+            end
         end
-        R-->>D: { tokens: n, revoked: k, failed: n - k, skipped: null } (failed > 0 なら warn)
+        R-->>D: { tokens: n, revoked: k, failed: n - k, skipped: null } (失敗した行ごとに warn。呼ばなかった行があれば warn 1 回)
     end
     D->>D: step = 'delete_user' → auth.admin.deleteUser (CASCADE で行も消える)
 ```
 
 - `revokeForAccountDeletion` は例外を投げない (中で全部受け止める)。退会の結果は変えない。表の読み取り (`listAppleRefreshTokens`) と、行ごとの処理 (`client_secret` の作成 (`createPrivateKey`・`sign` は PEM が壊れていると投げる) と失効) をそれぞれ `try` で囲む。秘密鍵の書き間違い (`\n` の誤り・ヘッダの欠け・別の鍵) でも、その行を `failed` に数えて `warn` にし、次の行・`delete_user` へ進む。
+- 段階全体 (表の読み取りから最後の行まで) の時間は `APPLE_REVOKE_TOTAL_BUDGET_MS` (3 秒) まで (計算は §13.1: 退会の route の `maxDuration` 60 秒に収める)。締め切りは段階の入口で 1 回決める。試行ごとの待ち (`AbortSignal.timeout`) は `APPLE_API_TIMEOUT_MS` と締め切りまでの残りの短いほう。締め切りを過ぎたら、やり直しも次の行の失効もしない。残りの行は `client_secret` も作らず `failed` に数え、`warn` を 1 回 (`not_attempted`・`budget_ms`) 出す。Apple が応答しなくても段階は約 3 秒で終わり、`delete_user` へ進む (裁定 2・S-15・S-32)。
 - 行の削除はしない (CASCADE に任せる。失効に失敗した行も `deleteUser` で消える)。
 - `AccountDeletionStep` に `'apple_revoke'` を足す (ログの `step` に使う。失敗で返す段階にはならない)。成功のログ `account deleted` の metadata に `apple: report` を足す。
 
@@ -651,10 +665,26 @@ export const APPLE_CLIENT_SECRET_AUDIENCE = 'https://appleid.apple.com';
  * 5 分 = サーバとの時計のずれ (数十秒) に耐え、漏れたときの使える時間を短くする
  */
 export const APPLE_CLIENT_SECRET_TTL_SECONDS = 300;
-/** Apple の API の応答を待つ最長 (ミリ秒)。ふだんは 1 秒以内。Turnstile の確認 (TURNSTILE_VERIFY_TIMEOUT_MS) と同じ 5 秒 */
+/**
+ * Apple の API の 1 回の応答を待つ最長 (ミリ秒)。ふだんは 1 秒以内。Turnstile の確認 (TURNSTILE_VERIFY_TIMEOUT_MS) と同じ 5 秒。
+ * 交換 (/auth/token) はこの値。失効 (/auth/revoke) はこの値と、退会の段階の締め切りまでの残りの短いほう (APPLE_REVOKE_TOTAL_BUDGET_MS)
+ */
 export const APPLE_API_TIMEOUT_MS = 5000;
-/** 失効の試行の回数 (1 回目が通信の失敗・5xx ならもう 1 回)。退会の応答を待たせ過ぎないよう 2 回まで */
+/**
+ * 失効の試行の回数 (1 回目が失敗ならもう 1 回。失敗の種類 (通信の失敗・時間切れ・4xx・5xx) は区別しない)。
+ * 2 回目も APPLE_REVOKE_TOTAL_BUDGET_MS の締め切りの前だけ試す (締め切りを過ぎたらやり直さない)
+ */
 export const APPLE_REVOKE_ATTEMPTS = 2;
+/**
+ * 退会の段階 apple_revoke 全体 (表の読み取りから最後の行の失効まで) に使ってよい時間 (ミリ秒)。設計書 §13.1 の計算:
+ * 退会の route (src/app/api/account/delete/route.ts) の maxDuration 60 秒 − Storage の掃除の上限 45 秒
+ * (src/lib/account-deletion-storage.ts の DEFAULT_MAX_DURATION_MS) − 完了メールの待ちの上限 5 秒
+ * (src/lib/account-deletion-notification.ts の ACCOUNT_DELETED_EMAIL_TIMEOUT_MS) = 10 秒を、段階全体の上限を持たない段階
+ * (DB の関数・Stripe・deleteUser。Stripe は 1 回の呼び出しに上限があるが段階全体の上限は無い) と分け合う。Apple に 3 秒、ほかの段階に 7 秒を残す。
+ * 締め切りを過ぎた行は Apple を呼ばずに failed に数える (Apple の障害で退会の route の時間を超えない。裁定 2)。
+ * 環境変数にしない: 3 つの上限と組で決まる値で、これだけを上げるとほかの段階の分 (7 秒) が減り、60 秒を超えうる (src/__tests__/lib/auth/apple/config.test.ts が 3 つの和 < 60 秒を確かめる)
+ */
+export const APPLE_REVOKE_TOTAL_BUDGET_MS = 3000;
 
 export interface AppleSignInServerConfig {
   readonly teamId: string;
@@ -796,12 +826,13 @@ const HTTP_OK = 200;
 const HTTP_BAD_REQUEST = 400;
 const INVALID_GRANT = 'invalid_grant';
 
-async function postForm(fetchImpl: FetchLike, url: string, form: Record<string, string>): Promise<Response> {
+/** timeoutMs を過ぎたら fetch (と本文の読み取り) を打ち切る */
+async function postForm(fetchImpl: FetchLike, url: string, form: Record<string, string>, timeoutMs: number): Promise<Response> {
   return fetchImpl(url, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams(form).toString(),
-    signal: AbortSignal.timeout(APPLE_API_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 }
 
@@ -818,12 +849,17 @@ export async function exchangeAppleAuthorizationCode(
 ): Promise<AppleTokenExchangeResult> {
   let response: Response;
   try {
-    response = await postForm(fetchImpl, APPLE_TOKEN_ENDPOINT, {
-      client_id: input.clientId,
-      client_secret: input.clientSecret,
-      code: input.code,
-      grant_type: 'authorization_code',
-    });
+    response = await postForm(
+      fetchImpl,
+      APPLE_TOKEN_ENDPOINT,
+      {
+        client_id: input.clientId,
+        client_secret: input.clientSecret,
+        code: input.code,
+        grant_type: 'authorization_code',
+      },
+      APPLE_API_TIMEOUT_MS,
+    );
   } catch {
     return { ok: false, reason: 'unavailable', status: null, error: null };
   }
@@ -839,19 +875,27 @@ export async function exchangeAppleAuthorizationCode(
   return { ok: false, reason: 'unavailable', status: response.status, error };
 }
 
-/** refresh token を失効させる (token_type_hint=refresh_token)。200 は既に無効な token でも返る (F-14) */
+/**
+ * refresh token を失効させる (token_type_hint=refresh_token)。200 は既に無効な token でも返る (F-14)。
+ * timeoutMs: 待つ最長 (ミリ秒)。省略すると APPLE_API_TIMEOUT_MS。退会の段階 (revocation.ts) は締め切りまでの残りとの短いほうを渡す
+ */
 export async function revokeAppleRefreshToken(
-  input: { clientId: string; clientSecret: string; refreshToken: string },
+  input: { clientId: string; clientSecret: string; refreshToken: string; timeoutMs?: number },
   fetchImpl: FetchLike = fetch,
 ): Promise<AppleRevokeResult> {
   let response: Response;
   try {
-    response = await postForm(fetchImpl, APPLE_REVOKE_ENDPOINT, {
-      client_id: input.clientId,
-      client_secret: input.clientSecret,
-      token: input.refreshToken,
-      token_type_hint: 'refresh_token',
-    });
+    response = await postForm(
+      fetchImpl,
+      APPLE_REVOKE_ENDPOINT,
+      {
+        client_id: input.clientId,
+        client_secret: input.clientSecret,
+        token: input.refreshToken,
+        token_type_hint: 'refresh_token',
+      },
+      input.timeoutMs ?? APPLE_API_TIMEOUT_MS,
+    );
   } catch {
     return { ok: false, status: null, error: null };
   }
@@ -1087,16 +1131,26 @@ export async function POST(request: NextRequest) {
  * 退会の段階 apple_revoke (docs/design/mobile/06-sign-in-with-apple.md §9.3)。
  * 保管している refresh token を行ごとに失効させる。例外を投げない (退会の結果を変えない)。失敗は warn のログ。
  * 表の読み取りと、行ごとの処理 (client_secret の作成と失効) をそれぞれ try で囲む (秘密鍵が壊れていると createAppleClientSecret が投げる)。
+ * 段階全体 (表の読み取りから最後の行まで) の時間は APPLE_REVOKE_TOTAL_BUDGET_MS まで (§13.1。退会の route の maxDuration に収める)。
+ * 締め切りは入口で 1 回決める。試行ごとの待ちは APPLE_API_TIMEOUT_MS と締め切りまでの残りの短いほう。
+ * 締め切りを過ぎたら、やり直しも次の行の失効もしない。残りの行は Apple を呼ばずに failed に数え、warn を 1 回出す。
  */
 import { createAppleClientSecret } from './client-secret';
-import { APPLE_CLIENT_SECRET_TTL_SECONDS, APPLE_REVOKE_ATTEMPTS, readAppleSignInServerConfig } from './config';
-import { revokeAppleRefreshToken, type FetchLike } from './rest';
+import {
+  APPLE_API_TIMEOUT_MS,
+  APPLE_CLIENT_SECRET_TTL_SECONDS,
+  APPLE_REVOKE_ATTEMPTS,
+  APPLE_REVOKE_TOTAL_BUDGET_MS,
+  readAppleSignInServerConfig,
+} from './config';
+import { revokeAppleRefreshToken, type AppleRevokeResult, type FetchLike } from './rest';
 import { listAppleRefreshTokens, type AppleRefreshTokenRow, type AppleTokenStore } from './tokens';
 
 /** 退会の本体 (deleteAccount) が受け取る報告 (成功のログの metadata に載る) */
 export interface AppleRevocationReport {
   readonly tokens: number;
   readonly revoked: number;
+  /** 失効できなかった行 (Apple の失敗・client_secret を作れない・締め切りを過ぎて呼ばなかった) */
   readonly failed: number;
   /** 秘密が無く Apple を呼ばなかった */
   readonly skipped: 'not_configured' | null;
@@ -1113,13 +1167,26 @@ export interface AccountDeletionAppleRevocation {
   revokeForAccountDeletion(userId: string, log: AppleRevocationLogger, requestId: string): Promise<AppleRevocationReport>;
 }
 
+/** 1 行の結果。not_attempted = 締め切りを過ぎていて Apple を呼ばなかった (failed に数える) */
+type RevokeRowOutcome = 'revoked' | 'failed' | 'not_attempted';
+type AppleRevokeFailure = Extract<AppleRevokeResult, { ok: false }>;
+
 const MS_PER_SECOND = 1000;
 
-export function createAccountDeletionAppleRevocation(
-  deps: { admin: () => AppleTokenStore; fetchImpl?: FetchLike; now?: () => Date },
-): AccountDeletionAppleRevocation {
+export function createAccountDeletionAppleRevocation(deps: {
+  admin: () => AppleTokenStore;
+  fetchImpl?: FetchLike;
+  /** 時計 (client_secret の iat と締め切り)。テストは進む偽物を渡す。省略すると new Date() */
+  now?: () => Date;
+  /** 段階全体の時間の上限 (ミリ秒)。テスト用。省略すると APPLE_REVOKE_TOTAL_BUDGET_MS */
+  budgetMs?: number;
+}): AccountDeletionAppleRevocation {
+  const nowMs = (): number => (deps.now?.() ?? new Date()).getTime();
   return {
     async revokeForAccountDeletion(userId, log, requestId) {
+      const budgetMs = deps.budgetMs ?? APPLE_REVOKE_TOTAL_BUDGET_MS;
+      const deadlineMs = nowMs() + budgetMs;
+      const remainingMs = (): number => deadlineMs - nowMs();
       let rows: AppleRefreshTokenRow[];
       try {
         rows = await listAppleRefreshTokens(deps.admin(), userId);
@@ -1141,34 +1208,48 @@ export function createAccountDeletionAppleRevocation(
         });
         return { tokens: rows.length, revoked: 0, failed: 0, skipped: 'not_configured' };
       }
-      /** 1 行を失効させる。成功なら true。投げない (client_secret を作れないときも false を返して warn) */
-      const revokeRow = async (row: AppleRefreshTokenRow): Promise<boolean> => {
+      /** 1 行を失効させる。投げない (client_secret を作れないときも failed を返して warn) */
+      const revokeRow = async (row: AppleRefreshTokenRow): Promise<RevokeRowOutcome> => {
+        if (remainingMs() <= 0) return 'not_attempted';
         try {
           const clientSecret = createAppleClientSecret({
             teamId: config.teamId,
             keyId: config.keyId,
             privateKeyPem: config.privateKeyPem,
             clientId: row.client_id,
-            issuedAtSeconds: Math.floor((deps.now?.() ?? new Date()).getTime() / MS_PER_SECOND),
+            issuedAtSeconds: Math.floor(nowMs() / MS_PER_SECOND),
             ttlSeconds: APPLE_CLIENT_SECRET_TTL_SECONDS,
           });
-          for (let attempt = 1; attempt <= APPLE_REVOKE_ATTEMPTS; attempt += 1) {
+          let attempts = 0;
+          let lastFailure: AppleRevokeFailure | null = null;
+          while (attempts < APPLE_REVOKE_ATTEMPTS) {
+            const remaining = remainingMs();
+            if (remaining <= 0) break;
+            attempts += 1;
             const result = await revokeAppleRefreshToken(
-              { clientId: row.client_id, clientSecret, refreshToken: row.refresh_token },
+              {
+                clientId: row.client_id,
+                clientSecret,
+                refreshToken: row.refresh_token,
+                timeoutMs: Math.min(APPLE_API_TIMEOUT_MS, remaining),
+              },
               deps.fetchImpl,
             );
-            if (result.ok) return true;
-            if (attempt === APPLE_REVOKE_ATTEMPTS) {
-              log.warn('account deletion: apple token revocation failed (deletion continues)', {
-                request_id: requestId,
-                step: 'apple_revoke',
-                client_id: row.client_id,
-                apple_status: result.status,
-                apple_error: result.error,
-              });
-            }
+            if (result.ok) return 'revoked';
+            lastFailure = result;
           }
-          return false;
+          // client_secret を作る間に締め切りを過ぎた (1 回も呼んでいない)
+          if (attempts === 0) return 'not_attempted';
+          log.warn('account deletion: apple token revocation failed (deletion continues)', {
+            request_id: requestId,
+            step: 'apple_revoke',
+            client_id: row.client_id,
+            attempts,
+            apple_status: lastFailure?.status ?? null,
+            apple_error: lastFailure?.error ?? null,
+            budget_exhausted: remainingMs() <= 0,
+          });
+          return 'failed';
         } catch (error) {
           // 秘密鍵が壊れている (createPrivateKey・sign が投げた) など。値・PEM はログに出さない
           log.warn('account deletion: could not revoke the apple token (deletion continues)', {
@@ -1177,12 +1258,23 @@ export function createAccountDeletionAppleRevocation(
             client_id: row.client_id,
             error_name: error instanceof Error ? error.name : 'unknown',
           });
-          return false;
+          return 'failed';
         }
       };
       let revoked = 0;
+      let notAttempted = 0;
       for (const row of rows) {
-        if (await revokeRow(row)) revoked += 1;
+        const outcome = await revokeRow(row);
+        if (outcome === 'revoked') revoked += 1;
+        if (outcome === 'not_attempted') notAttempted += 1;
+      }
+      if (notAttempted > 0) {
+        log.warn('account deletion: apple revocation ran out of its time budget; the remaining tokens were not sent to apple (deletion continues)', {
+          request_id: requestId,
+          step: 'apple_revoke',
+          not_attempted: notAttempted,
+          budget_ms: budgetMs,
+        });
       }
       return { tokens: rows.length, revoked, failed: rows.length - revoked, skipped: null };
     },
@@ -1215,6 +1307,7 @@ export type AccountDeletionStep =
 //   appleRevocation?: AccountDeletionAppleRevocation;
 
 // deleteAccount の中 (billing_recheck の直後・delete_user の直前):
+//   (段階の時間は revocation.ts の中で APPLE_REVOKE_TOTAL_BUDGET_MS まで。deleteAccount は時間を渡さない)
 //   step = 'apple_revoke';
 //   const appleRevocation = params.appleRevocation ?? createAccountDeletionAppleRevocation({ admin: () => admin });
 //   const appleReport: AppleRevocationReport = await appleRevocation.revokeForAccountDeletion(userId, userLog, requestId);
@@ -1226,7 +1319,7 @@ export type AccountDeletionStep =
 //   log.info('account deleted', { …既存…, billing_recheck: billingRecheckReport, apple: appleReport });
 ```
 
-ファイル冒頭の流れの注に「4'''. 段階 apple_revoke: Sign in with Apple の refresh token を失効させる (docs/design/mobile/06-sign-in-with-apple.md §9.3)。失敗しても退会は続ける (warn)」の行を足す。
+ファイル冒頭の流れの注に「4'''. 段階 apple_revoke: Sign in with Apple の refresh token を失効させる (docs/design/mobile/06-sign-in-with-apple.md §9.3)。失敗しても退会は続ける (warn)。時間は APPLE_REVOKE_TOTAL_BUDGET_MS (3 秒) まで (退会の route の maxDuration に収める。過ぎた行は Apple を呼ばない)」の行を足す。
 
 ### 11.5 モバイル (`apps/mobile`)
 
@@ -1785,7 +1878,8 @@ T-34 の `PRIVACY_DATA_TABLES` に `apple_sign_in_tokens` → `'アカウント'
 | 秘密が無い | 続く | `warn` (`skipped: 'not_configured'`・行数) |
 | 表を読めない | 続く | `warn` (`error_name`) |
 | Apple が 200 | 続く | なし (成功のログの `apple.revoked`) |
-| Apple が 4xx / 5xx / 時間切れ (2 回) | 続く | `warn` (`client_id`・`apple_status`・`apple_error`) |
+| Apple が 4xx / 5xx / 時間切れ (段階の時間の上限の中で最大 2 回。1 回目で上限を使い切ったら 1 回) | 続く | `warn` (`client_id`・`attempts`・`apple_status`・`apple_error`・`budget_exhausted`) |
+| 締め切り (`APPLE_REVOKE_TOTAL_BUDGET_MS`) を過ぎた後の行 | 続く (Apple を呼ばない。`failed` に数える) | `warn` 1 回 (`not_attempted`・`budget_ms`) |
 | 秘密鍵が壊れていて `client_secret` を作れない (行ごと) | 続く (Apple を呼ばない。`failed` に数える) | `warn` (`client_id`・`error_name`) |
 
 ## 13. 定数と環境変数
@@ -1800,8 +1894,9 @@ T-34 の `PRIVACY_DATA_TABLES` に `apple_sign_in_tokens` → `'アカウント'
 | `APPLE_SIGN_IN_NATIVE_CLIENT_ID` | `'com.homegohan.app'` | `src/lib/auth/apple/config.ts` | `apps/mobile/app.json` の `ios.bundleIdentifier` (テストが突き合わせる) |
 | `APPLE_TOKEN_ENDPOINT` / `APPLE_REVOKE_ENDPOINT` / `APPLE_CLIENT_SECRET_AUDIENCE` | Apple の URL | 同上 | F-14 |
 | `APPLE_CLIENT_SECRET_TTL_SECONDS` | 300 | 同上 | 要求ごとに作る。時計のずれに耐え、漏れたときの時間を短く。上限 6 か月 |
-| `APPLE_API_TIMEOUT_MS` | 5000 | 同上 | Turnstile の確認と同じ。運用で変える想定が無いので環境変数にしない |
-| `APPLE_REVOKE_ATTEMPTS` | 2 | 同上 | 退会の応答 (route の `maxDuration` 60 秒) を待たせない |
+| `APPLE_API_TIMEOUT_MS` | 5000 | 同上 | Turnstile の確認と同じ。運用で変える想定が無いので環境変数にしない。交換はこの値、失効はこの値と締め切りまでの残りの短いほう |
+| `APPLE_REVOKE_ATTEMPTS` | 2 | 同上 | 一時の失敗を 1 回だけ吸収する (失敗の種類は区別しない)。2 回目も `APPLE_REVOKE_TOTAL_BUDGET_MS` の締め切りの前だけ |
+| `APPLE_REVOKE_TOTAL_BUDGET_MS` | 3000 | 同上 | 退会の route の `maxDuration` 60 秒 (`src/app/api/account/delete/route.ts:9`) − Storage の掃除の上限 45 秒 (`DEFAULT_MAX_DURATION_MS`。`src/lib/account-deletion-storage.ts:55`) − 完了メールの待ちの上限 5 秒 (`ACCOUNT_DELETED_EMAIL_TIMEOUT_MS`。`src/lib/account-deletion-notification.ts:34`) = 10 秒が、段階全体の上限をコードに持たない段階 (`check_blockers`・`billing`・`prepare`・`release_membership`・`record`・`billing_recheck`・`delete_user`・完了の記録。Stripe の段階は 1 回の呼び出しに 10 秒の上限 (`src/lib/billing/stripe-gateway.ts:33`) があるが、段階全体の上限は無い) と `apple_revoke` の分。そのうち 3 秒を Apple に充て、ほかの段階に 7 秒を残す (45 + 5 + 3 = 53 < 60。`src/__tests__/lib/auth/apple/config.test.ts` が和を確かめる)。Apple のふだんの応答 (1 秒以内) なら 2 行でも収まる。Apple が応答しないときは 1 行目の 1 回目で使い切り、段階は約 3 秒で終わる (S-32)。環境変数にしない (3 つの上限と組で決まる値で、これだけを上げるとほかの段階の分 (7 秒) が減り、60 秒を超えうる) |
 | `APPLE_SIGN_IN_BUTTON_HEIGHT` | 48 (pt) | `apps/mobile/src/components/auth/AppleSignInButton.tsx` | Google のボタンの高さと同じ。HIG の最小 30pt |
 | `APPLE_SIGN_IN_BUTTON_HEIGHT_PX` / `APPLE_SIGN_IN_BUTTON_FONT_PX` | 56 / 24 | `src/components/auth/AppleSignInButton.tsx` | HIG の 43% (56pt / 24pt の例) |
 | `APPLE_LOGO_IMAGE_SCALE` | 3 | 同上 | ロゴの画像を Apple の URL から取るときの `scale` (1〜6)。高解像度の画面 (devicePixelRatio 3 まで) で滲まない。画像の一辺 = 56 × 3 = 168 画素 (§11.6) |
@@ -1858,13 +1953,13 @@ jest.mock('expo-crypto', () => ({
 | ファイル | it |
 |---|---|
 | `src/__tests__/lib/auth/apple/client-secret.test.ts` (新設) | `ES256 の JWT: header は { alg: 'ES256', kid }、payload は iss / iat / exp = iat + ttl / aud / sub` / `署名は node:crypto の verify (ieee-p1363) で検証できる (テスト用に生成した P-256 の鍵)` / `exp - iat が 6 か月 (15,777,000 秒) を超えない (APPLE_CLIENT_SECRET_TTL_SECONDS)` |
-| `src/__tests__/lib/auth/apple/config.test.ts` (新設) | `APPLE_SIGN_IN_NATIVE_CLIENT_ID は apps/mobile/app.json の ios.bundleIdentifier と同じ` / `4 つのうち Team ID・Key ID・秘密鍵のどれかが無ければ null` / `秘密鍵の \n を改行に戻す` / `Services ID が無ければ servicesId は null (ほかはそろう)` |
+| `src/__tests__/lib/auth/apple/config.test.ts` (新設) | `APPLE_SIGN_IN_NATIVE_CLIENT_ID は apps/mobile/app.json の ios.bundleIdentifier と同じ` / `4 つのうち Team ID・Key ID・秘密鍵のどれかが無ければ null` / `秘密鍵の \n を改行に戻す` / `Services ID が無ければ servicesId は null (ほかはそろう)` / `退会の時間の予算: APPLE_REVOKE_TOTAL_BUDGET_MS + DEFAULT_MAX_DURATION_MS (src/lib/account-deletion-storage.ts) + ACCOUNT_DELETED_EMAIL_TIMEOUT_MS (src/lib/account-deletion-notification.ts) が、退会の route の maxDuration (秒) をミリ秒にした値より小さい` (秒 → ミリ秒は名前付きの定数 `MS_PER_SECOND`。maxDuration は `src/app/api/account/delete/route.ts` の本文を `/export const maxDuration = (\d+);/` で読む。`tests/account-deletion-owner-guard-migration-contract.test.ts:188` と同じ読み方。2 つの定数は import する。`account-deletion-notification.ts` の import 先 `@/lib/emails/send` は `tests/account-deletion-email.test.ts` が `importOriginal` で実物を読んでいる) |
 | `packages/shared/src/apple-sign-in.test.ts` (新設。段 A1。`packages/shared/src/*.test.ts` の既存の置き方) | `isAppleSignInFlagOn: 'on'・'ON'・' on ' は true` / `undefined・''・'off'・'true'・'1' は false` / `APPLE_SIGN_IN_MESSAGES は failed・signupFailed・noIdentityToken の 3 つで、どれも空でない日本語の文 (Apple・GoTrue の英文の語 (provider・nonce・token など) を含まない)` |
 | `src/__tests__/lib/auth/apple/schemas.test.ts` (新設。段 A1) | `AppleAuthorizationBodySchema: 1 文字と APPLE_AUTHORIZATION_CODE_MAX_LENGTH 文字は通り、空・APPLE_AUTHORIZATION_CODE_MAX_LENGTH + 1 文字・authorization_code が無い・文字列でない は通らない` / `AppleTokenResponseSchema: refresh_token が無い・空は通らない。access_token・id_token・token_type・expires_in は無くても通る` / `AppleErrorResponseSchema: error が無ければ通らない。error_description は無くても通る` / `AppleAuthorizationResponseSchema: { stored: true } と { stored: false, reason: 'not_configured' } は通り、{ stored: false } (reason 無し)・ほかの reason は通らない` |
-| `src/__tests__/lib/auth/apple/rest.test.ts` (新設) | `exchange: form (client_id・client_secret・code・grant_type=authorization_code) を /auth/token へ POST し、200 の refresh_token を返す` / `redirect_uri を送らない` / `400 invalid_grant は invalid_code` / `ほかの 4xx・5xx・壊れた本文・例外 (時間切れ) は unavailable (error_description は結果に入れない)` / `revoke: token_type_hint=refresh_token で POST。200 は ok` / `失敗は status と error` / `AbortSignal.timeout(5000) を付ける` |
+| `src/__tests__/lib/auth/apple/rest.test.ts` (新設) | `exchange: form (client_id・client_secret・code・grant_type=authorization_code) を /auth/token へ POST し、200 の refresh_token を返す` / `redirect_uri を送らない` / `400 invalid_grant は invalid_code` / `ほかの 4xx・5xx・壊れた本文・例外 (時間切れ) は unavailable (error_description は結果に入れない)` / `revoke: token_type_hint=refresh_token で POST。200 は ok` / `失敗は status と error` / `exchange と、timeoutMs を渡さない revoke は AbortSignal.timeout(APPLE_API_TIMEOUT_MS) を付ける` / `revoke に timeoutMs を渡すと AbortSignal.timeout(timeoutMs) を付ける` (どちらも `vi.spyOn(AbortSignal, 'timeout')` の引数で見る) |
 | `src/__tests__/lib/auth/apple/tokens.test.ts` (新設) | `store: upsert の onConflict は user_id,client_id` / `list: user_id で絞って client_id と refresh_token を返す` / `error は投げる` |
 | `src/__tests__/lib/auth/apple/authorization.test.ts` (新設) | `not_configured なら Apple を呼ばない` / `secret の sub と client_id は bundle ID` / `invalid_code → status invalid_code` / `unavailable → unavailable` / `store の失敗 → store_failed (error を持つ)` / `秘密鍵が壊れていれば secret_failed (投げない・Apple を呼ばない)` / `成功 → stored (upsert の行)` / `hasAppleIdentity: provider apple があれば true` |
-| `src/__tests__/lib/auth/apple/revocation.test.ts` (新設) | `行が無ければ Apple を呼ばず tokens 0` / `秘密が無ければ skipped not_configured と warn` / `行ごとに client_id を sub にした secret で revoke` / `失敗は 2 回まで試し、2 回目も失敗なら failed に数えて warn (投げない)` / `秘密鍵が壊れていても投げず、行ごとに failed に数えて warn (Apple を呼ばない。PEM を warn に出さない)` / `表の読み取りの失敗は warn して tokens 0` |
+| `src/__tests__/lib/auth/apple/revocation.test.ts` (新設) | `行が無ければ Apple を呼ばず tokens 0` / `秘密が無ければ skipped not_configured と warn` / `行ごとに client_id を sub にした secret で revoke` / `締め切りの前なら失敗は 2 回まで試し、2 回目も失敗なら failed に数えて warn (attempts 2。投げない)` / `秘密鍵が壊れていても投げず、行ごとに failed に数えて warn (Apple を呼ばない。PEM を warn に出さない)` / `表の読み取りの失敗は warn して tokens 0` / `予算を超えたら残りの行を呼ばずに failed にして投げない: 2 行・偽の fetch が偽の時計を budgetMs 進めて時間切れ (例外) を返す → fetch は 1 回だけ (1 行目の 1 回目)・2 行目は呼ばない・{ tokens: 2, revoked: 0, failed: 2 }・warn は 1 行目 (attempts 1・budget_exhausted true) と締め切り (not_attempted 1・budget_ms) の 2 つ` / `1 回目の失敗で締め切りを過ぎたらやり直さない (1 行・fetch 1 回・attempts 1)` / `試行の待ちは APPLE_API_TIMEOUT_MS と締め切りまでの残りの短いほう (budgetMs 3000 で 1 回目は 3000、budgetMs 10000 で 1 回目は 5000。vi.spyOn(AbortSignal, 'timeout') の引数で見る)` / `budgetMs を省略すると APPLE_REVOKE_TOTAL_BUDGET_MS (偽の時計を APPLE_REVOKE_TOTAL_BUDGET_MS 進める fetch で、2 行目を呼ばない)`。偽の時計は fetch の中でだけ進める (`now` は呼ぶたびに同じ値を返す) |
 | `src/__tests__/lib/auth/apple/web-callback.test.ts` (新設) | `provider が apple でなければ skipped (何も読まない)` / `identities に apple が無ければ skipped` / `provider_refresh_token が無ければ info で skipped` / `Services ID が無ければ skipped` / `そろえば Services ID の行として store` / `store の失敗は warn で skipped (投げない)` |
 | `src/__tests__/api/auth/apple-authorization.test.ts` (新設) | `本文の形が違えば 400 VALIDATION_ERROR (Supabase を作らない)` / `1,025 文字は 400` / `未認証は 401` / `凍結は 403` / `レート制限は 429` / `apple の identity が無ければ 409 APPLE_IDENTITY_NOT_LINKED (Apple を呼ばない)` / `not_configured は 200 { stored: false, reason }` / `invalid_code は 400 APPLE_AUTHORIZATION_CODE_INVALID` / `unavailable は 500 (本文は固定の文。ログに step exchange)` / `secret_failed は 500 (本文は固定の文。ログに step client_secret)` / `stored は 200 { stored: true }` / `Cache-Control: private, no-store` / `認可コードが応答・ログに出ない` |
 | `tests/account-deletion.test.ts` (追記) | `apple_revoke は billing_recheck のあと deleteUser の前に 1 回呼ぶ (呼ぶ順の検査に足す)` / `失効の報告は成功のログの apple に載る` / `既定の実装で秘密鍵が壊れていても退会は ok (段階 apple_revoke で失敗にならず deleteUser まで進む)` / `appleRevocation が無いときの既定の実装は params.admin で表を読む (偽の admin の from が返す行)`。既存の it は `appleRevocation` に偽物 (`{ revokeForAccountDeletion: async () => ({ tokens: 0, revoked: 0, failed: 0, skipped: null }) }`) を渡す共通の引数に足して緑のまま |
@@ -1904,7 +1999,7 @@ jest.mock('expo-crypto', () => ({
 | 差し替え口 | `DeleteAccountParams.appleRevocation` (`AccountDeletionAppleRevocation`) | 同上・`src/lib/auth/apple/revocation.ts` | A1 |
 | レート制限の種類 | `'auth-apple-authorization'` | `src/lib/rate-limit.ts` | A1 |
 | 関数 (サーバ) | `createAppleClientSecret`・`exchangeAppleAuthorizationCode`・`revokeAppleRefreshToken`・`storeAppleRefreshToken`・`listAppleRefreshTokens`・`registerAppleAuthorization`・`hasAppleIdentity`・`createAccountDeletionAppleRevocation`・`readAppleSignInServerConfig`・`storeAppleRefreshTokenFromWebCallback` (段 B) | `src/lib/auth/apple/*.ts` | A1 / B |
-| 定数 (サーバ) | `APPLE_SIGN_IN_NATIVE_CLIENT_ID`・`APPLE_TOKEN_ENDPOINT`・`APPLE_REVOKE_ENDPOINT`・`APPLE_CLIENT_SECRET_AUDIENCE`・`APPLE_CLIENT_SECRET_TTL_SECONDS`・`APPLE_API_TIMEOUT_MS`・`APPLE_REVOKE_ATTEMPTS`・`APPLE_CALLBACK_PROVIDER` (段 B) | `config.ts`・`web-callback.ts` | A1 / B |
+| 定数 (サーバ) | `APPLE_SIGN_IN_NATIVE_CLIENT_ID`・`APPLE_TOKEN_ENDPOINT`・`APPLE_REVOKE_ENDPOINT`・`APPLE_CLIENT_SECRET_AUDIENCE`・`APPLE_CLIENT_SECRET_TTL_SECONDS`・`APPLE_API_TIMEOUT_MS`・`APPLE_REVOKE_ATTEMPTS`・`APPLE_REVOKE_TOTAL_BUDGET_MS`・`APPLE_CALLBACK_PROVIDER` (段 B) | `config.ts`・`web-callback.ts` | A1 / B |
 | Zod | `AppleAuthorizationBodySchema`・`AppleTokenResponseSchema`・`AppleErrorResponseSchema`・`AppleAuthorizationResponseSchema` | `src/lib/auth/apple/schemas.ts` | A1 |
 | 共有 | `APPLE_SIGN_IN_FLAG_ON`・`isAppleSignInFlagOn`・`APPLE_AUTHORIZATION_CODE_MAX_LENGTH`・`APPLE_SIGN_IN_MESSAGES` | `packages/shared/src/apple-sign-in.ts` | A1 |
 | 環境変数 | `NEXT_PUBLIC_APPLE_SIGN_IN`・`APPLE_SIGN_IN_TEAM_ID`・`APPLE_SIGN_IN_KEY_ID`・`APPLE_SIGN_IN_PRIVATE_KEY`・`APPLE_SIGN_IN_SERVICES_ID` (5 つとも A1) / `EXPO_PUBLIC_APPLE_SIGN_IN` (A2) | `src/lib/env.ts`・`.env.example` / `apps/mobile/env.example` | A1 / A2 |
@@ -2054,7 +2149,7 @@ jest.mock('expo-crypto', () => ({
 ## 21. 未解決事項・選択肢
 
 - **Q-1 (選択式) Web にも Apple のログインを出すか**: 既定 = 出す (段 B)。理由: アプリで Apple だけで作った人が Web に入る手段が、Apple か「パスワードを忘れた」の再設定 (cross/16 §11.5) しか無い。アプリだけにするなら段 B と `APPLE_SIGN_IN_SERVICES_ID`・19.1 の 3・19.2 の 3 を落とす (iOS のネイティブは Services ID も Secret Key も要らない)。
-- **Q-2 (選択式) 失効に失敗したときに退会を止めるか**: 既定 = 止めない (裁定 2)。止める案は Apple の障害で退会 (5.1.1(v)) ができなくなる。やり直しの列 (R3) は退会の量が増えたら別の Issue で。
+- **Q-2 (選択式) 失効に失敗したときに退会を止めるか**: 既定 = 止めない (裁定 2)。止める案は Apple の障害で退会 (5.1.1(v)) ができなくなる。やり直しの列 (R3) は退会の量が増えたら別の Issue で (段階の時間の上限 (§13.1) を過ぎて呼ばなかった行も、その列があれば拾える)。
 - **Q-3 Android の Apple ログイン**: 範囲外。出すときは Google と同じ `signInWithOAuth({ provider: 'apple' })` + `openAuthSessionAsync` (Services ID と Secret Key が要る) を `Platform.OS === 'android'` のときだけ使う。Android の提出 (iOS の後) の案件で決める。
 - **Q-4 設定画面から Apple の連携だけを外す操作**: 範囲外 (Supabase の `unlinkIdentity` は identity が 2 つ以上のときだけ使える)。要るなら別の Issue。
 - **Q-5 メールを隠した人が既存のアカウントと別になったときの案内**: 本書は Google と同じく案内しない (S-6)。HIG は「同じメールなら結び付けを提案」と言うが、中継のメールでは判定できない。要るなら設定画面に `linkIdentity` の案内を足す別の Issue。
