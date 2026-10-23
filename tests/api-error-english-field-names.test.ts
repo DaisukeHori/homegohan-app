@@ -17,8 +17,12 @@
  *      括弧に入れた項目名・大文字の語・形式の名前・JSON の値は拾わない
  *   2. src/app/api の全 route (相手が機械の配下を除く) の失敗の本文の文に、括弧の外の英字の項目名・役割名が無い
  *   3. 自前の本文の関数の一覧 (ROUTE_ERROR_TEXT_CALLS) の関数が実在し、その位置の引数が文 (message) である
- * 限界: 本文の文を表 (オブジェクト) から引くもの・関数の戻り値で作るもの・入力の検証の関数が返す文は見ない
- *   (健康の記録の入力の検証は tests/health-api-messages.test.ts が値で確かめる)。見張りであって網羅の証明ではない。
+ *   4. src/lib・src/schemas・packages の Zod の検証の文 (validationMessageOf などが日本語の文をそのまま本文の message にする) にも、
+ *      括弧の外の英字の項目名が無い (findValidationMessageTexts。応答の形の検査で画面に出ない文は ZOD_TEXT_EXEMPT_FILES に理由つき)
+ *   5. src/lib の関数・表が作って本文に流す文 (BAN を断る文・食事の入力の検証・プランのキーの文・二段階認証の画面の表) を値で確かめる
+ * 限界: 本文の文を表 (オブジェクト) から引くもの・関数の戻り値で作るもの・入力の検証の関数が返す文は、4 と 5 に挙げたもの以外は見ない
+ *   (健康の記録の入力の検証は tests/health-api-messages.test.ts が、通知の設定の文は tests/notification-preferences.test.ts が値で確かめる)。
+ *   テンプレートの式に差し込む値 (`${key}` など) も走査では見ないので、値で確かめる。見張りであって網羅の証明ではない。
  */
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
@@ -26,12 +30,25 @@ import {
   API_ROUTES_ROOT,
   englishIdentifiersOutsideParentheses,
   findErrorTexts,
+  findValidationMessageTexts,
   isUnderDir,
   routeFilesUnder,
   sourceOf,
   walkFiles,
 } from './helpers/api-error-text-scan';
 import { MACHINE_FACING_ERROR_TEXT_PATHS } from './helpers/api-error-japanese-scope';
+import { SUPER_ADMIN_BAN_REJECTED_MESSAGE } from '@/lib/admin/user-ban';
+import {
+  MEAL_TYPE_MESSAGE,
+  PLANNED_MEAL_NUTRIENT_FIELDS,
+  validatePlannedMealInput,
+} from '@/lib/planned-meal-validation';
+import {
+  ORG_PLAN_KEY_PREFIX_MESSAGE,
+  PERSONAL_FAMILY_PLAN_KEY_MESSAGE,
+  PRICE_APPLIES_TO_MESSAGE,
+} from '@/lib/super-admin/plans-schemas';
+import { MFA_ERROR_MESSAGES } from '@/lib/auth/mfa/client';
 
 /**
  * route の中で失敗の本文を作る自前の関数と、その文の引数の位置 (0 から数える)。
@@ -156,5 +173,114 @@ describe('src/app/api の失敗の本文の文に、括弧の外の英字の項�
 
   it('違反が 0 件', () => {
     expect(violationsOf(files)).toEqual([]);
+  });
+});
+
+/** Zod の検証の文を探す配下 (route の中の Zod も見る。相手が機械の配下は除く) */
+const ZOD_TEXT_SOURCE_DIRS = ['src/lib', 'src/schemas', 'src/app/api', 'packages/shared/src', 'packages/core/src'] as const;
+/**
+ * Zod の検証の文を見ないファイルと理由 (画面に出ないもの)。
+ * 理由は「その Zod の失敗が本文の文にならない」ことに限る。画面に出うる文は、ここに足さずに直す
+ */
+const ZOD_TEXT_EXEMPT_FILES: ReadonlyMap<string, string> = new Map([
+  [
+    'src/lib/legal-consent-api.ts',
+    'GET /api/legal/status が自分の応答の形を確かめる検査 (LegalConsentStatusSchema)。食い違えば internalError の 500 で、文は本文に出ずログに残るだけ',
+  ],
+]);
+
+const isTypeScriptSource = (name: string) => /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name) && !/\.d\.ts$/.test(name);
+
+describe('走査: Zod の検証の文を集める (findValidationMessageTexts)', () => {
+  const FIXTURE_FILE = 'src/lib/__fixture__/schemas.ts';
+  const FIXTURE = `
+    import { z } from 'zod';
+    const KEY_MESSAGE = 'plan_key の形が違います';
+    export const S = z
+      .object({
+        id: z.string().uuid({ message: 'id は UUID 形式で指定してください' }),
+        status: z.enum(['a', 'b'], { message: '状態 (status) の値が不正です' }),
+        key: z.string().regex(/^[a-z]+$/, KEY_MESSAGE),
+        from: z.string().min(1, 'from は必須です'),
+      })
+      .refine((v) => v.id !== v.key, { message: 'cursor が不正です', path: ['id'] });
+    export function log() {
+      console.error('family_id のログは見ない');
+    }
+  `;
+
+  it('文字列の引数・message のオプション・import しない同じファイルの const を拾い、括弧に入れた項目名とログは拾わない', () => {
+    const found = findValidationMessageTexts(FIXTURE_FILE, { text: FIXTURE })
+      .filter((f) => englishIdentifiersOutsideParentheses(f.text).length > 0)
+      .map((f) => f.text);
+    expect(found.sort()).toEqual(
+      ['cursor が不正です', 'from は必須です', 'id は UUID 形式で指定してください', 'plan_key の形が違います'].sort(),
+    );
+  });
+});
+
+describe('Zod の検証の文に、括弧の外の英字の項目名が無い (src/lib・src/schemas・src/app/api・packages)', () => {
+  const files = ZOD_TEXT_SOURCE_DIRS.flatMap((dir) => walkFiles(dir, isTypeScriptSource)).filter(
+    (file) => !isMachineFacing(file) && !/(^|\/)__tests__\//.test(file),
+  );
+
+  it('走査するファイルに、以前に違反があったファイルを含む (配下の取り違えで空振りしない)', () => {
+    expect(files).toEqual(
+      expect.arrayContaining([
+        'src/lib/super-admin/plans-schemas.ts',
+        'src/lib/data-subject-requests/core.ts',
+        'src/lib/admin/inquiries.ts',
+        'src/app/api/contact/route.ts',
+      ]),
+    );
+  });
+
+  it('見ないファイルの一覧は実在し、Zod の文を持つ (古くなった一覧を残さない)', () => {
+    for (const file of ZOD_TEXT_EXEMPT_FILES.keys()) {
+      expect(files, file).toContain(file);
+      expect(findValidationMessageTexts(file).length, file).toBeGreaterThan(0);
+    }
+  });
+
+  it('違反が 0 件', () => {
+    const violations = files
+      .filter((file) => !ZOD_TEXT_EXEMPT_FILES.has(file))
+      .flatMap((file) => findValidationMessageTexts(file))
+      .filter((found) => englishIdentifiersOutsideParentheses(found.text).length > 0)
+      .map((found) => `${found.file}:${found.line} 「${found.text}」`);
+    expect(violations).toEqual([]);
+  });
+});
+
+describe('src/lib の関数・表が作って本文に流す文 (値で確かめる)', () => {
+  it('BAN を断る文 (applyUserBan が返し、モデレーションの route が本文の message にする)', () => {
+    expect(englishIdentifiersOutsideParentheses(SUPER_ADMIN_BAN_REJECTED_MESSAGE)).toEqual([]);
+    expect(SUPER_ADMIN_BAN_REJECTED_MESSAGE).toContain('(super_admin)');
+  });
+
+  it('食事の入力の検証の文 (meals・meal-plans の 400 の error。Web の alert・モバイルの Alert がそのまま出す)', () => {
+    expect(englishIdentifiersOutsideParentheses(MEAL_TYPE_MESSAGE)).toEqual([]);
+    const invalidNutrients = Object.fromEntries(PLANNED_MEAL_NUTRIENT_FIELDS.map((field) => [field, -1]));
+    const result = validatePlannedMealInput({ mealType: 'brunch', nutrients: invalidNutrients });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(Object.keys(result.fieldErrors).sort()).toEqual(['meal_type', ...PLANNED_MEAL_NUTRIENT_FIELDS].sort());
+    for (const message of Object.values(result.fieldErrors)) {
+      expect(englishIdentifiersOutsideParentheses(message), message).toEqual([]);
+    }
+    expect(englishIdentifiersOutsideParentheses(result.error)).toEqual([]);
+  });
+
+  it('プランのキー・価格の適用先の文 (テンプレートに差し込む値も括弧の中)', () => {
+    for (const message of [PERSONAL_FAMILY_PLAN_KEY_MESSAGE, ORG_PLAN_KEY_PREFIX_MESSAGE, PRICE_APPLIES_TO_MESSAGE]) {
+      expect(englishIdentifiersOutsideParentheses(message), message).toEqual([]);
+    }
+  });
+
+  it('二段階認証の画面の表 (MFA_ERROR_MESSAGES) の全部の文', () => {
+    expect(MFA_ERROR_MESSAGES.size).toBeGreaterThan(0);
+    for (const [code, message] of MFA_ERROR_MESSAGES) {
+      expect(englishIdentifiersOutsideParentheses(message), code).toEqual([]);
+    }
   });
 });

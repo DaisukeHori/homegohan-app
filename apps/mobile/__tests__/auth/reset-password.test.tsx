@@ -13,12 +13,15 @@
  *     (supabase.auth.signOut() を直接呼ぶと、この端末の push token が user_push_tokens に残る)
  *  5. 422 (最近使ったパスワード) は本文の error を「更新失敗」で出し、サインアウトしない
  *  6. 403 AUTH_RECOVERY_SESSION_REQUIRED は本文の error を出し、サインアウトしない
+ *  7. (#1917 の続き) リンクが ?error= (GoTrue の error・error_description は英文) を運んできたら、固定の文 (AUTH_LINK_ERROR_MESSAGE) を出し、
+ *     英文を Alert に出さない。セッションの交換もしない
+ *  8. (#1917 の続き) セッションの確立 (setSession) が英語の例外を返したら、「セッションエラー」に固定の日本語の文を出す
  */
 
 import React from 'react';
 import { Alert } from 'react-native';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
-import { PASSWORD_MAX_BYTES, PASSWORD_TOO_LONG_MESSAGE } from '@homegohan/shared';
+import { AUTH_LINK_ERROR_MESSAGE, PASSWORD_MAX_BYTES, PASSWORD_TOO_LONG_MESSAGE } from '@homegohan/shared';
 
 // ---- Mocks ----
 
@@ -48,8 +51,11 @@ jest.mock('../../src/lib/signOut', () => ({
   signOutWithCleanup: (...args: any[]) => mockSignOutWithCleanup(...args),
 }));
 
+/** リンクから取り出した値 (テストごとに差し替える。既定は再設定のコード) */
+const DEFAULT_LINK_PARAMS: Record<string, string> = { code: 'test-code' };
+let mockLinkParams: Record<string, string> = DEFAULT_LINK_PARAMS;
 jest.mock('../../src/lib/deeplink', () => ({
-  extractSupabaseLinkParams: () => ({ code: 'test-code' }),
+  extractSupabaseLinkParams: () => mockLinkParams,
 }));
 
 jest.mock('expo-linking', () => ({
@@ -85,6 +91,7 @@ import ResetPasswordPage from '../../app/(auth)/auth/reset-password';
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockLinkParams = DEFAULT_LINK_PARAMS;
   jest.spyOn(Alert, 'alert').mockImplementation(() => {});
   // Simulate existing session so sessionReady = true immediately
   mockGetSession.mockResolvedValue({ data: { session: { access_token: 'tok', user: { id: 'user-reset-1' } } } });
@@ -250,5 +257,39 @@ describe('ResetPasswordPage', () => {
     });
     expect(mockSignOutWithCleanup).not.toHaveBeenCalled();
     expect(mockReplace).not.toHaveBeenCalled();
+  });
+  /** Alert に出した文の全部 (タイトルと本文) */
+  const alertedTexts = () => (Alert.alert as jest.Mock).mock.calls.flatMap((call: unknown[]) => call.filter((v): v is string => typeof v === 'string'));
+  const NO_SESSION = { data: { session: null } };
+
+  it('7. リンクが ?error= (英文の error・error_description) を運んできたら、固定の文を出し、英文を出さず、セッションの交換もしない (#1917 の続き)', async () => {
+    mockGetSession.mockResolvedValue(NO_SESSION);
+    mockLinkParams = { error: 'access_denied', error_code: 'otp_expired', error_description: 'Email link is invalid or has expired' };
+
+    render(<ResetPasswordPage />);
+
+    await waitFor(() => {
+      expect(Alert.alert).toHaveBeenCalledWith('エラー', AUTH_LINK_ERROR_MESSAGE);
+    });
+    const texts = alertedTexts().join('\n');
+    expect(texts).not.toContain('access_denied');
+    expect(texts).not.toContain('otp_expired');
+    expect(texts).not.toContain('Email link is invalid');
+    expect(mockExchangeCodeForSession).not.toHaveBeenCalled();
+    expect(mockSetSession).not.toHaveBeenCalled();
+  });
+
+  it('8. セッションの確立 (setSession) が英語の例外を返したら、「セッションエラー」に固定の日本語の文を出す (#1917 の続き)', async () => {
+    mockGetSession.mockResolvedValue(NO_SESSION);
+    mockLinkParams = { access_token: 'access-1', refresh_token: 'refresh-1' };
+    mockSetSession.mockResolvedValue({ error: { message: 'Invalid Refresh Token: Refresh Token Not Found' } });
+
+    render(<ResetPasswordPage />);
+
+    await waitFor(() => {
+      expect(Alert.alert).toHaveBeenCalledWith('セッションエラー', 'セッションの確立に失敗しました。');
+    });
+    expect(mockSetSession).toHaveBeenCalledWith({ access_token: 'access-1', refresh_token: 'refresh-1' });
+    expect(alertedTexts().join('\n')).not.toContain('Refresh Token');
   });
 });

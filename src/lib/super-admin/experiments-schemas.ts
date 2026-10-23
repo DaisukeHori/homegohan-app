@@ -22,7 +22,7 @@ export const CreateExperimentSchema = z.object({
   end_date: CalendarDateSchema.optional(),
 }).refine(
   (data) => data.variants.reduce((sum, v) => sum + v.weight, 0) === 100,
-  { message: '全バリアントの weight 合計は 100 である必要があります', path: ['variants'] },
+  { message: '全バリアントの重み (weight) の合計は 100 である必要があります', path: ['variants'] },
 );
 
 export const UpdateExperimentSchema = z.object({

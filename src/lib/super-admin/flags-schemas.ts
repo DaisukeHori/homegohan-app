@@ -21,7 +21,7 @@ export const FeatureFlagConstraintsSchema = z.object({
 }).optional();
 
 export const CreateFeatureFlagSchema = z.object({
-  key: z.string().regex(/^[a-z0-9_]+$/, 'key は小文字英数字とアンダースコアのみ使用可能').min(1).max(100),
+  key: z.string().regex(/^[a-z0-9_]+$/, 'キー (key) は小文字英数字とアンダースコアのみ使用可能').min(1).max(100),
   description: z.string().max(500).optional(),
   enabled: z.boolean().default(false),
   rollout_strategy: RolloutStrategySchema.optional(),

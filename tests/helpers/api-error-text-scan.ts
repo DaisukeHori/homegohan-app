@@ -293,6 +293,75 @@ export function findErrorTexts(
   return bodyTextsOf(sf, textCalls).flatMap(({ line, texts }) => texts.map((text) => ({ file, line, text })));
 }
 
+/**
+ * Zod の検証の文を受け取るメソッド。`.min(1, '文')`・`.refine(fn, '文')` のように文字列の引数で受け取るか、
+ * `z.enum(値, { message: '文' })`・`.refine(fn, { message })`・`ctx.addIssue({ code, message })` のようにオブジェクトの引数で受け取る
+ */
+const ZOD_MESSAGE_METHODS: ReadonlySet<string> = new Set([
+  'min', 'max', 'length', 'email', 'uuid', 'url', 'regex', 'int', 'positive', 'negative', 'nonnegative', 'nonpositive',
+  'nonempty', 'datetime', 'date', 'time', 'refine', 'superRefine', 'startsWith', 'endsWith', 'gte', 'lte', 'gt', 'lt',
+  'multipleOf', 'finite', 'safe', 'enum', 'string', 'number', 'boolean', 'object', 'array', 'literal', 'union', 'custom',
+  'check', 'addIssue',
+]);
+/** Zod の名前空間 (`z.xxx(…)` は、メソッドの名前に関わらず文の引数を見る) */
+const ZOD_NAMESPACE = 'z';
+/** Zod のオプションのうち、検証の文が入るプロパティ (v4 は message と error) */
+const ZOD_MESSAGE_PROPERTIES: ReadonlySet<string> = new Set(['message', 'error']);
+
+/** `a.b().c` の根の式 (`z.string().min` なら `z`) */
+function chainRootOf(node: ts.Expression): ts.Expression {
+  let current = node;
+  while (ts.isCallExpression(current) || ts.isPropertyAccessExpression(current)) current = current.expression;
+  return current;
+}
+
+/** Zod の呼び出しの 1 つの引数から、検証の文を集める (オブジェクトなら message / error の値) */
+function collectZodArgumentTexts(sf: ts.SourceFile, arg: ts.Expression, out: CollectedTexts): void {
+  if (!ts.isObjectLiteralExpression(arg)) {
+    collectTexts(sf, arg, 0, out);
+    return;
+  }
+  for (const property of arg.properties) {
+    if (ts.isPropertyAssignment(property) && ts.isIdentifier(property.name) && ZOD_MESSAGE_PROPERTIES.has(property.name.text)) {
+      collectTexts(sf, property.initializer, 0, out);
+    } else if (ts.isShorthandPropertyAssignment(property) && ZOD_MESSAGE_PROPERTIES.has(property.name.text)) {
+      collectTexts(sf, property.name, 0, out);
+    }
+  }
+}
+
+/**
+ * 1 つのファイルの Zod の検証の文を全部集める (#1917 の続き)。
+ * Zod の文は、日本語を含めば src/lib/super-admin/validation-errors.ts の validationMessageOf などがそのまま本文の message にするので、
+ * 画面に出る。文字列の引数と、オプションのオブジェクトの message / error を、同じファイルと import 元の const までたどって集める。
+ * 限界: Zod の外の関数が作る文・表 (オブジェクト) から引く文・関数で作る文 (`error: (issue) => …`) は見ない。text は fixture 用
+ */
+export function findValidationMessageTexts(file: string, options: { text?: string } = {}): ErrorTextAt[] {
+  const sf = options.text === undefined ? sourceOf(file) : parse(file, options.text);
+  const found: ErrorTextAt[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const root = chainRootOf(node.expression);
+      const isZodCall =
+        ZOD_MESSAGE_METHODS.has(node.expression.name.text) || (ts.isIdentifier(root) && root.text === ZOD_NAMESPACE);
+      if (isZodCall) {
+        for (const arg of node.arguments) {
+          const out: CollectedTexts = { texts: [], exceptionMessages: 0 };
+          collectZodArgumentTexts(sf, arg, out);
+          const line = sf.getLineAndCharacterOfPosition(arg.getStart(sf)).line + 1;
+          for (const text of out.texts) {
+            const normalized = text.replace(/\s+/g, ' ').trim();
+            if (normalized.length > 0) found.push({ file, line, text: normalized });
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return found;
+}
+
 /** dir の下のファイルのうち accept(名前) が真のもの (リポジトリの根からの相対パス。並べて返す) */
 export function walkFiles(dir: string, accept: (name: string) => boolean): string[] {
   const result: string[] = [];

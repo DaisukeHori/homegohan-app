@@ -41,8 +41,8 @@ export const PLAN_STATUSES = ['draft', 'public', 'private', 'deprecated'] as con
 export const PRICE_APPLIES_TO = ['new_only'] as const;
 
 /** applies_to に new_only 以外が来たときのメッセージ (route が最初の issue の message をそのまま UI / 呼び出し元へ返す) */
-const PRICE_APPLIES_TO_MESSAGE =
-  '価格変更は新規契約のみに適用されます。applies_to には new_only だけを指定できます (既存契約の価格は変更できません)';
+export const PRICE_APPLIES_TO_MESSAGE =
+  '価格変更は新規契約のみに適用されます。適用先 (applies_to) には新規契約のみ (new_only) だけを指定できます (既存契約の価格は変更できません)';
 
 /**
  * プランステータス遷移マップ (operator/04-plan-management.md §3.4 ライフサイクル準拠)
@@ -79,12 +79,12 @@ export function isAllowedPlanStatusTransition(
  * 個人・家族のプランに組織のプランの値 (isOrgPlanKey: standard / premium / enterprise と org_ で始まる key) を付けたときの文 (#1912)。
  * 付けると利用者の画面に「組織のプラン」と出てしまう
  */
-export const PERSONAL_FAMILY_PLAN_KEY_MESSAGE = `個人・家族のプランの plan_key には ${ORG_PLAN_VALUES_WIRE.join(' / ')} や ${ORG_SUBSCRIPTION_PLAN_KEY_PREFIX} で始まる値を使えません (組織のプランの値です)`;
+export const PERSONAL_FAMILY_PLAN_KEY_MESSAGE = `個人・家族のプランのキー (plan_key) には、組織のプランの値 (${ORG_PLAN_VALUES_WIRE.join(' / ')} と ${ORG_SUBSCRIPTION_PLAN_KEY_PREFIX} で始まる値) を使えません`;
 
 /**
  * 組織のプランの plan_key が org_ で始まらないときの文 (#1912)。始まらないと利用者の画面に「有料プラン」と出てしまう
  */
-export const ORG_PLAN_KEY_PREFIX_MESSAGE = `組織のプランの plan_key は ${ORG_SUBSCRIPTION_PLAN_KEY_PREFIX} で始まる値にしてください`;
+export const ORG_PLAN_KEY_PREFIX_MESSAGE = `組織のプランのキー (plan_key) は、組織のプランの頭の文字 (${ORG_SUBSCRIPTION_PLAN_KEY_PREFIX}) で始まる値にしてください`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // スキーマ定義
