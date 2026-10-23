@@ -15,6 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
+import { isRaisedExceptionWithCode } from '@/lib/errors/db-raised-code';
 
 const ROOT = path.resolve(__dirname, '..');
 const MIGRATIONS_DIR = path.join(ROOT, 'supabase', 'migrations');
@@ -211,11 +212,15 @@ describe(`${MIGRATION}: アプリの側`, () => {
   it('運営の作成 API は、トリガーと同じコード (P0001 + OWNER_ACCOUNT_DELETING) を 409 にする', () => {
     const route = squash(stripTsComments(read(ADMIN_ORG_ROUTE)));
     expect(route).toContain(`const OWNER_ACCOUNT_DELETING = '${RAISE_CODE}';`);
-    expect(route).toContain("const PG_RAISE_EXCEPTION = 'P0001';");
-    expect(route).toContain('return error?.code === PG_RAISE_EXCEPTION && error.message === OWNER_ACCOUNT_DELETING;');
+    // P0001 + コードの完全一致の判定は共通の関数 (src/lib/errors/db-raised-code.ts) で行う (#1917。route では `.message` を読まない)
+    expect(route).toContain("import { isRaisedExceptionWithCode } from '@/lib/errors/db-raised-code';");
     expect(route).toMatch(
-      /if \(isOwnerAccountDeletingError\(insertError\)\) \{ return NextResponse\.json\( \{ error: \{ code: OWNER_ACCOUNT_DELETING, message: '[^']+' \} \}, \{ status: 409 \}, \); \}/,
+      /if \(isRaisedExceptionWithCode\(insertError, OWNER_ACCOUNT_DELETING\)\) \{ return NextResponse\.json\( \{ error: \{ code: OWNER_ACCOUNT_DELETING, message: '[^']+' \} \}, \{ status: 409 \}, \); \}/,
     );
+    // その関数は、トリガーと同じ P0001 + このコードの完全一致だけを拾う
+    expect(isRaisedExceptionWithCode({ code: 'P0001', message: RAISE_CODE }, RAISE_CODE)).toBe(true);
+    expect(isRaisedExceptionWithCode({ code: '23505', message: RAISE_CODE }, RAISE_CODE)).toBe(false);
+    expect(isRaisedExceptionWithCode({ code: 'P0001', message: `ERROR: ${RAISE_CODE}` }, RAISE_CODE)).toBe(false);
   });
 });
 

@@ -14,6 +14,7 @@ import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
+import { dbErrorMentionsCode } from '@/lib/errors/db-raised-code';
 import { AdminSetUserRolesResultSchema, RoleChangeBodySchema } from '@/lib/admin/users-schemas';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
@@ -104,15 +105,16 @@ async function handleRoleChange(request: Request, params: Params) {
 
   if (updateError) {
     console.error('[api/admin/users/[id]/role] update error:', updateError.message);
-    if (updateError.message.includes('USER_NOT_FOUND')) {
+    // RPC が RAISE EXCEPTION したコードの判定は共通の関数で行い、route では (ログのほかに) `.message` を読まない (#1917)
+    if (dbErrorMentionsCode(updateError, 'USER_NOT_FOUND')) {
       return NextResponse.json(
         { error: { code: 'NOT_FOUND', message: 'ユーザーが見つかりません' } },
         { status: 404 },
       );
     }
     if (
-      updateError.message.includes('FORBIDDEN') ||
-      updateError.message.includes('CANNOT_MODIFY_OWN_ROLES')
+      dbErrorMentionsCode(updateError, 'FORBIDDEN') ||
+      dbErrorMentionsCode(updateError, 'CANNOT_MODIFY_OWN_ROLES')
     ) {
       return NextResponse.json(
         { error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } },
