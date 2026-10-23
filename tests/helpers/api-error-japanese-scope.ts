@@ -48,6 +48,7 @@ export const JAPANESE_ERROR_API_DIRS: readonly string[] = [
 /** route が本文を作るのに使う共通の関数のファイル (ここも違反 0 件を見張る) */
 export const JAPANESE_ERROR_SHARED_BODY_FILES: readonly string[] = [
   'src/lib/api/error-responses.ts',
+  'src/lib/billing/http.ts',
   'src/lib/org-api-errors.ts',
   'src/lib/org-challenge-api.ts',
 ];
