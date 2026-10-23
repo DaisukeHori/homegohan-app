@@ -18,6 +18,12 @@
  * 権限: super_admin だけ。ai_daily_limits はクライアントのポリシーが無い (service_role だけが読み書きする) ので、
  * requireRole(['super_admin']) を通したあとで service_role のクライアントを使う。
  * 監査ログ (admin_audit_logs) は、ログインした本人の権限のクライアントで書く (RLS の audit_logs_insert_admins)。
+ *
+ * 同時の保存 (#1917 の整合の候補と同じ型): 監査の before は保存の直前に読んだ値なので、保存は「読んだ値のままなら書く」条件つきにする。
+ *   - 行があった: 読んだ daily_limit のままのときだけ更新する (NULL は .is で比べる)
+ *   - 行が無かった: 作るだけ (同じキーの行が先にできていたら何もしない。ON CONFLICT DO NOTHING)
+ * どちらも 0 行なら読み直し、今の値が送られた値と同じなら書かず記録もしない (200 で今の行)、違えば 409 CONFLICT_STALE_DATA
+ * (cross/04 §4.2)。これで監査の before は、書いた時点の実際の直前の値と必ず一致する。
  */
 import { NextResponse } from 'next/server';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
@@ -47,6 +53,17 @@ export const dynamic = 'force-dynamic';
 
 const GET_ROUTE = 'GET /api/super-admin/llm/quotas';
 const PATCH_ROUTE = 'PATCH /api/super-admin/llm/quotas';
+
+/** 保存した行として返す ai_daily_limits の列 */
+const SAVED_LIMIT_COLUMNS = 'plan_key, daily_limit, updated_at';
+
+/** 読んでから書くまでに別の運営が同じプランの上限を変えていた (条件つきの保存が 0 行で、今の値が送られた値と違う) */
+const STALE_LIMIT_RESPONSE = {
+  error: {
+    code: 'CONFLICT_STALE_DATA',
+    message: '別の運営が先にこのプランの上限を変えました。画面を読み込み直して、もう一度確認してください',
+  },
+} as const;
 
 function authErrorResponse(err: unknown): NextResponse | null {
   if (err instanceof AuthError) {
@@ -154,21 +171,46 @@ export async function PATCH(request: Request) {
       return internalError(PATCH_ROUTE, beforeError, { userId: actorId, table: 'ai_daily_limits' }, { shape: 'nested' });
     }
 
-    const { data: saved, error: saveError } = await admin
-      .from('ai_daily_limits')
-      .upsert(
-        { plan_key: planKey, daily_limit: dailyLimit, updated_by: actorId, updated_at: new Date().toISOString() },
-        { onConflict: 'plan_key' },
-      )
-      .select('plan_key, daily_limit, updated_at')
-      .single();
-    if (saveError || !saved) {
-      return internalError(
-        PATCH_ROUTE,
-        saveError ?? new Error('ai_daily_limits upsert returned no row'),
-        { userId: actorId, table: 'ai_daily_limits' },
-        { shape: 'nested' },
-      );
+    // 直前に読んだ値のままのときだけ書く (監査の before を、書いた時点の実際の直前の値にする)
+    const values = { daily_limit: dailyLimit, updated_by: actorId, updated_at: new Date().toISOString() };
+    const saveLimit = async () => {
+      if (before) {
+        const updateQuery = admin.from('ai_daily_limits').update(values).eq('plan_key', planKey);
+        // daily_limit の列は NULL (無制限) を許すので、読んだ値が NULL なら .eq ではなく .is で比べる (PostgREST の eq.null は NULL に一致しない)
+        return (before.daily_limit === null
+          ? updateQuery.is('daily_limit', null)
+          : updateQuery.eq('daily_limit', before.daily_limit)
+        )
+          .select(SAVED_LIMIT_COLUMNS)
+          .maybeSingle();
+      }
+      // 行が無かった: 作るだけ。読んでから書くまでに別の運営が同じキーの行を作っていたら何もしない (0 行)
+      return admin
+        .from('ai_daily_limits')
+        .upsert({ plan_key: planKey, ...values }, { onConflict: 'plan_key', ignoreDuplicates: true })
+        .select(SAVED_LIMIT_COLUMNS)
+        .maybeSingle();
+    };
+    const { data: saved, error: saveError } = await saveLimit();
+    if (saveError) {
+      return internalError(PATCH_ROUTE, saveError, { userId: actorId, table: 'ai_daily_limits' }, { shape: 'nested' });
+    }
+
+    if (!saved) {
+      // 0 行: 読んでから書くまでに、別の運営がこのプランの上限を変えた (作った・消した)。読み直して決める
+      const { data: current, error: rereadError } = await admin
+        .from('ai_daily_limits')
+        .select(SAVED_LIMIT_COLUMNS)
+        .eq('plan_key', planKey)
+        .maybeSingle();
+      if (rereadError) {
+        return internalError(PATCH_ROUTE, rereadError, { userId: actorId, table: 'ai_daily_limits' }, { shape: 'nested' });
+      }
+      // 別の運営が同じ値を先に保存していた: 書かず、記録もしない (その変更は先の運営の監査に残っている)
+      if (current && current.daily_limit === dailyLimit) {
+        return NextResponse.json({ data: current });
+      }
+      return NextResponse.json(STALE_LIMIT_RESPONSE, { status: 409 });
     }
 
     // 監査ログ (ログインした本人の権限で書く。記録に失敗しても保存は取り消さない: recordAdminAudit は fail-open)
