@@ -8,6 +8,8 @@ import { useEffect, useState } from "react";
 // 止めている集計の区切りは「準備中」とも出さない (#1911: 未完成の機能は画面に出さない)。
 // 見出し・メンバー数の文言は日本語 (以前は固定の英語「Health Cockpit」「Total Members」「users」だった)。
 // 見出しはサイドバーのナビの名前「ダッシュボード」、人数の単位は組織メンバーの一覧 (/org/members) と同じ「名」。
+// 見出しの下の説明は、画面の今の中身 (メンバー数) だけを言う。止めている集計があるように読める文
+// (以前の「組織のバイタルサインと生産性指標」) は書かない (#1911)。
 
 type MemberCountState =
   | { status: "loading" }
@@ -44,7 +46,7 @@ export default function OrgDashboardPage() {
       <div className="flex justify-between items-end">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">ダッシュボード</h1>
-          <p className="text-gray-500 mt-2">組織のバイタルサインと生産性指標</p>
+          <p className="text-gray-500 mt-2">組織のメンバー数</p>
         </div>
         <div className="text-right">
           <p className="text-xs font-bold text-gray-400">メンバー数</p>
