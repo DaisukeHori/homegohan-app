@@ -48,8 +48,8 @@ export default function FavoritesPage() {
   const [hasMore, setHasMore] = useState(false);
   // 初回フェッチかどうか（初回のみ全画面ローディングを表示し、以降の検索/並び替えは小スピナーに留める）
   const isFirstFetchRef = useRef(true);
-  // UX2-06: recipeUuid を保持しているのに未使用で、削除しかできなかった問題への対応。
-  // タップでレシピ詳細（材料・作り方・買い物追加）を表示する。
+  // UX2-06 / #2011: タップでレシピ詳細（材料・作り方・栄養・買い物追加）を表示する。
+  // 詳細は一覧の 1 件 (DishFavorite) が持つ料理の写しで描く (問い合わせない)。
   // selectedFavorite は閉じるアニメーション中も内容を保持するため isRecipeModalOpen とは
   // 別の state にしている（isRecipeModalOpen=false で閉じアニメーションのみ発火させる）。
   const [selectedFavorite, setSelectedFavorite] = useState<FavoriteItem | null>(null);
