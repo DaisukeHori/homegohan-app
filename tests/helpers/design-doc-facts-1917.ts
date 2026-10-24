@@ -25,7 +25,10 @@ function singleLines(items: readonly string[]): string[] {
   return items.filter((item) => !item.includes('-'));
 }
 
-/** 画面の表の (auth) の行 (cross/13b §3.3)。auth を呼ぶ行を `login.tsx:<Google>, <メールとパスワード>`・`signup.tsx:<Google>, <メールの登録>` の順で書く */
+/**
+ * 画面の表の (auth) の行 (cross/13b §3.3)。auth を呼ぶ行を `login.tsx:<Google>, <メールとパスワード>`・`signup.tsx:<Google>, <メールの登録>`
+ * の形で書き、並びの最後がメールの行 (Sign in with Apple の段 A2 の前は `signup.tsx:<メールの登録>` の 1 つだけ)
+ */
 const AUTH_SCREEN_ROW = /^\| \(auth\) \|/;
 const LOGIN_FILE = String.raw`login\.tsx`;
 const SIGNUP_FILE = String.raw`signup\.tsx`;
