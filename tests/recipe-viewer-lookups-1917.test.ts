@@ -251,6 +251,8 @@ describe('レシピの API: 埋め込まずに引いた名前といいねを返�
     expect(((await res.json()) as { comment: { authorName: string } }).comment.authorName).toBe('見ている人');
     expect(argsOf('user_profiles', 'in')).toEqual([['id', [VIEWER_ID]]]);
     expect(String(argsOf('recipe_comments', 'select')[0]?.[0])).not.toMatch(/user_profiles/);
+    // コメントの投稿では、いいねは引かない
+    expect(callsOn('recipe_likes')).toEqual([]);
   });
 });
 

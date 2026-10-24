@@ -272,6 +272,15 @@ describe('src の select の埋め込みは、PostgREST が解決できる関係
     expect(findings.map((f) => [f.code, f.text])).toEqual([['PGRST200', 'recipe_comments → user_profiles(nickname)']]);
   });
 
+  it('insert / update のあとの select も、from から続く連なりとして読む (コメントの投稿が保存の戻りに埋め込んでいた形)', () => {
+    const findings = scanSnippet(`
+      export async function POST() {
+        return db.from('recipe_comments').insert({ content }).select('id, user_profiles(nickname)').single();
+      }
+    `);
+    expect(findings.map((f) => [f.code, f.text])).toEqual([['PGRST200', 'recipe_comments → user_profiles(nickname)']]);
+  });
+
   it('外部キーが 2 本ある埋め込み (recipes → recipe_likes: recipe_id・recipe_uuid) をヒント無しで使うと PGRST201', () => {
     const findings = scanSnippet(`db.from('recipes').select('*, recipe_likes(user_id)')`);
     expect(findings.map((f) => f.code)).toEqual(['PGRST201']);
