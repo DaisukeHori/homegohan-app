@@ -96,10 +96,14 @@ export async function DELETE(request: NextRequest, props: Params) {
     const flagKey = params.key;
 
     // feature_packages からフラグキーが使用中か確認
-    const { data: pkgs } = await supabase
+    // 確かめられなかった (DB の失敗) ときは 500。使用中でないとして削除へ進まない (#1917 の続き。以前は失敗を捨て、使用中の確認を素通りしていた)
+    const { data: pkgs, error: pkgsError } = await supabase
       .from('feature_packages')
       .select('id, package_key, feature_flags')
       .contains('feature_flags', [flagKey]);
+    if (pkgsError) {
+      return internalError('DELETE /api/super-admin/flags/[key]', pkgsError, { userId: user.id, table: 'feature_packages' }, { shape: 'nested' });
+    }
 
     if (pkgs && pkgs.length > 0) {
       return NextResponse.json(

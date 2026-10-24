@@ -115,13 +115,16 @@ const { WEEKLY_MENU_REQUEST_FAILED_MESSAGE, WEEKLY_MENU_REQUEST_STALE_DISPLAY_ME
 
 const user = { id: 'user-1' };
 
+/** 献立の生成の受付の id (weekly_menu_requests.id は uuid の列。UUID の形でない requestId は DB に渡さず not_found を返すので、UUID の形にする。#1917 の続き) */
+const REQUEST_ID = '60000000-0000-4000-8000-0000000000a1';
+
 const makeRequest = (requestId: string) =>
   new Request(`http://localhost/api/ai/menu/weekly/status?requestId=${requestId}`);
 
 /** status が読む行 (既定は生成中で、進捗が新しい行) */
 function requestRow(overrides: Record<string, unknown> = {}) {
   return {
-    id: 'req-1',
+    id: REQUEST_ID,
     status: 'processing',
     error_message: null,
     created_at: ago(60),
@@ -158,7 +161,7 @@ describe('GET /api/ai/menu/weekly/status', () => {
   it('stale でない processing リクエストはそのまま状態を返す(復元は呼ばない)', async () => {
     selectResultQueue.push({ data: requestRow(), error: null });
 
-    const res = await GET(makeRequest('req-1'));
+    const res = await GET(makeRequest(REQUEST_ID));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -171,7 +174,7 @@ describe('GET /api/ai/menu/weekly/status', () => {
   it('非 stale ポーリングでは generated_data を select しない(二次クエリも発行しない)。生存信号の列は読む', async () => {
     selectResultQueue.push({ data: requestRow(), error: null });
 
-    await GET(makeRequest('req-1'));
+    await GET(makeRequest(REQUEST_ID));
 
     // 通常ポーリングでの select は1回のみで、generated_data を含まないこと
     expect(mockSelect).toHaveBeenCalledTimes(1);
@@ -187,10 +190,10 @@ describe('GET /api/ai/menu/weekly/status', () => {
     const staleUpdatedAt = ago(STALE_MINUTES);
     selectResultQueue.push({ data: requestRow({ updated_at: staleUpdatedAt }), error: null });
     // 書き換えた行の generated_data を更新の戻り値で受け取る (#1042: 通常の読み取りでは読まない)
-    updateResultQueue.push({ data: [{ id: 'req-1', generated_data: { snapshot: [snapshotRow] } }], error: null });
+    updateResultQueue.push({ data: [{ id: REQUEST_ID, generated_data: { snapshot: [snapshotRow] } }], error: null });
     mockRestorePlannedMealsSnapshot.mockResolvedValueOnce({ restored: 1, skipped: 0, failed: 0 });
 
-    const res = await GET(makeRequest('req-1'));
+    const res = await GET(makeRequest(REQUEST_ID));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -214,7 +217,7 @@ describe('GET /api/ai/menu/weekly/status', () => {
       error_message: 'stale_request_timeout',
       updated_at: new Date(NOW_MS).toISOString(),
     });
-    expect(filterOf(call, 'id')).toEqual([['eq', 'id', 'req-1']]);
+    expect(filterOf(call, 'id')).toEqual([['eq', 'id', REQUEST_ID]]);
     expect(filterOf(call, 'user_id')).toEqual([['eq', 'user_id', user.id]]);
     expect(filterOf(call, 'status')).toEqual([['eq', 'status', 'processing']]);
     expect(filterOf(call, 'updated_at')).toEqual([['eq', 'updated_at', staleUpdatedAt]]);
@@ -227,9 +230,9 @@ describe('GET /api/ai/menu/weekly/status', () => {
 
   it('stale だが snapshot がない場合は復元を呼ばず response に restore を含めない', async () => {
     selectResultQueue.push({ data: requestRow({ status: 'pending', updated_at: ago(STALE_MINUTES), progress: null }), error: null });
-    updateResultQueue.push({ data: [{ id: 'req-1', generated_data: null }], error: null });
+    updateResultQueue.push({ data: [{ id: REQUEST_ID, generated_data: null }], error: null });
 
-    const res = await GET(makeRequest('req-1'));
+    const res = await GET(makeRequest(REQUEST_ID));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -252,7 +255,7 @@ describe('GET /api/ai/menu/weekly/status: 止まりの判定は cleanup と同�
       error: null,
     });
 
-    const json = await (await GET(makeRequest('req-1'))).json();
+    const json = await (await GET(makeRequest(REQUEST_ID))).json();
 
     expect(json.status).toBe('processing');
     expect(json.errorMessage).toBeNull();
@@ -264,9 +267,9 @@ describe('GET /api/ai/menu/weekly/status: 止まりの判定は cleanup と同�
     const workerAcquiredAt = ago(STALE_MINUTES);
     const updatedAt = ago(STALE_MINUTES + 5);
     selectResultQueue.push({ data: requestRow({ updated_at: updatedAt, worker_acquired_at: workerAcquiredAt }), error: null });
-    updateResultQueue.push({ data: [{ id: 'req-1', generated_data: null }], error: null });
+    updateResultQueue.push({ data: [{ id: REQUEST_ID, generated_data: null }], error: null });
 
-    const json = await (await GET(makeRequest('req-1'))).json();
+    const json = await (await GET(makeRequest(REQUEST_ID))).json();
 
     expect(json.status).toBe('failed');
     expect(filterOf(updateCalls[0], 'updated_at')).toEqual([['eq', 'updated_at', updatedAt]]);
@@ -278,7 +281,7 @@ describe('GET /api/ai/menu/weekly/status: 止まりの判定は cleanup と同�
     // 更新までのあいだに Edge Function が進捗を書いた: 読んだときの updated_at と一致する行が無い
     updateResultQueue.push({ data: [], error: null });
 
-    const json = await (await GET(makeRequest('req-1'))).json();
+    const json = await (await GET(makeRequest(REQUEST_ID))).json();
 
     expect(updateCalls).toHaveLength(1);
     expect(json.status).toBe('processing');
@@ -292,7 +295,7 @@ describe('GET /api/ai/menu/weekly/status: 止まりの判定は cleanup と同�
     selectResultQueue.push({ data: requestRow({ updated_at: ago(STALE_MINUTES) }), error: null });
     updateResultQueue.push({ data: null, error: { message: 'update rejected' } });
 
-    const res = await GET(makeRequest('req-1'));
+    const res = await GET(makeRequest(REQUEST_ID));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -305,7 +308,7 @@ describe('GET /api/ai/menu/weekly/status: 止まりの判定は cleanup と同�
   it('時刻が読めない行 (created_at・updated_at・worker_acquired_at のどれも読めない) は止まったと見なさない', async () => {
     selectResultQueue.push({ data: requestRow({ created_at: null, updated_at: null, worker_acquired_at: null }), error: null });
 
-    const json = await (await GET(makeRequest('req-1'))).json();
+    const json = await (await GET(makeRequest(REQUEST_ID))).json();
 
     expect(json.status).toBe('processing');
     expect(mockUpdate).not.toHaveBeenCalled();
@@ -316,9 +319,9 @@ describe('GET /api/ai/menu/weekly/status: 止まりの判定は cleanup と同�
       data: requestRow({ status: 'pending', created_at: ago(STALE_MINUTES), updated_at: null, worker_acquired_at: null }),
       error: null,
     });
-    updateResultQueue.push({ data: [{ id: 'req-1', generated_data: null }], error: null });
+    updateResultQueue.push({ data: [{ id: REQUEST_ID, generated_data: null }], error: null });
 
-    const json = await (await GET(makeRequest('req-1'))).json();
+    const json = await (await GET(makeRequest(REQUEST_ID))).json();
 
     expect(json.status).toBe('failed');
     expect(filterOf(updateCalls[0], 'updated_at')).toEqual([['is', 'updated_at', null]]);
@@ -330,7 +333,7 @@ describe('GET /api/ai/menu/weekly/status: 止まりの判定は cleanup と同�
       error: null,
     });
 
-    const json = await (await GET(makeRequest('req-1'))).json();
+    const json = await (await GET(makeRequest(REQUEST_ID))).json();
 
     expect(json.status).toBe('queued');
     expect(mockUpdate).not.toHaveBeenCalled();
@@ -343,7 +346,7 @@ describe('GET /api/ai/menu/weekly/status: 止まりの判定は cleanup と同�
 describe('GET /api/ai/menu/weekly/status: 失敗の文 (#1172)', () => {
   function failedRow(errorMessage: string | null) {
     return {
-      id: 'req-1',
+      id: REQUEST_ID,
       status: 'failed',
       error_message: errorMessage,
       updated_at: new Date().toISOString(),
@@ -365,7 +368,7 @@ describe('GET /api/ai/menu/weekly/status: 失敗の文 (#1172)', () => {
   ])('%s は返さず、固定の文を返す (errorMessage / error_message の両方)', async (_label, stored) => {
     selectResultQueue.push({ data: failedRow(stored), error: null });
 
-    const res = await GET(makeRequest('req-1'));
+    const res = await GET(makeRequest(REQUEST_ID));
     const text = await res.text();
     const json = JSON.parse(text);
 
@@ -384,7 +387,7 @@ describe('GET /api/ai/menu/weekly/status: 失敗の文 (#1172)', () => {
   ])('こちらで書いた文 (%s) は、画面が見分けられるようそのまま返す', async (_label, stored) => {
     selectResultQueue.push({ data: failedRow(stored), error: null });
 
-    const json = await (await GET(makeRequest('req-1'))).json();
+    const json = await (await GET(makeRequest(REQUEST_ID))).json();
 
     expect(json.errorMessage).toBe(stored);
     expect(json.error_message).toBe(stored);
@@ -394,7 +397,7 @@ describe('GET /api/ai/menu/weekly/status: 失敗の文 (#1172)', () => {
   it('行の error_message が進まなくなった行の印なら、日本語の文にして返す (#1576)', async () => {
     selectResultQueue.push({ data: failedRow('stale_request_timeout'), error: null });
 
-    const json = await (await GET(makeRequest('req-1'))).json();
+    const json = await (await GET(makeRequest(REQUEST_ID))).json();
 
     expect(json.errorMessage).toBe(WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE);
     expect(json.error_message).toBe(WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE);
@@ -403,7 +406,7 @@ describe('GET /api/ai/menu/weekly/status: 失敗の文 (#1172)', () => {
   it('error_message が空 (null) なら null のまま返す (画面は自分の既定の文を出す)', async () => {
     selectResultQueue.push({ data: failedRow(null), error: null });
 
-    const json = await (await GET(makeRequest('req-1'))).json();
+    const json = await (await GET(makeRequest(REQUEST_ID))).json();
 
     expect(json.errorMessage).toBeNull();
     expect(json.error_message).toBeNull();

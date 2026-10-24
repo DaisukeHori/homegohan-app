@@ -13,6 +13,7 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { isRaisedExceptionWithCode } from '@/lib/errors/db-raised-code';
+import { internalError } from '@/lib/api/errors';
 import { z } from 'zod';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
@@ -159,11 +160,16 @@ export async function POST(request: Request) {
   // owner が既に他組織に所属しているかチェック (user_profiles_org_consistency 制約対応)
   const supabaseAdmin = getSupabaseAdmin();
 
-  const { data: ownerProfile } = await supabaseAdmin
+  // 読めなかった (DB の失敗) ときは 500。所属なしとして作成へ進まない (#1917 の続き。以前は失敗を捨て、所属の確認を素通りしていた)。
+  // プロフィールの行が無いときは今までどおり所属なしとして進む
+  const { data: ownerProfile, error: ownerProfileError } = await supabaseAdmin
     .from('user_profiles')
     .select('organization_id')
     .eq('id', effectiveOwnerId)
-    .single();
+    .maybeSingle();
+  if (ownerProfileError) {
+    return internalError('POST /api/admin/organizations', ownerProfileError, { userId: actor.id, table: 'user_profiles' }, { shape: 'nested' });
+  }
 
   if (ownerProfile?.organization_id) {
     return NextResponse.json(

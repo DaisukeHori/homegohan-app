@@ -48,6 +48,9 @@
  * #1845 で足したもの: tests/og-image-1845.test.tsx は、同じ型 (テストの中で、OGP の画像とアイコンの route を丸ごと読み込み、
  *   next/og (wasm) で PNG を描く)。
  *
+ * #1917 の続き (仕分け triage-1025a) で足したもの: tests/route-input2-1917.test.ts は、同じ型 (テストの中で、レシピ・買い物リスト・
+ *   運営の会計ほか 30 余りの handler の route を丸ごと読み込む。tests/route-invalid-input-1917.test.ts と同じ形)。
+ *
  * 時間切れが効くのは遅いときだけで、速く終わるテストの所要は変わらない (止まったテストを見切るまでが長くなるだけ)。
  * 期待値・待つ条件は変えないので、検査は緩まない。全体の既定 (vitest.config.ts) は変えず、一覧のファイルだけに効かせる
  * (各ファイルの先頭で applyHeavyUnitTestTimeout() を呼んで vi.setConfig する。時間切れはテスト・フックを登録したときの
@@ -112,6 +115,7 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/og-image-1845.test.tsx",
   "tests/recipes-route.test.ts",
   "tests/route-error-boundaries.test.tsx",
+  "tests/route-input2-1917.test.ts",
   "tests/route-invalid-input-1917.test.ts",
   "tests/security-workflow.test.ts",
   "tests/shell-multibyte-var-expansion.test.ts",
