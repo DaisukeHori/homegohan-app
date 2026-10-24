@@ -33,6 +33,11 @@ vi.mock('next/navigation', () => ({
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+// 問い合わせの詳細の画面はメッセージの末尾へ scrollIntoView する。テストの DOM には無いので、何もしない関数を置く
+if (typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = () => undefined;
+}
+
 const ID = '55555555-5555-4555-8555-555555555555';
 const ASSIGNEE_ID = '66666666-6666-4666-8666-666666666666';
 const MFA_REQUIRED_MESSAGE = '二段階認証の確認が必要です';
