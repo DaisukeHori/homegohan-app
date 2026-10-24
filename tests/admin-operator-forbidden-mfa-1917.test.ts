@@ -19,6 +19,7 @@ import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthError, ForbiddenError, MfaRequiredError } from '@/lib/auth/errors';
 import {
+  API_FORBIDDEN_MESSAGE,
   API_MFA_ENROLLMENT_REQUIRED_MESSAGE,
   API_MFA_REQUIRED_MESSAGE,
   API_OP_PERMISSION_DENIED_MESSAGE,
@@ -83,6 +84,8 @@ interface Case {
   method: Method;
   /** 403 の code (従来のまま) */
   code: string;
+  /** 二段階認証でない 403 の文 (従来のまま)。省略すると「権限がありません」 */
+  deniedMessage?: string;
   call: () => Promise<Response>;
 }
 
@@ -91,7 +94,8 @@ const OP = 'OP_PERMISSION_DENIED';
 const CASES: Case[] = [
   { file: 'src/app/api/admin/catalog/import/route.ts', method: 'POST', code: OP, call: async () => (await import('@/app/api/admin/catalog/import/route')).POST(req('POST', '/api/admin/catalog/import')) },
   { file: 'src/app/api/admin/finance/exports/route.ts', method: 'GET', code: OP, call: async () => (await import('@/app/api/admin/finance/exports/route')).GET(req('GET', '/api/admin/finance/exports')) },
-  { file: 'src/app/api/admin/finance/exports/route.ts', method: 'POST', code: OP, call: async () => (await import('@/app/api/admin/finance/exports/route')).POST(req('POST', '/api/admin/finance/exports')) },
+  // POST は以前から authFailureNested (既定の表) を通すので、二段階認証でない 403 の文は「この操作を行う権限がありません」
+  { file: 'src/app/api/admin/finance/exports/route.ts', method: 'POST', code: OP, deniedMessage: API_FORBIDDEN_MESSAGE, call: async () => (await import('@/app/api/admin/finance/exports/route')).POST(req('POST', '/api/admin/finance/exports')) },
   { file: 'src/app/api/admin/finance/refunds/route.ts', method: 'POST', code: OP, call: async () => (await import('@/app/api/admin/finance/refunds/route')).POST(req('POST', '/api/admin/finance/refunds')) },
   { file: 'src/app/api/admin/moderation/[type]/[id]/restore/route.ts', method: 'POST', code: OP, call: async () => (await import('@/app/api/admin/moderation/[type]/[id]/restore/route')).POST(req('POST', `/api/admin/moderation/recipe/${ID}/restore`), modCtx) },
   { file: 'src/app/api/admin/moderation/[type]/[id]/route.ts', method: 'GET', code: OP, call: async () => (await import('@/app/api/admin/moderation/[type]/[id]/route')).GET(req('GET', `/api/admin/moderation/recipe/${ID}`), modCtx) },
@@ -149,7 +153,8 @@ const caseName = (c: Case) => `${c.method} ${c.file}`;
 const GATE_ERRORS = [
   ['二段階認証の確認 (AUTH_2FA_REQUIRED)', () => new MfaRequiredError('AUTH_2FA_REQUIRED', RAW_MFA_TEXT), API_MFA_REQUIRED_MESSAGE],
   ['二段階認証の登録 (AUTH_2FA_ENROLLMENT_REQUIRED)', () => new MfaRequiredError('AUTH_2FA_ENROLLMENT_REQUIRED', RAW_MFA_TEXT), API_MFA_ENROLLMENT_REQUIRED_MESSAGE],
-  ['ロールが足りない (PERM_DENIED)', () => new ForbiddenError('PERM_DENIED', RAW_FORBIDDEN_TEXT), API_OP_PERMISSION_DENIED_MESSAGE],
+  /** 文が null = その route の従来の二段階認証でない 403 の文 (Case.deniedMessage) */
+  ['ロールが足りない (PERM_DENIED)', () => new ForbiddenError('PERM_DENIED', RAW_FORBIDDEN_TEXT), null],
 ] as const;
 
 beforeEach(() => {
@@ -175,7 +180,7 @@ describe.each(CASES.map((c) => [caseName(c), c] as const))('%s: ゲートの 403
     const res = await c.call();
     expect(res.status).toBe(403);
     const text = await res.text();
-    expect(JSON.parse(text)).toEqual({ error: { code: c.code, message } });
+    expect(JSON.parse(text)).toEqual({ error: { code: c.code, message: message ?? c.deniedMessage ?? API_OP_PERMISSION_DENIED_MESSAGE } });
     expect(text).not.toContain(RAW_MFA_TEXT);
     expect(text).not.toContain(RAW_FORBIDDEN_TEXT);
     expect(h.requireRole).toHaveBeenCalledTimes(1);
