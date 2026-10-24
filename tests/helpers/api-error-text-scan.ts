@@ -8,7 +8,8 @@
  *   本文 = `NextResponse.json(本文, …)` / `Response.json(本文, …)` の 1 つ目の引数と、BODY_TEXT_CALLS の関数の文の引数
  *     (`challengeError(code, 文, status)` の 2 つ目)
  *   本文の文 = 本文のオブジェクトの `error` / `message` の値 (値がオブジェクトなら、その中の `error` / `message` も)。
- *     値の位置 = 式そのもの・三項演算子の 2 つの枝・?? / || の両辺・括弧・as / satisfies・テンプレートの文字の部分。
+ *     値の位置 = 式そのもの・三項演算子の 2 つの枝・?? / || の両辺・括弧・as / satisfies・テンプレートの文字の部分
+ *     (findErrorTexts / findValidationMessageTexts に substitutions を渡すと、テンプレートの式の部分も値として読む。renderSubstitution)。
  *     名前 (定数・変数) は、同じファイルの `const 名前 = …` と、import 元のファイルの `export const 名前 = …` を
  *     MAX_RESOLVE_DEPTH 段までたどる
  *   違反 = ラテン文字を含み日本語 (ひらがな・カタカナ・漢字・全角) を 1 文字も含まない文 / 値が `X.message` の文
@@ -221,9 +222,15 @@ function renderTemplate(sf: ts.SourceFile, node: ts.TemplateExpression, depth: n
 
 /**
  * テンプレートの 1 つの式を、走査で読む文にする。文字列の字・定数 (同じファイルと import 元の const)・配列の定数の join・
- * 数 (数の字・Math の関数・数どうしの計算) は値にする。読み取れない式は、見逃しの一覧になければ印 (UNRESOLVED_SUBSTITUTION) にする
+ * 数 (数の字・Math の関数・数どうしの計算) は値にする。見逃しの一覧にある式は空にし、それ以外の読み取れない式は印 (UNRESOLVED_SUBSTITUTION) にする
  */
 function renderSubstitution(sf: ts.SourceFile, node: ts.Expression, depth: number, options: SubstitutionOptions): string {
+  // 見逃しの一覧は、式の字面のまま (名前をたどる前に) 引く (`maxOffsetDays` を、初期値の関数の呼び出しでなく名前で載せられるように)
+  const key = substitutionKey(sf.fileName, node.getText(sf));
+  if (options.exempt.has(key)) {
+    options.used?.add(key);
+    return '';
+  }
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
   if (ts.isTemplateExpression(node)) return renderTemplate(sf, node, depth, options);
   if (ts.isNumericLiteral(node)) return NUMBER_SUBSTITUTION;
@@ -260,11 +267,6 @@ function renderSubstitution(sf: ts.SourceFile, node: ts.Expression, depth: numbe
   if (ts.isIdentifier(node) && depth < MAX_RESOLVE_DEPTH) {
     const resolved = resolveConst(sf, node.text);
     if (resolved) return renderSubstitution(resolved.sf, resolved.init, depth + 1, options);
-  }
-  const key = substitutionKey(sf.fileName, node.getText(sf));
-  if (options.exempt.has(key)) {
-    options.used?.add(key);
-    return '';
   }
   return ` ${UNRESOLVED_SUBSTITUTION} `;
 }
