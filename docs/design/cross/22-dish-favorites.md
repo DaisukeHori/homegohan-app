@@ -345,7 +345,7 @@
 
 ### 6.7 モジュールと契約 (決めること 7)
 
-- `src/modules/dish-favorites/core.ts`: 定数 (§13)・Zod (`DishIngredientItemSchema`・`DishIngredientSchema`・`DishSnapshotSchema`・`SaveDishFavoriteBodySchema`・`DishFavoriteSchema`・`DishFavoriteRowSchema`・`DishNameSchema`・`DishFavoriteSortSchema`)・純関数 (`displayDishNameOf`・`dishNameKeyOf`・`dishFavoritesQueryOf`・`dishSnapshotFromMenuDish`・`ingredientLineOf`・`recipeModalDataOf`・`ingredientInputsOf`・`toDishFavorite`・`dishJsonByteLength`)・失敗の文とコード。import は `zod` だけ。
+- `src/modules/dish-favorites/core.ts`: 定数 (§13)・Zod (`DishIngredientItemSchema`・`DishIngredientSchema`・`DishSnapshotSchema`・`SaveDishFavoriteBodySchema`・`DishFavoriteSchema`・`DishFavoriteRowSchema`・`DishNameSchema`・`DishFavoriteSortSchema`)・純関数 (`displayDishNameOf`・`dishNameKeyOf`・`dishFavoritesQueryOf`・`dishSnapshotFromMenuDish`・`menuDishIngredientsOf` (#2023。献立の料理の材料を `ingredientInputsOf` に渡せる形にそろえる)・`ingredientLineOf`・`recipeModalDataOf`・`ingredientInputsOf`・`toDishFavorite`・`dishJsonByteLength`)・失敗の文とコード。import は `zod` だけ。
 - `src/modules/dish-favorites/server.ts`: `dishFavoritesMaxPerUser`・`listDishFavorites`・`findDishFavoriteByName`・`countDishFavorites`・`saveDishFavorite`・`deleteDishFavorite`。RLS の効く client (`Pick<SupabaseClient, 'from'>`) を受け取る。`process.env.DISH_FAVORITES_MAX_PER_USER` を読む唯一の場所。
 - 依存の向き: `src/app/api/favorites/**` → `core` + `server`。`src/app/(main)/favorites/**`・`menus/weekly/page.tsx` → `core` だけ。モジュールは `src/app`・`src/components` を import しない。
 - 契約の逐語は §8。エラー表は §10。
@@ -2911,7 +2911,7 @@ R-2 の『ページを読み直したときの ♥ の印は保存の状態と�
 | `src/app/(main)/menus/weekly/_components/modals/RecipeModal.tsx` | 変えない。お気に入りの画面からも使う (§7.12) | ♥ の `data-testid`・`aria-pressed`・描画を 1 か所に |
 | `src/app/(main)/favorites/page.tsx`・`FavoriteListItem.tsx`・`FavoriteRecipeModal.tsx` | 差分 (§7.10〜§7.12)。見た目と文言は保つ | R-13 |
 | `src/app/(main)/menus/weekly/page.tsx`・`recipeReducer.ts` | 差分 (§7.8・§7.9) | ♥ の配線の置き換え |
-| `src/app/(main)/menus/weekly/page.tsx` の `addRecipeToShoppingList` (材料を名前と分量に分ける正規表現・`new Set` の重複の除去) | 変えない。正規表現は `core.ts` の `INGREDIENT_AMOUNT_PATTERN` に同じ文字列で写す (2 か所になる)。重複の除去は写さない (F-32) | ♥ の配線の範囲外 (Q-8)。2 か所の正規表現を見比べる番兵は足さない (`core.ts` 側は U-10 が分け方を守る)。Q-8 で献立の画面が `ingredientInputsOf` を使えば 1 か所になる |
+| `src/app/(main)/menus/weekly/page.tsx` の `addRecipeToShoppingList` (材料を名前と分量に分ける正規表現・`new Set` の重複の除去) | 本書では変えない。重複の除去は写さない (F-32)。#2023 (Q-8) で献立の画面が `_state/recipeShoppingList.ts` から `menuDishIngredientsOf` → `ingredientInputsOf` を使う形になり、正規表現は `core.ts` の `INGREDIENT_AMOUNT_PATTERN` の 1 か所になった (重複の除去は献立の画面の側に残る) | ♥ の配線の範囲外 (Q-8)。分け方は `core.ts` の U-10 と献立の画面の回帰テスト (`src/__tests__/app/menus/weekly/recipe-shopping-list.test.ts`) が守る |
 | `src/lib/account-export-tables.ts`・`src/lib/env.ts`・`.env.example` | 1 行 / 1 項目 / 3 行 (§7.6・§7.7) | 書き出し・環境変数の一覧 |
 | `src/lib/legal/privacy-text.ts` | 変えない | 第3条「レシピ」の行の「保存をしたレシピ」に含まれる (§6.6) |
 | `src/components/marketing/landing-copy.ts` の `favorites` の主張 | 変えない | 根拠のパスは残る (F-20) |
@@ -2956,8 +2956,8 @@ R-2 の『ページを読み直したときの ♥ の印は保存の状態と�
 | Q-5 | 上限 300 の値と、同時の POST で 1〜2 件超えうること | 300 と安全弁のまま。値は環境変数で変えられる | オーナー (値) |
 | Q-6 | `tests/api-list-range-scan.test.ts` の走査の範囲が `src/app/api` だけで、`.range(` を `src/modules` に置く本書の形は見張りの外になる | 本書の V-3 が `resolveBeyondLastPage` を使うことを確かめる。走査の範囲に `src/modules` を足す改定は見張りの PR で (段 B1 と同時でよい) | — (実装者の判断で段 B1 に含めてよい) |
 | Q-7 | 同じ名前・別の中身の扱い (名前で 1 件・♥ は名前で引く。S-4・S-5) | §5 で確定した構造の帰結。変えるなら構造裁定への差し戻し | オーナー (異議があれば) |
-| Q-8 | 献立の画面の「材料を買い物リストに追加」(`addRecipeToShoppingList`) は、材料が構造の形の料理 (本番の 6 割。F-31) で例外になり「追加に失敗しました」を出す (F-32。本書の前からある不具合) | 本書では変えない (♥ の配線の範囲外)。直すなら別の Issue で、本書の `ingredientInputsOf` (構造の形と 1 行の文字列の両方を受ける) を献立の画面からも使う形にできる (そのとき正規表現の 2 か所は 1 か所になる。献立の画面は材料の列を 2 か所から集めるので、重複の除去はその側に残す。§18) | オーケストレーター (別の Issue にするか) |
-| Q-9 | `types/domain.ts` の `DishDetail.ingredients?: string[]` が実データ (構造の形) と合わない (F-10) | 本書では変えない (型を直すと献立の画面の材料の扱いの全経路に波及する)。本書の `dishSnapshotFromMenuDish` は `unknown` として読むので型に依らない | オーケストレーター (別の Issue にするか) |
+| Q-8 | 献立の画面の「材料を買い物リストに追加」(`addRecipeToShoppingList`) は、材料が構造の形の料理 (本番の 6 割。F-31) で例外になり「追加に失敗しました」を出す (F-32。本書の前からある不具合) | 本書では変えない (♥ の配線の範囲外)。直すなら別の Issue で、本書の `ingredientInputsOf` (構造の形と 1 行の文字列の両方を受ける) を献立の画面からも使う形にできる (そのとき正規表現の 2 か所は 1 か所になる。献立の画面は材料の列を 2 か所から集めるので、重複の除去はその側に残す。§18) | #2023 で解消 (献立の画面は `_state/recipeShoppingList.ts` の `addRecipeIngredientsToShoppingList` が `menuDishIngredientsOf` → 重複の除去 → `ingredientInputsOf` で送る) |
+| Q-9 | `types/domain.ts` の `DishDetail.ingredients?: string[]` が実データ (構造の形) と合わない (F-10) | 本書では変えない (型を直すと献立の画面の材料の扱いの全経路に波及する)。本書の `dishSnapshotFromMenuDish` は `unknown` として読むので型に依らない | #2023 では型を変えない (献立の画面の追加は材料を `unknown` として `menuDishIngredientsOf` で読むので型に依らない)。残りはオーケストレーター |
 
 ## 22. 改定履歴
 
