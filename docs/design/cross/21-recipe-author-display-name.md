@@ -934,7 +934,6 @@ const people: Record<
   Person
 > = {} as never;
 let publicRecipeId: string;
-let privateRecipeId: string;
 let systemRecipeId: string;
 /** I-12 で退会させる leaver の公開レシピ */
 let leaverRecipeId: string;
@@ -987,13 +986,11 @@ beforeAll(async () => {
       .insert({ user_id: people[key].user.userId, name: `t-cross21-${key}-${TS}`, is_public: true });
     if (error) throw new Error(`recipes (${key}): ${error.message}`);
   }
-  const { data: priv, error: privError } = await supabaseAdmin
+  // privateOnly の非公開レシピ (I-2 で公開の内容が無い人として返らないこと・I-5 で本人には返ることを確かめる)
+  const { error: privError } = await supabaseAdmin
     .from('recipes')
-    .insert({ user_id: people.privateOnly.user.userId, name: `t-cross21-private-${TS}`, is_public: false })
-    .select('id')
-    .single();
-  if (privError || !priv) throw new Error(`recipes (private): ${privError?.message}`);
-  privateRecipeId = priv.id as string;
+    .insert({ user_id: people.privateOnly.user.userId, name: `t-cross21-private-${TS}`, is_public: false });
+  if (privError) throw new Error(`recipes (private): ${privError.message}`);
   // 作者のいないシステムの公開レシピ (user_id NULL。RLS の user_id IS NULL の枝で誰にでも見える)
   const { data: sys, error: sysError } = await supabaseAdmin
     .from('recipes')
