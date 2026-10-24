@@ -66,6 +66,7 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import {
@@ -128,7 +129,7 @@ export async function GET(request: Request, props: Params) {
     }
     if (err instanceof ForbiddenError) {
       return NextResponse.json(
-        { error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } },
+        { error: { code: 'OP_PERMISSION_DENIED', message: operatorForbiddenMessageOf(err) } },
         { status: 403 },
       );
     }
@@ -226,7 +227,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
     }
     if (err instanceof ForbiddenError) {
       return NextResponse.json(
-        { error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } },
+        { error: { code: 'OP_PERMISSION_DENIED', message: operatorForbiddenMessageOf(err) } },
         { status: 403 },
       );
     }

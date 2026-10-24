@@ -18,6 +18,7 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { createClient } from '@/lib/supabase/server';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
@@ -62,7 +63,7 @@ function errorJson(code: string, message: string, status: number): NextResponse 
 /** requireRole の失敗 → 401 / 403 (既存の super-admin の route と同じ形)。それ以外は投げ直す */
 function authFailure(err: unknown): NextResponse {
   if (err instanceof AuthError) return errorJson('AUTH_UNAUTHENTICATED', '認証が必要です', HTTP_UNAUTHORIZED);
-  if (err instanceof ForbiddenError) return errorJson('OP_PERMISSION_DENIED', '権限がありません', HTTP_FORBIDDEN);
+  if (err instanceof ForbiddenError) return errorJson('OP_PERMISSION_DENIED', operatorForbiddenMessageOf(err), HTTP_FORBIDDEN);
   throw err;
 }
 
