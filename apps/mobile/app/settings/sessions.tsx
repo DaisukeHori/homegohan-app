@@ -4,7 +4,7 @@
  *
  * - 端末の見出しは device_label (UA から決まる言葉)。端末名 (device_name) は「端末名: …」として添えるだけ (§7.1)。
  * - この端末には解除のボタンを出さない (この端末のログアウトは設定のタブの「ログアウト」。この画面は signOutOnDevice を呼ばない §22 N-34)。
- * - 失敗の文は getApiErrorMessage (本文の error = サーバーが決めた固定の文。圏外は通信の文)。
+ * - 失敗の文は getJapaneseApiErrorMessage (本文の error = サーバーが決めた固定の文。圏外は通信の文。日本語でない例外の文は固定の文)。
  */
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
@@ -12,7 +12,7 @@ import { Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Text } from "../../src/components/ui/Text";
 
 import { Button, Card, LoadingState, PageHeader, SectionHeader } from "../../src/components/ui";
-import { getApiErrorMessage } from "../../src/lib/api-error";
+import { getJapaneseApiErrorMessage } from "../../src/lib/api-error";
 import {
   fetchLoginHistory,
   fetchSessions,
@@ -64,7 +64,7 @@ export default function SessionsSettingsScreen() {
       const [sessions, history] = await Promise.all([fetchSessions(), fetchLoginHistory()]);
       setLoad({ kind: "ready", sessions, history });
     } catch (e: unknown) {
-      setLoad({ kind: "error", message: getApiErrorMessage(e, LOAD_FAILED_MESSAGE) });
+      setLoad({ kind: "error", message: getJapaneseApiErrorMessage(e, LOAD_FAILED_MESSAGE) });
     }
   }, []);
 
@@ -85,7 +85,7 @@ export default function SessionsSettingsScreen() {
           : current,
       );
     } catch (e: unknown) {
-      Alert.alert("ログアウトできませんでした", getApiErrorMessage(e, REVOKE_FAILED_MESSAGE));
+      Alert.alert("ログアウトできませんでした", getJapaneseApiErrorMessage(e, REVOKE_FAILED_MESSAGE));
     } finally {
       setBusy(false);
     }
@@ -100,7 +100,7 @@ export default function SessionsSettingsScreen() {
       await revokeOtherSessions();
       await reload();
     } catch (e: unknown) {
-      Alert.alert("ログアウトできませんでした", getApiErrorMessage(e, REVOKE_FAILED_MESSAGE));
+      Alert.alert("ログアウトできませんでした", getJapaneseApiErrorMessage(e, REVOKE_FAILED_MESSAGE));
     } finally {
       setBusy(false);
     }
