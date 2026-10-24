@@ -4,6 +4,7 @@
  */
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { RECIPE_AUTHOR_DISPLAY_NAMES_RPC } from '@/lib/recipes/viewer-lookups';
 
 // --- shared supabase mock ---
 const mockGetUser = vi.fn();
@@ -216,6 +217,12 @@ describe('#168 /api/recipes/[id]/comments GET', () => {
   // #948 でこのエンドポイントに認証必須化 (未認証401) が導入されたため、
   // 認証済みユーザーでコメント一覧を取得するケースで検証する。
   it('認証済みユーザーはコメント一覧を取得できる (user_id は含まれない)', async () => {
+    // 書いた人の表示名は関数 recipe_author_display_names で引く (#1917・cross/21。埋め込みは PostgREST が解決できない)
+    mockRpc.mockImplementation(async (fn: string) =>
+      fn === RECIPE_AUTHOR_DISPLAY_NAMES_RPC
+        ? { data: [{ author_id: 'uid-alice', display_name: 'Alice' }], error: null }
+        : { data: null, error: null },
+    );
     mockGetUser.mockResolvedValue({ data: { user: { id: 'uid-reader' } }, error: null });
     const selectChain = {
       eq: vi.fn().mockReturnThis(),
@@ -232,15 +239,7 @@ describe('#168 /api/recipes/[id]/comments GET', () => {
         error: null,
       }),
     };
-    // 書いた人の名前は user_profiles を別のクエリで引く (#1917。埋め込みは PostgREST が解決できない)
-    const profileChain = {
-      in: vi.fn().mockResolvedValue({ data: [{ id: 'uid-alice', nickname: 'Alice' }], error: null }),
-    };
-    mockFrom.mockImplementation((table: string) =>
-      table === 'user_profiles'
-        ? { select: vi.fn().mockReturnValue(profileChain) }
-        : { select: vi.fn().mockReturnValue(selectChain) },
-    );
+    mockFrom.mockImplementation(() => ({ select: vi.fn().mockReturnValue(selectChain) }));
 
     const res = await commentsGET(new Request('http://localhost/api/recipes/r1/comments'), {
       params: { id: 'r1' },
@@ -289,7 +288,7 @@ describe('#169 /api/recipes/[id] GET view_count', () => {
     recipe_comments: [],
   };
 
-  /** 作者の名前 (user_profiles) と自分のいいね (recipe_likes) を引くクエリ (#1917。埋め込まずに別のクエリで引く)。どちらも 0 行 */
+  /** 自分のいいね (recipe_likes) を引くクエリ (#1917。埋め込まずに別のクエリで引く)。0 行 */
   const emptyLookup = () => {
     const chain = {
       eq: vi.fn().mockReturnThis(),
@@ -298,7 +297,11 @@ describe('#169 /api/recipes/[id] GET view_count', () => {
     return { select: vi.fn().mockReturnValue(chain) };
   };
 
-  beforeEach(() => vi.resetAllMocks());
+  beforeEach(() => {
+    vi.resetAllMocks();
+    // reset で mockRpc が undefined を返すと、作者の表示名の rpc (未ログインでも呼ぶ) の names.error で落ちる
+    mockRpc.mockResolvedValue({ data: null, error: null });
+  });
 
   it('未認証リクエストでは view_count を更新しない', async () => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
@@ -318,7 +321,9 @@ describe('#169 /api/recipes/[id] GET view_count', () => {
     expect(res.status).toBe(200);
     // #257: view_count 更新は increment_recipe_view_count RPC 経由。
     // 未認証時は当該 RPC が呼ばれていないこと(update モックは実装に存在せず検証にならないため RPC を直接検証)。
-    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockRpc).not.toHaveBeenCalledWith('increment_recipe_view_count', expect.anything());
+    // 作者の表示名は未ログインでも引く (cross/21)
+    expect(mockRpc).toHaveBeenCalledWith(RECIPE_AUTHOR_DISPLAY_NAMES_RPC, { p_user_ids: ['uid-owner'] });
   });
 
   it('認証済みリクエストでは view_count を更新する', async () => {

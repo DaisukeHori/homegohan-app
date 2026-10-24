@@ -17,8 +17,9 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
-  // 書いた人の名前 (user_profiles) は埋め込まずに別のクエリで引く (recipe_comments.user_id の外部キーは auth.users 宛で、
-  // `user_profiles(nickname)` の埋め込みは PostgREST が解決できず、この API はいつも 500 になっていた。#1917。src/lib/recipes/viewer-lookups.ts)
+  // 書いた人の表示名は埋め込まずに関数 recipe_author_display_names で引く (recipe_comments.user_id の外部キーは auth.users 宛で、
+  // `user_profiles(nickname)` の埋め込みは PostgREST が解決できず、この API はいつも 500 になっていた。#1917。
+  // src/lib/recipes/viewer-lookups.ts・cross/21)
   const { data, error } = await supabase
     .from('recipe_comments')
     .select('id, content, rating, created_at, user_id')
@@ -41,7 +42,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     id: c.id,
     content: c.content,
     rating: c.rating,
-    authorName: recipeAuthorName(lookups.nicknames.get(c.user_id)),
+    authorName: recipeAuthorName(lookups.authorNames.get(c.user_id)),
     createdAt: c.created_at,
   }));
 
@@ -80,7 +81,8 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
       rating = r;
     }
 
-    // 返す名前 (自分の user_profiles.nickname) は、埋め込まずに (PostgREST が解決できず、この API はいつも 500 になっていた。#1917)、
+    // 返す名前 (自分の表示名。関数 recipe_author_display_names は本人には設定に関わらず自分の名前を返す。cross/21) は、
+    // 埋め込まずに (PostgREST が解決できず、この API はいつも 500 になっていた。#1917)、
     // コメントを保存する前に引く。引けなかったときは何も保存せずに 500 にする (保存したあとで失敗すると、保存できたのに失敗に見える)
     const lookups = await loadRecipeViewerLookups(supabase, user.id, { authorIds: [user.id], recipeIds: [] });
     if (!lookups.ok) {
@@ -106,7 +108,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         id: data.id,
         content: data.content,
         rating: data.rating,
-        authorName: recipeAuthorName(lookups.nicknames.get(user.id)),
+        authorName: recipeAuthorName(lookups.authorNames.get(user.id)),
         createdAt: data.created_at,
       }
     });
