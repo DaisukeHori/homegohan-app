@@ -357,22 +357,20 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: AI_NUTRITION_FEEDBACK_QUERY_REQUIRED_MESSAGE }, { status: 400 });
     }
 
+    // 形の違う値 (UUID でない cacheId・実在しない日付) は DB に渡さず、行が無いときと同じ not_found
+    // (uuid・date 型の列に渡すと失敗し、下の「DB の失敗は 500」に入るため。#1917 の続き)。cacheId があれば cacheId で引く
+    if (cacheId ? !isUuid(cacheId) : !isCalendarDate(date)) {
+      return NextResponse.json({ status: 'not_found' });
+    }
+
     let query = supabase
       .from('nutrition_feedback_cache')
       .select('id, feedback, status, nutrition_hash')
       .eq('user_id', user.id);
 
-    // 形の違う値 (UUID でない cacheId・実在しない日付) は DB に渡さず、行が無いときと同じ not_found
-    // (uuid・date 型の列に渡すと失敗し、下の「DB の失敗は 500」に入るため。#1917 の続き)
     if (cacheId) {
-      if (!isUuid(cacheId)) {
-        return NextResponse.json({ status: 'not_found' });
-      }
       query = query.eq('id', cacheId);
     } else if (date) {
-      if (!isCalendarDate(date)) {
-        return NextResponse.json({ status: 'not_found' });
-      }
       query = query.eq('target_date', date);
     }
 
