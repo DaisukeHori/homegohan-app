@@ -48,6 +48,8 @@
 | R-15 | 新しい migration は追加だけ (既存の表・行に触らない)。戻し口を対で置く。番号はマージの直前に確定する | 設計書の規約 | §7.1・§7.2 |
 | R-16 | 画像は保存しない (料理の画像は献立の非公開バケットの署名付き URL で、献立と一緒に消える) | cross/19 | §6.2 |
 
+(R-2・R-3・R-4・R-13・R-14・R-17 は画面と route の要件 (♥ の印の一致・お気に入りの画面の一覧と検索と削除・詳細と買い物リスト・既存の e2e の文言と応答の形・本文の NULL 文字と壊れた JSON と 416・`RecipeModal` の再利用) なので配線の冊 `cross/22b-dish-favorites-wiring.md` §0.2 に移した。欠番ではない。番号は 17 本の通し番号のまま)
+
 ### 0.3 ユーザーシナリオ (20 本。トレースは §4.3)
 
 | # | シナリオ | 期待 |
@@ -62,7 +64,7 @@
 | S-15 | お気に入りを持つ人が退会する | `auth.users` の削除で CASCADE。書き出し (`/api/export`) には `dish_favorites` が本人の分だけ出る |
 | S-16 | 2 つのタブで同じ「肉じゃが」の ♥ を同時に押す | UNIQUE (user_id, dish_name_key) と upsert で 1 行。片方は 201 `created: true`、もう片方は 200 `created: false` (写しは後の内容) |
 | S-17 | お気に入りを保存した食事を献立から消す・週を作り直す | お気に入りは残る (写し。`source_planned_meal_id` は参照だけで外部キーを張らない) |
-| S-19 | 料理の名前が空白だけ・101 文字以上 | status は 400 `VALIDATION_ERROR`。POST も 400 |
+| S-19 | 料理の名前が空白だけ・101 文字以上・NULL 文字を含む | status は 400 `VALIDATION_ERROR` (DB に渡さない)。POST も 400 (NULL 文字は本文の検査で `INVALID_CHARACTER`) |
 | S-20 | 材料も作り方も無い料理 (買う・外食の献立の料理) を ♥ する | 保存できる (空の配列)。詳細は「材料情報なし」「作り方」の案内 |
 
 (S-1〜S-3・S-6〜S-8・S-13・S-18 は画面と route の流れなので配線の冊 `cross/22b-dish-favorites-wiring.md` §0.3 に移した。番号は 20 本の通し番号のまま)
@@ -117,7 +119,7 @@
 | # | 事実 | 場所 |
 |---|---|---|
 | F-9 | 献立の作り直し: `meal/regenerate` は `planned_meals` を insert と update で書き換える。`day/regenerate`・`v4/generate` は insert 中心。同じ料理名でも中身は変わり得る。`dishes` の中に料理の一意の id は無い | `src/app/api/ai/menu/meal/regenerate/route.ts:100`・`:130`・`supabase/baseline/prod_schema.sql:5904` (dishes の COMMENT) |
-| F-10 | 料理の型 `DishDetail`: `name`・`role?`・`ingredient?`・`ingredients?: string[]`・`recipeSteps?: string[]`・`ingredientsMd?`・`recipeStepsMd?`・`displayOrder?`・画像の列・栄養 29 項目 (`calories_kcal`・`protein_g` … `polyunsaturated_fat_g`)。`LegacyDishDetail` は旧形式の短いキー (`cal`・`protein` … `folicAcid`) を足す | `types/domain.ts:642-704`・`src/app/(main)/menus/weekly/_state/types.ts:8-33` |
+| F-10 | 料理の型 `DishDetail`: `name`・`role?`・`ingredient?`・`ingredients?: string[]`・`recipeSteps?: string[]`・`ingredientsMd?`・`recipeStepsMd?`・`displayOrder?`・画像の列・栄養 30 項目 (`calories_kcal` と、`protein_g` … `polyunsaturated_fat_g` の 29 項目)。`LegacyDishDetail` は旧形式の短いキー (`cal`・`protein` … `folicAcid`) を足す | `types/domain.ts:642-704`・`src/app/(main)/menus/weekly/_state/types.ts:8-33` |
 | F-11 | AI 相談の `like_recipe` は `recipe_likes` を `recipe_id` と `user_id` で select (`.single()`) し、無ければ insert する。プロンプトは `recipeId` を uuid と説明する | `src/lib/ai/consultation-action-executor.ts:1319-1343`・`src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts:748` |
 | F-12 | 公開レシピの `isLiked` は `recipe_likes.recipe_id` で引く (`loadRecipeViewerLookups`)。cross/21 がこのファイルを差し替える設計を持つ | `src/lib/recipes/viewer-lookups.ts:53-75` |
 | F-13 | 個人データの書き出し: `recipe_likes` は `self('user_id')`・`orderBy: ['user_id', 'recipe_id']`。新しい表は同じ配列に行を足す。分類漏れは `tests/account-export-tables.test.ts` が本番のスナップショットと新しい migration から見つける | `src/lib/account-export-tables.ts:1-15`・`:182-183` |
@@ -168,7 +170,7 @@
 
 - **表**: `dish_favorites` (§7.1)。1 行 = 本人 × 料理名の鍵。`dish` (jsonb) に料理の写し (§7.3 の `DishSnapshot`) を入れる。`source_planned_meal_id` は「どの食事から保存したか」の参照だけ (外部キーを張らない。献立が消えても残す)。
 - **同じ料理の判定**: 本人ごとの `dish_name_key` (表示名の空白を 1 つに・NFKC・小文字)。UNIQUE (user_id, dish_name_key)。
-- **写しの中身**: 名前・役割・kcal・栄養 28 項目・材料 (配列と markdown)・作り方 (配列と markdown)。画像は写さない (R-16)。
+- **写しの中身**: 名前・役割・kcal・栄養 29 項目 (kcal を除く)・材料 (配列と markdown)・作り方 (配列と markdown)。画像は写さない (R-16)。
 - **モジュール**: `src/modules/dish-favorites/core.ts` (定数・Zod・純関数。ブラウザでも使える) と `server.ts` (DB の操作。route だけが使う)。UI は `core` だけを import する。モジュールは `src/app` を import しない。
 - **API**: `/api/favorites` の下に 4 本。既存の `GET /api/favorites` は `dish_favorites` を読む形に書き換える (応答の形は `{ favorites, total }` のまま、行の形は snake_case に改める)。
 - **♥ の状態**: 名前で引く (status)。保存済みなら `favoriteId` を画面が持ち、押下で DELETE に使う。
@@ -189,7 +191,7 @@
 | S-15 | 退会 → `auth.users` の DELETE → `dish_favorites_user_id_fkey` CASCADE。書き出しは `ACCOUNT_EXPORT_TABLES` の `{ table: 'dish_favorites', scope: self('user_id'), orderBy: ['created_at', 'id'] }` | §7.1・§7.7・§16 |
 | S-16 | タブ A と B が同時に POST → 両方「行なし」→ 両方 upsert → UNIQUE で片方が INSERT・片方が `ON CONFLICT DO UPDATE` → A は `created: true` (201)・B は `created: false` (200)。1 行。`favoriteId` は同じ id | §7.1・§7.4・§9.3 |
 | S-17 | 食事を消す・週を作り直す → `planned_meals` が消える / 変わる。`dish_favorites` は外部キーを持たないので残る。`source_planned_meal_id` は指す先の無い uuid になるだけ (読まない) | §7.1 |
-| S-19 | status `name=`・空白だけ・101 文字 → `DishNameSchema.safeParse` 失敗 → 400 `DISH_FAVORITE_NAME_INVALID_MESSAGE`。POST も `dish.name` で同じ検証 | §7.3・§7.5 |
+| S-19 | status `name=`・空白だけ・101 文字・NULL 文字を含む → `DishNameSchema.safeParse` 失敗 (NULL 文字は `refine`) → 400 `DISH_FAVORITE_NAME_INVALID_MESSAGE`。DB には問い合わせない。POST も `dish.name` で同じ検証 (NULL 文字はその前に `rejectNullCharacterBody` が 400 `INVALID_CHARACTER`) | §7.3・§7.5・§9.3・§10 |
 | S-20 | 材料も作り方も無い料理 → 写しは `ingredients: []`・`recipe_steps: []`・md null → 保存できる。`RecipeModal` は「材料情報なし」と作り方の案内文を出す | §7.3・F-4 |
 
 ## 5. 構造裁定 (相 3・1 回だけ)
@@ -199,7 +201,7 @@
 | 案 | 中身 | 利点 | 欠点 | 裁定 |
 |---|---|---|---|---|
 | A (採用) | 新しい表 `dish_favorites` (本人 × 料理名の鍵で 1 行・写しを jsonb で持つ)。`recipe_likes` と分ける | 本人だけの RLS を最初から正しく張れる。`recipes` の公開 / いいね数 / コメント / 運営の非表示 (hidden_at) の仕組みを持ち込まない。写しは自己完結で献立の変化に影響されない。既存の `recipe_likes` の壊れた列・外部キー・トリガーに触らない (削除の承認を待たずに動かせる) | 表が 1 つ増える (書き出し・T-34・FK の一覧の追随が要る) | 採用 |
-| B | ♥ のたびに非公開の `recipes` の行 (`is_public = false`) を作り、`recipe_likes.recipe_id` で指す | 既存の表と API (詳細は `/api/recipes/{uuid}`) をそのまま使える | `recipes` は公開レシピの表で、`like_count` の同期トリガー・コメント・通報・運営の非表示・作者名 (cross/21) の対象になる。`recipe_likes` の『Anyone can view likes』が本人の献立の料理名を全ログインユーザーに読ませる (RLS を直す = 既存の変更)。`recipes.ingredients jsonb`・`steps text[]` は栄養 28 項目と markdown を持たず、写しが欠ける。`recipes` の行と `recipe_likes` の行の 2 つを消す整合が要る | 不採用 |
+| B | ♥ のたびに非公開の `recipes` の行 (`is_public = false`) を作り、`recipe_likes.recipe_id` で指す | 既存の表と API (詳細は `/api/recipes/{uuid}`) をそのまま使える | `recipes` は公開レシピの表で、`like_count` の同期トリガー・コメント・通報・運営の非表示・作者名 (cross/21) の対象になる。`recipe_likes` の『Anyone can view likes』が本人の献立の料理名を全ログインユーザーに読ませる (RLS を直す = 既存の変更)。`recipes.ingredients jsonb`・`steps text[]` は栄養 29 項目と markdown を持たず、写しが欠ける。`recipes` の行と `recipe_likes` の行の 2 つを消す整合が要る | 不採用 |
 | C | A の表で、同じ料理の判定を中身の指紋 (名前 + 材料 + 作り方の sha256) にする | 作り直しで中身が変わった料理を別のお気に入りとして持てる (♥ の印が中身と一致する) | 指紋を画面とサーバーで同じに計算する関数 (非同期の Web Crypto) が要り、status も中身を送る形になる。同じ名前が一覧に何件も並ぶ (名前順・検索で見分けられない)。上限に早く達する | 不採用 (§5.2) |
 
 ### 5.2 F の問い (縁の発生源を消すより単純な構造は無いか)
@@ -410,6 +412,12 @@ export function dishFavoritesLimitMessage(max: number): string {
 
 // ───────────────────────────── 名前の正規化 ─────────────────────────────
 
+/**
+ * NULL 文字 (U+0000)。Postgres の text は保存できず、問い合わせの値 (eq・ilike) に入ると DB が拒んで route が 500 になる
+ * (src/lib/api/null-character.ts と同じ理由)。本文は route が rejectNullCharacterBody で先に断る。URL の値 (status の name・一覧の q) はここで扱う
+ */
+const NULL_CHARACTER = '\u0000';
+
 /** 料理の表示名: 空白 (全角を含む) の連続を 1 つの半角空白にまとめ、前後を除く。幅と大文字小文字はそのまま */
 export function displayDishNameOf(raw: string): string {
   return raw.replace(/\s+/g, ' ').trim();
@@ -420,11 +428,20 @@ export function dishNameKeyOf(raw: string): string {
   return displayDishNameOf(raw).normalize('NFKC').toLowerCase();
 }
 
-/** 料理の名前 (入力は表示名に正規化してから長さを見る) */
+/** 料理の名前 (NULL 文字を含む値は通さない。入力は表示名に正規化してから長さを見る) */
 export const DishNameSchema = z
   .string()
+  .refine((raw) => !raw.includes(NULL_CHARACTER))
   .transform(displayDishNameOf)
   .pipe(z.string().min(1).max(DISH_FAVORITE_NAME_MAX_CHARS));
+
+/**
+ * 一覧の検索語 (GET /api/favorites の q): NULL 文字を除き、前後の空白を除いて、先頭 DISH_FAVORITES_QUERY_MAX_CHARS 文字で切る。
+ * 無い (null) ・空なら空 (絞らない)。一覧の route は不正な値を 400 にせず丸める (limit / offset / sort と同じ。§10)
+ */
+export function dishFavoritesQueryOf(raw: string | null): string {
+  return (raw ?? '').split(NULL_CHARACTER).join('').trim().slice(0, DISH_FAVORITES_QUERY_MAX_CHARS);
+}
 
 // ───────────────────────────── 写し (DishSnapshot) の Zod ─────────────────────────────
 
@@ -465,7 +482,7 @@ const nutrientShape = {
 } as const;
 
 export type DishFavoriteNutrientKey = keyof typeof nutrientShape;
-/** 栄養の項目名の一覧 (28 項目。写しを作る・RecipeModal の形にするときに回す) */
+/** 栄養の項目名の一覧 (29 項目。calories_kcal を除く。写しを作る・RecipeModal の形にするときに回す) */
 export const DISH_FAVORITE_NUTRIENT_KEYS = Object.keys(nutrientShape) as ReadonlyArray<DishFavoriteNutrientKey>;
 
 const textLine = (maxChars: number) => z.string().trim().min(1).max(maxChars);
@@ -695,7 +712,7 @@ export function dishFavoritesMaxPerUser(value: string | undefined = process.env.
 }
 
 export interface ListDishFavoritesQuery {
-  /** 名前の部分一致 (空なら絞らない)。route が長さを切ってから渡す */
+  /** 名前の部分一致 (空なら絞らない)。route が core.ts の dishFavoritesQueryOf で正規化 (NULL 文字を除き長さを切る) してから渡す */
   q: string;
   sort: DishFavoriteSort;
   offset: number;
@@ -1243,11 +1260,11 @@ describe('dish_favorites: 退会 (I-6)', () => {
 });
 ```
 
-### 7.15 単体テスト (新設 3 ファイル・書き換え 3 ファイル)。it 名は §12
+### 7.15 単体テスト (核の冊は新設 2 ファイル。route 3 本と画面の部品のテスト (新設 2・書き換え 3) は配線の冊 `cross/22b` §7.15)。it 名は §12
 
 | ファイル | 中身 | 作り方 |
 |---|---|---|
-| `tests/dish-favorites-core.test.ts` (新) | §7.3 の純関数と Zod (U-1〜U-12) | import は `@/modules/dish-favorites/core` だけ。DB もモックも要らない |
+| `tests/dish-favorites-core.test.ts` (新) | §7.3 の純関数と Zod (U-1〜U-14) | import は `@/modules/dish-favorites/core` だけ。DB もモックも要らない |
 | `tests/dish-favorites-server.test.ts` (新) | §7.4 の 5 関数 (V-1〜V-10) | `tests/helpers/fake-supabase.ts` の `createFakeSupabase` で `from` の呼び出し順の結果を並べる。`resolveBeyondLastPage` のログは `@/lib/db-logger` を `vi.mock` (`tests/api/favorites-route.test.ts` の形) |
 
 ## 8. facade 契約
@@ -1258,7 +1275,7 @@ describe('dish_favorites: 退会 (I-6)', () => {
 | TS (core) | `export const DishSnapshotSchema` / `export type DishSnapshot = z.infer<typeof DishSnapshotSchema>` / `export type DishSnapshotInput = z.input<typeof DishSnapshotSchema>` | 新設 |
 | TS (core) | `export const SaveDishFavoriteBodySchema = z.object({ dish: DishSnapshotSchema, source_planned_meal_id: uuid.nullable().default(null) })` / `export type SaveDishFavoriteBody` | 新設 |
 | TS (core) | `export const DishFavoriteSchema` (`id`・`dish_name`・`dish`・`source_planned_meal_id`・`created_at`・`updated_at`) / `export type DishFavorite` / `export const DishFavoriteRowSchema = DishFavoriteSchema.extend({ user_id, dish_name_key })` / `export type DishFavoriteRow` / `export function toDishFavorite(row: DishFavoriteRow): DishFavorite` | 新設 |
-| TS (core) | `export const DishNameSchema` (表示名に正規化して 1〜100 文字) / `export const DISH_FAVORITE_SORTS = ['newest', 'oldest', 'name'] as const` / `export const DishFavoriteSortSchema` / `export type DishFavoriteSort` / `export const DISH_FAVORITE_SORT_DEFAULT: DishFavoriteSort = 'newest'` | 新設 |
+| TS (core) | `export const DishNameSchema` (NULL 文字を含む値を通さず、表示名に正規化して 1〜100 文字) / `export function dishFavoritesQueryOf(raw: string / null): string` (`/` は union。一覧の q: NULL 文字を除き、前後の空白を除き、先頭 100 文字) / `export const DISH_FAVORITE_SORTS = ['newest', 'oldest', 'name'] as const` / `export const DishFavoriteSortSchema` / `export type DishFavoriteSort` / `export const DISH_FAVORITE_SORT_DEFAULT: DishFavoriteSort = 'newest'` | 新設 |
 | TS (core) | `export function displayDishNameOf(raw: string): string` / `export function dishNameKeyOf(raw: string): string` | 新設 |
 | TS (core) | `export function dishSnapshotFromMenuDish(dish: Readonly<Record<string, unknown>>, nameFallback?: string): DishSnapshotInput` | 新設 |
 | TS (core) | `export function recipeModalDataOf(favorite: DishFavorite): Record<string, unknown>` / `export function ingredientInputsOf(ingredients: ReadonlyArray<string>): ShoppingIngredientInput[]` / `export interface ShoppingIngredientInput { name: string; amount: string / null }` (`/` は union) | 新設 |
@@ -1292,6 +1309,10 @@ describe('dish_favorites: 退会 (I-6)', () => {
 | 面 | 現行 (origin/main `edff659e4`) | 設計後 |
 |---|---|---|
 | 一覧の検索・並び | `recipe_id` の ilike・`created_at` / `recipe_id` | `dish_name` の ilike・`created_at` / `dish_name_key` (+ `id` で安定) |
+| 一覧の検索語 `q` の正規化 | 前後の空白を除くだけ (`src/app/api/favorites/route.ts:60`)。NULL 文字・長い値もそのまま DB に渡る | `dishFavoritesQueryOf`: NULL 文字を除き、前後の空白を除き、先頭 100 文字 (`DISH_FAVORITES_QUERY_MAX_CHARS`) で切る (§7.3・§10) |
+| 一覧 `GET /api/favorites` の応答の形 | `{ favorites, total }`。行は `recipe_likes` を写した `{ id, recipeName (= recipe_id), recipeUuid, likedAt }` (camelCase。`src/app/api/favorites/route.ts:80-86`) | `{ favorites, total }` (外側の形は同じ。R-13 は配線の冊 §0.2)。行は `listDishFavorites` が返す `DishFavorite` (`{ id, dish_name, dish, source_planned_meal_id, created_at, updated_at }`・snake_case。`user_id`・`dish_name_key` は出さない。§7.3 `toDishFavorite`) |
+| 削除の鍵 | 料理の名前。お気に入りの画面は `DELETE /api/recipes/{料理名}/like` を呼ぶ (`src/app/(main)/favorites/page.tsx:111`) → uuid でないので 404 (消えない) | 行の `id` (uuid)。`DELETE /api/favorites/[id]` が `deleteDishFavorite(db, userId, id)` を呼ぶ。id は一覧の行の `id` か、status の応答の `id` (画面の `favoriteId`) |
+| ♥ の状態の鍵 | 料理の名前を `recipe_likes.recipe_id` (uuid) に当てる (常に当たらない) | 料理名の鍵 `dish_name_key` (`findDishFavoriteByName`)。名前が不正 (空白だけ・101 文字以上・NULL 文字を含む) なら status は 400 で DB に問い合わせない |
 | 同じ料理の判定 | (保存できないので無い) | 本人 × `dish_name_key` で 1 件 |
 | 件数の上限 | 無い | 300 (環境変数で上書き) |
 | RLS | `recipe_likes`: 『Anyone can view likes』(全ログイン利用者が全員の行を読める) | `dish_favorites`: 本人だけ (self 4 本)。anon は権限なし |
@@ -1311,11 +1332,12 @@ describe('dish_favorites: 退会 (I-6)', () => {
 | S0 | `POST` (dish.name の鍵 = K) | 本文が正典の形・写し ≤ 32 KB・件数 < 上限 | S1 (写し = 本文) | 201 `{ favorite, created: true }`。♥ 塗り・`favoriteId` |
 | S0 | `POST` | 件数 ≥ 上限 | S0 | 409 `CONFLICT_DISH_FAVORITES_LIMIT`。♥ 戻る・理由の文 |
 | S0 | `POST` | 本文が形でない・名前が空・写しが大きい | S0 | 400 `VALIDATION_ERROR` (壊れた JSON は `API_INVALID_JSON_MESSAGE`・NULL 文字は `INVALID_CHARACTER`)。♥ 戻る |
-| S0 | `GET status?name=K` | 名前が 1〜100 文字 | S0 | `{ favorited: false, id: null }`。♥ 空 |
+| S0 | `GET status?name=K` | 名前が `DishNameSchema` を通る (NULL 文字なし・表示名で 1〜100 文字) | S0 | `{ favorited: false, id: null }`。♥ 空 |
 | S0 | `DELETE /[id]` (この K の id は無い) | id が uuid の形 | S0 | 404。画面は「未保存」にそろえる |
 | S0 | 献立の作り直し・削除 | — | S0 | 何もしない |
 | S1 | `POST` (同じ K) | 本文が正典の形 (件数は数えない) | S1 (写し = 本文で置き換え) | 200 `{ favorite, created: false }` (同時押しでだけ起きる。S-16) |
-| S1 | `GET status?name=K` | — | S1 | `{ favorited: true, id }`。♥ 塗り・`favoriteId` |
+| S1 | `POST` (同じ K) | 本文が形でない・写しが大きい (壊れた JSON・NULL 文字を含む本文も) | S1 (写しは変わらない) | 400 `VALIDATION_ERROR` (壊れた JSON は `API_INVALID_JSON_MESSAGE`・NULL 文字は `INVALID_CHARACTER`)。upsert しない。♥ は戻る (塗りのまま) |
+| S1 | `GET status?name=K` | 名前が `DishNameSchema` を通る | S1 | `{ favorited: true, id }`。♥ 塗り・`favoriteId` |
 | S1 | `DELETE /[id]` (この K の id) | 本人の行 | S0 | 200。♥ 空・一覧から消える・`favoriteId` null |
 | S1 | `DELETE /[id]` を他人が | RLS で 0 行 | S1 | 404 (他人には在るかどうかを見せない) |
 | S1 | 献立の作り直し (同じ名前・別の中身) | — | S1 (写しは変わらない) | 次に開くと ♥ 塗り・写しは前の中身 (S-4) |
@@ -1323,6 +1345,9 @@ describe('dish_favorites: 退会 (I-6)', () => {
 | S1 | 一覧 `GET` | — | S1 | 行が出る (写しごと) |
 | S0 / S1 | 退会 | — | 行なし | CASCADE |
 | S0 / S1 | 未ログインの呼び出し | — | 変わらない | 401 |
+| S0 / S1 | `GET status?name=` (名前が無い・空白だけ・101 文字以上・NULL 文字を含む) | `DishNameSchema` を通らない | 変わらない | 400 `VALIDATION_ERROR` (`DISH_FAVORITE_NAME_INVALID_MESSAGE`)。DB に問い合わせない。♥ の印は変えない (S-19) |
+| S0 / S1 | 一覧 `GET` (q に NULL 文字・101 文字以上) | — | 変わらない | 200。q は `dishFavoritesQueryOf` で NULL 文字を除き 100 文字で切ってから絞る (500 にしない) |
+| S0 / S1 | DB の失敗 (status・一覧・POST・DELETE) | — | 変わらない | 500 `INTERNAL_ERROR` (原因は構造化ログ)。POST は ♥ を戻す |
 
 表に無い遷移を作ったら blocking (`POST` が S0 で上限を数えずに入れる・`DELETE` が RLS の外で消す・作り直しが写しを書き換える など)。
 
@@ -1335,17 +1360,19 @@ describe('dish_favorites: 退会 (I-6)', () => {
 | `POST /api/favorites` | JSON として読めない | 400 | `{ error: 'リクエストボディが不正です' }` | `API_INVALID_JSON_MESSAGE` |
 | `POST /api/favorites` | `SaveDishFavoriteBodySchema` に合わない (名前が空・101 文字・材料 51 件・栄養が負・uuid でない source) / 写しが 32768 バイト超 | 400 | `{ error: '料理の内容が正しくありません', code: 'VALIDATION_ERROR' }` | `DISH_FAVORITE_INVALID_MESSAGE`・`DISH_FAVORITE_VALIDATION_CODE` |
 | `POST /api/favorites` | 新しい名前で件数 ≥ 上限 | 409 | `{ error: 'お気に入りに保存できる件数の上限 (300 件) に達しています。ほかのお気に入りを削除してからお試しください', code: 'CONFLICT_DISH_FAVORITES_LIMIT' }` | `dishFavoritesLimitMessage(max)`・`DISH_FAVORITES_LIMIT_CODE` ([NEW]。cross/04 §4.2 CONFLICT 系に 1 行。§17) |
-| `GET /api/favorites/status` | `name` が無い・空白だけ・101 文字以上 | 400 | `{ error: '料理の名前を指定してください', code: 'VALIDATION_ERROR' }` | `DISH_FAVORITE_NAME_INVALID_MESSAGE` |
+| `GET /api/favorites/status` | `name` が無い・空白だけ・101 文字以上・NULL 文字 (U+0000) を含む | 400 | `{ error: '料理の名前を指定してください', code: 'VALIDATION_ERROR' }` | `DISH_FAVORITE_NAME_INVALID_MESSAGE` |
 | `DELETE /api/favorites/[id]` | id が uuid の形でない / 本人の行が無い (他人の行・消した行) | 404 | `{ error: '対象が見つかりません' }` | `API_NOT_FOUND_MESSAGE` |
 | 全 4 本 | DB の失敗 (読み込み・upsert・削除・行の形が正典と違う) | 500 | `{ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' }` (原因は構造化ログにだけ) | `internalError` (src/lib/api/errors.ts) |
 | `GET /api/favorites` | 件数より後ろの offset (416) | 200 | `{ favorites: [], total }` | `resolveBeyondLastPage` |
 | `GET /api/favorites` | `limit` / `offset` / `sort` が不正 | 200 | 丸めて返す (limit 1〜200 既定 100・offset 0〜100000・未知の sort は newest) | `clampIntParam`・`DISH_FAVORITE_SORT_DEFAULT` |
+| `GET /api/favorites` | `q` に NULL 文字 (U+0000) を含む | 200 | NULL 文字を除いた語で絞って返す (DB に NULL 文字を渡さない。渡すと DB が拒んで 500 になる) | `dishFavoritesQueryOf` |
+| `GET /api/favorites` | `q` が 101 文字以上 (前後の空白を除いたあと) | 200 | 先頭 100 文字で切った語で絞って返す | `dishFavoritesQueryOf`・`DISH_FAVORITES_QUERY_MAX_CHARS` |
 
 ## 12. テスト一覧 (it 名)
 
 | 種別 | ファイル | it 名 |
 |---|---|---|
-| 単体 (core) | `tests/dish-favorites-core.test.ts` (新) | U-1「displayDishNameOf は空白 (全角を含む) の連続を 1 つの半角空白にまとめ、前後を除く」/ U-2「dishNameKeyOf は NFKC と小文字にそろえる (全角英数・半角カナ・大文字の違いで同じ鍵になる)」/ U-3「DishNameSchema は空白だけ・101 文字を通さず、正規化した表示名を返す」/ U-4「DishSnapshotSchema は栄養 28 項目・calories_kcal・材料・作り方の既定値 (null・[]) を補い、負の栄養・NaN・材料 51 件・作り方 31 件・markdown 8001 文字を通さない」/ U-5「SaveDishFavoriteBodySchema は source_planned_meal_id を省略すると null、uuid でない値を通さない」/ U-6「dishSnapshotFromMenuDish は新形式のキーを優先し、無ければ旧形式 (cal・protein … folicAcid) から埋め、負・NaN・文字列でない値は null にする」/ U-7「dishSnapshotFromMenuDish は ingredients・recipeSteps の空でない文字列だけを集め、ingredientsMd・recipeStepsMd を写す。name が無ければ nameFallback」/ U-8「dishSnapshotFromMenuDish の結果は DishSnapshotSchema を通る (本番の形の料理 3 例: 材料と md あり / 配列だけ / 何も無い)」/ U-9「recipeModalDataOf は role・calories_kcal・栄養を直下に、ingredientsMd・recipeStepsMd・ingredients・recipeSteps を dishes[0] に、imageUrl は null にする」/ U-10「ingredientInputsOf は『鶏むね肉 200g』『塩 少々』を name と amount に分け、分量の無い行は amount null」/ U-11「toDishFavorite は user_id と dish_name_key を落とす」/ U-12「dishJsonByteLength は UTF-8 のバイト数 (日本語は 1 文字 3 バイト)」/ U-13「DISH_FAVORITE_NUTRIENT_KEYS は 28 項目で types/domain.ts の DishDetail の栄養の名前 (calories_kcal を除く) と同じ集合」|
+| 単体 (core) | `tests/dish-favorites-core.test.ts` (新) | U-1「displayDishNameOf は空白 (全角を含む) の連続を 1 つの半角空白にまとめ、前後を除く」/ U-2「dishNameKeyOf は NFKC と小文字にそろえる (全角英数・半角カナ・大文字の違いで同じ鍵になる)」/ U-3「DishNameSchema は空白だけ・101 文字・NULL 文字を含む値を通さず、正規化した表示名を返す」/ U-4「DishSnapshotSchema は栄養 29 項目・calories_kcal・材料・作り方の既定値 (null・[]) を補い、負の栄養・NaN・材料 51 件・作り方 31 件・markdown 8001 文字を通さない」/ U-5「SaveDishFavoriteBodySchema は source_planned_meal_id を省略すると null、uuid でない値を通さない」/ U-6「dishSnapshotFromMenuDish は新形式のキーを優先し、無ければ旧形式 (cal・protein … folicAcid) から埋め、負・NaN・文字列でない値は null にする」/ U-7「dishSnapshotFromMenuDish は ingredients・recipeSteps の空でない文字列だけを集め、ingredientsMd・recipeStepsMd を写す。name が無ければ nameFallback」/ U-8「dishSnapshotFromMenuDish の結果は DishSnapshotSchema を通る (本番の形の料理 3 例: 材料と md あり / 配列だけ / 何も無い)」/ U-9「recipeModalDataOf は role・calories_kcal・栄養を直下に、ingredientsMd・recipeStepsMd・ingredients・recipeSteps を dishes[0] に、imageUrl は null にする」/ U-10「ingredientInputsOf は『鶏むね肉 200g』『塩 少々』を name と amount に分け、分量の無い行は amount null」/ U-11「toDishFavorite は user_id と dish_name_key を落とす」/ U-12「dishJsonByteLength は UTF-8 のバイト数 (日本語は 1 文字 3 バイト)」/ U-13「DISH_FAVORITE_NUTRIENT_KEYS は 29 項目で types/domain.ts の DishDetail の栄養の名前 (calories_kcal を除く) と同じ集合」/ U-14「dishFavoritesQueryOf は null を空に、NULL 文字を除き、前後の空白を除き、101 文字以上を先頭 100 文字に切る」|
 | 単体 (server) | `tests/dish-favorites-server.test.ts` (新) | V-1「dishFavoritesMaxPerUser は正の整数の環境変数を使い、未設定・空・0・負・小数・数字でない値は既定の 300」/ V-2「listDishFavorites は user_id で絞り、q の ilike・sort ごとの order (newest = created_at desc / oldest = asc / name = dish_name_key) と id の order・range を掛ける」/ V-3「listDishFavorites は 416 のとき同じ絞り込みの head の count で数え直し、空の一覧と件数を返す」/ V-4「listDishFavorites は DB の失敗と、正典の形でない行を失敗にする (0 件にしない)」/ V-5「findDishFavoriteByName は dish_name_key (dishNameKeyOf) で maybeSingle し、無ければ null」/ V-6「saveDishFavorite は同じ鍵の行が無ければ件数を数え、上限以上なら limit (upsert しない)」/ V-7「saveDishFavorite は同じ鍵の行があれば件数を数えずに upsert し created: false」/ V-8「saveDishFavorite は onConflict user_id,dish_name_key で upsert し、dish_name を表示名・dish.name も表示名にそろえる」/ V-9「saveDishFavorite は DB の失敗 (確認・件数・upsert) を reason: 'db' で返す」/ V-10「deleteDishFavorite は id と user_id で delete し、returning が 0 行なら deleted: false」|
 | 契約 (静的) | `tests/dish-favorites-migration-contract.test.ts` (新) | §7.13 の C-1〜C-8 |
 | 結合 (実 DB) | `tests/integration/rls/dish-favorites.test.ts` (新) | §7.14 の I-1〜I-7 |
@@ -1370,6 +1397,8 @@ describe('dish_favorites: 退会 (I-6)', () => {
 | `DISH_FAVORITES_QUERY_MAX_CHARS` | = `DISH_FAVORITE_NAME_MAX_CHARS` | core.ts | 検索語は料理名の一部 |
 | `DISH_FAVORITES_PAGE_SIZE` | 50 | core.ts (お気に入りの画面の `PAGE_SIZE`) | 既存の値 (#263) |
 | `DISH_FAVORITE_SORTS` / `DISH_FAVORITE_SORT_DEFAULT` | `['newest', 'oldest', 'name']` / `'newest'` | core.ts | 既存の並び |
+| `DISH_FAVORITE_NUTRIENT_KEYS` | 栄養の項目名 29 個 (`protein_g` … `polyunsaturated_fat_g`。`calories_kcal` を除く) | core.ts (`nutrientShape` のキーから作る) | `types/domain.ts` の `DishDetail` の栄養の名前 (F-10。U-13 が集合の一致を見る) |
+| `NULL_CHARACTER` (export しない) | `'\u0000'` | core.ts | Postgres の text は U+0000 を保存できない (`src/lib/api/null-character.ts` と同じ理由)。`DishNameSchema` が通さず、`dishFavoritesQueryOf` が除く |
 | `UPSERT_CONFLICT_TARGET` | `'user_id,dish_name_key'` | server.ts | UNIQUE `dish_favorites_user_dish_name_key` |
 | `PG_INSUFFICIENT_PRIVILEGE` / `PG_UNIQUE_VIOLATION` / `PG_CHECK_VIOLATION` | `'42501'` / `'23505'` / `'23514'` | 結合テスト | Postgres のエラーコード |
 
@@ -1387,17 +1416,18 @@ describe('dish_favorites: 退会 (I-6)', () => {
 | トリガー | `trg_dish_favorites_updated_at` (既存の `update_updated_at_column()`) | DB |
 | RLS ポリシー | `dish_favorites_self_select`・`_insert`・`_update`・`_delete` | DB |
 | ファイル | `src/modules/dish-favorites/core.ts`・`src/modules/dish-favorites/server.ts` | `src/modules/` (新しいディレクトリ) |
-| 定数 | §13 の 16 個 + 失敗の文とコード 5 個 (`DISH_FAVORITE_INVALID_MESSAGE`・`DISH_FAVORITE_NAME_INVALID_MESSAGE`・`DISH_FAVORITE_VALIDATION_CODE`・`DISH_FAVORITES_LIMIT_CODE`・`dishFavoritesLimitMessage`) | `core.ts` |
+| 定数 | §13 の core.ts の export 18 個 (`DISH_FAVORITE_NAME_MAX_CHARS`・`DISH_FAVORITE_ROLE_MAX_CHARS`・`DISH_FAVORITE_INGREDIENTS_MAX_ITEMS`・`DISH_FAVORITE_INGREDIENT_MAX_CHARS`・`DISH_FAVORITE_STEPS_MAX_ITEMS`・`DISH_FAVORITE_STEP_MAX_CHARS`・`DISH_FAVORITE_MARKDOWN_MAX_CHARS`・`DISH_FAVORITE_DISH_MAX_BYTES`・`DISH_FAVORITES_MAX_PER_USER_DEFAULT`・`DISH_FAVORITES_LIST_LIMIT_MIN`・`DISH_FAVORITES_LIST_LIMIT_MAX`・`DISH_FAVORITES_LIST_LIMIT_DEFAULT`・`DISH_FAVORITES_LIST_OFFSET_MAX`・`DISH_FAVORITES_QUERY_MAX_CHARS`・`DISH_FAVORITES_PAGE_SIZE`・`DISH_FAVORITE_SORTS`・`DISH_FAVORITE_SORT_DEFAULT`・`DISH_FAVORITE_NUTRIENT_KEYS`) + 失敗の文とコード 5 個 (`DISH_FAVORITE_INVALID_MESSAGE`・`DISH_FAVORITE_NAME_INVALID_MESSAGE`・`DISH_FAVORITE_VALIDATION_CODE`・`DISH_FAVORITES_LIMIT_CODE`・`dishFavoritesLimitMessage`)。export しない定数は `NULL_CHARACTER` (§13)・`UUID_PATTERN`・`LEGACY_NUTRIENT_KEYS`・`INGREDIENT_AMOUNT_PATTERN` | `core.ts` |
 | エラーコード | `CONFLICT_DISH_FAVORITES_LIMIT` (409) [NEW] | cross/04 §4.2 CONFLICT 系 (§17) |
 | 型 / Zod | `DishSnapshotSchema`・`DishSnapshot`・`DishSnapshotInput`・`SaveDishFavoriteBodySchema`・`SaveDishFavoriteBody`・`DishFavoriteSchema`・`DishFavorite`・`DishFavoriteRowSchema`・`DishFavoriteRow`・`DishNameSchema`・`DishFavoriteSortSchema`・`DishFavoriteSort`・`DishFavoriteNutrientKey`・`ShoppingIngredientInput` | `core.ts` |
-| 関数 (core) | `displayDishNameOf`・`dishNameKeyOf`・`dishSnapshotFromMenuDish`・`recipeModalDataOf`・`ingredientInputsOf`・`toDishFavorite`・`dishJsonByteLength`・`dishFavoritesLimitMessage` | `core.ts` |
+| 関数 (core) | `displayDishNameOf`・`dishNameKeyOf`・`dishFavoritesQueryOf`・`dishSnapshotFromMenuDish`・`recipeModalDataOf`・`ingredientInputsOf`・`toDishFavorite`・`dishJsonByteLength`・`dishFavoritesLimitMessage` | `core.ts` |
 | 関数 (server) | `dishFavoritesMaxPerUser`・`listDishFavorites`・`findDishFavoriteByName`・`countDishFavorites`・`saveDishFavorite`・`deleteDishFavorite` と型 `DishFavoritesDb`・`ListDishFavoritesQuery`・`ListDishFavoritesResult`・`FindDishFavoriteResult`・`CountDishFavoritesResult`・`SaveDishFavoriteResult`・`DeleteDishFavoriteResult`・定数 `DISH_FAVORITES_TABLE` | `server.ts` |
 | 環境変数 | `DISH_FAVORITES_MAX_PER_USER` | `src/lib/env.ts` (SERVER_ENV_VARS)・`.env.example` |
 | 書き出しの行 | `{ table: 'dish_favorites', scope: self('user_id'), orderBy: ['created_at', 'id'] }` | `src/lib/account-export-tables.ts` |
 | 対応の行 | `dish_favorites: 'レシピ'` | `tests/legal-text-1901.test.ts` の `PRIVACY_DATA_TABLES`・cross/20 の写し (§17) |
 | 外部キーの動作の行 | `'dish_favorites.user_id': 'CASCADE'` | `tests/integration/security/auth-users-fk-on-delete.test.ts` の `EXPECTED_ACTIONS` |
 | ファイル (テスト) | `tests/dish-favorites-core.test.ts`・`tests/dish-favorites-server.test.ts`・`tests/dish-favorites-migration-contract.test.ts`・`tests/integration/rls/dish-favorites.test.ts` | `tests/` |
-| 既存ファイルの変更 (新設ではない) | `src/lib/env.ts`・`.env.example` (§7.6)・`src/lib/account-export-tables.ts` (§7.7)・`src/types/database.types.ts`・`packages/shared/src/database.types.ts` (生成し直し)・`tests/legal-text-1901.test.ts`・`tests/integration/security/auth-users-fk-on-delete.test.ts`・`account-export-scope.test.ts` | — |
+| 既存ファイルの変更 (新設ではない) | `src/lib/env.ts`・`.env.example` (§7.6)・`src/lib/account-export-tables.ts` (§7.7)・`src/types/database.types.ts`・`packages/shared/src/database.types.ts` (生成し直し)・`tests/legal-text-1901.test.ts`・`tests/legal-claims-1901.ts` (privacy-3#6 の evidence の表の列挙。§16)・`tests/integration/security/auth-users-fk-on-delete.test.ts`・`account-export-scope.test.ts` | — |
+| 配線の冊の新設と変更 (本書では書かない) | route 3 ファイル (`src/app/api/favorites/route.ts` の GET の書き換えと POST の新設・`status/route.ts`・`[id]/route.ts`)・献立の画面と reducer・お気に入りの画面 3 ファイル・`tests/api/favorites-route.test.ts` の書き換え・`src/__tests__/api/null-character-routes.test.ts` の表の 1 行・`tests/e2e/bug-104-favorites-system.spec.ts` の E-1 ほか | 配線の冊 `cross/22b` §14 |
 | 設計書 | `docs/design/cross/22-dish-favorites.md` (本書) | `docs/design/cross/` |
 
 新しい Storage のパス・RPC・cron は無い。`RecipeModal`・`/api/recipes/[id]/like`・`recipe_likes`・`viewer-lookups.ts`・`consultation-action-executor.ts`・Edge Functions は変えない。
@@ -1413,7 +1443,9 @@ describe('dish_favorites: 退会 (I-6)', () => {
 
 ## 16. 既存の番兵 (契約テスト・走査テスト) の追随表
 
-本設計が足す・変える・移すものの名前 (`dish_favorites`・`DISH_FAVORITE*`・`/api/favorites`・`favorites/route.ts`・`FavoriteRecipeModal`・`FavoriteListItem`・`recipeName`・`likedAt`・`recipeUuid`・`FAVORITE_SET`・`DISH_FAVORITES_MAX_PER_USER`・`recipe_likes`・`/api/recipes/[id]/like`) を grep の語にして `tests/`・`src/__tests__/`・`src/app/(main)/favorites/_components/__tests__/`・`apps/mobile/__tests__/`・`scripts/` を走査した結果 (2026-10-25・origin/main `edff659e4`)。
+本設計が足す・変える・移すものの名前 (`dish_favorites`・`DISH_FAVORITE*`・`/api/favorites`・`favorites/route.ts`・`FavoriteRecipeModal`・`FavoriteListItem`・`recipeName`・`likedAt`・`recipeUuid`・`FAVORITE_SET`・`DISH_FAVORITES_MAX_PER_USER`・`recipe_likes`・`/api/recipes/[id]/like`) を grep の語にして `tests/`・`src/__tests__/`・`src/app/(main)/favorites/_components/__tests__/`・`apps/mobile/__tests__/`・`scripts/`・`supabase/baseline/` を走査した結果 (2026-10-25・origin/main `edff659e4`)。
+
+段 B1 / B2 (route と画面) で反応する番兵の行の本体は配線の冊 `cross/22b` §16 にある。本書の表には、核の段 A で反応するものと、核の定数・文が根拠を置くもの (`tests/api/favorites-route.test.ts`・`tests/helpers/api-error-japanese-scope.ts`・`src/__tests__/api/null-character-routes.test.ts`) を、配線の冊への指し先つきで載せる。
 
 | 番兵 | grep の語 | 反応 | 直し方 | 段 |
 |---|---|---|---|---|
@@ -1426,8 +1458,12 @@ describe('dish_favorites: 退会 (I-6)', () => {
 | `tests/db-privilege-hardening-migration-contract.test.ts` (規則 5) | `GRANT ALL`・`TRUNCATE`・`EARLIER_ROLLBACKS_GRANTING_TRUNCATE` | `20261022190000` より後の戻し口が利用者へ表の TRUNCATE (ALL を含む) を付けると赤 | §7.2 は DROP だけ (GRANT を書かない)。§7.1 も `GRANT ALL` / `TRUNCATE` を書かない (C-4 が重ねて見る) | A |
 | `tests/integration/security/db-privilege-hardening.test.ts` T-1〜T-4 | `has_table_privilege`・`TRUNCATE` | public の全表で anon / authenticated に TRUNCATE があると赤 | §7.1 は REVOKE ALL のあと 4 権限だけ GRANT (TRUNCATE は付かない) | A |
 | `tests/legal-text-1901.test.ts:127-200, 872-880` | `PRIVACY_DATA_TABLES`・`PRIVACY_DATA_EXCLUDED`・`T-34` | `ACCOUNT_EXPORT_TABLES` に足した表が対応の表に無いと赤 | `dish_favorites: 'レシピ'` を `recipe_likes: 'レシピ'` の次に。cross/20 の写しも (§17) | A |
+| `tests/legal-claims-1901.ts:246` (`privacy-3#6`) | `privacy-3#6`・`F-42 (recipes・recipe_collections・recipe_collection_items・recipe_likes・recipe_comments)` | 「レシピ」の行の主張の根拠。`tests/legal-text-1901.test.ts` (`:1068-1081`) が見るのは `fragment` が本文に 1 回あること・`chars` (字数)・evidence の `F-n` / `P-n` が cross/20 の行にあること・evidence のパスが実在すること。括弧の中の表の列挙は数えない。第3条の文を変えないので `fragment`・`chars` は変わらず緑のまま | 文 (`fragment`・`chars`) は変えない。evidence の F-42 の括弧に `dish_favorites` を `recipe_likes` の次に足す (T-34 の対応 `dish_favorites: 'レシピ'` と揃える。見張りは列挙を数えないが、根拠の記述を実際の表と合わせる) | A |
 | `tests/helpers/schema-snapshot.ts` | `CREATE TABLE`・`PRIMARY KEY`・`REFERENCES` | migration の列・主キー・外部キーの読み取り (ベストエフォート)。表の中の `CONSTRAINT … PRIMARY KEY (id)` と列の `REFERENCES auth.users(id)` を読む | §7.1 は表の中に PK と REFERENCES を書く (apple_sign_in_tokens と同じ形) | A |
 | `tests/env-source-scan.test.ts` (1・4・6・9) | `process.env`・`ENV_VARS`・`.env.example`・`readOnlyBy` | 本番コードが名前で読む変数が `src/lib/env.ts` の一覧に無い・`.env.example` に無い・`readOnlyBy` 以外のファイルが読むと赤 | §7.6 の一覧の 1 項目 (`readOnlyBy: 'src/modules/dish-favorites/server.ts'`) と `.env.example` の 3 行。読むのは `server.ts` だけ | B1 |
+| `tests/api/favorites-route.test.ts` (既存) | `recipe_likes`・`recipeName`・`likedAt`・`clampIntParam` の表 (#1226) | 段 A では反応しない (route を変えない)。§13 の `DISH_FAVORITES_LIST_LIMIT_MIN` / `_MAX` / `_DEFAULT`・`DISH_FAVORITES_LIST_OFFSET_MAX` は、このファイルのクランプの表が固定している値 (1 / 200 / 100・100000) と同じ。段 B1 で GET を `dish_favorites` を読む形に書き換えると、`from` の表名 (`recipe_likes` → `dish_favorites`) と行の形 (§9.2) を期待する it が赤 | 配線の冊 `cross/22b` §16 の行と §7.15 (R-1〜R-6・P-1〜P-9 に書き換え。クランプの表はそのまま) | B1 |
+| `tests/api-error-japanese-scan.test.ts`・`tests/helpers/api-error-japanese-scope.ts:46` | `JAPANESE_ERROR_API_DIRS`・`'src/app/api/favorites'` | 見張りの範囲は `src/app/api/favorites` の route。`src/modules/dish-favorites/` は範囲の外なので段 A では反応しない。段 B1 の route は失敗の文を `core.ts` の日本語の固定の文 (§10) と `src/lib/api/error-responses.ts` から返す | 配線の冊 `cross/22b` §16 の行。`core.ts` の失敗の文は日本語の固定の文のまま (§7.3) | B1 |
+| `src/__tests__/api/null-character-routes.test.ts:134, 281, 457` | `ENTRIES`・`EXCLUDED`・`BODY_READ_PATTERN`・`readJsonBody(` | 段 A では反応しない (本文を読む route を足さない)。段 B1 で `POST /api/favorites` が `readJsonBody(` を持つと、表に無ければ赤 | 配線の冊 `cross/22b` §16 の行 (`ENTRIES` に `favorites/route.ts` の POST の 1 行)。URL の値 (status の `name`・一覧の `q`) の NULL 文字はこの番兵の対象外なので、`core.ts` の `DishNameSchema` (通さない) と `dishFavoritesQueryOf` (除く) が受け持つ (§10・U-3・U-14) | B1 |
 | `tests/postgrest-embed-relationship-scan.test.ts` | `.select('`・`MIN_CHECKED_EMBEDS` | 埋め込み (`表名(列)`) を使うと関係の有無を見る。本書は埋め込みを使わない | 変更なし | — |
 | `tests/supabase-service-role-client-scan.test.ts` | `createClient(`・`SUPABASE_JS_CLIENT_ALLOWLIST` | service_role のクライアントを自前で作ると赤 | 作らない (RLS の client だけ) | — |
 | `tests/jst-today-source-scan.test.ts` | `new Date()`・`todayLocal` | 今日の日付を自前で作ると赤 | 作らない (`created_at` は DB の既定) | — |
@@ -1437,7 +1473,7 @@ describe('dish_favorites: 退会 (I-6)', () => {
 | `tests/design-doc-version-header-matches-history.test.ts` | `\| 版 \| v` | 表紙の版の行 (`\| 版 \| vX.Y (日付) \|`) を持つ冊が対象。本書は cross/21 と同じ改定履歴の表 (対象外) | 変更なし | — |
 | `tests/design-doc-migration-number.test.ts`・`tests/helpers/design-doc-migration-number.ts` | `<番号はマージ時に確定>`・`<同じ番号>`・`.down.sql` | 設計書への当てはめは本書の §7.13 C-8 が行う (mobile/08 と同じ形)。置き場と番号が混ざると赤 | 本書の名指しは全部置き場。番号を書き入れるときは全部同時に | 設計・A |
 | `tests/design-doc-fact-consistency.test.ts`・`tests/design-doc-followup-owned-edits.test.ts`・`tests/design-doc-followup-anchors-1917.test.ts`・`tests/design-doc-stale-claims-1912.test.ts`・`tests/design-doc-push-paths-resolve.test.ts` | (名指しした冊だけ) | 本書は名指しに無い。§17 の追随表は逐語の書き換えの行を持たない (行を足す形だけ) | 変更なし | — |
-| `scripts/baseline/*` (`catalog_policies.csv`・`catalog_tables.csv` の drift) | `catalog_policies.csv` | 次にベースラインを作り直すときに `dish_favorites` の表・ポリシー・索引が控えに入る (手で直さない) | 変更なし | — |
+| `scripts/baseline/*` (`catalog_policies.csv`・`catalog_tables.csv` の drift)・`supabase/baseline/prod_table_acl.sql`・`tests/backup-db.test.ts:830-878` | `catalog_policies.csv`・`prod_table_acl.sql`・`recipe_likes` | 次にベースラインを作り直すときに `dish_favorites` の表・ポリシー・索引 (`catalog_*.csv`・`prod_schema.sql`) と表の権限 (`prod_table_acl.sql` の `REVOKE ALL ... FROM PUBLIC, anon, authenticated, service_role` と GRANT の行) が控えに入る。`tests/backup-db.test.ts` の golden は `build_restore_fixups.py` の出力と `prod_table_acl.sql` などをつないだものの一致を見るだけで、migration の表が控えにあるかは見ないので、段 A では反応しない | 変更なし (控えは手で直さない。作り直しは `scripts/baseline/build_baseline.py`) | — |
 | 走査テスト (as any・マジックナンバー) | `as any`・数のリテラル | 本書の TS に `as any` は無い。数は §13 の定数。既存の `favorites/route.ts` の `let q: any` は GET の書き換えで消える | §13 の形を守る | A・B1・B2 |
 
 ## 17. 他の文書への追随表 (本書では編集しない。実装 PR または docs PR で)
@@ -1448,7 +1484,8 @@ describe('dish_favorites: 退会 (I-6)', () => {
 | `docs/design/cross/20-terms-privacy-text.md` | T-34 の表 → 行の対応の写し (`recipe_likes: 'レシピ'` の行の近く) と §2.2 F-42 の説明 | `dish_favorites: 'レシピ'` の 1 行を足す。F-42 の「書き込む処理が無い表は 15」は変わらない (`dish_favorites` は route が書く) | 段 A のマージと同日 |
 | `docs/design/cross/02-rls-patterns.md` | §4.1 self-ownership の「用途」 | 実例に `dish_favorites` (cross/22 §7.1) を 1 語足す | 段 A のマージと同日 (任意) |
 | Issue #2011 | 本文 | 設計の内容 (表・API・画面・段) をオーケストレーターが書き込む (リンクだけにしない) | 設計のマージと同日 |
-| `supabase/baseline/` (`prod_schema.sql`・`catalog_*.csv`) | 控え | 次にベースラインを作り直すときに `dish_favorites` が入る (手で直さない) | 次のベースラインの更新 |
+| `supabase/baseline/` (`prod_schema.sql`・`prod_table_acl.sql`・`catalog_*.csv`) | 控え | 次にベースラインを作り直すときに `dish_favorites` の表・制約・ポリシー・索引・トリガーと表の権限 (authenticated に SELECT / INSERT / UPDATE / DELETE。anon は無し) が入る (手で直さない) | 次のベースラインの更新 |
+| `docs/design/cross/22b-dish-favorites-wiring.md` (配線の冊) | §7.5.1 (`GET /api/favorites` の `q`)・§7.5.2 (status)・§3.1 F-4 と §9.2 の「栄養 28 項目」・§7.15 の見出しの数 | 核のマージの後の書き直しで: ① §7.5.1 の `q` を `dishFavoritesQueryOf(searchParams.get('q'))` で作る (NULL 文字を除き 100 文字で切る。本書 §10)。② §7.5.2 は `DishNameSchema` が NULL 文字を通さないので変更なし (400 の文と code は同じ)。route の単体テストに「q に NULL 文字」(200・DB に NULL 文字が渡らない) と「status の name に NULL 文字」(400・DB に問い合わせない) を足す。③ 「栄養 28 項目」は `RecipeModal` が描く項目の実数を数え直して書く (写しの栄養は本書 §7.3 の 29 項目)。④ §7.15 の見出しを「新設 2・書き換え 3」に (表の行の実数) | 配線の冊の書き直し (核のマージの後) |
 
 ## 18. 既存実装との関連
 
