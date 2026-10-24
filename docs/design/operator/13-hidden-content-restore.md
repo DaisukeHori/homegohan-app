@@ -984,7 +984,7 @@ export async function POST(request: Request, props: Params) {
 
   const { type, id } = params;
   if (!MODERATION_TYPES.includes(type as ModerationType)) {
-    return errorResponse(400, 'VALIDATION_ERROR', `type は ${MODERATION_TYPES.join(', ')} のいずれかである必要があります`);
+    return errorResponse(400, 'VALIDATION_ERROR', MODERATION_TYPE_INVALID_MESSAGE);
   }
   const moderationType = type as ModerationType;
   // ai_content は準備中 (未対応)。本文の検証より前に 501 (#1128)
@@ -1566,7 +1566,7 @@ export default function ModerationRestoreForm({
 | 本文に NULL 文字 | route (`rejectNullCharacterBody`) | `INVALID_CHARACTER` | 400 | `src/lib/api/null-character.ts` の `NULL_CHARACTER_ERROR_MESSAGE` | 認証・DB より前 |
 | 未認証 | `requireRole` | `AUTH_UNAUTHENTICATED` | 401 | 認証が必要です | 既存と同じ |
 | ロール不足・凍結・AAL 不足 | `requireRole` | `OP_PERMISSION_DENIED` (`ForbiddenError` 全般) | 403 | 権限がありません | 既存と同じ (`AUTH_ACCOUNT_FROZEN` / `AUTH_2FA_*` も `ForbiddenError` なので同じ文) |
-| `type` が不正 | route | `VALIDATION_ERROR` | 400 | type は food, recipe, ai_content のいずれかである必要があります | 既存と同じ |
+| `type` が不正 | route | `VALIDATION_ERROR` | 400 | 種類 (type) は次のいずれかを指定してください (food, recipe, ai_content) (`src/lib/admin/moderation-schemas.ts` の `MODERATION_TYPE_INVALID_MESSAGE`。#1917 の続きで項目名と受け付ける値を括弧に入れた) | 既存と同じ |
 | `type = ai_content` | route (`notSupportedResponse`) | `OP_NOT_SUPPORTED` | 501 | `AI_CONTENT_NOT_SUPPORTED_MESSAGE` | 本文の検証より前 |
 | 本文が JSON でない | route | `INVALID_JSON` | 400 | リクエストボディが不正です | |
 | `restore_note` が無い・空白だけ・5000 字超 | route (Zod) | `VALIDATION_ERROR` | 400 | バリデーションエラー (+ `details`) | 画面は送らずに知らせる |

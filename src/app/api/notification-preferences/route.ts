@@ -22,6 +22,25 @@ const DEFAULT_SETTINGS = {
   data_share_enabled: false,
 };
 
+/** 部分更新で受け付ける項目 (data_share_enabled は旧ビルドのアプリ向けに受け付けるだけ。上のコメント参照) */
+const PREFERENCE_KEYS = ['notifications_enabled', 'auto_analyze_enabled', 'data_share_enabled'] as const;
+type PreferenceKey = (typeof PREFERENCE_KEYS)[number];
+
+/**
+ * 項目の日本語の名前 (設定の画面の見出しと同じ。data_share_enabled は旧ビルドの画面の「トレーナーと共有」)。
+ * 失敗の文は「日本語の名前 (項目のキー)」の形にして、英字のキーを括弧の外に出さない (#1917 の続き)
+ */
+const PREFERENCE_LABELS: Readonly<Record<PreferenceKey, string>> = {
+  notifications_enabled: '通知',
+  auto_analyze_enabled: '自動解析',
+  data_share_enabled: 'トレーナーと共有',
+};
+
+/** 項目の値が真偽値でないときの 400 の文 */
+function preferenceNotBooleanMessage(key: PreferenceKey): string {
+  return `${PREFERENCE_LABELS[key]} (${key}) はオン (true) かオフ (false) で指定してください`;
+}
+
 // 設定 toggle の取得
 export async function GET(_request: NextRequest) {
   const supabase = await createClient();
@@ -72,13 +91,12 @@ export async function PATCH(request: NextRequest) {
   }
 
   // data_share_enabled は旧ビルドのアプリ向けに受け付けるだけ (上のコメント参照。値は同意ではない)
-  const allowed = ['notifications_enabled', 'auto_analyze_enabled', 'data_share_enabled'] as const;
-  const patch: Partial<Record<(typeof allowed)[number], boolean>> = {};
+  const patch: Partial<Record<PreferenceKey, boolean>> = {};
 
-  for (const key of allowed) {
+  for (const key of PREFERENCE_KEYS) {
     if (key in body) {
       if (typeof body[key] !== 'boolean') {
-        return NextResponse.json({ error: `${key} はオン (true) かオフ (false) で指定してください` }, { status: 400 });
+        return NextResponse.json({ error: preferenceNotBooleanMessage(key) }, { status: 400 });
       }
       patch[key] = body[key] as boolean;
     }

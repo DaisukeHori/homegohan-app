@@ -411,7 +411,8 @@ describe('GET /api/admin/finance/invoices/[id] -> admin.finance.invoice.view', (
   });
 
   it('404 のときは記録しない', async () => {
-    userScopedClient = makeClient({ stripe_webhook_events: [{ data: null, error: { message: 'not found' } }], admin_audit_logs: [INSERT_OK] });
+    // maybeSingle は行が無いと data: null・error: null を返す (#1917。DB の失敗は 404 ではなく 500)
+    userScopedClient = makeClient({ stripe_webhook_events: [{ data: null, error: null }], admin_audit_logs: [INSERT_OK] });
 
     const res = await invoiceRoute.GET((await nextGet(`http://localhost/api/admin/finance/invoices/${EVENT_ID}`)) as never, {
       params: { id: EVENT_ID },

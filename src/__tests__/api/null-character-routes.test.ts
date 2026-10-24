@@ -13,10 +13,14 @@
  *   (表に無い route で呼んでいる・表にある route で呼ばなくなった、のどちらも見つける)
  * - 洗い漏れの検出: 本文を読む handler (同じファイルの関数に読ませるものを含む) は、表か EXCLUDED のどちらかにちょうど 1 回載る
  *   (新しく本文を読む handler を足して、確かめを付け忘れると赤になる)
+ * - 本文の形 (#1917 の続き): NESTED_BODY_FILES の route は nested ({ error: { code, message } })、ほかは flat ({ error, code }) で返す。
+ *   route がほかの失敗で返す本文が nested だけ / flat だけなら、NULL 文字の 400 も同じ形であること (構文木で数える) を確かめる
+ *   (以前は全 route が flat で、error.message を読む運営の画面などでは理由の文が出なかった)
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { NextRequest } from 'next/server';
+import ts from 'typescript';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NULL_CHARACTER_ERROR_CODE, NULL_CHARACTER_ERROR_MESSAGE } from '@/lib/api/null-character';
 import { applyHeavyUnitTestTimeout } from '../../../tests/helpers/heavy-unit-test-timeout';
@@ -48,6 +52,77 @@ type RouteParams = {
   key: string;
 };
 type RouteHandler = (request: NextRequest, context: { params: Promise<RouteParams> }) => Promise<Response>;
+
+/**
+ * NULL 文字の 400 を nested ({ error: { code, message } }) で返す route (src/app/api からのファイル)。
+ * route がほかの 400 で返す本文と同じ形にする (docs/design/cross/04-api-conventions.md §5.2。src/lib/api/reject-null-character.ts の shape)。
+ * 運営 (admin・super-admin・operator)・家族・課金の配下と、自分の 400 を nested で返すそのほかの route
+ */
+const NESTED_BODY_FILES: ReadonlySet<string> = new Set([
+  'admin/catalog/import/route.ts',
+  'admin/data-requests/[id]/route.ts',
+  'admin/finance/exports/route.ts',
+  'admin/inquiries/[id]/route.ts',
+  'admin/moderation/[type]/[id]/restore/route.ts',
+  'admin/moderation/[type]/[id]/route.ts',
+  'admin/organizations/[id]/route.ts',
+  'admin/organizations/route.ts',
+  'admin/sales/leads/[id]/activities/route.ts',
+  'admin/sales/leads/[id]/route.ts',
+  'admin/sales/leads/route.ts',
+  'admin/support/tickets/[id]/assign/route.ts',
+  'admin/support/tickets/[id]/messages/route.ts',
+  'admin/support/tickets/[id]/route.ts',
+  'admin/support/tickets/route.ts',
+  'admin/users/[id]/freeze/route.ts',
+  'admin/users/[id]/role/route.ts',
+  'admin/users/[id]/route.ts',
+  'billing/checkout/route.ts',
+  'billing/checkout/sync/route.ts',
+  'comparison/trigger/route.ts',
+  'family/dissolve/route.ts',
+  'family/groups/route.ts',
+  'family/invites/[id]/accept/route.ts',
+  'family/invites/route.ts',
+  'family/members/[member_id]/promote/route.ts',
+  'family/members/[member_id]/remove/route.ts',
+  'family/members/child/route.ts',
+  'family/members/me/share/route.ts',
+  'family/promotions/[token]/accept/route.ts',
+  'family/representative-transfer/propose/route.ts',
+  'handson-tour/skip/route.ts',
+  'meals/paste/route.ts',
+  'menu-plans/add/route.ts',
+  'operator/membership/family/[id]/dissolve/route.ts',
+  'operator/membership/family/[id]/transfer/route.ts',
+  'operator/membership/org/[id]/dissolve/route.ts',
+  'operator/membership/org/[id]/transfer/route.ts',
+  'org/departments/route.ts',
+  'org/dissolve/route.ts',
+  'org/invites/route.ts',
+  'org/members/route.ts',
+  'org/owner-transfer/propose/route.ts',
+  'org/settings/route.ts',
+  'push-tokens/claim/route.ts',
+  'push-tokens/release/route.ts',
+  'super-admin/backups/dr-tests/route.ts',
+  'super-admin/coupons/[id]/apply/route.ts',
+  'super-admin/coupons/[id]/route.ts',
+  'super-admin/coupons/route.ts',
+  'super-admin/embeddings/regenerate/route.ts',
+  'super-admin/experiments/[id]/route.ts',
+  'super-admin/experiments/route.ts',
+  'super-admin/feature-packages/[id]/route.ts',
+  'super-admin/feature-packages/route.ts',
+  'super-admin/flags/[key]/route.ts',
+  'super-admin/flags/route.ts',
+  'super-admin/llm/quotas/route.ts',
+  'super-admin/plans/[id]/price-change/route.ts',
+  'super-admin/plans/[id]/route.ts',
+  'super-admin/plans/route.ts',
+  'super-admin/settings/route.ts',
+  'super-admin/users/[id]/manual-plan/route.ts',
+]);
 
 type Entry = {
   /** src/app/api からの route のファイル */
@@ -273,13 +348,19 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+/** NULL 文字の 400 の本文 (手で書いた期待値。形ごと) */
+const FLAT_BODY = { error: NULL_CHARACTER_ERROR_MESSAGE, code: NULL_CHARACTER_ERROR_CODE };
+const NESTED_BODY = { error: { code: NULL_CHARACTER_ERROR_CODE, message: NULL_CHARACTER_ERROR_MESSAGE } };
+
 describe.each(ENTRIES)('$method /api/$file (#1657)', (entry) => {
-  it('本文に NULL 文字があれば、DB に触れる前に 400 INVALID_CHARACTER を返す', async () => {
+  const nested = NESTED_BODY_FILES.has(entry.file);
+
+  it(`本文に NULL 文字があれば、DB に触れる前に 400 INVALID_CHARACTER を返す (本文は ${nested ? 'nested' : 'flat'})`, async () => {
     const handler = await entry.load();
     const res = await handler(makeRequest(entry.method, freeTextBody(`メモ${NUL}`)), makeContext());
 
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: NULL_CHARACTER_ERROR_MESSAGE, code: NULL_CHARACTER_ERROR_CODE });
+    expect(await res.json()).toEqual(nested ? NESTED_BODY : FLAT_BODY);
     expect(mockCreateClient).not.toHaveBeenCalled();
   });
 
@@ -290,6 +371,7 @@ describe.each(ENTRIES)('$method /api/$file (#1657)', (entry) => {
     if (res !== null) {
       const json: unknown = await res.json().catch(() => null);
       expect(json).not.toEqual(expect.objectContaining({ code: NULL_CHARACTER_ERROR_CODE }));
+      expect(json).not.toEqual(expect.objectContaining({ error: expect.objectContaining({ code: NULL_CHARACTER_ERROR_CODE }) }));
     }
   });
 });
@@ -365,7 +447,7 @@ describe('NULL 文字の入口の確かめを持つ route の一覧 (#1657)', ()
   it('rejectNullCharacterBody を呼ぶ handler は、上の表の route とちょうど同じ', () => {
     const actual = listRouteFiles(API_ROOT).flatMap((file) =>
       [...handlerSources(fs.readFileSync(file, 'utf-8'))]
-        .filter(([, body]) => /await rejectNullCharacterBody\(\w+\)/.test(body))
+        .filter(([, body]) => /await rejectNullCharacterBody\(\w+(?:, \{ shape: 'nested' \})?\)/.test(body))
         .map(([method]) => routeKey(method, file)),
     );
 
@@ -410,10 +492,68 @@ describe('NULL 文字の入口の確かめを持つ route の一覧 (#1657)', ()
         .map((line) => line.trim())
         .filter((line) => line.length > 0 && !line.startsWith('//') && !/^[{)]/.test(line) && !/^\w+: /.test(line));
       expect(requestParam, `${entry.method} ${entry.file}`).toBeDefined();
+      const shapeArgument = NESTED_BODY_FILES.has(entry.file) ? ", { shape: 'nested' }" : '';
       expect(codeLines[0], `${entry.method} ${entry.file}`).toBe(
-        `const nullCharacterRejection = await rejectNullCharacterBody(${requestParam})${codeLines[0]?.endsWith(';') ? ';' : ''}`,
+        `const nullCharacterRejection = await rejectNullCharacterBody(${requestParam}${shapeArgument})${codeLines[0]?.endsWith(';') ? ';' : ''}`,
       );
       expect(codeLines[1], `${entry.method} ${entry.file}`).toMatch(/^if \(nullCharacterRejection\) return nullCharacterRejection;?$/);
     }
+  });
+});
+
+/** route のファイルの失敗の本文の形を数える: `NextResponse.json` / `Response.json` の本文の error がオブジェクト (nested) か文 (flat) か */
+function errorBodyShapeCounts(source: string): { nested: number; flat: number } {
+  const sf = ts.createSourceFile('route.ts', source, ts.ScriptTarget.Latest, true);
+  let nested = 0;
+  let flat = 0;
+  const visit = (node: ts.Node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === 'json' &&
+      ts.isIdentifier(node.expression.expression) &&
+      ['NextResponse', 'Response'].includes(node.expression.expression.text)
+    ) {
+      const body = node.arguments[0];
+      if (body && ts.isObjectLiteralExpression(body)) {
+        for (const property of body.properties) {
+          if (!ts.isPropertyAssignment(property) || !ts.isIdentifier(property.name) || property.name.text !== 'error') continue;
+          const value = property.initializer;
+          if (ts.isObjectLiteralExpression(value)) nested += 1;
+          else if (ts.isStringLiteral(value) || ts.isNoSubstitutionTemplateLiteral(value) || ts.isTemplateExpression(value)) flat += 1;
+          else if (ts.isIdentifier(value) && /MESSAGE$/.test(value.text)) flat += 1;
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return { nested, flat };
+}
+
+describe('NULL 文字の 400 の本文の形は、route のほかの失敗の本文の形と同じ (#1917 の続き)', () => {
+  it('数え方: error がオブジェクトなら nested、文 (文字列・テンプレート・〜MESSAGE の定数) なら flat', () => {
+    const source = [
+      "const a = NextResponse.json({ error: { code: 'X', message: '文' } }, { status: 400 });",
+      "const b = NextResponse.json({ error: '文', code: 'X' }, { status: 400 });",
+      'const c = Response.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });',
+      'const d = NextResponse.json({ data: 1 });',
+    ].join('\n');
+    expect(errorBodyShapeCounts(source)).toEqual({ nested: 1, flat: 2 });
+  });
+
+  it('NESTED_BODY_FILES は表の route だけ', () => {
+    const files = new Set(ENTRIES.map((entry) => entry.file));
+    expect([...NESTED_BODY_FILES].filter((file) => !files.has(file))).toEqual([]);
+  });
+
+  it('ほかの本文が nested だけの route は NESTED_BODY_FILES に入り、flat だけの route は入らない', () => {
+    const mismatches: string[] = [];
+    for (const file of new Set(ENTRIES.map((entry) => entry.file))) {
+      const { nested, flat } = errorBodyShapeCounts(fs.readFileSync(path.join(API_ROOT, file), 'utf-8'));
+      if (nested > 0 && flat === 0 && !NESTED_BODY_FILES.has(file)) mismatches.push(`${file}: nested ${nested} 件なのに flat`);
+      if (flat > 0 && nested === 0 && NESTED_BODY_FILES.has(file)) mismatches.push(`${file}: flat ${flat} 件なのに nested`);
+    }
+    expect(mismatches).toEqual([]);
   });
 });

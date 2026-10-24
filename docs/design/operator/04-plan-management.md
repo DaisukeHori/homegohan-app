@@ -81,7 +81,7 @@ SSO            |      |     |             |           |              |          
 |---------|--------|------------|
 | `new_only` | `subscription_plans` の `stripe_price_id` (**月額**) / `stripe_yearly_price_id` (**年額**) のうち、変えた方を新 Price ID に更新する。月額・年額は 1 回のリクエストで同時に変えられる | 変えた interval ごとに新 Price object を作成し、**同じ interval の旧 Price だけ** `active=false` にする (旧 Price は新規の申し込みで選べなくなる。既存サブスクリプションは旧 Price のまま請求される) |
 
-`plan_price_history` の `old_stripe_price_id` / `new_stripe_price_id` は月額の Price ID (`subscription_plans.stripe_price_id` と同じ意味)。年額の Price ID は `admin_audit_logs.details` (`old_stripe_yearly_price_id` / `new_stripe_yearly_price_id`) に残す。
+`plan_price_history` の `old_stripe_price_id` / `new_stripe_price_id` は月額の Price ID (`subscription_plans.stripe_price_id` と同じ意味)。年額の Price ID は `admin_audit_logs.details` (`old_stripe_yearly_price_id` / `new_stripe_yearly_price_id`) に残す。履歴と監査の old_* は、`apply_plan_price_change` がプランの行をロックして読んだ、この更新の直前の値 (#1917 の続き。2 人の運営がほぼ同時に変えても、後の記録が先の変更より前の値にならない。流れは `02-api-spec.md` の `POST /api/super-admin/plans/{id}/price-change`)。
 
 **Stripe Price の immutability 対応**:
 - Stripe Price は作成後に amount を変更できない (Stripe の設計)
@@ -110,7 +110,7 @@ export async function syncPlanPrices(request: SyncRequest, deps: SyncDeps) {
   //    無効化の失敗はベストエフォート (新しい Price の作成が必須の契約)
   return { month, year };
 }
-// その後、price-change route が plan_price_history (service-role) → subscription_plans (変えた interval の列だけ) →
+// その前に price-change route は begin_plan_price_change でプランごとの予約を取り (予約中なら 409。#1917 の続き)、その後 apply_plan_price_change が plan_price_history → subscription_plans (変えた interval の列だけ) を 1 つのトランザクションで書き →
 // admin_audit_logs の順に書く。Stripe 同期が必須の環境 (STRIPE_SECRET_KEY あり) で同期に失敗したら、DB は一切更新しない (fail-closed)。
 ```
 
@@ -181,9 +181,9 @@ stateDiagram-v2
 
 ### 3.5a 廃止の安全弁と組織のプランの行 (#1127・#1912)
 
-いまの廃止は `PATCH /api/super-admin/plans/{id}` の `status: 'deprecated'` で行い、廃止の前に契約が終わっていない契約者を数えて 1 件でもいれば 409 `OP_PLAN_HAS_SUBSCRIBERS` で止める (`src/lib/super-admin/plan-subscribers.ts`。API の形は `02-api-spec.md` の `PATCH /api/super-admin/plans/{id}`)。
+いまの廃止は `PATCH /api/super-admin/plans/{id}` の `status: 'deprecated'` で行い、廃止の前に契約が終わっていない契約者を数えて 1 件でもいれば 409 `OP_PLAN_HAS_SUBSCRIBERS` で止める (`src/lib/super-admin/plan-subscribers.ts`。API の形は `02-api-spec.md` の `PATCH /api/super-admin/plans/{id}`)。数えてから書くまでの間に入った契約 (作成・live / active への切り替え・プランの付け替え。トリガー `trg_subscriber_plan_key_share` がプランの行に FOR KEY SHARE を取る) は、書く文の中の DB のトリガー `guard_plan_deprecate_subscribers` が commit を待ってから同じ数え方で数え直して止める (#1917 の続き。route を通らない UPDATE も止まる)。
 
-| プラン | 個人契約 | 家族グループ | 組織 (`organizations.plan`) | 廃止の画面・価格変更の画面 |
+| プラン | 個人契約 (`plan_key` が一致し `status` が trialing / active / paused / past_due / grace) | 家族グループ (`plan_key` が一致し `status = 'active'`) | 組織 (`organizations.plan` が一致し `status = 'active'`) | 廃止の画面・価格変更の画面 |
 |---|---|---|---|---|
 | 個人・家族のプラン | 数える | 数える | 数える | 注記なし |
 | 組織のプランの行 (`plan_type = 'org'` の `org_*`) | 数える | 数える | **数えない** (件数の欄を出さない) | 注記 `ORG_SUBSCRIPTION_PLAN_ROW_NOTE` を出す |

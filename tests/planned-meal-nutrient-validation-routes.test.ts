@@ -70,6 +70,9 @@ import { PATCH as mealPlansPATCH } from '../src/app/api/meal-plans/meals/[id]/ro
 import { POST as addFromPhotoPOST } from '../src/app/api/meal-plans/add-from-photo/route';
 import { POST as aiNutritionPOST } from '../src/app/api/ai/nutrition/route';
 
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする */
+const MEAL_ID = '77777777-7777-4777-8777-777777777776';
+
 // ==================== モックの部品 ====================
 
 /** どのメソッドを呼んでも自分自身を返し、await すると result になるクエリビルダ */
@@ -133,7 +136,7 @@ describe('POST /api/meals (#1205)', () => {
     const upsert = vi.fn(() => ({
       select: vi.fn(() => ({ single: vi.fn(async () => ({ data: { id: 'day-1' }, error: null })) })),
     }));
-    const insert = insertBuilder({ id: 'meal-1' });
+    const insert = insertBuilder({ id: MEAL_ID });
     mockFrom.mockImplementation((table: string) => {
       if (table === 'user_daily_meals') return { upsert };
       if (table === 'planned_meals') return { insert };
@@ -224,7 +227,7 @@ describe('POST /api/meals (#1205)', () => {
 
 describe('PATCH /api/meals/[id] (#1205)', () => {
   const existing = {
-    id: 'meal-1',
+    id: MEAL_ID,
     mode: 'cook',
     catalog_product_id: null,
     source_type: 'manual',
@@ -234,10 +237,10 @@ describe('PATCH /api/meals/[id] (#1205)', () => {
     user_daily_meals: { user_id: 'user-1' },
   };
   const patch = (body: unknown) =>
-    mealsPATCH(jsonRequest('http://localhost/api/meals/meal-1', 'PATCH', body), { params: { id: 'meal-1' } });
+    mealsPATCH(jsonRequest(`http://localhost/api/meals/${MEAL_ID}`, 'PATCH', body), { params: { id: MEAL_ID } });
 
   function mockDb() {
-    const update = updateBuilder({ id: 'meal-1' });
+    const update = updateBuilder({ id: MEAL_ID });
     mockFrom.mockImplementation((table: string) => {
       if (table === 'planned_meals') return { select: () => queryBuilder({ data: existing, error: null }), update };
       throw new Error(`Unexpected table: ${table}`);
@@ -312,7 +315,7 @@ describe('POST /api/meal-plans/meals (#1205)', () => {
   const post = (body: unknown) => mealPlansPOST(jsonRequest('http://localhost/api/meal-plans/meals', 'POST', body));
 
   function mockDb() {
-    const insert = insertBuilder({ id: 'meal-1', daily_meal_id: 'day-1' });
+    const insert = insertBuilder({ id: MEAL_ID, daily_meal_id: 'day-1' });
     mockFrom.mockImplementation((table: string) => {
       if (table === 'user_daily_meals') return queryBuilder({ data: { id: 'day-1' }, error: null });
       if (table === 'planned_meals') return { insert };
@@ -371,7 +374,7 @@ describe('POST /api/meal-plans/meals (#1205)', () => {
 
 describe('PATCH /api/meal-plans/meals/[id] (#1205)', () => {
   const existing = {
-    id: 'meal-1',
+    id: MEAL_ID,
     mode: 'cook',
     catalog_product_id: null,
     source_type: 'manual',
@@ -381,12 +384,12 @@ describe('PATCH /api/meal-plans/meals/[id] (#1205)', () => {
     user_daily_meals: { user_id: 'user-1' },
   };
   const patch = (body: unknown) =>
-    mealPlansPATCH(jsonRequest('http://localhost/api/meal-plans/meals/meal-1', 'PATCH', body), {
-      params: { id: 'meal-1' },
+    mealPlansPATCH(jsonRequest(`http://localhost/api/meal-plans/meals/${MEAL_ID}`, 'PATCH', body), {
+      params: { id: MEAL_ID },
     });
 
   function mockDb() {
-    const update = updateBuilder({ id: 'meal-1' });
+    const update = updateBuilder({ id: MEAL_ID });
     mockFrom.mockImplementation((table: string) => {
       if (table === 'planned_meals') return { select: () => queryBuilder({ data: existing, error: null }), update };
       throw new Error(`Unexpected table: ${table}`);
@@ -439,7 +442,7 @@ describe('POST /api/meal-plans/add-from-photo (#1205)', () => {
     addFromPhotoPOST(jsonRequest('http://localhost/api/meal-plans/add-from-photo', 'POST', body));
 
   function mockDb() {
-    const insert = insertBuilder({ id: 'meal-1' });
+    const insert = insertBuilder({ id: MEAL_ID });
     const del = vi.fn(() => queryBuilder({ error: null }));
     mockFrom.mockImplementation((table: string) => {
       if (table === 'user_daily_meals') return queryBuilder({ data: { id: 'day-1' }, error: null });
@@ -487,7 +490,7 @@ describe('POST /api/meal-plans/add-from-photo (#1205)', () => {
 // ==================== POST /api/ai/nutrition ====================
 
 describe('POST /api/ai/nutrition (#1205)', () => {
-  const existing = { id: 'meal-1', dishes: null, is_simple: true, user_daily_meals: { user_id: 'user-1' } };
+  const existing = { id: MEAL_ID, dishes: null, is_simple: true, user_daily_meals: { user_id: 'user-1' } };
   const post = (body: unknown) => aiNutritionPOST(jsonRequest('http://localhost/api/ai/nutrition', 'POST', body));
 
   function mockDb() {
@@ -509,7 +512,7 @@ describe('POST /api/ai/nutrition (#1205)', () => {
       ['carbs_g', 'NaN'],
     ])('%s = %j なら 400 で、UPDATE しない', async (field, value) => {
       const { update } = mockDb();
-      const response = await post({ plannedMealId: 'meal-1', nutritionData: { calories_kcal: 500, [field]: value } });
+      const response = await post({ plannedMealId: MEAL_ID, nutritionData: { calories_kcal: 500, [field]: value } });
       expect(response.status).toBe(400);
       const body = await readBody(response);
       expect(body.code).toBe('VALIDATION_ERROR');
@@ -520,7 +523,7 @@ describe('POST /api/ai/nutrition (#1205)', () => {
     it('正当な値は正規化して UPDATE する。送られていない項目は書かない', async () => {
       const { update } = mockDb();
       const response = await post({
-        plannedMealId: 'meal-1',
+        plannedMealId: MEAL_ID,
         nutritionData: { calories_kcal: 523.6, protein_g: '20.5', veg_score: 4 },
       });
       expect(response.status).toBe(200);
@@ -546,7 +549,7 @@ describe('POST /api/ai/nutrition (#1205)', () => {
         quality_tags: [],
         dishes: [],
       });
-      const response = await post({ plannedMealId: 'meal-1', imageUrl: 'https://example.com/a.jpg' });
+      const response = await post({ plannedMealId: MEAL_ID, imageUrl: 'https://example.com/a.jpg' });
       expect(response.status).toBe(200);
       expect(update.mock.calls[0][0]).toMatchObject({
         calories_kcal: 5000,
@@ -559,7 +562,7 @@ describe('POST /api/ai/nutrition (#1205)', () => {
     it('AI の応答に含まれない項目は書かない (既存の値を消さない)', async () => {
       const { update } = mockDb();
       aiReturns({ calories_kcal: 480.4, veg_score: 2, quality_tags: [], dishes: [] });
-      const response = await post({ plannedMealId: 'meal-1', imageUrl: 'https://example.com/a.jpg' });
+      const response = await post({ plannedMealId: MEAL_ID, imageUrl: 'https://example.com/a.jpg' });
       expect(response.status).toBe(200);
       const payload = update.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.calories_kcal).toBe(480);

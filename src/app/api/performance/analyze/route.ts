@@ -46,9 +46,13 @@ async function runAnalysis(supabase: SupabaseLike, userId: string, date: string)
     .from('user_profiles')
     .select('weight, nutrition_goal, performance_profile')
     .eq('id', userId)
-    .single()
+    .maybeSingle()
 
-  if (profileError || !profileData) {
+  // 読めなかったときは 404 にしない (行が無いときだけ 404。DB の失敗は route が 500 にする。#1917)
+  if (profileError) {
+    return { ok: false, kind: 'internal', cause: profileError }
+  }
+  if (!profileData) {
     return { ok: false, kind: 'client', status: 404, error: ANALYSIS_PROFILE_NOT_FOUND_MESSAGE }
   }
 
@@ -57,9 +61,13 @@ async function runAnalysis(supabase: SupabaseLike, userId: string, date: string)
     .from('nutrition_targets')
     .select('daily_calories, protein_g, fat_g, carbs_g')
     .eq('user_id', userId)
-    .single()
+    .maybeSingle()
 
-  if (targetsError || !targetsData) {
+  // 読めなかったときは 404 にしない (行が無いときだけ 404。#1917)
+  if (targetsError) {
+    return { ok: false, kind: 'internal', cause: targetsError }
+  }
+  if (!targetsData) {
     return { ok: false, kind: 'client', status: 404, error: ANALYSIS_TARGETS_NOT_FOUND_MESSAGE }
   }
 

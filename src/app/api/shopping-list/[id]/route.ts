@@ -3,7 +3,8 @@ import { NextResponse } from 'next/server';
 import { toShoppingListItem } from '@/lib/converter';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { isUuid } from '@/lib/http-params';
 import { NO_FIELDS_TO_UPDATE_MESSAGE } from '@/lib/api/user-api-error-messages';
 
 /** 400: 選んだ分量の候補 (selectedVariantIndex) が候補の一覧の外 */
@@ -29,15 +30,23 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       updateFields.is_checked = isChecked;
     }
 
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
+    }
+
     if (typeof selectedVariantIndex === 'number') {
-      // 現在のアイテムを取得してバリデーション
+      // 現在のアイテムを取得してバリデーション。他人の行・消された行は 0 行なので 404 (#1917。.single() は 0 行を失敗にして 500 にしていた)
       const { data: currentItem, error: fetchError } = await supabase
         .from('shopping_list_items')
         .select('quantity_variants')
         .eq('id', params.id)
-        .single();
+        .maybeSingle();
 
       if (fetchError) throw fetchError;
+      if (!currentItem) {
+        return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
+      }
 
       const variants = currentItem?.quantity_variants || [];
       if (selectedVariantIndex < 0 || selectedVariantIndex >= variants.length) {
@@ -58,9 +67,13 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       .update(updateFields)
       .eq('id', params.id)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) throw error;
+    // 他人の行・消された行は更新した行が無い (#1917)
+    if (!data) {
+      return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
+    }
 
     return NextResponse.json({ success: true, item: toShoppingListItem(data) });
   } catch (error: any) {

@@ -26,6 +26,9 @@ const PATCH_ROUTE_NAME = 'PATCH /api/admin/users/[id]';
 
 type Params = { params: Promise<{ id: string }> };
 
+/** ユーザーが無い (UUID の形でない id を含む) */
+const USER_NOT_FOUND_RESPONSE = { error: { code: 'NOT_FOUND', message: 'ユーザーが見つかりません' } } as const;
+
 export async function GET(request: Request, props: Params) {
   const params = await props.params;
   let actor;
@@ -48,6 +51,10 @@ export async function GET(request: Request, props: Params) {
   }
 
   const { id } = params;
+  // uuid 型の列に UUID でない文字列を渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入るので、DB に渡さず 404 (PATCH と同じ)
+  if (!isUuid(id)) {
+    return NextResponse.json(USER_NOT_FOUND_RESPONSE, { status: 404 });
+  }
   // requireRole 通過後のみ到達する。RLS は user_profiles に自分の行のみの
   // ポリシーしか無いため、他ユーザーの詳細取得には service_role が必須 (#1028)。
   const supabaseAdmin = getSupabaseAdmin();
@@ -60,13 +67,14 @@ export async function GET(request: Request, props: Params) {
     .from('user_profiles')
     .select('*')
     .eq('id', id)
-    .single();
+    .maybeSingle();
 
-  if (profileError || !profile) {
-    return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: 'ユーザーが見つかりません' } },
-      { status: 404 },
-    );
+  // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗でユーザーが消えたように見せない。#1917)
+  if (profileError) {
+    return internalError(LOG_SOURCE, profileError, { userId: actor.id, table: 'user_profiles' }, { shape: 'nested' });
+  }
+  if (!profile) {
+    return NextResponse.json(USER_NOT_FOUND_RESPONSE, { status: 404 });
   }
 
   // メールアドレス (#1145): 見てよいのは admin / super_admin だけ。support には引かず null。
@@ -200,7 +208,7 @@ export async function GET(request: Request, props: Params) {
  */
 export async function PATCH(request: Request, props: Params) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   let actor;

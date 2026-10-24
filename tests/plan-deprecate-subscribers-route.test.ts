@@ -23,6 +23,9 @@ import {
   type FakeRow,
 } from './helpers/fake-plan-subscribers-db';
 
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする */
+const PLAN_ID = '88888888-8888-4888-8888-888888888881';
+
 const mockRequireRole = vi.fn();
 
 vi.mock('@/lib/auth/helpers', () => ({
@@ -66,7 +69,7 @@ interface ErrorBody {
 
 function existingPlan(overrides: Record<string, unknown> = {}) {
   return {
-    id: 'plan-1',
+    id: PLAN_ID,
     plan_key: 'pro',
     display_name: 'Pro',
     plan_type: 'personal',
@@ -77,7 +80,7 @@ function existingPlan(overrides: Record<string, unknown> = {}) {
 }
 
 function patchRequest(body: Record<string, unknown>) {
-  return new Request('http://localhost/api/super-admin/plans/plan-1', {
+  return new Request(`http://localhost/api/super-admin/plans/${PLAN_ID}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -100,7 +103,7 @@ async function patch(
     admin_audit_logs: [{ data: null, error: null }],
   });
   subscribersDb = createFakePlanSubscribersDb(subscribers);
-  const res = await PATCH(patchRequest(body), { params: { id: 'plan-1' } });
+  const res = await PATCH(patchRequest(body), { params: { id: PLAN_ID } });
   return { res, json: (await res.json()) as ErrorBody & { data?: Record<string, unknown> } };
 }
 
@@ -308,7 +311,7 @@ describe('契約者数を数えられなかったときは、廃止を止める 
     const [message, error, metadata] = mockLoggerError.mock.calls[0]!;
     expect(message).toContain('契約者数を確認できなかった');
     expect((error as Error).message).toContain(table);
-    expect(metadata).toEqual({ plan_id: 'plan-1', plan_key: 'pro', table, pg_code: code });
+    expect(metadata).toEqual({ plan_id: PLAN_ID, plan_key: 'pro', table, pg_code: code });
   });
 
   it('件数が返らない (count が null) ときも 500。プランを更新しない', async () => {
@@ -346,7 +349,7 @@ describe('認可の前に service_role を使わない (#1127)', () => {
   it('未認証 (401) では、service_role のクライアントを作らない', async () => {
     mockRequireRole.mockRejectedValueOnce(new AuthError('AUTH_UNAUTHENTICATED'));
 
-    const res = await PATCH(patchRequest(DEPRECATE), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest(DEPRECATE), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(401);
     expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
@@ -355,7 +358,7 @@ describe('認可の前に service_role を使わない (#1127)', () => {
   it('super_admin 以外 (403) では、service_role のクライアントを作らない', async () => {
     mockRequireRole.mockRejectedValueOnce(new ForbiddenError('FORBIDDEN_ROLE'));
 
-    const res = await PATCH(patchRequest(DEPRECATE), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest(DEPRECATE), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(403);
     expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
@@ -424,5 +427,78 @@ describe('組織のプランの行 (org_*) の廃止では、組織の件数を�
     expect(family.res.status).toBe(409);
     expect(family.json.error.counts).toEqual({ personal_subscriptions: 0, family_groups: 0, organizations: 1 });
     expect(family.json.error.organizations_note).toBeUndefined();
+  });
+});
+
+describe('数えてから書くまでの間に入った契約は、書く文の中の DB のトリガーが止め、同じ 409 にする (#1917)', () => {
+  /** 数え上げは 0 件で通り、UPDATE が DB のトリガー guard_plan_deprecate_subscribers の RAISE で失敗する */
+  async function patchRaisedByTrigger(details: unknown, plan = existingPlan()) {
+    fakeSupabase = createFakeSupabase({
+      subscription_plans: [
+        { data: plan, error: null },
+        { data: null, error: { message: 'OP_PLAN_HAS_SUBSCRIBERS', code: 'P0001', details, hint: null } },
+      ],
+      admin_audit_logs: [{ data: null, error: null }],
+    });
+    subscribersDb = createFakePlanSubscribersDb({});
+    const res = await PATCH(patchRequest(DEPRECATE), { params: { id: PLAN_ID } });
+    return { res, json: (await res.json()) as ErrorBody };
+  }
+
+  it('トリガーの内訳 (DETAIL の JSON) で 409 OP_PLAN_HAS_SUBSCRIBERS を返し、監査ログを書かない', async () => {
+    const { res, json } = await patchRaisedByTrigger('{"family_groups": 0, "organizations": 0, "personal_subscriptions": 1}');
+
+    expect(res.status).toBe(409);
+    expect(json.error.code).toBe('OP_PLAN_HAS_SUBSCRIBERS');
+    expect(json.error.counts).toEqual({ personal_subscriptions: 1, family_groups: 0, organizations: 0 });
+    expect(json.error.message).toContain('個人契約 1 件');
+    // 公開中のプランなので「非公開にする」を案内する (数え上げの 409 と同じ文面)
+    expect(json.error.message).toContain('非公開にする');
+    expect(json.error.organizations_note).toBeUndefined();
+    expect(tablesTouched()).toEqual(['subscription_plans', 'subscription_plans']);
+  });
+
+  it('組織のプランの行 (org_*) では、内訳に組織の欄が無く、注記 (organizations_note) を返す', async () => {
+    const { res, json } = await patchRaisedByTrigger(
+      '{"family_groups": 2, "personal_subscriptions": 0}',
+      existingPlan({ plan_key: 'org_starter', plan_type: 'org' }),
+    );
+
+    expect(res.status).toBe(409);
+    expect(json.error.counts).toEqual({ personal_subscriptions: 0, family_groups: 2 });
+    expect(json.error.organizations_note).toBe(ORG_SUBSCRIPTION_PLAN_ROW_NOTE);
+  });
+
+  it.each([
+    ['JSON でない', 'not json'],
+    ['キーが足りない', '{"personal_subscriptions": 1}'],
+    ['知らないキーがある', '{"personal_subscriptions": 1, "family_groups": 0, "extra": 1}'],
+    ['文字列でない', null],
+  ])('内訳が %s ときは、廃止していない (トリガーが止めた) ので 500 OP_PLAN_SUBSCRIBER_CHECK_FAILED にし、ログに残す', async (_label, details) => {
+    const { res, json } = await patchRaisedByTrigger(details);
+
+    expect(res.status).toBe(500);
+    expect(json.error.code).toBe('OP_PLAN_SUBSCRIBER_CHECK_FAILED');
+    expect(mockLoggerError).toHaveBeenCalledWith(
+      expect.stringContaining('廃止のトリガー'),
+      expect.objectContaining({ message: 'OP_PLAN_HAS_SUBSCRIBERS' }),
+      { plan_id: PLAN_ID, plan_key: 'pro' },
+    );
+    expect(tablesTouched()).toEqual(['subscription_plans', 'subscription_plans']);
+  });
+
+  it('トリガー以外の UPDATE の失敗は、これまでどおり汎用の 500 (INTERNAL_ERROR)', async () => {
+    fakeSupabase = createFakeSupabase({
+      subscription_plans: [
+        { data: existingPlan(), error: null },
+        { data: null, error: { message: 'deadlock detected', code: '40P01', details: null, hint: null } },
+      ],
+    });
+    subscribersDb = createFakePlanSubscribersDb({});
+    const res = await PATCH(patchRequest(DEPRECATE), { params: { id: PLAN_ID } });
+    const json = (await res.json()) as ErrorBody;
+
+    expect(res.status).toBe(500);
+    expect(json.error.code).toBe('INTERNAL_ERROR');
   });
 });

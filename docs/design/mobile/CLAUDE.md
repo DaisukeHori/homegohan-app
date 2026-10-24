@@ -85,7 +85,7 @@ React Native + Expo SDK 58 によるモバイルアプリ:
 
 | 依存先 | 用途 |
 |-------|------|
-| `cross/01-auth-session.md` | セッション同期 / 2FA (方針。運営の MFA は cross/12。WebView の運営画面の確認は cross/12 §16.4) / 子供同意 |
+| `cross/01-auth-session.md` | セッション同期 / 2FA (方針。運営の MFA は cross/12。WebView の運営画面の確認は cross/12 §16.4) / 子供同意 / §3.1・§3.3 の Apple のログインと退会のときの IdP 側の失効 (`08-sign-in-with-apple.md`) |
 | `family/02-api-spec.md` | `/api/family/invites/{token}/accept` 受諾フロー |
 | `org/02-api-spec.md` | `/api/org/invites/{token}/accept` 受諾フロー |
 | `cross/04-api-conventions.md` | API レスポンス snake_case |

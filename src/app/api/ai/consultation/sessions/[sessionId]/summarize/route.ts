@@ -5,8 +5,10 @@ import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage } from '@/lib/plan/entitlements';
 import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { internalError } from '@/lib/api/errors';
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE } from '@/lib/ai/ai-api-messages';
+import { isUuid } from '@/lib/http-params';
 
 function stripMarkdownCodeBlock(text: string): string {
   let cleaned = text.trim();
@@ -101,13 +103,23 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
   let existingSummary: any | null = null;
 
   try {
-    // セッション所有者確認
-    const { data: session } = await supabase
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
+    if (!isUuid(params.sessionId)) {
+      return NextResponse.json({ error: AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE }, { status: 404 });
+    }
+
+    // セッション所有者確認。読めなかったときは 404 にしない (行が無い・他人のセッションのときだけ 404。#1917)
+    const { data: session, error: sessionError } = await supabase
       .from('ai_consultation_sessions')
       .select('*')
       .eq('id', params.sessionId)
-      .single();
+      .maybeSingle();
 
+    if (sessionError) {
+      // 所有者を確かめられていないので 500 (下の catch の「既存の要約で 200」に渡さない。そこでは既存の要約もまだ読めておらず、
+      // 「成功・要約なし」に見えてしまう。兄弟の close と同じ形。#1917)
+      return internalError('POST /api/ai/consultation/sessions/[sessionId]/summarize', sessionError, { userId: user.id, table: 'ai_consultation_sessions' });
+    }
     if (!session || session.user_id !== user.id) {
       return NextResponse.json({ error: AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE }, { status: 404 });
     }

@@ -12,6 +12,11 @@
  * 入っていなければ 409 CONFLICT_STALE_DATA (cross/04 §4.2)。これで遷移表に無い遷移 (例: private を読んで public に戻す間に別の運営が deprecated にすると、書けば deprecated → public になる) は書かれず、
  * 監査の status_from は書いた時点の実際の直前の値と必ず一致する。
  * 削除 (DELETE) も同じで、draft のままのときだけ消す (0 行なら読み直して、無ければ 404、あれば 409 CONFLICT_STALE_DATA)。
+ *
+ * 廃止の安全弁 (#1127・#1912) は、書く前に route が契約者を数え (countPlanSubscribers)、さらに書く文の中で DB のトリガー
+ * guard_plan_deprecate_subscribers がプランの行を FOR UPDATE でロックし直し、commit 前の契約者が増える書き込み (契約の作成・live への
+ * 切り替え・プランの付け替え。どれもトリガー trg_subscriber_plan_key_share でプランの行に FOR KEY SHARE を取る) を待ってから数え直す (#1917)。
+ * 数えてから書くまでの間に契約が入ったときは、トリガーが OP_PLAN_HAS_SUBSCRIBERS で止め、route は数え上げと同じ 409 を返す。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -19,12 +24,19 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
-import { PlanUpdateSchema, isAllowedPlanStatusTransition } from '@/lib/super-admin/plans-schemas';
+import {
+  PlanUpdateSchema,
+  isAllowedPlanStatusTransition,
+  planStatusLockedFieldsMessage,
+  planStatusTransitionMessage,
+} from '@/lib/super-admin/plans-schemas';
 import {
   ORG_SUBSCRIPTION_PLAN_ROW_NOTE,
   PlanSubscriberCountError,
   countPlanSubscribers,
   isOrganizationsCounted,
+  isPlanHasSubscribersDbError,
+  parsePlanSubscriberCountsDetail,
   planHasSubscribersMessage,
   totalPlanSubscribers,
   type PlanSubscriberCounts,
@@ -33,13 +45,41 @@ import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { invalidInputResponse, invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
+import { isUuid } from '@/lib/http-params';
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+/** 対象が無い (UUID の形でない id を含む) */
+const PLAN_NOT_FOUND_RESPONSE = { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } } as const;
 
 /** 読んでから書くまでに別の運営がプランを変えていた (条件つきの更新が 0 行で、読み直した行に送った変更が入っていない) */
 const STALE_PLAN_RESPONSE = {
   error: { code: 'CONFLICT_STALE_DATA', message: '別の運営が先にこのプランを変えました。画面を読み込み直して、もう一度確認してください' },
 } as const;
+
+/** 契約者を数えられなかったので廃止を止めたとき (500)。DB の生のエラー文は返さない (#1172) */
+const SUBSCRIBER_CHECK_FAILED_RESPONSE = {
+  error: {
+    code: 'OP_PLAN_SUBSCRIBER_CHECK_FAILED',
+    message: '契約者数を確認できなかったため、廃止を中止しました。時間をおいて、もう一度お試しください。',
+  },
+} as const;
+
+/** 契約者がいるので廃止を止めたとき (409)。route の数え上げと、DB のトリガー (書く文の中の数え上げ。#1917) の両方で同じ本文にする */
+function planHasSubscribersResponse(counts: PlanSubscriberCounts, canUnpublish: boolean): NextResponse {
+  return NextResponse.json(
+    {
+      error: {
+        code: 'OP_PLAN_HAS_SUBSCRIBERS',
+        message: planHasSubscribersMessage(counts, { canUnpublish }),
+        counts,
+        // 組織の件数を数えていないときは、件数の欄 (counts.organizations) の代わりに注記を返す (#1912)
+        ...(isOrganizationsCounted(counts) ? {} : { organizations_note: ORG_SUBSCRIPTION_PLAN_ROW_NOTE }),
+      },
+    },
+    { status: 409 }
+  );
+}
 
 /** 列の値が送った値と同じか (配列は要素ごと、ends_at は時刻として比べる。DB は timestamptz を別の書式で返すため) */
 function sameColumnValue(column: string, current: unknown, requested: unknown): boolean {
@@ -63,19 +103,24 @@ export async function GET(_request: NextRequest, props: RouteContext) {
   const params = await props.params;
   try {
     await requireRole(['super_admin']);
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
+    }
     const supabase = await createClient();
 
     const { data: plan, error } = await supabase
       .from('subscription_plans')
       .select('*')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
-    if (error || !plan) {
-      return NextResponse.json(
-        { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } },
-        { status: 404 }
-      );
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で消えたように見せない。#1917)
+    if (error) {
+      return internalError('GET /api/super-admin/plans/[id]', error, { table: 'subscription_plans' }, { shape: 'nested' });
+    }
+    if (!plan) {
+      return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     // 価格変更履歴を追加取得
@@ -101,12 +146,16 @@ export async function GET(_request: NextRequest, props: RouteContext) {
 
 export async function PATCH(request: NextRequest, props: RouteContext) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   const logger = createLogger('PATCH /api/super-admin/plans/[id]', generateRequestId());
   try {
     const user = await requireRole(['super_admin']);
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
+    }
     const supabase = await createClient();
 
     // 既存プランを取得
@@ -114,13 +163,14 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
       .from('subscription_plans')
       .select('*')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
-    if (fetchErr || !existing) {
-      return NextResponse.json(
-        { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } },
-        { status: 404 }
-      );
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で消えたように見せない。#1917)
+    if (fetchErr) {
+      return internalError('PATCH /api/super-admin/plans/[id]', fetchErr, { userId: user.id, table: 'subscription_plans' }, { shape: 'nested' });
+    }
+    if (!existing) {
+      return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     const bodyResult = await readJsonBody(request);
@@ -145,7 +195,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
           {
             error: {
               code: 'OP_PLAN_INVALID_TRANSITION',
-              message: `${existing.status} から ${input.status} への遷移は許可されていません`,
+              // 状態の値は「画面の名前 (値)」の形で括弧に入れる (#1917 の続き)
+              message: planStatusTransitionMessage(existing.status, input.status),
             },
           },
           { status: 422 }
@@ -161,7 +212,7 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
           {
             error: {
               code: 'OP_PLAN_DEPRECATE_ENDS_AT_REQUIRED',
-              message: '廃止移行には ends_at (廃止予定日) の指定が必要です',
+              message: '廃止移行には廃止予定日 (ends_at) の指定が必要です',
             },
           },
           { status: 400 }
@@ -188,32 +239,13 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
             plan_key: existing.plan_key,
             ...(countErr instanceof PlanSubscriberCountError ? { table: countErr.table, pg_code: countErr.pgCode } : {}),
           });
-          return NextResponse.json(
-            {
-              error: {
-                code: 'OP_PLAN_SUBSCRIBER_CHECK_FAILED',
-                message: '契約者数を確認できなかったため、廃止を中止しました。時間をおいて、もう一度お試しください。',
-              },
-            },
-            { status: 500 }
-          );
+          return NextResponse.json(SUBSCRIBER_CHECK_FAILED_RESPONSE, { status: 500 });
         }
 
         // 組織のプランの行では、組織の件数を「0 件」として判定に入れない (数えていないので counts に organizations が無い)。
         // 個人・家族の契約者がいれば、これまでどおり止める (#1912)
         if (totalPlanSubscribers(counts) > 0) {
-          return NextResponse.json(
-            {
-              error: {
-                code: 'OP_PLAN_HAS_SUBSCRIBERS',
-                message: planHasSubscribersMessage(counts, { canUnpublish: existing.status === 'public' }),
-                counts,
-                // 組織の件数を数えていないときは、件数の欄 (counts.organizations) の代わりに注記を返す (#1912)
-                ...(isOrganizationsCounted(counts) ? {} : { organizations_note: ORG_SUBSCRIPTION_PLAN_ROW_NOTE }),
-              },
-            },
-            { status: 409 }
-          );
+          return planHasSubscribersResponse(counts, existing.status === 'public');
         }
       }
     }
@@ -238,7 +270,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
           {
             error: {
               code: 'OP_PLAN_STATUS_LOCKED',
-              message: `公開中プランでは ${disallowedKeys.join(', ')} は変更できません。価格変更は price-change API を使用してください。`,
+              // 項目名は「画面の名前 (項目名)」の形で括弧に入れる (#1917 の続き)
+              message: planStatusLockedFieldsMessage(disallowedKeys),
             },
           },
           { status: 422 }
@@ -290,6 +323,18 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
     const { data: updated, error: updateErr } = await updateQuery.select().maybeSingle();
 
     if (updateErr) {
+      // #1917: 上の数え上げから書くまでの間に契約が入った (DB のトリガー guard_plan_deprecate_subscribers が、書く文の中で
+      // commit 前の契約を待ってから数え直して止めた)。上の数え上げと同じ 409 にする (内訳はトリガーの DETAIL)
+      if (isPlanHasSubscribersDbError(updateErr)) {
+        const dbCounts = parsePlanSubscriberCountsDetail(updateErr.details);
+        if (dbCounts) return planHasSubscribersResponse(dbCounts, existing.status === 'public');
+        // 内訳を読めなかった: 廃止はしていない (トリガーが止めた) ので、数えられなかったときと同じ 500 にする
+        logger.withUser(user.id).error('廃止のトリガーの契約者の内訳を読めませんでした (廃止はしていません)', updateErr, {
+          plan_id: params.id,
+          plan_key: existing.plan_key,
+        });
+        return NextResponse.json(SUBSCRIBER_CHECK_FAILED_RESPONSE, { status: 500 });
+      }
       return internalError('PATCH /api/super-admin/plans/[id]', updateErr, { userId: user.id }, { shape: 'nested' });
     }
 
@@ -350,25 +395,30 @@ export async function DELETE(request: NextRequest, props: RouteContext) {
   const params = await props.params;
   try {
     const user = await requireRole(['super_admin']);
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
+    }
     const supabase = await createClient();
 
     const { data: existing, error: fetchErr } = await supabase
       .from('subscription_plans')
       .select('id, status, plan_key')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
-    if (fetchErr || !existing) {
-      return NextResponse.json(
-        { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } },
-        { status: 404 }
-      );
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で消えたように見せない。#1917)
+    if (fetchErr) {
+      return internalError('DELETE /api/super-admin/plans/[id]', fetchErr, { userId: user.id, table: 'subscription_plans' }, { shape: 'nested' });
+    }
+    if (!existing) {
+      return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     // draft のみ削除可能
     if (existing.status !== 'draft') {
       return NextResponse.json(
-        { error: { code: 'OP_PLAN_NOT_DRAFT', message: 'draft 状態のプランのみ削除できます' } },
+        { error: { code: 'OP_PLAN_NOT_DRAFT', message: '下書き (draft) 状態のプランのみ削除できます' } },
         { status: 422 }
       );
     }

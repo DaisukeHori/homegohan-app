@@ -8,6 +8,7 @@ import { aiConsentSkippedField, checkUserAiConsent } from '@/lib/ai/consent-guar
 import { internalError } from '@/lib/api/errors';
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE, AI_CONSULTATION_SESSION_ALREADY_CLOSED_MESSAGE } from '@/lib/ai/ai-api-messages';
+import { isUuid } from '@/lib/http-params';
 
 function stripMarkdownCodeBlock(text: string): string {
   let cleaned = text.trim();
@@ -72,13 +73,21 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   try {
-    // セッション所有者確認
-    const { data: session } = await supabase
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
+    if (!isUuid(params.sessionId)) {
+      return NextResponse.json({ error: AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE }, { status: 404 });
+    }
+
+    // セッション所有者確認。読めなかったときは 404 にしない (行が無い・他人のセッションのときだけ 404。#1917)
+    const { data: session, error: sessionError } = await supabase
       .from('ai_consultation_sessions')
       .select('*')
       .eq('id', params.sessionId)
-      .single();
+      .maybeSingle();
 
+    if (sessionError) {
+      return internalError('POST /api/ai/consultation/sessions/[sessionId]/close', sessionError, { userId: user.id, table: 'ai_consultation_sessions' });
+    }
     if (!session || session.user_id !== user.id) {
       return NextResponse.json({ error: AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE }, { status: 404 });
     }

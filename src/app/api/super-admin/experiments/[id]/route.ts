@@ -3,6 +3,9 @@
  * PATCH  /api/super-admin/experiments/[id]  — 実験更新 (start/stop/cancel)
  * DELETE /api/super-admin/experiments/[id]  — 実験削除
  * operator/02-api-spec.md §15 準拠
+ *
+ * 読み込み・更新の DB の失敗 (#1917): DB の失敗は 500 にし、行が無いときだけ 404 にする (一時的な失敗で実験が消えたように見せない)。
+ * UUID の形でない id は DB に渡さず 404。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
@@ -13,23 +16,35 @@ import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { readJsonBody, SUPER_ADMIN_INVALID_JSON_BODY_MESSAGE } from '@/lib/super-admin/validation-errors';
+import { isUuid } from '@/lib/http-params';
 
 type Params = { params: Promise<{ id: string }> };
+
+/** 実験が無い (UUID の形でない id を含む) */
+const EXPERIMENT_NOT_FOUND_RESPONSE = { error: { code: 'NOT_FOUND', message: '実験が見つかりません' } } as const;
 
 export async function GET(_request: NextRequest, props: Params) {
   const params = await props.params;
   try {
     await requireRole(['super_admin']);
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(EXPERIMENT_NOT_FOUND_RESPONSE, { status: 404 });
+    }
     const supabase = await createClient();
 
     const { data, error } = await supabase
       .from('experiments')
       .select('*')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
-    if (error || !data) {
-      return NextResponse.json({ error: { code: 'NOT_FOUND', message: '実験が見つかりません' } }, { status: 404 });
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で実験が消えたように見せない。#1917)
+    if (error) {
+      return internalError('GET /api/super-admin/experiments/[id]', error, { table: 'experiments' }, { shape: 'nested' });
+    }
+    if (!data) {
+      return NextResponse.json(EXPERIMENT_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     return NextResponse.json({ data });
@@ -42,7 +57,7 @@ export async function GET(_request: NextRequest, props: Params) {
 
 export async function PATCH(request: NextRequest, props: Params) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   try {
@@ -66,15 +81,24 @@ export async function PATCH(request: NextRequest, props: Params) {
       );
     }
 
+    // UUID の形でない id は DB に渡さず 404 (入力の検査 (400) のあと。行が無い UUID と同じ順にそろえる)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(EXPERIMENT_NOT_FOUND_RESPONSE, { status: 404 });
+    }
+
     const { data, error } = await supabase
       .from('experiments')
       .update(parsed.data)
       .eq('id', params.id)
       .select()
-      .single();
+      .maybeSingle();
 
-    if (error || !data) {
-      return NextResponse.json({ error: { code: 'NOT_FOUND', message: '実験が見つかりません' } }, { status: 404 });
+    // 書けなかったときは 404 にしない (更新した行が無いときだけ 404。#1917)
+    if (error) {
+      return internalError('PATCH /api/super-admin/experiments/[id]', error, { userId: user.id, table: 'experiments' }, { shape: 'nested' });
+    }
+    if (!data) {
+      return NextResponse.json(EXPERIMENT_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     // 監査ログ
@@ -102,17 +126,25 @@ export async function DELETE(request: NextRequest, props: Params) {
   const params = await props.params;
   try {
     const user = await requireRole(['super_admin']);
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(EXPERIMENT_NOT_FOUND_RESPONSE, { status: 404 });
+    }
     const supabase = await createClient();
 
     // running 状態の実験は削除不可
-    const { data: existing } = await supabase
+    const { data: existing, error: fetchError } = await supabase
       .from('experiments')
       .select('status, key, name')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。#1917)
+    if (fetchError) {
+      return internalError('DELETE /api/super-admin/experiments/[id]', fetchError, { userId: user.id, table: 'experiments' }, { shape: 'nested' });
+    }
     if (!existing) {
-      return NextResponse.json({ error: { code: 'NOT_FOUND', message: '実験が見つかりません' } }, { status: 404 });
+      return NextResponse.json(EXPERIMENT_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     if (existing.status === 'running') {

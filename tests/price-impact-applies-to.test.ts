@@ -16,6 +16,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createQueryBuilder, type FakeQueryResult } from './helpers/fake-supabase';
 import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE } from '@/lib/super-admin/plan-subscribers';
 
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする */
+const PLAN_ID = '88888888-8888-4888-8888-888888888884';
+const MISSING_PLAN_ID = '88888888-8888-4888-8888-88888888888f';
+
 const mockRequireRole = vi.fn();
 
 vi.mock('@/lib/auth/helpers', () => ({
@@ -46,7 +50,7 @@ function createImpactSupabase(opts: { plan: FakeQueryResult }) {
 
 /** 現行月額 1,500 円の個人プラン */
 function existingPlan() {
-  return { id: 'plan-1', plan_key: 'pro', monthly_price_jpy: 1500, plan_type: 'personal' };
+  return { id: PLAN_ID, plan_key: 'pro', monthly_price_jpy: 1500, plan_type: 'personal' };
 }
 
 function impactRequest(query: string) {
@@ -79,7 +83,7 @@ describe('GET /api/super-admin/plans/[id]/price-impact (#1102: 新規契約の�
     fakeSupabase = createImpactSupabase({ plan: { data: existingPlan(), error: null } });
 
     const res = await GET(impactRequest('new_monthly_price_jpy=2000&applies_to=new_only'), {
-      params: { id: 'plan-1' },
+      params: { id: PLAN_ID },
     });
 
     expect(res.status).toBe(200);
@@ -101,7 +105,7 @@ describe('GET /api/super-admin/plans/[id]/price-impact (#1102: 新規契約の�
     fakeSupabase = createImpactSupabase({ plan: { data: existingPlan(), error: null } });
 
     const res = await GET(impactRequest('new_monthly_price_jpy=1000&applies_to=new_only'), {
-      params: { id: 'plan-1' },
+      params: { id: PLAN_ID },
     });
 
     expect(res.status).toBe(200);
@@ -114,7 +118,7 @@ describe('GET /api/super-admin/plans/[id]/price-impact (#1102: 新規契約の�
   it('applies_to を省略した場合も new_only として扱う', async () => {
     fakeSupabase = createImpactSupabase({ plan: { data: existingPlan(), error: null } });
 
-    const res = await GET(impactRequest('new_monthly_price_jpy=2000'), { params: { id: 'plan-1' } });
+    const res = await GET(impactRequest('new_monthly_price_jpy=2000'), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(200);
     const json = (await res.json()) as ImpactBody;
@@ -128,7 +132,7 @@ describe('GET /api/super-admin/plans/[id]/price-impact (#1102: 新規契約の�
   it('新価格を省略した場合は現行価格を返す (新価格 = 現行価格)', async () => {
     fakeSupabase = createImpactSupabase({ plan: { data: existingPlan(), error: null } });
 
-    const res = await GET(impactRequest(''), { params: { id: 'plan-1' } });
+    const res = await GET(impactRequest(''), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(200);
     const json = (await res.json()) as ImpactBody;
@@ -142,7 +146,7 @@ describe('GET /api/super-admin/plans/[id]/price-impact (#1102: 新規契約の�
       plan: { data: { ...existingPlan(), monthly_price_jpy: null }, error: null },
     });
 
-    const res = await GET(impactRequest('new_monthly_price_jpy=500'), { params: { id: 'plan-1' } });
+    const res = await GET(impactRequest('new_monthly_price_jpy=500'), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(200);
     const json = (await res.json()) as ImpactBody;
@@ -158,7 +162,7 @@ describe('GET /api/super-admin/plans/[id]/price-impact (#1102: new_only 以外�
       fakeSupabase = createImpactSupabase({ plan: { data: existingPlan(), error: null } });
 
       const res = await GET(impactRequest(`new_monthly_price_jpy=2000&applies_to=${appliesTo}`), {
-        params: { id: 'plan-1' },
+        params: { id: PLAN_ID },
       });
 
       expect(res.status).toBe(400);
@@ -175,7 +179,7 @@ describe('GET /api/super-admin/plans/[id]/price-impact (#1102: new_only 以外�
     fakeSupabase = createImpactSupabase({ plan: { data: existingPlan(), error: null } });
 
     const res = await GET(impactRequest('new_monthly_price_jpy=2000&applies_to=everyone'), {
-      params: { id: 'plan-1' },
+      params: { id: PLAN_ID },
     });
 
     expect(res.status).toBe(400);
@@ -188,7 +192,7 @@ describe('GET /api/super-admin/plans/[id]/price-impact (#1102: new_only 以外�
     fakeSupabase = createImpactSupabase({ plan: { data: existingPlan(), error: null } });
 
     for (const bad of ['-1', '12.5']) {
-      const res = await GET(impactRequest(`new_monthly_price_jpy=${bad}`), { params: { id: 'plan-1' } });
+      const res = await GET(impactRequest(`new_monthly_price_jpy=${bad}`), { params: { id: PLAN_ID } });
       expect(res.status).toBe(400);
     }
     expect(fakeSupabase.from).not.toHaveBeenCalled();
@@ -197,9 +201,10 @@ describe('GET /api/super-admin/plans/[id]/price-impact (#1102: new_only 以外�
 
 describe('GET /api/super-admin/plans/[id]/price-impact (#1102: 権限とプラン取得)', () => {
   it('プランが存在しなければ 404 を返す', async () => {
-    fakeSupabase = createImpactSupabase({ plan: { data: null, error: { message: 'not found' } } });
+    // maybeSingle は行が無いと data: null・error: null を返す (#1917。DB の失敗は 404 ではなく 500)。id は UUID の形 (形の違う id は DB に渡さない)
+    fakeSupabase = createImpactSupabase({ plan: { data: null, error: null } });
 
-    const res = await GET(impactRequest('new_monthly_price_jpy=2000'), { params: { id: 'missing' } });
+    const res = await GET(impactRequest('new_monthly_price_jpy=2000'), { params: { id: MISSING_PLAN_ID } });
 
     expect(res.status).toBe(404);
     const json = (await res.json()) as { error: { code: string } };
@@ -212,7 +217,7 @@ describe('GET /api/super-admin/plans/[id]/price-impact (#1102: 権限とプラ�
     mockRequireRole.mockRejectedValue(new ForbiddenError('forbidden'));
     fakeSupabase = createImpactSupabase({ plan: { data: existingPlan(), error: null } });
 
-    const res = await GET(impactRequest('new_monthly_price_jpy=2000'), { params: { id: 'plan-1' } });
+    const res = await GET(impactRequest('new_monthly_price_jpy=2000'), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(403);
     expect(fakeSupabase.from).not.toHaveBeenCalled();
@@ -222,10 +227,10 @@ describe('GET /api/super-admin/plans/[id]/price-impact (#1102: 権限とプラ�
 describe('GET /api/super-admin/plans/[id]/price-impact (#1912: 組織のプランの行 (org_*) の注記)', () => {
   it('組織のプランの行では、組織の件数の代わりに organizations_note を添える', async () => {
     fakeSupabase = createImpactSupabase({
-      plan: { data: { id: 'plan-1', plan_key: 'org_standard', monthly_price_jpy: 980, plan_type: 'org' }, error: null },
+      plan: { data: { id: PLAN_ID, plan_key: 'org_standard', monthly_price_jpy: 980, plan_type: 'org' }, error: null },
     });
 
-    const res = await GET(impactRequest('new_monthly_price_jpy=1200'), { params: { id: 'plan-1' } });
+    const res = await GET(impactRequest('new_monthly_price_jpy=1200'), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(200);
     const json = (await res.json()) as ImpactBody & { data: { organizations_note?: string } };
@@ -239,7 +244,7 @@ describe('GET /api/super-admin/plans/[id]/price-impact (#1912: 組織のプラ�
   it('個人のプランには organizations_note を付けない', async () => {
     fakeSupabase = createImpactSupabase({ plan: { data: existingPlan(), error: null } });
 
-    const res = await GET(impactRequest('new_monthly_price_jpy=2000'), { params: { id: 'plan-1' } });
+    const res = await GET(impactRequest('new_monthly_price_jpy=2000'), { params: { id: PLAN_ID } });
 
     const json = (await res.json()) as ImpactBody & { data: { organizations_note?: string } };
     expect(json.data.organizations_note).toBeUndefined();

@@ -57,9 +57,13 @@ export async function GET() {
       .from('organizations')
       .select(ORG_SETTINGS_SELECT_COLUMNS)
       .eq('id', profile.organization_id)
-      .single();
+      .maybeSingle();
 
-    if (orgError || !org) {
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で組織が消えたように見せない。#1917)
+    if (orgError) {
+      return internalError('GET', '組織設定の読み込みに失敗しました', orgError);
+    }
+    if (!org) {
       return NextResponse.json(
         { error: { code: 'NOT_FOUND', message: '組織が見つかりません' } },
         { status: 404 },
@@ -74,7 +78,7 @@ export async function GET() {
 
 export async function PUT(request: Request) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   try {
     const { profile } = await requireOrgAdmin();

@@ -55,6 +55,10 @@ const CONSUME_ALLOWED_ROW = { allowed: true, metered: true, plan: 'free', limit:
 const CONSUME_DENIED_ROW = { allowed: false, metered: true, plan: 'free', limit: 10, used: 10, usage_date: '2026-10-11' };
 const SESSION_ID = '22222222-2222-4222-8222-222222222222';
 const MEAL_ID = '33333333-3333-4333-8333-333333333333';
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、アクション・1 日の献立の id も UUID の形にする */
+const ACTION_1_ID = '44444444-4444-4444-8444-444444444441';
+const ACTION_2_ID = '44444444-4444-4444-8444-444444444442';
+const DAY_ID = '55555555-5555-4555-8555-555555555555';
 const TODAY = new Date().toISOString().split('T')[0];
 
 type ConsentMode = 'none' | 'outdated' | 'failed' | 'granted';
@@ -174,7 +178,14 @@ function makeQuery(table: string, client: SupabaseClientKind): unknown {
         if (prop === 'then') {
           return (resolve: (v: unknown) => unknown, reject: (e: unknown) => unknown) => Promise.resolve(listResult()).then(resolve, reject);
         }
-        if (prop === 'single' || prop === 'maybeSingle') return () => Promise.resolve(singleResult());
+        if (prop === 'single') return () => Promise.resolve(singleResult());
+        // maybeSingle は行が無いと失敗にせず data: null・error: null を返す (PostgREST と同じ。#1917 で route の読み込みを maybeSingle にした)
+        if (prop === 'maybeSingle') {
+          return () => {
+            const result = singleResult();
+            return Promise.resolve(result.data === null && result.error?.code === 'PGRST116' ? { data: null, error: null } : result);
+          };
+        }
         if (prop === 'insert' || prop === 'update' || prop === 'upsert' || prop === 'delete') {
           return (payload: unknown) => {
             h.state.writes.push({ table, op: String(prop), payload, client });
@@ -452,6 +463,10 @@ const ROUTE_CASES: RouteCase[] = [
     file: 'src/app/api/ai/nutrition-analysis/route.ts',
     kind: 'reject',
     refundOnInsertFailure: { table: 'weekly_menu_requests', feature: 'menu_generation' },
+    setup: () => {
+      // 対象の食事は、その日のその区分の行がちょうど 1 件のときだけ変える (#1917。.limit() で読んで件数を見る)
+      h.state.rows.planned_meals = [{ id: MEAL_ID }];
+    },
     call: async () => (await import('@/app/api/ai/nutrition-analysis/route')).POST(
       json('http://localhost/api/ai/nutrition-analysis', { targetDate: TODAY, targetMealType: 'dinner', prompt: '野菜を増やす' }),
     ),
@@ -552,7 +567,7 @@ const ROUTE_CASES: RouteCase[] = [
     kind: 'reject',
     setup: () => {
       h.state.single.ai_action_logs = {
-        id: 'action-1',
+        id: ACTION_1_ID,
         action_type: 'generate_day_menu',
         action_params: { date: TODAY },
         status: 'pending',
@@ -561,8 +576,8 @@ const ROUTE_CASES: RouteCase[] = [
     },
     sends: () => h.runConsultationAction.mock.calls.length,
     call: async () => (await import('@/app/api/ai/consultation/actions/[actionId]/execute/route')).POST(
-      json('http://localhost/api/ai/consultation/actions/action-1/execute', {}),
-      { params: { actionId: 'action-1' } },
+      json(`http://localhost/api/ai/consultation/actions/${ACTION_1_ID}/execute`, {}),
+      { params: { actionId: ACTION_1_ID } },
     ),
   },
   {
@@ -572,7 +587,7 @@ const ROUTE_CASES: RouteCase[] = [
     kind: 'pass',
     setup: () => {
       h.state.single.ai_action_logs = {
-        id: 'action-2',
+        id: ACTION_2_ID,
         action_type: 'update_meal',
         action_params: { mealId: MEAL_ID },
         status: 'pending',
@@ -581,8 +596,8 @@ const ROUTE_CASES: RouteCase[] = [
     },
     // AI へは送らないアクションなので、AI の送り口は 0 のまま、アクションの実行 (runConsultationAction) は進む
     call: async () => (await import('@/app/api/ai/consultation/actions/[actionId]/execute/route')).POST(
-      json('http://localhost/api/ai/consultation/actions/action-2/execute', {}),
-      { params: { actionId: 'action-2' } },
+      json(`http://localhost/api/ai/consultation/actions/${ACTION_2_ID}/execute`, {}),
+      { params: { actionId: ACTION_2_ID } },
     ),
   },
   {
@@ -592,10 +607,10 @@ const ROUTE_CASES: RouteCase[] = [
     kind: 'reject',
     refundOnInsertFailure: { table: 'weekly_menu_requests', feature: 'menu_generation' },
     setup: () => {
-      h.state.single.user_daily_meals = { id: 'day-1', day_date: TODAY };
+      h.state.single.user_daily_meals = { id: DAY_ID, day_date: TODAY };
     },
     call: async () => (await import('@/app/api/ai/menu/day/regenerate/route')).POST(
-      json('http://localhost/api/ai/menu/day/regenerate', { dailyMealId: 'day-1' }),
+      json('http://localhost/api/ai/menu/day/regenerate', { dailyMealId: DAY_ID }),
     ),
   },
   {
@@ -605,7 +620,7 @@ const ROUTE_CASES: RouteCase[] = [
     kind: 'reject',
     refundOnInsertFailure: { table: 'weekly_menu_requests', feature: 'menu_generation' },
     setup: () => {
-      h.state.single.user_daily_meals = { id: 'day-1', day_date: TODAY };
+      h.state.single.user_daily_meals = { id: DAY_ID, day_date: TODAY };
     },
     call: async () => (await import('@/app/api/ai/menu/meal/generate/route')).POST(
       json('http://localhost/api/ai/menu/meal/generate', { dayDate: TODAY, mealType: 'dinner' }),
@@ -621,9 +636,9 @@ const ROUTE_CASES: RouteCase[] = [
       h.state.single.planned_meals = {
         id: MEAL_ID,
         meal_type: 'dinner',
-        daily_meal_id: 'day-1',
+        daily_meal_id: DAY_ID,
         is_completed: false,
-        user_daily_meals: { id: 'day-1', day_date: TODAY, user_id: USER },
+        user_daily_meals: { id: DAY_ID, day_date: TODAY, user_id: USER },
       };
     },
     call: async () => (await import('@/app/api/ai/menu/meal/regenerate/route')).POST(
@@ -916,14 +931,14 @@ describe('consultation execute: AI へ送らないアクションは、未同意
   it.each(DENIED_MODES)('同意が %s: update_meal は実行される (runConsultationAction が呼ばれる)', async (mode) => {
     h.state.consentMode = mode;
     h.state.single.ai_action_logs = {
-      id: 'action-2',
+      id: ACTION_2_ID,
       action_type: 'update_meal',
       action_params: { mealId: MEAL_ID },
       status: 'pending',
       ai_consultation_sessions: { user_id: USER },
     };
     const { POST } = await import('@/app/api/ai/consultation/actions/[actionId]/execute/route');
-    const res = await POST(json('http://localhost/api/ai/consultation/actions/action-2/execute', {}), { params: { actionId: 'action-2' } });
+    const res = await POST(json(`http://localhost/api/ai/consultation/actions/${ACTION_2_ID}/execute`, {}), { params: { actionId: ACTION_2_ID } });
     expect(res.status).toBe(200);
     expect(h.runConsultationAction).toHaveBeenCalledTimes(1);
   });
@@ -1039,7 +1054,7 @@ describe('consultation execute (#1149): 献立の生成のアクションが上�
   it('429 AI_DAILY_LIMIT を返し、アクションを pending のまま残す (ai_action_logs を書き換えない)', async () => {
     h.state.consentMode = 'granted';
     h.state.single.ai_action_logs = {
-      id: 'action-1',
+      id: ACTION_1_ID,
       action_type: 'generate_day_menu',
       action_params: { date: TODAY },
       status: 'pending',
@@ -1052,7 +1067,7 @@ describe('consultation execute (#1149): 献立の生成のアクションが上�
       aiDailyLimit: denied,
     } as never);
     const { POST } = await import('@/app/api/ai/consultation/actions/[actionId]/execute/route');
-    const res = await POST(json('http://localhost/api/ai/consultation/actions/action-1/execute', {}), { params: { actionId: 'action-1' } });
+    const res = await POST(json(`http://localhost/api/ai/consultation/actions/${ACTION_1_ID}/execute`, {}), { params: { actionId: ACTION_1_ID } });
 
     expect(res.status).toBe(429);
     expect(await bodyOf(res)).toMatchObject({ code: 'AI_DAILY_LIMIT', limit: 10 });

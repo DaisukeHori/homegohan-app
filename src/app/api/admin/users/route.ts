@@ -17,6 +17,7 @@ import { buildUserSearchFilter } from '@/lib/admin/users-search';
 import { isAccountFrozen } from '@/lib/auth/frozen';
 import { jstDayStartTimestamp } from '@/lib/date-utils';
 import { jstOptionalDayRangeTimestamps } from '@/lib/jst-day-ranges';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 
 export const dynamic = 'force-dynamic';
 
@@ -61,11 +62,27 @@ export async function GET(request: Request) {
   // メールは引かず、メールでの検索も効かせない (検索でメールの存在を推測させない)。
   const canSeeEmail = canViewUserEmail(actor.roles);
 
-  // ユーザープロファイルを検索
-  let query = supabase
-    .from('user_profiles')
-    .select(
-      `
+  // 全文検索 (email/name/id)
+  // 検索語は buildUserSearchFilter が引用符・LIKE のワイルドカードをエスケープして or=(...) にする
+  // (以前は文字列連結で、"," ")" で構文エラーになり、"%" "_" がワイルドカードとして働いた)。
+  // メールの部分一致は admin / super_admin だけ。見つかった user_id を id.in.(...) で足す。
+  const searchTerm = params.q?.trim();
+  let searchFilter: string | null = null;
+  if (searchTerm) {
+    const emailMatchedIds = canSeeEmail ? await findUserIdsByEmail(supabase, searchTerm, LOG_SOURCE) : [];
+    searchFilter = buildUserSearchFilter(searchTerm, emailMatchedIds);
+  }
+
+  // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectUsers) から作る。
+  // 絞り込みを 2 か所に書くと、片方だけ直したときに件数と一覧がずれるため。
+  // 凍結の判定の時刻も 1 回だけ決める (一覧と件数で同じ時刻を使う)
+  const nowIso = new Date().toISOString();
+  const selectUsers = (options: { head?: boolean } = {}) => {
+    // ユーザープロファイルを検索
+    let query = supabase
+      .from('user_profiles')
+      .select(
+        `
       id,
       nickname,
       roles,
@@ -78,76 +95,73 @@ export async function GET(request: Request) {
       frozen_by,
       unban_at
     `,
-      { count: 'exact' },
-    );
+        listCountOptions(options.head),
+      );
 
-  // 全文検索 (email/name/id)
-  // 検索語は buildUserSearchFilter が引用符・LIKE のワイルドカードをエスケープして or=(...) にする
-  // (以前は文字列連結で、"," ")" で構文エラーになり、"%" "_" がワイルドカードとして働いた)。
-  // メールの部分一致は admin / super_admin だけ。見つかった user_id を id.in.(...) で足す。
-  const searchTerm = params.q?.trim();
-  if (searchTerm) {
-    const emailMatchedIds = canSeeEmail ? await findUserIdsByEmail(supabase, searchTerm, LOG_SOURCE) : [];
-    const searchFilter = buildUserSearchFilter(searchTerm, emailMatchedIds);
     if (searchFilter) {
       query = query.or(searchFilter);
     }
-  }
 
-  // ロールフィルタ
-  if (params.role) {
-    query = query.contains('roles', [params.role]);
-  }
+    // ロールフィルタ
+    if (params.role) {
+      query = query.contains('roles', [params.role]);
+    }
 
-  // ステータスフィルタ
-  // #1030 round-2: is_banned (レスポンス側) は isAccountFrozen (unban_at 考慮) で
-  // 判定するため、フィルタ条件も同じ意味論に揃える。frozen_at IS NOT NULL だけで
-  // 判定すると、一時 BAN が期限切れ (unban_at <= now) になったユーザーが
-  // status=banned で検索すると is_banned: false のまま一覧に出てしまい、
-  // status=active からは除外され続ける不整合が生じる。
-  const nowIso = new Date().toISOString();
-  if (params.status === 'banned') {
-    // 凍結中 かつ (無期限 BAN または unban_at が未到来)
-    query = query
-      .not('frozen_at', 'is', null)
-      .or(`unban_at.is.null,unban_at.gt.${nowIso}`);
-  } else if (params.status === 'active') {
-    // 未凍結、または一時 BAN が期限切れ (unban_at が過去) で自動解除扱い
-    query = query.or(
-      `frozen_at.is.null,and(frozen_at.not.is.null,unban_at.not.is.null,unban_at.lte.${nowIso})`,
-    );
-  }
+    // ステータスフィルタ
+    // #1030 round-2: is_banned (レスポンス側) は isAccountFrozen (unban_at 考慮) で
+    // 判定するため、フィルタ条件も同じ意味論に揃える。frozen_at IS NOT NULL だけで
+    // 判定すると、一時 BAN が期限切れ (unban_at <= now) になったユーザーが
+    // status=banned で検索すると is_banned: false のまま一覧に出てしまい、
+    // status=active からは除外され続ける不整合が生じる。
+    if (params.status === 'banned') {
+      // 凍結中 かつ (無期限 BAN または unban_at が未到来)
+      query = query
+        .not('frozen_at', 'is', null)
+        .or(`unban_at.is.null,unban_at.gt.${nowIso}`);
+    } else if (params.status === 'active') {
+      // 未凍結、または一時 BAN が期限切れ (unban_at が過去) で自動解除扱い
+      query = query.or(
+        `frozen_at.is.null,and(frozen_at.not.is.null,unban_at.not.is.null,unban_at.lte.${nowIso})`,
+      );
+    }
 
-  // 登録日フィルタ (#1433): 登録日 FROM の JST 0 時以上、登録日 TO の翌日の JST 0 時未満。
-  // 日付の文字列をそのまま created_at (timestamptz) と比べると UTC の 0 時 = JST 9 時と読まれ、
-  // JST の 0:00〜8:59 に登録したユーザーが FROM の日から落ち、TO の日の 0:00 より後がまるごと落ちる。
-  const { fromTimestamp: registeredFrom, toTimestampExclusive: registeredToExclusive } =
-    jstOptionalDayRangeTimestamps(params.registered_from, params.registered_to);
-  if (registeredFrom) {
-    query = query.gte('created_at', registeredFrom);
-  }
-  if (registeredToExclusive) {
-    query = query.lt('created_at', registeredToExclusive);
-  }
+    // 登録日フィルタ (#1433): 登録日 FROM の JST 0 時以上、登録日 TO の翌日の JST 0 時未満。
+    // 日付の文字列をそのまま created_at (timestamptz) と比べると UTC の 0 時 = JST 9 時と読まれ、
+    // JST の 0:00〜8:59 に登録したユーザーが FROM の日から落ち、TO の日の 0:00 より後がまるごと落ちる。
+    const { fromTimestamp: registeredFrom, toTimestampExclusive: registeredToExclusive } =
+      jstOptionalDayRangeTimestamps(params.registered_from, params.registered_to);
+    if (registeredFrom) {
+      query = query.gte('created_at', registeredFrom);
+    }
+    if (registeredToExclusive) {
+      query = query.lt('created_at', registeredToExclusive);
+    }
 
-  // 最終ログイン (#1433): 「最終ログイン日がこの日より前」= その日の JST 0 時より前 (その日にログインした人は含めない)。
-  if (params.last_login_before) {
-    query = query.lt('last_login_at', jstDayStartTimestamp(params.last_login_before));
-  }
+    // 最終ログイン (#1433): 「最終ログイン日がこの日より前」= その日の JST 0 時より前 (その日にログインした人は含めない)。
+    if (params.last_login_before) {
+      query = query.lt('last_login_at', jstDayStartTimestamp(params.last_login_before));
+    }
+    return query;
+  };
 
   // ソート
   const sortColumn =
     params.sort === 'last_login'
       ? 'last_login_at'
       : 'created_at';
-  query = query.order(sortColumn, { ascending: params.order === 'asc' });
 
   // ページネーション
   const from = (params.page - 1) * params.per_page;
   const to = from + params.per_page - 1;
-  query = query.range(from, to);
 
-  const { data, error, count } = await query;
+  // 件数より後ろのページ (416 / PGRST103) は、失敗にせず空のページと本当の件数にする (src/lib/api/list-range.ts)
+  const { data, error, count } = await resolveBeyondLastPage(
+    await selectUsers()
+      .order(sortColumn, { ascending: params.order === 'asc' })
+      .range(from, to),
+    () => selectUsers({ head: true }),
+    LOG_SOURCE,
+  );
 
   if (error) {
     console.error('[api/admin/users] DB error:', error.message);

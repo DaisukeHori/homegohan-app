@@ -18,7 +18,8 @@ import { requireRole, type UserProfile } from '@/lib/auth/helpers';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { internalError } from '@/lib/api/errors';
-import { AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
+import { AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED, authFailureNested, invalidJsonNested } from '@/lib/api/error-responses';
+import { readJsonBody } from '@/lib/http-params';
 import { ExportRequestSchema } from '@/lib/admin/finance-schemas';
 import { jstOptionalDayRangeTimestamps } from '@/lib/jst-day-ranges';
 import { recordAdminAudit } from '@/lib/admin/audit';
@@ -82,14 +83,16 @@ function toCsv(headers: string[], rows: Record<string, unknown>[]): string {
 
 export async function POST(request: NextRequest) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   try {
     const user = await requireRole(['admin', 'super_admin', 'finance']);
     const supabase = await createClient();
 
-    const body = await request.json() as unknown;
-    const parsed = ExportRequestSchema.safeParse(body);
+    // 壊れた JSON は 400 INVALID_JSON (外側の catch の 500 に落とさない。#1917)
+    const bodyResult = await readJsonBody(request);
+    if (!bodyResult.ok) return invalidJsonNested();
+    const parsed = ExportRequestSchema.safeParse(bodyResult.body);
     // 存在しない日付・時刻つきの期間・知らない種別などは 400。DB は読まず、監査ログも作らない (#1433)
     if (!parsed.success) {
       return NextResponse.json(

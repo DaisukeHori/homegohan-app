@@ -758,9 +758,9 @@ describe('POST /api/admin/moderation/[type]/[id]', () => {
     type RecipeListBody = { recipes: Array<{ id: string; name: string }> };
 
     /**
-     * 未ログインの GET /api/recipes?q=<name> で見える、その名前のレシピ。
-     * ログイン中の GET /api/recipes は、recipes と user_profiles の関係が無く (embed が失敗し、DB エラーを握りつぶして空の 200 を返す)、
-     * 隠す・隠さないに関係なく常に空になる既存の不具合がある。そのため API 経由の確認は未ログインで行う。
+     * 未ログインの GET /api/recipes?q=<name> で見える、その名前のレシピ。API 経由の確認は未ログインで行う
+     * (ログイン中の一覧は、以前は解決できない埋め込みのせいで常に空だった。#1917 で直し、
+     * ログイン中の一覧・詳細・コメントは tests/integration/security/recipes-api-logged-in.test.ts で確かめている)。
      * ログイン中のユーザー・本人・家族の見え方は、PostgREST を直接叩く tests/integration/rls/hidden-content-visibility.test.ts で確かめている
      */
     const listNamesAsAnon = async (name: string) => {

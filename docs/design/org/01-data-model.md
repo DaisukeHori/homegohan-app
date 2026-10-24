@@ -23,7 +23,7 @@
 #### `organizations` 拡張
 
 ```sql
--- 運営側が既存に作成している base テーブルに対して追加列を付与する
+-- 運営側が既存に作成している base テーブルに対して追加列を付与する (subscription_status は本番に既にある列で、下の ADD は効かない。本番は text・NULL 可・既定 'trial'・CHECK 無し: supabase/baseline/prod_schema.sql:772。書く処理は無い: org/09 §4)
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS subscription_status VARCHAR(20) NOT NULL DEFAULT 'trialing'
   CHECK (subscription_status IN ('trialing', 'active', 'past_due', 'suspended', 'cancelled'));
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS billing_email       VARCHAR(255);

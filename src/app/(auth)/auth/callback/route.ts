@@ -4,7 +4,7 @@ import { cookies } from 'next/headers'
 import { getSafeRedirectPath } from '@/lib/auth/safe-redirect'
 import { resolveFirstSignInDestination } from '@/lib/legal-consent'
 import { recordWebLoginContextFromRequest } from '@/lib/auth/sessions/web-login-context'
-import { isEmailChangeAwaitingOtherMessage } from '@homegohan/shared'
+import { AUTH_LINK_ERROR_MESSAGE, isEmailChangeAwaitingOtherMessage } from '@homegohan/shared'
 import { buildLinkNoticePath, LINK_NOTICE_EMAIL_CHANGE_AWAITING_OTHER } from '@/lib/auth/link-notice'
 import { createLogger, generateRequestId } from '@/lib/db-logger'
 import { appleCallbackErrorMessage, storeAppleRefreshTokenFromWebCallback } from '@/lib/auth/apple/web-callback'
@@ -43,13 +43,13 @@ export async function GET(request: Request) {
       description: error_description,
       code: error_code
     })
-    // エラーページにリダイレクト（エラー情報付き）
-    // Apple (?provider=apple) は Apple・GoTrue の英文を出さず、日本語の固定の文にする (docs/design/mobile/08-sign-in-with-apple.md §12.3・S-34)。
-    // ほかの provider は今までどおり error_description (無ければ error)
+    // エラーページにリダイレクト（エラー情報付き。provider・GoTrue の英文は画面に出さず、上の console.error にだけ残す）
+    // Apple (?provider=apple) は Apple 向けの固定の文 (docs/design/mobile/08-sign-in-with-apple.md §12.3・S-34)。
+    // ほかの provider (Google など) とメールのリンクも英文を出さず、固定の文 AUTH_LINK_ERROR_MESSAGE (#1917 の続き)
     const loginUrl = new URL('/login', requestUrl.origin)
     loginUrl.searchParams.set(
       'error',
-      appleCallbackErrorMessage(requestUrl.searchParams.get('provider')) ?? (error_description || error_param || 'Authentication failed'),
+      appleCallbackErrorMessage(requestUrl.searchParams.get('provider')) ?? AUTH_LINK_ERROR_MESSAGE,
     )
     return NextResponse.redirect(loginUrl)
   }

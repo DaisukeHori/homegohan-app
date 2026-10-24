@@ -12,17 +12,25 @@
 
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { AuthError, ForbiddenError, MfaRequiredError } from '@/lib/auth/errors';
+import { API_OP_PERMISSION_DENIED_CODE, forbiddenMessageOf, operatorMfaRequiredNested } from '@/lib/api/error-responses';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { dbErrorMentionsCode } from '@/lib/errors/db-raised-code';
 import { AdminSetUserRolesResultSchema, RoleChangeBodySchema } from '@/lib/admin/users-schemas';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { normalizeUuid } from '@/lib/http-params';
+import { isUuid, normalizeUuid } from '@/lib/http-params';
+import { internalError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
 
 type Params = { params: Promise<{ id: string }> };
+
+/** 構造化ログの function_name (PATCH と PUT は同じ処理) */
+const ROUTE_NAME = 'PATCH /api/admin/users/[id]/role';
+
+/** ユーザーが無い (UUID の形でない id を含む) */
+const USER_NOT_FOUND_RESPONSE = { error: { code: 'NOT_FOUND', message: 'ユーザーが見つかりません' } } as const;
 
 async function handleRoleChange(request: Request, params: Params) {
   let actor;
@@ -36,10 +44,10 @@ async function handleRoleChange(request: Request, params: Params) {
       );
     }
     if (err instanceof ForbiddenError) {
-      return NextResponse.json(
-        { error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } },
-        { status: 403 },
-      );
+      // 二段階認証が未完了 (MfaRequiredError) なら、code は従来どおり OP_PERMISSION_DENIED のまま、文は二段階認証の日本語の固定の文
+      // (ForbiddenError の code の表。下の RPC が DB の二段階認証の判定で止まったときと同じ文。#1917)
+      const message = err instanceof MfaRequiredError ? forbiddenMessageOf(err) : '権限がありません';
+      return NextResponse.json({ error: { code: API_OP_PERMISSION_DENIED_CODE, message } }, { status: 403 });
     }
     throw err;
   }
@@ -77,6 +85,11 @@ async function handleRoleChange(request: Request, params: Params) {
     );
   }
 
+  // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
+  if (!isUuid(id)) {
+    return NextResponse.json(USER_NOT_FOUND_RESPONSE, { status: 404 });
+  }
+
   // requireRole 通過後のみ到達する。RLS は user_profiles に自分の行のみの
   // ポリシーしか無いため、他ユーザーの存在確認には service_role が必須 (#1028)。
   const supabaseAdmin = getSupabaseAdmin();
@@ -90,13 +103,14 @@ async function handleRoleChange(request: Request, params: Params) {
     .from('user_profiles')
     .select('id, roles')
     .eq('id', id)
-    .single();
+    .maybeSingle();
 
-  if (profileError || !profile) {
-    return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: 'ユーザーが見つかりません' } },
-      { status: 404 },
-    );
+  // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗でユーザーが消えたように見せない。#1917)
+  if (profileError) {
+    return internalError(ROUTE_NAME, profileError, { userId: actor.id, table: 'user_profiles' }, { shape: 'nested' });
+  }
+  if (!profile) {
+    return NextResponse.json(USER_NOT_FOUND_RESPONSE, { status: 404 });
   }
 
   // ロール更新 (auth.uid() 依存の SECURITY DEFINER 関数のため session client で呼ぶ)
@@ -112,6 +126,10 @@ async function handleRoleChange(request: Request, params: Params) {
         { status: 404 },
       );
     }
+    // DB の二段階認証の判定 (OPERATOR_MFA_REQUIRED。cross/12 §11.4) で止まったら、ゲート (requireRole) が二段階認証で止めたときと
+    // 同じ 403 (code は OP_PERMISSION_DENIED・文は二段階認証の日本語の固定の文) にする (汎用の 500 にしない。#1917)
+    const mfaRequired = operatorMfaRequiredNested(updateError, { code: { fixed: API_OP_PERMISSION_DENIED_CODE } });
+    if (mfaRequired) return mfaRequired;
     if (
       dbErrorMentionsCode(updateError, 'FORBIDDEN') ||
       dbErrorMentionsCode(updateError, 'CANNOT_MODIFY_OWN_ROLES')
@@ -161,14 +179,14 @@ async function handleRoleChange(request: Request, params: Params) {
 
 export async function PATCH(request: Request, ctx: Params) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   return handleRoleChange(request, ctx);
 }
 
 export async function PUT(request: Request, ctx: Params) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   return handleRoleChange(request, ctx);
 }

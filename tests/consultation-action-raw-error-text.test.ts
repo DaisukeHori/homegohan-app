@@ -16,6 +16,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
 
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする */
+const ACTION_LOG_ID = '99999999-9999-4999-8999-999999999991';
+
 // 1 件のテストの中で route を丸ごと読み込むので、負荷の高い機械で vitest の既定の時間切れ (テスト 5 秒) を超えて落ちたことがある。
 // このファイルだけ延ばす (根拠と環境変数での上書きは tests/helpers/heavy-unit-test-timeout.ts。#1488・#1605)。テストとフックを定義する前に置く
 applyHeavyUnitTestTimeout();
@@ -274,7 +277,7 @@ describe('POST /api/ai/consultation/actions/[actionId]/execute (#1172)', () => {
     h.failOn = { table: 'pantry_items', op: 'insert' };
     h.single = {
       ai_action_logs: {
-        id: 'log-1',
+        id: ACTION_LOG_ID,
         action_type: 'add_pantry_item',
         action_params: { name: '卵' },
         status: 'pending',
@@ -283,8 +286,8 @@ describe('POST /api/ai/consultation/actions/[actionId]/execute (#1172)', () => {
     };
     const { POST } = await import('@/app/api/ai/consultation/actions/[actionId]/execute/route');
 
-    const res = await POST(new Request('http://localhost/api/ai/consultation/actions/log-1/execute', { method: 'POST' }), {
-      params: { actionId: 'log-1' },
+    const res = await POST(new Request(`http://localhost/api/ai/consultation/actions/${ACTION_LOG_ID}/execute`, { method: 'POST' }), {
+      params: { actionId: ACTION_LOG_ID },
     });
 
     expect(res.status).toBe(200);
@@ -310,7 +313,7 @@ function sessionAndMessageRows() {
   h.single = { ai_consultation_sessions: { id: SESSION_ID, user_id: USER, status: 'active' } };
   h.written = {
     ai_consultation_messages: { id: 'msg-1', content: 'こんにちは', created_at: '2026-10-10T00:00:00Z' },
-    ai_action_logs: { id: 'log-1' },
+    ai_action_logs: { id: ACTION_LOG_ID },
   };
 }
 

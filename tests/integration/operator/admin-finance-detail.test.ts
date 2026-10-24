@@ -9,9 +9,9 @@
  * 権限: finance / admin / super_admin。ほかのロール (support など) と一般ユーザーは 403、未認証は 401。
  * ただし NPS / CSAT の集計 (GET nps) と NPS の書き出し (POST exports の export_type=nps) は admin / super_admin だけ。
  * finance は 403 (#1311。財務ロールを NPS / CSAT から外した)。書き出せる種別の一覧 (GET exports) にも、finance には nps を出さない。
- * 入力エラーは 400 を期待する (AC の「422 相当」)。ただし現状の finance ルートは、JSON として読めない本文・不正な日時・
- * 最終ページより先のページ指定を握っておらず、500 になる (reconciliation は検証自体が無い) 箇所がある。
- * その箇所は `[既知の不具合]` の it.fails で固定してある。
+ * 入力エラーは 400 を期待する (AC の「422 相当」)。ただし現状の finance ルートは、不正な絞り込み (invoices の status・per_page、reconciliation の
+ * page・per_page・日時) を握っておらず 500 / 200 になる (reconciliation は検証自体が無い) 箇所があり、`[既知の不具合]` の it.fails で固定してある。
+ * (#1917 で、JSON として読めない本文は 400 INVALID_JSON、件数より後ろのページは 200 の空のページと本当の件数 (meta.total) を返すようになった)
  * (#1433 で、exports の本文と nps の期間は入口で検査して 400 を返すようになった。期間は JST の暦日の日付 YYYY-MM-DD)
  *
  * テストデータは service_role で直接 seed する (本番や共有 DB の既存行には依存しない)。
@@ -240,12 +240,18 @@ describe('GET /api/admin/finance/invoices', () => {
     expect(res.status).toBe(400);
   });
 
-  // 既知の不具合: 最終ページより先を指定すると PostgREST が 416 (Requested range not satisfiable) を返し、
-  // それを握らず 500 になる。空のページ (200 + data: []) を返すのが期待。直ったら `.fails` を外すこと。
-  it.fails('[既知の不具合] 200 with an empty page when page is beyond the last page (現状は 500)', async () => {
+  // 件数より後ろのページ (PostgREST の 416 / PGRST103) は 500 にせず、空のページと本当の件数を返す (#1917)。
+  // 本当の件数 = 同じ絞り込みの 1 ページ目の meta.total (画面はこれで最後のページへ取り直す)
+  it('200 with an empty page and the real total when page is beyond the last page (#1917)', async () => {
+    const first = await apiCall('GET', '/api/admin/finance/invoices?page=1&per_page=1', financeUser.jwt);
+    expect(first.status).toBe(200);
+    const firstTotal = (first.body as { meta: { total: number } }).meta.total;
+
     const res = await apiCall('GET', '/api/admin/finance/invoices?page=1000&per_page=1', financeUser.jwt);
-    expect(res.status).toBe(200);
-    expect((res.body as { data: unknown[] }).data).toEqual([]);
+    expect(res.status, `status が違う。応答本文: ${JSON.stringify(res.body)}`).toBe(200);
+    const body = res.body as { data: unknown[]; meta: { total: number; page: number; per_page: number } };
+    expect(body.data).toEqual([]);
+    expect(body.meta).toMatchObject({ total: firstTotal, page: 1000, per_page: 1 });
   });
 
   it('403 for general user', async () => {
@@ -531,16 +537,15 @@ describe('POST /api/admin/finance/exports', () => {
     }
   });
 
-  // 既知の不具合: request.json() の失敗 (JSON として読めない本文) を握っておらず、汎用の catch で 500 になる。
-  // (以前のテストは [400, 422, 500] を許容していて、この不具合を隠していた) 直ったら `.fails` を外すこと。
-  it.fails('[既知の不具合] 400 for malformed JSON body (現状は 500 INTERNAL_ERROR)', async () => {
+  // JSON として読めない本文は 400 INVALID_JSON (汎用の catch の 500 に落とさない。#1917)
+  it('400 INVALID_JSON for malformed JSON body (#1917)', async () => {
     const res = await apiCallRaw(
       'POST',
       '/api/admin/finance/exports',
       financeUser.jwt,
       '{"export_type": ',
     );
-    expect(res.status).toBe(400);
+    expectError(res, 400, 'INVALID_JSON');
   });
 
   it('403 for general user', async () => {
@@ -797,16 +802,28 @@ describe('GET /api/admin/finance/reconciliation', () => {
     expect(body.meta.total).toBe(0);
   });
 
+  // 件数より後ろのページ (PostgREST の 416 / PGRST103) は 500 にせず、空のページと本当の件数を返す (#1917)。
+  // 本当の件数 = 同じ絞り込みの 1 ページ目の meta.total
+  it('200 with an empty page and the real total when page is beyond the last page (#1917)', async () => {
+    const first = await apiCall('GET', '/api/admin/finance/reconciliation?page=1&per_page=1', adminUser.jwt);
+    expect(first.status).toBe(200);
+    const firstTotal = (first.body as ReconciliationBody).meta.total;
+
+    const res = await apiCall('GET', '/api/admin/finance/reconciliation?page=1000&per_page=1', adminUser.jwt);
+    expect(res.status, `status が違う。応答本文: ${JSON.stringify(res.body)}`).toBe(200);
+    const body = res.body as ReconciliationBody;
+    expect(body.data.discrepancies).toEqual([]);
+    expect(body.meta.total).toBe(firstTotal);
+  });
+
   // 既知の不具合: page / per_page / from / to を検証せず、parseInt の結果や不正な日時をそのまま DB に渡す。
-  // page=abc は 200 (meta.page が null)、page=-1・範囲外のページ・不正な日時は DB エラーの 500 になる。
-  // 不正な値は 400 (VALIDATION_ERROR)、範囲外のページは空のページ (200) を返すのが期待。
-  // 直ったら `.fails` を外すこと。
+  // page=abc は 200 (meta.page が null)、page=-1・不正な日時は DB エラーの 500 になる。
+  // 不正な値は 400 (VALIDATION_ERROR) を返すのが期待。直ったら `.fails` を外すこと。
   const invalidQueries = [
     { name: 'page that is not a number', query: 'page=abc', expected: 400 },
     { name: 'negative page', query: 'page=-1', expected: 400 },
     { name: 'per_page=0', query: 'per_page=0', expected: 400 },
     { name: 'an invalid from date', query: 'from=not-a-date', expected: 400 },
-    { name: 'a page beyond the last page (empty page)', query: 'page=1000&per_page=1', expected: 200 },
   ];
   for (const { name, query, expected } of invalidQueries) {
     it.fails(`[既知の不具合] ${expected} for ${name} (現状は検証が無く 200 / 500)`, async () => {

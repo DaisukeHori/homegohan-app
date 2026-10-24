@@ -36,7 +36,7 @@ function badRequest(message: string) {
  */
 export async function POST(request: NextRequest) {
   // 本文の文字列に NULL 文字 (U+0000) があれば、DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   let body: unknown;
   try {
@@ -49,13 +49,13 @@ export async function POST(request: NextRequest) {
   const secret = record.install_secret;
   const userId = record.user_id;
   if (!isExpoPushToken(token)) {
-    return badRequest('expo_push_token が Expo の push token の形ではありません');
+    return badRequest('通知のトークン (expo_push_token) が Expo の通知のトークンの形ではありません');
   }
   if (!isPushInstallSecret(secret)) {
-    return badRequest('install_secret が端末の秘密の値の形ではありません');
+    return badRequest('端末の秘密の値 (install_secret) の形が正しくありません');
   }
   if (typeof userId !== 'string' || !UUID_PATTERN.test(userId)) {
-    return badRequest('user_id が UUID の形ではありません');
+    return badRequest('利用者の ID (user_id) が UUID の形ではありません');
   }
 
   try {

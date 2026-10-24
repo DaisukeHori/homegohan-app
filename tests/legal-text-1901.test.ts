@@ -202,7 +202,7 @@ const PRIVACY_DATA_TABLES: Readonly<Record<string, string>> = {
   membership_audit: '運営の記録',
   meal_nutrition_debug_logs: '運営の記録',
   gdpr_deletion_requests: '運営の記録',
-  // #1917 の続き (D73。20261023130000): 退会の印 (退会を始めた日時)。第3条の「退会の記録」に当たる。退会が済むと消える
+  // #1917 の続き (D73。20261023130000): 退会の印 (退会を始めた日時)。第3条の「退会の記録」に当たる。退会が済むと消える (途中で止まったときも消す。20261024120000)
   account_deletion_guards: '運営の記録',
 };
 

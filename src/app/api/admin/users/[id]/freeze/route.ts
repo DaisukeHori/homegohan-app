@@ -18,10 +18,19 @@ import { FreezeBodySchema, UnfreezeBodySchema } from '@/lib/admin/users-schemas'
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { SUPER_ADMIN_ROLES_LITERAL, isNullRoles } from '@/lib/admin/user-ban';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { internalError } from '@/lib/api/errors';
+import { isUuid } from '@/lib/http-params';
 
 export const dynamic = 'force-dynamic';
 
 type Params = { params: Promise<{ id: string }> };
+
+/** 構造化ログの function_name */
+const POST_ROUTE_NAME = 'POST /api/admin/users/[id]/freeze';
+const DELETE_ROUTE_NAME = 'DELETE /api/admin/users/[id]/freeze';
+
+/** ユーザーが無い (UUID の形でない id を含む) */
+const USER_NOT_FOUND_RESPONSE = { error: { code: 'NOT_FOUND', message: 'ユーザーが見つかりません' } } as const;
 
 /** 読んで確かめてから書くまでに、対象の利用者の roles が変わった (super_admin になった等。条件つきの凍結の更新が 0 行) */
 const STALE_FREEZE_TARGET_RESPONSE = {
@@ -33,7 +42,7 @@ const STALE_FREEZE_TARGET_RESPONSE = {
 
 export async function POST(request: Request, props: Params) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   let actor;
@@ -80,7 +89,7 @@ export async function POST(request: Request, props: Params) {
   // permanent BAN は super_admin のみ可能
   if (freezeData.ban_type === 'permanent' && !actor.roles.includes('super_admin')) {
     return NextResponse.json(
-      { error: { code: 'OP_PERMISSION_DENIED', message: '永久 BAN は super_admin のみ実行可能です' } },
+      { error: { code: 'OP_PERMISSION_DENIED', message: '永久 BAN はスーパー管理者 (super_admin) のみ実行可能です' } },
       { status: 403 },
     );
   }
@@ -88,7 +97,7 @@ export async function POST(request: Request, props: Params) {
   // temporary BAN は duration_days 必須
   if (freezeData.ban_type === 'temporary' && !freezeData.duration_days) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: '一時 BAN の場合は duration_days が必須です' } },
+      { error: { code: 'VALIDATION_ERROR', message: '一時 BAN の場合は日数 (duration_days) が必須です' } },
       { status: 400 },
     );
   }
@@ -98,24 +107,29 @@ export async function POST(request: Request, props: Params) {
   const supabaseAdmin = getSupabaseAdmin();
   const supabase = await createClient();
 
-  // 対象ユーザーが存在するか確認
+  // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
+  if (!isUuid(id)) {
+    return NextResponse.json(USER_NOT_FOUND_RESPONSE, { status: 404 });
+  }
+
+  // 対象ユーザーが存在するか確認。読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗でユーザーが消えたように見せない。#1917)
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('user_profiles')
     .select('id, roles')
     .eq('id', id)
-    .single();
+    .maybeSingle();
 
-  if (profileError || !profile) {
-    return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: 'ユーザーが見つかりません' } },
-      { status: 404 },
-    );
+  if (profileError) {
+    return internalError(POST_ROUTE_NAME, profileError, { userId: actor.id, table: 'user_profiles' }, { shape: 'nested' });
+  }
+  if (!profile) {
+    return NextResponse.json(USER_NOT_FOUND_RESPONSE, { status: 404 });
   }
 
   // super_admin を凍結しようとした場合は拒否
   if (Array.isArray(profile.roles) && profile.roles.includes('super_admin')) {
     return NextResponse.json(
-      { error: { code: 'OP_TARGET_PROTECTED', message: 'super_admin ユーザーを凍結することはできません' } },
+      { error: { code: 'OP_TARGET_PROTECTED', message: 'スーパー管理者 (super_admin) のユーザーを凍結することはできません' } },
       { status: 403 },
     );
   }
@@ -211,7 +225,7 @@ export async function POST(request: Request, props: Params) {
 
 export async function DELETE(request: Request, props: Params) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   let actor;
@@ -259,18 +273,23 @@ export async function DELETE(request: Request, props: Params) {
   const supabaseAdmin = getSupabaseAdmin();
   const supabase = await createClient();
 
-  // 対象ユーザーが存在するか確認
+  // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
+  if (!isUuid(id)) {
+    return NextResponse.json(USER_NOT_FOUND_RESPONSE, { status: 404 });
+  }
+
+  // 対象ユーザーが存在するか確認。読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗でユーザーが消えたように見せない。#1917)
   const { data: profile, error: profileError } = await supabaseAdmin
     .from('user_profiles')
     .select('id')
     .eq('id', id)
-    .single();
+    .maybeSingle();
 
-  if (profileError || !profile) {
-    return NextResponse.json(
-      { error: { code: 'NOT_FOUND', message: 'ユーザーが見つかりません' } },
-      { status: 404 },
-    );
+  if (profileError) {
+    return internalError(DELETE_ROUTE_NAME, profileError, { userId: actor.id, table: 'user_profiles' }, { shape: 'nested' });
+  }
+  if (!profile) {
+    return NextResponse.json(USER_NOT_FOUND_RESPONSE, { status: 404 });
   }
 
   // frozen_at / frozen_reason / frozen_by / unban_at を NULL にリセット (凍結解除)

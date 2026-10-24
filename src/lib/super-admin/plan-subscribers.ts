@@ -5,6 +5,12 @@
  * 廃止前の通知 (90 / 30 / 7 日前) がまだ無いため、廃止したプランで課金だけが続くおそれがある。
  * 課金が始まるまでは「契約者が 0 になってから廃止する」運用にし、PATCH /api/super-admin/plans/[id] が
  * 廃止の前にここで契約者を数えて、1 件でもあれば止める。
+ * 数えてから書くまでの間に入った契約は、書く文の中の DB のトリガー guard_plan_deprecate_subscribers が同じ数え方で数え直して止める (#1917。
+ * プランの行を FOR UPDATE でロックし直し、commit 前の契約者が増える書き込み (契約の作成・live への切り替え・プランの付け替え。
+ * トリガー trg_subscriber_plan_key_share がプランの行に FOR KEY SHARE を取る) を待つ。PLAN_HAS_SUBSCRIBERS_DB_ERROR)。数え方を変えるときは、
+ * トリガー 2 種 (supabase/migrations/20261024130000_plan_deprecate_lock_and_price_change_reservation.sql の guard_plan_deprecate_subscribers と
+ * trg_subscriber_plan_key_share の WHEN・関数) も同じに直す
+ * (tests/plan-deprecate-lock-price-change-reservation-migration-contract.test.ts が突き合わせる)。
  *
  * 数える対象は「契約が終わっていないもの」だけ。
  *   - personal_subscriptions : plan_key が一致し、status が trialing / active / paused / past_due / grace
@@ -27,6 +33,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { z } from 'zod';
 import { ORG_PLAN_VALUES } from '@/lib/org-plans';
 import { isOrgSubscriptionPlanRow } from '@/lib/super-admin/ai-daily-limits';
 
@@ -156,6 +163,46 @@ export async function countPlanSubscribers(
 export function totalPlanSubscribers(counts: PlanSubscriberCounts): number {
   const personalAndFamily = counts.personal_subscriptions + counts.family_groups;
   return isOrganizationsCounted(counts) ? personalAndFamily + counts.organizations : personalAndFamily;
+}
+
+/**
+ * DB のトリガー guard_plan_deprecate_subscribers が、廃止 (status → deprecated) の UPDATE の中で契約者を見つけたときに RAISE する文 (#1917。
+ * supabase/migrations/20261024130000_plan_deprecate_lock_and_price_change_reservation.sql)。
+ * route が数えてから書くまでの間に契約が入ったときや、route を通らない UPDATE を止める。SQLSTATE は P0001、DETAIL は内訳の JSON
+ */
+export const PLAN_HAS_SUBSCRIBERS_DB_ERROR = 'OP_PLAN_HAS_SUBSCRIBERS';
+
+/** トリガーの DETAIL (内訳の JSON) の形。キーは countPlanSubscribers と同じ (組織のプランの行では organizations が無い) */
+const PlanSubscriberCountsDetailSchema = z
+  .object({
+    personal_subscriptions: z.number().int().min(0),
+    family_groups: z.number().int().min(0),
+    organizations: z.number().int().min(0).optional(),
+  })
+  .strict();
+
+/** DB の失敗が、廃止のトリガーの「契約者がいる」か */
+export function isPlanHasSubscribersDbError(error: { message?: string } | null | undefined): boolean {
+  return error?.message === PLAN_HAS_SUBSCRIBERS_DB_ERROR;
+}
+
+/**
+ * トリガーの DETAIL (JSON の文字列) を内訳にする。形が違えば null (呼び出し側は数えられなかったときと同じく扱う)
+ */
+export function parsePlanSubscriberCountsDetail(detail: unknown): PlanSubscriberCounts | null {
+  if (typeof detail !== 'string') return null;
+  let json: unknown;
+  try {
+    json = JSON.parse(detail);
+  } catch {
+    return null;
+  }
+  const parsed = PlanSubscriberCountsDetailSchema.safeParse(json);
+  if (!parsed.success) return null;
+  const { personal_subscriptions, family_groups, organizations } = parsed.data;
+  return organizations === undefined
+    ? { personal_subscriptions, family_groups }
+    : { personal_subscriptions, family_groups, organizations };
 }
 
 const COUNT_LABELS: ReadonlyArray<readonly [keyof PlanSubscriberCounts, string]> = [

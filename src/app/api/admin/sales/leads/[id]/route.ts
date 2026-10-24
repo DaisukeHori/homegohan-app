@@ -13,6 +13,7 @@
  * 活動履歴の読み込みの失敗も空の履歴にせず 500 にする (履歴が無いように見せない)。
  * UUID の形でない id は、DB に渡す前に 404 NOT_FOUND で断る (GET・PATCH とも)。uuid 型の列に渡すと 22P02 で失敗し、
  * 上の「DB の失敗は 500」に入ってしまうため (形の違う id は「そのリードは無い」と同じに扱う)。
+ * PATCH の本文が JSON として読めないときは 400 INVALID_JSON (外側の catch の 500 に落とさない。#1917)。
  *
  * ステージの変更の活動履歴 (#1917 の整合の候補 C20): stage_change の書き込みに失敗しても、リードの更新は書けているので応答は 200 のまま
  * (監査ログと同じ fail-open)。失敗は db-logger に error で残す (黙って捨てない)。
@@ -25,13 +26,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
+import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested, invalidJsonNested } from '@/lib/api/error-responses';
 import { updateLeadSchema } from '@/lib/admin/sales-schemas';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { errorCodeOf, internalError, toLoggableError } from '@/lib/api/errors';
 import { createLogger } from '@/lib/db-logger';
-import { isUuid } from '@/lib/http-params';
+import { isUuid, readJsonBody } from '@/lib/http-params';
 
 /** 400: 本文・クエリの検証の失敗の文 (項目ごとの理由は details に添える。message は画面がそのまま出す文なので文字列にする) */
 const VALIDATION_ERROR_MESSAGE = '入力内容を確認してください';
@@ -152,14 +153,16 @@ export async function GET(request: NextRequest, props: RouteContext) {
 
 export async function PATCH(request: NextRequest, props: RouteContext) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   try {
     const currentUser = await requireRole(['sales', 'admin', 'super_admin']);
 
-    const body = await request.json();
-    const parseResult = updateLeadSchema.safeParse(body);
+    // 壊れた JSON は 400 INVALID_JSON (外側の catch の 500 に落とさない)
+    const bodyResult = await readJsonBody(request);
+    if (!bodyResult.ok) return invalidJsonNested();
+    const parseResult = updateLeadSchema.safeParse(bodyResult.body);
     if (!parseResult.success) {
       return NextResponse.json(
         { error: { code: 'VALIDATION_ERROR', message: VALIDATION_ERROR_MESSAGE, details: parseResult.error.flatten() } },

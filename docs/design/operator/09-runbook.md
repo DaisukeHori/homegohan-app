@@ -396,13 +396,13 @@ Step 5: org_admin に手順案内
 削除の実行 (即時):
   ユーザー: 設定画面「アカウントを削除する」→ 確認 (Web は「削除します」入力 / モバイルは確認アラート)
   → POST /api/account/delete { confirm: true }
-  → 削除をブロックする条件 (409。先に譲渡または解散してもらう。判定の前に退会の印を付ける (RPC begin_account_deletion_guard。印のある人を運営がオーナーにして組織を作れない。20261023130000。印のある人を家族の代表者にもできない (作成・譲渡の承諾・運営の強制譲渡は 409 REPRESENTATIVE_ACCOUNT_DELETING)。20261023150000)):
+  → 削除をブロックする条件 (409。先に譲渡または解散してもらう。判定の前に退会の印を付ける (RPC begin_account_deletion_guard。印のある人を運営がオーナーにして組織を作れない。20261023130000。印のある人を家族の代表者にもできない (作成・譲渡の承諾・運営の強制譲渡は 409 REPRESENTATIVE_ACCOUNT_DELETING)。20261023150000。退会が deleteUser の前に止まったら (409・途中の失敗)、返す前に印を消す (RPC end_account_deletion_guard。20261024120000)。deleteUser を呼んだあとに止まったときは 15 分残る)):
      - 組織の owner         → ACCOUNT_DELETE_BLOCKED_ORG_OWNER
      - 家族グループの代表者  → ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE
   → Stripe の後始末 (段階 billing。billing/01 §11): 顧客の開いたままの Checkout を閉じ、終端でない契約を即時解約し、Stripe の顧客を匿名化する
      (顧客も契約の行も無ければ Stripe を呼ばない。失敗したら削除しない。まだ何も変えていないので再実行できる)
   → 生のメールアドレスを残す記録を伏せ、本人の非公開レシピを消す (RPC prepare_account_deletion。メール配信ログ・問い合わせ・招待)
-  → ライセンス席を解放 (RPC release_user_membership。失敗しても続ける。ただし IS_ORG_OWNER (直前にオーナーになっていた) は確認をやり直して 409 で止め (オーナーでなくなっていたら削除せず失敗にする)、CONFLICT_RETRY (所属の組織が途中で変わった) は削除せず失敗にする。src/lib/account-deletion.ts:349-365)
+  → ライセンス席を解放 (RPC release_user_membership。失敗しても続ける。ただし IS_ORG_OWNER (直前にオーナーになっていた) は確認をやり直して 409 で止め (オーナーでなくなっていたら削除せず失敗にする)、CONFLICT_RETRY (所属の組織が途中で変わった) は削除せず失敗にする。src/lib/account-deletion.ts:400-420。RPC の呼び出しは :402)
   → Storage のファイルを削除 (meal_photos / fridge-images / health-checkups の <user_id>/ 以下など)
   → Stripe の後始末をもう一度 (段階 billing_recheck。deleteUser の直前。段階 billing のあとに完了した Checkout の契約・作られた顧客を閉じる。
      失敗したら削除しない。アカウントは残り、もう一度の退会で片付く)
@@ -595,7 +595,7 @@ T+1week: ポストモーテム
 【個人データ漏洩報告書】
 
 報告日時: YYYY-MM-DD HH:MM
-事業者名: ほめゴハン株式会社 (仮称)
+事業者名: 株式会社MHD医健
 
 1. 事故の概要
    [1-2 段落で漏洩の経緯を記述]

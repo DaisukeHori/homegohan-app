@@ -7,6 +7,8 @@ import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
 import { isFeatureEnabled } from '@/lib/feature-flags';
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
+import { isUuid } from '@/lib/http-params';
+import { isCalendarDate } from '@/lib/date-utils';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
@@ -50,6 +52,12 @@ export async function POST(request: Request) {
     // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。本人の確認・同意のあとで、service role で書く
     const queueDb = getAiQueueWriter();
 
+    // 形の違う ID (UUID でない)・日付 (実在しない日付) は DB に渡さず 404 (uuid / date 型の列に渡すと型の変換で失敗し、
+    // 下の「DB の失敗は 500」に入る。以前は DB の失敗も「その日が無い」と同じ 404 にしていた。#1917)
+    if (dailyMealId ? !isUuid(dailyMealId) : !isCalendarDate(dayDate)) {
+      return NextResponse.json({ error: AI_MENU_DAY_NOT_FOUND_MESSAGE }, { status: 404 });
+    }
+
     // 2. daily_meal_idを取得
     let targetDayId = dailyMealId;
     
@@ -60,9 +68,13 @@ export async function POST(request: Request) {
         .select('id')
         .eq('day_date', dayDate)
         .eq('user_id', user.id)
-        .single();
+        .maybeSingle();
 
-      if (dayError || !dayData) {
+      // 読めなかったときは 404 にしない (行が無いときだけ 404。#1917)
+      if (dayError) {
+        return internalError('POST /api/ai/menu/day/regenerate', dayError, { userId: user.id, table: 'user_daily_meals' });
+      }
+      if (!dayData) {
         return NextResponse.json({ error: AI_MENU_DAY_NOT_FOUND_MESSAGE }, { status: 404 });
       }
       targetDayId = dayData.id;
@@ -74,9 +86,12 @@ export async function POST(request: Request) {
       .select('id, day_date')
       .eq('id', targetDayId)
       .eq('user_id', user.id)
-      .single();
+      .maybeSingle();
 
-    if (dailyMealError || !dailyMeal) {
+    if (dailyMealError) {
+      return internalError('POST /api/ai/menu/day/regenerate', dailyMealError, { userId: user.id, table: 'user_daily_meals' });
+    }
+    if (!dailyMeal) {
       return NextResponse.json({ error: AI_MENU_DAY_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 

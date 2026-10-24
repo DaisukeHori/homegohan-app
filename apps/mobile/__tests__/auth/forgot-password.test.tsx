@@ -97,7 +97,8 @@ describe('ForgotPasswordPage', () => {
     fireEvent.press(getByText('送信'));
 
     await waitFor(() => {
-      expect(Alert.alert).toHaveBeenCalledWith('送信失敗', 'Rate limit exceeded');
+      // Supabase Auth の英語の文は出さず、固定の文 (#1917 の続き)
+      expect(Alert.alert).toHaveBeenCalledWith('送信失敗', '送信に失敗しました。');
     });
   });
 });

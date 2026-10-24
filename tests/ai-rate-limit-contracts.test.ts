@@ -8,6 +8,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
 
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、セッション・アクションの id は UUID の形にする */
+const RL_SESSION_ID = '66666666-6666-4666-8666-666666666661';
+const RL_ACTION_ID = '66666666-6666-4666-8666-666666666662';
+
 // 負荷の高い機械で vitest の既定の時間切れ (テスト 5 秒・フック 10 秒) を超えて落ちたことがあるので、このファイルだけ延ばす
 // (根拠と環境変数での上書きは tests/helpers/heavy-unit-test-timeout.ts。#1488)。テストとフックを定義する前に置く
 applyHeavyUnitTestTimeout();
@@ -372,10 +376,12 @@ describe('AI route rate limit contracts (#1022)', () => {
       select: vi.fn(() => sessionsChain),
       eq: vi.fn(() => sessionsChain),
       update: vi.fn(() => sessionsChain),
+      // セッションの読み込みは maybeSingle (#1917)。single と同じ行を返す
+      maybeSingle: vi.fn(() => sessionsChain.single()),
       single: vi.fn(() =>
         Promise.resolve({
           data: {
-            id: 'sess-1',
+            id: RL_SESSION_ID,
             user_id: 'rl-user-1',
             status: 'active',
             title: 'AI相談',
@@ -405,11 +411,11 @@ describe('AI route rate limit contracts (#1022)', () => {
 
     const { POST } = await import('../src/app/api/ai/consultation/sessions/[sessionId]/close/route');
     const makeRequest = () =>
-      new Request('http://localhost/api/ai/consultation/sessions/sess-1/close', { method: 'POST' });
+      new Request(`http://localhost/api/ai/consultation/sessions/${RL_SESSION_ID}/close`, { method: 'POST' });
 
     const statuses: number[] = [];
     for (let i = 0; i < 6; i++) {
-      const res = await POST(makeRequest(), { params: { sessionId: 'sess-1' } });
+      const res = await POST(makeRequest(), { params: { sessionId: RL_SESSION_ID } });
       statuses.push(res.status);
     }
 
@@ -835,10 +841,12 @@ describe('consultation/actions/execute update_meal: 画像トリガーは genera
       select: vi.fn(() => actionLogsChain),
       eq: vi.fn(() => actionLogsChain),
       update: vi.fn(() => actionLogsChain),
+      // アクションの読み込みは maybeSingle (#1917)。single と同じ行を返す
+      maybeSingle: vi.fn(() => actionLogsChain.single()),
       single: vi.fn(() =>
         Promise.resolve({
           data: {
-            id: 'action-1',
+            id: RL_ACTION_ID,
             status: 'pending',
             action_type: 'update_meal',
             action_params: {
@@ -890,10 +898,10 @@ describe('consultation/actions/execute update_meal: 画像トリガーは genera
   it('generation(5/min)の枠内でも、2回目以降は image(1/min)超過で画像だけ skip される(DB更新は成功維持)', async () => {
     const { POST } = await import('../src/app/api/ai/consultation/actions/[actionId]/execute/route');
     const makeRequest = () =>
-      new Request('http://localhost/api/ai/consultation/actions/action-1/execute', { method: 'POST' });
+      new Request(`http://localhost/api/ai/consultation/actions/${RL_ACTION_ID}/execute`, { method: 'POST' });
 
-    const first = await POST(makeRequest(), { params: { actionId: 'action-1' } });
-    const second = await POST(makeRequest(), { params: { actionId: 'action-1' } });
+    const first = await POST(makeRequest(), { params: { actionId: RL_ACTION_ID } });
+    const second = await POST(makeRequest(), { params: { actionId: RL_ACTION_ID } });
 
     const firstBody = await first.json();
     const secondBody = await second.json();

@@ -58,7 +58,7 @@ export async function POST(request: Request) {
   const urls = parseUrls(body);
   if (!urls) {
     return NextResponse.json(
-      { error: `urls は 1〜${MAX_PHOTO_URL_LENGTH} 文字の文字列の配列 (${MAX_PHOTO_URLS_PER_SIGN_REQUEST} 件まで) で送ってください` },
+      { error: `画像の URL (urls) は 1〜${MAX_PHOTO_URL_LENGTH} 文字の文字列の配列 (${MAX_PHOTO_URLS_PER_SIGN_REQUEST} 件まで) で送ってください` },
       { status: 400 },
     );
   }

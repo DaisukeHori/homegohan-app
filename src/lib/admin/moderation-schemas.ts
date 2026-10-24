@@ -11,6 +11,12 @@ import { z } from 'zod';
 export const MODERATION_TYPES = ['food', 'recipe', 'ai_content'] as const;
 export type ModerationType = (typeof MODERATION_TYPES)[number];
 
+/**
+ * 400 VALIDATION_ERROR の文: パスの種類 (type) が MODERATION_TYPES に無い (対応・復元の route)。
+ * 受け付ける値 (英字) は、項目名と同じく括弧に入れて添える (#1917 の続き。src/lib/health-api-messages.ts の healthEnumMessage と同じ形)
+ */
+export const MODERATION_TYPE_INVALID_MESSAGE = `種類 (type) は次のいずれかを指定してください (${MODERATION_TYPES.join(', ')})`;
+
 // ─── キュー一覧検索 ────────────────────────────────────────────────────────────
 
 export const ModerationQueueSearchSchema = z.object({

@@ -22,7 +22,7 @@
  *    2 回目以降が 0 バイトの空 body になっていた (next dev で実証済み)。
  *    `notFoundResponse()` として都度生成する。
  *  - `meals`/`recipes` の embed は admin bypass 無し RLS で null 化され、
- *    content_moderator は `moderation_flags_admin_all` (admin/super_admin のみ) に
+ *    content_moderator は `moderation_flags_admin_select` (旧 `moderation_flags_admin_all`。#1917 で SELECT だけ) (admin/super_admin のみ) に
  *    阻まれ 0 件/0 行更新になっていた。requireRole 通過後に service-role
  *    (`getSupabaseAdmin()`) へ切り替えて解消する。
  *  - BAN は `admin_set_user_roles` で `roles=['banned']` にするだけで
@@ -71,6 +71,7 @@ import { createLogger, generateRequestId } from '@/lib/db-logger';
 import {
   ModerationResolveBodySchema,
   MODERATION_TYPES,
+  MODERATION_TYPE_INVALID_MESSAGE,
   isModerationDeleteAction,
   type ModerationType,
 } from '@/lib/admin/moderation-schemas';
@@ -137,7 +138,7 @@ export async function GET(request: Request, props: Params) {
 
   if (!MODERATION_TYPES.includes(type as ModerationType)) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: `type は ${MODERATION_TYPES.join(', ')} のいずれかである必要があります` } },
+      { error: { code: 'VALIDATION_ERROR', message: MODERATION_TYPE_INVALID_MESSAGE } },
       { status: 400 },
     );
   }
@@ -150,7 +151,7 @@ export async function GET(request: Request, props: Params) {
   }
 
   // requireRole 通過後のみ到達する。meals/recipes の embed は admin bypass 無し
-  // RLS で null 化され、content_moderator は moderation_flags_admin_all
+  // RLS で null 化され、content_moderator は moderation_flags_admin_select (旧 _admin_all)
   // (admin/super_admin のみ) に阻まれるため service-role が必須 (#1041 round-2)。
   const supabaseAdmin = getSupabaseAdmin();
 
@@ -191,7 +192,7 @@ export async function GET(request: Request, props: Params) {
 
 export async function POST(request: Request, props: Params) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   return handleResolve(request, params);
@@ -199,7 +200,7 @@ export async function POST(request: Request, props: Params) {
 
 export async function PUT(request: Request, props: Params) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   return handleResolve(request, params);
@@ -230,7 +231,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
   // type バリデーション
   if (!MODERATION_TYPES.includes(type as ModerationType)) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: `type は ${MODERATION_TYPES.join(', ')} のいずれかである必要があります` } },
+      { error: { code: 'VALIDATION_ERROR', message: MODERATION_TYPE_INVALID_MESSAGE } },
       { status: 400 },
     );
   }
@@ -266,7 +267,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
   // delete_and_temp_ban は ban_duration_days 必須
   if (action === 'delete_and_temp_ban' && !ban_duration_days) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'delete_and_temp_ban の場合は ban_duration_days が必須です' } },
+      { error: { code: 'VALIDATION_ERROR', message: '削除と一時 BAN (delete_and_temp_ban) の場合は BAN の日数 (ban_duration_days) が必須です' } },
       { status: 400 },
     );
   }
@@ -274,7 +275,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
   // delete_and_perm_ban は super_admin のみ
   if (action === 'delete_and_perm_ban' && !actor.roles.includes('super_admin')) {
     return NextResponse.json(
-      { error: { code: 'OP_PERMISSION_DENIED', message: '永久 BAN は super_admin のみ実行可能です' } },
+      { error: { code: 'OP_PERMISSION_DENIED', message: '永久 BAN はスーパー管理者 (super_admin) のみ実行可能です' } },
       { status: 403 },
     );
   }

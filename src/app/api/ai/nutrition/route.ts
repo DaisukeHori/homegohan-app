@@ -16,6 +16,7 @@ import {
 } from '@/lib/planned-meal-validation';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
+import { isUuid } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { aiRequiredFieldMessage, AI_MENU_MEAL_NOT_FOUND_MESSAGE, AI_IMAGE_URL_INVALID_MESSAGE, AI_NUTRITION_ESTIMATE_FAILED_MESSAGE, AI_NUTRITION_INPUT_REQUIRED_MESSAGE } from '@/lib/ai/ai-api-messages';
@@ -48,7 +49,12 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: aiRequiredFieldMessage('献立') }, { status: 400 });
     }
 
-    // 2. 所有権確認（日付ベースモデル）
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
+    if (!isUuid(plannedMealId)) {
+      return NextResponse.json({ error: AI_MENU_MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
+    }
+
+    // 2. 所有権確認（日付ベースモデル）。読めなかったときは 404 にしない (行が無いときだけ 404。#1917)
     const { data: existing, error: existError } = await supabase
       .from('planned_meals')
       .select(`
@@ -59,9 +65,12 @@ export async function POST(request: Request) {
       `)
       .eq('id', plannedMealId)
       .eq('user_daily_meals.user_id', user.id)
-      .single();
+      .maybeSingle();
 
-    if (existError || !existing) {
+    if (existError) {
+      return internalError('POST /api/ai/nutrition', existError, { userId: user.id, table: 'planned_meals' });
+    }
+    if (!existing) {
       return NextResponse.json({ error: AI_MENU_MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 

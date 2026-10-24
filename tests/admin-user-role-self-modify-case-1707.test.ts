@@ -14,7 +14,8 @@ const mocks = vi.hoisted(() => {
     from: vi.fn((table: string) => ({
       select: (columns: string) => ({
         eq: (column: string, value: string) => ({
-          single: async () => {
+          // 対象の存在の確認は maybeSingle で読む (#1917。DB の失敗は 404 ではなく 500)
+          maybeSingle: async () => {
             targetSelect(table, columns, column, value);
             return { data: { id: value, roles: ['user'] }, error: null };
           },

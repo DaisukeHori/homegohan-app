@@ -15,9 +15,13 @@ import {
   FeaturePackagesQuerySchema,
 } from '@/lib/super-admin/feature-packages-schemas';
 import { internalError } from '@/lib/api/errors';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { invalidInputResponse, invalidJsonBodyResponse, invalidQueryResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
+
+/** 一覧の構造化ログの function_name */
+const LIST_ROUTE_NAME = 'GET /api/super-admin/feature-packages';
 
 export async function GET(request: NextRequest) {
   try {
@@ -38,18 +42,27 @@ export async function GET(request: NextRequest) {
     const { status, page, per_page } = queryResult.data;
     const offset = (page - 1) * per_page;
 
-    let query = supabase
-      .from('feature_packages')
-      .select('*', { count: 'exact' })
-      .order('display_order', { ascending: true })
-      .range(offset, offset + per_page - 1);
+    // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectFeaturePackages) から作る
+    const selectFeaturePackages = (options: { head?: boolean } = {}) => {
+      let query = supabase
+        .from('feature_packages')
+        .select('*', listCountOptions(options.head));
 
-    if (status) query = query.eq('status', status);
+      if (status) query = query.eq('status', status);
 
-    const { data, error, count } = await query;
+      return query;
+    };
+
+    const { data, error, count } = await resolveBeyondLastPage(
+      await selectFeaturePackages()
+        .order('display_order', { ascending: true })
+        .range(offset, offset + per_page - 1),
+      () => selectFeaturePackages({ head: true }),
+      LIST_ROUTE_NAME,
+    );
 
     if (error) {
-      return internalError('GET /api/super-admin/feature-packages', error, {}, { shape: 'nested' });
+      return internalError(LIST_ROUTE_NAME, error, {}, { shape: 'nested' });
     }
 
     return NextResponse.json({
@@ -70,7 +83,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   try {
     const user = await requireRole(['super_admin']);
@@ -106,7 +119,7 @@ export async function POST(request: NextRequest) {
     if (error) {
       if (error.code === '23505') {
         return NextResponse.json(
-          { error: { code: 'OP_PACKAGE_KEY_DUPLICATE', message: 'package_key が既に存在します' } },
+          { error: { code: 'OP_PACKAGE_KEY_DUPLICATE', message: 'パッケージのキー (package_key) は既に存在します' } },
           { status: 409 }
         );
       }

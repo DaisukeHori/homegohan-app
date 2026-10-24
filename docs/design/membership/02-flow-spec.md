@@ -208,7 +208,7 @@ server → rpc('create_family_group', { p_name })   ※ プランは渡さない
        → 201 { data: { family_group } }
 ```
 
-**未成年 (#1173):** `create_family_group` は、本人の `user_profiles.birth_date` が 18 歳未満なら `MINOR_ACCOUNT_NOT_ALLOWED` (403。設計書 `cross/14-parental-consent.md` §6.4 の 12)。18 歳未満の本人が家族に入るのは昇格 (§9) だけで、家族の代表者・組織のオーナーは引き受けない (保護者の同意とのつながりが切れたときの退会を 409 で塞がない)。 **退会の手続き中 (#1917 の続き):** 新しい退会の印 (`account_deletion_guards`) のある本人は家族を作れない (`family_groups` のトリガー `family_groups_representative_not_deleting` が `REPRESENTATIVE_ACCOUNT_DELETING` で止める。route は 409。`supabase/migrations/20261023150000_account_deletion_family_representative_guard.sql`)。
+**未成年 (#1173):** `create_family_group` は、本人の `user_profiles.birth_date` が 18 歳未満なら `MINOR_ACCOUNT_NOT_ALLOWED` (403。設計書 `cross/14-parental-consent.md` §6.4 の 12)。18 歳未満の本人が家族に入るのは昇格 (§9) だけで、家族の代表者・組織のオーナーは引き受けない (保護者の同意とのつながりが切れたときの退会を 409 で塞がない)。 **退会の手続き中 (#1917 の続き):** 新しい退会の印 (`account_deletion_guards`) のある本人は家族を作れない (`family_groups` のトリガー `trg_representative_not_deleting` (関数 `family_groups_representative_not_deleting`) が `REPRESENTATIVE_ACCOUNT_DELETING` で止める。route は 409。`supabase/migrations/20261023150000_account_deletion_family_representative_guard.sql`)。 退会が `deleteUser` の前に止まると (409・途中の失敗)、退会の本体が返す前に印を消すので、そのあとは作れる (`20261024120000_account_deletion_guard_release.sql`)。
 
 ---
 
@@ -295,9 +295,9 @@ POST /api/family/promotions/{token}/reject → rpc('reject_child_promotion')
 
 org owner 譲渡と同パターン。`propose_family_representative_transfer` / `accept_family_representative_transfer`。代表は他の adult にしか譲渡できない (child は不可)。提案時に宛先へ提案メール、承諾後に旧代表者と新代表者へ完了メールを送る (§5 と同じ。宛先のメールアドレスは `auth.users` から引く。04 §5)。
 
-**承諾時の不変条件 (#1237):** 承諾 RPC は承諾時点で、承諾者がその家族の `status = 'active'` かつ `role IN ('representative', 'adult')` のメンバーであることを再検証し、満たさなければ何も変更せずに [NEW] `TRANSFER_ACCEPTOR_NOT_IN_FAMILY` (403) を返す (脱退・除名済みのユーザーが古い提案で代表者になり、家族グループを DELETE CASCADE できてしまうのを防ぐ)。二重承諾の防止とその他のエラーコードは §5 と同じ。
+**承諾時の不変条件 (#1237):** 承諾 RPC は承諾時点で、承諾者がその家族の `status = 'active'` かつ `role IN ('representative', 'adult')` のメンバーであることを再検証し、満たさなければ何も変更せずに [NEW] `TRANSFER_ACCEPTOR_NOT_IN_FAMILY` (403) を返す (脱退・除名済みのユーザーが古い提案で代表者になり、家族グループを DELETE CASCADE できてしまうのを防ぐ。いまは利用者による家族の行の直接の DELETE そのものが無い: `20261022200000_family_groups_no_direct_delete.sql`・#1961)。二重承諾の防止とその他のエラーコードは §5 と同じ。
 
-**未成年 (#1173):** `accept_family_representative_transfer` は、本人の `user_profiles.birth_date` が 18 歳未満なら `MINOR_ACCOUNT_NOT_ALLOWED` (403。設計書 `cross/14-parental-consent.md` §6.4 の 12)。18 歳未満の本人が家族に入るのは昇格 (§9) だけで、家族の代表者・組織のオーナーは引き受けない (保護者の同意とのつながりが切れたときの退会を 409 で塞がない)。 **退会の手続き中 (#1917 の続き):** 新しい退会の印のある承諾者は代表者を引き受けない (トリガー `family_groups_representative_not_deleting` が `REPRESENTATIVE_ACCOUNT_DELETING` で止め、提案は pending のまま。route は 409。運営の強制譲渡 `operator_force_representative_transfer` の譲渡先も同じで、route は 409「譲渡先のユーザーは退会の手続き中です」。`20261023150000`)。
+**未成年 (#1173):** `accept_family_representative_transfer` は、本人の `user_profiles.birth_date` が 18 歳未満なら `MINOR_ACCOUNT_NOT_ALLOWED` (403。設計書 `cross/14-parental-consent.md` §6.4 の 12)。18 歳未満の本人が家族に入るのは昇格 (§9) だけで、家族の代表者・組織のオーナーは引き受けない (保護者の同意とのつながりが切れたときの退会を 409 で塞がない)。 **退会の手続き中 (#1917 の続き):** 新しい退会の印のある承諾者は代表者を引き受けない (トリガー `trg_representative_not_deleting` (関数 `family_groups_representative_not_deleting`) が `REPRESENTATIVE_ACCOUNT_DELETING` で止め、提案は pending のまま。route は 409。運営の強制譲渡 `operator_force_representative_transfer` の譲渡先も同じで、route は 409「譲渡先のユーザーは退会の手続き中です」。`20261023150000`)。 退会が `deleteUser` の前に止まると (409・途中の失敗)、退会の本体が返す前に印を消すので、そのあとは引き受けられる (`20261024120000`)。
 
 ---
 

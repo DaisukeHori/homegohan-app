@@ -7,9 +7,20 @@
  *       扱いとなり、publish/unpublish/deprecate が一切できなくなっていた。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { isAllowedPlanStatusTransition } from '@/lib/super-admin/plans-schemas';
+import {
+  PLAN_STATUSES,
+  PLAN_UPDATE_FIELD_LABELS,
+  PlanUpdateSchema,
+  isAllowedPlanStatusTransition,
+  planStatusLockedFieldsMessage,
+  planStatusTransitionMessage,
+} from '@/lib/super-admin/plans-schemas';
+import { englishIdentifiersOutsideParentheses } from './helpers/api-error-text-scan';
 import { createFakeSupabase } from './helpers/fake-supabase';
 import { createFakePlanSubscribersDb } from './helpers/fake-plan-subscribers-db';
+
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする */
+const PLAN_ID = '88888888-8888-4888-8888-888888888882';
 
 describe('isAllowedPlanStatusTransition', () => {
   it('draft --> public / private を許可する', () => {
@@ -62,7 +73,7 @@ const { PATCH } = await import('@/app/api/super-admin/plans/[id]/route');
 const actor = { id: 'sa-1', email: 'sa@example.com', roles: ['super_admin'], organization_id: null };
 
 function patchRequest(body: Record<string, unknown>) {
-  return new Request('http://localhost/api/super-admin/plans/plan-1', {
+  return new Request(`http://localhost/api/super-admin/plans/${PLAN_ID}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -71,7 +82,7 @@ function patchRequest(body: Record<string, unknown>) {
 
 function existingPlan(overrides: Record<string, unknown>) {
   return {
-    id: 'plan-1',
+    id: PLAN_ID,
     plan_key: 'pro',
     display_name: 'Pro',
     plan_type: 'personal',
@@ -96,7 +107,7 @@ describe('PATCH /api/super-admin/plans/[id] (#1041 状態遷移一方向ロッ�
       admin_audit_logs: [{ data: null, error: null }],
     });
 
-    const res = await PATCH(patchRequest({ status: 'private' }), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest({ status: 'private' }), { params: { id: PLAN_ID } });
     expect(res.status).toBe(200);
   });
 
@@ -109,7 +120,7 @@ describe('PATCH /api/super-admin/plans/[id] (#1041 状態遷移一方向ロッ�
       admin_audit_logs: [{ data: null, error: null }],
     });
 
-    const res = await PATCH(patchRequest({ status: 'public' }), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest({ status: 'public' }), { params: { id: PLAN_ID } });
     expect(res.status).toBe(200);
   });
 
@@ -124,7 +135,7 @@ describe('PATCH /api/super-admin/plans/[id] (#1041 状態遷移一方向ロッ�
 
     const res = await PATCH(
       patchRequest({ status: 'deprecated', ends_at: '2027-01-01T00:00:00.000Z' }),
-      { params: { id: 'plan-1' } },
+      { params: { id: PLAN_ID } },
     );
     expect(res.status).toBe(200);
   });
@@ -134,7 +145,7 @@ describe('PATCH /api/super-admin/plans/[id] (#1041 状態遷移一方向ロッ�
       subscription_plans: [{ data: existingPlan({ status: 'public', ends_at: null }), error: null }],
     });
 
-    const res = await PATCH(patchRequest({ status: 'deprecated' }), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest({ status: 'deprecated' }), { params: { id: PLAN_ID } });
     expect(res.status).toBe(400);
     const json = (await res.json()) as { error: { code: string } };
     expect(json.error.code).toBe('OP_PLAN_DEPRECATE_ENDS_AT_REQUIRED');
@@ -145,10 +156,13 @@ describe('PATCH /api/super-admin/plans/[id] (#1041 状態遷移一方向ロッ�
       subscription_plans: [{ data: existingPlan({ status: 'deprecated' }), error: null }],
     });
 
-    const res = await PATCH(patchRequest({ status: 'public' }), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest({ status: 'public' }), { params: { id: PLAN_ID } });
     expect(res.status).toBe(422);
-    const json = (await res.json()) as { error: { code: string } };
+    const json = (await res.json()) as { error: { code: string; message: string } };
     expect(json.error.code).toBe('OP_PLAN_INVALID_TRANSITION');
+    // 状態の値は「画面の名前 (値)」の形で括弧の中 (運営の画面 (plans/[id]/page.tsx) は message をそのまま alert に出す。#1917 の続き)
+    expect(json.error.message).toBe('プランの状態を 廃止 (deprecated) から 公開中 (public) へ変えることはできません');
+    expect(englishIdentifiersOutsideParentheses(json.error.message)).toEqual([]);
   });
 
   it('deprecated --> private (un-deprecate) は許可される', async () => {
@@ -160,7 +174,7 @@ describe('PATCH /api/super-admin/plans/[id] (#1041 状態遷移一方向ロッ�
       admin_audit_logs: [{ data: null, error: null }],
     });
 
-    const res = await PATCH(patchRequest({ status: 'private' }), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest({ status: 'private' }), { params: { id: PLAN_ID } });
     expect(res.status).toBe(200);
   });
 
@@ -169,10 +183,25 @@ describe('PATCH /api/super-admin/plans/[id] (#1041 状態遷移一方向ロッ�
       subscription_plans: [{ data: existingPlan({ status: 'public' }), error: null }],
     });
 
-    const res = await PATCH(patchRequest({ stripe_product_id: 'prod_x' }), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest({ stripe_product_id: 'prod_x' }), { params: { id: PLAN_ID } });
     expect(res.status).toBe(422);
     const json = (await res.json()) as { error: { code: string } };
     expect(json.error.code).toBe('OP_PLAN_STATUS_LOCKED');
+  });
+
+  it('公開中のプランで変えられない項目を送ると、項目名を「画面の名前 (項目名)」の形で括弧に入れた文を返す (#1917 の続き)', async () => {
+    fakeSupabase = createFakeSupabase({
+      subscription_plans: [{ data: existingPlan({ status: 'public' }), error: null }],
+    });
+
+    const res = await PATCH(patchRequest({ trial_days: 7, max_members: 10 }), { params: { id: PLAN_ID } });
+    expect(res.status).toBe(422);
+    const json = (await res.json()) as { error: { code: string; message: string } };
+    expect(json.error.code).toBe('OP_PLAN_STATUS_LOCKED');
+    expect(json.error.message).toBe(
+      '公開中・非公開のプランでは、次の項目は変更できません: メンバーの数の上限 (max_members)、試用の日数 (trial_days)。価格の変更は price-change API を使ってください。',
+    );
+    expect(englishIdentifiersOutsideParentheses(json.error.message)).toEqual([]);
   });
 
   it('deprecated 中に status 以外を変更しようとすると 422 (廃止済みロック)', async () => {
@@ -180,9 +209,42 @@ describe('PATCH /api/super-admin/plans/[id] (#1041 状態遷移一方向ロッ�
       subscription_plans: [{ data: existingPlan({ status: 'deprecated' }), error: null }],
     });
 
-    const res = await PATCH(patchRequest({ display_name: 'New Name' }), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest({ display_name: 'New Name' }), { params: { id: PLAN_ID } });
     expect(res.status).toBe(422);
     const json = (await res.json()) as { error: { code: string } };
     expect(json.error.code).toBe('OP_PLAN_DEPRECATED_LOCKED');
+  });
+});
+
+describe('プランの状態・項目の失敗の文 (#1917 の続き: 英字の値・項目名を括弧の外に出さない)', () => {
+  it('全部の状態の組み合わせの遷移の文に、括弧の外の英字が無い', () => {
+    for (const from of PLAN_STATUSES) {
+      for (const to of PLAN_STATUSES) {
+        const message = planStatusTransitionMessage(from, to);
+        expect(englishIdentifiersOutsideParentheses(message), message).toEqual([]);
+        expect(message).toContain(`(${from})`);
+        expect(message).toContain(`(${to})`);
+      }
+    }
+  });
+
+  it('表に無い状態の値も括弧の中に入れる', () => {
+    const message = planStatusTransitionMessage('archived_x', 'public');
+    expect(message).toBe('プランの状態を 不明な状態 (archived_x) から 公開中 (public) へ変えることはできません');
+    expect(englishIdentifiersOutsideParentheses(message)).toEqual([]);
+  });
+
+  it('更新の項目の名前の表は PlanUpdateSchema の全部の項目を持ち、全部の項目の文に括弧の外の英字が無い', () => {
+    const keys = Object.keys(PlanUpdateSchema.shape).sort();
+    expect(Object.keys(PLAN_UPDATE_FIELD_LABELS).sort()).toEqual(keys);
+    const message = planStatusLockedFieldsMessage(keys);
+    expect(englishIdentifiersOutsideParentheses(message), message).toEqual([]);
+    for (const key of keys) expect(message).toContain(`${PLAN_UPDATE_FIELD_LABELS[key as keyof typeof PLAN_UPDATE_FIELD_LABELS]} (${key})`);
+  });
+
+  it('表に無い項目名も括弧の中に入れる', () => {
+    const message = planStatusLockedFieldsMessage(['unknown_field']);
+    expect(message).toContain('項目 (unknown_field)');
+    expect(englishIdentifiersOutsideParentheses(message)).toEqual([]);
   });
 });

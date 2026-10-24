@@ -225,7 +225,7 @@ export const RefundRequestSchema = z
       .refine((reason) => !reason.includes('\u0000'), '使用できない文字が含まれています'),
   })
   .refine((request) => (request.stripe_charge_id != null) !== (request.stripe_invoice_id != null), {
-    message: 'stripe_charge_id と stripe_invoice_id はどちらか一方だけを指定してください',
+    message: 'Stripe の支払い (stripe_charge_id) と請求書 (stripe_invoice_id) はどちらか一方だけを指定してください',
     path: ['stripe_charge_id'],
   });
 

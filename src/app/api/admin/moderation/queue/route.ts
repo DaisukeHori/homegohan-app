@@ -13,7 +13,7 @@
  * `type` 未指定の一覧は食事画像とレシピだけで、AI コンテンツは含まない。
  *
  * #1041 round-2 修正:
- *  - (F) `moderation_flags_admin_all` は admin/super_admin のみで
+ *  - (F) `moderation_flags_admin_select` (旧 `moderation_flags_admin_all`。#1917 で SELECT だけ) は admin/super_admin のみで
  *    content_moderator を許可しない。requireRole 通過後に service-role
  *    (`getSupabaseAdmin()`) へ切り替えて content_moderator でも読めるようにする。
  *  - (G) `PER_TYPE_FETCH_CAP` (500) 超のデータがある場合、`meta.total` に

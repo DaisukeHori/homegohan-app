@@ -342,6 +342,17 @@ describe('PATCH /api/admin/support/tickets/[id]', () => {
     expectError(res, 400, 'VALIDATION_ERROR');
   });
 
+  // UUID の形でも auth.users に無い担当者は、更新が外部キー違反 (23503) で失敗する。入力の誤りなので 400 VALIDATION_ERROR (#1917)
+  it('400 VALIDATION_ERROR for an assignee_id that is a UUID but not an existing user, and leaves the assignee untouched (#1917)', async () => {
+    const ticketId = await seedTicket({ assigneeId: supportUser.userId });
+    const res = await apiCall('PATCH', `/api/admin/support/tickets/${ticketId}`, supportUser.jwt, {
+      assignee_id: randomUuid(),
+    });
+    expectError(res, 400, 'VALIDATION_ERROR');
+    expect(JSON.stringify(res.body)).not.toContain('support_tickets_assignee_id_fkey');
+    expect((await readTicket(ticketId)).assignee_id).toBe(supportUser.userId);
+  });
+
   it('400 for an empty object (at least one field is required)', async () => {
     const ticketId = await seedTicket();
     const res = await apiCall('PATCH', `/api/admin/support/tickets/${ticketId}`, supportUser.jwt, {});
@@ -380,10 +391,8 @@ describe('PATCH /api/admin/support/tickets/[id]', () => {
     expectError(res, 401);
   });
 
-  // 既知の不具合: request.json() の SyntaxError を握っておらず、汎用の catch で 500 になる。
-  // (moderation の [type]/[id] や users/[id]/freeze は INVALID_JSON の 400 を返している)
-  // 直ったら `.fails` を外すこと。
-  it.fails('[既知の不具合] 400 for malformed JSON body (現状は 500 INTERNAL_ERROR)', async () => {
+  // JSON として読めない本文は 400 INVALID_JSON (汎用の catch の 500 に落とさない。#1917)
+  it('400 INVALID_JSON for malformed JSON body (#1917)', async () => {
     const ticketId = await seedTicket();
     const res = await apiCallRaw(
       'PATCH',
@@ -391,7 +400,7 @@ describe('PATCH /api/admin/support/tickets/[id]', () => {
       supportUser.jwt,
       '{"status": ',
     );
-    expect(res.status).toBe(400);
+    expectError(res, 400, 'INVALID_JSON');
   });
 });
 
@@ -455,6 +464,20 @@ describe('POST /api/admin/support/tickets/[id]/assign', () => {
     expect((await readTicket(ticketId)).assignee_id).toBeNull();
   });
 
+  // UUID の形でも auth.users に無い担当者は、更新が外部キー違反 (23503) で失敗する。入力の誤りなので 400 VALIDATION_ERROR (#1917)
+  it('400 VALIDATION_ERROR for an assignee_id that is a UUID but not an existing user, and leaves the assignee untouched (#1917)', async () => {
+    const ticketId = await seedTicket({ assigneeId: supportUser.userId });
+    const res = await apiCall(
+      'POST',
+      `/api/admin/support/tickets/${ticketId}/assign`,
+      supportUser.jwt,
+      { assignee_id: randomUuid() },
+    );
+    expectError(res, 400, 'VALIDATION_ERROR');
+    expect(JSON.stringify(res.body)).not.toContain('support_tickets_assignee_id_fkey');
+    expect((await readTicket(ticketId)).assignee_id).toBe(supportUser.userId);
+  });
+
   it('400 for missing assignee_id', async () => {
     const ticketId = await seedTicket();
     const res = await apiCall(
@@ -507,8 +530,8 @@ describe('POST /api/admin/support/tickets/[id]/assign', () => {
     expectError(res, 401);
   });
 
-  // 既知の不具合: PATCH と同じ (request.json() の SyntaxError が 500 になる)。直ったら `.fails` を外すこと。
-  it.fails('[既知の不具合] 400 for malformed JSON body (現状は 500 INTERNAL_ERROR)', async () => {
+  // PATCH と同じ: JSON として読めない本文は 400 INVALID_JSON (#1917)
+  it('400 INVALID_JSON for malformed JSON body (#1917)', async () => {
     const ticketId = await seedTicket();
     const res = await apiCallRaw(
       'POST',
@@ -516,7 +539,7 @@ describe('POST /api/admin/support/tickets/[id]/assign', () => {
       supportUser.jwt,
       '{"assignee_id": ',
     );
-    expect(res.status).toBe(400);
+    expectError(res, 400, 'INVALID_JSON');
   });
 });
 
@@ -786,8 +809,8 @@ describe('POST /api/admin/support/tickets/[id]/messages', () => {
     expectError(res, 401);
   });
 
-  // 既知の不具合: PATCH と同じ (request.json() の SyntaxError が 500 になる)。直ったら `.fails` を外すこと。
-  it.fails('[既知の不具合] 400 for malformed JSON body (現状は 500 INTERNAL_ERROR)', async () => {
+  // PATCH と同じ: JSON として読めない本文は 400 INVALID_JSON (#1917)
+  it('400 INVALID_JSON for malformed JSON body (#1917)', async () => {
     const ticketId = await seedTicket();
     const res = await apiCallRaw(
       'POST',
@@ -795,6 +818,6 @@ describe('POST /api/admin/support/tickets/[id]/messages', () => {
       supportUser.jwt,
       '{"body": ',
     );
-    expect(res.status).toBe(400);
+    expectError(res, 400, 'INVALID_JSON');
   });
 });

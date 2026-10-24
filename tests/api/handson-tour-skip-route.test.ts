@@ -39,7 +39,7 @@ describe('#1045 F6-10: /api/handson-tour/skip', () => {
         return {
           select: vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
-              single: vi.fn().mockResolvedValue({ data: { id: 'user-1' }, error: null }),
+              maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'user-1' }, error: null }),
             }),
           }),
           update: vi.fn().mockReturnValue({
@@ -74,7 +74,7 @@ describe('#1045 F6-10: /api/handson-tour/skip', () => {
         return {
           select: vi.fn().mockReturnValue({
             eq: vi.fn().mockReturnValue({
-              single: vi.fn().mockResolvedValue({ data: { id: 'user-1' }, error: null }),
+              maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'user-1' }, error: null }),
             }),
           }),
           update: vi.fn().mockReturnValue({
@@ -109,7 +109,7 @@ describe('#1045 F6-10: /api/handson-tour/skip', () => {
             if (cols === 'id') {
               return {
                 eq: vi.fn().mockReturnValue({
-                  single: vi.fn().mockResolvedValue({ data: { id: 'user-1' }, error: null }),
+                  maybeSingle: vi.fn().mockResolvedValue({ data: { id: 'user-1' }, error: null }),
                 }),
               };
             }
@@ -151,7 +151,8 @@ describe('#1045 F6-10: /api/handson-tour/skip', () => {
       from: vi.fn(() => ({
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockResolvedValue({ data: null, error: { message: 'not found' } }),
+            // maybeSingle は行が無いと data: null・error: null を返す (#1917。DB の失敗は 404 ではなく 500)
+            maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
           }),
         }),
       })),

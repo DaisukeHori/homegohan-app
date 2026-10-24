@@ -23,6 +23,9 @@ import {
 import { POST as mealsPOST } from '../src/app/api/meals/route';
 import { PATCH as mealPlansPatch } from '../src/app/api/meal-plans/meals/[id]/route';
 
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする */
+const MEAL_ID = '77777777-7777-4777-8777-777777777771';
+
 describe('catalog meal persistence routes', () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -36,7 +39,7 @@ describe('catalog meal persistence routes', () => {
       }),
     });
     const insertedMeal = {
-      id: 'meal-1',
+      id: MEAL_ID,
       daily_meal_id: 'daily-1',
       meal_type: 'lunch',
       mode: 'buy',
@@ -111,19 +114,19 @@ describe('catalog meal persistence routes', () => {
 
   it('meal-plans PATCH applies catalog fields when selecting a catalog product', async () => {
     const existingMeal = {
-      id: 'meal-1',
+      id: MEAL_ID,
       mode: 'buy',
       catalog_product_id: null,
       source_type: 'manual',
       generation_metadata: null,
       user_daily_meals: { user_id: 'user-1' },
     };
-    const updatedMeal = { id: 'meal-1', catalog_product_id: 'catalog-1', source_type: 'catalog_product' };
+    const updatedMeal = { id: MEAL_ID, catalog_product_id: 'catalog-1', source_type: 'catalog_product' };
 
     const select = vi.fn().mockReturnValue({
       eq: vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnValue({
-          single: vi.fn().mockResolvedValue({ data: existingMeal, error: null }),
+          maybeSingle: vi.fn().mockResolvedValue({ data: existingMeal, error: null }),
         }),
       }),
     });
@@ -153,7 +156,7 @@ describe('catalog meal persistence routes', () => {
     });
 
     const response = await mealPlansPatch(
-      new Request('http://localhost/api/meal-plans/meals/meal-1', {
+      new Request(`http://localhost/api/meal-plans/meals/${MEAL_ID}`, {
         method: 'PATCH',
         body: JSON.stringify({
           catalogProductId: 'catalog-1',
@@ -161,7 +164,7 @@ describe('catalog meal persistence routes', () => {
           description: '公開商品',
         }),
       }),
-      { params: { id: 'meal-1' } },
+      { params: { id: MEAL_ID } },
     );
 
     expect(buildCatalogSelectionUpdate).toHaveBeenCalledWith({
@@ -191,7 +194,7 @@ describe('catalog meal persistence routes', () => {
 
   it('meal-plans PATCH clears catalog linkage when manual content overrides an existing catalog meal', async () => {
     const existingMeal = {
-      id: 'meal-1',
+      id: MEAL_ID,
       mode: 'buy',
       catalog_product_id: 'catalog-1',
       source_type: 'catalog_product',
@@ -200,12 +203,12 @@ describe('catalog meal persistence routes', () => {
       },
       user_daily_meals: { user_id: 'user-1' },
     };
-    const updatedMeal = { id: 'meal-1', catalog_product_id: null, source_type: 'manual' };
+    const updatedMeal = { id: MEAL_ID, catalog_product_id: null, source_type: 'manual' };
 
     const select = vi.fn().mockReturnValue({
       eq: vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnValue({
-          single: vi.fn().mockResolvedValue({ data: existingMeal, error: null }),
+          maybeSingle: vi.fn().mockResolvedValue({ data: existingMeal, error: null }),
         }),
       }),
     });
@@ -227,14 +230,14 @@ describe('catalog meal persistence routes', () => {
     });
 
     const response = await mealPlansPatch(
-      new Request('http://localhost/api/meal-plans/meals/meal-1', {
+      new Request(`http://localhost/api/meal-plans/meals/${MEAL_ID}`, {
         method: 'PATCH',
         body: JSON.stringify({
           dishName: '手入力どんぶり',
           description: '手入力へ変更',
         }),
       }),
-      { params: { id: 'meal-1' } },
+      { params: { id: MEAL_ID } },
     );
 
     expect(clearCatalogSelectionMetadata).toHaveBeenCalledWith(

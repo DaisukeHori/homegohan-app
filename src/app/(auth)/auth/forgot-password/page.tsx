@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { TurnstileWidget, useTurnstile } from "@/components/auth/TurnstileWidget";
 import { createClient } from "@/lib/supabase/client";
 import { CAPTCHA_FAILED_MESSAGE, isCaptchaFailure } from "@/lib/auth/turnstile";
+import { authErrorMessageForDisplay } from "@/lib/auth/auth-error-message";
 import { ArrowLeft, Mail, CheckCircle2, AlertCircle } from "lucide-react";
 
 export default function ForgotPasswordPage() {
@@ -50,8 +51,9 @@ export default function ForgotPasswordPage() {
       setSuccess(true);
     } catch (err: any) {
       console.error("Password reset error:", err);
-      // #1165: 英語の生のエラー文は出さない (ウィジェットは取り直し済み)
-      setError(isCaptchaFailure(err) ? CAPTCHA_FAILED_MESSAGE : err.message || "パスワードリセットに失敗しました");
+      // #1165: 英語の生のエラー文は出さない (ウィジェットは取り直し済み)。
+      // GoTrue の英語の文 (回数の制限など) も出さない (回数の制限は「しばらくしてから」の案内。#1917 の続き)
+      setError(isCaptchaFailure(err) ? CAPTCHA_FAILED_MESSAGE : authErrorMessageForDisplay(err, "パスワードリセットに失敗しました"));
     } finally {
       setLoading(false);
     }

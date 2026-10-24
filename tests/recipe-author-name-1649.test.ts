@@ -13,6 +13,9 @@
  *   - GET  /api/recipes/[id]/comments   の comments[].authorName
  *   - POST /api/recipes/[id]/comments   の comment.authorName
  *
+ * 作者の名前は、レシピ・コメントに埋め込まずに user_profiles を別のクエリで引く (#1917。src/lib/recipes/viewer-lookups.ts)。
+ * ここのモックの user_profiles は、引かれた id のどれにも h.nickname を返す。
+ *
  * Supabase には接続しない (createClient をモック)。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -21,28 +24,31 @@ import { RECIPE_AUTHOR_FALLBACK_NAME, recipeAuthorName } from '@/lib/recipes/aut
 const RECIPE_ID = 'r0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 
 const h = vi.hoisted(() => ({
-  /** recipes / recipe_comments を読んだとき (insert の戻りを含む) に埋め込まれる user_profiles.nickname */
+  /** user_profiles を引いたときの nickname (引かれた id のどれにもこの値を返す) */
   nickname: '' as string,
 }));
 
-/** select / eq / or / order / range / insert / maybeSingle / single を受ける最小のクエリビルダー */
+/** select / eq / in / or / order / range / insert / maybeSingle / single を受ける最小のクエリビルダー */
 function queryFor(table: string) {
-  const profile = { nickname: h.nickname };
   const recipeRow = {
     id: RECIPE_ID,
     user_id: 'author-1',
     name: 'カレー',
     is_public: true,
-    user_profiles: profile,
-    recipe_likes: [],
-    recipe_comments: [{ id: 'c-1', content: 'おいしい', rating: 5, created_at: '2026-10-01T00:00:00Z', user_profiles: profile }],
+    recipe_comments: [{ id: 'c-1', content: 'おいしい', rating: 5, created_at: '2026-10-01T00:00:00Z', user_id: 'commenter-1' }],
   };
-  const commentRow = { id: 'c-1', content: 'おいしい', rating: 5, created_at: '2026-10-01T00:00:00Z', user_profiles: profile };
+  const commentRow = { id: 'c-1', content: 'おいしい', rating: 5, created_at: '2026-10-01T00:00:00Z', user_id: 'commenter-1' };
 
   const builder: Record<string, unknown> = {};
+  /** user_profiles の .in('id', ids) で引かれた id */
+  let profileIds: string[] = [];
   for (const method of ['select', 'eq', 'or', 'lte', 'order', 'insert']) {
     builder[method] = () => builder;
   }
+  builder.in = (column: string, values: string[]) => {
+    if (column === 'id') profileIds = values;
+    return builder;
+  };
   if (table === 'recipes') {
     builder.range = async () => ({ data: [recipeRow], error: null, count: 1 });
     builder.maybeSingle = async () => ({ data: recipeRow, error: null });
@@ -50,6 +56,11 @@ function queryFor(table: string) {
     // GET は order のあと await する (thenable)。POST は insert → select → single
     builder.then = (resolve: (value: unknown) => void) => resolve({ data: [commentRow], error: null });
     builder.single = async () => ({ data: commentRow, error: null });
+  } else if (table === 'user_profiles') {
+    builder.then = (resolve: (value: unknown) => void) =>
+      resolve({ data: profileIds.map((id) => ({ id, nickname: h.nickname })), error: null });
+  } else if (table === 'recipe_likes') {
+    builder.then = (resolve: (value: unknown) => void) => resolve({ data: [], error: null });
   } else {
     throw new Error(`unexpected table: ${table}`);
   }

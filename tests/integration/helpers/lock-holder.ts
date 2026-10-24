@@ -5,7 +5,7 @@
  * org-transfer-toctou.test.ts (#1984) で作った形を切り出したもの。それまでの形は、接続を pg_sleep の決まった秒数だけ開いておき、
  * その窓のうちに後の処理が並ぶことを仮定していた。負荷が高いと並ぶまでが窓より長くなり、並ぶ前に commit して
  * 「commit のあとに呼んだ」のと同じになって揺らいだ。ここでは時間で放さない:
- *   - 接続は先の処理を済ませたあと、放されるまで pg_sleep で待つ (HOLD_UNTIL_RELEASED_SQL)。
+ *   - 接続は先の処理を済ませたあと、放されるまで pg_sleep で待つ (holdUntilReleasedSql(maxHoldSeconds))。
  *   - 放すのは release() で、pg_sleep の途中にいることを確かめてから pg_cancel_backend を送る。取り消しは pg_sleep の文
  *     (例外のブロックのサブトランザクション) だけを抜けさせ、それより前の文 (先の処理・行のロック) と後の文はそのまま commit する。
  *   - 放されないまま上限 (maxHoldSeconds) に達した接続は HOLDER_NOT_RELEASED を RAISE して全体を失敗させる (黙って commit しない)。
@@ -156,7 +156,13 @@ export interface Holder {
 export interface LockWaitOptions {
   /** 失敗の文に出す手順の名前 (どの手順で並ばなかったか) */
   step: string;
-  /** 待ちの相手がこの接続であること (pg_blocking_pids に holder の pid が入っていること) まで確かめる */
+  /**
+   * 待ちの相手がこの接続であること (pg_blocking_pids に holder の pid が入っていること) まで確かめる。
+   * 前提: holder は、待つ側を呼ぶより前に、その行 (ロック) を取って pg_sleep に入っていること。holder が、待つ側と一緒に待っていた
+   * ほかの接続の commit のあとで行を取り直す (取り直す行を、その commit が新しい版に書き換えた) 形では、commit で起こされた待つ側と
+   * holder がその行を取り合い、待つ側が先に取って holder を待たずに終わることがある (#1917 の OT-25 の手順 (4')。決まった順にならない)。
+   * その形で待ちを確かめるときは waitForLockWaitersUnlessSettled で「待つ側が先に終わった」も見分ける
+   */
   blockedBy?: Holder;
   /** 待ちの種類 (pg_stat_activity.wait_event。例: advisory lock なら 'advisory') まで確かめる。無ければ種類を問わない */
   waitEvent?: string;
@@ -172,6 +178,9 @@ export interface QueuedCall<T> {
   /** 待ちの種類 (LockWaitOptions.waitEvent) */
   waitEvent?: string;
 }
+
+/** waitForLockWaitersUnlessSettled の結果: 並んだ (queued) か、並ぶ前に呼び出しが終わった (settled) か */
+export type LockWaitOutcome = 'queued' | 'settled';
 
 export interface LockHolderKitOptions {
   /** /pg/query に投げる関数 (ゲートウェイの 502 のやり直しは呼ぶ側のものを使う) */
@@ -198,6 +207,17 @@ export interface LockHolderKit {
    * その接続に待たされているもの (pg_blocking_pids に pid が入っている) だけを数える。並ばなければ手順の名前を付けて失敗する
    */
   waitForLockWaiters: (match: string, count: number, options: LockWaitOptions) => Promise<void>;
+  /**
+   * waitForLockWaiters と同じく待つが、並ぶ前に settled() が true になったら (呼び出しが待たずに終わったら) 'settled' を返す。
+   * 待つ側と holder が同じ commit で起こされて行を取り合う形 (blockedBy の前提の注記) で、どちらが先に取ったかを見分ける。
+   * count 本並んだら 'queued'。どちらにもならないまま上限に達したら、waitForLockWaiters と同じ文で落ちる
+   */
+  waitForLockWaitersUnlessSettled: (
+    match: string,
+    count: number,
+    options: LockWaitOptions,
+    settled: () => boolean,
+  ) => Promise<LockWaitOutcome>;
   /**
    * holder が持っている間に waiter を呼び、waiter が holder に待たされて行のロックの待ちに並んだのを確かめてから holder を放す
    * (waiter は holder の commit を待ってから判定する。並ぶ前に放して、commit のあとに呼んだのと同じになるのを防ぐ)
@@ -283,7 +303,12 @@ export function createLockHolderKit(options: LockHolderKitOptions): LockHolderKi
     return holder;
   }
 
-  async function waitForLockWaiters(match: string, count: number, { step, blockedBy, waitEvent }: LockWaitOptions): Promise<void> {
+  async function pollLockWaiters(
+    match: string,
+    count: number,
+    { step, blockedBy, waitEvent }: LockWaitOptions,
+    settled: () => boolean,
+  ): Promise<LockWaitOutcome> {
     const blockerPid = blockedBy ? blockedBy.pid() : null;
     if (blockedBy && blockerPid === null) throw new Error(`手順「${step}」: ${blockedBy.label} がまだ pg_sleep に入っていません`);
     const blockedByClause = blockerPid === null ? '' : `AND ${blockerPid} = ANY(pg_blocking_pids(pid))`;
@@ -295,7 +320,9 @@ export function createLockHolderKit(options: LockHolderKitOptions): LockHolderKi
       SELECT count(*)::int AS n FROM pg_stat_activity
       WHERE wait_event_type = 'Lock' ${waitEventClause} AND query LIKE '%${match}%' AND pid <> pg_backend_pid() ${blockedByClause}`);
       seen = rows[0]?.n ?? 0;
-      if (seen >= count) return;
+      if (seen >= count) return 'queued';
+      // 数えたあとに見る (数えたときにまだ並んでいなかった呼び出しが、そのあと待たずに終わったのを見分ける)
+      if (settled()) return 'settled';
       await sleep(timings.pollMs);
     }
     const behind = blockedBy ? `${blockedBy.label} の後ろの` : '';
@@ -303,6 +330,19 @@ export function createLockHolderKit(options: LockHolderKitOptions): LockHolderKi
     throw new Error(
       `手順「${step}」: ${match} の呼び出しが ${timings.deadlineMs} ミリ秒のうちに${behind}行のロックの待ち${kind}に ${count} 本並びませんでした (並んだのは ${seen} 本)`,
     );
+  }
+
+  async function waitForLockWaiters(match: string, count: number, options: LockWaitOptions): Promise<void> {
+    await pollLockWaiters(match, count, options, () => false);
+  }
+
+  function waitForLockWaitersUnlessSettled(
+    match: string,
+    count: number,
+    options: LockWaitOptions,
+    settled: () => boolean,
+  ): Promise<LockWaitOutcome> {
+    return pollLockWaiters(match, count, options, settled);
   }
 
   async function runBehindHolder<T>(holder: Holder, waiter: QueuedCall<T>): Promise<[HolderOutcome, T]> {
@@ -342,5 +382,15 @@ export function createLockHolderKit(options: LockHolderKitOptions): LockHolderKi
     await Promise.allSettled(pendingHolders);
   }
 
-  return { timings, pgQuery, startHolder, waitForLockWaiters, runBehindHolder, whileHolding, releaseOpenHolders, settle };
+  return {
+    timings,
+    pgQuery,
+    startHolder,
+    waitForLockWaiters,
+    waitForLockWaitersUnlessSettled,
+    runBehindHolder,
+    whileHolding,
+    releaseOpenHolders,
+    settle,
+  };
 }

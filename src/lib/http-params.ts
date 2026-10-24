@@ -50,7 +50,7 @@ export function normalizeUuid(value: string): string {
 }
 
 /** パスパラメータの id が UUID の形式でないときの 400 の本文の文とコード (#1478) */
-export const INVALID_ID_PARAM_MESSAGE = 'id の形式が正しくありません';
+export const INVALID_ID_PARAM_MESSAGE = 'ID (id) の形式が正しくありません';
 export const INVALID_ID_PARAM_CODE = 'VALIDATION_ERROR';
 
 /**

@@ -13,6 +13,10 @@ import { requireRole } from '@/lib/auth/helpers';
 import { authFailureNested } from '@/lib/api/error-responses';
 import { InfraAlertsQuerySchema } from '@/lib/super-admin/infra-schemas';
 import { internalError } from '@/lib/api/errors';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
+
+/** 一覧の構造化ログの function_name */
+const LIST_ROUTE_NAME = 'GET /api/super-admin/infra/alerts';
 
 export async function GET(request: NextRequest) {
   try {
@@ -30,22 +34,31 @@ export async function GET(request: NextRequest) {
 
     const { resolved, page, per_page } = parsed.data;
 
-    let query = supabase
-      .from('infra_alerts')
-      .select('*', { count: 'exact' })
-      .order('triggered_at', { ascending: false })
-      .range((page - 1) * per_page, page * per_page - 1);
+    // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectAlerts) から作る
+    const selectAlerts = (options: { head?: boolean } = {}) => {
+      let query = supabase
+        .from('infra_alerts')
+        .select('*', listCountOptions(options.head));
 
-    if (resolved === 'true') {
-      query = query.not('resolved_at', 'is', null);
-    } else if (resolved === 'false') {
-      query = query.is('resolved_at', null);
-    }
+      if (resolved === 'true') {
+        query = query.not('resolved_at', 'is', null);
+      } else if (resolved === 'false') {
+        query = query.is('resolved_at', null);
+      }
 
-    const { data, error, count } = await query;
+      return query;
+    };
+
+    const { data, error, count } = await resolveBeyondLastPage(
+      await selectAlerts()
+        .order('triggered_at', { ascending: false })
+        .range((page - 1) * per_page, page * per_page - 1),
+      () => selectAlerts({ head: true }),
+      LIST_ROUTE_NAME,
+    );
 
     if (error) {
-      return internalError('GET /api/super-admin/infra/alerts', error, {}, { shape: 'nested' });
+      return internalError(LIST_ROUTE_NAME, error, {}, { shape: 'nested' });
     }
 
     return NextResponse.json({

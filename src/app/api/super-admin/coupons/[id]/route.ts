@@ -18,26 +18,35 @@ import { recordAdminAudit } from '@/lib/admin/audit';
 import { couponInvalidInputResponse } from '@/lib/super-admin/coupon-errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
+import { isUuid } from '@/lib/http-params';
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+/** クーポンが無い (UUID の形でない id を含む) */
+const COUPON_NOT_FOUND_RESPONSE = { error: { code: 'OP_COUPON_NOT_FOUND', message: 'クーポンが見つかりません' } } as const;
 
 export async function GET(_request: NextRequest, props: RouteContext) {
   const params = await props.params;
   try {
     await requireRole(['super_admin']);
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(COUPON_NOT_FOUND_RESPONSE, { status: 404 });
+    }
     const supabase = await createClient();
 
     const { data: coupon, error } = await supabase
       .from('coupons')
       .select('*')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
-    if (error || !coupon) {
-      return NextResponse.json(
-        { error: { code: 'OP_COUPON_NOT_FOUND', message: 'クーポンが見つかりません' } },
-        { status: 404 }
-      );
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で消えたように見せない。#1917)
+    if (error) {
+      return internalError('GET /api/super-admin/coupons/[id]', error, { table: 'coupons' }, { shape: 'nested' });
+    }
+    if (!coupon) {
+      return NextResponse.json(COUPON_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     return NextResponse.json({ data: coupon });
@@ -55,7 +64,7 @@ export async function GET(_request: NextRequest, props: RouteContext) {
 
 export async function PATCH(request: NextRequest, props: RouteContext) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   try {
@@ -94,17 +103,23 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
       );
     }
 
+    // UUID の形でない id は DB に渡さず 404 (入力の検査 (400) のあと。uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(COUPON_NOT_FOUND_RESPONSE, { status: 404 });
+    }
+
     const { data: existing, error: fetchErr } = await supabase
       .from('coupons')
       .select('id, code, valid_from')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
-    if (fetchErr || !existing) {
-      return NextResponse.json(
-        { error: { code: 'OP_COUPON_NOT_FOUND', message: 'クーポンが見つかりません' } },
-        { status: 404 }
-      );
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で消えたように見せない。#1917)
+    if (fetchErr) {
+      return internalError('PATCH /api/super-admin/coupons/[id]', fetchErr, { userId: user.id, table: 'coupons' }, { shape: 'nested' });
+    }
+    if (!existing) {
+      return NextResponse.json(COUPON_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     // #1510: 新しい有効期限が、保存済みの有効開始日より前の日なら 400 (開始日より前の期限は、一度も使えないクーポンになる)。
@@ -124,10 +139,14 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
       .update(updateData)
       .eq('id', params.id)
       .select()
-      .single();
+      .maybeSingle();
 
     if (error) {
       return internalError('PATCH /api/super-admin/coupons/[id]', error, { userId: user.id }, { shape: 'nested' });
+    }
+    // 読んでから書くまでに消された (更新した行が無い) ときは 404 (#1917)
+    if (!updated) {
+      return NextResponse.json(COUPON_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     // 監査ログ記録
@@ -160,25 +179,30 @@ export async function DELETE(request: NextRequest, props: RouteContext) {
   const params = await props.params;
   try {
     const user = await requireRole(['super_admin']);
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(COUPON_NOT_FOUND_RESPONSE, { status: 404 });
+    }
     const supabase = await createClient();
 
     const { data: existing, error: fetchErr } = await supabase
       .from('coupons')
       .select('id, code, uses_count')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
-    if (fetchErr || !existing) {
-      return NextResponse.json(
-        { error: { code: 'OP_COUPON_NOT_FOUND', message: 'クーポンが見つかりません' } },
-        { status: 404 }
-      );
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で消えたように見せない。#1917)
+    if (fetchErr) {
+      return internalError('DELETE /api/super-admin/coupons/[id]', fetchErr, { userId: user.id, table: 'coupons' }, { shape: 'nested' });
+    }
+    if (!existing) {
+      return NextResponse.json(COUPON_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     // 利用中 (uses_count > 0) のクーポンは削除不可
     if (existing.uses_count > 0) {
       return NextResponse.json(
-        { error: { code: 'OP_COUPON_IN_USE', message: '利用実績があるクーポンは削除できません。paused に変更してください。' } },
+        { error: { code: 'OP_COUPON_IN_USE', message: '利用実績があるクーポンは削除できません。一時停止 (paused) に変更してください。' } },
         { status: 409 }
       );
     }

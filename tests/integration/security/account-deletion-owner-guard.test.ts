@@ -6,7 +6,7 @@
  *   退会の途中の人 (所属が無い人・release_user_membership が所属を外した人) は空なので、オーナーになれた。
  * 修正後 (supabase/migrations/20261023130000_account_deletion_owner_guard.sql):
  *   - 退会の本体は findBlocker の前に退会の印 (begin_account_deletion_guard → account_deletion_guards) を付ける。
- *   - organizations の BEFORE INSERT のトリガー organizations_owner_not_deleting は、owner_id の人に新しい印があれば
+ *   - organizations の BEFORE INSERT のトリガー trg_organizations_owner_not_deleting (関数 organizations_owner_not_deleting()) は、owner_id の人に新しい印があれば
  *     OWNER_ACCOUNT_DELETING (P0001) で止める。運営の作成 API はそれを 409 OWNER_ACCOUNT_DELETING にする。
  *   - 印と作成は、その人の id の advisory lock で直列になる (印が先なら作成が止まり、作成が先なら印は作成の commit を待ち、
  *     そのあとの findBlocker が作られた組織を読んで 409 にする)。
@@ -263,7 +263,7 @@ describe('退会の印 (account_deletion_guards・begin_account_deletion_guard) 
   }, TEST_TIMEOUT_MS);
 });
 
-describe('退会の印のある人をオーナーにして組織を作らない (トリガー organizations_owner_not_deleting)', () => {
+describe('退会の印のある人をオーナーにして組織を作らない (トリガー trg_organizations_owner_not_deleting (関数 organizations_owner_not_deleting()))', () => {
   it('GD-3: 印のある人を owner_id にした INSERT は OWNER_ACCOUNT_DELETING (P0001) で止まり、組織は作られない。印の無い人は従来どおり作れる', async () => {
     const [deleting, other] = await Promise.all([createUser('gd3-deleting'), createUser('gd3-other')]);
     expect((await beginGuard(deleting.id)).ok).toBe(true);
@@ -359,17 +359,17 @@ describe('印と作成が同時に走ったとき (advisory lock で直列にな
 });
 
 describe('退会の本体と運営の作成 API', () => {
-  it('GD-10: 退会の本体は findBlocker の前に印を付ける (409 で止まっても印は付いている)。印のある人を owner に指定した運営の作成 API は 409 OWNER_ACCOUNT_DELETING で、組織を作らない', async () => {
+  it('GD-10: 退会の本体が 409 で止まったら印は消えている (20261024120000。印を付けるのが findBlocker より先なのは GD-9)。印のある人を owner に指定した運営の作成 API は 409 OWNER_ACCOUNT_DELETING で、組織を作らない', async () => {
     const [owner, target] = await Promise.all([createUser('gd10-owner'), createUser('gd10-target')]);
     const operatorUser = await createTestUserWithRoles({ email: testEmail(`deletion-owner-guard-gd10-admin`, TS), roles: ['user', 'admin'] });
     operatorUsers.push(operatorUser);
 
-    // 組織のオーナーの退会は 409 で止まるが、印は findBlocker の前に付いている
+    // 組織のオーナーの退会は 409 で止まり、止まった退会の印は返す前に消える (end_account_deletion_guard。20261024120000)
     const existing = await insertOrg(owner.id, 'gd10-existing');
     expect(existing.ok, JSON.stringify(existing)).toBe(true);
     const blocked = await deleteAccount({ userId: owner.id, admin: srAdmin, requestId: `req_gd10_${TS}` });
     expect(blocked).toMatchObject({ ok: false, status: HTTP_CONFLICT, error: 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER' });
-    expect(await guardRows(owner.id)).toHaveLength(1);
+    expect(await guardRows(owner.id)).toEqual([]);
 
     // 所属の無い人に印を付けると (退会の途中)、運営の作成 API は 409 で断り、作らない
     expect((await beginGuard(target.id)).ok).toBe(true);
@@ -378,7 +378,7 @@ describe('退会の本体と運営の作成 API', () => {
       owner_id: target.id,
     });
     expect(refused.status, JSON.stringify(refused.body)).toBe(HTTP_CONFLICT);
-    expect(refused.body.error).toEqual({ code: RAISE_CODE, message: '指定した owner は退会の手続き中です' });
+    expect(refused.body.error).toEqual({ code: RAISE_CODE, message: '指定したオーナー (owner_id) は退会の手続き中です' });
     expect(await ownedOrgIds(target.id)).toEqual([]);
 
     // 印が古くなれば (途中で止まった退会の残り) 作れる
