@@ -187,8 +187,8 @@ describe('GET /api/admin/moderation/[type]/[id]', () => {
 
   it('food: 見つからない場合は 404 (service-role 経由)', async () => {
     fakeSupabase = createFakeSupabase({ moderation_flags: [{ data: null, error: null }] });
-    const res = await GET(new Request('http://localhost/api/admin/moderation/food/x'), {
-      params: { type: 'food', id: 'x' },
+    const res = await GET(new Request('http://localhost/api/admin/moderation/food/f1a90000-0000-4000-8000-000000000001'), {
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
     expect(res.status).toBe(404);
     // #1041 round-2 (D/F): requireRole 通過後に service-role が使われること
@@ -199,8 +199,8 @@ describe('GET /api/admin/moderation/[type]/[id]', () => {
     fakeSupabase = createFakeSupabase({
       moderation_flags: [{ data: null, error: { message: 'connection lost' } }],
     });
-    const res = await GET(new Request('http://localhost/api/admin/moderation/food/x'), {
-      params: { type: 'food', id: 'x' },
+    const res = await GET(new Request('http://localhost/api/admin/moderation/food/f1a90000-0000-4000-8000-000000000001'), {
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
     expect(res.status).toBe(500);
     const json = (await res.json()) as { error: { code: string } };
@@ -242,8 +242,8 @@ describe('GET /api/admin/moderation/[type]/[id]', () => {
     const { AuthError } = await import('@/lib/auth/errors');
     mockRequireRole.mockRejectedValue(new AuthError('AUTH_UNAUTHENTICATED'));
     fakeSupabase = createFakeSupabase({});
-    const res = await GET(new Request('http://localhost/api/admin/moderation/food/x'), {
-      params: { type: 'food', id: 'x' },
+    const res = await GET(new Request('http://localhost/api/admin/moderation/food/f1a90000-0000-4000-8000-000000000001'), {
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
     expect(res.status).toBe(401);
     // 認可前に service-role へ切り替わってはならない (権限昇格穴の防止)
@@ -254,8 +254,8 @@ describe('GET /api/admin/moderation/[type]/[id]', () => {
     const { ForbiddenError } = await import('@/lib/auth/errors');
     mockRequireRole.mockRejectedValue(new ForbiddenError('PERM_DENIED'));
     fakeSupabase = createFakeSupabase({});
-    const res = await GET(new Request('http://localhost/api/admin/moderation/food/x'), {
-      params: { type: 'food', id: 'x' },
+    const res = await GET(new Request('http://localhost/api/admin/moderation/food/f1a90000-0000-4000-8000-000000000001'), {
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
     expect(res.status).toBe(403);
     expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
@@ -269,16 +269,16 @@ describe('GET /api/admin/moderation/[type]/[id]', () => {
       ],
     });
 
-    const res1 = await GET(new Request('http://localhost/api/admin/moderation/food/x'), {
-      params: { type: 'food', id: 'x' },
+    const res1 = await GET(new Request('http://localhost/api/admin/moderation/food/f1a90000-0000-4000-8000-000000000001'), {
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
     const text1 = await res1.text();
     expect(res1.status).toBe(404);
     expect(text1.length).toBeGreaterThan(0);
     expect(JSON.parse(text1).error.code).toBe('NOT_FOUND');
 
-    const res2 = await GET(new Request('http://localhost/api/admin/moderation/food/y'), {
-      params: { type: 'food', id: 'y' },
+    const res2 = await GET(new Request('http://localhost/api/admin/moderation/food/f1a90000-0000-4000-8000-000000000003'), {
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000003' },
     });
     const text2 = await res2.text();
     expect(res2.status).toBe(404);
@@ -559,7 +559,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
 
   it('対象が見つからない場合は 404', async () => {
     fakeSupabase = createFakeSupabase({ moderation_flags: [{ data: null, error: null }] });
-    const res = await POST(postRequest({ action: 'approve' }), { params: { type: 'food', id: 'missing' } });
+    const res = await POST(postRequest({ action: 'approve' }), { params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' } });
     expect(res.status).toBe(404);
   });
 
