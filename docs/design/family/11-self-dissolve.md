@@ -56,7 +56,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | 解散 | `family_groups.status` / `organizations.status` を `'dissolved'` にし、メンバーの所属を外すこと。利用者の解散 (本書) と運営の強制解散 (membership/05) の 2 つの入口がある |
 | 後始末 | 解散のときにメンバーの所属を外す UPDATE の並び (家族: `family_members` を `left`・`user_profiles.family_id` を NULL。組織: `user_profiles` の所属の列を外す・`org_license_pools.used_licenses` を 0)。本書で関数 `family_dissolve_apply` / `org_dissolve_apply` に閉じる (§11.2) |
 | 代表者 / オーナー | `family_groups.representative_id` / `organizations.owner_id` が指す人。解散の RPC はこの列で判定する (`family_members.role` / `user_profiles.org_role` ではない。§7.2) |
-| 退会 | `POST /api/account/delete` (`deleteAccount`)。代表者・オーナーは `findBlocker` が 409 で止める (`src/lib/account-deletion.ts:282-320`) |
+| 退会 | `POST /api/account/delete` (`deleteAccount`)。代表者・オーナーは `findBlocker` が 409 で止める (`src/lib/account-deletion.ts:311-349`) |
 | 凍結 | `user_profiles.frozen_at` (BAN)。凍結中に呼べる API は `FROZEN_ALLOWED_API_PATHS` (`src/lib/auth/frozen.ts:60-66`) だけ |
 | 未同意 | 規約の版上げ後に新しい版に同意していない状態。`/api` は同意の許可リスト (`packages/shared/src/legal-consent-api.ts:103`) 以外 403 |
 
@@ -97,7 +97,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 
 | # | 事実 | 出どころ |
 |---|---|---|
-| F-1 | 退会の本体 `findBlocker` は `organizations.owner_id = userId` / `family_groups.representative_id = userId` の行があれば 409 (`ACCOUNT_DELETE_BLOCKED_ORG_OWNER` / `ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE`) を返す。`status` を見ない。文は「組織のオーナーです。先にオーナーを譲渡するか組織を解散してください。」「家族グループの代表者です。先に代表者を譲渡するか家族グループを解散してください。」 | `src/lib/account-deletion.ts:282-320` (origin/main `4b1e1abe` の時点は `:248-285`) |
+| F-1 | 退会の本体 `findBlocker` は `organizations.owner_id = userId` / `family_groups.representative_id = userId` の行があれば 409 (`ACCOUNT_DELETE_BLOCKED_ORG_OWNER` / `ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE`) を返す。`status` を見ない。文は「組織のオーナーです。先にオーナーを譲渡するか組織を解散してください。」「家族グループの代表者です。先に代表者を譲渡するか家族グループを解散してください。」 | `src/lib/account-deletion.ts:311-349` (origin/main `4b1e1abe` の時点は `:248-285`) |
 | F-2 | 409 のときの Web の案内 `ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE` は譲渡の画面 (`/org/settings/owner-transfer`・`/family/representative-transfer`) へ送る。コメントに「解散は利用者の画面が無い (運営が行う)」 | `src/lib/account-self-service.ts:100-116` |
 | F-3 | 利用者が家族・組織を解散する route は無い。`src/app/api/family/` は groups (POST = 作成)・invites・leave・members・menu・promotions・representative-transfer、`src/app/api/org/` は settings・leave・owner-transfer・members・invites・departments・challenges。`dissolve` を含む route は運営の 2 本だけ | `src/app/api/operator/membership/family/[id]/dissolve/route.ts`・`.../org/[id]/dissolve/route.ts` |
 | F-4 | 運営の強制解散 RPC `operator_force_dissolve_family(p_family_id, p_reason)` (最新の定義 `supabase/migrations/20261017130000_operator_mfa_db_gate.sql:281-319`): super_admin + `operator_mfa_satisfied()` → `family_groups` を `FOR NO KEY UPDATE` でロック (:301) → `family_members` を `active → left` (:303) → `user_profiles.family_id` を NULL (:304) → `family_groups` を `dissolved`・`dissolved_at = NOW()` (:306-308) → `membership_audit` に `operator_force_dissolve` (:312)。家族が無ければ何もせず NULL を返す (監査の行は書く) | 同ファイル |
@@ -1068,7 +1068,7 @@ migration のあと、ローカルの Supabase で型を作り直し、`src/type
 | `src/app/api/admin/organizations/route.ts:31-33, 153-155` (読み手 1) | コードは変えない (作る組織は active なので `owner_id` を必ず入れる)。コメントの「列は NOT NULL」を CHECK の説明に |
 | (読み手 2〜5) `src/app/api/family/representative-transfer/[id]/accept/route.ts`・`src/app/api/operator/membership/family/[id]/transfer/route.ts`・`src/app/api/operator/membership/org/[id]/transfer/route.ts`・`src/lib/membership/exit-notification.ts` | 読んだ `representative_id` / `owner_id` を `string \| null` として扱う (`?? null`)。譲渡・退出の対象は active な行なので値は入っているが、型の上で NULL を受ける |
 | `src/lib/account-export-tables.ts:239` (`self('representative_id')`) | 変えない (本人の id と比べるだけ)。解散のあとは `representative_id` が NULL なので、元代表者の書き出しに解散した `family_groups` の行は入らない (本人の所属の記録は `family_members` の行 (`left`) として `self('user_id')` で出る) |
-| `src/lib/account-deletion.ts:289, 306` (`findBlocker` の `.eq('owner_id', userId)` / `.eq('representative_id', userId)`) | 変えない (型: `.eq` は `string \| null` の列に `string` を渡せるので `tsc` は通る。動き: NULL の行は当たらないので、解散のあとは 409 にならない = 解散のあとの退会が通る仕組みそのもの。§13.6・S-13)。コメントだけ §13.6 のとおり足す |
+| `src/lib/account-deletion.ts:318, 335` (`findBlocker` の `.eq('owner_id', userId)` / `.eq('representative_id', userId)`) | 変えない (型: `.eq` は `string \| null` の列に `string` を渡せるので `tsc` は通る。動き: NULL の行は当たらないので、解散のあとは 409 にならない = 解散のあとの退会が通る仕組みそのもの。§13.6・S-13)。コメントだけ §13.6 のとおり足す |
 | `scripts/guide-screenshots/seed.ts:439` (`family_groups` を `.eq('representative_id', existing.id)` で delete)・`:452` (`representative_id: repId` で insert) | 変えない (型: `.eq` は上と同じ。`Insert` の `representative_id?: string \| null` は `string` を受ける。動き: 作る家族は `status` 既定の `active` で代表者を入れるので CHECK を満たす。解散した家族は代表者を指さないので、利用者を消し直すときの RESTRICT にも当たらない) |
 
 型の再生成と `OrganizationSchema` の `.nullable()` で、#1103 項目 10 の番兵 `tests/organizations-owner-id-not-null-migration-contract.test.ts:172-191` (型 2 ファイル × `it.each` と Zod の it) が赤になる。CHECK `organizations_active_has_owner` が DB に入ると `tests/integration/security/organizations-owner-id-not-null.test.ts` も赤になる。どちらも §21.6 の逐語で書き換える (§23)。

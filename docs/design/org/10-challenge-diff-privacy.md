@@ -190,7 +190,7 @@ A を確定し、以後は蒸し返さない。
 | S-11 | PUT status=cancelled → ガード可 → 確定のトリガーは `NEW.status = 'completed'` だけなので書かない。以後の UPDATE はガードで RAISE | ✔ |
 | S-12 | draft の期間変更はガードを通る。active にしたあとは S-7 | ✔ |
 | S-13 | INSERT のたびに +1。延べ数であることを画面に書く | ✔ (限界: 1 人で増やせる。§19) |
-| S-14 | 退会の処理 (`src/lib/account-deletion.ts:366`) が `release_user_membership` (最新の定義は `20261022160000_release_membership_owner_race.sql:57`。service_role だけ) を呼び、`organization_id` / `org_role` / `department_id` を NULL にする (参加行は触らない。ここまで S-3 と同じ)。続く auth.users の削除で、`organization_challenge_participants.user_id` の ON DELETE CASCADE により行が消える。DELETE にトリガーは無い。集計の表は `challenge_id` しか持たないので変わらない | ✔ |
+| S-14 | 退会の処理 (`src/lib/account-deletion.ts:402`) が `release_user_membership` (最新の定義は `20261022160000_release_membership_owner_race.sql:57`。service_role だけ) を呼び、`organization_id` / `org_role` / `department_id` を NULL にする (参加行は触らない。ここまで S-3 と同じ)。続く auth.users の削除で、`organization_challenge_participants.user_id` の ON DELETE CASCADE により行が消える。DELETE にトリガーは無い。集計の表は `challenge_id` しか持たないので変わらない | ✔ |
 | S-15 | migration の埋め戻し: `joined_count` = いまの参加行の数、completed の行は一度だけ確定。以後 S-5 と同じ | ✔ |
 | S-16 | `GET /api/org/challenges/[id]` と `/my-challenges` は同じ `fetchChallengeAggregates` → 同じ関数。管理者がメンバーとして呼んでも同じ値 | ✔ |
 | S-17 | 控えが無い。確定は「completed にする UPDATE」のトリガーで、その直前に同じトランザクションで計算した行から取る (バッチの経路)。手動終了 (S-10) は前夜の計算の行から取る。どちらも「いまの行」で、別の日付を記録しない | ✔ (抜け道 3) |
