@@ -18,7 +18,7 @@ import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { isUuid } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { aiRequiredFieldMessage, AI_MENU_MEAL_NOT_FOUND_MESSAGE, AI_IMAGE_URL_INVALID_MESSAGE, AI_NUTRITION_ESTIMATE_FAILED_MESSAGE, AI_NUTRITION_INPUT_REQUIRED_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 /**
@@ -34,7 +34,12 @@ export async function POST(request: Request) {
   const supabase = await createClient();
 
   try {
-    const { plannedMealId, imageUrl, nutritionData } = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const requestBody = await request.json().catch(() => null);
+    if (!requestBody || typeof requestBody !== 'object') {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
+    const { plannedMealId, imageUrl, nutritionData } = requestBody;
 
     // 1. ユーザー確認
     const { data: { user }, error: userError } = await supabase.auth.getUser();

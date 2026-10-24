@@ -20,7 +20,7 @@ import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/
 import { internalError } from '@/lib/api/errors';
 import { isUuid, uuidOrNull } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { MEAL_NOT_FOUND_MESSAGE } from '@/lib/api/user-api-error-messages';
 
 export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
@@ -33,7 +33,11 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
   if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
-    const json = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const json = await request.json().catch(() => null);
+    if (!json || typeof json !== 'object') {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
     const {
       isCompleted,
       dishName,
@@ -268,6 +272,11 @@ export async function DELETE(request: Request, props: { params: Promise<{ id: st
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
+
+  // UUID の形でない id は DB に渡さず 404 (PATCH と同じ。uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る。#1917)
+  if (!isUuid(params.id)) {
+    return NextResponse.json({ error: MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
+  }
 
   try {
     // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。本人の行に絞って service role で取り消す

@@ -7,7 +7,7 @@ import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AI_NUTRITION_FEEDBACK_INPUT_REQUIRED_MESSAGE, AI_NUTRITION_FEEDBACK_QUERY_REQUIRED_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
@@ -171,7 +171,11 @@ export async function POST(request: Request) {
     const rateLimitResult = await checkRateLimit(user.id, 'analysis');
     if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
-    const body = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
     const { date, nutrition, mealCount, weekData, forceRefresh } = body;
 
     if (!nutrition || !date) {

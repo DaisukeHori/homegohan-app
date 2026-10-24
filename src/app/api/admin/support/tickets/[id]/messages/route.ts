@@ -15,7 +15,7 @@
  * ユーザーが分からないチケットはチケット自体を対象にする。本文は入れない (ticket_id・message_id・is_internal だけ)。
  *
  * POST のチケットの読み込みの DB の失敗 (#1917): 500 INTERNAL_ERROR にし、チケットの行が無いときだけ 404 にする
- * (一時的な失敗でチケットが消えたように見せない)。UUID の形でない id は DB に渡さず 404。壊れた JSON の本文は 400 INVALID_JSON。
+ * (一時的な失敗でチケットが消えたように見せない)。UUID の形でない id は GET・POST とも DB に渡さず 404。壊れた JSON の本文は 400 INVALID_JSON。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
@@ -42,6 +42,10 @@ export async function GET(request: NextRequest, props: RouteContext) {
   const params = await props.params;
   try {
     const currentUser = await requireRole(['support', 'admin', 'super_admin']);
+    // UUID の形でない id は DB に渡さず 404 (POST と同じ。uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る。#1917)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(TICKET_NOT_FOUND_RESPONSE, { status: 404 });
+    }
     const supabase = await createClient();
 
     const isInternalAllowed = currentUser.roles.some((r) =>

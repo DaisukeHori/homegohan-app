@@ -11,7 +11,7 @@ import { aiDailyLimitResponse, aiDailyLimitSkippedField, consumeAiUsage, refundA
 import { isCalendarDate, nutritionAnalysisRange } from '@/lib/jst-day-ranges';
 import { aiConsentSkippedField, checkUserAiConsent, requireAiConsent } from '@/lib/ai/consent-guard';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AI_MENU_CHANGE_INPUT_REQUIRED_MESSAGE, aiInvalidDateMessage, AI_MENU_DAY_NOT_FOUND_MESSAGE, AI_MENU_MEAL_NOT_FOUND_MESSAGE, AI_MENU_REQUEST_CREATE_FAILED_MESSAGE, AI_MENU_REGENERATE_FAILED_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 /** 対象の食事を探すときに読む件数。ちょうど 1 件かを見分けるのに 2 件まで読めば足りる (複数あれば決められないので 404) */
@@ -371,7 +371,11 @@ export async function POST(request: Request) {
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   try {
-    const body = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
     const { targetDate, targetMealType, prompt } = body;
 
     if (!targetDate || !targetMealType || !prompt) {
