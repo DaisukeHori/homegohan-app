@@ -5,6 +5,7 @@
 | v1.0 | 2026-10-25 | 新設 (Issue #2011 の設計ゲート・A 型 4 相。献立の料理の ♥ を、料理そのもの (材料・作り方・栄養) の写しとして本人だけの表 `dish_favorites` に保存し、お気に入りの画面から詳細を開く) |
 | v1.1 | 2026-10-25 | 設計ゲート R1 の修正 (1 冊にまとめ直す・DB の CHECK を Zod より緩い安全弁に・鍵の長さを Zod で見る・同時の ♥ の応答・server の単体テストの偽物・段分け・番兵の追随。§22) |
 | v1.2 | 2026-10-25 | 設計ゲート R2 の修正 (材料の 3 つの形 (構造の形・長い 1 行・短い行) を写しが受ける・材料 1 行の上限を本番の実測で決め直す・jsonb の上限の再計算・献立の ♥ の応答を押した時点のモーダルに限る・同じ料理を開き直したときに ♥ の状態を引き直す。§22) |
+| v1.3 | 2026-10-25 | 設計ゲート R3 の修正 (お気に入りの詳細に幕を足す・削除の応答で詳細を閉じる判定を応答の時点の行で行う・詳細の状態遷移表を足す。§22) |
 
 要件の正本は Issue #2011 の本文とコメント。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
 ファイル名は cross/22 (cross/ の既存は 01〜09・12・13a・13b・14〜21。10・11・13 は欠番)。
@@ -45,7 +46,7 @@
 | R-1 | 献立の料理のモーダルの ♥ を押すと、その料理 (名前・役割・kcal・栄養・材料・作り方) が本人のお気に入りとして保存される | #2011・冒頭の前提の 1 項目め (料理を材料・作り方・栄養ごと保存) | §7.3・§7.4・§7.5 (POST)・§7.9 |
 | R-2 | もう一度 ♥ を押すと消える。モーダルを開き直したとき (同じ料理を開き直したときも)・ページを読み直したときの ♥ の印は保存の状態と一致する。押したあとにモーダルを閉じたり別の料理を開いたりしても、その応答はいま開いているモーダルの印・id を変えない | #2011・`tests/e2e/bug-31-favorite-button.spec.ts` | §7.5 (status・DELETE)・§7.8・§7.9・§9.3 (b) |
 | R-3 | お気に入りの画面で、保存した料理を一覧 (件数つき)・名前で検索・並び替え (新しい順 / 古い順 / 名前順)・削除できる | #2011・`src/app/(main)/favorites/page.tsx` の今の機能 | §7.5 (GET)・§7.10 |
-| R-4 | お気に入りの画面から、料理の詳細 (材料・作り方・栄養) を開ける。材料を買い物リストに足せる。本番の献立の料理の材料の 3 つの形 (構造の形・長い 1 行・短い行。§3.4 F-31) のどれでも保存でき、材料が写しに残る | 冒頭の前提の 1 項目め (お気に入りの画面から詳細を開ける)・`FavoriteRecipeModal` の今の機能 | §7.3・§7.12 |
+| R-4 | お気に入りの画面から、料理の詳細 (材料・作り方・栄養) を開ける。材料を買い物リストに足せる。本番の献立の料理の材料の 3 つの形 (構造の形・長い 1 行・短い行。§3.4 F-31) のどれでも保存でき、材料が写しに残る。詳細は今と同じく幕 (半透明の黒) の上に開き、幕を押すと閉じ、開いている間は後ろの一覧に届かない (F-33)。詳細の ♥ で消した応答は、そのときに詳細が出している行が消した行のときだけ詳細を閉じる | 冒頭の前提の 1 項目め (お気に入りの画面から詳細を開ける)・`FavoriteRecipeModal` の今の機能 | §7.3・§7.10・§7.12・§9.3 (c) |
 | R-5 | 献立が作り直されて同じ名前の別の中身になっても、お気に入りの写しは変わらない。献立 (planned_meals) が消えても残る | #2011「料理そのものを保存」 | §3.1 F-9・§6.2・§9.3 |
 | R-6 | 同じ名前を二度 ♥ しても 1 件 (重ならない)。同時に 2 か所から押しても 1 件 | §0.1 の 2 | §7.1 (UNIQUE)・§7.4 (upsert)・§9.3 |
 | R-7 | 他人のお気に入りは読めない・消せない・数えられない (RLS)。未ログインは 401 | cross/02 §4.1・`recipe_likes` の『Anyone can view likes』を繰り返さない | §7.1・§7.14 |
@@ -60,7 +61,7 @@
 | R-16 | 画像は保存しない (料理の画像は献立の非公開バケットの署名付き URL で、献立と一緒に消える) | cross/19 | §6.2 |
 | R-17 | 保存した料理の表示は献立のモーダルと同じ部品 (`RecipeModal`) で行う (材料・作り方・栄養の描き方を 2 か所に持たない) | 保守 | §7.12 |
 
-### 0.3 ユーザーシナリオ (24 本。トレースは §4.3)
+### 0.3 ユーザーシナリオ (26 本。トレースは §4.3)
 
 | # | シナリオ | 期待 |
 |---|---|---|
@@ -88,6 +89,8 @@
 | S-22 | 材料が 1 つの長い文 (100 文字を超える 1 行。本番の料理の 16%。F-31) の料理を ♥ する | 201 (1 行の上限は 2000 文字)。詳細は献立のモーダルと同じく長い 1 行を分けた表。買い物リストは献立の画面と同じ規則 (`ingredientInputsOf`) |
 | S-23 | 料理 A のモーダルで ♥ を押し、応答が返る前に閉じて、保存済みの料理 B を開く | A の応答は捨てる (B のモーダルの ♥ の印・`favoriteId`・取得中の印を変えない)。B の ♥ は B の status のとおり塗り・`favoriteId` = B の id。A の保存は DB では応答どおり (A は S1) |
 | S-24 | 保存済みの料理 X のモーダルで「材料を買い物リストに追加」を押す (成功するとモーダルが閉じ、`selectedRecipe` は X のまま) → 同じ料理 X をもう一度タップ | 開くたびに status を引き直す。♥ は塗り・`favoriteId` = X の id (押すと DELETE) |
+| S-25 | お気に入りの画面で行 F の詳細を開いたまま、詳細の外 (後ろの一覧の別の行・行の ♥・検索欄・下のナビの位置) を押す | 詳細の後ろは幕で暗い。押した所は幕が受けて詳細が閉じる (今の詳細と同じ)。後ろの行は開かず、行の ♥ の削除も検索も起きない |
+| S-26 | お気に入りの画面で行 F の詳細の ♥ を押し、応答が返る前に詳細を閉じて、別の行 G の詳細を開く | 応答を待つ間はどの詳細の ♥ も押せない (disabled)。F の削除の応答 (200) は一覧から F を外し件数を 1 減らすが、G の詳細は閉じない。F の詳細を開いたままなら、応答で閉じる |
 
 ### 0.4 分冊判定
 
@@ -149,7 +152,7 @@
 | F-8 | 一覧の 1 行 `FavoriteListItem` は `item.recipeName`・`item.likedAt` を描き、「レシピを見る」と「お気に入りから削除」の 2 つの `<button>` を兄弟で並べる (#1050) | `src/app/(main)/favorites/_components/FavoriteListItem.tsx:16-27`・`:52-60` |
 | F-9 | 献立の作り直し: `meal/regenerate` は `planned_meals` を insert と update で書き換える。`day/regenerate`・`v4/generate` は insert 中心。同じ料理名でも中身は変わり得る。`dishes` の中に料理の一意の id は無い | `src/app/api/ai/menu/meal/regenerate/route.ts:100`・`:130`・`supabase/baseline/prod_schema.sql:5904` (dishes の COMMENT) |
 | F-10 | 料理の型 `DishDetail`: `name`・`role?`・`ingredient?`・`ingredients?: string[]`・`recipeSteps?: string[]`・`ingredientsMd?`・`recipeStepsMd?`・`displayOrder?`・画像の列・栄養 30 項目 (`calories_kcal` と、`protein_g` … `polyunsaturated_fat_g` の 29 項目)。`LegacyDishDetail` は旧形式の短いキー (`cal`・`protein` … `folicAcid`) を足す。ただし `ingredients` の型 (`string[]`) は実データと合わない: 献立の生成 (Edge Function) は材料を `{ name, amount_g, note }` の配列で書く (F-31) | `types/domain.ts:642-704`・`src/app/(main)/menus/weekly/_state/types.ts:8-33`・`supabase/functions/_shared/meal-generator.ts:228`・`meal-generator-v5.ts:584` (プロンプトの形 `"ingredients": [{ "name": "食材名", "amount_g": 数値, "note": "任意" }]`) |
-| F-11 | AI 相談の `like_recipe` は `recipe_likes` を `recipe_id` と `user_id` で select (`.single()`) し、無ければ insert する。プロンプトは `recipeId` を uuid と説明する | `src/lib/ai/consultation-action-executor.ts:1319-1343`・`src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts:748` |
+| F-11 | AI 相談の `like_recipe` は `recipe_likes` を `recipe_id` と `user_id` で select (`.single()`) し、無ければ insert する。プロンプトは `recipeId` を uuid と説明する | `src/lib/ai/consultation-action-executor.ts:1335-1359` (origin/main `32f1d64bf`。#2013 の前の `edff659e4` では `:1319-1343`。中身は同じ)・`src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts:748` |
 | F-12 | 公開レシピの `isLiked` は `recipe_likes.recipe_id` で引く (`loadRecipeViewerLookups`)。cross/21 がこのファイルを差し替える設計を持つ | `src/lib/recipes/viewer-lookups.ts:53-75` |
 | F-13 | 個人データの書き出し: `recipe_likes` は `self('user_id')`・`orderBy: ['user_id', 'recipe_id']`。新しい表は同じ配列に行を足す。分類漏れは `tests/account-export-tables.test.ts` が本番のスナップショットと新しい migration から見つける | `src/lib/account-export-tables.ts:1-15`・`:182-183` |
 | F-14 | プライバシーポリシー第3条の「レシピ」の行は『いいねや保存をしたレシピ、ユーザーが登録したレシピとコメント』。表 → 行の対応は `tests/legal-text-1901.test.ts` の `PRIVACY_DATA_TABLES` (`recipe_likes: 'レシピ'` など) が、書き出しの許可一覧と除外一覧の全表について閉じる (T-34) | `src/lib/legal/privacy-text.ts:213`・`tests/legal-text-1901.test.ts:127-200`・`:872-880` |
@@ -159,6 +162,7 @@
 | F-18 | 本文の読み方の決まり: NULL 文字は `rejectNullCharacterBody` を handler の最初に (`src/__tests__/api/null-character-routes.test.ts` の表)、壊れた JSON は `readJsonBody` で 400 (`tests/api-invalid-json-scan.test.ts`)、一覧の 416 は `resolveBeyondLastPage` (`tests/api-list-range-scan.test.ts`)、失敗の文は `src/lib/api/error-responses.ts` の日本語 (`tests/api-error-japanese-scan.test.ts`。`src/app/api/favorites` は見張りの範囲) | `src/lib/http-params.ts:60-75`・`src/lib/api/list-range.ts`・`tests/helpers/api-error-japanese-scope.ts:46` |
 | F-19 | `src/modules/` は無い (facade の前例は無い)。`@/*` は `./src/*` と `./*` に解決する | `tsconfig.json:25-29` |
 | F-20 | 公開の紹介ページの主張 `favorites` (『気に入ったレシピをお気に入りに残せる (献立のレシピのハートから)』) の根拠は `src/app/(main)/favorites/page.tsx` と `src/app/api/favorites/route.ts` | `src/components/marketing/landing-copy.ts:885` |
+| F-33 | 幕 (詳細の後ろの半透明の黒): `RecipeModal` はパネル (`motion.div`・`fixed … z-[201]`) を `FocusTrap` (`allowOutsideClick: true`) で包むだけで、幕を描かない。献立の画面は `{activeModal && (<> <motion.div className="fixed inset-0 z-[200]" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => setActiveModal(null)} /> …)}` の共有の幕を敷く (`useDialogA11y` の冒頭の注記も「バックドロップは page.tsx 側の共有 {activeModal && ...} が担う」)。今のお気に入りの詳細は `BottomSheet` を使い、その幕 (`rgba(0,0,0,0.5)`・`closeOnOverlayClick` の既定 true で押すと閉じる・`overlayClassName="z-[210]"`) が一覧を覆う。お気に入りの画面の上の帯は `position: sticky`・`zIndex: 50`、`(main)` の下のナビと横のメニューは `z-50` | `src/app/(main)/menus/weekly/_components/modals/RecipeModal.tsx:144-162`・`src/app/(main)/menus/weekly/page.tsx:6224-6232`・`src/components/common/useDialogA11y.ts:4-6`・`src/app/(main)/favorites/_components/FavoriteRecipeModal.tsx:16`・`:170-175`・`src/components/common/BottomSheet.tsx:78`・`:146-150`・`src/app/(main)/favorites/page.tsx:146-148`・`src/app/(main)/MainLayout.tsx:50`・`:230` |
 
 ### 3.2 DB (ベースライン `supabase/baseline/prod_schema.sql`)
 
@@ -196,7 +200,7 @@
 献立の画面 (menus/weekly/page.tsx)                      お気に入りの画面 (favorites/page.tsx)
   モーダルを開く → GET /api/favorites/status?name=      一覧 → GET /api/favorites?limit&offset&q&sort
   ♥ 押す (空→塗り) → POST /api/favorites { dish }       行の ♥ → DELETE /api/favorites/[id]
-  ♥ 押す (塗り→空) → DELETE /api/favorites/[id]         行をタップ → 一覧の写しで RecipeModal (問い合わせ無し)
+  ♥ 押す (塗り→空) → DELETE /api/favorites/[id]         行をタップ → 幕 + 一覧の写しで RecipeModal (問い合わせ無し)
           │                                                       │
           └──────── core.ts (純関数: 料理 → 写し / 写し → RecipeModal の形 / 材料 → 買い物リストの入力) ─┘
                                         │
@@ -222,7 +226,7 @@
 2. **♥ 押す (空 → 塗り)**: `selectedRecipeData.dishes[0]` を `dishSnapshotFromMenuDish` で写しにし、`POST /api/favorites { dish, source_planned_meal_id }`。201 / 200 の `favorite.id` を `favoriteId` に入れる。4xx / 5xx / 例外は ♥ を戻し、409・400 は本文の `error` を見せる。
 3. **♥ 押す (塗り → 空)**: `DELETE /api/favorites/{favoriteId}`。200 と 404 (もう無い) は空にする。ほかは戻す。
 4. **一覧**: `GET /api/favorites` は本人の行を `created_at` (newest / oldest) か `dish_name_key` (name) で並べ、`q` は `dish_name` の ilike。`resolveBeyondLastPage` で 416 を空のページにする。
-5. **詳細**: 一覧の行 (`DishFavorite`) を `recipeModalDataOf` で `RecipeModal` の `selectedRecipeData` の形にして開く。♥ は塗り固定で、押すと削除 (3 と同じ DELETE) して閉じる。買い物リストは `ingredientInputsOf(dish.ingredients)` を `/api/shopping-list/add-recipe` に送る。
+5. **詳細**: 一覧の行 (`DishFavorite`) を `recipeModalDataOf` で `RecipeModal` の `selectedRecipeData` の形にして開く。後ろには `FavoriteRecipeModal` が描く幕 (`z-[200]`) を敷き、幕を押すと閉じる (開いている間は後ろの一覧に届かない。F-33)。♥ は塗り固定で、押すと削除 (6 と同じ DELETE) し、応答 (200 / 404) の時点で詳細がその行を出していれば閉じる (応答待ちの間はどの詳細の ♥ も disabled)。買い物リストは `ingredientInputsOf(dish.ingredients)` を `/api/shopping-list/add-recipe` に送る。
 6. **削除**: `DELETE /api/favorites/[id]` は RLS で本人の行だけ消える。0 行なら 404。
 
 ### 4.3 シナリオのトレース (§4.1 の構造で手で走らせた記録)
@@ -253,6 +257,8 @@
 | S-22 | `ingredientListOf` が長い 1 行をそのまま (前後の空白だけ除いて) 写す → 1 行の枝 (1〜2000 文字) を通る (本番の最長 677 文字) → 201。詳細: `recipeModalDataOf` の `ingredients` は 1 行のまま → `RecipeModal` の `formatIngredientsToMarkdown` が先頭の要素の 100 文字超を分けて表にする (献立と同じ)。買い物リスト: `ingredientInputsOf` は献立の画面と同じ正規表現で分け、分けられなければ 1 件 (`{ name: 行, amount: null }`) | §7.3・§13・F-31 |
 | S-23 | A の ♥ → `handleToggleFavorite` が押した時点の回 `session` を控える → POST A 送信 → 閉じる (`RECIPE_SELECT null`。status の effect が回を進め、取得中の印を下ろす) → B をタップ (回を進めて status B) → status B が返り (回が同じ) `isFavorite=true`・`favoriteId=B.id` → POST A が返る: `favoriteSessionRef.current !== session` なので何もしない (B の印・id・取得中の印はそのまま。alert も出さない)。B の塗りの ♥ を押すと DELETE B.id | §7.9 (3)(4)・§9.3 (b) |
 | S-24 | X の status で `isFavorite=true`・`favoriteId=X.id` → 買い物リストに追加 → 成功で `setActiveModal(null)` (`selectedRecipe` は X のまま。開いているかの印 `isRecipeModalOpen` が false になり、status の effect が回を進める) → X をタップ: `RECIPE_SELECT X` は名前が同じなので印と id を保つ → `setActiveModal('recipe')` で `isRecipeModalOpen` が true → effect が回を進めて status X を引き直す (取得中は ♥ disabled) → `{ favorited: true, id }` | §7.8・§7.9 (3)・§9.3 (b) |
+| S-25 | 行 F の「レシピを見る」→ `openRecipeDetail(F)` (`openFavoriteIdRef` = F.id・`selectedFavorite` F・`isRecipeModalOpen` true) → `FavoriteRecipeModal` が `AnimatePresence` の下に幕 (`favorite-recipe-backdrop`・`fixed inset-0 z-[200]`) と `RecipeModal` (`z-[201]`) を描く → 後ろの行 G・行の ♥・検索欄・ナビ (どれも `z-50` 以下か重なりの順で下) の位置を押す → 幕の `onClick` → `onClose` = `closeRecipeDetail` (`openFavoriteIdRef` null・`isRecipeModalOpen` false) → 幕とパネルが `exit` で消える。G の `openRecipeDetail`・`handleRemove`・検索の `setSearchQuery` はどれも呼ばれない | §7.10 (3)(6)・§7.12・§9.3 (c)・F-33 |
+| S-26 | F の詳細の ♥ → `onRemove` → `handleRemove(F)` (`removingId` F.id。`isRemoving` = `removingId !== null` で ♥ disabled) → DELETE F 送信 → 幕を押す (`closeRecipeDetail`。ref null) → G の「レシピを見る」(ref G.id。G の詳細の ♥ も `removingId !== null` で disabled) → DELETE F 200 → 一覧から F を外し `total` − 1 → `openFavoriteIdRef.current` (G.id) ≠ F.id なので `closeRecipeDetail` を呼ばない (G の詳細は開いたまま) → `finally` で `removingId` null (G の ♥ が押せるようになる)。閉じずに待てば ref = F.id なので 200 で閉じる | §7.10 (3)(4)(6)・§9.3 (c) |
 
 ---
 
@@ -301,7 +307,7 @@
 - 検索 `q` は `dish_name` の部分一致 (ilike)。長さは `DISH_FAVORITES_QUERY_MAX_CHARS` (100) で切る。並びは `newest` (`created_at` 降順) / `oldest` (昇順) / `name` (`dish_name_key` 昇順)。どれも `id` で安定にする。未知の `sort` は `newest`。
 - ページングは `limit` (1〜200・既定 100) と `offset` (0〜100000) を `clampIntParam` で丸める (#1226 と同じ値。§13)。画面は 50 件ずつ。件数より後ろの offset は空のページと本当の件数 (`resolveBeyondLastPage`)。
 - 削除は `DELETE /api/favorites/[id]`。200 と 404 (もう無い) のどちらでも一覧から外す。
-- 詳細は一覧の行をそのまま `RecipeModal` に渡す (§7.12)。♥ は塗り固定で、押すと削除して閉じる。買い物リストの追加は `/api/shopping-list/add-recipe` に `{ ingredients: ingredientInputsOf(dish.ingredients) }` (構造の形は `{ name, amount: '<amount_g>g' }`。1 行の文字列は献立の画面と同じ正規表現で名前と分量に分ける。メモ (`note`) は買い物リストに送らない)。
+- 詳細は一覧の行をそのまま `RecipeModal` に渡し、後ろに幕を敷く (§7.12。幕を押すと閉じ、開いている間は後ろの一覧に届かない。今の `BottomSheet` の幕と同じ振る舞い。F-33)。♥ は塗り固定で、押すと削除し、応答の時点で詳細がその行を出していれば閉じる (§7.10 (3)(4)・§9.3 (c))。買い物リストの追加は `/api/shopping-list/add-recipe` に `{ ingredients: ingredientInputsOf(dish.ingredients) }` (構造の形は `{ name, amount: '<amount_g>g' }`。1 行の文字列は献立の画面と同じ正規表現で名前と分量に分ける。メモ (`note`) は買い物リストに送らない)。
 
 ### 6.4 既存の壊れた導線 (決めること 4)
 
@@ -1393,15 +1399,33 @@ const SHOPPING_LIST_NO_INGREDIENTS_MESSAGE = "材料情報がありません";
 /** 知らせを消すまでの時間 (ミリ秒)。読める長さで、次の操作の邪魔にならない程度 */
 const NOTICE_HIDE_MS = 3000;
 
-// (3) state に 1 つ
+// (3) state に 1 つと ref に 1 つ。詳細を開く・閉じるは openRecipeDetail・closeRecipeDetail だけが行う
   const [notice, setNotice] = useState<string | null>(null);
   useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(() => setNotice(null), NOTICE_HIDE_MS);
     return () => clearTimeout(timer);
   }, [notice]);
+  /**
+   * 詳細がいま出している行の id (閉じていれば null)。削除の応答の時点で読む。
+   * handleRemove の閉包の selectedFavorite は押した時点の値なので、それで比べると、
+   * 応答の前に詳細を閉じて別の行を開いたとき、その別の行の詳細を閉じてしまう (§9.3 (c)・S-26)
+   */
+  const openFavoriteIdRef = useRef<string | null>(null);
+  // 既存の openRecipeDetail (今の :123-126) を置き換える
+  const openRecipeDetail = (item: FavoriteItem) => {
+    openFavoriteIdRef.current = item.id;
+    setSelectedFavorite(item);
+    setIsRecipeModalOpen(true);
+  };
+  /** selectedFavorite は閉じるアニメーションの間も中身を保つため残す (今と同じ) */
+  const closeRecipeDetail = () => {
+    openFavoriteIdRef.current = null;
+    setIsRecipeModalOpen(false);
+  };
 
-// (4) handleRemove: 名前の DELETE /api/recipes/{name}/like を、id の DELETE /api/favorites/{id} に。200 と 404 (もう無い) は一覧から外す
+// (4) handleRemove: 名前の DELETE /api/recipes/{name}/like を、id の DELETE /api/favorites/{id} に。200 と 404 (もう無い) は一覧から外す。
+//     詳細がいま消した行を出しているときだけ閉じる (応答の時点の openFavoriteIdRef で比べる)
   const handleRemove = async (item: FavoriteItem) => {
     if (removingId) return;
     setRemovingId(item.id);
@@ -1410,7 +1434,7 @@ const NOTICE_HIDE_MS = 3000;
       if (res.ok || res.status === 404) {
         setFavorites((prev) => prev.filter((f) => f.id !== item.id));
         setTotal((prev) => Math.max(0, prev - 1));
-        if (selectedFavorite?.id === item.id) setIsRecipeModalOpen(false);
+        if (openFavoriteIdRef.current === item.id) closeRecipeDetail();
       }
     } catch (err) {
       console.error(err);
@@ -1421,23 +1445,27 @@ const NOTICE_HIDE_MS = 3000;
 
 // (5) FavoriteListItem の呼び出しは同じ (item の形が DishFavorite になる。§7.11)。formatDate は item.created_at に使う
 
-// (6) モーダルの呼び出し
+// (6) モーダルの呼び出し。isRemoving はどの行の削除の応答待ちでも true (handleRemove は応答待ちの間の 2 本目を
+//     `if (removingId) return` で黙って捨てるので、押せない印 (♥ の disabled) をそれに合わせる)
       <FavoriteRecipeModal
         isOpen={isRecipeModalOpen}
         favorite={selectedFavorite}
-        isRemoving={selectedFavorite !== null && removingId === selectedFavorite.id}
+        isRemoving={removingId !== null}
         onRemove={() => { if (selectedFavorite) void handleRemove(selectedFavorite); }}
         onNotice={setNotice}
-        onClose={() => setIsRecipeModalOpen(false)}
+        onClose={closeRecipeDetail}
       />
       {notice && (
-        <div role="status" style={{ position: "fixed", left: 16, right: 16, bottom: 96, padding: "10px 14px", borderRadius: 12, background: colors.text, color: colors.card, fontSize: 13, zIndex: 300 }}>
+        <div role="status" style={{ position: "fixed", left: 16, right: 16, bottom: 96, padding: "10px 14px", borderRadius: 12, background: colors.text, color: colors.card, fontSize: 13, zIndex: 300, pointerEvents: "none" }}>
           {notice}
         </div>
       )}
 ```
 
 `fetchFavorites` の `params` (`limit`・`offset`・`sort`・`q`) と応答の読み方 (`data.favorites`・`data.total`) は変えない。見出し「お気に入りレシピ」・「{total} 件」・placeholder「レシピ名で検索...」・空の 2 文・「次の50件を表示」も変えない (R-13)。
+
+- `useRef` は今の import (`:3` の `React, { useState, useEffect, useCallback, useRef }`) にある。`FavoriteListItem` の `onOpen={() => openRecipeDetail(item)}`・`onRemove={() => handleRemove(item)}`・`isRemoving={removingId === item.id}` (一覧の行の ♥) は今のまま。
+- 詳細を開く・閉じるは (3) の 2 つの関数だけが行う (`setIsRecipeModalOpen` を直接呼ぶ所をほかに作らない)。`openFavoriteIdRef` は「詳細がいま出している行」を、`removingId` は「応答待ちの削除の行」を持ち、詳細の開閉と削除の応答の組み合わせは §9.3 (c) の表のとおりになる。部品のテストの H-1〜H-3 (§12) が画面を描いて確かめる。
 
 ### 7.11 `src/app/(main)/favorites/_components/FavoriteListItem.tsx` (差分)
 
@@ -1466,10 +1494,19 @@ export type FavoriteListItemData = Pick<DishFavorite, "id" | "dish_name" | "crea
 // 以前 (#1050 UX2-06) は recipe_uuid があるときだけ /api/recipes/{uuid} を取り、無ければ「詳細情報が保存されていません」を出していた。
 // いまは一覧の 1 件 (DishFavorite) が料理の写し (材料・作り方・栄養) を持つので、問い合わせずに献立のモーダル (RecipeModal) で描く
 // (材料・作り方・栄養の描き方を 2 か所に持たない)。♥ は塗り固定で、押すとお気に入りから消して閉じる。
+// RecipeModal はパネル (z-[201]) だけで幕を持たない (献立の画面では page.tsx の共有の幕 z-[200] が後ろに敷かれる)。
+// ここでも同じ幕を RecipeModal の兄弟として描く: 後ろの一覧を暗くし、押すと閉じ、開いている間は一覧の行・♥・検索に届かない
+// (以前の BottomSheet の幕と同じ振る舞い)。
 import React from "react";
-import { AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { RecipeModal } from "@/app/(main)/menus/weekly/_components/modals/RecipeModal";
 import { ingredientInputsOf, recipeModalDataOf, type DishFavorite } from "@/modules/dish-favorites/core";
+
+/**
+ * 詳細の後ろに敷く幕の色。献立の画面の共有の幕 (menus/weekly/page.tsx の {activeModal && …}) と、
+ * 以前の詳細が使っていた BottomSheet の幕と同じ半透明の黒
+ */
+const FAVORITE_RECIPE_BACKDROP_BACKGROUND = "rgba(0,0,0,0.5)";
 
 /** 買い物リストに足したときの知らせ。page.tsx の定数と同じ文 (page が onNotice で受けて出す) */
 const SHOPPING_LIST_ADDED_MESSAGE = (count: number) => `${count}件の材料を買い物リストに追加しました`;
@@ -1479,7 +1516,7 @@ const SHOPPING_LIST_NO_INGREDIENTS_MESSAGE = "材料情報がありません";
 export interface FavoriteRecipeModalProps {
   isOpen: boolean;
   favorite: DishFavorite | null;
-  /** 削除の応答待ち (♥ を disabled にする) */
+  /** 削除の応答待ち (どの行の削除でも。page は removingId !== null を渡す。♥ を disabled にする) */
   isRemoving: boolean;
   /** ♥ (塗り) を押した = お気に入りから消す */
   onRemove: () => void;
@@ -1511,6 +1548,18 @@ export function FavoriteRecipeModal({ isOpen, favorite, isRemoving, onRemove, on
   return (
     <AnimatePresence>
       {isOpen && favorite && (
+        <motion.div
+          key="favorite-recipe-backdrop"
+          data-testid="favorite-recipe-backdrop"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={() => onClose()}
+          className="fixed inset-0 z-[200]"
+          style={{ background: FAVORITE_RECIPE_BACKDROP_BACKGROUND }}
+        />
+      )}
+      {isOpen && favorite && (
         <RecipeModal
           key={favorite.id}
           selectedRecipe={favorite.dish_name}
@@ -1528,6 +1577,8 @@ export function FavoriteRecipeModal({ isOpen, favorite, isRemoving, onRemove, on
 ```
 
 - `RecipeModal` の位置 (`fixed bottom-20 lg:bottom-0 … lg:left-64`) は `(main)` の layout の前提で、`/favorites` も同じ layout の下なのでそのまま使える。
+- 幕 (F-33): `RecipeModal` は幕を描かない。献立の画面は `page.tsx` の `{activeModal && …}` が `fixed inset-0 z-[200]`・`rgba(0,0,0,0.5)`・押すと閉じる幕を `RecipeModal` (`z-[201]`) の後ろに敷く。本書は同じ形の幕を `FavoriteRecipeModal` が `RecipeModal` の兄弟として描く (`AnimatePresence` の直下に、鍵の違う 2 つの子 `favorite-recipe-backdrop` と `favorite.id`)。幕は `z-[200]` なので、お気に入りの画面の上の帯 (`position: sticky`・`zIndex: 50`)・下のナビ (`z-50`)・横のメニュー (`z-50`)・一覧の行の上に乗り、`RecipeModal` のパネル (`z-[201]`) と知らせ (`zIndex: 300`。§7.10 (6)) の下に入る。知らせは `pointerEvents: "none"` なので、知らせの上を押しても下のパネルか幕が受ける (知らせが押す先を隠さない)。開いている間、詳細の外を押すと幕が受けて `onClose` を呼び、後ろの一覧の行・行の ♥・検索・並び替え・「次の50件を表示」・ナビには届かない。キーボードのフォーカスは `RecipeModal` の `FocusTrap` が詳細の中に留める (`allowOutsideClick: true` はクリックを止めないだけで、詳細の外のクリックは幕が受ける)。Esc は `RecipeModal` の `useDialogA11y` が `onClose` を呼ぶ (§9.3 (c))。
+- 閉じるときは幕とパネルの両方が `exit` のアニメーションで消える。消える途中で幕を押すと `onClose` がもう一度呼ばれるが、page の `closeRecipeDetail` (§7.10 (3)) は同じ値を入れ直すだけなので何も変わらない (§9.3 (c) の「閉じる途中」の行)。
 - `page.tsx` 側の 3 つの文の定数 (§7.10 (2)) は、このファイルの定数と同じ文にする (`onNotice` に渡すのはこのファイルの文。page の定数は page が自分で出す文のため)。実装で重複を避けたければ、3 つの文を `core.ts` ではなく `_components/shopping-list-notice.ts` に置いてよい (core は UI の文を持たない)。
 
 ### 7.13 `tests/dish-favorites-migration-contract.test.ts` (新。DB を使わない静的な検査。全文)
@@ -1980,7 +2031,7 @@ describe('dish_favorites: 退会 (I-6)', () => {
 });
 ```
 
-### 7.15 単体テスト (テストの新設 6 ファイル・書き換え 3 ファイル・偽物の新設 1 ファイル)。it 名は §12
+### 7.15 単体テスト (テストの新設 7 ファイル・書き換え 3 ファイル・偽物の新設 1 ファイル)。it 名は §12
 
 | ファイル | 中身 | 作り方 | 段 |
 |---|---|---|---|
@@ -1990,7 +2041,8 @@ describe('dish_favorites: 退会 (I-6)', () => {
 | `tests/api/favorites-route.test.ts` (書き換え) | §7.5.1 の GET (G-1〜G-7) と POST (P-1〜P-10) | `@/lib/supabase/server` の `createClient` の偽物は今のまま (`{ auth: { getUser }, from: mocks.from }`)。G-2・G-3 (#1226 の limit / offset のクランプの表) は今の `setupFavoritesQuery` (select / eq / ilike / order を自分に返し range が結果を返す) をそのまま使う (`listDishFavorites` は `select → eq → (ilike) → order → order → range` と呼び、`range` の結果を待つだけなので形が合う。行は `[]`)。G-4〜G-7 と P-* は `mocks.from.mockImplementation(scripted.db.from)` で §7.15.1 の偽物に切り替える。POST の並べ方は、新しい名前 = [確認 `{ data: null }`・件数 `{ count: n }`・upsert `{ data: 行 }`]、同じ名前 = [確認 `{ data: { id } }`・upsert `{ data: 行 }`] | B1 |
 | `tests/api/favorites-status-route.test.ts` (新) | §7.5.2 (T-1〜T-5) | 同上 (`createClient` の偽物 + §7.15.1) | B1 |
 | `tests/api/favorites-id-route.test.ts` (新) | §7.5.3 (D-1〜D-5) | 同上 | B1 |
-| `src/app/(main)/favorites/_components/__tests__/FavoriteRecipeModal.test.ts` (書き換え) | §7.12 (M-1〜M-4) | 今の `createRoot` + `React.createElement` の形のまま。`RecipeModal` は `vi.mock('@/app/(main)/menus/weekly/_components/modals/RecipeModal')` で props を記録する偽物にする (framer-motion・focus-trap を描かない) | B2 |
+| `src/app/(main)/favorites/_components/__tests__/FavoriteRecipeModal.test.ts` (書き換え) | §7.12 (M-1〜M-5) | 今の `createRoot` + `React.createElement` の形のまま。`RecipeModal` は `vi.mock('@/app/(main)/menus/weekly/_components/modals/RecipeModal')` で props を記録する偽物にする (framer-motion・focus-trap を描かない)。幕は偽物にしない (`FavoriteRecipeModal` が自分で描く `motion.div`。jsdom で `div` として描かれる): M-5 は `container.querySelector('[data-testid="favorite-recipe-backdrop"]')` があること・`className` に `fixed`・`inset-0`・`z-[200]` を含むこと (パネルの `z-[201]` の下・一覧の `z-50` の上) を見て、`act(() => backdrop.dispatchEvent(new MouseEvent('click', { bubbles: true })))` のあと `onClose` が 1 回・`onRemove` が 0 回。M-1 は同じ `querySelector` が null | B2 |
+| `src/app/(main)/favorites/__tests__/page.detail.test.ts` (新) | §7.10 (3)(4)(6) の詳細の開閉と削除の応答 (H-1〜H-3) | `src/app/(main)/health/graphs/__tests__/page.a11y.test.ts` の形 (`createRoot` + `React.createElement`・`IS_REACT_ACT_ENVIRONMENT`・`vi.mock('next/navigation', () => ({ useRouter: () => ({ back: vi.fn(), push: vi.fn() }) }))`)。`vi.mock('../_components/FavoriteRecipeModal', …)` で `FavoriteRecipeModal` を「描くたびに props を配列に積み、null を返す」偽物にし、最後の props (`isOpen`・`favorite`・`isRemoving`・`onRemove`・`onClose`) を見る。`FavoriteListItem` は本物 (行の `aria-label` 「{dish_name} のレシピを見る」のボタンを押して開く)。`fetch` は `vi.stubGlobal` で、`GET /api/favorites?…` に `{ ok: true, status: 200, json: async () => ({ favorites: [F, G], total: 2 }) }` (F・G は `DishFavorite` の形の固定値。`fetchFavorites` は `res.ok` と `res.json()` だけを読む)、`DELETE /api/favorites/{F.id}` には外から解決する Promise (`let resolveDelete: (r: { ok: boolean; status: number }) => void`。`handleRemove` は `res.ok` と `res.status` だけを読む) を返し、応答の時点をテストが決める。描いたあと `await act(async () => { await Promise.resolve(); })` で一覧の取得を待つ。H-2 は ① F の「レシピを見る」 ② 最後の props の `onRemove()` (`isRemoving` true を確かめる) ③ `onClose()` ④ G の「レシピを見る」 ⑤ `resolveDelete({ ok: true, status: 200 })` と `await act(async () => { await Promise.resolve(); })` ⑥ 最後の props が `isOpen: true`・`favorite.id === G.id`・`isRemoving: false`、一覧の行が G だけ、画面の「1 件」。H-1 は ③④ を飛ばして ⑥ が `isOpen: false` (404 の `{ ok: false, status: 404 }` でも同じ) | B2 |
 | `src/app/(main)/favorites/_components/__tests__/FavoriteListItem.test.ts` (書き換え) | 行の形の変更 (L-1) | 既存の 6 本の it はそのまま。fixture の `recipeName` → `dish_name`・`likedAt` → `created_at`・`recipeUuid` を消す | B2 |
 | `src/__tests__/app/menus/weekly/state/recipeReducer.test.ts` (新) | §7.8 の reducer (R-1〜R-4) | `recipeReducer` と `initialRecipeState` を import して直接呼ぶ (同じ階層の `weekViewReducer.test.ts` の形)。DOM もモックも要らない | B2 |
 | `src/__tests__/app/menus/weekly/dish-favorite-wiring.test.ts` (新) | §7.9 の配線 (W-1〜W-5) | page.tsx は巨大なクライアントコンポーネントで全体を描けないので、同じ階層の `request-watch-guard.test.ts` の形でソースを読む: コメントの行を除き (`stripCommentLines`)、`sliceBetween` (どちらも `request-watch-guard.test.ts` の中の関数なので、新しいファイルにも同じものを書く) で `const handleToggleFavorite = async () => {` から `const addRecipeToShoppingList` の前まで・status の effect (`favoriteSessionRef.current += 1;` から `}, [selectedRecipe, isRecipeModalOpen]);` まで) を切り出して、正規表現で順序と有無を見る | B2 |
@@ -2119,7 +2171,8 @@ export function createScriptedSupabase(results: ReadonlyArray<ScriptedResult>): 
 | 画面 | `RecipeState.favoriteId: string / null`・`RecipeAction { type: 'FAVORITE_ID_SET'; payload: string / null }` | 新設 |
 | 画面 | `RECIPE_SELECT`: payload が今の `selectedRecipe` と同じ (null でない) なら `isFavorite`・`favoriteId` を保ち、違う・null なら `false`・`null` に戻す | 変更 (今は null のときだけ `isFavorite` を戻す。F-3) |
 | 画面 | `menus/weekly/page.tsx`: `favoriteSessionRef` (モーダルの回)・`isRecipeModalOpen`。status はモーダルが開くたびに引き、status・POST・DELETE の応答は送った時点の回と同じときだけ反映 | 新設 (§7.9) |
-| 画面 | `FavoriteRecipeModalProps { isOpen; favorite: DishFavorite / null; isRemoving: boolean; onRemove(); onNotice(message: string); onClose() }` | 差し替え |
+| 画面 | `FavoriteRecipeModalProps { isOpen; favorite: DishFavorite / null; isRemoving: boolean; onRemove(); onNotice(message: string); onClose() }`。開いているときは `RecipeModal` の後ろに幕 (`data-testid="favorite-recipe-backdrop"`・`fixed inset-0 z-[200]`) を描き、幕を押すと `onClose` | 差し替え |
+| 画面 | `favorites/page.tsx`: `openFavoriteIdRef` (詳細がいま出している行の id)・`openRecipeDetail(item)` / `closeRecipeDetail()` (詳細の開閉はこの 2 つだけ)。削除の応答 (200 / 404) は `openFavoriteIdRef.current === item.id` のときだけ詳細を閉じる。`isRemoving` = `removingId !== null` | 変更 (§7.10) |
 | 画面 | `FavoriteListItemData = Pick<DishFavorite, 'id' / 'dish_name' / 'created_at'>` (`/` は union) | `recipeName` / `recipeUuid` / `likedAt` → `dish_name` / `created_at` |
 | 環境変数 | `DISH_FAVORITES_MAX_PER_USER` (任意・正の整数・`readOnlyBy: 'src/modules/dish-favorites/server.ts'`) | 新設 |
 | 書き出し | `ACCOUNT_EXPORT_TABLES` に `{ table: 'dish_favorites', scope: self('user_id'), orderBy: ['created_at', 'id'] }` | 新設 (行) |
@@ -2132,7 +2185,7 @@ export function createScriptedSupabase(results: ReadonlyArray<ScriptedResult>): 
 
 (a) 料理の状態 × 操作 → 結果 (本人の視点。`K` = その料理名の鍵の行が本人にあるか)
 
-| 料理の状態 | モーダルを開く (status) | ♥ を押す | お気に入りの一覧 | 一覧の詳細 | 一覧の ♥ (削除) |
+| 料理の状態 | モーダルを開く (status) | ♥ を押す | お気に入りの一覧 | 一覧の詳細 (幕の上に開く。§9.3 (c)) | 一覧の ♥ (削除) |
 |---|---|---|---|---|---|
 | A: 保存していない (K なし) | `{ favorited: false, id: null }`。♥ 空 | POST → 201 `created: true`。♥ 塗り・`favoriteId` | 出ない | — | — |
 | B: 同じ名前・同じ中身を保存済み (K あり) | `{ favorited: true, id }`。♥ 塗り | DELETE id → 200。♥ 空・一覧から消える | 出る (写し = 今の料理) | 同じ内容 | DELETE → 消える |
@@ -2148,6 +2201,8 @@ export function createScriptedSupabase(results: ReadonlyArray<ScriptedResult>): 
 | J: 写しが大きい (`dishJsonByteLength` が 32768 超)・K なし | A と同じ (status は名前だけを見る。`{ favorited: false, id: null }`) | POST → 400 `VALIDATION_ERROR` (`DISH_FAVORITE_INVALID_MESSAGE` を `alert`)。♥ は戻る。DB の CHECK (65536) には届かない | 出ない | — | — |
 | H: 未ログイン | 401 (印は変えない) | 401。♥ は戻る | 401 (画面は空のまま) | — | 401 |
 | L: DB の失敗 (読み込み・upsert・削除・行の形が正典と違う) | 500 `INTERNAL_ERROR` (印は変えない・取得中の disabled は解ける) | POST / DELETE → 500。♥ は戻る (文は出さない) | 500 (画面は前の一覧のまま。`fetchFavorites` は `console.error` だけ) | — | 500 (一覧から外さない) |
+
+「一覧の詳細」の列の詳細は、どの行でも幕 (§7.12・F-33) の上に開く: 開いている間、詳細の外を押すと幕が受けて閉じ、後ろの一覧 (行・行の ♥・検索・並び替え・「次の50件を表示」) には届かない。詳細の ♥ は「一覧の ♥ (削除)」の列と同じ DELETE で、応答の時点で詳細がその行を出していれば閉じる (§9.3 (c))。
 
 行の記号の `K` は料理名の鍵と紛れるので使わない。J・O は「K あり」では起きない (♥ が塗られていて押下は DELETE。I のように古い印 (空) のまま押したときは POST になり、同じ 400 で写しは変わらない。§9.3 (a) の S1 × `POST` の 400 の行)。M・N・O は材料の形の行で、A〜E (保存の有無と上限) と組み合わさる (M・N の POST は A・D・I の結果と同じで、201 / 409 / 200 になる)。
 
@@ -2177,7 +2232,7 @@ export function createScriptedSupabase(results: ReadonlyArray<ScriptedResult>): 
 | `GET /api/favorites/status` | 読む | 名前の鍵で 1 行 | 新設 (§7.5.2) |
 | 個人データの書き出し (`generateAccountExport`) | 読む | 本人の全行 (`self('user_id')`) | `ACCOUNT_EXPORT_TABLES` の 1 行 (§7.7) |
 | 献立の画面の ♥ | 表示 | `isFavorite`・`favoriteId` (status と POST / DELETE の結果) | §7.8・§7.9 |
-| お気に入りの画面の一覧・詳細・削除 | 表示 | `DishFavorite[]`・`RecipeModal` (材料は `ingredientLineOf` の行) | §7.10〜§7.12 |
+| お気に入りの画面の一覧・詳細・削除 | 表示 | `DishFavorite[]`・`RecipeModal` (材料は `ingredientLineOf` の行) と後ろの幕 (`favorite-recipe-backdrop`。押すと閉じる・開いている間は後ろの一覧に届かない) | §7.10〜§7.12・§9.3 (c) |
 | お気に入りの詳細の「材料を買い物リストに追加」 | 読む (写しの材料) → 既存の `POST /api/shopping-list/add-recipe` | `ingredientInputsOf(dish.ingredients)` (構造の形・1 行の文字列のどちらも) | §7.12 (route は変えない) |
 | 公開レシピの「いいね」(`recipe_likes`) の API・`isLiked`・AI 相談の `like_recipe`・献立の生成 | — | `dish_favorites` を読まない・書かない | 変更なし (§18) |
 | モバイル | 表示 | Web の `/favorites`・献立の画面を WebView で | 変更なし |
@@ -2198,6 +2253,8 @@ export function createScriptedSupabase(results: ReadonlyArray<ScriptedResult>): 
 | 写しの大きさの上限 | — | route: `dishJsonByteLength` (JSON.stringify の UTF-8) ≤ 32768 で 400。DB: `octet_length(dish::text)` ≤ 65536 (安全弁。jsonb の文字列で長くなる分の上限 32768 だけ緩いので、route が通した写しは当たらない。§13) |
 | 列が無いときの 3 段の退避 (#302) | ある (`recipe_likes` の `id` / `recipe_uuid` が本番に無いときの名残) | 無い (新しい表の列は決まっている) |
 | 一覧の詳細 | `recipeUuid` があるときだけ `/api/recipes/{uuid}`。常に null なので「詳細情報が保存されていません」 | 一覧の行の写しで `RecipeModal` (材料・作り方・栄養の 27 行 (F-4)。写しは栄養 29 項目をすべて持ち、`RecipeModal` が描かない 3 項目も書き出しには出る) |
+| 詳細の後ろの幕 | `BottomSheet` の幕 (`rgba(0,0,0,0.5)`・`z-[210]`。押すと閉じる・Esc で閉じる。開いている間は後ろの一覧に届かない。F-33) | `FavoriteRecipeModal` が描く幕 (`rgba(0,0,0,0.5)`・`fixed inset-0 z-[200]`・`RecipeModal` のパネルは `z-[201]`。押すと閉じる・Esc は `RecipeModal` の `useDialogA11y` で閉じる。開いている間は後ろの一覧に届かない。§7.12) |
+| 詳細の ♥ (削除) | 無い (詳細は削除の操作を持たない) | 押すと `DELETE /api/favorites/{id}`。応答待ちの間はどの詳細の ♥ も disabled (`removingId !== null`)。200 / 404 で一覧から外し、応答の時点で詳細がその行を出していれば (`openFavoriteIdRef`) 閉じる。ほかの失敗は詳細を開いたまま (§7.10 (3)(4)(6)) |
 | 一覧からの削除 | `DELETE /api/recipes/{料理名}/like` → 404 (消えない) | `DELETE /api/favorites/{id}` → 200 |
 | 写しの材料の形 | (保存できないので無い) | 献立の料理の形のまま: 1 行の文字列 (短い行・長い 1 行。1〜2000 文字) か構造の形 `{ name, amount_g, note }` (F-31 の 3 つの形をどれも保存できる) |
 | 買い物リストへの追加 (お気に入りから) | 詳細が開けないので届かない | `ingredientInputsOf(dish.ingredients)` → `/api/shopping-list/add-recipe` (構造の形は `{ name, amount: '<amount_g>g' }`) |
@@ -2268,6 +2325,30 @@ export function createScriptedSupabase(results: ReadonlyArray<ScriptedResult>): 
 | 開 / 取得中 / 押下中 | 「材料を買い物リストに追加」が成功 (`setActiveModal(null)` だけ。F-32) | — | 閉 (`name`・`fav`・`id` は保つ・`busy` false・`n` + 1) | 進行中の応答は捨てられる |
 
 表に無い遷移を作ったら blocking (回が違う応答が `fav`・`id`・`busy` を変える・開き直しで status を引かない・別の料理を選んだのに前の `id` が残る など)。押したあとに閉じて同じ料理を開き直したとき、捨てた応答の保存 / 削除が DB に入ったかどうかは、開き直しの status が引き直す (status が POST より先に DB に届いた場合は空のまま見え、次の押下が `POST` → 200 `created: false` か `DELETE` → 404 になり、どちらも正しい状態にそろう。S-16 (b) と同じ)。
+
+(c) お気に入りの画面の詳細 (詳細の状態 × 出来事 → 遷移先・ガード・副作用。§7.10・§7.12)
+
+状態の欄: `open` = `isRecipeModalOpen`・`sel` = `selectedFavorite`・`ref` = `openFavoriteIdRef.current`・`rm` = `removingId`。「閉じる途中」= `open` false になったあと、幕とパネルが `exit` のアニメーションで残っている間。
+
+| 状態 | 出来事 | ガード | 遷移先 | 副作用 |
+|---|---|---|---|---|
+| 閉 (`open` false・`ref` null) | 行 F の「レシピを見る」(`openRecipeDetail(F)`) | — | 開 F (`open` true・`sel` F・`ref` F.id。`rm` はそのまま) | 幕と `RecipeModal` を描く (問い合わせ無し。S-7)。`rm` が null でなければ ♥ は disabled |
+| 閉 | 行 F の ♥ (削除) | `rm` null | 閉 (`rm` F.id。行の ♥ は disabled) | `DELETE /api/favorites/{F.id}` (S-8) |
+| 閉 | 行 G の ♥ (削除) | `rm` が null でない (別の行の削除の応答待ち) | 閉 (変わらない) | 何も送らない (`if (removingId) return`。今と同じ) |
+| 開 F | 幕を押す (詳細の外のどこでも。後ろの行・行の ♥・検索欄・並び替え・「次の50件を表示」・上の帯・ナビの位置を含む) | — | 閉じる途中 (`open` false・`ref` null・`sel` F は残す) | `onClose` = `closeRecipeDetail`。後ろの要素には届かない (S-25) |
+| 開 F | 閉じるボタン・Esc | — | 閉じる途中 | `onClose` = `closeRecipeDetail` (`RecipeModal` の閉じるボタン・`useDialogA11y`) |
+| 開 F | Tab / Shift+Tab | — | 開 F | フォーカスは `RecipeModal` の `FocusTrap` が詳細の中に留める (後ろの一覧に行かない) |
+| 開 F | 詳細の ♥ (塗り) | `rm` null (`isRemoving` false) | 開 F・削除中 (`rm` F.id。♥ disabled) | `handleRemove(F)` → `DELETE /api/favorites/{F.id}` |
+| 開 F | 詳細の ♥ | `rm` が null でない | 開 F (変わらない) | ♥ は disabled なので押せない |
+| 開 F | 「材料を買い物リストに追加」 | 材料 (`ingredientInputsOf`) が 1 件以上 | 開 F | `POST /api/shopping-list/add-recipe` → `onNotice` (成功 / 失敗の文。§7.12)。詳細は閉じない |
+| 開 F | 「材料を買い物リストに追加」 | 材料が 0 件 | 開 F | `onNotice(材料情報がありません)`。POST しない |
+| 開 F・削除中 (`rm` F.id。詳細の ♥ で消した・行の ♥ で消してから応答の前に F を開いた) | 削除の応答 200 / 404 | `ref` = F.id (詳細がいま F を出している) | 閉じる途中 (`rm` null) | 一覧から F を外し `total` − 1。`closeRecipeDetail` |
+| 開 G / 閉 / 閉じる途中 (`rm` F.id。応答の前に閉じた・別の行 G を開いた・閉じたまま行の ♥ で消した) | 削除の応答 200 / 404 | `ref` ≠ F.id (null を含む) | 開 G のまま / 閉のまま (`rm` null) | 一覧から F を外し `total` − 1。詳細には触れない (S-26) |
+| 開 (F でも G でも) / 閉 / 閉じる途中 (`rm` F.id) | 削除の応答がほかの失敗 / 例外 | — | 変わらない (`rm` null) | 一覧は変えない (`console.error` だけ)。F の詳細を開いていれば ♥ は塗りのまま押せるようになる |
+| 閉じる途中 | 幕を押す | — | 閉じる途中 (変わらない) | `closeRecipeDetail` がもう一度呼ばれる (`ref` null・`open` false を入れ直すだけ) |
+| 閉じる途中 | `exit` のアニメーションが終わる | — | 閉 | 幕とパネルが DOM から消え、一覧に届くようになる |
+
+表に無い遷移を作ったら blocking (詳細が開いている間に後ろの一覧の行・行の ♥・検索が反応する・幕が無い / 押しても閉じない・削除の応答が、詳細がいま出していない行の削除で詳細を閉じる・応答待ちの間に詳細の ♥ が押せる など)。
 
 ---
 
@@ -2351,10 +2432,13 @@ sequenceDiagram
     M-->>G: { favorites, total }
     G-->>F: { favorites: DishFavorite[], total }
     U->>F: 行をタップ
+    F->>F: openRecipeDetail (openFavoriteIdRef = id) → 幕 (z-[200]) を敷く
     F->>R: recipeModalDataOf(favorite) (問い合わせ無し)
     R-->>U: 役割・kcal・栄養・材料・作り方
     U->>R: 材料を買い物リストに追加
     R->>R: ingredientInputsOf(dish.ingredients) → POST /api/shopping-list/add-recipe
+    U->>F: 幕 (詳細の外) を押す
+    F->>F: closeRecipeDetail (後ろの一覧には届かない)
 ```
 
 ---
@@ -2368,7 +2452,8 @@ sequenceDiagram
 | 単体 (route) | `tests/api/favorites-route.test.ts` (書き換え) | G-1「未ログインは 401 で、DB には問い合わせない」/ G-2「limit は 1〜200 に丸め、未指定・数字でない値は 100 (#1226 の表をそのまま)」/ G-3「offset は 0〜100000 に丸める (#1226 の表をそのまま)」/ G-4「q は dish_name の部分一致、sort は newest / oldest / name、未知の sort は newest」/ G-7「q の NULL 文字を除き 100 文字で切ってから ilike に渡す (200。DB に NULL 文字が渡らない)」/ G-5「自分の dish_favorites を DishFavorite の形で返し total を添える (user_id・dish_name_key は本文に出ない)」/ G-6「DB の失敗は 500 で、生のエラー文を本文に出さない (#1172)」/ P-1「POST は NULL 文字の本文を認証の前に 400 INVALID_CHARACTER にする」/ P-2「POST は未ログインを 401」/ P-3「POST は壊れた JSON を 400 (リクエストボディが不正です)」/ P-4「POST は正典の形でない本文 (名前が空・鍵が 101 文字以上になる名前・材料 51 件・材料 1 行 2001 文字・構造の形の材料の name が空・負の栄養) を 400 VALIDATION_ERROR で、DB に問い合わせない」/ P-10「POST は構造の形の材料と 677 文字の 1 行の材料をそのまま upsert に渡して 201 を返す (材料を落とさない)」/ P-5「POST は写しが 32768 バイトを超えると 400 VALIDATION_ERROR で、DB に問い合わせない (from を呼ばない)」/ P-6「POST は新しい名前 (確認で行なし) を 201 { favorite, created: true } で返す」/ P-7「POST は保存済みの名前 (確認で行あり) を件数を数えずに 200 { favorite, created: false } で返す」/ P-8「POST は上限で 409 CONFLICT_DISH_FAVORITES_LIMIT と件数入りの文を返す (DISH_FAVORITES_MAX_PER_USER を立てた値で)」/ P-9「POST は DB の失敗を 500 にする」|
 | 単体 (route) | `tests/api/favorites-status-route.test.ts` (新) | T-1「未ログインは 401」/ T-2「name が無い・空白だけ・101 文字・NULL 文字を含む・鍵が 101 文字以上は 400 VALIDATION_ERROR で DB に問い合わせない」/ T-3「保存済みなら { favorited: true, id }」/ T-4「未保存なら { favorited: false, id: null }」/ T-5「DB の失敗は 500」|
 | 単体 (route) | `tests/api/favorites-id-route.test.ts` (新) | D-1「未ログインは 401」/ D-2「uuid の形でない id は DB に渡さず 404」/ D-3「本人の行を消して 200 { success: true }」/ D-4「0 行 (他人・消した行) は 404」/ D-5「DB の失敗は 500」|
-| 部品 | `src/app/(main)/favorites/_components/__tests__/FavoriteRecipeModal.test.ts` (書き換え) | M-1「favorite が null・isOpen=false のときは RecipeModal を描かない」/ M-2「RecipeModal に dish_name・recipeModalDataOf(favorite)・isFavorite=true・isFavoriteLoading=isRemoving を渡す」/ M-3「onToggleFavorite が onRemove を呼ぶ」/ M-4「材料を買い物リストに追加は ingredientInputsOf の形で /api/shopping-list/add-recipe に POST し、結果を onNotice に渡す (成功 / 失敗 / 材料なし)」|
+| 部品 | `src/app/(main)/favorites/_components/__tests__/FavoriteRecipeModal.test.ts` (書き換え) | M-1「favorite が null・isOpen=false のときは RecipeModal も幕 (favorite-recipe-backdrop) も描かない」/ M-2「RecipeModal に dish_name・recipeModalDataOf(favorite)・isFavorite=true・isFavoriteLoading=isRemoving を渡す」/ M-3「onToggleFavorite が onRemove を呼ぶ」/ M-4「材料を買い物リストに追加は ingredientInputsOf の形で /api/shopping-list/add-recipe に POST し、結果を onNotice に渡す (成功 / 失敗 / 材料なし)」/ M-5「開いているときは RecipeModal の後ろに幕 (favorite-recipe-backdrop・fixed inset-0 z-[200]) を描き、幕を押すと onClose を 1 回呼ぶ (onRemove は呼ばない)」|
+| 部品 (画面) | `src/app/(main)/favorites/__tests__/page.detail.test.ts` (新) | H-1「詳細の ♥ (onRemove) は DELETE /api/favorites/{id} を送り、応答待ちの間は isRemoving=true、200 で詳細を閉じて一覧からその行を外し件数を 1 減らす (404 も同じ)」/ H-2「詳細の ♥ の応答の前に詳細を閉じて別の行の詳細を開くと、削除の応答 (200) はその別の行の詳細を閉じない (isOpen=true・favorite はその別の行のまま。一覧からは消した行だけを外す)」/ H-3「削除の応答待ちの間は、別の行の詳細を開いても isRemoving=true で、応答のあと false に戻る」|
 | 部品 | `src/app/(main)/favorites/_components/__tests__/FavoriteListItem.test.ts` (書き換え) | 既存 6 本の it 名は変えない。fixture を DishFavorite の形に (L-1「dish_name と created_at を描く」を 1 本足す) |
 | 単体 (reducer) | `src/__tests__/app/menus/weekly/state/recipeReducer.test.ts` (新) | R-1「RECIPE_SELECT で別の料理を選ぶと isFavorite は false・favoriteId は null に戻る」/ R-2「RECIPE_SELECT で今と同じ料理を選び直すと isFavorite と favoriteId を保つ (買い物リストの追加で閉じたあとの開き直し)」/ R-3「RECIPE_SELECT null で isFavorite は false・favoriteId は null に戻る」/ R-4「FAVORITE_ID_SET は favoriteId だけを変え、RECIPE_RESET は favoriteId を null に戻す」|
 | 配線 (ソース) | `src/__tests__/app/menus/weekly/dish-favorite-wiring.test.ts` (新) | W-1「status の effect はモーダルの回 (favoriteSessionRef) を進め、依存は [selectedRecipe, isRecipeModalOpen] (同じ料理を開き直しても引き直す)」/ W-2「status の応答は回が同じときだけ setIsFavorite・setFavoriteId・setIsFavoriteLoading(false) を呼ぶ」/ W-3「handleToggleFavorite は押した時点の回を控え、DELETE・POST・res.json の await のあとで isCurrentSession() を見てから setIsFavorite・setFavoriteId・alert を呼ぶ」/ W-4「handleToggleFavorite の catch と finally は isCurrentSession() のときだけ setIsFavorite(prev)・setIsFavoriteLoading(false) を呼ぶ」/ W-5「page.tsx は /api/recipes/…/like を呼ばず、/api/favorites/status・/api/favorites・/api/favorites/{id} を呼ぶ」|
@@ -2407,6 +2492,7 @@ sequenceDiagram
 | `DISH_FAVORITE_NUTRIENT_KEYS` | 栄養の項目名 29 個 (`protein_g` … `polyunsaturated_fat_g`。`calories_kcal` を除く) | core.ts (`nutrientShape` のキーから作る) | `types/domain.ts` の `DishDetail` の栄養の名前 (F-10。U-13 が集合の一致を見る) |
 | `NULL_CHARACTER` (export しない) | `'\u0000'` | core.ts | Postgres の text は U+0000 を保存できない (`src/lib/api/null-character.ts` と同じ理由)。`DishNameSchema` が通さず、`dishFavoritesQueryOf` が除く |
 | `NOTICE_HIDE_MS` | 3000 | favorites/page.tsx | 知らせを読める長さ。次の操作の邪魔にならない |
+| `FAVORITE_RECIPE_BACKDROP_BACKGROUND` (export しない) | `'rgba(0,0,0,0.5)'` | favorites/_components/FavoriteRecipeModal.tsx | 献立の画面の共有の幕 (`menus/weekly/page.tsx:6231`) と今の `BottomSheet` の幕 (`BottomSheet.tsx:147`) と同じ色 (F-33) |
 | `UPSERT_CONFLICT_TARGET` | `'user_id,dish_name_key'` | server.ts | UNIQUE `dish_favorites_user_dish_name_key` |
 | `PG_INSUFFICIENT_PRIVILEGE` / `PG_UNIQUE_VIOLATION` / `PG_CHECK_VIOLATION` | `'42501'` / `'23505'` / `'23514'` | 結合テスト | Postgres のエラーコード |
 | `NAME_MAX_CHARS` / `DISH_MAX_BYTES` / `DISH_DB_MAX_BYTES` / `MARKDOWN_MAX_CHARS` / `INGREDIENTS_MAX_ITEMS` / `NUMBER_KEYS` | 100 / 32768 / 65536 / 8000 / 50 / 数の項目 30 個 | 結合テスト (§7.14) | core.ts の同じ意味の定数 (`DISH_FAVORITE_NAME_MAX_CHARS`・`DISH_FAVORITE_DISH_MAX_BYTES`・`DISH_FAVORITE_DISH_DB_MAX_BYTES`・`DISH_FAVORITE_MARKDOWN_MAX_CHARS`・`DISH_FAVORITE_INGREDIENTS_MAX_ITEMS`・`calories_kcal` と `DISH_FAVORITE_NUTRIENT_KEYS`) と同じ値 (結合テストは DB の CHECK を直接見るので数を書く。値は C-3 と U-4・U-13 が core.ts 側で固定する) |
@@ -2439,12 +2525,15 @@ sequenceDiagram
 | 欄 | `selectedRecipeData.plannedMealId` (献立の画面がモーダルに渡す値) | `menus/weekly/page.tsx` |
 | ref / 値 | `favoriteSessionRef` (モーダルの回)・`isRecipeModalOpen` (料理のモーダルが開いているか) | `menus/weekly/page.tsx` (§7.9 (2)) |
 | props | `FavoriteRecipeModalProps` (`favorite: DishFavorite`・`isRemoving`・`onRemove`・`onNotice`) / `FavoriteListItemData = Pick<DishFavorite, …>` | `favorites/_components/` |
+| 定数 (画面。export しない) | `SHOPPING_LIST_ADDED_MESSAGE`・`SHOPPING_LIST_ADD_FAILED_MESSAGE`・`SHOPPING_LIST_NO_INGREDIENTS_MESSAGE` (page.tsx と FavoriteRecipeModal.tsx の両方)・`NOTICE_HIDE_MS` (page.tsx)・`FAVORITE_RECIPE_BACKDROP_BACKGROUND` (FavoriteRecipeModal.tsx) | `favorites/page.tsx`・`favorites/_components/FavoriteRecipeModal.tsx` |
+| ref / 関数 / 印 | `openFavoriteIdRef`・`openRecipeDetail` (今の関数の置き換え)・`closeRecipeDetail` (新)・state `notice` / 幕の `data-testid="favorite-recipe-backdrop"` | `favorites/page.tsx` (§7.10 (3)) / `FavoriteRecipeModal.tsx` (§7.12) |
 | 書き出しの行 | `{ table: 'dish_favorites', scope: self('user_id'), orderBy: ['created_at', 'id'] }` | `src/lib/account-export-tables.ts` |
 | 対応の行 | `dish_favorites: 'レシピ'` | `tests/legal-text-1901.test.ts` の `PRIVACY_DATA_TABLES`・cross/20 の写し (§17) |
 | 外部キーの動作の行 | `'dish_favorites.user_id': 'CASCADE'` | `tests/integration/security/auth-users-fk-on-delete.test.ts` の `EXPECTED_ACTIONS` |
 | 表の行 | `{ file: 'favorites/route.ts', method: 'POST', load: … }` | `src/__tests__/api/null-character-routes.test.ts` の `ENTRIES` |
 | ファイル (テスト) | `tests/dish-favorites-core.test.ts`・`tests/dish-favorites-server.test.ts`・`tests/api/favorites-status-route.test.ts`・`tests/api/favorites-id-route.test.ts`・`tests/dish-favorites-migration-contract.test.ts`・`tests/integration/rls/dish-favorites.test.ts` | `tests/` |
 | ファイル (テスト) | `src/__tests__/app/menus/weekly/state/recipeReducer.test.ts`・`src/__tests__/app/menus/weekly/dish-favorite-wiring.test.ts` | `src/__tests__/app/menus/weekly/` |
+| ファイル (テスト) | `src/app/(main)/favorites/__tests__/page.detail.test.ts` (H-1〜H-3) | `src/app/(main)/favorites/__tests__/` (新しいディレクトリ) |
 | ファイル (テストの偽物) | `tests/helpers/scripted-supabase.ts` (`createScriptedSupabase`・型 `ScriptedResult`・`ScriptedCall`・`ScriptedQuery`・`ScriptedSupabase`。§7.15.1) | `tests/helpers/` |
 | 既存ファイルの変更 (新設ではない) | `src/app/api/favorites/route.ts` (GET の書き換え)・`src/app/(main)/menus/weekly/page.tsx` (§7.9)・`recipeReducer.ts` (§7.8)・`src/app/(main)/favorites/page.tsx` (§7.10)・`FavoriteListItem.tsx` (§7.11)・`FavoriteRecipeModal.tsx` (§7.12)・`src/lib/env.ts`・`.env.example` (§7.6)・`src/lib/account-export-tables.ts` (§7.7)・`src/types/database.types.ts`・`packages/shared/src/database.types.ts` (生成し直し)・`tests/api/favorites-route.test.ts`・`FavoriteRecipeModal.test.ts`・`FavoriteListItem.test.ts`・`tests/legal-text-1901.test.ts`・`tests/legal-claims-1901.ts` (privacy-3#6 の evidence の表の列挙。§16)・`src/__tests__/lib/env.test.ts` (readOnlyBy の一覧の 1 行。§16)・`tests/integration/security/auth-users-fk-on-delete.test.ts`・`account-export-scope.test.ts`・`src/__tests__/api/null-character-routes.test.ts`・`tests/e2e/bug-104-favorites-system.spec.ts`。共有のテストの偽物 `tests/helpers/fake-supabase.ts`・`tests/helpers/recording-supabase.ts` は変えない (§7.15) | — |
 | 設計書 | `docs/design/cross/22-dish-favorites.md` (本書) | `docs/design/cross/` |
@@ -2459,11 +2548,11 @@ sequenceDiagram
 |---|---|---|---|
 | A (DB・core・書き出し) | §7.1 migration・§7.2 戻し口・§7.3 `core.ts` (C-3 が定数を読む。純関数と Zod だけで route はまだ無い)・§7.7 書き出しの 1 行・§7.13 契約テスト (C-1〜C-8)・§7.14 結合テスト (I-1〜I-8)・§7.15 の `tests/dish-favorites-core.test.ts` (U-1〜U-16)・`database.types.ts` 2 本の生成し直し・`tests/legal-text-1901.test.ts` の対応 1 行・`tests/legal-claims-1901.ts` の evidence の 1 語・`auth-users-fk-on-delete.test.ts` の `EXPECTED_ACTIONS` 1 行・`account-export-scope.test.ts` の種と件数 | 無し (追加だけの migration) | ① 段 A の migration を本番へ適用 (追加だけ。適用の確認は §19 の 1〜4) → ② 段 A の PR をマージ (番号は直前に確定。§7.1) |
 | B1 (server・環境変数・API) | §7.4 `server.ts`・§7.6 環境変数 (`src/lib/env.ts` の 1 項目・`.env.example` の 3 行・`src/__tests__/lib/env.test.ts` の readOnlyBy の一覧の 1 行)・§7.5 route 3 ファイル・§7.15.1 `tests/helpers/scripted-supabase.ts`・§7.15 の `tests/dish-favorites-server.test.ts` (V-1〜V-10)・route の単体テスト 3 本 (`tests/api/favorites-route.test.ts` の書き換え・`favorites-status-route.test.ts`・`favorites-id-route.test.ts`)・`src/__tests__/api/null-character-routes.test.ts` の表の 1 行・e2e の E-1 | 段 A が本番に適用済み・main に入っていること (表が無いと `GET /api/favorites` が 500) | ③ 段 B1 の PR をマージ (= `GET /api/favorites` が `dish_favorites` を読む。画面はまだ `/api/recipes/[id]/like` を呼ぶが、今までどおり 404 で何も壊れない) |
-| B2 (画面) | §7.8 reducer・§7.9 献立の画面・§7.10〜§7.12 お気に入りの画面 3 ファイル・§7.15 の部品のテスト 2 本の書き換え (`FavoriteRecipeModal.test.ts`・`FavoriteListItem.test.ts`)・reducer のテスト (R-1〜R-4)・献立の画面の配線テスト (W-1〜W-5) の新設 2 本 | 段 B1 が main に入っていること (status / POST / DELETE が無いと ♥ が動かない) | ④ 段 B2 の PR をマージ (= 公開。確認は §19 の 5〜8) |
+| B2 (画面) | §7.8 reducer・§7.9 献立の画面・§7.10〜§7.12 お気に入りの画面 3 ファイル・§7.15 の部品のテスト 2 本の書き換え (`FavoriteRecipeModal.test.ts` (M-1〜M-5)・`FavoriteListItem.test.ts`)・reducer のテスト (R-1〜R-4)・献立の画面の配線テスト (W-1〜W-5)・お気に入りの画面のテスト (`page.detail.test.ts`。H-1〜H-3) の新設 3 本 | 段 B1 が main に入っていること (status / POST / DELETE が無いと ♥ が動かない) | ④ 段 B2 の PR をマージ (= 公開。確認は §19 の 5〜8) |
 
 - 段内レビューの範囲は上の表の「中身」の列の §・ファイルだけ。最後の横断整合 (B2 の後) は段の境 (A の `core.ts` と B1 の `server.ts`・route の import、B1 の API と B2 の画面の fetch) と §9 の表 3 点を見る。
 - A・B1・B2 は同じ worktree で積んでもよいが、PR は分ける (A の本番の適用を B1 のマージの前に確かめるため)。B1 と B2 を 1 本の WF の 2 段にしてもよい (段内で 2 枚レビュー・最後に横断整合 1 回)。
-- 変更するファイルの数: 段 A = 12 前後 (製品 5・テスト 7)、段 B1 = 13 前後 (製品 6・テスト 7)、段 B2 = 9 (製品 5・テスト 4)。どの段も 15 ファイル・1,500 行以内。
+- 変更するファイルの数: 段 A = 12 前後 (製品 5・テスト 7)、段 B1 = 13 前後 (製品 6・テスト 7)、段 B2 = 10 (製品 5・テスト 5)。どの段も 15 ファイル・1,500 行以内。
 - 戻すとき: B2 → B1 のコードを戻してから、A の戻し口を流す (§7.2 の注意)。
 - `tests/account-export-tables.test.ts` は、migration のファイルが置かれた時点で `dish_favorites` を「分類が要る表」に数えるので、§7.7 の行は migration と同じ PR (段 A)。`tests/legal-text-1901.test.ts` の T-34 は `ACCOUNT_EXPORT_TABLES` の表を対応の表と突き合わせるので、対応の 1 行も段 A。
 - `src/__tests__/lib/env.test.ts` の readOnlyBy の一覧は `src/lib/env.ts` の一覧と完全一致を見て、`readOnlyBy` のファイルが実在することも見るので、§7.6 の 1 項目・`server.ts`・一覧の 1 行は同じ PR (段 B1)。
@@ -2505,7 +2594,7 @@ sequenceDiagram
 | `tests/route-invalid-input-1917.test.ts:331-410` | `/api/recipes/[id]/like`・`recipe_likes_recipe_id_fkey` | いいねの route の単体。route を変えないので緑のまま | 変更なし | — |
 | `tests/recipe-viewer-lookups-1917.test.ts`・`tests/recipes-route.test.ts`・`tests/recipe-author-name-1649.test.ts`・`tests/recipe-detail-hidden-404.test.ts`・`tests/api-security-cluster.test.ts`・`tests/integration/security/recipes-api-logged-in.test.ts` | `recipe_likes` | 公開レシピの `isLiked` の単体・結合。`viewer-lookups.ts` と route を変えないので緑のまま | 変更なし | — |
 | `src/app/(main)/favorites/_components/__tests__/FavoriteListItem.test.ts` | `recipeName`・`likedAt`・`recipeUuid` | fixture の形が `FavoriteListItemData` と合わず型で赤 (描画は `item.dish_name` を読むので文言の it も赤) | fixture を `{ id, dish_name, created_at }` に。it 名は変えない。L-1 を足す | B2 |
-| `src/app/(main)/favorites/_components/__tests__/FavoriteRecipeModal.test.ts` | `recipeUuid`・`/api/recipes/`・`favorite-recipe-no-uuid`・`favorite-recipe-loading` | 4 つの describe (表示制御・uuid 無し・取得成功・再試行) が props と DOM の変化で赤 | §7.15 のとおり書き換え (M-1〜M-4) | B2 |
+| `src/app/(main)/favorites/_components/__tests__/FavoriteRecipeModal.test.ts` | `recipeUuid`・`/api/recipes/`・`favorite-recipe-no-uuid`・`favorite-recipe-loading` | 4 つの describe (表示制御・uuid 無し・取得成功・再試行) が props と DOM の変化で赤 | §7.15 のとおり書き換え (M-1〜M-5) | B2 |
 | `tests/e2e/bug-104-favorites-system.spec.ts` | `お気に入りレシピ`・`レシピ名で検索...`・`お気に入りレシピはまだありません`・`に一致するレシピが見つかりませんでした`・`0 件`・`border-radius: 16px`・`/api/favorites`・`/api/recipes/:name/like` | 見出し・placeholder・空の文・行の角丸・`{ favorites, total }` の形・いいねの route の 404 を見る。どれも変えないので緑のまま | 変更なし + E-1 を足す | B1 (E-1) |
 | `tests/e2e/bug-31-favorite-button.spec.ts` | `favorite-button`・`aria-pressed` | ♥ の `data-testid`・`aria-pressed`・disabled の解除・再読込後の保持。`RecipeModal` を変えないので DOM は同じ。再読込後の保持は本書で初めて通る (今は保存されないので、データのある環境では落ちていた) | 変更なし | — |
 | `tests/e2e/w5-9-multitab-realtime-adversarial.spec.ts:703-785` (W5C-12) | `favorite-button`・`aria-pressed`・`W5C-12` | 2 つのコンテキストで同じ料理のモーダルを開き ♥ を同時に押し、2 秒後の `aria-pressed` が食い違えば注記 (`issue`) を足すだけ (expect は「レシピを見る」のあとの ♥ の表示だけ)。今は両方 404 で ♥ が戻り、注記なしで緑。設計後は S-16 (a) のとおり両方 201 (または片方 200) で同じ id・両方とも塗り (`true`) で注記は出ない。初めから保存済みなら両方 DELETE が 200 / 404 で両方とも空。片付けはタブ A が塗りのときだけ A の ♥ を 1 回押す (A の `favoriteId` = 共通の id の DELETE で行が消える)。`RecipeModal` の DOM は変えない | 変更なし | — |
@@ -2576,7 +2665,7 @@ sequenceDiagram
 段 B2 のマージ (= 公開) のあと (試験用のアカウントで。作った行は用済み後に消すか id を報告する):
 
 5. 献立の料理のモーダルで ♥ → ネットワークに `POST /api/favorites` 201。閉じて開き直すと `GET /api/favorites/status` が `favorited: true`、♥ が塗られている。ページを読み直しても同じ。
-6. `/favorites` に行が出る。行をタップすると材料・作り方・栄養が出る (問い合わせ無し)。「材料を買い物リストに追加」で知らせが出る。材料が構造の形の料理 (F-31) で、買い物リストに名前と「<分量>g」が入る。
+6. `/favorites` に行が出る。行をタップすると、後ろの一覧が幕で暗くなり、材料・作り方・栄養が出る (問い合わせ無し)。詳細の外 (暗い所) を押すと閉じ、後ろの行は開かない。「材料を買い物リストに追加」で知らせが出る。材料が構造の形の料理 (F-31) で、買い物リストに名前と「<分量>g」が入る。
 7. 行の ♥ で `DELETE /api/favorites/{id}` 200、行が消える。献立のモーダルの ♥ も空に戻る。
 8. 本番の `dish_favorites` に試験の行だけがあり、`user_id` が試験用のアカウント (`SELECT user_id, dish_name FROM public.dish_favorites`)。確認後に消す。
 
@@ -2612,3 +2701,4 @@ sequenceDiagram
 | v1.0 | 2026-10-25 | 新設 (A 型 4 相。構造 A = 新しい表 `dish_favorites` (本人 × 料理名の鍵で 1 件・写しを jsonb)・モジュール `core` / `server`・API 4 本・`RecipeModal` の再利用。段 A / B1 / B2。`recipe_likes` の片付けはオーナーに聞く (Q-1)) |
 | v1.1 | 2026-10-25 | 設計ゲート R1 の修正。① 核と配線の 2 冊に分けていたのを 1 冊に戻す (API 4 本・献立の ♥・お気に入りの画面・段 B1 / B2 を本書に戻し、`cross/22b` は作らない。§0.4)。② DB の CHECK `dish_favorites_dish_size` を route の上限 (JSON.stringify で 32768) より緩い 49152 に (jsonb の文字列で長くなる分の上限 16384。定数 `DISH_FAVORITE_DISH_JSONB_TEXT_EXTRA_MAX_BYTES`・`DISH_FAVORITE_DISH_DB_MAX_BYTES`。結合テスト I-8)。③ `DishNameSchema` が鍵 (NFKC) の長さも見る。④ 同時の ♥ (S-16) の応答を正典のコードに合わせる (両方 201 になりうる・200 は古い印のまま押したとき)。⑤ server と route の単体テストの偽物を新設の `tests/helpers/scripted-supabase.ts` に (共有の偽物は変えない)。⑥ 段分けで `server.ts`・環境変数・単体テストの段を明記。⑦ I-7 を厳密に後で見る。⑧ 番兵の追随表に `src/__tests__/lib/env.test.ts` の readOnlyBy の一覧を足す。⑨ 一覧の `q` を `dishFavoritesQueryOf` で作る・`RecipeModal` の栄養の行数を実数 (27) に |
 | v1.2 | 2026-10-25 | 設計ゲート R2 の修正。① 写しの材料が本番の 3 つの形 (構造の形 `{ name, amount_g, note }`・材料全体の長い 1 行・短い行。F-31) をどれも受ける (`DishIngredientItemSchema`・`DishIngredientSchema`・`ingredientListOf`・`ingredientLineOf`。構造の形を空の配列にしていた・長い 1 行を 400 にしていたのを直す)。② 材料 1 行の上限 `DISH_FAVORITE_INGREDIENT_MAX_CHARS` を 200 から 2000 に (本番の最長 677 文字)。構造の形の名前・メモの上限と分量の単位の定数を足す。③ jsonb の文字列で長くなる分の上限を数 80 個で数え直し 32768 に、DB の CHECK を 65536 に (I-8 も構造の形の材料 50 件で)。④ 献立の ♥ の応答をモーダルの回 (`favoriteSessionRef`) が同じときだけ反映 (閉じて別の料理を開いたあとの応答が印と id を書き換えていた)。⑤ status をモーダルが開くたびに引き直し (`isRecipeModalOpen` を依存に)、`RECIPE_SELECT` は同じ名前なら印と id を保つ (買い物リストの追加で閉じたあとの開き直しで ♥ が空になっていた)。⑥ 表 3 点に材料の形の行 (M・N・O) と献立の ♥ の状態遷移 (§9.3 (b)) を足す。⑦ シナリオ S-21〜S-24・テスト U-15・U-16・P-10・R-1〜R-4・W-1〜W-5 を足す |
+| v1.3 | 2026-10-25 | 設計ゲート R3 の修正。① お気に入りの詳細 (§7.12) に幕を足す: `RecipeModal` は幕を持たず (献立の画面は page.tsx の共有の幕を敷く。F-33)、§7.12 を写すと幕が消え、詳細を開いたまま後ろの一覧の行・行の ♥ を押せた。`FavoriteRecipeModal` が `RecipeModal` の兄弟として `fixed inset-0 z-[200]`・`rgba(0,0,0,0.5)` (`FAVORITE_RECIPE_BACKDROP_BACKGROUND`)・押すと `onClose` の幕を描く。② 表の構成で見つけた同じ面の欠陥を直す: 削除の応答で詳細を閉じる判定が押した時点の `selectedFavorite` (閉包) を見ていて、応答の前に閉じて別の行を開くとその詳細を閉じていた → 応答の時点の `openFavoriteIdRef` で比べる。`openRecipeDetail` / `closeRecipeDetail` に開閉をまとめる。詳細の ♥ は応答待ちの間どの行でも disabled (`removingId !== null`。2 本目は今も `if (removingId) return` で捨てられる)。③ 表 3 点に詳細の幕と削除の応答を足す (§9.1 (a) の注記・(b)・§9.2 の 2 行・§9.3 (c) の新しい遷移表)。④ シナリオ S-25・S-26 (26 本)・テスト M-5・H-1〜H-3 (新しいテストファイル `src/app/(main)/favorites/__tests__/page.detail.test.ts`)・R-4・§8・§11・§13・§14・§15・§16・§19 を追随 |
