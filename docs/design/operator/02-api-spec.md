@@ -218,7 +218,7 @@ BAN 解除
 ```
 
 **バリデーション**:
-- 呼べるのは `super_admin` だけ (`admin` は 403 `OP_PERMISSION_DENIED`)。自分自身のロールは変えられない (403 `OP_SELF_MODIFY`)。対象が無ければ 404 `NOT_FOUND`
+- 呼べるのは `super_admin` だけ (`admin` は 403 `OP_PERMISSION_DENIED`。二段階認証が未完了のときと、RPC が `OPERATOR_MFA_REQUIRED` で止めたときも 403 `OP_PERMISSION_DENIED` で、文は二段階認証の固定の文。cross/12 §11.4)。自分自身のロールは変えられない (403 `OP_SELF_MODIFY`)。対象が無ければ 404 `NOT_FOUND`
 - 付与可能ロール: `ALLOWED_ROLES` の 11 種 (`src/lib/admin/users-schemas.ts`)。1 つ以上
 - 更新は RPC `admin_set_user_roles` (本人の client)。監査 `admin.user.role_change` の `previous_roles` は、RPC が対象の行をロックして読んだ変える前の roles (戻り値。#1917。operator/07 §4.1)。パスワードの再認証はしない
 
