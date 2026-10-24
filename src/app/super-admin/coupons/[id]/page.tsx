@@ -61,16 +61,34 @@ function maxUsesText(maxUses: number | null): string {
   return maxUses != null ? String(maxUses) : '';
 }
 
+/** 入力欄 (表示名・有効期限・最大利用回数) の値。有効期限は JST の暦日 (YYYY-MM-DD)、最大利用回数は文字 (空欄は無制限) */
+type CouponInputs = { displayName: string; validUntil: string; maxUses: string };
+
+/** クーポンの行から作る入力欄の値。有効期限 (DB の時刻) は JST の暦日にする (#1483) */
+function couponInputsOf(coupon: Coupon): CouponInputs {
+  return {
+    displayName: coupon.display_name ?? '',
+    validUntil: couponValidityDay(coupon.valid_until),
+    maxUses: maxUsesText(coupon.max_uses),
+  };
+}
+
+/**
+ * 保存に成功したあとの 1 つの入力欄の値 (#1917)。保存を押したときの値 (atSave) から応答を待つあいだに変えていなければ
+ * 保存の応答の行の値 (saved) にし、変えていれば書きかけとして残す (次の保存で送る)
+ */
+function inputAfterSave(current: string, atSave: string, saved: string): string {
+  return current === atSave ? saved : current;
+}
+
 /**
  * 保存で送る本文。最後に読んだ・保存したクーポン (coupon) から変えた欄だけを入れる (#1917)。
  * 手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を、開いたときの古い値で上書きしてしまう
  * (route は送られた項目をそのまま書く)。有効期限は JST の暦日で比べる (#1483 の couponValidUntilPatchValue)。
- * 表示名の空欄は null、最大利用回数の空欄は null (無制限) にする (これまでと同じ)
+ * 表示名の空欄は null、最大利用回数の空欄は null (無制限) にする (これまでと同じ)。
+ * 手を付けていない入力欄は、読み込みと保存の成功のたびに coupon の値に揃える (handleSave) ので、ここで coupon と違う欄は運営が変えた欄
  */
-function changedCouponFields(
-  inputs: { displayName: string; validUntil: string; maxUses: string },
-  coupon: Coupon,
-): CouponSaveBody {
+function changedCouponFields(inputs: CouponInputs, coupon: Coupon): CouponSaveBody {
   const body: CouponSaveBody = {};
   if (inputs.displayName !== (coupon.display_name ?? '')) body.display_name = inputs.displayName || null;
   const validUntil = couponValidUntilPatchValue(inputs.validUntil, coupon.valid_until);
@@ -120,11 +138,13 @@ export default function CouponDetailPage() {
         setError(data.error?.message ?? '取得に失敗しました');
         return;
       }
-      setCoupon(data.data!);
-      setDisplayName(data.data!.display_name ?? '');
+      const loaded = data.data!;
+      const inputs = couponInputsOf(loaded);
+      setCoupon(loaded);
+      setDisplayName(inputs.displayName);
       // 有効期限 (DB の時刻) を JST の暦日にして編集欄に入れる (#1483)
-      setValidUntil(couponValidityDay(data.data!.valid_until));
-      setMaxUses(maxUsesText(data.data!.max_uses));
+      setValidUntil(inputs.validUntil);
+      setMaxUses(inputs.maxUses);
     } catch {
       setError('ネットワークエラー');
     } finally {
@@ -182,8 +202,10 @@ export default function CouponDetailPage() {
     setSaveSuccess(false);
     setSaveInfo('');
     // 送るのは、最後に読んだ・保存した値から変えた欄だけ (手を付けていない欄を古い値で上書きしない。#1917)。
-    // 有効期限は JST の暦日 (YYYY-MM-DD) のまま送り、API がその日の JST 23:59:59 の時刻にして書く (#1483)
-    const changes = changedCouponFields({ displayName, validUntil, maxUses }, coupon);
+    // 有効期限は JST の暦日 (YYYY-MM-DD) のまま送り、API がその日の JST 23:59:59 の時刻にして書く (#1483)。
+    // 押したときの入力欄の値は写しておく (応答を待つあいだに変えた欄を、保存の成功のあとに見分けるため)
+    const inputsAtSave: CouponInputs = { displayName, validUntil, maxUses };
+    const changes = changedCouponFields(inputsAtSave, coupon);
     if (Object.keys(changes).length === 0) {
       setSaveInfo(NO_COUPON_CHANGES_MESSAGE);
       return;
@@ -200,7 +222,16 @@ export default function CouponDetailPage() {
         setSaveError(data.error?.message ?? '保存に失敗しました');
         return;
       }
-      setCoupon(data.data!);
+      // 保存の応答の行 (書いたあとの最新の行) を新しい比べる元にし、手を付けていない入力欄もその行の値に揃える (#1917)。
+      // 送らなかった欄には、画面を開いたあとに別の運営が変えた値が入っていることがある。比べる元だけを新しくして入力欄を
+      // 古い値のままにすると、その欄が変えた欄に見え、次の保存 (何も変えずに押しても) で開いたときの古い値を送って、
+      // 別の運営の変更を上書きしてしまう。応答を待つあいだに変えた欄は書きかけとして残す (次の保存で送る)
+      const saved = data.data!;
+      const savedInputs = couponInputsOf(saved);
+      setCoupon(saved);
+      setDisplayName((current) => inputAfterSave(current, inputsAtSave.displayName, savedInputs.displayName));
+      setValidUntil((current) => inputAfterSave(current, inputsAtSave.validUntil, savedInputs.validUntil));
+      setMaxUses((current) => inputAfterSave(current, inputsAtSave.maxUses, savedInputs.maxUses));
       setSaveSuccess(true);
     } catch {
       setSaveError('ネットワークエラー');

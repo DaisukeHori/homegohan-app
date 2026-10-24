@@ -25,6 +25,27 @@ function parseFeatureFlags(raw: string): string[] {
   return raw.split(/[\n,]/).map((f) => f.trim()).filter(Boolean);
 }
 
+/** 入力欄 (表示名・説明・機能フラグ・表示順) の値。機能フラグは入力欄の文字 (改行かカンマ区切り) のまま */
+type FeaturePackageInputs = { displayName: string; description: string; featureFlagsRaw: string; displayOrder: number };
+
+/** 機能パッケージの行から作る入力欄の値 (機能フラグは 1 行に 1 つ) */
+function featurePackageInputsOf(pkg: FeaturePackage): FeaturePackageInputs {
+  return {
+    displayName: pkg.display_name,
+    description: pkg.description ?? '',
+    featureFlagsRaw: pkg.feature_flags.join('\n'),
+    displayOrder: pkg.display_order,
+  };
+}
+
+/**
+ * 保存に成功したあとの 1 つの入力欄の値 (#1917)。保存を押したときの値 (atSave) から応答を待つあいだに変えていなければ
+ * 保存の応答の行の値 (saved) にし、変えていれば書きかけとして残す (次の保存で送る)
+ */
+function inputAfterSave<T extends string | number>(current: T, atSave: T, saved: T): T {
+  return current === atSave ? saved : current;
+}
+
 /** 保存で送る本文 (PATCH /api/super-admin/feature-packages/{id} の表示名・説明・機能フラグ・表示順) */
 type FeaturePackageSaveBody = {
   display_name?: string;
@@ -36,7 +57,8 @@ type FeaturePackageSaveBody = {
 /**
  * 保存で送る本文。最後に読んだ・保存した機能パッケージ (pkg) から変えた欄だけを入れる (#1917)。
  * 手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を、開いたときの古い値で上書きしてしまう
- * (route は送られた項目をそのまま書く)。機能フラグは並びで比べる。説明の空欄は null にする (これまでと同じ)
+ * (route は送られた項目をそのまま書く)。機能フラグは並びで比べる。説明の空欄は null にする (これまでと同じ)。
+ * 手を付けていない入力欄は、読み込みと保存の成功のたびに pkg の値に揃える (handleSave) ので、ここで pkg と違う欄は運営が変えた欄
  */
 function changedFeaturePackageFields(
   inputs: { displayName: string; description: string; flags: string[]; displayOrder: number },
@@ -83,11 +105,13 @@ export default function FeaturePackageDetailPage() {
         setError(data.error?.message ?? '取得に失敗しました');
         return;
       }
-      setPkg(data.data!);
-      setDisplayName(data.data!.display_name);
-      setDescription(data.data!.description ?? '');
-      setFeatureFlagsRaw(data.data!.feature_flags.join('\n'));
-      setDisplayOrder(data.data!.display_order);
+      const loaded = data.data!;
+      const inputs = featurePackageInputsOf(loaded);
+      setPkg(loaded);
+      setDisplayName(inputs.displayName);
+      setDescription(inputs.description);
+      setFeatureFlagsRaw(inputs.featureFlagsRaw);
+      setDisplayOrder(inputs.displayOrder);
     } catch {
       setError('ネットワークエラー');
     } finally {
@@ -109,7 +133,9 @@ export default function FeaturePackageDetailPage() {
     }
     setSaveError('');
     setSaveSuccess(false);
-    // 送るのは、最後に読んだ・保存した値から変えた欄だけ (手を付けていない欄を古い値で上書きしない。#1917)
+    // 送るのは、最後に読んだ・保存した値から変えた欄だけ (手を付けていない欄を古い値で上書きしない。#1917)。
+    // 押したときの入力欄の値は写しておく (応答を待つあいだに変えた欄を、保存の成功のあとに見分けるため)
+    const inputsAtSave: FeaturePackageInputs = { displayName, description, featureFlagsRaw, displayOrder };
     const changes = changedFeaturePackageFields({ displayName, description, flags, displayOrder }, pkg);
     if (Object.keys(changes).length === 0) {
       setSaveInfo(NO_FEATURE_PACKAGE_CHANGES_MESSAGE);
@@ -128,7 +154,17 @@ export default function FeaturePackageDetailPage() {
         setSaveError(data.error?.message ?? '保存に失敗しました');
         return;
       }
-      setPkg(data.data!);
+      // 保存の応答の行 (書いたあとの最新の行) を新しい比べる元にし、手を付けていない入力欄もその行の値に揃える (#1917)。
+      // 送らなかった欄には、画面を開いたあとに別の運営が変えた値が入っていることがある。比べる元だけを新しくして入力欄を
+      // 古い値のままにすると、その欄が変えた欄に見え、次の保存 (何も変えずに押しても) で開いたときの古い値を送って、
+      // 別の運営の変更を上書きしてしまう。応答を待つあいだに変えた欄は書きかけとして残す (次の保存で送る)
+      const saved = data.data!;
+      const savedInputs = featurePackageInputsOf(saved);
+      setPkg(saved);
+      setDisplayName((current) => inputAfterSave(current, inputsAtSave.displayName, savedInputs.displayName));
+      setDescription((current) => inputAfterSave(current, inputsAtSave.description, savedInputs.description));
+      setFeatureFlagsRaw((current) => inputAfterSave(current, inputsAtSave.featureFlagsRaw, savedInputs.featureFlagsRaw));
+      setDisplayOrder((current) => inputAfterSave(current, inputsAtSave.displayOrder, savedInputs.displayOrder));
       setSaveSuccess(true);
     } catch {
       setSaveError('ネットワークエラー');

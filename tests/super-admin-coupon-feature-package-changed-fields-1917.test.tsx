@@ -8,7 +8,10 @@
  * プラン詳細 (tests/plan-detail-page-stale-1917.test.tsx) と同じ決まりにする。
  *   - 変えた欄だけを送る (空欄は null。これまでと同じ)
  *   - 何も変えていなければ送らず、その旨を出す (route は空の本文を 400 にする・監査に空の変更を残さない)
- *   - 保存に成功したら、保存した行が新しい初めの値になる
+ *   - 保存に成功したら、保存の応答の行 (書いたあとの最新の行) が新しい初めの値になり、手を付けていない入力欄もその行の値に揃える。
+ *     応答の行の送らなかった欄には、画面を開いたあとに別の運営が変えた値が入っていることがある。比べる元だけを新しくして
+ *     入力欄を古いままにすると、次の保存 (何も変えずに押しても) で開いたときの古い値を送り、別の運営の変更を上書きする
+ *   - 応答を待つあいだに変えた欄は、保存の成功のあとも書きかけとして残し、次の保存で送る
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する
  * (tests/super-admin-coupon-redemptions-1571.test.tsx と同じ)。
@@ -77,17 +80,46 @@ let container: HTMLDivElement;
 let root: Root;
 let fetchMock: ReturnType<typeof vi.fn>;
 
-/** GET は row を返し、PATCH は送られた項目を row に重ねた行を返す (route と同じく、送られなかった項目はそのまま) */
-function mockApi(row: Record<string, unknown>) {
+type MockApiOptions = {
+  /**
+   * 画面を開いたあと、最初の保存の前に別の運営が書いた変更 (DB の行の値)。最初の PATCH を書く前に行へ重ねるので、
+   * 保存の応答の行の送らなかった欄にこの値が入る (route は .update().select() で書いたあとの行全体を返す)
+   */
+  concurrentChange?: Record<string, unknown>;
+  /** 最初の PATCH の応答を、返された release() を呼ぶまで返さない (応答を待つあいだの入力を試すため) */
+  holdFirstPatch?: boolean;
+};
+
+/**
+ * GET は row を返し、PATCH は送られた項目を row に重ねた行を返す (route と同じく、送られなかった項目はそのまま)。
+ * 戻り値の release() は holdFirstPatch のときに最初の PATCH の応答を返す
+ */
+function mockApi(row: Record<string, unknown>, options: MockApiOptions = {}) {
   let current = { ...row };
+  let patchCount = 0;
+  let releaseHeld: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    releaseHeld = resolve;
+  });
   fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
     if (init?.method === 'PATCH') {
+      patchCount += 1;
+      if (patchCount === 1 && options.concurrentChange) current = { ...current, ...options.concurrentChange };
       current = { ...current, ...(JSON.parse(String(init.body)) as Record<string, unknown>) };
-      return jsonResponse(200, { data: current });
+      const written = { ...current };
+      if (patchCount === 1 && options.holdFirstPatch) await held;
+      return jsonResponse(200, { data: written });
     }
     return jsonResponse(200, { data: current });
   });
   vi.stubGlobal('fetch', fetchMock);
+  return {
+    release: async () => {
+      await act(async () => {
+        releaseHeld();
+      });
+    },
+  };
 }
 
 const patchBodies = () =>
@@ -220,6 +252,69 @@ describe('クーポン詳細: 保存は変えた欄だけを送る (#1917)', () 
     expect(patchBodies()).toHaveLength(1);
     expect(text()).toContain(NO_CHANGES_MESSAGE);
   });
+
+  it('保存の応答の行に別の運営が変えた最大利用回数・有効期限が入っていたら、入力欄をその値に揃え、次の保存で送らない', async () => {
+    mockApi(COUPON, { concurrentChange: { max_uses: 200, valid_until: '2027-03-31T14:59:59.999999Z' } });
+    await render(<CouponDetailPage />);
+    await typeInto(field('表示名'), '秋のクーポン (改)');
+    await clickSave();
+    await vi.waitFor(() => expect(text()).toContain('保存しました'));
+    expect(patchBodies()).toEqual([{ display_name: '秋のクーポン (改)' }]);
+    // 送らなかった欄の入力欄は、開いたときの値 (100・2026-12-31) でなく、応答の行 (別の運営の変更) の値になる
+    expect(field('最大利用回数').value).toBe('200');
+    expect(field('有効期限').value).toBe('2027-03-31');
+
+    // 何も変えずに押しても送らない (開いたときの 100・2026-12-31 で別の運営の変更を上書きしない)
+    await clickSave();
+    expect(patchBodies()).toHaveLength(1);
+    expect(text()).toContain(NO_CHANGES_MESSAGE);
+
+    // 別の欄 (表示名) だけを変えたら、表示名だけを送る
+    await typeInto(field('表示名'), '秋のクーポン (再)');
+    await clickSave();
+    await vi.waitFor(() => expect(patchBodies()).toHaveLength(2));
+    expect(patchBodies()[1]).toEqual({ display_name: '秋のクーポン (再)' });
+  });
+
+  it('保存の応答の行に別の運営が変えた表示名が入っていたら、最大利用回数だけを変えた次の保存で表示名を送らない', async () => {
+    mockApi(COUPON, { concurrentChange: { display_name: '冬のクーポン' } });
+    await render(<CouponDetailPage />);
+    await typeInto(field('最大利用回数'), '150');
+    await clickSave();
+    await vi.waitFor(() => expect(text()).toContain('保存しました'));
+    expect(field('表示名').value).toBe('冬のクーポン');
+
+    await typeInto(field('最大利用回数'), '160');
+    await clickSave();
+
+    await vi.waitFor(() => expect(patchBodies()).toHaveLength(2));
+    expect(patchBodies()).toEqual([{ max_uses: 150 }, { max_uses: 160 }]);
+  });
+
+  it('応答を待つあいだに変えた欄は、保存の成功のあとも残して次の保存で送る (手を付けていない欄だけ応答の行に揃える)', async () => {
+    const api = mockApi(COUPON, {
+      concurrentChange: { max_uses: 200, valid_until: '2027-03-31T14:59:59.999999Z' },
+      holdFirstPatch: true,
+    });
+    await render(<CouponDetailPage />);
+    await typeInto(field('表示名'), '秋のクーポン (改)');
+    await clickSave();
+    // 応答を待つあいだに、送った欄 (表示名) と送らなかった欄 (最大利用回数) を書き換える
+    await typeInto(field('表示名'), '秋のクーポン (改2)');
+    await typeInto(field('最大利用回数'), '150');
+
+    await api.release();
+    await vi.waitFor(() => expect(text()).toContain('保存しました'));
+    expect(field('表示名').value).toBe('秋のクーポン (改2)');
+    expect(field('最大利用回数').value).toBe('150');
+    // 手を付けていない有効期限は、応答の行 (別の運営の変更) の値になる
+    expect(field('有効期限').value).toBe('2027-03-31');
+
+    await clickSave();
+
+    await vi.waitFor(() => expect(patchBodies()).toHaveLength(2));
+    expect(patchBodies()[1]).toEqual({ display_name: '秋のクーポン (改2)', max_uses: 150 });
+  });
 });
 
 describe('機能パッケージ詳細: 保存は変えた欄だけを送る (#1917)', () => {
@@ -284,5 +379,65 @@ describe('機能パッケージ詳細: 保存は変えた欄だけを送る (#19
     expect(patchBodies()).toEqual([]);
     expect(text()).toContain('機能フラグを少なくとも1つ入力してください');
     expect(text()).not.toContain(NO_CHANGES_MESSAGE);
+  });
+
+  it('保存の応答の行に別の運営が変えた表示名・表示順が入っていたら、入力欄をその値に揃え、次の保存で送らない', async () => {
+    mockApi(FEATURE_PACKAGE, { concurrentChange: { display_name: '基本パッケージ (別)', display_order: 5 } });
+    await render(<FeaturePackageDetailPage />);
+    await typeInto(field('説明'), '基本の機能 (改)');
+    await clickSave();
+    await vi.waitFor(() => expect(text()).toContain('保存しました'));
+    expect(patchBodies()).toEqual([{ description: '基本の機能 (改)' }]);
+    // 送らなかった欄の入力欄は、開いたときの値 (基本パッケージ・2) でなく、応答の行 (別の運営の変更) の値になる
+    expect(field('表示名 *').value).toBe('基本パッケージ (別)');
+    expect(field('表示順').value).toBe('5');
+
+    // 何も変えずに押しても送らない (開いたときの値で別の運営の変更を上書きしない)
+    await clickSave();
+    expect(patchBodies()).toHaveLength(1);
+    expect(text()).toContain(NO_CHANGES_MESSAGE);
+
+    // 別の欄 (説明) だけを変えたら、説明だけを送る
+    await typeInto(field('説明'), '基本の機能 (再)');
+    await clickSave();
+    await vi.waitFor(() => expect(patchBodies()).toHaveLength(2));
+    expect(patchBodies()[1]).toEqual({ description: '基本の機能 (再)' });
+  });
+
+  it('保存の応答の行に別の運営が変えた説明・機能フラグが入っていたら、表示順だけを変えた次の保存で説明・機能フラグを送らない', async () => {
+    mockApi(FEATURE_PACKAGE, { concurrentChange: { description: '別の説明', feature_flags: ['flag_a', 'flag_b', 'flag_c'] } });
+    await render(<FeaturePackageDetailPage />);
+    await typeInto(field('表示順'), '7');
+    await clickSave();
+    await vi.waitFor(() => expect(text()).toContain('保存しました'));
+    expect(field('説明').value).toBe('別の説明');
+    expect(field('機能フラグ').value).toBe('flag_a\nflag_b\nflag_c');
+
+    await typeInto(field('表示順'), '8');
+    await clickSave();
+
+    await vi.waitFor(() => expect(patchBodies()).toHaveLength(2));
+    expect(patchBodies()).toEqual([{ display_order: 7 }, { display_order: 8 }]);
+  });
+
+  it('応答を待つあいだに変えた欄は、保存の成功のあとも残して次の保存で送る (手を付けていない欄だけ応答の行に揃える)', async () => {
+    const api = mockApi(FEATURE_PACKAGE, { concurrentChange: { display_order: 5 }, holdFirstPatch: true });
+    await render(<FeaturePackageDetailPage />);
+    await typeInto(field('表示名 *'), '基本パッケージ (改)');
+    await clickSave();
+    // 応答を待つあいだに、送らなかった欄 (説明) を書き換える
+    await typeInto(field('説明'), '書きかけの説明');
+
+    await api.release();
+    await vi.waitFor(() => expect(text()).toContain('保存しました'));
+    expect(field('表示名 *').value).toBe('基本パッケージ (改)');
+    expect(field('説明').value).toBe('書きかけの説明');
+    // 手を付けていない表示順は、応答の行 (別の運営の変更) の値になる
+    expect(field('表示順').value).toBe('5');
+
+    await clickSave();
+
+    await vi.waitFor(() => expect(patchBodies()).toHaveLength(2));
+    expect(patchBodies()[1]).toEqual({ description: '書きかけの説明' });
   });
 });
