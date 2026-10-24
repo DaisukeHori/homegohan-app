@@ -169,6 +169,16 @@ describe('メール送信の画面: 初回表示', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('権限がありません');
     expect(text()).not.toContain('条件に合うメールはありません');
   });
+
+  it('403 の本文の文が二段階認証の文なら、「権限がありません」で上書きせずその文を出す (#1917 の続き・整合 1025b)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: { code: 'FORBIDDEN', message: '二段階認証の確認が必要です' } }, 403));
+    await click(button('再読み込み'));
+
+    const alert = container.querySelector('[role="alert"]')?.textContent ?? '';
+    expect(alert).toContain('二段階認証の確認が必要です');
+    expect(alert).not.toContain('権限がありません');
+    expect(text()).not.toContain('条件に合うメールはありません');
+  });
 });
 
 describe('メール送信の画面: 状態の切り替えと絞り込み', () => {

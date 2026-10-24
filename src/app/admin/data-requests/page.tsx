@@ -12,6 +12,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
 import {
   DSR_ADMIN_API_PATH,
   DSR_ADMIN_LIST_LIMITS,
@@ -55,6 +56,7 @@ const STATUS_COLORS: Record<DsrStatus, string> = {
 };
 
 const LOAD_FAILURE_MESSAGE = '請求の一覧を読み込めませんでした。再読み込みしてください';
+/** 403 の文。本文の理由の文 (二段階認証の確認が要る など) があればそちらを出す (forbiddenMessageOfResponse。#1917) */
 const FORBIDDEN_MESSAGE = '権限がありません';
 
 /** タブと終了タブの状態から、一覧の API のクエリを作る */
@@ -109,7 +111,7 @@ export default function AdminDataRequestsPage() {
       }
       if (res.status === HTTP_FORBIDDEN) {
         setRows([]);
-        setError(FORBIDDEN_MESSAGE);
+        setError(await forbiddenMessageOfResponse(res, FORBIDDEN_MESSAGE));
         return;
       }
       const body: unknown = res.ok ? await res.json().catch(() => null) : null;
