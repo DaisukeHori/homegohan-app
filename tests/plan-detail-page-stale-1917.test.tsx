@@ -6,10 +6,12 @@
  * ボタンが残っていた (API の文に従って運営が手で読み込み直す必要があった)。修正後は次のようになる。
  *   - 保存・公開・非公開・廃止・廃止の取り消しが 409 CONFLICT_STALE_DATA なら、プランを読み直して今の状態とボタンを出し、
  *     読み直した旨を画面の上に出す (サーバーの「画面を読み込み直して」は出さない・alert も出さない)
- *   - 表示名・説明・表示順の入力欄は、書きかけ (最後に読んだ値から変えた) の欄だけ残し、ほかは読み直した値にする
+ *   - 表示名・説明・表示順の入力欄は、書きかけ (最後に読んだ・保存した値から変えた) の欄だけ残し、ほかは読み直した値にする
  *   - 読み直しに失敗したら「読み込み直した」とは出さず、画面と入力欄を残して、文と「再試行」を出す。「再試行」で読み直せたら
  *     読み直した旨の文に変える
  *   - 保存・状態の変更に成功したあとの読み直しに失敗しても、画面をエラーに置き換えず、文と「再試行」を出す
+ *   - 保存は、最後に読んだ・保存した値から変えた欄だけを送る。保存に成功したら送った値を新しい初めの値にするので、
+ *     続く読み直しが失敗しても、保存済みの欄を次の保存で送り直さず、「再試行」で書きかけとして残さない
  *   - 同じ 409 でも code が違う (契約者がいる OP_PLAN_HAS_SUBSCRIBERS など) ときは読み直さず、これまでどおり API の文を出す
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
@@ -434,6 +436,95 @@ describe('保存は変えた欄だけを送る (#1917)', () => {
     await click('保存する');
 
     expect(patchBodies()).toEqual([{ display_name: 'Pro プラス' }, { display_order: 9 }]);
+  });
+
+  it('保存に成功したあとの読み直しが失敗しても、保存した欄は保存済みとして扱い、次の保存で送り直さない (別の運営の変更を古い値で上書きしない)', async () => {
+    let gets = 0;
+    fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') return jsonResponse(200, { data: PLAN });
+      gets += 1;
+      // 1 回目の保存のあとの読み直し (2 回目の GET) だけ失敗させる
+      if (gets === 2) return jsonResponse(500, GET_FAILURE_BODIES[500]);
+      return jsonResponse(200, { data: PLAN });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+    await click('保存する');
+    expect(notice()?.textContent).toContain('最新の内容を読み込めませんでした');
+    expect(displayNameInput().value).toBe('Pro プラス');
+
+    // そのあいだに別の運営が表示名を変えていても、この運営が手を付けたのは説明だけなので、説明だけを送る
+    await typeInto(descriptionInput(), '説明を直した');
+    await click('保存する');
+
+    expect(patchBodies()).toEqual([{ display_name: 'Pro プラス' }, { description: '説明を直した' }]);
+  });
+
+  it('保存に成功したあとの読み直しが失敗したあと、「再試行」で読めたら、保存した欄は読み直した値にする (書きかけとして残さない)。その回に書きかけた欄は残す', async () => {
+    let gets = 0;
+    fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') return jsonResponse(200, { data: PLAN });
+      gets += 1;
+      if (gets === 2) return jsonResponse(500, GET_FAILURE_BODIES[500]);
+      // 「再試行」の読み直し: 保存のあとに別の運営が表示名を変えていた
+      return jsonResponse(200, { data: gets === 1 ? PLAN : { ...PLAN, display_name: '別の運営の表示名' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+    await click('保存する');
+    expect(notice()?.textContent).toContain('最新の内容を読み込めませんでした');
+    // 「再試行」の前に、説明を書きかける
+    await typeInto(descriptionInput(), '書きかけの説明');
+
+    await click('再試行');
+
+    expect(gets).toBe(3);
+    expect(notice()).toBeNull();
+    // 保存済みの表示名は書きかけではないので、読み直した値 (別の運営の値) にする
+    expect(displayNameInput().value).toBe('別の運営の表示名');
+    // その回に書きかけた説明は残す
+    expect(descriptionInput().value).toBe('書きかけの説明');
+
+    await click('保存する');
+    expect(patchBodies()).toEqual([{ display_name: 'Pro プラス' }, { description: '書きかけの説明' }]);
+  });
+
+  it('保存の応答を待つあいだに入力欄を変えたら、保存済みとして記録するのは送った値だけで、待つあいだに変えた値は次の保存で送る', async () => {
+    let gets = 0;
+    let resolvePatch: ((res: Response) => void) | undefined;
+    fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') {
+        if (resolvePatch === undefined) {
+          return new Promise<Response>((resolve) => {
+            resolvePatch = resolve;
+          });
+        }
+        return Promise.resolve(jsonResponse(200, { data: PLAN }));
+      }
+      gets += 1;
+      if (gets === 2) return Promise.resolve(jsonResponse(500, GET_FAILURE_BODIES[500]));
+      return Promise.resolve(jsonResponse(200, { data: PLAN }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+    await click('保存する');
+    expect(resolvePatch).toBeDefined();
+
+    // 応答を待つあいだに表示名をさらに変える
+    await typeInto(displayNameInput(), 'Pro プラス 2');
+    await act(async () => {
+      resolvePatch!(jsonResponse(200, { data: PLAN }));
+    });
+    await settle();
+    expect(notice()?.textContent).toContain('最新の内容を読み込めませんでした');
+    expect(displayNameInput().value).toBe('Pro プラス 2');
+
+    await click('保存する');
+
+    expect(patchBodies()).toEqual([{ display_name: 'Pro プラス' }, { display_name: 'Pro プラス 2' }]);
   });
 });
 

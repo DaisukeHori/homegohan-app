@@ -363,7 +363,7 @@ export default function CouponDetailPage() {
               {saveError}
             </div>
           )}
-{saveInfo && (
+          {saveInfo && (
             <div
               data-testid="save-info"
               className="bg-slate-50 border border-slate-200 text-slate-600 px-4 py-3 rounded-lg text-sm"
