@@ -42,10 +42,10 @@
 
 | # | 要件 | 根拠 | 本書の置き場 |
 |---|---|---|---|
-| R-1 | 献立の料理のモーダルの ♥ を押すと、その料理 (名前・役割・kcal・栄養・材料・作り方) が本人のお気に入りとして保存される | #2011・オーナーの選択 | §7.3・§7.4・§7.5 (POST)・§7.9 |
+| R-1 | 献立の料理のモーダルの ♥ を押すと、その料理 (名前・役割・kcal・栄養・材料・作り方) が本人のお気に入りとして保存される | #2011・冒頭の前提の 1 項目め (料理を材料・作り方・栄養ごと保存) | §7.3・§7.4・§7.5 (POST)・§7.9 |
 | R-2 | もう一度 ♥ を押すと消える。モーダルを開き直したとき (同じ料理を開き直したときも)・ページを読み直したときの ♥ の印は保存の状態と一致する。押したあとにモーダルを閉じたり別の料理を開いたりしても、その応答はいま開いているモーダルの印・id を変えない | #2011・`tests/e2e/bug-31-favorite-button.spec.ts` | §7.5 (status・DELETE)・§7.8・§7.9・§9.3 (b) |
 | R-3 | お気に入りの画面で、保存した料理を一覧 (件数つき)・名前で検索・並び替え (新しい順 / 古い順 / 名前順)・削除できる | #2011・`src/app/(main)/favorites/page.tsx` の今の機能 | §7.5 (GET)・§7.10 |
-| R-4 | お気に入りの画面から、料理の詳細 (材料・作り方・栄養) を開ける。材料を買い物リストに足せる。本番の献立の料理の材料の 3 つの形 (構造の形・長い 1 行・短い行。§3.4 F-31) のどれでも保存でき、材料が写しに残る | オーナーの選択・`FavoriteRecipeModal` の今の機能 | §7.3・§7.12 |
+| R-4 | お気に入りの画面から、料理の詳細 (材料・作り方・栄養) を開ける。材料を買い物リストに足せる。本番の献立の料理の材料の 3 つの形 (構造の形・長い 1 行・短い行。§3.4 F-31) のどれでも保存でき、材料が写しに残る | 冒頭の前提の 1 項目め (お気に入りの画面から詳細を開ける)・`FavoriteRecipeModal` の今の機能 | §7.3・§7.12 |
 | R-5 | 献立が作り直されて同じ名前の別の中身になっても、お気に入りの写しは変わらない。献立 (planned_meals) が消えても残る | #2011「料理そのものを保存」 | §3.1 F-9・§6.2・§9.3 |
 | R-6 | 同じ名前を二度 ♥ しても 1 件 (重ならない)。同時に 2 か所から押しても 1 件 | §0.1 の 2 | §7.1 (UNIQUE)・§7.4 (upsert)・§9.3 |
 | R-7 | 他人のお気に入りは読めない・消せない・数えられない (RLS)。未ログインは 401 | cross/02 §4.1・`recipe_likes` の『Anyone can view likes』を繰り返さない | §7.1・§7.14 |
@@ -2487,6 +2487,7 @@ sequenceDiagram
 | `tests/legal-text-1901.test.ts:127-200, 872-880` | `PRIVACY_DATA_TABLES`・`PRIVACY_DATA_EXCLUDED`・`T-34` | `ACCOUNT_EXPORT_TABLES` に足した表が対応の表に無いと赤 | `dish_favorites: 'レシピ'` を `recipe_likes: 'レシピ'` の次に。cross/20 の写しも (§17) | A |
 | `tests/legal-claims-1901.ts:246` (`privacy-3#6`) | `privacy-3#6`・`F-42 (recipes・recipe_collections・recipe_collection_items・recipe_likes・recipe_comments)` | 「レシピ」の行の主張の根拠。`tests/legal-text-1901.test.ts` (`:1068-1081`) が見るのは `fragment` が本文に 1 回あること・`chars` (字数)・evidence の `F-n` / `P-n` が cross/20 の行にあること・evidence のパスが実在すること。括弧の中の表の列挙は数えない。第3条の文を変えないので `fragment`・`chars` は変わらず緑のまま | 文 (`fragment`・`chars`) は変えない。evidence の F-42 の括弧に `dish_favorites` を `recipe_likes` の次に足す (T-34 の対応 `dish_favorites: 'レシピ'` と揃える。見張りは列挙を数えないが、根拠の記述を実際の表と合わせる) | A |
 | `tests/public-claims-guard.test.ts` | `evidence`・`landing-copy` の `favorites` | 主張の根拠のパス (`src/app/(main)/favorites/page.tsx`・`src/app/api/favorites/route.ts`) が実在すれば緑。文は変えない | 変更なし (パスは残る) | — |
+| `docs/design/marketing/01-landing-site.md` を読む番兵 (`tests/landing-axe-states-doc-1867.test.ts`・`tests/landing-pricing-doc-1911.test.ts`・`tests/landing-page-1867.test.ts`・`tests/e2e-landing-suite.test.ts`・`tests/guide-screenshots-zoom-clip-1867.test.ts`) | `01-landing-site`・`favorites`・`page.tsx:` | 見るのは E-20 の行・料金の記述・U-n / E-n の番兵・画像の切り取りで、`favorites` の主張の行 (marketing/01 の主張表の行 500・正典コードの行 2250) と、その根拠の行番号 (`favorites/page.tsx:180`・`:302`) はどれも見ない (2026-10-25 の grep で `favorites` と `page.tsx:` は 0 件)。§7.10 で `favorites/page.tsx` の行がずれても赤にならない | 変更なし (行番号の指し先の追随は §17。marketing/01 §9.7 の alt を読む `tests/public-claims-guard.test.ts` は上の行) | — |
 | `tests/helpers/schema-snapshot.ts` | `CREATE TABLE`・`PRIMARY KEY`・`REFERENCES` | migration の列・主キー・外部キーの読み取り (ベストエフォート)。表の中の `CONSTRAINT … PRIMARY KEY (id)` と列の `REFERENCES auth.users(id)` を読む | §7.1 は表の中に PK と REFERENCES を書く (apple_sign_in_tokens と同じ形) | A |
 | `src/__tests__/api/null-character-routes.test.ts:134, 281, 457` | `ENTRIES`・`EXCLUDED`・`BODY_READ_PATTERN`・`readJsonBody(` | 本文を読む handler (`readJsonBody(` を含む) が表にも EXCLUDED にも無いと赤。表にあるのに `rejectNullCharacterBody` を呼ばないと赤 | `ENTRIES` に `{ file: 'favorites/route.ts', method: 'POST', load: async () => (await import('@/app/api/favorites/route')).POST }` (flat の形。`shopping-list/add-recipe` の行の近く) | B1 |
 | `tests/api-invalid-json-scan.test.ts` | `request.json()`・`readJsonBody` | `request.json()` を route 全体の try で読み 500 にすると赤 | §7.5.1 は `readJsonBody` で読み `{ ok: false }` を 400 | B1 |
@@ -2533,6 +2534,9 @@ sequenceDiagram
 | `docs/design/cross/20-terms-privacy-text.md` | T-34 の表 → 行の対応の写し (`recipe_likes: 'レシピ'` の行の近く) と §2.2 F-42 の説明 | `dish_favorites: 'レシピ'` の 1 行を足す。F-42 の「書き込む処理が無い表は 15」は変わらない (`dish_favorites` は route が書く) | 段 A のマージと同日 |
 | `docs/design/cross/02-rls-patterns.md` | §4.1 self-ownership の「用途」 | 実例に `dish_favorites` (cross/22 §7.1) を 1 語足す | 段 A のマージと同日 (任意) |
 | `docs/design/cross/21-recipe-author-display-name.md` | §18 既存実装との関連 | 「献立の料理のお気に入りは `recipe_likes` を使わず `dish_favorites` (cross/22)。`viewer-lookups.ts` の `likedRecipeIds` は公開レシピの「いいね」だけ」の 1 行 (cross/21 のマージ後) | 段 B1 のマージと同日 |
+| `docs/design/marketing/01-landing-site.md` | 主張表の `favorites` の行 (行 500) の根拠の列と、正典コードの `favorites` の主張 (行 2250) | 行 500 の根拠の行番号 `src/app/(main)/favorites/page.tsx:180` (`お気に入りレシピ`)・`:302` (`週間献立のレシピからハートを押して追加できます`) を、§7.10 の差分 (import・定数・state の追加) で動いた後の行に直す (文言は変えないので、引用の文はそのまま)。主張の文 (『気に入ったレシピをお気に入りに残せる (献立のレシピのハートから)』) と行 2250 の evidence のパス 2 本は変えない (パスは残り、♥ から保存できるようになるので文は本書の後も正しい) | 段 B2 のマージと同日 |
+| `docs/design/cross/18-csp-nonce.md` | T-2 の行 (`src/app/(main)/favorites/page.tsx:347` の素の `<style>`) | 行番号を §7.10 の差分で動いた後の行に直す (`<style>` の扱い = 据え置きは変わらない。§7.10 は `<style>` に触れない) | 段 B2 のマージと同日 |
+| `docs/design/cross/20-terms-privacy-text.md` | §2.2 F-54 の「画面にあるのは」の文と根拠の列 | 『週間献立のいいね (お気に入りの画面はいいねを外す)』は、本書の後は `recipes` / `recipe_likes` の入口ではなくなる (献立の ♥ とお気に入りの画面は `dish_favorites` の API を呼ぶ。§7.9・§7.10)。この語句を外すか「献立の ♥ は `dish_favorites` に保存 (cross/22)」に書き換え、根拠の `src/app/(main)/menus/weekly/page.tsx:3492` と `src/app/(main)/favorites/page.tsx:111` (どちらも `/api/recipes/…/like` を呼ぶ行で、§7.9・§7.10 で無くなる) を外す。T-34 の行 (上) とは別の箇所 | 段 B2 のマージと同日 |
 | `apps/mobile/README.md` | 行 75 の「お気に入り … は Web の画面で確認する」 | 変えない (お気に入りは引き続き Web の `/favorites`) | — |
 | Issue #2011 | 本文 | 設計の内容 (表・API・画面・段) をオーケストレーターが書き込む (リンクだけにしない) | 設計のマージと同日 |
 | `supabase/baseline/` (`prod_schema.sql`・`prod_table_acl.sql`・`catalog_*.csv`) | 控え | 次にベースラインを作り直すときに `dish_favorites` の表・制約・ポリシー・索引・トリガーと表の権限 (authenticated に SELECT / INSERT / UPDATE / DELETE。anon は無し) が入る (手で直さない) | 次のベースラインの更新 |
@@ -2545,6 +2549,7 @@ sequenceDiagram
 |---|---|---|
 | `src/app/api/favorites/route.ts` (GET) | 書き換え (§7.5.1)。`recipe_likes` を読まない。#302 の 3 段の退避は消す | 新しい表の列は決まっている |
 | `src/app/api/recipes/[id]/like/route.ts` | 変えない | 公開レシピの「いいね」(uuid)。献立とお気に入りの画面が呼ばなくなるだけ |
+| `src/app/api/recipes/[id]/route.ts` (行 30 のコメント「自分のいいね (recipe_likes) は埋め込まない」) | 変えない | 公開レシピの詳細の API。`recipe_likes` の読み取りは `viewer-lookups.ts` のまま (#1917)。本書の経路は通らず、コメントの記述も本書の後で正しいまま |
 | `refreshLikeCount` (同 route の #258 の名残) | 変えない | 本書の経路は通らない。片付けは §21 Q-1 |
 | `recipe_likes` の表・`recipe_uuid`・外部キー 2 本・`trg_sync_recipe_like_count`・`sync_recipe_like_count`・`increment / decrement_recipe_like_count`・『Anyone can view likes』 | 変えない | 削除の migration は名指しの承認が要る (§21 Q-1) |
 | `src/lib/recipes/viewer-lookups.ts` (`likedRecipeIds`) | 変えない | 公開レシピの `isLiked`。cross/21 が差し替える設計を持つ (本書と衝突しない) |
