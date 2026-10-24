@@ -33,7 +33,13 @@ import { createLogger } from '@/lib/db-logger';
  *       他のリクエストが先に行を作ったので、読み直して更新パスに入る。
  */
 
-const STREAK_TYPE = 'daily_record';
+/**
+ * この関数が書く連続記録の種類。利用者のセッション (RLS が効く) で書くので、health_streaks の INSERT / UPDATE のポリシーが
+ * 利用者に許す種類 (migration 20261024110000_health_streaks_user_writes_daily_record_only.sql。#1917) と同じでなければならない
+ * (tests/health-streaks-user-writes-migration-contract.test.ts が突き合わせる)。
+ * 比較ランキングが読む meal_record / breakfast は、利用者が書けない (書くなら service_role の処理で書く)。
+ */
+export const STREAK_TYPE = 'daily_record';
 const BADGE_MILESTONES = [7, 14, 30, 60, 100] as const;
 
 /**

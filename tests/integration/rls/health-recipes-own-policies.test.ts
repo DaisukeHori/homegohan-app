@@ -5,6 +5,8 @@
  *   - health_goals   : view / insert / update / delete
  *   - health_records : view / insert / update / delete
  *   - health_streaks : view / insert / update / delete
+ *     (#1917 で INSERT / UPDATE は streak_type = 'daily_record' の行だけに絞った (migration 20261024110000)。ここでは daily_record の行で、
+ *      本人の行だけを扱えることを見る。種類の絞りは tests/integration/rls/health-streaks-user-writes.test.ts が見る)
  *   - recipes        : "Users can manage own recipes" (ALL)
  *
  * 本番の定義は migration と書き方が違う (TO public、UPDATE / ALL に WITH CHECK が無い) が、
@@ -163,9 +165,11 @@ const CASES: OwnTableCase[] = [
   },
   {
     table: 'health_streaks',
-    row: (userId, variant) => ({
+    // 利用者が書ける種類は daily_record だけ (#1917)。UNIQUE (user_id, streak_type) にぶつかる variant 2・3 は、どちらも
+    // RLS (42501) で先に止まる行 (他人が本人の user_id で作る・未認証で作る) なので、同じ種類でよい
+    row: (userId) => ({
       user_id: userId,
-      streak_type: `rls-drift-${TS}-${variant}`,
+      streak_type: 'daily_record',
     }),
     update: { current_streak: 5 },
     read: (r) => r.current_streak,
