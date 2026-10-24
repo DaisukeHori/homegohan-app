@@ -272,6 +272,13 @@ describe('一覧', () => {
     expect(alerts()[0]).toContain('ログインの有効期限が切れました');
   });
 
+  it('403 の本文の文が二段階認証の文なら、「権限がありません」で上書きせずその文を出す (#1917 の続き・整合 1025b)', async () => {
+    mockApi({ list: () => jsonResponse(403, { error: '二段階認証の確認が必要です' }) });
+    await renderPage();
+    expect(alerts()[0]).toContain('二段階認証の確認が必要です');
+    expect(alerts()[0]).not.toContain('権限がありません');
+  });
+
   it('通信エラー (fetch が失敗) でも汎用のエラーを出す', async () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
     await renderPage();
@@ -451,6 +458,18 @@ describe('作成', () => {
     await fillForm('題名', '本文');
     await click(findButton('作成する'), '作成ボタン');
     expect(alerts()).toEqual(['権限がありません。']);
+  });
+
+  it('作成の 403 の本文の文が二段階認証の文なら、その文を出す (#1917 の続き・整合 1025b)', async () => {
+    mockApi({
+      list: () => jsonResponse(200, listBody([])),
+      create: () => jsonResponse(403, { error: '二段階認証の登録が必要です' }),
+    });
+    await renderPage();
+    await fillForm('題名', '本文');
+    await click(findButton('作成する'), '作成ボタン');
+    expect(alerts()).toEqual(['二段階認証の登録が必要です']);
+    expect(titleInput().value).toBe('題名'); // 入力は残る
   });
 
   it('通信エラー (fetch が失敗) でも汎用のメッセージを出し、入力を残す', async () => {

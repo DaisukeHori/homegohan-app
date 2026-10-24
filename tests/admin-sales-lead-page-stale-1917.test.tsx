@@ -220,6 +220,27 @@ describe('リード詳細: ステージの変更が 409 CONFLICT_STALE_DATA で�
     expect(text()).not.toContain('読み込み直したので');
   });
 
+  it('読み直しが 403 で本文の文が二段階認証の文なら、「権限がありません」で上書きせずその文を出す (#1917 の続き・整合 1025b)', async () => {
+    let gets = 0;
+    fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') {
+        return jsonResponse(409, { error: { code: 'CONFLICT_STALE_DATA', message: SERVER_STALE_MESSAGE } });
+      }
+      gets += 1;
+      if (gets === 2) return jsonResponse(403, { error: { code: 'OP_PERMISSION_DENIED', message: '二段階認証の確認が必要です' } });
+      return jsonResponse(200, { data: lead('approach') });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await renderPage();
+
+    await changeStage('商談中');
+
+    expect(gets).toBe(2);
+    expect(text()).toContain('二段階認証の確認が必要です');
+    expect(text()).not.toContain('権限がありません');
+    expect(text()).not.toContain('読み込み直せなかった');
+  });
+
   it('読み直しが 401 (ログインが切れた) ならログインの画面へ移し、「読み込み直せなかった」の文を出さない', async () => {
     const state = mockApi(
       () => jsonResponse(409, { error: { code: 'CONFLICT_STALE_DATA', message: SERVER_STALE_MESSAGE } }),
