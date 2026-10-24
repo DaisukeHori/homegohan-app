@@ -170,8 +170,8 @@ await supabase.from('admin_audit_logs').insert({
 
 ---
 
-### POST /api/admin/users/{id}/ban
-ユーザー BAN
+### POST /api/admin/users/{id}/freeze
+ユーザーの凍結 (BAN。`src/app/api/admin/users/[id]/freeze/route.ts` の POST。画面は `/admin/users/[id]/freeze` の `src/components/admin/UserFreezeForm.tsx`)
 
 **リクエスト**:
 ```json
@@ -189,18 +189,18 @@ await supabase.from('admin_audit_logs').insert({
 - `ban_type`: `temporary` | `permanent`
 - `reason_category`: `spam` | `abuse` | `policy_violation` | `other`
 - `duration_days`: `temporary` の場合必須、1〜365
-- super_admin のみ `permanent` BAN 可能
+- super_admin のみ `permanent` BAN 可能。`notify_user` (省略時 true) は監査の details に残すだけ、`notification_message` (1000 文字まで) は受け取るが使わない。利用者へ凍結を知らせる処理は無い (画面はどちらも送らない)
 
 **レスポンス**: `200 { "data": { "ban_id": "uuid", "unban_at": "2026-05-13T00:00:00Z" } }`
 
-**副作用**: `admin_audit_logs` INSERT (severity='warn')。実装は `POST /api/admin/users/{id}/freeze`。対象が super_admin なら 403 `OP_TARGET_PROTECTED`。凍結の UPDATE は読んだ時点の「super_admin でない」状態のままのときだけ書く条件つき (読んだ `roles` が NULL なら `roles IS NULL`、そうでなければ `roles` が `super_admin` を含まない。`src/lib/admin/user-ban.ts` の `SUPER_ADMIN_ROLES_LITERAL`。PostgREST の or は UPDATE で 42703 になるので使わない)。読んでから書くまでに変わっていたら 0 行 → 読み直して、無ければ 404 `NOT_FOUND`、あれば 409 `CONFLICT_STALE_DATA` (書かず、監査も残さない)。モデレーションの BAN (`applyUserBan`) も同じ条件で、0 行なら読み直して kind `not_found` / `super_admin` / `internal`
+**副作用**: `admin_audit_logs` INSERT (`admin.user.ban`・severity='warn')。対象が super_admin なら 403 `OP_TARGET_PROTECTED`。凍結の UPDATE は読んだ時点の「super_admin でない」状態のままのときだけ書く条件つき (読んだ `roles` が NULL なら `roles IS NULL`、そうでなければ `roles` が `super_admin` を含まない。`src/lib/admin/user-ban.ts` の `SUPER_ADMIN_ROLES_LITERAL`。PostgREST の or は UPDATE で 42703 になるので使わない)。読んでから書くまでに変わっていたら 0 行 → 読み直して、無ければ 404 `NOT_FOUND`、あれば 409 `CONFLICT_STALE_DATA` (書かず、監査も残さない)。モデレーションの BAN (`applyUserBan`) も同じ条件で、0 行なら読み直して kind `not_found` / `super_admin` / `internal`
 
 ---
 
-### POST /api/admin/users/{id}/unban
-BAN 解除
+### DELETE /api/admin/users/{id}/freeze
+凍結の解除 (BAN の解除。同じ route の DELETE)
 
-**リクエスト**: `{ "reason": "誤検知と判断" }`
+**リクエスト**: `{ "reason": "誤検知と判断" }` (`reason` は必須)。応答は `200 { "data": { "success": true } }`、監査は `admin.user.unban` (severity='warn')。対象が無い (UUID でない id を含む) ときは 404 `NOT_FOUND`
 
 **権限**: `admin`, `super_admin`。実装は `DELETE /api/admin/users/{id}/freeze` (応答は `200 { "data": { "success": true } }`)。副作用は `admin_audit_logs` INSERT (`admin.user.unban`・severity='warn')。解除の UPDATE は凍結中 (`frozen_at` が NULL でない) のときだけ書く条件つきで、別の運営が先に解除していると 0 行 → 読み直して、無ければ 404 `NOT_FOUND`、あれば 409 `CONFLICT_STALE_DATA` (書かず、監査も残さない。POST の凍結の 409 と同じ扱い。#1917)
 
@@ -362,7 +362,7 @@ BAN 解除
 | 400 | `VALIDATION_ERROR` / `INVALID_JSON` / `INVALID_CHARACTER` | 本文が JSON でない (:136-139)・Zod の検査に通らない (:144-147)・本文に NULL 文字がある (:111-112) |
 | 401 | `AUTH_UNAUTHENTICATED` | 未ログイン (:119) |
 | 403 | `OP_PERMISSION_DENIED` | `admin` / `super_admin` でない (:125) |
-| 409 | `OWNER_ALREADY_IN_ORG` / `OWNER_ACCOUNT_DELETING` | オーナーにする人がすでに別の組織に所属している (:167-172) / オーナーにする人が退会の手続き中 (退会の印 `account_deletion_guards` があり、DB のトリガー `trg_organizations_owner_not_deleting` (関数 `organizations_owner_not_deleting()`) が組織の行の INSERT を止めた。`supabase/migrations/20261023130000_account_deletion_owner_guard.sql`。:184-189。文は「指定した owner は退会の手続き中です」。#1917 の続き) |
+| 409 | `OWNER_ALREADY_IN_ORG` / `OWNER_ACCOUNT_DELETING` | オーナーにする人がすでに別の組織に所属している (:167-172) / オーナーにする人が退会の手続き中 (退会の印 `account_deletion_guards` があり、DB のトリガー `trg_organizations_owner_not_deleting` (関数 `organizations_owner_not_deleting()`) が組織の行の INSERT を止めた。`supabase/migrations/20261023130000_account_deletion_owner_guard.sql`。:184-189。文は「指定したオーナー (owner_id) は退会の手続き中です」。#1917 の続き) |
 | 500 | `INTERNAL_ERROR` | 組織の行の作成 (:190-194)・オーナーの `user_profiles` の更新 (:221-227) に失敗 |
 
 **権限**: `admin`, `super_admin`
