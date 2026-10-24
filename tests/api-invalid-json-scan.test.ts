@@ -13,11 +13,13 @@
  *     (flat の route は `{ error: API_INVALID_JSON_MESSAGE }`、nested の route は invalidJsonNested())
  *   - readJsonBody (src/lib/http-params.ts) で読み、`{ ok: false }` を 400 にする
  *   - 本文を読む 1 文だけを try で包み、catch で 400 を返すか、既定の値にする
+ *   (route 全体の catch が 500 にせず、その route の決まった応答を返すもの (POST /api/ai/hint の固定のヒント (#1327)) はそのまま)
  *
  * 数えるもの (TypeScript の構文木で読む。コメント・文字列の中は見ない):
  *   src/app/api 配下の `request.json()` / `req.json()` の呼び出しのうち、`.catch(...)` を続けず、
- *   いちばん内側の try の本体が 2 文以上 (本文の読み込み以外の処理も包む) で、その catch が 400 を返さないもの
- *   (catch の中に 400 の数字・INVALID_JSON・invalidJson の名前が無いもの)。try の外で読むものも数える。
+ *   いちばん内側の try の本体が 2 文以上 (本文の読み込み以外の処理も包む) で、その catch が 500 にするもの
+ *   (catch の中に internalError・500 の数字・INTERNAL_ERROR・throw があり、400 の数字・INVALID_JSON・invalidJson の名前が無いもの)。
+ *   try の外で読むもの (例外がそのまま route の外へ出て 500 になる) も数える。
  *
  * この検査の限界 (捕まえない書き方):
  *   - request を別の名前の変数に入れてから読むもの (`const r = request; await r.json()`)
@@ -36,6 +38,8 @@ const SCAN_ROOT = 'src/app/api';
 const REQUEST_NAMES = new Set(['request', 'req']);
 /** catch が 400 (入力の誤り) を返していると見なす印 */
 const BAD_REQUEST_MARK = /\b400\b|INVALID_JSON|invalidJson/;
+/** catch が 500 にしている (または外へ投げ直す) と見なす印 */
+const INTERNAL_ERROR_MARK = /internalError|\b500\b|INTERNAL_ERROR|\bthrow\b/;
 /** 本文の読み込みだけを包む try の本体の文の数 */
 const DEDICATED_TRY_STATEMENTS = 1;
 
@@ -75,15 +79,17 @@ function isFollowedByCatch(call: ts.CallExpression): boolean {
   return ts.isPropertyAccessExpression(parent) && parent.name.text === 'catch';
 }
 
-/** いちばん内側の try (同じ関数の中で、呼び出しが try の本体にあるもの) が、読めない本文を 500 にしない形か */
+/** いちばん内側の try (同じ関数の中で、呼び出しが try の本体にあるもの) が、読めない本文を 500 にしない形か (本文だけを包む・catch が 400 か 500 以外の決まった応答) */
 function isGuardedByTry(call: ts.CallExpression, source: ts.SourceFile): boolean {
   let current: ts.Node = call;
   while (current.parent && !ts.isFunctionLike(current.parent)) {
     const parent: ts.Node = current.parent;
     if (ts.isTryStatement(parent) && parent.tryBlock === current) {
       if (parent.tryBlock.statements.length === DEDICATED_TRY_STATEMENTS) return true;
-      const catchText = parent.catchClause ? parent.catchClause.block.getText(source) : '';
-      return BAD_REQUEST_MARK.test(catchText);
+      // catch の無い try (finally だけ) は、例外がそのまま外へ出て 500 になる
+      if (!parent.catchClause) return false;
+      const catchText = parent.catchClause.block.getText(source);
+      return BAD_REQUEST_MARK.test(catchText) || !INTERNAL_ERROR_MARK.test(catchText);
     }
     current = parent;
   }
@@ -138,6 +144,34 @@ describe('API の route が JSON として読めない本文を 500 にしない
       }
     `);
     expect(findings.map((f) => f.line)).toEqual([3]);
+  });
+
+  it('route 全体の try の catch が 500 にせず、決まった応答を返す書き方は数えない', () => {
+    const findings = scanSnippet(`
+      export async function POST(request: Request) {
+        try {
+          const { a } = await request.json();
+          return NextResponse.json({ hint: hintOf(a) });
+        } catch (error) {
+          return NextResponse.json({ hint: '固定のヒント' });
+        }
+      }
+    `);
+    expect(findings).toEqual([]);
+  });
+
+  it('catch で投げ直す書き方は見つける', () => {
+    const findings = scanSnippet(`
+      export async function POST(request: Request) {
+        try {
+          const body = await request.json();
+          return NextResponse.json(await save(body));
+        } catch (error) {
+          throw error;
+        }
+      }
+    `);
+    expect(findings.map((f) => f.line)).toEqual([4]);
   });
 
   it('.catch で受ける書き方・本文だけを包む try・catch が 400 を返す try は数えない', () => {

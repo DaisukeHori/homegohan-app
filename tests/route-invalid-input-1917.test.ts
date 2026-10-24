@@ -8,7 +8,7 @@
  *     同じ型の DELETE /api/pantry/[id]・DELETE /api/meal-plans/meals/[id]・GET /api/admin/support/tickets/[id]/messages)
  *   - コメントの POST で、レシピが無い (外部キー違反 23503) と 500 になっていた
  *   - `const body = await request.json()` を route 全体の try の中で読み、壊れた JSON の例外が catch の internalError に流れて
- *     500 になっていた (下の JSON_CASES の 40 の handler)
+ *     500 になっていた (下の JSON_CASES の 39 の handler。POST /api/ai/hint は catch が固定のヒントを返す決まり (#1327) なので変えていない)
  *
  * 直したあとの不変条件 (docs/design/cross/04-api-conventions.md §5.2):
  *   - UUID の形でない id は DB に渡さず、行が無い id と同じ応答 (404。PUT / DELETE /api/recipes/[id] は今までどおり 403)
@@ -353,7 +353,6 @@ const JSON_CASES: JsonCase[] = [
       ),
   },
   { name: 'POST /api/ai/consultation/sessions', call: async (b) => (await import('@/app/api/ai/consultation/sessions/route')).POST(request('/api/ai/consultation/sessions', 'POST', b)) },
-  { name: 'POST /api/ai/hint', call: async (b) => (await import('@/app/api/ai/hint/route')).POST(request('/api/ai/hint', 'POST', b)) },
   { name: 'POST /api/ai/image/generate', call: async (b) => (await import('@/app/api/ai/image/generate/route')).POST(request('/api/ai/image/generate', 'POST', b)) },
   { name: 'POST /api/ai/menu/day/regenerate', call: async (b) => (await import('@/app/api/ai/menu/day/regenerate/route')).POST(request('/api/ai/menu/day/regenerate', 'POST', b)) },
   { name: 'POST /api/ai/menu/meal/generate', call: async (b) => (await import('@/app/api/ai/menu/meal/generate/route')).POST(request('/api/ai/menu/meal/generate', 'POST', b)) },
