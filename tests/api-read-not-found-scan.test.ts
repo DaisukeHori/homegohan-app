@@ -23,7 +23,9 @@
  *       (maybeSingle は行が無いと data が null で error も null だが、DB の失敗でも data は null になる。
  *       error を受けないと失敗が「無い」と見分けられず 404 になる。health/checkups/[id] の PUT・DELETE で見つかった形)
  *   どちらも、その if の条件か then の側で PGRST116 を見分けているもの (`if (error.code === 'PGRST116') return 404`) は数えない
- *   (行が無い失敗だけを 404 にし、ほかの失敗を 500 にする書き方)。
+ *   (行が無い失敗だけを 404 にし、ほかの失敗を 500 にする書き方)。(B)・(C) の if の条件がエラーの code を比べているもの
+ *   (`if (error?.code === POSTGRES_FOREIGN_KEY_VIOLATION && ...) return 404`。保存の参照先が無い外部キー違反だけを 404 にする。
+ *   POST /api/recipes/[id]/comments) も数えない (特定の失敗だけを見分けていて、ほかの失敗は 404 にならない)。
  *
  * この検査の限界 (捕まえない書き方。網羅は目指さない):
  *   - 404 を返す関数を呼ぶだけで、then の側に 404 の数字が出てこないもの (`if (error || !row) return notFound()`)
@@ -111,6 +113,27 @@ function mentionsNoRowsCode(node: ts.Node): boolean {
   return found;
 }
 
+/** 式の中に、エラーらしい名前の値の code を === / == で比べるところがあるか (`error?.code === X`) */
+function comparesErrorCode(expr: ts.Node): boolean {
+  let found = false;
+  const isErrorCode = (n: ts.Expression): boolean =>
+    ts.isPropertyAccessExpression(n) && n.name.text === 'code' && isErrorValue(n.expression);
+  const visit = (n: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isBinaryExpression(n) &&
+      (n.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken || n.operatorToken.kind === ts.SyntaxKind.EqualsEqualsToken) &&
+      (isErrorCode(n.left) || isErrorCode(n.right))
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(expr);
+  return found;
+}
+
 /** `a || b || c` を項の並びにする */
 function orOperands(expr: ts.Expression): ts.Expression[] {
   const inner = ts.isParenthesizedExpression(expr) ? expr.expression : expr;
@@ -175,7 +198,8 @@ function notFoundIfsAfter(statement: ts.Statement): ts.IfStatement[] {
         ts.isIfStatement(next) &&
         returnsNotFound(next.thenStatement) &&
         !mentionsNoRowsCode(next.expression) &&
-        !mentionsNoRowsCode(next.thenStatement),
+        !mentionsNoRowsCode(next.thenStatement) &&
+        !comparesErrorCode(next.expression),
     );
 }
 
@@ -428,6 +452,33 @@ describe('API の route が DB の読み込みの失敗を 404 にしない (#19
       }
     `);
     expect(findings).toEqual([]);
+  });
+
+  it('(B) .single() の失敗のうち、エラーの code を比べて特定の失敗 (外部キー違反) だけを 404 にする書き方は数えない', () => {
+    const findings = scanSnippet(`
+      export async function POST() {
+        const { data, error } = await db.from('t').insert(v).select('id').single();
+        if (error?.code === FOREIGN_KEY_VIOLATION && error.message.includes('t_parent_id_fkey')) {
+          return NextResponse.json({ error: 'x' }, { status: 404 });
+        }
+        if (error) throw error;
+        return NextResponse.json(data);
+      }
+    `);
+    expect(findings).toEqual([]);
+  });
+
+  it('(B) .single() のあとで、code を比べずに error だけで 404 にする書き方は見つける', () => {
+    const findings = scanSnippet(`
+      export async function POST() {
+        const { data, error } = await db.from('t').insert(v).select('id').single();
+        if (error) {
+          return NextResponse.json({ error: 'x' }, { status: 404 });
+        }
+        return NextResponse.json(data);
+      }
+    `);
+    expect(findings.map((f) => f.rule)).toEqual(['B']);
   });
 
   it('.single() の失敗のうち PGRST116 だけを 404 にする書き方は数えない', () => {

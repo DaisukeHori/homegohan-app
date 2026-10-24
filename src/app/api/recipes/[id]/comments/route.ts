@@ -12,11 +12,6 @@ const POSTGRES_FOREIGN_KEY_VIOLATION = '23503';
 /** recipe_comments.recipe_id → recipes.id の外部キーの名前 (supabase/migrations/20251126124224_create_meal_planner_tables.sql) */
 const RECIPE_COMMENTS_RECIPE_FK = 'recipe_comments_recipe_id_fkey';
 
-/** コメントの保存がレシピの外部キーで断られた (レシピが無い・消された) か。ほかの外部キー (user_id) の違反は含めない */
-function isMissingRecipeError(error: { code?: string; message?: string } | null): boolean {
-  return error?.code === POSTGRES_FOREIGN_KEY_VIOLATION && (error.message ?? '').includes(RECIPE_COMMENTS_RECIPE_FK);
-}
-
 // コメント一覧取得 (user_id は公開しない)
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -123,8 +118,9 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
       .select('id, content, rating, created_at')
       .single();
 
-    // レシピが無い (消された) ときは外部キー違反になる。500 にせず、レシピが無いときの 404 にする (#1917)
-    if (isMissingRecipeError(error)) {
+    // レシピが無い (消された) ときは recipe_id の外部キー違反になる。500 にせず、レシピが無いときの 404 にする (#1917)。
+    // ほかの外部キー (user_id) の違反は含めない (今までどおり 500)
+    if (error?.code === POSTGRES_FOREIGN_KEY_VIOLATION && error.message.includes(RECIPE_COMMENTS_RECIPE_FK)) {
       return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
     }
     if (error) throw error;
