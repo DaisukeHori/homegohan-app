@@ -39,12 +39,16 @@ export async function GET(request: NextRequest) {
     return internalError('GET /api/health/blood-tests', error, { userId: user.id, table: 'blood_test_results' });
   }
 
-  // 経年レビューも取得
-  const { data: longitudinalReview } = await supabase
+  // 経年レビューも取得。行が無いときだけ null。読めなかった (DB の失敗) ときは 500 (#1917 の続き。以前は失敗を捨て、
+  // 経年レビューがまだ無いように見えていた)
+  const { data: longitudinalReview, error: longitudinalReviewError } = await supabase
     .from('blood_test_longitudinal_reviews')
     .select('*')
     .eq('user_id', user.id)
     .maybeSingle();
+  if (longitudinalReviewError) {
+    return internalError('GET /api/health/blood-tests', longitudinalReviewError, { userId: user.id, table: 'blood_test_longitudinal_reviews' });
+  }
 
   return NextResponse.json({ results: data, longitudinalReview });
 }

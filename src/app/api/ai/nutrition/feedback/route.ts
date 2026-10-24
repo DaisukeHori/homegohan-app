@@ -8,7 +8,9 @@ import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
-import { AI_NUTRITION_FEEDBACK_INPUT_REQUIRED_MESSAGE, AI_NUTRITION_FEEDBACK_QUERY_REQUIRED_MESSAGE } from '@/lib/ai/ai-api-messages';
+import { AI_NUTRITION_FEEDBACK_INPUT_REQUIRED_MESSAGE, AI_NUTRITION_FEEDBACK_QUERY_REQUIRED_MESSAGE, aiInvalidDateMessage } from '@/lib/ai/ai-api-messages';
+import { isUuid } from '@/lib/http-params';
+import { isCalendarDate } from '@/lib/date-utils';
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
@@ -173,7 +175,7 @@ export async function POST(request: Request) {
 
     // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
     const body = await request.json().catch(() => null);
-    if (!body || typeof body !== 'object') {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
     }
     const { date, nutrition, mealCount, weekData, forceRefresh } = body;
@@ -181,17 +183,27 @@ export async function POST(request: Request) {
     if (!nutrition || !date) {
       return NextResponse.json({ error: AI_NUTRITION_FEEDBACK_INPUT_REQUIRED_MESSAGE }, { status: 400 });
     }
+    // 実在しない日付は DB に渡さず 400 (date 型の列に渡すと失敗する。下のキャッシュの読み込みの失敗を 500 にしたので、ここで先に断る。#1917 の続き)
+    if (!isCalendarDate(date)) {
+      return NextResponse.json({ error: aiInvalidDateMessage('日付') }, { status: 400 });
+    }
 
     const nutritionHash = generateHash(nutrition, weekData);
 
     // キャッシュを確認（forceRefreshでない場合）
     if (!forceRefresh) {
-      const { data: cached } = await supabase
+      // 行が無いときだけ「キャッシュなし」にする。読めなかった (DB の失敗) ときは 500 (#1917 の続き。以前は .single() の失敗を捨て、
+      // 失敗でもキャッシュなしとして AI の回数を数えて生成へ進んでいた)。(user_id, target_date) は一意なので 2 行にはならない
+      const { data: cached, error: cachedError } = await supabase
         .from('nutrition_feedback_cache')
         .select('id, feedback, nutrition_hash, status')
         .eq('user_id', user.id)
         .eq('target_date', date)
-        .single();
+        .maybeSingle();
+
+      if (cachedError) {
+        return internalError('POST /api/ai/nutrition/feedback', cachedError, { userId: user.id, table: 'nutrition_feedback_cache' });
+      }
 
       // キャッシュがあり、ハッシュが一致し、完了状態ならキャッシュを返す
       if (cached && cached.nutrition_hash === nutritionHash && cached.status === 'completed') {
@@ -350,15 +362,28 @@ export async function GET(request: Request) {
       .select('id, feedback, status, nutrition_hash')
       .eq('user_id', user.id);
 
+    // 形の違う値 (UUID でない cacheId・実在しない日付) は DB に渡さず、行が無いときと同じ not_found
+    // (uuid・date 型の列に渡すと失敗し、下の「DB の失敗は 500」に入るため。#1917 の続き)
     if (cacheId) {
+      if (!isUuid(cacheId)) {
+        return NextResponse.json({ status: 'not_found' });
+      }
       query = query.eq('id', cacheId);
     } else if (date) {
+      if (!isCalendarDate(date)) {
+        return NextResponse.json({ status: 'not_found' });
+      }
       query = query.eq('target_date', date);
     }
 
-    const { data, error } = await query.single();
+    // 行が無いときだけ not_found。読めなかった (DB の失敗) ときは 500 (#1917 の続き。以前は失敗も 200 の not_found にしていて、
+    // 「まだ無い」と見分けられなかった)。id は主キー・(user_id, target_date) は一意なので 2 行にはならない
+    const { data, error } = await query.maybeSingle();
 
-    if (error || !data) {
+    if (error) {
+      return internalError('GET /api/ai/nutrition/feedback', error, { userId: user.id, table: 'nutrition_feedback_cache' });
+    }
+    if (!data) {
       return NextResponse.json({ status: 'not_found' });
     }
 

@@ -123,13 +123,17 @@ export async function GET(_request: NextRequest, props: RouteContext) {
       return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
-    // 価格変更履歴を追加取得
-    const { data: priceHistory } = await supabase
+    // 価格変更履歴を追加取得。読めなかった (DB の失敗) ときは 500。空の履歴にしない (#1917 の続き。以前は失敗を捨て、
+    // 価格を一度も変えていないプランに見えていた)
+    const { data: priceHistory, error: priceHistoryError } = await supabase
       .from('plan_price_history')
       .select('*')
       .eq('plan_id', params.id)
       .order('created_at', { ascending: false })
       .limit(20);
+    if (priceHistoryError) {
+      return internalError('GET /api/super-admin/plans/[id]', priceHistoryError, { table: 'plan_price_history' }, { shape: 'nested' });
+    }
 
     return NextResponse.json({ data: { ...plan, price_history: priceHistory ?? [] } });
   } catch (err) {

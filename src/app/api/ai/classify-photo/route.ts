@@ -278,7 +278,7 @@ export async function POST(request: Request) {
     const startedAt = Date.now();
     // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
     const body = await request.json().catch(() => null);
-    if (!body || typeof body !== 'object') {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
     }
     const includeMealAnalysis = Boolean(body.includeMealAnalysis);
