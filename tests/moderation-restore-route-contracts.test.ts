@@ -191,7 +191,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 入口 (RT-1〜RT-4
   it('RT-1: 400 INVALID_CHARACTER (NULL 文字)。認証にも Supabase にも触れない', async () => {
     const res = await call('food', 'flag-1', restoreRequest({ restore_note: 'メモ\u0000' }));
     expect(res.status).toBe(400);
-    expect(((await res.json()) as { code: string }).code).toBe('INVALID_CHARACTER');
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('INVALID_CHARACTER');
     expect(mockRequireRole).not.toHaveBeenCalled();
     expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
     expect(mockCreateClient).not.toHaveBeenCalled();

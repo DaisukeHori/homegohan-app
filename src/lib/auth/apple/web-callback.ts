@@ -20,11 +20,11 @@ export const APPLE_CALLBACK_PROVIDER = 'apple';
  * ?provider=apple の /auth/callback に ?error= が付いて戻ったとき (Apple の画面で取り消した・拒否した、Apple / GoTrue の失敗。S-34) に、
  * ログイン画面 (/login?error=) の赤いバナーに出す固定の文。Apple・GoTrue の英文 (error_description・error の値) を出さない。
  * error の値 (user_cancelled_authorize・access_denied・server_error など。Apple と GoTrue が決める) では分けない (§21 Q-7 の (a))。
- * ログイン画面は ?error= の値をもう 1 回 decodeURIComponent してから出す (src/app/(auth)/login/page.tsx:62) ので、% を含めない
+ * ログイン画面は ?error= の値をもう 1 回 decodeURIComponent してから出す (src/app/(auth)/login/page.tsx:65) ので、% を含めない
  */
 export const APPLE_WEB_CALLBACK_ERROR_MESSAGE = 'Apple でのログインを完了できませんでした。もう一度お試しください。';
 
-/** ?provider= が apple なら APPLE_WEB_CALLBACK_ERROR_MESSAGE、ほかは null (呼ぶ側は今までどおり error_description か error を使う) */
+/** ?provider= が apple なら APPLE_WEB_CALLBACK_ERROR_MESSAGE、ほかは null (呼ぶ側は provider に関わらない固定の文 AUTH_LINK_ERROR_MESSAGE を使う。#1917 の続き) */
 export function appleCallbackErrorMessage(provider: string | null): string | null {
   return provider === APPLE_CALLBACK_PROVIDER ? APPLE_WEB_CALLBACK_ERROR_MESSAGE : null;
 }

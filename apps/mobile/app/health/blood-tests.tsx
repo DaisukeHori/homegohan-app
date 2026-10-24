@@ -227,7 +227,8 @@ export default function BloodTestsPage() {
       setItems(res.results ?? []);
       setLongitudinalReview(res.longitudinalReview ?? null);
     } catch (e: any) {
-      Alert.alert("エラー", e?.message ?? "データの取得に失敗しました。");
+      // 本文の文だけを出す (`HTTP 4xx …: {"error":…}` の生の文字列を出さない。#1917 の続き)
+      Alert.alert("エラー", getJapaneseApiErrorMessage(e, "データの取得に失敗しました。"));
     } finally {
       setIsLoading(false);
     }
@@ -370,7 +371,7 @@ export default function BloodTestsPage() {
       }
       setScreen("review");
     } catch (e: any) {
-      Alert.alert("失敗", e?.message ?? "登録に失敗しました。");
+      Alert.alert("失敗", getJapaneseApiErrorMessage(e, "登録に失敗しました。"));
     } finally {
       setIsSubmitting(false);
     }

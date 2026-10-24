@@ -53,8 +53,39 @@ const ADMIN_NOTES_MAX_LENGTH = 5000;
 const STALE_UPDATE_MESSAGE =
   "別の運営が先にこの問い合わせを更新していました。最新の内容を読み込み直したので、ステータスとメモを確かめてから、もう一度操作してください";
 
+/** 管理者メモの入力欄が書きかけ (読み直しで消さずに残す) のときに添える文 (#1917) */
+const NOTE_DRAFT_KEPT_SUFFIX = "（書きかけの管理者メモはそのまま残しています）";
+
 /** STALE_UPDATE_MESSAGE の、管理者メモの入力欄が書きかけ (読み直しで消さずに残す) のときの文 (#1917) */
-const STALE_UPDATE_MESSAGE_DRAFT_KEPT = `${STALE_UPDATE_MESSAGE}（書きかけの管理者メモはそのまま残しています）`;
+const STALE_UPDATE_MESSAGE_DRAFT_KEPT = `${STALE_UPDATE_MESSAGE}${NOTE_DRAFT_KEPT_SUFFIX}`;
+
+/**
+ * 更新が 409 CONFLICT_STALE_DATA で断られ、開いている問い合わせの詳細の読み直しにも失敗したときの文 (#1917)。
+ * 読み込み直せていないので「読み込み直した」とは言わない。内容の欄の「再試行」で読み直せたら STALE_UPDATE_MESSAGE に変える
+ */
+const STALE_RELOAD_FAILED_MESSAGE =
+  "別の運営が先にこの問い合わせを更新していました。最新の内容を読み込み直せませんでした。内容の欄の「再試行」で読み込み直してから、もう一度操作してください";
+
+/**
+ * 詳細の読み直し (reloadInquiryDetail) の結果。
+ *   - reloaded  : 読み直せた。draftKept は、管理者メモの入力欄が書きかけだったので残したか
+ *   - failed    : 読み直せなかった (詳細の欄にエラーと「再試行」が出ている)
+ *   - superseded: 読み直しの最中に別の問い合わせを開いた・閉じたので結果を捨てた
+ */
+type DetailReloadOutcome = { kind: "reloaded"; draftKept: boolean } | { kind: "failed" } | { kind: "superseded" };
+
+/** 409 のあとの詳細の読み直しの結果から、更新の欄に出す文 (superseded のときは null = 文を変えない)。draftEdited は読み直しの前に書きかけだったか */
+function staleUpdateMessageOf(outcome: DetailReloadOutcome, draftEdited: boolean): string | null {
+  switch (outcome.kind) {
+    case "reloaded":
+      return outcome.draftKept ? STALE_UPDATE_MESSAGE_DRAFT_KEPT : STALE_UPDATE_MESSAGE;
+    case "failed":
+      // 読み直せなかったときは入力欄に手を付けていないので、書きかけはそのまま残っている
+      return draftEdited ? `${STALE_RELOAD_FAILED_MESSAGE}${NOTE_DRAFT_KEPT_SUFFIX}` : STALE_RELOAD_FAILED_MESSAGE;
+    case "superseded":
+      return null;
+  }
+}
 
 // 失敗の応答の本文 (JSON でなければ null)
 async function readFailureBody(res: Response): Promise<unknown> {
@@ -216,21 +247,21 @@ export default function SupportInquiriesPage() {
   // 管理者メモの入力欄は、書きかけ (初めの値から変えている) なら消さずに残し、書きかけでなければ読み直したメモにする
   // (開いたときの古いメモを残すと、次の更新でそれを送り、別の運営が書いたメモを上書きしてしまうため)。
   // 取得した時点で、API が閲覧を監査ログに残す (表示が古いまま操作させないために読み直す)
-  const reloadInquiryDetail = useCallback(async (inquiryId: string) => {
+  const reloadInquiryDetail = useCallback(async (inquiryId: string): Promise<DetailReloadOutcome> => {
     const seq = ++detailSeq.current;
     setDetailError(null);
     setDetailLoading(true);
     try {
       const res = await fetch(`/api/admin/inquiries/${inquiryId}`);
-      if (seq !== detailSeq.current) return;
+      if (seq !== detailSeq.current) return { kind: "superseded" };
       if (!res.ok) {
         const message = await describeFailure(res, "問い合わせの内容を取得できませんでした");
-        if (seq !== detailSeq.current) return; // 本文を読んでいる間に選び直し・閉じられていたら、古い失敗は捨てる
+        if (seq !== detailSeq.current) return { kind: "superseded" }; // 本文を読んでいる間に選び直し・閉じられていたら、古い失敗は捨てる
         setDetailError(message);
-        return;
+        return { kind: "failed" };
       }
       const data = await res.json();
-      if (seq !== detailSeq.current) return;
+      if (seq !== detailSeq.current) return { kind: "superseded" };
       setSelectedInquiry(data.inquiry);
       const savedNote: string = data.inquiry.adminNotes || "";
       const draftKept = adminNoteRef.current !== loadedNoteRef.current;
@@ -241,14 +272,30 @@ export default function SupportInquiriesPage() {
       } else {
         resetAdminNote(savedNote);
       }
+      return { kind: "reloaded", draftKept };
     } catch (error) {
       console.error("Failed to reload inquiry:", error);
-      if (seq !== detailSeq.current) return;
+      if (seq !== detailSeq.current) return { kind: "superseded" };
       setDetailError("問い合わせの内容を取得できませんでした（通信エラー）");
+      return { kind: "failed" };
     } finally {
       if (seq === detailSeq.current) setDetailLoading(false);
     }
   }, [resetAdminNote]);
+
+  /**
+   * 409 CONFLICT_STALE_DATA のあとに、開いている問い合わせの詳細を読み直し、結果に合わせて更新の欄の文を決める (#1917)。
+   * 読み直しの前に文を決めない (読み直せなかったのに「読み込み直した」の文を残さない)。
+   * 詳細の欄の「再試行」(409 のあとの読み直しに失敗したとき) もこれを使い、読み直せたら「読み込み直した」の文に変える
+   */
+  const reloadStaleDetail = useCallback(
+    async (inquiryId: string) => {
+      const draftEdited = adminNoteRef.current !== loadedNoteRef.current;
+      const message = staleUpdateMessageOf(await reloadInquiryDetail(inquiryId), draftEdited);
+      if (message !== null) setUpdateError(message);
+    },
+    [reloadInquiryDetail],
+  );
 
   const closeInquiry = () => {
     detailSeq.current += 1; // 取得中の詳細があっても、閉じたあとの結果は捨てる
@@ -263,13 +310,19 @@ export default function SupportInquiriesPage() {
   const handleStatusUpdate = async (inquiryId: string, newStatus: string) => {
     setUpdating(true);
     setUpdateError(null);
+    // 管理者メモは、入力欄に手を付けた (最後に読んだ・保存したメモから変えた) ときだけ送る。手を付けていないのに開いたときの
+    // メモを送ると、API は自分が読んだ値で比べる (画面を開いてからの変更は見分けない。operator/02 §PUT /api/admin/inquiries/{id})
+    // ので、開いたあとに別の運営が書いたメモを、ステータスだけを変えた操作で上書きしてしまう (#1917)。
+    // 空にした入力欄は送らない (メモを消さない。これまでと同じ)
+    const noteEdited = adminNoteRef.current !== loadedNoteRef.current;
+    const adminNotesToSend = noteEdited && adminNote !== "" ? adminNote : undefined;
     try {
       const res = await fetch(`/api/admin/inquiries/${inquiryId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           status: newStatus,
-          adminNotes: adminNote || undefined,
+          adminNotes: adminNotesToSend,
         }),
       });
 
@@ -278,15 +331,15 @@ export default function SupportInquiriesPage() {
         if (isStaleDataConflict(res.status, body)) {
           // 別の運営が先に変えていた (API は書いていない)。表示が古いので、一覧と開いている問い合わせの詳細を読み直し、
           // その旨を出す (運営が手で読み直さなくてよいように。#1917)。書きかけの管理者メモは読み直しで消さない
-          // (書きかけでなければ、入力欄は読み直したメモになる。文もそれに合わせる)
-          const draftEdited = adminNoteRef.current !== loadedNoteRef.current;
-          setUpdateError(draftEdited ? STALE_UPDATE_MESSAGE_DRAFT_KEPT : STALE_UPDATE_MESSAGE);
-          const reloads: Promise<void>[] = [fetchInquiries()];
+          // (書きかけでなければ、入力欄は読み直したメモになる。文もそれに合わせる)。
+          // 文は詳細の読み直しの結果を待ってから決める (読み直しに失敗したら「読み込み直せなかった」の文にする)
           if (selectedInquiry?.id === inquiryId) {
             setStaleReloadedId(inquiryId);
-            reloads.push(reloadInquiryDetail(inquiryId));
+            await Promise.all([fetchInquiries(), reloadStaleDetail(inquiryId)]);
+          } else {
+            setUpdateError(noteEdited ? STALE_UPDATE_MESSAGE_DRAFT_KEPT : STALE_UPDATE_MESSAGE);
+            await fetchInquiries();
           }
-          await Promise.all(reloads);
           return;
         }
         // 更新できていないのに、画面だけ新しいステータスに見えないようにする (#1121)
@@ -303,10 +356,10 @@ export default function SupportInquiriesPage() {
           if (!prev) return null;
           // API が返した更新後の問い合わせ (本文・メモ・resolvedAt なども最新) があればそれを使う
           if (data?.inquiry) return { ...prev, ...data.inquiry };
-          return { ...prev, status: newStatus, adminNotes: adminNote || prev.adminNotes };
+          return { ...prev, status: newStatus, adminNotes: adminNotesToSend ?? prev.adminNotes };
         });
         // 管理者メモの入力欄は、保存された内容に合わせる (書きかけでなくなる)
-        resetAdminNote(data?.inquiry ? (data.inquiry.adminNotes || "") : adminNote);
+        resetAdminNote(data?.inquiry ? (data.inquiry.adminNotes || "") : (adminNotesToSend ?? adminNote));
       }
     } catch (error) {
       console.error("Failed to update inquiry:", error);
@@ -478,9 +531,10 @@ export default function SupportInquiriesPage() {
                     <span>{detailError}</span>
                     <button
                       onClick={() =>
-                        // 409 のあとの読み直しに失敗したときは、詳細だけを取り直す (書きかけのメモは残す。#1917)
+                        // 409 のあとの読み直しに失敗したときは、詳細だけを取り直す (書きかけのメモは残す)。
+                        // 読み直せたら、更新の欄の文も「読み込み直した」の文にする (#1917)
                         staleReloadedId === selectedInquiry.id
-                          ? reloadInquiryDetail(selectedInquiry.id)
+                          ? reloadStaleDetail(selectedInquiry.id)
                           : openInquiry(selectedInquiry)
                       }
                       className="underline whitespace-nowrap hover:text-red-900"

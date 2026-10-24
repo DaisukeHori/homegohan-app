@@ -40,6 +40,8 @@ const ROUTE_NAME = 'POST /api/super-admin/embeddings/regenerate';
 //  他は name_embedding を持つ。'recipes' / 'meals' / 'catalog_products' は
 //  embedding 列を持たないため対象外 — 追加するには migration が必要)
 const ALLOWED_TABLES = ['dataset_ingredients', 'dataset_recipes', 'dataset_menu_sets'] as const;
+/** 400 の文: table が ALLOWED_TABLES に無い。受け付ける値 (英字の表の名前) は括弧に入れて添える (#1917 の続き。healthEnumMessage と同じ形) */
+const TABLE_INVALID_MESSAGE = `対象の表 (table) は次のいずれかを指定してください (${ALLOWED_TABLES.join(' / ')})`;
 
 interface EdgeFunctionResult {
   success?: boolean;
@@ -55,18 +57,18 @@ interface EdgeFunctionResult {
 
 /**
  * 成功の本文の message (#1917)。Edge Function の message は英語の文 ('Processed 42 rows. Call again with offset=42' など) なので
- * 本文に入れず、処理した件数と続きの有無から日本語の文を作る (Edge Function の文は使わない)
+ * 本文に入れず、処理した件数と続きの有無から日本語の文を作る (Edge Function の文は使わない。次に送る英字の項目名 (offset) は括弧に入れる。#1917 の続き)
  */
 function regenerateResultMessage(processed: number, hasMore: boolean, nextOffset: number | undefined): string {
   if (!hasMore) return `${processed} 件を再生成しました。残りはありません`;
   return nextOffset === undefined
     ? `${processed} 件を再生成しました。続きがあります`
-    : `${processed} 件を再生成しました。続きは offset ${nextOffset} から実行してください`;
+    : `${processed} 件を再生成しました。続きは開始の位置 (offset) を ${nextOffset} にして実行してください`;
 }
 
 export async function POST(request: NextRequest) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   try {
     const actor = await requireRole(['super_admin']);
@@ -83,12 +85,12 @@ export async function POST(request: NextRequest) {
     const { table, onlyMissing, offset, limit } = (body as Record<string, unknown>) ?? {};
 
     if (!table || typeof table !== 'string') {
-      return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: 'table は必須です' } }, { status: 400 });
+      return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: '対象の表 (table) は必須です' } }, { status: 400 });
     }
 
     if (!(ALLOWED_TABLES as readonly string[]).includes(table)) {
       return NextResponse.json(
-        { error: { code: 'VALIDATION_ERROR', message: `table は ${ALLOWED_TABLES.join(' / ')} のいずれかである必要があります` } },
+        { error: { code: 'VALIDATION_ERROR', message: TABLE_INVALID_MESSAGE } },
         { status: 400 },
       );
     }

@@ -9,6 +9,7 @@ import { Text, TextInput } from "../../src/components/ui/Text";
 import Svg, { Path } from "react-native-svg";
 
 import { colors, spacing, radius, shadows } from "../../src/theme";
+import { getJapaneseApiErrorMessage } from "../../src/lib/api-error";
 import { completeAuthLink } from "../../src/lib/authLink";
 import { extractSupabaseLinkParams } from "../../src/lib/deeplink";
 import { supabase } from "../../src/lib/supabase";
@@ -121,7 +122,8 @@ export default function LoginScreen() {
         }
       }
     } catch (e: any) {
-      Alert.alert("Googleログイン失敗", e?.message ?? "Googleログインに失敗しました。");
+      // Supabase Auth (GoTrue)・Google の英語の文は出さない (日本語の文だけを出す。#1917 の続き)
+      Alert.alert("Googleログイン失敗", getJapaneseApiErrorMessage(e, "Googleログインに失敗しました。"));
     } finally {
       setIsSubmitting(false);
     }
@@ -210,7 +212,7 @@ export default function LoginScreen() {
       // user_profiles から onboarding 状態を取得して振り分け
       await routeAfterSignIn(next);
     } catch (e: any) {
-      const msg = e?.message ?? "ログインに失敗しました。";
+      const msg = getJapaneseApiErrorMessage(e, "ログインに失敗しました。");
       setErrorMessage(msg);
       Alert.alert("ログイン失敗", msg);
     } finally {

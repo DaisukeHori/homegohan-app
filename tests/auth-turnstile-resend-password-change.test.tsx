@@ -73,6 +73,7 @@ vi.mock('framer-motion', async () => {
 
 import VerifyPage from '@/app/(auth)/auth/verify/page';
 import { CAPTCHA_FAILED_MESSAGE } from '@/lib/auth/turnstile';
+import { AUTH_RATE_LIMITED_MESSAGE } from '@/lib/auth/auth-error-message';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -267,15 +268,38 @@ describe('メール確認の再送 (/auth/verify)', () => {
       expect(resendButton().disabled).toBe(true); // 新しいトークンが届くまで
     });
 
-    it('CAPTCHA 以外のエラーは、今までどおり「再送信に失敗しました」を出す', async () => {
+    it('回数の制限 (429) は、GoTrue の英語の文を付け足さず「しばらくしてから」の案内を出す (#1917 の続き)', async () => {
       mocks.resend.mockResolvedValue({ data: null, error: { status: 429, message: 'email rate limit exceeded' } });
       await renderPage(VerifyPage);
       await emitToken('tok-resend-1');
 
       await click(resendButton());
 
-      expect(text()).toContain('再送信に失敗しました: email rate limit exceeded');
+      expect(text()).toContain(AUTH_RATE_LIMITED_MESSAGE);
+      expect(text()).not.toContain('email rate limit exceeded');
       expect(text()).not.toContain(CAPTCHA_FAILED_MESSAGE);
+    });
+
+    it('CAPTCHA・回数の制限以外の GoTrue の英語の文は出さず、「再送信に失敗しました」の固定の文を出す (#1917 の続き)', async () => {
+      mocks.resend.mockResolvedValue({ data: null, error: { status: 422, code: 'email_address_invalid', message: 'Email address "x" is invalid' } });
+      await renderPage(VerifyPage);
+      await emitToken('tok-resend-1');
+
+      await click(resendButton());
+
+      expect(text()).toContain('再送信に失敗しました。しばらくしてから再度お試しください。');
+      expect(text()).not.toContain('is invalid');
+    });
+
+    it('resend が例外を投げても、例外の英語の文を出さず「予期せぬエラー」の固定の文を出す (#1917 の続き)', async () => {
+      mocks.resend.mockRejectedValue(new Error('Failed to fetch dynamically imported module'));
+      await renderPage(VerifyPage);
+      await emitToken('tok-resend-1');
+
+      await click(resendButton());
+
+      expect(text()).toContain('予期せぬエラーが発生しました。しばらくしてから再度お試しください。');
+      expect(text()).not.toContain('Failed to fetch');
     });
   });
 });

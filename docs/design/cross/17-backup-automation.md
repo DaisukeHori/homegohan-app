@@ -1372,7 +1372,7 @@ export const drTestRecordBodySchema = z
       .min(0, '復旧にかかった分は 0 以上で書いてください')
       .max(DR_TEST_RTO_MINUTES_MAX, `復旧にかかった分は ${DR_TEST_RTO_MINUTES_MAX} 以下で書いてください`)
       .nullable(),
-    smoke: z.enum(DR_TEST_SMOKE_RESULTS, { message: 'smoke の結果を選んでください' }),
+    smoke: z.enum(DR_TEST_SMOKE_RESULTS, { message: '動作確認 (smoke) の結果を選んでください' }),
     notes: z
       .string({ message: 'メモを文字で書いてください' })
       .max(DR_TEST_NOTES_MAX_LENGTH, `メモは ${DR_TEST_NOTES_MAX_LENGTH} 文字以内で書いてください`),
@@ -1951,7 +1951,7 @@ if __name__ == "__main__":
 | 同 | §4.7 の各失敗 | 終了 1 (`not_configured` は 3。`run` の config と、`restore` の config = 手元のシェルに R2 の 4 つが無い) |
 | 同 (`report-issue`) | `GITHUB_REPOSITORY` が無い・空 | 標準エラー出力に名前、終了 2 (Issue に触らない) |
 | 同 (`report-issue`) | GitHub の API の失敗 (`listOpenIssues` / `createIssue` / `updateIssue` / `closeIssue` が例外) | 標準エラー出力に操作の名前と伏せた文、終了 1 (Issue は途中までのまま。§4.7・§8.3 の report_failed) |
-| `POST /api/super-admin/backups/dr-tests` | 本文に NUL | 400 `{ error: <文>, code: 'INVALID_CHARACTER' }` (`rejectNullCharacterBody` の既存の形。ほかの項目と違い入れ子にしない) |
+| `POST /api/super-admin/backups/dr-tests` | 本文に NUL | 400 `{ error: { code: 'INVALID_CHARACTER', message: <文> } }` (`rejectNullCharacterBody(request, { shape: 'nested' })`。ほかの項目と同じ入れ子の形。#1917 の続き) |
 | 同 | 未ログイン | 401 `{ error: { code: 'UNAUTHORIZED', message } }` |
 | 同 | super_admin でない・凍結中 | 403 `{ error: { code: 'FORBIDDEN', message } }` |
 | 同 | JSON でない | 400 `{ error: { code: 'OP_INVALID_INPUT', message: 'リクエストボディが不正です', details: [] } }` (`invalidJsonBodyResponse`) |

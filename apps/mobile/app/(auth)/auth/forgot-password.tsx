@@ -6,6 +6,7 @@ import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, View } fr
 import { Text, TextInput } from "../../../src/components/ui/Text";
 
 import { colors, spacing, radius, shadows } from "../../../src/theme";
+import { getJapaneseApiErrorMessage } from "../../../src/lib/api-error";
 import { supabase } from "../../../src/lib/supabase";
 import { TurnstileWidget, useTurnstile } from "../../../src/components/auth/TurnstileWidget";
 import { CAPTCHA_FAILED_MESSAGE, isCaptchaFailure } from "../../../src/lib/turnstile";
@@ -48,7 +49,7 @@ export default function ForgotPasswordPage() {
       Alert.alert("送信しました", successMsg);
     } catch (e: any) {
       // #1165: 英語の生のエラー文は出さない (ウィジェットは取り直し済み)
-      Alert.alert("送信失敗", isCaptchaFailure(e) ? CAPTCHA_FAILED_MESSAGE : (e?.message ?? "送信に失敗しました。"));
+      Alert.alert("送信失敗", isCaptchaFailure(e) ? CAPTCHA_FAILED_MESSAGE : getJapaneseApiErrorMessage(e, "送信に失敗しました。"));
     } finally {
       setIsSubmitting(false);
     }

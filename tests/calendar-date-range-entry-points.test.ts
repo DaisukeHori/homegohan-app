@@ -57,7 +57,7 @@ describe('GET /api/health/records/[date]: 範囲の外の日付は 400 (前日�
       params: Promise.resolve({ date }),
     });
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: '日付 (date) は YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください' });
+    expect(await res.json()).toEqual({ error: '日付 (date)はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください' });
     expect(h.from).not.toHaveBeenCalled();
   });
 });
@@ -66,7 +66,7 @@ describe('GET /api/ai/menu/meal/pending: 範囲の外の週の日付は 400 (週
   it.each(OUT_OF_RANGE_DATES)('date=%s は 400 で、DB に触れない', async (date) => {
     const res = await getMealPending(new Request(`http://localhost/api/ai/menu/meal/pending?date=${date}`));
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: '日付は YYYY-MM-DD の形の実在する日付 (0101-01-02〜9998-12-30) で指定してください' });
+    expect(await res.json()).toEqual({ error: '日付はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください' });
     expect(h.from).not.toHaveBeenCalled();
   });
 });
@@ -81,7 +81,7 @@ describe('POST /api/ai/menu/weekly/request: 範囲の外の開始日は 400 (7 �
       }),
     );
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: '開始日は YYYY-MM-DD の形の実在する日付 (0101-01-02〜9998-12-30) で指定してください' });
+    expect(await res.json()).toEqual({ error: '開始日はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください' });
     expect(h.getUser).not.toHaveBeenCalled();
     expect(h.from).not.toHaveBeenCalled();
   });

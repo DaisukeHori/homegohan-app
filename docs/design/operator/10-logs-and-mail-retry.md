@@ -1820,7 +1820,7 @@ export function toEmailOutboxListItem(row: EmailOutboxApiRow): EmailOutboxListIt
 const EmailOutboxFilterSchema = z.object({
   status: z.enum(EMAIL_OUTBOX_LIST_STATUSES).default('dead'),
   template: z.string().max(100).optional(),
-  cursor: z.string().max(512).refine((v) => decodeAppLogCursor(v) !== null, 'cursor が不正です').optional(),
+  cursor: z.string().max(512).refine((v) => decodeAppLogCursor(v) !== null, '続きの位置 (cursor) が不正です').optional(),
 });
 export interface EmailOutboxQuery {
   status: EmailOutboxListStatus;

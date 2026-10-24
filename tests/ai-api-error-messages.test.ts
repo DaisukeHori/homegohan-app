@@ -8,7 +8,9 @@
  *   走査は関数の戻り値 (aiTargetSlotDateInvalidMessage(i) など) と、route の外のファイル (相談の提案の実行の結果) の文を見ない。
  *
  * このテストが確かめること:
- *   1. ai-api-messages.ts の文の定数と、文を作る関数の戻り値が、どれも日本語 (英語だけの文でない)
+ *   1. ai-api-messages.ts の文の定数と、文を作る関数の戻り値が、どれも日本語 (英語だけの文でない) で、括弧の外に英字の項目名・値が無い
+ *      (englishIdentifiersOutsideParentheses。関数の戻り値は route の走査 (tests/api-error-english-field-names.test.ts) が読まないので、
+ *      ここで export された全部の関数を値で確かめる。食事の区分の文は v4 / v5 が渡す 5 値を差し込む)
  *   2. 文を作る関数が、数・位置・日付の範囲を文に入れる (手で書いた期待値と突き合わせる)
  *   3. AI の全 route と相談の提案の実行 (src/lib/ai/consultation-action-executor.ts) の、どこかのオブジェクトの error / message に直接書いた文
  *      (v4 / v5 の枠の検証の戻り値・提案の実行の結果を含む) と、検証の失敗の文 (`errors.push(…)` の引数・`errors: [...]` の要素。
@@ -17,14 +19,15 @@
  */
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { MEAL_ORDER } from '@homegohan/shared';
 import * as messages from '@/lib/ai/ai-api-messages';
-import { isEnglishOnly, JAPANESE, routeFilesUnder, sourceOf } from './helpers/api-error-text-scan';
+import { englishIdentifiersOutsideParentheses, isEnglishOnly, JAPANESE, routeFilesUnder, sourceOf } from './helpers/api-error-text-scan';
 
 /** 見張る AI の route の根 */
 const API_AI_ROUTES_ROOT = 'src/app/api/ai';
 
 /** 受け付ける日付の範囲 (手で書いた期待値。isCalendarDate の範囲と同じ) */
-const DATE_RANGE_JA = 'YYYY-MM-DD の形の実在する日付 (0101-01-02〜9998-12-30)';
+const DATE_RANGE_JA = 'YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付';
 
 describe('ai-api-messages.ts の文は日本語', () => {
   const stringEntries = Object.entries(messages).filter((entry): entry is [string, string] => typeof entry[1] === 'string');
@@ -45,7 +48,7 @@ describe('ai-api-messages.ts の文は日本語', () => {
 
   it('日付の条件は、受け付ける範囲を書いた日本語の文', () => {
     expect(messages.AI_CALENDAR_DATE_REQUIREMENT_JA).toBe(DATE_RANGE_JA);
-    expect(messages.aiInvalidDateMessage('開始日')).toBe(`開始日は ${DATE_RANGE_JA} で指定してください`);
+    expect(messages.aiInvalidDateMessage('開始日')).toBe(`開始日は${DATE_RANGE_JA}で指定してください`);
     expect(messages.aiRequiredFieldMessage('日付')).toBe('日付を指定してください');
   });
 
@@ -53,27 +56,57 @@ describe('ai-api-messages.ts の文は日本語', () => {
     expect(messages.aiTargetSlotsTooManyMessage(93, 31, 3)).toBe('献立を作る枠は 93 個 (31 日 × 3 食) までです');
     expect(messages.aiTargetSlotsSpanTooLongMessage(31)).toBe('献立を作る期間は、最初の日から最後の日まで含めて 31 日以内にしてください');
     expect(messages.aiTargetSlotNotObjectMessage(0)).toBe('1 番目の枠の指定が正しくありません');
-    expect(messages.aiTargetSlotDateInvalidMessage(2)).toBe(`3 番目の枠の日付は ${DATE_RANGE_JA} で指定してください`);
+    expect(messages.aiTargetSlotDateInvalidMessage(2)).toBe(`3 番目の枠の日付は${DATE_RANGE_JA}で指定してください`);
+    // 受け付ける英字の値は括弧の中に ' / ' で並べる (#1917 の続き。以前は「… の食事の区分は breakfast・lunch のどれかにしてください」で、英字の値が括弧の外に出ていた)
     expect(messages.aiTargetSlotMealTypeInvalidMessage(1, ['breakfast', 'lunch'])).toBe(
-      '2 番目の枠の食事の区分は breakfast・lunch のどれかにしてください',
+      '2 番目の枠の食事の区分 (mealType) は次のいずれかを指定してください (breakfast / lunch)',
     );
     expect(messages.aiTargetSlotPlannedMealIdInvalidMessage(4)).toBe('5 番目の枠の献立の指定が正しくありません');
     expect(messages.aiTargetSlotDuplicateMessage('2026-10-10', 'dinner')).toBe('同じ枠 (2026-10-10 の dinner) が 2 回指定されています');
   });
 
-  it('文を作る関数の戻り値は、どれも英語だけの文でない', () => {
-    const outputs = [
-      messages.aiInvalidDateMessage('日付'),
-      messages.aiRequiredFieldMessage('日付'),
-      messages.aiTargetSlotsTooManyMessage(1, 1, 1),
-      messages.aiTargetSlotsSpanTooLongMessage(1),
-      messages.aiTargetSlotNotObjectMessage(0),
-      messages.aiTargetSlotDateInvalidMessage(0),
-      messages.aiTargetSlotMealTypeInvalidMessage(0, ['breakfast']),
-      messages.aiTargetSlotPlannedMealIdInvalidMessage(0),
-      messages.aiTargetSlotDuplicateMessage('2026-10-10', 'lunch'),
-    ];
-    for (const text of outputs) expect(isEnglishOnly(text), text).toBe(false);
+  /**
+   * 文を作る関数ごとの戻り値 (関数の名前 → 戻り値)。差し込む値は、本番で入る値 (食事の区分は v4 / v5 が渡す正本 MEAL_ORDER の 5 値・
+   * 重複の枠は英字の区分の値) にする。ai-api-messages.ts に関数を足したら、ここにも足す (下の it が export の一覧との一致を確かめる)
+   */
+  const FUNCTION_OUTPUTS: Readonly<Record<string, string>> = {
+    aiInvalidDateMessage: messages.aiInvalidDateMessage('日付'),
+    aiRequiredFieldMessage: messages.aiRequiredFieldMessage('日付'),
+    aiTargetSlotsTooManyMessage: messages.aiTargetSlotsTooManyMessage(1, 1, 1),
+    aiTargetSlotsSpanTooLongMessage: messages.aiTargetSlotsSpanTooLongMessage(1),
+    aiTargetSlotNotObjectMessage: messages.aiTargetSlotNotObjectMessage(0),
+    aiTargetSlotDateInvalidMessage: messages.aiTargetSlotDateInvalidMessage(0),
+    aiTargetSlotMealTypeInvalidMessage: messages.aiTargetSlotMealTypeInvalidMessage(0, MEAL_ORDER),
+    aiTargetSlotPlannedMealIdInvalidMessage: messages.aiTargetSlotPlannedMealIdInvalidMessage(0),
+    aiTargetSlotDuplicateMessage: messages.aiTargetSlotDuplicateMessage('2026-10-10', 'lunch'),
+  };
+
+  it('文を作る関数の戻り値の一覧は、ai-api-messages.ts が export する関数を全部持つ (足した関数が下の確かめから漏れない)', () => {
+    const exportedFunctions = Object.entries(messages)
+      .filter(([, value]) => typeof value === 'function')
+      .map(([name]) => name);
+    expect(Object.keys(FUNCTION_OUTPUTS).sort()).toEqual(exportedFunctions.sort());
+  });
+
+  it('文を作る関数の戻り値は、どれも英語だけの文でなく、括弧の外に英字の項目名・値が無い (#1917 の続き)', () => {
+    for (const [name, text] of Object.entries(FUNCTION_OUTPUTS)) {
+      expect(isEnglishOnly(text), name).toBe(false);
+      expect(englishIdentifiersOutsideParentheses(text), `${name}: ${text}`).toEqual([]);
+    }
+  });
+
+  it('判定は、以前の食事の区分の文 (英字の値を括弧の外に並べた形) を拾う (上の確かめが空振りしない)', () => {
+    expect(englishIdentifiersOutsideParentheses('2 番目の枠の食事の区分は breakfast・lunch・midnight_snack のどれかにしてください')).toEqual([
+      'breakfast',
+      'lunch',
+      'midnight_snack',
+    ]);
+  });
+
+  it('文の定数 (*_MESSAGE と日付の条件) も、括弧の外に英字の項目名・値が無い', () => {
+    for (const [name, text] of stringEntries.filter(([key]) => !key.endsWith('_CODE'))) {
+      expect(englishIdentifiersOutsideParentheses(text), `${name}: ${text}`).toEqual([]);
+    }
   });
 });
 

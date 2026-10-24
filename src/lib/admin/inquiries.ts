@@ -41,14 +41,14 @@ export type InquiryStatus = (typeof INQUIRY_STATUSES)[number];
 /** 管理者メモの最大文字数 (問い合わせ本文 /api/contact の上限 5000 に揃える) */
 export const ADMIN_NOTES_MAX_LENGTH = 5000;
 
-const inquiryStatusSchema = z.enum(INQUIRY_STATUSES, { message: 'status の値が不正です' });
+const inquiryStatusSchema = z.enum(INQUIRY_STATUSES, { message: '対応の状態 (status) の値が不正です' });
 
 /** 一覧のクエリ。limit / page は clampIntParam で丸めるので、ここでは status だけ検証する */
 export const inquiryListQuerySchema = z.object({
   status: inquiryStatusSchema.optional(),
 });
 
-export const inquiryIdSchema = z.string().uuid({ message: 'id は UUID 形式で指定してください' });
+export const inquiryIdSchema = z.string().uuid({ message: 'ID (id) は UUID 形式で指定してください' });
 
 /**
  * 更新のボディ。Web (PUT) もモバイル (PATCH) も { status, adminNotes } を送る。
@@ -66,7 +66,7 @@ export const inquiryUpdateBodySchema = z
       .optional(),
   })
   .refine((body) => body.status !== undefined || body.adminNotes !== undefined, {
-    message: 'status か adminNotes のどちらかを指定してください',
+    message: '対応の状態 (status) か管理者メモ (adminNotes) のどちらかを指定してください',
   });
 
 /** 更新のボディ (inquiryUpdateBodySchema を通したもの) */

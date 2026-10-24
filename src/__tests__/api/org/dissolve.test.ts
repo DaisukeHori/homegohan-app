@@ -169,7 +169,8 @@ describe('POST /api/org/dissolve: 入口 (#1917)', () => {
     const res = await call({ organization_id: ORG_ID, confirm: true, note: 'a\u0000b' });
 
     expect(res.status).toBe(400);
-    expect(await res.json()).toMatchObject({ code: 'INVALID_CHARACTER' });
+    // 組織の API のほかの失敗と同じ nested の形 (#1917 の続き)
+    expect(await res.json()).toMatchObject({ error: { code: 'INVALID_CHARACTER' } });
     expect(mocks.createClient).not.toHaveBeenCalled();
     expect(mocks.rpc).not.toHaveBeenCalled();
   });

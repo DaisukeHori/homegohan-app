@@ -329,7 +329,7 @@ describe('LoginScreen — Google ログイン (#1038 F7-08)', () => {
     expect(mockExchangeCodeForSession).not.toHaveBeenCalled();
   });
 
-  it('4-5. コールバックが error を運んできたら、その説明を出してセッション処理はしない', async () => {
+  it('4-5. コールバックが error を運んできたら、英文の説明ではなく固定の文を出してセッション処理はしない (#1917 の続き)', async () => {
     mockOpenAuthSessionAsync.mockResolvedValue({
       type: 'success',
       url: 'homegohan:///auth/verify?error=access_denied&error_description=User+cancelled',
@@ -338,7 +338,7 @@ describe('LoginScreen — Google ログイン (#1038 F7-08)', () => {
 
     await pressGoogleLogin(api);
 
-    await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Googleログイン失敗', 'User cancelled'));
+    await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Googleログイン失敗', 'ログインの手続きを完了できませんでした。メールのリンクから開いた場合は、リンクの期限が切れている可能性があります。もう一度お試しください。'));
     expect(mockExchangeCodeForSession).not.toHaveBeenCalled();
     expect(mockReplace).not.toHaveBeenCalled();
   });
@@ -350,7 +350,7 @@ describe('LoginScreen — Google ログイン (#1038 F7-08)', () => {
 
     await pressGoogleLogin(api);
 
-    await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Googleログイン失敗', 'invalid flow state'));
+    await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith('Googleログイン失敗', '確認に失敗しました。'));
     expect(mockReplace).not.toHaveBeenCalled();
   });
 

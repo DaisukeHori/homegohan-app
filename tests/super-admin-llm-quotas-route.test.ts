@@ -16,6 +16,7 @@
  * 実 DB での確認は tests/integration/operator/super-admin-llm.test.ts と tests/integration/rls/ai-daily-limit-rpc.test.ts。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { englishIdentifiersOutsideParentheses } from './helpers/api-error-text-scan';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { AI_DAILY_LIMIT_MAX, LLM_QUOTAS_ENFORCED_NOTE } from '@/lib/super-admin/llm-schemas';
 import {
@@ -557,8 +558,12 @@ describe('buildAiDailyLimitRows: 一覧の組み立て', () => {
       ['enterprise', null, true],
       ['legacy_plan', 'unknown_key', false],
     ]);
-    expect(AI_DAILY_LIMIT_READ_ONLY_NOTES.org_subscription_plan).toContain('組織の上限は standard / premium / enterprise の行で決まります');
+    expect(AI_DAILY_LIMIT_READ_ONLY_NOTES.org_subscription_plan).toContain('組織の上限は組織のプランの値 (standard / premium / enterprise) の行で決まります');
     expect(AI_DAILY_LIMIT_READ_ONLY_NOTES.unknown_key).toContain('保存できません');
+    // 組織のプランの値 (英字) は括弧の中 (409 の本文の文と画面の案内。#1917 の続き)
+    for (const message of [...Object.values(AI_DAILY_LIMIT_READ_ONLY_NOTES), PLAN_READ_ONLY_MESSAGE]) {
+      expect(englishIdentifiersOutsideParentheses(message), message).toEqual([]);
+    }
   });
 
   it('#1912: 組織のプランの値が plan_type = org で subscription_plans にあっても、保存できる行のまま (PATCH と同じ判定)', () => {

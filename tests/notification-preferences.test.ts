@@ -12,6 +12,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
+import { englishIdentifiersOutsideParentheses } from './helpers/api-error-text-scan';
 
 // ── Supabase サーバークライアントのモック ────────────────────────────────────
 const mockMaybeSingle = vi.fn();
@@ -159,6 +160,21 @@ describe('PATCH /api/notification-preferences', () => {
     expect(res.status).toBe(400);
   });
 
+  // #1917 の続き: 失敗の文は「日本語の名前 (項目のキー)」の形で、英字のキーを括弧の外に出さない (3 つの項目とも)
+  it.each([
+    ['notifications_enabled', '通知 (notifications_enabled) はオン (true) かオフ (false) で指定してください'],
+    ['auto_analyze_enabled', '自動解析 (auto_analyze_enabled) はオン (true) かオフ (false) で指定してください'],
+    ['data_share_enabled', 'トレーナーと共有 (data_share_enabled) はオン (true) かオフ (false) で指定してください'],
+  ])('%s が boolean 以外なら、400 の error は日本語の名前に項目のキーを括弧で添えた文', async (key, message) => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
+    const res = await PATCH(makeRequest('PATCH', { [key]: 'yes' }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.error).toBe(message);
+    expect(englishIdentifiersOutsideParentheses(body.error)).toEqual([]);
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+
   it('有効なフィールドがゼロの場合は 400 を返す', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
     const res = await PATCH(makeRequest('PATCH', { unknown_field: true }));
@@ -228,7 +244,7 @@ describe('PATCH /api/notification-preferences', () => {
       const res = await PATCH(makeRequest('PATCH', { data_share_enabled: value }));
       expect(res.status).toBe(400);
       const body = await res.json();
-      expect(body.error).toBe('data_share_enabled はオン (true) かオフ (false) で指定してください');
+      expect(body.error).toBe('トレーナーと共有 (data_share_enabled) はオン (true) かオフ (false) で指定してください');
     }
     expect(mockUpsert).not.toHaveBeenCalled();
   });

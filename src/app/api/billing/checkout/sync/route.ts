@@ -18,7 +18,7 @@ const NO_STORE = { 'Cache-Control': 'no-store' } as const;
 
 export async function POST(request: Request): Promise<NextResponse> {
   // 本文の NULL 文字 (U+0000) は認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   let userId: string | undefined;
   try {

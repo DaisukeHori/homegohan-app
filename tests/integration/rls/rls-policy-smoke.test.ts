@@ -2,7 +2,7 @@
  * RLS 4 テーブル policy smoke test (PR #911 証跡)
  *
  * 対象テーブル:
- *   - moderation_flags  : admin/super_admin のみ全操作
+ *   - moderation_flags  : admin/super_admin のみ SELECT (書き込みは service_role だけ。migration 20261024140000。#1917)
  *   - organizations     : org_admin は自組織のみ SELECT、admin/super_admin は全操作
  *   - sport_presets     : 全ユーザー (anon 含む) SELECT 可、super_admin のみ書き込み
  *   - experiment_assignments : super_admin のみ SELECT/DELETE

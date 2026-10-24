@@ -132,7 +132,7 @@ describe('VerifyPage', () => {
     render(<VerifyPage />);
 
     await waitFor(() => {
-      expect(Alert.alert).toHaveBeenCalledWith('エラー', 'Token expired');
+      expect(Alert.alert).toHaveBeenCalledWith('エラー', 'ログインの手続きを完了できませんでした。メールのリンクから開いた場合は、リンクの期限が切れている可能性があります。もう一度お試しください。');
     });
     expect(mockExchangeCodeForSession).not.toHaveBeenCalled();
     expect(mockVerifyOtp).not.toHaveBeenCalled();
@@ -175,7 +175,7 @@ describe('VerifyPage — リンクの情報が無い・失敗したときの表�
 
     expect(await findByTestId('verify-error-text')).toBeTruthy();
     expect(queryByText('確認が完了しました。ログインしてください。')).toBeNull();
-    expect(Alert.alert).toHaveBeenCalledWith('エラー', 'Token expired');
+    expect(Alert.alert).toHaveBeenCalledWith('エラー', 'ログインの手続きを完了できませんでした。メールのリンクから開いた場合は、リンクの期限が切れている可能性があります。もう一度お試しください。');
   });
 
   it('4-4. code の交換に失敗したときは、「確認失敗」のアラートとエラー表示にする', async () => {
@@ -186,7 +186,7 @@ describe('VerifyPage — リンクの情報が無い・失敗したときの表�
     const { findByTestId } = render(<VerifyPage />);
 
     expect(await findByTestId('verify-error-text')).toBeTruthy();
-    expect(Alert.alert).toHaveBeenCalledWith('確認失敗', 'invalid flow state');
+    expect(Alert.alert).toHaveBeenCalledWith('確認失敗', '確認に失敗しました。');
     expect(mockRedirect).not.toHaveBeenCalled();
   });
 

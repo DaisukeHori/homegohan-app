@@ -11,6 +11,7 @@ import {
   healthBooleanMessage,
   healthDateInvalidMessage,
   healthEnumMessage,
+  healthFieldLabel,
   healthIntegerMessage,
   healthNumberMessage,
   healthStringMessage,
@@ -241,8 +242,8 @@ function parseNullableNumber(
   const value = input[key];
   if (value == null || value === '') return null;
 
-  // 失敗の文の項目名は画面の項目名 (label) にする。無ければ項目のキー
-  const label = opts.label ?? key;
+  // 失敗の文の項目名は画面の項目名 (label) にする。無ければ「日本語の名前 (キー)」(healthFieldLabel)
+  const label = opts.label ?? healthFieldLabel(key);
 
   // #267: 16進数 (0x...) や指数表記を含む文字列を除外し、十進数のみ許可
   if (typeof value === 'string' && !/^-?\d+(\.\d+)?$/.test(value.trim())) {
@@ -511,7 +512,7 @@ export function sanitizeHealthGoalCreate(
     const goalType = typeof body.goal_type === 'string' ? body.goal_type.trim() : '';
     const def = goalType ? findGoalTypeDef(goalType) : undefined;
     if (goalType && !def) {
-      errors.push(`goal_type は ${ACCEPTED_GOAL_TYPES.join(', ')} のいずれかを指定してください`);
+      errors.push(healthEnumMessage('goal_type', ACCEPTED_GOAL_TYPES));
     }
 
     const targetValue = parseNullableNumber(body, 'target_value', errors, goalValueOpts(def, 'target'));

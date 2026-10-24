@@ -5620,6 +5620,32 @@ export type Database = {
           },
         ]
       }
+      plan_price_change_reservations: {
+        Row: {
+          plan_id: string
+          reserved_at: string
+          token: string
+        }
+        Insert: {
+          plan_id: string
+          reserved_at?: string
+          token: string
+        }
+        Update: {
+          plan_id?: string
+          reserved_at?: string
+          token?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "plan_price_change_reservations_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: true
+            referencedRelation: "subscription_plans"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       plan_price_history: {
         Row: {
           affected_subscription_count: number | null
@@ -8498,6 +8524,21 @@ export type Database = {
         }
         Returns: Json
       }
+      apply_plan_price_change: {
+        Args: {
+          p_applies_to: string
+          p_changed_by: string
+          p_effective_at: string
+          p_new_monthly_price_jpy: number
+          p_new_stripe_price_id: string
+          p_new_stripe_yearly_price_id: string
+          p_new_yearly_price_jpy: number
+          p_plan_id: string
+          p_reason: string
+          p_token: string
+        }
+        Returns: Json
+      }
       assert_org_invite_recipient_not_in_org: {
         Args: { p_email: string; p_organization_id: string }
         Returns: undefined
@@ -8538,6 +8579,10 @@ export type Database = {
           p_user_id: string
         }
         Returns: string
+      }
+      begin_plan_price_change: {
+        Args: { p_plan_id: string; p_stale_after_seconds: number }
+        Returns: Json
       }
       billing_apply_store_subscription: {
         Args: { p_fetched_at: string; p_snapshot: Json; p_source: string }
@@ -9072,6 +9117,10 @@ export type Database = {
           template: string
           total_count: number
         }[]
+      }
+      end_account_deletion_guard: {
+        Args: { p_user_id: string }
+        Returns: undefined
       }
       enforce_membership_daily_cap: {
         Args: { p_email?: string; p_kind: string; p_scope_id: string }
@@ -9798,6 +9847,10 @@ export type Database = {
       }
       release_ops_alert: {
         Args: { p_alert_key: string; p_claimed_at: string }
+        Returns: boolean
+      }
+      release_plan_price_change: {
+        Args: { p_plan_id: string; p_token: string }
         Returns: boolean
       }
       release_user_membership: {
