@@ -1162,7 +1162,7 @@ export const MEMBERSHIP_SETTINGS_PATH = '/settings/membership';
 // tsc:skip (既存ファイルへの追加の断片。enum・ErrorStatusMap・MEMBERSHIP_ERROR_MESSAGES の 3 か所に同じ 2 値を足す)
 // enum MembershipErrorCode の NOT_FAMILY_REPRESENTATIVE の下に:
   // #1917: 利用者の解散 (dissolve_family_by_representative / dissolve_org_by_owner) が RAISE する。ORG_ALREADY_DISSOLVED は
-  // operator_force_dissolve_org も前から RAISE している (運営の route は internalError で返すので、これまで表に無かった)
+  // operator_force_dissolve_org も前から RAISE している (運営の強制解散の route もこの表の status と文で返す。operator-rpc-errors.ts)
   FAMILY_ALREADY_DISSOLVED = 'FAMILY_ALREADY_DISSOLVED',
   ORG_ALREADY_DISSOLVED = 'ORG_ALREADY_DISSOLVED',
 // ErrorStatusMap に:
