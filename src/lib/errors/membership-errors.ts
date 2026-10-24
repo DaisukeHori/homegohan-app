@@ -34,7 +34,7 @@ export enum MembershipErrorCode {
   IS_FAMILY_REPRESENTATIVE = 'IS_FAMILY_REPRESENTATIVE',
   NOT_FAMILY_REPRESENTATIVE = 'NOT_FAMILY_REPRESENTATIVE',
   // #1917: 利用者の解散 (dissolve_family_by_representative / dissolve_org_by_owner) が RAISE する。ORG_ALREADY_DISSOLVED は
-  // operator_force_dissolve_org も前から RAISE している (運営の route は internalError で返すので、これまで表に無かった)。
+  // operator_force_dissolve_org も前から RAISE している (運営の強制解散の route もこの表の status と文で返す。operator-rpc-errors.ts)。
   // ORG_ALREADY_DISSOLVED は accept_org_invite (20261022100000_org_invite_dissolved.sql) と
   // accept_org_owner_transfer (20261022140000_org_transfer_toctou.sql) も RAISE する
   FAMILY_ALREADY_DISSOLVED = 'FAMILY_ALREADY_DISSOLVED',
