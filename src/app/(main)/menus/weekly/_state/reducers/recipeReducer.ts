@@ -11,6 +11,8 @@ export interface RecipeState {
   selectedRecipeData: AnyRecord;
   isFavorite: boolean;
   isFavoriteLoading: boolean;
+  /** 保存済みのお気に入りの id (DELETE /api/favorites/[id] に使う)。未保存・未取得は null (#2011) */
+  favoriteId: string | null;
   aiSuggestions: AnyRecord[];
   aiHint: string;
   isLoadingHint: boolean;
@@ -26,6 +28,7 @@ export type RecipeAction =
   | { type: 'FAVORITE_SET'; payload: boolean }
   | { type: 'FAVORITE_LOADING_SET'; payload: boolean }
   | { type: 'FAVORITE_TOGGLE' }
+  | { type: 'FAVORITE_ID_SET'; payload: string | null }
   | { type: 'AI_SUGGESTIONS_SET'; payload: AnyRecord[] }
   | { type: 'AI_HINT_SET'; payload: string }
   | { type: 'HINT_LOADING_START' }
@@ -41,6 +44,7 @@ export const initialRecipeState: RecipeState = {
   selectedRecipeData: null,
   isFavorite: false,
   isFavoriteLoading: false,
+  favoriteId: null,
   aiSuggestions: [],
   aiHint: '',
   isLoadingHint: false,
@@ -55,13 +59,18 @@ export function recipeReducer(
   action: RecipeAction,
 ): RecipeState {
   switch (action.type) {
-    case 'RECIPE_SELECT':
+    // 料理が変わったとき (別の名前・閉じる (null)) だけ ♥ の状態と id を両方とも未取得に戻す。
+    // 同じ名前を選び直したとき (買い物リストに足してモーダルが閉じ、selectedRecipe が残ったまま同じ料理を開く) は両方を保つ
+    // (どちらの場合も、モーダルが開くたびに page.tsx の status の取得が引き直して入れ直す。取得中は ♥ が disabled。#2011)
+    case 'RECIPE_SELECT': {
+      const sameRecipe = action.payload !== null && action.payload === state.selectedRecipe;
       return {
         ...state,
         selectedRecipe: action.payload,
-        // レシピが変わったらお気に入り状態をリセット
-        isFavorite: action.payload === null ? false : state.isFavorite,
+        isFavorite: sameRecipe ? state.isFavorite : false,
+        favoriteId: sameRecipe ? state.favoriteId : null,
       };
+    }
 
     case 'RECIPE_DATA_SET':
       return { ...state, selectedRecipeData: action.payload };
@@ -74,6 +83,9 @@ export function recipeReducer(
 
     case 'FAVORITE_TOGGLE':
       return { ...state, isFavorite: !state.isFavorite };
+
+    case 'FAVORITE_ID_SET':
+      return { ...state, favoriteId: action.payload };
 
     case 'AI_SUGGESTIONS_SET':
       return { ...state, aiSuggestions: action.payload };
