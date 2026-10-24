@@ -458,6 +458,14 @@ describe('JSON の null の本文を確かめずに読んでいた route は 400
     expect(await res.json()).toEqual(FLAT_INVALID_JSON);
     expect(tables()).toEqual([]);
   });
+
+  it.each(['null', '[]', '1', '"text"'])('POST /api/onboarding/progress: 本文 %s は 400 (null は 500 になっていた)。DB に触れない', async (body) => {
+    const { POST } = await import('@/app/api/onboarding/progress/route');
+    const res = await POST(request('/api/onboarding/progress', 'POST', body));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual(FLAT_INVALID_JSON);
+    expect(tables()).toEqual([]);
+  });
 });
 
 // ---- P15: 栄養の振り返り -------------------------------------------------------
