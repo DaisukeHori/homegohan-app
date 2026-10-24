@@ -169,6 +169,12 @@ vi.mock('@/lib/ai/ai-chat-gate', () => ({
   aiChatDisabledResponse: vi.fn(async () => null),
 }));
 
+// AI 相談のメッセージの送信は、セッションを読む前に AI のクライアントを作る (作れないと 500)。ここでは AI へ送らないので、中身の無いものを返す
+vi.mock('@/lib/ai/fast-llm', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/ai/fast-llm')>()),
+  getFastLLMClient: vi.fn(() => ({})),
+}));
+
 vi.mock('@/lib/db-logger', () => {
   const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
   return {
@@ -179,8 +185,6 @@ vi.mock('@/lib/db-logger', () => {
 
 vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://example.supabase.co');
 vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-role-key-for-test');
-// AI 相談のメッセージの送信は、セッションを読む前に AI のクライアントを作る (キーが無いと MissingEnvError の 500)。AI へは送らない
-vi.stubEnv('XAI_API_KEY', 'xai-key-for-test');
 
 function json(url: string, method: string, body: unknown): NextRequest {
   return new NextRequest(url, {

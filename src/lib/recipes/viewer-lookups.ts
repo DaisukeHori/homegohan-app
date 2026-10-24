@@ -42,9 +42,9 @@ interface LikeRow {
   recipe_id: string;
 }
 
-/** 空の値・重複を除く */
+/** 無い値 (作者のいないシステムのレシピの user_id は NULL) と重複を除く */
 function distinctIds(ids: ReadonlyArray<string | null | undefined>): string[] {
-  return [...new Set(ids.filter((id): id is string => typeof id === 'string' && id !== ''))];
+  return [...new Set(ids.filter((id): id is string => typeof id === 'string'))];
 }
 
 /**
