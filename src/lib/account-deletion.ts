@@ -35,7 +35,8 @@
  *      organizations.owner_id / family_groups.representative_id の RESTRICT で失敗する型は残らない: 組織の運営の作成は 1 の印で止まり
  *      (OWNER_ACCOUNT_DELETING。20261023130000 の見出し)、組織の譲渡は 3 が止める。家族の代表者になる 3 つの経路 (作成・譲渡の承諾・
  *      運営の強制譲渡) は 1 の印で止まる (REPRESENTATIVE_ACCOUNT_DELETING。20261023150000 の見出し)。印は退会の route の
- *      maxDuration より長く効き、消すのは deleteUser の前に止まったときだけなので、1 回の退会の実行の間は外れない。
+ *      maxDuration より長く効き、消すのは deleteUser の前に止まったときだけなので、1 回の退会の実行の間は外れない
+ *      (同じ人の退会が 2 つ同時に走り、先に止まった方が消したときは別。20261024120000 の見出し)。
  *      削除が済んだら (すでに消えていたときも)、記録に削除の日時を入れる (complete_account_deletion_record)。
  *      これに失敗しても退会の結果は変えない (アカウントはもう消えている)。失敗はログに残す (記録は executed_at が空のまま残る)。
  *   6. 本人に退会の完了メールを 1 通送る (#1152。src/lib/account-deletion-notification.ts)。
