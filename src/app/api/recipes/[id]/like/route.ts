@@ -101,7 +101,8 @@ export async function DELETE(request: Request, props: { params: Promise<{ id: st
   if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   // UUID の形でない id は DB に渡さず 404 (POST と同じ。uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る。#1917 の続き)。
-  // 200 にしない: お気に入りの画面 (src/app/(main)/favorites/page.tsx) は成功の応答で一覧から外すので、何も消していないのに消えたように見える
+  // 200 にしない: 呼び出し側は成功の応答を「消えた」と読むので、何も消していないのに消えたように見える
+  // (お気に入りの画面と献立の ♥ は #2011 から dish_favorites の DELETE /api/favorites/{id} を使い、この route を呼ばない)
   if (!isUuid(params.id)) return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
 
   try {

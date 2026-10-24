@@ -27,18 +27,18 @@ import React, { act } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 
-import { FavoriteListItem } from '../FavoriteListItem';
+import { FavoriteListItem, type FavoriteListItemData } from '../FavoriteListItem';
 
 const h = React.createElement;
 
 let container: HTMLDivElement;
 let root: Root;
 
-const ITEM = {
+// #2011: 一覧の行は献立の料理のお気に入り (DishFavorite) の id・dish_name・created_at
+const ITEM: FavoriteListItemData = {
   id: 'fav-1',
-  recipeName: '鶏の唐揚げ',
-  recipeUuid: 'uuid-1',
-  likedAt: '2026-07-01T00:00:00.000Z',
+  dish_name: '鶏の唐揚げ',
+  created_at: '2026-07-01T00:00:00.000Z',
 };
 
 const formatDate = (iso: string) => iso.slice(0, 10);
@@ -59,7 +59,7 @@ afterEach(() => {
 });
 
 function getOpenButton(): HTMLButtonElement {
-  const btn = container.querySelector(`button[aria-label="${ITEM.recipeName} のレシピを見る"]`);
+  const btn = container.querySelector(`button[aria-label="${ITEM.dish_name} のレシピを見る"]`);
   expect(btn, '「レシピを見る」ボタンが見つかりません').not.toBeNull();
   return btn as HTMLButtonElement;
 }
@@ -157,7 +157,16 @@ describe('FavoriteListItem: キーボード削除リグレッション (#1050 ro
       'button 内に非 phrasing content (div/p) が残っています'
     ).toBeNull();
     // 見た目維持の確認: レシピ名と日付テキストは引き続き読める
-    expect(openBtn.textContent).toContain(ITEM.recipeName);
+    expect(openBtn.textContent).toContain(ITEM.dish_name);
     expect(openBtn.textContent).toContain('に追加');
+  });
+
+  it('L-1「dish_name と created_at を描く」', () => {
+    render();
+    const openBtn = getOpenButton();
+    expect(openBtn.getAttribute('aria-label')).toBe('鶏の唐揚げ のレシピを見る');
+    expect(openBtn.textContent).toContain('鶏の唐揚げ');
+    // 日付は formatDate(item.created_at) の結果
+    expect(openBtn.textContent).toContain('2026-07-01 に追加');
   });
 });
