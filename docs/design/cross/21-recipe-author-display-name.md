@@ -5,6 +5,7 @@
 | v1.0 | 2026-10-24 | 新設 (Issue #1917 の続き (api-read-errors のあと) の設計ゲート・A 型 4 相。公開レシピの一覧・詳細・コメントの作者名を、本人以外にも表示名で出す) |
 | v1.1 | 2026-10-24 | 審査 R1 の反映: 戻し口の見出しを対の migration の名前に・段 A の本番の適用を文面が効いたあとの同じ門に (§15 の本番の順序)・プライバシーポリシーの文をレシピとコメントで分ける (6 文)・結合テストの helper を実在の export と本テスト内の定義に・I-12 を退会する作者の公開レシピで確かめる形に・C-8 を段 B へ・fix 枝の単体テストの it の対応表 (§7.11) |
 | v1.2 | 2026-10-24 | 網羅性 (周 2) の反映: 本人が公開レシピを消す出来事 (F-19c・S-17・§9.1・§9.3・I-16)・コメントの POST の返り値を実 DB で (I-17)・§14 に `anon-definer-execute.test.ts`・§9.3 の本人の見え方の文の訂正・§3 の origin/main を `cae0e288` に取り直し (§16 に新設の番兵 2 つ) |
+| v1.3 | 2026-10-24 | 審査 R2 の反映: レシピを非公開に戻す・公開に戻す・運営が隠す・隠すのを戻すと、そのレシピへのコメントの書き手の K-公開 も変わる遷移を表に (§0.3 S-12・S-13・§4.3・§9.1・§9.3・§7.10 I-10 に toggleCommenter・§18)・§19 の 7〜9 の本番の検証は、書き込みの前にオーケストレーターが承認の要否を確かめる形に |
 
 要件の正本は Issue #1917 の本文とコメント。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
 ファイル名は cross/21 (cross/ の既存は 01〜09・12・13a・13b・14〜20。10・11・13 は欠番)。
@@ -74,8 +75,8 @@
 | S-9 | 16 歳の本人のアカウント H (保護者の同意の経路) が公開したレシピの `authorName` は「匿名」。H が自分で見ると自分の名前。18 歳の誕生日 (JST) から他の人にも表示名になる |
 | S-10 | 利用者 I がプロフィールの編集で「公開したレシピとコメントに、ニックネームを作者名として表示する」をオフにして保存すると、他の人には I の公開レシピ・コメントの `authorName` が「匿名」になり、I 自身には自分の名前のまま。オンに戻すと表示名に戻る |
 | S-11 | 利用者 J が公開レシピを 1 つも持たず、他人の公開レシピにコメントもしていないとき、誰かが J の id で関数を直接呼んでも J の名前は返らない (0 行) |
-| S-12 | B が公開レシピを非公開に戻し、ほかに公開レシピもコメントも無いなら、B の名前は他の人には返らなくなる (B 自身の一覧には自分の名前) |
-| S-13 | 運営が B の公開レシピを隠す (`hidden_at`) と、そのレシピは本人以外に出なくなる (既存の RLS)。B にほかの公開レシピ・コメントが無ければ、B の名前も他の人には返らなくなる |
+| S-12 | B が公開レシピを非公開に戻し、ほかに公開レシピもコメントも無いなら、B の名前は他の人には返らなくなる (B 自身の一覧には自分の名前)。そのレシピにだけコメントしていた C (ほかに公開の内容が無い) の名前も、他の人には返らなくなる (コメントは消えない。C 自身には自分の名前)。B がレシピを公開に戻すと、B・C とも表示名に戻る |
+| S-13 | 運営が B の公開レシピを隠す (`hidden_at`) と、そのレシピは本人以外に出なくなる (既存の RLS)。B にほかの公開レシピ・コメントが無ければ、B の名前も他の人には返らなくなる。そのレシピにだけコメントしていた C (ほかに公開の内容が無い) の名前も返らなくなる。運営が隠すのを戻すと、B・C とも表示名に戻る |
 | S-14 | C が B の公開レシピにコメントを投稿すると、`POST` の返り値の `authorName` は C 自身の名前 (名前を出さない設定でも、本人には自分の名前) |
 | S-15 | `user_id` が NULL のシステムのレシピは、今までどおり `authorName` が「匿名」 (関数に id を渡さない) |
 | S-16 | 関数の読み込みが失敗すると (接続の失敗など)、一覧・詳細・コメントの API は 500 を返す (名前が無いように見せない。既存の決まり) |
@@ -134,7 +135,7 @@
 
 ## 3. 現状の事実 (origin/main `cae0e288`・fix/api-read-errors `a8d75cec`・本番の読み取り 2026-10-24)
 
-v1.0〜v1.1 は origin/main `c9ee3e59` で取った。`c9ee3e59..cae0e288` の差分 (1 コミット・#2003) が触れたファイルのうち本節が指すものは `CLAUDE.md` と `docs/design/cross/20-terms-privacy-text.md` だけで、どちらも 1 行を 1 行に置き換える直し (行がずれない) で、本書が指す行 (`CLAUDE.md:83`・cross/20 の行 213・227・243・2000・2014) の中身は変わっていない。レシピの route・`author-name.ts`・文面 (`privacy-text.ts`・`terms-text.ts`)・migration・`anon-definer-execute.test.ts` は差分に無い。fix/api-read-errors は `a8d75cec` のままで、まだ main に入っていない。
+v1.0〜v1.1 は origin/main `c9ee3e59` で取った。`c9ee3e59..cae0e288` の差分 (1 コミット・#2003) が触れたファイルのうち本節が指すものは `CLAUDE.md` と `docs/design/cross/20-terms-privacy-text.md` だけで、どちらも 1 行を 1 行に置き換える直し (行がずれない) で、本書が指す行 (`CLAUDE.md:83`・cross/20 の行 213・227・243・2000・2014) の中身は変わっていない。レシピの route・`author-name.ts`・文面 (`privacy-text.ts`・`terms-text.ts`)・migration・`anon-definer-execute.test.ts` は差分に無い。fix/api-read-errors は `a8d75cec` のままで、まだ main に入っていない。v1.3 の時点で、そのあとの main の 1 コミット (#2004) も確かめた: 触れたのは退会の直し (`src/lib/account-deletion.ts`・新しい migration `20261024120000_account_deletion_guard_release.sql` (関数 `end_account_deletion_guard` を service_role にだけ GRANT) と戻し口・2 つの `database.types.ts` への関数の追記・テスト) と、文書の 1 行を 1 行に置き換える直し (`CLAUDE.md`・cross/08・cross/14・cross/16・cross/20 ほか。`tests/legal-text-1901.test.ts` も行 205 の 1 行) で、本書が指す行 (`CLAUDE.md:83`・cross/14 の行 18-19・cross/20 の行 213・227・243・2000・2014・`tests/legal-text-1901.test.ts:1058-1073`) の中身と、anon の許可一覧・レシピの route・文面 (`privacy-text.ts`・`terms-text.ts`) は変わっていない。本書の事実の sha は `cae0e288` のままにする。
 
 ### 3.1 API と lib
 
@@ -246,8 +247,8 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 | S-9 | H: `age_years_jst(birth_date) = 16 < 18` → (b) 偽 → 他の人には「匿名」。H 自身には (a)。18 歳の誕生日 (JST) に `age_years_jst` が 18 になり (b) 真 | 年齢 |
 | S-10 | I: `show_recipe_author_name = false` → (b) 偽 → 他の人には「匿名」。I 自身には (a) で自分の名前。true に戻すと (b) 真 | 設定 |
 | S-11 | J: 公開レシピもコメントも無い → (b) の EXISTS が偽 → 0 行。J 自身が呼べば (a) で自分の名前だけ | 公開の作者でない |
-| S-12 | B が非公開に戻す → EXISTS (公開レシピ) が偽・コメントも無ければ (b) 偽 → 他の人には「匿名」。B 自身は (a) | 公開の作者でない |
-| S-13 | 隠す → `hidden_at` あり → EXISTS の `hidden_at IS NULL` で外れる → ほかに公開の内容が無ければ「匿名」。レシピ自体は RLS で本人以外に出ない | 公開の作者でない |
+| S-12 | B が非公開に戻す → B: EXISTS (公開レシピ) が偽・コメントも無ければ (b) 偽 → 他の人には「匿名」。B 自身は (a)。C: コメントの EXISTS は `r.is_public = true` の結合で外れる (コメントの行は残る) → ほかに公開の内容が無ければ (b) 偽 → 他の人には「匿名」。C 自身は (a)。公開に戻す → 2 つの EXISTS が真に戻り、B・C とも (b) | 公開の作者でない |
+| S-13 | 隠す → `hidden_at` あり → B: レシピの EXISTS の `hidden_at IS NULL` で外れる・C: コメントの EXISTS の `r.hidden_at IS NULL` で外れる → それぞれ、ほかに公開の内容が無ければ「匿名」。レシピ自体は RLS で本人以外に出ない。隠すのを戻す → B・C とも (b) | 公開の作者でない |
 | S-14 | POST → `authorIds = [C]` → `auth.uid() = C` → (a) → C の名前 (設定に関わらず) | (a) |
 | S-15 | `user_id` NULL → `distinctIds` が除く → RPC に渡らない → 「匿名」 (fix 枝と同じ) | 行なし |
 | S-16 | RPC が `error` を返す → `{ ok: false, table: 'recipe_author_display_names', error }` → route が `internalError` で 500 | 失敗 |
@@ -852,7 +853,8 @@ describe('cross/21 recipe_author_display_names の migration (静的)', () => {
  *   I-7  GET /api/recipes (未ログイン・ログイン中): 公開レシピの authorName が作者の表示名。18 歳未満の作者は '匿名'
  *   I-8  GET /api/recipes/[id] (未ログイン): authorName が作者の表示名。ログイン中: コメントの authorName (コメントの作者は表示名・設定オフの人は '匿名')
  *   I-9  PUT /api/profile で showRecipeAuthorName を false にすると他の人には '匿名'、true に戻すと表示名。本人の一覧には自分の名前のまま
- *   I-10 公開レシピを非公開に戻す・運営が隠す (hidden_at) と、ほかに公開の内容が無い作者の名前は返らなくなる
+ *   I-10 公開レシピを非公開に戻す・運営が隠す (hidden_at) と、ほかに公開の内容が無い作者と、そのレシピにだけコメントした人 (toggleCommenter) の
+ *        名前は返らなくなる。公開に戻す・隠すのを戻すと両方返る (S-12・S-13。コメントの行は消えない)
  *   I-11 権限: anon と authenticated は EXECUTE でき、PUBLIC と service_role には EXECUTE が無い。user_profiles の SELECT のポリシーは本人の行だけの 1 本のまま
  *   I-12 公開レシピとコメントを持つ作者 (leaver) を退会 (auth.admin.deleteUser) させると、その公開レシピは user_id が NULL・is_public が true のまま残り、
  *        一覧・詳細 (未ログイン・ログイン中) の authorName は '匿名' になり (退会の前は表示名)、コメントは消える (S-6・R-3)
@@ -941,7 +943,7 @@ type CommentPostBody = { comment: { content: string; authorName: string } };
 
 const people: Record<
   | 'author' | 'minor' | 'noBirth' | 'frozen' | 'tempFrozen' | 'tempFrozenExpired' | 'optOut' | 'noName' | 'privateOnly' | 'commenter' | 'viewer'
-  | 'unfreeze' | 'turns18Today' | 'turns18Tomorrow' | 'leaver' | 'deleter' | 'deleteCommenter',
+  | 'unfreeze' | 'turns18Today' | 'turns18Tomorrow' | 'leaver' | 'deleter' | 'deleteCommenter' | 'toggleCommenter',
   Person
 > = {} as never;
 let publicRecipeId: string;
@@ -950,6 +952,8 @@ let systemRecipeId: string;
 let leaverRecipeId: string;
 /** I-16 で deleter 本人が消す公開レシピ */
 let deleterRecipeId: string;
+/** I-10 で公開の状態を切り替える tempFrozenExpired の公開レシピ (toggleCommenter がコメントする) */
+let toggleRecipeId: string;
 
 async function makePerson(key: keyof typeof people, profile: Record<string, unknown>): Promise<void> {
   const nickname = `作者${key}${TS}`;
@@ -987,6 +991,8 @@ beforeAll(async () => {
   // I-16 で自分の公開レシピを消す作者と、そのレシピにだけコメントする人 (どちらも 18 歳以上・名前あり・設定は既定。ほかに公開の内容を持たない)
   await makePerson('deleter', { birth_date: ADULT_BIRTH_DATE });
   await makePerson('deleteCommenter', { birth_date: ADULT_BIRTH_DATE });
+  // I-10 で tempFrozenExpired の公開レシピにだけコメントする人 (18 歳以上・名前あり・設定は既定。ほかに公開の内容を持たない)
+  await makePerson('toggleCommenter', { birth_date: ADULT_BIRTH_DATE });
 
   // 公開レシピ: author のもの 1 件 + 返らない人たちのもの 1 件ずつ (公開レシピがあっても返らないことを確かめる)
   const { data: recipe, error: recipeError } = await supabaseAdmin
@@ -1035,6 +1041,19 @@ beforeAll(async () => {
     .from('recipe_comments')
     .insert({ recipe_id: deleterRecipeId, user_id: people.deleteCommenter.user.userId, content: `t-cross21-comment-deleteCommenter-${TS}`, rating: 4 });
   if (deleteCommentError) throw new Error(`recipe_comments (deleteCommenter): ${deleteCommentError.message}`);
+  // tempFrozenExpired の公開レシピ (上の for で作った 1 件) と、そこへの toggleCommenter のコメント
+  // (I-10 で、レシピの公開の状態を切り替えたとき、コメントの書き手の名前も追随することを確かめる)
+  const { data: toggleRecipe, error: toggleRecipeError } = await supabaseAdmin
+    .from('recipes')
+    .select('id')
+    .eq('user_id', people.tempFrozenExpired.user.userId)
+    .single();
+  if (toggleRecipeError || !toggleRecipe) throw new Error(`recipes (tempFrozenExpired): ${toggleRecipeError?.message}`);
+  toggleRecipeId = toggleRecipe.id as string;
+  const { error: toggleCommentError } = await supabaseAdmin
+    .from('recipe_comments')
+    .insert({ recipe_id: toggleRecipeId, user_id: people.toggleCommenter.user.userId, content: `t-cross21-comment-toggleCommenter-${TS}`, rating: 4 });
+  if (toggleCommentError) throw new Error(`recipe_comments (toggleCommenter): ${toggleCommentError.message}`);
 
   // コメント: commenter・optOut・minor・leaver (どれも author の公開レシピへ)
   for (const key of ['commenter', 'optOut', 'minor', 'leaver'] as const) {
@@ -1129,14 +1148,33 @@ describe('I-7〜I-10: レシピの API 経由', () => {
     expect(shown.body.recipes[0]?.authorName).toBe(people.author.nickname);
   });
 
-  it('I-10: 非公開に戻す・隠すと、ほかに公開の内容が無い作者の名前は返らなくなる', async () => {
+  it('I-10: 非公開に戻す・隠すと、ほかに公開の内容が無い作者と、そのレシピにだけコメントした人の名前は返らなくなる。戻すと両方返る', async () => {
     const id = people.tempFrozenExpired.user.userId;
-    await supabaseAdmin.from('recipes').update({ is_public: false }).eq('user_id', id);
-    expect((await namesAs(anon(), [id])).has(id)).toBe(false);
-    await supabaseAdmin.from('recipes').update({ is_public: true, hidden_at: new Date().toISOString() }).eq('user_id', id);
-    expect((await namesAs(anon(), [id])).has(id)).toBe(false);
-    await supabaseAdmin.from('recipes').update({ hidden_at: null }).eq('user_id', id);
-    expect((await namesAs(anon(), [id])).get(id)).toBe(people.tempFrozenExpired.nickname);
+    const commenterId = people.toggleCommenter.user.userId;
+    const both = { [id]: people.tempFrozenExpired.nickname, [commenterId]: people.toggleCommenter.nickname };
+    const namesOfBoth = async () => Object.fromEntries(await namesAs(anon(), [id, commenterId]));
+    const setRecipe = async (patch: { is_public?: boolean; hidden_at?: string | null }) => {
+      const { error } = await supabaseAdmin.from('recipes').update(patch).eq('id', toggleRecipeId);
+      expect(error).toBeNull();
+    };
+
+    expect(await namesOfBoth(), '切り替える前 (作者と書き手の両方)').toEqual(both);
+    await setRecipe({ is_public: false });
+    expect(await namesOfBoth(), '本人が非公開に戻した').toEqual({});
+    await setRecipe({ is_public: true });
+    expect(await namesOfBoth(), '公開に戻した').toEqual(both);
+    await setRecipe({ hidden_at: new Date().toISOString() });
+    expect(await namesOfBoth(), '運営が隠した').toEqual({});
+    await setRecipe({ hidden_at: null });
+    expect(await namesOfBoth(), '隠すのを戻した').toEqual(both);
+
+    // 非公開・隠すは CASCADE しない: 書き手のコメントの行は残っている (名前が返らなかったのは K-公開 の判定による)
+    const { data: kept, error: keptError } = await supabaseAdmin
+      .from('recipe_comments')
+      .select('user_id')
+      .eq('recipe_id', toggleRecipeId);
+    expect(keptError).toBeNull();
+    expect(kept).toEqual([{ user_id: commenterId }]);
   });
 });
 
@@ -1436,7 +1474,9 @@ rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
 | 公開レシピなし・コメントだけ (公開レシピへ) | 他人 | — | — | 表示名 | — |
 | 公開レシピなし・コメントなし (非公開だけ) | 本人 | 表示名 | 表示名 | — | 表示名 |
 | 同 | 他人 (本人の非公開レシピは見えない) | — | — | — | — |
-| 公開レシピを運営が隠した (ほかに公開なし) | 他人・未ログイン | (レシピが出ない) | (404) | コメント GET (ログイン中だけ) は今までどおり返る (F-19b)。書き手の名前は、ほかに公開の内容が無ければ匿名 (隠したレシピは (b) の公開に数えない) | — |
+| 公開レシピを本人が非公開に戻した (ほかに公開なし) | 他人・未ログイン | (レシピが出ない) | (404) | コメント GET (ログイン中だけ) は今までどおり返る (F-19b。コメントの行は消えない)。書き手の名前は、ほかに公開の内容が無ければ匿名 (非公開のレシピへのコメントは (b) の公開に数えない)。公開に戻すと表示名に戻る | — |
+| 公開レシピを本人が非公開に戻した (ほかに公開なし) | 本人 | 表示名 (本人の一覧は `user_id.eq.自分` で非公開も出る。F-1) | 表示名 (RLS で本人には見えて 200) | 本人のコメントは表示名 ((a))。他の書き手は、ほかに公開の内容が無ければ匿名 | 表示名 ((a)。INSERT はレシピの見え方を見ない。F-19b) |
+| 公開レシピを運営が隠した (ほかに公開なし) | 他人・未ログイン | (レシピが出ない) | (404) | コメント GET (ログイン中だけ) は今までどおり返る (F-19b)。書き手の名前は、ほかに公開の内容が無ければ匿名 (隠したレシピへのコメントは (b) の公開に数えない)。隠すのを戻すと表示名に戻る | — |
 | 公開レシピを運営が隠した (ほかに公開なし) | 本人 | 表示名 (本人の一覧は `user_id.eq.自分` で隠したレシピも出る。F-1・F-16) | 表示名 (RLS で本人には見えて 200) | 本人のコメントは表示名 ((a))。他の書き手は、ほかに公開の内容が無ければ匿名 | 表示名 ((a)。INSERT はレシピの見え方を見ない。F-19b) |
 | 公開レシピを本人が消した (`DELETE /api/recipes/[id]`。ほかに公開なし) | 他人・未ログイン | (レシピが出ない) | (404) | 消したレシピへのコメントは CASCADE で消える (F-19c)。そのコメントの書き手も、ほかに公開の内容が無ければ、ほかの場所で匿名 | — |
 | 公開レシピを本人が消した (ほかに公開なし) | 本人 | (消したレシピは出ない。本人のほかのレシピは表示名 ((a))) | (404) | (消える) | — |
@@ -1480,7 +1520,7 @@ rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
 - 本人からは、退会を除き、K-名前 が真なら ほかの 4 つの条件 (K-設定・K-凍結・K-年齢・K-公開) に依らず自分の名前 ((a))。K-名前 が偽なら本人にも「匿名」(関数は `normalize_profile_name` が NULL の人を (a) でも返さない。§6.1 (1))。凍結中の本人はレシピの API に届かない (F-19a)。
 - 関数は呼ばれるたびに 5 つの条件を今の行と時刻で計算し直す。状態を記録する列は無い (`show_recipe_author_name` は K-設定 の入力で、状態そのものではない)。したがって遷移先は「出来事が変えた 1 つの条件を集合に足す / 集合から除く」で決まり、出来事の順序に依らない (解除の順序は問わない。最後に欠けていた条件が満たされたときに初めて **表示** になる)。
 
-出来事 × 条件 (1 つの出来事が 1 人について変える条件は 1 つ。本人のレシピを消す出来事は、CASCADE で消えたコメントの書き手の K-公開 も変えうるが、それは書き手ごとに同じ遷移を 1 つずつ起こす):
+出来事 × 条件 (1 つの出来事が 1 人について変える条件は 1 つ。ただし、レシピの公開の状態を変える出来事 (公開にする・非公開に戻す・運営が隠す・隠すのを戻す・本人が消す) は、作者の K-公開 だけでなく、**そのレシピへのコメントの書き手** の K-公開 も変えうる。コメントの EXISTS (§7.1) がコメント先のレシピの `is_public = true AND hidden_at IS NULL` を見るためで、非公開に戻す・隠すではコメントの行は残ったまま数えられなくなり、消すでは CASCADE で行が消える。影響を受ける人ごとに (作者・書き手のそれぞれについて、ほかに公開の内容が無いときだけ) 同じ遷移を 1 つずつ起こす。各人の X は互いに独立):
 
 | 出来事 | 変わる条件 | 遷移 (欠けている集合 X に対して) | ガード | 副作用 |
 |---|---|---|---|---|
@@ -1493,8 +1533,11 @@ rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
 | 18 歳未満と記録し直される | — | 起きない (`birth_date` は write-once で、18 歳以上の人が 18 歳未満になることは無い) | — | — |
 | 本人がニックネームを空・`'Guest'` にする | K-名前 を偽に | X → X ∪ {名前} | `PUT /api/profile` | — |
 | 本人が名前を入れる | K-名前 を真に | X → X − {名前} | 同 | — |
-| レシピを公開にする (`is_public = true`) / 公開レシピにコメントする / 運営が隠したのを戻す (`hidden_at` を NULL) | K-公開 を真に | X → X − {公開} | 本人の RLS の書き込み / 運営 | 次の読み込みから |
-| 最後の公開レシピを非公開に戻す / 運営が隠す / 本人が最後の公開レシピを消す (`DELETE /api/recipes/[id]`) / 最後の公開のコメントを消す (ほかに公開の内容が無いとき) | K-公開 を偽に | X → X ∪ {公開} | 本人の RLS の書き込み (消すのは route が所有者を確かめてから。F-19c。凍結中は 403 で届かない) / 運営 / コメントは本人の RLS の DELETE | レシピを消すと、そのレシピへのコメントが CASCADE で消える (F-19c)。そのコメントの書き手のうち、ほかに公開の内容が無い人も X → X ∪ {公開} |
+| レシピを公開にする (`is_public = true`) / 運営が隠したのを戻す (`hidden_at` を NULL) | 作者と、そのレシピへのコメントの書き手の K-公開 を真に | 作者: X → X − {公開}。書き手 (それぞれ): X → X − {公開} | 本人の RLS の書き込み / 運営 | 次の読み込みから。書き手の名前も同じ読み込みから表示名に戻る (非公開・隠した間もコメントの行は残っていたので、行の書き込みは無い) |
+| 公開レシピにコメントする | 書いた人の K-公開 を真に | X → X − {公開} | 本人の RLS の INSERT | 次の読み込みから |
+| 公開レシピを非公開に戻す / 運営が隠す | 作者と、そのレシピへのコメントの書き手の K-公開 を偽に (それぞれ、ほかに公開の内容が無いとき) | 作者: X → X ∪ {公開}。書き手 (それぞれ): X → X ∪ {公開} | 本人の RLS の書き込み (凍結中は 403 で届かない) / 運営 | コメントの行は消えない (CASCADE は起きない)。公開に戻す・隠すのを戻すで、上の行の遷移で戻る |
+| 本人が公開レシピを消す (`DELETE /api/recipes/[id]`) | 作者と、そのレシピへのコメントの書き手の K-公開 を偽に (それぞれ、ほかに公開の内容が無いとき) | 作者: X → X ∪ {公開}。書き手 (それぞれ): X → X ∪ {公開} | route が所有者を確かめてから (F-19c。凍結中は 403 で届かない) | そのレシピへのコメントが CASCADE で消える (F-19c)。戻す操作は無い |
+| 最後の公開のコメントを消す (ほかに公開の内容が無いとき) | 書いた人の K-公開 を偽に | X → X ∪ {公開} | 本人の RLS の DELETE | — |
 | 退会する | (全部) | どの状態からも → **退会** | `prepare_account_deletion` → `deleteUser` | `recipes.user_id` NULL・`recipe_comments` 消える・`user_profiles` 消える |
 | (退会のあと) | — | 戻らない | — | — |
 
@@ -1507,6 +1550,8 @@ rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
 | 匿名{年齢, 公開} | 18 歳の誕生日 → レシピを公開 | 匿名{公開} | 表示 | 匿名 → 匿名 → 表示名 |
 | 表示 | 凍結 → 設定を off → 凍結を解除 | 匿名{凍結} → 匿名{凍結, 設定} | 匿名{設定} | 表示名 → 匿名 → 匿名 → 匿名 |
 | 匿名{凍結, 名前} | 退会 | — | 退会 | 匿名 (`user_id` NULL) |
+| 表示 (B のレシピにだけコメントした C) | B がレシピを非公開に戻す → B が公開に戻す | 匿名{公開} | 表示 | 表示名 → 匿名 → 表示名 (C 自身は何もしていない) |
+| 匿名{設定} (同じ C) | 運営が B のレシピを隠す → C が設定を on → 運営が隠すのを戻す | 匿名{設定, 公開} → 匿名{公開} | 表示 | 匿名 → 匿名 → 匿名 → 表示名 |
 
 表に無い遷移を作らない (例: 運営が作者名だけを隠す操作は無い。隠すのはレシピ単位の `hidden_at`)。
 
@@ -1697,6 +1742,7 @@ sequenceDiagram
 | `user_profiles` の RLS 3 本・`recipes` / `recipe_comments` の RLS | 保持 (変えない) |
 | `increment_recipe_view_count` の呼び出し・詳細の 404 の判定・コメント POST の検査 | 保持 |
 | `DELETE /api/recipes/[id]`・`recipe_comments_recipe_id_fkey` の `ON DELETE CASCADE` | 保持 (変えない)。本人がレシピを消すと、本人とそのレシピにだけコメントした人の K-公開 が偽になりうる (§9.3・S-17・I-16) |
+| `recipes.is_public` の切り替え (本人)・`recipes.hidden_at` (運営が隠す / 戻す) | 保持 (変えない)。切り替えると、作者と、そのレシピへのコメントの書き手の K-公開 が変わりうる (コメントの行は残る。§9.3・S-12・S-13・I-10) |
 | `PUT /api/profile`・`fromUserProfile` / `toUserProfile` | 列を 1 つ通す (§7.6)。route は変えない |
 | プロフィールの編集画面 | チェック 1 つを足す (§7.7) |
 | `prepare_account_deletion`・外部キーの `ON DELETE` | 保持 (退会の扱いは既存のまま) |
@@ -1717,9 +1763,9 @@ sequenceDiagram
 
 段 B の公開のあと:
 
-7. 未ログインで `GET /api/recipes` (公開レシピがあれば) の `authorName` が「匿名」以外になりうること (本番は `recipes` が 0 行なので、捨てアカウント 2 つ (18 歳以上・生年月日あり) で公開レシピ 1 件を作って確かめ、用済み後に消す。捨て伝票・捨てデータの恒常承認の範囲)。
-8. 同じ公開レシピを、捨てアカウントの一方で `PUT /api/profile { showRecipeAuthorName: false }` にしてから他方で読み、「匿名」になること。
-9. デプロイ後整合ゲート (2 枚) で、本書 §9.1 の行のうち本番で確かめられるもの (未ログイン・他人・本人・設定オフ) を実測する。
+7. 未ログインで `GET /api/recipes` (公開レシピがあれば) の `authorName` が「匿名」以外になりうること。本番は `recipes` が 0 行 (§3.4) なので、確かめるには本番に検証用のアカウント 2 つ (18 歳以上・生年月日あり) と公開レシピ 1 件を作る必要がある。本番へ書き込む検証なので、実行の前にオーケストレーターが承認の要否を確かめる (本書は承認の範囲を定めない)。書き込みを伴わない確認は、上の 1〜6 (読み取り) と、ローカルの結合テスト (§7.10) の緑。
+8. (7 で検証用のアカウントを作った場合だけ) 同じ公開レシピを、一方のアカウントで `PUT /api/profile { showRecipeAuthorName: false }` にしてから他方で読み、「匿名」になること。用済みのあとはアカウントとレシピを消す。
+9. デプロイ後整合ゲート (2 枚) で、本書 §9.1 の行のうち本番で確かめられるもの (未ログイン・他人・本人・設定オフ) を実測する。本番に公開レシピが無い間は、読み取りで確かめられるもの (1〜6 と、`/rest/v1/rpc/recipe_author_display_names` を anon で呼び、`user_profiles` の id を渡しても (公開の作者がいないので) 0 行が返ること) に留め、書き込みを伴う実測は 7 と同じく、実行の前にオーケストレーターが承認の要否を確かめる。
 
 ---
 
@@ -1752,3 +1798,4 @@ sequenceDiagram
 | v1.0 | 2026-10-24 | 新設 (A 型 4 相。構造 A = SECURITY DEFINER の関数 `recipe_author_display_names` + 本人の選択の列 `show_recipe_author_name`。段 A/B/C。プライバシーポリシーの版はオーナーに聞く (Q-1)) |
 | v1.1 | 2026-10-24 | 審査 R1 の反映 (§7.2・§7.9・§7.10・§7.11・§7.12・§6.4・§9.2・§12・§15・§16・§19・§21。構造 A は変えない) |
 | v1.2 | 2026-10-24 | 網羅性 (周 2) の反映 (§0.3・§3・§4.3・§7.10・§9.1・§9.3・§12・§14・§15・§16・§18。構造 A は変えない) |
+| v1.3 | 2026-10-24 | 審査 R2 の反映: レシピの公開の状態を変える出来事 (非公開に戻す・公開に戻す・運営が隠す・戻す) がコメントの書き手の K-公開 も変えること (§0.3 S-12・S-13・§4.3・§9.1・§9.3・§7.10 I-10・§18)・§19 の 7〜9 を、本番への書き込みの前に承認の要否を確かめる形に (§19。構造 A は変えない) |
