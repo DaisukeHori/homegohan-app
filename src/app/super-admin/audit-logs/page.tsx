@@ -2,6 +2,12 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { lastPageToRefetch } from "@/lib/list-pagination";
+import { forbiddenMessageOfResponse } from "@/lib/admin/api-error-message";
+
+/** 403 (Forbidden) の HTTP ステータス */
+const HTTP_FORBIDDEN = 403;
+/** CSV の書き出しの失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917) */
+const CSV_EXPORT_FAILURE_MESSAGE = "CSV エクスポートに失敗しました";
 
 interface AuditLogEntry {
   id: string;
@@ -85,8 +91,13 @@ export default function AuditLogsPage() {
     if (toDate) params.set("to", toDate);
 
     const res = await fetch(`/api/super-admin/audit-logs?${params}`);
+    if (res.status === HTTP_FORBIDDEN) {
+      // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 は「CSV エクスポートに失敗しました」(#1917)
+      alert(await forbiddenMessageOfResponse(res, CSV_EXPORT_FAILURE_MESSAGE));
+      return;
+    }
     if (!res.ok) {
-      alert("CSV エクスポートに失敗しました");
+      alert(CSV_EXPORT_FAILURE_MESSAGE);
       return;
     }
     const blob = await res.blob();

@@ -7,6 +7,7 @@
  */
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
 import Link from 'next/link';
 
 type LeadSource = 'website' | 'referral' | 'event' | 'cold_call' | 'other';
@@ -58,7 +59,8 @@ export default function NewLeadPage() {
       });
 
       if (res.status === 401) { router.push('/login'); return; }
-      if (res.status === 403) { setError('権限がありません'); return; }
+      // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
+      if (res.status === 403) { setError(await forbiddenMessageOfResponse(res)); return; }
       if (!res.ok) {
         const json = await res.json();
         throw new Error(json.error?.message ?? 'リード作成に失敗しました');

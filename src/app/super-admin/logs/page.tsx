@@ -16,6 +16,7 @@
 
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
+import { forbiddenMessageForScreen } from '@/lib/admin/api-error-message';
 // 型だけを import する (値を import すると zod がブラウザ向けの bundle に入る)
 import type { AppLogEntry, AppLogLevel, AppLogListResponse } from '@/lib/super-admin/app-logs';
 
@@ -252,10 +253,13 @@ interface ApiErrorBody {
   error?: { message?: string };
 }
 
-/** 失敗した応答を、運用者に分かる説明にする。401 / 403 の API のメッセージは英語のコードなので使わない */
+/**
+ * 失敗した応答を、運用者に分かる説明にする。401 / 403 の API のメッセージは使わない。
+ * ただし 403 の本文の文が理由の文 (二段階認証の確認が要る・凍結) なら、その文を出す (forbiddenMessageForScreen。#1917)
+ */
 function describeFailure(status: number, body: ApiErrorBody | null): string {
   if (status === 401) return 'ログインの有効期限が切れています。ログインし直してください';
-  if (status === 403) return 'このログを見る権限がありません (super_admin のみ)';
+  if (status === 403) return forbiddenMessageForScreen(body, 'このログを見る権限がありません (super_admin のみ)');
   return body?.error?.message ?? `読み込みに失敗しました (HTTP ${status})`;
 }
 

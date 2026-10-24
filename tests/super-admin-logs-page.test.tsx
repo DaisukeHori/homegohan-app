@@ -519,6 +519,16 @@ describe('運用ログ画面: 失敗', () => {
     expect(text()).not.toContain('条件に合うログはありません');
   });
 
+  it('403 の本文の文が二段階認証の文なら、「権限がありません」で上書きせずその文を出す (#1917 の続き・整合 1025b)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: { code: 'FORBIDDEN', message: '二段階認証の確認が必要です' } }, 403));
+    await click(button('再読み込み'));
+
+    const alert = container.querySelector('[role="alert"]')?.textContent ?? '';
+    expect(alert).toContain('二段階認証の確認が必要です');
+    expect(alert).not.toContain('権限がありません');
+    expect(container.querySelectorAll('tbody tr')).toHaveLength(0);
+  });
+
   it('ログインの有効期限が切れた (401) ときは、ログインし直すよう説明する', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: { code: 'UNAUTHORIZED', message: 'AUTH_UNAUTHENTICATED' } }, 401));
     await click(button('再読み込み'));

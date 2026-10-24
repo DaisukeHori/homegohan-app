@@ -18,7 +18,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { isStaleDataConflict } from '@/lib/admin/api-error-message';
+import { forbiddenMessageForScreen, isStaleDataConflict } from '@/lib/admin/api-error-message';
 import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE, countsOrganizationsFor } from '@/lib/super-admin/plan-subscribers';
 
 type Plan = {
@@ -108,18 +108,22 @@ function editsAfterSave(loaded: PlanEdits, sent: PlanEdits, body: PlanSaveBody):
  *   - stale              : 409 CONFLICT_STALE_DATA のあとに読み直した
  *   - stale-reload-failed: 409 CONFLICT_STALE_DATA のあとの読み直しに失敗した (「再試行」を出す)
  *   - reload-failed      : 保存・状態の変更に成功したあとの読み直しに失敗した (「再試行」を出す)
- * editsKept は、入力欄の書きかけを読み直しで消さずに残したか
+ * editsKept は、入力欄の書きかけを読み直しで消さずに残したか。
+ * unavailable の message は画面に出す理由の文。404 は PLAN_NOT_FOUND_ON_RELOAD_MESSAGE。
+ * 403 は応答の本文の文が理由の文 (二段階認証の確認が要る など。#2014 の operatorForbiddenMessageOf) ならその文、
+ * それ以外 (ロールが足りない・本文が読めない) は「権限がありません」(forbiddenMessageForScreen。読み込み直しても変わらないので
+ * どちらも「再試行」は出さない。#1917)
  */
 type ReloadNotice =
   | { kind: 'stale'; editsKept: boolean }
   | { kind: 'stale-reload-failed'; editsKept: boolean }
   | { kind: 'reload-failed' }
-  | { kind: 'unavailable'; reason: PlanUnavailableReason };
+  | { kind: 'unavailable'; reason: PlanUnavailableReason; message: string };
 
 /**
  * 表示したあとの読み直しが、読み込み直しても変わらない理由で断られた (「再試行」を出さない。#1917)。
  *   - not-found: 404 (読み直しの間にプランが消えた)
- *   - forbidden: 403 (読み直しの間に運営の権限が外れた)
+ *   - forbidden: 403 (読み直しの間に運営の権限が外れた・二段階認証の確認が要るようになった)
  */
 type PlanUnavailableReason = 'not-found' | 'forbidden';
 
@@ -140,9 +144,6 @@ const PLAN_RELOAD_FAILED_MESSAGE = '最新の内容を読み込めませんで�
 /** 読み直しが 404 (プランが消えた) で断られたときの文。読み込み直しても変わらないので「再試行」は出さない */
 const PLAN_NOT_FOUND_ON_RELOAD_MESSAGE = 'プランが見つかりません。一覧に戻って確かめてください';
 
-/** 読み直しが 403 (運営の権限が外れた) で断られたときの文。読み込み直しても変わらないので「再試行」は出さない */
-const PLAN_FORBIDDEN_ON_RELOAD_MESSAGE = '権限がありません';
-
 /** 保存を押したが、どの入力欄も最後に読んだ・保存した値から変えていなかったときの文 (送らない。#1917) */
 const NO_PLAN_CHANGES_MESSAGE = '変更した項目がないので、保存していません';
 
@@ -158,7 +159,7 @@ function reloadNoticeText(notice: ReloadNotice): string {
     case 'reload-failed':
       return PLAN_RELOAD_FAILED_MESSAGE;
     case 'unavailable':
-      return notice.reason === 'not-found' ? PLAN_NOT_FOUND_ON_RELOAD_MESSAGE : PLAN_FORBIDDEN_ON_RELOAD_MESSAGE;
+      return notice.message;
   }
 }
 
@@ -169,7 +170,7 @@ function reloadNoticeText(notice: ReloadNotice): string {
 type PlanReloadOutcome =
   | { kind: 'loaded'; editsKept: boolean }
   | { kind: 'failed' }
-  | { kind: 'unavailable'; reason: PlanUnavailableReason }
+  | { kind: 'unavailable'; reason: PlanUnavailableReason; message: string }
   | { kind: 'superseded' };
 
 /** 表示したあとの読み直しの HTTP ステータスのうち、読み込み直しても変わらない理由 (#1917) */
@@ -240,13 +241,20 @@ export default function PlanDetailPage() {
     }
     try {
       const res = await fetch(`/api/super-admin/plans/${planId}`);
-      const data = await res.json() as { data?: Plan; error?: { message: string } };
+      // 403 の本文が JSON として読めなくても「権限がありません」を出せるよう、読めない本文は null にする (#1917)
+      const body: unknown = await res.json().catch(() => null);
       if (seq !== fetchSeq.current) return { kind: 'superseded' };
+      const data = (body ?? {}) as { data?: Plan; error?: { message: string } };
       if (!res.ok || !data.data) {
         if (!isReload) setError(data.error?.message ?? 'プランの取得に失敗しました');
-        // 表示したあとの読み直しが 404 / 403 なら、その理由を返す (「読み込み直せませんでした。再試行で…」で覆わない。#1917)
-        if (isReload && res.status === HTTP_NOT_FOUND) return { kind: 'unavailable', reason: 'not-found' };
-        if (isReload && res.status === HTTP_FORBIDDEN) return { kind: 'unavailable', reason: 'forbidden' };
+        // 表示したあとの読み直しが 404 / 403 なら、その理由を返す (「読み込み直せませんでした。再試行で…」で覆わない。#1917)。
+        // 403 は本文の文 (二段階認証の確認が要る など) を捨てずに出す (#2014 の route の文を、読み直しのときにも打ち消さない)
+        if (isReload && res.status === HTTP_NOT_FOUND) {
+          return { kind: 'unavailable', reason: 'not-found', message: PLAN_NOT_FOUND_ON_RELOAD_MESSAGE };
+        }
+        if (isReload && res.status === HTTP_FORBIDDEN) {
+          return { kind: 'unavailable', reason: 'forbidden', message: forbiddenMessageForScreen(body) };
+        }
         return { kind: 'failed' };
       }
       const loaded = data.data;
@@ -289,7 +297,7 @@ export default function PlanDetailPage() {
   const reloadAfterSuccess = useCallback(async () => {
     const outcome = await fetchPlan();
     if (outcome.kind === 'failed') setReloadNotice({ kind: 'reload-failed' });
-    if (outcome.kind === 'unavailable') setReloadNotice({ kind: 'unavailable', reason: outcome.reason });
+    if (outcome.kind === 'unavailable') setReloadNotice({ kind: 'unavailable', reason: outcome.reason, message: outcome.message });
   }, [fetchPlan]);
 
   /**
@@ -305,7 +313,7 @@ export default function PlanDetailPage() {
       setReloadNotice({ kind: 'stale-reload-failed', editsKept: editedBefore });
     } else if (outcome.kind === 'unavailable') {
       // プランが消えた・権限が外れた: その理由を出す (「再試行」で読み込み直すよう促さない。#1917)
-      setReloadNotice({ kind: 'unavailable', reason: outcome.reason });
+      setReloadNotice({ kind: 'unavailable', reason: outcome.reason, message: outcome.message });
     }
   }, [fetchPlan]);
 
@@ -317,7 +325,7 @@ export default function PlanDetailPage() {
     }
     const outcome = await fetchPlan({ keepEdits: true });
     if (outcome.kind === 'loaded') setReloadNotice(null);
-    if (outcome.kind === 'unavailable') setReloadNotice({ kind: 'unavailable', reason: outcome.reason });
+    if (outcome.kind === 'unavailable') setReloadNotice({ kind: 'unavailable', reason: outcome.reason, message: outcome.message });
   }, [fetchPlan, reloadAfterStale, reloadNotice]);
 
   /**

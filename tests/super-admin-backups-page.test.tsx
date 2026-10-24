@@ -354,6 +354,26 @@ describe('/super-admin/backups (バックアップ・DR)', () => {
     expect(alerts().map((a) => a.textContent).join('')).toContain('この画面を見る権限がありません');
   });
 
+  it('読み込み・送信の 403 の本文の文が二段階認証の文なら、固定の文で上書きせずその文を出す (#1917 の続き・整合 1025b)', async () => {
+    getResponse = { status: 403, body: { error: { code: 'FORBIDDEN', message: '二段階認証の確認が必要です' } } };
+    await render();
+    const loadAlerts = alerts().map((a) => a.textContent).join('');
+    expect(loadAlerts).toContain('二段階認証の確認が必要です');
+    expect(loadAlerts).not.toContain('この画面を見る権限がありません');
+
+    await act(async () => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    getResponse = { status: 200, body: statusBody() };
+    postResponses = [{ status: 403, body: { error: { code: 'FORBIDDEN', message: '二段階認証の確認が必要です' } } }];
+    await render();
+    await submit();
+    const texts = alerts().map((a) => a.textContent ?? '');
+    expect(texts.some((t) => t.includes('二段階認証の確認が必要です'))).toBe(true);
+    expect(texts.some((t) => t.includes('記録する権限がありません'))).toBe(false);
+  });
+
   it('201 で読み直し、項目の文が消え、role="alert" が無い', async () => {
     const parsed = drTestRecordBodySchema.safeParse({ kind: 'nope' });
     if (parsed.success) throw new Error('検証が通ってしまった');
