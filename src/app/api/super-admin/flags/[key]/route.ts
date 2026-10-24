@@ -4,7 +4,7 @@
  * operator/02-api-spec.md §7 準拠
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { authFailureNested } from '@/lib/api/error-responses';
 import { invalidateFeatureFlag } from '@/lib/feature-flags';
@@ -47,7 +47,8 @@ export async function PATCH(request: NextRequest, props: Params) {
     // enabled/rollout_strategy/constraints を永続化していなかった)
     const updateData: Record<string, unknown> = { ...parsed.data, updated_at: new Date().toISOString() };
 
-    const { data: updated, error } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { data: updated, error } = await getSupabaseAdmin()
       .from('feature_flags')
       .update(updateData)
       .eq('key', flagKey)
@@ -117,7 +118,8 @@ export async function DELETE(request: NextRequest, props: Params) {
     // #1029: feature_flags テーブルから実 DELETE する (以前は監査ログを INSERT するだけで
     // 実データを一切削除していなかった)。未登録キー (feature_flags に行が無い) の DELETE は
     // 0 行 affected でもエラーにせず成功として扱う (既存の orphan キー削除フローと整合)。
-    const { error: deleteError } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { error: deleteError } = await getSupabaseAdmin()
       .from('feature_flags')
       .delete()
       .eq('key', flagKey);
