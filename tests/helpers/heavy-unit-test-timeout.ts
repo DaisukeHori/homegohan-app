@@ -85,6 +85,8 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "src/__tests__/app/settings/data-export.test.ts",
   "src/__tests__/lib/membership/invite-throttle.in-memory.test.ts",
   "tests/admin-invalid-json-1917.test.ts",
+  "tests/admin-operator-forbidden-mfa-1917.test.ts",
+  "tests/admin-user-freeze-route-1917.test.ts",
   "tests/ai-consent-enforcement-edge.test.ts",
   "tests/ai-consent-enforcement-routes.test.ts",
   "tests/ai-consent-enforcement.test.ts",

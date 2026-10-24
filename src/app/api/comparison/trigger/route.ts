@@ -35,6 +35,7 @@ import { z } from 'zod';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { internalError } from '@/lib/api/errors';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { requireRole } from '@/lib/auth/helpers';
 import { createLogger } from '@/lib/db-logger';
 import { getSupabaseServiceConfig } from '@/lib/env-required';
@@ -134,7 +135,7 @@ export async function POST(request: Request) {
       return NextResponse.json(errorBody('UNAUTHORIZED', '認証が必要です'), { status: 401 });
     }
     if (err instanceof ForbiddenError) {
-      return NextResponse.json(errorBody('FORBIDDEN', '権限がありません'), { status: 403 });
+      return NextResponse.json(errorBody('FORBIDDEN', operatorForbiddenMessageOf(err)), { status: 403 });
     }
     return internalError(ROUTE_NAME, err, {}, { shape: 'nested' });
   }

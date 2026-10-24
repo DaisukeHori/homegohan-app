@@ -1013,6 +1013,50 @@ describe('DELETE /api/admin/users/[id]/freeze (BAN 解除)', () => {
     });
   });
 
+  // #1917: 解除の UPDATE は凍結中 (frozen_at が NULL でない) のときだけ書く条件つき。凍結されていなければ 409 で、監査を残さない
+  it('409 CONFLICT_STALE_DATA for a user that is not frozen, without writing an audit log (#1917)', async () => {
+    await clearFrozenInDb(targetUser.userId);
+    const unbanLog = () =>
+      latestAuditLog({ actorId: adminUser.userId, actionType: 'admin.user.unban', targetId: targetUser.userId });
+    const before = await unbanLog();
+
+    const res = await apiCall('DELETE', `/api/admin/users/${targetUser.userId}/freeze`, adminUser.jwt, {
+      reason: 'Not frozen',
+    });
+    expectError(res, 409, 'CONFLICT_STALE_DATA');
+    expect((await unbanLog())?.id ?? null).toBe(before?.id ?? null);
+    expect(await readFrozen(targetUser.userId)).toEqual({
+      frozen_at: null,
+      frozen_reason: null,
+      frozen_by: null,
+      unban_at: null,
+    });
+  });
+
+  it('200 then 409 - a second unfreeze from a stale screen is refused and writes no second audit log (#1917)', async () => {
+    await freezeInDb(targetUser.userId, adminUser.userId);
+    const first = await apiCall('DELETE', `/api/admin/users/${targetUser.userId}/freeze`, adminUser.jwt, {
+      reason: 'First unfreeze',
+    });
+    expect(dataOf(first)).toEqual({ success: true });
+    const firstLog = await latestAuditLog({
+      actorId: adminUser.userId,
+      actionType: 'admin.user.unban',
+      targetId: targetUser.userId,
+    });
+    expect(firstLog?.details).toMatchObject({ reason: 'First unfreeze' });
+
+    // 別の運営 (super_admin) が古い画面から同じ解除を送る
+    const secondActorLog = () =>
+      latestAuditLog({ actorId: superAdminUser.userId, actionType: 'admin.user.unban', targetId: targetUser.userId });
+    const secondBefore = await secondActorLog();
+    const second = await apiCall('DELETE', `/api/admin/users/${targetUser.userId}/freeze`, superAdminUser.jwt, {
+      reason: 'Second unfreeze from a stale screen',
+    });
+    expectError(second, 409, 'CONFLICT_STALE_DATA');
+    expect((await secondActorLog())?.id ?? null).toBe(secondBefore?.id ?? null);
+  });
+
   it.each([
     { name: 'an empty reason', body: { reason: '' } },
     { name: 'a missing reason', body: {} },

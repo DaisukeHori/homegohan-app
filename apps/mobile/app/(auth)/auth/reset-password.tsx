@@ -8,7 +8,7 @@ import { Text, TextInput } from "../../../src/components/ui/Text";
 
 import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { getApi } from "../../../src/lib/api";
-import { getApiErrorMessage, getJapaneseApiErrorMessage } from "../../../src/lib/api-error";
+import { getJapaneseApiErrorMessage } from "../../../src/lib/api-error";
 import { extractSupabaseLinkParams } from "../../../src/lib/deeplink";
 import { signOutWithCleanup } from "../../../src/lib/signOut";
 import { supabase } from "../../../src/lib/supabase";
@@ -105,8 +105,9 @@ export default function ResetPasswordPage() {
       await signOutWithCleanup(userId);
       router.replace("/login");
     } catch (e: unknown) {
-      // 本文の error = cross/16 §19 の文 (422 VALID_PASSWORD_HISTORY / VALID_PASSWORD_WEAK、403 AUTH_RECOVERY_SESSION_REQUIRED など)。圏外は通信の文言
-      Alert.alert("更新失敗", getApiErrorMessage(e, "更新に失敗しました。"));
+      // 本文の error = cross/16 §19 の文 (422 VALID_PASSWORD_HISTORY / VALID_PASSWORD_WEAK、403 AUTH_RECOVERY_SESSION_REQUIRED など)。圏外は通信の文言。
+      // HTTP のエラーでない例外 (Supabase Auth の英文など) の英文は出さず、固定の文にする (#1917 の続き)
+      Alert.alert("更新失敗", getJapaneseApiErrorMessage(e, "更新に失敗しました。"));
     } finally {
       setIsSubmitting(false);
     }
