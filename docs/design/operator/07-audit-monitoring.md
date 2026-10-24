@@ -210,7 +210,7 @@ super_admin.mfa.reset               - 別の super_admin による運営の二�
 - **fail-open**。ただし監査の起点 (取り消せない操作: verify の成功・コードの消費・unenroll の成功・再発行の呼び出し) の後は、
   続く手順が途中で失敗しても、止まった手順の名前を `failed_step` に入れて **必ず 1 行書いてから** 応答する (起点より前の失敗は書かない)。
 - ログインごとの 6 桁の確認 (verified な factor の verify) は記録しない (ログインの一部。Supabase の auth 監査に残る)。
-- 自己サービスの `/api/auth/mfa/*` は `tests/admin-mutation-audit-coverage-1571.test.ts` の走査の 4 つのディレクトリの外にあるが、上の 4 種を記録する (同じテストが、4 つのディレクトリの外の運営ロールの確認に届く変更系として表に載せる。記録は別のファイルの `recordMfaAudit()` なので `exempt` に理由を書く)。
+- 自己サービスの `/api/auth/mfa/*` は `tests/admin-mutation-audit-coverage-1571.test.ts` の走査の 4 つのディレクトリの外にあるが、上の 4 種を記録する (同じテストが、4 つのディレクトリの外の運営ロールの確認に届く変更系として表に載せる。`enroll` (登録の開始) は記録せず、登録の完了は `verify` の成功で `admin.mfa.enroll` を書くので、`exempt` の理由はそれを書く。ほかの 4 本 (`backup-codes`・`factors` の DELETE・`recover`・`verify`) は記録が別のファイルの `recordMfaAudit()` なので `exempt` に理由を書く)。
 
 #### 4.1.1 ユーザー PII 閲覧系操作 (#1200)
 

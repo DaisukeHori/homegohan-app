@@ -2,7 +2,7 @@
  * #1917 の続き: 運営の家族の代表者の強制譲渡 POST /api/operator/membership/family/{id}/transfer が、退会の途中の人を代表者にしない (route のテスト)。
  *
  * 退会 (src/lib/account-deletion.ts の deleteAccount) は findBlocker の前に退会の印 (begin_account_deletion_guard) を付ける。
- * 印のある人を representative_id にする family_groups の書き込みは、DB のトリガー family_groups_representative_not_deleting が
+ * 印のある人を representative_id にする family_groups の書き込みは、DB のトリガー trg_representative_not_deleting (関数 family_groups_representative_not_deleting) が
  * 'REPRESENTATIVE_ACCOUNT_DELETING' (P0001) で止める (supabase/migrations/20261023150000_account_deletion_family_representative_guard.sql。
  * 実 DB では tests/integration/security/account-deletion-family-rep-guard.test.ts)。
  * ここでは、その止めを route が 409 REPRESENTATIVE_ACCOUNT_DELETING (日本語の固定の文) にし、監査・通知を出さないことを確かめる。
