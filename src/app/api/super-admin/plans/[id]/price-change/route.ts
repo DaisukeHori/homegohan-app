@@ -285,7 +285,8 @@ export async function POST(request: NextRequest, props: RouteContext) {
       return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
-    // 1. 予約を取り、ロックの下で読んだプランの値を受け取る (#1917)
+    // 1. 予約を取り、ロックの下で読んだプランの値を受け取る (#1917)。
+    //    読めなかったとき (DB の失敗) は 404 にしない (行が無いときだけ 404。一時的な失敗で消えたように見せない。#1917)
     let begin;
     try {
       begin = await beginPlanPriceChange(rpcClient, params.id);
@@ -370,10 +371,7 @@ export async function POST(request: NextRequest, props: RouteContext) {
       reservationHeld = false;
 
       if (applied.result === 'not_found') {
-        return NextResponse.json(
-          { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } },
-          { status: 404 }
-        );
+        return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
       }
       if (applied.result === 'lost') {
         return NextResponse.json(

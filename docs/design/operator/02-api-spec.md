@@ -1229,7 +1229,7 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 ---
 
 ### GET / POST /api/admin/sales/leads/{id}/activities
-`GET` は活動履歴の一覧 (`{ data: [{ id, lead_id, actor_id, activity_type, details, created_at }] }`。新しい順。権限は `sales` / `admin` / `super_admin`。UUID の形でない id は DB に渡さず 404 `NOT_FOUND`、読み込みの DB の失敗は 500 `INTERNAL_ERROR`。監査ログは残さない。`src/app/api/admin/sales/leads/[id]/activities/route.ts:57-85`。`POST` は :87 から)。`POST` は活動記録追加。リードの読み込みの DB の失敗は 500 `INTERNAL_ERROR` (404 は行が無いとき (UUID の形でない id を含む。DB に渡さず、本文の検査の 400 のあとに 404) だけ)。追加のあとのリードの `updated_at` の更新に失敗しても、活動は追加できているので 201 のまま (失敗は db-logger に error で残す。#1917)。POST は本文が JSON として読めないときは 400 `INVALID_JSON` (外側の catch の 500 に落とさない。#1917)。
+`GET` は活動履歴の一覧 (`{ data: [{ id, lead_id, actor_id, activity_type, details, created_at }] }`。新しい順。権限は `sales` / `admin` / `super_admin`。UUID の形でない id は DB に渡さず 404 `NOT_FOUND`、読み込みの DB の失敗は 500 `INTERNAL_ERROR`。監査ログは残さない。`src/app/api/admin/sales/leads/[id]/activities/route.ts:57-85`。`POST` は :87 から)。`POST` は活動記録追加。リードの読み込みの DB の失敗は 500 `INTERNAL_ERROR` (404 は行が無いとき (UUID の形でない id を含む。DB に渡さず、本文の検査の 400 のあとに 404) だけ)。追加のあとのリードの `updated_at` の更新に失敗しても、活動は追加できているので 201 のまま (失敗は db-logger に error で残す。#1917)。`POST` は本文が JSON として読めないときは 400 `INVALID_JSON` (外側の catch の 500 に落とさない。#1917)。
 
 **リクエスト**:
 ```json

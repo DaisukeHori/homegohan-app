@@ -135,10 +135,10 @@ describe('1. 予約 (begin_plan_price_change)', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('UUID の形でない id は予約 (DB) に渡さず 404 OP_PLAN_NOT_FOUND (uuid の引数に渡すと 22P02 で 500 に入るため。#1917)', async () => {
+  it('UUID の形でない id は予約を取らずに 404 OP_PLAN_NOT_FOUND (uuid の引数に渡すと 22P02 の失敗になり 500 に入るため。#1917)', async () => {
     process.env.STRIPE_SECRET_KEY = 'sk_test_x';
-    const fetchMock = stubEdge(edgeOk({}));
     fakeSupabase = priceChangeSupabase();
+    const fetchMock = stubEdge(edgeOk({}));
 
     const res = await POST(priceChangeRequest({}), { params: { id: 'not-a-uuid' } });
 
