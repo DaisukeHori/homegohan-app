@@ -1124,7 +1124,7 @@ export function sendDsrResolvedEmail(admin: DsrAdminClient, row: DsrNotification
 |---|---|---|---|
 | `AUTH_UNAUTHENTICATED` | 401 | 全 route | 本人: `{ error: 'ログインが必要です', code }` (#1917 で英語の 'Unauthorized' から変えた) / 運営: `{ error: { code, message: '認証が必要です' } }` |
 | `AUTH_ACCOUNT_FROZEN` | 403 | 本人向け | 凍結中の /api 呼び出しは middleware (lib/supabase/middleware.ts) が先に止めるので、実際の本文は middleware の `{ error: { code, message: 'アカウントが凍結されています' } }`。route の authenticateDsrRequester (`requireUserAllowingMissingProfile` の ForbiddenError) → `{ error: 'アカウントが凍結されています', code }` (flat) は middleware を通った場合の二重の守り |
-| `OP_PERMISSION_DENIED` | 403 | 運営向け | `{ error: { code, message: '権限がありません' } }` |
+| `OP_PERMISSION_DENIED` | 403 | 運営向け | `{ error: { code, message } }`。message は `authFailureResponse` (`src/lib/admin/inquiries.ts`) が `operatorForbiddenMessageOf` で決める: 二段階認証が未完了 (`MfaRequiredError`) なら「二段階認証の確認が必要です」(登録が要るなら「二段階認証の登録が必要です」)、それ以外は「権限がありません」 |
 | `INVALID_CHARACTER` | 400 | 本文を読む route (rejectNullCharacterBody) | 既存の固定文 |
 | `INVALID_JSON` | 400 | 本文を読む route | 本人: `{ error: 'リクエストボディが不正です', code }` |
 | `VALIDATION_ERROR` | 400 | zod の失敗・id の形式 | `{ error: '入力内容を確認してください', code, details: flatten }` (運営は nested + details) |

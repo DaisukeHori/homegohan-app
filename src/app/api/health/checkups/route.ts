@@ -37,12 +37,16 @@ export async function GET(request: NextRequest) {
     return internalError('GET /api/health/checkups', error, { userId: user.id, table: 'health_checkups' });
   }
 
-  // 経年レビューも取得
-  const { data: longitudinalReview } = await supabase
+  // 経年レビューも取得。行が無いときだけ null。読めなかった (DB の失敗) ときは 500 (#1917 の続き。以前は失敗を捨て、
+  // 経年レビューがまだ無いように見えていた)
+  const { data: longitudinalReview, error: longitudinalReviewError } = await supabase
     .from('health_checkup_longitudinal_reviews')
     .select('*')
     .eq('user_id', user.id)
     .maybeSingle();
+  if (longitudinalReviewError) {
+    return internalError('GET /api/health/checkups', longitudinalReviewError, { userId: user.id, table: 'health_checkup_longitudinal_reviews' });
+  }
 
   return NextResponse.json({
     checkups: data,
@@ -67,7 +71,7 @@ export async function POST(request: NextRequest) {
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   const body = await request.json().catch(() => null);
-  if (!body || typeof body !== 'object') {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
   }
 

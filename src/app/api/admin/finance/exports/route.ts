@@ -18,7 +18,7 @@ import { requireRole, type UserProfile } from '@/lib/auth/helpers';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { internalError } from '@/lib/api/errors';
-import { AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED, authFailureNested, invalidJsonNested } from '@/lib/api/error-responses';
+import { AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED, authFailureNested, invalidJsonNested, operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { readJsonBody } from '@/lib/http-params';
 import { ExportRequestSchema } from '@/lib/admin/finance-schemas';
 import { jstOptionalDayRangeTimestamps } from '@/lib/jst-day-ranges';
@@ -47,7 +47,7 @@ export async function GET(_request: NextRequest) {
     }
     if (err instanceof ForbiddenError) {
       return NextResponse.json(
-        { error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } },
+        { error: { code: 'OP_PERMISSION_DENIED', message: operatorForbiddenMessageOf(err) } },
         { status: 403 },
       );
     }

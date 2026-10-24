@@ -176,9 +176,9 @@ describe('一覧 (予算を超えたファイル・時間切れを延ばした�
     expect(hasExtendedTimeout('vi.setConfig({ restoreMocks: true });')).toBe(false);
   });
 
-  it('時間切れを延ばしたファイル (heavy-unit-test-timeout.ts の一覧 42 本 + local-ci-slot-test-timeout.ts の 3 本 = 45 本。#1501 で 20 本・#1498 で 2 本を一覧から外し、#1605 で一覧に 15 本・local-ci-slot-test-timeout.ts に 1 本、#1657 で一覧に 1 本、#1686 で一覧に 1 本、#1792 で一覧に 1 本、#1779 で一覧に 2 本、#1845 で一覧に 1 本、bash 3.2 のマルチバイトの文字の見張り (tests/shell-multibyte-var-expansion.test.ts) で一覧に 1 本、#1917 の読み込みの失敗の route のテストで一覧に 3 本、#1917 の続きの入力の誤りの route のテスト (tests/route-invalid-input-1917.test.ts) で一覧に 1 本足した) は、どれも延ばしたファイルとして拾う', () => {
+  it('時間切れを延ばしたファイル (heavy-unit-test-timeout.ts の一覧 45 本 + local-ci-slot-test-timeout.ts の 3 本 = 48 本。#1501 で 20 本・#1498 で 2 本を一覧から外し、#1605 で一覧に 15 本・local-ci-slot-test-timeout.ts に 1 本、#1657 で一覧に 1 本、#1686 で一覧に 1 本、#1792 で一覧に 1 本、#1779 で一覧に 2 本、#1845 で一覧に 1 本、bash 3.2 のマルチバイトの文字の見張り (tests/shell-multibyte-var-expansion.test.ts) で一覧に 1 本、#1917 の読み込みの失敗の route のテストで一覧に 3 本、#1917 の続きの入力の誤りの route のテスト (tests/route-invalid-input-1917.test.ts) で一覧に 1 本、#1917 の続きの運営の凍結の route と運営の route のゲートの 403 の文のテストで一覧に 2 本、#1917 の続きの仕分け triage-1025a の route のテスト (tests/route-input2-1917.test.ts) で一覧に 1 本足した) は、どれも延ばしたファイルとして拾う', () => {
     const extended = [...HEAVY_UNIT_TEST_FILES, ...SLOT_TIMEOUT_FILES];
-    expect(extended).toHaveLength(45);
+    expect(extended).toHaveLength(48);
     for (const file of extended) expect(hasExtendedTimeout(read(file)), file).toBe(true);
   });
 });

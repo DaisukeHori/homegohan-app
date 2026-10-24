@@ -47,14 +47,19 @@ export async function GET(request: NextRequest, props: { params: Promise<{ id: s
     const stripeCustomerId = (invoiceObj as { customer?: string })?.customer ?? null;
     const stripeSubscriptionId = (invoiceObj as { subscription?: string })?.subscription ?? null;
 
-    // personal_subscriptions から user_id を取得 (stripe_subscription_id で結合)
+    // personal_subscriptions から user_id を取得 (stripe_subscription_id で結合)。
+    // 紐づく契約の行が無いときだけ user_id を null にする。読めなかった (DB の失敗) ときは 500 (#1917 の続き。以前は失敗を捨て、
+    // 利用者の欄が空 = 「紐づく契約が無い」と見分けられなかった)。stripe_subscription_id は一意なので 2 行にはならない
     let userId: string | null = null;
     if (stripeSubscriptionId) {
-      const { data: sub } = await supabase
+      const { data: sub, error: subError } = await supabase
         .from('personal_subscriptions')
         .select('user_id, plan_key')
         .eq('stripe_subscription_id', stripeSubscriptionId)
-        .single();
+        .maybeSingle();
+      if (subError) {
+        return internalError('GET /api/admin/finance/invoices/[id]', subError, { userId: actor.id, table: 'personal_subscriptions' }, { shape: 'nested' });
+      }
       userId = sub?.user_id ?? null;
     }
 

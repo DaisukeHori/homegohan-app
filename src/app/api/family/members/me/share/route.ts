@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/server';
 import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { UpdateShareSettingsBodySchema } from '@/schemas/membership/share-settings';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { internalError } from '@/lib/api/errors';
 
 export async function PATCH(request: Request) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
@@ -46,13 +47,18 @@ export async function PATCH(request: Request) {
 
   const { share_meals, share_health, share_menu } = parsed.data;
 
-  // 現在の設定値を取得してデフォルト値として使用
-  const { data: currentMember } = await supabase
+  // 現在の設定値を取得してデフォルト値として使用。
+  // 読めなかった (DB の失敗) ときは 500。既定の値で上書きしない (#1917 の続き。以前は失敗を捨て、送らなかった項目を
+  // 既定の値 (健康は共有しない など) で書き換えていた)。家族に入っていない (行が無い) ときは今までどおり既定の値で RPC に任せる
+  const { data: currentMember, error: currentMemberError } = await supabase
     .from('family_members')
     .select('share_meals, share_health, share_menu')
     .eq('user_id', user.id)
     .eq('status', 'active')
-    .single();
+    .maybeSingle();
+  if (currentMemberError) {
+    return internalError('PATCH /api/family/members/me/share', currentMemberError, { userId: user.id, table: 'family_members' }, { shape: 'nested' });
+  }
 
   const newShareMeals = share_meals ?? currentMember?.share_meals ?? true;
   const newShareHealth = share_health ?? currentMember?.share_health ?? false;
