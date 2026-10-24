@@ -123,6 +123,20 @@ async function seedRow(table: string, row: Record<string, unknown>): Promise<str
   return (data as { id: string }).id;
 }
 
+/** 行を見分ける列と値 (id の無い表は主キーの列。experiment_assignments は experiment_id・user_id、system_settings は key) */
+type RowKey = Readonly<Record<string, string>>;
+
+/** 問い合わせに、行を見分ける列の eq を足す */
+function whereKey<Q extends { eq: (column: string, value: string) => Q }>(query: Q, key: RowKey): Q {
+  return Object.entries(key).reduce((q, [column, value]) => q.eq(column, value), query);
+}
+
+async function rowOfKey(table: string, key: RowKey): Promise<Record<string, unknown> | null> {
+  const { data, error } = await whereKey(srAdmin.from(table).select('*'), key).maybeSingle();
+  if (error) throw new Error(`${table} ${JSON.stringify(key)}: ${error.message}`);
+  return data as Record<string, unknown> | null;
+}
+
 async function rowOf(table: string, id: string): Promise<Record<string, unknown> | null> {
   const { data, error } = await srAdmin.from(table).select('*').eq('id', id).maybeSingle();
   if (error) throw new Error(`${table} ${id}: ${error.message}`);
@@ -188,7 +202,8 @@ const OPERATOR_TABLES: readonly OperatorTableSpec[] = [
 ];
 
 /** 運営だけが書く表の、既にある行 (service_role で作る。subscription_plans は種の行を使う) */
-const existingIds = new Map<OperatorTable, string>();
+const existingKeys = new Map<OperatorTable, RowKey>();
+const setExistingId = (table: OperatorTable, id: string) => existingKeys.set(table, { id });
 let experimentId = '';
 let leadId = '';
 let ticketId = '';
@@ -211,10 +226,13 @@ beforeAll(async () => {
   orgOperatorAal2 = await aal2Jwt(orgOperator);
 
   experimentId = await seedRow('experiments', { key: `seed_${RUN}`, name: `#1917 seed ${RUN}`, variants: [], created_by: superAdmin.id });
-  existingIds.set('experiments', experimentId);
-  existingIds.set('experiment_assignments', await seedRow('experiment_assignments', { experiment_id: experimentId, user_id: customer.id, variant_key: 'control' }));
-  existingIds.set('admin_user_notes', await seedRow('admin_user_notes', { user_id: customer.id, admin_id: support.id, note: `#1917 seed ${RUN}` }));
-  existingIds.set(
+  setExistingId('experiments', experimentId);
+  // experiment_assignments は id の列を持たない (主キーは experiment_id・user_id)
+  const { error: assignmentError } = await srAdmin.from('experiment_assignments').insert({ experiment_id: experimentId, user_id: customer.id, variant_key: 'control' });
+  if (assignmentError) throw new Error(`seed experiment_assignments: ${assignmentError.message}`);
+  existingKeys.set('experiment_assignments', { experiment_id: experimentId, user_id: customer.id });
+  setExistingId('admin_user_notes', await seedRow('admin_user_notes', { user_id: customer.id, admin_id: support.id, note: `#1917 seed ${RUN}` }));
+  setExistingId(
     'coupons',
     await seedRow('coupons', {
       code: `SEED${RUN}`.slice(0, 40),
@@ -225,17 +243,20 @@ beforeAll(async () => {
       created_by: superAdmin.id,
     }),
   );
-  existingIds.set('feature_flags', await seedRow('feature_flags', { key: `seed_${RUN}`, description: `#1917 seed ${RUN}`, enabled: false }));
+  setExistingId('feature_flags', await seedRow('feature_flags', { key: `seed_${RUN}`, description: `#1917 seed ${RUN}`, enabled: false }));
   // 運営の画面は active 以外のパッケージも読む (本冊が作る feature_packages_select_super_admin)
-  existingIds.set('feature_packages', await seedRow('feature_packages', { package_key: `seed_${RUN}`, display_name: `#1917 seed ${RUN}`, status: 'deprecated' }));
+  setExistingId('feature_packages', await seedRow('feature_packages', { package_key: `seed_${RUN}`, display_name: `#1917 seed ${RUN}`, status: 'deprecated' }));
   leadId = await seedRow('sales_leads', { company_name: `#1917 seed ${RUN}` });
-  existingIds.set('sales_leads', leadId);
-  existingIds.set('sales_lead_activities', await seedRow('sales_lead_activities', { lead_id: leadId, actor_id: sales.id, activity_type: 'note', details: { memo: 'seed' } }));
-  existingIds.set('system_settings', await seedRow('system_settings', { key: `seed_${RUN}`, value: { v: 'seed' } }));
+  setExistingId('sales_leads', leadId);
+  setExistingId('sales_lead_activities', await seedRow('sales_lead_activities', { lead_id: leadId, actor_id: sales.id, activity_type: 'note', details: { memo: 'seed' } }));
+  // system_settings は id の列を持たない (主キーは key)
+  const { error: settingError } = await srAdmin.from('system_settings').insert({ key: `seed_${RUN}`, value: { v: 'seed' } });
+  if (settingError) throw new Error(`seed system_settings: ${settingError.message}`);
+  existingKeys.set('system_settings', { key: `seed_${RUN}` });
   const { data: plan, error: planError } = await retryIdempotentSetup(srAdmin, 'beforeAll: subscription_plans の種の行', (db) =>
     db.from('subscription_plans').select('id').order('display_order').limit(1).single());
   if (planError || !plan) throw new Error(`subscription_plans: ${planError?.message}`);
-  existingIds.set('subscription_plans', (plan as { id: string }).id);
+  setExistingId('subscription_plans', (plan as { id: string }).id);
 
   ticketId = await seedRow('support_tickets', { user_id: customer.id, subject: `#1917 seed ${RUN}`, category: 'other', priority: 'medium', status: 'open' });
   inquiryId = await seedRow('inquiries', { user_id: customer.id, inquiry_type: 'general', email: customer.email, subject: `#1917 seed ${RUN}`, message: 'seed', status: 'pending' });
@@ -280,26 +301,26 @@ afterAll(async () => {
 
 describe('O-1: 運営だけが書く 10 表は、運営 (aal2 を含む) の自分のセッションの直接の書き込みが 42501 で、行は変わらない', () => {
   it.each(OPERATOR_TABLES)('$table: 本冊の前に書けた運営 ($formerWriters) の INSERT / UPDATE / DELETE は 42501', async (spec) => {
-    const id = existingIds.get(spec.table)!;
-    const before = await rowOf(spec.table, id);
+    const key = existingKeys.get(spec.table)!;
+    const before = await rowOfKey(spec.table, key);
     expect(before, `${spec.table} の既にある行`).not.toBeNull();
     for (const who of spec.formerWriters) {
       const db = asUser(jwtOf(who));
       expect((await db.from(spec.table).insert(spec.newRow())).error?.code, `${who} INSERT`).toBe(INSUFFICIENT_PRIVILEGE);
-      expect((await db.from(spec.table).update(spec.patch).eq('id', id)).error?.code, `${who} UPDATE`).toBe(INSUFFICIENT_PRIVILEGE);
-      expect((await db.from(spec.table).delete().eq('id', id)).error?.code, `${who} DELETE`).toBe(INSUFFICIENT_PRIVILEGE);
+      expect((await whereKey(db.from(spec.table).update(spec.patch), key)).error?.code, `${who} UPDATE`).toBe(INSUFFICIENT_PRIVILEGE);
+      expect((await whereKey(db.from(spec.table).delete(), key)).error?.code, `${who} DELETE`).toBe(INSUFFICIENT_PRIVILEGE);
     }
-    expect(await rowOf(spec.table, id)).toEqual(before);
+    expect(await rowOfKey(spec.table, key)).toEqual(before);
   }, TEST_TIMEOUT_MS);
 });
 
 describe('O-2: 運営の読み取りは残る (運営の画面・API は本人のセッションで読む)', () => {
   it.each(OPERATOR_TABLES)('$table: $readers は既にある行を読める', async (spec) => {
-    const id = existingIds.get(spec.table)!;
+    const key = existingKeys.get(spec.table)!;
     for (const who of spec.readers) {
-      const { data, error } = await asUser(jwtOf(who)).from(spec.table).select('id').eq('id', id);
+      const { data, error } = await whereKey(asUser(jwtOf(who)).from(spec.table).select('*'), key);
       expect(error, who).toBeNull();
-      expect(data, who).toEqual([{ id }]);
+      expect(data, who).toHaveLength(1);
     }
   }, TEST_TIMEOUT_MS);
 });
@@ -505,7 +526,7 @@ describe('U: 利用者の INSERT は、運営の判定の列を指定できな�
     for (const [label, db] of [['user', asUser(customer.jwt)], ['anon', anon()]] as const) {
       for (const spec of OPERATOR_TABLES) {
         expect((await db.from(spec.table).insert(spec.newRow())).error?.code, `${label} ${spec.table} INSERT`).toBe(INSUFFICIENT_PRIVILEGE);
-        expect((await db.from(spec.table).update(spec.patch).eq('id', existingIds.get(spec.table)!)).error?.code, `${label} ${spec.table} UPDATE`).toBe(INSUFFICIENT_PRIVILEGE);
+        expect((await whereKey(db.from(spec.table).update(spec.patch), existingKeys.get(spec.table)!)).error?.code, `${label} ${spec.table} UPDATE`).toBe(INSUFFICIENT_PRIVILEGE);
       }
       expect((await db.from('inquiries').update({ status: 'resolved' }).eq('id', inquiryId)).error?.code, `${label} inquiries UPDATE`).toBe(INSUFFICIENT_PRIVILEGE);
       expect((await db.from('support_tickets').update({ status: 'resolved' }).eq('id', ticketId)).error?.code, `${label} support_tickets UPDATE`).toBe(INSUFFICIENT_PRIVILEGE);
