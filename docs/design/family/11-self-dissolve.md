@@ -1065,7 +1065,7 @@ migration のあと、ローカルの Supabase で型を作り直し、`src/type
 |---|---|
 | `src/schemas/membership/family-group.ts:17` `representative_id` | `z.string().uuid().nullable()` |
 | `src/schemas/membership/organization.ts:27` `owner_id` (コメントは `:26`) | `z.string().uuid().nullable()`。上のコメント「列は NOT NULL (#1103 項目 10 / migration 20261017100000)」を「active な行では NOT NULL (CHECK)。解散した行は NULL (#1917)」に |
-| `src/app/api/admin/organizations/route.ts:31-33, 153-155` (読み手 1) | コードは変えない (作る組織は active なので `owner_id` を必ず入れる)。コメントの「列は NOT NULL」を CHECK の説明に |
+| `src/app/api/admin/organizations/route.ts:32-34, 154-156` (読み手 1) | コードは変えない (作る組織は active なので `owner_id` を必ず入れる)。コメントの「列は NOT NULL」を CHECK の説明に |
 | (読み手 2〜5) `src/app/api/family/representative-transfer/[id]/accept/route.ts`・`src/app/api/operator/membership/family/[id]/transfer/route.ts`・`src/app/api/operator/membership/org/[id]/transfer/route.ts`・`src/lib/membership/exit-notification.ts` | 読んだ `representative_id` / `owner_id` を `string \| null` として扱う (`?? null`)。譲渡・退出の対象は active な行なので値は入っているが、型の上で NULL を受ける |
 | `src/lib/account-export-tables.ts:239` (`self('representative_id')`) | 変えない (本人の id と比べるだけ)。解散のあとは `representative_id` が NULL なので、元代表者の書き出しに解散した `family_groups` の行は入らない (本人の所属の記録は `family_members` の行 (`left`) として `self('user_id')` で出る) |
 | `src/lib/account-deletion.ts:318, 335` (`findBlocker` の `.eq('owner_id', userId)` / `.eq('representative_id', userId)`) | 変えない (型: `.eq` は `string \| null` の列に `string` を渡せるので `tsc` は通る。動き: NULL の行は当たらないので、解散のあとは 409 にならない = 解散のあとの退会が通る仕組みそのもの。§13.6・S-13)。コメントだけ §13.6 のとおり足す |
