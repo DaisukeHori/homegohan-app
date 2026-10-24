@@ -109,9 +109,9 @@ export function aiTargetSlotNotObjectMessage(index: number): string {
 export function aiTargetSlotDateInvalidMessage(index: number): string {
   return invalidCalendarDateMessage(`${index + 1} 番目の枠の日付`);
 }
-/** 400: targetSlots の 1 つの枠の食事の区分が、受け付ける区分でない */
+/** 400: targetSlots の 1 つの枠の食事の区分が、受け付ける区分でない。受け付ける英字の値は括弧に入れて添える (healthEnumMessage・MEAL_TYPE_MESSAGE と同じ形。#1917 の続き) */
 export function aiTargetSlotMealTypeInvalidMessage(index: number, validMealTypes: readonly string[]): string {
-  return `${index + 1} 番目の枠の食事の区分は ${validMealTypes.join('・')} のどれかにしてください`;
+  return `${index + 1} 番目の枠の食事の区分 (mealType) は次のいずれかを指定してください (${validMealTypes.join(' / ')})`;
 }
 /** 400: targetSlots の 1 つの枠の献立の ID の形が正しくない */
 export function aiTargetSlotPlannedMealIdInvalidMessage(index: number): string {

@@ -26,7 +26,9 @@
  *      数・日本語の文だと分かっている読み取れない式だけを、TEMPLATE_SUBSTITUTION_EXEMPT に理由つきで載せる
  * 限界: 本文の文を表 (オブジェクト) から引くもの・関数の戻り値で作るもの・入力の検証の関数が返す文は、4 と 5 に挙げたもの以外は見ない
  *   (健康の記録の入力の検証は tests/health-api-messages.test.ts が、通知の設定の文は tests/notification-preferences.test.ts が、
- *   プランの状態・項目の文は tests/plan-status-transition.test.ts が値で確かめる)。見張りであって網羅の証明ではない。
+ *   プランの状態・項目の文は tests/plan-status-transition.test.ts が、AI の API の文を作る関数 (献立の生成の枠の食事の区分の文など) は
+ *   tests/ai-api-error-messages.test.ts が、埋め込みの再生成の成功の文は tests/embeddings-regenerate-route.test.ts が値で確かめる)。
+ *   見張りであって網羅の証明ではない。
  */
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';

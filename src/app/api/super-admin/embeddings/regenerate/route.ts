@@ -57,13 +57,13 @@ interface EdgeFunctionResult {
 
 /**
  * 成功の本文の message (#1917)。Edge Function の message は英語の文 ('Processed 42 rows. Call again with offset=42' など) なので
- * 本文に入れず、処理した件数と続きの有無から日本語の文を作る (Edge Function の文は使わない)
+ * 本文に入れず、処理した件数と続きの有無から日本語の文を作る (Edge Function の文は使わない。次に送る英字の項目名 (offset) は括弧に入れる。#1917 の続き)
  */
 function regenerateResultMessage(processed: number, hasMore: boolean, nextOffset: number | undefined): string {
   if (!hasMore) return `${processed} 件を再生成しました。残りはありません`;
   return nextOffset === undefined
     ? `${processed} 件を再生成しました。続きがあります`
-    : `${processed} 件を再生成しました。続きは offset ${nextOffset} から実行してください`;
+    : `${processed} 件を再生成しました。続きは開始の位置 (offset) を ${nextOffset} にして実行してください`;
 }
 
 export async function POST(request: NextRequest) {
