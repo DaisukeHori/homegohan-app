@@ -1,8 +1,8 @@
 -- migration: 20261024110000_announcements_moderation_flags_select_only.sql
 -- 戻し方: supabase/rollbacks/20261024110000_announcements_moderation_flags_select_only.down.sql
 -- #1917 の続き: 運営 (admin / super_admin) が PostgREST の直接の書き込みで announcements (お知らせ) と moderation_flags (食事の通報)
--- の行を INSERT / UPDATE / DELETE でき、recipe_flags (レシピの通報) の行を UPDATE でき、運営の API と監査ログ (admin_audit_logs) を
--- 通らずに済んでしまう既存の欠陥を直す。
+-- の行を INSERT / UPDATE / DELETE でき、recipe_flags (レシピの通報) の行を UPDATE でき、personal_subscriptions (個人の契約) の行を
+-- INSERT / UPDATE でき、運営の API と監査ログ (admin_audit_logs) を通らずに済んでしまう既存の欠陥を直す。
 --
 -- 背景:
 --   (A) announcements: 本番のベースライン (20251126124224_create_meal_planner_tables.sql) の
@@ -25,10 +25,21 @@
 --       src/lib/admin/hidden-content-restore.ts の approveRejectedFlagsOfContent)。直接の書き込みは (B) と同じく監査も非表示・BAN の手順も通らない。
 --       ほかのポリシーは :9594 "Anyone can create recipe flags" (FOR INSERT・TO authenticated・reporter_id = auth.uid()。利用者の通報) と
 --       :9713 "Users and admins can view recipe flags" (FOR SELECT。本人と運営) で、DELETE のポリシーはもともと無い。
+--   (D) personal_subscriptions: 20261016210000_billing_core.sql:51 "personal_subscriptions_insert_admin" (FOR INSERT) と
+--       :55 "personal_subscriptions_update_admin" (FOR UPDATE。どちらも roles が admin / super_admin) と、ベースラインの
+--       :13790-13791 の anon / authenticated への INSERT / SELECT / UPDATE / DELETE の権限 (anon の INSERT / UPDATE / DELETE は
+--       20261016210000:63 が外した) により、運営は契約の行を直接作り・書き換えられた。20261017130000:409・:411 は TO authenticated と
+--       MFA の判定を足しただけ。契約を書く入口は、運営の手動付与 (POST / DELETE /api/super-admin/users/{id}/manual-plan。監査
+--       admin.billing.manual_grant / manual_revoke) と Stripe・ストアの写像・クーポンの適用で、どれも service_role の client で
+--       SECURITY DEFINER の関数 (billing_grant_manual_subscription など) を呼ぶ。直接の書き込みは監査も、関数の不変条件 (利用者ごとの
+--       ロックの順・live な行の衝突の判定 BILL_LIVE_ROW_CONFLICT・plan_key_cached と family_groups の同期) も通らずに、有料のプランを
+--       与え・変えられた (docs/design/billing/02-manual-plan-grant.md §16 の 2 の「残すか」。推奨は消す側)。
+--       ほかのポリシーはベースラインの :10743 "personal_subscriptions_no_delete" (FOR DELETE USING (false)) と :10747
+--       "personal_subscriptions_select" (FOR SELECT。本人と運営 (admin / super_admin / finance / support)) で、どちらも残す。
 --   TRUNCATE は 20261022190000_db_privilege_hardening.sql が anon / authenticated から外してある。
---   これより後の migration に、3 つの表のポリシー・権限を変えるものは無い。
+--   これより後の migration に、4 つの表のポリシー・権限を変えるものは無い。
 --
---   3 つの表を読む・書く経路 (origin/main で git grep した):
+--   4 つの表を読む・書く経路 (origin/main で git grep した):
 --     announcements:
 --     - 作成: POST /api/announcements (admin / super_admin。requireRole の後で書く)。この変更で INSERT は service_role の client
 --       (getSupabaseAdmin()) で書き、監査は今までどおり本人のセッションの client で書く (src/app/api/admin/organizations/route.ts の
@@ -52,9 +63,19 @@
 --     - 利用者の通報 (INSERT) は "Anyone can create recipe flags" のまま残す (authenticated の INSERT の権限も残す)。
 --       アプリにいま利用者のセッションで recipe_flags に INSERT する経路は無いが、利用者が自分の名前で通報を作ることは
 --       運営の API を迂回する書き込みではないので、本冊では変えない
---     3 つとも:
+--     personal_subscriptions:
+--     - 書くのは SECURITY DEFINER の関数だけで、どれも EXECUTE は service_role だけ: 写像 billing_apply_stripe_subscription
+--       (20261016210000)・billing_apply_store_subscription (20261021100000)・手動付与 billing_grant_manual_subscription・
+--       取り消し billing_revoke_manual_subscription・期限切れ billing_expire_manual_subscription_for_user (20261017230000・
+--       20261021100000)・クーポンの適用 apply_coupon (20261007160700)。関数は所有者 (postgres) の権限で書くので、この変更の影響を受けない。
+--       日次のプロシージャ billing_expire_manual_subscriptions は pg_cron (postgres) が呼び、利用者ごとに上の関数を呼ぶだけ
+--     - アプリ (src・apps/mobile・supabase/functions) は、どのセッションでも .from('personal_subscriptions') で INSERT / UPDATE /
+--       UPSERT / DELETE しない (src/lib/billing/manual-grant-repository.ts・repository.ts・iap-repository.ts は getSupabaseAdmin() で
+--       関数を呼ぶ)。読むのは本人 (利用者の画面・書き出し) と運営 (運営の画面) のセッションで、SELECT のポリシーと権限は変えない
+--     4 つとも:
 --     - 退会: announcements.created_by (20261010000100_auth_users_fk_on_delete.sql:238)・moderation_flags.resolved_by (:292)・
---       recipe_flags.reporter_id / reviewed_by (:318・:323) は ON DELETE SET NULL。外部キーの動作は表の所有者の権限で動き、RLS も当たらない
+--       recipe_flags.reporter_id / reviewed_by (:318・:323) は ON DELETE SET NULL、personal_subscriptions.user_id
+--       (ベースライン :9223) は ON DELETE CASCADE。外部キーの動作は表の所有者の権限で動き、RLS も当たらない
 --     - e2e・結合テストの準備と後片付けは service_role の鍵か postgres で書く
 --
 -- 変更 (20261022180000_org_tables_rpc_only_writes.sql の organization_invites と同じ形):
@@ -74,24 +95,47 @@
 --   5. recipe_flags の書き込みの権限: UPDATE / DELETE を anon と authenticated から外し、INSERT を anon から外す
 --      (anon の INSERT を許すポリシーはもともと無い)。authenticated の INSERT は利用者の通報のために残す。
 --      SELECT・REFERENCES・TRIGGER・MAINTAIN と service_role の権限は変えない。
---   運営の MFA の判定を持つポリシーの数 (tests/integration/security/operator-mfa-db-gate.test.ts の番兵) は 1 本減る
---   (1・2 は表ごとに 1 本を消して 1 本を作る。4 は 1 本を消すだけ)。番兵の DB_GATED_POLICY_MIN_COUNT を 56 から 55 にした。
+--   6. personal_subscriptions の運営の personal_subscriptions_insert_admin (FOR INSERT) と personal_subscriptions_update_admin
+--      (FOR UPDATE) を消す (作り直さない。運営の SELECT は personal_subscriptions_select がもともと持っている)。
+--      本人と運営の SELECT と、DELETE の禁止 (personal_subscriptions_no_delete) は残す。
+--      これで personal_subscriptions に INSERT / UPDATE を許すポリシーが 1 本も無くなる (DELETE は常に偽のポリシーだけ)。
+--   7. personal_subscriptions の書き込みの権限 INSERT / UPDATE / DELETE を anon と authenticated から外す (anon の分は
+--      20261016210000:63 が外してあり、ここでは何も変わらない。3. と同じ形にそろえる)。本人の UPDATE / DELETE も、今までの
+--      0 行で黙って終わる形から 42501 で止まる形になる。SELECT・REFERENCES・TRIGGER・MAINTAIN と service_role の権限は変えない。
+--   運営の MFA の判定を持つポリシーの数 (tests/integration/security/operator-mfa-db-gate.test.ts の番兵) は 3 本減る
+--   (1・2 は表ごとに 1 本を消して 1 本を作る。4 は 1 本、6 は 2 本を消すだけ)。番兵の DB_GATED_POLICY_MIN_COUNT を 56 から 53 にした。
 --
--- 同じ型の全域の探索 (運営のロールで判定する FOR ALL のポリシーの残り。直さないものと理由):
---   - 運営のロールで判定する書き込みのポリシーのうち、運営の API が service_role で書いていて本人のセッションの client で書く
---     経路が無い表は、announcements・moderation_flags・recipe_flags の 3 つで、本冊でまとめて直す (recipe_flags は FOR UPDATE)。
---   - 運営の API が本人のセッションの client でそのポリシーに頼って書いている表 (coupons・experiments・feature_flags・
---     feature_packages・subscription_plans・system_settings・sales_leads・sales_lead_activities・admin_user_notes・departments・
---     organization_challenges) は、ポリシーを絞ると API が書けなくなるので、API を service_role に移す変更と一緒に別の案件で直す。
---   - 運営が書く API が無い表 (help_articles・infra_alerts・email_blacklist・plan_store_products・sport_presets・
---     organization_reports・csat_feedbacks) は「API を通らない書き込み」の型に当たらない (通るべき API が無い)。
+-- 同じ型の全域の探索:
+--   型 = 運営のロール (user_profiles.roles の運営ロールの文字列) で判定する、書き込みを許すポリシー (FOR ALL / INSERT / UPDATE / DELETE)。
+--   本冊の直前の public のポリシーのうち、この型に当たるのは 31 本 (migration を version 順に流した状態から機械で数えた。
+--   台帳 = tests/helpers/operator-write-policy-sweep.ts の OPERATOR_WRITE_POLICY_SWEEP。
+--   tests/announcements-moderation-flags-select-only-migration-contract.test.ts が、migration の文面から作った一覧と台帳の一致と、
+--   この節が台帳のすべての表を名指しすることを見る。後の migration がこの型のポリシーを足すとその test が赤になり、台帳での分類を求める)。
+--   (1) 本冊が消した (運営の API が service_role の client か SECURITY DEFINER の関数で書き、本人のセッションの client でそのポリシーに
+--       頼って書く経路が無い) — 5 本: announcements (ALL)・moderation_flags (ALL)・recipe_flags (UPDATE)・
+--       personal_subscriptions (INSERT・UPDATE)。
+--   (2) 別の案件 (運営や組織の管理者の API が本人のセッションの client でそのポリシーに頼って書く。ポリシーを絞ると API が書けなく
+--       なるので、API を service_role に移す変更と一緒に直す) — 17 本: coupons・experiments・experiment_assignments (DELETE。
+--       src/app/api/super-admin/experiments/[id]/route.ts の DELETE)・feature_flags・feature_packages・subscription_plans・
+--       system_settings・sales_leads・sales_lead_activities・admin_user_notes・departments・organization_challenges・
+--       inquiries (UPDATE。src/app/api/admin/inquiries/[id]/route.ts の PATCH)・support_tickets (INSERT・UPDATE) と
+--       support_ticket_messages (INSERT。src/app/api/admin/support/tickets/**)・organization_invites (DELETE。
+--       src/app/api/org/invites/route.ts の DELETE。組織の owner / admin の枝と同じポリシー)。
+--   (3) 当たらない: 運営が書く API が無い (通るべき API が無い) — 8 本: help_articles・infra_alerts・email_blacklist・
+--       plan_store_products・sport_presets・organization_reports・csat_feedbacks・organizations (DELETE。
+--       organizations_delete_super_admin は 20261023100000_organizations_no_owner_direct_delete.sql (#1963) が残すと決めた。
+--       PostgREST の DELETE は SELECT のポリシーにも当たる必要があり、所属が残る間は 23514 で止まる)。
+--   (4) 当たらない: 監査ログそのもの — 1 本: admin_audit_logs の audit_logs_insert_admins (INSERT。src/lib/admin/audit.ts の
+--       recordAdminAudit が本人のセッションで書く監査の記録。WITH CHECK が actor_id = 本人・system.* でないことに固定する。
+--       20261017130000:375)。
 --
 -- 既存データへの影響: なし (ポリシーと権限だけの変更。行は消さない・変えない)。
 -- 冪等: DROP POLICY IF EXISTS と REVOKE のため、2 回続けて適用してもエラーにならない。
--- ロック: DROP / CREATE POLICY は表に ACCESS EXCLUSIVE を取る。3 つの表は小さく、一瞬で終わる。
+-- ロック: DROP / CREATE POLICY は表に ACCESS EXCLUSIVE を取る。4 つの表は小さく、一瞬で終わる。
 -- 確認: tests/integration/rls/announcements-moderation-flags-select-only.test.ts (実 DB)
 --       tests/announcements-moderation-flags-select-only-migration-contract.test.ts (静的)
 --       tests/integration/rls/coupon-experiment-recipe-flags-rls.test.ts の recipe_flags の段 (実 DB)
+--       tests/integration/security/billing-personal-subscriptions-rls.test.ts の personal_subscriptions の段 (実 DB)
 
 -- 表のロックを長く待たない (待ちが続いたら失敗させて流し直す。20261023100000 と同じ)
 SET LOCAL lock_timeout = '10s';
@@ -116,3 +160,10 @@ DROP POLICY IF EXISTS "Admins can update recipe flags" ON public.recipe_flags;
 -- 5. レシピの通報の書き込みの権限 (authenticated の INSERT は利用者の通報のために残す)
 REVOKE UPDATE, DELETE ON TABLE public.recipe_flags FROM anon, authenticated;
 REVOKE INSERT ON TABLE public.recipe_flags FROM anon;
+
+-- 6. 契約の運営の INSERT / UPDATE のポリシーを消す (本人と運営の SELECT と、DELETE の禁止は残す)
+DROP POLICY IF EXISTS personal_subscriptions_insert_admin ON public.personal_subscriptions;
+DROP POLICY IF EXISTS personal_subscriptions_update_admin ON public.personal_subscriptions;
+
+-- 7. 契約の書き込みの権限 (書くのは、サーバーが呼ぶ SECURITY DEFINER の関数だけ)
+REVOKE INSERT, UPDATE, DELETE ON TABLE public.personal_subscriptions FROM anon, authenticated;

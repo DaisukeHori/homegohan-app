@@ -62,10 +62,11 @@ const POLICY_ROLES_COLUMN_PATTERN = /\broles\b/;
 const POLICY_OPERATOR_ROLE_LITERAL_PATTERN = /'(super_admin|admin|finance|org_industrial_doctor)'::text/;
 /**
  * 番兵: 見つけ方が空振りしていないこと。2026-10-16 の本番の母集合の数 (付録 A。58 から 56 に動いた) から、
- * 20261024110000_announcements_moderation_flags_select_only.sql (#1917 の続き) が recipe_flags の "Admins can update recipe flags" を
- * 消して 55 にした (announcements と moderation_flags は FOR ALL を消して SELECT を作り直したので数は変わらない)
+ * 20261024110000_announcements_moderation_flags_select_only.sql (#1917 の続き) が recipe_flags の "Admins can update recipe flags" と
+ * personal_subscriptions の personal_subscriptions_insert_admin / personal_subscriptions_update_admin を消して 53 にした
+ * (announcements と moderation_flags は FOR ALL を消して SELECT を作り直したので数は変わらない)
  */
-const DB_GATED_POLICY_MIN_COUNT = 55;
+const DB_GATED_POLICY_MIN_COUNT = 53;
 /** 運営ロールを確かめる関数の見つけ方: public の SECURITY DEFINER で authenticated か anon が EXECUTE でき、本体 (prosrc) に両方が当たるもの */
 const FUNCTION_ROLES_PATTERN = /\broles\b/;
 const FUNCTION_OPERATOR_ROLE_LITERAL_PATTERN = /'(super_admin|admin|finance|org_industrial_doctor)'/;
