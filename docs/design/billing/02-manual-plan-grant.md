@@ -682,7 +682,7 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 | `src/app/api/feature-flags/route.ts:45-56` (機能フラグの一覧の判定) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。上と同じ |
 | `src/lib/super-admin/flag-active-users.ts:73-93` (フラグの対象人数の集計) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。M 行の利用者はそのプランの人数に入る |
 | `supabase/functions/_shared/ai-chat-flag.ts:52-108` (Edge Function の AI 相談のスイッチ) | 読 (`plan_key_cached`) | 空なら `free` (`DEFAULT_PLAN_KEY`) | 変えない。上と同じ (本冊は Edge Function を変えない) |
-| `src/app/api/admin/users/route.ts:74,178` (運営のユーザー一覧の `plan_key`。`UserListItemSchema`) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。M 行の利用者は付与したプランで出る (由来は出さない。由来と期限は本冊の節 §10 だけ) |
+| `src/app/api/admin/users/route.ts:91,193` (運営のユーザー一覧の `plan_key`。`UserListItemSchema`) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。M 行の利用者は付与したプランで出る (由来は出さない。由来と期限は本冊の節 §10 だけ) |
 | `src/app/api/admin/users/[id]/route.ts:141` (運営のユーザー詳細の `plan_key`) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。上と同じ |
 | `src/lib/account-export-tables.ts:142` (本人の書き出しの `user_profiles`) | 読 (`plan_key_cached`) | 列をそのまま | 変えない。M 行の `plan_key` がそのまま出る |
 | `user_profiles` の本人の UPDATE (特権列ガード) | 書 (本人) | `plan_key_cached` は 42501 | 変えない。本冊の関数は SECURITY DEFINER (所有者 postgres) なのでガードに当たらない (F3) |
