@@ -22,7 +22,7 @@ export interface LegalClaim {
 }
 
 /** 主張の数 (宣言)。実列挙 (LEGAL_CLAIMS.length) と本文の単位の数の両方と一致する (T-35) */
-export const LEGAL_CLAIM_COUNT = 426;
+export const LEGAL_CLAIM_COUNT = 433;
 
 export const LEGAL_CLAIMS: readonly LegalClaim[] = [
   { id: 'terms-1#1', section: 'terms-1', fragment: 'この利用規約（以下「本規約」', chars: 118, basis: 'product', evidence: 'F-1・apps/mobile/app.json' },
@@ -348,6 +348,7 @@ export const LEGAL_CLAIMS: readonly LegalClaim[] = [
   { id: 'privacy-8#6', section: 'privacy-8', fragment: 'AI 機能のための日本国外の', chars: 42, basis: 'product', evidence: 'F-8' },
   { id: 'privacy-8#7', section: 'privacy-8', fragment: '委託先への提供は、第7条のと', chars: 39, basis: 'law', evidence: '個人情報保護法 27 条 1 項・5 項' },
   { id: 'privacy-8#8', section: 'privacy-8', fragment: '家族グループのメンバーや組織', chars: 62, basis: 'product', evidence: 'F-18・F-19・F-49' },
+  { id: 'privacy-8#13', section: 'privacy-8', fragment: '公開の状態のレシピとそのレシ', chars: 102, basis: 'product', evidence: 'docs/design/cross/21-recipe-author-display-name.md (§6.4・§7.1。recipe_author_display_names の同意と公開の条件)' },
   { id: 'privacy-8#9', section: 'privacy-8', fragment: '当社は、個人データの共同利用', chars: 20, basis: 'product', evidence: 'F-27 (共同利用・提供の処理が無い)' },
   { id: 'privacy-8#10', section: 'privacy-8', fragment: '本人の同意を得ずに行う第三者', chars: 35, basis: 'product', evidence: 'F-27' },
   { id: 'privacy-8#11', section: 'privacy-8', fragment: '当社の事業を第三者に承継する', chars: 39, basis: 'law', evidence: '個人情報保護法 27 条 1 項・5 項' },
@@ -363,6 +364,12 @@ export const LEGAL_CLAIMS: readonly LegalClaim[] = [
   { id: 'privacy-9#9', section: 'privacy-9', fragment: '組織のチャレンジに参加したユ', chars: 35, basis: 'product', evidence: 'F-19・src/lib/org-challenges.ts:115-128' },
   { id: 'privacy-9#10', section: 'privacy-9', fragment: '本サービスに保存した写真、健', chars: 80, basis: 'product', evidence: 'F-17・F-18・F-19・F-33・F-43・F-45' },
   { id: 'privacy-9#11', section: 'privacy-9', fragment: '家族グループから退出し、また', chars: 52, basis: 'product', evidence: 'F-49' },
+  { id: 'privacy-9#12', section: 'privacy-9', fragment: 'ユーザーが公開の状態にしたレ', chars: 76, basis: 'product', evidence: 'docs/design/cross/21-recipe-author-display-name.md (§6.3)・src/lib/legal/terms-text.ts (第13条 2 項)' },
+  { id: 'privacy-9#13', section: 'privacy-9', fragment: '公開の状態のレシピへのコメン', chars: 54, basis: 'product', evidence: 'docs/design/cross/21-recipe-author-display-name.md (§3.2・§6.3)・src/lib/recipes/viewer-lookups.ts' },
+  { id: 'privacy-9#14', section: 'privacy-9', fragment: '作者名を表示しない設定にする', chars: 33, basis: 'product', evidence: 'docs/design/cross/21-recipe-author-display-name.md (§6.5・user_profiles.show_recipe_author_name)' },
+  { id: 'privacy-9#15', section: 'privacy-9', fragment: '初期設定では表示します', chars: 11, basis: 'product', evidence: 'docs/design/cross/21-recipe-author-display-name.md (§6.5。DEFAULT true)' },
+  { id: 'privacy-9#16', section: 'privacy-9', fragment: '歳未満のユーザーと、アカウン', chars: 41, basis: 'product', evidence: 'docs/design/cross/21-recipe-author-display-name.md (§6.1 (3)(4)。recipe_author_display_names の (b))' },
+  { id: 'privacy-9#17', section: 'privacy-9', fragment: '退会した後は作者名は表示され', chars: 39, basis: 'product', evidence: 'docs/design/cross/21-recipe-author-display-name.md (§6.1 (2))・第12条の参照' },
   { id: 'privacy-10#1', section: 'privacy-10', fragment: '本サービスは、ユーザーのブラ', chars: 56, basis: 'law', evidence: '電気通信事業法 27 条の 12 (§3.2)' },
   { id: 'privacy-10#2', section: 'privacy-10', fragment: '電気通信事業法の外部送信規律', chars: 36, basis: 'law', evidence: '電気通信事業法 27 条の 12 (§3.2)' },
   { id: 'privacy-10#3', section: 'privacy-10', fragment: '当社は、広告のための Coo', chars: 65, basis: 'product', evidence: 'F-15' },
