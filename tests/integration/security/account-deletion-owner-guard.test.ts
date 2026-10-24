@@ -6,7 +6,7 @@
  *   退会の途中の人 (所属が無い人・release_user_membership が所属を外した人) は空なので、オーナーになれた。
  * 修正後 (supabase/migrations/20261023130000_account_deletion_owner_guard.sql):
  *   - 退会の本体は findBlocker の前に退会の印 (begin_account_deletion_guard → account_deletion_guards) を付ける。
- *   - organizations の BEFORE INSERT のトリガー organizations_owner_not_deleting は、owner_id の人に新しい印があれば
+ *   - organizations の BEFORE INSERT のトリガー trg_organizations_owner_not_deleting (関数 organizations_owner_not_deleting()) は、owner_id の人に新しい印があれば
  *     OWNER_ACCOUNT_DELETING (P0001) で止める。運営の作成 API はそれを 409 OWNER_ACCOUNT_DELETING にする。
  *   - 印と作成は、その人の id の advisory lock で直列になる (印が先なら作成が止まり、作成が先なら印は作成の commit を待ち、
  *     そのあとの findBlocker が作られた組織を読んで 409 にする)。
@@ -263,7 +263,7 @@ describe('退会の印 (account_deletion_guards・begin_account_deletion_guard) 
   }, TEST_TIMEOUT_MS);
 });
 
-describe('退会の印のある人をオーナーにして組織を作らない (トリガー organizations_owner_not_deleting)', () => {
+describe('退会の印のある人をオーナーにして組織を作らない (トリガー trg_organizations_owner_not_deleting (関数 organizations_owner_not_deleting()))', () => {
   it('GD-3: 印のある人を owner_id にした INSERT は OWNER_ACCOUNT_DELETING (P0001) で止まり、組織は作られない。印の無い人は従来どおり作れる', async () => {
     const [deleting, other] = await Promise.all([createUser('gd3-deleting'), createUser('gd3-other')]);
     expect((await beginGuard(deleting.id)).ok).toBe(true);

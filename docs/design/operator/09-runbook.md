@@ -402,7 +402,7 @@ Step 5: org_admin に手順案内
   → Stripe の後始末 (段階 billing。billing/01 §11): 顧客の開いたままの Checkout を閉じ、終端でない契約を即時解約し、Stripe の顧客を匿名化する
      (顧客も契約の行も無ければ Stripe を呼ばない。失敗したら削除しない。まだ何も変えていないので再実行できる)
   → 生のメールアドレスを残す記録を伏せ、本人の非公開レシピを消す (RPC prepare_account_deletion。メール配信ログ・問い合わせ・招待)
-  → ライセンス席を解放 (RPC release_user_membership。失敗しても続ける。ただし IS_ORG_OWNER (直前にオーナーになっていた) は確認をやり直して 409 で止め (オーナーでなくなっていたら削除せず失敗にする)、CONFLICT_RETRY (所属の組織が途中で変わった) は削除せず失敗にする。src/lib/account-deletion.ts:349-365)
+  → ライセンス席を解放 (RPC release_user_membership。失敗しても続ける。ただし IS_ORG_OWNER (直前にオーナーになっていた) は確認をやり直して 409 で止め (オーナーでなくなっていたら削除せず失敗にする)、CONFLICT_RETRY (所属の組織が途中で変わった) は削除せず失敗にする。src/lib/account-deletion.ts:400-420。RPC の呼び出しは :366)
   → Storage のファイルを削除 (meal_photos / fridge-images / health-checkups の <user_id>/ 以下など)
   → Stripe の後始末をもう一度 (段階 billing_recheck。deleteUser の直前。段階 billing のあとに完了した Checkout の契約・作られた顧客を閉じる。
      失敗したら削除しない。アカウントは残り、もう一度の退会で片付く)
