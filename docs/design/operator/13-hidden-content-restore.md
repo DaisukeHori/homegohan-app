@@ -886,7 +886,7 @@ export const MODERATION_RESTORE_AUDIT_ACTION = 'admin.moderation.restore';
 
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { AuthError, ForbiddenError } from '@/lib/auth/errors'; import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import {
@@ -977,7 +977,7 @@ export async function POST(request: Request, props: Params) {
       return errorResponse(401, 'AUTH_UNAUTHENTICATED', '認証が必要です');
     }
     if (err instanceof ForbiddenError) {
-      return errorResponse(403, 'OP_PERMISSION_DENIED', '権限がありません');
+      return errorResponse(403, 'OP_PERMISSION_DENIED', operatorForbiddenMessageOf(err));
     }
     throw err;
   }
@@ -1565,7 +1565,7 @@ export default function ModerationRestoreForm({
 |---|---|---|---|---|---|
 | 本文に NULL 文字 | route (`rejectNullCharacterBody`) | `INVALID_CHARACTER` | 400 | `src/lib/api/null-character.ts` の `NULL_CHARACTER_ERROR_MESSAGE` | 認証・DB より前 |
 | 未認証 | `requireRole` | `AUTH_UNAUTHENTICATED` | 401 | 認証が必要です | 既存と同じ |
-| ロール不足・凍結・AAL 不足 | `requireRole` | `OP_PERMISSION_DENIED` (`ForbiddenError` 全般) | 403 | 権限がありません | 既存と同じ (`AUTH_ACCOUNT_FROZEN` / `AUTH_2FA_*` も `ForbiddenError` なので同じ文) |
+| ロール不足・凍結・AAL 不足 | `requireRole` | `OP_PERMISSION_DENIED` (`ForbiddenError` 全般) | 403 | `MfaRequiredError` (`AUTH_2FA_*`) なら「二段階認証の確認が必要です」/「二段階認証の登録が必要です」、それ以外は「権限がありません」 | 文は `operatorForbiddenMessageOf` (`src/lib/api/error-responses.ts`) で決める (code はどれも `OP_PERMISSION_DENIED`。`cross/12-operator-mfa.md` §19.3 の (b)) |
 | `type` が不正 | route | `VALIDATION_ERROR` | 400 | 種類 (type) は次のいずれかを指定してください (food, recipe, ai_content) (`src/lib/admin/moderation-schemas.ts` の `MODERATION_TYPE_INVALID_MESSAGE`。#1917 の続きで項目名と受け付ける値を括弧に入れた) | 既存と同じ |
 | `type = ai_content` | route (`notSupportedResponse`) | `OP_NOT_SUPPORTED` | 501 | `AI_CONTENT_NOT_SUPPORTED_MESSAGE` | 本文の検証より前 |
 | 本文が JSON でない | route | `INVALID_JSON` | 400 | リクエストボディが不正です | |
