@@ -5,7 +5,7 @@
  * 実 DB での確認は tests/integration/rls/operator-session-writes-select-only.test.ts。
  *
  * 確かめること:
- *   - migration を全部流した後の、16 の表のポリシー (名前・種類) と、anon / authenticated / service_role の表の権限
+ *   - migration を全部流した後の、17 の表のポリシー (名前・種類) と、anon / authenticated / service_role の表の権限
  *   - 本冊の直前の状態 (番兵: 読み取りが、消す・変えるポリシーと外す権限を拾えている)
  *   - 本冊だけを流したときの差分 (消す・作る・変えるポリシーと、外す権限だけが変わる)
  *   - 作る SELECT のポリシーの USING は、消すポリシーの 20261017130000 の式と逐語で同じ (運営の MFA の判定つき)
@@ -391,7 +391,8 @@ const normalizeExpression = (expression: string | null): string | null =>
 function clausesOf(rest: string): { roles: string | null; using: string | null; check: string | null } {
   const to = /\bTO\s+(.+?)(?=\s+USING\b|\s+WITH\s+CHECK\b|\s*$)/i.exec(rest.trim());
   return {
-    roles: to ? to[1].replace(/"/g, '').toLowerCase().split(',').map((r) => r.trim()).join(', ') : null,
+    // ロールの並びは意味を持たない (ベースラインの dump の後の書き直しで並びが変わる) ので、並べ替えて比べる
+    roles: to ? to[1].replace(/"/g, '').toLowerCase().split(',').map((r) => r.trim()).sort().join(', ') : null,
     using: normalizeExpression(balancedAfter(rest, /\bUSING\b/i)),
     check: normalizeExpression(balancedAfter(rest, /\bWITH\s+CHECK\b/i)),
   };
@@ -487,7 +488,7 @@ function createStatement(sql: string, table: string, name: string): string {
   return lines.length === 1 ? lines[0] : '';
 }
 
-describe('#1917 の続き: migration を全部流した後の、16 の表のポリシーと権限', () => {
+describe('#1917 の続き: migration を全部流した後の、17 の表のポリシーと権限', () => {
   it.each(TABLES)('$table: 残るポリシーは finalPolicies だけで、SELECT 以外は組織の管理者・利用者の枝のものだけ', ({ table, finalPolicies }) => {
     const finalState = stateAfter(table, migrations);
     expect(policyCommands(finalState)).toEqual(byName(finalPolicies));
@@ -626,7 +627,7 @@ describe('#1917 の続き: 本冊の migration', () => {
       'inquiries',
       'Anyone can create inquiries',
       ["(status = 'pending'::text)", '(admin_notes IS NULL)', '(resolved_at IS NULL)', '((user_id IS NULL) OR (user_id = auth.uid()))'],
-      'authenticated, anon',
+      'anon, authenticated',
     ],
     [
       'support_tickets',
@@ -639,7 +640,7 @@ describe('#1917 の続き: 本冊の migration', () => {
     expect(policy.command).toBe('INSERT');
     expect(policy.roles).toBe(roles);
     expect(policy.using).toBeNull();
-    expect(policy.check).toBe(`(${terms.join(' AND ')})`);
+    expect(policy.check).toBe(`((${terms.join(' AND ')}))`);
   });
 
   it('ALTER POLICY で TO を書き換えるのは、組織の 3 本・チケットのメッセージ (どれも元から TO authenticated) と tickets_insert_user (public → authenticated) だけ', () => {
@@ -699,7 +700,7 @@ const isTestPath = (file: string) => /(__tests__|\.test\.|\.spec\.)/.test(file);
 const SERVICE_ROLE_RECEIVER = 'getSupabaseAdmin()';
 
 /**
- * 16 の表に書く (insert / update / upsert / delete) 場所と、その受け手 (.from の前の式)。キーは「ファイル 表 操作」。
+ * 17 の表に書く (insert / update / upsert / delete) 場所と、その受け手 (.from の前の式)。キーは「ファイル 表 操作」。
  * ここに無い場所で書くと赤になる。本人のセッションの client (supabase) で書いてよいのは、本冊の後も本人の枝のポリシーが残るものだけ
  */
 const WRITE_SITES: Readonly<Record<string, string>> = {
@@ -745,10 +746,13 @@ const WRITE_SITES: Readonly<Record<string, string>> = {
   'src/app/api/org/invites/route.ts organization_invites delete': 'supabase',
   // 引数の client で書く (呼び出し側の src/app/api/experiments/[key]/assignment/route.ts が getSupabaseAdmin() を渡す。下の検査)
   'src/lib/experiments/assignment.ts experiment_assignments insert': 'supabase',
+  // 通報の判定 (resolveModerationItem)。呼び出し側の運営の route が requireRole の後の service_role の client を渡す
+  // (tests/announcements-moderation-flags-select-only-migration-contract.test.ts が呼び出しの引数を見る)
+  'src/lib/admin/moderation-backend.ts recipe_flags update': 'supabase',
 };
 const SESSION_WRITE_ROUTES = ['src/app/api/contact/route.ts', 'src/app/api/org/challenges/route.ts', 'src/app/api/org/departments/route.ts', 'src/app/api/org/invites/route.ts'];
 
-/** 16 の表に書く呼び出しを、ファイルごとに見つける (受け手 .from('表') から 1 つの式の中で insert / update / upsert / delete を呼ぶ) */
+/** 17 の表に書く呼び出しを、ファイルごとに見つける (受け手 .from('表') から 1 つの式の中で insert / update / upsert / delete を呼ぶ) */
 function writeSitesIn(file: string): Array<{ key: string; receiver: string }> {
   const code = stripComments(fs.readFileSync(file, 'utf-8'));
   const found: Array<{ key: string; receiver: string }> = [];
@@ -766,7 +770,7 @@ describe('#1917 の続き: アプリのコードは、運営の書き込みを s
   }).filter((file) => !isTestPath(rel(file)));
   const sites = files.flatMap(writeSitesIn);
 
-  it('16 の表に書く場所は WRITE_SITES の一覧と同じ (増えたら、本人のセッションで書いていないかを確かめて一覧に足す)', () => {
+  it('17 の表に書く場所は WRITE_SITES の一覧と同じ (増えたら、本人のセッションで書いていないかを確かめて一覧に足す)', () => {
     expect(files.length).toBeGreaterThan(0);
     expect([...new Set(sites.map((s) => s.key))].sort()).toEqual(Object.keys(WRITE_SITES).sort());
   });
@@ -840,7 +844,7 @@ function functionDefinitions(file: string, sql: string): FunctionDefinition[] {
   });
 }
 
-/** 16 の表に書く DB の関数 (「関数名 表」→ 役目)。最新の定義はどれも SECURITY DEFINER で、所有者の権限で書くので本冊の影響を受けない */
+/** 17 の表に書く DB の関数 (「関数名 表」→ 役目)。最新の定義はどれも SECURITY DEFINER で、所有者の権限で書くので本冊の影響を受けない */
 const DB_FUNCTION_WRITERS: Readonly<Record<string, string>> = {
   'accept_org_invite organization_invites': '招待の承諾',
   'apply_coupon coupons': 'クーポンの適用 (20261007160700)',
@@ -854,7 +858,7 @@ const DB_FUNCTION_WRITERS: Readonly<Record<string, string>> = {
 };
 
 describe('#1917 の続き: DB の関数の書き込み', () => {
-  it('16 の表に INSERT / UPDATE / DELETE する関数は DB_FUNCTION_WRITERS だけで、最新の定義はどれも SECURITY DEFINER', () => {
+  it('17 の表に INSERT / UPDATE / DELETE する関数は DB_FUNCTION_WRITERS だけで、最新の定義はどれも SECURITY DEFINER', () => {
     const definitions = migrations.flatMap(({ file, sql }) => functionDefinitions(file, sql));
     expect(definitions.length, '関数の定義を読めている').toBeGreaterThan(Object.keys(DB_FUNCTION_WRITERS).length);
     const latest = new Map<string, FunctionDefinition>();

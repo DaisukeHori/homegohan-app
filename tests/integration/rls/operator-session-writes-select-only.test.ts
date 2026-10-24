@@ -15,7 +15,7 @@
  *   | 利用者                                       | レシピの通報・問い合わせ・チケットの INSERT に運営の判定の列を入れる | 書ける | 42501 (U-1)               |
  *   | 利用者・未認証                               | 運営の判定の列を入れない通報・問い合わせ・チケット・メッセージの INSERT | 書ける | 書ける (U-2)          |
  *   | 利用者・未認証                               | 運営だけが書く表・問い合わせ・チケットの書き込み   | 42501 / 0 行         | 42501 (U-3)                    |
- * カタログ (C-1・C-2): 16 の表のポリシーの名前と種類・残る書き込みのポリシーが運営のロールを見ないこと・anon / authenticated / service_role の権限。
+ * カタログ (C-1・C-2): 17 の表のポリシーの名前と種類・残る書き込みのポリシーが運営のロールを見ないこと・anon / authenticated / service_role の権限。
  * 同じ型 (運営のロールで判定する書き込みのポリシー) のいまの状態と台帳の突き合わせは、常設の検査
  * tests/integration/rls/operator-write-policy-ledger.test.ts (実 DB) と tests/operator-write-policy-ledger.test.ts (migration の文面) が受け持つ。
  *
@@ -232,7 +232,8 @@ beforeAll(async () => {
   existingIds.set('sales_leads', leadId);
   existingIds.set('sales_lead_activities', await seedRow('sales_lead_activities', { lead_id: leadId, actor_id: sales.id, activity_type: 'note', details: { memo: 'seed' } }));
   existingIds.set('system_settings', await seedRow('system_settings', { key: `seed_${RUN}`, value: { v: 'seed' } }));
-  const { data: plan, error: planError } = await srAdmin.from('subscription_plans').select('id').order('display_order').limit(1).single();
+  const { data: plan, error: planError } = await retryIdempotentSetup(srAdmin, 'beforeAll: subscription_plans の種の行', (db) =>
+    db.from('subscription_plans').select('id').order('display_order').limit(1).single());
   if (planError || !plan) throw new Error(`subscription_plans: ${planError?.message}`);
   existingIds.set('subscription_plans', (plan as { id: string }).id);
 

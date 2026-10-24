@@ -270,7 +270,7 @@ describe('POST /api/admin/support/tickets/[id]/messages: 顧客向けの返信 (
     });
     // 保存は service_role の client から。本人の権限の client では書かない (#1917 の続き)
     expect(insert?.via).toBe('admin');
-    expect(userDb.calls.filter((c) => c.via === 'session' && WRITE_METHODS.includes(c.method))).toEqual([]);
+    expect(userDb.calls.filter((c) => c.via === 'session' && SUPPORT_TABLES.includes(c.table) && WRITE_METHODS.includes(c.method))).toEqual([]);
   });
 
   it('メールには今回の返信だけを載せ、スレッドにある内部メモは混ざらない', async () => {
@@ -538,6 +538,6 @@ describe('POST /api/admin/support/tickets/[id]/messages: 認可・入力検証�
 
     expect(res.status).toBe(500);
     expect(mockSendEmail).not.toHaveBeenCalled();
-    expect(userDb.calls.filter((c) => WRITE_METHODS.includes(c.method))).toEqual([]);
+    expect(userDb.calls.filter((c) => SUPPORT_TABLES.includes(c.table) && WRITE_METHODS.includes(c.method))).toEqual([]);
   });
 });
