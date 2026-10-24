@@ -31,6 +31,11 @@ import { NextResponse } from 'next/server';
 import { AuthError, ForbiddenError, MfaRequiredError, type MfaRequiredCode } from '@/lib/auth/errors';
 import { INTERNAL_ERROR_MESSAGE } from '@/lib/api/errors';
 import { dbErrorMentionsCode, type DbRaisedErrorLike } from '@/lib/errors/db-raised-code';
+import {
+  API_ACCOUNT_FROZEN_MESSAGE,
+  API_MFA_ENROLLMENT_REQUIRED_MESSAGE,
+  API_MFA_REQUIRED_MESSAGE,
+} from '@/lib/api/forbidden-reason-messages';
 
 /** 401: ログインしていない・セッションが切れた・プロフィールが無い */
 export const API_UNAUTHENTICATED_MESSAGE = 'ログインが必要です';
@@ -38,12 +43,8 @@ export const API_UNAUTHENTICATED_MESSAGE = 'ログインが必要です';
 export const API_FORBIDDEN_MESSAGE = 'この操作を行う権限がありません';
 /** 403: 組織に所属していない (requireOrgMember の PERM_NOT_ORG_MEMBER) */
 export const API_NOT_ORG_MEMBER_MESSAGE = '組織に所属していません';
-/** 403: アカウントが凍結されている (AUTH_ACCOUNT_FROZEN。src/lib/auth/helpers.ts の assertNotFrozen と同じ文) */
-export const API_ACCOUNT_FROZEN_MESSAGE = 'アカウントが凍結されています';
-/** 403: 二段階認証の確認が要る (AUTH_2FA_REQUIRED。src/lib/auth/mfa/assurance.ts と同じ文) */
-export const API_MFA_REQUIRED_MESSAGE = '二段階認証の確認が必要です';
-/** 403: 二段階認証の登録が要る (AUTH_2FA_ENROLLMENT_REQUIRED。src/lib/auth/mfa/assurance.ts と同じ文) */
-export const API_MFA_ENROLLMENT_REQUIRED_MESSAGE = '二段階認証の登録が必要です';
+// 403 の理由の文 (凍結・二段階認証の確認・二段階認証の登録) は、運営の画面も読むので next/server を読まないファイルに置く
+export { API_ACCOUNT_FROZEN_MESSAGE, API_MFA_ENROLLMENT_REQUIRED_MESSAGE, API_MFA_REQUIRED_MESSAGE };
 /** 400: 本文が JSON として読めない */
 export const API_INVALID_JSON_MESSAGE = 'リクエストボディが不正です';
 /** 404: 対象が見つからない (他人のもの・消されたものを含む。在るかどうかを区別して見せない) */

@@ -9,6 +9,7 @@
 import { useState, useEffect, useCallback, useRef, use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
 import { describeReplyEmailOutcome } from '@/lib/admin/support-reply-email-status';
 
 interface Message {
@@ -85,7 +86,8 @@ export default function TicketDetailPage(props: PageProps) {
     try {
       const res = await fetch(`/api/admin/support/tickets/${params.id}`);
       if (res.status === 401) { router.push('/login'); return; }
-      if (res.status === 403) { setError('権限がありません'); return; }
+      // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
+      if (res.status === 403) { setError(await forbiddenMessageOfResponse(res)); return; }
       if (res.status === 404) { setError('チケットが見つかりません'); return; }
       if (!res.ok) throw new Error('取得失敗');
       const json = await res.json();

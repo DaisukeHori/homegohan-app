@@ -1,3 +1,5 @@
+import { FORBIDDEN_REASON_MESSAGES } from '@/lib/api/forbidden-reason-messages';
+
 /**
  * 管理 API の失敗応答 (JSON の本文) から、画面に出すメッセージを取り出す。
  * 運営コンソールのお知らせ管理・組織管理の画面で共通に使う。
@@ -51,4 +53,27 @@ export const STALE_DATA_HTTP_STATUS = 409;
  */
 export function isStaleDataConflict(status: number, body: unknown): boolean {
   return status === STALE_DATA_HTTP_STATUS && extractApiErrorCode(body) === STALE_DATA_ERROR_CODE;
+}
+
+/** 403 の画面の固定の文の既定 (運営の route の 403 OP_PERMISSION_DENIED の、ロールが足りないときの文と同じ) */
+export const FORBIDDEN_SCREEN_MESSAGE = '権限がありません';
+
+/**
+ * 403 の応答の本文から、画面に出す文を決める (#1917)。
+ * 本文の文が理由の文 (二段階認証の確認・登録が要る・凍結。src/lib/api/forbidden-reason-messages.ts) なら、その文をそのまま出す。
+ * それ以外 (ロールが足りない・本文が読めない・形が違う) は画面の固定の文 (fallback) を出す。
+ * 運営の route は、ゲート (requireRole) の後でセッションの状態が変わったとき二段階認証の文を 403 に入れる (#2014) ので、
+ * 画面が 403 を固定の「権限がありません」で上書きすると、二段階認証が要るのに権限が無いように見える。
+ * 理由の文だけを通すのは、画面ごとの固定の文 (「この画面を見る権限がありません (super_admin のみ)」など) を残し、
+ * 理由でない文 (古い route の英語の文など) を画面に出さないため
+ */
+export function forbiddenMessageForScreen(body: unknown, fallback: string = FORBIDDEN_SCREEN_MESSAGE): string {
+  const message = extractApiErrorMessage(body);
+  return message !== null && FORBIDDEN_REASON_MESSAGES.has(message) ? message : fallback;
+}
+
+/** 403 の応答 (本文をまだ読んでいない Response) から、画面に出す文を決める。本文が JSON として読めなければ fallback */
+export async function forbiddenMessageOfResponse(res: Response, fallback: string = FORBIDDEN_SCREEN_MESSAGE): Promise<string> {
+  const body: unknown = await res.json().catch(() => null);
+  return forbiddenMessageForScreen(body, fallback);
 }
