@@ -4478,7 +4478,7 @@ const DEVICE_PURCHASE_STORE: PurchaseStore = Platform.OS === "android" ? "play_s
                   ['決済の事業者とストアが保存する記録', '各事業者の規約によります'],
 ```
 
-- 保存期間の根拠: 契約の行は `personal_subscriptions_user_id_fkey` の `ON DELETE CASCADE` (`supabase/baseline/prod_schema.sql:9207`) で退会と一緒に消える。決済の事業者の顧客の行 (`billing_customers.user_id` の `ON DELETE SET NULL`。`supabase/migrations/20261016210000_billing_core.sql:72`) は紐づけを外して残り、Stripe の顧客は退会の段階 `billing` で匿名にする (`src/lib/billing/account-deletion.ts:84-88`)。クーポンの利用の記録は退会で匿名にする (`20261010000100_auth_users_fk_on_delete.sql` の B)。通知の記録 (`stripe_webhook_events`・`revenuecat_webhook_events`) は利用者の列を持たず、`payload` の最小化した写しに利用者の ID が残る (§6.3・billing/01 §6.3)。
+- 保存期間の根拠: 契約の行は `personal_subscriptions_user_id_fkey` の `ON DELETE CASCADE` (`supabase/baseline/prod_schema.sql:9207`) で退会と一緒に消える。決済の事業者の顧客の行 (`billing_customers.user_id` の `ON DELETE SET NULL`。`supabase/migrations/20261016210000_billing_core.sql:72`) は紐づけを外して残り、Stripe の顧客は退会の段階 `billing` で匿名にする (`src/lib/billing/account-deletion.ts:79-83`)。クーポンの利用の記録は退会で匿名にする (`20261010000100_auth_users_fk_on_delete.sql` の B)。通知の記録 (`stripe_webhook_events`・`revenuecat_webhook_events`) は利用者の列を持たず、`payload` の最小化した写しに利用者の ID が残る (§6.3・billing/01 §6.3)。
 
 ### 11.3 特定商取引法に基づく表記
 
