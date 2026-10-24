@@ -17,7 +17,7 @@ import { CANONICAL_GOAL_TYPES, describeGoalRangesForPrompt } from '@/lib/health-
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { normalizeProfileName } from '@/lib/profile-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE, AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE } from '@/lib/ai/ai-api-messages';
 import { isUuid } from '@/lib/http-params';
 
@@ -1029,7 +1029,11 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
       return NextResponse.json({ error: AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
-    const body = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
     const userMessage = body.message?.trim();
 
     if (!userMessage) {

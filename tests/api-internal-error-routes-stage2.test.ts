@@ -130,6 +130,8 @@ const SECRETS = ['secret_constraint_xyz', 'secret_table_xyz', 'secret_value_xyz'
 
 const FLAT_BODY = { error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE };
 const NESTED_BODY = { error: { code: INTERNAL_ERROR_CODE, message: INTERNAL_ERROR_MESSAGE } };
+/** GET /api/recipes/[id] のパスの id (UUID の形でない id は DB に渡さず 404 にするので、UUID の形にする。#1917) */
+const RECIPE_ID = '30000000-0000-4000-8000-000000000001';
 
 const url = (path: string) => `http://localhost${path}`;
 const get = (path: string) => new NextRequest(url(path));
@@ -175,7 +177,7 @@ describe('#1172 第 2 段: DB のエラーで 500 を返す route は、汎用�
     ['GET /api/performance/checkins', () => performanceCheckins.GET(get('/api/performance/checkins')), 'user-1'],
     ['GET /api/onboarding/status', () => onboardingStatus.GET(), 'user-1'],
     ['GET /api/ai/consultation/important-messages', () => importantMessages.GET(get('/api/ai/consultation/important-messages')), 'user-1'],
-    ['GET /api/recipes/[id]', () => recipeById.GET(get('/api/recipes/r-1'), { params: { id: 'r-1' } }), 'user-1'],
+    ['GET /api/recipes/[id]', () => recipeById.GET(get(`/api/recipes/${RECIPE_ID}`), { params: { id: RECIPE_ID } }), 'user-1'],
   ] as const)('%s', async (routeName, call, userId) => {
     h.queue = [FAIL];
 

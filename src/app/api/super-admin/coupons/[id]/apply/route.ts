@@ -21,7 +21,8 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { CouponApplySchema } from '@/lib/super-admin/coupons-schemas';
-import { applyCoupon, CouponApplyError, couponApplyErrorMessageOf } from '@/lib/plan/coupon';
+import { applyCoupon, CouponApplyError, couponApplyErrorMessageOf, COUPON_NOT_FOUND_MESSAGE } from '@/lib/plan/coupon';
+import { isUuid } from '@/lib/http-params';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { couponInvalidInputResponse } from '@/lib/super-admin/coupon-errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
@@ -57,6 +58,12 @@ export async function POST(request: NextRequest, props: RouteContext) {
     }
 
     const input = parseResult.data;
+
+    // UUID の形でない id は DB に渡さず、クーポンが無いときと同じ 404 OP_COUPON_NOT_FOUND (apply_coupon の p_coupon_id は uuid。
+    // 渡すと 22P02 で失敗し、業務エラーでないので外側の catch の 500 に入る。#1917 の続き)
+    if (!isUuid(params.id)) {
+      return NextResponse.json({ error: { code: 'OP_COUPON_NOT_FOUND', message: COUPON_NOT_FOUND_MESSAGE } }, { status: 404 });
+    }
 
     let result;
     try {

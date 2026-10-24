@@ -9,7 +9,7 @@ import { sendEmail } from '@/lib/emails/send';
 import { isEmailFailure } from '@/lib/emails/send-result';
 import { maskEmailAddress } from '@/lib/emails/outbox';
 import { renderContactAdminNotificationEmail } from '@/lib/emails/support/contact-admin-notification';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 // #1044 (F6-19): 入力を Zod で厳密検証する
 const contactInquirySchema = z.object({
@@ -96,7 +96,11 @@ export async function POST(request: NextRequest) {
   const supabase = await createClient();
 
   try {
-    const body = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
 
     // #1044 (F6-19): Zod による厳密バリデーション
     const parseResult = contactInquirySchema.safeParse(body);

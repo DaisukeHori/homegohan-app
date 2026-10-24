@@ -201,14 +201,17 @@ describe('#166 /api/contact POST rate limit', () => {
 // ─────────────────────────────────────────────
 import { GET as commentsGET } from '../src/app/api/recipes/[id]/comments/route';
 
+/** レシピのパスの id (UUID の形でない id は DB に渡さず 404 にするので、UUID の形にする。#1917) */
+const RECIPE_ID = '30000000-0000-4000-8000-000000000001';
+
 describe('#168 /api/recipes/[id]/comments GET', () => {
   beforeEach(() => vi.resetAllMocks());
 
   it('未認証は401を返す', async () => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
 
-    const res = await commentsGET(new Request('http://localhost/api/recipes/r1/comments'), {
-      params: { id: 'r1' },
+    const res = await commentsGET(new Request(`http://localhost/api/recipes/${RECIPE_ID}/comments`), {
+      params: { id: RECIPE_ID },
     });
     expect(res.status).toBe(401);
   });
@@ -242,8 +245,8 @@ describe('#168 /api/recipes/[id]/comments GET', () => {
         : { select: vi.fn().mockReturnValue(selectChain) },
     );
 
-    const res = await commentsGET(new Request('http://localhost/api/recipes/r1/comments'), {
-      params: { id: 'r1' },
+    const res = await commentsGET(new Request(`http://localhost/api/recipes/${RECIPE_ID}/comments`), {
+      params: { id: RECIPE_ID },
     });
     expect(res.status).toBe(200);
     const { comments } = await res.json();
@@ -263,7 +266,7 @@ import { GET as recipeGET } from '../src/app/api/recipes/[id]/route';
 
 describe('#169 /api/recipes/[id] GET view_count', () => {
   const recipeRow = {
-    id: 'r1',
+    id: RECIPE_ID,
     user_id: 'uid-owner',
     is_public: true,
     name: 'Test',
@@ -312,8 +315,8 @@ describe('#169 /api/recipes/[id] GET view_count', () => {
       select: vi.fn().mockReturnValue(selectChainDetail),
     });
 
-    const res = await recipeGET(new Request('http://localhost/api/recipes/r1'), {
-      params: { id: 'r1' },
+    const res = await recipeGET(new Request(`http://localhost/api/recipes/${RECIPE_ID}`), {
+      params: { id: RECIPE_ID },
     });
     expect(res.status).toBe(200);
     // #257: view_count 更新は increment_recipe_view_count RPC 経由。
@@ -337,11 +340,11 @@ describe('#169 /api/recipes/[id] GET view_count', () => {
       table === 'recipes' ? { select: vi.fn().mockReturnValue(selectChainDetail) } : emptyLookup(),
     );
 
-    const res = await recipeGET(new Request('http://localhost/api/recipes/r1'), {
-      params: { id: 'r1' },
+    const res = await recipeGET(new Request(`http://localhost/api/recipes/${RECIPE_ID}`), {
+      params: { id: RECIPE_ID },
     });
     expect(res.status).toBe(200);
-    expect(mockRpc).toHaveBeenCalledWith('increment_recipe_view_count', { recipe_id: 'r1' });
+    expect(mockRpc).toHaveBeenCalledWith('increment_recipe_view_count', { recipe_id: RECIPE_ID });
   });
 });
 

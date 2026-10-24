@@ -110,6 +110,7 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/og-image-1845.test.tsx",
   "tests/recipes-route.test.ts",
   "tests/route-error-boundaries.test.tsx",
+  "tests/route-invalid-input-1917.test.ts",
   "tests/security-workflow.test.ts",
   "tests/shell-multibyte-var-expansion.test.ts",
   "tests/supabase-local-kong-keepalive.test.ts",

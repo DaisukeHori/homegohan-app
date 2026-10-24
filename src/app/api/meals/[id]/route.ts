@@ -20,7 +20,7 @@ import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/
 import { internalError } from '@/lib/api/errors';
 import { isUuid, uuidOrNull } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { MEAL_NOT_FOUND_MESSAGE } from '@/lib/api/user-api-error-messages';
 
 /**
@@ -86,7 +86,11 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
-    const body = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
 
     // #1205: 栄養素の型・範囲を、DB に触れる前に確認する（不正なら 400）。
     // 下の allowlist はキー名を絞るだけで値は見ないため、ここで値を確認する。

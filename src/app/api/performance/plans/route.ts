@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { toPerformancePlan, fromPerformancePlan } from '@/lib/converter'
 import { internalError } from '@/lib/api/errors'
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character'
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
 
 /** 400: 調整の種類 (adjustmentType) と理由 (rationale) が無い */
 const ADJUSTMENT_FIELDS_REQUIRED_MESSAGE = '調整の種類 (adjustmentType) と理由 (rationale) を指定してください'
@@ -74,7 +74,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
-    const body = await request.json()
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null)
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 })
+    }
     const {
       adjustmentType,
       adjustmentValue,
@@ -159,7 +163,11 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
-    const body = await request.json()
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null)
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 })
+    }
     const { planId, status, endDate } = body
 
     if (!planId) {

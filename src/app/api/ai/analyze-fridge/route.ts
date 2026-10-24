@@ -12,7 +12,7 @@ import { aiDailyLimitResponse, consumeAiUsage, AI_USAGE_COVERED_BY_GRANT, redeem
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AI_IMAGE_REQUIRED_MESSAGE, AI_PHOTO_MODE_MISMATCH_CODE } from '@/lib/ai/ai-api-messages';
 
 /** 送られた写真の URL が、本人の写真として読めないとき (他人の写真・消えた写真) の文面 (#1365) */
@@ -49,7 +49,11 @@ export async function POST(request: Request) {
   if (!rateLimitResult.success) return rateLimitExceededResponse(rateLimitResult);
 
   try {
-    const body = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
     // inventoryImageUrl は imageUrl の別名として受け付ける (App / WEB 統一)
     const { imageBase64, mimeType } = body;
     const imageUrl: string | undefined = body.imageUrl ?? body.inventoryImageUrl;

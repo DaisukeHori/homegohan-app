@@ -6,7 +6,7 @@ import { aiUsageRecordedHeaders, aiDailyLimitResponse, consumeAiUsage, AI_USAGE_
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AI_IMAGE_REQUIRED_MESSAGE, AI_PHOTO_ANALYSIS_STARTED_MESSAGE, AI_PHOTO_MODE_MISMATCH_CODE } from '@/lib/ai/ai-api-messages';
 
 interface ImageInput {
@@ -60,7 +60,11 @@ export async function POST(request: Request) {
 
   try {
     const startedAt = Date.now();
-    const body = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
     const { images, imageBase64, mimeType, mealType, mealId, prefetchedGeminiResult } = body as {
       images?: ImageInput[];
       imageBase64?: string;

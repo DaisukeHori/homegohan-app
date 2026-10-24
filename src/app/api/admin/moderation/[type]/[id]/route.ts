@@ -87,6 +87,7 @@ import { notSupportedResponse } from '@/lib/admin/not-supported';
 import { applyUserBan, BAN_INTERNAL_ERROR_MESSAGE } from '@/lib/admin/user-ban';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { isUuid } from '@/lib/http-params';
 
 export const dynamic = 'force-dynamic';
 
@@ -154,6 +155,12 @@ export async function GET(request: Request, props: Params) {
   // RLS で null 化され、content_moderator は moderation_flags_admin_select (旧 _admin_all)
   // (admin/super_admin のみ) に阻まれるため service-role が必須 (#1041 round-2)。
   const supabaseAdmin = getSupabaseAdmin();
+
+  // UUID の形でない id は DB に渡さず、通報が無いときと同じ 404 (moderation_flags.id / recipe_flags.id は uuid の列。
+  // 渡すと 22P02 で失敗し、下の catch の 500 に入る。#1917 の続き)
+  if (!isUuid(id)) {
+    return notFoundResponse();
+  }
 
   try {
     const item = await fetchModerationSingle(supabaseAdmin, moderationType, id);
@@ -288,6 +295,12 @@ async function handleResolve(request: Request, params: { type: string; id: strin
   const supabaseAdmin = getSupabaseAdmin();
   const supabase = await createClient();
   const newStatus = action === 'approve' ? 'approved' : action === 'escalate' ? 'escalated' : 'rejected';
+
+  // UUID の形でない id は DB に渡さず、通報が無いときと同じ 404 (moderation_flags.id / recipe_flags.id は uuid の列。
+  // 渡すと 22P02 で失敗し、下の catch の 500 に入る。#1917 の続き)
+  if (!isUuid(id)) {
+    return notFoundResponse();
+  }
 
   let item;
   try {

@@ -166,7 +166,7 @@ const RECIPE_PHOTO = publicUrl('fridge-images', `${OWNER}/recipe.jpg`);
 
 function mealFlagRow() {
   return {
-    id: 'flag-1',
+    id: 'f1a90000-0000-4000-8000-000000000001',
     status: 'pending',
     reason: null,
     resolution_note: null,
@@ -181,7 +181,7 @@ function mealFlagRow() {
 
 function recipeFlagRow() {
   return {
-    id: 'rflag-1',
+    id: 'f1a90000-0000-4000-8000-000000000002',
     status: 'pending',
     reason: null,
     reviewed_by: null,
@@ -208,13 +208,13 @@ describe('運営の審査の API は content_url を署名付き URL で返す',
   it('GET /api/admin/moderation/[type]/[id]', async () => {
     setRouteAdmin({ moderation_flags: [{ data: mealFlagRow(), error: null }] });
 
-    const res = await detailGET(new Request('http://localhost/api/admin/moderation/food/flag-1'), {
-      params: { type: 'food', id: 'flag-1' },
+    const res = await detailGET(new Request('http://localhost/api/admin/moderation/food/f1a90000-0000-4000-8000-000000000001'), {
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
 
     expect(res.status).toBe(200);
     const json = (await res.json()) as { data: { content_url: string | null; id: string } };
-    expect(json.data.id).toBe('flag-1');
+    expect(json.data.id).toBe('f1a90000-0000-4000-8000-000000000001');
     expect(json.data.content_url).toBe(signedOf('meal_photos', `${OWNER}/meal.jpg`));
     expect(routeSignCalls.map(({ bucket, paths }) => ({ bucket, paths }))).toEqual([
       { bucket: 'meal_photos', paths: [`${OWNER}/meal.jpg`] },
@@ -233,8 +233,8 @@ describe('運営の審査の API は content_url を署名付き URL で返す',
     expect(res.status).toBe(200);
     const json = (await res.json()) as { data: Array<{ id: string; content_url: string | null }> };
     expect(json.data).toEqual([
-      expect.objectContaining({ id: 'flag-1', content_url: signedOf('meal_photos', `${OWNER}/meal.jpg`) }),
-      expect.objectContaining({ id: 'rflag-1', content_url: signedOf('fridge-images', `${OWNER}/recipe.jpg`) }),
+      expect.objectContaining({ id: 'f1a90000-0000-4000-8000-000000000001', content_url: signedOf('meal_photos', `${OWNER}/meal.jpg`) }),
+      expect.objectContaining({ id: 'f1a90000-0000-4000-8000-000000000002', content_url: signedOf('fridge-images', `${OWNER}/recipe.jpg`) }),
     ]);
   });
 
