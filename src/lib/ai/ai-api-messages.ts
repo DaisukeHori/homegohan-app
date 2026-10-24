@@ -16,7 +16,7 @@
  *   - route の外の文 (この文の定数と関数・相談の提案の実行の結果 src/lib/ai/consultation-action-executor.ts の result.error と
  *     検証の失敗の文 (errors.push / errors: [...])) は tests/ai-api-error-messages.test.ts が見張る
  */
-import { CALENDAR_DATE_MAX, CALENDAR_DATE_MIN } from '@/lib/date-utils';
+import { CALENDAR_DATE_REQUIREMENT_JA, invalidCalendarDateMessage } from '@/lib/api/user-api-error-messages';
 
 // ===== 写真の読み取り (analyze-* / classify-photo) =====
 
@@ -46,11 +46,14 @@ export const AI_NUTRITION_FEEDBACK_QUERY_REQUIRED_MESSAGE = '日付か振り返�
 
 // ===== 献立 (menu/** ・nutrition-analysis) =====
 
-/** 日付の条件 (YYYY-MM-DD の実在する日付。範囲は isCalendarDate と同じ) */
-export const AI_CALENDAR_DATE_REQUIREMENT_JA = `YYYY-MM-DD の形の実在する日付 (${CALENDAR_DATE_MIN}〜${CALENDAR_DATE_MAX})`;
-/** 400: 日付の項目が条件に合わない (field は利用者に見せる項目の名前) */
+/**
+ * 日付の条件 (YYYY-MM-DD の実在する日付。範囲は isCalendarDate と同じ)。
+ * 利用者向けの API と同じ文 (src/lib/api/user-api-error-messages.ts の CALENDAR_DATE_REQUIREMENT_JA。#1917 で 1 つにそろえた)
+ */
+export const AI_CALENDAR_DATE_REQUIREMENT_JA = CALENDAR_DATE_REQUIREMENT_JA;
+/** 400: 日付の項目が条件に合わない (field は利用者に見せる項目の名前)。文の形は invalidCalendarDateMessage と同じ */
 export function aiInvalidDateMessage(field: string): string {
-  return `${field}は ${AI_CALENDAR_DATE_REQUIREMENT_JA} で指定してください`;
+  return invalidCalendarDateMessage(field);
 }
 /** 400: 必須の項目が無い (field は利用者に見せる項目の名前) */
 export function aiRequiredFieldMessage(field: string): string {
@@ -104,11 +107,11 @@ export function aiTargetSlotNotObjectMessage(index: number): string {
 }
 /** 400: targetSlots の 1 つの枠の日付が条件に合わない */
 export function aiTargetSlotDateInvalidMessage(index: number): string {
-  return `${index + 1} 番目の枠の日付は ${AI_CALENDAR_DATE_REQUIREMENT_JA} で指定してください`;
+  return invalidCalendarDateMessage(`${index + 1} 番目の枠の日付`);
 }
-/** 400: targetSlots の 1 つの枠の食事の区分が、受け付ける区分でない */
+/** 400: targetSlots の 1 つの枠の食事の区分が、受け付ける区分でない。受け付ける英字の値は括弧に入れて添える (healthEnumMessage・MEAL_TYPE_MESSAGE と同じ形。#1917 の続き) */
 export function aiTargetSlotMealTypeInvalidMessage(index: number, validMealTypes: readonly string[]): string {
-  return `${index + 1} 番目の枠の食事の区分は ${validMealTypes.join('・')} のどれかにしてください`;
+  return `${index + 1} 番目の枠の食事の区分 (mealType) は次のいずれかを指定してください (${validMealTypes.join(' / ')})`;
 }
 /** 400: targetSlots の 1 つの枠の献立の ID の形が正しくない */
 export function aiTargetSlotPlannedMealIdInvalidMessage(index: number): string {

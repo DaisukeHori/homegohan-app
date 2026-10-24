@@ -30,7 +30,7 @@ const HTTP_CREATED = 201;
 
 export async function POST(request: NextRequest) {
   // 本文の文字列に NULL 文字 (U+0000) があると DB (jsonb) で拒まれて 500 になる。認証・DB に触れる前に 400 で断る (#1657)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   try {
     const actor = await requireRole(['super_admin']);

@@ -302,7 +302,7 @@ describe('sanitizeHealthGoalCreate (#1229)', () => {
       const result = sanitizeHealthGoalCreate({ ...WEB_BODY, goal_type: goalType });
       expect(result.data, goalType).toBeNull();
       expect(result.errors, goalType).toEqual([
-        'goal_type は weight, body_fat, steps, step_count, sleep_hours のいずれかを指定してください',
+        '目標の種類 (goal_type) は次のいずれかを指定してください (weight, body_fat, steps, step_count, sleep_hours)',
       ]);
     }
   });

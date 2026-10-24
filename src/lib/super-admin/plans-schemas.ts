@@ -41,8 +41,8 @@ export const PLAN_STATUSES = ['draft', 'public', 'private', 'deprecated'] as con
 export const PRICE_APPLIES_TO = ['new_only'] as const;
 
 /** applies_to に new_only 以外が来たときのメッセージ (route が最初の issue の message をそのまま UI / 呼び出し元へ返す) */
-const PRICE_APPLIES_TO_MESSAGE =
-  '価格変更は新規契約のみに適用されます。applies_to には new_only だけを指定できます (既存契約の価格は変更できません)';
+export const PRICE_APPLIES_TO_MESSAGE =
+  '価格変更は新規契約のみに適用されます。適用先 (applies_to) には新規契約のみ (new_only) だけを指定できます (既存契約の価格は変更できません)';
 
 /**
  * プランステータス遷移マップ (operator/04-plan-management.md §3.4 ライフサイクル準拠)
@@ -79,12 +79,12 @@ export function isAllowedPlanStatusTransition(
  * 個人・家族のプランに組織のプランの値 (isOrgPlanKey: standard / premium / enterprise と org_ で始まる key) を付けたときの文 (#1912)。
  * 付けると利用者の画面に「組織のプラン」と出てしまう
  */
-export const PERSONAL_FAMILY_PLAN_KEY_MESSAGE = `個人・家族のプランの plan_key には ${ORG_PLAN_VALUES_WIRE.join(' / ')} や ${ORG_SUBSCRIPTION_PLAN_KEY_PREFIX} で始まる値を使えません (組織のプランの値です)`;
+export const PERSONAL_FAMILY_PLAN_KEY_MESSAGE = `個人・家族のプランのキー (plan_key) には、組織のプランの値 (${ORG_PLAN_VALUES_WIRE.join(' / ')} と ${ORG_SUBSCRIPTION_PLAN_KEY_PREFIX} で始まる値) を使えません`;
 
 /**
  * 組織のプランの plan_key が org_ で始まらないときの文 (#1912)。始まらないと利用者の画面に「有料プラン」と出てしまう
  */
-export const ORG_PLAN_KEY_PREFIX_MESSAGE = `組織のプランの plan_key は ${ORG_SUBSCRIPTION_PLAN_KEY_PREFIX} で始まる値にしてください`;
+export const ORG_PLAN_KEY_PREFIX_MESSAGE = `組織のプランのキー (plan_key) は、組織のプランの頭の文字 (${ORG_SUBSCRIPTION_PLAN_KEY_PREFIX}) で始まる値にしてください`;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // スキーマ定義
@@ -149,6 +149,62 @@ export const PlanUpdateSchema = z.object({
 });
 
 export type PlanUpdateInput = z.infer<typeof PlanUpdateSchema>;
+
+/**
+ * プランの状態の画面の名前 (super_admin のプランの一覧・詳細の画面 (src/app/super-admin/plans) の STATUS_LABELS と同じ語)。
+ * 運営の API の失敗の文で、状態の値 (draft など) を括弧に入れて添える前に置く (#1917 の続き)
+ */
+export const PLAN_STATUS_LABELS: Readonly<Record<(typeof PLAN_STATUSES)[number], string>> = {
+  draft: '下書き',
+  public: '公開中',
+  private: '非公開',
+  deprecated: '廃止',
+};
+
+/** プランの更新 (PATCH) の項目の画面の名前。失敗の文で、項目名 (trial_days など) を括弧に入れて添える前に置く (#1917 の続き) */
+export const PLAN_UPDATE_FIELD_LABELS: Readonly<Record<keyof PlanUpdateInput, string>> = {
+  display_name: '表示名',
+  description: '説明',
+  banner_url: 'バナーの画像の URL',
+  feature_package_ids: '機能のパッケージ',
+  display_order: '表示の順番',
+  max_members: 'メンバーの数の上限',
+  max_family_seats: '家族の席の数の上限',
+  trial_days: '試用の日数',
+  min_contract_months: '最低の契約の月数',
+  auto_renew_default: '自動更新の既定',
+  stripe_product_id: 'Stripe の商品の ID',
+  status: '状態',
+  ends_at: '廃止の予定日',
+};
+
+/** 状態の値を「画面の名前 (値)」にする (表に無い値は「不明な状態 (値)」。英字の値を括弧の外に出さない) */
+function planStatusLabel(status: string): string {
+  const label = (PLAN_STATUS_LABELS as Readonly<Record<string, string>>)[status];
+  return `${label ?? '不明な状態'} (${status})`;
+}
+
+/** 項目名を「画面の名前 (項目名)」にする (表に無い項目は「項目 (項目名)」) */
+function planUpdateFieldLabel(key: string): string {
+  const label = (PLAN_UPDATE_FIELD_LABELS as Readonly<Record<string, string>>)[key];
+  return `${label ?? '項目'} (${key})`;
+}
+
+/**
+ * 422 OP_PLAN_INVALID_TRANSITION の文: 許されていない状態の遷移 (#1917 の続き)。
+ * 以前は `${from} から ${to} への遷移は許可されていません` で、英字の状態の値 (draft など) が括弧の外に出ていた
+ */
+export function planStatusTransitionMessage(from: string, to: string): string {
+  return `プランの状態を ${planStatusLabel(from)} から ${planStatusLabel(to)} へ変えることはできません`;
+}
+
+/**
+ * 422 OP_PLAN_STATUS_LOCKED の文: 公開中・非公開のプランで変えられない項目を送った (#1917 の続き)。
+ * 以前は `公開中プランでは ${keys.join(', ')} は変更できません` で、英字の項目名 (trial_days など) が括弧の外に出ていた
+ */
+export function planStatusLockedFieldsMessage(keys: readonly string[]): string {
+  return `公開中・非公開のプランでは、次の項目は変更できません: ${keys.map(planUpdateFieldLabel).join('、')}。価格の変更は price-change API を使ってください。`;
+}
 
 /**
  * 価格変更リクエスト

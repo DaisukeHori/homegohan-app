@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { API_INTERNAL_ERROR_MESSAGE, API_INVALID_JSON_MESSAGE, authFailureFlat } from '@/lib/api/error-responses';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
@@ -87,8 +87,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: IS_PUBLIC_INVALID_MESSAGE }, { status: 400 });
     }
 
-    const supabase = await createClient();
-    const { data, error } = await supabase
+    const supabase = await createClient(); // 監査ログ (admin_audit_logs) は本人の権限で書く (RLS の audit_logs_insert_admins)
+    const { data, error } = await getSupabaseAdmin() // お知らせの書き込みは service_role だけ (運営の直接の書き込みを塞いだ。20261024140000。#1917)
       .from('announcements')
       .insert({
         title,

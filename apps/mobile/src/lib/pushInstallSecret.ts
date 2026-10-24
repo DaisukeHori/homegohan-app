@@ -4,8 +4,8 @@
  *
  * - 端末ごと (アプリのインストールごと) に 1 つ。利用者ごとではない: 同じ端末でログインした利用者はみな同じ値を使い、
  *   claim が同じ端末の前の利用者の行を外し、release がサインアウトした利用者の行を消すときの所有の証明になる
- * - 値はサーバーが作り、claim の応答で 1 度だけ返す (pushNotifications.ts の registerAndSaveExpoPushToken)。
- *   アプリには安全な乱数の部品 (expo-crypto など) が無いので、ネイティブの部品を足さずに済むよう、サーバー (node:crypto) で作る
+ * - 値はサーバー (node:crypto) で作り、claim の応答で 1 度だけ返す (pushNotifications.ts の registerAndSaveExpoPushToken)。
+ *   アプリは値を作らず、受け取った値を保管庫に置くだけ
  * - 保管庫は expo-secure-store (iOS Keychain / Android Keystore)。ログインのセッションと同じく、端末の初回ロック解除後は読め
  *   (バックグラウンドの起動でも読める)、バックアップの復元で別の端末へは移らない (AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY)
  * - ログアウト・退会の掃除では消さない (利用者のデータではなく端末のもの。消すと、次の利用者が前の利用者の行を外せなくなる)

@@ -7,10 +7,12 @@
  * ここは、関数で組み立てる文 (invalidCalendarDateMessage) と、本文を別のファイルで組み立てるもの (DSR_UNAUTHENTICATED_BODY の
  * スプレッド) を、値で確かめる
  */
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import {
   CALENDAR_DATE_PARAM_LABELS,
+  CALENDAR_DATE_RANGE_PARAMS_LABEL,
   CALENDAR_DATE_REQUIREMENT_JA,
   MEAL_NOT_FOUND_MESSAGE,
   MEAL_SAVE_FAILED_MESSAGE,
@@ -26,7 +28,30 @@ import {
 } from '@/lib/onboarding-api-errors';
 import { DSR_UNAUTHENTICATED_BODY } from '@/lib/data-subject-requests/requester-http';
 import { CALENDAR_DATE_MAX, CALENDAR_DATE_MIN } from '@/lib/date-utils';
-import { isEnglishOnly, JAPANESE } from '../helpers/api-error-text-scan';
+import { CalendarDateSchema } from '@/lib/calendar-date-schema';
+import { aiInvalidDateMessage, aiTargetSlotDateInvalidMessage, AI_CALENDAR_DATE_REQUIREMENT_JA } from '@/lib/ai/ai-api-messages';
+import { healthDateInvalidMessage, HEALTH_DATE_PARAM_INVALID_MESSAGE } from '@/lib/health-api-messages';
+import { isEnglishOnly, JAPANESE, sourceOf, textPartsOf, walkFiles } from '../helpers/api-error-text-scan';
+
+/** 受け付ける日付の説明の文を持ってよい、ただ 1 つのファイル */
+const CALENDAR_DATE_REQUIREMENT_SOURCE = 'src/lib/api/user-api-error-messages.ts';
+/** 日付の説明の文の目印 (説明を自前で書くと、この語を含む文字列になる) */
+const CALENDAR_DATE_REQUIREMENT_MARKER = '実在する日付';
+/** 走査する配下 (API の本文の文を作る route と src/lib) */
+const DATE_TEXT_SCAN_DIRS = ['src/app/api', 'src/lib'] as const;
+/** 日付の説明の定数の名前 (CALENDAR_DATE_REQUIREMENT_JA と、AI の別名 AI_CALENDAR_DATE_REQUIREMENT_JA) */
+const CALENDAR_DATE_REQUIREMENT_NAME = /(^|_)CALENDAR_DATE_REQUIREMENT_JA$/;
+
+/** ファイルのテンプレートの式に差し込んだ名前 (`${名前}` の名前だけ。コメントは見ない) */
+function templateSubstitutionNamesOf(file: string, sf: ts.SourceFile = sourceOf(file)): string[] {
+  const names: string[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isTemplateSpan(node) && ts.isIdentifier(node.expression)) names.push(node.expression.text);
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return names;
+}
 
 describe('日付の 400 の文', () => {
   it('受け付ける範囲は isCalendarDate と同じ (CALENDAR_DATE_MIN〜CALENDAR_DATE_MAX)', () => {
@@ -42,6 +67,51 @@ describe('日付の 400 の文', () => {
     const message = invalidCalendarDateMessage(CALENDAR_DATE_PARAM_LABELS[name]);
     expect(message).toBe(`${head}${CALENDAR_DATE_REQUIREMENT_JA}で指定してください`);
     expect(isEnglishOnly(message)).toBe(false);
+  });
+});
+
+describe('日付の 400 の文を作る所は 1 つ (#1917。健康の記録・AI・Zod の日付の文の作り手が別々の形を持っていた)', () => {
+  it('健康の記録・AI の API・Zod の日付の文は、同じ説明 (CALENDAR_DATE_REQUIREMENT_JA) と同じ形 (「名前は説明で指定してください」)', () => {
+    expect(healthDateInvalidMessage('record_date')).toBe(invalidCalendarDateMessage('記録の日付 (record_date)'));
+    expect(HEALTH_DATE_PARAM_INVALID_MESSAGE).toBe(invalidCalendarDateMessage(CALENDAR_DATE_PARAM_LABELS.date));
+    expect(AI_CALENDAR_DATE_REQUIREMENT_JA).toBe(CALENDAR_DATE_REQUIREMENT_JA);
+    expect(aiInvalidDateMessage('開始日')).toBe(invalidCalendarDateMessage('開始日'));
+    expect(aiTargetSlotDateInvalidMessage(0)).toBe(invalidCalendarDateMessage('1 番目の枠の日付'));
+    const parsed = CalendarDateSchema.safeParse('2026-02-30');
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues[0]?.message).toBe(invalidCalendarDateMessage('日付'));
+  });
+
+  it('開始日と終了日をまとめて断る文 (家族の献立・買い物リストの作り直し) も同じ作り手で、項目名と「は」の間に空白を入れない (#1917 の続き)', () => {
+    expect(invalidCalendarDateMessage(CALENDAR_DATE_RANGE_PARAMS_LABEL)).toBe(
+      '開始日 (startDate)と終了日 (endDate)はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください',
+    );
+  });
+
+  it(`src/app/api と src/lib で、日付の説明 (CALENDAR_DATE_REQUIREMENT_JA とその別名) をテンプレートに差し込んで文を作るのは ${CALENDAR_DATE_REQUIREMENT_SOURCE} だけ (ほかは invalidCalendarDateMessage を使う。#1917 の続き)`, () => {
+    const files = DATE_TEXT_SCAN_DIRS.flatMap((dir) => walkFiles(dir, (name) => /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name)));
+    const builders = files.filter((file) => templateSubstitutionNamesOf(file).some((name) => CALENDAR_DATE_REQUIREMENT_NAME.test(name)));
+    expect(builders).toEqual([CALENDAR_DATE_REQUIREMENT_SOURCE]);
+  });
+
+  it('上の見張りの部品は、テンプレートに差し込んだ名前を拾う (以前の family/menu の文)', () => {
+    const fixture = ts.createSourceFile(
+      'fixture.ts',
+      'const m = `開始日 (startDate) と終了日 (endDate) は${CALENDAR_DATE_REQUIREMENT_JA}で指定してください`; const n = `${AI_CALENDAR_DATE_REQUIREMENT_JA}`;',
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    expect(templateSubstitutionNamesOf('fixture.ts', fixture).filter((name) => CALENDAR_DATE_REQUIREMENT_NAME.test(name))).toEqual([
+      'CALENDAR_DATE_REQUIREMENT_JA',
+      'AI_CALENDAR_DATE_REQUIREMENT_JA',
+    ]);
+  });
+
+  it(`src/app/api と src/lib の文字列 (コメントは見ない) で「${CALENDAR_DATE_REQUIREMENT_MARKER}」を書くのは ${CALENDAR_DATE_REQUIREMENT_SOURCE} だけ`, () => {
+    const files = DATE_TEXT_SCAN_DIRS.flatMap((dir) => walkFiles(dir, (name) => /\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name)));
+    expect(files).toContain(CALENDAR_DATE_REQUIREMENT_SOURCE);
+    const writers = files.filter((file) => textPartsOf(file).some((text) => text.includes(CALENDAR_DATE_REQUIREMENT_MARKER)));
+    expect(writers).toEqual([CALENDAR_DATE_REQUIREMENT_SOURCE]);
   });
 });
 

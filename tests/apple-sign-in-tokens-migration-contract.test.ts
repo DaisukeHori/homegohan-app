@@ -3,23 +3,27 @@
  * 設計: docs/design/mobile/08-sign-in-with-apple.md §8.1
  *
  * 本物の DB での外部キーの動作は tests/integration/security/auth-users-fk-on-delete.test.ts (EXPECTED_ACTIONS)、権限は
- * tests/integration/security/db-privilege-hardening.test.ts が確かめる。ここでは SQL の文面だけを確かめる。
+ * tests/integration/security/db-privilege-hardening.test.ts が確かめる。ここでは SQL の文面と、設計書が名指すファイル名の番号だけを確かめる。
  *   1. 表は PK (user_id, client_id)・user_id は auth.users を指し ON DELETE CASCADE
  *   2. RLS を有効にし、PUBLIC / anon / authenticated の権限を外す (ポリシー・GRANT は書かない。読み書きは service_role だけ)
  *   3. 既存の行に触る文 (UPDATE / INSERT / DELETE) と、既存の表への ALTER が無い (追加だけの migration)
  *   4. ロックの待ちに上限を付ける
  *   5. 戻し口は DROP TABLE IF EXISTS だけ
  *   6. コメントに、記録の無い決定の帰属の語を書かない
+ *   7. 設計書 (mobile/08) が名指す migration と戻し口のファイル名の番号が、すべて置き場のままか、すべて実在する番号 (混ざらない)
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { collectMigrationNameMentions, findMigrationNumberProblems } from './helpers/design-doc-migration-number';
 
 const ROOT = path.resolve(__dirname, '..');
 const MIGRATIONS_DIR = path.join(ROOT, 'supabase/migrations');
 const ROLLBACKS_DIR = path.join(ROOT, 'supabase/rollbacks');
-const MIGRATION_SUFFIX = '_apple_sign_in_tokens.sql';
-const ROLLBACK_SUFFIX = '_apple_sign_in_tokens.down.sql';
+const DESIGN_DOC_PATH = path.join(ROOT, 'docs/design/mobile/08-sign-in-with-apple.md');
+const MIGRATION_NAME = 'apple_sign_in_tokens';
+const MIGRATION_SUFFIX = `_${MIGRATION_NAME}.sql`;
+const ROLLBACK_SUFFIX = `_${MIGRATION_NAME}.down.sql`;
 
 /** `--` から行末までのコメントを除く (この 2 つのファイルでは、文字列リテラルの中に `--` は出てこない) */
 function stripLineComments(sql: string): string {
@@ -99,5 +103,27 @@ describe('apple_sign_in_tokens の戻し口', () => {
       .map((statement) => statement.trim())
       .filter((statement) => statement !== '' && !/^SET\s+LOCAL\b/i.test(statement));
     expect(statements).toEqual(['DROP TABLE IF EXISTS public.apple_sign_in_tokens']);
+  });
+});
+
+describe('設計書 (mobile/08) が名指す apple_sign_in_tokens の migration と戻し口の番号', () => {
+  const doc = fs.readFileSync(DESIGN_DOC_PATH, 'utf8');
+  const realVersion = migrationFiles[0].slice(0, -MIGRATION_SUFFIX.length);
+  /** §8.1 の SQL の見出しの行 (行は 1 から) */
+  const headerLines = doc
+    .split('\n')
+    .map((text, index) => ({ line: index + 1, prefix: /^-- (?:migration|戻し方|rollback): /.exec(text)?.[0], text }))
+    .filter((header) => header.prefix !== undefined && header.text.includes(`_${MIGRATION_NAME}.`));
+
+  it('§8.1 の SQL の見出し 3 行 (migration の見出し・戻し方の案内・戻し口の見出し) が、この名前のファイルを名指す', () => {
+    expect(headerLines.map((header) => header.prefix)).toEqual(['-- migration: ', '-- 戻し方: ', '-- rollback: ']);
+  });
+
+  it('名指しの番号は、すべて置き場のままか、すべて実在する migration の番号 (一部だけ書き換えて対の見出しが食い違わない)', () => {
+    const mentions = collectMigrationNameMentions(doc, MIGRATION_NAME);
+    const mentionedLines = new Set(mentions.map((mention) => mention.line));
+    // 見出しの 3 行 (とくに #1917 の書き換えで残った戻し口の見出し) が、番号の突き合わせの対象に入っていること
+    expect(headerLines.filter((header) => !mentionedLines.has(header.line))).toEqual([]);
+    expect(findMigrationNumberProblems(mentions, realVersion)).toEqual([]);
   });
 });

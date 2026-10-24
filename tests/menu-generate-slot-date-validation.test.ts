@@ -76,7 +76,7 @@ const INVALID_DATES = [
 /** 400 の文の「受け付ける日付」の説明 (手で書いた期待値。CALENDAR_DATE_REQUIREMENT と同じ文) */
 const DATE_REQUIREMENT = 'YYYY-MM-DD format (an existing calendar date from 0101-01-02 to 9998-12-30)';
 /** Next の API (src/app/api/ai/**) の 400 の文の「受け付ける日付」の説明 (手で書いた期待値。src/lib/ai/ai-api-messages.ts の AI_CALENDAR_DATE_REQUIREMENT_JA と同じ文。#1917) */
-const DATE_REQUIREMENT_JA = 'YYYY-MM-DD の形の実在する日付 (0101-01-02〜9998-12-30)';
+const DATE_REQUIREMENT_JA = 'YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付';
 
 function jsonRequest(body: unknown): Request {
   return new Request('http://localhost/api/test', {
@@ -111,7 +111,7 @@ describe.each([
     );
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
-      error: `2 番目の枠の日付は ${DATE_REQUIREMENT_JA} で指定してください`,
+      error: `2 番目の枠の日付は${DATE_REQUIREMENT_JA}で指定してください`,
     });
     expect(h.getUser).not.toHaveBeenCalled();
     expect(h.from).not.toHaveBeenCalled();
@@ -139,7 +139,7 @@ describe('POST /api/ai/menu/meal/generate: dayDate は実在する日付だけ (
   it.each(INVALID_DATES)('dayDate=%s は、DB・認証に触れる前に 400', async (dayDate) => {
     const res = await postMealGenerate(jsonRequest({ dayDate, mealType: 'lunch' }));
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: `日付は ${DATE_REQUIREMENT_JA} で指定してください` });
+    expect(await res.json()).toEqual({ error: `日付は${DATE_REQUIREMENT_JA}で指定してください` });
     expect(h.getUser).not.toHaveBeenCalled();
     expect(h.from).not.toHaveBeenCalled();
     expect(h.callV4).not.toHaveBeenCalled();
@@ -159,7 +159,7 @@ describe('POST /api/ai/nutrition-analysis (献立変更の実行): targetDate �
       jsonRequest({ targetDate, targetMealType: 'dinner', prompt: '野菜を増やして' }),
     );
     expect(res.status).toBe(400);
-    expect(await res.json()).toEqual({ error: `日付は ${DATE_REQUIREMENT_JA} で指定してください` });
+    expect(await res.json()).toEqual({ error: `日付は${DATE_REQUIREMENT_JA}で指定してください` });
     expect(h.from).not.toHaveBeenCalled();
     expect(h.callV4).not.toHaveBeenCalled();
   });
@@ -205,7 +205,7 @@ describe('Edge Function (generate-menu-v4 / v5) の入口の判定 findInvalidTa
     expect(findInvalidTargetSlotDate([])).toBeNull();
   });
 
-  it.each(INVALID_DATES)('date=%s の要素があれば、その位置を言う文 (Next.js の 400 と同じ文)', (date) => {
+  it.each(INVALID_DATES)('date=%s の要素があれば、その位置を言う Edge Function の入口の英語の文 (Next.js の 400 は日本語の別の文)', (date) => {
     expect(
       findInvalidTargetSlotDate([
         { date: '2026-10-10', mealType: 'breakfast' },

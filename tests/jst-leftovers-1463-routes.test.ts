@@ -143,13 +143,13 @@ describe('5. 存在しない日付・範囲の外の日付は、DB に触れる�
       params,
     );
     expect(put.status).toBe(400);
-    expect(await put.json()).toEqual({ error: '日付 (date) は YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください' });
+    expect(await put.json()).toEqual({ error: '日付 (date)はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください' });
 
     const del = await deleteHealthRecord(new NextRequest(`http://localhost/api/health/records/${date}`, { method: 'DELETE' }), {
       params: Promise.resolve({ date }),
     });
     expect(del.status).toBe(400);
-    expect(await del.json()).toEqual({ error: '日付 (date) は YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください' });
+    expect(await del.json()).toEqual({ error: '日付 (date)はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください' });
     expect(h.queries).toEqual([]);
   });
 
@@ -167,7 +167,7 @@ describe('5. 存在しない日付・範囲の外の日付は、DB に触れる�
       new NextRequest('http://localhost/api/health/records', { method: 'POST', body: JSON.stringify({ record_date: date, weight: 60 }) }),
     );
     expect(full.status).toBe(400);
-    expect(await full.json()).toEqual({ error: '記録の日付 (record_date) は YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください' });
+    expect(await full.json()).toEqual({ error: '記録の日付 (record_date)はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください' });
 
     const quick = await postQuickRecord(
       new NextRequest('http://localhost/api/health/records/quick', {
@@ -176,7 +176,7 @@ describe('5. 存在しない日付・範囲の外の日付は、DB に触れる�
       }),
     );
     expect(quick.status).toBe(400);
-    expect(await quick.json()).toEqual({ error: '記録の日付 (record_date) は YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください' });
+    expect(await quick.json()).toEqual({ error: '記録の日付 (record_date)はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください' });
     expect(h.queries).toEqual([]);
   });
 
@@ -188,7 +188,7 @@ describe('5. 存在しない日付・範囲の外の日付は、DB に触れる�
       const res = await regenerateShoppingList(jsonRequest('http://localhost/api/shopping-list/regenerate', 'POST', body));
       expect(res.status, JSON.stringify(body)).toBe(400);
       expect(await res.json()).toEqual({
-        error: '開始日 (startDate) と終了日 (endDate) はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください',
+        error: '開始日 (startDate)と終了日 (endDate)はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください',
       });
     }
     expect(h.queries).toEqual([]);

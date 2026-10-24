@@ -6,7 +6,7 @@
  *   (operator_force_representative_transfer) は、退会の途中かを見ずに代表者を書いた。退会は家族の所属を関数で外さないので、
  *   退会の途中の人は家族の active なメンバーのままで、承諾・強制譲渡の在籍の確認を通った。
  * 修正後 (supabase/migrations/20261023150000_account_deletion_family_representative_guard.sql):
- *   - family_groups の BEFORE INSERT OR UPDATE OF representative_id のトリガー family_groups_representative_not_deleting が、
+ *   - family_groups の BEFORE INSERT OR UPDATE OF representative_id のトリガー trg_representative_not_deleting (関数 family_groups_representative_not_deleting) が、
  *     新しい representative_id の人に新しい退会の印 (account_deletion_guards。20261023130000) があれば
  *     REPRESENTATIVE_ACCOUNT_DELETING (P0001) で止める。NULL (解散) と値を変えない UPDATE は止めない。
  *   - 印と代表者の変更は、その人の id の advisory lock で直列になる (印が先なら変更が止まり、変更が先なら印は変更の commit を待ち、
@@ -322,7 +322,7 @@ afterAll(async () => {
   });
 }, CLEANUP_TIMEOUT_MS);
 
-describe('退会の印のある人を家族の代表者にしない (トリガー family_groups_representative_not_deleting)', () => {
+describe('退会の印のある人を家族の代表者にしない (トリガー trg_representative_not_deleting (関数 family_groups_representative_not_deleting))', () => {
   it('FR-1: 家族の作成 — 印のある本人は REPRESENTATIVE_ACCOUNT_DELETING で作れず、何も書かれない。印の無い人は従来どおり作れる', async () => {
     const [deleting, other] = await Promise.all([createUser('fr1-deleting'), createUser('fr1-other')]);
     await Promise.all([grantFamilyPlan(srAdmin, deleting.id), grantFamilyPlan(srAdmin, other.id)]);
@@ -420,10 +420,12 @@ describe('退会の印のある人を家族の代表者にしない (トリガ�
     expect(forceOutcome.ok, JSON.stringify(forceOutcome)).toBe(true);
     expect((await familyState(forced.familyId))?.representative_id).toBe(forced.adult.id);
 
-    // 退会が 409 (代表者) で止まった人が、印が新しいうちに家族を解散する (#1917 の「解散してから退会する」の流れ)
+    // 退会が 409 (代表者) で止まった人が、家族を解散する (#1917 の「解散してから退会する」の流れ)。409 の印は返す前に消える
+    // (20261024120000) ので、新しい印 (同じ人の別の退会が走っている間など) があっても解散を止めないことは、印を付け直して確かめる
     const dissolving = await buildFamily('fr6-dissolve');
     const blocked = await deleteAccount({ userId: dissolving.rep.id, admin: srAdmin, requestId: `req_fr6_${TS}` });
     expect(blocked).toMatchObject({ ok: false, status: HTTP_CONFLICT, error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE' });
+    expect((await beginGuard(dissolving.rep.id)).ok).toBe(true);
     const { error: dissolveError } = await asUser(dissolving.rep.jwt).rpc('dissolve_family_by_representative', {
       p_family_id: dissolving.familyId,
     });

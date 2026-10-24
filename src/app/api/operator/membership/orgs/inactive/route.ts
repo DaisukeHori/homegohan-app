@@ -6,7 +6,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
-import { authFailureNested } from '@/lib/api/error-responses';
+import { authFailureNested, operatorMfaRequiredNested } from '@/lib/api/error-responses';
 import { internalError } from '@/lib/api/errors';
 
 export const dynamic = 'force-dynamic';
@@ -18,6 +18,10 @@ export async function GET() {
 
     const { data, error } = await supabase.rpc('list_orgs_with_inactive_owner');
     if (error) {
+      // DB の二段階認証の判定 (OPERATOR_MFA_REQUIRED。cross/12 §11.4) で止まったら、ゲート (requireSuperAdmin) が二段階認証で止めたときと
+      // 同じ 403 と日本語の固定の文にする (汎用の 500 にしない。#1917)
+      const mfaRequired = operatorMfaRequiredNested(error);
+      if (mfaRequired) return mfaRequired;
       return internalError('GET /api/operator/membership/orgs/inactive', error, {}, { shape: 'nested' });
     }
 

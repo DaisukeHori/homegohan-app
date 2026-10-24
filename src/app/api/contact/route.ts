@@ -14,7 +14,7 @@ import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 // #1044 (F6-19): 入力を Zod で厳密検証する
 const contactInquirySchema = z.object({
   inquiryType: z.enum(['general', 'support', 'bug', 'feature'], {
-    message: 'inquiryType の値が不正です',
+    message: 'お問い合わせの種類 (inquiryType) の値が不正です',
   }),
   email: z.string().email('有効なメールアドレスを入力してください'),
   subject: z.string().min(1, '件名は必須です').max(100, '件名は100文字以内です'),

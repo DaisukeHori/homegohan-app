@@ -8,7 +8,7 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 export async function POST(request: Request) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
 
@@ -81,7 +81,7 @@ export async function POST(request: Request) {
         { status: ErrorStatusMap[MembershipErrorCode.FAMILY_PLAN_REQUIRED] },
       );
     }
-    // #1917 の続き: 退会の手続き中の本人は家族を作れない (家族の行のトリガー family_groups_representative_not_deleting が止める。
+    // #1917 の続き: 退会の手続き中の本人は家族を作れない (家族の行のトリガー trg_representative_not_deleting (関数 family_groups_representative_not_deleting) が止める。
     // 作ると、退会の最後のアカウントの削除が代表者の外部キーで失敗する)。DB の生の文は出さない
     if ((error.message ?? '').includes(MembershipErrorCode.REPRESENTATIVE_ACCOUNT_DELETING)) {
       return NextResponse.json(

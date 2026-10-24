@@ -17,7 +17,10 @@
 import { act, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { EMAIL_CHANGE_AWAITING_OTHER_NOTICE } from '@homegohan/shared';
+import { AUTH_LINK_ERROR_MESSAGE, EMAIL_CHANGE_AWAITING_OTHER_NOTICE } from '@homegohan/shared';
+
+/** ログイン画面へ移すときのパス (?error= は英文ではなく固定の文。#1917 の続き) */
+const LOGIN_WITH_LINK_ERROR = `/login?${new URLSearchParams({ error: AUTH_LINK_ERROR_MESSAGE }).toString()}`;
 
 const mocks = vi.hoisted(() => {
   const replace = vi.fn();
@@ -174,10 +177,8 @@ describe('/auth/callback: 認証リンクの知らせを /auth/link-notice へ�
     expect(await callback('?code=abc')).toBe('/home');
   });
 
-  it('クエリのエラーは今までどおりログイン画面へ (link-notice を通さない)', async () => {
-    expect(await callback('?error=access_denied&error_description=Email+link+is+invalid')).toBe(
-      '/login?error=Email+link+is+invalid',
-    );
+  it('クエリのエラーは今までどおりログイン画面へ (link-notice を通さない)。英文ではなく固定の文を付ける', async () => {
+    expect(await callback('?error=access_denied&error_description=Email+link+is+invalid')).toBe(LOGIN_WITH_LINK_ERROR);
   });
 
   it('招待などの next は、そのまま link-notice の next に渡す', async () => {
@@ -197,8 +198,8 @@ describe('resolveLinkNotice (#1574)', () => {
     ['next が無い', '', '', { kind: 'continue', next: LINK_NOTICE_DEFAULT_NEXT }],
     ['next が外のサイト (オープンリダイレクト)', `?next=${encodeURIComponent('//evil.example.com')}`, '', { kind: 'continue', next: LINK_NOTICE_DEFAULT_NEXT }],
     ['next がスキーム付き', `?next=${encodeURIComponent('https://evil.example.com')}`, `#${SINGLE_CONFIRMATION_ENCODED}`, { kind: 'email_change_awaiting_other', next: LINK_NOTICE_DEFAULT_NEXT }],
-    ['ハッシュのエラー (説明つき)', `?next=%2Fhome`, '#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired', { kind: 'link_error', redirectTo: '/login?error=Email+link+is+invalid+or+has+expired' }],
-    ['ハッシュのエラー (説明なし)', `?next=%2Fhome`, '#error=access_denied', { kind: 'link_error', redirectTo: '/login?error=access_denied' }],
+    ['ハッシュのエラー (説明つき)', `?next=%2Fhome`, '#error=access_denied&error_code=otp_expired&error_description=Email+link+is+invalid+or+has+expired', { kind: 'link_error', redirectTo: LOGIN_WITH_LINK_ERROR }],
+    ['ハッシュのエラー (説明なし)', `?next=%2Fhome`, '#error=access_denied', { kind: 'link_error', redirectTo: LOGIN_WITH_LINK_ERROR }],
   ])('%s', (_label, search, hash, expected) => {
     expect(resolveLinkNotice({ search, hash })).toEqual(expected);
   });
@@ -264,9 +265,10 @@ describe('/auth/link-notice の画面 (#1574)', () => {
     expect(container.querySelector('[data-testid="link-notice-email-change-awaiting-other"]')).toBeNull();
   });
 
-  it('ハッシュにエラーがあれば、ログイン画面へエラーつきで移る', async () => {
+  it('ハッシュにエラーがあれば、ログイン画面へ固定の文つきで移る (GoTrue の英文は付けない)', async () => {
     await renderAt('?next=%2Fhome', '#error=access_denied&error_description=Email+link+is+invalid');
-    expect(mocks.replace).toHaveBeenCalledWith('/login?error=Email+link+is+invalid');
+    expect(mocks.replace).toHaveBeenCalledWith(LOGIN_WITH_LINK_ERROR);
+    expect(String(mocks.replace.mock.calls[0]?.[0])).not.toContain('Email');
     expect(container.querySelector('[data-testid="link-notice-email-change-awaiting-other"]')).toBeNull();
   });
 

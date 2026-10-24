@@ -490,8 +490,8 @@ describe('POST /api/super-admin/backups/dr-tests', () => {
   it('本文に NUL → 400 INVALID_CHARACTER で createClient を呼ばない', async () => {
     const res = await POST(postRequest({ ...VALID_BODY, notes: 'a\u0000b' }));
     expect(res.status).toBe(400);
-    // 既存の rejectNullCharacterBody (src/lib/api/reject-null-character.ts) の形 (flat: { error: <文>, code })
-    expect((await res.json()).code).toBe('INVALID_CHARACTER');
+    // 運営の API のほかの失敗と同じ nested の形 ({ error: { code, message } }。#1917 の続き)
+    expect((await res.json()).error.code).toBe('INVALID_CHARACTER');
     expect(mocks.createClient).not.toHaveBeenCalled();
     expect(mocks.auditInserts).toHaveLength(0);
   });

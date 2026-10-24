@@ -2,7 +2,7 @@
  * #1917 の続き (D73): 運営の組織の作成 POST /api/admin/organizations が、退会の途中の人をオーナーにしない (route のテスト)。
  *
  * 退会 (src/lib/account-deletion.ts の deleteAccount) は findBlocker の前に退会の印 (begin_account_deletion_guard) を付ける。
- * 印のある人を owner_id にする organizations の INSERT は、DB のトリガー organizations_owner_not_deleting が
+ * 印のある人を owner_id にする organizations の INSERT は、DB のトリガー trg_organizations_owner_not_deleting (関数 organizations_owner_not_deleting()) が
  * 'OWNER_ACCOUNT_DELETING' (P0001) で止める (supabase/migrations/20261023130000_account_deletion_owner_guard.sql。
  * 実 DB では tests/integration/security/account-deletion-owner-guard.test.ts)。
  * ここでは、その止めを route が 409 OWNER_ACCOUNT_DELETING (日本語の固定の文) にし、席の行・オーナーの所属・監査を書かないことを確かめる。
@@ -98,7 +98,7 @@ describe('POST /api/admin/organizations: 退会の途中の人をオーナーに
 
     expect(res.status).toBe(409);
     expect(await json(res)).toEqual({
-      error: { code: OWNER_ACCOUNT_DELETING, message: '指定した owner は退会の手続き中です' },
+      error: { code: OWNER_ACCOUNT_DELETING, message: '指定したオーナー (owner_id) は退会の手続き中です' },
     });
     expect(serviceDb.rows('organizations')).toEqual([]);
     expect(serviceDb.recorded('org_license_pools')).toHaveLength(0);

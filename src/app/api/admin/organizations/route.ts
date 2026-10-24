@@ -27,7 +27,7 @@ const OrgSearchSchema = z.object({
 });
 
 const OrgCreateSchema = z.object({
-  name: z.string().min(1, { message: 'name は必須です' }).max(200),
+  name: z.string().min(1, { message: '組織の名前 (name) は必須です' }).max(200),
   plan: z.enum(ORG_PLAN_VALUES).optional().default(ORG_PLAN_DEFAULT),
   // organizations.owner_id は active な行では NOT NULL (CHECK organizations_active_has_owner。#1103 項目 10 → #1917)。作る組織は active。
   // 本文では省略してよく、未指定時は呼び出し元の運営を owner にする (下の POST で必ず埋める)
@@ -109,7 +109,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   let actor;
   try {
@@ -166,7 +166,7 @@ export async function POST(request: Request) {
 
   if (ownerProfile?.organization_id) {
     return NextResponse.json(
-      { error: { code: 'OWNER_ALREADY_IN_ORG', message: '指定した owner は既に別の組織に所属しています' } },
+      { error: { code: 'OWNER_ALREADY_IN_ORG', message: '指定したオーナー (owner_id) は既に別の組織に所属しています' } },
       { status: 409 },
     );
   }
@@ -183,7 +183,7 @@ export async function POST(request: Request) {
     // トリガーが P0001 + このコードの完全一致で止めた形だけを拾う。コードの判定は共通の関数で行い、route では (ログのほかに) `.message` を読まない (#1917)
     if (isRaisedExceptionWithCode(insertError, OWNER_ACCOUNT_DELETING)) {
       return NextResponse.json(
-        { error: { code: OWNER_ACCOUNT_DELETING, message: '指定した owner は退会の手続き中です' } },
+        { error: { code: OWNER_ACCOUNT_DELETING, message: '指定したオーナー (owner_id) は退会の手続き中です' } },
         { status: 409 },
       );
     }

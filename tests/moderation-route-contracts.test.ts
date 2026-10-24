@@ -435,8 +435,8 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
 
     expect(res.status).toBe(500);
     const json = (await res.json()) as { error: { code: string; message: string } };
-    expect(json.error).toEqual({ code: 'OP_BAN_FAILED', message: 'super_admin ユーザーを BAN することはできません' });
-    expect(auditInsertPayload(fakeSupabase).details.ban_error).toBe('super_admin ユーザーを BAN することはできません');
+    expect(json.error).toEqual({ code: 'OP_BAN_FAILED', message: 'スーパー管理者 (super_admin) のユーザーを BAN することはできません' });
+    expect(auditInsertPayload(fakeSupabase).details.ban_error).toBe('スーパー管理者 (super_admin) のユーザーを BAN することはできません');
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 

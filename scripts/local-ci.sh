@@ -1266,7 +1266,7 @@ stage_secrets() {
     return 0
   fi
   printf '%s\n' "$parsed" | tail -n +2 >>"$log"
-  record secrets:gitleaks RED - "$findings" - "$commits" - "$(($(now) - t0))" "$(tail_hint "シークレットの疑い $findings 件 (終了コード ${rc}。値は出していない。本物ならキーを無効にして発行し直す。ダミーなら .gitleaks.toml か行末の gitleaks:allow)" "$log")"
+  record secrets:gitleaks RED - "$findings" - "$commits" - "$(($(now) - t0))" "$(tail_hint "シークレットの疑い $findings 件 (終了コード ${rc}。値は出していない。本物ならキーを無効にして発行し直す。ダミーなら .gitleaks.toml か行末の gitleaks:allow。push 済みのコミットの差分にだけ残った 1 件は .gitleaksignore に SHA 付きの指紋で)" "$log")"
 }
 
 # ---------------------------------------------------------------------
