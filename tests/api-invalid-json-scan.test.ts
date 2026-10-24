@@ -6,7 +6,7 @@
  *   `const body = await request.json()` を route 全体の try の中で読むと、壊れた JSON の例外が catch の internalError に流れ、
  *   呼び出し元の入力の誤りが 500 (処理中にエラー) になる。構造化ログにも内部エラーとして残る
  *   (レシピ・コメント・買い物リストの route などで見つかった。docs/design/cross/04-api-conventions.md §5.2 の
- *   「JSON が読めない本文は 400」に合わない)。
+ *   「JSON として読めない本文を 500 にしない」に合わない)。
  *
  * 決まり (直し方): 本文は次のどれかで読む。
  *   - `await request.json().catch(() => null)` で読み、読めなかったとき (null・オブジェクトでない) を 400 にする

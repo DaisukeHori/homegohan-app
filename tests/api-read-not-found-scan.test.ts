@@ -44,7 +44,7 @@
  *   id を検証する (route の正典が UUID でない id を 400 と決めているもの) か、UUID の正規表現 (UUID_RE など) で確かめていること。
  *   「パスの値を引数にして」= 引数の中に `params` か、`params` から取り出した変数 (`const { id } = await params` の id など) の名前があること。
  *   本文の `.safeParse(body)` だけの handler は、確かめていない側に数える。
- *   パスの値が uuid の列に届かない (文字列の列・日付・トークン) handler や、所属の操作の route (code の体系が正典で別に決まる) は
+ *   パスの値が uuid の列に届かない (文字列の列・日付) handler や、所属の操作の route (code の体系が正典で別に決まる) は
  *   PATH_ID_CHECK_EXCLUDED に理由つきで載せる。載せた handler が検査を持つようになったら (または消えたら)、載せたままを失敗にする。
  *   限界: handler が呼ぶ関数 (src/lib・同じファイルの関数) の中で DB に渡すもの (`.from` を handler に書かないもの) は見ない。
  *   この形は #1917 の続きで手で洗った (admin/moderation/[type]/[id] の GET・POST・PUT・restore の POST と super-admin/coupons/[id]/apply の POST は
