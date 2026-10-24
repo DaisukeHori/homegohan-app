@@ -26,7 +26,7 @@ import {
 import * as Linking from "expo-linking";
 
 import { getApi } from "./api";
-import { getApiErrorMessage } from "./api-error";
+import { getJapaneseApiErrorMessage } from "./api-error";
 import { supabase } from "./supabase";
 
 /** メール変更の確認メールのリンクを開いたときに戻る、アプリの画面 (新規登録のメール確認と同じ) */
@@ -59,8 +59,9 @@ export async function changePassword(_email: string, input: PasswordChangeInput)
   } catch (err) {
     // パスワード・本文は出さない。エラーの種類だけを残す
     console.error("[settings/account] password change failed:", err instanceof Error ? err.name : "unknown");
-    // 本文の error = cross/16 §19 の文。圏外・待ち時間切れは通信の文言。取り出せなければ共通の失敗の文言
-    return { ok: false, message: getApiErrorMessage(err, describePasswordChangeApiError(null, null)) };
+    // 本文の error = cross/16 §19 の文。圏外・待ち時間切れは通信の文言。取り出せない・日本語でない文 (HTTP のエラーでない例外の英文) は
+    // 共通の失敗の文言 (#1917 の続き)
+    return { ok: false, message: getJapaneseApiErrorMessage(err, describePasswordChangeApiError(null, null)) };
   }
 }
 
