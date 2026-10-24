@@ -139,6 +139,23 @@ export function forbiddenMessageOf(err: ForbiddenError, table: ForbiddenMessageT
   return table.get(err.code) ?? API_FORBIDDEN_MESSAGE;
 }
 
+/**
+ * 403: 運営の route (admin・super-admin) が OP_PERMISSION_DENIED の本文に従来から書いてきた文
+ * (operator/02-api-spec.md のエラー表の route。画面・E2E が読むので変えない)
+ */
+export const API_OP_PERMISSION_DENIED_MESSAGE = '権限がありません';
+
+/**
+ * 運営の route の 403 (code は OP_PERMISSION_DENIED のまま) の本文の文。
+ * 二段階認証が未完了 (MfaRequiredError) なら、その理由の日本語の固定の文 (forbiddenMessageOf の既定の表) にし、
+ * それ以外 (ロールが足りない・凍結など) は従来の API_OP_PERMISSION_DENIED_MESSAGE のまま (#1917)。
+ * ゲート (requireRole) の後でセッションの状態が変わったとき、二段階認証が要るのに権限が無いように見せないため
+ * (ロールの変更の route (src/app/api/admin/users/[id]/role/route.ts) が先に直した形を、運営の route でそろえる)
+ */
+export function operatorForbiddenMessageOf(err: ForbiddenError): string {
+  return err instanceof MfaRequiredError ? forbiddenMessageOf(err) : API_OP_PERMISSION_DENIED_MESSAGE;
+}
+
 function responseInit(status: number, headers: HeadersInit | undefined): ResponseInit {
   return headers === undefined ? { status } : { status, headers };
 }

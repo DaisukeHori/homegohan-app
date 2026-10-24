@@ -22,6 +22,7 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import {
@@ -114,7 +115,7 @@ export async function POST(request: Request, props: Params) {
       return errorResponse(401, 'AUTH_UNAUTHENTICATED', '認証が必要です');
     }
     if (err instanceof ForbiddenError) {
-      return errorResponse(403, 'OP_PERMISSION_DENIED', '権限がありません');
+      return errorResponse(403, 'OP_PERMISSION_DENIED', operatorForbiddenMessageOf(err));
     }
     throw err;
   }
