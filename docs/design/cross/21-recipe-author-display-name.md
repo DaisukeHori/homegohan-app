@@ -6,6 +6,7 @@
 | v1.1 | 2026-10-24 | 審査 R1 の反映: 戻し口の見出しを対の migration の名前に・段 A の本番の適用を文面が効いたあとの同じ門に (§15 の本番の順序)・プライバシーポリシーの文をレシピとコメントで分ける (6 文)・結合テストの helper を実在の export と本テスト内の定義に・I-12 を退会する作者の公開レシピで確かめる形に・C-8 を段 B へ・fix 枝の単体テストの it の対応表 (§7.11) |
 | v1.2 | 2026-10-24 | 網羅性 (周 2) の反映: 本人が公開レシピを消す出来事 (F-19c・S-17・§9.1・§9.3・I-16)・コメントの POST の返り値を実 DB で (I-17)・§14 に `anon-definer-execute.test.ts`・§9.3 の本人の見え方の文の訂正・§3 の origin/main を `cae0e288` に取り直し (§16 に新設の番兵 2 つ) |
 | v1.3 | 2026-10-24 | 審査 R2 の反映: レシピを非公開に戻す・公開に戻す・運営が隠す・隠すのを戻すと、そのレシピへのコメントの書き手の K-公開 も変わる遷移を表に (§0.3 S-12・S-13・§4.3・§9.1・§9.3・§7.10 I-10 に toggleCommenter・§18)・§19 の 7〜9 の本番の検証は、書き込みの前にオーケストレーターが承認の要否を確かめる形に |
+| v1.4 | 2026-10-24 | 網羅性 (周 3) の反映: 公開レシピを新しく作る出来事 (INSERT) を §9.3 に・§9.1 に「公開レシピなし・コメントだけ」× 未ログイン / 本人の行・§14 の段 C に `packages/shared/src/legal-versions.ts` と `docs/legal/archive/v2026.4/` (選択肢 (b) のときだけ)・個人データの書き出しで新しい列を出すことの決定 (§6.5・§16・§18) |
 
 要件の正本は Issue #1917 の本文とコメント。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
 ファイル名は cross/21 (cross/ の既存は 01〜09・12・13a・13b・14〜20。10・11・13 は欠番)。
@@ -337,6 +338,7 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 
 - 置き場: `user_profiles.show_recipe_author_name boolean NOT NULL DEFAULT true` (列 1 つ)。レシピごとの列にしない (レシピを作る・編集する画面が無く、設定を置く所が無い。F-13)。
 - 既定は「出す」(本書の冒頭の前提のとおり)。
+- 個人データの書き出し (`GET /api/account/export`。`src/lib/account-export-tables.ts` の `user_profiles` は `'*'` で読んで `omit` の列だけを外す): この列は書き出しに **含める** (`omit` に足さない)。本人が選んだ設定で、運営の内部の管理情報 (`omit` にある権限・凍結・課金の内部キャッシュ) ではなく、`notification_preferences` と同じく本人のデータに当たるため。`src/lib/account-export-tables.ts` は変えない (§16 の `tests/account-export-tables.test.ts` の行)。
 - 画面: プロフィールの編集 (`/profile`) の基本情報タブ、ニックネームの欄のすぐ下にチェック 1 つ (§7.7)。保存は既存の `PUT /api/profile` (F-11)。本人が RLS の UPDATE で書ける列 (特権列ガードの名指しに入れない。F-21)。
 - 文言 (定数。§7.4): ラベル「公開したレシピとコメントに、ニックネームを作者名として表示する」、注記「オフにすると、他の人には「匿名」と表示されます。あなた自身の画面には、自分の名前が表示されます。」。
 
@@ -1472,6 +1474,8 @@ rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
 | 設定オフ (`show_recipe_author_name = false`) | 他人・未ログイン | 匿名 | 匿名 | 匿名 | — |
 | 設定オフ | 本人 | 表示名 | 表示名 | 表示名 | 表示名 |
 | 公開レシピなし・コメントだけ (公開レシピへ) | 他人 | — | — | 表示名 | — |
+| 同 | 未ログイン | — | — | (RLS で 0 件 / GET は 401) | — (未ログインの POST は 401) |
+| 同 | 本人 | 表示名 (本人の非公開のレシピがあれば。無ければ —) | — (他人の公開レシピの作者は、その作者の行で決まる) | 本人のコメントは表示名 ((a)) | 表示名 ((a)) |
 | 公開レシピなし・コメントなし (非公開だけ) | 本人 | 表示名 | 表示名 | — | 表示名 |
 | 同 | 他人 (本人の非公開レシピは見えない) | — | — | — | — |
 | 公開レシピを本人が非公開に戻した (ほかに公開なし) | 他人・未ログイン | (レシピが出ない) | (404) | コメント GET (ログイン中だけ) は今までどおり返る (F-19b。コメントの行は消えない)。書き手の名前は、ほかに公開の内容が無ければ匿名 (非公開のレシピへのコメントは (b) の公開に数えない)。公開に戻すと表示名に戻る | — |
@@ -1520,7 +1524,7 @@ rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
 - 本人からは、退会を除き、K-名前 が真なら ほかの 4 つの条件 (K-設定・K-凍結・K-年齢・K-公開) に依らず自分の名前 ((a))。K-名前 が偽なら本人にも「匿名」(関数は `normalize_profile_name` が NULL の人を (a) でも返さない。§6.1 (1))。凍結中の本人はレシピの API に届かない (F-19a)。
 - 関数は呼ばれるたびに 5 つの条件を今の行と時刻で計算し直す。状態を記録する列は無い (`show_recipe_author_name` は K-設定 の入力で、状態そのものではない)。したがって遷移先は「出来事が変えた 1 つの条件を集合に足す / 集合から除く」で決まり、出来事の順序に依らない (解除の順序は問わない。最後に欠けていた条件が満たされたときに初めて **表示** になる)。
 
-出来事 × 条件 (1 つの出来事が 1 人について変える条件は 1 つ。ただし、レシピの公開の状態を変える出来事 (公開にする・非公開に戻す・運営が隠す・隠すのを戻す・本人が消す) は、作者の K-公開 だけでなく、**そのレシピへのコメントの書き手** の K-公開 も変えうる。コメントの EXISTS (§7.1) がコメント先のレシピの `is_public = true AND hidden_at IS NULL` を見るためで、非公開に戻す・隠すではコメントの行は残ったまま数えられなくなり、消すでは CASCADE で行が消える。影響を受ける人ごとに (作者・書き手のそれぞれについて、ほかに公開の内容が無いときだけ) 同じ遷移を 1 つずつ起こす。各人の X は互いに独立):
+出来事 × 条件 (1 つの出来事が 1 人について変える条件は 1 つ。ただし、レシピの公開の状態を変える出来事 (公開で新しく作る・公開にする・非公開に戻す・運営が隠す・隠すのを戻す・本人が消す) は、作者の K-公開 だけでなく、**そのレシピへのコメントの書き手** の K-公開 も変えうる。コメントの EXISTS (§7.1) がコメント先のレシピの `is_public = true AND hidden_at IS NULL` を見るためで、非公開に戻す・隠すではコメントの行は残ったまま数えられなくなり、消すでは CASCADE で行が消える。公開で新しく作るときは、そのレシピへのコメントはまだ無いので、変わるのは作者の K-公開 だけ。影響を受ける人ごとに (作者・書き手のそれぞれについて、ほかに公開の内容が無いときだけ) 同じ遷移を 1 つずつ起こす。各人の X は互いに独立):
 
 | 出来事 | 変わる条件 | 遷移 (欠けている集合 X に対して) | ガード | 副作用 |
 |---|---|---|---|---|
@@ -1533,7 +1537,8 @@ rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
 | 18 歳未満と記録し直される | — | 起きない (`birth_date` は write-once で、18 歳以上の人が 18 歳未満になることは無い) | — | — |
 | 本人がニックネームを空・`'Guest'` にする | K-名前 を偽に | X → X ∪ {名前} | `PUT /api/profile` | — |
 | 本人が名前を入れる | K-名前 を真に | X → X − {名前} | 同 | — |
-| レシピを公開にする (`is_public = true`) / 運営が隠したのを戻す (`hidden_at` を NULL) | 作者と、そのレシピへのコメントの書き手の K-公開 を真に | 作者: X → X − {公開}。書き手 (それぞれ): X → X − {公開} | 本人の RLS の書き込み / 運営 | 次の読み込みから。書き手の名前も同じ読み込みから表示名に戻る (非公開・隠した間もコメントの行は残っていたので、行の書き込みは無い) |
+| 本人が公開レシピを新しく作る (`POST /api/recipes` の `isPublic: true`。INSERT で `is_public = true`・`hidden_at` は NULL) | 作者の K-公開 を真に (書き手は居ない) | 作者: X → X − {公開} | 本人の RLS の INSERT (凍結中は 403 で届かない) | 次の読み込みから。新しいレシピへのコメントはまだ無いので、書き手の遷移は起きない (コメントがついたときは「公開レシピにコメントする」の行)。INSERT で K-公開 が真になることは I-1 で確かめる (§7.10 の準備は公開レシピを `is_public: true` の INSERT で作ってから関数を呼ぶ。準備の INSERT は service_role で、本人の RLS の INSERT の経路は既存の `POST /api/recipes` のまま) |
+| 既存のレシピを公開にする (`PUT /api/recipes/[id]` の `isPublic: true`。UPDATE で `is_public = true`) / 運営が隠したのを戻す (`hidden_at` を NULL) | 作者と、そのレシピへのコメントの書き手の K-公開 を真に | 作者: X → X − {公開}。書き手 (それぞれ): X → X − {公開} | 本人の RLS の書き込み / 運営 | 次の読み込みから。書き手の名前も同じ読み込みから表示名に戻る (非公開・隠した間もコメントの行は残っていたので、行の書き込みは無い) |
 | 公開レシピにコメントする | 書いた人の K-公開 を真に | X → X − {公開} | 本人の RLS の INSERT | 次の読み込みから |
 | 公開レシピを非公開に戻す / 運営が隠す | 作者と、そのレシピへのコメントの書き手の K-公開 を偽に (それぞれ、ほかに公開の内容が無いとき) | 作者: X → X ∪ {公開}。書き手 (それぞれ): X → X ∪ {公開} | 本人の RLS の書き込み (凍結中は 403 で届かない) / 運営 | コメントの行は消えない (CASCADE は起きない)。公開に戻す・隠すのを戻すで、上の行の遷移で戻る |
 | 本人が公開レシピを消す (`DELETE /api/recipes/[id]`) | 作者と、そのレシピへのコメントの書き手の K-公開 を偽に (それぞれ、ほかに公開の内容が無いとき) | 作者: X → X ∪ {公開}。書き手 (それぞれ): X → X ∪ {公開} | route が所有者を確かめてから (F-19c。凍結中は 403 で届かない) | そのレシピへのコメントが CASCADE で消える (F-19c)。戻す操作は無い |
@@ -1649,7 +1654,7 @@ sequenceDiagram
 | ファイル | `recipe-author-display-names.test.ts` | `tests/integration/security/` |
 | ファイル | `recipe-author-name-setting-1917.test.tsx` | `tests/` |
 | 許可一覧の行 | `'recipe_author_display_names(uuid[])'` | `tests/integration/security/anon-definer-execute.test.ts` |
-| 既存ファイルの変更 (新設ではない) | `src/app/api/recipes/route.ts`・`[id]/route.ts`・`[id]/comments/route.ts` (§7.5)・`lib/converter.ts` (§7.6)・`src/app/(main)/profile/page.tsx` (§7.7)・`src/types/database.types.ts`・`packages/shared/src/database.types.ts` (生成し直し)・`tests/recipe-viewer-lookups-1917.test.ts`・`tests/recipes-route.test.ts`・`tests/recipe-author-name-1649.test.ts`・`tests/recipe-detail-hidden-404.test.ts`・`tests/api-security-cluster.test.ts` (§7.11)・`tests/integration/security/anon-definer-execute.test.ts` (§7.8。許可一覧の行と describe / it の「2 本」→「3 本」。段 A)・段 C: `src/lib/legal/privacy-text.ts`・`tests/legal-claims-1901.ts` (§7.12) | — |
+| 既存ファイルの変更 (新設ではない) | `src/app/api/recipes/route.ts`・`[id]/route.ts`・`[id]/comments/route.ts` (§7.5)・`lib/converter.ts` (§7.6)・`src/app/(main)/profile/page.tsx` (§7.7)・`src/types/database.types.ts`・`packages/shared/src/database.types.ts` (生成し直し)・`tests/recipe-viewer-lookups-1917.test.ts`・`tests/recipes-route.test.ts`・`tests/recipe-author-name-1649.test.ts`・`tests/recipe-detail-hidden-404.test.ts`・`tests/api-security-cluster.test.ts` (§7.11)・`tests/integration/security/anon-definer-execute.test.ts` (§7.8。許可一覧の行と describe / it の「2 本」→「3 本」。段 A)・段 C: `src/lib/legal/privacy-text.ts`・`tests/legal-claims-1901.ts` (§7.12)・選択肢 (b) のときだけ `packages/shared/src/legal-versions.ts` (`LEGAL_DOCUMENTS` の両文書を v2026.5 に) と `docs/legal/archive/v2026.4/` (控えの新設。cross/20 §9.1 の手順) (§7.12・§21 Q-1) | — |
 | 設計書 | `docs/design/cross/21-recipe-author-display-name.md` (本書) | `docs/design/cross/` |
 
 新しい環境変数・route・テーブル・RLS ポリシー・エラーコードは無い (R-18)。
@@ -1707,7 +1712,8 @@ sequenceDiagram
 | `tests/no-pending-wording-1911.test.ts`・`tests/public-claims-guard.test.ts` | `準備中`・`予定です`・`FORBIDDEN` | `src` の文言に未完成・予定の語があると赤 | §7.4 の文言に入れない | B |
 | `tests/legal-text-1901.test.ts:1058-1073`・`tests/legal-claims-1901.ts:25` | `LEGAL_CLAIM_COUNT`・`fragment`・`chars`・`evidence` | 文を足して主張の表を足さないと赤。字数が違うと赤。evidence のパスが実在しない・evidence の `F-n` が cross/20 に無いと赤 | §7.12 の 6 行と +6 (evidence は本書と `viewer-lookups.ts` のパスだけ・`F-n` を書かない) | C |
 | `tests/legal-text-1901.test.ts` (見出し) | `PRIVACY_SECTION_HEADINGS`・`家族グループと組織での見え方` | 見出しの逐語を直書きした検査があれば赤 | 直書きがあれば新しい見出しに | C |
-| `packages/shared/src/legal-versions.test.ts` | `LEGAL_DOCUMENTS`・`effectiveDate` | 版の形と施行日の形 | 選択肢 (b) で版を上げるときも形は同じ | C |
+| `packages/shared/src/legal-versions.test.ts` | `LEGAL_DOCUMENTS`・`effectiveDate` | 版の形と施行日の形 | 選択肢 (b) で版を上げるときも形は同じ (版を上げるのは `packages/shared/src/legal-versions.ts`。§14 の段 C) | C |
+| `tests/account-export-tables.test.ts` (個人データの書き出しの棚卸し) | `user_profiles`・`omit`・`SENSITIVE_NAME`・`add column` | 本書の migration の `ADD COLUMN` を `tests/helpers/schema-snapshot.ts` が読み、`user_profiles` の出力する列に `show_recipe_author_name` が入る。列名は `SENSITIVE_NAME` に当たらず、`auth.users` を指さないので、秘密の列・他人を指す列の検査は緑のまま。表の分類 (新しい表) は無い | 変更なし。`src/lib/account-export-tables.ts` の `user_profiles` の `omit` にも足さない (本人の設定は本人のデータとして書き出す。§6.5) | A |
 | `tests/docs-table-column-count.test.ts` | `docs/`・`\|` | 本書の表の行が見出しと違う数の区切りを持つと赤 | 本書の表はセルの中の `\|` をコードの span に入れるか、`/` で書く | 設計 |
 | `tests/design-doc-version-header-matches-history.test.ts` | `\| 版 \| v` | 表紙の版と改定履歴の最後の版が食い違うと赤 | 本書の表紙は版の表 (§22 と同じ行) | 設計 |
 | `tests/design-doc-removed-mobile-screens.test.ts`・`tests/docs-mobile-removed-references.test.ts` | `apps/mobile/app/` | 消したモバイルの画面を名指しすると赤 | 本書はモバイルの画面を名指ししない | 設計 |
@@ -1744,6 +1750,8 @@ sequenceDiagram
 | `DELETE /api/recipes/[id]`・`recipe_comments_recipe_id_fkey` の `ON DELETE CASCADE` | 保持 (変えない)。本人がレシピを消すと、本人とそのレシピにだけコメントした人の K-公開 が偽になりうる (§9.3・S-17・I-16) |
 | `recipes.is_public` の切り替え (本人)・`recipes.hidden_at` (運営が隠す / 戻す) | 保持 (変えない)。切り替えると、作者と、そのレシピへのコメントの書き手の K-公開 が変わりうる (コメントの行は残る。§9.3・S-12・S-13・I-10) |
 | `PUT /api/profile`・`fromUserProfile` / `toUserProfile` | 列を 1 つ通す (§7.6)。route は変えない |
+| `POST /api/recipes` (本人がレシピを作る。`isPublic` で公開にできる) | 保持 (変えない)。公開で作ると作者の K-公開 が真になる (§9.3。返り値に `authorName` は無い) |
+| 個人データの書き出し (`src/lib/account-export-tables.ts` の `user_profiles`) | 保持 (変えない)。新しい列 `show_recipe_author_name` は既定どおり書き出しに入る (`omit` に足さない。§6.5) |
 | プロフィールの編集画面 | チェック 1 つを足す (§7.7) |
 | `prepare_account_deletion`・外部キーの `ON DELETE` | 保持 (退会の扱いは既存のまま) |
 | `age_years_jst`・`normalize_profile_name` | 本文から呼ぶ。作り直さない |
@@ -1799,3 +1807,4 @@ sequenceDiagram
 | v1.1 | 2026-10-24 | 審査 R1 の反映 (§7.2・§7.9・§7.10・§7.11・§7.12・§6.4・§9.2・§12・§15・§16・§19・§21。構造 A は変えない) |
 | v1.2 | 2026-10-24 | 網羅性 (周 2) の反映 (§0.3・§3・§4.3・§7.10・§9.1・§9.3・§12・§14・§15・§16・§18。構造 A は変えない) |
 | v1.3 | 2026-10-24 | 審査 R2 の反映: レシピの公開の状態を変える出来事 (非公開に戻す・公開に戻す・運営が隠す・戻す) がコメントの書き手の K-公開 も変えること (§0.3 S-12・S-13・§4.3・§9.1・§9.3・§7.10 I-10・§18)・§19 の 7〜9 を、本番への書き込みの前に承認の要否を確かめる形に (§19。構造 A は変えない) |
+| v1.4 | 2026-10-24 | 網羅性 (周 3) の反映 (§6.5・§9.1・§9.3・§14・§16・§18。構造 A は変えない) |
