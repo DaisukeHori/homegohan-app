@@ -7,6 +7,7 @@
 | v1.2 | 2026-10-24 | 網羅性 (周 2) の反映: 本人が公開レシピを消す出来事 (F-19c・S-17・§9.1・§9.3・I-16)・コメントの POST の返り値を実 DB で (I-17)・§14 に `anon-definer-execute.test.ts`・§9.3 の本人の見え方の文の訂正・§3 の origin/main を `cae0e288` に取り直し (§16 に新設の番兵 2 つ) |
 | v1.3 | 2026-10-24 | 審査 R2 の反映: レシピを非公開に戻す・公開に戻す・運営が隠す・隠すのを戻すと、そのレシピへのコメントの書き手の K-公開 も変わる遷移を表に (§0.3 S-12・S-13・§4.3・§9.1・§9.3・§7.10 I-10 に toggleCommenter・§18)・§19 の 7〜9 の本番の検証は、書き込みの前にオーケストレーターが承認の要否を確かめる形に |
 | v1.4 | 2026-10-24 | 網羅性 (周 3) の反映: 公開レシピを新しく作る出来事 (INSERT) を §9.3 に・§9.1 に「公開レシピなし・コメントだけ」× 未ログイン / 本人の行・§14 の段 C に `packages/shared/src/legal-versions.ts` と `docs/legal/archive/v2026.4/` (選択肢 (b) のときだけ)・個人データの書き出しで新しい列を出すことの決定 (§6.5・§16・§18) |
+| v1.5 | 2026-10-24 | 審査 R3 の反映: プライバシーポリシー第8条 (第三者提供) の 1 項・3 項・4 項を判定 (§6.4)。名前を他の人に出すのを、作者名の表示を書いた版 (以後の版) に同意した人だけにする条件 K-同意 を関数に足す (§7.1・C-10・I-18・S-18・§9)・第8条 3 項に 1 文 (主張の表 privacy-8#13。§7.12)・選択肢 (c) は選べないことに (§6.4・§21 Q-1) |
 
 要件の正本は Issue #1917 の本文とコメント。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
 ファイル名は cross/21 (cross/ の既存は 01〜09・12・13a・13b・14〜20。10・11・13 は欠番)。
@@ -55,13 +56,14 @@
 | R-11 | 本人が「名前を出さない」を選べる。置き場はプロフィールの編集 (`/profile` のニックネームの欄のすぐ下)。既定は「出す」 | 決めること 5 | §6.5, §7.6, §7.7 |
 | R-12 | API の返り値の形 (`authorName: string`・コメントの `user_id` を返さない (#168)) は変えない | 既存の契約 | §8 |
 | R-13 | 名前が読めなかったときは今までどおり 500 (名前が無いように見せない) | fix 枝の `viewer-lookups.ts` の決まり | §10 |
-| R-14 | プライバシーポリシーの文面が足りるかを判定し、足りないなら逐語の文と版の選択肢を出す | 決めること 4 | §6.4, §7.12, §21 Q-1 |
-| R-15 | migration と `.down.sql`・関数の権限・TS の定数の突き合わせを DB を使わない契約テストで固定し、実 DB の結合テストで R-1〜R-6・R-9・R-10 を確かめる | `tests/rpc-profile-name-placeholder-migration-contract.test.ts` の前例 | §7.9, §7.10, §12 |
+| R-14 | プライバシーポリシーの文面 (利用目的・第三者提供 (第8条)・見え方 (第9条) ほか) が足りるかを条ごとに判定し、足りないなら逐語の文と版の選択肢を出す | 決めること 4 | §6.4, §7.12, §21 Q-1 |
+| R-15 | migration と `.down.sql`・関数の権限・TS の定数・版の一覧と旧版の控えの突き合わせを DB を使わない契約テストで固定し、実 DB の結合テストで R-1〜R-6・R-9・R-10・R-19 を確かめる | `tests/rpc-profile-name-placeholder-migration-contract.test.ts` の前例 | §7.9, §7.10, §12 |
 | R-16 | 段の順序で、レシピの API が 500 を返す時間を作らない (関数が無い状態でコードを出さない)。文面 (段 C) が効く前に、他人の表示名を返す経路 (関数とその EXECUTE) を本番に置かない | 段分けの原則・§6.4 の判定 | §6.4, §9.2, §15, §19 |
 | R-17 | 設計の正典コードに `as any`・マジックナンバーを置かない (年齢の境・関数名・文面は名前付きの定数) | 設計の絶対条件 | §7, §13 |
 | R-18 | 新しい環境変数・route・テーブル・RLS ポリシーを足さない。足すのは列 1 つ・関数 1 本・索引 1 つ | 発明しない | §14 |
+| R-19 | 他の人に名前を出すのは、作者名の表示を書いた版 (以後の版) のプライバシーポリシーに同意した人 (`user_profiles.privacy_version_accepted` がその版以後) だけ。作者名の表示を書く前の版にだけ同意した人・同意の記録が無い人は「匿名」(本人には自分の名前) | 決めること 4 (第8条 1 項「あらかじめユーザーの同意を得ることなく、個人データを第三者に提供しません」・4 項「オプトアウトによる提供も行いません」と両立させる。F-30) | §6.1 (9), §6.4, §7.1, §7.9 C-10, §7.10 I-18 |
 
-### 0.3 ユーザーシナリオ (17 本。トレースは §4.3)
+### 0.3 ユーザーシナリオ (18 本。トレースは §4.3)
 
 | # | シナリオ |
 |---|---|
@@ -82,6 +84,7 @@
 | S-15 | `user_id` が NULL のシステムのレシピは、今までどおり `authorName` が「匿名」 (関数に id を渡さない) |
 | S-16 | 関数の読み込みが失敗すると (接続の失敗など)、一覧・詳細・コメントの API は 500 を返す (名前が無いように見せない。既存の決まり) |
 | S-17 | B が自分の最後の公開レシピを `DELETE /api/recipes/[id]` で消すと、レシピとそのレシピへのコメントが消える。B と、そのレシピにだけコメントしていた C (ほかに公開の内容が無い) の名前は、他の人には返らなくなる (B・C 自身には自分の名前) |
+| S-18 | 利用者 K (18 歳以上・名前あり・設定は既定) が、作者名の表示を書く前の版 (例: v2026.3) のプライバシーポリシーにだけ同意したまま公開レシピを持つと、他の人には K の `authorName` は「匿名」。K が作者名の表示を書いた版に同意すると、次の読み込みから表示名になる。同意の記録が無い人 (`privacy_version_accepted` が NULL) も「匿名」。K 自身が関数を呼べば自分の名前 (ログインしてレシピの API を呼ぶと、同意ゲートが 403 `LEGAL_CONSENT_REQUIRED` を返す。F-31) |
 
 ### 0.4 分冊判定
 
@@ -112,7 +115,7 @@
 
 ## 1. 目的・スコープ
 
-公開レシピの作者名を、本人以外 (ログインしている利用者と未ログインの人) にも表示名で返す。読む範囲は「公開の作者の表示名 1 列」に絞り、`user_profiles` の RLS は変えず、service_role も使わない。本人が名前を出さない選択を持てるようにし、凍結中・18 歳未満・退会・名前なしの人は「匿名」のまま残す。
+公開レシピの作者名を、本人以外 (ログインしている利用者と未ログインの人) にも表示名で返す。読む範囲は「公開の作者の表示名 1 列」に絞り、`user_profiles` の RLS は変えず、service_role も使わない。本人が名前を出さない選択を持てるようにし、凍結中・18 歳未満・退会・名前なしの人と、作者名の表示を書いた版のプライバシーポリシーにまだ同意していない人は「匿名」のまま残す。
 
 対象外: 作者名を描く画面の新設。作者のプロフィール画面・作者ごとのレシピ一覧。コメントの `user_id` の公開。
 
@@ -128,6 +131,8 @@
 | cross/20-terms-privacy-text.md §2.2 F-19 (行 213)・F-33 (行 227)・F-49 (行 243) | `user_profiles` の SELECT が本人の行だけであること・家族の中の表示名の見え方。公開レシピの作者としての表示名の記載は無い (§6.4) |
 | cross/20 §9.3 (行 2000) | 内容が変わる文面の直しは版を上げる。本書の文の追加は版を上げる改定に当たる (§6.4・§21 Q-1) |
 | cross/20 §9.4 (行 2014) | 版を上げる改定は施行日の前にお知らせで予告する |
+| プライバシーポリシー第8条 (`src/lib/legal/privacy-text.ts:340-343`) | 1 項 (あらかじめの同意なく第三者に提供しない)・3 項 (他の人への表示の根拠)・4 項 (オプトアウトによる提供をしない)。本書は 3 項に 1 文を足し、1 項・4 項と両立させるため K-同意 を関数に持たせる (§6.4・R-19) |
+| cross/08-legal-compliance.md (同意ゲート)・`supabase/migrations/20261008200700_legal_documents_acceptance.sql`・`20261017030000_parental_consent_and_birth_date.sql` (`accept_legal_documents`) | 同意した版の記録 `privacy_version_accepted` と同意ゲート (F-31)。本書は記録を読むだけ |
 | プライバシーポリシー第12条 (`src/lib/legal/privacy-text.ts:420`) | 公開の状態のユーザーコンテンツは退会後も紐づけを外して匿名で残す。本書の R-3 の根拠 |
 | 利用規約第13条 2 項 (`src/lib/legal/terms-text.ts:299`) | 公開の状態のユーザーコンテンツは未ログインの人を含め誰でも閲覧できる。本書の R-9 の根拠 |
 | #1917 の続き (fix/api-read-errors) | `loadRecipeViewerLookups` の形 (別のクエリで引く・失敗は 500) を土台にする |
@@ -136,7 +141,7 @@
 
 ## 3. 現状の事実 (origin/main `cae0e288`・fix/api-read-errors `a8d75cec`・本番の読み取り 2026-10-24)
 
-v1.0〜v1.1 は origin/main `c9ee3e59` で取った。`c9ee3e59..cae0e288` の差分 (1 コミット・#2003) が触れたファイルのうち本節が指すものは `CLAUDE.md` と `docs/design/cross/20-terms-privacy-text.md` だけで、どちらも 1 行を 1 行に置き換える直し (行がずれない) で、本書が指す行 (`CLAUDE.md:83`・cross/20 の行 213・227・243・2000・2014) の中身は変わっていない。レシピの route・`author-name.ts`・文面 (`privacy-text.ts`・`terms-text.ts`)・migration・`anon-definer-execute.test.ts` は差分に無い。fix/api-read-errors は `a8d75cec` のままで、まだ main に入っていない。v1.3 の時点で、そのあとの main の 1 コミット (#2004) も確かめた: 触れたのは退会の直し (`src/lib/account-deletion.ts`・新しい migration `20261024120000_account_deletion_guard_release.sql` (関数 `end_account_deletion_guard` を service_role にだけ GRANT) と戻し口・2 つの `database.types.ts` への関数の追記・テスト) と、文書の 1 行を 1 行に置き換える直し (`CLAUDE.md`・cross/08・cross/14・cross/16・cross/20 ほか。`tests/legal-text-1901.test.ts` も行 205 の 1 行) で、本書が指す行 (`CLAUDE.md:83`・cross/14 の行 18-19・cross/20 の行 213・227・243・2000・2014・`tests/legal-text-1901.test.ts:1058-1073`) の中身と、anon の許可一覧・レシピの route・文面 (`privacy-text.ts`・`terms-text.ts`) は変わっていない。本書の事実の sha は `cae0e288` のままにする。
+v1.0〜v1.1 は origin/main `c9ee3e59` で取った。`c9ee3e59..cae0e288` の差分 (1 コミット・#2003) が触れたファイルのうち本節が指すものは `CLAUDE.md` と `docs/design/cross/20-terms-privacy-text.md` だけで、どちらも 1 行を 1 行に置き換える直し (行がずれない) で、本書が指す行 (`CLAUDE.md:83`・cross/20 の行 213・227・243・2000・2014) の中身は変わっていない。レシピの route・`author-name.ts`・文面 (`privacy-text.ts`・`terms-text.ts`)・migration・`anon-definer-execute.test.ts` は差分に無い。fix/api-read-errors は `a8d75cec` のままで、まだ main に入っていない。v1.3 の時点で、そのあとの main の 1 コミット (#2004) も確かめた: 触れたのは退会の直し (`src/lib/account-deletion.ts`・新しい migration `20261024120000_account_deletion_guard_release.sql` (関数 `end_account_deletion_guard` を service_role にだけ GRANT) と戻し口・2 つの `database.types.ts` への関数の追記・テスト) と、文書の 1 行を 1 行に置き換える直し (`CLAUDE.md`・cross/08・cross/14・cross/16・cross/20 ほか。`tests/legal-text-1901.test.ts` も行 205 の 1 行) で、本書が指す行 (`CLAUDE.md:83`・cross/14 の行 18-19・cross/20 の行 213・227・243・2000・2014・`tests/legal-text-1901.test.ts:1058-1073`) の中身と、anon の許可一覧・レシピの route・文面 (`privacy-text.ts`・`terms-text.ts`) は変わっていない。本書の事実の sha は `cae0e288` のままにする。v1.5 で足した F-30〜F-32 の指し先 (`privacy-text.ts`・`tests/legal-claims-1901.ts`・`20261008200700`・`20261017030000`・`lib/supabase/middleware.ts`・`packages/shared/src/legal-consent-api.ts`・`packages/shared/src/legal-versions.ts`・`docs/legal/archive/`・`CLAUDE.md:138`) も #2004 の差分に無い (`CLAUDE.md` の差分は行 293 の 1 行だけ)。origin/main はその後も `a9526417` (#2004) のまま (v1.5 の時点)。
 
 ### 3.1 API と lib
 
@@ -180,10 +185,13 @@ v1.0〜v1.1 は origin/main `c9ee3e59` で取った。`c9ee3e59..cae0e288` の�
 | # | 事実 | 根拠 |
 |---|---|---|
 | F-25 | 利用規約第13条 2 項: 「ユーザーが公開の状態にしたユーザーコンテンツは、ログインしていない方を含め、誰でも閲覧できる状態になります。」 | `src/lib/legal/terms-text.ts:299` |
-| F-26 | プライバシーポリシー第3条はニックネームを取得する情報に載せる。第4条の利用目的は「本サービスの提供（アカウントの管理、記録の保存と表示、…）」。第6条は AI 事業者への送信にニックネームが含まれることと「ニックネームには実名を使わないことをお勧めします」を書く。第8条 3 項は「家族グループのメンバーや組織の管理者に対する表示は…（第9条）」。第9条の見出しは「家族グループと組織での見え方」で、公開レシピの作者としてニックネームが他の利用者 (未ログインを含む) に出ることは、どの条にも書いていない | `src/lib/legal/privacy-text.ts:290, 342, 356-360` |
+| F-26 | プライバシーポリシー第3条はニックネームを取得する情報に載せる。第4条の利用目的は「本サービスの提供（アカウントの管理、記録の保存と表示、…）」。第6条は AI 事業者への送信にニックネームが含まれることと「ニックネームには実名を使わないことをお勧めします」を書く。第8条 3 項は「家族グループのメンバーや組織の管理者に対する表示は…（第9条）」(第8条の 1 項・3 項・4 項の文は F-30)。第9条の見出しは「家族グループと組織での見え方」で、公開レシピの作者としてニックネームが他の利用者 (未ログインを含む) に出ることは、どの条にも書いていない | `src/lib/legal/privacy-text.ts:290, 342, 356-360` |
 | F-27 | 第12条の表: 「公開の状態のユーザーコンテンツ」は「退会後も、ユーザーとの紐づけを外して匿名の状態で残します」。第15条: 18 歳未満は保護者の同意が必要・13 歳未満の本人名義のアカウントは作らない。18 歳未満の本人の公開レシピの作者名の扱いは文面に無い | `src/lib/legal/privacy-text.ts:420, 493` |
 | F-28 | いまの版は両文書とも v2026.3 (施行日 2026-10-22)。PR #1997 (OPEN・`feat/siwa-d-legal`) がプライバシーポリシーに Apple を足して両文書を v2026.4 にし、`effectiveDate` は仮置きの 2026-11-01、施行日の前にお知らせで予告してからマージする手順。予告の文は Issue #1139 のコメントに置いてあり、「Apple についての記載を加えるもの」と書いている | `packages/shared/src/legal-versions.ts` (`LEGAL_DOCUMENTS`)・PR #1997 の本文・Issue #1139 のコメント |
 | F-29 | 文面の 1 文 = 主張の表 `tests/legal-claims-1901.ts` の 1 行 (`LEGAL_CLAIM_COUNT = 424`。`fragment` が文の中に 1 回だけ現れ、`chars` が文の字数 (文末の 。を除く))。文を足すと行と `LEGAL_CLAIM_COUNT` を足す | `tests/legal-claims-1901.ts:25, 354-364`・`tests/legal-text-1901.test.ts:1058-1073` |
+| F-30 | プライバシーポリシー第8条 (第三者提供): 1 項「当社は、次の場合を除き、あらかじめユーザーの同意を得ることなく、個人データを第三者に提供しません。」(以下 (a)〜(d) の法令の場合)。3 項「家族グループのメンバーや組織の管理者に対する表示は、ユーザー自身の共有の設定、または組織への所属に基づいて行います（第9条）。」(他の人への表示の根拠として挙げるのは家族グループと組織だけ)。4 項「当社は、個人データの共同利用を行いません。本人の同意を得ずに行う第三者提供（オプトアウトによる提供）も行いません。」。主張の表の行は privacy-8#1〜#12 (3 項は privacy-8#8・4 項の 2 文目は privacy-8#10) | `src/lib/legal/privacy-text.ts:340, 342, 343`・`tests/legal-claims-1901.ts:342-353` |
+| F-31 | 同意の記録: `user_profiles.privacy_version_accepted` (varchar(20)・特権列) は、同意した版の文字列。書くのは `accept_legal_documents` だけ (authenticated に EXECUTE。版の形 `^[0-9A-Za-z._-]{1,20}$` だけを確かめ、「いま有効な版」かは確かめない。DB は版の中身を知らない。確かめるのは `POST /api/legal/accept`)。同意ゲート: 本番は 2026-10-10 から `LEGAL_CONSENT_ENFORCE=on` で、いまの版に同意していないサインイン中の人 (生年月日の未入力と、保護者の同意とのつながりの無い 18 歳未満も同じ) の `/api/*` は、許可リスト (`LEGAL_CONSENT_EXEMPT_API_PATHS`。レシピの route は無い) を除き 403 `LEGAL_CONSENT_REQUIRED`。ゲートは Next の middleware だけで、PostgREST を直接呼ぶ経路には掛からない | `supabase/migrations/20261008200700_legal_documents_acceptance.sql:20, 47`・`supabase/migrations/20261017030000_parental_consent_and_birth_date.sql:445, 465, 527`・`lib/supabase/middleware.ts:267`・`packages/shared/src/legal-consent-api.ts`・`CLAUDE.md:138` |
+| F-32 | 版の並び: プライバシーポリシーの版は v2025.1 → v2026.1 → v2026.2 → v2026.3 (いま。`LEGAL_DOCUMENTS.privacy_policy.version`)。旧版の文面の控えは `docs/legal/archive/<版>/privacy.md` (いまは v2025.1・v2026.1・v2026.2。版を上げる PR が直前の版の控えを足す。cross/20 §9.1)。どの控えにも、公開レシピの作者名の記載は無い | `packages/shared/src/legal-versions.ts`・`docs/legal/archive/` |
 
 ### 3.4 本番の読み取り (2026-10-24。SELECT だけ。書き込みなし)
 
@@ -191,6 +199,7 @@ v1.0〜v1.1 は origin/main `c9ee3e59` で取った。`c9ee3e59..cae0e288` の�
 |---|---|
 | `auth.users` | 195 |
 | `user_profiles` | 65 (うち仮置き `'Guest'` 2・空 0・凍結中 0・`birth_date` あり 5) |
+| `user_profiles.privacy_version_accepted` | NULL 60・`v2025.1` 1・`v2026.3` 4 (作者名の表示を書いた版に同意した人は、まだいない) |
 | `recipes` / `recipe_comments` | 0 / 0 |
 | `user_profiles` の列 | `nickname text NOT NULL`・`frozen_at`・`unban_at`・`birth_date date` を含む 130 列。表示名の専用の列は無い |
 
@@ -214,13 +223,16 @@ public.recipe_author_display_names(uuid[])  SECURITY DEFINER・STABLE・search_p
    入力の id ごとに、user_profiles を主キーで引き、次のどちらかなら (id, 表示名) を返す。それ以外は行を返さない
      (a) id = auth.uid()  … 本人には自分の名前をいつも返す (非公開のレシピ・名前を出さない設定でも)
      (b) 公開の作者 (公開レシピの user_id か、公開レシピへのコメントの user_id)
-         かつ show_recipe_author_name = true かつ 凍結中でない かつ birth_date があり 18 歳以上
+         かつ show_recipe_author_name = true
+         かつ 作者名の表示を書いた版 (以後の版) のプライバシーポリシーに同意済み (privacy_version_accepted が「書く前の版の一覧」に無い)
+         かつ 凍結中でない かつ birth_date があり 18 歳以上
    表示名は normalize_profile_name(nickname)。NULL (名前が無い) の人は返さない
    ▼
 route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかった人は '匿名'
 ```
 
-- 読む列は `user_profiles` の `id`・`nickname`・`show_recipe_author_name`・`frozen_at`・`unban_at`・`birth_date` (判定に使う) で、返すのは `id` と表示名だけ。
+- 読む列は `user_profiles` の `id`・`nickname`・`show_recipe_author_name`・`privacy_version_accepted`・`frozen_at`・`unban_at`・`birth_date` (判定に使う) で、返すのは `id` と表示名だけ。
+- 同意の条件 (K-同意) は、プライバシーポリシー第8条 1 項・4 項と両立させるため (§6.4)。DB はどの版が「いま有効」かを知らない (F-31) ので、関数は「作者名の表示を書く前の版」の閉じた一覧 (`c_privacy_versions_without_author_name`) を持ち、記録された版がそこに無い人を同意済みとみなす。一覧と旧版の控え・いまの文面の突き合わせは契約テスト C-10 が固定する。
 - 他人の名前が返る条件 (b) は「公開の場にすでに出ているコンテンツの作者」に閉じる。公開レシピもコメントも無い人の id を渡しても 0 行 (R-6・S-11)。
 - 本人の選択は `user_profiles.show_recipe_author_name boolean NOT NULL DEFAULT true` の列 1 つ。特権列ではなく、本人が `PUT /api/profile` (RLS の UPDATE) で書く。
 - RLS ポリシーは足さない。anon / authenticated の `user_profiles` の SELECT は本人の行だけのまま。
@@ -237,7 +249,7 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 
 | # | 走らせた結果 | 判定の枝 |
 |---|---|---|
-| S-1 | 一覧 → `authorIds = [B]` → RPC: B は (b) を満たす (公開レシピあり・設定 true・凍結なし・18 歳以上・名前あり) → `(B, 'Bの表示名')` → `authorName` = B の表示名 | (b) |
+| S-1 | 一覧 → `authorIds = [B]` → RPC: B は (b) を満たす (公開レシピあり・設定 true・作者名の表示を書いた版に同意済み・凍結なし・18 歳以上・名前あり) → `(B, 'Bの表示名')` → `authorName` = B の表示名 | (b) |
 | S-2 | 未ログイン → `viewerId` null でも RPC は呼ぶ (anon に EXECUTE) → `auth.uid()` は NULL なので (a) は偽・(b) で B の名前 → 表示名。コメントは `recipe_comments` の RLS (authenticated だけ) で 0 件 | (b) |
 | S-3 | 詳細 → `authorIds = [B, C]` → C は公開レシピへのコメントがある → (b) → C の表示名 | (b) |
 | S-4 | B 自身 → `auth.uid() = B` → (a) → 非公開でも B の名前 | (a) |
@@ -254,6 +266,7 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 | S-15 | `user_id` NULL → `distinctIds` が除く → RPC に渡らない → 「匿名」 (fix 枝と同じ) | 行なし |
 | S-16 | RPC が `error` を返す → `{ ok: false, table: 'recipe_author_display_names', error }` → route が `internalError` で 500 | 失敗 |
 | S-17 | B の `DELETE` → route が所有者を確かめて `recipes` の行を消す (F-19c) → `recipe_comments_recipe_id_fkey` の CASCADE で C のコメントも消える → B も C も (b) の 2 つの EXISTS が偽 → 他の人が B・C の id を渡しても 0 行 → 「匿名」。B・C が自分で呼べば (a) | 公開の作者でない |
+| S-18 | K: `privacy_version_accepted = 'v2026.3'` は `c_privacy_versions_without_author_name` にある → (b) の同意の条件で偽 → 他の人には行なし → 「匿名」。NULL の人は `IS NOT NULL` で偽 → 「匿名」。K が作者名の表示を書いた版に同意する (`accept_legal_documents` が `privacy_version_accepted` をその版に) → 一覧に無い → (b) 真 → 次の読み込みから表示名。K 自身が関数を呼べば (a) | 同意 |
 
 ---
 
@@ -263,7 +276,7 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 
 | 案 | 中身 | 最小の情報か | cross/02 §3.3 との整合 | 未ログインに出せるか | 変更の大きさ | 判定 |
 |---|---|---|---|---|---|---|
-| A (採用) | SECURITY DEFINER の関数 `recipe_author_display_names(uuid[])` が、公開の作者の表示名だけを返す。route は RLS のクライアントで `rpc` を呼ぶ | 名前 1 列・公開の作者だけ・本人の選択と凍結・年齢の条件を関数が持つ | 整合する (service_role を使わない。関数の権限は定型で絞る。anon の許可一覧に 1 本足す) | 出せる (anon に EXECUTE) | migration 1 本 + lib 1 つ + route の呼び出しの 1 語 × 5 + 設定の列と画面 | 採用 |
+| A (採用) | SECURITY DEFINER の関数 `recipe_author_display_names(uuid[])` が、公開の作者の表示名だけを返す。route は RLS のクライアントで `rpc` を呼ぶ | 名前 1 列・公開の作者だけ・本人の選択と同意・凍結・年齢の条件を関数が持つ | 整合する (service_role を使わない。関数の権限は定型で絞る。anon の許可一覧に 1 本足す) | 出せる (anon に EXECUTE) | migration 1 本 + lib 1 つ + route の呼び出しの 1 語 × 5 + 設定の列と画面 | 採用 |
 | B | route が `getSupabaseAdmin()` (service_role) で `user_profiles` の `nickname` を `.in('id', authorIds)` で読む | 列は絞れるが、「公開の作者だけ」の条件をコードで書く必要があり、未ログインの route には認可が無い | 違反 (§3.3「API Routes 内での service_role を禁止」。CLAUDE.md:83 は認可のあとだけ) | 出せる | 小さい | 不採用 |
 | C | `user_profiles` に SELECT のポリシーを足す (公開の作者の行を誰でも読める) | 行の全列 (健康・家族の構成・生年月日など 130 列) が読めてしまう。PostgREST は列の権限をポリシーごとに絞れない。列の権限を anon / authenticated から外すと本人の読み込みも壊れる | RLS の変更そのもの | 出せる | ポリシー 1 本だが露出が大きい | 不採用 |
 | C' | 所有者 postgres の VIEW (`security_invoker` でない) で `id` と表示名だけを出す | 列は絞れる。条件も書ける | VIEW は Supabase の advisor が「SECURITY DEFINER view」として警告する対象。前例は 1 つだけで、権限の契約テストの型 (関数の ACL) に乗らない | 出せる | VIEW 1 つ | 不採用 (A と同じ露出で、既存の検査の型に乗る A を取る) |
@@ -272,7 +285,8 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 
 ### 5.2 F の問い (縁の発生源を消すより単純な構造は無いか)
 
-- 縁は「どの人の名前を出すか」(本人・公開の作者・凍結・年齢・設定) の 5 つの条件で、どれも発注と決めること 1・5 から来る。条件を減らす = 名前を広く出すことになり、最小の情報の要件 (R-6) に反する。
+- 縁は「どの人の名前を出すか」(本人・公開の作者・凍結・年齢・設定・同意) の 6 つの条件で、どれも発注と決めること 1・4・5 から来る。条件を減らす = 名前を広く出すことになり、最小の情報の要件 (R-6) か、第8条との両立 (R-19) に反する。
+- 同意の条件 (v1.5 で追加) は、同じ関数の (b) の中の 1 つの式で、構造 A (関数 1 本が条件を持ち、route は呼ぶだけ) は変えない。同意ゲート (F-31) に任せる案は取らない: ゲートは Next の middleware だけに掛かり、PostgREST を直接呼んで公開した内容と、版が上がる前に公開した内容の作者を止められない。
 - 条件をコード (TS) に持つ案 (B) は service_role が要る。条件を関数 1 本に持ち、route は関数を呼ぶだけ、が最も単純。
 - 「本人には自分の名前をいつも返す」(a) は、fix 枝の今の挙動 (RLS で自分の行は読める) をそのまま残すための条件で、これを外すと本人の非公開のレシピの `authorName` が「匿名」に変わる (既存の結合テストが赤になる挙動の変更)。残す。
 
@@ -292,11 +306,12 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 | (1) 名前が無い (空・空白だけ・仮置きの `'Guest'`) | 「匿名」 | 「匿名」 | 既存の規則 (F-6・F-7)。SQL も `normalize_profile_name` で同じ判定 |
 | (2) 退会した | 「匿名」 (`user_id` が NULL。コメントは消える) | — | 第12条 (F-27)・外部キー (F-17・F-18) |
 | (3) 凍結中 (`isAccountFrozen` が真) | 「匿名」 | N/A (レシピの API に届かない: middleware が凍結中の本人の `/api/*` を 403 `AUTH_ACCOUNT_FROZEN` で止め、`FROZEN_ALLOWED_API_PATHS` にレシピの route は無い。F-19a。関数を PostgREST から直接呼べば (a) で自分の名前だけが返る) | 凍結は運営の処分で、本人は設定を変えられない。名前を公開の場に出し続けない。一時凍結の期限が過ぎた人はログインの判定と同じく凍結中でない |
-| (4) 18 歳未満の本人のアカウント (`birth_date` で 18 歳未満)・生年月日の無い人 | 「匿名」 | 表示名 | 18 歳未満の本人の名前を未ログインの人を含む公開の場に出すことは、保護者の同意書 (cross/14) にもプライバシーポリシー第15条にも無い。生年月日の無い人は同意ゲート (`/legal-consent`) を通っていない人で、年齢を確かめられないので出さない (fail closed)。18 歳になった日 (JST) から出す |
+| (4) 18 歳未満の本人のアカウント (`birth_date` で 18 歳未満)・生年月日の無い人 | 「匿名」 | 表示名 (生年月日の無い人と、保護者の同意とのつながりの無い 18 歳未満は、サインインしてレシピの API を呼ぶと同意ゲートが 403 `LEGAL_CONSENT_REQUIRED` を返す。本番は強制中。F-31。関数を直接呼べば表示名 ((a))) | 18 歳未満の本人の名前を未ログインの人を含む公開の場に出すことは、保護者の同意書 (cross/14) にもプライバシーポリシー第15条にも無い。生年月日の無い人は同意ゲート (`/legal-consent`) を通っていない人で、年齢を確かめられないので出さない (fail closed)。18 歳になった日 (JST) から出す |
 | (5) 本人が自分のレシピ・コメントを見る | — | 表示名 (非公開・設定オフでも) | fix 枝の今の挙動を残す (R-10) |
 | (6) 名前を出さない設定 (`show_recipe_author_name = false`) | 「匿名」 | 表示名 | 決めること 5 (§6.5)。画面の注記で「他の人には「匿名」と表示されます」と説明する |
 | (7) 公開レシピもコメントも無い人 | 行を返さない (= 「匿名」) | 表示名 | 最小の情報 (R-6)。`userId` は一覧の返り値に含まれるので、関数を uuid → 名前の引き直しに使えないようにする |
 | (8) `user_id` が NULL のシステムのレシピ | 「匿名」 | — | fix 枝と同じ (関数に渡さない) |
+| (9) 作者名の表示を書く前の版にだけ同意した人 (`privacy_version_accepted` が `c_privacy_versions_without_author_name` にある)・同意の記録が無い人 (NULL) | 「匿名」 | 関数を直接呼べば表示名 ((a))。サインインしてレシピの API を呼ぶと、同意ゲートが 403 `LEGAL_CONSENT_REQUIRED` を返す (本番は `LEGAL_CONSENT_ENFORCE=on`。F-31) | 第8条 1 項・4 項と両立させる (§6.4)。作者名の表示を書いた版に同意したあとから出す |
 
 出す名前の列は `user_profiles.nickname` (表示名の専用の列は無い。F-14・§3.4)。新しい列は作らない (ニックネームと別の「表示名」を持つと、どちらをどこに出すかの決まりが増える)。
 
@@ -308,7 +323,7 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 - 権限: `REVOKE ALL … FROM PUBLIC, anon, authenticated, service_role;` のあと `GRANT EXECUTE … TO anon, authenticated;`。service_role には付けない (service_role は表を直接読める。呼ぶ所が無い)。
 - anon の許可一覧 (`tests/integration/security/anon-definer-execute.test.ts` の `ANON_EXECUTABLE_DEFINER_ALLOWLIST`) に理由つきで足す (§7.8)。
 - `normalize_profile_name` と `age_years_jst` は本文から呼ぶ (所有者 postgres の権限。F-7・F-20)。
-- 関数の中で読む列は判定に要る 6 列だけ。返すのは `(author_id uuid, display_name text)`。
+- 関数の中で読む列は判定に要る 7 列 (`id`・`nickname`・`show_recipe_author_name`・`privacy_version_accepted`・`frozen_at`・`unban_at`・`birth_date`) だけ。返すのは `(author_id uuid, display_name text)`。
 - 入力の配列の大きさに上限は置かない (route が渡すのは DB から読んだ行の `user_id` で、一覧は 100 行まで。詳細はコメントの数に従う。関数の仕事は id ごとに主キー 1 回 + 索引つきの EXISTS 2 回で線形。直接 `/rest/v1/rpc` から大きな配列を渡す費用は、今も PostgREST の `in.(…)` が受け付ける費用と同じ)。
 - 索引: `recipes` は `idx_recipes_user_id` が既にある (F-22)。`recipe_comments (user_id)` に `idx_recipe_comments_user_id` を足す (コメントの EXISTS が表の走査にならないように)。
 
@@ -320,24 +335,48 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 
 ### 6.4 プライバシーポリシーの文面 (決めること 4)
 
-判定: **足りない**。第3条はニックネームを取得すると書き、第4条は「記録の保存と表示」を目的に挙げるが、ニックネームが誰に見えるかを書いた条 (第6条 AI・第9条 家族と組織) のどれにも「公開レシピの作者として他の利用者 (未ログインを含む) に出る」は無い (F-26)。読む人は「ニックネームが見えるのは家族・組織・AI だけ」と読める。他人に見える範囲が広がるのは内容が変わる改定なので、cross/20 §9.3 の規律で版を上げる (再同意が起きる)。
+判定: **足りない**。条ごとの判定 (いまの文面は origin/main の `src/lib/legal/privacy-text.ts`。F-26・F-27・F-30):
 
-文面の逐語 (第9条に 6 文を足し、見出しを改める) は §7.12。版の置き方は 3 択で、オーナーに聞く (§21 Q-1):
+| 条 | いまの記載 | 設計後の挙動 | 判定 | 本書の対応 |
+|---|---|---|---|---|
+| 第3条 (取得する情報) | ニックネームを取得する | 新しく取得する情報は無い (足す列は本人が選ぶ設定 1 つ) | 足りる | なし |
+| 第4条 (利用目的) | 「本サービスの提供（…記録の保存と表示、…）」 | ニックネームを公開レシピの作者名として表示する | 目的の語は覆うが、誰に見えるかを書いていない | 見える範囲を第9条に書く |
+| 第6条 (AI 事業者) | AI への送信にニックネームが含まれる・実名を使わないことを勧める | 変わらない | 足りる (公開の場の表示ではない) | なし |
+| 第8条 1 項 | 法令の場合を除き、あらかじめユーザーの同意を得ずに個人データを第三者に提供しない | 公開レシピとそのコメントの作者名を、未ログインを含む他の人に出す | 本書は、作者名の表示が個人情報保護法の第三者提供に当たるかを決めない。当たるとしても 1 項を守れる形にする (あらかじめの同意がある人の名前だけを出す) | 名前を出すのは、作者名の表示を書いた版 (以後の版) に同意した人だけにする (K-同意。§7.1・R-19)。1 項の文は変えない |
+| 第8条 3 項 | 他の人への表示の根拠として、家族グループ (共有の設定) と組織 (所属) だけを挙げる | 公開レシピとそのコメントの作者名も他の人に表示する | 足りない (表示の根拠の列挙から漏れ、読む人は「他の人への表示は家族と組織だけ」と読める) | 3 項に 1 文を足す (表示の根拠 = 作者名の表示を定めた版への同意と、本人がレシピを公開の状態にした・コメントを書いたこと。§7.12)。主張の表に privacy-8#13 |
+| 第8条 4 項 | 本人の同意を得ずに行う第三者提供 (オプトアウトによる提供) を行わない | 既定は「表示する」で、本人が「表示しない」に切り替えられる | 両立する (理由は下) | 4 項の文は変えない |
+| 第9条 (見え方) | 家族グループと組織での見え方だけ | 公開レシピとそのコメントの作者名が見える | 足りない | 見出しを改め、3 項 (6 文) を足す (§7.12) |
+| 第12条 (退会) | 公開の状態のユーザーコンテンツは紐づけを外して匿名で残す | 退会した人の作者名は「匿名」 | 足りる | 第9条の文から第12条を参照する |
+| 第15条 (未成年) | 18 歳未満は保護者の同意が必要 | 18 歳未満の作者名は出さない | 足りる (出さない側) | 第9条の文に「表示しません」を書く |
+
+第8条 4 項と両立する理由:
+
+- 4 項の「オプトアウトによる提供」は、本人の同意を得ずに、本人が求めたら止めることを条件に第三者へ提供する形 (個人情報保護法 27 条 2 項の形) を指す。本書の作者名の表示はこの形をとらない。名前が他の人に出るのは、次の 2 つがそろったときだけで、どちらかが欠ければ出ない (関数の (b) が判定する。§7.1):
+  1. 本人が、作者名の表示とその既定 (表示する) を書いた版 (以後の版) のプライバシーポリシーに同意している (K-同意)。
+  2. 本人が自分で公開の状態にしたレシピか、本人が自分で書いたコメント (コメント先のレシピが公開の状態のもの) がある (K-公開)。`recipes.is_public` の既定は false で、公開にできるのは本人だけ (`POST /api/recipes` の `isPublic`・`PUT /api/recipes/[id]`・RLS `Users can manage own recipes`。F-19c)。コメントを書けるのも本人だけ (`Users can create comments` の `user_id = auth.uid()`。F-19b)。
+- 「作者名を表示しない」設定 (§6.5) は、同意の上の表示を本人がいつでも止める口で、表示の根拠ではない。既定 (表示する) は、同意する文面 (第9条の「初期設定では表示します」) に書いてある。
+- 作者名の表示を書く前の版にだけ同意した人 (本番では `v2025.1` 1 人・`v2026.3` 4 人。未同意 60 人。§3.4) の名前は、版が上がる前に公開した内容でも、同意ゲートを通らずに PostgREST から直接公開した内容でも、出ない。出るのは、その人が作者名の表示を書いた版に同意したあと (S-18)。同意ゲート (F-31) だけに頼らないのは、ゲートが Next の middleware だけに掛かり、この 2 つを止められないため。
+- 版の判定: DB はどの版が「いま有効」かを知らない (F-31)。過去の版は増えない閉じた集合なので、関数は「作者名の表示を書く前の版」の一覧 `c_privacy_versions_without_author_name` を定数で持ち、記録された版が一覧に無い人を同意済みとみなす (作者名の表示を書いた版より後の版は、どれも一覧に入らない)。一覧と、旧版の控え (`docs/legal/archive/<版>/privacy.md`)・いまの文面の「作者名の表示の文を持つか」が一致することを契約テスト C-10 が固定する (版を上げる PR・控えを足す PR がずれを作ると赤になる)。
+- 残る経路: 本人が `accept_legal_documents` を PostgREST から直接呼ぶと、形の合う任意の文字列を同意の版として記録できる (F-31。既存の挙動)。一覧に無い文字列を記録すれば K-同意 が真になるが、本人が自分の操作で同意を記録したもので、影響は本人の名前だけ (§20)。
+
+第8条 3 項に足す文は、表示の根拠を「作者名の表示を定めた本ポリシーの版へのユーザーの同意」と「ユーザー自身がレシピを公開の状態にし、またはコメントを書いたこと」と書き、関数の K-同意・K-公開 と対応する (§7.12 の対応表)。他人に見える範囲が広がるのは内容が変わる改定なので、cross/20 §9.3 の規律で版を上げる (再同意が起きる)。
+
+文面の逐語 (第8条 3 項に 1 文、第9条に 6 文を足し、第9条の見出しを改める。計 7 文) は §7.12。版の置き方はオーナーに聞く (§21 Q-1):
 
 | 選択肢 | 中身 | 利点 | 代償 |
 |---|---|---|---|
-| (a) 推奨 | v2026.4 (PR #1997。施行日 2026-11-01 の仮置き・予告のあとマージ) に入れる | 再同意が 1 回で済む。予告の工程が 1 回 | PR #1997 の文面と主張の表に本書の 6 文を足す (`LEGAL_CLAIM_COUNT` を +6)。Issue #1139 の予告の文を「Apple の記載と、公開レシピの作者名の表示」に改めてから投稿する。段 A の本番の適用と段 A・段 B のマージは、PR #1997 のマージ・デプロイ (施行日) のあとにそろえる |
-| (b) | 別の版 (v2026.5) にする | PR #1997 と Issue #1139 の予告を触らない | 予告 → 施行の工程がもう 1 回。再同意が 2 回続く。段 A の本番の適用と段 A・段 B のマージは v2026.5 の施行日まで待つ |
-| (c) | 版を上げずに文だけ足す (内容が変わらない直しと整理する) | すぐ公開できる | §9.3 の規律に反する (他人に見える範囲が広がる改定を「内容が変わらない」とは言えない)。本書は勧めない |
+| (a) 推奨 | v2026.4 (PR #1997。施行日 2026-11-01 の仮置き・予告のあとマージ) に入れる | 再同意が 1 回で済む。予告の工程が 1 回 | PR #1997 の文面と主張の表に本書の 7 文を足す (`LEGAL_CLAIM_COUNT` を +7)。Issue #1139 の予告の文を「Apple の記載と、公開レシピの作者名の表示」に改めてから投稿する。関数の一覧 `c_privacy_versions_without_author_name` は `v2025.1`・`v2026.1`・`v2026.2`・`v2026.3`。段 A の本番の適用と段 A・段 B のマージは、PR #1997 のマージ・デプロイ (施行日) のあとにそろえる |
+| (b) | 別の版 (v2026.5) にする | PR #1997 と Issue #1139 の予告を触らない | 予告 → 施行の工程がもう 1 回。再同意が 2 回続く。関数の一覧に `v2026.4` も入れる (5 つ)。段 A の本番の適用と段 A・段 B のマージは v2026.5 の施行日まで待つ |
+| (c) 選べない | 版を上げずに文だけ足す | — | §9.3 の規律に反する (他人に見える範囲が広がる改定を「内容が変わらない」とは言えない)。加えて、作者名の表示を書いた版と書く前の版が同じ文字列になり、K-同意 で同意した人を見分けられない (その版を一覧に入れると誰の名前も出ず、入れないと文を読んでいない人の名前が出て第8条 1 項・4 項と両立しない)。オーナーには (a)(b) の 2 つを聞く |
 
-本書の既定 (オーナーの回答が無い間): (a) として段 C を書く。段 A の関数は anon / authenticated に EXECUTE を付け、適用した時点から公開の作者の表示名を `/rest/v1/rpc` で直接引ける (作者の uuid は未ログインの一覧の `userId` で返る) ので、段 A の本番の適用も「今の文面では足りない」の判定に掛かる。そのため、どの選択肢でも、段 A の本番の適用・段 A のマージ・段 B のマージを、文面 (段 C) が効いたあとに同じ座で続けて行う (§15 の本番の順序)。段 A・段 B の実装と実装ゲートは、それより前に済ませておいてよい。
+本書の既定 (オーナーの回答が無い間): (a) として段 C と関数の一覧を書く。段 A の関数は anon / authenticated に EXECUTE を付け、適用した時点から公開の作者の表示名を `/rest/v1/rpc` で直接引ける (作者の uuid は未ログインの一覧の `userId` で返る)。K-同意 があるので、作者名の表示を書いた版がデプロイされる前は、他の人に名前が返る人は通常の経路では居ない (`POST /api/legal/accept` はいまの版だけを記録する。F-31) が、文面と挙動の順序をそろえるため、どの選択肢でも、段 A の本番の適用・段 A のマージ・段 B のマージを、文面 (段 C) が効いたあとに同じ座で続けて行う (§15 の本番の順序)。段 A・段 B の実装と実装ゲートは、それより前に済ませておいてよい (C-10 は文面が効く前と後のどちらでも緑。§7.9)。
 
 ### 6.5 本人が名前を出さない選択 (決めること 5)
 
 持つ。理由: ニックネームに実名を入れている人がいる (第6条が「実名を使わないことをお勧めします」と書くほどには起きる)。公開レシピの `is_public` を切る以外に名前だけを伏せる手段が無いと、名前を伏せたい人はレシピの公開そのものをやめるしかない。
 
 - 置き場: `user_profiles.show_recipe_author_name boolean NOT NULL DEFAULT true` (列 1 つ)。レシピごとの列にしない (レシピを作る・編集する画面が無く、設定を置く所が無い。F-13)。
-- 既定は「出す」(本書の冒頭の前提のとおり)。
+- 既定は「出す」(本書の冒頭の前提のとおり)。既定は第9条の文 (「初期設定では表示します」) として同意する文面に書き、作者名の表示を書いた版に同意した人にだけ効く (K-同意。§6.4)。
 - 個人データの書き出し (`GET /api/account/export`。`src/lib/account-export-tables.ts` の `user_profiles` は `'*'` で読んで `omit` の列だけを外す): この列は書き出しに **含める** (`omit` に足さない)。本人が選んだ設定で、運営の内部の管理情報 (`omit` にある権限・凍結・課金の内部キャッシュ) ではなく、`notification_preferences` と同じく本人のデータに当たるため。`src/lib/account-export-tables.ts` は変えない (§16 の `tests/account-export-tables.test.ts` の行)。
 - 画面: プロフィールの編集 (`/profile`) の基本情報タブ、ニックネームの欄のすぐ下にチェック 1 つ (§7.7)。保存は既存の `PUT /api/profile` (F-11)。本人が RLS の UPDATE で書ける列 (特権列ガードの名指しに入れない。F-21)。
 - 文言 (定数。§7.4): ラベル「公開したレシピとコメントに、ニックネームを作者名として表示する」、注記「オフにすると、他の人には「匿名」と表示されます。あなた自身の画面には、自分の名前が表示されます。」。
@@ -370,9 +409,14 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 --   2. 索引 idx_recipe_comments_user_id (recipe_comments.user_id): 下の関数のコメントの EXISTS 用。recipes.user_id は idx_recipes_user_id が既にある。
 --   3. 関数 public.recipe_author_display_names(p_user_ids uuid[]) RETURNS TABLE (author_id uuid, display_name text):
 --      渡された id のうち、(a) 呼び出した本人 (auth.uid()) か、(b) 公開の作者 (is_public かつ hidden_at IS NULL のレシピの user_id、
---      またはそのレシピへのコメントの user_id) で、名前を出す設定・凍結中でない・生年月日があり 18 歳以上 の人だけ、
+--      またはそのレシピへのコメントの user_id) で、名前を出す設定・作者名の表示を書いた版 (以後の版) のプライバシーポリシーに同意済み・
+--      凍結中でない・生年月日があり 18 歳以上 の人だけ、
 --      (id, normalize_profile_name(nickname)) を返す。名前が無い人 (NULL) は返さない。返らなかった人は route が '匿名' にする。
 --      読むのは user_profiles の判定に要る列だけで、返すのは id と表示名だけ。RLS のポリシーは足さない・変えない。
+--      同意済みの判定: privacy_version_accepted (accept_legal_documents だけが書く同意の版) が NULL でなく、
+--      作者名の表示を書く前の版の一覧 c_privacy_versions_without_author_name に無いこと。DB はどの版が「いま有効」かを知らない
+--      (20261008200700) ので、増えない過去の版の一覧を持つ。一覧は旧版の控え docs/legal/archive/ と突き合わせる
+--      (tests/recipe-author-display-names-migration-contract.test.ts の C-10)。プライバシーポリシー第8条 1 項・4 項 (第三者提供) と両立させるための条件。
 --      凍結中の判定は src/lib/auth/frozen.ts の isAccountFrozen と同じ (frozen_at があり、unban_at が無いか今より未来)。
 --      年齢は public.age_years_jst (JST の暦日。20261017030000) で、境は @homegohan/shared の ADULT_AGE_YEARS と同じ 18。
 --
@@ -418,6 +462,11 @@ DECLARE
   -- 名前を出す作者の年齢の下限 (歳)。@homegohan/shared の ADULT_AGE_YEARS (packages/shared/src/parental-consent.ts) と同じ値。
   -- 18 歳未満の本人のアカウント (保護者の同意の経路) の名前は公開の場に出さない (cross/21 §6.1 (4))
   c_adult_age_years CONSTANT pg_catalog.int4 := 18;
+  -- 作者名の表示を書く前のプライバシーポリシーの版 (packages/shared/src/legal-versions.ts の LEGAL_DOCUMENTS.privacy_policy.version の過去の値)。
+  -- ここにある版にだけ同意した人と、同意の記録が無い人の名前は、他の人に返さない (第8条 1 項・4 項。cross/21 §6.4)。
+  -- 過去の版は増えないので、作者名の表示を書いた版より後の版は足さない。旧版の控え (docs/legal/archive/) と
+  -- いまの文面との突き合わせは C-10 が行う。オーナーの選択 (cross/21 §21 Q-1) が (b) なら 'v2026.4' も足す
+  c_privacy_versions_without_author_name CONSTANT pg_catalog.text[] := ARRAY['v2025.1', 'v2026.1', 'v2026.2', 'v2026.3']::pg_catalog.text[];
   -- 呼び出した本人。未ログイン (anon) は NULL
   v_viewer pg_catalog.uuid := auth.uid();
 BEGIN
@@ -435,8 +484,10 @@ BEGIN
        -- (a) 本人には自分の名前をいつも返す (非公開のレシピ・名前を出さない設定でも)
        p.id = v_viewer
        OR (
-         -- (b) 公開の作者で、出す設定・凍結中でない・18 歳以上
+         -- (b) 公開の作者で、出す設定・作者名の表示を書いた版 (以後の版) に同意済み・凍結中でない・18 歳以上
          p.show_recipe_author_name
+         AND p.privacy_version_accepted IS NOT NULL
+         AND p.privacy_version_accepted::pg_catalog.text <> ALL (c_privacy_versions_without_author_name)
          AND (p.frozen_at IS NULL OR (p.unban_at IS NOT NULL AND p.unban_at <= pg_catalog.now()))
          AND p.birth_date IS NOT NULL
          AND public.age_years_jst(p.birth_date) >= c_adult_age_years
@@ -460,7 +511,7 @@ REVOKE ALL ON FUNCTION public.recipe_author_display_names(uuid[]) FROM PUBLIC, a
 GRANT EXECUTE ON FUNCTION public.recipe_author_display_names(uuid[]) TO anon, authenticated;
 
 COMMENT ON FUNCTION public.recipe_author_display_names(uuid[]) IS
-  'cross/21: 公開レシピの作者・コメントの書き手の表示名。渡した id のうち、本人か、公開の作者 (出す設定・凍結中でない・18 歳以上) だけを (author_id, display_name) で返す。名前の無い人は返さない。レシピの API (src/lib/recipes/viewer-lookups.ts) が RLS のクライアントで呼ぶ。anon / authenticated';
+  'cross/21: 公開レシピの作者・コメントの書き手の表示名。渡した id のうち、本人か、公開の作者 (出す設定・作者名の表示を書いた版のプライバシーポリシーに同意済み・凍結中でない・18 歳以上) だけを (author_id, display_name) で返す。名前の無い人は返さない。レシピの API (src/lib/recipes/viewer-lookups.ts) が RLS のクライアントで呼ぶ。anon / authenticated';
 ```
 
 ### 7.2 `supabase/rollbacks/<同じ番号>_recipe_author_display_names.down.sql`
@@ -706,6 +757,9 @@ const ANON_EXECUTABLE_DEFINER_ALLOWLIST: Record<string, string> = {
  *   C-7 戻し口は関数 → 索引 → 列 の順に消し、GRANT を書かない
  *   C-8 viewer-lookups.ts の RECIPE_AUTHOR_DISPLAY_NAMES_RPC が関数の名前と同じで、user_profiles を直接 select していない (段 B の PR で足す)
  *   C-9 anon の許可一覧に関数の完全形がある。2 つの database.types.ts に関数と列が入っている
+ *   C-10 同意の条件 (K-同意) がある。「作者名の表示を書く前の版」の一覧 c_privacy_versions_without_author_name は、旧版の控え
+ *        (docs/legal/archive/<版>/privacy.md) といまの版 (LEGAL_DOCUMENTS.privacy_policy.version の src/lib/legal/privacy-text.ts) のうち、
+ *        作者名の表示の文を持たない版をすべて含み、持つ版を含まない (文面が効く前でも後でも緑。版を上げる PR・控えを足す PR がずれを作ると赤)
  *
  * 段 A の PR はこのファイルを C-8 の it を除いて置き、段 B の PR (viewer-lookups.ts を差し替える PR) が C-8 の it を足す
  * (段 A の時点の viewer-lookups.ts は fix 枝の形で、まだ user_profiles を読み、RPC の定数を持たないため)。
@@ -713,7 +767,7 @@ const ANON_EXECUTABLE_DEFINER_ALLOWLIST: Record<string, string> = {
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ADULT_AGE_YEARS } from '@homegohan/shared';
+import { ADULT_AGE_YEARS, LEGAL_DOCUMENTS } from '@homegohan/shared';
 
 const ROOT = path.resolve(__dirname, '..');
 const MIGRATIONS_DIR = 'supabase/migrations';
@@ -726,6 +780,15 @@ const INDEX_NAME = 'idx_recipe_comments_user_id';
 const VIEWER_LOOKUPS = 'src/lib/recipes/viewer-lookups.ts';
 const ALLOWLIST_TEST = 'tests/integration/security/anon-definer-execute.test.ts';
 const TYPE_FILES = ['src/types/database.types.ts', 'packages/shared/src/database.types.ts'] as const;
+/** 旧版の控えの置き場 (cross/20 §9.1。版ごとのディレクトリの中に privacy.md) */
+const LEGAL_ARCHIVE_DIR = 'docs/legal/archive';
+const ARCHIVED_PRIVACY_FILE = 'privacy.md';
+/** いまの版のプライバシーポリシーの本文 */
+const PRIVACY_TEXT_SOURCE = 'src/lib/legal/privacy-text.ts';
+/** 作者名の表示を書いた文 (cross/21 §7.12 の第9条の 1 文目) の一部。これを持つ版が「作者名の表示を書いた版」 */
+const AUTHOR_NAME_PRIVACY_FRAGMENT = 'ニックネームが作者名として表示され';
+/** 同意の版の形。accept_legal_documents (20261017030000) が受け付ける形と同じ (英数字・. _ - の 1〜20 文字 = 列の varchar(20)) */
+const LEGAL_VERSION_FORMAT = /^[0-9A-Za-z._-]{1,20}$/;
 /** 特権列ガード・年齢・名前の関数は、この migration が作り直してはいけない (ほかの契約テストの前提) */
 const MUST_NOT_REDEFINE = [
   'guard_user_profiles_privileged',
@@ -832,8 +895,34 @@ describe('cross/21 recipe_author_display_names の migration (静的)', () => {
       expect(types, `${typeFile} に列`).toMatch(new RegExp(`^\\s+${COLUMN_NAME}: boolean`, 'm'));
     }
   });
+
+  it('C-10: 同意の条件がある。作者名の表示を書く前の版の一覧は、旧版の控えといまの版のうち作者名の表示の文を持たない版とそろう', () => {
+    expect(flat).toContain(
+      'p.privacy_version_accepted IS NOT NULL AND p.privacy_version_accepted::pg_catalog.text <> ALL (c_privacy_versions_without_author_name)',
+    );
+    const declared = /c_privacy_versions_without_author_name CONSTANT pg_catalog\.text\[\] := ARRAY\[([^\]]*)\]::pg_catalog\.text\[\];/.exec(flat);
+    expect(declared, '一覧の定数がある').not.toBeNull();
+    const listed = [...(declared?.[1] ?? '').matchAll(/'([^']*)'/g)].map((m) => m[1]);
+    expect(listed.length, '一覧は空でない').toBeGreaterThan(0);
+    for (const version of listed) expect(version, `${version} の形`).toMatch(LEGAL_VERSION_FORMAT);
+
+    const archived = fs
+      .readdirSync(path.join(ROOT, LEGAL_ARCHIVE_DIR))
+      .filter((dir) => fs.existsSync(path.join(ROOT, LEGAL_ARCHIVE_DIR, dir, ARCHIVED_PRIVACY_FILE)));
+    expect(archived.length, '旧版の控えがある').toBeGreaterThan(0);
+    const texts: Array<readonly [string, string]> = [
+      ...archived.map((dir) => [dir, read(`${LEGAL_ARCHIVE_DIR}/${dir}/${ARCHIVED_PRIVACY_FILE}`)] as const),
+      [LEGAL_DOCUMENTS.privacy_policy.version, read(PRIVACY_TEXT_SOURCE)] as const,
+    ];
+    for (const [version, text] of texts) {
+      const hasAuthorName = text.includes(AUTHOR_NAME_PRIVACY_FRAGMENT);
+      expect(listed.includes(version), `${version}: 作者名の表示の文を${hasAuthorName ? '持つので一覧に入れない' : '持たないので一覧に入れる'}`).toBe(!hasAuthorName);
+    }
+  });
 });
 ```
+
+C-10 は、選択肢 (a) で文面 (PR #1997) が効く前は「いまの版 v2026.3 が文を持たない → 一覧にある」、効いたあとは「控え v2026.3 が文を持たない → 一覧にある・いまの版 v2026.4 が文を持つ → 一覧に無い」で、どちらも緑。版を上げる PR が直前の版の控えを足さなかった場合も、一覧の余分な版は検査しない (形だけを見る) ので赤にならない。いまの版の本文は `privacy-text.ts` のソースの文字列で見る (§7.12 の 1 文目は `${…}` を含まない文字列なので、そのまま含まれる)。
 
 ### 7.10 `tests/integration/security/recipe-author-display-names.test.ts` (新。ローカル Supabase + Next の開発サーバー)
 
@@ -867,6 +956,14 @@ describe('cross/21 recipe_author_display_names の migration (静的)', () => {
  *        deleter と、そのレシピにだけコメントした人 (deleteCommenter) の名前は他の人に返らなくなる。deleter 本人には返る (S-17)
  *   I-17 名前を出さない設定の本人 (optOut) が POST /api/recipes/[id]/comments で投稿すると、返り値の authorName は本人の表示名。
  *        他の人の詳細では同じコメントの authorName は '匿名' (S-14)
+ *   I-18 作者名の表示を書く前の版にだけ同意した作者 (oldConsent)・同意の記録が無い作者 (noConsent) の名前は、公開レシピがあっても
+ *        他の人 (未ログイン・ログイン中) に関数から返らない (本人には返る)。oldConsent が作者名の表示を書いた版に同意すると返る
+ *        (S-18・R-19。関数を直接呼ぶだけなので段 A。API が関数の結果をそのまま authorName にすることは I-7 が確かめる)
+ *
+ * 同意の版: makePerson は privacy_version_accepted に CONSENTED_PRIVACY_VERSION を入れる (I-18 の 2 人だけ上書きする)。
+ *   関数は「作者名の表示を書く前の版の一覧に無い版」を同意済みとみなすので、実在の版 (LEGAL_DOCUMENTS) ではなくテスト専用の値を使う
+ *   (文面 (段 C) が効く前は、いまの版が一覧にあり、実在の版を使うと全員が返らなくなるため)。
+ *   ローカルの開発サーバーは同意ゲートを強制しない (LEGAL_CONSENT_ENFORCE は既定で off) ので、API の呼び出しはこの値で止まらない。
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh) と Next の開発サーバー。
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
@@ -936,6 +1033,10 @@ const MINOR_BIRTH_DATE = `${new Date().getFullYear() - ADULT_AGE_YEARS + 2}-01-0
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 /** 開発サーバーが最初の要求でルートをコンパイルするのを待つ時間 (ミリ秒) */
 const FIRST_COMPILE_TIMEOUT_MS = 180_000;
+/** 作者名の表示を書いた版に同意済みとして入れる版 (テスト専用の値。§7.1 の一覧 c_privacy_versions_without_author_name に無く、版の形 (英数字・. _ - の 20 文字以内) に合う) */
+const CONSENTED_PRIVACY_VERSION = 'test-cross21-consent';
+/** 作者名の表示を書く前の版 (§7.1 の一覧にある。選択肢 (a)(b) のどちらでも一覧に入る) */
+const OLD_PRIVACY_VERSION = 'v2026.3';
 
 type Person = { user: TestUser; nickname: string };
 type AuthorNameRow = { author_id: string; display_name: string };
@@ -945,7 +1046,8 @@ type CommentPostBody = { comment: { content: string; authorName: string } };
 
 const people: Record<
   | 'author' | 'minor' | 'noBirth' | 'frozen' | 'tempFrozen' | 'tempFrozenExpired' | 'optOut' | 'noName' | 'privateOnly' | 'commenter' | 'viewer'
-  | 'unfreeze' | 'turns18Today' | 'turns18Tomorrow' | 'leaver' | 'deleter' | 'deleteCommenter' | 'toggleCommenter',
+  | 'unfreeze' | 'turns18Today' | 'turns18Tomorrow' | 'leaver' | 'deleter' | 'deleteCommenter' | 'toggleCommenter'
+  | 'oldConsent' | 'noConsent',
   Person
 > = {} as never;
 let publicRecipeId: string;
@@ -960,7 +1062,11 @@ let toggleRecipeId: string;
 async function makePerson(key: keyof typeof people, profile: Record<string, unknown>): Promise<void> {
   const nickname = `作者${key}${TS}`;
   const user = await createTestUserWithRoles({ email: `sec-author-${key}-${TS}@homegohan.test`, roles: ['user'] });
-  const { error } = await supabaseAdmin.from('user_profiles').update({ nickname, ...profile }).eq('id', user.userId);
+  // privacy_version_accepted は特権列 (本人は書けない)。service_role は特権列ガードの対象外。profile で上書きできる (I-18)
+  const { error } = await supabaseAdmin
+    .from('user_profiles')
+    .update({ nickname, privacy_version_accepted: CONSENTED_PRIVACY_VERSION, ...profile })
+    .eq('id', user.userId);
   if (error) throw new Error(`user_profiles (${key}): ${error.message}`);
   people[key] = { user, nickname };
 }
@@ -995,6 +1101,9 @@ beforeAll(async () => {
   await makePerson('deleteCommenter', { birth_date: ADULT_BIRTH_DATE });
   // I-10 で tempFrozenExpired の公開レシピにだけコメントする人 (18 歳以上・名前あり・設定は既定。ほかに公開の内容を持たない)
   await makePerson('toggleCommenter', { birth_date: ADULT_BIRTH_DATE });
+  // I-18 の 2 人 (18 歳以上・名前あり・設定は既定。作者名の表示を書く前の版にだけ同意 / 同意の記録なし)
+  await makePerson('oldConsent', { birth_date: ADULT_BIRTH_DATE, privacy_version_accepted: OLD_PRIVACY_VERSION });
+  await makePerson('noConsent', { birth_date: ADULT_BIRTH_DATE, privacy_version_accepted: null });
 
   // 公開レシピ: author のもの 1 件 + 返らない人たちのもの 1 件ずつ (公開レシピがあっても返らないことを確かめる)
   const { data: recipe, error: recipeError } = await supabaseAdmin
@@ -1004,7 +1113,8 @@ beforeAll(async () => {
     .single();
   if (recipeError || !recipe) throw new Error(`recipes: ${recipeError?.message}`);
   publicRecipeId = recipe.id as string;
-  for (const key of ['minor', 'noBirth', 'frozen', 'tempFrozen', 'tempFrozenExpired', 'optOut', 'noName', 'unfreeze', 'turns18Today', 'turns18Tomorrow'] as const) {
+  // (一覧の検索 q=t-cross21- に当たる公開レシピは、ここまでとこの下を合わせて 16 件で、一覧の既定の 20 件に収まる)
+  for (const key of ['minor', 'noBirth', 'frozen', 'tempFrozen', 'tempFrozenExpired', 'optOut', 'noName', 'unfreeze', 'turns18Today', 'turns18Tomorrow', 'oldConsent', 'noConsent'] as const) {
     const { error } = await supabaseAdmin
       .from('recipes')
       .insert({ user_id: people[key].user.userId, name: `t-cross21-${key}-${TS}`, is_public: true });
@@ -1315,6 +1425,33 @@ describe('I-16〜I-17: 本人がレシピを消す・コメントの POST の返
     expect(byContent.get(content)).toBe(FALLBACK);
   });
 });
+
+describe('I-18: 作者名の表示を書いた版への同意 (K-同意)', () => {
+  it('I-18: 書く前の版にだけ同意した作者と同意の記録が無い作者の名前は他の人に返らず、書いた版に同意すると返る', async () => {
+    const oldConsent = people.oldConsent.user.userId;
+    const noConsent = people.noConsent.user.userId;
+    // どちらも公開レシピを持つ (beforeAll) が、同意の条件で返らない
+    for (const db of [anon(), asUser(people.viewer.user.jwt)]) {
+      const names = await namesAs(db, [oldConsent, noConsent]);
+      expect([...names.keys()], '同意の前').toEqual([]);
+    }
+    // 本人には自分の名前 ((a))
+    for (const key of ['oldConsent', 'noConsent'] as const) {
+      const self = await namesAs(asUser(people[key].user.jwt), [people[key].user.userId]);
+      expect(self.get(people[key].user.userId), `${key} 本人`).toBe(people[key].nickname);
+    }
+
+    // oldConsent が作者名の表示を書いた版に同意する (本番は accept_legal_documents が書く。特権列なので service_role で入れる)
+    const { error } = await supabaseAdmin
+      .from('user_profiles')
+      .update({ privacy_version_accepted: CONSENTED_PRIVACY_VERSION })
+      .eq('id', oldConsent);
+    expect(error).toBeNull();
+    const after = await namesAs(anon(), [oldConsent, noConsent]);
+    expect(after.get(oldConsent), '同意のあとの oldConsent').toBe(people.oldConsent.nickname);
+    expect(after.has(noConsent), '同意の記録が無いままの noConsent').toBe(false);
+  });
+});
 ```
 
 import する helper は origin/main に実在する export だけ: `supabaseAdmin` (`tests/integration/helpers/supabase.ts`。service_role の Proxy。`.from(...)`・`.auth.admin.deleteUser(...)` をそのまま呼べる)・`createTestUserWithRoles` / `cleanupTestUser` / `TestUser` (`tests/integration/helpers/users.ts`。`TestUser` は `userId`・`jwt` を持つ。`cleanupTestUser` は消えた人に呼んでも投げない)・`apiCall` (`tests/integration/helpers/api.ts`)。`client` / `anon` / `asUser` / `pgQuery` は上のとおり本テストの中に置く (`anon-definer-execute.test.ts` の冒頭と同じ作り)。
@@ -1391,10 +1528,13 @@ rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
 
 ### 7.12 段 C: プライバシーポリシーの文 (`src/lib/legal/privacy-text.ts`。オーナーの選択 §21 Q-1 のあと)
 
-第9条の見出しと、第9条の `ol` の末尾に足す項 (3 項。文は 6 つ):
+足す文は 7 つ: 第8条 3 項の末尾に 1 文、第9条の `ol` の末尾に 3 項 (6 文)。第9条の見出しも改める。第8条の 1 項・4 項の文は変えない (§6.4)。
 
 ```ts
 // tsc:skip
+// 第8条 (id 'privacy-8') の ol の 3 項目 (いまは 1 文。privacy-text.ts:342) の末尾に 1 文を足し、2 文にする
+'家族グループのメンバーや組織の管理者に対する表示は、ユーザー自身の共有の設定、または組織への所属に基づいて行います（第9条）。公開の状態のレシピとそのレシピへのコメントの作者名の表示は、その表示を定めた本ポリシーの版へのユーザーの同意と、ユーザー自身がレシピを公開の状態にし、またはコメントを書いたことに基づいて行います（第9条）。',
+
 // PRIVACY_SECTION_HEADINGS[8] (いま '第9条（家族グループと組織での見え方）')
 '第9条（家族グループ、組織、公開したレシピでの見え方）',
 
@@ -1408,16 +1548,18 @@ rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
 
 | 文 | 製品の挙動 (本書) |
 |---|---|
-| 1 文目 (レシピは未ログインを含め誰でも) | 公開レシピは anon も読める (F-16)。一覧・詳細は未ログインにも作者名を返す (§6.3・関数は anon に EXECUTE)。作者名を描く画面は今は無い (F-13・§21 Q-2) が、API の返り値として誰でも読める状態になるので、見える範囲の説明として「表示され」と書く (画面ができても文は変わらない) |
-| 2 文目 (コメントはログインしているユーザーに) | `recipe_comments` の SELECT は authenticated だけ (F-16)。コメント GET は未認証なら 401 のまま・詳細の未ログインのコメントは 0 件 (F-3・§6.3) |
-| 3・4 文目 (設定と既定) | `show_recipe_author_name` (既定 true。§6.5) |
-| 5 文目 (18 歳未満・凍結) | 関数の (b) の K-年齢・K-凍結 (§6.1 (3)(4))。生年月日の無い人も出さないが、文は表示しない側の挙動なので書き足さない |
-| 6 文目 (退会) | `recipes_user_id_fkey` の `ON DELETE SET NULL` で作者名は「匿名」 (§6.1 (2))・第12条 |
+| 第8条 3 項の 2 文目 (表示の根拠) | 関数の (b) の K-同意 (`privacy_version_accepted` が作者名の表示を書く前の版の一覧に無い) と K-公開 (公開かつ隠されていないレシピ、またはそのレシピへのコメントがある。レシピを公開にできるのも、コメントを書けるのも本人だけ。F-19b・F-19c) (§6.4・§7.1)。「その表示を定めた本ポリシーの版」= 第9条の下の 6 文を持つ版 (C-10 が一覧と控えを突き合わせる) |
+| 第9条 1 文目 (レシピは未ログインを含め誰でも) | 公開レシピは anon も読める (F-16)。一覧・詳細は未ログインにも作者名を返す (§6.3・関数は anon に EXECUTE)。作者名を描く画面は今は無い (F-13・§21 Q-2) が、API の返り値として誰でも読める状態になるので、見える範囲の説明として「表示され」と書く (画面ができても文は変わらない) |
+| 第9条 2 文目 (コメントはログインしているユーザーに) | `recipe_comments` の SELECT は authenticated だけ (F-16)。コメント GET は未認証なら 401 のまま・詳細の未ログインのコメントは 0 件 (F-3・§6.3) |
+| 第9条 3・4 文目 (設定と既定) | `show_recipe_author_name` (既定 true。§6.5) |
+| 第9条 5 文目 (18 歳未満・凍結) | 関数の (b) の K-年齢・K-凍結 (§6.1 (3)(4))。生年月日の無い人も出さないが、文は表示しない側の挙動なので書き足さない |
+| 第9条 6 文目 (退会) | `recipes_user_id_fkey` の `ON DELETE SET NULL` で作者名は「匿名」 (§6.1 (2))・第12条 |
 
-主張の表 (`tests/legal-claims-1901.ts`) に足す 6 行 (`chars` は文末の 。を除いた字数 (String.prototype.length)。`f.adultAgeYears` は 18 で数えた。実装で T-35 の実行と食い違えば実測に合わせる)。evidence のパスは段 C のマージの時点で実在するもの (本書と、fix 枝が main に入ったあとの `viewer-lookups.ts`) だけを書く (T-35 は evidence のパスの実在を確かめる):
+主張の表 (`tests/legal-claims-1901.ts`) に足す 7 行 (`chars` は文末の 。を除いた字数 (String.prototype.length)。`f.adultAgeYears` は 18 で数えた。実装で T-35 の実行と食い違えば実測に合わせる)。evidence のパスは段 C のマージの時点で実在するもの (本書と、fix 枝が main に入ったあとの `viewer-lookups.ts`) だけを書く (T-35 は evidence のパスの実在を確かめる)。privacy-8#13 は表の privacy-8#8 の行のすぐ下に置く (id は節の中の次の番号。既存の privacy-8#9〜#12 の番号は振り直さない。T-35 は id の順を見ない)。privacy-8#8 (3 項の 1 文目) の行は変えない (文は同じで、`chars` 62 のまま):
 
 ```ts
 // tsc:skip
+{ id: 'privacy-8#13', section: 'privacy-8', fragment: '公開の状態のレシピとそのレシ', chars: 102, basis: 'product', evidence: 'docs/design/cross/21-recipe-author-display-name.md (§6.4・§7.1。recipe_author_display_names の同意と公開の条件)' },
 { id: 'privacy-9#12', section: 'privacy-9', fragment: 'ユーザーが公開の状態にしたレ', chars: 76, basis: 'product', evidence: 'docs/design/cross/21-recipe-author-display-name.md (§6.3)・src/lib/legal/terms-text.ts (第13条 2 項)' },
 { id: 'privacy-9#13', section: 'privacy-9', fragment: '公開の状態のレシピへのコメン', chars: 54, basis: 'product', evidence: 'docs/design/cross/21-recipe-author-display-name.md (§3.2・§6.3)・src/lib/recipes/viewer-lookups.ts' },
 { id: 'privacy-9#14', section: 'privacy-9', fragment: '作者名を表示しない設定にする', chars: 33, basis: 'product', evidence: 'docs/design/cross/21-recipe-author-display-name.md (§6.5・user_profiles.show_recipe_author_name)' },
@@ -1426,9 +1568,10 @@ rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
 { id: 'privacy-9#17', section: 'privacy-9', fragment: '退会した後は作者名は表示され', chars: 39, basis: 'product', evidence: 'docs/design/cross/21-recipe-author-display-name.md (§6.1 (2))・第12条の参照' },
 ```
 
-- `LEGAL_CLAIM_COUNT` を +6 (PR #1997 のあとなら 426 → 432。先なら 424 → 430)。
+- `LEGAL_CLAIM_COUNT` を +7 (PR #1997 のあとなら 426 → 433。先なら 424 → 431)。
+- fragment の重なり: privacy-8#13 の `公開の状態のレシピとそのレシ` は、privacy-8 のほかの文に現れない (T-35 は同じ節の中で 1 対 1 を見る)。privacy-9#13 の `公開の状態のレシピへのコメン` とは節が違う。
 - evidence に `F-n` / `P-n` の語を書かない (T-35 は evidence の中の `F-n` / `P-n` を cross/20 の `| F-n |` の行と突き合わせるので、本書の F の番号を書くと赤になる)。本書の節は `§n` で書く。
-- 版: 選択肢 (a) なら PR #1997 の v2026.4 のまま (版は上げない。文を足すだけ)。(b) なら `LEGAL_DOCUMENTS` の両文書を v2026.5 にし、`docs/legal/archive/v2026.4/` に控えを作る (cross/20 §9.1 の手順)。
+- 版: 選択肢 (a) なら PR #1997 の v2026.4 のまま (版は上げない。文を足すだけ。関数の一覧は `v2025.1`〜`v2026.3` の 4 つ)。(b) なら `LEGAL_DOCUMENTS` の両文書を v2026.5 にし、`docs/legal/archive/v2026.4/` に控えを作る (cross/20 §9.1 の手順。関数の一覧に `v2026.4` を足して 5 つ)。(c) (版を上げない) は選べない (§6.4)。どちらでも、版の文字列と関数の一覧の食い違いは C-10 が赤にする。
 - 利用規約は変えない (第13条 2 項がすでに公開の範囲を書いている)。
 - 見出しの変更は `tests/legal-text-1901.test.ts` の見出しの検査 (`PRIVACY_SECTION_HEADINGS` を読む所) と `src/lib/legal/index.ts` の再エクスポートに影響しない (配列の要素の値だけが変わる)。見出しの逐語を直書きしたテストがあれば直す (§16)。
 
@@ -1461,7 +1604,7 @@ rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
 
 | 作者の状態 | 見ている人 | 一覧 | 詳細の作者 | コメントの作者 | POST の返り値 |
 |---|---|---|---|---|---|
-| 名前あり・既定・凍結なし・18 歳以上・公開レシピあり | 他のログイン利用者 | 表示名 | 表示名 | 表示名 | — |
+| 名前あり・既定・作者名の表示を書いた版に同意済み・凍結なし・18 歳以上・公開レシピあり | 他のログイン利用者 | 表示名 | 表示名 | 表示名 | — |
 | 同 | 未ログイン | 表示名 | 表示名 | (RLS で 0 件 / GET は 401) | — |
 | 同 | 本人 | 表示名 | 表示名 | 表示名 | 表示名 |
 | 名前なし (`'Guest'`・空) | 全員 | 匿名 | 匿名 | 匿名 | 匿名 |
@@ -1470,9 +1613,12 @@ rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
 | 凍結中 (無期限・一時で未来) | 本人 | N/A (403 `AUTH_ACCOUNT_FROZEN`。middleware が route の手前で止める。F-19a) | N/A (同) | N/A (同) | N/A (同) |
 | 一時凍結の期限切れ | 他人・未ログイン | 表示名 | 表示名 | 表示名 | — |
 | 18 歳未満・生年月日なし | 他人・未ログイン | 匿名 | 匿名 | 匿名 | — |
-| 18 歳未満・生年月日なし | 本人 | 表示名 | 表示名 | 表示名 | 表示名 |
+| 18 歳未満 (保護者の同意とのつながりあり) | 本人 | 表示名 | 表示名 | 表示名 | 表示名 |
+| 生年月日なし・保護者の同意とのつながりの無い 18 歳未満 | 本人 | N/A (サインインしてレシピの API を呼ぶと 403 `LEGAL_CONSENT_REQUIRED`。同意ゲートは生年月日の未入力とつながりの無い 18 歳未満も止める。本番は強制中。F-31。関数を直接呼べば表示名 ((a))) | N/A (同) | N/A (同) | N/A (同) |
 | 設定オフ (`show_recipe_author_name = false`) | 他人・未ログイン | 匿名 | 匿名 | 匿名 | — |
 | 設定オフ | 本人 | 表示名 | 表示名 | 表示名 | 表示名 |
+| 作者名の表示を書く前の版にだけ同意・同意の記録なし (K-同意 が偽) | 他人・未ログイン | 匿名 | 匿名 | 匿名 | — |
+| 作者名の表示を書く前の版にだけ同意・同意の記録なし | 本人 | N/A (サインインしてレシピの API を呼ぶと 403 `LEGAL_CONSENT_REQUIRED`。同意ゲートが route の手前で止める。本番は強制中。F-31。関数を直接呼べば表示名 ((a))) | N/A (同) | N/A (同) | N/A (同) |
 | 公開レシピなし・コメントだけ (公開レシピへ) | 他人 | — | — | 表示名 | — |
 | 同 | 未ログイン | — | — | (RLS で 0 件 / GET は 401) | — (未ログインの POST は 401) |
 | 同 | 本人 | 表示名 (本人の非公開のレシピがあれば。無ければ —) | — (他人の公開レシピの作者は、その作者の行で決まる) | 本人のコメントは表示名 ((a)) | 表示名 ((a)) |
@@ -1494,37 +1640,39 @@ rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
 | 面 | main (`cae0e288`) | fix 枝 (`a8d75cec`) | 段 C のあと | 段 A の適用〜段 B のマージ | 設計後 (段 B のマージのあと) |
 |---|---|---|---|---|---|
 | 作者名の読み方 | select の埋め込み (`user_profiles(nickname)`。PostgREST が解決できず 500 / 空) | 別のクエリ (`user_profiles` を `.in('id', …)`。RLS で本人の行だけ) | fix 枝と同じ | fix 枝と同じ (API は関数を使わない) | SECURITY DEFINER の関数 `recipe_author_display_names` (本人 + 公開の作者) |
-| 他人の公開レシピの `authorName` | (500 / 空) | 「匿名」 | 「匿名」 | 「匿名」 | 表示名 (凍結中・18 歳未満・設定オフ・名前なしは「匿名」) |
+| 他人の公開レシピの `authorName` | (500 / 空) | 「匿名」 | 「匿名」 | 「匿名」 | 表示名 (凍結中・18 歳未満・設定オフ・名前なし・作者名の表示を書いた版に未同意は「匿名」) |
 | 本人の `authorName` | (500 / 空) | 表示名 | 表示名 | 表示名 | 表示名 (変わらない) |
 | 未ログインの `authorName` | 「匿名」 (未認証は埋め込まない) | 「匿名」 (DB に問い合わせない) | 「匿名」 | 「匿名」 | 表示名 (関数を呼ぶ) |
-| `/rest/v1/rpc/recipe_author_display_names` を直接呼ぶ (anon キーだけでも) | 関数が無い | 関数が無い | 関数が無い | 公開の作者の表示名が返る (関数の条件どおり。段 C の文面がすでに効いている) | 同じ |
+| `/rest/v1/rpc/recipe_author_display_names` を直接呼ぶ (anon キーだけでも) | 関数が無い | 関数が無い | 関数が無い | 公開の作者の表示名が返る (関数の条件どおり。作者名の表示を書いた版に同意した人だけ。段 C の文面がすでに効いている) | 同じ |
 | いいね (`isLiked`) | 埋め込み | 別のクエリ (ログイン中だけ) | 同 | 同 | 変わらない |
 | `user_profiles` の RLS | 本人の行だけ | 同 | 同 | 同 | 同 (変えない) |
 | service_role | 使わない | 使わない | 使わない | 使わない | 使わない |
 | 本人の選択 | 無い | 無い | 無い | 列はある (全員 true)。画面と `PUT /api/profile` の口は無い | `show_recipe_author_name` (プロフィールの編集) |
-| プライバシーポリシー | 公開レシピの作者名の記載なし | 同 | 第9条に 3 項 (版はオーナーの選択) | 同 | 同 |
+| プライバシーポリシー | 公開レシピの作者名の記載なし | 同 | 第8条 3 項に 1 文・第9条に 3 項 (版はオーナーの選択) | 同 | 同 |
+| 作者名の表示を書いた版への同意 (`privacy_version_accepted`) | 記録はあるが、作者名とは関わらない | 同 | その版がいまの版になり、サインインした人から順に同意する (同意ゲート。F-31) | 同 (関数の K-同意 が読む) | 同 |
 | anon が呼べる DEFINER の関数 | 2 本 | 2 本 | 2 本 | 3 本 | 3 本 |
 
-- 段 C のあと・段 B のマージの前は、文面が「表示されます」と書き、API は「匿名」を返す。見える範囲が文面より狭い側のずれなので、他人の名前が文面より先に出ることは無い。このずれを短くするため、段 A の適用から段 B のマージまでを文面の施行日 (選択肢 (c) なら段 C のマージ) の当日に続けて行う (§15)。
+- 段 C のあと・段 B のマージの前は、文面が「表示されます」と書き、API は「匿名」を返す。見える範囲が文面より狭い側のずれなので、他人の名前が文面より先に出ることは無い。このずれを短くするため、段 A の適用から段 B のマージまでを文面の施行日の当日に続けて行う (§15)。設計後も、名前が出るのは作者名の表示を書いた版に同意した人から順になる (K-同意。同意していない人は「匿名」で、文面より狭い側)。
 
 ### 9.3 ③状態遷移表 (作者の「他の人からの見え方」× 出来事 → 遷移先・ガード・副作用)
 
-状態は 1 次元の列挙ではなく、他の人に名前が返るための **5 つの条件** (関数の (b) の 4 つと、本人を含む全員に掛かる K-名前) の組で表す (条件は互いに独立で、同時に何本でも欠けうる)。
+状態は 1 次元の列挙ではなく、他の人に名前が返るための **6 つの条件** (関数の (b) の 5 つと、本人を含む全員に掛かる K-名前) の組で表す (条件は互いに独立で、同時に何本でも欠けうる)。
 
 | 記号 | 条件 (満たす = 真) | 関数 (§7.1) の式 |
 |---|---|---|
 | K-設定 | 名前を出す設定が on | `p.show_recipe_author_name` |
+| K-同意 | 作者名の表示を書いた版 (以後の版) のプライバシーポリシーに同意している | `p.privacy_version_accepted IS NOT NULL AND p.privacy_version_accepted::pg_catalog.text <> ALL (c_privacy_versions_without_author_name)` |
 | K-凍結 | 凍結中でない | `p.frozen_at IS NULL OR (p.unban_at IS NOT NULL AND p.unban_at <= now())` |
 | K-年齢 | 生年月日があり 18 歳以上 | `p.birth_date IS NOT NULL AND age_years_jst(p.birth_date) >= c_adult_age_years` |
 | K-名前 | 表示名がある | `normalize_profile_name(p.nickname) IS NOT NULL` |
 | K-公開 | 公開の内容がある (公開かつ隠されていないレシピ、またはそのレシピへのコメント) | 2 つの `EXISTS` の OR |
 
-- 状態 = 「欠けている条件の集合」。**表示** = 集合が空 (5 つとも真)。**匿名{…}** = 1 つ以上欠けている (例: 匿名{設定, 凍結})。ほかに終わりの状態 **退会** (`user_profiles` の行が無い) がある。
+- 状態 = 「欠けている条件の集合」。**表示** = 集合が空 (6 つとも真)。**匿名{…}** = 1 つ以上欠けている (例: 匿名{設定, 凍結})。ほかに終わりの状態 **退会** (`user_profiles` の行が無い) がある。
 - 他の人に返るのは **表示** のときだけ。どの条件が欠けているか (何個欠けているか) は返り値から分からない (§20)。
-- 本人からは、退会を除き、K-名前 が真なら ほかの 4 つの条件 (K-設定・K-凍結・K-年齢・K-公開) に依らず自分の名前 ((a))。K-名前 が偽なら本人にも「匿名」(関数は `normalize_profile_name` が NULL の人を (a) でも返さない。§6.1 (1))。凍結中の本人はレシピの API に届かない (F-19a)。
-- 関数は呼ばれるたびに 5 つの条件を今の行と時刻で計算し直す。状態を記録する列は無い (`show_recipe_author_name` は K-設定 の入力で、状態そのものではない)。したがって遷移先は「出来事が変えた 1 つの条件を集合に足す / 集合から除く」で決まり、出来事の順序に依らない (解除の順序は問わない。最後に欠けていた条件が満たされたときに初めて **表示** になる)。
+- 本人からは、退会を除き、K-名前 が真なら ほかの 5 つの条件 (K-設定・K-同意・K-凍結・K-年齢・K-公開) に依らず自分の名前 ((a))。K-名前 が偽なら本人にも「匿名」(関数は `normalize_profile_name` が NULL の人を (a) でも返さない。§6.1 (1))。凍結中の本人はレシピの API に届かない (F-19a)。K-同意 が偽の本人と、生年月日の無い本人 (K-年齢 が偽の一部) も、サインインしてレシピの API を呼ぶと同意ゲートで止まる (403 `LEGAL_CONSENT_REQUIRED`。F-31。§6.1 (4)(9))。
+- 関数は呼ばれるたびに 6 つの条件を今の行と時刻で計算し直す。状態を記録する列は無い (`show_recipe_author_name` は K-設定 の入力で、状態そのものではない)。したがって遷移先は「出来事が変えた 1 つの条件を集合に足す / 集合から除く」で決まり、出来事の順序に依らない (解除の順序は問わない。最後に欠けていた条件が満たされたときに初めて **表示** になる)。
 
-出来事 × 条件 (1 つの出来事が 1 人について変える条件は 1 つ。ただし、レシピの公開の状態を変える出来事 (公開で新しく作る・公開にする・非公開に戻す・運営が隠す・隠すのを戻す・本人が消す) は、作者の K-公開 だけでなく、**そのレシピへのコメントの書き手** の K-公開 も変えうる。コメントの EXISTS (§7.1) がコメント先のレシピの `is_public = true AND hidden_at IS NULL` を見るためで、非公開に戻す・隠すではコメントの行は残ったまま数えられなくなり、消すでは CASCADE で行が消える。公開で新しく作るときは、そのレシピへのコメントはまだ無いので、変わるのは作者の K-公開 だけ。影響を受ける人ごとに (作者・書き手のそれぞれについて、ほかに公開の内容が無いときだけ) 同じ遷移を 1 つずつ起こす。各人の X は互いに独立):
+出来事 × 条件 (1 つの出来事が 1 人について変える条件は 1 つ。ただし、本人の同意の記録 (`accept_legal_documents`) は、同じ呼び出しで K-同意 と (生年月日が未記録の人の) K-年齢 を変えうる (下の「同意する」と「生年月日が記録される」の 2 行を 1 つの呼び出しで起こす。2 つは別の条件の足し引きなので、どちらを先に数えても終わりの集合は同じ)。また、レシピの公開の状態を変える出来事 (公開で新しく作る・公開にする・非公開に戻す・運営が隠す・隠すのを戻す・本人が消す) は、作者の K-公開 だけでなく、**そのレシピへのコメントの書き手** の K-公開 も変えうる。コメントの EXISTS (§7.1) がコメント先のレシピの `is_public = true AND hidden_at IS NULL` を見るためで、非公開に戻す・隠すではコメントの行は残ったまま数えられなくなり、消すでは CASCADE で行が消える。公開で新しく作るときは、そのレシピへのコメントはまだ無いので、変わるのは作者の K-公開 だけ。影響を受ける人ごとに (作者・書き手のそれぞれについて、ほかに公開の内容が無いときだけ) 同じ遷移を 1 つずつ起こす。各人の X は互いに独立):
 
 | 出来事 | 変わる条件 | 遷移 (欠けている集合 X に対して) | ガード | 副作用 |
 |---|---|---|---|---|
@@ -1535,6 +1683,9 @@ rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
 | 18 歳の誕生日 (JST) を迎える | K-年齢 を真に | X → X − {年齢} | 生年月日があること | 時刻で切れる (列は変わらない) |
 | 生年月日が記録される (`accept_legal_documents`) | K-年齢 を、18 歳以上なら真に (18 歳未満なら偽のまま) | X → X − {年齢} (18 歳以上のとき) / X のまま | `birth_date` が NULL の人だけ (write-once) | 既存の同意の副作用 |
 | 18 歳未満と記録し直される | — | 起きない (`birth_date` は write-once で、18 歳以上の人が 18 歳未満になることは無い) | — | — |
+| 本人がプライバシーポリシーに同意する (`POST /api/legal/accept` → `accept_legal_documents`。記録するのは、いまの版 = 作者名の表示を書いた版以後の版) | K-同意 を真に | X → X − {同意} | `POST /api/legal/accept` はいまの版だけを記録する (F-31)。いまの版は一覧に無い (C-10) | `privacy_version_accepted` をその版に (既存の同意の副作用)。次の読み込みから |
+| 本人が `accept_legal_documents` を PostgREST から直接呼び、一覧にある版 (作者名の表示を書く前の版) を記録する | K-同意 を偽に | X → X ∪ {同意} | authenticated に EXECUTE (版の形だけを確かめる。F-31) | 本人の操作だけで起き、本人の名前だけに効く (§20)。次にいまの版に同意すれば上の行で戻る |
+| 版を上げる (`LEGAL_DOCUMENTS` を書き換えてデプロイ) | — (列は変わらない) | X のまま (作者名の表示を書いた版以後の版に同意した人は、より新しい版がいまの版になっても K-同意 は真のまま。新しい版も一覧に入らない) | 新しい版も作者名の表示の文を持つこと (C-10。文を消す版を作るなら一覧に足す) | 同意ゲートが再同意を求める (既存。名前の表示は変わらない) |
 | 本人がニックネームを空・`'Guest'` にする | K-名前 を偽に | X → X ∪ {名前} | `PUT /api/profile` | — |
 | 本人が名前を入れる | K-名前 を真に | X → X − {名前} | 同 | — |
 | 本人が公開レシピを新しく作る (`POST /api/recipes` の `isPublic: true`。INSERT で `is_public = true`・`hidden_at` は NULL) | 作者の K-公開 を真に (書き手は居ない) | 作者: X → X − {公開} | 本人の RLS の INSERT (凍結中は 403 で届かない) | 次の読み込みから。新しいレシピへのコメントはまだ無いので、書き手の遷移は起きない (コメントがついたときは「公開レシピにコメントする」の行)。INSERT で K-公開 が真になることは I-1 で確かめる (§7.10 の準備は公開レシピを `is_public: true` の INSERT で作ってから関数を呼ぶ。準備の INSERT は service_role で、本人の RLS の INSERT の経路は既存の `POST /api/recipes` のまま) |
@@ -1557,6 +1708,8 @@ rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
 | 匿名{凍結, 名前} | 退会 | — | 退会 | 匿名 (`user_id` NULL) |
 | 表示 (B のレシピにだけコメントした C) | B がレシピを非公開に戻す → B が公開に戻す | 匿名{公開} | 表示 | 表示名 → 匿名 → 表示名 (C 自身は何もしていない) |
 | 匿名{設定} (同じ C) | 運営が B のレシピを隠す → C が設定を on → 運営が隠すのを戻す | 匿名{設定, 公開} → 匿名{公開} | 表示 | 匿名 → 匿名 → 匿名 → 表示名 |
+| 匿名{同意} (v2026.3 の同意のまま公開レシピを持つ K。S-18) | 版が上がる (作者名の表示を書いた版がいまの版に) → K がサインインして同意する | 匿名{同意} | 表示 | 匿名 → 匿名 → 表示名 |
+| 匿名{同意, 年齢} (同意の記録も生年月日も無い人) | 同意する (同じ呼び出しで 18 歳以上の生年月日を記録) | — | 表示 | 匿名 → 表示名 |
 
 表に無い遷移を作らない (例: 運営が作者名だけを隠す操作は無い。隠すのはレシピ単位の `hidden_at`)。
 
@@ -1591,7 +1744,7 @@ sequenceDiagram
     R->>L: authorIds / recipeIds / viewerId
     par 名前 (未ログインでも)
         L->>F: rpc(p_user_ids)
-        F->>F: 本人 or (公開の作者 and 設定 on and 凍結なし and 18 歳以上)
+        F->>F: 本人 or (公開の作者 and 設定 on and 書いた版に同意済み and 凍結なし and 18 歳以上)
         F-->>L: (author_id, display_name) の行
     and いいね (ログイン中だけ)
         L->>DB: recipe_likes を自分の user_id で
@@ -1609,15 +1762,15 @@ sequenceDiagram
 
 | 種別 | ファイル | it 名 |
 |---|---|---|
-| 契約 (静的) | `tests/recipe-author-display-names-migration-contract.test.ts` (新) | C-1〜C-9 (§7.9 のとおり) |
-| 結合 (実 DB) | `tests/integration/security/recipe-author-display-names.test.ts` (新) | I-1〜I-17 (§7.10 のとおり。I-16 = 本人がレシピを消す (S-17)・I-17 = コメントの POST の返り値 (S-14。U-8 のモックの単体と別に実 DB で)) |
+| 契約 (静的) | `tests/recipe-author-display-names-migration-contract.test.ts` (新) | C-1〜C-10 (§7.9 のとおり。C-10 = 同意の条件と、作者名の表示を書く前の版の一覧 ⇄ 旧版の控え・いまの文面) |
+| 結合 (実 DB) | `tests/integration/security/recipe-author-display-names.test.ts` (新) | I-1〜I-18 (§7.10 のとおり。I-16 = 本人がレシピを消す (S-17)・I-17 = コメントの POST の返り値 (S-14。U-8 のモックの単体と別に実 DB で)・I-18 = 作者名の表示を書いた版への同意 (S-18)) |
 | 単体 | `tests/recipe-viewer-lookups-1917.test.ts` (直す) | U-1「作者の表示名は recipe_author_display_names に id を渡して引き、いいねは自分の recipe_likes をレシピの id で引く。NULL の作者と重複は除く」/ U-2「未ログイン (viewerId が null) でも名前は引く。いいねは引かない」/ U-3「引く作者が無ければ関数を呼ばない。レシピが無ければいいねを引かない」/ U-4「data が null で返っても (失敗ではない)、名前もいいねも空として扱う」/ U-5「GET /api/recipes/[id]: レシピとコメントの作者の表示名・自分のいいねを返す。select に user_profiles・recipe_likes を埋め込まない」/ U-6「GET /api/recipes/[id]: 未ログインでも作者の表示名を返す (いいねと閲覧数の加算は呼ばない・isLiked は false)」/ U-7「GET /api/recipes/[id]/comments: 書いた人の表示名を返し、user_id は返さない。select に user_profiles を埋め込まない」/ U-8「POST /api/recipes/[id]/comments: 自分の表示名を返す。insert の select に user_profiles を埋め込まない」/ U-9 (`it.each` で GET 3 本)「%s: 作者の表示名 (recipe_author_display_names) が読めなければ 500。DB の生の文面は本文に出さず、読めなかった読み込みの名前をログに残す」(S-16) / U-10「GET /api/recipes/[id]: user_id が NULL のシステムのレシピは authorName が既定の呼称で、関数に id を渡さない (コメントも無ければ関数を呼ばない)」(S-15) / U-11 (`it.each` で 2 本)「%s が読めなければ、その読み込みの名前と DB のエラーを返す (名前が無い・いいねしていないことにしない)」(表は `recipe_author_display_names`・`recipe_likes`) / U-12「POST /api/recipes/[id]/comments: 自分の表示名 (recipe_author_display_names) が読めなければ、コメントを保存せずに 500」。fix 枝の 13 本との対応と期待の直しは §7.11 (1) の表。「いいねしていないレシピは isLiked が false」「%s: 自分のいいね (recipe_likes) が読めなければ 500 …」の 2 本は名前も中身も変えない |
 | 単体 | `tests/recipes-route.test.ts` (直す) | R-1「認証済みなら公開レシピと自分のレシピを取る。作者の表示名と自分のいいねは埋め込まず、関数と別のクエリで引く (#1917・cross/21)」/ R-2「未ログインでも作者の表示名は関数で引く。いいねは DB に問い合わせない」/ R-3 (`it.each` で 2 本。名前は fix 枝のまま)「%s が読めなかったときは、名前が無い・いいねしていないように見せず 500 (DB の生の文面は本文に出さない)」(表の 1 行目を `作者の表示名 (recipe_author_display_names)`) / R-4「取得した行を camelCase に変換し、関数が返した表示名と自分のいいねを反映する」。fix 枝の it との対応は §7.11 (2) の表。ほかの it (page / limit / max_time・検索語・DB エラーの 500 など) は名前も中身も変えない (モックの `rpc` が既定で 0 行を返す) |
 | 単体 | `tests/recipe-author-name-1649.test.ts`・`tests/recipe-detail-hidden-404.test.ts`・`tests/api-security-cluster.test.ts` (直す) | it 名は変えない。モックと期待を §7.11 (3)〜(5) の形に (api-security-cluster の「未認証リクエストでは view_count を更新しない」は、`mockRpc` が呼ばれないことではなく `increment_recipe_view_count` で呼ばれないことを見る) |
 | 単体 | `tests/recipe-author-name-setting-1917.test.tsx` (新) | P-1「toUserProfile: show_recipe_author_name が無い行は showRecipeAuthorName が true」/ P-2「fromUserProfile: showRecipeAuthorName を show_recipe_author_name に写す。undefined なら書かない」/ P-3「プロフィールの編集の基本情報タブに、ニックネームの下の切り替えがラベルと注記つきで出て、外して保存すると PUT /api/profile の本文に showRecipeAuthorName: false が入る」 |
 | 結合 (既存) | `tests/integration/security/recipes-api-logged-in.test.ts` | 変更なし (本人の非公開のレシピに本人の名前。関数の (a) で同じ結果) |
 | 結合 (既存) | `tests/integration/security/anon-definer-execute.test.ts` | A1 / A1b の期待を 3 本に (§7.8) |
-| 文面 (段 C) | `tests/legal-text-1901.test.ts`・`tests/legal-claims-1901.ts` | 主張の表に 6 行・`LEGAL_CLAIM_COUNT` +6 (§7.12) |
+| 文面 (段 C) | `tests/legal-text-1901.test.ts`・`tests/legal-claims-1901.ts` | 主張の表に 7 行 (privacy-8#13・privacy-9#12〜#17)・`LEGAL_CLAIM_COUNT` +7 (§7.12) |
 
 ---
 
@@ -1626,6 +1779,9 @@ sequenceDiagram
 | 定数 | 値 | 置き場 | 根拠 | 環境変数で上書き |
 |---|---|---|---|---|
 | `c_adult_age_years` | 18 | §7.1 の関数 | `ADULT_AGE_YEARS` (法令の年齢。cross/14) と同じ。C-4 が突き合わせる | しない (法令の値) |
+| `c_privacy_versions_without_author_name` | `ARRAY['v2025.1', 'v2026.1', 'v2026.2', 'v2026.3']` (選択肢 (a)。(b) なら `'v2026.4'` も) | §7.1 の関数 | 作者名の表示を書く前のプライバシーポリシーの版 (F-32・§6.4)。C-10 が旧版の控えといまの文面と突き合わせる | しない (過去の版の事実。環境で変えると第8条との両立が崩れる) |
+| `AUTHOR_NAME_PRIVACY_FRAGMENT`・`LEGAL_ARCHIVE_DIR`・`ARCHIVED_PRIVACY_FILE`・`PRIVACY_TEXT_SOURCE`・`LEGAL_VERSION_FORMAT` | §7.9 のとおり | `tests/recipe-author-display-names-migration-contract.test.ts` (C-10) | 作者名の表示の文の一部・控えの置き場とファイル名・いまの文面のファイル・版の形 (`accept_legal_documents` と同じ) | しない |
+| `CONSENTED_PRIVACY_VERSION`・`OLD_PRIVACY_VERSION` | `'test-cross21-consent'`・`'v2026.3'` | `tests/integration/security/recipe-author-display-names.test.ts` | 同意済みとして入れるテスト専用の版・一覧にある版 (I-18。makePerson の既定) | しない |
 | `RECIPE_AUTHOR_DISPLAY_NAMES_RPC` | `'recipe_author_display_names'` | `viewer-lookups.ts` | 関数の名前。C-8 が突き合わせる | しない |
 | `RECIPE_AUTHOR_FALLBACK_NAME` | `'匿名'` | `author-name.ts` (既存) | 既定の呼称 | しない |
 | `RECIPE_AUTHOR_NAME_SETTING_LABEL` / `_NOTE` | §7.4 | `author-name.ts` | 画面の文言 | しない |
@@ -1645,6 +1801,7 @@ sequenceDiagram
 | 列 | `user_profiles.show_recipe_author_name boolean NOT NULL DEFAULT true` | DB |
 | 索引 | `idx_recipe_comments_user_id` (`recipe_comments (user_id)`) | DB |
 | 関数 | `public.recipe_author_display_names(uuid[])` | DB |
+| 関数の中の定数 | `c_adult_age_years`・`c_privacy_versions_without_author_name` | §7.1 の関数の `DECLARE` |
 | 定数 | `RECIPE_AUTHOR_DISPLAY_NAMES_RPC` | `src/lib/recipes/viewer-lookups.ts` |
 | 型 | `AuthorNameRow` (非公開) | 同 |
 | 欄 | `RecipeViewerLookups.authorNames` (`nicknames` の置き換え) | 同 |
@@ -1665,22 +1822,22 @@ sequenceDiagram
 
 | 段 | 中身 | 前提 | 本番の順序 |
 |---|---|---|---|
-| C (文面) | §7.12 の 6 文・見出し・主張の表 6 行・版 (選択肢に従う) | オーナーの選択 (§21 Q-1)。fix/api-read-errors が main に入っていること (主張の表の evidence が `src/lib/recipes/viewer-lookups.ts` を指し、T-35 がパスの実在を確かめる) | 下の ① |
-| A (DB) | §7.1 migration・§7.2 戻し口・§7.9 契約テストの C-1〜C-7・C-9 (C-8 は段 B)・§7.10 結合テストの I-1〜I-6・I-11・I-13・I-14・`database.types.ts` 2 本の生成し直し・§7.8 許可一覧 | fix/api-read-errors が main に入っていること (結合テストの API 経由の部分は段 B へ)。`tests/database-types-migrations-contract.test.ts` が関数と列を見るので、型の生成し直しは同じ PR | 下の ②・③。実装ゲートは先に通してよいが、本番への適用とマージは ① のあとまで待つ |
+| C (文面) | §7.12 の 7 文 (第8条 3 項に 1 文・第9条に 6 文)・第9条の見出し・主張の表 7 行・版 (選択肢に従う) | オーナーの選択 (§21 Q-1)。fix/api-read-errors が main に入っていること (主張の表の evidence が `src/lib/recipes/viewer-lookups.ts` を指し、T-35 がパスの実在を確かめる) | 下の ① |
+| A (DB) | §7.1 migration・§7.2 戻し口・§7.9 契約テストの C-1〜C-7・C-9・C-10 (C-8 は段 B)・§7.10 結合テストの I-1〜I-6・I-11・I-13・I-14・I-18・`database.types.ts` 2 本の生成し直し・§7.8 許可一覧 | fix/api-read-errors が main に入っていること (結合テストの API 経由の部分は段 B へ)。`tests/database-types-migrations-contract.test.ts` が関数と列を見るので、型の生成し直しは同じ PR。関数の一覧 `c_privacy_versions_without_author_name` はオーナーの選択 (§21 Q-1) に合わせる (C-10 は文面が効く前も後も緑。§7.9) | 下の ②・③。実装ゲートは先に通してよいが、本番への適用とマージは ① のあとまで待つ |
 | B (API・設定) | §7.3 `viewer-lookups.ts`・§7.4 `author-name.ts`・§7.5 route の 1 語 × 5・§7.6 型と変換・§7.7 画面・§7.9 の C-8 (契約テストのファイルに it を 1 つ足す)・§7.11 単体テストの直し (5 ファイル)・§7.10 の I-7〜I-10・I-12・I-15〜I-17・P-1〜P-3 | 段 A が本番に適用済み・main に入っていること (関数が無いと全部の一覧・詳細が 500。R-16) | 下の ④。マージ = 公開 |
 
-本番の順序 (選択肢 (a)(b)(c) のどれでも同じ。段 A の関数は anon / authenticated に EXECUTE を付けるので、適用した時点から `/rest/v1/rpc` で公開の作者の表示名を直接引ける (§9.2)。そのため段 A の本番の適用を、文面が効いたあとの同じ門に置く):
+本番の順序 (選択肢 (a)(b) のどちらでも同じ。(c) は選べない。§6.4。段 A の関数は anon / authenticated に EXECUTE を付けるので、適用した時点から `/rest/v1/rpc` で公開の作者の表示名を直接引ける (§9.2。返るのは作者名の表示を書いた版に同意した人だけ)。文面と挙動の順序をそろえるため、段 A の本番の適用を、文面が効いたあとの同じ門に置く):
 
-1. 段 C の文面が効く。(a): PR #1997 に本書の 6 文と主張の表 6 行を足し、PR #1997 の手順 (予告のあと施行日にマージ・デプロイ) で出す。(b): v2026.5 の PR を、予告のあと施行日にマージ・デプロイする。(c): 段 C の PR をマージ・デプロイする。
+1. 段 C の文面が効く。(a): PR #1997 に本書の 7 文と主張の表 7 行を足し、PR #1997 の手順 (予告のあと施行日にマージ・デプロイ) で出す。(b): v2026.5 の PR を、予告のあと施行日にマージ・デプロイする。
 2. 段 A の migration を本番へ適用する (追加だけの migration。適用の確認は §19 の 1〜6)。
 3. 段 A の PR をマージする (番号は直前に確定。§7.1)。
 4. 段 B の PR をマージする (= 公開。確認は §19 の 7〜9)。
 
-- ②〜④ は同じ座で続けて行い、① の当日 (施行日。(c) なら段 C のマージの日) に置く。② の前に ① のデプロイが済んだことを `/privacy` の版と施行日の表示で確かめる。
+- ②〜④ は同じ座で続けて行い、① の当日 (施行日) に置く。② の前に ① のデプロイが済んだことを `/privacy` の版と施行日の表示で確かめる。
 - ① より前に ②〜④ を行わない (文面が足りない間に他人の名前が出る経路を作らない。§6.4)。
 - A と B は同じ worktree で積んでもよいが、PR は分ける (A の本番の適用を B のマージの前に確かめるため)。
 - 戻すとき: B のコードを戻してから A の戻し口を流す (§7.2 の注意)。文面 (段 C) は戻さない (見える範囲が文面より狭くなる側のずれ。§9.2)。
-- 段 B の変更は 17 ファイル (製品コード 9: `viewer-lookups.ts`・`author-name.ts`・route 3 本・`types/domain.ts`・`types/database.ts`・`lib/converter.ts`・`src/app/(main)/profile/page.tsx` / tests 8: §7.11 の 5 ファイル・`recipe-author-display-names-migration-contract.test.ts` (C-8)・`recipe-author-display-names.test.ts` (I-7〜I-10・I-12・I-15〜I-17)・`recipe-author-name-setting-1917.test.tsx` (新)) で、1,500 行以内。15 ファイルを超えるので、実装ゲートの 1 レビュアー枠は分割パネル (src の担当・tests の担当・横断整合の担当) にする。
+- 段 B の変更は 17 ファイル (製品コード 9: `viewer-lookups.ts`・`author-name.ts`・route 3 本・`types/domain.ts`・`types/database.ts`・`lib/converter.ts`・`src/app/(main)/profile/page.tsx` / tests 8: §7.11 の 5 ファイル・`recipe-author-display-names-migration-contract.test.ts` (C-8)・`recipe-author-display-names.test.ts` (I-7〜I-10・I-12・I-15〜I-17。I-18 は段 A)・`recipe-author-name-setting-1917.test.tsx` (新)) で、1,500 行以内。15 ファイルを超えるので、実装ゲートの 1 レビュアー枠は分割パネル (src の担当・tests の担当・横断整合の担当) にする。
 
 ---
 
@@ -1710,9 +1867,11 @@ sequenceDiagram
 | `tests/api-raw-error-message-scan.test.ts`・`tests/lib-raw-error-message-scan.test.ts` | `error.message` | 生のエラーの文を本文に返すと赤 | `internalError` のまま | — |
 | `tests/env-source-scan.test.ts` | `process.env` | 新しい環境変数は無い | 変更なし | — |
 | `tests/no-pending-wording-1911.test.ts`・`tests/public-claims-guard.test.ts` | `準備中`・`予定です`・`FORBIDDEN` | `src` の文言に未完成・予定の語があると赤 | §7.4 の文言に入れない | B |
-| `tests/legal-text-1901.test.ts:1058-1073`・`tests/legal-claims-1901.ts:25` | `LEGAL_CLAIM_COUNT`・`fragment`・`chars`・`evidence` | 文を足して主張の表を足さないと赤。字数が違うと赤。evidence のパスが実在しない・evidence の `F-n` が cross/20 に無いと赤 | §7.12 の 6 行と +6 (evidence は本書と `viewer-lookups.ts` のパスだけ・`F-n` を書かない) | C |
+| `tests/legal-text-1901.test.ts:1058-1073`・`tests/legal-claims-1901.ts:25` | `LEGAL_CLAIM_COUNT`・`fragment`・`chars`・`evidence` | 文を足して主張の表を足さないと赤。字数が違うと赤。evidence のパスが実在しない・evidence の `F-n` が cross/20 に無いと赤 | §7.12 の 7 行と +7 (evidence は本書と `viewer-lookups.ts` のパスだけ・`F-n` を書かない) | C |
 | `tests/legal-text-1901.test.ts` (見出し) | `PRIVACY_SECTION_HEADINGS`・`家族グループと組織での見え方` | 見出しの逐語を直書きした検査があれば赤 | 直書きがあれば新しい見出しに | C |
 | `packages/shared/src/legal-versions.test.ts` | `LEGAL_DOCUMENTS`・`effectiveDate` | 版の形と施行日の形 | 選択肢 (b) で版を上げるときも形は同じ (版を上げるのは `packages/shared/src/legal-versions.ts`。§14 の段 C) | C |
+| C-10 (本書が足す番兵。`tests/recipe-author-display-names-migration-contract.test.ts`) | `LEGAL_DOCUMENTS`・`docs/legal/archive/`・`ニックネームが作者名として表示され` | 段 A のあと、版を上げる PR (将来) と控えを足す PR に効く: いまの版・控えの版が作者名の表示の文を持たないのに関数の一覧に無いと赤、持つのに一覧にあると赤 | 文を持つ版を足すだけなら変更なし (緑)。文を消す・言い換える版を作るときは、関数の一覧を CREATE OR REPLACE で直す migration か、C-10 の `AUTHOR_NAME_PRIVACY_FRAGMENT` の追随を同じ PR で行う | A (以後の版の PR) |
+| `tests/integration/security/legal-documents-acceptance.test.ts`・`tests/legal-consent-gate.test.ts` ほか (`privacy_version_accepted` を読む既存のテスト) | `privacy_version_accepted` | 本書は列を読むだけで、書く関数・ゲート・特権列ガードを変えない | 変更なし | — |
 | `tests/account-export-tables.test.ts` (個人データの書き出しの棚卸し) | `user_profiles`・`omit`・`SENSITIVE_NAME`・`add column` | 本書の migration の `ADD COLUMN` を `tests/helpers/schema-snapshot.ts` が読み、`user_profiles` の出力する列に `show_recipe_author_name` が入る。列名は `SENSITIVE_NAME` に当たらず、`auth.users` を指さないので、秘密の列・他人を指す列の検査は緑のまま。表の分類 (新しい表) は無い | 変更なし。`src/lib/account-export-tables.ts` の `user_profiles` の `omit` にも足さない (本人の設定は本人のデータとして書き出す。§6.5) | A |
 | `tests/docs-table-column-count.test.ts` | `docs/`・`\|` | 本書の表の行が見出しと違う数の区切りを持つと赤 | 本書の表はセルの中の `\|` をコードの span に入れるか、`/` で書く | 設計 |
 | `tests/design-doc-version-header-matches-history.test.ts` | `\| 版 \| v` | 表紙の版と改定履歴の最後の版が食い違うと赤 | 本書の表紙は版の表 (§22 と同じ行) | 設計 |
@@ -1731,7 +1890,8 @@ sequenceDiagram
 | `docs/design/cross/CLAUDE.md` | ファイル一覧の表 | `21-recipe-author-display-name.md` の行を足す (「公開レシピの作者の表示名 (SECURITY DEFINER の関数で公開の作者だけ・本人の選択・凍結と年齢の扱い)」/ #1917 の続き)。「10・11 は欠番」の文はそのまま | 設計のマージと同日 |
 | `docs/design/cross/02-rls-patterns.md` | §3.3 の末尾 | 「他人の `user_profiles` の表示名を公開レシピの作者として出す経路は、SECURITY DEFINER の関数 `recipe_author_display_names` (cross/21。RLS のポリシーは足していない)」の 1 行 | 段 A のマージと同日 |
 | 同 | §10 の表の Security の行 (行 585) | anon が EXECUTE できる DEFINER の関数の許可一覧が 3 本になること (関数名を添える) | 同上 |
-| `docs/design/cross/20-terms-privacy-text.md` | §7 第9条・§10.3 主張の表・§9.1 (版)・§2.2 (F の行を 1 つ足す: 公開レシピの作者名の表示の経路) | §7.12 の文と行。版はオーナーの選択 (§21 Q-1) に従う。cross/20 は A 型の正規の経路か docs PR で改定する | 段 C |
+| `docs/design/cross/20-terms-privacy-text.md` | §7 第8条 3 項と第9条・§10.3 主張の表 (privacy-8#13・privacy-9#12〜#17)・§9.1 (版)・§2.2 (F の行を 1 つ足す: 公開レシピの作者名の表示の経路と、作者名の表示を書いた版への同意の条件 (cross/21 §6.4)) | §7.12 の文と行。版はオーナーの選択 (§21 Q-1) に従う。cross/20 は A 型の正規の経路か docs PR で改定する | 段 C |
+| `docs/design/cross/20-terms-privacy-text.md` | §9.3 (版を上げる規律) | 「作者名の表示の文 (第9条) を消す・言い換える版を作るときは、`recipe_author_display_names` の `c_privacy_versions_without_author_name` を直す (cross/21 §7.1・C-10)」の 1 行 | 段 A のマージと同日 |
 | `docs/design/cross/14-parental-consent.md` | §8 (別 Issue・注記) | 「18 歳未満の本人のアカウントの公開レシピの作者名は公開の場に出さない (cross/21 §6.1 (4))」の 1 行 | 段 A のマージと同日 |
 | `CLAUDE.md` (root) | 行 83 (他ユーザーの行を読むときは認可のあとに `getSupabaseAdmin()`) | 例外の 1 文: 「公開レシピの作者の表示名だけは、認可の無い一覧・詳細でも SECURITY DEFINER の関数 `recipe_author_display_names` で読む (cross/21)」 | 段 B のマージと同日 |
 | Issue #1139 のコメント (予告の文) | 「Apple についての記載を加えるもの」 | 選択肢 (a) のとき、公開レシピの作者名の表示の記載も加えることを文に足す (投稿の前) | 段 C (オーナーの選択のあと) |
@@ -1755,6 +1915,8 @@ sequenceDiagram
 | プロフィールの編集画面 | チェック 1 つを足す (§7.7) |
 | `prepare_account_deletion`・外部キーの `ON DELETE` | 保持 (退会の扱いは既存のまま) |
 | `age_years_jst`・`normalize_profile_name` | 本文から呼ぶ。作り直さない |
+| `accept_legal_documents`・`POST /api/legal/accept`・同意ゲート・`user_profiles.privacy_version_accepted` | 保持 (変えない)。関数が `privacy_version_accepted` を読む (K-同意)。同意すると次の読み込みから名前が出る (§9.3) |
+| `LEGAL_DOCUMENTS` (`packages/shared/src/legal-versions.ts`)・`docs/legal/archive/` | 段 A では変えない (段 C の選択肢 (b) のときだけ版を上げる)。C-10 が関数の一覧と突き合わせる |
 
 ---
 
@@ -1764,14 +1926,14 @@ sequenceDiagram
 
 1. `schema_migrations` に本 migration の番号がある。
 2. `information_schema.columns` で `user_profiles.show_recipe_author_name` が `boolean`・`NOT NULL`・既定 `true`。`SELECT count(*) FROM user_profiles WHERE show_recipe_author_name IS DISTINCT FROM true` が 0。
-3. `pg_proc` で `recipe_author_display_names` が `prosecdef = true`・`provolatile = 's'`・`proconfig` に `search_path=`。
+3. `pg_proc` で `recipe_author_display_names` が `prosecdef = true`・`provolatile = 's'`・`proconfig` に `search_path=`。`pg_get_functiondef` の本文の `c_privacy_versions_without_author_name` がオーナーの選択どおり ((a) なら `v2025.1`・`v2026.1`・`v2026.2`・`v2026.3`)。`SELECT privacy_version_accepted, count(*) FROM user_profiles GROUP BY 1` の値が、NULL・一覧にある版・いまの版 (`/privacy` に出る版) のどれか (それ以外の値は `accept_legal_documents` を直接呼んで記録した値。§20)。
 4. `has_function_privilege` が anon・authenticated で true、service_role で false。PUBLIC の EXECUTE が無い (I-11 と同じ SQL)。
 5. `pg_policies` の `user_profiles` の SELECT が `Users can view own profile` の 1 本のまま。
 6. `pg_indexes` に `idx_recipe_comments_user_id`。
 
 段 B の公開のあと:
 
-7. 未ログインで `GET /api/recipes` (公開レシピがあれば) の `authorName` が「匿名」以外になりうること。本番は `recipes` が 0 行 (§3.4) なので、確かめるには本番に検証用のアカウント 2 つ (18 歳以上・生年月日あり) と公開レシピ 1 件を作る必要がある。本番へ書き込む検証なので、実行の前にオーケストレーターが承認の要否を確かめる (本書は承認の範囲を定めない)。書き込みを伴わない確認は、上の 1〜6 (読み取り) と、ローカルの結合テスト (§7.10) の緑。
+7. 未ログインで `GET /api/recipes` (公開レシピがあれば) の `authorName` が「匿名」以外になりうること。本番は `recipes` が 0 行 (§3.4) なので、確かめるには本番に検証用のアカウント 2 つ (18 歳以上・生年月日あり・いまの版に同意済み) と公開レシピ 1 件を作る必要がある。本番へ書き込む検証なので、実行の前にオーケストレーターが承認の要否を確かめる (本書は承認の範囲を定めない)。書き込みを伴わない確認は、上の 1〜6 (読み取り) と、ローカルの結合テスト (§7.10) の緑。
 8. (7 で検証用のアカウントを作った場合だけ) 同じ公開レシピを、一方のアカウントで `PUT /api/profile { showRecipeAuthorName: false }` にしてから他方で読み、「匿名」になること。用済みのあとはアカウントとレシピを消す。
 9. デプロイ後整合ゲート (2 枚) で、本書 §9.1 の行のうち本番で確かめられるもの (未ログイン・他人・本人・設定オフ) を実測する。本番に公開レシピが無い間は、読み取りで確かめられるもの (1〜6 と、`/rest/v1/rpc/recipe_author_display_names` を anon で呼び、`user_profiles` の id を渡しても (公開の作者がいないので) 0 行が返ること) に留め、書き込みを伴う実測は 7 と同じく、実行の前にオーケストレーターが承認の要否を確かめる。
 
@@ -1781,9 +1943,11 @@ sequenceDiagram
 
 - 一覧 1 ページ (最大 100 行) で関数の呼び出しは 1 回。id ごとに `user_profiles` の主キー 1 回・`recipes` の `idx_recipes_user_id` の EXISTS 1 回・`recipe_comments` の `idx_recipe_comments_user_id` + `recipes` の主キーの EXISTS 1 回。
 - 関数は `STABLE` なので 1 文の中で `auth.uid()`・`now()` は 1 回の値。
-- 関数が返すのは id と表示名だけ。判定に使う列 (生年月日・凍結・設定) の値は返さない。「返らなかった」ことから分かるのは「公開の作者でないか、名前を出さない状態」のどれかで、どれかは分からない。
+- 関数が返すのは id と表示名だけ。判定に使う列 (生年月日・凍結・設定・同意の版) の値は返さない。「返らなかった」ことから分かるのは「公開の作者でないか、名前を出さない状態」のどれかで、どれかは分からない。
 - `user_id` が一覧の返り値に含まれるので、関数を uuid → 名前の引き直しに使えるかが論点になる。(b) の EXISTS で「公開の場にすでに名前が出る人」に閉じているので、関数から新しく分かることは無い。
 - 直接 `/rest/v1/rpc` から呼ぶ anon の費用は、配列の長さに線形。PostgREST の本文の大きさの上限と、既存の `in.(…)` と同じ露出 (§6.2)。
+- 同意の版 (K-同意) を本人が偽れる経路: `accept_legal_documents` は authenticated が PostgREST から直接呼べ、版の形だけを確かめる (F-31。既存の挙動で、本書は変えない)。本人が一覧に無い任意の文字列を記録すると K-同意 が真になり、一覧にある版を記録すると偽になる。どちらも本人の操作で、変わるのは本人の名前の出方だけ (他人の名前・他人の判定には効かない)。同意ゲートは、いまの版と違う値を記録した人を次の要求から止める。
+- 一覧 `c_privacy_versions_without_author_name` は配列の定数で、比較は id ごとに 1 回 (要素は 4〜5 個)。
 
 ---
 
@@ -1791,11 +1955,12 @@ sequenceDiagram
 
 | # | 事項 | 本書の置き方 | 誰が決めるか |
 |---|---|---|---|
-| Q-1 | プライバシーポリシーの文 (§7.12) の版の置き方: (a) v2026.4 (PR #1997・施行日 2026-11-01 の仮置き) に入れ、Issue #1139 の予告の文に作者名の表示を足してから投稿する / (b) 別の版 v2026.5 / (c) 版を上げずに文だけ足す | (a) を既定にして段 C を書いた。どの選択肢でも、段 A の本番の適用と段 A・段 B のマージは文面が効いたあと (§15 の本番の順序)。(c) は勧めない (§6.4) | オーナー |
+| Q-1 | プライバシーポリシーの文 (§7.12。第8条 3 項に 1 文・第9条に 6 文。主張の表 +7) の版の置き方: (a) v2026.4 (PR #1997・施行日 2026-11-01 の仮置き) に入れ、Issue #1139 の予告の文に作者名の表示を足してから投稿する / (b) 別の版 v2026.5 | (a) を既定にして段 C と関数の一覧 (`v2025.1`〜`v2026.3`) を書いた。(b) なら関数の一覧に `v2026.4` を足す。どちらでも、段 A の本番の適用と段 A・段 B のマージは文面が効いたあと (§15 の本番の順序)。版を上げずに文だけ足す案 (c) は、cross/20 §9.3 の規律に反し、K-同意 で同意した人を見分けられず第8条 1 項・4 項と両立しないので選べない (§6.4) | オーナー |
 | Q-2 | 作者名を描く画面が今は無い (F-13)。API の `authorName` を一覧・詳細のどこに描くかは別の発注 | 本書は API の値と設定の切り替えまで。画面は別 Issue の候補 | オーナー |
 | Q-3 | 18 歳未満の本人の作者名を出さない (§6.1 (4)) ことは本書の既定。保護者の同意書に「公開レシピの作者名」を足して出す案は取らない | 出さないまま。変えるなら cross/14 の同意書の版上げを伴う別の設計 | オーナー |
 | Q-4 | 凍結中の作者名を出さない (§6.1 (3)) ことは本書の既定 | 出さないまま | オーナー |
 | Q-5 | 本人には設定オフでも自分の名前が出る (§6.1 (5))。画面で「他の人には匿名」と分かる印 (`isOwner` を使う) は作者名を描く画面ができるときに | 注記の文言 (§7.4) で説明する | — (Q-2 と一緒) |
+| Q-6 | 作者名の表示を書いた版にまだ同意していない人の作者名を「匿名」にする (K-同意。§6.1 (9)・§6.4) ことは本書の既定。施行日のあと、サインインした人から順に同意して名前が出るので、施行日の直後は「匿名」が多い (本番の同意の記録は §3.4) | 出さないまま (第8条 1 項・4 項と両立させるため)。作者名の表示が個人情報保護法の第三者提供に当たるかの解釈は本書では決めず、当たるとしても 1 項・4 項を守れる形にした。解釈の確認 (専門家の確認を含む) を行うかはオーナー | オーナー |
 
 ---
 
@@ -1808,3 +1973,4 @@ sequenceDiagram
 | v1.2 | 2026-10-24 | 網羅性 (周 2) の反映 (§0.3・§3・§4.3・§7.10・§9.1・§9.3・§12・§14・§15・§16・§18。構造 A は変えない) |
 | v1.3 | 2026-10-24 | 審査 R2 の反映: レシピの公開の状態を変える出来事 (非公開に戻す・公開に戻す・運営が隠す・戻す) がコメントの書き手の K-公開 も変えること (§0.3 S-12・S-13・§4.3・§9.1・§9.3・§7.10 I-10・§18)・§19 の 7〜9 を、本番への書き込みの前に承認の要否を確かめる形に (§19。構造 A は変えない) |
 | v1.4 | 2026-10-24 | 網羅性 (周 3) の反映 (§6.5・§9.1・§9.3・§14・§16・§18。構造 A は変えない) |
+| v1.5 | 2026-10-24 | 審査 R3 の反映: プライバシーポリシー第8条 1 項・3 項・4 項の判定 (§6.4)・関数の (b) に同意の条件 K-同意 (`privacy_version_accepted` が作者名の表示を書く前の版の一覧に無い) を足す (§0.2 R-19・§0.3 S-18・§3 F-30〜F-32・§4・§5.2・§6.1 (9)・§7.1・§7.9 C-10・§7.10 I-18・§9・§11〜§21)・第8条 3 項に 1 文 (§7.12。主張の表 +7)・選択肢 (c) を選べないことに (構造 A は変えない) |
