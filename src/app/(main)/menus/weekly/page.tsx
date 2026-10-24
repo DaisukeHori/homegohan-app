@@ -79,6 +79,13 @@ import { PhotoEditModal } from "./_components/modals/PhotoEditModal";
 import { NutritionDetailModal } from "./_components/modals/NutritionDetailModal";
 import { ImproveMealModal } from "./_components/modals/ImproveMealModal";
 import { dishSnapshotFromMenuDish } from '@/modules/dish-favorites/core';
+import {
+  addRecipeIngredientsToShoppingList,
+  RECIPE_SHOPPING_ADDED_TITLE,
+  RECIPE_SHOPPING_NO_INGREDIENTS_MESSAGE,
+  RECIPE_SHOPPING_NO_INGREDIENTS_TITLE,
+  recipeShoppingAddedMessage,
+} from './_state/recipeShoppingList';
 
 // #182/#322: dynamic import で初期バンドルを削減 (LCP 改善)
 const V4GenerateModal = dynamic(
@@ -3545,69 +3552,25 @@ export default function WeeklyMenuPage() {
     }
   };
 
-  // Add recipe ingredients to shopping list
+  // 料理の材料を買い物リストに追加する (#2023)。材料の集め方 (dishes の各料理 + 直下の ingredients・重複の除去) と
+  // 名前と分量への分け方 (1 行の文字列と構造の形の両方。ingredientInputsOf) は _state/recipeShoppingList.ts
   const addRecipeToShoppingList = async () => {
     if (!selectedRecipeData || !currentPlan) return;
-    try {
-      // 材料を収集：dishes内の各料理の材料 + 旧形式のingredientsを統合
-      let allIngredients: string[] = [];
-      
-      // dishes配列から材料を収集
-      if (selectedRecipeData.dishes && Array.isArray(selectedRecipeData.dishes)) {
-        selectedRecipeData.dishes.forEach((dish: any) => {
-          if (dish.ingredients && Array.isArray(dish.ingredients)) {
-            allIngredients = [...allIngredients, ...dish.ingredients];
-          }
-        });
-      }
-      
-      // 旧形式の材料も追加（フォールバック）
-      if (selectedRecipeData.ingredients && Array.isArray(selectedRecipeData.ingredients)) {
-        allIngredients = [...allIngredients, ...selectedRecipeData.ingredients];
-      }
-      
-      // 重複を除去
-      allIngredients = [...new Set(allIngredients)];
-      
-      if (allIngredients.length === 0) {
-        setSuccessMessage({ title: '材料なし', message: '材料情報がありません。「AIで変更」で再生成してください。' });
-        return;
-      }
-      
-      // 文字列形式 "鶏むね肉 200g" を {name, amount} 形式にパース
-      const parsedIngredients = allIngredients.map((ing: string) => {
-        // 最後のスペースで分割して分量を抽出（例: "鶏むね肉 200g" → name: "鶏むね肉", amount: "200g"）
-        const match = ing.match(/^(.+?)\s+(\d+.*|少々|適量|適宜)$/);
-        if (match) {
-          return { name: match[1], amount: match[2] };
-        }
-        return { name: ing, amount: null };
-      });
-      
-      const res = await fetch('/api/shopping-list/add-recipe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          shoppingListId: activeShoppingList?.id,
-          ingredients: parsedIngredients 
-        })
-      });
-      if (res.ok) {
-        const { items } = await res.json();
-        setShoppingList([...useShoppingStore.getState().shoppingList, ...items]);
-        setActiveModal(null);
-        setSuccessMessage({ 
-          title: '買い物リストに追加しました ✓', 
-          message: `${parsedIngredients.length}件の材料を追加しました` 
-        });
-      } else {
-        const err = await res.json();
-        alert(`エラー: ${err.error || '追加に失敗しました'}`);
-      }
-    } catch (e) { 
-      console.error('Add to shopping list error:', e);
-      alert("追加に失敗しました"); 
+    const result = await addRecipeIngredientsToShoppingList({
+      recipeData: selectedRecipeData,
+      shoppingListId: activeShoppingList?.id,
+    });
+    if (result.kind === 'no-ingredients') {
+      setSuccessMessage({ title: RECIPE_SHOPPING_NO_INGREDIENTS_TITLE, message: RECIPE_SHOPPING_NO_INGREDIENTS_MESSAGE });
+      return;
     }
+    if (result.kind === 'failed') {
+      alert(result.alertMessage);
+      return;
+    }
+    setShoppingList([...useShoppingStore.getState().shoppingList, ...result.items]);
+    setActiveModal(null);
+    setSuccessMessage({ title: RECIPE_SHOPPING_ADDED_TITLE, message: recipeShoppingAddedMessage(result.count) });
   };
 
   // Generate weekly menu with AI
