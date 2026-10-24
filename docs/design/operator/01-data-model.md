@@ -221,7 +221,7 @@ CREATE TABLE plan_price_history (
 
 CREATE INDEX idx_plan_price_history_plan ON plan_price_history(plan_id, created_at DESC);
 
-ALTER TABLE plan_price_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE plan_price_history ENABLE ROW LEVEL SECURITY;  -- 書き込みは service_role の DB の関数 apply_plan_price_change だけ (価格の変更の予約の表 plan_price_change_reservations (plan_id PK・token・reserved_at。RLS 有効・利用者の権限なし) と同じ migration 20261024110000。#1917 の続き)
 
 CREATE POLICY "plan_price_history_select" ON plan_price_history
   FOR SELECT USING (
