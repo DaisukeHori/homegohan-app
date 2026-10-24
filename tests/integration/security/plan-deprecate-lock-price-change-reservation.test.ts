@@ -1,6 +1,6 @@
 /**
  * #1917 の続き: 運営のプランの操作で、ロックの外で読んだ値に頼っていた 2 か所の直し (実 DB)
- * (supabase/migrations/20261024110000_plan_deprecate_lock_and_price_change_reservation.sql)
+ * (supabase/migrations/20261024130000_plan_deprecate_lock_and_price_change_reservation.sql)
  *
  * (1) 廃止の安全弁のトリガー guard_plan_deprecate_subscribers
  *   DL-1 契約の作成 (personal_subscriptions の INSERT) をコミット前のまま開いておくと、廃止の UPDATE はその後ろで待ち、

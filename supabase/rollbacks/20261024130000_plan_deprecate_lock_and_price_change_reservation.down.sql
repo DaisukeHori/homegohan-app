@@ -1,4 +1,4 @@
--- rollback: 20261024110000_plan_deprecate_lock_and_price_change_reservation.sql
+-- rollback: 20261024130000_plan_deprecate_lock_and_price_change_reservation.sql
 -- 廃止の安全弁のトリガーと、契約者が増える書き込みのロックのトリガー 3 本 (trg_subscriber_plan_key_share)、価格の変更の予約 (表と関数 3 本) を外す。本番に戻す必要があるときは、この内容を新しい migration として PR 経由で適用する。
 -- ⚠️ 先にアプリを戻すこと: POST /api/super-admin/plans/{id}/price-change は begin_plan_price_change / apply_plan_price_change /
 --    release_plan_price_change を呼ぶ (無ければ価格の変更が 500 になる)。PATCH /api/super-admin/plans/{id} はトリガーが無くても動く

@@ -1,5 +1,5 @@
--- migration: 20261024110000_plan_deprecate_lock_and_price_change_reservation.sql
--- 戻し方: supabase/rollbacks/20261024110000_plan_deprecate_lock_and_price_change_reservation.down.sql
+-- migration: 20261024130000_plan_deprecate_lock_and_price_change_reservation.sql
+-- 戻し方: supabase/rollbacks/20261024130000_plan_deprecate_lock_and_price_change_reservation.down.sql
 -- #1917 の続き: 運営のプランの操作で、ロックの外で読んだ値に頼っていた 2 か所を直す (追加だけ。既存のデータ・権限・ポリシーは変えない)。
 --
 -- (1) プランの廃止の安全弁 (#1127・#1912) を、書く文と同じトランザクションの中でも確かめる

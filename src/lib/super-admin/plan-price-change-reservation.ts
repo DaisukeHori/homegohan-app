@@ -8,7 +8,7 @@
  * 無効化したあとで 409 になり、DB が無効な Price を指したまま残る。
  *
  * そこで、プランごとの予約の行 (plan_price_change_reservations) で 1 本ずつにする
- * (supabase/migrations/20261024110000_plan_deprecate_lock_and_price_change_reservation.sql):
+ * (supabase/migrations/20261024130000_plan_deprecate_lock_and_price_change_reservation.sql):
  *   1. beginPlanPriceChange   : プランの行をロックして予約を取り、ロックの下で読んだプランの値を返す。予約中なら in_progress
  *   2. (route が Stripe を呼ぶ。予約を取った 1 本だけが呼ぶ)
  *   3. applyPlanPriceChange   : 予約が自分のもののままなら、ロックの下で読んだ値を old_* にして履歴を INSERT し、価格を UPDATE し、

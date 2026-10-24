@@ -1,5 +1,5 @@
 /**
- * #1917 の続き: supabase/migrations/20261024110000_plan_deprecate_lock_and_price_change_reservation.sql を、ファイルの読み取りで確かめる
+ * #1917 の続き: supabase/migrations/20261024130000_plan_deprecate_lock_and_price_change_reservation.sql を、ファイルの読み取りで確かめる
  * (DB には接続しない。実際の挙動 (待ち合い・結果) は tests/integration/security/plan-deprecate-lock-price-change-reservation.test.ts)。
  *
  * (1) 廃止の安全弁のトリガー guard_plan_deprecate_subscribers
@@ -32,7 +32,7 @@ import { ACTIVE_PERSONAL_SUBSCRIPTION_STATUSES, PLAN_HAS_SUBSCRIBERS_DB_ERROR } 
 import { PLAN_PRICE_CHANGE_RPC } from '@/lib/super-admin/plan-price-change-reservation';
 
 const ROOT = path.resolve(__dirname, '..');
-const MIGRATION = '20261024110000_plan_deprecate_lock_and_price_change_reservation';
+const MIGRATION = '20261024130000_plan_deprecate_lock_and_price_change_reservation';
 const MIGRATION_PATH = path.join(ROOT, 'supabase', 'migrations', `${MIGRATION}.sql`);
 const ROLLBACK_PATH = path.join(ROOT, 'supabase', 'rollbacks', `${MIGRATION}.down.sql`);
 const TYPE_FILES = ['src/types/database.types.ts', 'packages/shared/src/database.types.ts'] as const;
