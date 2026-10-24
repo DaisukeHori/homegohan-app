@@ -4,6 +4,7 @@ import { internalError } from '@/lib/api/errors';
 import { recipeAuthorName } from '@/lib/recipes/author-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { loadRecipeViewerLookups } from '@/lib/recipes/viewer-lookups';
 
 // コメント一覧取得 (user_id は公開しない)
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
@@ -16,25 +17,31 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
+  // 書いた人の名前 (user_profiles) は埋め込まずに別のクエリで引く (recipe_comments.user_id の外部キーは auth.users 宛で、
+  // `user_profiles(nickname)` の埋め込みは PostgREST が解決できず、この API はいつも 500 になっていた。#1917。src/lib/recipes/viewer-lookups.ts)
   const { data, error } = await supabase
     .from('recipe_comments')
-    .select(`
-      id,
-      content,
-      rating,
-      created_at,
-      user_profiles(nickname)
-    `)
+    .select('id, content, rating, created_at, user_id')
     .eq('recipe_id', params.id)
     .order('created_at', { ascending: false });
 
   if (error) return internalError('GET /api/recipes/[id]/comments', error, { userId: user.id });
 
-  const comments = (data || []).map((c: any) => ({
+  const rows = data || [];
+  const lookups = await loadRecipeViewerLookups(supabase, user.id, {
+    authorIds: rows.map((c: { user_id: string | null }) => c.user_id),
+    recipeIds: [],
+  });
+  if (!lookups.ok) {
+    return internalError('GET /api/recipes/[id]/comments', lookups.error, { userId: user.id, table: lookups.table });
+  }
+
+  // 書いた人の user_id は返さない (#168。名前だけ)
+  const comments = rows.map((c: any) => ({
     id: c.id,
     content: c.content,
     rating: c.rating,
-    authorName: recipeAuthorName(c.user_profiles?.nickname),
+    authorName: recipeAuthorName(lookups.nicknames.get(c.user_id)),
     createdAt: c.created_at,
   }));
 
@@ -73,6 +80,13 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
       rating = r;
     }
 
+    // 返す名前 (自分の user_profiles.nickname) は、埋め込まずに (PostgREST が解決できず、この API はいつも 500 になっていた。#1917)、
+    // コメントを保存する前に引く。引けなかったときは何も保存せずに 500 にする (保存したあとで失敗すると、保存できたのに失敗に見える)
+    const lookups = await loadRecipeViewerLookups(supabase, user.id, { authorIds: [user.id], recipeIds: [] });
+    if (!lookups.ok) {
+      return internalError('POST /api/recipes/[id]/comments', lookups.error, { userId: user.id, table: lookups.table });
+    }
+
     const { data, error } = await supabase
       .from('recipe_comments')
       .insert({
@@ -81,26 +95,18 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
         content,
         rating,
       })
-      .select(`
-        id,
-        content,
-        rating,
-        created_at,
-        user_profiles(nickname)
-      `)
+      .select('id, content, rating, created_at')
       .single();
 
     if (error) throw error;
 
-    const userProfileRaw = data.user_profiles as { nickname: string | null } | { nickname: string | null }[] | null;
-    const userProfile = Array.isArray(userProfileRaw) ? userProfileRaw[0] ?? null : userProfileRaw;
     return NextResponse.json({
       success: true,
       comment: {
         id: data.id,
         content: data.content,
         rating: data.rating,
-        authorName: recipeAuthorName(userProfile?.nickname),
+        authorName: recipeAuthorName(lookups.nicknames.get(user.id)),
         createdAt: data.created_at,
       }
     });

@@ -226,13 +226,21 @@ describe('#168 /api/recipes/[id]/comments GET', () => {
             content: 'おいしい',
             rating: 5,
             created_at: '2024-01-01',
-            user_profiles: { nickname: 'Alice' },
+            user_id: 'uid-alice',
           },
         ],
         error: null,
       }),
     };
-    mockFrom.mockReturnValue({ select: vi.fn().mockReturnValue(selectChain) });
+    // 書いた人の名前は user_profiles を別のクエリで引く (#1917。埋め込みは PostgREST が解決できない)
+    const profileChain = {
+      in: vi.fn().mockResolvedValue({ data: [{ id: 'uid-alice', nickname: 'Alice' }], error: null }),
+    };
+    mockFrom.mockImplementation((table: string) =>
+      table === 'user_profiles'
+        ? { select: vi.fn().mockReturnValue(profileChain) }
+        : { select: vi.fn().mockReturnValue(selectChain) },
+    );
 
     const res = await commentsGET(new Request('http://localhost/api/recipes/r1/comments'), {
       params: { id: 'r1' },
@@ -240,8 +248,10 @@ describe('#168 /api/recipes/[id]/comments GET', () => {
     expect(res.status).toBe(200);
     const { comments } = await res.json();
     expect(comments).toHaveLength(1);
-    // user_id がレスポンスに含まれないこと
+    // user_id がレスポンスに含まれないこと (名前を引くために読んだ user_id も返さない)
     expect(comments[0]).not.toHaveProperty('userId');
+    expect(comments[0]).not.toHaveProperty('user_id');
+    expect(JSON.stringify(comments)).not.toContain('uid-alice');
     expect(comments[0]).toHaveProperty('authorName', 'Alice');
   });
 });
@@ -276,9 +286,16 @@ describe('#169 /api/recipes/[id] GET view_count', () => {
     like_count: 0,
     created_at: '2024-01-01',
     updated_at: '2024-01-01',
-    user_profiles: { nickname: 'Owner', id: 'uid-owner' },
-    recipe_likes: [],
     recipe_comments: [],
+  };
+
+  /** 作者の名前 (user_profiles) と自分のいいね (recipe_likes) を引くクエリ (#1917。埋め込まずに別のクエリで引く)。どちらも 0 行 */
+  const emptyLookup = () => {
+    const chain = {
+      eq: vi.fn().mockReturnThis(),
+      in: vi.fn().mockResolvedValue({ data: [], error: null }),
+    };
+    return { select: vi.fn().mockReturnValue(chain) };
   };
 
   beforeEach(() => vi.resetAllMocks());
@@ -316,9 +333,9 @@ describe('#169 /api/recipes/[id] GET view_count', () => {
       // #1445: 詳細は .maybeSingle() で読む (0 行を 404 にするため)
       maybeSingle: vi.fn().mockResolvedValue({ data: recipeRow, error: null }),
     };
-    mockFrom.mockReturnValue({
-      select: vi.fn().mockReturnValue(selectChainDetail),
-    });
+    mockFrom.mockImplementation((table: string) =>
+      table === 'recipes' ? { select: vi.fn().mockReturnValue(selectChainDetail) } : emptyLookup(),
+    );
 
     const res = await recipeGET(new Request('http://localhost/api/recipes/r1'), {
       params: { id: 'r1' },

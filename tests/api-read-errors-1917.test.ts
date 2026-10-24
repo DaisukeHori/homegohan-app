@@ -9,13 +9,19 @@
  * 直したあとの不変条件 (route ごとに確かめる):
  *  - 読み込みの DB の失敗は 500 (404 にしない)。DB の生の文面は本文に出さない
  *  - 行が無いときだけ 404 (レシピの更新・削除は以前から 403 のまま)
- *  - uuid の列を引く id が UUID の形でなければ、DB に渡さずに 404 (渡すと 22P02 の失敗になり、500 に入ってしまうため)
+ *  - uuid の列を引く id が UUID の形でなければ、DB に渡さずに 404 (渡すと 22P02 の失敗になり、500 に入ってしまうため)。
+ *    日付の列を引く日付が実在しないときも同じ
+ *  - 読んでから書くまでに消された (更新した行が無い) ときも 404。2 本目の読み込み (探し直し) の DB の失敗も 500
  *
  * PostgREST の呼び出しは、ここで作る小さな偽物が受ける。どのメソッドを繋いでも同じものを返し、maybeSingle / single / await で
  * テーブルごとの結果を返す。failTable に決めたテーブルの読み込みは DB の失敗、missingTable に決めたテーブルは行が無い。
+ * vanishAfter / failAfter は、決めた回数だけ読んだあとから行が無くなる / DB の失敗になる (1 本目の読み込みのあとの分岐を通す)。
+ * manyRows は、一覧で読んだときの行数 (同じ区分に 2 件以上、を作る)。
  */
 import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { recordAdminAudit } from '@/lib/admin/audit';
+import { AI_MENU_MEAL_NOT_FOUND_MESSAGE } from '@/lib/ai/ai-api-messages';
 import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
 
 // route を丸ごと読み込むので、負荷の高い機械で既定の時間切れを超えうる (#1605 の同じ型)。テストとフックを定義する前に置く
@@ -31,6 +37,8 @@ const NOT_UUID = 'not-a-uuid';
 const RAW_DB_MESSAGE = 'connection reset by peer';
 const DB_FAILURE = { code: '08006', message: RAW_DB_MESSAGE, details: null, hint: null };
 const TODAY = '2026-10-24';
+/** 形は YYYY-MM-DD だが実在しない日付 (date 型の列に渡すと 22P02 で失敗する) */
+const NOT_A_DATE = '2026-02-30';
 
 /** 外部キー違反 (担当者が auth.users に無い) の DB の生のエラー文 (本文に出てはいけない) */
 const RAW_FK_MESSAGE = 'insert or update on table "support_tickets" violates foreign key constraint "support_tickets_assignee_id_fkey"';
@@ -45,6 +53,10 @@ const state = {
   missingTable: null as string | null,
   /** このテーブルは、ここに決めた回数だけ読んだあとから行が無くなる (読んでから書くまでに消された、を作る) */
   vanishAfter: null as { table: string; reads: number } | null,
+  /** このテーブルは、ここに決めた回数だけ読んだあとから DB の失敗になる (1 本目は読めて、2 本目の読み込みが失敗する、を作る) */
+  failAfter: null as { table: string; reads: number } | null,
+  /** このテーブルを一覧で読んだときの行数 (既定は 1 行) */
+  manyRows: null as { table: string; rows: number } | null,
   /** from() に渡されたテーブル (呼んだ順) */
   fromTables: [] as string[],
 };
@@ -83,10 +95,12 @@ function rowOf(table: string): Record<string, unknown> {
 function resultOf(table: string, many: boolean) {
   const readsBefore = state.fromTables.filter((t) => t === table).length;
   state.fromTables.push(table);
-  if (state.failTable === table) return { data: null, error: state.failError ?? DB_FAILURE, count: null, status: 503 };
+  const failedAfter = state.failAfter?.table === table && readsBefore >= state.failAfter.reads;
+  if (state.failTable === table || failedAfter) return { data: null, error: state.failError ?? DB_FAILURE, count: null, status: 503 };
   const vanished = state.vanishAfter?.table === table && readsBefore >= state.vanishAfter.reads;
   if (state.missingTable === table || vanished) return { data: many ? [] : null, error: null, count: 0, status: 200 };
-  return { data: many ? [rowOf(table)] : rowOf(table), error: null, count: 1, status: 200 };
+  const rows = state.manyRows?.table === table ? state.manyRows.rows : 1;
+  return { data: many ? Array.from({ length: rows }, () => rowOf(table)) : rowOf(table), error: null, count: rows, status: 200 };
 }
 
 function makeQuery(table: string): unknown {
@@ -165,6 +179,8 @@ vi.mock('@/lib/db-logger', () => {
 
 vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://example.supabase.co');
 vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'service-role-key-for-test');
+// AI 相談のメッセージの送信は、セッションを読む前に AI のクライアントを作る (キーが無いと MissingEnvError の 500)。AI へは送らない
+vi.stubEnv('XAI_API_KEY', 'xai-key-for-test');
 
 function json(url: string, method: string, body: unknown): NextRequest {
   return new NextRequest(url, {
@@ -184,8 +200,12 @@ interface ReadCase {
   call: (id: string) => Promise<Response>;
   /** 行が無いときのステータス (既定は 404) */
   missingStatus?: number;
-  /** UUID の形でない id を DB に渡さずに断るか (id を取らない route・文字列の id の route は false) */
+  /** 形の違う id を DB に渡さずに断るか (id を取らない route・文字列の id の route は false) */
   checksUuid?: boolean;
+  /** 読める形の id (既定は ROW_ID) */
+  validId?: string;
+  /** 形の違う id (既定は UUID の形でない NOT_UUID) */
+  invalidId?: string;
 }
 
 const BASE = 'http://localhost';
@@ -248,6 +268,13 @@ const CASES: ReadCase[] = [
     name: 'GET /api/super-admin/feature-packages/[id]',
     table: 'feature_packages',
     call: async (id) => (await import('@/app/api/super-admin/feature-packages/[id]/route')).GET(new NextRequest(`${BASE}/api/super-admin/feature-packages/${id}`), ctx({ id })),
+  },
+  {
+    // 本文の検査のあとで、UUID の形でない id を DB に渡さずに 404 にする (以前は更新の 22P02 で 500)
+    name: 'PATCH /api/super-admin/feature-packages/[id]',
+    table: 'feature_packages',
+    call: async (id) =>
+      (await import('@/app/api/super-admin/feature-packages/[id]/route')).PATCH(json(`${BASE}/api/super-admin/feature-packages/${id}`, 'PATCH', { display_name: '新しい名前' }), ctx({ id })),
   },
   {
     name: 'DELETE /api/super-admin/feature-packages/[id]',
@@ -365,6 +392,11 @@ const CASES: ReadCase[] = [
     call: async (id) => (await import('@/app/api/meals/[id]/route')).GET(new Request(`${BASE}/api/meals/${id}`), ctx({ id })),
   },
   {
+    name: 'PATCH /api/meals/[id]',
+    table: 'planned_meals',
+    call: async (id) => (await import('@/app/api/meals/[id]/route')).PATCH(json(`${BASE}/api/meals/${id}`, 'PATCH', { dish_name: '鮭の塩焼き' }), ctx({ id })),
+  },
+  {
     name: 'DELETE /api/meals/[id]',
     table: 'planned_meals',
     call: async (id) => (await import('@/app/api/meals/[id]/route')).DELETE(new Request(`${BASE}/api/meals/${id}`, { method: 'DELETE' }), ctx({ id })),
@@ -383,6 +415,12 @@ const CASES: ReadCase[] = [
     name: 'PATCH /api/shopping-list/[id]',
     table: 'shopping_list_items',
     call: async (id) => (await import('@/app/api/shopping-list/[id]/route')).PATCH(json(`${BASE}/api/shopping-list/${id}`, 'PATCH', { selectedVariantIndex: 0 }), ctx({ id })),
+  },
+  {
+    // 分量を選ばない更新は、先に読まずに更新だけをする (更新した行が無いときは 404)
+    name: 'PATCH /api/shopping-list/[id] (チェックだけ)',
+    table: 'shopping_list_items',
+    call: async (id) => (await import('@/app/api/shopping-list/[id]/route')).PATCH(json(`${BASE}/api/shopping-list/${id}`, 'PATCH', { isChecked: true }), ctx({ id })),
   },
   {
     name: 'PATCH /api/pantry/[id]',
@@ -432,10 +470,33 @@ const CASES: ReadCase[] = [
     call: async () => (await import('@/app/api/performance/analyze/route')).GET(new NextRequest(`${BASE}/api/performance/analyze?date=${TODAY}`)),
   },
   {
+    // POST も GET と同じ分析 (runAnalysis) を通る
+    name: 'POST /api/performance/analyze (自分のプロフィール)',
+    table: 'user_profiles',
+    checksUuid: false,
+    call: async () => (await import('@/app/api/performance/analyze/route')).POST(json(`${BASE}/api/performance/analyze`, 'POST', { date: TODAY })),
+  },
+  {
+    name: 'POST /api/performance/analyze (栄養の目標)',
+    table: 'nutrition_targets',
+    checksUuid: false,
+    call: async () => (await import('@/app/api/performance/analyze/route')).POST(json(`${BASE}/api/performance/analyze`, 'POST', { date: TODAY })),
+  },
+  {
     name: 'GET /api/ai/consultation/sessions/[sessionId]/messages',
     table: 'ai_consultation_sessions',
     call: async (id) =>
       (await import('@/app/api/ai/consultation/sessions/[sessionId]/messages/route')).GET(new Request(`${BASE}/api/ai/consultation/sessions/${id}/messages`), ctx({ sessionId: id })),
+  },
+  {
+    // メッセージの送信は、AI へ送る前にセッションの所有者を確かめる
+    name: 'POST /api/ai/consultation/sessions/[sessionId]/messages (所有者の確認)',
+    table: 'ai_consultation_sessions',
+    call: async (id) =>
+      (await import('@/app/api/ai/consultation/sessions/[sessionId]/messages/route')).POST(
+        json(`${BASE}/api/ai/consultation/sessions/${id}/messages`, 'POST', { message: '夕食の相談です' }),
+        ctx({ sessionId: id }),
+      ),
   },
   {
     name: 'POST /api/ai/consultation/sessions/[sessionId]/close (所有者の確認)',
@@ -461,6 +522,25 @@ const CASES: ReadCase[] = [
       ),
   },
   {
+    // 重要の印の切り替えは、メッセージより先にセッションの所有者を確かめる
+    name: 'POST /api/ai/consultation/sessions/[sessionId]/messages/[messageId]/important (セッション)',
+    table: 'ai_consultation_sessions',
+    call: async (id) =>
+      (await import('@/app/api/ai/consultation/sessions/[sessionId]/messages/[messageId]/important/route')).POST(
+        json(`${BASE}/api/ai/consultation/sessions/${id}/messages/${ROW_ID}/important`, 'POST', { isImportant: true }),
+        ctx({ sessionId: id, messageId: ROW_ID }),
+      ),
+  },
+  {
+    name: 'POST /api/ai/consultation/actions/[actionId]/execute (アクションの実行)',
+    table: 'ai_action_logs',
+    call: async (id) =>
+      (await import('@/app/api/ai/consultation/actions/[actionId]/execute/route')).POST(
+        new Request(`${BASE}/api/ai/consultation/actions/${id}/execute`, { method: 'POST' }),
+        ctx({ actionId: id }),
+      ),
+  },
+  {
     name: 'DELETE /api/ai/consultation/actions/[actionId]/execute (アクションの却下)',
     table: 'ai_action_logs',
     call: async (id) =>
@@ -478,6 +558,14 @@ const CASES: ReadCase[] = [
     name: 'POST /api/ai/menu/day/regenerate (1 日の献立)',
     table: 'user_daily_meals',
     call: async (id) => (await import('@/app/api/ai/menu/day/regenerate/route')).POST(json(`${BASE}/api/ai/menu/day/regenerate`, 'POST', { dailyMealId: id })),
+  },
+  {
+    // 日付で指したときは、その日の行を日付で探す。実在しない日付は DB に渡さずに 404
+    name: 'POST /api/ai/menu/day/regenerate (日付で指す)',
+    table: 'user_daily_meals',
+    validId: TODAY,
+    invalidId: NOT_A_DATE,
+    call: async (date) => (await import('@/app/api/ai/menu/day/regenerate/route')).POST(json(`${BASE}/api/ai/menu/day/regenerate`, 'POST', { dayDate: date })),
   },
   {
     name: 'POST /api/ai/nutrition-analysis (その日の献立)',
@@ -504,13 +592,16 @@ beforeEach(() => {
   state.failError = null;
   state.missingTable = null;
   state.vanishAfter = null;
+  state.failAfter = null;
+  state.manyRows = null;
   state.fromTables = [];
+  vi.mocked(recordAdminAudit).mockClear();
 });
 
-describe.each(CASES)('$name', ({ table, call, missingStatus = 404, checksUuid = true }) => {
+describe.each(CASES)('$name', ({ table, call, missingStatus = 404, checksUuid = true, validId = ROW_ID, invalidId = NOT_UUID }) => {
   it('読み込みの DB の失敗は 500 (404 にしない)。DB の生の文面は本文に出さない', async () => {
     state.failTable = table;
-    const res = await call(ROW_ID);
+    const res = await call(validId);
     expect(res.status).toBe(500);
     expect(await res.text()).not.toContain(RAW_DB_MESSAGE);
     expect(state.fromTables).toContain(table);
@@ -518,14 +609,14 @@ describe.each(CASES)('$name', ({ table, call, missingStatus = 404, checksUuid = 
 
   it(`行が無いときは ${missingStatus}`, async () => {
     state.missingTable = table;
-    const res = await call(ROW_ID);
+    const res = await call(validId);
     expect(res.status).toBe(missingStatus);
     expect(state.fromTables).toContain(table);
   });
 
   if (checksUuid) {
-    it(`UUID の形でない id は DB に渡さず ${missingStatus}`, async () => {
-      const res = await call(NOT_UUID);
+    it(`形の違う id (${invalidId}) は DB に渡さず ${missingStatus}`, async () => {
+      const res = await call(invalidId);
       expect(res.status).toBe(missingStatus);
       expect(state.fromTables).not.toContain(table);
     });
@@ -533,8 +624,16 @@ describe.each(CASES)('$name', ({ table, call, missingStatus = 404, checksUuid = 
 });
 
 // 所有権の確認で行を読めたあと、更新するまでに消された (更新した行が無い) ときは 404。
-// 更新を .single() で受けると PGRST116 の失敗になり 500 になっていた (#1917)
-describe.each([
+// 更新を .single() で受けると PGRST116 の失敗になり 500 になっていた (#1917)。消えた行の監査ログは残さない
+interface VanishCase {
+  name: string;
+  table: string;
+  /** 404 の本文の error.code (入れ子の形の本文の route だけ) */
+  notFoundCode?: string;
+  call: () => Promise<Response>;
+}
+
+describe.each<VanishCase>([
   {
     name: 'PUT /api/health/goals/[id]',
     table: 'health_goals',
@@ -545,13 +644,82 @@ describe.each([
     table: 'health_checkups',
     call: async () => (await import('@/app/api/health/checkups/[id]/route')).PUT(json(`${BASE}/api/health/checkups/${ROW_ID}`, 'PUT', { weight: 60 }), ctx({ id: ROW_ID })),
   },
-])('$name', ({ table, call }) => {
-  it('読んでから書くまでに消されたときは 404 (500 にしない)', async () => {
+  {
+    name: 'PATCH /api/super-admin/coupons/[id]',
+    table: 'coupons',
+    notFoundCode: 'OP_COUPON_NOT_FOUND',
+    call: async () =>
+      (await import('@/app/api/super-admin/coupons/[id]/route')).PATCH(json(`${BASE}/api/super-admin/coupons/${ROW_ID}`, 'PATCH', { display_name: '新しい名前' }), ctx({ id: ROW_ID })),
+  },
+  {
+    name: 'PATCH /api/shopping-list/[id] (分量を選ぶ)',
+    table: 'shopping_list_items',
+    call: async () => (await import('@/app/api/shopping-list/[id]/route')).PATCH(json(`${BASE}/api/shopping-list/${ROW_ID}`, 'PATCH', { selectedVariantIndex: 0 }), ctx({ id: ROW_ID })),
+  },
+])('$name', ({ table, notFoundCode, call }) => {
+  it('読んでから書くまでに消されたときは 404 (500 にしない・200 で空の data も返さない)。監査ログは残さない', async () => {
     state.vanishAfter = { table, reads: 1 };
     const res = await call();
     expect(res.status).toBe(404);
+    if (notFoundCode) {
+      expect(((await res.json()) as { error: { code: string } }).error.code).toBe(notFoundCode);
+    }
     // 所有権の確認と更新の 2 回読んでいる (更新まで届いている)
     expect(state.fromTables.filter((t) => t === table)).toHaveLength(2);
+    expect(recordAdminAudit).not.toHaveBeenCalled();
+  });
+});
+
+// アクションの ID で探して無かったら、メッセージの ID として探し直す。2 本目の読み込みの DB の失敗も 500 にし、
+// 「アクションが見つかりません」(404) にしない (#1917)
+describe.each([
+  {
+    name: 'POST /api/ai/consultation/actions/[actionId]/execute',
+    call: async () =>
+      (await import('@/app/api/ai/consultation/actions/[actionId]/execute/route')).POST(
+        new Request(`${BASE}/api/ai/consultation/actions/${ROW_ID}/execute`, { method: 'POST' }),
+        ctx({ actionId: ROW_ID }),
+      ),
+  },
+  {
+    name: 'DELETE /api/ai/consultation/actions/[actionId]/execute',
+    call: async () =>
+      (await import('@/app/api/ai/consultation/actions/[actionId]/execute/route')).DELETE(
+        new Request(`${BASE}/api/ai/consultation/actions/${ROW_ID}/execute`, { method: 'DELETE' }),
+        ctx({ actionId: ROW_ID }),
+      ),
+  },
+])('$name', ({ call }) => {
+  it('アクションの ID では無く、メッセージの ID で探し直す読み込みが DB の失敗なら 500 (404 にしない)。DB の生の文面は本文に出さない', async () => {
+    state.missingTable = 'ai_action_logs';
+    state.failAfter = { table: 'ai_action_logs', reads: 1 };
+    const res = await call();
+    expect(res.status).toBe(500);
+    expect(await res.text()).not.toContain(RAW_DB_MESSAGE);
+    // アクションの ID で 1 回、メッセージの ID で 1 回読んでいる (2 本目まで届いている)
+    expect(state.fromTables.filter((t) => t === 'ai_action_logs')).toHaveLength(2);
+  });
+
+  it('どちらで探しても無ければ 404', async () => {
+    state.missingTable = 'ai_action_logs';
+    const res = await call();
+    expect(res.status).toBe(404);
+    expect(state.fromTables.filter((t) => t === 'ai_action_logs')).toHaveLength(2);
+  });
+});
+
+// その日の同じ区分 (夕食など) に食事が 2 件以上あると、どれを変えるか決められないので 404 (以前の .single() と同じ。#1917)。
+// AI のキューには何も積まない
+describe('POST /api/ai/nutrition-analysis: 同じ区分の食事が 2 件以上', () => {
+  it('404 (献立が見つかりません)。AI のキューに積まない', async () => {
+    state.manyRows = { table: 'planned_meals', rows: 2 };
+    const res = await (await import('@/app/api/ai/nutrition-analysis/route')).POST(
+      json(`${BASE}/api/ai/nutrition-analysis`, 'POST', { targetDate: TODAY, targetMealType: 'dinner', prompt: '野菜を増やして' }),
+    );
+    expect(res.status).toBe(404);
+    expect(((await res.json()) as { error: string }).error).toBe(AI_MENU_MEAL_NOT_FOUND_MESSAGE);
+    expect(state.fromTables).toContain('planned_meals');
+    expect(state.fromTables).not.toContain('weekly_menu_requests');
   });
 });
 

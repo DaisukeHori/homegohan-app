@@ -8,6 +8,7 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { escapeLikePattern, quotePostgrestValue } from '@/lib/admin/users-search';
+import { loadRecipeViewerLookups } from '@/lib/recipes/viewer-lookups';
 
 /** 一覧の構造化ログの function_name */
 const LIST_ROUTE_NAME = 'GET /api/recipes';
@@ -32,17 +33,11 @@ export async function GET(request: Request) {
   // clampIntParam は無効な値を default に倒すので、min より小さい 0 を「指定なし」の目印にしている。
   const maxTime = clampIntParam(searchParams.get('max_time'), { min: 1, max: 1440, default: 0 });
 
-  // 認証済みの場合のみ recipe_likes を JOIN する（未認証では RLS で空配列になるが
-  // user_profiles FK の PostgREST キャッシュ問題を避けるためシンプルなクエリを使用）
-  const selectClause = user
-    ? `*, user_profiles(nickname), recipe_likes(user_id)`
-    : `*`;
-
   // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectRecipes) から作る
   const selectRecipes = (options: { head?: boolean } = {}) => {
     let dbQuery = supabase
       .from('recipes')
-      .select(selectClause, listCountOptions(options.head));
+      .select('*', listCountOptions(options.head));
 
     // 公開レシピ、または自分のレシピ
     if (user) {
@@ -86,11 +81,22 @@ export async function GET(request: Request) {
     return internalError(LIST_ROUTE_NAME, error, { userId: user?.id });
   }
 
+  const rows = data || [];
+  // 作者の名前と自分のいいねは、埋め込まずに別のクエリで引く (どちらの埋め込みも PostgREST が解決できない。
+  // src/lib/recipes/viewer-lookups.ts)。読めなかったときも 500 (名前が無い・いいねしていないように見せない)
+  const lookups = await loadRecipeViewerLookups(supabase, user?.id ?? null, {
+    authorIds: rows.map((item) => item.user_id),
+    recipeIds: rows.map((item) => item.id),
+  });
+  if (!lookups.ok) {
+    return internalError(LIST_ROUTE_NAME, lookups.error, { userId: user?.id, table: lookups.table });
+  }
+
   // キャメルケース変換
-  const recipes = (data || []).map((item: any) => ({
+  const recipes = rows.map((item: any) => ({
     id: item.id,
     userId: item.user_id,
-    authorName: recipeAuthorName(item.user_profiles?.nickname),
+    authorName: recipeAuthorName(lookups.nicknames.get(item.user_id)),
     name: item.name,
     description: item.description,
     caloriesKcal: item.calories_kcal,
@@ -109,7 +115,7 @@ export async function GET(request: Request) {
     videoUrl: item.video_url,
     viewCount: item.view_count || 0,
     likeCount: item.like_count || 0,
-    isLiked: user ? item.recipe_likes?.some((l: any) => l.user_id === user.id) : false,
+    isLiked: lookups.likedRecipeIds.has(item.id),
     createdAt: item.created_at,
     updatedAt: item.updated_at,
   }));

@@ -46,9 +46,38 @@ type QueryResult = {
   count: number | null;
 };
 
+type LookupResult = { data: unknown[] | null; error: { message: string } | null };
+
+/**
+ * 作者の名前 (user_profiles) と自分のいいね (recipe_likes) を引くクエリのモック (src/lib/recipes/viewer-lookups.ts)。
+ * select / eq / in は自分自身を返し、await すると結果を返す
+ */
+function lookupQuery(result: LookupResult) {
+  const builder = {
+    select: vi.fn(),
+    eq: vi.fn(),
+    in: vi.fn(),
+    then: (resolve: (value: LookupResult) => unknown, reject?: (reason: unknown) => unknown) =>
+      Promise.resolve(result).then(resolve, reject),
+  };
+  builder.select.mockReturnValue(builder);
+  builder.eq.mockReturnValue(builder);
+  builder.in.mockReturnValue(builder);
+  return builder;
+}
+
+/** user_profiles / recipe_likes の結果 (既定は 0 行) */
+const lookupResults: Record<'user_profiles' | 'recipe_likes', LookupResult> = {
+  user_profiles: { data: [], error: null },
+  recipe_likes: { data: [], error: null },
+};
+/** 最後の呼び出しで作った user_profiles / recipe_likes のクエリ */
+const lookupBuilders: Partial<Record<'user_profiles' | 'recipe_likes', ReturnType<typeof lookupQuery>>> = {};
+
 /**
  * recipes 一覧のクエリビルダーのモック。
  * select / or / eq / lte / order は自分自身を返し、最後の range だけが結果を返す。
+ * user_profiles / recipe_likes は lookupResults の結果を返す (それ以外のテーブルは呼ばれない)
  */
 function setupRecipesQuery(
   result: QueryResult = { data: [], error: null, count: 0 },
@@ -67,7 +96,15 @@ function setupRecipesQuery(
   builder.lte.mockReturnValue(builder);
   builder.order.mockReturnValue(builder);
   builder.range.mockResolvedValue(result);
-  mockFrom.mockReturnValue(builder);
+  mockFrom.mockImplementation((table: string) => {
+    if (table === 'recipes') return builder;
+    if (table === 'user_profiles' || table === 'recipe_likes') {
+      const lookup = lookupQuery(lookupResults[table]);
+      lookupBuilders[table] = lookup;
+      return lookup;
+    }
+    throw new Error(`unexpected table: ${table}`);
+  });
   return builder;
 }
 
@@ -87,6 +124,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   // 既定は未認証 (公開レシピのみ)
   mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+  lookupResults.user_profiles = { data: [], error: null };
+  lookupResults.recipe_likes = { data: [], error: null };
+  delete lookupBuilders.user_profiles;
+  delete lookupBuilders.recipe_likes;
 });
 
 afterEach(() => {
@@ -239,17 +280,48 @@ describe('GET /api/recipes: クランプ以外の挙動は変えない', () => {
     expect(builder.order).toHaveBeenCalledWith('created_at', { ascending: false });
   });
 
-  it('認証済みなら公開レシピと自分のレシピを取り、いいね情報も一緒に取る', async () => {
+  it('認証済みなら公開レシピと自分のレシピを取る。作者の名前と自分のいいねは埋め込まず、別のクエリで引く (#1917)', async () => {
     mockGetUser.mockResolvedValue({ data: { user }, error: null });
-    const builder = setupRecipesQuery();
+    const builder = setupRecipesQuery({ data: [{ id: 'r1', user_id: 'user-2' }, { id: 'r2', user_id: 'user-2' }], error: null, count: 2 });
 
-    await callGet();
+    const { res } = await callGet();
 
-    expect(builder.select).toHaveBeenCalledWith(
-      '*, user_profiles(nickname), recipe_likes(user_id)',
-      { count: 'exact' },
-    );
+    expect(res.status).toBe(200);
+    // user_profiles(nickname)・recipe_likes(user_id) の埋め込みは PostgREST が解決できない (PGRST200 / PGRST201) ので使わない
+    expect(builder.select).toHaveBeenCalledWith('*', { count: 'exact' });
     expect(builder.or).toHaveBeenCalledWith('is_public.eq.true,user_id.eq.user-1');
+    // 作者の名前は、一覧の作者 (重複を除く) の user_profiles を引く
+    expect(lookupBuilders.user_profiles?.select).toHaveBeenCalledWith('id, nickname');
+    expect(lookupBuilders.user_profiles?.in).toHaveBeenCalledWith('id', ['user-2']);
+    // いいねは、自分のものを一覧のレシピで絞って引く
+    expect(lookupBuilders.recipe_likes?.select).toHaveBeenCalledWith('recipe_id');
+    expect(lookupBuilders.recipe_likes?.eq).toHaveBeenCalledWith('user_id', 'user-1');
+    expect(lookupBuilders.recipe_likes?.in).toHaveBeenCalledWith('recipe_id', ['r1', 'r2']);
+  });
+
+  it('未ログインなら作者の名前もいいねも DB に問い合わせない (RLS で読めず、いいねも無い)', async () => {
+    setupRecipesQuery({ data: [{ id: 'r1', user_id: 'user-2' }], error: null, count: 1 });
+
+    const { res, json } = await callGet();
+
+    expect(res.status).toBe(200);
+    expect(mockFrom.mock.calls.map((call) => call[0])).toEqual(['recipes']);
+    expect(json.recipes[0]).toMatchObject({ authorName: '匿名', isLiked: false });
+  });
+
+  it.each([
+    ['作者の名前 (user_profiles)', 'user_profiles'],
+    ['自分のいいね (recipe_likes)', 'recipe_likes'],
+  ] as const)('%s が読めなかったときは、名前が無い・いいねしていないように見せず 500 (DB の生の文面は本文に出さない)', async (_name, table) => {
+    mockGetUser.mockResolvedValue({ data: { user }, error: null });
+    setupRecipesQuery({ data: [{ id: 'r1', user_id: 'user-2' }], error: null, count: 1 });
+    lookupResults[table] = { data: null, error: { message: 'lookup boom' } };
+
+    const { res, json } = await callGet();
+
+    expect(res.status).toBe(500);
+    expect(json).toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
+    expect(JSON.stringify(json)).not.toContain('lookup boom');
   });
 
   it('category / cuisine_type / difficulty はそのまま eq で絞り込む', async () => {
@@ -282,14 +354,15 @@ describe('GET /api/recipes: クランプ以外の挙動は変えない', () => {
     expect(searchFilter).toBe('name.ilike."%a,b)\\\\%\\\\_%",description.ilike."%a,b)\\\\%\\\\_%"');
   });
 
-  it('取得した行を camelCase に変換し、自分のいいねを isLiked に反映する', async () => {
+  it('取得した行を camelCase に変換し、別のクエリで引いた作者の名前と自分のいいねを反映する', async () => {
     mockGetUser.mockResolvedValue({ data: { user }, error: null });
+    lookupResults.user_profiles = { data: [{ id: 'user-2', nickname: 'ほり' }], error: null };
+    lookupResults.recipe_likes = { data: [{ recipe_id: 'r1' }], error: null };
     setupRecipesQuery({
       data: [
         {
           id: 'r1',
           user_id: 'user-2',
-          user_profiles: { nickname: 'ほり' },
           name: '肉じゃが',
           description: '定番',
           calories_kcal: 320,
@@ -308,7 +381,6 @@ describe('GET /api/recipes: クランプ以外の挙動は変えない', () => {
           video_url: null,
           view_count: null,
           like_count: 3,
-          recipe_likes: [{ user_id: 'user-1' }],
           created_at: '2026-01-01T00:00:00.000Z',
           updated_at: '2026-01-02T00:00:00.000Z',
         },
