@@ -38,6 +38,11 @@ const ROLLBACK_PATH = path.join(ROOT, 'supabase', 'rollbacks', `${MIGRATION}.dow
 const TYPE_FILES = ['src/types/database.types.ts', 'packages/shared/src/database.types.ts'] as const;
 const PRICE_CHANGE_ROUTE = 'src/app/api/super-admin/plans/[id]/price-change/route.ts';
 
+/** 正規表現の記号をすべてエスケープする (関数の引数の型の並びを、そのまま照合するため) */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /** SQL のコメント (-- から行末) を除く (コメントの中の語に一致させない) */
 function stripSqlComments(sql: string): string {
   return sql
@@ -178,10 +183,10 @@ describe('(2) 価格の変更の予約', () => {
     for (const [name, args] of Object.entries(signatures)) {
       expect(functionBlock(name), name).toMatch(/LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''/);
       const revoke = new RegExp(
-        `REVOKE ALL ON FUNCTION public\\.${name}\\(${args.replace(/[()]/g, '\\$&')}\\)\\s+FROM PUBLIC, anon, authenticated, service_role;`,
+        `REVOKE ALL ON FUNCTION public\\.${name}\\(${escapeRegExp(args)}\\)\\s+FROM PUBLIC, anon, authenticated, service_role;`,
       );
       expect(migration, name).toMatch(revoke);
-      const grant = new RegExp(`GRANT EXECUTE ON FUNCTION public\\.${name}\\(${args}\\)\\s+TO service_role;`);
+      const grant = new RegExp(`GRANT EXECUTE ON FUNCTION public\\.${name}\\(${escapeRegExp(args)}\\)\\s+TO service_role;`);
       expect(migration, name).toMatch(grant);
     }
   });
