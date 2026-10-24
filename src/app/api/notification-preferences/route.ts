@@ -89,6 +89,10 @@ export async function PATCH(request: NextRequest) {
   } catch {
     return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
   }
+  // JSON としては読めてもオブジェクトでない本文 (null・配列・数・文字列) も 400 (#1917 の続き。null・数は下の `key in body` が例外になり 500 になっていた)
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+  }
 
   // data_share_enabled は旧ビルドのアプリ向けに受け付けるだけ (上のコメント参照。値は同意ではない)
   const patch: Partial<Record<PreferenceKey, boolean>> = {};

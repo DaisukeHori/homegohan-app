@@ -4,7 +4,7 @@ import { internalError } from '@/lib/api/errors';
 // MealType (食事の区分 5 値) は @homegohan/shared が正本 (#1631。手書きしない)
 import type { MealType } from '@homegohan/shared';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { normalizeUuid } from '@/lib/http-params';
+import { isUuid, normalizeUuid } from '@/lib/http-params';
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { MEAL_NOT_FOUND_MESSAGE, REQUIRED_FIELDS_MISSING_MESSAGE } from '@/lib/api/user-api-error-messages';
 
@@ -28,7 +28,7 @@ export async function POST(request: Request) {
   try {
     // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
     const requestBody = await request.json().catch(() => null);
-    if (!requestBody || typeof requestBody !== 'object') {
+    if (!requestBody || typeof requestBody !== 'object' || Array.isArray(requestBody)) {
       return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
     }
     const { mealId: rawMealId, direction, dayId: rawDayId } = requestBody;
@@ -40,6 +40,10 @@ export async function POST(request: Request) {
     // 以後 (照合・DB) はそろえた値だけを使う (#1793。文字列でない値はそのまま = 今までどおり見つからない)
     const mealId = typeof rawMealId === 'string' ? normalizeUuid(rawMealId) : rawMealId;
     const dayId = typeof rawDayId === 'string' ? normalizeUuid(rawDayId) : rawDayId;
+    // UUID の形でない dayId は DB に渡さず 404 (その日の食事が無いときと同じ。uuid 型の列に渡すと 22P02 で失敗し、下の catch の 500 に入っていた。#1917 の続き)
+    if (!isUuid(dayId)) {
+      return NextResponse.json({ error: MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
+    }
 
     // その日の全ての食事を取得（display_order順）
     const { data: meals, error: fetchError } = await supabase

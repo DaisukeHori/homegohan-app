@@ -160,6 +160,14 @@ describe('changePassword — API の失敗', () => {
     expect(result).toEqual({ ok: false, message: 'パスワードを変更できませんでした。時間をおいて、もう一度お試しください。' });
   });
 
+  it('HTTP のエラーでない例外の英文 (Supabase Auth の文など) は出さず、共通の失敗の文言を返す (#1917 の続き)', async () => {
+    mockApiPost.mockRejectedValue(new Error('Auth session missing!'));
+
+    const result = await changePassword(EMAIL, VALID_INPUT);
+
+    expect(result).toEqual({ ok: false, message: 'パスワードを変更できませんでした。時間をおいて、もう一度お試しください。' });
+  });
+
   it('失敗のログにパスワード・本文を出さない (エラーの名前だけ)', async () => {
     const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
     mockApiPost.mockRejectedValue(

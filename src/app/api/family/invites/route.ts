@@ -32,12 +32,21 @@ export async function GET(_request: Request) {
     );
   }
 
-  // 自身の family_id を取得
-  const { data: profile } = await supabase
+  // 自身の family_id を取得。読めなかった (DB の失敗) ときは 500 (#1917 の続き。以前は失敗を捨て、招待が 0 件のように見えていた)。
+  // 招待の一覧の読み込みの失敗と同じ形で返す
+  const { data: profile, error: profileError } = await supabase
     .from('user_profiles')
     .select('family_id')
     .eq('id', user.id)
-    .single();
+    .maybeSingle();
+
+  if (profileError) {
+    console.error('[api/family/invites] GET profile error:', profileError);
+    return NextResponse.json(
+      { error: { code: MembershipErrorCode.RPC_FAILED, message: '招待一覧の取得に失敗しました' } },
+      { status: 500 },
+    );
+  }
 
   if (!profile?.family_id) {
     return NextResponse.json({ data: { invites: [] } });

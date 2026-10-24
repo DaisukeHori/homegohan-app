@@ -7,6 +7,8 @@
  * 修正後は次のようになる。
  *   - 409 CONFLICT_STALE_DATA のあとはリードを読み直して今のステージを出し、読み直した旨の画面の文を出す (サーバーの文は出さない)
  *   - 読み直しに失敗したら、「読み込み直した」とは出さず、読み込み直せなかった旨の文を出す
+ *   - 読み直しが 404 (リードが消えた)・403 (権限が外れた)・401 (ログインが切れた) なら、その理由の文を
+ *     「画面を読み込み直して…」の文で上書きしない (消えたリードに読み込み直しを促さない)
  *   - 409 でも code が CONFLICT_STALE_DATA でなければ読み直さない
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
@@ -62,16 +64,30 @@ let container: HTMLDivElement;
 let root: Root;
 let fetchMock: ReturnType<typeof vi.fn>;
 
-/** PATCH は patchResponse を返し、その時点で別の担当者の変更 (ステージ = 提案) が入る。n 回目 (1 始まり) の GET を failGets で失敗させる */
-function mockApi(patchResponse: () => Response, failGets: number[] = []) {
+/** GET の失敗の応答 (HTTP ステータスごと。本文は API の形) */
+const GET_FAILURE_BODIES: Record<number, unknown> = {
+  401: { error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } },
+  403: { error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } },
+  404: { error: { code: 'NOT_FOUND', message: 'リードが見つかりません' } },
+  500: { error: { code: 'INTERNAL_ERROR', message: '失敗' } },
+};
+
+/**
+ * PATCH は patchResponse を返し、その時点で別の担当者の変更 (ステージ = 提案) が入る。
+ * n 回目 (1 始まり) の GET を failGets で失敗させる (配列なら 500、{ n: status } ならその HTTP ステータス)
+ */
+function mockApi(patchResponse: () => Response, failGets: number[] | Record<number, number> = []) {
   const state = { patched: false, gets: 0 };
+  const failureStatusOf = (n: number): number | undefined =>
+    Array.isArray(failGets) ? (failGets.includes(n) ? 500 : undefined) : failGets[n];
   fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
     if (init?.method === 'PATCH') {
       state.patched = true;
       return patchResponse();
     }
     state.gets += 1;
-    if (failGets.includes(state.gets)) return jsonResponse(500, { error: { code: 'INTERNAL_ERROR', message: '失敗' } });
+    const failureStatus = failureStatusOf(state.gets);
+    if (failureStatus !== undefined) return jsonResponse(failureStatus, GET_FAILURE_BODIES[failureStatus]);
     return jsonResponse(200, { data: lead(state.patched ? 'proposal' : 'approach') });
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -168,6 +184,55 @@ describe('リード詳細: ステージの変更が 409 CONFLICT_STALE_DATA で�
     expect(text()).toContain('読み込み直せなかった');
     expect(text()).not.toContain('読み込み直したので');
     expect(text()).not.toContain('画面を開き直して');
+  });
+
+  it('読み直しが 404 (リードが消えた) なら「リードが見つかりません」を出し、「読み込み直せなかった」で上書きしない', async () => {
+    const state = mockApi(
+      () => jsonResponse(409, { error: { code: 'CONFLICT_STALE_DATA', message: SERVER_STALE_MESSAGE } }),
+      { 2: 404 },
+    );
+    await renderPage();
+
+    await changeStage('商談中');
+
+    expect(state.gets).toBe(2);
+    expect(text()).toContain('リードが見つかりません');
+    expect(text()).not.toContain('読み込み直せなかった');
+    expect(text()).not.toContain('読み込み直したので');
+    expect(text()).not.toContain('画面を読み込み直して');
+    // 消えたリードのステージ変更の欄は残さず、一覧へ戻る道を出す
+    expect(Array.from(container.querySelectorAll('h2')).some((h) => h.textContent === 'ステージ変更')).toBe(false);
+    expect(container.querySelector('a[href="/admin/sales"]')?.textContent).toBe('リード一覧に戻る');
+  });
+
+  it('読み直しが 403 (権限が外れた) なら「権限がありません」を出し、「読み込み直せなかった」で上書きしない', async () => {
+    const state = mockApi(
+      () => jsonResponse(409, { error: { code: 'CONFLICT_STALE_DATA', message: SERVER_STALE_MESSAGE } }),
+      { 2: 403 },
+    );
+    await renderPage();
+
+    await changeStage('商談中');
+
+    expect(state.gets).toBe(2);
+    expect(text()).toContain('権限がありません');
+    expect(text()).not.toContain('読み込み直せなかった');
+    expect(text()).not.toContain('読み込み直したので');
+  });
+
+  it('読み直しが 401 (ログインが切れた) ならログインの画面へ移し、「読み込み直せなかった」の文を出さない', async () => {
+    const state = mockApi(
+      () => jsonResponse(409, { error: { code: 'CONFLICT_STALE_DATA', message: SERVER_STALE_MESSAGE } }),
+      { 2: 401 },
+    );
+    await renderPage();
+
+    await changeStage('商談中');
+
+    expect(state.gets).toBe(2);
+    expect(routerPush).toHaveBeenCalledWith('/login');
+    expect(text()).not.toContain('読み込み直せなかった');
+    expect(text()).not.toContain('読み込み直したので');
   });
 
   it('409 でも code が CONFLICT_STALE_DATA でなければ読み直さず、変更の失敗を出す', async () => {

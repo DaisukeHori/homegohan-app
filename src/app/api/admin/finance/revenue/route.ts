@@ -65,12 +65,16 @@ export async function GET(request: NextRequest) {
     }
 
     // 集計サマリー
-    const { data: summary } = await supabase
+    // 読めなかった (DB の失敗) ときは 500。平均を 0 にしない (#1917 の続き。以前は失敗を捨て、売上が 0 のように見えていた)
+    const { data: summary, error: summaryError } = await supabase
       .from('revenue_snapshots')
       .select('total_mrr_jpy, total_arr_jpy, new_signups, cancellations')
       .gte('date', query.from ?? jstDayOffset(-REVENUE_SUMMARY_LOOKBACK_DAYS))
       .order('date', { ascending: false })
       .limit(30);
+    if (summaryError) {
+      return internalError(LIST_ROUTE_NAME, summaryError, { table: 'revenue_snapshots' }, { shape: 'nested' });
+    }
 
     const avgMrr = summary && summary.length > 0
       ? Math.round(summary.reduce((s, r) => s + (r.total_mrr_jpy ?? 0), 0) / summary.length)

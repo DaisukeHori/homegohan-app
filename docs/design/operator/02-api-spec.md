@@ -202,7 +202,7 @@ BAN 解除
 
 **リクエスト**: `{ "reason": "誤検知と判断" }`
 
-**権限**: `admin`, `super_admin`
+**権限**: `admin`, `super_admin`。実装は `DELETE /api/admin/users/{id}/freeze` (応答は `200 { "data": { "success": true } }`)。副作用は `admin_audit_logs` INSERT (`admin.user.unban`・severity='warn')。解除の UPDATE は凍結中 (`frozen_at` が NULL でない) のときだけ書く条件つきで、別の運営が先に解除していると 0 行 → 読み直して、無ければ 404 `NOT_FOUND`、あれば 409 `CONFLICT_STALE_DATA` (書かず、監査も残さない。POST の凍結の 409 と同じ扱い。#1917)
 
 ---
 
@@ -1223,7 +1223,7 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 
 - ステージを変えると、活動履歴 (`sales_lead_activities`) に `stage_change` (`details: { from_stage, to_stage }`) を残す (この書き込みに失敗しても、リードは更新できているので 200 のまま (監査ログと同じ fail-open)。失敗は db-logger に error で残す。#1917)
 - 同時の更新: 本文に `stage` があるときは「直前に読んだ `stage` のままなら書く」条件つきにする。0 行なら読み直し、リードがあれば 409 `CONFLICT_STALE_DATA`
-  (書かず、活動履歴も監査ログも残さない)、無ければ 404。`from_stage` は書いた時点の実際の直前のステージと必ず一致する。`stage` が無い更新には条件を付けず、更新が 0 行 (読んでから書くまでにリードが消えた) なら 404 (`src/app/api/admin/sales/leads/[id]/route.ts:212-215`)。画面 (`/admin/sales/{id}`) は 409 `CONFLICT_STALE_DATA` を受けたらリードを読み直し、読み直した旨の画面の文を出す (サーバーの「画面を開き直して」は出さない。読み直しに失敗したら読み込み直せなかった旨の文。#1917。`src/app/admin/sales/[id]/page.tsx`)
+  (書かず、活動履歴も監査ログも残さない)、無ければ 404。`from_stage` は書いた時点の実際の直前のステージと必ず一致する。`stage` が無い更新には条件を付けず、更新が 0 行 (読んでから書くまでにリードが消えた) なら 404 (`src/app/api/admin/sales/leads/[id]/route.ts:212-215`)。画面 (`/admin/sales/{id}`) は 409 `CONFLICT_STALE_DATA` を受けたらリードを読み直し、読み直した旨の画面の文を出す (サーバーの「画面を開き直して」は出さない。読み直しに失敗したら読み込み直せなかった旨の文。読み直しが 404 (リードが消えた)・403 (権限が外れた)・401 (ログインが切れた) なら、その理由の文 (「リードが見つかりません」「権限がありません」・ログインの画面へ移す) を読み込み直せなかった旨の文で上書きしない。404 のときは前に読んだリードを画面に残さず、一覧へ戻る道を出す。#1917。`src/app/admin/sales/[id]/page.tsx`)
 - 読み込み・更新・読み直しの DB の失敗は 500 `INTERNAL_ERROR` (404 にしない)。UUID の形でない id は DB に渡さず 404 `NOT_FOUND` (本文の検査の 400 のあと。uuid 型の列に渡すと 22P02 で「DB の失敗」に入るため。#1917)。詳細の `GET /api/admin/sales/leads/{id}` も同じで、リード・活動履歴の読み込みの DB の失敗は 500 (404 は行が無いとき (UUID の形でない id を含む) だけ。活動履歴の読み込みの失敗を空の履歴にしない。#1917)
 
 ---
@@ -1361,7 +1361,7 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 プラン詳細。 プランの行 (`subscription_plans`) の読み込みの DB の失敗は 500 (404 にしない)。404 は行が無いとき (UUID の形でない id は DB に渡さずに 404) だけ (cross/04 §5.2。#1917)。編集 (PATCH)・削除 (DELETE)・価格の変更 (POST price-change)・影響の見積もり (GET price-impact) の読み込みも同じ。詳細 (GET) の価格変更の履歴 (`plan_price_history`) の読み込みの失敗は 200 のまま (`price_history` は空)
 
 ### PATCH /api/super-admin/plans/{id}
-プラン編集 (draft のみ自由編集、public 以降は価格変更 API 経由)。同時の変更: 遷移の可否・status ごとに変えてよい項目・廃止の `ends_at` の要否は直前に読んだ `status` (と `ends_at`) で決め、更新はその `status` のまま (廃止で既存の `ends_at` に頼るときは `ends_at` が NULL でないことも) のときだけ書く条件つき。0 行なら読み直し、送った変更がもう入っていれば 200 (書かず記録もしない)、入っていなければ 409 `CONFLICT_STALE_DATA`、行が無ければ 404 `OP_PLAN_NOT_FOUND` (cross/04 §4.2)。廃止の `ends_at` の要否は書いた後の値で決める (本文の `ends_at: null` は既存の値があっても 400 `OP_PLAN_DEPRECATE_ENDS_AT_REQUIRED`)。監査 `update_plan` は `status` を変えたときだけ `status_from` / `status_to` を持ち、`status_from` は書いた時点の実際の直前の値。削除 (`DELETE /api/super-admin/plans/{id}`。draft のみ・それ以外は 422 `OP_PLAN_NOT_DRAFT`) も `status = 'draft'` のままのときだけ消し、0 行なら読み直して、無ければ 404 `OP_PLAN_NOT_FOUND`、あれば 409 `CONFLICT_STALE_DATA` (どちらも記録しない)。画面 (`/super-admin/plans/{id}`) は保存・公開・非公開・廃止・廃止の取り消しが 409 `CONFLICT_STALE_DATA` なら、プランを読み直して今の状態とボタンを出し、読み直した旨を画面の上に出す (表示名・説明・表示順の書きかけは残す。表示したあとの読み直しは画面を外さず、失敗したら画面と入力欄を残して文と「再試行」を出す。#1917。`src/app/super-admin/plans/[id]/page.tsx`)
+プラン編集 (draft のみ自由編集、public 以降は価格変更 API 経由)。同時の変更: 遷移の可否・status ごとに変えてよい項目・廃止の `ends_at` の要否は直前に読んだ `status` (と `ends_at`) で決め、更新はその `status` のまま (廃止で既存の `ends_at` に頼るときは `ends_at` が NULL でないことも) のときだけ書く条件つき。0 行なら読み直し、送った変更がもう入っていれば 200 (書かず記録もしない)、入っていなければ 409 `CONFLICT_STALE_DATA`、行が無ければ 404 `OP_PLAN_NOT_FOUND` (cross/04 §4.2)。廃止の `ends_at` の要否は書いた後の値で決める (本文の `ends_at: null` は既存の値があっても 400 `OP_PLAN_DEPRECATE_ENDS_AT_REQUIRED`)。監査 `update_plan` は `status` を変えたときだけ `status_from` / `status_to` を持ち、`status_from` は書いた時点の実際の直前の値。削除 (`DELETE /api/super-admin/plans/{id}`。draft のみ・それ以外は 422 `OP_PLAN_NOT_DRAFT`) も `status = 'draft'` のままのときだけ消し、0 行なら読み直して、無ければ 404 `OP_PLAN_NOT_FOUND`、あれば 409 `CONFLICT_STALE_DATA` (どちらも記録しない)。画面 (`/super-admin/plans/{id}`) は保存・公開・非公開・廃止・廃止の取り消しが 409 `CONFLICT_STALE_DATA` なら、プランを読み直して今の状態とボタンを出し、読み直した旨を画面の上に出す (表示名・説明・表示順の書きかけは残す。表示したあとの読み直しは画面を外さず、失敗したら画面と入力欄を残して文と「再試行」を出す。読み直しが 404 / 403 なら、その理由の文を出し「再試行」は出さない。#1917。`src/app/super-admin/plans/[id]/page.tsx`)。画面の保存は、表示名・説明・表示順のうち最後に読んだ・保存した値から変えた欄だけを送る (条件つきの更新は `status` だけなので、手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を古い値で上書きするため。説明の空欄は `null`。何も変えていなければ送らず、その旨を出す。保存に成功したら送った値を新しい初めの値にし、続く読み直しが失敗しても保存済みの欄を次の保存で送り直さない・「再試行」で書きかけとして残さない。#1917)
 
 **廃止の安全弁** (`status: 'deprecated'` への遷移。#1127・#1912。実装 `src/lib/super-admin/plan-subscribers.ts` の `countPlanSubscribers`): 廃止の前に、契約が終わっていない契約者を service_role で数え、1 件でもいれば 409 `OP_PLAN_HAS_SUBSCRIBERS` で止める (数えられなかったときは 500 `OP_PLAN_SUBSCRIBER_CHECK_FAILED`)。数えてから書くまでの間に入った契約は、書く文の中の DB のトリガー `guard_plan_deprecate_subscribers` (migration `20261024130000`。プランの行を FOR UPDATE でロックし直して commit 前の契約者が増える書き込みを待ってから、同じ数え方で数え直す) が `OP_PLAN_HAS_SUBSCRIBERS` (P0001。DETAIL は内訳の JSON) で止め、route は同じ 409 (内訳はトリガーの DETAIL) を返す。内訳を読めなければ 500 `OP_PLAN_SUBSCRIBER_CHECK_FAILED` (廃止はしていない)。契約者が増える書き込み = 個人契約・家族のグループ・組織の、作成・数えられる status (個人 = 上の live 5 値・家族と組織 = `active`) への切り替え・プランの付け替え。どれも同じ migration のトリガー `trg_subscriber_plan_key_share` (3 表の BEFORE INSERT OR UPDATE) でプランの行に FOR KEY SHARE を取るので、廃止の FOR UPDATE と待ち合う (外部キーの確認だけでは、plan_key を変えずに status だけを live にする UPDATE と、外部キーの無い組織を待たないため。#1917 の続き)。廃止がロックを取った後に来た書き込みは廃止の commit を待ち、廃止の後の契約になる。
 
@@ -1524,7 +1524,7 @@ deprecated → private にロールバック (緊急用)
 ---
 
 ### PATCH /api/super-admin/feature-packages/{id}
-パッケージ更新
+パッケージ更新。画面 (`/super-admin/feature-packages/{id}`) の保存は、表示名・説明・機能フラグ・表示順のうち最後に読んだ・保存した値から変えた欄だけを送る (送られた項目をそのまま書くので、手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を古い値で上書きするため。機能フラグは並びで比べる。説明の空欄は `null`。何も変えていなければ送らず、その旨を出す。保存に成功したら、応答の行 (書いたあとの最新の行) を新しい比べる元にし、手を付けていない入力欄もその行の値に揃える (送らなかった欄に別の運営の変更が入っていても、次の保存で開いたときの古い値を送らない。応答を待つあいだに変えた欄は書きかけとして残し、次の保存で送る)。#1917)
 
 ### DELETE /api/super-admin/feature-packages/{id}
 パッケージ削除。 パッケージの行 (`feature_packages`) の読み込みの DB の失敗は 500 (404 にしない)。404 は行が無いとき (UUID の形でない id は DB に渡さずに 404) だけ (cross/04 §5.2。#1917)。詳細 (GET) の読み込みも同じ
@@ -1588,7 +1588,7 @@ deprecated → private にロールバック (緊急用)
 ---
 
 ### PATCH /api/super-admin/coupons/{id}
-クーポン編集 (送った欄だけを変える。どれも省略可)
+クーポン編集 (送った欄だけを変える。どれも省略可)。画面 (`/super-admin/coupons/{id}`) の保存は、表示名・有効期限・最大利用回数のうち最後に読んだ・保存した値から変えた欄だけを送る (手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を古い値で上書きするため。有効期限は JST の暦日で比べる。表示名・最大利用回数の空欄は `null`。何も変えていなければ送らず、その旨を出す。保存に成功したら、応答の行 (書いたあとの最新の行) を新しい比べる元にし、手を付けていない入力欄もその行の値に揃える (送らなかった欄に別の運営の変更が入っていても、次の保存で開いたときの古い値を送らない。応答を待つあいだに変えた欄は書きかけとして残し、次の保存で送る)。#1917)
 
 **リクエスト**:
 ```json
@@ -1843,10 +1843,10 @@ Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#113
 | `OP_NOT_SUPPORTED` | 501 | [NEW] 未対応の機能 (本文は予定を書かず、いまの事実だけを言う。#1911)。認可を通った人にだけ返す (データエクスポート・AI コンテンツの審査) |
 | `DSR_INVALID_TRANSITION` | 409 | [NEW] 個人情報の請求の更新 (`PATCH /api/admin/data-requests/{id}`) が状態遷移表に無い (同じ状態の指定・本人確認待ち / 終わった請求への更新を含む。cross/15 §7.4・§13) |
 | `DSR_RESPONSE_NOTE_REQUIRED` | 422 | [NEW] 個人情報の請求を対応済み・対応できずにするのに本人への応答が空 (`PATCH /api/admin/data-requests/{id}`。cross/15 §13) |
-| `CONFLICT_PRECONDITION_REQUIRED` / `CONFLICT_OPTIMISTIC_LOCK` / `CONFLICT_STALE_DATA` | 428 / 412 / 409 | 楽観的ロック (cross/04 §4.2)。`PATCH /api/admin/data-requests/{id}` で、`If-Unmodified-Since` が無い / GET が返した `updated_at` と違う / 条件つきの UPDATE が 0 行。`CONFLICT_STALE_DATA` は組織のプランの変更 (`PATCH /api/admin/organizations/{id}`) でも使う: 直前に読んだ `plan` のままなら書く条件つきの UPDATE が 0 行で、読み直した `plan` が送られたプランと違う (同じなら 200 で書かず記録もしない。#1912)。同じ形で、問い合わせの更新 (`PATCH` / `PUT /api/admin/inquiries/{id}`。条件は読んだ `status` と `updated_at`)・AI の 1 日の上限の保存 (`PATCH /api/super-admin/llm/quotas`。条件は読んだ `daily_limit`、行が無かったときは作るだけ)・リードのステージの変更 (`PATCH /api/admin/sales/leads/{id}`。条件は読んだ `stage`。読み直してリードがあれば常に 409)・プランの編集と削除 (`PATCH` / `DELETE /api/super-admin/plans/{id}`。条件は読んだ `status` (削除は `draft`)、廃止で既存の `ends_at` に頼るときは `ends_at` が NULL でないことも。編集は送った変更がもう入っていれば 200)・利用者の凍結 (`POST /api/admin/users/{id}/freeze`。条件は読んだ時点の super_admin でない状態のまま。読み直して対象があれば常に 409) でも使う。送った値が今の値と同じだったときの扱いは違う: 組織のプラン・AI の 1 日の上限・プランの編集 (読み直した行に送った変更がもう入っていたとき) は 200 で書かず記録もしないが、問い合わせの更新は 200 で書かずに今の行 (本文を含む) を返すので、`changed: false` として記録する (:984) |
+| `CONFLICT_PRECONDITION_REQUIRED` / `CONFLICT_OPTIMISTIC_LOCK` / `CONFLICT_STALE_DATA` | 428 / 412 / 409 | 楽観的ロック (cross/04 §4.2)。`PATCH /api/admin/data-requests/{id}` で、`If-Unmodified-Since` が無い / GET が返した `updated_at` と違う / 条件つきの UPDATE が 0 行。`CONFLICT_STALE_DATA` は組織のプランの変更 (`PATCH /api/admin/organizations/{id}`) でも使う: 直前に読んだ `plan` のままなら書く条件つきの UPDATE が 0 行で、読み直した `plan` が送られたプランと違う (同じなら 200 で書かず記録もしない。#1912)。同じ形で、問い合わせの更新 (`PATCH` / `PUT /api/admin/inquiries/{id}`。条件は読んだ `status` と `updated_at`)・AI の 1 日の上限の保存 (`PATCH /api/super-admin/llm/quotas`。条件は読んだ `daily_limit`、行が無かったときは作るだけ)・リードのステージの変更 (`PATCH /api/admin/sales/leads/{id}`。条件は読んだ `stage`。読み直してリードがあれば常に 409)・プランの編集と削除 (`PATCH` / `DELETE /api/super-admin/plans/{id}`。条件は読んだ `status` (削除は `draft`)、廃止で既存の `ends_at` に頼るときは `ends_at` が NULL でないことも。編集は送った変更がもう入っていれば 200)・利用者の凍結 (`POST /api/admin/users/{id}/freeze`。条件は読んだ時点の super_admin でない状態のまま。読み直して対象があれば常に 409)・利用者の凍結の解除 (`DELETE /api/admin/users/{id}/freeze`。条件は凍結中 (`frozen_at` が NULL でない) のまま。読み直して対象があれば常に 409) でも使う。送った値が今の値と同じだったときの扱いは違う: 組織のプラン・AI の 1 日の上限・プランの編集 (読み直した行に送った変更がもう入っていたとき) は 200 で書かず記録もしないが、問い合わせの更新は 200 で書かずに今の行 (本文を含む) を返すので、`changed: false` として記録する (:984) |
 | `OP_EMAIL_OUTBOX_NOT_FOUND` | 404 | [NEW] 再送 (`POST /api/super-admin/email-outbox/{id}/requeue`) の行が無い (`10-logs-and-mail-retry.md` §11) |
 | `OP_EMAIL_OUTBOX_NOT_REQUEUEABLE` | 409 | [NEW] 再送できない行。`details.reason` が `not_dead` (届けられなかった行でない) か `redacted` (宛先を伏せた行) (`10-logs-and-mail-retry.md` §11) |
-| `AUTH_2FA_REQUIRED` | 403 | 二段階認証の確認が要る (必須ロールで認証アプリを登録済み・セッションが aal1)。`requireRole` が `MfaRequiredError` (`ForbiddenError` の派生) を投げ、運営の API は route の既存の 403 の code (`FORBIDDEN` / `OP_PERMISSION_DENIED`) で返す (本文の message は、`authFailureNested` を通す route では「二段階認証の確認が必要です」、403 を固定のリテラルで返す route では「権限がありません」。`cross/12-operator-mfa.md` §19.3)。この code を本文に出すのは自己サービスの `/api/auth/mfa/*` だけ。画面 (layout / page) は `requireRoleForPage` が MFA の画面へ回す (`cross/12-operator-mfa.md` §13.4・§19.3) |
+| `AUTH_2FA_REQUIRED` | 403 | 二段階認証の確認が要る (必須ロールで認証アプリを登録済み・セッションが aal1)。`requireRole` が `MfaRequiredError` (`ForbiddenError` の派生) を投げ、運営の API は route の既存の 403 の code (`FORBIDDEN` / `OP_PERMISSION_DENIED`) で返す (本文の message は、`authFailureNested` を通す route でも、403 を固定の code (`OP_PERMISSION_DENIED` など) で返して文を `operatorForbiddenMessageOf` (`src/lib/api/error-responses.ts`) で決める route でも「二段階認証の確認が必要です」(登録が要るなら「二段階認証の登録が必要です」)。`cross/12-operator-mfa.md` §19.3)。この code を本文に出すのは自己サービスの `/api/auth/mfa/*` だけ。画面 (layout / page) は `requireRoleForPage` が MFA の画面へ回す (`cross/12-operator-mfa.md` §13.4・§19.3) |
 | `AUTH_2FA_ENROLLMENT_REQUIRED` | 403 | [NEW] 二段階認証の登録が要る (必須ロールで未登録・猶予なし・セッションが aal1)。扱いは `AUTH_2FA_REQUIRED` と同じ (`cross/12-operator-mfa.md` §19) |
 
 ## 24. テスト方針

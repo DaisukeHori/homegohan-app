@@ -21,7 +21,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { createClient } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { API_INTERNAL_ERROR_MESSAGE } from '@/lib/api/error-responses';
+import { API_INTERNAL_ERROR_MESSAGE, operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { RefundRequestSchema, type RefundRequest } from '@/lib/admin/finance-schemas';
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
     }
     if (err instanceof ForbiddenError) {
       return NextResponse.json(
-        { error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } },
+        { error: { code: 'OP_PERMISSION_DENIED', message: operatorForbiddenMessageOf(err) } },
         { status: 403 },
       );
     }

@@ -214,10 +214,16 @@ describe('update_health_goal (#1229)', () => {
   });
 
   it('rejects null for the NOT NULL columns before reaching the database', async () => {
-    for (const updates of [{ target_value: null }, { target_unit: null }]) {
+    // 文は /api/health/goals の PATCH と同じ日本語の文で、空にしようとした項目の文だけを出す
+    // (#1917 の続き。以前は「target_value と target_unit は空にできません」と英字の項目名が括弧の外に出ていた)
+    for (const [updates, error] of [
+      [{ target_value: null }, '目標値 (target_value) は空にできません'],
+      [{ target_unit: null }, '単位 (target_unit) は空にできません'],
+      [{ target_value: null, target_unit: null }, '目標値 (target_value) は空にできません, 単位 (target_unit) は空にできません'],
+    ] as const) {
       const out = await run('update_health_goal', { goalId: 'goal-1', updates });
       expect(out.success).toBe(false);
-      expect(out.result.error).toBe('target_value と target_unit は空にできません');
+      expect(out.result.error).toBe(error);
     }
     expect(state.updates).toEqual([]);
   });

@@ -136,6 +136,16 @@ describe('栄養目標の画面: 再計算の失敗 (#1917)', () => {
     expectNoRawHttpText(message);
   });
 
+  it('HTTP のエラーでない例外の英文は出さず、固定の文「再計算に失敗しました。」を出す (#1917 の続き)', async () => {
+    mockPost.mockRejectedValueOnce(new Error('Network request failed'));
+
+    render(<NutritionTargetsScreen />);
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalled());
+    const [message] = alertMessages(alertSpy);
+    expect(message).toBe('再計算に失敗しました。');
+  });
+
   it('HTTP 500 (src/lib/api/errors.ts の internalError の flat の本文) も本文の日本語の文だけを出す', async () => {
     mockPost.mockRejectedValueOnce(
       httpErrorOf(500, 'Internal Server Error', { error: INTERNAL_ERROR_BODY_MESSAGE, code: 'INTERNAL_ERROR' }),

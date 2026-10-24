@@ -469,7 +469,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | active | オーナー・admin が RLS で UPDATE (`status` / `owner_id`。REST 直接) | active (変わらない) | RLS `organizations_update_admin` は通るが、`trg_guard_organizations_privileged` が止める (既存。F-13) | 42501 `CANNOT_MODIFY_PRIVILEGED_COLUMN`。何も変わらない (本書は変えない) |
 | active | オーナー・admin が RLS で UPDATE (`dissolved_at` だけ。REST 直接) | active (変わらない) | `organizations_update_admin` は通るが、`guard_organizations_privileged` が `dissolved_at` も止める (#1959。`20261022190000_db_privilege_hardening.sql`) | 42501。何も変わらない (本書の後の #1959 が塞いだ。本書は変えない) |
 | dissolved | 元オーナーが解散の API | dissolved | — | 409 `ORG_ALREADY_DISSOLVED` |
-| dissolved | 運営が強制解散 | dissolved | — | `ORG_ALREADY_DISSOLVED` (既存。route は 500 `internalError`) |
+| dissolved | 運営が強制解散 | dissolved | — | 409 `ORG_ALREADY_DISSOLVED` (既存の RPC のコード。route は `src/lib/membership/operator-rpc-errors.ts` で写す) |
 | dissolved | 元オーナーが退会 | dissolved (`owner_id` NULL のまま) | — | 200 |
 | dissolved | 元オーナーが別の組織の招待を承諾 | dissolved | — | 承諾できる (S-15) |
 | dissolved | 組織の招待の承諾 (解散した組織へ) | dissolved | 組織の行 (NO KEY UPDATE) の `status` が active でない | `ORG_ALREADY_DISSOLVED` で止まる (所属・席数・監査は変わらず、招待は pending のまま。Q-4 の修正) |
@@ -1162,7 +1162,7 @@ export const MEMBERSHIP_SETTINGS_PATH = '/settings/membership';
 // tsc:skip (既存ファイルへの追加の断片。enum・ErrorStatusMap・MEMBERSHIP_ERROR_MESSAGES の 3 か所に同じ 2 値を足す)
 // enum MembershipErrorCode の NOT_FAMILY_REPRESENTATIVE の下に:
   // #1917: 利用者の解散 (dissolve_family_by_representative / dissolve_org_by_owner) が RAISE する。ORG_ALREADY_DISSOLVED は
-  // operator_force_dissolve_org も前から RAISE している (運営の route は internalError で返すので、これまで表に無かった)
+  // operator_force_dissolve_org も前から RAISE している (運営の強制解散の route もこの表の status と文で返す。operator-rpc-errors.ts)
   FAMILY_ALREADY_DISSOLVED = 'FAMILY_ALREADY_DISSOLVED',
   ORG_ALREADY_DISSOLVED = 'ORG_ALREADY_DISSOLVED',
 // ErrorStatusMap に:

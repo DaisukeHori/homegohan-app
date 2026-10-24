@@ -22,6 +22,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import {
@@ -123,13 +124,17 @@ export async function GET(_request: NextRequest, props: RouteContext) {
       return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
-    // 価格変更履歴を追加取得
-    const { data: priceHistory } = await supabase
+    // 価格変更履歴を追加取得。読めなかった (DB の失敗) ときは 500。空の履歴にしない (#1917 の続き。以前は失敗を捨て、
+    // 価格を一度も変えていないプランに見えていた)
+    const { data: priceHistory, error: priceHistoryError } = await supabase
       .from('plan_price_history')
       .select('*')
       .eq('plan_id', params.id)
       .order('created_at', { ascending: false })
       .limit(20);
+    if (priceHistoryError) {
+      return internalError('GET /api/super-admin/plans/[id]', priceHistoryError, { table: 'plan_price_history' }, { shape: 'nested' });
+    }
 
     return NextResponse.json({ data: { ...plan, price_history: priceHistory ?? [] } });
   } catch (err) {
@@ -137,7 +142,7 @@ export async function GET(_request: NextRequest, props: RouteContext) {
       return NextResponse.json({ error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } }, { status: 401 });
     }
     if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } }, { status: 403 });
+      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: operatorForbiddenMessageOf(err) } }, { status: 403 });
     }
     console.error('[super-admin/plans/[id] GET]', err);
     return NextResponse.json({ error: { code: 'OP_INTERNAL_ERROR', message: '内部エラー' } }, { status: 500 });
@@ -384,7 +389,7 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
       return NextResponse.json({ error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } }, { status: 401 });
     }
     if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } }, { status: 403 });
+      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: operatorForbiddenMessageOf(err) } }, { status: 403 });
     }
     console.error('[super-admin/plans/[id] PATCH]', err);
     return NextResponse.json({ error: { code: 'OP_INTERNAL_ERROR', message: '内部エラー' } }, { status: 500 });
@@ -474,7 +479,7 @@ export async function DELETE(request: NextRequest, props: RouteContext) {
       return NextResponse.json({ error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } }, { status: 401 });
     }
     if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } }, { status: 403 });
+      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: operatorForbiddenMessageOf(err) } }, { status: 403 });
     }
     console.error('[super-admin/plans/[id] DELETE]', err);
     return NextResponse.json({ error: { code: 'OP_INTERNAL_ERROR', message: '内部エラー' } }, { status: 500 });

@@ -15,7 +15,7 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { API_INVALID_JSON_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { z } from 'zod';
 import { getSupabaseServiceConfig, isMissingEnvError } from '@/lib/env-required';
 import { recordAdminAudit } from '@/lib/admin/audit';
@@ -112,7 +112,7 @@ export async function POST(request: Request) {
     }
     if (err instanceof ForbiddenError) {
       return NextResponse.json(
-        { error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } },
+        { error: { code: 'OP_PERMISSION_DENIED', message: operatorForbiddenMessageOf(err) } },
         { status: 403 },
       );
     }
