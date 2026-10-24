@@ -60,14 +60,14 @@ interface BusinessErrorSpec {
   byDetail?: Record<string, string>;
 }
 
+/** OP_COUPON_NOT_FOUND の文 (route が UUID でない id を DB に渡さずに断るときも同じ文を返す。#1917 の続き) */
+export const COUPON_NOT_FOUND_MESSAGE = 'クーポンが見つかりません';
+
 /**
  * apply_coupon が `RAISE EXCEPTION '<コード>' USING ERRCODE = 'P0001', DETAIL = '<種別>'` で返す業務エラー。
  * 従来の applyCoupon が投げていた CouponApplyError (コードと文言) と同じものに戻す。
  * HTTP ステータスへの対応付けは route 側 (OP_SUBSCRIPTION_NOT_FOUND / OP_COUPON_NOT_FOUND は 404、それ以外は 422)。
  */
-/** OP_COUPON_NOT_FOUND の文 (route が UUID でない id を DB に渡さずに断るときも同じ文を返す。#1917 の続き) */
-export const COUPON_NOT_FOUND_MESSAGE = 'クーポンが見つかりません';
-
 const BUSINESS_ERRORS: ReadonlyMap<string, BusinessErrorSpec> = new Map<string, BusinessErrorSpec>([
   ['OP_COUPON_NOT_FOUND', { message: COUPON_NOT_FOUND_MESSAGE }],
   ['OP_COUPON_INVALID', { message: 'クーポンが有効な状態ではありません' }],
