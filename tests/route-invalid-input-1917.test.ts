@@ -6,12 +6,16 @@
  *   - UUID の形でない id を uuid の列に渡し、PostgREST の 22P02 の失敗が「DB の失敗は 500」に入っていた
  *     (GET /api/recipes/[id]・GET / POST /api/recipes/[id]/comments・DELETE /api/shopping-list/[id]、
  *     同じ型の DELETE /api/pantry/[id]・DELETE /api/meal-plans/meals/[id]・GET /api/admin/support/tickets/[id]/messages)
- *   - コメントの POST で、レシピが無い (外部キー違反 23503) と 500 になっていた
+ *   - 同じ型で、helper (src/lib) の中で uuid の列に渡す route (GET・POST・PUT /api/admin/moderation/[type]/[id]・
+ *     POST /api/admin/moderation/[type]/[id]/restore・POST /api/super-admin/coupons/[id]/apply は tests/coupons-apply-route.test.ts) と、
+ *     いいねの route (GET・POST・DELETE /api/recipes/[id]/like。recipe_likes.recipe_id は uuid の列で、画面はレシピの名前を送ることがある)
+ *   - コメント・いいねの POST で、レシピが無い (外部キー違反 23503) と 500 になっていた
  *   - `const body = await request.json()` を route 全体の try の中で読み、壊れた JSON の例外が catch の internalError に流れて
  *     500 になっていた (下の JSON_CASES の 39 の handler。POST /api/ai/hint は catch が固定のヒントを返す決まり (#1327) なので変えていない)
  *
  * 直したあとの不変条件 (docs/design/cross/04-api-conventions.md §5.2):
- *   - UUID の形でない id は DB に渡さず、行が無い id と同じ応答 (404。PUT / DELETE /api/recipes/[id] は今までどおり 403)
+ *   - UUID の形でない id は DB に渡さず、行が無い id と同じ応答 (404。PUT / DELETE /api/recipes/[id] は今までどおり 403・
+ *     GET /api/recipes/[id]/like は いいねの行が無いときと同じ 200 { liked: false })
  *   - レシピの外部キー違反は 404。ほかの外部キー違反・DB の失敗は今までどおり 500
  *   - JSON として読めない本文・オブジェクトでない本文は 400 `{ error: 'リクエストボディが不正です' }`
  *     (nested の route は `{ error: { code: 'INVALID_JSON', message } }`)
@@ -321,6 +325,141 @@ describe('同じ型: DELETE /api/pantry/[id]・DELETE /api/meal-plans/meals/[id]
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: { code: 'NOT_FOUND', message: 'チケットが見つかりません' } });
     expect(h.fromCalls).toEqual([]);
+  });
+});
+
+describe('いいね: GET・POST・DELETE /api/recipes/[id]/like (recipe_likes.recipe_id は uuid の列)', () => {
+  const load = () => import('@/app/api/recipes/[id]/like/route');
+  const likeRequest = (id: string, method: string) => request(`/api/recipes/${encodeURIComponent(id)}/like`, method);
+  /** 献立・お気に入りの画面が送るレシピの名前 (UUID の形でない id) */
+  const RECIPE_NAME = '照り焼きチキン';
+
+  it('GET は UUID の形でない id (レシピの名前) に、いいねの行が無いときと同じ 200 { liked: false }。DB に触れない', async () => {
+    const { GET } = await load();
+    for (const id of [NOT_UUID, RECIPE_NAME]) {
+      const res = await GET(likeRequest(id, 'GET'), ctx({ id }));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ liked: false });
+    }
+    expect(h.fromCalls).toEqual([]);
+  });
+
+  it('GET は UUID の id なら今までどおり行の有無を返す', async () => {
+    const { GET } = await load();
+    h.results.recipe_likes = { data: { user_id: USER_ID }, error: null };
+    const liked = await GET(likeRequest(ROW_ID, 'GET'), ctx({ id: ROW_ID }));
+    expect(await liked.json()).toEqual({ liked: true });
+    h.results.recipe_likes = { data: null, error: null };
+    const notLiked = await GET(likeRequest(ROW_ID, 'GET'), ctx({ id: ROW_ID }));
+    expect(await notLiked.json()).toEqual({ liked: false });
+    expect(h.fromCalls).toEqual(['recipe_likes', 'recipe_likes']);
+  });
+
+  it.each(['POST', 'DELETE'] as const)('%s は UUID の形でない id (レシピの名前) を 404 (レシピが無いときと同じ)。DB に触れない', async (method) => {
+    const route = await load();
+    for (const id of [NOT_UUID, RECIPE_NAME]) {
+      const res = await route[method](likeRequest(id, method), ctx({ id }));
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual(FLAT_NOT_FOUND);
+    }
+    expect(h.fromCalls).toEqual([]);
+  });
+
+  it('POST はレシピが無い (recipe_id の外部キー違反 23503) ときは 404。500 にしない', async () => {
+    const { POST } = await load();
+    h.results.recipe_likes = {
+      data: null,
+      error: {
+        code: '23503',
+        message: 'insert or update on table "recipe_likes" violates foreign key constraint "recipe_likes_recipe_id_fkey"',
+      },
+    };
+    const res = await POST(likeRequest(ROW_ID, 'POST'), ctx({ id: ROW_ID }));
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual(FLAT_NOT_FOUND);
+  });
+
+  it('POST のレシピ以外の外部キー違反 (user_id) は 404 にせず 500', async () => {
+    const { POST } = await load();
+    h.results.recipe_likes = {
+      data: null,
+      error: {
+        code: '23503',
+        message: 'insert or update on table "recipe_likes" violates foreign key constraint "recipe_likes_user_id_fkey"',
+      },
+    };
+    const res = await POST(likeRequest(ROW_ID, 'POST'), ctx({ id: ROW_ID }));
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual(FLAT_INTERNAL);
+  });
+
+  it.each(['POST', 'DELETE'] as const)('%s は UUID の id で DB が失敗したときは今までどおり 500', async (method) => {
+    const route = await load();
+    h.results.recipe_likes = { data: null, error: DB_FAILURE };
+    const res = await route[method](likeRequest(ROW_ID, method), ctx({ id: ROW_ID }));
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual(FLAT_INTERNAL);
+  });
+
+  it.each([
+    ['POST', true],
+    ['DELETE', false],
+  ] as const)('%s は UUID の id なら成功の応答は今までどおり', async (method, liked) => {
+    const route = await load();
+    h.results.recipe_likes = { data: null, error: null };
+    const res = await route[method](likeRequest(ROW_ID, method), ctx({ id: ROW_ID }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true, liked, likeCount: 0 });
+  });
+});
+
+describe('運営の通報: GET・POST・PUT /api/admin/moderation/[type]/[id]・POST .../restore (通報の id は uuid の列)', () => {
+  const MODERATION_NOT_FOUND = { error: { code: 'NOT_FOUND', message: 'モデレーションアイテムが見つかりません' } };
+  const MODERATION_INTERNAL = { error: { code: 'INTERNAL_ERROR', message: '内部エラーが発生しました' } };
+  const path = (type: string, id: string) => `/api/admin/moderation/${type}/${id}`;
+
+  it.each(['food', 'recipe'])('GET (%s) は UUID の形でない id を 404 (通報が無いときと同じ)。DB に触れない', async (type) => {
+    const { GET } = await import('@/app/api/admin/moderation/[type]/[id]/route');
+    const res = await GET(request(path(type, NOT_UUID), 'GET'), ctx({ type, id: NOT_UUID }));
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual(MODERATION_NOT_FOUND);
+    expect(h.fromCalls).toEqual([]);
+  });
+
+  it.each(['POST', 'PUT'] as const)('%s は UUID の形でない id を 404 (通報が無いときと同じ)。DB に触れない', async (method) => {
+    const route = await import('@/app/api/admin/moderation/[type]/[id]/route');
+    const res = await route[method](request(path('food', NOT_UUID), method, '{"action":"approve"}'), ctx({ type: 'food', id: NOT_UUID }));
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual(MODERATION_NOT_FOUND);
+    expect(h.fromCalls).toEqual([]);
+  });
+
+  it('restore の POST は UUID の形でない id を 404 (通報が無いときと同じ)。DB に触れない', async () => {
+    const { POST } = await import('@/app/api/admin/moderation/[type]/[id]/restore/route');
+    const res = await POST(
+      request(`${path('recipe', NOT_UUID)}/restore`, 'POST', '{"restore_note":"誤って隠したため戻す"}'),
+      ctx({ type: 'recipe', id: NOT_UUID }),
+    );
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual(MODERATION_NOT_FOUND);
+    expect(h.fromCalls).toEqual([]);
+  });
+
+  it('UUID の id で通報の読み込みが失敗したときは今までどおり 500 (GET・POST・restore)', async () => {
+    h.results.moderation_flags = { data: null, error: DB_FAILURE };
+    const moderation = await import('@/app/api/admin/moderation/[type]/[id]/route');
+    const restore = await import('@/app/api/admin/moderation/[type]/[id]/restore/route');
+    const params = ctx({ type: 'food', id: ROW_ID });
+    const responses = [
+      await moderation.GET(request(path('food', ROW_ID), 'GET'), params),
+      await moderation.POST(request(path('food', ROW_ID), 'POST', '{"action":"approve"}'), params),
+      await restore.POST(request(`${path('food', ROW_ID)}/restore`, 'POST', '{"restore_note":"誤って隠したため戻す"}'), params),
+    ];
+    for (const res of responses) {
+      expect(res.status).toBe(500);
+      expect(await res.json()).toEqual(MODERATION_INTERNAL);
+    }
+    expect(h.fromCalls).toEqual(['moderation_flags', 'moderation_flags', 'moderation_flags']);
   });
 });
 

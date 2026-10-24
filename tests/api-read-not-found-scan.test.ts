@@ -40,11 +40,16 @@
  *
  * (D) パスの id を DB に渡す前に形を確かめているか (#1917 の続き。整合 1024c):
  *   動的なパス ([id] など) の route.ts の HTTP の handler (GET / POST / PUT / PATCH / DELETE) のうち、パスの値 (第 2 引数) を受け取り、
- *   handler の中で `.from(...)` か `.rpc(...)` を呼ぶものは、handler の中で isUuid / normalizeUuid を呼ぶか、`.safeParse(...)` で
+ *   handler の中で `.from(...)` か `.rpc(...)` を呼ぶものは、パスの値を引数にして isUuid / normalizeUuid を呼ぶか、`.safeParse(...)` で
  *   id を検証する (route の正典が UUID でない id を 400 と決めているもの) か、UUID の正規表現 (UUID_RE など) で確かめていること。
+ *   「パスの値を引数にして」= 引数の中に `params` か、`params` から取り出した変数 (`const { id } = await params` の id など) の名前があること。
+ *   本文の `.safeParse(body)` だけの handler は、確かめていない側に数える。
  *   パスの値が uuid の列に届かない (文字列の列・日付・トークン) handler や、所属の操作の route (code の体系が正典で別に決まる) は
  *   PATH_ID_CHECK_EXCLUDED に理由つきで載せる。載せた handler が検査を持つようになったら (または消えたら)、載せたままを失敗にする。
- *   限界: handler が呼ぶ src/lib の関数の中で DB に渡すもの (`.from` を handler に書かないもの) は見ない。
+ *   限界: handler が呼ぶ関数 (src/lib・同じファイルの関数) の中で DB に渡すもの (`.from` を handler に書かないもの) は見ない。
+ *   この形は #1917 の続きで手で洗った (admin/moderation/[type]/[id] の GET・POST・PUT・restore の POST と super-admin/coupons/[id]/apply の POST は
+ *   isUuid を足した。account/data-requests/[id] は parseDsrId・admin/users/[id]/role は handleRoleChange の中・super-admin/users/[id]/manual-plan は
+ *   targetIdOf・admin/inquiries/[id] は updateInquiry の中で確かめている)。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -241,12 +246,10 @@ const PATH_ID_CHECK_EXCLUDED: Record<string, string> = {
   'admin/finance/invoices/[id]/route.ts GET': 'id は Stripe のイベント ID で、stripe_webhook_events.id は文字列の列',
   'experiments/[key]/assignment/route.ts GET': 'key は実験の名前で、文字列の列を引く',
   'super-admin/flags/[key]/route.ts DELETE': 'key は機能フラグの名前で、文字列の列を引く',
+  'super-admin/flags/[key]/route.ts PATCH': 'key は機能フラグの名前で、文字列の列を引く',
   'health/records/[date]/route.ts GET': 'パスの値は日付で、RECORD_DATE_PATTERN と isCalendarDate で確かめて 400 にする',
   'health/records/[date]/route.ts PUT': 'パスの値は日付で、RECORD_DATE_PATTERN と isCalendarDate で確かめて 400 にする',
   'health/records/[date]/route.ts DELETE': 'パスの値は日付で、RECORD_DATE_PATTERN と isCalendarDate で確かめて 400 にする',
-  'recipes/[id]/like/route.ts GET': 'recipe_likes.recipe_id はレシピの名前の文字列の列 (#258)',
-  'recipes/[id]/like/route.ts POST': 'recipe_likes.recipe_id はレシピの名前の文字列の列 (#258)',
-  'recipes/[id]/like/route.ts DELETE': 'recipe_likes.recipe_id はレシピの名前の文字列の列 (#258)',
   'family/invites/[id]/reject/route.ts POST': MEMBERSHIP_ROUTE_REASON,
   'family/invites/[id]/revoke/route.ts POST': MEMBERSHIP_ROUTE_REASON,
   'family/members/[member_id]/remove/route.ts POST': MEMBERSHIP_ROUTE_REASON,
@@ -260,6 +263,8 @@ const PATH_ID_CHECK_EXCLUDED: Record<string, string> = {
   'org/owner-transfer/[id]/decline/route.ts POST': MEMBERSHIP_ROUTE_REASON,
   'operator/membership/family/[id]/candidates/route.ts GET': MEMBERSHIP_ROUTE_REASON,
   'operator/membership/org/[id]/candidates/route.ts GET': MEMBERSHIP_ROUTE_REASON,
+  'operator/membership/family/[id]/dissolve/route.ts POST': MEMBERSHIP_ROUTE_REASON,
+  'operator/membership/org/[id]/dissolve/route.ts POST': MEMBERSHIP_ROUTE_REASON,
 };
 
 interface PathIdHandler {
@@ -267,19 +272,58 @@ interface PathIdHandler {
   checked: boolean;
 }
 
-/** handler の中の呼び出しを調べる: DB に触るか (`.from` / `.rpc`)、パスの値の形を確かめるか */
+/** 束縛 (変数名・分割代入) が作る名前を集める */
+function collectBindingNames(name: ts.BindingName, out: Set<string>): void {
+  if (ts.isIdentifier(name)) {
+    out.add(name.text);
+    return;
+  }
+  for (const element of name.elements) {
+    if (ts.isBindingElement(element)) collectBindingNames(element.name, out);
+  }
+}
+
+/** ノードの中に、names のどれかの名前の識別子があるか */
+function mentionsAnyName(node: ts.Node, names: ReadonlySet<string>): boolean {
+  if (ts.isIdentifier(node) && names.has(node.text)) return true;
+  return ts.forEachChild(node, (child) => mentionsAnyName(child, names) || undefined) ?? false;
+}
+
+/**
+ * handler の中でパスの値を指す名前: `params` と、`params` (またはそこから取り出した変数) から作った変数
+ * (`const { id } = await params` の id・`const { id: familyId } = params` の familyId・`const id = (await props.params).id` の id など)
+ */
+function pathValueNames(body: ts.Node): Set<string> {
+  const names = new Set<string>(['params']);
+  const visit = (n: ts.Node): void => {
+    if (ts.isVariableDeclaration(n) && n.initializer && mentionsAnyName(n.initializer, names)) {
+      collectBindingNames(n.name, names);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(body);
+  return names;
+}
+
+/**
+ * handler の中の呼び出しを調べる: DB に触るか (`.from` / `.rpc`)、パスの値の形を確かめるか。
+ * 確かめる呼び出し (isUuid・normalizeUuid・`.safeParse`・UUID の正規表現の `.test`) は、引数にパスの値の名前があるときだけ数える
+ * (本文の `.safeParse(body)` だけでは、パスの値を確かめたことにならない)
+ */
 function inspectHandler(body: ts.Node): { touchesDb: boolean; checked: boolean } {
+  const pathNames = pathValueNames(body);
+  const checksPathValue = (call: ts.CallExpression): boolean => call.arguments.some((arg) => mentionsAnyName(arg, pathNames));
   let touchesDb = false;
   let checked = false;
   const visit = (n: ts.Node): void => {
     if (ts.isCallExpression(n)) {
       const callee = n.expression;
-      if (ts.isIdentifier(callee) && (callee.text === 'isUuid' || callee.text === 'normalizeUuid')) checked = true;
+      if (ts.isIdentifier(callee) && (callee.text === 'isUuid' || callee.text === 'normalizeUuid') && checksPathValue(n)) checked = true;
       if (ts.isPropertyAccessExpression(callee)) {
         const name = callee.name.text;
         if (name === 'from' || name === 'rpc') touchesDb = true;
-        if (name === 'safeParse') checked = true;
-        if (name === 'test' && ts.isIdentifier(callee.expression) && /UUID/i.test(callee.expression.text)) checked = true;
+        if (name === 'safeParse' && checksPathValue(n)) checked = true;
+        if (name === 'test' && ts.isIdentifier(callee.expression) && /UUID/i.test(callee.expression.text) && checksPathValue(n)) checked = true;
       }
     }
     ts.forEachChild(n, visit);
@@ -534,6 +578,39 @@ describe('API の route が DB の読み込みの失敗を 404 にしない (#19
     expect(unchecked).toEqual([
       { key: 'snippet/[id]/route.ts DELETE', checked: false },
       { key: 'snippet/[id]/route.ts PATCH', checked: true },
+    ]);
+  });
+
+  it('(D) 本文だけを確かめる handler は数え、パスの値から取り出した変数を確かめる handler は数えない', () => {
+    const handlers = pathIdHandlers(
+      `
+      export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
+        const params = await props.params;
+        const parsed = BodySchema.safeParse(await request.json());
+        if (!parsed.success || !isUuid(parsed.data.member_id)) return NextResponse.json({ error: 'x' }, { status: 400 });
+        const { error } = await supabase.from('t').delete().eq('id', params.id);
+        return NextResponse.json({ success: !error });
+      }
+      export async function PUT(request: Request, props: { params: Promise<{ id: string }> }) {
+        const { id: rowId } = await props.params;
+        if (!IdSchema.safeParse(rowId).success) return NextResponse.json({ error: 'x' }, { status: 400 });
+        const { error } = await supabase.from('t').update({}).eq('id', rowId);
+        return NextResponse.json({ success: !error });
+      }
+      export async function DELETE(request: Request, { params }: { params: Promise<{ id: string }> }) {
+        const { id } = await params;
+        const normalized = id.trim();
+        if (!UUID_RE.test(normalized)) return NextResponse.json({ error: 'x' }, { status: 404 });
+        const { error } = await supabase.from('t').delete().eq('id', normalized);
+        return NextResponse.json({ success: !error });
+      }
+      `,
+      'snippet/[id]/route.ts',
+    );
+    expect(handlers).toEqual([
+      { key: 'snippet/[id]/route.ts POST', checked: false },
+      { key: 'snippet/[id]/route.ts PUT', checked: true },
+      { key: 'snippet/[id]/route.ts DELETE', checked: true },
     ]);
     expect(isDynamicRouteFile('snippet/[id]/route.ts')).toBe(true);
     expect(isDynamicRouteFile('snippet/route.ts')).toBe(false);

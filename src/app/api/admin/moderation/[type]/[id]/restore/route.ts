@@ -48,6 +48,7 @@ import {
 import { notSupportedResponse } from '@/lib/admin/not-supported';
 import { recordAdminAudit, type AdminAuditSeverity } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { isUuid } from '@/lib/http-params';
 
 export const dynamic = 'force-dynamic';
 
@@ -147,6 +148,12 @@ export async function POST(request: Request, props: Params) {
   // 監査ログだけ本人の権限の client (RLS audit_logs_insert_admins)
   const supabaseAdmin = getSupabaseAdmin();
   const supabase = await createClient();
+
+  // UUID の形でない id は DB に渡さず、通報が無いときと同じ 404 (moderation_flags.id / recipe_flags.id は uuid の列。
+  // 渡すと 22P02 で失敗し、下の catch の 500 に入る。#1917 の続き)
+  if (!isUuid(id)) {
+    return errorResponse(404, 'NOT_FOUND', 'モデレーションアイテムが見つかりません');
+  }
 
   let item;
   try {

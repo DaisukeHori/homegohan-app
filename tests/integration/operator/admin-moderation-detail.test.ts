@@ -883,14 +883,13 @@ describe('POST /api/admin/moderation/[type]/[id]', () => {
       expectError(res, 404, 'NOT_FOUND');
     });
 
-    // 既知の不具合: UUID でない id を DB にそのまま渡し、DB エラーが 500 INTERNAL_ERROR になる
-    // (users/[id]/freeze は同じ入力で 404 を返す)。400 / 404 などの 4xx が期待。直ったら `.fails` を外すこと。
-    it.fails('[既知の不具合] 4xx for an id that is not a UUID (現状は 500 INTERNAL_ERROR)', async () => {
+    // UUID でない id は DB に渡さず、通報が無いときと同じ 404 NOT_FOUND (以前は DB の 22P02 が 500 INTERNAL_ERROR になっていた。
+    // users/[id]/freeze と同じ。#1917 の続き)
+    it('404 for an id that is not a UUID (500 にしない)', async () => {
       const res = await apiCall('POST', '/api/admin/moderation/food/not-a-uuid', adminUser.jwt, {
         action: 'approve',
       });
-      expect(res.status).toBeGreaterThanOrEqual(400);
-      expect(res.status).toBeLessThan(500);
+      expectError(res, 404, 'NOT_FOUND');
     });
 
     // #1128: AI コンテンツの審査は準備中 (未対応)。404 (該当なし) ではなく 501 で未対応と伝える
