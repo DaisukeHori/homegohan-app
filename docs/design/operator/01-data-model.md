@@ -420,7 +420,7 @@ CREATE POLICY "personal_subscriptions_select" ON personal_subscriptions
     )
   );
 
--- INSERT / UPDATE: admin / super_admin だけ (本人は書けない。billing/01 §6.2)。
+-- INSERT / UPDATE: admin / super_admin だけ (本人は書けない。billing/01 §6.2)。この 2 本 (下の CREATE POLICY) は後の supabase/migrations/20261024140000_announcements_moderation_flags_select_only.sql (PR #2006) で消え、いまは admin / super_admin も PostgREST から書けない (書くのはサーバーが呼ぶ SECURITY DEFINER の関数だけ)。
 -- Stripe の写しは service_role (RLS を通らない) の billing_apply_stripe_subscription が書く。
 -- 本人の解約の予約・取り消しは API (POST /api/billing/subscription/cancel・/api/billing/subscription/resume) が Stripe に送り、写像が写す
 CREATE POLICY "personal_subscriptions_insert_admin" ON personal_subscriptions
