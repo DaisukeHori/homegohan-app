@@ -7,6 +7,7 @@
 | v1.2 | 2026-10-25 | 設計ゲート R2 の修正 (材料の 3 つの形 (構造の形・長い 1 行・短い行) を写しが受ける・材料 1 行の上限を本番の実測で決め直す・jsonb の上限の再計算・献立の ♥ の応答を押した時点のモーダルに限る・同じ料理を開き直したときに ♥ の状態を引き直す。§22) |
 | v1.3 | 2026-10-25 | 設計ゲート R3 の修正 (お気に入りの詳細に幕を足す・削除の応答で詳細を閉じる判定を応答の時点の行で行う・詳細の状態遷移表を足す。§22) |
 | v1.4 | 2026-10-25 | 設計ゲート R4 の修正 (♥ の取得中の disabled を読んだ時点で skip していた e2e の 2 本目と、取得の前の値を読む探索の e2e を、disabled の解除を待つ形に直す (§7.16)・e2e の利用者と献立の事実 (F-34・F-35)。§22) |
+| v1.5 | 2026-10-25 | 設計ゲート R5 の修正 (お気に入りの画面で削除の 200 / 404 のあと次のページの offset を 1 戻す・一覧の GET と削除を重ねない・一覧に無い行 (詳細だけが出していた行) の削除は読み直しで件数をそろえる・一覧のページングと削除の状態遷移表 §9.3 (d) を足す。§22) |
 
 要件の正本は Issue #2011 の本文とコメント。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
 ファイル名は cross/22 (cross/ の既存は 01〜09・12・13a・13b・14〜21。10・11・13 は欠番)。
@@ -46,7 +47,7 @@
 |---|---|---|---|
 | R-1 | 献立の料理のモーダルの ♥ を押すと、その料理 (名前・役割・kcal・栄養・材料・作り方) が本人のお気に入りとして保存される | #2011・冒頭の前提の 1 項目め (料理を材料・作り方・栄養ごと保存) | §7.3・§7.4・§7.5 (POST)・§7.9 |
 | R-2 | もう一度 ♥ を押すと消える。モーダルを開き直したとき (同じ料理を開き直したときも)・ページを読み直したときの ♥ の印は保存の状態と一致する。押したあとにモーダルを閉じたり別の料理を開いたりしても、その応答はいま開いているモーダルの印・id を変えない | #2011・`tests/e2e/bug-31-favorite-button.spec.ts` | §7.5 (status・DELETE)・§7.8・§7.9・§7.16・§9.3 (b)・§12 (再読込の確かめ方) |
-| R-3 | お気に入りの画面で、保存した料理を一覧 (件数つき)・名前で検索・並び替え (新しい順 / 古い順 / 名前順)・削除できる | #2011・`src/app/(main)/favorites/page.tsx` の今の機能 | §7.5 (GET)・§7.10 |
+| R-3 | お気に入りの画面で、保存した料理を一覧 (件数つき)・名前で検索・並び替え (新しい順 / 古い順 / 名前順)・削除できる。消したあとに「次の50件を表示」で次のページを読んでも、行が抜けたり重なったりしない (削除と一覧の取得が重なっても) | #2011・`src/app/(main)/favorites/page.tsx` の今の機能 | §7.5 (GET)・§7.10・§9.1 (a3)・§9.3 (d) |
 | R-4 | お気に入りの画面から、料理の詳細 (材料・作り方・栄養) を開ける。材料を買い物リストに足せる。本番の献立の料理の材料の 3 つの形 (構造の形・長い 1 行・短い行。§3.4 F-31) のどれでも保存でき、材料が写しに残る。詳細は今と同じく幕 (半透明の黒) の上に開き、幕を押すと閉じ、開いている間は後ろの一覧に届かない (F-33)。詳細の ♥ で消した応答は、そのときに詳細が出している行が消した行のときだけ詳細を閉じる | 冒頭の前提の 1 項目め (お気に入りの画面から詳細を開ける)・`FavoriteRecipeModal` の今の機能 | §7.3・§7.10・§7.12・§9.3 (c) |
 | R-5 | 献立が作り直されて同じ名前の別の中身になっても、お気に入りの写しは変わらない。献立 (planned_meals) が消えても残る | #2011「料理そのものを保存」 | §3.1 F-9・§6.2・§9.3 |
 | R-6 | 同じ名前を二度 ♥ しても 1 件 (重ならない)。同時に 2 か所から押しても 1 件 | §0.1 の 2 | §7.1 (UNIQUE)・§7.4 (upsert)・§9.3 |
@@ -62,7 +63,7 @@
 | R-16 | 画像は保存しない (料理の画像は献立の非公開バケットの署名付き URL で、献立と一緒に消える) | cross/19 | §6.2 |
 | R-17 | 保存した料理の表示は献立のモーダルと同じ部品 (`RecipeModal`) で行う (材料・作り方・栄養の描き方を 2 か所に持たない) | 保守 | §7.12 |
 
-### 0.3 ユーザーシナリオ (26 本。トレースは §4.3)
+### 0.3 ユーザーシナリオ (29 本。トレースは §4.3)
 
 | # | シナリオ | 期待 |
 |---|---|---|
@@ -92,6 +93,9 @@
 | S-24 | 保存済みの料理 X のモーダルで「材料を買い物リストに追加」を押す (成功するとモーダルが閉じ、`selectedRecipe` は X のまま) → 同じ料理 X をもう一度タップ | 開くたびに status を引き直す。♥ は塗り・`favoriteId` = X の id (押すと DELETE) |
 | S-25 | お気に入りの画面で行 F の詳細を開いたまま、詳細の外 (後ろの一覧の別の行・行の ♥・検索欄・下のナビの位置) を押す | 詳細の後ろは幕で暗い。押した所は幕が受けて詳細が閉じる (今の詳細と同じ)。後ろの行は開かず、行の ♥ の削除も検索も起きない |
 | S-26 | お気に入りの画面で行 F の詳細の ♥ を押し、応答が返る前に詳細を閉じて、別の行 G の詳細を開く | 応答を待つ間はどの詳細の ♥ も押せない (disabled)。F の削除の応答 (200) は一覧から F を外し件数を 1 減らすが、G の詳細は閉じない。F の詳細を開いたままなら、応答で閉じる |
+| S-27 | 51 件以上を保存している利用者が、お気に入りの画面の 1 ページ目で行 F の ♥ (または F の詳細の ♥) を押して消し、「次の50件を表示」を押す | 削除 (200。404 も同じ) で一覧から F が外れ「N 件」が 1 減り、次のページの GET は `offset=49` (読み込んだ 50 行 − 消した 1 行)。サーバーで 1 つ前に詰まった元の 51 件目も一覧に出る (抜けない・重ならない)。k 件消せば `offset` は 50 − k |
+| S-28 | (a) 行 F の ♥ の応答の前に、「次の50件を表示」・並び替え・検索語の確定・上の更新ボタンを押す / (b)「次の50件を表示」や検索の応答の前に、行の ♥・詳細の ♥ を押す | (a) 削除の応答待ちの間は「次の50件を表示」は押せない (disabled)。並び替え・検索・更新の GET は削除の応答のあとに送られ、F の無い一覧と本当の件数になる。(b) 一覧の GET の応答待ちの間の ♥ は何も送らない (応答のあとに押せば消える) |
+| S-29 | お気に入りの画面で検索語を入れてすぐ (debounce の 300ms の前に) 行 F の詳細を開き、F を含まない検索の結果が届いたあと (詳細 F は開いたまま)、詳細の ♥ で F を消す | 削除 (200) で詳細が閉じる。一覧 (検索の結果) と次のページの `offset` は変えない (読み込んだ先頭の部分は詰まらない)。1 ページ目を読み直して件数をそろえる (F が検索語に当たっていれば「N 件」が 1 減り、当たっていなければ変わらない) |
 
 ### 0.4 分冊判定
 
@@ -164,6 +168,7 @@
 | F-19 | `src/modules/` は無い (facade の前例は無い)。`@/*` は `./src/*` と `./*` に解決する | `tsconfig.json:25-29` |
 | F-20 | 公開の紹介ページの主張 `favorites` (『気に入ったレシピをお気に入りに残せる (献立のレシピのハートから)』) の根拠は `src/app/(main)/favorites/page.tsx` と `src/app/api/favorites/route.ts` | `src/components/marketing/landing-copy.ts:885` |
 | F-33 | 幕 (詳細の後ろの半透明の黒): `RecipeModal` はパネル (`motion.div`・`fixed … z-[201]`) を `FocusTrap` (`allowOutsideClick: true`) で包むだけで、幕を描かない。献立の画面は `{activeModal && (<> <motion.div className="fixed inset-0 z-[200]" style={{ background: 'rgba(0,0,0,0.5)' }} onClick={() => setActiveModal(null)} /> …)}` の共有の幕を敷く (`useDialogA11y` の冒頭の注記も「バックドロップは page.tsx 側の共有 {activeModal && ...} が担う」)。今のお気に入りの詳細は `BottomSheet` を使い、その幕 (`rgba(0,0,0,0.5)`・`closeOnOverlayClick` の既定 true で押すと閉じる・`overlayClassName="z-[210]"`) が一覧を覆う。お気に入りの画面の上の帯は `position: sticky`・`zIndex: 50`、`(main)` の下のナビと横のメニューは `z-50` | `src/app/(main)/menus/weekly/_components/modals/RecipeModal.tsx:144-162`・`src/app/(main)/menus/weekly/page.tsx:6224-6232`・`src/components/common/useDialogA11y.ts:4-6`・`src/app/(main)/favorites/_components/FavoriteRecipeModal.tsx:16`・`:170-175`・`src/components/common/BottomSheet.tsx:78`・`:146-150`・`src/app/(main)/favorites/page.tsx:146-148`・`src/app/(main)/MainLayout.tsx:50`・`:230` |
+| F-36 | お気に入りの画面の一覧のページング: `offset` は次のページの GET の offset。GET の応答で `setOffset(nextOffset + fetched.length)`・`setHasMore(fetched.length === PAGE_SIZE)`。検索語・並び替えが変わると effect が `setOffset(0)` のあと `fetchFavorites(0)`。上の更新ボタンは `fetchFavorites(0)`。「次の50件を表示」は `fetchFavorites(offset)`・`disabled={loadingMore}`。`handleRemove` は一覧と `total` を減らすが `offset` に触れない。一覧の GET どうし・GET と削除の応答の順の見張りは無く、どの GET も `finally` で `loading`・`loadingMore`・`isSearching` を 3 つとも下ろす。今は削除が必ず 404 (F-7) で一覧を変えないので、削除と `offset` の食い違いには届かない | `src/app/(main)/favorites/page.tsx:66-99` (`:89`・`:90`・`:93-98`)・`:101-104`・`:106-121`・`:189`・`:320-340` (`:322`・`:323`) |
 
 ### 3.2 DB (ベースライン `supabase/baseline/prod_schema.sql`)
 
@@ -246,7 +251,7 @@
 | S-5 | ♥ 押下 → DELETE (最初の写しが消える) → 空。再度押下 → POST (新しい中身) → 201。表は新しい写し | §9.3 |
 | S-6 | `GET /api/favorites?limit=50&offset=0&sort=newest` → `listDishFavorites` → `created_at desc, id` → `{ favorites: DishFavorite[], total }` → 「N 件」 | §7.5 GET・§7.10 |
 | S-7 | 行をタップ → `selectedFavorite` に行 → `FavoriteRecipeModal` が `recipeModalDataOf(favorite)` を `RecipeModal` に渡す → 役割・kcal・栄養 (`protein_g` などが 0 でなければ)・材料 (`ingredients_md` があれば表、無ければ `ingredients` を `ingredientLineOf` で 1 行の文字列にしたものから表)・作り方。買い物リストは `ingredientInputsOf` → POST → 「N 件の材料を買い物リストに追加しました」 | §7.12・§7.3 |
-| S-8 | 行の ♥ → DELETE id → 200 → 一覧から外し `total - 1` | §7.10 |
+| S-8 | 行の ♥ (`removingId` null・`fetchesInFlightRef` 0) → DELETE id → 200 → 一覧から外し `total - 1`・`offset - 1` (次のページの GET の offset。S-27) | §7.10 (4) |
 | S-9 | `q=じゃが&sort=name` → `ilike('dish_name', '%じゃが%')`・`order('dish_name_key')` → 名前順 | §7.4 |
 | S-10 | offset が件数以上 → PostgREST 416 → `resolveBeyondLastPage` が同じ絞り込みで head の count → `{ favorites: [], total }` | §7.4・F-18 |
 | S-11 | 300 行ある → POST (新しい名前) → `countDishFavorites` = 300 ≥ 300 → `{ ok: false, reason: 'limit' }` → 409 `{ error: 上限の文, code: CONFLICT_DISH_FAVORITES_LIMIT }` → 画面は ♥ を戻し `error` を alert | §7.4・§7.5・§10 |
@@ -264,7 +269,10 @@
 | S-23 | A の ♥ → `handleToggleFavorite` が押した時点の回 `session` を控える → POST A 送信 → 閉じる (`RECIPE_SELECT null`。status の effect が回を進め、取得中の印を下ろす) → B をタップ (回を進めて status B) → status B が返り (回が同じ) `isFavorite=true`・`favoriteId=B.id` → POST A が返る: `favoriteSessionRef.current !== session` なので何もしない (B の印・id・取得中の印はそのまま。alert も出さない)。B の塗りの ♥ を押すと DELETE B.id | §7.9 (3)(4)・§9.3 (b) |
 | S-24 | X の status で `isFavorite=true`・`favoriteId=X.id` → 買い物リストに追加 → 成功で `setActiveModal(null)` (`selectedRecipe` は X のまま。開いているかの印 `isRecipeModalOpen` が false になり、status の effect が回を進める) → X をタップ: `RECIPE_SELECT X` は名前が同じなので印と id を保つ → `setActiveModal('recipe')` で `isRecipeModalOpen` が true → effect が回を進めて status X を引き直す (取得中は ♥ disabled) → `{ favorited: true, id }` | §7.8・§7.9 (3)・§9.3 (b) |
 | S-25 | 行 F の「レシピを見る」→ `openRecipeDetail(F)` (`openFavoriteIdRef` = F.id・`selectedFavorite` F・`isRecipeModalOpen` true) → `FavoriteRecipeModal` が `AnimatePresence` の下に幕 (`favorite-recipe-backdrop`・`fixed inset-0 z-[200]`) と `RecipeModal` (`z-[201]`) を描く → 後ろの行 G・行の ♥・検索欄・ナビ (どれも `z-50` 以下か重なりの順で下) の位置を押す → 幕の `onClick` → `onClose` = `closeRecipeDetail` (`openFavoriteIdRef` null・`isRecipeModalOpen` false) → 幕とパネルが `exit` で消える。G の `openRecipeDetail`・`handleRemove`・検索の `setSearchQuery` はどれも呼ばれない | §7.10 (3)(6)・§7.12・§9.3 (c)・F-33 |
-| S-26 | F の詳細の ♥ → `onRemove` → `handleRemove(F)` (`removingId` F.id。`isRemoving` = `removingId !== null` で ♥ disabled) → DELETE F 送信 → 幕を押す (`closeRecipeDetail`。ref null) → G の「レシピを見る」(ref G.id。G の詳細の ♥ も `removingId !== null` で disabled) → DELETE F 200 → 一覧から F を外し `total` − 1 → `openFavoriteIdRef.current` (G.id) ≠ F.id なので `closeRecipeDetail` を呼ばない (G の詳細は開いたまま) → `finally` で `removingId` null (G の ♥ が押せるようになる)。閉じずに待てば ref = F.id なので 200 で閉じる | §7.10 (3)(4)(6)・§9.3 (c) |
+| S-26 | F の詳細の ♥ → `onRemove` → `handleRemove(F)` (`removingId` F.id。`isRemoving` = `removingId !== null` で ♥ disabled) → DELETE F 送信 → 幕を押す (`closeRecipeDetail`。ref null) → G の「レシピを見る」(ref G.id。G の詳細の ♥ も `removingId !== null` で disabled) → DELETE F 200 → 一覧から F を外し `total` − 1・`offset` − 1 → `openFavoriteIdRef.current` (G.id) ≠ F.id なので `closeRecipeDetail` を呼ばない (G の詳細は開いたまま) → `finally` で `removingId` null (G の ♥ が押せるようになる)。閉じずに待てば ref = F.id なので 200 で閉じる | §7.10 (3)(4)(6)・§9.3 (c) |
+| S-27 | 1 ページ目: `GET ?limit=50&offset=0` → 50 行・`total` 51 → `offset` 50・`hasMore` true → 行 F の ♥ → `handleRemove(F)` (`removingId` null・`fetchesInFlightRef` 0 なので送る。`removingId` F.id・`removalRef` に Promise。「次の50件を表示」は `removingId !== null` で disabled) → DELETE 200 → 一覧から F を外し `total` 50・`offset` 49 → `finally` で `removalRef` null・`removingId` null (ボタンが押せる) → 「次の50件を表示」→ `fetchFavorites(49)` → `GET ?offset=49` → サーバーの 50 行のうち 50 行目 (元の 51 件目) の 1 行 → 一覧 50 行・`offset` 50・`hasMore` false。「50 件」と表示の行の数が合う | §7.10 (3a)(4)(7)・§9.3 (d) |
+| S-28 | (a) DELETE F の応答待ち (`removalRef` あり) に並び替え → effect が `setOffset(0)`・`fetchFavorites(0)` → `fetchesInFlightRef` 1・`isSearching` true → `removalRef` を待つ (GET はまだ送らない) → DELETE 200 → 後始末 (一覧から F・`total` − 1・`offset` は 0 のまま) → `removalRef` null・待ちが解ける → `GET ?offset=0&sort=oldest` (削除のあとの DB を読む) → 一覧・`total`・`offset` を置き換える。「次の50件を表示」は DELETE の応答まで disabled。(b) 「次の50件を表示」の GET の応答待ち (`fetchesInFlightRef` 1) に行 F の ♥ → `handleRemove` が `fetchesInFlightRef.current > 0` で return (DELETE を送らない) → GET の応答で一覧に足し `offset` = 送った offset + k・`fetchesInFlightRef` 0 → もう一度 ♥ → DELETE | §7.10 (3a)(4)(7)・§9.3 (d) |
+| S-29 | 検索語を入れる → 行 F の「レシピを見る」(`openFavoriteIdRef` F.id) → 300ms 後に `debouncedQuery` が変わり effect が `setOffset(0)`・`fetchFavorites(0)` → 応答 (F を含まない k 行) で `favoritesRef`・一覧・`total`・`offset` を置き換える (詳細 F は開いたまま) → 詳細の ♥ → `handleRemove(F)` (`removingId` null・`fetchesInFlightRef` 0 なので送る) → DELETE 200 → `favoritesRef` に F が無い → 一覧・`total`・`offset` はそのまま → `fetchesInFlightRef` 0 なので `fetchFavorites(0)` (`fetchesInFlightRef` 1・`removalRef` を待つ) → `openFavoriteIdRef` = F.id なので `closeRecipeDetail` → `finally` で `removalRef` を解く → `GET ?offset=0&q=…` → 一覧・`total`・`offset` を置き換える。削除の応答の前に並び替えなどで読み直しが待っていれば (`fetchesInFlightRef` 1)、`handleRemove` は読み直しを足さず、待っていた 1 本が送られる | §7.10 (3a)(4)・§9.3 (d) |
 
 ---
 
@@ -312,7 +320,7 @@
 - 一覧 = `GET /api/favorites`。1 行 = `DishFavorite` (`id`・`dish_name`・`dish` (写し)・`source_planned_meal_id`・`created_at`・`updated_at`)。写しごと返すので詳細の API は無い。
 - 検索 `q` は `dish_name` の部分一致 (ilike)。長さは `DISH_FAVORITES_QUERY_MAX_CHARS` (100) で切る。並びは `newest` (`created_at` 降順) / `oldest` (昇順) / `name` (`dish_name_key` 昇順)。どれも `id` で安定にする。未知の `sort` は `newest`。
 - ページングは `limit` (1〜200・既定 100) と `offset` (0〜100000) を `clampIntParam` で丸める (#1226 と同じ値。§13)。画面は 50 件ずつ。件数より後ろの offset は空のページと本当の件数 (`resolveBeyondLastPage`)。
-- 削除は `DELETE /api/favorites/[id]`。200 と 404 (もう無い) のどちらでも一覧から外す。
+- 削除は `DELETE /api/favorites/[id]`。200 と 404 (もう無い) のどちらでも一覧から外し、「N 件」と次のページの `offset` を 1 ずつ戻す (サーバーで詰まった行が次のページで抜けないように。消した行が一覧に無い (詳細だけが出していた) ときは一覧と `offset` を変えず、1 ページ目を読み直して件数をそろえる)。削除と一覧の取得 (次のページ・検索・並び替え・更新) は重ねない (§7.10 (3a)(4)(7)・§9.3 (d))。
 - 詳細は一覧の行をそのまま `RecipeModal` に渡し、後ろに幕を敷く (§7.12。幕を押すと閉じ、開いている間は後ろの一覧に届かない。今の `BottomSheet` の幕と同じ振る舞い。F-33)。♥ は塗り固定で、押すと削除し、応答の時点で詳細がその行を出していれば閉じる (§7.10 (3)(4)・§9.3 (c))。買い物リストの追加は `/api/shopping-list/add-recipe` に `{ ingredients: ingredientInputsOf(dish.ingredients) }` (構造の形は `{ name, amount: '<amount_g>g' }`。1 行の文字列は献立の画面と同じ正規表現で名前と分量に分ける。メモ (`note`) は買い物リストに送らない)。
 
 ### 6.4 既存の壊れた導線 (決めること 4)
@@ -1431,21 +1439,100 @@ const NOTICE_HIDE_MS = 3000;
     setIsRecipeModalOpen(false);
   };
 
-// (4) handleRemove: 名前の DELETE /api/recipes/{name}/like を、id の DELETE /api/favorites/{id} に。200 と 404 (もう無い) は一覧から外す。
-//     詳細がいま消した行を出しているときだけ閉じる (応答の時点の openFavoriteIdRef で比べる)
+// (3a) 一覧の GET と削除の DELETE を重ねない (§9.3 (d))。ref を 3 つ足し、既存の fetchFavorites (今の :66-99) を置き換える。
+//      変えるのは「応答待ちの GET の本数を数える」「削除の応答待ちがあれば、その後始末が済んでから GET を送る」
+//      「一覧を変えるときは favoritesRef にも同じ配列を入れる」の 3 点だけ
+//      (params・応答の読み方・loading / isSearching / loadingMore の立て方と下ろし方・依存の [debouncedQuery, sort] は今のまま)
+  /** 応答待ちの一覧の GET の本数 (最初の読み込み・取り直し・次のページ)。0 でない間は handleRemove が何も送らない */
+  const fetchesInFlightRef = useRef(0);
+  /**
+   * 応答待ちの削除 (handleRemove の後始末 (一覧・total・offset) が済むと解ける Promise。無ければ null)。
+   * 一覧の GET はこれを待ってから送る。先に送ると、消す前の一覧が後から届いて消した行が戻ったり、
+   * 消したあとの一覧に削除の後始末が重なって total と offset が 1 ずつずれたりする
+   */
+  const removalRef = useRef<Promise<void> | null>(null);
+  /**
+   * 一覧 (favorites) の写し。一覧を変える 3 か所 (取り直し・次のページ・削除) で state と同じ配列を同時に入れる。
+   * 削除の応答で「消した行が読み込んだ一覧にあったか」を描画を待たずに読む (詳細だけが出していた行は一覧に無いことがある。(4))
+   */
+  const favoritesRef = useRef<FavoriteItem[]>([]);
+  const fetchFavorites = useCallback(async (nextOffset = 0) => {
+    fetchesInFlightRef.current += 1;
+    if (nextOffset === 0) {
+      if (isFirstFetchRef.current) {
+        setLoading(true);
+      } else {
+        setIsSearching(true);
+      }
+    } else {
+      setLoadingMore(true);
+    }
+    try {
+      // 待つのは取り直し (nextOffset 0) だけになる: 次のページは削除の応答待ちの間に押せない ((7))。
+      // 取り直しの応答は一覧・total・offset を置き換えるので、削除の後始末のあとに届けば正しい
+      const pendingRemoval = removalRef.current;
+      if (pendingRemoval) await pendingRemoval;
+      const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(nextOffset), sort });
+      if (debouncedQuery) params.set("q", debouncedQuery);
+      const res = await fetch(`/api/favorites?${params}`);
+      if (!res.ok) throw new Error("Failed to fetch favorites");
+      const data = await res.json();
+      const fetched: FavoriteItem[] = data.favorites ?? [];
+      const nextFavorites = nextOffset === 0 ? fetched : [...favoritesRef.current, ...fetched];
+      favoritesRef.current = nextFavorites;
+      setFavorites(nextFavorites);
+      setTotal(data.total ?? 0);
+      setOffset(nextOffset + fetched.length);
+      setHasMore(fetched.length === PAGE_SIZE);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      fetchesInFlightRef.current -= 1;
+      setLoading(false);
+      setLoadingMore(false);
+      setIsSearching(false);
+      isFirstFetchRef.current = false;
+    }
+  }, [debouncedQuery, sort]);
+
+// (4) handleRemove: 名前の DELETE /api/recipes/{name}/like を、id の DELETE /api/favorites/{id} に。200 と 404 (もう無い) のとき:
+//     - 消した行が読み込んだ一覧にあれば、一覧から外し、total と offset を 1 ずつ戻す。offset は次のページの GET の offset で、
+//       サーバーでは消した行の後ろが 1 つ前に詰まるので、戻さないと「次の50件を表示」で次のページの先頭の 1 行が読まれない
+//       (k 件消せば k 行。S-27・H-5)
+//     - 一覧に無ければ (詳細を開いたあとに検索語が確定して一覧が置き換わり、詳細だけが出していた行。S-29)、一覧と offset は
+//       そのまま (読み込んだ先頭の部分は詰まらない)。total に入っていたかは分からないので 1 ページ目から読み直す。
+//       読み直しが既に削除の応答を待っていれば (fetchesInFlightRef が 0 でない)、それが最新の検索語と並びで読むので足さない (H-9・H-10)
+//     詳細がいま消した行を出しているときだけ閉じる (応答の時点の openFavoriteIdRef で比べる)。
+//     削除の応答待ち (removingId) と一覧の GET の応答待ち (fetchesInFlightRef) の間は何も送らない (§9.3 (c)(d)・H-7)
   const handleRemove = async (item: FavoriteItem) => {
-    if (removingId) return;
+    if (removingId || fetchesInFlightRef.current > 0) return;
     setRemovingId(item.id);
+    let settleRemoval = () => {};
+    removalRef.current = new Promise<void>((resolve) => {
+      settleRemoval = () => resolve();
+    });
     try {
       const res = await fetch(`/api/favorites/${encodeURIComponent(item.id)}`, { method: "DELETE" });
       if (res.ok || res.status === 404) {
-        setFavorites((prev) => prev.filter((f) => f.id !== item.id));
-        setTotal((prev) => Math.max(0, prev - 1));
+        const remaining = favoritesRef.current.filter((f) => f.id !== item.id);
+        if (remaining.length < favoritesRef.current.length) {
+          favoritesRef.current = remaining;
+          setFavorites(remaining);
+          setTotal((prev) => Math.max(0, prev - 1));
+          setOffset((prev) => Math.max(0, prev - 1));
+        } else if (fetchesInFlightRef.current === 0) {
+          // この fetchFavorites は押した時点の検索語と並びのもの。そのあとに変わっていれば effect の読み直しが
+          // removalRef を待っている (fetchesInFlightRef が 0 でない) のでここには来ない。送るのは finally で removalRef が解けてから
+          void fetchFavorites(0);
+        }
         if (openFavoriteIdRef.current === item.id) closeRecipeDetail();
       }
     } catch (err) {
       console.error(err);
     } finally {
+      // 後始末 (上の set*) のあとで解く。待っている取り直しの GET はここから送られる (§9.3 (d) の「取り直しの待ち」)
+      removalRef.current = null;
+      settleRemoval();
       setRemovingId(null);
     }
   };
@@ -1474,13 +1561,20 @@ const NOTICE_HIDE_MS = 3000;
           {notice}
         </div>
       )}
+
+// (7) 「次の50件を表示」(今の :320-340): disabled に削除の応答待ちを足す。応答の前に押せると、offset が (4) で 1 戻る前の値で
+//     GET が出て、次のページの先頭の 1 行が読まれない (§9.3 (d)・H-6)。onClick・style (cursor・opacity は loadingMore のまま)・文言は今のまま
+                <button
+                  onClick={() => fetchFavorites(offset)}
+                  disabled={loadingMore || removingId !== null}
 ```
 
-`fetchFavorites` の `params` (`limit`・`offset`・`sort`・`q`) と応答の読み方 (`data.favorites`・`data.total`) は変えない。見出し「お気に入りレシピ」・「{total} 件」・placeholder「レシピ名で検索...」・空の 2 文・「次の50件を表示」も変えない (R-13)。
+`fetchFavorites` の `params` (`limit`・`offset`・`sort`・`q`) と応答の読み方 (`data.favorites`・`data.total`) は変えない (変えるのは (3a) の 3 点だけ)。見出し「お気に入りレシピ」・「{total} 件」・placeholder「レシピ名で検索...」・空の 2 文・「次の50件を表示」の文言と見た目も変えない (R-13)。
 
 - `useRef` は今の import (`:3` の `React, { useState, useEffect, useCallback, useRef }`) にある。`FavoriteListItem` の `onOpen={() => openRecipeDetail(item)}`・`onRemove={() => handleRemove(item)}`・`isRemoving={removingId === item.id}` (一覧の行の ♥) は今のまま。
 - 詳細を開く・閉じるは (3) の 2 つの関数だけが行う (`setIsRecipeModalOpen` を直接呼ぶ所をほかに作らない)。`openFavoriteIdRef` は「詳細がいま出している行」を、`removingId` は「応答待ちの削除の行」を持ち、詳細の開閉と削除の応答の組み合わせは §9.3 (c) の表のとおりになる。部品のテストの H-1〜H-4 (§12) が画面を描いて確かめる。
 - 閉じる途中 (§9.3 (c)): `open` が false になったあとも、`AnimatePresence` は幕とパネルを `exit` のアニメーションが終わるまで DOM に残し、パネルは最後に開いていたときの props のまま描く (`framer-motion` の `AnimatePresence` は離れる子を前の要素のまま描く)。`RecipeModal` の `FocusTrap` (`active` を渡していない) と `useDialogA11y` (`isOpen` を渡していない) も、残っている間は有効のまま。そのため、閉じる途中に押せるのはパネルの中 (閉じるボタン・♥・「材料を買い物リストに追加」) と幕と Esc だけで、後ろの一覧 (行の「レシピを見る」・行の ♥・検索) には届かない。パネルの ♥ は (6) の見張り (`openFavoriteIdRef.current` が null) で何もしない。閉じるボタン・幕・Esc は `closeRecipeDetail` を入れ直すだけ。「材料を買い物リストに追加」は開いているときと同じく POST して知らせを出す (詳細の開閉にも一覧にも触れない)。
+- 一覧の GET と削除 (§9.3 (d)): (3a)(4)(7) で、削除の応答待ちと一覧の GET の送信・応答待ちが重ならない (削除の応答待ちの間は「次の50件を表示」が disabled・取り直しの GET は `removalRef` を待ってから送る・一覧の GET の応答待ちの間は `handleRemove` が何も送らない)。そのため一覧・`total`・`offset` を変える応答は 1 つずつ届き、静止 (一覧の GET の応答待ちも削除の応答待ちも無い) のとき `offset` = 一覧の行の数 (サーバーの並びの先頭から読み込んだ行の数) が保たれる。例外は検索語・並び替えの取り直しが失敗したときで、effect が 0 にした `offset` が残る (今と同じ。このとき「次の50件を表示」は `offset=0` の取り直しになり、行は抜けも重なりもしない)。消した行が一覧に無いこと (詳細を開いたあとに検索語が確定して一覧が置き換わり、詳細だけがその行を出していたとき。S-29) は `favoritesRef` で応答の時点に見分け、一覧・`offset` はそのまま、件数は 1 ページ目の読み直しでそろえる。`favoritesRef` は `favorites` を変える 3 か所で同じ配列を入れるので、描画の前でも一覧と同じ (`favorites` の閉包は描画の時点の値なので使わない)。一覧の GET の応答待ちの間に押した行の ♥・詳細の ♥ は、今の「別の行の削除の応答待ちの間の行の ♥」と同じく何も送らず、見た目も変えない (詳細の ♥ の `isRemoving` は `removingId !== null` のまま)。一覧の GET どうしの重なり (取り直しの応答待ちの間の「次の50件を表示」・検索語の打ち直しで並ぶ 2 本の取り直し) の応答の順は今と同じく見張らない (F-36。本書は変えない)。部品のテストの H-5〜H-10 (§12) が画面を描いて確かめる。
 
 ### 7.11 `src/app/(main)/favorites/_components/FavoriteListItem.tsx` (差分)
 
@@ -2057,7 +2151,7 @@ describe('dish_favorites: 退会 (I-6)', () => {
 | `tests/api/favorites-status-route.test.ts` (新) | §7.5.2 (T-1〜T-5) | 同上 (`createClient` の偽物 + §7.15.1) | B1 |
 | `tests/api/favorites-id-route.test.ts` (新) | §7.5.3 (D-1〜D-5) | 同上 | B1 |
 | `src/app/(main)/favorites/_components/__tests__/FavoriteRecipeModal.test.ts` (書き換え) | §7.12 (M-1〜M-5) | 今の `createRoot` + `React.createElement` の形のまま。`RecipeModal` は `vi.mock('@/app/(main)/menus/weekly/_components/modals/RecipeModal')` で props を記録する偽物にする (framer-motion・focus-trap を描かない)。幕は偽物にしない (`FavoriteRecipeModal` が自分で描く `motion.div`。jsdom で `div` として描かれる): M-5 は `container.querySelector('[data-testid="favorite-recipe-backdrop"]')` があること・`className` に `fixed`・`inset-0`・`z-[200]` を含むこと (パネルの `z-[201]` の下・一覧の `z-50` の上) を見て、`act(() => backdrop.dispatchEvent(new MouseEvent('click', { bubbles: true })))` のあと `onClose` が 1 回・`onRemove` が 0 回。M-1 は同じ `querySelector` が null | B2 |
-| `src/app/(main)/favorites/__tests__/page.detail.test.ts` (新) | §7.10 (3)(4)(6) の詳細の開閉と削除の応答 (H-1〜H-4) | `src/app/(main)/health/graphs/__tests__/page.a11y.test.ts` の形 (`createRoot` + `React.createElement`・`IS_REACT_ACT_ENVIRONMENT`・`vi.mock('next/navigation', () => ({ useRouter: () => ({ back: vi.fn(), push: vi.fn() }) }))`)。`vi.mock('../_components/FavoriteRecipeModal', …)` で `FavoriteRecipeModal` を「描くたびに props を配列に積み、null を返す」偽物にし、最後の props (`isOpen`・`favorite`・`isRemoving`・`onRemove`・`onClose`) を見る。`FavoriteListItem` は本物 (行の `aria-label` 「{dish_name} のレシピを見る」のボタンを押して開く)。`fetch` は `vi.stubGlobal` で、`GET /api/favorites?…` に `{ ok: true, status: 200, json: async () => ({ favorites: [F, G], total: 2 }) }` (F・G は `DishFavorite` の形の固定値。`fetchFavorites` は `res.ok` と `res.json()` だけを読む)、`DELETE /api/favorites/{F.id}` には外から解決する Promise (`let resolveDelete: (r: { ok: boolean; status: number }) => void`。`handleRemove` は `res.ok` と `res.status` だけを読む) を返し、応答の時点をテストが決める。描いたあと `await act(async () => { await Promise.resolve(); })` で一覧の取得を待つ。H-2 は ① F の「レシピを見る」 ② 最後の props の `onRemove()` (`isRemoving` true を確かめる) ③ `onClose()` ④ G の「レシピを見る」 ⑤ `resolveDelete({ ok: true, status: 200 })` と `await act(async () => { await Promise.resolve(); })` ⑥ 最後の props が `isOpen: true`・`favorite.id === G.id`・`isRemoving: false`、一覧の行が G だけ、画面の「1 件」。H-1 は ③④ を飛ばして ⑥ が `isOpen: false` (404 の `{ ok: false, status: 404 }` でも同じ)。H-4 は ① F の「レシピを見る」 ② そのときの props の `onRemove` を控える ③ 最後の props の `onClose()` (最後の props が `isOpen: false` になる) ④ 控えた `onRemove` を 2 回呼ぶ (閉じる途中のパネルが古い props のまま押される場面の写し。§9.3 (c)) ⑤ `fetch` の DELETE の呼び出しが 0 回・最後の props の `isRemoving: false`・画面の「2 件」 | B2 |
+| `src/app/(main)/favorites/__tests__/page.detail.test.ts` (新) | §7.10 (3)(4)(6) の詳細の開閉と削除の応答 (H-1〜H-4)・§7.10 (3a)(4)(7) の一覧のページングと削除の順序 (H-5〜H-10) | `src/app/(main)/health/graphs/__tests__/page.a11y.test.ts` の形 (`createRoot` + `React.createElement`・`IS_REACT_ACT_ENVIRONMENT`・`vi.mock('next/navigation', () => ({ useRouter: () => ({ back: vi.fn(), push: vi.fn() }) }))`)。`vi.mock('../_components/FavoriteRecipeModal', …)` で `FavoriteRecipeModal` を「描くたびに props を配列に積み、null を返す」偽物にし、最後の props (`isOpen`・`favorite`・`isRemoving`・`onRemove`・`onClose`) を見る。`FavoriteListItem` は本物 (行の `aria-label` 「{dish_name} のレシピを見る」のボタンを押して開く)。`fetch` は `vi.stubGlobal` で、`GET /api/favorites?…` に `{ ok: true, status: 200, json: async () => ({ favorites: [F, G], total: 2 }) }` (F・G は `DishFavorite` の形の固定値。`fetchFavorites` は `res.ok` と `res.json()` だけを読む)、`DELETE /api/favorites/{F.id}` には外から解決する Promise (`let resolveDelete: (r: { ok: boolean; status: number }) => void`。`handleRemove` は `res.ok` と `res.status` だけを読む) を返し、応答の時点をテストが決める。描いたあと・応答を解決したあとは `settle()` で待つ (ファイルの中の関数 `const settle = () => act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 0)); });`。1 回の macrotask を待つので、その前の microtask (`fetch`・`res.json()`・`removalRef` の待ち) はすべて流れる。検索の debounce (300ms) は進まない)。H-2 は ① F の「レシピを見る」 ② 最後の props の `onRemove()` (`isRemoving` true を確かめる) ③ `onClose()` ④ G の「レシピを見る」 ⑤ `resolveDelete({ ok: true, status: 200 })` と `settle()` ⑥ 最後の props が `isOpen: true`・`favorite.id === G.id`・`isRemoving: false`、一覧の行が G だけ、画面の「1 件」。H-1 は ③④ を飛ばして ⑥ が `isOpen: false` (404 の `{ ok: false, status: 404 }` でも同じ)。H-4 は ① F の「レシピを見る」 ② そのときの props の `onRemove` を控える ③ 最後の props の `onClose()` (最後の props が `isOpen: false` になる) ④ 控えた `onRemove` を 2 回呼ぶ (閉じる途中のパネルが古い props のまま押される場面の写し。§9.3 (c)) ⑤ `fetch` の DELETE の呼び出しが 0 回・最後の props の `isRemoving: false`・画面の「2 件」。H-5〜H-8 は `fetch` の偽物を次のものにする: 1 本目の GET (`offset=0`) は `DISH_FAVORITES_PAGE_SIZE` 行 (`P0`〜`P49`。`DishFavorite` の形で `id`・`dish_name` だけ違う固定値) と `total: DISH_FAVORITES_PAGE_SIZE + 1` を返し (「次の50件を表示」が出る)、2 本目からの GET は外から解決する Promise (`let resolveGet: (r: { ok: boolean; status: number; json: () => Promise<unknown> }) => void`) を返す。DELETE は H-1〜H-4 と同じ `resolveDelete`。呼び出しは `calls` に `{ method, url }` で順に積み、URL の `offset`・`sort` は `new URL(url, "http://localhost").searchParams` で読む。行の ♥ は `aria-label="お気に入りから削除"` のボタン (先頭が `P0`)、「次の50件を表示」は文言で探すボタン、並び替えは `select` (`value` を `"oldest"` にして `change` を `{ bubbles: true }` で dispatch)。H-5 は ① `P0` の行の ♥ ② `resolveDelete({ ok: true, status: 200 })`・`settle()` ③ 行が `DISH_FAVORITES_PAGE_SIZE - 1`・画面の「{`DISH_FAVORITES_PAGE_SIZE`} 件」 ④「次の50件を表示」を押す ⑤ 最後の GET の `offset` が `String(DISH_FAVORITES_PAGE_SIZE - 1)` (② を `{ ok: false, status: 404 }` にしても同じ)。H-6 は ① `P0` の行の ♥ (応答待ち) ②「次の50件を表示」が `disabled`・`button.click()` しても GET の数が増えない ③ `resolveDelete({ ok: true, status: 200 })`・`settle()` ④ `disabled` が外れる。H-7 は ①「次の50件を表示」(2 本目の GET が応答待ち) ② `P0` の行の ♥ を押す ③ DELETE の呼び出しが 0 回・`P0` の行の ♥ は disabled でない ④ `resolveGet({ ok: true, status: 200, json: async () => ({ favorites: [], total: DISH_FAVORITES_PAGE_SIZE + 1 }) })`・`settle()` ⑤ `P0` の行の ♥ を押すと DELETE が 1 回。H-8 は ① `P0` の行の ♥ (応答待ち) ② 並び替えを `oldest` に・`settle()` ③ `sort=oldest` の GET がまだ無い ④ `resolveDelete({ ok: true, status: 200 })`・`settle()` ⑤ `sort=oldest` の GET が 1 本あり、`calls` の中で DELETE より後。H-9・H-10 は 1 本目の GET を H-1〜H-4 と同じ `{ favorites: [F, G], total: 2 }` にし、2 本目からの GET は H-5〜H-8 と同じく `resolveGet` で解決する。H-9 は ① F の「レシピを見る」 ② 並び替えを `oldest` に (画面では詳細の幕が並び替えを隠すが、一覧が置き換わる経路は検索語の確定と同じ `fetchFavorites(0)` なので、テストは並び替えで起こす) ③ `resolveGet({ ok: true, status: 200, json: async () => ({ favorites: [G], total: 2 }) })`・`settle()` (一覧の行が G だけ・最後の props は `isOpen: true`・`favorite.id === F.id`) ④ 最後の props の `onRemove()` ⑤ `resolveDelete({ ok: true, status: 200 })`・`settle()` ⑥ 最後の props が `isOpen: false`・一覧の行は G だけ・画面の「2 件」・`calls` の DELETE より後の GET が 1 本 (`offset=0`・`sort=oldest`) ⑦ `resolveGet({ ok: true, status: 200, json: async () => ({ favorites: [G], total: 1 }) })`・`settle()` で画面の「1 件」。H-10 は H-9 の ①〜④ のあと ⑤ 並び替えを `name` に・`settle()` (GET の数は増えない) ⑥ `resolveDelete({ ok: true, status: 200 })`・`settle()` ⑦ `calls` の DELETE より後の GET が 1 本だけで `sort=name` | B2 |
 | `src/app/(main)/favorites/_components/__tests__/FavoriteListItem.test.ts` (書き換え) | 行の形の変更 (L-1) | 既存の 6 本の it はそのまま。fixture の `recipeName` → `dish_name`・`likedAt` → `created_at`・`recipeUuid` を消す | B2 |
 | `src/__tests__/app/menus/weekly/state/recipeReducer.test.ts` (新) | §7.8 の reducer (R-1〜R-4) | `recipeReducer` と `initialRecipeState` を import して直接呼ぶ (同じ階層の `weekViewReducer.test.ts` の形)。DOM もモックも要らない | B2 |
 | `src/__tests__/app/menus/weekly/dish-favorite-wiring.test.ts` (新) | §7.9 の配線 (W-1〜W-5) | page.tsx は巨大なクライアントコンポーネントで全体を描けないので、同じ階層の `request-watch-guard.test.ts` の形でソースを読む: コメントの行を除き (`stripCommentLines`)、`sliceBetween` (どちらも `request-watch-guard.test.ts` の中の関数なので、新しいファイルにも同じものを書く) で `const handleToggleFavorite = async () => {` から `const addRecipeToShoppingList` の前まで・status の effect (`favoriteSessionRef.current += 1;` から `}, [selectedRecipe, isRecipeModalOpen]);` まで) を切り出して、正規表現で順序と有無を見る | B2 |
@@ -2244,7 +2338,7 @@ S3 のほかの行と、同じファイルのほかのシナリオ (S1・S2・S4
 | 画面 | `RECIPE_SELECT`: payload が今の `selectedRecipe` と同じ (null でない) なら `isFavorite`・`favoriteId` を保ち、違う・null なら `false`・`null` に戻す | 変更 (今は null のときだけ `isFavorite` を戻す。F-3) |
 | 画面 | `menus/weekly/page.tsx`: `favoriteSessionRef` (モーダルの回)・`isRecipeModalOpen`。status はモーダルが開くたびに引き、status・POST・DELETE の応答は送った時点の回と同じときだけ反映 | 新設 (§7.9) |
 | 画面 | `FavoriteRecipeModalProps { isOpen; favorite: DishFavorite / null; isRemoving: boolean; onRemove(); onNotice(message: string); onClose() }`。開いているときは `RecipeModal` の後ろに幕 (`data-testid="favorite-recipe-backdrop"`・`fixed inset-0 z-[200]`) を描き、幕を押すと `onClose` | 差し替え |
-| 画面 | `favorites/page.tsx`: `openFavoriteIdRef` (詳細がいま出している行の id)・`openRecipeDetail(item)` / `closeRecipeDetail()` (詳細の開閉はこの 2 つだけ)。削除の応答 (200 / 404) は `openFavoriteIdRef.current === item.id` のときだけ詳細を閉じる。`isRemoving` = `removingId !== null` | 変更 (§7.10) |
+| 画面 | `favorites/page.tsx`: `openFavoriteIdRef` (詳細がいま出している行の id)・`openRecipeDetail(item)` / `closeRecipeDetail()` (詳細の開閉はこの 2 つだけ)。削除の応答 (200 / 404) は、消した行が一覧にあれば一覧から外し `total` と `offset` を 1 ずつ戻し (0 未満にしない)、`openFavoriteIdRef.current === item.id` のときだけ詳細を閉じる。`isRemoving` = `removingId !== null`。一覧の GET と削除を重ねない: `fetchesInFlightRef` (応答待ちの一覧の GET の本数。0 でない間は `handleRemove` が何も送らない)・`removalRef` (応答待ちの削除。`fetchFavorites` はこれが解けてから GET を送る)・`favoritesRef` (一覧の写し。消した行が一覧に無いときは一覧・`total`・`offset` を変えず、取り直しが待っていなければ `fetchFavorites(0)`)・「次の50件を表示」は `disabled={loadingMore \|\| removingId !== null}` | 変更 (§7.10) |
 | 画面 | `FavoriteListItemData = Pick<DishFavorite, 'id' / 'dish_name' / 'created_at'>` (`/` は union) | `recipeName` / `recipeUuid` / `likedAt` → `dish_name` / `created_at` |
 | 環境変数 | `DISH_FAVORITES_MAX_PER_USER` (任意・正の整数・`readOnlyBy: 'src/modules/dish-favorites/server.ts'`) | 新設 |
 | 書き出し | `ACCOUNT_EXPORT_TABLES` に `{ table: 'dish_favorites', scope: self('user_id'), orderBy: ['created_at', 'id'] }` | 新設 (行) |
@@ -2293,6 +2387,22 @@ S3 のほかの行と、同じファイルのほかのシナリオ (S1・S2・S4
 | `offset` が件数より後ろ | 200 `{ favorites: [], total }` (416 を空のページに) | `resolveBeyondLastPage` |
 | 未ログイン / DB の失敗 | 401 / 500 (表 (a) の H・L) | §10 |
 
+(a3) お気に入りの画面の一覧のページング × 削除 (画面。1 ページ = `DISH_FAVORITES_PAGE_SIZE` (50) 行。§7.10 (3a)(4)(7)・§9.3 (d))
+
+| 場面 | 結果 | 根拠 |
+|---|---|---|
+| 1 ページ目 (50 行) を読み、そのうち k 件を消してから「次の50件を表示」 | `GET ?offset=50−k`。サーバーで k 行前に詰まった行も読まれる (抜けない・重ならない)。「N 件」は消した数だけ減る | §7.10 (4)・S-27・H-5 |
+| 2 ページ目まで (100 行) 読み、1 ページ目の 1 行を消してから「次の50件を表示」 | `GET ?offset=99` | §7.10 (4) |
+| ちょうど 50 件を読み (`hasMore` true)、1 件消してから「次の50件を表示」 | `GET ?offset=49` (= 件数) → 空のページと本当の件数 (`resolveBeyondLastPage`。S-10) → `hasMore` false でボタンが消える | §7.4・§7.10 (4) |
+| 最後のページまで読んだあと (`hasMore` false) に消す | 一覧と「N 件」が減る。ボタンは出ないまま | §7.10 (4) |
+| 消すのが 404 (別のタブで消した) | 200 と同じ (一覧から外し、`total` と `offset` を 1 戻す。読み込んだ時点で一覧にあった行が DB から消えているので、サーバーの並びは 200 と同じく 1 つ前に詰まっている) | §7.10 (4) |
+| 消すのが失敗 (500 / 例外) | 一覧・`total`・`offset` を変えない | §7.10 (4) |
+| 削除の応答待ちの間に「次の50件を表示」 | 押せない (disabled) | §7.10 (7)・H-6 |
+| 削除の応答待ちの間に検索語の確定・並び替え・上の更新ボタン | GET は削除の応答 (後始末) のあとに送り、消したあとの一覧と件数になる | §7.10 (3a)・S-28・H-8 |
+| 一覧の GET の応答待ちの間 (最初の読み込み・取り直し・次のページ) に行の ♥・詳細の ♥ | 何も送らない (見た目は変えない)。応答のあとに押せば消せる | §7.10 (4)・S-28・H-7 |
+| 検索語を入れてすぐ (debounce の前に) 行 F の詳細を開き、F を含まない検索の結果が届いたあとに、詳細の ♥ で F を消す | 詳細は閉じる。一覧 (検索の結果) と `offset` は変えない (読み込んだ先頭の部分は詰まらない)。件数は 1 ページ目の読み直しでそろう (F が検索語に当たれば 1 減り、当たらなければ変わらない)。読み直しが既に削除の応答を待っていれば、その 1 本だけ | §7.10 (4)・S-29・H-9・H-10 |
+| 一覧の GET どうしの重なり (取り直しの応答待ちの間の「次の50件を表示」・検索語の打ち直しで並ぶ 2 本の取り直し) | 今と同じ (応答の順は見張らない。本書は変えない) | F-36 |
+
 (b) 消費経路 (書く側・読む側・表示・他)
 
 | 経路 | 読む / 書く | 何を | 本書で |
@@ -2328,8 +2438,9 @@ S3 のほかの行と、同じファイルのほかのシナリオ (S1・S2・S4
 | 列が無いときの 3 段の退避 (#302) | ある (`recipe_likes` の `id` / `recipe_uuid` が本番に無いときの名残) | 無い (新しい表の列は決まっている) |
 | 一覧の詳細 | `recipeUuid` があるときだけ `/api/recipes/{uuid}`。常に null なので「詳細情報が保存されていません」 | 一覧の行の写しで `RecipeModal` (材料・作り方・栄養の 27 行 (F-4)。写しは栄養 29 項目をすべて持ち、`RecipeModal` が描かない 3 項目も書き出しには出る) |
 | 詳細の後ろの幕 | `BottomSheet` の幕 (`rgba(0,0,0,0.5)`・`z-[210]`。押すと閉じる・Esc で閉じる。開いている間は後ろの一覧に届かない。F-33) | `FavoriteRecipeModal` が描く幕 (`rgba(0,0,0,0.5)`・`fixed inset-0 z-[200]`・`RecipeModal` のパネルは `z-[201]`。押すと閉じる・Esc は `RecipeModal` の `useDialogA11y` で閉じる。開いている間と閉じる途中 (`exit` のアニメーションの間) は後ろの一覧に届かない。§7.12・§9.3 (c)) |
-| 詳細の ♥ (削除) | 無い (詳細は削除の操作を持たない) | 押すと `DELETE /api/favorites/{id}`。応答待ちの間はどの詳細の ♥ も disabled (`removingId !== null`)。200 / 404 で一覧から外し、応答の時点で詳細がその行を出していれば (`openFavoriteIdRef`) 閉じる。ほかの失敗は詳細を開いたまま。閉じる途中のパネル (古い props のまま描かれる) の ♥ は何も送らない (押した時点の `openFavoriteIdRef` が null。H-4) (§7.10 (3)(4)(6)) |
-| 一覧からの削除 | `DELETE /api/recipes/{料理名}/like` → 404 (消えない) | `DELETE /api/favorites/{id}` → 200 |
+| 詳細の ♥ (削除) | 無い (詳細は削除の操作を持たない) | 押すと `DELETE /api/favorites/{id}` (一覧の GET の応答待ちの間は何も送らない)。応答待ちの間はどの詳細の ♥ も disabled (`removingId !== null`)。200 / 404 で一覧から外し (`total`・`offset` も 1 戻す。その行が一覧に無ければ一覧と `offset` は変えず 1 ページ目を読み直す。S-29)、応答の時点で詳細がその行を出していれば (`openFavoriteIdRef`) 閉じる。ほかの失敗は詳細を開いたまま。閉じる途中のパネル (古い props のまま描かれる) の ♥ は何も送らない (押した時点の `openFavoriteIdRef` が null。H-4) (§7.10 (3)(4)(6)) |
+| 一覧からの削除 | `DELETE /api/recipes/{料理名}/like` → 404 (消えない。一覧・`total`・`offset` は変わらない) | `DELETE /api/favorites/{id}` → 200 (404 も同じ扱い)。一覧から外し、`total` と次のページの `offset` を 1 ずつ戻す (0 未満にしない。§7.10 (4)・S-27) |
+| 削除と一覧の GET の重なり | 削除が必ず 404 で一覧を変えないので、食い違いは起きない。一覧の GET と削除の応答の順の見張りは無い (F-36) | 重ねない: 削除の応答待ちの間は「次の50件を表示」を押せず (disabled)、取り直し (検索語・並び替え・更新ボタン) の GET は削除の後始末のあとに送る。一覧の GET の応答待ちの間は行の ♥・詳細の ♥ は何も送らない (§7.10 (3a)(4)(7)・§9.3 (d)・S-28)。一覧の GET どうしの重なりは今と同じ |
 | 写しの材料の形 | (保存できないので無い) | 献立の料理の形のまま: 1 行の文字列 (短い行・長い 1 行。1〜2000 文字) か構造の形 `{ name, amount_g, note }` (F-31 の 3 つの形をどれも保存できる) |
 | 買い物リストへの追加 (お気に入りから) | 詳細が開けないので届かない | `ingredientInputsOf(dish.ingredients)` → `/api/shopping-list/add-recipe` (構造の形は `{ name, amount: '<amount_g>g' }`)。献立の画面の追加との差: 献立の画面は同じ料理の材料の列を 2 か所から集めて `new Set` で 1 回に戻すが、本書は写しの材料を 1 回だけ読み、重複を除かない (料理の中に同じ要素が 2 つあれば 2 件のまま。本番では 0 件。F-32) |
 | 献立のモーダルの ♥ の応答の反映 | 応答の時点のモーダルが押した時点と同じかを見ない (閉じて別の料理を開いたあとでも印を書き換える) | 押した時点のモーダルの回 (`favoriteSessionRef`) が続いているときだけ反映。前の回の応答は捨てる |
@@ -2403,23 +2514,25 @@ S3 のほかの行と、同じファイルのほかのシナリオ (S1・S2・S4
 
 (c) お気に入りの画面の詳細 (詳細の状態 × 出来事 → 遷移先・ガード・副作用。§7.10・§7.12)
 
-状態の欄: `open` = `isRecipeModalOpen`・`sel` = `selectedFavorite`・`ref` = `openFavoriteIdRef.current`・`rm` = `removingId`。「閉じる途中」= `open` false になったあと、幕とパネルが `exit` のアニメーションで残っている間 (`ref` は必ず null)。この間、パネルは最後に開いていたときの props のまま描かれ (`AnimatePresence` は離れる子を前の要素のまま描く)、`RecipeModal` の `FocusTrap` と `useDialogA11y` (Esc) も有効のまま。幕 (`fixed inset-0 z-[200]`) も残ってクリックを受ける。
+状態の欄: `open` = `isRecipeModalOpen`・`sel` = `selectedFavorite`・`ref` = `openFavoriteIdRef.current`・`rm` = `removingId`・`get` = `fetchesInFlightRef.current` (応答待ちの一覧の GET の本数)。一覧・`total`・`offset` (次のページの GET の offset) の数とページングの遷移は (d)。「閉じる途中」= `open` false になったあと、幕とパネルが `exit` のアニメーションで残っている間 (`ref` は必ず null)。この間、パネルは最後に開いていたときの props のまま描かれ (`AnimatePresence` は離れる子を前の要素のまま描く)、`RecipeModal` の `FocusTrap` と `useDialogA11y` (Esc) も有効のまま。幕 (`fixed inset-0 z-[200]`) も残ってクリックを受ける。
 
 | 状態 | 出来事 | ガード | 遷移先 | 副作用 |
 |---|---|---|---|---|
 | 閉 (`open` false・`ref` null) | 行 F の「レシピを見る」(`openRecipeDetail(F)`) | — | 開 F (`open` true・`sel` F・`ref` F.id。`rm` はそのまま) | 幕と `RecipeModal` を描く (問い合わせ無し。S-7)。`rm` が null でなければ ♥ は disabled |
-| 閉 | 行 F の ♥ (削除) | `rm` null | 閉 (`rm` F.id。行の ♥ は disabled) | `DELETE /api/favorites/{F.id}` (S-8) |
+| 閉 | 行 F の ♥ (削除) | `rm` null・`get` 0 | 閉 (`rm` F.id。行の ♥ は disabled) | `DELETE /api/favorites/{F.id}` (S-8)。「次の50件を表示」は応答まで disabled ((d)) |
 | 閉 | 行 G の ♥ (削除) | `rm` が null でない (別の行の削除の応答待ち) | 閉 (変わらない) | 何も送らない (`if (removingId) return`。今と同じ) |
+| 閉 | 行 F の ♥ (削除) | `rm` null・`get` > 0 (一覧の GET の応答待ち: 最初の読み込み・取り直し・次のページ) | 閉 (変わらない) | 何も送らない (`fetchesInFlightRef.current > 0` で return。H-7)。行の ♥ は disabled にならない。GET の応答のあとに押せば、この表の「閉」× 行 F の ♥ (ガード `rm` null・`get` 0) の行 |
 | 開 F | 幕を押す (詳細の外のどこでも。後ろの行・行の ♥・検索欄・並び替え・「次の50件を表示」・上の帯・ナビの位置を含む) | — | 閉じる途中 (`open` false・`ref` null・`sel` F は残す) | `onClose` = `closeRecipeDetail`。後ろの要素には届かない (S-25) |
 | 開 F | 閉じるボタン・Esc | — | 閉じる途中 | `onClose` = `closeRecipeDetail` (`RecipeModal` の閉じるボタン・`useDialogA11y`) |
 | 開 F | Tab / Shift+Tab | — | 開 F | フォーカスは `RecipeModal` の `FocusTrap` が詳細の中に留める (後ろの一覧に行かない) |
-| 開 F | 詳細の ♥ (塗り) | `rm` null (`isRemoving` false)・`ref` = F.id (開いている間は必ず成り立つ) | 開 F・削除中 (`rm` F.id。♥ disabled) | `onRemove` → `handleRemove(F)` → `DELETE /api/favorites/{F.id}` |
+| 開 F | 詳細の ♥ (塗り) | `rm` null (`isRemoving` false)・`get` 0・`ref` = F.id (開いている間は必ず成り立つ) | 開 F・削除中 (`rm` F.id。♥ disabled) | `onRemove` → `handleRemove(F)` → `DELETE /api/favorites/{F.id}` |
 | 開 F | 詳細の ♥ | `rm` が null でない | 開 F (変わらない) | ♥ は disabled なので押せない |
+| 開 F | 詳細の ♥ | `rm` null・`get` > 0 (開く前に始まった一覧の GET の応答待ち。検索語の debounce が詳細を開いたあとに確定したときなど) | 開 F (変わらない) | 何も送らない (`handleRemove` が `fetchesInFlightRef.current > 0` で return。♥ は disabled にならない)。GET の応答のあとに押せば上の「詳細の ♥ (塗り)」の行 |
 | 開 F | 「材料を買い物リストに追加」 | 材料 (`ingredientInputsOf`) が 1 件以上 | 開 F | `POST /api/shopping-list/add-recipe` → `onNotice` (成功 / 失敗の文。§7.12)。詳細は閉じない |
 | 開 F | 「材料を買い物リストに追加」 | 材料が 0 件 | 開 F | `onNotice(材料情報がありません)`。POST しない |
-| 開 F・削除中 (`rm` F.id。詳細の ♥ で消した・行の ♥ で消してから応答の前に F を開いた) | 削除の応答 200 / 404 | `ref` = F.id (詳細がいま F を出している) | 閉じる途中 (`rm` null) | 一覧から F を外し `total` − 1。`closeRecipeDetail` |
-| 開 G / 閉 / 閉じる途中 (`rm` F.id。応答の前に閉じた・別の行 G を開いた・閉じたまま行の ♥ で消した) | 削除の応答 200 / 404 | `ref` ≠ F.id (null を含む) | 開 G のまま / 閉のまま / 閉じる途中のまま (`rm` null) | 一覧から F を外し `total` − 1。詳細には触れない (S-26) |
-| 開 (F でも G でも) / 閉 / 閉じる途中 (`rm` F.id) | 削除の応答がほかの失敗 / 例外 | — | 変わらない (`rm` null) | 一覧は変えない (`console.error` だけ)。F の詳細を開いていれば ♥ は塗りのまま押せるようになる |
+| 開 F・削除中 (`rm` F.id。詳細の ♥ で消した・行の ♥ で消してから応答の前に F を開いた) | 削除の応答 200 / 404 | `ref` = F.id (詳細がいま F を出している) | 閉じる途中 (`rm` null) | 一覧から F を外し `total` − 1・`offset` − 1 (F が一覧に無ければ一覧・`total`・`offset` は変えず 1 ページ目を読み直す。(d)・S-29)。`closeRecipeDetail` |
+| 開 G / 閉 / 閉じる途中 (`rm` F.id。応答の前に閉じた・別の行 G を開いた・閉じたまま行の ♥ で消した) | 削除の応答 200 / 404 | `ref` ≠ F.id (null を含む) | 開 G のまま / 閉のまま / 閉じる途中のまま (`rm` null) | 一覧から F を外し `total` − 1・`offset` − 1 (F が一覧に無いときは (d))。詳細には触れない (S-26) |
+| 開 (F でも G でも) / 閉 / 閉じる途中 (`rm` F.id) | 削除の応答がほかの失敗 / 例外 | — | 変わらない (`rm` null) | 一覧・`total`・`offset` は変えない (`console.error` だけ)。F の詳細を開いていれば ♥ は塗りのまま押せるようになる |
 | 閉じる途中 | 幕を押す | — | 閉じる途中 (変わらない) | `closeRecipeDetail` がもう一度呼ばれる (`ref` null・`open` false を入れ直すだけ) |
 | 閉じる途中 | パネルの閉じるボタン・Esc | — | 閉じる途中 (変わらない) | `closeRecipeDetail` がもう一度呼ばれる (同上。Esc は消える途中の `RecipeModal` の `useDialogA11y` が受ける) |
 | 閉じる途中 | Tab / Shift+Tab | — | 閉じる途中 (変わらない) | フォーカスは消える途中のパネルの `FocusTrap` が留める (後ろの一覧に行かない)。`exit` が終わってパネルが DOM から消えると `FocusTrap` が外れる |
@@ -2428,7 +2541,33 @@ S3 のほかの行と、同じファイルのほかのシナリオ (S1・S2・S4
 | 閉じる途中 | パネルの「材料を買い物リストに追加」 | 開 F の 2 行と同じ (材料が 1 件以上 / 0 件) | 閉じる途中 (変わらない) | 開 F の 2 行と同じ (`POST /api/shopping-list/add-recipe` → `onNotice` / `onNotice(材料情報がありません)`)。知らせは page が出す (`zIndex: 300`) ので閉じたあとも読める。詳細の開閉にも一覧にも触れない |
 | 閉じる途中 | `exit` のアニメーションが終わる | — | 閉 | 幕とパネルが DOM から消え、一覧に届くようになる |
 
-表に無い遷移を作ったら blocking (詳細が開いている間・閉じる途中に後ろの一覧の行・行の ♥・検索が反応する・幕が無い / 押しても閉じない・削除の応答が、詳細がいま出していない行の削除で詳細を閉じる・応答待ちの間に詳細の ♥ が押せる・閉じる途中のパネルの ♥ が DELETE を送る など)。
+表に無い遷移を作ったら blocking (詳細が開いている間・閉じる途中に後ろの一覧の行・行の ♥・検索が反応する・幕が無い / 押しても閉じない・削除の応答が、詳細がいま出していない行の削除で詳細を閉じる・応答待ちの間に詳細の ♥ が押せる・閉じる途中のパネルの ♥ が DELETE を送る・一覧の GET の応答待ちの間に行の ♥・詳細の ♥ が DELETE を送る・削除の 200 / 404 で `offset` を戻さない など)。
+
+(d) お気に入りの画面の一覧 (ページングと削除の順序。§7.10 (3a)(4)(7))
+
+状態の欄: `n` = 一覧の行の数 (`favorites.length`。`favoritesRef.current` も同じ配列)・`off` = `offset` (次のページの GET の offset)・`get` = `fetchesInFlightRef.current` (応答待ちの一覧の GET の本数)・`rm` = `removingId` (`removalRef` は `rm` が null でない間だけ Promise を持つ)・`more` = `hasMore`。状態の名前: 「静止」= `get` 0・`rm` null / 「次のページの取得中」・「取り直しの取得中」= `get` > 0・`rm` null / 「削除中」= `rm` F.id・`get` 0 / 「取り直しの待ち」= `rm` F.id・`get` > 0 (削除の応答待ちの間に始まった取り直しが `removalRef` を待っている。次のページは削除の応答待ちの間に始まらず、削除は一覧の GET の応答待ちの間に始まらないので、`rm` と `get` > 0 が重なるのはこの形だけ)。「取り直し」= `fetchFavorites(0)` (最初の読み込み・検索語の確定 (debounce 300ms)・並び替え・上の更新ボタン・一覧に無い行の削除のあと (§7.10 (4))。検索語・並び替えのときは effect が先に `off` を 0 にする。今と同じ)。
+
+一覧の GET と削除が重ならないので、一覧・`total`・`off` を変える出来事は 1 つずつ届き、静止のとき `off` = `n` (サーバーの並びの先頭から `n` 行を読み込んである) が保たれる: 取り直しの応答は `off` = 届いた行の数、次のページの応答は `off` = 送った `off` + 届いた行の数、削除の 200 / 404 は消した行が一覧にあれば `n` − 1・`off` − 1、無ければ `n` も `off` も変えない (読み込んだ先頭の部分は詰まらない)。例外は検索語・並び替えの取り直しが失敗したときで、effect が 0 にした `off` が残る (今と同じ。このとき「次の50件を表示」は `fetchFavorites(0)` で取り直しになり、行は抜けも重なりもしない)。
+
+| 状態 | 出来事 | ガード | 遷移先 | 副作用 |
+|---|---|---|---|---|
+| 静止 (`more` true) | 「次の50件を表示」 | `loadingMore` false・`rm` null (`disabled={loadingMore \|\| removingId !== null}`) | 次のページの取得中 (`get` + 1・`loadingMore` true) | `GET ?offset=off` (S-27・H-5) |
+| 次のページの取得中 | 応答 200 (k 行) | — | 静止 (`n` + k・`off` = 送った `off` + k・`more` は k = 50 のとき true) | 一覧の後ろに足す・`total` は応答の値 |
+| 次のページの取得中 | 応答の失敗 / 例外 | — | 静止 (`n`・`off`・`more` は変わらない) | `console.error` |
+| 静止 | 取り直し | `rm` null | 取り直しの取得中 (`get` + 1) | `GET ?offset=0` (今と同じ) |
+| 取り直しの取得中 | 応答 200 (k 行) | — | 静止 (`n` = k・`off` = k・`more` は k = 50 のとき true) | 一覧・`total` を置き換える |
+| 取り直しの取得中 | 応答の失敗 / 例外 | — | 静止 (一覧・`total`・`more` は前のまま。`off` は effect が 0 にしたときは 0) | `console.error` (今と同じ) |
+| 次のページの取得中 / 取り直しの取得中 | 行 F の ♥・詳細の ♥ | `get` > 0 | 変わらない | 何も送らない (`handleRemove` が `fetchesInFlightRef.current > 0` で return。見た目は変えない。H-7) |
+| 静止 | 行 F の ♥・詳細の ♥ (§9.3 (c)) | `rm` null・`get` 0 | 削除中 (`rm` F.id・`removalRef` に Promise) | `DELETE /api/favorites/{F.id}`。「次の50件を表示」は disabled になる |
+| 削除中 / 取り直しの待ち | 行 G の ♥・詳細の ♥ | `rm` が null でない | 変わらない | 何も送らない (今と同じ。詳細の ♥ は disabled) |
+| 削除中 / 取り直しの待ち | 「次の50件を表示」 | `rm` が null でない | 変わらない | ボタンは disabled で何も送らない (H-6) |
+| 削除中 | 応答 200 / 404 | F が一覧にある (`favoritesRef`) | 静止 (`n` − 1・`off` − 1 (0 未満にしない)・`total` − 1。`more` は変わらない) | 一覧から F を外す・詳細は §9.3 (c)・`removalRef` を null にして解く。次の「次の50件を表示」は `offset` = 消したあとの `off` で送る (H-5) |
+| 削除中 | 応答 200 / 404 | F が一覧に無い (詳細だけが出していた行。S-29) | 取り直しの取得中 (`get` + 1・`rm` null。`n`・`off`・`total` はその場では変えない) | `fetchFavorites(0)` (押した時点の検索語と並び) が `removalRef` の解けたあとに `GET ?offset=0` を送る・詳細は §9.3 (c) (H-9) |
+| 削除中 | 応答の失敗 / 例外 | — | 静止 (`n`・`off`・`total` は変わらない) | `console.error`・`removalRef` を null にして解く |
+| 削除中 / 取り直しの待ち | 取り直し | `rm` が null でない | 取り直しの待ち (`get` + 1。GET はまだ送らない) | `fetchFavorites(0)` が `removalRef` を待つ (H-8) |
+| 取り直しの待ち | 削除の応答 (200 / 404 / 失敗 / 例外) | — | 取り直しの取得中 (`rm` null) | 削除の後始末 (F が一覧にあれば上の「削除中」の 200 / 404 の行と同じ数の変化。F が一覧に無くても読み直しは足さない (待っている取り直しが最新の検索語と並びで読む。H-10)) が済んでから、待っていた取り直しが `GET ?offset=0` を送る (削除のあとの DB を読む。2 本以上待っていればどれも送る) |
+
+表に無い遷移を作ったら blocking (削除の 200 / 404 で一覧にある行の `off` を戻さない・一覧に無い行の削除で `n`・`off`・`total` を変える・削除の応答待ちの間に次のページの GET を送る・削除の応答待ちの間に取り直しの GET を送る・一覧の GET の応答待ちの間に DELETE を送る・取り直しの待ちが削除の後始末の前に解ける など)。一覧の GET どうしの重なり (取り直しの取得中の「次の50件を表示」・取り直しの取得中のもう一度の取り直し) は今の画面と同じで、応答の順を見張らない (F-36。本書は変えない)。
 
 ---
 
@@ -2500,6 +2639,7 @@ sequenceDiagram
     participant U as 利用者
     participant F as お気に入りの画面 (/favorites)
     participant G as GET /api/favorites
+    participant D as DELETE /api/favorites/[id]
     participant M as server.ts
     participant DB as dish_favorites (RLS)
     participant R as RecipeModal
@@ -2511,6 +2651,17 @@ sequenceDiagram
     DB-->>M: 行 + count (件数より後ろなら 416 → head の count で数え直し)
     M-->>G: { favorites, total }
     G-->>F: { favorites: DishFavorite[], total }
+    U->>F: 行の ♥ (削除。一覧の GET の応答待ちの間は送らない)
+    F->>D: /api/favorites/{id}
+    D->>M: deleteDishFavorite(db, user, id)
+    M->>DB: delete where id and user_id = me returning id
+    DB-->>M: 1 行 (消えていれば 0 行)
+    M-->>D: { deleted }
+    D-->>F: 200 (0 行なら 404)
+    F->>F: 一覧から外す・total − 1・offset − 1 (応答までは「次の 50 件」disabled・取り直しの GET は応答を待つ)
+    U->>F: 次の 50 件
+    F->>G: ?limit=50&offset=(読み込んだ行の数)&q&sort
+    G-->>F: { favorites, total } (一覧の後ろに足す)
     U->>F: 行をタップ
     F->>F: openRecipeDetail (openFavoriteIdRef = id) → 幕 (z-[200]) を敷く
     F->>R: recipeModalDataOf(favorite) (問い合わせ無し)
@@ -2533,7 +2684,7 @@ sequenceDiagram
 | 単体 (route) | `tests/api/favorites-status-route.test.ts` (新) | T-1「未ログインは 401」/ T-2「name が無い・空白だけ・101 文字・NULL 文字を含む・鍵が 101 文字以上は 400 VALIDATION_ERROR で DB に問い合わせない」/ T-3「保存済みなら { favorited: true, id }」/ T-4「未保存なら { favorited: false, id: null }」/ T-5「DB の失敗は 500」|
 | 単体 (route) | `tests/api/favorites-id-route.test.ts` (新) | D-1「未ログインは 401」/ D-2「uuid の形でない id は DB に渡さず 404」/ D-3「本人の行を消して 200 { success: true }」/ D-4「0 行 (他人・消した行) は 404」/ D-5「DB の失敗は 500」|
 | 部品 | `src/app/(main)/favorites/_components/__tests__/FavoriteRecipeModal.test.ts` (書き換え) | M-1「favorite が null・isOpen=false のときは RecipeModal も幕 (favorite-recipe-backdrop) も描かない」/ M-2「RecipeModal に dish_name・recipeModalDataOf(favorite)・isFavorite=true・isFavoriteLoading=isRemoving を渡す」/ M-3「onToggleFavorite が onRemove を呼ぶ」/ M-4「材料を買い物リストに追加は ingredientInputsOf の形で /api/shopping-list/add-recipe に POST し、結果を onNotice に渡す (成功 / 失敗 / 材料なし)」/ M-5「開いているときは RecipeModal の後ろに幕 (favorite-recipe-backdrop・fixed inset-0 z-[200]) を描き、幕を押すと onClose を 1 回呼ぶ (onRemove は呼ばない)」|
-| 部品 (画面) | `src/app/(main)/favorites/__tests__/page.detail.test.ts` (新) | H-1「詳細の ♥ (onRemove) は DELETE /api/favorites/{id} を送り、応答待ちの間は isRemoving=true、200 で詳細を閉じて一覧からその行を外し件数を 1 減らす (404 も同じ)」/ H-2「詳細の ♥ の応答の前に詳細を閉じて別の行の詳細を開くと、削除の応答 (200) はその別の行の詳細を閉じない (isOpen=true・favorite はその別の行のまま。一覧からは消した行だけを外す)」/ H-3「削除の応答待ちの間は、別の行の詳細を開いても isRemoving=true で、応答のあと false に戻る」/ H-4「詳細を閉じたあと (閉じる途中)、開いていたときの props の onRemove を 2 回呼んでも DELETE を送らず、isRemoving は false のまま・件数も変わらない」|
+| 部品 (画面) | `src/app/(main)/favorites/__tests__/page.detail.test.ts` (新) | H-1「詳細の ♥ (onRemove) は DELETE /api/favorites/{id} を送り、応答待ちの間は isRemoving=true、200 で詳細を閉じて一覧からその行を外し件数を 1 減らす (404 も同じ)」/ H-2「詳細の ♥ の応答の前に詳細を閉じて別の行の詳細を開くと、削除の応答 (200) はその別の行の詳細を閉じない (isOpen=true・favorite はその別の行のまま。一覧からは消した行だけを外す)」/ H-3「削除の応答待ちの間は、別の行の詳細を開いても isRemoving=true で、応答のあと false に戻る」/ H-4「詳細を閉じたあと (閉じる途中)、開いていたときの props の onRemove を 2 回呼んでも DELETE を送らず、isRemoving は false のまま・件数も変わらない」/ H-5「一覧の行の ♥ で 1 件消した (200) あとの「次の50件を表示」は、offset = 読み込んだ行の数 − 1 で GET を送り、件数は 1 減る (404 も同じ)」/ H-6「削除の応答待ちの間は「次の50件を表示」が disabled で GET を送らず、応答のあとに押せるようになる」/ H-7「一覧の GET の応答待ちの間 (「次の50件を表示」を押したあと) に行の ♥ を押しても DELETE を送らず、GET の応答のあとに押すと送る」/ H-8「削除の応答待ちの間に並び替えを変えると、一覧の GET は削除の応答のあとに送る」/ H-9「詳細を開いたあとに一覧が置き換わり、詳細の行が一覧に無いとき、詳細の ♥ の削除 (200) は一覧と件数を変えずに詳細を閉じ、1 ページ目の GET を DELETE のあとに 1 本送る」/ H-10「H-9 の削除の応答の前に並び替えを変えると、削除の応答のあとの GET は並び替えの 1 本だけ (読み直しを足さない)」|
 | 部品 | `src/app/(main)/favorites/_components/__tests__/FavoriteListItem.test.ts` (書き換え) | 既存 6 本の it 名は変えない。fixture を DishFavorite の形に (L-1「dish_name と created_at を描く」を 1 本足す) |
 | 単体 (reducer) | `src/__tests__/app/menus/weekly/state/recipeReducer.test.ts` (新) | R-1「RECIPE_SELECT で別の料理を選ぶと isFavorite は false・favoriteId は null に戻る」/ R-2「RECIPE_SELECT で今と同じ料理を選び直すと isFavorite と favoriteId を保つ (買い物リストの追加で閉じたあとの開き直し)」/ R-3「RECIPE_SELECT null で isFavorite は false・favoriteId は null に戻る」/ R-4「FAVORITE_ID_SET は favoriteId だけを変え、RECIPE_RESET は favoriteId を null に戻す」|
 | 配線 (ソース) | `src/__tests__/app/menus/weekly/dish-favorite-wiring.test.ts` (新) | W-1「status の effect はモーダルの回 (favoriteSessionRef) を進め、依存は [selectedRecipe, isRecipeModalOpen] (同じ料理を開き直しても引き直す)」/ W-2「status の応答は回が同じときだけ setIsFavorite・setFavoriteId・setIsFavoriteLoading(false) を呼ぶ」/ W-3「handleToggleFavorite は押した時点の回を控え、DELETE・POST・res.json の await のあとで isCurrentSession() を見てから setIsFavorite・setFavoriteId・alert を呼ぶ」/ W-4「handleToggleFavorite の catch と finally は isCurrentSession() のときだけ setIsFavorite(prev)・setIsFavoriteLoading(false) を呼ぶ」/ W-5「page.tsx は /api/recipes/…/like を呼ばず、/api/favorites/status・/api/favorites・/api/favorites/{id} を呼ぶ」|
@@ -2611,14 +2762,14 @@ R-2 の『ページを読み直したときの ♥ の印は保存の状態と�
 | props | `FavoriteRecipeModalProps` (`favorite: DishFavorite`・`isRemoving`・`onRemove`・`onNotice`) / `FavoriteListItemData = Pick<DishFavorite, …>` | `favorites/_components/` |
 | 定数 (e2e。export しない) | `FAVORITE_REQUEST_SETTLE_TIMEOUT_MS` (2 つのファイルにそれぞれ 1 つ。§7.16・§13) | `tests/e2e/bug-31-favorite-button.spec.ts`・`tests/e2e/.exploration/recipe-shopping-explore.spec.ts` |
 | 定数 (画面。export しない) | `SHOPPING_LIST_ADDED_MESSAGE`・`SHOPPING_LIST_ADD_FAILED_MESSAGE`・`SHOPPING_LIST_NO_INGREDIENTS_MESSAGE` (page.tsx と FavoriteRecipeModal.tsx の両方)・`NOTICE_HIDE_MS` (page.tsx)・`FAVORITE_RECIPE_BACKDROP_BACKGROUND` (FavoriteRecipeModal.tsx) | `favorites/page.tsx`・`favorites/_components/FavoriteRecipeModal.tsx` |
-| ref / 関数 / 印 | `openFavoriteIdRef`・`openRecipeDetail` (今の関数の置き換え)・`closeRecipeDetail` (新)・state `notice` / 幕の `data-testid="favorite-recipe-backdrop"` | `favorites/page.tsx` (§7.10 (3)) / `FavoriteRecipeModal.tsx` (§7.12) |
+| ref / 関数 / 印 | `openFavoriteIdRef`・`openRecipeDetail` (今の関数の置き換え)・`closeRecipeDetail` (新)・state `notice`・`fetchesInFlightRef`・`removalRef`・`favoritesRef` (一覧の GET と削除を重ねない・消した行が一覧にあったかを読む。`fetchFavorites` は置き換え) / 幕の `data-testid="favorite-recipe-backdrop"` | `favorites/page.tsx` (§7.10 (3)(3a)) / `FavoriteRecipeModal.tsx` (§7.12) |
 | 書き出しの行 | `{ table: 'dish_favorites', scope: self('user_id'), orderBy: ['created_at', 'id'] }` | `src/lib/account-export-tables.ts` |
 | 対応の行 | `dish_favorites: 'レシピ'` | `tests/legal-text-1901.test.ts` の `PRIVACY_DATA_TABLES`・cross/20 の写し (§17) |
 | 外部キーの動作の行 | `'dish_favorites.user_id': 'CASCADE'` | `tests/integration/security/auth-users-fk-on-delete.test.ts` の `EXPECTED_ACTIONS` |
 | 表の行 | `{ file: 'favorites/route.ts', method: 'POST', load: … }` | `src/__tests__/api/null-character-routes.test.ts` の `ENTRIES` |
 | ファイル (テスト) | `tests/dish-favorites-core.test.ts`・`tests/dish-favorites-server.test.ts`・`tests/api/favorites-status-route.test.ts`・`tests/api/favorites-id-route.test.ts`・`tests/dish-favorites-migration-contract.test.ts`・`tests/integration/rls/dish-favorites.test.ts` | `tests/` |
 | ファイル (テスト) | `src/__tests__/app/menus/weekly/state/recipeReducer.test.ts`・`src/__tests__/app/menus/weekly/dish-favorite-wiring.test.ts` | `src/__tests__/app/menus/weekly/` |
-| ファイル (テスト) | `src/app/(main)/favorites/__tests__/page.detail.test.ts` (H-1〜H-4) | `src/app/(main)/favorites/__tests__/` (新しいディレクトリ) |
+| ファイル (テスト) | `src/app/(main)/favorites/__tests__/page.detail.test.ts` (H-1〜H-10) | `src/app/(main)/favorites/__tests__/` (新しいディレクトリ) |
 | ファイル (テストの偽物) | `tests/helpers/scripted-supabase.ts` (`createScriptedSupabase`・型 `ScriptedResult`・`ScriptedCall`・`ScriptedQuery`・`ScriptedSupabase`。§7.15.1) | `tests/helpers/` |
 | 既存ファイルの変更 (新設ではない) | `src/app/api/favorites/route.ts` (GET の書き換え)・`src/app/(main)/menus/weekly/page.tsx` (§7.9)・`recipeReducer.ts` (§7.8)・`src/app/(main)/favorites/page.tsx` (§7.10)・`FavoriteListItem.tsx` (§7.11)・`FavoriteRecipeModal.tsx` (§7.12)・`src/lib/env.ts`・`.env.example` (§7.6)・`src/lib/account-export-tables.ts` (§7.7)・`src/types/database.types.ts`・`packages/shared/src/database.types.ts` (生成し直し)・`tests/api/favorites-route.test.ts`・`FavoriteRecipeModal.test.ts`・`FavoriteListItem.test.ts`・`tests/legal-text-1901.test.ts`・`tests/legal-claims-1901.ts` (privacy-3#6 の evidence の表の列挙。§16)・`src/__tests__/lib/env.test.ts` (readOnlyBy の一覧の 1 行。§16)・`tests/integration/security/auth-users-fk-on-delete.test.ts`・`account-export-scope.test.ts`・`src/__tests__/api/null-character-routes.test.ts`・`tests/e2e/bug-104-favorites-system.spec.ts`・`tests/e2e/bug-31-favorite-button.spec.ts`・`tests/e2e/.exploration/recipe-shopping-explore.spec.ts` (§7.16)。共有のテストの偽物 `tests/helpers/fake-supabase.ts`・`tests/helpers/recording-supabase.ts` は変えない (§7.15) | — |
 | 設計書 | `docs/design/cross/22-dish-favorites.md` (本書) | `docs/design/cross/` |
@@ -2633,7 +2784,7 @@ R-2 の『ページを読み直したときの ♥ の印は保存の状態と�
 |---|---|---|---|
 | A (DB・core・書き出し) | §7.1 migration・§7.2 戻し口・§7.3 `core.ts` (C-3 が定数を読む。純関数と Zod だけで route はまだ無い)・§7.7 書き出しの 1 行・§7.13 契約テスト (C-1〜C-8)・§7.14 結合テスト (I-1〜I-8)・§7.15 の `tests/dish-favorites-core.test.ts` (U-1〜U-16)・`database.types.ts` 2 本の生成し直し・`tests/legal-text-1901.test.ts` の対応 1 行・`tests/legal-claims-1901.ts` の evidence の 1 語・`auth-users-fk-on-delete.test.ts` の `EXPECTED_ACTIONS` 1 行・`account-export-scope.test.ts` の種と件数 | 無し (追加だけの migration) | ① 段 A の migration を本番へ適用 (追加だけ。適用の確認は §19 の 1〜4) → ② 段 A の PR をマージ (番号は直前に確定。§7.1) |
 | B1 (server・環境変数・API) | §7.4 `server.ts`・§7.6 環境変数 (`src/lib/env.ts` の 1 項目・`.env.example` の 3 行・`src/__tests__/lib/env.test.ts` の readOnlyBy の一覧の 1 行)・§7.5 route 3 ファイル・§7.15.1 `tests/helpers/scripted-supabase.ts`・§7.15 の `tests/dish-favorites-server.test.ts` (V-1〜V-10)・route の単体テスト 3 本 (`tests/api/favorites-route.test.ts` の書き換え・`favorites-status-route.test.ts`・`favorites-id-route.test.ts`)・`src/__tests__/api/null-character-routes.test.ts` の表の 1 行・e2e の E-1 | 段 A が本番に適用済み・main に入っていること (表が無いと `GET /api/favorites` が 500) | ③ 段 B1 の PR をマージ (= `GET /api/favorites` が `dish_favorites` を読む。画面はまだ `/api/recipes/[id]/like` を呼ぶが、今までどおり 404 で何も壊れない) |
-| B2 (画面) | §7.8 reducer・§7.9 献立の画面・§7.10〜§7.12 お気に入りの画面 3 ファイル・§7.15 の部品のテスト 2 本の書き換え (`FavoriteRecipeModal.test.ts` (M-1〜M-5)・`FavoriteListItem.test.ts`)・reducer のテスト (R-1〜R-4)・献立の画面の配線テスト (W-1〜W-5)・お気に入りの画面のテスト (`page.detail.test.ts`。H-1〜H-4) の新設 3 本・§7.16 の既存の e2e 2 本 (`tests/e2e/bug-31-favorite-button.spec.ts` の 2 本目の待ち (1 本目の :44 も同じ定数に)・`tests/e2e/.exploration/recipe-shopping-explore.spec.ts` の S3 の待ち) | 段 B1 が main に入っていること (status / POST / DELETE が無いと ♥ が動かない) | ④ 段 B2 の PR をマージ (= 公開。確認は §19 の 5〜8) |
+| B2 (画面) | §7.8 reducer・§7.9 献立の画面・§7.10〜§7.12 お気に入りの画面 3 ファイル・§7.15 の部品のテスト 2 本の書き換え (`FavoriteRecipeModal.test.ts` (M-1〜M-5)・`FavoriteListItem.test.ts`)・reducer のテスト (R-1〜R-4)・献立の画面の配線テスト (W-1〜W-5)・お気に入りの画面のテスト (`page.detail.test.ts`。H-1〜H-10) の新設 3 本・§7.16 の既存の e2e 2 本 (`tests/e2e/bug-31-favorite-button.spec.ts` の 2 本目の待ち (1 本目の :44 も同じ定数に)・`tests/e2e/.exploration/recipe-shopping-explore.spec.ts` の S3 の待ち) | 段 B1 が main に入っていること (status / POST / DELETE が無いと ♥ が動かない) | ④ 段 B2 の PR をマージ (= 公開。確認は §19 の 5〜8) |
 
 - 段内レビューの範囲は上の表の「中身」の列の §・ファイルだけ。最後の横断整合 (B2 の後) は段の境 (A の `core.ts` と B1 の `server.ts`・route の import、B1 の API と B2 の画面の fetch) と §9 の表 3 点を見る。
 - A・B1・B2 は同じ worktree で積んでもよいが、PR は分ける (A の本番の適用を B1 のマージの前に確かめるため)。B1 と B2 を 1 本の WF の 2 段にしてもよい (段内で 2 枚レビュー・最後に横断整合 1 回)。
@@ -2794,3 +2945,4 @@ R-2 の『ページを読み直したときの ♥ の印は保存の状態と�
 | v1.2 | 2026-10-25 | 設計ゲート R2 の修正。① 写しの材料が本番の 3 つの形 (構造の形 `{ name, amount_g, note }`・材料全体の長い 1 行・短い行。F-31) をどれも受ける (`DishIngredientItemSchema`・`DishIngredientSchema`・`ingredientListOf`・`ingredientLineOf`。構造の形を空の配列にしていた・長い 1 行を 400 にしていたのを直す)。② 材料 1 行の上限 `DISH_FAVORITE_INGREDIENT_MAX_CHARS` を 200 から 2000 に (本番の最長 677 文字)。構造の形の名前・メモの上限と分量の単位の定数を足す。③ jsonb の文字列で長くなる分の上限を数 80 個で数え直し 32768 に、DB の CHECK を 65536 に (I-8 も構造の形の材料 50 件で)。④ 献立の ♥ の応答をモーダルの回 (`favoriteSessionRef`) が同じときだけ反映 (閉じて別の料理を開いたあとの応答が印と id を書き換えていた)。⑤ status をモーダルが開くたびに引き直し (`isRecipeModalOpen` を依存に)、`RECIPE_SELECT` は同じ名前なら印と id を保つ (買い物リストの追加で閉じたあとの開き直しで ♥ が空になっていた)。⑥ 表 3 点に材料の形の行 (M・N・O) と献立の ♥ の状態遷移 (§9.3 (b)) を足す。⑦ シナリオ S-21〜S-24・テスト U-15・U-16・P-10・R-1〜R-4・W-1〜W-5 を足す |
 | v1.3 | 2026-10-25 | 設計ゲート R3 の修正。① お気に入りの詳細 (§7.12) に幕を足す: `RecipeModal` は幕を持たず (献立の画面は page.tsx の共有の幕を敷く。F-33)、§7.12 を写すと幕が消え、詳細を開いたまま後ろの一覧の行・行の ♥ を押せた。`FavoriteRecipeModal` が `RecipeModal` の兄弟として `fixed inset-0 z-[200]`・`rgba(0,0,0,0.5)` (`FAVORITE_RECIPE_BACKDROP_BACKGROUND`)・押すと `onClose` の幕を描く。② 表の構成で見つけた同じ面の欠陥を直す: 削除の応答で詳細を閉じる判定が押した時点の `selectedFavorite` (閉包) を見ていて、応答の前に閉じて別の行を開くとその詳細を閉じていた → 応答の時点の `openFavoriteIdRef` で比べる。`openRecipeDetail` / `closeRecipeDetail` に開閉をまとめる。詳細の ♥ は応答待ちの間どの行でも disabled (`removingId !== null`。2 本目は今も `if (removingId) return` で捨てられる)。③ 表 3 点に詳細の幕と削除の応答を足す (§9.1 (a) の注記・(b)・§9.2 の 2 行・§9.3 (c) の新しい遷移表)。④ シナリオ S-25・S-26 (26 本)・テスト M-5・H-1〜H-3 (新しいテストファイル `src/app/(main)/favorites/__tests__/page.detail.test.ts`)・R-4・§8・§11・§13・§14・§15・§16・§19 を追随 |
 | v1.4 | 2026-10-25 | 設計ゲート R4 の修正。① §7.9 (3) はモーダルを開くたびに ♥ を取得中の disabled にするので、`tests/e2e/bug-31-favorite-button.spec.ts` の 2 本目 (♥ が見えた直後に `isDisabled()` を読み、disabled なら skip。:100-105) が、献立のある利用者で走らせても毎回 skip になり再読込後の保持を確かめなくなっていた。§16 の「変更なし・本書で初めて通る」を直し、2 本目を disabled の解除の待ちに置き換える (§7.16 (1)。押したあと POST の応答を待ってから閉じる・1 本目の待ちも同じ定数 `FAVORITE_REQUEST_SETTLE_TIMEOUT_MS`)。② 同じ型 (♥ の値を取得の前に読む e2e) を ♥ を使う e2e 5 本で洗い、§16 に無かった探索の `tests/e2e/.exploration/recipe-shopping-explore.spec.ts` の S3 (固定の試験用アカウントで行が残り、保存済みの料理で赤になる) を足して直す (§7.16 (2))。W5C-12・B5-5・特性テストは取得の前の値を expect に使わないので変えない (§16 に理由)。③ e2e の利用者と献立の事実を F-34 (`tourPendingUser` は献立を作らず試験の終わりに消える・固定の試験用アカウントは行が残る)・F-35 (`.exploration/` も走る・`click()` は enabled を待つ) に足し、特性テストの行の「データのある環境では行が残る」を直す。④ R-2 の再読込の自動の確かめを §12 の末尾に書く (I-1・E-1・T-3・T-4・W-1・W-2・reducer の R-1・R-3。bug-31 はふだん献立が無く skip)。⑤ 表 3 点に追随 (§9.1 (b) に e2e の行・§9.2 に「開いてから status の応答までの ♥」の行・§9.3 (b) に取得中 / 押下中の ♥ の押下の行)。§0.2・§3.3・§12〜§15 も追随。F-1 の effect の行を `:1924-1935` に (useEffect は :1925 から)。⑥ §16 に、走査で漏れていた `tests/api-error-english-field-names.test.ts` の行 (変更なし) を足す |
+| v1.5 | 2026-10-25 | 設計ゲート R5 の修正。① お気に入りの画面の削除 (行の ♥・詳細の ♥) の 200 / 404 で一覧と `total` だけを減らし、次のページの GET の `offset` を戻していなかった。51 件以上で 1 ページ目の行を消してから「次の50件を表示」を押すと、サーバーで 1 つ前に詰まった行が読まれず一覧から抜けていた (k 件消せば k 行)。`handleRemove` の成功の枝で `offset` を 1 戻す (0 未満にしない。§7.10 (4))。② 同じ数 (一覧・`total`・`offset`) を食い違わせる経路を洗って直す: (i) 削除と一覧の GET の重なり → 重ねない形にする (削除の応答待ちの間は「次の50件を表示」を disabled に (§7.10 (7))、取り直し (検索語・並び替え・更新ボタン) の GET は削除の後始末のあとに送る (`removalRef`)、一覧の GET の応答待ちの間は削除を送らない (`fetchesInFlightRef`)。§7.10 (3a)(4))。(ii) 消した行が一覧に無いとき (詳細を開いたあとに検索語が確定して一覧が置き換わった。S-29) も `total` と `offset` を 1 戻していた → `favoritesRef` (一覧の写し) で見分け、一覧と `offset` は変えず、件数は 1 ページ目の読み直しでそろえる (読み直しが既に待っていれば足さない)。一覧の GET どうしの重なりは今と同じ (F-36)。③ 表 3 点を追随 (§9.1 (a3) の新しい表・§9.2 の「一覧からの削除」「詳細の ♥ (削除)」の行と「削除と一覧の GET の重なり」の新しい行・§9.3 (c) の状態の欄と削除の行と `get` の 2 行・新しい §9.3 (d))。④ 事実 F-36・シナリオ S-27〜S-29 (29 本)・テスト H-5〜H-10 (`page.detail.test.ts` に足す。待ちを `settle()` に)・§0.2 R-3・§7.15・§8・§11・§12・§14・§15 を追随 |
