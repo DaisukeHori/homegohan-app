@@ -420,10 +420,12 @@ describe('退会の印のある人を家族の代表者にしない (トリガ�
     expect(forceOutcome.ok, JSON.stringify(forceOutcome)).toBe(true);
     expect((await familyState(forced.familyId))?.representative_id).toBe(forced.adult.id);
 
-    // 退会が 409 (代表者) で止まった人が、印が新しいうちに家族を解散する (#1917 の「解散してから退会する」の流れ)
+    // 退会が 409 (代表者) で止まった人が、家族を解散する (#1917 の「解散してから退会する」の流れ)。409 の印は返す前に消える
+    // (20261024120000) ので、新しい印 (同じ人の別の退会が走っている間など) があっても解散を止めないことは、印を付け直して確かめる
     const dissolving = await buildFamily('fr6-dissolve');
     const blocked = await deleteAccount({ userId: dissolving.rep.id, admin: srAdmin, requestId: `req_fr6_${TS}` });
     expect(blocked).toMatchObject({ ok: false, status: HTTP_CONFLICT, error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE' });
+    expect((await beginGuard(dissolving.rep.id)).ok).toBe(true);
     const { error: dissolveError } = await asUser(dissolving.rep.jwt).rpc('dissolve_family_by_representative', {
       p_family_id: dissolving.familyId,
     });

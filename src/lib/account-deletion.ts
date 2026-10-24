@@ -10,6 +10,10 @@
  *   1. 退会の印を付けてから (DB 関数 begin_account_deletion_guard。印のある人を運営がオーナーにして組織を作れない。supabase/migrations/20261023130000_account_deletion_owner_guard.sql。
  *      印のある人は家族の代表者にもなれない (家族の作成・代表者の譲渡の承諾・運営の強制譲渡。20261023150000_account_deletion_family_representative_guard.sql))、
  *      組織のオーナー / 家族の代表者なら 409 で止める (譲渡か解散が先)。
+ *      5 の deleteUser を呼ぶ前に止まったら (409・どの段の失敗でも)、返す前に印を消す (DB 関数 end_account_deletion_guard。
+ *      20261024120000_account_deletion_guard_release.sql)。止まった退会の印で、本人の家族の作成・代表者の引き受けを止めないため。
+ *      消すのに失敗しても応答は変えない (ログに残すだけ。印は 15 分で古くなる)。deleteUser を呼んだあとに止まったときは消さない
+ *      (アカウントが消えたか・消える途中かを確かめられない。トリガーが止め続け、削除が済めば auth.users の CASCADE で消える)。
  *   1'. 段階 billing (billing/01 §11。src/lib/billing/account-deletion.ts): 顧客の開いたままの Stripe Checkout Session を閉じ、
  *      Stripe の契約 (顧客の全契約と DB の行の和) のうち終端でないものを即時解約し、Stripe の顧客を匿名化する。
  *      顧客も契約の行も無ければ Stripe を呼ばない。失敗したらここで止める (まだ何も変えていないのでやり直せる)。
@@ -31,7 +35,7 @@
  *      organizations.owner_id / family_groups.representative_id の RESTRICT で失敗する型は残らない: 組織の運営の作成は 1 の印で止まり
  *      (OWNER_ACCOUNT_DELETING。20261023130000 の見出し)、組織の譲渡は 3 が止める。家族の代表者になる 3 つの経路 (作成・譲渡の承諾・
  *      運営の強制譲渡) は 1 の印で止まる (REPRESENTATIVE_ACCOUNT_DELETING。20261023150000 の見出し)。印は退会の route の
- *      maxDuration より長く効くので、1 回の退会の実行の間は外れない。
+ *      maxDuration より長く効き、消すのは deleteUser の前に止まったときだけなので、1 回の退会の実行の間は外れない。
  *      削除が済んだら (すでに消えていたときも)、記録に削除の日時を入れる (complete_account_deletion_record)。
  *      これに失敗しても退会の結果は変えない (アカウントはもう消えている)。失敗はログに残す (記録は executed_at が空のまま残る)。
  *   6. 本人に退会の完了メールを 1 通送る (#1152。src/lib/account-deletion-notification.ts)。
@@ -278,6 +282,30 @@ async function completeDeletionRecord(
   }
 }
 
+/**
+ * 退会の印を消す (#1917 の続き。20261024120000_account_deletion_guard_release.sql)。退会が deleteUser を呼ぶ前に止まったときにだけ呼ぶ。
+ * 例外は投げない: 消すのに失敗しても退会の応答 (409・失敗) は変えず、ログに残すだけ (印は c_guard_window (15 分) で古くなって効かなくなる)。
+ * まだ削除していないので、ログには user_id を付けてよい (userLog)。
+ */
+async function endDeletionGuard(
+  admin: AccountDeletionAdmin,
+  userId: string,
+  userLog: ReturnType<AccountDeletionLogger['withUser']>,
+  requestId: string,
+  step: AccountDeletionStep,
+): Promise<void> {
+  try {
+    const { error } = await admin.rpc('end_account_deletion_guard', { p_user_id: userId });
+    if (error) throw error;
+  } catch (error) {
+    userLog.error('account deletion: end_account_deletion_guard failed (the guard expires by itself)', toError(error), {
+      step,
+      request_id: requestId,
+      ...errorHints(error),
+    });
+  }
+}
+
 /** 組織のオーナー / 家族の代表者なら、削除をブロックする結果を返す (問い合わせ自体の失敗は例外) */
 async function findBlocker(admin: AccountDeletionAdmin, userId: string): Promise<DeleteAccountResult | null> {
   // P0 Critical Fix F12: 削除前に owner/representative チェック
@@ -336,6 +364,13 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
   // deleteUser が実際に削除したか (すでに消えていたユーザーのやり直しでは false。完了メールは最初の退会で送っている)
   let deletedNow = false;
   let deletedAt: Date | null = null;
+  // deleteUser を呼んだか。呼ぶ前に止まったら (409・どの段の失敗でも) 退会の印を消してから返す。呼んだあとは消さない
+  // (アカウントが消えたか・消える途中かを確かめられない。印はトリガーが止め続け、削除が済めば auth.users の CASCADE で消える)
+  let deleteUserCalled = false;
+  const stopBeforeDeletion = async (result: DeleteAccountResult): Promise<DeleteAccountResult> => {
+    if (!deleteUserCalled) await endDeletionGuard(admin, userId, userLog, requestId, step);
+    return result;
+  };
   try {
     // 退会の印 (#1917 の続き。20261023130000・20261023150000): findBlocker より先に付ける。印のあとに運営がこの人をオーナーにして
     // 組織を作ろうとすると、またはこの人を家族の代表者にしようとすると (家族の作成・代表者の譲渡の承諾・運営の強制譲渡)、DB のトリガーが止める。
@@ -343,7 +378,7 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
     const { error: guardError } = await admin.rpc('begin_account_deletion_guard', { p_user_id: userId });
     if (guardError) throw guardError;
     const blocker = await findBlocker(admin, userId);
-    if (blocker) return blocker;
+    if (blocker) return await stopBeforeDeletion(blocker);
 
     completionEmailTo = await readAccountDeletionEmail(admin, userId, { log, requestId });
 
@@ -370,7 +405,7 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
       // やり直しでオーナーでなくなっていたら (同時の譲渡がもう一度あった)、確かめられないまま消さずに失敗にする (もう一度の退会で片付く)
       if (isRaisedCode(releaseError, RELEASE_MEMBERSHIP_OWNER_CODE)) {
         const blocker = await findBlocker(admin, userId);
-        if (blocker) return blocker;
+        if (blocker) return await stopBeforeDeletion(blocker);
         throw releaseError;
       }
       // 所属の組織が途中で変わった (所属は外れていない)。その組織の席を残したまま消さないよう、失敗にする
@@ -404,6 +439,8 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
     const appleReport: AppleRevocationReport = await appleRevocation.revokeForAccountDeletion(userId, userLog, requestId);
 
     step = 'delete_user';
+    // ここから先で止まっても印は消さない (取り消せない段)
+    deleteUserCalled = true;
     const { error: deleteError } = await admin.auth.admin.deleteUser(userId);
     if (deleteError) {
       if (!isUserAlreadyGone(deleteError)) throw deleteError;
@@ -425,7 +462,7 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
       request_id: requestId,
       ...errorHints(error),
     });
-    return accountDeletionFailure(requestId, step);
+    return await stopBeforeDeletion(accountDeletionFailure(requestId, step));
   }
 
   // 削除が済んでから、本人に完了メールを送る (#1152)。try の外に置き、送信の失敗が退会の失敗 (500) にならないようにする。

@@ -9073,6 +9073,10 @@ export type Database = {
           total_count: number
         }[]
       }
+      end_account_deletion_guard: {
+        Args: { p_user_id: string }
+        Returns: undefined
+      }
       enforce_membership_daily_cap: {
         Args: { p_email?: string; p_kind: string; p_scope_id: string }
         Returns: undefined

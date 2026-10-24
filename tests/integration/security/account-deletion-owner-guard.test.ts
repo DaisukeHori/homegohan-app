@@ -359,17 +359,17 @@ describe('印と作成が同時に走ったとき (advisory lock で直列にな
 });
 
 describe('退会の本体と運営の作成 API', () => {
-  it('GD-10: 退会の本体は findBlocker の前に印を付ける (409 で止まっても印は付いている)。印のある人を owner に指定した運営の作成 API は 409 OWNER_ACCOUNT_DELETING で、組織を作らない', async () => {
+  it('GD-10: 退会の本体が 409 で止まったら印は消えている (20261024120000。印を付けるのが findBlocker より先なのは GD-9)。印のある人を owner に指定した運営の作成 API は 409 OWNER_ACCOUNT_DELETING で、組織を作らない', async () => {
     const [owner, target] = await Promise.all([createUser('gd10-owner'), createUser('gd10-target')]);
     const operatorUser = await createTestUserWithRoles({ email: testEmail(`deletion-owner-guard-gd10-admin`, TS), roles: ['user', 'admin'] });
     operatorUsers.push(operatorUser);
 
-    // 組織のオーナーの退会は 409 で止まるが、印は findBlocker の前に付いている
+    // 組織のオーナーの退会は 409 で止まり、止まった退会の印は返す前に消える (end_account_deletion_guard。20261024120000)
     const existing = await insertOrg(owner.id, 'gd10-existing');
     expect(existing.ok, JSON.stringify(existing)).toBe(true);
     const blocked = await deleteAccount({ userId: owner.id, admin: srAdmin, requestId: `req_gd10_${TS}` });
     expect(blocked).toMatchObject({ ok: false, status: HTTP_CONFLICT, error: 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER' });
-    expect(await guardRows(owner.id)).toHaveLength(1);
+    expect(await guardRows(owner.id)).toEqual([]);
 
     // 所属の無い人に印を付けると (退会の途中)、運営の作成 API は 409 で断り、作らない
     expect((await beginGuard(target.id)).ok).toBe(true);
