@@ -2,7 +2,7 @@
 
 ## 1. 目的・スコープ
 
-家族管理ドメインの全テーブルに対する Row Level Security (RLS) ポリシーを具体的な SQL で確定する。
+家族管理ドメインの全テーブルに対する Row Level Security (RLS) ポリシーを具体的な SQL で確定する。注: 本書の SQL (`family_members.role` の `'owner'` / `'admin'` を前提にした §6 の `family_invites_*` ほか) は初版の下書きで、本番には無い。`family_members.role` の値は `representative` / `adult` / `child` (型 `family_role_enum`) で、`'owner'` / `'admin'` は無い。`family_invites` の今のポリシーは SELECT の `family_invites_select_adult` (家族の大人) だけで、利用者 (anon / authenticated) の INSERT / UPDATE / DELETE / TRUNCATE の権限は外してあり、招待の作成・取り消し・拒否・承諾は SECURITY DEFINER の RPC (`create_family_invite` / `revoke_family_invite` / `reject_family_invite` / `accept_family_invite`) だけが書く (`supabase/migrations/20261022150000_family_invites_rpc_only_writes.sql`)。正は `docs/design/membership/01-data-model.md` §3.5 (RLS policy) と migration (本書の文は当初のまま残す)。
 「アプリ層 feature flag は UX のため、RLS はセキュリティのため」の二層防御原則に従う。
 
 スコープ外: `cross/02-rls-patterns.md` の共通パターンは本書で流用するが詳細は cross/ に委ねる。

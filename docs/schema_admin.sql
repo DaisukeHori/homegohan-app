@@ -1,4 +1,4 @@
--- 管理機能用スキーマ拡張
+-- 管理機能用スキーマ拡張 (初期の下書き。本番の定義は supabase/migrations が正で、この SQL とは一致しない (例: user_profiles.roles は本番では text[])。下の announcements の "Admins can manage announcements" (FOR ALL) は supabase/migrations/20261024140000_announcements_moderation_flags_select_only.sql で消え、運営のポリシーは SELECT だけ)
 
 -- 1. ユーザーロールの追加
 -- 既存テーブルへのカラム追加

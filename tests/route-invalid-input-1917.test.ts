@@ -14,8 +14,8 @@
  *     500 になっていた (下の JSON_CASES の 39 の handler。POST /api/ai/hint は catch が固定のヒントを返す決まり (#1327) なので変えていない)
  *
  * 直したあとの不変条件 (docs/design/cross/04-api-conventions.md §5.2):
- *   - UUID の形でない id は DB に渡さず、行が無い id と同じ応答 (404。PUT / DELETE /api/recipes/[id] は今までどおり 403・
- *     GET /api/recipes/[id]/like は いいねの行が無いときと同じ 200 { liked: false })
+ *   - UUID の形でない id は DB に渡さず 404 (PUT / DELETE /api/recipes/[id] は今までどおり 403・GET /api/recipes/[id]/like は いいねの行が無いときと同じ 200 { liked: false })。
+ *     UUID の形で行が無い id への応答は route ごとに今までどおり (コメントの GET は 200 の空の一覧、買い物リストと pantry の DELETE は 200 { success: true })
  *   - レシピの外部キー違反は 404。ほかの外部キー違反・DB の失敗は今までどおり 500
  *   - JSON として読めない本文・オブジェクトでない本文 (null・配列) は 400 `{ error: 'リクエストボディが不正です' }`
  *     (nested の route は `{ error: { code: 'INVALID_JSON', message } }`)
