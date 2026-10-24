@@ -16,7 +16,7 @@
  * #1041 round-2 (D/F) 修正: `meals`/`recipes` は admin bypass 無しの RLS
  * (所有者本人のみ参照可) のため、user-scoped client でこのモジュールの関数を
  * 呼ぶと embed (`meals(...)`/`recipes(...)`) が null 化し、BAN 対象所有者が
- * 取得できず BAN が skip される (偽成功)。加えて `moderation_flags_admin_all`
+ * 取得できず BAN が skip される (偽成功)。加えて `moderation_flags_admin_select` (旧 `moderation_flags_admin_all`。#1917 で SELECT だけ)
  * は admin/super_admin のみのため、content_moderator が呼ぶと 0 件/0 行更新に
  * なる。呼び出し側 (route) は **requireRole 等の authz を通した後** に
  * `getSupabaseAdmin()` (service-role) を渡すこと。

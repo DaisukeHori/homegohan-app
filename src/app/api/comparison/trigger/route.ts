@@ -63,6 +63,8 @@ const CRON_RUN_NOW_AUDIT_TARGET_TYPE = 'cron_job';
  * 比較画面の選択肢 (モバイル: 日・週・月、Web: 週・月) をすべて含む。
  */
 const PERIOD_TYPES = ['daily', 'weekly', 'monthly'] as const;
+/** 400 の文: periodType が PERIOD_TYPES に無い。受け付ける値 (英字) は括弧に入れて添える (#1917 の続き。healthEnumMessage と同じ形) */
+const PERIOD_TYPE_INVALID_MESSAGE = `比べる期間の種類 (periodType) は次のいずれかを指定してください (${PERIOD_TYPES.join(' / ')})`;
 /** periodType を省略したときの値。Edge Function の既定 (weekly) と同じ */
 const DEFAULT_PERIOD_TYPE: (typeof PERIOD_TYPES)[number] = 'weekly';
 
@@ -121,7 +123,7 @@ async function recordRunNowAudit(
 
 export async function POST(request: Request) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   let actorId: string;
   try {
@@ -140,7 +142,7 @@ export async function POST(request: Request) {
   const parsed = TriggerBodySchema.safeParse(await readBody(request));
   if (!parsed.success) {
     return NextResponse.json(
-      errorBody('VALIDATION_ERROR', `periodType は ${PERIOD_TYPES.join(' / ')} のいずれかを指定してください`),
+      errorBody('VALIDATION_ERROR', PERIOD_TYPE_INVALID_MESSAGE),
       { status: 400 },
     );
   }

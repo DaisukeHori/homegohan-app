@@ -70,6 +70,8 @@ const DATE_REQUIREMENT = 'YYYY-MM-DD format (an existing calendar date from 0101
 const DATE_REQUIREMENT_JA = 'YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付';
 const DATE_PARAM_LABELS_JA: Record<string, string> = { date: '日付 (date)', startDate: '開始日 (startDate)', endDate: '終了日 (endDate)' };
 const invalidDateMessageJa = (label: string) => `${label}は${DATE_REQUIREMENT_JA}で指定してください`;
+/** 健康の記録の一覧 (/api/health/records) の日付の query の日本語の名前 (src/lib/health-api-messages.ts の表と同じ。手で書いた期待値) */
+const HEALTH_DATE_QUERY_NAMES_JA: Record<string, string> = { start_date: '開始日', end_date: '終了日' };
 
 /** JST 2026-10-14 (水) 0:30。UTC ではまだ 10/13 */
 const NOW_JST = '2026-10-13T15:30:00.000Z';
@@ -223,7 +225,7 @@ describe('1. GET /api/health/records: start_date / end_date は実在する日�
     for (const name of ['start_date', 'end_date']) {
       const res = await getHealthRecords(new NextRequest(`http://localhost/api/health/records?${name}=${date}`));
       expect(res.status, name).toBe(400);
-      expect(await res.json(), name).toEqual({ error: `${name} は YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください` });
+      expect(await res.json(), name).toEqual({ error: invalidDateMessageJa(`${HEALTH_DATE_QUERY_NAMES_JA[name]} (${name})`) });
     }
     expect(queries).toEqual([]);
   });

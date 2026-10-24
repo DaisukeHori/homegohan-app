@@ -46,7 +46,7 @@ const user = await requireRole(['admin', 'super_admin', 'sales']);
 { "data": { ... }, "meta": { "total": 100, "page": 1, "per_page": 50 } }
 ```
 
-エラー (例外: 本文の NULL 文字 (U+0000) で断る 400 `INVALID_CHARACTER` は、認証の前に `rejectNullCharacterBody` が flat の `{ "error": "<文>", "code": "INVALID_CHARACTER" }` で返す。`src/lib/api/reject-null-character.ts:32-35`):
+エラー (本文の NULL 文字 (U+0000) で断る 400 `INVALID_CHARACTER` も、認証の前に `rejectNullCharacterBody(request, { shape: 'nested' })` が同じ nested の `{ "error": { "code": "INVALID_CHARACTER", "message": "<文>" } }` で返す。#1917 の続きで flat から改めた。`src/lib/api/reject-null-character.ts:49-55`・`:69`):
 ```json
 { "error": { "code": "OP_PERMISSION_DENIED", "message": "...", "details": {} } }
 ```
@@ -328,18 +328,18 @@ BAN 解除
 ---
 
 ### GET /api/admin/organizations
-組織の一覧 (運営)。実装は `src/app/api/admin/organizations/route.ts:36-107`
+組織の一覧 (運営)。実装は `src/app/api/admin/organizations/route.ts:37-108`
 
 **クエリパラメータ**: `q` (組織名の部分一致)・`plan` (`ORG_PLAN_VALUES` のどれか。`src/lib/org-plans.ts:22`)・`page` (default: 1)・`per_page` (default: 30, max: 100)。不正なら 400 `VALIDATION_ERROR` (:60-65)
 
-**レスポンス**: `{ "organizations": [{ "id", "name", "plan", "created_at", "updated_at" }], "meta": { "total", "page", "per_page" } }` (新しい順)。件数より後ろのページ (PostgREST の 416 / PGRST103) は、同じ絞り込みで件数だけを数え直して、空の一覧と本当の件数 (`meta.total`) を 200 で返す (画面は件数から最後のページへ取り直す。:80-89・:279-297)。それ以外の読み出しの失敗・想定外の例外と、件数を数え直せないときは 500 `INTERNAL_ERROR` (空の一覧にしない。:91-96・:102-106・:299-305)
+**レスポンス**: `{ "organizations": [{ "id", "name", "plan", "created_at", "updated_at" }], "meta": { "total", "page", "per_page" } }` (新しい順)。件数より後ろのページ (PostgREST の 416 / PGRST103) は、同じ絞り込みで件数だけを数え直して、空の一覧と本当の件数 (`meta.total`) を 200 で返す (画面は件数から最後のページへ取り直す。:81-90・:286-299)。それ以外の読み出しの失敗・想定外の例外と、件数を数え直せないときは 500 `INTERNAL_ERROR` (空の一覧にしない。:92-97・:103-107・:301-307)
 
 **権限**: `admin`, `super_admin` (未ログインは 401 `AUTH_UNAUTHENTICATED` :43・ほかの利用者は 403 `OP_PERMISSION_DENIED` :49)
 
 ---
 
 ### POST /api/admin/organizations
-組織の作成 (運営)。実装は `src/app/api/admin/organizations/route.ts:109-242`
+組織の作成 (運営)。実装は `src/app/api/admin/organizations/route.ts:110-244`
 
 **リクエスト**:
 ```json
@@ -349,7 +349,7 @@ BAN 解除
 - `plan`: `ORG_PLAN_VALUES` (`standard` / `premium` / `enterprise`) のどれか。省略すると `ORG_PLAN_DEFAULT` (`standard`)
 - `owner_id`: 省略すると呼び出した運営をオーナーにする (作る組織は active なので `organizations.owner_id` は NOT NULL)
 
-**処理**: service_role (`getSupabaseAdmin`) で、organizations の行・`org_license_pools` の行 (`total_licenses` = NULL・`used_licenses` = 0。失敗してもログだけで続ける)・オーナーの `user_profiles` (`organization_id` と `org_role = 'owner'`) を書く。オーナーにする人が退会の途中 (退会の本体が findBlocker の前に付ける退会の印が新しい) なら、organizations の行の INSERT を DB のトリガー `trg_organizations_owner_not_deleting` (関数 `organizations_owner_not_deleting()`) が止め、何も書かずに 409 `OWNER_ACCOUNT_DELETING` を返す (#1917 の続き。退会の最後の `deleteUser` が `organizations_owner_id_fkey` (RESTRICT) で失敗しないように)
+**処理**: service_role (`getSupabaseAdmin`) で、organizations の行・`org_license_pools` の行 (`total_licenses` = NULL・`used_licenses` = 0。失敗してもログだけで続ける)・オーナーの `user_profiles` (`organization_id` と `org_role = 'owner'`) を書く。オーナーにする人が退会の途中 (退会の本体が findBlocker の前に付ける退会の印が新しい) なら、organizations の行の INSERT を DB のトリガー `trg_organizations_owner_not_deleting` (関数 `organizations_owner_not_deleting()`) が止め、何も書かずに 409 `OWNER_ACCOUNT_DELETING` を返す (#1917 の続き。退会の最後の `deleteUser` が `organizations_owner_id_fkey` (RESTRICT) で失敗しないように。退会が `deleteUser` の前に止まると (409・途中の失敗)、退会の本体が返す前に印を消すので、そのあとは作れる。`20261024120000`)
 
 **レスポンス**: `{ "organization": { "id", "name", "plan", "owner_id", "created_at", "updated_at" } }`
 
@@ -362,8 +362,8 @@ BAN 解除
 | 400 | `VALIDATION_ERROR` / `INVALID_JSON` / `INVALID_CHARACTER` | 本文が JSON でない (:136-139)・Zod の検査に通らない (:144-147)・本文に NULL 文字がある (:111-112) |
 | 401 | `AUTH_UNAUTHENTICATED` | 未ログイン (:119) |
 | 403 | `OP_PERMISSION_DENIED` | `admin` / `super_admin` でない (:125) |
-| 409 | `OWNER_ALREADY_IN_ORG` / `OWNER_ACCOUNT_DELETING` | オーナーにする人がすでに別の組織に所属している (:167-170) / オーナーにする人が退会の手続き中 (退会の印 `account_deletion_guards` があり、DB のトリガー `trg_organizations_owner_not_deleting` (関数 `organizations_owner_not_deleting()`) が組織の行の INSERT を止めた。`supabase/migrations/20261023130000_account_deletion_owner_guard.sql`。:182-187。文は「指定した owner は退会の手続き中です」。#1917 の続き) |
-| 500 | `INTERNAL_ERROR` | 組織の行の作成 (:189-192)・オーナーの `user_profiles` の更新 (:222-225) に失敗 |
+| 409 | `OWNER_ALREADY_IN_ORG` / `OWNER_ACCOUNT_DELETING` | オーナーにする人がすでに別の組織に所属している (:167-172) / オーナーにする人が退会の手続き中 (退会の印 `account_deletion_guards` があり、DB のトリガー `trg_organizations_owner_not_deleting` (関数 `organizations_owner_not_deleting()`) が組織の行の INSERT を止めた。`supabase/migrations/20261023130000_account_deletion_owner_guard.sql`。:184-189。文は「指定した owner は退会の手続き中です」。#1917 の続き) |
+| 500 | `INTERNAL_ERROR` | 組織の行の作成 (:190-194)・オーナーの `user_profiles` の更新 (:221-227) に失敗 |
 
 **権限**: `admin`, `super_admin`
 
@@ -541,13 +541,13 @@ BAN 解除
 ---
 
 ### POST /api/admin/audit-logs/export
-監査ログ CSV エクスポート
+未実装 (`src/app/api/admin/audit-logs` に route は無い)。監査ログ CSV エクスポート
 
 **リクエスト**: `{ "from": "2026-01-01", "to": "2026-05-06", "format": "csv" }`
 
 **レスポンス**: `{ "data": { "export_id": "uuid", "status": "processing" } }`
 
-**副作用**: `admin_audit_logs` に `admin.export.request` を記録
+**副作用**: (作るときは operator/07 §4.1 の名前で記録する。今あるエクスポートは `POST /api/admin/finance/exports` の `admin.finance.export` (旧名 `admin.export.request`))
 
 ---
 
@@ -1223,13 +1223,13 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 
 - ステージを変えると、活動履歴 (`sales_lead_activities`) に `stage_change` (`details: { from_stage, to_stage }`) を残す (この書き込みに失敗しても、リードは更新できているので 200 のまま (監査ログと同じ fail-open)。失敗は db-logger に error で残す。#1917)
 - 同時の更新: 本文に `stage` があるときは「直前に読んだ `stage` のままなら書く」条件つきにする。0 行なら読み直し、リードがあれば 409 `CONFLICT_STALE_DATA`
-  (書かず、活動履歴も監査ログも残さない)、無ければ 404。`from_stage` は書いた時点の実際の直前のステージと必ず一致する。`stage` が無い更新には条件を付けず、更新が 0 行 (読んでから書くまでにリードが消えた) なら 404 (`src/app/api/admin/sales/leads/[id]/route.ts:228-231`)。画面 (`/admin/sales/{id}`) は 409 `CONFLICT_STALE_DATA` を受けたらリードを読み直し、読み直した旨の画面の文を出す (サーバーの「画面を開き直して」は出さない。読み直しに失敗したら読み込み直せなかった旨の文。#1917。`src/app/admin/sales/[id]/page.tsx`)
+  (書かず、活動履歴も監査ログも残さない)、無ければ 404。`from_stage` は書いた時点の実際の直前のステージと必ず一致する。`stage` が無い更新には条件を付けず、更新が 0 行 (読んでから書くまでにリードが消えた) なら 404 (`src/app/api/admin/sales/leads/[id]/route.ts:208-212`)。画面 (`/admin/sales/{id}`) は 409 `CONFLICT_STALE_DATA` を受けたらリードを読み直し、読み直した旨の画面の文を出す (サーバーの「画面を開き直して」は出さない。読み直しに失敗したら読み込み直せなかった旨の文。#1917。`src/app/admin/sales/[id]/page.tsx`)
 - 読み込み・更新・読み直しの DB の失敗は 500 `INTERNAL_ERROR` (404 にしない)。UUID の形でない id は DB に渡さず 404 `NOT_FOUND` (本文の検査の 400 のあと。uuid 型の列に渡すと 22P02 で「DB の失敗」に入るため。#1917)。詳細の `GET /api/admin/sales/leads/{id}` も同じで、リード・活動履歴の読み込みの DB の失敗は 500 (404 は行が無いとき (UUID の形でない id を含む) だけ。活動履歴の読み込みの失敗を空の履歴にしない。#1917)
 
 ---
 
 ### GET / POST /api/admin/sales/leads/{id}/activities
-`GET` は活動履歴の一覧 (`{ data: [{ id, lead_id, actor_id, activity_type, details, created_at }] }`。新しい順。権限は `sales` / `admin` / `super_admin`。UUID の形でない id は DB に渡さず 404 `NOT_FOUND`、読み込みの DB の失敗は 500 `INTERNAL_ERROR`。監査ログは残さない。`src/app/api/admin/sales/leads/[id]/activities/route.ts:53-95`)。`POST` は活動記録追加。リードの読み込みの DB の失敗は 500 `INTERNAL_ERROR` (404 は行が無いとき (UUID の形でない id を含む。DB に渡さず、本文の検査の 400 のあとに 404) だけ)。追加のあとのリードの `updated_at` の更新に失敗しても、活動は追加できているので 201 のまま (失敗は db-logger に error で残す。#1917)
+`GET` は活動履歴の一覧 (`{ data: [{ id, lead_id, actor_id, activity_type, details, created_at }] }`。新しい順。権限は `sales` / `admin` / `super_admin`。UUID の形でない id は DB に渡さず 404 `NOT_FOUND`、読み込みの DB の失敗は 500 `INTERNAL_ERROR`。監査ログは残さない。`src/app/api/admin/sales/leads/[id]/activities/route.ts:56-84`。`POST` は :86 から)。`POST` は活動記録追加。リードの読み込みの DB の失敗は 500 `INTERNAL_ERROR` (404 は行が無いとき (UUID の形でない id を含む。DB に渡さず、本文の検査の 400 のあとに 404) だけ)。追加のあとのリードの `updated_at` の更新に失敗しても、活動は追加できているので 201 のまま (失敗は db-logger に error で残す。#1917)
 
 **リクエスト**:
 ```json
@@ -1247,7 +1247,7 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 ---
 
 ### POST /api/admin/sales/leads/{id}/proposal-pdf
-提案書 PDF 生成
+未実装 (`src/app/api/admin/sales/leads/[id]/proposal-pdf` の route は無い)。提案書 PDF 生成
 
 **レスポンス**: `{ "data": { "pdf_url": "https://storage.../proposals/xxx.pdf" } }`
 
@@ -1363,7 +1363,7 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 ### PATCH /api/super-admin/plans/{id}
 プラン編集 (draft のみ自由編集、public 以降は価格変更 API 経由)。同時の変更: 遷移の可否・status ごとに変えてよい項目・廃止の `ends_at` の要否は直前に読んだ `status` (と `ends_at`) で決め、更新はその `status` のまま (廃止で既存の `ends_at` に頼るときは `ends_at` が NULL でないことも) のときだけ書く条件つき。0 行なら読み直し、送った変更がもう入っていれば 200 (書かず記録もしない)、入っていなければ 409 `CONFLICT_STALE_DATA`、行が無ければ 404 `OP_PLAN_NOT_FOUND` (cross/04 §4.2)。廃止の `ends_at` の要否は書いた後の値で決める (本文の `ends_at: null` は既存の値があっても 400 `OP_PLAN_DEPRECATE_ENDS_AT_REQUIRED`)。監査 `update_plan` は `status` を変えたときだけ `status_from` / `status_to` を持ち、`status_from` は書いた時点の実際の直前の値。削除 (`DELETE /api/super-admin/plans/{id}`。draft のみ・それ以外は 422 `OP_PLAN_NOT_DRAFT`) も `status = 'draft'` のままのときだけ消し、0 行なら読み直して、無ければ 404 `OP_PLAN_NOT_FOUND`、あれば 409 `CONFLICT_STALE_DATA` (どちらも記録しない)。画面 (`/super-admin/plans/{id}`) は保存・公開・非公開・廃止・廃止の取り消しが 409 `CONFLICT_STALE_DATA` なら、プランを読み直して今の状態とボタンを出し、読み直した旨を画面の上に出す (表示名・説明・表示順の書きかけは残す。表示したあとの読み直しは画面を外さず、失敗したら画面と入力欄を残して文と「再試行」を出す。#1917。`src/app/super-admin/plans/[id]/page.tsx`)
 
-**廃止の安全弁** (`status: 'deprecated'` への遷移。#1127・#1912。実装 `src/lib/super-admin/plan-subscribers.ts` の `countPlanSubscribers`): 廃止の前に、契約が終わっていない契約者を service_role で数え、1 件でもいれば 409 `OP_PLAN_HAS_SUBSCRIBERS` で止める (数えられなかったときは 500 `OP_PLAN_SUBSCRIBER_CHECK_FAILED`)。
+**廃止の安全弁** (`status: 'deprecated'` への遷移。#1127・#1912。実装 `src/lib/super-admin/plan-subscribers.ts` の `countPlanSubscribers`): 廃止の前に、契約が終わっていない契約者を service_role で数え、1 件でもいれば 409 `OP_PLAN_HAS_SUBSCRIBERS` で止める (数えられなかったときは 500 `OP_PLAN_SUBSCRIBER_CHECK_FAILED`)。数えてから書くまでの間に入った契約は、書く文の中の DB のトリガー `guard_plan_deprecate_subscribers` (migration `20261024130000`。プランの行を FOR UPDATE でロックし直して commit 前の契約者が増える書き込みを待ってから、同じ数え方で数え直す) が `OP_PLAN_HAS_SUBSCRIBERS` (P0001。DETAIL は内訳の JSON) で止め、route は同じ 409 (内訳はトリガーの DETAIL) を返す。内訳を読めなければ 500 `OP_PLAN_SUBSCRIBER_CHECK_FAILED` (廃止はしていない)。契約者が増える書き込み = 個人契約・家族のグループ・組織の、作成・数えられる status (個人 = 上の live 5 値・家族と組織 = `active`) への切り替え・プランの付け替え。どれも同じ migration のトリガー `trg_subscriber_plan_key_share` (3 表の BEFORE INSERT OR UPDATE) でプランの行に FOR KEY SHARE を取るので、廃止の FOR UPDATE と待ち合う (外部キーの確認だけでは、plan_key を変えずに status だけを live にする UPDATE と、外部キーの無い組織を待たないため。#1917 の続き)。廃止がロックを取った後に来た書き込みは廃止の commit を待ち、廃止の後の契約になる。
 
 | 内訳 (`error.counts` のキー) | 数える行 | 組織のプランの行 (`plan_type = 'org'` の `org_*`) |
 |---|---|---|
@@ -1439,10 +1439,10 @@ deprecated → private にロールバック (緊急用)
 **処理フロー**:
 1. 入力の検証 (`applies_to` が `new_only` 以外なら 400。DB にも Stripe にも触れない)
 2. Stripe (Edge Function `stripe-price-sync`): 変えた interval ごとに `prices.create` で新 Price object を作り、**同じ interval の旧 Price だけ** `active=false` にする。`{ month, year }` を返す (変えなかった方は null)
-3. DB: `plan_price_history` INSERT (service-role。月額の Stripe Price ID を記録) → `subscription_plans` 更新 (変えた interval の列だけ: 月額 = `stripe_price_id` / 年額 = `stripe_yearly_price_id`) → `admin_audit_logs` INSERT (年額の Price ID と、interval ごとの旧 Price 無効化結果を含む)
+3. DB: `plan_price_history` INSERT (service-role。月額の Stripe Price ID を記録) → `subscription_plans` 更新 (変えた interval の列だけ: 月額 = `stripe_price_id` / 年額 = `stripe_yearly_price_id`) → `admin_audit_logs` INSERT (年額の Price ID と、interval ごとの旧 Price 無効化結果を含む)。同時の変更 (#1917 の続き): 2 の前に `begin_plan_price_change` でプランごとの予約を取り (プランの行を FOR NO KEY UPDATE でロックし、予約が無いか期限 (`PRICE_CHANGE_RESERVATION_STALE_SECONDS` = 900 秒) より古いときだけ取る。ロックの下で読んだプランの値で 2 を呼ぶ)、履歴の INSERT と価格の更新は `apply_plan_price_change` が予約が自分のもののままのときだけ 1 つのトランザクションで書く (履歴の old_* はロックの下で読んだ、この更新の直前の値)。監査の old_* は apply が返した変える前の値 (`previous`)。2 で失敗したときなど apply まで行かなかったときは `release_plan_price_change` で予約を消す。3 本とも service_role だけ
 4. 既存サブスクリプションの Price は切り替えない (既存の契約者は旧 Price のまま請求される)
 
-**エラー**: `STRIPE_SECRET_KEY` と `stripe_product_id` がある (Stripe 同期が必須の) プランで同期に失敗したら 502 `OP_STRIPE_SYNC_FAILED` (Edge Function 未デプロイは 503 `OP_STRIPE_SYNC_UNAVAILABLE`)。DB は更新しない (fail-closed)。月額・年額の両方を変えたのに片方の新 Price ID が返らなかった場合も 502 で、DB は更新しない。`STRIPE_SECRET_KEY` 未設定の環境は mock モード (DB だけ更新、`stripe_mock: true`)。
+**エラー**: `STRIPE_SECRET_KEY` と `stripe_product_id` がある (Stripe 同期が必須の) プランで同期に失敗したら 502 `OP_STRIPE_SYNC_FAILED` (Edge Function 未デプロイは 503 `OP_STRIPE_SYNC_UNAVAILABLE`)。DB は更新しない (fail-closed)。月額・年額の両方を変えたのに片方の新 Price ID が返らなかった場合も 502 で、DB は更新しない。`STRIPE_SECRET_KEY` 未設定の環境は mock モード (DB だけ更新、`stripe_mock: true`)。#1917 の続き: 無いプランは 404 `OP_PLAN_NOT_FOUND`・draft は 422 `OP_PLAN_DRAFT_USE_PATCH` (予約のときに判定)。別の運営の価格の変更が進行中 (予約が取れない) なら 409 `CONFLICT_STALE_DATA` で Stripe も DB も触らない。予約を失っていた (期限の後に別の運営が取り直した) なら 409 `CONFLICT_STALE_DATA` で DB を書かない。履歴と価格の保存の失敗は 500 `OP_DB_ERROR` (1 つのトランザクションなので履歴も価格も書いていない)。Stripe の同期の後の 409 / 500 の文には、Stripe に新しい Price が作られている旨を添える
 
 ---
 
@@ -1846,7 +1846,7 @@ Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#113
 | `CONFLICT_PRECONDITION_REQUIRED` / `CONFLICT_OPTIMISTIC_LOCK` / `CONFLICT_STALE_DATA` | 428 / 412 / 409 | 楽観的ロック (cross/04 §4.2)。`PATCH /api/admin/data-requests/{id}` で、`If-Unmodified-Since` が無い / GET が返した `updated_at` と違う / 条件つきの UPDATE が 0 行。`CONFLICT_STALE_DATA` は組織のプランの変更 (`PATCH /api/admin/organizations/{id}`) でも使う: 直前に読んだ `plan` のままなら書く条件つきの UPDATE が 0 行で、読み直した `plan` が送られたプランと違う (同じなら 200 で書かず記録もしない。#1912)。同じ形で、問い合わせの更新 (`PATCH` / `PUT /api/admin/inquiries/{id}`。条件は読んだ `status` と `updated_at`)・AI の 1 日の上限の保存 (`PATCH /api/super-admin/llm/quotas`。条件は読んだ `daily_limit`、行が無かったときは作るだけ)・リードのステージの変更 (`PATCH /api/admin/sales/leads/{id}`。条件は読んだ `stage`。読み直してリードがあれば常に 409)・プランの編集と削除 (`PATCH` / `DELETE /api/super-admin/plans/{id}`。条件は読んだ `status` (削除は `draft`)、廃止で既存の `ends_at` に頼るときは `ends_at` が NULL でないことも。編集は送った変更がもう入っていれば 200)・利用者の凍結 (`POST /api/admin/users/{id}/freeze`。条件は読んだ時点の super_admin でない状態のまま。読み直して対象があれば常に 409) でも使う。送った値が今の値と同じだったときの扱いは違う: 組織のプラン・AI の 1 日の上限・プランの編集 (読み直した行に送った変更がもう入っていたとき) は 200 で書かず記録もしないが、問い合わせの更新は 200 で書かずに今の行 (本文を含む) を返すので、`changed: false` として記録する (:984) |
 | `OP_EMAIL_OUTBOX_NOT_FOUND` | 404 | [NEW] 再送 (`POST /api/super-admin/email-outbox/{id}/requeue`) の行が無い (`10-logs-and-mail-retry.md` §11) |
 | `OP_EMAIL_OUTBOX_NOT_REQUEUEABLE` | 409 | [NEW] 再送できない行。`details.reason` が `not_dead` (届けられなかった行でない) か `redacted` (宛先を伏せた行) (`10-logs-and-mail-retry.md` §11) |
-| `AUTH_2FA_REQUIRED` | 403 | 二段階認証の確認が要る (必須ロールで認証アプリを登録済み・セッションが aal1)。`requireRole` が `MfaRequiredError` (`ForbiddenError` の派生) を投げ、運営の API は route の既存の 403 の code (`FORBIDDEN` / `OP_PERMISSION_DENIED` / `PERM_DENIED`) で返す (本文の message は、`authFailureNested` を通す route では「二段階認証の確認が必要です」、403 を固定のリテラルで返す route では「権限がありません」。`cross/12-operator-mfa.md` §19.3)。この code を本文に出すのは自己サービスの `/api/auth/mfa/*` だけ。画面 (layout / page) は `requireRoleForPage` が MFA の画面へ回す (`cross/12-operator-mfa.md` §13.4・§19.3) |
+| `AUTH_2FA_REQUIRED` | 403 | 二段階認証の確認が要る (必須ロールで認証アプリを登録済み・セッションが aal1)。`requireRole` が `MfaRequiredError` (`ForbiddenError` の派生) を投げ、運営の API は route の既存の 403 の code (`FORBIDDEN` / `OP_PERMISSION_DENIED`) で返す (本文の message は、`authFailureNested` を通す route では「二段階認証の確認が必要です」、403 を固定のリテラルで返す route では「権限がありません」。`cross/12-operator-mfa.md` §19.3)。この code を本文に出すのは自己サービスの `/api/auth/mfa/*` だけ。画面 (layout / page) は `requireRoleForPage` が MFA の画面へ回す (`cross/12-operator-mfa.md` §13.4・§19.3) |
 | `AUTH_2FA_ENROLLMENT_REQUIRED` | 403 | [NEW] 二段階認証の登録が要る (必須ロールで未登録・猶予なし・セッションが aal1)。扱いは `AUTH_2FA_REQUIRED` と同じ (`cross/12-operator-mfa.md` §19) |
 
 ## 24. テスト方針

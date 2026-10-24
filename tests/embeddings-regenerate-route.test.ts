@@ -7,6 +7,7 @@
  * 修正後は実際に Edge Function を呼び出し、失敗時は偽成功にせず 502/503 を返す。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { englishIdentifiersOutsideParentheses } from './helpers/api-error-text-scan';
 
 const mockRequireRole = vi.fn();
 
@@ -179,8 +180,10 @@ describe('POST /api/super-admin/embeddings/regenerate (#1041 F4-12)', () => {
     expect(json.ok).toBe(true);
     expect(json.processed).toBe(42);
     expect(json.hasMore).toBe(true);
-    // #1917: Edge Function の英語の文 ('Processed 42 rows') は本文に入れず、件数と続きから作った日本語の文にする
-    expect(json.message).toBe('42 件を再生成しました。続きは offset 42 から実行してください');
+    // #1917: Edge Function の英語の文 ('Processed 42 rows') は本文に入れず、件数と続きから作った日本語の文にする。
+    // 次に送る英字の項目名 (offset) は括弧に入れる (#1917 の続き。以前は「続きは offset 42 から実行してください」で括弧の外に出ていた)
+    expect(json.message).toBe('42 件を再生成しました。続きは開始の位置 (offset) を 42 にして実行してください');
+    expect(englishIdentifiersOutsideParentheses(json.message)).toEqual([]);
   });
 
   it.each([
@@ -204,6 +207,7 @@ describe('POST /api/super-admin/embeddings/regenerate (#1041 F4-12)', () => {
 
     expect(res.status).toBe(200);
     expect((JSON.parse(raw) as { message: string }).message).toBe(message);
+    expect(englishIdentifiersOutsideParentheses(message)).toEqual([]);
     expect(raw).not.toContain(edge.message);
   });
 });

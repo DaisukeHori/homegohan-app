@@ -9,6 +9,7 @@ import { PASSWORD_HINT_TEXT, SIGNUP_MINOR_NOTICE, validatePassword } from "@home
 import Svg, { Path } from "react-native-svg";
 
 import { colors, spacing, radius, shadows } from "../../src/theme";
+import { getJapaneseApiErrorMessage } from "../../src/lib/api-error";
 import { supabase } from "../../src/lib/supabase";
 import { TurnstileWidget, useTurnstile } from "../../src/components/auth/TurnstileWidget";
 import { CAPTCHA_FAILED_MESSAGE, isCaptchaFailure } from "../../src/lib/turnstile";
@@ -74,7 +75,8 @@ export default function SignupScreen() {
         router.replace("/auth/verify");
       }
     } catch (e: any) {
-      Alert.alert("Google登録失敗", e?.message ?? "Google登録に失敗しました。");
+      // Supabase Auth (GoTrue)・Google の英語の文は出さない (#1917 の続き)
+      Alert.alert("Google登録失敗", getJapaneseApiErrorMessage(e, "Google登録に失敗しました。"));
     } finally {
       setIsSubmitting(false);
     }
@@ -128,7 +130,7 @@ export default function SignupScreen() {
       ]);
     } catch (e: any) {
       // #1165: 英語の生のエラー文は出さない (ウィジェットは取り直し済み)
-      const msg = isCaptchaFailure(e) ? CAPTCHA_FAILED_MESSAGE : (e?.message ?? "登録に失敗しました。");
+      const msg = isCaptchaFailure(e) ? CAPTCHA_FAILED_MESSAGE : getJapaneseApiErrorMessage(e, "登録に失敗しました。");
       setErrorMessage(msg);
       Alert.alert("登録失敗", msg);
     } finally {

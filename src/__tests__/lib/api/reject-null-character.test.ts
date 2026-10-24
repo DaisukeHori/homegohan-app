@@ -38,6 +38,23 @@ describe('rejectNullCharacterBody', () => {
     expect(await res?.json()).toEqual({ error: NULL_CHARACTER_ERROR_MESSAGE, code: NULL_CHARACTER_ERROR_CODE });
   });
 
+  it('shape を渡さない・flat なら flat の本文、nested なら nested の本文 (#1917 の続き。route のほかの本文の形に合わせる)', async () => {
+    const body = { note: `メモ${NUL}` };
+    const flatDefault = await rejectNullCharacterBody(jsonRequest(body));
+    const flat = await rejectNullCharacterBody(jsonRequest(body), { shape: 'flat' });
+    const nested = await rejectNullCharacterBody(jsonRequest(body), { shape: 'nested' });
+
+    expect(await flatDefault?.json()).toEqual({ error: NULL_CHARACTER_ERROR_MESSAGE, code: NULL_CHARACTER_ERROR_CODE });
+    expect(await flat?.json()).toEqual({ error: NULL_CHARACTER_ERROR_MESSAGE, code: NULL_CHARACTER_ERROR_CODE });
+    expect(nested?.status).toBe(400);
+    // error.message を読む画面 (運営の画面など) で理由の文が出る
+    expect(await nested?.json()).toEqual({ error: { code: NULL_CHARACTER_ERROR_CODE, message: NULL_CHARACTER_ERROR_MESSAGE } });
+  });
+
+  it('nested でも NULL 文字が無ければ null を返す', async () => {
+    expect(await rejectNullCharacterBody(jsonRequest({ note: 'ふつう' }), { shape: 'nested' })).toBeNull();
+  });
+
   it('NULL 文字が無ければ null を返し、route はそのあと同じ本文を request.json() で読める', async () => {
     const body = { note: 'ふつうのメモ\u0001', count: 2, nested: { items: ['a', 'b'] } };
     const request = jsonRequest(body);

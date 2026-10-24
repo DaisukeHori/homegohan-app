@@ -5,7 +5,7 @@
  * 書き換えた判定の結果を固定する。
  *   - 5 値 (夜食 midnight_snack を含む) は区分の確認を通り、次の認証へ進む
  *   - 5 値以外 (未知の値・大文字・前後の空白・日本語・文字列でない値) は、DB・認証・Edge Function に触れる前に 400
- *   - 400 の本文は位置と、受け付ける 5 値を正本の並びで言う
+ *   - 400 の本文は位置と、受け付ける 5 値を正本の並びで言う (英字の値は括弧の中。#1917 の続き)
  * 期待値はここで手で書く (正本から導いた値と比べると、導き方の誤りを見逃すため)。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -39,14 +39,15 @@ vi.mock('@/lib/rate-limit', () => ({
 vi.mock('@/lib/feature-flags', () => ({ isFeatureEnabled: vi.fn(async () => false) }));
 vi.mock('@vercel/functions', () => ({ waitUntil: vi.fn() }));
 
+import { englishIdentifiersOutsideParentheses } from './helpers/api-error-text-scan';
 import { POST as postV4Generate } from '../src/app/api/ai/menu/v4/generate/route';
 import { POST as postV5Generate } from '../src/app/api/ai/menu/v5/generate/route';
 
 /** 区分の確認に使う、実在する日付 */
 const DATE = '2026-10-10';
 
-/** 400 の本文の「受け付ける区分」(手で書いた期待値。正本 MEAL_ORDER の並び) */
-const MEAL_TYPE_REQUIREMENT = 'breakfast・lunch・dinner・snack・midnight_snack';
+/** 400 の本文の「受け付ける区分」(手で書いた期待値。正本 MEAL_ORDER の並び。英字の値は括弧の中に ' / ' で並べる: #1917 の続き) */
+const MEAL_TYPE_REQUIREMENT = 'breakfast / lunch / dinner / snack / midnight_snack';
 
 /** 区分の確認を通らない値 */
 const INVALID_MEAL_TYPES: Array<[string, unknown]> = [
@@ -111,9 +112,12 @@ describe.each([
         }),
       );
       expect(res.status).toBe(HTTP_BAD_REQUEST);
-      expect(await res.json()).toEqual({
-        error: `2 番目の枠の食事の区分は ${MEAL_TYPE_REQUIREMENT} のどれかにしてください`,
+      const body = (await res.json()) as { error: string };
+      expect(body).toEqual({
+        error: `2 番目の枠の食事の区分 (mealType) は次のいずれかを指定してください (${MEAL_TYPE_REQUIREMENT})`,
       });
+      // Web の献立の生成の画面 (useV4MenuGeneration) とモバイルは error をそのまま出すので、英字の項目名・値は括弧の外に出さない (#1917 の続き)
+      expect(englishIdentifiersOutsideParentheses(body.error)).toEqual([]);
       expect(h.getUser).not.toHaveBeenCalled();
       expect(h.from).not.toHaveBeenCalled();
       expect(h.callV4).not.toHaveBeenCalled();

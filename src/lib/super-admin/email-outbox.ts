@@ -83,7 +83,7 @@ const EmailOutboxFilterSchema = z.object({
   cursor: z
     .string()
     .max(CURSOR_MAX_CHARS)
-    .refine((v) => decodeAppLogCursor(v) !== null, 'cursor が不正です')
+    .refine((v) => decodeAppLogCursor(v) !== null, '続きの位置 (cursor) が不正です')
     .optional(),
 });
 export interface EmailOutboxQuery {

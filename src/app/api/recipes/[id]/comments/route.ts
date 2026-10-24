@@ -68,7 +68,7 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
     if (body.rating !== undefined && body.rating !== null) {
       const r = Number(body.rating);
       if (!Number.isInteger(r) || r < 1 || r > 5) {
-        return NextResponse.json({ error: 'ratingは1〜5の整数で入力してください' }, { status: 400 });
+        return NextResponse.json({ error: '評価 (rating) は 1〜5 の整数で入力してください' }, { status: 400 });
       }
       rating = r;
     }

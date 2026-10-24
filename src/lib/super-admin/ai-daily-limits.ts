@@ -106,12 +106,12 @@ export type AiDailyLimitReadOnlyReason = (typeof AI_DAILY_LIMIT_READ_ONLY_REASON
 /** 保存できない行に、運営の画面で出す案内 (理由ごと) */
 export const AI_DAILY_LIMIT_READ_ONLY_NOTES: Readonly<Record<AiDailyLimitReadOnlyReason, string>> = {
   unknown_key: 'このキーはプランの表にも組織のプランにも無いため、保存できません',
-  org_subscription_plan: `組織の上限は ${ORG_PLAN_VALUES_LABEL} の行で決まります。この行の値は使われないため、保存できません`,
+  org_subscription_plan: `組織の上限は組織のプランの値 (${ORG_PLAN_VALUES_LABEL}) の行で決まります。この行の値は使われないため、保存できません`,
 };
 
 /** PATCH で subscription_plans の組織のプランの行 (org_*) を断るときのエラー (#1912。operator/02-api-spec.md §23) */
 export const PLAN_READ_ONLY_CODE = 'PLAN_READ_ONLY';
-export const PLAN_READ_ONLY_MESSAGE = `組織の上限は ${ORG_PLAN_VALUES_LABEL} の行で決まります。組織のプラン (org_*) の行は保存できません`;
+export const PLAN_READ_ONLY_MESSAGE = `組織の上限は組織のプランの値 (${ORG_PLAN_VALUES_LABEL}) の行で決まります。組織のプラン (org_*) の行は保存できません`;
 /** 断るときの状態コード (リクエストの形は正しいが、このプランの行は変更できない。SETTING_READ_ONLY と同じ 409) */
 export const PLAN_READ_ONLY_STATUS = 409;
 

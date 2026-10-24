@@ -30,6 +30,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AuthError, ForbiddenError } from '../../src/lib/auth/errors';
 import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE } from '../../src/lib/api/errors';
+import { englishIdentifiersOutsideParentheses } from '../helpers/api-error-text-scan';
 import {
   isMissingEnvError,
   MISSING_ENV_ERROR_MESSAGE,
@@ -247,7 +248,9 @@ describe('POST /api/comparison/trigger: 関数の呼び方 (#1406)', () => {
     expect(res.status).toBe(400);
     const json = await res.json();
     expect(json.error.code).toBe('VALIDATION_ERROR');
-    expect(json.error.message).toBe('periodType は daily / weekly / monthly のいずれかを指定してください');
+    expect(json.error.message).toBe('比べる期間の種類 (periodType) は次のいずれかを指定してください (daily / weekly / monthly)');
+    // 受け付ける値 (英字) も括弧の中 (#1917 の続き)
+    expect(englishIdentifiersOutsideParentheses(json.error.message)).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -135,6 +135,7 @@ Web のログイン画面は、ブラウザから Supabase を直接呼ばず、
 | 新規登録 | `signUp` | 対応済み | 対応済み (次のビルドから) |
 | パスワード再設定の依頼 | `resetPasswordForEmail` | 対応済み | 対応済み (次のビルドから) |
 | Google ログイン・登録 | `signInWithOAuth` | CAPTCHA の対象外 | CAPTCHA の対象外 |
+| Apple ログイン・登録 (`docs/design/mobile/08-sign-in-with-apple.md`) | Web: `signInWithOAuth` (段 B)。iOS: `signInWithIdToken` (段 A2) | CAPTCHA の対象外 | CAPTCHA の対象外 (GoTrue は `/token` の `grant_type` が `id_token`・`pkce`・`refresh_token` のとき CAPTCHA を確かめない) |
 | メール確認の再送 (`/auth/verify`) | `resend` | 対応済み (トークンは `options.captchaToken`。#1474) | (モバイルに再送の画面は無い) |
 | 設定 → アカウント → パスワード変更 | Web・モバイルとも `POST /api/auth/password/change` (サーバーが RPC `auth_password_check` で今のパスワードを確かめ、GoTrue の `PUT /auth/v1/user` で更新する。#1720 段 C・PR #1860) | CAPTCHA の対象外 (再認証の `signInWithPassword` をしない。`src/app/(main)/settings/account/page.tsx`。#1474 で付けたトークンは #1860 で要らなくなった) | CAPTCHA の対象外 (同じ API。`apps/mobile/src/lib/account-credentials.ts`) |
 | 新しいパスワードの保存 (`/auth/reset-password`) | `updateUser` | CAPTCHA の対象外 | CAPTCHA の対象外 |

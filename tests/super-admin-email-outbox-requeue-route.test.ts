@@ -181,7 +181,7 @@ describe('POST /api/super-admin/email-outbox/[id]/requeue: 再送', () => {
     const { res, json } = await post('not-a-uuid');
 
     expect(res.status).toBe(400);
-    expect(json.error).toEqual({ code: 'VALIDATION_ERROR', message: 'id の形式が正しくありません' });
+    expect(json.error).toEqual({ code: 'VALIDATION_ERROR', message: 'ID (id) の形式が正しくありません' });
     expect(state.adminCalls).toEqual([]);
   });
 

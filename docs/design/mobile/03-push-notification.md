@@ -56,7 +56,7 @@ Expo Push Notifications を使用したプッシュ通知の設計を定義す�
   (`apps/mobile/src/lib/pushInstallSecret.ts`)。サーバーは値を持たず、SHA-256 (16 進の小文字 64 文字) を `user_push_tokens.install_secret_hash` に持つ
   (migration `20261016163600_user_push_tokens_install_secret.sql`。CHECK で形を固定)。
   利用者ごとではない (同じ端末でログインした利用者はみな同じ値)。ログアウト・退会の掃除では消さない。
-  アプリに安全な乱数の部品 (`expo-crypto` など) が無いので、ネイティブの部品を足さずに済むよう、サーバー (`node:crypto`) で作る
+  値はサーバー (`node:crypto`) で作り、claim の応答で 1 度だけ返す
 - **claim の本文と動き** (`src/app/api/push-tokens/claim/route.ts`)
 
   | 本文 | アプリがこう送るとき | 本人の行のハッシュ | 外す行 (同じトークンの、ほかの利用者の行のうち) | 応答 |

@@ -16,7 +16,7 @@
  * `...(res.aiFlags ?? [])` と配列として展開しており、形を変えるとその版が壊れるため
  * (この画面はリポジトリからは #1389 で削除済みだが、端末に入っている古い版は残る)。
  *
- * #1041 round-2 (F) 修正: `moderation_flags_admin_all` RLS ポリシーは
+ * #1041 round-2 (F) 修正: `moderation_flags_admin_select` (旧 `moderation_flags_admin_all`。#1917 で SELECT だけ) RLS ポリシーは
  * admin/super_admin のみで content_moderator を許可しない。requireRole は
  * content_moderator を許可しているため、user-scoped client では
  * content_moderator が呼ぶと常に 0 件 (偽成功) になっていた。requireRole

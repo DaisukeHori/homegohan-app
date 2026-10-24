@@ -67,7 +67,7 @@ sequenceDiagram
 ### 3.3 ソーシャルログイン統合方針
 
 - 同一メールアドレスの既存アカウントとソーシャルアカウントは **確認メール送信後に自動統合**
-- 退会時: ソーシャル連携トークン全削除 + Google/Apple ドキュメント準拠で IdP 側 revoke
+- 退会時: ソーシャル連携トークン全削除 + Google/Apple ドキュメント準拠で IdP 側 revoke (Apple は mobile/08 §9.3 (退会の段階 `apple_revoke`)。Google の revoke は未実装 (mobile/08 Q-10))
 - ソーシャルログイン経由の初回登録時は `user_profiles.terms_accepted = true` が入っていないため、利用規約同意モーダルを強制表示
 
 ---

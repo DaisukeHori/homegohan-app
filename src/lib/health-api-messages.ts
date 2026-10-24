@@ -14,7 +14,7 @@
  *   - 英語の文が入っていないことは tests/api-error-japanese-scan.test.ts (src/app/api/health の走査) と
  *     tests/health-api-messages.test.ts が見張る
  */
-import { CALENDAR_DATE_MAX, CALENDAR_DATE_MIN } from '@/lib/date-utils';
+import { invalidCalendarDateMessage } from '@/lib/api/user-api-error-messages';
 
 /**
  * 本文が JSON のオブジェクトでない (src/lib/api/error-responses.ts の API_INVALID_JSON_MESSAGE と同じ文。
@@ -22,18 +22,68 @@ import { CALENDAR_DATE_MAX, CALENDAR_DATE_MIN } from '@/lib/date-utils';
  */
 export const HEALTH_INVALID_BODY_MESSAGE = 'リクエストボディが不正です';
 
-/** 日付の形の説明 (isCalendarDate が受け付ける範囲) */
-const CALENDAR_DATE_RULE = `YYYY-MM-DD の形の、${CALENDAR_DATE_MIN} から ${CALENDAR_DATE_MAX} までの実在する日付`;
+/**
+ * 健康の記録の入力の項目のキー → 失敗の文に出す日本語の名前 (#1917)。
+ * 文には「日本語の名前 (キー)」の形で出す (healthFieldLabel)。英字のキーだけの文 ('daily_note は文字列か…') を画面に出さないため。
+ * 数値の項目は src/lib/health-payloads.ts の表の label (単位つき) を使うので、ここには数値の項目の多くは載せない。
+ * 利用者が送るキーで引くので、プロトタイプのキー ('constructor' など) に当たらないよう Map で持つ
+ */
+const HEALTH_FIELD_NAMES: ReadonlyMap<string, string> = new Map([
+  // 記録 (health_records)
+  ['record_date', '記録の日付'],
+  ['start_date', '開始日'],
+  ['end_date', '終了日'],
+  ['daily_note', '1 日のメモ'],
+  ['notes', 'メモ'],
+  ['data_source', '記録の取り込み元'],
+  // 目標 (health_goals)
+  ['goal_type', '目標の種類'],
+  ['target_value', '目標値'],
+  ['current_value', '現在の値'],
+  ['target_unit', '単位'],
+  ['target_date', '目標の日付'],
+  ['note', 'メモ'],
+  // 健康診断・血液検査
+  ['checkup_date', '受診日'],
+  ['facility_name', '受診した施設'],
+  ['checkup_type', '健診の種類'],
+  ['image_url', '画像の URL'],
+  ['test_date', '検査日'],
+  ['test_facility', '検査した施設'],
+  // 通知の設定 (health_notification_preferences。画面 src/app/(main)/health/settings/page.tsx の見出しの名前)
+  ['enabled', '通知'],
+  ['quiet_hours_start', '静かな時間の開始'],
+  ['quiet_hours_end', '静かな時間の終了'],
+  ['record_mode', '記録モード'],
+  ['personality_type', '通知スタイル'],
+  ['morning_reminder_enabled', '朝のリマインダー'],
+  ['morning_reminder_time', '朝のリマインダーの時刻'],
+  ['evening_reminder_enabled', '夜のリマインダー'],
+  ['evening_reminder_time', '夜のリマインダーの時刻'],
+  ['vacation_mode', 'お休みモード'],
+  ['vacation_until', 'お休みモードの終わりの日'],
+]);
 
-/** 日付の項目の値が、YYYY-MM-DD の形の実在する日付でない */
+/** 表に無いキーの日本語の名前 (英字のキーだけの文にしないため、括弧の外は日本語にする) */
+const HEALTH_FIELD_FALLBACK_NAME = '項目';
+
+/** 項目のキーを、失敗の文に出す「日本語の名前 (キー)」にする (表に無いキーは「項目 (キー)」) */
+export function healthFieldLabel(key: string): string {
+  return `${HEALTH_FIELD_NAMES.get(key) ?? HEALTH_FIELD_FALLBACK_NAME} (${key})`;
+}
+
+/**
+ * 日付の項目の値が、YYYY-MM-DD の形の実在する日付でない。
+ * 文の形は利用者向けの API と同じ (src/lib/api/user-api-error-messages.ts の invalidCalendarDateMessage。#1917 で 1 つにそろえた)
+ */
 export function healthDateInvalidMessage(field: string): string {
-  return `${field} は ${CALENDAR_DATE_RULE}で指定してください`;
+  return invalidCalendarDateMessage(healthFieldLabel(field));
 }
 
 /** URL の日付 (/api/health/records/[date]) が、YYYY-MM-DD の形の実在する日付でない */
-export const HEALTH_DATE_PARAM_INVALID_MESSAGE = `日付 (date) は ${CALENDAR_DATE_RULE}で指定してください`;
+export const HEALTH_DATE_PARAM_INVALID_MESSAGE = invalidCalendarDateMessage('日付 (date)');
 /** 記録の日付 (record_date) が、YYYY-MM-DD の形の実在する日付でない */
-export const HEALTH_RECORD_DATE_INVALID_MESSAGE = `記録の日付 (record_date) は ${CALENDAR_DATE_RULE}で指定してください`;
+export const HEALTH_RECORD_DATE_INVALID_MESSAGE = healthDateInvalidMessage('record_date');
 /** 記録の日付 (record_date) が無い */
 export const HEALTH_RECORD_DATE_REQUIRED_MESSAGE = '記録の日付 (record_date) を指定してください';
 /** 健康の記録の項目が 1 つも無い */
@@ -76,37 +126,40 @@ export const HEALTH_CHALLENGE_TEMPLATE_INVALID_MESSAGE = 'チャレンジの種�
 /** 連続記録の種類 (type) が受け付ける種類でない */
 export const HEALTH_STREAK_TYPE_INVALID_MESSAGE = '連続記録の種類 (type) が正しくありません';
 
-/** 項目の値が文字列か null でない */
+/** 項目の値が文字列か null でない (field は項目のキー。文には healthFieldLabel の名前で出す) */
 export function healthStringOrNullMessage(field: string): string {
-  return `${field} は文字列か null で指定してください`;
+  return `${healthFieldLabel(field)} は文字列か null で指定してください`;
 }
 
-/** 項目の値が文字列でない */
+/** 項目の値が文字列でない (field は項目のキー) */
 export function healthStringMessage(field: string): string {
-  return `${field} は文字列で指定してください`;
+  return `${healthFieldLabel(field)} は文字列で指定してください`;
 }
 
-/** 項目の値が HH:MM の形の時刻でない */
+/** 項目の値が HH:MM の形の時刻でない (field は項目のキー) */
 export function healthTimeMessage(field: string): string {
-  return `${field} は HH:MM の形の時刻で指定してください`;
+  return `${healthFieldLabel(field)} は HH:MM の形の時刻で指定してください`;
 }
 
-/** 項目の値が真偽値でない */
+/** 項目の値が真偽値でない (field は項目のキー) */
 export function healthBooleanMessage(field: string): string {
-  return `${field} は true か false で指定してください`;
+  return `${healthFieldLabel(field)} は true か false で指定してください`;
 }
 
-/** 項目の値が数値 (または null) でない。label は画面の項目名 (無ければ項目のキー) */
+/** 項目の値が数値 (または null) でない。label は画面の項目名 (無ければ healthFieldLabel(項目のキー)) */
 export function healthNumberMessage(label: string): string {
   return `${label} は数値で指定してください`;
 }
 
-/** 項目の値が整数 (または null) でない。label は画面の項目名 (無ければ項目のキー) */
+/** 項目の値が整数 (または null) でない。label は画面の項目名 (無ければ healthFieldLabel(項目のキー)) */
 export function healthIntegerMessage(label: string): string {
   return `${label} は整数で指定してください`;
 }
 
-/** 項目の値が、受け付ける値のどれでもない */
+/**
+ * 項目の値が、受け付ける値のどれでもない (field は項目のキー)。
+ * 受け付ける値 (API に送る英字の値) は、項目名と同じく括弧に入れて添える (英字の語を括弧の外に出さない。#1917)
+ */
 export function healthEnumMessage(field: string, allowed: readonly string[]): string {
-  return `${field} は ${allowed.join(', ')} のいずれかを指定してください`;
+  return `${healthFieldLabel(field)} は次のいずれかを指定してください (${allowed.join(', ')})`;
 }

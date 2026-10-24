@@ -281,7 +281,7 @@ describe('POST /api/operator/membership/org/[id]/transfer: 通知メールの宛
     expect(sentTo(NO_ORG_EMAIL)).toHaveLength(0);
   });
 
-  it('旧オーナーは RPC を実行する前に取得する (RPC の戻り値や、RPC の後の読み直しに頼らない)', async () => {
+  it('organizations の読み取りは RPC の前の控えの 1 回だけ (旧オーナーは RPC の戻り値を使い、RPC の後に読み直さない)', async () => {
     await call();
 
     const rpcAt = fake.events.indexOf(`rpc:${RPC_NAME}`);

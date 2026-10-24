@@ -140,7 +140,7 @@ describe('RefundRequestSchema の出力', () => {
     expect(both.success).toBe(false);
     if (!neither.success) {
       expect(neither.error.flatten().fieldErrors.stripe_charge_id).toEqual([
-        'stripe_charge_id と stripe_invoice_id はどちらか一方だけを指定してください',
+        'Stripe の支払い (stripe_charge_id) と請求書 (stripe_invoice_id) はどちらか一方だけを指定してください',
       ]);
     }
   });

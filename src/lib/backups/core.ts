@@ -106,7 +106,7 @@ export const drTestRecordBodySchema = z
       .min(0, '復旧にかかった分は 0 以上で書いてください')
       .max(DR_TEST_RTO_MINUTES_MAX, `復旧にかかった分は ${DR_TEST_RTO_MINUTES_MAX} 以下で書いてください`)
       .nullable(),
-    smoke: z.enum(DR_TEST_SMOKE_RESULTS, { message: 'smoke の結果を選んでください' }),
+    smoke: z.enum(DR_TEST_SMOKE_RESULTS, { message: '動作確認 (smoke) の結果を選んでください' }),
     notes: z
       .string({ message: 'メモを文字で書いてください' })
       .max(DR_TEST_NOTES_MAX_LENGTH, `メモは ${DR_TEST_NOTES_MAX_LENGTH} 文字以内で書いてください`),

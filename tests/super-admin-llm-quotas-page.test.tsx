@@ -9,7 +9,7 @@
  *   - #1912: 組織のプランの値の行 (plan_source: 'org_plan') は表示名「<値>（組織のプラン）」で出て、保存できる。
  *     どちらにも無いキーの行 (plan_source: 'unknown') は、入力欄と保存のボタンを止めて案内を出す (PATCH が 404 で断るため)
  *   - #1912: subscription_plans の組織のプランの行 (plan_type: 'org' の org_*) も、入力欄と保存のボタンを止め、
- *     「組織の上限は standard / premium / enterprise の行で決まります」と案内する (PATCH が 409 PLAN_READ_ONLY で断るため)
+ *     「組織の上限は組織のプランの値 (standard / premium / enterprise) の行で決まります」と案内する (PATCH が 409 PLAN_READ_ONLY で断るため)
  *   - #1917: 保存が 409 CONFLICT_STALE_DATA (別の運営が先に同じプランの上限を変えた) で断られたら、一覧を読み直していまの上限を出し、
  *     行に画面の文を出す。書きかけの行 (新しい上限・理由) は残し、書きかけの無い行は読み直した値にする。409 PLAN_READ_ONLY は読み直さない
  *   - #1917: 表を出したあとの読み直し (保存のあと・409 のあと) は表を外さずに行い (入力欄の要素もフォーカスも入れ替えない)、
@@ -205,7 +205,7 @@ describe('/super-admin/llm/quotas (AI の利用上限)', () => {
     expect(button.disabled).toBe(true);
     const note = row('org_enterprise').querySelector('[data-testid="quota-not-editable-org_enterprise"]')?.textContent;
     expect(note).toBe(AI_DAILY_LIMIT_READ_ONLY_NOTES.org_subscription_plan);
-    expect(note).toContain('組織の上限は standard / premium / enterprise の行で決まります');
+    expect(note).toContain('組織の上限は組織のプランの値 (standard / premium / enterprise) の行で決まります');
     // いまの上限は読めるまま出す
     expect(row('org_enterprise').textContent).toContain('無制限');
     // 組織のプランの値の行と個人のプランの行は止めない・案内も出さない
@@ -541,12 +541,12 @@ describe('/super-admin/llm/quotas (AI の利用上限)', () => {
     });
 
     it('同じ 409 でも PLAN_READ_ONLY は読み直さず、API の文を出す', async () => {
-      mockStale('PLAN_READ_ONLY', '組織の上限は standard / premium / enterprise の行で決まります');
+      mockStale('PLAN_READ_ONLY', '組織の上限は組織のプランの値 (standard / premium / enterprise) の行で決まります');
       await render();
       await save('pro', '20', '理由');
 
       expect(getCalls()).toBe(1);
-      expect(row('pro').textContent).toContain('組織の上限は standard / premium / enterprise の行で決まります');
+      expect(row('pro').textContent).toContain('組織の上限は組織のプランの値 (standard / premium / enterprise) の行で決まります');
       expect(row('pro').textContent).not.toContain('別の運営が先に');
       expect(inputsOf('pro').map((input) => input.value)).toEqual(['20', '理由']);
     });
