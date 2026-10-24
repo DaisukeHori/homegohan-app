@@ -347,7 +347,7 @@ POST /api/operator/membership/family/{id}/dissolve body: { reason }
 
 各 endpoint で `requireRole(['super_admin'])` を最初に check。
 
-RPC の `RAISE EXCEPTION '<コード>'` は汎用の 500 にせず、4xx と日本語の固定の文で返す (#1917 の続き。RPC ごとのコードの表は `src/lib/membership/operator-rpc-errors.ts`・強制の譲渡の 2 本は route が個別に写す):
+RPC が `RAISE EXCEPTION '<コード>'` で返す既知のコードは汎用の 500 にせず、4xx と日本語の固定の文で返す (#1917 の続き。RPC ごとのコードの表は `src/lib/membership/operator-rpc-errors.ts`・強制の譲渡の 2 本は route が個別に写す):
 
 - `OPERATOR_MFA_REQUIRED` → 403 (ゲートが二段階認証で止めたときと同じ code と文。`operatorMfaRequiredNested`)
 - 権限の判定 (`OPERATOR_PERMISSION_REQUIRED`・`NOT_OPERATOR`・`INSUFFICIENT_PERMISSION`) → 403 `FORBIDDEN`「この操作を行う権限がありません」
