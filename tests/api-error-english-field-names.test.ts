@@ -56,6 +56,8 @@ import {
   PRICE_APPLIES_TO_MESSAGE,
 } from '@/lib/super-admin/plans-schemas';
 import { MFA_ERROR_MESSAGES } from '@/lib/auth/mfa/client';
+import { MODERATION_TYPE_INVALID_MESSAGE } from '@/lib/admin/moderation-schemas';
+import { PLAN_READ_ONLY_MESSAGE } from '@/lib/super-admin/ai-daily-limits';
 
 /**
  * route の中で失敗の本文を作る自前の関数と、その文の引数の位置 (0 から数える)。
@@ -192,6 +194,27 @@ describe('src/app/api の失敗の本文の文に、括弧の外の英字の項�
         'src/app/api/super-admin/settings/route.ts',
       ]),
     );
+  });
+
+  /** 以前にテンプレートで英字の値を括弧の外に差し込んでいた route と、直したあとの文 (走査が式の部分を値として読めていることを確かめる) */
+  const FIXED_TEMPLATE_TEXTS: ReadonlyArray<readonly [string, string]> = [
+    ['src/app/api/admin/moderation/[type]/[id]/route.ts', MODERATION_TYPE_INVALID_MESSAGE],
+    ['src/app/api/admin/moderation/[type]/[id]/restore/route.ts', MODERATION_TYPE_INVALID_MESSAGE],
+    ['src/app/api/comparison/trigger/route.ts', '比べる期間の種類 (periodType) は次のいずれかを指定してください (daily / weekly / monthly)'],
+    [
+      'src/app/api/super-admin/embeddings/regenerate/route.ts',
+      '対象の表 (table) は次のいずれかを指定してください (dataset_ingredients / dataset_recipes / dataset_menu_sets)',
+    ],
+    ['src/app/api/super-admin/llm/quotas/route.ts', PLAN_READ_ONLY_MESSAGE],
+    ['src/app/api/super-admin/flags/[key]/route.ts', `このフラグは次の機能のパッケージで使用中のため削除できません ( ${UNRESOLVED_SUBSTITUTION} )`],
+  ];
+
+  it.each(FIXED_TEMPLATE_TEXTS)('走査は %s の直した文「%s」を、式の部分を値にして集める', (file, text) => {
+    expect(files).toContain(file);
+    expect(findErrorTexts(file, { extraTextCalls: ROUTE_ERROR_TEXT_CALLS, substitutions: SUBSTITUTIONS }).map((found) => found.text)).toContain(
+      text,
+    );
+    expect(englishIdentifiersOutsideParentheses(text)).toEqual([]);
   });
 
   it('違反が 0 件', () => {
