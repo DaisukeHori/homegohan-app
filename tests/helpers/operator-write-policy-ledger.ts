@@ -100,7 +100,7 @@ interface PolicyText {
  * migration (行コメントを除いた文面) を順に流したときの、ポリシーの全部 (「スキーマ.表|ポリシー」→ 種類と式)。
  * CREATE / DROP / ALTER POLICY (式の差し替えと RENAME) と DROP TABLE を、ファイルの中で書かれた順に流す
  */
-export function policiesAfterMigrations(files: ReadonlyArray<{ sql: string }>): Map<string, PolicyText> {
+function policiesAfterMigrations(files: ReadonlyArray<{ sql: string }>): Map<string, PolicyText> {
   const policies = new Map<string, PolicyText>();
   const keyOf = (schema: string | undefined, table: string, name: string) => `${(schema ?? 'public').toLowerCase()}.${table}|${name}`;
   for (const { sql } of files) {

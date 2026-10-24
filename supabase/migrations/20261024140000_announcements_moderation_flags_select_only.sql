@@ -108,10 +108,10 @@
 -- 同じ型の全域の探索 (本冊を書いた時点の棚卸しの記録):
 --   型 = 運営のロール (user_profiles.roles の運営ロールの文字列) で判定する、書き込みを許すポリシー (FOR ALL / INSERT / UPDATE / DELETE)。
 --   本冊の直前の public のポリシーのうち、この型に当たるのは 31 本だった (migration を version 順に流した状態から機械で数えた)。
---   本冊の後に残る (2)〜(4) の 26 本は、いまの状態の常設の台帳 tests/helpers/operator-write-policy-ledger.ts が分類と理由つきで持つ
---   (tests/operator-write-policy-ledger.test.ts が migration の文面と、tests/integration/rls/operator-write-policy-ledger.test.ts が実 DB と
---   台帳の一致を見る。後の migration がこの型のポリシーを足す・消すときは、台帳の行を足す・消す)。本冊の contract test は、(1) の 5 本が
---   本冊の直前にこの型に当たり、本冊がこの型をその 5 本だけ減らすことを見る。
+--   本冊の後に残った (2)〜(4) の 26 本は、分類と理由つきで常設の台帳 tests/helpers/operator-write-policy-ledger.ts に載せた (台帳は
+--   いまの状態だけを持ち、後の migration がこの型のポリシーを足す・消すときに行を足す・消す。tests/operator-write-policy-ledger.test.ts が
+--   migration の文面と、tests/integration/rls/operator-write-policy-ledger.test.ts が実 DB と、台帳の一致を見る)。本冊の contract test は、
+--   (1) の 5 本が本冊の直前にこの型に当たり、本冊がこの型をその 5 本だけ減らすことを見る。
 --   (1) 本冊が消した (運営の API が service_role の client か SECURITY DEFINER の関数で書き、本人のセッションの client でそのポリシーに
 --       頼って書く経路が無い) — 5 本: announcements (ALL)・moderation_flags (ALL)・recipe_flags (UPDATE)・
 --       personal_subscriptions (INSERT・UPDATE)。
