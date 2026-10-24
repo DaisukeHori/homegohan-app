@@ -6,7 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
-import { authFailureNested } from '@/lib/api/error-responses';
+import { authFailureNested, operatorMfaRequiredNested } from '@/lib/api/error-responses';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { internalError } from '@/lib/api/errors';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
@@ -69,6 +69,10 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     });
 
     if (rpcError) {
+      // DB の二段階認証の判定 (OPERATOR_MFA_REQUIRED。cross/12 §11.4) で止まったら、ゲート (requireSuperAdmin) が二段階認証で止めたときと
+      // 同じ 403 と日本語の固定の文にする (汎用の 500 にしない。#1917)
+      const mfaRequired = operatorMfaRequiredNested(rpcError);
+      if (mfaRequired) return mfaRequired;
       return internalError(ROUTE_NAME, rpcError, { userId: operatorId }, { shape: 'nested' });
     }
 

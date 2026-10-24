@@ -28,8 +28,9 @@
  *     (tests/api-error-japanese-scan.test.ts。配下の一覧は tests/helpers/api-error-japanese-scope.ts)
  */
 import { NextResponse } from 'next/server';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { AuthError, ForbiddenError, MfaRequiredError, type MfaRequiredCode } from '@/lib/auth/errors';
 import { INTERNAL_ERROR_MESSAGE } from '@/lib/api/errors';
+import { dbErrorMentionsCode, type DbRaisedErrorLike } from '@/lib/errors/db-raised-code';
 
 /** 401: ログインしていない・セッションが切れた・プロフィールが無い */
 export const API_UNAUTHENTICATED_MESSAGE = 'ログインが必要です';
@@ -194,4 +195,31 @@ export function authFailureNested(err: unknown, options: AuthFailureNestedOption
     );
   }
   return null;
+}
+
+/**
+ * DB の運営の関数 (docs/design/cross/12-operator-mfa.md §11.4 の 7 本。段 E) が二段階認証の判定
+ * (`public.operator_mfa_satisfied()` が偽) で止めたときの `RAISE EXCEPTION` の文面
+ */
+export const DB_OPERATOR_MFA_REQUIRED_CODE = 'OPERATOR_MFA_REQUIRED';
+
+/**
+ * DB の判定が偽になるのは「TOTP を登録済みの必須ロールの呼び出し元が aal1 のセッション」のときだけ
+ * (未登録なら判定は真)。route のゲート (requireRole / requireSuperAdmin) では、同じ状態は二段階認証の確認が要る
+ * (AUTH_2FA_REQUIRED) になるので、DB で止まったときも同じ code の例外として扱う
+ */
+const DB_OPERATOR_MFA_GATE_EQUIVALENT_CODE: MfaRequiredCode = 'AUTH_2FA_REQUIRED';
+
+/**
+ * RPC のエラーが DB の二段階認証の判定 (OPERATOR_MFA_REQUIRED) で止まったものなら、route のゲートが二段階認証で止めたときと
+ * 同じ 403 の本文 (nested の形・options.code で選んだ code・二段階認証の日本語の固定の文) を返す。そうでなければ null。
+ * route のゲートを通った後でも、ゲートと RPC の間でセッションの状態が変わると DB の判定で止まりうる。
+ * そのとき汎用の 500 にせず、二段階認証の確認が要ることを伝える (#1917)。RPC の生の文面は本文に入れない
+ */
+export function operatorMfaRequiredNested(
+  error: DbRaisedErrorLike | null | undefined,
+  options: AuthFailureNestedOptions = {},
+): NextResponse<ApiNestedErrorBody> | null {
+  if (!dbErrorMentionsCode(error, DB_OPERATOR_MFA_REQUIRED_CODE)) return null;
+  return authFailureNested(new MfaRequiredError(DB_OPERATOR_MFA_GATE_EQUIVALENT_CODE), options);
 }

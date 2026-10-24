@@ -12,6 +12,10 @@
  *     「組織の上限は組織のプランの値 (standard / premium / enterprise) の行で決まります」と案内する (PATCH が 409 PLAN_READ_ONLY で断るため)
  *   - #1917: 保存が 409 CONFLICT_STALE_DATA (別の運営が先に同じプランの上限を変えた) で断られたら、一覧を読み直していまの上限を出し、
  *     行に画面の文を出す。書きかけの行 (新しい上限・理由) は残し、書きかけの無い行は読み直した値にする。409 PLAN_READ_ONLY は読み直さない
+ *   - #1917: 表を出したあとの読み直し (保存のあと・409 のあと) は表を外さずに行い (入力欄の要素もフォーカスも入れ替えない)、
+ *     失敗しても表と書きかけを残して、表の上に文と「再試行」を出す。409 のあとの読み直しに失敗したら行の文も「読み込み直せなかった」にし、
+ *     どの経路の読み直し (「再試行」・ほかの行の保存のあとの読み直し) でも、読み直せたら「読み込み直した」文に変える。
+ *     409 の文の出ている行 (「入力した値と理由は残しています」と伝えている行) の書きかけは、ほかの行の保存のあとの読み直しでも消さない
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
@@ -223,6 +227,56 @@ describe('/super-admin/llm/quotas (AI の利用上限)', () => {
     expect(AI_DAILY_LIMIT_READ_ONLY_NOTES.unknown_key).not.toBe(AI_DAILY_LIMIT_READ_ONLY_NOTES.org_subscription_plan);
   });
 
+  it('#1917: 初めの読み込みに失敗したら、エラーと「再試行」を出す。「再試行」で読めたら表を出す', async () => {
+    let gets = 0;
+    fetchMock.mockImplementation(async () => {
+      gets += 1;
+      return gets === 1
+        ? { ok: false, status: 500, json: async () => ({ error: { code: 'INTERNAL_ERROR', message: '上限を取得できませんでした' } }) }
+        : { ok: true, status: 200, json: async () => LIST };
+    });
+    await render();
+    expect(row('pro')).toBeNull();
+    const alert = container.querySelector('[role="alert"]') as HTMLElement;
+    expect(alert.textContent).toContain('上限を取得できませんでした');
+
+    await act(async () => {
+      (alert.querySelector('button') as HTMLButtonElement).click();
+    });
+    await flush();
+    expect(gets).toBe(2);
+    expect(row('pro')).not.toBeNull();
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('#1917: 保存のあとの読み直しに失敗しても、表とほかの行の書きかけを残し、表の上に文と「再試行」を出す', async () => {
+    let gets = 0;
+    fetchMock.mockImplementation(async (_input: unknown, init?: RequestInit) => {
+      if (init?.method === 'PATCH') return { ok: true, status: 200, json: async () => ({ data: { plan_key: 'pro', daily_limit: 20 } }) };
+      gets += 1;
+      return gets === 2
+        ? { ok: false, status: 500, json: async () => ({ error: { code: 'INTERNAL_ERROR', message: '上限を取得できませんでした' } }) }
+        : { ok: true, status: 200, json: async () => LIST };
+    });
+    await render();
+    const premiumReason = Array.from(row('premium').querySelectorAll('input'))[1] as HTMLInputElement;
+    await type(premiumReason, '書きかけの理由');
+    await save('pro', '20', '理由');
+
+    expect(row('pro').textContent).toContain('保存しました（20 回）');
+    expect(row('free')).not.toBeNull();
+    expect((Array.from(row('premium').querySelectorAll('input'))[1] as HTMLInputElement).value).toBe('書きかけの理由');
+    const reloadError = container.querySelector('[data-testid="quota-reload-error"]') as HTMLElement;
+    expect(reloadError.textContent).toContain('最新の上限を読み込めませんでした');
+
+    await act(async () => {
+      (reloadError.querySelector('button') as HTMLButtonElement).click();
+    });
+    await flush();
+    expect(gets).toBe(3);
+    expect(container.querySelector('[data-testid="quota-reload-error"]')).toBeNull();
+  });
+
   it('保存に失敗したら、API の文を行に出す', async () => {
     patchStatus = 404;
     await render();
@@ -303,6 +357,187 @@ describe('/super-admin/llm/quotas (AI の利用上限)', () => {
         { plan_key: 'pro', daily_limit: 20, reason: '有料の検証' },
       ]);
       expect(row('pro').textContent).toContain('保存しました（20 回）');
+    });
+
+    /**
+     * PATCH は 1 回目が 409 CONFLICT_STALE_DATA。その時点で別の運営の変更 (pro = 50 回) が入る。
+     * GET は failGets 回目 (1 始まり) の呼び出しを 500 で失敗させる
+     */
+    function mockStaleWithFailingReload(failGets: number[]) {
+      let changed = false;
+      let patches = 0;
+      let gets = 0;
+      fetchMock.mockImplementation(async (_input: unknown, init?: RequestInit) => {
+        if (init?.method === 'PATCH') {
+          patches += 1;
+          if (patches > 1) return { ok: true, status: 200, json: async () => ({ data: { plan_key: 'pro', daily_limit: 20 } }) };
+          changed = true;
+          return { ok: false, status: 409, json: async () => ({ error: { code: 'CONFLICT_STALE_DATA', message: SERVER_STALE_MESSAGE } }) };
+        }
+        gets += 1;
+        if (failGets.includes(gets)) {
+          return { ok: false, status: 500, json: async () => ({ error: { code: 'INTERNAL_ERROR', message: '上限を取得できませんでした' } }) };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => (changed ? listWith({ pro: { daily_limit: 50, configured: true, effective_daily_limit: 50 } }) : LIST),
+        };
+      });
+    }
+
+    const reloadError = () => container.querySelector('[data-testid="quota-reload-error"]');
+
+    it('読み直しに失敗しても表と書きかけを残し、表の上に文と「再試行」を出す。行の文は「読み込み直せなかった」にする', async () => {
+      mockStaleWithFailingReload([2]);
+      await render();
+      await type(inputsOf('premium')[1], '書きかけの理由');
+      await save('pro', '20', '有料の検証');
+
+      expect(getCalls()).toBe(2);
+      // 表は残る (エラーに置き換えない)
+      expect(row('pro')).not.toBeNull();
+      expect(row('free')).not.toBeNull();
+      expect(inputsOf('pro').map((input) => input.value)).toEqual(['20', '有料の検証']);
+      expect(inputsOf('premium').map((input) => input.value)).toEqual(['10', '書きかけの理由']);
+      // 表の上に文と「再試行」
+      expect(reloadError()?.textContent).toContain('最新の上限を読み込めませんでした');
+      expect(reloadError()?.textContent).toContain('上限を取得できませんでした');
+      expect(reloadError()?.querySelector('button')?.textContent).toBe('再試行');
+      // 行の文は、読み直せていないので「読み込み直した」とは言わない
+      expect(row('pro').textContent).toContain('別の運営が先にこのプランの上限を変えていました');
+      expect(row('pro').textContent).toContain('読み込み直せなかった');
+      expect(row('pro').textContent).not.toContain('一覧を読み込み直したので');
+      // 表の値は 409 の前のまま (読み直せていない)
+      expect(row('pro').textContent).toContain('free の値');
+    });
+
+    it('「再試行」で読み直せたら、いまの上限を出し、表の上の文を消して、行の文を「読み込み直した」文にする。書きかけは残す', async () => {
+      mockStaleWithFailingReload([2]);
+      await render();
+      await type(inputsOf('premium')[1], '書きかけの理由');
+      await save('pro', '20', '有料の検証');
+      expect(reloadError()).not.toBeNull();
+
+      await act(async () => {
+        (reloadError()!.querySelector('button') as HTMLButtonElement).click();
+      });
+      await flush();
+
+      expect(getCalls()).toBe(3);
+      expect(reloadError()).toBeNull();
+      expect(row('pro').textContent).toContain('50 回');
+      expect(row('pro').textContent).toContain('一覧を読み込み直した');
+      expect(row('pro').textContent).not.toContain('読み込み直せなかった');
+      expect(inputsOf('pro').map((input) => input.value)).toEqual(['20', '有料の検証']);
+      expect(inputsOf('premium').map((input) => input.value)).toEqual(['10', '書きかけの理由']);
+    });
+
+    it('「再試行」でなく、ほかの行の保存のあとの読み直しで読み直せたときも、行の文を「読み込み直した」文にする。409 の行の書きかけは残す', async () => {
+      // GET: 1 = 初回・2 = 409 のあとの読み直し (失敗)・3 = premium の保存のあとの読み直し (成功)
+      mockStaleWithFailingReload([2]);
+      await render();
+      await save('pro', '20', '有料の検証');
+      expect(row('pro').textContent).toContain('読み込み直せなかった');
+      expect(reloadError()).not.toBeNull();
+
+      await save('premium', '12', '組織の理由');
+
+      expect(getCalls()).toBe(3);
+      expect(row('premium').textContent).toContain('保存しました（12 回）');
+      // 表の上の文と「再試行」は消える。pro の行の文も、もう「読み込み直せなかった」「再試行」とは言わない
+      expect(reloadError()).toBeNull();
+      expect(row('pro').textContent).toContain('50 回');
+      expect(row('pro').textContent).toContain('一覧を読み込み直したので');
+      expect(row('pro').textContent).not.toContain('読み込み直せなかった');
+      expect(row('pro').textContent).not.toContain('「再試行」');
+      // 文が「入力した値と理由は残しています」と伝えているので、pro の書きかけは残す。保存した premium は読み直した値にする
+      expect(row('pro').textContent).toContain('入力した値と理由は残しています');
+      expect(inputsOf('pro').map((input) => input.value)).toEqual(['20', '有料の検証']);
+      expect(inputsOf('premium').map((input) => input.value)).toEqual(['10', '']);
+    });
+
+    it('409 のあとに読み直せた行の書きかけは、ほかの行の保存のあとの読み直しでも消さない (文の「残しています」のとおり)', async () => {
+      mockStaleWithFailingReload([]);
+      await render();
+      await type(inputsOf('free')[1], '書きかけの理由');
+      await save('pro', '20', '有料の検証');
+      expect(row('pro').textContent).toContain('一覧を読み込み直したので');
+
+      await save('premium', '12', '組織の理由');
+
+      expect(getCalls()).toBe(3);
+      expect(row('pro').textContent).toContain('一覧を読み込み直したので');
+      expect(row('pro').textContent).toContain('入力した値と理由は残しています');
+      expect(inputsOf('pro').map((input) => input.value)).toEqual(['20', '有料の検証']);
+      // 409 の文の無い行は、これまでどおり保存のあとの読み直しで読んだ値にする
+      expect(inputsOf('free').map((input) => input.value)).toEqual(['10', '']);
+      expect(inputsOf('premium').map((input) => input.value)).toEqual(['10', '']);
+
+      // 409 の行をもう一度保存して通れば、その行も読んだ値に戻す (もう残すと伝えていない)
+      await act(async () => {
+        (row('pro').querySelector('button') as HTMLButtonElement).click();
+      });
+      await flush();
+      expect(row('pro').textContent).toContain('保存しました（20 回）');
+      expect(inputsOf('pro').map((input) => input.value)).toEqual(['50', '']);
+    });
+
+    it('409 のあとに読み直せた行の文は、そのあとのほかの行の保存のあとの読み直しに失敗しても「読み込み直せなかった」にしない', async () => {
+      // GET: 1 = 初回・2 = 409 のあとの読み直し (成功)・3 = premium の保存のあとの読み直し (失敗)
+      mockStaleWithFailingReload([3]);
+      await render();
+      await save('pro', '20', '有料の検証');
+      expect(row('pro').textContent).toContain('一覧を読み込み直したので');
+
+      await save('premium', '12', '組織の理由');
+
+      expect(getCalls()).toBe(3);
+      expect(reloadError()?.textContent).toContain('最新の上限を読み込めませんでした');
+      expect(row('pro').textContent).toContain('一覧を読み込み直したので');
+      expect(row('pro').textContent).not.toContain('読み込み直せなかった');
+    });
+
+    it('読み直しの最中も表 (入力欄の要素) を外さず、保存のボタンは止める', async () => {
+      let releaseReload!: () => void;
+      const reloadGate = new Promise<void>((resolve) => {
+        releaseReload = resolve;
+      });
+      let gets = 0;
+      fetchMock.mockImplementation(async (_input: unknown, init?: RequestInit) => {
+        if (init?.method === 'PATCH') {
+          return { ok: false, status: 409, json: async () => ({ error: { code: 'CONFLICT_STALE_DATA', message: SERVER_STALE_MESSAGE } }) };
+        }
+        gets += 1;
+        if (gets > 1) await reloadGate;
+        return { ok: true, status: 200, json: async () => LIST };
+      });
+      await render();
+      const proLimitInput = inputsOf('pro')[0];
+      await type(proLimitInput, '20');
+      await type(inputsOf('pro')[1], '理由');
+      await act(async () => {
+        (row('pro').querySelector('button') as HTMLButtonElement).click();
+      });
+      await flush();
+
+      // 読み直しの応答待ち: 表はそのまま (同じ入力欄の要素)。保存のボタンは押せない。行の文は「読み込み直している」
+      // (結果が出る前に「読み込み直した」とも「読み込み直せなかった」とも言わない)
+      expect(gets).toBe(2);
+      expect(row('pro').textContent).toContain('一覧を読み込み直しています');
+      expect(row('pro').textContent).not.toContain('一覧を読み込み直したので');
+      expect(row('pro').textContent).not.toContain('読み込み直せなかった');
+      expect(inputsOf('pro')[0]).toBe(proLimitInput);
+      expect(container.querySelector('.animate-spin')).toBeNull();
+      expect((row('free').querySelector('button') as HTMLButtonElement).disabled).toBe(true);
+
+      await act(async () => {
+        releaseReload();
+      });
+      await flush();
+      expect(inputsOf('pro')[0]).toBe(proLimitInput);
+      expect((row('free').querySelector('button') as HTMLButtonElement).disabled).toBe(false);
+      expect(row('pro').textContent).toContain('一覧を読み込み直したので');
     });
 
     it('同じ 409 でも PLAN_READ_ONLY は読み直さず、API の文を出す', async () => {
