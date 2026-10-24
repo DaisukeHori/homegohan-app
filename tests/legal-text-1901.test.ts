@@ -152,6 +152,7 @@ const PRIVACY_DATA_TABLES: Readonly<Record<string, string>> = {
   recipe_collections: 'レシピ',
   recipe_collection_items: 'レシピ',
   recipe_likes: 'レシピ',
+  dish_favorites: 'レシピ',
   recipe_comments: 'レシピ',
   health_records: '健康',
   health_goals: '健康',

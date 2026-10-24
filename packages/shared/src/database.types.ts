@@ -2284,6 +2284,39 @@ export type Database = {
           },
         ]
       }
+      dish_favorites: {
+        Row: {
+          created_at: string
+          dish: Json
+          dish_name: string
+          dish_name_key: string
+          id: string
+          source_planned_meal_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          dish: Json
+          dish_name: string
+          dish_name_key: string
+          id?: string
+          source_planned_meal_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          dish?: Json
+          dish_name?: string
+          dish_name_key?: string
+          id?: string
+          source_planned_meal_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       email_blacklist: {
         Row: {
           added_at: string

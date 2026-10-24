@@ -147,6 +147,8 @@ async function seedUser(user: TestUser, tag: 'A' | 'B') {
   // A は B の公開レシピに「いいね」・コメント・通報をする (相手のレシピ ID は A の行に残るが、B のデータではない)
   const targetRecipe = tag === 'A' ? bPublicRecipeId : recipe.id;
   await insert('recipe_likes', { user_id: uid, recipe_id: targetRecipe });
+  // #2011 献立の料理のお気に入り (dish_favorites)。本人の行だけが出る (B の料理名は下の「文字列として含まれない」で見る)
+  await insert('dish_favorites', { user_id: uid, dish_name: mark('DISH-FAV'), dish_name_key: mark('DISH-FAV').toLowerCase(), dish: { name: mark('DISH-FAV') } });
   await insert('recipe_comments', { user_id: uid, recipe_id: targetRecipe, content: mark('COMMENT') });
   await insert('recipe_flags', { reporter_id: uid, recipe_id: targetRecipe, reason: mark('FLAG'), reviewed_by: STAFF.id });
   await insert('recipe_requests', { user_id: uid });
@@ -520,6 +522,7 @@ describe('#1131 エクスポート: 本物の RLS の上で本人の行だけが
       recipe_collections: 1,
       recipe_collection_items: 1,
       recipe_likes: 1,
+      dish_favorites: 1,
       recipe_comments: 1,
       family_members: 1, // 自分の所属行だけ。B の行は含まない
       family_groups: 0,
@@ -563,7 +566,7 @@ describe('#1131 エクスポート: 本物の RLS の上で本人の行だけが
       expect(text, hidden).not.toContain(hidden);
     }
     // 本人のデータは入っている
-    for (const shown of [`SIGNED-A-${RUN}`, `NICK-A-${RUN}`, `MEMO-A-${RUN}`, `DISH-1-A-${RUN}`, `COMMENT-A-${RUN}`, `PROMPT-A-${RUN}`, `SUPPORT-REPLY-A-${RUN}`, `CHAT-A-${RUN}`, `DSR-A-${RUN}`]) {
+    for (const shown of [`SIGNED-A-${RUN}`, `NICK-A-${RUN}`, `MEMO-A-${RUN}`, `DISH-1-A-${RUN}`, `DISH-FAV-A-${RUN}`, `COMMENT-A-${RUN}`, `PROMPT-A-${RUN}`, `SUPPORT-REPLY-A-${RUN}`, `CHAT-A-${RUN}`, `DSR-A-${RUN}`]) {
       expect(text, shown).toContain(shown);
     }
   });
