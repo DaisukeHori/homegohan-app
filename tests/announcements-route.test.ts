@@ -9,6 +9,8 @@
  *  - #1571: POST で作成できたときだけ、監査ログ (admin_audit_logs) に admin.announcement.create を本人の権限の client で 1 行残す
  *    (対象はお知らせ・details はお知らせの id と公開の状態だけで、タイトル・本文は入れない・ip_address は利用者の IP)。
  *    401 / 403 / 400 / 500 は記録しない。記録に失敗しても作成の応答は変えない (fail-open。失敗は db-logger に残る)
+ *  - #1917: お知らせの INSERT は requireRole を通った後に service_role の client で書く (運営の直接の書き込みを塞いだ
+ *    migration 20261024140000 の後は、本人のセッションでは書けない)。一覧は本人のセッションの client で読む
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSchemaDb, type DbError, type Row, type SchemaDb } from './helpers/schema-checked-db';
@@ -30,12 +32,28 @@ vi.mock('@/lib/db-logger', () => ({
 let sessionUser: FakeUser | null = null;
 let db: SchemaDb;
 
+/**
+ * どの client がどの表に触れたか (client の種類, 表)。
+ * お知らせの書き込みは service_role だけ (運営の FOR ALL のポリシーを SELECT に絞った。migration 20261024140000。#1917)。
+ * 監査ログは本人のセッションの client で書き (RLS の audit_logs_insert_admins)、管理用の一覧は本人のセッションの client で読む
+ * (運営の SELECT のポリシー "Admins can view announcements")
+ */
+let tableAccesses: Array<['session' | 'service', string]> = [];
+
+function recordingClient(kind: 'session' | 'service', user: FakeUser | null) {
+  const client = makeClient(db, user);
+  return {
+    ...client,
+    from: (table: string) => {
+      tableAccesses.push([kind, table]);
+      return client.from(table);
+    },
+  };
+}
+
 vi.mock('@/lib/supabase/server', () => ({
-  createClient: () => makeClient(db, sessionUser),
-  // お知らせは RLS (admin / super_admin は ALL、公開済みは誰でも SELECT) と同じ判定なので、service_role は使わない
-  getSupabaseAdmin: () => {
-    throw new Error('announcements route must not use the service role client');
-  },
+  createClient: () => recordingClient('session', sessionUser),
+  getSupabaseAdmin: () => recordingClient('service', null),
 }));
 
 const route = await import('@/app/api/announcements/route');
@@ -52,6 +70,7 @@ const DRAFT_ANNOUNCEMENT = { id: 'ann-draft', title: '下書き', content: '社�
 function setup(options: { roles?: string[] | null; errors?: Record<string, DbError>; announcements?: Row[] } = {}) {
   const roles = options.roles === undefined ? ['admin'] : options.roles;
   sessionUser = roles === null ? null : { id: ACTOR_ID };
+  tableAccesses = [];
   db = createSchemaDb({
     tables: {
       user_profiles: roles === null ? [] : [profileRow(ACTOR_ID, { roles })],
@@ -348,5 +367,64 @@ describe('POST /api/announcements: 監査ログ (admin.announcement.create) (#15
     expect(mockLoggerError).toHaveBeenCalledTimes(1);
     expect(mockLoggerError.mock.calls[0][0]).toBe('POST /api/announcements');
     expect(mockLoggerError.mock.calls[0][1]).toBe('監査ログ (admin_audit_logs) への記録に失敗しました');
+  });
+});
+
+describe('お知らせの書き込みは service_role だけ (運営の直接の書き込みを塞いだ。migration 20261024140000。#1917)', () => {
+  const body = { title: '新機能のお知らせ', content: '本文です', isPublic: true };
+  const accessesOf = (kind: 'session' | 'service') => tableAccesses.filter(([k]) => k === kind).map(([, table]) => table);
+
+  it.each(ALLOWED_ROLES)('%s ロールの作成: お知らせは service_role の client で 1 回だけ書き、監査ログは本人のセッションの client で書く', async (role) => {
+    setup({ roles: [role] });
+
+    const res = await post(body);
+
+    expect(res.status).toBe(200);
+    expect(accessesOf('service')).toEqual(['announcements']);
+    expect(accessesOf('session')).not.toContain('announcements');
+    expect(accessesOf('session')).toContain('admin_audit_logs');
+    expect(db.recorded('announcements', 'insert')).toHaveLength(1);
+    expect(db.recorded('admin_audit_logs', 'insert')).toHaveLength(1);
+  });
+
+  it.each([
+    ['未ログイン', null, 401],
+    ['support ロール', ['support'], 403],
+    ['user ロール', ['user'], 403],
+  ] as const)('%s (%#): service_role の client を使わない (認可の前に書かない)', async (_label, roles, status) => {
+    setup({ roles: roles === null ? null : [...roles] });
+
+    const res = await post(body);
+
+    expect(res.status).toBe(status);
+    expect(accessesOf('service')).toEqual([]);
+    expect(db.recorded('announcements', 'insert')).toHaveLength(0);
+  });
+
+  it('400 (必須項目が足りない): service_role の client を使わない', async () => {
+    const res = await post({ title: 't' });
+
+    expect(res.status).toBe(400);
+    expect(accessesOf('service')).toEqual([]);
+  });
+
+  it.each(ALLOWED_ROLES)('%s ロールの管理用の一覧は、本人のセッションの client で読む (service_role を使わない)', async (role) => {
+    setup({ roles: [role] });
+
+    const res = await get();
+
+    expect(res.status).toBe(200);
+    expect(accessesOf('session')).toContain('announcements');
+    expect(accessesOf('service')).toEqual([]);
+  });
+
+  it('公開の一覧は、本人のセッションの client で読む (service_role を使わない)', async () => {
+    setup({ roles: null });
+
+    const res = await get('?mode=public');
+
+    expect(res.status).toBe(200);
+    expect(accessesOf('session')).toEqual(['announcements']);
+    expect(accessesOf('service')).toEqual([]);
   });
 });

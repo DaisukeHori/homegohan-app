@@ -14,7 +14,9 @@
  *     (#1041)。本人に自分の variant を選ばせない・書き換えさせないため、本人向けのポリシーは足さない。
  * recipe_flags (レシピの通報):
  *   - INSERT: ログインした本人が reporter_id = 自分 の行だけ。anon と、他人を reporter にした行は拒否。
- *   - SELECT: 通報した本人の行と、admin / super_admin は全行。UPDATE: admin / super_admin。DELETE のポリシーは無い。
+ *   - SELECT: 通報した本人の行と、admin / super_admin は全行。UPDATE / DELETE のポリシーは無く、anon / authenticated は UPDATE /
+ *     DELETE の権限も持たない (運営の "Admins can update recipe flags" と書き込みの権限は 20261024140000 で外した。#1917 の続き)。
+ *     通報の判定は運営の API が service_role で書く。
  *
  * PostgREST を supabase-js で直接叩いて検証する (アプリ層のガードを経由しない経路が攻撃面のため)。
  *
@@ -415,30 +417,26 @@ describe('#1103 recipe_flags: 通報は本人として作り、読めるのは�
     expect(ids).toEqual([]);
   });
 
-  it('F-7: 通報した本人は自分の通報の status を書き換えられず、消すこともできない', async () => {
+  it('F-7: 通報した本人は自分の通報の status を書き換えられず、消すこともできない (権限が無いので 42501)', async () => {
     const client = authedClient(alice.jwt);
     const updated = await client.from('recipe_flags').update({ status: 'dismissed' }).eq('id', aliceFlagId).select('id');
-    expect(updated.error).toBeNull();
-    expect(updated.data).toEqual([]);
+    expect(updated.error?.code).toBe(RLS_DENIED);
     const deleted = await client.from('recipe_flags').delete().eq('id', aliceFlagId).select('id');
-    expect(deleted.error).toBeNull();
-    expect(deleted.data).toEqual([]);
+    expect(deleted.error?.code).toBe(RLS_DENIED);
     expect(await rowOf('recipe_flags', 'id', aliceFlagId)).toMatchObject({ status: 'pending' });
   });
 
-  it('F-8: admin は status を更新できるが、DELETE のポリシーは無いので消せない', async () => {
+  it('F-8: admin も PostgREST から直接は status を書き換えられず、消せない (42501。通報の判定は運営の API が service_role で書く。#1917 の続き)', async () => {
     const client = authedClient(admin.jwt);
     const updated = await client
       .from('recipe_flags')
       .update({ status: 'reviewed', reviewed_by: admin.userId })
       .eq('id', bobFlagId)
       .select('id, status');
-    expect(updated.error).toBeNull();
-    expect(updated.data).toEqual([{ id: bobFlagId, status: 'reviewed' }]);
+    expect(updated.error?.code).toBe(RLS_DENIED);
 
     const deleted = await client.from('recipe_flags').delete().eq('id', bobFlagId).select('id');
-    expect(deleted.error).toBeNull();
-    expect(deleted.data).toEqual([]);
-    expect(await rowOf('recipe_flags', 'id', bobFlagId)).toMatchObject({ status: 'reviewed' });
+    expect(deleted.error?.code).toBe(RLS_DENIED);
+    expect(await rowOf('recipe_flags', 'id', bobFlagId)).toMatchObject({ status: 'pending', reviewed_by: null });
   });
 });

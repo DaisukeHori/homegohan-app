@@ -301,7 +301,7 @@ describe('POST /api/operator/membership/family/[id]/transfer: 通知メールの
     expect(sentTo(STRANGER_EMAIL)).toHaveLength(0);
   });
 
-  it('旧代表者は RPC を実行する前に取得する (RPC の後に family_groups を読み直さない)', async () => {
+  it('family_groups の読み取りは RPC の前の控えの 1 回だけ (旧代表者は RPC の戻り値を使い、RPC の後に読み直さない)', async () => {
     await call();
 
     const rpcAt = fake.events.indexOf(`rpc:${RPC_NAME}`);

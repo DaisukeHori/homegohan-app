@@ -86,7 +86,7 @@ GRANT EXECUTE ON FUNCTION public.list_families_with_inactive_representative TO a
 ---
 
 ## 3. 強制譲渡 RPC
-
+> 現在形: 実在する関数は `operator_force_owner_transfer` / `operator_force_representative_transfer` で、最新の定義は `supabase/migrations/20261023140000_operator_transfer_return_old_owner.sql` (`:43`・`:105`。どちらも `jsonb` を返す)。下の SQL は設計時の案の記録で、関数名 (`force_transfer_*`) と戻り値 (`organizations` / `family_groups`) は実装と違う。
 ```sql
 CREATE OR REPLACE FUNCTION public.force_transfer_org_owner(
   p_organization_id UUID,
@@ -339,9 +339,9 @@ type InactiveOwner = {
 GET  /api/operator/membership/orgs/inactive?days=90
 GET  /api/operator/membership/families/inactive?days=90
 GET  /api/operator/membership/audit?scope=&action=&from=&to=&page=&limit=
-POST /api/operator/membership/org/{id}/transfer    body: { new_owner_id, reason }
+POST /api/operator/membership/org/{id}/transfer    body: { to_user_id, reason }
 POST /api/operator/membership/org/{id}/dissolve    body: { reason }
-POST /api/operator/membership/family/{id}/transfer body: { new_rep_id, reason }
+POST /api/operator/membership/family/{id}/transfer body: { to_user_id, reason }  (to_user_id が退会の手続き中なら 409 REPRESENTATIVE_ACCOUNT_DELETING。20261023150000)
 POST /api/operator/membership/family/{id}/dissolve body: { reason }
 ```
 

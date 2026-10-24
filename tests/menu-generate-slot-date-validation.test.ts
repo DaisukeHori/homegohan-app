@@ -204,7 +204,7 @@ describe('Edge Function (generate-menu-v4 / v5) の入口の判定 findInvalidTa
     expect(findInvalidTargetSlotDate([])).toBeNull();
   });
 
-  it.each(INVALID_DATES)('date=%s の要素があれば、その位置を言う文 (Next.js の 400 と同じ文)', (date) => {
+  it.each(INVALID_DATES)('date=%s の要素があれば、その位置を言う Edge Function の入口の英語の文 (Next.js の 400 は日本語の別の文)', (date) => {
     expect(
       findInvalidTargetSlotDate([
         { date: '2026-10-10', mealType: 'breakfast' },

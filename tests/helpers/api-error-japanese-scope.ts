@@ -94,8 +94,8 @@ export const MACHINE_FACING_ERROR_TEXT_PATHS: readonly MachineFacingErrorTextPat
     path: 'src/app/api/webhooks',
     reason:
       'Stripe・RevenueCat・Resend のサーバーが送る Webhook の受け口。応答は相手のサーバーが状態 (401 / 413 / 503 / 409 など) で再送を決め、' +
-      '本文は利用者の画面に出ない。本文の code (payload_too_large・webhook_not_configured・event_in_progress など) は ' +
-      '設計書 billing/01・billing/03 と tests/webhooks-*-route.test.ts が読む機械向けの code',
+      '本文は利用者の画面に出ない。Stripe・RevenueCat の本文の code (payload_too_large・webhook_not_configured・event_in_progress など) は ' +
+      '設計書 billing/01・billing/03 と tests/webhooks-*-route.test.ts が読む機械向けの code。Resend の受け口 (src/app/api/webhooks/resend/route.ts) は、相手が状態 (401 / 413 / 503 / 400) だけを読む',
   },
   {
     path: 'src/lib/cron-auth.ts',
@@ -114,6 +114,6 @@ export const SENTINEL_EXCLUDED_ROUTE_FILES: readonly string[] = [];
 
 /**
  * 一覧の外 (まだ直していない配下) の違反の件数の基線。キー = `src/app/api/<最初の区切り>`、値 = 英語だけの文と例外の文面の件数の合計。
- * 件数が 0 の配下は書かない。数えたのは 2026-10-23 の origin/main (509ccf36) の上
+ * 件数が 0 の配下は書かない。いまは src/app/api の配下がすべて JAPANESE_ERROR_API_DIRS か MACHINE_FACING_ERROR_TEXT_PATHS に入っており、基線は空 (新しい違反は 1 件でも tests/api-error-japanese-scan.test.ts が赤にする)
  */
 export const UNFIXED_VIOLATION_BASELINE: Readonly<Record<string, number>> = {};

@@ -22,7 +22,7 @@
  *    2 回目以降が 0 バイトの空 body になっていた (next dev で実証済み)。
  *    `notFoundResponse()` として都度生成する。
  *  - `meals`/`recipes` の embed は admin bypass 無し RLS で null 化され、
- *    content_moderator は `moderation_flags_admin_all` (admin/super_admin のみ) に
+ *    content_moderator は `moderation_flags_admin_select` (旧 `moderation_flags_admin_all`。#1917 で SELECT だけ) (admin/super_admin のみ) に
  *    阻まれ 0 件/0 行更新になっていた。requireRole 通過後に service-role
  *    (`getSupabaseAdmin()`) へ切り替えて解消する。
  *  - BAN は `admin_set_user_roles` で `roles=['banned']` にするだけで
@@ -151,7 +151,7 @@ export async function GET(request: Request, props: Params) {
   }
 
   // requireRole 通過後のみ到達する。meals/recipes の embed は admin bypass 無し
-  // RLS で null 化され、content_moderator は moderation_flags_admin_all
+  // RLS で null 化され、content_moderator は moderation_flags_admin_select (旧 _admin_all)
   // (admin/super_admin のみ) に阻まれるため service-role が必須 (#1041 round-2)。
   const supabaseAdmin = getSupabaseAdmin();
 

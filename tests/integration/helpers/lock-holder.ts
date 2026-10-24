@@ -5,7 +5,7 @@
  * org-transfer-toctou.test.ts (#1984) で作った形を切り出したもの。それまでの形は、接続を pg_sleep の決まった秒数だけ開いておき、
  * その窓のうちに後の処理が並ぶことを仮定していた。負荷が高いと並ぶまでが窓より長くなり、並ぶ前に commit して
  * 「commit のあとに呼んだ」のと同じになって揺らいだ。ここでは時間で放さない:
- *   - 接続は先の処理を済ませたあと、放されるまで pg_sleep で待つ (HOLD_UNTIL_RELEASED_SQL)。
+ *   - 接続は先の処理を済ませたあと、放されるまで pg_sleep で待つ (holdUntilReleasedSql(maxHoldSeconds))。
  *   - 放すのは release() で、pg_sleep の途中にいることを確かめてから pg_cancel_backend を送る。取り消しは pg_sleep の文
  *     (例外のブロックのサブトランザクション) だけを抜けさせ、それより前の文 (先の処理・行のロック) と後の文はそのまま commit する。
  *   - 放されないまま上限 (maxHoldSeconds) に達した接続は HOLDER_NOT_RELEASED を RAISE して全体を失敗させる (黙って commit しない)。

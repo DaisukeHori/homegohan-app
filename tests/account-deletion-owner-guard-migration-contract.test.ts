@@ -6,7 +6,7 @@
  *   1. 表 account_deletion_guards: auth.users を指す (ON DELETE CASCADE)。RLS が有効で、ポリシーも利用者・service_role の表の権限も無い
  *   2. begin_account_deletion_guard: SECURITY DEFINER・search_path ''。advisory lock を取ってから、auth.users に居る人だけに印を付ける
  *      (あれば日時を今にする)。EXECUTE は service_role だけ
- *   3. トリガー organizations_owner_not_deleting: BEFORE INSERT だけ (UPDATE には付けない)。同じキーの advisory lock を取ってから、
+ *   3. トリガー trg_organizations_owner_not_deleting (関数 organizations_owner_not_deleting()): BEFORE INSERT だけ (UPDATE には付けない)。同じキーの advisory lock を取ってから、
  *      新しい印があれば OWNER_ACCOUNT_DELETING (P0001)。印が効く長さは、退会の route の maxDuration と Vercel の関数の上限より長い
  *   4. 退会の本体は findBlocker より先に印を付け、運営の作成 API はトリガーの止めを 409 OWNER_ACCOUNT_DELETING にする (同じコード)
  *   5. 戻し口が実在し、足したものをすべて外す

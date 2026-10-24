@@ -7,8 +7,11 @@
  * 特権列ガードに plan_key_cached を足した。
  *
  * 確認すること:
- *   67. 本人は自分の契約の行を INSERT / UPDATE できない (RLS) が、SELECT はできる
- *   68. admin は従来どおり INSERT / UPDATE できる。anon には INSERT / UPDATE / DELETE の権限が無い
+ *   67. 本人は自分の契約の行を INSERT / UPDATE できない (RLS と権限) が、SELECT はできる
+ *   68. admin も契約の行を直接 INSERT / UPDATE / DELETE できない (42501)。anon と authenticated には INSERT / UPDATE / DELETE の権限が無い
+ *       (migration 20261024140000_announcements_moderation_flags_select_only.sql が運営の INSERT / UPDATE のポリシー
+ *       personal_subscriptions_insert_admin / _update_admin と authenticated の書き込みの権限を外した。#1917 の続き。
+ *       契約を書くのは、サーバーが service_role で呼ぶ SECURITY DEFINER の関数 (写像・手動付与・クーポンの適用) だけ)
  *   69. billing_customers は anon / authenticated から見えず書けない。service_role は読み書きできる
  *   70. personal_subscriptions の UPDATE で updated_at が進む
  *   88. 本人は user_profiles.plan_key_cached を UPDATE でも INSERT でも変えられない (CANNOT_MODIFY_PRIVILEGED_COLUMN)。service_role は書ける
@@ -133,7 +136,7 @@ describe('billing/01 §6.2: personal_subscriptions の RLS', () => {
   it('authenticated user cannot INSERT or UPDATE own personal_subscriptions row (RLS) but can SELECT it', async () => {
     const id = await insertSubscription(owner.id, 'expired');
 
-    // INSERT: 本人の行でも拒否 (WITH CHECK の本人の枝を外した)
+    // INSERT: 本人の行でも拒否 (WITH CHECK の本人の枝を外し、後に 20261024140000 が authenticated の INSERT の権限も外した)
     const { error: insertError } = await asUser(owner.jwt)
       .from('personal_subscriptions')
       .insert({ user_id: owner.id, plan_key: 'family_pro', status: 'active' });
@@ -144,14 +147,13 @@ describe('billing/01 §6.2: personal_subscriptions の RLS', () => {
       .eq('user_id', owner.id);
     expect(count).toBe(1);
 
-    // UPDATE: 本人の行は USING に当たらず 0 行 (エラーにはならない)。値は変わらない
-    const { data: updated, error: updateError } = await asUser(owner.jwt)
+    // UPDATE: authenticated に UPDATE の権限が無い (20261024140000 で外した) ので 42501。値は変わらない
+    // (権限を外す前は、本人の行は USING に当たらず 0 行で黙って終わっていた)
+    const { error: updateError } = await asUser(owner.jwt)
       .from('personal_subscriptions')
       .update({ status: 'active', plan_key: 'family_pro' })
-      .eq('id', id)
-      .select('id');
-    expect(updateError).toBeNull();
-    expect(updated).toEqual([]);
+      .eq('id', id);
+    expect(updateError?.code).toBe('42501');
     expect(await subscriptionRow(id)).toMatchObject({ status: 'expired', plan_key: 'pro' });
 
     // SELECT: 本人の行は読める
@@ -160,30 +162,39 @@ describe('billing/01 §6.2: personal_subscriptions の RLS', () => {
     expect(own).toEqual([{ id }]);
   });
 
-  it('admin can still INSERT/UPDATE; anon has no INSERT/UPDATE/DELETE privilege', async () => {
+  it('admin cannot INSERT/UPDATE/DELETE directly (42501); anon and authenticated have no INSERT/UPDATE/DELETE privilege', async () => {
+    // 運営の直接の書き込みは、監査 (admin.billing.manual_grant) も手動付与の関数の不変条件 (live な行の衝突・plan_key_cached と
+    // family_groups の同期) も通らないので塞いだ (20261024140000。#1917 の続き)。admin は TOTP を登録していない (MFA の判定は真) ので、
+    // 修正前はこのセッションで書けた
     const target = await createUser('admin-target');
-    const { data: inserted, error: insertError } = await asUser(admin.jwt)
+    const id = await insertSubscription(target.id, 'expired');
+    const { error: insertError } = await asUser(admin.jwt)
       .from('personal_subscriptions')
-      .insert({ user_id: target.id, plan_key: 'pro', status: 'expired' })
-      .select('id')
-      .single();
-    expect(insertError).toBeNull();
-    const id = (inserted as { id: string }).id;
-    const { data: updated, error: updateError } = await asUser(admin.jwt)
+      .insert({ user_id: target.id, plan_key: 'pro', status: 'active' });
+    expect(insertError?.code).toBe('42501');
+    const { error: updateError } = await asUser(admin.jwt)
       .from('personal_subscriptions')
-      .update({ notes: 'admin note' })
-      .eq('id', id)
-      .select('id');
-    expect(updateError).toBeNull();
-    expect(updated).toEqual([{ id }]);
+      .update({ status: 'active', notes: 'admin note' })
+      .eq('id', id);
+    expect(updateError?.code).toBe('42501');
+    const { error: deleteError } = await asUser(admin.jwt).from('personal_subscriptions').delete().eq('id', id);
+    expect(deleteError?.code).toBe('42501');
+    // 行は service_role で作った 1 行のまま (増えていない・書き換わっていない・消えていない)
+    const { data: rows } = await srAdmin.from('personal_subscriptions').select('id, status, notes').eq('user_id', target.id);
+    expect(rows).toEqual([{ id, status: 'expired', notes: null }]);
 
-    const privileges = await pgQuery<{ privilege: string; granted: boolean }>(`
-      SELECT p AS privilege, has_table_privilege('anon', 'public.personal_subscriptions', p) AS granted
-        FROM unnest(ARRAY['INSERT', 'UPDATE', 'DELETE']) AS p`);
+    const privileges = await pgQuery<{ role: string; privilege: string; granted: boolean }>(`
+      SELECT r AS role, p AS privilege, has_table_privilege(r, 'public.personal_subscriptions', p) AS granted
+        FROM unnest(ARRAY['anon', 'authenticated']) AS r,
+             unnest(ARRAY['INSERT', 'UPDATE', 'DELETE']) AS p
+       ORDER BY r, p`);
     expect(privileges).toEqual([
-      { privilege: 'INSERT', granted: false },
-      { privilege: 'UPDATE', granted: false },
-      { privilege: 'DELETE', granted: false },
+      { role: 'anon', privilege: 'DELETE', granted: false },
+      { role: 'anon', privilege: 'INSERT', granted: false },
+      { role: 'anon', privilege: 'UPDATE', granted: false },
+      { role: 'authenticated', privilege: 'DELETE', granted: false },
+      { role: 'authenticated', privilege: 'INSERT', granted: false },
+      { role: 'authenticated', privilege: 'UPDATE', granted: false },
     ]);
     const { error: anonInsert } = await anon()
       .from('personal_subscriptions')

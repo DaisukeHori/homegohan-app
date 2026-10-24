@@ -25,14 +25,11 @@
  * stripe-price-sync` の未実施に気づけるようにする。偽成功 (DB のみ更新して
  * 200 を返す) には戻さない。
  *
- * #1041 round-3 (C1) 修正: `plan_price_history` は SELECT ポリシーのみで
- * INSERT ポリシーが存在しない (default deny)。従来は user-scoped client で
- * INSERT し、RLS 拒否を「非致命的: 続行」として握り潰していたため、本番では
- * 毎回拒否され監査証跡 (価格変更履歴) が永久に空のまま 200 を返す偽成功に
- * なっていた。service-role (`getSupabaseAdmin()`) に切替え、かつ
- * subscription_plans の価格 UPDATE より「前」に実行することで、履歴 INSERT が
- * 失敗した場合に価格 UPDATE 自体を行わせない (価格は変更したが監査証跡が無い
- * 状態を構造的に発生させない)。
+ * #1041 round-3 (C1) / round-4 (W3) の経緯: `plan_price_history` は SELECT ポリシーのみで INSERT ポリシーが無い (default deny) ため、
+ * 履歴は service-role で書く。以前は履歴の INSERT と価格の UPDATE を別々の文で流し (履歴を先に書いて、失敗したら価格を変えない)、
+ * UPDATE だけが失敗すると「履歴はあるが価格は変わっていない」状態が残りえた。#1917 から、履歴と価格は DB の関数
+ * apply_plan_price_change が 1 つのトランザクションで書くので、どちらか片方だけが残ることは無い。
+ * Stripe の同期のあとで DB に書けなかったときは、Stripe に新しい Price が作られている旨を文に添える (STRIPE_PRICE_MAY_EXIST_NOTE)。
  *
  * #1041 round-4 (W1) 修正: OP_INVALID_INPUT のメッセージに
  * `parseResult.error.message` (issues 配列の生 JSON 文字列) をそのまま
@@ -40,12 +37,16 @@
  * 最初の issue の message のみを抽出して返す (details には引き続き全 issues
  * を含める)。
  *
- * #1041 round-4 (W3) 修正: `plan_price_history` INSERT 失敗時のメッセージに
- * 「価格は変更していません」と記載していたが、これは DB 上の
- * subscription_plans.monthly_price_jpy/yearly_price_jpy を指しており、Stripe 側の
- * Price 作成 (履歴 INSERT より前に実行済み) には触れていなかった。Stripe 同期が
- * 必須な状況では、この時点で新 Price が Stripe 上に作成済みの可能性がある旨を
- * 追記する (metadata の plan_key/changed_by で当該 Price を識別できる)。
+ * #1917 同時の変更: 以前はプランをロックも条件も無く読み、その値を履歴と監査の old_* に書き、価格を .eq(id) だけで UPDATE していた。
+ * 2 人の運営がほぼ同時に同じプランの価格を変えると、後の記録の old_* が実際の直前の値と食い違った。
+ * いまはプランごとの予約の行で 1 本ずつにする (src/lib/super-admin/plan-price-change-reservation.ts):
+ *   1. beginPlanPriceChange: プランの行をロックして予約を取り、ロックの下で読んだプランの値を返す。
+ *      無ければ 404、draft なら 422、別の運営の価格の変更が進行中なら 409 CONFLICT_STALE_DATA (Stripe も DB も触らない)
+ *   2. Stripe の同期 (予約を取った 1 本だけが Edge Function を呼ぶ。Edge Function はその時点の DB の旧 Price を無効化する)
+ *   3. applyPlanPriceChange: 予約が自分のもののままなら、ロックの下で読んだ値を old_* にして履歴を INSERT し、変えた列だけを UPDATE し、
+ *      予約を消す (1 つのトランザクション)。予約を失っていたら (期限の後に別の運営が取り直した) 409 CONFLICT_STALE_DATA で何も書かない
+ *   4. 監査の old_* は 3 が返した変える前の値 (previous) で書く
+ *   1 の後、3 まで行かずに返るとき (Stripe の同期の失敗・例外) は、予約を消してから返す (releasePlanPriceChange)。
  *
  * (#1041 round-3 (C2) / round-4 (C) の「stripe_price_id は 1 本しか保持できない」制約は、
  * #1102 で年額用の列 stripe_yearly_price_id を足して解消した。)
@@ -56,13 +57,27 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { getSupabaseServiceConfig } from '@/lib/env-required';
-import { PriceChangeSchema } from '@/lib/super-admin/plans-schemas';
+import { PriceChangeSchema, type PriceChangeInput } from '@/lib/super-admin/plans-schemas';
 import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { invalidInputResponse, invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
+import {
+  PRICE_CHANGE_IN_PROGRESS_MESSAGE,
+  PRICE_CHANGE_RESERVATION_LOST_MESSAGE,
+  PRICE_CHANGE_SAVE_FAILED_MESSAGE,
+  STRIPE_PRICE_MAY_EXIST_NOTE,
+  applyPlanPriceChange,
+  beginPlanPriceChange,
+  releasePlanPriceChange,
+  type PlanPriceChangeRpcClient,
+  type ReservedPlan,
+} from '@/lib/super-admin/plan-price-change-reservation';
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+const ROUTE_NAME = 'POST /api/super-admin/plans/[id]/price-change';
 
 /** Edge Function stripe-price-sync が interval ごとに返す結果 (変えなかった interval は null / 省略) */
 type StripeSyncIntervalResult = {
@@ -81,6 +96,151 @@ type IntervalSync = {
 
 const NO_SYNC: IntervalSync = { newPriceId: null, oldPriceDeactivated: false, oldPriceDeactivationSkippedReason: null };
 
+/** Stripe の同期の結果: 続けてよい (interval ごとの結果) か、そのまま返す失敗の応答か */
+type StripeSyncOutcome = { ok: true; monthly: IntervalSync; yearly: IntervalSync } | { ok: false; response: NextResponse };
+
+/**
+ * Edge Function stripe-price-sync を呼ぶ (operator/04-plan-management.md §3.3 準拠)。月額・年額を変えるときは、1 回の呼び出しで両方を渡す (#1102)。
+ * 失敗は偽成功にせず、DB を更新しない応答を返す (fail-closed。#1041 F4-06)
+ */
+async function syncStripePrices(
+  planId: string,
+  plan: ReservedPlan,
+  input: PriceChangeInput,
+  actorId: string,
+): Promise<StripeSyncOutcome> {
+  const monthlyChange = input.new_monthly_price_jpy != null;
+  const yearlyChange = input.new_yearly_price_jpy != null;
+  // #1434: 必須の接続情報は env-required の getter で取り出す (以前は `${process.env.X}` を直接埋め込み、
+  // 欠けていると `undefined/functions/v1/...` へ通信していた)。欠けていれば MissingEnvError → route の catch で 500
+  const service = getSupabaseServiceConfig();
+  const edgeFnUrl = `${service.url}/functions/v1/stripe-price-sync`;
+  let edgeRes: Response;
+  try {
+    edgeRes = await fetch(edgeFnUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${service.serviceRoleKey}`,
+      },
+      body: JSON.stringify({
+        plan_id: planId,
+        plan_key: plan.plan_key,
+        stripe_product_id: plan.stripe_product_id,
+        new_monthly_price_jpy: input.new_monthly_price_jpy,
+        new_yearly_price_jpy: input.new_yearly_price_jpy,
+        applies_to: input.applies_to,
+        actor_id: actorId,
+        reason: input.reason,
+      }),
+    });
+  } catch (stripeErr) {
+    console.error('[super-admin/price-change] Stripe Edge Function fetch failed:', stripeErr);
+    return {
+      ok: false,
+      response: NextResponse.json(
+        { error: { code: 'OP_STRIPE_SYNC_FAILED', message: 'Stripe との価格同期に失敗しました。DB は更新していません。' } },
+        { status: 502 },
+      ),
+    };
+  }
+
+  if (!edgeRes.ok) {
+    const errBody = await edgeRes.text().catch(() => '');
+    console.error('[super-admin/price-change] Edge Function stripe-price-sync failed:', edgeRes.status, errBody);
+
+    // #1041 round-2 (C): 404 は Edge Function 未デプロイの可能性が高く、
+    // 一時的な Stripe API 障害 (OP_STRIPE_SYNC_FAILED) とは原因が異なる。
+    // 運用者が supabase functions deploy stripe-price-sync の未実施に
+    // 気づけるよう区別する。
+    if (edgeRes.status === 404) {
+      return {
+        ok: false,
+        response: NextResponse.json(
+          {
+            error: {
+              code: 'OP_STRIPE_SYNC_UNAVAILABLE',
+              message:
+                'Stripe価格同期機能が利用できません (Edge Function stripe-price-sync が未デプロイの可能性があります)。DB は更新していません。',
+            },
+          },
+          { status: 503 },
+        ),
+      };
+    }
+
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: {
+            code: 'OP_STRIPE_SYNC_FAILED',
+            message: `Stripe との価格同期に失敗しました (HTTP ${edgeRes.status})。DB は更新していません。`,
+          },
+        },
+        { status: 502 },
+      ),
+    };
+  }
+
+  const edgeData = (await edgeRes.json().catch(() => ({}))) as {
+    month?: StripeSyncIntervalResult | null;
+    year?: StripeSyncIntervalResult | null;
+  };
+
+  // 変えると指定した interval ごとに、新しい Price の ID を受け取る。
+  // #1041 round-4 (C): Edge Function が interval 不一致等で旧 Price の deactivate をスキップした場合、
+  // 監査ログに残して運用者が把握できるようにする。
+  const toIntervalSync = (changed: boolean, result: StripeSyncIntervalResult | null | undefined): IntervalSync =>
+    changed
+      ? {
+          newPriceId: result?.new_stripe_price_id ?? null,
+          oldPriceDeactivated: result?.deactivated ?? false,
+          oldPriceDeactivationSkippedReason: result?.deactivation_skipped_reason ?? null,
+        }
+      : NO_SYNC;
+  const monthly = toIntervalSync(monthlyChange, edgeData.month);
+  const yearly = toIntervalSync(yearlyChange, edgeData.year);
+
+  // Edge Function が 200 を返したのに、変えると指定した interval の Price ID が取得できない場合も
+  // 同期未完了とみなし、偽成功にしない (一方だけ取れた場合も、DB を片方だけ更新する中途半端な状態にしない)。
+  const missing = [
+    ...(monthlyChange && !monthly.newPriceId ? ['月額'] : []),
+    ...(yearlyChange && !yearly.newPriceId ? ['年額'] : []),
+  ];
+  if (missing.length > 0) {
+    console.error(
+      `[super-admin/price-change] Edge Function returned ok but no new_stripe_price_id for: ${missing.join(', ')}`,
+    );
+    return {
+      ok: false,
+      response: NextResponse.json(
+        {
+          error: {
+            code: 'OP_STRIPE_SYNC_FAILED',
+            message: `Stripe Price の作成結果を確認できませんでした (${missing.join('・')})。DB は更新していません。`,
+          },
+        },
+        { status: 502 },
+      ),
+    };
+  }
+  return { ok: true, monthly, yearly };
+}
+
+/**
+ * apply まで行かなかった予約を消す。消せなくても応答は変えない (予約は期限の後に次の begin が取り直す)。失敗はログに残す
+ */
+async function releaseReservation(client: PlanPriceChangeRpcClient, planId: string, token: string, actorId: string): Promise<void> {
+  try {
+    await releasePlanPriceChange(client, planId, token);
+  } catch (releaseErr) {
+    createLogger(ROUTE_NAME, generateRequestId())
+      .withUser(actorId)
+      .error('価格の変更の予約を消せませんでした (期限の後に取り直されます)', releaseErr, { plan_id: planId });
+  }
+}
+
 export async function POST(request: NextRequest, props: RouteContext) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
   const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
@@ -89,9 +249,10 @@ export async function POST(request: NextRequest, props: RouteContext) {
   try {
     const user = await requireRole(['super_admin']);
     const supabase = await createClient();
-    // requireRole 通過後のみ到達する。plan_price_history には INSERT ポリシーが
-    // 存在しないため service-role が必須 (#1041 round-3 C1)。
+    // requireRole 通過後のみ到達する。予約・履歴・価格の書き込みは service_role だけが呼べる DB の関数で行う
+    // (plan_price_history には INSERT ポリシーが無い #1041 round-3 C1)。
     const supabaseAdmin = getSupabaseAdmin();
+    const rpcClient: PlanPriceChangeRpcClient = { rpc: (fn, args) => supabaseAdmin.rpc(fn, args) };
 
     const bodyResult = await readJsonBody(request);
     if (!bodyResult.ok) {
@@ -114,276 +275,162 @@ export async function POST(request: NextRequest, props: RouteContext) {
 
     const input = parseResult.data;
 
-    // プランを取得
-    const { data: plan, error: planErr } = await supabase
-      .from('subscription_plans')
-      .select('*')
-      .eq('id', params.id)
-      .single();
-
-    if (planErr || !plan) {
+    // 1. 予約を取り、ロックの下で読んだプランの値を受け取る (#1917)
+    let begin;
+    try {
+      begin = await beginPlanPriceChange(rpcClient, params.id);
+    } catch (beginErr) {
+      return internalError(ROUTE_NAME, beginErr, { userId: user.id }, { shape: 'nested' });
+    }
+    if (begin.result === 'not_found') {
       return NextResponse.json(
         { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } },
         { status: 404 }
       );
     }
-
     // draft は価格変更 API を使う必要なし (PATCH で対応)
-    if (plan.status === 'draft') {
+    if (begin.result === 'draft') {
       return NextResponse.json(
         { error: { code: 'OP_PLAN_DRAFT_USE_PATCH', message: '下書き (draft) のプランは PATCH API で価格を変更してください' } },
         { status: 422 }
       );
     }
+    if (begin.result === 'in_progress') {
+      return NextResponse.json(
+        { error: { code: 'CONFLICT_STALE_DATA', message: PRICE_CHANGE_IN_PROGRESS_MESSAGE } },
+        { status: 409 }
+      );
+    }
+    const { plan, token } = begin;
 
-    const monthlyChange = input.new_monthly_price_jpy != null;
-    const yearlyChange = input.new_yearly_price_jpy != null;
+    // apply が返るまでは予約を持っている。apply まで行かずに返るとき (Stripe の同期の失敗・例外) は、finally で予約を消す
+    let reservationHeld = true;
+    try {
+      // #1041 (F4-06) 修正: STRIPE_SECRET_KEY が設定されている場合は「本番で Stripe 同期が
+      // 必須」という明示的な状態であり、Edge Function 呼び出しに失敗した場合はそれを
+      // 偽成功 (DB のみ更新して 200 を返す) にせず 502 で失敗させる (fail-closed)。
+      // STRIPE_SECRET_KEY が未設定の場合のみ、意図された dev/mock モードとして続行する。
+      const stripeSyncExpected = Boolean(process.env.STRIPE_SECRET_KEY && plan.stripe_product_id);
 
-    // 月額・年額それぞれの Stripe 同期結果 (Edge Function の interval ガードによる deactivate 結果を含む。
-    // 監査ログ details に記録するため、DB 更新前に受け取っておく)。
-    let monthly: IntervalSync = NO_SYNC;
-    let yearly: IntervalSync = NO_SYNC;
+      // 月額・年額それぞれの Stripe 同期結果 (Edge Function の interval ガードによる deactivate 結果を含む。
+      // 監査ログ details に記録するため、DB 更新前に受け取っておく)。
+      let monthly: IntervalSync = NO_SYNC;
+      let yearly: IntervalSync = NO_SYNC;
+      if (stripeSyncExpected) {
+        // 2. Stripe の同期。予約を持っているのはこの要求だけなので、Edge Function が DB から読んで無効化する旧 Price は、
+        //    apply がロックの下で読む値 (監査の old_stripe_price_id / old_stripe_yearly_price_id) と同じ
+        const sync = await syncStripePrices(params.id, plan, input, user.id);
+        if (!sync.ok) return sync.response;
+        monthly = sync.monthly;
+        yearly = sync.yearly;
+      } else {
+        console.warn('[super-admin/price-change] STRIPE_SECRET_KEY not set or stripe_product_id missing — mock mode (dev/test)');
+      }
 
-    // #1041 (F4-06) 修正: STRIPE_SECRET_KEY が設定されている場合は「本番で Stripe 同期が
-    // 必須」という明示的な状態であり、Edge Function 呼び出しに失敗した場合はそれを
-    // 偽成功 (DB のみ更新して 200 を返す) にせず 502 で失敗させる (fail-closed)。
-    // STRIPE_SECRET_KEY が未設定の場合のみ、意図された dev/mock モードとして続行する。
-    const stripeSyncExpected = Boolean(process.env.STRIPE_SECRET_KEY && plan.stripe_product_id);
-
-    if (stripeSyncExpected) {
-      // #1434: 必須の接続情報は env-required の getter で取り出す (以前は `${process.env.X}` を直接埋め込み、
-      // 欠けていると `undefined/functions/v1/...` へ通信していた)。欠けていれば MissingEnvError → 下の catch で 500
-      const service = getSupabaseServiceConfig();
-      const edgeFnUrl = `${service.url}/functions/v1/stripe-price-sync`;
-      let edgeRes: Response;
+      // 3. 履歴と価格を 1 つのトランザクションで書く (変えた interval の列だけ: 月額 = stripe_price_id / 年額 = stripe_yearly_price_id。#1102)。
+      // 履歴の old/new_stripe_price_id は月額の Price ID (subscription_plans.stripe_price_id と同じ意味。#1102)。
+      // new_stripe_price_id は、この変更で新しい月額の Price を作ったときだけ入る (年額だけ変えたときは null)。
+      let applied;
       try {
-        // Edge Function stripe-price-sync を呼ぶ (operator/04-plan-management.md §3.3 準拠)。
-        // 月額・年額を変えるときは、1 回の呼び出しで両方を渡す (#1102)。
-        edgeRes = await fetch(edgeFnUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${service.serviceRoleKey}`,
-          },
-          body: JSON.stringify({
-            plan_id: params.id,
-            plan_key: plan.plan_key,
-            stripe_product_id: plan.stripe_product_id,
-            new_monthly_price_jpy: input.new_monthly_price_jpy,
-            new_yearly_price_jpy: input.new_yearly_price_jpy,
-            applies_to: input.applies_to,
-            actor_id: user.id,
-            reason: input.reason,
-          }),
+        applied = await applyPlanPriceChange(rpcClient, {
+          planId: params.id,
+          token,
+          newMonthlyPriceJpy: input.new_monthly_price_jpy ?? null,
+          newYearlyPriceJpy: input.new_yearly_price_jpy ?? null,
+          newStripePriceId: monthly.newPriceId,
+          newStripeYearlyPriceId: yearly.newPriceId,
+          changedBy: user.id,
+          reason: input.reason,
+          effectiveAt: input.effective_at,
+          appliesTo: input.applies_to,
         });
-      } catch (stripeErr) {
-        console.error('[super-admin/price-change] Stripe Edge Function fetch failed:', stripeErr);
+      } catch (applyErr) {
+        // DB の生のエラー文は本文に出さない (#1172)。原因は構造化ログに残す
+        createLogger(ROUTE_NAME, generateRequestId())
+          .withUser(user.id)
+          .error('価格の変更の保存 (apply_plan_price_change) に失敗しました', applyErr, { plan_id: params.id });
         return NextResponse.json(
           {
             error: {
-              code: 'OP_STRIPE_SYNC_FAILED',
-              message: 'Stripe との価格同期に失敗しました。DB は更新していません。',
+              code: 'OP_DB_ERROR',
+              message: PRICE_CHANGE_SAVE_FAILED_MESSAGE + (stripeSyncExpected ? STRIPE_PRICE_MAY_EXIST_NOTE : ''),
             },
           },
-          { status: 502 },
+          { status: 500 }
         );
       }
+      // apply が返ったら、予約は消えている (applied) か、もう自分のものではない (lost) か、プランごと無い (not_found)
+      reservationHeld = false;
 
-      if (!edgeRes.ok) {
-        const errBody = await edgeRes.text().catch(() => '');
-        console.error('[super-admin/price-change] Edge Function stripe-price-sync failed:', edgeRes.status, errBody);
-
-        // #1041 round-2 (C): 404 は Edge Function 未デプロイの可能性が高く、
-        // 一時的な Stripe API 障害 (OP_STRIPE_SYNC_FAILED) とは原因が異なる。
-        // 運用者が supabase functions deploy stripe-price-sync の未実施に
-        // 気づけるよう区別する。
-        if (edgeRes.status === 404) {
-          return NextResponse.json(
-            {
-              error: {
-                code: 'OP_STRIPE_SYNC_UNAVAILABLE',
-                message:
-                  'Stripe価格同期機能が利用できません (Edge Function stripe-price-sync が未デプロイの可能性があります)。DB は更新していません。',
-              },
-            },
-            { status: 503 },
-          );
-        }
-
+      if (applied.result === 'not_found') {
+        return NextResponse.json(
+          { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } },
+          { status: 404 }
+        );
+      }
+      if (applied.result === 'lost') {
         return NextResponse.json(
           {
             error: {
-              code: 'OP_STRIPE_SYNC_FAILED',
-              message: `Stripe との価格同期に失敗しました (HTTP ${edgeRes.status})。DB は更新していません。`,
+              code: 'CONFLICT_STALE_DATA',
+              message: PRICE_CHANGE_RESERVATION_LOST_MESSAGE + (stripeSyncExpected ? STRIPE_PRICE_MAY_EXIST_NOTE : ''),
             },
           },
-          { status: 502 },
+          { status: 409 }
         );
       }
+      const previous = applied.previous;
 
-      const edgeData = (await edgeRes.json().catch(() => ({}))) as {
-        month?: StripeSyncIntervalResult | null;
-        year?: StripeSyncIntervalResult | null;
-      };
-
-      // 変えると指定した interval ごとに、新しい Price の ID を受け取る。
-      // #1041 round-4 (C): Edge Function が interval 不一致等で旧 Price の deactivate をスキップした場合、
-      // 監査ログに残して運用者が把握できるようにする。
-      const toIntervalSync = (changed: boolean, result: StripeSyncIntervalResult | null | undefined): IntervalSync =>
-        changed
-          ? {
-              newPriceId: result?.new_stripe_price_id ?? null,
-              oldPriceDeactivated: result?.deactivated ?? false,
-              oldPriceDeactivationSkippedReason: result?.deactivation_skipped_reason ?? null,
-            }
-          : NO_SYNC;
-      monthly = toIntervalSync(monthlyChange, edgeData.month);
-      yearly = toIntervalSync(yearlyChange, edgeData.year);
-
-      // Edge Function が 200 を返したのに、変えると指定した interval の Price ID が取得できない場合も
-      // 同期未完了とみなし、偽成功にしない (一方だけ取れた場合も、DB を片方だけ更新する中途半端な状態にしない)。
-      const missing = [
-        ...(monthlyChange && !monthly.newPriceId ? ['月額'] : []),
-        ...(yearlyChange && !yearly.newPriceId ? ['年額'] : []),
-      ];
-      if (missing.length > 0) {
-        console.error(
-          `[super-admin/price-change] Edge Function returned ok but no new_stripe_price_id for: ${missing.join(', ')}`,
-        );
-        return NextResponse.json(
-          {
-            error: {
-              code: 'OP_STRIPE_SYNC_FAILED',
-              message: `Stripe Price の作成結果を確認できませんでした (${missing.join('・')})。DB は更新していません。`,
-            },
-          },
-          { status: 502 },
-        );
-      }
-    } else {
-      console.warn('[super-admin/price-change] STRIPE_SECRET_KEY not set or stripe_product_id missing — mock mode (dev/test)');
-    }
-
-    // plan_price_history に INSERT (operator/01-data-model.md §3.4 準拠)。
-    // #1041 round-3 (C1): service-role (`supabaseAdmin`) を使用し、かつ
-    // subscription_plans の価格 UPDATE より前に実行する。ここで失敗した場合は
-    // DB の価格をまだ一切更新していないため、そのまま 500 を返せば「価格は
-    // 変更されたのに監査証跡が無い」という中途半端な状態を残さずに済む
-    // (UPDATE を先に行い失敗時にロールバックする方式は、ロールバック自体が
-    // 失敗し得る二重障害点を増やすため採用しない)。
-    // old/new_stripe_price_id は月額の Price ID (subscription_plans.stripe_price_id と同じ意味。#1102)。
-    // new_stripe_price_id は、この変更で新しい月額の Price を作ったときだけ入る (年額だけ変えたときは null)。
-    const { error: historyErr } = await supabaseAdmin.from('plan_price_history').insert({
-      plan_id: params.id,
-      old_monthly_price_jpy: plan.monthly_price_jpy,
-      new_monthly_price_jpy: input.new_monthly_price_jpy ?? plan.monthly_price_jpy,
-      old_yearly_price_jpy: plan.yearly_price_jpy,
-      new_yearly_price_jpy: input.new_yearly_price_jpy ?? plan.yearly_price_jpy,
-      old_stripe_price_id: plan.stripe_price_id,
-      new_stripe_price_id: monthly.newPriceId,
-      changed_by: user.id,
-      reason: input.reason,
-      effective_at: input.effective_at,
-      applies_to: input.applies_to,
-    });
-
-    if (historyErr) {
-      console.error('[super-admin/price-change POST] price_history INSERT failed:', historyErr);
-      return NextResponse.json(
-        {
-          error: {
-            code: 'OP_PRICE_HISTORY_INSERT_FAILED',
-            // #1041 round-4 (W3): Stripe 同期が必須な状況では、この時点で新
-            // Price が Stripe 上に作成済みの可能性がある (履歴 INSERT は Stripe
-            // Price 作成より後に実行される)。DB (subscription_plans) の価格は
-            // 未更新だが Stripe 側の状態と食い違い得るため、その旨を明示する。
-            message:
-              '価格変更履歴の記録に失敗しました。価格(DB)は変更していません。' +
-              '※Stripe 側では新価格(Price)が作成済みの可能性があります' +
-              '(metadata の plan_key/changed_by で識別可)。',
-          },
+      // 4. 監査ログ記録 (severity='warn' — 課金影響操作)。old_* は apply がロックの下で読んだ、この更新の実際の直前の値 (#1917)
+      await recordAdminAudit({
+        supabase,
+        actorId: user.id,
+        targetId: params.id,
+        targetType: 'subscription_plan',
+        actionType: 'change_price',
+        details: {
+          plan_key: plan.plan_key,
+          old_monthly_price_jpy: previous.monthly_price_jpy,
+          new_monthly_price_jpy: input.new_monthly_price_jpy,
+          old_yearly_price_jpy: previous.yearly_price_jpy,
+          new_yearly_price_jpy: input.new_yearly_price_jpy,
+          applies_to: input.applies_to,
+          reason: input.reason,
+          stripe_mock: !stripeSyncExpected,
+          // #1102: 月額 (stripe_price_id) と年額 (stripe_yearly_price_id) の Price ID。
+          // 変えなかった interval の new_* は null。
+          old_stripe_price_id: previous.stripe_price_id,
+          new_stripe_price_id: monthly.newPriceId,
+          old_stripe_yearly_price_id: previous.stripe_yearly_price_id,
+          new_stripe_yearly_price_id: yearly.newPriceId,
+          // #1041 round-4 (C): 旧 Price の deactivate 結果 (interval 不一致等で
+          // スキップされた場合、運用者が気づけるよう監査ログに残す)。月額 / 年額それぞれ。
+          old_stripe_price_deactivated: monthly.oldPriceDeactivated,
+          old_stripe_price_deactivation_skipped_reason: monthly.oldPriceDeactivationSkippedReason,
+          old_stripe_yearly_price_deactivated: yearly.oldPriceDeactivated,
+          old_stripe_yearly_price_deactivation_skipped_reason: yearly.oldPriceDeactivationSkippedReason,
         },
-        { status: 500 },
-      );
+        severity: 'warn',
+        request,
+        routeName: 'api/super-admin/plans/[id]/price-change POST',
+      });
+
+      return NextResponse.json({
+        data: {
+          plan_id: params.id,
+          plan_key: plan.plan_key,
+          new_monthly_price_jpy: input.new_monthly_price_jpy,
+          new_yearly_price_jpy: input.new_yearly_price_jpy,
+          // 月額 (stripe_price_id) / 年額 (stripe_yearly_price_id) の新しい Stripe Price ID。変えなかった方は null
+          new_stripe_price_id: monthly.newPriceId,
+          new_stripe_yearly_price_id: yearly.newPriceId,
+          applies_to: input.applies_to,
+          stripe_mock: !stripeSyncExpected,
+        },
+      });
+    } finally {
+      if (reservationHeld) await releaseReservation(rpcClient, params.id, token, user.id);
     }
-
-    // DB 更新: subscription_plans
-    // Note (#1041 round-4 W3 Sonnet Suggestion): plan_price_history への INSERT は
-    // 既に成功しているため、この後の UPDATE が失敗すると「価格変更履歴には記録
-    // されたが実際の価格 (DB) は変更されていない」非対称な状態が残り得る。
-    // UPDATE 失敗時は OP_DB_ERROR で明示的にエラーを返すため運用者は気づけるが、
-    // 履歴行の事後的な取消/訂正は行わない (履歴は「変更を試みた記録」として残す
-    // 設計。ロールバック処理自体が失敗し得る二重障害点を増やさないため採用しない
-    // — round-3 (C1) の historyErr 側の設計判断と対称)。
-    // #1102: 変えた interval の Price ID の列だけを更新する (月額 = stripe_price_id / 年額 = stripe_yearly_price_id)。
-    // 変えなかった interval の列は一切書かない (もう片方の Price への参照を消さない)。
-    const planUpdate: Record<string, unknown> = { updated_at: new Date().toISOString() };
-    if (input.new_monthly_price_jpy != null) planUpdate.monthly_price_jpy = input.new_monthly_price_jpy;
-    if (input.new_yearly_price_jpy != null) planUpdate.yearly_price_jpy = input.new_yearly_price_jpy;
-    if (monthly.newPriceId) planUpdate.stripe_price_id = monthly.newPriceId;
-    if (yearly.newPriceId) planUpdate.stripe_yearly_price_id = yearly.newPriceId;
-
-    const { error: updateErr } = await supabase
-      .from('subscription_plans')
-      .update(planUpdate)
-      .eq('id', params.id);
-
-    if (updateErr) {
-      console.error('[super-admin/price-change POST]', updateErr);
-      return NextResponse.json(
-        // DB の生のエラー文は本文に出さない (#1172)。原因は上の console.error に残る
-        { error: { code: 'OP_DB_ERROR', message: 'プランの更新に失敗しました' } },
-        { status: 500 }
-      );
-    }
-
-    // 監査ログ記録 (severity='warn' — 課金影響操作)
-    await recordAdminAudit({
-      supabase,
-      actorId: user.id,
-      targetId: params.id,
-      targetType: 'subscription_plan',
-      actionType: 'change_price',
-      details: {
-        plan_key: plan.plan_key,
-        old_monthly_price_jpy: plan.monthly_price_jpy,
-        new_monthly_price_jpy: input.new_monthly_price_jpy,
-        old_yearly_price_jpy: plan.yearly_price_jpy,
-        new_yearly_price_jpy: input.new_yearly_price_jpy,
-        applies_to: input.applies_to,
-        reason: input.reason,
-        stripe_mock: !stripeSyncExpected,
-        // #1102: 月額 (stripe_price_id) と年額 (stripe_yearly_price_id) の Price ID。
-        // 変えなかった interval の new_* は null。
-        old_stripe_price_id: plan.stripe_price_id ?? null,
-        new_stripe_price_id: monthly.newPriceId,
-        old_stripe_yearly_price_id: plan.stripe_yearly_price_id ?? null,
-        new_stripe_yearly_price_id: yearly.newPriceId,
-        // #1041 round-4 (C): 旧 Price の deactivate 結果 (interval 不一致等で
-        // スキップされた場合、運用者が気づけるよう監査ログに残す)。月額 / 年額それぞれ。
-        old_stripe_price_deactivated: monthly.oldPriceDeactivated,
-        old_stripe_price_deactivation_skipped_reason: monthly.oldPriceDeactivationSkippedReason,
-        old_stripe_yearly_price_deactivated: yearly.oldPriceDeactivated,
-        old_stripe_yearly_price_deactivation_skipped_reason: yearly.oldPriceDeactivationSkippedReason,
-      },
-      severity: 'warn',
-      request,
-      routeName: 'api/super-admin/plans/[id]/price-change POST',
-    });
-
-    return NextResponse.json({
-      data: {
-        plan_id: params.id,
-        plan_key: plan.plan_key,
-        new_monthly_price_jpy: input.new_monthly_price_jpy,
-        new_yearly_price_jpy: input.new_yearly_price_jpy,
-        // 月額 (stripe_price_id) / 年額 (stripe_yearly_price_id) の新しい Stripe Price ID。変えなかった方は null
-        new_stripe_price_id: monthly.newPriceId,
-        new_stripe_yearly_price_id: yearly.newPriceId,
-        applies_to: input.applies_to,
-        stripe_mock: !stripeSyncExpected,
-      },
-    });
   } catch (err) {
     if (err instanceof AuthError) {
       return NextResponse.json({ error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } }, { status: 401 });
