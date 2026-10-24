@@ -32,9 +32,15 @@ const RAW_DB_MESSAGE = 'connection reset by peer';
 const DB_FAILURE = { code: '08006', message: RAW_DB_MESSAGE, details: null, hint: null };
 const TODAY = '2026-10-24';
 
+/** 外部キー違反 (担当者が auth.users に無い) の DB の生のエラー文 (本文に出てはいけない) */
+const RAW_FK_MESSAGE = 'insert or update on table "support_tickets" violates foreign key constraint "support_tickets_assignee_id_fkey"';
+const FK_VIOLATION = { code: '23503', message: RAW_FK_MESSAGE, details: 'Key (assignee_id) is not present in table "users".', hint: null };
+
 const state = {
   /** 読み込みを DB の失敗にするテーブル */
   failTable: null as string | null,
+  /** failTable の失敗の中身 (既定は DB_FAILURE = 接続の失敗) */
+  failError: null as Record<string, unknown> | null,
   /** 行が無いテーブル */
   missingTable: null as string | null,
   /** このテーブルは、ここに決めた回数だけ読んだあとから行が無くなる (読んでから書くまでに消された、を作る) */
@@ -77,7 +83,7 @@ function rowOf(table: string): Record<string, unknown> {
 function resultOf(table: string, many: boolean) {
   const readsBefore = state.fromTables.filter((t) => t === table).length;
   state.fromTables.push(table);
-  if (state.failTable === table) return { data: null, error: DB_FAILURE, count: null, status: 503 };
+  if (state.failTable === table) return { data: null, error: state.failError ?? DB_FAILURE, count: null, status: 503 };
   const vanished = state.vanishAfter?.table === table && readsBefore >= state.vanishAfter.reads;
   if (state.missingTable === table || vanished) return { data: many ? [] : null, error: null, count: 0, status: 200 };
   return { data: many ? [rowOf(table)] : rowOf(table), error: null, count: 1, status: 200 };
@@ -270,6 +276,16 @@ const CASES: ReadCase[] = [
       (await import('@/app/api/super-admin/plans/[id]/price-impact/route')).GET(new NextRequest(`${BASE}/api/super-admin/plans/${id}/price-impact?new_monthly_price_jpy=1200`), ctx({ id })),
   },
   {
+    // 価格の変更の前にプランを読む。読めなかったときを 404 にしていた (#1917)
+    name: 'POST /api/super-admin/plans/[id]/price-change',
+    table: 'subscription_plans',
+    call: async (id) =>
+      (await import('@/app/api/super-admin/plans/[id]/price-change/route')).POST(
+        json(`${BASE}/api/super-admin/plans/${id}/price-change`, 'POST', { new_monthly_price_jpy: 1200, applies_to: 'new_only', reason: 'price update' }),
+        ctx({ id }),
+      ),
+  },
+  {
     name: 'GET /api/super-admin/experiments/[id]',
     table: 'experiments',
     call: async (id) => (await import('@/app/api/super-admin/experiments/[id]/route')).GET(new NextRequest(`${BASE}/api/super-admin/experiments/${id}`), ctx({ id })),
@@ -422,6 +438,20 @@ const CASES: ReadCase[] = [
       (await import('@/app/api/ai/consultation/sessions/[sessionId]/messages/route')).GET(new Request(`${BASE}/api/ai/consultation/sessions/${id}/messages`), ctx({ sessionId: id })),
   },
   {
+    name: 'POST /api/ai/consultation/sessions/[sessionId]/close (所有者の確認)',
+    table: 'ai_consultation_sessions',
+    call: async (id) =>
+      (await import('@/app/api/ai/consultation/sessions/[sessionId]/close/route')).POST(json(`${BASE}/api/ai/consultation/sessions/${id}/close`, 'POST', {}), ctx({ sessionId: id })),
+  },
+  {
+    // この route は AI の失敗を既存の要約の 200 で返すが、所有者の確認の DB の失敗はそこに入れない
+    // (既存の要約もまだ読めておらず「成功・要約なし」に見えていた。R2 で見つかった)
+    name: 'POST /api/ai/consultation/sessions/[sessionId]/summarize (所有者の確認)',
+    table: 'ai_consultation_sessions',
+    call: async (id) =>
+      (await import('@/app/api/ai/consultation/sessions/[sessionId]/summarize/route')).POST(json(`${BASE}/api/ai/consultation/sessions/${id}/summarize`, 'POST', {}), ctx({ sessionId: id })),
+  },
+  {
     name: 'POST /api/ai/consultation/sessions/[sessionId]/messages/[messageId]/important (メッセージ)',
     table: 'ai_consultation_messages',
     call: async (id) =>
@@ -471,6 +501,7 @@ const CASES: ReadCase[] = [
 
 beforeEach(() => {
   state.failTable = null;
+  state.failError = null;
   state.missingTable = null;
   state.vanishAfter = null;
   state.fromTables = [];
@@ -521,5 +552,33 @@ describe.each([
     expect(res.status).toBe(404);
     // 所有権の確認と更新の 2 回読んでいる (更新まで届いている)
     expect(state.fromTables.filter((t) => t === table)).toHaveLength(2);
+  });
+});
+
+// 担当者 (assignee_id) が UUID の形でも auth.users に無いと、更新が外部キー違反 (23503) で失敗する。
+// これは入力の誤りなので 400 VALIDATION_ERROR (500 にしない・以前の 404 にもしない)。DB の生の文面は本文に出さない
+describe.each([
+  {
+    name: 'PATCH /api/admin/support/tickets/[id]',
+    call: async () =>
+      (await import('@/app/api/admin/support/tickets/[id]/route')).PATCH(json(`${BASE}/api/admin/support/tickets/${ROW_ID}`, 'PATCH', { assignee_id: OTHER_USER_ID }), ctx({ id: ROW_ID })),
+  },
+  {
+    name: 'POST /api/admin/support/tickets/[id]/assign',
+    call: async () =>
+      (await import('@/app/api/admin/support/tickets/[id]/assign/route')).POST(json(`${BASE}/api/admin/support/tickets/${ROW_ID}/assign`, 'POST', { assignee_id: OTHER_USER_ID }), ctx({ id: ROW_ID })),
+  },
+])('$name', ({ call }) => {
+  it('担当者が存在しない (外部キー違反) は 400 VALIDATION_ERROR。DB の生の文面は本文に出さない', async () => {
+    state.failTable = 'support_tickets';
+    state.failError = FK_VIOLATION;
+    const res = await call();
+    expect(res.status).toBe(400);
+    const text = await res.text();
+    expect((JSON.parse(text) as { error: { code: string } }).error.code).toBe('VALIDATION_ERROR');
+    expect(text).not.toContain(RAW_FK_MESSAGE);
+    expect(text).not.toContain('support_tickets_assignee_id_fkey');
+    // 更新まで届いている (本文の検査の 400 ではない)
+    expect(state.fromTables).toContain('support_tickets');
   });
 });

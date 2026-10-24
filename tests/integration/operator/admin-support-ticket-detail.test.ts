@@ -342,6 +342,17 @@ describe('PATCH /api/admin/support/tickets/[id]', () => {
     expectError(res, 400, 'VALIDATION_ERROR');
   });
 
+  // UUID の形でも auth.users に無い担当者は、更新が外部キー違反 (23503) で失敗する。入力の誤りなので 400 VALIDATION_ERROR (#1917)
+  it('400 VALIDATION_ERROR for an assignee_id that is a UUID but not an existing user, and leaves the assignee untouched (#1917)', async () => {
+    const ticketId = await seedTicket({ assigneeId: supportUser.userId });
+    const res = await apiCall('PATCH', `/api/admin/support/tickets/${ticketId}`, supportUser.jwt, {
+      assignee_id: randomUuid(),
+    });
+    expectError(res, 400, 'VALIDATION_ERROR');
+    expect(JSON.stringify(res.body)).not.toContain('support_tickets_assignee_id_fkey');
+    expect((await readTicket(ticketId)).assignee_id).toBe(supportUser.userId);
+  });
+
   it('400 for an empty object (at least one field is required)', async () => {
     const ticketId = await seedTicket();
     const res = await apiCall('PATCH', `/api/admin/support/tickets/${ticketId}`, supportUser.jwt, {});
@@ -451,6 +462,20 @@ describe('POST /api/admin/support/tickets/[id]/assign', () => {
     );
     expectError(res, 400, 'VALIDATION_ERROR');
     expect((await readTicket(ticketId)).assignee_id).toBeNull();
+  });
+
+  // UUID の形でも auth.users に無い担当者は、更新が外部キー違反 (23503) で失敗する。入力の誤りなので 400 VALIDATION_ERROR (#1917)
+  it('400 VALIDATION_ERROR for an assignee_id that is a UUID but not an existing user, and leaves the assignee untouched (#1917)', async () => {
+    const ticketId = await seedTicket({ assigneeId: supportUser.userId });
+    const res = await apiCall(
+      'POST',
+      `/api/admin/support/tickets/${ticketId}/assign`,
+      supportUser.jwt,
+      { assignee_id: randomUuid() },
+    );
+    expectError(res, 400, 'VALIDATION_ERROR');
+    expect(JSON.stringify(res.body)).not.toContain('support_tickets_assignee_id_fkey');
+    expect((await readTicket(ticketId)).assignee_id).toBe(supportUser.userId);
   });
 
   it('400 for missing assignee_id', async () => {

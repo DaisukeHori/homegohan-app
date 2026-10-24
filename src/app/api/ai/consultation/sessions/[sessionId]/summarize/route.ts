@@ -5,6 +5,7 @@ import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage } from '@/lib/plan/entitlements';
 import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { internalError } from '@/lib/api/errors';
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE } from '@/lib/ai/ai-api-messages';
 import { isUuid } from '@/lib/http-params';
@@ -115,8 +116,9 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
       .maybeSingle();
 
     if (sessionError) {
-      // この route は失敗を UI に「失敗」と見せない (下の catch が既存の要約で 200 を返す)。DB の失敗もそちらに渡す
-      throw sessionError;
+      // 所有者を確かめられていないので 500 (下の catch の「既存の要約で 200」に渡さない。そこでは既存の要約もまだ読めておらず、
+      // 「成功・要約なし」に見えてしまう。兄弟の close と同じ形。#1917)
+      return internalError('POST /api/ai/consultation/sessions/[sessionId]/summarize', sessionError, { userId: user.id, table: 'ai_consultation_sessions' });
     }
     if (!session || session.user_id !== user.id) {
       return NextResponse.json({ error: AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE }, { status: 404 });
