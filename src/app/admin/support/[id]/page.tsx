@@ -35,6 +35,13 @@ interface Ticket {
   messages: Message[];
 }
 
+/** 403 (Forbidden) の HTTP ステータス */
+const HTTP_FORBIDDEN = 403;
+/** 担当者の割り当ての失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917) */
+const ASSIGN_FAILURE_MESSAGE = '割り当て失敗';
+/** 状態の変更の失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917) */
+const STATUS_CHANGE_FAILURE_MESSAGE = 'ステータス変更失敗';
+
 const STATUS_LABELS: Record<string, string> = {
   open: '未対応',
   in_progress: '対応中',
@@ -87,7 +94,7 @@ export default function TicketDetailPage(props: PageProps) {
       const res = await fetch(`/api/admin/support/tickets/${params.id}`);
       if (res.status === 401) { router.push('/login'); return; }
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
-      if (res.status === 403) { setError(await forbiddenMessageOfResponse(res)); return; }
+      if (res.status === HTTP_FORBIDDEN) { setError(await forbiddenMessageOfResponse(res)); return; }
       if (res.status === 404) { setError('チケットが見つかりません'); return; }
       if (!res.ok) throw new Error('取得失敗');
       const json = await res.json();
@@ -141,10 +148,12 @@ export default function TicketDetailPage(props: PageProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ assignee_id: assigneeId }),
       });
-      if (!res.ok) throw new Error('割り当て失敗');
+      // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 と失敗は「割り当て失敗」(#1917)
+      if (res.status === HTTP_FORBIDDEN) throw new Error(await forbiddenMessageOfResponse(res, ASSIGN_FAILURE_MESSAGE));
+      if (!res.ok) throw new Error(ASSIGN_FAILURE_MESSAGE);
       await fetchTicket();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '割り当て失敗');
+      setError(e instanceof Error ? e.message : ASSIGN_FAILURE_MESSAGE);
     } finally {
       setIsAssigning(false);
     }
@@ -158,10 +167,12 @@ export default function TicketDetailPage(props: PageProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
-      if (!res.ok) throw new Error('ステータス変更失敗');
+      // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 と失敗は「ステータス変更失敗」(#1917)
+      if (res.status === HTTP_FORBIDDEN) throw new Error(await forbiddenMessageOfResponse(res, STATUS_CHANGE_FAILURE_MESSAGE));
+      if (!res.ok) throw new Error(STATUS_CHANGE_FAILURE_MESSAGE);
       await fetchTicket();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'ステータス変更失敗');
+      setError(e instanceof Error ? e.message : STATUS_CHANGE_FAILURE_MESSAGE);
     } finally {
       setStatusChanging(false);
     }

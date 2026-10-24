@@ -6,7 +6,7 @@
  * 権限: sales, admin, super_admin
  */
 import { useState, useEffect, useCallback, use } from 'react';
-import { forbiddenMessageOfResponse, isStaleDataConflict } from '@/lib/admin/api-error-message';
+import { forbiddenMessageForScreen, forbiddenMessageOfResponse, isStaleDataConflict } from '@/lib/admin/api-error-message';
 import { todayLocal } from '@/lib/date-utils';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -21,6 +21,11 @@ const STALE_STAGE_MESSAGE =
 /** 409 CONFLICT_STALE_DATA のあとのリードの読み直しにも失敗したときの文 (読み直せていないので「読み込み直した」とは言わない。#1917) */
 const STALE_STAGE_RELOAD_FAILED_MESSAGE =
   '別の担当者が先にこのリードのステージを変えていました。最新の内容を読み込み直せなかったので、画面を読み込み直してから、もう一度変更してください';
+
+/** 403 (Forbidden) の HTTP ステータス */
+const HTTP_FORBIDDEN = 403;
+/** ステージの変更の失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917) */
+const STAGE_CHANGE_FAILURE_MESSAGE = 'ステージ変更失敗';
 
 /**
  * リードの読み込み (fetchLead) の結果。
@@ -133,7 +138,7 @@ export default function LeadDetailPage(props: PageProps) {
       const res = await fetch(`/api/admin/sales/leads/${params.id}`);
       if (res.status === 401) { router.push('/login'); return 'unauthorized'; }
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
-      if (res.status === 403) { setError(await forbiddenMessageOfResponse(res)); return 'forbidden'; }
+      if (res.status === HTTP_FORBIDDEN) { setError(await forbiddenMessageOfResponse(res)); return 'forbidden'; }
       if (res.status === 404) {
         // リードが消えていたら、前に読んだリードを画面に残さない (消えたリードのステージを変えられるように見せない。#1917)
         setLead(null);
@@ -203,7 +208,9 @@ export default function LeadDetailPage(props: PageProps) {
           if (message !== null) setError(message);
           return;
         }
-        throw new Error('ステージ変更失敗');
+        // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 と失敗は「ステージ変更失敗」(#1917)
+        if (res.status === HTTP_FORBIDDEN) throw new Error(forbiddenMessageForScreen(body, STAGE_CHANGE_FAILURE_MESSAGE));
+        throw new Error(STAGE_CHANGE_FAILURE_MESSAGE);
       }
       await fetchLead();
     } catch (e: unknown) {
