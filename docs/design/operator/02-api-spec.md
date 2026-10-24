@@ -72,7 +72,7 @@ await supabase.from('admin_audit_logs').insert({
 ## 4. ユーザー管理 API
 
 ### GET /api/admin/users
-ユーザー一覧・検索
+ユーザー一覧・検索。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数 (`meta.total`) を返す。数え直しも失敗したら 500。ほかの読み込みの DB の失敗は 500 (200 の空の一覧にしない。cross/04 §6.2。#1917)
 
 **クエリパラメータ**:
 
@@ -122,7 +122,7 @@ await supabase.from('admin_audit_logs').insert({
 ---
 
 ### GET /api/admin/users/{id}
-ユーザー詳細 (`email` の扱いは上の「email の扱い」と同じ。`support` には `null`)
+ユーザー詳細 (`email` の扱いは上の「email の扱い」と同じ。`support` には `null`)。 読み込みの DB の失敗は 500 (404 にしない)。404 は行が無いとき (UUID の形でない id は DB に渡さずに 404) だけ (cross/04 §5.2。#1917)。凍結・凍結の解除・ロールの変更の対象の読み込みも同じ
 
 **レスポンス**:
 ```json
@@ -828,7 +828,7 @@ MRR 時系列
 ---
 
 ### GET /api/admin/finance/invoices
-請求書一覧
+請求書一覧。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数 (`meta.total`) を返す。数え直しも失敗したら 500。ほかの読み込みの DB の失敗は 500 (200 の空の一覧にしない。cross/04 §6.2。#1917)。詳細の `GET /api/admin/finance/invoices/{id}` は、読み込みの DB の失敗を 500 にし、行が無いときだけ 404 (#1917)
 
 ### POST /api/admin/finance/invoices/{id}/resend
 請求書再送
@@ -876,7 +876,7 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 ## 10. サポート API
 
 ### GET /api/support/tickets
-チケット一覧
+チケット一覧。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数 (`meta.total`) を返す。数え直しも失敗したら 500。ほかの読み込みの DB の失敗は 500 (200 の空の一覧にしない。cross/04 §6.2。#1917)。チケットの作成 (POST) は 本文が JSON として読めないときは 400 `INVALID_JSON` (外側の catch の 500 に落とさない。#1917)
 
 **クエリ**: `?status=open&priority=high&assignee_id=uuid&page=1`
 
@@ -900,12 +900,12 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 ---
 
 ### GET /api/support/tickets/{id}
-チケット詳細 (メッセージ一覧含む)
+チケット詳細 (メッセージ一覧含む)。 読み込みの DB の失敗は 500 (404 にしない)。404 は行が無いとき (UUID の形でない id は DB に渡さずに 404) だけ (cross/04 §5.2。#1917)
 
 ---
 
 ### POST /api/support/tickets/{id}/messages
-メッセージ追加
+メッセージ追加。チケットの読み込みの DB の失敗は 500 (404 は行が無いとき (UUID の形でない id を含む) だけ)。 本文が JSON として読めないときは 400 `INVALID_JSON` (外側の catch の 500 に落とさない。#1917)
 
 **リクエスト**:
 ```json
@@ -927,7 +927,7 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 ---
 
 ### PATCH /api/support/tickets/{id}
-ステータス・担当者変更
+ステータス・担当者変更。更新の DB の失敗は 500 (404 は更新した行が無いとき (UUID の形でない id を含む) だけ)。担当者 (`assignee_id`) が存在しない (外部キー違反) は 400 `VALIDATION_ERROR`。 本文が JSON として読めないときは 400 `INVALID_JSON` (外側の catch の 500 に落とさない。#1917)。`POST /api/admin/support/tickets/{id}/assign` も同じ
 
 **リクエスト**: `{ "status": "resolved", "assignee_id": "uuid" }`
 
@@ -1162,7 +1162,7 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 ---
 
 ### GET /api/super-admin/infra/alerts
-アラート一覧
+アラート一覧。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数 (`meta.total`) を返す。数え直しも失敗したら 500。ほかの読み込みの DB の失敗は 500 (200 の空の一覧にしない。cross/04 §6.2。#1917)
 
 ### POST /api/super-admin/infra/alerts/{id}/acknowledge
 アラート確認
@@ -1192,7 +1192,7 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 ## 14. 営業 CRM API
 
 ### GET /api/admin/sales/leads
-見込み客一覧
+見込み客一覧。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数 (`meta.total`) を返す。数え直しも失敗したら 500。ほかの読み込みの DB の失敗は 500 (200 の空の一覧にしない。cross/04 §6.2。#1917)。リードの作成 (POST) は 本文が JSON として読めないときは 400 `INVALID_JSON` (外側の catch の 500 に落とさない。#1917)
 
 **クエリ**: `?stage=meeting&assigned_to=uuid&page=1`
 
@@ -1219,17 +1219,17 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 ---
 
 ### PATCH /api/admin/sales/leads/{id}
-リード更新 (ステージ変更含む)
+リード更新 (ステージ変更含む)。 本文が JSON として読めないときは 400 `INVALID_JSON` (外側の catch の 500 に落とさない。#1917)
 
 - ステージを変えると、活動履歴 (`sales_lead_activities`) に `stage_change` (`details: { from_stage, to_stage }`) を残す (この書き込みに失敗しても、リードは更新できているので 200 のまま (監査ログと同じ fail-open)。失敗は db-logger に error で残す。#1917)
 - 同時の更新: 本文に `stage` があるときは「直前に読んだ `stage` のままなら書く」条件つきにする。0 行なら読み直し、リードがあれば 409 `CONFLICT_STALE_DATA`
-  (書かず、活動履歴も監査ログも残さない)、無ければ 404。`from_stage` は書いた時点の実際の直前のステージと必ず一致する。`stage` が無い更新には条件を付けず、更新が 0 行 (読んでから書くまでにリードが消えた) なら 404 (`src/app/api/admin/sales/leads/[id]/route.ts:228-231`)
+  (書かず、活動履歴も監査ログも残さない)、無ければ 404。`from_stage` は書いた時点の実際の直前のステージと必ず一致する。`stage` が無い更新には条件を付けず、更新が 0 行 (読んでから書くまでにリードが消えた) なら 404 (`src/app/api/admin/sales/leads/[id]/route.ts:212-215`)
 - 読み込み・更新・読み直しの DB の失敗は 500 `INTERNAL_ERROR` (404 にしない)。UUID の形でない id は DB に渡さず 404 `NOT_FOUND` (本文の検査の 400 のあと。uuid 型の列に渡すと 22P02 で「DB の失敗」に入るため。#1917)。詳細の `GET /api/admin/sales/leads/{id}` も同じで、リード・活動履歴の読み込みの DB の失敗は 500 (404 は行が無いとき (UUID の形でない id を含む) だけ。活動履歴の読み込みの失敗を空の履歴にしない。#1917)
 
 ---
 
 ### GET / POST /api/admin/sales/leads/{id}/activities
-`GET` は活動履歴の一覧 (`{ data: [{ id, lead_id, actor_id, activity_type, details, created_at }] }`。新しい順。権限は `sales` / `admin` / `super_admin`。UUID の形でない id は DB に渡さず 404 `NOT_FOUND`、読み込みの DB の失敗は 500 `INTERNAL_ERROR`。監査ログは残さない。`src/app/api/admin/sales/leads/[id]/activities/route.ts:53-95`)。`POST` は活動記録追加。リードの読み込みの DB の失敗は 500 `INTERNAL_ERROR` (404 は行が無いとき (UUID の形でない id を含む。DB に渡さず、本文の検査の 400 のあとに 404) だけ)。追加のあとのリードの `updated_at` の更新に失敗しても、活動は追加できているので 201 のまま (失敗は db-logger に error で残す。#1917)
+`GET` は活動履歴の一覧 (`{ data: [{ id, lead_id, actor_id, activity_type, details, created_at }] }`。新しい順。権限は `sales` / `admin` / `super_admin`。UUID の形でない id は DB に渡さず 404 `NOT_FOUND`、読み込みの DB の失敗は 500 `INTERNAL_ERROR`。監査ログは残さない。`src/app/api/admin/sales/leads/[id]/activities/route.ts:53-95`)。`POST` は活動記録追加。リードの読み込みの DB の失敗は 500 `INTERNAL_ERROR` (404 は行が無いとき (UUID の形でない id を含む。DB に渡さず、本文の検査の 400 のあとに 404) だけ)。追加のあとのリードの `updated_at` の更新に失敗しても、活動は追加できているので 201 のまま (失敗は db-logger に error で残す。#1917)　POST は 本文が JSON として読めないときは 400 `INVALID_JSON` (外側の catch の 500 に落とさない。#1917)。
 
 **リクエスト**:
 ```json
@@ -1256,7 +1256,7 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 ## 15. A/B テスト API
 
 ### GET /api/super-admin/experiments
-実験一覧
+実験一覧。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数 (`meta.total`) を返す。数え直しも失敗したら 500。ほかの読み込みの DB の失敗は 500 (200 の空の一覧にしない。cross/04 §6.2。#1917)
 
 **権限**: `super_admin`
 
@@ -1284,10 +1284,10 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 ---
 
 ### PATCH /api/super-admin/experiments/{id}
-実験更新 (start/stop/cancel)
+実験更新 (start/stop/cancel)。 読み込みの DB の失敗は 500 (404 にしない)。404 は行が無いとき (UUID の形でない id は DB に渡さずに 404) だけ (cross/04 §5.2。#1917)。詳細 (GET)・削除 (DELETE) の読み込みも同じ
 
 ### GET /api/super-admin/experiments/{id}/results
-実験結果 (p値、信頼区間、サブグループ分析)
+実験結果 (p値、信頼区間、サブグループ分析)。実験の読み込みの DB の失敗は 500 (404 は行が無いとき (UUID の形でない id を含む) だけ。#1917)
 
 ---
 
@@ -1328,7 +1328,7 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 ## 17. プラン定義 API
 
 ### GET /api/super-admin/plans
-プラン一覧
+プラン一覧。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数 (`meta.total`) を返す。数え直しも失敗したら 500。ほかの読み込みの DB の失敗は 500 (200 の空の一覧にしない。cross/04 §6.2。#1917)
 
 **クエリ**: `?type=org&status=public`
 
@@ -1358,7 +1358,7 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 ---
 
 ### GET /api/super-admin/plans/{id}
-プラン詳細
+プラン詳細。 読み込みの DB の失敗は 500 (404 にしない)。404 は行が無いとき (UUID の形でない id は DB に渡さずに 404) だけ (cross/04 §5.2。#1917)。編集 (PATCH)・削除 (DELETE)・価格の変更 (POST price-change)・影響の見積もり (GET price-impact) の読み込みも同じ
 
 ### PATCH /api/super-admin/plans/{id}
 プラン編集 (draft のみ自由編集、public 以降は価格変更 API 経由)。同時の変更: 遷移の可否・status ごとに変えてよい項目・廃止の `ends_at` の要否は直前に読んだ `status` (と `ends_at`) で決め、更新はその `status` のまま (廃止で既存の `ends_at` に頼るときは `ends_at` が NULL でないことも) のときだけ書く条件つき。0 行なら読み直し、送った変更がもう入っていれば 200 (書かず記録もしない)、入っていなければ 409 `CONFLICT_STALE_DATA`、行が無ければ 404 `OP_PLAN_NOT_FOUND` (cross/04 §4.2)。廃止の `ends_at` の要否は書いた後の値で決める (本文の `ends_at: null` は既存の値があっても 400 `OP_PLAN_DEPRECATE_ENDS_AT_REQUIRED`)。監査 `update_plan` は `status` を変えたときだけ `status_from` / `status_to` を持ち、`status_from` は書いた時点の実際の直前の値。削除 (`DELETE /api/super-admin/plans/{id}`。draft のみ・それ以外は 422 `OP_PLAN_NOT_DRAFT`) も `status = 'draft'` のままのときだけ消し、0 行なら読み直して、無ければ 404 `OP_PLAN_NOT_FOUND`、あれば 409 `CONFLICT_STALE_DATA` (どちらも記録しない)
@@ -1504,7 +1504,7 @@ deprecated → private にロールバック (緊急用)
 ## 18. 機能パッケージ API
 
 ### GET /api/super-admin/feature-packages
-パッケージ一覧
+パッケージ一覧。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数 (`meta.total`) を返す。数え直しも失敗したら 500。ほかの読み込みの DB の失敗は 500 (200 の空の一覧にしない。cross/04 §6.2。#1917)
 
 ### POST /api/super-admin/feature-packages
 パッケージ作成
@@ -1527,7 +1527,7 @@ deprecated → private にロールバック (緊急用)
 パッケージ更新
 
 ### DELETE /api/super-admin/feature-packages/{id}
-パッケージ削除
+パッケージ削除。 読み込みの DB の失敗は 500 (404 にしない)。404 は行が無いとき (UUID の形でない id は DB に渡さずに 404) だけ (cross/04 §5.2。#1917)。詳細 (GET) の読み込みも同じ
 
 **バリデーション**: 利用中プランがある場合は `OP_PACKAGE_IN_USE` で 409
 
@@ -1546,7 +1546,7 @@ deprecated → private にロールバック (緊急用)
 - 本文は `src/lib/super-admin/coupon-errors.ts` の `couponInvalidInputResponse` / `couponInvalidQueryResponse` が作る。`OP_INVALID_QUERY` も `code` 以外は同じ形
 
 ### GET /api/super-admin/coupons
-クーポン一覧
+クーポン一覧。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数 (`meta.total`) を返す。数え直しも失敗したら 500。ほかの読み込みの DB の失敗は 500 (200 の空の一覧にしない。cross/04 §6.2。#1917)
 
 **クエリ**: `?status=active&applicable_to=all&page=1&per_page=50` (どれも省略可。`per_page` は 1〜200)。形の誤りは 400 `OP_INVALID_QUERY` (本文の形は §19 冒頭)
 
@@ -1583,7 +1583,7 @@ deprecated → private にロールバック (緊急用)
 ---
 
 ### GET /api/super-admin/coupons/{id}
-クーポン詳細。`{ "data": coupons の行 }`。無ければ 404 `OP_COUPON_NOT_FOUND`
+クーポン詳細。`{ "data": coupons の行 }`。無ければ 404 `OP_COUPON_NOT_FOUND`。 読み込みの DB の失敗は 500 (404 にしない)。404 は行が無いとき (UUID の形でない id は DB に渡さずに 404) だけ (cross/04 §5.2。#1917)。編集 (PATCH)・削除 (DELETE)・適用履歴 (GET redemptions) の読み込みも同じ (適用履歴の一覧は件数より後ろのページを空のページと本当の件数にする)
 
 ---
 
