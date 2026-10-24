@@ -1696,6 +1696,7 @@ sequenceDiagram
 | `recipeAuthorName`・`RECIPE_AUTHOR_FALLBACK_NAME`・`normalizeProfileName` | 保持 (変えない) |
 | `user_profiles` の RLS 3 本・`recipes` / `recipe_comments` の RLS | 保持 (変えない) |
 | `increment_recipe_view_count` の呼び出し・詳細の 404 の判定・コメント POST の検査 | 保持 |
+| `DELETE /api/recipes/[id]`・`recipe_comments_recipe_id_fkey` の `ON DELETE CASCADE` | 保持 (変えない)。本人がレシピを消すと、本人とそのレシピにだけコメントした人の K-公開 が偽になりうる (§9.3・S-17・I-16) |
 | `PUT /api/profile`・`fromUserProfile` / `toUserProfile` | 列を 1 つ通す (§7.6)。route は変えない |
 | プロフィールの編集画面 | チェック 1 つを足す (§7.7) |
 | `prepare_account_deletion`・外部キーの `ON DELETE` | 保持 (退会の扱いは既存のまま) |
@@ -1750,4 +1751,4 @@ sequenceDiagram
 |---|---|---|
 | v1.0 | 2026-10-24 | 新設 (A 型 4 相。構造 A = SECURITY DEFINER の関数 `recipe_author_display_names` + 本人の選択の列 `show_recipe_author_name`。段 A/B/C。プライバシーポリシーの版はオーナーに聞く (Q-1)) |
 | v1.1 | 2026-10-24 | 審査 R1 の反映 (§7.2・§7.9・§7.10・§7.11・§7.12・§6.4・§9.2・§12・§15・§16・§19・§21。構造 A は変えない) |
-| v1.2 | 2026-10-24 | 網羅性 (周 2) の反映 (§0.3・§3・§4.3・§7.10・§9.1・§9.3・§12・§14・§15・§16。構造 A は変えない) |
+| v1.2 | 2026-10-24 | 網羅性 (周 2) の反映 (§0.3・§3・§4.3・§7.10・§9.1・§9.3・§12・§14・§15・§16・§18。構造 A は変えない) |
