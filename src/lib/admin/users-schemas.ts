@@ -157,11 +157,18 @@ export const AdminSetUserRolesResultSchema = z
 
 // ─── 凍結 (BAN) ───────────────────────────────────────────────────────────────
 
+/** 凍結・凍結解除の理由の文字数の上限 (operator/02-api-spec.md §4。凍結の画面 src/components/admin/UserFreezeForm.tsx も送る前にこれで確かめる) */
+export const FREEZE_REASON_MAX_LENGTH = 2000;
+/** 一時 BAN の日数の下限 (1 日) */
+export const FREEZE_DURATION_DAYS_MIN = 1;
+/** 一時 BAN の日数の上限 (365 日。モデレーションの一時 BAN と同じ範囲) */
+export const FREEZE_DURATION_DAYS_MAX = 365;
+
 export const FreezeBodySchema = z.object({
   ban_type: z.enum(['temporary', 'permanent']),
   reason_category: z.enum(['spam', 'abuse', 'policy_violation', 'other']),
-  reason_detail: z.string().min(1).max(2000),
-  duration_days: z.number().int().min(1).max(365).optional(),
+  reason_detail: z.string().min(1).max(FREEZE_REASON_MAX_LENGTH),
+  duration_days: z.number().int().min(FREEZE_DURATION_DAYS_MIN).max(FREEZE_DURATION_DAYS_MAX).optional(),
   notify_user: z.boolean().optional().default(true),
   notification_message: z.string().max(1000).optional(),
 });
@@ -171,7 +178,7 @@ export type FreezeBody = z.infer<typeof FreezeBodySchema>;
 // ─── 凍結解除 ─────────────────────────────────────────────────────────────────
 
 export const UnfreezeBodySchema = z.object({
-  reason: z.string().min(1).max(2000),
+  reason: z.string().min(1).max(FREEZE_REASON_MAX_LENGTH),
 });
 
 export type UnfreezeBody = z.infer<typeof UnfreezeBodySchema>;

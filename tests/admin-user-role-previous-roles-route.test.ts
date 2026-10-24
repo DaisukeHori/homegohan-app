@@ -147,8 +147,11 @@ describe.each([
     ['FORBIDDEN', 403, 'OP_PERMISSION_DENIED'],
     ['CANNOT_MODIFY_OWN_ROLES', 403, 'OP_PERMISSION_DENIED'],
     ['ERROR: USER_NOT_FOUND', 404, 'NOT_FOUND'],
-    // 分かるコードを含まない RAISE (二段階認証の確認が要る) は、汎用の 500
-    ['OPERATOR_MFA_REQUIRED', 500, 'INTERNAL_ERROR'],
+    // DB の二段階認証の判定 (OPERATOR_MFA_REQUIRED) は、ゲートの二段階認証と同じ 403 (code は OP_PERMISSION_DENIED。文は
+    // tests/operator-mfa-db-gate-routes-403.test.ts が確かめる)。汎用の 500 にしない
+    ['OPERATOR_MFA_REQUIRED', 403, 'OP_PERMISSION_DENIED'],
+    // 分かるコードを含まない RAISE は、汎用の 500
+    ['SOME_UNKNOWN_DB_FAILURE', 500, 'INTERNAL_ERROR'],
   ])('RPC が %s で失敗: %i %s を返し、RPC の文面を本文に入れず、監査を残さない', async (message, status, code) => {
     mocks.state.rpcResult = { data: null, error: { message } };
 
