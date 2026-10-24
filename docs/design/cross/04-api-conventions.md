@@ -373,7 +373,7 @@ interface NestedErrorResponse {
 { "error": { "code": "IS_FAMILY_REPRESENTATIVE", "message": "メンバーの除名に失敗しました" } }
 ```
 
-どちらの形でも、本文に DB の生のエラー文・捕まえた例外の文面・`details`・`hint`・スタックを入れない (500 は汎用の文だけにし、元のエラーは構造化ログに残す)。 1 行を読んで「無ければ 404」にするところは `.maybeSingle()` で読み、DB の失敗は 500・行が無いときだけ 404 にする (`.single()` の失敗や `error || !row` を 404 にしない。uuid の列を引く id は DB に渡す前に `isUuid` (`src/lib/http-params.ts`) で確かめて 404。`tests/api-read-not-found-scan.test.ts` が src/app/api を走査して見張る。#1917)。
+どちらの形でも、本文に DB の生のエラー文・捕まえた例外の文面・`details`・`hint`・スタックを入れない (500 は汎用の文だけにし、元のエラーは構造化ログに残す)。 1 行を読んで「無ければ 404」にするところは `.maybeSingle()` で読み、DB の失敗は 500・行が無いときだけ 404 にする (`.single()` の失敗や `error || !row` を 404 にしない。ただし `.single()` の失敗のうち `PGRST116` (行が無い) を見分けて 404 にし、ほかの失敗を 500 にするものは除く (`super-admin/feature-packages/[id]` の PATCH など)。uuid の列を引く id は DB に渡す前に `isUuid` (`src/lib/http-params.ts`) で確かめて 404 (route の正典が UUID でない id を 400 と決めているもの = 問い合わせ (operator/02 の `GET /api/admin/inquiries/{id}`)・開示等の請求 (cross/15 の `dsrIdSchema`)・再送 (operator/10 の requeue)・健康の `health/checkups/[id]`・`health/goals/[id]` (`INVALID_ID_PARAM_CODE`) などは 400 のまま)。`tests/api-read-not-found-scan.test.ts` が src/app/api を走査して見張る。#1917)。
 
 認可の失敗 (401 / 403) の本文で例外の文面 (`err.message`) や英語の文を返している route は、直すときに共通の関数 `authFailureFlat` / `authFailureNested` (`src/lib/api/error-responses.ts`。#1917) で作る (既に日本語の固定の文を返している route (`OP_PERMISSION_DENIED` に `権限がありません` など) はそのままでよい。`message` / `error` は日本語の固定の文で、`AuthError` / `ForbiddenError` の文面 (`requireRole` の `Requires one of: …` など) は入れない。403 の文は `ForbiddenError` の `code` ごとの表で決め、既定の表は凍結・二段階認証・組織に所属していないの文を持つ。nested の `code` は従来の route の code を変えないように、401 と 403 で別々に `'http'` (`UNAUTHORIZED` / `FORBIDDEN`)・`'error'` (例外の `code`)・`{ fixed: '<コード>' }` (`UNAUTHENTICATED`・`OP_PERMISSION_DENIED` など) から選ぶ (admin の営業・問い合わせの形 = 401 は例外の `code`・403 は `OP_PERMISSION_DENIED`、会計の形 = 401 は `UNAUTHENTICATED`・403 は `OP_PERMISSION_DENIED` は同じファイルの定数)。400 (JSON が読めない)・404・409・500 の固定の文の定数も同じファイル。`src/lib/org-api-errors.ts` はこの上に載せた /api/org の包み)。英語だけの文・例外の文面が本文に無いことは、`tests/api-error-japanese-scan.test.ts` が直し終えた配下 (`tests/helpers/api-error-japanese-scope.ts` の `JAPANESE_ERROR_API_DIRS`) の route を走査して見張り、一覧の外の配下の違反の件数は同じファイルの基線と一致することを番兵が確かめる (走査の部品は `tests/helpers/api-error-text-scan.ts`)。 利用者の画面に出ず相手が機械の route・ファイル (外部のサービスの Webhook の受け口 `src/app/api/webhooks`・Vercel Cron の認証 `src/lib/cron-auth.ts`) の本文は、英字の機械向けの code (英小文字と `_`。`payload_too_large`・`cron_disabled` など) のまま残し、同じファイルの `MACHINE_FACING_ERROR_TEXT_PATHS` に理由つきで載せる (番兵の数から外れ、本文の文が機械向けの code だけで英語の文と例外の文面が無いことを見張る)。
 
@@ -443,7 +443,7 @@ LIMIT $limit + 1;  -- +1 で has_more を判定
 
 ### 6.2 offset-based (管理画面のみ)
 
-件数表示が必要な管理画面 (`/admin/*`, `/super-admin/*`) のみ使用可。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数を返す (`src/lib/api/list-range.ts` の `resolveBeyondLastPage`。数え直しも失敗したら 500。問い合わせ・開示等の請求の一覧は従来どおり `total: null`)。画面は件数から最後のページへ取り直す (`src/lib/list-pagination.ts`)。ほかの読み込みの DB の失敗は 200 の空の一覧にせず 500 (`tests/api-list-range-scan.test.ts` が `.range(` を使う route を見張る。#1917)。
+件数表示が必要な管理画面 (`/admin/*`, `/super-admin/*`) のみ使用可。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数を返す (`src/lib/api/list-range.ts` の `resolveBeyondLastPage`。数え直しも失敗したら 500。問い合わせ・開示等の請求の一覧は従来どおり `total: null`)。画面は件数から最後のページへ取り直す (`src/lib/list-pagination.ts`)。一覧の行の読み込みのそれ以外の DB の失敗は 200 の空の一覧にせず 500 (`tests/api-list-range-scan.test.ts` が `.range(` を使う route を見張る。#1917)。
 
 ```
 GET /api/v1/admin/users?page=2&limit=50
