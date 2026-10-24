@@ -306,16 +306,9 @@ const CASES: ReadCase[] = [
     call: async (id) =>
       (await import('@/app/api/super-admin/plans/[id]/price-impact/route')).GET(new NextRequest(`${BASE}/api/super-admin/plans/${id}/price-impact?new_monthly_price_jpy=1200`), ctx({ id })),
   },
-  {
-    // 価格の変更の前にプランを読む。読めなかったときを 404 にしていた (#1917)
-    name: 'POST /api/super-admin/plans/[id]/price-change',
-    table: 'subscription_plans',
-    call: async (id) =>
-      (await import('@/app/api/super-admin/plans/[id]/price-change/route')).POST(
-        json(`${BASE}/api/super-admin/plans/${id}/price-change`, 'POST', { new_monthly_price_jpy: 1200, applies_to: 'new_only', reason: 'price update', effective_at: '2026-11-01T00:00:00.000Z' }),
-        ctx({ id }),
-      ),
-  },
+  // POST /api/super-admin/plans/[id]/price-change は、プランを subscription_plans から読まず、予約の関数 begin_plan_price_change
+  // (#2005) がロックの下で読む。予約の DB の失敗の 500・プランが無いときの 404・UUID の形でない id の 404 は
+  // tests/price-change-reservation-route.test.ts が確かめる
   {
     name: 'GET /api/super-admin/experiments/[id]',
     table: 'experiments',
