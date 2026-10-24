@@ -10,6 +10,7 @@ import { TurnstileWidget, useTurnstile } from "@/components/auth/TurnstileWidget
 import { createClient } from "@/lib/supabase/client";
 import { getSafeRedirectPath } from "@/lib/auth/safe-redirect";
 import { CAPTCHA_FAILED_MESSAGE, isCaptchaFailure } from "@/lib/auth/turnstile";
+import { authErrorMessageForDisplay } from "@/lib/auth/auth-error-message";
 import { validatePassword, PASSWORD_HINT_TEXT } from "@/lib/auth/validate-password";
 import { AppleSignInButton, APPLE_SIGN_IN_BUTTON_HEIGHT_PX } from "@/components/auth/AppleSignInButton";
 import { isAppleSignInEnabled } from "@/lib/auth/apple-sign-in-flag";
@@ -17,6 +18,10 @@ import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 const LEGAL_AGREEMENT_REQUIRED_MESSAGE = '登録するには、利用規約とプライバシーポリシーへの同意が必要です。';
+/** 登録が断られたときの文 (GoTrue の英語の文は付け足さない。#1917 の続き) */
+const SIGNUP_FAILED_MESSAGE = '登録に失敗しました。入力内容をご確認のうえ、もう一度お試しください。';
+/** 登録で予期しない例外が起きたときの文 (例外の文面は出さず console に残す。#1917 の続き) */
+const UNEXPECTED_SIGNUP_ERROR_MESSAGE = '予期せぬエラーが発生しました。しばらくしてから再度お試しください。';
 
 function SignupContent() {
   const [isLoading, setIsLoading] = useState(false);
@@ -157,7 +162,8 @@ function SignupContent() {
           // #1165: 英語の生のエラー文は出さない (ウィジェットは取り直し済み)
           setFormError(CAPTCHA_FAILED_MESSAGE);
         } else {
-          setFormError(`登録に失敗しました: ${error.message}`);
+          // GoTrue の英語の文は付け足さない (回数の制限は「しばらくしてから」の案内。#1917 の続き)
+          setFormError(authErrorMessageForDisplay(error, SIGNUP_FAILED_MESSAGE));
         }
         // #286: エラー確定後に即座にローディングを解除（finally でも解除されるが明示的に）
         setIsLoading(false);
@@ -189,7 +195,7 @@ function SignupContent() {
       setFormError(
         /network|fetch|failed to fetch/i.test(msg)
           ? 'ネットワークエラーが発生しました。通信状態をご確認のうえ再度お試しください。'
-          : `予期せぬエラーが発生しました: ${msg}`
+          : authErrorMessageForDisplay(error, UNEXPECTED_SIGNUP_ERROR_MESSAGE)
       );
     } finally {
       // #286: finally で必ずローディング解除（すべての return 経路を網羅）

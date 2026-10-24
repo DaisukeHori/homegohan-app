@@ -33,7 +33,7 @@ export default function NewExperimentPage() {
     if (!form.key) newErrors.key = "キーは必須です";
     else if (!/^[a-z0-9_]+$/.test(form.key)) newErrors.key = "小文字英数字とアンダースコアのみ";
     if (!form.name) newErrors.name = "名前は必須です";
-    if (totalWeight !== 100) newErrors.variants = "バリアントの weight 合計は 100 である必要があります";
+    if (totalWeight !== 100) newErrors.variants = "バリアントの重み (weight) の合計は 100 である必要があります";
     return newErrors;
   };
 

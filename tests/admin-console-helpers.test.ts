@@ -25,11 +25,11 @@ describe('extractApiErrorMessage', () => {
       extractApiErrorMessage({
         error: {
           code: 'OWNER_ALREADY_IN_ORG',
-          message: '指定した owner は既に別の組織に所属しています',
+          message: '指定したオーナー (owner_id) は既に別の組織に所属しています',
           details: { fieldErrors: { owner_id: ['Invalid UUID'] } },
         },
       }),
-    ).toBe('指定した owner は既に別の組織に所属しています');
+    ).toBe('指定したオーナー (owner_id) は既に別の組織に所属しています');
   });
 
   it.each([

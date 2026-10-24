@@ -168,12 +168,12 @@ const AppLogsFilterSchema = z
     cursor: z
       .string()
       .max(512)
-      .refine((value) => decodeAppLogCursor(value) !== null, 'cursor が不正です')
+      .refine((value) => decodeAppLogCursor(value) !== null, '続きの位置 (cursor) が不正です')
       .optional(),
   })
   .refine(
     (v) => !(isValidIsoDateTime(v.from) && isValidIsoDateTime(v.to)) || Date.parse(v.from) <= Date.parse(v.to),
-    { message: 'from は to 以前の日時にしてください', path: ['from'] },
+    { message: '開始の日時 (from) は終了の日時 (to) 以前の日時にしてください', path: ['from'] },
   );
 
 /** 絞り込みに使うクエリパラメータ名 (limit は別に扱う) */

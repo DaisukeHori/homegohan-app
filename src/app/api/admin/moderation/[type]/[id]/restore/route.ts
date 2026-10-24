@@ -27,6 +27,7 @@ import { createLogger, generateRequestId } from '@/lib/db-logger';
 import {
   MODERATION_RESTORE_AUDIT_ACTION,
   MODERATION_TYPES,
+  MODERATION_TYPE_INVALID_MESSAGE,
   ModerationRestoreBodySchema,
   type ModerationType,
 } from '@/lib/admin/moderation-schemas';
@@ -100,7 +101,7 @@ const RACED_RESTORE_ERROR: Record<HiddenContentRestorability['kind'], string> = 
 
 export async function POST(request: Request, props: Params) {
   // 本文の NULL 文字は、認証・DB に触れる前に 400 で断る (#1657)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
 
@@ -119,7 +120,7 @@ export async function POST(request: Request, props: Params) {
 
   const { type, id } = params;
   if (!MODERATION_TYPES.includes(type as ModerationType)) {
-    return errorResponse(400, 'VALIDATION_ERROR', `type は ${MODERATION_TYPES.join(', ')} のいずれかである必要があります`);
+    return errorResponse(400, 'VALIDATION_ERROR', MODERATION_TYPE_INVALID_MESSAGE);
   }
   const moderationType = type as ModerationType;
   // ai_content は準備中 (未対応)。本文の検証より前に 501 (#1128)

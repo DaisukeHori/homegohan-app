@@ -19,7 +19,7 @@ export type TicketListQuery = z.infer<typeof ticketListQuerySchema>;
 
 // ─── チケット作成 ─────────────────────────────────────────────────────────────
 export const createTicketSchema = z.object({
-  user_id: z.string().uuid({ message: 'user_id は UUID 形式で指定してください' }),
+  user_id: z.string().uuid({ message: '利用者の ID (user_id) は UUID 形式で指定してください' }),
   subject: z
     .string()
     .min(1, '件名は必須です')
@@ -46,7 +46,7 @@ export type UpdateTicketInput = z.infer<typeof updateTicketSchema>;
 
 // ─── 担当者割り当て ───────────────────────────────────────────────────────────
 export const assignTicketSchema = z.object({
-  assignee_id: z.string().uuid({ message: 'assignee_id は UUID 形式です' }),
+  assignee_id: z.string().uuid({ message: '担当者の ID (assignee_id) は UUID 形式で指定してください' }),
 });
 
 export type AssignTicketInput = z.infer<typeof assignTicketSchema>;

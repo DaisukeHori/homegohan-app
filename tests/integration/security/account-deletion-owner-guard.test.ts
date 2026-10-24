@@ -378,7 +378,7 @@ describe('退会の本体と運営の作成 API', () => {
       owner_id: target.id,
     });
     expect(refused.status, JSON.stringify(refused.body)).toBe(HTTP_CONFLICT);
-    expect(refused.body.error).toEqual({ code: RAISE_CODE, message: '指定した owner は退会の手続き中です' });
+    expect(refused.body.error).toEqual({ code: RAISE_CODE, message: '指定したオーナー (owner_id) は退会の手続き中です' });
     expect(await ownedOrgIds(target.id)).toEqual([]);
 
     // 印が古くなれば (途中で止まった退会の残り) 作れる

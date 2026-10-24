@@ -252,10 +252,10 @@ export async function POST(request: Request) {
       //   無事だが新規挿入分が残留しており、重複している可能性がある（データ消失ではない）
       const rollbackSucceeded = !rollbackDeleteFailed && !restoreFailed;
       const message = rollbackSucceeded
-        ? 'Pantry replace が部分的に失敗したため、元のデータへロールバックしました'
+        ? '冷蔵庫の置き換え (replace) が部分的に失敗したため、元のデータへロールバックしました'
         : restoreFailed
-          ? 'Pantry replace が部分的に失敗し、旧データの復元にも失敗しました。冷蔵庫データが失われた可能性があります。サポートへ連絡してください'
-          : 'Pantry replace が部分的に失敗し、新規追加分の削除ロールバックに失敗しました。旧データは復元済みのため、新規追加分と重複している可能性があります。内容をご確認ください';
+          ? '冷蔵庫の置き換え (replace) が部分的に失敗し、旧データの復元にも失敗しました。冷蔵庫データが失われた可能性があります。サポートへ連絡してください'
+          : '冷蔵庫の置き換え (replace) が部分的に失敗し、新規追加分の削除ロールバックに失敗しました。旧データは復元済みのため、新規追加分と重複している可能性があります。内容をご確認ください';
 
       return NextResponse.json(
         {

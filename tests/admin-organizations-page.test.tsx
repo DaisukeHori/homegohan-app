@@ -614,7 +614,7 @@ describe('作成', () => {
     mockApi({
       list: () => jsonResponse(200, listBody([org(1)])),
       create: () =>
-        jsonResponse(409, errorBody('OWNER_ALREADY_IN_ORG', '指定した owner は既に別の組織に所属しています')),
+        jsonResponse(409, errorBody('OWNER_ALREADY_IN_ORG', '指定したオーナー (owner_id) は既に別の組織に所属しています')),
     });
     await renderPage();
     await type(createName(), '株式会社テスト');
@@ -623,7 +623,7 @@ describe('作成', () => {
     await click(findButton('作成する'), '作成ボタン');
 
     expect(callsOf('POST')).toHaveLength(1);
-    expect(alerts()).toEqual(['指定した owner は既に別の組織に所属しています']);
+    expect(alerts()).toEqual(['指定したオーナー (owner_id) は既に別の組織に所属しています']);
     expect(statuses()).toEqual([]);
     // 入力は残る (直してもう一度送れる)
     expect(createName().value).toBe('株式会社テスト');
@@ -710,7 +710,7 @@ describe('作成', () => {
     expect(callsOf('POST')).toHaveLength(1);
 
     await act(async () => {
-      slow.resolve(jsonResponse(409, errorBody('OWNER_ALREADY_IN_ORG', '指定した owner は既に別の組織に所属しています')));
+      slow.resolve(jsonResponse(409, errorBody('OWNER_ALREADY_IN_ORG', '指定したオーナー (owner_id) は既に別の組織に所属しています')));
     });
     await settle();
     expect(findButton('作成する')?.disabled).toBe(false);
@@ -725,7 +725,7 @@ describe('作成', () => {
       create: () =>
         ++calls === 1
           ? jsonResponse(200, { organization: org(1) })
-          : jsonResponse(409, errorBody('OWNER_ALREADY_IN_ORG', '指定した owner は既に別の組織に所属しています')),
+          : jsonResponse(409, errorBody('OWNER_ALREADY_IN_ORG', '指定したオーナー (owner_id) は既に別の組織に所属しています')),
     });
     await renderPage();
     await type(createName(), '一つ目');
@@ -735,7 +735,7 @@ describe('作成', () => {
     await type(createName(), '二つ目');
     await click(findButton('作成する'), '作成ボタン');
     expect(statuses()).toEqual([]);
-    expect(alerts()).toEqual(['指定した owner は既に別の組織に所属しています']);
+    expect(alerts()).toEqual(['指定したオーナー (owner_id) は既に別の組織に所属しています']);
   });
 });
 

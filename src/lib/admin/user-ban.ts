@@ -67,7 +67,7 @@ function hasSuperAdminRole(roles: unknown): boolean {
   return Array.isArray(roles) && roles.includes('super_admin');
 }
 
-const SUPER_ADMIN_BAN_REJECTED_MESSAGE = 'super_admin ユーザーを BAN することはできません';
+export const SUPER_ADMIN_BAN_REJECTED_MESSAGE = 'スーパー管理者 (super_admin) のユーザーを BAN することはできません';
 const BAN_TARGET_NOT_FOUND_MESSAGE = 'BAN 対象ユーザーが見つかりません';
 
 export interface ApplyUserBanResult {

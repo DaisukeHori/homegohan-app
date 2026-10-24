@@ -25,6 +25,7 @@ export * from './apple-sign-in';
 export * from './account-change-errors';
 export * from './account-change-input';
 export * from './email-change-link';
+export * from './auth-link-error';
 export * from './health-blood-test-reference';
 export * from './org-challenges';
 export * from './org-settings';

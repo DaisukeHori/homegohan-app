@@ -168,7 +168,7 @@ const SHARED_VALIDATION_CASES: Array<{ name: string; actionType: string; params:
     name: 'update_health_goal: 期日が日付でない',
     actionType: 'update_health_goal',
     params: { goalId: 'goal-1', updates: { target_date: '2026/10/10' } },
-    error: 'target_date は YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください',
+    error: '目標の日付 (target_date)はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください',
   },
 ];
 

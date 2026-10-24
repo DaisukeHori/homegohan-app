@@ -19,7 +19,7 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 export async function POST(request: Request) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   const logger = createLogger('POST /api/family/representative-transfer/propose', generateRequestId());
   const supabase = await createClient();
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
 
   if (!parsed.family_id || !parsed.to_user_id) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'family_id と to_user_id は必須です' } },
+      { error: { code: 'VALIDATION_ERROR', message: '家族のグループ (family_id) と譲渡先の利用者 (to_user_id) は必須です' } },
       { status: 400 },
     );
   }

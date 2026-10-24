@@ -16,7 +16,7 @@ export async function POST(
   { params }: { params: Promise<{ member_id: string }> },
 ) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   const { member_id } = await params;
   const logger = createLogger('POST /api/family/members/[member_id]/remove', generateRequestId());
@@ -45,7 +45,7 @@ export async function POST(
 
   if (!parsed.family_id) {
     return NextResponse.json(
-      { error: { code: MembershipErrorCode.VALIDATION_ERROR, message: 'family_id は必須です' } },
+      { error: { code: MembershipErrorCode.VALIDATION_ERROR, message: '家族のグループ (family_id) は必須です' } },
       { status: 400 },
     );
   }

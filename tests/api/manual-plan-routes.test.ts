@@ -221,15 +221,15 @@ describe('POST: 本文の検証 (§9.0 の 5・6)', () => {
     expectNoServiceCalls();
   });
 
-  it('POST/DELETE: 400 INVALID_CHARACTER for a NULL character before requireRole (flat body)', async () => {
+  it('POST/DELETE: 400 INVALID_CHARACTER for a NULL character before requireRole (nested body like the other errors of the route. #1917)', async () => {
     for (const method of ['POST', 'DELETE'] as const) {
       const response = await (method === 'POST' ? POST : DELETE)(
         rawRequest(method, TARGET_ID, JSON.stringify({ plan_key: 'pro', reason: 'a\u0000b' })),
         params(TARGET_ID),
       );
       expect(response.status).toBe(400);
-      const json = (await response.json()) as { code: string };
-      expect(json.code).toBe('INVALID_CHARACTER');
+      const json = (await response.json()) as { error: { code: string } };
+      expect(json.error.code).toBe('INVALID_CHARACTER');
     }
     expect(mocks.requireRole).not.toHaveBeenCalled();
     expectNoServiceCalls();

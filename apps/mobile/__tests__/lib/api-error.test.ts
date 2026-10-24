@@ -157,34 +157,39 @@ describe('getApiErrorMessage — 通信できないとき (#1168)', () => {
 });
 
 describe('getApiErrorMessage — 取り出せないとき', () => {
-  it('本文に message が無ければ Error の message をそのまま返す', async () => {
+  // HTTP のエラーで本文から文を取り出せないときは、生の `HTTP <status> …` の文字列ではなく fallback (#1917 の続き。
+  // 以前は Error の message をそのまま返し、ゲートウェイの HTML の 502 などで英語の生の文字列が画面に出ていた)
+  it('本文に message が無ければ fallback (生の "HTTP 500 …" を返さない)', async () => {
     const api = clientRespondingWith(500, 'Internal Server Error', JSON.stringify({ error: { code: 'INTERNAL_ERROR' } }));
     const error = await rejectionOf(api.get('/api/x'));
 
-    expect(getApiErrorMessage(error, 'fallback')).toBe((error as Error).message);
-    expect(getApiErrorMessage(error, 'fallback')).toContain('HTTP 500 Internal Server Error:');
+    expect((error as Error).message).toContain('HTTP 500 Internal Server Error:');
+    expect(getApiErrorMessage(error, 'fallback')).toBe('fallback');
   });
 
-  it('message が空文字なら Error の message をそのまま返す', async () => {
+  it('message が空文字なら fallback', async () => {
     const api = clientRespondingWith(500, 'Internal Server Error', JSON.stringify({ error: { code: 'INTERNAL_ERROR', message: '' } }));
     const error = await rejectionOf(api.get('/api/x'));
 
-    expect(getApiErrorMessage(error, 'fallback')).toBe((error as Error).message);
+    expect(getApiErrorMessage(error, 'fallback')).toBe('fallback');
   });
 
-  it('JSON ではない応答 (存在しないパスの HTML など) は、ステータス付きの message をそのまま返す', async () => {
+  it('JSON ではない応答 (存在しないパスの HTML など) は fallback (ステータス付きの生の message を返さない)', async () => {
     const api = clientRespondingWith(404, 'Not Found', '<!DOCTYPE html><html><body>404</body></html>');
     const error = await rejectionOf(api.get('/api/super-admin/feature-flags'));
 
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toBe('HTTP 404 Not Found: <!DOCTYPE html><html><body>404</body></html>');
-    expect(getApiErrorMessage(error, 'fallback')).toBe((error as Error).message);
+    expect(getApiErrorMessage(error, 'fallback')).toBe('fallback');
   });
 
-  it('本文が JSON として読めない "HTTP ..." 形式の message は、そのまま返す', () => {
-    expect(getApiErrorMessage(new Error('HTTP 502 Bad Gateway: upstream timeout'), 'fallback')).toBe(
-      'HTTP 502 Bad Gateway: upstream timeout',
-    );
+  it('本文が JSON として読めない "HTTP ..." 形式の message (ゲートウェイの 502 など) は fallback', () => {
+    expect(getApiErrorMessage(new Error('HTTP 502 Bad Gateway: upstream timeout'), 'fallback')).toBe('fallback');
+    expect(getApiErrorMessage(new Error('HTTP 502 : <html><body>Bad Gateway</body></html>'), 'fallback')).toBe('fallback');
+  });
+
+  it('HTTP のエラーでない例外の文は、今までどおりそのまま返す (日本語でない文を出さないのは getJapaneseApiErrorMessage)', () => {
+    expect(getApiErrorMessage(new Error('Network request failed'), 'fallback')).toBe('Network request failed');
   });
 
   it('文字列や message を持つオブジェクトが投げられても扱える', () => {

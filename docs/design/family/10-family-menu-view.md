@@ -915,7 +915,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { MembershipErrorCode } from '@/lib/errors/membership-errors';
-import { isCalendarDate, CALENDAR_DATE_REQUIREMENT } from '@/lib/date-utils';
+import { isCalendarDate } from '@/lib/date-utils'; import { CALENDAR_DATE_RANGE_PARAMS_LABEL, invalidCalendarDateMessage } from '@/lib/api/user-api-error-messages';
 import { groupFamilyMenuRows, isFamilyMenuRangeAllowed, FAMILY_MENU_RANGE_MAX_DAYS } from '@/lib/membership/family-menu';
 import { FamilyMenuRpcRowsSchema, type FamilyMenuData } from '@/schemas/membership/family-menu';
 
@@ -934,10 +934,10 @@ export async function GET(request: Request) {
   const startDate = searchParams.get('startDate') ?? '';
   const endDate = searchParams.get('endDate') ?? '';
   if (!isCalendarDate(startDate) || !isCalendarDate(endDate)) {
-    return NextResponse.json({ error: { code: MembershipErrorCode.INVALID_REQUEST, message: `startDate / endDate must be ${CALENDAR_DATE_REQUIREMENT}` } }, { status: 400 });
+    return NextResponse.json({ error: { code: MembershipErrorCode.INVALID_REQUEST, message: invalidCalendarDateMessage(CALENDAR_DATE_RANGE_PARAMS_LABEL) } }, { status: 400 });
   }
   if (!isFamilyMenuRangeAllowed(startDate, endDate)) {
-    return NextResponse.json({ error: { code: MembershipErrorCode.INVALID_REQUEST, message: `範囲は startDate 以上 endDate 以下で、${FAMILY_MENU_RANGE_MAX_DAYS} 日以内にしてください` } }, { status: 400 });
+    return NextResponse.json({ error: { code: MembershipErrorCode.INVALID_REQUEST, message: `範囲は開始日 (startDate) 以上、終了日 (endDate) 以下で、${FAMILY_MENU_RANGE_MAX_DAYS} 日以内にしてください` } }, { status: 400 });
   }
 
   const { data: profile, error: profileError } = await supabase.from('user_profiles').select('family_id').eq('id', user.id).maybeSingle();

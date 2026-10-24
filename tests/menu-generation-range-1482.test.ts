@@ -150,14 +150,14 @@ describe('1. 運営の A/B テスト・エクスポートのスキーマは、�
 describe('1. 健康の入力の日付の項目 (健康診断の日・目標の期日・休止の期限) は、実在する日付だけを通す', () => {
   it.each(INVALID_DATES)('%s は errors に入り、data に入らない', (date) => {
     const checkup = sanitizeHealthCheckupPayload({ checkup_date: date });
-    expect(checkup.errors).toEqual(['checkup_date は YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください']);
+    expect(checkup.errors).toEqual(['受診日 (checkup_date)はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください']);
     expect(checkup.data).not.toHaveProperty('checkup_date');
 
     const goal = sanitizeHealthGoalCreate({ goal_type: 'weight', target_value: 60, target_date: date });
-    expect(goal.errors).toContain('target_date は YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください');
+    expect(goal.errors).toContain('目標の日付 (target_date)はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください');
 
     const prefs = sanitizeNotificationPreferences({ vacation_until: date });
-    expect(prefs.errors).toEqual(['vacation_until は YYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください']);
+    expect(prefs.errors).toEqual(['お休みモードの終わりの日 (vacation_until)はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください']);
   });
 
   it('実在する日付は前後の空白を除いて通す', () => {

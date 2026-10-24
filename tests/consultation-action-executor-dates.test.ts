@@ -120,7 +120,7 @@ describe.each(ACTIONS)('$actionType: date は実在する日付だけ (#1433)', 
     const db = makeSupabase();
     const out = await run(db, actionType, params(date));
     expect(out.success).toBe(false);
-    expect(out.result).toEqual({ error: '日付は YYYY-MM-DD の形の実在する日付 (0101-01-02〜9998-12-30) で指定してください' });
+    expect(out.result).toEqual({ error: '日付はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください' });
     expect(resolveExistingTargetSlots).not.toHaveBeenCalled();
     expect(db.from).not.toHaveBeenCalled();
     expect(queueDb.from).not.toHaveBeenCalled();
@@ -145,7 +145,7 @@ describe('generate_week_menu: startDate は実在する日付で、受け付け�
     const db = makeSupabase();
     const out = await run(db, 'generate_week_menu', { startDate });
     expect(out.success).toBe(false);
-    expect(out.result).toEqual({ error: '開始日は YYYY-MM-DD の形の実在する日付 (0101-01-02〜9998-12-30) で指定してください' });
+    expect(out.result).toEqual({ error: '開始日はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください' });
     expect(resolveExistingTargetSlots).not.toHaveBeenCalled();
     expect(db.from).not.toHaveBeenCalled();
     expect(queueDb.from).not.toHaveBeenCalled();
@@ -195,7 +195,7 @@ describe.each([
       ai_consultation_sessions: { user_id: USER.id },
     });
     expect(out.success).toBe(false);
-    expect(out.result).toEqual({ error: '日付は YYYY-MM-DD の形の実在する日付 (0101-01-02〜9998-12-30) で指定してください' });
+    expect(out.result).toEqual({ error: '日付はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください' });
     expect(queries).toEqual([]);
     expect(updateHealthStreak).not.toHaveBeenCalled();
   });
@@ -233,6 +233,6 @@ it('update_health_record: date が無いときも DB に触れずに断る (#148
     ai_consultation_sessions: { user_id: USER.id },
   });
   expect(out.success).toBe(false);
-  expect(out.result).toEqual({ error: '日付は YYYY-MM-DD の形の実在する日付 (0101-01-02〜9998-12-30) で指定してください' });
+  expect(out.result).toEqual({ error: '日付はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください' });
   expect(queries).toEqual([]);
 });

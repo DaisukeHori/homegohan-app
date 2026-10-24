@@ -446,7 +446,7 @@ export type DsrErrorCode = (typeof DSR_ERROR_CODES)[number];
 
 // ── Zod (入力の正本) ─────────────────────────────────────────────────────────
 export const dsrCreateBodySchema = z.object({
-  request_type: z.enum(DSR_REQUEST_TYPES, { message: 'request_type の値が不正です' }),
+  request_type: z.enum(DSR_REQUEST_TYPES, { message: '請求の種類 (request_type) の値が不正です' }),
   details: z
     .string()
     .trim()
@@ -457,16 +457,16 @@ export type DsrCreateInput = z.infer<typeof dsrCreateBodySchema>;
 
 /** 本人確認トークン (tokens.ts が作る 32 バイトの 16 進 = 64 文字) */
 export const dsrVerifyBodySchema = z.object({
-  token: z.string().regex(/^[0-9a-f]{64}$/, 'token の形式が不正です'),
+  token: z.string().regex(/^[0-9a-f]{64}$/, '確認のトークン (token) の形式が不正です'),
 });
 export type DsrVerifyInput = z.infer<typeof dsrVerifyBodySchema>;
 
-export const dsrIdSchema = z.string().uuid({ message: 'id は UUID 形式で指定してください' });
+export const dsrIdSchema = z.string().uuid({ message: 'ID (id) は UUID 形式で指定してください' });
 
 /** 運営の一覧の絞り込み (page / per_page は clampIntParam で丸めるので、ここでは見ない) */
 export const dsrAdminListQuerySchema = z.object({
-  status: z.enum(DSR_STATUSES, { message: 'status の値が不正です' }).optional(),
-  request_type: z.enum(DSR_REQUEST_TYPES, { message: 'request_type の値が不正です' }).optional(),
+  status: z.enum(DSR_STATUSES, { message: '状態 (status) の値が不正です' }).optional(),
+  request_type: z.enum(DSR_REQUEST_TYPES, { message: '請求の種類 (request_type) の値が不正です' }).optional(),
   /** '1' のときだけ期限超過 (due_at < now かつ received / in_progress) に絞る */
   overdue: z.enum(['1']).optional(),
 });
@@ -477,7 +477,7 @@ export const DSR_OPERATOR_TARGET_STATUSES = ['in_progress', 'fulfilled', 'reject
 
 export const dsrAdminUpdateBodySchema = z
   .object({
-    status: z.enum(DSR_OPERATOR_TARGET_STATUSES, { message: 'status の値が不正です' }).optional(),
+    status: z.enum(DSR_OPERATOR_TARGET_STATUSES, { message: '状態 (status) の値が不正です' }).optional(),
     response_note: z
       .string()
       .max(DSR_NOTE_MAX_LENGTH, `応答は${DSR_NOTE_MAX_LENGTH}文字以内です`)
@@ -491,7 +491,7 @@ export const dsrAdminUpdateBodySchema = z
   })
   .refine(
     (body) => body.status !== undefined || body.response_note !== undefined || body.admin_notes !== undefined,
-    { message: 'status か response_note か admin_notes のどれかを指定してください' },
+    { message: '状態 (status) か利用者への回答 (response_note) か運営のメモ (admin_notes) のどれかを指定してください' },
   );
 export type DsrAdminUpdateInput = z.infer<typeof dsrAdminUpdateBodySchema>;
 

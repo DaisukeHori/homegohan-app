@@ -129,7 +129,7 @@ export type PlannedMealValidationResult =
     }
   | PlannedMealValidationFailure;
 
-const MEAL_TYPE_MESSAGE = `mealType は ${PLANNED_MEAL_TYPES.join(' / ')} のいずれかを指定してください`;
+export const MEAL_TYPE_MESSAGE = `食事の区分 (mealType) は次のいずれかを指定してください (${PLANNED_MEAL_TYPES.join(' / ')})`;
 
 /**
  * リクエストから取り出した meal_type と栄養素を検証する。DB に触れる前に呼ぶ。

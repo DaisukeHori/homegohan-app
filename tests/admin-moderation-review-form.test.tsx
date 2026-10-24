@@ -273,7 +273,7 @@ describe('ModerationReviewForm: 結果の表示', () => {
   });
 
   it.each([
-    { status: 403, body: { error: { code: 'OP_PERMISSION_DENIED', message: '永久 BAN は super_admin のみ実行可能です' } }, text: '永久 BAN は super_admin のみ' },
+    { status: 403, body: { error: { code: 'OP_PERMISSION_DENIED', message: '永久 BAN はスーパー管理者 (super_admin) のみ実行可能です' } }, text: '永久 BAN はスーパー管理者 (super_admin) のみ' },
     { status: 400, body: { error: { code: 'VALIDATION_ERROR', message: 'バリデーションエラー' } }, text: 'バリデーションエラー' },
     { status: 404, body: { error: { code: 'NOT_FOUND', message: 'モデレーションアイテムが見つかりません' } }, text: 'モデレーションアイテムが見つかりません' },
     { status: 422, body: { error: { code: 'OP_BAN_TARGET_UNRESOLVED', message: 'BAN 対象ユーザーを特定できませんでした' } }, text: 'BAN 対象ユーザーを特定できませんでした' },

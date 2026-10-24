@@ -26,6 +26,12 @@ export const CALENDAR_DATE_PARAM_LABELS = {
   endDate: '終了日 (endDate)',
 } as const;
 
+/**
+ * 開始日と終了日をまとめて断る 400 の文の名前 (家族の献立 (family/menu)・買い物リストの作り直し (shopping-list/regenerate))。
+ * 文は invalidCalendarDateMessage(この名前) で作る (日付の 400 の文の形を 1 つにそろえる。#1917 の続き)
+ */
+export const CALENDAR_DATE_RANGE_PARAMS_LABEL = `${CALENDAR_DATE_PARAM_LABELS.startDate}と${CALENDAR_DATE_PARAM_LABELS.endDate}`;
+
 /** 404: 自分の食事が見つからない (他人のもの・消されたものを含む。在るかどうかを区別して見せない) */
 export const MEAL_NOT_FOUND_MESSAGE = '食事が見つかりません';
 

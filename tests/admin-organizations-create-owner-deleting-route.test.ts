@@ -98,7 +98,7 @@ describe('POST /api/admin/organizations: 退会の途中の人をオーナーに
 
     expect(res.status).toBe(409);
     expect(await json(res)).toEqual({
-      error: { code: OWNER_ACCOUNT_DELETING, message: '指定した owner は退会の手続き中です' },
+      error: { code: OWNER_ACCOUNT_DELETING, message: '指定したオーナー (owner_id) は退会の手続き中です' },
     });
     expect(serviceDb.rows('organizations')).toEqual([]);
     expect(serviceDb.recorded('org_license_pools')).toHaveLength(0);

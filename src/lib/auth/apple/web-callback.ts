@@ -24,7 +24,7 @@ export const APPLE_CALLBACK_PROVIDER = 'apple';
  */
 export const APPLE_WEB_CALLBACK_ERROR_MESSAGE = 'Apple でのログインを完了できませんでした。もう一度お試しください。';
 
-/** ?provider= が apple なら APPLE_WEB_CALLBACK_ERROR_MESSAGE、ほかは null (呼ぶ側は今までどおり error_description か error を使う) */
+/** ?provider= が apple なら APPLE_WEB_CALLBACK_ERROR_MESSAGE、ほかは null (呼ぶ側は provider に関わらない固定の文 AUTH_LINK_ERROR_MESSAGE を使う。#1917 の続き) */
 export function appleCallbackErrorMessage(provider: string | null): string | null {
   return provider === APPLE_CALLBACK_PROVIDER ? APPLE_WEB_CALLBACK_ERROR_MESSAGE : null;
 }

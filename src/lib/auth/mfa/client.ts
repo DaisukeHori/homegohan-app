@@ -139,7 +139,7 @@ export async function requestMfaApi<T>(
 }
 
 /** 画面の文言 (§15 の表と同じ文)。Map にして、constructor などの Object の名前の code を拾わない */
-const MFA_ERROR_MESSAGES: ReadonlyMap<string, string> = new Map<string, string>([
+export const MFA_ERROR_MESSAGES: ReadonlyMap<string, string> = new Map<string, string>([
   ['AUTH_2FA_INVALID', '確認コードが正しくありません。認証アプリの最新のコードを入力してください。'],
   ['RATE_LIMITED', '試行回数が多すぎます。しばらくしてから再度お試しください。'],
   ['AUTH_2FA_NOT_ENROLLED', '認証アプリが登録されていません。先に登録してください。'],
@@ -149,7 +149,7 @@ const MFA_ERROR_MESSAGES: ReadonlyMap<string, string> = new Map<string, string>(
   ['AUTH_UNAUTHENTICATED', 'ログインが切れました。もう一度ログインしてください。'],
   ['AUTH_2FA_NATIVE_SESSION', 'アプリの中では、この画面で二段階認証の確認や解除ができません。アプリの確認画面か、ブラウザで行ってください。'],
   ['UNAUTHORIZED', 'ログインが切れました。もう一度ログインしてください。'],
-  ['FORBIDDEN', 'この操作には super_admin の権限と、二段階認証の確認が必要です。'],
+  ['FORBIDDEN', 'この操作にはスーパー管理者 (super_admin) の権限と、二段階認証の確認が必要です。'],
   ['OP_SELF_MODIFY', '自分自身の二段階認証は、ここでは解除できません。バックアップコードか、二段階認証の設定の画面で解除してください。'],
   ['OP_INVALID_INPUT', '入力内容を確認してください (理由・本人確認の方法・確認のチェックが必要です)。'],
   ['NOT_FOUND', '対象の利用者が見つかりません。'],

@@ -167,7 +167,8 @@ describe('POST /api/billing/checkout', () => {
     mocks.requireUser.mockClear();
     const nul = await checkoutPOST(jsonPost('/api/billing/checkout', { plan_key: 'pro\u0000', interval: 'month' }));
     expect(nul.status).toBe(400);
-    expect(await nul.json()).toMatchObject({ code: 'INVALID_CHARACTER' });
+    // 課金の API のほかの失敗と同じ nested の形 (#1917 の続き)
+    expect(await nul.json()).toMatchObject({ error: { code: 'INVALID_CHARACTER' } });
     expect(mocks.requireUser).not.toHaveBeenCalled();
   });
 });

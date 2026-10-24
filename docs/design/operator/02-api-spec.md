@@ -46,7 +46,7 @@ const user = await requireRole(['admin', 'super_admin', 'sales']);
 { "data": { ... }, "meta": { "total": 100, "page": 1, "per_page": 50 } }
 ```
 
-エラー (例外: 本文の NULL 文字 (U+0000) で断る 400 `INVALID_CHARACTER` は、認証の前に `rejectNullCharacterBody` が flat の `{ "error": "<文>", "code": "INVALID_CHARACTER" }` で返す。`src/lib/api/reject-null-character.ts:32-35`):
+エラー (本文の NULL 文字 (U+0000) で断る 400 `INVALID_CHARACTER` も、認証の前に `rejectNullCharacterBody(request, { shape: 'nested' })` が同じ nested の `{ "error": { "code": "INVALID_CHARACTER", "message": "<文>" } }` で返す。#1917 の続きで flat から改めた。`src/lib/api/reject-null-character.ts:49-55`・`:69`):
 ```json
 { "error": { "code": "OP_PERMISSION_DENIED", "message": "...", "details": {} } }
 ```

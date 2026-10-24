@@ -24,7 +24,12 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
-import { PlanUpdateSchema, isAllowedPlanStatusTransition } from '@/lib/super-admin/plans-schemas';
+import {
+  PlanUpdateSchema,
+  isAllowedPlanStatusTransition,
+  planStatusLockedFieldsMessage,
+  planStatusTransitionMessage,
+} from '@/lib/super-admin/plans-schemas';
 import {
   ORG_SUBSCRIPTION_PLAN_ROW_NOTE,
   PlanSubscriberCountError,
@@ -132,7 +137,7 @@ export async function GET(_request: NextRequest, props: RouteContext) {
 
 export async function PATCH(request: NextRequest, props: RouteContext) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   const logger = createLogger('PATCH /api/super-admin/plans/[id]', generateRequestId());
@@ -176,7 +181,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
           {
             error: {
               code: 'OP_PLAN_INVALID_TRANSITION',
-              message: `${existing.status} から ${input.status} への遷移は許可されていません`,
+              // 状態の値は「画面の名前 (値)」の形で括弧に入れる (#1917 の続き)
+              message: planStatusTransitionMessage(existing.status, input.status),
             },
           },
           { status: 422 }
@@ -192,7 +198,7 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
           {
             error: {
               code: 'OP_PLAN_DEPRECATE_ENDS_AT_REQUIRED',
-              message: '廃止移行には ends_at (廃止予定日) の指定が必要です',
+              message: '廃止移行には廃止予定日 (ends_at) の指定が必要です',
             },
           },
           { status: 400 }
@@ -250,7 +256,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
           {
             error: {
               code: 'OP_PLAN_STATUS_LOCKED',
-              message: `公開中プランでは ${disallowedKeys.join(', ')} は変更できません。価格変更は price-change API を使用してください。`,
+              // 項目名は「画面の名前 (項目名)」の形で括弧に入れる (#1917 の続き)
+              message: planStatusLockedFieldsMessage(disallowedKeys),
             },
           },
           { status: 422 }
@@ -392,7 +399,7 @@ export async function DELETE(request: NextRequest, props: RouteContext) {
     // draft のみ削除可能
     if (existing.status !== 'draft') {
       return NextResponse.json(
-        { error: { code: 'OP_PLAN_NOT_DRAFT', message: 'draft 状態のプランのみ削除できます' } },
+        { error: { code: 'OP_PLAN_NOT_DRAFT', message: '下書き (draft) 状態のプランのみ削除できます' } },
         { status: 422 }
       );
     }

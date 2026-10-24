@@ -90,6 +90,7 @@ import LoginPage from '@/app/(auth)/login/page';
 import SignupPage from '@/app/(auth)/signup/page';
 import ForgotPasswordPage from '@/app/(auth)/auth/forgot-password/page';
 import { CAPTCHA_FAILED_MESSAGE } from '@/lib/auth/turnstile';
+import { AUTH_RATE_LIMITED_MESSAGE } from '@/lib/auth/auth-error-message';
 import { PASSWORD_MAX_BYTES, PASSWORD_TOO_LONG_MESSAGE } from '@homegohan/shared';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -511,6 +512,33 @@ describe('新規登録 (/signup)', () => {
       expect(submitButton().disabled).toBe(true); // 新しいトークンが届くまで
     });
 
+    it.each([
+      ['回数の制限 (429)', { status: 429, code: 'over_email_send_rate_limit', message: 'email rate limit exceeded' }, AUTH_RATE_LIMITED_MESSAGE],
+      ['ほかの GoTrue の失敗', { status: 403, code: 'signup_disabled', message: 'Signups not allowed for this instance' }, '登録に失敗しました。'],
+    ])('GoTrue の英語の文 (%s) は付け足さず、日本語の文を出す (#1917 の続き)', async (_label, gotrueError, expected) => {
+      mocks.signUp.mockResolvedValue({ data: { user: null, session: null }, error: gotrueError });
+      await renderPage(SignupPage);
+      await fill();
+      await emitToken('tok-signup-1');
+
+      await submit();
+
+      expect(alertText()).toContain(expected);
+      expect(text()).not.toContain(gotrueError.message);
+    });
+
+    it('signUp が例外を投げても (通信以外)、例外の英語の文を出さず「予期せぬエラー」の固定の文を出す (#1917 の続き)', async () => {
+      mocks.signUp.mockRejectedValue(new Error('Unexpected token < in JSON at position 0'));
+      await renderPage(SignupPage);
+      await fill();
+      await emitToken('tok-signup-1');
+
+      await submit();
+
+      expect(alertText()).toContain('予期せぬエラーが発生しました。しばらくしてから再度お試しください。');
+      expect(text()).not.toContain('Unexpected token');
+    });
+
     it('登録できたら確認メール画面へ進む (Turnstile を入れても流れは変わらない)', async () => {
       await renderPage(SignupPage);
       await fill();
@@ -600,6 +628,22 @@ describe('パスワード再設定 (/auth/forgot-password)', () => {
       expect(text()).toContain(CAPTCHA_FAILED_MESSAGE);
       expect(text()).not.toContain('captcha verification process failed');
       expect(submitButton().disabled).toBe(true); // 新しいトークンが届くまで
+    });
+
+    it.each([
+      ['回数の制限 (429)', { status: 429, code: 'over_email_send_rate_limit', message: 'For security purposes, you can only request this after 60 seconds.' }, AUTH_RATE_LIMITED_MESSAGE],
+      ['回数の制限 (文だけ)', { status: 400, message: 'Email rate limit exceeded' }, AUTH_RATE_LIMITED_MESSAGE],
+      ['ほかの GoTrue の失敗', { status: 500, code: 'unexpected_failure', message: 'Error sending recovery email' }, 'パスワードリセットに失敗しました'],
+    ])('GoTrue の英語の文 (%s) は赤い帯に出さず、日本語の文を出す (#1917 の続き)', async (_label, gotrueError, expected) => {
+      mocks.resetPasswordForEmail.mockResolvedValue({ data: null, error: gotrueError });
+      await renderPage(ForgotPasswordPage);
+      typeInto('input[type="email"]', EMAIL);
+      await emitToken('tok-reset-1');
+
+      await submit();
+
+      expect(text()).toContain(expected);
+      expect(text()).not.toContain(gotrueError.message);
     });
 
     it('送信できたら完了画面になり、「別のメールアドレスで試す」で戻ると、ウィジェットを描き直して新しいトークンを待つ', async () => {

@@ -201,7 +201,7 @@ describe('drTestRecordBodySchema', () => {
     expect(issueMessages(validBody({ result: 'failed', notes: '' }))).toEqual(['失敗・見送りのときは理由を書いてください']);
     expect(issueMessages(validBody({ result: 'ok' }))).toEqual(['結果を選んでください']);
     expect(issueMessages(validBody({ environment: 'mars' }))).toEqual(['復元した先を選んでください']);
-    expect(issueMessages(validBody({ smoke: 'maybe' }))).toEqual(['smoke の結果を選んでください']);
+    expect(issueMessages(validBody({ smoke: 'maybe' }))).toEqual(['動作確認 (smoke) の結果を選んでください']);
     expect(issueMessages(validBody({ rto_minutes: '45' }))).toEqual(['復旧にかかった分を数で書いてください']);
     expect(issueMessages(validBody({ notes: 3 }))).toEqual(['メモを文字で書いてください']);
     expect(issueMessages(validBody({ backup_key: 3 }))).toEqual(['R2 のキーを文字で書いてください']);

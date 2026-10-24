@@ -311,7 +311,7 @@ describe('カタログの取り込み: 同じ route の 401 / 403 と同じ nest
     const res = await catalogImport.POST(send('POST', '/api/admin/catalog/import', { sourceCode: 'invalid_source' }));
     expect(res.status).toBe(400);
     const body = (await bodyOf(res)).json as { error: unknown; details: unknown };
-    expect(body.error).toEqual({ code: 'invalid_source', message: 'sourceCode が不正です' });
+    expect(body.error).toEqual({ code: 'invalid_source', message: '取り込み元 (sourceCode) が正しくありません' });
     expect(body.details).toEqual(expect.objectContaining({ fieldErrors: expect.any(Object) }));
   });
 });
