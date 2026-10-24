@@ -20,6 +20,41 @@ type FeaturePackage = {
   updated_at: string;
 };
 
+/** 機能フラグの入力欄 (改行かカンマ区切り) を、フラグの並びにする */
+function parseFeatureFlags(raw: string): string[] {
+  return raw.split(/[\n,]/).map((f) => f.trim()).filter(Boolean);
+}
+
+/** 保存で送る本文 (PATCH /api/super-admin/feature-packages/{id} の表示名・説明・機能フラグ・表示順) */
+type FeaturePackageSaveBody = {
+  display_name?: string;
+  description?: string | null;
+  feature_flags?: string[];
+  display_order?: number;
+};
+
+/**
+ * 保存で送る本文。最後に読んだ・保存した機能パッケージ (pkg) から変えた欄だけを入れる (#1917)。
+ * 手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を、開いたときの古い値で上書きしてしまう
+ * (route は送られた項目をそのまま書く)。機能フラグは並びで比べる。説明の空欄は null にする (これまでと同じ)
+ */
+function changedFeaturePackageFields(
+  inputs: { displayName: string; description: string; flags: string[]; displayOrder: number },
+  pkg: FeaturePackage,
+): FeaturePackageSaveBody {
+  const body: FeaturePackageSaveBody = {};
+  if (inputs.displayName !== pkg.display_name) body.display_name = inputs.displayName;
+  if (inputs.description !== (pkg.description ?? '')) body.description = inputs.description || null;
+  const flagsChanged =
+    inputs.flags.length !== pkg.feature_flags.length || inputs.flags.some((flag, i) => flag !== pkg.feature_flags[i]);
+  if (flagsChanged) body.feature_flags = inputs.flags;
+  if (inputs.displayOrder !== pkg.display_order) body.display_order = inputs.displayOrder;
+  return body;
+}
+
+/** 保存を押したが、どの入力欄も最後に読んだ・保存した値から変えていなかったときの文 (送らない。#1917) */
+const NO_FEATURE_PACKAGE_CHANGES_MESSAGE = '変更した項目がないので、保存していません';
+
 export default function FeaturePackageDetailPage() {
   const params = useParams();
   const pkgId = params.id as string;
@@ -36,6 +71,8 @@ export default function FeaturePackageDetailPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saveSuccess, setSaveSuccess] = useState(false);
+  // 保存を押したが送らなかったときの文 (変えた欄が無い。#1917)
+  const [saveInfo, setSaveInfo] = useState('');
 
   const fetchPkg = useCallback(async () => {
     setIsLoading(true);
@@ -63,25 +100,28 @@ export default function FeaturePackageDetailPage() {
   }, [fetchPkg]);
 
   const handleSave = async () => {
-    const flags = featureFlagsRaw.split(/[\n,]/).map((f) => f.trim()).filter(Boolean);
+    if (!pkg) return;
+    setSaveInfo('');
+    const flags = parseFeatureFlags(featureFlagsRaw);
     if (flags.length === 0) {
       setSaveError('機能フラグを少なくとも1つ入力してください');
       return;
     }
-    setIsSaving(true);
     setSaveError('');
     setSaveSuccess(false);
+    // 送るのは、最後に読んだ・保存した値から変えた欄だけ (手を付けていない欄を古い値で上書きしない。#1917)
+    const changes = changedFeaturePackageFields({ displayName, description, flags, displayOrder }, pkg);
+    if (Object.keys(changes).length === 0) {
+      setSaveInfo(NO_FEATURE_PACKAGE_CHANGES_MESSAGE);
+      return;
+    }
+    setIsSaving(true);
 
     try {
       const res = await fetch(`/api/super-admin/feature-packages/${pkgId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          display_name: displayName,
-          description: description || null,
-          feature_flags: flags,
-          display_order: displayOrder,
-        }),
+        body: JSON.stringify(changes),
       });
       const data = await res.json() as { data?: FeaturePackage; error?: { message: string } };
       if (!res.ok) {
@@ -123,7 +163,7 @@ export default function FeaturePackageDetailPage() {
     );
   }
 
-  const flags = featureFlagsRaw.split(/[\n,]/).map((f) => f.trim()).filter(Boolean);
+  const flags = parseFeatureFlags(featureFlagsRaw);
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -162,7 +202,7 @@ export default function FeaturePackageDetailPage() {
           <input
             type="text"
             value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
+            onChange={(e) => { setDisplayName(e.target.value); setSaveInfo(''); }}
             className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
           />
         </div>
@@ -171,7 +211,7 @@ export default function FeaturePackageDetailPage() {
           <label className="block text-sm font-medium text-slate-700 mb-1">説明</label>
           <textarea
             value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            onChange={(e) => { setDescription(e.target.value); setSaveInfo(''); }}
             rows={2}
             className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
           />
@@ -181,7 +221,7 @@ export default function FeaturePackageDetailPage() {
           <label className="block text-sm font-medium text-slate-700 mb-1">機能フラグ</label>
           <textarea
             value={featureFlagsRaw}
-            onChange={(e) => setFeatureFlagsRaw(e.target.value)}
+            onChange={(e) => { setFeatureFlagsRaw(e.target.value); setSaveInfo(''); }}
             rows={5}
             className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-orange-500"
           />
@@ -199,7 +239,7 @@ export default function FeaturePackageDetailPage() {
           <input
             type="number"
             value={displayOrder}
-            onChange={(e) => setDisplayOrder(Number(e.target.value))}
+            onChange={(e) => { setDisplayOrder(Number(e.target.value)); setSaveInfo(''); }}
             min="0"
             className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
           />
@@ -208,6 +248,14 @@ export default function FeaturePackageDetailPage() {
         {saveError && (
           <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
             {saveError}
+          </div>
+        )}
+        {saveInfo && (
+          <div
+            data-testid="save-info"
+            className="bg-slate-50 border border-slate-200 text-slate-600 px-4 py-3 rounded-lg text-sm"
+          >
+            {saveInfo}
           </div>
         )}
         {saveSuccess && (

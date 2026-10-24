@@ -22,6 +22,34 @@ const STALE_STAGE_MESSAGE =
 const STALE_STAGE_RELOAD_FAILED_MESSAGE =
   '別の担当者が先にこのリードのステージを変えていました。最新の内容を読み込み直せなかったので、画面を読み込み直してから、もう一度変更してください';
 
+/**
+ * リードの読み込み (fetchLead) の結果。
+ *   - loaded      : 読めた
+ *   - unauthorized: 401 (ログインの画面へ移した)
+ *   - forbidden   : 403 (「権限がありません」を出した)
+ *   - not-found   : 404 (「リードが見つかりません」を出した)
+ *   - failed      : そのほかの失敗 (「リードの取得に失敗しました」を出した)
+ */
+type LeadLoadOutcome = 'loaded' | 'unauthorized' | 'forbidden' | 'not-found' | 'failed';
+
+/**
+ * 409 CONFLICT_STALE_DATA のあとの読み直しの結果から、画面に出す文を決める (null = fetchLead が出した文をそのまま残す)。
+ * 読み直しの間にリードが消えた (404)・権限が外れた (403)・ログインが切れた (401) ときは、その理由のほうが確かなので
+ * 「画面を読み込み直して」の文で上書きしない (消えたリードに読み込み直しを促さない。#1917)
+ */
+function staleStageMessageOf(outcome: LeadLoadOutcome): string | null {
+  switch (outcome) {
+    case 'loaded':
+      return STALE_STAGE_MESSAGE;
+    case 'failed':
+      return STALE_STAGE_RELOAD_FAILED_MESSAGE;
+    case 'unauthorized':
+    case 'forbidden':
+    case 'not-found':
+      return null;
+  }
+}
+
 type Stage = 'approach' | 'meeting' | 'proposal' | 'negotiation' | 'won' | 'lost';
 type ActivityType = 'call' | 'email' | 'meeting' | 'note' | 'stage_change';
 
@@ -97,22 +125,27 @@ export default function LeadDetailPage(props: PageProps) {
   // ステージ変更
   const [isChangingStage, setIsChangingStage] = useState(false);
 
-  /** リードを読む。読めたら true (409 のあとの読み直しで、結果に合わせて文を決めるため。#1917) */
-  const fetchLead = useCallback(async (): Promise<boolean> => {
+  /** リードを読み、結果の種類を返す (409 のあとの読み直しで、結果に合わせて文を決めるため。#1917) */
+  const fetchLead = useCallback(async (): Promise<LeadLoadOutcome> => {
     setIsLoading(true);
     setError(null);
     try {
       const res = await fetch(`/api/admin/sales/leads/${params.id}`);
-      if (res.status === 401) { router.push('/login'); return false; }
-      if (res.status === 403) { setError('権限がありません'); return false; }
-      if (res.status === 404) { setError('リードが見つかりません'); return false; }
+      if (res.status === 401) { router.push('/login'); return 'unauthorized'; }
+      if (res.status === 403) { setError('権限がありません'); return 'forbidden'; }
+      if (res.status === 404) {
+        // リードが消えていたら、前に読んだリードを画面に残さない (消えたリードのステージを変えられるように見せない。#1917)
+        setLead(null);
+        setError('リードが見つかりません');
+        return 'not-found';
+      }
       if (!res.ok) throw new Error('取得失敗');
       const json = await res.json();
       setLead(json.data);
-      return true;
+      return 'loaded';
     } catch {
       setError('リードの取得に失敗しました');
-      return false;
+      return 'failed';
     } finally {
       setIsLoading(false);
     }
@@ -163,9 +196,10 @@ export default function LeadDetailPage(props: PageProps) {
         const body: unknown = await res.json().catch(() => null);
         if (isStaleDataConflict(res.status, body)) {
           // 別の担当者が先にステージを変えていた (API は書かずに 409 CONFLICT_STALE_DATA を返す)。今のステージを読み直して、その旨を出す。
-          // 文は読み直しの結果を待ってから決める (読み直せなかったのに「読み込み直した」と出さない。#1917)
-          const reloaded = await fetchLead();
-          setError(reloaded ? STALE_STAGE_MESSAGE : STALE_STAGE_RELOAD_FAILED_MESSAGE);
+          // 文は読み直しの結果を待ってから決める (読み直せなかったのに「読み込み直した」と出さない。
+          // 404 / 403 のときは fetchLead が出した理由の文を残す。#1917)
+          const message = staleStageMessageOf(await fetchLead());
+          if (message !== null) setError(message);
           return;
         }
         throw new Error('ステージ変更失敗');

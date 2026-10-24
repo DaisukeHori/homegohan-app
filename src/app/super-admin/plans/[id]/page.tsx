@@ -8,7 +8,10 @@
  * 断られたら、画面が自分でプランを読み直し、読み直した旨を画面の上に出す (運営が手で読み込み直さなくてよいように。#1917)。
  * 表示名・説明・表示順の入力欄は、最後に読んだ値から変えている (書きかけ) ものだけ残し、ほかは読み直した値にする。
  * 一度表示したあとの読み直し (保存・状態の変更のあと・409 のあと) は画面を外さずに行い、失敗しても画面と入力欄を残して、
- * 文と「再試行」を出す (読み直しの失敗で画面ごとエラーに置き換えない。#1917)。
+ * 文と「再試行」を出す (読み直しの失敗で画面ごとエラーに置き換えない。#1917)。読み直しが 404 / 403 で断られたときは、
+ * 読み込み直しても変わらないので、その理由の文を出し、「再試行」は出さない。
+ * 保存は、表示名・説明・表示順のうち最後に読んだ値から変えた欄だけを送る (手を付けていない欄を、画面を開いたあとに
+ * 別の運営が変えた値の上に古い値で書かない。#1917)。
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -62,11 +65,27 @@ function editsOf(plan: Plan): PlanEdits {
 
 /** 入力欄が書きかけか (最後に読んだプランから作った初めの値から、どれかの欄を変えている) */
 function isEdited(current: PlanEdits, loaded: PlanEdits): boolean {
-  return (
-    current.displayName !== loaded.displayName ||
-    current.description !== loaded.description ||
-    current.displayOrder !== loaded.displayOrder
-  );
+  return Object.keys(changedPlanFields(current, loaded)).length > 0;
+}
+
+/** 保存で送る本文 (PATCH /api/super-admin/plans/{id} の表示名・説明・表示順) */
+type PlanSaveBody = {
+  display_name?: string;
+  description?: string | null;
+  display_order?: number;
+};
+
+/**
+ * 保存で送る本文。最後に読んだプランから作った初めの値から変えた欄だけを入れる。
+ * 手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を、開いたときの古い値で上書きしてしまう
+ * (route は送られた項目をそのまま書き、読んだ値を条件にするのは status だけ。#1917)。説明の空欄は null にする (これまでと同じ)
+ */
+function changedPlanFields(current: PlanEdits, loaded: PlanEdits): PlanSaveBody {
+  const body: PlanSaveBody = {};
+  if (current.displayName !== loaded.displayName) body.display_name = current.displayName;
+  if (current.description !== loaded.description) body.description = current.description || null;
+  if (current.displayOrder !== loaded.displayOrder) body.display_order = current.displayOrder;
+  return body;
 }
 
 /**
@@ -79,7 +98,15 @@ function isEdited(current: PlanEdits, loaded: PlanEdits): boolean {
 type ReloadNotice =
   | { kind: 'stale'; editsKept: boolean }
   | { kind: 'stale-reload-failed'; editsKept: boolean }
-  | { kind: 'reload-failed' };
+  | { kind: 'reload-failed' }
+  | { kind: 'unavailable'; reason: PlanUnavailableReason };
+
+/**
+ * 表示したあとの読み直しが、読み込み直しても変わらない理由で断られた (「再試行」を出さない。#1917)。
+ *   - not-found: 404 (読み直しの間にプランが消えた)
+ *   - forbidden: 403 (読み直しの間に運営の権限が外れた)
+ */
+type PlanUnavailableReason = 'not-found' | 'forbidden';
 
 /**
  * 409 CONFLICT_STALE_DATA のあとに読み直したときの文。
@@ -95,6 +122,15 @@ const STALE_PLAN_RELOAD_FAILED_MESSAGE =
 /** 保存・状態の変更に成功したあとの読み直しに失敗したときの文 */
 const PLAN_RELOAD_FAILED_MESSAGE = '最新の内容を読み込めませんでした。「再試行」で読み込み直してください';
 
+/** 読み直しが 404 (プランが消えた) で断られたときの文。読み込み直しても変わらないので「再試行」は出さない */
+const PLAN_NOT_FOUND_ON_RELOAD_MESSAGE = 'プランが見つかりません。一覧に戻って確かめてください';
+
+/** 読み直しが 403 (運営の権限が外れた) で断られたときの文。読み込み直しても変わらないので「再試行」は出さない */
+const PLAN_FORBIDDEN_ON_RELOAD_MESSAGE = '権限がありません';
+
+/** 保存を押したが、どの入力欄も最後に読んだ値から変えていなかったときの文 (送らない。#1917) */
+const NO_PLAN_CHANGES_MESSAGE = '変更した項目がないので、保存していません';
+
 /** 入力欄の書きかけを残したときに添える文 */
 const EDITS_KEPT_SUFFIX = '（入力中の表示名・説明・表示順はそのまま残しています）';
 
@@ -106,11 +142,24 @@ function reloadNoticeText(notice: ReloadNotice): string {
       return `${STALE_PLAN_RELOAD_FAILED_MESSAGE}${notice.editsKept ? EDITS_KEPT_SUFFIX : ''}`;
     case 'reload-failed':
       return PLAN_RELOAD_FAILED_MESSAGE;
+    case 'unavailable':
+      return notice.reason === 'not-found' ? PLAN_NOT_FOUND_ON_RELOAD_MESSAGE : PLAN_FORBIDDEN_ON_RELOAD_MESSAGE;
   }
 }
 
-/** 読み直しの結果。superseded は、読み直しの最中に新しい読み直しが始まったので結果を捨てた */
-type PlanReloadOutcome = { kind: 'loaded'; editsKept: boolean } | { kind: 'failed' } | { kind: 'superseded' };
+/**
+ * 読み直しの結果。superseded は、読み直しの最中に新しい読み直しが始まったので結果を捨てた。
+ * unavailable は、表示したあとの読み直しが 404 / 403 で断られた (読み込み直しても変わらない理由。#1917)
+ */
+type PlanReloadOutcome =
+  | { kind: 'loaded'; editsKept: boolean }
+  | { kind: 'failed' }
+  | { kind: 'unavailable'; reason: PlanUnavailableReason }
+  | { kind: 'superseded' };
+
+/** 表示したあとの読み直しの HTTP ステータスのうち、読み込み直しても変わらない理由 (#1917) */
+const HTTP_FORBIDDEN = 403;
+const HTTP_NOT_FOUND = 404;
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   draft: { label: '下書き', color: 'bg-slate-100 text-slate-600' },
@@ -129,6 +178,8 @@ export default function PlanDetailPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saveSuccess, setSaveSuccess] = useState(false);
+  // 保存を押したが送らなかったときの文 (変えた欄が無い。#1917)
+  const [saveInfo, setSaveInfo] = useState('');
 
   // 編集フィールド
   const [displayName, setDisplayName] = useState('');
@@ -154,6 +205,8 @@ export default function PlanDetailPage() {
     setDisplayName(next.displayName);
     setDescription(next.description);
     setDisplayOrder(next.displayOrder);
+    // 入力欄が変わったら、「変更した項目がないので、保存していません」は古いので消す
+    setSaveInfo('');
   }, []);
 
   /**
@@ -175,6 +228,9 @@ export default function PlanDetailPage() {
       if (seq !== fetchSeq.current) return { kind: 'superseded' };
       if (!res.ok || !data.data) {
         if (!isReload) setError(data.error?.message ?? 'プランの取得に失敗しました');
+        // 表示したあとの読み直しが 404 / 403 なら、その理由を返す (「読み込み直せませんでした。再試行で…」で覆わない。#1917)
+        if (isReload && res.status === HTTP_NOT_FOUND) return { kind: 'unavailable', reason: 'not-found' };
+        if (isReload && res.status === HTTP_FORBIDDEN) return { kind: 'unavailable', reason: 'forbidden' };
         return { kind: 'failed' };
       }
       const loaded = data.data;
@@ -217,6 +273,7 @@ export default function PlanDetailPage() {
   const reloadAfterSuccess = useCallback(async () => {
     const outcome = await fetchPlan();
     if (outcome.kind === 'failed') setReloadNotice({ kind: 'reload-failed' });
+    if (outcome.kind === 'unavailable') setReloadNotice({ kind: 'unavailable', reason: outcome.reason });
   }, [fetchPlan]);
 
   /**
@@ -230,6 +287,9 @@ export default function PlanDetailPage() {
       setReloadNotice({ kind: 'stale', editsKept: outcome.editsKept });
     } else if (outcome.kind === 'failed') {
       setReloadNotice({ kind: 'stale-reload-failed', editsKept: editedBefore });
+    } else if (outcome.kind === 'unavailable') {
+      // プランが消えた・権限が外れた: その理由を出す (「再試行」で読み込み直すよう促さない。#1917)
+      setReloadNotice({ kind: 'unavailable', reason: outcome.reason });
     }
   }, [fetchPlan]);
 
@@ -241,6 +301,7 @@ export default function PlanDetailPage() {
     }
     const outcome = await fetchPlan({ keepEdits: true });
     if (outcome.kind === 'loaded') setReloadNotice(null);
+    if (outcome.kind === 'unavailable') setReloadNotice({ kind: 'unavailable', reason: outcome.reason });
   }, [fetchPlan, reloadAfterStale, reloadNotice]);
 
   /**
@@ -263,9 +324,16 @@ export default function PlanDetailPage() {
   };
 
   const handleSave = async () => {
-    setIsSaving(true);
     setSaveError('');
     setSaveSuccess(false);
+    setSaveInfo('');
+    // 送るのは、最後に読んだ値から変えた欄だけ (手を付けていない欄を古い値で上書きしない。#1917)
+    const changes = changedPlanFields(editsRef.current, loadedEditsRef.current);
+    if (Object.keys(changes).length === 0) {
+      setSaveInfo(NO_PLAN_CHANGES_MESSAGE);
+      return;
+    }
+    setIsSaving(true);
     setReloadNotice(null);
     try {
       const res = await fetch(`/api/super-admin/plans/${planId}`, {
@@ -276,11 +344,8 @@ export default function PlanDetailPage() {
         // 保存のたびに subscription_plans.banner_url が null で上書きされていた。
         // PATCH の route は送られなかった項目を更新しない (`!== undefined` のときだけ updateData に入れる) ので、
         // 送らなければ banner_url はそのまま残る。
-        body: JSON.stringify({
-          display_name: displayName,
-          description: description || null,
-          display_order: displayOrder,
-        }),
+        // #1917: 入力欄のある 3 項目も、最後に読んだ値から変えた欄だけを送る (changedPlanFields)
+        body: JSON.stringify(changes),
       });
       const data: unknown = await res.json().catch(() => null);
       if (!res.ok) {
@@ -459,7 +524,7 @@ export default function PlanDetailPage() {
           className="mb-4 bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-lg text-sm flex items-center justify-between gap-4"
         >
           <span>{reloadNoticeText(reloadNotice)}</span>
-          {reloadNotice.kind !== 'stale' && (
+          {(reloadNotice.kind === 'stale-reload-failed' || reloadNotice.kind === 'reload-failed') && (
             <button
               type="button"
               onClick={() => void retryReload()}
@@ -553,6 +618,14 @@ export default function PlanDetailPage() {
           {saveError && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
               {saveError}
+            </div>
+          )}
+          {saveInfo && (
+            <div
+              data-testid="plan-save-info"
+              className="bg-slate-50 border border-slate-200 text-slate-600 px-4 py-3 rounded-lg text-sm"
+            >
+              {saveInfo}
             </div>
           )}
           {saveSuccess && (

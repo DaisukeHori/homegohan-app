@@ -67,9 +67,18 @@ interface ApiOptions {
   patch: () => Response;
   /** PATCH のあとに GET が返すプラン (別の運営の変更が入ったもの) */
   planAfterPatch?: typeof PLAN;
-  /** n 回目 (1 始まり) の GET を 500 で失敗させる */
+  /** n 回目 (1 始まり) の GET を失敗させる (HTTP ステータスは failGetStatus) */
   failGets?: number[];
+  /** failGets の GET の HTTP ステータス (既定は 500) */
+  failGetStatus?: number;
 }
+
+/** GET の失敗の応答の本文 (HTTP ステータスごと。route の形) */
+const GET_FAILURE_BODIES: Record<number, unknown> = {
+  403: { error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } },
+  404: { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } },
+  500: { error: { code: 'INTERNAL_ERROR', message: 'プランの取得に失敗しました' } },
+};
 
 function mockApi(options: ApiOptions) {
   const state = { patched: false, gets: 0, patches: 0 };
@@ -82,7 +91,8 @@ function mockApi(options: ApiOptions) {
     }
     state.gets += 1;
     if (options.failGets?.includes(state.gets)) {
-      return jsonResponse(500, { error: { code: 'INTERNAL_ERROR', message: 'プランの取得に失敗しました' } });
+      const status = options.failGetStatus ?? 500;
+      return jsonResponse(status, GET_FAILURE_BODIES[status]);
     }
     return jsonResponse(200, { data: state.patched && options.planAfterPatch ? options.planAfterPatch : PLAN });
   });
@@ -259,7 +269,8 @@ describe('保存が 409 CONFLICT_STALE_DATA で断られたとき (#1917)', () =
 
     await click('保存する');
 
-    expect(patchBodies()[0]).toEqual({ display_name: 'Pro プラス', description: '個人向け', display_order: 1 });
+    // 送るのは変えた表示名だけ (手を付けていない説明・表示順は送らない)
+    expect(patchBodies()[0]).toEqual({ display_name: 'Pro プラス' });
     expect(state.gets).toBe(2);
     expect(text()).toContain('公開中');
     // 書きかけ (表示名) は残し、手を付けていない欄 (説明・表示順) は読み直した値
@@ -271,18 +282,19 @@ describe('保存が 409 CONFLICT_STALE_DATA で断られたとき (#1917)', () =
     expect(text()).not.toContain('画面を読み込み直して');
     expect(text()).not.toContain('保存しました');
 
-    // もう一度保存すると、書きかけの表示名と読み直した値を送る
+    // もう一度保存すると、書きかけの表示名だけを送る (読み直した説明・表示順は別の運営の値のまま。送って書き直さない)
     await click('保存する');
-    expect(patchBodies()[1]).toEqual({ display_name: 'Pro プラス', description: '別の運営の説明', display_order: 5 });
+    expect(patchBodies()[1]).toEqual({ display_name: 'Pro プラス' });
     expect(notice()).toBeNull();
     expect(text()).toContain('保存しました');
   });
 
   it('入力欄に手を付けていなければ、全部を読み直した値にし、「残しています」は出さない', async () => {
+    // 入力欄に手を付けていなければ保存は送らない (#1917) ので、409 は状態の変更 (廃止) で起こす
     mockApi({ patch: staleResponse, planAfterPatch: { ...PLAN, display_name: 'Pro (改)', description: '別の運営の説明' } });
     await renderPage();
 
-    await click('保存する');
+    await click('廃止する');
 
     expect(displayNameInput().value).toBe('Pro (改)');
     expect(descriptionInput().value).toBe('別の運営の説明');
@@ -321,6 +333,7 @@ describe('成功したあとの読み直し (#1917)', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
 
     await click('保存する');
 
@@ -341,5 +354,158 @@ describe('成功したあとの読み直し (#1917)', () => {
 
     expect(text()).toContain('プランが見つかりません');
     expect(displayNameInput()).toBeNull();
+  });
+});
+
+describe('保存は変えた欄だけを送る (#1917)', () => {
+  it('説明だけを変えたら説明だけを送り、手を付けていない表示名・表示順は送らない', async () => {
+    mockApi({ patch: () => jsonResponse(200, { data: PLAN }) });
+    await renderPage();
+    await typeInto(descriptionInput(), '説明を直した');
+
+    await click('保存する');
+
+    expect(patchBodies()).toEqual([{ description: '説明を直した' }]);
+    expect(text()).toContain('保存しました');
+  });
+
+  it('表示順だけを変えたら表示順だけを送る', async () => {
+    mockApi({ patch: () => jsonResponse(200, { data: PLAN }) });
+    await renderPage();
+    await typeInto(displayOrderInput(), '7');
+
+    await click('保存する');
+
+    expect(patchBodies()).toEqual([{ display_order: 7 }]);
+  });
+
+  it('説明を空にしたら description: null を送る (説明を消す)', async () => {
+    mockApi({ patch: () => jsonResponse(200, { data: PLAN }) });
+    await renderPage();
+    await typeInto(descriptionInput(), '');
+
+    await click('保存する');
+
+    expect(patchBodies()).toEqual([{ description: null }]);
+  });
+
+  it('変えた欄を元の値に戻したら、変えていないものとして送らない', async () => {
+    mockApi({ patch: () => jsonResponse(200, { data: PLAN }) });
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+    await typeInto(displayNameInput(), 'Pro');
+
+    await click('保存する');
+
+    expect(patchBodies()).toEqual([]);
+    expect(text()).toContain('変更した項目がないので、保存していません');
+  });
+
+  it('何も変えずに保存したら送らず、その旨を出す。入力欄を変えたらその文は消える', async () => {
+    const state = mockApi({ patch: () => jsonResponse(200, { data: PLAN }) });
+    await renderPage();
+
+    await click('保存する');
+
+    expect(patchBodies()).toEqual([]);
+    expect(state.gets).toBe(1);
+    expect(text()).toContain('変更した項目がないので、保存していません');
+    expect(text()).not.toContain('保存しました');
+
+    await typeInto(displayNameInput(), 'Pro プラス');
+    expect(text()).not.toContain('変更した項目がないので、保存していません');
+  });
+
+  it('保存のあとに読み直した値が新しい初めの値になり、次の保存は、そのあとに変えた欄だけを送る', async () => {
+    let gets = 0;
+    fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') return jsonResponse(200, { data: PLAN });
+      gets += 1;
+      // 1 回目の保存のあとの読み直しでは、保存した表示名と、別の運営が変えた説明が入っている
+      return jsonResponse(200, { data: gets === 1 ? PLAN : { ...PLAN, display_name: 'Pro プラス', description: '別の運営の説明' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+    await click('保存する');
+    expect(descriptionInput().value).toBe('別の運営の説明');
+
+    await typeInto(displayOrderInput(), '9');
+    await click('保存する');
+
+    expect(patchBodies()).toEqual([{ display_name: 'Pro プラス' }, { display_order: 9 }]);
+  });
+});
+
+describe('表示したあとの読み直しが 404 / 403 で断られたとき (#1917)', () => {
+  it.each([
+    [404, 'プランが見つかりません'],
+    [403, '権限がありません'],
+  ])('409 のあとの読み直しが %s なら、その理由を出し、「読み込み直せませんでした」と「再試行」は出さない', async (status, message) => {
+    const state = mockApi({ patch: staleResponse, failGets: [2], failGetStatus: status });
+    await renderPage();
+
+    await click('再公開する');
+
+    expect(state.gets).toBe(2);
+    expect(notice()?.textContent).toContain(message);
+    expect(notice()?.textContent).not.toContain('読み込み直せませんでした');
+    expect(notice()?.textContent).not.toContain('読み込み直したので');
+    expect(notice()?.querySelector('button')).toBeNull();
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
+
+  it('409 のあとの読み直しが 404 でも、入力欄の書きかけは残す (画面を消さない)', async () => {
+    mockApi({ patch: staleResponse, failGets: [2], failGetStatus: 404 });
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+
+    await click('保存する');
+
+    expect(displayNameInput().value).toBe('Pro プラス');
+    expect(notice()?.textContent).toContain('プランが見つかりません');
+    expect(notice()?.textContent).not.toContain('再試行');
+  });
+
+  it('保存に成功したあとの読み直しが 404 なら、その理由を出し、「最新の内容を読み込めませんでした」と「再試行」は出さない', async () => {
+    let gets = 0;
+    fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') return jsonResponse(200, { data: PLAN });
+      gets += 1;
+      if (gets === 2) return jsonResponse(404, GET_FAILURE_BODIES[404]);
+      return jsonResponse(200, { data: PLAN });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+
+    await click('保存する');
+
+    expect(gets).toBe(2);
+    expect(notice()?.textContent).toContain('プランが見つかりません');
+    expect(notice()?.textContent).not.toContain('最新の内容を読み込めませんでした');
+    expect(notice()?.querySelector('button')).toBeNull();
+  });
+
+  it('「再試行」の読み直しが 404 なら、「読み込み直せませんでした」を理由の文に変える', async () => {
+    let gets = 0;
+    fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') return jsonResponse(200, { data: PLAN });
+      gets += 1;
+      if (gets === 2) return jsonResponse(500, GET_FAILURE_BODIES[500]);
+      if (gets === 3) return jsonResponse(404, GET_FAILURE_BODIES[404]);
+      return jsonResponse(200, { data: PLAN });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+    await click('保存する');
+    expect(notice()?.textContent).toContain('最新の内容を読み込めませんでした');
+
+    await click('再試行');
+
+    expect(gets).toBe(3);
+    expect(notice()?.textContent).toContain('プランが見つかりません');
+    expect(notice()?.querySelector('button')).toBeNull();
   });
 });

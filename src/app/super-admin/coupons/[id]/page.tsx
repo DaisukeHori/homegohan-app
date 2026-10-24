@@ -49,6 +49,39 @@ type RedemptionsResponse = {
 /** 適用履歴の API (GET /api/super-admin/coupons/{id}/redemptions) のページ番号は 1 から */
 const FIRST_REDEMPTIONS_PAGE = 1;
 
+/** 保存で送る本文 (PATCH /api/super-admin/coupons/{id} の表示名・有効期限・最大利用回数) */
+type CouponSaveBody = {
+  display_name?: string | null;
+  valid_until?: string;
+  max_uses?: number | null;
+};
+
+/** 最大利用回数の入力欄の文字 (空欄は無制限) */
+function maxUsesText(maxUses: number | null): string {
+  return maxUses != null ? String(maxUses) : '';
+}
+
+/**
+ * 保存で送る本文。最後に読んだ・保存したクーポン (coupon) から変えた欄だけを入れる (#1917)。
+ * 手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を、開いたときの古い値で上書きしてしまう
+ * (route は送られた項目をそのまま書く)。有効期限は JST の暦日で比べる (#1483 の couponValidUntilPatchValue)。
+ * 表示名の空欄は null、最大利用回数の空欄は null (無制限) にする (これまでと同じ)
+ */
+function changedCouponFields(
+  inputs: { displayName: string; validUntil: string; maxUses: string },
+  coupon: Coupon,
+): CouponSaveBody {
+  const body: CouponSaveBody = {};
+  if (inputs.displayName !== (coupon.display_name ?? '')) body.display_name = inputs.displayName || null;
+  const validUntil = couponValidUntilPatchValue(inputs.validUntil, coupon.valid_until);
+  if (validUntil !== undefined) body.valid_until = validUntil;
+  if (inputs.maxUses !== maxUsesText(coupon.max_uses)) body.max_uses = inputs.maxUses ? Number(inputs.maxUses) : null;
+  return body;
+}
+
+/** 保存を押したが、どの入力欄も最後に読んだ・保存した値から変えていなかったときの文 (送らない。#1917) */
+const NO_COUPON_CHANGES_MESSAGE = '変更した項目がないので、保存していません';
+
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   active: { label: '有効', color: 'bg-green-100 text-green-700' },
   paused: { label: '停止中', color: 'bg-yellow-100 text-yellow-700' },
@@ -70,6 +103,8 @@ export default function CouponDetailPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saveSuccess, setSaveSuccess] = useState(false);
+  // 保存を押したが送らなかったときの文 (変えた欄が無い。#1917)
+  const [saveInfo, setSaveInfo] = useState('');
   const [activeTab, setActiveTab] = useState<'detail' | 'redemptions'>('detail');
 
   const [displayName, setDisplayName] = useState('');
@@ -89,7 +124,7 @@ export default function CouponDetailPage() {
       setDisplayName(data.data!.display_name ?? '');
       // 有効期限 (DB の時刻) を JST の暦日にして編集欄に入れる (#1483)
       setValidUntil(couponValidityDay(data.data!.valid_until));
-      setMaxUses(data.data!.max_uses != null ? String(data.data!.max_uses) : '');
+      setMaxUses(maxUsesText(data.data!.max_uses));
     } catch {
       setError('ネットワークエラー');
     } finally {
@@ -142,19 +177,23 @@ export default function CouponDetailPage() {
   }, [activeTab, fetchRedemptions]);
 
   const handleSave = async () => {
-    setIsSaving(true);
+    if (!coupon) return;
     setSaveError('');
     setSaveSuccess(false);
+    setSaveInfo('');
+    // 送るのは、最後に読んだ・保存した値から変えた欄だけ (手を付けていない欄を古い値で上書きしない。#1917)。
+    // 有効期限は JST の暦日 (YYYY-MM-DD) のまま送り、API がその日の JST 23:59:59 の時刻にして書く (#1483)
+    const changes = changedCouponFields({ displayName, validUntil, maxUses }, coupon);
+    if (Object.keys(changes).length === 0) {
+      setSaveInfo(NO_COUPON_CHANGES_MESSAGE);
+      return;
+    }
+    setIsSaving(true);
     try {
       const res = await fetch(`/api/super-admin/coupons/${couponId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          display_name: displayName || null,
-          // JST の暦日 (YYYY-MM-DD) のまま、日付を変えたときだけ送る。API がその日の JST 23:59:59 の時刻にして書く (#1483)
-          valid_until: coupon ? couponValidUntilPatchValue(validUntil, coupon.valid_until) : validUntil,
-          max_uses: maxUses ? Number(maxUses) : null,
-        }),
+        body: JSON.stringify(changes),
       });
       const data = await res.json() as { data?: Coupon; error?: { message: string } };
       if (!res.ok) {
@@ -284,7 +323,7 @@ export default function CouponDetailPage() {
             <input
               type="text"
               value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
+              onChange={(e) => { setDisplayName(e.target.value); setSaveInfo(''); }}
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
             />
           </div>
@@ -295,7 +334,7 @@ export default function CouponDetailPage() {
               <input
                 type="date"
                 value={validUntil}
-                onChange={(e) => setValidUntil(e.target.value)}
+                onChange={(e) => { setValidUntil(e.target.value); setSaveInfo(''); }}
                 className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
               />
             </div>
@@ -304,7 +343,7 @@ export default function CouponDetailPage() {
               <input
                 type="number"
                 value={maxUses}
-                onChange={(e) => setMaxUses(e.target.value)}
+                onChange={(e) => { setMaxUses(e.target.value); setSaveInfo(''); }}
                 min={coupon.uses_count}
                 className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
                 placeholder="無制限"
@@ -322,6 +361,14 @@ export default function CouponDetailPage() {
           {saveError && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
               {saveError}
+            </div>
+          )}
+{saveInfo && (
+            <div
+              data-testid="save-info"
+              className="bg-slate-50 border border-slate-200 text-slate-600 px-4 py-3 rounded-lg text-sm"
+            >
+              {saveInfo}
             </div>
           )}
           {saveSuccess && (
