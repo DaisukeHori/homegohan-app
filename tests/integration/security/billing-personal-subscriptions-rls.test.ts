@@ -136,7 +136,7 @@ describe('billing/01 §6.2: personal_subscriptions の RLS', () => {
   it('authenticated user cannot INSERT or UPDATE own personal_subscriptions row (RLS) but can SELECT it', async () => {
     const id = await insertSubscription(owner.id, 'expired');
 
-    // INSERT: 本人の行でも拒否 (WITH CHECK の本人の枝を外した)
+    // INSERT: 本人の行でも拒否 (WITH CHECK の本人の枝を外し、後に 20261024110000 が authenticated の INSERT の権限も外した)
     const { error: insertError } = await asUser(owner.jwt)
       .from('personal_subscriptions')
       .insert({ user_id: owner.id, plan_key: 'family_pro', status: 'active' });
