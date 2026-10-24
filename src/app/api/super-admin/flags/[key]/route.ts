@@ -106,7 +106,8 @@ export async function DELETE(request: NextRequest, props: Params) {
         {
           error: {
             code: 'OP_FEATURE_FLAG_IN_USE',
-            message: `このフラグは ${pkgs.map((p) => p.package_key).join(', ')} で使用中のため削除できません`,
+            // パッケージのキー (英字) は括弧に入れて添える (#1917 の続き)
+            message: `このフラグは次の機能のパッケージで使用中のため削除できません (${pkgs.map((p) => p.package_key).join(', ')})`,
           },
         },
         { status: 409 },

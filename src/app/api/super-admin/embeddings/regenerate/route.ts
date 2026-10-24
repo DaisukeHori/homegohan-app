@@ -40,6 +40,8 @@ const ROUTE_NAME = 'POST /api/super-admin/embeddings/regenerate';
 //  他は name_embedding を持つ。'recipes' / 'meals' / 'catalog_products' は
 //  embedding 列を持たないため対象外 — 追加するには migration が必要)
 const ALLOWED_TABLES = ['dataset_ingredients', 'dataset_recipes', 'dataset_menu_sets'] as const;
+/** 400 の文: table が ALLOWED_TABLES に無い。受け付ける値 (英字の表の名前) は括弧に入れて添える (#1917 の続き。healthEnumMessage と同じ形) */
+const TABLE_INVALID_MESSAGE = `対象の表 (table) は次のいずれかを指定してください (${ALLOWED_TABLES.join(' / ')})`;
 
 interface EdgeFunctionResult {
   success?: boolean;
@@ -88,7 +90,7 @@ export async function POST(request: NextRequest) {
 
     if (!(ALLOWED_TABLES as readonly string[]).includes(table)) {
       return NextResponse.json(
-        { error: { code: 'VALIDATION_ERROR', message: `対象の表 (table) は ${ALLOWED_TABLES.join(' / ')} のいずれかである必要があります` } },
+        { error: { code: 'VALIDATION_ERROR', message: TABLE_INVALID_MESSAGE } },
         { status: 400 },
       );
     }

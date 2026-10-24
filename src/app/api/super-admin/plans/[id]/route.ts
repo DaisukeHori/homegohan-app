@@ -19,7 +19,12 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
-import { PlanUpdateSchema, isAllowedPlanStatusTransition } from '@/lib/super-admin/plans-schemas';
+import {
+  PlanUpdateSchema,
+  isAllowedPlanStatusTransition,
+  planStatusLockedFieldsMessage,
+  planStatusTransitionMessage,
+} from '@/lib/super-admin/plans-schemas';
 import {
   ORG_SUBSCRIPTION_PLAN_ROW_NOTE,
   PlanSubscriberCountError,
@@ -145,7 +150,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
           {
             error: {
               code: 'OP_PLAN_INVALID_TRANSITION',
-              message: `${existing.status} から ${input.status} への遷移は許可されていません`,
+              // 状態の値は「画面の名前 (値)」の形で括弧に入れる (#1917 の続き)
+              message: planStatusTransitionMessage(existing.status, input.status),
             },
           },
           { status: 422 }
@@ -238,7 +244,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
           {
             error: {
               code: 'OP_PLAN_STATUS_LOCKED',
-              message: `公開中プランでは ${disallowedKeys.join(', ')} は変更できません。価格変更は price-change API を使用してください。`,
+              // 項目名は「画面の名前 (項目名)」の形で括弧に入れる (#1917 の続き)
+              message: planStatusLockedFieldsMessage(disallowedKeys),
             },
           },
           { status: 422 }

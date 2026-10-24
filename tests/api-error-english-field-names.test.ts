@@ -20,9 +20,13 @@
  *   4. src/lib・src/schemas・packages の Zod の検証の文 (validationMessageOf などが日本語の文をそのまま本文の message にする) にも、
  *      括弧の外の英字の項目名が無い (findValidationMessageTexts。応答の形の検査で画面に出ない文は ZOD_TEXT_EXEMPT_FILES に理由つき)
  *   5. src/lib の関数・表が作って本文に流す文 (BAN を断る文・食事の入力の検証・プランのキーの文・二段階認証の画面の表) を値で確かめる
+ *   6. 2 と 4 の走査は、テンプレートの式の部分 (`${…}`) を値として読む (定数・配列の定数の join・数はたどって値にし、
+ *      読み取れない式は英字の項目名の形の印 UNRESOLVED_SUBSTITUTION にする)。キー・状態・種類の値のような英字が入りうる式を括弧の外に
+ *      差し込むと違反になる (以前の `公開中プランでは ${keys.join(', ')} は変更できません`・`${from} から ${to} への遷移`)。
+ *      数・日本語の文だと分かっている読み取れない式だけを、TEMPLATE_SUBSTITUTION_EXEMPT に理由つきで載せる
  * 限界: 本文の文を表 (オブジェクト) から引くもの・関数の戻り値で作るもの・入力の検証の関数が返す文は、4 と 5 に挙げたもの以外は見ない
- *   (健康の記録の入力の検証は tests/health-api-messages.test.ts が、通知の設定の文は tests/notification-preferences.test.ts が値で確かめる)。
- *   テンプレートの式に差し込む値 (`${key}` など) も走査では見ないので、値で確かめる。見張りであって網羅の証明ではない。
+ *   (健康の記録の入力の検証は tests/health-api-messages.test.ts が、通知の設定の文は tests/notification-preferences.test.ts が、
+ *   プランの状態・項目の文は tests/plan-status-transition.test.ts が値で確かめる)。見張りであって網羅の証明ではない。
  */
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
@@ -34,7 +38,10 @@ import {
   isUnderDir,
   routeFilesUnder,
   sourceOf,
+  substitutionKey,
+  UNRESOLVED_SUBSTITUTION,
   walkFiles,
+  type SubstitutionOptions,
 } from './helpers/api-error-text-scan';
 import { MACHINE_FACING_ERROR_TEXT_PATHS } from './helpers/api-error-japanese-scope';
 import { SUPER_ADMIN_BAN_REJECTED_MESSAGE } from '@/lib/admin/user-ban';
@@ -74,10 +81,16 @@ const isMachineFacing = (file: string) =>
  * 走査は読み取れない式を印 (UNRESOLVED_SUBSTITUTION) にして、括弧の外にあれば違反にする。
  * 理由は「式の値が数・日本語の文である」ことに限る。英字の値 (キー・状態・種類の値) が入りうる式は、ここに足さずに括弧に入れるか日本語の名前にする
  */
-const TEMPLATE_SUBSTITUTION_EXEMPT: ReadonlyMap<string, string> = new Map([]);
-/** 走査で使った見逃しの鍵 (古くなった一覧を見つける) */
-const usedSubstitutionExempt = new Set<string>();
-const SUBSTITUTIONS = { exempt: TEMPLATE_SUBSTITUTION_EXEMPT, used: usedSubstitutionExempt };
+const TEMPLATE_SUBSTITUTION_EXEMPT: ReadonlyMap<string, string> = new Map([
+  [
+    substitutionKey('src/app/api/storage/signed-urls/route.ts', 'MAX_PHOTO_URL_LENGTH'),
+    '画像の URL の文字数の上限 (数)。@homegohan/shared の定数で、走査は package の import をたどらない',
+  ],
+  [substitutionKey('src/app/api/menu-plans/add/route.ts', 'maxOffsetDays'), '開始日のずれの日数の上限 (数。menuPlansAddMaxDateOffsetDays() の戻り値)'],
+  [substitutionKey('src/app/api/org/challenges/route.ts', 'meta.targetMin'), 'チャレンジの目標値の下限 (数。ORG_CHALLENGE_TYPE_META の targetMin)'],
+  [substitutionKey('src/app/api/org/challenges/route.ts', 'meta.targetMax'), 'チャレンジの目標値の上限 (数。ORG_CHALLENGE_TYPE_META の targetMax)'],
+]);
+const SUBSTITUTIONS: SubstitutionOptions = { exempt: TEMPLATE_SUBSTITUTION_EXEMPT };
 
 const violationsOf = (files: readonly string[]) =>
   files
@@ -295,5 +308,68 @@ describe('src/lib の関数・表が作って本文に流す文 (値で確かめ
     for (const [code, message] of MFA_ERROR_MESSAGES) {
       expect(englishIdentifiersOutsideParentheses(message), code).toEqual([]);
     }
+  });
+});
+
+describe('走査: テンプレートの式の部分を値として読む (#1917 の続き)', () => {
+  const FIXTURE_FILE = 'src/app/api/__fixture_template__/route.ts';
+  const FIXTURE = `
+    import { NextResponse } from 'next/server';
+    const KINDS = ['food', 'recipe'] as const;
+    const LIMIT = 30;
+    const LABEL = '試用の日数 (trial_days)';
+    export async function PATCH(keys: string[], from: string, to: string, n: number) {
+      if (a) return NextResponse.json({ error: { message: \`公開中プランでは \${keys.join(', ')} は変更できません\` } });
+      if (b) return NextResponse.json({ error: { message: \`\${from} から \${to} への遷移は許可されていません\` } });
+      if (c) return NextResponse.json({ error: \`種類 (type) は \${KINDS.join(', ')} のいずれかです\` });
+      if (d) return NextResponse.json({ error: \`次の項目は変更できません (\${keys.join(', ')})\` });
+      if (e) return NextResponse.json({ error: \`種類 (type) は次のいずれかです (\${KINDS.join(' / ')})\` });
+      if (f) return NextResponse.json({ error: \`\${LABEL} は \${LIMIT} 日以内、\${LIMIT * 2 - 1} 回まで、上位 \${Math.round(n)}% です\` });
+      if (g) return NextResponse.json({ error: \`目標値は \${n} 以上です\` });
+      return NextResponse.json({ ok: true });
+    }
+  `;
+  const textsWith = (exempt: ReadonlyMap<string, string>, used?: Set<string>) =>
+    findErrorTexts(FIXTURE_FILE, { text: FIXTURE, substitutions: { exempt, used } }).map((found) => found.text);
+
+  it('読み取れない式は印にし、定数・配列の定数の join・数は値にする', () => {
+    expect(textsWith(new Map())).toEqual([
+      `公開中プランでは ${UNRESOLVED_SUBSTITUTION} は変更できません`,
+      `${UNRESOLVED_SUBSTITUTION} から ${UNRESOLVED_SUBSTITUTION} への遷移は許可されていません`,
+      '種類 (type) は food, recipe のいずれかです',
+      `次の項目は変更できません ( ${UNRESOLVED_SUBSTITUTION} )`,
+      '種類 (type) は次のいずれかです (food / recipe)',
+      '試用の日数 (trial_days) は 0 日以内、0 回まで、上位 0% です',
+      `目標値は ${UNRESOLVED_SUBSTITUTION} 以上です`,
+    ]);
+  });
+
+  it('括弧の外に英字の値・読み取れない式を差し込む文だけを違反にする (以前のプランの文・モデレーションの種類の文)', () => {
+    const violations = textsWith(new Map()).filter((text) => englishIdentifiersOutsideParentheses(text).length > 0);
+    expect(violations).toEqual([
+      `公開中プランでは ${UNRESOLVED_SUBSTITUTION} は変更できません`,
+      `${UNRESOLVED_SUBSTITUTION} から ${UNRESOLVED_SUBSTITUTION} への遷移は許可されていません`,
+      '種類 (type) は food, recipe のいずれかです',
+      `目標値は ${UNRESOLVED_SUBSTITUTION} 以上です`,
+    ]);
+  });
+
+  it('見逃しの一覧に載せた式は空にし、使った鍵を積む', () => {
+    const used = new Set<string>();
+    const key = substitutionKey(FIXTURE_FILE, 'n');
+    const texts = textsWith(new Map([[key, '数']]), used);
+    expect(texts).toContain('目標値は 以上です');
+    expect([...used]).toEqual([key]);
+  });
+
+  it('見逃しの一覧 (TEMPLATE_SUBSTITUTION_EXEMPT) の鍵は、どれも走査で使われる (古くなった一覧を残さない)', () => {
+    const used = new Set<string>();
+    const options: SubstitutionOptions = { exempt: TEMPLATE_SUBSTITUTION_EXEMPT, used };
+    const routeFiles = routeFilesUnder(API_ROUTES_ROOT).filter((file) => !isMachineFacing(file));
+    for (const file of routeFiles) findErrorTexts(file, { extraTextCalls: ROUTE_ERROR_TEXT_CALLS, substitutions: options });
+    for (const dir of ZOD_TEXT_SOURCE_DIRS) {
+      for (const file of walkFiles(dir, isTypeScriptSource)) findValidationMessageTexts(file, { substitutions: options });
+    }
+    expect([...TEMPLATE_SUBSTITUTION_EXEMPT.keys()].filter((key) => !used.has(key))).toEqual([]);
   });
 });

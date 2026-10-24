@@ -5,10 +5,16 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { TurnstileWidget, useTurnstile } from "@/components/auth/TurnstileWidget";
 import { CAPTCHA_FAILED_MESSAGE, isCaptchaFailure } from "@/lib/auth/turnstile";
+import { authErrorMessageForDisplay } from "@/lib/auth/auth-error-message";
 import { getSafeRedirectPath } from "@/lib/auth/safe-redirect";
 import { useState, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { AlertCircle } from "lucide-react";
+
+/** 再送が断られたときの文 (GoTrue の英語の文は付け足さない。#1917 の続き) */
+const RESEND_FAILED_MESSAGE = '再送信に失敗しました。しばらくしてから再度お試しください。';
+/** 再送で予期しない例外が起きたときの文 (例外の文面は出さず console に残す。#1917 の続き) */
+const UNEXPECTED_RESEND_ERROR_MESSAGE = '予期せぬエラーが発生しました。しばらくしてから再度お試しください。';
 
 function VerifyContent() {
   const [isResending, setIsResending] = useState(false);
@@ -54,8 +60,9 @@ function VerifyContent() {
 
       if (error) {
         console.error('Resend error:', error);
-        // #1474: CAPTCHA の確認で断られたときは、英語の生のエラー文を出さない (ウィジェットは取り直し済み)
-        setResendError(isCaptchaFailure(error) ? CAPTCHA_FAILED_MESSAGE : `再送信に失敗しました: ${error.message}`);
+        // #1474: CAPTCHA の確認で断られたときは、英語の生のエラー文を出さない (ウィジェットは取り直し済み)。
+        // GoTrue の英語の文 (回数の制限など) も付け足さない (#1917 の続き)
+        setResendError(isCaptchaFailure(error) ? CAPTCHA_FAILED_MESSAGE : authErrorMessageForDisplay(error, RESEND_FAILED_MESSAGE));
         return;
       }
 
@@ -66,7 +73,7 @@ function VerifyContent() {
       setResendError(
         isCaptchaFailure(error)
           ? CAPTCHA_FAILED_MESSAGE
-          : `予期せぬエラーが発生しました: ${error.message || '不明なエラー'}`,
+          : authErrorMessageForDisplay(error, UNEXPECTED_RESEND_ERROR_MESSAGE),
       );
     } finally {
       setIsResending(false);

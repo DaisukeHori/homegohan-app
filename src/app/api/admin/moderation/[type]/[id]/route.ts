@@ -71,6 +71,7 @@ import { createLogger, generateRequestId } from '@/lib/db-logger';
 import {
   ModerationResolveBodySchema,
   MODERATION_TYPES,
+  MODERATION_TYPE_INVALID_MESSAGE,
   isModerationDeleteAction,
   type ModerationType,
 } from '@/lib/admin/moderation-schemas';
@@ -137,7 +138,7 @@ export async function GET(request: Request, props: Params) {
 
   if (!MODERATION_TYPES.includes(type as ModerationType)) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: `種類 (type) は ${MODERATION_TYPES.join(', ')} のいずれかである必要があります` } },
+      { error: { code: 'VALIDATION_ERROR', message: MODERATION_TYPE_INVALID_MESSAGE } },
       { status: 400 },
     );
   }
@@ -230,7 +231,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
   // type バリデーション
   if (!MODERATION_TYPES.includes(type as ModerationType)) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: `種類 (type) は ${MODERATION_TYPES.join(', ')} のいずれかである必要があります` } },
+      { error: { code: 'VALIDATION_ERROR', message: MODERATION_TYPE_INVALID_MESSAGE } },
       { status: 400 },
     );
   }

@@ -188,7 +188,7 @@ describe('5. 存在しない日付・範囲の外の日付は、DB に触れる�
       const res = await regenerateShoppingList(jsonRequest('http://localhost/api/shopping-list/regenerate', 'POST', body));
       expect(res.status, JSON.stringify(body)).toBe(400);
       expect(await res.json()).toEqual({
-        error: '開始日 (startDate) と終了日 (endDate) はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください',
+        error: '開始日 (startDate)と終了日 (endDate)はYYYY-MM-DD の形の、0101-01-02 から 9998-12-30 までの実在する日付で指定してください',
       });
     }
     expect(h.queries).toEqual([]);

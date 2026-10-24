@@ -8,7 +8,7 @@ import { internalError } from '@/lib/api/errors';
 import { addDaysToDate, isCalendarDate } from '@/lib/date-utils';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
-import { CALENDAR_DATE_REQUIREMENT_JA } from '@/lib/api/user-api-error-messages';
+import { CALENDAR_DATE_RANGE_PARAMS_LABEL, invalidCalendarDateMessage } from '@/lib/api/user-api-error-messages';
 
 /** 400: 開始日・終了日が無い */
 const DATE_RANGE_REQUIRED_MESSAGE = '開始日 (startDate) と終了日 (endDate) を指定してください';
@@ -56,7 +56,7 @@ export async function POST(request: Request) {
     // YYYY-MM-DD の実在する日付 (受け付ける範囲の中) だけを通す。以前は new Date で確かめていたので、2026-02-30 が 3/2 に
     // 繰り上がって通り、リクエストの行 (start_date / end_date は date 型) を作るところで 500 になっていた (#1463)
     if (!isCalendarDate(startDate) || !isCalendarDate(endDate)) {
-      return NextResponse.json({ error: `開始日 (startDate) と終了日 (endDate) は${CALENDAR_DATE_REQUIREMENT_JA}で指定してください` }, { status: 400 });
+      return NextResponse.json({ error: invalidCalendarDateMessage(CALENDAR_DATE_RANGE_PARAMS_LABEL) }, { status: 400 });
     }
     // 4 桁の年の YYYY-MM-DD どうしは、文字列の大小が日付の前後と同じ
     if (startDate > endDate) {

@@ -8,12 +8,16 @@
  * (CALENDAR_DATE_MIN 〜 CALENDAR_DATE_MAX。前後 1 年の余白つき) の外は 400 にする。
  */
 import { z } from 'zod';
-import { CALENDAR_DATE_REQUIREMENT_JA } from '@/lib/api/user-api-error-messages';
+import { invalidCalendarDateMessage } from '@/lib/api/user-api-error-messages';
 import { isCalendarDate } from '@/lib/date-utils';
 
+/** CalendarDateSchema の失敗の文の項目の名前 (スキーマはどの項目に使われるかを知らない) */
+const CALENDAR_DATE_SCHEMA_LABEL = '日付';
+
 export const CalendarDateSchema = z.string().refine(isCalendarDate, {
-  // 受け付ける日付の説明は利用者向けの API の 400 の文と同じ (#1917 で 1 つにそろえた)
-  message: `${CALENDAR_DATE_REQUIREMENT_JA}を指定してください`,
+  // 文は利用者向けの API の日付の 400 の文と同じ作り手 (invalidCalendarDateMessage) で作る (#1917 で 1 つにそろえた。
+  // スキーマは項目名を知らないので、名前は「日付」)
+  message: invalidCalendarDateMessage(CALENDAR_DATE_SCHEMA_LABEL),
 });
 
 /**

@@ -9,7 +9,7 @@
 //   - 変更の理由は必須 (監査ログに残す)
 //   - 組織のプランの値 (standard / premium / enterprise) の行も保存できる。どちらにも無いキーの行は入力欄と保存を止める (#1912)
 //   - subscription_plans の組織のプランの行 (org_*) は値が判定に使われないので、入力欄と保存を止め、
-//     「組織の上限は standard / premium / enterprise の行で決まります」と案内する (PATCH も 409 PLAN_READ_ONLY で断る。#1912)
+//     「組織の上限は組織のプランの値 (standard / premium / enterprise) の行で決まります」と案内する (PATCH も 409 PLAN_READ_ONLY で断る。#1912)
 //   - 保存が 409 CONFLICT_STALE_DATA (読んでから書くまでに別の運営が先に同じプランの上限を変えた) で断られたら、一覧を読み直して
 //     いまの上限を出し、行にその旨を出す。入力欄 (新しい上限・理由) の書きかけは読み直しで消さない (#1917)
 
