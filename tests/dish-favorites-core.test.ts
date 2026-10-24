@@ -48,6 +48,37 @@ const UTF8_BYTES_PER_KANA = 3;
 const SNAPSHOT_KEY_COUNT = 36;
 /** 「㌀」(U+3300 SQUARE APAATO)。NFKC で「アパート」になり、鍵が表示名より長くなる */
 const SQUARE_APAATO = '\u3300';
+/**
+ * \u65e7\u5f62\u5f0f\u306e\u77ed\u3044\u30ad\u30fc (src/app/(main)/menus/weekly/_state/types.ts \u306e LegacyDishDetail \u306e 23 \u500b) \u3068\u65b0\u5f62\u5f0f\u306e\u9805\u76ee\u306e\u5bfe\u5fdc
+ * (menus/weekly/page.tsx \u306e normalizedDish \u306e `dish.<\u65b0> ?? d.<\u65e7>` \u3068\u540c\u3058\u7d44)\u3002U-6 \u304c core.ts \u306e\u5bfe\u5fdc\u8868\u3092\u3053\u306e\u8868\u3067 1 \u5bfe 1 \u306b\u898b\u308b
+ */
+const LEGACY_TO_CURRENT: ReadonlyArray<readonly [string, string]> = [
+  ['cal', 'calories_kcal'],
+  ['protein', 'protein_g'],
+  ['fat', 'fat_g'],
+  ['carbs', 'carbs_g'],
+  ['fiber', 'fiber_g'],
+  ['sugar', 'sugar_g'],
+  ['sodium', 'sodium_g'],
+  ['potassium', 'potassium_mg'],
+  ['calcium', 'calcium_mg'],
+  ['phosphorus', 'phosphorus_mg'],
+  ['iron', 'iron_mg'],
+  ['zinc', 'zinc_mg'],
+  ['cholesterol', 'cholesterol_mg'],
+  ['vitaminA', 'vitamin_a_ug'],
+  ['vitaminB1', 'vitamin_b1_mg'],
+  ['vitaminB2', 'vitamin_b2_mg'],
+  ['vitaminB6', 'vitamin_b6_mg'],
+  ['vitaminB12', 'vitamin_b12_ug'],
+  ['vitaminC', 'vitamin_c_mg'],
+  ['vitaminD', 'vitamin_d_ug'],
+  ['vitaminE', 'vitamin_e_mg'],
+  ['vitaminK', 'vitamin_k_ug'],
+  ['folicAcid', 'folic_acid_ug'],
+];
+/** U-6: \u65e7\u5f62\u5f0f\u306e\u5024\u306b\u8db3\u3059\u7aef\u6570 (\u5024\u304c\u4e92\u3044\u306b\u9055\u3044\u3001\u6574\u6570\u3067\u306a\u3044\u3088\u3046\u306b) */
+const LEGACY_VALUE_FRACTION = 0.25;
 
 const ROW_ID = '11111111-1111-4111-8111-111111111111';
 const USER_ID = '22222222-2222-4222-8222-222222222222';
@@ -216,6 +247,42 @@ describe('dish-favorites core: 献立の料理 → 写し', () => {
     expect(legacy.calories_kcal).toBe(250);
     expect(legacy.protein_g).toBe(8);
     expect(legacy.vitamin_b12_ug).toBe(1.2);
+
+    // 旧形式のキー 23 個 (LegacyDishDetail の全部) を互いに違う正の値で渡すと、対応する新形式の項目へ 1 対 1 で入る
+    // (core.ts の対応のどれか 1 つの綴りの誤り・抜けがあれば、その項目が null か別の値になる)。旧形式に名前の無い 7 項目は null
+    const legacyNames = new Set(LEGACY_TO_CURRENT.map(([legacyName]) => legacyName));
+    expect(legacyNames.size).toBe(LEGACY_TO_CURRENT.length);
+    const legacySource = fs.readFileSync(path.join(ROOT, 'src/app/(main)/menus/weekly/_state/types.ts'), 'utf8');
+    const legacyStart = legacySource.indexOf('export type LegacyDishDetail = DishDetail & {');
+    expect(legacyStart).toBeGreaterThanOrEqual(0);
+    const legacyBody = legacySource.slice(legacyStart, legacySource.indexOf('\n};', legacyStart));
+    const legacyDeclared = [...legacyBody.matchAll(/^\s*(\w+)\?:\s*number\s*;/gm)].map((match) => match[1]);
+    expect(new Set(legacyDeclared)).toEqual(legacyNames);
+    const allNutrientKeys = ['calories_kcal', ...DISH_FAVORITE_NUTRIENT_KEYS] as const;
+    const legacyInput: Record<string, unknown> = { name: '旧形式だけ' };
+    const expectedFromLegacy: Record<string, number | null> = Object.fromEntries(allNutrientKeys.map((key) => [key, null]));
+    LEGACY_TO_CURRENT.forEach(([legacyName, currentKey], index) => {
+      const value = index + 1 + LEGACY_VALUE_FRACTION;
+      legacyInput[legacyName] = value;
+      expectedFromLegacy[currentKey] = value;
+    });
+    const allLegacy = dishSnapshotFromMenuDish(legacyInput);
+    expect(Object.fromEntries(allNutrientKeys.map((key) => [key, allLegacy[key]]))).toStrictEqual(expectedFromLegacy);
+
+    // 0 は null にしない (画面の「-」に化けない)。新形式の 0 は旧形式より優先し、旧形式の 0 もそのまま入る。文字列の '0' も 0
+    const zeros = dishSnapshotFromMenuDish({ name: '水', protein_g: 0, protein: 99, fat: 0, calories_kcal: 0, sodium: '0', carbs_g: '0', carbs: 5 });
+    expect(zeros.protein_g).toBe(0);
+    expect(zeros.fat_g).toBe(0);
+    expect(zeros.calories_kcal).toBe(0);
+    expect(zeros.sodium_g).toBe(0);
+    expect(zeros.carbs_g).toBe(0);
+
+    // 空文字と空白だけの文字列は 0 でなく null (Number('') は 0 になる)。新形式が空なら旧形式を読む
+    const blanks = dishSnapshotFromMenuDish({ name: '空', fat: '', fiber: '  ', protein_g: '', protein: 8, vitamin_c_mg: ' ', vitaminC: '' });
+    expect(blanks.fat_g).toBeNull();
+    expect(blanks.fiber_g).toBeNull();
+    expect(blanks.protein_g).toBe(8);
+    expect(blanks.vitamin_c_mg).toBeNull();
   });
 
   it('U-7: dishSnapshotFromMenuDish は ingredients の空でない文字列 (前後の空白を除く) と name のある構造の形 ({ name, amount_g, note }。amount_g は 0 以上の数か null・note は空なら null) を集めて数・null・name の無いオブジェクトを捨て、recipeSteps の空でない文字列を集め、ingredientsMd・recipeStepsMd を写す。name が無ければ nameFallback', () => {
@@ -234,6 +301,9 @@ describe('dish-favorites core: 献立の料理 → 写し', () => {
           { name: '  玉ねぎ ', amount_g: 100, note: 'みじん切り' },
           { name: '塩', amount_g: -1, note: '' },
           { name: '水', note: 5 },
+          { name: ' 酢 ', amount_g: 0 },
+          { name: '砂糖', amount_g: '' },
+          { name: '油', amount_g: '  ', note: '  ' },
         ],
         recipeSteps: [' 切る ', '', '  ', 1, null, '煮る'],
         ingredientsMd: '| 材料 | 分量 |',
@@ -248,6 +318,10 @@ describe('dish-favorites core: 献立の料理 → 写し', () => {
       { name: '玉ねぎ', amount_g: 100, note: 'みじん切り' },
       { name: '塩', amount_g: null, note: null },
       { name: '水', amount_g: null, note: null },
+      // amount_g の 0 は 0 のまま (null にしない)。空文字・空白だけの amount_g は null、空白だけの note は null
+      { name: '酢', amount_g: 0, note: null },
+      { name: '砂糖', amount_g: null, note: null },
+      { name: '油', amount_g: null, note: null },
     ]);
     expect(snapshot.recipe_steps).toStrictEqual(['切る', '煮る']);
     expect(snapshot.ingredients_md).toBe('| 材料 | 分量 |');
@@ -370,6 +444,7 @@ describe('dish-favorites core: 写し → 画面', () => {
         'しょうゆ',
         { name: '玉ねぎ', amount_g: 100, note: 'みじん切り' },
         { name: '水', amount_g: null, note: '常温' },
+        { name: '酢', amount_g: 0, note: null },
         '鶏むね肉 200g',
       ],
     }).ingredients;
@@ -381,6 +456,8 @@ describe('dish-favorites core: 写し → 画面', () => {
       { name: 'しょうゆ', amount: null },
       { name: '玉ねぎ', amount: '100g' },
       { name: '水', amount: null },
+      // amount_g の 0 は '0g' (null にしない)
+      { name: '酢', amount: '0g' },
       { name: '鶏むね肉', amount: '200g' },
     ]);
     expect(ingredientInputsOf([])).toEqual([]);
@@ -491,6 +568,9 @@ describe('dish-favorites core: 写し → 画面', () => {
       [{ name: '塩', amount_g: null, note: '少々' }, '塩 (少々)'],
       [{ name: 'こしょう', amount_g: null, note: null }, 'こしょう'],
       [{ name: '砂糖', amount_g: 0.5, note: null }, '砂糖 0.5g'],
+      // 分量の 0 は付ける (null と区別する)
+      [{ name: '水', amount_g: 0, note: 'メモ' }, '水 0g (メモ)'],
+      [{ name: '酢', amount_g: 0, note: null }, '酢 0g'],
     ];
     for (const [input, expected] of cases) {
       expect(ingredientLineOf(DishIngredientSchema.parse(input))).toBe(expected);
