@@ -3,6 +3,7 @@
 | 版 | 日付 | 内容 |
 |---|---|---|
 | v1.0 | 2026-10-24 | 新設 (Issue #1917 の続き (api-read-errors のあと) の設計ゲート・A 型 4 相。公開レシピの一覧・詳細・コメントの作者名を、本人以外にも表示名で出す) |
+| v1.1 | 2026-10-24 | 審査 R1 の反映: 戻し口の見出しを対の migration の名前に・段 A の本番の適用を文面が効いたあとの同じ門に (§15 の本番の順序)・プライバシーポリシーの文をレシピとコメントで分ける (6 文)・結合テストの helper を実在の export と本テスト内の定義に・I-12 を退会する作者の公開レシピで確かめる形に・C-8 を段 B へ・fix 枝の単体テストの it の対応表 (§7.11) |
 
 要件の正本は Issue #1917 の本文とコメント。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
 ファイル名は cross/21 (cross/ の既存は 01〜09・12・13a・13b・14〜20。10・11・13 は欠番)。
@@ -53,7 +54,7 @@
 | R-13 | 名前が読めなかったときは今までどおり 500 (名前が無いように見せない) | fix 枝の `viewer-lookups.ts` の決まり | §10 |
 | R-14 | プライバシーポリシーの文面が足りるかを判定し、足りないなら逐語の文と版の選択肢を出す | 決めること 4 | §6.4, §7.12, §21 Q-1 |
 | R-15 | migration と `.down.sql`・関数の権限・TS の定数の突き合わせを DB を使わない契約テストで固定し、実 DB の結合テストで R-1〜R-6・R-9・R-10 を確かめる | `tests/rpc-profile-name-placeholder-migration-contract.test.ts` の前例 | §7.9, §7.10, §12 |
-| R-16 | 段の順序で、レシピの API が 500 を返す時間を作らない (関数が無い状態でコードを出さない) | 段分けの原則 | §15, §19 |
+| R-16 | 段の順序で、レシピの API が 500 を返す時間を作らない (関数が無い状態でコードを出さない)。文面 (段 C) が効く前に、他人の表示名を返す経路 (関数とその EXECUTE) を本番に置かない | 段分けの原則・§6.4 の判定 | §6.4, §9.2, §15, §19 |
 | R-17 | 設計の正典コードに `as any`・マジックナンバーを置かない (年齢の境・関数名・文面は名前付きの定数) | 設計の絶対条件 | §7, §13 |
 | R-18 | 新しい環境変数・route・テーブル・RLS ポリシーを足さない。足すのは列 1 つ・関数 1 本・索引 1 つ | 発明しない | §14 |
 
@@ -84,7 +85,7 @@
 
 - 核は関数 1 本 (`recipe_author_display_names`) と lib 1 つ (`viewer-lookups.ts`) で、消費先の route 3 本は同じ lib の呼び出し側 (1 レーン)。核と配線に分けると、配線の冊は「`lookups.nicknames` を `lookups.authorNames` に改める」1 行の冊になる。
 - プライバシーポリシーの文面は本書では編集しない (cross/20 が正典)。本書は逐語の文と版の選択肢を出し (§7.12・§21 Q-1)、改定は cross/20 の改定版か docs PR で行う。
-- 段分け (§15) で、DB (段 A) → API と設定 (段 B) → 文面 (段 C。オーナーの選択のあと) の順に閉じる。
+- 段分け (§15) は、DB (段 A)・API と設定 (段 B)・文面 (段 C。オーナーの選択のあと) の 3 つ。本番は 文面 (段 C) が効く → 段 A の適用 → 段 A のマージ → 段 B のマージ の順で、後ろの 3 つを同じ座で続けて行う。
 
 ### 0.5 用語
 
@@ -313,15 +314,15 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 
 判定: **足りない**。第3条はニックネームを取得すると書き、第4条は「記録の保存と表示」を目的に挙げるが、ニックネームが誰に見えるかを書いた条 (第6条 AI・第9条 家族と組織) のどれにも「公開レシピの作者として他の利用者 (未ログインを含む) に出る」は無い (F-26)。読む人は「ニックネームが見えるのは家族・組織・AI だけ」と読める。他人に見える範囲が広がるのは内容が変わる改定なので、cross/20 §9.3 の規律で版を上げる (再同意が起きる)。
 
-文面の逐語 (第9条に 5 文を足し、見出しを改める) は §7.12。版の置き方は 3 択で、オーナーに聞く (§21 Q-1):
+文面の逐語 (第9条に 6 文を足し、見出しを改める) は §7.12。版の置き方は 3 択で、オーナーに聞く (§21 Q-1):
 
 | 選択肢 | 中身 | 利点 | 代償 |
 |---|---|---|---|
-| (a) 推奨 | v2026.4 (PR #1997。施行日 2026-11-01 の仮置き・予告のあとマージ) に入れる | 再同意が 1 回で済む。予告の工程が 1 回 | PR #1997 の文面と主張の表に本書の 5 文を足す (`LEGAL_CLAIM_COUNT` を +5)。Issue #1139 の予告の文を「Apple の記載と、公開レシピの作者名の表示」に改めてから投稿する。段 B (API) の本番の公開は v2026.4 の施行日 (2026-11-01) 以後にそろえる |
-| (b) | 別の版 (v2026.5) にする | PR #1997 と Issue #1139 の予告を触らない | 予告 → 施行の工程がもう 1 回。再同意が 2 回続く。段 B の公開は v2026.5 の施行日まで待つ |
+| (a) 推奨 | v2026.4 (PR #1997。施行日 2026-11-01 の仮置き・予告のあとマージ) に入れる | 再同意が 1 回で済む。予告の工程が 1 回 | PR #1997 の文面と主張の表に本書の 6 文を足す (`LEGAL_CLAIM_COUNT` を +6)。Issue #1139 の予告の文を「Apple の記載と、公開レシピの作者名の表示」に改めてから投稿する。段 A の本番の適用と段 A・段 B のマージは、PR #1997 のマージ・デプロイ (施行日) のあとにそろえる |
+| (b) | 別の版 (v2026.5) にする | PR #1997 と Issue #1139 の予告を触らない | 予告 → 施行の工程がもう 1 回。再同意が 2 回続く。段 A の本番の適用と段 A・段 B のマージは v2026.5 の施行日まで待つ |
 | (c) | 版を上げずに文だけ足す (内容が変わらない直しと整理する) | すぐ公開できる | §9.3 の規律に反する (他人に見える範囲が広がる改定を「内容が変わらない」とは言えない)。本書は勧めない |
 
-本書の既定 (オーナーの回答が無い間): (a) として段 C を書く。段 A (migration) は版と独立に先に適用できる。段 B のマージの時期はオーナーの回答に従う (§15)。
+本書の既定 (オーナーの回答が無い間): (a) として段 C を書く。段 A の関数は anon / authenticated に EXECUTE を付け、適用した時点から公開の作者の表示名を `/rest/v1/rpc` で直接引ける (作者の uuid は未ログインの一覧の `userId` で返る) ので、段 A の本番の適用も「今の文面では足りない」の判定に掛かる。そのため、どの選択肢でも、段 A の本番の適用・段 A のマージ・段 B のマージを、文面 (段 C) が効いたあとに同じ座で続けて行う (§15 の本番の順序)。段 A・段 B の実装と実装ゲートは、それより前に済ませておいてよい。
 
 ### 6.5 本人が名前を出さない選択 (決めること 5)
 
@@ -334,7 +335,7 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 
 ### 6.6 段分け (決めること 6)
 
-§15。段 A (DB) → 段 B (API・設定) → 段 C (文面。オーナーの選択のあと)。段 A の本番の適用は段 B のマージより前 (R-16)。
+§15。段 A (DB)・段 B (API・設定)・段 C (文面。オーナーの選択のあと)。本番は 段 C の文面が効く → 段 A の適用 → 段 A のマージ → 段 B のマージ の順 (R-16。段 A の適用は段 B のマージより前で、文面が効いたあと)。
 
 ---
 
@@ -342,7 +343,7 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 
 ### 7.1 `supabase/migrations/<番号はマージ時に確定>_recipe_author_display_names.sql`
 
-番号はマージの直前に origin/main の `supabase/migrations` の最大より大きい番号で確定する (ファイル名・1 行目の見出し・「戻し方」の参照・戻し口のファイル名と見出しの 4 か所を同時に)。
+番号はマージの直前に origin/main の `supabase/migrations` の最大より大きい番号で確定する (ファイル名・1 行目の見出し・「戻し方」の参照・戻し口のファイル名と見出しの 4 か所を同時に)。戻し口の 1 行目の見出しは、戻し口自身のファイル名 (`.down.sql`) ではなく、対の migration のファイル名 (`<番号>_recipe_author_display_names.sql`) を書く (`tests/migration-file-version-integrity.test.ts` の「戻し口には同じ名前の migration があり、1 行目の見出しもその migration を指す」の決まり。既存の戻し口 (例: `20261024100000_apple_sign_in_tokens.down.sql` の `-- rollback: 20261024100000_apple_sign_in_tokens.sql`) と同じ形)。
 
 ```sql
 -- migration: <番号はマージ時に確定>_recipe_author_display_names.sql
@@ -456,8 +457,8 @@ COMMENT ON FUNCTION public.recipe_author_display_names(uuid[]) IS
 ### 7.2 `supabase/rollbacks/<同じ番号>_recipe_author_display_names.down.sql`
 
 ```sql
--- rollback: <同じ番号>_recipe_author_display_names.down.sql
--- cross/21 の戻し口。関数 → 索引 → 列 の順に消す。
+-- rollback: <同じ番号>_recipe_author_display_names.sql
+-- cross/21 の戻し口 (このファイルは supabase/rollbacks/<同じ番号>_recipe_author_display_names.down.sql。1 行目は対の migration の名前)。関数 → 索引 → 列 の順に消す。
 -- 注意: 先にコードを戻す (viewer-lookups.ts が rpc を呼んだまま関数を消すと、レシピの API が PGRST202 の 500 になる)。
 -- 列を消すと、本人の「名前を出さない」の選択は失われる (戻したあとに再適用しても既定の true に戻る)。
 -- anon / authenticated への GRANT は何も付け直さない (TRUNCATE / ALL を含む。20261022190000 より後の戻し口の規律)。
@@ -686,15 +687,19 @@ const ANON_EXECUTABLE_DEFINER_ALLOWLIST: Record<string, string> = {
  *
  * 本物の DB での振る舞い (他人の表示名が返る・返らない人・anon が呼べる・user_profiles の RLS が変わっていない) は
  * tests/integration/security/recipe-author-display-names.test.ts が確かめる。ここでは、ファイルの文面だけで崩れやすい所を確かめる。
- *   C-1 migration はちょうど 1 本。1 行目の見出しと「戻し方」の参照がファイル名と一致し、戻し口が実在して見出しも一致する
+ *   C-1 migration はちょうど 1 本。1 行目の見出しと「戻し方」の参照がファイル名と一致し、戻し口が実在して、その 1 行目の見出しが対の migration のファイル名を指す
+ *       (tests/migration-file-version-integrity.test.ts の決まり。戻し口の見出しに .down.sql を書かない)
  *   C-2 列 show_recipe_author_name は boolean NOT NULL DEFAULT true。特権列ガードの関数を作り直していない
  *   C-3 関数は SECURITY DEFINER・STABLE・search_path が空・RETURNS TABLE (author_id uuid, display_name text)
  *   C-4 年齢の境の定数が @homegohan/shared の ADULT_AGE_YEARS と同じ。age_years_jst と normalize_profile_name を呼び、どちらも作り直していない
  *   C-5 凍結中の判定が isAccountFrozen と同じ形 (frozen_at IS NULL OR (unban_at IS NOT NULL AND unban_at <= now()))
  *   C-6 権限: 完全形で PUBLIC / anon / authenticated / service_role から REVOKE し、anon と authenticated にだけ GRANT EXECUTE。TRUNCATE / ALL を付けない
  *   C-7 戻し口は関数 → 索引 → 列 の順に消し、GRANT を書かない
- *   C-8 viewer-lookups.ts の RECIPE_AUTHOR_DISPLAY_NAMES_RPC が関数の名前と同じで、user_profiles を直接 select していない
+ *   C-8 viewer-lookups.ts の RECIPE_AUTHOR_DISPLAY_NAMES_RPC が関数の名前と同じで、user_profiles を直接 select していない (段 B の PR で足す)
  *   C-9 anon の許可一覧に関数の完全形がある。2 つの database.types.ts に関数と列が入っている
+ *
+ * 段 A の PR はこのファイルを C-8 の it を除いて置き、段 B の PR (viewer-lookups.ts を差し替える PR) が C-8 の it を足す
+ * (段 A の時点の viewer-lookups.ts は fix 枝の形で、まだ user_profiles を読み、RPC の定数を持たないため)。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -750,7 +755,8 @@ describe('cross/21 recipe_author_display_names の migration (静的)', () => {
     expect(sql).toContain(`${ROLLBACKS_DIR}/${rollbackFile}`);
     const rollbackPath = path.join(ROOT, ROLLBACKS_DIR, rollbackFile);
     expect(fs.existsSync(rollbackPath), `${rollbackFile} が実在する`).toBe(true);
-    expect(read(`${ROLLBACKS_DIR}/${rollbackFile}`).split('\n')[0]).toBe(`-- rollback: ${rollbackFile}`);
+    // 戻し口の見出しは対の migration の名前 (<stem>.sql)。tests/migration-file-version-integrity.test.ts と同じ決まり
+    expect(read(`${ROLLBACKS_DIR}/${rollbackFile}`).split('\n')[0]).toBe(`-- rollback: ${file}`);
   });
 
   it('C-2: 列は boolean NOT NULL DEFAULT true。特権列ガードを作り直さない', () => {
@@ -801,6 +807,7 @@ describe('cross/21 recipe_author_display_names の migration (静的)', () => {
     expect(down).not.toMatch(/\bGRANT\b/);
   });
 
+  // C-8 は段 B の PR で足す (段 A の PR には置かない。§15)
   it('C-8: viewer-lookups.ts は関数の名前の定数で rpc を呼び、user_profiles を直接 select しない', () => {
     const src = read(VIEWER_LOOKUPS);
     expect(src).toContain(`export const RECIPE_AUTHOR_DISPLAY_NAMES_RPC = '${FUNCTION_NAME}';`);
@@ -841,7 +848,8 @@ describe('cross/21 recipe_author_display_names の migration (静的)', () => {
  *   I-9  PUT /api/profile で showRecipeAuthorName を false にすると他の人には '匿名'、true に戻すと表示名。本人の一覧には自分の名前のまま
  *   I-10 公開レシピを非公開に戻す・運営が隠す (hidden_at) と、ほかに公開の内容が無い作者の名前は返らなくなる
  *   I-11 権限: anon と authenticated は EXECUTE でき、PUBLIC と service_role には EXECUTE が無い。user_profiles の SELECT のポリシーは本人の行だけの 1 本のまま
- *   I-12 作者を退会 (auth.admin.deleteUser) させると、公開レシピは user_id が NULL で残り authorName は '匿名'、コメントは消える
+ *   I-12 公開レシピとコメントを持つ作者 (leaver) を退会 (auth.admin.deleteUser) させると、その公開レシピは user_id が NULL・is_public が true のまま残り、
+ *        一覧・詳細 (未ログイン・ログイン中) の authorName は '匿名' になり (退会の前は表示名)、コメントは消える (S-6・R-3)
  *   I-13 凍結を解除 (frozen_at を NULL) すると、凍結中に返らなかった作者の名前が返る (S-7)
  *   I-14 18 歳の誕生日 (JST) の境: 今日が 18 歳の誕生日の人は返り、明日が 18 歳の誕生日の人は返らない (S-9。DB の時計の JST の今日で生年月日を決める)
  *   I-15 user_id が NULL のシステムの公開レシピは、一覧・詳細 (未ログイン・ログイン中) で authorName が '匿名' (S-15)
@@ -852,12 +860,55 @@ describe('cross/21 recipe_author_display_names の migration (静的)', () => {
  *   npx vitest run --config vitest.integration.config.ts tests/integration/security/recipe-author-display-names.test.ts
  * 作った行とユーザーは afterAll で消す。本番には接続しない。
  * 生年月日・凍結の列は特権列なので service_role (supabaseAdmin) で入れる (本番で入れるのは accept_legal_documents と運営の凍結)。
+ * anon / ログインした利用者のクライアントと pgQuery は、tests/integration/security/anon-definer-execute.test.ts の冒頭と同じ作りで
+ * このファイルの中に置く (tests/integration/helpers/supabase.ts の supabaseAnon は呼び出せない Proxy の定数で、JWT を渡す口も pgQuery も無い)。
  */
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import ws from 'ws';
 import { ADULT_AGE_YEARS, PROFILE_NAME_PLACEHOLDER } from '@homegohan/shared';
 import { apiCall } from '../helpers/api';
-import { pgQuery, supabaseAdmin, supabaseAnon, supabaseAsUser } from '../helpers/supabase';
+import { supabaseAdmin } from '../helpers/supabase';
 import { cleanupTestUser, createTestUserWithRoles, type TestUser } from '../helpers/users';
+
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+if (!url || !anonKey || !serviceKey) {
+  throw new Error(
+    'NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY が未設定です。',
+  );
+}
+
+function client(key: string, accessToken?: string): SupabaseClient {
+  return createClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    realtime: { transport: ws as unknown as typeof WebSocket },
+    ...(accessToken ? { global: { headers: { Authorization: `Bearer ${accessToken}` } } } : {}),
+  });
+}
+
+/** 未ログイン (anon キーだけ) のクライアント */
+const anon = () => client(anonKey);
+/** ログインした利用者 (anon キー + その人の JWT) のクライアント */
+const asUser = (jwt: string) => client(anonKey, jwt);
+
+/** ローカルスタックの postgres-meta で SQL を実行する (カタログの確認と、DB の時計の読み取りだけに使う。読み取り専用) */
+async function pgQuery<T = Record<string, unknown>>(query: string): Promise<T[]> {
+  const res = await fetch(`${url}/pg/query`, {
+    method: 'POST',
+    headers: {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(`pg/query ${res.status}: ${JSON.stringify(body)}`);
+  return body as T[];
+}
 
 const TS = Date.now();
 const RPC = 'recipe_author_display_names';
@@ -874,15 +925,19 @@ const FIRST_COMPILE_TIMEOUT_MS = 180_000;
 
 type Person = { user: TestUser; nickname: string };
 type AuthorNameRow = { author_id: string; display_name: string };
+type ListBody = { recipes: Array<{ id: string; userId: string | null; authorName: string }> };
+type DetailBody = { recipe: { authorName: string; comments: Array<{ content: string; authorName: string }> } };
 
 const people: Record<
   | 'author' | 'minor' | 'noBirth' | 'frozen' | 'tempFrozen' | 'tempFrozenExpired' | 'optOut' | 'noName' | 'privateOnly' | 'commenter' | 'viewer'
-  | 'unfreeze' | 'turns18Today' | 'turns18Tomorrow',
+  | 'unfreeze' | 'turns18Today' | 'turns18Tomorrow' | 'leaver',
   Person
 > = {} as never;
 let publicRecipeId: string;
 let privateRecipeId: string;
 let systemRecipeId: string;
+/** I-12 で退会させる leaver の公開レシピ */
+let leaverRecipeId: string;
 
 async function makePerson(key: keyof typeof people, profile: Record<string, unknown>): Promise<void> {
   const nickname = `作者${key}${TS}`;
@@ -892,8 +947,8 @@ async function makePerson(key: keyof typeof people, profile: Record<string, unkn
   people[key] = { user, nickname };
 }
 
-async function namesAs(client: ReturnType<typeof supabaseAnon>, ids: Array<string | null>): Promise<Map<string, string>> {
-  const { data, error } = await client.rpc(RPC, { p_user_ids: ids });
+async function namesAs(db: SupabaseClient, ids: Array<string | null>): Promise<Map<string, string>> {
+  const { data, error } = await db.rpc(RPC, { p_user_ids: ids });
   if (error) throw new Error(`${RPC}: ${error.message}`);
   return new Map((data as AuthorNameRow[]).map((r) => [r.author_id, r.display_name]));
 }
@@ -915,6 +970,8 @@ beforeAll(async () => {
   // I-14 の 2 人の生年月日は、JST の 0 時をまたがないよう it の中で入れ直す (ここでは 18 歳未満の値で作る)
   await makePerson('turns18Today', { birth_date: MINOR_BIRTH_DATE });
   await makePerson('turns18Tomorrow', { birth_date: MINOR_BIRTH_DATE });
+  // I-12 で退会させる作者 (18 歳以上・名前あり・設定は既定。公開レシピ 1 件とコメント 1 件を持つ)
+  await makePerson('leaver', { birth_date: ADULT_BIRTH_DATE });
 
   // 公開レシピ: author のもの 1 件 + 返らない人たちのもの 1 件ずつ (公開レシピがあっても返らないことを確かめる)
   const { data: recipe, error: recipeError } = await supabaseAdmin
@@ -945,9 +1002,17 @@ beforeAll(async () => {
     .single();
   if (sysError || !sys) throw new Error(`recipes (system): ${sysError?.message}`);
   systemRecipeId = sys.id as string;
+  // leaver の公開レシピ (I-12 で退会させたあとも user_id NULL で残ることを確かめる)
+  const { data: leaverRecipe, error: leaverError } = await supabaseAdmin
+    .from('recipes')
+    .insert({ user_id: people.leaver.user.userId, name: `t-cross21-leaver-${TS}`, is_public: true })
+    .select('id')
+    .single();
+  if (leaverError || !leaverRecipe) throw new Error(`recipes (leaver): ${leaverError?.message}`);
+  leaverRecipeId = leaverRecipe.id as string;
 
-  // コメント: commenter (公開レシピへ)・optOut (公開レシピへ)・minor (公開レシピへ)
-  for (const key of ['commenter', 'optOut', 'minor'] as const) {
+  // コメント: commenter・optOut・minor・leaver (どれも author の公開レシピへ)
+  for (const key of ['commenter', 'optOut', 'minor', 'leaver'] as const) {
     const { error } = await supabaseAdmin
       .from('recipe_comments')
       .insert({ recipe_id: publicRecipeId, user_id: people[key].user.userId, content: `t-cross21-comment-${key}-${TS}`, rating: 4 });
@@ -965,47 +1030,44 @@ afterAll(async () => {
 
 describe('I-1〜I-6: 関数 recipe_author_display_names', () => {
   it('I-1: anon が呼ぶと、公開の作者の表示名が返る', async () => {
-    const names = await namesAs(supabaseAnon(), [people.author.user.userId]);
+    const names = await namesAs(anon(), [people.author.user.userId]);
     expect(names.get(people.author.user.userId)).toBe(people.author.nickname);
   });
 
   it('I-2: 18 歳未満・生年月日なし・凍結中・設定オフ・名前なし・公開の内容が無い人は返らない', async () => {
     const keys = ['minor', 'noBirth', 'frozen', 'tempFrozen', 'optOut', 'noName', 'privateOnly', 'viewer'] as const;
-    const names = await namesAs(supabaseAnon(), keys.map((k) => people[k].user.userId));
+    const names = await namesAs(anon(), keys.map((k) => people[k].user.userId));
     expect([...names.keys()]).toEqual([]);
   });
 
   it('I-3: 一時凍結の期限が過ぎた人は返る', async () => {
-    const names = await namesAs(supabaseAnon(), [people.tempFrozenExpired.user.userId]);
+    const names = await namesAs(anon(), [people.tempFrozenExpired.user.userId]);
     expect(names.get(people.tempFrozenExpired.user.userId)).toBe(people.tempFrozenExpired.nickname);
   });
 
   it('I-4: 公開レシピへのコメントだけの人も返る', async () => {
-    const names = await namesAs(supabaseAnon(), [people.commenter.user.userId]);
+    const names = await namesAs(anon(), [people.commenter.user.userId]);
     expect(names.get(people.commenter.user.userId)).toBe(people.commenter.nickname);
   });
 
   it('I-5: 本人には自分の名前が返る (非公開だけ・設定オフ・18 歳未満)。他の人には返らない', async () => {
     for (const key of ['privateOnly', 'optOut', 'minor'] as const) {
-      const self = await namesAs(supabaseAsUser(people[key].user.jwt), [people[key].user.userId]);
+      const self = await namesAs(asUser(people[key].user.jwt), [people[key].user.userId]);
       expect(self.get(people[key].user.userId), `${key} 本人`).toBe(people[key].nickname);
-      const other = await namesAs(supabaseAsUser(people.viewer.user.jwt), [people[key].user.userId]);
+      const other = await namesAs(asUser(people.viewer.user.jwt), [people[key].user.userId]);
       expect(other.has(people[key].user.userId), `${key} を viewer から`).toBe(false);
     }
   });
 
   it('I-6: 重複・NULL・知らない id は無視。空の配列は 0 行', async () => {
     const id = people.author.user.userId;
-    const names = await namesAs(supabaseAnon(), [id, id, null, '00000000-0000-0000-0000-000000000000']);
+    const names = await namesAs(anon(), [id, id, null, '00000000-0000-0000-0000-000000000000']);
     expect([...names.entries()]).toEqual([[id, people.author.nickname]]);
-    expect([...(await namesAs(supabaseAnon(), [])).keys()]).toEqual([]);
+    expect([...(await namesAs(anon(), [])).keys()]).toEqual([]);
   });
 });
 
 describe('I-7〜I-10: レシピの API 経由', () => {
-  type ListBody = { recipes: Array<{ id: string; userId: string | null; authorName: string }> };
-  type DetailBody = { recipe: { authorName: string; comments: Array<{ content: string; authorName: string }> } };
-
   it('I-7: 一覧の authorName は作者の表示名 (未ログイン・ログイン中)。18 歳未満の作者は既定の呼称', async () => {
     for (const jwt of [null, people.viewer.user.jwt]) {
       const res = await apiCall<ListBody>('GET', `/api/recipes?q=t-cross21-`, jwt);
@@ -1045,11 +1107,11 @@ describe('I-7〜I-10: レシピの API 経由', () => {
   it('I-10: 非公開に戻す・隠すと、ほかに公開の内容が無い作者の名前は返らなくなる', async () => {
     const id = people.tempFrozenExpired.user.userId;
     await supabaseAdmin.from('recipes').update({ is_public: false }).eq('user_id', id);
-    expect((await namesAs(supabaseAnon(), [id])).has(id)).toBe(false);
+    expect((await namesAs(anon(), [id])).has(id)).toBe(false);
     await supabaseAdmin.from('recipes').update({ is_public: true, hidden_at: new Date().toISOString() }).eq('user_id', id);
-    expect((await namesAs(supabaseAnon(), [id])).has(id)).toBe(false);
+    expect((await namesAs(anon(), [id])).has(id)).toBe(false);
     await supabaseAdmin.from('recipes').update({ hidden_at: null }).eq('user_id', id);
-    expect((await namesAs(supabaseAnon(), [id])).get(id)).toBe(people.tempFrozenExpired.nickname);
+    expect((await namesAs(anon(), [id])).get(id)).toBe(people.tempFrozenExpired.nickname);
   });
 });
 
@@ -1074,24 +1136,49 @@ describe('I-11〜I-12: 権限・RLS・退会', () => {
     expect(policies).toEqual([{ policyname: 'Users can view own profile', qual: '(auth.uid() = id)' }]);
   });
 
-  it('I-12: 退会すると公開レシピは user_id が NULL で残り authorName は既定の呼称。コメントは消える', async () => {
-    const victim = people.commenter;
-    const { error } = await supabaseAdmin.auth.admin.deleteUser(victim.user.userId);
+  it('I-12: 退会すると公開レシピは user_id が NULL で残り、一覧・詳細の authorName は既定の呼称。コメントは消える', async () => {
+    const leaver = people.leaver;
+    // 退会の前は、公開の作者として表示名が出る (退会で「匿名」に変わったことを確かめるための前提)
+    const before = await apiCall<DetailBody>('GET', `/api/recipes/${leaverRecipeId}`, null);
+    expect(before.status).toBe(200);
+    expect(before.body.recipe.authorName).toBe(leaver.nickname);
+
+    const { error } = await supabaseAdmin.auth.admin.deleteUser(leaver.user.userId);
     expect(error).toBeNull();
-    const res = await apiCall<{ recipe: { comments: Array<{ content: string }> } }>('GET', `/api/recipes/${publicRecipeId}`, people.viewer.user.jwt);
-    expect(res.body.recipe.comments.map((c) => c.content)).not.toContain(`t-cross21-comment-commenter-${TS}`);
-    const { data: row } = await supabaseAdmin.from('recipes').select('user_id').eq('id', privateRecipeId).maybeSingle();
-    expect(row).not.toBeNull();
+
+    // recipes_user_id_fkey は ON DELETE SET NULL: 公開レシピは消えずに、作者との紐づけだけが外れる (R-3・第12条)
+    const { data: row, error: rowError } = await supabaseAdmin
+      .from('recipes')
+      .select('user_id, is_public')
+      .eq('id', leaverRecipeId)
+      .maybeSingle();
+    expect(rowError).toBeNull();
+    expect(row).toEqual({ user_id: null, is_public: true });
+
+    for (const jwt of [null, people.viewer.user.jwt]) {
+      const list = await apiCall<ListBody>('GET', `/api/recipes?q=t-cross21-leaver-${TS}`, jwt);
+      expect(list.status).toBe(200);
+      expect(list.body.recipes.map((r) => r.id)).toContain(leaverRecipeId);
+      expect(list.body.recipes.find((r) => r.id === leaverRecipeId)?.authorName).toBe(FALLBACK);
+      const detail = await apiCall<DetailBody>('GET', `/api/recipes/${leaverRecipeId}`, jwt);
+      expect(detail.status).toBe(200);
+      expect(detail.body.recipe.authorName).toBe(FALLBACK);
+    }
+
+    // recipe_comments.user_id の外部キー (auth.users 宛) は ON DELETE CASCADE (F-17): leaver のコメントは消える
+    const res = await apiCall<DetailBody>('GET', `/api/recipes/${publicRecipeId}`, people.viewer.user.jwt);
+    expect(res.status).toBe(200);
+    expect(res.body.recipe.comments.map((c) => c.content)).not.toContain(`t-cross21-comment-leaver-${TS}`);
   });
 });
 
 describe('I-13〜I-15: 凍結の解除・18 歳の誕生日の境・システムのレシピ', () => {
   it('I-13: 凍結を解除 (frozen_at を NULL) すると名前が返る', async () => {
     const id = people.unfreeze.user.userId;
-    expect((await namesAs(supabaseAnon(), [id])).has(id), '凍結中').toBe(false);
+    expect((await namesAs(anon(), [id])).has(id), '凍結中').toBe(false);
     const { error } = await supabaseAdmin.from('user_profiles').update({ frozen_at: null, unban_at: null }).eq('id', id);
     expect(error).toBeNull();
-    expect((await namesAs(supabaseAnon(), [id])).get(id), '解除のあと').toBe(people.unfreeze.nickname);
+    expect((await namesAs(anon(), [id])).get(id), '解除のあと').toBe(people.unfreeze.nickname);
   });
 
   it('I-14: 今日が 18 歳の誕生日 (JST) の人は返り、明日が 18 歳の誕生日の人は返らない', async () => {
@@ -1108,7 +1195,7 @@ describe('I-13〜I-15: 凍結の解除・18 歳の誕生日の境・システム
       const { error } = await supabaseAdmin.from('user_profiles').update({ birth_date: birthDate }).eq('id', id);
       expect(error).toBeNull();
     }
-    const names = await namesAs(supabaseAnon(), [today, tomorrow]);
+    const names = await namesAs(anon(), [today, tomorrow]);
     expect(names.get(today), '今日が 18 歳の誕生日').toBe(people.turns18Today.nickname);
     expect(names.has(tomorrow), '明日が 18 歳の誕生日 (今日は 17 歳)').toBe(false);
   });
@@ -1126,32 +1213,81 @@ describe('I-13〜I-15: 凍結の解除・18 歳の誕生日の境・システム
 });
 ```
 
-(helper の名前 `supabaseAnon` / `supabaseAsUser` / `pgQuery` は `tests/integration/helpers/supabase.ts` の既存の export に合わせる。無い名前があれば、`anon-definer-execute.test.ts` の `client(anonKey)` / `client(anonKey, jwt)` / `pgQuery` と同じ作りを本テストの中に置く。)
+import する helper は origin/main に実在する export だけ: `supabaseAdmin` (`tests/integration/helpers/supabase.ts`。service_role の Proxy。`.from(...)`・`.auth.admin.deleteUser(...)` をそのまま呼べる)・`createTestUserWithRoles` / `cleanupTestUser` / `TestUser` (`tests/integration/helpers/users.ts`。`TestUser` は `userId`・`jwt` を持つ。`cleanupTestUser` は消えた人に呼んでも投げない)・`apiCall` (`tests/integration/helpers/api.ts`)。`client` / `anon` / `asUser` / `pgQuery` は上のとおり本テストの中に置く (`anon-definer-execute.test.ts` の冒頭と同じ作り)。
 
-### 7.11 既存の単体テストの直し (`tests/recipe-viewer-lookups-1917.test.ts` ほか。断片)
+### 7.11 既存の単体テストの直し (fix 枝の 5 ファイル。断片)
+
+5 ファイルとも fix 枝 (`a8d75cec`) の形を土台にする。共通の決まり: 名前は `rpc(RECIPE_AUTHOR_DISPLAY_NAMES_RPC, { p_user_ids })` で引かれるので、モックの `rpc` は **関数名で分岐** する (詳細の `increment_recipe_view_count` も同じ `rpc` を通る)。`from('user_profiles')` の分岐は呼ばれなくなるので消す。定数は `import { RECIPE_AUTHOR_DISPLAY_NAMES_RPC } from '@/lib/recipes/viewer-lookups'` で取る。
+
+(1) `tests/recipe-viewer-lookups-1917.test.ts`: `fakeClient` の `rpc` を次に替え、`beforeEach` の `h.rows.user_profiles` を `h.rows[RECIPE_AUTHOR_DISPLAY_NAMES_RPC]` に替える。`h.errors[<関数名>]`・`h.nullData` は `from` と同じに効く (fix 枝の `it.each` の本文 `h.errors[table] = DB_FAILURE` がそのまま関数の失敗を作れる)。
 
 ```ts
 // tsc:skip
-// モックの rpc は関数名で分岐する (詳細の increment_recipe_view_count と、名前の recipe_author_display_names の 2 つが同じ rpc を通る)
-const authorNameRows: Array<{ author_id: string; display_name: string }> = [];
-const rpcCalls: Array<{ fn: string; args: unknown }> = [];
-const supabaseMock = {
-  auth: { getUser: async () => ({ data: { user: viewer }, error: null }) },
-  rpc: async (fn: string, args: unknown) => {
-    rpcCalls.push({ fn, args });
-    if (fn === 'recipe_author_display_names') return { data: authorNameRows, error: null };
-    return { data: null, error: null };
-  },
-  from: (table: string) => query(table),   // recipe_likes だけ (user_profiles は呼ばれない)
-};
+// fakeClient() の rpc (呼び出しは h.calls に { table: <関数名>, method: 'rpc', args: [<引数>] } で記録する)
+rpc: async (fn: string, args?: unknown) => {
+  h.calls.push({ table: fn, method: 'rpc', args: [args] });
+  if (fn !== RECIPE_AUTHOR_DISPLAY_NAMES_RPC) return { data: null, error: null }; // increment_recipe_view_count
+  const error = h.errors[fn] ?? null;
+  if (error) return { data: null, error };
+  if (h.nullData) return { data: null, error: null };
+  return { data: h.rows[fn] ?? [], error: null };
+},
+
+// beforeEach の h.rows: user_profiles の 3 行を、関数の返す行に替える
+[RECIPE_AUTHOR_DISPLAY_NAMES_RPC]: [
+  { author_id: AUTHOR_ID, display_name: '作者' },
+  { author_id: COMMENTER_ID, display_name: 'コメントした人' },
+  { author_id: VIEWER_ID, display_name: '見ている人' },
+],
 ```
 
-- it の名前は §12 の U-1〜U-10。`argsOf('user_profiles', …)` の期待は `rpcCalls` の期待 (`{ fn: 'recipe_author_display_names', args: { p_user_ids: [AUTHOR_ID, COMMENTER_ID] } }`) に置き換える。
-- `tests/recipes-route.test.ts`・`tests/recipe-detail-hidden-404.test.ts`・`tests/api-security-cluster.test.ts`・`tests/recipe-author-name-1649.test.ts` も同じ形 (`from('user_profiles')` の分岐を消し、`rpc` を関数名で分岐)。
+fix 枝の it (13 本) との対応 (「変えない」の 2 本は名前も中身もそのまま):
+
+| fix 枝の it (行) | 設計後 | 期待の直し |
+|---|---|---|
+| 「作者の名前は user_profiles を id で、いいねは…」(133) | U-1 | `argsOf('user_profiles', …)` の 2 行 → `expect(argsOf(RECIPE_AUTHOR_DISPLAY_NAMES_RPC, 'rpc')).toEqual([[{ p_user_ids: [AUTHOR_ID, COMMENTER_ID] }]])` と `expect(callsOn('user_profiles')).toEqual([])`。結果の `nicknames: new Map<string, unknown>(…)` → `authorNames: new Map([[AUTHOR_ID, '作者'], [COMMENTER_ID, 'コメントした人'], [VIEWER_ID, '見ている人']])` |
+| 「未ログイン (viewerId が null) なら DB に問い合わせず…」(155) | U-2 | `expect(h.calls).toEqual([{ table: RECIPE_AUTHOR_DISPLAY_NAMES_RPC, method: 'rpc', args: [{ p_user_ids: [AUTHOR_ID] }] }])`。結果は `authorNames` が上の 3 行の Map・`likedRecipeIds` は空 |
+| 「引く作者もレシピも無ければ DB に問い合わせない…」(162) | U-3 | `h.calls` は `[]` のまま。結果の `nicknames: new Map()` → `authorNames: new Map()` |
+| `it.each` 「%s が読めなければ、そのテーブルと DB のエラーを返す…」(169) | U-11 | 表の 1 行目を `[RECIPE_AUTHOR_DISPLAY_NAMES_RPC, { authorIds: [AUTHOR_ID], recipeIds: [] }]` に (2 行目の `recipe_likes` はそのまま)。本文は変えない (`h.errors[table]` が rpc にも効く) |
+| 「data が null で返っても…」(180) | U-4 | 結果の `nicknames` → `authorNames` |
+| 「GET /api/recipes/[id]: レシピとコメントの作者の名前・自分のいいね…」(190) | U-5 | `argsOf('user_profiles', 'in')` → `expect(argsOf(RECIPE_AUTHOR_DISPLAY_NAMES_RPC, 'rpc')).toEqual([[{ p_user_ids: [AUTHOR_ID, COMMENTER_ID] }]])`。ほかの期待 (`authorName: '作者'`・コメントの `'コメントした人'`・`recipe_likes` の `in`) はそのまま |
+| 「GET /api/recipes/[id]: いいねしていないレシピは isLiked が false」(207) | 変えない | — |
+| 「GET /api/recipes/[id]: 未ログインなら名前もいいねも問い合わせない…」(216) | U-6 | `authorName: '匿名'` → `'作者'`。`expect([...new Set(h.calls.map((c) => c.table))]).toEqual(['recipes', RECIPE_AUTHOR_DISPLAY_NAMES_RPC])` (いいねと閲覧数の加算は呼ばない) |
+| 「GET /api/recipes/[id]/comments: 書いた人の名前を返し…」(226) | U-7 | 期待はそのまま。`expect(argsOf(RECIPE_AUTHOR_DISPLAY_NAMES_RPC, 'rpc')).toEqual([[{ p_user_ids: [COMMENTER_ID] }]])` を足す |
+| 「POST /api/recipes/[id]/comments: 自分の名前を返す…」(240) | U-8 | `argsOf('user_profiles', 'in')` → `expect(argsOf(RECIPE_AUTHOR_DISPLAY_NAMES_RPC, 'rpc')).toEqual([[{ p_user_ids: [VIEWER_ID] }]])` |
+| `it.each(surfaces)` 「%s: 作者の名前 (user_profiles) が読めなければ 500…」(266) | U-9 | `h.errors.user_profiles` → `h.errors[RECIPE_AUTHOR_DISPLAY_NAMES_RPC]`。ログの期待 `table: 'user_profiles'` → `table: RECIPE_AUTHOR_DISPLAY_NAMES_RPC` |
+| `it.each` 「%s: 自分のいいね (recipe_likes) が読めなければ 500…」(278) | 変えない | — |
+| 「POST /api/recipes/[id]/comments: 自分の名前が読めなければ、コメントを保存せずに 500」(288) | U-12 | `h.errors.user_profiles` → `h.errors[RECIPE_AUTHOR_DISPLAY_NAMES_RPC]`。ログの期待の `table` も同じに |
+| (無い) | U-10 (新) | `h.rows.recipes[0]` の `user_id` を `null`・`recipe_comments` を `[]` にして詳細を GET → `authorName` が `'匿名'`、`callsOn(RECIPE_AUTHOR_DISPLAY_NAMES_RPC)` が `[]` |
+
+(2) `tests/recipes-route.test.ts`: `createClient` のモックに `rpc: mockRpc` (`const mockRpc = vi.fn()`) を足す。`lookupResults` の鍵を `'user_profiles' | 'recipe_likes'` から `typeof RECIPE_AUTHOR_DISPLAY_NAMES_RPC | 'recipe_likes'` に替え、`beforeEach` で `lookupResults[RECIPE_AUTHOR_DISPLAY_NAMES_RPC] = { data: [], error: null }` と `mockRpc.mockImplementation(async (fn: string) => (fn === RECIPE_AUTHOR_DISPLAY_NAMES_RPC ? lookupResults[RECIPE_AUTHOR_DISPLAY_NAMES_RPC] : { data: null, error: null }))` を置く (未ログインで行のある一覧のほかの it も名前の rpc を通るので、既定の 0 行を返す)。`setupRecipesQuery` の `from` は `'recipes'` と `'recipe_likes'` だけを受ける。it の対応:
+
+| fix 枝の it (行) | 設計後の it 名 | 期待の直し |
+|---|---|---|
+| 「認証済みなら公開レシピと自分のレシピを取る。作者の名前と自分のいいねは埋め込まず、別のクエリで引く (#1917)」(283) | 「認証済みなら公開レシピと自分のレシピを取る。作者の表示名と自分のいいねは埋め込まず、関数と別のクエリで引く (#1917・cross/21)」 | `lookupBuilders.user_profiles` の 2 行 → `expect(mockRpc).toHaveBeenCalledWith(RECIPE_AUTHOR_DISPLAY_NAMES_RPC, { p_user_ids: ['user-2'] })` |
+| 「未ログインなら作者の名前もいいねも DB に問い合わせない (RLS で読めず、いいねも無い)」(302) | 「未ログインでも作者の表示名は関数で引く。いいねは DB に問い合わせない」 | `lookupResults[RECIPE_AUTHOR_DISPLAY_NAMES_RPC] = { data: [{ author_id: 'user-2', display_name: 'ほり' }], error: null }` にし、`mockFrom` の呼び出しは `['recipes']` のまま・`mockRpc` は `(RECIPE_AUTHOR_DISPLAY_NAMES_RPC, { p_user_ids: ['user-2'] })` で 1 回・`json.recipes[0]` は `{ authorName: 'ほり', isLiked: false }` |
+| `it.each` 「%s が読めなかったときは、名前が無い・いいねしていないように見せず 500…」(312) | 名前は変えない | 表の 1 行目を `['作者の表示名 (recipe_author_display_names)', RECIPE_AUTHOR_DISPLAY_NAMES_RPC]` に (2 行目はそのまま)。本文の `lookupResults[table] = …` は `mockRpc` が読む |
+| 「取得した行を camelCase に変換し、別のクエリで引いた作者の名前と自分のいいねを反映する」(357) | 「取得した行を camelCase に変換し、関数が返した表示名と自分のいいねを反映する」 | `lookupResults.user_profiles = { data: [{ id: 'user-2', nickname: 'ほり' }], … }` → `lookupResults[RECIPE_AUTHOR_DISPLAY_NAMES_RPC] = { data: [{ author_id: 'user-2', display_name: 'ほり' }], error: null }` |
+
+(3) `tests/recipe-author-name-1649.test.ts`: `queryFor` の `user_profiles` の分岐 (と `profileIds`) を消し、`createClient` のモックの `rpc` を次に替える。it は名前も期待も変えない (route が `recipeAuthorName` で整えるので、`'Guest'` などは今までどおり「匿名」になる)。
+
+```ts
+// tsc:skip
+rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
+  fn === RECIPE_AUTHOR_DISPLAY_NAMES_RPC
+    ? { data: (args?.p_user_ids ?? []).map((id) => ({ author_id: id, display_name: h.nickname })), error: null }
+    : { data: null, error: null },
+```
+
+(4) `tests/recipe-detail-hidden-404.test.ts`: `rpc` は今のまま (`{ data: null, error: null }` = 名前は 0 件 = 「匿名」) で期待は変わらない。`from` の `'user_profiles'` の分岐を消し、`emptyLookupQuery` の説明の「作者の名前 (user_profiles) と」を消す。it は変えない。
+
+(5) `tests/api-security-cluster.test.ts`:
+- 「認証済みユーザーはコメント一覧を取得できる (user_id は含まれない)」: `profileChain` と `from` の `'user_profiles'` の分岐を消し、it の先頭で `mockRpc.mockImplementation(async (fn: string) => (fn === RECIPE_AUTHOR_DISPLAY_NAMES_RPC ? { data: [{ author_id: 'uid-alice', display_name: 'Alice' }], error: null } : { data: null, error: null }))` を置く。期待 (`authorName` が `'Alice'`・`uid-alice` を返さない) は変えない。
+- `describe('#169 /api/recipes/[id] GET view_count')`: `beforeEach(() => vi.resetAllMocks())` のあとに `mockRpc.mockResolvedValue({ data: null, error: null })` を足す (reset で `mockRpc` が `undefined` を返すと、名前の rpc の `names.error` で落ちる)。「未認証リクエストでは view_count を更新しない」の `expect(mockRpc).not.toHaveBeenCalled()` を、`expect(mockRpc).not.toHaveBeenCalledWith('increment_recipe_view_count', expect.anything())` と `expect(mockRpc).toHaveBeenCalledWith(RECIPE_AUTHOR_DISPLAY_NAMES_RPC, { p_user_ids: ['uid-owner'] })` (未ログインでも名前は引く) に替える。it 名は変えない。`emptyLookup` の説明の「作者の名前 (user_profiles) と」を消す。
 
 ### 7.12 段 C: プライバシーポリシーの文 (`src/lib/legal/privacy-text.ts`。オーナーの選択 §21 Q-1 のあと)
 
-第9条の見出しと、第9条の `ol` の末尾に足す項 (3 項。文は 5 つ):
+第9条の見出しと、第9条の `ol` の末尾に足す項 (3 項。文は 6 つ):
 
 ```ts
 // tsc:skip
@@ -1159,23 +1295,35 @@ const supabaseMock = {
 '第9条（家族グループ、組織、公開したレシピでの見え方）',
 
 // 第9条 (id 'privacy-9') の ol の items の末尾に 3 項
-'ユーザーが公開の状態にしたレシピとそのコメントには、ニックネームが作者名として表示され、ログインしていない方を含め、誰でも閲覧できる状態になります（利用規約第13条）。',
-'作者名を表示しない設定にすると、ほかのユーザーには「匿名」と表示されます。初期設定では表示します。',
+'ユーザーが公開の状態にしたレシピには、ニックネームが作者名として表示され、ログインしていない方を含め、誰でも閲覧できる状態になります（利用規約第13条）。公開の状態のレシピへのコメントには、ログインしているユーザーに対して、ニックネームが作者名として表示されます。',
+'作者名を表示しない設定にすると、ほかの方には「匿名」と表示されます。初期設定では表示します。',
 `${f.adultAgeYears} 歳未満のユーザーと、アカウントが凍結されているユーザーの作者名は表示しません。退会した後は作者名は表示されず、公開の状態のレシピの扱いは第12条のとおりです。`,
 ```
 
-主張の表 (`tests/legal-claims-1901.ts`) に足す 5 行 (`chars` は文末の 。を除いた字数。実装で T の実行と食い違えば実測に合わせる):
+文と製品の挙動の対応 (主張の表の basis は 'product'。cross/20 の「主張 ⇄ 製品の根拠」の規律):
+
+| 文 | 製品の挙動 (本書) |
+|---|---|
+| 1 文目 (レシピは未ログインを含め誰でも) | 公開レシピは anon も読める (F-16)。一覧・詳細は未ログインにも作者名を返す (§6.3・関数は anon に EXECUTE)。作者名を描く画面は今は無い (F-13・§21 Q-2) が、API の返り値として誰でも読める状態になるので、見える範囲の説明として「表示され」と書く (画面ができても文は変わらない) |
+| 2 文目 (コメントはログインしているユーザーに) | `recipe_comments` の SELECT は authenticated だけ (F-16)。コメント GET は未認証なら 401 のまま・詳細の未ログインのコメントは 0 件 (F-3・§6.3) |
+| 3・4 文目 (設定と既定) | `show_recipe_author_name` (既定 true。§6.5) |
+| 5 文目 (18 歳未満・凍結) | 関数の (b) の K-年齢・K-凍結 (§6.1 (3)(4))。生年月日の無い人も出さないが、文は表示しない側の挙動なので書き足さない |
+| 6 文目 (退会) | `recipes_user_id_fkey` の `ON DELETE SET NULL` で作者名は「匿名」 (§6.1 (2))・第12条 |
+
+主張の表 (`tests/legal-claims-1901.ts`) に足す 6 行 (`chars` は文末の 。を除いた字数 (String.prototype.length)。`f.adultAgeYears` は 18 で数えた。実装で T-35 の実行と食い違えば実測に合わせる)。evidence のパスは段 C のマージの時点で実在するもの (本書と、fix 枝が main に入ったあとの `viewer-lookups.ts`) だけを書く (T-35 は evidence のパスの実在を確かめる):
 
 ```ts
 // tsc:skip
-{ id: 'privacy-9#12', section: 'privacy-9', fragment: 'ユーザーが公開の状態にしたレ', chars: 83, basis: 'product', evidence: 'cross/21 §6.3・supabase/migrations/*_recipe_author_display_names.sql・src/lib/legal/terms-text.ts (第13条 2 項)' },
-{ id: 'privacy-9#13', section: 'privacy-9', fragment: '作者名を表示しない設定にする', chars: 36, basis: 'product', evidence: 'cross/21 §6.5・user_profiles.show_recipe_author_name' },
-{ id: 'privacy-9#14', section: 'privacy-9', fragment: '初期設定では表示します', chars: 11, basis: 'product', evidence: 'cross/21 §6.5 (DEFAULT true)' },
-{ id: 'privacy-9#15', section: 'privacy-9', fragment: '歳未満のユーザーと、アカウン', chars: 41, basis: 'product', evidence: 'cross/21 §6.1 (3)(4)・recipe_author_display_names の (b)' },
-{ id: 'privacy-9#16', section: 'privacy-9', fragment: '退会した後は作者名は表示され', chars: 39, basis: 'product', evidence: 'cross/21 §6.1 (2)・第12条の参照' },
+{ id: 'privacy-9#12', section: 'privacy-9', fragment: 'ユーザーが公開の状態にしたレ', chars: 76, basis: 'product', evidence: 'docs/design/cross/21-recipe-author-display-name.md (§6.3)・src/lib/legal/terms-text.ts (第13条 2 項)' },
+{ id: 'privacy-9#13', section: 'privacy-9', fragment: '公開の状態のレシピへのコメン', chars: 54, basis: 'product', evidence: 'docs/design/cross/21-recipe-author-display-name.md (§3.2・§6.3)・src/lib/recipes/viewer-lookups.ts' },
+{ id: 'privacy-9#14', section: 'privacy-9', fragment: '作者名を表示しない設定にする', chars: 33, basis: 'product', evidence: 'docs/design/cross/21-recipe-author-display-name.md (§6.5・user_profiles.show_recipe_author_name)' },
+{ id: 'privacy-9#15', section: 'privacy-9', fragment: '初期設定では表示します', chars: 11, basis: 'product', evidence: 'docs/design/cross/21-recipe-author-display-name.md (§6.5。DEFAULT true)' },
+{ id: 'privacy-9#16', section: 'privacy-9', fragment: '歳未満のユーザーと、アカウン', chars: 41, basis: 'product', evidence: 'docs/design/cross/21-recipe-author-display-name.md (§6.1 (3)(4)。recipe_author_display_names の (b))' },
+{ id: 'privacy-9#17', section: 'privacy-9', fragment: '退会した後は作者名は表示され', chars: 39, basis: 'product', evidence: 'docs/design/cross/21-recipe-author-display-name.md (§6.1 (2))・第12条の参照' },
 ```
 
-- `LEGAL_CLAIM_COUNT` を +5 (PR #1997 のあとなら 426 → 431。先なら 424 → 429)。
+- `LEGAL_CLAIM_COUNT` を +6 (PR #1997 のあとなら 426 → 432。先なら 424 → 430)。
+- evidence に `F-n` / `P-n` の語を書かない (T-35 は evidence の中の `F-n` / `P-n` を cross/20 の `| F-n |` の行と突き合わせるので、本書の F の番号を書くと赤になる)。本書の節は `§n` で書く。
 - 版: 選択肢 (a) なら PR #1997 の v2026.4 のまま (版は上げない。文を足すだけ)。(b) なら `LEGAL_DOCUMENTS` の両文書を v2026.5 にし、`docs/legal/archive/v2026.4/` に控えを作る (cross/20 §9.1 の手順)。
 - 利用規約は変えない (第13条 2 項がすでに公開の範囲を書いている)。
 - 見出しの変更は `tests/legal-text-1901.test.ts` の見出しの検査 (`PRIVACY_SECTION_HEADINGS` を読む所) と `src/lib/legal/index.ts` の再エクスポートに影響しない (配列の要素の値だけが変わる)。見出しの逐語を直書きしたテストがあれば直す (§16)。
@@ -1231,18 +1379,23 @@ const supabaseMock = {
 
 ### 9.2 ②状態比較表 (現行 vs 設計後)
 
-| 面 | main (`c9ee3e59`) | fix 枝 (`a8d75cec`) | 設計後 |
-|---|---|---|---|
-| 作者名の読み方 | select の埋め込み (`user_profiles(nickname)`。PostgREST が解決できず 500 / 空) | 別のクエリ (`user_profiles` を `.in('id', …)`。RLS で本人の行だけ) | SECURITY DEFINER の関数 `recipe_author_display_names` (本人 + 公開の作者) |
-| 他人の公開レシピの `authorName` | (500 / 空) | 「匿名」 | 表示名 (凍結中・18 歳未満・設定オフ・名前なしは「匿名」) |
-| 本人の `authorName` | (500 / 空) | 表示名 | 表示名 (変わらない) |
-| 未ログインの `authorName` | 「匿名」 (未認証は埋め込まない) | 「匿名」 (DB に問い合わせない) | 表示名 (関数を呼ぶ) |
-| いいね (`isLiked`) | 埋め込み | 別のクエリ (ログイン中だけ) | 変わらない |
-| `user_profiles` の RLS | 本人の行だけ | 同 | 同 (変えない) |
-| service_role | 使わない | 使わない | 使わない |
-| 本人の選択 | 無い | 無い | `show_recipe_author_name` (プロフィールの編集) |
-| プライバシーポリシー | 公開レシピの作者名の記載なし | 同 | 第9条に 3 項 (段 C。版はオーナーの選択) |
-| anon が呼べる DEFINER の関数 | 2 本 | 2 本 | 3 本 |
+列の「段 C のあと」は段 C の文面が効き、段 A の適用の前。「段 A の適用〜段 B のマージ」は §15 の本番の順序の ②〜④ (同じ座で続けて行う数分) の間。
+
+| 面 | main (`c9ee3e59`) | fix 枝 (`a8d75cec`) | 段 C のあと | 段 A の適用〜段 B のマージ | 設計後 (段 B のマージのあと) |
+|---|---|---|---|---|---|
+| 作者名の読み方 | select の埋め込み (`user_profiles(nickname)`。PostgREST が解決できず 500 / 空) | 別のクエリ (`user_profiles` を `.in('id', …)`。RLS で本人の行だけ) | fix 枝と同じ | fix 枝と同じ (API は関数を使わない) | SECURITY DEFINER の関数 `recipe_author_display_names` (本人 + 公開の作者) |
+| 他人の公開レシピの `authorName` | (500 / 空) | 「匿名」 | 「匿名」 | 「匿名」 | 表示名 (凍結中・18 歳未満・設定オフ・名前なしは「匿名」) |
+| 本人の `authorName` | (500 / 空) | 表示名 | 表示名 | 表示名 | 表示名 (変わらない) |
+| 未ログインの `authorName` | 「匿名」 (未認証は埋め込まない) | 「匿名」 (DB に問い合わせない) | 「匿名」 | 「匿名」 | 表示名 (関数を呼ぶ) |
+| `/rest/v1/rpc/recipe_author_display_names` を直接呼ぶ (anon キーだけでも) | 関数が無い | 関数が無い | 関数が無い | 公開の作者の表示名が返る (関数の条件どおり。段 C の文面がすでに効いている) | 同じ |
+| いいね (`isLiked`) | 埋め込み | 別のクエリ (ログイン中だけ) | 同 | 同 | 変わらない |
+| `user_profiles` の RLS | 本人の行だけ | 同 | 同 | 同 | 同 (変えない) |
+| service_role | 使わない | 使わない | 使わない | 使わない | 使わない |
+| 本人の選択 | 無い | 無い | 無い | 列はある (全員 true)。画面と `PUT /api/profile` の口は無い | `show_recipe_author_name` (プロフィールの編集) |
+| プライバシーポリシー | 公開レシピの作者名の記載なし | 同 | 第9条に 3 項 (版はオーナーの選択) | 同 | 同 |
+| anon が呼べる DEFINER の関数 | 2 本 | 2 本 | 2 本 | 3 本 | 3 本 |
+
+- 段 C のあと・段 B のマージの前は、文面が「表示されます」と書き、API は「匿名」を返す。見える範囲が文面より狭い側のずれなので、他人の名前が文面より先に出ることは無い。このずれを短くするため、段 A の適用から段 B のマージまでを文面の施行日 (選択肢 (c) なら段 C のマージ) の当日に続けて行う (§15)。
 
 ### 9.3 ③状態遷移表 (作者の「他の人からの見え方」× 出来事 → 遷移先・ガード・副作用)
 
@@ -1342,13 +1495,13 @@ sequenceDiagram
 |---|---|---|
 | 契約 (静的) | `tests/recipe-author-display-names-migration-contract.test.ts` (新) | C-1〜C-9 (§7.9 のとおり) |
 | 結合 (実 DB) | `tests/integration/security/recipe-author-display-names.test.ts` (新) | I-1〜I-15 (§7.10 のとおり) |
-| 単体 | `tests/recipe-viewer-lookups-1917.test.ts` (直す) | U-1「作者の表示名は recipe_author_display_names に id を渡して引き、いいねは自分の recipe_likes をレシピの id で引く。NULL の作者と重複は除く」/ U-2「未ログイン (viewerId が null) でも名前は引く。いいねは引かない」/ U-3「引く作者が無ければ関数を呼ばない。レシピが無ければいいねを引かない」/ U-4「data が null で返っても (失敗ではない)、名前もいいねも空として扱う」/ U-5「GET /api/recipes/[id]: レシピとコメントの作者の表示名・自分のいいねを返す。select に user_profiles・recipe_likes を埋め込まない」/ U-6「GET /api/recipes/[id]: 未ログインでも作者の表示名を返す (いいねは false)」/ U-7「GET /api/recipes/[id]/comments: 書いた人の表示名を返し、user_id は返さない」/ U-8「POST /api/recipes/[id]/comments: 自分の表示名を返す。名前が読めなければコメントを保存せずに 500」/ U-9 (`it.each` で GET 3 本)「%s: 作者の表示名 (recipe_author_display_names) が読めなければ 500。DB の生の文面は本文に出さず、読めなかった読み込みの名前をログに残す」(fix 枝の「作者の名前 (user_profiles) が読めなければ 500 …」の it.each を置き換える。S-16) / U-10「GET /api/recipes/[id]: user_id が NULL のシステムのレシピは authorName が既定の呼称で、関数に id を渡さない (コメントも無ければ関数を呼ばない)」(S-15)。ここに挙げない fix 枝の it (「いいねしていないレシピは isLiked が false」「自分のいいね (recipe_likes) が読めなければ 500 …」) は名前も中身も変えない |
-| 単体 | `tests/recipes-route.test.ts` (直す) | 「認証済みなら公開レシピと自分のレシピを取る。作者の表示名と自分のいいねは埋め込まず、関数と別のクエリで引く (#1917・cross/21)」/「未ログインでも作者の表示名は関数で引く。いいねは DB に問い合わせない」/「取得した行を camelCase に変換し、関数が返した表示名と自分のいいねを反映する」 |
-| 単体 | `tests/recipe-author-name-1649.test.ts`・`tests/recipe-detail-hidden-404.test.ts`・`tests/api-security-cluster.test.ts` (直す) | it 名は変えない。モックを §7.11 の形に |
+| 単体 | `tests/recipe-viewer-lookups-1917.test.ts` (直す) | U-1「作者の表示名は recipe_author_display_names に id を渡して引き、いいねは自分の recipe_likes をレシピの id で引く。NULL の作者と重複は除く」/ U-2「未ログイン (viewerId が null) でも名前は引く。いいねは引かない」/ U-3「引く作者が無ければ関数を呼ばない。レシピが無ければいいねを引かない」/ U-4「data が null で返っても (失敗ではない)、名前もいいねも空として扱う」/ U-5「GET /api/recipes/[id]: レシピとコメントの作者の表示名・自分のいいねを返す。select に user_profiles・recipe_likes を埋め込まない」/ U-6「GET /api/recipes/[id]: 未ログインでも作者の表示名を返す (いいねと閲覧数の加算は呼ばない・isLiked は false)」/ U-7「GET /api/recipes/[id]/comments: 書いた人の表示名を返し、user_id は返さない。select に user_profiles を埋め込まない」/ U-8「POST /api/recipes/[id]/comments: 自分の表示名を返す。insert の select に user_profiles を埋め込まない」/ U-9 (`it.each` で GET 3 本)「%s: 作者の表示名 (recipe_author_display_names) が読めなければ 500。DB の生の文面は本文に出さず、読めなかった読み込みの名前をログに残す」(S-16) / U-10「GET /api/recipes/[id]: user_id が NULL のシステムのレシピは authorName が既定の呼称で、関数に id を渡さない (コメントも無ければ関数を呼ばない)」(S-15) / U-11 (`it.each` で 2 本)「%s が読めなければ、その読み込みの名前と DB のエラーを返す (名前が無い・いいねしていないことにしない)」(表は `recipe_author_display_names`・`recipe_likes`) / U-12「POST /api/recipes/[id]/comments: 自分の表示名 (recipe_author_display_names) が読めなければ、コメントを保存せずに 500」。fix 枝の 13 本との対応と期待の直しは §7.11 (1) の表。「いいねしていないレシピは isLiked が false」「%s: 自分のいいね (recipe_likes) が読めなければ 500 …」の 2 本は名前も中身も変えない |
+| 単体 | `tests/recipes-route.test.ts` (直す) | R-1「認証済みなら公開レシピと自分のレシピを取る。作者の表示名と自分のいいねは埋め込まず、関数と別のクエリで引く (#1917・cross/21)」/ R-2「未ログインでも作者の表示名は関数で引く。いいねは DB に問い合わせない」/ R-3 (`it.each` で 2 本。名前は fix 枝のまま)「%s が読めなかったときは、名前が無い・いいねしていないように見せず 500 (DB の生の文面は本文に出さない)」(表の 1 行目を `作者の表示名 (recipe_author_display_names)`) / R-4「取得した行を camelCase に変換し、関数が返した表示名と自分のいいねを反映する」。fix 枝の it との対応は §7.11 (2) の表。ほかの it (page / limit / max_time・検索語・DB エラーの 500 など) は名前も中身も変えない (モックの `rpc` が既定で 0 行を返す) |
+| 単体 | `tests/recipe-author-name-1649.test.ts`・`tests/recipe-detail-hidden-404.test.ts`・`tests/api-security-cluster.test.ts` (直す) | it 名は変えない。モックと期待を §7.11 (3)〜(5) の形に (api-security-cluster の「未認証リクエストでは view_count を更新しない」は、`mockRpc` が呼ばれないことではなく `increment_recipe_view_count` で呼ばれないことを見る) |
 | 単体 | `tests/recipe-author-name-setting-1917.test.tsx` (新) | P-1「toUserProfile: show_recipe_author_name が無い行は showRecipeAuthorName が true」/ P-2「fromUserProfile: showRecipeAuthorName を show_recipe_author_name に写す。undefined なら書かない」/ P-3「プロフィールの編集の基本情報タブに、ニックネームの下の切り替えがラベルと注記つきで出て、外して保存すると PUT /api/profile の本文に showRecipeAuthorName: false が入る」 |
 | 結合 (既存) | `tests/integration/security/recipes-api-logged-in.test.ts` | 変更なし (本人の非公開のレシピに本人の名前。関数の (a) で同じ結果) |
 | 結合 (既存) | `tests/integration/security/anon-definer-execute.test.ts` | A1 / A1b の期待を 3 本に (§7.8) |
-| 文面 (段 C) | `tests/legal-text-1901.test.ts`・`tests/legal-claims-1901.ts` | 主張の表に 5 行・`LEGAL_CLAIM_COUNT` +5 (§7.12) |
+| 文面 (段 C) | `tests/legal-text-1901.test.ts`・`tests/legal-claims-1901.ts` | 主張の表に 6 行・`LEGAL_CLAIM_COUNT` +6 (§7.12) |
 
 ---
 
@@ -1396,13 +1549,22 @@ sequenceDiagram
 
 | 段 | 中身 | 前提 | 本番の順序 |
 |---|---|---|---|
-| A (DB) | §7.1 migration・§7.2 戻し口・§7.9 契約テスト・§7.10 結合テストの I-1〜I-6・I-11・I-13・I-14・`database.types.ts` 2 本の生成し直し・§7.8 許可一覧 | fix/api-read-errors が main に入っていること (結合テストの API 経由の部分は段 B へ)。`tests/database-types-migrations-contract.test.ts` が関数と列を見るので、型の生成し直しは同じ PR | マージの前に本番へ適用する (追加だけの migration。適用の確認は §19)。列と関数が先に存在しても、fix 枝のコードは使わないので挙動は変わらない |
-| B (API・設定) | §7.3 `viewer-lookups.ts`・§7.4 `author-name.ts`・§7.5 route の 1 語 × 5・§7.6 型と変換・§7.7 画面・§7.11 単体テストの直し (U-1〜U-10)・§7.10 の I-7〜I-10・I-12・I-15・P-1〜P-3 | 段 A が本番に適用済み (関数が無いと全部の一覧・詳細が 500。R-16) | マージ = 公開。段 C の版の選択肢 (a)(b) を取るなら、公開の日を文面の施行日 (v2026.4 なら 2026-11-01) 以後にそろえる。(c) ならすぐ |
-| C (文面) | §7.12 の 5 文・見出し・主張の表 5 行・版 (選択肢に従う) | オーナーの選択 (§21 Q-1) | 文面の版の施行日 (予告のあと) |
+| C (文面) | §7.12 の 6 文・見出し・主張の表 6 行・版 (選択肢に従う) | オーナーの選択 (§21 Q-1)。fix/api-read-errors が main に入っていること (主張の表の evidence が `src/lib/recipes/viewer-lookups.ts` を指し、T-35 がパスの実在を確かめる) | 下の ① |
+| A (DB) | §7.1 migration・§7.2 戻し口・§7.9 契約テストの C-1〜C-7・C-9 (C-8 は段 B)・§7.10 結合テストの I-1〜I-6・I-11・I-13・I-14・`database.types.ts` 2 本の生成し直し・§7.8 許可一覧 | fix/api-read-errors が main に入っていること (結合テストの API 経由の部分は段 B へ)。`tests/database-types-migrations-contract.test.ts` が関数と列を見るので、型の生成し直しは同じ PR | 下の ②・③。実装ゲートは先に通してよいが、本番への適用とマージは ① のあとまで待つ |
+| B (API・設定) | §7.3 `viewer-lookups.ts`・§7.4 `author-name.ts`・§7.5 route の 1 語 × 5・§7.6 型と変換・§7.7 画面・§7.9 の C-8 (契約テストのファイルに it を 1 つ足す)・§7.11 単体テストの直し (5 ファイル)・§7.10 の I-7〜I-10・I-12・I-15・P-1〜P-3 | 段 A が本番に適用済み・main に入っていること (関数が無いと全部の一覧・詳細が 500。R-16) | 下の ④。マージ = 公開 |
 
+本番の順序 (選択肢 (a)(b)(c) のどれでも同じ。段 A の関数は anon / authenticated に EXECUTE を付けるので、適用した時点から `/rest/v1/rpc` で公開の作者の表示名を直接引ける (§9.2)。そのため段 A の本番の適用を、文面が効いたあとの同じ門に置く):
+
+1. 段 C の文面が効く。(a): PR #1997 に本書の 6 文と主張の表 6 行を足し、PR #1997 の手順 (予告のあと施行日にマージ・デプロイ) で出す。(b): v2026.5 の PR を、予告のあと施行日にマージ・デプロイする。(c): 段 C の PR をマージ・デプロイする。
+2. 段 A の migration を本番へ適用する (追加だけの migration。適用の確認は §19 の 1〜6)。
+3. 段 A の PR をマージする (番号は直前に確定。§7.1)。
+4. 段 B の PR をマージする (= 公開。確認は §19 の 7〜9)。
+
+- ②〜④ は同じ座で続けて行い、① の当日 (施行日。(c) なら段 C のマージの日) に置く。② の前に ① のデプロイが済んだことを `/privacy` の版と施行日の表示で確かめる。
+- ① より前に ②〜④ を行わない (文面が足りない間に他人の名前が出る経路を作らない。§6.4)。
 - A と B は同じ worktree で積んでもよいが、PR は分ける (A の本番の適用を B のマージの前に確かめるため)。
-- 戻すとき: B のコードを戻してから A の戻し口を流す (§7.2 の注意)。
-- 段 B の変更は 15 ファイル以内・1,500 行以内 (分割パネルは要らない)。
+- 戻すとき: B のコードを戻してから A の戻し口を流す (§7.2 の注意)。文面 (段 C) は戻さない (見える範囲が文面より狭くなる側のずれ。§9.2)。
+- 段 B の変更は 17 ファイル (製品コード 9: `viewer-lookups.ts`・`author-name.ts`・route 3 本・`types/domain.ts`・`types/database.ts`・`lib/converter.ts`・`src/app/(main)/profile/page.tsx` / tests 8: §7.11 の 5 ファイル・`recipe-author-display-names-migration-contract.test.ts` (C-8)・`recipe-author-display-names.test.ts` (I-7〜I-10・I-12・I-15)・`recipe-author-name-setting-1917.test.tsx` (新)) で、1,500 行以内。15 ファイルを超えるので、実装ゲートの 1 レビュアー枠は分割パネル (src の担当・tests の担当・横断整合の担当) にする。
 
 ---
 
@@ -1412,15 +1574,15 @@ sequenceDiagram
 
 | 番兵 | grep の語 | 反応 | 直し方 | 段 |
 |---|---|---|---|---|
-| `tests/recipe-viewer-lookups-1917.test.ts` (fix 枝) | `nicknames`・`user_profiles`・`argsOf('user_profiles'` | `from('user_profiles')` の select / in を期待し、`nicknames` を読むので赤 | §7.11 の形に直し、it 名を U-1〜U-10 に (U-9 は fix 枝の「作者の名前 (user_profiles) が読めなければ 500」の it.each の置き換え) | B |
-| `tests/recipes-route.test.ts` (fix 枝) | `lookupResults.user_profiles`・`未ログインなら作者の名前もいいねも DB に問い合わせない` | `user_profiles` のクエリと「未ログインは問い合わせない」を期待するので赤 | `rpc` を関数名で分岐するモックに替え、it 名を §12 のとおりに | B |
-| `tests/recipe-author-name-1649.test.ts`・`tests/recipe-detail-hidden-404.test.ts`・`tests/api-security-cluster.test.ts` (fix 枝) | `table === 'user_profiles'`・`emptyLookup` | `from('user_profiles')` の分岐で名前を返す / 0 行にしているので、名前を期待する it が赤 | `rpc` の分岐で `recipe_author_display_names` の行を返す (§7.11)。it 名は変えない | B |
+| `tests/recipe-viewer-lookups-1917.test.ts` (fix 枝) | `nicknames`・`user_profiles`・`argsOf('user_profiles'`・`h.errors.user_profiles`・`it.each` の `['user_profiles', …]` | `from('user_profiles')` の select / in を期待し、`nicknames` を読むので赤。`it.each` 「%s が読めなければ、そのテーブルと DB のエラーを返す…」(169) の `user_profiles` の行は、名前を rpc で引くようになると `h.errors.user_profiles` が効かず `ok: true` になって赤。未ログインの「DB に問い合わせない」(155・216) も、未ログインで rpc を呼ぶので赤 | §7.11 (1) の形 (rpc を関数名で分岐し `h.errors` / `h.nullData` を効かせる) に直し、fix 枝の 13 本を §7.11 (1) の表のとおり U-1〜U-12 に (11 本を直す・2 本は変えない・U-10 を足す) | B |
+| `tests/recipes-route.test.ts` (fix 枝) | `lookupResults.user_profiles`・`lookupBuilders.user_profiles`・`未ログインなら作者の名前もいいねも DB に問い合わせない`・`it.each` の `['作者の名前 (user_profiles)', 'user_profiles']` | `user_profiles` のクエリと「未ログインは問い合わせない」を期待するので赤。モックに `rpc` が無いので、未ログインで行のある一覧を読むほかの it も `rpc` の呼び出しで落ちる | §7.11 (2) のとおり `mockRpc` を足して既定で 0 行を返し、fix 枝の 4 本 (283・302・312・357) を R-1〜R-4 に | B |
+| `tests/recipe-author-name-1649.test.ts`・`tests/recipe-detail-hidden-404.test.ts`・`tests/api-security-cluster.test.ts` (fix 枝) | `table === 'user_profiles'`・`emptyLookup`・`profileChain`・`expect(mockRpc).not.toHaveBeenCalled()`・`vi.resetAllMocks()` | 1649: `from('user_profiles')` で名前を返しているので、名前を期待する it が赤。api-security-cluster: コメント一覧の `'Alice'` が赤、#169 の「未認証リクエストでは view_count を更新しない」は名前の rpc で `mockRpc` が呼ばれるので赤 (`resetAllMocks` のあとは `mockRpc` が `undefined` を返して 500 にもなる)。hidden-404: `rpc` が `{ data: null, error: null }` を返すので緑のまま | §7.11 (3)〜(5) のとおり。it 名は変えない | B |
 | `tests/postgrest-embed-relationship-scan.test.ts` (fix 枝) | `.select('`・`MIN_CHECKED_EMBEDS` | `rpc` は埋め込みではないので数えない。埋め込みの数は変わらない | 変更なし | — |
 | `tests/integration/security/recipes-api-logged-in.test.ts` (fix 枝) | `authorName`・`NICKNAME` | 本人の非公開のレシピの `authorName` が本人の nickname。関数の (a) で同じ結果 | 変更なし (段 A の適用後に緑のまま。段 B で実際に関数を通る) | — |
 | `tests/integration/security/anon-definer-execute.test.ts:95-100, 123-151` | `ANON_EXECUTABLE_DEFINER_ALLOWLIST`・`許可リストの 2 本` | A1: 許可一覧に無い DEFINER の関数を anon が呼べると赤。A1b: 一覧の関数が anon に呼べないと赤 | §7.8 の行を足し、describe / it の「2 本」を「3 本」に | A |
 | `tests/integration/security/anon-invoker-execute.test.ts` | `prosecdef`・`許可一覧` | SECURITY INVOKER の関数だけを見る。本書の関数は DEFINER | 変更なし | — |
 | `tests/database-types-migrations-contract.test.ts:202-225` | `Functions`・`Tables`・`CREATE FUNCTION` | migration の関数が 2 つの型ファイルの `Functions` に無いと赤。写しがずれると赤 | ローカルの Supabase で型を生成し直し、2 つのファイルに同じ内容を置く (`__InternalSupabase` は残す) | A |
-| `tests/migration-file-version-integrity.test.ts:53-109` | `-- migration:`・`-- rollback:`・`supabase/rollbacks/` | 1 行目の見出しがファイル名と違う・戻し口が無い・見出しが違うと赤 | §7.1・§7.2 の形。番号の確定で 4 か所を同時に書き換える | A |
+| `tests/migration-file-version-integrity.test.ts:53-109` | `-- migration:`・`-- rollback:`・`supabase/rollbacks/`・`withSqlExtension` | migration の 1 行目の見出しがファイル名と違う・案内した戻し口が無い・戻し口の 1 行目の見出しが対の migration のファイル名 (`<stem>.sql`) を指さないと赤 (戻し口の見出しに `<stem>.down.sql` を書くと赤) | §7.1・§7.2 の形 (戻し口の 1 行目は `-- rollback: <番号>_recipe_author_display_names.sql`。C-1 も同じ形を見る)。番号の確定で 4 か所を同時に書き換える | A |
 | `tests/db-privilege-hardening-migration-contract.test.ts` | `GRANT ALL`・`TRUNCATE` | 新しい migration / 戻し口が anon / authenticated に表の TRUNCATE (ALL を含む) を付けると赤 | 本書の migration は関数の EXECUTE だけを GRANT する (C-6・C-7 が重ねて見る) | A |
 | `tests/rpc-profile-name-placeholder-migration-contract.test.ts:161` | `normalize_profile_name を定義する migration は本 migration だけ` | 別の migration が `normalize_profile_name` を CREATE すると赤 | 本書の migration は呼ぶだけ (C-2 の `MUST_NOT_REDEFINE`) | — |
 | `tests/parental-consent-migration-contract.test.ts` | `age_years_jst`・`guard_user_profiles_privileged` | 特権列ガードや年齢の関数を作り直すと赤になりうる | 作り直さない (C-2) | — |
@@ -1432,7 +1594,7 @@ sequenceDiagram
 | `tests/api-raw-error-message-scan.test.ts`・`tests/lib-raw-error-message-scan.test.ts` | `error.message` | 生のエラーの文を本文に返すと赤 | `internalError` のまま | — |
 | `tests/env-source-scan.test.ts` | `process.env` | 新しい環境変数は無い | 変更なし | — |
 | `tests/no-pending-wording-1911.test.ts`・`tests/public-claims-guard.test.ts` | `準備中`・`予定です`・`FORBIDDEN` | `src` の文言に未完成・予定の語があると赤 | §7.4 の文言に入れない | B |
-| `tests/legal-text-1901.test.ts:1058-1073`・`tests/legal-claims-1901.ts:25` | `LEGAL_CLAIM_COUNT`・`fragment`・`chars` | 文を足して主張の表を足さないと赤。字数が違うと赤 | §7.12 の 5 行と +5 | C |
+| `tests/legal-text-1901.test.ts:1058-1073`・`tests/legal-claims-1901.ts:25` | `LEGAL_CLAIM_COUNT`・`fragment`・`chars`・`evidence` | 文を足して主張の表を足さないと赤。字数が違うと赤。evidence のパスが実在しない・evidence の `F-n` が cross/20 に無いと赤 | §7.12 の 6 行と +6 (evidence は本書と `viewer-lookups.ts` のパスだけ・`F-n` を書かない) | C |
 | `tests/legal-text-1901.test.ts` (見出し) | `PRIVACY_SECTION_HEADINGS`・`家族グループと組織での見え方` | 見出しの逐語を直書きした検査があれば赤 | 直書きがあれば新しい見出しに | C |
 | `packages/shared/src/legal-versions.test.ts` | `LEGAL_DOCUMENTS`・`effectiveDate` | 版の形と施行日の形 | 選択肢 (b) で版を上げるときも形は同じ | C |
 | `tests/docs-table-column-count.test.ts` | `docs/`・`\|` | 本書の表の行が見出しと違う数の区切りを持つと赤 | 本書の表はセルの中の `\|` をコードの span に入れるか、`/` で書く | 設計 |
@@ -1475,7 +1637,7 @@ sequenceDiagram
 
 ## 19. 受入条件と本番の確認 (オーケストレーターが行う。本書のコードは本番に書き込まない)
 
-段 A の適用のあと (読み取りだけ):
+段 A の適用のあと (読み取りだけ。適用は §15 の本番の順序の ② で、段 C の文面が効いたあと):
 
 1. `schema_migrations` に本 migration の番号がある。
 2. `information_schema.columns` で `user_profiles.show_recipe_author_name` が `boolean`・`NOT NULL`・既定 `true`。`SELECT count(*) FROM user_profiles WHERE show_recipe_author_name IS DISTINCT FROM true` が 0。
@@ -1506,7 +1668,7 @@ sequenceDiagram
 
 | # | 事項 | 本書の置き方 | 誰が決めるか |
 |---|---|---|---|
-| Q-1 | プライバシーポリシーの文 (§7.12) の版の置き方: (a) v2026.4 (PR #1997・施行日 2026-11-01 の仮置き) に入れ、Issue #1139 の予告の文に作者名の表示を足してから投稿する / (b) 別の版 v2026.5 / (c) 版を上げずに文だけ足す | (a) を既定にして段 C を書いた。(a)(b) のときは段 B の公開を施行日以後にそろえる。(c) は勧めない (§6.4) | オーナー |
+| Q-1 | プライバシーポリシーの文 (§7.12) の版の置き方: (a) v2026.4 (PR #1997・施行日 2026-11-01 の仮置き) に入れ、Issue #1139 の予告の文に作者名の表示を足してから投稿する / (b) 別の版 v2026.5 / (c) 版を上げずに文だけ足す | (a) を既定にして段 C を書いた。どの選択肢でも、段 A の本番の適用と段 A・段 B のマージは文面が効いたあと (§15 の本番の順序)。(c) は勧めない (§6.4) | オーナー |
 | Q-2 | 作者名を描く画面が今は無い (F-13)。API の `authorName` を一覧・詳細のどこに描くかは別の発注 | 本書は API の値と設定の切り替えまで。画面は別 Issue の候補 | オーナー |
 | Q-3 | 18 歳未満の本人の作者名を出さない (§6.1 (4)) ことは本書の既定。保護者の同意書に「公開レシピの作者名」を足して出す案は取らない | 出さないまま。変えるなら cross/14 の同意書の版上げを伴う別の設計 | オーナー |
 | Q-4 | 凍結中の作者名を出さない (§6.1 (3)) ことは本書の既定 | 出さないまま | オーナー |
@@ -1519,3 +1681,4 @@ sequenceDiagram
 | 版 | 日付 | 内容 |
 |---|---|---|
 | v1.0 | 2026-10-24 | 新設 (A 型 4 相。構造 A = SECURITY DEFINER の関数 `recipe_author_display_names` + 本人の選択の列 `show_recipe_author_name`。段 A/B/C。プライバシーポリシーの版はオーナーに聞く (Q-1)) |
+| v1.1 | 2026-10-24 | 審査 R1 の反映 (§7.2・§7.9・§7.10・§7.11・§7.12・§6.4・§9.2・§12・§15・§16・§19・§21。構造 A は変えない) |
