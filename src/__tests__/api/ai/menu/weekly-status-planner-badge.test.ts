@@ -79,13 +79,16 @@ const { WEEKLY_MENU_REQUEST_WEEKLY_ORIGIN_SELECT } = await import('@/lib/ai/week
 
 const user = { id: 'user-1' };
 
+/** 献立の生成の受付の id (weekly_menu_requests.id は uuid の列。UUID の形でない requestId は DB に渡さず not_found を返すので、UUID の形にする。#1917 の続き) */
+const REQUEST_ID = '60000000-0000-4000-8000-0000000000a1';
+
 const makeRequest = (requestId: string) =>
   new Request(`http://localhost/api/ai/menu/weekly/status?requestId=${requestId}`);
 
 /** status が読む行 (既定は週の献立の生成の印があり、完了した行) */
 function requestRow(overrides: Record<string, unknown> = {}) {
   return {
-    id: 'req-1',
+    id: REQUEST_ID,
     status: 'completed',
     error_message: null,
     created_at: ago(10),
@@ -120,21 +123,21 @@ describe('GET /api/ai/menu/weekly/status: 週の献立の生成が完了した�
   it('印だけを weekly_request として読み、generated_data 全体は読まない', async () => {
     selectResultQueue.push({ data: requestRow({ status: 'processing' }), error: null });
 
-    await GET(makeRequest('req-1'));
+    await GET(makeRequest(REQUEST_ID));
 
     const columns = String(mockSelect.mock.calls[0][0]).split(',').map((c) => c.trim());
     expect(columns).toContain(WEEKLY_MENU_REQUEST_WEEKLY_ORIGIN_SELECT);
     expect(WEEKLY_MENU_REQUEST_WEEKLY_ORIGIN_SELECT).toBe('weekly_request:generated_data->weeklyRequest');
     expect(columns).not.toContain('generated_data');
     // 読むのは本人の行だけ (付与の相手もこの user.id)
-    expect(mockSelectEq1).toHaveBeenCalledWith('id', 'req-1');
+    expect(mockSelectEq1).toHaveBeenCalledWith('id', REQUEST_ID);
     expect(mockSelectEq2).toHaveBeenCalledWith('user_id', user.id);
   });
 
   it('completed で印のある行は、本人に service role のクライアントで planner を 1 回付ける', async () => {
     selectResultQueue.push({ data: requestRow(), error: null });
 
-    const res = await GET(makeRequest('req-1'));
+    const res = await GET(makeRequest(REQUEST_ID));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -147,7 +150,7 @@ describe('GET /api/ai/menu/weekly/status: 週の献立の生成が完了した�
     mockAwardBadge.mockResolvedValue({ ...AWARDED, awarded: false });
     selectResultQueue.push({ data: requestRow(), error: null });
 
-    const res = await GET(makeRequest('req-1'));
+    const res = await GET(makeRequest(REQUEST_ID));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -169,7 +172,7 @@ describe('GET /api/ai/menu/weekly/status: 週の献立の生成が完了した�
   ])('completed でも %s には付けない', async (_label, weeklyRequest) => {
     selectResultQueue.push({ data: requestRow({ weekly_request: weeklyRequest }), error: null });
 
-    const res = await GET(makeRequest('req-1'));
+    const res = await GET(makeRequest(REQUEST_ID));
 
     expect(res.status).toBe(200);
     expect(mockAwardBadge).not.toHaveBeenCalled();
@@ -179,7 +182,7 @@ describe('GET /api/ai/menu/weekly/status: 週の献立の生成が完了した�
   it.each(['processing', 'queued', 'pending', 'failed'])('status が %s の行には、印があっても付けない (失敗・中止・生成中)', async (status) => {
     selectResultQueue.push({ data: requestRow({ status }), error: null });
 
-    const res = await GET(makeRequest('req-1'));
+    const res = await GET(makeRequest(REQUEST_ID));
 
     expect(res.status).toBe(200);
     expect(mockAwardBadge).not.toHaveBeenCalled();
@@ -191,9 +194,9 @@ describe('GET /api/ai/menu/weekly/status: 週の献立の生成が完了した�
       data: requestRow({ status: 'processing', created_at: staleAt, updated_at: staleAt }),
       error: null,
     });
-    updateResultQueue.push({ data: [{ id: 'req-1', generated_data: { weeklyRequest: true } }], error: null });
+    updateResultQueue.push({ data: [{ id: REQUEST_ID, generated_data: { weeklyRequest: true } }], error: null });
 
-    const res = await GET(makeRequest('req-1'));
+    const res = await GET(makeRequest(REQUEST_ID));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -207,7 +210,7 @@ describe('GET /api/ai/menu/weekly/status: 週の献立の生成が完了した�
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     selectResultQueue.push({ data: requestRow(), error: null });
 
-    const res = await GET(makeRequest('req-1'));
+    const res = await GET(makeRequest(REQUEST_ID));
     const json = await res.json();
 
     expect(res.status).toBe(200);
