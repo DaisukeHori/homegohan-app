@@ -2003,7 +2003,26 @@ export function createScriptedSupabase(results: ReadonlyArray<ScriptedResult>): 
 | F: 材料・作り方の無い料理 (買う・外食) | A か B と同じ | POST → 201 (`ingredients: []`・`recipe_steps: []`) | 出る | 「材料情報なし」と作り方の案内文 | DELETE |
 | G: 名前が空白だけ・101 文字以上・NULL 文字を含む・鍵 (NFKC) が 101 文字以上 | status → 400 `VALIDATION_ERROR` (印は変えない) | POST → 400 (NULL 文字は `INVALID_CHARACTER`)。♥ は戻る | — | — | — |
 | I: 別のタブで同じ名前を保存済み・このタブの印は空のまま (K あり) | (開いた時点の印 = 空) | POST → 200 `created: false` (写しを置き換える)。♥ 塗り・`favoriteId` = 既存の id | 出る (写し = 後の内容) | 後の内容 | DELETE → 消える |
+| J: 写しが大きい (`dishJsonByteLength` が 32768 超)・K なし | A と同じ (status は名前だけを見る。`{ favorited: false, id: null }`) | POST → 400 `VALIDATION_ERROR` (`DISH_FAVORITE_INVALID_MESSAGE` を `alert`)。♥ は戻る。DB の CHECK (49152) には届かない | 出ない | — | — |
 | H: 未ログイン | 401 (印は変えない) | 401。♥ は戻る | 401 (画面は空のまま) | — | 401 |
+| L: DB の失敗 (読み込み・upsert・削除・行の形が正典と違う) | 500 `INTERNAL_ERROR` (印は変えない・取得中の disabled は解ける) | POST / DELETE → 500。♥ は戻る (文は出さない) | 500 (画面は前の一覧のまま。`fetchFavorites` は `console.error` だけ) | — | 500 (一覧から外さない) |
+
+行の記号の `K` は料理名の鍵と紛れるので使わない。J は「K あり」では起きない (♥ が塗られていて押下は DELETE。I のように古い印 (空) のまま押したときは POST になり、同じ 400 で写しは変わらない。§9.3 の S1 × `POST` の 400 の行)。
+
+(a2) 一覧の検索・並び替え × 結果 (`GET /api/favorites`。どの行も本人の行だけ。S-9)
+
+| 入力 | 結果 | 根拠 |
+|---|---|---|
+| `q` なし・空・空白だけ | 絞らない | `dishFavoritesQueryOf` が空を返す (§7.3) |
+| `q` = 部分一致の語 (例「じゃが」) | `dish_name` の ilike で絞る。`total` は絞ったあとの件数 | §7.4・S-9 |
+| `q` に NULL 文字 (U+0000) を含む | NULL 文字を除いた語で絞る (DB に渡さない・500 にしない) | `dishFavoritesQueryOf`・§10 |
+| `q` が 101 文字以上 (前後の空白を除いたあと) | 先頭 100 文字で切った語で絞る | `DISH_FAVORITES_QUERY_MAX_CHARS`・§10 |
+| `sort` = `newest` / なし / 未知の値 | `created_at` の降順 (`id` で安定) | `DISH_FAVORITE_SORT_DEFAULT` |
+| `sort` = `oldest` | `created_at` の昇順 (`id` で安定) | §7.4 |
+| `sort` = `name` | `dish_name_key` の昇順 (`id` で安定) | §7.4・S-9 |
+| `limit` / `offset` が不正・範囲外 | 丸める (limit 1〜200 既定 100・offset 0〜100000) | `clampIntParam`・§13 |
+| `offset` が件数より後ろ | 200 `{ favorites: [], total }` (416 を空のページに) | `resolveBeyondLastPage` |
+| 未ログイン / DB の失敗 | 401 / 500 (表 (a) の H・L) | §10 |
 
 (b) 消費経路 (書く側・読む側・表示・他)
 
@@ -2273,7 +2292,7 @@ sequenceDiagram
 
 ## 16. 既存の番兵 (契約テスト・走査テスト) の追随表
 
-本設計が足す・変える・移すものの名前 (`dish_favorites`・`DISH_FAVORITE*`・`/api/favorites`・`favorites/route.ts`・`FavoriteRecipeModal`・`FavoriteListItem`・`recipeName`・`likedAt`・`recipeUuid`・`FAVORITE_SET`・`DISH_FAVORITES_MAX_PER_USER`・`recipe_likes`・`/api/recipes/[id]/like`) を grep の語にして `tests/`・`src/__tests__/`・`src/app/(main)/favorites/_components/__tests__/`・`apps/mobile/__tests__/`・`scripts/`・`supabase/baseline/` を走査した結果 (2026-10-25・origin/main `edff659e4`)。
+本設計が足す・変える・移すものの名前 (`dish_favorites`・`DISH_FAVORITE*`・`/api/favorites`・`favorites/route.ts`・`FavoriteRecipeModal`・`FavoriteListItem`・`recipeName`・`likedAt`・`recipeUuid`・`FAVORITE_SET`・`DISH_FAVORITES_MAX_PER_USER`・`recipe_likes`・`/api/recipes/[id]/like`・`favorite-button`・`aria-pressed`・`RecipeModal` の ♥ の props (`isFavorite`・`onToggleFavorite`)) を grep の語にして `tests/`・`src/__tests__/`・`src/app/(main)/favorites/_components/__tests__/`・`apps/mobile/__tests__/`・`scripts/`・`supabase/baseline/` を走査した結果 (2026-10-25・origin/main `edff659e4`)。
 
 | 番兵 | grep の語 | 反応 | 直し方 | 段 |
 |---|---|---|---|---|
@@ -2308,6 +2327,10 @@ sequenceDiagram
 | `src/app/(main)/favorites/_components/__tests__/FavoriteRecipeModal.test.ts` | `recipeUuid`・`/api/recipes/`・`favorite-recipe-no-uuid`・`favorite-recipe-loading` | 4 つの describe (表示制御・uuid 無し・取得成功・再試行) が props と DOM の変化で赤 | §7.15 のとおり書き換え (M-1〜M-4) | B2 |
 | `tests/e2e/bug-104-favorites-system.spec.ts` | `お気に入りレシピ`・`レシピ名で検索...`・`お気に入りレシピはまだありません`・`に一致するレシピが見つかりませんでした`・`0 件`・`border-radius: 16px`・`/api/favorites`・`/api/recipes/:name/like` | 見出し・placeholder・空の文・行の角丸・`{ favorites, total }` の形・いいねの route の 404 を見る。どれも変えないので緑のまま | 変更なし + E-1 を足す | B1 (E-1) |
 | `tests/e2e/bug-31-favorite-button.spec.ts` | `favorite-button`・`aria-pressed` | ♥ の `data-testid`・`aria-pressed`・disabled の解除・再読込後の保持。`RecipeModal` を変えないので DOM は同じ。再読込後の保持は本書で初めて通る (今は保存されないので、データのある環境では落ちていた) | 変更なし | — |
+| `tests/e2e/w5-9-multitab-realtime-adversarial.spec.ts:703-785` (W5C-12) | `favorite-button`・`aria-pressed`・`W5C-12` | 2 つのコンテキストで同じ料理のモーダルを開き ♥ を同時に押し、2 秒後の `aria-pressed` が食い違えば注記 (`issue`) を足すだけ (expect は「レシピを見る」のあとの ♥ の表示だけ)。今は両方 404 で ♥ が戻り、注記なしで緑。設計後は S-16 (a) のとおり両方 201 (または片方 200) で同じ id・両方とも塗り (`true`) で注記は出ない。初めから保存済みなら両方 DELETE が 200 / 404 で両方とも空。片付けはタブ A が塗りのときだけ A の ♥ を 1 回押す (A の `favoriteId` = 共通の id の DELETE で行が消える)。`RecipeModal` の DOM は変えない | 変更なし | — |
+| `tests/e2e/multi-context-parallel-ops.spec.ts:360-450` (B5-5) | `favorite-button`・`aria-pressed`・`not.toBeDisabled`・`B5-5` | W5C-12 と同じ形 (2 コンテキストで同時に ♥ → `aria-pressed` の食い違いを注記するだけ)。加えて ♥ が `disabled` でなくなるのを待つ (status の取得中は disabled。§7.9 (3) の `finally` で解ける。status が 400 / 500 でも解ける)。設計後は S-16 (a) で両方とも塗り。片付けは W5C-12 と同じ | 変更なし | — |
+| `tests/e2e/refactor-baseline/weekly-characterization.spec.ts:446-480` | `favorite-button`・`aria-pressed` | 献立の画面の特性テスト。♥ が見えること・`aria-pressed` が `true` / `false` のどちらかであること・押したあとも属性があることを見る (反転は見ない)。`RecipeModal` の DOM を変えないので緑のまま。設計後は押すと本当に保存される (片付けは無いので、データのある環境ではその料理の行が 1 つ残る。次の走行では塗りから始まり、押すと DELETE で消える。どちらでも緑) | 変更なし | — |
+| `src/__tests__/app/menus/weekly/recipe-modal-plan-skipped.test.tsx` | `RecipeModal`・`isFavorite`・`isFavoriteLoading`・`onToggleFavorite` | `RecipeModal` の props を組んで料理画像の枠の文を見る単体。本書は `RecipeModal` の props と描画を変えない (§7.9 の末尾。§7.12 も同じ props で使う) ので緑のまま | 変更なし | — |
 | `tests/helpers/mobile-removed-1598.ts`・`tests/design-doc-removed-mobile-screens.test.ts`・`tests/docs-mobile-removed-references.test.ts`・`tests/mobile-removed-files-references.test.ts` | `apps/mobile/app/`・消した画面の名前 | 設計書・README が消したモバイルの画面をいまあるものとして名指しすると赤 | 本書はモバイルの画面のパスを名指ししない (F-16 は README の行を指す) | 設計 |
 | `apps/mobile/__tests__/lib/notification-route.test.ts:91`・`apps/mobile/__tests__/home/tab-layout.test.tsx` | `'/favorites'`・`favorites` | 通知の行き先 `/favorites` と、タブに `favorites` が無いこと。どちらも変えない | 変更なし | — |
 | `tests/docs-table-column-count.test.ts` | `docs/`・`\|` | 本書の表の行が見出しと違う数の区切りを持つと赤 | 本書の表はセルの中の union を `/` で書く・`\|` をコードの span に入れる | 設計 |
