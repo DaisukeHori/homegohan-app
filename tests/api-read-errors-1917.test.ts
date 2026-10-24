@@ -281,7 +281,7 @@ const CASES: ReadCase[] = [
     table: 'subscription_plans',
     call: async (id) =>
       (await import('@/app/api/super-admin/plans/[id]/price-change/route')).POST(
-        json(`${BASE}/api/super-admin/plans/${id}/price-change`, 'POST', { new_monthly_price_jpy: 1200, applies_to: 'new_only', reason: 'price update' }),
+        json(`${BASE}/api/super-admin/plans/${id}/price-change`, 'POST', { new_monthly_price_jpy: 1200, applies_to: 'new_only', reason: 'price update', effective_at: '2026-11-01T00:00:00.000Z' }),
         ctx({ id }),
       ),
   },
