@@ -328,7 +328,7 @@ BAN 解除
 ---
 
 ### GET /api/admin/organizations
-組織の一覧 (運営)。実装は `src/app/api/admin/organizations/route.ts:38-109`
+組織の一覧 (運営)。実装は `src/app/api/admin/organizations/route.ts:37-108`
 
 **クエリパラメータ**: `q` (組織名の部分一致)・`plan` (`ORG_PLAN_VALUES` のどれか。`src/lib/org-plans.ts:22`)・`page` (default: 1)・`per_page` (default: 30, max: 100)。不正なら 400 `VALIDATION_ERROR` (:60-65)
 
@@ -339,7 +339,7 @@ BAN 解除
 ---
 
 ### POST /api/admin/organizations
-組織の作成 (運営)。実装は `src/app/api/admin/organizations/route.ts:111-245`
+組織の作成 (運営)。実装は `src/app/api/admin/organizations/route.ts:110-244`
 
 **リクエスト**:
 ```json
