@@ -45,9 +45,14 @@ vi.mock('@/lib/admin/audit', () => ({
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: () => Promise.resolve(fakeDb.client),
-  getSupabaseAdmin: () => {
-    throw new Error('この試験では service_role を使わない (廃止の操作をしない)');
-  },
+  // プランの更新 (subscription_plans) は service_role の client で書く (運営の直接の書き込みを塞いだ。#1917 の続き)。
+  // 同じ代わりの DB に書く。廃止の操作 (契約者の数え上げ) はしないので、ほかの表には触れない
+  getSupabaseAdmin: () => ({
+    from: (table: string) => {
+      if (table !== 'subscription_plans') throw new Error(`この試験では service_role で ${table} を使わない (廃止の操作をしない)`);
+      return fakeDb.client.from(table);
+    },
+  }),
 }));
 
 // route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする

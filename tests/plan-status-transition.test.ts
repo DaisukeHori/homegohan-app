@@ -65,7 +65,12 @@ vi.mock('@/lib/supabase/server', () => ({
   // #1127: 廃止 (--> deprecated) の前に、service_role で契約者数を数えるようになった。
   // このファイルが確かめるのは状態遷移の規則なので、契約者のいない DB を渡す
   // (契約者がいるときの動きは tests/plan-deprecate-subscribers-route.test.ts)
-  getSupabaseAdmin: () => createFakePlanSubscribersDb().client,
+  // プランの更新 (subscription_plans) も service_role の client で書く (運営の直接の書き込みを塞いだ。#1917 の続き)。
+  // プランの行は本人のセッションの読み取りと同じ代わりの DB (fakeSupabase) の順の結果を使う
+  getSupabaseAdmin: () => {
+    const subscribers = createFakePlanSubscribersDb().client;
+    return { from: (table: string) => (table === 'subscription_plans' ? fakeSupabase.from(table) : subscribers.from(table)) };
+  },
 }));
 
 const { PATCH } = await import('@/app/api/super-admin/plans/[id]/route');

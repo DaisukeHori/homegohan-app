@@ -7,7 +7,9 @@
  * user_id = <顧客> の行を INSERT するため RLS で拒否され、500 DB_ERROR になっていた。
  *
  * 期待する認可 (修正後):
- *   - 運営 (roles に support / admin / super_admin のいずれか) は任意の user_id でチケットを起票できる
+ *   - 運営 (roles に support / admin / super_admin のいずれか) は、運営画面の API (POST /api/admin/support/tickets) で任意の user_id の
+ *     チケットを起票できる。API は requireRole の後で service_role の client で書く。運営が自分のセッションで PostgREST から直接
+ *     起票する経路は閉じた (運営の INSERT のポリシー tickets_insert_staff を消した。20261025100000・#1917 の続き。直接の起票は 42501)
  *   - 一般ユーザーは自分の user_id でだけ起票できる (他人の user_id は 42501 のまま)
  *   - support / admin / super_admin 以外の運営系ロール (sales / finance / content_moderator / org_admin) は代理起票できない
  *   - 未認証 (anon) は起票できない
@@ -215,37 +217,31 @@ afterAll(async () => {
 // RLS (PostgREST 直叩き)
 // ================================================================
 describe('#1248 support_tickets INSERT (RLS)', () => {
-  it('R-1: support は顧客の user_id でチケットを起票できる', async () => {
-    const { data, error } = await authedClient(support.jwt)
+  it('R-1: support も自分のセッションでは顧客の user_id のチケットを直接起票できない (42501。代理起票は運営画面の API が service_role で書く。#1917 の続き)', async () => {
+    const { error } = await authedClient(support.jwt)
       .from('support_tickets')
-      .insert(ticketRow(customer.userId, 'R-1'))
-      .select('id, user_id')
-      .single();
-    expect(error).toBeNull();
-    expect(data?.user_id).toBe(customer.userId);
-    expect(await countTickets('R-1')).toBe(1);
+      .insert(ticketRow(customer.userId, 'R-1'));
+    expect(error).not.toBeNull();
+    expect(error!.code).toBe('42501');
+    expect(await countTickets('R-1')).toBe(0);
   });
 
-  it('R-2: admin は顧客の user_id でチケットを起票できる', async () => {
-    const { data, error } = await authedClient(admin.jwt)
+  it('R-2: admin も自分のセッションでは顧客の user_id のチケットを直接起票できない (42501。代理起票は運営画面の API が service_role で書く。#1917 の続き)', async () => {
+    const { error } = await authedClient(admin.jwt)
       .from('support_tickets')
-      .insert(ticketRow(customer.userId, 'R-2'))
-      .select('id, user_id')
-      .single();
-    expect(error).toBeNull();
-    expect(data?.user_id).toBe(customer.userId);
-    expect(await countTickets('R-2')).toBe(1);
+      .insert(ticketRow(customer.userId, 'R-2'));
+    expect(error).not.toBeNull();
+    expect(error!.code).toBe('42501');
+    expect(await countTickets('R-2')).toBe(0);
   });
 
-  it('R-3: super_admin は顧客の user_id でチケットを起票できる', async () => {
-    const { data, error } = await authedClient(superAdmin.jwt)
+  it('R-3: super_admin も自分のセッションでは顧客の user_id のチケットを直接起票できない (42501。代理起票は運営画面の API が service_role で書く。#1917 の続き)', async () => {
+    const { error } = await authedClient(superAdmin.jwt)
       .from('support_tickets')
-      .insert(ticketRow(customer.userId, 'R-3'))
-      .select('id, user_id')
-      .single();
-    expect(error).toBeNull();
-    expect(data?.user_id).toBe(customer.userId);
-    expect(await countTickets('R-3')).toBe(1);
+      .insert(ticketRow(customer.userId, 'R-3'));
+    expect(error).not.toBeNull();
+    expect(error!.code).toBe('42501');
+    expect(await countTickets('R-3')).toBe(0);
   });
 
   it('R-4: support / admin / super_admin 以外の運営系ロールは代理起票できない (42501)', async () => {

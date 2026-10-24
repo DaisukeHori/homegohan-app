@@ -77,7 +77,8 @@ function rlsAllows(client: ClientKind, table: string, kind: Call['kind'], row: R
   if (table === 'user_profiles') return kind === 'select' && row.id === actor.id; // "Users can view own profile"
   if (table === 'inquiries') {
     if (kind === 'select') return isOperator() || row.user_id === actor.id; // "Admins can view all inquiries"
-    if (kind === 'update') return isOperator(); // "Admins can update inquiries"
+    // 運営の UPDATE のポリシー "Admins can update inquiries" は消した (20261025100000。#1917 の続き)。書くのは service_role だけ
+    if (kind === 'update') return false;
     return false;
   }
   if (table === 'admin_audit_logs') {
@@ -565,12 +566,14 @@ describe('GET /api/admin/inquiries (一覧)', () => {
     expect(list.inquiries.find((i: Json) => i.id === I2).userName).toBe(expected);
   });
 
-  it('service_role は user_profiles にしか使わない (inquiries / admin_audit_logs は本人のセッション)', async () => {
+  it('service_role は user_profiles の読み取りと inquiries の UPDATE にだけ使う (inquiries の読み取りと admin_audit_logs は本人のセッション。#1917 の続き)', async () => {
     await listGET(listRequest());
     await detailGET(detailRequest(I2), ctx(I2));
     await PATCH(updateRequest(I2, 'PATCH', { status: 'resolved' }), ctx(I2));
-    const adminTables = new Set(world.calls.filter((c) => c.client === 'admin').map((c) => c.table));
-    expect([...adminTables]).toEqual(['user_profiles']);
+    const adminUses = new Set(world.calls.filter((c) => c.client === 'admin').map((c) => `${c.table}.${c.kind}`));
+    expect([...adminUses].sort()).toEqual(['inquiries.update', 'user_profiles.select']);
+    const sessionUses = new Set(world.calls.filter((c) => c.client === 'session').map((c) => `${c.table}.${c.kind}`));
+    expect(sessionUses.has('inquiries.update')).toBe(false);
   });
 
   it('ニックネームを引けなくても一覧は返す (メールアドレス表示に切り替え、ログに残す)', async () => {

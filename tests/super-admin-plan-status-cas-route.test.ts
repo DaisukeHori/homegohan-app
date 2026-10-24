@@ -64,7 +64,12 @@ function interleavingFrom(table: string) {
 vi.mock('@/lib/supabase/server', () => ({
   createClient: () => Promise.resolve({ from: interleavingFrom }),
   // 廃止の安全弁 (#1127) は契約者のいない DB で通す (契約者がいるときは tests/plan-deprecate-subscribers-route.test.ts)
-  getSupabaseAdmin: () => createFakePlanSubscribersDb().client,
+  // プランの更新・削除 (subscription_plans) は service_role の client で書く (運営の直接の書き込みを塞いだ。#1917 の続き)。
+  // 同じ DB に、割り込みの再現 (interleavingFrom) つきで書く
+  getSupabaseAdmin: () => {
+    const subscribers = createFakePlanSubscribersDb().client;
+    return { from: (table: string) => (table === 'subscription_plans' ? interleavingFrom(table) : subscribers.from(table)) };
+  },
 }));
 
 const { PATCH, DELETE } = await import('@/app/api/super-admin/plans/[id]/route');

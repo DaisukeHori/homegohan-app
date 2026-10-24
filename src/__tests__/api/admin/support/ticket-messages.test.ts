@@ -85,9 +85,10 @@ type DbResult = { data: unknown; error: unknown };
 let callOrder: string[] = [];
 
 /**
- * ユーザー権限 (RLS あり) の Supabase クライアントの代役。
+ * チケットとメッセージの表の Supabase クライアントの代役 (本人の権限 (RLS あり) の client と、service_role の client が同じ代わりの表を使う)。
  * from(table).select().eq()... のようなチェーンは何を呼んでも自分自身を返し、await すると
- * テーブルと呼んだ操作に応じた結果を返す。呼び出しは calls に記録する。
+ * テーブルと呼んだ操作に応じた結果を返す。呼び出しは、呼んだ client (via) つきで calls に記録する。
+ * 運営の書き込みのポリシーは消した (#1917 の続き) ので、メッセージの保存とチケットの更新は service_role の client (via = 'admin') から来る。
  */
 function createUserClientFake(state: {
   ticket: DbResult;
@@ -95,7 +96,7 @@ function createUserClientFake(state: {
   ticketUpdate: DbResult;
   thread: unknown[];
 }) {
-  const calls: Array<{ table: string; method: string; args: unknown[] }> = [];
+  const calls: Array<{ table: string; method: string; args: unknown[]; via: 'session' | 'admin' }> = [];
 
   const resolveResult = (table: string, ops: string[]): DbResult => {
     if (table === 'support_tickets') return ops.includes('update') ? state.ticketUpdate : state.ticket;
@@ -107,7 +108,7 @@ function createUserClientFake(state: {
   };
 
   const client = {
-    from(table: string) {
+    from(table: string, via: 'session' | 'admin' = 'session') {
       const ops: string[] = [];
       const builder: unknown = new Proxy(
         {},
@@ -118,7 +119,7 @@ function createUserClientFake(state: {
             }
             return (...args: unknown[]) => {
               ops.push(String(prop));
-              calls.push({ table, method: String(prop), args });
+              calls.push({ table, method: String(prop), args, via });
               if (table === 'support_tickets' && prop === 'update') callOrder.push('ticket_update');
               return builder;
             };
@@ -133,6 +134,10 @@ function createUserClientFake(state: {
 }
 
 let userDb: ReturnType<typeof createUserClientFake>;
+/** service_role の client でも userDb の代わりの表を使う表 */
+const SUPPORT_TABLES: readonly string[] = ['support_tickets', 'support_ticket_messages'];
+/** 書き込みの操作 */
+const WRITE_METHODS: readonly string[] = ['insert', 'update', 'upsert', 'delete'];
 
 function postRequest(body: unknown) {
   return new Request(`http://localhost/api/admin/support/tickets/${TICKET_ID}/messages`, {
@@ -166,7 +171,9 @@ beforeEach(() => {
 
   mockGetSupabaseAdmin.mockReturnValue({
     auth: { admin: { getUserById: mockGetUserById } },
-    from: (table: string) => ({ insert: (row: unknown) => mockAdminInsert(table, row) }),
+    // チケットとメッセージの表は本人の権限の client と同じ代わりの表 (呼ばれた時点の userDb) を使う。ほかの表 (送信ログ) は mockAdminInsert
+    from: (table: string) =>
+      SUPPORT_TABLES.includes(table) ? userDb.client.from(table, 'admin') : { insert: (row: unknown) => mockAdminInsert(table, row) },
   });
   mockGetUserById.mockResolvedValue({
     data: { user: { id: CUSTOMER_ID, email: CUSTOMER_EMAIL } },
@@ -210,7 +217,8 @@ describe('POST /api/admin/support/tickets/[id]/messages: 内部メモ (is_intern
     expect(res.status).toBe(201);
     expect(json.data.is_internal).toBe(true);
     expect(mockSendEmail).not.toHaveBeenCalled();
-    expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
+    // service_role の client は保存の 1 回だけ (#1917 の続き)。宛先の解決はしない
+    expect(mockGetSupabaseAdmin).toHaveBeenCalledTimes(1);
     expect(mockGetUserById).not.toHaveBeenCalled();
     expect(mockAdminInsert).not.toHaveBeenCalled();
   });
@@ -260,6 +268,9 @@ describe('POST /api/admin/support/tickets/[id]/messages: 顧客向けの返信 (
       body: REPLY_BODY,
       attachments: [],
     });
+    // 保存は service_role の client から。本人の権限の client では書かない (#1917 の続き)
+    expect(insert?.via).toBe('admin');
+    expect(userDb.calls.filter((c) => c.via === 'session' && WRITE_METHODS.includes(c.method))).toEqual([]);
   });
 
   it('メールには今回の返信だけを載せ、スレッドにある内部メモは混ざらない', async () => {
@@ -300,6 +311,7 @@ describe('POST /api/admin/support/tickets/[id]/messages: 顧客向けの返信 (
     await postExternal();
 
     const update = userDb.calls.find((c) => c.table === 'support_tickets' && c.method === 'update');
+    expect(update?.via).toBe('admin');
     expect(update?.args[0]).toMatchObject({ status: 'in_progress' });
     expect(update?.args[0]).toHaveProperty('first_response_at');
     // メール送信が遅い・失敗しても初回応答の記録が残るよう、通知は最後にする
@@ -389,8 +401,14 @@ describe('POST /api/admin/support/tickets/[id]/messages: 顧客向けの返信 (
       expect(mockLogWarn).toHaveBeenCalledTimes(1);
     });
 
-    it('service role の環境変数が無い (getSupabaseAdmin が例外): 201 + email.status=failed', async () => {
+    it('宛先の解決で service role の client を作れない (getSupabaseAdmin が例外): 201 + email.status=failed', async () => {
+      // 保存と初回応答の記録 (service_role の client を 2 回作る) のあと、宛先の解決で作れない
+      const adminClient: unknown = mockGetSupabaseAdmin();
+      const SAVE_AND_FIRST_RESPONSE_CALLS = 2;
+      let calls = 0;
       mockGetSupabaseAdmin.mockImplementation(() => {
+        calls += 1;
+        if (calls <= SAVE_AND_FIRST_RESPONSE_CALLS) return adminClient;
         throw new Error('Supabase admin env is missing');
       });
 
@@ -504,7 +522,22 @@ describe('POST /api/admin/support/tickets/[id]/messages: 認可・入力検証�
 
     expect(res.status).toBe(500);
     expect(mockSendEmail).not.toHaveBeenCalled();
-    expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
+    // service_role の client は保存 (失敗した) の 1 回だけ作る。宛先の解決はしない
+    expect(mockGetSupabaseAdmin).toHaveBeenCalledTimes(1);
+    expect(mockGetUserById).not.toHaveBeenCalled();
     expect(mockAdminInsert).not.toHaveBeenCalled();
+    expect(userDb.calls.some((c) => c.table === 'support_tickets' && c.method === 'update')).toBe(false);
+  });
+
+  it('service role の client を作れない (環境変数が無い) ときは保存できないので 500。本人の権限の client では書かず、メールも送らない (#1917 の続き)', async () => {
+    mockGetSupabaseAdmin.mockImplementation(() => {
+      throw new Error('Supabase admin env is missing');
+    });
+
+    const res = await postExternal();
+
+    expect(res.status).toBe(500);
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(userDb.calls.filter((c) => WRITE_METHODS.includes(c.method))).toEqual([]);
   });
 });

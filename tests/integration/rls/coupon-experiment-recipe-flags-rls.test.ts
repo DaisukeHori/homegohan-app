@@ -9,11 +9,13 @@
  *   - INSERT / UPDATE / DELETE のポリシーは無い。書き込みは service_role 専用の RPC apply_coupon (#1224) だけ。
  *     運営ロール (super_admin を含む) も PostgREST から直接は書けない (上限の検査を飛ばした適用を作らせない)。
  * experiment_assignments (A/B テストの割り当て):
- *   - SELECT / DELETE は super_admin だけ。INSERT / UPDATE のポリシーは無い。
+ *   - SELECT は super_admin だけ。INSERT / UPDATE / DELETE のポリシーは無く、anon / authenticated は書き込みの権限も持たない
+ *     (super_admin の DELETE のポリシーと書き込みの権限は 20261025100000 で外した。実験の削除の API は service_role で消す。#1917 の続き)。
  *   - 割り当ては GET /api/experiments/[key]/assignment が service_role で、ログインした本人の user_id に絞って作る
  *     (#1041)。本人に自分の variant を選ばせない・書き換えさせないため、本人向けのポリシーは足さない。
  * recipe_flags (レシピの通報):
- *   - INSERT: ログインした本人が reporter_id = 自分 の行だけ。anon と、他人を reporter にした行は拒否。
+ *   - INSERT: ログインした本人が reporter_id = 自分 の行だけ。anon と、他人を reporter にした行は拒否。運営の判定の列
+ *     (status・reviewed_by・reviewed_at) は指定できない (20261025100000。#1917 の続き)。
  *   - SELECT: 通報した本人の行と、admin / super_admin は全行。UPDATE / DELETE のポリシーは無く、anon / authenticated は UPDATE /
  *     DELETE の権限も持たない (運営の "Admins can update recipe flags" と書き込みの権限は 20261024140000 で外した。#1917 の続き)。
  *     通報の判定は運営の API が service_role で書く。
@@ -325,7 +327,7 @@ describe('#1103 experiment_assignments: 本人は自分の割り当てを読め�
     expect(data).toEqual([]);
   });
 
-  it('E-5: 本人は自分の variant を UPDATE で書き換えられず、DELETE で引き直すこともできない', async () => {
+  it('E-5: 本人は自分の variant を UPDATE で書き換えられず、DELETE で引き直すこともできない (42501。書き込みの権限が無い)', async () => {
     const client = authedClient(alice.jwt);
     const updated = await client
       .from('experiment_assignments')
@@ -333,16 +335,14 @@ describe('#1103 experiment_assignments: 本人は自分の割り当てを読め�
       .eq('experiment_id', experimentId)
       .eq('user_id', alice.userId)
       .select('user_id');
-    expect(updated.error).toBeNull();
-    expect(updated.data).toEqual([]);
+    expect(updated.error?.code).toBe(RLS_DENIED);
     const deleted = await client
       .from('experiment_assignments')
       .delete()
       .eq('experiment_id', experimentId)
       .eq('user_id', alice.userId)
       .select('user_id');
-    expect(deleted.error).toBeNull();
-    expect(deleted.data).toEqual([]);
+    expect(deleted.error?.code).toBe(RLS_DENIED);
 
     const { data } = await srAdmin
       .from('experiment_assignments')
@@ -352,7 +352,7 @@ describe('#1103 experiment_assignments: 本人は自分の割り当てを読め�
     expect(data).toEqual([{ variant_key: VARIANT_CONTROL }]);
   });
 
-  it('E-6: super_admin も UPDATE はできない (0 行)。DELETE はできる', async () => {
+  it('E-6: super_admin も自分のセッションでは UPDATE も DELETE もできない (42501。実験の削除の API は service_role で消す。#1917 の続き)', async () => {
     const client = authedClient(superAdmin.jwt);
     const updated = await client
       .from('experiment_assignments')
@@ -360,8 +360,7 @@ describe('#1103 experiment_assignments: 本人は自分の割り当てを読め�
       .eq('experiment_id', experimentId)
       .eq('user_id', bob.userId)
       .select('user_id');
-    expect(updated.error).toBeNull();
-    expect(updated.data).toEqual([]);
+    expect(updated.error?.code).toBe(RLS_DENIED);
 
     const deleted = await client
       .from('experiment_assignments')
@@ -369,8 +368,9 @@ describe('#1103 experiment_assignments: 本人は自分の割り当てを読め�
       .eq('experiment_id', experimentId)
       .eq('user_id', bob.userId)
       .select('user_id');
-    expect(deleted.error).toBeNull();
-    expect(deleted.data).toEqual([{ user_id: bob.userId }]);
+    expect(deleted.error?.code).toBe(RLS_DENIED);
+    const { data } = await srAdmin.from('experiment_assignments').select('user_id').eq('experiment_id', experimentId).eq('user_id', bob.userId);
+    expect(data).toEqual([{ user_id: bob.userId }]);
   });
 });
 
