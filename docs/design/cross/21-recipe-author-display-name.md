@@ -1918,6 +1918,7 @@ sequenceDiagram
 | `age_years_jst`・`normalize_profile_name` | 本文から呼ぶ。作り直さない |
 | `accept_legal_documents`・`POST /api/legal/accept`・同意ゲート・`user_profiles.privacy_version_accepted` | 保持 (変えない)。関数が `privacy_version_accepted` を読む (K-同意)。同意すると次の読み込みから名前が出る (§9.3) |
 | `LEGAL_DOCUMENTS` (`packages/shared/src/legal-versions.ts`)・`docs/legal/archive/` | 段 A では変えない (段 C の選択肢 (b) のときだけ版を上げる)。C-10 が関数の一覧と突き合わせる |
+| 献立の料理のお気に入り (cross/22) | 献立の料理のお気に入りは `recipe_likes` を使わず `dish_favorites` (cross/22)。`viewer-lookups.ts` の `likedRecipeIds` は公開レシピの「いいね」だけ |
 
 ---
 
