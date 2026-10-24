@@ -5,11 +5,14 @@ import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { normalizeProfileName } from "@/lib/profile-name";
 import { UsersListResponseSchema, type UserListItem } from "@/lib/admin/users-schemas";
+import { forbiddenMessageOfResponse } from "@/lib/admin/api-error-message";
 
 // 一覧に出す件数 (GET /api/admin/users の per_page。API の既定と同じ 50 件)
 const USERS_PER_PAGE = 50;
 
 const USERS_LOAD_ERROR = "ユーザー一覧を取得できませんでした。しばらくしてから、もう一度お試しください。";
+/** 403 (Forbidden) の HTTP ステータス */
+const HTTP_FORBIDDEN = 403;
 
 /** 日時 (ISO 8601) を一覧の日付の表示にする。値が無ければ "-" */
 function formatDate(value: string | null): string {
@@ -64,9 +67,11 @@ function SupportUsersContent() {
 
       const res = await fetch(`/api/admin/users?${params}`);
       if (!res.ok) {
-        // 取得できなかったことを「ユーザーが見つかりません」と見せない
+        // 取得できなかったことを「ユーザーが見つかりません」と見せない。
+        // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 と失敗は USERS_LOAD_ERROR (#1917)
+        const message = res.status === HTTP_FORBIDDEN ? await forbiddenMessageOfResponse(res, USERS_LOAD_ERROR) : USERS_LOAD_ERROR;
         setUsers([]);
-        setLoadError(USERS_LOAD_ERROR);
+        setLoadError(message);
         return;
       }
       // 応答は { data: UserListItem[], meta } (route と同じスキーマで確かめる)。

@@ -600,3 +600,74 @@ describe('表示したあとの読み直しが 404 / 403 で断られたとき (
     expect(notice()?.querySelector('button')).toBeNull();
   });
 });
+
+describe('表示したあとの読み直しの 403 は、本文の理由の文を捨てない (#1917 の続き・整合 1025b。#2014 の二段階認証の文)', () => {
+  /** n 回目 (1 始まり) の GET だけを、与えた 403 の応答にする。PATCH は 200 */
+  function mockReloadForbidden(forbidden: () => Response) {
+    let gets = 0;
+    fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') return jsonResponse(200, { data: PLAN });
+      gets += 1;
+      if (gets === 2) return forbidden();
+      return jsonResponse(200, { data: PLAN });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return () => gets;
+  }
+
+  it.each([
+    ['二段階認証の確認', '二段階認証の確認が必要です'],
+    ['二段階認証の登録', '二段階認証の登録が必要です'],
+  ])('保存のあとの読み直しが 403 (%s) なら、その文を出し、「権限がありません」と「再試行」は出さない', async (_label, message) => {
+    const gets = mockReloadForbidden(() => jsonResponse(403, { error: { code: 'OP_PERMISSION_DENIED', message } }));
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+
+    await click('保存する');
+
+    expect(gets()).toBe(2);
+    expect(notice()?.textContent).toBe(message);
+    expect(notice()?.textContent).not.toContain('権限がありません');
+    expect(notice()?.textContent).not.toContain('最新の内容を読み込めませんでした');
+    expect(notice()?.querySelector('button')).toBeNull();
+    // 画面と入力欄は残す
+    expect(displayNameInput().value).toBe('Pro プラス');
+  });
+
+  it('409 のあとの読み直しが 403 (二段階認証の確認) でも、その文を出す', async () => {
+    let gets = 0;
+    fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') return staleResponse();
+      gets += 1;
+      if (gets === 2) return jsonResponse(403, { error: { code: 'OP_PERMISSION_DENIED', message: '二段階認証の確認が必要です' } });
+      return jsonResponse(200, { data: PLAN });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await renderPage();
+
+    await click('再公開する');
+
+    expect(gets).toBe(2);
+    expect(notice()?.textContent).toBe('二段階認証の確認が必要です');
+    expect(notice()?.querySelector('button')).toBeNull();
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['ロールが足りない (運営の route の文)', () => jsonResponse(403, { error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } })],
+    ['英語の文', () => jsonResponse(403, { error: { code: 'FORBIDDEN', message: 'Requires one of: super_admin' } })],
+    ['本文が JSON として読めない', () => new Response('<html>Forbidden</html>', { status: 403, headers: { 'content-type': 'text/html' } })],
+  ])('読み直しの 403 が %s なら「権限がありません」を出し、「再試行」は出さない', async (_label, forbidden) => {
+    const gets = mockReloadForbidden(forbidden);
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+
+    await click('保存する');
+
+    expect(gets()).toBe(2);
+    expect(notice()?.textContent).toBe('権限がありません');
+    expect(notice()?.textContent).not.toContain('Requires');
+    expect(notice()?.querySelector('button')).toBeNull();
+    expect(displayNameInput().value).toBe('Pro プラス');
+  });
+});
