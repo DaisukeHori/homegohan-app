@@ -1247,7 +1247,7 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 ---
 
 ### POST /api/admin/sales/leads/{id}/proposal-pdf
-未実装 (`src/app/api/admin/sales` に route は無い)。提案書 PDF 生成
+未実装 (`src/app/api/admin/sales/leads/[id]/proposal-pdf` の route は無い)。提案書 PDF 生成
 
 **レスポンス**: `{ "data": { "pdf_url": "https://storage.../proposals/xxx.pdf" } }`
 
