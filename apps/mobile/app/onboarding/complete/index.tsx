@@ -14,7 +14,7 @@ import { Text, TextInput } from "../../../src/components/ui/Text";
 
 import { Card, SectionHeader } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
-import { getApiErrorMessage } from "../../../src/lib/api-error";
+import { getJapaneseApiErrorMessage } from "../../../src/lib/api-error";
 import { supabase } from "../../../src/lib/supabase";
 import { colors, radius, shadows, spacing } from "../../../src/theme";
 import { deriveMacroTargets } from "@homegohan/shared";
@@ -174,7 +174,7 @@ export default function OnboardingComplete() {
       );
     } catch (e: unknown) {
       // getApi の失敗の message は `HTTP 404 Not Found: {"error":"…"}` の形なので、そのまま出さず本文の文だけを出す (#1917)
-      Alert.alert("エラー", getApiErrorMessage(e, "保存に失敗しました。"));
+      Alert.alert("エラー", getJapaneseApiErrorMessage(e, "保存に失敗しました。"));
     } finally {
       setSaving(false);
     }
