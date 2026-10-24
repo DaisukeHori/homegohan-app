@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Card, LoadingState } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
-import { getApiErrorMessage } from "../../src/lib/api-error";
+import { getJapaneseApiErrorMessage } from "../../src/lib/api-error";
 import { supabase } from "../../src/lib/supabase";
 import { useProfile } from "../../src/providers/ProfileProvider";
 import { colors, radius, shadows, spacing } from "../../src/theme";
@@ -960,7 +960,7 @@ export default function OnboardingQuestions() {
     } catch (e: unknown) {
       setIsCalculating(false);
       // getApi の失敗の message は `HTTP 401 Unauthorized: {"error":"…"}` の形なので、そのまま出さず本文の文だけを出す (#1917)
-      Alert.alert("保存失敗", getApiErrorMessage(e, ONBOARDING_SAVE_FAILED_MESSAGE));
+      Alert.alert("保存失敗", getJapaneseApiErrorMessage(e, ONBOARDING_SAVE_FAILED_MESSAGE));
     } finally {
       setIsSubmitting(false);
     }

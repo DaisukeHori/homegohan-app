@@ -11,7 +11,8 @@
  *   1. 許可リストは アプリの 5 値 (PLANNED_MEAL_TYPES = DB のトリガーが通す値 = packages/shared の MealType) と同じ
  *   2. generate_single_meal は 5 値のどれでも献立生成に進み、Edge Function へ渡すスロットに mealType がそのまま入る
  *   3. 5 値以外 (大文字小文字・前後の空白・日本語・配列など) は、DB にも Edge Function にも触れずに断る。
- *      エラーに許可する 5 値を入れる (AI が選び直せるように)
+ *      エラーに許可する 5 値を入れる (AI が選び直せるように)。文は食事の入力の検証と同じ「食事の区分 (mealType) は次のいずれかを…」で、
+ *      英字の項目名・値は括弧の中 (#1917 の続き。以前は「mealType は breakfast/lunch/… のいずれかである必要があります」)
  *   4. システムプロンプト (messages/route.ts) の mealType は、許可リストから作る (4 値の固定文字列を持たない)
  *
  * DB 側の検査 (meals.meal_type のトリガー) は tests/integration/rls/meals-meal-type-trigger.test.ts が確認する。
@@ -123,6 +124,15 @@ describe('AI_ALLOWED_MEAL_TYPES (#1103)', () => {
   });
 });
 
+/** 生成中の文に出す食事の区分の日本語の名前 (手で書いた期待値。MEAL_LABELS と同じ) */
+const EXPECTED_MEAL_LABELS: Readonly<Record<string, string>> = {
+  breakfast: '朝食',
+  lunch: '昼食',
+  dinner: '夕食',
+  snack: 'おやつ',
+  midnight_snack: '夜食',
+};
+
 describe('generate_single_meal: mealType の許可 (#1103)', () => {
   it.each(['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'])(
     '%s は受け付け、献立生成のリクエストと Edge Function へのスロットに mealType がそのまま入る',
@@ -131,7 +141,12 @@ describe('generate_single_meal: mealType の許可 (#1103)', () => {
       const out = await generateSingleMeal(db, { date: DATE, mealType });
 
       expect(out.success).toBe(true);
-      expect(out.result).toMatchObject({ requestId: 'request-1', status: 'processing' });
+      // 生成中の文の食事の区分は日本語の名前 (#1917 の続き。以前は「2026-…のdinnerを生成中...」と英字の値が出ていた)
+      expect(out.result).toMatchObject({
+        requestId: 'request-1',
+        status: 'processing',
+        message: `${DATE}の${EXPECTED_MEAL_LABELS[mealType]}を生成中...`,
+      });
 
       // weekly_menu_requests の target_slots (Edge Function が読む)。service role のクライアントで積み、利用者のクライアントでは書かない
       expect(db.requestInserts).toHaveLength(0);
@@ -189,7 +204,7 @@ describe('generate_single_meal: mealType の許可 (#1103)', () => {
 
     expect(out.success).toBe(false);
     expect(out.result).toEqual({
-      error: 'mealType は breakfast/lunch/dinner/snack/midnight_snack のいずれかである必要があります',
+      error: '食事の区分 (mealType) は次のいずれかを指定してください (breakfast / lunch / dinner / snack / midnight_snack)',
     });
     expect(db.from).not.toHaveBeenCalled();
     expect(queueDb.from).not.toHaveBeenCalled();
@@ -203,12 +218,12 @@ describe('generate_single_meal: mealType の許可 (#1103)', () => {
     ['mealType が空文字', { date: DATE, mealType: '' }],
     ['mealType が null', { date: DATE, mealType: null }],
     ['date が無い', { mealType: 'midnight_snack' }],
-  ])('必須項目の抜け (%s) は、従来どおり「date と mealType は必須です」', async (_label, params) => {
+  ])('必須項目の抜け (%s) は「日付 (date) と食事の区分 (mealType) を指定してください」(#1917 の続き。以前は「date と mealType は必須です」)', async (_label, params) => {
     const db = makeSupabase();
     const out = await generateSingleMeal(db, params);
 
     expect(out.success).toBe(false);
-    expect(out.result).toEqual({ error: 'date と mealType は必須です' });
+    expect(out.result).toEqual({ error: '日付 (date) と食事の区分 (mealType) を指定してください' });
     expect(db.from).not.toHaveBeenCalled();
     expect(queueDb.from).not.toHaveBeenCalled();
   });

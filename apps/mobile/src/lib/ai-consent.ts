@@ -8,7 +8,7 @@
  *
  *   } catch (e) {
  *     if (handleAiConsentRequiredError(e)) return;
- *     Alert.alert("エラー", getApiErrorMessage(e, "..."));
+ *     Alert.alert("エラー", getJapaneseApiErrorMessage(e, "..."));
  *   }
  *
  * 非同期の処理 (献立の生成・買い物リストの作り直し) は、受け付けたあとに同意の判定で止まると、リクエストの行に人向けの文を書いて

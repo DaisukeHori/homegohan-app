@@ -75,7 +75,9 @@ const JAPANESE_TEXT_PATTERN = /[\u3040-\u30ff\u3400-\u9fff\uff00-\uffef]/;
  *
  * getApiErrorMessage は、HTTP のエラーでない例外の文 (生の fetch の通信の失敗 'Network request failed'・Supabase Auth (GoTrue) の
  * 英語の文 'Invalid login credentials' など) をそのまま返す。API の失敗の本文の文は日本語の固定の文なので、日本語でない文は利用者に見せる文ではない。
- * API・Supabase Auth の失敗を Alert に出す画面 (健康の記録・ログイン・登録・パスワードの再設定など) はこちらを使う (#1917 の続き)
+ * API・Supabase Auth の失敗を Alert・画面に出すところ (健康の記録・ログイン・登録・パスワードの再設定・端末の一覧・初期設定など) は、
+ * すべてこちらを使う (#1917 の続き)。画面・部品・フック・src/lib から getApiErrorMessage を直接呼ばない
+ * (__tests__/lib/raw-error-message-screens.test.ts が見張る。以前はパスワードの再設定の更新の失敗だけが getApiErrorMessage のままだった)
  */
 export function getJapaneseApiErrorMessage(error: unknown, fallback: string): string {
   const message = getApiErrorMessage(error, fallback);

@@ -28,6 +28,9 @@
  *   (健康の記録の入力の検証は tests/health-api-messages.test.ts が、通知の設定の文は tests/notification-preferences.test.ts が、
  *   プランの状態・項目の文は tests/plan-status-transition.test.ts が、AI の API の文を作る関数 (献立の生成の枠の食事の区分の文など) は
  *   tests/ai-api-error-messages.test.ts が、埋め込みの再生成の成功の文は tests/embeddings-regenerate-route.test.ts が値で確かめる)。
+ *   AI 相談の提案の実行 (src/lib/ai/consultation-action-executor.ts。route の外) の result.error と検証の失敗の文は、
+ *   tests/ai-api-error-messages.test.ts が同じ判定 (englishIdentifiersOutsideParentheses) で走査し、
+ *   tests/consultation-action-validation-messages.test.ts が実行の結果の値で確かめる (#1917 の続き)。
  *   見張りであって網羅の証明ではない。
  */
 import ts from 'typescript';
