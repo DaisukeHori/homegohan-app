@@ -81,7 +81,7 @@ export async function POST(request: Request) {
         { status: ErrorStatusMap[MembershipErrorCode.FAMILY_PLAN_REQUIRED] },
       );
     }
-    // #1917 の続き: 退会の手続き中の本人は家族を作れない (家族の行のトリガー family_groups_representative_not_deleting が止める。
+    // #1917 の続き: 退会の手続き中の本人は家族を作れない (家族の行のトリガー trg_representative_not_deleting (関数 family_groups_representative_not_deleting) が止める。
     // 作ると、退会の最後のアカウントの削除が代表者の外部キーで失敗する)。DB の生の文は出さない
     if ((error.message ?? '').includes(MembershipErrorCode.REPRESENTATIVE_ACCOUNT_DELETING)) {
       return NextResponse.json(

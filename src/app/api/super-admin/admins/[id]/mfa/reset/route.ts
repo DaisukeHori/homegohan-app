@@ -25,6 +25,11 @@
  * (src/__tests__/api/null-character-routes.test.ts の EXCLUDED §23 N-28)。
  * 監査は recordMfaAudit (src/lib/auth/mfa/audit.ts) の中の recordAdminAudit で書き、この route は recordAdminAudit を直接呼ばない
  * (tests/admin-mutation-audit-coverage-1571.test.ts の EXPECTED では exempt に理由つき §23 N-38)。
+ * 監査の factors_before / backup_codes_before は「削除の前に数えた値」(§17 の定義) で、監査を書いた後の実数ではない (#1917)。
+ * 監査を取り消せない操作 (セッションの終了・削除) より先に書く fail-closed の設計なので、削除の結果では書けない。
+ * Auth の管理 API (listFactors / deleteFactor) は DB の鍵をまたげないので、5 の後に対象が factor を足すと、その factor は数えにも削除にも入らない。
+ * 8 で消すのは 5 で数えた factor そのもの (factors_before と応答の factors_deleted は同じ数)。backup_codes_before は未使用の残数で、
+ * 応答の backup_codes_deleted (使用済みを含む全行) とは数え方が違う。
  */
 import { NextResponse, type NextRequest } from 'next/server';
 import { internalError } from '@/lib/api/errors';
@@ -115,7 +120,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     if (profileError) return internalErrorResponse(profileError, { userId: actorId, targetId: id });
     if (!profile) return errorJson('NOT_FOUND', NOT_FOUND_MESSAGE, HTTP_NOT_FOUND);
 
-    // 5. 消す前の数 (監査の details の材料)。どちらの失敗でも監査を書かず、何も消さない (まだ何もしていない)
+    // 5. 消す前の数 (監査の details の材料。記録するのは「削除の前に数えた値」。冒頭の注記 #1917)。どちらの失敗でも監査を書かず、何も消さない (まだ何もしていない)
     const { data: listed, error: listError } = await admin.auth.admin.mfa.listFactors({ userId: id });
     if (listError || !listed) return internalErrorResponse(listError, { userId: actorId, targetId: id });
     const factors = listed.factors;

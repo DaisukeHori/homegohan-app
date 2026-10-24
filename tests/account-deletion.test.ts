@@ -7,6 +7,8 @@
  *   - 組織のオーナー / 家族の代表者は、従来と同じ 409 の形で止まり、何も呼ばない
  *   - 順序: 退会の印 (begin_account_deletion_guard。#1917 の続き) → 確認 → prepare_account_deletion → release_user_membership → Storage → 削除の実行記録を始める
  *     (begin_account_deletion_record) → auth.admin.deleteUser → 記録に済んだ印 (complete_account_deletion_record) (#1562)
+ *   - deleteUser を呼ぶ前に止まったら (409・どの段の失敗でも)、返す前に退会の印を消す (end_account_deletion_guard。#1917 の続き・
+ *     20261024120000)。deleteUser を呼んだあとは消さない。消すのに失敗しても結果は変えない
  *   - 削除の実行記録: 本人の退会は executor 'self' / 理由 'user_request'、運営の削除は 'operator' と運営者の id。
  *     記録を始められなければ削除しない。済んだ印の失敗は退会の結果を変えない (アカウントはもう消えている)
  *   - 失敗の扱い: prepare / Storage / deleteUser の失敗はそこで止めて ACCOUNT_DELETE_FAILED (deleteUser より前なら deleteUser を呼ばない)。
@@ -86,6 +88,7 @@ function makeWorld(overrides: Partial<World> = {}): World {
     tables: { organizations: { data: [] }, family_groups: { data: [] } },
     rpc: {
       begin_account_deletion_guard: { data: null },
+      end_account_deletion_guard: { data: null },
       prepare_account_deletion: { data: { email_delivery_logs: 1 } },
       release_user_membership: { data: null },
       begin_account_deletion_record: { data: RECORD_ID },
@@ -212,7 +215,7 @@ const run = (extra: Record<string, unknown> = {}) =>
   });
 
 describe('deleteAccount: 409 (従来と同じ形)', () => {
-  it('組織のオーナーは ACCOUNT_DELETE_BLOCKED_ORG_OWNER。退会の印のほかは何も呼ばない', async () => {
+  it('組織のオーナーは ACCOUNT_DELETE_BLOCKED_ORG_OWNER。退会の印を付けて消すほかは何も呼ばない', async () => {
     world.tables.organizations = { data: [{ id: 'org-1', name: '株式会社テスト' }] };
     const result = await run();
 
@@ -223,7 +226,7 @@ describe('deleteAccount: 409 (従来と同じ形)', () => {
       message: '組織のオーナーです。先にオーナーを譲渡するか組織を解散してください。',
       organization: { id: 'org-1', name: '株式会社テスト' },
     });
-    expect(world.calls).toEqual(['rpc:begin_account_deletion_guard', 'from:organizations']);
+    expect(world.calls).toEqual(['rpc:begin_account_deletion_guard', 'from:organizations', 'rpc:end_account_deletion_guard']);
     expect(httpOf(result)).toEqual({
       status: 409,
       body: {
@@ -234,7 +237,7 @@ describe('deleteAccount: 409 (従来と同じ形)', () => {
     });
   });
 
-  it('家族グループの代表者は ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE。退会の印のほかは何も呼ばない', async () => {
+  it('家族グループの代表者は ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE。退会の印を付けて消すほかは何も呼ばない', async () => {
     world.tables.family_groups = { data: [{ id: 'fg-1', name: 'うちの家族' }] };
     const result = await run();
 
@@ -245,7 +248,12 @@ describe('deleteAccount: 409 (従来と同じ形)', () => {
       message: '家族グループの代表者です。先に代表者を譲渡するか家族グループを解散してください。',
       family_group: { id: 'fg-1', name: 'うちの家族' },
     });
-    expect(world.calls).toEqual(['rpc:begin_account_deletion_guard', 'from:organizations', 'from:family_groups']);
+    expect(world.calls).toEqual([
+      'rpc:begin_account_deletion_guard',
+      'from:organizations',
+      'from:family_groups',
+      'rpc:end_account_deletion_guard',
+    ]);
     expect(httpOf(result).body).toEqual({
       error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE',
       message: '家族グループの代表者です。先に代表者を譲渡するか家族グループを解散してください。',
@@ -257,7 +265,7 @@ describe('deleteAccount: 409 (従来と同じ形)', () => {
     world.tables.organizations = { error: { message: SECRET_DB_MESSAGE } };
     const result = await run();
     expect(result).toMatchObject({ ok: false, status: 500, error: 'ACCOUNT_DELETE_FAILED', step: 'check_blockers' });
-    expect(world.calls).toEqual(['rpc:begin_account_deletion_guard', 'from:organizations']);
+    expect(world.calls).toEqual(['rpc:begin_account_deletion_guard', 'from:organizations', 'rpc:end_account_deletion_guard']);
 
     world = makeWorld({ tables: { organizations: { data: [] }, family_groups: { error: { message: SECRET_DB_MESSAGE } } } });
     const second = await run();
@@ -286,7 +294,7 @@ describe('deleteAccount: 退会の印 (#1917 の続き。supabase/migrations/202
     const result = await run();
 
     expect(result).toMatchObject({ ok: false, status: 409, error: 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER', organization: { id: 'org-3' } });
-    expect(world.calls).toEqual(['rpc:begin_account_deletion_guard', 'from:organizations']);
+    expect(world.calls).toEqual(['rpc:begin_account_deletion_guard', 'from:organizations', 'rpc:end_account_deletion_guard']);
   });
 
   it('印を付けられなければ (DB の失敗)、確かめないまま進まず ACCOUNT_DELETE_FAILED (step: check_blockers)。生のエラー文を結果に入れない', async () => {
@@ -295,7 +303,8 @@ describe('deleteAccount: 退会の印 (#1917 の続き。supabase/migrations/202
 
     expect(result).toEqual(accountDeletionFailure(REQUEST_ID, 'check_blockers'));
     expect(JSON.stringify(result)).not.toContain('secret_constraint');
-    expect(world.calls).toEqual(['rpc:begin_account_deletion_guard']);
+    // 応答が失われただけで印が付いていることもあるので、消してから返す (印が無ければ何もしない関数)
+    expect(world.calls).toEqual(['rpc:begin_account_deletion_guard', 'rpc:end_account_deletion_guard']);
   });
 
   it('印の呼び出しが例外を投げても ACCOUNT_DELETE_FAILED (step: check_blockers)。billing・prepare・deleteUser を呼ばない', async () => {
@@ -303,7 +312,117 @@ describe('deleteAccount: 退会の印 (#1917 の続き。supabase/migrations/202
     const result = await run();
 
     expect(result).toEqual(accountDeletionFailure(REQUEST_ID, 'check_blockers'));
-    expect(world.calls).toEqual(['rpc:begin_account_deletion_guard']);
+    expect(world.calls).toEqual(['rpc:begin_account_deletion_guard', 'rpc:end_account_deletion_guard']);
+  });
+});
+
+/** 退会の印を消す呼び出し (#1917 の続き。supabase/migrations/20261024120000_account_deletion_guard_release.sql) */
+const END_GUARD_CALL = 'rpc:end_account_deletion_guard';
+
+/** world を、ある止まり方にする (deleteUser を呼ぶ前に止まる経路) */
+type StopSetup = (target: World) => void;
+
+/** deleteUser を呼ぶ前に止まる経路の全部 (src/lib/account-deletion.ts の deleteAccount の return / throw を 1 つずつ) */
+const STOPS_BEFORE_DELETE_USER: ReadonlyArray<[label: string, setup: StopSetup, expected: { status: number; step?: string; error: string }]> = [
+  ['退会の印を付けられない (DB の失敗)', (target) => { target.rpc.begin_account_deletion_guard = { error: { message: SECRET_DB_MESSAGE, code: '42883' } }; }, { status: 500, step: 'check_blockers', error: 'ACCOUNT_DELETE_FAILED' }],
+  ['退会の印の呼び出しが例外', (target) => { target.rpc.begin_account_deletion_guard = { throws: true }; }, { status: 500, step: 'check_blockers', error: 'ACCOUNT_DELETE_FAILED' }],
+  ['findBlocker の 409 (組織のオーナー)', (target) => { target.tables.organizations = { data: [{ id: 'org-1', name: '株式会社テスト' }] }; }, { status: 409, error: 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER' }],
+  ['findBlocker の 409 (家族の代表者)', (target) => { target.tables.family_groups = { data: [{ id: 'fg-1', name: 'うちの家族' }] }; }, { status: 409, error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE' }],
+  ['findBlocker の問い合わせの失敗', (target) => { target.tables.family_groups = { error: { message: SECRET_DB_MESSAGE } }; }, { status: 500, step: 'check_blockers', error: 'ACCOUNT_DELETE_FAILED' }],
+  ['段階 billing の失敗', (target) => { target.billingThrows = { billing: new Error(SECRET_DB_MESSAGE) }; }, { status: 500, step: 'billing', error: 'ACCOUNT_DELETE_FAILED' }],
+  ['prepare_account_deletion の失敗', (target) => { target.rpc.prepare_account_deletion = { error: { message: SECRET_DB_MESSAGE, code: '42883' } }; }, { status: 500, step: 'prepare', error: 'ACCOUNT_DELETE_FAILED' }],
+  [
+    'release_user_membership の IS_ORG_OWNER → 確認のやり直しの 409',
+    (target) => {
+      target.rpc.release_user_membership = { error: { message: 'IS_ORG_OWNER', code: 'P0001' } };
+      target.afterRpc = { prepare_account_deletion: (world) => { world.tables.organizations = { data: [{ id: 'org-2', name: '譲渡された組織' }] }; } };
+    },
+    { status: 409, error: 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER' },
+  ],
+  ['release_user_membership の IS_ORG_OWNER → やり直してもオーナーでない', (target) => { target.rpc.release_user_membership = { error: { message: 'IS_ORG_OWNER', code: 'P0001' } }; }, { status: 500, step: 'release_membership', error: 'ACCOUNT_DELETE_FAILED' }],
+  ['release_user_membership の CONFLICT_RETRY', (target) => { target.rpc.release_user_membership = { error: { message: 'CONFLICT_RETRY', code: 'P0001' } }; }, { status: 500, step: 'release_membership', error: 'ACCOUNT_DELETE_FAILED' }],
+  ['Storage の失敗', (target) => { target.storage.listError = { message: 'storage is down' }; }, { status: 500, step: 'storage', error: 'ACCOUNT_DELETE_FAILED' }],
+  ['削除の実行記録を始められない', (target) => { target.rpc.begin_account_deletion_record = { error: { message: SECRET_DB_MESSAGE, code: 'P0001' } }; }, { status: 500, step: 'record', error: 'ACCOUNT_DELETE_FAILED' }],
+  ['段階 billing_recheck の失敗', (target) => { target.billingThrows = { billing_recheck: new Error(SECRET_DB_MESSAGE) }; }, { status: 500, step: 'billing_recheck', error: 'ACCOUNT_DELETE_FAILED' }],
+];
+
+describe('deleteAccount: deleteUser の前に止まったら退会の印を消す (#1917 の続き。20261024120000_account_deletion_guard_release.sql)', () => {
+  it.each(STOPS_BEFORE_DELETE_USER)('%s: 印を本人の id で 1 回だけ消し、それが最後の呼び出し。deleteUser は呼ばない', async (_label, setup, expected) => {
+    setup(world);
+    const result = await run();
+
+    expect(result).toMatchObject({ ok: false, ...expected });
+    expect(world.calls.filter((call) => call === END_GUARD_CALL)).toHaveLength(1);
+    expect(world.calls[world.calls.length - 1]).toBe(END_GUARD_CALL);
+    expect(world.rpcArgs.end_account_deletion_guard).toEqual({ p_user_id: USER });
+    expect(world.calls).not.toContain('auth.deleteUser');
+  });
+
+  it('想定外の例外で止まっても印を消す (step: check_blockers)', async () => {
+    const admin = makeAdmin(world);
+    (admin as unknown as { from: () => never }).from = () => {
+      throw new Error('unexpected');
+    };
+    const result = await deleteAccount({ userId: USER, admin, requestId: REQUEST_ID, logger: logs.logger });
+    expect(result).toEqual(accountDeletionFailure(REQUEST_ID, 'check_blockers'));
+    expect(world.calls).toEqual(['rpc:begin_account_deletion_guard', END_GUARD_CALL]);
+  });
+
+  it('消すのに失敗しても (エラーでも例外でも) 結果は変えない。ログ (error) に段階・request_id・SQLSTATE を残し、user_id を付ける (まだ削除していない)', async () => {
+    world.tables.organizations = { data: [{ id: 'org-1', name: '株式会社テスト' }] };
+    world.rpc.end_account_deletion_guard = { error: { message: SECRET_DB_MESSAGE, code: '40001' } };
+    const blocked = await run();
+    expect(blocked).toEqual({
+      ok: false,
+      status: 409,
+      error: 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER',
+      message: '組織のオーナーです。先にオーナーを譲渡するか組織を解散してください。',
+      organization: { id: 'org-1', name: '株式会社テスト' },
+    });
+    const failure = logs.entries.find((entry) => entry.level === 'error' && /end_account_deletion_guard failed/.test(entry.message));
+    expect(failure?.viaUser).toBe(true);
+    expect(failure?.metadata).toMatchObject({ step: 'check_blockers', request_id: REQUEST_ID, error_code: '40001' });
+    expect(failure?.error).toBeInstanceOf(Error);
+    expect(JSON.stringify(blocked)).not.toContain('secret_constraint');
+
+    world = makeWorld({ billingThrows: { billing_recheck: new Error(SECRET_DB_MESSAGE) } });
+    logs = makeLogger();
+    world.rpc.end_account_deletion_guard = { throws: true };
+    expect(await run()).toEqual(accountDeletionFailure(REQUEST_ID, 'billing_recheck'));
+    expect(logs.entries.filter((entry) => entry.level === 'error').map((entry) => entry.message)).toEqual([
+      'account deletion failed at step: billing_recheck',
+      'account deletion: end_account_deletion_guard failed (the guard expires by itself)',
+    ]);
+  });
+
+  it('退会が済んだら消さない (印は auth.users の CASCADE で消える)。すでに消えていたユーザーのやり直しでも消さない', async () => {
+    expect(await run()).toEqual({ ok: true });
+    expect(world.calls).not.toContain(END_GUARD_CALL);
+
+    world = makeWorld();
+    world.deleteUser.error = { message: 'User not found', status: 404, code: 'user_not_found' };
+    expect(await run()).toEqual({ ok: true });
+    expect(world.calls).not.toContain(END_GUARD_CALL);
+  });
+
+  it('deleteUser を呼んだあとに止まったら消さない (deleteUser の失敗・削除のあとの失敗。アカウントが消えたか・消える途中かを確かめられない)', async () => {
+    world.deleteUser.error = { message: SECRET_DB_MESSAGE, status: 500, code: 'unexpected_failure' };
+    expect(await run()).toEqual(accountDeletionFailure(REQUEST_ID, 'delete_user'));
+    expect(world.calls).toContain('auth.deleteUser');
+    expect(world.calls).not.toContain(END_GUARD_CALL);
+
+    // 削除のあと (成功のログ) で例外が出た: 結果は失敗 (step: delete_user) だが、アカウントはもう消えているので印には触れない
+    world = makeWorld();
+    const throwingInfo = makeLogger();
+    const logger = {
+      ...throwingInfo.logger,
+      info: () => {
+        throw new Error('log sink is down');
+      },
+    } as unknown as AccountDeletionLogger;
+    expect(await run({ logger })).toEqual(accountDeletionFailure(REQUEST_ID, 'delete_user'));
+    expect(world.calls).toContain('auth.deleteUser');
+    expect(world.calls).not.toContain(END_GUARD_CALL);
   });
 });
 
@@ -515,6 +634,7 @@ describe('deleteAccount: 失敗の扱い', () => {
       'rpc:prepare_account_deletion',
       'rpc:release_user_membership',
       'from:organizations',
+      'rpc:end_account_deletion_guard',
     ]);
     expect(httpOf(result).status).toBe(409);
   });
