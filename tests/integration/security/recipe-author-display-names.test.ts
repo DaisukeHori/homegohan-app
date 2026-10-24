@@ -47,6 +47,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
 import { ADULT_AGE_YEARS, PROFILE_NAME_PLACEHOLDER } from '@homegohan/shared';
 import { apiCall } from '../helpers/api';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 import { supabaseAdmin } from '../helpers/supabase';
 import { cleanupTestUser, createTestUserWithRoles, type TestUser } from '../helpers/users';
 
@@ -223,11 +224,12 @@ beforeAll(async () => {
   if (deleteCommentError) throw new Error(`recipe_comments (deleteCommenter): ${deleteCommentError.message}`);
   // tempFrozenExpired の公開レシピ (上の for で作った 1 件) と、そこへの toggleCommenter のコメント
   // (I-10 で、レシピの公開の状態を切り替えたとき、コメントの書き手の名前も追随することを確かめる)
-  const { data: toggleRecipe, error: toggleRecipeError } = await supabaseAdmin
-    .from('recipes')
-    .select('id')
-    .eq('user_id', people.tempFrozenExpired.user.userId)
-    .single();
+  // 準備のフックの select はゲートウェイの一時的な失敗だけをやり直す (tests/integration-setup-transient-retry.test.ts の決まり)
+  const { data: toggleRecipe, error: toggleRecipeError } = await retryIdempotentSetup(
+    supabaseAdmin,
+    'beforeAll: tempFrozenExpired の公開レシピの select',
+    (db) => db.from('recipes').select('id').eq('user_id', people.tempFrozenExpired.user.userId).single(),
+  );
   if (toggleRecipeError || !toggleRecipe) throw new Error(`recipes (tempFrozenExpired): ${toggleRecipeError?.message}`);
   toggleRecipeId = toggleRecipe.id as string;
   const { error: toggleCommentError } = await supabaseAdmin
