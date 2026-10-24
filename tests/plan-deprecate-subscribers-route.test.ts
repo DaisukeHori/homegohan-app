@@ -441,7 +441,7 @@ describe('数えてから書くまでの間に入った契約は、書く文の�
       admin_audit_logs: [{ data: null, error: null }],
     });
     subscribersDb = createFakePlanSubscribersDb({});
-    const res = await PATCH(patchRequest(DEPRECATE), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest(DEPRECATE), { params: { id: PLAN_ID } });
     return { res, json: (await res.json()) as ErrorBody };
   }
 
@@ -482,7 +482,7 @@ describe('数えてから書くまでの間に入った契約は、書く文の�
     expect(mockLoggerError).toHaveBeenCalledWith(
       expect.stringContaining('廃止のトリガー'),
       expect.objectContaining({ message: 'OP_PLAN_HAS_SUBSCRIBERS' }),
-      { plan_id: 'plan-1', plan_key: 'pro' },
+      { plan_id: PLAN_ID, plan_key: 'pro' },
     );
     expect(tablesTouched()).toEqual(['subscription_plans', 'subscription_plans']);
   });
@@ -495,7 +495,7 @@ describe('数えてから書くまでの間に入った契約は、書く文の�
       ],
     });
     subscribersDb = createFakePlanSubscribersDb({});
-    const res = await PATCH(patchRequest(DEPRECATE), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest(DEPRECATE), { params: { id: PLAN_ID } });
     const json = (await res.json()) as ErrorBody;
 
     expect(res.status).toBe(500);

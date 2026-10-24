@@ -194,7 +194,7 @@ describe('PATCH /api/super-admin/plans/[id] (#1041 状態遷移一方向ロッ�
       subscription_plans: [{ data: existingPlan({ status: 'public' }), error: null }],
     });
 
-    const res = await PATCH(patchRequest({ trial_days: 7, max_members: 10 }), { params: { id: 'plan-1' } });
+    const res = await PATCH(patchRequest({ trial_days: 7, max_members: 10 }), { params: { id: PLAN_ID } });
     expect(res.status).toBe(422);
     const json = (await res.json()) as { error: { code: string; message: string } };
     expect(json.error.code).toBe('OP_PLAN_STATUS_LOCKED');
