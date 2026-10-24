@@ -400,6 +400,23 @@ describe('UserFreezeForm: 失敗のとき', () => {
     expect(auditActions()).toEqual([]);
   });
 
+  it('本物の route で、古い画面から解除した (別の運営が先に解除済み): 409 の文が出て読み直し、監査を残さない (#1917)', async () => {
+    // 画面は凍結中 (isBanned) のまま、DB の行は凍結されていない (beforeEach の行は frozen_at が無い)
+    wireFetchToRoute();
+    await renderForm({ isBanned: true });
+    await typeInto(fieldById<HTMLTextAreaElement>('reason'), '誤検知だった');
+    await clickButton(UNFREEZE_BUTTON);
+
+    expect(lastCall().init.method).toBe('DELETE');
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+      '対象のユーザーは凍結されていないため、凍結を解除しませんでした。画面を読み込み直して、もう一度確認してください',
+    );
+    expect(refreshMock).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('[role="status"]')).toBeNull();
+    expect(buttonByText(UNFREEZE_BUTTON)).toBeDefined();
+    expect(auditActions()).toEqual([]);
+  });
+
   it('403 OP_TARGET_PROTECTED: API の文を出すだけで、読み直さない', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse(403, { error: { code: 'OP_TARGET_PROTECTED', message: 'super_admin ユーザーを凍結することはできません' } }),

@@ -76,7 +76,7 @@ export async function POST(request: Request) {
 
     // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
     const body = await request.json().catch(() => null)
-    if (!body || typeof body !== 'object') {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 })
     }
     
@@ -163,6 +163,11 @@ export async function PUT(request: Request) {
     try {
       body = await request.json();
     } catch {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
+    // JSON としては読めてもオブジェクトでない本文 (null・配列・数・文字列) も 400 (#1917 の続き。null は下の body.age の読み出しで
+    // 例外になり 500 に、配列は項目の無い更新になっていた)
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
     }
 

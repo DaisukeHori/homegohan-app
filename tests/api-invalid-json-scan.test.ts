@@ -197,3 +197,155 @@ describe('API の route が JSON として読めない本文を 500 にしない
     expect(findings).toEqual([]);
   });
 });
+
+/**
+ * #1917 の続き (仕分け triage-1025a の P12): 本文がオブジェクトかを `typeof body !== 'object'` だけで確かめると、配列 ([] など) が通る。
+ * 項目の無い配列の本文は必須の項目の検査をすり抜けて DB に届き、NOT NULL 違反などの 500 になる (POST /api/recipes の
+ * name の無い本文で見つかった)。本文を読んだ値を `typeof X !== 'object'` で確かめる if は、同じ条件に `Array.isArray(X)` も入れる。
+ *
+ * 数えるもの (構文木で読む): src/app/api 配下で、`request.json()` / `req.json()` を初期値・代入の値に含む変数 X について、
+ *   `typeof X !== 'object'` (または `!=`) を含む if の条件に `Array.isArray(X)` が無いもの。
+ * 限界: 本文を別の名前の変数に移してから確かめるもの・readJsonBody の戻り値 (`.body`) を確かめるもの・if でなく三項演算子や
+ *   return の式で確かめるもの・Zod の z.object で確かめるもの (z.object は配列を通さない) は見ない。
+ *   また、JSON の null を確かめずに項目を読む書き方 (`(body as T).x`) も見ない (route ごとのテスト tests/route-input2-1917.test.ts)。
+ */
+function bodyVariableNames(source: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  const containsRequestJson = (node: ts.Node): boolean => {
+    let found = false;
+    const visit = (child: ts.Node): void => {
+      if (found) return;
+      if (isRequestJsonCall(child)) {
+        found = true;
+        return;
+      }
+      ts.forEachChild(child, visit);
+    };
+    visit(node);
+    return found;
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && containsRequestJson(node.initializer)) {
+      names.add(node.name.text);
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      containsRequestJson(node.right)
+    ) {
+      names.add(node.left.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return names;
+}
+
+/** `typeof X !== 'object'` / `typeof X != 'object'` の X の名前 (違う形なら null) */
+function typeofNotObjectTarget(node: ts.Node): string | null {
+  if (!ts.isBinaryExpression(node)) return null;
+  const op = node.operatorToken.kind;
+  if (op !== ts.SyntaxKind.ExclamationEqualsEqualsToken && op !== ts.SyntaxKind.ExclamationEqualsToken) return null;
+  const sides = [node.left, node.right];
+  const typeofSide = sides.find((side) => ts.isTypeOfExpression(side));
+  const literalSide = sides.find((side) => ts.isStringLiteral(side) && side.text === 'object');
+  if (!typeofSide || !literalSide || !ts.isTypeOfExpression(typeofSide) || !ts.isIdentifier(typeofSide.expression)) return null;
+  return typeofSide.expression.text;
+}
+
+/** 条件の式の中に `Array.isArray(name)` があるか */
+function hasArrayIsArrayOf(condition: ts.Expression, name: string): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === 'Array' &&
+      node.expression.name.text === 'isArray' &&
+      node.arguments.length === 1 &&
+      ts.isIdentifier(node.arguments[0]) &&
+      node.arguments[0].text === name
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(condition);
+  return found;
+}
+
+function scanArrayBodySource(text: string, relative: string): Finding[] {
+  const source = ts.createSourceFile(relative, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const bodyNames = bodyVariableNames(source);
+  const findings: Finding[] = [];
+  if (bodyNames.size === 0) return findings;
+  const visit = (node: ts.Node): void => {
+    if (ts.isIfStatement(node)) {
+      const targets = new Set<string>();
+      const collect = (child: ts.Node): void => {
+        const target = typeofNotObjectTarget(child);
+        if (target && bodyNames.has(target)) targets.add(target);
+        ts.forEachChild(child, collect);
+      };
+      collect(node.expression);
+      for (const target of targets) {
+        if (!hasArrayIsArrayOf(node.expression, target)) {
+          findings.push({ file: relative, line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1 });
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return findings;
+}
+
+describe('API の route が配列の本文をオブジェクトとして通さない (#1917 の続き)', () => {
+  it('src/app/api の全ファイルで、本文を typeof object で確かめる if が配列も断っている', () => {
+    const files = listSourceFiles(path.join(ROOT, SCAN_ROOT));
+    expect(files.length).toBeGreaterThan(0);
+    const findings = files.flatMap((file) => scanArrayBodySource(fs.readFileSync(file, 'utf-8'), path.relative(ROOT, file)));
+    expect(findings.map((f) => `${f.file}:${f.line}`)).toEqual([]);
+  });
+
+  it('typeof object だけで確かめる書き方を見つける (.catch の値・try の中の代入のどちらも)', () => {
+    const findings = scanArrayBodySource(
+      `
+      export async function POST(request: Request) {
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== 'object') return bad();
+        let raw: unknown;
+        try {
+          raw = await request.json();
+        } catch {
+          return bad();
+        }
+        if (typeof raw != 'object' || raw === null) return bad();
+        return ok(body, raw);
+      }
+    `,
+      'snippet/route.ts',
+    );
+    expect(findings.map((f) => f.line)).toEqual([4, 11]);
+  });
+
+  it('同じ条件に Array.isArray があれば数えない。本文でない値の typeof は数えない', () => {
+    const findings = scanArrayBodySource(
+      `
+      export async function POST(request: Request) {
+        const body = await request.json().catch(() => null);
+        if (!body || typeof body !== 'object' || Array.isArray(body)) return bad();
+        const slot = body.slots[0];
+        if (!slot || typeof slot !== 'object') return bad();
+        return ok(body);
+      }
+    `,
+      'snippet/route.ts',
+    );
+    expect(findings).toEqual([]);
+  });
+});

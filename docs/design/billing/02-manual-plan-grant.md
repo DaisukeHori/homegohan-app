@@ -1399,7 +1399,7 @@ export async function revokeManualPlanRequest(userId: string, body: ManualPlanRe
  */
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { AuthError, ForbiddenError } from '@/lib/auth/errors'; import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { createClient } from '@/lib/supabase/server';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
@@ -1444,7 +1444,7 @@ function errorJson(code: string, message: string, status: number): NextResponse 
 /** requireRole の失敗 → 401 / 403 (既存の super-admin の route と同じ形)。それ以外は投げ直す */
 function authFailure(err: unknown): NextResponse {
   if (err instanceof AuthError) return errorJson('AUTH_UNAUTHENTICATED', '認証が必要です', HTTP_UNAUTHORIZED);
-  if (err instanceof ForbiddenError) return errorJson('OP_PERMISSION_DENIED', '権限がありません', HTTP_FORBIDDEN);
+  if (err instanceof ForbiddenError) return errorJson('OP_PERMISSION_DENIED', operatorForbiddenMessageOf(err), HTTP_FORBIDDEN);
   throw err;
 }
 
@@ -1978,7 +1978,7 @@ sequenceDiagram
 | `INVALID_CHARACTER` | 400 | `rejectNullCharacterBody` (nested の形 `{ error: { code, message } }`。#1917 の続き) | 既存の文 |
 | `OP_INVALID_INPUT` | 400 | JSON でない (`invalidJsonBodyResponse`) / Zod (`invalidInputResponse`。`message` は最初の issue の文: `有効期限は今日より後の日付を指定してください` ほか) / DB 関数の `BILL_MANUAL_EXPIRES_AT_PAST` (`MANUAL_GRANT_ERROR_MESSAGES.OP_INVALID_INPUT`) | 入力値が不正です (既定) / 有効期限は今日より後の日付を指定してください |
 | `AUTH_UNAUTHENTICATED` | 401 | `requireRole` (`AuthError`) | 認証が必要です |
-| `OP_PERMISSION_DENIED` | 403 | `requireRole` (`ForbiddenError`。ロール不足・凍結・`MfaRequiredError`) | 権限がありません |
+| `OP_PERMISSION_DENIED` | 403 | `requireRole` (`ForbiddenError`。ロール不足・凍結・`MfaRequiredError`) | `MfaRequiredError` なら「二段階認証の確認が必要です」(登録が要るなら「二段階認証の登録が必要です」)、それ以外は「権限がありません」(`operatorForbiddenMessageOf`) |
 | `OP_SELF_MODIFY` [NEW: cross/04 に未記載。`POST /api/super-admin/admins/[id]/mfa/reset` が先に使っている] | 403 | route (`POST` / `DELETE` の `selfModifyFailure`。パスの id = 実行者。§9.0 の 4 = 本文の検証・service・DB より前) / service (`grantManualPlan` / `revokeManualPlan` の先頭。二重の守り。route を経たときは届かない) | 自分自身のプランは、ここでは変更できません |
 | `NOT_FOUND` | 404 | route (UUID の形でない) / service (`user_profiles` に無い) / DB 関数の `BILL_UNKNOWN_USER` | ユーザーが見つかりません |
 | `OP_SUBSCRIPTION_ALREADY_ACTIVE` | 409 | DB 関数の `BILL_LIVE_ROW_CONFLICT` | すでに有効な契約があります |

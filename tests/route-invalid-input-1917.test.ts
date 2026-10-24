@@ -17,7 +17,7 @@
  *   - UUID の形でない id は DB に渡さず、行が無い id と同じ応答 (404。PUT / DELETE /api/recipes/[id] は今までどおり 403・
  *     GET /api/recipes/[id]/like は いいねの行が無いときと同じ 200 { liked: false })
  *   - レシピの外部キー違反は 404。ほかの外部キー違反・DB の失敗は今までどおり 500
- *   - JSON として読めない本文・オブジェクトでない本文は 400 `{ error: 'リクエストボディが不正です' }`
+ *   - JSON として読めない本文・オブジェクトでない本文 (null・配列) は 400 `{ error: 'リクエストボディが不正です' }`
  *     (nested の route は `{ error: { code: 'INVALID_JSON', message } }`)
  *
  * Supabase には接続しない (createClient をモック)。
@@ -145,6 +145,8 @@ vi.mock('@/lib/ai/fast-llm', async (importOriginal) => ({
 const BROKEN_JSON = '{"name": "カレー"';
 /** JSON としては読めるが、オブジェクトでない本文 */
 const NON_OBJECT_JSON = 'null';
+/** JSON としては読めるが、配列の本文 (typeof は 'object' なので、typeof だけの検査は通してしまう。#1917 の続き) */
+const ARRAY_JSON = '[{"name":"カレー"}]';
 
 const FLAT_INVALID_JSON = { error: API_INVALID_JSON_MESSAGE };
 const NESTED_INVALID_JSON = { error: { code: API_INVALID_JSON_CODE, message: API_INVALID_JSON_MESSAGE } };
@@ -529,6 +531,7 @@ describe.each(JSON_CASES)('$name', ({ call, nested }) => {
   it.each([
     ['壊れた JSON', BROKEN_JSON],
     ['オブジェクトでない JSON (null)', NON_OBJECT_JSON],
+    ['配列の JSON', ARRAY_JSON],
   ])('%s の本文は 400 (500 にしない)', async (_label, body) => {
     const res = await call(body);
     expect(res.status).toBe(400);

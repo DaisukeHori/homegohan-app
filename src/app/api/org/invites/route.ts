@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { requireOrgAdmin, type OrgAdminContext } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
-import { readJsonBody } from '@/lib/http-params';
+import { isUuid, readJsonBody } from '@/lib/http-params';
 import {
   createOrgInviteWithEmail,
   invalidOrgInviteBodyResponse,
@@ -138,6 +138,11 @@ export async function DELETE(request: Request) {
 
     if (!inviteId) {
       return NextResponse.json({ error: '招待の ID を指定してください' }, { status: 400 });
+    }
+    // UUID の形でない id は DB に渡さない。消す行が無いので、行が無い id と同じく成功を返す
+    // (uuid 型の列に渡すと 22P02 で失敗し、下の catch の 500 に入っていた。#1917 の続き)
+    if (!isUuid(inviteId)) {
+      return NextResponse.json({ success: true });
     }
 
     const { error } = await supabase
