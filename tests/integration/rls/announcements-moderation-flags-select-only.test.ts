@@ -2,7 +2,7 @@
  * #1917 の続き: 運営 (admin / super_admin) の announcements (お知らせ) と moderation_flags (食事の通報) の FOR ALL のポリシーを
  * SELECT だけにし、recipe_flags (レシピの通報) の運営の FOR UPDATE のポリシーと personal_subscriptions (個人の契約) の運営の
  * FOR INSERT / FOR UPDATE のポリシーを消し、anon / authenticated の書き込みの権限を外した
- * (migration 20261024110000_announcements_moderation_flags_select_only.sql)。
+ * (migration 20261024140000_announcements_moderation_flags_select_only.sql)。
  * 修正前は、MFA 済み (aal2) の運営が自分のセッションの JWT で PostgREST からお知らせ・食事の通報を直接 INSERT / UPDATE / DELETE でき、
  * レシピの通報を直接 UPDATE でき、契約を直接 INSERT / UPDATE でき、運営の API (POST /api/announcements・運営の通報の API・
  * 手動付与の API) と監査ログ (admin_audit_logs) を通らなかった (契約は、手動付与の関数の不変条件 (live な行の衝突の判定・
@@ -33,8 +33,8 @@
  *          DELETE の禁止だけ)。運営の SELECT のポリシーは TO authenticated・operator_mfa_satisfied() を呼ぶ。anon / authenticated は
  *          UPDATE / DELETE / TRUNCATE を持たず、INSERT は recipe_flags の authenticated だけが持ち、SELECT を持つ。service_role は書き込みを持つ
  *   - A-8: recipe_flags の利用者の通報 (本人を reporter にした INSERT) は、利用者も aal2 の運営も今までどおり作れる
- *   - A-9: 同じ型の全域の探索: 実 DB の、運営のロールで判定する書き込みのポリシーが、台帳 (tests/helpers/operator-write-policy-sweep.ts)
- *          から本冊が消したものを除いたものと過不足なく一致する
+ * 同じ型 (運営のロールで判定する書き込みのポリシー) のいまの状態と台帳の突き合わせは、本冊から切り離した常設の検査
+ * tests/integration/rls/operator-write-policy-ledger.test.ts (実 DB) と tests/operator-write-policy-ledger.test.ts (migration の文面) が受け持つ。
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh)。Next の開発サーバーは要らない (PostgREST を直接呼ぶ)。
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
@@ -46,7 +46,6 @@ import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
-import { isOperatorRoleExpression, OPERATOR_WRITE_POLICIES_AFTER_MIGRATION } from '../../helpers/operator-write-policy-sweep';
 import { promoteToAal2 } from '../helpers/mfa';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
@@ -543,19 +542,5 @@ describe('A-7: カタログ', () => {
       expect(held.get(`${role} SELECT`), `${role} SELECT`).toBe(true);
     }
     for (const privilege of ['INSERT', 'UPDATE', 'DELETE', 'SELECT']) expect(held.get(`service_role ${privilege}`), `service_role ${privilege}`).toBe(true);
-  }, TEST_TIMEOUT_MS);
-});
-
-describe('A-9: 同じ型の全域の探索 (実 DB と台帳)', () => {
-  it('運営のロールで判定する、書き込みを許す public のポリシーは、台帳から本冊が消したものを除いたものと過不足なく一致する', async () => {
-    const rows = await pgQuery<{ tablename: string; policyname: string; cmd: string; qual: string | null; with_check: string | null }>(`
-      SELECT tablename, policyname, cmd, qual, with_check
-      FROM pg_policies WHERE schemaname = 'public' AND cmd <> 'SELECT'`);
-    const actual = rows
-      .filter((r) => isOperatorRoleExpression(`${r.qual ?? ''} ${r.with_check ?? ''}`))
-      .map((r) => `${r.tablename}|${r.policyname} ${r.cmd}`)
-      .sort();
-    const expected = OPERATOR_WRITE_POLICIES_AFTER_MIGRATION.map((e) => `${e.table}|${e.policy} ${e.command}`).sort();
-    expect(actual).toEqual(expected);
   }, TEST_TIMEOUT_MS);
 });

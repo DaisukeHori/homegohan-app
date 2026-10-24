@@ -1,4 +1,4 @@
--- rollback: 20261024110000_announcements_moderation_flags_select_only.sql
+-- rollback: 20261024140000_announcements_moderation_flags_select_only.sql
 -- #1917 の続きで SELECT だけにした announcements と moderation_flags の運営のポリシーと、消した recipe_flags の運営の UPDATE の
 -- ポリシーと、消した personal_subscriptions の運営の INSERT / UPDATE のポリシーと、外した書き込みの権限を、元に戻す。
 -- ポリシーは 20261017130000_operator_mfa_db_gate.sql の :379 (announcements)・:402 (moderation_flags)・:413 (recipe_flags)・

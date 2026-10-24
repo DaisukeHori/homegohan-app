@@ -88,7 +88,7 @@ export async function POST(request: Request) {
     }
 
     const supabase = await createClient(); // 監査ログ (admin_audit_logs) は本人の権限で書く (RLS の audit_logs_insert_admins)
-    const { data, error } = await getSupabaseAdmin() // お知らせの書き込みは service_role だけ (運営の直接の書き込みを塞いだ。20261024110000。#1917)
+    const { data, error } = await getSupabaseAdmin() // お知らせの書き込みは service_role だけ (運営の直接の書き込みを塞いだ。20261024140000。#1917)
       .from('announcements')
       .insert({
         title,

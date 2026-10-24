@@ -10,7 +10,7 @@
  *    (対象はお知らせ・details はお知らせの id と公開の状態だけで、タイトル・本文は入れない・ip_address は利用者の IP)。
  *    401 / 403 / 400 / 500 は記録しない。記録に失敗しても作成の応答は変えない (fail-open。失敗は db-logger に残る)
  *  - #1917: お知らせの INSERT は requireRole を通った後に service_role の client で書く (運営の直接の書き込みを塞いだ
- *    migration 20261024110000 の後は、本人のセッションでは書けない)。一覧は本人のセッションの client で読む
+ *    migration 20261024140000 の後は、本人のセッションでは書けない)。一覧は本人のセッションの client で読む
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSchemaDb, type DbError, type Row, type SchemaDb } from './helpers/schema-checked-db';
@@ -34,7 +34,7 @@ let db: SchemaDb;
 
 /**
  * どの client がどの表に触れたか (client の種類, 表)。
- * お知らせの書き込みは service_role だけ (運営の FOR ALL のポリシーを SELECT に絞った。migration 20261024110000。#1917)。
+ * お知らせの書き込みは service_role だけ (運営の FOR ALL のポリシーを SELECT に絞った。migration 20261024140000。#1917)。
  * 監査ログは本人のセッションの client で書き (RLS の audit_logs_insert_admins)、管理用の一覧は本人のセッションの client で読む
  * (運営の SELECT のポリシー "Admins can view announcements")
  */
@@ -370,7 +370,7 @@ describe('POST /api/announcements: 監査ログ (admin.announcement.create) (#15
   });
 });
 
-describe('お知らせの書き込みは service_role だけ (運営の直接の書き込みを塞いだ。migration 20261024110000。#1917)', () => {
+describe('お知らせの書き込みは service_role だけ (運営の直接の書き込みを塞いだ。migration 20261024140000。#1917)', () => {
   const body = { title: '新機能のお知らせ', content: '本文です', isPublic: true };
   const accessesOf = (kind: 'session' | 'service') => tableAccesses.filter(([k]) => k === kind).map(([, table]) => table);
 

@@ -90,7 +90,7 @@ describe('#1103 RLS の正本が supabase/migrations にある', () => {
     });
   });
 
-  it('recipe_flags: 本人の INSERT・本人と admin の SELECT だけ (UPDATE / DELETE は無い。運営の UPDATE は 20261024110000 で消した。#1917 の続き)', () => {
+  it('recipe_flags: 本人の INSERT・本人と admin の SELECT だけ (UPDATE / DELETE は無い。運営の UPDATE は 20261024140000 で消した。#1917 の続き)', () => {
     expect(Object.fromEntries(policiesOf('recipe_flags'))).toEqual({
       'Anyone can create recipe flags': 'INSERT',
       'Users and admins can view recipe flags': 'SELECT',

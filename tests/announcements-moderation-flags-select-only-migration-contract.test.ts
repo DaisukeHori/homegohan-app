@@ -2,7 +2,7 @@
  * #1917 の続き: 運営 (admin / super_admin) の announcements (お知らせ) と moderation_flags (食事の通報) の FOR ALL のポリシーを
  * SELECT だけにし、recipe_flags (レシピの通報) の運営の FOR UPDATE のポリシーと personal_subscriptions (個人の契約) の運営の
  * FOR INSERT / FOR UPDATE のポリシーを消し、anon / authenticated の書き込みの権限を外した
- * migration (supabase/migrations/20261024110000_announcements_moderation_flags_select_only.sql) を、ファイルの読み取りで確かめる
+ * migration (supabase/migrations/20261024140000_announcements_moderation_flags_select_only.sql) を、ファイルの読み取りで確かめる
  * (DB には接続しない)。運営は PostgREST の直接の書き込みで、運営の API と監査ログ (admin_audit_logs) を通らずにお知らせ・通報・契約を書けた。
  *
  *   1. migration を version 順にすべて流したときの 4 つの表のポリシーに、書き込みを許すものが無い。残る SELECT 以外のポリシーは
@@ -16,24 +16,21 @@
  *   4. アプリのコード (Web・モバイル・Edge Function・共有のライブラリ) で 4 つの表に書くのは、決まったファイルだけで、どれも
  *      requireRole の後の service_role の client で書く。DB の関数で 4 つの表に書くのは、決まった SECURITY DEFINER の関数だけ
  *   5. 本冊の migration のコメントが挙げる行番号が、ファイルの事実と合う
- *   6. 同じ型の全域の探索: 運営のロールで判定する書き込みのポリシーの全部 (migration の文面から作る) が、台帳
- *      (tests/helpers/operator-write-policy-sweep.ts) と過不足なく一致し、本冊の頭のコメントが台帳の表をすべて分類どおりに名指しする
+ *   6. 同じ型 (運営のロールで判定する書き込みのポリシー) の中での本冊の差分: 本冊が消す 5 本は本冊の直前にこの型に当たり、本冊は
+ *      この型をその 5 本だけ減らす (足さない)。この型のいまの状態は常設の台帳 (tests/helpers/operator-write-policy-ledger.ts) が持ち、
+ *      tests/operator-write-policy-ledger.test.ts (migration の文面) と tests/integration/rls/operator-write-policy-ledger.test.ts (実 DB) が見る
+ *   7. 本冊の version は supabase/migrations の中で本冊だけ (ほかの migration と重ならない)。migration と戻し口の頭の行と、リポジトリの中で
+ *      本冊のファイルの名前を書いた参照は、どれも今の version を指す
  * 実際の挙動は tests/integration/rls/announcements-moderation-flags-select-only.test.ts (実 DB) が確かめる。
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { listFiles, rel, ROOT, stripComments } from './helpers/ai-reach';
-import {
-  isOperatorRoleExpression,
-  OPERATOR_WRITE_POLICIES_AFTER_MIGRATION,
-  OPERATOR_WRITE_POLICY_SWEEP,
-  type OperatorWritePolicySweepCategory,
-  type OperatorWritePolicySweepEntry,
-} from './helpers/operator-write-policy-sweep';
+import { operatorWritePolicyRow, operatorWritePolicyRowsAfterMigrations } from './helpers/operator-write-policy-ledger';
 
 const MIGRATIONS_DIR = path.join(ROOT, 'supabase', 'migrations');
-const MIGRATION = '20261024110000_announcements_moderation_flags_select_only';
+const MIGRATION = '20261024140000_announcements_moderation_flags_select_only';
 const MIGRATION_FILE = `${MIGRATION}.sql`;
 const ROLLBACK_PATH = path.join(ROOT, 'supabase', 'rollbacks', `${MIGRATION}.down.sql`);
 /** 本番のベースライン (ポリシーと権限を最初に作ったファイル) */
@@ -584,133 +581,61 @@ describe('#1917 の続き: 本冊のコメントが挙げる行番号', () => {
   });
 });
 
-/** migration の文面から作る、public のポリシーの全部 (「表|ポリシー」→ 種類と式の文面) */
-interface PolicyText {
-  command: string;
-  /** CREATE POLICY / ALTER POLICY の ON 表 の後ろの文面 (USING と WITH CHECK の式を含む) */
-  text: string;
-}
+describe('#1917 の続き: 同じ型 (運営のロールで判定する書き込みのポリシー) の中での本冊の差分', () => {
+  /** 本冊が消すポリシー (突き合わせの行の形「表|ポリシー 種類」) */
+  const removedRows = REMOVED_POLICIES.map(({ table, name, command }) => operatorWritePolicyRow(table, name, command)).sort();
 
-const QUALIFIED_TABLE = String.raw`(?:"?(\w+)"?\.)?"?([A-Za-z_]\w*)"?`;
-
-/** migration を順に流したときの、public のポリシー (CREATE / DROP / ALTER POLICY と DROP TABLE を書かれた順に流す) */
-function publicPoliciesAfter(files: ReadonlyArray<{ sql: string }>): Map<string, PolicyText> {
-  const policies = new Map<string, PolicyText>();
-  const keyOf = (schema: string | undefined, table: string, name: string) => `${(schema ?? 'public').toLowerCase()}.${table}|${name}`;
-  for (const { sql } of files) {
-    const events: Array<{ at: number; apply: () => void }> = [];
-    for (const m of sql.matchAll(new RegExp(String.raw`CREATE\s+POLICY\s+${POLICY_NAME}\s+ON\s+${QUALIFIED_TABLE}([^;]*);`, 'gi'))) {
-      const key = keyOf(m[3], m[4], m[1] ?? m[2]);
-      const rest = m[5];
-      const command = (/^\s*(?:AS\s+\w+\s+)?(?:FOR\s+(ALL|SELECT|INSERT|UPDATE|DELETE))?/i.exec(rest)?.[1] ?? 'ALL').toUpperCase();
-      events.push({ at: m.index ?? 0, apply: () => policies.set(key, { command, text: rest }) });
-    }
-    for (const m of sql.matchAll(new RegExp(String.raw`DROP\s+POLICY\s+(?:IF\s+EXISTS\s+)?${POLICY_NAME}\s+ON\s+${QUALIFIED_TABLE}`, 'gi'))) {
-      const key = keyOf(m[3], m[4], m[1] ?? m[2]);
-      events.push({ at: m.index ?? 0, apply: () => policies.delete(key) });
-    }
-    for (const m of sql.matchAll(new RegExp(String.raw`ALTER\s+POLICY\s+${POLICY_NAME}\s+ON\s+${QUALIFIED_TABLE}([^;]*);`, 'gi'))) {
-      const schema = m[3];
-      const table = m[4];
-      const key = keyOf(schema, table, m[1] ?? m[2]);
-      const rest = m[5];
-      events.push({
-        at: m.index ?? 0,
-        apply: () => {
-          const current = policies.get(key);
-          if (!current) return;
-          const rename = /RENAME\s+TO\s+(?:"([^"]+)"|(\w+))/i.exec(rest);
-          if (rename) {
-            policies.delete(key);
-            policies.set(keyOf(schema, table, rename[1] ?? rename[2]), current);
-          } else if (/\b(USING|WITH\s+CHECK)\b/i.test(rest)) {
-            policies.set(key, { ...current, text: rest });
-          }
-        },
-      });
-    }
-    for (const m of sql.matchAll(new RegExp(String.raw`DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?${QUALIFIED_TABLE}`, 'gi'))) {
-      const prefix = `${(m[1] ?? 'public').toLowerCase()}.${m[2]}|`;
-      events.push({
-        at: m.index ?? 0,
-        apply: () => {
-          for (const key of [...policies.keys()]) if (key.startsWith(prefix)) policies.delete(key);
-        },
-      });
-    }
-    for (const event of events.sort((a, b) => a.at - b.at)) event.apply();
-  }
-  return policies;
-}
-
-/** 運営のロールで判定する、書き込みを許す public のポリシー (「表|ポリシー 種類」の並び) */
-function operatorWritePolicies(files: ReadonlyArray<{ sql: string }>): string[] {
-  return [...publicPoliciesAfter(files).entries()]
-    .filter(([key, { command, text }]) => key.startsWith('public.') && command !== 'SELECT' && isOperatorRoleExpression(text))
-    .map(([key, { command }]) => `${key.slice('public.'.length)} ${command}`)
-    .sort();
-}
-
-const ledgerRows = (entries: readonly OperatorWritePolicySweepEntry[]) => entries.map((e) => `${e.table}|${e.policy} ${e.command}`).sort();
-
-/** 頭のコメントの「同じ型の全域の探索」の節と、分類ごとの見出しの番号 */
-const SWEEP_SECTION_START = '-- 同じ型の全域の探索:';
-const SWEEP_SECTION_END = '-- 既存データへの影響';
-const SWEEP_HEADING_OF: Readonly<Record<OperatorWritePolicySweepCategory, string>> = {
-  closedHere: '(1)',
-  sessionClientApi: '(2)',
-  noOperatorWriteApi: '(3)',
-  auditSink: '(4)',
-};
-const CATEGORY_ORDER = Object.keys(SWEEP_HEADING_OF) as OperatorWritePolicySweepCategory[];
-
-/** 節の中の、分類 category の見出しから次の見出しまで */
-function sweepSubsection(section: string, category: OperatorWritePolicySweepCategory): string {
-  const start = section.indexOf(`--   ${SWEEP_HEADING_OF[category]} `);
-  if (start < 0) return '';
-  const next = CATEGORY_ORDER.slice(CATEGORY_ORDER.indexOf(category) + 1)
-    .map((c) => section.indexOf(`--   ${SWEEP_HEADING_OF[c]} `, start))
-    .filter((at) => at > start);
-  return section.slice(start, next.length > 0 ? Math.min(...next) : section.length);
-}
-
-/** 表の名前が、ほかの名前・パスの一部としてでなく出る */
-const mentionsTable = (text: string, table: string) => new RegExp(String.raw`(?<![\w/])${table}(?![\w/])`).test(text);
-
-describe('#1917 の続き: 同じ型の全域の探索 (運営のロールで判定する書き込みのポリシーの台帳)', () => {
-  it('本冊の直前の、運営のロールで判定する書き込みのポリシーは、台帳 OPERATOR_WRITE_POLICY_SWEEP と過不足なく一致する (分類の無いものが無い)', () => {
+  it('本冊が消すポリシーは、本冊の直前にこの型に当たる (型の見つけ方が、消す対象を拾えている)', () => {
     expect(migrationIndex).toBeGreaterThan(0);
-    expect(operatorWritePolicies(migrations.slice(0, migrationIndex))).toEqual(ledgerRows(OPERATOR_WRITE_POLICY_SWEEP));
+    const before = operatorWritePolicyRowsAfterMigrations(migrations.slice(0, migrationIndex));
+    for (const row of removedRows) expect(before, row).toContain(row);
   });
 
-  it('全部流した後は、台帳から本冊が消したもの (closedHere) を除いたものと一致する (後の migration がこの型のポリシーを足したら、台帳で分類する)', () => {
-    expect(operatorWritePolicies(migrations)).toEqual(ledgerRows(OPERATOR_WRITE_POLICIES_AFTER_MIGRATION));
+  it('本冊を流すと、この型の一覧から消すポリシーだけが減り、増えるものは無い (作り直す SELECT のポリシーはこの型に当たらない)', () => {
+    const before = operatorWritePolicyRowsAfterMigrations(migrations.slice(0, migrationIndex));
+    const afterOwn = operatorWritePolicyRowsAfterMigrations(migrations.slice(0, migrationIndex + 1));
+    expect(migrations[migrationIndex].file).toBe(MIGRATION_FILE);
+    expect(afterOwn).toEqual(before.filter((row) => !removedRows.includes(row)));
+  });
+});
+
+/** migration のファイル名の頭の version (14 桁) */
+const VERSION_PATTERN = /^(\d{14})_/;
+const versionOf = (file: string): string => VERSION_PATTERN.exec(file)?.[1] ?? '';
+const MIGRATION_VERSION = versionOf(MIGRATION_FILE);
+/** 本冊のファイルの名前 (version を除く部分) */
+const MIGRATION_SLUG = MIGRATION.slice(MIGRATION_VERSION.length + 1);
+/** 本冊のファイルの名前を書いた参照を探す場所 (アプリのコード・テスト・migration と戻し口・文書) */
+const REFERENCE_DIRS = ['src', 'tests', 'supabase/migrations', 'supabase/rollbacks', 'docs'] as const;
+const isReferenceText = (name: string) => /\.(ts|tsx|sql|md)$/.test(name);
+
+describe('#1917 の続き: 本冊の version', () => {
+  it('version は supabase/migrations の中で本冊だけ (ほかの migration と同じ version だと、本番の適用の記録 (schema_migrations) が適用済みとみなして当たらない)', () => {
+    expect(MIGRATION_VERSION).toMatch(/^\d{14}$/);
+    expect(migrationFileNames.filter((file) => versionOf(file) === MIGRATION_VERSION)).toEqual([MIGRATION_FILE]);
   });
 
-  it('台帳の closedHere は、本冊が消すポリシー (REMOVED_POLICIES) と同じ', () => {
-    const closed = OPERATOR_WRITE_POLICY_SWEEP.filter((e) => e.category === 'closedHere').map((e) => `${e.table}|${e.policy} ${e.command}`).sort();
-    expect(closed).toEqual(REMOVED_POLICIES.map((p) => `${p.table}|${p.name} ${p.command}`).sort());
+  it('戻し口の version も supabase/rollbacks の中で本冊の戻し口だけ', () => {
+    const rollbacks = fs.readdirSync(path.dirname(ROLLBACK_PATH)).filter((file) => versionOf(file) === MIGRATION_VERSION);
+    expect(rollbacks).toEqual([path.basename(ROLLBACK_PATH)]);
   });
 
-  it('台帳の行は 1 本ずつで、理由を持つ', () => {
-    const keys = OPERATOR_WRITE_POLICY_SWEEP.map((e) => `${e.table}|${e.policy}`);
-    expect(new Set(keys).size).toBe(keys.length);
-    for (const entry of OPERATOR_WRITE_POLICY_SWEEP) expect(entry.reason.trim(), `${entry.table}|${entry.policy}`).not.toBe('');
+  it('migration の 1 行目と 2 行目は、自分のファイルと戻し口を指す', () => {
+    const [first, second] = migrationRaw.split('\n');
+    expect(first).toBe(`-- migration: ${MIGRATION_FILE}`);
+    expect(second).toBe(`-- 戻し方: ${rel(ROLLBACK_PATH)}`);
   });
 
-  it('本冊の頭のコメントの「同じ型の全域の探索」は、総数と分類ごとの本数を書き、台帳の表をすべて分類どおりの見出しの下で名指しする', () => {
-    const start = migrationRaw.indexOf(SWEEP_SECTION_START);
-    const end = migrationRaw.indexOf(SWEEP_SECTION_END, start);
-    expect(start, '節がある').toBeGreaterThan(0);
-    expect(end).toBeGreaterThan(start);
-    const section = migrationRaw.slice(start, end);
-    expect(section).toContain(`この型に当たるのは ${OPERATOR_WRITE_POLICY_SWEEP.length} 本`);
-    for (const category of CATEGORY_ORDER) {
-      const entries = OPERATOR_WRITE_POLICY_SWEEP.filter((e) => e.category === category);
-      const subsection = sweepSubsection(section, category);
-      expect(subsection, `${SWEEP_HEADING_OF[category]} の見出しがある`).not.toBe('');
-      expect(subsection, `${SWEEP_HEADING_OF[category]} の本数`).toContain(`— ${entries.length} 本`);
-      for (const { table } of entries) expect(mentionsTable(subsection, table), `${SWEEP_HEADING_OF[category]} が ${table} を名指しする`).toBe(true);
-    }
+  it('リポジトリの中で本冊のファイルの名前を書いた参照は、どれも今の version を指す (付け直したときの書き残しが無い)', () => {
+    const files = REFERENCE_DIRS.flatMap((dir) => {
+      const abs = path.join(ROOT, dir);
+      return fs.existsSync(abs) ? listFiles(abs, isReferenceText) : [];
+    });
+    const reference = new RegExp(String.raw`(\d{14})_${MIGRATION_SLUG}\b`, 'g');
+    const found = files.flatMap((file) =>
+      [...fs.readFileSync(file, 'utf-8').matchAll(reference)].map((m) => ({ file: rel(file), version: m[1] })),
+    );
+    expect(found.length, '参照を読めている').toBeGreaterThan(0);
+    expect(found.filter(({ version }) => version !== MIGRATION_VERSION)).toEqual([]);
   });
 });

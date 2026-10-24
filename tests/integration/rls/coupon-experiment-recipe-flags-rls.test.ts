@@ -15,7 +15,7 @@
  * recipe_flags (レシピの通報):
  *   - INSERT: ログインした本人が reporter_id = 自分 の行だけ。anon と、他人を reporter にした行は拒否。
  *   - SELECT: 通報した本人の行と、admin / super_admin は全行。UPDATE / DELETE のポリシーは無く、anon / authenticated は UPDATE /
- *     DELETE の権限も持たない (運営の "Admins can update recipe flags" と書き込みの権限は 20261024110000 で外した。#1917 の続き)。
+ *     DELETE の権限も持たない (運営の "Admins can update recipe flags" と書き込みの権限は 20261024140000 で外した。#1917 の続き)。
  *     通報の判定は運営の API が service_role で書く。
  *
  * PostgREST を supabase-js で直接叩いて検証する (アプリ層のガードを経由しない経路が攻撃面のため)。

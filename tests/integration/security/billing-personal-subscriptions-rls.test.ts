@@ -9,7 +9,7 @@
  * 確認すること:
  *   67. 本人は自分の契約の行を INSERT / UPDATE できない (RLS と権限) が、SELECT はできる
  *   68. admin も契約の行を直接 INSERT / UPDATE / DELETE できない (42501)。anon と authenticated には INSERT / UPDATE / DELETE の権限が無い
- *       (migration 20261024110000_announcements_moderation_flags_select_only.sql が運営の INSERT / UPDATE のポリシー
+ *       (migration 20261024140000_announcements_moderation_flags_select_only.sql が運営の INSERT / UPDATE のポリシー
  *       personal_subscriptions_insert_admin / _update_admin と authenticated の書き込みの権限を外した。#1917 の続き。
  *       契約を書くのは、サーバーが service_role で呼ぶ SECURITY DEFINER の関数 (写像・手動付与・クーポンの適用) だけ)
  *   69. billing_customers は anon / authenticated から見えず書けない。service_role は読み書きできる
@@ -136,7 +136,7 @@ describe('billing/01 §6.2: personal_subscriptions の RLS', () => {
   it('authenticated user cannot INSERT or UPDATE own personal_subscriptions row (RLS) but can SELECT it', async () => {
     const id = await insertSubscription(owner.id, 'expired');
 
-    // INSERT: 本人の行でも拒否 (WITH CHECK の本人の枝を外し、後に 20261024110000 が authenticated の INSERT の権限も外した)
+    // INSERT: 本人の行でも拒否 (WITH CHECK の本人の枝を外し、後に 20261024140000 が authenticated の INSERT の権限も外した)
     const { error: insertError } = await asUser(owner.jwt)
       .from('personal_subscriptions')
       .insert({ user_id: owner.id, plan_key: 'family_pro', status: 'active' });
@@ -147,7 +147,7 @@ describe('billing/01 §6.2: personal_subscriptions の RLS', () => {
       .eq('user_id', owner.id);
     expect(count).toBe(1);
 
-    // UPDATE: authenticated に UPDATE の権限が無い (20261024110000 で外した) ので 42501。値は変わらない
+    // UPDATE: authenticated に UPDATE の権限が無い (20261024140000 で外した) ので 42501。値は変わらない
     // (権限を外す前は、本人の行は USING に当たらず 0 行で黙って終わっていた)
     const { error: updateError } = await asUser(owner.jwt)
       .from('personal_subscriptions')
@@ -164,7 +164,7 @@ describe('billing/01 §6.2: personal_subscriptions の RLS', () => {
 
   it('admin cannot INSERT/UPDATE/DELETE directly (42501); anon and authenticated have no INSERT/UPDATE/DELETE privilege', async () => {
     // 運営の直接の書き込みは、監査 (admin.billing.manual_grant) も手動付与の関数の不変条件 (live な行の衝突・plan_key_cached と
-    // family_groups の同期) も通らないので塞いだ (20261024110000。#1917 の続き)。admin は TOTP を登録していない (MFA の判定は真) ので、
+    // family_groups の同期) も通らないので塞いだ (20261024140000。#1917 の続き)。admin は TOTP を登録していない (MFA の判定は真) ので、
     // 修正前はこのセッションで書けた
     const target = await createUser('admin-target');
     const id = await insertSubscription(target.id, 'expired');

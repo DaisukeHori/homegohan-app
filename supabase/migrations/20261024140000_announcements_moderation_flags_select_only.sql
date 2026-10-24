@@ -1,5 +1,5 @@
--- migration: 20261024110000_announcements_moderation_flags_select_only.sql
--- 戻し方: supabase/rollbacks/20261024110000_announcements_moderation_flags_select_only.down.sql
+-- migration: 20261024140000_announcements_moderation_flags_select_only.sql
+-- 戻し方: supabase/rollbacks/20261024140000_announcements_moderation_flags_select_only.down.sql
 -- #1917 の続き: 運営 (admin / super_admin) が PostgREST の直接の書き込みで announcements (お知らせ) と moderation_flags (食事の通報)
 -- の行を INSERT / UPDATE / DELETE でき、recipe_flags (レシピの通報) の行を UPDATE でき、personal_subscriptions (個人の契約) の行を
 -- INSERT / UPDATE でき、運営の API と監査ログ (admin_audit_logs) を通らずに済んでしまう既存の欠陥を直す。
@@ -105,12 +105,13 @@
 --   運営の MFA の判定を持つポリシーの数 (tests/integration/security/operator-mfa-db-gate.test.ts の番兵) は 3 本減る
 --   (1・2 は表ごとに 1 本を消して 1 本を作る。4 は 1 本、6 は 2 本を消すだけ)。番兵の DB_GATED_POLICY_MIN_COUNT を 56 から 53 にした。
 --
--- 同じ型の全域の探索:
+-- 同じ型の全域の探索 (本冊を書いた時点の棚卸しの記録):
 --   型 = 運営のロール (user_profiles.roles の運営ロールの文字列) で判定する、書き込みを許すポリシー (FOR ALL / INSERT / UPDATE / DELETE)。
---   本冊の直前の public のポリシーのうち、この型に当たるのは 31 本 (migration を version 順に流した状態から機械で数えた。
---   台帳 = tests/helpers/operator-write-policy-sweep.ts の OPERATOR_WRITE_POLICY_SWEEP。
---   tests/announcements-moderation-flags-select-only-migration-contract.test.ts が、migration の文面から作った一覧と台帳の一致と、
---   この節が台帳のすべての表を名指しすることを見る。後の migration がこの型のポリシーを足すとその test が赤になり、台帳での分類を求める)。
+--   本冊の直前の public のポリシーのうち、この型に当たるのは 31 本だった (migration を version 順に流した状態から機械で数えた)。
+--   本冊の後に残る (2)〜(4) の 26 本は、いまの状態の常設の台帳 tests/helpers/operator-write-policy-ledger.ts が分類と理由つきで持つ
+--   (tests/operator-write-policy-ledger.test.ts が migration の文面と、tests/integration/rls/operator-write-policy-ledger.test.ts が実 DB と
+--   台帳の一致を見る。後の migration がこの型のポリシーを足す・消すときは、台帳の行を足す・消す)。本冊の contract test は、(1) の 5 本が
+--   本冊の直前にこの型に当たり、本冊がこの型をその 5 本だけ減らすことを見る。
 --   (1) 本冊が消した (運営の API が service_role の client か SECURITY DEFINER の関数で書き、本人のセッションの client でそのポリシーに
 --       頼って書く経路が無い) — 5 本: announcements (ALL)・moderation_flags (ALL)・recipe_flags (UPDATE)・
 --       personal_subscriptions (INSERT・UPDATE)。
@@ -134,6 +135,7 @@
 -- ロック: DROP / CREATE POLICY は表に ACCESS EXCLUSIVE を取る。4 つの表は小さく、一瞬で終わる。
 -- 確認: tests/integration/rls/announcements-moderation-flags-select-only.test.ts (実 DB)
 --       tests/announcements-moderation-flags-select-only-migration-contract.test.ts (静的)
+--       tests/operator-write-policy-ledger.test.ts (静的)・tests/integration/rls/operator-write-policy-ledger.test.ts (実 DB) (同じ型の台帳)
 --       tests/integration/rls/coupon-experiment-recipe-flags-rls.test.ts の recipe_flags の段 (実 DB)
 --       tests/integration/security/billing-personal-subscriptions-rls.test.ts の personal_subscriptions の段 (実 DB)
 
