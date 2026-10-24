@@ -6,6 +6,7 @@
 | v1.1 | 2026-10-25 | 設計ゲート R1 の修正 (1 冊にまとめ直す・DB の CHECK を Zod より緩い安全弁に・鍵の長さを Zod で見る・同時の ♥ の応答・server の単体テストの偽物・段分け・番兵の追随。§22) |
 | v1.2 | 2026-10-25 | 設計ゲート R2 の修正 (材料の 3 つの形 (構造の形・長い 1 行・短い行) を写しが受ける・材料 1 行の上限を本番の実測で決め直す・jsonb の上限の再計算・献立の ♥ の応答を押した時点のモーダルに限る・同じ料理を開き直したときに ♥ の状態を引き直す。§22) |
 | v1.3 | 2026-10-25 | 設計ゲート R3 の修正 (お気に入りの詳細に幕を足す・削除の応答で詳細を閉じる判定を応答の時点の行で行う・詳細の状態遷移表を足す。§22) |
+| v1.4 | 2026-10-25 | 設計ゲート R4 の修正 (♥ の取得中の disabled を読んだ時点で skip していた e2e の 2 本目と、取得の前の値を読む探索の e2e を、disabled の解除を待つ形に直す (§7.16)・e2e の利用者と献立の事実 (F-34・F-35)。§22) |
 
 要件の正本は Issue #2011 の本文とコメント。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
 ファイル名は cross/22 (cross/ の既存は 01〜09・12・13a・13b・14〜21。10・11・13 は欠番)。
@@ -44,7 +45,7 @@
 | # | 要件 | 根拠 | 本書の置き場 |
 |---|---|---|---|
 | R-1 | 献立の料理のモーダルの ♥ を押すと、その料理 (名前・役割・kcal・栄養・材料・作り方) が本人のお気に入りとして保存される | #2011・冒頭の前提の 1 項目め (料理を材料・作り方・栄養ごと保存) | §7.3・§7.4・§7.5 (POST)・§7.9 |
-| R-2 | もう一度 ♥ を押すと消える。モーダルを開き直したとき (同じ料理を開き直したときも)・ページを読み直したときの ♥ の印は保存の状態と一致する。押したあとにモーダルを閉じたり別の料理を開いたりしても、その応答はいま開いているモーダルの印・id を変えない | #2011・`tests/e2e/bug-31-favorite-button.spec.ts` | §7.5 (status・DELETE)・§7.8・§7.9・§9.3 (b) |
+| R-2 | もう一度 ♥ を押すと消える。モーダルを開き直したとき (同じ料理を開き直したときも)・ページを読み直したときの ♥ の印は保存の状態と一致する。押したあとにモーダルを閉じたり別の料理を開いたりしても、その応答はいま開いているモーダルの印・id を変えない | #2011・`tests/e2e/bug-31-favorite-button.spec.ts` | §7.5 (status・DELETE)・§7.8・§7.9・§7.16・§9.3 (b)・§12 (再読込の確かめ方) |
 | R-3 | お気に入りの画面で、保存した料理を一覧 (件数つき)・名前で検索・並び替え (新しい順 / 古い順 / 名前順)・削除できる | #2011・`src/app/(main)/favorites/page.tsx` の今の機能 | §7.5 (GET)・§7.10 |
 | R-4 | お気に入りの画面から、料理の詳細 (材料・作り方・栄養) を開ける。材料を買い物リストに足せる。本番の献立の料理の材料の 3 つの形 (構造の形・長い 1 行・短い行。§3.4 F-31) のどれでも保存でき、材料が写しに残る。詳細は今と同じく幕 (半透明の黒) の上に開き、幕を押すと閉じ、開いている間は後ろの一覧に届かない (F-33)。詳細の ♥ で消した応答は、そのときに詳細が出している行が消した行のときだけ詳細を閉じる | 冒頭の前提の 1 項目め (お気に入りの画面から詳細を開ける)・`FavoriteRecipeModal` の今の機能 | §7.3・§7.10・§7.12・§9.3 (c) |
 | R-5 | 献立が作り直されて同じ名前の別の中身になっても、お気に入りの写しは変わらない。献立 (planned_meals) が消えても残る | #2011「料理そのものを保存」 | §3.1 F-9・§6.2・§9.3 |
@@ -55,7 +56,7 @@
 | R-10 | 退会で消える (CASCADE)。個人データの書き出しに `dish_favorites` が出る | #1131・#1175 | §7.1・§7.7・§16 |
 | R-11 | プライバシーポリシーの第3条の表に対応する行がある (文は変えない) | cross/20 F-42・T-34 | §6.6・§17 |
 | R-12 | `recipe_likes`・公開レシピの「いいね」の API・`isLiked`・AI 相談の `like_recipe`・献立の生成の `recipe_likes` の読み取りは変えない | 前提 | §18 |
-| R-13 | 既存の e2e (bug-104・bug-31) が見る文言・`data-testid`・応答の形 (`favorites` の配列と `total`) を保つ | `tests/e2e/bug-104-favorites-system.spec.ts`・`bug-31-favorite-button.spec.ts` | §7.10・§16 |
+| R-13 | 既存の e2e (bug-104・bug-31) が見る文言・`data-testid`・応答の形 (`favorites` の配列と `total`) を保つ | `tests/e2e/bug-104-favorites-system.spec.ts`・`bug-31-favorite-button.spec.ts` | §7.10・§7.16・§16 |
 | R-14 | 本文を読む route は NULL 文字と壊れた JSON を 400 にし、一覧の route は件数より後ろのページを 500 にしない。失敗の文は日本語の固定の文 | #1657・#1917 の見張り (§16) | §7.5 |
 | R-15 | 新しい migration は追加だけ (既存の表・行に触らない)。戻し口を対で置く。番号はマージの直前に確定する | 設計書の規約 | §7.1・§7.2 |
 | R-16 | 画像は保存しない (料理の画像は献立の非公開バケットの署名付き URL で、献立と一緒に消える) | cross/19 | §6.2 |
@@ -142,7 +143,7 @@
 
 | # | 事実 | 場所 |
 |---|---|---|
-| F-1 | 献立の画面は、料理のモーダルを開くと `GET /api/recipes/{料理名}/like` で ♥ の状態を引き (失敗の応答では印を変えない)、♥ の押下で `POST` / `DELETE` を楽観的更新で送る (失敗で戻す) | `src/app/(main)/menus/weekly/page.tsx:1926-1935`・`:3485-3502` |
+| F-1 | 献立の画面は、料理のモーダルを開くと `GET /api/recipes/{料理名}/like` で ♥ の状態を引き (失敗の応答では印を変えない。取得中の印 `isFavoriteLoading` は立てないので、♥ は取得中も押せる)、♥ の押下で `POST` / `DELETE` を楽観的更新で送る (失敗で戻す。押下中だけ `isFavoriteLoading` を立てる。`RecipeModal` の ♥ は `disabled={isFavoriteLoading}`) | `src/app/(main)/menus/weekly/page.tsx:1924-1935` (コメント 1 行と useEffect)・`:3485-3502`・`_components/modals/RecipeModal.tsx:330` |
 | F-2 | モーダルを開くとき、料理 (`dishesArray[idx]`) の新形式 (`calories_kcal` など) を優先し旧形式 (`cal` など) から埋めた `normalizedDish` を作り、`selectedRecipeData = { ...normalizedDish, imageUrl, dishes: [normalizedDish], allIngredients }` にする。`selectedRecipe` は料理名 | 同 `:5432-5472` |
 | F-3 | ♥ の状態は `recipeReducer` の `isFavorite` / `isFavoriteLoading` (`FAVORITE_SET` / `FAVORITE_LOADING_SET`)。`RECIPE_SELECT` は payload が null のときだけ `isFavorite` を戻す | `src/app/(main)/menus/weekly/_state/reducers/recipeReducer.ts:26-27`・`:57-70` |
 | F-4 | `RecipeModal` は `selectedRecipe` (名前)・`selectedRecipeData` (any)・`isFavorite`・`isFavoriteLoading`・`onToggleFavorite`・`onAddToShoppingList` を受け、役割・kcal・画像・栄養の 27 行 (`:243-280`。「エネルギー」(`calories_kcal`) と、写しの栄養 29 項目のうち `fiber_soluble_g`・`fiber_insoluble_g`・`magnesium_mg` を除く 26 項目。`protein_g`・`fat_g`・`carbs_g` のどれかが 0 でないときだけ描く)・材料 (`dishes[0].ingredientsMd` か `ingredients` から表)・作り方 (`dishes[0].recipeStepsMd` か `recipeSteps`) を描く。♥ は `data-testid="favorite-button"`・`aria-pressed` | `src/app/(main)/menus/weekly/_components/modals/RecipeModal.tsx:122-150`・`:330-346` |
@@ -178,7 +179,12 @@
 
 ### 3.3 既存のテストと番兵
 
-§16 に全列挙する。要点: `tests/api/favorites-route.test.ts` (一覧 API の単体)・`src/app/(main)/favorites/_components/__tests__/FavoriteListItem.test.ts`・`FavoriteRecipeModal.test.ts`・`tests/e2e/bug-104-favorites-system.spec.ts`・`bug-31-favorite-button.spec.ts`・`tests/route-invalid-input-1917.test.ts:331-410` (いいねの route。変えない)。
+§16 に全列挙する。要点: `tests/api/favorites-route.test.ts` (一覧 API の単体)・`src/app/(main)/favorites/_components/__tests__/FavoriteListItem.test.ts`・`FavoriteRecipeModal.test.ts`・`tests/e2e/bug-104-favorites-system.spec.ts`・`bug-31-favorite-button.spec.ts`・`tests/e2e/.exploration/recipe-shopping-explore.spec.ts` (S3)・`tests/route-invalid-input-1917.test.ts:331-410` (いいねの route。変えない)。
+
+| # | 事実 | 場所 |
+|---|---|---|
+| F-34 | ♥ (`data-testid="favorite-button"`) を読む・押す e2e は 5 本 (§16)。そのうち `bug-31-favorite-button.spec.ts` (2 本) と `refactor-baseline/weekly-characterization.spec.ts:446-480` は `tourPendingUser` で走る。`tourPendingUser` は試験ごとに `createFreshUser` で作り、終わりに `cleanupFreshUser` (`admin.deleteUser`。CASCADE で本人の行も消える) で消す利用者で、fixture は献立を作らない。献立が無いと「レシピを見る」が無く、bug-31 は 2 本とも冒頭の `test.skip(true, 'No recipe available for E2E user')` で抜け、特性テストは注記を足して return する。W5C-12・B5-5・探索 S3 は固定の試験用アカウント (`E2E_USER_EMAIL`) で、保存した行は走行をまたいで残る | `tests/e2e/fixtures/fresh-user.ts:577-624`・`tests/e2e/bug-31-favorite-button.spec.ts:20-24`・`:79-83`・`weekly-characterization.spec.ts:456-462`・`w5-9-multitab-realtime-adversarial.spec.ts:30-37` (`loginInContext`)・`tests/e2e/fixtures/auth.ts:518` (`login`) |
+| F-35 | `playwright.config.ts` は `testDir: "./tests/e2e"` で `testIgnore` を持たないので、`tests/e2e/.exploration/` の spec も `npm run test:e2e` で走る。`expect` の既定の待ちは 10 秒。Playwright の `click()` は押す前に要素が enabled になるのを待つ (操作の待ち)。`isDisabled()`・`getAttribute()` は待たずに、その時点の値を返す | `playwright.config.ts:18-21`・`package.json` の `test:e2e` |
 
 ### 3.4 本番の読み取り (2026-10-25。SELECT だけ。書き込みなし)
 
@@ -1301,7 +1307,7 @@ import { dishSnapshotFromMenuDish } from '@/modules/dish-favorites/core';
   /** 料理のモーダルが開いているか (買い物リストの追加は activeModal だけを閉じ selectedRecipe を残す。F-32) */
   const isRecipeModalOpen = activeModal === 'recipe' && selectedRecipe !== null;
 
-// (3) :1926-1935 の useEffect を置き換える (♥ の状態を dish_favorites から名前で引く。モーダルが開くたびに引き直す。取得中は ♥ を disabled にする)
+// (3) :1924-1935 (コメント 1 行と useEffect) を置き換える (♥ の状態を dish_favorites から名前で引く。モーダルが開くたびに引き直す。取得中は ♥ を disabled にする)
   useEffect(() => {
     favoriteSessionRef.current += 1;
     const session = favoriteSessionRef.current;
@@ -2141,6 +2147,63 @@ export function createScriptedSupabase(results: ReadonlyArray<ScriptedResult>): 
 - V-3 の並べ方: [`{ error: { code: 'PGRST103', message: 'Requested range not satisfiable' }, status: 416 }`・`{ count: 7 }`] → `{ ok: true, favorites: [], total: 7 }`、`queries[1].calls[0]` が `{ method: 'select', args: [ROW_COLUMNS の文字列, { count: 'exact', head: true }] }`、`queries[1].calls` に `ilike` が `queries[0]` と同じ引数で入る (q があるとき)。
 - 行の値は `DishFavoriteRowSchema` を通る形にする (`id`・`user_id` は uuid の形・`dish` は `DishSnapshotSchema.parse({ name: '肉じゃが' })` の結果・`created_at`・`updated_at` は ISO の文字列)。
 
+### 7.16 既存の e2e 2 本の差分 (段 B2。♥ の取得中の disabled が解けてから読む)
+
+§7.9 (3) は、モーダルが開くたびに取得中の印 (`isFavoriteLoading`) を立て、status の応答 (失敗・例外を含む) まで ♥ を disabled にする (今は取得中の印を立てず、♥ は取得中も押せる。F-1)。Playwright の `click()` は enabled になるのを待ってから押す (F-35) ので、押すだけの所は変わらない。変わるのは、♥ が見えた直後に `isDisabled()` / `getAttribute('aria-pressed')` でその時点の値を読み、その値で skip や expect の結果が決まる所で、♥ を使う e2e 5 本 (F-34・§16) のうち次の 2 本がそれに当たる。ほかの 3 本は変えない: B5-5 は読む前に disabled の解除を待ち、W5C-12 と特性テストは見えた直後に読む値を注記の文か「true / false のどちらか」の確認にしか使わない (§16 の各行)。
+
+(1) `tests/e2e/bug-31-favorite-button.spec.ts`。2 本目「favorite state persists after page reload」は、♥ が見えた直後に `isDisabled()` を読み、disabled なら `test.skip` で抜ける (:100-105)。設計後は開いた直後の ♥ は取得中で disabled なので、献立のある利用者で走らせても毎回 skip になり (skip は緑に数えられる)、再読込後の保持を確かめない。1 本目 (:44) と同じく disabled の解除を待つ形にする。あわせて、♥ を押したあと保存の応答を待たずに閉じて読み直すと、読み直しの status が保存より先に DB に届きうるので、押下中の disabled の解除 (= POST の応答) を待ってから閉じる。2 本とも `tourPendingUser` (献立を作らない。F-34) で走るので、ふだんの走行では今と同じく冒頭の「No recipe available for E2E user」で skip する。直すのは、献立のある利用者で走らせたときに ♥ まで届いて確かめるため (再読込の自動の確かめの全体は §12 の末尾)。
+
+```ts
+// tsc:skip (既存ファイルの差分の断片)
+// (1a) :10 (import { test, expect } from "./fixtures/fresh-user";) の次に定数を 1 つ
+/**
+ * ♥ の取得 (GET /api/favorites/status) と押下 (POST / DELETE) の応答で ♥ の disabled が解けるまでの待ちの上限 (#2011)。
+ * モーダルを開くたびに status を引き直し、取得中と押下中は ♥ が disabled になる。
+ * 1 本目の今の待ち (:44 の 10 秒) と multi-context-parallel-ops.spec.ts の B5-5 (:394・:410) の待ちと同じ値
+ */
+const FAVORITE_REQUEST_SETTLE_TIMEOUT_MS = 10_000;
+
+// (1b) 1 本目の :44 を定数にする (値は同じ)
+    await expect(favBtn).not.toBeDisabled({ timeout: FAVORITE_REQUEST_SETTLE_TIMEOUT_MS });
+
+// (1c) 2 本目の :100-105 (コメント 1 行・isDisabled() を読む 1 行・disabled なら skip する if の 4 行) を置き換える
+    // モーダルを開くたびに ♥ の状態 (GET /api/favorites/status) を取り直し、取得中は disabled になる (#2011)。
+    // disabled のまま読んで skip すると、再読込後の保持を確かめずに緑になるので、1 本目と同じく解除を待つ
+    await expect(favBtn).not.toBeDisabled({ timeout: FAVORITE_REQUEST_SETTLE_TIMEOUT_MS });
+
+// (1d) 2 本目の :117 (await expect(favBtn).toHaveAttribute("aria-pressed", "true");) の次に 2 行。
+    // aria-pressed は押した時点で塗る (楽観的更新)。押下中は disabled なので、解除 = POST の応答 (保存が DB に入った) を待ってから閉じる
+    await expect(favBtn).not.toBeDisabled({ timeout: FAVORITE_REQUEST_SETTLE_TIMEOUT_MS });
+```
+
+2 本目のほかの行は変えない (読み直したあとの :142 の `toHaveAttribute("aria-pressed", "true", { timeout: 5_000 })` は値がそろうまで待つ。:111・:116・:145 の `click()` は enabled を待つ)。
+
+(2) `tests/e2e/.exploration/recipe-shopping-explore.spec.ts` の「S3: ハートボタン: クリックで aria-pressed 変化確認」(:153-212)。♥ が見えた直後に押す前の `aria-pressed` を読み (:189)、押して 1 秒後の値と違うことを `expect` で見る (:202・:211)。固定の試験用アカウントで走り、保存した行が走行をまたいで残る (F-34) ので、設計後に保存済みの料理で開くと、押す前の値を status の応答の前 (`false`) に読み、押すと DELETE で `false` になって「変わらない」で赤になる (今は ♥ の保存の応答が 404 で ♥ が戻るので、献立のある走行では赤になりうる)。status の応答と disabled の解除を待ってから、押す前の値を読む。
+
+```ts
+// tsc:skip (既存ファイルの差分の断片)
+// (2a) :34 (const SS_DIR = path.resolve(__dirname, "recipe-shopping");) の次に定数を 1 つ (名前・値・根拠は (1a) と同じ)
+/**
+ * ♥ の取得 (GET /api/favorites/status) と押下 (POST / DELETE) の応答で ♥ の disabled が解けるまでの待ちの上限 (#2011)。
+ * bug-31-favorite-button.spec.ts の同じ名前の定数と同じ値
+ */
+const FAVORITE_REQUEST_SETTLE_TIMEOUT_MS = 10_000;
+
+// (2b) S3 の :171 (await recipeBtn.click();) の直前に、status の応答の待ちを先に張る
+  // モーダルを開くと ♥ の状態 (GET /api/favorites/status) を引き、取得中は ♥ が disabled (#2011)。
+  // 押す前の aria-pressed を取得の前に読むと、保存済みの料理で「押しても変わらない」に見えるので、応答を待ってから読む。
+  // モーダルが開かずに下の if で return するときに待ちの失敗が残らないよう、失敗は null にする
+  const favoriteStatusResponse = page
+    .waitForResponse((res) => res.url().includes('/api/favorites/status'), { timeout: FAVORITE_REQUEST_SETTLE_TIMEOUT_MS })
+    .catch(() => null);
+
+// (2c) :183-187 (if (!favVisible) { … return; }) の次、:189 (const ariaBeforeClick = …) の前に 2 行
+  await favoriteStatusResponse;
+  await expect(favBtn).not.toBeDisabled({ timeout: FAVORITE_REQUEST_SETTLE_TIMEOUT_MS });
+```
+
+S3 のほかの行と、同じファイルのほかのシナリオ (S1・S2・S4〜S11) は変えない。status の応答が来ないまま待ちが切れても (null)、次の `not.toBeDisabled` が取得中の印の解除を待つ。
+
 ---
 
 ## 8. facade 契約
@@ -2237,6 +2300,7 @@ export function createScriptedSupabase(results: ReadonlyArray<ScriptedResult>): 
 | お気に入りの詳細の「材料を買い物リストに追加」 | 読む (写しの材料) → 既存の `POST /api/shopping-list/add-recipe` | `ingredientInputsOf(dish.ingredients)` (構造の形・1 行の文字列のどちらも。文字列の分け方は献立の画面の正規表現の写し (F-32)。重複の除去はしない) | §7.12 (route は変えない) |
 | 公開レシピの「いいね」(`recipe_likes`) の API・`isLiked`・AI 相談の `like_recipe`・献立の生成 | — | `dish_favorites` を読まない・書かない | 変更なし (§18) |
 | モバイル | 表示 | Web の `/favorites`・献立の画面を WebView で | 変更なし |
+| 既存の e2e (♥ を読む・押す 5 本。F-34) | 読む (DOM) | ♥ の `aria-pressed`・`disabled` (取得中・押下中は disabled) | bug-31 の 2 本目と探索 S3 は disabled の解除を待ってから読むように直す (§7.16)。W5C-12・B5-5・特性テストは変えない (§16) |
 
 ### 9.2 ②状態比較表 (現行 vs 設計後)
 
@@ -2244,6 +2308,7 @@ export function createScriptedSupabase(results: ReadonlyArray<ScriptedResult>): 
 |---|---|---|
 | 献立の ♥ を押す | `POST /api/recipes/{料理名}/like` → 404 (保存されない。♥ は戻る) | `POST /api/favorites { dish }` → 201 (料理の写しが保存される。♥ 塗り) |
 | モーダルを開いたときの ♥ | `GET /api/recipes/{料理名}/like` → `{ liked: false }` (常に空) | `GET /api/favorites/status?name=` → 保存の有無 (名前の鍵) |
+| モーダルを開いてから status の応答までの ♥ | 押せる (取得中の印を立てない。F-1)。印は開く前の値 (`RECIPE_SELECT` は null のときだけ戻す。F-3) | disabled (取得中の印 `isFavoriteLoading` を開くたびに立て、応答 (失敗・例外を含む) で下ろす。§7.9 (3))。印は未取得の空 (同じ料理の開き直しは前の値)。e2e はこの間に ♥ の値を読まず、disabled の解除を待つ (§7.16) |
 | ♥ をもう一度押す | `DELETE /api/recipes/{料理名}/like` → 404 | `DELETE /api/favorites/{id}` → 200 |
 | お気に入りの一覧 | `recipe_likes` (本番 0 行。入れる経路が無い) | `dish_favorites` の本人の行 (写しごと) |
 | 一覧の行の形 | `{ id, recipeName, recipeUuid: null, likedAt }` | `{ id, dish_name, dish, source_planned_meal_id, created_at, updated_at }` |
@@ -2316,6 +2381,7 @@ export function createScriptedSupabase(results: ReadonlyArray<ScriptedResult>): 
 | 開・空 | ♥ を押す | `busy` false | 押下中 (`fav` true・`busy` true。押した時点の回を控える) | `POST /api/favorites` (写し) |
 | 開・塗り | ♥ を押す | `busy` false・`id` あり | 押下中 (`fav` false・`busy` true) | `DELETE /api/favorites/{id}` |
 | 開・塗り | ♥ を押す | `busy` false・`id` なし (POST の応答に id が無かったとき) | 開・塗り (`fav` を戻す・`busy` false) | 何も送らない |
+| 取得中 / 押下中 | ♥ を押す | `busy` true (`RecipeModal` の ♥ は `disabled`。`handleToggleFavorite` も `isFavoriteLoading` で return) | 変わらない | 何も送らない。e2e は disabled の解除を待ってから ♥ の値を読む (§7.16) |
 | 押下中 (POST) | 応答 201 / 200 | 回が同じ | 開・塗り | `id` = `favorite.id`・`busy` false |
 | 押下中 (POST) | 応答 409 / 400 | 回が同じ | 開・空 | `alert(error)`・`busy` false |
 | 押下中 (POST) | 応答がほかの失敗 / 例外 | 回が同じ | 開・空 | `busy` false |
@@ -2463,7 +2529,10 @@ sequenceDiagram
 | 結合 (既存) | `tests/integration/security/auth-users-fk-on-delete.test.ts` | `EXPECTED_ACTIONS` に `'dish_favorites.user_id': 'CASCADE'` (D の集合の一致) |
 | 結合 (既存) | `tests/integration/security/account-export-scope.test.ts` | 種に A・B の `dish_favorites` を 1 行ずつ足し、`row_counts` に `dish_favorites: 1`。「他人の文字列が入らない」は B の料理名を `mark('DISH-FAV')` で |
 | e2e (既存) | `tests/e2e/bug-104-favorites-system.spec.ts` | 既存 7 本は変えない (いいねの route の 3 本もそのまま)。E-1「POST /api/favorites に料理の写しを送ると 201 で、GET /api/favorites に出て、DELETE /api/favorites/{id} で消える」を足す (API だけ。献立の生成に依らない) |
-| e2e (既存) | `tests/e2e/bug-31-favorite-button.spec.ts` | 変えない (♥ の `aria-pressed` と再読込後の保持。本書で初めて通るようになる) |
+| e2e (既存) | `tests/e2e/bug-31-favorite-button.spec.ts` | it 名は変えない (「clicking heart button toggles aria-pressed and heart fill color」・「favorite state persists after page reload」)。2 本目の「disabled なら skip」を disabled の解除の待ちに置き換え、♥ を押したあと POST の応答 (押下中の disabled の解除) を待ってから閉じる。1 本目の待ちは同じ定数に (§7.16 (1))。`tourPendingUser` は献立を作らないので、ふだんの走行では今と同じく 2 本とも「No recipe available for E2E user」で skip する (F-34) |
+| e2e (既存) | `tests/e2e/.exploration/recipe-shopping-explore.spec.ts` | it 名は変えない (「S3: ハートボタン: クリックで aria-pressed 変化確認」)。押す前の `aria-pressed` を、status の応答と disabled の解除を待ってから読む (§7.16 (2)) |
+
+R-2 の『ページを読み直したときの ♥ の印は保存の状態と一致する』の自動の確かめ: 読み直しは画面を最初から描き直すので、(i) 保存が DB に残る (I-1・E-1)、(ii) status が保存の有無と id を返す (T-3・T-4)、(iii) モーダルを開くたびに status を引いて印と id を入れる (W-1・W-2)、(iv) 印は未取得の空から始まる (reducer のテストの R-1・R-3) の組で確かめる。e2e の bug-31 の 2 本目は、献立のある利用者で走らせたときに読み直しを通しで確かめる (ふだんの走行は献立が無く skip。F-34)。本番では §19 の 5 で確かめる。
 
 ---
 
@@ -2498,6 +2567,7 @@ sequenceDiagram
 | `PG_INSUFFICIENT_PRIVILEGE` / `PG_UNIQUE_VIOLATION` / `PG_CHECK_VIOLATION` | `'42501'` / `'23505'` / `'23514'` | 結合テスト | Postgres のエラーコード |
 | `NAME_MAX_CHARS` / `DISH_MAX_BYTES` / `DISH_DB_MAX_BYTES` / `MARKDOWN_MAX_CHARS` / `INGREDIENTS_MAX_ITEMS` / `NUMBER_KEYS` | 100 / 32768 / 65536 / 8000 / 50 / 数の項目 30 個 | 結合テスト (§7.14) | core.ts の同じ意味の定数 (`DISH_FAVORITE_NAME_MAX_CHARS`・`DISH_FAVORITE_DISH_MAX_BYTES`・`DISH_FAVORITE_DISH_DB_MAX_BYTES`・`DISH_FAVORITE_MARKDOWN_MAX_CHARS`・`DISH_FAVORITE_INGREDIENTS_MAX_ITEMS`・`calories_kcal` と `DISH_FAVORITE_NUTRIENT_KEYS`) と同じ値 (結合テストは DB の CHECK を直接見るので数を書く。値は C-3 と U-4・U-13 が core.ts 側で固定する) |
 | `HTTP_OK` | 200 | `tests/helpers/scripted-supabase.ts` | 結果に status を書かないときの既定 (supabase-js の成功の応答) |
+| `FAVORITE_REQUEST_SETTLE_TIMEOUT_MS` (export しない) | 10000 (`10_000`) | `tests/e2e/bug-31-favorite-button.spec.ts`・`tests/e2e/.exploration/recipe-shopping-explore.spec.ts` (それぞれのファイルに 1 つ。§7.16) | ♥ の取得 (status) と押下 (POST / DELETE) の応答で disabled が解けるまでの待ちの上限。bug-31 の 1 本目の今の待ち (:44) と B5-5 (`multi-context-parallel-ops.spec.ts:394`・`:410`) と同じ 10 秒 |
 
 環境変数は 1 つ (`DISH_FAVORITES_MAX_PER_USER`)。`src/lib/env.ts` の一覧と `.env.example` に載せる (§7.6)。
 
@@ -2526,6 +2596,7 @@ sequenceDiagram
 | 欄 | `selectedRecipeData.plannedMealId` (献立の画面がモーダルに渡す値) | `menus/weekly/page.tsx` |
 | ref / 値 | `favoriteSessionRef` (モーダルの回)・`isRecipeModalOpen` (料理のモーダルが開いているか) | `menus/weekly/page.tsx` (§7.9 (2)) |
 | props | `FavoriteRecipeModalProps` (`favorite: DishFavorite`・`isRemoving`・`onRemove`・`onNotice`) / `FavoriteListItemData = Pick<DishFavorite, …>` | `favorites/_components/` |
+| 定数 (e2e。export しない) | `FAVORITE_REQUEST_SETTLE_TIMEOUT_MS` (2 つのファイルにそれぞれ 1 つ。§7.16・§13) | `tests/e2e/bug-31-favorite-button.spec.ts`・`tests/e2e/.exploration/recipe-shopping-explore.spec.ts` |
 | 定数 (画面。export しない) | `SHOPPING_LIST_ADDED_MESSAGE`・`SHOPPING_LIST_ADD_FAILED_MESSAGE`・`SHOPPING_LIST_NO_INGREDIENTS_MESSAGE` (page.tsx と FavoriteRecipeModal.tsx の両方)・`NOTICE_HIDE_MS` (page.tsx)・`FAVORITE_RECIPE_BACKDROP_BACKGROUND` (FavoriteRecipeModal.tsx) | `favorites/page.tsx`・`favorites/_components/FavoriteRecipeModal.tsx` |
 | ref / 関数 / 印 | `openFavoriteIdRef`・`openRecipeDetail` (今の関数の置き換え)・`closeRecipeDetail` (新)・state `notice` / 幕の `data-testid="favorite-recipe-backdrop"` | `favorites/page.tsx` (§7.10 (3)) / `FavoriteRecipeModal.tsx` (§7.12) |
 | 書き出しの行 | `{ table: 'dish_favorites', scope: self('user_id'), orderBy: ['created_at', 'id'] }` | `src/lib/account-export-tables.ts` |
@@ -2536,7 +2607,7 @@ sequenceDiagram
 | ファイル (テスト) | `src/__tests__/app/menus/weekly/state/recipeReducer.test.ts`・`src/__tests__/app/menus/weekly/dish-favorite-wiring.test.ts` | `src/__tests__/app/menus/weekly/` |
 | ファイル (テスト) | `src/app/(main)/favorites/__tests__/page.detail.test.ts` (H-1〜H-3) | `src/app/(main)/favorites/__tests__/` (新しいディレクトリ) |
 | ファイル (テストの偽物) | `tests/helpers/scripted-supabase.ts` (`createScriptedSupabase`・型 `ScriptedResult`・`ScriptedCall`・`ScriptedQuery`・`ScriptedSupabase`。§7.15.1) | `tests/helpers/` |
-| 既存ファイルの変更 (新設ではない) | `src/app/api/favorites/route.ts` (GET の書き換え)・`src/app/(main)/menus/weekly/page.tsx` (§7.9)・`recipeReducer.ts` (§7.8)・`src/app/(main)/favorites/page.tsx` (§7.10)・`FavoriteListItem.tsx` (§7.11)・`FavoriteRecipeModal.tsx` (§7.12)・`src/lib/env.ts`・`.env.example` (§7.6)・`src/lib/account-export-tables.ts` (§7.7)・`src/types/database.types.ts`・`packages/shared/src/database.types.ts` (生成し直し)・`tests/api/favorites-route.test.ts`・`FavoriteRecipeModal.test.ts`・`FavoriteListItem.test.ts`・`tests/legal-text-1901.test.ts`・`tests/legal-claims-1901.ts` (privacy-3#6 の evidence の表の列挙。§16)・`src/__tests__/lib/env.test.ts` (readOnlyBy の一覧の 1 行。§16)・`tests/integration/security/auth-users-fk-on-delete.test.ts`・`account-export-scope.test.ts`・`src/__tests__/api/null-character-routes.test.ts`・`tests/e2e/bug-104-favorites-system.spec.ts`。共有のテストの偽物 `tests/helpers/fake-supabase.ts`・`tests/helpers/recording-supabase.ts` は変えない (§7.15) | — |
+| 既存ファイルの変更 (新設ではない) | `src/app/api/favorites/route.ts` (GET の書き換え)・`src/app/(main)/menus/weekly/page.tsx` (§7.9)・`recipeReducer.ts` (§7.8)・`src/app/(main)/favorites/page.tsx` (§7.10)・`FavoriteListItem.tsx` (§7.11)・`FavoriteRecipeModal.tsx` (§7.12)・`src/lib/env.ts`・`.env.example` (§7.6)・`src/lib/account-export-tables.ts` (§7.7)・`src/types/database.types.ts`・`packages/shared/src/database.types.ts` (生成し直し)・`tests/api/favorites-route.test.ts`・`FavoriteRecipeModal.test.ts`・`FavoriteListItem.test.ts`・`tests/legal-text-1901.test.ts`・`tests/legal-claims-1901.ts` (privacy-3#6 の evidence の表の列挙。§16)・`src/__tests__/lib/env.test.ts` (readOnlyBy の一覧の 1 行。§16)・`tests/integration/security/auth-users-fk-on-delete.test.ts`・`account-export-scope.test.ts`・`src/__tests__/api/null-character-routes.test.ts`・`tests/e2e/bug-104-favorites-system.spec.ts`・`tests/e2e/bug-31-favorite-button.spec.ts`・`tests/e2e/.exploration/recipe-shopping-explore.spec.ts` (§7.16)。共有のテストの偽物 `tests/helpers/fake-supabase.ts`・`tests/helpers/recording-supabase.ts` は変えない (§7.15) | — |
 | 設計書 | `docs/design/cross/22-dish-favorites.md` (本書) | `docs/design/cross/` |
 
 新しい Storage のパス・RPC・cron は無い。`RecipeModal`・`/api/recipes/[id]/like`・`recipe_likes`・`viewer-lookups.ts`・`consultation-action-executor.ts`・Edge Functions は変えない。
@@ -2549,11 +2620,11 @@ sequenceDiagram
 |---|---|---|---|
 | A (DB・core・書き出し) | §7.1 migration・§7.2 戻し口・§7.3 `core.ts` (C-3 が定数を読む。純関数と Zod だけで route はまだ無い)・§7.7 書き出しの 1 行・§7.13 契約テスト (C-1〜C-8)・§7.14 結合テスト (I-1〜I-8)・§7.15 の `tests/dish-favorites-core.test.ts` (U-1〜U-16)・`database.types.ts` 2 本の生成し直し・`tests/legal-text-1901.test.ts` の対応 1 行・`tests/legal-claims-1901.ts` の evidence の 1 語・`auth-users-fk-on-delete.test.ts` の `EXPECTED_ACTIONS` 1 行・`account-export-scope.test.ts` の種と件数 | 無し (追加だけの migration) | ① 段 A の migration を本番へ適用 (追加だけ。適用の確認は §19 の 1〜4) → ② 段 A の PR をマージ (番号は直前に確定。§7.1) |
 | B1 (server・環境変数・API) | §7.4 `server.ts`・§7.6 環境変数 (`src/lib/env.ts` の 1 項目・`.env.example` の 3 行・`src/__tests__/lib/env.test.ts` の readOnlyBy の一覧の 1 行)・§7.5 route 3 ファイル・§7.15.1 `tests/helpers/scripted-supabase.ts`・§7.15 の `tests/dish-favorites-server.test.ts` (V-1〜V-10)・route の単体テスト 3 本 (`tests/api/favorites-route.test.ts` の書き換え・`favorites-status-route.test.ts`・`favorites-id-route.test.ts`)・`src/__tests__/api/null-character-routes.test.ts` の表の 1 行・e2e の E-1 | 段 A が本番に適用済み・main に入っていること (表が無いと `GET /api/favorites` が 500) | ③ 段 B1 の PR をマージ (= `GET /api/favorites` が `dish_favorites` を読む。画面はまだ `/api/recipes/[id]/like` を呼ぶが、今までどおり 404 で何も壊れない) |
-| B2 (画面) | §7.8 reducer・§7.9 献立の画面・§7.10〜§7.12 お気に入りの画面 3 ファイル・§7.15 の部品のテスト 2 本の書き換え (`FavoriteRecipeModal.test.ts` (M-1〜M-5)・`FavoriteListItem.test.ts`)・reducer のテスト (R-1〜R-4)・献立の画面の配線テスト (W-1〜W-5)・お気に入りの画面のテスト (`page.detail.test.ts`。H-1〜H-3) の新設 3 本 | 段 B1 が main に入っていること (status / POST / DELETE が無いと ♥ が動かない) | ④ 段 B2 の PR をマージ (= 公開。確認は §19 の 5〜8) |
+| B2 (画面) | §7.8 reducer・§7.9 献立の画面・§7.10〜§7.12 お気に入りの画面 3 ファイル・§7.15 の部品のテスト 2 本の書き換え (`FavoriteRecipeModal.test.ts` (M-1〜M-5)・`FavoriteListItem.test.ts`)・reducer のテスト (R-1〜R-4)・献立の画面の配線テスト (W-1〜W-5)・お気に入りの画面のテスト (`page.detail.test.ts`。H-1〜H-3) の新設 3 本・§7.16 の既存の e2e 2 本 (`tests/e2e/bug-31-favorite-button.spec.ts` の 2 本目の待ち (1 本目の :44 も同じ定数に)・`tests/e2e/.exploration/recipe-shopping-explore.spec.ts` の S3 の待ち) | 段 B1 が main に入っていること (status / POST / DELETE が無いと ♥ が動かない) | ④ 段 B2 の PR をマージ (= 公開。確認は §19 の 5〜8) |
 
 - 段内レビューの範囲は上の表の「中身」の列の §・ファイルだけ。最後の横断整合 (B2 の後) は段の境 (A の `core.ts` と B1 の `server.ts`・route の import、B1 の API と B2 の画面の fetch) と §9 の表 3 点を見る。
 - A・B1・B2 は同じ worktree で積んでもよいが、PR は分ける (A の本番の適用を B1 のマージの前に確かめるため)。B1 と B2 を 1 本の WF の 2 段にしてもよい (段内で 2 枚レビュー・最後に横断整合 1 回)。
-- 変更するファイルの数: 段 A = 12 前後 (製品 5・テスト 7)、段 B1 = 13 前後 (製品 6・テスト 7)、段 B2 = 10 (製品 5・テスト 5)。どの段も 15 ファイル・1,500 行以内。
+- 変更するファイルの数: 段 A = 12 前後 (製品 5・テスト 7)、段 B1 = 13 前後 (製品 6・テスト 7)、段 B2 = 12 (製品 5・テスト 7)。どの段も 15 ファイル・1,500 行以内。
 - 戻すとき: B2 → B1 のコードを戻してから、A の戻し口を流す (§7.2 の注意)。
 - `tests/account-export-tables.test.ts` は、migration のファイルが置かれた時点で `dish_favorites` を「分類が要る表」に数えるので、§7.7 の行は migration と同じ PR (段 A)。`tests/legal-text-1901.test.ts` の T-34 は `ACCOUNT_EXPORT_TABLES` の表を対応の表と突き合わせるので、対応の 1 行も段 A。
 - `src/__tests__/lib/env.test.ts` の readOnlyBy の一覧は `src/lib/env.ts` の一覧と完全一致を見て、`readOnlyBy` のファイルが実在することも見るので、§7.6 の 1 項目・`server.ts`・一覧の 1 行は同じ PR (段 B1)。
@@ -2584,6 +2655,7 @@ sequenceDiagram
 | `tests/api-read-not-found-scan.test.ts` (A〜D) | `.single()`・`.maybeSingle()`・`404`・`isUuid` | 動的な route の handler で `.from` / `.rpc` を呼ぶのに id を確かめないと赤。`error || !row` を 404 にすると赤 | §7.5.3 は `isUuid(id)` を先に見る (handler は `.from` を呼ばない)。§7.4 は `maybeSingle` の error を失敗にし、`null` だけを「無い」にする | B1 |
 | `tests/api-list-range-scan.test.ts` | `.range(`・`resolveBeyondLastPage(`・`isBeyondLastPage(`・`416`・`'PGRST103'` | `src/app/api` で `.range(` を使うファイルが扱いを持たないと赤。**`.range(` が `server.ts` (src/modules) に移るので、`favorites/route.ts` には `.range(` が無くなり、この見張りの対象から外れる** (走査は `src/app/api` だけ) | §7.4 が `resolveBeyondLastPage` を使う (V-3 が確かめる)。見張りの範囲を `src/modules` に広げる改定は §21 Q-6 | B1 |
 | `tests/api-error-japanese-scan.test.ts`・`tests/helpers/api-error-japanese-scope.ts:46` | `JAPANESE_ERROR_API_DIRS`・`'src/app/api/favorites'` | `src/app/api/favorites` の下の route の失敗の文に英語だけの文や例外の文面があると赤 | §7.5 の文はすべて `error-responses.ts` と `core.ts` の日本語の固定の文 | B1 |
+| `tests/api-error-english-field-names.test.ts`・`tests/helpers/api-error-text-scan.ts` | `findErrorTexts`・`englishIdentifiersOutsideParentheses`・`resolveConst` | `src/app/api` の route (相手が機械の配下を除く) の失敗の本文の文に、括弧の外の英字の項目名・役割名があると赤 (import した定数もたどって値にする)。§7.5 の route が本文に入れる文は `error-responses.ts` の固定の文 (`API_UNAUTHENTICATED_MESSAGE`・`API_INVALID_JSON_MESSAGE`・`API_NOT_FOUND_MESSAGE`)・`rejectNullCharacterBody` の `NULL_CHARACTER_ERROR_MESSAGE` (`src/lib/api/null-character.ts`) と `core.ts` の `DISH_FAVORITE_INVALID_MESSAGE`・`DISH_FAVORITE_NAME_INVALID_MESSAGE`・`dishFavoritesLimitMessage(max)` (数だけを差し込む) で、どれも英字の項目名を含まない。`server.ts` の `ROW_SHAPE_FAILURE_MESSAGE` は本文に出さない (`internalError` が固定の文にする) | 変更なし | — |
 | `tests/api-raw-error-message-scan.test.ts`・`tests/lib-raw-error-message-scan.test.ts` | `error.message`・`details`・`hint` | 本文に DB の生の文を入れると赤 | `internalError` と固定の文だけ。`server.ts` は `error` を返すだけで文を作らない | B1 |
 | `src/__tests__/lib/env.test.ts:439-553` (「値を読む場所が決まっている変数」の it。配列は `:442-493`) | `readOnlyBy`・`sealed`・`MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS` | `ENV_VARS` のうち `readOnlyBy` を持つ全項目の `[name, readOnlyBy]` を並べ替えたものと、手で書いた配列の完全一致 (`toEqual`) を見る。§7.6 で `DISH_FAVORITES_MAX_PER_USER` を足すと配列に無いので赤。あわせて `required: false`・`whenMissing` があること・`readOnlyBy` のファイルが実在することを見る | 配列の `['CSP_REPORT_ONLY', 'src/lib/security/csp.ts']` と `['DSR_RESPONSE_DUE_DAYS', 'src/lib/data-subject-requests/config.ts']` の間に、根拠のコメント 1 行 (`// #2011 献立の料理のお気に入りの件数の上限。正の整数でなければ既定値にする読み方を 1 か所に置く`) と `['DISH_FAVORITES_MAX_PER_USER', 'src/modules/dish-favorites/server.ts'],` を足す (並べ替えの順で `CSP_` と `DSR_` の間)。it の題名の変数の列挙にも `DISH_FAVORITES_MAX_PER_USER` を `CSP_REPORT_ONLY` の次に足す。同じ it の `@ts-expect-error` の列挙 (`getOptionalEnv` に渡せないこと) に `// @ts-expect-error DISH_FAVORITES_MAX_PER_USER の値を読むのは src/modules/dish-favorites/server.ts だけ (#2011)` と `getOptionalEnv('DISH_FAVORITES_MAX_PER_USER');` の 2 行を `DSR_RESPONSE_DUE_DAYS` の 2 行の次に足す | B1 |
 | `tests/env-source-scan.test.ts` (1・4・6・9) | `process.env`・`ENV_VARS`・`.env.example`・`readOnlyBy` | 本番コードが名前で読む変数が `src/lib/env.ts` の一覧に無い・`.env.example` に無い・`readOnlyBy` 以外のファイルが読むと赤 | §7.6 の一覧の 1 項目 (`readOnlyBy: 'src/modules/dish-favorites/server.ts'`) と `.env.example` の 3 行。読むのは `server.ts` だけ | B1 |
@@ -2597,10 +2669,11 @@ sequenceDiagram
 | `src/app/(main)/favorites/_components/__tests__/FavoriteListItem.test.ts` | `recipeName`・`likedAt`・`recipeUuid` | fixture の形が `FavoriteListItemData` と合わず型で赤 (描画は `item.dish_name` を読むので文言の it も赤) | fixture を `{ id, dish_name, created_at }` に。it 名は変えない。L-1 を足す | B2 |
 | `src/app/(main)/favorites/_components/__tests__/FavoriteRecipeModal.test.ts` | `recipeUuid`・`/api/recipes/`・`favorite-recipe-no-uuid`・`favorite-recipe-loading` | 4 つの describe (表示制御・uuid 無し・取得成功・再試行) が props と DOM の変化で赤 | §7.15 のとおり書き換え (M-1〜M-5) | B2 |
 | `tests/e2e/bug-104-favorites-system.spec.ts` | `お気に入りレシピ`・`レシピ名で検索...`・`お気に入りレシピはまだありません`・`に一致するレシピが見つかりませんでした`・`0 件`・`border-radius: 16px`・`/api/favorites`・`/api/recipes/:name/like` | 見出し・placeholder・空の文・行の角丸・`{ favorites, total }` の形・いいねの route の 404 を見る。どれも変えないので緑のまま | 変更なし + E-1 を足す | B1 (E-1) |
-| `tests/e2e/bug-31-favorite-button.spec.ts` | `favorite-button`・`aria-pressed` | ♥ の `data-testid`・`aria-pressed`・disabled の解除・再読込後の保持。`RecipeModal` を変えないので DOM は同じ。再読込後の保持は本書で初めて通る (今は保存されないので、データのある環境では落ちていた) | 変更なし | — |
-| `tests/e2e/w5-9-multitab-realtime-adversarial.spec.ts:703-785` (W5C-12) | `favorite-button`・`aria-pressed`・`W5C-12` | 2 つのコンテキストで同じ料理のモーダルを開き ♥ を同時に押し、2 秒後の `aria-pressed` が食い違えば注記 (`issue`) を足すだけ (expect は「レシピを見る」のあとの ♥ の表示だけ)。今は両方 404 で ♥ が戻り、注記なしで緑。設計後は S-16 (a) のとおり両方 201 (または片方 200) で同じ id・両方とも塗り (`true`) で注記は出ない。初めから保存済みなら両方 DELETE が 200 / 404 で両方とも空。片付けはタブ A が塗りのときだけ A の ♥ を 1 回押す (A の `favoriteId` = 共通の id の DELETE で行が消える)。`RecipeModal` の DOM は変えない | 変更なし | — |
+| `tests/e2e/bug-31-favorite-button.spec.ts` | `favorite-button`・`aria-pressed` | ♥ の `data-testid`・`aria-pressed`・disabled の解除・再読込後の保持。`RecipeModal` を変えないので DOM は同じ。2 本目は ♥ が見えた直後に `isDisabled()` を読み、disabled なら `test.skip` で抜ける (:100-105)。設計後は開いた直後の ♥ が取得中で disabled (§7.9 (3)) なので、献立のある利用者で走らせても毎回 skip になり、再読込後の保持を確かめずに緑になる (1 本目は :44 で解除を待つので変わらない)。`tourPendingUser` は献立を作らないので、ふだんの走行では origin/main でも設計後でも 2 本とも冒頭の「No recipe available for E2E user」で skip する (F-34) | §7.16 (1): 2 本目の skip を `not.toBeDisabled` の待ちに置き換え、♥ を押したあと POST の応答を待ってから閉じる。待ちの値は定数 `FAVORITE_REQUEST_SETTLE_TIMEOUT_MS` (1 本目の :44 も同じ定数に) | B2 |
+| `tests/e2e/w5-9-multitab-realtime-adversarial.spec.ts:703-785` (W5C-12) | `favorite-button`・`aria-pressed`・`W5C-12` | 2 つのコンテキストで同じ料理のモーダルを開き ♥ を同時に押し、2 秒後の `aria-pressed` が食い違えば注記 (`issue`) を足すだけ (expect は「レシピを見る」のあとの ♥ の表示だけ)。今は両方 404 で ♥ が戻り、注記なしで緑。設計後は S-16 (a) のとおり両方 201 (または片方 200) で同じ id・両方とも塗り (`true`) で注記は出ない。初めから保存済みなら両方 DELETE が 200 / 404 で両方とも空。片付けはタブ A が塗りのときだけ A の ♥ を 1 回押す (A の `favoriteId` = 共通の id の DELETE で行が消える)。♥ が見えた直後に読む `pressedBeforeA` (:749) は取得の前の値のことがあるが、注記の文に入るだけで expect には使わない。同時の `click()` は disabled の解除 (status の応答) を待ってから押す (F-35)。`RecipeModal` の DOM は変えない | 変更なし | — |
 | `tests/e2e/multi-context-parallel-ops.spec.ts:360-450` (B5-5) | `favorite-button`・`aria-pressed`・`not.toBeDisabled`・`B5-5` | W5C-12 と同じ形 (2 コンテキストで同時に ♥ → `aria-pressed` の食い違いを注記するだけ)。加えて ♥ が `disabled` でなくなるのを待つ (status の取得中は disabled。§7.9 (3) の `finally` で解ける。status が 400 / 500 でも解ける)。設計後は S-16 (a) で両方とも塗り。片付けは W5C-12 と同じ | 変更なし | — |
-| `tests/e2e/refactor-baseline/weekly-characterization.spec.ts:446-480` | `favorite-button`・`aria-pressed` | 献立の画面の特性テスト。♥ が見えること・`aria-pressed` が `true` / `false` のどちらかであること・押したあとも属性があることを見る (反転は見ない)。`RecipeModal` の DOM を変えないので緑のまま。設計後は押すと本当に保存される (片付けは無いので、データのある環境ではその料理の行が 1 つ残る。次の走行では塗りから始まり、押すと DELETE で消える。どちらでも緑) | 変更なし | — |
+| `tests/e2e/refactor-baseline/weekly-characterization.spec.ts:446-480` | `favorite-button`・`aria-pressed` | 献立の画面の特性テスト。♥ が見えること・`aria-pressed` が `true` / `false` のどちらかであること・押したあとも属性があることを見る (反転は見ない)。`RecipeModal` の DOM を変えないので緑のまま。`tourPendingUser` は献立を作らないので、ふだんの走行では「レシピを見る」が無く注記を足して return する (F-34)。献立がある場合も、押す前に読む `aria-pressed` (:471) は取得の前の値 (`false`) のことがあるが見るのは true / false のどちらかであることだけで、`click()` は disabled の解除を待ってから押す (F-35)。押すと本当に保存されるが、利用者は試験の終わりに消える (CASCADE で行も消える) ので次の走行に残らない | 変更なし | — |
+| `tests/e2e/.exploration/recipe-shopping-explore.spec.ts:153-212` (S3) | `favorite-button`・`aria-pressed`・`S3` | 探索の e2e (`npm run test:e2e` で走る。F-35)。♥ (無ければ `aria-pressed` と svg を持つボタン) が見えた直後に押す前の `aria-pressed` を読み (:189)、押して 1 秒後の値と違うことを expect で見る (:211)。固定の試験用アカウントで行が走行をまたいで残る (F-34) ので、設計後に保存済みの料理で開くと、押す前の値を status の応答の前 (`false`) に読み、押すと DELETE で `false` になって赤になる。今は ♥ の保存の応答が 404 で ♥ が戻るので、献立のある走行では赤になりうる | §7.16 (2): モーダルを開く前に status の応答の待ちを張り、♥ が見えたあと応答と disabled の解除を待ってから押す前の値を読む。定数 `FAVORITE_REQUEST_SETTLE_TIMEOUT_MS` | B2 |
 | `src/__tests__/app/menus/weekly/` のソース走査の配線テスト (`static-guard`・`ux2-01-02-error-handling-wiring`・`ux2-02-remaining-alerts-wiring`・`request-watch-guard` など) | `selectedRecipe`・`isFavorite`・`setIsFavorite`・`handleToggleFavorite`・`alert(` | ♥ の配線 (status の effect・`handleToggleFavorite`) を切り出すテストは無い (2026-10-25 の grep で 0 件)。`ux2-02` の `alert(` の検査は名指しした生成系の関数の中だけを見るので、§7.9 (4) の `alert(err.error)` には当たらない | 変更なし (♥ の配線は新設の W-1〜W-5 が見る) | B2 |
 | `src/__tests__/app/menus/weekly/recipe-modal-plan-skipped.test.tsx` | `RecipeModal`・`isFavorite`・`isFavoriteLoading`・`onToggleFavorite` | `RecipeModal` の props を組んで料理画像の枠の文を見る単体。本書は `RecipeModal` の props と描画を変えない (§7.9 の末尾。§7.12 も同じ props で使う) ので緑のまま | 変更なし | — |
 | `tests/helpers/mobile-removed-1598.ts`・`tests/design-doc-removed-mobile-screens.test.ts`・`tests/docs-mobile-removed-references.test.ts`・`tests/mobile-removed-files-references.test.ts` | `apps/mobile/app/`・消した画面の名前 | 設計書・README が消したモバイルの画面をいまあるものとして名指しすると赤 | 本書はモバイルの画面のパスを名指ししない (F-16 は README の行を指す) | 設計 |
@@ -2704,3 +2777,4 @@ sequenceDiagram
 | v1.1 | 2026-10-25 | 設計ゲート R1 の修正。① 核と配線の 2 冊に分けていたのを 1 冊に戻す (API 4 本・献立の ♥・お気に入りの画面・段 B1 / B2 を本書に戻し、`cross/22b` は作らない。§0.4)。② DB の CHECK `dish_favorites_dish_size` を route の上限 (JSON.stringify で 32768) より緩い 49152 に (jsonb の文字列で長くなる分の上限 16384。定数 `DISH_FAVORITE_DISH_JSONB_TEXT_EXTRA_MAX_BYTES`・`DISH_FAVORITE_DISH_DB_MAX_BYTES`。結合テスト I-8)。③ `DishNameSchema` が鍵 (NFKC) の長さも見る。④ 同時の ♥ (S-16) の応答を正典のコードに合わせる (両方 201 になりうる・200 は古い印のまま押したとき)。⑤ server と route の単体テストの偽物を新設の `tests/helpers/scripted-supabase.ts` に (共有の偽物は変えない)。⑥ 段分けで `server.ts`・環境変数・単体テストの段を明記。⑦ I-7 を厳密に後で見る。⑧ 番兵の追随表に `src/__tests__/lib/env.test.ts` の readOnlyBy の一覧を足す。⑨ 一覧の `q` を `dishFavoritesQueryOf` で作る・`RecipeModal` の栄養の行数を実数 (27) に |
 | v1.2 | 2026-10-25 | 設計ゲート R2 の修正。① 写しの材料が本番の 3 つの形 (構造の形 `{ name, amount_g, note }`・材料全体の長い 1 行・短い行。F-31) をどれも受ける (`DishIngredientItemSchema`・`DishIngredientSchema`・`ingredientListOf`・`ingredientLineOf`。構造の形を空の配列にしていた・長い 1 行を 400 にしていたのを直す)。② 材料 1 行の上限 `DISH_FAVORITE_INGREDIENT_MAX_CHARS` を 200 から 2000 に (本番の最長 677 文字)。構造の形の名前・メモの上限と分量の単位の定数を足す。③ jsonb の文字列で長くなる分の上限を数 80 個で数え直し 32768 に、DB の CHECK を 65536 に (I-8 も構造の形の材料 50 件で)。④ 献立の ♥ の応答をモーダルの回 (`favoriteSessionRef`) が同じときだけ反映 (閉じて別の料理を開いたあとの応答が印と id を書き換えていた)。⑤ status をモーダルが開くたびに引き直し (`isRecipeModalOpen` を依存に)、`RECIPE_SELECT` は同じ名前なら印と id を保つ (買い物リストの追加で閉じたあとの開き直しで ♥ が空になっていた)。⑥ 表 3 点に材料の形の行 (M・N・O) と献立の ♥ の状態遷移 (§9.3 (b)) を足す。⑦ シナリオ S-21〜S-24・テスト U-15・U-16・P-10・R-1〜R-4・W-1〜W-5 を足す |
 | v1.3 | 2026-10-25 | 設計ゲート R3 の修正。① お気に入りの詳細 (§7.12) に幕を足す: `RecipeModal` は幕を持たず (献立の画面は page.tsx の共有の幕を敷く。F-33)、§7.12 を写すと幕が消え、詳細を開いたまま後ろの一覧の行・行の ♥ を押せた。`FavoriteRecipeModal` が `RecipeModal` の兄弟として `fixed inset-0 z-[200]`・`rgba(0,0,0,0.5)` (`FAVORITE_RECIPE_BACKDROP_BACKGROUND`)・押すと `onClose` の幕を描く。② 表の構成で見つけた同じ面の欠陥を直す: 削除の応答で詳細を閉じる判定が押した時点の `selectedFavorite` (閉包) を見ていて、応答の前に閉じて別の行を開くとその詳細を閉じていた → 応答の時点の `openFavoriteIdRef` で比べる。`openRecipeDetail` / `closeRecipeDetail` に開閉をまとめる。詳細の ♥ は応答待ちの間どの行でも disabled (`removingId !== null`。2 本目は今も `if (removingId) return` で捨てられる)。③ 表 3 点に詳細の幕と削除の応答を足す (§9.1 (a) の注記・(b)・§9.2 の 2 行・§9.3 (c) の新しい遷移表)。④ シナリオ S-25・S-26 (26 本)・テスト M-5・H-1〜H-3 (新しいテストファイル `src/app/(main)/favorites/__tests__/page.detail.test.ts`)・R-4・§8・§11・§13・§14・§15・§16・§19 を追随 |
+| v1.4 | 2026-10-25 | 設計ゲート R4 の修正。① §7.9 (3) はモーダルを開くたびに ♥ を取得中の disabled にするので、`tests/e2e/bug-31-favorite-button.spec.ts` の 2 本目 (♥ が見えた直後に `isDisabled()` を読み、disabled なら skip。:100-105) が、献立のある利用者で走らせても毎回 skip になり再読込後の保持を確かめなくなっていた。§16 の「変更なし・本書で初めて通る」を直し、2 本目を disabled の解除の待ちに置き換える (§7.16 (1)。押したあと POST の応答を待ってから閉じる・1 本目の待ちも同じ定数 `FAVORITE_REQUEST_SETTLE_TIMEOUT_MS`)。② 同じ型 (♥ の値を取得の前に読む e2e) を ♥ を使う e2e 5 本で洗い、§16 に無かった探索の `tests/e2e/.exploration/recipe-shopping-explore.spec.ts` の S3 (固定の試験用アカウントで行が残り、保存済みの料理で赤になる) を足して直す (§7.16 (2))。W5C-12・B5-5・特性テストは取得の前の値を expect に使わないので変えない (§16 に理由)。③ e2e の利用者と献立の事実を F-34 (`tourPendingUser` は献立を作らず試験の終わりに消える・固定の試験用アカウントは行が残る)・F-35 (`.exploration/` も走る・`click()` は enabled を待つ) に足し、特性テストの行の「データのある環境では行が残る」を直す。④ R-2 の再読込の自動の確かめを §12 の末尾に書く (I-1・E-1・T-3・T-4・W-1・W-2・reducer の R-1・R-3。bug-31 はふだん献立が無く skip)。⑤ 表 3 点に追随 (§9.1 (b) に e2e の行・§9.2 に「開いてから status の応答までの ♥」の行・§9.3 (b) に取得中 / 押下中の ♥ の押下の行)。§0.2・§3.3・§12〜§15 も追随。F-1 の effect の行を `:1924-1935` に (useEffect は :1925 から)。⑥ §16 に、走査で漏れていた `tests/api-error-english-field-names.test.ts` の行 (変更なし) を足す |
