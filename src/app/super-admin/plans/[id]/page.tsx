@@ -3,11 +3,18 @@
 /**
  * /super-admin/plans/[id] — プラン詳細・編集
  * operator/03-ui-spec.md §24 準拠
+ *
+ * 保存・公開・非公開・廃止・廃止の取り消しが 409 CONFLICT_STALE_DATA (読んでから書くまでに別の運営が先にプランを変えた) で
+ * 断られたら、画面が自分でプランを読み直し、読み直した旨を画面の上に出す (運営が手で読み込み直さなくてよいように。#1917)。
+ * 表示名・説明・表示順の入力欄は、最後に読んだ値から変えている (書きかけ) ものだけ残し、ほかは読み直した値にする。
+ * 一度表示したあとの読み直し (保存・状態の変更のあと・409 のあと) は画面を外さずに行い、失敗しても画面と入力欄を残して、
+ * 文と「再試行」を出す (読み直しの失敗で画面ごとエラーに置き換えない。#1917)。
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { isStaleDataConflict } from '@/lib/admin/api-error-message';
 import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE, countsOrganizationsFor } from '@/lib/super-admin/plan-subscribers';
 
 type Plan = {
@@ -41,6 +48,70 @@ type PriceHistoryEntry = {
   created_at: string;
 };
 
+/** 入力欄 (表示名・説明・表示順) の値 */
+type PlanEdits = {
+  displayName: string;
+  description: string;
+  displayOrder: number;
+};
+
+/** プランの行から作る入力欄の初めの値 */
+function editsOf(plan: Plan): PlanEdits {
+  return { displayName: plan.display_name, description: plan.description ?? '', displayOrder: plan.display_order };
+}
+
+/** 入力欄が書きかけか (最後に読んだプランから作った初めの値から、どれかの欄を変えている) */
+function isEdited(current: PlanEdits, loaded: PlanEdits): boolean {
+  return (
+    current.displayName !== loaded.displayName ||
+    current.description !== loaded.description ||
+    current.displayOrder !== loaded.displayOrder
+  );
+}
+
+/**
+ * 画面の上に出す、読み直しについての文 (#1917)。
+ *   - stale              : 409 CONFLICT_STALE_DATA のあとに読み直した
+ *   - stale-reload-failed: 409 CONFLICT_STALE_DATA のあとの読み直しに失敗した (「再試行」を出す)
+ *   - reload-failed      : 保存・状態の変更に成功したあとの読み直しに失敗した (「再試行」を出す)
+ * editsKept は、入力欄の書きかけを読み直しで消さずに残したか
+ */
+type ReloadNotice =
+  | { kind: 'stale'; editsKept: boolean }
+  | { kind: 'stale-reload-failed'; editsKept: boolean }
+  | { kind: 'reload-failed' };
+
+/**
+ * 409 CONFLICT_STALE_DATA のあとに読み直したときの文。
+ * サーバーの文は「画面を読み込み直して」と頼む文なので使わない (画面が自分で読み直すため)
+ */
+const STALE_PLAN_MESSAGE =
+  '別の運営が先にこのプランを変えていました。最新の内容を読み込み直したので、状態を確かめてから、もう一度操作してください';
+
+/** 409 CONFLICT_STALE_DATA のあとの読み直しに失敗したときの文 */
+const STALE_PLAN_RELOAD_FAILED_MESSAGE =
+  '別の運営が先にこのプランを変えていました。最新の内容を読み込み直せませんでした。「再試行」で読み込み直してから、もう一度操作してください';
+
+/** 保存・状態の変更に成功したあとの読み直しに失敗したときの文 */
+const PLAN_RELOAD_FAILED_MESSAGE = '最新の内容を読み込めませんでした。「再試行」で読み込み直してください';
+
+/** 入力欄の書きかけを残したときに添える文 */
+const EDITS_KEPT_SUFFIX = '（入力中の表示名・説明・表示順はそのまま残しています）';
+
+function reloadNoticeText(notice: ReloadNotice): string {
+  switch (notice.kind) {
+    case 'stale':
+      return `${STALE_PLAN_MESSAGE}${notice.editsKept ? EDITS_KEPT_SUFFIX : ''}`;
+    case 'stale-reload-failed':
+      return `${STALE_PLAN_RELOAD_FAILED_MESSAGE}${notice.editsKept ? EDITS_KEPT_SUFFIX : ''}`;
+    case 'reload-failed':
+      return PLAN_RELOAD_FAILED_MESSAGE;
+  }
+}
+
+/** 読み直しの結果。superseded は、読み直しの最中に新しい読み直しが始まったので結果を捨てた */
+type PlanReloadOutcome = { kind: 'loaded'; editsKept: boolean } | { kind: 'failed' } | { kind: 'superseded' };
+
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   draft: { label: '下書き', color: 'bg-slate-100 text-slate-600' },
   public: { label: '公開中', color: 'bg-green-100 text-green-700' },
@@ -65,34 +136,137 @@ export default function PlanDetailPage() {
   const [displayOrder, setDisplayOrder] = useState(0);
   const [activeTab, setActiveTab] = useState<'basic' | 'price' | 'history'>('basic');
 
-  const fetchPlan = useCallback(async () => {
-    setIsLoading(true);
+  // 画面の上に出す、読み直しについての文 (#1917)
+  const [reloadNotice, setReloadNotice] = useState<ReloadNotice | null>(null);
+  const [isReloading, setIsReloading] = useState(false);
+  // 一度プランを表示したか (表示したあとの読み直しは、画面を外さずに行う。#1917)
+  const hasLoadedRef = useRef(false);
+  // 入力欄のいまの値 (描画を待たずに読むための写し。入力欄は setEdits でだけ変える)
+  const editsRef = useRef<PlanEdits>({ displayName: '', description: '', displayOrder: 0 });
+  // 最後に読んだプランから作った入力欄の初めの値 (読み直しのとき、書きかけの欄を見分ける。#1917)
+  const loadedEditsRef = useRef<PlanEdits>({ displayName: '', description: '', displayOrder: 0 });
+  // 読み直しを重ねたとき、古い読み直しの結果で上書きしないための連番
+  const fetchSeq = useRef(0);
+
+  const setEdits = useCallback((patch: Partial<PlanEdits>) => {
+    const next = { ...editsRef.current, ...patch };
+    editsRef.current = next;
+    setDisplayName(next.displayName);
+    setDescription(next.description);
+    setDisplayOrder(next.displayOrder);
+  }, []);
+
+  /**
+   * プランを読む。初めの読み込みは画面を「読み込み中」にし、失敗したら画面をエラーにする。
+   * 表示したあとの読み直しは画面を外さず、失敗しても画面と入力欄を残す (結果は戻り値で返し、文は呼び出し側が決める。#1917)。
+   * keepEdits のときは、入力欄のうち最後に読んだ値から変えている (書きかけの) 欄を残し、ほかは読んだ値にする
+   */
+  const fetchPlan = useCallback(async (options: { keepEdits?: boolean } = {}): Promise<PlanReloadOutcome> => {
+    const seq = ++fetchSeq.current;
+    const isReload = hasLoadedRef.current;
+    if (isReload) {
+      setIsReloading(true);
+    } else {
+      setIsLoading(true);
+    }
     try {
       const res = await fetch(`/api/super-admin/plans/${planId}`);
       const data = await res.json() as { data?: Plan; error?: { message: string } };
-      if (!res.ok) {
-        setError(data.error?.message ?? 'プランの取得に失敗しました');
-        return;
+      if (seq !== fetchSeq.current) return { kind: 'superseded' };
+      if (!res.ok || !data.data) {
+        if (!isReload) setError(data.error?.message ?? 'プランの取得に失敗しました');
+        return { kind: 'failed' };
       }
-      setPlan(data.data!);
-      setDisplayName(data.data!.display_name);
-      setDescription(data.data!.description ?? '');
-      setDisplayOrder(data.data!.display_order);
+      const loaded = data.data;
+      const fresh = editsOf(loaded);
+      const previous = loadedEditsRef.current;
+      const current = editsRef.current;
+      const keep = options.keepEdits === true && isReload;
+      const next: PlanEdits = {
+        displayName: keep && current.displayName !== previous.displayName ? current.displayName : fresh.displayName,
+        description: keep && current.description !== previous.description ? current.description : fresh.description,
+        displayOrder: keep && current.displayOrder !== previous.displayOrder ? current.displayOrder : fresh.displayOrder,
+      };
+      const editsKept =
+        next.displayName !== fresh.displayName ||
+        next.description !== fresh.description ||
+        next.displayOrder !== fresh.displayOrder;
+      loadedEditsRef.current = fresh;
+      hasLoadedRef.current = true;
+      setPlan(loaded);
+      setError('');
+      setEdits(next);
+      return { kind: 'loaded', editsKept };
     } catch {
-      setError('ネットワークエラー');
+      if (seq !== fetchSeq.current) return { kind: 'superseded' };
+      if (!isReload) setError('ネットワークエラー');
+      return { kind: 'failed' };
     } finally {
-      setIsLoading(false);
+      if (seq === fetchSeq.current) {
+        setIsLoading(false);
+        setIsReloading(false);
+      }
     }
-  }, [planId]);
+  }, [planId, setEdits]);
 
   useEffect(() => {
-    fetchPlan();
+    void fetchPlan();
   }, [fetchPlan]);
+
+  /** 保存・状態の変更に成功したあとの読み直し。失敗したら画面を残して文と「再試行」を出す (#1917) */
+  const reloadAfterSuccess = useCallback(async () => {
+    const outcome = await fetchPlan();
+    if (outcome.kind === 'failed') setReloadNotice({ kind: 'reload-failed' });
+  }, [fetchPlan]);
+
+  /**
+   * 409 CONFLICT_STALE_DATA (別の運営が先にプランを変えた) のあとの読み直し。書きかけの入力欄は残し、
+   * 結果に合わせて文を出す (読み直せなかったのに「読み込み直した」と出さない。#1917)
+   */
+  const reloadAfterStale = useCallback(async () => {
+    const editedBefore = isEdited(editsRef.current, loadedEditsRef.current);
+    const outcome = await fetchPlan({ keepEdits: true });
+    if (outcome.kind === 'loaded') {
+      setReloadNotice({ kind: 'stale', editsKept: outcome.editsKept });
+    } else if (outcome.kind === 'failed') {
+      setReloadNotice({ kind: 'stale-reload-failed', editsKept: editedBefore });
+    }
+  }, [fetchPlan]);
+
+  /** 「再試行」: 失敗した読み直しをやり直す。409 のあとの読み直しなら、成功したら 409 のあとの文にする */
+  const retryReload = useCallback(async () => {
+    if (reloadNotice?.kind === 'stale-reload-failed') {
+      await reloadAfterStale();
+      return;
+    }
+    const outcome = await fetchPlan({ keepEdits: true });
+    if (outcome.kind === 'loaded') setReloadNotice(null);
+  }, [fetchPlan, reloadAfterStale, reloadNotice]);
+
+  /**
+   * 状態の変更 (公開・非公開・廃止・廃止の取り消し) の応答を処理する。成功なら読み直す。
+   * 409 CONFLICT_STALE_DATA なら読み直して画面の上に文を出す (#1917)。それ以外の失敗は API の文を alert で出す
+   */
+  const handleStatusResponse = async (res: Response, failureSummary: string) => {
+    if (res.ok) {
+      await reloadAfterSuccess();
+      return;
+    }
+    const data: unknown = await res.json().catch(() => null);
+    if (isStaleDataConflict(res.status, data)) {
+      await reloadAfterStale();
+      return;
+    }
+    const message =
+      typeof data === 'object' && data !== null ? (data as { error?: { message?: unknown } }).error?.message : undefined;
+    alert(typeof message === 'string' ? message : `${failureSummary} (HTTP ${res.status})`);
+  };
 
   const handleSave = async () => {
     setIsSaving(true);
     setSaveError('');
     setSaveSuccess(false);
+    setReloadNotice(null);
     try {
       const res = await fetch(`/api/super-admin/plans/${planId}`, {
         method: 'PATCH',
@@ -108,16 +282,24 @@ export default function PlanDetailPage() {
           display_order: displayOrder,
         }),
       });
-      const data = await res.json() as { error?: { message: string } };
+      const data: unknown = await res.json().catch(() => null);
       if (!res.ok) {
-        setSaveError(data.error?.message ?? '保存に失敗しました');
+        if (isStaleDataConflict(res.status, data)) {
+          // 別の運営が先にプランを変えていた (API は書いていない)。プランを読み直し、その旨を画面の上に出す。
+          // 入力欄の書きかけは消さない (#1917)
+          await reloadAfterStale();
+          return;
+        }
+        const message =
+          typeof data === 'object' && data !== null ? (data as { error?: { message?: unknown } }).error?.message : undefined;
+        setSaveError(typeof message === 'string' ? message : '保存に失敗しました');
         return;
       }
       setSaveSuccess(true);
       // #1724: PATCH の応答はプランの行だけで、価格変更の履歴 (price_history) を含まない。
       // 応答で plan を丸ごと置き換えると履歴の一覧が空になるので、画面の状態は GET (fetchPlan) だけから作る
       // (公開・非公開・廃止の操作と同じ)。
-      await fetchPlan();
+      await reloadAfterSuccess();
     } catch {
       setSaveError('ネットワークエラー');
     } finally {
@@ -131,19 +313,15 @@ export default function PlanDetailPage() {
     );
     if (!confirm) return;
 
+    setReloadNotice(null);
     try {
       const res = await fetch(`/api/super-admin/plans/${planId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus }),
       });
-      if (res.ok) {
-        fetchPlan();
-        return;
-      }
       // #1041 修正: 失敗時 (422/400/403 等) に無反応にせず、必ずエラーを表示する
-      const data = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-      alert(data?.error?.message ?? `ステータス変更に失敗しました (HTTP ${res.status})`);
+      await handleStatusResponse(res, 'ステータス変更に失敗しました');
     } catch {
       alert('ステータス変更に失敗しました (ネットワークエラー)');
     }
@@ -162,18 +340,14 @@ export default function PlanDetailPage() {
     const orgRowNote = plan && !countsOrganizationsFor(plan) ? `\n\n${ORG_SUBSCRIPTION_PLAN_ROW_NOTE}` : '';
     if (!window.confirm(`このプランを ${endsAtInput} 廃止予定で廃止しますか？${orgRowNote}`)) return;
 
+    setReloadNotice(null);
     try {
       const res = await fetch(`/api/super-admin/plans/${planId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'deprecated', ends_at: endsAtDate.toISOString() }),
       });
-      if (res.ok) {
-        fetchPlan();
-        return;
-      }
-      const data = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-      alert(data?.error?.message ?? `廃止処理に失敗しました (HTTP ${res.status})`);
+      await handleStatusResponse(res, '廃止処理に失敗しました');
     } catch {
       alert('廃止処理に失敗しました (ネットワークエラー)');
     }
@@ -182,18 +356,14 @@ export default function PlanDetailPage() {
   // deprecated --> private への緊急ロールバック (public には戻さない)
   const handleUndeprecate = async () => {
     if (!window.confirm('廃止を取り消し、非公開状態に戻しますか？')) return;
+    setReloadNotice(null);
     try {
       const res = await fetch(`/api/super-admin/plans/${planId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'private' }),
       });
-      if (res.ok) {
-        fetchPlan();
-        return;
-      }
-      const data = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-      alert(data?.error?.message ?? `廃止取り消しに失敗しました (HTTP ${res.status})`);
+      await handleStatusResponse(res, '廃止取り消しに失敗しました');
     } catch {
       alert('廃止取り消しに失敗しました (ネットワークエラー)');
     }
@@ -282,6 +452,26 @@ export default function PlanDetailPage() {
         </div>
       </div>
 
+      {reloadNotice && (
+        <div
+          role="alert"
+          data-testid="plan-reload-notice"
+          className="mb-4 bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-lg text-sm flex items-center justify-between gap-4"
+        >
+          <span>{reloadNoticeText(reloadNotice)}</span>
+          {reloadNotice.kind !== 'stale' && (
+            <button
+              type="button"
+              onClick={() => void retryReload()}
+              disabled={isReloading}
+              className="shrink-0 underline whitespace-nowrap hover:text-amber-900 disabled:opacity-50"
+            >
+              {isReloading ? '読み込み中...' : '再試行'}
+            </button>
+          )}
+        </div>
+      )}
+
       {showOrgRowNote && (
         <p
           data-testid="org-subscription-plan-row-note"
@@ -327,7 +517,7 @@ export default function PlanDetailPage() {
             <input
               type="text"
               value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
+              onChange={(e) => setEdits({ displayName: e.target.value })}
               disabled={!isEditable}
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-slate-50"
             />
@@ -337,7 +527,7 @@ export default function PlanDetailPage() {
             <label className="block text-sm font-medium text-slate-700 mb-1">説明</label>
             <textarea
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e) => setEdits({ description: e.target.value })}
               disabled={!isEditable}
               rows={4}
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-slate-50"
@@ -349,7 +539,7 @@ export default function PlanDetailPage() {
             <input
               type="number"
               value={displayOrder}
-              onChange={(e) => setDisplayOrder(Number(e.target.value))}
+              onChange={(e) => setEdits({ displayOrder: Number(e.target.value) })}
               disabled={!isEditable}
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-slate-50"
             />
@@ -375,7 +565,8 @@ export default function PlanDetailPage() {
             <div className="flex justify-end pt-2">
               <button
                 onClick={handleSave}
-                disabled={isSaving}
+                // 読み直しの最中は保存しない (読み直しが入力欄を今のプランの値に合わせる前の値を送らないため。#1917)
+                disabled={isSaving || isReloading}
                 className="px-5 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors disabled:opacity-50"
               >
                 {isSaving ? '保存中...' : '保存する'}
