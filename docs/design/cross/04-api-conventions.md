@@ -149,6 +149,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `CONFLICT_DUPLICATE_EMAIL` | メールアドレス重複 | 409 |
 | `CONFLICT_DUPLICATE_INVITE` | 既存招待が有効 | 409 |
 | `CONFLICT_FAMILY_MEMBER_LIMIT` | 家族メンバー上限 | 409 |
+| `CONFLICT_DISH_FAVORITES_LIMIT` | **[NEW]** 献立の料理のお気に入りの件数の上限 (`POST /api/favorites`。cross/22 §10) | 409 |
 
 #### RATE 系
 
