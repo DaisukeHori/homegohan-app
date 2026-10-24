@@ -8,6 +8,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { lastPageToRefetch } from '@/lib/list-pagination';
 
 type TicketStatus = 'open' | 'in_progress' | 'pending' | 'resolved' | 'closed';
 type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
@@ -94,6 +95,12 @@ export default function SupportTicketsPage() {
         throw new Error('チケット一覧の取得に失敗しました');
       }
       const json = await res.json();
+      // 件数より後ろのページ (最後のページの唯一の行が消えたあとの読み直しなど) は、空のページを見せずに最後のページへ取り直す (#1917)
+      const refetchPage = lastPageToRefetch({ rows: (json.data ?? []).length, page, total: json.meta?.total ?? 0, perPage });
+      if (refetchPage !== null) {
+        setPage(refetchPage);
+        return;
+      }
       setTickets(json.data ?? []);
       setTotal(json.meta?.total ?? 0);
     } catch (e: unknown) {

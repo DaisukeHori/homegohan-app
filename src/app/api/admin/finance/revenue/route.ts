@@ -11,8 +11,12 @@ import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
 import { RevenueQuerySchema } from '@/lib/admin/finance-schemas';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 
 export const dynamic = 'force-dynamic';
+
+/** 一覧の構造化ログの function_name */
+const LIST_ROUTE_NAME = 'GET /api/admin/finance/revenue';
 
 /** 集計サマリーの既定の期間 (from を指定しないとき、JST の今日から何日前までの revenue_snapshots.date を見るか) */
 const REVENUE_SUMMARY_LOOKBACK_DAYS = 30;
@@ -32,22 +36,29 @@ export async function GET(request: NextRequest) {
       per_page: searchParams.get('per_page') ?? undefined,
     });
 
-    let dbQuery = supabase
-      .from('revenue_snapshots')
-      .select('*', { count: 'exact' })
-      .order('date', { ascending: false });
+    // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectSnapshots) から作る
+    const selectSnapshots = (options: { head?: boolean } = {}) => {
+      let dbQuery = supabase
+        .from('revenue_snapshots')
+        .select('*', listCountOptions(options.head));
 
-    if (query.from) {
-      dbQuery = dbQuery.gte('date', query.from);
-    }
-    if (query.to) {
-      dbQuery = dbQuery.lte('date', query.to);
-    }
+      if (query.from) {
+        dbQuery = dbQuery.gte('date', query.from);
+      }
+      if (query.to) {
+        dbQuery = dbQuery.lte('date', query.to);
+      }
+      return dbQuery;
+    };
 
     const offset = (query.page - 1) * query.per_page;
-    dbQuery = dbQuery.range(offset, offset + query.per_page - 1);
-
-    const { data: snapshots, count, error } = await dbQuery;
+    const { data: snapshots, count, error } = await resolveBeyondLastPage(
+      await selectSnapshots()
+        .order('date', { ascending: false })
+        .range(offset, offset + query.per_page - 1),
+      () => selectSnapshots({ head: true }),
+      LIST_ROUTE_NAME,
+    );
 
     if (error) {
       throw new Error(error.message);

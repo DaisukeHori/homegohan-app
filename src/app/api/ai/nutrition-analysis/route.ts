@@ -14,6 +14,9 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AI_MENU_CHANGE_INPUT_REQUIRED_MESSAGE, aiInvalidDateMessage, AI_MENU_DAY_NOT_FOUND_MESSAGE, AI_MENU_MEAL_NOT_FOUND_MESSAGE, AI_MENU_REQUEST_CREATE_FAILED_MESSAGE, AI_MENU_REGENERATE_FAILED_MESSAGE } from '@/lib/ai/ai-api-messages';
 
+/** 対象の食事を探すときに読む件数。ちょうど 1 件かを見分けるのに 2 件まで読めば足りる (複数あれば決められないので 404) */
+const MEAL_LOOKUP_LIMIT = 2;
+
 // 栄養目標が未設定のときの既定値（g/日）。
 // 糖質は「炭水化物 − 食物繊維」で計算しているので、目標も同じ定義（炭水化物の目標 − 食物繊維の目標）で導く (#1146)。
 const DEFAULT_CARBS_TARGET_G = 300;
@@ -381,26 +384,35 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: aiInvalidDateMessage('日付') }, { status: 400 });
     }
 
-    // 該当日付の user_daily_meals を取得（日付ベースモデル）
-    const { data: dailyMeal } = await supabase
+    // 該当日付の user_daily_meals を取得（日付ベースモデル）。
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で献立が無いように見せない。#1917)
+    const { data: dailyMeal, error: dailyMealError } = await supabase
       .from('user_daily_meals')
       .select('id')
       .eq('user_id', user.id)
       .eq('day_date', targetDate)
-      .single();
+      .maybeSingle();
 
+    if (dailyMealError) {
+      return internalError('POST /api/ai/nutrition-analysis', dailyMealError, { userId: user.id, table: 'user_daily_meals' });
+    }
     if (!dailyMeal) {
       return NextResponse.json({ error: AI_MENU_DAY_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
-    // 対象の食事を取得
-    const { data: meal } = await supabase
+    // 対象の食事を取得。1 日の同じ区分に食事が複数あると、どれを変えるか決められないので、ちょうど 1 件のときだけ進む
+    // (以前の .single() と同じ。0 件・複数は 404)。読めなかったときは 404 にしない (#1917)
+    const { data: meals, error: mealError } = await supabase
       .from('planned_meals')
       .select('id')
       .eq('daily_meal_id', dailyMeal.id)
       .eq('meal_type', targetMealType)
-      .single();
+      .limit(MEAL_LOOKUP_LIMIT);
 
+    if (mealError) {
+      return internalError('POST /api/ai/nutrition-analysis', mealError, { userId: user.id, table: 'planned_meals' });
+    }
+    const meal = meals?.length === 1 ? meals[0] : null;
     if (!meal) {
       return NextResponse.json({ error: AI_MENU_MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
     }

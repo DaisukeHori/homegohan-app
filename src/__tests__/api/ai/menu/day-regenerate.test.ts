@@ -22,7 +22,8 @@ const mockFrom = vi.fn((table: string) => {
       select: () => ({
         eq: () => ({
           eq: () => ({
-            single: mockUserDailyMealsSingle,
+            // 1 日の献立は maybeSingle で読む (#1917。DB の失敗は 404 ではなく 500)
+            maybeSingle: mockUserDailyMealsSingle,
           }),
         }),
       }),
@@ -116,7 +117,8 @@ vi.mock('@vercel/functions', () => ({
 const { POST } = await import('@/app/api/ai/menu/day/regenerate/route');
 
 const user = { id: 'user-1' };
-const dailyMealId = 'day-1';
+// route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、1 日の献立の id は UUID の形にする
+const dailyMealId = '99999999-9999-4999-8999-999999999996';
 const dayDate = '2026-07-10';
 
 const makeRequest = (body: Record<string, unknown>) =>

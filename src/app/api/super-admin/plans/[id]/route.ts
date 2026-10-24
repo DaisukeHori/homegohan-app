@@ -45,8 +45,12 @@ import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { invalidInputResponse, invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
+import { isUuid } from '@/lib/http-params';
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+/** 対象が無い (UUID の形でない id を含む) */
+const PLAN_NOT_FOUND_RESPONSE = { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } } as const;
 
 /** 読んでから書くまでに別の運営がプランを変えていた (条件つきの更新が 0 行で、読み直した行に送った変更が入っていない) */
 const STALE_PLAN_RESPONSE = {
@@ -99,19 +103,24 @@ export async function GET(_request: NextRequest, props: RouteContext) {
   const params = await props.params;
   try {
     await requireRole(['super_admin']);
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
+    }
     const supabase = await createClient();
 
     const { data: plan, error } = await supabase
       .from('subscription_plans')
       .select('*')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
-    if (error || !plan) {
-      return NextResponse.json(
-        { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } },
-        { status: 404 }
-      );
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で消えたように見せない。#1917)
+    if (error) {
+      return internalError('GET /api/super-admin/plans/[id]', error, { table: 'subscription_plans' }, { shape: 'nested' });
+    }
+    if (!plan) {
+      return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     // 価格変更履歴を追加取得
@@ -143,6 +152,10 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
   const logger = createLogger('PATCH /api/super-admin/plans/[id]', generateRequestId());
   try {
     const user = await requireRole(['super_admin']);
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
+    }
     const supabase = await createClient();
 
     // 既存プランを取得
@@ -150,13 +163,14 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
       .from('subscription_plans')
       .select('*')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
-    if (fetchErr || !existing) {
-      return NextResponse.json(
-        { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } },
-        { status: 404 }
-      );
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で消えたように見せない。#1917)
+    if (fetchErr) {
+      return internalError('PATCH /api/super-admin/plans/[id]', fetchErr, { userId: user.id, table: 'subscription_plans' }, { shape: 'nested' });
+    }
+    if (!existing) {
+      return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     const bodyResult = await readJsonBody(request);
@@ -381,19 +395,24 @@ export async function DELETE(request: NextRequest, props: RouteContext) {
   const params = await props.params;
   try {
     const user = await requireRole(['super_admin']);
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
+    }
     const supabase = await createClient();
 
     const { data: existing, error: fetchErr } = await supabase
       .from('subscription_plans')
       .select('id, status, plan_key')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
-    if (fetchErr || !existing) {
-      return NextResponse.json(
-        { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } },
-        { status: 404 }
-      );
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で消えたように見せない。#1917)
+    if (fetchErr) {
+      return internalError('DELETE /api/super-admin/plans/[id]', fetchErr, { userId: user.id, table: 'subscription_plans' }, { shape: 'nested' });
+    }
+    if (!existing) {
+      return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     // draft のみ削除可能

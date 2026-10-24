@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { lastPageToRefetch } from "@/lib/list-pagination";
 
 interface AuditLogEntry {
   id: string;
@@ -56,6 +57,12 @@ export default function AuditLogsPage() {
         throw new Error(body.error?.message ?? `HTTP ${res.status}`);
       }
       const { data, meta } = await res.json();
+      // 件数より後ろのページは、空のページを見せずに最後のページへ取り直す (#1917)
+      const refetchPage = lastPageToRefetch({ rows: (data ?? []).length, page, total: meta?.total ?? 0, perPage: PER_PAGE });
+      if (refetchPage !== null) {
+        setPage(refetchPage);
+        return;
+      }
       setLogs(data ?? []);
       setTotal(meta?.total ?? 0);
     } catch (err) {

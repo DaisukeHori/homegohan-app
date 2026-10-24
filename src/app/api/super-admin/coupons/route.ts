@@ -15,11 +15,15 @@ import {
   CouponsQuerySchema,
 } from '@/lib/super-admin/coupons-schemas';
 import { internalError } from '@/lib/api/errors';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { couponValidFromTimestamp, couponValidUntilTimestamp } from '@/lib/super-admin/coupon-validity';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { couponInvalidInputResponse, couponInvalidQueryResponse } from '@/lib/super-admin/coupon-errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
+
+/** 一覧の構造化ログの function_name */
+const LIST_ROUTE_NAME = 'GET /api/super-admin/coupons';
 
 export async function GET(request: NextRequest) {
   try {
@@ -42,19 +46,28 @@ export async function GET(request: NextRequest) {
     const { status, applicable_to, page, per_page } = queryResult.data;
     const offset = (page - 1) * per_page;
 
-    let query = supabase
-      .from('coupons')
-      .select('*', { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range(offset, offset + per_page - 1);
+    // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectCoupons) から作る
+    const selectCoupons = (options: { head?: boolean } = {}) => {
+      let query = supabase
+        .from('coupons')
+        .select('*', listCountOptions(options.head));
 
-    if (status) query = query.eq('status', status);
-    if (applicable_to) query = query.eq('applicable_to', applicable_to);
+      if (status) query = query.eq('status', status);
+      if (applicable_to) query = query.eq('applicable_to', applicable_to);
 
-    const { data, error, count } = await query;
+      return query;
+    };
+
+    const { data, error, count } = await resolveBeyondLastPage(
+      await selectCoupons()
+        .order('created_at', { ascending: false })
+        .range(offset, offset + per_page - 1),
+      () => selectCoupons({ head: true }),
+      LIST_ROUTE_NAME,
+    );
 
     if (error) {
-      return internalError('GET /api/super-admin/coupons', error, {}, { shape: 'nested' });
+      return internalError(LIST_ROUTE_NAME, error, {}, { shape: 'nested' });
     }
 
     return NextResponse.json({

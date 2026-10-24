@@ -78,14 +78,18 @@ export async function PUT(
     return NextResponse.json({ error: HEALTH_CHECKUP_DATE_NULL_MESSAGE }, { status: 400 });
   }
 
-  // 所有権確認
-  const { data: existing } = await supabase
+  // 所有権確認。
+  // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で記録が消えたように見せない。目標 goals/[id] と同じ。#1917)
+  const { data: existing, error: existingError } = await supabase
     .from('health_checkups')
     .select('id')
     .eq('id', id)
     .eq('user_id', user.id)
     .maybeSingle();
 
+  if (existingError) {
+    return internalError('PUT /api/health/checkups/[id]', existingError, { userId: user.id, table: 'health_checkups' });
+  }
   if (!existing) {
     return NextResponse.json({ error: HEALTH_CHECKUP_NOT_FOUND_MESSAGE }, { status: 404 });
   }
@@ -99,10 +103,14 @@ export async function PUT(
     })
     .eq('id', id)
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
     return internalError('PUT /api/health/checkups/[id]', error, { userId: user.id, table: 'health_checkups' });
+  }
+  // 読んでから書くまでに消された (更新した行が無い) ときは 404 (#1917)
+  if (!data) {
+    return NextResponse.json({ error: HEALTH_CHECKUP_NOT_FOUND_MESSAGE }, { status: 404 });
   }
 
   return NextResponse.json({ checkup: data });
@@ -126,14 +134,17 @@ export async function DELETE(
     return NextResponse.json({ error: INVALID_ID_PARAM_MESSAGE, code: INVALID_ID_PARAM_CODE }, { status: 400 });
   }
 
-  // 所有権確認
-  const { data: existing } = await supabase
+  // 所有権確認。読めなかったときは 404 にしない (行が無いときだけ 404。PUT と同じ。#1917)
+  const { data: existing, error: existingError } = await supabase
     .from('health_checkups')
     .select('id, image_url')
     .eq('id', id)
     .eq('user_id', user.id)
     .maybeSingle();
 
+  if (existingError) {
+    return internalError('DELETE /api/health/checkups/[id]', existingError, { userId: user.id, table: 'health_checkups' });
+  }
   if (!existing) {
     return NextResponse.json({ error: HEALTH_CHECKUP_NOT_FOUND_MESSAGE }, { status: 404 });
   }

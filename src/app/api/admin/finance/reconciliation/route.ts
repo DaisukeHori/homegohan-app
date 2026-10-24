@@ -10,8 +10,12 @@ import { requireRole } from '@/lib/auth/helpers';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 
 export const dynamic = 'force-dynamic';
+
+/** 一覧の構造化ログの function_name */
+const LIST_ROUTE_NAME = 'GET /api/admin/finance/reconciliation';
 
 export async function GET(request: NextRequest) {
   try {
@@ -29,19 +33,26 @@ export async function GET(request: NextRequest) {
     const page = parseInt(searchParams.get('page') ?? '1', 10);
     const perPage = parseInt(searchParams.get('per_page') ?? '50', 10);
 
-    let logsQuery = supabase
-      .from('admin_audit_logs')
-      .select('*', { count: 'exact' })
-      .eq('action_type', 'system.stripe.reconcile_discrepancy')
-      .order('created_at', { ascending: false });
+    // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectDiscrepancyLogs) から作る
+    const selectDiscrepancyLogs = (options: { head?: boolean } = {}) => {
+      let logsQuery = supabase
+        .from('admin_audit_logs')
+        .select('*', listCountOptions(options.head))
+        .eq('action_type', 'system.stripe.reconcile_discrepancy');
 
-    if (from) logsQuery = logsQuery.gte('created_at', from);
-    if (to) logsQuery = logsQuery.lte('created_at', to);
+      if (from) logsQuery = logsQuery.gte('created_at', from);
+      if (to) logsQuery = logsQuery.lte('created_at', to);
+      return logsQuery;
+    };
 
     const offset = (page - 1) * perPage;
-    logsQuery = logsQuery.range(offset, offset + perPage - 1);
-
-    const { data: logs, count, error: logsError } = await logsQuery;
+    const { data: logs, count, error: logsError } = await resolveBeyondLastPage(
+      await selectDiscrepancyLogs()
+        .order('created_at', { ascending: false })
+        .range(offset, offset + perPage - 1),
+      () => selectDiscrepancyLogs({ head: true }),
+      LIST_ROUTE_NAME,
+    );
 
     if (logsError) {
       throw new Error(logsError.message);

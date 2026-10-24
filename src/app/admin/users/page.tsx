@@ -8,11 +8,13 @@
 export const dynamic = 'force-dynamic';
 
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
 import { canViewUserEmail } from '@/lib/admin/user-emails';
 import { normalizeProfileName } from '@/lib/profile-name';
 import type { UserListItem, UsersListResponse } from '@/lib/admin/users-schemas';
+import { lastPageToRefetch } from '@/lib/list-pagination';
 
 interface PageProps {
   searchParams: Promise<{ q?: string; status?: string; page?: string }>;
@@ -41,6 +43,8 @@ export default async function AdminUsersPage(props: PageProps) {
   // 応答の形は route と同じ型 (src/lib/admin/users-schemas.ts の UsersListResponse) で読む (#1717)
   let users: UserListItem[] = [];
   let total = 0;
+  // 一覧を読めたか (API の失敗・fetch の例外のときは false。そのときは最後のページへ移さない)
+  let listed = false;
 
   try {
     const res = await adminFetch(`/api/admin/users?${params.toString()}`);
@@ -48,11 +52,25 @@ export default async function AdminUsersPage(props: PageProps) {
       const json = (await res.json()) as UsersListResponse;
       users = json.data ?? [];
       total = json.meta?.total ?? 0;
+      listed = true;
     } else {
       console.error('[admin/users page] API error:', res.status);
     }
   } catch (err) {
     console.error('[admin/users page] fetch failed:', err);
+  }
+
+  // 件数より後ろのページ (最後のページの唯一の行が消えたあと・URL のページ番号) は、空のページを見せずに最後のページへ移す (#1917)。
+  // 一覧を読めたときだけ判定する (API の失敗を、何も知らせずにページを移す動きに変えない)。
+  // status は空 (全ステータス) でも必ず付ける (付けないと次の読み込みで既定の active に戻る。下の「前へ」「次へ」と同じ)。
+  // redirect は例外で抜けるので、上の try の外で呼ぶ
+  const refetchPage = listed ? lastPageToRefetch({ rows: users.length, page, total, perPage }) : null;
+  if (refetchPage !== null) {
+    const lastPageParams = new URLSearchParams();
+    lastPageParams.set('q', q);
+    lastPageParams.set('status', status);
+    lastPageParams.set('page', String(refetchPage));
+    redirect(`/admin/users?${lastPageParams.toString()}`);
   }
 
   const totalPages = Math.ceil(total / perPage);

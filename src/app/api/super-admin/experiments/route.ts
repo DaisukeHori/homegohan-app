@@ -9,9 +9,13 @@ import { requireRole } from '@/lib/auth/helpers';
 import { authFailureNested } from '@/lib/api/error-responses';
 import { CreateExperimentSchema } from '@/lib/super-admin/experiments-schemas';
 import { internalError } from '@/lib/api/errors';
+import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { readJsonBody, SUPER_ADMIN_INVALID_JSON_BODY_MESSAGE } from '@/lib/super-admin/validation-errors';
+
+/** 一覧の構造化ログの function_name */
+const LIST_ROUTE_NAME = 'GET /api/super-admin/experiments';
 
 export async function GET(request: NextRequest) {
   try {
@@ -22,20 +26,29 @@ export async function GET(request: NextRequest) {
     const page = Math.max(1, parseInt(searchParams.get('page') ?? '1'));
     const perPage = Math.min(100, Math.max(1, parseInt(searchParams.get('per_page') ?? '50')));
 
-    let query = supabase
-      .from('experiments')
-      .select('*', { count: 'exact' })
-      .order('created_at', { ascending: false })
-      .range((page - 1) * perPage, page * perPage - 1);
+    // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectExperiments) から作る
+    const selectExperiments = (options: { head?: boolean } = {}) => {
+      let query = supabase
+        .from('experiments')
+        .select('*', listCountOptions(options.head));
 
-    if (status) {
-      query = query.eq('status', status);
-    }
+      if (status) {
+        query = query.eq('status', status);
+      }
 
-    const { data, error, count } = await query;
+      return query;
+    };
+
+    const { data, error, count } = await resolveBeyondLastPage(
+      await selectExperiments()
+        .order('created_at', { ascending: false })
+        .range((page - 1) * perPage, page * perPage - 1),
+      () => selectExperiments({ head: true }),
+      LIST_ROUTE_NAME,
+    );
 
     if (error) {
-      return internalError('GET /api/super-admin/experiments', error, { userId: user.id }, { shape: 'nested' });
+      return internalError(LIST_ROUTE_NAME, error, { userId: user.id }, { shape: 'nested' });
     }
 
     return NextResponse.json({

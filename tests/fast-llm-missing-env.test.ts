@@ -16,6 +16,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
 
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする */
+const MEAL_ID = '99999999-9999-4999-8999-999999999992';
+
 // 1 件のテストの中で route を丸ごと読み込むので、負荷の高い機械で vitest の既定の時間切れ (テスト 5 秒) を超えうる (#1605 の同じ型)。
 // このファイルだけ延ばす (根拠と環境変数での上書きは tests/helpers/heavy-unit-test-timeout.ts。#1488・#1605)。テストとフックを定義する前に置く
 applyHeavyUnitTestTimeout();
@@ -141,10 +144,11 @@ describe('呼び出し元 POST /api/ai/nutrition の応答は変わらない (#1
     h.getUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
     h.consumeAiUsage.mockResolvedValue({ allowed: true });
     const single = vi.fn(async () => ({
-      data: { id: 'meal-1', dishes: null, is_simple: true, user_daily_meals: { user_id: 'user-1' } },
+      data: { id: MEAL_ID, dishes: null, is_simple: true, user_daily_meals: { user_id: 'user-1' } },
       error: null,
     }));
-    const builder = { select: () => builder, eq: () => builder, single };
+    // 献立の所有の確認は maybeSingle で読む (#1917)
+    const builder = { select: () => builder, eq: () => builder, single, maybeSingle: single };
     h.from.mockImplementation((table: string) => {
       if (table === 'planned_meals') return builder;
       throw new Error(`unexpected table: ${table}`);
@@ -153,7 +157,7 @@ describe('呼び出し元 POST /api/ai/nutrition の応答は変わらない (#1
     const response = await POST(
       new Request('http://localhost/api/ai/nutrition', {
         method: 'POST',
-        body: JSON.stringify({ plannedMealId: 'meal-1', imageUrl: 'https://example.com/meal.jpg' }),
+        body: JSON.stringify({ plannedMealId: MEAL_ID, imageUrl: 'https://example.com/meal.jpg' }),
       }),
     );
     const text = await response.text();

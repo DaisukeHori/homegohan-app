@@ -5,6 +5,9 @@
  *
  * operator/01-data-model.md §3.3 準拠
  * 権限: super_admin のみ
+ *
+ * 読み込みの DB の失敗 (#1917): GET・DELETE の読み込みは、DB の失敗を 500 にし、行が無いときだけ 404 にする
+ * (一時的な失敗で機能パッケージが消えたように見せない)。UUID の形でない id は DB に渡さず 404。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -16,26 +19,35 @@ import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { invalidInputResponse, invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
+import { isUuid } from '@/lib/http-params';
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+/** 機能パッケージが無い (UUID の形でない id を含む) */
+const PACKAGE_NOT_FOUND_RESPONSE = { error: { code: 'OP_PACKAGE_NOT_FOUND', message: '機能パッケージが見つかりません' } } as const;
 
 export async function GET(_request: NextRequest, props: RouteContext) {
   const params = await props.params;
   try {
     await requireRole(['super_admin']);
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(PACKAGE_NOT_FOUND_RESPONSE, { status: 404 });
+    }
     const supabase = await createClient();
 
     const { data: pkg, error } = await supabase
       .from('feature_packages')
       .select('*')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
-    if (error || !pkg) {
-      return NextResponse.json(
-        { error: { code: 'OP_PACKAGE_NOT_FOUND', message: '機能パッケージが見つかりません' } },
-        { status: 404 }
-      );
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で消えたように見せない。#1917)
+    if (error) {
+      return internalError('GET /api/super-admin/feature-packages/[id]', error, { table: 'feature_packages' }, { shape: 'nested' });
+    }
+    if (!pkg) {
+      return NextResponse.json(PACKAGE_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     return NextResponse.json({ data: pkg });
@@ -70,6 +82,11 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
 
     if (!parseResult.success) {
       return invalidInputResponse(parseResult.error.issues);
+    }
+
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(PACKAGE_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     const input = parseResult.data;
@@ -128,19 +145,24 @@ export async function DELETE(request: NextRequest, props: RouteContext) {
   const params = await props.params;
   try {
     const user = await requireRole(['super_admin']);
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json(PACKAGE_NOT_FOUND_RESPONSE, { status: 404 });
+    }
     const supabase = await createClient();
 
     const { data: existing, error: fetchErr } = await supabase
       .from('feature_packages')
       .select('id, package_key, status')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
-    if (fetchErr || !existing) {
-      return NextResponse.json(
-        { error: { code: 'OP_PACKAGE_NOT_FOUND', message: '機能パッケージが見つかりません' } },
-        { status: 404 }
-      );
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で消えたように見せない。#1917)
+    if (fetchErr) {
+      return internalError('DELETE /api/super-admin/feature-packages/[id]', fetchErr, { userId: user.id, table: 'feature_packages' }, { shape: 'nested' });
+    }
+    if (!existing) {
+      return NextResponse.json(PACKAGE_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     const { error: deleteErr } = await supabase

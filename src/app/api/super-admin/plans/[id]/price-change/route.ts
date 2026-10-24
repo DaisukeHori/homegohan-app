@@ -63,6 +63,7 @@ import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { invalidInputResponse, invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
+import { isUuid } from '@/lib/http-params';
 import {
   PRICE_CHANGE_IN_PROGRESS_MESSAGE,
   PRICE_CHANGE_RESERVATION_LOST_MESSAGE,
@@ -78,6 +79,9 @@ import {
 type RouteContext = { params: Promise<{ id: string }> };
 
 const ROUTE_NAME = 'POST /api/super-admin/plans/[id]/price-change';
+
+/** プランが無い (UUID の形でない id を含む) */
+const PLAN_NOT_FOUND_RESPONSE = { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } } as const;
 
 /** Edge Function stripe-price-sync が interval ごとに返す結果 (変えなかった interval は null / 省略) */
 type StripeSyncIntervalResult = {
@@ -275,7 +279,14 @@ export async function POST(request: NextRequest, props: RouteContext) {
 
     const input = parseResult.data;
 
-    // 1. 予約を取り、ロックの下で読んだプランの値を受け取る (#1917)
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の引数に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)。
+    // 入力の検査 (400) のあとに置き、行が無い UUID と同じ順にそろえる
+    if (!isUuid(params.id)) {
+      return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
+    }
+
+    // 1. 予約を取り、ロックの下で読んだプランの値を受け取る (#1917)。
+    //    読めなかったとき (DB の失敗) は 404 にしない (行が無いときだけ 404。一時的な失敗で消えたように見せない。#1917)
     let begin;
     try {
       begin = await beginPlanPriceChange(rpcClient, params.id);
@@ -283,10 +294,7 @@ export async function POST(request: NextRequest, props: RouteContext) {
       return internalError(ROUTE_NAME, beginErr, { userId: user.id }, { shape: 'nested' });
     }
     if (begin.result === 'not_found') {
-      return NextResponse.json(
-        { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } },
-        { status: 404 }
-      );
+      return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
     }
     // draft は価格変更 API を使う必要なし (PATCH で対応)
     if (begin.result === 'draft') {
@@ -363,10 +371,7 @@ export async function POST(request: NextRequest, props: RouteContext) {
       reservationHeld = false;
 
       if (applied.result === 'not_found') {
-        return NextResponse.json(
-          { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } },
-          { status: 404 }
-        );
+        return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
       }
       if (applied.result === 'lost') {
         return NextResponse.json(

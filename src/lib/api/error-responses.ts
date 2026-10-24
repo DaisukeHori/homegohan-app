@@ -63,6 +63,10 @@ export const API_OP_PERMISSION_DENIED_CODE = 'OP_PERMISSION_DENIED';
 
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
+const HTTP_BAD_REQUEST = 400;
+
+/** nested の 400: 本文が JSON として読めない (運営の API の従来の code。operator/02-api-spec.md のエラー表) */
+export const API_INVALID_JSON_CODE = 'INVALID_JSON';
 
 /** ForbiddenError の code → 本文の文 (表に無い code は API_FORBIDDEN_MESSAGE) */
 export type ForbiddenMessageTable = ReadonlyMap<string, string>;
@@ -195,6 +199,18 @@ export function authFailureNested(err: unknown, options: AuthFailureNestedOption
     );
   }
   return null;
+}
+
+/**
+ * 本文が JSON として読めない (壊れた JSON) ときの 400 を nested の形 `{ error: { code: 'INVALID_JSON', message } }` で返す (#1917)。
+ * `await request.json()` の例外を route 全体の catch (internalError の 500) に流さず、呼び出し元の入力の誤りとして返すために使う
+ * (src/lib/http-params.ts の readJsonBody で読み、`{ ok: false }` のときにこれを返す)
+ */
+export function invalidJsonNested(): NextResponse<ApiNestedErrorBody> {
+  return NextResponse.json(
+    { error: { code: API_INVALID_JSON_CODE, message: API_INVALID_JSON_MESSAGE } },
+    { status: HTTP_BAD_REQUEST },
+  );
 }
 
 /**

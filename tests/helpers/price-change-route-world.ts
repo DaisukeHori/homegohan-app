@@ -10,7 +10,8 @@ import { vi } from 'vitest';
 import { createFakeSupabase, type FakeQueryResult, type FakeSupabase } from './fake-supabase';
 import { PLAN_PRICE_CHANGE_RPC } from '@/lib/super-admin/plan-price-change-reservation';
 
-export const PLAN_ID = 'plan-1';
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、プランの id は UUID の形にする */
+export const PLAN_ID = '88888888-8888-4888-8888-888888888883';
 export const RESERVATION_TOKEN = '11111111-1111-4111-8111-111111111111';
 export const actor = { id: 'sa-1', email: 'sa@example.com', roles: ['super_admin'], organization_id: null };
 

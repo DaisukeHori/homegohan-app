@@ -54,6 +54,9 @@ import { POST as mealPlansPost } from '../src/app/api/meal-plans/meals/route';
 import { POST as mealsPost } from '../src/app/api/meals/route';
 import { PATCH as mealsPatch } from '../src/app/api/meals/[id]/route';
 
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする */
+const MEAL_ID = '77777777-7777-4777-8777-777777777773';
+
 // x-request-id は uuid の形式のときだけ meal_image_jobs.request_id (uuid の列) に入る (#1532)
 const REQUEST_ID_1 = '6b1f2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
 const REQUEST_ID_2 = '7c2a3b4d-5e6f-4b7c-9d8e-0f1a2b3c4d5e';
@@ -98,7 +101,7 @@ describe('meal image route contracts', () => {
     vi.mocked(buildDishImagePayload).mockResolvedValueOnce(payload);
 
     const existingMeal = {
-      id: 'meal-1',
+      id: MEAL_ID,
       dishes: [{ name: 'existing' }],
       image_url: 'https://examples.com/old-cover.png',
       catalog_product_id: null,
@@ -108,9 +111,9 @@ describe('meal image route contracts', () => {
     const selectChain: any = {
       select: vi.fn(() => selectChain),
       eq: vi.fn(() => selectChain),
-      single: vi.fn().mockResolvedValue({ data: existingMeal, error: null }),
+      maybeSingle: vi.fn().mockResolvedValue({ data: existingMeal, error: null }),
     };
-    const updateSelectSingle = vi.fn().mockResolvedValue({ data: { id: 'meal-1' }, error: null });
+    const updateSelectSingle = vi.fn().mockResolvedValue({ data: { id: MEAL_ID }, error: null });
     const updateChain: any = {
       eq: vi.fn(() => updateChain),
       select: vi.fn(() => ({ single: updateSelectSingle })),
@@ -125,18 +128,18 @@ describe('meal image route contracts', () => {
     });
 
     const response = await mealPlansPatch(
-      new Request('http://localhost/api/meal-plans/meals/meal-1', {
+      new Request(`http://localhost/api/meal-plans/meals/${MEAL_ID}`, {
         method: 'PATCH',
         headers: { 'x-request-id': REQUEST_ID_1 },
         body: JSON.stringify({ dishes: [{ name: 'new' }], imageUrl: 'manual-cover' }),
       }),
-      { params: { id: 'meal-1' } }
+      { params: { id: MEAL_ID } }
     );
 
     expect(response.status).toBe(200);
     expect(vi.mocked(buildDishImagePayload)).toHaveBeenCalledWith(
       expect.objectContaining({
-        triggerSource: 'nextjs:meal-plans/meals/meal-1:PATCH',
+        triggerSource: `nextjs:meal-plans/meals/${MEAL_ID}:PATCH`,
         imageUrlOverride: 'manual-cover',
       })
     );
@@ -149,13 +152,13 @@ describe('meal image route contracts', () => {
     expect(vi.mocked(enqueueMealImageJobs)).toHaveBeenCalledWith(
       expect.objectContaining({
         supabase: mockQueueClient,
-        plannedMealId: 'meal-1',
+        plannedMealId: MEAL_ID,
         jobSeeds: payload.jobs,
         requestId: REQUEST_ID_1,
       })
     );
     expect(vi.mocked(triggerMealImageJobProcessing)).toHaveBeenCalledWith({
-      plannedMealId: 'meal-1',
+      plannedMealId: MEAL_ID,
       limit: payload.jobs.length,
     });
   });
@@ -225,7 +228,7 @@ describe('meal image route contracts', () => {
 function anyQuery(table: string): unknown {
   const rows: Record<string, unknown> = {
     user_daily_meals: { id: 'day-1' },
-    planned_meals: { id: 'meal-1', dishes: [{ name: 'existing' }], image_url: null, user_daily_meals: { user_id: 'user-1' } },
+    planned_meals: { id: MEAL_ID, dishes: [{ name: 'existing' }], image_url: null, user_daily_meals: { user_id: 'user-1' } },
   };
   const builder: unknown = new Proxy(
     {},
@@ -259,8 +262,8 @@ const IMAGE_ROUTE_CASES: Array<{ name: string; call: () => Promise<Response> }> 
     name: 'PATCH src/app/api/meal-plans/meals/[id]/route',
     call: () =>
       mealPlansPatch(
-        new Request('http://localhost/api/meal-plans/meals/meal-1', { method: 'PATCH', body: JSON.stringify({ dishes: [{ name: 'new' }] }) }),
-        { params: { id: 'meal-1' } },
+        new Request(`http://localhost/api/meal-plans/meals/${MEAL_ID}`, { method: 'PATCH', body: JSON.stringify({ dishes: [{ name: 'new' }] }) }),
+        { params: { id: MEAL_ID } },
       ),
   },
   {
@@ -276,8 +279,8 @@ const IMAGE_ROUTE_CASES: Array<{ name: string; call: () => Promise<Response> }> 
   {
     name: 'PATCH src/app/api/meals/[id]/route',
     call: () =>
-      mealsPatch(new Request('http://localhost/api/meals/meal-1', { method: 'PATCH', body: JSON.stringify({ dishes: [{ name: 'new' }] }) }), {
-        params: { id: 'meal-1' },
+      mealsPatch(new Request(`http://localhost/api/meals/${MEAL_ID}`, { method: 'PATCH', body: JSON.stringify({ dishes: [{ name: 'new' }] }) }), {
+        params: { id: MEAL_ID },
       }),
   },
 ];

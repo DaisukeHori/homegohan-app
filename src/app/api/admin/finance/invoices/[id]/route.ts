@@ -27,9 +27,14 @@ export async function GET(request: NextRequest, props: { params: Promise<{ id: s
       .from('stripe_webhook_events')
       .select('*')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
-    if (error || !evt) {
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で請求書が消えたように見せない。#1917)。
+    // stripe_webhook_events.id は文字列 (Stripe のイベント ID) なので、形の検査は要らない
+    if (error) {
+      return internalError('GET /api/admin/finance/invoices/[id]', error, { userId: actor.id, table: 'stripe_webhook_events' }, { shape: 'nested' });
+    }
+    if (!evt) {
       return NextResponse.json(
         { error: { code: 'NOT_FOUND', message: '請求書が見つかりません' } },
         { status: 404 },

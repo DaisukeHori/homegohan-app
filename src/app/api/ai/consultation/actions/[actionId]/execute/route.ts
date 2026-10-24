@@ -6,6 +6,7 @@ import { AI_SENDING_ACTION_TYPES, runConsultationAction } from '@/lib/ai/consult
 import { aiDailyLimitResponse } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
+import { isUuid } from '@/lib/http-params';
 import { API_UNAUTHENTICATED_MESSAGE, API_FORBIDDEN_MESSAGE } from '@/lib/api/error-responses';
 import { AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE, AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE, AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE } from '@/lib/ai/ai-api-messages';
 
@@ -58,6 +59,11 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
   // (献立の削除・買い物リストの操作など、AI を使わないアクションは記録しない)
 
   try {
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
+    if (!isUuid(params.actionId)) {
+      return NextResponse.json({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE }, { status: 404 });
+    }
+
     // actionIdはメッセージIDまたはアクションログIDの可能性がある
     let { data: action, error: actionError } = await supabase
       .from('ai_action_logs')
@@ -66,10 +72,15 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
         ai_consultation_sessions!inner(user_id)
       `)
       .eq('id', params.actionId)
-      .single();
+      .maybeSingle();
+
+    // 読めなかったときは 404 にしない (行が無いときだけ、メッセージ ID として探し直す。#1917)
+    if (actionError) {
+      return internalError('POST /api/ai/consultation/actions/[actionId]/execute', actionError, { userId: user.id, table: 'ai_action_logs' });
+    }
 
     // 見つからない場合はメッセージIDとして検索
-    if (actionError || !action) {
+    if (!action) {
       const { data: actionByMessage, error: msgError } = await supabase
         .from('ai_action_logs')
         .select(`
@@ -78,9 +89,12 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
         `)
         .eq('message_id', params.actionId)
         .eq('status', 'pending')
-        .single();
+        .maybeSingle();
       
-      if (msgError || !actionByMessage) {
+      if (msgError) {
+        return internalError('POST /api/ai/consultation/actions/[actionId]/execute', msgError, { userId: user.id, table: 'ai_action_logs' });
+      }
+      if (!actionByMessage) {
         return NextResponse.json({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE }, { status: 404 });
       }
       action = actionByMessage;
@@ -150,6 +164,11 @@ export async function DELETE(request: Request, props: { params: Promise<{ action
   if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
+    if (!isUuid(params.actionId)) {
+      return NextResponse.json({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE }, { status: 404 });
+    }
+
     // actionIdはメッセージIDまたはアクションログIDの可能性がある（POSTと同じ探索順・同じ所有権検証）
     // idパスもmessage_idパスと同様にpending限定（両パスの対称性を確保し、処理済みactionの再却下を防止）
     let { data: action, error: actionError } = await supabase
@@ -160,10 +179,15 @@ export async function DELETE(request: Request, props: { params: Promise<{ action
       `)
       .eq('id', params.actionId)
       .eq('status', 'pending')
-      .single();
+      .maybeSingle();
+
+    // 読めなかったときは 404 にしない (行が無いときだけ、メッセージ ID として探し直す。#1917)
+    if (actionError) {
+      return internalError('DELETE /api/ai/consultation/actions/[actionId]/execute', actionError, { userId: user.id, table: 'ai_action_logs' });
+    }
 
     // 見つからない場合はメッセージIDとして検索
-    if (actionError || !action) {
+    if (!action) {
       const { data: actionByMessage, error: msgError } = await supabase
         .from('ai_action_logs')
         .select(`
@@ -172,9 +196,12 @@ export async function DELETE(request: Request, props: { params: Promise<{ action
         `)
         .eq('message_id', params.actionId)
         .eq('status', 'pending')
-        .single();
+        .maybeSingle();
 
-      if (msgError || !actionByMessage) {
+      if (msgError) {
+        return internalError('DELETE /api/ai/consultation/actions/[actionId]/execute', msgError, { userId: user.id, table: 'ai_action_logs' });
+      }
+      if (!actionByMessage) {
         return NextResponse.json({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE }, { status: 404 });
       }
       action = actionByMessage;

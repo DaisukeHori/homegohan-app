@@ -4,6 +4,8 @@ import { internalError } from '@/lib/api/errors';
 import { recipeAuthorName } from '@/lib/recipes/author-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_FORBIDDEN_MESSAGE, API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { isUuid } from '@/lib/http-params';
+import { loadRecipeViewerLookups } from '@/lib/recipes/viewer-lookups';
 
 // レシピ詳細取得
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
@@ -21,18 +23,18 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     }
   }
 
+  // 作者の名前 (user_profiles) と自分のいいね (recipe_likes) は埋め込まない (どちらの埋め込みも PostgREST が解決できず、
+  // この API はいつも 500 になっていた。#1917。src/lib/recipes/viewer-lookups.ts)。コメントは recipes への外部キーが 1 本なので埋め込める
   const { data, error } = await supabase
     .from('recipes')
     .select(`
       *,
-      user_profiles(nickname, id),
-      recipe_likes(user_id),
       recipe_comments(
         id,
         content,
         rating,
         created_at,
-        user_profiles(nickname)
+        user_id
       )
     `)
     .eq('id', params.id)
@@ -48,10 +50,20 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
   }
 
+  const comments = data.recipe_comments || [];
+  // 作者 (レシピとコメント) の名前と自分のいいねを別のクエリで引く。読めなかったときも 500 (名前が無い・いいねしていないように見せない)
+  const lookups = await loadRecipeViewerLookups(supabase, user?.id ?? null, {
+    authorIds: [data.user_id, ...comments.map((c: { user_id: string | null }) => c.user_id)],
+    recipeIds: [data.id],
+  });
+  if (!lookups.ok) {
+    return internalError('GET /api/recipes/[id]', lookups.error, { userId: user?.id, table: lookups.table });
+  }
+
   const recipe = {
     id: data.id,
     userId: data.user_id,
-    authorName: recipeAuthorName(data.user_profiles?.nickname),
+    authorName: recipeAuthorName(lookups.nicknames.get(data.user_id)),
     name: data.name,
     description: data.description,
     caloriesKcal: data.calories_kcal,
@@ -71,13 +83,14 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     sourceUrl: data.source_url,
     viewCount: data.view_count || 0,
     likeCount: data.like_count || 0,
-    isLiked: user ? data.recipe_likes?.some((l: any) => l.user_id === user.id) : false,
+    isLiked: lookups.likedRecipeIds.has(data.id),
     isOwner: user?.id === data.user_id,
-    comments: (data.recipe_comments || []).map((c: any) => ({
+    // コメントを書いた人の user_id は返さない (#168。名前だけ)
+    comments: comments.map((c: any) => ({
       id: c.id,
       content: c.content,
       rating: c.rating,
-      authorName: recipeAuthorName(c.user_profiles?.nickname),
+      authorName: recipeAuthorName(lookups.nicknames.get(c.user_id)),
       createdAt: c.created_at,
     })),
     createdAt: data.created_at,
@@ -98,13 +111,21 @@ export async function PUT(request: Request, props: { params: Promise<{ id: strin
   if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
-    // 所有者確認
-    const { data: existing } = await supabase
+    // UUID の形でない id は DB に渡さない (行が無い id と同じ 403。uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json({ error: API_FORBIDDEN_MESSAGE }, { status: 403 });
+    }
+
+    // 所有者確認。読めなかったときは 403 にしない (DB の失敗は 500。行が無い・他人のレシピのときだけ 403。#1917)
+    const { data: existing, error: existingError } = await supabase
       .from('recipes')
       .select('user_id')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
+    if (existingError) {
+      return internalError('PUT /api/recipes/[id]', existingError, { userId: user.id, table: 'recipes' });
+    }
     if (!existing || existing.user_id !== user.id) {
       return NextResponse.json({ error: API_FORBIDDEN_MESSAGE }, { status: 403 });
     }
@@ -153,13 +174,21 @@ export async function DELETE(request: Request, props: { params: Promise<{ id: st
   if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
-    // 所有者確認
-    const { data: existing } = await supabase
+    // UUID の形でない id は DB に渡さない (行が無い id と同じ 403。uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
+    if (!isUuid(params.id)) {
+      return NextResponse.json({ error: API_FORBIDDEN_MESSAGE }, { status: 403 });
+    }
+
+    // 所有者確認。読めなかったときは 403 にしない (DB の失敗は 500。行が無い・他人のレシピのときだけ 403。#1917)
+    const { data: existing, error: existingError } = await supabase
       .from('recipes')
       .select('user_id')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
+    if (existingError) {
+      return internalError('DELETE /api/recipes/[id]', existingError, { userId: user.id, table: 'recipes' });
+    }
     if (!existing || existing.user_id !== user.id) {
       return NextResponse.json({ error: API_FORBIDDEN_MESSAGE }, { status: 403 });
     }

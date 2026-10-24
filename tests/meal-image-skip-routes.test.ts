@@ -39,8 +39,9 @@ import {
 import { AI_USAGE_ALLOWED, AI_USAGE_DENIED } from './helpers/ai-usage-mock';
 
 const USER_ID = 'user-1';
-const MEAL_ID = 'meal-1';
-const DAY_ID = 'day-1';
+// route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、食事・1 日の献立の id は UUID の形にする
+const MEAL_ID = '77777777-7777-4777-8777-777777777774';
+const DAY_ID = '77777777-7777-4777-8777-777777777775';
 const CURRY = { name: 'カレー', role: 'main' };
 const PHOTO_URL = 'https://example.com/storage/meal-photos/user-1/photo.jpg';
 const PRODUCT_URL = 'https://example.com/catalog/bento.jpg';

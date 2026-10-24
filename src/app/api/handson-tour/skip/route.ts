@@ -5,6 +5,7 @@ import {
   type HandsonTourSkipRequest,
 } from '@/lib/handson-tour/schemas';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { internalError } from '@/lib/api/errors';
 
 export async function POST(request: Request) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
@@ -36,9 +37,13 @@ export async function POST(request: Request) {
       .from('user_profiles')
       .select('id')
       .eq('id', user.id)
-      .single();
+      .maybeSingle();
 
-    if (profileError || !profile) {
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗でプロファイルが無いように見せない。#1917)
+    if (profileError) {
+      return internalError('POST /api/handson-tour/skip', profileError, { userId: user.id, table: 'user_profiles' }, { shape: 'nested' });
+    }
+    if (!profile) {
       return NextResponse.json(
         { error: { code: 'profile_not_found', message: 'プロファイルが見つかりません' } },
         { status: 404 },

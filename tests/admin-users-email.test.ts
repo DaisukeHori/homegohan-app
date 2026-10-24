@@ -391,7 +391,8 @@ describe('GET /api/admin/users/[id] — メールアドレス', () => {
   });
 
   it('対象が存在しなければ 404 で、メールも引かない', async () => {
-    mocks.results['user_profiles'] = { data: null, error: { message: 'not found' } };
+    // maybeSingle は行が無いと data: null・error: null を返す (#1917。DB の失敗は 404 ではなく 500)
+    mocks.results['user_profiles'] = { data: null, error: null };
     const res = await detailGET(new Request(`http://localhost/api/admin/users/${ID_1}`), detailCtx(ID_1));
     expect(res.status).toBe(404);
     expect(mocks.rpc).not.toHaveBeenCalled();

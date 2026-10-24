@@ -49,13 +49,25 @@ function recipesQuery() {
   return builder;
 }
 
+/** 作者の名前 (user_profiles) と自分のいいね (recipe_likes) を引くクエリ (#1917。埋め込まずに別のクエリで引く)。どちらも 0 行 */
+function emptyLookupQuery() {
+  const builder = {
+    select: () => builder,
+    eq: () => builder,
+    in: () => builder,
+    then: (resolve: (value: { data: unknown[]; error: null }) => unknown) => resolve({ data: [], error: null }),
+  };
+  return builder;
+}
+
 vi.mock('@/lib/supabase/server', () => ({
   createClient: async () => ({
     auth: { getUser: async () => ({ data: { user: h.user }, error: null }) },
     rpc: async () => ({ data: null, error: null }),
     from: (table: string) => {
-      if (table !== 'recipes') throw new Error(`unexpected table: ${table}`);
-      return recipesQuery();
+      if (table === 'recipes') return recipesQuery();
+      if (table === 'user_profiles' || table === 'recipe_likes') return emptyLookupQuery();
+      throw new Error(`unexpected table: ${table}`);
     },
   }),
 }));
@@ -86,8 +98,6 @@ function recipeRow(overrides: Record<string, unknown> = {}) {
     user_id: 'owner-1',
     name: 'テストのレシピ',
     is_public: true,
-    user_profiles: { nickname: 'owner', id: 'owner-1' },
-    recipe_likes: [],
     recipe_comments: [],
     ...overrides,
   };

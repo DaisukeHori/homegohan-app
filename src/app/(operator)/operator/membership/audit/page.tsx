@@ -7,6 +7,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
+import { lastPageToRefetch } from '@/lib/list-pagination';
 
 type AuditRow = {
   id: string;
@@ -122,6 +123,12 @@ export default function MembershipAuditPage() {
         throw new Error(body.error?.message ?? `HTTP ${res.status}`);
       }
       const json = await res.json();
+      // 件数より後ろのページは、空のページを見せずに最後のページへ取り直す (#1917)
+      const refetchPage = lastPageToRefetch({ rows: (json.data ?? []).length, page, total: json.meta?.total ?? 0, perPage: limit });
+      if (refetchPage !== null) {
+        setPage(refetchPage);
+        return;
+      }
       setRows(json.data ?? []);
       setTotal(json.meta?.total ?? 0);
     } catch (err) {

@@ -29,6 +29,9 @@ import { COUPON_VALID_UNTIL_BEFORE_FROM_MESSAGE } from '@/lib/super-admin/coupon
 import { inEachTimeZone, TEST_TIME_ZONES } from './helpers/time-zones';
 import { microsOf } from './helpers/timestamptz';
 
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする */
+const COUPON_ID = '88888888-8888-4888-8888-888888888886';
+
 /** apply_coupon の有効性の判定 (2. クーポンの有効性) と同じ比べ方 */
 function applyCouponValidity(at: string, validFrom: string, validUntil: string): 'OK' | 'NOT_YET_VALID' | 'EXPIRED' {
   const t = microsOf(at);
@@ -170,8 +173,12 @@ function fakeSupabase(storedValidFrom: string = STORED_VALID_FROM) {
   const couponInserts: Record<string, unknown>[] = [];
   const couponUpdates: Record<string, unknown>[] = [];
   const auditInserts: Record<string, unknown>[] = [];
+  // insert は .select().single()、update は .select().maybeSingle() で読む (#1917。更新した行が無ければ 404)
   const singleResult = (data: Record<string, unknown>) => ({
-    select: () => ({ single: () => Promise.resolve({ data, error: null }) }),
+    select: () => ({
+      single: () => Promise.resolve({ data, error: null }),
+      maybeSingle: () => Promise.resolve({ data, error: null }),
+    }),
   });
   const client = {
     from: (table: string) => {
@@ -186,17 +193,18 @@ function fakeSupabase(storedValidFrom: string = STORED_VALID_FROM) {
       return {
         insert: (row: Record<string, unknown>) => {
           couponInserts.push(row);
-          return singleResult({ id: 'coupon-1', ...row });
+          return singleResult({ id: COUPON_ID, ...row });
         },
         select: () => ({
           eq: () => ({
-            single: () =>
-              Promise.resolve({ data: { id: 'coupon-1', code: 'JST1483', valid_from: storedValidFrom }, error: null }),
+            // 保存済みのクーポンは maybeSingle で読む (#1917。DB の失敗は 404 ではなく 500)
+            maybeSingle: () =>
+              Promise.resolve({ data: { id: COUPON_ID, code: 'JST1483', valid_from: storedValidFrom }, error: null }),
           }),
         }),
         update: (row: Record<string, unknown>) => {
           couponUpdates.push(row);
-          return { eq: () => singleResult({ id: 'coupon-1', ...row }) };
+          return { eq: () => singleResult({ id: COUPON_ID, ...row }) };
         },
       };
     },
@@ -287,8 +295,8 @@ describe('PATCH /api/super-admin/coupons/[id] (#1483 有効期限は JST の暦�
 
   it('期限の日の JST 23:59:59.999999 にして書く', async () => {
     const res = await PATCH(
-      jsonRequest('http://localhost/api/super-admin/coupons/coupon-1', 'PATCH', { valid_until: '2026-10-31' }),
-      { params: { id: 'coupon-1' } },
+      jsonRequest(`http://localhost/api/super-admin/coupons/${COUPON_ID}`, 'PATCH', { valid_until: '2026-10-31' }),
+      { params: { id: COUPON_ID } },
     );
     expect(res.status).toBe(200);
     expect(fake.couponUpdates).toEqual([{ valid_until: '2026-10-31T14:59:59.999999Z' }]);
@@ -299,8 +307,8 @@ describe('PATCH /api/super-admin/coupons/[id] (#1483 有効期限は JST の暦�
     ['日時 (日付ではない)', '2026-10-31T00:00:00Z'],
   ])('400 OP_INVALID_INPUT: 有効期限が%s (DB に書かない)', async (_label, validUntil) => {
     const res = await PATCH(
-      jsonRequest('http://localhost/api/super-admin/coupons/coupon-1', 'PATCH', { valid_until: validUntil }),
-      { params: { id: 'coupon-1' } },
+      jsonRequest(`http://localhost/api/super-admin/coupons/${COUPON_ID}`, 'PATCH', { valid_until: validUntil }),
+      { params: { id: COUPON_ID } },
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
@@ -323,8 +331,8 @@ describe('PATCH /api/super-admin/coupons/[id] (#1510 有効期限と保存済み
   async function patch(storedValidFrom: string, body: Record<string, unknown>) {
     const fake = fakeSupabase(storedValidFrom);
     mockCreateClient.mockResolvedValue(fake.client);
-    const res = await PATCH(jsonRequest('http://localhost/api/super-admin/coupons/coupon-1', 'PATCH', body), {
-      params: { id: 'coupon-1' },
+    const res = await PATCH(jsonRequest(`http://localhost/api/super-admin/coupons/${COUPON_ID}`, 'PATCH', body), {
+      params: { id: COUPON_ID },
     });
     return { res, fake };
   }
@@ -419,8 +427,8 @@ describe('400 OP_INVALID_INPUT の本文の形 (#1534 POST と PATCH で同じ)'
   async function patch(body: Record<string, unknown>) {
     const fake = fakeSupabase();
     mockCreateClient.mockResolvedValue(fake.client);
-    const res = await PATCH(jsonRequest('http://localhost/api/super-admin/coupons/coupon-1', 'PATCH', body), {
-      params: { id: 'coupon-1' },
+    const res = await PATCH(jsonRequest(`http://localhost/api/super-admin/coupons/${COUPON_ID}`, 'PATCH', body), {
+      params: { id: COUPON_ID },
     });
     return { status: res.status, body: (await res.json()) as InvalidBody, fake };
   }
@@ -520,7 +528,7 @@ describe('400 OP_INVALID_QUERY の本文の形 (#1641 一覧と適用履歴)', (
   ] as const)('GET /api/super-admin/coupons/[id]/redemptions (%s)', async (_label, query, path) => {
     const res = await GET_REDEMPTIONS(
       new NextRequest(`http://localhost/api/super-admin/coupons/coupon-1/redemptions?${query}`) as never,
-      { params: Promise.resolve({ id: 'coupon-1' }) },
+      { params: Promise.resolve({ id: COUPON_ID }) },
     );
     expect(res.status).toBe(400);
     expectQueryFirstIssue((await res.json()) as QueryBody, path);

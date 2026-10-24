@@ -712,7 +712,8 @@ describe('GET /api/admin/support/tickets/[id] -> admin.support.ticket.view', () 
   });
 
   it('404: チケットが無いときは記録しない', async () => {
-    setup({ ticketResult: { data: null, error: { message: 'no rows' } } });
+    // maybeSingle は行が無いと data: null・error: null を返す (#1917。DB の失敗は 404 ではなく 500)
+    setup({ ticketResult: { data: null, error: null } });
 
     const res = await call();
 

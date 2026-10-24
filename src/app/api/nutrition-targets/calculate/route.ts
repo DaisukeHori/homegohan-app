@@ -31,9 +31,13 @@ export async function POST() {
       .from('user_profiles')
       .select('*')
       .eq('id', user.id)
-      .single();
+      .maybeSingle();
 
-    if (profileError || !profile) {
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗でプロフィールが無いように見せない。#1917)
+    if (profileError) {
+      return internalError('POST /api/nutrition-targets/calculate', profileError, { userId: user.id, table: 'user_profiles' });
+    }
+    if (!profile) {
       return NextResponse.json({ error: PROFILE_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 

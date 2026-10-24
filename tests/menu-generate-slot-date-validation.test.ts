@@ -171,7 +171,8 @@ describe('POST /api/ai/nutrition-analysis (献立変更の実行): targetDate �
       const query = {
         select: () => query,
         eq: () => query,
-        single: async () => ({ data: null, error: null }),
+        // その日の行は maybeSingle で読む (#1917。行が無いときは data: null・error: null)
+        maybeSingle: async () => ({ data: null, error: null }),
       };
       return query;
     });

@@ -27,7 +27,8 @@ function userClient() {
       const builder = {
         select: () => builder,
         eq: () => builder,
-        single: async () => ({
+        // 献立の所有の確認は maybeSingle で読む (#1917)
+        maybeSingle: async () => ({
           data: { id: MEAL_ID, dishes: [], is_simple: false, user_daily_meals: { user_id: USER } },
           error: null,
         }),

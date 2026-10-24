@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AI_USAGE_ALLOWED } from './helpers/ai-usage-mock';
 import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
 
+/** route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする */
+const MEAL_ID = '77777777-7777-4777-8777-777777777772';
+
 // 1 件のテストの中で route を丸ごと読み込むので、負荷の高い機械で vitest の既定の時間切れ (テスト 5 秒) を超えうる (#1605 の同じ型)。
 // このファイルだけ延ばす (根拠と環境変数での上書きは tests/helpers/heavy-unit-test-timeout.ts。#1488・#1605)。テストとフックを定義する前に置く
 applyHeavyUnitTestTimeout();
@@ -99,7 +102,7 @@ describe('image route contracts', () => {
       select: mockSelect,
     };
 
-    mockSingle.mockResolvedValue({ data: { id: 'meal-1' }, error: null });
+    mockSingle.mockResolvedValue({ data: { id: MEAL_ID }, error: null });
     mockSelect.mockImplementation(() => selectChain as any);
     mockEq.mockImplementation(() => selectChain as any);
     mockNeq.mockImplementation(() => selectChain as any);
@@ -737,27 +740,27 @@ describe('image route contracts', () => {
 
   it('meal-plans PATCH persists imageUrl to the planned_meals image_url column', async () => {
     const storedMeal = {
-      id: 'meal-1',
+      id: MEAL_ID,
       image_url: 'https://example.com/generated.png',
     };
     mockSingle.mockResolvedValue({ data: storedMeal, error: null });
 
     const { PATCH } = await import('../src/app/api/meal-plans/meals/[id]/route');
     const response = await PATCH(
-      new Request('http://localhost/api/meal-plans/meals/meal-1', {
+      new Request(`http://localhost/api/meal-plans/meals/${MEAL_ID}`, {
         method: 'PATCH',
         body: JSON.stringify({
           imageUrl: 'https://example.com/generated.png',
         }),
       }),
-      { params: { id: 'meal-1' } },
+      { params: { id: MEAL_ID } },
     );
 
     expect(mockFrom).toHaveBeenCalledWith('planned_meals');
     expect(mockUpdate).toHaveBeenCalledWith({
       image_url: 'https://example.com/generated.png',
     });
-    expect(mockEq).toHaveBeenCalledWith('id', 'meal-1');
+    expect(mockEq).toHaveBeenCalledWith('id', MEAL_ID);
     await expect(response.json()).resolves.toEqual({
       success: true,
       meal: storedMeal,

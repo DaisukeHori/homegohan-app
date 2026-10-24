@@ -25,8 +25,13 @@ import { createClient } from '@/lib/supabase/server';
 import { PriceImpactQuerySchema } from '@/lib/super-admin/plans-schemas';
 import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE, countsOrganizationsFor } from '@/lib/super-admin/plan-subscribers';
 import { invalidQueryResponse } from '@/lib/super-admin/validation-errors';
+import { isUuid } from '@/lib/http-params';
+import { internalError } from '@/lib/api/errors';
 
 type RouteContext = { params: Promise<{ id: string }> };
+
+/** プランが無い (UUID の形でない id を含む) */
+const PLAN_NOT_FOUND_RESPONSE = { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } } as const;
 
 export async function GET(request: NextRequest, props: RouteContext) {
   const params = await props.params;
@@ -46,18 +51,25 @@ export async function GET(request: NextRequest, props: RouteContext) {
       return invalidQueryResponse(queryResult.error.issues);
     }
 
+    // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)。
+    // 入力の検査 (400) のあとに置き、行が無い UUID と同じ順にそろえる
+    if (!isUuid(params.id)) {
+      return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
+    }
+
     // プランを取得 (存在確認と、現行の月額を返すため)
     const { data: plan, error: planErr } = await supabase
       .from('subscription_plans')
       .select('id, plan_key, plan_type, monthly_price_jpy')
       .eq('id', params.id)
-      .single();
+      .maybeSingle();
 
-    if (planErr || !plan) {
-      return NextResponse.json(
-        { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } },
-        { status: 404 }
-      );
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で消えたように見せない。#1917)
+    if (planErr) {
+      return internalError('GET /api/super-admin/plans/[id]/price-impact', planErr, { table: 'subscription_plans' }, { shape: 'nested' });
+    }
+    if (!plan) {
+      return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
     const currentMonthlyPrice = plan.monthly_price_jpy ?? 0;

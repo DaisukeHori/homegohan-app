@@ -57,9 +57,13 @@ export async function GET() {
       .from('organizations')
       .select(ORG_SETTINGS_SELECT_COLUMNS)
       .eq('id', profile.organization_id)
-      .single();
+      .maybeSingle();
 
-    if (orgError || !org) {
+    // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で組織が消えたように見せない。#1917)
+    if (orgError) {
+      return internalError('GET', '組織設定の読み込みに失敗しました', orgError);
+    }
+    if (!org) {
       return NextResponse.json(
         { error: { code: 'NOT_FOUND', message: '組織が見つかりません' } },
         { status: 404 },

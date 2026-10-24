@@ -16,6 +16,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FakeSupabase } from './helpers/fake-supabase';
 import {
+  PLAN_ID,
   RESERVATION_TOKEN,
   actor,
   applied,
@@ -59,7 +60,7 @@ vi.mock('@/lib/supabase/server', () => ({
 const { POST } = await import('@/app/api/super-admin/plans/[id]/price-change/route');
 
 const ORIGINAL_ENV = { ...process.env };
-const RELEASE_ARGS = { p_plan_id: 'plan-1', p_token: RESERVATION_TOKEN };
+const RELEASE_ARGS = { p_plan_id: PLAN_ID, p_token: RESERVATION_TOKEN };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -90,15 +91,15 @@ describe('1. 予約 (begin_plan_price_change)', () => {
       return rpc(fn, args);
     });
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(200);
     expect(rpcArgs(fakeSupabase, PLAN_PRICE_CHANGE_RPC.begin)).toEqual([
-      { p_plan_id: 'plan-1', p_stale_after_seconds: PRICE_CHANGE_RESERVATION_STALE_SECONDS },
+      { p_plan_id: PLAN_ID, p_stale_after_seconds: PRICE_CHANGE_RESERVATION_STALE_SECONDS },
     ]);
     expect(order).toEqual([PLAN_PRICE_CHANGE_RPC.begin, 'stripe', PLAN_PRICE_CHANGE_RPC.apply]);
     // apply は begin の token で呼ぶ。成功したら release は呼ばない (apply が予約を消す)
-    expect(applyArgs(fakeSupabase)).toMatchObject({ p_plan_id: 'plan-1', p_token: RESERVATION_TOKEN });
+    expect(applyArgs(fakeSupabase)).toMatchObject({ p_plan_id: PLAN_ID, p_token: RESERVATION_TOKEN });
   });
 
   it('別の運営の価格の変更が進行中 (in_progress) なら 409 CONFLICT_STALE_DATA。Stripe も apply も release も呼ばず、監査も書かない', async () => {
@@ -106,7 +107,7 @@ describe('1. 予約 (begin_plan_price_change)', () => {
     fakeSupabase = priceChangeSupabase({ begin: { data: { result: 'in_progress' }, error: null } });
     const fetchMock = stubEdge(edgeOk({}));
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: { code: 'CONFLICT_STALE_DATA', message: PRICE_CHANGE_IN_PROGRESS_MESSAGE } });
@@ -120,17 +121,30 @@ describe('1. 予約 (begin_plan_price_change)', () => {
     const fetchMock = stubEdge(edgeOk({}));
 
     fakeSupabase = priceChangeSupabase({ begin: { data: { result: 'not_found' }, error: null } });
-    const notFound = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const notFound = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
     expect(notFound.status).toBe(404);
     expect(await notFound.json()).toEqual({ error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } });
     expect(rpcOrder(fakeSupabase)).toEqual([PLAN_PRICE_CHANGE_RPC.begin]);
 
     fakeSupabase = priceChangeSupabase({ begin: { data: { result: 'draft' }, error: null } });
-    const draft = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const draft = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
     expect(draft.status).toBe(422);
     expect(((await draft.json()) as { error: { code: string } }).error.code).toBe('OP_PLAN_DRAFT_USE_PATCH');
     expect(rpcOrder(fakeSupabase)).toEqual([PLAN_PRICE_CHANGE_RPC.begin]);
 
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('UUID の形でない id は予約を取らずに 404 OP_PLAN_NOT_FOUND (uuid の引数に渡すと 22P02 の失敗になり 500 に入るため。#1917)', async () => {
+    process.env.STRIPE_SECRET_KEY = 'sk_test_x';
+    fakeSupabase = priceChangeSupabase();
+    const fetchMock = stubEdge(edgeOk({}));
+
+    const res = await POST(priceChangeRequest({}), { params: { id: 'not-a-uuid' } });
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } });
+    expect(rpcOrder(fakeSupabase)).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -142,7 +156,7 @@ describe('1. 予約 (begin_plan_price_change)', () => {
     fakeSupabase = priceChangeSupabase({ begin: beginResult });
     const fetchMock = stubEdge(edgeOk({}));
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
     const text = await res.text();
 
     expect(res.status).toBe(500);
@@ -172,7 +186,7 @@ describe('3. 書き込み (apply_plan_price_change) と 4. 監査の old_*', () 
       }),
     );
 
-    const res = await POST(priceChangeRequest({ new_monthly_price_jpy: 1200, new_yearly_price_jpy: 12000 }), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({ new_monthly_price_jpy: 1200, new_yearly_price_jpy: 12000 }), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(200);
     expect(auditDetails(fakeSupabase)).toMatchObject({
@@ -193,7 +207,7 @@ describe('3. 書き込み (apply_plan_price_change) と 4. 監査の old_*', () 
     fakeSupabase = priceChangeSupabase({ apply: { data: { result: 'lost' }, error: null } });
     stubEdge(edgeOk({ month: { new_stripe_price_id: 'price_new', deactivated: true } }));
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(409);
     // Stripe の同期の後なので、新しい Price が Stripe に作られている旨を添える
@@ -208,7 +222,7 @@ describe('3. 書き込み (apply_plan_price_change) と 4. 監査の old_*', () 
     delete process.env.STRIPE_SECRET_KEY;
     fakeSupabase = priceChangeSupabase({ apply: { data: { result: 'lost' }, error: null } });
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: { code: 'CONFLICT_STALE_DATA', message: PRICE_CHANGE_RESERVATION_LOST_MESSAGE } });
@@ -218,7 +232,7 @@ describe('3. 書き込み (apply_plan_price_change) と 4. 監査の old_*', () 
     delete process.env.STRIPE_SECRET_KEY;
     fakeSupabase = priceChangeSupabase({ apply: { data: { result: 'not_found' }, error: null } });
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(404);
     expect(auditDetails(fakeSupabase)).toBeUndefined();
@@ -229,7 +243,7 @@ describe('3. 書き込み (apply_plan_price_change) と 4. 監査の old_*', () 
     delete process.env.STRIPE_SECRET_KEY;
     fakeSupabase = priceChangeSupabase({ apply: { data: { result: 'applied' }, error: null } });
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(500);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe('OP_DB_ERROR');
@@ -244,7 +258,7 @@ describe('apply まで行かなかったときの予約の後片付け (release_
     fakeSupabase = priceChangeSupabase();
     stubEdge({ ok: false, status: 500, text: () => Promise.resolve('edge failed') });
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(502);
     expect(rpcOrder(fakeSupabase)).toEqual([PLAN_PRICE_CHANGE_RPC.begin, PLAN_PRICE_CHANGE_RPC.release]);
@@ -259,12 +273,12 @@ describe('apply まで行かなかったときの予約の後片付け (release_
     fakeSupabase = priceChangeSupabase({ release: releaseResult });
     stubEdge({ ok: false, status: 500, text: () => Promise.resolve('edge failed') });
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
 
     expect(res.status).toBe(502);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe('OP_STRIPE_SYNC_FAILED');
     expect(mockWithUser).toHaveBeenCalledWith('sa-1');
-    expect(mockLogError).toHaveBeenCalledWith(expect.stringContaining('予約を消せませんでした'), expect.any(Error), { plan_id: 'plan-1' });
+    expect(mockLogError).toHaveBeenCalledWith(expect.stringContaining('予約を消せませんでした'), expect.any(Error), { plan_id: PLAN_ID });
   });
 
   it('予約の後に例外が出ても (接続情報が無い)、予約を消してから 500 を返す', async () => {
@@ -274,7 +288,7 @@ describe('apply まで行かなかったときの予約の後片付け (release_
     const fetchMock = stubEdge(edgeOk({}));
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const res = await POST(priceChangeRequest({}), { params: { id: 'plan-1' } });
+    const res = await POST(priceChangeRequest({}), { params: { id: PLAN_ID } });
     consoleError.mockRestore();
 
     expect(res.status).toBe(500);

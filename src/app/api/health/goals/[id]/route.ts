@@ -31,10 +31,14 @@ export async function GET(
     .select('*')
     .eq('id', id)
     .eq('user_id', user.id)
-    .single();
+    .maybeSingle();
 
   if (error) {
     return internalError('GET /api/health/goals/[id]', error, { userId: user.id, table: 'health_goals' });
+  }
+  // 他人の目標・消された目標は行が無い (RLS と user_id の絞り込み)。500 にせず 404 (健康診断の記録 checkups/[id] と同じ。#1917)
+  if (!data) {
+    return NextResponse.json({ error: HEALTH_GOAL_NOT_FOUND_MESSAGE }, { status: 404 });
   }
 
   return NextResponse.json({ goal: data });
@@ -63,14 +67,18 @@ export async function PUT(
   const body = await request.json().catch(() => null);
 
   // 目標の所有者確認
-  // #1229: 目標値の範囲は goal_type ごとに違うため、入力の検証より先に対象の行を取得する
-  const { data: existing } = await supabase
+  // #1229: 目標値の範囲は goal_type ごとに違うため、入力の検証より先に対象の行を取得する。
+  // 読めなかったときは 404 にしない (行が無いときだけ 404。一時的な失敗で目標が消えたように見せない。#1917)
+  const { data: existing, error: existingError } = await supabase
     .from('health_goals')
     .select('*')
     .eq('id', id)
     .eq('user_id', user.id)
-    .single();
+    .maybeSingle();
 
+  if (existingError) {
+    return internalError('PUT /api/health/goals/[id]', existingError, { userId: user.id, table: 'health_goals' });
+  }
   if (!existing) {
     return NextResponse.json({ error: HEALTH_GOAL_NOT_FOUND_MESSAGE }, { status: 404 });
   }
@@ -165,10 +173,14 @@ export async function PUT(
     })
     .eq('id', id)
     .select()
-    .single();
+    .maybeSingle();
 
   if (error) {
     return internalError('PUT /api/health/goals/[id]', error, { userId: user.id, table: 'health_goals' });
+  }
+  // 読んでから書くまでに消された (更新した行が無い) ときは 404 (#1917)
+  if (!data) {
+    return NextResponse.json({ error: HEALTH_GOAL_NOT_FOUND_MESSAGE }, { status: 404 });
   }
 
   return NextResponse.json({ goal: data });

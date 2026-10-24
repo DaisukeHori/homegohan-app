@@ -12,18 +12,19 @@
  * リードの行が無いときだけ 404 にする (一時的な失敗でリードが消えたように見せない)。
  * UUID の形でない id は、DB に渡す前に 404 NOT_FOUND で断る (GET・POST とも)。uuid 型の列に渡すと 22P02 で失敗し、
  * 「DB の失敗は 500」に入ってしまうため (形の違う id は「そのリードは無い」と同じに扱う)。
+ * POST の本文が JSON として読めないときは 400 INVALID_JSON (外側の catch の 500 に落とさない。#1917)。
  * 追加のあとのリードの updated_at の更新に失敗しても、活動は追加できているので 201 のまま (fail-open)。失敗は db-logger に error で残す。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
+import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested, invalidJsonNested } from '@/lib/api/error-responses';
 import { createActivitySchema } from '@/lib/admin/sales-schemas';
 import { errorCodeOf, internalError, toLoggableError } from '@/lib/api/errors';
 import { createLogger } from '@/lib/db-logger';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { recordAdminAudit } from '@/lib/admin/audit';
-import { isUuid } from '@/lib/http-params';
+import { isUuid, readJsonBody } from '@/lib/http-params';
 
 /** 400: 本文・クエリの検証の失敗の文 (項目ごとの理由は details に添える。message は画面がそのまま出す文なので文字列にする) */
 const VALIDATION_ERROR_MESSAGE = '入力内容を確認してください';
@@ -91,8 +92,10 @@ export async function POST(request: NextRequest, props: RouteContext) {
   try {
     const currentUser = await requireRole(['sales', 'admin', 'super_admin']);
 
-    const body = await request.json();
-    const parseResult = createActivitySchema.safeParse(body);
+    // 壊れた JSON は 400 INVALID_JSON (外側の catch の 500 に落とさない)
+    const bodyResult = await readJsonBody(request);
+    if (!bodyResult.ok) return invalidJsonNested();
+    const parseResult = createActivitySchema.safeParse(bodyResult.body);
     if (!parseResult.success) {
       return NextResponse.json(
         { error: { code: 'VALIDATION_ERROR', message: VALIDATION_ERROR_MESSAGE, details: parseResult.error.flatten() } },
