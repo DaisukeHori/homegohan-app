@@ -63,7 +63,7 @@ export enum MembershipErrorCode {
   // billing/03 §6.6・§9.5: create_family_group と family_members のトリガー (family_members_billing_plan_gate) が RAISE する。
   // 家族グループの作成とメンバーの追加は、家族プランの契約がある代表者のグループだけ
   FAMILY_PLAN_REQUIRED = 'FAMILY_PLAN_REQUIRED',
-  // #1917 の続き: family_groups のトリガー family_groups_representative_not_deleting
+  // #1917 の続き: family_groups のトリガー trg_representative_not_deleting (関数 family_groups_representative_not_deleting)
   // (supabase/migrations/20261023150000_account_deletion_family_representative_guard.sql) が、退会の手続き中 (新しい退会の印がある) の人を
   // 代表者にする作成・譲渡の承諾・運営の強制譲渡を止めるときに RAISE する
   REPRESENTATIVE_ACCOUNT_DELETING = 'REPRESENTATIVE_ACCOUNT_DELETING',
