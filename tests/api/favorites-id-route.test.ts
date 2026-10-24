@@ -40,7 +40,7 @@ import { DELETE } from '../../src/app/api/favorites/[id]/route';
 const USER_ID = '11111111-1111-4111-8111-111111111111';
 const FAVORITE_ID = '22222222-2222-4222-8222-222222222222';
 
-function useScripted(...results: ScriptedResult[]): ScriptedSupabase {
+function scriptFrom(...results: ScriptedResult[]): ScriptedSupabase {
   const scripted = createScriptedSupabase(results);
   mocks.from.mockImplementation(scripted.db.from);
   return scripted;
@@ -81,7 +81,7 @@ describe('DELETE /api/favorites/[id] (D-1〜D-5)', () => {
   });
 
   it('D-3 本人の行を消して 200 { success: true }', async () => {
-    const scripted = useScripted({ data: [{ id: FAVORITE_ID }] });
+    const scripted = scriptFrom({ data: [{ id: FAVORITE_ID }] });
 
     const { res, json } = await callDelete(FAVORITE_ID);
 
@@ -98,7 +98,7 @@ describe('DELETE /api/favorites/[id] (D-1〜D-5)', () => {
   });
 
   it('D-4 0 行 (他人・消した行) は 404', async () => {
-    useScripted({ data: [] });
+    scriptFrom({ data: [] });
 
     const { res, json } = await callDelete(FAVORITE_ID);
 
@@ -107,7 +107,7 @@ describe('DELETE /api/favorites/[id] (D-1〜D-5)', () => {
   });
 
   it('D-5 DB の失敗は 500', async () => {
-    useScripted({ error: { code: '42501', message: 'permission denied for table dish_favorites' } });
+    scriptFrom({ error: { code: '42501', message: 'permission denied for table dish_favorites' } });
 
     const { res, json } = await callDelete(FAVORITE_ID);
 

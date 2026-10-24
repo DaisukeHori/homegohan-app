@@ -111,7 +111,7 @@ function setupFavoritesQuery(...results: QueryResult[]) {
 }
 
 /** from を scripted-supabase の偽物に切り替える */
-function useScripted(...results: ScriptedResult[]): ScriptedSupabase {
+function scriptFrom(...results: ScriptedResult[]): ScriptedSupabase {
   const scripted = createScriptedSupabase(results);
   mocks.from.mockImplementation(scripted.db.from);
   return scripted;
@@ -267,7 +267,7 @@ describe('GET /api/favorites (G-4〜G-7)', () => {
     ] as const;
 
     for (const [sortParam, expectedOrder] of cases) {
-      const scripted = useScripted({ data: [], count: 0 });
+      const scripted = scriptFrom({ data: [], count: 0 });
 
       const { res } = await callGet(`?q=%20%E3%81%98%E3%82%83%E3%81%8C%20${sortParam}`);
 
@@ -285,7 +285,7 @@ describe('GET /api/favorites (G-4〜G-7)', () => {
     }
 
     // q が無い・空白だけなら絞らない
-    const scripted = useScripted({ data: [], count: 0 });
+    const scripted = scriptFrom({ data: [], count: 0 });
     await callGet('?q=%20%20');
     expect(scripted.queries[0].calls.some((call) => call.method === 'ilike')).toBe(false);
   });
@@ -293,7 +293,7 @@ describe('GET /api/favorites (G-4〜G-7)', () => {
   it('G-7 q の NULL 文字を除き 100 文字で切ってから ilike に渡す (200。DB に NULL 文字が渡らない)', async () => {
     const longName = `肉じゃが${'あ'.repeat(DISH_FAVORITES_QUERY_MAX_CHARS + 20)}`;
     const raw = `  肉\u0000じゃが${'あ'.repeat(DISH_FAVORITES_QUERY_MAX_CHARS + 20)}`;
-    const scripted = useScripted({ data: [], count: 0 });
+    const scripted = scriptFrom({ data: [], count: 0 });
 
     const { res, json } = await callGet(`?${new URLSearchParams({ q: raw }).toString()}`);
 
@@ -313,7 +313,7 @@ describe('GET /api/favorites (G-4〜G-7)', () => {
       dish: DishSnapshotSchema.parse({ name: 'カレー', ingredients: [{ name: '玉ねぎ', amount_g: 100, note: null }] }),
       source_planned_meal_id: PLANNED_MEAL_ID,
     });
-    const scripted = useScripted({ data: [rowOf(), second], count: 7, status: 206 });
+    const scripted = scriptFrom({ data: [rowOf(), second], count: 7, status: 206 });
 
     const { res, json } = await callGet('?limit=2&offset=0');
 
@@ -328,7 +328,7 @@ describe('GET /api/favorites (G-4〜G-7)', () => {
   });
 
   it('G-6 DB の失敗は 500 で、生のエラー文を本文に出さない (#1172)', async () => {
-    useScripted({ error: { code: '42501', message: 'permission denied for table dish_favorites' }, status: 403 });
+    scriptFrom({ error: { code: '42501', message: 'permission denied for table dish_favorites' }, status: 403 });
 
     const { res, json } = await callGet();
 
@@ -342,7 +342,7 @@ describe('GET /api/favorites (G-4〜G-7)', () => {
 
     // 行の形が正典と違うときも 500 (0 件の 200 にしない)
     mocks.userError.mockClear();
-    useScripted({ data: [{ ...rowOf(), id: 'not-a-uuid' }], count: 1 });
+    scriptFrom({ data: [{ ...rowOf(), id: 'not-a-uuid' }], count: 1 });
     const broken = await callGet();
     expect(broken.res.status).toBe(500);
     expect(broken.json).toEqual({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE });
@@ -431,7 +431,7 @@ describe('POST /api/favorites (P-1〜P-10)', () => {
     const LONG_INGREDIENT_LINE_CHARS = 677;
     const longLine = '材'.repeat(LONG_INGREDIENT_LINE_CHARS);
     const ingredients = [{ name: '鶏むね肉', amount_g: 200, note: '皮なし' }, { name: '塩', amount_g: null, note: null }, longLine];
-    const scripted = useScripted({ data: null }, { count: 0 }, { data: rowOf() });
+    const scripted = scriptFrom({ data: null }, { count: 0 }, { data: rowOf() });
 
     const { res } = await callPost(JSON.stringify({ dish: { name: '肉じゃが', ingredients } }));
 
@@ -455,14 +455,14 @@ describe('POST /api/favorites (P-1〜P-10)', () => {
     expect(mocks.from).not.toHaveBeenCalled();
 
     // ちょうど 32768 バイトは通す (境界)
-    useScripted({ data: null }, { count: 0 }, { data: rowOf() });
+    scriptFrom({ data: null }, { count: 0 }, { data: rowOf() });
     const accepted = await callPost(JSON.stringify(bodyWithDishBytes(DISH_FAVORITE_DISH_MAX_BYTES)));
     expect(accepted.res.status).toBe(201);
   });
 
   it('P-6 POST は新しい名前 (確認で行なし) を 201 { favorite, created: true } で返す', async () => {
     const saved = rowOf({ source_planned_meal_id: PLANNED_MEAL_ID });
-    const scripted = useScripted({ data: null }, { count: 3 }, { data: saved });
+    const scripted = scriptFrom({ data: null }, { count: 3 }, { data: saved });
 
     const { res, json } = await callPost(JSON.stringify({ dish: { name: '  肉じゃが ' }, source_planned_meal_id: PLANNED_MEAL_ID }));
 
@@ -487,7 +487,7 @@ describe('POST /api/favorites (P-1〜P-10)', () => {
   });
 
   it('P-7 POST は保存済みの名前 (確認で行あり) を件数を数えずに 200 { favorite, created: false } で返す', async () => {
-    const scripted = useScripted({ data: { id: FAVORITE_ID } }, { data: rowOf() });
+    const scripted = scriptFrom({ data: { id: FAVORITE_ID } }, { data: rowOf() });
 
     const { res, json } = await callPost(JSON.stringify({ dish: { name: '肉じゃが' } }));
 
@@ -502,7 +502,7 @@ describe('POST /api/favorites (P-1〜P-10)', () => {
   it('P-8 POST は上限で 409 CONFLICT_DISH_FAVORITES_LIMIT と件数入りの文を返す (DISH_FAVORITES_MAX_PER_USER を立てた値で)', async () => {
     const LIMIT_FROM_ENV = 5;
     vi.stubEnv('DISH_FAVORITES_MAX_PER_USER', String(LIMIT_FROM_ENV));
-    const scripted = useScripted({ data: null }, { count: LIMIT_FROM_ENV });
+    const scripted = scriptFrom({ data: null }, { count: LIMIT_FROM_ENV });
 
     const { res, json } = await callPost(JSON.stringify(validBody));
 
@@ -514,7 +514,7 @@ describe('POST /api/favorites (P-1〜P-10)', () => {
     expect(scripted.queries).toHaveLength(2);
 
     // 上限より 1 少なければ保存する
-    useScripted({ data: null }, { count: LIMIT_FROM_ENV - 1 }, { data: rowOf() });
+    scriptFrom({ data: null }, { count: LIMIT_FROM_ENV - 1 }, { data: rowOf() });
     expect((await callPost(JSON.stringify(validBody))).res.status).toBe(201);
   });
 
@@ -528,7 +528,7 @@ describe('POST /api/favorites (P-1〜P-10)', () => {
 
     for (const results of scriptedFailures) {
       mocks.userError.mockClear();
-      useScripted(...results);
+      scriptFrom(...results);
 
       const { res, json } = await callPost(JSON.stringify(validBody));
 

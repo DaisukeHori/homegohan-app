@@ -60,7 +60,7 @@ function rowOf(): DishFavoriteRow {
   };
 }
 
-function useScripted(...results: ScriptedResult[]): ScriptedSupabase {
+function scriptFrom(...results: ScriptedResult[]): ScriptedSupabase {
   const scripted = createScriptedSupabase(results);
   mocks.from.mockImplementation(scripted.db.from);
   return scripted;
@@ -112,12 +112,12 @@ describe('GET /api/favorites/status (T-1〜T-5)', () => {
     expect(mocks.from).not.toHaveBeenCalled();
 
     // 100 文字ちょうどは通す (境界)
-    useScripted({ data: null });
+    scriptFrom({ data: null });
     expect((await callGet('あ'.repeat(DISH_FAVORITE_NAME_MAX_CHARS))).res.status).toBe(200);
   });
 
   it('T-3 保存済みなら { favorited: true, id }', async () => {
-    const scripted = useScripted({ data: rowOf() });
+    const scripted = scriptFrom({ data: rowOf() });
 
     const { res, json } = await callGet(' ＮＩＫＵ　じゃが ');
 
@@ -131,7 +131,7 @@ describe('GET /api/favorites/status (T-1〜T-5)', () => {
   });
 
   it('T-4 未保存なら { favorited: false, id: null }', async () => {
-    useScripted({ data: null });
+    scriptFrom({ data: null });
 
     const { res, json } = await callGet('カレー');
 
@@ -140,7 +140,7 @@ describe('GET /api/favorites/status (T-1〜T-5)', () => {
   });
 
   it('T-5 DB の失敗は 500', async () => {
-    useScripted({ error: { code: '57014', message: 'canceling statement due to statement timeout' } });
+    scriptFrom({ error: { code: '57014', message: 'canceling statement due to statement timeout' } });
 
     const { res, json } = await callGet('肉じゃが');
 
@@ -150,7 +150,7 @@ describe('GET /api/favorites/status (T-1〜T-5)', () => {
 
     // 行の形が正典と違うときも 500 (「未保存」にしない)
     mocks.userError.mockClear();
-    useScripted({ data: { ...rowOf(), id: 'not-a-uuid' } });
+    scriptFrom({ data: { ...rowOf(), id: 'not-a-uuid' } });
     const broken = await callGet('肉じゃが');
     expect(broken.res.status).toBe(500);
     expect(mocks.userError).toHaveBeenCalledTimes(1);
