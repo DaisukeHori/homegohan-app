@@ -388,7 +388,8 @@ describe('POST /api/operator/membership/org/[id]/dissolve: 通知メールの宛
 
 describe('POST /api/operator/membership/org/[id]/dissolve: RPC のエラー', () => {
   it('RPC が失敗: 500 INTERNAL_ERROR を返し、通知メールは送らない', async () => {
-    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'ORG_NOT_FOUND', code: 'P0001' } });
+    // 分からない失敗 (RPC の既知のコードを含まない) は従来どおり 500
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'SOME_UNKNOWN_DB_FAILURE', code: 'XX000' } });
 
     const res = await call();
     const json = await res.json();
@@ -397,7 +398,19 @@ describe('POST /api/operator/membership/org/[id]/dissolve: RPC のエラー', ()
     expect(json.error.code).toBe('INTERNAL_ERROR');
     // DB の生のエラー文は本文に出さない (#1172 / #1434)
     expect(json.error.message).toBe('処理中にエラーが発生しました');
-    expect(JSON.stringify(json)).not.toContain('ORG_NOT_FOUND');
+    expect(JSON.stringify(json)).not.toContain('SOME_UNKNOWN_DB_FAILURE');
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(fake.auth.admin.getUserById).not.toHaveBeenCalled();
+  });
+
+  it('RPC が既知のコード (ORG_NOT_FOUND) で止めた: 404 と日本語の固定の文を返し (汎用の 500 にしない。#1917 の続き)、通知メールは送らない', async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'ORG_NOT_FOUND', code: 'P0001' } });
+
+    const res = await call();
+    const json = await res.json();
+
+    expect(res.status).toBe(404);
+    expect(json.error).toEqual({ code: 'ORG_NOT_FOUND', message: '組織が見つかりません。' });
     expect(mocks.sendEmail).not.toHaveBeenCalled();
     expect(fake.auth.admin.getUserById).not.toHaveBeenCalled();
   });

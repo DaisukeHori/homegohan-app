@@ -2,7 +2,7 @@
  * ログイン中の端末・最近のログイン・端末名の登録の API (#1189・#1190)。設計の正典 docs/design/cross/16-auth-history-sessions.md §16・§14.1〜14.5。
  *
  * どれも getApi() (Bearer の access token を付ける) で Next.js の API を呼ぶ。失敗は getApi() の例外のまま投げる
- * (画面は getApiErrorMessage で本文の error を出す)。応答の形は Web の src/lib/auth/sessions/schemas.ts と同じ型だけで受ける
+ * (画面は getJapaneseApiErrorMessage で本文の error を出す)。応答の形は Web の src/lib/auth/sessions/schemas.ts と同じ型だけで受ける
  * (Zod を packages/shared に写さない。§25 Q-7)。
  */
 import { getApi } from "./api";
