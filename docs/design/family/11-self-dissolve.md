@@ -1548,7 +1548,7 @@ export async function POST(request: Request) {
 |---|---|---|---|
 | `NOT_AUTHENTICATED` (RPC) / `getUser` 失敗 | 401 | `NOT_AUTHENTICATED` | 文を出さない (`dissolveOwnScope` は `unauthorized` を返し、区画が `onUnauthorized` を呼ぶ。メンバーシップ設定と凍結中の画面は `/login` へ、同意の前の画面は戻り先 (`next`) にその画面のパスを付けた `/login` へ移る (`AccountWithoutConsent.tsx` の既存の `onUnauthorized`)。§15.1・§15.4) |
 | 本文が壊れている・`confirm` が true でない・id が UUID でない | 400 | `VALIDATION_ERROR` | 入力の内容が正しくありません。確かめて、もう一度お試しください。 |
-| 本文に NULL 文字 | 400 | `INVALID_CHARACTER` (`rejectNullCharacterBody`。本文は平らな `{ error, code }`) | 画面からは起きない (区画が送る本文は id と `true` だけ)。起きれば `MEMBERSHIP_ERROR_FALLBACK_MESSAGE` (「処理に失敗しました。時間をおいてもう一度お試しください。」。`INVALID_CHARACTER` は `MembershipErrorCode` に無い) |
+| 本文に NULL 文字 | 400 | `INVALID_CHARACTER` (`rejectNullCharacterBody(request, { shape: 'nested' })`。本文は家族の API のほかの失敗と同じ nested の `{ error: { code, message } }`。#1917 の続き) | 画面からは起きない (区画が送る本文は id と `true` だけ)。起きれば `MEMBERSHIP_ERROR_FALLBACK_MESSAGE` (「処理に失敗しました。時間をおいてもう一度お試しください。」。`INVALID_CHARACTER` は `MembershipErrorCode` に無い) |
 | `FAMILY_NOT_FOUND` / `ORG_NOT_FOUND` | 404 | 同名 | 家族が見つかりません。/ 組織が見つかりません。 |
 | `NOT_FAMILY_REPRESENTATIVE` / `NOT_ORG_OWNER` | 403 | 同名 | 家族の代表者だけが操作できます。/ 組織のオーナーだけが操作できます。 |
 | `FAMILY_ALREADY_DISSOLVED` / `ORG_ALREADY_DISSOLVED` | 409 | 同名 | この家族グループはすでに解散しています。/ この組織はすでに解散しています。 |

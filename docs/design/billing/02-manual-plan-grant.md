@@ -1865,7 +1865,7 @@ const canGrantManualPlan = isSuperAdmin && actor.id !== profile.id;
 
 パスの `{id}` は利用者の `user_profiles.id` (UUID)。UUID の形でなければ 404 `NOT_FOUND` (DB に触れない)。UUID の形なら小文字にそろえてから使う (#1707。自分の判定・DB・監査)。
 
-本文の NULL 文字 (#1657): `POST` と `DELETE` は handler の最初の 2 行で `rejectNullCharacterBody(request)` を呼ぶ (400 `{ error, code: 'INVALID_CHARACTER' }` は既存の共通の形)。`GET` は本文を読まない。
+本文の NULL 文字 (#1657): `POST` と `DELETE` は handler の最初の 2 行で `rejectNullCharacterBody(request, { shape: 'nested' })` を呼ぶ (400 は運営 API のほかの失敗と同じ nested の `{ error: { code: 'INVALID_CHARACTER', message } }`。#1917 の続きで flat から改めた)。`GET` は本文を読まない。
 
 ### 9.0 判定の順 (route の正本。§4.2 のトレース・§7.3・§11 はこの番号を引く)
 
@@ -1873,7 +1873,7 @@ const canGrantManualPlan = isSuperAdmin && actor.id !== profile.id;
 
 | # | `POST` / `DELETE` | `GET` | 止まったときの応答 |
 |---|---|---|---|
-| 1 | `rejectNullCharacterBody(request)` (handler の最初の 2 行) | — (本文を読まない) | 400 `INVALID_CHARACTER` (flat。ヘルパーの応答のまま) |
+| 1 | `rejectNullCharacterBody(request, { shape: 'nested' })` (handler の最初の 2 行) | — (本文を読まない) | 400 `INVALID_CHARACTER` (nested。#1917 の続き) |
 | 2 | `requireRole(['super_admin'])` (AAL2) | 同じ | 401 `AUTH_UNAUTHENTICATED` / 403 `OP_PERMISSION_DENIED` (`authFailure`)。それ以外の例外は投げ直す (Next の既定の 500) |
 | 3 | パスの id の形 (`targetIdOf`。UUID の形なら小文字にそろえる) | 同じ | 404 `NOT_FOUND` (`errorJson`) |
 | 4 | 自分自身 (`id === normalizeUuid(actor.id)`) | — (自分の判定をしない) | 403 `OP_SELF_MODIFY` (`selfModifyFailure`)。本文の検証 (5・6) より前なので、本文が JSON でなくても Zod に通らなくても 403。cross/12 の super_admin の reset (`src/app/api/super-admin/admins/[id]/mfa/reset/route.ts`) と同じ順 |
@@ -1975,7 +1975,7 @@ sequenceDiagram
 
 | コード | HTTP | 出どころ | 文 |
 |---|---|---|---|
-| `INVALID_CHARACTER` | 400 | `rejectNullCharacterBody` (flat の形 `{ error, code }`) | 既存の文 |
+| `INVALID_CHARACTER` | 400 | `rejectNullCharacterBody` (nested の形 `{ error: { code, message } }`。#1917 の続き) | 既存の文 |
 | `OP_INVALID_INPUT` | 400 | JSON でない (`invalidJsonBodyResponse`) / Zod (`invalidInputResponse`。`message` は最初の issue の文: `有効期限は今日より後の日付を指定してください` ほか) / DB 関数の `BILL_MANUAL_EXPIRES_AT_PAST` (`MANUAL_GRANT_ERROR_MESSAGES.OP_INVALID_INPUT`) | 入力値が不正です (既定) / 有効期限は今日より後の日付を指定してください |
 | `AUTH_UNAUTHENTICATED` | 401 | `requireRole` (`AuthError`) | 認証が必要です |
 | `OP_PERMISSION_DENIED` | 403 | `requireRole` (`ForbiddenError`。ロール不足・凍結・`MfaRequiredError`) | 権限がありません |
