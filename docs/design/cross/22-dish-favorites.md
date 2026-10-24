@@ -1129,7 +1129,7 @@ export async function DELETE(_request: Request, props: { params: Promise<{ id: s
 
 ```ts
 // tsc:skip (既存ファイルの差分の断片)
-// (1) import に 2 つ
+// (1) import に 1 つ
 import { dishSnapshotFromMenuDish } from '@/modules/dish-favorites/core';
 
 // (2) recipeReducer から分解する所 (:787-796 の並び) に 1 対
@@ -2028,3 +2028,144 @@ sequenceDiagram
 新しい Storage のパス・RPC・cron は無い。`RecipeModal`・`/api/recipes/[id]/like`・`recipe_likes`・`viewer-lookups.ts`・`consultation-action-executor.ts`・Edge Functions は変えない。
 
 ---
+
+## 15. 段分け (実装 WF は 3 段。段ごとに 2 枚レビューを閉じる)
+
+| 段 | 中身 | 前提 | 本番の順序 |
+|---|---|---|---|
+| A (DB と型) | §7.1 migration・§7.2 戻し口・§7.13 契約テスト (C-1〜C-8)・§7.14 結合テスト (I-1〜I-7)・`database.types.ts` 2 本の生成し直し・§7.7 書き出しの 1 行・`tests/legal-text-1901.test.ts` の対応 1 行・`auth-users-fk-on-delete.test.ts` の `EXPECTED_ACTIONS` 1 行・`account-export-scope.test.ts` の種と件数。**C-3 が core.ts の定数を読むので、§7.3 `core.ts` も段 A に含める** (純関数と Zod だけ。route はまだ無い) | 無し (追加だけの migration) | ① 段 A の migration を本番へ適用 (追加だけ。適用の確認は §19 の 1〜4) → ② 段 A の PR をマージ (番号は直前に確定。§7.1) |
+| B1 (モジュールと API) | §7.4 `server.ts`・§7.5 route 3 ファイル・§7.6 環境変数・`src/__tests__/api/null-character-routes.test.ts` の表の 1 行・§7.15 の単体テスト (core・server・route 3 本)・e2e の E-1 | 段 A が本番に適用済み・main に入っていること (表が無いと `GET /api/favorites` が 500) | ③ 段 B1 の PR をマージ (= `GET /api/favorites` が `dish_favorites` を読む。画面はまだ `/api/recipes/[id]/like` を呼ぶが、今までどおり 404 で何も壊れない) |
+| B2 (画面) | §7.8 reducer・§7.9 献立の画面・§7.10〜§7.12 お気に入りの画面 3 ファイル・部品のテスト 2 本の書き換え | 段 B1 が main に入っていること (status / POST / DELETE が無いと ♥ が動かない) | ④ 段 B2 の PR をマージ (= 公開。確認は §19 の 5〜8) |
+
+- A・B1・B2 は同じ worktree で積んでもよいが、PR は分ける (A の本番の適用を B1 のマージの前に確かめるため)。B1 と B2 を 1 本の WF の 2 段にしてもよい (段内で 2 枚レビュー・最後に横断整合 1 回)。
+- 変更するファイルの数: 段 A = 10 前後 (製品 5・テスト 5)、段 B1 = 11 前後 (製品 6・テスト 5)、段 B2 = 7 (製品 5・テスト 2)。どの段も 15 ファイル・1,500 行以内。
+- 戻すとき: B2 → B1 のコードを戻してから、A の戻し口を流す (§7.2 の注意)。
+- `tests/account-export-tables.test.ts` は、migration のファイルが置かれた時点で `dish_favorites` を「分類が要る表」に数えるので、§7.7 の行は migration と同じ PR (段 A)。`tests/legal-text-1901.test.ts` の T-34 は `ACCOUNT_EXPORT_TABLES` の表を対応の表と突き合わせるので、対応の 1 行も段 A。
+
+---
+
+## 16. 既存の番兵 (契約テスト・走査テスト) の追随表
+
+本設計が足す・変える・移すものの名前 (`dish_favorites`・`DISH_FAVORITE*`・`/api/favorites`・`favorites/route.ts`・`FavoriteRecipeModal`・`FavoriteListItem`・`recipeName`・`likedAt`・`recipeUuid`・`FAVORITE_SET`・`DISH_FAVORITES_MAX_PER_USER`・`recipe_likes`・`/api/recipes/[id]/like`) を grep の語にして `tests/`・`src/__tests__/`・`src/app/(main)/favorites/_components/__tests__/`・`apps/mobile/__tests__/`・`scripts/` を走査した結果 (2026-10-25・origin/main `edff659e4`)。
+
+| 番兵 | grep の語 | 反応 | 直し方 | 段 |
+|---|---|---|---|---|
+| `tests/account-export-tables.test.ts` | `DATA_SUBJECT_COLUMNS`・`loadSchemaModel`・`applyMigration`・`分類` | migration が置かれると `dish_favorites` (user_id を持つ) が「分類が要る表」に数えられ、`ACCOUNT_EXPORT_TABLES` にも `ACCOUNT_EXPORT_EXCLUDED` にも無いと赤。並びが主キー (`id`) を含まないと赤。秘密っぽい列名 (`SENSITIVE_NAME`) と他人を指す列は無い | §7.7 の行 (`orderBy: ['created_at', 'id']`) | A |
+| `tests/account-export.test.ts` | `ACCOUNT_EXPORT_TABLES.map((t) => t.table)`・`createFakePostgrest` | `json.data` の鍵が `ACCOUNT_EXPORT_TABLES` の順。種に無い表は偽物が `[]` を返すので緑のまま | 変更なし (A・B の `dish_favorites` を種に足し「B の行が入らない」を 1 行足すのは任意) | A |
+| `tests/integration/security/account-export-scope.test.ts:130-160, 500-540` | `insert('recipe_likes'`・`row_counts`・`expect(empty).toEqual(['family_groups'])` | 「family_groups 以外は全表に本人の行がある」なので、種に `dish_favorites` が無いと `empty` に入って赤。`row_counts` に無いと `toMatchObject` は緑だが、種を足すなら件数も書く | 種に A・B それぞれ `insert('dish_favorites', { user_id: uid, dish_name: mark('DISH-FAV'), dish_name_key: …, dish: { name: … } })` を 1 行、`row_counts` に `dish_favorites: 1` | A |
+| `tests/integration/security/auth-users-fk-on-delete.test.ts:195-230` | `EXPECTED_ACTIONS`・`'recipe_likes.user_id': 'CASCADE'` | D: auth.users を指す外部キーの集合と一覧の鍵の集合が一致しないと赤 (`dish_favorites.user_id` が増える) | `'dish_favorites.user_id': 'CASCADE'` を `recipe_likes.user_id` の行の次に | A |
+| `tests/database-types-migrations-contract.test.ts:150-240` | `Tables`・`CREATE TABLE`・`expectedTables` | migration の `CREATE TABLE public.dish_favorites` が 2 つの型ファイルの `Tables` に無いと赤。写しがずれると赤 | ローカルの Supabase で型を生成し直し、2 つのファイルに同じ内容を置く (`__InternalSupabase` は残す) | A |
+| `tests/migration-file-version-integrity.test.ts:53-109` | `-- migration:`・`-- rollback:`・`supabase/rollbacks/`・`withSqlExtension` | 1 行目の見出しがファイル名と違う・案内した戻し口が無い・戻し口の見出しが対の migration を指さないと赤 | §7.1・§7.2 の形 (戻し口の 1 行目は `-- rollback: <同じ番号>_dish_favorites.sql`)。番号の確定で 4 か所を同時に | A |
+| `tests/db-privilege-hardening-migration-contract.test.ts` (規則 5) | `GRANT ALL`・`TRUNCATE`・`EARLIER_ROLLBACKS_GRANTING_TRUNCATE` | `20261022190000` より後の戻し口が利用者へ表の TRUNCATE (ALL を含む) を付けると赤 | §7.2 は DROP だけ (GRANT を書かない)。§7.1 も `GRANT ALL` / `TRUNCATE` を書かない (C-4 が重ねて見る) | A |
+| `tests/integration/security/db-privilege-hardening.test.ts` T-1〜T-4 | `has_table_privilege`・`TRUNCATE` | public の全表で anon / authenticated に TRUNCATE があると赤 | §7.1 は REVOKE ALL のあと 4 権限だけ GRANT (TRUNCATE は付かない) | A |
+| `tests/legal-text-1901.test.ts:127-200, 872-880` | `PRIVACY_DATA_TABLES`・`PRIVACY_DATA_EXCLUDED`・`T-34` | `ACCOUNT_EXPORT_TABLES` に足した表が対応の表に無いと赤 | `dish_favorites: 'レシピ'` を `recipe_likes: 'レシピ'` の次に。cross/20 の写しも (§17) | A |
+| `tests/legal-claims-1901.ts:246`・`tests/public-claims-guard.test.ts` | `privacy-3#6`・`evidence`・`landing-copy` の `favorites` | 主張の根拠のパス (`src/app/(main)/favorites/page.tsx`・`src/app/api/favorites/route.ts`) が実在すれば緑。文は変えない | 変更なし (パスは残る) | — |
+| `tests/helpers/schema-snapshot.ts` | `CREATE TABLE`・`PRIMARY KEY`・`REFERENCES` | migration の列・主キー・外部キーの読み取り (ベストエフォート)。表の中の `CONSTRAINT … PRIMARY KEY (id)` と列の `REFERENCES auth.users(id)` を読む | §7.1 は表の中に PK と REFERENCES を書く (apple_sign_in_tokens と同じ形) | A |
+| `src/__tests__/api/null-character-routes.test.ts:134, 281, 457` | `ENTRIES`・`EXCLUDED`・`BODY_READ_PATTERN`・`readJsonBody(` | 本文を読む handler (`readJsonBody(` を含む) が表にも EXCLUDED にも無いと赤。表にあるのに `rejectNullCharacterBody` を呼ばないと赤 | `ENTRIES` に `{ file: 'favorites/route.ts', method: 'POST', load: async () => (await import('@/app/api/favorites/route')).POST }` (flat の形。`shopping-list/add-recipe` の行の近く) | B1 |
+| `tests/api-invalid-json-scan.test.ts` | `request.json()`・`readJsonBody` | `request.json()` を route 全体の try で読み 500 にすると赤 | §7.5.1 は `readJsonBody` で読み `{ ok: false }` を 400 | B1 |
+| `tests/api-read-not-found-scan.test.ts` (A〜D) | `.single()`・`.maybeSingle()`・`404`・`isUuid` | 動的な route の handler で `.from` / `.rpc` を呼ぶのに id を確かめないと赤。`error || !row` を 404 にすると赤 | §7.5.3 は `isUuid(id)` を先に見る (handler は `.from` を呼ばない)。§7.4 は `maybeSingle` の error を失敗にし、`null` だけを「無い」にする | B1 |
+| `tests/api-list-range-scan.test.ts` | `.range(`・`resolveBeyondLastPage(`・`isBeyondLastPage(`・`416`・`'PGRST103'` | `src/app/api` で `.range(` を使うファイルが扱いを持たないと赤。**`.range(` が `server.ts` (src/modules) に移るので、`favorites/route.ts` には `.range(` が無くなり、この見張りの対象から外れる** (走査は `src/app/api` だけ) | §7.4 が `resolveBeyondLastPage` を使う (V-3 が確かめる)。見張りの範囲を `src/modules` に広げる改定は §21 Q-6 | B1 |
+| `tests/api-error-japanese-scan.test.ts`・`tests/helpers/api-error-japanese-scope.ts:46` | `JAPANESE_ERROR_API_DIRS`・`'src/app/api/favorites'` | `src/app/api/favorites` の下の route の失敗の文に英語だけの文や例外の文面があると赤 | §7.5 の文はすべて `error-responses.ts` と `core.ts` の日本語の固定の文 | B1 |
+| `tests/api-raw-error-message-scan.test.ts`・`tests/lib-raw-error-message-scan.test.ts` | `error.message`・`details`・`hint` | 本文に DB の生の文を入れると赤 | `internalError` と固定の文だけ。`server.ts` は `error` を返すだけで文を作らない | B1 |
+| `tests/env-source-scan.test.ts` (1・4・6・9) | `process.env`・`ENV_VARS`・`.env.example`・`readOnlyBy` | 本番コードが名前で読む変数が `src/lib/env.ts` の一覧に無い・`.env.example` に無い・`readOnlyBy` 以外のファイルが読むと赤 | §7.6 の一覧の 1 項目 (`readOnlyBy: 'src/modules/dish-favorites/server.ts'`) と `.env.example` の 3 行。読むのは `server.ts` だけ | B1 |
+| `tests/postgrest-embed-relationship-scan.test.ts` | `.select('`・`MIN_CHECKED_EMBEDS` | 埋め込み (`表名(列)`) を使うと関係の有無を見る。本書は埋め込みを使わない | 変更なし | — |
+| `tests/supabase-service-role-client-scan.test.ts` | `createClient(`・`SUPABASE_JS_CLIENT_ALLOWLIST` | service_role のクライアントを自前で作ると赤 | 作らない (RLS の client だけ) | — |
+| `tests/next15-async-request-api-scan.test.ts` | `params`・`await` | `props.params` を await しないと赤 | §7.5.3 は `await props.params` | B1 |
+| `tests/jst-today-source-scan.test.ts` | `new Date()`・`todayLocal` | 今日の日付を自前で作ると赤 | 作らない (`created_at` は DB の既定) | — |
+| `tests/api/favorites-route.test.ts` (既存) | `recipe_likes`・`recipeName`・`recipeUuid`・`likedAt`・`42703`・`'id, recipe_id, recipe_uuid, created_at'` | `from('recipe_likes')`・列の退避・行の形を期待する it が赤 (「変えていない挙動」の 4 本と 416 の 3 本)。limit / offset のクランプの表 (28 本) は range の引数だけを見るので、`dish_favorites` の空の結果を返せば緑 | §7.15 のとおり書き換え (R-1〜R-6・P-1〜P-9)。クランプの表はそのまま | B1 |
+| `tests/route-invalid-input-1917.test.ts:331-410` | `/api/recipes/[id]/like`・`recipe_likes_recipe_id_fkey` | いいねの route の単体。route を変えないので緑のまま | 変更なし | — |
+| `tests/recipe-viewer-lookups-1917.test.ts`・`tests/recipes-route.test.ts`・`tests/recipe-author-name-1649.test.ts`・`tests/recipe-detail-hidden-404.test.ts`・`tests/api-security-cluster.test.ts`・`tests/integration/security/recipes-api-logged-in.test.ts` | `recipe_likes` | 公開レシピの `isLiked` の単体・結合。`viewer-lookups.ts` と route を変えないので緑のまま | 変更なし | — |
+| `src/app/(main)/favorites/_components/__tests__/FavoriteListItem.test.ts` | `recipeName`・`likedAt`・`recipeUuid` | fixture の形が `FavoriteListItemData` と合わず型で赤 (描画は `item.dish_name` を読むので文言の it も赤) | fixture を `{ id, dish_name, created_at }` に。it 名は変えない。L-1 を足す | B2 |
+| `src/app/(main)/favorites/_components/__tests__/FavoriteRecipeModal.test.ts` | `recipeUuid`・`/api/recipes/`・`favorite-recipe-no-uuid`・`favorite-recipe-loading` | 4 つの describe (表示制御・uuid 無し・取得成功・再試行) が props と DOM の変化で赤 | §7.15 のとおり書き換え (M-1〜M-4) | B2 |
+| `tests/e2e/bug-104-favorites-system.spec.ts` | `お気に入りレシピ`・`レシピ名で検索...`・`お気に入りレシピはまだありません`・`に一致するレシピが見つかりませんでした`・`0 件`・`border-radius: 16px`・`/api/favorites`・`/api/recipes/:name/like` | 見出し・placeholder・空の文・行の角丸・`{ favorites, total }` の形・いいねの route の 404 を見る。どれも変えないので緑のまま | 変更なし + E-1 を足す | B1 (E-1) |
+| `tests/e2e/bug-31-favorite-button.spec.ts` | `favorite-button`・`aria-pressed` | ♥ の `data-testid`・`aria-pressed`・disabled の解除・再読込後の保持。`RecipeModal` を変えないので DOM は同じ。再読込後の保持は本書で初めて通る (今は保存されないので、データのある環境では落ちていた) | 変更なし | — |
+| `tests/helpers/mobile-removed-1598.ts`・`tests/design-doc-removed-mobile-screens.test.ts`・`tests/docs-mobile-removed-references.test.ts`・`tests/mobile-removed-files-references.test.ts` | `apps/mobile/app/`・消した画面の名前 | 設計書・README が消したモバイルの画面をいまあるものとして名指しすると赤 | 本書はモバイルの画面のパスを名指ししない (F-16 は README の行を指す) | 設計 |
+| `apps/mobile/__tests__/lib/notification-route.test.ts:91`・`apps/mobile/__tests__/home/tab-layout.test.tsx` | `'/favorites'`・`favorites` | 通知の行き先 `/favorites` と、タブに `favorites` が無いこと。どちらも変えない | 変更なし | — |
+| `tests/docs-table-column-count.test.ts` | `docs/`・`\|` | 本書の表の行が見出しと違う数の区切りを持つと赤 | 本書の表はセルの中の union を `/` で書く・`\|` をコードの span に入れる | 設計 |
+| `tests/design-doc-version-header-matches-history.test.ts` | `\| 版 \| v` | 表紙の版の行 (`\| 版 \| vX.Y (日付) \|`) を持つ冊が対象。本書は cross/21 と同じ改定履歴の表 (対象外) | 変更なし | — |
+| `tests/design-doc-migration-number.test.ts`・`tests/helpers/design-doc-migration-number.ts` | `<番号はマージ時に確定>`・`<同じ番号>`・`.down.sql` | 設計書への当てはめは本書の §7.13 C-8 が行う (mobile/08 と同じ形)。置き場と番号が混ざると赤 | 本書の名指しは全部置き場。番号を書き入れるときは全部同時に | 設計・A |
+| `tests/design-doc-fact-consistency.test.ts`・`tests/design-doc-followup-owned-edits.test.ts`・`tests/design-doc-followup-anchors-1917.test.ts`・`tests/design-doc-stale-claims-1912.test.ts`・`tests/design-doc-push-paths-resolve.test.ts` | (名指しした冊だけ) | 本書は名指しに無い。§17 の追随表は逐語の書き換えの行を持たない (行を足す形だけ) | 変更なし | — |
+| `tests/no-pending-wording-1911.test.ts`・`tests/public-claims-guard.test.ts` | `準備中`・`予定です` | `src` の文言に未完成・予定の語があると赤 | §7.10〜§7.12 の文言に入れない | B2 |
+| `scripts/baseline/*` (`catalog_policies.csv`・`catalog_tables.csv` の drift) | `catalog_policies.csv` | 次にベースラインを作り直すときに `dish_favorites` の表・ポリシー・索引が控えに入る (手で直さない) | 変更なし | — |
+| 走査テスト (as any・マジックナンバー) | `as any`・数のリテラル | 本書の TS に `as any` は無い。数は §13 の定数。既存の `favorites/route.ts` の `let q: any` は GET の書き換えで消える | §13 の形を守る | A・B1・B2 |
+
+---
+
+## 17. 他の文書への追随表 (本書では編集しない。実装 PR または docs PR で)
+
+| 文書 | 箇所 | 直すこと | 期日 |
+|---|---|---|---|
+| `docs/design/cross/CLAUDE.md` | ファイル一覧の表 | `22-dish-favorites.md` の行を足す (「献立の料理のお気に入り (料理の写しを本人だけの表 `dish_favorites` に・名前の鍵で 1 件・お気に入りの画面の詳細)」/ #2011)。「10・11 は欠番」の文はそのまま。`21-recipe-author-display-name.md` の行が無ければ cross/21 §17 の行と一緒に | 設計のマージと同日 |
+| `docs/design/cross/04-api-conventions.md` | §4.2 CONFLICT 系の表 | `CONFLICT_DISH_FAVORITES_LIMIT` の行 (「献立の料理のお気に入りの件数の上限 (`POST /api/favorites`。cross/22 §10)」/ 409) を `[NEW]` で足す | 段 B1 のマージと同日 |
+| `docs/design/cross/20-terms-privacy-text.md` | T-34 の表 → 行の対応の写し (`recipe_likes: 'レシピ'` の行の近く) と §2.2 F-42 の説明 | `dish_favorites: 'レシピ'` の 1 行を足す。F-42 の「書き込む処理が無い表は 15」は変わらない (`dish_favorites` は route が書く) | 段 A のマージと同日 |
+| `docs/design/cross/02-rls-patterns.md` | §4.1 self-ownership の「用途」 | 実例に `dish_favorites` (cross/22 §7.1) を 1 語足す | 段 A のマージと同日 (任意) |
+| `docs/design/cross/21-recipe-author-display-name.md` | §18 既存実装との関連 | 「献立の料理のお気に入りは `recipe_likes` を使わず `dish_favorites` (cross/22)。`viewer-lookups.ts` の `likedRecipeIds` は公開レシピの「いいね」だけ」の 1 行 (cross/21 のマージ後) | 段 B1 のマージと同日 |
+| `apps/mobile/README.md` | 行 75 の「お気に入り … は Web の画面で確認する」 | 変えない (お気に入りは引き続き Web の `/favorites`) | — |
+| Issue #2011 | 本文 | 設計の内容 (表・API・画面・段) をオーケストレーターが書き込む (リンクだけにしない) | 設計のマージと同日 |
+| `supabase/baseline/` (`prod_schema.sql`・`catalog_*.csv`) | 控え | 次にベースラインを作り直すときに `dish_favorites` が入る (手で直さない) | 次のベースラインの更新 |
+
+---
+
+## 18. 既存実装との関連
+
+| 既存 | 扱い | 理由 |
+|---|---|---|
+| `src/app/api/favorites/route.ts` (GET) | 書き換え (§7.5.1)。`recipe_likes` を読まない。#302 の 3 段の退避は消す | 新しい表の列は決まっている |
+| `src/app/api/recipes/[id]/like/route.ts` | 変えない | 公開レシピの「いいね」(uuid)。献立とお気に入りの画面が呼ばなくなるだけ |
+| `refreshLikeCount` (同 route の #258 の名残) | 変えない | 本書の経路は通らない。片付けは §21 Q-1 |
+| `recipe_likes` の表・`recipe_uuid`・外部キー 2 本・`trg_sync_recipe_like_count`・`sync_recipe_like_count`・`increment / decrement_recipe_like_count`・『Anyone can view likes』 | 変えない | 削除の migration は名指しの承認が要る (§21 Q-1) |
+| `src/lib/recipes/viewer-lookups.ts` (`likedRecipeIds`) | 変えない | 公開レシピの `isLiked`。cross/21 が差し替える設計を持つ (本書と衝突しない) |
+| `src/lib/ai/consultation-action-executor.ts` の `like_recipe` | 変えない | uuid の公開レシピ向け。献立の料理を AI 相談から保存する要求は無い (§21 Q-4) |
+| `supabase/functions/generate-menu-v4 / v5` の `recipe_likes` の読み取り | 変えない | `dish_favorites` を生成の好みに使う要求は無い (§21 Q-3) |
+| `src/app/(main)/menus/weekly/_components/modals/RecipeModal.tsx` | 変えない。お気に入りの画面からも使う (§7.12) | ♥ の `data-testid`・`aria-pressed`・描画を 1 か所に |
+| `src/app/(main)/favorites/page.tsx`・`FavoriteListItem.tsx`・`FavoriteRecipeModal.tsx` | 差分 (§7.10〜§7.12)。見た目と文言は保つ | R-13 |
+| `src/app/(main)/menus/weekly/page.tsx`・`recipeReducer.ts` | 差分 (§7.8・§7.9) | ♥ の配線の置き換え |
+| `src/lib/account-export-tables.ts`・`src/lib/env.ts`・`.env.example` | 1 行 / 1 項目 / 3 行 (§7.6・§7.7) | 書き出し・環境変数の一覧 |
+| `src/lib/legal/privacy-text.ts` | 変えない | 第3条「レシピ」の行の「保存をしたレシピ」に含まれる (§6.6) |
+| `src/components/marketing/landing-copy.ts` の `favorites` の主張 | 変えない | 根拠のパスは残る (F-20) |
+| モバイル (`apps/mobile`) | 変えない | Web の画面を WebView で開く (F-16) |
+| `src/types/database.types.ts`・`packages/shared/src/database.types.ts` | 生成し直し (段 A) | `tests/database-types-migrations-contract.test.ts` |
+
+## 19. 受入条件と本番の確認 (オーケストレーターが行う。本書のコードは本番に書き込まない)
+
+段 A の適用のあと (SELECT だけ):
+
+1. `SELECT policyname, cmd, roles FROM pg_policies WHERE schemaname = 'public' AND tablename = 'dish_favorites' ORDER BY policyname` が self の 4 本 (`{authenticated}`)。
+2. `SELECT grantee, privilege_type FROM information_schema.role_table_grants WHERE table_schema = 'public' AND table_name = 'dish_favorites' ORDER BY 1, 2` が `authenticated` に DELETE / INSERT / SELECT / UPDATE (TRUNCATE なし)、`anon` に無し、`service_role` に既定の分。
+3. `SELECT conname, contype FROM pg_constraint WHERE conrelid = 'public.dish_favorites'::regclass ORDER BY 1` が PK・UNIQUE・CHECK 4 本・FK 1 本 (`confdeltype = 'c'`)。
+4. `SELECT relrowsecurity FROM pg_class WHERE oid = 'public.dish_favorites'::regclass` が true。
+
+段 B2 のマージ (= 公開) のあと (試験用のアカウントで。作った行は用済み後に消すか id を報告する):
+
+5. 献立の料理のモーダルで ♥ → ネットワークに `POST /api/favorites` 201。閉じて開き直すと `GET /api/favorites/status` が `favorited: true`、♥ が塗られている。ページを読み直しても同じ。
+6. `/favorites` に行が出る。行をタップすると材料・作り方・栄養が出る (問い合わせ無し)。「材料を買い物リストに追加」で知らせが出る。
+7. 行の ♥ で `DELETE /api/favorites/{id}` 200、行が消える。献立のモーダルの ♥ も空に戻る。
+8. 本番の `dish_favorites` に試験の行だけがあり、`user_id` が試験用のアカウント (`SELECT user_id, dish_name FROM public.dish_favorites`)。確認後に消す。
+
+## 20. 性能・安全の考慮
+
+- 一覧は `(user_id, created_at DESC)` の索引で引く。名前順は UNIQUE 索引 `(user_id, dish_name_key)` が効く。`ilike` の部分一致は本人の行 (最大 300) の走査で足りる。
+- 1 ページの応答は最大 200 行 × 写し (本番の最大 3.9 KB・上限 32 KB)。画面は 50 行 (≈ 100〜200 KB) ずつ。
+- 上限 (300) は同時の POST で 1〜2 件超えうる (安全弁。§6.5)。厳密にするなら BEFORE INSERT のトリガーで数える改定 (§21 Q-5)。
+- RLS は本人だけ。anon は権限ごと外す。service_role は使わない。`user_id` は `auth.uid()` を WITH CHECK で強制する (他人の行を作れない)。
+- 本文の大きさ: `SaveDishFavoriteBodySchema` の上限 (§13) と `dishJsonByteLength` ≤ 32 KB。Next.js の既定の本文の上限より小さい。
+- `q` の `%` / `_` は ilike のワイルドカードとして働く (既存の挙動と同じ。本人の行にしか当たらないので漏れは無い)。
+- 写しは本人の献立から作られた本人のデータで、他人の情報・秘密を含まない (書き出しに出してよい。§6.5)。
+
+## 21. 未解決事項 (設計は上の既定で進める)
+
+| # | 事項 | 本書の置き方 | 誰が決めるか |
+|---|---|---|---|
+| Q-1 | `recipe_likes` の壊れた導線の片付け (`recipe_uuid` 列・外部キー 2 本目・`trg_sync_recipe_like_count` と関数 3 本・`refreshLikeCount` の #258 の名残・『Anyone can view likes』の広い SELECT)。選択肢: (a) 触らない (本書の既定。公開レシピの「いいね」は uuid で動く) / (b) 別の Issue で削除の migration を設計する (列と外部キーとトリガーを消し、SELECT を本人だけにする。cross/21 の `viewer-lookups.ts` の説明の書き換えも伴う) / (c) `recipe_likes` ごと消して公開レシピの「いいね」をやめる (`like_count`・`isLiked`・AI 相談の `like_recipe`・生成の読み取りが対象) | (a) で進める。(b)(c) は削除の migration で、名指しの承認が要る | オーナー |
+| Q-2 | 公開レシピの「いいね」(`recipe_likes`) をお気に入りの画面に並べて出すか | 出さない (本番 0 行・公開レシピの一覧の画面は無い)。出すなら 2 つ目の区分 (タブ) の設計 | オーナー |
+| Q-3 | 献立の生成 (generate-menu-v4 / v5) が `recipe_likes` を好みに使っている (uuid なので今は何も当たらない)。`dish_favorites` の料理名を好みとして渡すか | 渡さない (本書の範囲外)。渡すなら Edge Function の読み取りを `dish_favorites.dish_name` に変える別の発注 | オーナー |
+| Q-4 | AI 相談の `like_recipe` で献立の料理を保存できるようにするか (今は uuid の公開レシピ向け) | しない。するなら操作の params に料理の写しを渡す設計 | オーナー |
+| Q-5 | 上限 300 の値と、同時の POST で 1〜2 件超えうること | 300 と安全弁のまま。値は環境変数で変えられる | オーナー (値) |
+| Q-6 | `tests/api-list-range-scan.test.ts` の走査の範囲が `src/app/api` だけで、`.range(` を `src/modules` に置く本書の形は見張りの外になる | 本書の V-3 が `resolveBeyondLastPage` を使うことを確かめる。走査の範囲に `src/modules` を足す改定は見張りの PR で (段 B1 と同時でよい) | — (実装者の判断で段 B1 に含めてよい) |
+| Q-7 | 同じ名前・別の中身の扱い (名前で 1 件・♥ は名前で引く。S-4・S-5) | §5 で確定した構造の帰結。変えるなら構造裁定への差し戻し | オーナー (異議があれば) |
+
+## 22. 改定履歴
+
+| 版 | 日付 | 内容 |
+|---|---|---|
+| v1.0 | 2026-10-25 | 新設 (A 型 4 相。構造 A = 新しい表 `dish_favorites` (本人 × 料理名の鍵で 1 件・写しを jsonb)・モジュール `core` / `server`・API 4 本・`RecipeModal` の再利用。段 A / B1 / B2。`recipe_likes` の片付けはオーナーに聞く (Q-1)) |
