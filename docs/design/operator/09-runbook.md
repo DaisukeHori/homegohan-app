@@ -396,7 +396,7 @@ Step 5: org_admin に手順案内
 削除の実行 (即時):
   ユーザー: 設定画面「アカウントを削除する」→ 確認 (Web は「削除します」入力 / モバイルは確認アラート)
   → POST /api/account/delete { confirm: true }
-  → 削除をブロックする条件 (409。先に譲渡または解散してもらう。判定の前に退会の印を付ける (RPC begin_account_deletion_guard。印のある人を運営がオーナーにして組織を作れない。20261023130000。印のある人を家族の代表者にもできない (作成・譲渡の承諾・運営の強制譲渡は 409 REPRESENTATIVE_ACCOUNT_DELETING)。20261023150000)):
+  → 削除をブロックする条件 (409。先に譲渡または解散してもらう。判定の前に退会の印を付ける (RPC begin_account_deletion_guard。印のある人を運営がオーナーにして組織を作れない。20261023130000。印のある人を家族の代表者にもできない (作成・譲渡の承諾・運営の強制譲渡は 409 REPRESENTATIVE_ACCOUNT_DELETING)。20261023150000。退会が deleteUser の前に止まったら (409・途中の失敗)、返す前に印を消す (RPC end_account_deletion_guard。20261024120000)。deleteUser を呼んだあとに止まったときは 15 分残る)):
      - 組織の owner         → ACCOUNT_DELETE_BLOCKED_ORG_OWNER
      - 家族グループの代表者  → ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE
   → Stripe の後始末 (段階 billing。billing/01 §11): 顧客の開いたままの Checkout を閉じ、終端でない契約を即時解約し、Stripe の顧客を匿名化する

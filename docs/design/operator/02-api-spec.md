@@ -349,7 +349,7 @@ BAN 解除
 - `plan`: `ORG_PLAN_VALUES` (`standard` / `premium` / `enterprise`) のどれか。省略すると `ORG_PLAN_DEFAULT` (`standard`)
 - `owner_id`: 省略すると呼び出した運営をオーナーにする (作る組織は active なので `organizations.owner_id` は NOT NULL)
 
-**処理**: service_role (`getSupabaseAdmin`) で、organizations の行・`org_license_pools` の行 (`total_licenses` = NULL・`used_licenses` = 0。失敗してもログだけで続ける)・オーナーの `user_profiles` (`organization_id` と `org_role = 'owner'`) を書く。オーナーにする人が退会の途中 (退会の本体が findBlocker の前に付ける退会の印が新しい) なら、organizations の行の INSERT を DB のトリガー `trg_organizations_owner_not_deleting` (関数 `organizations_owner_not_deleting()`) が止め、何も書かずに 409 `OWNER_ACCOUNT_DELETING` を返す (#1917 の続き。退会の最後の `deleteUser` が `organizations_owner_id_fkey` (RESTRICT) で失敗しないように)
+**処理**: service_role (`getSupabaseAdmin`) で、organizations の行・`org_license_pools` の行 (`total_licenses` = NULL・`used_licenses` = 0。失敗してもログだけで続ける)・オーナーの `user_profiles` (`organization_id` と `org_role = 'owner'`) を書く。オーナーにする人が退会の途中 (退会の本体が findBlocker の前に付ける退会の印が新しい) なら、organizations の行の INSERT を DB のトリガー `trg_organizations_owner_not_deleting` (関数 `organizations_owner_not_deleting()`) が止め、何も書かずに 409 `OWNER_ACCOUNT_DELETING` を返す (#1917 の続き。退会の最後の `deleteUser` が `organizations_owner_id_fkey` (RESTRICT) で失敗しないように。退会が `deleteUser` の前に止まると (409・途中の失敗)、退会の本体が返す前に印を消すので、そのあとは作れる。`20261024120000`)
 
 **レスポンス**: `{ "organization": { "id", "name", "plan", "owner_id", "created_at", "updated_at" } }`
 

@@ -107,7 +107,7 @@
 - `422 VALID_REQUIRED_FIELD`: バリデーション失敗
 - `409 FAM_USER_ALREADY_IN_GROUP`: 既に所属
 
-**未成年 (#1173):** `create_family_group` は、本人の `user_profiles.birth_date` が 18 歳未満なら `MINOR_ACCOUNT_NOT_ALLOWED` (403。設計書 `cross/14-parental-consent.md` §6.4 の 12)。18 歳未満の本人が家族に入るのは昇格 (`docs/design/membership/02-flow-spec.md` §9) だけで、家族の代表者・組織のオーナーは引き受けない (保護者の同意とのつながりが切れたときの退会を 409 で塞がない)。 **退会の手続き中 (#1917 の続き):** 新しい退会の印のある本人は家族を作れない (`409 REPRESENTATIVE_ACCOUNT_DELETING`。`family_groups` のトリガー `family_groups_representative_not_deleting`。`supabase/migrations/20261023150000_account_deletion_family_representative_guard.sql`)。
+**未成年 (#1173):** `create_family_group` は、本人の `user_profiles.birth_date` が 18 歳未満なら `MINOR_ACCOUNT_NOT_ALLOWED` (403。設計書 `cross/14-parental-consent.md` §6.4 の 12)。18 歳未満の本人が家族に入るのは昇格 (`docs/design/membership/02-flow-spec.md` §9) だけで、家族の代表者・組織のオーナーは引き受けない (保護者の同意とのつながりが切れたときの退会を 409 で塞がない)。 **退会の手続き中 (#1917 の続き):** 新しい退会の印のある本人は家族を作れない (`409 REPRESENTATIVE_ACCOUNT_DELETING`。`family_groups` のトリガー `family_groups_representative_not_deleting`。`supabase/migrations/20261023150000_account_deletion_family_representative_guard.sql`)。退会が `deleteUser` の前に止まると (409・途中の失敗)、退会の本体が返す前に印を消すので、そのあとは作れる (`20261024120000_account_deletion_guard_release.sql`)。
 
 ---
 

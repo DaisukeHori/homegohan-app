@@ -829,7 +829,7 @@ $$);
      ブリッジのコードは /api/auth の prefix の行 (auth_flow) で止めない。
      凍結中は同意の画面に進めないため。凍結の判定で通るパスがすべて同意の許可リストにあることは
      lib/supabase/__tests__/middleware-legal-consent-api.test.ts が全 route で確かめる)
-3. 削除をブロックする条件 (409。判定の前に退会の印を付ける: RPC begin_account_deletion_guard。印のある人を運営がオーナーにして組織を作ろうとすると DB のトリガーが止める。supabase/migrations/20261023130000_account_deletion_owner_guard.sql。印のある人を家族の代表者にする作成・譲渡の承諾・運営の強制譲渡も DB のトリガーが REPRESENTATIVE_ACCOUNT_DELETING で止める。20261023150000_account_deletion_family_representative_guard.sql。#1917 の続き):
+3. 削除をブロックする条件 (409。判定の前に退会の印を付ける: RPC begin_account_deletion_guard。印のある人を運営がオーナーにして組織を作ろうとすると DB のトリガーが止める。supabase/migrations/20261023130000_account_deletion_owner_guard.sql。印のある人を家族の代表者にする作成・譲渡の承諾・運営の強制譲渡も DB のトリガーが REPRESENTATIVE_ACCOUNT_DELETING で止める。20261023150000_account_deletion_family_representative_guard.sql。#1917 の続き。オーナーの選択 (2026-10-24): 退会が止まったらその場で印を消す。auth.admin.deleteUser (手順 5) を呼ぶ前に止まったら (この 409・手順 4 の失敗)、返す前に RPC end_account_deletion_guard で印を消す (supabase/migrations/20261024120000_account_deletion_guard_release.sql。消すのに失敗しても応答は変えない)。deleteUser を呼んだあとに止まったときは消さない):
    - 組織の owner → ACCOUNT_DELETE_BLOCKED_ORG_OWNER
      (先に owner を譲渡するか、組織を解散する)
    - 家族グループの代表者 → ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE
@@ -888,7 +888,7 @@ $$);
 | 送信待ちの宛先 (`email_outbox.to_email`) | 削除または匿名化 | 実装済み (#1193)。RPC `prepare_account_deletion` が本人の行の宛先・件名・本文を伏せ (queued は dead)、他人宛の行の件名・本文・返信先の中の本人のアドレスだけを伏せる。退会の完了メールは送れたあと・届けられなかったあとに伏せる |
 | DB バックアップ (R2) の中の個人情報 | 復旧の目的でだけ、暗号化して保管する | 実装済み (cross/17-backup-automation.md §9.1)。daily 30 日・weekly 366 日・annual 2,557 日 (7 年) 残り、退会した利用者の行も取得の時点の分は含まれる。開けるのは age の秘密鍵を持つオーナーだけで、復元以外の目的で開かない。プライバシーポリシーに追記した (cross/20 §7 第12条) |
 | 送信待ちの送信元 (`email_outbox.from_email`) | 伏せない | 送信元はアプリのアドレス (`EMAIL_FROM`・運用メールも同じ) で、利用者のものではない |
-| 途中で失敗したとき | 半端な状態を残さず、やり直せる | 実装済み (#1175)。後始末 (手順 4) の失敗は 500 (internalError) で止めて `deleteUser` を呼ばない。ライセンス席の解放 (`release_user_membership`) だけは失敗しても続けるが、`IS_ORG_OWNER` (確認のあとにオーナーになっていた) は確認をやり直して 409 で止め (オーナーでなくなっていたら削除せず 500)、`CONFLICT_RETRY` (所属の組織が途中で変わった) は削除せず 500 にする (`src/lib/account-deletion.ts:349-365`)。外部キー違反で `deleteUser` が失敗する経路は、確認 (手順 3 の 409) のあとに家族の代表者になった人の `family_groups.representative_id` (ON DELETE RESTRICT) だけで、500 になる (もう一度の退会で 409 になる。`supabase/migrations/20261022160000_release_membership_owner_race.sql` の見出し) |
+| 途中で失敗したとき | 半端な状態を残さず、やり直せる | 実装済み (#1175)。後始末 (手順 4) の失敗は 500 (internalError) で止めて `deleteUser` を呼ばない。ライセンス席の解放 (`release_user_membership`) だけは失敗しても続けるが、`IS_ORG_OWNER` (確認のあとにオーナーになっていた) は確認をやり直して 409 で止め (オーナーでなくなっていたら削除せず 500)、`CONFLICT_RETRY` (所属の組織が途中で変わった) は削除せず 500 にする (`src/lib/account-deletion.ts:399-419`)。確認 (手順 3) のあとに組織のオーナー・家族の代表者になって `deleteUser` が外部キー (ON DELETE RESTRICT) で失敗する経路は、手順 3 の退会の印と DB のトリガーが止める (`20261023130000`・`20261023150000`)。`deleteUser` を呼ぶ前に止まったとき (409・500) は、返す前に退会の印を消す (`20261024120000`。止まった退会の印で、本人の家族の作成・代表者の引き受けと、運営のその人をオーナーにした組織の作成を止めない) |
 
 ### 16.4 `gdpr_deletion_requests` テーブルの扱い (削除の実行記録)
 
