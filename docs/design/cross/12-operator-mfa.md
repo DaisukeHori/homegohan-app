@@ -681,7 +681,7 @@ COMMENT ON FUNCTION public.operator_mfa_satisfied() IS
 | `operator_force_representative_transfer(uuid, uuid, text)` | `supabase/migrations/20261008090100_family_lock_order.sql:224-267` | `:235` | `NOT_OPERATOR` |
 
 - 判定は役割の判定の直後で、どの関数でも最初の更新・ロック (`PERFORM ... FOR NO KEY UPDATE`・`UPDATE`・`RETURN QUERY`) より前。判定で止まると何も変わらない。`admin_set_user_roles` は自分の id の判定 (`CANNOT_MODIFY_OWN_ROLES`) より前に止まる。
-- 呼び出し元のエラーの扱い: Next.js の route はゲート (aal2 か未登録の `pass_grace`) を通った後にしか呼ばないので、`OPERATOR_MFA_REQUIRED` は返らない。返った場合は今の route の `rpcError` の扱い (`internalError` で 500) のまま (route は変えない)。PostgREST を直接呼んだときは HTTP 400 `{ code: 'P0001', message: 'OPERATOR_MFA_REQUIRED' }`。
+- 呼び出し元のエラーの扱い: Next.js の route はゲート (aal2 か未登録の `pass_grace`) を通った後にしか呼ばないので、`OPERATOR_MFA_REQUIRED` は普段は返らない。ゲートと RPC の間でセッションの状態が変わって返った場合は、7 本の関数を呼ぶ route (運営の強制の譲渡・解散の 4 本・放置の一覧の 2 本・ロールの更新) が `operatorMfaRequiredNested` (`src/lib/api/error-responses.ts`) で、ゲートが二段階認証の確認 (`AUTH_2FA_REQUIRED`) で止めたときと同じ 403 (route の 403 の code・文は `API_MFA_REQUIRED_MESSAGE`) にする (汎用の 500 にしない。#1917。`tests/operator-mfa-db-gate-routes-403.test.ts` が呼ぶ route の一覧と応答を見張る)。PostgREST を直接呼んだときは HTTP 400 `{ code: 'P0001', message: 'OPERATOR_MFA_REQUIRED' }`。
 - 最新の定義は、マージ直前に origin/main で `git grep -n "FUNCTION public.<名前>\|FUNCTION \"public\".\"<名前>\"" origin/main -- supabase/` を流し、上の表より新しい定義が無いことを確かめる (あれば、その最新のものを写す)。
 
 **4. RLS のポリシー 56 本** — 付録 A の「up」の 55 文と、`subscription_plans_select_public` の分け方の 3 文を、そのまま並べる。55 文の作り方 (機械的に決まる): 本番 (2026-10-16 の `pg_policies` の読み取り。付録 A.4 の指紋) の `pg_policies` の `qual` / `with_check` を 1 行にした式の中で、運営ロールの条件の項 — `(<user_profiles か up>.roles && ARRAY[...])`・`(ARRAY[...] && <user_profiles か up>.roles)`・`('<ロール>'::text = ANY (<user_profiles か up>.roles))` のどれか — を `(<その項> AND (SELECT public.operator_mfa_satisfied()))` に置き換え、`TO authenticated` を付けた `ALTER POLICY`。項は 1 つの式に 1 つずつ (USING と WITH CHECK を両方持つ 5 本は、それぞれに 1 つ)。本人の行の枝 (`user_id = auth.uid()` など)・公開の枝・組織の役割の枝 (`up.org_role = ANY (...)`)・`audit_logs_insert_admins` の #1736 の 4 項 (`action_type !~~ 'system.%'` など) は置き換えない。付録 A.2 の 56 文の式は 2026-10-16 の本番の `pg_policies` の式と 1 文字も違わず (A.4 の指紋 `digest_full` が一致)、A.1 の 55 文はその式にこの規則を機械的に当てたもの。
@@ -2540,7 +2540,7 @@ sequenceDiagram
 | `AUTH_2FA_INVALID` | **400** (cross/04 は 401 → 改める) | 既存の予約 | 6 桁 / バックアップコードの不一致・形の誤り | `/verify` `/recover` |
 | `AUTH_2FA_NOT_ENROLLED` | 404 / 409 | **[NEW]** | factor が無い・本人のものでない (解除は、本人の verified な TOTP factor でない id) | `/verify` `/factors/{id}` `/recover` `/backup-codes` |
 | `AUTH_2FA_ALREADY_ENROLLED` | 409 | **[NEW]** | 登録済みで enroll | `/enroll` |
-| `OPERATOR_MFA_REQUIRED` | (SQL の例外。PostgREST は 400) | **[NEW]** | TOTP を登録済みの必須ロールの呼び出し元が、aal1 のセッションで運営の関数 7 本を直接呼んだ | §11.4 の 7 本の関数 (段 E)。Next.js の route はゲートの後にしか呼ばないので返らない |
+| `OPERATOR_MFA_REQUIRED` | (SQL の例外。PostgREST は 400) | **[NEW]** | TOTP を登録済みの必須ロールの呼び出し元が、aal1 のセッションで運営の関数 7 本を直接呼んだ | §11.4 の 7 本の関数 (段 E)。Next.js の route はゲートの後にしか呼ばないので普段は返らない。返ったら route は 403 (ゲートの `AUTH_2FA_REQUIRED` と同じ文。§11.4 の 3 の「呼び出し元のエラーの扱い」) |
 | `AUTH_2FA_NATIVE_SESSION` | 409 | **[NEW]** | アプリの WebView の借り物のセッション (refresh_token が使えない値) で、セッションの token を発行し直す操作をしようとした | `/verify` `/factors/{id}` (§16.4) |
 
 ### 19.2 既存のまま使う code
