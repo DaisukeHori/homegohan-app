@@ -150,6 +150,123 @@ function importSourceOf(sf: ts.SourceFile, name: string): string | null {
 interface CollectedTexts {
   texts: string[];
   exceptionMessages: number;
+  /** 渡すと、テンプレートの式の部分を値として読む (renderSubstitution)。渡さなければ式の部分を空白にしてつなぐ (英語だけの文の走査) */
+  substitutions?: SubstitutionOptions;
+}
+
+/**
+ * テンプレートの式の部分のうち、値を読み取れないものの印 (#1917 の続き)。
+ * 英字の項目名の形にしてあるので、括弧の外に出ると englishIdentifiersOutsideParentheses が拾う
+ * (`公開中プランでは ${keys.join(', ')} は変更できません` の keys のような、英字の値が入りうる式を見落とさない)。
+ * 括弧の中の式 (`次のいずれかを指定してください (${values})`) は括弧ごと外れるので拾わない
+ */
+export const UNRESOLVED_SUBSTITUTION = 'unresolved_value';
+/** 数として読み取れた式 (数の字・数の定数・Math の関数・数どうしの計算) の印。英字の項目名にならない */
+const NUMBER_SUBSTITUTION = '0';
+/** `X.join()` の区切りを省いたときの区切り (Array.prototype.join の既定) */
+const DEFAULT_JOIN_SEPARATOR = ',';
+/** 数どうしの計算の演算子 (両辺が数なら数) */
+const ARITHMETIC_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.AsteriskToken,
+  ts.SyntaxKind.SlashToken,
+  ts.SyntaxKind.PercentToken,
+  ts.SyntaxKind.PlusToken,
+]);
+
+/** テンプレートの式の部分の読み方 */
+export interface SubstitutionOptions {
+  /**
+   * 値を読み取れない式のうち、英字の項目名・値にならないと分かっているもの (substitutionKey(ファイル, 式の字面) → 理由)。
+   * 印 (UNRESOLVED_SUBSTITUTION) の代わりに空にする。英字の値が入りうる式は、ここに足さずに括弧に入れるか日本語の名前にする
+   */
+  exempt: ReadonlyMap<string, string>;
+  /** 使った見逃しの鍵を積む (古くなった一覧を見つけるため) */
+  used?: Set<string>;
+}
+
+/** 見逃しの一覧の鍵 (式があるファイルと、式の字面) */
+export function substitutionKey(file: string, expressionText: string): string {
+  return `${file}:${expressionText}`;
+}
+
+/** 名前の `const` の初期値を、同じファイル・import 元のファイルの順に探す (見つかったファイルの構文木と初期値) */
+function resolveConst(sf: ts.SourceFile, name: string): { sf: ts.SourceFile; init: ts.Expression } | null {
+  const local = findConstInitializer(sf, name);
+  if (local) return { sf, init: local };
+  const from = importSourceOf(sf, name);
+  if (!from) return null;
+  const imported = sourceOf(from);
+  const init = findConstInitializer(imported, name);
+  return init ? { sf: imported, init } : null;
+}
+
+/** `X.join(区切り)` の X を配列の字 (`[...] as const` を含む) までたどる */
+function arrayLiteralOf(sf: ts.SourceFile, node: ts.Expression, depth: number): { sf: ts.SourceFile; array: ts.ArrayLiteralExpression } | null {
+  if (ts.isArrayLiteralExpression(node)) return { sf, array: node };
+  if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
+    return arrayLiteralOf(sf, node.expression, depth);
+  }
+  if (ts.isIdentifier(node) && depth < MAX_RESOLVE_DEPTH) {
+    const resolved = resolveConst(sf, node.text);
+    return resolved ? arrayLiteralOf(resolved.sf, resolved.init, depth + 1) : null;
+  }
+  return null;
+}
+
+/** テンプレートを、式の部分を値として読んだ文にする */
+function renderTemplate(sf: ts.SourceFile, node: ts.TemplateExpression, depth: number, options: SubstitutionOptions): string {
+  return node.head.text + node.templateSpans.map((span) => renderSubstitution(sf, span.expression, depth, options) + span.literal.text).join('');
+}
+
+/**
+ * テンプレートの 1 つの式を、走査で読む文にする。文字列の字・定数 (同じファイルと import 元の const)・配列の定数の join・
+ * 数 (数の字・Math の関数・数どうしの計算) は値にする。読み取れない式は、見逃しの一覧になければ印 (UNRESOLVED_SUBSTITUTION) にする
+ */
+function renderSubstitution(sf: ts.SourceFile, node: ts.Expression, depth: number, options: SubstitutionOptions): string {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+  if (ts.isTemplateExpression(node)) return renderTemplate(sf, node, depth, options);
+  if (ts.isNumericLiteral(node)) return NUMBER_SUBSTITUTION;
+  if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node) || ts.isNonNullExpression(node)) {
+    return renderSubstitution(sf, node.expression, depth, options);
+  }
+  if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken) {
+    const operand = renderSubstitution(sf, node.operand, depth, options);
+    if (operand === NUMBER_SUBSTITUTION) return NUMBER_SUBSTITUTION;
+  }
+  if (ts.isBinaryExpression(node) && ARITHMETIC_OPERATORS.has(node.operatorToken.kind)) {
+    const left = renderSubstitution(sf, node.left, depth, options);
+    const right = renderSubstitution(sf, node.right, depth, options);
+    if (left === NUMBER_SUBSTITUTION && right === NUMBER_SUBSTITUTION) return NUMBER_SUBSTITUTION;
+    if (node.operatorToken.kind === ts.SyntaxKind.PlusToken) return left + right;
+  }
+  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+    const callee = node.expression;
+    if (ts.isIdentifier(callee.expression) && callee.expression.text === 'Math') return NUMBER_SUBSTITUTION;
+    if (callee.name.text === 'join') {
+      const found = arrayLiteralOf(sf, callee.expression, depth);
+      const separatorArg = node.arguments[0];
+      const separator =
+        separatorArg === undefined
+          ? DEFAULT_JOIN_SEPARATOR
+          : ts.isStringLiteral(separatorArg) || ts.isNoSubstitutionTemplateLiteral(separatorArg)
+            ? separatorArg.text
+            : null;
+      if (found && separator !== null) {
+        return found.array.elements.map((element) => renderSubstitution(found.sf, element, depth, options)).join(separator);
+      }
+    }
+  }
+  if (ts.isIdentifier(node) && depth < MAX_RESOLVE_DEPTH) {
+    const resolved = resolveConst(sf, node.text);
+    if (resolved) return renderSubstitution(resolved.sf, resolved.init, depth + 1, options);
+  }
+  const key = substitutionKey(sf.fileName, node.getText(sf));
+  if (options.exempt.has(key)) {
+    options.used?.add(key);
+    return '';
+  }
+  return ` ${UNRESOLVED_SUBSTITUTION} `;
 }
 
 /** 値の位置にある文字列を集める。名前は定数をたどる。値が `X.message` なら例外の文面として印を付ける */
@@ -157,7 +274,11 @@ function collectTexts(sf: ts.SourceFile, node: ts.Expression, depth: number, out
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
     out.texts.push(node.text);
   } else if (ts.isTemplateExpression(node)) {
-    out.texts.push([node.head.text, ...node.templateSpans.map((s) => s.literal.text)].join(' '));
+    out.texts.push(
+      out.substitutions
+        ? renderTemplate(sf, node, depth, out.substitutions)
+        : [node.head.text, ...node.templateSpans.map((s) => s.literal.text)].join(' '),
+    );
   } else if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
     collectTexts(sf, node.expression, depth, out);
   } else if (ts.isConditionalExpression(node)) {
@@ -172,17 +293,8 @@ function collectTexts(sf: ts.SourceFile, node: ts.Expression, depth: number, out
   } else if (ts.isPropertyAccessExpression(node) && node.name.text === 'message') {
     out.exceptionMessages += 1;
   } else if (ts.isIdentifier(node) && depth < MAX_RESOLVE_DEPTH) {
-    const local = findConstInitializer(sf, node.text);
-    if (local) {
-      collectTexts(sf, local, depth + 1, out);
-      return;
-    }
-    const from = importSourceOf(sf, node.text);
-    if (from) {
-      const imported = sourceOf(from);
-      const init = findConstInitializer(imported, node.text);
-      if (init) collectTexts(imported, init, depth + 1, out);
-    }
+    const resolved = resolveConst(sf, node.text);
+    if (resolved) collectTexts(resolved.sf, resolved.init, depth + 1, out);
   }
 }
 
@@ -232,13 +344,17 @@ interface BodyTextsAt {
 }
 
 /** ファイルの失敗の本文を作る呼び出しごとに、本文の文を集める */
-function bodyTextsOf(sf: ts.SourceFile, textCalls: ReadonlyMap<string, number>): BodyTextsAt[] {
+function bodyTextsOf(
+  sf: ts.SourceFile,
+  textCalls: ReadonlyMap<string, number>,
+  substitutions?: SubstitutionOptions,
+): BodyTextsAt[] {
   const found: BodyTextsAt[] = [];
   const visit = (node: ts.Node) => {
     if (ts.isCallExpression(node)) {
       const body = bodyArgumentOf(node, textCalls);
       if (body) {
-        const out: CollectedTexts = { texts: [], exceptionMessages: 0 };
+        const out: CollectedTexts = { texts: [], exceptionMessages: 0, substitutions };
         if (body.isObjectBody) collectBodyTexts(sf, body.arg, out);
         else collectTexts(sf, body.arg, 0, out);
         found.push({
@@ -282,15 +398,16 @@ export interface ErrorTextAt {
 /**
  * 1 つのファイルの失敗の本文の文を、全部集める (違反かどうかは見ない)。
  * extraTextCalls を渡すと、BODY_TEXT_CALLS に加えて、その関数 (名前 → 文の引数の位置) の文も集める
- * (route の中の errorResponse(status, code, 文) のような、本文を作る自前の関数)。text は fixture 用 (findErrorTextViolations と同じ)
+ * (route の中の errorResponse(status, code, 文) のような、本文を作る自前の関数)。text は fixture 用 (findErrorTextViolations と同じ)。
+ * substitutions を渡すと、テンプレートの式の部分を値として読む (renderSubstitution。読み取れない式は UNRESOLVED_SUBSTITUTION)
  */
 export function findErrorTexts(
   file: string,
-  options: { extraTextCalls?: ReadonlyMap<string, number>; text?: string } = {},
+  options: { extraTextCalls?: ReadonlyMap<string, number>; text?: string; substitutions?: SubstitutionOptions } = {},
 ): ErrorTextAt[] {
   const sf = options.text === undefined ? sourceOf(file) : parse(file, options.text);
   const textCalls = new Map([...BODY_TEXT_CALLS, ...(options.extraTextCalls ?? [])]);
-  return bodyTextsOf(sf, textCalls).flatMap(({ line, texts }) => texts.map((text) => ({ file, line, text })));
+  return bodyTextsOf(sf, textCalls, options.substitutions).flatMap(({ line, texts }) => texts.map((text) => ({ file, line, text })));
 }
 
 /**
@@ -336,7 +453,10 @@ function collectZodArgumentTexts(sf: ts.SourceFile, arg: ts.Expression, out: Col
  * 画面に出る。文字列の引数と、オプションのオブジェクトの message / error を、同じファイルと import 元の const までたどって集める。
  * 限界: Zod の外の関数が作る文・表 (オブジェクト) から引く文・関数で作る文 (`error: (issue) => …`) は見ない。text は fixture 用
  */
-export function findValidationMessageTexts(file: string, options: { text?: string } = {}): ErrorTextAt[] {
+export function findValidationMessageTexts(
+  file: string,
+  options: { text?: string; substitutions?: SubstitutionOptions } = {},
+): ErrorTextAt[] {
   const sf = options.text === undefined ? sourceOf(file) : parse(file, options.text);
   const found: ErrorTextAt[] = [];
   const visit = (node: ts.Node) => {
@@ -346,7 +466,7 @@ export function findValidationMessageTexts(file: string, options: { text?: strin
         ZOD_MESSAGE_METHODS.has(node.expression.name.text) || (ts.isIdentifier(root) && root.text === ZOD_NAMESPACE);
       if (isZodCall) {
         for (const arg of node.arguments) {
-          const out: CollectedTexts = { texts: [], exceptionMessages: 0 };
+          const out: CollectedTexts = { texts: [], exceptionMessages: 0, substitutions: options.substitutions };
           collectZodArgumentTexts(sf, arg, out);
           const line = sf.getLineAndCharacterOfPosition(arg.getStart(sf)).line + 1;
           for (const text of out.texts) {

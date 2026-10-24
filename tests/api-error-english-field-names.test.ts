@@ -69,9 +69,19 @@ const MESSAGE_PARAMETER_NAME = 'message';
 const isMachineFacing = (file: string) =>
   MACHINE_FACING_ERROR_TEXT_PATHS.some(({ path: p }) => file === p || isUnderDir(file, p));
 
+/**
+ * テンプレートの式のうち、値を読み取れないが英字の項目名・値にならないもの (substitutionKey(ファイル, 式の字面) → 理由)。
+ * 走査は読み取れない式を印 (UNRESOLVED_SUBSTITUTION) にして、括弧の外にあれば違反にする。
+ * 理由は「式の値が数・日本語の文である」ことに限る。英字の値 (キー・状態・種類の値) が入りうる式は、ここに足さずに括弧に入れるか日本語の名前にする
+ */
+const TEMPLATE_SUBSTITUTION_EXEMPT: ReadonlyMap<string, string> = new Map([]);
+/** 走査で使った見逃しの鍵 (古くなった一覧を見つける) */
+const usedSubstitutionExempt = new Set<string>();
+const SUBSTITUTIONS = { exempt: TEMPLATE_SUBSTITUTION_EXEMPT, used: usedSubstitutionExempt };
+
 const violationsOf = (files: readonly string[]) =>
   files
-    .flatMap((file) => findErrorTexts(file, { extraTextCalls: ROUTE_ERROR_TEXT_CALLS }))
+    .flatMap((file) => findErrorTexts(file, { extraTextCalls: ROUTE_ERROR_TEXT_CALLS, substitutions: SUBSTITUTIONS }))
     .filter((found) => englishIdentifiersOutsideParentheses(found.text).length > 0)
     .map((found) => `${found.file}:${found.line} 「${found.text}」`);
 
@@ -248,7 +258,7 @@ describe('Zod の検証の文に、括弧の外の英字の項目名が無い (s
   it('違反が 0 件', () => {
     const violations = files
       .filter((file) => !ZOD_TEXT_EXEMPT_FILES.has(file))
-      .flatMap((file) => findValidationMessageTexts(file))
+      .flatMap((file) => findValidationMessageTexts(file, { substitutions: SUBSTITUTIONS }))
       .filter((found) => englishIdentifiersOutsideParentheses(found.text).length > 0)
       .map((found) => `${found.file}:${found.line} 「${found.text}」`);
     expect(violations).toEqual([]);
