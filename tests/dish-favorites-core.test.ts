@@ -49,8 +49,8 @@ const SNAPSHOT_KEY_COUNT = 36;
 /** 「㌀」(U+3300 SQUARE APAATO)。NFKC で「アパート」になり、鍵が表示名より長くなる */
 const SQUARE_APAATO = '\u3300';
 /**
- * \u65e7\u5f62\u5f0f\u306e\u77ed\u3044\u30ad\u30fc (src/app/(main)/menus/weekly/_state/types.ts \u306e LegacyDishDetail \u306e 23 \u500b) \u3068\u65b0\u5f62\u5f0f\u306e\u9805\u76ee\u306e\u5bfe\u5fdc
- * (menus/weekly/page.tsx \u306e normalizedDish \u306e `dish.<\u65b0> ?? d.<\u65e7>` \u3068\u540c\u3058\u7d44)\u3002U-6 \u304c core.ts \u306e\u5bfe\u5fdc\u8868\u3092\u3053\u306e\u8868\u3067 1 \u5bfe 1 \u306b\u898b\u308b
+ * 旧形式の短いキー (src/app/(main)/menus/weekly/_state/types.ts の LegacyDishDetail の 23 個) と新形式の項目の対応
+ * (menus/weekly/page.tsx の normalizedDish の `dish.<新> ?? d.<旧>` と同じ組)。U-6 が core.ts の対応表をこの表で 1 対 1 に見る
  */
 const LEGACY_TO_CURRENT: ReadonlyArray<readonly [string, string]> = [
   ['cal', 'calories_kcal'],
@@ -77,7 +77,7 @@ const LEGACY_TO_CURRENT: ReadonlyArray<readonly [string, string]> = [
   ['vitaminK', 'vitamin_k_ug'],
   ['folicAcid', 'folic_acid_ug'],
 ];
-/** U-6: \u65e7\u5f62\u5f0f\u306e\u5024\u306b\u8db3\u3059\u7aef\u6570 (\u5024\u304c\u4e92\u3044\u306b\u9055\u3044\u3001\u6574\u6570\u3067\u306a\u3044\u3088\u3046\u306b) */
+/** U-6: 旧形式の値に足す端数 (値が互いに違い、整数でないように) */
 const LEGACY_VALUE_FRACTION = 0.25;
 
 const ROW_ID = '11111111-1111-4111-8111-111111111111';
