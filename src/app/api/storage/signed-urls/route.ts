@@ -27,7 +27,7 @@ const ROUTE_NAME = 'POST /api/storage/signed-urls';
 
 /** 本文を確かめる。形が違えば null */
 function parseUrls(body: unknown): string[] | null {
-  if (typeof body !== 'object' || body === null) return null;
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return null;
   const { urls } = body as { urls?: unknown };
   if (!Array.isArray(urls) || urls.length > MAX_PHOTO_URLS_PER_SIGN_REQUEST) return null;
   if (!urls.every((url): url is string => typeof url === 'string' && url.length > 0 && url.length <= MAX_PHOTO_URL_LENGTH)) {
