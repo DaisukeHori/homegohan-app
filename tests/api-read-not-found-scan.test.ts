@@ -581,7 +581,7 @@ describe('API の route が DB の読み込みの失敗を 404 にしない (#19
     ]);
   });
 
-  it('(D) 本文だけを確かめる handler は数え、パスの値から取り出した変数を確かめる handler は数えない', () => {
+  it('(D) 本文だけを確かめる handler は確かめていない側に、パスの値から取り出した変数を確かめる handler は確かめた側に数える', () => {
     const handlers = pathIdHandlers(
       `
       export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
