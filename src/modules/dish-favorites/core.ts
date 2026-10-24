@@ -359,6 +359,18 @@ export function dishSnapshotFromMenuDish(dish: Readonly<Record<string, unknown>>
   };
 }
 
+/**
+ * 献立の料理の材料 (DishDetail.ingredients。型は string[] だが実データは構造の形もある。F-10・F-31) を、ingredientInputsOf に渡せる形にそろえる。
+ * 読み方は dishSnapshotFromMenuDish の ingredientListOf と同じ (文字列は前後の空白を除き空なら捨てる・構造の形は name が空でなければ
+ * { name, amount_g (0 以上の数か null), note (空でない文字列か null) }・それ以外は捨てる)。長さの上限では切らない (検証はしない)。
+ * 献立の画面の「材料を買い物リストに追加」が使う (#2023・§21 Q-8)
+ */
+export function menuDishIngredientsOf(value: unknown): DishIngredient[] {
+  return ingredientListOf(value).map((item) =>
+    typeof item === 'string' ? item : { name: item.name, amount_g: item.amount_g ?? null, note: item.note ?? null },
+  );
+}
+
 // ───────────────────────────── 写し → 画面 ─────────────────────────────
 
 /** 構造の形の分量の表示 (「200g」)。amount_g が null なら null */
