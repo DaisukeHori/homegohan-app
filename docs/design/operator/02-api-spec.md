@@ -328,18 +328,18 @@ BAN 解除
 ---
 
 ### GET /api/admin/organizations
-組織の一覧 (運営)。実装は `src/app/api/admin/organizations/route.ts:36-107`
+組織の一覧 (運営)。実装は `src/app/api/admin/organizations/route.ts:37-108`
 
 **クエリパラメータ**: `q` (組織名の部分一致)・`plan` (`ORG_PLAN_VALUES` のどれか。`src/lib/org-plans.ts:22`)・`page` (default: 1)・`per_page` (default: 30, max: 100)。不正なら 400 `VALIDATION_ERROR` (:60-65)
 
-**レスポンス**: `{ "organizations": [{ "id", "name", "plan", "created_at", "updated_at" }], "meta": { "total", "page", "per_page" } }` (新しい順)。件数より後ろのページ (PostgREST の 416 / PGRST103) は、同じ絞り込みで件数だけを数え直して、空の一覧と本当の件数 (`meta.total`) を 200 で返す (画面は件数から最後のページへ取り直す。:80-89・:279-297)。それ以外の読み出しの失敗・想定外の例外と、件数を数え直せないときは 500 `INTERNAL_ERROR` (空の一覧にしない。:91-96・:102-106・:299-305)
+**レスポンス**: `{ "organizations": [{ "id", "name", "plan", "created_at", "updated_at" }], "meta": { "total", "page", "per_page" } }` (新しい順)。件数より後ろのページ (PostgREST の 416 / PGRST103) は、同じ絞り込みで件数だけを数え直して、空の一覧と本当の件数 (`meta.total`) を 200 で返す (画面は件数から最後のページへ取り直す。:81-90・:286-299)。それ以外の読み出しの失敗・想定外の例外と、件数を数え直せないときは 500 `INTERNAL_ERROR` (空の一覧にしない。:92-97・:103-107・:301-307)
 
 **権限**: `admin`, `super_admin` (未ログインは 401 `AUTH_UNAUTHENTICATED` :43・ほかの利用者は 403 `OP_PERMISSION_DENIED` :49)
 
 ---
 
 ### POST /api/admin/organizations
-組織の作成 (運営)。実装は `src/app/api/admin/organizations/route.ts:109-242`
+組織の作成 (運営)。実装は `src/app/api/admin/organizations/route.ts:110-244`
 
 **リクエスト**:
 ```json
@@ -362,8 +362,8 @@ BAN 解除
 | 400 | `VALIDATION_ERROR` / `INVALID_JSON` / `INVALID_CHARACTER` | 本文が JSON でない (:136-139)・Zod の検査に通らない (:144-147)・本文に NULL 文字がある (:111-112) |
 | 401 | `AUTH_UNAUTHENTICATED` | 未ログイン (:119) |
 | 403 | `OP_PERMISSION_DENIED` | `admin` / `super_admin` でない (:125) |
-| 409 | `OWNER_ALREADY_IN_ORG` / `OWNER_ACCOUNT_DELETING` | オーナーにする人がすでに別の組織に所属している (:167-170) / オーナーにする人が退会の手続き中 (退会の印 `account_deletion_guards` があり、DB のトリガー `trg_organizations_owner_not_deleting` (関数 `organizations_owner_not_deleting()`) が組織の行の INSERT を止めた。`supabase/migrations/20261023130000_account_deletion_owner_guard.sql`。:182-187。文は「指定した owner は退会の手続き中です」。#1917 の続き) |
-| 500 | `INTERNAL_ERROR` | 組織の行の作成 (:189-192)・オーナーの `user_profiles` の更新 (:222-225) に失敗 |
+| 409 | `OWNER_ALREADY_IN_ORG` / `OWNER_ACCOUNT_DELETING` | オーナーにする人がすでに別の組織に所属している (:167-172) / オーナーにする人が退会の手続き中 (退会の印 `account_deletion_guards` があり、DB のトリガー `trg_organizations_owner_not_deleting` (関数 `organizations_owner_not_deleting()`) が組織の行の INSERT を止めた。`supabase/migrations/20261023130000_account_deletion_owner_guard.sql`。:184-189。文は「指定した owner は退会の手続き中です」。#1917 の続き) |
+| 500 | `INTERNAL_ERROR` | 組織の行の作成 (:190-194)・オーナーの `user_profiles` の更新 (:221-227) に失敗 |
 
 **権限**: `admin`, `super_admin`
 
@@ -541,13 +541,13 @@ BAN 解除
 ---
 
 ### POST /api/admin/audit-logs/export
-監査ログ CSV エクスポート
+未実装 (`src/app/api/admin/audit-logs` に route は無い)。監査ログ CSV エクスポート
 
 **リクエスト**: `{ "from": "2026-01-01", "to": "2026-05-06", "format": "csv" }`
 
 **レスポンス**: `{ "data": { "export_id": "uuid", "status": "processing" } }`
 
-**副作用**: `admin_audit_logs` に `admin.export.request` を記録
+**副作用**: (作るときは operator/07 §4.1 の名前で記録する。今あるエクスポートは `POST /api/admin/finance/exports` の `admin.finance.export` (旧名 `admin.export.request`))
 
 ---
 
@@ -1223,13 +1223,13 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 
 - ステージを変えると、活動履歴 (`sales_lead_activities`) に `stage_change` (`details: { from_stage, to_stage }`) を残す (この書き込みに失敗しても、リードは更新できているので 200 のまま (監査ログと同じ fail-open)。失敗は db-logger に error で残す。#1917)
 - 同時の更新: 本文に `stage` があるときは「直前に読んだ `stage` のままなら書く」条件つきにする。0 行なら読み直し、リードがあれば 409 `CONFLICT_STALE_DATA`
-  (書かず、活動履歴も監査ログも残さない)、無ければ 404。`from_stage` は書いた時点の実際の直前のステージと必ず一致する。`stage` が無い更新には条件を付けず、更新が 0 行 (読んでから書くまでにリードが消えた) なら 404 (`src/app/api/admin/sales/leads/[id]/route.ts:228-231`)
+  (書かず、活動履歴も監査ログも残さない)、無ければ 404。`from_stage` は書いた時点の実際の直前のステージと必ず一致する。`stage` が無い更新には条件を付けず、更新が 0 行 (読んでから書くまでにリードが消えた) なら 404 (`src/app/api/admin/sales/leads/[id]/route.ts:208-212`)
 - 読み込み・更新・読み直しの DB の失敗は 500 `INTERNAL_ERROR` (404 にしない)。UUID の形でない id は DB に渡さず 404 `NOT_FOUND` (本文の検査の 400 のあと。uuid 型の列に渡すと 22P02 で「DB の失敗」に入るため。#1917)。詳細の `GET /api/admin/sales/leads/{id}` も同じで、リード・活動履歴の読み込みの DB の失敗は 500 (404 は行が無いとき (UUID の形でない id を含む) だけ。活動履歴の読み込みの失敗を空の履歴にしない。#1917)
 
 ---
 
 ### GET / POST /api/admin/sales/leads/{id}/activities
-`GET` は活動履歴の一覧 (`{ data: [{ id, lead_id, actor_id, activity_type, details, created_at }] }`。新しい順。権限は `sales` / `admin` / `super_admin`。UUID の形でない id は DB に渡さず 404 `NOT_FOUND`、読み込みの DB の失敗は 500 `INTERNAL_ERROR`。監査ログは残さない。`src/app/api/admin/sales/leads/[id]/activities/route.ts:53-95`)。`POST` は活動記録追加。リードの読み込みの DB の失敗は 500 `INTERNAL_ERROR` (404 は行が無いとき (UUID の形でない id を含む。DB に渡さず、本文の検査の 400 のあとに 404) だけ)。追加のあとのリードの `updated_at` の更新に失敗しても、活動は追加できているので 201 のまま (失敗は db-logger に error で残す。#1917)
+`GET` は活動履歴の一覧 (`{ data: [{ id, lead_id, actor_id, activity_type, details, created_at }] }`。新しい順。権限は `sales` / `admin` / `super_admin`。UUID の形でない id は DB に渡さず 404 `NOT_FOUND`、読み込みの DB の失敗は 500 `INTERNAL_ERROR`。監査ログは残さない。`src/app/api/admin/sales/leads/[id]/activities/route.ts:56-84`。`POST` は :86 から)。`POST` は活動記録追加。リードの読み込みの DB の失敗は 500 `INTERNAL_ERROR` (404 は行が無いとき (UUID の形でない id を含む。DB に渡さず、本文の検査の 400 のあとに 404) だけ)。追加のあとのリードの `updated_at` の更新に失敗しても、活動は追加できているので 201 のまま (失敗は db-logger に error で残す。#1917)
 
 **リクエスト**:
 ```json
@@ -1247,7 +1247,7 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 ---
 
 ### POST /api/admin/sales/leads/{id}/proposal-pdf
-提案書 PDF 生成
+未実装 (`src/app/api/admin/sales` に route は無い)。提案書 PDF 生成
 
 **レスポンス**: `{ "data": { "pdf_url": "https://storage.../proposals/xxx.pdf" } }`
 
@@ -1846,7 +1846,7 @@ Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#113
 | `CONFLICT_PRECONDITION_REQUIRED` / `CONFLICT_OPTIMISTIC_LOCK` / `CONFLICT_STALE_DATA` | 428 / 412 / 409 | 楽観的ロック (cross/04 §4.2)。`PATCH /api/admin/data-requests/{id}` で、`If-Unmodified-Since` が無い / GET が返した `updated_at` と違う / 条件つきの UPDATE が 0 行。`CONFLICT_STALE_DATA` は組織のプランの変更 (`PATCH /api/admin/organizations/{id}`) でも使う: 直前に読んだ `plan` のままなら書く条件つきの UPDATE が 0 行で、読み直した `plan` が送られたプランと違う (同じなら 200 で書かず記録もしない。#1912)。同じ形で、問い合わせの更新 (`PATCH` / `PUT /api/admin/inquiries/{id}`。条件は読んだ `status` と `updated_at`)・AI の 1 日の上限の保存 (`PATCH /api/super-admin/llm/quotas`。条件は読んだ `daily_limit`、行が無かったときは作るだけ)・リードのステージの変更 (`PATCH /api/admin/sales/leads/{id}`。条件は読んだ `stage`。読み直してリードがあれば常に 409)・プランの編集と削除 (`PATCH` / `DELETE /api/super-admin/plans/{id}`。条件は読んだ `status` (削除は `draft`)、廃止で既存の `ends_at` に頼るときは `ends_at` が NULL でないことも。編集は送った変更がもう入っていれば 200)・利用者の凍結 (`POST /api/admin/users/{id}/freeze`。条件は読んだ時点の super_admin でない状態のまま。読み直して対象があれば常に 409) でも使う。送った値が今の値と同じだったときの扱いは違う: 組織のプラン・AI の 1 日の上限・プランの編集 (読み直した行に送った変更がもう入っていたとき) は 200 で書かず記録もしないが、問い合わせの更新は 200 で書かずに今の行 (本文を含む) を返すので、`changed: false` として記録する (:984) |
 | `OP_EMAIL_OUTBOX_NOT_FOUND` | 404 | [NEW] 再送 (`POST /api/super-admin/email-outbox/{id}/requeue`) の行が無い (`10-logs-and-mail-retry.md` §11) |
 | `OP_EMAIL_OUTBOX_NOT_REQUEUEABLE` | 409 | [NEW] 再送できない行。`details.reason` が `not_dead` (届けられなかった行でない) か `redacted` (宛先を伏せた行) (`10-logs-and-mail-retry.md` §11) |
-| `AUTH_2FA_REQUIRED` | 403 | 二段階認証の確認が要る (必須ロールで認証アプリを登録済み・セッションが aal1)。`requireRole` が `MfaRequiredError` (`ForbiddenError` の派生) を投げ、運営の API は route の既存の 403 の code (`FORBIDDEN` / `OP_PERMISSION_DENIED` / `PERM_DENIED`) で返す (本文の message は、`authFailureNested` を通す route では「二段階認証の確認が必要です」、403 を固定のリテラルで返す route では「権限がありません」。`cross/12-operator-mfa.md` §19.3)。この code を本文に出すのは自己サービスの `/api/auth/mfa/*` だけ。画面 (layout / page) は `requireRoleForPage` が MFA の画面へ回す (`cross/12-operator-mfa.md` §13.4・§19.3) |
+| `AUTH_2FA_REQUIRED` | 403 | 二段階認証の確認が要る (必須ロールで認証アプリを登録済み・セッションが aal1)。`requireRole` が `MfaRequiredError` (`ForbiddenError` の派生) を投げ、運営の API は route の既存の 403 の code (`FORBIDDEN` / `OP_PERMISSION_DENIED`) で返す (本文の message は、`authFailureNested` を通す route では「二段階認証の確認が必要です」、403 を固定のリテラルで返す route では「権限がありません」。`cross/12-operator-mfa.md` §19.3)。この code を本文に出すのは自己サービスの `/api/auth/mfa/*` だけ。画面 (layout / page) は `requireRoleForPage` が MFA の画面へ回す (`cross/12-operator-mfa.md` §13.4・§19.3) |
 | `AUTH_2FA_ENROLLMENT_REQUIRED` | 403 | [NEW] 二段階認証の登録が要る (必須ロールで未登録・猶予なし・セッションが aal1)。扱いは `AUTH_2FA_REQUIRED` と同じ (`cross/12-operator-mfa.md` §19) |
 
 ## 24. テスト方針

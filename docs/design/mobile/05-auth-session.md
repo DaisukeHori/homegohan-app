@@ -10,7 +10,7 @@
 
 ## 1. 目的・スコープ
 
-モバイルアプリの認証まわり (セッションの保管、起動時の復元、Google ログイン、WebView との状態の食い違い、push token) の設計。
+モバイルアプリの認証まわり (セッションの保管、起動時の復元、Google ログイン、WebView との状態の食い違い、push token) の設計。Apple のログイン (iOS のネイティブのシート・Web の OAuth) は `08-sign-in-with-apple.md`。
 Issue #1038 (F7-04〜F7-10) の修正に合わせて整理した。
 
 `01-architecture.md` の「3.3 セッション同期」は、この文書の内容で置き換わる部分がある (特に、セッションの保管先と、`session-expired` の向き)。
