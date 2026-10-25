@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import {
   FeaturePackageCreateSchema,
   FeaturePackagesQuerySchema,
@@ -104,7 +104,8 @@ export async function POST(request: NextRequest) {
 
     const input = parseResult.data;
 
-    const { data: pkg, error } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { data: pkg, error } = await getSupabaseAdmin()
       .from('feature_packages')
       .insert({
         package_key: input.package_key,

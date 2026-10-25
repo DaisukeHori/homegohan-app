@@ -9,7 +9,7 @@
  * 1 回の取得 = 1 行で admin.sales.lead.list を監査ログに残す (絞り込みの条件と件数だけ)。
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested, invalidJsonNested } from '@/lib/api/error-responses';
 import { readJsonBody } from '@/lib/http-params';
@@ -144,7 +144,8 @@ export async function POST(request: NextRequest) {
       contact_email: inputData.contact_email || null,
     };
 
-    const { data: lead, error } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { data: lead, error } = await getSupabaseAdmin()
       .from('sales_leads')
       .insert(insertData)
       .select()

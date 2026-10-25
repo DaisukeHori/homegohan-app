@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import {
   PlanCreateSchema,
   PlansQuerySchema,
@@ -109,7 +109,8 @@ export async function POST(request: NextRequest) {
     // feature_packages 配列を UUID[] に変換
     const featurePackageIds = input.feature_package_ids ?? [];
 
-    const { data: plan, error } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { data: plan, error } = await getSupabaseAdmin()
       .from('subscription_plans')
       .insert({
         plan_key: input.plan_key,

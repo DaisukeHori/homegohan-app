@@ -2,7 +2,8 @@
  * #1103 (項目 5): PATCH /api/admin/users/[id] の管理ノート (admin_note)
  *
  * 以前は user_profiles.admin_note 列へ UPDATE していたが、その列は本番にもリポジトリにも無く、常に 500 だった。
- * 修正後は admin_user_notes (運営ロールだけが読み書きできる内部メモ) に 1 行追加する。
+ * 修正後は admin_user_notes (運営ロールだけが読める内部メモ) に 1 行追加する。
+ * 追加は service_role の client で書く (運営の直接の書き込みのポリシーは消した。#1917 の続き)。監査ログは本人のセッションの client で書く。
  *
  * 確かめること:
  *  - user_profiles を UPDATE しない (列を足さない。本人の行は本人が全列読めるため、内部メモを置かない)
@@ -92,11 +93,11 @@ function callsOf(client: ReturnType<typeof makeClient>, table: string, method: s
 beforeEach(() => {
   vi.clearAllMocks();
   mockRequireRole.mockResolvedValue({ id: ADMIN_ID, roles: ['admin'] });
-  serviceRoleClient = makeClient({ user_profiles: { data: { id: TARGET_ID }, error: null } });
-  userScopedClient = makeClient({
+  serviceRoleClient = makeClient({
+    user_profiles: { data: { id: TARGET_ID }, error: null },
     admin_user_notes: { data: { id: NOTE_ID }, error: null },
-    admin_audit_logs: { data: null, error: null },
   });
+  userScopedClient = makeClient({ admin_audit_logs: { data: null, error: null } });
 });
 
 describe('PATCH /api/admin/users/[id] — 管理ノートの追加 (#1103 項目 5)', () => {
@@ -106,9 +107,11 @@ describe('PATCH /api/admin/users/[id] — 管理ノートの追加 (#1103 項目
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ data: { success: true, note_id: NOTE_ID } });
 
-    expect(callsOf(userScopedClient, 'admin_user_notes', 'insert')).toEqual([
+    expect(callsOf(serviceRoleClient, 'admin_user_notes', 'insert')).toEqual([
       { table: 'admin_user_notes', method: 'insert', args: [{ user_id: TARGET_ID, admin_id: ADMIN_ID, note: '要注意ユーザー' }] },
     ]);
+    // 本人のセッションの client では admin_user_notes に触れない (書き込みのポリシーと権限が無い)
+    expect(userScopedClient.calls.some((c) => c.table === 'admin_user_notes')).toBe(false);
     // user_profiles には存在確認の SELECT だけ (列の UPDATE をしない)
     expect(serviceRoleClient.calls.filter((c) => c.table === 'user_profiles').map((c) => c.method)).toEqual([
       'select',
@@ -165,6 +168,7 @@ describe('PATCH /api/admin/users/[id] — 管理ノートの追加 (#1103 項目
     serviceRoleClient = makeClient({ user_profiles: { data: null, error: null } });
     const res = await route.PATCH(patchRequest({ admin_note: 'x' }), { params: { id: TARGET_ID } });
     expect(res.status).toBe(404);
+    expect(callsOf(serviceRoleClient, 'admin_user_notes', 'insert')).toEqual([]);
     expect(userScopedClient.from).not.toHaveBeenCalled();
   });
 
@@ -202,9 +206,9 @@ describe('PATCH /api/admin/users/[id] — 管理ノートの追加 (#1103 項目
     if (table === 'user_profiles') {
       serviceRoleClient = makeClient({ user_profiles: { data: null, error: dbError } });
     } else {
-      userScopedClient = makeClient({
+      serviceRoleClient = makeClient({
+        user_profiles: { data: { id: TARGET_ID }, error: null },
         admin_user_notes: { data: null, error: dbError },
-        admin_audit_logs: { data: null, error: null },
       });
     }
     const res = await route.PATCH(patchRequest({ admin_note: 'x' }), { params: { id: TARGET_ID } });

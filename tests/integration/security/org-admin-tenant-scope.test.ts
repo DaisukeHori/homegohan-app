@@ -10,7 +10,8 @@
  *
  * 期待する挙動 (修正後):
  *   - 管理者は「同じ組織で org_role が owner / admin」のユーザーだけ (roles の 'org_admin' は見ない)
- *   - 運営のグローバル admin / super_admin が自組織のテーブルを直接操作できる点は第2段まで現状維持
+ *   - 運営のグローバル admin / super_admin でも、org_role が owner / admin でなければ自組織のテーブルを直接書けない
+ *     (部署・チャレンジ・招待の削除のポリシーの運営の枝は 20261025120000 で外した。#1917 の続き。組織の管理 API も 403)
  *
  * API ルート (Bearer JWT) と PostgREST 直叩きの両方で検証する。
  * 前提: ローカル Supabase (scripts/supabase-local.sh) と Next dev サーバ (npm run dev) が起動済み。
@@ -291,10 +292,11 @@ describe('#1235 RLS: 同じ組織の org_role = owner / admin だけが管理者
     expect(await departmentNames(orgB)).not.toContain(`other-org-dept-${TS}`);
   });
 
-  it('運営のグローバル admin は自組織のテーブルを直接操作できる (第2段まで現状維持)', async () => {
+  it('運営のグローバル admin でも org_role が member なら、自組織の部署を直接作れない (運営の枝は外した。#1917 の続き)', async () => {
     const name = `global-admin-dept-${TS}`;
     const { error } = await asUser(globalAdmin.jwt).from('departments').insert({ organization_id: orgB, name });
-    expect(error).toBeNull();
+    expect(error?.code).toBe('42501');
+    expect(await departmentNames(orgB)).not.toContain(name);
   });
 
   it('招待で admin になったユーザーは招待を取り消せる (DELETE)', async () => {

@@ -10,7 +10,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import {
   CouponCreateSchema,
   CouponsQuerySchema,
@@ -113,7 +113,8 @@ export async function POST(request: NextRequest) {
     const validFrom = couponValidFromTimestamp(input.valid_from);
     const validUntil = couponValidUntilTimestamp(input.valid_until);
 
-    const { data: coupon, error } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { data: coupon, error } = await getSupabaseAdmin()
       .from('coupons')
       .insert({
         code: input.code,

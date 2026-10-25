@@ -589,8 +589,9 @@ describe('同時の更新', () => {
     const res = await apiCall<{ inquiry: InquiryDto }>('PUT', `/api/admin/inquiries/${id}`, admin.jwt, { status: 'in_progress' });
     expect(res.status).toBe(200);
 
-    // 古い updated_at を条件にした更新は 0 行 (route の 409 の元)
-    const stale = await supportClient
+    // 古い updated_at を条件にした更新は 0 行 (route の 409 の元)。route と同じく service_role の client で書く
+    // (運営の UPDATE のポリシーは消した。20261025120000・#1917 の続き)
+    const stale = await srAdmin
       .from('inquiries')
       .update({ status: 'resolved' })
       .eq('id', id)
@@ -602,7 +603,7 @@ describe('同時の更新', () => {
 
     // 読み直した updated_at の文字列そのままなら一致する (秒未満が丸められて毎回 0 行にならない)
     const current = await supportClient.from('inquiries').select('status, updated_at').eq('id', id).single();
-    const fresh = await supportClient
+    const fresh = await srAdmin
       .from('inquiries')
       .update({ admin_notes: '条件つきの更新' })
       .eq('id', id)
@@ -802,7 +803,7 @@ describe('監査ログ (admin_audit_logs)', () => {
 // RLS (API を通さず、PostgREST を直接叩く)
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('RLS: 運営ロール以外は直接 PostgREST を叩いても他人の問い合わせを読めない・更新できない', () => {
+describe('RLS: 直接 PostgREST を叩いても、運営ロール以外は他人の問い合わせを読めず、誰も更新できない', () => {
   it('一般ユーザーは、他人 (会員・ゲスト) の問い合わせを読めない', async () => {
     const { data, error } = await client(anonKey, general.jwt)
       .from('inquiries')
@@ -812,27 +813,27 @@ describe('RLS: 運営ロール以外は直接 PostgREST を叩いても他人の
     expect(data).toEqual([]);
   });
 
-  it('一般ユーザーは、問い合わせを更新できない (0 行)', async () => {
+  it('一般ユーザーは、問い合わせを更新できない (42501。anon / authenticated は UPDATE の権限を持たない。#1917 の続き)', async () => {
     const before = await dbRow(seeded.guestResolved);
-    const { data, error } = await client(anonKey, general.jwt)
+    const { error } = await client(anonKey, general.jwt)
       .from('inquiries')
       .update({ status: 'pending', admin_notes: 'RLS' })
       .eq('id', seeded.guestResolved)
       .select('id');
-    expect(error).toBeNull();
-    expect(data).toEqual([]);
+    expect(error?.code).toBe('42501');
     expect(await dbRow(seeded.guestResolved)).toEqual(before);
   });
 
-  it('support は直接でも読み書きできる (API が本人のセッションで動く前提)', async () => {
+  it('support は直接読めるが、直接は書けない (42501。更新は API が requireRole の後で service_role で書く。#1917 の続き)', async () => {
     const supportClient = client(anonKey, support.jwt);
     const read = await supportClient.from('inquiries').select('id').eq('id', seeded.guestResolved);
     expect(read.error).toBeNull();
     expect(read.data).toHaveLength(1);
 
+    const before = await dbRow(seeded.guestResolved);
     const update = await supportClient.from('inquiries').update({ admin_notes: 'RLS 確認' }).eq('id', seeded.guestResolved).select('id');
-    expect(update.error).toBeNull();
-    expect(update.data).toHaveLength(1);
+    expect(update.error?.code).toBe('42501');
+    expect(await dbRow(seeded.guestResolved)).toEqual(before);
   });
 
   it('他人の user_profiles は一般ユーザー・support のセッションでは読めない (だから ニックネームの解決に service role が要る)', async () => {
