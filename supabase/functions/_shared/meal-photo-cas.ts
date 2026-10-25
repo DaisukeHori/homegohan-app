@@ -54,15 +54,31 @@ export async function claimPhotoAnalysis(
   db: Pick<SupabaseClient, "from">,
   params: { mealId: string; invokedAt: string | null },
 ): Promise<PhotoAnalysisClaim> {
+  if (params.invokedAt === null) {
+    return claimWith(db, params.mealId, null);
+  }
+  // 「updated_at が invokedAt 以前」と「updated_at が NULL」を 1 つの or (updated_at.is.null,updated_at.lte.…) にしない。
+  // PostgREST は or の条件を、update の返す行 (と count) にも当て直す。印を付けると updated_at が now() に進んで条件から外れるので、
+  // 書けていても 0 行が返る (ローカルの Supabase で確かめた。lte・is・eq は当て直さない)。条件ごとに 1 回ずつ付ける
+  // (どちらも条件つきの 1 文なので、あいだに別の印が付いても、印が 2 つ付くことは無い)
+  const claimed = await claimWith(db, params.mealId, { op: "lte", invokedAt: params.invokedAt });
+  if (claimed.status === "claimed") return claimed;
+  return claimWith(db, params.mealId, { op: "is_null" });
+}
+
+/** 印を付ける update を 1 回送る (condition が null なら条件なし) */
+async function claimWith(
+  db: Pick<SupabaseClient, "from">,
+  mealId: string,
+  condition: { op: "lte"; invokedAt: string } | { op: "is_null" } | null,
+): Promise<PhotoAnalysisClaim> {
   // updated_at の値はトリガーが DB の now() で上書きする (ここで送る値は使われない)
   let query = db
     .from("planned_meals")
     .update({ updated_at: new Date().toISOString() })
-    .eq("id", params.mealId);
-  if (params.invokedAt !== null) {
-    // 日時の文字列は . と : を含むので、PostgREST の or の値として二重引用符で囲む
-    query = query.or(`updated_at.is.null,updated_at.lte."${params.invokedAt}"`);
-  }
+    .eq("id", mealId);
+  if (condition?.op === "lte") query = query.lte("updated_at", condition.invokedAt);
+  if (condition?.op === "is_null") query = query.is("updated_at", null);
   const { data, error } = await query.select("updated_at");
   if (error) throw error;
   const rows: Array<{ updated_at?: unknown }> = Array.isArray(data) ? data : [];

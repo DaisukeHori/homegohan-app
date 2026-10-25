@@ -6,8 +6,9 @@
  *   2. 解析のあと isPhotoAnalysisCurrent で updated_at が印のままかを見る
  *   3. analyze-meal-photo/index.ts の update は .eq('id', mealId).eq('updated_at', 印).select('id') で、0 行なら書かない
  * 単体テスト (tests/analyze-meal-photo-cas.test.ts) は作り物の DB で順序を見る。ここでは作り物では分からないこと
- * (or の値の二重引用符・timestamptz の文字列の一致・トリガー trg_planned_meals_updated_at が印の update でも updated_at を進めること・
- * NULL の updated_at) を、ローカルの Supabase で見る。3 の update は index.ts と同じ形をここで組む (index.ts が同じ形を使うことは
+ * (印を付けた update が行を返すこと (PostgREST は or の条件を返す行にも当て直すので、or を使うと書けていても 0 行になる)・
+ * timestamptz の文字列の一致・トリガー trg_planned_meals_updated_at が印の update でも updated_at を進めること・NULL の updated_at) を、
+ * ローカルの Supabase で見る。3 の update は index.ts と同じ形をここで組む (index.ts が同じ形を使うことは
  * 単体テストの PC-6 が見る)。
  *
  * 確かめること (P-n はこのファイルの it の番号):

@@ -9,10 +9,10 @@
  * 守り方は supabase/functions/_shared/meal-photo-cas.ts の注 (印を付ける → 書く前に確かめる → 印のままの行にだけ書く)。
  *
  * ここでは Edge Function のハンドラ (index.ts) を本物で動かし、Supabase (planned_meals・Storage・認証)・解析のパイプライン・
- * 画像のジョブの取り消し・同意の判定・利用回数・ロガーを作り物にする。planned_meals の update は条件 (eq / lte / or) を
+ * 画像のジョブの取り消し・同意の判定・利用回数・ロガーを作り物にする。planned_meals の update は条件 (eq / lte / is) を
  * 本当に評価し、当たると updated_at を進める (本物の trg_planned_meals_updated_at と同じく、どの書き手が書いても変わる)。
  * 時刻は作り物の時計 (呼ぶたびに 1 ミリ秒進む) で、invokedAt もこの時計から取る (本物の DB の時刻と route の時刻の前後と同じ)。
- * PostgREST の本物の評価 (or の引用・timestamptz の一致) は tests/integration/rls/planned-meals-photo-analysis-cas.test.ts が見る。
+ * PostgREST の本物の評価 (update の返す行・timestamptz の文字列の一致) は tests/integration/rls/planned-meals-photo-analysis-cas.test.ts が見る。
  *
  * 確かめること (PC-n はこのファイルの it の番号):
  *   - PC-1: 先に送った解析 (A) が後に終わっても、後に送った解析 (B) の結果が残る (直す前は A が上書きした)
@@ -34,7 +34,7 @@ type Row = Record<string, unknown>;
 type Filter =
   | { op: 'eq'; column: string; value: unknown }
   | { op: 'lte'; column: string; value: string }
-  | { op: 'or'; alternatives: Array<{ op: 'is_null' | 'lte'; column: string; value?: string }> };
+  | { op: 'is_null'; column: string };
 
 const MEAL_ID = '11111111-1111-4111-8111-111111111111';
 const USER_ID = '33333333-3333-4333-8333-333333333333';
@@ -88,20 +88,7 @@ function matches(row: Row, filters: Filter[]): boolean {
   return filters.every((f) => {
     if (f.op === 'eq') return columnOf(row, f.column) === f.value;
     if (f.op === 'lte') return timeOf(columnOf(row, f.column)) <= timeOf(f.value);
-    return f.alternatives.some((alt) =>
-      alt.op === 'is_null' ? columnOf(row, alt.column) === null : timeOf(columnOf(row, alt.column)) <= timeOf(alt.value),
-    );
-  });
-}
-
-/** PostgREST の or の文字列 (このファイルが見る形だけ: `col.is.null` と `col.lte."値"`) を読む */
-function parseOr(expr: string): Extract<Filter, { op: 'or' }>['alternatives'] {
-  return expr.split(',').map((part) => {
-    const isNull = /^([a-z_]+)\.is\.null$/.exec(part);
-    if (isNull) return { op: 'is_null' as const, column: isNull[1] };
-    const lte = /^([a-z_]+)\.lte\."([^"]+)"$/.exec(part);
-    if (lte) return { op: 'lte' as const, column: lte[1], value: lte[2] };
-    throw new Error(`作り物が読めない or の条件: ${part}`);
+    return columnOf(row, f.column) === null;
   });
 }
 
@@ -158,9 +145,14 @@ function plannedMealsQuery() {
       filters.push({ op: 'lte', column, value });
       return query;
     },
-    or: (expr: string) => {
-      filters.push({ op: 'or', alternatives: parseOr(expr) });
+    is: (column: string, value: null) => {
+      if (value !== null) throw new Error('作り物の is は null だけ');
+      filters.push({ op: 'is_null', column });
       return query;
+    },
+    // or は作り物に無い (PostgREST は or の条件を update の返す行にも当て直し、印を付けた行が返らない。_shared/meal-photo-cas.ts の注)
+    or: () => {
+      throw new Error('写真の解析の印に or を使わない (_shared/meal-photo-cas.ts の注)');
     },
     maybeSingle: async () => {
       const { data } = run();
