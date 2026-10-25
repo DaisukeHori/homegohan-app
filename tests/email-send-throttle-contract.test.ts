@@ -75,6 +75,10 @@ const EXEMPT_EMAIL_SENDERS: Record<string, string> = {
     '運営 (support / admin / super_admin) 専用の POST /api/admin/support/tickets/[id]/messages が、requireRole を通した後の顧客向け返信 (内部メモはメールにしない) でだけ呼ぶ。' +
     '宛先はチケットの顧客本人のアドレス (ticket.user_id を auth.admin.getUserById で引く) に固定で、呼び出し側は宛先を指定できない。' +
     '運営による代理起票 (#1248) は admin_audit_logs に残る。送信回数の上限は設けていない (必要になったら、除外をやめて invite-throttle 相当の判定を通す)',
+  'src/lib/admin/send-freeze-notification-email.ts':
+    '運営 (admin / super_admin) 専用の POST /api/admin/users/[id]/freeze が requireRole を通し、凍結の UPDATE が 1 行だったあとにだけ呼ぶ (#2026)。' +
+    '宛先は凍結した本人の auth.users 上の登録アドレス (auth.admin.getUserById で引く) に固定で、運営も利用者も宛先を指定できない。' +
+    '1 回の凍結につき 1 通 (Idempotency-Key account-frozen:<ban_id>) で、本文の運営のメッセージは 1000 文字まで',
   // #1160 除名・脱退の通知。送る入口は 4 つの route (family/org の除名・脱退) だが、送信はこの共通ヘルパーだけが行う
   'src/lib/membership/exit-notification.ts':
     '家族グループ / 組織の除名・脱退 (remove_family_member / leave_family / remove_org_member / leave_org) の RPC が成功した直後に、' +

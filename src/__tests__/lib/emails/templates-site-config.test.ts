@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EmailEnvelopeSchema, type EmailEnvelope } from '@/lib/emails/envelope';
 import { renderAccountDeletedEmail } from '@/lib/emails/account/account-deleted';
 import { renderLoginNewDeviceEmail } from '@/lib/emails/account/login-new-device';
+import { renderAccountFrozenEmail } from '@/lib/emails/account/account-frozen';
 import type { InviteEmailVars } from '@/lib/emails/membership/templates';
 import { renderFamilyInviteEmail } from '@/lib/emails/membership/family-invite';
 import { renderFamilyInviteExistingEmail } from '@/lib/emails/membership/family-invite-existing';
@@ -78,6 +79,18 @@ const TEMPLATES: TemplateCase[] = [
         device_label: 'Windows の Chrome',
         ip_address: '203.0.113.10',
         country_code: 'JP',
+      }),
+    mentionsSupport: true,
+  },
+  {
+    file: 'account/account-frozen',
+    name: 'account-frozen',
+    render: () =>
+      renderAccountFrozenEmail({
+        to_email: 'taro@example.com',
+        frozen_at: new Date('2026-10-25T01:00:00.000Z'),
+        unban_at: new Date('2026-11-01T01:00:00.000Z'),
+        operator_message: null,
       }),
     mentionsSupport: true,
   },

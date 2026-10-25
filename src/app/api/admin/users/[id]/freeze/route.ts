@@ -9,6 +9,11 @@
  * 凍結の UPDATE は「読んだ時点の super_admin でない状態のままなら書く」条件つきにし (src/lib/admin/user-ban.ts の SUPER_ADMIN_ROLES_LITERAL)、0 行なら読み直して、
  * 対象が無ければ 404、あれば 409 CONFLICT_STALE_DATA (書かず、監査も残さない。cross/04 §4.2)。
  *
+ * 通知メール (POST。#2026。docs/design/cross/24-freeze-notify-mail.md): notify_user (省略時 true) なら、凍結の UPDATE が 1 行だったあとに
+ * sendFreezeNotificationEmail で凍結した本人の登録アドレスへ 1 通を送信待ち (email_outbox) に積む。best-effort で、積めなくても 200 のまま。
+ * 結果は応答の data.notification と監査 admin.user.ban の details.notification に残す。notification_message は本文の「▼ 運営からのメッセージ」の段。
+ * 403 / 404 / 409 / 500 では送らない (凍結されていない人に送らない)。
+ *
  * 同時の変更 (DELETE): 凍結の解除は「凍結中 (frozen_at が NULL でない) のときだけ書く」条件つきの UPDATE にする。
  * 別の運営が先に解除していると 0 行になるので、読み直して、対象が無ければ 404、あれば 409 CONFLICT_STALE_DATA
  * (書かず、admin.user.unban の監査も残さない。POST の 409 と同じ扱い。#1917)。
@@ -28,6 +33,9 @@ import { SUPER_ADMIN_ROLES_LITERAL, isNullRoles } from '@/lib/admin/user-ban';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { internalError } from '@/lib/api/errors';
 import { isUuid } from '@/lib/http-params';
+import { createLogger } from '@/lib/db-logger';
+import { sendFreezeNotificationEmail } from '@/lib/admin/send-freeze-notification-email';
+import { FREEZE_NOTIFICATION_NOT_REQUESTED, type FreezeNotificationOutcome } from '@/lib/admin/freeze-notification-status';
 
 export const dynamic = 'force-dynamic';
 
@@ -150,10 +158,14 @@ export async function POST(request: Request, props: Params) {
     );
   }
 
+  // 凍結の日時。UPDATE の frozen_at と通知メールの本文の両方に使う (同じ値にする)
+  const frozenAt = new Date();
+
   // 凍結期限計算 (#1030: unban_at 列に永続化するため UPDATE より先に計算する)
   let unbanAt: string | null = null;
+  let unbanDate: Date | null = null;
   if (freezeData.ban_type === 'temporary' && freezeData.duration_days) {
-    const unbanDate = new Date();
+    unbanDate = new Date(frozenAt);
     unbanDate.setDate(unbanDate.getDate() + freezeData.duration_days);
     unbanAt = unbanDate.toISOString();
   }
@@ -165,7 +177,7 @@ export async function POST(request: Request, props: Params) {
   const freezeUpdate = supabaseAdmin
     .from('user_profiles')
     .update({
-      frozen_at: new Date().toISOString(),
+      frozen_at: frozenAt.toISOString(),
       frozen_reason: `[${freezeData.reason_category}] ${freezeData.reason_detail}`,
       frozen_by: actor.id,
       unban_at: unbanAt,
@@ -209,8 +221,27 @@ export async function POST(request: Request, props: Params) {
     return NextResponse.json(STALE_FREEZE_TARGET_RESPONSE, { status: 409 });
   }
 
-  // 監査ログ INSERT (operator/02-api-spec.md §3.3)
   const banId = crypto.randomUUID();
+
+  // 通知メール (best-effort。cross/24 §6.1)。notify_user が false なら宛先も引かない。
+  // 運営のメッセージは Zod が前後の空白を除いているので、空なら「無し」
+  const notificationMessage = freezeData.notification_message || null;
+  let notification: FreezeNotificationOutcome = FREEZE_NOTIFICATION_NOT_REQUESTED;
+  let notificationOutboxId: string | null = null;
+  if (freezeData.notify_user) {
+    const sent = await sendFreezeNotificationEmail({
+      userId: id,
+      banId,
+      frozenAt,
+      unbanAt: unbanDate,
+      operatorMessage: notificationMessage,
+      logger: createLogger(POST_ROUTE_NAME).withUser(actor.id),
+    });
+    notification = sent.outcome;
+    notificationOutboxId = sent.outbox_id;
+  }
+
+  // 監査ログ INSERT (operator/02-api-spec.md §3.3)。通知の結果も残す (cross/24 §6.5)
   await recordAdminAudit({
     supabase,
     actorId: actor.id,
@@ -225,6 +256,12 @@ export async function POST(request: Request, props: Params) {
       duration_days: freezeData.duration_days,
       notify_user: freezeData.notify_user,
       unban_at: unbanAt,
+      notification_message: freezeData.notify_user ? notificationMessage : null,
+      notification: {
+        status: notification.status,
+        reason: notification.reason ?? null,
+        outbox_id: notificationOutboxId,
+      },
     },
     severity: 'warn',
     request,
@@ -235,6 +272,7 @@ export async function POST(request: Request, props: Params) {
     data: {
       ban_id: banId,
       unban_at: unbanAt,
+      notification,
     },
   });
 }
