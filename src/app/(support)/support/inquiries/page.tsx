@@ -74,7 +74,7 @@ const STALE_RELOAD_FAILED_MESSAGE =
  * (営業リードの画面の 409 のあとの読み直しと同じ分け方。src/app/admin/sales/[id]/page.tsx の staleStageMessageOf)
  */
 const STALE_RELOAD_UNAVAILABLE_MESSAGE =
-  "別の運営が先にこの問い合わせを更新していたので、更新していません。最新の内容も読み込めませんでした（理由は内容の欄に出しています）";
+  "別の運営が先にこの問い合わせを更新していました（この操作では更新していません）。最新の内容も読み込めませんでした（理由は内容の欄に出しています）";
 
 /**
  * 詳細の読み直しの失敗のうち、「再試行」で読み直しても同じ結果になる HTTP ステータス。
