@@ -30,7 +30,7 @@
 ### 3. RLS 厳格化
 - 全テーブルで RLS 有効化必須
 - 例外: `dataset_*` 等の公開マスター
-- service_role 経由でのバイパスは Edge Function に限定し、コードレビューで監視
+- service_role の client は Edge Function と、Next.js では `getSupabaseAdmin()` からだけ作り、認可・本人の確認の後にだけ使う (cross/02 §3.3)。コードレビューで監視
 
 ### 4. snake_case 統一
 - DB: snake_case
