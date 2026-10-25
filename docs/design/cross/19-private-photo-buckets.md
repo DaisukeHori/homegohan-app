@@ -113,7 +113,7 @@ Issue #1365: Supabase Storage の `meal_photos` (食事写真) と `fridge-image
 ## 2. 関連要件
 
 - Issue #1365 (本文)。Issue #1538 の項目 2。関連 #1243 / #1260 (本人のフォルダへの限定と保存パス)・PR #1681 (段 1)・#1598 / PR #1733 (モバイルの WebView 一本化)・#1175 (退会の掃除)・#1101 / #1538 (隠したコンテンツの完全削除)・#1584 (家族の献立の表示。family/10)。
-- `docs/design/CLAUDE.md` §3 (RLS 厳格化: service_role のバイパスは Edge Function とサーバーに限定し、コードレビューで監視)。`cross/02` (RLS パターン)。`cross/09` §9 (RLS は allow / deny の両方を確かめる)。`docs/operations/rls-drift-20261006.md` P-2 / P-3 (本番の公開バケットの記録)。
+- `docs/design/CLAUDE.md` §3 (RLS 厳格化: service_role の client は Edge Function と、Next.js では `getSupabaseAdmin()` だけから作り、コードレビューで監視)。`cross/02` (RLS パターン)。`cross/09` §9 (RLS は allow / deny の両方を確かめる)。`docs/operations/rls-drift-20261006.md` P-2 / P-3 (本番の公開バケットの記録)。
 - 一次情報 (本書が依拠するもの): Supabase 公式「Storage Buckets」(非公開バケットの読み出しは、利用者の JWT を付けた download (RLS に従う) か、`createSignedUrl` の署名付き URL だけ。公開バケットは取得と配信でアクセス制御をバイパスし、upload / delete / move / copy は制御される)。同「Serving assets from Storage」(署名付き URL は Auth の JWT 鍵と別の専用の鍵で署名され、Auth の鍵の交換で失効しない。個別の失効は Supabase のサポートへの依頼)。同「Smart CDN」(署名付き URL の応答は token ごとに別のキャッシュキー。token の失効や期限切れはキャッシュを消さず、キャッシュの期間 (オブジェクトの `cacheControl`。既定 1 時間) が過ぎるまで同じ URL は配られうる。オブジェクトの削除は全 token のキャッシュを最長 60 秒で無効にする)。Next.js 公式 `images.minimumCacheTTL` (最適化した画像の有効期限は `minimumCacheTTL` と上流の `Cache-Control` の max-age の大きい方)。
 
 ---

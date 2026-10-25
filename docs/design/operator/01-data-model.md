@@ -1126,7 +1126,7 @@ CREATE INDEX idx_password_history_user ON password_history(user_id, changed_at D
 
 ALTER TABLE password_history ENABLE ROW LEVEL SECURITY;
 
--- service_role のみアクセス (パスワード検証は Edge Function 内)
+-- service_role のみアクセス (照合は RPC auth_password_check。下の段落)
 CREATE POLICY "password_history_no_direct_access" ON password_history
   FOR ALL USING (false);
 ```

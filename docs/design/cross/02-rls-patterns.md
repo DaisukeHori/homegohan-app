@@ -42,10 +42,10 @@ ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;
 
 ### 3.3 service_role バイパスのガイドライン
 
-- **service_role を使う場所**: Supabase Edge Function のみ
-- **禁止**: Next.js Server Actions・API Routes 内での `createClient(SERVICE_ROLE_KEY)` 直接使用
+- **service_role の client を作る場所**: Supabase Edge Function と、Next.js では `lib/supabase/server.ts` の `getSupabaseAdmin()`。例外は `tests/supabase-service-role-client-scan.test.ts` の理由つきの許可の一覧 (`SUPABASE_JS_CLIENT_ALLOWLIST`) で service_role を使うとしたファイルだけで、今は `src/lib/db-logger.ts` (ブラウザ向けのページからも import されるので `next/headers` を読む `lib/supabase/server.ts` を import できない。`app_logs` への INSERT にだけ使う)
+- **禁止**: Next.js (Server Actions・API Routes・`src/lib`・`lib`) での自前の `createClient(SERVICE_ROLE_KEY)` (`getSupabaseAdmin()` と上の一覧のほか)。同じテストが `src`・`lib` を走査して見張る (`supabase/functions`・`scripts` は走査の対象外。使う前の確認の順も見ない)。使う前に何を確かめるかは route ごとに決まり (ログインした利用者の route は認可か本人の確認、Webhook は署名、cron は秘密の照合、など)、決まりは各 route の設計書にある (ルートの `CLAUDE.md` の「ロール認可」の節も見る)
 - **コードレビュー必須**: `service_role` が使われる PR は security ラベルを付与、実装リーダーがレビュー
-- Edge Function での service_role 使用時は必ず `admin_audit_logs` に記録
+- `admin_audit_logs` に記録する操作は `operator/07-audit-monitoring.md` §4 の「監査対象操作の網羅リスト」が決める
 
 ### 3.4 表の TRUNCATE の権限
 
@@ -209,7 +209,7 @@ CREATE POLICY "{table}_public_read"
   ON {table_name} FOR SELECT
   USING (true);
 
--- INSERT / UPDATE / DELETE は service_role のみ (= Edge Function)
+-- INSERT / UPDATE / DELETE は service_role のみ (Edge Function か、Next.js の getSupabaseAdmin()。§3.3)
 -- ポリシー不要 (service_role はバイパス)
 ```
 
@@ -402,7 +402,7 @@ export async function withAdvisoryLock<T>(
   key: string,
   fn: () => Promise<T>
 ): Promise<T> {
-  const supabase = createServiceRoleClient(); // Edge Function 内のみ
+  const supabase = getSupabaseAdmin(); // service_role の client (§3.3)
 
   await supabase.rpc('acquire_advisory_lock', {
     lock_key: key,
@@ -579,7 +579,7 @@ COMMIT;
 | テスト種別 | 対象 | ツール |
 |---------|------|------|
 | Integration | 各 RLS パターンが意図通り動作するか (SELECT / INSERT / UPDATE / DELETE) | Vitest + Supabase Local |
-| Integration | service_role バイパスが Edge Function 以外で使われていないか | CI での grep チェック |
+| Contract | service_role の client が `getSupabaseAdmin()` と理由つきの許可の一覧のほかで作られていないか (`src`・`lib` を構文木で走査。`supabase/functions`・`scripts` と、使う前の確認の順は見ない) | Vitest (`tests/supabase-service-role-client-scan.test.ts`) |
 | Security | 別ユーザーが他人の行を読めないことを確認 | Vitest + Supabase Local |
 | Security | 監査ログの UPDATE / DELETE が拒否されることを確認 | Vitest + Supabase Local |
 | Security | public の関数 (SECURITY DEFINER / SECURITY INVOKER) のうち anon が EXECUTE できるものが、理由つきの許可一覧のものだけか (Supabase の既定の権限と PUBLIC の EXECUTE が残らないか。INVOKER のトリガー関数は除外の条件で外す) | Vitest + Supabase Local (`tests/integration/security/anon-definer-execute.test.ts`・`anon-invoker-execute.test.ts`) |
