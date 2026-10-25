@@ -77,7 +77,7 @@ function rlsAllows(client: ClientKind, table: string, kind: Call['kind'], row: R
   if (table === 'user_profiles') return kind === 'select' && row.id === actor.id; // "Users can view own profile"
   if (table === 'inquiries') {
     if (kind === 'select') return isOperator() || row.user_id === actor.id; // "Admins can view all inquiries"
-    // 運営の UPDATE のポリシー "Admins can update inquiries" は消した (20261025100000。#1917 の続き)。書くのは service_role だけ
+    // 運営の UPDATE のポリシー "Admins can update inquiries" は消した (20261025120000。#1917 の続き)。書くのは service_role だけ
     if (kind === 'update') return false;
     return false;
   }

@@ -1,6 +1,6 @@
 /**
  * #1917 の続き: 運営 (と組織の管理者のポリシーの運営の枝) が自分のセッションの JWT で PostgREST から直接書けた 17 本のポリシーを閉じ、
- * 利用者の INSERT が運営の判定の列を指定できないようにした (migration 20261025100000_operator_session_writes_select_only.sql)。
+ * 利用者の INSERT が運営の判定の列を指定できないようにした (migration 20261025120000_operator_session_writes_select_only.sql)。
  * 運営の API は requireRole の後で service_role の client で書く (API の結合テストは tests/integration/operator/** が受け持つ)。
  *
  * 直接の操作の結果 (この表で固定する):

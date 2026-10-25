@@ -11,7 +11,7 @@
  * 期待する挙動 (修正後):
  *   - 管理者は「同じ組織で org_role が owner / admin」のユーザーだけ (roles の 'org_admin' は見ない)
  *   - 運営のグローバル admin / super_admin でも、org_role が owner / admin でなければ自組織のテーブルを直接書けない
- *     (部署・チャレンジ・招待の削除のポリシーの運営の枝は 20261025100000 で外した。#1917 の続き。組織の管理 API も 403)
+ *     (部署・チャレンジ・招待の削除のポリシーの運営の枝は 20261025120000 で外した。#1917 の続き。組織の管理 API も 403)
  *
  * API ルート (Bearer JWT) と PostgREST 直叩きの両方で検証する。
  * 前提: ローカル Supabase (scripts/supabase-local.sh) と Next dev サーバ (npm run dev) が起動済み。

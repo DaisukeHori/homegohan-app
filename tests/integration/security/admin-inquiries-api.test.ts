@@ -590,7 +590,7 @@ describe('同時の更新', () => {
     expect(res.status).toBe(200);
 
     // 古い updated_at を条件にした更新は 0 行 (route の 409 の元)。route と同じく service_role の client で書く
-    // (運営の UPDATE のポリシーは消した。20261025100000・#1917 の続き)
+    // (運営の UPDATE のポリシーは消した。20261025120000・#1917 の続き)
     const stale = await srAdmin
       .from('inquiries')
       .update({ status: 'resolved' })

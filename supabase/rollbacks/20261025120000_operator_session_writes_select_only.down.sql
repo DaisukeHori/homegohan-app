@@ -1,4 +1,4 @@
--- rollback: 20261025100000_operator_session_writes_select_only.sql
+-- rollback: 20261025120000_operator_session_writes_select_only.sql
 -- #1917 の続きで消した・SELECT だけにした運営の書き込みのポリシー 17 本と、条件を足した利用者の INSERT のポリシー 3 本と、
 -- 外した書き込みの権限を、元に戻す。
 -- 運営の書き込みのポリシーは、本冊の直前の形に作り直す (名前・種類 (FOR)・TO・式はそのまま):

@@ -10,12 +10,12 @@
  *     運営ロール (super_admin を含む) も PostgREST から直接は書けない (上限の検査を飛ばした適用を作らせない)。
  * experiment_assignments (A/B テストの割り当て):
  *   - SELECT は super_admin だけ。INSERT / UPDATE / DELETE のポリシーは無く、anon / authenticated は書き込みの権限も持たない
- *     (super_admin の DELETE のポリシーと書き込みの権限は 20261025100000 で外した。実験の削除の API は service_role で消す。#1917 の続き)。
+ *     (super_admin の DELETE のポリシーと書き込みの権限は 20261025120000 で外した。実験の削除の API は service_role で消す。#1917 の続き)。
  *   - 割り当ては GET /api/experiments/[key]/assignment が service_role で、ログインした本人の user_id に絞って作る
  *     (#1041)。本人に自分の variant を選ばせない・書き換えさせないため、本人向けのポリシーは足さない。
  * recipe_flags (レシピの通報):
  *   - INSERT: ログインした本人が reporter_id = 自分 の行だけ。anon と、他人を reporter にした行は拒否。運営の判定の列
- *     (status・reviewed_by・reviewed_at) は指定できない (20261025100000。#1917 の続き)。
+ *     (status・reviewed_by・reviewed_at) は指定できない (20261025120000。#1917 の続き)。
  *   - SELECT: 通報した本人の行と、admin / super_admin は全行。UPDATE / DELETE のポリシーは無く、anon / authenticated は UPDATE /
  *     DELETE の権限も持たない (運営の "Admins can update recipe flags" と書き込みの権限は 20261024140000 で外した。#1917 の続き)。
  *     通報の判定は運営の API が service_role で書く。

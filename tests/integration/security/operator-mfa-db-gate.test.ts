@@ -65,7 +65,7 @@ const POLICY_OPERATOR_ROLE_LITERAL_PATTERN = /'(super_admin|admin|finance|org_in
  * 20261024140000_announcements_moderation_flags_select_only.sql (#1917 の続き) が recipe_flags の "Admins can update recipe flags" と
  * personal_subscriptions の personal_subscriptions_insert_admin / personal_subscriptions_update_admin を消して 53 にした
  * (announcements と moderation_flags は FOR ALL を消して SELECT を作り直したので数は変わらない)。
- * 20261025100000_operator_session_writes_select_only.sql (#1917 の続き) が運営の書き込みのポリシー 7 本を消し、4 本から運営の枝を外して
+ * 20261025120000_operator_session_writes_select_only.sql (#1917 の続き) が運営の書き込みのポリシー 7 本を消し、4 本から運営の枝を外して
  * 42 にした (FOR ALL を消して SELECT を作り直した 6 表は数が変わらない)
  */
 const DB_GATED_POLICY_MIN_COUNT = 42;
@@ -407,7 +407,7 @@ describe('#1707 段 E: PostgREST / RPC を本人の JWT で直接呼ぶ', () => 
     expect(allowed.data).toEqual([{ key: FEATURE_FLAG_KEY }]);
   });
 
-  it('DB-7: 登録済み admin の aal1 の token では admin_user_notes を読めず、aal2 の token では読める (SELECT の運営の枝)。どちらの token でも直接の insert は code 42501 (書き込みは API が service_role で書く。20261025100000・#1917 の続き)', async () => {
+  it('DB-7: 登録済み admin の aal1 の token では admin_user_notes を読めず、aal2 の token では読める (SELECT の運営の枝)。どちらの token でも直接の insert は code 42501 (書き込みは API が service_role で書く。20261025120000・#1917 の続き)', async () => {
     const { data: seeded, error: seedError } = await srAdmin
       .from('admin_user_notes')
       .insert({ user_id: ordinary.id, admin_id: adminEnrolled.id, note: `#1707 seeded ${TS}` })

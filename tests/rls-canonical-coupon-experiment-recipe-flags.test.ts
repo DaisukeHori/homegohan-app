@@ -9,9 +9,9 @@
  *   - 期待するポリシーが、期待するコマンド (SELECT / INSERT / UPDATE / DELETE) で定義され、後から DROP されていない
  *   - coupon_redemptions と experiment_assignments には、書き込み (INSERT / UPDATE / DELETE) のポリシーを足していない。
  *     書き込みは service_role (apply_coupon RPC #1224・割り当て処理 #1041・実験の削除の API) だけが行う
- *     (experiment_assignments の運営の DELETE のポリシーは 20261025100000 で消した。#1917 の続き)。
+ *     (experiment_assignments の運営の DELETE のポリシーは 20261025120000 で消した。#1917 の続き)。
  *   - recipe_flags の書き込みのポリシーは利用者の通報 (INSERT) だけ。通報の判定 (UPDATE) は運営の API が service_role で書く。
- *     利用者の通報は、運営の判定の列 (status・reviewed_by・reviewed_at) を指定できない (20261025100000)。
+ *     利用者の通報は、運営の判定の列 (status・reviewed_by・reviewed_at) を指定できない (20261025120000)。
  * 実際に PostgREST から何ができるかは tests/integration/rls/coupon-experiment-recipe-flags-rls.test.ts が確かめる。
  */
 import { readdirSync, readFileSync } from 'node:fs';

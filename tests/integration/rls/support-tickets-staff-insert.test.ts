@@ -9,7 +9,7 @@
  * 期待する認可 (修正後):
  *   - 運営 (roles に support / admin / super_admin のいずれか) は、運営画面の API (POST /api/admin/support/tickets) で任意の user_id の
  *     チケットを起票できる。API は requireRole の後で service_role の client で書く。運営が自分のセッションで PostgREST から直接
- *     起票する経路は閉じた (運営の INSERT のポリシー tickets_insert_staff を消した。20261025100000・#1917 の続き。直接の起票は 42501)
+ *     起票する経路は閉じた (運営の INSERT のポリシー tickets_insert_staff を消した。20261025120000・#1917 の続き。直接の起票は 42501)
  *   - 一般ユーザーは自分の user_id でだけ起票できる (他人の user_id は 42501 のまま)
  *   - support / admin / super_admin 以外の運営系ロール (sales / finance / content_moderator / org_admin) は代理起票できない
  *   - 未認証 (anon) は起票できない

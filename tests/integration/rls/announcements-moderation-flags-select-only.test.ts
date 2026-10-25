@@ -518,7 +518,7 @@ describe('A-7: カタログ', () => {
     const report = rows.find((r) => r.policyname === USER_REPORT_INSERT_POLICY);
     if (report) {
       // 残す利用者の通報は、本人を reporter にした行だけ (運営の枝を持たない)。運営の判定の列は指定できない
-      // (20261025100000 が status = 'pending'・reviewed_by と reviewed_at は NULL の条件を足した。#1917 の続き)
+      // (20261025120000 が status = 'pending'・reviewed_by と reviewed_at は NULL の条件を足した。#1917 の続き)
       expect(report.roles).toBe('{authenticated}');
       expect(report.with_check).toBe("((reporter_id = auth.uid()) AND (status = 'pending'::text) AND (reviewed_by IS NULL) AND (reviewed_at IS NULL))");
     }

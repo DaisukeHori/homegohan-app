@@ -17,7 +17,7 @@
  *      255 文字まで入り、256 文字は拒否される
  *   C. 書き込み権限: 本人のセッションでは誰も書けない (匿名・一般ユーザー・admin・super_admin の書き込みは行を変えない)。
  *      書くのは service_role の client (運営の API と、価格の変更の関数)。super_admin の書き込みのポリシー
- *      subscription_plans_mutate_super_admin と書き込みの権限は 20261025100000 で外した (#1917 の続き)
+ *      subscription_plans_mutate_super_admin と書き込みの権限は 20261025120000 で外した (#1917 の続き)
  *   D. migration を 2 回流しても失敗せず (冪等)、すでに書いた値は消えない
  *
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
@@ -134,7 +134,7 @@ describe('#1102 A. subscription_plans の Stripe Price ID 列 (カタログ)', (
     expect(comments.stripe_yearly_price_id).toContain('stripe_price_id');
   });
 
-  it('RLS は有効のままで、ポリシーは 2 本 (運営 (admin・super_admin) の SELECT / 公開・非公開プランの SELECT。super_admin の全操作は 20261025100000 で消した) から増減していない', async () => {
+  it('RLS は有効のままで、ポリシーは 2 本 (運営 (admin・super_admin) の SELECT / 公開・非公開プランの SELECT。super_admin の全操作は 20261025120000 で消した) から増減していない', async () => {
     const policies = await pgQuery<{ policyname: string; cmd: string }>(`
       SELECT policyname, cmd
       FROM pg_policies

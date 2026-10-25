@@ -11,8 +11,8 @@
  *   - SELECT: チケット所有者は自分のチケットの is_internal=false のみ。staff (support/admin/super_admin) は全件
  *   - INSERT: sender_id = auth.uid() を全員に必須。所有者は自チケットへ is_internal=false のみ。
  *     staff の投稿は運営画面の API (POST /api/admin/support/tickets/{id}/messages) が service_role で書く。staff が自分のセッションで
- *     PostgREST から直接投稿する運営の枝は外した (20261025100000・#1917 の続き。直接の投稿は 42501)
- *   - UPDATE / DELETE: ポリシー無し・anon / authenticated の権限も無し (42501。20261025100000 で権限を外した)
+ *     PostgREST から直接投稿する運営の枝は外した (20261025120000・#1917 の続き。直接の投稿は 42501)
+ *   - UPDATE / DELETE: ポリシー無し・anon / authenticated の権限も無し (42501。20261025120000 で権限を外した)
  *
  * PostgREST を supabase-js で直接叩いて検証する (アプリ層のガードを経由しない経路が攻撃面のため)。
  *

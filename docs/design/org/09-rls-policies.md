@@ -422,7 +422,7 @@ CREATE POLICY "org_invites_delete" ON organization_invites
   );
 ```
 
-実装 (migration `20261022180000_org_tables_rpc_only_writes.sql`・#1917): 利用者 (anon / authenticated) の INSERT / UPDATE のポリシーは置かず、INSERT / UPDATE / TRUNCATE の権限も外してある。招待の作成は SECURITY DEFINER の RPC `create_org_invite` だけ (所属組織の owner / admin の判定・`p_role` が `owner` なら `INSUFFICIENT_PERMISSION`・宛先の在籍 `ALREADY_IN_ORG`・席数 `SEAT_LIMIT_EXCEEDED`・24 時間の上限 `RATE_LIMITED`)。承諾・拒否・取り消しも SECURITY DEFINER の RPC (`accept_org_invite` / `reject_org_invite` / `revoke_org_invite`)。DELETE はポリシー `"Org admins can delete invites"` (TO authenticated・同じ組織の利用者で、org_role が owner / admin のときだけ。DELETE /api/org/invites が使う。運営 (`roles` の admin / super_admin) の枝は `20261025100000_operator_session_writes_select_only.sql` (#1917 の続き) で外した) で、権限は authenticated だけ。SELECT は `org_invites_select_admin` と `"Org admins can view invites"`。
+実装 (migration `20261022180000_org_tables_rpc_only_writes.sql`・#1917): 利用者 (anon / authenticated) の INSERT / UPDATE のポリシーは置かず、INSERT / UPDATE / TRUNCATE の権限も外してある。招待の作成は SECURITY DEFINER の RPC `create_org_invite` だけ (所属組織の owner / admin の判定・`p_role` が `owner` なら `INSUFFICIENT_PERMISSION`・宛先の在籍 `ALREADY_IN_ORG`・席数 `SEAT_LIMIT_EXCEEDED`・24 時間の上限 `RATE_LIMITED`)。承諾・拒否・取り消しも SECURITY DEFINER の RPC (`accept_org_invite` / `reject_org_invite` / `revoke_org_invite`)。DELETE はポリシー `"Org admins can delete invites"` (TO authenticated・同じ組織の利用者で、org_role が owner / admin のときだけ。DELETE /api/org/invites が使う。運営 (`roles` の admin / super_admin) の枝は `20261025120000_operator_session_writes_select_only.sql` (#1917 の続き) で外した) で、権限は authenticated だけ。SELECT は `org_invites_select_admin` と `"Org admins can view invites"`。
 
 ## 14. organization_challenges / org_challenge_participants
 

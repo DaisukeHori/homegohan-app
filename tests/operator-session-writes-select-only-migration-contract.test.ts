@@ -1,7 +1,7 @@
 /**
  * #1917 の続き: 運営 (と組織の管理者のポリシーの運営の枝) が自分のセッションの JWT で PostgREST から直接書けた 17 本のポリシーを閉じ、
  * 運営の API を service_role の書き込みに移し、利用者の INSERT が運営の判定の列を指定できないようにした
- * (migration 20261025100000_operator_session_writes_select_only.sql) ことを、migration の文面とアプリのコードで固定する (DB は使わない)。
+ * (migration 20261025120000_operator_session_writes_select_only.sql) ことを、migration の文面とアプリのコードで固定する (DB は使わない)。
  * 実 DB での確認は tests/integration/rls/operator-session-writes-select-only.test.ts。
  *
  * 確かめること:
@@ -22,7 +22,7 @@ import { listFiles, rel, ROOT, stripComments } from './helpers/ai-reach';
 import { operatorWritePolicyRow, operatorWritePolicyRowsAfterMigrations } from './helpers/operator-write-policy-ledger';
 
 const MIGRATIONS_DIR = path.join(ROOT, 'supabase', 'migrations');
-const MIGRATION = '20261025100000_operator_session_writes_select_only';
+const MIGRATION = '20261025120000_operator_session_writes_select_only';
 const MIGRATION_FILE = `${MIGRATION}.sql`;
 const ROLLBACK_PATH = path.join(ROOT, 'supabase', 'rollbacks', `${MIGRATION}.down.sql`);
 /** 本番のベースライン (#1116 で統合した最初の migration) */

@@ -11,7 +11,7 @@
  * 台帳は過去の状態の写しを持たない。どの migration がこの型の何を消したかの記録は、その migration の頭のコメントと PR に置く
  * (最初の棚卸しは #1917 の続き = announcements_moderation_flags_select_only の migration の頭のコメントの「同じ型の全域の探索」)。
  * 運営の API が本人のセッションの client でこの型のポリシーに頼って書く形は残さない: 運営の API は requireRole の後で service_role の
- * client で書く (20261025100000_operator_session_writes_select_only.sql がその形の 17 本を消した・運営の枝を外した)。
+ * client で書く (20261025120000_operator_session_writes_select_only.sql がその形の 17 本を消した・運営の枝を外した)。
  * この型のポリシーを新しく足すときは、運営の API がそれに頼って書かないこと (分類のどちらかに当たること) を確かめる。
  */
 

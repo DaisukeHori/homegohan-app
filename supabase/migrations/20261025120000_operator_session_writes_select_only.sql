@@ -1,5 +1,5 @@
--- migration: 20261025100000_operator_session_writes_select_only.sql
--- 戻し方: supabase/rollbacks/20261025100000_operator_session_writes_select_only.down.sql
+-- migration: 20261025120000_operator_session_writes_select_only.sql
+-- 戻し方: supabase/rollbacks/20261025120000_operator_session_writes_select_only.down.sql
 -- #1917 の続き (20261024140000_announcements_moderation_flags_select_only.sql の残り): 運営 (と組織の管理者のポリシーの運営の枝) が
 -- 自分のセッションの JWT で PostgREST から 17 本のポリシーの表へ直接書け、運営の API と監査ログ (admin_audit_logs) を通らずに済んで
 -- しまう既存の欠陥を直す。あわせて、利用者の INSERT のポリシーが運営の判定の列を利用者に指定させる欠陥 (recipe_flags と、同じ型の
