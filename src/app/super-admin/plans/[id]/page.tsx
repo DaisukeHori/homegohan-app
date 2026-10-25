@@ -7,6 +7,10 @@
  * 保存・公開・非公開・廃止・廃止の取り消しが 409 CONFLICT_STALE_DATA (読んでから書くまでに別の運営が先にプランを変えた) で
  * 断られたら、画面が自分でプランを読み直し、読み直した旨を画面の上に出す (運営が手で読み込み直さなくてよいように。#1917)。
  * 表示名・説明・表示順の入力欄は、最後に読んだ・保存した値から変えている (書きかけ) ものだけ残し、ほかは読み直した値にする。
+ * 保存・状態の変更に成功したあとの読み直しも同じく書きかけの欄を残す (応答を待つあいだ・読み直しを待つあいだに打った、
+ * まだ送っていない入力を黙って消さない。保存のあとは、送った欄の比べる元を送った値にしてから読み直す)。
+ * ただし読み直したプランが編集できない状態 (廃止) なら、どの読み直しでも書きかけを残さず、全部を読み直した値にする
+ * (廃止のあとは入力欄が編集できず保存のボタンも出ないので、残すと送る道の無い値を、廃止済みのプランの値として見せ続ける)。
  * 一度表示したあとの読み直し (保存・状態の変更のあと・409 のあと) は画面を外さずに行い、失敗しても画面と入力欄を残して、
  * 文と「再試行」を出す (読み直しの失敗で画面ごとエラーに置き換えない。#1917)。読み直しが 404 / 403 で断られたときは、
  * 読み込み直しても変わらないので、その理由の文を出し、「再試行」は出さない。
@@ -177,6 +181,14 @@ type PlanReloadOutcome =
 const HTTP_FORBIDDEN = 403;
 const HTTP_NOT_FOUND = 404;
 
+/**
+ * 表示名・説明・表示順を編集できる状態か (下書き・公開中・非公開)。廃止したプランは編集できない
+ * (route も廃止中は状態の変更のほかを断る)。入力欄の disabled と保存のボタン、読み直しで書きかけを残すかの判定に使う
+ */
+function isEditableStatus(status: string): boolean {
+  return status === 'draft' || status === 'public' || status === 'private';
+}
+
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   draft: { label: '下書き', color: 'bg-slate-100 text-slate-600' },
   public: { label: '公開中', color: 'bg-green-100 text-green-700' },
@@ -229,7 +241,9 @@ export default function PlanDetailPage() {
   /**
    * プランを読む。初めの読み込みは画面を「読み込み中」にし、失敗したら画面をエラーにする。
    * 表示したあとの読み直しは画面を外さず、失敗しても画面と入力欄を残す (結果は戻り値で返し、文は呼び出し側が決める。#1917)。
-   * keepEdits のときは、入力欄のうち最後に読んだ・保存した値から変えている (書きかけの) 欄を残し、ほかは読んだ値にする
+   * keepEdits のときは、入力欄のうち最後に読んだ・保存した値から変えている (書きかけの) 欄を残し、ほかは読んだ値にする。
+   * ただし読んだプランが編集できない状態 (廃止) なら keepEdits でも全部を読んだ値にする (入力欄は編集できず保存のボタンも
+   * 出ないので、書きかけを残すと、送る道の無い保存していない値を、廃止済みのプランの値として DB と食い違えて見せ続ける)
    */
   const fetchPlan = useCallback(async (options: { keepEdits?: boolean } = {}): Promise<PlanReloadOutcome> => {
     const seq = ++fetchSeq.current;
@@ -261,7 +275,7 @@ export default function PlanDetailPage() {
       const fresh = editsOf(loaded);
       const previous = loadedEditsRef.current;
       const current = editsRef.current;
-      const keep = options.keepEdits === true && isReload;
+      const keep = options.keepEdits === true && isReload && isEditableStatus(loaded.status);
       const next: PlanEdits = {
         displayName: keep && current.displayName !== previous.displayName ? current.displayName : fresh.displayName,
         description: keep && current.description !== previous.description ? current.description : fresh.description,
@@ -293,15 +307,22 @@ export default function PlanDetailPage() {
     void fetchPlan();
   }, [fetchPlan]);
 
-  /** 保存・状態の変更に成功したあとの読み直し。失敗したら画面を残して文と「再試行」を出す (#1917) */
+  /**
+   * 保存・状態の変更に成功したあとの読み直し。失敗したら画面を残して文と「再試行」を出す (#1917)。
+   * 書きかけの入力欄は残す (keepEdits)。保存の応答を待つあいだ・この読み直しを待つあいだに打った、まだ送っていない入力を
+   * 読み直した値で黙って消さない。保存のあとは、呼ぶ前に送った欄の比べる元を送った値にしている (handleSave の editsAfterSave)
+   * ので、送った値のままの欄は読み直した値になり、送ったあとに変えた欄だけが残る。
+   * 読み直したプランが廃止 (自分の「廃止する」・待つあいだに別の運営が廃止) なら、書きかけも残さず読み直した値にする (fetchPlan)
+   */
   const reloadAfterSuccess = useCallback(async () => {
-    const outcome = await fetchPlan();
+    const outcome = await fetchPlan({ keepEdits: true });
     if (outcome.kind === 'failed') setReloadNotice({ kind: 'reload-failed' });
     if (outcome.kind === 'unavailable') setReloadNotice({ kind: 'unavailable', reason: outcome.reason, message: outcome.message });
   }, [fetchPlan]);
 
   /**
-   * 409 CONFLICT_STALE_DATA (別の運営が先にプランを変えた) のあとの読み直し。書きかけの入力欄は残し、
+   * 409 CONFLICT_STALE_DATA (別の運営が先にプランを変えた) のあとの読み直し。書きかけの入力欄は残し
+   * (読み直したプランが廃止なら残さない。そのときは「残しています」も添えない)、
    * 結果に合わせて文を出す (読み直せなかったのに「読み込み直した」と出さない。#1917)
    */
   const reloadAfterStale = useCallback(async () => {
@@ -476,7 +497,7 @@ export default function PlanDetailPage() {
   }
 
   const statusInfo = STATUS_LABELS[plan.status] ?? { label: plan.status, color: 'bg-slate-100 text-slate-600' };
-  const isEditable = plan.status === 'draft' || plan.status === 'public' || plan.status === 'private';
+  const isEditable = isEditableStatus(plan.status);
   // #1912: 組織のプランの行 (org_*) は組織の段階とは無関係で、組織の件数を数えない。廃止・価格変更の前に注記を出す
   const showOrgRowNote = !countsOrganizationsFor(plan);
 
