@@ -353,11 +353,11 @@ UI (page・hook) は `@homegohan/shared` だけを読み、`server.ts` を impor
 
 ## 7. 正典コード
 
-### 7.1 `supabase/migrations/<番号はマージ時に確定>_planned_meals_set_completed_rpc.sql` (段 A。追加だけ)
+### 7.1 `supabase/migrations/20261025130000_planned_meals_set_completed_rpc.sql` (段 A。追加だけ)
 
 ```sql
--- migration: <番号はマージ時に確定>_planned_meals_set_completed_rpc.sql
--- 戻し方: supabase/rollbacks/<同じ番号>_planned_meals_set_completed_rpc.down.sql
+-- migration: 20261025130000_planned_meals_set_completed_rpc.sql
+-- 戻し方: supabase/rollbacks/20261025130000_planned_meals_set_completed_rpc.down.sql
 -- #2025 (1/2): 献立 (planned_meals) の「食べた」の切り替えを、本人の行だけを書く SECURITY DEFINER の関数 1 本にする。
 --
 -- 背景:
@@ -379,7 +379,7 @@ UI (page・hook) は `@homegohan/shared` だけを読み、`server.ts` を impor
 --     - 返すのは書いた行の id / is_completed / completed_at / updated_at (updated_at はトリガー trg_planned_meals_updated_at が進める)
 --     - EXECUTE は authenticated と service_role だけ (PUBLIC・anon から外す。tests/integration/security/anon-definer-execute.test.ts の A1)
 --   利用者のセッションから is_completed / completed_at / veg_score を直接書く権限は、次の migration
---   (<番号はマージ時に確定>_planned_meals_score_columns_server_only.sql) が外す。アプリの書き手の付け替え (この関数を呼ぶ形) は
+--   (20261026010000_planned_meals_score_columns_server_only.sql) が外す。アプリの書き手の付け替え (この関数を呼ぶ形) は
 --   その前にデプロイする (docs/design/cross/23-planned-meals-score-integrity.md §15)。
 --
 -- 既存データへの影響: なし。
@@ -440,17 +440,17 @@ GRANT EXECUTE ON FUNCTION public.planned_meals_set_completed(uuid, boolean) TO a
 - `search_path = ''` でも `now()`・`auth.uid()` は解決する (`pg_catalog` は常に引かれ、`auth.uid()` は schema つき)。
 - `SET LOCAL lock_timeout` は前例 (`20261024110000`) と同じ。表のロックは取らないが、形をそろえる。
 
-### 7.2 `supabase/rollbacks/<同じ番号>_planned_meals_set_completed_rpc.down.sql`
+### 7.2 `supabase/rollbacks/20261025130000_planned_meals_set_completed_rpc.down.sql`
 
 ```sql
--- rollback: <同じ番号>_planned_meals_set_completed_rpc.sql
+-- rollback: 20261025130000_planned_meals_set_completed_rpc.sql
 -- #2025 (1/2) で足した、献立の「食べた」を切り替える SECURITY DEFINER の関数 planned_meals_set_completed(uuid, boolean) を消す。
 -- 表・ポリシー・権限・行には触れていないので、戻すのは関数だけ。
 -- 本番に戻す必要があるときは、この内容を新しい migration として PR 経由で適用する (本番への直接 SQL は禁止。CLAUDE.md)。
 --
 -- 影響:
 --   - 戻すと、アプリの完了の切り替え (hook・route・AI 相談) は RPC が無いので失敗する (PostgREST の PGRST202)。
---     先に 2/2 (<番号はマージ時に確定>_planned_meals_score_columns_server_only.sql) を戻し、アプリを直接 UPDATE する版に戻してから流す。
+--     先に 2/2 (20261026010000_planned_meals_score_columns_server_only.sql) を戻し、アプリを直接 UPDATE する版に戻してから流す。
 --
 -- 何度流しても同じ結果になる (冪等: DROP FUNCTION IF EXISTS)。
 
@@ -459,11 +459,11 @@ SET LOCAL lock_timeout = '10s';
 DROP FUNCTION IF EXISTS public.planned_meals_set_completed(uuid, boolean);
 ```
 
-### 7.3 `supabase/migrations/<番号はマージ時に確定>_planned_meals_score_columns_server_only.sql` (段 C。権限だけ)
+### 7.3 `supabase/migrations/20261026010000_planned_meals_score_columns_server_only.sql` (段 C。権限だけ)
 
 ```sql
--- migration: <番号はマージ時に確定>_planned_meals_score_columns_server_only.sql
--- 戻し方: supabase/rollbacks/<同じ番号>_planned_meals_score_columns_server_only.down.sql
+-- migration: 20261026010000_planned_meals_score_columns_server_only.sql
+-- 戻し方: supabase/rollbacks/20261026010000_planned_meals_score_columns_server_only.down.sql
 -- #2025 (2/2): 比較ランキングと組織のチャレンジが指標に使う planned_meals の 3 列 (veg_score / is_completed / completed_at) を、
 --   利用者 (anon / authenticated) の INSERT / UPDATE の権限から外す。書けるのはサーバだけにする。
 --
@@ -476,7 +476,7 @@ DROP FUNCTION IF EXISTS public.planned_meals_set_completed(uuid, boolean);
 --
 --   3 列を書く経路 (origin/main で git grep した。docs/design/cross/23-planned-meals-score-integrity.md §3.1):
 --     - 完了の切り替え (モバイルのホーム・Web のホーム・PATCH /api/meals/[id]・PATCH /api/meal-plans/meals/[id]・AI 相談の
---       complete_meal) は、1/2 (<番号はマージ時に確定>_planned_meals_set_completed_rpc.sql) の SECURITY DEFINER の関数
+--       complete_meal) は、1/2 (20261025130000_planned_meals_set_completed_rpc.sql) の SECURITY DEFINER の関数
 --       planned_meals_set_completed を呼ぶ形に付け替え済み (所有者の権限で書くので、この変更の影響を受けない)
 --     - 野菜スコア (veg_score) を書くのは写真の解析 (supabase/functions/analyze-meal-photo) の背景の処理だけで、service_role の
 --       client で本人の行を確かめてから書く形に付け替え済み。POST /api/ai/nutrition は veg_score を書かない
@@ -538,10 +538,10 @@ GRANT INSERT (
 ) ON TABLE public.planned_meals TO authenticated;
 ```
 
-### 7.4 `supabase/rollbacks/<同じ番号>_planned_meals_score_columns_server_only.down.sql`
+### 7.4 `supabase/rollbacks/20261026010000_planned_meals_score_columns_server_only.down.sql`
 
 ```sql
--- rollback: <同じ番号>_planned_meals_score_columns_server_only.sql
+-- rollback: 20261026010000_planned_meals_score_columns_server_only.sql
 -- #2025 (2/2) で外した planned_meals の利用者の INSERT / UPDATE の権限を元に戻す。
 -- 列ごとの権限 (authenticated の 56 列) を外し、表ごとの INSERT / UPDATE を anon と authenticated に付け直す
 -- (本番のベースライン 20251126124224_create_meal_planner_tables.sql:13798-13799 の形。SELECT・DELETE・REFERENCES・TRIGGER・
@@ -602,14 +602,14 @@ GRANT INSERT, UPDATE ON TABLE public.planned_meals TO anon, authenticated;
 /**
  * 利用者 (authenticated) のセッションからは INSERT / UPDATE できない列。
  * 比較ランキング (calculate-segment-stats) と組織のチャレンジ (update_org_challenge_progress) が指標に使う 2 列と、
- * 完了の時刻 (完了の RPC だけが書く)。migration <番号はマージ時に確定>_planned_meals_score_columns_server_only.sql が
+ * 完了の時刻 (完了の RPC だけが書く)。migration 20261026010000_planned_meals_score_columns_server_only.sql が
  * 列の権限から外す。
  */
 export const PLANNED_MEALS_SERVER_ONLY_COLUMNS = ['is_completed', 'completed_at', 'veg_score'] as const;
 
 export type PlannedMealsServerOnlyColumn = (typeof PLANNED_MEALS_SERVER_ONLY_COLUMNS)[number];
 
-/** 完了の切り替えの RPC (SECURITY DEFINER。本人の行だけ。migration <番号はマージ時に確定>_planned_meals_set_completed_rpc.sql) */
+/** 完了の切り替えの RPC (SECURITY DEFINER。本人の行だけ。migration 20261025130000_planned_meals_set_completed_rpc.sql) */
 export const PLANNED_MEALS_SET_COMPLETED_RPC = 'planned_meals_set_completed';
 
 /** RPC の引数 (DB の関数の引数名と同じ) */
@@ -1548,8 +1548,8 @@ describe('#2025 C-10: 組織のチャレンジの集計は変えない', () => {
 // tsc:skip (本書が新設する @homegohan/shared の planned-meals-integrity と、src/lib/planned-meals-snapshot.ts に足す restoreOwnPlannedMealsSnapshot (§7.12) を import する。ほかの import は main に実在する)
 /**
  * #2025: planned_meals の 3 列 (is_completed / completed_at / veg_score) を利用者が書けなくし、完了は RPC
- * planned_meals_set_completed だけにする (migration <番号はマージ時に確定>_planned_meals_set_completed_rpc.sql と
- * <番号はマージ時に確定>_planned_meals_score_columns_server_only.sql)。設計: docs/design/cross/23-planned-meals-score-integrity.md §7.20
+ * planned_meals_set_completed だけにする (migration 20261025130000_planned_meals_set_completed_rpc.sql と
+ * 20261026010000_planned_meals_score_columns_server_only.sql)。設計: docs/design/cross/23-planned-meals-score-integrity.md §7.20
  *
  * 修正前は RLS "Users can manage own planned meals" (FOR ALL) と表の INSERT / UPDATE の権限で、利用者が PostgREST から
  * 自分の行の veg_score / is_completed に任意の値を入れ、比較ランキング (veg_score_avg / breakfast_rate) と組織のチャレンジの
@@ -2636,8 +2636,8 @@ I-n は §7.20、C-n は §7.19、走査 n は §7.21 の項目。
 
 | 種類 | 名前 | 段 |
 |---|---|---|
-| migration | `supabase/migrations/<番号はマージ時に確定>_planned_meals_set_completed_rpc.sql` + `supabase/rollbacks/<同じ番号>_planned_meals_set_completed_rpc.down.sql` | A |
-| migration | `supabase/migrations/<番号はマージ時に確定>_planned_meals_score_columns_server_only.sql` + `supabase/rollbacks/<同じ番号>_planned_meals_score_columns_server_only.down.sql` | C |
+| migration | `supabase/migrations/20261025130000_planned_meals_set_completed_rpc.sql` + `supabase/rollbacks/20261025130000_planned_meals_set_completed_rpc.down.sql` | A |
+| migration | `supabase/migrations/20261026010000_planned_meals_score_columns_server_only.sql` + `supabase/rollbacks/20261026010000_planned_meals_score_columns_server_only.down.sql` | C |
 | DB の関数 | `public.planned_meals_set_completed(uuid, boolean)` | A |
 | ファイル | `packages/shared/src/planned-meals-integrity.ts` (+ `index.ts` の 1 行) | A |
 | ファイル | `supabase/functions/_shared/veg-score.ts` | A |
@@ -2733,7 +2733,7 @@ route・テーブル・列・Storage のパス・環境変数の新設は無い�
 | 文書 | 直す点 | 誰が・いつ |
 |---|---|---|
 | `docs/design/cross/CLAUDE.md` のファイル一覧 | 本書 `23-planned-meals-score-integrity.md` の行 (「`planned_meals` の `veg_score` / `is_completed` / `completed_at` をサーバの計算値だけにする (列の権限・完了の RPC・写真の解析の service_role)」・要件参照 #2025) を `22-dish-favorites.md` の行と `24-freeze-notify-mail.md` の行の間に足す (origin/main `4e342f3f3` の一覧は 22 の次が 24 (#2026 の追随で入った))。欠番の注 (「10・11 は欠番」) はそのまま | オーケストレーターの docs PR (設計のマージと同日) |
-| `docs/design/cross/02-rls-patterns.md` §8 | `planned_meals` の行を足す (ドメインは「献立 (meal planner)」。適用パターン = self (user_daily_meals 経由の USING) + **列の権限** (3 列は authenticated の INSERT / UPDATE から外す。`<番号はマージ時に確定>_planned_meals_score_columns_server_only.sql`)。完了は RPC `planned_meals_set_completed`)。§10 の表に「列の権限が information_schema のとおりか (`tests/integration/rls/planned-meals-score-integrity.test.ts` I-9)」を 1 行 | オーケストレーターの docs PR (段 C のマージと同日) |
+| `docs/design/cross/02-rls-patterns.md` §8 | `planned_meals` の行を足す (ドメインは「献立 (meal planner)」。適用パターン = self (user_daily_meals 経由の USING) + **列の権限** (3 列は authenticated の INSERT / UPDATE から外す。`20261026010000_planned_meals_score_columns_server_only.sql`)。完了は RPC `planned_meals_set_completed`)。§10 の表に「列の権限が information_schema のとおりか (`tests/integration/rls/planned-meals-score-integrity.test.ts` I-9)」を 1 行 | オーケストレーターの docs PR (段 C のマージと同日) |
 | `src/lib/org-challenges.ts:55-56` の注釈 | 「書き込み元によって尺度が違う (写真の解析は 0〜100 点、AI の推定は 1〜5 点)」を「野菜スコアは写真の解析が書く 0〜100 点 (`VEG_SCORE_MIN` / `VEG_SCORE_MAX`。cross/23 §6.3)」に。`targetMax: VEG_SCORE_MAX` | 段 B の実装 PR (コード) |
 | `docs/design/cross/02-rls-patterns.md` §3.3 (`:45-48`)・§10 (`:582`) と `docs/design/CLAUDE.md` §3 (`:33`) | 文 (「service_role を使う場所: Supabase Edge Function のみ」「Edge Function での service_role 使用時は必ず `admin_audit_logs` に記録」「service_role バイパスが Edge Function 以外で使われていないか (CI での grep チェック)」「service_role 経由でのバイパスは Edge Function に限定」) が origin/main の実際と食い違う: Next.js の route は `getSupabaseAdmin()` だけから service_role の client を作り、認可・本人の確認の後にだけ使う (`src/app/api` の 90 ファイル。見張りは `tests/supabase-service-role-client-scan.test.ts` (#1162) で、Edge Function 以外での使用を禁じる検査ではない)。Edge Function の service_role の書き込みは `admin_audit_logs` を書かず、記録する操作は operator/07 §4 の一覧が決める。本書の §7.12・§7.15 もこの文から外れる。直す案: §3.3 を「service_role の client は、Edge Function と、Next.js では `lib/supabase/server.ts` の `getSupabaseAdmin()` からだけ作る (自前の `createClient(SERVICE_ROLE_KEY)` は禁止。`tests/supabase-service-role-client-scan.test.ts`)。route では認可 (`requireRole` 等) か本人の確認を先に通した後にだけ使う。`admin_audit_logs` に記録する操作は operator/07 §4 の一覧」に、§10 の行の確認の手段を同じテストに、CLAUDE.md §3 を同じ旨に。規則の文の書き換えなので、直すかと文面はオーケストレーターが決める (直さないなら、本書の 2 か所は文から外れたままになる。§21 Q-8 と合わせて決める) | オーケストレーターの docs PR (設計のマージと同日。段 B の実装の前) |
 | `supabase/migrations/20261014100100_org_challenge_progress.sql:47-49` の注釈 | 「尺度が違う」の記述は古くなるが、適用済みの migration は書き換えない (`tests/database-types-migrations-contract.test.ts` の注と同じ規則)。cross/02 §8 の行で現在形を示す | 直さない (記録) |
