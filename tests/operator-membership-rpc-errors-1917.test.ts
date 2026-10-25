@@ -12,6 +12,8 @@
  *      RPC にコードが増えたら、ここが赤くなる
  *   3. 強制解散の組織の route: ORG_ALREADY_DISSOLVED は 409・ORG_NOT_FOUND は 404・権限の判定は 403。本文は日本語の固定の文で、
  *      RPC の文面を入れず、監査と通知を出さない
+ *   3b. 強制解散の家族の route: FAMILY_ALREADY_DISSOLVED は 409・FAMILY_NOT_FOUND は 404 (無い家族・解散済みの家族を 200 にせず、
+ *      admin_audit_logs と通知を出さない。20261026100000_operator_force_dissolve_family_missing.sql)
  *   4. 分からない失敗は従来どおり 500
  *   5. operatorMembershipRpcErrorNested は、RPC の表に載ったコードだけを語として拾う
  */
@@ -326,6 +328,47 @@ describe('POST /api/operator/membership/org/{id}/dissolve: RPC の既知のエ�
   });
 });
 
+describe('POST /api/operator/membership/family/{id}/dissolve: 無い家族・解散済みの家族 (20261026100000_operator_force_dissolve_family_missing.sql)', () => {
+  const route = ROUTES.find((r) => r.rpc === 'operator_force_dissolve_family') as RouteCase;
+
+  it('RPC の最新の定義は FAMILY_NOT_FOUND と FAMILY_ALREADY_DISSOLVED を RAISE する (無い家族・解散済みの家族を成功にしない)', () => {
+    const raisedByFamily = RAISED.get('operator_force_dissolve_family') ?? new Set<string>();
+    expect(raisedByFamily.has(MembershipErrorCode.FAMILY_NOT_FOUND)).toBe(true);
+    expect(raisedByFamily.has(MembershipErrorCode.FAMILY_ALREADY_DISSOLVED)).toBe(true);
+  });
+
+  it.each([
+    [MembershipErrorCode.FAMILY_ALREADY_DISSOLVED, HTTP_CONFLICT],
+    [MembershipErrorCode.FAMILY_NOT_FOUND, HTTP_NOT_FOUND],
+  ])('%s は %i・code はそのまま・membership-errors の日本語の固定の文。admin_audit_logs と通知メールを出さない', async (code, status) => {
+    mocks.state.rpcResult = { data: null, error: raised(code) };
+
+    const res = await call(route);
+
+    expect(res.status).toBe(status);
+    expect(res.body.error).toEqual({ code, message: MEMBERSHIP_ERROR_MESSAGES[code] });
+    expect(mocks.recordAdminAudit).not.toHaveBeenCalled();
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('解散済みの家族の 409 の文は「すでに解散しています」、無い家族の 404 の文は「見つかりません」(運営の画面にそのまま出る)', async () => {
+    mocks.state.rpcResult = { data: null, error: raised(MembershipErrorCode.FAMILY_ALREADY_DISSOLVED) };
+    expect((await call(route)).body.error?.message).toBe('この家族グループはすでに解散しています。');
+
+    mocks.state.rpcResult = { data: null, error: raised(MembershipErrorCode.FAMILY_NOT_FOUND) };
+    expect((await call(route)).body.error?.message).toBe('家族が見つかりません。');
+  });
+
+  it('前後に文が付いた文面 (ERROR: FAMILY_ALREADY_DISSOLVED) も 409', async () => {
+    mocks.state.rpcResult = { data: null, error: { message: `ERROR: ${MembershipErrorCode.FAMILY_ALREADY_DISSOLVED}` } };
+
+    const res = await call(route);
+
+    expect(res.status).toBe(HTTP_CONFLICT);
+    expect(res.body.error?.code).toBe(MembershipErrorCode.FAMILY_ALREADY_DISSOLVED);
+  });
+});
+
 describe.each([
   ['POST', 'operator_force_dissolve_family', 'NOT_OPERATOR'],
   ['GET', 'list_orgs_with_inactive_owner', 'INSUFFICIENT_PERMISSION'],
@@ -370,6 +413,9 @@ describe('operatorMembershipRpcErrorNested', () => {
     expect(operatorMembershipRpcErrorNested('operator_force_dissolve_family', raised('ORG_ALREADY_DISSOLVED'))).toBeNull();
     expect(operatorMembershipRpcErrorNested('operator_force_dissolve_family', raised('OPERATOR_PERMISSION_REQUIRED'))).toBeNull();
     expect(operatorMembershipRpcErrorNested('operator_force_dissolve_org', raised('NOT_OPERATOR'))).toBeNull();
+    // 組織の強制解散の RPC は家族のコードを RAISE しない (家族の強制解散の 404 / 409 を組織の route で拾わない)
+    expect(operatorMembershipRpcErrorNested('operator_force_dissolve_org', raised('FAMILY_NOT_FOUND'))).toBeNull();
+    expect(operatorMembershipRpcErrorNested('operator_force_dissolve_org', raised('FAMILY_ALREADY_DISSOLVED'))).toBeNull();
     expect(operatorMembershipRpcErrorNested('list_orgs_with_inactive_owner', raised('ORG_NOT_FOUND'))).toBeNull();
     // 二段階認証の判定は route が operatorMfaRequiredNested で先に拾う
     expect(operatorMembershipRpcErrorNested('operator_force_dissolve_org', raised(DB_OPERATOR_MFA_REQUIRED_CODE))).toBeNull();

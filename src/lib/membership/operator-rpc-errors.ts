@@ -37,9 +37,11 @@ export interface OperatorRpcRaisedCodes {
 /**
  * 運営の membership の route のうち、RPC のエラーをこの関数で写す RPC と、その RPC が RAISE するコード。
  * 出典は migration の最新の定義:
- *   - operator_force_dissolve_org: supabase/migrations/20261022140000_org_transfer_toctou.sql / operator_force_dissolve_family: supabase/migrations/20261019120000_self_dissolve.sql
+ *   - operator_force_dissolve_org: supabase/migrations/20261022140000_org_transfer_toctou.sql
+ *   - operator_force_dissolve_family: supabase/migrations/20261026100000_operator_force_dissolve_family_missing.sql
+ *     (家族の行をロックした下で、無ければ FAMILY_NOT_FOUND・解散済みなら FAMILY_ALREADY_DISSOLVED。後始末と監査の前に止める。
+ *     それより前は家族が無い・解散済みでも RAISE せず、route が監査を書いて 200 を返していた)
  *   - list_orgs_with_inactive_owner / list_families_with_inactive_representative: supabase/migrations/20261017130000_operator_mfa_db_gate.sql
- * operator_force_dissolve_family は家族が無い・解散済みでも RAISE しない (後始末の UPDATE が 0 行・やり直しになる) ので、業務のコードは無い。
  * 強制の譲渡の 2 本 (operator_force_owner_transfer / operator_force_representative_transfer) は route が個別に写している
  */
 export const OPERATOR_MEMBERSHIP_RPC_RAISED_CODES = {
@@ -47,7 +49,10 @@ export const OPERATOR_MEMBERSHIP_RPC_RAISED_CODES = {
     permission: 'OPERATOR_PERMISSION_REQUIRED',
     membership: [MembershipErrorCode.ORG_NOT_FOUND, MembershipErrorCode.ORG_ALREADY_DISSOLVED],
   },
-  operator_force_dissolve_family: { permission: 'NOT_OPERATOR', membership: [] },
+  operator_force_dissolve_family: {
+    permission: 'NOT_OPERATOR',
+    membership: [MembershipErrorCode.FAMILY_NOT_FOUND, MembershipErrorCode.FAMILY_ALREADY_DISSOLVED],
+  },
   list_orgs_with_inactive_owner: { permission: 'INSUFFICIENT_PERMISSION', membership: [] },
   list_families_with_inactive_representative: { permission: 'INSUFFICIENT_PERMISSION', membership: [] },
 } as const satisfies Record<string, OperatorRpcRaisedCodes>;

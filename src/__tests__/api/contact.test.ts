@@ -4,9 +4,13 @@ import type { EmailEnvelope } from '@/lib/emails/envelope';
 import { EmailSendError } from '@/lib/emails/send-result';
 
 const mockGetUser = vi.fn();
-const mockSingle = vi.fn();
-const mockSelectAfterInsert = vi.fn(() => ({ single: mockSingle }));
-const mockInsert = vi.fn(() => ({ select: mockSelectAfterInsert }));
+/** insert の結果 ({ error })。route は保存した行を読み返さない (RETURNING を付けない) */
+const mockInsertResult = vi.fn();
+/** insert().select() が呼ばれたかの見張り。未ログイン (anon) は inquiries を読めないので、呼ぶと実 DB では RLS の違反になる */
+const mockSelectAfterInsert = vi.fn();
+const mockInsert = vi.fn((_row: Record<string, unknown>) =>
+  Object.assign(Promise.resolve().then(() => mockInsertResult()), { select: mockSelectAfterInsert }),
+);
 
 const mockOrder = vi.fn();
 const mockEq = vi.fn(() => ({ order: mockOrder }));
@@ -28,6 +32,8 @@ vi.mock('@/lib/supabase/server', () => ({
 
 const { POST, GET } = await import('@/app/api/contact/route');
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 const validBody = {
   inquiryType: 'general',
   email: 'user@example.com',
@@ -46,10 +52,7 @@ function makeRequest(body: unknown, ip = '203.0.113.1') {
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
-  mockSingle.mockResolvedValue({
-    data: { id: 'inquiry-1', inquiry_type: 'general', email: 'user@example.com', subject: 's', message: 'm' },
-    error: null,
-  });
+  mockInsertResult.mockReturnValue({ data: null, error: null });
   mockOrder.mockResolvedValue({ data: [], error: null });
   mockSendEmail.mockResolvedValue({ ok: true, id: 'outbox-id-1', attempts: 0, skipped: false, error: null });
 });
@@ -64,6 +67,49 @@ describe('POST /api/contact (#1044 F6-19)', () => {
     const json = await res.json();
     expect(res.status).toBe(200);
     expect(json.success).toBe(true);
+  });
+
+  it('未ログインの送信は、route で決めた UUID の id と user_id = NULL で INSERT し、保存した行を読み返さない (insert().select() を呼ばない)', async () => {
+    const res = await POST(makeRequest(validBody, '203.0.113.2'));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+    const row = mockInsert.mock.calls[0][0];
+    expect(row).toEqual({
+      id: expect.stringMatching(UUID_PATTERN),
+      user_id: null,
+      inquiry_type: 'general',
+      email: 'user@example.com',
+      subject: 'テスト件名',
+      message: 'テストメッセージ',
+      status: 'pending',
+    });
+    expect(mockSelectAfterInsert).not.toHaveBeenCalled();
+    expect(json.inquiryId).toBe(row.id);
+  });
+
+  it('ログイン中の送信は、本人の user_id で INSERT する (読み返さないのは同じ)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+
+    const res = await POST(makeRequest(validBody, '203.0.113.3'));
+
+    expect(res.status).toBe(200);
+    expect(mockInsert.mock.calls[0][0]).toMatchObject({ user_id: 'user-1', status: 'pending' });
+    expect(mockSelectAfterInsert).not.toHaveBeenCalled();
+  });
+
+  it('INSERT が失敗したら 500 (お問い合わせの保存に失敗しました)。通知は送らない', async () => {
+    mockInsertResult.mockReturnValue({ data: null, error: { code: '42501', message: 'new row violates row-level security policy' } });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await POST(makeRequest(validBody, '203.0.113.4'));
+    const json = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(json.error).toBe('お問い合わせの保存に失敗しました');
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   it('不正な inquiryType は 400 を返す', async () => {
@@ -179,7 +225,9 @@ describe('POST /api/contact: 管理者への通知メールの送信元 (#1194)'
 
     const envelope = sentEnvelope();
     expect(envelope.template).toBe('contact_admin_notification');
-    expect(envelope.subject).toBe('[お問い合わせ] s');
+    expect(envelope.subject).toBe('[お問い合わせ] テスト件名');
+    // 本文の ID は、保存した行の id (応答の inquiryId と同じ)
+    expect(envelope.text).toContain(`ID: ${mockInsert.mock.calls[0][0].id}`);
     expect(envelope.text).not.toContain('user@example.com');
     expect(envelope.text).toContain('u***@example.com');
     expect(envelope.text.split('\n')).toContain('https://app.example.test/support/inquiries');
