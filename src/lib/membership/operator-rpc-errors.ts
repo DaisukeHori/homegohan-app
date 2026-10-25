@@ -37,7 +37,7 @@ export interface OperatorRpcRaisedCodes {
 /**
  * 運営の membership の route のうち、RPC のエラーをこの関数で写す RPC と、その RPC が RAISE するコード。
  * 出典は migration の最新の定義:
- *   - operator_force_dissolve_org / operator_force_dissolve_family: supabase/migrations/20261019120000_self_dissolve.sql
+ *   - operator_force_dissolve_org: supabase/migrations/20261022140000_org_transfer_toctou.sql / operator_force_dissolve_family: supabase/migrations/20261019120000_self_dissolve.sql
  *   - list_orgs_with_inactive_owner / list_families_with_inactive_representative: supabase/migrations/20261017130000_operator_mfa_db_gate.sql
  * operator_force_dissolve_family は家族が無い・解散済みでも RAISE しない (後始末の UPDATE が 0 行・やり直しになる) ので、業務のコードは無い。
  * 強制の譲渡の 2 本 (operator_force_owner_transfer / operator_force_representative_transfer) は route が個別に写している

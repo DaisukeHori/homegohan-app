@@ -746,7 +746,7 @@ IDごとに簡潔にまとめます。
 | protein_g    | numeric     |                | たんぱく質        |
 | fat_g        | numeric     |                | 脂質           |
 | carbs_g      | numeric     |                | 炭水化物         |
-| veg_score    | integer     |                | 野菜スコア（0〜5程度） |
+| veg_score    | integer     |                | 野菜スコア（この表に書くコードは無い。献立の planned_meals.veg_score は写真の解析が書く 0〜100 の整数。cross/23 §6.3） |
 | quality_tags | text[]      |                | 「高タンパク」などのタグ |
 | raw_json     | jsonb       |                | AIレスポンス生データ  |
 | created_at   | timestamptz | default now()  |              |
@@ -844,7 +844,7 @@ export interface MealNutritionEstimate {
   proteinG: number | null;
   fatG: number | null;
   carbsG: number | null;
-  vegScore: number | null; // 0-5
+  vegScore: number | null; // この表に書くコードは無い (planned_meals.veg_score は 0-100。cross/23 §6.3)
   qualityTags: string[];
   rawJson: any;
   createdAt: ISODateTimeString;
@@ -1329,7 +1329,7 @@ export interface UserBadge {
     "fat_g": 18,
     "carbs_g": 85
   },
-  "veg_score": 4,
+  "veg_score": 50,
   "quality_tags": ["balanced", "good_protein", "good_veggies"]
 }
 ```
