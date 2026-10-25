@@ -5,12 +5,18 @@ import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { normalizeProfileName } from "@/lib/profile-name";
 import { UsersListResponseSchema, type UserListItem } from "@/lib/admin/users-schemas";
-import { forbiddenMessageOfResponse } from "@/lib/admin/api-error-message";
+import {
+  forbiddenMessageOfResponse,
+  operationFailureMessage,
+  operationNetworkFailureMessage,
+} from "@/lib/admin/api-error-message";
 
 // 一覧に出す件数 (GET /api/admin/users の per_page。API の既定と同じ 50 件)
 const USERS_PER_PAGE = 50;
 
 const USERS_LOAD_ERROR = "ユーザー一覧を取得できませんでした。しばらくしてから、もう一度お試しください。";
+/** メモの追加が失敗したときの文の頭 (後ろに理由を添える) */
+const NOTE_ADD_FAILURE_SUMMARY = "メモを追加できませんでした";
 /** 403 (Forbidden) の HTTP ステータス */
 const HTTP_FORBIDDEN = 403;
 
@@ -58,6 +64,8 @@ function SupportUsersContent() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [newNote, setNewNote] = useState("");
   const [addingNote, setAddingNote] = useState(false);
+  // メモの追加が失敗したときの文 (失敗の応答を黙って捨てない)
+  const [noteError, setNoteError] = useState<string | null>(null);
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -114,6 +122,8 @@ function SupportUsersContent() {
   }, [fetchUsers]);
 
   useEffect(() => {
+    // 前の利用者のメモの追加の失敗の文は、別の利用者の詳細に残さない
+    setNoteError(null);
     if (selectedUserId) {
       fetchUserDetail(selectedUserId);
     } else {
@@ -125,6 +135,7 @@ function SupportUsersContent() {
     if (!newNote.trim() || !selectedUserId) return;
     
     setAddingNote(true);
+    setNoteError(null);
     try {
       const res = await fetch(`/api/support/users/${selectedUserId}/notes`, {
         method: "POST",
@@ -132,12 +143,17 @@ function SupportUsersContent() {
         body: JSON.stringify({ note: newNote }),
       });
 
-      if (res.ok) {
-        setNewNote("");
-        fetchUserDetail(selectedUserId);
+      if (!res.ok) {
+        // 追加できていないことを画面に出し、入力したメモは残す (もう一度追加できるように)
+        const body: unknown = await res.json().catch(() => null);
+        setNoteError(operationFailureMessage(NOTE_ADD_FAILURE_SUMMARY, res.status, body));
+        return;
       }
+      setNewNote("");
+      fetchUserDetail(selectedUserId);
     } catch (error) {
       console.error("Failed to add note:", error);
+      setNoteError(operationNetworkFailureMessage(NOTE_ADD_FAILURE_SUMMARY));
     } finally {
       setAddingNote(false);
     }
@@ -351,6 +367,15 @@ function SupportUsersContent() {
                         追加
                       </button>
                     </div>
+                    {noteError && (
+                      <div
+                        role="alert"
+                        data-testid="note-add-error"
+                        className="mt-2 bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-lg text-sm"
+                      >
+                        {noteError}
+                      </div>
+                    )}
                   </div>
                 </>
               ) : null}

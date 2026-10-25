@@ -18,6 +18,8 @@ import {
   FORBIDDEN_SCREEN_MESSAGE,
   forbiddenMessageForScreen,
   forbiddenMessageOfResponse,
+  operationFailureMessage,
+  operationNetworkFailureMessage,
 } from '@/lib/admin/api-error-message';
 import {
   API_ACCOUNT_FROZEN_MESSAGE,
@@ -107,5 +109,34 @@ describe('理由の文の集合がサーバーの 403 の文と一致する (#19
     expect([...FORBIDDEN_REASON_MESSAGES].sort()).toEqual(
       [API_ACCOUNT_FROZEN_MESSAGE, API_MFA_ENROLLMENT_REQUIRED_MESSAGE, API_MFA_REQUIRED_MESSAGE].sort(),
     );
+  });
+});
+
+describe('operationFailureMessage (運営の画面の操作の失敗の文)', () => {
+  const SUMMARY = '一時停止できませんでした';
+
+  it('403 の理由の文 (二段階認証の確認が要る) はそのまま理由に添える', () => {
+    expect(operationFailureMessage(SUMMARY, 403, nested(API_MFA_REQUIRED_MESSAGE))).toBe(`${SUMMARY}（${API_MFA_REQUIRED_MESSAGE}）`);
+  });
+
+  it('403 の理由でない文 (英語の文など) は出さず「権限がありません」にする', () => {
+    expect(operationFailureMessage(SUMMARY, 403, nested('Forbidden'))).toBe(`${SUMMARY}（${FORBIDDEN_SCREEN_MESSAGE}）`);
+    expect(operationFailureMessage(SUMMARY, 403, null)).toBe(`${SUMMARY}（${FORBIDDEN_SCREEN_MESSAGE}）`);
+  });
+
+  it('403 でなければ本文の文を理由に添える (入れ子の形と flat の形のどちらでも)', () => {
+    expect(operationFailureMessage(SUMMARY, 404, nested('クーポンが見つかりません'))).toBe(`${SUMMARY}（クーポンが見つかりません）`);
+    expect(operationFailureMessage(SUMMARY, 500, { error: 'サーバーエラーが発生しました' })).toBe(
+      `${SUMMARY}（サーバーエラーが発生しました）`,
+    );
+  });
+
+  it('本文が読めなければ HTTP ステータスを添える', () => {
+    expect(operationFailureMessage(SUMMARY, 502, null)).toBe(`${SUMMARY}（HTTP 502）`);
+    expect(operationFailureMessage(SUMMARY, 500, { error: { code: 'X' } })).toBe(`${SUMMARY}（HTTP 500）`);
+  });
+
+  it('通信エラーは「通信エラー」を添える', () => {
+    expect(operationNetworkFailureMessage(SUMMARY)).toBe(`${SUMMARY}（通信エラー）`);
   });
 });

@@ -1074,6 +1074,105 @@ describe('更新が 409 CONFLICT_STALE_DATA で断られたとき (#1917)', () =
     expect(savedNotes()).toBeNull();
   });
 
+  // 409 のあとの読み直しが 401 / 403 / 404 (ログインが切れた・権限が外れた・二段階認証の確認が要る・問い合わせが消えた) のときは、
+  // 「再試行」で読み直しても読めないので、更新の欄で「再試行」での読み込み直しを促さない (営業リードの画面と同じ分け方)
+  const UNAVAILABLE_RELOADS: Array<[number, string, string]> = [
+    [404, 'NOT_FOUND', '問い合わせが見つかりません'],
+    [403, 'FORBIDDEN', '二段階認証の確認が必要です'],
+    [401, 'UNAUTHORIZED', '認証が必要です'],
+  ];
+
+  /** 開いたときは読めるが、409 のあとの読み直し (2 回目の詳細) は status で断られる API */
+  function staleThenUnavailableApi(status: number, code: string, message: string) {
+    const state = { changed: false, details: 0 };
+    mockApi({
+      list: () => jsonResponse(200, listBody([summary(1, state.changed ? { status: 'resolved' } : {})])),
+      detail: () => {
+        state.details += 1;
+        if (state.details >= 2) return jsonResponse(status, errorBody(code, message));
+        return jsonResponse(200, { inquiry: detail(1) });
+      },
+      put: () => {
+        state.changed = true;
+        return staleResponse();
+      },
+    });
+  }
+
+  const staleAlertText = () => alerts().find((a) => a.includes('別の運営が先にこの問い合わせを更新していました'));
+
+  it.each(UNAVAILABLE_RELOADS)(
+    '詳細の読み直しが %i なら、更新の欄で「再試行」での読み込み直しを促さず、理由は内容の欄に出す',
+    async (status, code, message) => {
+      staleThenUnavailableApi(status, code, message);
+      await renderPage();
+      await click(findRow('件名1'), '一覧の行');
+      await click(findButton('対応中'), '「対応中」ボタン');
+
+      expect(detailCalls('inq-1')).toHaveLength(2);
+      const staleAlert = staleAlertText();
+      expect(staleAlert).toBeDefined();
+      expect(staleAlert).toContain('更新していません');
+      expect(staleAlert).toContain('理由は内容の欄に出しています');
+      expect(staleAlert).not.toContain('再試行');
+      expect(staleAlert).not.toContain('読み込み直してから');
+      expect(staleAlert).not.toContain('読み込み直したので');
+      expect(staleAlert).not.toContain('書きかけ');
+      // 理由 (応答の文) は内容の欄に出る
+      expect(alerts().some((a) => a.includes('問い合わせの内容を取得できませんでした') && a.includes(message))).toBe(true);
+    },
+  );
+
+  it('詳細の読み直しが 404 で、管理者メモが書きかけなら、書きかけを残したことも添える (「再試行」は促さない)', async () => {
+    staleThenUnavailableApi(404, 'NOT_FOUND', '問い合わせが見つかりません');
+    await renderPage();
+    await click(findRow('件名1'), '一覧の行');
+    await typeNote('書きかけのメモ');
+    await click(findButton('対応中'), '「対応中」ボタン');
+
+    const staleAlert = staleAlertText();
+    expect(staleAlert).toContain('理由は内容の欄に出しています');
+    expect(staleAlert).toContain('書きかけの管理者メモはそのまま残しています');
+    expect(staleAlert).not.toContain('再試行');
+    expect(textarea().value).toBe('書きかけのメモ');
+  });
+
+  it('詳細の読み直しが 500 なら、これまでどおり「再試行」で読み込み直すよう促す (再試行で読めることがある)', async () => {
+    staleThenUnavailableApi(500, 'INTERNAL_ERROR', '問い合わせの取得に失敗しました');
+    await renderPage();
+    await click(findRow('件名1'), '一覧の行');
+    await click(findButton('対応中'), '「対応中」ボタン');
+
+    const staleAlert = staleAlertText();
+    expect(staleAlert).toContain('「再試行」で読み込み直してから');
+    expect(staleAlert).not.toContain('理由は内容の欄に出しています');
+  });
+
+  it('読み直しが 404 のあと、内容の欄の「再試行」で読み直せたら「読み込み直した」の文に変える', async () => {
+    const state = { changed: false, details: 0 };
+    mockApi({
+      list: () => jsonResponse(200, listBody([summary(1, state.changed ? { status: 'resolved' } : {})])),
+      detail: () => {
+        state.details += 1;
+        if (state.details === 2) return jsonResponse(404, errorBody('NOT_FOUND', '問い合わせが見つかりません'));
+        return jsonResponse(200, { inquiry: detail(1, state.changed ? { status: 'resolved' } : {}) });
+      },
+      put: () => {
+        state.changed = true;
+        return staleResponse();
+      },
+    });
+    await renderPage();
+    await click(findRow('件名1'), '一覧の行');
+    await click(findButton('対応中'), '「対応中」ボタン');
+    expect(staleAlertText()).toContain('理由は内容の欄に出しています');
+
+    await click(findButton('再試行'), '「再試行」ボタン');
+    expect(detailCalls('inq-1')).toHaveLength(3);
+    expect(staleAlertText()).toContain('読み込み直したので');
+    expect(staleAlertText()).not.toContain('理由は内容の欄に出しています');
+  });
+
   it('同じ 409 でも code が CONFLICT_STALE_DATA でなければ読み直さず、理由つきのエラーだけを出す', async () => {
     mockApi({
       list: () => jsonResponse(200, listBody([summary(1)])),
