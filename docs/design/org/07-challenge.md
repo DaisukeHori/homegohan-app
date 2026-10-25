@@ -424,7 +424,7 @@ sequenceDiagram
 | 期間 | JST の暦日。開始日から `min(終了日, 前日)` まで (今日は含めない)。参加した日より前の記録も、期間内なら数える |
 | 食事として数える記録 | `planned_meals.is_completed = true` で `mode` が `skip` でないもの。ハンズオンのお試しの記録 (`user_daily_meals.is_sandbox`) は数えない (比較ランキングの集計 calculate-segment-stats の planned_meals の読み込みと同じ。#1500)。運営が隠した食事 (`hidden_at`。#1101 / #1445) は `meals` / `recipes` の列で、この集計が読む `planned_meals` / `user_daily_meals` には無い。集計は `meals` を読まない (読むなら `is_sandbox = false` かつ `hidden_at IS NULL` で絞る) |
 | 朝食の割合 | 朝食を食べた日の数 ÷ 期間の日数 × 100 (1 日に何件あっても 1 日) |
-| 野菜スコア | `veg_score` が入っている食事の平均 (小数第 1 位)。`veg_score` は書き込み元によって尺度が違う (写真の解析 0〜100・AI の推定 1〜5) ため、換算せずそのまま平均する |
+| 野菜スコア | `veg_score` が入っている食事の平均 (小数第 1 位)。`veg_score` を書くコードは写真の解析 (`analyze-meal-photo` の背景の処理) だけで、値は 0〜100 の整数 (cross/23 §6.3) |
 | 自炊の割合 | `mode` が `cook` / `quick` (未設定は `cook`) の食事 ÷ 食事 × 100。`ai_creative` は数えない (バッジ・ホーム画面の自炊率と同じ) |
 | 順位 | `rank()`。丸めた値で決め、同じ値は同じ順位 (1, 1, 3, ...)。今も組織のメンバーである参加者だけ |
 | 終了 | 終了日 (JST) を過ぎた `active` のチャレンジは、計算のあとで `completed` にする |

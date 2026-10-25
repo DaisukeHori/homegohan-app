@@ -395,8 +395,8 @@ async function bulkRevoke(
   reason: string,
   actorId: string
 ): Promise<BulkRevokeResult> {
-  // advisory lock: 同一 org への並行 bulk-revoke を防ぐ (cross/02-rls-patterns.md §ラッパー経由必須)
-  await supabase.rpc('acquire_advisory_lock', { lock_key: 'bulk-revoke:' + orgId });
+  // advisory lock: 同一 org への並行 bulk-revoke を防ぐロック (hashtext('bulk-revoke:' || org_id)) は、別の RPC では取れない (取引の終わりで外れる)。
+  // 下の UPDATE と監査の書き込みは、中でそのロックを取る SECURITY DEFINER の関数 1 つにまとめて呼ぶ (cross/02-rls-patterns.md §6.3)
 
   const { data, error } = await supabase
     .from('org_license_assignments')

@@ -373,44 +373,44 @@ COMMENT ON FUNCTION acquire_family_group_lock(UUID) IS
 
 ### 6.3 実装例
 
+- `pg_advisory_xact_lock` は、取った取引 (トランザクション) の終わりで外れる。
+- ロックだけを取る RPC を呼んでから route で仕事をすると、ロックはその RPC の取引の終わりで外れ、後に続く仕事の間は保たれない。
+- ロックは、仕事をする SECURITY DEFINER の関数の中で取る (同じ取引)。route はその関数を 1 回呼ぶ。
+- ロックだけを取るラッパー (`acquire_advisory_lock`) と TS の `withAdvisoryLock` は、実コードに無い (billing/01 F13)。
+
 ```sql
--- supabase/migrations/xxxx_advisory_lock_helper.sql
--- pg_advisory_xact_lock を直接 RPC 呼び出しすることはできないため、
--- ラッパー関数 acquire_advisory_lock を用意する
-CREATE OR REPLACE FUNCTION acquire_advisory_lock(lock_key TEXT)
+-- 例: ロックと、ロックで守る仕事を 1 つの関数に入れる (鍵は §6.2 の命名)
+CREATE OR REPLACE FUNCTION public.example_locked_operation(p_pool_id UUID)
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
 BEGIN
-  PERFORM pg_advisory_xact_lock(hashtext(lock_key));
+  -- 1. 呼び出し元の確認 (本人か・役割) と引数の検証は、関数の中で行う
+  -- 2. 同じ鍵を取る処理どうしを直列にする。関数の取引の終わりで外れる
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('license_pool:' || p_pool_id::TEXT));
+  -- 3. ロックで守る仕事 (読み・確かめ・UPDATE) は、同じ関数の中で続けて行う
 END;
 $$;
 ```
 
-```typescript
-// src/lib/advisory-lock.ts
+実コードの例 (どれも、仕事をする関数の中で取る。行は最新の定義のロックの行):
 
-/**
- * acquire_advisory_lock RPC 経由でトランザクション内ロックを取得
- * トランザクション終了時に自動解放される
- * 注意: pg_advisory_xact_lock は Supabase RPC から直接呼び出せないため
- *       必ず acquire_advisory_lock ラッパーを経由すること
- */
-export async function withAdvisoryLock<T>(
-  key: string,
-  fn: () => Promise<T>
-): Promise<T> {
-  const supabase = getSupabaseAdmin(); // service_role の client (§3.3)
-
-  await supabase.rpc('acquire_advisory_lock', {
-    lock_key: key,
-  });
-
-  return fn();
-}
-```
+- `supabase/migrations/20261008120000_shopping_list_active_lock.sql:91` (`replace_active_shopping_list`)
+- `supabase/migrations/20261008120000_shopping_list_active_lock.sql:165` (`get_or_create_active_shopping_list`)
+- `supabase/migrations/20261016210000_billing_core.sql:254-255` (`billing_apply_stripe_subscription`)
+- `supabase/migrations/20261016240000_org_challenge_diff_privacy.sql:197` (`org_challenge_finalize`)
+- `supabase/migrations/20261017230000_billing_manual_plan_grant.sql:60` (`billing_grant_manual_subscription`)
+- `supabase/migrations/20261021100000_billing_paid_plans_iap.sql:260` (`billing_apply_store_subscription`)
+- `supabase/migrations/20261021100000_billing_paid_plans_iap.sql:507` (`consume_ai_usage_at`)
+- `supabase/migrations/20261021100000_billing_paid_plans_iap.sql:620` (`consume_ai_usage_capped_at`)
+- `supabase/migrations/20261021100000_billing_paid_plans_iap.sql:762` (`billing_revoke_manual_subscription`)
+- `supabase/migrations/20261021100000_billing_paid_plans_iap.sql:809` (`billing_expire_manual_subscription_for_user`)
+- `supabase/migrations/20261023130000_account_deletion_owner_guard.sql:85` (`begin_account_deletion_guard`)
+- `supabase/migrations/20261023130000_account_deletion_owner_guard.sql:123` (`organizations_owner_not_deleting`)
+- `supabase/migrations/20261023150000_account_deletion_family_representative_guard.sql:82` (`family_groups_representative_not_deleting`)
+- `supabase/migrations/20261024120000_account_deletion_guard_release.sql:53` (`end_account_deletion_guard`)
 
 ### 6.4 行ロック (SELECT FOR UPDATE)
 
