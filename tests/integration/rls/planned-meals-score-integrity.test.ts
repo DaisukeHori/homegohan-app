@@ -7,8 +7,9 @@
  * 自分の行の veg_score / is_completed に任意の値を入れ、比較ランキング (veg_score_avg / breakfast_rate) と組織のチャレンジの
  * veg_score を操作できた。
  *
- * 段 A (設計書 §15) の分だけを置く: RPC の it (I-1〜I-4・I-8) と RPC の戻し口 (I-13)。
- * 段 B で I-10・I-11・I-14・I-15、段 C で 3 列の it (I-5〜I-7・I-9) と権限の戻し口 (I-12) を足す。
+ * 段 A (設計書 §15): RPC の it (I-1〜I-4・I-8) と RPC の戻し口 (I-13)。
+ * 段 B: サーバの書き手の本人の確認 (I-10・I-11) と、完了の route を本物の PostgREST で (I-14・I-15)。
+ * 段 C で 3 列の it (I-5〜I-7・I-9) と権限の戻し口 (I-12) を足す。
  *
  * 確かめること (I-n はこのファイルの it の番号。括弧の S-n は設計書 §0.3 のシナリオ):
  *   - I-1 (S-1・S-3): 本人は RPC で自分の献立を完了にできる。completed_at は DB の時刻 (呼ぶ前後の時刻の間)。updated_at が進む
@@ -16,8 +17,16 @@
  *   - I-3 (S-20): 他人の献立の id・無い id は RPC が PLANNED_MEAL_NOT_FOUND (P0002)。行は変わらない
  *   - I-4 (S-19): 未認証 (anon) は RPC を実行できない (42501)
  *   - I-8 (S-25): service_role は今までどおり 3 列を読み書きできる (集計・献立の生成の口は残る)
+ *   - I-10 (S-16): 週間生成の復元 (restoreOwnPlannedMealsSnapshot) は、本人の日の行を service_role で 3 列ごと戻し、本人の日でない行は戻さない
+ *   - I-11 (S-11・S-12): 写真の解析の Edge Function と同じ本人の行の確認 (service_role・user_daily_meals!inner(user_id)・user_daily_meals.user_id) は、
+ *          本人の mealId で 1 行、他人の mealId で 0 行 (Edge は 0 行なら書かない。Edge のソースが同じ問い合わせを使うことは
+ *          tests/planned-meals-score-integrity-writers-scan.test.ts の項目 2 が見る)
  *   - I-13 (S-23): RPC の戻し口を 1 つのトランザクションで流して巻き戻す: 関数が消え、planned_meals の列の権限は変わらない。
  *          巻き戻ったあとの DB は関数があるまま
+ *   - I-14 (S-6): PATCH /api/meal-plans/meals/[id] の route の関数を、本物の PostgREST につないだ利用者の client で呼ぶ。本文が { isCompleted } だけ
+ *          (料理の無い献立。route の updateData が空になる形) でも 200 で、行が完了 / 未完了になる (空の UPDATE を PostgREST に送ると
+ *          0 行になり .single() が失敗して 500 になる。偽物の DB の単体テストではこれを検出できない)
+ *   - I-15 (S-5): PATCH /api/meals/[id] の route の関数を同じく呼ぶ。本文の completed_at (端末の時刻) は無視され、行の completed_at は DB の時刻
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh)。Next の開発サーバーは要らない。
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
@@ -28,7 +37,7 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import ws from 'ws';
 import {
   PLANNED_MEALS_SET_COMPLETED_RPC,
@@ -36,6 +45,7 @@ import {
   PLANNED_MEAL_NOT_FOUND_SQLSTATE,
   plannedMealsSetCompletedArgs,
 } from '@homegohan/shared';
+import { restoreOwnPlannedMealsSnapshot, type PlannedMealSnapshotRow } from '@/lib/planned-meals-snapshot';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -57,6 +67,17 @@ const srAdmin = client(serviceKey);
 const anon = () => client(anonKey);
 const asUser = (jwt: string) => client(anonKey, jwt);
 
+// I-14・I-15 で呼ぶ route (PATCH /api/meal-plans/meals/[id]・PATCH /api/meals/[id]) の createClient の代わり。
+// 本物の PostgREST につないだ、サインイン済みの利用者の client (it の中で入れる)。route は it の中で動的に import する
+let routeUserClient: SupabaseClient | null = null;
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: async () => {
+    if (!routeUserClient) throw new Error('routeUserClient を it の中で入れてから route を呼ぶ');
+    return routeUserClient;
+  },
+  getSupabaseAdmin: () => srAdmin,
+}));
+
 const TABLE = 'planned_meals';
 /** 権限の無い書き込み・RLS の WITH CHECK に反した書き込みの SQLSTATE */
 const INSUFFICIENT_PRIVILEGE = '42501';
@@ -64,11 +85,18 @@ const INSUFFICIENT_PRIVILEGE = '42501';
 const SERVER_VEG_SCORE = 80;
 /** 献立の日 (JST の暦日。集計の対象かどうかはここでは見ない) */
 const DAY_DATE = '2026-01-10';
+/** 復元を確かめる日 (DAY_DATE と別の日にし、復元の「空きのスロット」の判定に他の it の行が入らないようにする) */
+const RESTORE_DAY_DATE = '2026-01-11';
+/** 写真の解析の Edge Function が本人の行を確かめる問い合わせ (§7.15 と同じ文字列。writers-scan の項目 2 が Edge の側を見る) */
+const PHOTO_OWNERSHIP_SELECT = 'id, user_daily_meals!inner(user_id)';
+const PHOTO_OWNERSHIP_USER_FILTER = 'user_daily_meals.user_id';
 /** 結合テストの準備と後片付けの時間の上限 (ミリ秒) */
 const SETUP_TIMEOUT_MS = 120_000;
 const TEST_TIMEOUT_MS = 60_000;
 /** DB の時刻と Node の時刻の差として許す幅 (ミリ秒) */
 const CLOCK_SKEW_TOLERANCE_MS = 60_000;
+/** 端末が送ってくる完了の時刻の例 (route が無視して DB の時刻にすることを確かめる。今の時刻から遠い値) */
+const CLIENT_COMPLETED_AT = '2000-01-01T00:00:00.000Z';
 
 interface TestUser {
   id: string;
@@ -269,6 +297,99 @@ describe('#2025 planned_meals: サーバの書き手 (service_role) の口は残
     expect(data).toEqual([{ veg_score: SERVER_VEG_SCORE, is_completed: true }]);
     const inserted = await srAdmin.from(TABLE).insert({ daily_meal_id: otherDayId, meal_type: 'breakfast', dish_name: 'it2025-sr', is_completed: false }).select('id');
     expect(inserted.error).toBeNull();
+  }, TEST_TIMEOUT_MS);
+});
+
+describe('#2025 サーバの書き手 (service_role) の本人の確認', () => {
+  it('I-10 (S-16): 週間生成の復元は、本人の日の行を service_role で 3 列ごと戻し、本人の日でない行は戻さない', async () => {
+    const [ownerRestoreDayId, otherRestoreDayId] = await Promise.all([seedDay(owner.id, RESTORE_DAY_DATE), seedDay(other.id, RESTORE_DAY_DATE)]);
+    const [ownerRestoreMealId, otherRestoreMealId] = await Promise.all([
+      seedMeal(ownerRestoreDayId, 'restore-owner'),
+      seedMeal(otherRestoreDayId, 'restore-other'),
+    ]);
+    // 本人の行: RPC で完了にし、野菜スコアは service_role が書いた値を持つ (写真の解析の後の状態)
+    const completed = await asUser(owner.jwt).rpc(PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs(ownerRestoreMealId, true));
+    expect(completed.error).toBeNull();
+    const scored = await srAdmin.from(TABLE).update({ veg_score: SERVER_VEG_SCORE }).eq('id', ownerRestoreMealId);
+    expect(scored.error).toBeNull();
+    // snapshot: 本人の行は weekly/request と同じく利用者のセッションの select('*')。他人の行は本人の日でない行の代わり
+    const ownerRead = await asUser(owner.jwt).from(TABLE).select('*').eq('id', ownerRestoreMealId).single();
+    const otherRead = await srAdmin.from(TABLE).select('*').eq('id', otherRestoreMealId).single();
+    expect(ownerRead.error).toBeNull();
+    expect(otherRead.error).toBeNull();
+    const ownerSnapshot = ownerRead.data as PlannedMealSnapshotRow;
+    const otherSnapshot = otherRead.data as PlannedMealSnapshotRow;
+    const removed = await srAdmin.from(TABLE).delete().in('id', [ownerRestoreMealId, otherRestoreMealId]);
+    expect(removed.error).toBeNull();
+
+    const result = await restoreOwnPlannedMealsSnapshot({ userDb: asUser(owner.jwt), writer: srAdmin, snapshot: [ownerSnapshot, otherSnapshot] });
+
+    expect(result).toEqual({ restored: 1, skipped: 0, failed: 1 });
+    expect(await mealRow(ownerRestoreMealId)).toMatchObject({
+      is_completed: true,
+      completed_at: ownerSnapshot.completed_at,
+      veg_score: SERVER_VEG_SCORE,
+    });
+    expect(await mealRow(otherRestoreMealId)).toBeNull();
+  }, TEST_TIMEOUT_MS);
+
+  it('I-11 (S-11・S-12): 写真の解析と同じ本人の行の確認は、本人の mealId で 1 行、他人の mealId で 0 行', async () => {
+    const own = await srAdmin.from(TABLE).select(PHOTO_OWNERSHIP_SELECT).eq('id', ownerMealId).eq(PHOTO_OWNERSHIP_USER_FILTER, owner.id).maybeSingle();
+    expect(own.error).toBeNull();
+    expect(own.data).toMatchObject({ id: ownerMealId });
+    const foreign = await srAdmin.from(TABLE).select(PHOTO_OWNERSHIP_SELECT).eq('id', otherMealId).eq(PHOTO_OWNERSHIP_USER_FILTER, owner.id).maybeSingle();
+    expect(foreign.error).toBeNull();
+    expect(foreign.data).toBeNull();
+  }, TEST_TIMEOUT_MS);
+});
+
+describe('#2025 完了の route を本物の PostgREST で (route の関数を直接呼ぶ。Next の開発サーバーは要らない)', () => {
+  it('I-14 (S-6): PATCH /api/meal-plans/meals/[id] に { isCompleted } だけを送ると、料理の無い献立でも 200 で行が完了 / 未完了になる', async () => {
+    // seedMeal の献立は dishes が NULL (料理が無い) ので、route の updateData はほかの列を持たない
+    const mealId = await seedMeal(ownerDayId, 'route-meal-plans');
+    routeUserClient = owner.session;
+    const { PATCH } = await import('@/app/api/meal-plans/meals/[id]/route');
+    const call = (isCompleted: boolean) =>
+      PATCH(
+        new Request(`http://localhost/api/meal-plans/meals/${mealId}`, { method: 'PATCH', body: JSON.stringify({ isCompleted }) }),
+        { params: Promise.resolve({ id: mealId }) },
+      );
+
+    const done = await call(true);
+    expect(done.status).toBe(200);
+    const doneBody = (await done.json()) as { success: boolean; meal: Record<string, unknown> };
+    expect(doneBody.success).toBe(true);
+    expect(doneBody.meal).toMatchObject({ id: mealId, is_completed: true });
+    expect(doneBody.meal.completed_at).not.toBeNull();
+    expect(await mealRow(mealId)).toMatchObject({ is_completed: true, completed_at: doneBody.meal.completed_at });
+
+    const undone = await call(false);
+    expect(undone.status).toBe(200);
+    expect(await mealRow(mealId)).toMatchObject({ is_completed: false, completed_at: null });
+  }, TEST_TIMEOUT_MS);
+
+  it('I-15 (S-5): PATCH /api/meals/[id] の本文の completed_at (端末の時刻) は無視され、行の completed_at は DB の時刻', async () => {
+    const mealId = await seedMeal(ownerDayId, 'route-meals');
+    routeUserClient = owner.session;
+    const { PATCH } = await import('@/app/api/meals/[id]/route');
+    const from = Date.now();
+    const res = await PATCH(
+      new Request(`http://localhost/api/meals/${mealId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ is_completed: true, completed_at: CLIENT_COMPLETED_AT }),
+      }),
+      { params: Promise.resolve({ id: mealId }) },
+    );
+    const to = Date.now();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({ id: mealId, is_completed: true });
+    const row = await mealRow(mealId);
+    expect(row).toMatchObject({ is_completed: true, completed_at: body.completed_at });
+    const completedAt = Date.parse(String(row!.completed_at));
+    expect(completedAt).not.toBe(Date.parse(CLIENT_COMPLETED_AT));
+    expect(completedAt).toBeGreaterThanOrEqual(from - CLOCK_SKEW_TOLERANCE_MS);
+    expect(completedAt).toBeLessThanOrEqual(to + CLOCK_SKEW_TOLERANCE_MS);
   }, TEST_TIMEOUT_MS);
 });
 
