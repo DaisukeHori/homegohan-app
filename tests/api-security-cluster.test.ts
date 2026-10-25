@@ -170,8 +170,8 @@ describe('#166 /api/contact POST rate limit', () => {
 
   it('通常リクエストは 429 にならない', async () => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
-    const insertChain = { select: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: '1' }, error: null }) };
-    mockFrom.mockReturnValue({ insert: vi.fn().mockReturnValue(insertChain) });
+    // route は保存した行を読み返さない (RETURNING を付けない)。insert の結果だけを返す
+    mockFrom.mockReturnValue({ insert: vi.fn().mockResolvedValue({ data: null, error: null }) });
 
     const res = await contactPOST(makeRequest('10.0.0.1'));
     expect(res.status).not.toBe(429);
@@ -181,11 +181,7 @@ describe('#166 /api/contact POST rate limit', () => {
     // モジュールを動的 import して rate limit map を含む状態にする
     // 11 回連続リクエスト (same IP)
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
-    const insertChain = {
-      select: vi.fn().mockReturnThis(),
-      single: vi.fn().mockResolvedValue({ data: { id: '1' }, error: null }),
-    };
-    mockFrom.mockReturnValue({ insert: vi.fn().mockReturnValue(insertChain) });
+    mockFrom.mockReturnValue({ insert: vi.fn().mockResolvedValue({ data: null, error: null }) });
 
     const ip = `rate-limit-test-${Date.now()}`;
     let lastRes: any;

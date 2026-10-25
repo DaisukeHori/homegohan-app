@@ -18,6 +18,9 @@ interface Invite {
   invite_url?: string;
 }
 
+/** 招待の取消が失敗したときの文 */
+const REVOKE_FAILURE_MESSAGE = "招待の取り消しに失敗しました";
+
 export default function OrgInvitesPage() {
   const [invites, setInvites] = useState<Invite[]>([]);
   const [loading, setLoading] = useState(true);
@@ -105,11 +108,13 @@ export default function OrgInvitesPage() {
       if (res.ok) {
         fetchInvites();
       } else {
-        const data = await res.json();
-        alert(data.error?.message ?? "招待の取り消しに失敗しました");
+        // 本文が JSON でない失敗 (プロキシの 502 など) でも、取り消せなかったことを知らせる (黙って捨てない)
+        const data = await res.json().catch(() => null);
+        alert(data?.error?.message ?? REVOKE_FAILURE_MESSAGE);
       }
     } catch (error) {
       console.error("Failed to revoke invite:", error);
+      alert(`${REVOKE_FAILURE_MESSAGE}（通信エラー）`);
     }
   };
 
