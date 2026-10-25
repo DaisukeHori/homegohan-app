@@ -73,6 +73,9 @@ export async function POST(request: Request) {
       mealId?: string;
       prefetchedGeminiResult?: PrefetchedGeminiResult;
     };
+    // mealId の経路 (Edge の背景の処理が planned_meals の veg_score を書く) では、画面から来た解析の結果を Edge へ渡さない。
+    // 利用者が料理と材料の g を指定できると veg_score を好きな値にできる (#2025)。Edge の側でも使わない (二重に閉じる。cross/23 §7.15)
+    const forwardedPrefetchedGeminiResult = mealId ? undefined : prefetchedGeminiResult;
 
     const imageDataArray: ImageInput[] = Array.isArray(images) && images.length > 0
       ? images
@@ -104,7 +107,7 @@ export async function POST(request: Request) {
         images: imageDataArray,
         mealId,
         mealType,
-        prefetchedGeminiResult,
+        prefetchedGeminiResult: forwardedPrefetchedGeminiResult,
         userId: user.id,
         invokedAt: mealId ? invokedAt : undefined,
       },
@@ -128,7 +131,7 @@ export async function POST(request: Request) {
       mealId: mealId ?? null,
       mealType: mealType ?? null,
       sync: !mealId,
-      usedPrefetchedGeminiResult: Boolean(prefetchedGeminiResult?.dishes?.length),
+      usedPrefetchedGeminiResult: Boolean(forwardedPrefetchedGeminiResult?.dishes?.length),
       elapsedMs: Date.now() - startedAt,
       timings: data?.timings ?? null,
     });

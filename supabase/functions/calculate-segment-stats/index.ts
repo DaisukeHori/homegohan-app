@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { requireServiceRole } from '../_shared/auth.ts';
+import { nutritionScoreOfVegScoreAverage } from '../_shared/veg-score.ts';
 import { chunkArray, embeddedOne, fetchAllRows, throwIfError } from '../_shared/bulk-query.ts';
 import { createLogger, generateRequestId } from '../_shared/db-logger.ts';
 import {
@@ -421,8 +422,8 @@ function computeMetricFromBulk(userId: string, metricCode: string, bulk: BulkDat
     case 'nutrition_score': {
       const sum = bulk.vegScoreSum.get(userId) ?? 0;
       const cnt = bulk.vegScoreCount.get(userId) ?? 0;
-      const vegAvg = cnt > 0 ? sum / cnt : 0;
-      return Math.round(vegAvg * 20);
+      // veg_score は 0〜100 (写真の解析の尺度。#2025)。以前は 1〜5 点を前提に × 20 していた
+      return cnt > 0 ? nutritionScoreOfVegScoreAverage(sum / cnt) : 0;
     }
     case 'menu_execution_rate': {
       const total = bulk.plannedTotal.get(userId) ?? 0;

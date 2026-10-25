@@ -11,6 +11,7 @@ import { isMealType, MEAL_ORDER, type MealType } from '@homegohan/shared';
 import { addDaysToDate } from '@/lib/date-utils';
 import { isCalendarDate } from '@/lib/jst-day-ranges';
 import {
+  AI_ACTION_COMPLETE_MEAL_FAILED_MESSAGE,
   AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE,
   AI_CONSULTATION_DATE_AND_MEAL_TYPE_REQUIRED_MESSAGE,
   AI_CONSULTATION_DATE_REQUIRED_MESSAGE,
@@ -37,6 +38,7 @@ import {
   stripUndefined,
 } from '@/lib/health-payloads';
 import { updateHealthStreak } from '@/lib/health-streaks';
+import { setPlannedMealCompleted } from '@/modules/planned-meals-integrity/server';
 import { todayLocal } from '@/lib/date-utils';
 import { invokeGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { isFeatureEnabled } from '@/lib/feature-flags';
@@ -1031,25 +1033,23 @@ export async function runConsultationAction(
 
     case 'complete_meal': {
       const { mealId, isCompleted } = action.action_params;
-      // セキュリティチェック - user_daily_meals JOIN 経由でユーザー確認
-      const { data: meal } = await supabase
-        .from('planned_meals')
-        .select('id, user_daily_meals!inner(user_id)')
-        .eq('id', mealId)
-        .eq('user_daily_meals.user_id', user.id)
-        .maybeSingle();
-
-      if (!meal) {
-        result = { error: '権限がありません' };
+      // 本人の行かどうかは RPC (planned_meals_set_completed) が確かめる。他人の行・無い行・UUID の形でない id は not_found。
+      // completed_at は DB が決める (planned_meals の is_completed / completed_at は利用者のセッションから直接書けない。#2025)
+      const completion = await setPlannedMealCompleted(supabase, {
+        mealId: typeof mealId === 'string' ? mealId : '',
+        completed: isCompleted !== false,
+      });
+      if (!completion.ok) {
+        if (completion.reason === 'not_found') {
+          result = { error: '権限がありません' };
+          break;
+        }
+        success = false;
+        result = { mealId, error: AI_ACTION_COMPLETE_MEAL_FAILED_MESSAGE };
         break;
       }
-
-      const { error: updateError } = await supabase
-        .from('planned_meals')
-        .update({ is_completed: isCompleted !== false })
-        .eq('id', mealId);
-      success = !updateError;
-      result = { mealId, completed: isCompleted !== false };
+      success = true;
+      result = { mealId, completed: completion.row.is_completed };
       break;
     }
 

@@ -822,7 +822,8 @@ const allowedFields = [
 ];
 
 // (4) 既存の update (updateData) と画像のジョブの処理はそのまま。その後、完了の指定があれば RPC で切り替え、応答の行に載せる
-//     (既存の update の `data` の後ろ・`enqueueMealImageJobs` の前に置く)
+//     (既存の update の `data` と画像のジョブ (`enqueueMealImageJobs` / `triggerMealImageJobProcessing`) の後ろ・応答の前に置く。
+//      料理を 'pending' で保存した後に RPC の失敗で抜けると、ジョブが無いまま「料理画像を生成中です」が残るため)
 let completionRow: Record<string, unknown> = {};
 if (completionInput) {
   const completion = await setPlannedMealCompleted(supabase, { mealId: params.id, completed: completionInput.data });
@@ -844,7 +845,7 @@ return NextResponse.json({
 });
 ```
 
-順序: 既存の UPDATE (ほかの列) → 完了の RPC → 画像のジョブ。既存の UPDATE が失敗したら今までどおり 500 で終わり、RPC は呼ばない。RPC が失敗したら (他の列は保存済みのまま) 404 / 500 を返す。画面は失敗時に楽観的更新を戻して読み直す (今までと同じ)。
+順序: 既存の UPDATE (ほかの列) → 画像のジョブ → 完了の RPC。既存の UPDATE が失敗したら今までどおり 500 で終わり、RPC は呼ばない。RPC が失敗したら (他の列と画像のジョブは保存済みのまま) 404 / 500 を返す。RPC を画像のジョブの前に置くと、RPC の失敗で抜けたときに 'pending' で保存した料理のジョブが積まれず、「料理画像を生成中です」が残る。画面は失敗時に楽観的更新を戻して読み直す (今までと同じ)。
 
 この route の既存の UPDATE は、本文が完了の指定だけでも空にならない: `updateData.updated_at = new Date().toISOString()` を必ず入れている (origin/main の `src/app/api/meals/[id]/route.ts:124`。本書でも消さない)。そのため §7.9.2 の (4) のような分岐は要らない。
 
@@ -879,7 +880,7 @@ const { data, error } = hasColumnUpdates
   ? await supabase.from('planned_meals').update(updateData).eq('id', existingMeal.id).select().single()
   : await supabase.from('planned_meals').select().eq('id', existingMeal.id).single();
 
-// (5) (4) の `if (error) { ... }` の後ろ・画像のジョブの前
+// (5) 画像のジョブ (`if (imageAllowed && jobs.length > 0) { ... }`) の後ろ・応答の前 (理由は §7.9.1 の順序の注と同じ)
 let completionRow: Record<string, unknown> = {};
 if (completionInput) {
   const completion = await setPlannedMealCompleted(supabase, { mealId: existingMeal.id, completed: completionInput.data });

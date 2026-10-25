@@ -182,7 +182,6 @@ export async function POST(request: Request) {
         description: description || null,
         ingredients: ingredients || null,
         image_url: dishImagePayload.mealCoverImageUrl,
-        is_completed: false,
         source_type: sourceType || 'manual',
       };
 

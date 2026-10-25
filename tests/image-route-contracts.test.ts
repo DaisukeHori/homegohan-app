@@ -311,6 +311,44 @@ describe('image route contracts', () => {
     });
   });
 
+  it('analyze-meal-photo: mealId があるときは prefetchedGeminiResult を Edge Function へ渡さない (#2025)', async () => {
+    // mealId の経路は Edge の背景の処理が planned_meals の veg_score を書く。利用者が料理と材料の g (「キャベツ 120 g」) を
+    // 送り込めると veg_score を好きな値にできるので、写真から解析し直させる (Edge の側でも使わない。cross/23 §7.15)
+    const prefetchedGeminiResult = {
+      dishes: [
+        {
+          name: '野菜炒め',
+          role: 'main',
+          cookingMethod: 'stir_fried',
+          visiblePortionWeightG: 120,
+          visibleIngredients: [{ name: 'キャベツ', amount_g: 120 }],
+        },
+      ],
+    };
+    mockInvoke.mockResolvedValue({
+      data: { message: 'Photo analysis started in background' },
+      error: null,
+    });
+
+    const { POST } = await import('../src/app/api/ai/analyze-meal-photo/route');
+    const response = await POST(new Request('http://localhost/api/ai/analyze-meal-photo', {
+      method: 'POST',
+      body: JSON.stringify({
+        images: [{ base64: 'abc', mimeType: 'image/jpeg' }],
+        mealId: 'meal-2025',
+        mealType: 'dinner',
+        prefetchedGeminiResult,
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    const calledBody = (mockInvoke.mock.calls[0][1] as { body: Record<string, unknown> }).body;
+    expect(calledBody.prefetchedGeminiResult).toBeUndefined();
+    expect(calledBody.mealId).toBe('meal-2025');
+    expect(calledBody.images).toEqual([{ base64: 'abc', mimeType: 'image/jpeg' }]);
+  });
+
   it('analyze-meal-photo attaches catalog matches for returned dishes', async () => {
     mockInvoke.mockResolvedValue({
       data: {

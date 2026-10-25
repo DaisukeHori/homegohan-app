@@ -6,7 +6,7 @@
  *
  * - 既存献立の削除前にスナップショットを取得し weekly_menu_requests.generated_data に退避すること
  * - Edge Function 呼び出しが失敗した場合、スナップショットからのロールバック復元
- *   (restorePlannedMealsSnapshot) が実行されること
+ *   (restoreOwnPlannedMealsSnapshot。本人の日を利用者のセッションで確かめ、service role で戻す。#2025) が実行されること
  * - Edge Function が成功した場合はロールバックを実行しないこと
  *
  * #1867: 行を作るとき、generated_data に週の献立の生成の印 (weeklyRequest: true) を書くこと
@@ -150,9 +150,10 @@ vi.mock('@vercel/functions', () => ({
   }),
 }));
 
-const mockRestorePlannedMealsSnapshot = vi.fn(async (..._args: any[]) => ({ restored: 0, skipped: 0, failed: 0 }));
+const mockRestoreOwnPlannedMealsSnapshot = vi.fn(async (..._args: any[]) => ({ restored: 0, skipped: 0, failed: 0 }));
+// planned_meals の 3 列は利用者から INSERT できないので、復元は本人の日の確認 + service role の restoreOwnPlannedMealsSnapshot (#2025)
 vi.mock('@/lib/planned-meals-snapshot', () => ({
-  restorePlannedMealsSnapshot: mockRestorePlannedMealsSnapshot,
+  restoreOwnPlannedMealsSnapshot: mockRestoreOwnPlannedMealsSnapshot,
 }));
 
 const { POST } = await import('@/app/api/ai/menu/weekly/request/route');
@@ -226,7 +227,7 @@ describe('POST /api/ai/menu/weekly/request', () => {
       attempts: 3,
       errorMessage: 'generate-menu-v4 failed after 3/3 attempts',
     });
-    mockRestorePlannedMealsSnapshot.mockResolvedValue({ restored: 2, skipped: 0, failed: 0 });
+    mockRestoreOwnPlannedMealsSnapshot.mockResolvedValue({ restored: 2, skipped: 0, failed: 0 });
 
     const res = await POST(makeRequest({ startDate }));
     const json = await res.json();
@@ -242,11 +243,13 @@ describe('POST /api/ai/menu/weekly/request', () => {
     await flushBackground();
 
     // Edge Function 失敗 → ロールバック復元が呼ばれること
-    expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledTimes(1);
-    expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledWith(
-      mockSupabase,
-      [existingBreakfast, existingLunch],
-    );
+    expect(mockRestoreOwnPlannedMealsSnapshot).toHaveBeenCalledTimes(1);
+    // 本人の日の確認は利用者のセッション (userDb)、書き戻しは service role (writer = getSupabaseAdmin()) で行う (#2025)
+    expect(mockRestoreOwnPlannedMealsSnapshot).toHaveBeenCalledWith({
+      userDb: mockSupabase,
+      writer: mockAdminClient,
+      snapshot: [existingBreakfast, existingLunch],
+    });
 
     // markWeeklyMenuRequestFailed にロールバック結果が反映されたエラーメッセージが渡ること
     expect(mockMarkWeeklyMenuRequestFailed).toHaveBeenCalledTimes(1);
@@ -294,13 +297,13 @@ describe('POST /api/ai/menu/weekly/request', () => {
   it('Edge Function が同意の判定で止めた (T15 / #1154) ときも復元するが、失敗の文は人向けの文のまま残す (画面が見分けて同意画面へ案内するため)', async () => {
     const { AI_CONSENT_REQUIRED_MESSAGE, aiConsentReasonOfStoredError } = await import('@/lib/ai/consent-config');
     mockCallGenerateMenuV4WithRetry.mockResolvedValue({ ok: false, attempts: 1, errorMessage: AI_CONSENT_REQUIRED_MESSAGE });
-    mockRestorePlannedMealsSnapshot.mockResolvedValue({ restored: 2, skipped: 0, failed: 0 });
+    mockRestoreOwnPlannedMealsSnapshot.mockResolvedValue({ restored: 2, skipped: 0, failed: 0 });
 
     const res = await POST(makeRequest({ startDate }));
     expect(res.status).toBe(200);
     await flushBackground();
 
-    expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledTimes(1);
+    expect(mockRestoreOwnPlannedMealsSnapshot).toHaveBeenCalledTimes(1);
     expect(mockMarkWeeklyMenuRequestFailed).toHaveBeenCalledTimes(1);
     const failedArgs = mockMarkWeeklyMenuRequestFailed.mock.calls[0][0];
     expect(failedArgs.errorMessage).toBe(AI_CONSENT_REQUIRED_MESSAGE);
@@ -315,7 +318,7 @@ describe('POST /api/ai/menu/weekly/request', () => {
 
     await flushBackground();
 
-    expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+    expect(mockRestoreOwnPlannedMealsSnapshot).not.toHaveBeenCalled();
     expect(mockMarkWeeklyMenuRequestFailed).not.toHaveBeenCalled();
   });
 
@@ -334,7 +337,7 @@ describe('POST /api/ai/menu/weekly/request', () => {
     expect(insertPayload.generated_data).toEqual({ weeklyRequest: true });
 
     await flushBackground();
-    expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+    expect(mockRestoreOwnPlannedMealsSnapshot).not.toHaveBeenCalled();
   });
 
   it('#1035: TZ=UTC ランタイムで JST 早朝でも「昨日」の献立を削除しない（今日以降のみ処理）', async () => {
@@ -404,7 +407,7 @@ describe('POST /api/ai/menu/weekly/request — 必須の環境変数 (#1182)', (
       expect(mockPlannedMealsDeleteEq).not.toHaveBeenCalled();
       expect(mockWeeklyInsertCall).not.toHaveBeenCalled();
       expect(mockCallGenerateMenuV4WithRetry).not.toHaveBeenCalled();
-      expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+      expect(mockRestoreOwnPlannedMealsSnapshot).not.toHaveBeenCalled();
     },
   );
 });

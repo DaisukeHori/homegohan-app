@@ -36,6 +36,7 @@ import {
   estimateNutritionWithPerplexity,
   isPerplexityNutritionCandidate,
 } from './perplexity-nutrition.ts'
+import { vegScoreOfVegetableGrams } from './veg-score.ts'
 
 // ============================================
 // 型定義
@@ -610,14 +611,15 @@ function isVegetableIngredient(name: string, matchedName?: string | null): boole
   return /キャベツ|レタス|サラダ菜|きゅうり|胡瓜|トマト|ブロッコリー|にんじん|人参|もやし|ほうれん草|小松菜|白菜|玉ねぎ|たまねぎ|ねぎ|ネギ|しめじ|きのこ|舞茸|まいたけ|えのき|ピーマン|なす|茄子|大根|ごぼう|れんこん|蓮根/.test(text)
 }
 
-function estimateVegetableScore(dishes: AnalyzedDish[]): number {
+// 野菜スコア (planned_meals.veg_score の正本の計算。0〜100 の整数)。式と尺度は veg-score.ts に寄せる (#2025。値は今までと同じ。有限でない量は 0)
+export function estimateVegetableScore(dishes: AnalyzedDish[]): number {
   const vegetableGrams = dishes.reduce((sum, dish) => (
     sum + dish.ingredients.reduce((dishSum, ingredient) => (
       dishSum + (isVegetableIngredient(ingredient.name, ingredient.matched?.name) ? ingredient.amount_g : 0)
     ), 0)
   ), 0)
 
-  return clamp(Math.round((vegetableGrams / 120) * 100), 0, 100)
+  return vegScoreOfVegetableGrams(vegetableGrams)
 }
 
 function normalizeGeminiAnalysisResult(raw: unknown): GeminiAnalysisResult {

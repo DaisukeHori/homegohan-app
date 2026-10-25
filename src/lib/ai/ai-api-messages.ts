@@ -217,6 +217,8 @@ export const AI_CONSULTATION_IMAGE_URL_NOT_STRING_MESSAGE = `${aiConsultationFie
 export const AI_CONSULTATION_DATE_REQUIRED_MESSAGE = `${aiConsultationFieldLabel('date')} を指定してください`;
 /** 1 週間の献立の生成 (generate_week_menu) に開始日が無い */
 export const AI_CONSULTATION_START_DATE_REQUIRED_MESSAGE = `${aiConsultationFieldLabel('startDate')} を指定してください`;
+/** 献立の完了 (complete_meal) の切り替えが DB の失敗でできなかった (本人の献立でないときは既存の '権限がありません'。#2025) */
+export const AI_ACTION_COMPLETE_MEAL_FAILED_MESSAGE = '食事の完了を更新できませんでした';
 /** 1 食の献立の生成 (generate_single_meal) に日付か食事の区分が無い */
 export const AI_CONSULTATION_DATE_AND_MEAL_TYPE_REQUIRED_MESSAGE =
   `${aiConsultationFieldLabel('date')} と${aiConsultationFieldLabel('mealType')} を指定してください`;

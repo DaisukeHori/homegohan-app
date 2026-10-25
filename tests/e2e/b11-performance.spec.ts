@@ -369,6 +369,18 @@ test.describe("B11-4: 連打耐性", () => {
         body: JSON.stringify([{ id: "fake-meal-1", is_completed: true }]),
       });
     });
+    // ホームの完了の切り替えは RPC planned_meals_set_completed (POST /rest/v1/rpc/...) で書く (#2025)。
+    // 上の route には当たらないので、RPC の呼び出しも同じカウンタで数える (数えないと 0 回のまま通ってしまう)
+    await authedPage.route("**/rest/v1/rpc/planned_meals_set_completed*", async (route) => {
+      if (route.request().method() === "POST") {
+        apiCallCount++;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([{ id: "fake-meal-1", is_completed: true, completed_at: null, updated_at: null }]),
+      });
+    });
 
     await authedPage.goto("/home", { waitUntil: "networkidle" });
 

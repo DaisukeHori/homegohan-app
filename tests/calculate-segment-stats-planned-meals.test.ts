@@ -136,18 +136,19 @@ const pm = (userNo: number, mealType: string, completed: boolean, vegScore: numb
 });
 
 // 5 人 (セグメントは 5 人未満だと統計を作らない)。メニュー実行率が 100 / 75 / 50 / 25 / 0 になるように食事を置く。
-//   u1: 朝昼夕間 4 件すべて完了 (スコア 5, 4, 3, なし)      → 実行率 100, 朝食 100, 野菜 4.0, 栄養 80
-//   u2: 3 件完了 (間食は未完了)  (スコア 4, 4, 4, なし)      → 実行率  75, 朝食 100, 野菜 4.0, 栄養 80
-//   u3: 2 件完了                 (スコア 3, 3, 3, なし)      → 実行率  50, 朝食 100, 野菜 3.0, 栄養 60
-//   u4: 昼だけ完了               (スコア 2, 2, 2, 2)         → 実行率  25, 朝食   0, 野菜 2.0, 栄養 40
-//   u5: 何も完了していない       (スコア 1, 1, 1, 1)         → 実行率   0, 朝食   0, 野菜 1.0, 栄養 20
+// 野菜スコアは写真の解析の尺度 0〜100 (#2025)。栄養スコアは野菜スコアの平均を 0〜100 に正規化した値 (係数 1)。
+//   u1: 朝昼夕間 4 件すべて完了 (スコア 100, 80, 60, なし)  → 実行率 100, 朝食 100, 野菜 80, 栄養 80
+//   u2: 3 件完了 (間食は未完了)  (スコア 80, 80, 80, なし)   → 実行率  75, 朝食 100, 野菜 80, 栄養 80
+//   u3: 2 件完了                 (スコア 60, 60, 60, なし)   → 実行率  50, 朝食 100, 野菜 60, 栄養 60
+//   u4: 昼だけ完了               (スコア 40, 40, 40, 40)     → 実行率  25, 朝食   0, 野菜 40, 栄養 40
+//   u5: 何も完了していない       (スコア 20, 20, 20, 20)     → 実行率   0, 朝食   0, 野菜 20, 栄養 20
 function fivePeoplePlannedMeals(): PlannedRow[] {
   return [
-    pm(1, "breakfast", true, 5), pm(1, "lunch", true, 4), pm(1, "dinner", true, 3), pm(1, "snack", true, null),
-    pm(2, "breakfast", true, 4), pm(2, "lunch", true, 4), pm(2, "dinner", true, 4), pm(2, "snack", false, null),
-    pm(3, "breakfast", true, 3), pm(3, "lunch", true, 3), pm(3, "dinner", false, 3), pm(3, "snack", false, null),
-    pm(4, "breakfast", false, 2), pm(4, "lunch", true, 2), pm(4, "dinner", false, 2), pm(4, "snack", false, 2),
-    pm(5, "breakfast", false, 1), pm(5, "lunch", false, 1), pm(5, "dinner", false, 1), pm(5, "snack", false, 1),
+    pm(1, "breakfast", true, 100), pm(1, "lunch", true, 80), pm(1, "dinner", true, 60), pm(1, "snack", true, null),
+    pm(2, "breakfast", true, 80), pm(2, "lunch", true, 80), pm(2, "dinner", true, 80), pm(2, "snack", false, null),
+    pm(3, "breakfast", true, 60), pm(3, "lunch", true, 60), pm(3, "dinner", false, 60), pm(3, "snack", false, null),
+    pm(4, "breakfast", false, 40), pm(4, "lunch", true, 40), pm(4, "dinner", false, 40), pm(4, "snack", false, 40),
+    pm(5, "breakfast", false, 20), pm(5, "lunch", false, 20), pm(5, "dinner", false, 20), pm(5, "snack", false, 20),
   ];
 }
 
@@ -434,7 +435,7 @@ describe("calculate-segment-stats: planned_meals を user_daily_meals 経由で�
     const expected: Record<string, number[]> = {
       "m-exec": [100, 75, 50, 25, 0],
       "m-bf": [100, 100, 100, 0, 0],
-      "m-veg": [4, 4, 3, 2, 1],
+      "m-veg": [80, 80, 60, 40, 20],
       "m-nut": [80, 80, 60, 40, 20],
     };
     for (const [metricId, values] of Object.entries(expected)) {
@@ -450,6 +451,26 @@ describe("calculate-segment-stats: planned_meals を user_daily_meals 経由で�
     expect(db.saved.user_metrics).toHaveLength(20);
     expect(metricRow(db, 1, "m-exec")).toMatchObject({ previous_value: 50, change_rate: 100 });
     expect(metricRow(db, 2, "m-exec")).toMatchObject({ previous_value: null, change_rate: null });
+  });
+
+  it("nutrition_score は veg_score_avg (0〜100) を四捨五入した値 (係数 1)", async () => {
+    // 端数の出る平均: u1 は (100 + 80 + 71) / 3 = 83.67 → 野菜 83.7・栄養 84。u2 は (55 + 56) / 2 = 55.5 → 野菜 55.5・栄養 56
+    // (以前の × 20 なら栄養は 100 を超える。0〜100 の尺度のまま比べられること)
+    const db = newDb({
+      planned: [
+        pm(1, "breakfast", true, 100), pm(1, "lunch", true, 80), pm(1, "dinner", true, 71),
+        pm(2, "breakfast", true, 55), pm(2, "lunch", true, 56),
+        pm(3, "breakfast", true, 0),
+        pm(4, "breakfast", true, null),
+        pm(5, "breakfast", false, null),
+      ],
+    });
+    install(db);
+
+    await call();
+
+    expect([1, 2, 3, 4, 5].map((n) => metricRow(db, n, "m-veg").value)).toEqual([83.7, 55.5, 0, 0, 0]);
+    expect([1, 2, 3, 4, 5].map((n) => metricRow(db, n, "m-nut").value)).toEqual([84, 56, 0, 0, 0]);
   });
 
   it("セグメントの統計とランキングも、その指標から作られる", async () => {
@@ -627,7 +648,7 @@ const profilesOf = (count: number): Row[] =>
 
 describe("calculate-segment-stats: ランキングの順位・平均比 (#1306)", () => {
   it("同じ値の利用者は同じ順位になり (競技方式)、利用者の並び (取得順) に左右されない", async () => {
-    // 朝食実行率は 100 が 3 人 (u1〜u3)・0 が 2 人 (u4, u5)。野菜 4.0 と栄養 80 は 2 人 (u1, u2) が同じ値
+    // 朝食実行率は 100 が 3 人 (u1〜u3)・0 が 2 人 (u4, u5)。野菜 80 と栄養 80 は 2 人 (u1, u2) が同じ値
     const forward = newDb({ badges: ALL_BADGES });
     install(forward);
     await call(FINALIZED);
@@ -752,8 +773,8 @@ describe("calculate-segment-stats: 差の無い指標・実績の無い利用者
   });
 
   it("平均ちょうど (平均比 0%) の利用者には『平均超え』を付けない。平均を超えた利用者には付く", async () => {
-    // 野菜スコアは u1〜u5 が 1〜5 (平均 3)、栄養スコアは 20〜100 (平均 60)。メニュー実行率・朝食実行率は全員 100 で差が無い
-    const db = newDb({ planned: [1, 2, 3, 4, 5].map((n) => pm(n, "breakfast", true, n)), badges: ALL_BADGES });
+    // 野菜スコアと栄養スコアは u1〜u5 が 20〜100 (平均 60)。メニュー実行率・朝食実行率は全員 100 で差が無い
+    const db = newDb({ planned: [20, 40, 60, 80, 100].map((score, i) => pm(i + 1, "breakfast", true, score)), badges: ALL_BADGES });
     install(db);
 
     await call(FINALIZED);
