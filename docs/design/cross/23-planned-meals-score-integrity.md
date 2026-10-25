@@ -1218,6 +1218,7 @@ async function analyzeMealPhotoBackgroundTask({
 - 鍵 (`SERVICE_ROLE_JWT` / `SUPABASE_SERVICE_ROLE_KEY`) が無いとき: 今までは `queueDb` の作成の失敗が内側の `catch` で警告になり、利用者の client で update していた。本書の後は `queueDb` を内側の `try` の外 (外側の `try` の中) で作るので、`createClient` の例外が外側の `catch` に届き、ログに残して書かない (service_role でしか書けないため)。`queueDb` は今と同じ式で作るので、鍵についての前提は今と変わらない (本番の鍵の有無は本書では確かめていない。§19 の 4 が本番で `veg_score` が入ることを確かめる)。内側の `try` の中で作ると、その後の本人の確認と update から見えない。
 - 既存の外側の `catch` (`createLogger('analyze-meal-photo').withUser(userId).error(...)`) はそのまま。他人の `mealId` は今まで RLS で黙って 0 行だったが、本書の後はこの例外がログに残る (書き込みは起きない)。
 - **cross/02 §3.3 との関係** (本書を書いた時点の文から外れていた 2 か所目。1 か所目は §7.12): 書いた時点の cross/02 §3.3 は「Edge Function での service_role 使用時は必ず `admin_audit_logs` に記録」(`docs/design/cross/02-rls-patterns.md:48`) と書いていたが、本節の `queueDb` の新しい用途 (本人の行の確認と `planned_meals` の UPDATE) は `admin_audit_logs` に書かない。理由: `admin_audit_logs` に記録する操作は `docs/design/operator/07-audit-monitoring.md` §4 の網羅リスト (運営・システムの自動の操作・利用者の課金の操作) が決め、写真の解析の結果を本人の献立に書くことはその一覧に無い (記録の書き手 `src/lib/admin/audit.ts:1-6` も「運営操作の監査ログ」)。Edge Function の既存の service_role の書き込み (`generate-menu-v4` / `v5` が使う `_shared/save-meal.ts` の `planned_meals` の INSERT・本ファイルの `queueDb` の `meal_image_jobs` の取り消し) も `admin_audit_logs` を書いていない (origin/main `7f61035f5` で `git grep admin_audit_logs -- supabase/functions` は `_shared/hidden-content-purge.ts:20` の注の 1 件だけ)。書き込みの失敗・他人の `mealId` は、上の外側の `catch` のログに残る (§10)。§17 の追随で、cross/02 §3.3 の文を今の形 (記録する操作は operator/07 §4 の一覧が決める) に直した。
+- **書き込みの順序 (#121 の CAS。#2025 の続きで戻した)**: 同じ献立に写真の解析を 2 回続けて送ると背景の処理が 2 本並び、条件の無い update では後に終わった方が書いて、古い写真の結果が新しい結果を上書きしえた (route は `invokedAt` を送り CAS で防ぐと書いていたが、Edge は受け取っていなかった。#160 の CAS は #248 の競合の解消で消えていた)。本人の行の確認を解析の前に移し、その直後に `supabase/functions/_shared/meal-photo-cas.ts` の `claimPhotoAnalysis` で行に印を付ける (`updated_at` を進める。`invokedAt` があれば `updated_at` が `invokedAt` 以前か NULL のときだけ。PostgREST は or の条件を update の返す行にも当て直すので、2 つの条件は or にせず 1 回ずつ送る)。解析のあと `isPhotoAnalysisCurrent` で印のままかを見て、写真の結果の update は `.eq('updated_at', 印).select('id')` で印のままの行にだけ書く (0 行なら書かない)。後から送った解析の印が先の印を消すので、終わる順番によらず最後に送った写真の結果が残る。解析のあいだにほかの書き手 (完了の RPC・料理の画像のジョブ・画面の編集) が行を書いた場合も書かない。`invokedAt` が日時として読めなければ、利用回数を数える前に 400。振る舞いは `tests/analyze-meal-photo-cas.test.ts`、本物の PostgREST での評価は `tests/integration/rls/planned-meals-photo-analysis-cas.test.ts`。
 - `update` の本文の列は今までと同じ (`tests/analyze-meal-photo-sugar.test.ts` の「update は 1 か所・栄養の列は `buildPhotoOverwriteNutrition(result)`・`veg_score` は手書き」はそのまま通る。`select` は update に数えない)。
 - `mealId` の経路の解析は Gemini で行う (`prefetchedGeminiResult` を送っても使わない)。利用回数の数え方 (Next.js の印・Edge の `consumeEdgeAiUsage`) は今のまま (`prefetchedGeminiResult` の有無で数え方は変わらない。`tests/ai-usage-photo-auto-grant.test.ts` の 2 の「偽の prefetchedGeminiResult を送っても数える」のとおり)。
 - `tests/planned-meals-score-integrity-writers-scan.test.ts` (§7.21) の項目 2 は、`queueDb` の作成 (`createClient(` の 2 つの引数 `SUPABASE_URL`・`SERVICE_ROLE_JWT` ?? `SUPABASE_SERVICE_ROLE_KEY`)・本人の確認の 2 つの条件・`if (!owned) throw new Error(PLANNED_MEAL_NOT_FOUND_CODE)`・`await queueDb` の update の順を、空白と改行の違いを無視して見る (字下げは問わない)。項目 7 は、背景の処理の登録と背景の処理の関数に `prefetchedGeminiResult` が無く、関数の中の `analyzeWithEvidence` が 3 引数であることを AST で見る。Next.js の route が `mealId` のときに渡さないことは `tests/image-route-contracts.test.ts` の追記の it (§7.22) が振る舞いで見る。
@@ -2513,14 +2514,20 @@ sequenceDiagram
   participant T as planned_meals
   A->>E: invoke { images, mealId, mealType, userId, invokedAt } (利用者の JWT。prefetchedGeminiResult は mealId があるので渡さない)
   E->>E: 認証・同意・利用回数 → 背景の処理を登録 ({ images, mealId, mealType, userId, authHeader }。本文に prefetchedGeminiResult があっても渡さない) → 200 { message }
-  E->>G: analyzeWithEvidence(images, mealType, supabase) (3 引数。Gemini で認識) → result (vegScore = vegScoreOfVegetableGrams(野菜 g))
-  E->>W: cancelPendingMealImageJobs (本人の行に絞る)
   E->>W: select id, user_daily_meals!inner(user_id) where id = mealId and user_daily_meals.user_id = userId
-  alt 1 行
-    E->>W: update { ...栄養, veg_score: result.vegScore, ... } where id = mealId
-    W->>T: UPDATE (service_role。列の権限を通らない)
-  else 0 行
-    E->>E: throw PLANNED_MEAL_NOT_FOUND → ログ
+  alt 0 行
+    E->>E: throw PLANNED_MEAL_NOT_FOUND → ログ (印も付けない)
+  else 1 行
+    E->>W: claimPhotoAnalysis: update { updated_at } where id = mealId and updated_at <= invokedAt (0 行なら updated_at is null で 1 回。or にしない) → 印 = 進んだ updated_at (invokedAt が無ければ条件なし)
+    alt 0 行 (invokedAt のあとに書かれていた)
+      E->>E: 解析せずに終える
+    else 印が付いた
+      E->>G: analyzeWithEvidence(images, mealType, supabase) (3 引数。Gemini で認識) → result (vegScore = vegScoreOfVegetableGrams(野菜 g))
+      E->>W: isPhotoAnalysisCurrent: select id where id = mealId and updated_at = 印 (違えばアップロード・取り消し・書き込みをせずに終える)
+      E->>W: cancelPendingMealImageJobs (本人の行に絞る)
+      E->>W: update { ...栄養, veg_score: result.vegScore, ... } where id = mealId and updated_at = 印
+      W->>T: UPDATE (service_role。列の権限を通らない。0 行なら書かずに終える)
+    end
   end
 ```
 
