@@ -569,3 +569,525 @@ GRANT INSERT, UPDATE ON TABLE public.planned_meals TO anon, authenticated;
 ```
 
 列の並びは 4 か所とも同じ (ベースラインの CREATE TABLE の順から 3 列を抜いたもの)。`tests/planned-meals-score-integrity-migration-contract.test.ts` (§7.19) が、ベースラインの列から機械で作った一覧と 4 か所の一致を見る。
+
+### 7.5 `packages/shared/src/planned-meals-integrity.ts` (新。全文。何も import しない。Web・モバイル・テストが読む)
+
+`packages/shared/src/index.ts` に `export * from './planned-meals-integrity';` を 1 行足す (`./billing-plans` の行の次)。
+
+```ts
+// packages/shared/src/planned-meals-integrity.ts
+// 献立 (planned_meals) の、サーバだけが書く 3 列と完了の RPC (docs/design/cross/23-planned-meals-score-integrity.md)。
+// Web (src) とモバイル (apps/mobile) の両方から読むので、zod も supabase-js も import しない。
+// Edge Function は packages/shared を import できないので、尺度の値は supabase/functions/_shared/veg-score.ts にも置く
+// (値の一致は tests/veg-score-scale-contract.test.ts が見る)。
+
+/**
+ * 利用者 (authenticated) のセッションからは INSERT / UPDATE できない列。
+ * 比較ランキング (calculate-segment-stats) と組織のチャレンジ (update_org_challenge_progress) が指標に使う 2 列と、
+ * 完了の時刻 (完了の RPC だけが書く)。migration <番号はマージ時に確定>_planned_meals_score_columns_server_only.sql が
+ * 列の権限から外す。
+ */
+export const PLANNED_MEALS_SERVER_ONLY_COLUMNS = ['is_completed', 'completed_at', 'veg_score'] as const;
+
+export type PlannedMealsServerOnlyColumn = (typeof PLANNED_MEALS_SERVER_ONLY_COLUMNS)[number];
+
+/** 完了の切り替えの RPC (SECURITY DEFINER。本人の行だけ。migration <番号はマージ時に確定>_planned_meals_set_completed_rpc.sql) */
+export const PLANNED_MEALS_SET_COMPLETED_RPC = 'planned_meals_set_completed';
+
+/** RPC の引数 (DB の関数の引数名と同じ) */
+export interface PlannedMealsSetCompletedArgs {
+  p_meal_id: string;
+  p_completed: boolean;
+}
+
+/** RPC の引数を組み立てる (hook・route・テストで引数名を手書きしない) */
+export function plannedMealsSetCompletedArgs(mealId: string, completed: boolean): PlannedMealsSetCompletedArgs {
+  return { p_meal_id: mealId, p_completed: completed };
+}
+
+/** RPC が返す 1 行 (RETURNS TABLE)。completed_at / updated_at は ISO 8601 の文字列か null */
+export interface PlannedMealsSetCompletedRow {
+  id: string;
+  is_completed: boolean;
+  completed_at: string | null;
+  updated_at: string | null;
+}
+
+/**
+ * RPC が「本人の行として見つからない」ときに RAISE する文 (他人の行・無い行)。SQLSTATE は P0002 (no_data_found)。
+ * supabase-js の error は { code: 'P0002', message: 'PLANNED_MEAL_NOT_FOUND' } の形で届く
+ */
+export const PLANNED_MEAL_NOT_FOUND_CODE = 'PLANNED_MEAL_NOT_FOUND';
+export const PLANNED_MEAL_NOT_FOUND_SQLSTATE = 'P0002';
+
+/** supabase-js / PostgREST のエラーが、RPC の PLANNED_MEAL_NOT_FOUND か */
+export function isPlannedMealNotFoundRpcError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const { code, message } = error as { code?: unknown; message?: unknown };
+  if (code === PLANNED_MEAL_NOT_FOUND_SQLSTATE) return true;
+  return typeof message === 'string' && message.includes(PLANNED_MEAL_NOT_FOUND_CODE);
+}
+
+/**
+ * 野菜スコアの尺度 (写真の解析 supabase/functions/_shared/nutrition-pipeline.ts の estimateVegetableScore が書く値の範囲)。
+ * 計算の正本は supabase/functions/_shared/veg-score.ts (ここは Web / モバイル用の写し)。
+ * 組織のチャレンジ (src/lib/org-challenges.ts) の目標値の範囲と、比較ランキングの nutrition_score の正規化がこの値を使う
+ */
+export const VEG_SCORE_MIN = 0;
+export const VEG_SCORE_MAX = 100;
+
+/** 野菜スコアとして DB に入ってよい値 (0〜100 の整数) か。null は「未計算」で、ここでは false */
+export function isVegScore(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= VEG_SCORE_MIN && value <= VEG_SCORE_MAX;
+}
+```
+
+### 7.6 `supabase/functions/_shared/veg-score.ts` (新。全文。Deno。何も import しない)
+
+```ts
+// supabase/functions/_shared/veg-score.ts
+// 野菜スコア (planned_meals.veg_score) の尺度と計算の正本 (docs/design/cross/23-planned-meals-score-integrity.md §6.3)。
+// 書くのは analyze-meal-photo の背景の処理 (service_role) だけ。読むのは calculate-segment-stats (nutrition_score の正規化)。
+// Web / モバイルは packages/shared/src/planned-meals-integrity.ts の写し (VEG_SCORE_MIN / VEG_SCORE_MAX) を読む。
+// 値の一致は tests/veg-score-scale-contract.test.ts が見る。
+
+/** 野菜スコアの下限・上限 (整数の点)。DB の列は integer */
+export const VEG_SCORE_MIN = 0;
+export const VEG_SCORE_MAX = 100;
+
+/**
+ * 満点 (VEG_SCORE_MAX) に当たる 1 食の野菜の量 (g)。
+ * 以前の estimateVegetableScore の式 `round(vegetableGrams / 120 * 100)` の 120 を名前にしたもの。尺度の定義そのもので、
+ * 変えると過去の値と比べられなくなるので、環境変数では変えない (変えるときは設計書を改定する)
+ */
+export const VEG_SCORE_FULL_MARK_GRAMS = 120;
+
+/**
+ * 比較ランキングの nutrition_score (0〜100 の整数) を veg_score_avg から求める係数。
+ * 尺度が 0〜100 なので 1 (以前は 1〜5 点を前提に 20 を掛けていた)
+ */
+export const NUTRITION_SCORE_PER_VEG_SCORE = 100 / VEG_SCORE_MAX;
+
+function clampVegScore(value: number): number {
+  return Math.min(VEG_SCORE_MAX, Math.max(VEG_SCORE_MIN, value));
+}
+
+/**
+ * 1 食の野菜の量 (g の合計) から野菜スコア (0〜100 の整数) を求める。
+ * 有限でない・負の量は 0 (以前は NaN が通り抜けた)。
+ */
+export function vegScoreOfVegetableGrams(vegetableGrams: number): number {
+  if (!Number.isFinite(vegetableGrams) || vegetableGrams <= 0) return VEG_SCORE_MIN;
+  return clampVegScore(Math.round((vegetableGrams / VEG_SCORE_FULL_MARK_GRAMS) * VEG_SCORE_MAX));
+}
+
+/** 比較ランキングの nutrition_score: veg_score_avg (0〜100) を 0〜100 の整数に正規化する。平均が無い (0 件) ときは 0 */
+export function nutritionScoreOfVegScoreAverage(vegScoreAverage: number): number {
+  if (!Number.isFinite(vegScoreAverage)) return VEG_SCORE_MIN;
+  return clampVegScore(Math.round(vegScoreAverage * NUTRITION_SCORE_PER_VEG_SCORE));
+}
+```
+
+### 7.7 `src/modules/planned-meals-integrity/core.ts` (新。全文。zod と `@homegohan/shared` だけを import する)
+
+```ts
+// tsc:skip (本書が新設する @homegohan/shared の planned-meals-integrity を import する。型は §7.5 のとおり)
+// src/modules/planned-meals-integrity/core.ts
+// 献立の完了の RPC の入出力の Zod の正典と文言 (docs/design/cross/23-planned-meals-score-integrity.md §7.7)。
+// route と server.ts から使う。DB の操作は ./server.ts。
+import { z } from 'zod';
+import type { PlannedMealsSetCompletedRow } from '@homegohan/shared';
+
+/**
+ * route の本文の完了の指定 (PATCH /api/meals/[id] の is_completed・PATCH /api/meal-plans/meals/[id] の isCompleted)。
+ * boolean だけ。undefined は「指定なし」(route が safeParse の前に見分ける)。文字列の 'true' や 1 は通さない
+ */
+export const PlannedMealCompletionInputSchema = z.boolean();
+
+/** RPC planned_meals_set_completed が返す 1 行 (RETURNS TABLE)。PostgREST は配列で返す */
+export const PlannedMealsSetCompletedRowSchema = z.object({
+  id: z.string().uuid(),
+  is_completed: z.boolean(),
+  completed_at: z.string().nullable(),
+  updated_at: z.string().nullable(),
+}) satisfies z.ZodType<PlannedMealsSetCompletedRow>;
+
+export type PlannedMealCompletionRow = z.infer<typeof PlannedMealsSetCompletedRowSchema>;
+
+/** 本文の is_completed / isCompleted が boolean でないときの 400 の文 (固定。値は載せない) */
+export const PLANNED_MEAL_COMPLETION_INVALID_MESSAGE = '完了の指定は true か false で送ってください';
+
+/** RPC の返す行の形が正典と違うときの失敗の文 (ログ用。本文には出ない) */
+export const PLANNED_MEAL_COMPLETION_ROW_SHAPE_FAILURE_MESSAGE =
+  'planned_meals_set_completed の返す行の形が正典 (PlannedMealsSetCompletedRowSchema) と違います';
+```
+
+### 7.8 `src/modules/planned-meals-integrity/server.ts` (新。全文。route と AI 相談の executor だけが import する)
+
+```ts
+// tsc:skip (本書が新設する ./core と @homegohan/shared の planned-meals-integrity を import する)
+// src/modules/planned-meals-integrity/server.ts
+// 献立の完了の切り替え (RPC planned_meals_set_completed の呼び出し)。RLS の効く利用者の client を受け取る (service_role は使わない)。
+// 失敗は固定の形で返し、DB の生のエラーは呼び出し側 (route) が internalError で構造化ログにだけ残す。
+import type { SupabaseClient } from '@supabase/supabase-js';
+import {
+  PLANNED_MEALS_SET_COMPLETED_RPC,
+  isPlannedMealNotFoundRpcError,
+  plannedMealsSetCompletedArgs,
+} from '@homegohan/shared';
+import { isUuid } from '@/lib/http-params';
+import {
+  PLANNED_MEAL_COMPLETION_ROW_SHAPE_FAILURE_MESSAGE,
+  PlannedMealsSetCompletedRowSchema,
+  type PlannedMealCompletionRow,
+} from './core';
+
+/** route・executor が渡す、利用者のセッションの Supabase クライアント (rpc だけを使う) */
+export type PlannedMealsIntegrityDb = Pick<SupabaseClient, 'rpc'>;
+
+export type SetPlannedMealCompletedResult =
+  | { ok: true; row: PlannedMealCompletionRow }
+  /** 本人の行として無い (他人の行・消えた行・UUID の形でない id)。route は 404、AI 相談は '権限がありません' */
+  | { ok: false; reason: 'not_found' }
+  /** DB の失敗 (RPC が無い・接続の失敗・行の形が違う)。route は 500 */
+  | { ok: false; reason: 'db'; error: unknown };
+
+/**
+ * 献立を完了 / 未完了にする。completed_at は DB が決める (完了なら既存の時刻か now()、未完了なら NULL)。
+ * UUID の形でない id は DB に渡さず not_found (uuid 型の引数に渡すと 22P02 になるため)。
+ */
+export async function setPlannedMealCompleted(
+  db: PlannedMealsIntegrityDb,
+  params: { mealId: string; completed: boolean },
+): Promise<SetPlannedMealCompletedResult> {
+  if (!isUuid(params.mealId)) return { ok: false, reason: 'not_found' };
+  const { data, error } = await db.rpc(
+    PLANNED_MEALS_SET_COMPLETED_RPC,
+    plannedMealsSetCompletedArgs(params.mealId, params.completed),
+  );
+  if (error) {
+    if (isPlannedMealNotFoundRpcError(error)) return { ok: false, reason: 'not_found' };
+    return { ok: false, reason: 'db', error };
+  }
+  // RETURNS TABLE は配列で届く (supabase-js の型の都合で単体のこともあるので両方を受ける)
+  const rows: unknown[] = Array.isArray(data) ? data : data === null || data === undefined ? [] : [data];
+  const parsed = PlannedMealsSetCompletedRowSchema.safeParse(rows[0]);
+  if (!parsed.success) {
+    return { ok: false, reason: 'db', error: new Error(PLANNED_MEAL_COMPLETION_ROW_SHAPE_FAILURE_MESSAGE) };
+  }
+  return { ok: true, row: parsed.data };
+}
+```
+
+### 7.9 route 2 本の差分 (完了は RPC。本文の `completed_at` は無視)
+
+#### 7.9.1 `src/app/api/meals/[id]/route.ts` の PATCH (差分。3 か所)
+
+```ts
+// tsc:skip (既存ファイルの差分の断片)
+// (1) import に足す
+import { setPlannedMealCompleted } from '@/modules/planned-meals-integrity/server';
+import { PLANNED_MEAL_COMPLETION_INVALID_MESSAGE, PlannedMealCompletionInputSchema } from '@/modules/planned-meals-integrity/core';
+
+// (2) 本文の検証 (validatePlannedMealInput の直後)。is_completed が無ければ null。boolean でなければ 400 (DB に触れる前)
+//     completed_at は本文にあっても読まない (時刻は DB が決める)
+const completionInput = body.is_completed === undefined ? null : PlannedMealCompletionInputSchema.safeParse(body.is_completed);
+if (completionInput && !completionInput.success) {
+  return NextResponse.json({ error: PLANNED_MEAL_COMPLETION_INVALID_MESSAGE }, { status: 400 });
+}
+
+// (3) allowedFields から 'is_completed', 'completed_at' を外す (列の権限が無く、送ると 42501 になる)
+const allowedFields = [
+  'dish_name', 'mode', 'description', 'image_url', 'ingredients',
+  'calories_kcal', 'protein_g', 'fat_g', 'carbs_g',
+  'dishes', 'is_simple', 'cooking_time_minutes', 'source_type'
+];
+
+// (4) 既存の update (updateData) と画像のジョブの処理はそのまま。その後、完了の指定があれば RPC で切り替え、応答の行に載せる
+//     (既存の update の `data` の後ろ・`enqueueMealImageJobs` の前に置く)
+let completionRow: Record<string, unknown> = {};
+if (completionInput) {
+  const completion = await setPlannedMealCompleted(supabase, { mealId: params.id, completed: completionInput.data });
+  if (!completion.ok) {
+    if (completion.reason === 'not_found') {
+      return NextResponse.json({ error: MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
+    }
+    return internalError('PATCH /api/meals/[id]', completion.error, { userId: user.id, requestId: requestId ?? undefined });
+  }
+  completionRow = completion.row;
+}
+
+// (5) 応答: 行に RPC の値 (is_completed / completed_at / updated_at) を重ねる
+return NextResponse.json({
+  ...data,
+  ...completionRow,
+  ...(imageGenerationThrottled ? { imageGenerationThrottled: true } : {}),
+  ...aiDailyLimitSkippedField(imageUsage),
+});
+```
+
+順序: 既存の UPDATE (ほかの列) → 完了の RPC → 画像のジョブ。既存の UPDATE が失敗したら今までどおり 500 で終わり、RPC は呼ばない。RPC が失敗したら (他の列は保存済みのまま) 404 / 500 を返す。画面は失敗時に楽観的更新を戻して読み直す (今までと同じ)。
+
+#### 7.9.2 `src/app/api/meal-plans/meals/[id]/route.ts` の PATCH (差分。3 か所)
+
+```ts
+// tsc:skip (既存ファイルの差分の断片)
+// (1) import に足す (7.9.1 と同じ 2 行)
+import { setPlannedMealCompleted } from '@/modules/planned-meals-integrity/server';
+import { PLANNED_MEAL_COMPLETION_INVALID_MESSAGE, PlannedMealCompletionInputSchema } from '@/modules/planned-meals-integrity/core';
+
+// (2) validatePlannedMealInput の直後
+const completionInput = isCompleted === undefined ? null : PlannedMealCompletionInputSchema.safeParse(isCompleted);
+if (completionInput && !completionInput.success) {
+  return NextResponse.json({ error: PLANNED_MEAL_COMPLETION_INVALID_MESSAGE }, { status: 400 });
+}
+
+// (3) updateData から is_completed / completed_at の 2 行を消す (次の 4 行を削除)
+//   if (isCompleted !== undefined) {
+//     updateData.is_completed = isCompleted;
+//     updateData.completed_at = isCompleted ? new Date().toISOString() : null;
+//   }
+
+// (4) 既存の update の `data` の後ろ・画像のジョブの前
+let completionRow: Record<string, unknown> = {};
+if (completionInput) {
+  const completion = await setPlannedMealCompleted(supabase, { mealId: existingMeal.id, completed: completionInput.data });
+  if (!completion.ok) {
+    if (completion.reason === 'not_found') {
+      return NextResponse.json({ error: MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
+    }
+    throw completion.error;
+  }
+  completionRow = completion.row;
+}
+
+// (5) 応答
+return NextResponse.json({
+  success: true,
+  meal: { ...data, ...completionRow },
+  ...(imageGenerationThrottled ? { imageGenerationThrottled: true } : {}),
+  ...aiDailyLimitSkippedField(imageUsage),
+});
+```
+
+`throw completion.error` は、この route の既存の `catch` が `internalError('PATCH /api/meal-plans/meals/[id]', error, { userId })` で 500 にする形に合わせたもの (既存の `if (error) throw error;` と同じ)。
+
+### 7.10 `src/lib/ai/consultation-action-executor.ts` の `complete_meal` (差し替え)
+
+```ts
+// tsc:skip (既存ファイルの差分の断片。import は先頭に足す)
+import { setPlannedMealCompleted } from '@/modules/planned-meals-integrity/server';
+
+    case 'complete_meal': {
+      const { mealId, isCompleted } = action.action_params;
+      // 本人の行かどうかは RPC (planned_meals_set_completed) が確かめる。他人の行・無い行・UUID の形でない id は not_found
+      const completion = await setPlannedMealCompleted(supabase, {
+        mealId: typeof mealId === 'string' ? mealId : '',
+        completed: isCompleted !== false,
+      });
+      if (!completion.ok) {
+        if (completion.reason === 'not_found') {
+          result = { error: '権限がありません' };
+          break;
+        }
+        success = false;
+        result = { mealId, error: '食事の完了を更新できませんでした' };
+        break;
+      }
+      success = true;
+      result = { mealId, completed: completion.row.is_completed };
+      break;
+    }
+```
+
+- 既存の所有権の確認 (`select id, user_daily_meals!inner(user_id)`) は消す (RPC が同じ式で確かめる)。
+- `result.error` の文 '権限がありません' は既存のまま (`tests/consultation-action-raw-error-text.test.ts`・`src/lib/ai/ai-api-messages.ts` の決まり: route の外の文は固定の日本語)。DB の失敗の文 '食事の完了を更新できませんでした' は新設 (§13)。`src/lib/ai/ai-api-messages.ts` の「相談の提案の実行の値の検証」の節に定数 `AI_ACTION_COMPLETE_MEAL_FAILED_MESSAGE` として置き、executor はそれを読む (直書きしない)。
+
+### 7.11 新規作成の 3 route (差分。`is_completed: false` の 1 行を消す)
+
+```ts
+// tsc:skip (既存ファイルの差分の断片)
+// src/app/api/meals/route.ts (insertData)・src/app/api/meal-plans/meals/route.ts (insertData)・
+// src/app/api/meal-plans/add-from-photo/route.ts (insertData) の 3 か所から、次の 1 行を消す
+//   is_completed: false,
+// 列の既定 (DEFAULT false) が入る。応答の is_completed (.select().single() / newMeal.is_completed) は false のまま
+```
+
+### 7.12 週間生成の失敗時の復元 (`src/app/api/ai/menu/weekly/request/route.ts` の差分)
+
+```ts
+// tsc:skip (既存ファイルの差分の断片)
+// import に getSupabaseAdmin を足す (createClient と同じ行から)
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
+
+// 失敗時の復元 (既存の restorePlannedMealsSnapshot(supabase, deletedMealsSnapshot) の 1 行を差し替える)
+//   snapshot の行は本人のセッション (RLS) の select('*') で読んだもので、daily_meal_id は本人の user_daily_meals を指す。
+//   利用者の権限では is_completed / completed_at / veg_score を INSERT できない (42501) ので、消した行をそのまま
+//   (完了の印・時刻・野菜スコアを落とさずに) 戻すために service_role で INSERT する (#2025。cross/02 §3.3 の例外。
+//   所有権は行の出どころで保証され、ここで別の行を作らない)
+const restoreResult = await restorePlannedMealsSnapshot(getSupabaseAdmin(), deletedMealsSnapshot);
+```
+
+`src/lib/planned-meals-snapshot.ts` は変えない (受け取った client で INSERT する。`fetchOccupiedSlots` も同じ client で、snapshot の `daily_meal_id` に絞る)。
+
+### 7.13 `src/app/api/ai/nutrition/route.ts` の差分 (`veg_score` を書かない。3 か所)
+
+```ts
+// tsc:skip (既存ファイルの差分の断片)
+// (1) nutritionData の分岐の update: veg_score の 1 行を消す (quality_tags は残す)
+      const { error: updateError } = await supabase
+        .from('planned_meals')
+        .update({
+          // 検証済みの値（送られていない項目は含まれず、既存の値を残す）
+          ...validation.nutrients,
+          // veg_score は利用者から受け取らない (#2025。サーバの計算値 = 写真の解析だけが書く)
+          quality_tags: nutritionData.quality_tags,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', plannedMealId);
+
+// (2) プロンプトから `"veg_score": number (1-5),` の行を消す (応答の形は calories_kcal / protein_g / fat_g / carbs_g / quality_tags / dishes)
+
+// (3) imageUrl の分岐の updatePayload から `veg_score: result.veg_score,` の 1 行を消す
+        const updatePayload: Record<string, unknown> = {
+          ...aiNutrients,
+          // veg_score は書かない (#2025。fast LLM の 1〜5 点は写真の解析の 0〜100 点と尺度が違い、正本ではない)
+          quality_tags: result.quality_tags,
+          dishes: photoDishes.length > 0 ? photoDishes : existing.dishes ?? null,
+          image_url: imageUrl,
+          updated_at: new Date().toISOString(),
+        };
+```
+
+応答 (`{ success: true, nutritionData }` / `{ success: true, nutritionData: result }`) の形は変えない (AI の応答に `veg_score` が入っていてもそのまま返すが、保存はしない)。
+
+### 7.14 hook 2 本の差分 (完了は RPC)
+
+#### 7.14.1 `src/hooks/useHomeData.ts` (Web のホーム)
+
+```ts
+// tsc:skip (既存ファイルの差分の断片)
+// import に足す (formatLocalDate と同じ行から)
+import { formatLocalDate, pantryExpiringSoonUntil, PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs } from "@homegohan/shared";
+
+    // DB更新 (完了は RPC。completed_at は DB が決める。#2025)
+    const { error } = await supabase.rpc(PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs(mealId, newStatus));
+```
+
+楽観的更新 (`completedAt: newStatus ? new Date().toISOString() : null`) と失敗時の戻し・`fetchHomeData()` は今のまま (画面の時刻は読み直しで DB の値に置き換わる)。
+
+#### 7.14.2 `apps/mobile/src/hooks/useHomeData.ts` (モバイルのホーム)
+
+```ts
+// tsc:skip (既存ファイルの差分の断片)
+// import に足す (formatCalendarDate と同じ行から)
+import { formatCalendarDate, pantryExpiringSoonUntil, todayCalendarDate, todayLocal, PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs } from "@homegohan/shared";
+
+    const { error } = await supabase.rpc(PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs(mealId, newStatus));
+```
+
+楽観的更新・失敗時の戻し・`fetchAll()` は今のまま。
+
+### 7.15 `supabase/functions/analyze-meal-photo/index.ts` の差分 (背景の処理の書き込みを service_role に)
+
+```ts
+// tsc:skip (Deno の既存ファイルの差分の断片)
+// analyzeMealPhotoBackgroundTask の中。利用者の client (supabase) は解析 (analyzeWithEvidence) と Storage のアップロードに使い続ける。
+// planned_meals の書き込みは service_role の client (writer) で行う。利用者の権限では veg_score を書けない (#2025)。
+// service_role は RLS を通らないので、書く前に本人の行であることを必ず確かめる (save-meal.ts の「最終防衛線」と同じ考え)。
+const writer = createClient(
+  Deno.env.get('SUPABASE_URL') ?? '',
+  Deno.env.get('SERVICE_ROLE_JWT') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+)
+
+// (meal_image_jobs の取り消しは、今まで try の中で作っていた queueDb を writer に置き換える)
+await cancelPendingMealImageJobs({ supabase: writer, userId, plannedMealId: mealId, reason: 'photo overwrite' })
+
+// 本人の行か (user_daily_meals.user_id = userId)。無ければ書かずに終える (他人の mealId・消えた献立)
+const { data: owned, error: ownedError } = await writer
+  .from('planned_meals')
+  .select('id, user_daily_meals!inner(user_id)')
+  .eq('id', mealId)
+  .eq('user_daily_meals.user_id', userId)
+  .maybeSingle()
+if (ownedError) throw ownedError
+if (!owned) throw new Error(PLANNED_MEAL_NOT_FOUND_CODE)
+
+const { error: updateError } = await writer
+  .from('planned_meals')
+  .update({
+    dish_name: dishName || '写真から入力',
+    dishes: photoDishes,
+    image_url: imageUrl,
+    description: result.praiseComment,
+    // 栄養素 (基本・拡張・糖質)。書く列は meal-photo-update.ts に集約している (#1146)
+    ...buildPhotoOverwriteNutrition(result),
+    // 野菜スコア (0〜100。_shared/veg-score.ts の尺度。#2025 の正本)
+    veg_score: result.vegScore,
+    // メタデータ
+    is_simple: result.dishes.length <= 1,
+    mode: 'cook',
+    updated_at: new Date().toISOString(),
+  })
+  .eq('id', mealId)
+```
+
+- `PLANNED_MEAL_NOT_FOUND_CODE` は Edge では `_shared/veg-score.ts` に置かず、`index.ts` の先頭で `const PLANNED_MEAL_NOT_FOUND_CODE = 'PLANNED_MEAL_NOT_FOUND'` と定義する (Edge は `packages/shared` を import しない。値は §7.5 と同じ。`tests/veg-score-scale-contract.test.ts` が一致を見る)。
+- 既存の `catch` (`createLogger('analyze-meal-photo').withUser(userId).error(...)`) はそのまま。他人の `mealId` は今まで RLS で黙って 0 行だったが、本書の後はこの例外がログに残る (書き込みは起きない)。
+- `update` の本文の列は今までと同じ (`tests/analyze-meal-photo-sugar.test.ts` の「update は 1 か所・栄養の列は `buildPhotoOverwriteNutrition(result)`・`veg_score` は手書き」はそのまま通る。`select` は update に数えない)。
+- `writer` の変数名と `createClient(... SERVICE_ROLE_JWT ... SUPABASE_SERVICE_ROLE_KEY ...)` の形は、`tests/planned-meals-score-integrity-writers-scan.test.ts` (§7.21) が逐語で見る。
+
+### 7.16 `supabase/functions/_shared/nutrition-pipeline.ts` の差分 (`estimateVegetableScore` を尺度の正本に寄せる)
+
+```ts
+// tsc:skip (Deno の既存ファイルの差分の断片)
+import { vegScoreOfVegetableGrams } from './veg-score.ts'
+
+// estimateVegetableScore を export し、式を veg-score.ts に寄せる (値は今までと同じ。有限でない量は 0)
+export function estimateVegetableScore(dishes: AnalyzedDish[]): number {
+  const vegetableGrams = dishes.reduce((sum, dish) => (
+    sum + dish.ingredients.reduce((dishSum, ingredient) => (
+      dishSum + (isVegetableIngredient(ingredient.name, ingredient.matched?.name) ? ingredient.amount_g : 0)
+    ), 0)
+  ), 0)
+
+  return vegScoreOfVegetableGrams(vegetableGrams)
+}
+```
+
+`export` にするのは `tests/veg-score-scale-contract.test.ts` から直接呼ぶため (`nutrition-pipeline.ts` は supabase-js と Gemini の module を import するので、テストは `vegScoreOfVegetableGrams` の方を主に確かめ、`estimateVegetableScore` は「その関数を呼ぶ」ことを AST で見る)。
+
+### 7.17 `supabase/functions/calculate-segment-stats/index.ts` の差分 (`nutrition_score` の係数)
+
+```ts
+// tsc:skip (Deno の既存ファイルの差分の断片)
+import { nutritionScoreOfVegScoreAverage } from '../_shared/veg-score.ts';
+
+    case 'nutrition_score': {
+      const sum = bulk.vegScoreSum.get(userId) ?? 0;
+      const cnt = bulk.vegScoreCount.get(userId) ?? 0;
+      // veg_score は 0〜100 (写真の解析の尺度。#2025)。以前は 1〜5 点を前提に × 20 していた
+      return cnt > 0 ? nutritionScoreOfVegScoreAverage(sum / cnt) : 0;
+    }
+```
+
+`veg_score_avg` の分岐 (`Math.round((sum / cnt) * 10) / 10`) は変えない。
+
+### 7.18 `src/types/database.types.ts`・`packages/shared/src/database.types.ts` (段 A で生成し直す。追記の形)
+
+`Functions` の節に次が入る (`supabase gen types` の出力。手書きしない。`tests/database-types-migrations-contract.test.ts` の「型の作り直し方」の手順で生成し、2 本を同じ中身にする)。
+
+```ts
+// tsc:skip (生成物の断片。アルファベット順で planner_* の後・plan_* の前後の位置は生成に従う)
+      planned_meals_set_completed: {
+        Args: { p_completed: boolean; p_meal_id: string }
+        Returns: {
+          id: string
+          is_completed: boolean
+          completed_at: string
+          updated_at: string
+        }[]
+      }
+```
+
+`completed_at` / `updated_at` の null の有無は生成物のとおりにする (RETURNS TABLE の列は NOT NULL の情報を持たないので、生成は `string` と出す。アプリは §7.7 の Zod (`nullable()`) で読む)。
