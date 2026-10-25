@@ -443,11 +443,12 @@ describe('機能パッケージ詳細: 保存は変えた欄だけを送る (#19
 });
 
 /**
- * 状態の変更 (クーポンの一時停止・再開、機能パッケージの廃止) に成功したあとの読み直しも、書きかけの入力欄を残す
- * (#1917 の続き。プラン詳細の成功したあとの読み直しと同じ決まり)。以前は読み直しが入力欄を全部読み直した値にしていたので、
- * まだ保存していない入力が黙って消えていた。手を付けていない欄は読み直した値 (別の運営の変更) にする
+ * 状態の変更 (クーポンの一時停止・再開、機能パッケージの廃止) に成功したあとも、書きかけの入力欄を残す (#1917 の続き)。
+ * 以前は成功のあとの読み直しが入力欄を全部読み直した値にしていたので、まだ保存していない入力が黙って消えていた。
+ * いまは成功したら PATCH の応答の行 (書いたあとの最新の行) で表示を新しくし、全体を読み直さない。保存の経路と同じく、
+ * 手を付けていない欄は応答の行の値 (別の運営の変更) にし、書きかけは残す (inputAfterSave)
  */
-describe('状態の変更に成功したあとの読み直しは、書きかけの入力欄を残す (#1917 の続き)', () => {
+describe('状態の変更に成功したあとも、書きかけの入力欄を残す (#1917 の続き)', () => {
   const hasButton = (label: string) =>
     Array.from(container.querySelectorAll('button')).some((b) => b.textContent?.includes(label));
 
@@ -463,7 +464,7 @@ describe('状態の変更に成功したあとの読み直しは、書きかけ�
     vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
 
-  it('クーポン: 一時停止のあとの読み直しで、書きかけの表示名を残し、手を付けていない欄は読み直した値にする。次の保存で表示名だけを送る', async () => {
+  it('クーポン: 一時停止に成功したら、書きかけの表示名を残し、手を付けていない欄は応答の行の値にする。次の保存で表示名だけを送る', async () => {
     mockApi(COUPON, { concurrentChange: { max_uses: 200 } });
     await render(<CouponDetailPage />);
     await typeInto(field('表示名'), '書きかけの表示名');
@@ -497,7 +498,7 @@ describe('状態の変更に成功したあとの読み直しは、書きかけ�
     expect(field('表示名').value).toBe('秋のクーポン');
   });
 
-  it('クーポン: 書きかけの欄が無ければ、全部の欄を読み直した値にする', async () => {
+  it('クーポン: 書きかけの欄が無ければ、全部の欄を応答の行の値にする', async () => {
     mockApi(COUPON, { concurrentChange: { display_name: '冬のクーポン', max_uses: 200 } });
     await render(<CouponDetailPage />);
 
@@ -532,7 +533,7 @@ describe('状態の変更に成功したあとの読み直しは、書きかけ�
     vi.stubGlobal('fetch', fetchMock);
   }
 
-  it('クーポン: 保存した欄は書きかけとして残さない (保存のあとに別の運営が変えた値を、一時停止のあとの読み直しで出す)', async () => {
+  it('クーポン: 保存した欄は書きかけとして残さない (保存のあとに別の運営が変えた値を、一時停止の応答の行から出す)', async () => {
     mockApiWithChangeBeforeSecondPatch(COUPON, { display_name: '別の運営の表示名' });
     await render(<CouponDetailPage />);
     await typeInto(field('表示名'), '秋のクーポン (改)');
@@ -549,7 +550,7 @@ describe('状態の変更に成功したあとの読み直しは、書きかけ�
     expect(text()).toContain(NO_CHANGES_MESSAGE);
   });
 
-  it('機能パッケージ: 保存した欄は書きかけとして残さない (保存のあとに別の運営が変えた値を、廃止のあとの読み直しで出す)', async () => {
+  it('機能パッケージ: 保存した欄は書きかけとして残さない (保存のあとに別の運営が変えた値を、廃止の応答の行から出す)', async () => {
     mockApiWithChangeBeforeSecondPatch(FEATURE_PACKAGE, { description: '別の運営の説明' });
     await render(<FeaturePackageDetailPage />);
     await typeInto(field('説明'), '基本の機能 (改)');
@@ -566,7 +567,7 @@ describe('状態の変更に成功したあとの読み直しは、書きかけ�
     expect(text()).toContain(NO_CHANGES_MESSAGE);
   });
 
-  it('機能パッケージ: 廃止のあとの読み直しで、書きかけの説明を残し、手を付けていない欄は読み直した値にする。次の保存で説明だけを送る', async () => {
+  it('機能パッケージ: 廃止に成功したら、書きかけの説明を残し、手を付けていない欄は応答の行の値にする。次の保存で説明だけを送る', async () => {
     mockApi(FEATURE_PACKAGE, { concurrentChange: { display_order: 5, feature_flags: ['flag_a', 'flag_b', 'flag_c'] } });
     await render(<FeaturePackageDetailPage />);
     await typeInto(field('説明'), '書きかけの説明');
@@ -596,7 +597,7 @@ describe('状態の変更に成功したあとの読み直しは、書きかけ�
     await typeInto(field('表示順'), '9');
     await api.release();
 
-    // 読み直しが終わると状態が「廃止」になり、「廃止する」ボタンが消える
+    // 応答が返ると状態が「廃止」になり、「廃止する」ボタンが消える
     await vi.waitFor(() => expect(hasButton('廃止する')).toBe(false));
     await vi.waitFor(() => expect(container.querySelector('input[type="text"]')).not.toBeNull());
     expect(field('機能フラグ').value).toBe('flag_a\nflag_z');

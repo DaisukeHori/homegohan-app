@@ -5,10 +5,11 @@
  * operator/03-ui-spec.md §14 / operator/04-plan-management.md §4.1 準拠
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { couponValidityDay, couponValidUntilPatchValue } from '@/lib/super-admin/coupon-validity';
+import { operationFailureMessage, operationNetworkFailureMessage } from '@/lib/admin/api-error-message';
 
 type Coupon = {
   id: string;
@@ -82,20 +83,11 @@ function inputAfterSave(current: string, atSave: string, saved: string): string 
 }
 
 /**
- * 読み直したあとの 1 つの入力欄の値 (#1917 の続き)。書きかけを残す読み直し (状態の変更に成功したあと) で、読み直す前の
- * 比べる元 (最後に読んだ・保存した行の値 = baseline) から変えていなければ読み直した値 (fresh) にし、変えていれば書きかけとして残す
- * (まだ保存していない入力を、読み直しで黙って消さない)。baseline が無い (書きかけを残さない読み込み) ときは読み直した値
- */
-function inputAfterReload(current: string, baseline: string | undefined, fresh: string): string {
-  return baseline !== undefined && current !== baseline ? current : fresh;
-}
-
-/**
  * 保存で送る本文。最後に読んだ・保存したクーポン (coupon) から変えた欄だけを入れる (#1917)。
  * 手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を、開いたときの古い値で上書きしてしまう
  * (route は送られた項目をそのまま書く)。有効期限は JST の暦日で比べる (#1483 の couponValidUntilPatchValue)。
  * 表示名の空欄は null、最大利用回数の空欄は null (無制限) にする (これまでと同じ)。
- * 手を付けていない入力欄は、読み込みと保存の成功のたびに coupon の値に揃える (handleSave) ので、ここで coupon と違う欄は運営が変えた欄
+ * 手を付けていない入力欄は、読み込み・保存の成功・状態の変更の成功のたびに coupon の値に揃える (handleSave・handleStatusChange) ので、ここで coupon と違う欄は運営が変えた欄
  */
 function changedCouponFields(inputs: CouponInputs, coupon: Coupon): CouponSaveBody {
   const body: CouponSaveBody = {};
@@ -108,6 +100,20 @@ function changedCouponFields(inputs: CouponInputs, coupon: Coupon): CouponSaveBo
 
 /** 保存を押したが、どの入力欄も最後に読んだ・保存した値から変えていなかったときの文 (送らない。#1917) */
 const NO_COUPON_CHANGES_MESSAGE = '変更した項目がないので、保存していません';
+
+/** 状態の変更 (PATCH /api/super-admin/coupons/{id} の status) で変えられる状態 */
+type CouponStatusChange = 'active' | 'paused';
+
+/** 状態の変更の操作の名前 (確かめる文と失敗の文に使う) */
+const STATUS_CHANGE_LABELS: Record<CouponStatusChange, string> = {
+  paused: '一時停止',
+  active: '再開',
+};
+
+/** 状態の変更が失敗したときの文の頭 (後ろに理由を添える) */
+function statusChangeFailureSummary(newStatus: CouponStatusChange): string {
+  return `${STATUS_CHANGE_LABELS[newStatus]}できませんでした`;
+}
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   active: { label: '有効', color: 'bg-green-100 text-green-700' },
@@ -132,19 +138,16 @@ export default function CouponDetailPage() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   // 保存を押したが送らなかったときの文 (変えた欄が無い。#1917)
   const [saveInfo, setSaveInfo] = useState('');
+  // 状態の変更 (一時停止・再開) の応答を待っているか・失敗したときの文
+  const [isChangingStatus, setIsChangingStatus] = useState(false);
+  const [statusError, setStatusError] = useState('');
   const [activeTab, setActiveTab] = useState<'detail' | 'redemptions'>('detail');
 
   const [displayName, setDisplayName] = useState('');
   const [validUntil, setValidUntil] = useState('');
   const [maxUses, setMaxUses] = useState('');
-  // 入力欄の比べる元 (最後に読んだ・保存した行)。描画を待たずに、読み直しの応答の時点の値を読むための写し (#1917 の続き)
-  const couponRef = useRef<Coupon | null>(null);
 
-  /**
-   * クーポンを読む。keepEdits のときは、入力欄のうち比べる元 (最後に読んだ・保存した行) から変えている (書きかけの) 欄を残し、
-   * ほかは読んだ値にする (状態の変更に成功したあとの読み直しで、まだ保存していない入力を黙って消さない。#1917 の続き)
-   */
-  const fetchCoupon = useCallback(async (options: { keepEdits?: boolean } = {}) => {
+  const fetchCoupon = useCallback(async () => {
     setIsLoading(true);
     try {
       const res = await fetch(`/api/super-admin/coupons/${couponId}`);
@@ -155,13 +158,11 @@ export default function CouponDetailPage() {
       }
       const loaded = data.data!;
       const inputs = couponInputsOf(loaded);
-      const baseline = options.keepEdits === true && couponRef.current ? couponInputsOf(couponRef.current) : undefined;
-      couponRef.current = loaded;
       setCoupon(loaded);
-      setDisplayName((current) => inputAfterReload(current, baseline?.displayName, inputs.displayName));
+      setDisplayName(inputs.displayName);
       // 有効期限 (DB の時刻) を JST の暦日にして編集欄に入れる (#1483)
-      setValidUntil((current) => inputAfterReload(current, baseline?.validUntil, inputs.validUntil));
-      setMaxUses((current) => inputAfterReload(current, baseline?.maxUses, inputs.maxUses));
+      setValidUntil(inputs.validUntil);
+      setMaxUses(inputs.maxUses);
     } catch {
       setError('ネットワークエラー');
     } finally {
@@ -245,7 +246,6 @@ export default function CouponDetailPage() {
       // 別の運営の変更を上書きしてしまう。応答を待つあいだに変えた欄は書きかけとして残す (次の保存で送る)
       const saved = data.data!;
       const savedInputs = couponInputsOf(saved);
-      couponRef.current = saved;
       setCoupon(saved);
       setDisplayName((current) => inputAfterSave(current, inputsAtSave.displayName, savedInputs.displayName));
       setValidUntil((current) => inputAfterSave(current, inputsAtSave.validUntil, savedInputs.validUntil));
@@ -258,19 +258,41 @@ export default function CouponDetailPage() {
     }
   };
 
-  const handleStatusChange = async (newStatus: 'active' | 'paused') => {
-    const label = newStatus === 'paused' ? '停止' : '再開';
-    if (!confirm(`このクーポンを${label}しますか？`)) return;
+  /**
+   * 状態の変更 (一時停止・再開)。失敗の応答を黙って捨てず、操作の名前と理由を画面に出す
+   * (403 は理由の文 (二段階認証の確認が要る など) だけを通す。operationFailureMessage)。
+   * 成功したら PATCH の応答の行 (書いたあとの最新の行) で表示を新しくする。全体を「読み込み中」にして読み直さない。
+   * 入力欄は保存の経路と同じく、手を付けていない欄だけ応答の行の値に揃え、書きかけは残す (inputAfterSave。#1917)
+   */
+  const handleStatusChange = async (newStatus: CouponStatusChange) => {
+    if (!coupon) return;
+    if (!confirm(`このクーポンを${STATUS_CHANGE_LABELS[newStatus]}しますか？`)) return;
+    // 押したときの最後に読んだ・保存した行から作る入力欄の値 (入力欄がこれと同じなら手を付けていない欄)
+    const loadedInputs = couponInputsOf(coupon);
+    setStatusError('');
+    setIsChangingStatus(true);
     try {
       const res = await fetch(`/api/super-admin/coupons/${couponId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus }),
       });
-      // 書きかけの入力欄は残す (まだ保存していない入力を、状態の変更のあとの読み直しで黙って消さない。#1917 の続き)
-      if (res.ok) fetchCoupon({ keepEdits: true });
+      if (!res.ok) {
+        const body: unknown = await res.json().catch(() => null);
+        setStatusError(operationFailureMessage(statusChangeFailureSummary(newStatus), res.status, body));
+        return;
+      }
+      // 応答は { data: 書いたあとの行 } (保存の経路と同じ形。route は .update().select() の行を返す)
+      const saved = (await res.json() as { data: Coupon }).data;
+      const savedInputs = couponInputsOf(saved);
+      setCoupon(saved);
+      setDisplayName((current) => inputAfterSave(current, loadedInputs.displayName, savedInputs.displayName));
+      setValidUntil((current) => inputAfterSave(current, loadedInputs.validUntil, savedInputs.validUntil));
+      setMaxUses((current) => inputAfterSave(current, loadedInputs.maxUses, savedInputs.maxUses));
     } catch {
-      alert('ステータス変更に失敗しました');
+      setStatusError(operationNetworkFailureMessage(statusChangeFailureSummary(newStatus)));
+    } finally {
+      setIsChangingStatus(false);
     }
   };
 
@@ -306,7 +328,8 @@ export default function CouponDetailPage() {
           {coupon.status === 'active' && (
             <button
               onClick={() => handleStatusChange('paused')}
-              className="px-3 py-1.5 border border-yellow-300 text-yellow-600 rounded-lg text-xs font-medium hover:bg-yellow-50 transition-colors"
+              disabled={isChangingStatus}
+              className="px-3 py-1.5 border border-yellow-300 text-yellow-600 rounded-lg text-xs font-medium hover:bg-yellow-50 transition-colors disabled:opacity-50"
             >
               一時停止
             </button>
@@ -314,13 +337,24 @@ export default function CouponDetailPage() {
           {coupon.status === 'paused' && (
             <button
               onClick={() => handleStatusChange('active')}
-              className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors"
+              disabled={isChangingStatus}
+              className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors disabled:opacity-50"
             >
               再開する
             </button>
           )}
         </div>
       </div>
+
+      {statusError && (
+        <div
+          role="alert"
+          data-testid="status-change-error"
+          className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm"
+        >
+          {statusError}
+        </div>
+      )}
 
       {/* タブ */}
       <div className="flex gap-1 mb-6 border-b border-slate-200">

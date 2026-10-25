@@ -61,27 +61,50 @@ const STALE_UPDATE_MESSAGE_DRAFT_KEPT = `${STALE_UPDATE_MESSAGE}${NOTE_DRAFT_KEP
 
 /**
  * 更新が 409 CONFLICT_STALE_DATA で断られ、開いている問い合わせの詳細の読み直しにも失敗したときの文 (#1917)。
- * 読み込み直せていないので「読み込み直した」とは言わない。内容の欄の「再試行」で読み直せたら STALE_UPDATE_MESSAGE に変える
+ * 読み込み直せていないので「読み込み直した」とは言わない。内容の欄の「再試行」で読み直せたら STALE_UPDATE_MESSAGE に変える。
+ * 読み直しの失敗が 401 / 403 / 404 (再試行しても読めない) のときは、この文ではなく STALE_RELOAD_UNAVAILABLE_MESSAGE
  */
 const STALE_RELOAD_FAILED_MESSAGE =
   "別の運営が先にこの問い合わせを更新していました。最新の内容を読み込み直せませんでした。内容の欄の「再試行」で読み込み直してから、もう一度操作してください";
 
 /**
- * 詳細の読み直し (reloadInquiryDetail) の結果。
- *   - reloaded  : 読み直せた。draftKept は、管理者メモの入力欄が書きかけだったので残したか
- *   - failed    : 読み直せなかった (詳細の欄にエラーと「再試行」が出ている)
- *   - superseded: 読み直しの最中に別の問い合わせを開いた・閉じたので結果を捨てた
+ * 更新が 409 CONFLICT_STALE_DATA で断られ、開いている問い合わせの詳細の読み直しが 401 / 403 / 404 (ログインが切れた・
+ * 権限が外れた・二段階認証の確認が要る・問い合わせが消えた) だったときの文。
+ * 読み直しを繰り返しても読めないので、「再試行」で読み込み直すよう促さない。理由は内容の欄に出ている
+ * (営業リードの画面の 409 のあとの読み直しと同じ分け方。src/app/admin/sales/[id]/page.tsx の staleStageMessageOf)
  */
-type DetailReloadOutcome = { kind: "reloaded"; draftKept: boolean } | { kind: "failed" } | { kind: "superseded" };
+const STALE_RELOAD_UNAVAILABLE_MESSAGE =
+  "別の運営が先にこの問い合わせを更新していました（この操作では更新していません）。最新の内容も読み込めませんでした（理由は内容の欄に出しています）";
+
+/**
+ * 詳細の読み直しの失敗のうち、「再試行」で読み直しても同じ結果になる HTTP ステータス。
+ * 401 (ログインが切れた)・403 (権限が外れた・二段階認証の確認が要る・凍結)・404 (問い合わせが消えた)
+ */
+const DETAIL_UNAVAILABLE_STATUSES: ReadonlySet<number> = new Set([401, 403, 404]);
+
+/**
+ * 詳細の読み直し (reloadInquiryDetail) の結果。
+ *   - reloaded   : 読み直せた。draftKept は、管理者メモの入力欄が書きかけだったので残したか
+ *   - failed     : 読み直せなかった (詳細の欄にエラーと「再試行」が出ている)。
+ *                  unavailable は、応答が DETAIL_UNAVAILABLE_STATUSES (再試行しても読めない理由) だったか
+ *   - superseded : 読み直しの最中に別の問い合わせを開いた・閉じたので結果を捨てた
+ */
+type DetailReloadOutcome =
+  | { kind: "reloaded"; draftKept: boolean }
+  | { kind: "failed"; unavailable: boolean }
+  | { kind: "superseded" };
 
 /** 409 のあとの詳細の読み直しの結果から、更新の欄に出す文 (superseded のときは null = 文を変えない)。draftEdited は読み直しの前に書きかけだったか */
 function staleUpdateMessageOf(outcome: DetailReloadOutcome, draftEdited: boolean): string | null {
   switch (outcome.kind) {
     case "reloaded":
       return outcome.draftKept ? STALE_UPDATE_MESSAGE_DRAFT_KEPT : STALE_UPDATE_MESSAGE;
-    case "failed":
+    case "failed": {
+      // 問い合わせが消えた・権限が外れたときは、消えた問い合わせの「再試行」を促さない (理由は内容の欄に出ている)
+      const message = outcome.unavailable ? STALE_RELOAD_UNAVAILABLE_MESSAGE : STALE_RELOAD_FAILED_MESSAGE;
       // 読み直せなかったときは入力欄に手を付けていないので、書きかけはそのまま残っている
-      return draftEdited ? `${STALE_RELOAD_FAILED_MESSAGE}${NOTE_DRAFT_KEPT_SUFFIX}` : STALE_RELOAD_FAILED_MESSAGE;
+      return draftEdited ? `${message}${NOTE_DRAFT_KEPT_SUFFIX}` : message;
+    }
     case "superseded":
       return null;
   }
@@ -258,7 +281,7 @@ export default function SupportInquiriesPage() {
         const message = await describeFailure(res, "問い合わせの内容を取得できませんでした");
         if (seq !== detailSeq.current) return { kind: "superseded" }; // 本文を読んでいる間に選び直し・閉じられていたら、古い失敗は捨てる
         setDetailError(message);
-        return { kind: "failed" };
+        return { kind: "failed", unavailable: DETAIL_UNAVAILABLE_STATUSES.has(res.status) };
       }
       const data = await res.json();
       if (seq !== detailSeq.current) return { kind: "superseded" };
@@ -277,7 +300,8 @@ export default function SupportInquiriesPage() {
       console.error("Failed to reload inquiry:", error);
       if (seq !== detailSeq.current) return { kind: "superseded" };
       setDetailError("問い合わせの内容を取得できませんでした（通信エラー）");
-      return { kind: "failed" };
+      // 通信エラーは「再試行」で読めることがある
+      return { kind: "failed", unavailable: false };
     } finally {
       if (seq === detailSeq.current) setDetailLoading(false);
     }

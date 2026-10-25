@@ -4,9 +4,10 @@
  * /super-admin/feature-packages/[id] — 機能パッケージ詳細・編集
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { operationFailureMessage, operationNetworkFailureMessage } from '@/lib/admin/api-error-message';
 
 type FeaturePackage = {
   id: string;
@@ -46,15 +47,6 @@ function inputAfterSave<T extends string | number>(current: T, atSave: T, saved:
   return current === atSave ? saved : current;
 }
 
-/**
- * 読み直したあとの 1 つの入力欄の値 (#1917 の続き)。書きかけを残す読み直し (廃止に成功したあと) で、読み直す前の
- * 比べる元 (最後に読んだ・保存した行の値 = baseline) から変えていなければ読み直した値 (fresh) にし、変えていれば書きかけとして残す
- * (まだ保存していない入力を、読み直しで黙って消さない)。baseline が無い (書きかけを残さない読み込み) ときは読み直した値
- */
-function inputAfterReload<T extends string | number>(current: T, baseline: T | undefined, fresh: T): T {
-  return baseline !== undefined && current !== baseline ? current : fresh;
-}
-
 /** 保存で送る本文 (PATCH /api/super-admin/feature-packages/{id} の表示名・説明・機能フラグ・表示順) */
 type FeaturePackageSaveBody = {
   display_name?: string;
@@ -67,7 +59,7 @@ type FeaturePackageSaveBody = {
  * 保存で送る本文。最後に読んだ・保存した機能パッケージ (pkg) から変えた欄だけを入れる (#1917)。
  * 手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を、開いたときの古い値で上書きしてしまう
  * (route は送られた項目をそのまま書く)。機能フラグは並びで比べる。説明の空欄は null にする (これまでと同じ)。
- * 手を付けていない入力欄は、読み込みと保存の成功のたびに pkg の値に揃える (handleSave) ので、ここで pkg と違う欄は運営が変えた欄
+ * 手を付けていない入力欄は、読み込み・保存の成功・廃止の成功のたびに pkg の値に揃える (handleSave・handleDeprecate) ので、ここで pkg と違う欄は運営が変えた欄
  */
 function changedFeaturePackageFields(
   inputs: { displayName: string; description: string; flags: string[]; displayOrder: number },
@@ -85,6 +77,9 @@ function changedFeaturePackageFields(
 
 /** 保存を押したが、どの入力欄も最後に読んだ・保存した値から変えていなかったときの文 (送らない。#1917) */
 const NO_FEATURE_PACKAGE_CHANGES_MESSAGE = '変更した項目がないので、保存していません';
+
+/** 廃止が失敗したときの文の頭 (後ろに理由を添える) */
+const DEPRECATE_FAILURE_SUMMARY = '廃止できませんでした';
 
 export default function FeaturePackageDetailPage() {
   const params = useParams();
@@ -104,14 +99,11 @@ export default function FeaturePackageDetailPage() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   // 保存を押したが送らなかったときの文 (変えた欄が無い。#1917)
   const [saveInfo, setSaveInfo] = useState('');
-  // 入力欄の比べる元 (最後に読んだ・保存した行)。描画を待たずに、読み直しの応答の時点の値を読むための写し (#1917 の続き)
-  const pkgRef = useRef<FeaturePackage | null>(null);
+  // 廃止の応答を待っているか・失敗したときの文
+  const [isDeprecating, setIsDeprecating] = useState(false);
+  const [deprecateError, setDeprecateError] = useState('');
 
-  /**
-   * 機能パッケージを読む。keepEdits のときは、入力欄のうち比べる元 (最後に読んだ・保存した行) から変えている (書きかけの) 欄を残し、
-   * ほかは読んだ値にする (廃止に成功したあとの読み直しで、まだ保存していない入力を黙って消さない。#1917 の続き)
-   */
-  const fetchPkg = useCallback(async (options: { keepEdits?: boolean } = {}) => {
+  const fetchPkg = useCallback(async () => {
     setIsLoading(true);
     try {
       const res = await fetch(`/api/super-admin/feature-packages/${pkgId}`);
@@ -122,13 +114,11 @@ export default function FeaturePackageDetailPage() {
       }
       const loaded = data.data!;
       const inputs = featurePackageInputsOf(loaded);
-      const baseline = options.keepEdits === true && pkgRef.current ? featurePackageInputsOf(pkgRef.current) : undefined;
-      pkgRef.current = loaded;
       setPkg(loaded);
-      setDisplayName((current) => inputAfterReload(current, baseline?.displayName, inputs.displayName));
-      setDescription((current) => inputAfterReload(current, baseline?.description, inputs.description));
-      setFeatureFlagsRaw((current) => inputAfterReload(current, baseline?.featureFlagsRaw, inputs.featureFlagsRaw));
-      setDisplayOrder((current) => inputAfterReload(current, baseline?.displayOrder, inputs.displayOrder));
+      setDisplayName(inputs.displayName);
+      setDescription(inputs.description);
+      setFeatureFlagsRaw(inputs.featureFlagsRaw);
+      setDisplayOrder(inputs.displayOrder);
     } catch {
       setError('ネットワークエラー');
     } finally {
@@ -177,7 +167,6 @@ export default function FeaturePackageDetailPage() {
       // 別の運営の変更を上書きしてしまう。応答を待つあいだに変えた欄は書きかけとして残す (次の保存で送る)
       const saved = data.data!;
       const savedInputs = featurePackageInputsOf(saved);
-      pkgRef.current = saved;
       setPkg(saved);
       setDisplayName((current) => inputAfterSave(current, inputsAtSave.displayName, savedInputs.displayName));
       setDescription((current) => inputAfterSave(current, inputsAtSave.description, savedInputs.description));
@@ -191,18 +180,41 @@ export default function FeaturePackageDetailPage() {
     }
   };
 
+  /**
+   * 廃止。失敗の応答を黙って捨てず、理由を画面に出す (403 は理由の文 (二段階認証の確認が要る など) だけを通す。operationFailureMessage)。
+   * 成功したら PATCH の応答の行 (書いたあとの最新の行) で表示を新しくする。全体を「読み込み中」にして読み直さない。
+   * 入力欄は保存の経路と同じく、手を付けていない欄だけ応答の行の値に揃え、書きかけは残す (inputAfterSave。#1917)
+   */
   const handleDeprecate = async () => {
+    if (!pkg) return;
     if (!confirm('この機能パッケージを廃止しますか？')) return;
+    // 押したときの最後に読んだ・保存した行から作る入力欄の値 (入力欄がこれと同じなら手を付けていない欄)
+    const loadedInputs = featurePackageInputsOf(pkg);
+    setDeprecateError('');
+    setIsDeprecating(true);
     try {
       const res = await fetch(`/api/super-admin/feature-packages/${pkgId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'deprecated' }),
       });
-      // 書きかけの入力欄は残す (まだ保存していない入力を、廃止のあとの読み直しで黙って消さない。#1917 の続き)
-      if (res.ok) fetchPkg({ keepEdits: true });
+      if (!res.ok) {
+        const body: unknown = await res.json().catch(() => null);
+        setDeprecateError(operationFailureMessage(DEPRECATE_FAILURE_SUMMARY, res.status, body));
+        return;
+      }
+      // 応答は { data: 書いたあとの行 } (保存の経路と同じ形。route は .update().select() の行を返す)
+      const saved = (await res.json() as { data: FeaturePackage }).data;
+      const savedInputs = featurePackageInputsOf(saved);
+      setPkg(saved);
+      setDisplayName((current) => inputAfterSave(current, loadedInputs.displayName, savedInputs.displayName));
+      setDescription((current) => inputAfterSave(current, loadedInputs.description, savedInputs.description));
+      setFeatureFlagsRaw((current) => inputAfterSave(current, loadedInputs.featureFlagsRaw, savedInputs.featureFlagsRaw));
+      setDisplayOrder((current) => inputAfterSave(current, loadedInputs.displayOrder, savedInputs.displayOrder));
     } catch {
-      alert('廃止処理に失敗しました');
+      setDeprecateError(operationNetworkFailureMessage(DEPRECATE_FAILURE_SUMMARY));
+    } finally {
+      setIsDeprecating(false);
     }
   };
 
@@ -239,12 +251,23 @@ export default function FeaturePackageDetailPage() {
         {pkg.status === 'active' && (
           <button
             onClick={handleDeprecate}
-            className="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg text-xs font-medium hover:bg-red-50 transition-colors"
+            disabled={isDeprecating}
+            className="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg text-xs font-medium hover:bg-red-50 transition-colors disabled:opacity-50"
           >
             廃止する
           </button>
         )}
       </div>
+
+      {deprecateError && (
+        <div
+          role="alert"
+          data-testid="status-change-error"
+          className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm"
+        >
+          {deprecateError}
+        </div>
+      )}
 
       <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-5">
         <div>

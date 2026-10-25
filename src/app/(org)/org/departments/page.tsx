@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { extractApiErrorMessage } from "@/lib/admin/api-error-message";
 
 interface Department {
   id: string;
@@ -13,6 +14,20 @@ interface Department {
   createdAt: string;
 }
 
+/** 部署の追加・更新・削除が失敗したときの文の頭 (後ろに理由を添える) */
+const CREATE_FAILURE_SUMMARY = "部署を追加できませんでした";
+const UPDATE_FAILURE_SUMMARY = "部署を更新できませんでした";
+const DELETE_FAILURE_SUMMARY = "部署を削除できませんでした";
+
+/**
+ * 失敗の応答から画面に出す文 (「<操作>（<理由>）」)。理由は本文の文 (API の error.message)、読めなければ HTTP ステータス。
+ * 失敗を黙って捨てない (名前の誤り (400)・参照されている部署の削除 (409)・500 のとき、操作が効いたか分からなくなるため)
+ */
+async function failureMessageOf(res: Response, summary: string): Promise<string> {
+  const body: unknown = await res.json().catch(() => null);
+  return `${summary}（${extractApiErrorMessage(body) ?? `HTTP ${res.status}`}）`;
+}
+
 export default function OrgDepartmentsPage() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
@@ -20,6 +35,8 @@ export default function OrgDepartmentsPage() {
   const [editingDept, setEditingDept] = useState<Department | null>(null);
   const [formName, setFormName] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // 追加・更新・削除が失敗したときの文
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const fetchDepartments = useCallback(async () => {
     try {
@@ -43,33 +60,33 @@ export default function OrgDepartmentsPage() {
     e.preventDefault();
     if (!formName.trim()) return;
 
+    const summary = editingDept ? UPDATE_FAILURE_SUMMARY : CREATE_FAILURE_SUMMARY;
     setSubmitting(true);
+    setErrorMessage(null);
     try {
-      if (editingDept) {
-        // 更新
-        const res = await fetch("/api/org/departments", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: editingDept.id, name: formName }),
-        });
-        if (res.ok) {
-          fetchDepartments();
-          resetForm();
-        }
-      } else {
-        // 新規作成
-        const res = await fetch("/api/org/departments", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: formName }),
-        });
-        if (res.ok) {
-          fetchDepartments();
-          resetForm();
-        }
+      const res = editingDept
+        ? // 更新
+          await fetch("/api/org/departments", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: editingDept.id, name: formName }),
+          })
+        : // 新規作成
+          await fetch("/api/org/departments", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: formName }),
+          });
+      if (!res.ok) {
+        // 保存できていないことを出し、フォームと入力した名前は残す (直してもう一度送れるように)
+        setErrorMessage(await failureMessageOf(res, summary));
+        return;
       }
+      fetchDepartments();
+      resetForm();
     } catch (error) {
       console.error("Failed to save department:", error);
+      setErrorMessage(`${summary}（通信エラー）`);
     } finally {
       setSubmitting(false);
     }
@@ -78,25 +95,32 @@ export default function OrgDepartmentsPage() {
   const handleDelete = async (deptId: string) => {
     if (!confirm("この部署を削除しますか？")) return;
 
+    setErrorMessage(null);
     try {
       const res = await fetch(`/api/org/departments?id=${deptId}`, {
         method: "DELETE",
       });
-      if (res.ok) {
-        fetchDepartments();
+      if (!res.ok) {
+        setErrorMessage(await failureMessageOf(res, DELETE_FAILURE_SUMMARY));
+        return;
       }
+      fetchDepartments();
     } catch (error) {
       console.error("Failed to delete department:", error);
+      setErrorMessage(`${DELETE_FAILURE_SUMMARY}（通信エラー）`);
     }
   };
 
+  // フォームを閉じる・開き直すときは、前の操作の失敗の文を残さない
   const resetForm = () => {
     setShowForm(false);
     setEditingDept(null);
     setFormName("");
+    setErrorMessage(null);
   };
 
   const startEdit = (dept: Department) => {
+    setErrorMessage(null);
     setEditingDept(dept);
     setFormName(dept.name);
     setShowForm(true);
@@ -124,6 +148,16 @@ export default function OrgDepartmentsPage() {
           + 部署を追加
         </button>
       </div>
+
+      {errorMessage && (
+        <div
+          role="alert"
+          data-testid="department-error"
+          className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm"
+        >
+          {errorMessage}
+        </div>
+      )}
 
       <AnimatePresence>
         {showForm && (
