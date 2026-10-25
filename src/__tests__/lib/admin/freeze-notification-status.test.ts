@@ -56,6 +56,8 @@ describe('describeFreezeNotificationOutcome (cross/24 §7.3)', () => {
     }
     expect(FREEZE_NOTIFICATION_SENT_MESSAGE).toBe('通知メールを送信待ちに登録しました (届くまで数分かかることがあります)');
     expect(FREEZE_NOTIFICATION_NOT_REQUESTED_MESSAGE).toBe('通知メールは送っていません');
-    expect(FREEZE_NOTIFICATION_UNKNOWN_MESSAGE).toBe('通知メールの結果を確認できませんでした (利用者の詳細の監査ログで確認してください)');
+    expect(FREEZE_NOTIFICATION_UNKNOWN_MESSAGE).toBe(
+      '通知メールの結果を確認できませんでした (super_admin の監査ログ閲覧 /super-admin/audit-logs で admin.user.ban の行を展開し、details の notification を確認してください)',
+    );
   });
 });

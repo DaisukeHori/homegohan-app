@@ -520,8 +520,16 @@ const NOT_SENT_MESSAGES: Record<FreezeNotificationReason, string> = {
 /** 送った・送らなかったときの文 */
 export const FREEZE_NOTIFICATION_SENT_MESSAGE = '通知メールを送信待ちに登録しました (届くまで数分かかることがあります)';
 export const FREEZE_NOTIFICATION_NOT_REQUESTED_MESSAGE = '通知メールは送っていません';
-/** 応答に結果が無い・読めないときの文 (古い API との食い違いなど) */
-export const FREEZE_NOTIFICATION_UNKNOWN_MESSAGE = '通知メールの結果を確認できませんでした (利用者の詳細の監査ログで確認してください)';
+/**
+ * 通知の結果 (監査 admin.user.ban の details.notification) を読める画面。super_admin だけが開け、行を展開すると details を描く
+ * (src/app/super-admin/audit-logs/page.tsx)。利用者の詳細 (/admin/users/[id]) の監査ログは super_admin にだけ出し、
+ * action_type・severity・日時だけで details を描かないので、読めないときの文はそこを指さない
+ */
+export const FREEZE_NOTIFICATION_AUDIT_LOGS_PATH = '/super-admin/audit-logs';
+/** 凍結の監査の種別 (POST /api/admin/users/[id]/freeze が details.notification とともに記録する) */
+export const FREEZE_NOTIFICATION_AUDIT_ACTION_TYPE = 'admin.user.ban';
+/** 応答に結果が無い・読めないときの文 (古い API との食い違いなど)。結果を確かめられる画面と、その画面で探す行を名指す */
+export const FREEZE_NOTIFICATION_UNKNOWN_MESSAGE = `通知メールの結果を確認できませんでした (super_admin の監査ログ閲覧 ${FREEZE_NOTIFICATION_AUDIT_LOGS_PATH} で ${FREEZE_NOTIFICATION_AUDIT_ACTION_TYPE} の行を展開し、details の notification を確認してください)`;
 
 /**
  * 応答の data.notification を読む。形が合わなければ null (画面は FREEZE_NOTIFICATION_UNKNOWN_MESSAGE を出す)。
@@ -935,7 +943,7 @@ import { describeFreezeNotificationOutcome, freezeNotificationOutcomeOf } from '
 |---|---|---|
 | Zod | `export const FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH = 1000` / `FreezeBodySchema.notification_message: z.string().trim().max(FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH).optional()` (ほかの項目は変えない。`notify_user` は `z.boolean().optional().default(true)` のまま) | 改 (`max(1000)` → 定数・`trim`) |
 | 文面 | `export const ACCOUNT_FROZEN_EMAIL_TEMPLATE = 'account_frozen'` / `export const ACCOUNT_FROZEN_EMAIL_SUBJECT = '【ほめゴハン】アカウントが凍結されました'` / `export const FROZEN_PAGE_PATH = '/frozen'` / `export const CONTACT_PAGE_PATH = '/contact'` / `export interface AccountFrozenEmailVars { to_email: string; frozen_at: Date; unban_at: Date / null; operator_message: string / null }` (`/` は union) / `export function formatAccountFrozenAt(date: Date): string` / `export function accountFrozenPeriodLines(unbanAt: Date / null): string` / `export function renderAccountFrozenEmail(vars: AccountFrozenEmailVars): EmailEnvelope` (封筒の `template` は literal `'account_frozen'`・`contains_secret` 無し・`html` 無し) | 新設 |
-| 結果の型 | `export type FreezeNotificationStatus = 'sent' / 'skipped' / 'failed' / 'not_requested'` / `export type FreezeNotificationReason = 'not_configured' / 'no_recipient' / 'send_failed'` / `export interface FreezeNotificationOutcome { status: FreezeNotificationStatus; reason?: FreezeNotificationReason }` / `export const FREEZE_NOTIFICATION_NOT_REQUESTED: FreezeNotificationOutcome` / `export function freezeNotificationOutcomeOf(value: unknown): FreezeNotificationOutcome / null` / `export function describeFreezeNotificationOutcome(outcome: FreezeNotificationOutcome / null): string` / 文の定数 `FREEZE_NOTIFICATION_SENT_MESSAGE`・`FREEZE_NOTIFICATION_NOT_REQUESTED_MESSAGE`・`FREEZE_NOTIFICATION_UNKNOWN_MESSAGE` | 新設 |
+| 結果の型 | `export type FreezeNotificationStatus = 'sent' / 'skipped' / 'failed' / 'not_requested'` / `export type FreezeNotificationReason = 'not_configured' / 'no_recipient' / 'send_failed'` / `export interface FreezeNotificationOutcome { status: FreezeNotificationStatus; reason?: FreezeNotificationReason }` / `export const FREEZE_NOTIFICATION_NOT_REQUESTED: FreezeNotificationOutcome` / `export function freezeNotificationOutcomeOf(value: unknown): FreezeNotificationOutcome / null` / `export function describeFreezeNotificationOutcome(outcome: FreezeNotificationOutcome / null): string` / 文の定数 `FREEZE_NOTIFICATION_SENT_MESSAGE`・`FREEZE_NOTIFICATION_NOT_REQUESTED_MESSAGE`・`FREEZE_NOTIFICATION_UNKNOWN_MESSAGE` / 読めないときの文が名指す画面と種別 `FREEZE_NOTIFICATION_AUDIT_LOGS_PATH`・`FREEZE_NOTIFICATION_AUDIT_ACTION_TYPE` | 新設 |
 | sender | `export const FREEZE_NOTIFICATION_EMAIL_TEMPLATE` (= `ACCOUNT_FROZEN_EMAIL_TEMPLATE`) / `export const FREEZE_NOTIFICATION_IDEMPOTENCY_PREFIX = 'account-frozen:'` / `export function freezeNotificationIdempotencyKey(banId: string): string` / `export interface FreezeNotificationLogger { warn; error }` / `export interface SendFreezeNotificationEmailParams { userId: string; banId: string; frozenAt: Date; unbanAt: Date / null; operatorMessage: string / null; logger: FreezeNotificationLogger }` / `export interface SendFreezeNotificationEmailResult { outcome: FreezeNotificationOutcome; outbox_id: string / null }` / `export async function sendFreezeNotificationEmail(params: SendFreezeNotificationEmailParams): Promise<SendFreezeNotificationEmailResult>` (例外を投げない) | 新設 |
 | API | `POST /api/admin/users/{id}/freeze` body `FreezeBody` → 200 `{ data: { ban_id: uuid, unban_at: string / null, notification: FreezeNotificationOutcome } }`。400 / 401 / 403 / 404 / 409 / 500 は今までどおり (通知は行わない) | 改 (`data.notification` を足す) |
 | 監査 | `admin.user.ban` の `details` に `notification_message: string / null` と `notification: { status, reason: FreezeNotificationReason / null, outbox_id: uuid / null }` | 改 (2 項目を足す) |
@@ -1187,7 +1195,7 @@ sequenceDiagram
 | ファイル | `src/lib/admin/freeze-notification-status.ts` | 結果の型と画面の文 (§7.3) |
 | ファイル | `src/lib/admin/send-freeze-notification-email.ts` | sender (§7.4) |
 | ファイル | `src/__tests__/lib/emails/account/account-frozen.test.ts`・`src/__tests__/lib/admin/freeze-notification-status.test.ts`・`src/__tests__/lib/admin/send-freeze-notification-email.test.ts`・`tests/admin-user-freeze-notify-2026.test.ts` | テスト (§12) |
-| 定数 | `FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH`・`ACCOUNT_FROZEN_EMAIL_TEMPLATE`・`ACCOUNT_FROZEN_EMAIL_SUBJECT`・`FROZEN_PAGE_PATH`・`CONTACT_PAGE_PATH`・`FREEZE_NOTIFICATION_EMAIL_TEMPLATE`・`FREEZE_NOTIFICATION_IDEMPOTENCY_PREFIX`・`FREEZE_NOTIFICATION_NOT_REQUESTED`・`FREEZE_NOTIFICATION_SENT_MESSAGE`・`FREEZE_NOTIFICATION_NOT_REQUESTED_MESSAGE`・`FREEZE_NOTIFICATION_UNKNOWN_MESSAGE` | §13 |
+| 定数 | `FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH`・`ACCOUNT_FROZEN_EMAIL_TEMPLATE`・`ACCOUNT_FROZEN_EMAIL_SUBJECT`・`FROZEN_PAGE_PATH`・`CONTACT_PAGE_PATH`・`FREEZE_NOTIFICATION_EMAIL_TEMPLATE`・`FREEZE_NOTIFICATION_IDEMPOTENCY_PREFIX`・`FREEZE_NOTIFICATION_NOT_REQUESTED`・`FREEZE_NOTIFICATION_SENT_MESSAGE`・`FREEZE_NOTIFICATION_NOT_REQUESTED_MESSAGE`・`FREEZE_NOTIFICATION_AUDIT_LOGS_PATH`・`FREEZE_NOTIFICATION_AUDIT_ACTION_TYPE`・`FREEZE_NOTIFICATION_UNKNOWN_MESSAGE` | §13 |
 | 関数 | `formatAccountFrozenAt`・`accountFrozenPeriodLines`・`renderAccountFrozenEmail`・`freezeNotificationOutcomeOf`・`describeFreezeNotificationOutcome`・`freezeNotificationIdempotencyKey`・`sendFreezeNotificationEmail` | §8 |
 | 型 | `AccountFrozenEmailVars`・`FreezeNotificationStatus`・`FreezeNotificationReason`・`FreezeNotificationOutcome`・`FreezeNotificationLogger`・`SendFreezeNotificationEmailParams`・`SendFreezeNotificationEmailResult` | §8 |
 | 文面の名前 (`email_outbox.template`) | `account_frozen` | DB の値 (表の変更なし) |
