@@ -12,13 +12,31 @@
  *
  * 別の運営の操作は、user_profiles の更新が DB に送られる直前 (と直後) に割り込ませて再現する。
  * schema-checked-db は route が付けた .is / .not の条件を実際に当てる (NULL の roles は not.cs に合わない。SQL と同じ)。
+ *
+ * 凍結の通知メール (#2026。cross/24 §16): 凍結が書けた (200) ときだけ sender が 1 回呼ばれ、403 / 409 / 404 では呼ばれない
+ * (凍結されていない人に「凍結されました」を送らない)。sender と構造化ログは差し替える。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSchemaDb, type Row, type SchemaDb } from './helpers/schema-checked-db';
 import { profileRow, uuid } from './helpers/route-world';
 import { applyUserBan, SUPER_ADMIN_ROLES_LITERAL } from '@/lib/admin/user-ban';
 
-const mockRequireRole = vi.fn();
+const { mockRequireRole, mockSendFreezeNotificationEmail } = vi.hoisted(() => ({
+  mockRequireRole: vi.fn(),
+  mockSendFreezeNotificationEmail: vi.fn(),
+}));
+
+vi.mock('@/lib/admin/send-freeze-notification-email', () => ({
+  sendFreezeNotificationEmail: mockSendFreezeNotificationEmail,
+}));
+
+vi.mock('@/lib/db-logger', () => {
+  const logger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
+  return {
+    createLogger: () => ({ ...logger, withUser: () => logger }),
+    generateRequestId: () => 'req_test',
+  };
+});
 
 vi.mock('@/lib/auth/helpers', () => ({
   requireRole: (...args: unknown[]) => mockRequireRole(...args),
@@ -104,6 +122,7 @@ const json = (res: Response) => res.json() as Promise<Record<string, any>>;
 beforeEach(() => {
   vi.clearAllMocks();
   mockRequireRole.mockResolvedValue(ACTOR);
+  mockSendFreezeNotificationEmail.mockResolvedValue({ outcome: { status: 'sent' }, outbox_id: 'ob-1' });
   beforeProfileUpdate = null;
   afterProfileUpdate = null;
 });
@@ -121,6 +140,8 @@ describe('POST /api/admin/users/{id}/freeze', () => {
     expect(updates).toHaveLength(1);
     expect(updates[0].not).toEqual([['roles', 'cs', SUPER_ADMIN_ROLES_LITERAL]]);
     expect(updates[0].isNull).toEqual([]);
+    expect(mockSendFreezeNotificationEmail).toHaveBeenCalledTimes(1);
+    expect(mockSendFreezeNotificationEmail.mock.calls[0][0]).toMatchObject({ userId: TARGET_ID });
   });
 
   it('roles が NULL の利用者は super_admin でないので凍結できる (200。条件は roles が NULL のまま)', async () => {
@@ -132,6 +153,7 @@ describe('POST /api/admin/users/{id}/freeze', () => {
     const updates = serviceDb.recorded('user_profiles', 'update');
     expect(updates[0].isNull).toEqual(['roles']);
     expect(updates[0].not).toEqual([]);
+    expect(mockSendFreezeNotificationEmail).toHaveBeenCalledTimes(1);
   });
 
   it('NULL の roles を読んだあとで super_admin でないロールが入った: 念のため書かず 409 (監査も残さない)', async () => {
@@ -141,6 +163,7 @@ describe('POST /api/admin/users/{id}/freeze', () => {
     expect(res.status).toBe(409);
     expect(targetNow()?.frozen_at).toBeNull();
     expect(auditRows()).toHaveLength(0);
+    expect(mockSendFreezeNotificationEmail).not.toHaveBeenCalled();
   });
 
   it('読んだ時点で super_admin なら 403 OP_TARGET_PROTECTED (書かない)', async () => {
@@ -150,6 +173,7 @@ describe('POST /api/admin/users/{id}/freeze', () => {
     expect((await json(res)).error.code).toBe('OP_TARGET_PROTECTED');
     expect(serviceDb.recorded('user_profiles', 'update')).toHaveLength(0);
     expect(auditRows()).toHaveLength(0);
+    expect(mockSendFreezeNotificationEmail).not.toHaveBeenCalled();
   });
 
   it('読んでから書くまでに別の運営が対象を super_admin にした: 409 CONFLICT_STALE_DATA。凍結されず、監査も残らない', async () => {
@@ -161,6 +185,7 @@ describe('POST /api/admin/users/{id}/freeze', () => {
     expect(targetNow()?.frozen_at).toBeNull();
     expect(targetNow()?.roles).toEqual(['user', 'super_admin']);
     expect(auditRows()).toHaveLength(0);
+    expect(mockSendFreezeNotificationEmail).not.toHaveBeenCalled();
   });
 
   it('読んでから書くまでに roles が NULL から super_admin になった: 409 (NULL を読んだ場合も条件が効く)', async () => {
@@ -170,6 +195,7 @@ describe('POST /api/admin/users/{id}/freeze', () => {
     expect(res.status).toBe(409);
     expect(targetNow()?.frozen_at).toBeNull();
     expect(auditRows()).toHaveLength(0);
+    expect(mockSendFreezeNotificationEmail).not.toHaveBeenCalled();
   });
 
   it('super_admin 以外のロールが変わっただけなら凍結する (200。条件は super_admin でないことだけ)', async () => {
@@ -179,6 +205,7 @@ describe('POST /api/admin/users/{id}/freeze', () => {
     expect(res.status).toBe(200);
     expect(targetNow()?.frozen_at).toEqual(expect.any(String));
     expect(auditRows()).toHaveLength(1);
+    expect(mockSendFreezeNotificationEmail).toHaveBeenCalledTimes(1);
   });
 
   it('読んでから書くまでに対象が消えた: 404 NOT_FOUND で、監査も残さない', async () => {
@@ -188,6 +215,7 @@ describe('POST /api/admin/users/{id}/freeze', () => {
     expect(res.status).toBe(404);
     expect((await json(res)).error.code).toBe('NOT_FOUND');
     expect(auditRows()).toHaveLength(0);
+    expect(mockSendFreezeNotificationEmail).not.toHaveBeenCalled();
   });
 });
 
