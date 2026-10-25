@@ -528,6 +528,155 @@ describe('保存は変えた欄だけを送る (#1917)', () => {
   });
 });
 
+/**
+ * 成功したあとの読み直し (保存・状態の変更のあと) も、書きかけの入力欄を残す (#1917 の続き)。
+ * 以前は成功したあとの読み直しが入力欄を全部読み直した値にしていたので、保存の応答を待つあいだ・読み直しを待つあいだに
+ * 打った、まだ送っていない入力が黙って消えていた (クーポン・機能パッケージの画面は保存の成功のあとも残す)。
+ * 比べる元は、保存なら送った値 (保存済みの欄は書きかけとして残さず、読み直した値にする)
+ */
+describe('成功したあとの読み直しは、書きかけの入力欄を残す (#1917 の続き)', () => {
+  /** PATCH は 200 で planAfterPatch を返す。holdPatch なら最初の PATCH を、holdGet なら n 回目 (1 始まり) の GET を、release まで返さない */
+  function mockSuccessApi(options: { planAfterPatch: typeof PLAN; holdGet?: number; holdPatch?: boolean }) {
+    let gets = 0;
+    let patched = false;
+    let releasePatch: (() => void) | undefined;
+    let releaseGet: (() => void) | undefined;
+    fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') {
+        if (options.holdPatch === true && !patched) {
+          await new Promise<void>((resolve) => {
+            releasePatch = resolve;
+          });
+        }
+        patched = true;
+        return jsonResponse(200, { data: options.planAfterPatch });
+      }
+      gets += 1;
+      if (options.holdGet === gets) {
+        await new Promise<void>((resolve) => {
+          releaseGet = resolve;
+        });
+      }
+      return jsonResponse(200, { data: patched ? options.planAfterPatch : PLAN });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return {
+      gets: () => gets,
+      releasePatch: async () => {
+        expect(releasePatch, 'PATCH を待たせていない').toBeDefined();
+        await act(async () => {
+          releasePatch!();
+        });
+        await settle();
+      },
+      releaseGet: async () => {
+        expect(releaseGet, 'GET を待たせていない').toBeDefined();
+        await act(async () => {
+          releaseGet!();
+        });
+        await settle();
+      },
+    };
+  }
+
+  it('保存の応答を待つあいだに変えた欄は、保存の成功のあとの読み直しが成功しても残し、次の保存で送る (手を付けていない欄は読み直した値)', async () => {
+    // 読み直しでは、保存した表示名と、別の運営が変えた表示順が入っている
+    const api = mockSuccessApi({ planAfterPatch: { ...PLAN, display_name: 'Pro プラス', display_order: 7 }, holdPatch: true });
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+    await click('保存する');
+
+    // 応答を待つあいだに、送った欄 (表示名) と送らなかった欄 (説明) を書き換える
+    await typeInto(displayNameInput(), 'Pro プラス 2');
+    await typeInto(descriptionInput(), '待つあいだの説明');
+    await api.releasePatch();
+
+    expect(api.gets()).toBe(2); // 初回 + 保存のあとの読み直し
+    expect(text()).toContain('保存しました');
+    expect(notice()).toBeNull();
+    expect(displayNameInput().value).toBe('Pro プラス 2');
+    expect(descriptionInput().value).toBe('待つあいだの説明');
+    // 手を付けていない表示順は、読み直した値 (別の運営の変更)
+    expect(displayOrderInput().value).toBe('7');
+
+    await click('保存する');
+
+    expect(patchBodies()).toEqual([
+      { display_name: 'Pro プラス' },
+      { display_name: 'Pro プラス 2', description: '待つあいだの説明' },
+    ]);
+  });
+
+  it('保存のあとの読み直しを待つあいだに変えた欄も残す', async () => {
+    const api = mockSuccessApi({ planAfterPatch: { ...PLAN, display_name: 'Pro プラス' }, holdGet: 2 });
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+    await click('保存する');
+
+    // 読み直し (2 回目の GET) の応答を待つあいだに、説明を書き換える
+    await typeInto(descriptionInput(), '読み直しを待つあいだの説明');
+    await api.releaseGet();
+
+    expect(api.gets()).toBe(2);
+    expect(displayNameInput().value).toBe('Pro プラス');
+    expect(descriptionInput().value).toBe('読み直しを待つあいだの説明');
+
+    await click('保存する');
+
+    expect(patchBodies()).toEqual([{ display_name: 'Pro プラス' }, { description: '読み直しを待つあいだの説明' }]);
+  });
+
+  it('保存した欄は、待つあいだに変えていなければ書きかけとして残さず、読み直した値 (別の運営がそのあとに変えた値) にする', async () => {
+    mockSuccessApi({ planAfterPatch: { ...PLAN, display_name: '別の運営の表示名' } });
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+
+    await click('保存する');
+
+    expect(displayNameInput().value).toBe('別の運営の表示名');
+    expect(notice()).toBeNull();
+
+    // 何も変えずに押しても送らない (保存済みの「Pro プラス」で別の運営の変更を上書きしない)
+    await click('保存する');
+    expect(patchBodies()).toEqual([{ display_name: 'Pro プラス' }]);
+    expect(container.querySelector('[data-testid="plan-save-info"]')?.textContent).toContain('変更した項目がないので');
+  });
+
+  it('状態の変更 (再公開) に成功したあとの読み直しでも、書きかけの欄を残し、手を付けていない欄は読み直した値にする', async () => {
+    const api = mockSuccessApi({ planAfterPatch: { ...PLAN, status: 'public', description: '別の運営の説明' } });
+    await renderPage();
+    await typeInto(displayNameInput(), '書きかけの表示名');
+
+    await click('再公開する');
+
+    expect(api.gets()).toBe(2);
+    expect(patchBodies()).toEqual([{ status: 'public' }]);
+    expect(text()).toContain('公開中');
+    expect(findButton('非公開にする')).toBeDefined();
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(displayNameInput().value).toBe('書きかけの表示名');
+    expect(descriptionInput().value).toBe('別の運営の説明');
+
+    await click('保存する');
+
+    expect(patchBodies()).toEqual([{ status: 'public' }, { display_name: '書きかけの表示名' }]);
+  });
+
+  it('状態の変更の応答を待つあいだに変えた欄も、成功したあとの読み直しで残す', async () => {
+    const api = mockSuccessApi({ planAfterPatch: { ...PLAN, status: 'public', display_order: 3 }, holdPatch: true });
+    await renderPage();
+
+    await click('再公開する');
+    await typeInto(descriptionInput(), '待つあいだの説明');
+    await api.releasePatch();
+
+    expect(text()).toContain('公開中');
+    expect(descriptionInput().value).toBe('待つあいだの説明');
+    expect(displayOrderInput().value).toBe('3');
+    expect(displayNameInput().value).toBe('Pro');
+  });
+});
+
 describe('表示したあとの読み直しが 404 / 403 で断られたとき (#1917)', () => {
   it.each([
     [404, 'プランが見つかりません'],

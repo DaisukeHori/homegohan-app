@@ -441,3 +441,113 @@ describe('機能パッケージ詳細: 保存は変えた欄だけを送る (#19
     expect(patchBodies()[1]).toEqual({ description: '書きかけの説明' });
   });
 });
+
+/**
+ * 状態の変更 (クーポンの一時停止・再開、機能パッケージの廃止) に成功したあとの読み直しも、書きかけの入力欄を残す
+ * (#1917 の続き。プラン詳細の成功したあとの読み直しと同じ決まり)。以前は読み直しが入力欄を全部読み直した値にしていたので、
+ * まだ保存していない入力が黙って消えていた。手を付けていない欄は読み直した値 (別の運営の変更) にする
+ */
+describe('状態の変更に成功したあとの読み直しは、書きかけの入力欄を残す (#1917 の続き)', () => {
+  const hasButton = (label: string) =>
+    Array.from(container.querySelectorAll('button')).some((b) => b.textContent?.includes(label));
+
+  async function clickButton(label: string) {
+    const button = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes(label));
+    expect(button, `「${label}」ボタンが見つからない`).toBeDefined();
+    await act(async () => {
+      button!.click();
+    });
+  }
+
+  beforeEach(() => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+  });
+
+  it('クーポン: 一時停止のあとの読み直しで、書きかけの表示名を残し、手を付けていない欄は読み直した値にする。次の保存で表示名だけを送る', async () => {
+    mockApi(COUPON, { concurrentChange: { max_uses: 200 } });
+    await render(<CouponDetailPage />);
+    await typeInto(field('表示名'), '書きかけの表示名');
+
+    await clickButton('一時停止');
+
+    await vi.waitFor(() => expect(text()).toContain('停止中'));
+    await vi.waitFor(() => expect(container.querySelector('input[type="text"]')).not.toBeNull());
+    expect(patchBodies()).toEqual([{ status: 'paused' }]);
+    expect(field('表示名').value).toBe('書きかけの表示名');
+    expect(field('最大利用回数').value).toBe('200');
+    expect(field('有効期限').value).toBe('2026-12-31');
+
+    await clickSave();
+
+    await vi.waitFor(() => expect(patchBodies()).toHaveLength(2));
+    expect(patchBodies()[1]).toEqual({ display_name: '書きかけの表示名' });
+  });
+
+  it('クーポン: 一時停止の応答を待つあいだに変えた欄も残す', async () => {
+    const api = mockApi(COUPON, { holdFirstPatch: true });
+    await render(<CouponDetailPage />);
+
+    await clickButton('一時停止');
+    await typeInto(field('最大利用回数'), '150');
+    await api.release();
+
+    await vi.waitFor(() => expect(text()).toContain('停止中'));
+    await vi.waitFor(() => expect(container.querySelector('input[type="text"]')).not.toBeNull());
+    expect(field('最大利用回数').value).toBe('150');
+    expect(field('表示名').value).toBe('秋のクーポン');
+  });
+
+  it('クーポン: 書きかけの欄が無ければ、全部の欄を読み直した値にする', async () => {
+    mockApi(COUPON, { concurrentChange: { display_name: '冬のクーポン', max_uses: 200 } });
+    await render(<CouponDetailPage />);
+
+    await clickButton('一時停止');
+
+    await vi.waitFor(() => expect(text()).toContain('停止中'));
+    await vi.waitFor(() => expect(container.querySelector('input[type="text"]')).not.toBeNull());
+    expect(field('表示名').value).toBe('冬のクーポン');
+    expect(field('最大利用回数').value).toBe('200');
+
+    await clickSave();
+    expect(patchBodies()).toHaveLength(1);
+    expect(text()).toContain(NO_CHANGES_MESSAGE);
+  });
+
+  it('機能パッケージ: 廃止のあとの読み直しで、書きかけの説明を残し、手を付けていない欄は読み直した値にする。次の保存で説明だけを送る', async () => {
+    mockApi(FEATURE_PACKAGE, { concurrentChange: { display_order: 5, feature_flags: ['flag_a', 'flag_b', 'flag_c'] } });
+    await render(<FeaturePackageDetailPage />);
+    await typeInto(field('説明'), '書きかけの説明');
+
+    await clickButton('廃止する');
+
+    await vi.waitFor(() => expect(hasButton('廃止する')).toBe(false));
+    await vi.waitFor(() => expect(container.querySelector('input[type="text"]')).not.toBeNull());
+    expect(patchBodies()).toEqual([{ status: 'deprecated' }]);
+    expect(field('表示順').value).toBe('5');
+    expect(field('説明').value).toBe('書きかけの説明');
+    expect(field('機能フラグ').value).toBe('flag_a\nflag_b\nflag_c');
+    expect(field('表示名 *').value).toBe('基本パッケージ');
+
+    await clickSave();
+
+    await vi.waitFor(() => expect(patchBodies()).toHaveLength(2));
+    expect(patchBodies()[1]).toEqual({ description: '書きかけの説明' });
+  });
+
+  it('機能パッケージ: 廃止の応答を待つあいだに変えた欄も残す', async () => {
+    const api = mockApi(FEATURE_PACKAGE, { holdFirstPatch: true });
+    await render(<FeaturePackageDetailPage />);
+
+    await clickButton('廃止する');
+    await typeInto(field('機能フラグ'), 'flag_a\nflag_z');
+    await typeInto(field('表示順'), '9');
+    await api.release();
+
+    // 読み直しが終わると状態が「廃止」になり、「廃止する」ボタンが消える
+    await vi.waitFor(() => expect(hasButton('廃止する')).toBe(false));
+    await vi.waitFor(() => expect(container.querySelector('input[type="text"]')).not.toBeNull());
+    expect(field('機能フラグ').value).toBe('flag_a\nflag_z');
+    expect(field('表示順').value).toBe('9');
+    expect(field('説明').value).toBe('基本の機能');
+  });
+});
