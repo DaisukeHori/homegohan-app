@@ -59,7 +59,7 @@ type FeaturePackageSaveBody = {
  * 保存で送る本文。最後に読んだ・保存した機能パッケージ (pkg) から変えた欄だけを入れる (#1917)。
  * 手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を、開いたときの古い値で上書きしてしまう
  * (route は送られた項目をそのまま書く)。機能フラグは並びで比べる。説明の空欄は null にする (これまでと同じ)。
- * 手を付けていない入力欄は、読み込みと保存の成功のたびに pkg の値に揃える (handleSave) ので、ここで pkg と違う欄は運営が変えた欄
+ * 手を付けていない入力欄は、読み込み・保存の成功・廃止の成功のたびに pkg の値に揃える (handleSave・handleDeprecate) ので、ここで pkg と違う欄は運営が変えた欄
  */
 function changedFeaturePackageFields(
   inputs: { displayName: string; description: string; flags: string[]; displayOrder: number },

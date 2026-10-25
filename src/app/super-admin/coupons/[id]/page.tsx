@@ -87,7 +87,7 @@ function inputAfterSave(current: string, atSave: string, saved: string): string 
  * 手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を、開いたときの古い値で上書きしてしまう
  * (route は送られた項目をそのまま書く)。有効期限は JST の暦日で比べる (#1483 の couponValidUntilPatchValue)。
  * 表示名の空欄は null、最大利用回数の空欄は null (無制限) にする (これまでと同じ)。
- * 手を付けていない入力欄は、読み込みと保存の成功のたびに coupon の値に揃える (handleSave) ので、ここで coupon と違う欄は運営が変えた欄
+ * 手を付けていない入力欄は、読み込み・保存の成功・状態の変更の成功のたびに coupon の値に揃える (handleSave・handleStatusChange) ので、ここで coupon と違う欄は運営が変えた欄
  */
 function changedCouponFields(inputs: CouponInputs, coupon: Coupon): CouponSaveBody {
   const body: CouponSaveBody = {};
