@@ -2798,7 +2798,7 @@ route・テーブル・列・Storage のパス・環境変数の新設は無い�
 段 C のマージの後 (SELECT だけ):
 8. `SELECT grantee, privilege_type, count(*) FROM information_schema.column_privileges WHERE table_name = 'planned_meals' AND grantee IN ('anon','authenticated') GROUP BY 1, 2` → authenticated の INSERT / UPDATE が 56、SELECT が 59 (DELETE / REFERENCES / TRIGGER は表の権限)。anon の INSERT / UPDATE は 0。
 9. `SELECT column_name FROM information_schema.column_privileges WHERE table_name = 'planned_meals' AND grantee = 'authenticated' AND privilege_type = 'UPDATE' AND column_name IN ('is_completed','completed_at','veg_score')` → 0 行。
-10. 3 の操作をもう一度 (RPC は列の権限の影響を受けない)。
+10. 3 の操作をもう一度 (RPC は列の権限の影響を受けない。3 と同じく本番の DB への書き込みを伴う)。
 11. 以後の比較ランキングの集計 (`calculate-segment-stats` の次の回) が失敗していない (`app_logs`・`cron.job_run_details`)。
 
 ## 20. 性能・安全の考慮
@@ -2817,7 +2817,7 @@ route・テーブル・列・Storage のパス・環境変数の新設は無い�
 | # | 項目 | 選択肢 | 既定 (本書) |
 |---|---|---|---|
 | Q-1 | `veg_score` の範囲 (0〜100) を DB でも守るか (`trg_planned_meals_validate_values` に `veg_score` を足す。service_role の書き手が誤った尺度の値を書いたときの砦) | (a) 足さない (書き手は 1 関数で、値は `vegScoreOfVegetableGrams` が収める) / (b) 別の小さな migration でトリガーの対象に足す (戻し口は `20261008110000` の定義に戻す) | (a)。(b) は別 Issue の候補 |
-| Q-2 | **決定 = (a) (オーナーの選択 2026-10-25・選択式「何も足さない」)。** `is_completed` を条件にする指標 (比較ランキングの `breakfast_rate`・`menu_execution_rate`、組織のチャレンジの `breakfast_rate`・`cooking_rate`・`veg_score`) の「完了」は、段 C の後も本人の申告のまま (RPC は本人の行なら献立の日 (未来を含む) を問わず完了にでき、`completed_at` はどの集計も読まない。§0.1 の 2)。Issue #2025 の症状のうち「`breakfast_rate` を自分で上げられる」は、どれかを採らないと閉じない | (a) 足さない (「食べた」は本人の申告として受け入れる。段 A〜C のまま) / (b) RPC で未来の日の献立を完了にさせない (`user_daily_meals.day_date` が JST の今日より後なら例外。§7.1 の関数に 1 条件を足す。集計は変えない。過去の日の後からの記録は今までどおり) / (c) 集計で `completed_at` を見る (完了の時刻が献立の日より前なら数えない等。`calculate-segment-stats` の select に `completed_at` を足し、`update_org_challenge_progress` を CREATE OR REPLACE する。指標の意味の変更) / (d) 写真の解析を通った献立だけを完了として数える (指標の意味の大きな変更) | **(a) (決定)**。段 A〜C (列の権限・RPC・書き手の付け替え) はどの答えでも変わらないので、答えを待たずに進められる。(b) を段 A のマージの前に選べば §7.1 の関数に同じ PR で足す。後なら別の小さな migration (RPC の CREATE OR REPLACE) と設計の追記。(c)・(d) は別の設計 |
+| Q-2 | **決定 = (a) (オーナーの選択 2026-10-25・選択式「何も足さない」)。** `is_completed` を条件にする指標 (比較ランキングの `breakfast_rate`・`menu_execution_rate`、組織のチャレンジの `breakfast_rate`・`cooking_rate`・`veg_score`) の「完了」は、段 C の後も本人の申告のまま (RPC は本人の行なら献立の日 (未来を含む) を問わず完了にでき、`completed_at` はどの集計も読まない。§0.1 の 2)。Issue #2025 の症状のうち「`breakfast_rate` を自分で上げられる」は、どれかを採らないと閉じない | (a) 足さない (「食べた」は本人の申告として受け入れる。段 A〜C のまま) / (b) RPC で未来の日の献立を完了にさせない (`user_daily_meals.day_date` が JST の今日より後なら例外。§7.1 の関数に 1 条件を足す。集計は変えない。過去の日の後からの記録は今までどおり) / (c) 集計で `completed_at` を見る (完了の時刻が献立の日より前なら数えない等。`calculate-segment-stats` の select に `completed_at` を足し、`update_org_challenge_progress` を CREATE OR REPLACE する。指標の意味の変更) / (d) 写真の解析を通った献立だけを完了として数える (指標の意味の大きな変更) | **(a) (決定)** |
 | Q-3 | 写真から記録した食事 (`POST /api/meal-plans/add-from-photo`・食事の記録の画面 `meals/new` の同期の `analyze-meal-photo`) に野菜スコアが付かない (今もそう。値が入るのは献立表の写真から入力 (`mealId` つき・W-8) だけ) | (a) そのまま / (b) `add-from-photo` がサーバで `vegScoreOfVegetableGrams` を計算して書く (service_role か RPC が要る) | (a)。(b) は別 Issue の候補 (指標に値が入る経路を増やす判断) |
 | Q-4 | `POST /api/ai/nutrition` を残すか (呼ぶ画面が無い) | (a) 残す (本書は `veg_score` を外すだけ) / (b) route とテストを消す | (a)。(b) は別 Issue |
 | Q-5 | anon の `planned_meals` の DELETE の権限 (INSERT / UPDATE と同じく経路は無い) | (a) 本書では触らない / (b) 段 C で `REVOKE DELETE ... FROM anon` も足す | (a) (発注の範囲 = 3 列の書き込み) |

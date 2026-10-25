@@ -398,7 +398,7 @@ describe('#1707 段 E: PostgREST / RPC を本人の JWT で直接呼ぶ', () => 
     expect((members as Array<{ status: string }>).map((m) => m.status)).toEqual(['active']);
   });
 
-  it('DB-6: 登録済み super_admin の aal1 の token で feature_flags を select すると 0 行、aal2 の token では 1 行以上 (feature_flags_super_admin_all の運営の枝)', async () => {
+  it('DB-6: 登録済み super_admin の aal1 の token で feature_flags を select すると 0 行、aal2 の token では 1 行以上 (feature_flags_select_super_admin (SELECT) の運営の枝。20261025120000 が feature_flags_super_admin_all を消して作り直した)', async () => {
     const denied = await asUser(superEnrolled.aal1).from('feature_flags').select('key').eq('key', FEATURE_FLAG_KEY);
     expect(denied.error).toBeNull();
     expect(denied.data).toEqual([]);

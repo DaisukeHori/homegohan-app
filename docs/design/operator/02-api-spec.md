@@ -875,7 +875,7 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 
 ## 10. サポート API
 
-### GET /api/support/tickets
+### GET /api/admin/support/tickets
 チケット一覧。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数 (`meta.total`) を返す。数え直しも失敗したら 500。一覧の行の読み込みのそれ以外の DB の失敗は 500 (200 の空の一覧にしない。cross/04 §6.2。#1917)。チケットの作成 (POST) は 本文が JSON として読めないときは 400 `INVALID_JSON` (外側の catch の 500 に落とさない。#1917)
 
 **クエリ**: `?status=open&priority=high&assignee_id=uuid&page=1`
@@ -884,7 +884,7 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 
 ---
 
-### POST /api/support/tickets
+### POST /api/admin/support/tickets
 チケット作成 (ユーザー側から)
 
 **リクエスト**:
@@ -899,12 +899,12 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 
 ---
 
-### GET /api/support/tickets/{id}
+### GET /api/admin/support/tickets/{id}
 チケット詳細 (メッセージ一覧含む)。 チケットの行 (`support_tickets`) の読み込みの DB の失敗は 500 (404 にしない)。404 は行が無いとき (UUID の形でない id は DB に渡さずに 404) だけ (cross/04 §5.2。#1917)。メッセージ (`support_ticket_messages`) の読み込みの DB の失敗も 500 (200 の空の `messages` にしない。`messages` が空なのはメッセージが 0 件のときだけ。cross/04 §5.2。#1917)
 
 ---
 
-### POST /api/support/tickets/{id}/messages
+### POST /api/admin/support/tickets/{id}/messages
 メッセージ追加。チケットの読み込みの DB の失敗は 500 (404 は行が無いとき (UUID の形でない id を含む) だけ)。 本文が JSON として読めないときは 400 `INVALID_JSON` (外側の catch の 500 に落とさない。#1917)
 
 **リクエスト**:
@@ -926,7 +926,7 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 
 ---
 
-### PATCH /api/support/tickets/{id}
+### PATCH /api/admin/support/tickets/{id}
 ステータス・担当者変更。更新の DB の失敗は 500 (404 は更新した行が無いとき (UUID の形でない id を含む) だけ)。担当者 (`assignee_id`) が存在しない (外部キー違反) は 400 `VALIDATION_ERROR`。 本文が JSON として読めないときは 400 `INVALID_JSON` (外側の catch の 500 に落とさない。#1917)。`POST /api/admin/support/tickets/{id}/assign` も同じ
 
 **リクエスト**: `{ "status": "resolved", "assignee_id": "uuid" }`

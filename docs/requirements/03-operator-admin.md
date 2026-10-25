@@ -232,7 +232,7 @@
    - BAN 種別 (一時 / 永久)
    - 期間 (一時 BAN の場合: 1 日 / 7 日 / 30 日)
    - 通知メッセージ (ユーザーに送る理由説明、編集可)
-3. 確定 → API `POST /api/admin/users/{id}/ban`
+3. 確定 → API `POST /api/admin/users/{id}/freeze`
 4. 監査ログ記録 + ユーザーに Email 通知
 5. ユーザーログイン時に「アカウントが BAN されています」表示
 
@@ -1586,8 +1586,8 @@ CREATE TABLE infra_alerts (
 - `GET /api/admin/users` (検索・フィルタ・ソート)
 - `GET /api/admin/users/{id}` (詳細)
 - `PATCH /api/admin/users/{id}` (基本情報更新)
-- `POST /api/admin/users/{id}/ban`
-- `POST /api/admin/users/{id}/unban`
+- `POST /api/admin/users/{id}/freeze`
+- `DELETE /api/admin/users/{id}/freeze`
 - `PUT /api/admin/users/{id}/roles`
 - `GET /api/admin/users/{id}/audit-logs`
 - `POST /api/admin/users/{id}/notes`
@@ -1621,11 +1621,11 @@ CREATE TABLE infra_alerts (
 - `POST /api/admin/finance/invoices/{id}/resend`
 
 ### 8.7 サポート
-- `GET /api/support/tickets`
-- `POST /api/support/tickets`
-- `GET /api/support/tickets/{id}`
-- `POST /api/support/tickets/{id}/messages`
-- `PATCH /api/support/tickets/{id}` (ステータス・担当者)
+- `GET /api/admin/support/tickets`
+- `POST /api/admin/support/tickets`
+- `GET /api/admin/support/tickets/{id}`
+- `POST /api/admin/support/tickets/{id}/messages`
+- `PATCH /api/admin/support/tickets/{id}` (ステータス・担当者)
 
 ### 8.8 通知配信
 - `GET /api/admin/notifications/campaigns`

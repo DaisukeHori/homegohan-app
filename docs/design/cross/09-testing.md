@@ -400,5 +400,5 @@ clean-build 後 (commit 32d13e1) に既存テストが壊れているリスト (
 - Visual Regression のベンダー選定 (Percy vs Chromatic)
 - Mobile E2E の自動化 (Maestro vs Detox)
 - 実 LLM を使った E2E nightly のコスト試算
-- staging 環境でのデータマスキング戦略 (cross/22 と整合)
+- staging 環境でのデータマスキング戦略
 - カオスエンジニアリングツール選定 (Phase 4)

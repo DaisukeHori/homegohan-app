@@ -459,7 +459,7 @@ CREATE POLICY plan_store_products_select_public ON public.plan_store_products
   FOR SELECT USING (EXISTS (
     SELECT 1 FROM public.subscription_plans AS p
      WHERE p.plan_key = plan_store_products.plan_key AND p.status IN ('public', 'private')));
--- 書くのは super_admin だけ。subscription_plans_mutate_super_admin の最新の定義 (20261017130000_operator_mfa_db_gate.sql:420) と同じ形:
+-- 書くのは super_admin だけ。subscription_plans_mutate_super_admin の最新の定義 (20261017130000_operator_mfa_db_gate.sql:420) と同じ形 (書いた時点。subscription_plans_mutate_super_admin は後の 20261025120000_operator_session_writes_select_only.sql で消えた。plan_store_products_mutate_super_admin は残る):
 -- TO authenticated・運営ロールの条件の項に (SELECT public.operator_mfa_satisfied()) を AND で付ける (cross/12 §11.4。
 -- tests/integration/security/operator-mfa-db-gate.test.ts の DB-1 が、運営ロールの条件を持つ全ポリシーにこの 2 点を求める)
 DROP POLICY IF EXISTS plan_store_products_mutate_super_admin ON public.plan_store_products;
