@@ -591,7 +591,10 @@ describe('#1310 家族の行の削除 (家族の行を先に取る) の途中に
 
     expectNoDeadlock(dissolve, deletion);
     expect(deletion.ok).toBe(true);
+    // 解散は家族の行のロックを待ったあと、消えた行を読めずに FAMILY_NOT_FOUND で止まる (監査を残さない。20261026100000)
+    expect(dissolve.message).toBe('FAMILY_NOT_FOUND');
     expect(await familyRow(familyId)).toBeNull();
+    expect(await auditCount(familyId, 'operator_force_dissolve')).toBe(0);
   });
 
   it('B3: 代表者の移譲の承諾が割り込んでもデッドロックしない (承諾は TRANSFER_ACCEPTOR_NOT_IN_FAMILY になる)', async () => {
@@ -762,7 +765,7 @@ describe('#1310 運営の強制解散 (コミット前) に、移譲・脱退・
     await expectDissolvedWithNoActiveMembers(familyId, [rep.id, adult.id]);
   });
 
-  it('C5: 運営の強制解散がコミット前のところへ、もう一度強制解散が来ても、デッドロックせず解散済みのまま', async () => {
+  it('C5: 運営の強制解散がコミット前のところへ、もう一度強制解散が来ても、デッドロックせず解散済みのまま。後の方は家族の行のロックを待ったあと解散済みを読んで FAMILY_ALREADY_DISSOLVED になり、監査は 1 行だけ (20261026100000)', async () => {
     const { rep, adults, familyId } = await buildFamily('c5', 1);
     const [adult] = adults;
 
@@ -771,8 +774,10 @@ describe('#1310 運営の強制解散 (コミット前) に、移譲・脱退・
 
     expectNoDeadlock(first, second);
     expect(first.ok).toBe(true);
-    expect(second.ok).toBe(true);
+    expect(second.ok).toBe(false);
+    expect(second.message).toBe('FAMILY_ALREADY_DISSOLVED');
     await expectDissolvedWithNoActiveMembers(familyId, [rep.id, adult.id]);
+    expect(await auditCount(familyId, 'operator_force_dissolve')).toBe(1);
   });
 });
 
