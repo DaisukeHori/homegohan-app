@@ -19,7 +19,7 @@ import { ingredientInputsOf, recipeModalDataOf, type DishFavorite } from "@/modu
  */
 const FAVORITE_RECIPE_BACKDROP_BACKGROUND = "rgba(0,0,0,0.5)";
 
-/** 買い物リストに足したときの知らせ。page.tsx の定数と同じ文 (page が onNotice で受けて出す) */
+/** 買い物リストに足したときの知らせ。文はこのファイルだけが持つ (page.tsx は onNotice で受けた文をそのまま出す) */
 const SHOPPING_LIST_ADDED_MESSAGE = (count: number) => `${count}件の材料を買い物リストに追加しました`;
 const SHOPPING_LIST_ADD_FAILED_MESSAGE = "買い物リストへの追加に失敗しました";
 const SHOPPING_LIST_NO_INGREDIENTS_MESSAGE = "材料情報がありません";

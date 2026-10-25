@@ -239,7 +239,7 @@ Next は nonce をリクエスト時の描画で付ける。ビルド時に静�
 | # | 箇所 | 種類 | 移し方 |
 |---|---|---|---|
 | T-1 | `src/app/(main)/badges/page.tsx:142`・`src/components/AIChatBubble.tsx:1548` の `<style jsx global>` (styled-jsx) | インライン `<style>` 要素 | 据え置き (`style-src 'unsafe-inline'`) |
-| T-2 | `src/app/(main)/favorites/page.tsx:347` の素の `<style>` | インライン `<style>` 要素 | 据え置き |
+| T-2 | `src/app/(main)/favorites/page.tsx:405` の素の `<style>` | インライン `<style>` 要素 | 据え置き |
 | T-3 | React の `style={…}` prop (`src` に 2,321 行・出現 2,322。テストを含む `git grep 'style={'`) | `style` 属性 | 据え置き (nonce は属性に効かない。`style-src-attr` の許可は `'unsafe-inline'` か `'unsafe-hashes'` + hash しか無い) |
 | T-4 | `src/lib/maintenance-mode.ts` の `MAINTENANCE_PAGE_HTML`・`src/app/(auth)/auth/native-bridge/route.ts` の `LEGACY_CLOSED_HTML` の `<style>` | 決まった HTML の中のインライン style | 据え置き |
 | T-5 | `src/app/global-error.tsx` の `style={…}` | `style` 属性 | 据え置き |
