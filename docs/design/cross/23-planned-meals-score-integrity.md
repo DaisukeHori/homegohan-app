@@ -1140,7 +1140,7 @@ const PLANNED_MEAL_NOT_FOUND_CODE = 'PLANNED_MEAL_NOT_FOUND'
 ```
 
 - 今まで内側の `try` の中で作っていた `queueDb` は `writer` に置き換わる (同じ鍵の service_role の client を 2 つ作らない)。`writer` は内側の `try` の外 (外側の `try` の中) で作る。内側の `try` の中で作ると、その後の本人の確認と update から見えない。
-- 鍵 (`SERVICE_ROLE_JWT` / `SUPABASE_SERVICE_ROLE_KEY`) が無いとき: 今までは `queueDb` の作成の失敗が内側の `catch` で警告になり、利用者の client で update していた。本書の後は `createClient` の例外が外側の `catch` に届き、ログに残して書かない (service_role でしか書けないため)。本番の Edge Function には両方の鍵がある (`queueDb` が今も使っている)。
+- 鍵 (`SERVICE_ROLE_JWT` / `SUPABASE_SERVICE_ROLE_KEY`) が無いとき: 今までは `queueDb` の作成の失敗が内側の `catch` で警告になり、利用者の client で update していた。本書の後は `createClient` の例外が外側の `catch` に届き、ログに残して書かない (service_role でしか書けないため)。`writer` は今の `queueDb` と同じ式で作るので、鍵についての前提は今と変わらない (本番の鍵の有無は本書では確かめていない。§19 の 4 が本番で `veg_score` が入ることを確かめる)。
 - 既存の外側の `catch` (`createLogger('analyze-meal-photo').withUser(userId).error(...)`) はそのまま。他人の `mealId` は今まで RLS で黙って 0 行だったが、本書の後はこの例外がログに残る (書き込みは起きない)。
 - `update` の本文の列は今までと同じ (`tests/analyze-meal-photo-sugar.test.ts` の「update は 1 か所・栄養の列は `buildPhotoOverwriteNutrition(result)`・`veg_score` は手書き」はそのまま通る。`select` は update に数えない)。
 - `tests/planned-meals-score-integrity-writers-scan.test.ts` (§7.21) の項目 2 は、`writer` の変数名・`createClient(` の 2 つの引数 (`SUPABASE_URL`・`SERVICE_ROLE_JWT` ?? `SUPABASE_SERVICE_ROLE_KEY`)・本人の確認の 2 つの条件・`if (!owned) throw new Error(PLANNED_MEAL_NOT_FOUND_CODE)`・`await writer` の update の順を、空白と改行の違いを無視して見る (字下げは問わない)。
