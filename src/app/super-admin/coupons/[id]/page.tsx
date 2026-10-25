@@ -5,7 +5,7 @@
  * operator/03-ui-spec.md §14 / operator/04-plan-management.md §4.1 準拠
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { couponValidityDay, couponValidUntilPatchValue } from '@/lib/super-admin/coupon-validity';
@@ -82,6 +82,15 @@ function inputAfterSave(current: string, atSave: string, saved: string): string 
 }
 
 /**
+ * 読み直したあとの 1 つの入力欄の値 (#1917 の続き)。書きかけを残す読み直し (状態の変更に成功したあと) で、読み直す前の
+ * 比べる元 (最後に読んだ・保存した行の値 = baseline) から変えていなければ読み直した値 (fresh) にし、変えていれば書きかけとして残す
+ * (まだ保存していない入力を、読み直しで黙って消さない)。baseline が無い (書きかけを残さない読み込み) ときは読み直した値
+ */
+function inputAfterReload(current: string, baseline: string | undefined, fresh: string): string {
+  return baseline !== undefined && current !== baseline ? current : fresh;
+}
+
+/**
  * 保存で送る本文。最後に読んだ・保存したクーポン (coupon) から変えた欄だけを入れる (#1917)。
  * 手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を、開いたときの古い値で上書きしてしまう
  * (route は送られた項目をそのまま書く)。有効期限は JST の暦日で比べる (#1483 の couponValidUntilPatchValue)。
@@ -128,8 +137,14 @@ export default function CouponDetailPage() {
   const [displayName, setDisplayName] = useState('');
   const [validUntil, setValidUntil] = useState('');
   const [maxUses, setMaxUses] = useState('');
+  // 入力欄の比べる元 (最後に読んだ・保存した行)。描画を待たずに、読み直しの応答の時点の値を読むための写し (#1917 の続き)
+  const couponRef = useRef<Coupon | null>(null);
 
-  const fetchCoupon = useCallback(async () => {
+  /**
+   * クーポンを読む。keepEdits のときは、入力欄のうち比べる元 (最後に読んだ・保存した行) から変えている (書きかけの) 欄を残し、
+   * ほかは読んだ値にする (状態の変更に成功したあとの読み直しで、まだ保存していない入力を黙って消さない。#1917 の続き)
+   */
+  const fetchCoupon = useCallback(async (options: { keepEdits?: boolean } = {}) => {
     setIsLoading(true);
     try {
       const res = await fetch(`/api/super-admin/coupons/${couponId}`);
@@ -140,11 +155,13 @@ export default function CouponDetailPage() {
       }
       const loaded = data.data!;
       const inputs = couponInputsOf(loaded);
+      const baseline = options.keepEdits === true && couponRef.current ? couponInputsOf(couponRef.current) : undefined;
+      couponRef.current = loaded;
       setCoupon(loaded);
-      setDisplayName(inputs.displayName);
+      setDisplayName((current) => inputAfterReload(current, baseline?.displayName, inputs.displayName));
       // 有効期限 (DB の時刻) を JST の暦日にして編集欄に入れる (#1483)
-      setValidUntil(inputs.validUntil);
-      setMaxUses(inputs.maxUses);
+      setValidUntil((current) => inputAfterReload(current, baseline?.validUntil, inputs.validUntil));
+      setMaxUses((current) => inputAfterReload(current, baseline?.maxUses, inputs.maxUses));
     } catch {
       setError('ネットワークエラー');
     } finally {
@@ -228,6 +245,7 @@ export default function CouponDetailPage() {
       // 別の運営の変更を上書きしてしまう。応答を待つあいだに変えた欄は書きかけとして残す (次の保存で送る)
       const saved = data.data!;
       const savedInputs = couponInputsOf(saved);
+      couponRef.current = saved;
       setCoupon(saved);
       setDisplayName((current) => inputAfterSave(current, inputsAtSave.displayName, savedInputs.displayName));
       setValidUntil((current) => inputAfterSave(current, inputsAtSave.validUntil, savedInputs.validUntil));
@@ -249,7 +267,8 @@ export default function CouponDetailPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus }),
       });
-      if (res.ok) fetchCoupon();
+      // 書きかけの入力欄は残す (まだ保存していない入力を、状態の変更のあとの読み直しで黙って消さない。#1917 の続き)
+      if (res.ok) fetchCoupon({ keepEdits: true });
     } catch {
       alert('ステータス変更に失敗しました');
     }

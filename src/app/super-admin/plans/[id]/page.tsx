@@ -7,6 +7,8 @@
  * 保存・公開・非公開・廃止・廃止の取り消しが 409 CONFLICT_STALE_DATA (読んでから書くまでに別の運営が先にプランを変えた) で
  * 断られたら、画面が自分でプランを読み直し、読み直した旨を画面の上に出す (運営が手で読み込み直さなくてよいように。#1917)。
  * 表示名・説明・表示順の入力欄は、最後に読んだ・保存した値から変えている (書きかけ) ものだけ残し、ほかは読み直した値にする。
+ * 保存・状態の変更に成功したあとの読み直しも同じく書きかけの欄を残す (応答を待つあいだ・読み直しを待つあいだに打った、
+ * まだ送っていない入力を黙って消さない。保存のあとは、送った欄の比べる元を送った値にしてから読み直す)。
  * 一度表示したあとの読み直し (保存・状態の変更のあと・409 のあと) は画面を外さずに行い、失敗しても画面と入力欄を残して、
  * 文と「再試行」を出す (読み直しの失敗で画面ごとエラーに置き換えない。#1917)。読み直しが 404 / 403 で断られたときは、
  * 読み込み直しても変わらないので、その理由の文を出し、「再試行」は出さない。
@@ -293,9 +295,14 @@ export default function PlanDetailPage() {
     void fetchPlan();
   }, [fetchPlan]);
 
-  /** 保存・状態の変更に成功したあとの読み直し。失敗したら画面を残して文と「再試行」を出す (#1917) */
+  /**
+   * 保存・状態の変更に成功したあとの読み直し。失敗したら画面を残して文と「再試行」を出す (#1917)。
+   * 書きかけの入力欄は残す (keepEdits)。保存の応答を待つあいだ・この読み直しを待つあいだに打った、まだ送っていない入力を
+   * 読み直した値で黙って消さない。保存のあとは、呼ぶ前に送った欄の比べる元を送った値にしている (handleSave の editsAfterSave)
+   * ので、送った値のままの欄は読み直した値になり、送ったあとに変えた欄だけが残る
+   */
   const reloadAfterSuccess = useCallback(async () => {
-    const outcome = await fetchPlan();
+    const outcome = await fetchPlan({ keepEdits: true });
     if (outcome.kind === 'failed') setReloadNotice({ kind: 'reload-failed' });
     if (outcome.kind === 'unavailable') setReloadNotice({ kind: 'unavailable', reason: outcome.reason, message: outcome.message });
   }, [fetchPlan]);
