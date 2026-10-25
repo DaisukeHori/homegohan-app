@@ -7,7 +7,7 @@
 設計原則:
 - `organization_id` 境界を全テーブルで厳守
 - 産業医境界: 家族領域は絶対に閲覧不可
-- HR Webhook / service_role バイパス: Edge Function のみ
+- service_role の client を作る場所: Edge Function と、Next.js では `getSupabaseAdmin()` だけ (HR Webhook も同じ。`cross/02-rls-patterns.md` §3.3)
 - 監査ログは immutable (DELETE / UPDATE 不可)
 
 ## 2. 関連要件

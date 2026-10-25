@@ -18,7 +18,7 @@
 - 本番の DB には書き込まない (本書の事実は 2026-10-25 の SELECT だけ。§3.4)。
 - ローンチ前。本番の `recipe_likes` は 0 行・`recipes` は 0 行 (2026-10-25 の SELECT。§3.4)。お気に入りの機能は一度も動いていないので、既存の行の移行は無い。正しい形にしてよい。
 - `recipe_likes` (公開レシピへの「いいね」) の表・RLS・外部キー・トリガー・関数は、本書では変えない (消すのは削除の migration で、名指しの承認が要る。§21 Q-1)。公開レシピの「いいね」の API (`/api/recipes/[id]/like`) と `isLiked` も変えない。
-- Next.js の API で service_role を使わない (cross/02 §3.3)。RLS は本人の行だけ (cross/02 §4.1 の self-ownership)。
+- Next.js の API で service_role を使わない (本書の決め。書いた時点の cross/02 §3.3 の文「service_role を使う場所: Supabase Edge Function のみ」に合わせた。今の §3.3 は Next.js の `getSupabaseAdmin()` も挙げる)。RLS は本人の行だけ (cross/02 §4.1 の self-ownership)。
 - 範囲外: 献立の生成 (generate-menu-v4 / v5) にお気に入りを好みとして渡すこと・AI 相談の `like_recipe` で献立の料理を保存すること・モバイルのネイティブの画面 (お気に入りは Web の `/favorites` を WebView で開く)・公開レシピの「いいね」をお気に入りの画面に並べること。新しい要求は発明しない (§21 に候補として残す)。
 
 ---
