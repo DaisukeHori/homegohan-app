@@ -2780,7 +2780,7 @@ route・テーブル・列・Storage のパス・環境変数の新設は無い�
 | `is_completed` だけを読む route・zod (`export/meals`・`consultation/sessions` と `messages`・`day/regenerate`・`nutrition-analysis`・`v4` / `v5/generate`・`support/users/[id]`・`src/schemas/membership/family-menu.ts`) | 保持 | 変えない (列の SELECT の権限は変えない。§9.1) |
 | `src/lib/org-challenges.ts` | 変更 | `targetMax: VEG_SCORE_MAX` と注釈 |
 
-## 19. 受入条件と本番の確認 (SELECT だけの 1・2・8・9・11 はオーケストレーターが行う。本番の DB への書き込みを伴う 3・4・10 は、オーナーが行うか、オーナーの承認を得て行う。本書のコードは本番に書き込まない)
+## 19. 受入条件と本番の確認 (オーケストレーターが行う。本書のコードは本番に書き込まない)
 
 段 A のマージの後 (SELECT だけ):
 1. `SELECT proname, prosecdef, proconfig FROM pg_proc WHERE proname = 'planned_meals_set_completed'` → 1 行・`prosecdef = true`・`search_path=` を含む。
