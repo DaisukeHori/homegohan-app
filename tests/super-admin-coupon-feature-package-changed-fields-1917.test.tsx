@@ -513,6 +513,59 @@ describe('状態の変更に成功したあとの読み直しは、書きかけ�
     expect(text()).toContain(NO_CHANGES_MESSAGE);
   });
 
+  /**
+   * 保存のあと、状態の変更の前に別の運営が変えた値 (secondChange) を、2 回目の PATCH (状態の変更) を書く前に行へ重ねる。
+   * GET はいまの行を返し、PATCH は送られた項目を重ねた行を返す
+   */
+  function mockApiWithChangeBeforeSecondPatch(row: Record<string, unknown>, secondChange: Record<string, unknown>) {
+    let current = { ...row };
+    let patchCount = 0;
+    fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') {
+        patchCount += 1;
+        if (patchCount === 2) current = { ...current, ...secondChange };
+        current = { ...current, ...(JSON.parse(String(init.body)) as Record<string, unknown>) };
+        return jsonResponse(200, { data: { ...current } });
+      }
+      return jsonResponse(200, { data: current });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+  }
+
+  it('クーポン: 保存した欄は書きかけとして残さない (保存のあとに別の運営が変えた値を、一時停止のあとの読み直しで出す)', async () => {
+    mockApiWithChangeBeforeSecondPatch(COUPON, { display_name: '別の運営の表示名' });
+    await render(<CouponDetailPage />);
+    await typeInto(field('表示名'), '秋のクーポン (改)');
+    await clickSave();
+    await vi.waitFor(() => expect(text()).toContain('保存しました'));
+
+    await clickButton('一時停止');
+
+    await vi.waitFor(() => expect(text()).toContain('停止中'));
+    await vi.waitFor(() => expect(container.querySelector('input[type="text"]')).not.toBeNull());
+    expect(field('表示名').value).toBe('別の運営の表示名');
+    await clickSave();
+    expect(patchBodies()).toEqual([{ display_name: '秋のクーポン (改)' }, { status: 'paused' }]);
+    expect(text()).toContain(NO_CHANGES_MESSAGE);
+  });
+
+  it('機能パッケージ: 保存した欄は書きかけとして残さない (保存のあとに別の運営が変えた値を、廃止のあとの読み直しで出す)', async () => {
+    mockApiWithChangeBeforeSecondPatch(FEATURE_PACKAGE, { description: '別の運営の説明' });
+    await render(<FeaturePackageDetailPage />);
+    await typeInto(field('説明'), '基本の機能 (改)');
+    await clickSave();
+    await vi.waitFor(() => expect(text()).toContain('保存しました'));
+
+    await clickButton('廃止する');
+
+    await vi.waitFor(() => expect(hasButton('廃止する')).toBe(false));
+    await vi.waitFor(() => expect(container.querySelector('input[type="text"]')).not.toBeNull());
+    expect(field('説明').value).toBe('別の運営の説明');
+    await clickSave();
+    expect(patchBodies()).toEqual([{ description: '基本の機能 (改)' }, { status: 'deprecated' }]);
+    expect(text()).toContain(NO_CHANGES_MESSAGE);
+  });
+
   it('機能パッケージ: 廃止のあとの読み直しで、書きかけの説明を残し、手を付けていない欄は読み直した値にする。次の保存で説明だけを送る', async () => {
     mockApi(FEATURE_PACKAGE, { concurrentChange: { display_order: 5, feature_flags: ['flag_a', 'flag_b', 'flag_c'] } });
     await render(<FeaturePackageDetailPage />);
