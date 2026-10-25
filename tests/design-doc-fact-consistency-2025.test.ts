@@ -6,6 +6,8 @@
  * 名指すのに、§4.1 の `photo-entrances` の行の analyzePhotoWithAI を今の main の `:4330` に書き換え、同じ節の献立表の「写真から入力」の行は
  * 基準の `:4323` のまま残り、1 冊の中で値が 2 つに分かれた。
  * 「すべて基準の値のまま」と「すべて同じ今の行」のどちらも通し、値が分かれたときだけ赤にする (tests/helpers/design-doc-fact-consistency.ts)。
+ * あわせて、冊が基準の sha を名指す間は、その sha の時点の行番号のままであることを見る (R1 は marketing/01 §4.1 の根拠の行と
+ * billing/03 §2.4 の行を、基準の宣言を残したまま、そろえて今の main の行に書き換えた。値はそろっていても宣言と食い違う)。
  * 確かめる事実と冊は tests/helpers/design-doc-facts-2025.ts。
  */
 import fs from 'node:fs';
@@ -13,9 +15,13 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { collectFactValues, findSplitFactValues } from './helpers/design-doc-fact-consistency';
 import {
+  BASIS_PINNED_FACTS_2025,
   DESIGN_DOC_FACTS_2025,
   readAnalyzePhotoWithAiLine,
+  readBillingFoundationSha,
   readMarketingBasisSha,
+  readNutritionFeedbackModelLine,
+  readPraiseCommentPromptLine,
   readMobileGetApiErrorMessageRange,
   readOpenShoppingListLine,
   readShoppingListRegenerateCallLine,
@@ -85,6 +91,30 @@ describe('cross/16・cross/13b の事実の取り出し', () => {
     ]);
     expect(readMobileGetApiErrorMessageRange('HTTP の番号を持たない (`httpStatusOfApiError` が `undefined`。`api-error.ts:78-83`)')).toEqual([]);
   });
+});
+
+describe('冊が名指す基準の sha の時点の行番号 (基準を取り直さずに値だけ今の main の行にしない)', () => {
+  it('billing/03 の土台の sha と、原価の表の model の行を読む', () => {
+    expect(readBillingFoundationSha('| 土台 | origin/main `4b1e1abe` (#1911 のマージ。`66d02c5d` で cross/20 が入った後)。')).toEqual(['4b1e1abe']);
+    expect(readBillingFoundationSha('| 版 | origin/main `4b1e1abe` |')).toEqual([]);
+    expect(readNutritionFeedbackModelLine('| `nutrition_advice` (栄養士のコメント) | OpenAI `gpt-5.2` (`src/app/api/ai/nutrition/feedback/route.ts:112`) | 同上 |')).toEqual(['112']);
+    expect(readPraiseCommentPromptLine('献立の振り返りは `src/app/api/ai/nutrition/feedback/route.ts:94` の指示「良い点を見つけて褒める。…」')).toEqual(['94']);
+  });
+
+  for (const fact of BASIS_PINNED_FACTS_2025) {
+    it(`${fact.doc} の「${fact.name}」は、基準 ${fact.basis} の時点の行`, () => {
+      const doc = fs.readFileSync(path.join(ROOT, fact.doc), 'utf8');
+      const bases = collectFactValues(doc, fact.readBasis).map((mention) => mention.value);
+      // 冊が基準を取り直したなら、値を新しい基準で確かめ直して、この表 (tests/helpers/design-doc-facts-2025.ts) も直す
+      expect([...new Set(bases)], `${fact.doc} が名指す基準の sha`).toEqual([fact.basis]);
+      const mentions = collectFactValues(doc, fact.read);
+      expect(mentions.length, `${fact.doc} で「${fact.name}」を述べる箇所の数`).toBeGreaterThanOrEqual(1);
+      expect(
+        mentions.filter((mention) => mention.value !== fact.valueAtBasis),
+        `${fact.doc} の「${fact.name}」が基準 ${fact.basis} の時点の行 (:${fact.valueAtBasis}) と違う`,
+      ).toEqual([]);
+    });
+  }
 });
 
 describe('#2025 の続き (docs-1026b) で確かめた事実が、冊の中でそろう', () => {

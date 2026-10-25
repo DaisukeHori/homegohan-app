@@ -61,9 +61,51 @@ export const readMobileGetApiErrorMessageRange: FactValueReader = (text) =>
     /`:(\d+-\d+)` の `getApiErrorMessage`/g,
   ]);
 
+/** billing/03 の冊の頭の表の「土台」の行の sha (`| 土台 | origin/main `<sha>` …`) */
+export const readBillingFoundationSha: FactValueReader = (text) => capturesOf(text, [/^\| 土台 \| origin\/main `([0-9a-f]{7,40})`/g]);
+
+/** 栄養士のコメントの model の行 (billing/03 §2.4 の原価の表: OpenAI `gpt-5.2` (`…/nutrition/feedback/route.ts:<行>`)) */
+export const readNutritionFeedbackModelLine: FactValueReader = (text) =>
+  capturesOf(text, [/OpenAI `gpt-5\.2` \(`src\/app\/api\/ai\/nutrition\/feedback\/route\.ts:(\d+)`\)/g]);
+
+/** 献立の振り返りの褒めコメントの指示の行 (marketing/01 §4.1: `…/nutrition/feedback/route.ts:<行>` の指示) */
+export const readPraiseCommentPromptLine: FactValueReader = (text) =>
+  capturesOf(text, [/`src\/app\/api\/ai\/nutrition\/feedback\/route\.ts:(\d+)` の指示/g]);
+
 const MARKETING_01 = 'docs/design/marketing/01-landing-site.md';
 const CROSS_16 = 'docs/design/cross/16-auth-history-sessions.md';
 const CROSS_13B = 'docs/design/cross/13b-legal-consent-mobile.md';
+const BILLING_03 = 'docs/design/billing/03-paid-plans-and-iap.md';
+
+/** 冊が名指す基準の sha と、その sha の時点の行番号の組 */
+export type BasisPinnedFact = {
+  readonly name: string;
+  readonly doc: string;
+  /** 冊の基準の sha を読む */
+  readonly readBasis: FactValueReader;
+  /** 下の値を確かめた基準の sha (冊がこの sha を名指す間は、値はこの sha の時点の行) */
+  readonly basis: string;
+  readonly read: FactValueReader;
+  /** 基準の sha の時点の値 (`git show <basis>:<file>` の行で確かめた) */
+  readonly valueAtBasis: string;
+};
+
+/**
+ * 冊が基準の sha を名指したまま、行番号だけを今の main の行に書き換えると、基準の宣言と値が食い違う (docs-1026b の設計書の直しの R1 は
+ * marketing/01 §4.1 の根拠の行と billing/03 §2.4 の行を今の main の行にした)。冊の基準を取り直すときは、値と一緒にここも直す。
+ */
+export const BASIS_PINNED_FACTS_2025: readonly BasisPinnedFact[] = [
+  // ab201cc6 の src/app/(main)/menus/weekly/page.tsx:4323 = `const analyzePhotoWithAI = async () => {`
+  { name: '献立表の analyzePhotoWithAI の行', doc: MARKETING_01, readBasis: readMarketingBasisSha, basis: 'ab201cc6', read: readAnalyzePhotoWithAiLine, valueAtBasis: '4323' },
+  // ab201cc6 の同じファイルの :5649 = `aria-label="買い物リストを開く"`
+  { name: '献立表の「買い物リストを開く」の行', doc: MARKETING_01, readBasis: readMarketingBasisSha, basis: 'ab201cc6', read: readOpenShoppingListLine, valueAtBasis: '5649' },
+  // ab201cc6 の同じファイルの :3398 = `const res = await aiFetch(`/api/shopping-list/regenerate`, {`
+  { name: '献立表が /api/shopping-list/regenerate を呼ぶ行', doc: MARKETING_01, readBasis: readMarketingBasisSha, basis: 'ab201cc6', read: readShoppingListRegenerateCallLine, valueAtBasis: '3398' },
+  // ab201cc6 の src/app/api/ai/nutrition/feedback/route.ts:94 = `"praiseComment": "褒めコメント（80-120文字）。良い点を見つけて褒める。…"`
+  { name: '褒めコメントの指示の行', doc: MARKETING_01, readBasis: readMarketingBasisSha, basis: 'ab201cc6', read: readPraiseCommentPromptLine, valueAtBasis: '94' },
+  // 4b1e1abe の src/app/api/ai/nutrition/feedback/route.ts:112 = `model: 'gpt-5.2',`
+  { name: '栄養士のコメントの model の行', doc: BILLING_03, readBasis: readBillingFoundationSha, basis: '4b1e1abe', read: readNutritionFeedbackModelLine, valueAtBasis: '112' },
+];
 
 export const DESIGN_DOC_FACTS_2025: readonly DesignDocFact[] = [
   { name: 'file:line の基準の sha', doc: MARKETING_01, read: readMarketingBasisSha, minMentions: 2 },
