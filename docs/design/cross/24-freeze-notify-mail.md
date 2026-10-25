@@ -113,7 +113,7 @@
 | 文書 | 関係 |
 |---|---|
 | Issue #2026 | 要件の正本 |
-| `docs/design/operator/02-api-spec.md` §4 (`POST /api/admin/users/{id}/freeze`・行 173-198) | 今の API の記述。「`notify_user` は監査に残すだけ・`notification_message` は使わない」(行 192) を本書の形に直す (§17) |
+| `docs/design/operator/02-api-spec.md` §4 (`POST /api/admin/users/{id}/freeze`・行 173-198) | 書き換え前の API の記述。「`notify_user` は監査に残すだけ・`notification_message` は使わない」(行 192) を本書の形に直す (§17) |
 | `docs/design/operator/03-ui-spec.md` §6 (凍結の画面・行 143-149) | 「通知メッセージの欄は無い」(行 148) を本書の形に直す (§17) |
 | `docs/design/operator/07-audit-monitoring.md` §4.1 (行 149) | `admin.user.ban` の details の説明に通知の結果を足す (§17) |
 | `docs/design/operator/10-logs-and-mail-retry.md` §6 | `sendEmail` → `email_outbox` → worker の正典。本書はこの経路をそのまま使う。dead の通知 (§8) は `ops_` 以外の template を数えるので、本書の `account_frozen` も数えられる |
@@ -268,7 +268,7 @@ worker GET /api/cron/email-outbox (毎分。operator/10。本書は変えない)
 ### 6.4 画面の項目と既定 (決めること 4)
 
 - チェック `notify_user`「利用者に凍結をメールで知らせる (アカウントの登録メールアドレス宛)」。既定 on (API の `default(true)` と同じ。今までの画面は本文に入れていなかったので API は true で動いていたが送らなかった。本書で「on = 送る」になる)。
-- チェックが on のときだけ、任意のメッセージの欄 `notification_message` (textarea・1000 文字まで・文字数の残りを出す) を出す。説明の文: 「メールには、凍結の日時・種類・解除の予定・凍結中にできること・お問い合わせ先が入ります。理由カテゴリと詳細理由は入りません。ここに書いた文は「運営からのメッセージ」としてそのまま本文に入ります」。
+- チェックが on のときだけ、任意のメッセージの欄 `notification_message` (textarea・1000 文字まで・前後の空白を除いた文字数を「{文字数} / 1000 文字」で出す) を出す。説明の文: 「メールには、凍結の日時・種類・解除の予定・凍結中にできること・お問い合わせ先が入ります。理由カテゴリと詳細理由は入りません。」。欄の placeholder: 「ここに書いた文は「運営からのメッセージ」としてそのままメールの本文に入ります」 (§7.6)。
 - 成功の文: 今までの「永久 BAN で凍結しました」/「N 日間の一時 BAN で凍結しました」のあとに `describeFreezeNotificationOutcome(data.notification)` の文を 1 文添える (§7.3)。
 - 解除のフォームは変えない。
 
@@ -1247,7 +1247,7 @@ sequenceDiagram
 | `docs/design/operator/02-api-spec.md` | 196 | 「**副作用**: `admin_audit_logs` INSERT (`admin.user.ban`・severity='warn')。」の直後に「details は `ban_id`・`ban_type`・`reason_category`・`reason_detail`・`duration_days`・`notify_user`・`unban_at`・`notification_message` (true のときの文、無ければ null)・`notification { status, reason, outbox_id }` (cross/24 §6.5)。」を足す (行は増やさない。同じ行の末尾に) | 実装 PR |
 | `docs/design/operator/03-ui-spec.md` | 148 | 「- 通知メッセージの欄は無い (API は `notification_message` を受け取るが使わず、利用者へ知らせる処理も無い)」→「- 「利用者に凍結をメールで知らせる」のチェック (既定 on。API の `notify_user`) と、on のときだけ出る「利用者へのメッセージ (任意・1000 文字まで)」の欄 (API の `notification_message`。メールの「▼ 運営からのメッセージ」の段に入る)。成功の文に通知の結果 (送信待ちに登録した / 送っていない / 未送信と理由) を添える (cross/24 §6.4)」 | 実装 PR |
 | `docs/design/operator/07-audit-monitoring.md` | 149 | `admin.user.ban` の行の末尾に「details に `notification_message` と `notification { status, reason, outbox_id }` (凍結の通知メールの結果。cross/24 §6.5)」を足す (行は増やさない) | 実装 PR |
-| `docs/design/cross/CLAUDE.md` | 表の最後の行 (03734bcd1 では 28 行 = `21-…` の行。その後 origin/main `61e4163a3` までに #2027 が 29 行に `22-dish-favorites.md` の行を足した) と欠番の注記 (03734bcd1 では 30 行・`61e4163a3` では 31 行) | ファイル一覧の表に 1 行 (1 列目 `24-freeze-notify-mail.md`・2 列目「運営の凍結の通知メール (凍結した本人へ `account_frozen` を送信待ちに積む・画面のチェックと任意のメッセージ・監査と応答に結果)」・3 列目 `#2026`) を、表の最後の行 (23 の行が先に入っていればその次) の次に足す。欠番の注記の今の文「10・11 は欠番 (13a は分冊前の 13 の番号を引き継いでいる)。」は変えない (13 は 13a・13b に引き継がれていて欠番として数えない。23 は別の案件の設計 `cross/23-…` が使う番号で、その冊の追随が自分の行を足す。本書の実装の PR の時点で 23 の行がまだ無くても、注記に 23 を足さない) | 実装 PR |
+| `docs/design/cross/CLAUDE.md` | 表の最後の行 (03734bcd1 では 28 行 = `21-…` の行。その後 origin/main `61e4163a3` までに #2027 が 29 行に `22-dish-favorites.md` の行を足した) と欠番の注記 (03734bcd1 では 30 行・`61e4163a3` では 31 行・`4e342f3f3` では 32 行) | ファイル一覧の表に 1 行 (1 列目 `24-freeze-notify-mail.md`・2 列目「運営の凍結の通知メール (凍結した本人へ `account_frozen` を送信待ちに積む・画面のチェックと任意のメッセージ・監査と応答に結果)」・3 列目 `#2026`) を、表の最後の行 (23 の行が先に入っていればその次) の次に足す。欠番の注記の今の文「10・11 は欠番 (13a は分冊前の 13 の番号を引き継いでいる)。」は変えない (13 は 13a・13b に引き継がれていて欠番として数えない。23 は別の案件の設計 `cross/23-…` が使う番号で、その冊の追随が自分の行を足す。本書の実装の PR の時点で 23 の行がまだ無くても、注記に 23 を足さない) | 実装 PR |
 | `docs/design/operator/10-logs-and-mail-retry.md` | — | 変更なし (template の一覧表を持たない。`account_frozen` は `ops_` でないので dead の通知に数えられる、という既存の規則のまま) | — |
 | `docs/design/cross/20-terms-privacy-text.md`・利用規約・プライバシーポリシー | — | 変更なし (F-18・F-19。事後の通知メールは第16条 1 項の「事前に通知することなく」と矛盾せず、第16条 2・3 項の語を本文に使う。条文に通知メールの約束は足さない) | — |
 
@@ -1259,10 +1259,10 @@ sequenceDiagram
 | 変更 | `src/lib/admin/users-schemas.ts` (定数 1 つ・`notification_message` の Zod)・`src/app/api/admin/users/[id]/freeze/route.ts` (POST の通知と監査と応答)・`src/components/admin/UserFreezeForm.tsx` (チェック・欄・成功の文・`send` の戻り値)・テスト 7 ファイル (§7.7)・docs 4 冊 (§17 の operator/02・03・07・cross/CLAUDE.md) |
 | 新規 | `src/lib/emails/account/account-frozen.ts`・`src/lib/admin/freeze-notification-status.ts`・`src/lib/admin/send-freeze-notification-email.ts`・テスト 4 ファイル (§7.7) |
 
-## 19. 受入条件と本番の確認 (オーケストレーターが行う。本書のコードは本番の DB に直接書き込まない)
+## 19. 受入条件と本番の確認 (本番の DB と送信を伴う 2〜5 は、オーナーが行うか、オーナーの承認を得て行う。本書のコードは本番の DB に直接書き込まない)
 
 1. マージ前 (270k の全件): §12 のテストがすべて緑。`tsc`・lint が緑。§16 の番兵がすべて緑。
-2. 本番 (Vercel) の反映後、試験用の利用者 (捨てアカウント。恒久承認の範囲) を admin が一時 BAN 1 日・チェック on・メッセージありで凍結する → 画面に「1 日間の一時 BAN で凍結しました。通知メールを送信待ちに登録しました…」→ `email_outbox` に `template` `account_frozen`・`user_id` = 試験用の利用者の queued の行が 1 行 (Supabase MCP の SELECT) → 1〜2 分で `sent` になり、試験用の受信箱に件名「【ほめゴハン】アカウントが凍結されました」のメールが届き、本文に凍結の日時・「一時的な凍結」・解除の予定・「▼ 運営からのメッセージ」の段・2 つのリンク・問い合わせ先がある → リンクの `/frozen` を開き、ログインすると凍結の画面に移る。
+2. 本番 (Vercel) の反映後、試験用の利用者 (捨てアカウント) を admin が一時 BAN 1 日・チェック on・メッセージありで凍結する → 画面に「1 日間の一時 BAN で凍結しました。通知メールを送信待ちに登録しました…」→ `email_outbox` に `template` `account_frozen`・`user_id` = 試験用の利用者の queued の行が 1 行 (Supabase MCP の SELECT) → 1〜2 分で `sent` になり、試験用の受信箱に件名「【ほめゴハン】アカウントが凍結されました」のメールが届き、本文に凍結の日時・「一時的な凍結」・解除の予定・「▼ 運営からのメッセージ」の段・2 つのリンク・問い合わせ先がある → リンクの `/frozen` を開き、ログインすると凍結の画面に移る。
 3. 監査 (`/super-admin/audit-logs` または SELECT): `admin.user.ban` の details に `notification_message`・`notification { status: 'sent', reason: null, outbox_id }` があり、`outbox_id` が 2 の行の id。
 4. 解除してから、チェック off で凍結する → 「…通知メールは送っていません」。`email_outbox` に新しい行は無い。監査の `notification.status` が `not_requested`。
 5. 用済みの試験用の利用者は解除し、退会 (または削除) する。`email_outbox` の行が伏せられる (`to_email` が `redacted@redacted.invalid`)。
