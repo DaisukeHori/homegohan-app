@@ -64,9 +64,11 @@ const POLICY_OPERATOR_ROLE_LITERAL_PATTERN = /'(super_admin|admin|finance|org_in
  * 番兵: 見つけ方が空振りしていないこと。2026-10-16 の本番の母集合の数 (付録 A。58 から 56 に動いた) から、
  * 20261024140000_announcements_moderation_flags_select_only.sql (#1917 の続き) が recipe_flags の "Admins can update recipe flags" と
  * personal_subscriptions の personal_subscriptions_insert_admin / personal_subscriptions_update_admin を消して 53 にした
- * (announcements と moderation_flags は FOR ALL を消して SELECT を作り直したので数は変わらない)
+ * (announcements と moderation_flags は FOR ALL を消して SELECT を作り直したので数は変わらない)。
+ * 20261025120000_operator_session_writes_select_only.sql (#1917 の続き) が運営の書き込みのポリシー 7 本を消し、4 本から運営の枝を外して
+ * 42 にした (FOR ALL を消して SELECT を作り直した 6 表は数が変わらない)
  */
-const DB_GATED_POLICY_MIN_COUNT = 53;
+const DB_GATED_POLICY_MIN_COUNT = 42;
 /** 運営ロールを確かめる関数の見つけ方: public の SECURITY DEFINER で authenticated か anon が EXECUTE でき、本体 (prosrc) に両方が当たるもの */
 const FUNCTION_ROLES_PATTERN = /\broles\b/;
 const FUNCTION_OPERATOR_ROLE_LITERAL_PATTERN = /'(super_admin|admin|finance|org_industrial_doctor)'/;
@@ -405,21 +407,32 @@ describe('#1707 段 E: PostgREST / RPC を本人の JWT で直接呼ぶ', () => 
     expect(allowed.data).toEqual([{ key: FEATURE_FLAG_KEY }]);
   });
 
-  it('DB-7: 登録済み admin の aal1 の token で admin_user_notes に insert すると code 42501、aal2 の token では成功 (WITH CHECK の運営の枝)', async () => {
-    const denied = await asUser(adminEnrolled.aal1)
+  it('DB-7: 登録済み admin の aal1 の token では admin_user_notes を読めず、aal2 の token では読める (SELECT の運営の枝)。どちらの token でも直接の insert は code 42501 (書き込みは API が service_role で書く。20261025120000・#1917 の続き)', async () => {
+    const { data: seeded, error: seedError } = await srAdmin
       .from('admin_user_notes')
-      .insert({ user_id: ordinary.id, admin_id: adminEnrolled.id, note: `#1707 aal1 ${TS}` });
-    expect(denied.error?.code).toBe(INSUFFICIENT_PRIVILEGE);
-    const allowed = await asUser(adminEnrolled.aal2)
-      .from('admin_user_notes')
-      .insert({ user_id: ordinary.id, admin_id: adminEnrolled.id, note: `#1707 aal2 ${TS}` })
+      .insert({ user_id: ordinary.id, admin_id: adminEnrolled.id, note: `#1707 seeded ${TS}` })
       .select('id')
       .single();
-    expect(allowed.error).toBeNull();
-    createdNoteIds.push((allowed.data as { id: string }).id);
-    // aal1 の insert は行を作っていない
+    expect(seedError).toBeNull();
+    const seededId = (seeded as { id: string }).id;
+    createdNoteIds.push(seededId);
+
+    const deniedRead = await asUser(adminEnrolled.aal1).from('admin_user_notes').select('id').eq('id', seededId);
+    expect(deniedRead.error).toBeNull();
+    expect(deniedRead.data).toEqual([]);
+    const allowedRead = await asUser(adminEnrolled.aal2).from('admin_user_notes').select('id').eq('id', seededId);
+    expect(allowedRead.error).toBeNull();
+    expect(allowedRead.data).toEqual([{ id: seededId }]);
+
+    for (const [label, jwt] of [['aal1', adminEnrolled.aal1], ['aal2', adminEnrolled.aal2]] as const) {
+      const denied = await asUser(jwt)
+        .from('admin_user_notes')
+        .insert({ user_id: ordinary.id, admin_id: adminEnrolled.id, note: `#1707 ${label} ${TS}` });
+      expect(denied.error?.code, label).toBe(INSUFFICIENT_PRIVILEGE);
+    }
+    // 直接の insert は行を作っていない
     const { data: notes } = await srAdmin.from('admin_user_notes').select('note').eq('user_id', ordinary.id);
-    expect((notes as Array<{ note: string }>).map((n) => n.note)).toEqual([`#1707 aal2 ${TS}`]);
+    expect((notes as Array<{ note: string }>).map((n) => n.note)).toEqual([`#1707 seeded ${TS}`]);
   });
 
   it('DB-8: 登録済み admin の aal1 の token で inquiries を select すると、自分の行だけが読め、他人の行は読めない (S-29。本人の行の枝は判定を通さない)', async () => {

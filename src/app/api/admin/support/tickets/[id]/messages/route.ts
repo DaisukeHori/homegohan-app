@@ -18,7 +18,7 @@
  * (一時的な失敗でチケットが消えたように見せない)。UUID の形でない id は GET・POST とも DB に渡さず 404。壊れた JSON の本文は 400 INVALID_JSON。
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested, invalidJsonNested } from '@/lib/api/error-responses';
 import { isUuid, readJsonBody } from '@/lib/http-params';
@@ -165,7 +165,8 @@ export async function POST(request: NextRequest, props: RouteContext) {
       return NextResponse.json(TICKET_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
-    const { data: message, error: msgError } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { data: message, error: msgError } = await getSupabaseAdmin()
       .from('support_ticket_messages')
       .insert({
         ticket_id: params.id,
@@ -200,7 +201,8 @@ export async function POST(request: NextRequest, props: RouteContext) {
     if (!is_internal) {
       // first_response_at が未設定の場合は設定
       // (メール通知の成否に関わらず、返信を投稿した時点で記録する)
-      await supabase
+      // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+      await getSupabaseAdmin()
         .from('support_tickets')
         .update({
           first_response_at: new Date().toISOString(),

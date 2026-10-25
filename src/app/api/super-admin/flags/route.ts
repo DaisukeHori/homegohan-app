@@ -97,7 +97,8 @@ export async function POST(request: NextRequest) {
     // #1029: feature_flags テーブルへ実体を作成する (以前は feature_packages.feature_flags
     // 配列にキーを append するだけで、enabled/rollout_strategy/constraints を保持する
     // 場所が無かった)
-    const { data: created, error: insertError } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { data: created, error: insertError } = await getSupabaseAdmin()
       .from('feature_flags')
       .insert({
         key,
@@ -134,7 +135,8 @@ export async function POST(request: NextRequest) {
     if (basicPkg) {
       const currentFlags: string[] = basicPkg.feature_flags ?? [];
       if (!currentFlags.includes(key)) {
-        await supabase
+        // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+        await getSupabaseAdmin()
           .from('feature_packages')
           .update({ feature_flags: [...currentFlags, key], updated_at: new Date().toISOString() })
           .eq('id', basicPkg.id);

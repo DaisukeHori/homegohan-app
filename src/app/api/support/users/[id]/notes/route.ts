@@ -72,9 +72,11 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
       return NextResponse.json({ error: USER_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
-    // ノート追加 (admin_user_notes の RLS は運営ロールに許しているので、本人のセッションの client で書く)
+    // ノート追加。admin_user_notes の書き込みは service_role だけ (運営の直接の書き込みを塞いだ。#1917 の続き)。
+    // requireRole を通したあとだけ書く。監査ログは本人のセッションの client で書く
     const supabase = await createClient();
-    const { data, error } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { data, error } = await getSupabaseAdmin()
       .from('admin_user_notes')
       .insert({
         user_id: params.id,

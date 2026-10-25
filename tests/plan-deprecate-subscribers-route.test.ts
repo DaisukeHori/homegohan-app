@@ -46,6 +46,8 @@ vi.mock('@/lib/db-logger', () => ({
 let fakeSupabase: ReturnType<typeof createFakeSupabase>;
 let subscribersDb: ReturnType<typeof createFakePlanSubscribersDb>;
 const mockGetSupabaseAdmin = vi.fn();
+/** service_role の client で subscription_plans に触れた回数の記録 (プランの更新は service_role で書く) */
+let adminPlanWrites: string[] = [];
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: () => Promise.resolve(fakeSupabase),
@@ -120,7 +122,16 @@ function onePersonalSubscriber(status = 'active'): FakePlanSubscribersDbOptions 
 beforeEach(() => {
   vi.clearAllMocks();
   mockRequireRole.mockResolvedValue(actor);
-  mockGetSupabaseAdmin.mockImplementation(() => subscribersDb.client);
+  // service_role の client: 契約者の数え上げ (subscribersDb) と、プランの更新 (subscription_plans。運営の直接の書き込みを塞いだので
+  // service_role で書く。#1917 の続き)。プランの行は本人のセッションの読み取りと同じ代わりの DB (fakeSupabase) の順の結果を使う
+  mockGetSupabaseAdmin.mockImplementation(() => ({
+    from: (table: string) => {
+      if (table !== 'subscription_plans') return subscribersDb.client.from(table);
+      adminPlanWrites.push(table);
+      return fakeSupabase.from(table);
+    },
+  }));
+  adminPlanWrites = [];
 });
 
 describe('契約者がいないプランは、これまでどおり廃止できる (#1127)', () => {
@@ -132,6 +143,8 @@ describe('契約者がいないプランは、これまでどおり廃止でき�
     expect(tablesTouched()).toEqual(['subscription_plans', 'subscription_plans', 'admin_audit_logs']);
     const updateBuilder = fakeSupabase.from.mock.results[1]!.value as { update: ReturnType<typeof vi.fn> };
     expect(updateBuilder.update).toHaveBeenCalledWith(expect.objectContaining({ status: 'deprecated', ends_at: ENDS_AT }));
+    // 2 回目の subscription_plans (更新) は service_role の client から (#1917 の続き)
+    expect(adminPlanWrites).toEqual(['subscription_plans']);
   });
 
   it('終了済みの契約・解散済みの家族と組織・別プランの契約者しかいなければ、廃止できる', async () => {
@@ -255,7 +268,9 @@ describe('安全装置が働く範囲は、廃止への遷移だけ (#1127)', ()
     const { res } = await patch({ status: 'private' }, { subscribers: onePersonalSubscriber() });
 
     expect(res.status).toBe(200);
-    expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
+    // 契約者の表を読まない (service_role の client はプランの更新にだけ使う。#1917 の続き)
+    expect(subscribersDb.from).not.toHaveBeenCalled();
+    expect(adminPlanWrites).toEqual(['subscription_plans']);
   });
 
   it('廃止の取り消し (deprecated --> private) は、契約者がいても止めず、契約者数も数えない', async () => {
@@ -265,14 +280,18 @@ describe('安全装置が働く範囲は、廃止への遷移だけ (#1127)', ()
     );
 
     expect(res.status).toBe(200);
-    expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
+    // 契約者の表を読まない (service_role の client はプランの更新にだけ使う。#1917 の続き)
+    expect(subscribersDb.from).not.toHaveBeenCalled();
+    expect(adminPlanWrites).toEqual(['subscription_plans']);
   });
 
   it('status を変えない編集 (表示名の変更) は、契約者がいても止めず、契約者数も数えない', async () => {
     const { res } = await patch({ display_name: 'Pro (新)' }, { subscribers: onePersonalSubscriber() });
 
     expect(res.status).toBe(200);
-    expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
+    // 契約者の表を読まない (service_role の client はプランの更新にだけ使う。#1917 の続き)
+    expect(subscribersDb.from).not.toHaveBeenCalled();
+    expect(adminPlanWrites).toEqual(['subscription_plans']);
   });
 
   it('廃止予定日 (ends_at) が無い廃止は、先に 400 で止まり、契約者数は数えない', async () => {

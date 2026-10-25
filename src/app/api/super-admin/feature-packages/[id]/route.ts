@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { FeaturePackageUpdateSchema } from '@/lib/super-admin/feature-packages-schemas';
 import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
@@ -99,7 +99,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
     if (input.display_order !== undefined) updateData.display_order = input.display_order;
     if (input.status !== undefined) updateData.status = input.status;
 
-    const { data: updated, error } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { data: updated, error } = await getSupabaseAdmin()
       .from('feature_packages')
       .update(updateData)
       .eq('id', params.id)
@@ -166,7 +167,8 @@ export async function DELETE(request: NextRequest, props: RouteContext) {
       return NextResponse.json(PACKAGE_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
-    const { error: deleteErr } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { error: deleteErr } = await getSupabaseAdmin()
       .from('feature_packages')
       .delete()
       .eq('id', params.id);

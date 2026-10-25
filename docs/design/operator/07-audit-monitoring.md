@@ -146,7 +146,7 @@ actor_id NULL・action_type `system.*` で書く。読んで判断する側は a
 `(記録なし)` の行は、設計で予定していたが API が無い (操作そのものが未実装) ため、記録する箇所も無いもの。
 
 ```
-admin.user.ban                      - ユーザー BAN (POST /api/admin/users/{id}/freeze。凍結の更新は読んだ時点の super_admin でない状態のままのときだけ書く。0 行なら読み直し、対象が無ければ 404、あれば (読んでから書くまでに super_admin になった等) 常に 409 CONFLICT_STALE_DATA で、どちらも書かず記録もしない)
+admin.user.ban                      - ユーザー BAN (POST /api/admin/users/{id}/freeze。凍結の更新は読んだ時点の super_admin でない状態のままのときだけ書く。0 行なら読み直し、対象が無ければ 404、あれば (読んでから書くまでに super_admin になった等) 常に 409 CONFLICT_STALE_DATA で、どちらも書かず記録もしない)。details に `notification_message` と `notification { status, reason, outbox_id }` (凍結の通知メールの結果。cross/24 §6.5)
 admin.user.unban                    - BAN 解除 (DELETE /api/admin/users/{id}/freeze)
 admin.user.role_change              - ロール変更 (PATCH / PUT /api/admin/users/{id}/role。details は previous_roles と new_roles)
                                       previous_roles は admin_set_user_roles が対象の行を FOR NO KEY UPDATE でロックして読んだ変える前の roles

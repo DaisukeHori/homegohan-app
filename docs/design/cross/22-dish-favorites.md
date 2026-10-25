@@ -1407,10 +1407,10 @@ import { DISH_FAVORITES_PAGE_SIZE, type DishFavorite, type DishFavoriteSort } fr
 type FavoriteItem = DishFavorite;
 type SortOption = DishFavoriteSort;
 const PAGE_SIZE = DISH_FAVORITES_PAGE_SIZE;
-/** 買い物リストに足したときの知らせ (RecipeModal には文を出す場所が無いので、画面の下に短く出す) */
-const SHOPPING_LIST_ADDED_MESSAGE = (count: number) => `${count}件の材料を買い物リストに追加しました`;
-const SHOPPING_LIST_ADD_FAILED_MESSAGE = "買い物リストへの追加に失敗しました";
-const SHOPPING_LIST_NO_INGREDIENTS_MESSAGE = "材料情報がありません";
+// 買い物リストに足したときの知らせの 3 つの文 (SHOPPING_LIST_ADDED_MESSAGE・SHOPPING_LIST_ADD_FAILED_MESSAGE・
+// SHOPPING_LIST_NO_INGREDIENTS_MESSAGE) は page.tsx に置かない。FavoriteRecipeModal.tsx (§7.12) だけが持ち、
+// page は onNotice (§7.10 (6)) で受けた文を画面の下に短く出す (RecipeModal には文を出す場所が無いため)。
+// page が自分で組み立てる知らせの文は無い。
 /** 知らせを消すまでの時間 (ミリ秒)。読める長さで、次の操作の邪魔にならない程度 */
 const NOTICE_HIDE_MS = 3000;
 
@@ -1617,7 +1617,7 @@ import { ingredientInputsOf, recipeModalDataOf, type DishFavorite } from "@/modu
  */
 const FAVORITE_RECIPE_BACKDROP_BACKGROUND = "rgba(0,0,0,0.5)";
 
-/** 買い物リストに足したときの知らせ。page.tsx の定数と同じ文 (page が onNotice で受けて出す) */
+/** 買い物リストに足したときの知らせ。文はこのファイルだけが持つ (page.tsx は onNotice で受けた文をそのまま出す) */
 const SHOPPING_LIST_ADDED_MESSAGE = (count: number) => `${count}件の材料を買い物リストに追加しました`;
 const SHOPPING_LIST_ADD_FAILED_MESSAGE = "買い物リストへの追加に失敗しました";
 const SHOPPING_LIST_NO_INGREDIENTS_MESSAGE = "材料情報がありません";
@@ -1688,7 +1688,7 @@ export function FavoriteRecipeModal({ isOpen, favorite, isRemoving, onRemove, on
 - `RecipeModal` の位置 (`fixed bottom-20 lg:bottom-0 … lg:left-64`) は `(main)` の layout の前提で、`/favorites` も同じ layout の下なのでそのまま使える。
 - 幕 (F-33): `RecipeModal` は幕を描かない。献立の画面は `page.tsx` の `{activeModal && …}` が `fixed inset-0 z-[200]`・`rgba(0,0,0,0.5)`・押すと閉じる幕を `RecipeModal` (`z-[201]`) の後ろに敷く。本書は同じ形の幕を `FavoriteRecipeModal` が `RecipeModal` の兄弟として描く (`AnimatePresence` の直下に、鍵の違う 2 つの子 `favorite-recipe-backdrop` と `favorite.id`)。幕は `z-[200]` なので、お気に入りの画面の上の帯 (`position: sticky`・`zIndex: 50`)・下のナビ (`z-50`)・横のメニュー (`z-50`)・一覧の行の上に乗り、`RecipeModal` のパネル (`z-[201]`) と知らせ (`zIndex: 300`。§7.10 (6)) の下に入る。知らせは `pointerEvents: "none"` なので、知らせの上を押しても下のパネルか幕が受ける (知らせが押す先を隠さない)。開いている間、詳細の外を押すと幕が受けて `onClose` を呼び、後ろの一覧の行・行の ♥・検索・並び替え・「次の50件を表示」・ナビには届かない。キーボードのフォーカスは `RecipeModal` の `FocusTrap` が詳細の中に留める (`allowOutsideClick: true` はクリックを止めないだけで、詳細の外のクリックは幕が受ける)。Esc は `RecipeModal` の `useDialogA11y` が `onClose` を呼ぶ (§9.3 (c))。
 - 閉じるときは幕とパネルの両方が `exit` のアニメーションで消える。消える途中で幕を押すと `onClose` がもう一度呼ばれるが、page の `closeRecipeDetail` (§7.10 (3)) は同じ値を入れ直すだけなので何も変わらない (§9.3 (c) の「閉じる途中」の行)。消える途中のパネルは最後に開いていたときの props のまま描かれ、`FocusTrap`・`useDialogA11y` も残っている間は有効なので、閉じる途中に届く出来事はパネルの中・幕・Esc だけ (後ろの一覧には届かない)。パネルの ♥ は page の `onRemove` の見張り (§7.10 (6)) で何もしない。
-- `page.tsx` 側の 3 つの文の定数 (§7.10 (2)) は、このファイルの定数と同じ文にする (`onNotice` に渡すのはこのファイルの文。page の定数は page が自分で出す文のため)。実装で重複を避けたければ、3 つの文を `core.ts` ではなく `_components/shopping-list-notice.ts` に置いてよい (core は UI の文を持たない)。
+- 知らせの 3 つの文の定数は、このファイルだけが持つ (`page.tsx` には置かない。§7.10 (2))。page は `onNotice` で受けた文をそのまま出す。置き場を分けたければ、3 つの文を `core.ts` ではなく `_components/shopping-list-notice.ts` に置いてよい (core は UI の文を持たない)。
 
 ### 7.13 `tests/dish-favorites-migration-contract.test.ts` (新。DB を使わない静的な検査。全文)
 
@@ -2761,7 +2761,7 @@ R-2 の『ページを読み直したときの ♥ の印は保存の状態と�
 | ref / 値 | `favoriteSessionRef` (モーダルの回)・`isRecipeModalOpen` (料理のモーダルが開いているか) | `menus/weekly/page.tsx` (§7.9 (2)) |
 | props | `FavoriteRecipeModalProps` (`favorite: DishFavorite`・`isRemoving`・`onRemove`・`onNotice`) / `FavoriteListItemData = Pick<DishFavorite, …>` | `favorites/_components/` |
 | 定数 (e2e。export しない) | `FAVORITE_REQUEST_SETTLE_TIMEOUT_MS` (2 つのファイルにそれぞれ 1 つ。§7.16・§13) | `tests/e2e/bug-31-favorite-button.spec.ts`・`tests/e2e/.exploration/recipe-shopping-explore.spec.ts` |
-| 定数 (画面。export しない) | `SHOPPING_LIST_ADDED_MESSAGE`・`SHOPPING_LIST_ADD_FAILED_MESSAGE`・`SHOPPING_LIST_NO_INGREDIENTS_MESSAGE` (page.tsx と FavoriteRecipeModal.tsx の両方)・`NOTICE_HIDE_MS` (page.tsx)・`FAVORITE_RECIPE_BACKDROP_BACKGROUND` (FavoriteRecipeModal.tsx) | `favorites/page.tsx`・`favorites/_components/FavoriteRecipeModal.tsx` |
+| 定数 (画面。export しない) | `SHOPPING_LIST_ADDED_MESSAGE`・`SHOPPING_LIST_ADD_FAILED_MESSAGE`・`SHOPPING_LIST_NO_INGREDIENTS_MESSAGE` (FavoriteRecipeModal.tsx だけ。§7.10 (2)・§7.12)・`NOTICE_HIDE_MS` (page.tsx)・`FAVORITE_RECIPE_BACKDROP_BACKGROUND` (FavoriteRecipeModal.tsx) | `favorites/page.tsx`・`favorites/_components/FavoriteRecipeModal.tsx` |
 | ref / 関数 / 印 | `openFavoriteIdRef`・`openRecipeDetail` (今の関数の置き換え)・`closeRecipeDetail` (新)・state `notice`・`fetchesInFlightRef`・`removalRef`・`favoritesRef` (一覧の GET と削除を重ねない・消した行が一覧にあったかを読む。`fetchFavorites` は置き換え) / 幕の `data-testid="favorite-recipe-backdrop"` | `favorites/page.tsx` (§7.10 (3)(3a)) / `FavoriteRecipeModal.tsx` (§7.12) |
 | 書き出しの行 | `{ table: 'dish_favorites', scope: self('user_id'), orderBy: ['created_at', 'id'] }` | `src/lib/account-export-tables.ts` |
 | 対応の行 | `dish_favorites: 'レシピ'` | `tests/legal-text-1901.test.ts` の `PRIVACY_DATA_TABLES`・cross/20 の写し (§17) |

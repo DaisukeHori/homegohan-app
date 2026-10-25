@@ -558,14 +558,15 @@ describe('GET /api/support/users/[id]/notes -> admin.user.view_notes', () => {
 
 describe('POST /api/support/users/[id]/notes -> admin.user.note_add', () => {
   // #1161: 対象ユーザーの存在確認は認可の後に service_role で行う (user_profiles は RLS で本人の行しか見えない)。
-  // ノートの追加と監査ログの INSERT は、本人のセッションの client (RLS: 運営ロール / actor_id = auth.uid())
+  // ノートの追加は service_role (運営の直接の書き込みを塞いだ。#1917 の続き)、監査ログの INSERT は本人のセッションの client
+  // (RLS: actor_id = auth.uid())
   function setup(auditInsert: QueryResult = INSERT_OK) {
     mockRequireRole.mockResolvedValue(supportActor);
-    serviceRoleClient = makeClient({ user_profiles: [{ data: { id: TARGET_ID }, error: null }] });
-    userScopedClient = makeClient({
+    serviceRoleClient = makeClient({
+      user_profiles: [{ data: { id: TARGET_ID }, error: null }],
       admin_user_notes: [{ data: { id: NOTE_ID, note: SECRET_NOTE, created_at: '2026-10-01T00:00:00Z' }, error: null }],
-      admin_audit_logs: [auditInsert],
     });
+    userScopedClient = makeClient({ admin_audit_logs: [auditInsert] });
   }
 
   const call = (body: unknown = { note: SECRET_NOTE }, headers: Record<string, string> = {}) =>
@@ -584,6 +585,8 @@ describe('POST /api/support/users/[id]/notes -> admin.user.note_add', () => {
     const res = await call(undefined, { 'x-forwarded-for': '198.51.100.40, 10.0.0.1' });
 
     expect(res.status).toBe(200);
+    expect(serviceRoleClient.inserts.map((i) => i.table)).toEqual(['admin_user_notes']);
+    expect(userScopedClient.inserts.map((i) => i.table)).toEqual(['admin_audit_logs']);
     const rows = userScopedClient.auditRows();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({

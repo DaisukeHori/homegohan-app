@@ -316,7 +316,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
     const statusChanged = input.status !== undefined && input.status !== existing.status;
 
     // 判定に使った値のままのときだけ書く (冒頭のコメント)。status は遷移の可否と変えてよい項目の判定に使ったので常に条件にする
-    let updateQuery = supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    let updateQuery = getSupabaseAdmin()
       .from('subscription_plans')
       .update(updateData)
       .eq('id', params.id)
@@ -429,7 +430,8 @@ export async function DELETE(request: NextRequest, props: RouteContext) {
     }
 
     // draft のままのときだけ消す (読んでから消すまでに別の運営が公開していたら 0 行。公開したプランを消さない)
-    const { data: deleted, error: deleteErr } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { data: deleted, error: deleteErr } = await getSupabaseAdmin()
       .from('subscription_plans')
       .delete()
       .eq('id', params.id)
