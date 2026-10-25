@@ -1,5 +1,5 @@
 -- rollback: 20261007053924_align_health_recipes_own_policies.sql
--- 挙動は変わらない (本番ドリフト D-1〜D-12 が再び生じるだけ)。
+-- 20261024110000 より前の状態で流すなら挙動は変わらない (本番ドリフト D-1〜D-12 が再び生じるだけ)。20261024110000 の後に流すと、health_streaks の INSERT / UPDATE のポリシーを streak_type を絞らない旧式で作り直すので、利用者が自分の meal_record / breakfast の行を書ける穴が再び開く (20261024110000 の down を流したのと同じ認可になる)。
 --   この migration は定義の書き方を migration に揃えただけで、認可の結果は前後で同じ
 --   (tests/integration/rls/health-recipes-own-policies.test.ts)。通常は戻す必要は無い。
 --

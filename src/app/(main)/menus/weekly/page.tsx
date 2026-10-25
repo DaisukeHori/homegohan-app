@@ -78,6 +78,14 @@ import { ImageGenerateModal } from "./_components/modals/ImageGenerateModal";
 import { PhotoEditModal } from "./_components/modals/PhotoEditModal";
 import { NutritionDetailModal } from "./_components/modals/NutritionDetailModal";
 import { ImproveMealModal } from "./_components/modals/ImproveMealModal";
+import { dishSnapshotFromMenuDish } from '@/modules/dish-favorites/core';
+import {
+  addRecipeIngredientsToShoppingList,
+  RECIPE_SHOPPING_ADDED_TITLE,
+  RECIPE_SHOPPING_NO_INGREDIENTS_MESSAGE,
+  RECIPE_SHOPPING_NO_INGREDIENTS_TITLE,
+  recipeShoppingAddedMessage,
+} from './_state/recipeShoppingList';
 
 // #182/#322: dynamic import で初期バンドルを削減 (LCP 改善)
 const V4GenerateModal = dynamic(
@@ -795,6 +803,17 @@ export default function WeeklyMenuPage() {
 
   const isFavoriteLoading = recipe.isFavoriteLoading;
   const setIsFavoriteLoading = useCallback((v: boolean) => dispatchRecipe({ type: 'FAVORITE_LOADING_SET', payload: v }), []);
+
+  const favoriteId = recipe.favoriteId;
+  const setFavoriteId = useCallback((v: string | null) => dispatchRecipe({ type: 'FAVORITE_ID_SET', payload: v }), []);
+  /**
+   * 料理のモーダルの回 (#2011)。モーダルが開く・閉じる・別の料理になるたびに status の effect が 1 つ進める。
+   * status・POST・DELETE の応答は、送った時点の回と今の回が同じときだけ ♥ の印・favoriteId・取得中の印に入れる
+   * (押したあとに閉じて別の料理を開くと、前の料理の応答が今の料理の印と id を書き換えるため)
+   */
+  const favoriteSessionRef = useRef(0);
+  /** 料理のモーダルが開いているか (買い物リストの追加は activeModal だけを閉じ selectedRecipe を残す) */
+  const isRecipeModalOpen = activeModal === 'recipe' && selectedRecipe !== null;
 
   const aiSuggestions = recipe.aiSuggestions;
   const setAiSuggestions = useCallback((v: unknown[]) => dispatchRecipe({ type: 'AI_SUGGESTIONS_SET', payload: v }), []);
@@ -1921,18 +1940,26 @@ export default function WeeklyMenuPage() {
   const setImageReferencePreviews = useFormDraftStore((s) => s.setImageReferencePreviews);
   const imageGenerateInputRef = useRef<HTMLInputElement>(null);
 
-  // レシピモーダルが開いたとき、お気に入り状態を取得
+  // ♥ の状態を dish_favorites から名前で引く。モーダルが開くたびに引き直す。取得中は ♥ を disabled にする (#2011)
   useEffect(() => {
-    if (!selectedRecipe) {
-      setIsFavorite(false);
+    favoriteSessionRef.current += 1;
+    const session = favoriteSessionRef.current;
+    if (!isRecipeModalOpen || !selectedRecipe) {
+      // 閉じた: 前の回の取得・押下の応答は捨てられるので、取得中の印をここで下ろす
+      setIsFavoriteLoading(false);
       return;
     }
-    const encodedId = encodeURIComponent(selectedRecipe);
-    fetch(`/api/recipes/${encodedId}/like`)
-      .then(res => res.ok ? res.json() : null)
-      .then(data => { if (data) setIsFavorite(data.liked); })
-      .catch(() => {/* 取得失敗は無視 */});
-  }, [selectedRecipe]);
+    setIsFavoriteLoading(true);
+    fetch(`/api/favorites/status?name=${encodeURIComponent(selectedRecipe)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { favorited?: boolean; id?: string | null } | null) => {
+        if (favoriteSessionRef.current !== session || !data) return;
+        setIsFavorite(data.favorited === true);
+        setFavoriteId(typeof data.id === 'string' ? data.id : null);
+      })
+      .catch(() => {/* 取得失敗は無視 (印は今の値のまま) */})
+      .finally(() => { if (favoriteSessionRef.current === session) setIsFavoriteLoading(false); });
+  }, [selectedRecipe, isRecipeModalOpen]);
 
   const openAddMealModal = (mealType: MealType, dayIndex: number) => {
     setAddMealKey(mealType);
@@ -3481,90 +3508,69 @@ export default function WeeklyMenuPage() {
     });
   };
 
-  // お気に入りトグル (楽観的更新 + 失敗時ロールバック)
+  // お気に入りトグル (楽観的更新 + 失敗時ロールバック)。保存は料理の写しを POST、解除は id で DELETE (#2011)。
+  // 応答は押した時点のモーダルの回がまだ続いているときだけ反映する (閉じた・別の料理を開いたあとの応答は捨てる。alert も出さない)
   const handleToggleFavorite = async () => {
     if (!selectedRecipe || isFavoriteLoading) return;
+    const session = favoriteSessionRef.current;
+    const isCurrentSession = () => favoriteSessionRef.current === session;
     const prev = isFavorite;
     setIsFavorite(!prev);
     setIsFavoriteLoading(true);
     try {
-      const encodedId = encodeURIComponent(selectedRecipe);
-      const method = prev ? 'DELETE' : 'POST';
-      const res = await fetch(`/api/recipes/${encodedId}/like`, { method });
-      if (!res.ok) {
-        // rollback
+      if (prev) {
+        if (!favoriteId) { setIsFavorite(prev); return; }
+        const res = await fetch(`/api/favorites/${encodeURIComponent(favoriteId)}`, { method: 'DELETE' });
+        if (!isCurrentSession()) return;
+        // 404 = もう消えている。どちらも「未保存」が正しい状態
+        if (res.ok || res.status === 404) { setFavoriteId(null); } else { setIsFavorite(prev); }
+        return;
+      }
+      const dish = (selectedRecipeData?.dishes as unknown[] | undefined)?.[0];
+      const body = {
+        dish: dishSnapshotFromMenuDish(dish && typeof dish === 'object' ? (dish as Record<string, unknown>) : {}, selectedRecipe),
+        source_planned_meal_id: typeof selectedRecipeData?.plannedMealId === 'string' ? selectedRecipeData.plannedMealId : null,
+      };
+      const res = await fetch('/api/favorites', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!isCurrentSession()) return;
+      if (res.ok) {
+        const data = (await res.json()) as { favorite?: { id?: string } };
+        if (!isCurrentSession()) return;
+        setFavoriteId(typeof data.favorite?.id === 'string' ? data.favorite.id : null);
+      } else {
         setIsFavorite(prev);
+        // 409 (上限) と 400 (内容) は理由の文を見せる (本文の error は日本語の固定の文)
+        if (res.status === 409 || res.status === 400) {
+          const err = (await res.json().catch(() => null)) as { error?: string } | null;
+          if (isCurrentSession() && err?.error) alert(err.error);
+        }
       }
     } catch {
-      setIsFavorite(prev);
+      if (isCurrentSession()) setIsFavorite(prev);
     } finally {
-      setIsFavoriteLoading(false);
+      if (isCurrentSession()) setIsFavoriteLoading(false);
     }
   };
 
-  // Add recipe ingredients to shopping list
+  // 料理の材料を買い物リストに追加する (#2023)。材料の集め方 (dishes の各料理 + 直下の ingredients・重複の除去) と
+  // 名前と分量への分け方 (1 行の文字列と構造の形の両方。ingredientInputsOf) は _state/recipeShoppingList.ts
   const addRecipeToShoppingList = async () => {
     if (!selectedRecipeData || !currentPlan) return;
-    try {
-      // 材料を収集：dishes内の各料理の材料 + 旧形式のingredientsを統合
-      let allIngredients: string[] = [];
-      
-      // dishes配列から材料を収集
-      if (selectedRecipeData.dishes && Array.isArray(selectedRecipeData.dishes)) {
-        selectedRecipeData.dishes.forEach((dish: any) => {
-          if (dish.ingredients && Array.isArray(dish.ingredients)) {
-            allIngredients = [...allIngredients, ...dish.ingredients];
-          }
-        });
-      }
-      
-      // 旧形式の材料も追加（フォールバック）
-      if (selectedRecipeData.ingredients && Array.isArray(selectedRecipeData.ingredients)) {
-        allIngredients = [...allIngredients, ...selectedRecipeData.ingredients];
-      }
-      
-      // 重複を除去
-      allIngredients = [...new Set(allIngredients)];
-      
-      if (allIngredients.length === 0) {
-        setSuccessMessage({ title: '材料なし', message: '材料情報がありません。「AIで変更」で再生成してください。' });
-        return;
-      }
-      
-      // 文字列形式 "鶏むね肉 200g" を {name, amount} 形式にパース
-      const parsedIngredients = allIngredients.map((ing: string) => {
-        // 最後のスペースで分割して分量を抽出（例: "鶏むね肉 200g" → name: "鶏むね肉", amount: "200g"）
-        const match = ing.match(/^(.+?)\s+(\d+.*|少々|適量|適宜)$/);
-        if (match) {
-          return { name: match[1], amount: match[2] };
-        }
-        return { name: ing, amount: null };
-      });
-      
-      const res = await fetch('/api/shopping-list/add-recipe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          shoppingListId: activeShoppingList?.id,
-          ingredients: parsedIngredients 
-        })
-      });
-      if (res.ok) {
-        const { items } = await res.json();
-        setShoppingList([...useShoppingStore.getState().shoppingList, ...items]);
-        setActiveModal(null);
-        setSuccessMessage({ 
-          title: '買い物リストに追加しました ✓', 
-          message: `${parsedIngredients.length}件の材料を追加しました` 
-        });
-      } else {
-        const err = await res.json();
-        alert(`エラー: ${err.error || '追加に失敗しました'}`);
-      }
-    } catch (e) { 
-      console.error('Add to shopping list error:', e);
-      alert("追加に失敗しました"); 
+    const result = await addRecipeIngredientsToShoppingList({
+      recipeData: selectedRecipeData,
+      shoppingListId: activeShoppingList?.id,
+    });
+    if (result.kind === 'no-ingredients') {
+      setSuccessMessage({ title: RECIPE_SHOPPING_NO_INGREDIENTS_TITLE, message: RECIPE_SHOPPING_NO_INGREDIENTS_MESSAGE });
+      return;
     }
+    if (result.kind === 'failed') {
+      alert(result.alertMessage);
+      return;
+    }
+    setShoppingList([...useShoppingStore.getState().shoppingList, ...result.items]);
+    setActiveModal(null);
+    setSuccessMessage({ title: RECIPE_SHOPPING_ADDED_TITLE, message: recipeShoppingAddedMessage(result.count) });
   };
 
   // Generate weekly menu with AI
@@ -5468,6 +5474,8 @@ export default function WeeklyMenuPage() {
                       dishes: [normalizedDish],
                       // 全料理の材料（買い物リスト用）
                       allIngredients: dishesArray.flatMap(dd => dd.ingredients || []),
+                      // お気に入りの写しの source_planned_meal_id (#2011。参照だけ)
+                      plannedMealId: meal.id,
                     });
                     setActiveModal('recipe');
                   }}

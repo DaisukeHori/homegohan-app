@@ -3,7 +3,7 @@
 -- 組織の作成のトリガー (trg_organizations_owner_not_deleting・関数 organizations_owner_not_deleting) を外す。
 --
 -- 本番に戻す必要があるときは、この内容を新しい migration として PR 経由で適用する (本番への直接 SQL は禁止。CLAUDE.md)。
--- ⚠️ 先に supabase/rollbacks/20261023150000_account_deletion_family_representative_guard.down.sql を流すこと: 20261023150000 の family_groups のトリガーの関数がこの表 account_deletion_guards を読むので、表だけを外すと家族の作成と代表者の変更が失敗する。
+-- ⚠️ 先に supabase/rollbacks/20261023150000_account_deletion_family_representative_guard.down.sql を流すこと: 20261023150000 の family_groups のトリガーの関数がこの表 account_deletion_guards を読むので、表だけを外すと家族の作成と代表者の変更が失敗する。supabase/rollbacks/20261024120000_account_deletion_guard_release.down.sql も先に流すこと: 20261024120000 の関数 end_account_deletion_guard もこの表を読む (消す) ので、表だけを外すとその関数の呼び出しが失敗する。
 -- ⚠️ 先にアプリを戻すこと: 退会の本体 (src/lib/account-deletion.ts の deleteAccount) は findBlocker の前に
 --    begin_account_deletion_guard を呼び、失敗したら削除しない (ACCOUNT_DELETE_FAILED)。関数だけを先に外すと、退会がすべて失敗する。
 --

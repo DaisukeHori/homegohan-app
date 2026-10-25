@@ -22,7 +22,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
   try {
     // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
     const json = await request.json().catch(() => null);
-    if (!json || typeof json !== 'object') {
+    if (!json || typeof json !== 'object' || Array.isArray(json)) {
       return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
     }
     const { isChecked, selectedVariantIndex } = json;
@@ -91,7 +91,7 @@ export async function DELETE(request: Request, props: { params: Promise<{ id: st
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
-  // UUID の形でない id は DB に渡さず 404 (PATCH と同じ。uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る。#1917)
+  // UUID の形でない id は DB に渡さず 404 (UUID の形の確かめは PATCH と同じ。uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る。#1917)。UUID の形で 0 行の DELETE は、消した行数を見ずに 200 { success: true } のまま (PATCH の 0 行は 404)
   if (!isUuid(params.id)) {
     return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
   }

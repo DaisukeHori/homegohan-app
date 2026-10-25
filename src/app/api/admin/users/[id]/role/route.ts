@@ -12,8 +12,8 @@
 
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError, MfaRequiredError } from '@/lib/auth/errors';
-import { API_OP_PERMISSION_DENIED_CODE, forbiddenMessageOf, operatorMfaRequiredNested } from '@/lib/api/error-responses';
+import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { API_OP_PERMISSION_DENIED_CODE, operatorForbiddenMessageOf, operatorMfaRequiredNested } from '@/lib/api/error-responses';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { dbErrorMentionsCode } from '@/lib/errors/db-raised-code';
 import { AdminSetUserRolesResultSchema, RoleChangeBodySchema } from '@/lib/admin/users-schemas';
@@ -45,8 +45,8 @@ async function handleRoleChange(request: Request, params: Params) {
     }
     if (err instanceof ForbiddenError) {
       // 二段階認証が未完了 (MfaRequiredError) なら、code は従来どおり OP_PERMISSION_DENIED のまま、文は二段階認証の日本語の固定の文
-      // (ForbiddenError の code の表。下の RPC が DB の二段階認証の判定で止まったときと同じ文。#1917)
-      const message = err instanceof MfaRequiredError ? forbiddenMessageOf(err) : '権限がありません';
+      // (operatorForbiddenMessageOf。下の RPC が DB の二段階認証の判定で止まったときと同じ文。#1917)
+      const message = operatorForbiddenMessageOf(err);
       return NextResponse.json({ error: { code: API_OP_PERMISSION_DENIED_CODE, message } }, { status: 403 });
     }
     throw err;

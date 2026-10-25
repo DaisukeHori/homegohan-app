@@ -153,8 +153,8 @@ test.describe("2. レシピ関連", () => {
 
   test("2-3: /api/recipes に存在しない ID でアクセスすると 404 を返す", async ({ authedPage }) => {
     const res = await authedPage.request.get("/api/recipes/nonexistent-id-00000");
-    // 404 または 400 が期待値
-    expect([400, 404, 500]).toContain(res.status());
+    // UUID の形でない id は DB に渡さず 404 (src/app/api/recipes/[id]/route.ts の GET の先頭)。500 は許さない
+    expect(res.status()).toBe(404);
   });
 
   test("2-4: menus/weekly ページが正常にロードされる", async ({ authedPage }) => {

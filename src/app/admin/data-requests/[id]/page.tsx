@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
+import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
 import {
   DSR_ACTIONABLE_STATUSES,
   DSR_ADMIN_API_PATH,
@@ -47,6 +48,7 @@ const IF_UNMODIFIED_SINCE_HEADER = 'If-Unmodified-Since';
 
 const LOAD_FAILURE_MESSAGE = '請求を読み込めませんでした。再読み込みしてください';
 const NOT_FOUND_MESSAGE = '請求が見つかりません';
+/** 403 の文。本文の理由の文 (二段階認証の確認が要る など) があればそちらを出す (forbiddenMessageOfResponse。#1917) */
 const FORBIDDEN_MESSAGE = '権限がありません';
 /** 412 / 409 (別の運営者が先に更新した・状態が変わった) の文 (§9.2) */
 const CONFLICT_MESSAGE = '別の運営者が更新しました。再読み込みしてください';
@@ -147,7 +149,7 @@ export default function AdminDataRequestDetailPage() {
         return;
       }
       if (res.status === HTTP_FORBIDDEN) {
-        setLoadError(FORBIDDEN_MESSAGE);
+        setLoadError(await forbiddenMessageOfResponse(res, FORBIDDEN_MESSAGE));
         return;
       }
       if (res.status === HTTP_NOT_FOUND) {

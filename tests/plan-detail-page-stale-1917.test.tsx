@@ -6,10 +6,12 @@
  * ボタンが残っていた (API の文に従って運営が手で読み込み直す必要があった)。修正後は次のようになる。
  *   - 保存・公開・非公開・廃止・廃止の取り消しが 409 CONFLICT_STALE_DATA なら、プランを読み直して今の状態とボタンを出し、
  *     読み直した旨を画面の上に出す (サーバーの「画面を読み込み直して」は出さない・alert も出さない)
- *   - 表示名・説明・表示順の入力欄は、書きかけ (最後に読んだ値から変えた) の欄だけ残し、ほかは読み直した値にする
+ *   - 表示名・説明・表示順の入力欄は、書きかけ (最後に読んだ・保存した値から変えた) の欄だけ残し、ほかは読み直した値にする
  *   - 読み直しに失敗したら「読み込み直した」とは出さず、画面と入力欄を残して、文と「再試行」を出す。「再試行」で読み直せたら
  *     読み直した旨の文に変える
  *   - 保存・状態の変更に成功したあとの読み直しに失敗しても、画面をエラーに置き換えず、文と「再試行」を出す
+ *   - 保存は、最後に読んだ・保存した値から変えた欄だけを送る。保存に成功したら送った値を新しい初めの値にするので、
+ *     続く読み直しが失敗しても、保存済みの欄を次の保存で送り直さず、「再試行」で書きかけとして残さない
  *   - 同じ 409 でも code が違う (契約者がいる OP_PLAN_HAS_SUBSCRIBERS など) ときは読み直さず、これまでどおり API の文を出す
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
@@ -67,9 +69,18 @@ interface ApiOptions {
   patch: () => Response;
   /** PATCH のあとに GET が返すプラン (別の運営の変更が入ったもの) */
   planAfterPatch?: typeof PLAN;
-  /** n 回目 (1 始まり) の GET を 500 で失敗させる */
+  /** n 回目 (1 始まり) の GET を失敗させる (HTTP ステータスは failGetStatus) */
   failGets?: number[];
+  /** failGets の GET の HTTP ステータス (既定は 500) */
+  failGetStatus?: number;
 }
+
+/** GET の失敗の応答の本文 (HTTP ステータスごと。route の形) */
+const GET_FAILURE_BODIES: Record<number, unknown> = {
+  403: { error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } },
+  404: { error: { code: 'OP_PLAN_NOT_FOUND', message: 'プランが見つかりません' } },
+  500: { error: { code: 'INTERNAL_ERROR', message: 'プランの取得に失敗しました' } },
+};
 
 function mockApi(options: ApiOptions) {
   const state = { patched: false, gets: 0, patches: 0 };
@@ -82,7 +93,8 @@ function mockApi(options: ApiOptions) {
     }
     state.gets += 1;
     if (options.failGets?.includes(state.gets)) {
-      return jsonResponse(500, { error: { code: 'INTERNAL_ERROR', message: 'プランの取得に失敗しました' } });
+      const status = options.failGetStatus ?? 500;
+      return jsonResponse(status, GET_FAILURE_BODIES[status]);
     }
     return jsonResponse(200, { data: state.patched && options.planAfterPatch ? options.planAfterPatch : PLAN });
   });
@@ -259,7 +271,8 @@ describe('保存が 409 CONFLICT_STALE_DATA で断られたとき (#1917)', () =
 
     await click('保存する');
 
-    expect(patchBodies()[0]).toEqual({ display_name: 'Pro プラス', description: '個人向け', display_order: 1 });
+    // 送るのは変えた表示名だけ (手を付けていない説明・表示順は送らない)
+    expect(patchBodies()[0]).toEqual({ display_name: 'Pro プラス' });
     expect(state.gets).toBe(2);
     expect(text()).toContain('公開中');
     // 書きかけ (表示名) は残し、手を付けていない欄 (説明・表示順) は読み直した値
@@ -271,18 +284,19 @@ describe('保存が 409 CONFLICT_STALE_DATA で断られたとき (#1917)', () =
     expect(text()).not.toContain('画面を読み込み直して');
     expect(text()).not.toContain('保存しました');
 
-    // もう一度保存すると、書きかけの表示名と読み直した値を送る
+    // もう一度保存すると、書きかけの表示名だけを送る (読み直した説明・表示順は別の運営の値のまま。送って書き直さない)
     await click('保存する');
-    expect(patchBodies()[1]).toEqual({ display_name: 'Pro プラス', description: '別の運営の説明', display_order: 5 });
+    expect(patchBodies()[1]).toEqual({ display_name: 'Pro プラス' });
     expect(notice()).toBeNull();
     expect(text()).toContain('保存しました');
   });
 
   it('入力欄に手を付けていなければ、全部を読み直した値にし、「残しています」は出さない', async () => {
+    // 入力欄に手を付けていなければ保存は送らない (#1917) ので、409 は状態の変更 (廃止) で起こす
     mockApi({ patch: staleResponse, planAfterPatch: { ...PLAN, display_name: 'Pro (改)', description: '別の運営の説明' } });
     await renderPage();
 
-    await click('保存する');
+    await click('廃止する');
 
     expect(displayNameInput().value).toBe('Pro (改)');
     expect(descriptionInput().value).toBe('別の運営の説明');
@@ -321,6 +335,7 @@ describe('成功したあとの読み直し (#1917)', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
 
     await click('保存する');
 
@@ -341,5 +356,318 @@ describe('成功したあとの読み直し (#1917)', () => {
 
     expect(text()).toContain('プランが見つかりません');
     expect(displayNameInput()).toBeNull();
+  });
+});
+
+describe('保存は変えた欄だけを送る (#1917)', () => {
+  it('説明だけを変えたら説明だけを送り、手を付けていない表示名・表示順は送らない', async () => {
+    mockApi({ patch: () => jsonResponse(200, { data: PLAN }) });
+    await renderPage();
+    await typeInto(descriptionInput(), '説明を直した');
+
+    await click('保存する');
+
+    expect(patchBodies()).toEqual([{ description: '説明を直した' }]);
+    expect(text()).toContain('保存しました');
+  });
+
+  it('表示順だけを変えたら表示順だけを送る', async () => {
+    mockApi({ patch: () => jsonResponse(200, { data: PLAN }) });
+    await renderPage();
+    await typeInto(displayOrderInput(), '7');
+
+    await click('保存する');
+
+    expect(patchBodies()).toEqual([{ display_order: 7 }]);
+  });
+
+  it('説明を空にしたら description: null を送る (説明を消す)', async () => {
+    mockApi({ patch: () => jsonResponse(200, { data: PLAN }) });
+    await renderPage();
+    await typeInto(descriptionInput(), '');
+
+    await click('保存する');
+
+    expect(patchBodies()).toEqual([{ description: null }]);
+  });
+
+  it('変えた欄を元の値に戻したら、変えていないものとして送らない', async () => {
+    mockApi({ patch: () => jsonResponse(200, { data: PLAN }) });
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+    await typeInto(displayNameInput(), 'Pro');
+
+    await click('保存する');
+
+    expect(patchBodies()).toEqual([]);
+    expect(text()).toContain('変更した項目がないので、保存していません');
+  });
+
+  it('何も変えずに保存したら送らず、その旨を出す。入力欄を変えたらその文は消える', async () => {
+    const state = mockApi({ patch: () => jsonResponse(200, { data: PLAN }) });
+    await renderPage();
+
+    await click('保存する');
+
+    expect(patchBodies()).toEqual([]);
+    expect(state.gets).toBe(1);
+    expect(text()).toContain('変更した項目がないので、保存していません');
+    expect(text()).not.toContain('保存しました');
+
+    await typeInto(displayNameInput(), 'Pro プラス');
+    expect(text()).not.toContain('変更した項目がないので、保存していません');
+  });
+
+  it('保存のあとに読み直した値が新しい初めの値になり、次の保存は、そのあとに変えた欄だけを送る', async () => {
+    let gets = 0;
+    fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') return jsonResponse(200, { data: PLAN });
+      gets += 1;
+      // 1 回目の保存のあとの読み直しでは、保存した表示名と、別の運営が変えた説明が入っている
+      return jsonResponse(200, { data: gets === 1 ? PLAN : { ...PLAN, display_name: 'Pro プラス', description: '別の運営の説明' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+    await click('保存する');
+    expect(descriptionInput().value).toBe('別の運営の説明');
+
+    await typeInto(displayOrderInput(), '9');
+    await click('保存する');
+
+    expect(patchBodies()).toEqual([{ display_name: 'Pro プラス' }, { display_order: 9 }]);
+  });
+
+  it('保存に成功したあとの読み直しが失敗しても、保存した欄は保存済みとして扱い、次の保存で送り直さない (別の運営の変更を古い値で上書きしない)', async () => {
+    let gets = 0;
+    fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') return jsonResponse(200, { data: PLAN });
+      gets += 1;
+      // 1 回目の保存のあとの読み直し (2 回目の GET) だけ失敗させる
+      if (gets === 2) return jsonResponse(500, GET_FAILURE_BODIES[500]);
+      return jsonResponse(200, { data: PLAN });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+    await click('保存する');
+    expect(notice()?.textContent).toContain('最新の内容を読み込めませんでした');
+    expect(displayNameInput().value).toBe('Pro プラス');
+
+    // そのあいだに別の運営が表示名を変えていても、この運営が手を付けたのは説明だけなので、説明だけを送る
+    await typeInto(descriptionInput(), '説明を直した');
+    await click('保存する');
+
+    expect(patchBodies()).toEqual([{ display_name: 'Pro プラス' }, { description: '説明を直した' }]);
+  });
+
+  it('保存に成功したあとの読み直しが失敗したあと、「再試行」で読めたら、保存した欄は読み直した値にする (書きかけとして残さない)。その回に書きかけた欄は残す', async () => {
+    let gets = 0;
+    fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') return jsonResponse(200, { data: PLAN });
+      gets += 1;
+      if (gets === 2) return jsonResponse(500, GET_FAILURE_BODIES[500]);
+      // 「再試行」の読み直し: 保存のあとに別の運営が表示名を変えていた
+      return jsonResponse(200, { data: gets === 1 ? PLAN : { ...PLAN, display_name: '別の運営の表示名' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+    await click('保存する');
+    expect(notice()?.textContent).toContain('最新の内容を読み込めませんでした');
+    // 「再試行」の前に、説明を書きかける
+    await typeInto(descriptionInput(), '書きかけの説明');
+
+    await click('再試行');
+
+    expect(gets).toBe(3);
+    expect(notice()).toBeNull();
+    // 保存済みの表示名は書きかけではないので、読み直した値 (別の運営の値) にする
+    expect(displayNameInput().value).toBe('別の運営の表示名');
+    // その回に書きかけた説明は残す
+    expect(descriptionInput().value).toBe('書きかけの説明');
+
+    await click('保存する');
+    expect(patchBodies()).toEqual([{ display_name: 'Pro プラス' }, { description: '書きかけの説明' }]);
+  });
+
+  it('保存の応答を待つあいだに入力欄を変えたら、保存済みとして記録するのは送った値だけで、待つあいだに変えた値は次の保存で送る', async () => {
+    let gets = 0;
+    let resolvePatch: ((res: Response) => void) | undefined;
+    fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') {
+        if (resolvePatch === undefined) {
+          return new Promise<Response>((resolve) => {
+            resolvePatch = resolve;
+          });
+        }
+        return Promise.resolve(jsonResponse(200, { data: PLAN }));
+      }
+      gets += 1;
+      if (gets === 2) return Promise.resolve(jsonResponse(500, GET_FAILURE_BODIES[500]));
+      return Promise.resolve(jsonResponse(200, { data: PLAN }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+    await click('保存する');
+    expect(resolvePatch).toBeDefined();
+
+    // 応答を待つあいだに表示名をさらに変える
+    await typeInto(displayNameInput(), 'Pro プラス 2');
+    await act(async () => {
+      resolvePatch!(jsonResponse(200, { data: PLAN }));
+    });
+    await settle();
+    expect(notice()?.textContent).toContain('最新の内容を読み込めませんでした');
+    expect(displayNameInput().value).toBe('Pro プラス 2');
+
+    await click('保存する');
+
+    expect(patchBodies()).toEqual([{ display_name: 'Pro プラス' }, { display_name: 'Pro プラス 2' }]);
+  });
+});
+
+describe('表示したあとの読み直しが 404 / 403 で断られたとき (#1917)', () => {
+  it.each([
+    [404, 'プランが見つかりません'],
+    [403, '権限がありません'],
+  ])('409 のあとの読み直しが %s なら、その理由を出し、「読み込み直せませんでした」と「再試行」は出さない', async (status, message) => {
+    const state = mockApi({ patch: staleResponse, failGets: [2], failGetStatus: status });
+    await renderPage();
+
+    await click('再公開する');
+
+    expect(state.gets).toBe(2);
+    expect(notice()?.textContent).toContain(message);
+    expect(notice()?.textContent).not.toContain('読み込み直せませんでした');
+    expect(notice()?.textContent).not.toContain('読み込み直したので');
+    expect(notice()?.querySelector('button')).toBeNull();
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
+
+  it('409 のあとの読み直しが 404 でも、入力欄の書きかけは残す (画面を消さない)', async () => {
+    mockApi({ patch: staleResponse, failGets: [2], failGetStatus: 404 });
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+
+    await click('保存する');
+
+    expect(displayNameInput().value).toBe('Pro プラス');
+    expect(notice()?.textContent).toContain('プランが見つかりません');
+    expect(notice()?.textContent).not.toContain('再試行');
+  });
+
+  it('保存に成功したあとの読み直しが 404 なら、その理由を出し、「最新の内容を読み込めませんでした」と「再試行」は出さない', async () => {
+    let gets = 0;
+    fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') return jsonResponse(200, { data: PLAN });
+      gets += 1;
+      if (gets === 2) return jsonResponse(404, GET_FAILURE_BODIES[404]);
+      return jsonResponse(200, { data: PLAN });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+
+    await click('保存する');
+
+    expect(gets).toBe(2);
+    expect(notice()?.textContent).toContain('プランが見つかりません');
+    expect(notice()?.textContent).not.toContain('最新の内容を読み込めませんでした');
+    expect(notice()?.querySelector('button')).toBeNull();
+  });
+
+  it('「再試行」の読み直しが 404 なら、「読み込み直せませんでした」を理由の文に変える', async () => {
+    let gets = 0;
+    fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') return jsonResponse(200, { data: PLAN });
+      gets += 1;
+      if (gets === 2) return jsonResponse(500, GET_FAILURE_BODIES[500]);
+      if (gets === 3) return jsonResponse(404, GET_FAILURE_BODIES[404]);
+      return jsonResponse(200, { data: PLAN });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+    await click('保存する');
+    expect(notice()?.textContent).toContain('最新の内容を読み込めませんでした');
+
+    await click('再試行');
+
+    expect(gets).toBe(3);
+    expect(notice()?.textContent).toContain('プランが見つかりません');
+    expect(notice()?.querySelector('button')).toBeNull();
+  });
+});
+
+describe('表示したあとの読み直しの 403 は、本文の理由の文を捨てない (#1917 の続き・整合 1025b。#2014 の二段階認証の文)', () => {
+  /** n 回目 (1 始まり) の GET だけを、与えた 403 の応答にする。PATCH は 200 */
+  function mockReloadForbidden(forbidden: () => Response) {
+    let gets = 0;
+    fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') return jsonResponse(200, { data: PLAN });
+      gets += 1;
+      if (gets === 2) return forbidden();
+      return jsonResponse(200, { data: PLAN });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return () => gets;
+  }
+
+  it.each([
+    ['二段階認証の確認', '二段階認証の確認が必要です'],
+    ['二段階認証の登録', '二段階認証の登録が必要です'],
+  ])('保存のあとの読み直しが 403 (%s) なら、その文を出し、「権限がありません」と「再試行」は出さない', async (_label, message) => {
+    const gets = mockReloadForbidden(() => jsonResponse(403, { error: { code: 'OP_PERMISSION_DENIED', message } }));
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+
+    await click('保存する');
+
+    expect(gets()).toBe(2);
+    expect(notice()?.textContent).toBe(message);
+    expect(notice()?.textContent).not.toContain('権限がありません');
+    expect(notice()?.textContent).not.toContain('最新の内容を読み込めませんでした');
+    expect(notice()?.querySelector('button')).toBeNull();
+    // 画面と入力欄は残す
+    expect(displayNameInput().value).toBe('Pro プラス');
+  });
+
+  it('409 のあとの読み直しが 403 (二段階認証の確認) でも、その文を出す', async () => {
+    let gets = 0;
+    fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') return staleResponse();
+      gets += 1;
+      if (gets === 2) return jsonResponse(403, { error: { code: 'OP_PERMISSION_DENIED', message: '二段階認証の確認が必要です' } });
+      return jsonResponse(200, { data: PLAN });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await renderPage();
+
+    await click('再公開する');
+
+    expect(gets).toBe(2);
+    expect(notice()?.textContent).toBe('二段階認証の確認が必要です');
+    expect(notice()?.querySelector('button')).toBeNull();
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['ロールが足りない (運営の route の文)', () => jsonResponse(403, { error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } })],
+    ['英語の文', () => jsonResponse(403, { error: { code: 'FORBIDDEN', message: 'Requires one of: super_admin' } })],
+    ['本文が JSON として読めない', () => new Response('<html>Forbidden</html>', { status: 403, headers: { 'content-type': 'text/html' } })],
+  ])('読み直しの 403 が %s なら「権限がありません」を出し、「再試行」は出さない', async (_label, forbidden) => {
+    const gets = mockReloadForbidden(forbidden);
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+
+    await click('保存する');
+
+    expect(gets()).toBe(2);
+    expect(notice()?.textContent).toBe('権限がありません');
+    expect(notice()?.textContent).not.toContain('Requires');
+    expect(notice()?.querySelector('button')).toBeNull();
+    expect(displayNameInput().value).toBe('Pro プラス');
   });
 });

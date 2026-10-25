@@ -36,7 +36,7 @@ export interface ManualGrantClientFailure {
 export type ManualGrantClientResult<T> = ManualGrantClientSuccess<T> | ManualGrantClientFailure;
 
 /**
- * 運営 API の失敗の本文 (nested) と、rejectNullCharacterBody の flat の本文 ({ error, code }) の両方から code だけを読む。
+ * 運営 API の失敗の本文 (nested。手動付与の route の rejectNullCharacterBody の 400 も { shape: 'nested' } で nested) と、flat の本文 ({ error, code }) の両方から code だけを読む。
  * 本文の文面 (error.message) は読まない (src/lib/auth/mfa/client.ts:87-96 と同じ。tests/lib-raw-error-message-scan.test.ts が
  * src/lib の結果に「エラーらしい名前の .message」を入れることを違反に数える。F27)
  */

@@ -87,7 +87,12 @@ export async function GET(request: NextRequest, props: RouteContext) {
       messagesQuery = messagesQuery.eq('is_internal', false);
     }
 
-    const { data: messages } = await messagesQuery;
+    // メッセージが読めなかった (DB の失敗) ときは 500。空の一覧にしない (#1917 の続き。以前は失敗を捨て、
+    // メッセージが 1 件も無いチケットに見えていた)。監査ログは情報を返すときだけ残すので、ここで返すときは残さない
+    const { data: messages, error: messagesError } = await messagesQuery;
+    if (messagesError) {
+      return internalError('GET /api/admin/support/tickets/[id]', messagesError, { userId: currentUser.id, table: 'support_ticket_messages' }, { shape: 'nested' });
+    }
 
     const data = { ...ticket, messages: messages ?? [] };
 
