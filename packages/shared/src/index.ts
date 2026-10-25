@@ -37,6 +37,7 @@ export * from './handson-tour-nickname';
 export * from './push-token-claim';
 export * from './push-notification-kinds';
 export * from './billing-plans';
+export * from './planned-meals-integrity';
 export type {
   Json,
   Database,
