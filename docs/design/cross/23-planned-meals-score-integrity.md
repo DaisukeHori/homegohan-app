@@ -29,7 +29,7 @@
 | # | 決めること | 答え (§6) |
 |---|---|---|
 | 1 | 3 列 (`veg_score`・`is_completed`・`completed_at`) を書く経路の全列挙と、書き手ごとの client (利用者のセッションか、サーバ = route の service_role / Edge Function の service_role か) | §3.1 の 13 経路の表。利用者のセッションで 3 列を書いている経路は 9 本 (モバイルのホーム・Web のホーム・食事の詳細 → `PATCH /api/meals/[id]`・献立表 → `PATCH /api/meal-plans/meals/[id]`・AI 相談の `complete_meal`・`POST /api/ai/nutrition` の 2 分岐・写真の解析の Edge Function (利用者の JWT で書いている)・週間生成のスナップショットの復元 (生成の失敗時の `weekly/request` と、止まった生成の後片付けの `weekly/status`・`weekly/pending`・`weekly/cleanup` の 4 route))。ほかに新規作成の 3 route が `is_completed: false` を利用者のセッションで送る |
-| 2 | `is_completed` は利用者が「食べた」を記録する操作そのもの。何をサーバの計算値と見るか | 完了の操作は本人の操作として残す。サーバの計算値 = **完了の時刻 `completed_at` (DB の `now()`) と、`is_completed` ⇄ `completed_at` の対の整合** (完了なら時刻あり・未完了なら NULL。利用者は時刻を偽れず、対を崩せない)。書く口は SECURITY DEFINER の RPC `planned_meals_set_completed(p_meal_id, p_completed)` の 1 本だけで、本人の行かどうかは関数の中で確かめる (§6.2)。集計側の別の検証 (将来の日付の完了を数えない等) は本書では足さない (§21 Q-2) |
+| 2 | `is_completed` は利用者が「食べた」を記録する操作そのもの。何をサーバの計算値と見るか | 完了の操作は本人の操作として残す (「食べた」は利用者の申告で、サーバが写真などから計算できる値ではない)。書く口は SECURITY DEFINER の RPC `planned_meals_set_completed(p_meal_id, p_completed)` の 1 本だけで、本人の行かどうかは関数の中で確かめる (§6.2)。サーバが決めるのは **完了の時刻 `completed_at` (DB の `now()`) と、`is_completed` ⇄ `completed_at` の対の整合** だけ (完了なら時刻あり・未完了なら NULL。利用者は時刻を偽れず、対を崩せない)。**`is_completed` の値そのものは段 C の後も利用者が決める** (本人の行なら、献立の日 (未来の日を含む) を問わず完了にできる。PostgREST の直接の書き込みが RPC に替わるだけ)。集計 (`calculate-segment-stats` の `breakfast_rate`・`menu_execution_rate`、組織のチャレンジ `update_org_challenge_progress` の `breakfast_rate`・`cooking_rate`・`veg_score` (完了した食事だけを平均する)) は `is_completed` だけを条件にし、`completed_at` はどの集計も読まない。したがって **これらの指標の「完了」は段 C の後も自己申告のまま** で、Issue #2025 の症状のうち `breakfast_rate` を自分で上げられる点は本書の段 A〜C では閉じない。集計の側の検証を足すかは **§21 Q-2 (未決・オーナーの判断が要る)**。段 A〜C は Q-2 のどの答えでも変わらない (§21) |
 | 3 | `veg_score` の計算の正本・範囲・型 | 正本 = 写真の解析の `nutrition-pipeline.ts` の `estimateVegetableScore` (料理の材料のうち野菜の g の合計 ÷ 120 g × 100 を四捨五入し 0〜100 に収める)。範囲 0〜100 の整数 (列は `integer`)。NULL = まだ計算していない。書くのは `analyze-meal-photo` の背景の処理 1 か所 (service_role・本人の行であることを確かめてから)。`POST /api/ai/nutrition` は `veg_score` を書かない (利用者の入力の分岐は利用者の値そのもの、AI の分岐は別のモデルの 1〜5 点で正本と尺度が違う) (§6.3) |
 | 4 | 権限の外し方 (列の GRANT か、RLS の WITH CHECK か、トリガーか) | **列の権限**: 表の INSERT / UPDATE を anon / authenticated から REVOKE し、authenticated に 3 列を除く 56 列の INSERT (列) / UPDATE (列) を GRANT し直す。RLS のポリシー・SELECT・DELETE・service_role は変えない (§6.4・§5) |
 | 5 | モバイルの古いビルドが直接書いていた場合に壊れないか (版の互換) | 古いビルドの完了の切り替えは 42501 で失敗し、既存の失敗時の処理 (楽観的更新を戻して読み直す) で画面は元に戻る。壊れるのはその操作だけで、ほかの画面は変わらない。ローンチ前で利用者はゼロなので、互換のための猶予は作らない (§6.5) |
@@ -43,7 +43,7 @@
 | R-1 | 利用者 (authenticated) のセッションは、PostgREST の INSERT / UPDATE / upsert のどれでも `planned_meals.veg_score`・`is_completed`・`completed_at` に値を入れられない (42501)。他の 56 列は今までどおり書ける | #2025・オーナーの選択 | §7.3・§7.20 |
 | R-2 | 利用者は自分の献立を「食べた」「食べていない」に切り替えられる (Web のホーム・食事の詳細・献立表・モバイルのホーム・AI 相談)。切り替えの口は RPC `planned_meals_set_completed` 1 本で、`completed_at` は DB の `now()` (完了) か NULL (未完了)。すでに完了している行をもう一度完了にしても `completed_at` は変わらない | §0.1 の 2 | §7.1・§7.8〜§7.10・§7.14 |
 | R-3 | 他人の献立・存在しない id・UUID の形でない id は `PLANNED_MEAL_NOT_FOUND` (route は 404 の固定の文)。未ログインは RPC を実行できない (42501) | cross/02 §4.1 | §7.1・§7.8・§10 |
-| R-4 | `veg_score` は `estimateVegetableScore` の値 (0〜100 の整数) だけが入る。書くのは `analyze-meal-photo` の背景の処理で、service_role の client で、本人の行であることを確かめてから書く。他人の `mealId` を渡しても書かない | §0.1 の 3 | §7.6・§7.15・§7.16 |
+| R-4 | `veg_score` は `estimateVegetableScore` の値 (0〜100 の整数) だけが入る。書くのは `analyze-meal-photo` の背景の処理で、service_role の client で、本人の行であることを確かめてから書く。他人の `mealId` を渡しても書かない。解析の入力は写真だけで、利用者が送った解析の結果 (`prefetchedGeminiResult`。料理と材料の g) は `mealId` の経路では使わない (Edge の背景の処理に渡さず、Next.js の route も `mealId` のときは Edge へ渡さない) | §0.1 の 3 | §7.6・§7.15・§7.16 |
 | R-5 | `POST /api/ai/nutrition` は `veg_score` を書かない (利用者の `nutritionData.veg_score` は捨てる。AI の応答の `veg_score` も書かず、プロンプトからも外す)。栄養素 4 列・`quality_tags`・`dishes` などは今までどおり | §0.1 の 3 | §7.13 |
 | R-6 | 新規作成の 3 route (`POST /api/meals`・`POST /api/meal-plans/meals`・`POST /api/meal-plans/add-from-photo`) は `is_completed` を送らない (DB の既定 false)。応答の `is_completed` は false のまま | R-1 の帰結 | §7.11 |
 | R-7 | 週間生成のスナップショットの復元 (生成の失敗時の `weekly/request` と、止まった生成の後片付けの `weekly/status`・`weekly/pending`・`weekly/cleanup`) は、消した行の `is_completed`・`completed_at`・`veg_score` を落とさずに戻す。4 route とも `restoreOwnPlannedMealsSnapshot` を通し、行の `daily_meal_id` が本人の日であることを利用者のセッション (RLS) で確かめてから service_role の client で戻す。本人の日でない行は戻さない | R-1 の帰結・#1042 | §7.12 |
@@ -57,7 +57,7 @@
 | R-15 | 文言・`data-testid`・応答の形 (`PATCH /api/meals/[id]` は行そのもの、`PATCH /api/meal-plans/meals/[id]` は `{ success, meal }`) は変えない。応答の `is_completed`・`completed_at` は RPC が返した値 | 既存の画面と e2e | §7.9 |
 | R-16 | 本番への当て方: 段 A の migration → 段 B のデプロイ (Vercel・Edge) → 段 C の migration の順。段 C を先に当てると、古いコードの完了の切り替え・写真の上書きが 42501 で失敗する | §0.1 の 7 | §15・§19 |
 
-### 0.3 ユーザーシナリオ (25 本。トレースは §4.3)
+### 0.3 ユーザーシナリオ (26 本。トレースは §4.3)
 
 | # | シナリオ | 期待 |
 |---|---|---|
@@ -86,6 +86,7 @@
 | S-23 | 段 A の migration の戻し口を流す | 関数 `planned_meals_set_completed(uuid, boolean)` を消す。表・権限・行は変わらない |
 | S-24 | すでに完了している行 (`completed_at` あり) に RPC `p_completed: true` | `is_completed = true` のまま、`completed_at` は元の値 (今の時刻で上書きしない) |
 | S-25 | service_role (`save-meal.ts`) が `is_completed: false` で INSERT し、`generate-menu-v5` が `is_completed` を読む | 今までどおり通る (service_role の権限は変えない) |
+| S-26 | 写真の解析を `mealId` と `prefetchedGeminiResult` (「キャベツ 120 g」のような料理と材料の g) を一緒に送って呼ぶ (Next.js の `POST /api/ai/analyze-meal-photo` 経由でも、Edge を JWT で直接でも) | Next.js の route は `mealId` があるので Edge へ `prefetchedGeminiResult` を渡さない。Edge の背景の処理も受け取らず、写真を Gemini で解析し直した結果で `veg_score` を書く (利用者の g は使わない)。`mealId` 無し (同期・書き込み無し) の経路は今までどおり `prefetchedGeminiResult` を使う |
 
 ### 0.4 分冊判定
 
@@ -112,8 +113,8 @@
 
 ## 1. 目的・スコープ
 
-- 目的: 比較ランキングと組織のチャレンジが指標に使う `planned_meals` の 3 列を、利用者が PostgREST から直接書けない形にし、書く口をサーバの処理 (完了の RPC・写真の解析の service_role) に限る。
-- 対象: `planned_meals` の INSERT / UPDATE の権限 (列単位)・完了の RPC・3 列を書く既存の経路の付け替え (Web の route 10 本 = 完了の PATCH 2 本・作成 3 本・`/api/ai/nutrition`・週間生成の復元の 4 本 (と `src/lib/planned-meals-snapshot.ts` の 1 関数)、Web の hook 1 本・モバイルの hook 1 本・AI 相談の 1 アクション・Edge Function 3 本)・野菜スコアの尺度の定数・比較ランキングの `nutrition_score` の係数・テスト。
+- 目的: 比較ランキングと組織のチャレンジが指標に使う `planned_meals` の 3 列を、利用者が PostgREST から直接書けない形にし、書く口をサーバの処理 (完了の RPC・写真の解析の service_role) に限る。`veg_score` はサーバの計算値だけになる。`is_completed` は口が RPC に限られ `completed_at` がサーバの時刻になるが、完了にするかどうかは本人の申告のまま (§0.1 の 2・§21 Q-2)。
+- 対象: `planned_meals` の INSERT / UPDATE の権限 (列単位)・完了の RPC・3 列を書く既存の経路の付け替え (Web の route 11 本 = 完了の PATCH 2 本・作成 3 本・`/api/ai/nutrition`・写真の解析 `/api/ai/analyze-meal-photo` (`mealId` のときは `prefetchedGeminiResult` を Edge へ渡さない)・週間生成の復元の 4 本 (と `src/lib/planned-meals-snapshot.ts` の 1 関数)、Web の hook 1 本・モバイルの hook 1 本・AI 相談の 1 アクション・Edge Function 3 本)・野菜スコアの尺度の定数・比較ランキングの `nutrition_score` の係数・テスト。
 - 対象外: 冒頭の前提の「範囲外」のとおり。
 
 ## 2. 関連要件・既存設計
@@ -142,7 +143,7 @@
 | W-5 | AI 相談の `complete_meal` | `is_completed` | 利 (`execute` / `messages` の route が `createClient()` を渡す) | `src/lib/ai/consultation-action-executor.ts:1032-1053` | RPC (§7.10) |
 | W-6 | `POST /api/ai/nutrition` の `nutritionData` の分岐 | `veg_score` (`nutritionData.veg_score` を検証せずそのまま)・`quality_tags` | 利 | `src/app/api/ai/nutrition/route.ts:98-106` | `veg_score` を書かない (§7.13) |
 | W-7 | `POST /api/ai/nutrition` の `imageUrl` の分岐 (fast LLM。プロンプトは `veg_score` 1〜5) | `veg_score` (`result.veg_score`) | 利 | `src/app/api/ai/nutrition/route.ts:149・213` | `veg_score` を書かない (§7.13) |
-| W-8 | 写真の解析の背景の処理 `analyzeMealPhotoBackgroundTask` | `veg_score` (`result.vegScore` = 0〜100)・栄養の列・`dishes` など | **利** (anon key + 利用者の `Authorization` で作った client。`:172-176`。ジョブの取り消しだけ service_role `:233-236`) | `supabase/functions/analyze-meal-photo/index.ts:247-262`。呼ぶのは献立表の写真から入力 `analyzePhotoWithAI` (`src/app/(main)/menus/weekly/page.tsx:4357-4364` が `mealId: photoEditMeal.id` を送る) → `POST /api/ai/analyze-meal-photo` (`src/app/api/ai/analyze-meal-photo/route.ts:102-110` が利用者のセッションの client で `functions.invoke` し、`mealId` と JWT で確かめた `userId` を渡す) | service_role + 本人の行の確認 (§7.15) |
+| W-8 | 写真の解析の背景の処理 `analyzeMealPhotoBackgroundTask` | `veg_score` (`result.vegScore` = 0〜100)・栄養の列・`dishes` など | **利** (anon key + 利用者の `Authorization` で作った client。`:172-176`。ジョブの取り消しだけ service_role `:233-236`) | `supabase/functions/analyze-meal-photo/index.ts:247-262`。呼ぶのは献立表の写真から入力 `analyzePhotoWithAI` (`src/app/(main)/menus/weekly/page.tsx:4357-4364` が `mealId: photoEditMeal.id` を送る) → `POST /api/ai/analyze-meal-photo` (`src/app/api/ai/analyze-meal-photo/route.ts:102-110` が利用者のセッションの client で `functions.invoke` し、`mealId` と JWT で確かめた `userId` を渡す。本文の `prefetchedGeminiResult` もそのまま渡す `:68・107`)。Edge は本文の `prefetchedGeminiResult` を背景の処理に渡し (`index.ts:56-62・123-132`)、`analyzeWithEvidence` はそれがあると Gemini の認識を飛ばして利用者の料理と材料の g を使う (`:180` → `nutrition-pipeline.ts:785-804`)。このため `veg_score` は利用者が送った g で決まりうる | service_role + 本人の行の確認 + `mealId` の経路では `prefetchedGeminiResult` を使わない (§7.15) |
 | W-9 | `POST /api/meals` (献立の作成) | `is_completed: false` | 利 | `src/app/api/meals/route.ts:240` | 送らない (§7.11) |
 | W-10 | `POST /api/meal-plans/meals` | `is_completed: false` | 利 | `src/app/api/meal-plans/meals/route.ts:185` | 送らない (§7.11) |
 | W-11 | `POST /api/meal-plans/add-from-photo` | `is_completed: false` | 利 | `src/app/api/meal-plans/add-from-photo/route.ts:178` | 送らない (§7.11) |
@@ -153,6 +154,7 @@
 - `veg_score` を書く経路は W-6・W-7・W-8 の 3 本だけ。`save-meal.ts`・`meal-image.ts` (`writePlannedMealDishesWithOptimisticLock` は `dishes`・`image_url`・`updated_at` だけ)・`planned-meals-snapshot.ts` (写し) は `veg_score` を指定しない。モバイルの `apps/mobile/app/meals/new.tsx` の直接の INSERT (`20261008110000` のコメントが述べる) は origin/main に無い (#1598 で画面ごと削除した)。
 - `POST /api/ai/nutrition` を呼ぶ画面は src・apps/mobile に無い (route 自身の `internalError` の文だけ)。`tests/planned-meal-nutrient-validation-routes.test.ts`・`tests/ai-consent-enforcement-routes.test.ts` が route を直接呼ぶ。
 - Web の写真の記録 (`src/app/(main)/meals/new/page.tsx:552`) は `POST /api/ai/analyze-meal-photo` を `mealId` 無し (= 同期) で呼び、応答の `vegScore` を画面に出すだけで、保存 (`POST /api/meal-plans/add-from-photo`) には `veg_score` を渡さない。
+- `prefetchedGeminiResult` を送る画面は食事の記録の画面 (`src/app/(main)/meals/new/page.tsx:558`。判別 `classify-photo` が返した解析の結果を送り返す) だけで、`mealId` 無し (同期・書き込み無し) で呼ぶ。献立表の写真から入力 (`mealId` つき) は送らない。したがって `mealId` と `prefetchedGeminiResult` を一緒に受け取る口は画面には要らず、利用者が本文を作って送ったときにだけ使われる (Next.js の route 経由でも、Edge を JWT で直接でも)。
 - `mealId` つきで呼ぶ経路は 1 本ある: 献立表 (`/menus/weekly`) の写真から入力 (`src/app/(main)/menus/weekly/page.tsx:4357-4364`) → `POST /api/ai/analyze-meal-photo` (`route.ts:102-110`) → Edge `analyze-meal-photo` の背景の処理 (W-8)。`veg_score` に値が入るのはこの経路だけで、本番の `veg_score` が全行 NULL なのは、本番でこの経路がまだ使われていないため (2026-10-25 の SELECT。§3.5)。apps/mobile に `analyze-meal-photo` を呼ぶ箇所は無い。
 - 止まった生成の後片付けが使う `weekly_menu_requests.generated_data.snapshot` は、利用者からは書けない (`20261011010000_ai_queue_service_role_writes.sql` が `weekly_menu_requests` の INSERT / UPDATE / DELETE を anon / authenticated から外した。書くのは `getAiQueueWriter()` と Edge Function の service_role)。中身は `weekly/request` が利用者のセッションの `select('*')` で読んだ本人の行。
 - 読み手 (変えない): `supabase/functions/calculate-segment-stats/index.ts:349・386-394・416-425` (service_role。`veg_score_avg`・`nutrition_score = round(vegAvg × 20)`・`breakfast_rate`・`menu_execution_rate`)、`update_org_challenge_progress` (`20261014100100_org_challenge_progress.sql:155・174`。`avg(pm.veg_score)`)、`src/app/api/badges/route.ts:54-77`、`src/hooks/useHomeData.ts:573-585` (`veg_score` で並べる)、`apps/mobile/src/hooks/useHomeData.ts:386-410`、`src/lib/org-challenges.ts:53-62` (`targetMax: 100`。注釈に「写真の解析は 0〜100 点、AI の推定は 1〜5 点」)、`generate-menu-v4` / `v5` の `status: meal.is_completed ? "completed" : ...`、`src/lib/membership/family-menu.ts:147` (SECURITY DEFINER の `family_menu_planned_meals`) と、その応答を検める zod `src/schemas/membership/family-menu.ts:31・77` (`FamilyMenuMealSchema` / `FamilyMenuRpcRowSchema` の `is_completed`)、`src/app/api/ai/menu/day/regenerate/route.ts:103-106・122` (`is_completed` を select し、完了の食事を作り直しの対象から外す)、`src/app/api/ai/menu/v4/generate/route.ts:255・296`・`v5/generate/route.ts:228・262`・`src/app/api/ai/consultation/sessions/route.ts:95`・`sessions/[sessionId]/messages/route.ts:177・186・274`・`src/app/api/ai/nutrition-analysis/route.ts:82`・`src/app/api/export/meals/route.ts:70・119`・`src/app/api/support/users/[id]/route.ts:84` (`is_completed` を読む)、`lib/converter.ts:487・498` (`toPlannedMeal` が `is_completed`・`veg_score` を写す。`veg_score` は `|| null` なので 0 は null になる。指標の集計はこの関数を通らない)、`apps/mobile/src/components/menu/V4GenerateModal.tsx:106・127`。なお `lib/converter.ts:306` (`toMealNutritionEstimate`) の `veg_score` は別の表 `meal_nutrition_estimates` の列で、本書の対象外。
@@ -177,7 +179,7 @@
 
 - 実 DB: `tests/integration/rls/planned-meals-value-checks.test.ts` の 4 つの it (利用者のセッションが `is_completed` を書く。`:576-591` = 1 行ずつの切り替え (`:579`・`:584`・`:588`)・`:602-610` = 同じ日の食事の一括更新 (`:605` の `.update({ is_completed: true }).eq('daily_meal_id', …)`)・`:618-633` = 範囲外の値を同じ値で書き直す本文に `is_completed: true` (`:628`)・`:674-689` = migration を流し直した後の切り替え (`:683`))・`tests/integration/rls/stats-edge-functions-user-daily-meals.test.ts:148-150・382-383・594` (service_role で 3 列を seed・`:594` は service_role の UPDATE。`nutrition_score` の期待値 80/60/40/20 は `veg_score` 4/3/2/1 × 20)・`org-challenge-progress.test.ts:211-212`・`org-challenge-diff-privacy.test.ts:306`・`security/badges-api.test.ts:126・150`・`security/support-routes.test.ts:119` (service_role で seed。影響なし)。
 - 単体: `tests/calculate-segment-stats-planned-meals.test.ts:131-134・437-438・648-649・812` (`nutrition_score = veg × 20`)・`tests/planned-meal-nutrient-validation-routes.test.ts:527-531・548・564` (`veg_score` が update の本文に入ることを期待) と `:292-301`・`:423-428` (完了の切り替えの本文が update に入ることを期待。偽物の client に `rpc` が無い)・`tests/meal-image-skip-routes.test.ts:130-180・513・525` (route の偽物の DB に `rpc` が無い)・`tests/analyze-meal-photo-sugar.test.ts:430-454` (planned_meals の update が 1 か所で `veg_score` を手書きすること。本書の後も同じ)。
-- 静的: `tests/migration-file-version-integrity.test.ts` (見出し・戻し口の対)・`tests/database-types-migrations-contract.test.ts` (新しい関数が型ファイル 2 本にあること)・`tests/db-privilege-hardening-migration-contract.test.ts` (後の migration と戻し口が利用者へ表の TRUNCATE / ALL を付けないこと)・`tests/operator-write-policy-ledger.test.ts` (運営ロールのポリシー。本書は触らない)・`tests/supabase-service-role-client-scan.test.ts`・`tests/env-source-scan.test.ts`・`tests/postgrest-embed-relationship-scan.test.ts` (src・lib の埋め込み。Edge は見ない)・`tests/edge-function-verify-jwt.test.ts` (config は変えない)。
+- 静的: `tests/migration-file-version-integrity.test.ts` (見出し・戻し口の対)・`tests/database-types-migrations-contract.test.ts` (新しい関数が型ファイル 2 本にあること)・`tests/db-privilege-hardening-migration-contract.test.ts` (後の migration と戻し口が利用者へ表の TRUNCATE / ALL を付けないこと)・`tests/operator-write-policy-ledger.test.ts` (運営ロールのポリシー。本書は触らない)・`tests/supabase-service-role-client-scan.test.ts`・`tests/env-source-scan.test.ts`・`tests/postgrest-embed-relationship-scan.test.ts` (src・lib の埋め込み。Edge は見ない)・`tests/edge-function-verify-jwt.test.ts` (config は変えない)・`tests/ai-queue-writes-contract.test.ts:216-217` (`analyze-meal-photo/index.ts` の取り消しの client を `const queueDb = createClient(...)` と `supabase: queueDb` の名前で見る。§7.15 は名前を保つ)・`tests/image-route-contracts.test.ts:263-312` (`mealId` 無しで `prefetchedGeminiResult` を Edge へ渡すこと。§7.15 は `mealId` 無しなら今までどおり渡す)。
 - モバイル: `apps/mobile/__tests__/home/home.test.tsx` は `toggleMealCompletion` を jest.fn で差し替える (hook の中身は見ない)。
 - 週間生成の復元: `src/__tests__/api/ai/menu/weekly-request.test.ts:153-155・245-246`・`weekly-status.test.ts:103-108・209`・`weekly-pending.test.ts:104-109・196`・`weekly-cleanup.test.ts:109-114・186・255-256` (`restorePlannedMealsSnapshot` を差し替え、利用者のセッションの client で呼ばれることを期待)・`src/__tests__/lib/planned-meals-snapshot.test.ts` (関数そのもの)。
 
@@ -209,7 +211,7 @@
                            is_completed = p_completed, completed_at = now() | 既存 | NULL
                            無ければ PLANNED_MEAL_NOT_FOUND (P0002)
 サーバ (service_role)
-  ├─ analyze-meal-photo の背景の処理: 本人の行を確かめ → veg_score = vegScoreOfVegetableGrams(野菜 g) ほかを UPDATE
+  ├─ analyze-meal-photo の背景の処理: 写真を Gemini で解析 (利用者の prefetchedGeminiResult は使わない) → 本人の行を確かめ → veg_score = vegScoreOfVegetableGrams(野菜 g) ほかを UPDATE
   ├─ save-meal.ts / generate-menu: is_completed: false の INSERT (今までどおり)
   ├─ 週間生成の復元 (weekly/request・status・pending・cleanup): 行の daily_meal_id が本人の日か利用者のセッションで確かめ → 本人の行だけをそのまま INSERT
   └─ calculate-segment-stats / update_org_challenge_progress: 3 列を読む (今までどおり)
@@ -244,7 +246,7 @@
 | S-8 | PostgREST UPDATE `veg_score` → 列の権限 → 42501 | 期待どおり |
 | S-9 | PostgREST INSERT に `is_completed`・`veg_score` → 42501 (upsert は INSERT の権限で止まる) | 期待どおり |
 | S-10 | PostgREST UPDATE `dish_name` → 56 列の権限で通る。INSERT (3 列なし) → 通り `is_completed` は既定 false | 期待どおり |
-| S-11 | 献立表の写真から入力 → `POST /api/ai/analyze-meal-photo` (`mealId`・JWT の `userId`) → Edge: 利用者の client で解析 → `writer` (service_role) で `select id, user_daily_meals!inner(user_id)` + `eq('user_daily_meals.user_id', userId)` → 1 行 → `writer.update({ ..., veg_score: result.vegScore })` | 期待どおり |
+| S-11 | 献立表の写真から入力 → `POST /api/ai/analyze-meal-photo` (`mealId`・JWT の `userId`) → Edge: 利用者の client で解析 → `queueDb` (service_role) で `select id, user_daily_meals!inner(user_id)` + `eq('user_daily_meals.user_id', userId)` → 1 行 → `queueDb.update({ ..., veg_score: result.vegScore })` | 期待どおり |
 | S-12 | 同上 → 0 行 → `throw new Error(PLANNED_MEAL_NOT_FOUND_CODE)` → 既存の catch がログに残す | 期待どおり (書かない) |
 | S-13 | route: `validatePlannedMealInput` → update の本文は `{ ...validation.nutrients, quality_tags, updated_at }` | 期待どおり |
 | S-14 | route: プロンプトに `veg_score` 無し → `updatePayload` に `veg_score` 無し | 期待どおり |
@@ -259,6 +261,7 @@
 | S-23 | 戻し口: `DROP FUNCTION IF EXISTS public.planned_meals_set_completed(uuid, boolean)` | 期待どおり |
 | S-24 | 関数の CASE: `pm.is_completed IS TRUE AND pm.completed_at IS NOT NULL` → 既存の `completed_at` を保つ | 期待どおり |
 | S-25 | service_role は表の権限を変えていない → 通る | 期待どおり |
+| S-26 | Next.js: `forwardedPrefetchedGeminiResult = mealId ? undefined : prefetchedGeminiResult` → invoke の本文に渡らない。Edge を直接: ハンドラは `analyzeMealPhotoBackgroundTask({ images, mealId, mealType, userId, authHeader })` (prefetch の鍵が無い) → 背景の処理は `analyzeWithEvidence(images, mealType, supabase)` (3 引数) → Gemini の認識 → `vegScore` は写真の解析の g から → S-11 と同じ書き込み | 期待どおり (利用者の g は `veg_score` に届かない) |
 
 ---
 
@@ -277,7 +280,8 @@
 ### 5.2 F の問い (縁の発生源を消すより単純な構造は無いか)
 
 - 発生源は「利用者のセッションが表の列を区別せずに書ける」こと。列の権限はその発生源そのものを消す (A)。ポリシー (B) やトリガー (C) は書き込みの経路の途中で止める形で、発生源は残る。
-- 完了の操作を「本人の操作」として残す以上、`is_completed` の値そのものは本人が決める。サーバの計算値になるのは時刻と対の整合だけで、それ以上 (将来の日付を数えない等) は集計の意味の変更なので本書では足さない (§21 Q-2)。
+- 完了の操作を「本人の操作」として残す以上、`is_completed` の値そのものは本人が決める。サーバが決めるのは時刻と対の整合だけで、`completed_at` はどの集計も読まない。`is_completed` を条件にする指標 (`breakfast_rate`・`menu_execution_rate`・組織のチャレンジの `breakfast_rate`・`cooking_rate`・`veg_score`) は段 C の後も自己申告のまま。集計の側の検証 (未来の日の完了を拒む・完了の時刻を見る・写真の解析を条件にする等) は指標の意味の変更で、どれを採るかはオーナーの判断が要る (§21 Q-2・未決)。構造 A はどの答えとも両立する (完了の書き込みの口が RPC 1 本に集まるので、日付の検査を足すなら §7.1 の関数に 1 条件を足すだけ)。
+- 写真の解析の入力も発生源になる: 利用者が送る `prefetchedGeminiResult` (料理と材料の g) が `veg_score` の計算に届く。`mealId` の経路でそれを使わないのが、発生源を消す最も単純な形 (`mealId` つきの画面は送っていない。§7.15)。
 - `POST /api/ai/nutrition` から `veg_score` を外すのは、口を 1 つにする最も単純な形 (呼ぶ画面も無い)。
 
 ### 5.3 確定
@@ -299,12 +303,14 @@
 - 本人の行の判定は関数の中の `EXISTS (SELECT 1 FROM public.user_daily_meals d WHERE d.id = pm.daily_meal_id AND d.user_id = auth.uid())` (RLS の USING と同じ式)。0 行なら `PLANNED_MEAL_NOT_FOUND` (P0002)。
 - EXECUTE は authenticated と service_role だけ (PUBLIC・anon から外す。`anon-definer-execute.test.ts` A1 の規則)。
 - `is_sandbox` の日 (ハンズオンのお試し) の献立も切り替えられる (今までと同じ。集計は `is_sandbox = false` で絞る)。
+- 献立の日 (`user_daily_meals.day_date`) は見ない。本人の行なら未来の日の献立も完了にでき、集計はそれを完了として数える (今までと同じ。`completed_at` を読む集計は無い)。これを変えるかは §21 Q-2 (未決・オーナーの判断が要る)。
 
 ### 6.3 野菜スコア (決めること 3)
 
 - 正本 = `estimateVegetableScore` (`nutrition-pipeline.ts`)。本書で `_shared/veg-score.ts` の `vegScoreOfVegetableGrams(grams)` = `clamp(round(grams / VEG_SCORE_FULL_MARK_GRAMS × VEG_SCORE_MAX), VEG_SCORE_MIN, VEG_SCORE_MAX)` を使う形にする (値は今と同じ。`grams` が有限でない・負のときは今の NaN でなく 0)。
 - 型 integer・範囲 0〜100・NULL = 未計算。範囲は書き手 (この 1 関数) が守る。DB の CHECK / トリガーは足さない (§21 Q-1 に候補)。
 - 書くのは `analyze-meal-photo` の背景の処理だけ。service_role の client で、本人の行であることを `user_daily_meals!inner(user_id)` で確かめてから書く (RLS を通らない client なので、確認は必須)。
+- 計算の入力は写真の解析 (Gemini の認識) の料理と材料の g。利用者が送る解析の結果 (`prefetchedGeminiResult`) は `mealId` の経路では使わない (Edge の背景の処理に渡さない・Next.js の route も渡さない。§7.15)。
 - `POST /api/ai/nutrition` は 2 分岐とも `veg_score` を書かず、プロンプトからも外す。`quality_tags` は今までどおり (指標でない)。
 - 集計: `veg_score_avg` は値の平均 (小数第 1 位)。`nutrition_score = round(vegAvg × NUTRITION_SCORE_PER_VEG_SCORE)` (`= 100 / VEG_SCORE_MAX = 1`)。`src/lib/org-challenges.ts` の `targetMax` は `VEG_SCORE_MAX` を読む (値 100 は同じ)。
 
@@ -1074,9 +1080,11 @@ import { formatCalendarDate, pantryExpiringSoonUntil, todayCalendarDate, todayLo
 
 楽観的更新・失敗時の戻し・`fetchAll()` は今のまま。
 
-### 7.15 `supabase/functions/analyze-meal-photo/index.ts` の差分 (背景の処理の書き込みを service_role に)
+### 7.15 写真の解析の差分 (`supabase/functions/analyze-meal-photo/index.ts`: 背景の処理の書き込みを service_role に・`mealId` の経路では `prefetchedGeminiResult` を使わない / `src/app/api/ai/analyze-meal-photo/route.ts`: `mealId` のときは `prefetchedGeminiResult` を Edge へ渡さない)
 
-置き場: `analyzeMealPhotoBackgroundTask` の外側の `try {` の中。origin/main の `// planned_mealsを更新（全栄養素）` の行 (`:229`) から `if (updateError) throw updateError` の行 (`:266`) までを、次のブロックに置き換える (字下げは今のファイルと同じ 4 字。外側の `try {` の中)。利用者の client (`supabase`。関数の先頭で作る) は解析 (`analyzeWithEvidence`) と Storage のアップロードに使い続け、変えない。ファイルの先頭 (import の後) に定数を 1 行足す。
+`veg_score` を書くのは `mealId` の経路 (背景の処理) だけで、その値は解析の結果の料理と材料の g から `estimateVegetableScore` で出す (§6.3)。origin/main では、本文の `prefetchedGeminiResult` (画面が判別 `classify-photo` から受け取った解析の結果を送り返す口。料理の名前と材料の `amount_g` を含む) があると、`analyzeWithEvidence` は Gemini の認識を飛ばしてその値を使う (`nutrition-pipeline.ts:785-804`・`normalizeGeminiAnalysisResult` は材料の名前と `amount_g` を利用者の値のまま通す `:640-647`)。Edge は利用者の JWT で直接呼べる (`index.ts` の同意の判定の注のとおり) ので、`mealId` と一緒に「キャベツ 120 g」のような `prefetchedGeminiResult` を送れば `veg_score` を 0〜100 の好きな値にできる。`mealId` つきで呼ぶ唯一の画面 (献立表の写真から入力 `src/app/(main)/menus/weekly/page.tsx:4357-4364`) は `prefetchedGeminiResult` を送らない。送るのは食事の記録の画面 (`src/app/(main)/meals/new/page.tsx:558`) で、`mealId` 無し (= 同期。DB に書かず結果を返すだけ) の経路。そこで、**`mealId` の経路では `prefetchedGeminiResult` を使わない** (Edge の背景の処理に渡さず、Next.js の route も `mealId` のときは Edge へ渡さない。二重に閉じる)。`mealId` 無しの経路は今までどおり使う (書き込みが無いので指標に届かない)。
+
+置き場 (Edge): 4 か所。(1) ファイルの先頭 (import の後) に定数を 1 行足す。(2) ハンドラの `analyzeMealPhotoBackgroundTask({ ... })` の呼び出しから `prefetchedGeminiResult,` の 1 行を消す。(3) `analyzeMealPhotoBackgroundTask` の引数の分割代入と型から `prefetchedGeminiResult` を消し、`analyzeWithEvidence` を 3 引数で呼ぶ。(4) `analyzeMealPhotoBackgroundTask` の外側の `try {` の中の、origin/main の `// planned_mealsを更新（全栄養素）` の行 (`:229`) から `if (updateError) throw updateError` の行 (`:266`) までを、下のブロックに置き換える (字下げは今のファイルと同じ 4 字)。利用者の client (`supabase`。関数の先頭で作る) は解析 (`analyzeWithEvidence`) と Storage のアップロードに使い続け、変えない。service_role の client の変数名は今の `queueDb` のまま使う (`tests/ai-queue-writes-contract.test.ts:216-217` が `const queueDb = createClient(SUPABASE_URL, SERVICE_ROLE_JWT ?? SUPABASE_SERVICE_ROLE_KEY)` と `cancelPendingMealImageJobs({ supabase: queueDb, ... })` をこのファイルに求めるので、名前を変えるとその番兵が赤になる。§16)。
 
 ```ts
 // tsc:skip (Deno の既存ファイルの差分の断片)
@@ -1085,11 +1093,44 @@ import { formatCalendarDate, pantryExpiringSoonUntil, todayCalendarDate, todayLo
 /** 写真の解析の対象の献立が、本人の行として見つからない (他人の mealId・消えた献立)。#2025 */
 const PLANNED_MEAL_NOT_FOUND_CODE = 'PLANNED_MEAL_NOT_FOUND'
 
-// (2) 外側の try の中の、planned_meals を更新する部分 (origin/main の :229-266 を置き換える)
-    // planned_meals の書き込みは service_role の client (writer) で行う。利用者の権限では veg_score を書けない (#2025)。
+// (2) ハンドラの背景の処理の登録 (origin/main の :123-132。直前の既存のコメントは残す)。prefetchedGeminiResult を渡さない
+    // mealId の経路は planned_meals (veg_score を含む) に書くので、利用者が送った解析の結果 (prefetchedGeminiResult) を使わず、
+    // 写真から解析し直す。料理と材料の g を利用者が指定できると veg_score を好きな値にできる (#2025)
+    const backgroundPromise = analyzeMealPhotoBackgroundTask({
+      images: imageDataArray,
+      mealId,
+      mealType,
+      userId: user.id,
+      authHeader
+    }).catch((error) => {
+      console.error('Background task error:', error)
+    })
+
+// (3) 背景の処理の引数と解析の呼び出し (origin/main の :155-180)。prefetchedGeminiResult の引数と型を消す
+async function analyzeMealPhotoBackgroundTask({
+  images,
+  mealId,
+  mealType,
+  userId,
+  authHeader
+}: {
+  images: ImageInput[];
+  mealId: string;
+  mealType?: string;
+  userId: string;
+  authHeader: string;
+}) {
+  // (関数の先頭の console.log と利用者の client の作成は今のまま)
+  try {
+    // v2パイプラインで解析 (mealId の経路は Gemini で認識する。prefetchedGeminiResult を使わない。#2025)
+    const result = await analyzeWithEvidence(images, mealType || 'lunch', supabase)
+
+// (4) 外側の try の中の、planned_meals を更新する部分 (origin/main の :229-266 を置き換える)
+    // planned_meals の書き込みは service_role の client (queueDb) で行う。利用者の権限では veg_score を書けない (#2025)。
     // service_role は RLS を通らないので、書く前に本人の行であることを必ず確かめる (save-meal.ts の「最終防衛線」と同じ考え)。
-    // 鍵が無いと createClient が投げ、外側の catch がログに残す (書き込まない)
-    const writer = createClient(
+    // 鍵が無いと createClient が投げ、外側の catch がログに残す (書き込まない)。
+    // 変数名 queueDb は今の取り消しの client と同じ (tests/ai-queue-writes-contract.test.ts がこの名前で取り消しの client を見る)
+    const queueDb = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SERVICE_ROLE_JWT') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     )
@@ -1098,7 +1139,7 @@ const PLANNED_MEAL_NOT_FOUND_CODE = 'PLANNED_MEAL_NOT_FOUND'
       // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。本人 (JWT で確かめた userId) の行に絞って service role で取り消す。
       // 取り消しの失敗は今までどおり警告だけにして、写真の上書きは続ける
       await cancelPendingMealImageJobs({
-        supabase: writer,
+        supabase: queueDb,
         userId,
         plannedMealId: mealId,
         reason: 'photo overwrite',
@@ -1108,7 +1149,7 @@ const PLANNED_MEAL_NOT_FOUND_CODE = 'PLANNED_MEAL_NOT_FOUND'
     }
 
     // 本人の行か (user_daily_meals.user_id = userId)。無ければ書かずに終える (他人の mealId・消えた献立)
-    const { data: owned, error: ownedError } = await writer
+    const { data: owned, error: ownedError } = await queueDb
       .from('planned_meals')
       .select('id, user_daily_meals!inner(user_id)')
       .eq('id', mealId)
@@ -1117,7 +1158,7 @@ const PLANNED_MEAL_NOT_FOUND_CODE = 'PLANNED_MEAL_NOT_FOUND'
     if (ownedError) throw ownedError
     if (!owned) throw new Error(PLANNED_MEAL_NOT_FOUND_CODE)
 
-    const { error: updateError } = await writer
+    const { error: updateError } = await queueDb
       .from('planned_meals')
       .update({
         dish_name: dishName || '写真から入力',
@@ -1139,11 +1180,26 @@ const PLANNED_MEAL_NOT_FOUND_CODE = 'PLANNED_MEAL_NOT_FOUND'
     if (updateError) throw updateError
 ```
 
-- 今まで内側の `try` の中で作っていた `queueDb` は `writer` に置き換わる (同じ鍵の service_role の client を 2 つ作らない)。`writer` は内側の `try` の外 (外側の `try` の中) で作る。内側の `try` の中で作ると、その後の本人の確認と update から見えない。
-- 鍵 (`SERVICE_ROLE_JWT` / `SUPABASE_SERVICE_ROLE_KEY`) が無いとき: 今までは `queueDb` の作成の失敗が内側の `catch` で警告になり、利用者の client で update していた。本書の後は `createClient` の例外が外側の `catch` に届き、ログに残して書かない (service_role でしか書けないため)。`writer` は今の `queueDb` と同じ式で作るので、鍵についての前提は今と変わらない (本番の鍵の有無は本書では確かめていない。§19 の 4 が本番で `veg_score` が入ることを確かめる)。
+置き場 (Next.js の route `src/app/api/ai/analyze-meal-photo/route.ts`): 本文の分割代入 (`:68-75`) の後に 1 文を足し、`functions.invoke` の本文 (`:107`) とログ (`:131`) の `prefetchedGeminiResult` をその変数に替える。`mealId` 無し (同期) のときは今までどおり渡す (`tests/image-route-contracts.test.ts` の「forwards prefetched Gemini meal analysis when provided」は `mealId` 無しで、そのまま通る)。
+
+```ts
+// tsc:skip (Next.js の既存ファイルの差分の断片)
+    // mealId の経路 (Edge の背景の処理が planned_meals の veg_score を書く) では、画面から来た解析の結果を Edge へ渡さない。
+    // 利用者が料理と材料の g を指定できると veg_score を好きな値にできる (#2025)。Edge の側でも使わない (二重に閉じる。cross/23 §7.15)
+    const forwardedPrefetchedGeminiResult = mealId ? undefined : prefetchedGeminiResult;
+
+    // (invoke の本文)
+        prefetchedGeminiResult: forwardedPrefetchedGeminiResult,
+
+    // (console.info のログ)
+      usedPrefetchedGeminiResult: Boolean(forwardedPrefetchedGeminiResult?.dishes?.length),
+```
+
+- 鍵 (`SERVICE_ROLE_JWT` / `SUPABASE_SERVICE_ROLE_KEY`) が無いとき: 今までは `queueDb` の作成の失敗が内側の `catch` で警告になり、利用者の client で update していた。本書の後は `queueDb` を内側の `try` の外 (外側の `try` の中) で作るので、`createClient` の例外が外側の `catch` に届き、ログに残して書かない (service_role でしか書けないため)。`queueDb` は今と同じ式で作るので、鍵についての前提は今と変わらない (本番の鍵の有無は本書では確かめていない。§19 の 4 が本番で `veg_score` が入ることを確かめる)。内側の `try` の中で作ると、その後の本人の確認と update から見えない。
 - 既存の外側の `catch` (`createLogger('analyze-meal-photo').withUser(userId).error(...)`) はそのまま。他人の `mealId` は今まで RLS で黙って 0 行だったが、本書の後はこの例外がログに残る (書き込みは起きない)。
 - `update` の本文の列は今までと同じ (`tests/analyze-meal-photo-sugar.test.ts` の「update は 1 か所・栄養の列は `buildPhotoOverwriteNutrition(result)`・`veg_score` は手書き」はそのまま通る。`select` は update に数えない)。
-- `tests/planned-meals-score-integrity-writers-scan.test.ts` (§7.21) の項目 2 は、`writer` の変数名・`createClient(` の 2 つの引数 (`SUPABASE_URL`・`SERVICE_ROLE_JWT` ?? `SUPABASE_SERVICE_ROLE_KEY`)・本人の確認の 2 つの条件・`if (!owned) throw new Error(PLANNED_MEAL_NOT_FOUND_CODE)`・`await writer` の update の順を、空白と改行の違いを無視して見る (字下げは問わない)。
+- `mealId` の経路の解析は Gemini で行う (`prefetchedGeminiResult` を送っても使わない)。利用回数の数え方 (Next.js の印・Edge の `consumeEdgeAiUsage`) は今のまま (`prefetchedGeminiResult` の有無で数え方は変わらない。`tests/ai-usage-photo-auto-grant.test.ts` の 2 の「偽の prefetchedGeminiResult を送っても数える」のとおり)。
+- `tests/planned-meals-score-integrity-writers-scan.test.ts` (§7.21) の項目 2 は、`queueDb` の作成 (`createClient(` の 2 つの引数 `SUPABASE_URL`・`SERVICE_ROLE_JWT` ?? `SUPABASE_SERVICE_ROLE_KEY`)・本人の確認の 2 つの条件・`if (!owned) throw new Error(PLANNED_MEAL_NOT_FOUND_CODE)`・`await queueDb` の update の順を、空白と改行の違いを無視して見る (字下げは問わない)。項目 7 は、背景の処理の登録と背景の処理の関数に `prefetchedGeminiResult` が無く、関数の中の `analyzeWithEvidence` が 3 引数であることを AST で見る。Next.js の route が `mealId` のときに渡さないことは `tests/image-route-contracts.test.ts` の追記の it (§7.22) が振る舞いで見る。
 
 ### 7.16 `supabase/functions/_shared/nutrition-pipeline.ts` の差分 (`estimateVegetableScore` を尺度の正本に寄せる)
 
@@ -1971,7 +2027,7 @@ describe('#2025 戻し口を流したときの状態 (1 つのトランザクシ
  *      例外は無い (service_role で書く週間生成の復元は、行の変数を渡すので鍵は現れない)。
  *      見つけ方が空振りしていないことは、件数の下限ではなく、決まった文面 (DETECTOR_PROBES) を同じ関数に通して確かめる
  *      (オブジェクトリテラルで書く箇所の数はリポジトリの変更で増減するので、数で見張らない)
- *   2. supabase/functions/analyze-meal-photo/index.ts の planned_meals の update は、service_role の client (writer) で行い、
+ *   2. supabase/functions/analyze-meal-photo/index.ts の planned_meals の update は、service_role の client (queueDb。取り消しと同じ client) で行い、
  *      その直前に本人の行の確認 (user_daily_meals!inner(user_id) と eq('user_daily_meals.user_id', userId)) と、
  *      見つからないときに書かずに抜ける throw がある (同じ問い合わせが本物の DB で他人の行を 0 行にすることは
  *      tests/integration/rls/planned-meals-score-integrity.test.ts の I-11 が見る)。文面はコメントを除き、空白と改行を詰めてから比べる
@@ -1984,6 +2040,10 @@ describe('#2025 戻し口を流したときの状態 (1 つのトランザクシ
  *   6. 献立のスナップショットの復元は restoreOwnPlannedMealsSnapshot (本人の日の確認 + service_role) だけ。
  *      restorePlannedMealsSnapshot を直接呼ぶのは src/lib/planned-meals-snapshot.ts の中だけで、
  *      restoreOwnPlannedMealsSnapshot を呼ぶのは週間生成の 4 route で、どれも userDb に supabase、writer に getSupabaseAdmin() を渡す
+ *   7. analyze-meal-photo/index.ts の mealId の経路 (planned_meals に書く背景の処理) は、利用者が送った解析の結果
+ *      (prefetchedGeminiResult) を使わない: 背景の処理の登録 (analyzeMealPhotoBackgroundTask の呼び出し) の引数に無く、
+ *      背景の処理の関数の中にその語が無く、関数の中の analyzeWithEvidence は 3 引数 (4 つ目の prefetch を渡さない)。AST で見る
+ *      (Next.js の route が mealId のときに Edge へ渡さないことは tests/image-route-contracts.test.ts の追記の it が振る舞いで見る)
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -1998,6 +2058,13 @@ const PIPELINE = 'supabase/functions/_shared/nutrition-pipeline.ts';
 const NUTRITION_ROUTE = 'src/app/api/ai/nutrition/route.ts';
 const SHARED_MODULE = 'packages/shared/src/planned-meals-integrity.ts';
 const SNAPSHOT_LIB = 'src/lib/planned-meals-snapshot.ts';
+/** 写真の解析の背景の処理の関数の名前と、その中で呼ぶ解析の関数の名前 (§7.15) */
+const PHOTO_BACKGROUND_TASK = 'analyzeMealPhotoBackgroundTask';
+const PHOTO_ANALYZE_FUNCTION = 'analyzeWithEvidence';
+/** 利用者が送る解析の結果の鍵 (mealId の経路では使わない。§7.15) */
+const PREFETCHED_RESULT_KEY = 'prefetchedGeminiResult';
+/** analyzeWithEvidence(images, mealType, supabase) の引数の数 (4 つ目の prefetch を渡さない) */
+const PHOTO_ANALYZE_ARGUMENT_COUNT = 3;
 /** 献立のスナップショットを復元する route (§7.12) */
 const SNAPSHOT_RESTORE_ROUTES = [
   'src/app/api/ai/menu/weekly/request/route.ts',
@@ -2079,21 +2146,21 @@ describe('#2025 利用者のセッションで 3 列を書く経路が無い', (
     expect(offenders, '3 列は RPC (完了) か service_role (野菜スコア) でしか書けない').toEqual([]);
   });
 
-  it('2: analyze-meal-photo の planned_meals の update は service_role の writer で、直前に本人の行の確認がある', () => {
+  it('2: analyze-meal-photo の planned_meals の update は service_role の queueDb で、直前に本人の行の確認がある', () => {
     // コメントを除き、空白と改行を 1 つの空白に詰める (字下げ・改行の位置は問わない)
     const code = stripComments(fs.readFileSync(path.join(ROOT, PHOTO_FUNCTION), 'utf8')).replace(/\s+/g, ' ');
     expect(code).toMatch(
-      /const writer = createClient\( ?Deno\.env\.get\('SUPABASE_URL'\) \?\? '', ?Deno\.env\.get\('SERVICE_ROLE_JWT'\) \?\? Deno\.env\.get\('SUPABASE_SERVICE_ROLE_KEY'\) \?\? '',? ?\)/,
+      /const queueDb = createClient\( ?Deno\.env\.get\('SUPABASE_URL'\) \?\? '', ?Deno\.env\.get\('SERVICE_ROLE_JWT'\) \?\? Deno\.env\.get\('SUPABASE_SERVICE_ROLE_KEY'\) \?\? '',? ?\)/,
     );
-    const ownership = code.search(/await writer ?\.from\('planned_meals'\) ?\.select\('id, user_daily_meals!inner\(user_id\)'\)/);
-    const update = code.search(/await writer ?\.from\('planned_meals'\) ?\.update\(\{/);
+    const ownership = code.search(/await queueDb ?\.from\('planned_meals'\) ?\.select\('id, user_daily_meals!inner\(user_id\)'\)/);
+    const update = code.search(/await queueDb ?\.from\('planned_meals'\) ?\.update\(\{/);
     expect(ownership).toBeGreaterThan(-1);
     expect(update).toBeGreaterThan(ownership);
     const between = code.slice(ownership, update);
     expect(between).toMatch(/\.eq\('id', mealId\) ?\.eq\('user_daily_meals\.user_id', userId\)/);
     // 見つからなければ書かずに抜ける (他人の mealId・消えた献立)
     expect(between).toContain('if (!owned) throw new Error(PLANNED_MEAL_NOT_FOUND_CODE)');
-    // planned_meals の update は writer の 1 か所だけ (利用者の client (supabase) で update しない)
+    // planned_meals の update は queueDb の 1 か所だけ (利用者の client (supabase) で update しない)
     expect(code.match(/\.from\('planned_meals'\) ?\.update\(/g)).toHaveLength(1);
     expect(code).not.toMatch(/await supabase ?\.from\('planned_meals'\) ?\.update\(/);
   });
@@ -2142,10 +2209,42 @@ describe('#2025 利用者のセッションで 3 列を書く経路が無い', (
       );
     }
   });
+
+  it('7: analyze-meal-photo の mealId の経路 (背景の処理) は prefetchedGeminiResult を使わない', () => {
+    const sf = parse(path.join(ROOT, PHOTO_FUNCTION));
+    const registrations: ts.CallExpression[] = [];
+    const tasks: ts.FunctionDeclaration[] = [];
+    const visit = (node: ts.Node) => {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === PHOTO_BACKGROUND_TASK) registrations.push(node);
+      if (ts.isFunctionDeclaration(node) && node.name?.text === PHOTO_BACKGROUND_TASK) tasks.push(node);
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+    // 登録は 1 か所で、引数のオブジェクトリテラルに prefetchedGeminiResult の鍵が無い
+    expect(registrations).toHaveLength(1);
+    const [arg] = registrations[0].arguments;
+    expect(arg !== undefined && ts.isObjectLiteralExpression(arg)).toBe(true);
+    const keys = arg !== undefined && ts.isObjectLiteralExpression(arg)
+      ? arg.properties.flatMap((p) => (p.name && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) ? [p.name.text] : []))
+      : [];
+    expect(keys).toContain('mealId');
+    expect(keys).not.toContain(PREFETCHED_RESULT_KEY);
+    // 背景の処理の関数は 1 本で、その中にその語が無い (引数・型・呼び出しのどれにも)
+    expect(tasks).toHaveLength(1);
+    expect(stripComments(tasks[0].getText(sf))).not.toContain(PREFETCHED_RESULT_KEY);
+    // 関数の中の解析の呼び出しは 1 か所で、3 引数
+    const analyzeCalls: ts.CallExpression[] = [];
+    const visitTask = (node: ts.Node) => {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === PHOTO_ANALYZE_FUNCTION) analyzeCalls.push(node);
+      ts.forEachChild(node, visitTask);
+    };
+    visitTask(tasks[0]);
+    expect(analyzeCalls.map((call) => call.arguments.length)).toEqual([PHOTO_ANALYZE_ARGUMENT_COUNT]);
+  });
 });
 ```
 
-### 7.22 単体テスト (新設 6 ファイル・書き換え 11 ファイル)。it 名は §12
+### 7.22 単体テスト (新設 6 ファイル・書き換え 12 ファイル)。it 名は §12
 
 | ファイル | 内容 |
 |---|---|
@@ -2161,6 +2260,7 @@ describe('#2025 利用者のセッションで 3 列を書く経路が無い', (
 | `tests/integration/rls/planned-meals-value-checks.test.ts`・`stats-edge-functions-user-daily-meals.test.ts` (書き換え。2 ファイル) | §16 |
 | `src/__tests__/api/ai/menu/weekly-request.test.ts`・`weekly-status.test.ts`・`weekly-pending.test.ts`・`weekly-cleanup.test.ts` (書き換え。4 ファイル) | `restorePlannedMealsSnapshot` の差し替えを `restoreOwnPlannedMealsSnapshot` の差し替えに替え、`{ userDb: <利用者のセッションの偽物>, writer: <getSupabaseAdmin() の偽物>, snapshot }` で呼ばれることを見る。呼ばない場合の期待 (`not.toHaveBeenCalled`) と件数の集計・応答の形は今のまま (§16) |
 | `src/__tests__/lib/planned-meals-snapshot.test.ts` (追記) | `restoreOwnPlannedMealsSnapshot`: 空の snapshot は問い合わせない / 本人の日の行だけ writer で INSERT し、本人の日でない行と `daily_meal_id` の無い行は failed に数え writer に渡さない / 本人の日の問い合わせが失敗したら writer を呼ばず全部を failed / 問い合わせは `SLOT_LOOKUP_CHUNK_SIZE` ごと / writer 側の skipped・failed を足し合わせる |
+| `tests/image-route-contracts.test.ts` (追記) | `POST /api/ai/analyze-meal-photo` に `mealId` と `prefetchedGeminiResult` を一緒に送ると、`functions.invoke` の本文の `prefetchedGeminiResult` が `undefined` (Edge へ渡さない)。`expect((mockInvoke.mock.calls[0][1] as { body: Record<string, unknown> }).body.prefetchedGeminiResult).toBeUndefined()` と、本文の `mealId` が送った値であることを見る。既存の「forwards prefetched Gemini meal analysis when provided」(`mealId` 無し) は変えない (§16) |
 | `tests/e2e/b11-performance.spec.ts` (書き換え) | B11-4a の数え方の route を `**/rest/v1/planned_meals*` に加えて `**/rest/v1/rpc/planned_meals_set_completed*` も数える形に (完了の切り替えが RPC になると今の route に当たらず、数が 0 のまま通ってしまう) (§16) |
 
 ---
@@ -2203,7 +2303,8 @@ describe('#2025 利用者のセッションで 3 列を書く経路が無い', (
 | W-5 AI 相談 `complete_meal` | `is_completed` | 利 (route が渡す) | `setPlannedMealCompleted` → RPC | 同。not_found は '権限がありません' |
 | W-6 `/api/ai/nutrition` (`nutritionData`) | `veg_score` | 利 | `veg_score` を書かない | 栄養素・`quality_tags` だけ |
 | W-7 `/api/ai/nutrition` (`imageUrl`) | `veg_score` | 利 | `veg_score` を書かない (プロンプトからも外す) | 栄養素・`quality_tags`・`dishes` など |
-| W-8 `analyze-meal-photo` の背景の処理 | `veg_score` ほか | 利 (JWT) | service_role `writer` + 本人の行の確認 | 本人の行だけ。`veg_score` 0〜100 |
+| W-8 `analyze-meal-photo` の背景の処理 | `veg_score` ほか | 利 (JWT) | service_role `queueDb` + 本人の行の確認。解析は写真から (Gemini)。`prefetchedGeminiResult` は Next.js の route が `mealId` のとき渡さず、Edge の背景の処理も受け取らない | 本人の行だけ。`veg_score` 0〜100 (写真の解析の g から) |
+| W-8 の入口 Next.js `POST /api/ai/analyze-meal-photo` | (書かない。Edge へ転送) | 利 (route) | `mealId` のときは `prefetchedGeminiResult` を転送しない。`mealId` 無しは今までどおり転送 | `mealId` 無しの同期の応答は今までどおり |
 | W-9〜W-11 作成 3 route | `is_completed: false` | 利 | 送らない | 列の既定 false |
 | W-12 週間生成の復元 (request・status・pending・cleanup の 4 route) | 3 列を含む全列 | 利 | `restoreOwnPlannedMealsSnapshot`: 利用者のセッションで本人の日を確かめ → service_role (`getSupabaseAdmin()`) で INSERT | 本人の日の行は消した値のまま戻る。本人の日でない行は戻さない (failed) |
 | W-13 `save-meal.ts`・`generate-menu-*` | `is_completed: false`・読み | S | 変えない | 通る |
@@ -2231,9 +2332,12 @@ describe('#2025 利用者のセッションで 3 列を書く経路が無い', (
 | `completed_at` の値 | 端末の時刻 (W-1〜W-4) か無し (W-5) | DB の `now()` か既存か NULL |
 | `is_completed` と `completed_at` の対 | 崩れうる (W-5 は時刻を書かない) | 常に対 (完了 ⇔ 時刻あり) |
 | `veg_score` の書き手 | W-6 (利用者の値・検証なし)・W-7 (1〜5)・W-8 (0〜100・利用者の JWT) | W-8 だけ (0〜100・service_role・本人の行の確認) |
+| W-8 (`mealId` の経路) の解析の入力 | 写真、または利用者が送った `prefetchedGeminiResult` (料理と材料の g を利用者が決められる) | 写真だけ (Gemini の認識。`prefetchedGeminiResult` は Next.js も Edge も使わない) |
+| `is_completed` の値を決める主体 | 利用者 (PostgREST の直接の書き込み) | 利用者 (RPC。本人の行なら献立の日を問わない)。自己申告のまま (§21 Q-2・未決) |
+| `completed_at` を読む集計 | 無し | 無し (変えない。集計は `is_completed` だけを見る) |
 | `veg_score` の尺度 | 混在 (コードの注釈のとおり) | 0〜100 (`VEG_SCORE_MIN` / `MAX`) |
 | `nutrition_score` | `round(vegAvg × 20)` (1〜5 を前提) | `round(vegAvg × (100 / VEG_SCORE_MAX))` = `round(vegAvg)` |
-| `veg_score_avg`・`breakfast_rate`・`menu_execution_rate`・組織のチャレンジの SQL | – | 変えない |
+| `veg_score_avg`・`breakfast_rate`・`menu_execution_rate`・組織のチャレンジの SQL | – | 変えない (`breakfast_rate`・`menu_execution_rate`・組織のチャレンジの `breakfast_rate`・`cooking_rate`・`veg_score` の「完了」の条件は自己申告のまま。§21 Q-2) |
 | 作成 3 route の insert | `is_completed: false` を送る | 送らない (既定 false) |
 | `PATCH /api/meal-plans/meals/[id]` の本文が `{ isCompleted }` だけ (料理の無い献立) | `is_completed`・`completed_at` を UPDATE | 既存の UPDATE を流さず行を読み、RPC (空の UPDATE を PostgREST に送らない) |
 | `analyze-meal-photo` の service_role の鍵が無いとき | 取り消しだけ失敗 (警告) し、利用者の client で上書き | 書かずにログ |
@@ -2259,6 +2363,7 @@ describe('#2025 利用者のセッションで 3 列を書く経路が無い', (
 | 不整合 `false, T` | RPC `true` | 本人の行 | 完了 (`T = now()`。古い T は捨てる) | 対が直る |
 | 不整合 `true, NULL` | RPC `false` | 本人の行 | 未完了 (`completed_at = NULL` のまま) | 対が直る。`updated_at` が進む |
 | 不整合 `false, T` | RPC `false` | 本人の行 | 未完了 (`completed_at = NULL`。古い T は捨てる) | 対が直る。`updated_at` が進む |
+| 未完了 | RPC `true` (本人・献立の日が未来) | 本人の行 (献立の日は見ない) | 完了 (`T = now()`) | 集計はこの行を完了として数える (自己申告。§21 Q-2・未決) |
 | 任意 | RPC (他人・無い id・UUID でない) | 本人の行でない | 変わらず | `PLANNED_MEAL_NOT_FOUND` (P0002)。UUID でない id は `server.ts` が DB に渡さない |
 | 任意 | RPC (anon) | EXECUTE 無し | 変わらず | 42501 |
 | 任意 | RPC (`p_meal_id` / `p_completed` が NULL) | 引数 | 変わらず | `PLANNED_MEAL_INVALID_ARGUMENT` (22023) |
@@ -2269,7 +2374,8 @@ describe('#2025 利用者のセッションで 3 列を書く経路が無い', (
 
 | 状態 | 操作 | ガード | 遷移先 | 副作用 |
 |---|---|---|---|---|
-| NULL | `analyze-meal-photo` (`mealId` あり・本人) | `writer` の本人の行の確認 | 0〜100 の整数 | 栄養の列・`dishes`・`image_url` も上書き |
+| NULL | `analyze-meal-photo` (`mealId` あり・本人) | `queueDb` の本人の行の確認。解析は写真から (Gemini) | 0〜100 の整数 (写真の解析の g から) | 栄養の列・`dishes`・`image_url` も上書き |
+| 任意 | `analyze-meal-photo` (`mealId` あり・本人) + 利用者の `prefetchedGeminiResult` | Next.js の route は転送しない・Edge の背景の処理は受け取らない | 写真の解析の値 (利用者の g は使わない) | 同 |
 | 0〜100 | 同 | 同 | 新しい値 | 同 |
 | 任意 | `analyze-meal-photo` (他人の `mealId`) | 本人の行の確認で 0 行 | 変わらず | 例外 `PLANNED_MEAL_NOT_FOUND` をログに残す |
 | 任意 | `POST /api/ai/nutrition` (どちらの分岐も) | – | 変わらず (`veg_score` を書かない) | 栄養素・`quality_tags` などだけ |
@@ -2375,11 +2481,11 @@ sequenceDiagram
   participant A as Next.js /api/ai/analyze-meal-photo
   participant E as analyze-meal-photo (Edge)
   participant G as Gemini / dataset (利用者の client)
-  participant W as writer (service_role)
+  participant W as queueDb (service_role)
   participant T as planned_meals
-  A->>E: invoke { images, mealId, mealType } (利用者の JWT)
-  E->>E: 認証・同意・利用回数 → 背景の処理を登録 → 200 { message }
-  E->>G: analyzeWithEvidence → result (vegScore = vegScoreOfVegetableGrams(野菜 g))
+  A->>E: invoke { images, mealId, mealType, userId, invokedAt } (利用者の JWT。prefetchedGeminiResult は mealId があるので渡さない)
+  E->>E: 認証・同意・利用回数 → 背景の処理を登録 ({ images, mealId, mealType, userId, authHeader }。本文に prefetchedGeminiResult があっても渡さない) → 200 { message }
+  E->>G: analyzeWithEvidence(images, mealType, supabase) (3 引数。Gemini で認識) → result (vegScore = vegScoreOfVegetableGrams(野菜 g))
   E->>W: cancelPendingMealImageJobs (本人の行に絞る)
   E->>W: select id, user_daily_meals!inner(user_id) where id = mealId and user_daily_meals.user_id = userId
   alt 1 行
@@ -2413,7 +2519,7 @@ sequenceDiagram
 | ファイル | it |
 |---|---|
 | `tests/planned-meals-score-integrity-migration-contract.test.ts` (§7.19) | C-1 `2 本とも 1 行目・2 行目・戻し口の 1 行目が自分の番号を指す` / C-1 `RPC の migration は権限の migration より小さい番号 (先に当てる。段 A → 段 C)` / C-2 `関数 planned_meals_set_completed(uuid, boolean) を 1 本だけ作る (SECURITY DEFINER・search_path 空・RETURNS TABLE の 4 列)` / C-2 `本文は本人の行 (user_daily_meals.user_id = auth.uid()) だけを UPDATE し、無ければ PLANNED_MEAL_NOT_FOUND (P0002)。completed_at は now() か既存か NULL` / C-2 `EXECUTE を PUBLIC, anon, authenticated, service_role から外し、authenticated, service_role にだけ付ける。表・ポリシー・権限・行に触れない` / C-3 `戻し口は DROP FUNCTION IF EXISTS だけ` / C-4 `文は lock_timeout・表の INSERT, UPDATE の REVOKE・56 列の GRANT の 3 つだけ` / C-4 `ポリシー・トリガー・行に触れず、ALL / TRUNCATE / anon への GRANT が無い` / C-5 `戻し口は列の権限を外し (同じ列の一覧)、表の INSERT, UPDATE を anon, authenticated に付け直す。TRUNCATE / ALL は無い` / C-6 `権限の migration より後に planned_meals に列を足す migration は、同じファイルで authenticated へその列の INSERT (列) / UPDATE (列) を GRANT する` / C-7 `どの migration も planned_meals のポリシーを ALTER POLICY で変えず、RLS を切らず、3 列を利用者へ列単位で GRANT しない` / C-8 `設計書が名指す 2 本のファイル名の番号は、すべて置き場のままか、すべて実在する番号 (混ざらない)` / C-9 `packages/shared の 3 列は、権限の migration が除いた列と同じ` / C-10 `2 本の migration と戻し口は update_org_challenge_progress を作り直さず、消さない` |
-| `tests/planned-meals-score-integrity-writers-scan.test.ts` (§7.21) | `1: src・lib・apps/mobile の planned_meals の insert / update / upsert に is_completed / completed_at / veg_score の鍵が無い` / `2: analyze-meal-photo の planned_meals の update は service_role の writer で、直前に本人の行の確認がある` / `3: estimateVegetableScore は vegScoreOfVegetableGrams を呼び、数の式を自分で書かない` / `4: POST /api/ai/nutrition に veg_score が現れない` / `5: 完了の RPC の名前の直書きは packages/shared だけ` / `6: 献立のスナップショットの復元は restoreOwnPlannedMealsSnapshot だけで、4 route は userDb に supabase、writer に getSupabaseAdmin() を渡す` |
+| `tests/planned-meals-score-integrity-writers-scan.test.ts` (§7.21) | `1: src・lib・apps/mobile の planned_meals の insert / update / upsert に is_completed / completed_at / veg_score の鍵が無い` / `2: analyze-meal-photo の planned_meals の update は service_role の queueDb で、直前に本人の行の確認がある` / `3: estimateVegetableScore は vegScoreOfVegetableGrams を呼び、数の式を自分で書かない` / `4: POST /api/ai/nutrition に veg_score が現れない` / `5: 完了の RPC の名前の直書きは packages/shared だけ` / `6: 献立のスナップショットの復元は restoreOwnPlannedMealsSnapshot だけで、4 route は userDb に supabase、writer に getSupabaseAdmin() を渡す` / `7: analyze-meal-photo の mealId の経路 (背景の処理) は prefetchedGeminiResult を使わない` |
 | `tests/veg-score-scale-contract.test.ts` | `packages/shared と _shared/veg-score.ts の VEG_SCORE_MIN / VEG_SCORE_MAX は同じ値` / `PLANNED_MEAL_NOT_FOUND_CODE は analyze-meal-photo/index.ts の定数と同じ文` / `vegScoreOfVegetableGrams: 0 g → 0・60 g → 50・120 g → 100・240 g → 100 (上限)・NaN / 負 → 0・整数を返す` / `nutritionScoreOfVegScoreAverage: 70 → 70・100 → 100・0 → 0・NaN → 0 (係数は 100 / VEG_SCORE_MAX)` / `src/lib/org-challenges.ts の veg_score の targetMax は VEG_SCORE_MAX` |
 | `src/__tests__/modules/planned-meals-integrity/core.test.ts` | `PlannedMealCompletionInputSchema: true / false は通る。'true'・1・null・undefined は通らない` / `PlannedMealsSetCompletedRowSchema: RPC の行 (completed_at が null でも) は通る。uuid でない id・boolean でない is_completed は通らない` |
 | `src/__tests__/modules/planned-meals-integrity/server.test.ts` | `UUID の形でない id は rpc を呼ばず not_found` / `rpc を PLANNED_MEALS_SET_COMPLETED_RPC と { p_meal_id, p_completed } で 1 回呼ぶ` / `P0002 / PLANNED_MEAL_NOT_FOUND の error は not_found` / `ほかの error は db (error をそのまま持つ)` / `data が配列でも単体でも同じ行を返す` / `行の形が違えば db (PLANNED_MEAL_COMPLETION_ROW_SHAPE_FAILURE_MESSAGE)` |
@@ -2423,6 +2529,7 @@ sequenceDiagram
 | `tests/planned-meal-nutrient-validation-routes.test.ts` (書き換え) | `nutritionData の veg_score は update の本文に入らない (栄養素と quality_tags だけ)` / `AI の応答の veg_score は update の本文に入らない。プロンプトに veg_score が無い` |
 | `src/__tests__/lib/planned-meals-snapshot.test.ts` (追記) | `restoreOwnPlannedMealsSnapshot: 空の snapshot は問い合わせずに 0 件` / `本人の日の行だけ writer で INSERT し、本人の日でない行と daily_meal_id の無い行は failed に数えて writer に渡さない` / `本人の日の問い合わせが失敗したら writer を呼ばず、全部を failed に数える` / `本人の日の問い合わせは SLOT_LOOKUP_CHUNK_SIZE ごとに分ける` / `writer 側の skipped・failed に本人の日でない行の数を足す` |
 | `src/__tests__/api/ai/menu/weekly-request.test.ts`・`weekly-status.test.ts`・`weekly-pending.test.ts`・`weekly-cleanup.test.ts` (書き換え) | 既存の復元の it の期待を `restoreOwnPlannedMealsSnapshot` が `{ userDb: <利用者のセッションの偽物>, writer: <getSupabaseAdmin() の偽物>, snapshot }` で呼ばれる形に (it 名は今のまま。cleanup の直列の it も同じ) |
+| `tests/image-route-contracts.test.ts` (追記) | `analyze-meal-photo: mealId があるときは prefetchedGeminiResult を Edge Function へ渡さない (#2025)` |
 | `tests/e2e/b11-performance.spec.ts` (書き換え) | B11-4a (it 名は今のまま。数える route に `**/rest/v1/rpc/planned_meals_set_completed*` を足す) |
 | `tests/calculate-segment-stats-planned-meals.test.ts` (書き換え) | `nutrition_score は veg_score_avg (0〜100) を四捨五入した値 (係数 1)` (fixture の veg_score を 80 / 60 / 40 / 20 にし、`m-veg` = [80, 80, 60, 40, 20]・`m-nut` = [80, 80, 60, 40, 20]) |
 
@@ -2451,7 +2558,7 @@ I-n は §7.20、C-n は §7.19、走査 n は §7.21 の項目。
 | S-8 | I-5 |
 | S-9 | I-6 |
 | S-10 | I-5 (`dish_name` は書ける)・I-6 (3 列なしの INSERT は通り `is_completed` は false) |
-| S-11 | I-11 (本人の `mealId` で 1 行)・走査 2 (Edge が同じ問い合わせと service_role の writer を使う)・§19 の 4 (本番) |
+| S-11 | I-11 (本人の `mealId` で 1 行)・走査 2 (Edge が同じ問い合わせと service_role の `queueDb` を使う)・§19 の 4 (本番) |
 | S-12 | I-11 (他人の `mealId` で 0 行)・走査 2 (0 行なら update の前に throw) |
 | S-13 | `tests/planned-meal-nutrient-validation-routes.test.ts` (書き換え)・走査 4 |
 | S-14 | `tests/planned-meal-nutrient-validation-routes.test.ts` (書き換え)・走査 4 |
@@ -2466,6 +2573,7 @@ I-n は §7.20、C-n は §7.19、走査 n は §7.21 の項目。
 | S-23 | I-13・C-3 |
 | S-24 | I-2・C-2 |
 | S-25 | I-8 |
+| S-26 | `tests/image-route-contracts.test.ts` (追記。Next.js の route が `mealId` のとき渡さない)・走査 7 (Edge の背景の処理が受け取らず、`analyzeWithEvidence` が 3 引数) |
 
 ---
 
@@ -2492,6 +2600,7 @@ I-n は §7.20、C-n は §7.19、走査 n は §7.21 の項目。
 | テストの `RESTORED_TABLE_WRITE_GRANTS` | `['anon:INSERT', 'anon:UPDATE', 'authenticated:INSERT', 'authenticated:UPDATE']` | §7.20 | 段 C の戻し口が付け直す表の権限 (§7.4) |
 | テストの `ORG_CHALLENGE_PROGRESS_FUNCTION` | `'update_org_challenge_progress'` | §7.19 | 本書で変えない集計の関数の名前 (C-10) |
 | テストの `SNAPSHOT_LIB` / `SNAPSHOT_RESTORE_ROUTES` | `'src/lib/planned-meals-snapshot.ts'` / 週間生成の 4 route | §7.21 | §7.12 の置き場と呼ぶ側 |
+| テストの `PHOTO_BACKGROUND_TASK` / `PHOTO_ANALYZE_FUNCTION` / `PREFETCHED_RESULT_KEY` / `PHOTO_ANALYZE_ARGUMENT_COUNT` | `'analyzeMealPhotoBackgroundTask'` / `'analyzeWithEvidence'` / `'prefetchedGeminiResult'` / `3` | §7.21 | 項目 7 が見る Edge の関数の名前・本文の鍵・`analyzeWithEvidence(images, mealType, supabase)` の引数の数 (§7.15) |
 
 ---
 
@@ -2521,7 +2630,7 @@ route・テーブル・列・Storage のパス・環境変数の新設は無い�
 | 段 | 中身 | 触るファイル | 本番 |
 |---|---|---|---|
 | A (DB の口と共通の定数。追加だけ) | §7.1・§7.2 の migration と戻し口 / §7.5 `packages/shared` (+ `index.ts`) / §7.6 `_shared/veg-score.ts` / §7.18 型の生成物 2 ファイル / テスト: §7.19 の C-1〜C-3・C-8 (RPC の分)・C-10 (RPC の分)・§7.20 の I-1〜I-4・I-8・I-13 (RPC の戻し口)・`tests/veg-score-scale-contract.test.ts` の定数の一致と `vegScoreOfVegetableGrams` / `nutritionScoreOfVegScoreAverage` の it (`PLANNED_MEAL_NOT_FOUND_CODE` と `analyze-meal-photo/index.ts` の一致・`org-challenges.ts` の `targetMax` の it は段 B で足す) | `supabase/migrations/*`・`supabase/rollbacks/*`・`packages/shared/src/planned-meals-integrity.ts`・`packages/shared/src/index.ts`・`supabase/functions/_shared/veg-score.ts`・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・テスト | マージで migration が当たる (追加だけ。アプリはまだ RPC を呼ばない) |
-| B (書き手の付け替え) | §7.7・§7.8 モジュール / §7.9 route 2 本 / §7.10 executor + `ai-api-messages.ts` の定数 / §7.11 作成 3 route / §7.12 週間生成の復元 (`planned-meals-snapshot.ts` の `restoreOwnPlannedMealsSnapshot` と 4 route) / §7.13 nutrition route / §7.14 hook 2 本 / §7.15 Edge analyze-meal-photo / §7.16 pipeline / §7.17 segment stats / `src/lib/org-challenges.ts` の `targetMax: VEG_SCORE_MAX` と注釈 / テスト: §7.21・§7.22 の単体と書き換え (`tests/planned-meal-nutrient-validation-routes.test.ts`・`tests/meal-image-skip-routes.test.ts`・`tests/calculate-segment-stats-planned-meals.test.ts`・`tests/integration/rls/planned-meals-value-checks.test.ts`・`stats-edge-functions-user-daily-meals.test.ts`・`src/__tests__/api/ai/menu/weekly-*.test.ts` の 4 本・`src/__tests__/lib/planned-meals-snapshot.test.ts`・`tests/e2e/b11-performance.spec.ts`)・§7.20 の I-10・I-11・I-14・I-15 | §16 の表の「段 B」の行 | マージで Vercel と Edge Function がデプロイされる。この時点で古い書き方の経路は無くなるが、利用者の権限はまだ残る |
+| B (書き手の付け替え) | §7.7・§7.8 モジュール / §7.9 route 2 本 / §7.10 executor + `ai-api-messages.ts` の定数 / §7.11 作成 3 route / §7.12 週間生成の復元 (`planned-meals-snapshot.ts` の `restoreOwnPlannedMealsSnapshot` と 4 route) / §7.13 nutrition route / §7.14 hook 2 本 / §7.15 Edge analyze-meal-photo と Next.js の `src/app/api/ai/analyze-meal-photo/route.ts` / §7.16 pipeline / §7.17 segment stats / `src/lib/org-challenges.ts` の `targetMax: VEG_SCORE_MAX` と注釈 / テスト: §7.21・§7.22 の単体と書き換え (`tests/planned-meal-nutrient-validation-routes.test.ts`・`tests/meal-image-skip-routes.test.ts`・`tests/calculate-segment-stats-planned-meals.test.ts`・`tests/integration/rls/planned-meals-value-checks.test.ts`・`stats-edge-functions-user-daily-meals.test.ts`・`src/__tests__/api/ai/menu/weekly-*.test.ts` の 4 本・`src/__tests__/lib/planned-meals-snapshot.test.ts`・`tests/image-route-contracts.test.ts`・`tests/e2e/b11-performance.spec.ts`)・§7.20 の I-10・I-11・I-14・I-15 | §16 の表の「段 B」の行 | マージで Vercel と Edge Function がデプロイされる。この時点で古い書き方の経路は無くなるが、利用者の権限はまだ残る |
 | C (権限を外す) | §7.3・§7.4 の migration と戻し口 / テスト: §7.19 の C-4〜C-7・C-9・C-10 (権限の分)・§7.20 の I-5〜I-7・I-9・I-12 (権限の戻し口) | `supabase/migrations/*`・`supabase/rollbacks/*`・`tests/planned-meals-score-integrity-migration-contract.test.ts`・`tests/integration/rls/planned-meals-score-integrity.test.ts` (段 C で赤になる既存のテストは段 B で書き換え済み: §16 の段 B の行。段 C の PR は既存のテストを書き換えない) | **マージの前にオーナーへ migration の中身を確認する。** 段 B が本番で動いていることを確かめてからマージする (§19) |
 
 - 段 A の全件テストは、`tests/planned-meals-score-integrity-migration-contract.test.ts` の C-4〜C-7・C-9 が権限の migration を要求するので、段 A の時点ではその describe を `describe.skip` にせず、**C-4〜C-7・C-9 の describe を段 C の PR で足す** (段 A の PR には C-1〜C-3・C-8・C-10 の RPC の分だけ入れる。C-1 の「2 本とも」と C-10 の 4 ファイルは段 C で 2 本に広げる)。§7.20 も同じく、段 A では RPC の it (I-1〜I-4・I-8・I-13)、段 B で I-10・I-11、段 C で 3 列の it (I-5〜I-7・I-9・I-12) を足す。
@@ -2532,7 +2641,7 @@ route・テーブル・列・Storage のパス・環境変数の新設は無い�
 
 ## 16. 既存の番兵 (契約テスト・走査テスト) の追随表
 
-本書が足す・変える・移すものの名前を grep の語にして tests/ (e2e を含む)・src/__tests__/・apps/mobile/__tests__/・scripts/ で反応する番兵を全列挙した (origin/main `7f61035f5` で `git grep`。語 = `is_completed`・`isCompleted`・`completed_at`・`veg_score`・`vegScore`・`restorePlannedMealsSnapshot`・`planned-meals-snapshot`・変える route のパス)。「反応」= 本書の変更で赤くなる、検査が空振りする、または前提が変わる。反応しないものも、語に当たったファイルは行として残す。
+本書が足す・変える・移すものの名前を grep の語にして tests/ (e2e を含む)・src/__tests__/・apps/mobile/__tests__/・scripts/ で反応する番兵を全列挙した (origin/main `7f61035f5` で `git grep`。語 = `is_completed`・`isCompleted`・`completed_at`・`veg_score`・`vegScore`・`restorePlannedMealsSnapshot`・`planned-meals-snapshot`・`prefetchedGeminiResult`・`queueDb`・変える route と Edge Function のパス (`analyze-meal-photo` を含む))。「反応」= 本書の変更で赤くなる、検査が空振りする、または前提が変わる。反応しないものも、語に当たったファイルは行として残す。
 
 | 番兵 | grep の語 | 反応 | 直し方 | 段 |
 |---|---|---|---|---|
@@ -2543,6 +2652,10 @@ route・テーブル・列・Storage のパス・環境変数の新設は無い�
 | `tests/planned-meal-nutrient-validation-routes.test.ts:50-55・292-301・423-428` | `is_completed`・`isCompleted`・`supabaseClient` | 赤 (route が完了を RPC で切り替えるが、偽物の `supabaseClient` (`:52-55`) に `rpc` が無い。`:292-301` は update の本文に `is_completed`・`completed_at` が入ることを `toEqual` で期待。`:423-428` は `{ isCompleted: true }` だけの本文で update が呼ばれることを期待するが、§7.9.2 の (4) で、料理の無い献立 (`:376-385` の `existing` は `dishes: null`) は update を呼ばず読むだけになる) | `const mockRpc = vi.fn(async (_fn: string, args: { p_meal_id: string; p_completed: boolean }) => ({ data: [{ id: args.p_meal_id, is_completed: args.p_completed, completed_at: null, updated_at: null }], error: null }));` を置き、`supabaseClient` に `rpc: mockRpc` を足す。`:292-301` (it 名は今のまま): update の本文の期待を `{ updated_at: expect.any(String) }` に (`is_completed`・`completed_at` は入らない) し、`mockRpc` が `(PLANNED_MEALS_SET_COMPLETED_RPC, { p_meal_id: MEAL_ID, p_completed: true })` で 1 回呼ばれることを足す。`:423-428` (it 名は今のまま): `update` が呼ばれないこと・`mockRpc` が `(PLANNED_MEALS_SET_COMPLETED_RPC, { p_meal_id: MEAL_ID, p_completed: true })` で 1 回呼ばれること・200 を見る (`calories_kcal` を書かないことは、update を呼ばないことで満たす) | B |
 | `tests/meal-image-skip-routes.test.ts:130-180・203・513・525・534` | `makeUserDb`・`is_completed: true`・`isCompleted: true`・`complete_meal` | 赤 (route が `supabase.rpc` を呼ぶが偽物に `rpc` が無い) | `makeUserDb()` に `rpc: async (fn, args) => { h.state.writes.push({ table: \`rpc:${fn}\`, op: 'rpc', payload: args }); return { data: [{ id: MEAL_ID, is_completed: args.p_completed, completed_at: null, updated_at: null }], error: null }; }` を足す。`saves` の抽出 (`:48`) は `planned_meals` の insert / update だけを数えるので、toggle の段の期待 (画像のジョブを積まない) は変わらない | B |
 | `tests/analyze-meal-photo-sugar.test.ts:430-454` | `findUpdatePayloads(parseIndex(), "planned_meals")`・`"veg_score"` | 反応しない見込み (update は 1 か所のまま。`veg_score` は手書きのまま。`select` は update に数えない)。実行して確かめる | – | B |
+| `tests/ai-queue-writes-contract.test.ts:206-219` (Edge の取り消しの it) | `queueDb`・`analyze-meal-photo/index.ts`・`cancelPendingMealImageJobs` | 反応しない (§7.15 は service_role の client の変数名を `queueDb` のまま使い、`const queueDb = createClient(SUPABASE_URL, SERVICE_ROLE_JWT ?? SUPABASE_SERVICE_ROLE_KEY ?? '')` と `cancelPendingMealImageJobs({ supabase: queueDb, userId, ... })` の 1 か所を保つので、`:216` の toMatch と `:217` の `[true]` はそのまま通る。名前を変えると両方赤になる)。`queueDb は getAiQueueWriter() だけから作る` の it は src・lib・shared・packages・apps/mobile だけを見る (`APP_DIRS`) ので Edge は対象外。実行して確かめる | – | B |
+| `tests/image-route-contracts.test.ts:224-261・263-312・846-880` | `prefetchedGeminiResult`・`analyze-meal-photo`・`mealId` | 反応しない (どれも今のまま通る: `:242` と `:297` は `mealId` 無しで、`:297` は `prefetchedGeminiResult` が渡ることを期待する。§7.15 は `mealId` 無しなら今までどおり渡す。`:867` は `mealId` つきだが `objectContaining({ mealId, invokedAt })` で、`prefetchedGeminiResult` を送っていない)。`mealId` と `prefetchedGeminiResult` を一緒に送る it を追記する (§7.22) | it を 1 つ追記 | B |
+| `tests/ai-usage-photo-auto-grant.test.ts:175-178・213-218` | `prefetchedGeminiResult` | 反応しない (`mealId` を送らない。同期の経路は今までどおり `prefetchedGeminiResult` を渡す。数え方は変えない)。実行して確かめる | – | B |
+| `tests/ai-consent-enforcement-edge.test.ts:395-398`・`tests/edge-function-cors.test.ts:281` | `analyze-meal-photo/index.ts` | 反応しない (同意の判定と CORS はハンドラの入口で、背景の処理の引数と書き込みの client に触れない)。実行して確かめる | – | B |
 | `tests/database-types-migrations-contract.test.ts` | `Functions`・`CREATE OR REPLACE FUNCTION` | 赤 (型ファイル 2 本に `planned_meals_set_completed` が無い) | §7.18 の手順で型を生成し直し、2 本を同じ中身にする | A |
 | `tests/migration-file-version-integrity.test.ts` | `-- migration:`・`-- rollback:`・`supabase/rollbacks/` | 形が違えば赤 | §7.1〜§7.4 の見出しと戻し口の名前を守る (番号はマージの直前に確定) | A / C |
 | `tests/db-privilege-hardening-migration-contract.test.ts` (「この migration より後の migration / 戻し口が利用者へ表の TRUNCATE (ALL を含む) を付け直していない」) | `GRANT`・`TRUNCATE`・`ALL` | 反応しない (§7.3・§7.4 は `INSERT (列), UPDATE (列)` と `INSERT, UPDATE` だけ。`parseGrant` の privileges に ALL / TRUNCATE は出ない) | – (C-4・C-5 が ALL / TRUNCATE の無いことを別に見る) | C |
@@ -2574,7 +2687,7 @@ route・テーブル・列・Storage のパス・環境変数の新設は無い�
 | `src/__tests__/lib/membership/family-menu.test.ts`・`family-menu-rpc-types.test.ts`・`src/__tests__/components/membership/family-menu-rows.test.tsx`・`src/__tests__/hooks/useFamilyMenu.test.ts`・`src/__tests__/api/family/menu.test.ts` | `is_completed` | 反応しない (家族の献立の読み取りの形。SECURITY DEFINER の `family_menu_planned_meals` は変えない) | – | – |
 | `src/__tests__/app/meals/detail-meal-type-visual.test.tsx:53-54` | `is_completed`・`completed_at` | 反応しない (画面の行の fixture。画面が `PATCH /api/meals/[id]` に送る本文は変えない) | – | – |
 | `tests/api-read-errors-1917.test.ts:402-405` | `PATCH /api/meal-plans/meals/[id]`・`isCompleted` | 反応しない見込み (`PATCH /api/meal-plans/meals/[id]` の行は読み取りの失敗の 500・行が無いときの 404・UUID でない id の 404 の 3 つの it だけで、どれも所有の確認の読み取り (§7.9.2 の (4) より前) で返る。「読んでから書くまでに消えた」の describe (`:633-656`) にこの route は入っていない)。偽物の DB は `rpc` を持つ (`:134`。`{ data: null, error: null }` を返す) が、届かない。実行して確かめる | – | B |
-| `tests/catalog-meal-route-contracts.test.ts:179・247`・`tests/meal-image-route-contracts.test.ts:146`・`tests/image-route-contracts.test.ts`・`tests/ai-usage-contract.test.ts`・`tests/route-invalid-input-1917.test.ts`・`src/__tests__/api/null-character-routes.test.ts` | `PATCH /api/meal-plans/meals/[id]` (変える route のパス) | 反応しない (どれも完了の指定を送らない。`:179`・`:247` は update の本文を `toHaveBeenCalledWith({ ... })` の完全一致で見るが、本文に書く列があるので §7.9.2 の (4) は既存の UPDATE を通り、本文の鍵も変わらない。`updated_at` を足さない理由は §7.9.2 の注) | – | B |
+| `tests/catalog-meal-route-contracts.test.ts:179・247`・`tests/meal-image-route-contracts.test.ts:146`・`tests/ai-usage-contract.test.ts`・`tests/route-invalid-input-1917.test.ts`・`src/__tests__/api/null-character-routes.test.ts` | `PATCH /api/meal-plans/meals/[id]` (変える route のパス) | 反応しない (どれも完了の指定を送らない。`:179`・`:247` は update の本文を `toHaveBeenCalledWith({ ... })` の完全一致で見るが、本文に書く列があるので §7.9.2 の (4) は既存の UPDATE を通り、本文の鍵も変わらない。`updated_at` を足さない理由は §7.9.2 の注) | – | B |
 | `tests/ai-consent-enforcement-routes.test.ts:452・640` | `is_completed` | 反応しない見込み (同意の判定の前の偽物の行)。実行して確かめる | – | B |
 | `tests/badges-route.test.ts:515`・`tests/schema-checked-db.test.ts:90-93`・`tests/support-routes.test.ts:107-110`・`tests/catalog-meal-route-contracts.test.ts:52`・`tests/consultation-prompt-meal-type-order-1631.test.ts:144` | `is_completed` | 反応しない (読み手の問い合わせ・偽物の行) | – | – |
 | `tests/org-challenges-lib.test.ts:144-149` | `veg_score`・`targetMax` | 反応しない (`targetMax: VEG_SCORE_MAX` は 100 のまま。説明の文 (`description`) は変えない) | – | B |
@@ -2612,7 +2725,8 @@ route・テーブル・列・Storage のパス・環境変数の新設は無い�
 | `src/app/api/ai/menu/weekly/request/route.ts`・`weekly/status/route.ts`・`weekly/pending/route.ts`・`weekly/cleanup/route.ts` の復元 | 変更 | `restoreOwnPlannedMealsSnapshot` (本人の日の確認 + service_role) で戻す (§7.12) |
 | `src/lib/planned-meals-snapshot.ts` | 追記 | `restoreOwnPlannedMealsSnapshot` を足す。`restorePlannedMealsSnapshot`・`extractPlannedMealsSnapshot` は保持 |
 | `POST /api/ai/nutrition` | 変更 | `veg_score` を書かない (§7.13)。route は残す (呼ぶ画面は無いが、テストと互換のため消さない。消すかは §21 Q-4) |
-| `analyze-meal-photo/index.ts` | 変更 | 書き込みを service_role に (§7.15) |
+| `analyze-meal-photo/index.ts` | 変更 | 書き込みを service_role (`queueDb`) に。`mealId` の経路 (背景の処理) では `prefetchedGeminiResult` を使わない (§7.15) |
+| `src/app/api/ai/analyze-meal-photo/route.ts` | 変更 | `mealId` のときは `prefetchedGeminiResult` を Edge へ渡さない (§7.15)。`mealId` 無しは今までどおり |
 | `nutrition-pipeline.ts` の `estimateVegetableScore` | 変更 | export + `vegScoreOfVegetableGrams` (§7.16。値は同じ) |
 | `calculate-segment-stats/index.ts` の `nutrition_score` | 変更 | 係数 20 → `NUTRITION_SCORE_PER_VEG_SCORE` (§7.17) |
 | `update_org_challenge_progress` (SQL)・badges・family menu・`generate-menu-*`・`save-meal.ts` | 保持 | 変えない |
@@ -2625,7 +2739,7 @@ route・テーブル・列・Storage のパス・環境変数の新設は無い�
 1. `SELECT proname, prosecdef, proconfig FROM pg_proc WHERE proname = 'planned_meals_set_completed'` → 1 行・`prosecdef = true`・`search_path=` を含む。
 2. `SELECT has_function_privilege('anon', 'public.planned_meals_set_completed(uuid, boolean)', 'EXECUTE')` → false。`authenticated`・`service_role` → true。
 
-段 B のデプロイの後 (本番で、オーナーの試験用の利用者で。捨て伝票は恒久承認):
+段 B のデプロイの後 (本番で、試験用の利用者で行う。本番での操作は、オーケストレーターがその時点の承認の範囲で行う):
 3. Web のホームで「食べた」を押し、`SELECT is_completed, completed_at FROM planned_meals WHERE id = …` で `completed_at` が DB の時刻 (端末の時刻でない) になっている。もう一度押して NULL に戻る。
 4. 献立表 (`/menus/weekly`) の写真から入力 (`mealId` つきの経路。§3.1 W-8) で解析した後、`SELECT veg_score FROM planned_meals WHERE id = …` で `veg_score` が 0〜100 の整数で入っている (背景の処理が終わるまで待つ)。Edge Function のログに `PLANNED_MEAL_NOT_FOUND` が無い。
 5. Vercel のランタイムログに `planned_meals` の 42501 が無い。
@@ -2646,16 +2760,17 @@ route・テーブル・列・Storage のパス・環境変数の新設は無い�
 - 列の権限はカタログで判定され、行ごとの負荷は無い。PostgREST はスキーマのキャッシュを持つので、権限の変更後に PostgREST が再読み込みするまで (Supabase は自動) 少し遅れることがある。
 - SECURITY DEFINER の関数は `search_path = ''` で、表・関数を schema つきで書く (検索パスの差し替えを防ぐ)。入力は uuid と boolean で、文字列を組み立てない。
 - `analyze-meal-photo` の service_role の書き込みは、本人の行の確認 (`user_daily_meals!inner(user_id)` + `eq('user_daily_meals.user_id', userId)`) を必ず通す。`userId` は関数の入口で JWT から確かめた値。
+- `analyze-meal-photo` の `mealId` の経路は、利用者が送る解析の結果 (`prefetchedGeminiResult`) を使わず写真を Gemini で解析し直す (§7.15)。この経路を呼ぶ画面 (献立表の写真から入力) は今も送っていないので、解析の時間と AI の費用は今と変わらない。利用者が `mealId` と一緒に送った場合だけ、Gemini の認識の 1 回が増える (利用回数の数え方は今のまま)。
 - 週間生成の復元 (4 route) の service_role は、`restoreOwnPlannedMealsSnapshot` が利用者のセッションで本人の日と確かめた `daily_meal_id` の行だけを戻す (確かめられなければ 1 行も書かない。新しい行の `daily_meal_id` を作らない)。
 - 古いモバイルのビルドの失敗 (42501) はログに残るだけで、ほかの操作に波及しない。
 - 戻し口は 2 本とも冪等。順序は新しい順 (段 C → 段 A)。
 
-## 21. 未解決事項 (設計は上の既定で進める。選択肢つき)
+## 21. 未解決事項 (設計は上の既定で進める。選択肢つき。Q-2 だけは既定が無く、オーナーの判断を待つ。段 A〜C は Q-2 の答えに依らない)
 
 | # | 項目 | 選択肢 | 既定 (本書) |
 |---|---|---|---|
 | Q-1 | `veg_score` の範囲 (0〜100) を DB でも守るか (`trg_planned_meals_validate_values` に `veg_score` を足す。service_role の書き手が誤った尺度の値を書いたときの砦) | (a) 足さない (書き手は 1 関数で、値は `vegScoreOfVegetableGrams` が収める) / (b) 別の小さな migration でトリガーの対象に足す (戻し口は `20261008110000` の定義に戻す) | (a)。(b) は別 Issue の候補 |
-| Q-2 | 完了の集計側の別の検証 (将来の日付の献立の完了を数えない・1 日に完了できる回数の上限など) | (a) 足さない (完了は本人の操作。指標の意味を変えない) / (b) `calculate-segment-stats` と `update_org_challenge_progress` で `completed_at` が期間の中かを見る | (a)。(b) は指標の意味の変更なので、発注があれば別の設計 |
+| Q-2 | **未決・オーナーの判断が要る。** `is_completed` を条件にする指標 (比較ランキングの `breakfast_rate`・`menu_execution_rate`、組織のチャレンジの `breakfast_rate`・`cooking_rate`・`veg_score`) の「完了」は、段 C の後も本人の申告のまま (RPC は本人の行なら献立の日 (未来を含む) を問わず完了にでき、`completed_at` はどの集計も読まない。§0.1 の 2)。Issue #2025 の症状のうち「`breakfast_rate` を自分で上げられる」は、どれかを採らないと閉じない | (a) 足さない (「食べた」は本人の申告として受け入れる。段 A〜C のまま) / (b) RPC で未来の日の献立を完了にさせない (`user_daily_meals.day_date` が JST の今日より後なら例外。§7.1 の関数に 1 条件を足す。集計は変えない。過去の日の後からの記録は今までどおり) / (c) 集計で `completed_at` を見る (完了の時刻が献立の日より前なら数えない等。`calculate-segment-stats` の select に `completed_at` を足し、`update_org_challenge_progress` を CREATE OR REPLACE する。指標の意味の変更) / (d) 写真の解析を通った献立だけを完了として数える (指標の意味の大きな変更) | **既定なし (未決)**。段 A〜C (列の権限・RPC・書き手の付け替え) はどの答えでも変わらないので、答えを待たずに進められる。(b) を段 A のマージの前に選べば §7.1 の関数に同じ PR で足す。後なら別の小さな migration (RPC の CREATE OR REPLACE) と設計の追記。(c)・(d) は別の設計 |
 | Q-3 | 写真から記録した食事 (`POST /api/meal-plans/add-from-photo`・食事の記録の画面 `meals/new` の同期の `analyze-meal-photo`) に野菜スコアが付かない (今もそう。値が入るのは献立表の写真から入力 (`mealId` つき・W-8) だけ) | (a) そのまま / (b) `add-from-photo` がサーバで `vegScoreOfVegetableGrams` を計算して書く (service_role か RPC が要る) | (a)。(b) は別 Issue の候補 (指標に値が入る経路を増やす判断) |
 | Q-4 | `POST /api/ai/nutrition` を残すか (呼ぶ画面が無い) | (a) 残す (本書は `veg_score` を外すだけ) / (b) route とテストを消す | (a)。(b) は別 Issue |
 | Q-5 | anon の `planned_meals` の DELETE の権限 (INSERT / UPDATE と同じく経路は無い) | (a) 本書では触らない / (b) 段 C で `REVOKE DELETE ... FROM anon` も足す | (a) (発注の範囲 = 3 列の書き込み) |
