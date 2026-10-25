@@ -46,8 +46,16 @@ const NOT_SENT_MESSAGES: Record<FreezeNotificationReason, string> = {
 /** 送った・送らなかったときの文 */
 export const FREEZE_NOTIFICATION_SENT_MESSAGE = '通知メールを送信待ちに登録しました (届くまで数分かかることがあります)';
 export const FREEZE_NOTIFICATION_NOT_REQUESTED_MESSAGE = '通知メールは送っていません';
-/** 応答に結果が無い・読めないときの文 (古い API との食い違いなど) */
-export const FREEZE_NOTIFICATION_UNKNOWN_MESSAGE = '通知メールの結果を確認できませんでした (利用者の詳細の監査ログで確認してください)';
+/**
+ * 通知の結果 (監査 admin.user.ban の details.notification) を読める画面。super_admin だけが開け、行を展開すると details を描く
+ * (src/app/super-admin/audit-logs/page.tsx)。利用者の詳細 (/admin/users/[id]) の監査ログは super_admin にだけ出し、
+ * action_type・severity・日時だけで details を描かないので、読めないときの文はそこを指さない
+ */
+export const FREEZE_NOTIFICATION_AUDIT_LOGS_PATH = '/super-admin/audit-logs';
+/** 凍結の監査の種別 (POST /api/admin/users/[id]/freeze が details.notification とともに記録する) */
+export const FREEZE_NOTIFICATION_AUDIT_ACTION_TYPE = 'admin.user.ban';
+/** 応答に結果が無い・読めないときの文 (古い API との食い違いなど)。結果を確かめられる画面と、その画面で探す行を名指す */
+export const FREEZE_NOTIFICATION_UNKNOWN_MESSAGE = `通知メールの結果を確認できませんでした (super_admin の監査ログ閲覧 ${FREEZE_NOTIFICATION_AUDIT_LOGS_PATH} で ${FREEZE_NOTIFICATION_AUDIT_ACTION_TYPE} の行を展開し、details の notification を確認してください)`;
 
 /**
  * 応答の data.notification を読む。形が合わなければ null (画面は FREEZE_NOTIFICATION_UNKNOWN_MESSAGE を出す)。
