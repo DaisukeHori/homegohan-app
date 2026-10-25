@@ -417,7 +417,7 @@ export interface ShoppingIngredientInput {
   amount: string | null;
 }
 
-/** 「鶏むね肉 200g」を { name: '鶏むね肉', amount: '200g' } に分ける (menus/weekly/page.tsx の addRecipeToShoppingList が関数の中に直に書く正規表現と同じ文字列。F-32) */
+/** 「鶏むね肉 200g」を { name: '鶏むね肉', amount: '200g' } に分ける (献立の画面の「材料を買い物リストに追加」も menus/weekly/_state/recipeShoppingList.ts から ingredientInputsOf を通してこの定数を使う。#2023) */
 const INGREDIENT_AMOUNT_PATTERN = /^(.+?)\s+(\d+.*|少々|適量|適宜)$/;
 
 /**
