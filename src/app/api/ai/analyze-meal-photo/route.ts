@@ -96,10 +96,10 @@ export async function POST(request: Request) {
       : await consumeAiUsage(user.id, 'photo_analysis');
     if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
 
-    // #121: タイムアウト後の DB 書き込み防止
-    // mealId がある非同期モードでは invokedAt を Edge Function に渡す。
-    // Edge Function 側はDB更新前に planned_meals.photo_analyzed_at と比較し、
-    // 自分より新しい書き込みが既にある場合は更新をスキップする（CAS パターン）。
+    // #121: 古い解析の結果で新しい結果を上書きしない (CAS)。mealId がある非同期モードでは invokedAt (Edge を呼ぶ直前の時刻) を Edge Function に渡す。
+    // Edge Function は解析の前に、planned_meals.updated_at が invokedAt 以前のときだけ行に印を付け (updated_at を進める)、
+    // 書くときは updated_at が印のままの行にだけ書く。後から送った解析の印・ほかの書き込みがあれば書かない
+    // (supabase/functions/_shared/meal-photo-cas.ts。挙動は tests/analyze-meal-photo-cas.test.ts)
     const invokedAt = new Date().toISOString();
 
     const invokePromise = supabase.functions.invoke('analyze-meal-photo', {
