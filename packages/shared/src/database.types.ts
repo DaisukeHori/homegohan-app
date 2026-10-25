@@ -9706,6 +9706,15 @@ export type Database = {
         Args: { p_domain: string; p_value: string }
         Returns: string
       }
+      planned_meals_set_completed: {
+        Args: { p_completed: boolean; p_meal_id: string }
+        Returns: {
+          completed_at: string
+          id: string
+          is_completed: boolean
+          updated_at: string
+        }[]
+      }
       prepare_account_deletion: { Args: { p_user_id: string }; Returns: Json }
       preview_family_invite: {
         Args: { p_token: string }
