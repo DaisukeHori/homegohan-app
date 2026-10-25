@@ -7,6 +7,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { operationFailureMessage, operationNetworkFailureMessage } from '@/lib/admin/api-error-message';
 
 type FeaturePackage = {
   id: string;
@@ -77,6 +78,9 @@ function changedFeaturePackageFields(
 /** 保存を押したが、どの入力欄も最後に読んだ・保存した値から変えていなかったときの文 (送らない。#1917) */
 const NO_FEATURE_PACKAGE_CHANGES_MESSAGE = '変更した項目がないので、保存していません';
 
+/** 廃止が失敗したときの文の頭 (後ろに理由を添える) */
+const DEPRECATE_FAILURE_SUMMARY = '廃止できませんでした';
+
 export default function FeaturePackageDetailPage() {
   const params = useParams();
   const pkgId = params.id as string;
@@ -95,6 +99,9 @@ export default function FeaturePackageDetailPage() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   // 保存を押したが送らなかったときの文 (変えた欄が無い。#1917)
   const [saveInfo, setSaveInfo] = useState('');
+  // 廃止の応答を待っているか・失敗したときの文
+  const [isDeprecating, setIsDeprecating] = useState(false);
+  const [deprecateError, setDeprecateError] = useState('');
 
   const fetchPkg = useCallback(async () => {
     setIsLoading(true);
@@ -173,17 +180,41 @@ export default function FeaturePackageDetailPage() {
     }
   };
 
+  /**
+   * 廃止。失敗の応答を黙って捨てず、理由を画面に出す (403 は理由の文 (二段階認証の確認が要る など) だけを通す。operationFailureMessage)。
+   * 成功したら PATCH の応答の行 (書いたあとの最新の行) で表示を新しくする。全体を「読み込み中」にして読み直さない。
+   * 入力欄は保存の経路と同じく、手を付けていない欄だけ応答の行の値に揃え、書きかけは残す (inputAfterSave。#1917)
+   */
   const handleDeprecate = async () => {
+    if (!pkg) return;
     if (!confirm('この機能パッケージを廃止しますか？')) return;
+    // 押したときの最後に読んだ・保存した行から作る入力欄の値 (入力欄がこれと同じなら手を付けていない欄)
+    const loadedInputs = featurePackageInputsOf(pkg);
+    setDeprecateError('');
+    setIsDeprecating(true);
     try {
       const res = await fetch(`/api/super-admin/feature-packages/${pkgId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'deprecated' }),
       });
-      if (res.ok) fetchPkg();
+      if (!res.ok) {
+        const body: unknown = await res.json().catch(() => null);
+        setDeprecateError(operationFailureMessage(DEPRECATE_FAILURE_SUMMARY, res.status, body));
+        return;
+      }
+      // 応答は { data: 書いたあとの行 } (保存の経路と同じ形。route は .update().select() の行を返す)
+      const saved = (await res.json() as { data: FeaturePackage }).data;
+      const savedInputs = featurePackageInputsOf(saved);
+      setPkg(saved);
+      setDisplayName((current) => inputAfterSave(current, loadedInputs.displayName, savedInputs.displayName));
+      setDescription((current) => inputAfterSave(current, loadedInputs.description, savedInputs.description));
+      setFeatureFlagsRaw((current) => inputAfterSave(current, loadedInputs.featureFlagsRaw, savedInputs.featureFlagsRaw));
+      setDisplayOrder((current) => inputAfterSave(current, loadedInputs.displayOrder, savedInputs.displayOrder));
     } catch {
-      alert('廃止処理に失敗しました');
+      setDeprecateError(operationNetworkFailureMessage(DEPRECATE_FAILURE_SUMMARY));
+    } finally {
+      setIsDeprecating(false);
     }
   };
 
@@ -220,12 +251,23 @@ export default function FeaturePackageDetailPage() {
         {pkg.status === 'active' && (
           <button
             onClick={handleDeprecate}
-            className="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg text-xs font-medium hover:bg-red-50 transition-colors"
+            disabled={isDeprecating}
+            className="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg text-xs font-medium hover:bg-red-50 transition-colors disabled:opacity-50"
           >
             廃止する
           </button>
         )}
       </div>
+
+      {deprecateError && (
+        <div
+          role="alert"
+          data-testid="status-change-error"
+          className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm"
+        >
+          {deprecateError}
+        </div>
+      )}
 
       <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-5">
         <div>

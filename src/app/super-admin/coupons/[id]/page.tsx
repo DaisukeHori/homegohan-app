@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { couponValidityDay, couponValidUntilPatchValue } from '@/lib/super-admin/coupon-validity';
+import { operationFailureMessage, operationNetworkFailureMessage } from '@/lib/admin/api-error-message';
 
 type Coupon = {
   id: string;
@@ -100,6 +101,20 @@ function changedCouponFields(inputs: CouponInputs, coupon: Coupon): CouponSaveBo
 /** 保存を押したが、どの入力欄も最後に読んだ・保存した値から変えていなかったときの文 (送らない。#1917) */
 const NO_COUPON_CHANGES_MESSAGE = '変更した項目がないので、保存していません';
 
+/** 状態の変更 (PATCH /api/super-admin/coupons/{id} の status) で変えられる状態 */
+type CouponStatusChange = 'active' | 'paused';
+
+/** 状態の変更の操作の名前 (確かめる文と失敗の文に使う) */
+const STATUS_CHANGE_LABELS: Record<CouponStatusChange, string> = {
+  paused: '一時停止',
+  active: '再開',
+};
+
+/** 状態の変更が失敗したときの文の頭 (後ろに理由を添える) */
+function statusChangeFailureSummary(newStatus: CouponStatusChange): string {
+  return `${STATUS_CHANGE_LABELS[newStatus]}できませんでした`;
+}
+
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   active: { label: '有効', color: 'bg-green-100 text-green-700' },
   paused: { label: '停止中', color: 'bg-yellow-100 text-yellow-700' },
@@ -123,6 +138,9 @@ export default function CouponDetailPage() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   // 保存を押したが送らなかったときの文 (変えた欄が無い。#1917)
   const [saveInfo, setSaveInfo] = useState('');
+  // 状態の変更 (一時停止・再開) の応答を待っているか・失敗したときの文
+  const [isChangingStatus, setIsChangingStatus] = useState(false);
+  const [statusError, setStatusError] = useState('');
   const [activeTab, setActiveTab] = useState<'detail' | 'redemptions'>('detail');
 
   const [displayName, setDisplayName] = useState('');
@@ -240,18 +258,41 @@ export default function CouponDetailPage() {
     }
   };
 
-  const handleStatusChange = async (newStatus: 'active' | 'paused') => {
-    const label = newStatus === 'paused' ? '停止' : '再開';
-    if (!confirm(`このクーポンを${label}しますか？`)) return;
+  /**
+   * 状態の変更 (一時停止・再開)。失敗の応答を黙って捨てず、操作の名前と理由を画面に出す
+   * (403 は理由の文 (二段階認証の確認が要る など) だけを通す。operationFailureMessage)。
+   * 成功したら PATCH の応答の行 (書いたあとの最新の行) で表示を新しくする。全体を「読み込み中」にして読み直さない。
+   * 入力欄は保存の経路と同じく、手を付けていない欄だけ応答の行の値に揃え、書きかけは残す (inputAfterSave。#1917)
+   */
+  const handleStatusChange = async (newStatus: CouponStatusChange) => {
+    if (!coupon) return;
+    if (!confirm(`このクーポンを${STATUS_CHANGE_LABELS[newStatus]}しますか？`)) return;
+    // 押したときの最後に読んだ・保存した行から作る入力欄の値 (入力欄がこれと同じなら手を付けていない欄)
+    const loadedInputs = couponInputsOf(coupon);
+    setStatusError('');
+    setIsChangingStatus(true);
     try {
       const res = await fetch(`/api/super-admin/coupons/${couponId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus }),
       });
-      if (res.ok) fetchCoupon();
+      if (!res.ok) {
+        const body: unknown = await res.json().catch(() => null);
+        setStatusError(operationFailureMessage(statusChangeFailureSummary(newStatus), res.status, body));
+        return;
+      }
+      // 応答は { data: 書いたあとの行 } (保存の経路と同じ形。route は .update().select() の行を返す)
+      const saved = (await res.json() as { data: Coupon }).data;
+      const savedInputs = couponInputsOf(saved);
+      setCoupon(saved);
+      setDisplayName((current) => inputAfterSave(current, loadedInputs.displayName, savedInputs.displayName));
+      setValidUntil((current) => inputAfterSave(current, loadedInputs.validUntil, savedInputs.validUntil));
+      setMaxUses((current) => inputAfterSave(current, loadedInputs.maxUses, savedInputs.maxUses));
     } catch {
-      alert('ステータス変更に失敗しました');
+      setStatusError(operationNetworkFailureMessage(statusChangeFailureSummary(newStatus)));
+    } finally {
+      setIsChangingStatus(false);
     }
   };
 
@@ -287,7 +328,8 @@ export default function CouponDetailPage() {
           {coupon.status === 'active' && (
             <button
               onClick={() => handleStatusChange('paused')}
-              className="px-3 py-1.5 border border-yellow-300 text-yellow-600 rounded-lg text-xs font-medium hover:bg-yellow-50 transition-colors"
+              disabled={isChangingStatus}
+              className="px-3 py-1.5 border border-yellow-300 text-yellow-600 rounded-lg text-xs font-medium hover:bg-yellow-50 transition-colors disabled:opacity-50"
             >
               一時停止
             </button>
@@ -295,13 +337,24 @@ export default function CouponDetailPage() {
           {coupon.status === 'paused' && (
             <button
               onClick={() => handleStatusChange('active')}
-              className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors"
+              disabled={isChangingStatus}
+              className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors disabled:opacity-50"
             >
               再開する
             </button>
           )}
         </div>
       </div>
+
+      {statusError && (
+        <div
+          role="alert"
+          data-testid="status-change-error"
+          className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm"
+        >
+          {statusError}
+        </div>
+      )}
 
       {/* タブ */}
       <div className="flex gap-1 mb-6 border-b border-slate-200">

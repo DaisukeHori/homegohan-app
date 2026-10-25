@@ -15,6 +15,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const USER_ID = '33333333-3333-4333-8333-333333333333';
+const OTHER_USER_ID = '44444444-4444-4444-8444-444444444444';
 
 vi.mock('next/navigation', () => ({
   // サポートの利用者の画面は ?id= の利用者の詳細を開いた状態で始める
@@ -155,11 +156,11 @@ afterEach(async () => {
 describe('サポートの利用者の詳細: メモの追加の失敗を画面に出す', () => {
   const NOTES_PATH = `/api/support/users/${USER_ID}/notes`;
 
-  function userDetail(notes: Array<{ id: string; note: string }> = []) {
+  function userDetail(notes: Array<{ id: string; note: string }> = [], id = USER_ID, nickname = 'サポート対象さん') {
     return {
       user: {
-        id: USER_ID,
-        nickname: 'サポート対象さん',
+        id,
+        nickname,
         ageGroup: '30s',
         gender: 'female',
         roles: ['user'],
@@ -178,14 +179,35 @@ describe('サポートの利用者の詳細: メモの追加の失敗を画面�
     };
   }
 
+  /** 一覧の 1 行 (GET /api/admin/users の UserListItem) */
+  const OTHER_USER_ROW = {
+    id: OTHER_USER_ID,
+    email: null,
+    nickname: '別の利用者さん',
+    plan_key: 'free',
+    roles: ['user'],
+    is_banned: false,
+    frozen_at: null,
+    frozen_reason: null,
+    frozen_by: null,
+    unban_at: null,
+    last_login_at: null,
+    registered_at: '2026-10-01T03:00:00.000Z',
+    meal_count: 0,
+    organization_id: null,
+  };
+
   /** 一覧・詳細は読める。メモの追加 (POST) は post() の応答を返す */
   function mockSupportApi(post: () => Response | Promise<Response>) {
     const notes: Array<{ id: string; note: string }> = [];
     mockFetch((method, url, body) => {
       if (method === 'GET' && url.pathname === '/api/admin/users') {
-        return jsonResponse(200, { data: [], meta: { total: 0, page: 1, per_page: 50 } });
+        return jsonResponse(200, { data: [OTHER_USER_ROW], meta: { total: 1, page: 1, per_page: 50 } });
       }
       if (method === 'GET' && url.pathname === `/api/support/users/${USER_ID}`) return jsonResponse(200, userDetail(notes));
+      if (method === 'GET' && url.pathname === `/api/support/users/${OTHER_USER_ID}`) {
+        return jsonResponse(200, userDetail([], OTHER_USER_ID, '別の利用者さん'));
+      }
       if (method === 'POST' && url.pathname === NOTES_PATH) {
         return Promise.resolve(post()).then((res) => {
           if (res.ok) notes.push({ id: `note-${notes.length + 1}`, note: (body as { note: string }).note });
@@ -234,6 +256,18 @@ describe('サポートの利用者の詳細: メモの追加の失敗を画面�
 
     expect(byTestId('note-add-error')).toContain('通信エラー');
     expect(noteInput()!.value).toBe('電話で折り返し済み');
+  });
+
+  it('別の利用者を開いたら、前の利用者のメモの追加の失敗の文は出さない', async () => {
+    mockSupportApi(() => jsonResponse(500, { error: 'サーバーエラーが発生しました' }));
+    await addNote('電話で折り返し済み');
+    expect(byTestId('note-add-error')).not.toBeNull();
+
+    const otherRow = Array.from(container.querySelectorAll('p')).find((el) => el.textContent === '別の利用者さん');
+    await click(otherRow, '別の利用者の行');
+
+    await vi.waitFor(() => expect(container.querySelector('h2')?.textContent).toBe('別の利用者さん'));
+    expect(byTestId('note-add-error')).toBeNull();
   });
 
   it('成功したら入力欄を空にしてメモを読み直し、前の失敗の文を消す', async () => {
@@ -359,6 +393,19 @@ describe('組織の部署: 追加・更新・削除の失敗を画面に出す',
 
     expect(deptError()).toContain('部署を削除できませんでした');
     expect(deptError()).toContain(reason);
+  });
+
+  it('失敗のあとに「キャンセル」でフォームを閉じたら、失敗の文も消す', async () => {
+    mockDepartmentsApi({ post: () => jsonResponse(500, { error: { code: 'INTERNAL_ERROR', message: 'サーバーエラーが発生しました' } }) });
+    await renderPage(OrgDepartmentsPage);
+    await click(findButton('+ 部署を追加'), '「+ 部署を追加」ボタン');
+    await typeInto(nameInput(), '開発部');
+    await submitForm();
+    expect(deptError()).not.toBeNull();
+
+    await click(findButton('キャンセル'), '「キャンセル」ボタン');
+
+    expect(deptError()).toBeNull();
   });
 
   it('失敗のあとに成功したら、失敗の文を消してフォームを閉じる', async () => {
