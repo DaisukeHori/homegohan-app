@@ -10,7 +10,7 @@
  * UUID の形でない id は DB に渡さず 404。壊れた JSON の本文は 400 INVALID_JSON。
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { internalError } from '@/lib/api/errors';
 import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested, invalidJsonNested } from '@/lib/api/error-responses';
@@ -157,7 +157,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
       extraUpdates.closed_at = new Date().toISOString();
     }
 
-    const { data: ticket, error } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { data: ticket, error } = await getSupabaseAdmin()
       .from('support_tickets')
       .update({ ...updates, ...extraUpdates, updated_at: new Date().toISOString() })
       .eq('id', params.id)

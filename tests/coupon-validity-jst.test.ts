@@ -149,6 +149,7 @@ describe('couponValidUntilPatchValue (詳細の画面の保存で送る有効期
 
 const mockRequireRole = vi.fn();
 const mockCreateClient = vi.fn();
+const mockGetSupabaseAdmin = vi.fn();
 
 vi.mock('@/lib/auth/helpers', () => ({
   requireRole: (...args: unknown[]) => mockRequireRole(...args),
@@ -156,7 +157,15 @@ vi.mock('@/lib/auth/helpers', () => ({
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: (...args: unknown[]) => mockCreateClient(...args),
+  // クーポンの書き込みは service_role の client で書く (#1917 の続き)。テストでは同じ代わりの client を返す
+  getSupabaseAdmin: (...args: unknown[]) => mockGetSupabaseAdmin(...args),
 }));
+
+/** 本人のセッションの client と service_role の client に、同じ代わりの client を使う */
+function setFakeClient(client: unknown) {
+  mockCreateClient.mockResolvedValue(client);
+  mockGetSupabaseAdmin.mockReturnValue(client);
+}
 
 const { POST, GET } = await import('@/app/api/super-admin/coupons/route');
 const { GET: GET_REDEMPTIONS } = await import('@/app/api/super-admin/coupons/[id]/redemptions/route');
@@ -235,7 +244,7 @@ describe('POST /api/super-admin/coupons (#1483 有効開始日・有効期限は
     vi.clearAllMocks();
     mockRequireRole.mockResolvedValue(actor);
     fake = fakeSupabase();
-    mockCreateClient.mockResolvedValue(fake.client);
+    setFakeClient(fake.client);
   });
 
   it('開始日の JST 0:00・期限の日の JST 23:59:59.999999 にして書き、監査ログにも同じ時刻を残す', async () => {
@@ -290,7 +299,7 @@ describe('PATCH /api/super-admin/coupons/[id] (#1483 有効期限は JST の暦�
     vi.clearAllMocks();
     mockRequireRole.mockResolvedValue(actor);
     fake = fakeSupabase();
-    mockCreateClient.mockResolvedValue(fake.client);
+    setFakeClient(fake.client);
   });
 
   it('期限の日の JST 23:59:59.999999 にして書く', async () => {
@@ -330,7 +339,7 @@ describe('PATCH /api/super-admin/coupons/[id] (#1510 有効期限と保存済み
 
   async function patch(storedValidFrom: string, body: Record<string, unknown>) {
     const fake = fakeSupabase(storedValidFrom);
-    mockCreateClient.mockResolvedValue(fake.client);
+    setFakeClient(fake.client);
     const res = await PATCH(jsonRequest(`http://localhost/api/super-admin/coupons/${COUPON_ID}`, 'PATCH', body), {
       params: { id: COUPON_ID },
     });
@@ -419,14 +428,14 @@ describe('400 OP_INVALID_INPUT の本文の形 (#1534 POST と PATCH で同じ)'
 
   async function post(override: Record<string, unknown>) {
     const fake = fakeSupabase();
-    mockCreateClient.mockResolvedValue(fake.client);
+    setFakeClient(fake.client);
     const res = await POST(jsonRequest('http://localhost/api/super-admin/coupons', 'POST', { ...createBody, ...override }));
     return { status: res.status, body: (await res.json()) as InvalidBody, fake };
   }
 
   async function patch(body: Record<string, unknown>) {
     const fake = fakeSupabase();
-    mockCreateClient.mockResolvedValue(fake.client);
+    setFakeClient(fake.client);
     const res = await PATCH(jsonRequest(`http://localhost/api/super-admin/coupons/${COUPON_ID}`, 'PATCH', body), {
       params: { id: COUPON_ID },
     });
@@ -501,7 +510,7 @@ describe('400 OP_INVALID_QUERY の本文の形 (#1641 一覧と適用履歴)', (
   beforeEach(() => {
     vi.clearAllMocks();
     mockRequireRole.mockResolvedValue(actor);
-    mockCreateClient.mockResolvedValue(fakeSupabase().client);
+    setFakeClient(fakeSupabase().client);
   });
 
   function expectQueryFirstIssue(body: QueryBody, path: readonly string[]) {

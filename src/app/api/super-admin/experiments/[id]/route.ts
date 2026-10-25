@@ -8,7 +8,7 @@
  * UUID の形でない id は DB に渡さず 404。
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { authFailureNested } from '@/lib/api/error-responses';
 import { UpdateExperimentSchema } from '@/lib/super-admin/experiments-schemas';
@@ -86,7 +86,8 @@ export async function PATCH(request: NextRequest, props: Params) {
       return NextResponse.json(EXPERIMENT_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
-    const { data, error } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { data, error } = await getSupabaseAdmin()
       .from('experiments')
       .update(parsed.data)
       .eq('id', params.id)
@@ -155,9 +156,11 @@ export async function DELETE(request: NextRequest, props: Params) {
     }
 
     // experiment_assignments を先に削除
-    await supabase.from('experiment_assignments').delete().eq('experiment_id', params.id);
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    await getSupabaseAdmin().from('experiment_assignments').delete().eq('experiment_id', params.id);
 
-    const { error } = await supabase.from('experiments').delete().eq('id', params.id);
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { error } = await getSupabaseAdmin().from('experiments').delete().eq('id', params.id);
     if (error) {
       return internalError('DELETE /api/super-admin/experiments/[id]', error, { userId: user.id }, { shape: 'nested' });
     }

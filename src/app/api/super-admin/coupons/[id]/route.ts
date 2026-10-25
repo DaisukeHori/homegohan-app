@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { COUPON_VALID_UNTIL_BEFORE_FROM_MESSAGE, CouponUpdateSchema } from '@/lib/super-admin/coupons-schemas';
 import { internalError } from '@/lib/api/errors';
 import { couponValidityDay, couponValidUntilTimestamp } from '@/lib/super-admin/coupon-validity';
@@ -135,7 +135,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
       ]);
     }
 
-    const { data: updated, error } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { data: updated, error } = await getSupabaseAdmin()
       .from('coupons')
       .update(updateData)
       .eq('id', params.id)
@@ -208,7 +209,8 @@ export async function DELETE(request: NextRequest, props: RouteContext) {
       );
     }
 
-    const { error: deleteErr } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { error: deleteErr } = await getSupabaseAdmin()
       .from('coupons')
       .delete()
       .eq('id', params.id);

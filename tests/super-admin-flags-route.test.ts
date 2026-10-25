@@ -24,14 +24,15 @@ const state = vi.hoisted(() => ({
   adminClientError: null as Error | null,
   /** 管理者のクライアントで user_profiles に出した select の列 */
   adminSelects: [] as string[],
-  /** 本人の権限の client が feature_flags に対して行った書き込み */
-  writes: [] as Array<{ table: string; op: string; payload: unknown }>,
+  /** feature_flags に対して行った書き込みと、書いた client (本人の権限 / サービスロール。書き込みはサービスロールだけ。#1917 の続き) */
+  writes: [] as Array<{ table: string; op: string; payload: unknown; client: 'session' | 'admin' }>,
 }));
 const getSupabaseAdmin = vi.hoisted(() => vi.fn());
 const logUserError = vi.hoisted(() => vi.fn());
 const invalidateFeatureFlag = vi.hoisted(() => vi.fn());
 
-function sessionFrom(table: string) {
+/** client: feature_flags / feature_packages はどちらの client からも同じ代わりの表を使い、書き込みに client を記録する */
+function sessionFrom(table: string, client: 'session' | 'admin' = 'session') {
   if (table === 'user_profiles') {
     const builder: any = {
       select: () => builder,
@@ -55,7 +56,7 @@ function sessionFrom(table: string) {
         }
         if (prop === 'insert' || prop === 'update' || prop === 'delete') {
           return (payload?: unknown) => {
-            state.writes.push({ table, op: String(prop), payload });
+            state.writes.push({ table, op: String(prop), payload, client });
             return builder;
           };
         }
@@ -86,6 +87,8 @@ function sessionFrom(table: string) {
 function adminClient() {
   return {
     from: (table: string) => {
+      // 機能フラグ・機能パッケージの書き込みはサービスロールの client で行う (運営の直接の書き込みを塞いだ。#1917 の続き)
+      if (table === 'feature_flags' || table === 'feature_packages') return sessionFrom(table, 'admin');
       if (table !== 'user_profiles') throw new Error(`管理者の client が想定外の表 ${table} に触れた`);
       return {
         select: (columns: string, options?: { count?: string; head?: boolean }) => {
@@ -427,6 +430,7 @@ describe('作成・更新・削除のあと、このインスタンスのフラ�
     const res = await PATCH(jsonRequest('PATCH', { enabled: true }), { params: { key: 'maintenance_mode' } });
     expect(res.status).toBe(200);
     expect(invalidateFeatureFlag).toHaveBeenCalledWith('maintenance_mode');
+    expect(state.writes.map((w) => `${w.client} ${w.table} ${w.op}`)).toEqual(['admin feature_flags update']);
   });
 
   it('PATCH が検証エラー (400) のときは忘れない', async () => {
@@ -439,12 +443,14 @@ describe('作成・更新・削除のあと、このインスタンスのフラ�
     const res = await DELETE(jsonRequest('DELETE', {}), { params: { key: 'some_flag' } });
     expect(res.status).toBe(200);
     expect(invalidateFeatureFlag).toHaveBeenCalledWith('some_flag');
+    expect(state.writes.map((w) => `${w.client} ${w.table} ${w.op}`)).toEqual(['admin feature_flags delete']);
   });
 
   it('POST /api/super-admin/flags', async () => {
     const res = await POST(jsonRequest('POST', { key: 'new_flag', enabled: false }));
     expect(res.status).toBe(201);
     expect(invalidateFeatureFlag).toHaveBeenCalledWith('new_flag');
+    expect(state.writes.map((w) => `${w.client} ${w.table} ${w.op}`)).toEqual(['admin feature_flags insert']);
   });
 
   it('super_admin 以外は 403 で、キャッシュには触れない', async () => {

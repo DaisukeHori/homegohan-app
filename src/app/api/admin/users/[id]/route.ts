@@ -276,10 +276,11 @@ export async function PATCH(request: Request, props: Params) {
     );
   }
 
-  // ノートを追加する。admin_user_notes の RLS は運営ロール (admin / super_admin / support) に読み書きを許しているため、
-  // 操作した本人のセッションの client で書く (admin_id は auth.uid() と同じ本人の ID)。
+  // ノートを追加する。admin_user_notes の書き込みは service_role だけ (運営の直接の書き込みを塞いだ。#1917 の続き)。
+  // requireRole を通したあとだけ書き、admin_id は操作した本人の ID にする。監査ログは本人のセッションの client で書く
   const supabase = await createClient();
-  const { data: note, error: insertError } = await supabase
+  // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+  const { data: note, error: insertError } = await getSupabaseAdmin()
     .from('admin_user_notes')
     .insert({ user_id: id, admin_id: actor.id, note: admin_note })
     .select('id')

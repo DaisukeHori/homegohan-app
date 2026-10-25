@@ -556,9 +556,11 @@ describe('POST /api/support/users/[id]/notes', () => {
       success: true,
       note: { id: expect.any(String), note: SECRET_NOTE, createdAt: expect.any(String) },
     });
-    const inserted = sessionDb.recorded('admin_user_notes', 'insert');
+    // ノートは service_role で書く (運営の直接の書き込みのポリシーは消した。#1917 の続き)。本人のセッションの client では書かない
+    const inserted = adminDb.recorded('admin_user_notes', 'insert');
     expect(inserted).toHaveLength(1);
     expect(inserted[0].values).toEqual({ user_id: TARGET_ID, admin_id: ACTOR_ID, note: SECRET_NOTE });
+    expect(sessionDb.recorded('admin_user_notes', 'insert')).toHaveLength(0);
   });
 
   it('対象の存在確認は service_role で行う (セッションの client は RLS で他人の user_profiles が見えない)', async () => {
@@ -612,6 +614,7 @@ describe('POST /api/support/users/[id]/notes', () => {
     expect(res.status).toBe(400);
     expect(await json(res)).toEqual({ error: 'メモの内容を入力してください' });
     expect(sessionDb.recorded('admin_user_notes')).toHaveLength(0);
+    expect(adminDb.recorded('admin_user_notes')).toHaveLength(0);
     expect(sessionDb.rows('admin_audit_logs')).toHaveLength(0);
   });
 
@@ -629,6 +632,7 @@ describe('POST /api/support/users/[id]/notes', () => {
     expect(res.status).toBe(404);
     expect(await json(res)).toEqual({ error: 'ユーザーが見つかりません' });
     expect(sessionDb.recorded('admin_user_notes')).toHaveLength(0);
+    expect(adminDb.recorded('admin_user_notes')).toHaveLength(0);
     expect(sessionDb.rows('admin_audit_logs')).toHaveLength(0);
   });
 
@@ -641,7 +645,7 @@ describe('POST /api/support/users/[id]/notes', () => {
 
   it('500: ノートの保存に失敗したら汎用メッセージだけを返し、監査ログは残さない', async () => {
     const raw = 'insert or update on table "admin_user_notes" violates foreign key constraint';
-    setup({ sessionErrors: { admin_user_notes: { message: raw, code: '23503' } } });
+    setup({ adminErrors: { admin_user_notes: { message: raw, code: '23503' } } });
 
     const res = await call.notesPost({ note: 'メモ' });
     const text = await res.text();

@@ -7,9 +7,11 @@
  * このテストは、migration を古い順に読んだ最終状態で、次が成り立つことを固定する (DB は使わない)。
  *   - 3 つのテーブルとも RLS が有効 (後から DISABLE していない)
  *   - 期待するポリシーが、期待するコマンド (SELECT / INSERT / UPDATE / DELETE) で定義され、後から DROP されていない
- *   - coupon_redemptions と experiment_assignments には、書き込み (INSERT / UPDATE、coupon_redemptions は DELETE も) の
- *     ポリシーを足していない。書き込みは service_role (apply_coupon RPC #1224・割り当て処理 #1041) だけが行う。
+ *   - coupon_redemptions と experiment_assignments には、書き込み (INSERT / UPDATE / DELETE) のポリシーを足していない。
+ *     書き込みは service_role (apply_coupon RPC #1224・割り当て処理 #1041・実験の削除の API) だけが行う
+ *     (experiment_assignments の運営の DELETE のポリシーは 20261025120000 で消した。#1917 の続き)。
  *   - recipe_flags の書き込みのポリシーは利用者の通報 (INSERT) だけ。通報の判定 (UPDATE) は運営の API が service_role で書く。
+ *     利用者の通報は、運営の判定の列 (status・reviewed_by・reviewed_at) を指定できない (20261025120000)。
  * 実際に PostgREST から何ができるかは tests/integration/rls/coupon-experiment-recipe-flags-rls.test.ts が確かめる。
  */
 import { readdirSync, readFileSync } from 'node:fs';
@@ -83,10 +85,9 @@ describe('#1103 RLS の正本が supabase/migrations にある', () => {
     });
   });
 
-  it('experiment_assignments: super_admin の SELECT / DELETE だけ (割り当ては service_role だけが作る)', () => {
+  it('experiment_assignments: super_admin の SELECT だけ (割り当ては service_role だけが作り、実験の削除の API も service_role で消す。#1917 の続き)', () => {
     expect(Object.fromEntries(policiesOf('experiment_assignments'))).toEqual({
       experiment_assignments_select_super_admin: 'SELECT',
-      experiment_assignments_delete_super_admin: 'DELETE',
     });
   });
 
@@ -103,5 +104,15 @@ describe('#1103 RLS の正本が supabase/migrations にある', () => {
       'i',
     ).exec(SQL);
     expect(create?.[1]).toMatch(/WITH\s+CHECK\s*\(\s*\(\s*"?reporter_id"?\s*=\s*"?auth"?\."?uid"?\(\)\s*\)\s*\)/i);
+  });
+
+  it('recipe_flags の INSERT の最後の式は、本人を reporter にし、運営の判定の列 (status・reviewed_by・reviewed_at) を指定させない (#1917 の続き)', () => {
+    const alters = [
+      ...SQL.matchAll(new RegExp(`ALTER\\s+POLICY\\s+"Anyone can create recipe flags"\\s+ON\\s+${tableRef('recipe_flags')}([\\s\\S]*?);`, 'gi')),
+    ];
+    expect(alters).toHaveLength(1);
+    expect(alters[0][1].trim()).toBe(
+      "WITH CHECK (((reporter_id = auth.uid()) AND (status = 'pending'::text) AND (reviewed_by IS NULL) AND (reviewed_at IS NULL)))",
+    );
   });
 });

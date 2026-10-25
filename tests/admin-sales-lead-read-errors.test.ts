@@ -66,7 +66,8 @@ function faultInjectingFrom(table: string) {
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: () => ({ ...makeClient(sessionDb, sessionUser), from: faultInjectingFrom }),
-  getSupabaseAdmin: () => makeClient(sessionDb, null),
+  // リード・活動履歴への書き込みは service_role で行う (#1917 の続き)。更新の失敗の注入は service_role の client にも効かせる
+  getSupabaseAdmin: () => ({ ...makeClient(sessionDb, null), from: faultInjectingFrom }),
 }));
 
 const leadRoute = await import('@/app/api/admin/sales/leads/[id]/route');

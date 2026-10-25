@@ -179,14 +179,18 @@ describe('POST /api/admin/sales/leads/[id]/activities -> admin.sales.lead.activi
   const body = { activity_type: 'call', details: { memo: PRIVATE_TEXT } };
 
   it('追加できたら、対象をリードにして 1 行記録する (活動の本文は入れない)', async () => {
-    userScopedClient = makeClient({
-      sales_leads: [{ data: { id: LEAD_ID }, error: null }, { data: null, error: null }],
+    userScopedClient = makeClient({ sales_leads: [{ data: { id: LEAD_ID }, error: null }] });
+    // 活動の追加とリードの updated_at の更新は service_role で書く (運営の直接の書き込みを塞いだ。#1917 の続き)
+    serviceClient = makeClient({
       sales_lead_activities: [{ data: { id: 'act-1571', lead_id: LEAD_ID, activity_type: 'call' }, error: null }],
+      sales_leads: [{ data: null, error: null }],
     });
 
     const res = await activitiesRoute.POST(jsonRequest(`/api/admin/sales/leads/${LEAD_ID}/activities`, 'POST', body), paramsOf(LEAD_ID));
 
     expect(res.status).toBe(201);
+    expect(serviceClient.inserted.map((i) => i.table)).toEqual(['sales_lead_activities']);
+    expect(userScopedClient.inserted.map((i) => i.table)).toEqual(['admin_audit_logs']);
     const row = expectSingleAuditRow({
       action_type: 'admin.sales.lead.activity_add',
       target_id: LEAD_ID,
@@ -215,14 +219,8 @@ describe('POST /api/admin/sales/leads/[id]/activities -> admin.sales.lead.activi
   });
 
   it('記録に失敗しても追加は 201 のまま (失敗は db-logger に残る)', async () => {
-    userScopedClient = makeClient(
-      {
-        sales_leads: [{ data: { id: LEAD_ID }, error: null }],
-        sales_lead_activities: [{ data: { id: 'act-1571' }, error: null }],
-      },
-      {},
-      { auditInsertError: { message: 'rls', code: '42501' } },
-    );
+    userScopedClient = makeClient({ sales_leads: [{ data: { id: LEAD_ID }, error: null }] }, {}, { auditInsertError: { message: 'rls', code: '42501' } });
+    serviceClient = makeClient({ sales_lead_activities: [{ data: { id: 'act-1571' }, error: null }] });
 
     const res = await activitiesRoute.POST(jsonRequest(`/api/admin/sales/leads/${LEAD_ID}/activities`, 'POST', body), paramsOf(LEAD_ID));
 
@@ -233,11 +231,14 @@ describe('POST /api/admin/sales/leads/[id]/activities -> admin.sales.lead.activi
 
 describe('PUT /api/super-admin/settings -> super_admin.setting.change', () => {
   it('保存できたら key と値を 1 行記録する', async () => {
-    userScopedClient = makeClient({ system_settings: [{ data: null, error: null }] });
+    // 設定の保存は service_role で書く (運営の直接の書き込みを塞いだ。#1917 の続き)
+    serviceClient = makeClient({ system_settings: [{ data: null, error: null }] });
 
     const res = await settingsRoute.PUT(jsonRequest('/api/super-admin/settings', 'PUT', { key: ' support_email ', value: 'help@example.com' }));
 
     expect(res.status).toBe(200);
+    expect(serviceClient.inserted.map((i) => i.table)).toEqual(['system_settings']);
+    expect(userScopedClient.inserted.map((i) => i.table)).toEqual(['admin_audit_logs']);
     expectSingleAuditRow({
       action_type: 'super_admin.setting.change',
       target_id: null,
@@ -248,7 +249,7 @@ describe('PUT /api/super-admin/settings -> super_admin.setting.change', () => {
   });
 
   it('説明を送ったら description_changed: true', async () => {
-    userScopedClient = makeClient({ system_settings: [{ data: null, error: null }] });
+    serviceClient = makeClient({ system_settings: [{ data: null, error: null }] });
 
     await settingsRoute.PUT(jsonRequest('/api/super-admin/settings', 'PUT', { key: 'support_email', value: 'x', description: 'メモ' }));
 
@@ -260,7 +261,7 @@ describe('PUT /api/super-admin/settings -> super_admin.setting.change', () => {
     expect(readOnly.status).toBe(409);
     expect(userScopedClient.auditRows()).toHaveLength(0);
 
-    userScopedClient = makeClient({ system_settings: [{ data: null, error: { message: 'db down' } }] });
+    serviceClient = makeClient({ system_settings: [{ data: null, error: { message: 'db down' } }] });
     const failed = await settingsRoute.PUT(jsonRequest('/api/super-admin/settings', 'PUT', { key: 'support_email', value: 'x' }));
     expect(failed.status).toBe(500);
     expect(userScopedClient.auditRows()).toHaveLength(0);
@@ -307,8 +308,9 @@ describe('POST /api/admin/support/tickets/[id]/messages -> admin.support.ticket.
   it('保存できたら、対象をチケットを作ったユーザーにして 1 行記録する (本文は入れない)', async () => {
     userScopedClient = makeClient({
       support_tickets: [{ data: { id: TICKET_ID, status: 'open', user_id: TICKET_OWNER_ID, subject: 's' }, error: null }],
-      support_ticket_messages: [{ data: { id: 'msg-1571' }, error: null }],
     });
+    // メッセージの保存は service_role で書く (運営の直接の書き込みを塞いだ。#1917 の続き)
+    serviceClient = makeClient({ support_ticket_messages: [{ data: { id: 'msg-1571' }, error: null }] });
 
     const res = await messagesRoute.POST(
       jsonRequest(`/api/admin/support/tickets/${TICKET_ID}/messages`, 'POST', { body: PRIVATE_TEXT, is_internal: false }),
@@ -316,6 +318,8 @@ describe('POST /api/admin/support/tickets/[id]/messages -> admin.support.ticket.
     );
 
     expect(res.status).toBe(201);
+    expect(serviceClient.inserted.map((i) => i.table)).toEqual(['support_ticket_messages']);
+    expect(userScopedClient.inserted.map((i) => i.table)).toEqual(['admin_audit_logs']);
     const row = expectSingleAuditRow({
       action_type: 'admin.support.ticket.message_add',
       target_id: TICKET_OWNER_ID,
@@ -328,8 +332,8 @@ describe('POST /api/admin/support/tickets/[id]/messages -> admin.support.ticket.
   it('ユーザーの分からないチケットは、チケットを対象にする (内部メモも記録する)', async () => {
     userScopedClient = makeClient({
       support_tickets: [{ data: { id: TICKET_ID, status: 'open', user_id: null, subject: 's' }, error: null }],
-      support_ticket_messages: [{ data: { id: 'msg-1572' }, error: null }],
     });
+    serviceClient = makeClient({ support_ticket_messages: [{ data: { id: 'msg-1572' }, error: null }] });
 
     await messagesRoute.POST(
       jsonRequest(`/api/admin/support/tickets/${TICKET_ID}/messages`, 'POST', { body: 'memo', is_internal: true }),

@@ -282,6 +282,16 @@ describe('#1917 の続き: migration を全部流した後の、4 つの表の�
     expect(create).toEqual([
       'CREATE POLICY "Anyone can create recipe flags" ON "public"."recipe_flags" FOR INSERT TO "authenticated" WITH CHECK (("reporter_id" = "auth"."uid"()));',
     ]);
+    // 後の 20261025120000 (#1917 の続き) が、運営の判定の列 (status・reviewed_by・reviewed_at) を指定させない条件を足した (TO はそのまま)
+    const alters = migrations
+      .flatMap(({ file, sql }) => sql.split('\n').map((line) => ({ file, line })))
+      .filter(({ line }) => line.startsWith(`ALTER POLICY "${USER_REPORT_INSERT_POLICY}" ON public.recipe_flags `));
+    expect(alters).toEqual([
+      {
+        file: '20261025120000_operator_session_writes_select_only.sql',
+        line: "ALTER POLICY \"Anyone can create recipe flags\" ON public.recipe_flags WITH CHECK (((reporter_id = auth.uid()) AND (status = 'pending'::text) AND (reviewed_by IS NULL) AND (reviewed_at IS NULL)));",
+      },
+    ]);
   });
 
   it('personal_subscriptions: 残る DELETE のポリシーは常に偽 (USING (false)) で、どの migration も作り直していない', () => {
