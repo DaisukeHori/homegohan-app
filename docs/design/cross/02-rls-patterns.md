@@ -42,10 +42,10 @@ ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;
 
 ### 3.3 service_role バイパスのガイドライン
 
-- **service_role の client を作る場所**: Supabase Edge Function と、Next.js では `lib/supabase/server.ts` の `getSupabaseAdmin()` だけ (自前の `createClient(SERVICE_ROLE_KEY)` は禁止。`tests/supabase-service-role-client-scan.test.ts`)
-- route では、認可 (`requireRole` 等) か本人の確認を先に通した後にだけ使う
+- **service_role を使う場所**: Supabase Edge Function のみ
+- **禁止**: Next.js Server Actions・API Routes 内での `createClient(SERVICE_ROLE_KEY)` 直接使用
 - **コードレビュー必須**: `service_role` が使われる PR は security ラベルを付与、実装リーダーがレビュー
-- `admin_audit_logs` に記録する操作は `docs/design/operator/07-audit-monitoring.md` §4 の一覧が決める
+- Edge Function での service_role 使用時は必ず `admin_audit_logs` に記録
 
 ### 3.4 表の TRUNCATE の権限
 
@@ -579,7 +579,7 @@ COMMIT;
 | テスト種別 | 対象 | ツール |
 |---------|------|------|
 | Integration | 各 RLS パターンが意図通り動作するか (SELECT / INSERT / UPDATE / DELETE) | Vitest + Supabase Local |
-| Integration | service_role の client が `getSupabaseAdmin()` と Edge Function 以外で作られていないか | Vitest (`tests/supabase-service-role-client-scan.test.ts`) |
+| Integration | service_role バイパスが Edge Function 以外で使われていないか | CI での grep チェック |
 | Security | 別ユーザーが他人の行を読めないことを確認 | Vitest + Supabase Local |
 | Security | 監査ログの UPDATE / DELETE が拒否されることを確認 | Vitest + Supabase Local |
 | Security | public の関数 (SECURITY DEFINER / SECURITY INVOKER) のうち anon が EXECUTE できるものが、理由つきの許可一覧のものだけか (Supabase の既定の権限と PUBLIC の EXECUTE が残らないか。INVOKER のトリガー関数は除外の条件で外す) | Vitest + Supabase Local (`tests/integration/security/anon-definer-execute.test.ts`・`anon-invoker-execute.test.ts`) |
