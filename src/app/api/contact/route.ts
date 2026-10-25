@@ -116,19 +116,23 @@ export async function POST(request: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser();
     const userId = user?.id || null;
 
-    // DBに保存
-    const { data, error } = await supabase
+    // DBに保存。id は route で決めて渡し、保存した行を読み返さない (RETURNING を付けない)。
+    // /contact は未ログインでも送れるが、inquiries の SELECT のポリシーは authenticated だけで、anon が読める行は無い。
+    // INSERT … RETURNING (insert().select()) は SELECT のポリシーも新しい行に当てるので、読み返すと未ログインの送信が
+    // RLS の違反で落ちて 500 になる (tests/integration/rls/contact-anon-insert.test.ts)。
+    // 書き込みは今までどおり本人のセッション (ポリシー "Anyone can create inquiries" の条件つき) で行う。
+    const inquiryId = crypto.randomUUID();
+    const { error } = await supabase
       .from('inquiries')
       .insert({
+        id: inquiryId,
         user_id: userId,
         inquiry_type: inquiryType,
         email,
         subject,
         message,
         status: 'pending',
-      })
-      .select()
-      .single();
+      });
 
     if (error) {
       console.error('Failed to save inquiry:', error);
@@ -138,13 +142,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 管理者へメール通知（env未設定時はsilent succeed）
-    await sendAdminNotification(data);
+    // 管理者へメール通知（env未設定時はsilent succeed）。保存した値 (検証済みの入力と route で決めた id) を渡す
+    await sendAdminNotification({ id: inquiryId, inquiry_type: inquiryType, email, subject, message });
 
     return NextResponse.json({
       success: true,
       message: 'お問い合わせを受け付けました。内容を確認の上、ご連絡いたします。',
-      inquiryId: data.id,
+      inquiryId,
     });
 
   } catch (error: any) {
