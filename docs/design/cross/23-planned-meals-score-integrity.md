@@ -30,7 +30,7 @@
 | # | 決めること | 答え (§6) |
 |---|---|---|
 | 1 | 3 列 (`veg_score`・`is_completed`・`completed_at`) を書く経路の全列挙と、書き手ごとの client (利用者のセッションか、サーバ = route の service_role / Edge Function の service_role か) | §3.1 の 14 経路の表。利用者のセッションで 3 列を書いている経路は 9 本 (モバイルのホーム・Web のホーム・食事の詳細 → `PATCH /api/meals/[id]`・献立表 → `PATCH /api/meal-plans/meals/[id]`・AI 相談の `complete_meal`・`POST /api/ai/nutrition` の 2 分岐・写真の解析の Edge Function (利用者の JWT で書いている)・週間生成のスナップショットの復元 (生成の失敗時の `weekly/request` と、止まった生成の後片付けの `weekly/status`・`weekly/pending`・`weekly/cleanup` の 4 route))。ほかに新規作成の 3 route が `is_completed: false` を利用者のセッションで送る |
-| 2 | `is_completed` は利用者が「食べた」を記録する操作そのもの。何をサーバの計算値と見るか | 完了の操作は本人の操作として残す (「食べた」は利用者の申告で、サーバが写真などから計算できる値ではない)。書く口は SECURITY DEFINER の RPC `planned_meals_set_completed(p_meal_id, p_completed)` の 1 本だけで、本人の行かどうかは関数の中で確かめる (§6.2)。サーバが決めるのは **完了の時刻 `completed_at` (DB の `now()`) と、`is_completed` ⇄ `completed_at` の対の整合** だけ (完了なら時刻あり・未完了なら NULL。利用者は時刻を偽れず、対を崩せない)。**`is_completed` の値そのものは段 C の後も利用者が決める** (本人の行なら、献立の日 (未来の日を含む) を問わず完了にできる。PostgREST の直接の書き込みが RPC に替わるだけ)。集計 (`calculate-segment-stats` の `breakfast_rate`・`menu_execution_rate`、組織のチャレンジ `update_org_challenge_progress` の `breakfast_rate`・`cooking_rate`・`veg_score` (完了した食事だけを平均する)) は `is_completed` だけを条件にし、`completed_at` はどの集計も読まない。したがって **これらの指標の「完了」は段 C の後も自己申告のまま** で、Issue #2025 の症状のうち `breakfast_rate` を自分で上げられる点は本書の段 A〜C では閉じない。集計の側の検証を足すかは **§21 Q-2 (未決・オーナーの判断が要る)**。段 A〜C は Q-2 のどの答えでも変わらない (§21) |
+| 2 | `is_completed` は利用者が「食べた」を記録する操作そのもの。何をサーバの計算値と見るか | 完了の操作は本人の操作として残す (「食べた」は利用者の申告で、サーバが写真などから計算できる値ではない)。書く口は SECURITY DEFINER の RPC `planned_meals_set_completed(p_meal_id, p_completed)` の 1 本だけで、本人の行かどうかは関数の中で確かめる (§6.2)。サーバが決めるのは **完了の時刻 `completed_at` (DB の `now()`) と、`is_completed` ⇄ `completed_at` の対の整合** だけ (完了なら時刻あり・未完了なら NULL。利用者は時刻を偽れず、対を崩せない)。**`is_completed` の値そのものは段 C の後も利用者が決める** (本人の行なら、献立の日 (未来の日を含む) を問わず完了にできる。PostgREST の直接の書き込みが RPC に替わるだけ)。集計 (`calculate-segment-stats` の `breakfast_rate`・`menu_execution_rate`、組織のチャレンジ `update_org_challenge_progress` の `breakfast_rate`・`cooking_rate`・`veg_score` (完了した食事だけを平均する)) は `is_completed` だけを条件にし、`completed_at` はどの集計も読まない。したがって **これらの指標の「完了」は段 C の後も自己申告のまま** で、Issue #2025 の症状のうち `breakfast_rate` を自分で上げられる点は本書の段 A〜C では閉じない。集計の側の検証を足すかは **§21 Q-2 (a)・オーナーの選択 2026-10-25「何も足さない」**。段 A〜C は Q-2 のどの答えでも変わらない (§21) |
 | 3 | `veg_score` の計算の正本・範囲・型 | 正本 = 写真の解析の `nutrition-pipeline.ts` の `estimateVegetableScore` (料理の材料のうち野菜の g の合計 ÷ 120 g × 100 を四捨五入し 0〜100 に収める)。範囲 0〜100 の整数 (列は `integer`)。NULL = まだ計算していない。書くのは `analyze-meal-photo` の背景の処理 1 か所 (service_role・本人の行であることを確かめてから。解析の入力は写真だけで、利用者が送る解析の結果 `prefetchedGeminiResult` は `mealId` の経路では使わない)。`POST /api/ai/nutrition` は `veg_score` を書かない (利用者の入力の分岐は利用者の値そのもの、AI の分岐は別のモデルの 1〜5 点で正本と尺度が違う) (§6.3) |
 | 4 | 権限の外し方 (列の GRANT か、RLS の WITH CHECK か、トリガーか) | **列の権限**: 表の INSERT / UPDATE を anon / authenticated から REVOKE し、authenticated に 3 列を除く 56 列の INSERT (列) / UPDATE (列) を GRANT し直す。RLS のポリシー・SELECT・DELETE・service_role は変えない (§6.4・§5) |
 | 5 | モバイルの古いビルドが直接書いていた場合に壊れないか (版の互換) | 古いビルドの完了の切り替えは 42501 で失敗し、既存の失敗時の処理 (楽観的更新を戻して読み直す) で画面は元に戻る。壊れるのはその操作だけで、ほかの画面は変わらない。ローンチ前で利用者はゼロなので、互換のための猶予は作らない (§6.5) |
@@ -286,7 +286,7 @@
 ### 5.2 F の問い (縁の発生源を消すより単純な構造は無いか)
 
 - 発生源は「利用者のセッションが表の列を区別せずに書ける」こと。列の権限はその発生源そのものを消す (A)。ポリシー (B) やトリガー (C) は書き込みの経路の途中で止める形で、発生源は残る。
-- 完了の操作を「本人の操作」として残す以上、`is_completed` の値そのものは本人が決める。サーバが決めるのは時刻と対の整合だけで、`completed_at` はどの集計も読まない。`is_completed` を条件にする指標 (`breakfast_rate`・`menu_execution_rate`・組織のチャレンジの `breakfast_rate`・`cooking_rate`・`veg_score`) は段 C の後も自己申告のまま。集計の側の検証 (未来の日の完了を拒む・完了の時刻を見る・写真の解析を条件にする等) は指標の意味の変更で、どれを採るかはオーナーの判断が要る (§21 Q-2・未決)。構造 A はどの答えとも両立する (完了の書き込みの口が RPC 1 本に集まるので、日付の検査を足すなら §7.1 の関数に 1 条件を足すだけ)。
+- 完了の操作を「本人の操作」として残す以上、`is_completed` の値そのものは本人が決める。サーバが決めるのは時刻と対の整合だけで、`completed_at` はどの集計も読まない。`is_completed` を条件にする指標 (`breakfast_rate`・`menu_execution_rate`・組織のチャレンジの `breakfast_rate`・`cooking_rate`・`veg_score`) は段 C の後も自己申告のまま。集計の側の検証 (未来の日の完了を拒む・完了の時刻を見る・写真の解析を条件にする等) は指標の意味の変更で、どれも採らない (§21 Q-2 (a)・オーナーの選択 2026-10-25「何も足さない」)。構造 A はどの答えとも両立する (完了の書き込みの口が RPC 1 本に集まるので、日付の検査を足すなら §7.1 の関数に 1 条件を足すだけ)。
 - 写真の解析の入力も発生源になる: 利用者が送る `prefetchedGeminiResult` (料理と材料の g) が `veg_score` の計算に届く。`mealId` の経路でそれを使わないのが、発生源を消す最も単純な形 (`mealId` つきの画面は送っていない。§7.15)。
 - `POST /api/ai/nutrition` から `veg_score` を外すのは、口を 1 つにする最も単純な形 (呼ぶ画面も無い)。
 
@@ -309,7 +309,7 @@
 - 本人の行の判定は関数の中の `EXISTS (SELECT 1 FROM public.user_daily_meals d WHERE d.id = pm.daily_meal_id AND d.user_id = auth.uid())` (RLS の USING と同じ式)。0 行なら `PLANNED_MEAL_NOT_FOUND` (P0002)。
 - EXECUTE は authenticated と service_role だけ (PUBLIC・anon から外す。`anon-definer-execute.test.ts` A1 の規則)。
 - `is_sandbox` の日 (ハンズオンのお試し) の献立も切り替えられる (今までと同じ。集計は `is_sandbox = false` で絞る)。
-- 献立の日 (`user_daily_meals.day_date`) は見ない。本人の行なら未来の日の献立も完了にでき、集計はそれを完了として数える (今までと同じ。`completed_at` を読む集計は無い)。これを変えるかは §21 Q-2 (未決・オーナーの判断が要る)。
+- 献立の日 (`user_daily_meals.day_date`) は見ない。本人の行なら未来の日の献立も完了にでき、集計はそれを完了として数える (今までと同じ。`completed_at` を読む集計は無い)。これを変えるかは §21 Q-2 (a)・オーナーの選択 2026-10-25「何も足さない」。
 
 ### 6.3 野菜スコア (決めること 3)
 
@@ -2355,7 +2355,7 @@ describe('#2025 利用者のセッションで 3 列を書く経路が無い', (
 | `is_completed` と `completed_at` の対 | 崩れうる (W-5 は時刻を書かない) | 常に対 (完了 ⇔ 時刻あり) |
 | `veg_score` の書き手 | W-6 (利用者の値・検証なし)・W-7 (1〜5)・W-8 (0〜100・利用者の JWT) | W-8 だけ (0〜100・service_role・本人の行の確認) |
 | W-8 (`mealId` の経路) の解析の入力 | 写真、または利用者が送った `prefetchedGeminiResult` (料理と材料の g を利用者が決められる) | 写真だけ (Gemini の認識。`prefetchedGeminiResult` は Next.js も Edge も使わない) |
-| `is_completed` の値を決める主体 | 利用者 (PostgREST の直接の書き込み) | 利用者 (RPC。本人の行なら献立の日を問わない)。自己申告のまま (§21 Q-2・未決) |
+| `is_completed` の値を決める主体 | 利用者 (PostgREST の直接の書き込み) | 利用者 (RPC。本人の行なら献立の日を問わない)。自己申告のまま (§21 Q-2 (a)) |
 | `completed_at` を読む集計 | 無し | 無し (変えない。集計は `is_completed` だけを見る) |
 | `veg_score` の尺度 | 混在 (コードの注釈のとおり) | 0〜100 (`VEG_SCORE_MIN` / `MAX`) |
 | `nutrition_score` | `round(vegAvg × 20)` (1〜5 を前提) | `round(vegAvg × (100 / VEG_SCORE_MAX))` = `round(vegAvg)` |
@@ -2386,7 +2386,7 @@ describe('#2025 利用者のセッションで 3 列を書く経路が無い', (
 | 不整合 `false, T` | RPC `true` | 本人の行 | 完了 (`T = now()`。古い T は捨てる) | 対が直る |
 | 不整合 `true, NULL` | RPC `false` | 本人の行 | 未完了 (`completed_at = NULL` のまま) | 対が直る。`updated_at` が進む |
 | 不整合 `false, T` | RPC `false` | 本人の行 | 未完了 (`completed_at = NULL`。古い T は捨てる) | 対が直る。`updated_at` が進む |
-| 未完了 | RPC `true` (本人・献立の日が未来) | 本人の行 (献立の日は見ない) | 完了 (`T = now()`) | 集計はこの行を完了として数える (自己申告。§21 Q-2・未決) |
+| 未完了 | RPC `true` (本人・献立の日が未来) | 本人の行 (献立の日は見ない) | 完了 (`T = now()`) | 集計はこの行を完了として数える (自己申告。§21 Q-2 (a)) |
 | 任意 | RPC (他人・無い id・UUID でない) | 本人の行でない | 変わらず | `PLANNED_MEAL_NOT_FOUND` (P0002)。UUID でない id は `server.ts` が DB に渡さない |
 | 任意 | RPC (anon) | EXECUTE 無し | 変わらず | 42501 |
 | 任意 | RPC (service_role の鍵。利用者の JWT 無し) | `auth.uid()` が NULL (§7.1 の最初の IF) | 変わらず | `PLANNED_MEAL_UNAUTHENTICATED` (42501)。アプリに service_role で呼ぶ箇所は無い (service_role は下の行の直接の UPDATE で書く) |
@@ -2769,7 +2769,7 @@ route・テーブル・列・Storage のパス・環境変数の新設は無い�
 1. `SELECT proname, prosecdef, proconfig FROM pg_proc WHERE proname = 'planned_meals_set_completed'` → 1 行・`prosecdef = true`・`search_path=` を含む。
 2. `SELECT has_function_privilege('anon', 'public.planned_meals_set_completed(uuid, boolean)', 'EXECUTE')` → false。`authenticated`・`service_role` → true。
 
-段 B のデプロイの後 (本番で、試験用の利用者で行う。本番での操作は、オーケストレーターがその時点の承認の範囲で行う):
+段 B のデプロイの後 (本番で、試験用の利用者で行う。本番の DB への書き込みを伴う操作は、オーナーが行うか、オーナーの承認を得て行う):
 3. Web のホームで「食べた」を押し、`SELECT is_completed, completed_at FROM planned_meals WHERE id = …` で `completed_at` が DB の時刻 (端末の時刻でない) になっている。もう一度押して NULL に戻る。
 4. 献立表 (`/menus/weekly`) の写真から入力 (`mealId` つきの経路。§3.1 W-8) で解析した後、`SELECT veg_score FROM planned_meals WHERE id = …` で `veg_score` が 0〜100 の整数で入っている (背景の処理が終わるまで待つ)。Edge Function のログに `PLANNED_MEAL_NOT_FOUND` が無い。
 5. Vercel のランタイムログに `planned_meals` の 42501 が無い。
@@ -2795,12 +2795,12 @@ route・テーブル・列・Storage のパス・環境変数の新設は無い�
 - 古いモバイルのビルドの失敗 (42501) はログに残るだけで、ほかの操作に波及しない。
 - 戻し口は 2 本とも冪等。順序は新しい順 (段 C → 段 A)。
 
-## 21. 未解決事項 (設計は上の既定で進める。選択肢つき。Q-2 だけは既定が無く、オーナーの判断を待つ。段 A〜C は Q-2 の答えに依らない)
+## 21. 未解決事項 (設計は上の既定で進める。選択肢つき。Q-2 はオーナーの選択 2026-10-25 で (a) に決まった)
 
 | # | 項目 | 選択肢 | 既定 (本書) |
 |---|---|---|---|
 | Q-1 | `veg_score` の範囲 (0〜100) を DB でも守るか (`trg_planned_meals_validate_values` に `veg_score` を足す。service_role の書き手が誤った尺度の値を書いたときの砦) | (a) 足さない (書き手は 1 関数で、値は `vegScoreOfVegetableGrams` が収める) / (b) 別の小さな migration でトリガーの対象に足す (戻し口は `20261008110000` の定義に戻す) | (a)。(b) は別 Issue の候補 |
-| Q-2 | **未決・オーナーの判断が要る。** `is_completed` を条件にする指標 (比較ランキングの `breakfast_rate`・`menu_execution_rate`、組織のチャレンジの `breakfast_rate`・`cooking_rate`・`veg_score`) の「完了」は、段 C の後も本人の申告のまま (RPC は本人の行なら献立の日 (未来を含む) を問わず完了にでき、`completed_at` はどの集計も読まない。§0.1 の 2)。Issue #2025 の症状のうち「`breakfast_rate` を自分で上げられる」は、どれかを採らないと閉じない | (a) 足さない (「食べた」は本人の申告として受け入れる。段 A〜C のまま) / (b) RPC で未来の日の献立を完了にさせない (`user_daily_meals.day_date` が JST の今日より後なら例外。§7.1 の関数に 1 条件を足す。集計は変えない。過去の日の後からの記録は今までどおり) / (c) 集計で `completed_at` を見る (完了の時刻が献立の日より前なら数えない等。`calculate-segment-stats` の select に `completed_at` を足し、`update_org_challenge_progress` を CREATE OR REPLACE する。指標の意味の変更) / (d) 写真の解析を通った献立だけを完了として数える (指標の意味の大きな変更) | **既定なし (未決)**。段 A〜C (列の権限・RPC・書き手の付け替え) はどの答えでも変わらないので、答えを待たずに進められる。(b) を段 A のマージの前に選べば §7.1 の関数に同じ PR で足す。後なら別の小さな migration (RPC の CREATE OR REPLACE) と設計の追記。(c)・(d) は別の設計 |
+| Q-2 | **決定 = (a) (オーナーの選択 2026-10-25・選択式「何も足さない」)。** `is_completed` を条件にする指標 (比較ランキングの `breakfast_rate`・`menu_execution_rate`、組織のチャレンジの `breakfast_rate`・`cooking_rate`・`veg_score`) の「完了」は、段 C の後も本人の申告のまま (RPC は本人の行なら献立の日 (未来を含む) を問わず完了にでき、`completed_at` はどの集計も読まない。§0.1 の 2)。Issue #2025 の症状のうち「`breakfast_rate` を自分で上げられる」は、どれかを採らないと閉じない | (a) 足さない (「食べた」は本人の申告として受け入れる。段 A〜C のまま) / (b) RPC で未来の日の献立を完了にさせない (`user_daily_meals.day_date` が JST の今日より後なら例外。§7.1 の関数に 1 条件を足す。集計は変えない。過去の日の後からの記録は今までどおり) / (c) 集計で `completed_at` を見る (完了の時刻が献立の日より前なら数えない等。`calculate-segment-stats` の select に `completed_at` を足し、`update_org_challenge_progress` を CREATE OR REPLACE する。指標の意味の変更) / (d) 写真の解析を通った献立だけを完了として数える (指標の意味の大きな変更) | **(a) (決定)**。段 A〜C (列の権限・RPC・書き手の付け替え) はどの答えでも変わらないので、答えを待たずに進められる。(b) を段 A のマージの前に選べば §7.1 の関数に同じ PR で足す。後なら別の小さな migration (RPC の CREATE OR REPLACE) と設計の追記。(c)・(d) は別の設計 |
 | Q-3 | 写真から記録した食事 (`POST /api/meal-plans/add-from-photo`・食事の記録の画面 `meals/new` の同期の `analyze-meal-photo`) に野菜スコアが付かない (今もそう。値が入るのは献立表の写真から入力 (`mealId` つき・W-8) だけ) | (a) そのまま / (b) `add-from-photo` がサーバで `vegScoreOfVegetableGrams` を計算して書く (service_role か RPC が要る) | (a)。(b) は別 Issue の候補 (指標に値が入る経路を増やす判断) |
 | Q-4 | `POST /api/ai/nutrition` を残すか (呼ぶ画面が無い) | (a) 残す (本書は `veg_score` を外すだけ) / (b) route とテストを消す | (a)。(b) は別 Issue |
 | Q-5 | anon の `planned_meals` の DELETE の権限 (INSERT / UPDATE と同じく経路は無い) | (a) 本書では触らない / (b) 段 C で `REVOKE DELETE ... FROM anon` も足す | (a) (発注の範囲 = 3 列の書き込み) |
