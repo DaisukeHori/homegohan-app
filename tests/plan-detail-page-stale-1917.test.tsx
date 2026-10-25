@@ -677,6 +677,107 @@ describe('成功したあとの読み直しは、書きかけの入力欄を残�
   });
 });
 
+/**
+ * 読み直したプランが廃止になっていたら、書きかけの入力欄も残さず、読み直した値にする (#1917 の続き)。
+ * 廃止のあとは入力欄が編集できなくなり、保存のボタンも出ないので、書きかけを残すと、送る道の無い保存していない値を、
+ * 廃止済みのプランの読み取り専用の表示名・説明・表示順として見せ続ける (DB の値と食い違う)
+ */
+describe('読み直したプランが廃止なら、書きかけの入力欄を残さない (#1917 の続き)', () => {
+  /** 1 回目の PATCH は patchResponse (既定は 200 で planAfterPatch)。GET は PATCH のあとは planAfterPatch。holdPatch なら最初の PATCH を release まで返さない */
+  function mockDeprecatedApi(options: { planAfterPatch: typeof PLAN; patchResponse?: () => Response; holdPatch?: boolean }) {
+    let gets = 0;
+    let patched = false;
+    let releasePatch: (() => void) | undefined;
+    fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') {
+        if (options.holdPatch === true && !patched) {
+          await new Promise<void>((resolve) => {
+            releasePatch = resolve;
+          });
+        }
+        patched = true;
+        return options.patchResponse ? options.patchResponse() : jsonResponse(200, { data: options.planAfterPatch });
+      }
+      gets += 1;
+      return jsonResponse(200, { data: patched ? options.planAfterPatch : PLAN });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    return {
+      gets: () => gets,
+      releasePatch: async () => {
+        expect(releasePatch, 'PATCH を待たせていない').toBeDefined();
+        await act(async () => {
+          releasePatch!();
+        });
+        await settle();
+      },
+    };
+  }
+
+  /** 入力欄が 3 つとも読み直した廃止済みのプランの値で、編集できず、保存のボタンが無いこと */
+  function expectReadOnlyFresh(plan: typeof PLAN) {
+    expect(displayNameInput().value).toBe(plan.display_name);
+    expect(descriptionInput().value).toBe(plan.description);
+    expect(displayOrderInput().value).toBe(String(plan.display_order));
+    expect(displayNameInput().disabled).toBe(true);
+    expect(descriptionInput().disabled).toBe(true);
+    expect(displayOrderInput().disabled).toBe(true);
+    expect(findButton('保存する')).toBeUndefined();
+  }
+
+  it('書きかけのまま「廃止する」に成功したら、読み直した値 (DB の値) を出す (送る道の無い書きかけを、廃止済みのプランの値として見せない)', async () => {
+    const deprecated = { ...PLAN, status: 'deprecated' };
+    const api = mockDeprecatedApi({ planAfterPatch: deprecated });
+    await renderPage();
+    await typeInto(displayNameInput(), '書きかけの表示名');
+    await typeInto(descriptionInput(), '書きかけの説明');
+    await typeInto(displayOrderInput(), '9');
+
+    await click('廃止する');
+
+    expect(api.gets()).toBe(2); // 初回 + 廃止のあとの読み直し
+    expect(patchBodies()).toEqual([{ status: 'deprecated', ends_at: '2027-01-01T00:00:00.000Z' }]);
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(findButton('廃止を取り消す')).toBeDefined();
+    expect(notice()).toBeNull();
+    expectReadOnlyFresh(deprecated);
+  });
+
+  it('保存の応答を待つあいだに別の運営が廃止していたら、待つあいだに打った欄も残さず、読み直した値を出す', async () => {
+    const deprecated = { ...PLAN, display_name: 'Pro プラス', status: 'deprecated' };
+    const api = mockDeprecatedApi({ planAfterPatch: deprecated, holdPatch: true });
+    await renderPage();
+    await typeInto(displayNameInput(), 'Pro プラス');
+    await click('保存する');
+
+    // 応答を待つあいだ (まだ編集できる) に、送らなかった欄を書き換える
+    await typeInto(descriptionInput(), '待つあいだの説明');
+    await api.releasePatch();
+
+    expect(api.gets()).toBe(2);
+    expect(patchBodies()).toEqual([{ display_name: 'Pro プラス' }]);
+    expect(text()).toContain('保存しました');
+    expect(notice()).toBeNull();
+    expectReadOnlyFresh(deprecated);
+  });
+
+  it('409 CONFLICT_STALE_DATA のあとに読み直したプランが廃止なら、書きかけを残さず、「残しています」も出さない', async () => {
+    const deprecated = { ...PLAN, description: '別の運営の説明', status: 'deprecated' };
+    const api = mockDeprecatedApi({ planAfterPatch: deprecated, patchResponse: staleResponse });
+    await renderPage();
+    await typeInto(displayNameInput(), '書きかけの表示名');
+
+    await click('再公開する');
+
+    expect(api.gets()).toBe(2);
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(findButton('廃止を取り消す')).toBeDefined();
+    expect(notice()?.textContent).toContain('読み込み直したので');
+    expect(notice()?.textContent).not.toContain('そのまま残しています');
+    expectReadOnlyFresh(deprecated);
+  });
+});
+
 describe('表示したあとの読み直しが 404 / 403 で断られたとき (#1917)', () => {
   it.each([
     [404, 'プランが見つかりません'],
