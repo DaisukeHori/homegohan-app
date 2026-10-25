@@ -175,7 +175,6 @@ export async function POST(request: Request) {
       // （数値でない・負 → null、上限超え → 上限、小数 → 四捨五入）。0 と未入力は従来どおり null。
       calories_kcal: sanitizeAiNutrient('calories_kcal', totalCalories) || null,
       image_url: imageUrl,
-      is_completed: false,
       dishes: photoDishes.length > 0 ? photoDishes : null,
       is_simple: photoDishes.length <= 1,
       source_type: source === 'handson_tour' ? 'handson_tour' : 'manual',

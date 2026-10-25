@@ -99,7 +99,7 @@ export async function POST(request: Request) {
         .update({
           // 検証済みの値（送られていない項目は含まれず、既存の値を残す）
           ...validation.nutrients,
-          veg_score: nutritionData.veg_score,
+          // 野菜スコアは利用者から受け取らない (#2025。サーバの計算値 = 写真の解析だけが書く)
           quality_tags: nutritionData.quality_tags,
           updated_at: new Date().toISOString(),
         })
@@ -146,7 +146,6 @@ export async function POST(request: Request) {
           "protein_g": number,
           "fat_g": number,
           "carbs_g": number,
-          "veg_score": number (1-5),
           "quality_tags": ["タグ1", "タグ2"],
           "dishes": [{ "name": "料理名", "role": "main/side/soup" }]
         }
@@ -210,7 +209,7 @@ export async function POST(request: Request) {
 
         const updatePayload: Record<string, unknown> = {
           ...aiNutrients,
-          veg_score: result.veg_score,
+          // 野菜スコアは書かない (#2025。fast LLM の 1〜5 点は写真の解析の 0〜100 点と尺度が違い、正本ではない)
           quality_tags: result.quality_tags,
           dishes: photoDishes.length > 0 ? photoDishes : existing.dishes ?? null,
           image_url: imageUrl,

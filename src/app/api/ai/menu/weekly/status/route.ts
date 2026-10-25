@@ -1,7 +1,7 @@
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { NextResponse } from 'next/server';
-import { restorePlannedMealsSnapshot, extractPlannedMealsSnapshot } from '@/lib/planned-meals-snapshot';
+import { restoreOwnPlannedMealsSnapshot, extractPlannedMealsSnapshot } from '@/lib/planned-meals-snapshot';
 import { internalError } from '@/lib/api/errors';
 import { isWeeklyMenuRequestStale, markWeeklyMenuRequestStaleIfUnchanged } from '@/lib/weekly-menu-request-stale';
 import {
@@ -88,7 +88,8 @@ export async function GET(request: Request) {
         const snapshot = extractPlannedMealsSnapshot(failedRow.generated_data);
         let restoreResult: { restored: number; skipped: number; failed: number } | null = null;
         if (snapshot.length > 0) {
-          restoreResult = await restorePlannedMealsSnapshot(supabase, snapshot);
+          // planned_meals の 3 列は利用者から INSERT できない (#2025)。本人の日を確かめてから service role で戻す
+          restoreResult = await restoreOwnPlannedMealsSnapshot({ userDb: supabase, writer: getSupabaseAdmin(), snapshot });
           console.log(
             `🔁 [stale sweeper/status] Restored meals for request ${requestId}: restored=${restoreResult.restored} skipped=${restoreResult.skipped} failed=${restoreResult.failed}`,
           );

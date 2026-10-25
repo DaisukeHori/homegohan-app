@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { toAnnouncement, toPlannedMeal } from "@/lib/converter";
 import { resolveDisplayName } from "@/lib/user-display";
-import { formatLocalDate, pantryExpiringSoonUntil } from "@homegohan/shared";
+import { formatLocalDate, pantryExpiringSoonUntil, PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs } from "@homegohan/shared";
 import type { Tables } from "@homegohan/shared";
 import type { Announcement, PlannedMeal, PantryItem, Badge } from "@/types/domain";
 import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
@@ -925,14 +925,8 @@ export const useHomeData = () => {
         : Math.max(prev.completedCount - 1, 0),
     }));
 
-    // DB更新
-    const { error } = await supabase
-      .from('planned_meals')
-      .update({
-        is_completed: newStatus,
-        completed_at: newStatus ? new Date().toISOString() : null,
-      })
-      .eq('id', mealId);
+    // DB更新 (完了は RPC。completed_at は DB が決める。#2025)
+    const { error } = await supabase.rpc(PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs(mealId, newStatus));
 
     if (error) {
       console.error('Toggle completion error:', error);

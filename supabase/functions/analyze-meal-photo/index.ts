@@ -14,6 +14,13 @@ import { getCorsHeaders } from '../_shared/cors.ts'
 import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from '../_shared/ai-usage.ts'
 import { requireAiConsentForUser } from '../_shared/ai-consent-guard.ts'
 
+/**
+ * 写真の解析の対象の献立が、本人の行として見つからない (他人の mealId・消えた献立)。#2025。
+ * 値は packages/shared/src/planned-meals-integrity.ts の PLANNED_MEAL_NOT_FOUND_CODE と同じ
+ * (Edge は packages/shared を import しない。一致は tests/veg-score-scale-contract.test.ts が見る)
+ */
+const PLANNED_MEAL_NOT_FOUND_CODE = 'PLANNED_MEAL_NOT_FOUND'
+
 console.log("Analyze Meal Photo Function v2 loaded")
 
 Deno.serve(async (req) => {
@@ -120,11 +127,12 @@ Deno.serve(async (req) => {
     }
 
     // 非同期でバックグラウンドタスクを実行（EdgeRuntime.waitUntil で Edge が早期終了しないよう登録）
+    // mealId の経路は planned_meals (veg_score を含む) に書くので、利用者が送った解析の結果 (prefetchedGeminiResult) を使わず、
+    // 写真から解析し直す。料理と材料の g を利用者が指定できると veg_score を好きな値にできる (#2025)
     const backgroundPromise = analyzeMealPhotoBackgroundTask({
       images: imageDataArray,
       mealId,
       mealType,
-      prefetchedGeminiResult,
       userId: user.id,
       authHeader
     }).catch((error) => {
@@ -152,18 +160,16 @@ Deno.serve(async (req) => {
   }
 })
 
-async function analyzeMealPhotoBackgroundTask({ 
+async function analyzeMealPhotoBackgroundTask({
   images,
   mealId,
   mealType,
-  prefetchedGeminiResult,
   userId,
   authHeader
 }: {
   images: ImageInput[];
   mealId: string;
   mealType?: string;
-  prefetchedGeminiResult?: GeminiAnalysisResult;
   userId: string;
   authHeader: string;
 }) {
@@ -176,8 +182,8 @@ async function analyzeMealPhotoBackgroundTask({
   )
 
   try {
-    // v2パイプラインで解析
-    const result = await analyzeWithEvidence(images, mealType || 'lunch', supabase, prefetchedGeminiResult)
+    // v2パイプラインで解析 (mealId の経路は Gemini で認識する。利用者が送った解析の結果を使わない。#2025)
+    const result = await analyzeWithEvidence(images, mealType || 'lunch', supabase)
     console.log('Analysis result:', {
       dishes: result.dishes.length,
       totalCalories: result.totalCalories,
@@ -226,14 +232,18 @@ async function analyzeMealPhotoBackgroundTask({
     const photoDishes = buildPhotoDishList(dishes, imageUrl)
     const dishName = result.dishes.map(d => d.name).join('、')
     
-    // planned_mealsを更新（全栄養素）
+    // planned_meals の書き込みは service_role の client (queueDb) で行う。利用者の権限では veg_score を書けない (#2025)。
+    // service_role は RLS を通らないので、書く前に本人の行であることを必ず確かめる (save-meal.ts の「最終防衛線」と同じ考え)。
+    // 鍵が無いと createClient が投げ、外側の catch がログに残す (書き込まない)。
+    // 変数名 queueDb は今の取り消しの client と同じ (tests/ai-queue-writes-contract.test.ts がこの名前で取り消しの client を見る)
+    const queueDb = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SERVICE_ROLE_JWT') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+    )
+
     try {
-      // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。ユーザーの JWT のクライアントでは取り消せないので、
-      // 本人 (JWT で確かめた userId) の行に絞って service role で取り消す
-      const queueDb = createClient(
-        Deno.env.get('SUPABASE_URL') ?? '',
-        Deno.env.get('SERVICE_ROLE_JWT') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-      )
+      // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。本人 (JWT で確かめた userId) の行に絞って service role で取り消す。
+      // 取り消しの失敗は今までどおり警告だけにして、写真の上書きは続ける
       await cancelPendingMealImageJobs({
         supabase: queueDb,
         userId,
@@ -244,17 +254,27 @@ async function analyzeMealPhotoBackgroundTask({
       console.warn('Failed to cancel pending meal image jobs for photo update:', cancelError)
     }
 
-    const { error: updateError } = await supabase
+    // 本人の行か (user_daily_meals.user_id = userId)。無ければ書かずに終える (他人の mealId・消えた献立)
+    const { data: owned, error: ownedError } = await queueDb
+      .from('planned_meals')
+      .select('id, user_daily_meals!inner(user_id)')
+      .eq('id', mealId)
+      .eq('user_daily_meals.user_id', userId)
+      .maybeSingle()
+    if (ownedError) throw ownedError
+    if (!owned) throw new Error(PLANNED_MEAL_NOT_FOUND_CODE)
+
+    const { error: updateError } = await queueDb
       .from('planned_meals')
       .update({
-      dish_name: dishName || '写真から入力',
-      dishes: photoDishes,
+        dish_name: dishName || '写真から入力',
+        dishes: photoDishes,
         image_url: imageUrl,
         description: result.praiseComment,
         // 栄養素 (基本・拡張・糖質)。書く列は meal-photo-update.ts に集約している。
         // 糖質 (sugar_g) を炭水化物・食物繊維と一緒に上書きしないと、上書き前の AI 献立の古い糖質が残る (#1146)
         ...buildPhotoOverwriteNutrition(result),
-        // スコア
+        // 野菜スコア (0〜100。_shared/veg-score.ts の尺度。#2025 の正本)
         veg_score: result.vegScore,
         // メタデータ
         is_simple: result.dishes.length <= 1,

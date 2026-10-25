@@ -237,7 +237,6 @@ export async function POST(request: Request) {
       ingredients: ingredients,
       image_url: dishImagePayload.mealCoverImageUrl,
       dishes: imageDishes,
-      is_completed: false,
       source_type: sourceType || 'manual',
     };
 
