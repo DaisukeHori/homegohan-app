@@ -48,6 +48,7 @@ import {
   type PlannedMealNutrientField,
 } from '../../../src/lib/planned-meal-validation';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import { PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs } from '@homegohan/shared';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -573,19 +574,17 @@ describe('#1205 D. すでに範囲外の値を持つ行 (本番に元からあ�
     expectCheckViolation(res, 'calories_kcal');
   });
 
-  it('★既存の範囲外の行: 本人が is_completed を切り替えられる (範囲外の値は触らない)', async () => {
-    const done = await asUser(userJwt)
-      .from('planned_meals')
-      .update({ is_completed: true, completed_at: new Date().toISOString() })
-      .eq('id', allBadId);
+  it('★既存の範囲外の行: 本人が RPC で is_completed を切り替えられる (範囲外の値は触らない)', async () => {
+    // 完了の切り替えは RPC planned_meals_set_completed だけ (#2025。利用者のセッションは is_completed / completed_at を直接書けない)
+    const done = await asUser(userJwt).rpc(PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs(allBadId, true));
     expect(done.error).toBeNull();
     expect(await readRowText(allBadId)).toMatchObject({ ...ALL_BAD, is_completed: true });
 
-    const undone = await asUser(userJwt).from('planned_meals').update({ is_completed: false }).eq('id', allBadId);
+    const undone = await asUser(userJwt).rpc(PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs(allBadId, false));
     expect(undone.error).toBeNull();
     expect(await readRowText(allBadId)).toMatchObject({ ...ALL_BAD, is_completed: false });
 
-    const second = await asUser(userJwt).from('planned_meals').update({ is_completed: true }).eq('id', calorieBadId);
+    const second = await asUser(userJwt).rpc(PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs(calorieBadId, true));
     expect(second.error).toBeNull();
     expect(await readRowText(calorieBadId)).toMatchObject({ calories_kcal: '30000', is_completed: true });
   });
@@ -600,13 +599,14 @@ describe('#1205 D. すでに範囲外の値を持つ行 (本番に元からあ�
   });
 
   it('★既存の範囲外の行: 同じ日の食事の一括更新 (範囲外の行を含む) も通る', async () => {
+    // 一括で書く列はトリガーの対象でない memo (is_completed は利用者のセッションから直接書けない。#2025)
     const res = await asUser(userJwt)
       .from('planned_meals')
-      .update({ is_completed: true })
+      .update({ memo: 'bulk' })
       .eq('daily_meal_id', dailyMealId);
     expect(res.error).toBeNull();
-    expect(await readRowText(allBadId)).toMatchObject({ ...ALL_BAD, is_completed: true });
-    expect(await readRowText(calorieBadId)).toMatchObject({ calories_kcal: '30000', is_completed: true });
+    expect(await readRowText(allBadId)).toMatchObject({ ...ALL_BAD, memo: 'bulk' });
+    expect(await readRowText(calorieBadId)).toMatchObject({ calories_kcal: '30000', memo: 'bulk' });
   });
 
   it('★既存の範囲外の行: service_role (Edge Function が使う経路) の更新も通る', async () => {
@@ -625,11 +625,10 @@ describe('#1205 D. すでに範囲外の値を持つ行 (本番に元からあ�
         protein_g: ALL_BAD.protein_g,
         fat_g: Number(ALL_BAD.fat_g),
         carbs_g: Number(ALL_BAD.carbs_g),
-        is_completed: true,
       })
       .eq('id', allBadId);
     expect(res.error).toBeNull();
-    expect(await readRowText(allBadId)).toMatchObject({ ...ALL_BAD, is_completed: true });
+    expect(await readRowText(allBadId)).toMatchObject(ALL_BAD);
   });
 
   it('★既存の範囲外の行: 範囲外の値を「ほかの範囲外の値」に変える更新は拒否され、元の値が残る', async () => {
@@ -680,7 +679,7 @@ describe('#1205 D. すでに範囲外の値を持つ行 (本番に元からあ�
     expect(await triggerEnabled()).toBe('O');
 
     expect(await readRowText(legacyId)).toMatchObject({ calories_kcal: '-9', carbs_g: '-Infinity' });
-    const res = await asUser(userJwt).from('planned_meals').update({ is_completed: true }).eq('id', legacyId);
+    const res = await asUser(userJwt).rpc(PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs(legacyId, true));
     expect(res.error).toBeNull();
 
     // 流し直したあとも、新しい範囲外の書き込みは拒否される

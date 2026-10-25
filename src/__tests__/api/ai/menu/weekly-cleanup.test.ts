@@ -106,12 +106,13 @@ vi.mock('@/lib/supabase/server', () => ({
   getSupabaseAdmin: vi.fn(() => ({ from: mockAdminFrom })),
 }));
 
-const mockRestorePlannedMealsSnapshot = vi.fn(async (..._args: unknown[]) => ({ restored: 0, skipped: 0, failed: 0 }));
+const mockRestoreOwnPlannedMealsSnapshot = vi.fn(async (..._args: unknown[]) => ({ restored: 0, skipped: 0, failed: 0 }));
 vi.mock('@/lib/planned-meals-snapshot', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/planned-meals-snapshot')>();
   return {
     ...actual,
-    restorePlannedMealsSnapshot: mockRestorePlannedMealsSnapshot,
+    // 復元は本人の日の確認 + service role の restoreOwnPlannedMealsSnapshot (#2025)
+    restoreOwnPlannedMealsSnapshot: mockRestoreOwnPlannedMealsSnapshot,
   };
 });
 
@@ -154,7 +155,7 @@ describe('POST /api/ai/menu/weekly/cleanup', () => {
     expect(json.message).toBe('進まなくなった献立の生成はありません');
     expect(json.cleaned).toBe(0);
     expect(mockUpdate).not.toHaveBeenCalled();
-    expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+    expect(mockRestoreOwnPlannedMealsSnapshot).not.toHaveBeenCalled();
   });
 
   it('snapshot を持つ stuck リクエストのみ復元し、結果を集計して返す', async () => {
@@ -168,7 +169,7 @@ describe('POST /api/ai/menu/weekly/cleanup', () => {
     });
     updateResultQueue.push({ data: [{ id: 'req-1', generated_data: { snapshot: [snapshotRowA] } }], error: null });
     updateResultQueue.push({ data: [{ id: 'req-2', generated_data: null }], error: null });
-    mockRestorePlannedMealsSnapshot.mockResolvedValueOnce({ restored: 1, skipped: 0, failed: 0 });
+    mockRestoreOwnPlannedMealsSnapshot.mockResolvedValueOnce({ restored: 1, skipped: 0, failed: 0 });
 
     const res = await POST();
     const json = await res.json();
@@ -182,8 +183,9 @@ describe('POST /api/ai/menu/weekly/cleanup', () => {
     expect(json.failedMeals).toBe(0);
 
     // snapshot を持つ req-1 分のみ復元が呼ばれる
-    expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledTimes(1);
-    expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledWith(mockSupabase, [snapshotRowA]);
+    expect(mockRestoreOwnPlannedMealsSnapshot).toHaveBeenCalledTimes(1);
+    // 本人の日の確認は利用者のセッション (userDb)、書き戻しは service role (writer = getSupabaseAdmin()) で行う (#2025)
+    expect(mockRestoreOwnPlannedMealsSnapshot).toHaveBeenCalledWith({ userDb: mockSupabase, writer: { from: mockAdminFrom }, snapshot: [snapshotRowA] });
 
     // failed への更新は service role で、本人の行に絞って、行ごとに行う (#1465・#1494)
     expect(mockAdminFrom).toHaveBeenCalledWith('weekly_menu_requests');
@@ -211,7 +213,7 @@ describe('POST /api/ai/menu/weekly/cleanup', () => {
     expect(res.status).toBe(500);
     // DB の生のエラー文は本文に出さない (#1172)
     expect(json).toEqual({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE });
-    expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+    expect(mockRestoreOwnPlannedMealsSnapshot).not.toHaveBeenCalled();
   });
 
   it('読み取り自体が失敗した場合は更新も復元もせず 500 を返す', async () => {
@@ -223,7 +225,7 @@ describe('POST /api/ai/menu/weekly/cleanup', () => {
     expect(res.status).toBe(500);
     expect(json).toEqual({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE });
     expect(mockUpdate).not.toHaveBeenCalled();
-    expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+    expect(mockRestoreOwnPlannedMealsSnapshot).not.toHaveBeenCalled();
   });
 
   it('複数の stuck リクエストの復元は直列に実行し、結果を合算して返す (#1203)', async () => {
@@ -245,15 +247,15 @@ describe('POST /api/ai/menu/weekly/cleanup', () => {
       inFlight--;
       return { restored: 1, skipped: 1, failed: 1 };
     };
-    mockRestorePlannedMealsSnapshot.mockImplementationOnce(slowRestore).mockImplementationOnce(slowRestore);
+    mockRestoreOwnPlannedMealsSnapshot.mockImplementationOnce(slowRestore).mockImplementationOnce(slowRestore);
 
     const res = await POST();
     const json = await res.json();
 
     expect(res.status).toBe(200);
-    expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledTimes(2);
-    expect(mockRestorePlannedMealsSnapshot).toHaveBeenNthCalledWith(1, mockSupabase, snapshotA);
-    expect(mockRestorePlannedMealsSnapshot).toHaveBeenNthCalledWith(2, mockSupabase, snapshotB);
+    expect(mockRestoreOwnPlannedMealsSnapshot).toHaveBeenCalledTimes(2);
+    expect(mockRestoreOwnPlannedMealsSnapshot).toHaveBeenNthCalledWith(1, { userDb: mockSupabase, writer: { from: mockAdminFrom }, snapshot: snapshotA });
+    expect(mockRestoreOwnPlannedMealsSnapshot).toHaveBeenNthCalledWith(2, { userDb: mockSupabase, writer: { from: mockAdminFrom }, snapshot: snapshotB });
     // 同時に実行中の復元は常に 1 件以下
     expect(maxInFlight).toBe(1);
     expect(json.restoredMeals).toBe(2);
@@ -384,7 +386,7 @@ describe('POST /api/ai/menu/weekly/cleanup', () => {
 
       expect(json.cleaned).toBe(1);
       expect(json.ids).toEqual(['stuck']);
-      expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledTimes(1);
+      expect(mockRestoreOwnPlannedMealsSnapshot).toHaveBeenCalledTimes(1);
     });
 
     it('すべての行が読んでから書くまでに進んだときは「進まなくなった献立の生成はありません」を返す', async () => {
@@ -396,7 +398,7 @@ describe('POST /api/ai/menu/weekly/cleanup', () => {
 
       expect(json.message).toBe('進まなくなった献立の生成はありません');
       expect(json.cleaned).toBe(0);
-      expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+      expect(mockRestoreOwnPlannedMealsSnapshot).not.toHaveBeenCalled();
     });
   });
 
@@ -409,14 +411,14 @@ describe('POST /api/ai/menu/weekly/cleanup', () => {
       updateResultQueue.push({ data: [{ id: 'req-1', generated_data: { snapshot: snapshotOf('meal-1') } }], error: null });
       // req-2 の更新は一時的な DB のエラー
       updateResultQueue.push({ data: null, error: { message: 'temporary failure' } });
-      mockRestorePlannedMealsSnapshot.mockResolvedValueOnce({ restored: 1, skipped: 0, failed: 0 });
+      mockRestoreOwnPlannedMealsSnapshot.mockResolvedValueOnce({ restored: 1, skipped: 0, failed: 0 });
 
       const res = await POST();
       const json = await res.json();
 
       // failed にした req-1 の献立は、このときに戻す (以後どの route も failed の行を拾わないため)
-      expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledTimes(1);
-      expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledWith(mockSupabase, snapshotOf('meal-1'));
+      expect(mockRestoreOwnPlannedMealsSnapshot).toHaveBeenCalledTimes(1);
+      expect(mockRestoreOwnPlannedMealsSnapshot).toHaveBeenCalledWith({ userDb: mockSupabase, writer: { from: mockAdminFrom }, snapshot: snapshotOf('meal-1') });
       // 更新の失敗は 500 で知らせる (DB の生のエラー文は本文に出さない。#1172)
       expect(res.status).toBe(500);
       expect(json).toEqual({ error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE });
@@ -432,8 +434,8 @@ describe('POST /api/ai/menu/weekly/cleanup', () => {
 
       expect(updateCalls.map((call) => filterOf(call, 'id')[0]?.[2])).toEqual(['req-1', 'req-2']);
       // 更新に失敗した req-1 (書き換わっていない) は復元せず、failed にできた req-2 だけを復元する
-      expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledTimes(1);
-      expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledWith(mockSupabase, snapshotOf('meal-2'));
+      expect(mockRestoreOwnPlannedMealsSnapshot).toHaveBeenCalledTimes(1);
+      expect(mockRestoreOwnPlannedMealsSnapshot).toHaveBeenCalledWith({ userDb: mockSupabase, writer: { from: mockAdminFrom }, snapshot: snapshotOf('meal-2') });
       expect(res.status).toBe(500);
     });
 
@@ -445,7 +447,7 @@ describe('POST /api/ai/menu/weekly/cleanup', () => {
       const res = await POST();
 
       expect(updateCalls).toHaveLength(2);
-      expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+      expect(mockRestoreOwnPlannedMealsSnapshot).not.toHaveBeenCalled();
       expect(res.status).toBe(500);
     });
   });

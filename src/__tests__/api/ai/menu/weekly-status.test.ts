@@ -100,12 +100,13 @@ vi.mock('@/lib/supabase/server', () => ({
   getSupabaseAdmin: vi.fn(() => ({ from: mockAdminFrom })),
 }));
 
-const mockRestorePlannedMealsSnapshot = vi.fn(async (..._args: any[]) => ({ restored: 0, skipped: 0, failed: 0 }));
+const mockRestoreOwnPlannedMealsSnapshot = vi.fn(async (..._args: any[]) => ({ restored: 0, skipped: 0, failed: 0 }));
 vi.mock('@/lib/planned-meals-snapshot', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/planned-meals-snapshot')>();
   return {
     ...actual,
-    restorePlannedMealsSnapshot: mockRestorePlannedMealsSnapshot,
+    // 復元は本人の日の確認 + service role の restoreOwnPlannedMealsSnapshot (#2025)
+    restoreOwnPlannedMealsSnapshot: mockRestoreOwnPlannedMealsSnapshot,
   };
 });
 
@@ -167,7 +168,7 @@ describe('GET /api/ai/menu/weekly/status', () => {
     expect(res.status).toBe(200);
     expect(json.status).toBe('processing');
     expect(json.progress).toBe(5);
-    expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+    expect(mockRestoreOwnPlannedMealsSnapshot).not.toHaveBeenCalled();
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 
@@ -191,7 +192,7 @@ describe('GET /api/ai/menu/weekly/status', () => {
     selectResultQueue.push({ data: requestRow({ updated_at: staleUpdatedAt }), error: null });
     // 書き換えた行の generated_data を更新の戻り値で受け取る (#1042: 通常の読み取りでは読まない)
     updateResultQueue.push({ data: [{ id: REQUEST_ID, generated_data: { snapshot: [snapshotRow] } }], error: null });
-    mockRestorePlannedMealsSnapshot.mockResolvedValueOnce({ restored: 1, skipped: 0, failed: 0 });
+    mockRestoreOwnPlannedMealsSnapshot.mockResolvedValueOnce({ restored: 1, skipped: 0, failed: 0 });
 
     const res = await GET(makeRequest(REQUEST_ID));
     const json = await res.json();
@@ -205,8 +206,9 @@ describe('GET /api/ai/menu/weekly/status', () => {
     expect(json.updatedAt).toBe(new Date(NOW_MS).toISOString());
     expect(json.restore).toEqual({ restored: 1, skipped: 0, failed: 0 });
 
-    expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledTimes(1);
-    expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledWith(mockSupabase, [snapshotRow]);
+    expect(mockRestoreOwnPlannedMealsSnapshot).toHaveBeenCalledTimes(1);
+    // 本人の日の確認は利用者のセッション (userDb)、書き戻しは service role (writer = getSupabaseAdmin()) で行う (#2025)
+    expect(mockRestoreOwnPlannedMealsSnapshot).toHaveBeenCalledWith({ userDb: mockSupabase, writer: { from: mockAdminFrom }, snapshot: [snapshotRow] });
 
     // failed への更新は service role で、本人の行に絞って、読んだときの状態・生存信号がそのままの行だけに行う (#1465・#1507)
     expect(mockAdminFrom).toHaveBeenCalledWith('weekly_menu_requests');
@@ -238,7 +240,7 @@ describe('GET /api/ai/menu/weekly/status', () => {
     expect(res.status).toBe(200);
     expect(json.status).toBe('failed');
     expect(json.restore).toBeUndefined();
-    expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+    expect(mockRestoreOwnPlannedMealsSnapshot).not.toHaveBeenCalled();
     expect(filterOf(updateCalls[0], 'status')).toEqual([['eq', 'status', 'pending']]);
   });
 
@@ -260,7 +262,7 @@ describe('GET /api/ai/menu/weekly/status: 止まりの判定は cleanup と同�
     expect(json.status).toBe('processing');
     expect(json.errorMessage).toBeNull();
     expect(mockUpdate).not.toHaveBeenCalled();
-    expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+    expect(mockRestoreOwnPlannedMealsSnapshot).not.toHaveBeenCalled();
   });
 
   it('worker_acquired_at も updated_at もしきい値より古い行は止まった行として failed にする (worker_acquired_at も比較の条件に入れる)', async () => {
@@ -287,7 +289,7 @@ describe('GET /api/ai/menu/weekly/status: 止まりの判定は cleanup と同�
     expect(json.status).toBe('processing');
     expect(json.errorMessage).toBeNull();
     expect(json.restore).toBeUndefined();
-    expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+    expect(mockRestoreOwnPlannedMealsSnapshot).not.toHaveBeenCalled();
   });
 
   it('failed への更新が拒まれたときは failed と返さず、復元もしない (行は書き換わっていない。次のポーリングでやり直す)', async () => {
@@ -300,7 +302,7 @@ describe('GET /api/ai/menu/weekly/status: 止まりの判定は cleanup と同�
 
     expect(res.status).toBe(200);
     expect(json.status).toBe('processing');
-    expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+    expect(mockRestoreOwnPlannedMealsSnapshot).not.toHaveBeenCalled();
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
   });
