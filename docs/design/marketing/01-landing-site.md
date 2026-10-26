@@ -526,7 +526,7 @@ scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮�
 | 経路 | 解析の頼み方 | ほめるひと言 (`praiseComment`) | 栄養のひと言メモ (`nutritionTip`) |
 |---|---|---|---|
 | 食事の記録の画面 (`src/app/(main)/meals/new/page.tsx`。§0.5) | `POST /api/ai/analyze-meal-photo` を `mealId` 無しで呼ぶ (`:552`) → 同期で解析して結果を返す (`supabase/functions/analyze-meal-photo/index.ts:83-119`) | 結果の画面の「記録コメント」に出る (`:586`・`:1506-1520`) | 結果の画面の「栄養メモ」に出る (`:587`・`:1538-1543`) |
-| 献立表の「写真から入力」(`src/app/(main)/menus/weekly/page.tsx:4323` の `analyzePhotoWithAI`。モーダルの題 `PhotoEditModal.tsx:91`) | 同じ API を献立の 1 食の `mealId` つきで呼ぶ (`:4355`) → 裏で解析して `planned_meals.description` に `praiseComment` だけを保存する (`index.ts:247-264`) | 記録のときの画面には出ない。保存した文は後で食事の詳細の画面に出る (`src/app/(main)/meals/[id]/page.tsx:343-345`) | 保存されず、どこにも出ない |
+| 献立表の「写真から入力」(`src/app/(main)/menus/weekly/page.tsx:4323` の `analyzePhotoWithAI`。モーダルの題 `PhotoEditModal.tsx:91`) | 同じ API を献立の 1 食の `mealId` つきで呼ぶ (`:4355`) → 裏で解析して planned_meals の料理名・料理・画像・栄養・`veg_score` を上書きし、`description` に `praiseComment` を置く (`supabase/functions/analyze-meal-photo/index.ts` の写真の結果の update)。画面は結果が書かれるまで最大 120 秒読み直す (`src/lib/meal-photo-result-watch.ts` の `PHOTO_RESULT_POLL_TIMEOUT_MS`) | 記録のときの画面には出ない。保存した文は後で食事の詳細の画面に出る (`src/app/(main)/meals/[id]/page.tsx:343-345`) | 保存されず、どこにも出ない |
 | 食事の詳細の画面の「食べた！」(`src/app/(main)/meals/[id]/page.tsx:185`。写真を使わない) | `PATCH /api/meals/:id` で `is_completed` を true にするだけ | 作らない | 作らない |
 | どの経路も、1 日の利用回数の上限に達した日 | 写真の解析の API が 429 `AI_DAILY_LIMIT` を返し、解析しない (`route.ts:82-85`) | 出ない | 出ない |
 

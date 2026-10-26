@@ -7,7 +7,7 @@
 設計原則:
 - `organization_id` 境界を全テーブルで厳守
 - 産業医境界: 家族領域は絶対に閲覧不可
-- service_role の client を作る場所: Edge Function と、Next.js では `getSupabaseAdmin()` だけ (HR Webhook も同じ。`cross/02-rls-patterns.md` §3.3)
+- service_role の client を作る場所: 製品のコード (Edge Function と Next.js) では、Edge Function と、Next.js では `getSupabaseAdmin()` (例外は `tests/supabase-service-role-client-scan.test.ts` の一覧で service_role を使うとしたファイルだけ。Next.js での自前の `createClient(SERVICE_ROLE_KEY)` は禁止で、`scripts/` は走査の対象外。HR Webhook も同じ。`cross/02-rls-patterns.md` §3.3)
 - 監査ログは immutable (DELETE / UPDATE 不可)
 
 ## 2. 関連要件

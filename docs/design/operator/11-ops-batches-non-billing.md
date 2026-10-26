@@ -1306,6 +1306,7 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
 |---|---|---|---|---|
 | `active` | `operator_force_dissolve_family` (家族の冊) | `dissolved` (dissolved_at = now) | super_admin | members → left・profiles.family_id → NULL・`representative_id` → NULL (family/11 §11.1 の 4)・membership_audit |
 | `active` | `dissolve_family_by_representative` (家族の冊。family/11) | `dissolved` (dissolved_at = now) | 本人が代表者 (行のロック下) | members → left・profiles.family_id → NULL・`representative_id` → NULL・membership_audit (`group_dissolved`) |
+| `dissolved` | `operator_force_dissolve_family` (家族の冊) | 同じ (`dissolved_at` を上書きしない。90 日の起点は変わらない) | super_admin・家族の行のロック下で `status = 'dissolved'` (`20261026100000_operator_force_dissolve_family_missing.sql`。正は family/11 §10.1) | 409 `FAMILY_ALREADY_DISSOLVED`。membership_audit・admin_audit_logs・メールなし |
 | `dissolved` (< 90 日) | `purge-dissolved-family-groups` | 同じ | — | — |
 | `dissolved` (≥ 90 日・同意の記録なし) | 同上 | 行が消える (CASCADE: members / invites / promotion_requests) | 古い順に 500 件まで | 監査ログ 1 行 (消した回ごと) |
 | `dissolved` (≥ 90 日・同意の記録あり) | 同上 | 同じ | Q-2 | 戻り値の `skipped_with_consents_count` に数える。同じ回に消したものがあれば、その回の監査ログにも載る (P-20)。消したものが無い回は監査ログなし (P-27) |

@@ -105,7 +105,7 @@
 ## 1. 目的・スコープ
 
 - 目的: 監査に「知らせた」と残るのに届かない通知を、本当に届く通知にする。凍結した本人が、凍結の事実・種類・解除の予定・問い合わせ先をメールで知れるようにする。
-- 対象: `FreezeBodySchema` の定数化 (1 ファイル)・文面 (1 ファイル・新)・通知の結果の型と画面の文 (1 ファイル・新)・sender (1 ファイル・新)・route の POST (1 ファイル)・画面 `UserFreezeForm` (1 ファイル)・テスト (新設 4・改定 7。§7.7)・設計書 operator/02・03・07 と cross/CLAUDE.md への追随表 (§17)。
+- 対象: `FreezeBodySchema` の定数化 (1 ファイル)・文面 (1 ファイル・新)・通知の結果の型と画面の文 (1 ファイル・新)・sender (1 ファイル・新)・route の POST (1 ファイル)・画面 `UserFreezeForm` (1 ファイル)・テスト (新設 4・改定 7。続きの #2036 で新設 1。§7.7)・設計書 operator/02・03・07 と cross/CLAUDE.md への追随表 (§17)。
 - 対象外: 冒頭の前提のとおり。
 
 ## 2. 関連要件・既存設計
@@ -919,13 +919,14 @@ import { describeFreezeNotificationOutcome, freezeNotificationOutcomeOf } from '
 
 `maxLength` はブラウザの入力の上限 (UTF-16 の長さ)。`trim` のあとの長さはサーバーの Zod と同じ数え方 (UTF-16) で、画面の `message.length > MAX` の検査は `maxLength` の補助 (貼り付けで超えたとき)。解除のフォーム・注意の帯・ボタンは変えない。
 
-### 7.7 テスト (新設 4 ファイル・改定 7 ファイル。it 名は §12)
+### 7.7 テスト (新設 5 ファイル (うち 1 本は続きの #2036)・改定 7 ファイル。it 名は §12)
 
 | ファイル | 形 |
 |---|---|
 | `src/__tests__/lib/emails/account/account-frozen.test.ts` (新) | `src/__tests__/lib/emails/account/login-new-device.test.ts` と同じ形。`renderAccountFrozenEmail` を本物で呼び、封筒・本文の段・日本時間・リンク・`EmailEnvelopeSchema`・`contains_secret` 無しを見る。`vi.stubEnv('NEXT_PUBLIC_APP_URL', …)` でリンクの基点を確かめる |
 | `src/__tests__/lib/admin/freeze-notification-status.test.ts` (新) | `freezeNotificationOutcomeOf` と `describeFreezeNotificationOutcome` の表 |
 | `src/__tests__/lib/admin/send-freeze-notification-email.test.ts` (新) | `src/__tests__/lib/admin/send-ticket-reply-email.test.ts` と同じ形。`vi.mock('@/lib/emails/send')` (`sendEmail` を差し替え)・`vi.mock('@/lib/supabase/server')` (`getSupabaseAdmin` が `auth.admin.getUserById` の偽物を返す)。ロガーは配列に積む偽物 |
+| `tests/freeze-notification-unknown-message-target.test.ts` (新。#2036) | `describeFreezeNotificationOutcome(null)` が `FREEZE_NOTIFICATION_UNKNOWN_MESSAGE` を返すこと・文が名指す画面 (`FREEZE_NOTIFICATION_AUDIT_LOGS_PATH`) が実在して super_admin だけが開け、行の details を描くこと・利用者の詳細 (`src/app/admin/users/[id]/page.tsx`) を指さないこと・名指す種別 (`FREEZE_NOTIFICATION_AUDIT_ACTION_TYPE`) が凍結の route の記録する種別と同じことを、ファイルを読んで見る (コメントを除いた本文で) |
 | `tests/admin-user-freeze-notify-2026.test.ts` (新) | route の POST を本物で呼ぶ。`createSchemaDb` (`user_profiles`・`admin_audit_logs`。`tests/user-freeze-super-admin-race.test.ts` と同じ)・`getSupabaseAdmin` は `from` + `auth.admin.getUserById` の偽物・`vi.mock('@/lib/emails/send')`・`vi.mock('@/lib/db-logger')` (ログを配列に)。応答の `data.notification`・監査の `details`・`sendEmail` の封筒と options・呼ばれない分岐を見る |
 | `tests/admin-user-freeze-form.test.tsx` (改) | `vi.mock('@/lib/admin/send-freeze-notification-email')` を足し (既定は `{ outcome: { status: 'sent' }, outbox_id: 'ob-1' }`)、送る本文の `toEqual` に `notify_user: true` を足す。チェック・メッセージ・成功の文の it を足す |
 | `tests/user-freeze-super-admin-race.test.ts` (改) | `vi.mock('@/lib/admin/send-freeze-notification-email')` を足す。200 のときだけ呼ばれ、409 / 404 では呼ばれないことを見る |
@@ -1139,6 +1140,7 @@ sequenceDiagram
 | `src/__tests__/lib/emails/account/account-frozen.test.ts` (新) | `T-1 template は account_frozen (ACCOUNT_FROZEN_EMAIL_TEMPLATE と同じ値)、宛先は to_email、件名は ACCOUNT_FROZEN_EMAIL_SUBJECT` / `T-2 凍結の日時を日本時間で出す (UTC 15:05 → 翌日 00:05)` / `T-3 一時 BAN: 「一時的な凍結」と解除の予定の日時 (日本時間) と自動解除の文を出す` / `T-4 永久 BAN: 「無期限の凍結」「解除の予定はありません」を出し、解除の予定の行は無い` / `T-5 運営のメッセージがあれば「▼ 運営からのメッセージ」の段にそのまま (改行を含めて) 入り、無ければ段が無い` / `T-6 リンクは getSiteUrl() + /frozen と getSiteUrl() + /contact の 2 つだけで、問い合わせ先は getSupportEmail()` / `T-7 本文に理由カテゴリ・詳細理由・ban_id・宛先のアドレスを書かない (vars に無いものは入らない)` / `T-8 EmailEnvelopeSchema を通り、html を持たず、contains_secret を持たない` / `T-9 利用規約第16条の語 (「データの書き出し」「退会」「有料プランの解約」「お問い合わせ」「自動的に解除」) を本文に含む` |
 | `src/__tests__/lib/admin/freeze-notification-status.test.ts` (新) | `D-1 freezeNotificationOutcomeOf: 4 つの status を読み、表にある reason だけ残す` / `D-2 freezeNotificationOutcomeOf: オブジェクトでない・status が無い・未知の status は null` / `D-3 describeFreezeNotificationOutcome: sent / not_requested / 3 つの reason / reason の無い skipped・failed / null の 8 通り` |
 | `src/__tests__/lib/admin/send-freeze-notification-email.test.ts` (新) | `N-1 本人の登録アドレス宛に renderAccountFrozenEmail の封筒を送り、sent と outbox_id を返す` / `N-2 sendEmail の 2 つ目の引数は { userId, idempotencyKey: 'account-frozen:' + banId }` / `N-3 宛先は userId を auth.admin.getUserById で 1 人分だけ引く (listUsers は呼ばない)` / `N-4 operatorMessage を封筒の本文に入れ、null なら段が無い` / `N-5 RESEND_API_KEY 未設定 (sendEmail が skipped): skipped / not_configured・outbox_id null・warn を残す` / `N-6 outbox_failed: failed / send_failed・error を残す` / `N-7 suppressed: failed / send_failed・warn (error でない) を残す` / `N-8 sendEmail が例外: failed / send_failed` / `N-9 getUserById が error: failed / no_recipient・sendEmail を呼ばない` / `N-10 email が無い (null / 空): failed / no_recipient・warn` / `N-11 getUserById が例外・getSupabaseAdmin が例外: failed / no_recipient` / `N-12 ログの metadata に宛先のアドレスを含めない (ban_id・target_id・template だけ)` / `N-13 ロガーが例外を投げても failed を返し、外に投げない` / `N-14 FREEZE_NOTIFICATION_EMAIL_TEMPLATE は封筒の template と同じ値` |
+| `tests/freeze-notification-unknown-message-target.test.ts` (新。#2036) | `読めないとき (null) の文は FREEZE_NOTIFICATION_UNKNOWN_MESSAGE で、監査ログ閲覧の道と監査の種別を含む` / `利用者の詳細の監査ログは details を描かないので、文はそこを指さない` / `文が指す画面は実在し、super_admin だけが開け、行の details を描く` / `文が名指す監査の種別は、凍結の route が通知の結果 (notification) を残す種別と同じ` |
 | `tests/admin-user-freeze-notify-2026.test.ts` (新) | `R-1 notify_user 省略: 凍結のあと sendEmail が account_frozen の封筒で 1 回呼ばれ、200 の data.notification が sent、監査の details に notification { sent, null, outbox_id } と notification_message null` / `R-2 notification_message あり: 本文に段が入り、監査の notification_message に trim 後の文` / `R-3 notify_user false: getUserById も sendEmail も呼ばれず、not_requested。notification_message を送っても監査は null` / `R-4 notification_message が空白だけ: 「無し」として扱う (段なし・監査 null)` / `R-5 notification_message が 1001 文字・ban_type temporary で duration_days 無し: どちらも 400 VALIDATION_ERROR で凍結しない・送らない・監査なし` / `R-6 対象が super_admin (403)・UPDATE が 0 行 (409)・対象なし (404): getUserById も sendEmail も呼ばれない` / `R-7 getUserById が email 無し: 200・failed / no_recipient・監査に同じ・sendEmail を呼ばない` / `R-8 sendEmail が skipped: 200・skipped / not_configured` / `R-9 sendEmail が outbox_failed: 200・failed / send_failed・凍結は済んでいる (frozen_at あり)` / `R-10 UPDATE の frozen_at と封筒の frozen_at が同じ時刻、unban_at が frozen_at + duration_days` / `R-11 permanent: 封筒の unban_at が null` / `R-12 recordAdminAudit は通知のあとに 1 回だけ (順番)` / `R-13 凍結中の対象をもう一度凍結: 200・sendEmail が 2 回目も呼ばれ、2 回目の idempotencyKey は新しい ban_id の account-frozen:<ban_id> で 1 回目と違う` / `R-14 notification_message に NULL 文字: 400 INVALID_CHARACTER で凍結しない・getUserById も sendEmail も呼ばれない` |
 | `tests/admin-user-freeze-form.test.tsx` (改) | 既存の `凍結: JSON で POST する…` の `toEqual` に `notify_user: true` を足す (`永久 BAN (super_admin)…` も同様) / `F-1 チェックは既定で on で、メッセージの欄が出る` / `F-2 チェックを外すとメッセージの欄が消え、notify_user: false を送り notification_message を送らない` / `F-3 メッセージを書くと trim して notification_message に入れる。空白だけなら送らない` / `F-4 メッセージが 1001 文字 (on) は送らずに知らせる。ちょうど 1000 文字は送る` / `F-5 成功の文に通知の結果を添える: sent / not_requested / failed (no_recipient) / 応答に notification が無い` / `F-6 本物の route (sender は差し替え) で、チェック on なら sender が { userId, banId, frozenAt, unbanAt, operatorMessage } で呼ばれ、off なら呼ばれない` |
 | `tests/user-freeze-super-admin-race.test.ts` (改) | 既存の it に `sender が呼ばれた / 呼ばれない` の expect を足す: 200 の 3 本 (割り込みなし・roles NULL・super_admin 以外の変更) は 1 回、409 の 3 本と 404 は 0 回 |
@@ -1184,6 +1186,8 @@ sequenceDiagram
 | `FREEZE_NOTIFICATION_IDEMPOTENCY_PREFIX` | `src/lib/admin/send-freeze-notification-email.ts` | `'account-frozen:'` | 不審なログインの通知の `login-alert:<session_id>` と同じ形。1 回の凍結 (`ban_id`) につき 1 通 | 変えない |
 | `FREEZE_NOTIFICATION_NOT_REQUESTED` | `src/lib/admin/freeze-notification-status.ts` | `{ status: 'not_requested' }` | `notify_user: false` の結果 | 変えない |
 | 画面の文 3 つ (`FREEZE_NOTIFICATION_*_MESSAGE`) と `NOT_SENT_MESSAGES` | 同上 | §7.3 | 凍結は済んでいることを必ず添える | 定数 |
+| `FREEZE_NOTIFICATION_AUDIT_LOGS_PATH` | 同上 | `'/super-admin/audit-logs'` | 通知の結果 (監査 `admin.user.ban` の `details.notification`) を読める画面。super_admin だけが開け、行を展開すると details を描く。`FREEZE_NOTIFICATION_UNKNOWN_MESSAGE` が名指す (#2036) | 定数 |
+| `FREEZE_NOTIFICATION_AUDIT_ACTION_TYPE` | 同上 | `'admin.user.ban'` | 凍結の route (`POST /api/admin/users/[id]/freeze`) が `details.notification` とともに記録する監査の種別。`FREEZE_NOTIFICATION_UNKNOWN_MESSAGE` が名指す (#2036) | 定数 |
 
 環境変数: 新設しない。既存の `RESEND_API_KEY`・`EMAIL_FROM`・`NEXT_PUBLIC_SUPPORT_EMAIL`・`NEXT_PUBLIC_APP_URL`・`EMAIL_OUTBOX_*` をそのまま使う。
 
@@ -1194,7 +1198,7 @@ sequenceDiagram
 | ファイル | `src/lib/emails/account/account-frozen.ts` | 文面 (§7.2) |
 | ファイル | `src/lib/admin/freeze-notification-status.ts` | 結果の型と画面の文 (§7.3) |
 | ファイル | `src/lib/admin/send-freeze-notification-email.ts` | sender (§7.4) |
-| ファイル | `src/__tests__/lib/emails/account/account-frozen.test.ts`・`src/__tests__/lib/admin/freeze-notification-status.test.ts`・`src/__tests__/lib/admin/send-freeze-notification-email.test.ts`・`tests/admin-user-freeze-notify-2026.test.ts` | テスト (§12) |
+| ファイル | `src/__tests__/lib/emails/account/account-frozen.test.ts`・`src/__tests__/lib/admin/freeze-notification-status.test.ts`・`src/__tests__/lib/admin/send-freeze-notification-email.test.ts`・`tests/admin-user-freeze-notify-2026.test.ts`・`tests/freeze-notification-unknown-message-target.test.ts` (#2036) | テスト (§12) |
 | 定数 | `FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH`・`ACCOUNT_FROZEN_EMAIL_TEMPLATE`・`ACCOUNT_FROZEN_EMAIL_SUBJECT`・`FROZEN_PAGE_PATH`・`CONTACT_PAGE_PATH`・`FREEZE_NOTIFICATION_EMAIL_TEMPLATE`・`FREEZE_NOTIFICATION_IDEMPOTENCY_PREFIX`・`FREEZE_NOTIFICATION_NOT_REQUESTED`・`FREEZE_NOTIFICATION_SENT_MESSAGE`・`FREEZE_NOTIFICATION_NOT_REQUESTED_MESSAGE`・`FREEZE_NOTIFICATION_AUDIT_LOGS_PATH`・`FREEZE_NOTIFICATION_AUDIT_ACTION_TYPE`・`FREEZE_NOTIFICATION_UNKNOWN_MESSAGE` | §13 |
 | 関数 | `formatAccountFrozenAt`・`accountFrozenPeriodLines`・`renderAccountFrozenEmail`・`freezeNotificationOutcomeOf`・`describeFreezeNotificationOutcome`・`freezeNotificationIdempotencyKey`・`sendFreezeNotificationEmail` | §8 |
 | 型 | `AccountFrozenEmailVars`・`FreezeNotificationStatus`・`FreezeNotificationReason`・`FreezeNotificationOutcome`・`FreezeNotificationLogger`・`SendFreezeNotificationEmailParams`・`SendFreezeNotificationEmailResult` | §8 |
@@ -1265,7 +1269,7 @@ sequenceDiagram
 |---|---|
 | 保持 (変えない) | `DELETE /api/admin/users/{id}/freeze`・`UnfreezeBodySchema`・解除のフォーム・`applyUserBan` とモデレーションの route・`isAccountFrozen`・middleware の凍結の分岐・`/frozen`・`/frozen/account`・`/frozen/billing`・`sendEmail`・`email_outbox` と RPC・worker・dead の通知・`/super-admin/email-outbox`・`prepare_account_deletion`・`GET /api/admin/users/{id}` と利用者の詳細の画面・法務の文・モバイル |
 | 変更 | `src/lib/admin/users-schemas.ts` (定数 1 つ・`notification_message` の Zod)・`src/app/api/admin/users/[id]/freeze/route.ts` (POST の通知と監査と応答)・`src/components/admin/UserFreezeForm.tsx` (チェック・欄・成功の文・`send` の戻り値)・テスト 7 ファイル (§7.7)・docs 4 冊 (§17 の operator/02・03・07・cross/CLAUDE.md) |
-| 新規 | `src/lib/emails/account/account-frozen.ts`・`src/lib/admin/freeze-notification-status.ts`・`src/lib/admin/send-freeze-notification-email.ts`・テスト 4 ファイル (§7.7) |
+| 新規 | `src/lib/emails/account/account-frozen.ts`・`src/lib/admin/freeze-notification-status.ts`・`src/lib/admin/send-freeze-notification-email.ts`・テスト 5 ファイル (§7.7。1 本は #2036) |
 
 ## 19. 受入条件と本番の確認 (本番の DB と送信を伴う 2〜5 は、オーナーが行うか、オーナーの承認を得て行う。本書のコードは本番の DB に直接書き込まない)
 

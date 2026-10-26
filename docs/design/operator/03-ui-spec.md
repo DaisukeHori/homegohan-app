@@ -440,7 +440,7 @@ Step 3: スケジュール
 
 ---
 
-## 20. `/admin/audit-logs` — 監査ログ閲覧 (拡張)
+## 20. `/super-admin/audit-logs` — 監査ログ閲覧 (拡張)
 
 **フィルタ**:
 - アクション種別 (マルチセレクト)
@@ -460,7 +460,7 @@ Step 3: スケジュール
 | 重要度 | badge |
 | 詳細 | 展開 → JSON |
 
-**CSV エクスポート**: 法務対応用
+**CSV エクスポート**: 法務対応用 (画面は一覧と同じ `GET /api/super-admin/audit-logs` に `format=csv` を付けて呼ぶ)
 
 **権限**: `super_admin` のみ
 

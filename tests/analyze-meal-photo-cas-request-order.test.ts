@@ -15,7 +15,9 @@
  * (supabase/functions/analyze-meal-photo/index.ts) の両方を本物で動かし、route の functions.invoke は要求を溜めて、
  * テストが決めた順に Edge のハンドラへ渡す (Edge の起動の遅れを作る)。planned_meals は作り物の 1 行で、update の条件 (eq / lte / is) を
  * 本当に評価し、当たると updated_at を作り物の時計で進める (トリガー trg_planned_meals_updated_at と同じ)。時計は Date だけを
- * 作り物にしたもので、route の new Date() も同じ時計を読む。解析のパイプラインは呼ばれたらすぐに写真ごとの結果を返す。
+ * 作り物にしたもので、route の new Date() も同じ時計を読む。解析のパイプラインは呼ばれたらすぐに写真ごとの結果を返す
+ * (h.onAnalyze があれば、返す前にそれを待つ。画像のジョブの取り消しも h.onCancel があればそれを待つ。A の背景の処理の途中で
+ * B を route へ送る順を作る)。
  * 本物の PostgREST での評価 (要求の印の返す行・マイクロ秒の印の一致) は tests/integration/rls/planned-meals-photo-analysis-cas.test.ts の P-7〜P-9。
  *
  * 確かめること (RO-n はこのファイルの it の番号):
@@ -25,6 +27,13 @@
  *   - RO-4: route は要求の印を利用者の client の planned_meals の update で付け、送る値は updated_at だけ (3 列などを書かない)、
  *           本人の行が見つからないときは今までどおり route の時計を送り、Edge の本人の行の確認が止める
  *   - RO-5: parseInvokedAt は DB の時刻 (マイクロ秒まで・+00:00) の桁を落とさない (落とすと印の直後の updated_at が invokedAt より後になり、自分の要求の印で止まる)
+ *   - RO-6: A の Edge が B の要求の前に書き終えていたら、B の解析がその上に書き、B の結果が残る
+ *   - RO-7: A の解析のあいだに B の要求の印が付いたら、A は書き込みもアップロードもせず、B の結果が残る
+ *   - RO-8: A の書く前の確認のあと、書くまでのあいだに B の要求の印が付いたら、A の写真の結果の update は 0 行で、B の結果が残る
+ *
+ * 送った順ごとの振る舞いの正本は、このファイルの RO-n の it。cross/23 §12.3 は id で名指すだけ (S-27 = RO-1・RO-2・RO-6〜RO-8、
+ * S-11 = RO-3〜RO-5、S-12 = RO-4)。RO-n の it を足す・消すときは §12.3 の行も合わせる
+ * (tests/design-doc-followup-placement-2050.test.ts が、正典 → テストとテスト → 正典の両向きで見る)。
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveHeavyUnitTimeouts } from './helpers/heavy-unit-test-timeout';
@@ -70,6 +79,10 @@ const h = vi.hoisted(() => ({
   uploads: [] as string[],
   /** planned_meals の update の記録 (どの client からか・送った値・行に当たったか) */
   mealUpdates: [] as Array<{ by: 'user' | 'service'; values: Record<string, unknown>; matched: boolean }>,
+  /** 解析 (analyzeWithEvidence) が結果を返す前に待つ処理 (解析のあいだに B を route へ送る順を作る) */
+  onAnalyze: null as ((photo: string) => Promise<void>) | null,
+  /** 画像のジョブの取り消しの中で待つ処理 (書く前の確認と書き込みのあいだに B を route へ送る順を作る) */
+  onCancel: null as (() => Promise<void>) | null,
 }));
 
 /** 作り物の時計を 1 ミリ秒進めて、今の時刻を返す (DB の now() と route の new Date() の両方がこの時計) */
@@ -226,11 +239,13 @@ vi.mock('@supabase/supabase-js', () => ({
   }),
 }));
 
-// 解析のパイプライン: 呼ばれたらすぐに写真ごとの結果を返す (このファイルが見るのは印の付く順で、解析の終わる順ではない)
+// 解析のパイプライン: 呼ばれたらすぐに写真ごとの結果を返す (このファイルが見るのは印の付く順で、解析の終わる順ではない)。
+// h.onAnalyze があれば、結果を返す前にそれを待つ (RO-7)
 vi.mock('../supabase/functions/_shared/nutrition-pipeline.ts', () => ({
   analyzeWithEvidence: async (images: Array<{ base64: string }>) => {
     const photo = images[0]?.base64 ?? '';
     h.analyzedPhotos.push(photo);
+    await h.onAnalyze?.(photo);
     const name = photo === PHOTO_A ? DISH_A : DISH_B;
     return {
       dishes: [{ name, role: 'main', calories_kcal: 500, protein_g: 20, carbs_g: 60, fat_g: 15, ingredient: '', ingredients: [] }],
@@ -246,8 +261,12 @@ vi.mock('../supabase/functions/_shared/nutrition-pipeline.ts', () => ({
   },
 }));
 
+// 画像のジョブの取り消し: index.ts は書く前の確認 (isPhotoAnalysisCurrent) のあと、写真の結果の update の前に呼ぶ。
+// h.onCancel があれば、それを待つ (RO-8)
 vi.mock('../supabase/functions/_shared/meal-image-jobs.ts', () => ({
-  cancelPendingMealImageJobs: async () => {},
+  cancelPendingMealImageJobs: async () => {
+    await h.onCancel?.();
+  },
 }));
 
 vi.mock('../supabase/functions/_shared/ai-usage.ts', async (importOriginal) => ({
@@ -304,6 +323,8 @@ beforeEach(() => {
   h.analyzedPhotos = [];
   h.uploads = [];
   h.mealUpdates = [];
+  h.onAnalyze = null;
+  h.onCancel = null;
 });
 
 /** 画面と同じ本文で route に送る (route は Edge を呼ぶ直前に invokedAt を決めて、要求を溜める) */
@@ -404,6 +425,70 @@ describe('#2050 先に送った解析の印が、後に送った要求の時刻�
     expect(h.analyzedPhotos).toEqual([]);
     expect(h.mealUpdates.filter((u) => u.matched)).toEqual([]);
     expect(h.meal).toEqual(before);
+  });
+
+  it('RO-6: A の Edge が B の要求の前に書き終えていたら、B の解析がその上に書き、B の結果が残る', async () => {
+    await sendToRoute(PHOTO_A);
+    tick();
+    await deliverToEdge(0);
+    expect(h.meal?.dish_name).toBe(DISH_A);
+    tick();
+    await sendToRoute(PHOTO_B);
+    tick();
+    await deliverToEdge(1);
+
+    expect(h.analyzedPhotos).toEqual([PHOTO_A, PHOTO_B]);
+    expect(writtenDishes()).toEqual([DISH_A, DISH_B]);
+    expect(h.meal?.dish_name).toBe(DISH_B);
+    expect(h.meal?.veg_score).toBe(90);
+  });
+
+  it('RO-7: A の解析のあいだに B の要求の印が付いたら、A は書き込みもアップロードもせず、B の結果が残る', async () => {
+    await sendToRoute(PHOTO_A);
+    tick();
+    let routeStatusOfB: number | null = null;
+    h.onAnalyze = async (photo) => {
+      if (photo !== PHOTO_A) return;
+      tick();
+      routeStatusOfB = (await sendToRoute(PHOTO_B)).status;
+      tick();
+    };
+    await deliverToEdge(0);
+    expect(routeStatusOfB).toBe(200);
+    // A は解析を始めたが、書く前の確認で止まった
+    expect(h.analyzedPhotos).toEqual([PHOTO_A]);
+    expect(writtenDishes()).toEqual([]);
+    expect(h.uploads).toEqual([]);
+
+    await deliverToEdge(1);
+    expect(h.analyzedPhotos).toEqual([PHOTO_A, PHOTO_B]);
+    expect(writtenDishes()).toEqual([DISH_B]);
+    expect(h.meal?.dish_name).toBe(DISH_B);
+    expect(h.uploads).toHaveLength(1);
+  });
+
+  it('RO-8: A の書く前の確認のあと、書くまでのあいだに B の要求の印が付いたら、A の写真の結果の update は 0 行で、B の結果が残る', async () => {
+    await sendToRoute(PHOTO_A);
+    tick();
+    let routeStatusOfB: number | null = null;
+    h.onCancel = async () => {
+      // B の背景の処理の取り消しでは何もしない (A の 1 回だけ)
+      h.onCancel = null;
+      tick();
+      routeStatusOfB = (await sendToRoute(PHOTO_B)).status;
+      tick();
+    };
+    await deliverToEdge(0);
+    expect(routeStatusOfB).toBe(200);
+    await deliverToEdge(1);
+
+    const photoUpdates = h.mealUpdates.filter((u) => 'dish_name' in u.values);
+    expect(photoUpdates.map((u) => [u.values.dish_name, u.matched])).toEqual([
+      [DISH_A, false],
+      [DISH_B, true],
+    ]);
+    expect(h.meal?.dish_name).toBe(DISH_B);
+    expect(h.meal?.veg_score).toBe(90);
   });
 });
 

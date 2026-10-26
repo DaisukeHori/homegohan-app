@@ -3,6 +3,7 @@
 | 版 | 日付 | 内容 |
 |---|---|---|
 | v1.0 | 2026-10-25 | 新設 (Issue #2025 の設計ゲート・A 型 4 相。`planned_meals` の `veg_score`・`is_completed`・`completed_at` を利用者 (authenticated) の INSERT / UPDATE の権限から外し、完了の操作は SECURITY DEFINER の RPC `planned_meals_set_completed` 1 本に、野菜スコアは写真の解析の Edge Function が service_role で書く 1 か所に寄せる) |
+| v1.1 | 2026-10-26 | 段 A〜C の着地の記録: 段 A #2033 (`20261025130000_planned_meals_set_completed_rpc.sql`)・段 B #2034・段 C #2048 (`20261026120000_planned_meals_score_columns_server_only.sql`)。migration の番号はこの 2 つで確定し、本文の名指しは確定した番号。写真の解析の CAS (#2041・#2050) のシナリオ S-27・テストの行・定数・新設の行を足した |
 
 要件の正本は Issue #2025 の本文とコメント (2026-10-25 時点でコメントは無い)。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
 ファイル名は cross/23 (cross/ の既存は 01〜09・12・13a・13b・14〜22・24。10・11 は欠番、13 は 13a・13b に分かれている)。
@@ -35,7 +36,7 @@
 | 4 | 権限の外し方 (列の GRANT か、RLS の WITH CHECK か、トリガーか) | **列の権限**: 表の INSERT / UPDATE を anon / authenticated から REVOKE し、authenticated に 3 列を除く 56 列の INSERT (列) / UPDATE (列) を GRANT し直す。RLS のポリシー・SELECT・DELETE・service_role は変えない (§6.4・§5) |
 | 5 | モバイルの古いビルドが直接書いていた場合に壊れないか (版の互換) | 古いビルドの完了の切り替えは 42501 で失敗し、既存の失敗時の処理 (楽観的更新を戻して読み直す) で画面は元に戻る。壊れるのはその操作だけで、ほかの画面は変わらない。ローンチ前で利用者はゼロなので、互換のための猶予は作らない (§6.5) |
 | 6 | モジュラーモノリスの切り方・Zod の正典・エラー表・テスト | 共通の定数と RPC の名前は `packages/shared/src/planned-meals-integrity.ts` (Web・モバイル・テストが読む)。Web は `src/modules/planned-meals-integrity/` (`core.ts` = Zod・文言、`server.ts` = RPC の呼び出し)。Edge は `supabase/functions/_shared/veg-score.ts` (尺度と計算)。エラー表は §10。テストは §12 (§6.6) |
-| 7 | 段分けと本番への当て方 (権限を外す migration は、書き手を付け替えた後にしか当てられない) | migration を 2 本に分ける。段 A = RPC を足す migration (追加だけ) + 共通の定数、段 B = 書き手の付け替え (Web・モバイル・Edge)、段 C = 権限を外す migration。段 C のマージの前にオーナーへ migration の中身を確認する (§15) |
+| 7 | 段分けと本番への当て方 (権限を外す migration は、書き手を付け替えた後にしか当てられない) | migration を 2 本に分ける。段 A = RPC を足す migration (追加だけ) + 共通の定数、段 B = 書き手の付け替え (Web・モバイル・Edge)、段 C = 権限を外す migration。段 C のマージの前にオーナーへ migration の中身を確認する決まりで、段 A は #2033・段 B は #2034・段 C は #2048 でマージ済み (§15) |
 
 ### 0.2 要件行列
 
@@ -58,7 +59,7 @@
 | R-15 | 文言・`data-testid`・応答の形 (`PATCH /api/meals/[id]` は行そのもの、`PATCH /api/meal-plans/meals/[id]` は `{ success, meal }`) は変えない。応答の `is_completed`・`completed_at` は RPC が返した値 | 既存の画面と e2e | §7.9 |
 | R-16 | 本番への当て方: 段 A の migration → 段 B のデプロイ (Vercel・Edge) → 段 C の migration の順。段 C を先に当てると、古いコードの完了の切り替え・写真の上書きが 42501 で失敗する | §0.1 の 7 | §9.3 (c)・§15・§19 |
 
-### 0.3 ユーザーシナリオ (26 本。トレースは §4.3)
+### 0.3 ユーザーシナリオ (27 本。トレースは §4.3)
 
 | # | シナリオ | 期待 |
 |---|---|---|
@@ -88,6 +89,7 @@
 | S-24 | すでに完了している行 (`completed_at` あり) に RPC `p_completed: true` | `is_completed = true` のまま、`completed_at` は元の値 (今の時刻で上書きしない) |
 | S-25 | service_role (`save-meal.ts`) が `is_completed: false` で INSERT し、`generate-menu-v5` が `is_completed` を読む | 今までどおり通る (service_role の権限は変えない) |
 | S-26 | 写真の解析を `mealId` と `prefetchedGeminiResult` (「キャベツ 120 g」のような料理と材料の g) を一緒に送って呼ぶ (Next.js の `POST /api/ai/analyze-meal-photo` 経由でも、Edge を JWT で直接でも) | Next.js の route は `mealId` があるので Edge へ `prefetchedGeminiResult` を渡さない。Edge の背景の処理も受け取らず、写真を Gemini で解析し直した結果で `veg_score` を書く (利用者の g は使わない)。`mealId` 無し (同期・書き込み無し) の経路は今までどおり `prefetchedGeminiResult` を使う |
+| S-27 | 献立表で同じ献立に写真から入力を 2 回続けて送る (先の写真 A・後の写真 B。背景の処理が 2 本並ぶ。ほかの書き手は行を書かない。#2041・#2050) | 行に残るのは後に送った (route が `markPhotoAnalysisRequest` で後に要求の印を付けた) B の結果 (ほかの書き手は行を書かない前提)。確かめた順は §12.3 の RO-1・RO-2・RO-6・RO-7・RO-8。`invokedAt` が日時として読めなければ、利用回数を数える前に 400 (`INVALID_INVOKED_AT_MESSAGE`。PC-9) |
 
 ### 0.4 分冊判定
 
@@ -108,7 +110,7 @@
 
 - 実装は §7 の正典コードを写す。§8 の facade 契約と §13 の定数の名前を変えない。
 - 表 3 点 (§9) とエラー表 (§10) は、レビューが最初に自分で作り直して突き合わせる対象。
-- migration のファイル名の番号は置き場 (`<番号はマージ時に確定>`・`<同じ番号>`) で書く。マージの直前に `origin/main` の `supabase/migrations` の最大より大きい番号で確定し、設計書の置き場を全部その番号に書き換える (`tests/helpers/design-doc-migration-number.ts` の規則。混ざると赤)。
+- migration のファイル名の番号は、設計の段階では置き場で書き、マージの直前に `origin/main` の `supabase/migrations` の最大より大きい番号で確定して、設計書の置き場を全部その番号に書き換えた (段 A `20261025130000`・段 C `20261026120000`。`tests/helpers/design-doc-migration-number.ts` の規則。置き場と番号が混ざると赤)。
 
 ---
 
@@ -268,6 +270,7 @@
 | S-24 | 関数の CASE: `pm.is_completed IS TRUE AND pm.completed_at IS NOT NULL` → 既存の `completed_at` を保つ | 期待どおり |
 | S-25 | service_role は表の権限を変えていない → 通る | 期待どおり |
 | S-26 | Next.js: `forwardedPrefetchedGeminiResult = mealId ? undefined : prefetchedGeminiResult` → invoke の本文に渡らない。Edge を直接: ハンドラは `analyzeMealPhotoBackgroundTask({ images, mealId, mealType, userId, authHeader, invokedAt })` (prefetch の鍵が無い) → 背景の処理は S-11 と同じく本人の行の確認と `claimPhotoAnalysis` のあと `analyzeWithEvidence(images, mealType, supabase)` (3 引数) → Gemini の認識 → `vegScore` は写真の解析の g から → S-11 と同じ確認 (`isPhotoAnalysisCurrent`) と条件つきの書き込み (`.eq('updated_at', 印)`) | 期待どおり (利用者の g は `veg_score` に届かない) |
+| S-27 | A・B それぞれ S-11 と同じ手順を順に通る (止まる条件は §11.3): route: `markPhotoAnalysisRequest` (要求の印 = `invokedAt`) → Edge: `parseInvokedAt` → 本人の行の確認 → `claimPhotoAnalysis` → 解析 → `isPhotoAnalysisCurrent` → アップロード → `cancelPendingMealImageJobs` → `.eq('updated_at', 印)` の update。順の守りの理由は `supabase/functions/_shared/meal-photo-cas.ts` の冒頭の注釈 | 期待どおり (順ごとの結果は RO-1・RO-2・RO-6・RO-7・RO-8) |
 
 ---
 
@@ -347,7 +350,7 @@ UI (page・hook) は `@homegohan/shared` だけを読み、`server.ts` を impor
 
 ### 6.7 段分けと本番への当て方 (決めること 7)
 
-§15。段 A (RPC の migration + 共通の定数 + 型の生成物) → 本番に段 A の migration が当たってから段 B (書き手の付け替え) をデプロイ → 段 B が本番で動いてから段 C (権限の migration) をマージ。段 C の migration の中身はマージの前にオーナーへ確認する。
+§15。段 A (RPC の migration + 共通の定数 + 型の生成物) → 本番に段 A の migration が当たってから段 B (書き手の付け替え) をデプロイ → 段 B が本番で動いてから段 C (権限の migration) をマージ。段 C の migration の中身はマージの前にオーナーへ確認する決まりで、段 C は #2048 でマージ済み (確認の記録は Issue #2025 と PR #2048 の本文)。
 
 ---
 
@@ -1100,7 +1103,7 @@ import { formatCalendarDate, pantryExpiringSoonUntil, todayCalendarDate, todayLo
 
 楽観的更新・失敗時の戻し・`fetchAll()` は今のまま。
 
-### 7.15 写真の解析の差分 (`supabase/functions/analyze-meal-photo/index.ts`: 背景の処理の書き込みを service_role に・`mealId` の経路では `prefetchedGeminiResult` を使わない / `src/app/api/ai/analyze-meal-photo/route.ts`: `mealId` のときは `prefetchedGeminiResult` を Edge へ渡さない)
+### 7.15 写真の解析の差分 (`supabase/functions/analyze-meal-photo/index.ts`: 背景の処理の書き込みを service_role に・`mealId` の経路では `prefetchedGeminiResult` を使わない / `src/app/api/ai/analyze-meal-photo/route.ts`: `mealId` のときは `prefetchedGeminiResult` を Edge へ渡さない。下の Edge の囲みの (2)〜(4) は #121 の CAS を戻す前の旧い形で、今の順は本節の「書き込みの順序」の箇条と §11.3)
 
 `veg_score` を書くのは `mealId` の経路 (背景の処理) だけで、その値は解析の結果の料理と材料の g から `estimateVegetableScore` で出す (§6.3)。origin/main では、本文の `prefetchedGeminiResult` (画面が判別 `classify-photo` から受け取った解析の結果を送り返す口。料理の名前と材料の `amount_g` を含む) があると、`analyzeWithEvidence` は Gemini の認識を飛ばしてその値を使う (`nutrition-pipeline.ts:785-804`・`normalizeGeminiAnalysisResult` は材料の名前と `amount_g` を利用者の値のまま通す `:640-647`)。Edge は利用者の JWT で直接呼べる (`index.ts` の同意の判定の注のとおり) ので、`mealId` と一緒に「キャベツ 120 g」のような `prefetchedGeminiResult` を送れば `veg_score` を 0〜100 の好きな値にできる。`mealId` つきで呼ぶ唯一の画面 (献立表の写真から入力 `src/app/(main)/menus/weekly/page.tsx:4357-4364`) は `prefetchedGeminiResult` を送らない。送るのは食事の記録の画面 (`src/app/(main)/meals/new/page.tsx:558`) で、`mealId` 無し (= 同期。DB に書かず結果を返すだけ) の経路。そこで、**`mealId` の経路では `prefetchedGeminiResult` を使わない** (Edge の背景の処理に渡さず、Next.js の route も `mealId` のときは Edge へ渡さない。二重に閉じる)。`mealId` 無しの経路は今までどおり使う (書き込みが無いので指標に届かない)。
 
@@ -2579,6 +2582,8 @@ sequenceDiagram
 | `src/__tests__/lib/planned-meals-snapshot.test.ts` (追記) | `restoreOwnPlannedMealsSnapshot: 空の snapshot は問い合わせずに 0 件` / `本人の日の行だけ writer で INSERT し、本人の日でない行と daily_meal_id の無い行は failed に数えて writer に渡さない` / `本人の日の問い合わせが失敗したら writer を呼ばず、全部を failed に数える` / `本人の日の問い合わせは SLOT_LOOKUP_CHUNK_SIZE ごとに分ける` / `writer 側の skipped・failed に本人の日でない行の数を足す` |
 | `src/__tests__/api/ai/menu/weekly-request.test.ts`・`weekly-status.test.ts`・`weekly-pending.test.ts`・`weekly-cleanup.test.ts` (書き換え) | 既存の復元の it の期待を `restoreOwnPlannedMealsSnapshot` が `{ userDb: <利用者のセッションの偽物>, writer: <getSupabaseAdmin() の偽物>, snapshot }` で呼ばれる形に (it 名は今のまま。cleanup の直列の it も同じ) |
 | `tests/image-route-contracts.test.ts` (追記) | `analyze-meal-photo: mealId があるときは prefetchedGeminiResult を Edge Function へ渡さない (#2025)` |
+| `tests/analyze-meal-photo-cas.test.ts` (新。#2041) | `PC-1: 先に送った解析が後に終わっても、後に送った解析の結果が残る` / `PC-2: 先に送った解析が先に終わっても、後に送った解析の結果が残る (古い解析は後の印で書かない)` / `PC-3: 競う解析が無ければ、写真の結果を書く` / `PC-4: invokedAt より後に行が書かれていたら (遅れて届いた古い要求)、解析せず、行を変えない` / `PC-5: 解析のあいだにほかの書き手が行を書いたら、アップロード・取り消し・書き込みをしない` / `PC-6: 書く前の確認のあとに行が書かれても、update の条件で止まって書かない` / `PC-7: invokedAt が無くても印を付けて書く。後から送った解析には負ける` / `PC-8: 他人の献立の mealId では、印を付けず、解析も書き込みもしない` / `PC-9: invokedAt が %s なら 400 で、利用回数を数えず解析もしない` (日時として読めない文字列・数値) / `PC-10: updated_at が NULL の行でも、invokedAt つきで印を付けて書く` |
+| `tests/analyze-meal-photo-cas-request-order.test.ts` (新。#2050。S-n との対応は §12.3) | `RO-1: A の Edge が B の要求のあと (B の Edge より前) に印を付けようとしても、A は解析せず、B の結果が残る` / `RO-2: A の Edge が B の Edge より後に届いても、B の結果が残る` / `RO-3: 競う要求が無ければ、route の要求の印の時刻で Edge が印を付けて書く` / `RO-4: route は利用者の client で updated_at だけを送って要求の印を付け、進んだ updated_at を invokedAt として送る` / `RO-4: 本人の行が見つからない (他人の献立) ときは、行を変えずに route の時計を送り、Edge の本人の行の確認が止める` / `RO-5: parseInvokedAt は DB の時刻のマイクロ秒の桁を落とさない` (describe。書き方ごとの it.each・前後の比べ方・読めない値・無い値) / `RO-6: A の Edge が B の要求の前に書き終えていたら、B の解析がその上に書き、B の結果が残る` / `RO-7: A の解析のあいだに B の要求の印が付いたら、A は書き込みもアップロードもせず、B の結果が残る` / `RO-8: A の書く前の確認のあと、書くまでのあいだに B の要求の印が付いたら、A の写真の結果の update は 0 行で、B の結果が残る` |
 | `tests/e2e/b11-performance.spec.ts` (書き換え) | B11-4a (it 名は今のまま。数える route に `**/rest/v1/rpc/planned_meals_set_completed*` を足す) |
 | `tests/calculate-segment-stats-planned-meals.test.ts` (書き換え) | `nutrition_score は veg_score_avg (0〜100) を四捨五入した値 (係数 1)` (fixture の veg_score を 80 / 60 / 40 / 20 にし、`m-veg` = [80, 80, 60, 40, 20]・`m-nut` = [80, 80, 60, 40, 20]) |
 
@@ -2587,6 +2592,7 @@ sequenceDiagram
 | ファイル | it |
 |---|---|
 | `tests/integration/rls/planned-meals-score-integrity.test.ts` (§7.20) | I-1〜I-15 (§7.20 の冒頭のとおり。括弧の中の S-n が §0.3 のシナリオ) |
+| `tests/integration/rls/planned-meals-photo-analysis-cas.test.ts` (新。#2041・#2050) | `P-1: invokedAt が updated_at より後なら印が付き、印は進んだあとの updated_at と同じ` / `P-2: invokedAt が updated_at より前なら印が付かず、行は変わらない` / `P-3: 2 本の解析は、書く順番によらず後に印を付けた B だけが書ける (%s)` (A が先・B が先) / `P-4: updated_at が NULL の行でも、invokedAt つきで印が付く` / `P-5: 印のままなら isPhotoAnalysisCurrent は true、ほかの書き込みのあとは false` / `P-6: invokedAt が無ければ、行の updated_at によらず印が付く` / `P-7: 要求の印は updated_at を進めてその値を返し、parseInvokedAt を通した値で自分の要求の印のままの行に解析の印が付く` / `P-8: A・B の要求の印のあとでは、A の解析の印は付かず、B の解析の印が付いて B だけが書ける` / `P-9: 他人の献立には要求の印が付かず、行は変わらない` (P-7〜P-9 は #2050) |
 | `tests/integration/rls/planned-meals-value-checks.test.ts` (書き換え) | 4 つの it (§16 の行): `★既存の範囲外の行: 本人が RPC で is_completed を切り替えられる (範囲外の値は触らない)` (`:576-591`。直接の UPDATE 3 回を RPC に) / `★既存の範囲外の行: 同じ日の食事の一括更新 (範囲外の行を含む) も通る` (`:602-610`。it 名は今のまま。一括で書く列を `is_completed` から `memo` に) / `★既存の範囲外の行: 範囲外の値を同じ値で書き直しても通る (値が変わらない列は検査しない)` (`:618-633`。it 名は今のまま。本文から `is_completed: true` を外す) / `★migration を (範囲外の行があるまま) 流し直しても失敗せず、トリガーは有効のまま。そのあとも範囲外の行を更新できる` (`:674-689`。it 名は今のまま。`:683` の直接の UPDATE を RPC に) |
 | `tests/integration/rls/stats-edge-functions-user-daily-meals.test.ts` (書き換え) | seed の `veg_score` を 80 / 60 / 40 / 20 にし、`metricIds.veg` = [80, 80, 60, 40, 20]・`metricIds.nut` = [80, 80, 60, 40, 20] |
 | `tests/integration/rls/org-challenge-progress.test.ts` (変えない) | 既存の it のまま緑 (S-18: 組織のチャレンジの SQL は変えない。seed は service_role で 3 列を書くので段 C の後も通る。静的な側は §7.19 の C-10) |
@@ -2607,8 +2613,8 @@ I-n は §7.20、C-n は §7.19、走査 n は §7.21 の項目。
 | S-8 | I-5 |
 | S-9 | I-6 |
 | S-10 | I-5 (`dish_name` は書ける)・I-6 (3 列なしの INSERT は通り `is_completed` は false) |
-| S-11 | I-11 (本人の `mealId` で 1 行)・走査 2 (Edge が同じ問い合わせと service_role の `queueDb` を使う)・§19 の 4 (本番) |
-| S-12 | I-11 (他人の `mealId` で 0 行)・走査 2 (0 行なら update の前に throw) |
+| S-11 | I-11 (本人の `mealId` で 1 行)・走査 2 (Edge が同じ問い合わせと service_role の `queueDb` を使う)・§19 の 4 (本番)・`tests/analyze-meal-photo-cas-request-order.test.ts` (RO-3・RO-4・RO-5。route の要求の印から Edge の書き込みまで) |
+| S-12 | I-11 (他人の `mealId` で 0 行)・走査 2 (0 行なら update の前に throw)・`tests/analyze-meal-photo-cas-request-order.test.ts` (RO-4。要求の印が付かず、Edge の本人の行の確認が止める) |
 | S-13 | `tests/planned-meal-nutrient-validation-routes.test.ts` (書き換え)・走査 4 |
 | S-14 | `tests/planned-meal-nutrient-validation-routes.test.ts` (書き換え)・走査 4 |
 | S-15 | `tests/planned-meal-completion-routes.test.ts` (insertData)・走査 1 |
@@ -2623,6 +2629,7 @@ I-n は §7.20、C-n は §7.19、走査 n は §7.21 の項目。
 | S-24 | I-2・C-2 |
 | S-25 | I-8 |
 | S-26 | `tests/image-route-contracts.test.ts` (追記。Next.js の route が `mealId` のとき渡さない)・走査 7 (Edge の背景の処理が受け取らず、`analyzeWithEvidence` が 3 引数) |
+| S-27 | `tests/analyze-meal-photo-cas-request-order.test.ts` (RO-1・RO-2・RO-6・RO-7・RO-8。route と Edge を通す)・`tests/analyze-meal-photo-cas.test.ts` (PC-1・PC-2・PC-9)・`tests/integration/rls/planned-meals-photo-analysis-cas.test.ts` (P-1・P-3・P-7・P-8。本物の PostgREST での条件の評価) |
 
 ---
 
@@ -2650,6 +2657,7 @@ I-n は §7.20、C-n は §7.19、走査 n は §7.21 の項目。
 | テストの `ORG_CHALLENGE_PROGRESS_FUNCTION` | `'update_org_challenge_progress'` | §7.19 | 本書で変えない集計の関数の名前 (C-10) |
 | テストの `SNAPSHOT_LIB` / `SNAPSHOT_RESTORE_ROUTES` | `'src/lib/planned-meals-snapshot.ts'` / 週間生成の 4 route | §7.21 | §7.12 の置き場と呼ぶ側 |
 | テストの `PHOTO_BACKGROUND_TASK` / `PHOTO_ANALYZE_FUNCTION` / `PREFETCHED_RESULT_KEY` / `PHOTO_ANALYZE_ARGUMENT_COUNT` | `'analyzeMealPhotoBackgroundTask'` / `'analyzeWithEvidence'` / `'prefetchedGeminiResult'` / `3` | §7.21 | 項目 7 が見る Edge の関数の名前・本文の鍵・`analyzeWithEvidence(images, mealType, supabase)` の引数の数 (§7.15) |
+| `INVALID_INVOKED_AT_MESSAGE` | `'invokedAt must be an ISO 8601 date-time'` | `supabase/functions/analyze-meal-photo/index.ts` | `mealId` の経路の `invokedAt` が日時として読めないときの 400 の文 (利用回数を数える前。#2041。§9.3 の状態遷移表・§10 のエラー表) |
 
 ---
 
@@ -2662,13 +2670,14 @@ I-n は §7.20、C-n は §7.19、走査 n は §7.21 の項目。
 | DB の関数 | `public.planned_meals_set_completed(uuid, boolean)` | A |
 | ファイル | `packages/shared/src/planned-meals-integrity.ts` (+ `index.ts` の 1 行) | A |
 | ファイル | `supabase/functions/_shared/veg-score.ts` | A |
+| ファイル | `supabase/functions/_shared/meal-photo-cas.ts` (`claimPhotoAnalysis`・`isPhotoAnalysisCurrent`・`parseInvokedAt`・`markPhotoAnalysisRequest`。型 `PhotoAnalysisClaim`・`ParsedInvokedAt`・`PhotoAnalysisRequestMark`。§7.15 の「書き込みの順序」) | B の続き (#2041。`markPhotoAnalysisRequest`・`PhotoAnalysisRequestMark` は #2050) |
 | ファイル | `src/modules/planned-meals-integrity/core.ts`・`server.ts` | B |
 | 定数 | §13 の全部 | A / B |
 | 関数 (TS) | `plannedMealsSetCompletedArgs`・`isPlannedMealNotFoundRpcError`・`isVegScore`・`vegScoreOfVegetableGrams`・`nutritionScoreOfVegScoreAverage`・`setPlannedMealCompleted`・`restoreOwnPlannedMealsSnapshot` (`src/lib/planned-meals-snapshot.ts` に追記) | A / B |
 | 型 | `PlannedMealsServerOnlyColumn`・`PlannedMealsSetCompletedArgs`・`PlannedMealsSetCompletedRow`・`PlannedMealCompletionRow`・`PlannedMealsIntegrityDb`・`SetPlannedMealCompletedResult` | A / B |
 | Zod | `PlannedMealCompletionInputSchema`・`PlannedMealsSetCompletedRowSchema` | B |
 | 型の生成物 | `Functions.planned_meals_set_completed` (2 ファイル) | A |
-| テスト (新) | `tests/planned-meals-score-integrity-migration-contract.test.ts`・`tests/integration/rls/planned-meals-score-integrity.test.ts`・`tests/planned-meals-score-integrity-writers-scan.test.ts`・`tests/veg-score-scale-contract.test.ts`・`src/__tests__/modules/planned-meals-integrity/core.test.ts`・`server.test.ts`・`tests/planned-meal-completion-routes.test.ts`・`src/__tests__/hooks/useHomeData-completion.test.ts`・`apps/mobile/__tests__/hooks/useHomeData-completion.test.ts` | A / B / C (§15) |
+| テスト (新) | `tests/planned-meals-score-integrity-migration-contract.test.ts`・`tests/integration/rls/planned-meals-score-integrity.test.ts`・`tests/planned-meals-score-integrity-writers-scan.test.ts`・`tests/veg-score-scale-contract.test.ts`・`src/__tests__/modules/planned-meals-integrity/core.test.ts`・`server.test.ts`・`tests/planned-meal-completion-routes.test.ts`・`src/__tests__/hooks/useHomeData-completion.test.ts`・`apps/mobile/__tests__/hooks/useHomeData-completion.test.ts`・`tests/analyze-meal-photo-cas.test.ts`・`tests/integration/rls/planned-meals-photo-analysis-cas.test.ts`・`tests/analyze-meal-photo-cas-request-order.test.ts` (この 3 本は B の続き。前の 2 本は #2041、最後の 1 本は #2050) | A / B / C (§15) |
 
 route・テーブル・列・Storage のパス・環境変数の新設は無い。
 
@@ -2835,3 +2844,4 @@ route・テーブル・列・Storage のパス・環境変数の新設は無い�
 | 版 | 日付 | 内容 |
 |---|---|---|
 | v1.0 | 2026-10-25 | 新設 (A 型 4 相。発注者の選択「サーバの計算値だけ使う」に基づき、列の権限 + 完了の RPC + 写真の解析の service_role の構造 A で確定。migration 2 本・段 A → B → C) |
+| v1.1 | 2026-10-26 | 段 A〜C の着地の記録: 段 A #2033 (`20261025130000_planned_meals_set_completed_rpc.sql`)・段 B #2034・段 C #2048 (`20261026120000_planned_meals_score_columns_server_only.sql`)。migration の番号はこの 2 つで確定し、本文の名指しは確定した番号。写真の解析の CAS (#2041・#2050) のシナリオ S-27・テストの行・定数・新設の行を足した |

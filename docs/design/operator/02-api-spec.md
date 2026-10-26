@@ -521,8 +521,8 @@ await supabase.from('admin_audit_logs').insert({
 
 ## 6. 監査ログ API
 
-### GET /api/admin/audit-logs
-監査ログ一覧
+### GET /api/super-admin/audit-logs
+監査ログ一覧 (画面は `/super-admin/audit-logs`。`format=csv` を付けると CSV で返し、画面の CSV エクスポートはこれを呼ぶ)
 
 **クエリ**:
 
@@ -541,7 +541,7 @@ await supabase.from('admin_audit_logs').insert({
 ---
 
 ### POST /api/admin/audit-logs/export
-未実装 (`src/app/api/admin/audit-logs` に route は無い)。監査ログ CSV エクスポート
+未実装 (route は無い。今の CSV エクスポートは上の `GET /api/super-admin/audit-logs?format=csv`)。監査ログの非同期の CSV エクスポート
 
 **リクエスト**: `{ "from": "2026-01-01", "to": "2026-05-06", "format": "csv" }`
 
