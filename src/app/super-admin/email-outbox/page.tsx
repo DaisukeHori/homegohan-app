@@ -13,11 +13,21 @@
  * - 絞り込み: 状態 (既定は届けられなかったもの) と文面の名前 (完全一致)。「絞り込む」で反映する。
  * - ページ送り: 「さらに読み込む」で、API が返したカーソルを渡して続きを足す。
  * - 日時は日本時間で表示する。
+ * - 「再送」の通信そのものが失敗した (fetch が reject した) ときは、サーバーが再送を済ませてから応答が切れたこともあるので、
+ *   一覧を読み直して今の状態を見せ、「「<文面の名前>」の再送の応答を受け取れませんでした（通信エラー）」の文を出す (#2073)。
+ *   読み直さないと、行は「届けられなかった」のまま残り、もう一度押すと、自分の再送が済んでいたのに 409
+ *   「届けられなかったメールだけを再送できます」が出る。読み直しは一覧を外さずに行い (先頭の 1 ページを取り直す)、
+ *   失敗したら「再試行」を出し、読み直せるまで「再送」を止める (一覧の状態が古いかもしれないため)。
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { forbiddenMessageForScreen } from '@/lib/admin/api-error-message';
+import {
+  NO_RESPONSE_LIST_RELOADED_GUIDE,
+  NO_RESPONSE_LIST_RELOAD_FAILED_GUIDE,
+  statusChangeNoResponseMessage,
+} from '@/lib/super-admin/status-change-no-response';
 // 型だけを import する (値を import すると zod とメール送信のモジュールがブラウザ向けの bundle に入る)
 import type {
   EmailOutboxListItem,
@@ -50,6 +60,7 @@ const STATUS_STYLES: Record<EmailOutboxListStatus, string> = {
 
 const REDACTED_REQUEUE_NOTE = '宛先を伏せた行は再送できません';
 const REQUEUED_MESSAGE = '再送を受け付けました';
+const LIST_NETWORK_FAILURE_MESSAGE = '通信に失敗しました。ネットワークを確認して、もう一度お試しください';
 
 const INPUT_CLASS =
   'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500';
@@ -57,6 +68,8 @@ const PRIMARY_BUTTON_CLASS =
   'px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 const SECONDARY_BUTTON_CLASS =
   'px-4 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+const NOTICE_RETRY_BUTTON_CLASS =
+  'shrink-0 px-3 py-1.5 bg-amber-600 text-white rounded-lg text-sm font-semibold hover:bg-amber-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 const ROW_BUTTON_CLASS =
   'px-3 py-1 bg-white text-orange-600 border border-orange-300 rounded-lg text-xs font-medium hover:bg-orange-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap';
 
@@ -130,8 +143,36 @@ function describeFailure(status: number, body: ApiErrorBody | null): string {
   return body?.error?.message ?? `読み込みに失敗しました (HTTP ${status})`;
 }
 
-/** 再送の結果の知らせ */
-type Notice = { kind: 'success' | 'error'; text: string } | null;
+/**
+ * 再送の結果の知らせ。
+ *   - success / error: 応答を受け取れたときの結果
+ *   - no-response    : 再送の通信が reject されたあとに一覧を読み直した (#2073)。template は押した行の文面の名前。
+ *                      reloaded は一覧を読み直せたか (false なら「再試行」を出し、読み直せるまで「再送」を止める)
+ */
+type Notice =
+  | { kind: 'success' | 'error'; text: string }
+  | { kind: 'no-response'; template: string; reloaded: boolean }
+  | null;
+
+function noResponseNoticeText(notice: { template: string; reloaded: boolean }): string {
+  return statusChangeNoResponseMessage(
+    `「${notice.template}」の再送`,
+    notice.reloaded ? NO_RESPONSE_LIST_RELOADED_GUIDE : NO_RESPONSE_LIST_RELOAD_FAILED_GUIDE,
+  );
+}
+
+/**
+ * 一覧の読み込みの結果。superseded は、あとから出した読み込みに追い越された (画面はその読み込みが進める)
+ */
+type LoadOutcome = { kind: 'loaded' } | { kind: 'failed' } | { kind: 'superseded' };
+
+/**
+ * 一覧の読み込みの出し方。reread は、再送の通信が reject されたあとの読み直し (#2073):
+ * 読み込むあいだも今の一覧と知らせを外さず、失敗しても一覧を残す (文は呼び出し側が知らせに出すので、一覧の失敗の文は出さない)
+ */
+interface LoadOptions {
+  reread?: boolean;
+}
 
 export default function EmailOutboxPage() {
   /** 入力中の条件 */
@@ -147,36 +188,54 @@ export default function EmailOutboxPage() {
   const [requeueing, setRequeueing] = useState<ReadonlySet<string>>(() => new Set());
   /** 最後に出した一覧のリクエストの番号。遅れて返ってきた古い応答で画面を上書きしないために使う */
   const requestSeq = useRef(0);
-
-  const load = useCallback(async (filters: Filters, cursor: string | null) => {
-    requestSeq.current += 1;
-    const seq = requestSeq.current;
-    setStatus(cursor ? 'loading-more' : 'loading');
-    setError(null);
-    if (!cursor) {
-      setItems([]);
-      setNextCursor(null);
-      setNotice(null);
-    }
-    try {
-      const res = await fetch(`/api/super-admin/email-outbox?${buildQuery(filters, cursor)}`, { cache: 'no-store' });
-      const body = (await res.json().catch(() => null)) as (Partial<EmailOutboxListResponse> & ApiErrorBody) | null;
-      if (seq !== requestSeq.current) return;
-      if (!res.ok || !body?.data || !body.meta) {
-        setError(describeFailure(res.status, body));
-        setStatus('idle');
-        return;
-      }
-      const rows = body.data;
-      setItems((prev) => (cursor ? [...prev, ...rows] : rows));
-      setNextCursor(body.meta.next_cursor ?? null);
-      setStatus('idle');
-    } catch {
-      if (seq !== requestSeq.current) return;
-      setError('通信に失敗しました。ネットワークを確認して、もう一度お試しください');
-      setStatus('idle');
-    }
+  /** 表示中の一覧の条件の写し (再送の応答を待つあいだに「絞り込む」が押されても、読み直しで今の条件を使うため) */
+  const appliedRef = useRef<Filters>(DEFAULT_FILTERS);
+  // 再送の通信の reject のあとの一覧の読み直しが失敗し、まだ読み直せていないか (#2073)。そのあいだは「再送」を止める。
+  // ref は描画を待たずに handler で読むための写し
+  const listStaleRef = useRef(false);
+  const [isListStale, setIsListStale] = useState(false);
+  const markListStale = useCallback((stale: boolean) => {
+    listStaleRef.current = stale;
+    setIsListStale(stale);
   }, []);
+
+  const load = useCallback(
+    async (filters: Filters, cursor: string | null, options: LoadOptions = {}): Promise<LoadOutcome> => {
+      const reread = options.reread === true;
+      requestSeq.current += 1;
+      const seq = requestSeq.current;
+      setStatus(cursor ? 'loading-more' : 'loading');
+      setError(null);
+      if (!cursor && !reread) {
+        setItems([]);
+        setNextCursor(null);
+        setNotice(null);
+      }
+      try {
+        const res = await fetch(`/api/super-admin/email-outbox?${buildQuery(filters, cursor)}`, { cache: 'no-store' });
+        const body = (await res.json().catch(() => null)) as (Partial<EmailOutboxListResponse> & ApiErrorBody) | null;
+        if (seq !== requestSeq.current) return { kind: 'superseded' };
+        if (!res.ok || !body?.data || !body.meta) {
+          if (!reread) setError(describeFailure(res.status, body));
+          setStatus('idle');
+          return { kind: 'failed' };
+        }
+        const rows = body.data;
+        setItems((prev) => (cursor ? [...prev, ...rows] : rows));
+        setNextCursor(body.meta.next_cursor ?? null);
+        // 先頭から読み直せたので、一覧はもう古くない (#2073)
+        if (!cursor) markListStale(false);
+        setStatus('idle');
+        return { kind: 'loaded' };
+      } catch {
+        if (seq !== requestSeq.current) return { kind: 'superseded' };
+        if (!reread) setError(LIST_NETWORK_FAILURE_MESSAGE);
+        setStatus('idle');
+        return { kind: 'failed' };
+      }
+    },
+    [markListStale],
+  );
 
   useEffect(() => {
     void load(DEFAULT_FILTERS, null);
@@ -184,18 +243,46 @@ export default function EmailOutboxPage() {
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    appliedRef.current = draft;
     setApplied(draft);
     void load(draft, null);
   };
 
+  /**
+   * 再送の通信が reject されたあとの一覧の読み直しと知らせ (#2073)。表示中の一覧の条件で先頭から読み直す。
+   * 読み直せなければ「再試行」を出し、読み直せるまで「再送」を止める。あとから出した読み込みに追い越されたら、
+   * その読み込みが一覧を今の状態にするので、ここでは何もしない
+   */
+  const rereadAfterNoResponse = async (template: string) => {
+    const outcome = await load(appliedRef.current, null, { reread: true });
+    if (outcome.kind === 'superseded') return;
+    if (outcome.kind === 'failed') markListStale(true);
+    setNotice({ kind: 'no-response', template, reloaded: outcome.kind === 'loaded' });
+  };
+
+  /** 「再試行」: 再送の通信の reject のあとの、失敗した一覧の読み直しをやり直す (#2073) */
+  const retryReread = (template: string) => {
+    if (status !== 'idle') return;
+    void rereadAfterNoResponse(template);
+  };
+
   const requeue = async (item: EmailOutboxListItem) => {
+    // 再送の通信の reject のあとの一覧の読み直しが失敗しているあいだは送らない (一覧の状態が古いかもしれない。#2073)
+    if (listStaleRef.current) return;
     setRequeueing((prev) => new Set(prev).add(item.id));
     setNotice(null);
     try {
-      const res = await fetch(`/api/super-admin/email-outbox/${encodeURIComponent(item.id)}/requeue`, {
-        method: 'POST',
-        cache: 'no-store',
-      });
+      let res: Response;
+      try {
+        res = await fetch(`/api/super-admin/email-outbox/${encodeURIComponent(item.id)}/requeue`, {
+          method: 'POST',
+          cache: 'no-store',
+        });
+      } catch {
+        // 応答を受け取れなかった (オフライン・接続が切れたなど)。再送が済んだかは分からないので、一覧を読み直して今の状態を見せる (#2073)
+        await rereadAfterNoResponse(item.template);
+        return;
+      }
       const body = (await res.json().catch(() => null)) as ApiErrorBody | null;
       if (!res.ok) {
         setNotice({ kind: 'error', text: describeFailure(res.status, body) });
@@ -218,8 +305,6 @@ export default function EmailOutboxPage() {
         ),
       );
       setNotice({ kind: 'success', text: REQUEUED_MESSAGE });
-    } catch {
-      setNotice({ kind: 'error', text: '通信に失敗しました。ネットワークを確認して、もう一度お試しください' });
     } finally {
       setRequeueing((prev) => {
         const next = new Set(prev);
@@ -321,6 +406,24 @@ export default function EmailOutboxPage() {
           {notice.text}
         </div>
       )}
+      {notice?.kind === 'no-response' && (
+        <div
+          data-testid="email-outbox-reload-notice"
+          className="flex items-start justify-between gap-4 bg-amber-50 border border-amber-300 text-amber-900 px-4 py-3 rounded-lg mb-4 text-sm"
+        >
+          <p role={notice.reloaded ? 'status' : 'alert'}>{noResponseNoticeText(notice)}</p>
+          {!notice.reloaded && (
+            <button
+              type="button"
+              onClick={() => retryReread(notice.template)}
+              disabled={isLoading || isLoadingMore}
+              className={NOTICE_RETRY_BUTTON_CLASS}
+            >
+              {isLoading ? '読み込み中…' : '再試行'}
+            </button>
+          )}
+        </div>
+      )}
       {error && (
         <div role="alert" className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
           {error}
@@ -411,7 +514,7 @@ export default function EmailOutboxPage() {
                           <button
                             type="button"
                             onClick={() => void requeue(item)}
-                            disabled={busy}
+                            disabled={busy || isListStale}
                             aria-label={`${formatJst(item.created_at)} の ${item.template} を再送`}
                             className={ROW_BUTTON_CLASS}
                           >
