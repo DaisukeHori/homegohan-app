@@ -182,6 +182,8 @@ export const PLAN_UPDATE_FIELD_LABELS: Readonly<Record<keyof PlanUpdateInput, st
   stripe_product_id: 'Stripe の商品の ID',
   status: '状態',
   ends_at: '廃止の予定日',
+  // 書く値でなく書く条件 (#2064)。status ごとに変えてよい項目の検査で断ることは無いが、表は PlanUpdateSchema の全部の項目を持つ
+  expected_status: '画面が見ていた状態',
 };
 
 /** 状態の値を「画面の名前 (値)」にする (表に無い値は「不明な状態 (値)」。英字の値を括弧の外に出さない) */
