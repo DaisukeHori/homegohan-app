@@ -476,6 +476,12 @@ COMMIT;
 
 運営ロールの MFA (cross/12 §11.4。段 E): 運営ロール (`user_profiles.roles` の super_admin / admin / finance / org_industrial_doctor) の条件の項は `(<条件> AND (SELECT public.operator_mfa_satisfied()))` にし、そのポリシーは `TO authenticated` にする。運営ロールを確かめる SECURITY DEFINER の関数は、役割の判定の直後に `IF NOT public.operator_mfa_satisfied() THEN RAISE EXCEPTION 'OPERATOR_MFA_REQUIRED'` を足す (cross/12 §11.4。`tests/integration/security/operator-mfa-db-gate.test.ts` の DB-1・DB-2 が見張る)。
 
+### 8.4 献立 (meal planner) ドメイン
+
+| テーブル | 適用パターン | 備考 |
+|---------|------------|------|
+| `planned_meals` | self (`user_daily_meals` 経由の USING) + 列の権限 (`veg_score`・`is_completed`・`completed_at` は authenticated の INSERT / UPDATE から外す。`20261026120000_planned_meals_score_columns_server_only.sql`。anon の INSERT / UPDATE は無い) | 完了は RPC `planned_meals_set_completed`。設計は cross/23 |
+
 ---
 
 ## 9. マイグレーション: rls_hardening.sql テンプレート
@@ -563,6 +569,7 @@ COMMIT;
 | Security | 監査ログの UPDATE / DELETE が拒否されることを確認 | Vitest + Supabase Local |
 | Security | public の関数 (SECURITY DEFINER / SECURITY INVOKER) のうち anon が EXECUTE できるものが、理由つきの許可一覧のものだけか (Supabase の既定の権限と PUBLIC の EXECUTE が残らないか。INVOKER のトリガー関数は除外の条件で外す) | Vitest + Supabase Local (`tests/integration/security/anon-definer-execute.test.ts`・`anon-invoker-execute.test.ts`) |
 | Security | public の表・ビューに、anon / authenticated の TRUNCATE が無いか (既定の権限も。§3.4) | Vitest + Supabase Local (`tests/integration/security/db-privilege-hardening.test.ts`) |
+| Security | `planned_meals` の列の権限が information_schema のとおりか (authenticated の INSERT / UPDATE は 3 列を除く全列。§8.4) | Vitest + Supabase Local (`tests/integration/rls/planned-meals-score-integrity.test.ts` I-9) |
 
 ### 10.1 RLS テストの基本パターン
 

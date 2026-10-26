@@ -827,7 +827,7 @@ CREATE TABLE experiment_assignments (
 
 ALTER TABLE experiments ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "experiments_select_super_admin" ON experiments
+CREATE POLICY "experiments_select_super_admin" ON experiments -- 変えた (supabase/migrations/20261025120000_operator_session_writes_select_only.sql。FOR SELECT TO authenticated・operator_mfa_satisfied())。正は migration
   FOR ALL USING (
     EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND 'super_admin' = ANY(roles))
   );

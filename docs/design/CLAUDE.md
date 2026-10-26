@@ -30,7 +30,7 @@
 ### 3. RLS 厳格化
 - 全テーブルで RLS 有効化必須
 - 例外: `dataset_*` 等の公開マスター
-- service_role の client を作るのは Edge Function と、Next.js では `getSupabaseAdmin()` だけ (例外は `tests/supabase-service-role-client-scan.test.ts` の理由つきの許可の一覧)。自前の `createClient(SERVICE_ROLE_KEY)` は禁止。使う前に何を確かめるかは route ごとに決まり、決まりは各 route の設計書にある (`cross/02-rls-patterns.md` §3.3)。コードレビューで監視
+- 製品のコード (Edge Function と Next.js) では、service_role の client を作るのは Edge Function と、Next.js では `getSupabaseAdmin()` (例外は `tests/supabase-service-role-client-scan.test.ts` の理由つきの許可の一覧で service_role を使うとしたファイルだけ)。Next.js (Server Actions・API Routes・`src/lib`・`lib`) での自前の `createClient(SERVICE_ROLE_KEY)` は禁止 (同じテストが `src`・`lib` を走査して見張る。`supabase/functions`・`scripts/` は走査の対象外)。使う前に何を確かめるかは route ごとに決まり、決まりは各 route の設計書 (無ければルートの `CLAUDE.md` の「ロール認可」の節) にある (`cross/02-rls-patterns.md` §3.3)。コードレビューで監視
 
 ### 4. snake_case 統一
 - DB: snake_case
