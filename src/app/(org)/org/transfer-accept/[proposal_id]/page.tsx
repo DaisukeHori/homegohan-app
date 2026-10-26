@@ -1,9 +1,33 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { normalizeProfileName } from "@/lib/profile-name";
+
+/** 提案が無い (または RLS で見えない) ときの文 */
+const PROPOSAL_NOT_FOUND_MESSAGE = '提案が見つかりません';
+
+/**
+ * 提案 (と組織名・提案者) を読み込めなかったときの文。提案が無い (「提案が見つかりません」) と見分けるために出す
+ * (#2064 R4 と同じ型。組織のオーナーの譲渡の画面の CANDIDATES_LOAD_ERROR と同じ扱い)。
+ * 読み込みは Supabase の問い合わせで、失敗の理由 (英語の内部の文) は画面に出さない
+ */
+const PROPOSAL_LOAD_ERROR = '譲渡の提案を読み込めませんでした。しばらくしてから、もう一度お試しください。';
+
+/** 承諾・拒否の通信そのものが失敗した (fetch が reject した) ときの文 */
+const NETWORK_FAILURE_MESSAGE = 'ネットワークエラーが発生しました';
+
+/**
+ * .single() で行が 0 件 (または RLS で見えない) ときの PostgREST の失敗のコード。
+ * 行が無いのは「読み込めなかった」ではないので、これだけは読み込みの失敗と分ける
+ */
+const POSTGREST_NO_ROWS_CODE = 'PGRST116';
+
+/** 問い合わせの失敗が「行が無い」ではない (= 読み込めなかった) か */
+function isLoadFailure(error: { code?: string } | null): boolean {
+  return error !== null && error.code !== POSTGREST_NO_ROWS_CODE;
+}
 
 interface ProposalInfo {
   id: string;
@@ -36,55 +60,100 @@ export default function TransferAcceptPage() {
   const [loading, setLoading] = useState(true);
   const [accepting, setAccepting] = useState(false);
   const [declining, setDeclining] = useState(false);
+  // 承諾・拒否が失敗したときの文
   const [error, setError] = useState<string | null>(null);
+  // 提案が無い (または RLS で見えない) か。あるあいだは提案の代わりに「提案が見つかりません」と「ホームへ戻る」を出す
+  const [notFound, setNotFound] = useState(false);
+  // 提案を読み込めなかったときの文。あるあいだは提案の代わりにこの文と「再試行」を出す
+  // (#2064 R4 と同じ型。以前は error を見ず、読み込めなかったのを「提案が見つかりません」と見せていた)
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  // 提案・組織名・提案者を読む。画面を開いたとき・「再試行」・承諾 / 拒否の通信エラーのあとに呼ぶ。
+  // 読み込み中の表示 (loading) は呼び出し側が決める (承諾 / 拒否のあとの読み直しは、提案の表示を残したまま読み直す)
+  const fetchProposal = useCallback(async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        router.push(`/login?next=/org/transfer-accept/${proposalId}`);
+        return;
+      }
+      setCurrentUserId(user.id);
+
+      // ownership_transfer_proposals に reason 列は無い (存在しない列を select すると PostgREST が失敗し、
+      // 提案が「見つかりません」になっていた)。提案理由は DB に保存されず、提案メールにだけ載る
+      const { data: proposalData, error: proposalError } = await supabase
+        .from('ownership_transfer_proposals')
+        .select('id, from_user_id, to_user_id, status, proposed_at, expires_at, scope_id')
+        .eq('id', proposalId)
+        .single();
+
+      if (isLoadFailure(proposalError)) {
+        // 読み込めなかった (提案が無いのとは別。「提案が見つかりません」と見せない)
+        setLoadError(PROPOSAL_LOAD_ERROR);
+        return;
+      }
+      if (!proposalData) {
+        // 行が無い (PGRST116) か、RLS で見えない
+        setNotFound(true);
+        setLoadError(null);
+        return;
+      }
+
+      // 組織名取得 (行が無い・RLS で見えないときは「組織」「-」と出す。読み込めなかったときは読み込みの失敗)
+      const { data: orgData, error: orgError } = await supabase
+        .from('organizations')
+        .select('name')
+        .eq('id', proposalData.scope_id)
+        .single();
+      if (isLoadFailure(orgError)) {
+        setLoadError(PROPOSAL_LOAD_ERROR);
+        return;
+      }
+
+      // 提案者のプロフィール取得 (他人の user_profiles は RLS で読めないことが多い。そのときは「(不明)」と出す。
+      // 読み込めなかったときは読み込みの失敗)
+      const { data: fromUserData, error: fromUserError } = await supabase
+        .from('user_profiles')
+        .select('nickname')
+        .eq('id', proposalData.from_user_id)
+        .single();
+      if (isLoadFailure(fromUserError)) {
+        setLoadError(PROPOSAL_LOAD_ERROR);
+        return;
+      }
+
+      // 3 つとも読めてから出す (一部だけ読めた状態で承諾・拒否を出さない)
+      setProposal(proposalData);
+      setOrg(orgData);
+      setFromUser(fromUserData);
+      setNotFound(false);
+      setLoadError(null);
+    } catch (fetchError) {
+      // 問い合わせが例外を投げた (以前は try / finally だけで catch が無く、未処理の reject になっていた)
+      console.error('Failed to fetch ownership transfer proposal:', fetchError);
+      setLoadError(PROPOSAL_LOAD_ERROR);
+    }
+  }, [supabase, router, proposalId]);
+
+  const loadPage = useCallback(async () => {
+    setLoading(true);
+    try {
+      await fetchProposal();
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchProposal]);
 
   useEffect(() => {
-    const fetchProposal = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-          router.push(`/login?next=/org/transfer-accept/${proposalId}`);
-          return;
-        }
-        setCurrentUserId(user.id);
+    void loadPage();
+  }, [loadPage]);
 
-        // ownership_transfer_proposals に reason 列は無い (存在しない列を select すると PostgREST が失敗し、
-        // 提案が「見つかりません」になっていた)。提案理由は DB に保存されず、提案メールにだけ載る
-        const { data: proposalData } = await supabase
-          .from('ownership_transfer_proposals')
-          .select('id, from_user_id, to_user_id, status, proposed_at, expires_at, scope_id')
-          .eq('id', proposalId)
-          .single();
-
-        if (!proposalData) {
-          setError('提案が見つかりません');
-          return;
-        }
-
-        setProposal(proposalData);
-
-        // 組織名取得
-        const { data: orgData } = await supabase
-          .from('organizations')
-          .select('name')
-          .eq('id', proposalData.scope_id)
-          .single();
-        setOrg(orgData);
-
-        // 提案者のプロフィール取得
-        const { data: fromUserData } = await supabase
-          .from('user_profiles')
-          .select('nickname')
-          .eq('id', proposalData.from_user_id)
-          .single();
-        setFromUser(fromUserData);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchProposal();
-  }, [proposalId]);
+  // 読み込みをやり直す (読み込めなかったときの「再試行」)。
+  // 「再試行」は読み込めなかったとき (承諾・拒否のボタンを出していないとき) だけ出すので、承諾・拒否とは重ならない
+  const retryLoad = () => {
+    setError(null);
+    void loadPage();
+  };
 
   const handleAccept = async () => {
     if (!confirm('オーナー権限を引き受けますか？')) return;
@@ -102,7 +171,11 @@ export default function TransferAcceptPage() {
       alert('オーナー権限を引き受けました。');
       router.push('/org/dashboard');
     } catch {
-      setError('ネットワークエラーが発生しました');
+      setError(NETWORK_FAILURE_MESSAGE);
+      // サーバーが承諾を済ませてから応答が切れたこともあるので、提案を読み直して今の状態を見せる (#2064 R5 と同じ型。
+      // 読み直さないと、承諾済みの提案に承諾・拒否のボタンが残り、もう一度押すと失敗の文が出ていた)。
+      // 読み直しの応答を待つあいだもボタンを止めたままにする (accepting を戻さない)。読み直しが失敗したら「読み込めませんでした」を出す
+      await fetchProposal();
     } finally {
       setAccepting(false);
     }
@@ -124,7 +197,9 @@ export default function TransferAcceptPage() {
       alert('譲渡提案を拒否しました。');
       router.push('/home');
     } catch {
-      setError('ネットワークエラーが発生しました');
+      setError(NETWORK_FAILURE_MESSAGE);
+      // サーバーが拒否を済ませてから応答が切れたこともあるので、提案を読み直す (承諾の通信エラーと同じ。#2064 R5 と同じ型)
+      await fetchProposal();
     } finally {
       setDeclining(false);
     }
@@ -138,11 +213,43 @@ export default function TransferAcceptPage() {
     );
   }
 
-  if (error && !proposal) {
+  if (loadError) {
+    return (
+      <div className="p-8 max-w-lg mx-auto">
+        <div
+          role="alert"
+          data-testid="transfer-accept-load-error"
+          className="bg-red-50 border border-red-200 rounded-2xl p-8 text-center"
+        >
+          {/* 承諾・拒否の通信エラーのあとの読み直しが失敗したときは、通信エラーの文も残す */}
+          {error && <p className="text-red-700 text-sm mb-2">{error}</p>}
+          <p className="text-red-700 font-medium">{loadError}</p>
+          <div className="mt-4 flex justify-center gap-3">
+            <button
+              type="button"
+              onClick={retryLoad}
+              className="px-4 py-2 rounded-xl bg-white border border-red-300 text-red-700 font-medium hover:bg-red-100 transition-colors"
+            >
+              再試行
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push('/home')}
+              className="px-4 py-2 rounded-xl bg-gray-100 text-gray-700 font-medium hover:bg-gray-200 transition-colors"
+            >
+              ホームへ戻る
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (notFound) {
     return (
       <div className="p-8 max-w-lg mx-auto">
         <div className="bg-red-50 border border-red-200 rounded-2xl p-8 text-center">
-          <p className="text-red-700 font-medium">{error}</p>
+          <p className="text-red-700 font-medium">{PROPOSAL_NOT_FOUND_MESSAGE}</p>
           <button
             onClick={() => router.push('/home')}
             className="mt-4 px-4 py-2 rounded-xl bg-gray-100 text-gray-700 font-medium hover:bg-gray-200 transition-colors"

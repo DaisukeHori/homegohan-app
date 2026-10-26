@@ -114,6 +114,11 @@ export default function OrgDepartmentsPage() {
     } catch (error) {
       console.error("Failed to save department:", error);
       setErrorMessage(`${summary}（通信エラー）`);
+      // サーバーが追加・更新を済ませてから応答が切れたこともあるので、一覧を読み直して今の状態を見せる (#2064 R5 と同じ型。
+      // 読み直さないと、追加できていた部署が一覧に出ず、もう一度送って同じ部署を重ねて作りうる)。フォームと入力した名前は残す。
+      // 読み直しが失敗したときは fetchDepartments が一覧の「読み込めませんでした」を出す。
+      // 成功のときの読み直しと同じく、読み直しの応答を待つあいだも書き込みの待ち (writeInFlightRef) を戻さない
+      await fetchDepartments();
     } finally {
       writeInFlightRef.current = false;
       setSubmitting(false);
@@ -141,6 +146,11 @@ export default function OrgDepartmentsPage() {
     } catch (error) {
       console.error("Failed to delete department:", error);
       setErrorMessage(`${DELETE_FAILURE_SUMMARY}（通信エラー）`);
+      // サーバーが削除を済ませてから応答が切れたこともあるので、一覧を読み直す (#2064 R5 と同じ型。読み直さないと、
+      // 削除した部署が一覧に残り、もう一度削除を押すと 404 で「部署を削除できませんでした」が出ていた)。
+      // 読み直しが失敗したときは fetchDepartments が一覧の「読み込めませんでした」を出す。
+      // 成功のときの読み直しと同じく、読み直しの応答を待つあいだも書き込みの待ち (writeInFlightRef) を戻さない
+      await fetchDepartments();
     } finally {
       writeInFlightRef.current = false;
       setDeletingId(null);

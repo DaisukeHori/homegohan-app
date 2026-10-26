@@ -115,6 +115,11 @@ export default function OrgInvitesPage() {
     } catch (error) {
       console.error("Failed to create invite:", error);
       setSubmitError("通信エラーが発生しました");
+      // サーバーが招待を作ってから応答が切れたこともあるので、履歴を読み直して今の状態を見せる (#2064 R5 と同じ型。
+      // 読み直さないと、作れていた招待が履歴に出ず、もう一度送って同じ相手へ招待を重ねて送りうる)。フォームと入力は残す。
+      // 読み直しが失敗したときは fetchInvites が履歴の「読み込めませんでした」を出す。
+      // 成功のときの読み直しと同じく、読み直しの応答を待つあいだも書き込みの待ち (writeInFlightRef) を戻さない
+      await fetchInvites();
     } finally {
       writeInFlightRef.current = false;
       setSubmitting(false);
@@ -144,6 +149,11 @@ export default function OrgInvitesPage() {
     } catch (error) {
       console.error("Failed to revoke invite:", error);
       alert(`${REVOKE_FAILURE_MESSAGE}（通信エラー）`);
+      // サーバーが取消を済ませてから応答が切れたこともあるので、履歴を読み直す (#2064 R5 と同じ型。読み直さないと、
+      // 取り消した招待が「保留中」のまま取消のボタンを出し、もう一度押すと失敗の文が出ていた)。
+      // 読み直しが失敗したときは fetchInvites が履歴の「読み込めませんでした」を出す。
+      // 成功のときの読み直しと同じく、読み直しの応答を待つあいだも書き込みの待ち (writeInFlightRef) を戻さない
+      await fetchInvites();
     } finally {
       writeInFlightRef.current = false;
       setRevokingId(null);
