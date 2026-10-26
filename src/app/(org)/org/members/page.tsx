@@ -13,6 +13,12 @@ import { normalizeProfileName } from "@/lib/profile-name";
  */
 const MEMBERS_LOAD_ERROR = 'メンバーの一覧を読み込めませんでした。しばらくしてから、もう一度お試しください。';
 
+/**
+ * 除名・脱退の通信そのものが失敗した (fetch が reject した: オフライン・接続が切れたなど) ときに「除名失敗: 」「脱退失敗: 」の後ろに出す理由 (#2059)。
+ * 応答が届かないので、除名・脱退できたかどうかはこの画面では分からない。黙っていると、できたかどうかが分からないまま終わるため
+ */
+const MEMBERSHIP_NETWORK_FAILURE_REASON = '通信エラーが発生しました。通信状況を確認して、もう一度お試しください';
+
 interface Member {
   id: string;
   nickname: string | null;
@@ -36,7 +42,7 @@ export default function MembersPage() {
   // 除名か脱退のどちらかの書き込み (除名はそのあとの読み直しまで) の応答を待っているか (10/26 の整合ゲート 1026e。#2050)。
   // 除名のあとの読み直しは一覧を丸ごと差し替えるので、別のメンバーの除名を重ねると、先に送った読み直しの応答が後に届いたとき、
   // その古い一覧 (除名したメンバーがまだいる一覧) で表示が上書きされ、除名したメンバーの「除名」をもう一度押せてしまう
-  // (#2053 のクーポン・機能パッケージと同じ型)。待つあいだはすべての除名と脱退のボタンを止め、押されても送らない。
+  // (#2053 のクーポン・機能パッケージと同じ型)。待つあいだはすべての除名と脱退のボタン (と一覧の「再試行」。#2059) を止め、押されても送らない。
   // ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
   const writeInFlightRef = useRef(false);
   const isWriting = removingId !== null || leaving;
@@ -108,6 +114,10 @@ export default function MembersPage() {
         return;
       }
       await fetchData();
+    } catch (error) {
+      // 通信が失敗した (#2059。catch が無いと失敗の文が出ず、onClick の promise が reject のまま終わっていた)
+      console.error('Failed to remove member:', error);
+      alert(`除名失敗: ${MEMBERSHIP_NETWORK_FAILURE_REASON}`);
     } finally {
       writeInFlightRef.current = false;
       setRemovingId(null);
@@ -128,10 +138,22 @@ export default function MembersPage() {
         return;
       }
       router.push('/home');
+    } catch (error) {
+      // 通信が失敗した (#2059。catch が無いと失敗の文が出ず、onClick の promise が reject のまま終わっていた)
+      console.error('Failed to leave organization:', error);
+      alert(`脱退失敗: ${MEMBERSHIP_NETWORK_FAILURE_REASON}`);
     } finally {
       writeInFlightRef.current = false;
       setLeaving(false);
     }
+  };
+
+  // 一覧の読み込みをやり直す (読み込めなかったときの「再試行」)。
+  // 書き込みの応答を待つあいだは送らない (#2059。チャレンジ・部署・招待の画面と同じ形)。読み込み中の表示 (fetchData の setLoading) で
+  // 脱退の「処理中...」を隠さないため。ボタンも isWriting で止める。ref は再描画の前に押されたとき (ボタンがまだ止まっていない) の守り
+  const retryLoad = () => {
+    if (writeInFlightRef.current) return;
+    void fetchData();
   };
 
   const roleLabel = (role: string) => {
@@ -216,8 +238,9 @@ export default function MembersPage() {
                     <span>{loadError}</span>
                     <button
                       type="button"
-                      onClick={() => void fetchData()}
-                      className="shrink-0 px-3 py-1.5 bg-white border border-red-300 rounded-lg text-red-700 hover:bg-red-100 transition-colors"
+                      onClick={retryLoad}
+                      disabled={isWriting}
+                      className="shrink-0 px-3 py-1.5 bg-white border border-red-300 rounded-lg text-red-700 hover:bg-red-100 transition-colors disabled:opacity-50"
                     >
                       再試行
                     </button>

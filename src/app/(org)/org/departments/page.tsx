@@ -52,7 +52,7 @@ export default function OrgDepartmentsPage() {
   // 追加・更新か削除のどちらかの書き込みとそのあとの読み直しの応答を待っているか (10/26 の整合ゲート 1026e。#2050)。
   // 書き込みのあとの読み直しは一覧を丸ごと差し替えるので、2 つの書き込みを重ねると、先に送った読み直しの応答が後に届いたとき、
   // その古い一覧 (例: 消した部署がまだある一覧) で表示が上書きされ、消した部署の削除をもう一度押せてしまう
-  // (#2053 のクーポン・機能パッケージと同じ型)。待つあいだは追加・更新と削除のボタンを止め、押されても送らない。
+  // (#2053 のクーポン・機能パッケージと同じ型)。待つあいだは追加・更新と削除のボタン (と一覧の「再試行」。#2059) を止め、押されても送らない。
   // ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
   const writeInFlightRef = useRef(false);
   const isWriting = submitting || deletingId !== null;
@@ -147,8 +147,12 @@ export default function OrgDepartmentsPage() {
     }
   };
 
-  // 一覧の読み込みをやり直す (読み込めなかったときの「再試行」)
+  // 一覧の読み込みをやり直す (読み込めなかったときの「再試行」)。
+  // 書き込みとそのあとの読み直しの応答を待つあいだは送らない (#2059)。待つあいだに送ると、この読み込みが書き込みより前の一覧を読み、
+  // 書き込みのあとの読み直しより後に届いたとき、その古い一覧で表示が上書きされ、作ったものが表示から消える (もう一度作って重複させうる)。
+  // ボタンも isWriting で止める。ref は再描画の前に押されたとき (ボタンがまだ止まっていない) の守り
   const retryLoad = () => {
+    if (writeInFlightRef.current) return;
     setLoading(true);
     void fetchDepartments();
   };
@@ -254,7 +258,8 @@ export default function OrgDepartmentsPage() {
           <button
             type="button"
             onClick={retryLoad}
-            className="shrink-0 px-3 py-1.5 bg-white border border-red-300 rounded-lg text-red-700 hover:bg-red-100 transition-colors"
+            disabled={isWriting}
+            className="shrink-0 px-3 py-1.5 bg-white border border-red-300 rounded-lg text-red-700 hover:bg-red-100 transition-colors disabled:opacity-50"
           >
             再試行
           </button>
