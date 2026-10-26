@@ -30,8 +30,10 @@
  *   - RO-6: A の Edge が B の要求の前に書き終えていたら、B の解析がその上に書き、B の結果が残る
  *   - RO-7: A の解析のあいだに B の要求の印が付いたら、A は書き込みもアップロードもせず、B の結果が残る
  *   - RO-8: A の書く前の確認のあと、書くまでのあいだに B の要求の印が付いたら、A の写真の結果の update は 0 行で、B の結果が残る
- *     (RO-6〜RO-8 は cross/23 §0.3 の S-27 の順。B の要求の印は書き込みなので、A の印のあとに付くと A の確認と条件つきの update が止まり、
- *      A の書き込みが B の要求の印と B の解析の印のあいだに入ることは無い)
+ *
+ * 送った順ごとの振る舞いの正本は、このファイルの RO-n の it。cross/23 §12.3 は id で名指すだけ (S-27 = RO-1・RO-2・RO-6〜RO-8、
+ * S-11 = RO-3〜RO-5、S-12 = RO-4)。RO-n の it を足す・消すときは §12.3 の行も合わせる
+ * (tests/design-doc-followup-placement-2050.test.ts が、正典 → テストとテスト → 正典の両向きで見る)。
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveHeavyUnitTimeouts } from './helpers/heavy-unit-test-timeout';
