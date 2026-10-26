@@ -871,7 +871,7 @@ sequenceDiagram
 3. `it('rejects INSERT when actor_id does not match auth.uid()')`
 4. `it('returns 0 rows when admin role (non-super_admin) selects audit_logs')`
 5. `it('super_admin can SELECT all audit_logs')`
-6. `it('E2E: BAN action creates audit_log entry visible to super_admin')`
+6. `it('E2E: BAN action creates audit_log entry visible to super_admin')` (未作成: 下の例の `tests/e2e/operator/operator-ban-audit-log.spec.ts` はまだ無い)
 7. `it('writes an error row to app_logs when an API route handles an unexpected exception')`
 8. `it('Slack alert is sent when error rate exceeds 1% threshold')` (未実装: Better Stack を採用しないため、エラー率のアラートは §8.1 の旧案のまま)
 
@@ -983,11 +983,11 @@ describe('admin_audit_logs RLS ポリシー', () => {
   });
 });
 
-// tests/e2e/operator/operator-ban-audit-log.spec.ts
+// tests/e2e/operator/operator-ban-audit-log.spec.ts (未作成の例。このファイルはまだ無い。data-testid の名前も例で、今の画面には無い)
 test('BAN action creates audit_log entry visible to super_admin', async ({
   page,
 }) => {
-  await page.goto('/operator/users');
+  await page.goto('/admin/users');
   const targetRow = page.locator('[data-testid=user-row]').first();
   const targetUserId = await targetRow.getAttribute('data-user-id');
 
@@ -998,7 +998,7 @@ test('BAN action creates audit_log entry visible to super_admin', async ({
   ).toBeVisible();
 
   // 監査ログページで確認
-  await page.goto('/operator/audit-logs');
+  await page.goto('/super-admin/audit-logs');
   const latestLog = page.locator('[data-testid=audit-log-entry]').first();
   await expect(latestLog).toContainText('user_ban');
   await expect(latestLog).toContainText(targetUserId ?? '');

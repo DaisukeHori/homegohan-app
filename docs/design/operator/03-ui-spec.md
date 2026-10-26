@@ -45,7 +45,6 @@
 | 営業 CRM | admin, super_admin, sales |
 | 通知配信 | admin, super_admin |
 | 不正検知 | admin, super_admin |
-| 監査ログ | super_admin |
 | お知らせ | admin, super_admin |
 | super_admin 専用 ▼ | super_admin |
 | └ プラン管理 | super_admin |
@@ -56,12 +55,16 @@
 | └ Cron ジョブ | super_admin |
 | └ データエクスポート | super_admin |
 | └ インフラ監視 | super_admin |
+| └ アプリログ (`/super-admin/logs`) | super_admin |
+| └ 監査ログ (`/super-admin/audit-logs`) | super_admin |
 | └ メール送信 (`/super-admin/email-outbox`。送信待ち・届けられなかったメールの一覧と再送。`10-logs-and-mail-retry.md` §9.2。#1708) | super_admin |
 | └ 管理者管理 | super_admin |
 | └ DB 管理 | super_admin |
 | └ LLM 使用量 | super_admin |
 | └ システム設定 | super_admin |
 | └ バックアップ・DR (`/super-admin/backups`。取得の状態と DR 訓練の記録。`cross/17-backup-automation.md` §7.4。#1129・#1191) | super_admin |
+
+今の実装の super_admin の画面のサイドバー (`src/app/super-admin/layout.tsx` の `superAdminNavItems`・`superAdminOperationsNavItems`) の並び: 見出し「プラン管理」の下に「プラン管理・機能パッケージ・クーポン」、見出し「運用」の下に「アプリログ (`/super-admin/logs`)・監査ログ (`/super-admin/audit-logs`)・メール送信・バックアップ・DR・インフラ監視・LLM 使用量・機能フラグ・A/B テスト」。監査ログは super_admin 専用の「運用」の中にあり、最上位の項目ではない (「運用」の見出しは #1386 で足し、#2051 で監査ログ・インフラ監視・LLM 使用量・機能フラグ・A/B テストを「運用」に並べた)。
 
 `/admin/moderation` と `/admin/moderation/{type}/{id}` の画面の仕様は、本書に節が無い。隠したコンテンツを戻す欄 (「非表示の解除」のカード) と一覧の「非表示中」のバッジは `operator/13-hidden-content-restore.md` §9 が正本。
 
