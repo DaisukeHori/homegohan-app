@@ -90,6 +90,29 @@ describe('PATCH /api/super-admin/coupons/[id]', () => {
     expect(body.data.status).toBe('paused');
   });
 
+  // #2064: 遷移表 (active → paused・paused → active。expired は終端) に無い変更は 409 で断り、
+  // 書かず監査ログも残さない (以前は期限切れのクーポンの再開 expired → active が 200 で通り、監査ログが残った)
+  it('409 OP_COUPON_INVALID_TRANSITION for expired → active: 状態は変わらず、監査ログも残らない', async () => {
+    const { error: expireError } = await supabaseAdmin.from('coupons').update({ status: 'expired' }).eq('id', testCouponId);
+    if (expireError) throw new Error(`Failed to expire the coupon: ${expireError.message}`);
+    const countAudits = async () => {
+      const { count, error } = await supabaseAdmin
+        .from('admin_audit_logs')
+        .select('id', { count: 'exact', head: true })
+        .eq('target_id', testCouponId);
+      if (error) throw new Error(`Failed to count the audit logs: ${error.message}`);
+      return count ?? 0;
+    };
+    const auditsBefore = await countAudits();
+    const res = await apiCall('PATCH', `/api/super-admin/coupons/${testCouponId}`, superAdminUser.jwt, { status: 'active' });
+    expect(res.status).toBe(409);
+    expect((res.body as { error: { code: string } }).error.code).toBe('OP_COUPON_INVALID_TRANSITION');
+    const { data: row, error } = await supabaseAdmin.from('coupons').select('status').eq('id', testCouponId).single();
+    if (error) throw new Error(`Failed to read the coupon: ${error.message}`);
+    expect(row.status).toBe('expired');
+    expect(await countAudits()).toBe(auditsBefore);
+  });
+
   it('403 for admin trying to patch coupon', async () => {
     const res = await apiCall('PATCH', `/api/super-admin/coupons/${testCouponId}`, adminUser.jwt, {
       display_name: 'Admin cannot update',

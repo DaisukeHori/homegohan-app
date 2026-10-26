@@ -9,7 +9,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { couponValidityDay, couponValidUntilPatchValue } from '@/lib/super-admin/coupon-validity';
-import { operationFailureMessage, operationNetworkFailureMessage } from '@/lib/admin/api-error-message';
+import { isStatusChangeConflict, operationFailureMessage, operationNetworkFailureMessage } from '@/lib/admin/api-error-message';
+import { COUPON_INVALID_TRANSITION_ERROR_CODE } from '@/lib/super-admin/coupons-schemas';
 
 type Coupon = {
   id: string;
@@ -87,7 +88,7 @@ function inputAfterSave(current: string, atSave: string, saved: string): string 
  * 手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を、開いたときの古い値で上書きしてしまう
  * (route は送られた項目をそのまま書く)。有効期限は JST の暦日で比べる (#1483 の couponValidUntilPatchValue)。
  * 表示名の空欄は null、最大利用回数の空欄は null (無制限) にする (これまでと同じ)。
- * 手を付けていない入力欄は、読み込み・保存の成功・状態の変更の成功のたびに coupon の値に揃える (handleSave・handleStatusChange) ので、ここで coupon と違う欄は運営が変えた欄
+ * 手を付けていない入力欄は、読み込み・保存の成功・状態の変更の成功・状態の変更の 409 のあとの読み直しのたびに coupon の値に揃える (handleSave・handleStatusChange の applyLatestCoupon) ので、ここで coupon と違う欄は運営が変えた欄
  */
 function changedCouponFields(inputs: CouponInputs, coupon: Coupon): CouponSaveBody {
   const body: CouponSaveBody = {};
@@ -114,6 +115,16 @@ const STATUS_CHANGE_LABELS: Record<CouponStatusChange, string> = {
 function statusChangeFailureSummary(newStatus: CouponStatusChange): string {
   return `${STATUS_CHANGE_LABELS[newStatus]}できませんでした`;
 }
+
+/**
+ * 状態の変更が 409 (遷移表に無い変更・同時の変更) で断られ、クーポンを読み直せたときの理由の文 (#2064)。
+ * 画面の status が古かった (別の操作で一時停止・再開・期限切れにされていた)。英字の状態の値は出さない
+ */
+const STATUS_CONFLICT_RELOADED_REASON = '別の操作でクーポンの状態が先に変わっていました。今の状態を読み込み直しました';
+
+/** 状態の変更が 409 で断られ、読み直しも失敗したときの理由の文 (#2064) */
+const STATUS_CONFLICT_RELOAD_FAILED_REASON =
+  '別の操作でクーポンの状態が先に変わっていました。今の状態を読み込めなかったので、ページを読み込み直してください';
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   active: { label: '有効', color: 'bg-green-100 text-green-700' },
@@ -219,6 +230,30 @@ export default function CouponDetailPage() {
     if (activeTab === 'redemptions') fetchRedemptions(FIRST_REDEMPTIONS_PAGE);
   }, [activeTab, fetchRedemptions]);
 
+  /**
+   * 書いたあと・読み直したあとの最新の行 (latest) を画面の行にする。入力欄は、inputsBefore (押したときの最後に読んだ・保存した行の値)
+   * から変えていない欄だけ latest の値に揃え、書きかけは残す (inputAfterSave。#1917)
+   */
+  const applyLatestCoupon = (latest: Coupon, inputsBefore: CouponInputs) => {
+    const latestInputs = couponInputsOf(latest);
+    setCoupon(latest);
+    setDisplayName((current) => inputAfterSave(current, inputsBefore.displayName, latestInputs.displayName));
+    setValidUntil((current) => inputAfterSave(current, inputsBefore.validUntil, latestInputs.validUntil));
+    setMaxUses((current) => inputAfterSave(current, inputsBefore.maxUses, latestInputs.maxUses));
+  };
+
+  /** 409 のあとにクーポンを読み直す (全体を「読み込み中」にしない)。読めなければ null (#2064) */
+  const rereadCoupon = async (): Promise<Coupon | null> => {
+    try {
+      const res = await fetch(`/api/super-admin/coupons/${couponId}`);
+      if (!res.ok) return null;
+      const data = await res.json() as { data?: Coupon };
+      return data.data ?? null;
+    } catch {
+      return null;
+    }
+  };
+
   const handleSave = async () => {
     // 状態の変更の応答を待つあいだは送らない (#2050。writeInFlightRef)
     if (!coupon || writeInFlightRef.current) return;
@@ -251,12 +286,7 @@ export default function CouponDetailPage() {
       // 送らなかった欄には、画面を開いたあとに別の運営が変えた値が入っていることがある。比べる元だけを新しくして入力欄を
       // 古い値のままにすると、その欄が変えた欄に見え、次の保存 (何も変えずに押しても) で開いたときの古い値を送って、
       // 別の運営の変更を上書きしてしまう。応答を待つあいだに変えた欄は書きかけとして残す (次の保存で送る)
-      const saved = data.data!;
-      const savedInputs = couponInputsOf(saved);
-      setCoupon(saved);
-      setDisplayName((current) => inputAfterSave(current, inputsAtSave.displayName, savedInputs.displayName));
-      setValidUntil((current) => inputAfterSave(current, inputsAtSave.validUntil, savedInputs.validUntil));
-      setMaxUses((current) => inputAfterSave(current, inputsAtSave.maxUses, savedInputs.maxUses));
+      applyLatestCoupon(data.data!, inputsAtSave);
       setSaveSuccess(true);
     } catch {
       setSaveError('ネットワークエラー');
@@ -271,7 +301,9 @@ export default function CouponDetailPage() {
    * (403 は理由の文 (二段階認証の確認が要る など) だけを通す。operationFailureMessage)。
    * 成功したら PATCH の応答の行 (書いたあとの最新の行) で表示を新しくする。全体を「読み込み中」にして読み直さない。
    * 入力欄は保存の経路と同じく、手を付けていない欄だけ応答の行の値に揃え、書きかけは残す (inputAfterSave。#1917)。
-   * 保存の応答を待つあいだは送らない (#2050。writeInFlightRef)
+   * 保存の応答を待つあいだは送らない (#2050。writeInFlightRef)。
+   * 409 で、画面の status が古かった (遷移表に無い変更 OP_COUPON_INVALID_TRANSITION・同時の変更 CONFLICT_STALE_DATA) ときは、
+   * クーポンを読み直して状態の表示とボタンを今の状態にし、日本語の文を出す (書きかけは残す。#2064)
    */
   const handleStatusChange = async (newStatus: CouponStatusChange) => {
     if (!coupon || writeInFlightRef.current) return;
@@ -289,16 +321,18 @@ export default function CouponDetailPage() {
       });
       if (!res.ok) {
         const body: unknown = await res.json().catch(() => null);
+        if (isStatusChangeConflict(res.status, body, COUPON_INVALID_TRANSITION_ERROR_CODE)) {
+          const latest = await rereadCoupon();
+          if (latest) applyLatestCoupon(latest, loadedInputs);
+          const reason = latest ? STATUS_CONFLICT_RELOADED_REASON : STATUS_CONFLICT_RELOAD_FAILED_REASON;
+          setStatusError(`${statusChangeFailureSummary(newStatus)}（${reason}）`);
+          return;
+        }
         setStatusError(operationFailureMessage(statusChangeFailureSummary(newStatus), res.status, body));
         return;
       }
       // 応答は { data: 書いたあとの行 } (保存の経路と同じ形。route は .update().select() の行を返す)
-      const saved = (await res.json() as { data: Coupon }).data;
-      const savedInputs = couponInputsOf(saved);
-      setCoupon(saved);
-      setDisplayName((current) => inputAfterSave(current, loadedInputs.displayName, savedInputs.displayName));
-      setValidUntil((current) => inputAfterSave(current, loadedInputs.validUntil, savedInputs.validUntil));
-      setMaxUses((current) => inputAfterSave(current, loadedInputs.maxUses, savedInputs.maxUses));
+      applyLatestCoupon((await res.json() as { data: Coupon }).data, loadedInputs);
     } catch {
       setStatusError(operationNetworkFailureMessage(statusChangeFailureSummary(newStatus)));
     } finally {

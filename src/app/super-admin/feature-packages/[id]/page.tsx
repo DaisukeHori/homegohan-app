@@ -7,7 +7,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { operationFailureMessage, operationNetworkFailureMessage } from '@/lib/admin/api-error-message';
+import { isStatusChangeConflict, operationFailureMessage, operationNetworkFailureMessage } from '@/lib/admin/api-error-message';
+import { FEATURE_PACKAGE_INVALID_TRANSITION_ERROR_CODE } from '@/lib/super-admin/feature-packages-schemas';
 
 type FeaturePackage = {
   id: string;
@@ -59,7 +60,7 @@ type FeaturePackageSaveBody = {
  * 保存で送る本文。最後に読んだ・保存した機能パッケージ (pkg) から変えた欄だけを入れる (#1917)。
  * 手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を、開いたときの古い値で上書きしてしまう
  * (route は送られた項目をそのまま書く)。機能フラグは並びで比べる。説明の空欄は null にする (これまでと同じ)。
- * 手を付けていない入力欄は、読み込み・保存の成功・廃止の成功のたびに pkg の値に揃える (handleSave・handleDeprecate) ので、ここで pkg と違う欄は運営が変えた欄
+ * 手を付けていない入力欄は、読み込み・保存の成功・廃止の成功・廃止の 409 のあとの読み直しのたびに pkg の値に揃える (handleSave・handleDeprecate の applyLatestPackage) ので、ここで pkg と違う欄は運営が変えた欄
  */
 function changedFeaturePackageFields(
   inputs: { displayName: string; description: string; flags: string[]; displayOrder: number },
@@ -80,6 +81,16 @@ const NO_FEATURE_PACKAGE_CHANGES_MESSAGE = '変更した項目がないので、
 
 /** 廃止が失敗したときの文の頭 (後ろに理由を添える) */
 const DEPRECATE_FAILURE_SUMMARY = '廃止できませんでした';
+
+/**
+ * 廃止が 409 (遷移表に無い変更・同時の変更) で断られ、機能パッケージを読み直せたときの理由の文 (#2064)。
+ * 画面の status が古かった (別の操作で廃止されていた)。英字の状態の値は出さない
+ */
+const STATUS_CONFLICT_RELOADED_REASON = '別の操作で機能パッケージの状態が先に変わっていました。今の状態を読み込み直しました';
+
+/** 廃止が 409 で断られ、読み直しも失敗したときの理由の文 (#2064) */
+const STATUS_CONFLICT_RELOAD_FAILED_REASON =
+  '別の操作で機能パッケージの状態が先に変わっていました。今の状態を読み込めなかったので、ページを読み込み直してください';
 
 export default function FeaturePackageDetailPage() {
   const params = useParams();
@@ -135,6 +146,31 @@ export default function FeaturePackageDetailPage() {
     fetchPkg();
   }, [fetchPkg]);
 
+  /**
+   * 書いたあと・読み直したあとの最新の行 (latest) を画面の行にする。入力欄は、inputsBefore (押したときの最後に読んだ・保存した行の値)
+   * から変えていない欄だけ latest の値に揃え、書きかけは残す (inputAfterSave。#1917)
+   */
+  const applyLatestPackage = (latest: FeaturePackage, inputsBefore: FeaturePackageInputs) => {
+    const latestInputs = featurePackageInputsOf(latest);
+    setPkg(latest);
+    setDisplayName((current) => inputAfterSave(current, inputsBefore.displayName, latestInputs.displayName));
+    setDescription((current) => inputAfterSave(current, inputsBefore.description, latestInputs.description));
+    setFeatureFlagsRaw((current) => inputAfterSave(current, inputsBefore.featureFlagsRaw, latestInputs.featureFlagsRaw));
+    setDisplayOrder((current) => inputAfterSave(current, inputsBefore.displayOrder, latestInputs.displayOrder));
+  };
+
+  /** 409 のあとに機能パッケージを読み直す (全体を「読み込み中」にしない)。読めなければ null (#2064) */
+  const rereadPackage = async (): Promise<FeaturePackage | null> => {
+    try {
+      const res = await fetch(`/api/super-admin/feature-packages/${pkgId}`);
+      if (!res.ok) return null;
+      const data = await res.json() as { data?: FeaturePackage };
+      return data.data ?? null;
+    } catch {
+      return null;
+    }
+  };
+
   const handleSave = async () => {
     // 廃止の応答を待つあいだは送らない (#2050。writeInFlightRef)
     if (!pkg || writeInFlightRef.current) return;
@@ -172,13 +208,7 @@ export default function FeaturePackageDetailPage() {
       // 送らなかった欄には、画面を開いたあとに別の運営が変えた値が入っていることがある。比べる元だけを新しくして入力欄を
       // 古い値のままにすると、その欄が変えた欄に見え、次の保存 (何も変えずに押しても) で開いたときの古い値を送って、
       // 別の運営の変更を上書きしてしまう。応答を待つあいだに変えた欄は書きかけとして残す (次の保存で送る)
-      const saved = data.data!;
-      const savedInputs = featurePackageInputsOf(saved);
-      setPkg(saved);
-      setDisplayName((current) => inputAfterSave(current, inputsAtSave.displayName, savedInputs.displayName));
-      setDescription((current) => inputAfterSave(current, inputsAtSave.description, savedInputs.description));
-      setFeatureFlagsRaw((current) => inputAfterSave(current, inputsAtSave.featureFlagsRaw, savedInputs.featureFlagsRaw));
-      setDisplayOrder((current) => inputAfterSave(current, inputsAtSave.displayOrder, savedInputs.displayOrder));
+      applyLatestPackage(data.data!, inputsAtSave);
       setSaveSuccess(true);
     } catch {
       setSaveError('ネットワークエラー');
@@ -192,7 +222,9 @@ export default function FeaturePackageDetailPage() {
    * 廃止。失敗の応答を黙って捨てず、理由を画面に出す (403 は理由の文 (二段階認証の確認が要る など) だけを通す。operationFailureMessage)。
    * 成功したら PATCH の応答の行 (書いたあとの最新の行) で表示を新しくする。全体を「読み込み中」にして読み直さない。
    * 入力欄は保存の経路と同じく、手を付けていない欄だけ応答の行の値に揃え、書きかけは残す (inputAfterSave。#1917)。
-   * 保存の応答を待つあいだは送らない (#2050。writeInFlightRef)
+   * 保存の応答を待つあいだは送らない (#2050。writeInFlightRef)。
+   * 409 で、画面の status が古かった (遷移表に無い変更 OP_FEATURE_PACKAGE_INVALID_TRANSITION・同時の変更 CONFLICT_STALE_DATA) ときは、
+   * 機能パッケージを読み直して状態の表示とボタンを今の状態にし、日本語の文を出す (書きかけは残す。#2064)
    */
   const handleDeprecate = async () => {
     if (!pkg || writeInFlightRef.current) return;
@@ -210,17 +242,18 @@ export default function FeaturePackageDetailPage() {
       });
       if (!res.ok) {
         const body: unknown = await res.json().catch(() => null);
+        if (isStatusChangeConflict(res.status, body, FEATURE_PACKAGE_INVALID_TRANSITION_ERROR_CODE)) {
+          const latest = await rereadPackage();
+          if (latest) applyLatestPackage(latest, loadedInputs);
+          const reason = latest ? STATUS_CONFLICT_RELOADED_REASON : STATUS_CONFLICT_RELOAD_FAILED_REASON;
+          setDeprecateError(`${DEPRECATE_FAILURE_SUMMARY}（${reason}）`);
+          return;
+        }
         setDeprecateError(operationFailureMessage(DEPRECATE_FAILURE_SUMMARY, res.status, body));
         return;
       }
       // 応答は { data: 書いたあとの行 } (保存の経路と同じ形。route は .update().select() の行を返す)
-      const saved = (await res.json() as { data: FeaturePackage }).data;
-      const savedInputs = featurePackageInputsOf(saved);
-      setPkg(saved);
-      setDisplayName((current) => inputAfterSave(current, loadedInputs.displayName, savedInputs.displayName));
-      setDescription((current) => inputAfterSave(current, loadedInputs.description, savedInputs.description));
-      setFeatureFlagsRaw((current) => inputAfterSave(current, loadedInputs.featureFlagsRaw, savedInputs.featureFlagsRaw));
-      setDisplayOrder((current) => inputAfterSave(current, loadedInputs.displayOrder, savedInputs.displayOrder));
+      applyLatestPackage((await res.json() as { data: FeaturePackage }).data, loadedInputs);
     } catch {
       setDeprecateError(operationNetworkFailureMessage(DEPRECATE_FAILURE_SUMMARY));
     } finally {

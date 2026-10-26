@@ -55,6 +55,19 @@ export function isStaleDataConflict(status: number, body: unknown): boolean {
   return status === STALE_DATA_HTTP_STATUS && extractApiErrorCode(body) === STALE_DATA_ERROR_CODE;
 }
 
+/**
+ * 状態の変更 (クーポンの一時停止・再開、機能パッケージの廃止など) の失敗の応答が、画面の status が古いことを示す 409 か (#2064)。
+ * 409 CONFLICT_STALE_DATA (読んでから書くまでに別の操作が状態を変えた) と、その API の遷移表に無い変更の code
+ * (invalidTransitionCode。例: OP_COUPON_INVALID_TRANSITION) の 2 つ。画面のボタンは遷移表にある変更しか送らないので、
+ * 遷移表に無いと断られたのは、画面を開いたあとに別の操作で状態が変わっていたとき。画面はこのとき行を読み直す。
+ * 同じ 409 でも別の code は false (API の文を出すだけ)
+ */
+export function isStatusChangeConflict(status: number, body: unknown, invalidTransitionCode: string): boolean {
+  if (status !== STALE_DATA_HTTP_STATUS) return false;
+  const code = extractApiErrorCode(body);
+  return code === STALE_DATA_ERROR_CODE || code === invalidTransitionCode;
+}
+
 /** 403 の画面の固定の文の既定 (運営の route の 403 OP_PERMISSION_DENIED の、ロールが足りないときの文と同じ) */
 export const FORBIDDEN_SCREEN_MESSAGE = '権限がありません';
 
