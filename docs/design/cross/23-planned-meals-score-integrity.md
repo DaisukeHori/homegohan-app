@@ -2411,7 +2411,7 @@ describe('#2025 利用者のセッションで 3 列を書く経路が無い', (
 | 任意 | `analyze-meal-photo` (`mealId` あり・本人。印を付けたあと、解析のあいだに後から送った解析が印を付けた・ほかの書き手 (完了の RPC・料理の画像のジョブ・画面の編集) が行を書いた) | `isPhotoAnalysisCurrent` が false (`updated_at` が印でない) | 変わらず | アップロード・画像のジョブの取り消し・書き込みをせずに終える (`console.warn`) |
 | 任意 | `analyze-meal-photo` (`mealId` あり・本人。`isPhotoAnalysisCurrent` のあと、update までのあいだに行が書かれた) | update (`.eq('updated_at', 印).select('id')`) が 0 行 | 変わらず | 書かずに終える (`console.warn`)。Storage へのアップロードと画像のジョブの取り消しは済んでいる |
 | 任意 | `analyze-meal-photo` (`mealId` あり・本文の `invokedAt` が日時として読めない) | ハンドラの `parseInvokedAt` (利用回数を数える前) | 変わらず | 400 (`INVALID_INVOKED_AT_MESSAGE`)。背景の処理を登録しない (§10) |
-| 任意 | Next.js `POST /api/ai/analyze-meal-photo` (本文の `mealId` が UUID の形でない文字列・文字列でない値。#2050) | route の `isUuid` (利用回数を数える前・要求の印の前) | 変わらず | 400 (`AI_MENU_MEAL_ID_INVALID_MESSAGE`)。要求の印を付けず、Edge を呼ばない (uuid の列に渡すと PostgREST が 22P02 で失敗し 500 になるため) |
+| 任意 | Next.js `POST /api/ai/analyze-meal-photo` (本文の `mealId` が UUID の形でない真の値 (空でない文字列・数値・true・オブジェクトなど。空の文字列・null・false・0 は `mealId` 無しとして今までどおり同期の解析)。#2050) | route の `isUuid` (利用回数を数える前・要求の印の前) | 変わらず | 400 (`AI_MENU_MEAL_ID_INVALID_MESSAGE`)。要求の印を付けず、Edge を呼ばない (uuid の列に渡すと PostgREST が 22P02 で失敗し 500 になるため) |
 | 任意 | `analyze-meal-photo` (他人の `mealId`) | 本人の行の確認で 0 行 | 変わらず | 例外 `PLANNED_MEAL_NOT_FOUND` をログに残す (印を付けず、解析もしない) |
 | 任意 | `POST /api/ai/nutrition` (どちらの分岐も) | – | 変わらず (`veg_score` を書かない) | 栄養素・`quality_tags` などだけ |
 | 任意 | 利用者の PostgREST INSERT / UPDATE で `veg_score` | 列の権限 | 変わらず | 42501 |
@@ -2448,7 +2448,7 @@ describe('#2025 利用者のセッションで 3 列を書く経路が無い', (
 | AI 相談 `complete_meal` | not_found | – | 200 (`success: false`) | `result.error = '権限がありません'` (既存) | AI の返事 |
 | AI 相談 `complete_meal` | DB の失敗 | – | 200 (`success: false`) | `AI_ACTION_COMPLETE_MEAL_FAILED_MESSAGE` = '食事の完了を更新できませんでした' | AI の返事 |
 | PostgREST (利用者) | 3 列を含む INSERT / UPDATE / upsert | – / 42501 `permission denied for table planned_meals` | 403 | – | 古いビルド: 戻す |
-| Next.js `POST /api/ai/analyze-meal-photo` | 本文の `mealId` が UUID の形でない文字列・文字列でない値 (#2050) | – | 400 (利用回数を数える前。要求の印を付けず、Edge を呼ばない) | `AI_MENU_MEAL_ID_INVALID_MESSAGE` = '献立の指定が正しくありません' | 既存の失敗の表示 (画面は planned_meals の id を送るので起きない) |
+| Next.js `POST /api/ai/analyze-meal-photo` | 本文の `mealId` が UUID の形でない真の値 (空でない文字列・数値・true・オブジェクトなど。空の文字列・null・false・0 は `mealId` 無しとして今までどおり同期の解析) (#2050) | – | 400 (利用回数を数える前。要求の印を付けず、Edge を呼ばない) | `AI_MENU_MEAL_ID_INVALID_MESSAGE` = '献立の指定が正しくありません' | 既存の失敗の表示 (画面は planned_meals の id を送るので起きない) |
 | Next.js `POST /api/ai/analyze-meal-photo` | 要求の印 (`markPhotoAnalysisRequest`) の update の失敗 (#2050) | – | 500 (Edge を呼ばない。利用回数は数え済み) | `internalError` (既存) | 既存の失敗の表示 |
 | Edge `analyze-meal-photo` | 他人の `mealId`・消えた献立 | `Error('PLANNED_MEAL_NOT_FOUND')` | – (背景) | – | ログ (`createLogger('analyze-meal-photo')`) |
 | Edge `analyze-meal-photo` | service_role の鍵 (`SERVICE_ROLE_JWT` / `SUPABASE_SERVICE_ROLE_KEY`) が無い | `createClient` の例外 (`supabaseKey is required.`) | – (背景) | – | 外側の `catch` がログに残し、書き込まない (今までは取り消しだけ失敗して利用者の client で書いていた。§7.15 の注) |
