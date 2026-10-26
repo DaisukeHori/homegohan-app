@@ -33,6 +33,7 @@ import {
   familyRoleLabel,
   orgRoleLabel,
 } from '@/lib/membership/role-labels';
+import { SELF_DISSOLVE_CONFIRM_KEYWORD, SELF_DISSOLVE_COPY, selfDissolveApiPath } from '@/lib/membership/self-dissolve';
 
 const USER_ID = '33333333-3333-4333-8333-333333333333';
 const OLD_REP_ID = '44444444-4444-4444-8444-444444444444';
@@ -972,6 +973,146 @@ describe('#2073 設定のメンバーシップ: 読み込めなかったのを�
     expect(byTestId('settings-share-error')).toBe('共有設定の更新に失敗しました');
   });
 
+  it('読み直しの応答を待つあいだは、共有の切り替えを止めたままにする', async () => {
+    membershipReadable();
+    const reread = deferred<QueryResult>();
+    let rereadStarted = false;
+    const base = supabaseState.responders.family_members as Responder;
+    supabaseState.responders.family_members = (ctx: QueryContext) => {
+      // 共有の設定の読み直しは share_* の列だけを読む (画面を開いたときの読み込みは id・role も読む)
+      if (ctx.columns === 'share_meals, share_health, share_menu') {
+        rereadStarted = true;
+        return reread.promise;
+      }
+      return base(ctx);
+    };
+    mockFetch((method, url) => {
+      if (method === 'PATCH' && url.pathname === SHARE_PATH) throw new TypeError('Failed to fetch');
+      throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+    });
+    await renderElement(createElement(MembershipSettingsPage));
+    expect(healthSwitch()?.disabled).toBe(false);
+
+    await click(healthSwitch(), '健康記録の共有の切り替え');
+    expect(rereadStarted).toBe(true);
+    expect(healthSwitch()?.disabled).toBe(true);
+    expect(text()).toContain('保存中...');
+
+    await act(async () => {
+      reread.resolve({ data: { share_meals: true, share_health: true, share_menu: true }, error: null });
+    });
+    await settle();
+    expect(healthSwitch()?.disabled).toBe(false);
+    expect(healthSwitch()?.getAttribute('aria-checked')).toBe('true');
+    expect(text()).not.toContain('保存中...');
+  });
+
+  describe('読み込みの失敗の分岐 (一度読めたあとの読み直し・組織・家族グループ)', () => {
+    const ORG_NAME = '山田商事';
+    const FAMILY_NAME = '山田家';
+    const DISSOLVE_PATH = selfDissolveApiPath('family');
+    /** 所属家族の区画の「所属していません」の文の数 (組織と家族の 2 区画にある) */
+    const notMemberCount = () =>
+      Array.from(container.querySelectorAll('p')).filter((p) => p.textContent === '所属していません').length;
+    const spinner = () => container.querySelector('.animate-spin');
+
+    /** 家族 (代表者) と組織 (メンバー) の両方に入っている */
+    function bothMembershipsReadable() {
+      membershipReadable();
+      supabaseState.responders.user_profiles = () => ({
+        data: { family_id: FAMILY_ID, organization_id: ORG_ID, org_role: 'member', nickname: '太郎' },
+        error: null,
+      });
+      supabaseState.responders.family_members = () => ({ data: { id: MEMBER_A_ID, role: 'representative', ...serverShare }, error: null });
+      supabaseState.responders.organizations = () => ({ data: { id: ORG_ID, name: ORG_NAME }, error: null });
+    }
+
+    it('解散のあとの読み直しが失敗したら、解散した所属を外し、もう一方の所属の区画を残して、その上に読み込めなかった文を出す。「再試行」は画面を保ったまま読み直す', async () => {
+      bothMembershipsReadable();
+      mockFetch((method, url) => {
+        if (method === 'POST' && url.pathname === DISSOLVE_PATH) {
+          // 解散は済む (200)。そのあとの所属の読み直しだけが失敗する
+          supabaseState.responders.user_profiles = () => ({ data: null, error: LOAD_FAILURE });
+          return jsonResponse(200, { data: { dissolved_at: '2026-10-27T00:00:00.000Z' } });
+        }
+        throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+      });
+      await renderElement(createElement(MembershipSettingsPage));
+      expect(text()).toContain(FAMILY_NAME);
+      expect(text()).toContain(ORG_NAME);
+      expect(notMemberCount()).toBe(0);
+
+      await click(findButton('家族グループを解散'), '「家族グループを解散」');
+      await setValue(container.querySelector<HTMLInputElement>('[data-testid="self-dissolve-family-keyword"]'), SELF_DISSOLVE_CONFIRM_KEYWORD);
+      await click(container.querySelector<HTMLButtonElement>('[data-testid="self-dissolve-family-submit"]'), '「家族グループを解散する」');
+
+      expect(callsOf('POST', DISSOLVE_PATH)).toHaveLength(1);
+      // 解散のあとに所属を読み直した (画面を開いたときと合わせて 2 回)
+      expect(queryCount('user_profiles', 'single')).toBe(2);
+      expect(text()).toContain(SELF_DISSOLVE_COPY.family.done);
+      expect(byTestId('settings-membership-load-error')).toContain('所属の情報を読み込めませんでした');
+      // 全体を読み込み中や空の画面にしない: 組織の区画は残り、解散した家族は「所属していません」になる
+      expect(spinner()).toBeNull();
+      expect(text()).toContain(ORG_NAME);
+      expect(findButton('組織から脱退')).toBeDefined();
+      expect(text()).not.toContain(FAMILY_NAME);
+      expect(notMemberCount()).toBe(1);
+
+      // 「再試行」: 読み直しの応答を待つあいだも、画面 (組織の区画) を保つ
+      const retry = deferred<QueryResult>();
+      supabaseState.responders.user_profiles = () => retry.promise;
+      await click(findButton('再試行'), '「再試行」');
+      expect(spinner()).toBeNull();
+      expect(text()).toContain(ORG_NAME);
+
+      await act(async () => {
+        retry.resolve({ data: { family_id: null, organization_id: ORG_ID, org_role: 'member', nickname: '太郎' }, error: null });
+      });
+      await settle();
+      expect(byTestId('settings-membership-load-error')).toBeNull();
+      expect(text()).toContain(ORG_NAME);
+      expect(notMemberCount()).toBe(1);
+    });
+
+    it('画面を開いたときに組織を読み込めなかったら、「所属していません」と見せず、読み込めなかった文を出す', async () => {
+      membershipReadable();
+      supabaseState.responders.user_profiles = () => ({
+        data: { family_id: null, organization_id: ORG_ID, org_role: 'member', nickname: '太郎' },
+        error: null,
+      });
+      supabaseState.responders.organizations = () => ({ data: null, error: LOAD_FAILURE });
+      await renderElement(createElement(MembershipSettingsPage));
+
+      expect(queryCount('organizations', 'maybeSingle')).toBe(1);
+      expect(byTestId('settings-membership-load-error')).toContain('所属の情報を読み込めませんでした');
+      expect(notMemberCount()).toBe(0);
+      expect(findButton('家族グループを作成・参加')).toBeUndefined();
+      expect(spinner()).toBeNull();
+
+      supabaseState.responders.organizations = () => ({ data: { id: ORG_ID, name: ORG_NAME }, error: null });
+      await click(findButton('再試行'), '「再試行」');
+      expect(byTestId('settings-membership-load-error')).toBeNull();
+      expect(text()).toContain(ORG_NAME);
+    });
+
+    it('画面を開いたときに家族グループだけを読み込めなかったら、「所属していません」と見せず、読み込めなかった文を出す', async () => {
+      membershipReadable();
+      supabaseState.responders.family_groups = () => ({ data: null, error: LOAD_FAILURE });
+      await renderElement(createElement(MembershipSettingsPage));
+
+      // 家族の中の自分の行は読めている
+      expect(queryCount('family_members', 'maybeSingle')).toBe(1);
+      expect(byTestId('settings-membership-load-error')).toContain('所属の情報を読み込めませんでした');
+      expect(notMemberCount()).toBe(0);
+      expect(findButton('家族グループを作成・参加')).toBeUndefined();
+
+      supabaseState.responders.family_groups = () => ({ data: { id: FAMILY_ID, name: FAMILY_NAME }, error: null });
+      await click(findButton('再試行'), '「再試行」');
+      expect(byTestId('settings-membership-load-error')).toBeNull();
+      expect(text()).toContain(FAMILY_NAME);
+    });
+  });
+
   describe('組織の役割を内部の英字の値 (owner / admin / member) のまま出さない', () => {
     function orgMemberReadable(orgRole: string | null) {
       membershipReadable();
@@ -1259,6 +1400,32 @@ describe('#2073 S2 大人の招待: 送信の通信が切れたら、招待の�
     expect(text()).toContain(NETWORK_ERROR);
     expect(text()).toContain(STATE_UNCONFIRMED);
   });
+
+  it('読み直しの応答を待つあいだは、「招待を送信」を止めたままにする', async () => {
+    const reread = deferred<Response>();
+    let reads = 0;
+    mockFetch((method, url) => {
+      if (url.pathname !== INVITES_PATH) throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+      if (method === 'GET') {
+        reads += 1;
+        // 1 回目は画面を開いたとき、2 回目は送る前、3 回目は通信が切れたあとの読み直し
+        return reads < 3 ? jsonResponse(200, { data: { invites: serverInvites } }) : reread.promise;
+      }
+      throw new TypeError('Failed to fetch');
+    });
+    await renderElement(createElement(FamilyInvitePage));
+
+    await fillAndSubmit();
+    expect(reads).toBe(3);
+    expect(submitButton()?.disabled).toBe(true);
+
+    await act(async () => {
+      reread.resolve(jsonResponse(200, { data: { invites: serverInvites } }));
+    });
+    await settle();
+    expect(text()).toContain(NETWORK_ERROR);
+    expect(submitButton()?.disabled).toBe(false);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1403,6 +1570,59 @@ describe('#2073 S2 昇格の依頼: 送信・取り消しの通信が切れた�
 
     expect(text()).toContain(STATE_UNCONFIRMED);
   });
+
+  it('送信の読み直しの応答を待つあいだは、「参加リクエストを送信」を止めたままにする', async () => {
+    const reread = deferred<QueryResult>();
+    let reads = 0;
+    supabaseState.responders.family_promotion_requests = () => {
+      reads += 1;
+      return reads === 1 ? { data: null, error: null } : reread.promise;
+    };
+    mockFetch((method, url) => {
+      if (method === 'POST' && url.pathname === PROMOTE_PATH) throw new TypeError('Failed to fetch');
+      throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+    });
+    await renderElement(createElement(PromoteMemberPage));
+
+    await fillAndSend();
+    expect(reads).toBe(2);
+    expect(submitButton()?.disabled).toBe(true);
+
+    await act(async () => {
+      reread.resolve({ data: null, error: null });
+    });
+    await settle();
+    expect(text()).toContain(NETWORK_ERROR);
+    expect(submitButton()?.disabled).toBe(false);
+  });
+
+  it('取り消しの読み直しの応答を待つあいだは、「リクエストを取り消す」と「別のメールアドレスで再送する」を止めたままにする', async () => {
+    const reread = deferred<QueryResult>();
+    let reads = 0;
+    supabaseState.responders.family_promotion_requests = () => {
+      reads += 1;
+      return reads === 1 ? { data: pendingRow('req-old', EMAIL), error: null } : reread.promise;
+    };
+    mockFetch((method, url) => {
+      if (method === 'DELETE' && url.pathname === PROMOTE_PATH) throw new TypeError('Failed to fetch');
+      throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+    });
+    await renderElement(createElement(PromoteMemberPage));
+
+    await click(findButton('リクエストを取り消す'), '「リクエストを取り消す」');
+    expect(reads).toBe(2);
+    expect(findButton('リクエストを取り消す')).toBeUndefined();
+    expect(findButton('取消中…')?.disabled).toBe(true);
+    expect(findButton('別のメールアドレスで再送する')?.disabled).toBe(true);
+
+    await act(async () => {
+      reread.resolve({ data: pendingRow('req-old', EMAIL), error: null });
+    });
+    await settle();
+    expect(text()).toContain(NETWORK_ERROR);
+    expect(findButton('リクエストを取り消す')?.disabled).toBe(false);
+    expect(findButton('別のメールアドレスで再送する')?.disabled).toBe(false);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1468,6 +1688,36 @@ describe('#2073 S2 家族の作成: 作成の通信が切れたら、自分の�
 
     expect(router.push).not.toHaveBeenCalled();
     expect(text()).toContain(STATE_UNCONFIRMED);
+  });
+
+  it('読み直しの応答を待つあいだは、「家族グループを作る」を止めたままにする', async () => {
+    const reread = deferred<QueryResult>();
+    let rereadStarted = false;
+    mockFetch((method, url) => {
+      if (method === 'POST' && url.pathname === GROUPS_PATH) {
+        supabaseState.responders.user_profiles = (ctx: QueryContext) => {
+          if (ctx.kind === 'single' && ctx.filters.id === USER_ID) {
+            rereadStarted = true;
+            return reread.promise;
+          }
+          return { data: null, error: NO_ROWS };
+        };
+        throw new TypeError('Failed to fetch');
+      }
+      throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+    });
+    await renderElement(createElement(FamilySetupPage));
+
+    await fillAndSubmit();
+    expect(rereadStarted).toBe(true);
+    expect(submitButton()?.disabled).toBe(true);
+
+    await act(async () => {
+      reread.resolve({ data: { family_id: null, organization_id: null }, error: null });
+    });
+    await settle();
+    expect(text()).toContain(NETWORK_ERROR);
+    expect(submitButton()?.disabled).toBe(false);
   });
 });
 
@@ -1665,5 +1915,27 @@ describe('#2073 S8 家族の代表者の譲渡: 提案の送信の通信が切�
 
     expect(text()).toContain(STATE_UNCONFIRMED);
     expect(text()).not.toContain('譲渡提案を送信しました');
+  });
+
+  it('読み直しの応答を待つあいだは、「譲渡を提案」を止めたままにする', async () => {
+    const reread = deferred<QueryResult>();
+    let reads = 0;
+    supabaseState.responders.ownership_transfer_proposals = () => {
+      reads += 1;
+      return reads === 1 ? { data: null, error: null } : reread.promise;
+    };
+    proposeDisconnects(() => undefined);
+    await renderElement(createElement(FamilyRepresentativeTransferPage));
+
+    await selectAndPropose();
+    expect(reads).toBe(2);
+    expect(submitButton()?.disabled).toBe(true);
+
+    await act(async () => {
+      reread.resolve({ data: null, error: null });
+    });
+    await settle();
+    expect(text()).toContain(NETWORK_ERROR);
+    expect(submitButton()?.disabled).toBe(false);
   });
 });
