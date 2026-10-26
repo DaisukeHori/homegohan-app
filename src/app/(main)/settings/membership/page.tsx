@@ -13,6 +13,7 @@ import { ChevronLeft, Users, Building2, AlertTriangle } from 'lucide-react';
 import type { MembershipScope } from '@/lib/emails/membership/scope-label';
 import { SELF_DISSOLVE_COPY } from '@/lib/membership/self-dissolve';
 import { SelfDissolveSection } from '@/components/membership/SelfDissolveSection';
+import { orgRoleLabel } from '@/lib/membership/role-labels';
 import {
   readOwnMembershipAfterNetworkFailure,
   withMembershipStateNote,
@@ -417,7 +418,7 @@ export default function MembershipSettingsPage() {
                   <div>
                     <p className="text-sm font-medium text-gray-800">{orgInfo.org_name}</p>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      役割: {orgInfo.org_role}
+                      役割: {orgRoleLabel(orgInfo.org_role)}
                     </p>
                   </div>
                   {orgInfo.org_role === 'owner' ? (

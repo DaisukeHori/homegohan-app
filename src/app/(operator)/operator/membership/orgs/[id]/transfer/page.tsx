@@ -11,6 +11,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import ForceActionConfirmModal from '@/components/operator/membership/ForceActionConfirmModal';
 import { normalizeProfileName } from '@/lib/profile-name';
+import { orgRoleLabel } from '@/lib/membership/role-labels';
 
 type Candidate = {
   id: string;
@@ -137,7 +138,7 @@ export default function OrgTransferPage() {
                         {c.email ?? normalizeProfileName(c.nickname) ?? c.id}
                       </p>
                       <p className="text-xs text-gray-500">
-                        {c.org_role ?? 'member'} &mdash; 最終ログイン: {formatLastLogin(c.last_login_at)}
+                        {orgRoleLabel(c.org_role)} &mdash; 最終ログイン: {formatLastLogin(c.last_login_at)}
                       </p>
                     </div>
                   </label>

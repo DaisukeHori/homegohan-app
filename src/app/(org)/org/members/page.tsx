@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
 import { membershipErrorMessageOfBody } from "@/lib/errors/membership-errors";
 import { normalizeProfileName } from "@/lib/profile-name";
+import { orgRoleLabel } from "@/lib/membership/role-labels";
 import { readOwnMembershipAfterNetworkFailure, withMembershipStateNote } from "@/lib/membership/leave-state";
 
 /**
@@ -173,14 +174,6 @@ export default function MembersPage() {
     void fetchData();
   };
 
-  const roleLabel = (role: string) => {
-    switch (role) {
-      case 'owner': return 'オーナー';
-      case 'admin': return '管理者';
-      default: return 'メンバー';
-    }
-  };
-
   const canRemove = (targetRole: string, targetId: string): boolean => {
     if (!currentUser) return false;
     if (targetId === currentUser.id) return false;
@@ -292,7 +285,7 @@ export default function MembersPage() {
                         ? 'bg-blue-100 text-blue-700'
                         : 'bg-gray-100 text-gray-600'
                     }`}>
-                      {roleLabel(member.org_role)}
+                      {orgRoleLabel(member.org_role)}
                     </span>
                   </td>
                   <td className="p-4 text-sm text-gray-500 font-mono">

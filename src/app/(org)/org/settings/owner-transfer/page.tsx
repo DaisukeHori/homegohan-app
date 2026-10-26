@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { normalizeProfileName } from "@/lib/profile-name";
+import { orgRoleLabel } from "@/lib/membership/role-labels";
 import { MEMBERSHIP_STATE_UNCONFIRMED_NOTE } from "@/lib/membership/leave-state";
 import {
   readPendingTransferProposal,
@@ -157,13 +158,6 @@ export default function OwnerTransferPage() {
     }
   };
 
-  const roleLabel = (role: string) => {
-    switch (role) {
-      case 'admin': return '管理者';
-      default: return 'メンバー';
-    }
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -230,7 +224,7 @@ export default function OwnerTransferPage() {
                   <div className="flex-1">
                     <p className="font-medium text-gray-900">{normalizeProfileName(candidate.nickname) ?? '(名前なし)'}</p>
                     <p className="text-xs text-gray-500">
-                      {roleLabel(candidate.org_role)}
+                      {orgRoleLabel(candidate.org_role)}
                       {candidate.joined_org_at && (
                         <> — {new Date(candidate.joined_org_at).toLocaleDateString('ja-JP')} 加入</>
                       )}

@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
+import { familyRoleLabel } from '@/lib/membership/role-labels';
 
 /**
  * 自分のプロフィールを読み込めなかった・問い合わせが例外を投げたときの文 (#2073 S3)。家族に入っていない (家族の作成の画面へ移す) と
@@ -113,12 +114,6 @@ export default function FamilyDashboardPage() {
     void loadDashboard();
   }, [loadDashboard]);
 
-  const roleLabel = (role: string) => {
-    if (role === 'representative') return '代表';
-    if (role === 'adult') return '大人';
-    return '子供';
-  };
-
   const roleIcon = (role: string) => {
     if (role === 'representative') return '👑';
     if (role === 'adult') return '👤';
@@ -207,7 +202,7 @@ export default function FamilyDashboardPage() {
                     <div className="font-medium text-gray-800">
                       {member.display_name ?? '名前未設定'}
                     </div>
-                    <div className="text-xs text-gray-400">{roleLabel(member.role)}</div>
+                    <div className="text-xs text-gray-400">{familyRoleLabel(member.role)}</div>
                   </div>
                 </div>
               ))

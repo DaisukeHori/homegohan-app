@@ -15,6 +15,7 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
 import { membershipErrorMessageOfBody } from '@/lib/errors/membership-errors';
+import { familyRoleLabel } from '@/lib/membership/role-labels';
 import { withMembershipStateNote, type MembershipStateAfterNetworkFailure } from '@/lib/membership/leave-state';
 import {
   readOwnShareSettingsAfterNetworkFailure,
@@ -299,12 +300,6 @@ export default function FamilyMemberDetailPage() {
     }
   };
 
-  const roleLabel = (role: string) => {
-    if (role === 'representative') return '代表';
-    if (role === 'adult') return '大人';
-    return '子供';
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -375,7 +370,7 @@ export default function FamilyMemberDetailPage() {
             <h1 className="text-2xl font-bold text-gray-900">
               {member.display_name ?? '名前未設定'}
             </h1>
-            <p className="text-xs text-gray-400 mt-0.5">{roleLabel(member.role)}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{familyRoleLabel(member.role)}</p>
           </div>
         </div>
       </div>
@@ -389,7 +384,7 @@ export default function FamilyMemberDetailPage() {
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-gray-500">役割</span>
-              <span className="text-gray-800 font-medium">{roleLabel(member.role)}</span>
+              <span className="text-gray-800 font-medium">{familyRoleLabel(member.role)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-500">参加日</span>

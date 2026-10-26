@@ -26,6 +26,13 @@ import {
   TRANSFER_PROPOSAL_STATUS_MESSAGES,
   transferProposalStatusMessage,
 } from '@/lib/membership/transfer-proposal-status';
+import {
+  FAMILY_ROLE_LABELS,
+  ORG_ROLE_LABELS,
+  ROLE_UNKNOWN_LABEL,
+  familyRoleLabel,
+  orgRoleLabel,
+} from '@/lib/membership/role-labels';
 
 const USER_ID = '33333333-3333-4333-8333-333333333333';
 const OLD_REP_ID = '44444444-4444-4444-8444-444444444444';
@@ -412,6 +419,32 @@ function proposalRow(status: string, scope: 'family' | 'organization') {
     reason: null,
   };
 }
+
+describe('#2073 役割の表示名 (orgRoleLabel / familyRoleLabel)', () => {
+  it('組織の役割 (org_role_enum の 3 つ) を日本語にする', () => {
+    expect(orgRoleLabel('owner')).toBe('オーナー');
+    expect(orgRoleLabel('admin')).toBe('管理者');
+    expect(orgRoleLabel('member')).toBe('メンバー');
+    expect(Object.keys(ORG_ROLE_LABELS).sort()).toEqual(['admin', 'member', 'owner']);
+  });
+
+  it('家族の役割 (family_role_enum の 3 つ) を日本語にする', () => {
+    expect(familyRoleLabel('representative')).toBe('代表');
+    expect(familyRoleLabel('adult')).toBe('大人');
+    expect(familyRoleLabel('child')).toBe('子供');
+    expect(Object.keys(FAMILY_ROLE_LABELS).sort()).toEqual(['adult', 'child', 'representative']);
+  });
+
+  it('表に無い値・null・undefined・Object の組み込みの名前は、内部の値を出さず固定の文にする', () => {
+    for (const role of ['unexpected_role', '', null, undefined, 'toString', '__proto__', 'constructor']) {
+      expect(orgRoleLabel(role)).toBe(ROLE_UNKNOWN_LABEL);
+      expect(familyRoleLabel(role)).toBe(ROLE_UNKNOWN_LABEL);
+    }
+    // 組織と家族の役割の名前は混ざらない (家族の画面に組織の語を出さない)
+    expect(familyRoleLabel('owner')).toBe(ROLE_UNKNOWN_LABEL);
+    expect(orgRoleLabel('adult')).toBe(ROLE_UNKNOWN_LABEL);
+  });
+});
 
 describe('#2073 S5 家族の代表者の譲渡の承諾: 処理済みの提案の状態を英字で出さない', () => {
   function proposalIs(status: string) {
@@ -937,6 +970,56 @@ describe('#2073 設定のメンバーシップ: 読み込めなかったのを�
     expect(healthSwitch()?.getAttribute('aria-checked')).toBe('false');
     expect(queryCount('family_members')).toBe(loadQueries);
     expect(byTestId('settings-share-error')).toBe('共有設定の更新に失敗しました');
+  });
+
+  describe('組織の役割を内部の英字の値 (owner / admin / member) のまま出さない', () => {
+    function orgMemberReadable(orgRole: string | null) {
+      membershipReadable();
+      supabaseState.responders.user_profiles = () => ({
+        data: { family_id: null, organization_id: ORG_ID, org_role: orgRole, nickname: '太郎' },
+        error: null,
+      });
+      supabaseState.responders.organizations = () => ({ data: { id: ORG_ID, name: '山田商事' }, error: null });
+    }
+    /** 所属組織の区画の「役割: …」の行 */
+    const roleLine = () => Array.from(container.querySelectorAll('p')).find((p) => p.textContent?.startsWith('役割:'))?.textContent;
+
+    it.each([
+      ['owner', 'オーナー'],
+      ['admin', '管理者'],
+      ['member', 'メンバー'],
+    ])('役割が %s なら「役割: %s」と出し、英字の値を画面の文に出さない', async (orgRole, label) => {
+      orgMemberReadable(orgRole);
+      await renderElement(createElement(MembershipSettingsPage));
+
+      expect(text()).toContain('山田商事');
+      expect(roleLine()).toBe(`役割: ${label}`);
+      expect(text()).not.toMatch(new RegExp(`\\b${orgRole}\\b`));
+    });
+
+    it('組織のオーナーなら、役割の文を訳したうえで、譲渡と解散の操作はこれまでどおり出す', async () => {
+      orgMemberReadable('owner');
+      await renderElement(createElement(MembershipSettingsPage));
+
+      expect(roleLine()).toBe('役割: オーナー');
+      expect(findButton('オーナーを譲渡')).toBeDefined();
+      expect(findButton('組織を解散')).toBeDefined();
+    });
+
+    it('役割が空 (null) なら「メンバー」と出す', async () => {
+      orgMemberReadable(null);
+      await renderElement(createElement(MembershipSettingsPage));
+
+      expect(roleLine()).toBe('役割: メンバー');
+    });
+
+    it('表に無い役割は、内部の値を出さず固定の文 (メンバー) を出す', async () => {
+      orgMemberReadable('unexpected_role');
+      await renderElement(createElement(MembershipSettingsPage));
+
+      expect(roleLine()).toBe(`役割: ${ROLE_UNKNOWN_LABEL}`);
+      expect(text()).not.toContain('unexpected_role');
+    });
   });
 });
 
