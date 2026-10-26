@@ -86,6 +86,12 @@ export default function TicketDetailPage(props: PageProps) {
   const [isAssigning, setIsAssigning] = useState(false);
 
   const [statusChanging, setStatusChanging] = useState(false);
+  // 返信・担当者の設定・ステータスの変更のどれかの書き込みとそのあとの読み直しの応答を待っているか (10/26 の整合ゲート 1026e。#2050)。
+  // どの書き込みのあとの読み直しもチケットを丸ごと差し替えるので、2 つを重ねると、先に送った読み直しの応答が後に届いたとき、
+  // その古いチケット (例: 変える前のステータス) で表示が上書きされる (#2053 のクーポン・機能パッケージと同じ型)。
+  // 待つあいだは 3 つの書き込みのボタンを止め、押されても送らない。ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
+  const writeInFlightRef = useRef(false);
+  const isWriting = isSending || isAssigning || statusChanging;
 
   const fetchTicket = useCallback(async () => {
     setIsLoading(true);
@@ -113,7 +119,8 @@ export default function TicketDetailPage(props: PageProps) {
   }, [ticket?.messages]);
 
   const handleSendMessage = async () => {
-    if (!messageBody.trim()) return;
+    if (!messageBody.trim() || writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
     setIsSending(true);
     setEmailNotice(null);
     try {
@@ -135,12 +142,14 @@ export default function TicketDetailPage(props: PageProps) {
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '送信失敗');
     } finally {
+      writeInFlightRef.current = false;
       setIsSending(false);
     }
   };
 
   const handleAssign = async () => {
-    if (!assigneeId.trim()) return;
+    if (!assigneeId.trim() || writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
     setIsAssigning(true);
     try {
       const res = await fetch(`/api/admin/support/tickets/${params.id}/assign`, {
@@ -155,11 +164,14 @@ export default function TicketDetailPage(props: PageProps) {
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : ASSIGN_FAILURE_MESSAGE);
     } finally {
+      writeInFlightRef.current = false;
       setIsAssigning(false);
     }
   };
 
   const handleStatusChange = async (status: string) => {
+    if (writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
     setStatusChanging(true);
     try {
       const res = await fetch(`/api/admin/support/tickets/${params.id}`, {
@@ -174,6 +186,7 @@ export default function TicketDetailPage(props: PageProps) {
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : STATUS_CHANGE_FAILURE_MESSAGE);
     } finally {
+      writeInFlightRef.current = false;
       setStatusChanging(false);
     }
   };
@@ -272,7 +285,7 @@ export default function TicketDetailPage(props: PageProps) {
                   <button
                     key={s}
                     onClick={() => handleStatusChange(s)}
-                    disabled={statusChanging || ticket.status === s}
+                    disabled={isWriting || ticket.status === s}
                     className={`w-full text-left px-3 py-1.5 text-xs rounded border transition-colors ${
                       ticket.status === s
                         ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
@@ -297,7 +310,7 @@ export default function TicketDetailPage(props: PageProps) {
               />
               <button
                 onClick={handleAssign}
-                disabled={isAssigning || !assigneeId.trim()}
+                disabled={isWriting || !assigneeId.trim()}
                 className="w-full px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {isAssigning ? '割り当て中...' : '担当者を設定'}
@@ -384,7 +397,7 @@ export default function TicketDetailPage(props: PageProps) {
               <div className="flex justify-end">
                 <button
                   onClick={handleSendMessage}
-                  disabled={isSending || !messageBody.trim()}
+                  disabled={isWriting || !messageBody.trim()}
                   className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {isSending ? '送信中...' : isInternal ? 'メモを保存' : '返信を送信'}

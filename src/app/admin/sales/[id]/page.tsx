@@ -5,7 +5,7 @@
  * operator/03-ui-spec.md §17 準拠
  * 権限: sales, admin, super_admin
  */
-import { useState, useEffect, useCallback, use } from 'react';
+import { useState, useEffect, useCallback, useRef, use } from 'react';
 import { forbiddenMessageForScreen, forbiddenMessageOfResponse, isStaleDataConflict } from '@/lib/admin/api-error-message';
 import { todayLocal } from '@/lib/date-utils';
 import Link from 'next/link';
@@ -129,6 +129,12 @@ export default function LeadDetailPage(props: PageProps) {
 
   // ステージ変更
   const [isChangingStage, setIsChangingStage] = useState(false);
+  // 活動の記録かステージの変更のどちらかの書き込みとそのあとの読み直しの応答を待っているか (10/26 の整合ゲート 1026e。#2050)。
+  // どちらの書き込みのあとの読み直しもリードを丸ごと差し替えるので、2 つを重ねると、先に送った読み直しの応答が後に届いたとき、
+  // その古いリード (例: 変える前のステージ) で表示が上書きされる (#2053 のクーポン・機能パッケージと同じ型)。
+  // 待つあいだは両方のボタンを止め、押されても送らない。ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
+  const writeInFlightRef = useRef(false);
+  const isWriting = isAddingActivity || isChangingStage;
 
   /** リードを読み、結果の種類を返す (409 のあとの読み直しで、結果に合わせて文を決めるため。#1917) */
   const fetchLead = useCallback(async (): Promise<LeadLoadOutcome> => {
@@ -160,7 +166,8 @@ export default function LeadDetailPage(props: PageProps) {
   useEffect(() => { fetchLead(); }, [fetchLead]);
 
   const handleAddActivity = async () => {
-    if (!activitySummary.trim()) return;
+    if (!activitySummary.trim() || writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
     setIsAddingActivity(true);
     try {
       const res = await fetch(`/api/admin/sales/leads/${params.id}/activities`, {
@@ -185,12 +192,14 @@ export default function LeadDetailPage(props: PageProps) {
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '活動記録の追加に失敗しました');
     } finally {
+      writeInFlightRef.current = false;
       setIsAddingActivity(false);
     }
   };
 
   const handleStageChange = async (newStage: Stage) => {
-    if (!lead || lead.stage === newStage) return;
+    if (!lead || lead.stage === newStage || writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
     setIsChangingStage(true);
     try {
       const res = await fetch(`/api/admin/sales/leads/${params.id}`, {
@@ -216,6 +225,7 @@ export default function LeadDetailPage(props: PageProps) {
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'ステージ変更に失敗しました');
     } finally {
+      writeInFlightRef.current = false;
       setIsChangingStage(false);
     }
   };
@@ -328,7 +338,7 @@ export default function LeadDetailPage(props: PageProps) {
                   <button
                     key={stage}
                     onClick={() => handleStageChange(stage)}
-                    disabled={isChangingStage || lead.stage === stage}
+                    disabled={isWriting || lead.stage === stage}
                     className={`w-full text-left px-3 py-1.5 text-xs rounded border transition-colors ${
                       lead.stage === stage
                         ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
@@ -387,7 +397,7 @@ export default function LeadDetailPage(props: PageProps) {
               <div className="flex justify-end">
                 <button
                   onClick={handleAddActivity}
-                  disabled={isAddingActivity || !activitySummary.trim()}
+                  disabled={isWriting || !activitySummary.trim()}
                   className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {isAddingActivity ? '記録中...' : '活動を記録'}
