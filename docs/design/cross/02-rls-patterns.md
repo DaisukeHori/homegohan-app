@@ -348,69 +348,48 @@ RETURNING *;
 
 **命名規則**: `{ドメイン}-{エンティティ}:{UUID}` 形式（ハイフン区切り）
 
-### 6.2.1 `acquire_family_group_lock` ヘルパー関数
+### 6.2.1 家族グループの鍵 (`family-group:{UUID}`)
 
-家族グループ操作 (migrate-to-personal / transfer-ownership / dissolve → archived) に統一して使用するロック取得ヘルパー。
+家族グループの操作 (migrate-to-personal / transfer-ownership / dissolve → archived) で使う鍵。ロックは、その操作の DB の仕事をする SECURITY DEFINER の関数の中で、仕事と同じ取引で取る (§6.3)。
 
 ```sql
--- supabase/migrations/2026MMDD012_advisory_lock_helpers.sql
-
-CREATE OR REPLACE FUNCTION acquire_family_group_lock(family_group_id UUID)
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-BEGIN
-  PERFORM pg_advisory_xact_lock(hashtext('family-group:' || family_group_id::TEXT));
-END;
-$$;
-
-COMMENT ON FUNCTION acquire_family_group_lock(UUID) IS
-  '家族グループへの排他操作 (凍結/移行/譲渡/解散) 前に呼び出すアドバイザリロック。
-   トランザクション終了時に自動解放。プレフィックス: family-group:{UUID}';
+-- 仕事をする関数の本文の中で取る。関数の取引の終わりで外れる
+PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('family-group:' || p_family_group_id::TEXT));
+-- 続けて、ロックで守る仕事 (読み・確かめ・UPDATE) を同じ関数の中で行う
 ```
+
+- ロックだけを取る関数 `acquire_family_group_lock(UUID)` は、本番に無い (`pg_proc` に無い。billing/01 F13)。
+- この形 (ロックだけを取る関数を route から呼び、そのあと route で仕事をする) では、ロックはその関数の取引の終わりで外れ、後に続く仕事の間は保たれない (§6.3)。
 
 ### 6.3 実装例
 
+- `pg_advisory_xact_lock` は、取った取引 (トランザクション) の終わりで外れる。
+- ロックだけを取る RPC を route から呼んでから route で仕事をすると、ロックはその RPC の取引の終わりで外れる。そのため、後に続く仕事の間は保たれない。
+- ロックは、仕事をする SECURITY DEFINER の関数の中で、仕事と同じ取引で取る。route はその関数を呼ぶ。
+- ロックだけを取る関数 `acquire_advisory_lock` / `acquire_family_group_lock` は、本番に無い (`pg_proc` に無い。billing/01 F13)。TS の `withAdvisoryLock` も実コードに無い。
+
 ```sql
--- supabase/migrations/xxxx_advisory_lock_helper.sql
--- pg_advisory_xact_lock を直接 RPC 呼び出しすることはできないため、
--- ラッパー関数 acquire_advisory_lock を用意する
-CREATE OR REPLACE FUNCTION acquire_advisory_lock(lock_key TEXT)
-RETURNS void
-LANGUAGE plpgsql
+-- 例: ロックと、ロックで守る仕事を 1 つの関数に入れる (鍵は §6.2 の命名)
+CREATE OR REPLACE FUNCTION public.example_locked_operation(p_pool_id UUID)
+RETURNS void LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
 BEGIN
-  PERFORM pg_advisory_xact_lock(hashtext(lock_key));
-END;
-$$;
+  -- 1. 引数の検証は関数の中で行う。呼び出し元の確認 (本人か・役割) は、利用者の JWT でも呼べる関数なら関数の中で auth.uid() と役割を確かめる (20261008120000_shopping_list_active_lock.sql:136-142)。service_role だけが呼ぶ関数なら下の REVOKE / GRANT で絞り、利用者の確認は呼ぶ route が行う (§3.3)
+  -- 2. 同じ鍵を取る処理どうしを直列にする。関数の取引の終わりで外れる
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('license_pool:' || p_pool_id::TEXT));
+  -- 3. ロックで守る仕事 (読み・確かめ・UPDATE) は、同じ関数の中で続けて行う
+END $$;
+REVOKE ALL ON FUNCTION public.example_locked_operation(UUID) FROM PUBLIC, anon, authenticated;  -- 既定では新しい関数を anon / authenticated も EXECUTE できる (20251126124224_create_meal_planner_tables.sql:13060-13061)
+GRANT EXECUTE ON FUNCTION public.example_locked_operation(UUID) TO service_role;  -- 例は service_role だけが呼ぶ場合 (20261016210000_billing_core.sql:422-423 と同じ形)
 ```
 
-```typescript
-// src/lib/advisory-lock.ts
+実コードの例 (どれも、仕事をする SECURITY DEFINER の関数の中で、仕事と同じ取引でロックを取る。行はロックの行):
 
-/**
- * acquire_advisory_lock RPC 経由でトランザクション内ロックを取得
- * トランザクション終了時に自動解放される
- * 注意: pg_advisory_xact_lock は Supabase RPC から直接呼び出せないため
- *       必ず acquire_advisory_lock ラッパーを経由すること
- */
-export async function withAdvisoryLock<T>(
-  key: string,
-  fn: () => Promise<T>
-): Promise<T> {
-  const supabase = getSupabaseAdmin(); // service_role の client (§3.3)
-
-  await supabase.rpc('acquire_advisory_lock', {
-    lock_key: key,
-  });
-
-  return fn();
-}
-```
+- `supabase/migrations/20261008120000_shopping_list_active_lock.sql:91` (`replace_active_shopping_list`)
+- `supabase/migrations/20261008120000_shopping_list_active_lock.sql:165` (`get_or_create_active_shopping_list`)
+- `supabase/migrations/20261016210000_billing_core.sql:254-255` (`billing_apply_stripe_subscription`)
 
 ### 6.4 行ロック (SELECT FOR UPDATE)
 
