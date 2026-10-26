@@ -4,7 +4,7 @@
  * /super-admin/feature-packages/[id] — 機能パッケージ詳細・編集
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { operationFailureMessage, operationNetworkFailureMessage } from '@/lib/admin/api-error-message';
@@ -102,6 +102,11 @@ export default function FeaturePackageDetailPage() {
   // 廃止の応答を待っているか・失敗したときの文
   const [isDeprecating, setIsDeprecating] = useState(false);
   const [deprecateError, setDeprecateError] = useState('');
+  // 保存か廃止のどちらかの応答を待っているか (#2050)。どちらの応答も、その行 (書いたあとの行) をそのまま画面の行にするので、
+  // 2 つを重ねると、応答が送った順と逆に届いたとき、後に届いた古い方の行 (例: 廃止の前の status) が画面に残る。
+  // 待つあいだは両方のボタンを止め、押されても送らない。ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
+  const writeInFlightRef = useRef(false);
+  const isWriting = isSaving || isDeprecating;
 
   const fetchPkg = useCallback(async () => {
     setIsLoading(true);
@@ -131,7 +136,8 @@ export default function FeaturePackageDetailPage() {
   }, [fetchPkg]);
 
   const handleSave = async () => {
-    if (!pkg) return;
+    // 廃止の応答を待つあいだは送らない (#2050。writeInFlightRef)
+    if (!pkg || writeInFlightRef.current) return;
     setSaveInfo('');
     const flags = parseFeatureFlags(featureFlagsRaw);
     if (flags.length === 0) {
@@ -148,6 +154,7 @@ export default function FeaturePackageDetailPage() {
       setSaveInfo(NO_FEATURE_PACKAGE_CHANGES_MESSAGE);
       return;
     }
+    writeInFlightRef.current = true;
     setIsSaving(true);
 
     try {
@@ -176,6 +183,7 @@ export default function FeaturePackageDetailPage() {
     } catch {
       setSaveError('ネットワークエラー');
     } finally {
+      writeInFlightRef.current = false;
       setIsSaving(false);
     }
   };
@@ -183,14 +191,16 @@ export default function FeaturePackageDetailPage() {
   /**
    * 廃止。失敗の応答を黙って捨てず、理由を画面に出す (403 は理由の文 (二段階認証の確認が要る など) だけを通す。operationFailureMessage)。
    * 成功したら PATCH の応答の行 (書いたあとの最新の行) で表示を新しくする。全体を「読み込み中」にして読み直さない。
-   * 入力欄は保存の経路と同じく、手を付けていない欄だけ応答の行の値に揃え、書きかけは残す (inputAfterSave。#1917)
+   * 入力欄は保存の経路と同じく、手を付けていない欄だけ応答の行の値に揃え、書きかけは残す (inputAfterSave。#1917)。
+   * 保存の応答を待つあいだは送らない (#2050。writeInFlightRef)
    */
   const handleDeprecate = async () => {
-    if (!pkg) return;
+    if (!pkg || writeInFlightRef.current) return;
     if (!confirm('この機能パッケージを廃止しますか？')) return;
     // 押したときの最後に読んだ・保存した行から作る入力欄の値 (入力欄がこれと同じなら手を付けていない欄)
     const loadedInputs = featurePackageInputsOf(pkg);
     setDeprecateError('');
+    writeInFlightRef.current = true;
     setIsDeprecating(true);
     try {
       const res = await fetch(`/api/super-admin/feature-packages/${pkgId}`, {
@@ -214,6 +224,7 @@ export default function FeaturePackageDetailPage() {
     } catch {
       setDeprecateError(operationNetworkFailureMessage(DEPRECATE_FAILURE_SUMMARY));
     } finally {
+      writeInFlightRef.current = false;
       setIsDeprecating(false);
     }
   };
@@ -251,7 +262,7 @@ export default function FeaturePackageDetailPage() {
         {pkg.status === 'active' && (
           <button
             onClick={handleDeprecate}
-            disabled={isDeprecating}
+            disabled={isWriting}
             className="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg text-xs font-medium hover:bg-red-50 transition-colors disabled:opacity-50"
           >
             廃止する
@@ -345,7 +356,7 @@ export default function FeaturePackageDetailPage() {
         <div className="flex justify-end pt-2">
           <button
             onClick={handleSave}
-            disabled={isSaving}
+            disabled={isWriting}
             className="px-5 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors disabled:opacity-50"
           >
             {isSaving ? '保存中...' : '保存する'}

@@ -5,7 +5,7 @@
  * operator/03-ui-spec.md §14 / operator/04-plan-management.md §4.1 準拠
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { couponValidityDay, couponValidUntilPatchValue } from '@/lib/super-admin/coupon-validity';
@@ -141,6 +141,11 @@ export default function CouponDetailPage() {
   // 状態の変更 (一時停止・再開) の応答を待っているか・失敗したときの文
   const [isChangingStatus, setIsChangingStatus] = useState(false);
   const [statusError, setStatusError] = useState('');
+  // 保存か状態の変更のどちらかの応答を待っているか (#2050)。どちらの応答も、その行 (書いたあとの行) をそのまま画面の行にするので、
+  // 2 つを重ねると、応答が送った順と逆に届いたとき、後に届いた古い方の行 (例: 一時停止の前の status) が画面に残る。
+  // 待つあいだは両方のボタンを止め、押されても送らない。ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
+  const writeInFlightRef = useRef(false);
+  const isWriting = isSaving || isChangingStatus;
   const [activeTab, setActiveTab] = useState<'detail' | 'redemptions'>('detail');
 
   const [displayName, setDisplayName] = useState('');
@@ -215,7 +220,8 @@ export default function CouponDetailPage() {
   }, [activeTab, fetchRedemptions]);
 
   const handleSave = async () => {
-    if (!coupon) return;
+    // 状態の変更の応答を待つあいだは送らない (#2050。writeInFlightRef)
+    if (!coupon || writeInFlightRef.current) return;
     setSaveError('');
     setSaveSuccess(false);
     setSaveInfo('');
@@ -228,6 +234,7 @@ export default function CouponDetailPage() {
       setSaveInfo(NO_COUPON_CHANGES_MESSAGE);
       return;
     }
+    writeInFlightRef.current = true;
     setIsSaving(true);
     try {
       const res = await fetch(`/api/super-admin/coupons/${couponId}`, {
@@ -254,6 +261,7 @@ export default function CouponDetailPage() {
     } catch {
       setSaveError('ネットワークエラー');
     } finally {
+      writeInFlightRef.current = false;
       setIsSaving(false);
     }
   };
@@ -262,14 +270,16 @@ export default function CouponDetailPage() {
    * 状態の変更 (一時停止・再開)。失敗の応答を黙って捨てず、操作の名前と理由を画面に出す
    * (403 は理由の文 (二段階認証の確認が要る など) だけを通す。operationFailureMessage)。
    * 成功したら PATCH の応答の行 (書いたあとの最新の行) で表示を新しくする。全体を「読み込み中」にして読み直さない。
-   * 入力欄は保存の経路と同じく、手を付けていない欄だけ応答の行の値に揃え、書きかけは残す (inputAfterSave。#1917)
+   * 入力欄は保存の経路と同じく、手を付けていない欄だけ応答の行の値に揃え、書きかけは残す (inputAfterSave。#1917)。
+   * 保存の応答を待つあいだは送らない (#2050。writeInFlightRef)
    */
   const handleStatusChange = async (newStatus: CouponStatusChange) => {
-    if (!coupon) return;
+    if (!coupon || writeInFlightRef.current) return;
     if (!confirm(`このクーポンを${STATUS_CHANGE_LABELS[newStatus]}しますか？`)) return;
     // 押したときの最後に読んだ・保存した行から作る入力欄の値 (入力欄がこれと同じなら手を付けていない欄)
     const loadedInputs = couponInputsOf(coupon);
     setStatusError('');
+    writeInFlightRef.current = true;
     setIsChangingStatus(true);
     try {
       const res = await fetch(`/api/super-admin/coupons/${couponId}`, {
@@ -292,6 +302,7 @@ export default function CouponDetailPage() {
     } catch {
       setStatusError(operationNetworkFailureMessage(statusChangeFailureSummary(newStatus)));
     } finally {
+      writeInFlightRef.current = false;
       setIsChangingStatus(false);
     }
   };
@@ -328,7 +339,7 @@ export default function CouponDetailPage() {
           {coupon.status === 'active' && (
             <button
               onClick={() => handleStatusChange('paused')}
-              disabled={isChangingStatus}
+              disabled={isWriting}
               className="px-3 py-1.5 border border-yellow-300 text-yellow-600 rounded-lg text-xs font-medium hover:bg-yellow-50 transition-colors disabled:opacity-50"
             >
               一時停止
@@ -337,7 +348,7 @@ export default function CouponDetailPage() {
           {coupon.status === 'paused' && (
             <button
               onClick={() => handleStatusChange('active')}
-              disabled={isChangingStatus}
+              disabled={isWriting}
               className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors disabled:opacity-50"
             >
               再開する
@@ -464,7 +475,7 @@ export default function CouponDetailPage() {
           <div className="flex justify-end pt-2">
             <button
               onClick={handleSave}
-              disabled={isSaving}
+              disabled={isWriting}
               className="px-5 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors disabled:opacity-50"
             >
               {isSaving ? '保存中...' : '保存する'}
