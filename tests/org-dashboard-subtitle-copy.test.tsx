@@ -11,8 +11,9 @@
  *   1. ダッシュボードを描画し、見出し「ダッシュボード」のすぐ下の説明が「組織のメンバー数」であること。
  *      メンバー数が取れたときも取れなかったときも同じ (説明は取得の結果で変わらない)。
  *   2. 描画した画面の文字に、止めている集計を思わせる語 (STOPPED_FEATURE_WORDS) が 1 つも無いこと。
- *   3. 同じ型の取りこぼしが無いよう、組織の管理画面 (src/app/(org) 配下) のすべてのソースの、画面に出うる
- *      文字 (JSX の文字・文字列・テンプレート文字列の文字の部分) にも、その語が無いこと。
+ *   3. 同じ型の取りこぼしが無いよう、組織の画面 (組織の管理画面 src/app/(org) 配下と、管理画面の枠の外に置いた
+ *      src/app/(main)/org 配下。根は tests/helpers/org-screen-roots.ts の ORG_SCREEN_ROOTS。#2068・#2073) のすべてのソースの、
+ *      画面に出うる文字 (JSX の文字・文字列・テンプレート文字列の文字の部分) にも、その語が無いこと。
  *      コメントは構文木の節にならないので見ない (#1325 / #1120 の経緯を書いたコメントは残してよい)。
  *
  * 文言の英語の固定の残りは tests/org-ui-no-english-copy.test.ts が、集計・再集計の通信を呼ばないことは
@@ -26,16 +27,17 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ORG_SCREEN_ROOTS } from './helpers/org-screen-roots';
 
 const { default: OrgDashboardPage } = await import('@/app/(org)/org/dashboard/page');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const ROOT = path.resolve(__dirname, '..');
-/** 走査する画面のディレクトリ (組織の管理画面のルートグループ) */
-const SCAN_ROOT = 'src/app/(org)';
 /** ダッシュボードのソース (走査の対象に入っていることを確かめる) */
 const DASHBOARD_FILE = 'src/app/(org)/org/dashboard/page.tsx';
+/** 管理画面の枠の外に置いた組織の画面 (オーナーの譲渡の承諾の画面。#2068)。走査の対象に入っていることを確かめる */
+const TRANSFER_ACCEPT_FILE = 'src/app/(main)/org/transfer-accept/[proposal_id]/page.tsx';
 
 /** 見出し (サイドバーのナビの名前と同じ) */
 const DASHBOARD_HEADING = 'ダッシュボード';
@@ -146,7 +148,7 @@ describe('組織のダッシュボードの副題: 今の中身 (メンバー数
   });
 });
 
-// ---- 組織の管理画面のソースの走査 (同じ型の取りこぼしを防ぐ) ----
+// ---- 組織の画面のソースの走査 (同じ型の取りこぼしを防ぐ) ----
 
 interface CopyFinding {
   file: string;
@@ -193,8 +195,8 @@ function findStoppedFeatureWords(findings: CopyFinding[]): string[] {
   );
 }
 
-describe('組織の管理画面のソース: 止めている機能があるように読める語を、画面に出る文字に書かない (#1911)', () => {
-  const files = listSourceFiles(SCAN_ROOT);
+describe('組織の画面のソース: 止めている機能があるように読める語を、画面に出る文字に書かない (#1911)', () => {
+  const files = ORG_SCREEN_ROOTS.flatMap((scanRoot) => listSourceFiles(scanRoot));
 
   it('ST-4: 走査の対象にダッシュボードを含む組織の管理画面のソースがある (空の走査で通らない)', () => {
     expect(files).toContain(DASHBOARD_FILE);
@@ -202,7 +204,11 @@ describe('組織の管理画面のソース: 止めている機能があるよ�
     expect(dashboardCopy.map((finding) => finding.text)).toContain(DASHBOARD_SUBTITLE);
   });
 
-  it('ST-5: src/app/(org) 配下のどの画面の文字にも、止めている機能を思わせる語が無い', () => {
+  it('ST-7: 走査の対象に、管理画面の枠の外に置いた組織の画面 (オーナーの譲渡の承諾の画面。#2068) がある', () => {
+    expect(files).toContain(TRANSFER_ACCEPT_FILE);
+  });
+
+  it('ST-5: src/app/(org) 配下と src/app/(main)/org 配下のどの画面の文字にも、止めている機能を思わせる語が無い', () => {
     const violations = files.flatMap((file) =>
       findStoppedFeatureWords(collectCopy(file, fs.readFileSync(path.join(ROOT, file), 'utf8'))),
     );

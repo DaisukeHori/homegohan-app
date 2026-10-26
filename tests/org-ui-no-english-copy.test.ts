@@ -29,14 +29,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { ORG_SCREEN_ROOTS, isUnderRoot, orgUrlTopDirs } from './helpers/org-screen-roots';
 
 const ROOT = path.resolve(__dirname, '..');
 /**
  * 走査する画面のディレクトリ: 組織の管理画面のルートグループと、管理画面の枠の外に置いた組織の画面
- * (オーナーの譲渡の承諾の画面 /org/transfer-accept/[proposal_id]。一般メンバーも開くので (main) に置く。#2068)、
- * 家族の画面 (#2073 S5。家族の代表者の譲渡の承諾の画面が、処理済みの提案に「(ステータス: accepted)」と内部の英字の値を出していた)
+ * (オーナーの譲渡の承諾の画面 /org/transfer-accept/[proposal_id]。一般メンバーも開くので (main) に置く。#2068)。
+ * 組織の画面の根は、組織の画面を走査するテストで共通の定数 ORG_SCREEN_ROOTS から取る (#2073)。
+ * それに、家族の画面 (#2073 S5。家族の代表者の譲渡の承諾の画面が、処理済みの提案に「(ステータス: accepted)」と内部の英字の値を出していた) と、
+ * 設定のメンバーシップ (#2073。組織の役割を「役割: owner」と英字のまま出していた) を足す。
+ * 家族の画面と設定のメンバーシップは、この走査だけが見る根なので、共通の定数には入れない
+ * (共通の定数を広げると、それを使う組織の画面の別の走査 (API のエラーの日本語・見出しの文言) の範囲まで変わる)
  */
-const SCAN_ROOTS = ['src/app/(org)', 'src/app/(main)/org', 'src/app/(main)/family', 'src/app/(main)/settings/membership'];
+const FAMILY_SCREEN_ROOT = 'src/app/(main)/family';
+const SETTINGS_MEMBERSHIP_ROOT = 'src/app/(main)/settings/membership';
+const SCAN_ROOTS: readonly string[] = [...ORG_SCREEN_ROOTS, FAMILY_SCREEN_ROOT, SETTINGS_MEMBERSHIP_ROOT];
 /**
  * 内部の値をそのまま出していないかだけを見る画面 (英語だけの文言の走査は SCAN_ROOTS だけ)。
  * 運営の家族の代表者・組織のオーナーの付け替えの画面が、候補の役割を「adult」「member」と英字のまま出していた (#2073)
@@ -307,6 +314,13 @@ describe('組織の管理画面・家族の画面に英語だけの固定の文�
     expect(files).toContain('src/app/(main)/org/transfer-accept/[proposal_id]/page.tsx');
     expect(files).toContain('src/app/(main)/family/transfer-accept/[proposal_id]/page.tsx');
     expect(files).toContain('src/app/(main)/settings/membership/page.tsx');
+  });
+
+  it('URL が /org で始まる画面のディレクトリ (共通の定数の根の下) のファイルを、どれも走査している (#2073: 家族の画面の根を足しても組織の画面を落とさない)', () => {
+    const orgDirs = orgUrlTopDirs();
+    expect(orgDirs.length).toBeGreaterThan(0);
+    const unscanned = orgDirs.filter((dir) => !files.some((file) => isUnderRoot(file, dir)));
+    expect(unscanned).toEqual([]);
   });
 
   it('内部の状態・役割の値 (英字) を画面にそのまま出していない (#2073)', () => {

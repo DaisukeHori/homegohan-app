@@ -129,4 +129,14 @@ describe('.gitleaksignore の書き方', () => {
       '5f0cdb9479996d8bdb8b719d78f3e7f6255c9d9f:src/__tests__/lib/auth/apple/config.test.ts:private-key:30',
     );
   });
+
+  it('#2073 の機能フラグの名前の 1 件 (コミット 1175a075 の reject-reload-2073.test.tsx:538) を除外し、今のファイルにはその形が残っていない', () => {
+    const file = 'tests/super-admin-status-reject-reload-2073.test.tsx';
+    expect(lines).toContain(`1175a075b06aa5614dc8d7d3f1c2c0634974c511:${file}:generic-api-key:538`);
+    // 除外は 1175a075 の差分だけに効く。後のコミット (squash で main に入る差分) には、名前に key を含む変数へ
+    // 文字列をそのまま代入する形 (generic-api-key が拾う形) を残さない
+    const content = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    expect(content).toContain("const FLAG_NAME = 'reject_flag_2073';");
+    expect(content).not.toMatch(/\w*key\w*\s*=\s*['"`]/i);
+  });
 });

@@ -13,11 +13,26 @@
  * - 絞り込み: 状態 (既定は届けられなかったもの) と文面の名前 (完全一致)。「絞り込む」で反映する。
  * - ページ送り: 「さらに読み込む」で、API が返したカーソルを渡して続きを足す。
  * - 日時は日本時間で表示する。
+ * - 「再送」の通信そのものが失敗した (fetch が reject した) ときは、サーバーが再送を済ませてから応答が切れたこともあるので、
+ *   一覧を読み直して今の状態を見せ、「「<文面の名前>」の再送の応答を受け取れませんでした（通信エラー）」の文を出す (#2073)。
+ *   読み直さないと、行は「届けられなかった」のまま残り、もう一度押すと、自分の再送が済んでいたのに 409
+ *   「届けられなかったメールだけを再送できます」が出る。読み直しは一覧を外さずに行い (先頭の 1 ページを取り直す)、
+ *   失敗したら「再試行」を出し、読み直せるまで「再送」を止める (一覧の状態が古いかもしれないため)。
+ * - 再送は 1 行ずつ行い、一覧の読み込みと重ねない (#2073): 再送の応答 (reject のときは、そのあとの一覧の読み直しまで) を
+ *   待つあいだは、すべての行の「再送」と「絞り込む」「再読み込み」「さらに読み込む」「再試行」を止め、一覧を読み込むあいだは
+ *   すべての行の「再送」を止める。重ねると、再送の書き込みより先にサーバーが読んだ一覧 (その行がまだ「届けられなかった」) が
+ *   あとから届いて、再送の成功の描き替えと知らせを上書きし、もう一度押すと、自分の再送が済んでいたのに 409
+ *   「届けられなかったメールだけを再送できます」が出る (読み直しの最中にほかの行を再送したときなど)。
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { forbiddenMessageForScreen } from '@/lib/admin/api-error-message';
+import {
+  NO_RESPONSE_LIST_RELOADED_GUIDE,
+  NO_RESPONSE_LIST_RELOAD_FAILED_GUIDE,
+  statusChangeNoResponseMessage,
+} from '@/lib/super-admin/status-change-no-response';
 // 型だけを import する (値を import すると zod とメール送信のモジュールがブラウザ向けの bundle に入る)
 import type {
   EmailOutboxListItem,
@@ -50,6 +65,7 @@ const STATUS_STYLES: Record<EmailOutboxListStatus, string> = {
 
 const REDACTED_REQUEUE_NOTE = '宛先を伏せた行は再送できません';
 const REQUEUED_MESSAGE = '再送を受け付けました';
+const LIST_NETWORK_FAILURE_MESSAGE = '通信に失敗しました。ネットワークを確認して、もう一度お試しください';
 
 const INPUT_CLASS =
   'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500';
@@ -57,6 +73,8 @@ const PRIMARY_BUTTON_CLASS =
   'px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 const SECONDARY_BUTTON_CLASS =
   'px-4 py-2 bg-white text-slate-700 border border-slate-300 rounded-lg text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+const NOTICE_RETRY_BUTTON_CLASS =
+  'shrink-0 px-3 py-1.5 bg-amber-600 text-white rounded-lg text-sm font-semibold hover:bg-amber-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
 const ROW_BUTTON_CLASS =
   'px-3 py-1 bg-white text-orange-600 border border-orange-300 rounded-lg text-xs font-medium hover:bg-orange-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap';
 
@@ -130,53 +148,111 @@ function describeFailure(status: number, body: ApiErrorBody | null): string {
   return body?.error?.message ?? `読み込みに失敗しました (HTTP ${status})`;
 }
 
-/** 再送の結果の知らせ */
-type Notice = { kind: 'success' | 'error'; text: string } | null;
+/**
+ * 再送の結果の知らせ。
+ *   - success / error: 応答を受け取れたときの結果
+ *   - no-response    : 再送の通信が reject されたあとに一覧を読み直した (#2073)。template は押した行の文面の名前。
+ *                      reloaded は一覧を読み直せたか (false なら「再試行」を出し、読み直せるまで「再送」を止める)
+ */
+type Notice =
+  | { kind: 'success' | 'error'; text: string }
+  | { kind: 'no-response'; template: string; reloaded: boolean }
+  | null;
+
+function noResponseNoticeText(notice: { template: string; reloaded: boolean }): string {
+  return statusChangeNoResponseMessage(
+    `「${notice.template}」の再送`,
+    notice.reloaded ? NO_RESPONSE_LIST_RELOADED_GUIDE : NO_RESPONSE_LIST_RELOAD_FAILED_GUIDE,
+  );
+}
+
+/**
+ * 一覧の読み込みの結果。superseded は、あとから出した読み込みに追い越された (画面はその読み込みが進める)
+ */
+type LoadOutcome = { kind: 'loaded' } | { kind: 'failed' } | { kind: 'superseded' };
+
+/**
+ * 一覧の読み込みの出し方。reread は、再送の通信が reject されたあとの読み直し (#2073):
+ * 読み込むあいだも今の一覧と知らせを外さず、失敗しても一覧を残す (文は呼び出し側が知らせに出すので、一覧の失敗の文は出さない)
+ */
+interface LoadOptions {
+  reread?: boolean;
+}
 
 export default function EmailOutboxPage() {
   /** 入力中の条件 */
   const [draft, setDraft] = useState<Filters>(DEFAULT_FILTERS);
-  /** 表示中の一覧を取るのに使った条件 (「さらに読み込む」はこちらを使う) */
-  const [applied, setApplied] = useState<Filters>(DEFAULT_FILTERS);
   const [items, setItems] = useState<EmailOutboxListItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [status, setStatus] = useState<LoadStatus>('loading');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
-  /** 再送の要求を出している行の id (二重に押させない) */
-  const [requeueing, setRequeueing] = useState<ReadonlySet<string>>(() => new Set());
+  /** 一覧の読み込みの状態の写し (描画を待たずに handler で読むため。status と一緒に changeStatus で変える) */
+  const statusRef = useRef<LoadStatus>('loading');
+  const changeStatus = useCallback((next: LoadStatus) => {
+    statusRef.current = next;
+    setStatus(next);
+  }, []);
+  // 再送の書き込み (POST の応答と、通信が reject されたあとの一覧の読み直しまで) を待っているか (#2073)。
+  // 待つあいだは、すべての行の「再送」(二重に押させない・ほかの行も) と一覧の読み込みのボタンを止める (ファイルの冒頭の説明)。
+  // ref は描画を待たずに handler で読むための写し (再描画の前に続けて押されたときの守り)
+  const writeInFlightRef = useRef(false);
+  const [isWriting, setIsWriting] = useState(false);
+  /** 一覧の読み込み (先頭から・続き・読み直し) か再送の書き込みを待っているか (ref で見るので、再描画の前でも止まる) */
+  const isBusyNow = useCallback(() => statusRef.current !== 'idle' || writeInFlightRef.current, []);
   /** 最後に出した一覧のリクエストの番号。遅れて返ってきた古い応答で画面を上書きしないために使う */
   const requestSeq = useRef(0);
-
-  const load = useCallback(async (filters: Filters, cursor: string | null) => {
-    requestSeq.current += 1;
-    const seq = requestSeq.current;
-    setStatus(cursor ? 'loading-more' : 'loading');
-    setError(null);
-    if (!cursor) {
-      setItems([]);
-      setNextCursor(null);
-      setNotice(null);
-    }
-    try {
-      const res = await fetch(`/api/super-admin/email-outbox?${buildQuery(filters, cursor)}`, { cache: 'no-store' });
-      const body = (await res.json().catch(() => null)) as (Partial<EmailOutboxListResponse> & ApiErrorBody) | null;
-      if (seq !== requestSeq.current) return;
-      if (!res.ok || !body?.data || !body.meta) {
-        setError(describeFailure(res.status, body));
-        setStatus('idle');
-        return;
-      }
-      const rows = body.data;
-      setItems((prev) => (cursor ? [...prev, ...rows] : rows));
-      setNextCursor(body.meta.next_cursor ?? null);
-      setStatus('idle');
-    } catch {
-      if (seq !== requestSeq.current) return;
-      setError('通信に失敗しました。ネットワークを確認して、もう一度お試しください');
-      setStatus('idle');
-    }
+  /**
+   * 表示中の一覧を取るのに使った条件 (「絞り込む」で入れる)。「再読み込み」「さらに読み込む」と、再送の reject のあとの
+   * 読み直しはこちらを使う (入力中の draft は使わない)。handler で描画を待たずに読むため ref で持つ
+   */
+  const appliedRef = useRef<Filters>(DEFAULT_FILTERS);
+  // 再送の通信の reject のあとの一覧の読み直しが失敗し、まだ読み直せていないか (#2073)。そのあいだは「再送」を止める。
+  // ref は描画を待たずに handler で読むための写し
+  const listStaleRef = useRef(false);
+  const [isListStale, setIsListStale] = useState(false);
+  const markListStale = useCallback((stale: boolean) => {
+    listStaleRef.current = stale;
+    setIsListStale(stale);
   }, []);
+
+  const load = useCallback(
+    async (filters: Filters, cursor: string | null, options: LoadOptions = {}): Promise<LoadOutcome> => {
+      const reread = options.reread === true;
+      requestSeq.current += 1;
+      const seq = requestSeq.current;
+      changeStatus(cursor ? 'loading-more' : 'loading');
+      setError(null);
+      if (!cursor && !reread) {
+        setItems([]);
+        setNextCursor(null);
+        setNotice(null);
+      }
+      try {
+        const res = await fetch(`/api/super-admin/email-outbox?${buildQuery(filters, cursor)}`, { cache: 'no-store' });
+        const body = (await res.json().catch(() => null)) as (Partial<EmailOutboxListResponse> & ApiErrorBody) | null;
+        if (seq !== requestSeq.current) return { kind: 'superseded' };
+        if (!res.ok || !body?.data || !body.meta) {
+          if (!reread) setError(describeFailure(res.status, body));
+          changeStatus('idle');
+          return { kind: 'failed' };
+        }
+        const rows = body.data;
+        setItems((prev) => (cursor ? [...prev, ...rows] : rows));
+        setNextCursor(body.meta.next_cursor ?? null);
+        // 先頭から読み直せたので、一覧はもう古くない (#2073)
+        if (!cursor) markListStale(false);
+        changeStatus('idle');
+        return { kind: 'loaded' };
+      } catch {
+        if (seq !== requestSeq.current) return { kind: 'superseded' };
+        if (!reread) setError(LIST_NETWORK_FAILURE_MESSAGE);
+        changeStatus('idle');
+        return { kind: 'failed' };
+      }
+    },
+    [markListStale, changeStatus],
+  );
 
   useEffect(() => {
     void load(DEFAULT_FILTERS, null);
@@ -184,18 +260,70 @@ export default function EmailOutboxPage() {
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setApplied(draft);
+    // 一覧の読み込み・再送の書き込みを待つあいだは読み込まない (再送より先に読まれた一覧で、再送の結果を上書きしうる。#2073)
+    if (isBusyNow()) return;
+    appliedRef.current = draft;
     void load(draft, null);
   };
 
+  /** 「再読み込み」。一覧の読み込み・再送の書き込みを待つあいだは読み込まない (handleSubmit と同じ。#2073) */
+  const reloadList = () => {
+    if (isBusyNow()) return;
+    void load(appliedRef.current, null);
+  };
+
+  /**
+   * 再送の通信が reject されたあとの一覧の読み直しと知らせ (#2073)。表示中の一覧の条件で先頭から読み直す。
+   * 読み直せなければ「再試行」を出し、読み直せるまで「再送」を止める。
+   * 読み直しのあいだは、ほかの読み込みと再送を出さない (読み直しの status は 'loading'。requeue から呼ぶときは、読み直しが済むまで
+   * 書き込みの待ち (writeInFlightRef) も外さない)。追い越されたとき (superseded) は、追い越した読み込みが一覧を今の状態にするので
+   * 何もしない (load の戻り値の型に合わせた守り。読み直しのあいだはほかの読み込みを出さないので、いまの画面では起きない)
+   */
+  const rereadAfterNoResponse = async (template: string) => {
+    const outcome = await load(appliedRef.current, null, { reread: true });
+    if (outcome.kind === 'superseded') return;
+    if (outcome.kind === 'failed') markListStale(true);
+    setNotice({ kind: 'no-response', template, reloaded: outcome.kind === 'loaded' });
+  };
+
+  /**
+   * 「さらに読み込む」。一覧の読み込み (読み直しを含む) と再送の書き込みの最中は出さない: 再送の通信の reject のあとの
+   * 読み直しの最中に続きを読むと、続きの読み込みが読み直しを追い越して読み直しの結果を捨て、古い「届けられなかった」の行と
+   * 「再送」が知らせも無いまま残る (もう一度押すと、自分の再送が済んでいたのに 409 になる。#2073)
+   */
+  const loadMore = () => {
+    if (isBusyNow() || !nextCursor) return;
+    void load(appliedRef.current, nextCursor);
+  };
+
+  /** 「再試行」: 再送の通信の reject のあとの、失敗した一覧の読み直しをやり直す (#2073) */
+  const retryReread = (template: string) => {
+    if (isBusyNow()) return;
+    void rereadAfterNoResponse(template);
+  };
+
   const requeue = async (item: EmailOutboxListItem) => {
-    setRequeueing((prev) => new Set(prev).add(item.id));
+    // 送らないとき (#2073):
+    //   - 一覧の読み込み (読み直しを含む) かほかの再送 (その reject のあとの読み直しを含む) を待つあいだ。重ねると、再送より先に
+    //     サーバーが読んだ一覧が、あとから届いて再送の成功の描き替えを上書きする (ファイルの冒頭の説明)
+    //   - 再送の通信の reject のあとの一覧の読み直しが失敗しているあいだ (一覧の状態が古いかもしれない)
+    if (isBusyNow() || listStaleRef.current) return;
+    writeInFlightRef.current = true;
+    setIsWriting(true);
     setNotice(null);
     try {
-      const res = await fetch(`/api/super-admin/email-outbox/${encodeURIComponent(item.id)}/requeue`, {
-        method: 'POST',
-        cache: 'no-store',
-      });
+      let res: Response;
+      try {
+        res = await fetch(`/api/super-admin/email-outbox/${encodeURIComponent(item.id)}/requeue`, {
+          method: 'POST',
+          cache: 'no-store',
+        });
+      } catch {
+        // 応答を受け取れなかった (オフライン・接続が切れたなど)。再送が済んだかは分からないので、一覧を読み直して今の状態を見せる (#2073)。
+        // 読み直しの応答まで書き込みを待つ扱いにする (待たずにほかの行を再送すると、この読み直しの古い一覧で上書きされうる)
+        await rereadAfterNoResponse(item.template);
+        return;
+      }
       const body = (await res.json().catch(() => null)) as ApiErrorBody | null;
       if (!res.ok) {
         setNotice({ kind: 'error', text: describeFailure(res.status, body) });
@@ -218,20 +346,17 @@ export default function EmailOutboxPage() {
         ),
       );
       setNotice({ kind: 'success', text: REQUEUED_MESSAGE });
-    } catch {
-      setNotice({ kind: 'error', text: '通信に失敗しました。ネットワークを確認して、もう一度お試しください' });
     } finally {
-      setRequeueing((prev) => {
-        const next = new Set(prev);
-        next.delete(item.id);
-        return next;
-      });
+      writeInFlightRef.current = false;
+      setIsWriting(false);
     }
   };
 
   const templates = Array.from(new Set(items.map((item) => item.template)));
   const isLoading = status === 'loading';
   const isLoadingMore = status === 'loading-more';
+  /** 一覧の読み込みか再送の書き込みを待っているか (描画用。handler は isBusyNow で見る) */
+  const isBusy = status !== 'idle' || isWriting;
   const columnCount = 8;
 
   return (
@@ -290,7 +415,7 @@ export default function EmailOutboxPage() {
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          <button type="submit" disabled={isLoading || isLoadingMore} className={PRIMARY_BUTTON_CLASS}>
+          <button type="submit" disabled={isBusy} className={PRIMARY_BUTTON_CLASS}>
             絞り込む
           </button>
         </div>
@@ -303,8 +428,8 @@ export default function EmailOutboxPage() {
         </p>
         <button
           type="button"
-          onClick={() => void load(applied, null)}
-          disabled={isLoading || isLoadingMore}
+          onClick={reloadList}
+          disabled={isBusy}
           className={SECONDARY_BUTTON_CLASS}
         >
           再読み込み
@@ -319,6 +444,24 @@ export default function EmailOutboxPage() {
       {notice?.kind === 'error' && (
         <div role="alert" className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4 text-sm">
           {notice.text}
+        </div>
+      )}
+      {notice?.kind === 'no-response' && (
+        <div
+          data-testid="email-outbox-reload-notice"
+          className="flex items-start justify-between gap-4 bg-amber-50 border border-amber-300 text-amber-900 px-4 py-3 rounded-lg mb-4 text-sm"
+        >
+          <p role={notice.reloaded ? 'status' : 'alert'}>{noResponseNoticeText(notice)}</p>
+          {!notice.reloaded && (
+            <button
+              type="button"
+              onClick={() => retryReread(notice.template)}
+              disabled={isBusy}
+              className={NOTICE_RETRY_BUTTON_CLASS}
+            >
+              {isLoading ? '読み込み中…' : '再試行'}
+            </button>
+          )}
         </div>
       )}
       {error && (
@@ -363,7 +506,6 @@ export default function EmailOutboxPage() {
             <tbody className="divide-y divide-slate-100">
               {items.map((item) => {
                 const event = eventOf(item);
-                const busy = requeueing.has(item.id);
                 return (
                   <tr key={item.id} className="hover:bg-slate-50 transition-colors align-top">
                     <td className="px-4 py-2 text-slate-700 text-xs whitespace-nowrap font-mono">
@@ -411,7 +553,7 @@ export default function EmailOutboxPage() {
                           <button
                             type="button"
                             onClick={() => void requeue(item)}
-                            disabled={busy}
+                            disabled={isBusy || isListStale}
                             aria-label={`${formatJst(item.created_at)} の ${item.template} を再送`}
                             className={ROW_BUTTON_CLASS}
                           >
@@ -437,8 +579,8 @@ export default function EmailOutboxPage() {
           <div className="border-t border-slate-200 p-3 text-center">
             <button
               type="button"
-              onClick={() => void load(applied, nextCursor)}
-              disabled={isLoadingMore}
+              onClick={loadMore}
+              disabled={isBusy}
               className={SECONDARY_BUTTON_CLASS}
             >
               {isLoadingMore ? '読み込み中…' : 'さらに読み込む'}

@@ -25,6 +25,10 @@
  * 保存は、表示名・説明・表示順のうち最後に読んだ・保存した値から変えた欄だけを送る (手を付けていない欄を、画面を開いたあとに
  * 別の運営が変えた値の上に古い値で書かない。#1917)。保存に成功したら、送った欄の値をそのまま新しい初めの値にする
  * (続く読み直しが失敗しても、保存済みの欄を次の保存で送り直さない・「再試行」で書きかけとして残さない。#1917)。
+ * 状態の変更の通信そのものが失敗した (fetch が reject した) ときは、サーバーが変更を済ませてから応答が切れたこともあるので、
+ * プランを読み直して今の状態を見せ、「状態の変更の応答を受け取れませんでした」の文を画面の上に出す (alert にしない。#2073)。
+ * 読み直さないと、画面は古い status のボタンのまま残り、もう一度押すと expected_status が古いので 409 になって、自分の操作なのに
+ * 「別の運営が先にこのプランを変えていました」と出る。読み直しが失敗したら「再試行」を出し、読み直せるまで状態のボタンを止める (#2064)。
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -32,6 +36,11 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { forbiddenMessageForScreen, isStaleDataConflict } from '@/lib/admin/api-error-message';
 import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE, countsOrganizationsFor } from '@/lib/super-admin/plan-subscribers';
+import {
+  NO_RESPONSE_STATE_RELOADED_GUIDE,
+  NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
+  statusChangeNoResponseMessage,
+} from '@/lib/super-admin/status-change-no-response';
 
 type Plan = {
   id: string;
@@ -81,6 +90,16 @@ function isEdited(current: PlanEdits, loaded: PlanEdits): boolean {
   return Object.keys(changedPlanFields(current, loaded)).length > 0;
 }
 
+/**
+ * 状態の変更で送る本文 (PATCH /api/super-admin/plans/{id})。expected_status は画面が見ていた status (#2064)。
+ * ends_at は廃止のときだけ (廃止予定日)
+ */
+type PlanStatusChangeBody = {
+  status: 'public' | 'private' | 'deprecated';
+  expected_status: string;
+  ends_at?: string;
+};
+
 /** 保存で送る本文 (PATCH /api/super-admin/plans/{id} の表示名・説明・表示順) */
 type PlanSaveBody = {
   display_name?: string;
@@ -120,6 +139,8 @@ function editsAfterSave(loaded: PlanEdits, sent: PlanEdits, body: PlanSaveBody):
  *   - stale              : 409 CONFLICT_STALE_DATA のあとに読み直した
  *   - stale-reload-failed: 409 CONFLICT_STALE_DATA のあとの読み直しに失敗した (「再試行」を出す)
  *   - reload-failed      : 保存・状態の変更に成功したあとの読み直しに失敗した (「再試行」を出す)
+ *   - no-response              : 状態の変更の通信が reject された (応答を受け取れなかった) あとに読み直した (#2073)
+ *   - no-response-reload-failed: 状態の変更の通信が reject されたあとの読み直しに失敗した (「再試行」を出す。#2073)
  * editsKept は、入力欄の書きかけを読み直しで消さずに残したか。
  * unavailable の message は画面に出す理由の文。404 は PLAN_NOT_FOUND_ON_RELOAD_MESSAGE。
  * 403 は応答の本文の文が理由の文 (二段階認証の確認が要る など。#2014 の operatorForbiddenMessageOf) ならその文、
@@ -130,7 +151,14 @@ type ReloadNotice =
   | { kind: 'stale'; editsKept: boolean }
   | { kind: 'stale-reload-failed'; editsKept: boolean }
   | { kind: 'reload-failed' }
+  | { kind: 'no-response'; editsKept: boolean }
+  | { kind: 'no-response-reload-failed'; editsKept: boolean }
   | { kind: 'unavailable'; reason: PlanUnavailableReason; message: string };
+
+/** 「再試行」を出す文の種類 (読み直しに失敗して、まだ読み直せていない) */
+function isRetryableNotice(notice: ReloadNotice): boolean {
+  return notice.kind === 'stale-reload-failed' || notice.kind === 'reload-failed' || notice.kind === 'no-response-reload-failed';
+}
 
 /**
  * 表示したあとの読み直しが、読み込み直しても変わらない理由で断られた (「再試行」を出さない。#1917)。
@@ -149,6 +177,21 @@ const STALE_PLAN_MESSAGE =
 /** 409 CONFLICT_STALE_DATA のあとの読み直しに失敗したときの文 */
 const STALE_PLAN_RELOAD_FAILED_MESSAGE =
   '別の運営が先にこのプランを変えていました。最新の内容を読み込み直せませんでした。「再試行」で読み込み直してから、もう一度操作してください';
+
+/**
+ * 状態の変更の通信が reject された (応答を受け取れなかった) ときの文の操作の名前 (#2073)。
+ * 応答が無いので変更が済んだかは分からない。済んでいたとき (自分の操作) にも合うよう「失敗した」「別の運営が」とは言わない
+ */
+const STATUS_CHANGE_OPERATION_NAME = '状態の変更';
+
+/** 状態の変更の通信が reject され、プランを読み直せたときの文 (#2073) */
+const NO_RESPONSE_RELOADED_MESSAGE = statusChangeNoResponseMessage(STATUS_CHANGE_OPERATION_NAME, NO_RESPONSE_STATE_RELOADED_GUIDE);
+
+/** 状態の変更の通信が reject され、読み直しにも失敗したときの文 (「再試行」を出す。#2073) */
+const NO_RESPONSE_RELOAD_FAILED_MESSAGE = statusChangeNoResponseMessage(
+  STATUS_CHANGE_OPERATION_NAME,
+  NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
+);
 
 /** 保存・状態の変更に成功したあとの読み直しに失敗したときの文 */
 const PLAN_RELOAD_FAILED_MESSAGE = '最新の内容を読み込めませんでした。「再試行」で読み込み直してください';
@@ -170,6 +213,10 @@ function reloadNoticeText(notice: ReloadNotice): string {
       return `${STALE_PLAN_RELOAD_FAILED_MESSAGE}${notice.editsKept ? EDITS_KEPT_SUFFIX : ''}`;
     case 'reload-failed':
       return PLAN_RELOAD_FAILED_MESSAGE;
+    case 'no-response':
+      return `${NO_RESPONSE_RELOADED_MESSAGE}${notice.editsKept ? EDITS_KEPT_SUFFIX : ''}`;
+    case 'no-response-reload-failed':
+      return `${NO_RESPONSE_RELOAD_FAILED_MESSAGE}${notice.editsKept ? EDITS_KEPT_SUFFIX : ''}`;
     case 'unavailable':
       return notice.message;
   }
@@ -367,33 +414,51 @@ export default function PlanDetailPage() {
   }, [fetchPlan]);
 
   /**
-   * 409 CONFLICT_STALE_DATA (別の運営が先にプランを変えた) のあとの読み直し。書きかけの入力欄は残し
-   * (読み直したプランが廃止なら残さない。そのときは「残しています」も添えない)、
+   * 状態が分からなくなったあとの読み直し。cause は読み直す理由:
+   *   - stale      : 409 CONFLICT_STALE_DATA (別の運営が先にプランを変えた)
+   *   - no-response: 状態の変更の通信が reject された (応答を受け取れず、変更が済んだか分からない。#2073)
+   * 書きかけの入力欄は残し (読み直したプランが廃止なら残さない。そのときは「残しています」も添えない)、
    * 結果に合わせて文を出す (読み直せなかったのに「読み込み直した」と出さない。#1917)
    */
-  const reloadAfterStale = useCallback(async () => {
+  const reloadAfterUncertain = useCallback(async (cause: 'stale' | 'no-response') => {
     const editedBefore = isEdited(editsRef.current, loadedEditsRef.current);
     const outcome = await fetchPlan({ keepEdits: true });
     if (outcome.kind === 'loaded') {
-      setReloadNotice({ kind: 'stale', editsKept: outcome.editsKept });
+      setReloadNotice({ kind: cause, editsKept: outcome.editsKept });
     } else if (outcome.kind === 'failed') {
-      setReloadNotice({ kind: 'stale-reload-failed', editsKept: editedBefore });
+      setReloadNotice({ kind: cause === 'stale' ? 'stale-reload-failed' : 'no-response-reload-failed', editsKept: editedBefore });
     } else if (outcome.kind === 'unavailable') {
       // プランが消えた・権限が外れた: その理由を出す (「再試行」で読み込み直すよう促さない。#1917)
       setReloadNotice({ kind: 'unavailable', reason: outcome.reason, message: outcome.message });
     }
   }, [fetchPlan]);
 
-  /** 「再試行」: 失敗した読み直しをやり直す。409 のあとの読み直しなら、成功したら 409 のあとの文にする */
+  /** 409 CONFLICT_STALE_DATA (別の運営が先にプランを変えた) のあとの読み直し */
+  const reloadAfterStale = useCallback(() => reloadAfterUncertain('stale'), [reloadAfterUncertain]);
+
+  /**
+   * 状態の変更の通信が reject された (応答を受け取れなかった) あとの読み直し (#2073)。サーバーが変更を済ませてから応答が
+   * 切れたこともあるので、今の状態を見せる (読み直さないと、古い status のボタンをもう一度押して 409 になり、自分の操作なのに
+   * 「別の運営が先に…」と出る)。読み直しが失敗したら fetchPlan が isPlanStale を立てるので、状態のボタンは止まる (#2064)
+   */
+  const reloadAfterNoResponse = useCallback(() => reloadAfterUncertain('no-response'), [reloadAfterUncertain]);
+
+  /**
+   * 「再試行」: 失敗した読み直しをやり直す。409 のあと・通信の reject のあとの読み直しなら、成功したらそれぞれの読み直した文にする
+   */
   const retryReload = useCallback(async () => {
     if (reloadNotice?.kind === 'stale-reload-failed') {
       await reloadAfterStale();
       return;
     }
+    if (reloadNotice?.kind === 'no-response-reload-failed') {
+      await reloadAfterNoResponse();
+      return;
+    }
     const outcome = await fetchPlan({ keepEdits: true });
     if (outcome.kind === 'loaded') setReloadNotice(null);
     if (outcome.kind === 'unavailable') setReloadNotice({ kind: 'unavailable', reason: outcome.reason, message: outcome.message });
-  }, [fetchPlan, reloadAfterStale, reloadNotice]);
+  }, [fetchPlan, reloadAfterStale, reloadAfterNoResponse, reloadNotice]);
 
   /**
    * 状態の変更 (公開・非公開・廃止・廃止の取り消し) の応答を処理する。成功なら読み直す。
@@ -412,6 +477,36 @@ export default function PlanDetailPage() {
     const message =
       typeof data === 'object' && data !== null ? (data as { error?: { message?: unknown } }).error?.message : undefined;
     alert(typeof message === 'string' ? message : `${failureSummary} (HTTP ${res.status})`);
+  };
+
+  /**
+   * 状態の変更 (公開・非公開・再公開・廃止・廃止の取り消し) を送り、応答を処理する。
+   * 応答とそのあとの読み直しを待つあいだは、保存とほかの状態の変更を送らない (#2059)。
+   * 通信そのものが失敗した (fetch が reject した) ときは、プランを読み直して今の状態を見せる (alert にしない。#2073)
+   */
+  const sendStatusChange = async (body: PlanStatusChangeBody, failureSummary: string) => {
+    writeInFlightRef.current = true;
+    setIsChangingStatus(true);
+    setReloadNotice(null);
+    try {
+      let res: Response;
+      try {
+        res = await fetch(`/api/super-admin/plans/${planId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } catch {
+        // 応答を受け取れなかった (オフライン・接続が切れたなど)。変更が済んだかは分からないので、読み直して今の状態を見せる (#2073)
+        await reloadAfterNoResponse();
+        return;
+      }
+      // #1041 修正: 失敗時 (422/400/403 等) に無反応にせず、必ずエラーを表示する
+      await handleStatusResponse(res, failureSummary);
+    } finally {
+      writeInFlightRef.current = false;
+      setIsChangingStatus(false);
+    }
   };
 
   const handleSave = async () => {
@@ -485,23 +580,7 @@ export default function PlanDetailPage() {
     );
     if (!confirm) return;
 
-    writeInFlightRef.current = true;
-    setIsChangingStatus(true);
-    setReloadNotice(null);
-    try {
-      const res = await fetch(`/api/super-admin/plans/${planId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus, expected_status: expectedStatus }),
-      });
-      // #1041 修正: 失敗時 (422/400/403 等) に無反応にせず、必ずエラーを表示する
-      await handleStatusResponse(res, 'ステータス変更に失敗しました');
-    } catch {
-      alert('ステータス変更に失敗しました (ネットワークエラー)');
-    } finally {
-      writeInFlightRef.current = false;
-      setIsChangingStatus(false);
-    }
+    await sendStatusChange({ status: newStatus, expected_status: expectedStatus }, 'ステータス変更に失敗しました');
   };
 
   // #1041 修正: public/private --> deprecated への廃止移行を許可 (以前は恒久ロックされていた)
@@ -522,22 +601,10 @@ export default function PlanDetailPage() {
     const orgRowNote = !countsOrganizationsFor(plan) ? `\n\n${ORG_SUBSCRIPTION_PLAN_ROW_NOTE}` : '';
     if (!window.confirm(`このプランを ${endsAtInput} 廃止予定で廃止しますか？${orgRowNote}`)) return;
 
-    writeInFlightRef.current = true;
-    setIsChangingStatus(true);
-    setReloadNotice(null);
-    try {
-      const res = await fetch(`/api/super-admin/plans/${planId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'deprecated', ends_at: endsAtDate.toISOString(), expected_status: expectedStatus }),
-      });
-      await handleStatusResponse(res, '廃止処理に失敗しました');
-    } catch {
-      alert('廃止処理に失敗しました (ネットワークエラー)');
-    } finally {
-      writeInFlightRef.current = false;
-      setIsChangingStatus(false);
-    }
+    await sendStatusChange(
+      { status: 'deprecated', ends_at: endsAtDate.toISOString(), expected_status: expectedStatus },
+      '廃止処理に失敗しました',
+    );
   };
 
   // deprecated --> private への緊急ロールバック (public には戻さない)
@@ -548,22 +615,7 @@ export default function PlanDetailPage() {
     // 画面が見ていた status (廃止)。route は DB の status と違えば書かずに 409 にする (#2064)
     const expectedStatus = plan.status;
     if (!window.confirm('廃止を取り消し、非公開状態に戻しますか？')) return;
-    writeInFlightRef.current = true;
-    setIsChangingStatus(true);
-    setReloadNotice(null);
-    try {
-      const res = await fetch(`/api/super-admin/plans/${planId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'private', expected_status: expectedStatus }),
-      });
-      await handleStatusResponse(res, '廃止取り消しに失敗しました');
-    } catch {
-      alert('廃止取り消しに失敗しました (ネットワークエラー)');
-    } finally {
-      writeInFlightRef.current = false;
-      setIsChangingStatus(false);
-    }
+    await sendStatusChange({ status: 'private', expected_status: expectedStatus }, '廃止取り消しに失敗しました');
   };
 
   if (isLoading) {
@@ -663,7 +715,7 @@ export default function PlanDetailPage() {
           className="mb-4 bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-lg text-sm flex items-center justify-between gap-4"
         >
           <span>{reloadNoticeText(reloadNotice)}</span>
-          {(reloadNotice.kind === 'stale-reload-failed' || reloadNotice.kind === 'reload-failed') && (
+          {isRetryableNotice(reloadNotice) && (
             <button
               type="button"
               onClick={() => void retryReload()}

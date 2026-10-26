@@ -8,6 +8,13 @@
  */
 import { STALE_DATA_ERROR_CODE, STALE_DATA_HTTP_STATUS, extractApiErrorCode } from '@/lib/admin/api-error-message';
 import {
+  NO_RESPONSE_LIST_RELOADED_GUIDE,
+  NO_RESPONSE_LIST_RELOAD_FAILED_GUIDE,
+  NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
+  statusChangeNoResponseMessage,
+  statusChangeNoResponseSummary,
+} from '@/lib/super-admin/status-change-no-response';
+import {
   EXPERIMENT_INVALID_TRANSITION_ERROR_CODE,
   isExperimentStatus,
   type ExperimentStatus,
@@ -76,4 +83,31 @@ export function experimentListStaleGoneMessage(name: string): string {
 /** 一覧: 409 のあとの一覧の読み直しに失敗したときの文 (「再試行」を出す) */
 export function experimentListStaleReloadFailedMessage(name: string): string {
   return `別の操作で「${name}」の状態が先に変わっていました。一覧を読み込み直せませんでした。「再試行」で読み込み直してから、もう一度操作してください`;
+}
+
+/**
+ * 状態の変更 (開始・完了・中止) の通信が reject された (応答を受け取れなかった) ときの文の操作の名前 (#2073)。
+ * 応答が無いので変更が済んだかは分からない。済んでいた (自分の操作) ときにも合うよう「失敗した」「別の操作で」とは言わない
+ */
+const EXPERIMENT_STATUS_CHANGE_OPERATION_NAME = '状態の変更';
+
+/** 詳細: 通信が reject され、実験を読み直せたときの文 (今の状態を表示名で添える。#2073) */
+export function experimentNoResponseReloadedMessage(currentStatus: string): string {
+  return `${statusChangeNoResponseSummary(EXPERIMENT_STATUS_CHANGE_OPERATION_NAME)}。今の状態（${experimentStatusLabel(currentStatus)}）を読み込み直したので、状態を確かめてから、必要ならもう一度操作してください`;
+}
+
+/** 詳細: 通信が reject され、読み直しにも失敗したときの文 (「再試行」を出す。#2073) */
+export const EXPERIMENT_NO_RESPONSE_RELOAD_FAILED_MESSAGE = statusChangeNoResponseMessage(
+  EXPERIMENT_STATUS_CHANGE_OPERATION_NAME,
+  NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
+);
+
+/** 一覧: 通信が reject され、一覧を読み直せたときの文 (#2073)。状態は一覧の行のバッジで見せる */
+export function experimentListNoResponseReloadedMessage(name: string): string {
+  return statusChangeNoResponseMessage(`「${name}」の${EXPERIMENT_STATUS_CHANGE_OPERATION_NAME}`, NO_RESPONSE_LIST_RELOADED_GUIDE);
+}
+
+/** 一覧: 通信が reject され、一覧の読み直しにも失敗したときの文 (「再試行」を出す。#2073) */
+export function experimentListNoResponseReloadFailedMessage(name: string): string {
+  return statusChangeNoResponseMessage(`「${name}」の${EXPERIMENT_STATUS_CHANGE_OPERATION_NAME}`, NO_RESPONSE_LIST_RELOAD_FAILED_GUIDE);
 }

@@ -3,14 +3,27 @@
 /**
  * /super-admin/coupons/[id] — クーポン詳細・編集
  * operator/03-ui-spec.md §14 / operator/04-plan-management.md §4.1 準拠
+ *
+ * 状態の変更 (一時停止・再開) の通信そのものが失敗した (fetch が reject した) ときは、サーバーが変更を済ませてから応答が切れた
+ * こともあるので、クーポンを読み直して今の状態とボタンを見せ、「<操作>の応答を受け取れませんでした」の文を出す (#2073)。
+ * 読み直さないと、古い status のボタンをもう一度押して 409 (遷移表に無い変更) になり、自分の操作なのに
+ * 「別の操作でクーポンの状態が先に変わっていました」と出る。
+ * 状態の変更のあとの読み直し (409 のあと・通信の reject のあと) が失敗したら、文と「再試行」を出し、読み直せるまで
+ * 状態の変更のボタンを止める (画面の status が DB と食い違っているかもしれないのに、その status を元にしたボタンを出し続けない。
+ * プランの詳細と同じ。#2064・#2073)
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { couponValidityDay, couponValidUntilPatchValue } from '@/lib/super-admin/coupon-validity';
-import { isStatusChangeConflict, operationFailureMessage, operationNetworkFailureMessage } from '@/lib/admin/api-error-message';
+import { isStatusChangeConflict, operationFailureMessage } from '@/lib/admin/api-error-message';
 import { COUPON_INVALID_TRANSITION_ERROR_CODE } from '@/lib/super-admin/coupons-schemas';
+import {
+  NO_RESPONSE_STATE_RELOADED_GUIDE,
+  NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
+  statusChangeNoResponseMessage,
+} from '@/lib/super-admin/status-change-no-response';
 
 type Coupon = {
   id: string;
@@ -88,7 +101,7 @@ function inputAfterSave(current: string, atSave: string, saved: string): string 
  * 手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を、開いたときの古い値で上書きしてしまう
  * (route は送られた項目をそのまま書く)。有効期限は JST の暦日で比べる (#1483 の couponValidUntilPatchValue)。
  * 表示名の空欄は null、最大利用回数の空欄は null (無制限) にする (これまでと同じ)。
- * 手を付けていない入力欄は、読み込み・保存の成功・状態の変更の成功・状態の変更の 409 のあとの読み直しのたびに coupon の値に揃える (handleSave・handleStatusChange の applyLatestCoupon) ので、ここで coupon と違う欄は運営が変えた欄
+ * 手を付けていない入力欄は、読み込み・保存の成功・状態の変更の成功・状態の変更の 409 と通信の reject のあとの読み直しのたびに coupon の値に揃える (handleSave・handleStatusChange・retryReread の applyLatestCoupon) ので、ここで coupon と違う欄は運営が変えた欄
  */
 function changedCouponFields(inputs: CouponInputs, coupon: Coupon): CouponSaveBody {
   const body: CouponSaveBody = {};
@@ -122,9 +135,31 @@ function statusChangeFailureSummary(newStatus: CouponStatusChange): string {
  */
 const STATUS_CONFLICT_RELOADED_REASON = '別の操作でクーポンの状態が先に変わっていました。今の状態を読み込み直しました';
 
-/** 状態の変更が 409 で断られ、読み直しも失敗したときの理由の文 (#2064) */
+/** 状態の変更が 409 で断られ、読み直しも失敗したときの理由の文 (「再試行」を出す。#2064・#2073) */
 const STATUS_CONFLICT_RELOAD_FAILED_REASON =
-  '別の操作でクーポンの状態が先に変わっていました。今の状態を読み込めなかったので、ページを読み込み直してください';
+  '別の操作でクーポンの状態が先に変わっていました。今の状態を読み込めませんでした。「再試行」で読み込み直してから、もう一度操作してください';
+
+/**
+ * 状態の変更のあとに読み直す理由 (#2073)。
+ *   - conflict   : 409 (遷移表に無い変更・同時の変更) で断られた (画面の status が古かった)
+ *   - no-response: 通信が reject された (応答を受け取れず、変更が済んだか分からない)
+ */
+type StatusRereadCause = 'conflict' | 'no-response';
+
+/** 状態の変更のあとの読み直しが失敗し、「再試行」で読み直すのを待っている操作 (#2073) */
+type PendingStatusReread = { newStatus: CouponStatusChange; cause: StatusRereadCause };
+
+/** 状態の変更のあとに読み直した (reloaded) か、読み直せなかったかの文 (#2064・#2073) */
+function statusRereadMessage(newStatus: CouponStatusChange, cause: StatusRereadCause, reloaded: boolean): string {
+  if (cause === 'conflict') {
+    return `${statusChangeFailureSummary(newStatus)}（${reloaded ? STATUS_CONFLICT_RELOADED_REASON : STATUS_CONFLICT_RELOAD_FAILED_REASON}）`;
+  }
+  // 応答を受け取れなかった: 変更が済んでいた (自分の操作) ときにも合うよう「できませんでした」「別の操作で」とは言わない
+  return statusChangeNoResponseMessage(
+    STATUS_CHANGE_LABELS[newStatus],
+    reloaded ? NO_RESPONSE_STATE_RELOADED_GUIDE : NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
+  );
+}
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   active: { label: '有効', color: 'bg-green-100 text-green-700' },
@@ -156,7 +191,13 @@ export default function CouponDetailPage() {
   // 2 つを重ねると、応答が送った順と逆に届いたとき、後に届いた古い方の行 (例: 一時停止の前の status) が画面に残る。
   // 待つあいだは両方のボタンを止め、押されても送らない。ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
   const writeInFlightRef = useRef(false);
-  const isWriting = isSaving || isChangingStatus;
+  // 状態の変更のあとの読み直しが失敗し、まだ読み直せていない操作 (#2073)。あるあいだは文と「再試行」を出し、状態の変更のボタンを止める。
+  // ref は描画を待たずに handler で読むための写し
+  const [pendingReread, setPendingReread] = useState<PendingStatusReread | null>(null);
+  const pendingRereadRef = useRef<PendingStatusReread | null>(null);
+  // 「再試行」の読み直しを待っているか
+  const [isRereading, setIsRereading] = useState(false);
+  const isWriting = isSaving || isChangingStatus || isRereading;
   const [activeTab, setActiveTab] = useState<'detail' | 'redemptions'>('detail');
 
   const [displayName, setDisplayName] = useState('');
@@ -242,7 +283,13 @@ export default function CouponDetailPage() {
     setMaxUses((current) => inputAfterSave(current, inputsBefore.maxUses, latestInputs.maxUses));
   };
 
-  /** 409 のあとにクーポンを読み直す (全体を「読み込み中」にしない)。読めなければ null (#2064) */
+  /** 状態の変更のあとの読み直しを待っている操作を記録する (null で外す。#2073) */
+  const markPendingReread = (pending: PendingStatusReread | null) => {
+    pendingRereadRef.current = pending;
+    setPendingReread(pending);
+  };
+
+  /** 409 のあと・通信の reject のあとにクーポンを読み直す (全体を「読み込み中」にしない)。読めなければ null (#2064・#2073) */
   const rereadCoupon = async (): Promise<Coupon | null> => {
     try {
       const res = await fetch(`/api/super-admin/coupons/${couponId}`);
@@ -288,11 +335,42 @@ export default function CouponDetailPage() {
       // 別の運営の変更を上書きしてしまう。応答を待つあいだに変えた欄は書きかけとして残す (次の保存で送る)
       applyLatestCoupon(data.data!, inputsAtSave);
       setSaveSuccess(true);
+      // 保存の応答の行は書いたあとの最新の行 (status も今の値) なので、状態の変更のあとの読み直しの失敗は解ける (#2073)
+      const pending = pendingRereadRef.current;
+      if (pending) {
+        setStatusError(statusRereadMessage(pending.newStatus, pending.cause, true));
+        markPendingReread(null);
+      }
     } catch {
       setSaveError('ネットワークエラー');
     } finally {
       writeInFlightRef.current = false;
       setIsSaving(false);
+    }
+  };
+
+  /**
+   * 状態の変更のあとに読み直し、結果に合わせて文を出す (#2064・#2073)。inputsBefore は押したときの最後に読んだ・保存した行の
+   * 入力欄の値 (書きかけを残すため)。読み直せなかったら「再試行」を待つ操作として記録し、状態の変更のボタンを止める
+   */
+  const rereadAfterStatusChange = async (newStatus: CouponStatusChange, cause: StatusRereadCause, inputsBefore: CouponInputs) => {
+    const latest = await rereadCoupon();
+    if (latest) applyLatestCoupon(latest, inputsBefore);
+    setStatusError(statusRereadMessage(newStatus, cause, latest !== null));
+    markPendingReread(latest ? null : { newStatus, cause });
+  };
+
+  /** 「再試行」: 状態の変更のあとの失敗した読み直しをやり直す (#2073) */
+  const retryReread = async () => {
+    const pending = pendingRereadRef.current;
+    if (!coupon || !pending || writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
+    setIsRereading(true);
+    try {
+      await rereadAfterStatusChange(pending.newStatus, pending.cause, couponInputsOf(coupon));
+    } finally {
+      writeInFlightRef.current = false;
+      setIsRereading(false);
     }
   };
 
@@ -303,10 +381,12 @@ export default function CouponDetailPage() {
    * 入力欄は保存の経路と同じく、手を付けていない欄だけ応答の行の値に揃え、書きかけは残す (inputAfterSave。#1917)。
    * 保存の応答を待つあいだは送らない (#2050。writeInFlightRef)。
    * 409 で、画面の status が古かった (遷移表に無い変更 OP_COUPON_INVALID_TRANSITION・同時の変更 CONFLICT_STALE_DATA) ときは、
-   * クーポンを読み直して状態の表示とボタンを今の状態にし、日本語の文を出す (書きかけは残す。#2064)
+   * クーポンを読み直して状態の表示とボタンを今の状態にし、日本語の文を出す (書きかけは残す。#2064)。
+   * 通信が reject されたときも読み直す (サーバーが変更を済ませてから応答が切れたことがあるため。#2073)。
+   * 読み直しが失敗して、まだ読み直せていないあいだは送らない (#2073。画面の status が古いかもしれない)
    */
   const handleStatusChange = async (newStatus: CouponStatusChange) => {
-    if (!coupon || writeInFlightRef.current) return;
+    if (!coupon || writeInFlightRef.current || pendingRereadRef.current) return;
     if (!confirm(`このクーポンを${STATUS_CHANGE_LABELS[newStatus]}しますか？`)) return;
     // 押したときの最後に読んだ・保存した行から作る入力欄の値 (入力欄がこれと同じなら手を付けていない欄)
     const loadedInputs = couponInputsOf(coupon);
@@ -322,10 +402,7 @@ export default function CouponDetailPage() {
       if (!res.ok) {
         const body: unknown = await res.json().catch(() => null);
         if (isStatusChangeConflict(res.status, body, COUPON_INVALID_TRANSITION_ERROR_CODE)) {
-          const latest = await rereadCoupon();
-          if (latest) applyLatestCoupon(latest, loadedInputs);
-          const reason = latest ? STATUS_CONFLICT_RELOADED_REASON : STATUS_CONFLICT_RELOAD_FAILED_REASON;
-          setStatusError(`${statusChangeFailureSummary(newStatus)}（${reason}）`);
+          await rereadAfterStatusChange(newStatus, 'conflict', loadedInputs);
           return;
         }
         setStatusError(operationFailureMessage(statusChangeFailureSummary(newStatus), res.status, body));
@@ -334,7 +411,9 @@ export default function CouponDetailPage() {
       // 応答は { data: 書いたあとの行 } (保存の経路と同じ形。route は .update().select() の行を返す)
       applyLatestCoupon((await res.json() as { data: Coupon }).data, loadedInputs);
     } catch {
-      setStatusError(operationNetworkFailureMessage(statusChangeFailureSummary(newStatus)));
+      // 応答を受け取れなかった (通信が reject した: オフライン・接続が切れたなど。成功の応答の本文を読み切れなかったときも)。
+      // 変更が済んだかは分からないので、読み直して今の状態を見せる (#2073。rereadAfterStatusChange は投げない)
+      await rereadAfterStatusChange(newStatus, 'no-response', loadedInputs);
     } finally {
       writeInFlightRef.current = false;
       setIsChangingStatus(false);
@@ -354,6 +433,8 @@ export default function CouponDetailPage() {
   }
 
   const statusInfo = STATUS_LABELS[coupon.status] ?? { label: coupon.status, color: 'bg-slate-100 text-slate-500' };
+  // 状態の変更のボタンを止めるか (応答を待つあいだ・読み直しが失敗してまだ読み直せていないあいだ。#2050・#2073)
+  const statusButtonsDisabled = isWriting || pendingReread !== null;
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -373,7 +454,7 @@ export default function CouponDetailPage() {
           {coupon.status === 'active' && (
             <button
               onClick={() => handleStatusChange('paused')}
-              disabled={isWriting}
+              disabled={statusButtonsDisabled}
               className="px-3 py-1.5 border border-yellow-300 text-yellow-600 rounded-lg text-xs font-medium hover:bg-yellow-50 transition-colors disabled:opacity-50"
             >
               一時停止
@@ -382,7 +463,7 @@ export default function CouponDetailPage() {
           {coupon.status === 'paused' && (
             <button
               onClick={() => handleStatusChange('active')}
-              disabled={isWriting}
+              disabled={statusButtonsDisabled}
               className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors disabled:opacity-50"
             >
               再開する
@@ -392,12 +473,20 @@ export default function CouponDetailPage() {
       </div>
 
       {statusError && (
-        <div
-          role="alert"
-          data-testid="status-change-error"
-          className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm"
-        >
-          {statusError}
+        <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex items-center justify-between gap-4">
+          <p role="alert" data-testid="status-change-error">
+            {statusError}
+          </p>
+          {pendingReread && (
+            <button
+              type="button"
+              onClick={() => void retryReread()}
+              disabled={isWriting}
+              className="shrink-0 underline whitespace-nowrap hover:text-red-900 disabled:opacity-50"
+            >
+              {isRereading ? '読み込み中...' : '再試行'}
+            </button>
+          )}
         </div>
       )}
 
