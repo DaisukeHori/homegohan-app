@@ -77,6 +77,9 @@ export type ModalAction =
   | { type: 'MODAL_SET_MANUAL_EDIT_MEAL'; payload: PlannedMeal | null }
   | { type: 'MODAL_SET_DELETING_MEAL'; payload: PlannedMeal | null }
   | { type: 'MODAL_SET_PHOTO_EDIT_MEAL'; payload: PlannedMeal | null }
+  // 写真の解析の結果を待ち終えたとき (#2047): 写真から入力のモーダルが、まだその献立 (payload = mealId) のものなら閉じる。
+  // 待っているあいだに利用者が閉じた・別の献立やほかのモーダルを開いたなら、それは閉じない (その時点の状態で判定する)
+  | { type: 'MODAL_CLOSE_PHOTO_EDIT_FOR_MEAL'; payload: string }
   | { type: 'MODAL_SET_IMAGE_GENERATE_MEAL'; payload: PlannedMeal | null }
   | { type: 'IMPROVE_TARGETS_SET'; payload: MealType[] }
   | { type: 'WEEKLY_SUMMARY_MODAL_OPEN' }
@@ -155,6 +158,10 @@ export function modalReducer(
 
     case 'MODAL_SET_PHOTO_EDIT_MEAL':
       return { ...state, photoEditMeal: action.payload };
+
+    case 'MODAL_CLOSE_PHOTO_EDIT_FOR_MEAL':
+      if (state.activeModal !== 'photoEdit' || state.photoEditMeal?.id !== action.payload) return state;
+      return { ...state, activeModal: null, photoEditMeal: null };
 
     case 'MODAL_SET_IMAGE_GENERATE_MEAL':
       return { ...state, imageGenerateMeal: action.payload };
