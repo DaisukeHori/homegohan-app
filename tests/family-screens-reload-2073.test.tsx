@@ -1882,6 +1882,18 @@ describe('#2073 S2 子どもの追加: 追加の通信が切れたら、同じ�
     await click(submitButton(), '「追加する」');
   }
 
+  it('(読み込みの失敗の分岐で包み直した入力欄) 生年月日が正しくなければ入力欄を不正と示し、正しければ示さない', async () => {
+    familyReadable();
+    await renderElement(createElement(FamilyChildNewPage));
+    const birthInput = () => container.querySelector<HTMLInputElement>('#child-birth-date');
+
+    await setValue(birthInput(), BIRTH);
+    expect(birthInput()?.getAttribute('aria-invalid')).toBe('false');
+
+    await setValue(birthInput(), '2999-01-01');
+    expect(birthInput()?.getAttribute('aria-invalid')).toBe('true');
+  });
+
   it('サーバーが追加を済ませてから応答が切れたとき、読み直して行が増えていれば、成功のときと同じくメンバーの一覧へ移る', async () => {
     familyReadable();
     mockFetch((method, url) => {
@@ -2285,6 +2297,26 @@ describe('#2073 S2 昇格の依頼: 送信・取り消しの通信が切れた�
     expect(unhandled).toEqual([]);
   });
 
+  it.each([
+    ['応答の依頼の宛先', { data: { request: { id: 'req-new', email: 'taro.stored@example.com' } } }, 'taro.stored@example.com'],
+    ['応答に宛先が無ければ、入力した宛先 (前後の空白を除き小文字にしたもの)', { data: {} }, EMAIL],
+  ])('(対照) 応答が届いて成功したら、読み直さずに成功の画面を出し、%s を出す', async (_what, body, shownEmail) => {
+    mockFetch((method, url) => {
+      if (method === 'POST' && url.pathname === PROMOTE_PATH) return jsonResponse(200, body);
+      throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+    });
+    await renderElement(createElement(PromoteMemberPage));
+
+    await setValue(container.querySelector<HTMLInputElement>('#promotion-email'), ` ${EMAIL.toUpperCase()} `);
+    await click(submitButton(), '「参加リクエストを送信」');
+
+    expect(JSON.parse(String((callsOf('POST', PROMOTE_PATH)[0]?.[1] as RequestInit | undefined)?.body))).toEqual({ email: EMAIL });
+    // 画面を開いたときの 1 回だけ (成功したので読み直さない)
+    expect(filtersOf('family_promotion_requests')).toHaveLength(1);
+    expect(text()).toContain('参加リクエストを送信しました');
+    expect(text()).toContain(`${shownEmail} 宛に`);
+  });
+
   it('依頼を作れていなければ、通信エラーの文を出し、送信のフォームを残す', async () => {
     mockFetch((method, url) => {
       if (method === 'POST' && url.pathname === PROMOTE_PATH) throw new TypeError('Failed to fetch');
@@ -2669,6 +2701,23 @@ describe('#2073 S8 組織のオーナーの譲渡: 提案の送信の通信が�
     expect(router.push).toHaveBeenCalledWith('/org/members');
     expect(text()).not.toContain(ORG_NETWORK_ERROR);
     expect(unhandled).toEqual([]);
+  });
+
+  it('(対照) 応答が届いて成功したら、読み直さずに、送った旨を出してメンバーの一覧へ移る (成功の文は通信が切れたときと同じ)', async () => {
+    mockFetch((method, url) => {
+      if (method === 'POST' && url.pathname === PROPOSE_PATH) return jsonResponse(200, { data: { proposal_id: NEW_PROPOSAL_ID } });
+      throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+    });
+    await renderElement(createElement(OwnerTransferPage));
+
+    await selectAndPropose();
+
+    expect(callsOf('POST', PROPOSE_PATH)).toHaveLength(1);
+    // 送る前の 1 回だけ (成功したので読み直さない)
+    expect(queryCount('ownership_transfer_proposals', 'maybeSingle')).toBe(1);
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    expect(alertSpy).toHaveBeenCalledWith(ORG_PROPOSAL_SENT);
+    expect(router.push).toHaveBeenCalledWith('/org/members');
   });
 
   it('提案を作れていなければ、これまでどおり失敗の文を出し、移らない', async () => {
