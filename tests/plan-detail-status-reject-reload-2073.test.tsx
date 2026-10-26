@@ -123,7 +123,8 @@ const callsOf = (method: string) =>
 const patchBodies = () => callsOf('PATCH').map(([, init]) => JSON.parse(String((init as RequestInit).body)) as PatchBody);
 
 const text = () => container.textContent ?? '';
-const notice = () => container.querySelector('[data-testid="plan-reload-notice"]')?.textContent ?? null;
+/** 画面の上の文 (「再試行」のボタンの文字を含めない) */
+const notice = () => container.querySelector('[data-testid="plan-reload-notice"] > span')?.textContent ?? null;
 const statusBadge = () => container.querySelector('h1')?.nextElementSibling?.textContent ?? null;
 
 function findButton(label: string): HTMLButtonElement | undefined {

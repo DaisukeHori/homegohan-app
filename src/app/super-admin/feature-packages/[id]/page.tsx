@@ -2,13 +2,25 @@
 
 /**
  * /super-admin/feature-packages/[id] — 機能パッケージ詳細・編集
+ *
+ * 廃止の通信そのものが失敗した (fetch が reject した) ときは、サーバーが廃止を済ませてから応答が切れたこともあるので、
+ * 機能パッケージを読み直して今の状態とボタンを見せ、「廃止の応答を受け取れませんでした」の文を出す (#2073)。
+ * 読み直さないと、古い「廃止する」をもう一度押して 409 (遷移表に無い変更) になり、自分の操作なのに
+ * 「別の操作で機能パッケージの状態が先に変わっていました」と出る。
+ * 廃止のあとの読み直し (409 のあと・通信の reject のあと) が失敗したら、文と「再試行」を出し、読み直せるまで「廃止する」を止める
+ * (クーポンの詳細・プランの詳細と同じ。#2064・#2073)
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { isStatusChangeConflict, operationFailureMessage, operationNetworkFailureMessage } from '@/lib/admin/api-error-message';
+import { isStatusChangeConflict, operationFailureMessage } from '@/lib/admin/api-error-message';
 import { FEATURE_PACKAGE_INVALID_TRANSITION_ERROR_CODE } from '@/lib/super-admin/feature-packages-schemas';
+import {
+  NO_RESPONSE_STATE_RELOADED_GUIDE,
+  NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
+  statusChangeNoResponseMessage,
+} from '@/lib/super-admin/status-change-no-response';
 
 type FeaturePackage = {
   id: string;
@@ -60,7 +72,7 @@ type FeaturePackageSaveBody = {
  * 保存で送る本文。最後に読んだ・保存した機能パッケージ (pkg) から変えた欄だけを入れる (#1917)。
  * 手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を、開いたときの古い値で上書きしてしまう
  * (route は送られた項目をそのまま書く)。機能フラグは並びで比べる。説明の空欄は null にする (これまでと同じ)。
- * 手を付けていない入力欄は、読み込み・保存の成功・廃止の成功・廃止の 409 のあとの読み直しのたびに pkg の値に揃える (handleSave・handleDeprecate の applyLatestPackage) ので、ここで pkg と違う欄は運営が変えた欄
+ * 手を付けていない入力欄は、読み込み・保存の成功・廃止の成功・廃止の 409 と通信の reject のあとの読み直しのたびに pkg の値に揃える (handleSave・handleDeprecate・retryReread の applyLatestPackage) ので、ここで pkg と違う欄は運営が変えた欄
  */
 function changedFeaturePackageFields(
   inputs: { displayName: string; description: string; flags: string[]; displayOrder: number },
@@ -88,9 +100,31 @@ const DEPRECATE_FAILURE_SUMMARY = '廃止できませんでした';
  */
 const STATUS_CONFLICT_RELOADED_REASON = '別の操作で機能パッケージの状態が先に変わっていました。今の状態を読み込み直しました';
 
-/** 廃止が 409 で断られ、読み直しも失敗したときの理由の文 (#2064) */
+/** 廃止が 409 で断られ、読み直しも失敗したときの理由の文 (「再試行」を出す。#2064・#2073) */
 const STATUS_CONFLICT_RELOAD_FAILED_REASON =
-  '別の操作で機能パッケージの状態が先に変わっていました。今の状態を読み込めなかったので、ページを読み込み直してください';
+  '別の操作で機能パッケージの状態が先に変わっていました。今の状態を読み込めませんでした。「再試行」で読み込み直してから、もう一度操作してください';
+
+/** 廃止の通信が reject されたときの文の操作の名前 (#2073) */
+const DEPRECATE_OPERATION_NAME = '廃止';
+
+/**
+ * 廃止のあとに読み直す理由 (#2073)。
+ *   - conflict   : 409 (遷移表に無い変更・同時の変更) で断られた (画面の status が古かった)
+ *   - no-response: 通信が reject された (応答を受け取れず、廃止が済んだか分からない)
+ */
+type DeprecateRereadCause = 'conflict' | 'no-response';
+
+/** 廃止のあとに読み直した (reloaded) か、読み直せなかったかの文 (#2064・#2073) */
+function deprecateRereadMessage(cause: DeprecateRereadCause, reloaded: boolean): string {
+  if (cause === 'conflict') {
+    return `${DEPRECATE_FAILURE_SUMMARY}（${reloaded ? STATUS_CONFLICT_RELOADED_REASON : STATUS_CONFLICT_RELOAD_FAILED_REASON}）`;
+  }
+  // 応答を受け取れなかった: 廃止が済んでいた (自分の操作) ときにも合うよう「できませんでした」「別の操作で」とは言わない
+  return statusChangeNoResponseMessage(
+    DEPRECATE_OPERATION_NAME,
+    reloaded ? NO_RESPONSE_STATE_RELOADED_GUIDE : NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
+  );
+}
 
 export default function FeaturePackageDetailPage() {
   const params = useParams();
@@ -117,7 +151,13 @@ export default function FeaturePackageDetailPage() {
   // 2 つを重ねると、応答が送った順と逆に届いたとき、後に届いた古い方の行 (例: 廃止の前の status) が画面に残る。
   // 待つあいだは両方のボタンを止め、押されても送らない。ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
   const writeInFlightRef = useRef(false);
-  const isWriting = isSaving || isDeprecating;
+  // 廃止のあとの読み直しが失敗し、まだ読み直せていないときの理由 (#2073)。あるあいだは文と「再試行」を出し、「廃止する」を止める。
+  // ref は描画を待たずに handler で読むための写し
+  const [pendingReread, setPendingReread] = useState<DeprecateRereadCause | null>(null);
+  const pendingRereadRef = useRef<DeprecateRereadCause | null>(null);
+  // 「再試行」の読み直しを待っているか
+  const [isRereading, setIsRereading] = useState(false);
+  const isWriting = isSaving || isDeprecating || isRereading;
 
   const fetchPkg = useCallback(async () => {
     setIsLoading(true);
@@ -159,7 +199,13 @@ export default function FeaturePackageDetailPage() {
     setDisplayOrder((current) => inputAfterSave(current, inputsBefore.displayOrder, latestInputs.displayOrder));
   };
 
-  /** 409 のあとに機能パッケージを読み直す (全体を「読み込み中」にしない)。読めなければ null (#2064) */
+  /** 廃止のあとの読み直しを待っている理由を記録する (null で外す。#2073) */
+  const markPendingReread = (pending: DeprecateRereadCause | null) => {
+    pendingRereadRef.current = pending;
+    setPendingReread(pending);
+  };
+
+  /** 409 のあと・通信の reject のあとに機能パッケージを読み直す (全体を「読み込み中」にしない)。読めなければ null (#2064・#2073) */
   const rereadPackage = async (): Promise<FeaturePackage | null> => {
     try {
       const res = await fetch(`/api/super-admin/feature-packages/${pkgId}`);
@@ -210,6 +256,12 @@ export default function FeaturePackageDetailPage() {
       // 別の運営の変更を上書きしてしまう。応答を待つあいだに変えた欄は書きかけとして残す (次の保存で送る)
       applyLatestPackage(data.data!, inputsAtSave);
       setSaveSuccess(true);
+      // 保存の応答の行は書いたあとの最新の行 (status も今の値) なので、廃止のあとの読み直しの失敗は解ける (#2073)
+      const pending = pendingRereadRef.current;
+      if (pending) {
+        setDeprecateError(deprecateRereadMessage(pending, true));
+        markPendingReread(null);
+      }
     } catch {
       setSaveError('ネットワークエラー');
     } finally {
@@ -219,15 +271,42 @@ export default function FeaturePackageDetailPage() {
   };
 
   /**
+   * 廃止のあとに読み直し、結果に合わせて文を出す (#2064・#2073)。inputsBefore は押したときの最後に読んだ・保存した行の
+   * 入力欄の値 (書きかけを残すため)。読み直せなかったら「再試行」を待つ理由として記録し、「廃止する」を止める
+   */
+  const rereadAfterDeprecate = async (cause: DeprecateRereadCause, inputsBefore: FeaturePackageInputs) => {
+    const latest = await rereadPackage();
+    if (latest) applyLatestPackage(latest, inputsBefore);
+    setDeprecateError(deprecateRereadMessage(cause, latest !== null));
+    markPendingReread(latest ? null : cause);
+  };
+
+  /** 「再試行」: 廃止のあとの失敗した読み直しをやり直す (#2073) */
+  const retryReread = async () => {
+    const pending = pendingRereadRef.current;
+    if (!pkg || !pending || writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
+    setIsRereading(true);
+    try {
+      await rereadAfterDeprecate(pending, featurePackageInputsOf(pkg));
+    } finally {
+      writeInFlightRef.current = false;
+      setIsRereading(false);
+    }
+  };
+
+  /**
    * 廃止。失敗の応答を黙って捨てず、理由を画面に出す (403 は理由の文 (二段階認証の確認が要る など) だけを通す。operationFailureMessage)。
    * 成功したら PATCH の応答の行 (書いたあとの最新の行) で表示を新しくする。全体を「読み込み中」にして読み直さない。
    * 入力欄は保存の経路と同じく、手を付けていない欄だけ応答の行の値に揃え、書きかけは残す (inputAfterSave。#1917)。
    * 保存の応答を待つあいだは送らない (#2050。writeInFlightRef)。
    * 409 で、画面の status が古かった (遷移表に無い変更 OP_FEATURE_PACKAGE_INVALID_TRANSITION・同時の変更 CONFLICT_STALE_DATA) ときは、
-   * 機能パッケージを読み直して状態の表示とボタンを今の状態にし、日本語の文を出す (書きかけは残す。#2064)
+   * 機能パッケージを読み直して状態の表示とボタンを今の状態にし、日本語の文を出す (書きかけは残す。#2064)。
+   * 通信が reject されたときも読み直す (サーバーが廃止を済ませてから応答が切れたことがあるため。#2073)。
+   * 読み直しが失敗して、まだ読み直せていないあいだは送らない (#2073。画面の status が古いかもしれない)
    */
   const handleDeprecate = async () => {
-    if (!pkg || writeInFlightRef.current) return;
+    if (!pkg || writeInFlightRef.current || pendingRereadRef.current) return;
     if (!confirm('この機能パッケージを廃止しますか？')) return;
     // 押したときの最後に読んだ・保存した行から作る入力欄の値 (入力欄がこれと同じなら手を付けていない欄)
     const loadedInputs = featurePackageInputsOf(pkg);
@@ -243,10 +322,7 @@ export default function FeaturePackageDetailPage() {
       if (!res.ok) {
         const body: unknown = await res.json().catch(() => null);
         if (isStatusChangeConflict(res.status, body, FEATURE_PACKAGE_INVALID_TRANSITION_ERROR_CODE)) {
-          const latest = await rereadPackage();
-          if (latest) applyLatestPackage(latest, loadedInputs);
-          const reason = latest ? STATUS_CONFLICT_RELOADED_REASON : STATUS_CONFLICT_RELOAD_FAILED_REASON;
-          setDeprecateError(`${DEPRECATE_FAILURE_SUMMARY}（${reason}）`);
+          await rereadAfterDeprecate('conflict', loadedInputs);
           return;
         }
         setDeprecateError(operationFailureMessage(DEPRECATE_FAILURE_SUMMARY, res.status, body));
@@ -255,7 +331,9 @@ export default function FeaturePackageDetailPage() {
       // 応答は { data: 書いたあとの行 } (保存の経路と同じ形。route は .update().select() の行を返す)
       applyLatestPackage((await res.json() as { data: FeaturePackage }).data, loadedInputs);
     } catch {
-      setDeprecateError(operationNetworkFailureMessage(DEPRECATE_FAILURE_SUMMARY));
+      // 応答を受け取れなかった (通信が reject した: オフライン・接続が切れたなど。成功の応答の本文を読み切れなかったときも)。
+      // 廃止が済んだかは分からないので、読み直して今の状態を見せる (#2073。rereadAfterDeprecate は投げない)
+      await rereadAfterDeprecate('no-response', loadedInputs);
     } finally {
       writeInFlightRef.current = false;
       setIsDeprecating(false);
@@ -295,7 +373,8 @@ export default function FeaturePackageDetailPage() {
         {pkg.status === 'active' && (
           <button
             onClick={handleDeprecate}
-            disabled={isWriting}
+            // 応答を待つあいだ・廃止のあとの読み直しが失敗してまだ読み直せていないあいだは止める (#2050・#2073)
+            disabled={isWriting || pendingReread !== null}
             className="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg text-xs font-medium hover:bg-red-50 transition-colors disabled:opacity-50"
           >
             廃止する
@@ -304,12 +383,20 @@ export default function FeaturePackageDetailPage() {
       </div>
 
       {deprecateError && (
-        <div
-          role="alert"
-          data-testid="status-change-error"
-          className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm"
-        >
-          {deprecateError}
+        <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex items-center justify-between gap-4">
+          <p role="alert" data-testid="status-change-error">
+            {deprecateError}
+          </p>
+          {pendingReread && (
+            <button
+              type="button"
+              onClick={() => void retryReread()}
+              disabled={isWriting}
+              className="shrink-0 underline whitespace-nowrap hover:text-red-900 disabled:opacity-50"
+            >
+              {isRereading ? '読み込み中...' : '再試行'}
+            </button>
+          )}
         </div>
       )}
 

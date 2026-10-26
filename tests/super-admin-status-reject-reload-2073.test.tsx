@@ -397,7 +397,7 @@ describe('A/B テストの詳細: 状態の変更の通信が reject された�
     created_at: '2026-10-01T00:00:00Z',
   };
   const PATH = `/api/super-admin/experiments/${ROW_ID}`;
-  const noticeText = () => container.querySelector('[data-testid="experiment-reload-notice"]')?.textContent ?? null;
+  const noticeText = () => container.querySelector('[data-testid="experiment-reload-notice"] p')?.textContent ?? null;
 
   function mockExperimentServer(options: { failGet?: (n: number) => boolean; rejectPatch?: (n: number) => 'after-write' | undefined }) {
     let current: Record<string, unknown> = { ...EXPERIMENT };
@@ -473,7 +473,7 @@ describe('A/B テストの一覧: 状態の変更の通信が reject された�
     primary_metric: null,
     created_at: '2026-10-01T00:00:00Z',
   };
-  const noticeText = () => container.querySelector('[data-testid="experiment-reload-notice"]')?.textContent ?? null;
+  const noticeText = () => container.querySelector('[data-testid="experiment-reload-notice"] p')?.textContent ?? null;
 
   function mockListServer(options: { failGet?: (n: number) => boolean }) {
     let current: Record<string, unknown> = { ...EXPERIMENT };
