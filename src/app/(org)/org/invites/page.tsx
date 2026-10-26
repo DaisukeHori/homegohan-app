@@ -7,6 +7,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import { ORG_UNKNOWN_VALUE_LABEL } from "@/lib/org-plans";
+import { operationFailureMessage, operationNetworkFailureMessage } from "@/lib/admin/api-error-message";
 
 interface Invite {
   id: string;
@@ -20,6 +21,8 @@ interface Invite {
 
 /** 招待の取消が失敗したときの文 */
 const REVOKE_FAILURE_MESSAGE = "招待の取り消しに失敗しました";
+/** 招待の履歴を読み込めなかったときの文の頭 (後ろに理由を添える)。空の履歴 (「招待はありません」) と見分けるために出す (#2050) */
+const LOAD_FAILURE_SUMMARY = "招待の履歴を読み込めませんでした";
 
 export default function OrgInvitesPage() {
   const [invites, setInvites] = useState<Invite[]>([]);
@@ -31,28 +34,38 @@ export default function OrgInvitesPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  // 履歴を読み込めなかったときの文。あるあいだは履歴と「招待はありません」の代わりにこの文と「再試行」を出す (#2050)
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // 取消の応答を待っている招待の id。待つあいだは取消のボタンを止める
+  // (二度押しで 2 本目を送ると、取り消せているのに INVITE_NOT_FOUND で「招待の取り消しに失敗しました」が出るため。#2050)
+  const [revokingId, setRevokingId] = useState<string | null>(null);
 
   const fetchInvites = useCallback(async () => {
     try {
       const res = await fetch("/api/org/invites");
-      if (res.ok) {
-        const data = await res.json();
-        // GET /api/org/invites の応答 (src/schemas/membership/organization-invite.ts の OrgInviteListResponseSchema)。
-        // role は招待で付ける役割 (invited_role)、status は表示用の状態 (取り消し・拒否・期限切れを含む)
-        const items = data.invites ?? [];
-        setInvites(
-          items.map((i: Record<string, unknown>) => ({
-            id: i.id as string,
-            email: (i.email as string) ?? "",
-            role: (i.role as string) ?? "",
-            token: (i.token as string) ?? "",
-            status: getStatus(i),
-            expires_at: (i.expires_at ?? i.expiresAt) as string,
-          })),
-        );
+      if (!res.ok) {
+        const body: unknown = await res.json().catch(() => null);
+        setLoadError(operationFailureMessage(LOAD_FAILURE_SUMMARY, res.status, body));
+        return;
       }
+      const data = await res.json();
+      // GET /api/org/invites の応答 (src/schemas/membership/organization-invite.ts の OrgInviteListResponseSchema)。
+      // role は招待で付ける役割 (invited_role)、status は表示用の状態 (取り消し・拒否・期限切れを含む)
+      const items = data.invites ?? [];
+      setInvites(
+        items.map((i: Record<string, unknown>) => ({
+          id: i.id as string,
+          email: (i.email as string) ?? "",
+          role: (i.role as string) ?? "",
+          token: (i.token as string) ?? "",
+          status: getStatus(i),
+          expires_at: (i.expires_at ?? i.expiresAt) as string,
+        })),
+      );
+      setLoadError(null);
     } catch (error) {
       console.error("Failed to fetch invites:", error);
+      setLoadError(operationNetworkFailureMessage(LOAD_FAILURE_SUMMARY));
     } finally {
       setLoading(false);
     }
@@ -98,15 +111,18 @@ export default function OrgInvitesPage() {
   };
 
   const handleRevokeInvite = async (inviteId: string) => {
+    if (revokingId !== null) return;
     if (!confirm("この招待を取り消しますか？")) return;
 
+    setRevokingId(inviteId);
     try {
       const res = await fetch(`/api/org/invites/${inviteId}/revoke`, {
         method: "POST",
       });
 
       if (res.ok) {
-        fetchInvites();
+        // 読み直し (取り消した招待が「取消済」になり、取消のボタンが消える) まで待ってからボタンを戻す
+        await fetchInvites();
       } else {
         // 本文が JSON でない失敗 (プロキシの 502 など) でも、取り消せなかったことを知らせる (黙って捨てない)
         const data = await res.json().catch(() => null);
@@ -115,7 +131,15 @@ export default function OrgInvitesPage() {
     } catch (error) {
       console.error("Failed to revoke invite:", error);
       alert(`${REVOKE_FAILURE_MESSAGE}（通信エラー）`);
+    } finally {
+      setRevokingId(null);
     }
+  };
+
+  // 履歴の読み込みをやり直す (読み込めなかったときの「再試行」)
+  const retryLoad = () => {
+    setLoading(true);
+    void fetchInvites();
   };
 
   const copyInviteLink = (token: string, id: string) => {
@@ -246,6 +270,22 @@ export default function OrgInvitesPage() {
         <div className="px-6 py-4 border-b border-gray-50">
           <h2 className="font-semibold text-gray-700">招待履歴</h2>
         </div>
+        {loadError ? (
+          <div
+            role="alert"
+            data-testid="invite-load-error"
+            className="p-6 flex items-center justify-between gap-3 text-sm text-red-700 bg-red-50"
+          >
+            <span>{loadError}</span>
+            <button
+              type="button"
+              onClick={retryLoad}
+              className="shrink-0 px-3 py-1.5 bg-white border border-red-300 rounded-lg text-red-700 hover:bg-red-100 transition-colors"
+            >
+              再試行
+            </button>
+          </div>
+        ) : (
         <div className="divide-y divide-gray-50">
           {invites.map((invite) => {
             const { label, className: sc } = statusLabel(invite.status);
@@ -275,7 +315,8 @@ export default function OrgInvitesPage() {
                   {invite.status === "pending" && (
                     <button
                       onClick={() => handleRevokeInvite(invite.id)}
-                      className="px-4 py-2 bg-red-50 text-red-600 rounded-lg text-sm hover:bg-red-100 transition-colors"
+                      disabled={revokingId !== null}
+                      className="px-4 py-2 bg-red-50 text-red-600 rounded-lg text-sm hover:bg-red-100 transition-colors disabled:opacity-50"
                     >
                       取消
                     </button>
@@ -290,6 +331,7 @@ export default function OrgInvitesPage() {
             </div>
           )}
         </div>
+        )}
       </div>
     </div>
   );

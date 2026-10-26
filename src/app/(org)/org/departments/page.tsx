@@ -2,7 +2,11 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { extractApiErrorMessage } from "@/lib/admin/api-error-message";
+import {
+  extractApiErrorMessage,
+  operationFailureMessage,
+  operationNetworkFailureMessage,
+} from "@/lib/admin/api-error-message";
 
 interface Department {
   id: string;
@@ -18,6 +22,8 @@ interface Department {
 const CREATE_FAILURE_SUMMARY = "部署を追加できませんでした";
 const UPDATE_FAILURE_SUMMARY = "部署を更新できませんでした";
 const DELETE_FAILURE_SUMMARY = "部署を削除できませんでした";
+/** 部署の一覧を読み込めなかったときの文の頭 (後ろに理由を添える)。空の一覧 (「部署がありません」) と見分けるために出す (#2050) */
+const LOAD_FAILURE_SUMMARY = "部署の一覧を読み込めませんでした";
 
 /**
  * 失敗の応答から画面に出す文 (「<操作>（<理由>）」)。理由は本文の文 (API の error.message)、読めなければ HTTP ステータス。
@@ -37,16 +43,27 @@ export default function OrgDepartmentsPage() {
   const [submitting, setSubmitting] = useState(false);
   // 追加・更新・削除が失敗したときの文
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // 一覧を読み込めなかったときの文。あるあいだは一覧と「部署がありません」の代わりにこの文と「再試行」を出す
+  // (読めなかったのを部署が無いと見せない。管理者が同じ名前の部署を作り直さないように。#2050)
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // 削除の応答を待っている部署の id。待つあいだは削除のボタンを止める
+  // (二度押しで 2 本目の DELETE を送ると、削除できているのに 404 で「部署を削除できませんでした」が出るため。#2050)
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const fetchDepartments = useCallback(async () => {
     try {
       const res = await fetch("/api/org/departments");
-      if (res.ok) {
-        const data = await res.json();
-        setDepartments(data.departments);
+      if (!res.ok) {
+        const body: unknown = await res.json().catch(() => null);
+        setLoadError(operationFailureMessage(LOAD_FAILURE_SUMMARY, res.status, body));
+        return;
       }
+      const data = await res.json();
+      setDepartments(data.departments);
+      setLoadError(null);
     } catch (error) {
       console.error("Failed to fetch departments:", error);
+      setLoadError(operationNetworkFailureMessage(LOAD_FAILURE_SUMMARY));
     } finally {
       setLoading(false);
     }
@@ -93,8 +110,10 @@ export default function OrgDepartmentsPage() {
   };
 
   const handleDelete = async (deptId: string) => {
+    if (deletingId !== null) return;
     if (!confirm("この部署を削除しますか？")) return;
 
+    setDeletingId(deptId);
     setErrorMessage(null);
     try {
       const res = await fetch(`/api/org/departments?id=${deptId}`, {
@@ -104,11 +123,20 @@ export default function OrgDepartmentsPage() {
         setErrorMessage(await failureMessageOf(res, DELETE_FAILURE_SUMMARY));
         return;
       }
-      fetchDepartments();
+      // 読み直し (消した部署が一覧から消える) まで待ってからボタンを戻す (戻した直後の押下で 2 本目を送らないように)
+      await fetchDepartments();
     } catch (error) {
       console.error("Failed to delete department:", error);
       setErrorMessage(`${DELETE_FAILURE_SUMMARY}（通信エラー）`);
+    } finally {
+      setDeletingId(null);
     }
+  };
+
+  // 一覧の読み込みをやり直す (読み込めなかったときの「再試行」)
+  const retryLoad = () => {
+    setLoading(true);
+    void fetchDepartments();
   };
 
   // フォームを閉じる・開き直すときは、前の操作の失敗の文を残さない
@@ -139,7 +167,8 @@ export default function OrgDepartmentsPage() {
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">部署管理</h1>
-          <p className="text-gray-500 mt-1">{departments.length}件の部署</p>
+          {/* 読み込めなかったときは件数を出さない (「0件」と見せない) */}
+          {!loadError && <p className="text-gray-500 mt-1">{departments.length}件の部署</p>}
         </div>
         <button
           onClick={() => { resetForm(); setShowForm(true); }}
@@ -201,6 +230,22 @@ export default function OrgDepartmentsPage() {
         )}
       </AnimatePresence>
 
+      {loadError ? (
+        <div
+          role="alert"
+          data-testid="department-load-error"
+          className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center justify-between gap-3"
+        >
+          <span>{loadError}</span>
+          <button
+            type="button"
+            onClick={retryLoad}
+            className="shrink-0 px-3 py-1.5 bg-white border border-red-300 rounded-lg text-red-700 hover:bg-red-100 transition-colors"
+          >
+            再試行
+          </button>
+        </div>
+      ) : (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {departments.map((dept) => (
           <motion.div
@@ -223,7 +268,8 @@ export default function OrgDepartmentsPage() {
                 </button>
                 <button
                   onClick={() => handleDelete(dept.id)}
-                  className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                  disabled={deletingId !== null}
+                  className="p-2 text-gray-400 hover:text-red-600 transition-colors disabled:opacity-50"
                 >
                   🗑
                 </button>
@@ -237,6 +283,7 @@ export default function OrgDepartmentsPage() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
