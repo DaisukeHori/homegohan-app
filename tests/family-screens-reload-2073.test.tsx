@@ -606,6 +606,31 @@ describe('#2073 S3 家族の招待・子どもの追加・昇格の依頼: 読�
     expect(findButton('招待を送信')).toBeDefined();
   });
 
+  it('招待: 招待の履歴の「再試行」で読み直し、読めたら読み込めなかった文を消して履歴を出す', async () => {
+    profileResponds(inFamily);
+    let historyFails = true;
+    mockFetch((method, url) => {
+      if (method === 'GET' && url.pathname === '/api/family/invites') {
+        if (historyFails) return jsonResponse(500, { error: { code: 'RPC_FAILED' } });
+        return jsonResponse(200, {
+          data: { invites: [{ id: 'inv-1', email: 'a@example.com', status: 'pending', expires_at: '2999-01-01T00:00:00.000Z', created_at: '2026-10-01T00:00:00.000Z' }] },
+        });
+      }
+      throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+    });
+    await renderElement(createElement(FamilyInvitePage));
+    expect(byTestId('family-invites-load-error')).not.toBeNull();
+    expect(text()).not.toContain('a@example.com');
+    historyFails = false;
+
+    const retry = container.querySelector<HTMLButtonElement>('[data-testid="family-invites-load-error"] button');
+    await click(retry, '招待の履歴の「再試行」');
+
+    expect(callsOf('GET', '/api/family/invites')).toHaveLength(2);
+    expect(byTestId('family-invites-load-error')).toBeNull();
+    expect(text()).toContain('a@example.com');
+  });
+
   it('子どもの追加: 自分のプロフィールを読み込めなかったら、家族の作成の画面へ移さず、フォームの代わりに読み込めなかった文と「再試行」を出す', async () => {
     profileResponds(profileLoadFails);
     await renderElement(createElement(FamilyChildNewPage));
@@ -665,6 +690,57 @@ describe('#2073 S3 家族の招待・子どもの追加・昇格の依頼: 読�
 
     expect(text()).toContain('メンバーが見つかりません');
     expect(byTestId('family-promote-load-error')).toBeNull();
+  });
+
+  it('昇格の依頼: 「再試行」で読み直し、読めたら読み込めなかった文を消して送信のフォームを出す', async () => {
+    profileResponds(profileLoadFails);
+    supabaseState.responders.family_members = () => ({
+      data: { id: MEMBER_A_ID, display_name: 'たろう', role: 'child', user_id: null },
+      error: null,
+    });
+    supabaseState.responders.family_promotion_requests = () => ({ data: null, error: null });
+    await renderElement(createElement(PromoteMemberPage));
+    expect(byTestId('family-promote-load-error')).not.toBeNull();
+    profileResponds(inFamily);
+
+    await click(findButton('再試行'), '「再試行」');
+
+    expect(byTestId('family-promote-load-error')).toBeNull();
+    expect(findButton('参加リクエストを送信')).toBeDefined();
+  });
+
+  describe('問い合わせが例外を投げたとき (読み込み中のまま止まらず、未処理の reject にせず、読み込めなかった文を出す)', () => {
+    beforeEach(() => {
+      profileResponds(inFamily);
+      supabaseState.getUserThrows = true;
+    });
+
+    it('招待: 読み込めなかった文を出し、招待のフォームを出さない', async () => {
+      await renderElement(createElement(FamilyInvitePage));
+
+      expect(byTestId('family-invite-load-error')).toContain('家族の情報を読み込めませんでした');
+      expect(submitButton()).toBeNull();
+      expect(router.replace).not.toHaveBeenCalled();
+      expect(unhandled).toEqual([]);
+    });
+
+    it('子どもの追加: 読み込めなかった文を出し、追加のフォームを出さない', async () => {
+      await renderElement(createElement(FamilyChildNewPage));
+
+      expect(byTestId('family-child-new-load-error')).toContain('家族の情報を読み込めませんでした');
+      expect(submitButton()).toBeNull();
+      expect(router.replace).not.toHaveBeenCalled();
+      expect(unhandled).toEqual([]);
+    });
+
+    it('昇格の依頼: 読み込み中のまま止まらず、読み込めなかった文を出し、送信のフォームを出さない', async () => {
+      await renderElement(createElement(PromoteMemberPage));
+
+      expect(text()).not.toContain('読み込み中');
+      expect(byTestId('family-promote-load-error')).toContain('参加リクエストの情報を読み込めませんでした');
+      expect(submitButton()).toBeNull();
+      expect(unhandled).toEqual([]);
+    });
   });
 });
 
@@ -729,6 +805,40 @@ describe('#2073 メンバーの詳細: 読み込めなかったのを別の状�
     await renderElement(createElement(FamilyMemberDetailPage));
 
     expect(byTestId('family-member-detail-load-error')).not.toBeNull();
+  });
+
+  describe('自分の役割の行が無い (PGRST116) ときは、読み込めなかったとせず、権限なしとする', () => {
+    const OTHER_NAME = '花子';
+    /** 他人 (大人) の詳細を開く。自分の役割の問い合わせは myRole で返す */
+    function otherMemberReadable(myRole: () => QueryResult) {
+      selfMemberReadable();
+      const base = supabaseState.responders.family_members as Responder;
+      supabaseState.responders.family_members = (ctx: QueryContext) => {
+        if (ctx.columns === 'role') return myRole();
+        if (ctx.kind === 'single') {
+          const own = base(ctx) as QueryResult;
+          return { data: { ...(own.data as Record<string, unknown>), display_name: OTHER_NAME, user_id: OLD_REP_ID }, error: null };
+        }
+        return base(ctx);
+      };
+    }
+
+    it('読み込めなかった文を出さず、メンバーの情報を出し、管理の操作 (家族から外す) を出さない', async () => {
+      otherMemberReadable(() => ({ data: null, error: NO_ROWS }));
+      await renderElement(createElement(FamilyMemberDetailPage));
+
+      expect(byTestId('family-member-detail-load-error')).toBeNull();
+      expect(text()).toContain(OTHER_NAME);
+      expect(text()).not.toContain('家族から外す');
+    });
+
+    it('(対照) 自分が代表なら、同じメンバーに管理の操作 (家族から外す) を出す', async () => {
+      otherMemberReadable(() => ({ data: { role: 'representative' }, error: null }));
+      await renderElement(createElement(FamilyMemberDetailPage));
+
+      expect(text()).toContain(OTHER_NAME);
+      expect(text()).toContain('家族から外す');
+    });
   });
 
   it('問い合わせが例外を投げても、読み込み中のまま止まらず、未処理の reject にしない', async () => {
@@ -1007,6 +1117,43 @@ describe('#2073 設定のメンバーシップ: 読み込めなかったのを�
     expect(text()).not.toContain('保存中...');
   });
 
+  /** 3 つの共有の切り替えの aria-checked (食事・健康・週間献立) */
+  const shareSwitchStates = () =>
+    ['食事記録の共有', '健康記録の共有', '週間献立の共有'].map((label) =>
+      container.querySelector(`[aria-label="${label}"]`)?.getAttribute('aria-checked'),
+    );
+
+  it('画面を開いたとき、共有の設定はサーバーの値を出す (画面の既定の値のままにしない)', async () => {
+    membershipReadable();
+    // 画面の既定の値 (食事 有効・健康 無効・週間献立 有効) とすべて違う値
+    serverShare = { share_meals: false, share_health: true, share_menu: false };
+    await renderElement(createElement(MembershipSettingsPage));
+
+    expect(shareSwitchStates()).toEqual(['false', 'true', 'false']);
+  });
+
+  it('共有の更新の失敗の文は、次の切り替えで消す (前の失敗の文を残さない)', async () => {
+    membershipReadable();
+    let patchStatus = 400;
+    mockFetch((method, url) => {
+      if (method === 'PATCH' && url.pathname === SHARE_PATH) {
+        return patchStatus === 200 ? jsonResponse(200, { data: { ok: true } }) : jsonResponse(patchStatus, { error: { code: 'VALIDATION_ERROR' } });
+      }
+      throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+    });
+    await renderElement(createElement(MembershipSettingsPage));
+
+    await click(healthSwitch(), '健康記録の共有の切り替え (1 回目)');
+    expect(byTestId('settings-share-error')).toBe('共有設定の更新に失敗しました');
+
+    patchStatus = 200;
+    await click(healthSwitch(), '健康記録の共有の切り替え (2 回目)');
+
+    expect(callsOf('PATCH', SHARE_PATH)).toHaveLength(2);
+    expect(healthSwitch()?.getAttribute('aria-checked')).toBe('true');
+    expect(byTestId('settings-share-error')).toBeNull();
+  });
+
   describe('読み込みの失敗の分岐 (一度読めたあとの読み直し・組織・家族グループ)', () => {
     const ORG_NAME = '山田商事';
     const FAMILY_NAME = '山田家';
@@ -1072,6 +1219,40 @@ describe('#2073 設定のメンバーシップ: 読み込めなかったのを�
       expect(byTestId('settings-membership-load-error')).toBeNull();
       expect(text()).toContain(ORG_NAME);
       expect(notMemberCount()).toBe(1);
+    });
+
+    it('組織の解散のあとの読み直しで、家族の共有の設定が変わっていれば、読み直した値を出す', async () => {
+      bothMembershipsReadable();
+      supabaseState.responders.user_profiles = () => ({
+        data: { family_id: FAMILY_ID, organization_id: ORG_ID, org_role: 'owner', nickname: '太郎' },
+        error: null,
+      });
+      const ORG_DISSOLVE_PATH = selfDissolveApiPath('organization');
+      mockFetch((method, url) => {
+        if (method === 'POST' && url.pathname === ORG_DISSOLVE_PATH) {
+          // 組織の解散は済む (200)。そのあいだに家族の共有の設定が (別の端末で) 変わっている
+          supabaseState.responders.user_profiles = () => ({
+            data: { family_id: FAMILY_ID, organization_id: null, org_role: null, nickname: '太郎' },
+            error: null,
+          });
+          serverShare = { share_meals: false, share_health: true, share_menu: false };
+          return jsonResponse(200, { data: { dissolved_at: '2026-10-27T00:00:00.000Z' } });
+        }
+        throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+      });
+      await renderElement(createElement(MembershipSettingsPage));
+      expect(shareSwitchStates()).toEqual(['true', 'false', 'true']);
+
+      await click(findButton('組織を解散'), '「組織を解散」');
+      await setValue(container.querySelector<HTMLInputElement>('[data-testid="self-dissolve-organization-keyword"]'), SELF_DISSOLVE_CONFIRM_KEYWORD);
+      await click(container.querySelector<HTMLButtonElement>('[data-testid="self-dissolve-organization-submit"]'), '「組織を解散する」');
+
+      expect(callsOf('POST', ORG_DISSOLVE_PATH)).toHaveLength(1);
+      expect(queryCount('user_profiles', 'single')).toBe(2);
+      expect(byTestId('settings-membership-load-error')).toBeNull();
+      expect(text()).toContain(FAMILY_NAME);
+      expect(text()).not.toContain(ORG_NAME);
+      expect(shareSwitchStates()).toEqual(['false', 'true', 'false']);
     });
 
     it('画面を開いたときに組織を読み込めなかったら、「所属していません」と見せず、読み込めなかった文を出す', async () => {
@@ -1285,6 +1466,27 @@ describe('#2073 S2 子どもの追加: 追加の通信が切れたら、同じ�
     expect(text()).toContain(STATE_UNCONFIRMED);
   });
 
+  it('送る前の読み込みが失敗し、あとで同じ子どもの行が無ければ、追加できていないので、通信エラーの文だけを出す', async () => {
+    familyReadable();
+    childReadFails = true;
+    mockFetch((method, url) => {
+      if (method === 'POST' && url.pathname === CHILD_PATH) {
+        // 読み直しは読めるが、同じ子どもの行は無い (serverChildIds は空のまま)
+        childReadFails = false;
+        throw new TypeError('Failed to fetch');
+      }
+      throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+    });
+    await renderElement(createElement(FamilyChildNewPage));
+
+    await fillAndSubmit();
+
+    expect(queryCount('family_members', 'list')).toBe(2);
+    expect(router.push).not.toHaveBeenCalled();
+    expect(text()).toContain(NETWORK_ERROR);
+    expect(text()).not.toContain(STATE_UNCONFIRMED);
+  });
+
   it('読み直しの応答を待つあいだは、「追加する」を止めたままにする', async () => {
     familyReadable();
     const reread = deferred<QueryResult>();
@@ -1387,6 +1589,50 @@ describe('#2073 S2 大人の招待: 送信の通信が切れたら、招待の�
 
     expect(text()).toContain(NETWORK_ERROR);
     expect(text()).not.toContain('に招待メールを送信しました');
+  });
+
+  it('増えた招待が別の宛先だけなら (別の端末で別の人を招待した)、今回の招待を作れたと見なさず、入力を残す', async () => {
+    const OTHER_EMAIL = 'jiro@example.com';
+    inviteFetch(() => {
+      serverInvites = [invite('inv-other', OTHER_EMAIL), ...serverInvites];
+    });
+    await renderElement(createElement(FamilyInvitePage));
+
+    await fillAndSubmit();
+
+    expect(text()).toContain(NETWORK_ERROR);
+    expect(text()).not.toContain('に招待メールを送信しました');
+    expect(container.querySelector<HTMLInputElement>('input[type="email"]')?.value).not.toBe('');
+    // 読み直した履歴は出す
+    expect(text()).toContain(OTHER_EMAIL);
+  });
+
+  it.each(['accepted', 'expired'])(
+    '増えた招待が同じ宛先でも、状態が %s (承認待ちではない) なら、今回の招待を作れたと見なさない',
+    async (status) => {
+      inviteFetch(() => {
+        serverInvites = [{ ...invite('inv-new', EMAIL), status }, ...serverInvites];
+      });
+      await renderElement(createElement(FamilyInvitePage));
+
+      await fillAndSubmit();
+
+      expect(text()).toContain(NETWORK_ERROR);
+      expect(text()).not.toContain('に招待メールを送信しました');
+      expect(container.querySelector<HTMLInputElement>('input[type="email"]')?.value).not.toBe('');
+    },
+  );
+
+  it('サーバーの招待の宛先が大文字まじりでも、同じ宛先として、作れたと見なす', async () => {
+    inviteFetch(() => {
+      serverInvites = [invite('inv-new', 'Hanako@Example.com'), ...serverInvites];
+    });
+    await renderElement(createElement(FamilyInvitePage));
+
+    await fillAndSubmit();
+
+    expect(text()).toContain('に招待メールを送信しました');
+    expect(text()).not.toContain(NETWORK_ERROR);
   });
 
   it('読み直しが失敗したら、通信エラーの文に「状態を確かめられませんでした」を添える', async () => {
@@ -1663,6 +1909,23 @@ describe('#2073 S2 昇格の依頼: 送信・取り消しの通信が切れた�
     expect(text()).toContain(NETWORK_ERROR);
     expect(findButton('リクエストを取り消す')?.disabled).toBe(false);
     expect(findButton('別のメールアドレスで再送する')?.disabled).toBe(false);
+  });
+
+  it('読み直した新しい依頼の宛先が大文字まじりでも、同じ宛先として、作れたと見なす', async () => {
+    const STORED_EMAIL = 'Taro@Example.com';
+    mockFetch((method, url) => {
+      if (method === 'POST' && url.pathname === PROMOTE_PATH) {
+        serverPending = pendingRow('req-new', STORED_EMAIL);
+        throw new TypeError('Failed to fetch');
+      }
+      throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+    });
+    await renderElement(createElement(PromoteMemberPage));
+
+    await fillAndSend();
+
+    expect(text()).toContain('参加リクエストを送信しました');
+    expect(text()).not.toContain(NETWORK_ERROR);
   });
 
   it('読み直した新しい依頼が別の宛先なら、今回の依頼を作れたと見なさない', async () => {
