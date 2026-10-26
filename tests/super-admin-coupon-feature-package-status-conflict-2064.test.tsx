@@ -279,11 +279,11 @@ describe('機能パッケージ詳細: 廃止の 409 のあと、読み直して
       reread: () => jsonResponse(200, { data: { ...FEATURE_PACKAGE, status: 'deprecated', display_order: 7 } }),
     });
     await render(<FeaturePackageDetailPage />);
-    await typeInto(field('表示名'), '基本パッケージ (書きかけ)');
+    await typeInto(field('表示名 *'), '基本パッケージ (書きかけ)');
 
     await clickButton('廃止する');
 
-    expect(field('表示名').value).toBe('基本パッケージ (書きかけ)');
+    expect(field('表示名 *').value).toBe('基本パッケージ (書きかけ)');
     expect(field('表示順').value).toBe('7');
   });
 
