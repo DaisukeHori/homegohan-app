@@ -6,12 +6,24 @@
  *
  * 読み込み・更新の DB の失敗 (#1917): DB の失敗は 500 にし、行が無いときだけ 404 にする (一時的な失敗で実験が消えたように見せない)。
  * UUID の形でない id は DB に渡さず 404。
+ *
+ * 状態の遷移 (#2059): PATCH で status を送ったときは今の status を読み、遷移表 (EXPERIMENT_STATUS_TRANSITIONS。
+ * 画面のボタンと同じ draft → running・running → completed・running → cancelled) に無い変更 (同じ状態への変更を含む) を
+ * 409 OP_EXPERIMENT_INVALID_TRANSITION で断る (書かず、監査ログも残さない)。DB には遷移を止めるトリガーが無い。
+ * 更新は読んだ status のままのときだけ書く条件つきで、読んでから書くまでに別の操作 (2 つのタブ・2 人) が状態を変えていたら
+ * 0 行 → 読み直して、無ければ 404、あれば 409 CONFLICT_STALE_DATA (書かず、監査ログも残さない)。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { authFailureNested } from '@/lib/api/error-responses';
-import { UpdateExperimentSchema } from '@/lib/super-admin/experiments-schemas';
+import {
+  EXPERIMENT_INVALID_TRANSITION_ERROR_CODE,
+  UpdateExperimentSchema,
+  experimentStatusTransitionMessage,
+  isAllowedExperimentStatusTransition,
+} from '@/lib/super-admin/experiments-schemas';
+import { STALE_DATA_ERROR_CODE, STALE_DATA_HTTP_STATUS } from '@/lib/admin/api-error-message';
 import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
@@ -22,6 +34,14 @@ type Params = { params: Promise<{ id: string }> };
 
 /** 実験が無い (UUID の形でない id を含む) */
 const EXPERIMENT_NOT_FOUND_RESPONSE = { error: { code: 'NOT_FOUND', message: '実験が見つかりません' } } as const;
+
+/** 遷移表に無い状態の変更を断るときの HTTP ステータス (409 Conflict。今の状態と衝突する) */
+const EXPERIMENT_INVALID_TRANSITION_HTTP_STATUS = 409;
+
+/** 読んでから書くまでに別の操作が実験の状態を変えていた (条件つきの更新が 0 行) */
+const EXPERIMENT_STALE_STATUS_RESPONSE = {
+  error: { code: STALE_DATA_ERROR_CODE, message: '別の操作で実験の状態が先に変わりました。読み込み直してください' },
+} as const;
 
 export async function GET(_request: NextRequest, props: Params) {
   const params = await props.params;
@@ -86,20 +106,65 @@ export async function PATCH(request: NextRequest, props: Params) {
       return NextResponse.json(EXPERIMENT_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
+    const nextStatus = parsed.data.status;
+    // 状態を変えるときは、今の status を読んで遷移表で検査する (#2059)。読んだ status は更新の条件にも使う
+    let currentStatus: string | null = null;
+    if (nextStatus !== undefined) {
+      const { data: current, error: currentError } = await supabase
+        .from('experiments')
+        .select('status')
+        .eq('id', params.id)
+        .maybeSingle();
+      // 読めなかったときは 404 にしない (行が無いときだけ 404。#1917)
+      if (currentError) {
+        return internalError('PATCH /api/super-admin/experiments/[id]', currentError, { userId: user.id, table: 'experiments' }, { shape: 'nested' });
+      }
+      if (!current) {
+        return NextResponse.json(EXPERIMENT_NOT_FOUND_RESPONSE, { status: 404 });
+      }
+      currentStatus = current.status;
+      if (!isAllowedExperimentStatusTransition(current.status, nextStatus)) {
+        return NextResponse.json(
+          {
+            error: {
+              code: EXPERIMENT_INVALID_TRANSITION_ERROR_CODE,
+              message: experimentStatusTransitionMessage(current.status, nextStatus),
+            },
+          },
+          { status: EXPERIMENT_INVALID_TRANSITION_HTTP_STATUS },
+        );
+      }
+    }
+
     // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
-    const { data, error } = await getSupabaseAdmin()
-      .from('experiments')
-      .update(parsed.data)
-      .eq('id', params.id)
-      .select()
-      .maybeSingle();
+    let updateQuery = getSupabaseAdmin().from('experiments').update(parsed.data).eq('id', params.id);
+    // 状態の変更は、読んだ status のままのときだけ書く (二度押し・2 つのタブで、2 本目が古い状態の検査のまま書かないように。#2059)
+    if (currentStatus !== null) {
+      updateQuery = updateQuery.eq('status', currentStatus);
+    }
+    const { data, error } = await updateQuery.select().maybeSingle();
 
     // 書けなかったときは 404 にしない (更新した行が無いときだけ 404。#1917)
     if (error) {
       return internalError('PATCH /api/super-admin/experiments/[id]', error, { userId: user.id, table: 'experiments' }, { shape: 'nested' });
     }
     if (!data) {
-      return NextResponse.json(EXPERIMENT_NOT_FOUND_RESPONSE, { status: 404 });
+      if (currentStatus === null) {
+        return NextResponse.json(EXPERIMENT_NOT_FOUND_RESPONSE, { status: 404 });
+      }
+      // 状態の条件で 0 行: 読み直して、行が消えていれば 404、あれば別の操作が先に状態を変えたので 409 (書かず、監査も残さない)
+      const { data: reread, error: rereadError } = await supabase
+        .from('experiments')
+        .select('id')
+        .eq('id', params.id)
+        .maybeSingle();
+      if (rereadError) {
+        return internalError('PATCH /api/super-admin/experiments/[id]', rereadError, { userId: user.id, table: 'experiments' }, { shape: 'nested' });
+      }
+      if (!reread) {
+        return NextResponse.json(EXPERIMENT_NOT_FOUND_RESPONSE, { status: 404 });
+      }
+      return NextResponse.json(EXPERIMENT_STALE_STATUS_RESPONSE, { status: STALE_DATA_HTTP_STATUS });
     }
 
     // 監査ログ

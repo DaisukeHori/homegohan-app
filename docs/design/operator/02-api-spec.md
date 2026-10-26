@@ -1284,7 +1284,7 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 ---
 
 ### PATCH /api/super-admin/experiments/{id}
-実験更新 (start/stop/cancel)。 実験の行 (`experiments`) の読み込みの DB の失敗は 500 (404 にしない)。404 は行が無いとき (UUID の形でない id は DB に渡さずに 404) だけ (cross/04 §5.2。#1917)。詳細 (GET)・削除 (DELETE) の読み込みも同じ
+実験更新 (start/stop/cancel)。 実験の行 (`experiments`) の読み込みの DB の失敗は 500 (404 にしない)。404 は行が無いとき (UUID の形でない id は DB に渡さずに 404) だけ (cross/04 §5.2。#1917)。詳細 (GET)・削除 (DELETE) の読み込みも同じ **状態の遷移** (#2059): `status` を送ったときは今の `status` を読み、遷移表 (`src/lib/super-admin/experiments-schemas.ts` の `EXPERIMENT_STATUS_TRANSITIONS`。画面のボタンと同じ) = `draft` → `running` (一覧の「開始」・詳細の「実験開始」)・`running` → `completed` (「完了」) / `cancelled` (詳細の「中止」)・`completed` と `cancelled` からは変えない、に無い変更を 409 `OP_EXPERIMENT_INVALID_TRANSITION` で断る (同じ状態への変更 `running` → `running` なども断る。書かず、監査ログも残さない)。DB には遷移を止めるトリガーが無い (CHECK `experiments_status_check` は値の範囲だけ) ので、守りはこの route だけ。状態の更新は読んだ `status` のままのときだけ書く条件つき (`.eq('status', 読んだ status)`) で、読んでから書くまでに別の操作が状態を変えていたら 0 行 → 読み直して、無ければ 404 `NOT_FOUND`、あれば 409 `CONFLICT_STALE_DATA` (書かず、監査ログも残さない。cross/04 §4.2)。`status` を送らない更新 (`name`・`hypothesis`・`end_date`・`result`) は遷移を検査せず、今までどおり条件なしで書く
 
 ### GET /api/super-admin/experiments/{id}/results
 実験結果 (p値、信頼区間、サブグループ分析)。実験の読み込みの DB の失敗は 500 (404 は行が無いとき (UUID の形でない id を含む) だけ。#1917)
