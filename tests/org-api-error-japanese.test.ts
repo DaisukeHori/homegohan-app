@@ -12,7 +12,8 @@
  * このテストが確かめること:
  *   1. 走査: /api/org の全 route (と、route が本文を作るのに使う共通の関数のファイル) の失敗の本文の文が、どれも英語だけの文でない。
  *      本文の中で例外の文面 (`<なにか>.message`) を文として入れていない
- *   2. 組織の管理画面が呼ぶ API (src/app/(org) の `/api/...` の文字列) が、どれも 1 の走査の対象の route である
+ *   2. 組織の画面が呼ぶ API (src/app/(org) と、管理画面の枠の外に置いた src/app/(main)/org の `/api/...` の文字列。
+ *      根は tests/helpers/org-screen-roots.ts の ORG_SCREEN_ROOTS。#2068・#2073) が、どれも 1 の走査の対象の route である
  *   3. 共通の関数 (orgAuthFailureFlat / orgAuthFailureNested / handleMemberError) が、例外の文面に関わらず日本語の固定の文を返す
  *
  * 1 の走査で数えるもの (TypeScript の構文木で読む。コメントは見ない):
@@ -50,13 +51,12 @@ import {
   walkFiles,
 } from './helpers/api-error-text-scan';
 import { JAPANESE_ERROR_API_DIRS, JAPANESE_ERROR_SHARED_BODY_FILES } from './helpers/api-error-japanese-scope';
+import { ORG_SCREEN_ROOTS } from './helpers/org-screen-roots';
 
 /** 走査する route のディレクトリ */
 const API_ROOT = 'src/app/api/org';
 /** route が本文を作るのに使う共通の関数のファイル (ここも走査する) */
 const SHARED_BODY_FILES = ['src/lib/org-api-errors.ts', 'src/lib/org-challenge-api.ts', 'src/lib/api/error-responses.ts'];
-/** 組織の管理画面のルートグループ */
-const SCREEN_ROOT = 'src/app/(org)';
 /** 管理画面の枠の外に置いた組織の画面 (オーナーの譲渡の承諾の画面。#2068)。走査の対象に入っていることを確かめる */
 const TRANSFER_ACCEPT_FILE = 'src/app/(main)/org/transfer-accept/[proposal_id]/page.tsx';
 
@@ -122,8 +122,10 @@ describe('/api/org の失敗の本文に、英語の文と例外の文面が無�
   });
 });
 
-describe('組織の管理画面 (src/app/(org)) が呼ぶ API は、どれも上の走査の対象', () => {
-  const screens = walkFiles(SCREEN_ROOT, (name) => name.endsWith('.tsx') || name.endsWith('.ts'));
+describe('組織の画面 (src/app/(org) と src/app/(main)/org) が呼ぶ API は、どれも上の走査の対象', () => {
+  const screens = ORG_SCREEN_ROOTS.flatMap((screenRoot) =>
+    walkFiles(screenRoot, (name) => name.endsWith('.tsx') || name.endsWith('.ts')),
+  );
   const apiPaths = [...new Set(screens.flatMap((file) => collectApiPaths(file)))].sort();
 
   it('画面の API を集められている (招待・チャレンジ・設定・除名・脱退・譲渡を含む)', () => {

@@ -26,13 +26,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { ORG_SCREEN_ROOTS } from './helpers/org-screen-roots';
 
 const ROOT = path.resolve(__dirname, '..');
 /**
  * 走査する画面のディレクトリ: 組織の管理画面のルートグループと、管理画面の枠の外に置いた組織の画面
- * (オーナーの譲渡の承諾の画面 /org/transfer-accept/[proposal_id]。一般メンバーも開くので (main) に置く。#2068)
+ * (オーナーの譲渡の承諾の画面 /org/transfer-accept/[proposal_id]。一般メンバーも開くので (main) に置く。#2068)。
+ * 組織の画面を走査するテストで共通の定数 (#2073)
  */
-const SCAN_ROOTS = ['src/app/(org)', 'src/app/(main)/org'];
+const SCAN_ROOTS = ORG_SCREEN_ROOTS;
 
 /** 画面に出る属性 */
 const DISPLAY_ATTRIBUTES = new Set(['placeholder', 'title', 'alt', 'aria-label', 'label']);

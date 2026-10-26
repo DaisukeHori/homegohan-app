@@ -36,6 +36,7 @@ import {
 import { PRIVACY_PROCESSORS, PRIVACY_SECTION_COUNT, PRIVACY_SECTION_HEADINGS, privacyText } from '@/lib/legal/privacy-text';
 import { TERMS_ARTICLE_COUNT, TERMS_ARTICLE_HEADINGS, TERMS_MEDICAL_DISCLAIMER, termsText } from '@/lib/legal/terms-text';
 import { LEGAL_CLAIMS, LEGAL_CLAIM_COUNT } from './legal-claims-1901';
+import { ORG_SCREEN_ROOTS } from './helpers/org-screen-roots';
 import { stripAllTags } from './helpers/strip-tags';
 
 vi.mock('next/link', async () => {
@@ -834,8 +835,8 @@ describe('#1901 プライバシーポリシーの委託先・送り先・端末�
       // 役割は invited_role (create_org_invite が書く列)・状態は status (取り消し・拒否を一覧に出す)。旧い role 列は読まない
       new Set(['id', 'email', 'invited_role', 'status', 'department_id', 'token', 'expires_at', 'accepted_at', 'created_at', 'departments(name)']),
     );
-    // src/app/(main)/org は管理画面の枠の外に置いた組織の画面 (オーナーの譲渡の承諾の画面。#2068)
-    for (const file of listCodeFiles(['src/app/(org)', 'src/app/(main)/org', 'src/app/api/org'])) {
+    // 組織の画面 (src/app/(org) と、管理画面の枠の外に置いた src/app/(main)/org。#2068) は共通の定数 ORG_SCREEN_ROOTS から取る (#2073)
+    for (const file of listCodeFiles([...ORG_SCREEN_ROOTS, 'src/app/api/org'])) {
       const text = readRepo(file);
       expect(text, file).not.toContain('last_sign_in_at');
       expect(text, file).not.toContain('employee_');
