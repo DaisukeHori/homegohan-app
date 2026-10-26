@@ -19,7 +19,7 @@
 - 本番の DB には書き込まない (本書の事実は 2026-10-24 の読み取りだけ。§3.4)。
 - ローンチ前。本番の `auth.users` は 195 行・`user_profiles` は 65 行・`recipes` と `recipe_comments` は 0 行 (2026-10-24 の SELECT。§3.4)。既存の行の書き換えは無い。
 - `user_profiles` の SELECT の RLS (本人の行だけ) は変えない。他人の行を公開の場に出す経路は、本書が足す 1 本の関数だけ。
-- Next.js の API で service_role を使わない (cross/02 §3.3)。
+- Next.js の API で service_role を使わない (本書の決め。書いた時点の cross/02 §3.3 の文「service_role を使う場所: Supabase Edge Function のみ」に合わせた。今の §3.3 は Next.js の `getSupabaseAdmin()` も挙げる)。
 - 範囲外: 作者名を描く画面を新しく作ること (今は Web・モバイルのどこにも作者名を描く画面が無い。§3.3 F-13)。プロフィールの画面に足すのは「名前を出すか」の切り替え 1 つだけ。新しい要求は発明しない。
 
 ---
@@ -49,7 +49,7 @@
 | R-4 | 凍結中の人 (`isAccountFrozen` が真) の作者名は出さない (「匿名」)。一時凍結の期限が過ぎた人は出す | 決めること 1 | §6.1 (3), §7.1 |
 | R-5 | 18 歳未満の本人のアカウント (`user_profiles.birth_date` で 18 歳未満。`ADULT_AGE_YEARS`) の作者名は出さない。生年月日の無い人も出さない | 決めること 1・cross/14 §0 (年齢は `birth_date` だけで判定) | §6.1 (4), §7.1 |
 | R-6 | 他人の `user_profiles` を読むのは、公開レシピ (`is_public = true` かつ `hidden_at IS NULL`) の作者か、そのレシピへのコメントを書いた人の、表示名 1 列だけ。それ以外の列・それ以外の人は読めない | 決めること 2 (最小の情報) | §5, §6.2, §7.1 |
-| R-7 | Next.js の API と `viewer-lookups.ts` は service_role を使わない。`user_profiles` の RLS ポリシーは足さない・変えない | cross/02 §3.3・CLAUDE.md §3 | §5, §7.1, §9.3 |
+| R-7 | Next.js の API と `viewer-lookups.ts` は service_role を使わない。`user_profiles` の RLS ポリシーは足さない・変えない | cross/02 §3.3・CLAUDE.md §3 (どちらも書いた時点の文) | §5, §7.1, §9.3 |
 | R-8 | 読む経路は SECURITY DEFINER の関数 1 本。`SET search_path = ''`・完全修飾・引数の型まで含めた完全形で REVOKE してから必要なロールにだけ GRANT (#1039 / #1020 の定型) | `supabase/migrations/20261023130000_account_deletion_owner_guard.sql` の定型 | §7.1 |
 | R-9 | 未ログインの人にも出す (公開レシピは未ログインでも読める。利用規約第13条 2 項「ログインしていない方を含め、誰でも閲覧できる状態」)。関数は anon も呼べる | 決めること 3・`src/lib/legal/terms-text.ts:299` | §6.3, §7.1, §7.8 |
 | R-10 | 本人には、自分のレシピ・コメントの `authorName` に自分の名前が今までどおり出る (非公開のレシピ・名前を出さない設定のときも) | fix 枝の `tests/integration/security/recipes-api-logged-in.test.ts` (本人の非公開のレシピに本人の nickname が出る) | §6.1 (5), §7.1 |
@@ -125,7 +125,7 @@
 
 | 文書 | 関係 |
 |---|---|
-| cross/02-rls-patterns.md §3.3 (行 43-48) | Next.js の API で service_role を使わない。本書は SECURITY DEFINER の関数で読む (§5) |
+| cross/02-rls-patterns.md §3.3 (行 43-48) | 書いた時点の文は「service_role を使う場所: Supabase Edge Function のみ」(今は Next.js の `getSupabaseAdmin()` も挙げる)。本書は Next.js の API で service_role を使わず、SECURITY DEFINER の関数で読む (§5) |
 | cross/02 §10 (行 585) | anon が EXECUTE できる関数は理由つきの許可一覧だけ (`tests/integration/security/anon-definer-execute.test.ts:95-100`)。本書の関数は一覧に足す (§7.8) |
 | cross/14-parental-consent.md §0 (行 18-19) | 年齢の判定は `user_profiles.birth_date` だけ。18 歳未満の本人のアカウントは保護者の同意の経路。本書は 18 歳未満の名前を公開の場に出さない (§6.1 (4)) |
 | cross/20-terms-privacy-text.md §2.2 F-19 (行 213)・F-33 (行 227)・F-49 (行 243) | `user_profiles` の SELECT が本人の行だけであること・家族の中の表示名の見え方。公開レシピの作者としての表示名の記載は無い (§6.4) |
@@ -277,7 +277,7 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 | 案 | 中身 | 最小の情報か | cross/02 §3.3 との整合 | 未ログインに出せるか | 変更の大きさ | 判定 |
 |---|---|---|---|---|---|---|
 | A (採用) | SECURITY DEFINER の関数 `recipe_author_display_names(uuid[])` が、公開の作者の表示名だけを返す。route は RLS のクライアントで `rpc` を呼ぶ | 名前 1 列・公開の作者だけ・本人の選択と同意・凍結・年齢の条件を関数が持つ | 整合する (service_role を使わない。関数の権限は定型で絞る。anon の許可一覧に 1 本足す) | 出せる (anon に EXECUTE) | migration 1 本 + lib 1 つ + route の呼び出しの 1 語 × 5 + 設定の列と画面 | 採用 |
-| B | route が `getSupabaseAdmin()` (service_role) で `user_profiles` の `nickname` を `.in('id', authorIds)` で読む | 列は絞れるが、「公開の作者だけ」の条件をコードで書く必要があり、未ログインの route には認可が無い | 違反 (§3.3「API Routes 内での service_role を禁止」。CLAUDE.md:83 は認可のあとだけ) | 出せる | 小さい | 不採用 |
+| B | route が `getSupabaseAdmin()` (service_role) で `user_profiles` の `nickname` を `.in('id', authorIds)` で読む | 列は絞れるが、「公開の作者だけ」の条件をコードで書く必要があり、未ログインの route には認可が無い | 違反 (書いた時点の §3.3「API Routes 内での service_role を禁止」。CLAUDE.md:83 は認可のあとだけ) | 出せる | 小さい | 不採用 |
 | C | `user_profiles` に SELECT のポリシーを足す (公開の作者の行を誰でも読める) | 行の全列 (健康・家族の構成・生年月日など 130 列) が読めてしまう。PostgREST は列の権限をポリシーごとに絞れない。列の権限を anon / authenticated から外すと本人の読み込みも壊れる | RLS の変更そのもの | 出せる | ポリシー 1 本だが露出が大きい | 不採用 |
 | C' | 所有者 postgres の VIEW (`security_invoker` でない) で `id` と表示名だけを出す | 列は絞れる。条件も書ける | VIEW は Supabase の advisor が「SECURITY DEFINER view」として警告する対象。前例は 1 つだけで、権限の契約テストの型 (関数の ACL) に乗らない | 出せる | VIEW 1 つ | 不採用 (A と同じ露出で、既存の検査の型に乗る A を取る) |
 | D | `recipes` / `recipe_comments` に作者名の列を持ち、書くときに写す (トリガーで nickname の変更に追随) | 名前だけだが、書く経路 (API・AI の保存・RPC) の全部とトリガーが要る。設定・凍結・年齢の条件を列に写し続けるのは無理がある | 整合する | 出せる | 大きい (書く経路の全列挙) | 不採用 |
@@ -401,7 +401,7 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 -- 背景:
 --   user_profiles の SELECT の RLS は "Users can view own profile" (本人の行だけ)。レシピの API (src/lib/recipes/viewer-lookups.ts) は
 --   RLS の効くクライアントで作者の user_profiles.nickname を引くので、他人の作者名はいつも既定の呼称 '匿名' になっていた。
---   Next.js の API では service_role を使わない (docs/design/cross/02-rls-patterns.md §3.3)。RLS のポリシーを足すと行の全列が読めてしまう。
+--   Next.js の API では service_role を使わない (本書の決め。書いた時点の docs/design/cross/02-rls-patterns.md §3.3 の文に合わせた)。RLS のポリシーを足すと行の全列が読めてしまう。
 --
 -- 変更:
 --   1. 列 user_profiles.show_recipe_author_name boolean NOT NULL DEFAULT true: 本人が「公開したレシピとコメントに作者名を出す」を選ぶ。

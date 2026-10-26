@@ -835,7 +835,7 @@ Step 6: ポストモーテム (P0/P1 は 48 時間以内)
 ```mermaid
 sequenceDiagram
   participant Admin
-  participant API as /api/admin/users/{id}/ban
+  participant API as /api/admin/users/{id}/freeze
   participant DB as Supabase DB
   participant Slack
 

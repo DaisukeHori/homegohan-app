@@ -75,7 +75,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       const mfaRequired = operatorMfaRequiredNested(rpcError);
       if (mfaRequired) return mfaRequired;
       // 権限の判定 (NOT_OPERATOR) で止めたら、ゲートが権限で止めたときと同じ 403 と日本語の固定の文にする
-      // (汎用の 500 にしない。#1917 の続き。コードの一覧は src/lib/membership/operator-rpc-errors.ts)
+      // (汎用の 500 にしない。#1917 の続き。コードの一覧は src/lib/membership/operator-rpc-errors.ts)。
+      // 無い家族 (FAMILY_NOT_FOUND) は 404・解散済みの家族 (FAMILY_ALREADY_DISSOLVED) は 409 で返し、監査とメールを出さない
+      // (20261026100000_operator_force_dissolve_family_missing.sql。それより前は RPC が成功し、ここで監査を書いて 200 を返していた)
       const knownRpcError = operatorMembershipRpcErrorNested('operator_force_dissolve_family', rpcError);
       if (knownRpcError) return knownRpcError;
       return internalError(ROUTE_NAME, rpcError, { userId: operatorId }, { shape: 'nested' });

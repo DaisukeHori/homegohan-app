@@ -1,6 +1,7 @@
 /**
  * #1917 家族の代表者・組織のオーナーが自分で家族グループ・組織を解散する RPC (migration 20261019120000_self_dissolve.sql) を、
  * 本物の DB (ローカルの Supabase) で確かめる (設計書 docs/design/family/11-self-dissolve.md §21.2 の D-1〜D-16)。
+ * D-17 は運営の家族の強制解散が無い家族・解散済みの家族で止まること (migration 20261026100000_operator_force_dissolve_family_missing.sql) を確かめる。
  *
  * 呼び出しは本物の経路 (PostgREST + 本人の JWT)。競合の再現 (先の処理をコミット前のまま開いておく) とカタログの確認は、
  * ローカルスタックの postgres-meta (/pg/query、service_role キーが必要) を使う (family-lock-order-race.test.ts と同じ道具)。
@@ -11,7 +12,7 @@
  * 本番には接続しない。
  */
 
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, afterAll, afterEach } from 'vitest';
 import ws from 'ws';
@@ -847,5 +848,47 @@ describe('#1917 権限・列の制約・外部キー・運営の強制解散', (
     const orgAudits = await auditRows('organization', orgId, 'operator_force_dissolve');
     expect(orgAudits).toHaveLength(1);
     expect(orgAudits[0]).toMatchObject({ actor_id: operator.id, metadata: { reason: '#1917 D-13', previous_owner_id: owner.id } });
+  }, TEST_TIMEOUT_MS);
+
+  it('D-17: 運営の家族の強制解散は、無い id なら FAMILY_NOT_FOUND、解散済み (代表者の解散・運営の強制解散のあと) なら FAMILY_ALREADY_DISSOLVED で止め、dissolved_at を上書きせず、operator_force_dissolve の監査を残さない (20261026100000)', async () => {
+    const operator = await createUser('d17-operator', ['user', 'super_admin']);
+    const { client: sessionClient } = await signIn(operator.email);
+    const aal2 = await promoteToAal2(sessionClient);
+    const forceDissolve = async (familyId: string, reason: string): Promise<Outcome> => {
+      const { data, error } = await asUser(aal2).rpc('operator_force_dissolve_family', { p_family_id: familyId, p_reason: reason });
+      return toOutcome(data, error);
+    };
+
+    // 無い家族の id (修正前は成功し、戻り値 NULL のまま監査が 1 行残った)。修正前に残った監査も後片付けで消えるよう控える
+    const missingFamilyId = randomUUID();
+    createdFamilyIds.push(missingFamilyId);
+    expectRaised(await forceDissolve(missingFamilyId, '#1917 D-17 missing'), 'FAMILY_NOT_FOUND');
+    expect(await familyRow(missingFamilyId)).toBeNull();
+    expect(await auditRows('family', missingFamilyId, 'operator_force_dissolve')).toEqual([]);
+
+    // 代表者が解散した家族 (修正前は後始末がもう一度走って dissolved_at を上書きし、監査が 1 行増えた)
+    const [repA] = await createUsers('d17-self', 1);
+    const selfDissolvedId = await createFamily(repA, 'd17-self');
+    expect((await dissolveFamily(repA, selfDissolvedId)).ok).toBe(true);
+    const selfDissolvedBefore = await familyRow(selfDissolvedId);
+    expect(selfDissolvedBefore).toMatchObject({ status: 'dissolved', representative_id: null });
+    expectRaised(await forceDissolve(selfDissolvedId, '#1917 D-17 self'), 'FAMILY_ALREADY_DISSOLVED');
+    expect(await familyRow(selfDissolvedId)).toEqual(selfDissolvedBefore);
+    expect(await auditRows('family', selfDissolvedId, 'operator_force_dissolve')).toEqual([]);
+    expect(await auditRows('family', selfDissolvedId, 'group_dissolved')).toHaveLength(1);
+
+    // 運営が強制解散した家族をもう一度強制解散する (修正前は 2 回とも成功し、監査が 2 行になった)
+    const [repB, adultB] = await createUsers('d17-forced', 2);
+    const forcedId = await createFamily(repB, 'd17-forced');
+    await join(repB, forcedId, adultB);
+    const first = await forceDissolve(forcedId, '#1917 D-17 first');
+    expect(first.ok, JSON.stringify(first)).toBe(true);
+    const forcedBefore = await familyRow(forcedId);
+    expect(forcedBefore).toMatchObject({ status: 'dissolved', representative_id: null });
+    expectRaised(await forceDissolve(forcedId, '#1917 D-17 second'), 'FAMILY_ALREADY_DISSOLVED');
+    expect(await familyRow(forcedId)).toEqual(forcedBefore);
+    const forcedAudits = await auditRows('family', forcedId, 'operator_force_dissolve');
+    expect(forcedAudits).toHaveLength(1);
+    expect(forcedAudits[0]).toMatchObject({ metadata: { reason: '#1917 D-17 first', previous_representative_id: repB.id } });
   }, TEST_TIMEOUT_MS);
 });
