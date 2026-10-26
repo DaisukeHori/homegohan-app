@@ -149,7 +149,7 @@ describe('プラン詳細画面: 契約者がいるプランの廃止 (#1127)', 
     await vi.waitFor(() => expect(patchCalls()).toHaveLength(1));
     const [url, init] = patchCalls()[0]! as [string, { body: string }];
     expect(url).toBe('/api/super-admin/plans/plan-1');
-    expect(JSON.parse(init.body)).toEqual({ status: 'deprecated', ends_at: ENDS_AT_ISO });
+    expect(JSON.parse(init.body)).toEqual({ status: 'deprecated', ends_at: ENDS_AT_ISO, expected_status: 'public' });
   });
 
   it('500 (契約者数を確認できなかった): API の message を表示する。プランは再取得しない', async () => {

@@ -649,7 +649,7 @@ Step 3: スケジュール
 **実験詳細画面**:
 - 仮説 / バリアント設定
 - 統計分析パネル: p 値 / 信頼区間 / サブグループ別
-- 採用/却下ボタン
+- 状態のボタン: 下書きは「実験開始」、実行中は「完了」と「中止」(完了・中止のあとはボタンなし。遷移表は `src/lib/super-admin/experiments-schemas.ts` の `EXPERIMENT_STATUS_TRANSITIONS`)
 
 ---
 

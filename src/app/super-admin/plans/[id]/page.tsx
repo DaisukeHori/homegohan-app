@@ -17,6 +17,11 @@
  * 一度表示したあとの読み直し (保存・状態の変更のあと・409 のあと) は画面を外さずに行い、失敗しても画面と入力欄を残して、
  * 文と「再試行」を出す (読み直しの失敗で画面ごとエラーに置き換えない。#1917)。読み直しが 404 / 403 で断られたときは、
  * 読み込み直しても変わらないので、その理由の文を出し、「再試行」は出さない。
+ * 状態の変更 (公開・非公開・再公開・廃止・廃止の取り消し) は、画面が見ていた status を本文の expected_status に入れて送る。route は
+ * それが DB の status と違えば書かずに 409 CONFLICT_STALE_DATA にする (#2064。route は遷移を DB の status で検査するので、画面の
+ * status が古いと確認の文と違う遷移 (公開中に見えて「非公開にする」でも、DB が廃止なら廃止の取り消し) を書いてしまうため)。
+ * あわせて、表示したあとの読み直しが失敗しているあいだ (「再試行」で読み直せるまで) と、読み直しを待つあいだは、状態のボタンを止める
+ * (画面の status が DB と食い違っているかもしれないのに、その status を元にしたボタンを出し続けないため。#2064)。
  * 保存は、表示名・説明・表示順のうち最後に読んだ・保存した値から変えた欄だけを送る (手を付けていない欄を、画面を開いたあとに
  * 別の運営が変えた値の上に古い値で書かない。#1917)。保存に成功したら、送った欄の値をそのまま新しい初めの値にする
  * (続く読み直しが失敗しても、保存済みの欄を次の保存で送り直さない・「再試行」で書きかけとして残さない。#1917)。
@@ -221,6 +226,12 @@ export default function PlanDetailPage() {
   // 画面の上に出す、読み直しについての文 (#1917)
   const [reloadNotice, setReloadNotice] = useState<ReloadNotice | null>(null);
   const [isReloading, setIsReloading] = useState(false);
+  // 表示したあとの読み直しを待っているか (描画を待たずに読むための写し。状態の変更の handler の守りに使う。#2064)
+  const reloadingRef = useRef(false);
+  // 表示したあとの読み直しが失敗し、まだ読み直せていないか (画面の plan.status が DB と食い違っているかもしれない。#2064)。
+  // そのあいだは状態のボタンを止める。読み直しに成功したら外す。ref は描画を待たずに handler で読むための写し
+  const [isPlanStale, setIsPlanStale] = useState(false);
+  const planStaleRef = useRef(false);
   // 状態の変更 (公開・非公開・廃止・廃止の取り消し) の応答と、そのあとの読み直しを待っているか。
   // 待つあいだは状態のボタンを止める (二度押しで 2 本目を送ると、変えられているのに断られて失敗の文が出るため。#2050)
   const [isChangingStatus, setIsChangingStatus] = useState(false);
@@ -250,6 +261,22 @@ export default function PlanDetailPage() {
     setSaveInfo('');
   }, []);
 
+  /** 画面の plan.status が DB と食い違っているかもしれないか (表示したあとの読み直しの失敗) を記録する (#2064) */
+  const markPlanStale = useCallback((stale: boolean) => {
+    planStaleRef.current = stale;
+    setIsPlanStale(stale);
+  }, []);
+
+  /**
+   * 状態の変更を送らずに止めるか (#2064)。保存・ほかの状態の変更の応答 (とそのあとの読み直し) を待つあいだ (#2059)、
+   * 表示したあとの読み直しを待つあいだ (「再試行」を含む)、読み直しが失敗してまだ読み直せていないあいだ。
+   * ref で見るので、再描画の前に続けて押されても止まる
+   */
+  const isStatusChangeBlocked = useCallback(
+    () => writeInFlightRef.current || reloadingRef.current || planStaleRef.current,
+    [],
+  );
+
   /**
    * プランを読む。初めの読み込みは画面を「読み込み中」にし、失敗したら画面をエラーにする。
    * 表示したあとの読み直しは画面を外さず、失敗しても画面と入力欄を残す (結果は戻り値で返し、文は呼び出し側が決める。#1917)。
@@ -261,6 +288,7 @@ export default function PlanDetailPage() {
     const seq = ++fetchSeq.current;
     const isReload = hasLoadedRef.current;
     if (isReload) {
+      reloadingRef.current = true;
       setIsReloading(true);
     } else {
       setIsLoading(true);
@@ -281,6 +309,7 @@ export default function PlanDetailPage() {
         if (isReload && res.status === HTTP_FORBIDDEN) {
           return { kind: 'unavailable', reason: 'forbidden', message: forbiddenMessageForScreen(body) };
         }
+        if (isReload) markPlanStale(true);
         return { kind: 'failed' };
       }
       const loaded = data.data;
@@ -299,6 +328,7 @@ export default function PlanDetailPage() {
         next.displayOrder !== fresh.displayOrder;
       loadedEditsRef.current = fresh;
       hasLoadedRef.current = true;
+      markPlanStale(false);
       setPlan(loaded);
       setError('');
       setEdits(next);
@@ -306,14 +336,16 @@ export default function PlanDetailPage() {
     } catch {
       if (seq !== fetchSeq.current) return { kind: 'superseded' };
       if (!isReload) setError('ネットワークエラー');
+      if (isReload) markPlanStale(true);
       return { kind: 'failed' };
     } finally {
       if (seq === fetchSeq.current) {
+        reloadingRef.current = false;
         setIsLoading(false);
         setIsReloading(false);
       }
     }
-  }, [planId, setEdits]);
+  }, [planId, setEdits, markPlanStale]);
 
   useEffect(() => {
     void fetchPlan();
@@ -328,6 +360,8 @@ export default function PlanDetailPage() {
    */
   const reloadAfterSuccess = useCallback(async () => {
     const outcome = await fetchPlan({ keepEdits: true });
+    // 読み直せたら文を消す (読み直しが失敗しているあいだの保存は、その文と「再試行」を消さずに送るので、ここで消す。#2064)
+    if (outcome.kind === 'loaded') setReloadNotice(null);
     if (outcome.kind === 'failed') setReloadNotice({ kind: 'reload-failed' });
     if (outcome.kind === 'unavailable') setReloadNotice({ kind: 'unavailable', reason: outcome.reason, message: outcome.message });
   }, [fetchPlan]);
@@ -396,7 +430,9 @@ export default function PlanDetailPage() {
     }
     writeInFlightRef.current = true;
     setIsSaving(true);
-    setReloadNotice(null);
+    // 読み直しが失敗してまだ読み直せていないあいだは、その文と「再試行」を残す (消すと、状態のボタンが止まったまま
+    // 読み直す道が見えなくなる。保存に成功すれば続く読み直しで文が決まる。#2064)
+    if (!planStaleRef.current) setReloadNotice(null);
     try {
       const res = await fetch(`/api/super-admin/plans/${planId}`, {
         method: 'PATCH',
@@ -439,8 +475,11 @@ export default function PlanDetailPage() {
   };
 
   const handleStatusChange = async (newStatus: 'public' | 'private') => {
-    // 保存・ほかの状態の変更の応答 (とそのあとの読み直し) を待つあいだは送らない (#2059。writeInFlightRef)
-    if (writeInFlightRef.current) return;
+    // 保存・ほかの状態の変更の応答 (とそのあとの読み直し) を待つあいだ (#2059)・読み直しを待つあいだ・読み直しが失敗している
+    // あいだ (#2064) は送らない
+    if (!plan || isStatusChangeBlocked()) return;
+    // 画面が見ていた status。route は DB の status と違えば書かずに 409 にする (確認の文と違う遷移を書かない。#2064)
+    const expectedStatus = plan.status;
     const confirm = window.confirm(
       newStatus === 'public' ? 'このプランを公開しますか？' : 'このプランを非公開にしますか？'
     );
@@ -453,7 +492,7 @@ export default function PlanDetailPage() {
       const res = await fetch(`/api/super-admin/plans/${planId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
+        body: JSON.stringify({ status: newStatus, expected_status: expectedStatus }),
       });
       // #1041 修正: 失敗時 (422/400/403 等) に無反応にせず、必ずエラーを表示する
       await handleStatusResponse(res, 'ステータス変更に失敗しました');
@@ -467,8 +506,11 @@ export default function PlanDetailPage() {
 
   // #1041 修正: public/private --> deprecated への廃止移行を許可 (以前は恒久ロックされていた)
   const handleDeprecate = async () => {
-    // 保存・ほかの状態の変更の応答 (とそのあとの読み直し) を待つあいだは送らない (#2059。writeInFlightRef)
-    if (writeInFlightRef.current) return;
+    // 保存・ほかの状態の変更の応答 (とそのあとの読み直し) を待つあいだ (#2059)・読み直しを待つあいだ・読み直しが失敗している
+    // あいだ (#2064) は送らない
+    if (!plan || isStatusChangeBlocked()) return;
+    // 画面が見ていた status (公開中か非公開)。route は DB の status と違えば書かずに 409 にする (#2064)
+    const expectedStatus = plan.status;
     const endsAtInput = window.prompt('廃止予定日 (YYYY-MM-DD) を入力してください');
     if (!endsAtInput) return;
     const endsAtDate = new Date(`${endsAtInput}T00:00:00.000Z`);
@@ -477,7 +519,7 @@ export default function PlanDetailPage() {
       return;
     }
     // #1912: 組織のプランの行 (org_*) では組織の件数を数えない。確認の文に注記を添える (件数は出さない)
-    const orgRowNote = plan && !countsOrganizationsFor(plan) ? `\n\n${ORG_SUBSCRIPTION_PLAN_ROW_NOTE}` : '';
+    const orgRowNote = !countsOrganizationsFor(plan) ? `\n\n${ORG_SUBSCRIPTION_PLAN_ROW_NOTE}` : '';
     if (!window.confirm(`このプランを ${endsAtInput} 廃止予定で廃止しますか？${orgRowNote}`)) return;
 
     writeInFlightRef.current = true;
@@ -487,7 +529,7 @@ export default function PlanDetailPage() {
       const res = await fetch(`/api/super-admin/plans/${planId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'deprecated', ends_at: endsAtDate.toISOString() }),
+        body: JSON.stringify({ status: 'deprecated', ends_at: endsAtDate.toISOString(), expected_status: expectedStatus }),
       });
       await handleStatusResponse(res, '廃止処理に失敗しました');
     } catch {
@@ -500,8 +542,11 @@ export default function PlanDetailPage() {
 
   // deprecated --> private への緊急ロールバック (public には戻さない)
   const handleUndeprecate = async () => {
-    // 保存・ほかの状態の変更の応答 (とそのあとの読み直し) を待つあいだは送らない (#2059。writeInFlightRef)
-    if (writeInFlightRef.current) return;
+    // 保存・ほかの状態の変更の応答 (とそのあとの読み直し) を待つあいだ (#2059)・読み直しを待つあいだ・読み直しが失敗している
+    // あいだ (#2064) は送らない
+    if (!plan || isStatusChangeBlocked()) return;
+    // 画面が見ていた status (廃止)。route は DB の status と違えば書かずに 409 にする (#2064)
+    const expectedStatus = plan.status;
     if (!window.confirm('廃止を取り消し、非公開状態に戻しますか？')) return;
     writeInFlightRef.current = true;
     setIsChangingStatus(true);
@@ -510,7 +555,7 @@ export default function PlanDetailPage() {
       const res = await fetch(`/api/super-admin/plans/${planId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'private' }),
+        body: JSON.stringify({ status: 'private', expected_status: expectedStatus }),
       });
       await handleStatusResponse(res, '廃止取り消しに失敗しました');
     } catch {
@@ -535,6 +580,8 @@ export default function PlanDetailPage() {
 
   const statusInfo = STATUS_LABELS[plan.status] ?? { label: plan.status, color: 'bg-slate-100 text-slate-600' };
   const isEditable = isEditableStatus(plan.status);
+  // 状態のボタンを止めるか (isStatusChangeBlocked と同じ条件を state で。#2059・#2064)
+  const statusButtonsDisabled = isWriting || isReloading || isPlanStale;
   // #1912: 組織のプランの行 (org_*) は組織の段階とは無関係で、組織の件数を数えない。廃止・価格変更の前に注記を出す
   const showOrgRowNote = !countsOrganizationsFor(plan);
 
@@ -556,7 +603,7 @@ export default function PlanDetailPage() {
           {plan.status === 'draft' && (
             <button
               onClick={() => handleStatusChange('public')}
-              disabled={isWriting}
+              disabled={statusButtonsDisabled}
               className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors disabled:opacity-50"
             >
               公開する
@@ -565,7 +612,7 @@ export default function PlanDetailPage() {
           {plan.status === 'public' && (
             <button
               onClick={() => handleStatusChange('private')}
-              disabled={isWriting}
+              disabled={statusButtonsDisabled}
               className="px-3 py-1.5 bg-yellow-500 text-white rounded-lg text-xs font-medium hover:bg-yellow-600 transition-colors disabled:opacity-50"
             >
               非公開にする
@@ -574,7 +621,7 @@ export default function PlanDetailPage() {
           {plan.status === 'private' && (
             <button
               onClick={() => handleStatusChange('public')}
-              disabled={isWriting}
+              disabled={statusButtonsDisabled}
               className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors disabled:opacity-50"
             >
               再公開する
@@ -591,7 +638,7 @@ export default function PlanDetailPage() {
           {(plan.status === 'public' || plan.status === 'private') && (
             <button
               onClick={handleDeprecate}
-              disabled={isWriting}
+              disabled={statusButtonsDisabled}
               className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-xs font-medium hover:bg-red-600 transition-colors disabled:opacity-50"
             >
               廃止する
@@ -600,7 +647,7 @@ export default function PlanDetailPage() {
           {plan.status === 'deprecated' && (
             <button
               onClick={handleUndeprecate}
-              disabled={isWriting}
+              disabled={statusButtonsDisabled}
               className="px-3 py-1.5 bg-slate-500 text-white rounded-lg text-xs font-medium hover:bg-slate-600 transition-colors disabled:opacity-50"
             >
               廃止を取り消す

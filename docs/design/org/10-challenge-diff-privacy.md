@@ -1033,7 +1033,7 @@ if (!mine) {
 | active | status=draft の UPDATE (PostgREST。管理者の JWT) | — | RAISE `CHALLENGE_STATUS_LOCKED` (ガード) | 書き込み無し (S-6。§13 の節 G) |
 | active | 期間・種類・部署の UPDATE (PostgREST) | — | RAISE `CHALLENGE_PERIOD_LOCKED` | 書き込み無し |
 | completed / cancelled | PUT status=(別の値) (管理者) | — | 409 `CHALLENGE_STATUS_LOCKED` (API) / RAISE (DB) | 書き込み無し |
-| 任意 | 管理画面の状態のボタンを押す (管理者。Web `src/app/(org)/org/challenges/page.tsx:386`〜`:401`) | 上の PUT の行のとおり | 画面は、draft のカードに → active (「開始」)、active のカードに → completed (「終了」) のボタンだけを出す。completed / cancelled のカードにはボタンを出さない (押すと 409 になるボタンを置かない) | 押したら `PUT /api/org/challenges` の行と同じ。中止 (→ cancelled) のボタンは Web に無い (変えない) |
+| 任意 | 管理画面の状態のボタンを押す (管理者。Web `src/app/(org)/org/challenges/page.tsx:466`〜`:483`) | 上の PUT の行のとおり | 画面は、draft のカードに → active (「開始」)、active のカードに → completed (「終了」) のボタンだけを出す。completed / cancelled のカードにはボタンを出さない (押すと 409 になるボタンを置かない) | 押したら `PUT /api/org/challenges` の行と同じ。中止 (→ cancelled) のボタンは Web に無い (変えない) |
 | completed / cancelled | status=(別の値。draft / active / completed / cancelled のうち今と違うもの) の UPDATE (PostgREST。管理者の JWT) | — | RAISE `CHALLENGE_STATUS_LOCKED` (ガード。終わった状態からの遷移は遷移表に無い) | 書き込み無し。確定済みの値は動かず、中止は確定しないまま (S-6・S-11。§13 の節 G・U) |
 | completed / cancelled | 期間・種類・部署の UPDATE (PostgREST) | — | RAISE `CHALLENGE_PERIOD_LOCKED` | 書き込み無し |
 | 任意 | status を NULL にする UPDATE (PostgREST) | — | RAISE `CHALLENGE_STATUS_LOCKED` (ガード)。NOT NULL も 23502 で止める | 書き込み無し (S-24) |
@@ -1064,11 +1064,11 @@ if (!mine) {
 
 | 画面 | 現行 | 設計後 |
 |---|---|---|
-| 管理者 Web `src/app/(org)/org/challenges/page.tsx:203` 〜 `:206` の説明 | 「参加者が10人以上になるまでは参加者数を、集計が済んだ参加者が10人以上になるまでは平均を表示しません」 | 「参加者数は、これまでに参加した人の数で、やめた人や組織を離れた人を引きません。10人以上になるまでは表示しません。平均は、チャレンジが終了したあとに、終了時点の参加者が10人以上のときだけ表示します (開催中は表示しません)。同じ種類で期間が重なるチャレンジは、先に終了したものの平均だけを表示します」 |
-| 管理者 Web 集計の欄 (`:356` 〜 `:383`) | 「参加者」/ 「集計中」+「集計が済んだ参加者が10人以上になると、平均を表示します」 | 人数の見出し「参加した人」。平均の欄: active / draft = 「終了後に表示」+「チャレンジが終了すると、終了時点の参加者 (10人以上) の平均を表示します」、completed で非表示 = 「表示なし」+「終了時点の参加者が10人未満か、同じ種類で期間が重なるチャレンジの平均をすでに表示しているため、平均は表示しません」、completed で表示 = 値 + 「参加者の平均 (終了時点)」、cancelled = 平均の欄を出さない |
+| 管理者 Web `src/app/(org)/org/challenges/page.tsx:282` 〜 `:287` の説明 | 「参加者が10人以上になるまでは参加者数を、集計が済んだ参加者が10人以上になるまでは平均を表示しません」 | 「参加者数は、これまでに参加した人の数で、やめた人や組織を離れた人を引きません。10人以上になるまでは表示しません。平均は、チャレンジが終了したあとに、終了時点の参加者が10人以上のときだけ表示します (開催中は表示しません)。同じ種類で期間が重なるチャレンジは、先に終了したものの平均だけを表示します」 |
+| 管理者 Web 集計の欄 (`参加した人` の欄と `AverageCell` の欄) | 「参加者」/ 「集計中」+「集計が済んだ参加者が10人以上になると、平均を表示します」 | 人数の見出し「参加した人」。平均の欄: active / draft = 「終了後に表示」+「チャレンジが終了すると、終了時点の参加者 (10人以上) の平均を表示します」、completed で非表示 = 「表示なし」+「終了時点の参加者が10人未満か、同じ種類で期間が重なるチャレンジの平均をすでに表示しているため、平均は表示しません」、completed で表示 = 値 + 「参加者の平均 (終了時点)」、cancelled = 平均の欄を出さない |
 | 管理者モバイル `apps/mobile/app/(org)/org/challenges.tsx` (参加者数の文言・状態のボタン) | — | #1598 (2026-10-16) で画面ごと削除したので、本書では変えない (文言も状態のボタンの出し分けも対象外) |
 | メンバー一覧 `src/app/(main)/challenges/page.tsx:113` | 「会社の管理者には、参加者全体の人数と平均だけが表示されます (参加者が少ない間は、人数も平均も表示されません)」 | 「会社の管理者には、参加した人数と、チャレンジが終了したあとの平均だけが表示されます (参加した人が少ない間は表示されません)」 |
-| メンバー詳細 `src/app/(main)/challenges/[id]/page.tsx:275` | 同上 | 同上 |
+| メンバー詳細 `src/app/(main)/challenges/[id]/page.tsx:264` | 同上 | 同上 |
 | メンバー詳細 順位表の節 | `ranking.available` のときだけ表示 | `ranking.available === false && ranking.reason === 'org_admin'` のとき「組織の管理者 (このチャレンジがある間に管理者になったことがある人を含む) には、順位表を表示しません (あなたの記録と順位だけが表示されます)」を出す。`not_joined` は既存どおり何も出さない |
 | メンバー詳細 やめる節の文 | 「参加をやめると、あなたの記録は順位から外れ、順位表も見られなくなります」 | 変えない |
 
