@@ -94,17 +94,18 @@ vi.mock('@/lib/supabase/client', () => {
     };
     return query;
   };
-  return {
-    createClient: () => ({
-      auth: {
-        getUser: () =>
-          supabaseState.getUserThrows
-            ? Promise.reject(new TypeError('Failed to fetch'))
-            : Promise.resolve({ data: { user: { id: USER_ID } } }),
-      },
-      from: (table: string) => builder(table),
-    }),
+  // 本物の createClient と同じく、毎回同じクライアントを返す (家族の画面は supabase を useEffect の依存に入れているため、
+  // 描画のたびに別のクライアントを返すと読み込みが繰り返される)
+  const client = {
+    auth: {
+      getUser: () =>
+        supabaseState.getUserThrows
+          ? Promise.reject(new TypeError('Failed to fetch'))
+          : Promise.resolve({ data: { user: { id: USER_ID } } }),
+    },
+    from: (table: string) => builder(table),
   };
+  return { createClient: () => client };
 });
 
 const { default: OwnerTransferPage } = await import('@/app/(org)/org/settings/owner-transfer/page');
