@@ -119,9 +119,12 @@ export default function MembershipSettingsPage() {
   const [leaveError, setLeaveError] = useState<string | null>(null);
   // 共有の設定の更新に失敗したときの文 (#2073 S2)
   const [shareError, setShareError] = useState<string | null>(null);
-  // 所属を読み込めなかったときの文。あるあいだは所属の区画の代わりにこの文と「再試行」を出す (#2073 S3。以前は読み込めなかったのを
-  // 所属していないと見せ、家族グループの作成への案内を出していた)
+  // 所属を読み込めなかったときの文 (#2073 S3。以前は読み込めなかったのを所属していないと見せ、家族グループの作成への案内を出していた)。
+  // 一度も読めていないあいだは、所属の区画の代わりにこの文と「再試行」を出す。
+  // 読めたあと (解散のあとの読み直し) の失敗は、分かっている所属 (解散した所属は外したもの) の区画を残し、その上にこの文を出す
   const [loadError, setLoadError] = useState<string | null>(null);
+  // 所属を一度でも読めたか
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   // #1917 解散の区画を開いている所属 (null は閉じている) と、解散が済んだときの文
   const [dissolveTarget, setDissolveTarget] = useState<MembershipScope | null>(null);
@@ -225,6 +228,7 @@ export default function MembershipSettingsPage() {
         if (nextShareSettings) setShareSettings(nextShareSettings);
         setOrgInfo(nextOrg);
         setLoadError(null);
+        setHasLoaded(true);
       } catch (err) {
         console.error('[settings/membership] load error:', err);
         setLoadError(MEMBERSHIP_LOAD_ERROR);
@@ -381,7 +385,7 @@ export default function MembershipSettingsPage() {
             {dissolvedNotice}
           </p>
         )}
-        {loadError ? (
+        {loadError && (
           <div
             role="alert"
             data-testid="settings-membership-load-error"
@@ -390,13 +394,14 @@ export default function MembershipSettingsPage() {
             <span>{loadError}</span>
             <button
               type="button"
-              onClick={() => void loadData('initial')}
+              onClick={() => void loadData(hasLoaded ? 'refresh' : 'initial')}
               className="shrink-0 px-3 py-1.5 bg-white border border-red-300 rounded-lg text-red-700 hover:bg-red-100 transition-colors"
             >
               再試行
             </button>
           </div>
-        ) : (
+        )}
+        {loadError && !hasLoaded ? null : (
           <>
           {/* 所属組織セクション */}
           <section className="bg-white rounded-2xl shadow-sm overflow-hidden">
