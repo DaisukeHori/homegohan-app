@@ -10,6 +10,11 @@
  * (2) cross/23 §13 (定数一覧) に足した行の根拠の欄が「§11 の表」を指していたが、§11 はシーケンス図の節で、
  *     その定数の行も表も無かった。§13 の根拠の欄が `§X の…表` と書いて指す節は、その定数の名前を表の行に持つこと、
  *     根拠の欄が指す `§X` はどれも cross/23 に見出しとしてあることを確かめる。
+ * (3) cross/23 §0.3 に足したシナリオ S-27 (#2041 の写真の解析の CAS) の期待の欄が、Issue #2050 が P7 で製品の欠陥とした順
+ *     (先に送った A の印が後の B の invokedAt のあとに付き、A の結果が残る) を期待として書き、その順を
+ *     別の it (PC-4 = invokedAt のあとにほかの書き手が書いた行) の形と呼んでいた。§0.3 の宣言の本数と S-n の行・
+ *     §4.3 のトレース・§12.3 の対応表の S-n がそろうこと、§12.3 がテストのファイルの後の括弧で名指す it の id が
+ *     そのファイルに実在すること、#2041 のシナリオの期待の欄が「A の結果が残る」を書かないことを確かめる。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -41,6 +46,26 @@ const SECTION_TABLE_REFERENCE = /§(\d+(?:\.\d+)*) の[^§、・。()|]*?表/g;
 const SECTION_REFERENCE = /§(\d+(?:\.\d+)*)/g;
 /** 表の区切りの行 (`|---|---|`) */
 const TABLE_SEPARATOR_ROW = /^\|(?:\s*:?-+:?\s*\|)+\s*$/;
+
+/** cross/23 §0.3 の見出しの宣言の本数 (`### 0.3 ユーザーシナリオ (27 本。…)`) */
+const SCENARIO_COUNT_DECLARATION = /^#{2,4} 0\.3 ユーザーシナリオ \((\d+) 本/m;
+/** 表の先頭のセルがシナリオの番号 (`| S-27 |`) の行 */
+const SCENARIO_ROW = /^\| (S-\d+) \|/gm;
+const SCENARIO_ROW_PREFIX = '| S-';
+/** シナリオを持つ節の番号: §0.3 = シナリオ・§4.3 = トレース・§12.3 = シナリオ ⇄ テスト */
+const SCENARIO_SECTION = '0.3';
+const TRACE_SECTION = '4.3';
+const SCENARIO_TEST_SECTION = '12.3';
+/** §12.3 の行の、テストのファイルのすぐ後の括弧 (`` `tests/x.test.ts` (PC-1・PC-2 …) ``) */
+const TEST_FILE_WITH_IDS = /`((?:tests|src|apps)\/[^`]+\.test\.tsx?)` \(([^)]*)\)/g;
+/** 括弧の中の it の id (`PC-1`・`P-3`・`I-15`) */
+const TEST_ID = /\b([A-Z]{1,3}-\d+)\b/g;
+/** §0.3 のシナリオの表の、期待の欄の位置 (シナリオの番号・シナリオ・期待) */
+const SCENARIO_EXPECTATION_CELL = 2;
+/** #2041 の写真の解析の CAS のシナリオの行を見分ける語 */
+const PHOTO_CAS_SCENARIO_MARK = '#2041';
+/** Issue #2050 の P7 で製品の欠陥とした順の結果 (後に送った B の結果に代わって、先に送った A の結果が残る) */
+const P7_DEFECT_OUTCOME = 'A の結果が残る';
 
 /** needle で始まる行のすぐ上の見出しの行 (見出しが無ければ null) */
 function headingAbove(markdown: string, needle: string): string | null {
@@ -204,5 +229,95 @@ describe('cross/23 §13 の定数一覧の根拠の欄が指す節は、本書�
     expect(rows.length, '§13 の表の行を取り出せる').toBeGreaterThan(0);
     expect(rows.some(({ basis }) => [...basis.matchAll(SECTION_REFERENCE)].length > 0), '§13 の根拠の欄に §X の参照がある (走査が空でない)').toBe(true);
     expect(brokenConstantReferences(markdown, constants)).toEqual([]);
+  });
+});
+
+/** 節の本文の、先頭のセルがシナリオの番号の行の番号 (出てきた順) */
+function scenarioIds(body: string): string[] {
+  return [...body.matchAll(SCENARIO_ROW)].map((m) => m[1] ?? '');
+}
+
+/** §12.3 の行が、テストのファイルのすぐ後の括弧で名指す it の id のうち、そのファイルに `'<id>: ` の it 名が無いもの */
+function missingTestIds(scenarioTestSection: string, readFile: (relativePath: string) => string): string[] {
+  const missing: string[] = [];
+  for (const row of scenarioTestSection.split('\n').filter((line) => line.startsWith(SCENARIO_ROW_PREFIX))) {
+    for (const [, file, inside] of row.matchAll(TEST_FILE_WITH_IDS)) {
+      if (!file) continue;
+      const ids = [...(inside ?? '').matchAll(TEST_ID)].map((m) => m[1] ?? '');
+      if (ids.length === 0) continue;
+      const source = readFile(file);
+      for (const id of ids) {
+        if (!new RegExp(`['"\`]${id}: `).test(source)) missing.push(`${file}: ${id}`);
+      }
+    }
+  }
+  return missing;
+}
+
+/** §0.3 の #2041 のシナリオの行のうち、期待の欄が Issue #2050 の P7 の順の結果を書いているものの番号 */
+function photoCasScenariosExpectingP7(scenarioSection: string): string[] {
+  return scenarioSection
+    .split('\n')
+    .filter((line) => line.startsWith(SCENARIO_ROW_PREFIX) && line.includes(PHOTO_CAS_SCENARIO_MARK))
+    .filter((line) => (tableCells(line)[SCENARIO_EXPECTATION_CELL] ?? '').includes(P7_DEFECT_OUTCOME))
+    .map((line) => tableCells(line)[0] ?? '');
+}
+
+describe('cross/23 のシナリオの表・トレース・シナリオ ⇄ テストの表がそろい、#2041 のシナリオは Issue #2050 の P7 の順を期待にしない (#2050)', () => {
+  const casTestSource = [
+    "it('PC-1: 先に送った解析が後に終わっても、後に送った解析の結果が残る', async () => {",
+    "it.each([['A', 1]])('P-3: 2 本の解析は (%s)', async () => {",
+  ].join('\n');
+  const readFixture = (relativePath: string): string => (relativePath === 'tests/x.test.ts' ? casTestSource : '');
+
+  it('括弧の中の id がファイルの it 名に無ければ見分ける (it.each の名前も数える・id の無い括弧は見ない)', () => {
+    const section = [
+      '| シナリオ | 確かめるテスト |',
+      '|---|---|',
+      '| S-1 | `tests/x.test.ts` (PC-1・P-3。条件の評価) |',
+      '| S-2 | `tests/y.test.ts` (変えない。緑のまま) |',
+    ].join('\n');
+    expect(missingTestIds(section, readFixture)).toEqual([]);
+    const wrong = section.replace('(PC-1・P-3。', '(PC-1・PC-4・P-3。');
+    expect(missingTestIds(wrong, readFixture)).toEqual(['tests/x.test.ts: PC-4']);
+  });
+
+  it('#2041 のシナリオの期待の欄が「A の結果が残る」を書くと見分ける (#2041 を名指さない行は見ない)', () => {
+    const section = [
+      '| # | シナリオ | 期待 |',
+      '|---|---|---|',
+      '| S-26 | 写真の解析 | A の結果が残る |',
+      '| S-27 | 写真を 2 回続けて送る (#2041) | 行に残るのは後に送った B の結果 |',
+    ].join('\n');
+    expect(photoCasScenariosExpectingP7(section)).toEqual([]);
+    const defect = section.replace('後に送った B の結果 |', '後に送った B の結果。A の要求が遅れて届いたときは A の結果が残る |');
+    expect(photoCasScenariosExpectingP7(defect)).toEqual(['S-27']);
+  });
+
+  it('シナリオの番号の行を、出てきた順に取り出す (表の見出しの行・ほかの表の行は数えない)', () => {
+    expect(scenarioIds(['| # | シナリオ |', '|---|---|', '| S-1 | a |', '| S-2 | b |', '| I-1 | c |'].join('\n'))).toEqual(['S-1', 'S-2']);
+  });
+
+  it('cross/23 §0.3 の宣言の本数・§0.3 の行・§4.3 のトレース・§12.3 の対応表の S-n がそろう', () => {
+    const markdown = read(CROSS23);
+    const declared = SCENARIO_COUNT_DECLARATION.exec(markdown);
+    expect(declared, `${CROSS23} §0.3 の見出しが本数を宣言している`).not.toBeNull();
+    const scenarios = scenarioIds(sectionBody(markdown, SCENARIO_SECTION) ?? '');
+    expect(scenarios.length, '§0.3 の行の数 = 見出しの宣言の本数').toBe(Number(declared?.[1]));
+    expect(new Set(scenarios).size, '§0.3 の番号に重なりが無い').toBe(scenarios.length);
+    expect(scenarioIds(sectionBody(markdown, TRACE_SECTION) ?? ''), '§4.3 のトレースの行').toEqual(scenarios);
+    expect(scenarioIds(sectionBody(markdown, SCENARIO_TEST_SECTION) ?? ''), '§12.3 の対応表の行').toEqual(scenarios);
+  });
+
+  it('cross/23 §12.3 がテストのファイルの後の括弧で名指す it の id は、そのファイルに実在する', () => {
+    const section = sectionBody(read(CROSS23), SCENARIO_TEST_SECTION);
+    expect(section, `${CROSS23} に §12.3 の見出しがある`).not.toBeNull();
+    expect(missingTestIds(section ?? '', read)).toEqual([]);
+  });
+
+  it('cross/23 §0.3 の #2041 のシナリオの期待の欄は、Issue #2050 の P7 の順の結果 (A の結果が残る) を書かない', () => {
+    const section = sectionBody(read(CROSS23), SCENARIO_SECTION);
+    expect(section, `${CROSS23} に §0.3 の見出しがある`).not.toBeNull();
+    expect(photoCasScenariosExpectingP7(section ?? '')).toEqual([]);
   });
 });
