@@ -679,8 +679,6 @@ describe('サポートの利用者: 応答を待つ間に別の利用者を選�
     await click(findButton('追加'), '「追加」ボタン');
     await click(otherRow(), '別の利用者の行');
     await vi.waitFor(() => expect(detailName()).toBe(NICKNAME_B));
-    // 前の利用者に宛てた書きかけは、選んだ利用者の入力欄に残さない
-    expect(noteInput()!.value).toBe('');
 
     const detailACallsBefore = callsOf('GET', `/api/support/users/${USER_ID}`).length;
     await act(async () => {
@@ -698,6 +696,19 @@ describe('サポートの利用者: 応答を待つ間に別の利用者を選�
     expect(callsOf('POST', notesPath(OTHER_USER_ID))).toHaveLength(1);
     expect(callsOf('POST', notesPath(USER_ID))).toHaveLength(1);
     expect(detailName()).toBe(NICKNAME_B);
+  });
+
+  it('別の利用者を選んだら、前の利用者に宛てた書きかけのメモを入力欄に残さない (選んだ利用者に追加しないように)', async () => {
+    mockSupportApi({});
+    await renderPage(SupportUsersPage);
+    await vi.waitFor(() => expect(detailName()).toBe(NICKNAME_A));
+
+    await typeInto(noteInput(), 'A さんへのメモ');
+    await click(otherRow(), '別の利用者の行');
+    await vi.waitFor(() => expect(detailName()).toBe(NICKNAME_B));
+
+    expect(noteInput()!.value).toBe('');
+    expect(findButton('追加')!.disabled).toBe(true);
   });
 
   it('メモの追加の応答を待つ間に別の利用者を選ぶと、失敗の応答が届いても選んだ利用者の詳細に失敗の文を出さない', async () => {
