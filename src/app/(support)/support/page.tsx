@@ -1,8 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import { operationFailureMessage, operationNetworkFailureMessage } from "@/lib/admin/api-error-message";
+
+/**
+ * 対応状況を読み込めなかったときの文の頭 (後ろに理由を添える)。
+ * 読めなかったのを「未対応 0 件」「問い合わせはありません」と見せないために出す (#2050)
+ */
+const STATS_LOAD_FAILURE_SUMMARY = "対応状況を読み込めませんでした";
 
 interface SupportStats {
   overview: {
@@ -40,23 +47,37 @@ const STATUS_COLORS: Record<string, string> = {
 export default function SupportDashboard() {
   const [stats, setStats] = useState<SupportStats | null>(null);
   const [loading, setLoading] = useState(true);
+  // 対応状況を読み込めなかったときの文。あるあいだは件数と最近の問い合わせの代わりにこの文と「再試行」を出す
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const fetchStats = useCallback(async () => {
+    try {
+      const res = await fetch("/api/support/stats");
+      if (!res.ok) {
+        const body: unknown = await res.json().catch(() => null);
+        setLoadError(operationFailureMessage(STATS_LOAD_FAILURE_SUMMARY, res.status, body));
+        return;
+      }
+      const data = await res.json();
+      setStats(data);
+      setLoadError(null);
+    } catch (error) {
+      console.error("Failed to fetch stats:", error);
+      setLoadError(operationNetworkFailureMessage(STATS_LOAD_FAILURE_SUMMARY));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const res = await fetch("/api/support/stats");
-        if (res.ok) {
-          const data = await res.json();
-          setStats(data);
-        }
-      } catch (error) {
-        console.error("Failed to fetch stats:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchStats();
-  }, []);
+    void fetchStats();
+  }, [fetchStats]);
+
+  // 読み込みをやり直す (読み込めなかったときの「再試行」)
+  const retryLoad = () => {
+    setLoading(true);
+    void fetchStats();
+  };
 
   if (loading) {
     return (
@@ -73,6 +94,23 @@ export default function SupportDashboard() {
         <p className="text-gray-500 mt-1">問い合わせ対応状況の概要</p>
       </div>
 
+      {loadError ? (
+        <div
+          role="alert"
+          data-testid="support-stats-load-error"
+          className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center justify-between gap-3"
+        >
+          <span>{loadError}</span>
+          <button
+            type="button"
+            onClick={retryLoad}
+            className="shrink-0 px-3 py-1.5 bg-white border border-red-300 rounded-lg text-red-700 hover:bg-red-100 transition-colors"
+          >
+            再試行
+          </button>
+        </div>
+      ) : (
+      <>
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <motion.div
@@ -197,6 +235,8 @@ export default function SupportDashboard() {
           )}
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }
