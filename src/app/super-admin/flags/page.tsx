@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 
 interface FeatureFlag {
@@ -22,6 +22,13 @@ export default function FlagsPage() {
   // 削除の応答を待っているフラグの key。待つあいだは削除のボタンを止める
   // (二度押しで 2 本目の DELETE を送ると、削除できているのに断られて失敗の文が出るため。#2050)
   const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  // 切り替えか削除のどちらかの書き込み (切り替えはそのあとの一覧の読み直しまで) の応答を待っているか (10/26 の整合ゲート 1026e。#2050)。
+  // 切り替えのあとの読み直しは一覧を丸ごと差し替えるので、ほかの切り替え・削除と重ねると、応答が送った順と逆に届いたとき、
+  // 後に届いた古い一覧 (例: 後から切り替えたフラグが前の値の一覧・消したフラグがまだある一覧) で表示が上書きされる
+  // (#2053 のクーポン・機能パッケージと同じ型)。待つあいだはすべての切り替えと削除のボタンを止め、押されても送らない。
+  // ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
+  const writeInFlightRef = useRef(false);
+  const isWriting = toggling !== null || deletingKey !== null;
 
   const fetchFlags = async () => {
     try {
@@ -57,6 +64,8 @@ export default function FlagsPage() {
   };
 
   const handleToggle = async (key: string, currentEnabled: boolean) => {
+    if (writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
     setToggling(key);
     try {
       const res = await fetch(`/api/super-admin/flags/${key}`, {
@@ -69,17 +78,21 @@ export default function FlagsPage() {
         throw new Error(body.error?.message ?? `HTTP ${res.status}`);
       }
       setFlags((prev) => prev.map((f) => f.key === key ? { ...f, enabled: !currentEnabled } : f));
-      void reloadFlagsQuietly();
+      // 読み直しの応答まで待ってからボタンを戻す (待たずに次の書き込みを送ると、この読み直しの古い一覧で上書きされうるため)
+      await reloadFlagsQuietly();
     } catch (err) {
       alert(err instanceof Error ? err.message : "更新に失敗しました");
     } finally {
+      writeInFlightRef.current = false;
       setToggling(null);
     }
   };
 
   const handleDelete = async (key: string) => {
-    if (deletingKey !== null) return;
+    // 切り替え (とその読み直し) の応答を待つあいだも送らない (writeInFlightRef)
+    if (writeInFlightRef.current) return;
     if (!confirm(`フラグ "${key}" を削除しますか？`)) return;
+    writeInFlightRef.current = true;
     setDeletingKey(key);
     try {
       const res = await fetch(`/api/super-admin/flags/${key}`, { method: "DELETE" });
@@ -91,6 +104,7 @@ export default function FlagsPage() {
     } catch (err) {
       alert(err instanceof Error ? err.message : "削除に失敗しました");
     } finally {
+      writeInFlightRef.current = false;
       setDeletingKey(null);
     }
   };
@@ -170,10 +184,10 @@ export default function FlagsPage() {
                   <td className="px-6 py-4">
                     <button
                       onClick={() => handleToggle(flag.key, flag.enabled)}
-                      disabled={toggling === flag.key}
+                      disabled={isWriting}
                       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
                         flag.enabled ? "bg-green-500" : "bg-slate-600"
-                      } ${toggling === flag.key ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                      } ${isWriting ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
                     >
                       <span
                         className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
@@ -200,7 +214,7 @@ export default function FlagsPage() {
                   <td className="px-6 py-4">
                     <button
                       onClick={() => handleDelete(flag.key)}
-                      disabled={deletingKey !== null}
+                      disabled={isWriting}
                       className="text-red-400 hover:text-red-300 text-sm transition-colors disabled:opacity-50"
                     >
                       削除

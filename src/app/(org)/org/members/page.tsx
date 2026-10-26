@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
@@ -33,6 +33,13 @@ export default function MembersPage() {
   const [loading, setLoading] = useState(true);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
+  // 除名か脱退のどちらかの書き込み (除名はそのあとの読み直しまで) の応答を待っているか (10/26 の整合ゲート 1026e。#2050)。
+  // 除名のあとの読み直しは一覧を丸ごと差し替えるので、別のメンバーの除名を重ねると、先に送った読み直しの応答が後に届いたとき、
+  // その古い一覧 (除名したメンバーがまだいる一覧) で表示が上書きされ、除名したメンバーの「除名」をもう一度押せてしまう
+  // (#2053 のクーポン・機能パッケージと同じ型)。待つあいだはすべての除名と脱退のボタンを止め、押されても送らない。
+  // ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
+  const writeInFlightRef = useRef(false);
+  const isWriting = removingId !== null || leaving;
   // 一覧を読み込めなかったときの文。あるあいだは一覧と「メンバーがいません」の代わりにこの文と「再試行」を出す (#2050)
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -86,7 +93,9 @@ export default function MembersPage() {
   }, []);
 
   const handleRemove = async (memberId: string, memberNickname: string | null) => {
+    if (writeInFlightRef.current) return;
     if (!confirm(`「${normalizeProfileName(memberNickname) ?? 'このメンバー'}」を組織から除名しますか？`)) return;
+    writeInFlightRef.current = true;
     setRemovingId(memberId);
     try {
       const res = await fetch(`/api/org/members/${memberId}/remove`, {
@@ -100,12 +109,15 @@ export default function MembersPage() {
       }
       await fetchData();
     } finally {
+      writeInFlightRef.current = false;
       setRemovingId(null);
     }
   };
 
   const handleLeave = async () => {
+    if (writeInFlightRef.current) return;
     if (!confirm('組織から脱退しますか？この操作は元に戻せません。')) return;
+    writeInFlightRef.current = true;
     setLeaving(true);
     try {
       const res = await fetch('/api/org/leave', { method: 'POST' });
@@ -117,6 +129,7 @@ export default function MembersPage() {
       }
       router.push('/home');
     } finally {
+      writeInFlightRef.current = false;
       setLeaving(false);
     }
   };
@@ -166,7 +179,7 @@ export default function MembersPage() {
           {currentUser && currentUser.org_role !== 'owner' && (
             <button
               onClick={handleLeave}
-              disabled={leaving}
+              disabled={isWriting}
               className="px-4 py-2 rounded-xl border border-red-300 text-red-600 font-medium hover:bg-red-50 transition-colors text-sm disabled:opacity-50"
             >
               {leaving ? '処理中...' : '組織を脱退'}
@@ -251,7 +264,7 @@ export default function MembersPage() {
                     {canRemove(member.org_role, member.id) && (
                       <button
                         onClick={() => handleRemove(member.id, member.nickname)}
-                        disabled={removingId === member.id}
+                        disabled={isWriting}
                         className="px-3 py-1 rounded-lg text-xs font-medium text-red-600 border border-red-200 hover:bg-red-50 transition-colors disabled:opacity-50"
                       >
                         {removingId === member.id ? '処理中...' : '除名'}

@@ -94,6 +94,11 @@ const { default: LeadDetailPage } = await import('@/app/admin/sales/[id]/page');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
+// チケットの詳細の画面はメッセージの末尾へ scrollIntoView する。テストの DOM には無いので、何もしない関数を置く
+if (typeof Element.prototype.scrollIntoView !== 'function') {
+  Element.prototype.scrollIntoView = () => undefined;
+}
+
 function jsonResponse(status: number, body: unknown) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }

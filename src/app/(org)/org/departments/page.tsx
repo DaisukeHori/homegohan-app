@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   extractApiErrorMessage,
@@ -49,6 +49,13 @@ export default function OrgDepartmentsPage() {
   // 削除の応答を待っている部署の id。待つあいだは削除のボタンを止める
   // (二度押しで 2 本目の DELETE を送ると、削除できているのに 404 で「部署を削除できませんでした」が出るため。#2050)
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // 追加・更新か削除のどちらかの書き込みとそのあとの読み直しの応答を待っているか (10/26 の整合ゲート 1026e。#2050)。
+  // 書き込みのあとの読み直しは一覧を丸ごと差し替えるので、2 つの書き込みを重ねると、先に送った読み直しの応答が後に届いたとき、
+  // その古い一覧 (例: 消した部署がまだある一覧) で表示が上書きされ、消した部署の削除をもう一度押せてしまう
+  // (#2053 のクーポン・機能パッケージと同じ型)。待つあいだは追加・更新と削除のボタンを止め、押されても送らない。
+  // ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
+  const writeInFlightRef = useRef(false);
+  const isWriting = submitting || deletingId !== null;
 
   const fetchDepartments = useCallback(async () => {
     try {
@@ -75,9 +82,11 @@ export default function OrgDepartmentsPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formName.trim()) return;
+    // 削除 (とその読み直し) の応答を待つあいだは送らない (writeInFlightRef)
+    if (!formName.trim() || writeInFlightRef.current) return;
 
     const summary = editingDept ? UPDATE_FAILURE_SUMMARY : CREATE_FAILURE_SUMMARY;
+    writeInFlightRef.current = true;
     setSubmitting(true);
     setErrorMessage(null);
     try {
@@ -99,20 +108,24 @@ export default function OrgDepartmentsPage() {
         setErrorMessage(await failureMessageOf(res, summary));
         return;
       }
-      fetchDepartments();
       resetForm();
+      // 読み直しの応答まで待ってからボタンを戻す (待たずに次の書き込みを送ると、この読み直しの古い一覧で上書きされうるため)
+      await fetchDepartments();
     } catch (error) {
       console.error("Failed to save department:", error);
       setErrorMessage(`${summary}（通信エラー）`);
     } finally {
+      writeInFlightRef.current = false;
       setSubmitting(false);
     }
   };
 
   const handleDelete = async (deptId: string) => {
-    if (deletingId !== null) return;
+    // 追加・更新 (とその読み直し) の応答を待つあいだも送らない (writeInFlightRef)
+    if (writeInFlightRef.current) return;
     if (!confirm("この部署を削除しますか？")) return;
 
+    writeInFlightRef.current = true;
     setDeletingId(deptId);
     setErrorMessage(null);
     try {
@@ -129,6 +142,7 @@ export default function OrgDepartmentsPage() {
       console.error("Failed to delete department:", error);
       setErrorMessage(`${DELETE_FAILURE_SUMMARY}（通信エラー）`);
     } finally {
+      writeInFlightRef.current = false;
       setDeletingId(null);
     }
   };
@@ -213,7 +227,7 @@ export default function OrgDepartmentsPage() {
             <div className="flex gap-3">
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={isWriting}
                 className="px-6 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
               >
                 {submitting ? "保存中..." : editingDept ? "更新" : "追加"}
@@ -268,7 +282,7 @@ export default function OrgDepartmentsPage() {
                 </button>
                 <button
                   onClick={() => handleDelete(dept.id)}
-                  disabled={deletingId !== null}
+                  disabled={isWriting}
                   className="p-2 text-gray-400 hover:text-red-600 transition-colors disabled:opacity-50"
                 >
                   🗑
