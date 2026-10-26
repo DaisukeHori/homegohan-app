@@ -7,7 +7,8 @@ import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
-import { AI_IMAGE_REQUIRED_MESSAGE, AI_PHOTO_ANALYSIS_STARTED_MESSAGE, AI_PHOTO_MODE_MISMATCH_CODE } from '@/lib/ai/ai-api-messages';
+import { AI_IMAGE_REQUIRED_MESSAGE, AI_MENU_MEAL_ID_INVALID_MESSAGE, AI_PHOTO_ANALYSIS_STARTED_MESSAGE, AI_PHOTO_MODE_MISMATCH_CODE } from '@/lib/ai/ai-api-messages';
+import { isUuid } from '@/lib/http-params';
 import { markPhotoAnalysisRequest } from '../../../../../supabase/functions/_shared/meal-photo-cas';
 
 interface ImageInput {
@@ -66,14 +67,20 @@ export async function POST(request: Request) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
     }
-    const { images, imageBase64, mimeType, mealType, mealId, prefetchedGeminiResult } = body as {
+    const { images, imageBase64, mimeType, mealType, mealId: requestedMealId, prefetchedGeminiResult } = body as {
       images?: ImageInput[];
       imageBase64?: string;
       mimeType?: string;
       mealType?: string;
-      mealId?: string;
+      mealId?: unknown;
       prefetchedGeminiResult?: PrefetchedGeminiResult;
     };
+    // mealId (planned_meals.id。uuid の列) は、UUID の形でなければ数える前に 400。DB に渡すと PostgREST が 22P02 で失敗し、
+    // 要求の印 (markPhotoAnalysisRequest の .eq('id', mealId)) で 500 になる (#2050)。無い (偽の値) ときは今までどおり同期の解析
+    if (requestedMealId && !isUuid(requestedMealId)) {
+      return NextResponse.json({ error: AI_MENU_MEAL_ID_INVALID_MESSAGE }, { status: 400 });
+    }
+    const mealId = isUuid(requestedMealId) ? requestedMealId : undefined;
     // mealId の経路 (Edge の背景の処理が planned_meals の veg_score を書く) では、画面から来た解析の結果を Edge へ渡さない。
     // 利用者が料理と材料の g を指定できると veg_score を好きな値にできる (#2025)。Edge の側でも使わない (二重に閉じる。cross/23 §7.15)
     const forwardedPrefetchedGeminiResult = mealId ? undefined : prefetchedGeminiResult;
