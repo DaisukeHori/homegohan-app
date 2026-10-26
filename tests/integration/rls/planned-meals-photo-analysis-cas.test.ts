@@ -18,6 +18,11 @@
  *   - P-4: updated_at が NULL の行でも、invokedAt つきで印が付く
  *   - P-5: 印のままなら isPhotoAnalysisCurrent は true、ほかの書き込みのあとは false
  *   - P-6: invokedAt が無いときは、行の updated_at によらず印が付く
+ *   - P-7: route の要求の印 (markPhotoAnalysisRequest。利用者の client) は行の updated_at を進めて、その値 (マイクロ秒まで) を返し、
+ *          parseInvokedAt を通した値を invokedAt にすると、自分の要求の印のままの行に解析の印が付く (#2050)
+ *   - P-8: A の要求の印・B の要求の印のあとに、A の解析の印は付かず、B の解析の印が付いて B だけが書ける
+ *          (先に送った解析の印が、後に送った要求の時刻より後に付く順。#2050)
+ *   - P-9: 他人の献立には要求の印が付かず (not_found)、行は変わらない (利用者の client の RLS)
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh)。Next の開発サーバーは要らない。
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
@@ -26,10 +31,15 @@
  */
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import ws from 'ws';
 import {
   claimPhotoAnalysis,
   isPhotoAnalysisCurrent,
+  markPhotoAnalysisRequest,
+  parseInvokedAt,
   type PhotoAnalysisClaim,
+  type PhotoAnalysisRequestMark,
 } from '../../../supabase/functions/_shared/meal-photo-cas';
 import { adminClient } from '../helpers/supabase';
 
@@ -49,6 +59,38 @@ const PASSWORD = `${randomBytes(18).toString('base64url')}Aa1!`;
 let userId = '';
 let dayId = '';
 let seq = 0;
+/** サインイン済みの利用者の client (route の createClient の代わり。RLS が本人の行だけに絞る) */
+let userSession: SupabaseClient | null = null;
+/** 他人 (P-9) のサインイン済みの client と、その利用者の id */
+let otherSession: SupabaseClient | null = null;
+let otherUserId = '';
+
+/** anon の鍵の client でサインインする (利用者のセッション) */
+async function signIn(email: string): Promise<SupabaseClient> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!url || !anonKey) throw new Error('NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_ANON_KEY が要る');
+  const session = createClient(url, anonKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    realtime: { transport: ws as unknown as typeof WebSocket },
+  });
+  const { error } = await session.auth.signInWithPassword({ email, password: PASSWORD });
+  if (error) throw new Error(`signIn: ${error.message}`);
+  return session;
+}
+
+function sessionOf(session: SupabaseClient | null): SupabaseClient {
+  if (!session) throw new Error('beforeAll でサインインしていない');
+  return session;
+}
+
+/** 要求の印の時刻 (parseInvokedAt を通した値 = Edge が claimPhotoAnalysis に渡す invokedAt) */
+function invokedAtOf(mark: PhotoAnalysisRequestMark): string {
+  if (mark.status !== 'marked') throw new Error('要求の印が付かなかった');
+  const parsed = parseInvokedAt(mark.requestedAt);
+  if (!parsed.ok || parsed.invokedAt === null) throw new Error(`要求の印の時刻が読めない: ${mark.requestedAt}`);
+  return parsed.invokedAt;
+}
 
 async function seedMeal(label: string, extra: Record<string, unknown> = {}): Promise<string> {
   const { data, error } = await srAdmin
@@ -97,9 +139,16 @@ beforeAll(async () => {
   const day = await srAdmin.from('user_daily_meals').insert({ user_id: userId, day_date: DAY_DATE }).select('id').single();
   if (day.error || !day.data) throw new Error(`seed user_daily_meals: ${day.error?.message}`);
   dayId = day.data.id as string;
+  userSession = await signIn(email);
+  const otherEmail = `photo-cas-other-${RUN}@homegohan.test`;
+  const other = await srAdmin.auth.admin.createUser({ email: otherEmail, password: PASSWORD, email_confirm: true });
+  if (other.error || !other.data.user) throw new Error(`createUser other: ${other.error?.message}`);
+  otherUserId = other.data.user.id;
+  otherSession = await signIn(otherEmail);
 }, SETUP_TIMEOUT_MS);
 
 afterAll(async () => {
+  if (otherUserId) await srAdmin.auth.admin.deleteUser(otherUserId);
   if (!userId) return;
   await srAdmin.from('user_daily_meals').delete().eq('user_id', userId);
   await srAdmin.auth.admin.deleteUser(userId);
@@ -165,5 +214,40 @@ describe('写真の解析の書き込みの順序の守り (#121 の CAS・#2025
     const before = await mealRow(mealId);
     const token = tokenOf(await claimPhotoAnalysis(srAdmin, { mealId, invokedAt: null }));
     expect(Date.parse(token)).toBeGreaterThan(Date.parse(String(before.updated_at)));
+  }, TEST_TIMEOUT_MS);
+
+  it('P-7: 要求の印は updated_at を進めてその値を返し、parseInvokedAt を通した値で自分の要求の印のままの行に解析の印が付く', async () => {
+    const mealId = await seedMeal('p7');
+    const before = await mealRow(mealId);
+    const mark = await markPhotoAnalysisRequest(sessionOf(userSession), { mealId });
+    if (mark.status !== 'marked') throw new Error('要求の印が付かなかった');
+    const afterMark = await mealRow(mealId);
+    expect(mark.requestedAt).toBe(afterMark.updated_at);
+    expect(Date.parse(mark.requestedAt)).toBeGreaterThan(Date.parse(String(before.updated_at)));
+    expect(afterMark.dish_name).toBe(before.dish_name);
+
+    const token = tokenOf(await claimPhotoAnalysis(srAdmin, { mealId, invokedAt: invokedAtOf(mark) }));
+    expect(await writePhotoResult(mealId, token, 'photo-p7')).toBe(1);
+  }, TEST_TIMEOUT_MS);
+
+  it('P-8: A・B の要求の印のあとでは、A の解析の印は付かず、B の解析の印が付いて B だけが書ける', async () => {
+    const mealId = await seedMeal('p8');
+    const invokedAtA = invokedAtOf(await markPhotoAnalysisRequest(sessionOf(userSession), { mealId }));
+    const invokedAtB = invokedAtOf(await markPhotoAnalysisRequest(sessionOf(userSession), { mealId }));
+    // A の Edge が遅れて動き、B の要求の印のあとに A の印を付けようとする
+    const afterRequests = await mealRow(mealId);
+    expect(await claimPhotoAnalysis(srAdmin, { mealId, invokedAt: invokedAtA })).toEqual({ status: 'superseded' });
+    expect(await mealRow(mealId)).toEqual(afterRequests);
+
+    const tokenB = tokenOf(await claimPhotoAnalysis(srAdmin, { mealId, invokedAt: invokedAtB }));
+    expect(await writePhotoResult(mealId, tokenB, 'photo-B')).toBe(1);
+    expect((await mealRow(mealId)).dish_name).toBe('photo-B');
+  }, TEST_TIMEOUT_MS);
+
+  it('P-9: 他人の献立には要求の印が付かず、行は変わらない', async () => {
+    const mealId = await seedMeal('p9');
+    const before = await mealRow(mealId);
+    expect(await markPhotoAnalysisRequest(sessionOf(otherSession), { mealId })).toEqual({ status: 'not_found' });
+    expect(await mealRow(mealId)).toEqual(before);
   }, TEST_TIMEOUT_MS);
 });
