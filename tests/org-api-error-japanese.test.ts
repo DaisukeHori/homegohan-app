@@ -57,6 +57,8 @@ const API_ROOT = 'src/app/api/org';
 const SHARED_BODY_FILES = ['src/lib/org-api-errors.ts', 'src/lib/org-challenge-api.ts', 'src/lib/api/error-responses.ts'];
 /** 組織の管理画面のルートグループ */
 const SCREEN_ROOT = 'src/app/(org)';
+/** 管理画面の枠の外に置いた組織の画面 (オーナーの譲渡の承諾の画面。#2068)。走査の対象に入っていることを確かめる */
+const TRANSFER_ACCEPT_FILE = 'src/app/(main)/org/transfer-accept/[proposal_id]/page.tsx';
 
 const ROUTE_FILES = routeFilesUnder(API_ROOT);
 const findViolations = (file: string) => findErrorTextViolations(file);
@@ -133,8 +135,15 @@ describe('組織の管理画面 (src/app/(org)) が呼ぶ API は、どれも上
         '/api/org/members/*/remove',
         '/api/org/leave',
         '/api/org/owner-transfer/propose',
+        // 管理画面の枠の外に置いた承諾の画面 (#2068) が呼ぶ API
+        '/api/org/owner-transfer/*/accept',
+        '/api/org/owner-transfer/*/decline',
       ]),
     );
+  });
+
+  it('走査する画面に、管理画面の枠の外に置いた組織の画面 (オーナーの譲渡の承諾の画面。#2068) がある', () => {
+    expect(screens).toContain(TRANSFER_ACCEPT_FILE);
   });
 
   it('画面が呼ぶ API は、どれも /api/org の route のファイルに当たる', () => {

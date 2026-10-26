@@ -36,6 +36,8 @@ const ROOT = path.resolve(__dirname, '..');
 const SCAN_ROOT = 'src/app/(org)';
 /** ダッシュボードのソース (走査の対象に入っていることを確かめる) */
 const DASHBOARD_FILE = 'src/app/(org)/org/dashboard/page.tsx';
+/** 管理画面の枠の外に置いた組織の画面 (オーナーの譲渡の承諾の画面。#2068)。走査の対象に入っていることを確かめる */
+const TRANSFER_ACCEPT_FILE = 'src/app/(main)/org/transfer-accept/[proposal_id]/page.tsx';
 
 /** 見出し (サイドバーのナビの名前と同じ) */
 const DASHBOARD_HEADING = 'ダッシュボード';
@@ -200,6 +202,10 @@ describe('組織の管理画面のソース: 止めている機能があるよ�
     expect(files).toContain(DASHBOARD_FILE);
     const dashboardCopy = collectCopy(DASHBOARD_FILE, fs.readFileSync(path.join(ROOT, DASHBOARD_FILE), 'utf8'));
     expect(dashboardCopy.map((finding) => finding.text)).toContain(DASHBOARD_SUBTITLE);
+  });
+
+  it('ST-7: 走査の対象に、管理画面の枠の外に置いた組織の画面 (オーナーの譲渡の承諾の画面。#2068) がある', () => {
+    expect(files).toContain(TRANSFER_ACCEPT_FILE);
   });
 
   it('ST-5: src/app/(org) 配下のどの画面の文字にも、止めている機能を思わせる語が無い', () => {
