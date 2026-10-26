@@ -18,6 +18,11 @@
  *   読み直さないと、行は「届けられなかった」のまま残り、もう一度押すと、自分の再送が済んでいたのに 409
  *   「届けられなかったメールだけを再送できます」が出る。読み直しは一覧を外さずに行い (先頭の 1 ページを取り直す)、
  *   失敗したら「再試行」を出し、読み直せるまで「再送」を止める (一覧の状態が古いかもしれないため)。
+ * - 再送は 1 行ずつ行い、一覧の読み込みと重ねない (#2073): 再送の応答 (reject のときは、そのあとの一覧の読み直しまで) を
+ *   待つあいだは、すべての行の「再送」と「絞り込む」「再読み込み」「さらに読み込む」「再試行」を止め、一覧を読み込むあいだは
+ *   すべての行の「再送」を止める。重ねると、再送の書き込みより先にサーバーが読んだ一覧 (その行がまだ「届けられなかった」) が
+ *   あとから届いて、再送の成功の描き替えと知らせを上書きし、もう一度押すと、自分の再送が済んでいたのに 409
+ *   「届けられなかったメールだけを再送できます」が出る (読み直しの最中にほかの行を再送したときなど)。
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -177,18 +182,30 @@ interface LoadOptions {
 export default function EmailOutboxPage() {
   /** 入力中の条件 */
   const [draft, setDraft] = useState<Filters>(DEFAULT_FILTERS);
-  /** 表示中の一覧を取るのに使った条件 (「さらに読み込む」はこちらを使う) */
-  const [applied, setApplied] = useState<Filters>(DEFAULT_FILTERS);
   const [items, setItems] = useState<EmailOutboxListItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [status, setStatus] = useState<LoadStatus>('loading');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
-  /** 再送の要求を出している行の id (二重に押させない) */
-  const [requeueing, setRequeueing] = useState<ReadonlySet<string>>(() => new Set());
+  /** 一覧の読み込みの状態の写し (描画を待たずに handler で読むため。status と一緒に changeStatus で変える) */
+  const statusRef = useRef<LoadStatus>('loading');
+  const changeStatus = useCallback((next: LoadStatus) => {
+    statusRef.current = next;
+    setStatus(next);
+  }, []);
+  // 再送の書き込み (POST の応答と、通信が reject されたあとの一覧の読み直しまで) を待っているか (#2073)。
+  // 待つあいだは、すべての行の「再送」(二重に押させない・ほかの行も) と一覧の読み込みのボタンを止める (ファイルの冒頭の説明)。
+  // ref は描画を待たずに handler で読むための写し (再描画の前に続けて押されたときの守り)
+  const writeInFlightRef = useRef(false);
+  const [isWriting, setIsWriting] = useState(false);
+  /** 一覧の読み込み (先頭から・続き・読み直し) か再送の書き込みを待っているか (ref で見るので、再描画の前でも止まる) */
+  const isBusyNow = useCallback(() => statusRef.current !== 'idle' || writeInFlightRef.current, []);
   /** 最後に出した一覧のリクエストの番号。遅れて返ってきた古い応答で画面を上書きしないために使う */
   const requestSeq = useRef(0);
-  /** 表示中の一覧の条件の写し (再送の応答を待つあいだに「絞り込む」が押されても、読み直しで今の条件を使うため) */
+  /**
+   * 表示中の一覧を取るのに使った条件 (「絞り込む」で入れる)。「再読み込み」「さらに読み込む」と、再送の reject のあとの
+   * 読み直しはこちらを使う (入力中の draft は使わない)。handler で描画を待たずに読むため ref で持つ
+   */
   const appliedRef = useRef<Filters>(DEFAULT_FILTERS);
   // 再送の通信の reject のあとの一覧の読み直しが失敗し、まだ読み直せていないか (#2073)。そのあいだは「再送」を止める。
   // ref は描画を待たずに handler で読むための写し
@@ -204,7 +221,7 @@ export default function EmailOutboxPage() {
       const reread = options.reread === true;
       requestSeq.current += 1;
       const seq = requestSeq.current;
-      setStatus(cursor ? 'loading-more' : 'loading');
+      changeStatus(cursor ? 'loading-more' : 'loading');
       setError(null);
       if (!cursor && !reread) {
         setItems([]);
@@ -217,7 +234,7 @@ export default function EmailOutboxPage() {
         if (seq !== requestSeq.current) return { kind: 'superseded' };
         if (!res.ok || !body?.data || !body.meta) {
           if (!reread) setError(describeFailure(res.status, body));
-          setStatus('idle');
+          changeStatus('idle');
           return { kind: 'failed' };
         }
         const rows = body.data;
@@ -225,16 +242,16 @@ export default function EmailOutboxPage() {
         setNextCursor(body.meta.next_cursor ?? null);
         // 先頭から読み直せたので、一覧はもう古くない (#2073)
         if (!cursor) markListStale(false);
-        setStatus('idle');
+        changeStatus('idle');
         return { kind: 'loaded' };
       } catch {
         if (seq !== requestSeq.current) return { kind: 'superseded' };
         if (!reread) setError(LIST_NETWORK_FAILURE_MESSAGE);
-        setStatus('idle');
+        changeStatus('idle');
         return { kind: 'failed' };
       }
     },
-    [markListStale],
+    [markListStale, changeStatus],
   );
 
   useEffect(() => {
@@ -243,16 +260,24 @@ export default function EmailOutboxPage() {
 
   const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    // 一覧の読み込み・再送の書き込みを待つあいだは読み込まない (再送より先に読まれた一覧で、再送の結果を上書きしうる。#2073)
+    if (isBusyNow()) return;
     appliedRef.current = draft;
-    setApplied(draft);
     void load(draft, null);
+  };
+
+  /** 「再読み込み」。一覧の読み込み・再送の書き込みを待つあいだは読み込まない (handleSubmit と同じ。#2073) */
+  const reloadList = () => {
+    if (isBusyNow()) return;
+    void load(appliedRef.current, null);
   };
 
   /**
    * 再送の通信が reject されたあとの一覧の読み直しと知らせ (#2073)。表示中の一覧の条件で先頭から読み直す。
-   * 読み直せなければ「再試行」を出し、読み直せるまで「再送」を止める。あとから出した先頭からの読み込み (別の行の再送の
-   * reject のあとの読み直しなど) に追い越されたら、その読み込みが一覧を今の状態にするので、ここでは何もしない
-   * (続きの読み込み (「さらに読み込む」) は先頭を読み直さないので、読み込みの最中には出さない。loadMore を参照)
+   * 読み直せなければ「再試行」を出し、読み直せるまで「再送」を止める。
+   * 読み直しのあいだは、ほかの読み込みと再送を出さない (読み直しの status は 'loading'。requeue から呼ぶときは、読み直しが済むまで
+   * 書き込みの待ち (writeInFlightRef) も外さない)。追い越されたとき (superseded) は、追い越した読み込みが一覧を今の状態にするので
+   * 何もしない (load の戻り値の型に合わせた守り。読み直しのあいだはほかの読み込みを出さないので、いまの画面では起きない)
    */
   const rereadAfterNoResponse = async (template: string) => {
     const outcome = await load(appliedRef.current, null, { reread: true });
@@ -262,25 +287,29 @@ export default function EmailOutboxPage() {
   };
 
   /**
-   * 「さらに読み込む」。一覧の読み込み (読み直しを含む) の最中は出さない: 再送の通信の reject のあとの読み直しの最中に
-   * 続きを読むと、続きの読み込みが読み直しを追い越して読み直しの結果を捨て、古い「届けられなかった」の行と「再送」が
-   * 知らせも無いまま残る (もう一度押すと、自分の再送が済んでいたのに 409 になる。#2073)
+   * 「さらに読み込む」。一覧の読み込み (読み直しを含む) と再送の書き込みの最中は出さない: 再送の通信の reject のあとの
+   * 読み直しの最中に続きを読むと、続きの読み込みが読み直しを追い越して読み直しの結果を捨て、古い「届けられなかった」の行と
+   * 「再送」が知らせも無いまま残る (もう一度押すと、自分の再送が済んでいたのに 409 になる。#2073)
    */
   const loadMore = () => {
-    if (status !== 'idle' || !nextCursor) return;
+    if (isBusyNow() || !nextCursor) return;
     void load(appliedRef.current, nextCursor);
   };
 
   /** 「再試行」: 再送の通信の reject のあとの、失敗した一覧の読み直しをやり直す (#2073) */
   const retryReread = (template: string) => {
-    if (status !== 'idle') return;
+    if (isBusyNow()) return;
     void rereadAfterNoResponse(template);
   };
 
   const requeue = async (item: EmailOutboxListItem) => {
-    // 再送の通信の reject のあとの一覧の読み直しが失敗しているあいだは送らない (一覧の状態が古いかもしれない。#2073)
-    if (listStaleRef.current) return;
-    setRequeueing((prev) => new Set(prev).add(item.id));
+    // 送らないとき (#2073):
+    //   - 一覧の読み込み (読み直しを含む) かほかの再送 (その reject のあとの読み直しを含む) を待つあいだ。重ねると、再送より先に
+    //     サーバーが読んだ一覧が、あとから届いて再送の成功の描き替えを上書きする (ファイルの冒頭の説明)
+    //   - 再送の通信の reject のあとの一覧の読み直しが失敗しているあいだ (一覧の状態が古いかもしれない)
+    if (isBusyNow() || listStaleRef.current) return;
+    writeInFlightRef.current = true;
+    setIsWriting(true);
     setNotice(null);
     try {
       let res: Response;
@@ -290,7 +319,8 @@ export default function EmailOutboxPage() {
           cache: 'no-store',
         });
       } catch {
-        // 応答を受け取れなかった (オフライン・接続が切れたなど)。再送が済んだかは分からないので、一覧を読み直して今の状態を見せる (#2073)
+        // 応答を受け取れなかった (オフライン・接続が切れたなど)。再送が済んだかは分からないので、一覧を読み直して今の状態を見せる (#2073)。
+        // 読み直しの応答まで書き込みを待つ扱いにする (待たずにほかの行を再送すると、この読み直しの古い一覧で上書きされうる)
         await rereadAfterNoResponse(item.template);
         return;
       }
@@ -317,17 +347,16 @@ export default function EmailOutboxPage() {
       );
       setNotice({ kind: 'success', text: REQUEUED_MESSAGE });
     } finally {
-      setRequeueing((prev) => {
-        const next = new Set(prev);
-        next.delete(item.id);
-        return next;
-      });
+      writeInFlightRef.current = false;
+      setIsWriting(false);
     }
   };
 
   const templates = Array.from(new Set(items.map((item) => item.template)));
   const isLoading = status === 'loading';
   const isLoadingMore = status === 'loading-more';
+  /** 一覧の読み込みか再送の書き込みを待っているか (描画用。handler は isBusyNow で見る) */
+  const isBusy = status !== 'idle' || isWriting;
   const columnCount = 8;
 
   return (
@@ -386,7 +415,7 @@ export default function EmailOutboxPage() {
         </div>
 
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          <button type="submit" disabled={isLoading || isLoadingMore} className={PRIMARY_BUTTON_CLASS}>
+          <button type="submit" disabled={isBusy} className={PRIMARY_BUTTON_CLASS}>
             絞り込む
           </button>
         </div>
@@ -399,8 +428,8 @@ export default function EmailOutboxPage() {
         </p>
         <button
           type="button"
-          onClick={() => void load(applied, null)}
-          disabled={isLoading || isLoadingMore}
+          onClick={reloadList}
+          disabled={isBusy}
           className={SECONDARY_BUTTON_CLASS}
         >
           再読み込み
@@ -427,7 +456,7 @@ export default function EmailOutboxPage() {
             <button
               type="button"
               onClick={() => retryReread(notice.template)}
-              disabled={isLoading || isLoadingMore}
+              disabled={isBusy}
               className={NOTICE_RETRY_BUTTON_CLASS}
             >
               {isLoading ? '読み込み中…' : '再試行'}
@@ -477,7 +506,6 @@ export default function EmailOutboxPage() {
             <tbody className="divide-y divide-slate-100">
               {items.map((item) => {
                 const event = eventOf(item);
-                const busy = requeueing.has(item.id);
                 return (
                   <tr key={item.id} className="hover:bg-slate-50 transition-colors align-top">
                     <td className="px-4 py-2 text-slate-700 text-xs whitespace-nowrap font-mono">
@@ -525,7 +553,7 @@ export default function EmailOutboxPage() {
                           <button
                             type="button"
                             onClick={() => void requeue(item)}
-                            disabled={busy || isListStale}
+                            disabled={isBusy || isListStale}
                             aria-label={`${formatJst(item.created_at)} の ${item.template} を再送`}
                             className={ROW_BUTTON_CLASS}
                           >
@@ -552,7 +580,7 @@ export default function EmailOutboxPage() {
             <button
               type="button"
               onClick={loadMore}
-              disabled={isLoading || isLoadingMore}
+              disabled={isBusy}
               className={SECONDARY_BUTTON_CLASS}
             >
               {isLoadingMore ? '読み込み中…' : 'さらに読み込む'}
