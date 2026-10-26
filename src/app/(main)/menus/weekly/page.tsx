@@ -4448,7 +4448,8 @@ export default function WeeklyMenuPage() {
         }
 
         // 写真から入力のモーダルが、まだこの献立のものなら閉じる。選んだ写真は、いまも送った写真のままのときだけ消す
-        // (待っているあいだに閉じて別の献立のモーダルで選び直した写真は消さない)
+        // (解析中はモーダルの中で写真を足す・消すことができない (PhotoEditModal)。写真が変わっているのは、待っているあいだに
+        // 利用者がモーダルを閉じた (onClose が消す)・開き直して選び直した (openPhotoEdit が消してから選ぶ) ときで、選び直した写真は消さない)
         dispatchModal({ type: 'MODAL_CLOSE_PHOTO_EDIT_FOR_MEAL', payload: mealId });
         if (useFormDraftStore.getState().photoFiles === photoFiles) {
           setPhotoFiles([]);

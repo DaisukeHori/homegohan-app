@@ -131,10 +131,12 @@ export function PhotoEditModal({
                     unoptimized
                     className="rounded-lg object-cover"
                   />
+                  {/* 解析中 (結果が献立に書かれるまで待っているあいだも含む。#2047) は、送った写真を変えられないようにする */}
                   <button
                     onClick={() => onRemovePhoto(idx)}
+                    disabled={isAnalyzingPhoto}
                     aria-label={`写真${idx + 1}を削除`}
-                    className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center"
+                    className="absolute top-1 right-1 w-6 h-6 rounded-full flex items-center justify-center disabled:opacity-50"
                     style={{ background: 'rgba(0,0,0,0.6)' }}
                   >
                     <X size={12} color="#fff" />
@@ -144,7 +146,8 @@ export function PhotoEditModal({
               {/* 追加ボタン */}
               <button
                 onClick={handleGallerySelect}
-                className="aspect-square rounded-lg flex flex-col items-center justify-center"
+                disabled={isAnalyzingPhoto}
+                className="aspect-square rounded-lg flex flex-col items-center justify-center disabled:opacity-50"
                 style={{ background: colors.bg, border: `2px dashed ${colors.border}` }}
               >
                 <Plus size={24} color={colors.textMuted} />
