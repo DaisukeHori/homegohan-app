@@ -66,13 +66,21 @@ export function parseInvokedAt(value: unknown): ParsedInvokedAt {
   if (typeof value !== "string") return { ok: false };
   const time = Date.parse(value);
   if (Number.isNaN(time)) return { ok: false };
+  const isoSeconds = "YYYY-MM-DDTHH:mm:ss".length;
   const matched = ISO_DATE_TIME_WITH_FRACTION.exec(value);
-  // 秒の下の桁 (マイクロ秒の 6 桁にそろえる。7 桁目からは timestamptz に無いので落とす)。形が違う日時は Date のミリ秒まで
-  const fraction = matched
-    ? (matched[2] ?? "").padEnd(TIMESTAMPTZ_FRACTION_DIGITS, "0").slice(0, TIMESTAMPTZ_FRACTION_DIGITS)
-    : new Date(time).toISOString().slice(-(DATE_FRACTION_DIGITS + 1), -1).padEnd(TIMESTAMPTZ_FRACTION_DIGITS, "0");
-  // 秒までは Date で UTC にそろえる (時差は分の単位なので、秒の下の桁は変わらない)。Date は秒の下の桁を切り捨てて読むので、秒は繰り上がらない
-  const secondsInUtc = new Date(time).toISOString().slice(0, "YYYY-MM-DDTHH:mm:ss".length);
+  if (!matched) {
+    // 形が違う日時 (Date が読める別の書き方) は、Date のミリ秒までをマイクロ秒の 6 桁で書く
+    const iso = new Date(time).toISOString();
+    const millis = iso.slice(isoSeconds + 1, isoSeconds + 1 + DATE_FRACTION_DIGITS);
+    return { ok: true, invokedAt: `${iso.slice(0, isoSeconds)}.${millis.padEnd(TIMESTAMPTZ_FRACTION_DIGITS, "0")}Z` };
+  }
+  const [, dateTimeToSeconds, fractionDigits = "", zone] = matched;
+  // 秒までは、秒の下の桁を外した値を Date で UTC にそろえる (時差は分の単位なので、秒の下の桁は変わらない。丸めで秒が繰り上がらない)
+  const secondsTime = Date.parse(`${dateTimeToSeconds}${zone}`);
+  if (Number.isNaN(secondsTime)) return { ok: false };
+  const secondsInUtc = new Date(secondsTime).toISOString().slice(0, isoSeconds);
+  // 秒の下の桁はマイクロ秒の 6 桁にそろえる (7 桁目からは timestamptz に無いので落とす)
+  const fraction = fractionDigits.padEnd(TIMESTAMPTZ_FRACTION_DIGITS, "0").slice(0, TIMESTAMPTZ_FRACTION_DIGITS);
   return { ok: true, invokedAt: `${secondsInUtc}.${fraction}Z` };
 }
 
