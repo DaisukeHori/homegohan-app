@@ -1426,6 +1426,47 @@ describe('#2073 S2 大人の招待: 送信の通信が切れたら、招待の�
     expect(text()).toContain(NETWORK_ERROR);
     expect(submitButton()?.disabled).toBe(false);
   });
+
+  describe('送る前の招待の履歴を読み込めなかったとき', () => {
+    /** 招待の履歴の GET を数え、2 回目 (送る前) だけを失敗させる。3 回目 (通信が切れたあと) は serverInvites を返す */
+    function beforeReadFails(onPost: () => void) {
+      let reads = 0;
+      mockFetch((method, url) => {
+        if (url.pathname !== INVITES_PATH) throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+        if (method === 'GET') {
+          reads += 1;
+          if (reads === 2) throw new TypeError('Failed to fetch');
+          return jsonResponse(200, { data: { invites: serverInvites } });
+        }
+        onPost();
+        throw new TypeError('Failed to fetch');
+      });
+    }
+
+    it('あとでその宛先への招待があっても、今回の招待か前からの招待か見分けられないので、成功と見なさず「状態を確かめられませんでした」を添える', async () => {
+      beforeReadFails(() => {
+        serverInvites = [invite('inv-new', EMAIL)];
+      });
+      await renderElement(createElement(FamilyInvitePage));
+
+      await fillAndSubmit();
+
+      expect(text()).toContain(NETWORK_ERROR);
+      expect(text()).toContain(STATE_UNCONFIRMED);
+      expect(text()).not.toContain('に招待メールを送信しました');
+    });
+
+    it('あとでその宛先への招待が無ければ、作れていないので、通信エラーの文だけを出す', async () => {
+      beforeReadFails(() => undefined);
+      await renderElement(createElement(FamilyInvitePage));
+
+      await fillAndSubmit();
+
+      expect(text()).toContain(NETWORK_ERROR);
+      expect(text()).not.toContain(STATE_UNCONFIRMED);
+      expect(text()).not.toContain('に招待メールを送信しました');
+    });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1622,6 +1663,43 @@ describe('#2073 S2 昇格の依頼: 送信・取り消しの通信が切れた�
     expect(text()).toContain(NETWORK_ERROR);
     expect(findButton('リクエストを取り消す')?.disabled).toBe(false);
     expect(findButton('別のメールアドレスで再送する')?.disabled).toBe(false);
+  });
+
+  it('読み直した新しい依頼が別の宛先なら、今回の依頼を作れたと見なさない', async () => {
+    mockFetch((method, url) => {
+      if (method === 'POST' && url.pathname === PROMOTE_PATH) {
+        serverPending = pendingRow('req-other', 'jiro@example.com');
+        throw new TypeError('Failed to fetch');
+      }
+      throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+    });
+    await renderElement(createElement(PromoteMemberPage));
+
+    await fillAndSend();
+
+    expect(text()).toContain(NETWORK_ERROR);
+    expect(text()).not.toContain('参加リクエストを送信しました');
+  });
+
+  it('取り消しの読み直しで承認待ちの依頼が別の依頼に変わっていれば、取り消せていると見なし、読み直した依頼を出して失敗の文を出さない', async () => {
+    const OTHER_EMAIL = 'jiro@example.com';
+    serverPending = pendingRow('req-old', EMAIL);
+    mockFetch((method, url) => {
+      if (method === 'DELETE' && url.pathname === PROMOTE_PATH) {
+        serverPending = pendingRow('req-other', OTHER_EMAIL);
+        throw new TypeError('Failed to fetch');
+      }
+      throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+    });
+    await renderElement(createElement(PromoteMemberPage));
+    expect(text()).toContain(EMAIL);
+
+    await click(findButton('リクエストを取り消す'), '「リクエストを取り消す」');
+
+    expect(text()).not.toContain(NETWORK_ERROR);
+    expect(text()).toContain('承認待ちのリクエストがあります');
+    expect(text()).toContain(OTHER_EMAIL);
+    expect(text()).not.toContain(EMAIL);
   });
 });
 
