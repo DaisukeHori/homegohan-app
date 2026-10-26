@@ -218,14 +218,16 @@ describe('クーポン詳細: 一時停止・再開の失敗を画面に出す',
     expect(text()).toContain('停止中');
   });
 
-  it('通信エラーでも画面に出す (alert にしない)', async () => {
+  it('通信エラーでも画面に出す (alert にしない)。応答が無く済んだか分からないので、読み直して「応答を受け取れませんでした」と出す (#2073)', async () => {
     mockApi(COUPON, { patch: () => Promise.reject(new TypeError('Failed to fetch')) });
     await render(<CouponDetailPage />);
 
     await clickButton('一時停止');
 
-    expect(statusError()).toContain('一時停止できませんでした');
-    expect(statusError()).toContain('通信エラー');
+    expect(statusError()).toBe(
+      '一時停止の応答を受け取れませんでした（通信エラー）。今の状態を読み込み直したので、状態を確かめてから、必要ならもう一度操作してください',
+    );
+    expect(getCalls()).toHaveLength(2);
     expect(alertSpy).not.toHaveBeenCalled();
   });
 
@@ -338,14 +340,16 @@ describe('機能パッケージ詳細: 廃止の失敗を画面に出す', () =>
     expect(statusError()).not.toContain('Forbidden');
   });
 
-  it('通信エラーでも画面に出す (alert にしない)', async () => {
+  it('通信エラーでも画面に出す (alert にしない)。応答が無く済んだか分からないので、読み直して「応答を受け取れませんでした」と出す (#2073)', async () => {
     mockApi(FEATURE_PACKAGE, { patch: () => Promise.reject(new TypeError('Failed to fetch')) });
     await render(<FeaturePackageDetailPage />);
 
     await clickButton('廃止する');
 
-    expect(statusError()).toContain('廃止できませんでした');
-    expect(statusError()).toContain('通信エラー');
+    expect(statusError()).toBe(
+      '廃止の応答を受け取れませんでした（通信エラー）。今の状態を読み込み直したので、状態を確かめてから、必要ならもう一度操作してください',
+    );
+    expect(getCalls()).toHaveLength(2);
     expect(alertSpy).not.toHaveBeenCalled();
   });
 

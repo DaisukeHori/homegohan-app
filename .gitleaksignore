@@ -10,3 +10,9 @@
 #   src/__tests__/lib/auth/apple/config.test.ts の 30 行目のダミーの PEM (本文は ABCDEF。本物の鍵ではない) を拾ったもの。
 #   後のコミットでヘッダを分けて組み立てる形に直したので、このコミットの差分にだけ残る (PR の検査範囲に入る)。
 5f0cdb9479996d8bdb8b719d78f3e7f6255c9d9f:src/__tests__/lib/auth/apple/config.test.ts:private-key:30
+#
+# 1175a075b06aa5614dc8d7d3f1c2c0634974c511 (運営の画面の状態の変更の reject の読み直しの回帰テスト #2073) の generic-api-key:
+#   tests/super-admin-status-reject-reload-2073.test.tsx の 538 行目の機能フラグの名前 (テスト用の作り物。本物の秘密ではない) を、
+#   変数名に KEY が入っていたため API キーの代入の形として拾ったもの。後のコミットで変数名を FLAG_NAME に直したので、
+#   このコミットの差分にだけ残る (PR の検査範囲に入る)。
+1175a075b06aa5614dc8d7d3f1c2c0634974c511:tests/super-admin-status-reject-reload-2073.test.tsx:generic-api-key:538

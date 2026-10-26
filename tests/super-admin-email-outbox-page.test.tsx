@@ -6,6 +6,8 @@
  *   - 状態の切り替え・文面の名前で絞り込む (「絞り込む」を押したときだけ)
  *   - dead の行にだけ「再送」。伏せ字の行は無効にして理由を出す
  *   - 再送の成功で行を queued に描き替え、role="status" で知らせる。409 / 404 は API の説明を出す
+ *   - 再送の通信の reject は一覧を読み直し、自分の再送が済んでいたときにも合う文を出す (#2073。詳しくは super-admin-status-reject-reload-2073.test.tsx)
+ *   - 再送は 1 行ずつで、一覧の読み込みと重ねない (#2073。同じく super-admin-status-reject-reload-2073.test.tsx)
  *   - さらに読み込む (カーソル)
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
@@ -269,12 +271,22 @@ describe('メール送信の画面: 再送', () => {
     expect(container.querySelector('[role="status"]')).toBeNull();
   });
 
-  it('通信の失敗も説明を出す', async () => {
+  it('通信の失敗 (reject) は、再送が済んだか分からないので一覧を読み直し、自分の再送が済んでいたときにも合う文を出す (#2073)', async () => {
     fetchMock.mockRejectedValueOnce(new Error('network down'));
 
     await click(buttonsIn(rows()[0], '再送')[0]);
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
 
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('通信に失敗しました');
+    // 初回の一覧 + 読み直しの一覧 (表示中の条件で先頭から)
+    expect(listCalls()).toHaveLength(2);
+    expect(lastListParams().get('status')).toBe('dead');
+    expect(lastListParams().has('cursor')).toBe(false);
+    expect(container.querySelector('[data-testid="email-outbox-reload-notice"] [role="status"]')?.textContent).toBe(
+      '「family_invite」の再送の応答を受け取れませんでした（通信エラー）。一覧を読み込み直したので、今の状態を確かめてから、必要ならもう一度操作してください',
+    );
+    expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 });
 
