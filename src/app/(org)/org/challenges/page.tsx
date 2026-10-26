@@ -200,6 +200,11 @@ export default function OrgChallengesPage() {
     } catch (error) {
       console.error("Failed to create challenge:", error);
       setErrorMessage("チャレンジを作成できませんでした。通信状況を確認して、もう一度お試しください");
+      // サーバーがチャレンジを作ってから応答が切れたこともあるので、一覧を読み直して今の状態を見せる (#2064 R5 と同じ型。
+      // 読み直さないと、作れていたチャレンジが一覧に出ず、もう一度送って同じチャレンジを重ねて作りうる)。フォームと入力は残す。
+      // 読み直しが失敗したときは fetchChallenges が一覧の「読み込めませんでした」を出す。
+      // 成功のときの読み直しと同じく、読み直しの応答を待つあいだも書き込みの待ち (writeInFlightRef) を戻さない
+      await fetchChallenges();
     } finally {
       writeInFlightRef.current = false;
       setSubmitting(false);
@@ -228,6 +233,11 @@ export default function OrgChallengesPage() {
     } catch (error) {
       console.error("Failed to update challenge:", error);
       setErrorMessage("チャレンジの状態を変更できませんでした。通信状況を確認して、もう一度お試しください");
+      // サーバーが状態を変えてから応答が切れたこともあるので、一覧を読み直す (#2064 R5 と同じ型。読み直さないと、
+      // 状態の変わったチャレンジに前の状態のボタンが残り、次の押下で古い状態からの変更を送っていた)。
+      // 読み直しが失敗したときは fetchChallenges が一覧の「読み込めませんでした」を出す。
+      // 成功のときの読み直しと同じく、読み直しの応答を待つあいだも書き込みの待ち (writeInFlightRef) を戻さない
+      await fetchChallenges();
     } finally {
       writeInFlightRef.current = false;
       setChangingStatusId(null);

@@ -434,8 +434,8 @@ describe('#2059 Q2 組織のメンバー: 除名・脱退の通信が失敗し�
     expect(callsOf('POST', `/api/org/members/${MEMBER_A_ID}/remove`)).toHaveLength(1);
     expect(alertSpy).toHaveBeenCalledTimes(1);
     expect(alertSpy).toHaveBeenCalledWith(`除名失敗: ${NETWORK_FAILURE_REASON}`);
-    // 除名できていないので、一覧は読み直さず、Aさんの「除名」はもう一度押せる
-    expect(supabaseState.membersQueryCount).toBe(1);
+    // 除名できたかどうかは分からないので一覧を読み直す (#2064 R5)。サーバーの一覧に Aさんが残っているので、Aさんの「除名」はもう一度押せる
+    expect(supabaseState.membersQueryCount).toBe(2);
     expect(findButton('除名')!.disabled).toBe(false);
   });
 
