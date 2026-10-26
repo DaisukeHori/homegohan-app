@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ORG_CHALLENGE_MIN_PARTICIPANTS,
@@ -134,6 +134,13 @@ export default function OrgChallengesPage() {
   // 状態の変更 (開始・終了) の応答を待っているチャレンジの id。待つあいだは状態のボタンを止める
   // (二度押しで 2 本目を送ると、変えられているのに断られて失敗の文が出るため。#2050)
   const [changingStatusId, setChangingStatusId] = useState<string | null>(null);
+  // 作成か状態の変更のどちらかの書き込みとそのあとの読み直しの応答を待っているか (10/26 の整合ゲート 1026e。#2050)。
+  // 書き込みのあとの読み直しは一覧を丸ごと差し替えるので、2 つの書き込みを重ねると、先に送った読み直しの応答が後に届いたとき、
+  // その古い一覧 (例: 開始したチャレンジがまだ下書きの一覧) で表示が上書きされ、開始したチャレンジの「開始」をもう一度押せてしまう
+  // (#2053 のクーポン・機能パッケージと同じ型)。待つあいだは作成と開始・終了のボタンを止め、押されても送らない。
+  // ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
+  const writeInFlightRef = useRef(false);
+  const isWriting = submitting || changingStatusId !== null;
 
   const fetchChallenges = useCallback(async () => {
     try {
@@ -160,6 +167,9 @@ export default function OrgChallengesPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // 開始・終了 (とその読み直し) の応答を待つあいだは送らない (writeInFlightRef)
+    if (writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
     setSubmitting(true);
     setErrorMessage(null);
 
@@ -180,9 +190,10 @@ export default function OrgChallengesPage() {
       });
 
       if (res.ok) {
-        fetchChallenges();
         setShowForm(false);
         setFormData(INITIAL_FORM);
+        // 読み直しの応答まで待ってからボタンを戻す (待たずに次の書き込みを送ると、この読み直しの古い一覧で上書きされうるため)
+        await fetchChallenges();
       } else {
         setErrorMessage(await readErrorMessage(res, "チャレンジを作成できませんでした"));
       }
@@ -190,12 +201,15 @@ export default function OrgChallengesPage() {
       console.error("Failed to create challenge:", error);
       setErrorMessage("チャレンジを作成できませんでした。通信状況を確認して、もう一度お試しください");
     } finally {
+      writeInFlightRef.current = false;
       setSubmitting(false);
     }
   };
 
   const handleStatusChange = async (challengeId: string, newStatus: string) => {
-    if (changingStatusId !== null) return;
+    // 作成 (とその読み直し) の応答を待つあいだも送らない (writeInFlightRef)
+    if (writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
     setChangingStatusId(challengeId);
     setErrorMessage(null);
     try {
@@ -215,6 +229,7 @@ export default function OrgChallengesPage() {
       console.error("Failed to update challenge:", error);
       setErrorMessage("チャレンジの状態を変更できませんでした。通信状況を確認して、もう一度お試しください");
     } finally {
+      writeInFlightRef.current = false;
       setChangingStatusId(null);
     }
   };
@@ -369,7 +384,7 @@ export default function OrgChallengesPage() {
             <div className="flex gap-3">
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={isWriting}
                 className="px-6 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
               >
                 {submitting ? "作成中..." : "作成"}
@@ -446,7 +461,7 @@ export default function OrgChallengesPage() {
                 {challenge.status === "draft" && (
                   <button
                     onClick={() => handleStatusChange(challenge.id, "active")}
-                    disabled={changingStatusId !== null}
+                    disabled={isWriting}
                     className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors disabled:opacity-50"
                   >
                     開始
@@ -455,7 +470,7 @@ export default function OrgChallengesPage() {
                 {challenge.status === "active" && (
                   <button
                     onClick={() => handleStatusChange(challenge.id, "completed")}
-                    disabled={changingStatusId !== null}
+                    disabled={isWriting}
                     className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
                   >
                     終了

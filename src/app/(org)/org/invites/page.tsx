@@ -4,7 +4,7 @@
 // (設計書 03-ui-spec.md §1.1)
 // 招待発行フォーム + 招待履歴一覧 (revoke ボタン付き)
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import { ORG_UNKNOWN_VALUE_LABEL } from "@/lib/org-plans";
 import { operationFailureMessage, operationNetworkFailureMessage } from "@/lib/admin/api-error-message";
@@ -39,6 +39,13 @@ export default function OrgInvitesPage() {
   // 取消の応答を待っている招待の id。待つあいだは取消のボタンを止める
   // (二度押しで 2 本目を送ると、取り消せているのに INVITE_NOT_FOUND で「招待の取り消しに失敗しました」が出るため。#2050)
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  // 招待の送信か取消のどちらかの書き込みとそのあとの読み直しの応答を待っているか (10/26 の整合ゲート 1026e。#2050)。
+  // 書き込みのあとの読み直しは履歴を丸ごと差し替えるので、2 つの書き込みを重ねると、先に送った読み直しの応答が後に届いたとき、
+  // その古い履歴 (例: 取り消した招待がまだ「招待中」の履歴) で表示が上書きされ、取り消した招待の取消をもう一度押せてしまう
+  // (#2053 のクーポン・機能パッケージと同じ型)。待つあいだは送信と取消のボタンを止め、押されても送らない。
+  // ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
+  const writeInFlightRef = useRef(false);
+  const isWriting = submitting || revokingId !== null;
 
   const fetchInvites = useCallback(async () => {
     try {
@@ -77,8 +84,10 @@ export default function OrgInvitesPage() {
 
   const handleCreateInvite = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newEmail) return;
+    // 取消 (とその読み直し) の応答を待つあいだは送らない (writeInFlightRef)
+    if (!newEmail || writeInFlightRef.current) return;
 
+    writeInFlightRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -97,7 +106,8 @@ export default function OrgInvitesPage() {
         setCustomMessage("");
         setNewRole("member");
         setShowForm(false);
-        fetchInvites();
+        // 読み直しの応答まで待ってからボタンを戻す (待たずに次の書き込みを送ると、この読み直しの古い履歴で上書きされうるため)
+        await fetchInvites();
       } else {
         const data = await res.json();
         setSubmitError(data.error?.message ?? data.error ?? "招待の作成に失敗しました");
@@ -106,14 +116,17 @@ export default function OrgInvitesPage() {
       console.error("Failed to create invite:", error);
       setSubmitError("通信エラーが発生しました");
     } finally {
+      writeInFlightRef.current = false;
       setSubmitting(false);
     }
   };
 
   const handleRevokeInvite = async (inviteId: string) => {
-    if (revokingId !== null) return;
+    // 招待の送信 (とその読み直し) の応答を待つあいだも送らない (writeInFlightRef)
+    if (writeInFlightRef.current) return;
     if (!confirm("この招待を取り消しますか？")) return;
 
+    writeInFlightRef.current = true;
     setRevokingId(inviteId);
     try {
       const res = await fetch(`/api/org/invites/${inviteId}/revoke`, {
@@ -132,6 +145,7 @@ export default function OrgInvitesPage() {
       console.error("Failed to revoke invite:", error);
       alert(`${REVOKE_FAILURE_MESSAGE}（通信エラー）`);
     } finally {
+      writeInFlightRef.current = false;
       setRevokingId(null);
     }
   };
@@ -250,7 +264,7 @@ export default function OrgInvitesPage() {
           <div className="flex gap-3">
             <button
               type="submit"
-              disabled={submitting}
+              disabled={isWriting}
               className="px-6 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
             >
               {submitting ? "送信中..." : "招待を送信"}
@@ -315,7 +329,7 @@ export default function OrgInvitesPage() {
                   {invite.status === "pending" && (
                     <button
                       onClick={() => handleRevokeInvite(invite.id)}
-                      disabled={revokingId !== null}
+                      disabled={isWriting}
                       className="px-4 py-2 bg-red-50 text-red-600 rounded-lg text-sm hover:bg-red-100 transition-colors disabled:opacity-50"
                     >
                       取消

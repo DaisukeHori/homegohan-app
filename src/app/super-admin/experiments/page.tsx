@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 
 interface Experiment {
@@ -26,6 +26,11 @@ export default function ExperimentsPage() {
   const [experiments, setExperiments] = useState<Experiment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // 状態の変更 (開始・完了) の応答を待っている実験の id。待つあいだは一覧の状態の変更のボタンを止め、押されても送らない
+  // (二度押しで 2 本目の PATCH を送ると、変えられているのに 2 本目が断られて (running → running) 失敗の文が出るため。#2050)。
+  // ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
+  const [changingId, setChangingId] = useState<string | null>(null);
+  const changingRef = useRef(false);
 
   useEffect(() => {
     const fetchExperiments = async () => {
@@ -47,6 +52,9 @@ export default function ExperimentsPage() {
   }, []);
 
   const handleStatusChange = async (id: string, status: string) => {
+    if (changingRef.current) return;
+    changingRef.current = true;
+    setChangingId(id);
     try {
       const res = await fetch(`/api/super-admin/experiments/${id}`, {
         method: "PATCH",
@@ -60,6 +68,9 @@ export default function ExperimentsPage() {
       setExperiments((prev) => prev.map((e) => e.id === id ? { ...e, status: status as Experiment["status"] } : e));
     } catch (err) {
       alert(err instanceof Error ? err.message : "更新に失敗しました");
+    } finally {
+      changingRef.current = false;
+      setChangingId(null);
     }
   };
 
@@ -151,7 +162,8 @@ export default function ExperimentsPage() {
                         {exp.status === "draft" && (
                           <button
                             onClick={() => handleStatusChange(exp.id, "running")}
-                            className="text-green-400 hover:text-green-300 text-sm transition-colors"
+                            disabled={changingId !== null}
+                            className="text-green-400 hover:text-green-300 text-sm transition-colors disabled:opacity-50"
                           >
                             開始
                           </button>
@@ -159,7 +171,8 @@ export default function ExperimentsPage() {
                         {exp.status === "running" && (
                           <button
                             onClick={() => handleStatusChange(exp.id, "completed")}
-                            className="text-blue-400 hover:text-blue-300 text-sm transition-colors"
+                            disabled={changingId !== null}
+                            className="text-blue-400 hover:text-blue-300 text-sm transition-colors disabled:opacity-50"
                           >
                             完了
                           </button>
