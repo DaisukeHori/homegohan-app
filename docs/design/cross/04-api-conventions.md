@@ -271,6 +271,8 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `OP_CONTENT_RESTORE_WINDOW_EXPIRED` | **[NEW]** 隠してから 89 日を過ぎて戻せない (保管期間 90 日の完全削除を待つ) | 409 |
 | `OP_CONTENT_RESTORE_FAILED` | **[NEW]** 通報は承認済みにしたが行を戻せなかった。やり直せる | 500 |
 | `OP_EXPERIMENT_INVALID_TRANSITION` | **[NEW]** A/B テストの状態の変更が遷移表に無い (同じ状態への変更を含む。`PATCH /api/super-admin/experiments/{id}`。`operator/02-api-spec.md` §15) | 409 |
+| `OP_COUPON_INVALID_TRANSITION` | **[NEW]** クーポンの状態の変更が遷移表に無い (同じ状態への変更・期限切れからの再開を含む。`PATCH /api/super-admin/coupons/{id}`。`operator/02-api-spec.md` §19) | 409 |
+| `OP_FEATURE_PACKAGE_INVALID_TRANSITION` | **[NEW]** 機能パッケージの状態の変更が遷移表に無い (同じ状態への変更・廃止の取り消しを含む。`PATCH /api/super-admin/feature-packages/{id}`。`operator/02-api-spec.md` §18) | 409 |
 
 #### BILL 系
 
