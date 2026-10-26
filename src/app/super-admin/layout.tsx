@@ -20,11 +20,20 @@ const superAdminNavItems = [
 ];
 
 // 運用・監視。プラン管理とは見出しを分ける (アプリログはプランと関係ないため)
+// 直下の画面は、404 にしている画面 (データエクスポート。#1911) を除き、すべてここかプラン管理に並べる (#2050。
+// 画面があるのに並べないと URL を知らない人は開けない。tests/super-admin-sidebar-reachability-2050.test.tsx)
 const superAdminOperationsNavItems = [
   { href: '/super-admin/logs', label: 'アプリログ', icon: '📜' },
+  // 監査ログ閲覧。凍結の通知の結果が読めないときの文 (FREEZE_NOTIFICATION_AUDIT_LOGS_PATH) がこの画面を名指す (#2036)
+  { href: '/super-admin/audit-logs', label: '監査ログ', icon: '🔍' },
   // 送信待ち・届けられなかったメールの一覧と再送 (#1708。docs/design/operator/10-logs-and-mail-retry.md §9.2)
   { href: '/super-admin/email-outbox', label: 'メール送信', icon: '✉️' },
   { href: '/super-admin/backups', label: 'バックアップ・DR', icon: '🗄️' },
+  { href: '/super-admin/infra', label: 'インフラ監視', icon: '📈' },
+  { href: '/super-admin/llm', label: 'LLM 使用量', icon: '🤖' },
+  // メンテナンスモードと AI 相談の緊急停止もここで切り替える (#1148)
+  { href: '/super-admin/flags', label: '機能フラグ', icon: '🚩' },
+  { href: '/super-admin/experiments', label: 'A/B テスト', icon: '🧪' },
 ];
 
 export default async function SuperAdminLayout({
