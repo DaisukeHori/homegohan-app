@@ -7,7 +7,7 @@
 /**
  * 利用者 (authenticated) のセッションからは INSERT / UPDATE できない列。
  * 比較ランキング (calculate-segment-stats) と組織のチャレンジ (update_org_challenge_progress) が指標に使う 2 列と、
- * 完了の時刻 (完了の RPC だけが書く)。migration 20261026010000_planned_meals_score_columns_server_only.sql が
+ * 完了の時刻 (完了の RPC だけが書く)。migration 20261026120000_planned_meals_score_columns_server_only.sql が
  * 列の権限から外す。
  */
 export const PLANNED_MEALS_SERVER_ONLY_COLUMNS = ['is_completed', 'completed_at', 'veg_score'] as const;

@@ -5,7 +5,7 @@
 --
 -- 影響:
 --   - 戻すと、アプリの完了の切り替え (hook・route・AI 相談) は RPC が無いので失敗する (PostgREST の PGRST202)。
---     先に 2/2 (20261026010000_planned_meals_score_columns_server_only.sql) を戻し、アプリを直接 UPDATE する版に戻してから流す。
+--     先に 2/2 (20261026120000_planned_meals_score_columns_server_only.sql) を戻し、アプリを直接 UPDATE する版に戻してから流す。
 --
 -- 何度流しても同じ結果になる (冪等: DROP FUNCTION IF EXISTS)。
 

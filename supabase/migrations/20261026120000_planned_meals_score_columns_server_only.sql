@@ -1,5 +1,5 @@
--- migration: 20261026010000_planned_meals_score_columns_server_only.sql
--- 戻し方: supabase/rollbacks/20261026010000_planned_meals_score_columns_server_only.down.sql
+-- migration: 20261026120000_planned_meals_score_columns_server_only.sql
+-- 戻し方: supabase/rollbacks/20261026120000_planned_meals_score_columns_server_only.down.sql
 -- #2025 (2/2): 比較ランキングと組織のチャレンジが指標に使う planned_meals の 3 列 (veg_score / is_completed / completed_at) を、
 --   利用者 (anon / authenticated) の INSERT / UPDATE の権限から外す。書けるのはサーバだけにする。
 --

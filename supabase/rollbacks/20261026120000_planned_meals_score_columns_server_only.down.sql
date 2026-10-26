@@ -1,4 +1,4 @@
--- rollback: 20261026010000_planned_meals_score_columns_server_only.sql
+-- rollback: 20261026120000_planned_meals_score_columns_server_only.sql
 -- #2025 (2/2) で外した planned_meals の利用者の INSERT / UPDATE の権限を元に戻す。
 -- 列ごとの権限 (authenticated の 56 列) を外し、表ごとの INSERT / UPDATE を anon と authenticated に付け直す
 -- (本番のベースライン 20251126124224_create_meal_planner_tables.sql:13798-13799 の形。SELECT・DELETE・REFERENCES・TRIGGER・
