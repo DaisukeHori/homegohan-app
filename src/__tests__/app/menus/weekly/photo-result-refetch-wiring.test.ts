@@ -73,11 +73,12 @@ describe('写真から入力: 解析が終わってから献立を読み直す (
     const beforeWait = okBranch.slice(0, waitAt);
     expect(beforeWait).not.toContain('setActiveModal(null)');
     expect(beforeWait).not.toContain('setPhotoFiles([])');
-    expect(beforeWait).not.toContain('setIsAnalyzingPhoto(false)');
-    // 待ち終えたら、モーダルは「まだこの献立のものなら」閉じる (利用者が開いた別のモーダルを閉じない)
+    expect(beforeWait).not.toContain('endPhotoAnalyze()');
+    // 待ち終えたら、モーダルは「まだ解析を頼んだ回のものなら」閉じる (利用者が開いた別のモーダル・開き直したモーダルを閉じない)
     expect(okBranch).not.toContain('setActiveModal(null)');
-    expect(okBranch.indexOf("dispatchModal({ type: 'MODAL_CLOSE_PHOTO_EDIT_FOR_MEAL', payload: mealId })")).toBeGreaterThan(waitAt);
-    expect(okBranch.indexOf('setIsAnalyzingPhoto(false)')).toBeGreaterThan(waitAt);
+    expect(okBranch).not.toContain('MODAL_CLOSE_PHOTO_EDIT_FOR_MEAL');
+    expect(okBranch.indexOf("dispatchModal({ type: 'MODAL_CLOSE_PHOTO_EDIT_SESSION', payload: session })")).toBeGreaterThan(waitAt);
+    expect(okBranch.indexOf('endPhotoAnalyze()')).toBeGreaterThan(waitAt);
   });
 
   it('上限で止まったら黙って終えず、その旨を出す (閉じたら献立を読み直す)。献立が消えていたらその旨を出す', () => {
@@ -116,5 +117,38 @@ describe('写真の解析の結果を待つ監視の印 (#2047。#1657 の印と
     const unmountCode = blockAfter(pageSource.slice(unmountAt), 'return () => {');
     expect(unmountCode).toContain('photoResultWatchRef.current.active = false;');
     expect(unmountCode).toContain('photoResultWatchRef.current = null;');
+  });
+});
+
+describe('写真から入力のモーダルの回 (#2047: 待つあいだに開いた別のモーダルを、待ち始めたときのモーダルと見分ける)', () => {
+  it('解析は一度に 1 つ: 解析中なら始めない。始めるときに、写真を送ったモーダルの回を控えてから解析中にする', () => {
+    const guardAt = analyzeCode.indexOf('if (isAnalyzingPhoto) return;');
+    const sessionAt = analyzeCode.indexOf('const session = photoEditSession;');
+    const startAt = analyzeCode.indexOf('startPhotoAnalyze(session);');
+    expect(guardAt).toBeGreaterThanOrEqual(0);
+    expect(sessionAt).toBeGreaterThan(guardAt);
+    expect(startAt).toBeGreaterThan(sessionAt);
+    // 回を持たない「解析中にする」だけの経路を残さない
+    expect(pageSource).not.toContain("dispatchAiGen({ type: 'PHOTO_ANALYZE_START' })");
+    expect(pageSource).not.toContain('setIsAnalyzingPhoto(');
+  });
+
+  it('モーダルの「解析中」は、そのモーダルの回で送った写真のときだけ。ほかの回で送った写真なら other を渡す', () => {
+    const modalAt = pageSource.indexOf('<PhotoEditModal');
+    expect(modalAt).toBeGreaterThanOrEqual(0);
+    const modalProps = pageSource.slice(modalAt, pageSource.indexOf('/>', pageSource.indexOf('onAnalyze={analyzePhotoWithAI}', modalAt)));
+    expect(modalProps).toContain("isAnalyzingPhoto={photoEditAnalyzeState === 'own'}");
+    expect(modalProps).toContain("isOtherPhotoAnalyzing={photoEditAnalyzeState === 'other'}");
+    expect(pageSource).toContain('const photoEditAnalyzeState = photoAnalyzeStateForSession(aiGen, photoEditSession);');
+  });
+
+  it('写真から入力のモーダルは、手で変更のモーダルからも openPhotoEdit で開く (開くたびに新しい回・写真は空から)', () => {
+    const openBody = stripLineComments(blockAfter(pageSource, 'const openPhotoEdit = (meal: PlannedMeal) => {'));
+    expect(openBody).toContain("dispatchModal({ type: 'MODAL_OPEN_PHOTO_EDIT', payload: meal });");
+    expect(openBody).toContain('setPhotoFiles([]);');
+    expect(openBody).toContain('setPhotoPreviews([]);');
+    expect(pageSource).toContain('onOpenPhotoEdit={() => openPhotoEdit(manualEditMeal)}');
+    // 回を進めずに写真から入力のモーダルを開く経路を残さない
+    expect(stripLineComments(pageSource)).not.toContain("setActiveModal('photoEdit')");
   });
 });

@@ -11,6 +11,7 @@ import { describe, it, expect } from 'vitest';
 import {
   aiGenerationReducer,
   initialAiGenerationState,
+  photoAnalyzeStateForSession,
   type AiGenerationState,
 } from '@/app/(main)/menus/weekly/_state/reducers/aiGenerationReducer';
 
@@ -62,5 +63,38 @@ describe('aiGenerationReducer', () => {
     expect(next.isGenerating).toBe(false);
     expect(next.generatingMeal).toBeNull();
     expect(next.generationProgress).toBeNull();
+  });
+});
+
+// Issue #2047: 写真の解析は、解析している写真を送ったモーダルの回 (photoEditSession) を持つ。
+// 結果を待つあいだ (最大 2 分) に開いた別のモーダルに「AIが解析中...」を出さず、解析のボタンだけ押せなくするため
+describe('aiGenerationReducer: 写真の解析の回 (#2047)', () => {
+  const ANALYZED_SESSION = 3;
+  const OTHER_SESSION = 4;
+
+  it('PHOTO_ANALYZE_START は解析中にし、写真を送ったモーダルの回を持つ。PHOTO_ANALYZE_END は両方を戻す', () => {
+    const started = aiGenerationReducer(initialAiGenerationState, {
+      type: 'PHOTO_ANALYZE_START',
+      payload: { session: ANALYZED_SESSION },
+    });
+    expect(started.isAnalyzingPhoto).toBe(true);
+    expect(started.analyzingPhotoSession).toBe(ANALYZED_SESSION);
+
+    const ended = aiGenerationReducer(started, { type: 'PHOTO_ANALYZE_END' });
+    expect(ended.isAnalyzingPhoto).toBe(false);
+    expect(ended.analyzingPhotoSession).toBeNull();
+  });
+
+  it('photoAnalyzeStateForSession: 解析していなければ idle・写真を送った回なら own・ほかの回なら other', () => {
+    expect(photoAnalyzeStateForSession(initialAiGenerationState, ANALYZED_SESSION)).toBe('idle');
+    const started = aiGenerationReducer(initialAiGenerationState, {
+      type: 'PHOTO_ANALYZE_START',
+      payload: { session: ANALYZED_SESSION },
+    });
+    expect(photoAnalyzeStateForSession(started, ANALYZED_SESSION)).toBe('own');
+    expect(photoAnalyzeStateForSession(started, OTHER_SESSION)).toBe('other');
+    const ended = aiGenerationReducer(started, { type: 'PHOTO_ANALYZE_END' });
+    expect(photoAnalyzeStateForSession(ended, ANALYZED_SESSION)).toBe('idle');
+    expect(photoAnalyzeStateForSession(ended, OTHER_SESSION)).toBe('idle');
   });
 });

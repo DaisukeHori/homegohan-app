@@ -21,8 +21,20 @@ const colors = {
   border: '#E8E8E8',
 };
 
+/**
+ * 前のモーダルで送った写真の結果を待っているあいだ (isOtherPhotoAnalyzing) に、解析のボタンの上に出す案内 (#2047)。
+ * 写真の解析は一度に 1 つなので、待ち終えるまでこのモーダルの写真は解析できない (写真は選べる)
+ */
+export const OTHER_PHOTO_ANALYZING_NOTICE = '前に送った写真の解析を待っています。終わると、この写真を解析できます。';
+
 interface PhotoEditModalProps {
+  /** このモーダルで送った写真を解析している (結果が献立に書かれるまで待っているあいだも含む。#2047) */
   isAnalyzingPhoto: boolean;
+  /**
+   * 前のモーダル (閉じた別の献立のもの・同じ献立で開き直す前のもの) で送った写真の結果を待っている (#2047)。
+   * このモーダルの写真は選べるが、解析のボタンは押せない。「AIが解析中...」は出さず、その旨の案内を出す
+   */
+  isOtherPhotoAnalyzing: boolean;
   onClose: () => void;
   onPhotoSelect: (files: FileList) => void;
   onRemovePhoto: (idx: number) => void;
@@ -31,6 +43,7 @@ interface PhotoEditModalProps {
 
 export function PhotoEditModal({
   isAnalyzingPhoto,
+  isOtherPhotoAnalyzing,
   onClose,
   onPhotoSelect,
   onRemovePhoto,
@@ -131,7 +144,7 @@ export function PhotoEditModal({
                     unoptimized
                     className="rounded-lg object-cover"
                   />
-                  {/* 解析中 (結果が献立に書かれるまで待っているあいだも含む。#2047) は、送った写真を変えられないようにする */}
+                  {/* このモーダルで送った写真の解析中 (結果が献立に書かれるまで待っているあいだも含む。#2047) は、送った写真を変えられないようにする */}
                   <button
                     onClick={() => onRemovePhoto(idx)}
                     disabled={isAnalyzingPhoto}
@@ -186,9 +199,14 @@ export function PhotoEditModal({
         </div>
       </div>
       <div className="px-4 py-4 pb-4 lg:pb-6 flex-shrink-0" style={{ borderTop: `1px solid ${colors.border}`, background: colors.card }}>
+        {isOtherPhotoAnalyzing && (
+          <p role="status" style={{ fontSize: 12, color: colors.textLight, marginBottom: 8 }}>
+            {OTHER_PHOTO_ANALYZING_NOTICE}
+          </p>
+        )}
         <button
           onClick={onAnalyze}
-          disabled={photoFiles.length === 0 || isAnalyzingPhoto}
+          disabled={photoFiles.length === 0 || isAnalyzingPhoto || isOtherPhotoAnalyzing}
           className="w-full py-3.5 rounded-xl flex items-center justify-center gap-2 disabled:opacity-50"
           style={{ background: colors.blue }}
         >

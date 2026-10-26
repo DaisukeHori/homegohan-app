@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo, useReducer } 
 import {
   weekViewReducer, initialWeekViewState,
   modalReducer, initialModalState,
-  aiGenerationReducer, initialAiGenerationState, useAiConsentGenerationFailure,
+  aiGenerationReducer, initialAiGenerationState, photoAnalyzeStateForSession, useAiConsentGenerationFailure,
   nutritionReducer, initialNutritionState,
   recipeReducer, initialRecipeState,
   uiFlagReducer, initialUiFlagState,
@@ -609,6 +609,8 @@ export default function WeeklyMenuPage() {
 
   const photoEditMeal = modal.photoEditMeal;
   const setPhotoEditMeal = useCallback((m: PlannedMeal | null) => dispatchModal({ type: 'MODAL_SET_PHOTO_EDIT_MEAL', payload: m }), []);
+  // 写真から入力のモーダルを開いた回の番号 (#2047。modalReducer の photoEditSession)
+  const photoEditSession = modal.photoEditSession;
 
   const imageGenerateMeal = modal.imageGenerateMeal;
   const setImageGenerateMeal = useCallback((m: PlannedMeal | null) => dispatchModal({ type: 'MODAL_SET_IMAGE_GENERATE_MEAL', payload: m }), []);
@@ -738,10 +740,12 @@ export default function WeeklyMenuPage() {
   const setImproveNextDay = useCallback((v: boolean) => dispatchAiGen({ type: 'IMPROVE_NEXT_DAY_SET', payload: v }), []);
 
   const isAnalyzingPhoto = aiGen.isAnalyzingPhoto;
-  const setIsAnalyzingPhoto = useCallback((v: boolean) => {
-    if (v) dispatchAiGen({ type: 'PHOTO_ANALYZE_START' });
-    else dispatchAiGen({ type: 'PHOTO_ANALYZE_END' });
-  }, []);
+  // 写真の解析を始める: 解析している写真を送ったモーダルの回 (photoEditSession) を控える (#2047)
+  const startPhotoAnalyze = useCallback((session: number) => dispatchAiGen({ type: 'PHOTO_ANALYZE_START', payload: { session } }), []);
+  const endPhotoAnalyze = useCallback(() => dispatchAiGen({ type: 'PHOTO_ANALYZE_END' }), []);
+  // いま開いている写真から入力のモーダル (回) から見た写真の解析の状態 (#2047)。
+  // 'own' = このモーダルで送った写真を解析中 / 'other' = 前のモーダルで送った写真の結果を待っている / 'idle' = 解析していない
+  const photoEditAnalyzeState = photoAnalyzeStateForSession(aiGen, photoEditSession);
 
   const isGeneratingMealImage = aiGen.isGeneratingMealImage;
   const setIsGeneratingMealImage = useCallback((v: boolean) => {
@@ -2190,7 +2194,8 @@ export default function WeeklyMenuPage() {
   const improveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // 献立改善の監視 1 回分の印 (#1657)。次の改善の開始・中止 (handleCancelGeneration)・アンマウントで active が false になる
   const improveWatchRef = useRef<{ active: boolean } | null>(null);
-  // 写真の解析 (写真から入力) の結果を待つ監視 1 回分の印 (#2047)。次の解析の開始・アンマウントで active が false になる
+  // 写真の解析 (写真から入力) の結果を待つ監視 1 回分の印 (#2047)。アンマウントで active が false になる
+  // (次の解析の開始でも下ろすが、解析は一度に 1 つ (analyzePhotoWithAI の先頭で止める) なので、待っているあいだに次の解析は始まらない)
   const photoResultWatchRef = useRef<{ active: boolean } | null>(null);
   // いま画面に出している週の初日。写真の解析の結果を待ち終えたとき、待っているあいだに週が変わっていたら、
   // 解析を頼んだ週の献立を画面に置かない (キャッシュにだけ置く) ために見る (#2047)
@@ -4323,11 +4328,12 @@ export default function WeeklyMenuPage() {
   };
 
   // Open photo edit modal
+  // 開くたびに新しい回 (photoEditSession) にし、写真を空にする。手で変更のモーダルからの「写真から入力」もここを通る (#2047:
+  // 解析の結果を待つあいだに開き直したモーダルを、待ち始めたときのモーダルと見分け、送った写真を新しい回に持ち越さない)
   const openPhotoEdit = (meal: PlannedMeal) => {
-    setPhotoEditMeal(meal);
+    dispatchModal({ type: 'MODAL_OPEN_PHOTO_EDIT', payload: meal });
     setPhotoFiles([]);
     setPhotoPreviews([]);
-    setActiveModal('photoEdit');
   };
 
   // Handle photo selection（複数枚対応）
@@ -4358,8 +4364,13 @@ export default function WeeklyMenuPage() {
   const analyzePhotoWithAI = async () => {
     const { photoFiles } = useFormDraftStore.getState();
     if (photoFiles.length === 0 || !photoEditMeal || !currentPlan) return;
+    // 写真の解析は一度に 1 つ (#2047)。前のモーダルで送った写真の結果を待っているあいだは始めない
+    // (モーダルの解析のボタンも押せない。PhotoEditModal の isOtherPhotoAnalyzing)
+    if (isAnalyzingPhoto) return;
 
-    setIsAnalyzingPhoto(true);
+    // 解析を頼むモーダルの回。待ち終えたとき、モーダルがまだこの回なら閉じる (開き直したモーダルは閉じない)
+    const session = photoEditSession;
+    startPhotoAnalyze(session);
     const mealId = photoEditMeal.id;
     const targetDate = formatLocalDate(weekStart);
     const endDate = addDaysStr(targetDate, 6);
@@ -4374,7 +4385,7 @@ export default function WeeklyMenuPage() {
     try {
       // 「同意しない」なら写真を AI に送らない
       if ((await ensureAiConsent()) === "declined") {
-        setIsAnalyzingPhoto(false);
+        endPhotoAnalyze();
         return;
       }
       // 複数枚の写真をBase64に変換して送信
@@ -4409,7 +4420,7 @@ export default function WeeklyMenuPage() {
 
       // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さない (写真は残す)
       if (await isAiConsentRequiredResponse(res)) {
-        setIsAnalyzingPhoto(false);
+        endPhotoAnalyze();
         return;
       }
       
@@ -4417,7 +4428,9 @@ export default function WeeklyMenuPage() {
         // mealId つきの解析は非同期 (#2047): route の 200 は「Edge が背景で解析を始めた」で、解析 (10〜20 秒) はまだ終わっていない。
         // 結果が献立に書かれたことが分かるまで、上限つきで読み直す (src/lib/meal-photo-result-watch.ts)。
         // 待っているあいだは、写真から入力のモーダルを開いたまま「AIが解析中...」を出す (食事の記録の画面などの写真の入力と同じく、
-        // 解析が終わるまでその場で待つ)。利用者がモーダルを閉じても読み直しは続け、結果が書かれたら献立に置く
+        // 解析が終わるまでその場で待つ)。利用者がモーダルを閉じても読み直しは続け、結果が書かれたら献立に置く。
+        // 閉じたあとに開いた写真から入力のモーダル (別の献立・同じ献立の開き直し) は別の回なので「AIが解析中...」を出さず、
+        // 写真は選べるが解析のボタンは待ち終えるまで押せない (解析は一度に 1 つ。photoEditAnalyzeState === 'other')
         if (photoResultWatchRef.current) photoResultWatchRef.current.active = false;
         const photoResultWatch = { active: true };
         photoResultWatchRef.current = photoResultWatch;
@@ -4428,7 +4441,7 @@ export default function WeeklyMenuPage() {
           fetchWeek: fetchTargetWeek,
           isActive: () => photoResultWatch.active,
         });
-        // アンマウント (や次の解析の開始) で印が下りていたら、何も置かない
+        // アンマウントで印が下りていたら、何も置かない
         if (outcome.status === 'cancelled' || !photoResultWatch.active) return;
         photoResultWatchRef.current = null;
 
@@ -4447,15 +4460,16 @@ export default function WeeklyMenuPage() {
           }
         }
 
-        // 写真から入力のモーダルが、まだこの献立のものなら閉じる。選んだ写真は、いまも送った写真のままのときだけ消す
-        // (解析中はモーダルの中で写真を足す・消すことができない (PhotoEditModal)。写真が変わっているのは、待っているあいだに
-        // 利用者がモーダルを閉じた (onClose が消す)・開き直して選び直した (openPhotoEdit が消してから選ぶ) ときで、選び直した写真は消さない)
-        dispatchModal({ type: 'MODAL_CLOSE_PHOTO_EDIT_FOR_MEAL', payload: mealId });
+        // 写真から入力のモーダルが、まだ解析を頼んだ回のものなら閉じる (開き直したモーダルは、同じ献立でも閉じない)。
+        // 選んだ写真は、いまも送った写真のままのときだけ消す (解析中はそのモーダルの中で写真を足す・消すことができない (PhotoEditModal)。
+        // 写真が変わっているのは、待っているあいだに利用者がモーダルを閉じた (onClose が消す)・開き直した (openPhotoEdit が消してから
+        // 選ぶ) ときで、開き直したモーダルの写真は消さない)
+        dispatchModal({ type: 'MODAL_CLOSE_PHOTO_EDIT_SESSION', payload: session });
         if (useFormDraftStore.getState().photoFiles === photoFiles) {
           setPhotoFiles([]);
           setPhotoPreviews([]);
         }
-        setIsAnalyzingPhoto(false);
+        endPhotoAnalyze();
 
         // 上限まで待っても結果が書かれなかった (解析が長い・失敗した・解析のあいだに献立が書かれて結果を捨てた #2041 の CAS) なら、
         // 黙って終えずにその旨を出す。閉じたら献立を読み直す (そのあいだに書かれていれば出る)
@@ -4484,7 +4498,7 @@ export default function WeeklyMenuPage() {
           type: 'error',
           onRetry: () => analyzePhotoWithAI(),
         });
-        setIsAnalyzingPhoto(false);
+        endPhotoAnalyze();
       }
     } catch (error) {
       console.error('Photo analysis error:', error);
@@ -4494,7 +4508,7 @@ export default function WeeklyMenuPage() {
         type: 'error',
         onRetry: () => analyzePhotoWithAI(),
       });
-      setIsAnalyzingPhoto(false);
+      endPhotoAnalyze();
     }
   };
 
@@ -6565,7 +6579,7 @@ export default function WeeklyMenuPage() {
                 onAddDish={addManualDish}
                 onRemoveDish={removeManualDish}
                 onUpdateDish={updateManualDish}
-                onOpenPhotoEdit={() => { setActiveModal('photoEdit'); setPhotoEditMeal(manualEditMeal); }}
+                onOpenPhotoEdit={() => openPhotoEdit(manualEditMeal)}
                 onOpenImageGenerate={openImageGenerate}
                 onSave={saveManualEdit}
               />
@@ -6598,7 +6612,8 @@ export default function WeeklyMenuPage() {
             {/* Photo Edit Modal */}
             {activeModal === 'photoEdit' && photoEditMeal && (
               <PhotoEditModal
-                isAnalyzingPhoto={isAnalyzingPhoto}
+                isAnalyzingPhoto={photoEditAnalyzeState === 'own'}
+                isOtherPhotoAnalyzing={photoEditAnalyzeState === 'other'}
                 onClose={() => { setActiveModal(null); setPhotoEditMeal(null); setPhotoFiles([]); setPhotoPreviews([]); }}
                 onPhotoSelect={(files: FileList) => {
                   const newFiles = Array.from(files);
