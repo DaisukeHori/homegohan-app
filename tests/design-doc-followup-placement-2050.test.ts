@@ -14,7 +14,15 @@
  *     (先に送った A の印が後の B の invokedAt のあとに付き、A の結果が残る) を期待として書き、その順を
  *     別の it (PC-4 = invokedAt のあとにほかの書き手が書いた行) の形と呼んでいた。§0.3 の宣言の本数と S-n の行・
  *     §4.3 のトレース・§12.3 の対応表の S-n がそろうこと、§12.3 がテストのファイルの後の括弧で名指す it の id が
- *     そのファイルに実在すること、#2041 のシナリオの期待の欄が「A の結果が残る」を書かないことを確かめる。
+ *     そのファイルに実在すること、#2041 のシナリオの期待の欄が「A の結果が残る」を書かないことを確かめる
+ *     (P7 は #2056 で直り、route が Edge を呼ぶ直前に行に要求の印 (markPhotoAnalysisRequest) を付けるので、
+ *     ほかの書き手が書かなければ、どの順でも後に送った B の結果が残る。tests/analyze-meal-photo-cas-request-order.test.ts の
+ *     RO-1・RO-2・RO-6〜RO-8)。
+ * (4) R3 の指摘: S-27 の期待とトレースが、B の invokedAt から B の印までのあいだに行が書かれない前提を置いたまま、
+ *     それを満たさない順 (A の書き込みがそのあいだに入る順) まで B の結果が残ると書いていた。トレースが、コードが実際に
+ *     通る順序の守りの手順 (_shared/meal-photo-cas.ts の関数のうち route・Edge が呼ぶもの) を飛ばすと、前提が抜けても
+ *     気づけない (#2056 で要求の印が足されたあとも、トレースは Edge の印からしか書いていなかった)。#2041 のシナリオの
+ *     §4.3 のトレースの行が、route・Edge が呼ぶ手順の関数の名前をどれも書くことを確かめる。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -64,8 +72,23 @@ const TEST_ID = /\b([A-Z]{1,3}-\d+)\b/g;
 const SCENARIO_EXPECTATION_CELL = 2;
 /** #2041 の写真の解析の CAS のシナリオの行を見分ける語 */
 const PHOTO_CAS_SCENARIO_MARK = '#2041';
-/** Issue #2050 の P7 で製品の欠陥とした順の結果 (後に送った B の結果に代わって、先に送った A の結果が残る) */
+/**
+ * Issue #2050 の P7 で製品の欠陥とした順の結果 (後に送った B の結果に代わって、先に送った A の結果が残る)。
+ * #2056 の後は、ほかの書き手が書かなければどの順でも B の結果が残るので、#2041 のシナリオの期待の欄には出てこない
+ */
 const P7_DEFECT_OUTCOME = 'A の結果が残る';
+/** 写真の解析の書き込みの順序の守り (#121 の CAS・#2050 の要求の印) の関数を置くファイル */
+const PHOTO_CAS_MODULE = 'supabase/functions/_shared/meal-photo-cas.ts';
+/** 順序の守りの関数を呼ぶ側 (Next.js の route = 要求の印・Edge のハンドラ = invokedAt の読み取り・解析の印・書く前の確認) */
+const PHOTO_CAS_CALLERS: readonly string[] = [
+  'src/app/api/ai/analyze-meal-photo/route.ts',
+  'supabase/functions/analyze-meal-photo/index.ts',
+];
+/** export した関数の名前 (`export function x(`・`export async function x(`) */
+const EXPORTED_FUNCTION = /^export (?:async )?function (\w+)\s*\(/gm;
+/** ブロックの注釈と行の注釈 (`https://` の `//` は残す) */
+const BLOCK_COMMENT = /\/\*[\s\S]*?\*\//g;
+const LINE_COMMENT = /(^|[^:])\/\/.*$/gm;
 
 /** needle で始まる行のすぐ上の見出しの行 (見出しが無ければ null) */
 function headingAbove(markdown: string, needle: string): string | null {
@@ -263,6 +286,38 @@ function photoCasScenariosExpectingP7(scenarioSection: string): string[] {
     .map((line) => tableCells(line)[0] ?? '');
 }
 
+/** 注釈を外したソース (注釈の中の関数の名前を呼び出しと数えない) */
+function withoutComments(source: string): string {
+  return source.replace(BLOCK_COMMENT, '').replace(LINE_COMMENT, '$1');
+}
+
+/** moduleSource が export した関数のうち、呼ぶ側のどれかが (注釈の外で) `名前(` と呼ぶものの名前 (export の順) */
+function casStepsCalledBy(moduleSource: string, callerSources: readonly string[]): string[] {
+  const exported = [...moduleSource.matchAll(EXPORTED_FUNCTION)].map((m) => m[1] ?? '');
+  const callers = callerSources.map(withoutComments);
+  return exported.filter((name) => callers.some((source) => new RegExp(`\\b${name}\\(`).test(source)));
+}
+
+/** §0.3 の #2041 のシナリオの §4.3 のトレースの行が書いていない手順 (`S-27: 名前`。トレースの行が無ければ `S-27: トレースの行が無い`) */
+function casStepsMissingFromTraces(scenarioSection: string, traceSection: string, steps: readonly string[]): string[] {
+  const ids = scenarioSection
+    .split('\n')
+    .filter((line) => line.startsWith(SCENARIO_ROW_PREFIX) && line.includes(PHOTO_CAS_SCENARIO_MARK))
+    .map((line) => tableCells(line)[0] ?? '');
+  const missing: string[] = [];
+  for (const id of ids) {
+    const trace = traceSection.split('\n').find((line) => line.startsWith(`| ${id} |`));
+    if (!trace) {
+      missing.push(`${id}: トレースの行が無い`);
+      continue;
+    }
+    for (const step of steps) {
+      if (!trace.includes(`\`${step}`)) missing.push(`${id}: ${step}`);
+    }
+  }
+  return missing;
+}
+
 describe('cross/23 のシナリオの表・トレース・シナリオ ⇄ テストの表がそろい、#2041 のシナリオは Issue #2050 の P7 の順を期待にしない (#2050)', () => {
   const casTestSource = [
     "it('PC-1: 先に送った解析が後に終わっても、後に送った解析の結果が残る', async () => {",
@@ -319,5 +374,54 @@ describe('cross/23 のシナリオの表・トレース・シナリオ ⇄ テ�
     const section = sectionBody(read(CROSS23), SCENARIO_SECTION);
     expect(section, `${CROSS23} に §0.3 の見出しがある`).not.toBeNull();
     expect(photoCasScenariosExpectingP7(section ?? '')).toEqual([]);
+  });
+});
+
+describe('cross/23 の #2041 のシナリオのトレースは、route・Edge が呼ぶ書き込みの順序の守りの手順をどれも書く (#2050 R3)', () => {
+  const moduleFixture = [
+    'export function parseInvokedAt(value: unknown) {}',
+    'export async function markRequest(db: Db) {}',
+    'export async function claim(db: Db) {}',
+    'function notExported() {}',
+    'export async function unused(db: Db) {}',
+  ].join('\n');
+  const routeFixture = [
+    "import { markRequest } from './cas';",
+    '// unused(db) は注釈の中だけ',
+    '/* claim(db) もブロックの注釈の中だけ */',
+    "const url = 'https://example.test/unused';",
+    'const mark = await markRequest(supabase);',
+  ].join('\n');
+  const edgeFixture = 'const parsed = parseInvokedAt(body.invokedAt)\nconst c = await claim(queueDb)';
+
+  it('export した関数のうち、呼ぶ側が注釈の外で呼ぶものだけを手順に数える', () => {
+    expect(casStepsCalledBy(moduleFixture, [routeFixture, edgeFixture])).toEqual(['parseInvokedAt', 'markRequest', 'claim']);
+    expect(casStepsCalledBy(moduleFixture, [routeFixture])).toEqual(['markRequest']);
+  });
+
+  it('#2041 のシナリオのトレースの行が手順の名前を書かない・トレースの行が無いと見分ける (#2041 を名指さない行は見ない)', () => {
+    const scenarios = ['| # | シナリオ | 期待 |', '|---|---|---|', '| S-26 | 写真 | x |', '| S-27 | 写真を 2 回 (#2041) | B |'].join('\n');
+    const trace = [
+      '| # | トレース | 結果 |',
+      '|---|---|---|',
+      '| S-26 | 何も書かない | 期待どおり |',
+      '| S-27 | route: `markRequest` → Edge: `parseInvokedAt` → `claim` (印 a) | 期待どおり |',
+    ].join('\n');
+    const steps = ['parseInvokedAt', 'markRequest', 'claim'];
+    expect(casStepsMissingFromTraces(scenarios, trace, steps)).toEqual([]);
+    // 要求の印を飛ばし、Edge から書き始めたトレース (R2 の S-27 のトレースは、#2056 が足した要求の印を書いていなかった)
+    const skipped = trace.replace('route: `markRequest` → ', '');
+    expect(casStepsMissingFromTraces(scenarios, skipped, steps)).toEqual(['S-27: markRequest']);
+    const noRow = trace.replace(/^\| S-27 \|.*$/m, '');
+    expect(casStepsMissingFromTraces(scenarios, noRow, steps)).toEqual(['S-27: トレースの行が無い']);
+  });
+
+  it('cross/23 §4.3 の #2041 のシナリオのトレースの行は、route・Edge が呼ぶ手順の関数の名前をどれも書く', () => {
+    const steps = casStepsCalledBy(read(PHOTO_CAS_MODULE), PHOTO_CAS_CALLERS.map(read));
+    // 走査が空でない: Edge の解析の印と、route の要求の印 (#2050) は手順に入る
+    expect(steps).toEqual(expect.arrayContaining(['claimPhotoAnalysis', 'markPhotoAnalysisRequest']));
+    const markdown = read(CROSS23);
+    const scenarioSection = sectionBody(markdown, SCENARIO_SECTION) ?? '';
+    expect(casStepsMissingFromTraces(scenarioSection, sectionBody(markdown, TRACE_SECTION) ?? '', steps)).toEqual([]);
   });
 });
