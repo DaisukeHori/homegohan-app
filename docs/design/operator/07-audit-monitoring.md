@@ -316,7 +316,7 @@ super_admin.app_logs.list           - アプリログの一覧・本文の検索
 
 実コードの名前が下の一覧と違うもの (#1571 の時点。名前は変えていない):
 - プランの作成・更新・削除は `create_plan` / `update_plan` / `delete_plan` (POST /api/super-admin/plans・PATCH / DELETE /api/super-admin/plans/{id})。
-  公開・非公開・廃止・廃止の取り消しは `update_plan` の中の変更として記録する (status を変えたときは details に `status_from` / `status_to` も入れる。更新は直前に読んだ status のまま (廃止で既存の ends_at に頼るときは ends_at が NULL でないことも) のとき、削除は draft のままのときだけ行い、読んでから書くまでに別の運営が変えていたら書かず記録もしない。0 行なら読み直し、プランが無ければ 404、編集は送った変更がもう入っていれば 200、それ以外は 409 CONFLICT_STALE_DATA。status_from は書いた時点の実際の直前の値)。価格変更は `change_price` (POST /api/super-admin/plans/{id}/price-change)。
+  公開・非公開・廃止・廃止の取り消しは `update_plan` の中の変更として記録する (status を変えたときは details に `status_from` / `status_to` も入れる。更新は直前に読んだ status のまま (廃止で既存の ends_at に頼るときは ends_at が NULL でないことも) のとき、削除は draft のままのときだけ行い、読んでから書くまでに別の運営が変えていたら書かず記録もしない。0 行なら読み直し、プランが無ければ 404、編集は送った変更がもう入っていれば 200、それ以外は 409 CONFLICT_STALE_DATA。本文の expected_status (画面が見ていた status) が DB の status と違うときは、書かずに 409 CONFLICT_STALE_DATA を返し、記録もしない (遷移の検査より先)。status_from は書いた時点の実際の直前の値)。価格変更は `change_price` (POST /api/super-admin/plans/{id}/price-change)。
 - A/B テスト (/api/super-admin/experiments) の作成・更新・削除は `super_admin.plan.create` / `super_admin.plan.update` を使っている。
 - 機能パッケージは `create_feature_package` / `update_feature_package` / `delete_feature_package`。
 - 機能フラグの作成・更新・削除は、すべて `super_admin.feature_flag.toggle`。
