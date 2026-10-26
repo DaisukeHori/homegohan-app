@@ -11,6 +11,8 @@
  * 読んでから書くまでに別の運営が変えていたら 0 行で、読み直した行に送った変更がもう入っていれば 200 (書かず記録もしない)、
  * 入っていなければ 409 CONFLICT_STALE_DATA (cross/04 §4.2)。これで遷移表に無い遷移 (例: private を読んで public に戻す間に別の運営が deprecated にすると、書けば deprecated → public になる) は書かれず、
  * 監査の status_from は書いた時点の実際の直前の値と必ず一致する。
+ * 本文に画面が見ていた status (expected_status) があれば、DB の status と同じときだけ書き、違えば書かずに 409 CONFLICT_STALE_DATA (#2064。
+ * 画面の status が古いまま、確認の文と違う遷移 (廃止 → 非公開 = 廃止の取り消し など) を書かない。画面の状態の変更は必ず送る)。
  * 削除 (DELETE) も同じで、draft のままのときだけ消す (0 行なら読み直して、無ければ 404、あれば 409 CONFLICT_STALE_DATA)。
  *
  * 廃止の安全弁 (#1127・#1912) は、書く前に route が契約者を数え (countPlanSubscribers)、さらに書く文の中で DB のトリガー
@@ -192,6 +194,14 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
 
     const input = parseResult.data;
 
+    // 画面が見ていた status (expected_status。#2064) が DB の status と違えば、書かずに 409 CONFLICT_STALE_DATA にする。
+    // 遷移の可否は下で DB の status で決めるので、画面の status が古いまま送られると (状態の変更のあとの読み直しが失敗した・
+    // 画面を開いているあいだに別の運営が変えた)、確認の文と違う遷移 (例: 画面は公開中で「非公開にする」でも、DB が廃止なら
+    // 廃止 → 非公開 = 廃止の取り消し) を書いてしまう。遷移の検査 (422)・廃止済みの変更の拒否 (422) より先に断る
+    if (input.expected_status !== undefined && input.expected_status !== existing.status) {
+      return NextResponse.json(STALE_PLAN_RESPONSE, { status: 409 });
+    }
+
     // status 遷移が指定されている場合は許可された遷移か検証する
     // (#1041 修正: public/private 到達後に status 変更が恒久ロックされていたバグ)
     if (input.status !== undefined && input.status !== existing.status) {
@@ -267,6 +277,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
         'display_order',
         'status',
         'ends_at',
+        // 書く値でなく、書く条件 (画面が見ていた status。上で DB の status と同じことを確かめた。#2064)
+        'expected_status',
       ];
       const inputKeys = Object.keys(input).filter((k) => input[k as keyof typeof input] !== undefined);
       const disallowedKeys = inputKeys.filter((k) => !allowedKeys.includes(k));
@@ -286,7 +298,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
 
     if (existing.status === 'deprecated') {
       // deprecated では private への遷移 (un-deprecate) のみ許可 (それ以外は変更不可)
-      const allowedKeys: string[] = ['status'];
+      // expected_status は書く値でなく、書く条件 (画面が見ていた status。上で DB の status と同じことを確かめた。#2064)
+      const allowedKeys: string[] = ['status', 'expected_status'];
       const inputKeys = Object.keys(input).filter((k) => input[k as keyof typeof input] !== undefined);
       const disallowedKeys = inputKeys.filter((k) => !allowedKeys.includes(k));
       if (disallowedKeys.length > 0) {

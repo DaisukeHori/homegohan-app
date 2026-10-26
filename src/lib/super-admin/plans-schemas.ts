@@ -146,6 +146,12 @@ export const PlanUpdateSchema = z.object({
   stripe_product_id: z.string().max(255).nullable().optional(),
   status: z.enum(PLAN_STATUSES).optional(),
   ends_at: z.string().datetime().nullable().optional(),
+  /**
+   * 画面が見ていた status (#2064)。送られたら、route は DB の status と同じときだけ書き、違えば書かずに 409 CONFLICT_STALE_DATA にする。
+   * 遷移の検査は DB の status で行うので、画面の status が古い (読み直しの失敗・別の運営の変更) と、確認の文と違う遷移
+   * (例: 廃止 → 非公開 = 廃止の取り消し) を書いてしまう。それを止めるため、状態の変更を送る画面は必ず入れる。列には書かない
+   */
+  expected_status: z.enum(PLAN_STATUSES).optional(),
 });
 
 export type PlanUpdateInput = z.infer<typeof PlanUpdateSchema>;
@@ -176,6 +182,8 @@ export const PLAN_UPDATE_FIELD_LABELS: Readonly<Record<keyof PlanUpdateInput, st
   stripe_product_id: 'Stripe の商品の ID',
   status: '状態',
   ends_at: '廃止の予定日',
+  // 書く値でなく書く条件 (#2064)。status ごとに変えてよい項目の検査で断ることは無いが、表は PlanUpdateSchema の全部の項目を持つ
+  expected_status: '画面が見ていた状態',
 };
 
 /** 状態の値を「画面の名前 (値)」にする (表に無い値は「不明な状態 (値)」。英字の値を括弧の外に出さない) */
