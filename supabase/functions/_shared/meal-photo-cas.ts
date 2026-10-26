@@ -1,27 +1,37 @@
 /**
- * 写真の解析 (analyze-meal-photo の mealId の経路) の書き込みの順序の守り (#121 の CAS を戻す。#2025 の続き)
+ * 写真の解析 (analyze-meal-photo の mealId の経路) の書き込みの順序の守り (#121 の CAS を戻す。#2025 の続き。#2050)
  *
  * 同じ献立に写真の解析を 2 回続けて送ると、背景の処理 (EdgeRuntime.waitUntil) が 2 本並ぶ。以前は書き込みに条件が無く、
  * 後に終わった方が planned_meals を書いた。先に送った古い写真の結果が、後に送った新しい写真の結果を上書きしえた
  * (#160 で入った CAS は、#248 の競合の解消で消えていた)。
  *
  * 守り方 (updated_at を印に使う。process-meal-image-jobs の料理の画像の書き込み (#1527) と同じ楽観的な排他):
- *   1. 印を付ける (claimPhotoAnalysis): 解析を始める前に、行の updated_at を進める (トリガー trg_planned_meals_updated_at が
- *      DB の now() にする)。進めたあとの updated_at が、この解析の印になる。
- *      invokedAt (Next.js の route が Edge を呼ぶ直前の時刻) があるときは、行の updated_at が invokedAt 以前 (または NULL) の
- *      ときだけ印を付ける。呼んだあとに行が書かれていた (後から送った解析が先に印を付けた・ほかの書き込みがあった) なら、
- *      この解析は古いので、解析せずにやめる (Edge に遅れて届いた古い要求が、新しい要求の印を消さない)。
+ *   0. 要求の印を付ける (markPhotoAnalysisRequest。Next.js の route が Edge を呼ぶ直前に、利用者の client で呼ぶ): 行の updated_at を
+ *      進め (トリガー trg_planned_meals_updated_at が DB の now() にする)、進めたあとの updated_at を invokedAt として Edge へ送る。
+ *      送った順 = 要求の印が付いた順で、後に送った要求の印は行に残る (#2050)。
+ *   1. 印を付ける (claimPhotoAnalysis。Edge の背景の処理): 解析を始める前に、行の updated_at を進める。進めたあとの updated_at が、
+ *      この解析の印になる。
+ *      invokedAt があるときは、行の updated_at が invokedAt 以前 (または NULL) のときだけ印を付ける。呼んだあとに行が書かれていた
+ *      (後から送った要求の印・後から送った解析の印・ほかの書き込みがあった) なら、この解析は古いので、解析せずにやめる
+ *      (Edge に遅れて届いた古い要求が、新しい要求の印を消さない)。
  *   2. 書く前に確かめる (isPhotoAnalysisCurrent): 解析のあと、行の updated_at が印のままかを見る。違えば、Storage への
  *      アップロードと画像のジョブの取り消しをせずにやめる。
  *   3. 書く (analyze-meal-photo/index.ts の update): updated_at が印のままの行にだけ書く (.eq('updated_at', 印))。
  *      0 行なら書かずにやめる (確かめてから書くまでのあいだに書かれた場合も、ここで止まる)。
  *
- * 後から送った解析の印が、先に送った解析の印を消すので、終わる順番によらず、最後に送った写真の結果だけが残る。
+ * 後から送った要求の印と、後から送った解析の印が、先に送った解析の印を消す (または付けさせない) ので、終わる順番によらず、
+ * 最後に送った写真の結果だけが残る。先に送った解析の Edge の起動が遅れ、その印を付けようとする時刻が後に送った要求の時刻より
+ * 後になっても、後に送った要求の印が行に残っているので、先に送った解析の印は付かない (#2050。0 が無かったときは、invokedAt が
+ * route の時計で、先に送った解析の印が後に送った要求の時刻より後に付くと、後に送った解析の印が付かなかった)。
  * 解析のあいだに行がほかの書き手 (完了の RPC・料理の画像のジョブ・画面の編集など) に書かれた場合も、写真の結果を書かない
  * (#121 の「自分より新しい書き込みが既にある場合は更新をスキップする」と同じ)。
  *
- * db は service_role の client (RLS を通らない)。呼ぶ前に本人の行であることを確かめること (index.ts が確かめる)。
- * 型の import だけで、実行時の依存は無い (単体テスト・結合テストで読み込める)。
+ * 要求の印が付かない (本人の行が見つからない) ときは、route は今までどおり route の時計を invokedAt として送る
+ * (Edge の背景の処理は本人の行の確認で止まる)。Edge を利用者の JWT で直接呼んだとき (invokedAt が無い) は 0 を通らない。
+ *
+ * claimPhotoAnalysis / isPhotoAnalysisCurrent の db は service_role の client (RLS を通らない)。呼ぶ前に本人の行であることを
+ * 確かめること (index.ts が確かめる)。markPhotoAnalysisRequest の db は利用者の client (RLS が本人の行だけに絞る)。
+ * 型の import だけで、実行時の依存は無い (単体テスト・結合テスト・Next.js の route で読み込める)。
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -33,16 +43,59 @@ export type PhotoAnalysisClaim =
 /** 本文の invokedAt を読んだ結果。無いときは null (Edge を利用者の JWT で直接呼んだときなど) */
 export type ParsedInvokedAt = { ok: true; invokedAt: string | null } | { ok: false };
 
+/** 写真の解析の要求に印を付けた結果 (markPhotoAnalysisRequest) */
+export type PhotoAnalysisRequestMark =
+  | { status: "marked"; requestedAt: string }
+  | { status: "not_found" };
+
+/** timestamptz の秒の下の桁の数 (PostgreSQL はマイクロ秒まで持つ) */
+const TIMESTAMPTZ_FRACTION_DIGITS = 6;
+/** Date が持つ秒の下の桁の数 (ミリ秒) */
+const DATE_FRACTION_DIGITS = 3;
+/** ISO 8601 の日時 (秒まで・秒の下の桁・Z か ±hh:mm)。秒の下の桁を Date より細かく持つ値を、桁を落とさずに読むため */
+const ISO_DATE_TIME_WITH_FRACTION = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})$/;
+
 /**
- * 本文の invokedAt を ISO 8601 の文字列 (UTC。ミリ秒まで) にそろえる。無い (undefined / null) ときは null。
- * 文字列でない・日時として読めないときは ok: false (呼び出し側が 400 にする)
+ * 本文の invokedAt を ISO 8601 の文字列 (UTC。マイクロ秒まで) にそろえる。無い (undefined / null) ときは null。
+ * 文字列でない・日時として読めないときは ok: false (呼び出し側が 400 にする)。
+ * invokedAt は route が付けた要求の印 (DB の updated_at。マイクロ秒まで) なので、秒の下の桁を Date のミリ秒に丸めない
+ * (丸めると、印の直後の updated_at が invokedAt より後になり、自分の要求の印で claimPhotoAnalysis が止まる。#2050)
  */
 export function parseInvokedAt(value: unknown): ParsedInvokedAt {
   if (value === undefined || value === null) return { ok: true, invokedAt: null };
   if (typeof value !== "string") return { ok: false };
   const time = Date.parse(value);
   if (Number.isNaN(time)) return { ok: false };
-  return { ok: true, invokedAt: new Date(time).toISOString() };
+  const matched = ISO_DATE_TIME_WITH_FRACTION.exec(value);
+  // 秒の下の桁 (マイクロ秒の 6 桁にそろえる。7 桁目からは timestamptz に無いので落とす)。形が違う日時は Date のミリ秒まで
+  const fraction = matched
+    ? (matched[2] ?? "").padEnd(TIMESTAMPTZ_FRACTION_DIGITS, "0").slice(0, TIMESTAMPTZ_FRACTION_DIGITS)
+    : new Date(time).toISOString().slice(-(DATE_FRACTION_DIGITS + 1), -1).padEnd(TIMESTAMPTZ_FRACTION_DIGITS, "0");
+  // 秒までは Date で UTC にそろえる (時差は分の単位なので、秒の下の桁は変わらない)。Date は秒の下の桁を切り捨てて読むので、秒は繰り上がらない
+  const secondsInUtc = new Date(time).toISOString().slice(0, "YYYY-MM-DDTHH:mm:ss".length);
+  return { ok: true, invokedAt: `${secondsInUtc}.${fraction}Z` };
+}
+
+/**
+ * 写真の解析を Edge へ送る直前に、献立の行に要求の印を付ける (updated_at を進める。Next.js の route が呼ぶ)。
+ * 進めたあとの updated_at (DB の時刻) を requestedAt として返す。route はこれを invokedAt として Edge へ送る。
+ * db は利用者の client (RLS が本人の行だけに絞る)。行が見えない (他人の献立・消えた献立) ときは not_found で、行を変えない。
+ * 送るのは updated_at だけ (トリガーが DB の now() にする。利用者の client に許された列だけを書く)
+ */
+export async function markPhotoAnalysisRequest(
+  db: Pick<SupabaseClient, "from">,
+  params: { mealId: string },
+): Promise<PhotoAnalysisRequestMark> {
+  const { data, error } = await db
+    .from("planned_meals")
+    .update({ updated_at: new Date().toISOString() })
+    .eq("id", params.mealId)
+    .select("updated_at");
+  if (error) throw error;
+  const rows: Array<{ updated_at?: unknown }> = Array.isArray(data) ? data : [];
+  const requestedAt = rows[0]?.updated_at;
+  if (typeof requestedAt !== "string") return { status: "not_found" };
+  return { status: "marked", requestedAt };
 }
 
 /**
