@@ -6,6 +6,7 @@
  *   - 機能パッケージの詳細 (/super-admin/feature-packages/[id]) の「廃止する」
  *   - A/B テストの詳細 (/super-admin/experiments/[id]) の「実験開始」「完了」「中止」と一覧 (/super-admin/experiments) の「開始」「完了」
  *   - 機能フラグの一覧 (/super-admin/flags) の切り替えと「削除」
+ *   - メール送信の一覧 (/super-admin/email-outbox) の「再送」 (dead → queued。2 周目のレビューで足した同じ型)
  *
  * 以前の画面は、通信が reject されると「通信エラー」の文 (または alert) を出すだけで読み直さなかった。サーバーが変更を済ませてから
  * 応答が切れると、画面は古い状態とボタンのまま残り、もう一度押すと 409 (遷移表に無い変更・同時の変更) になって、
@@ -41,6 +42,7 @@ const { default: FeaturePackageDetailPage } = await import('@/app/super-admin/fe
 const { default: ExperimentDetailPage } = await import('@/app/super-admin/experiments/[id]/page');
 const { default: ExperimentsPage } = await import('@/app/super-admin/experiments/page');
 const { default: FlagsPage } = await import('@/app/super-admin/flags/page');
+const { default: EmailOutboxPage } = await import('@/app/super-admin/email-outbox/page');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -627,5 +629,164 @@ describe('機能フラグの一覧: 切り替え・削除の通信が reject さ
     expect(noticeText()).toBe(`「${FLAG_NAME}」の切り替えの応答を受け取れませんでした（通信エラー）。${LIST_RELOADED_GUIDE}`);
     expect(toggle()?.disabled).toBe(false);
     expect(findButton('再試行')).toBeUndefined();
+  });
+});
+
+describe('メール送信の一覧: 再送の通信が reject されたら一覧を読み直す (#2073 と同じ型)', () => {
+  const LIST_PATH = '/api/super-admin/email-outbox';
+  const REQUEUE_PATH = `${LIST_PATH}/${ROW_ID}/requeue`;
+  const TEMPLATE = 'family_invite';
+  const CREATED_AT = '2026-10-16T05:00:01.000000+00:00';
+  /** route の 409 (dead でない行の再送) の文。自分の再送が済んでいたのにこれが出てはいけない */
+  const NOT_REQUEUEABLE_MESSAGE = '届けられなかったメールだけを再送できます';
+  const outboxRow = (status: 'dead' | 'queued') => ({
+    id: ROW_ID,
+    created_at: CREATED_AT,
+    updated_at: CREATED_AT,
+    status,
+    template: TEMPLATE,
+    recipient: 't***@example.com',
+    redacted: false,
+    user_id: null,
+    attempts: status === 'dead' ? 1 : 0,
+    requeue_count: status === 'dead' ? 0 : 1,
+    next_attempt_at: CREATED_AT,
+    lease_expires_at: null,
+    last_error_code: 'validation_error',
+    last_error_message: 'The domain is not verified',
+    last_status_code: 403,
+    sent_at: null,
+    dead_at: status === 'dead' ? CREATED_AT : null,
+    requeued_at: status === 'dead' ? null : CREATED_AT,
+  });
+  const noticeText = () => container.querySelector('[data-testid="email-outbox-reload-notice"] p')?.textContent ?? null;
+  const noticeRole = () => container.querySelector('[data-testid="email-outbox-reload-notice"] p')?.getAttribute('role') ?? null;
+  const tableRows = () => Array.from(container.querySelectorAll('tbody tr'));
+  const rowOf = () => tableRows().find((tr) => tr.textContent?.includes(TEMPLATE));
+  const requeueButton = () =>
+    Array.from(rowOf()?.querySelectorAll('button') ?? []).find((b) => b.textContent?.trim() === '再送') as
+      | HTMLButtonElement
+      | undefined;
+
+  /**
+   * サーバーの代わり。GET は今の行を status の絞り込みどおりに返す (route と同じく、絞り込みに合わない行は返さない)。
+   * POST は dead の行だけ queued にする (dead でなければ 409 not_dead)。rejectPost(n) が 'after-write' の n 回目の POST は、
+   * 書いてから reject する (応答が切れた)。'before-write' なら書かずに reject する。failGet(n) が true の n 回目の GET は 500
+   */
+  function mockOutboxServer(options: {
+    rejectPost?: (n: number) => 'after-write' | 'before-write' | undefined;
+    failGet?: (n: number) => boolean;
+  }) {
+    let current: 'dead' | 'queued' = 'dead';
+    let gets = 0;
+    let posts = 0;
+    mockFetch((method, url) => {
+      if (method === 'GET' && url.pathname === LIST_PATH) {
+        gets += 1;
+        if (options.failGet?.(gets)) return jsonResponse(500, { error: { message: '内部エラー' } });
+        const data = url.searchParams.get('status') === current ? [outboxRow(current)] : [];
+        return jsonResponse(200, { data, meta: { limit: 50, has_more: false, next_cursor: null } });
+      }
+      if (method === 'POST' && url.pathname === REQUEUE_PATH) {
+        posts += 1;
+        const reject = options.rejectPost?.(posts);
+        if (reject === 'before-write') throw networkFailure();
+        if (current !== 'dead') {
+          return jsonResponse(409, {
+            error: { code: 'OP_EMAIL_OUTBOX_NOT_REQUEUEABLE', message: NOT_REQUEUEABLE_MESSAGE, details: { reason: 'not_dead' } },
+          });
+        }
+        current = 'queued';
+        if (reject === 'after-write') throw networkFailure();
+        return jsonResponse(200, { data: { id: ROW_ID, status: 'queued' } });
+      }
+      throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+    });
+    return { serverStatus: () => current };
+  }
+
+  it('サーバーが再送を済ませてから応答が切れたら、一覧を読み直して今の状態を見せ、自分の操作でも合う文を出す (通信の失敗の alert にしない)', async () => {
+    const s = mockOutboxServer({ rejectPost: () => 'after-write' });
+    await renderElement(createElement(EmailOutboxPage));
+    expect(requeueButton()?.disabled).toBe(false);
+
+    await click(requeueButton(), '「再送」ボタン');
+
+    expect(s.serverStatus()).toBe('queued');
+    expect(callsOf('GET', LIST_PATH)).toHaveLength(2);
+    // 届けられなかったものの一覧を読み直したので、送信待ちに移った行は一覧から外れ、「再送」も押せない (押しても 409 にならない)
+    expect(rowOf()).toBeUndefined();
+    expect(requeueButton()).toBeUndefined();
+    expect(noticeText()).toBe(`「${TEMPLATE}」の再送の応答を受け取れませんでした（通信エラー）。${LIST_RELOADED_GUIDE}`);
+    expect(noticeRole()).toBe('status');
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(text()).not.toContain('通信に失敗しました');
+    expect(findButton('再試行')).toBeUndefined();
+    expect(alertSpy).not.toHaveBeenCalled();
+
+    // 送信待ちで絞り込むと、その行が「送信待ち」で見える (読み直した今の状態)
+    await click(container.querySelector('#email-outbox-status-queued') as HTMLInputElement, '「送信待ち」の選択肢');
+    await click(findButton('絞り込む'), '「絞り込む」ボタン');
+    expect(rowOf()?.textContent).toContain('送信待ち');
+  });
+
+  it('サーバーが書く前に応答が切れたら、読み直した一覧で「再送」を押し直せ、409 にならずに再送できる', async () => {
+    const s = mockOutboxServer({ rejectPost: (n) => (n === 1 ? 'before-write' : undefined) });
+    await renderElement(createElement(EmailOutboxPage));
+
+    await click(requeueButton(), '「再送」ボタン');
+
+    expect(s.serverStatus()).toBe('dead');
+    expect(callsOf('GET', LIST_PATH)).toHaveLength(2);
+    expect(noticeText()).toBe(`「${TEMPLATE}」の再送の応答を受け取れませんでした（通信エラー）。${LIST_RELOADED_GUIDE}`);
+    expect(requeueButton()?.disabled).toBe(false);
+
+    await click(requeueButton(), '「再送」ボタン');
+
+    expect(s.serverStatus()).toBe('queued');
+    expect(callsOf('POST', REQUEUE_PATH)).toHaveLength(2);
+    expect(text()).not.toContain(NOT_REQUEUEABLE_MESSAGE);
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('再送を受け付けました');
+    expect(noticeText()).toBeNull();
+  });
+
+  it('一覧の読み直しにも失敗したら、一覧を残して「再試行」を出し、「再送」を止める。「再試行」で読み直せたら今の状態にする', async () => {
+    const s = mockOutboxServer({ rejectPost: () => 'after-write', failGet: (n) => n === 2 });
+    await renderElement(createElement(EmailOutboxPage));
+
+    await click(requeueButton(), '「再送」ボタン');
+
+    expect(s.serverStatus()).toBe('queued');
+    expect(noticeText()).toBe(`「${TEMPLATE}」の再送の応答を受け取れませんでした（通信エラー）。${LIST_RELOAD_FAILED_GUIDE}`);
+    expect(noticeRole()).toBe('alert');
+    // 一覧は外さずに残す (読み直しの失敗で空にしない)。ただし状態が古いかもしれないので「再送」は止める
+    expect(rowOf()?.textContent).toContain('届けられなかった');
+    expect(requeueButton()?.disabled).toBe(true);
+    await forceClick(requeueButton(), '「再送」ボタン');
+    expect(callsOf('POST', REQUEUE_PATH)).toHaveLength(1);
+    expect(text()).not.toContain(NOT_REQUEUEABLE_MESSAGE);
+
+    await click(findButton('再試行'), '「再試行」ボタン');
+
+    expect(callsOf('GET', LIST_PATH)).toHaveLength(3);
+    expect(rowOf()).toBeUndefined();
+    expect(noticeText()).toBe(`「${TEMPLATE}」の再送の応答を受け取れませんでした（通信エラー）。${LIST_RELOADED_GUIDE}`);
+    expect(findButton('再試行')).toBeUndefined();
+    expect(alertSpy).not.toHaveBeenCalled();
+  });
+
+  it('「再試行」で読み直したあとは「再送」を戻す (書く前に切れていた行はもう一度再送できる)', async () => {
+    const s = mockOutboxServer({ rejectPost: (n) => (n === 1 ? 'before-write' : undefined), failGet: (n) => n === 2 });
+    await renderElement(createElement(EmailOutboxPage));
+
+    await click(requeueButton(), '「再送」ボタン');
+    expect(requeueButton()?.disabled).toBe(true);
+
+    await click(findButton('再試行'), '「再試行」ボタン');
+
+    expect(requeueButton()?.disabled).toBe(false);
+    await click(requeueButton(), '「再送」ボタン');
+    expect(s.serverStatus()).toBe('queued');
+    expect(callsOf('POST', REQUEUE_PATH)).toHaveLength(2);
   });
 });
