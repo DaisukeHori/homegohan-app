@@ -7,7 +7,9 @@ import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
-import { AI_IMAGE_REQUIRED_MESSAGE, AI_PHOTO_ANALYSIS_STARTED_MESSAGE, AI_PHOTO_MODE_MISMATCH_CODE } from '@/lib/ai/ai-api-messages';
+import { AI_IMAGE_REQUIRED_MESSAGE, AI_MENU_MEAL_ID_INVALID_MESSAGE, AI_PHOTO_ANALYSIS_STARTED_MESSAGE, AI_PHOTO_MODE_MISMATCH_CODE } from '@/lib/ai/ai-api-messages';
+import { isUuid } from '@/lib/http-params';
+import { markPhotoAnalysisRequest } from '../../../../../supabase/functions/_shared/meal-photo-cas';
 
 interface ImageInput {
   base64: string;
@@ -65,14 +67,20 @@ export async function POST(request: Request) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
     }
-    const { images, imageBase64, mimeType, mealType, mealId, prefetchedGeminiResult } = body as {
+    const { images, imageBase64, mimeType, mealType, mealId: requestedMealId, prefetchedGeminiResult } = body as {
       images?: ImageInput[];
       imageBase64?: string;
       mimeType?: string;
       mealType?: string;
-      mealId?: string;
+      mealId?: unknown;
       prefetchedGeminiResult?: PrefetchedGeminiResult;
     };
+    // mealId (planned_meals.id。uuid の列) は、UUID の形でなければ数える前に 400。DB に渡すと PostgREST が 22P02 で失敗し、
+    // 要求の印 (markPhotoAnalysisRequest の .eq('id', mealId)) で 500 になる (#2050)。無い (偽の値) ときは今までどおり同期の解析
+    if (requestedMealId && !isUuid(requestedMealId)) {
+      return NextResponse.json({ error: AI_MENU_MEAL_ID_INVALID_MESSAGE }, { status: 400 });
+    }
+    const mealId = isUuid(requestedMealId) ? requestedMealId : undefined;
     // mealId の経路 (Edge の背景の処理が planned_meals の veg_score を書く) では、画面から来た解析の結果を Edge へ渡さない。
     // 利用者が料理と材料の g を指定できると veg_score を好きな値にできる (#2025)。Edge の側でも使わない (二重に閉じる。cross/23 §7.15)
     const forwardedPrefetchedGeminiResult = mealId ? undefined : prefetchedGeminiResult;
@@ -96,11 +104,13 @@ export async function POST(request: Request) {
       : await consumeAiUsage(user.id, 'photo_analysis');
     if (!aiUsage.allowed) return aiDailyLimitResponse(aiUsage);
 
-    // #121: 古い解析の結果で新しい結果を上書きしない (CAS)。mealId がある非同期モードでは invokedAt (Edge を呼ぶ直前の時刻) を Edge Function に渡す。
+    // #121: 古い解析の結果で新しい結果を上書きしない (CAS)。mealId がある非同期モードでは、Edge を呼ぶ直前に行に要求の印を付け
+    // (updated_at を進める。利用者の client なので本人の行だけ)、進んだ updated_at を invokedAt として Edge Function に渡す。
     // Edge Function は解析の前に、planned_meals.updated_at が invokedAt 以前のときだけ行に印を付け (updated_at を進める)、
-    // 書くときは updated_at が印のままの行にだけ書く。後から送った解析の印・ほかの書き込みがあれば書かない
-    // (supabase/functions/_shared/meal-photo-cas.ts。挙動は tests/analyze-meal-photo-cas.test.ts)
-    const invokedAt = new Date().toISOString();
+    // 書くときは updated_at が印のままの行にだけ書く。後から送った要求の印・後から送った解析の印・ほかの書き込みがあれば書かない。
+    // 要求の印が行に残るので、先に送った解析の Edge が遅れて動いても、後に送った写真の結果が残る (#2050)
+    // (supabase/functions/_shared/meal-photo-cas.ts。挙動は tests/analyze-meal-photo-cas.test.ts・analyze-meal-photo-cas-request-order.test.ts)
+    const invokedAt = mealId ? await photoAnalysisInvokedAt(supabase, mealId) : undefined;
 
     const invokePromise = supabase.functions.invoke('analyze-meal-photo', {
       body: {
@@ -109,7 +119,7 @@ export async function POST(request: Request) {
         mealType,
         prefetchedGeminiResult: forwardedPrefetchedGeminiResult,
         userId: user.id,
-        invokedAt: mealId ? invokedAt : undefined,
+        invokedAt,
       },
       // #1177 Edge Function はユーザーの JWT で呼ばれたときに利用回数を記録する。この API ルートが記録済みなので、
       // 二重に記録しないよう、署名つきの印を付ける
@@ -179,4 +189,18 @@ export async function POST(request: Request) {
     }
     return internalError('POST /api/ai/analyze-meal-photo', error, { userId: user.id });
   }
+}
+
+/**
+ * mealId の経路で Edge へ送る invokedAt。行に要求の印を付け (markPhotoAnalysisRequest)、進んだ updated_at (DB の時刻) を返す。
+ * 本人の行が見つからない (他人の献立・消えた献立) ときは行を変えずに route の時計を返す (今までどおり。Edge の背景の処理が
+ * 本人の行の確認で止める)。印を付ける update が失敗したら投げる (route の catch が 500 にする。順序を守れない解析を始めない)
+ */
+async function photoAnalysisInvokedAt(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  mealId: string,
+): Promise<string> {
+  const mark = await markPhotoAnalysisRequest(supabase, { mealId });
+  if (mark.status === 'marked') return mark.requestedAt;
+  return new Date().toISOString();
 }
