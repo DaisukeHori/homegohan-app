@@ -22,7 +22,7 @@ import { requireAiConsentForUser } from '../_shared/ai-consent-guard.ts'
  */
 const PLANNED_MEAL_NOT_FOUND_CODE = 'PLANNED_MEAL_NOT_FOUND'
 
-/** 400: 本文の invokedAt (Next.js の route が Edge を呼ぶ直前の時刻) が日時として読めない */
+/** 400: 本文の invokedAt (Next.js の route が Edge を呼ぶ直前に付けた要求の印の時刻) が日時として読めない */
 const INVALID_INVOKED_AT_MESSAGE = 'invokedAt must be an ISO 8601 date-time'
 
 console.log("Analyze Meal Photo Function v2 loaded")
@@ -86,7 +86,8 @@ Deno.serve(async (req) => {
       })
     }
 
-    // mealId の経路の invokedAt (#121)。書き込みの順序の守り (_shared/meal-photo-cas.ts) に使う。読めなければ数える前に 400
+    // mealId の経路の invokedAt (#121。route が付けた要求の印 = DB の updated_at。#2050)。書き込みの順序の守り (_shared/meal-photo-cas.ts) に使う。
+    // マイクロ秒まで読む。読めなければ数える前に 400
     const parsedInvokedAt = parseInvokedAt(mealId ? invokedAt : undefined)
     if (!parsedInvokedAt.ok) {
       return new Response(JSON.stringify({ error: INVALID_INVOKED_AT_MESSAGE }), {
@@ -188,7 +189,7 @@ async function analyzeMealPhotoBackgroundTask({
   mealType?: string;
   userId: string;
   authHeader: string;
-  /** Next.js の route が Edge を呼ぶ直前の時刻 (ISO 8601)。利用者の JWT で直接呼んだときは null */
+  /** Next.js の route が Edge を呼ぶ直前に付けた要求の印 (DB の updated_at。ISO 8601・マイクロ秒まで。#2050)。利用者の JWT で直接呼んだときは null */
   invokedAt: string | null;
 }) {
   console.log(`Starting photo analysis v2 for mealId: ${mealId}, user: ${userId}`)
@@ -220,7 +221,8 @@ async function analyzeMealPhotoBackgroundTask({
     if (!owned) throw new Error(PLANNED_MEAL_NOT_FOUND_CODE)
 
     // 書き込みの順序の守り (#121 の CAS。_shared/meal-photo-cas.ts)。解析の前に行に印を付ける (updated_at を進める)。
-    // 後から送った解析の印がこの印を消すので、終わる順番によらず、最後に送った写真の結果だけが残る。
+    // invokedAt は Next.js の route が Edge を呼ぶ直前に付けた要求の印 (DB の updated_at)。後から送った要求の印・後から送った解析の印が
+    // この印を消す (または付けさせない) ので、終わる順番・Edge の動き出す順番によらず、最後に送った写真の結果だけが残る (#2050)。
     // invokedAt のあとに行が書かれていたら、この要求は古いので解析せずに終える
     const claim = await claimPhotoAnalysis(queueDb, { mealId, invokedAt })
     if (claim.status === 'superseded') {

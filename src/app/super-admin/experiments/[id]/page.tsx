@@ -47,6 +47,9 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
   const [results, setResults] = useState<ExperimentResults | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // 状態の変更 (開始・完了・中止) の応答を待っているか。待つあいだは状態のボタンを止める
+  // (二度押しで 2 本目を送ると、変えられているのに断られて失敗の文が出るため。#2050)
+  const [isChangingStatus, setIsChangingStatus] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -78,7 +81,9 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
   }, [params.id]);
 
   const handleStatusChange = async (status: string) => {
+    if (isChangingStatus) return;
     if (!confirm(`ステータスを "${status}" に変更しますか？`)) return;
+    setIsChangingStatus(true);
     try {
       const res = await fetch(`/api/super-admin/experiments/${params.id}`, {
         method: "PATCH",
@@ -93,6 +98,8 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
       setExperiment(data);
     } catch (err) {
       alert(err instanceof Error ? err.message : "更新に失敗しました");
+    } finally {
+      setIsChangingStatus(false);
     }
   };
 
@@ -139,7 +146,8 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
           {experiment.status === "draft" && (
             <button
               onClick={() => handleStatusChange("running")}
-              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+              disabled={isChangingStatus}
+              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
             >
               実験開始
             </button>
@@ -148,13 +156,15 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
             <>
               <button
                 onClick={() => handleStatusChange("completed")}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                disabled={isChangingStatus}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
               >
                 完了
               </button>
               <button
                 onClick={() => handleStatusChange("cancelled")}
-                className="bg-red-700 hover:bg-red-800 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                disabled={isChangingStatus}
+                className="bg-red-700 hover:bg-red-800 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
               >
                 中止
               </button>

@@ -582,7 +582,9 @@ export default function MealCaptureModal() {
         setTotalCarbs(data.totalCarbs || 0);
         setTotalFat(data.totalFat || 0);
         setOverallScore(data.overallScore || 75);
-        setVegScore(data.vegScore || 50);
+        // 野菜スコアは 0〜100 で、野菜が無ければ 0 (#2050)。`|| 50` だと 0 が 50 に変わるので、数のときだけそのまま使い、
+        // 数が無いときは画面の既定 (useState の 0) にする。前の解析の値は残さない
+        setVegScore(typeof data.vegScore === 'number' ? data.vegScore : 0);
         setPraiseComment(data.praiseComment || '');
         setNutritionTip(data.nutritionTip || '');
         setNutritionalAdvice(data.nutritionalAdvice || '');
@@ -1525,7 +1527,7 @@ export default function MealCaptureModal() {
                 { label: 'タンパク質', value: totalProtein, unit: 'g', color: colors.blue },
                 { label: '炭水化物', value: totalCarbs, unit: 'g', color: colors.warning },
                 { label: '脂質', value: totalFat, unit: 'g', color: colors.purple },
-                { label: '野菜', value: vegScore, unit: '点', color: colors.success },
+                { label: '野菜', value: vegScore, unit: '点', color: colors.success, testId: 'meal-result-veg-score' },
               ].map((n, i) => (
                 <div key={i} className="p-2 rounded-xl text-center" style={{ background: colors.bg }}>
                   <p style={{ fontSize: 9, color: colors.textMuted, margin: '0 0 2px 0' }}>{n.label}</p>

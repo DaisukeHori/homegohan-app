@@ -11,6 +11,10 @@ import {
   formatParticipantCount,
   isOrgChallengeType,
 } from "@/lib/org-challenges";
+import { operationFailureMessage, operationNetworkFailureMessage } from "@/lib/admin/api-error-message";
+
+/** チャレンジの一覧を読み込めなかったときの文の頭 (後ろに理由を添える)。空の一覧 (「チャレンジがありません」) と見分けるために出す (#2050) */
+const LOAD_FAILURE_SUMMARY = "チャレンジの一覧を読み込めませんでした";
 
 // #1132: 管理者に見せるのは集計 (参加者数と平均) だけ。参加者一人ひとりの進み具合・順位は、誰にも見せない (参加者どうしを除く)。
 // 少人数から個人が分かってしまわないよう、参加した人 (延べ) が最小人数に満たない間は参加者数を出さない。
@@ -125,16 +129,26 @@ export default function OrgChallengesPage() {
   const [formData, setFormData] = useState(INITIAL_FORM);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // 一覧を読み込めなかったときの文。あるあいだは一覧と「チャレンジがありません」の代わりにこの文と「再試行」を出す (#2050)
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // 状態の変更 (開始・終了) の応答を待っているチャレンジの id。待つあいだは状態のボタンを止める
+  // (二度押しで 2 本目を送ると、変えられているのに断られて失敗の文が出るため。#2050)
+  const [changingStatusId, setChangingStatusId] = useState<string | null>(null);
 
   const fetchChallenges = useCallback(async () => {
     try {
       const res = await fetch("/api/org/challenges");
-      if (res.ok) {
-        const data = await res.json();
-        setChallenges(data.challenges);
+      if (!res.ok) {
+        const body: unknown = await res.json().catch(() => null);
+        setLoadError(operationFailureMessage(LOAD_FAILURE_SUMMARY, res.status, body));
+        return;
       }
+      const data = await res.json();
+      setChallenges(data.challenges);
+      setLoadError(null);
     } catch (error) {
       console.error("Failed to fetch challenges:", error);
+      setLoadError(operationNetworkFailureMessage(LOAD_FAILURE_SUMMARY));
     } finally {
       setLoading(false);
     }
@@ -181,6 +195,8 @@ export default function OrgChallengesPage() {
   };
 
   const handleStatusChange = async (challengeId: string, newStatus: string) => {
+    if (changingStatusId !== null) return;
+    setChangingStatusId(challengeId);
     setErrorMessage(null);
     try {
       const res = await fetch("/api/org/challenges", {
@@ -190,14 +206,23 @@ export default function OrgChallengesPage() {
       });
 
       if (res.ok) {
-        fetchChallenges();
+        // 読み直し (ボタンが次の状態のものに変わる) まで待ってからボタンを戻す
+        await fetchChallenges();
       } else {
         setErrorMessage(await readErrorMessage(res, "チャレンジの状態を変更できませんでした"));
       }
     } catch (error) {
       console.error("Failed to update challenge:", error);
       setErrorMessage("チャレンジの状態を変更できませんでした。通信状況を確認して、もう一度お試しください");
+    } finally {
+      setChangingStatusId(null);
     }
+  };
+
+  // 一覧の読み込みをやり直す (読み込めなかったときの「再試行」)
+  const retryLoad = () => {
+    setLoading(true);
+    void fetchChallenges();
   };
 
   /** 種類を選んだら、単位と目標値の初期値をその種類に合わせる */
@@ -361,6 +386,22 @@ export default function OrgChallengesPage() {
         )}
       </AnimatePresence>
 
+      {loadError ? (
+        <div
+          role="alert"
+          data-testid="challenge-load-error"
+          className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center justify-between gap-3"
+        >
+          <span>{loadError}</span>
+          <button
+            type="button"
+            onClick={retryLoad}
+            className="shrink-0 px-3 py-1.5 bg-white border border-red-300 rounded-lg text-red-700 hover:bg-red-100 transition-colors"
+          >
+            再試行
+          </button>
+        </div>
+      ) : (
       <div className="space-y-4">
         {challenges.map((challenge) => (
           <motion.div
@@ -405,7 +446,8 @@ export default function OrgChallengesPage() {
                 {challenge.status === "draft" && (
                   <button
                     onClick={() => handleStatusChange(challenge.id, "active")}
-                    className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors"
+                    disabled={changingStatusId !== null}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors disabled:opacity-50"
                   >
                     開始
                   </button>
@@ -413,7 +455,8 @@ export default function OrgChallengesPage() {
                 {challenge.status === "active" && (
                   <button
                     onClick={() => handleStatusChange(challenge.id, "completed")}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                    disabled={changingStatusId !== null}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
                   >
                     終了
                   </button>
@@ -428,6 +471,7 @@ export default function OrgChallengesPage() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

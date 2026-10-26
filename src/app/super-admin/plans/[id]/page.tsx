@@ -218,6 +218,9 @@ export default function PlanDetailPage() {
   // 画面の上に出す、読み直しについての文 (#1917)
   const [reloadNotice, setReloadNotice] = useState<ReloadNotice | null>(null);
   const [isReloading, setIsReloading] = useState(false);
+  // 状態の変更 (公開・非公開・廃止・廃止の取り消し) の応答と、そのあとの読み直しを待っているか。
+  // 待つあいだは状態のボタンを止める (二度押しで 2 本目を送ると、変えられているのに断られて失敗の文が出るため。#2050)
+  const [isChangingStatus, setIsChangingStatus] = useState(false);
   // 一度プランを表示したか (表示したあとの読み直しは、画面を外さずに行う。#1917)
   const hasLoadedRef = useRef(false);
   // 入力欄のいまの値 (描画を待たずに読むための写し。入力欄は setEdits でだけ変える)
@@ -423,11 +426,13 @@ export default function PlanDetailPage() {
   };
 
   const handleStatusChange = async (newStatus: 'public' | 'private') => {
+    if (isChangingStatus) return;
     const confirm = window.confirm(
       newStatus === 'public' ? 'このプランを公開しますか？' : 'このプランを非公開にしますか？'
     );
     if (!confirm) return;
 
+    setIsChangingStatus(true);
     setReloadNotice(null);
     try {
       const res = await fetch(`/api/super-admin/plans/${planId}`, {
@@ -439,11 +444,14 @@ export default function PlanDetailPage() {
       await handleStatusResponse(res, 'ステータス変更に失敗しました');
     } catch {
       alert('ステータス変更に失敗しました (ネットワークエラー)');
+    } finally {
+      setIsChangingStatus(false);
     }
   };
 
   // #1041 修正: public/private --> deprecated への廃止移行を許可 (以前は恒久ロックされていた)
   const handleDeprecate = async () => {
+    if (isChangingStatus) return;
     const endsAtInput = window.prompt('廃止予定日 (YYYY-MM-DD) を入力してください');
     if (!endsAtInput) return;
     const endsAtDate = new Date(`${endsAtInput}T00:00:00.000Z`);
@@ -455,6 +463,7 @@ export default function PlanDetailPage() {
     const orgRowNote = plan && !countsOrganizationsFor(plan) ? `\n\n${ORG_SUBSCRIPTION_PLAN_ROW_NOTE}` : '';
     if (!window.confirm(`このプランを ${endsAtInput} 廃止予定で廃止しますか？${orgRowNote}`)) return;
 
+    setIsChangingStatus(true);
     setReloadNotice(null);
     try {
       const res = await fetch(`/api/super-admin/plans/${planId}`, {
@@ -465,12 +474,16 @@ export default function PlanDetailPage() {
       await handleStatusResponse(res, '廃止処理に失敗しました');
     } catch {
       alert('廃止処理に失敗しました (ネットワークエラー)');
+    } finally {
+      setIsChangingStatus(false);
     }
   };
 
   // deprecated --> private への緊急ロールバック (public には戻さない)
   const handleUndeprecate = async () => {
+    if (isChangingStatus) return;
     if (!window.confirm('廃止を取り消し、非公開状態に戻しますか？')) return;
+    setIsChangingStatus(true);
     setReloadNotice(null);
     try {
       const res = await fetch(`/api/super-admin/plans/${planId}`, {
@@ -481,6 +494,8 @@ export default function PlanDetailPage() {
       await handleStatusResponse(res, '廃止取り消しに失敗しました');
     } catch {
       alert('廃止取り消しに失敗しました (ネットワークエラー)');
+    } finally {
+      setIsChangingStatus(false);
     }
   };
 
@@ -519,7 +534,8 @@ export default function PlanDetailPage() {
           {plan.status === 'draft' && (
             <button
               onClick={() => handleStatusChange('public')}
-              className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors"
+              disabled={isChangingStatus}
+              className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors disabled:opacity-50"
             >
               公開する
             </button>
@@ -527,7 +543,8 @@ export default function PlanDetailPage() {
           {plan.status === 'public' && (
             <button
               onClick={() => handleStatusChange('private')}
-              className="px-3 py-1.5 bg-yellow-500 text-white rounded-lg text-xs font-medium hover:bg-yellow-600 transition-colors"
+              disabled={isChangingStatus}
+              className="px-3 py-1.5 bg-yellow-500 text-white rounded-lg text-xs font-medium hover:bg-yellow-600 transition-colors disabled:opacity-50"
             >
               非公開にする
             </button>
@@ -535,7 +552,8 @@ export default function PlanDetailPage() {
           {plan.status === 'private' && (
             <button
               onClick={() => handleStatusChange('public')}
-              className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors"
+              disabled={isChangingStatus}
+              className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors disabled:opacity-50"
             >
               再公開する
             </button>
@@ -551,7 +569,8 @@ export default function PlanDetailPage() {
           {(plan.status === 'public' || plan.status === 'private') && (
             <button
               onClick={handleDeprecate}
-              className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-xs font-medium hover:bg-red-600 transition-colors"
+              disabled={isChangingStatus}
+              className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-xs font-medium hover:bg-red-600 transition-colors disabled:opacity-50"
             >
               廃止する
             </button>
@@ -559,7 +578,8 @@ export default function PlanDetailPage() {
           {plan.status === 'deprecated' && (
             <button
               onClick={handleUndeprecate}
-              className="px-3 py-1.5 bg-slate-500 text-white rounded-lg text-xs font-medium hover:bg-slate-600 transition-colors"
+              disabled={isChangingStatus}
+              className="px-3 py-1.5 bg-slate-500 text-white rounded-lg text-xs font-medium hover:bg-slate-600 transition-colors disabled:opacity-50"
             >
               廃止を取り消す
             </button>

@@ -7,6 +7,12 @@ import Link from "next/link";
 import { membershipErrorMessageOfBody } from "@/lib/errors/membership-errors";
 import { normalizeProfileName } from "@/lib/profile-name";
 
+/**
+ * メンバーの一覧を読み込めなかったときの文。空の一覧 (「メンバーがいません」) と見分けるために出す (#2050)。
+ * 読み込みは Supabase の問い合わせで、失敗の理由 (英語の内部の文) は画面に出さない
+ */
+const MEMBERS_LOAD_ERROR = 'メンバーの一覧を読み込めませんでした。しばらくしてから、もう一度お試しください。';
+
 interface Member {
   id: string;
   nickname: string | null;
@@ -27,6 +33,8 @@ export default function MembersPage() {
   const [loading, setLoading] = useState(true);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
+  // 一覧を読み込めなかったときの文。あるあいだは一覧と「メンバーがいません」の代わりにこの文と「再試行」を出す (#2050)
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const fetchData = async () => {
     setLoading(true);
@@ -34,26 +42,40 @@ export default function MembersPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
         .select('org_role, organization_id')
         .eq('id', user.id)
         .single();
 
+      if (profileError) {
+        // 自分のプロフィールを読めなかった (組織に属していないのとは別。空の一覧と見せない)
+        setLoadError(MEMBERS_LOAD_ERROR);
+        return;
+      }
       if (!profile?.organization_id) {
+        setLoadError(null);
         setLoading(false);
         return;
       }
 
       setCurrentUser({ id: user.id, org_role: profile.org_role ?? 'member' });
 
-      const { data: membersData } = await supabase
+      const { data: membersData, error: membersError } = await supabase
         .from('user_profiles')
         .select('id, nickname, org_role, joined_org_at')
         .eq('organization_id', profile.organization_id)
         .order('joined_org_at', { ascending: true });
 
+      if (membersError) {
+        setLoadError(MEMBERS_LOAD_ERROR);
+        return;
+      }
       setMembers(membersData ?? []);
+      setLoadError(null);
+    } catch (error) {
+      console.error('Failed to fetch members:', error);
+      setLoadError(MEMBERS_LOAD_ERROR);
     } finally {
       setLoading(false);
     }
@@ -128,7 +150,8 @@ export default function MembersPage() {
     <div className="p-8 space-y-8">
       <div className="flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">組織メンバー ({members.length} 名)</h1>
+          {/* 読み込めなかったときは人数を出さない (「0 名」と見せない) */}
+          <h1 className="text-2xl font-bold text-gray-900">{loadError ? '組織メンバー' : `組織メンバー (${members.length} 名)`}</h1>
           <p className="text-gray-500 text-sm">メンバーの管理・除名・脱退</p>
         </div>
         <div className="flex gap-3">
@@ -169,7 +192,26 @@ export default function MembersPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
-            {members.length === 0 ? (
+            {loadError ? (
+              <tr>
+                <td colSpan={4} className="p-8">
+                  <div
+                    role="alert"
+                    data-testid="member-load-error"
+                    className="flex items-center justify-between gap-3 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm"
+                  >
+                    <span>{loadError}</span>
+                    <button
+                      type="button"
+                      onClick={() => void fetchData()}
+                      className="shrink-0 px-3 py-1.5 bg-white border border-red-300 rounded-lg text-red-700 hover:bg-red-100 transition-colors"
+                    >
+                      再試行
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            ) : members.length === 0 ? (
               <tr>
                 <td colSpan={4} className="p-8 text-center text-gray-400">メンバーがいません</td>
               </tr>

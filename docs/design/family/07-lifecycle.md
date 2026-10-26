@@ -85,11 +85,11 @@ async function executeWithLifecycleLock<T>(
   operation: (supabase: SupabaseClient) => Promise<T>,
   supabase: SupabaseClient
 ): Promise<T> {
-  // 1. advisory lock 取得 (cross/02-rls-patterns.md §6.2.1 のヘルパー使用)
-  // ロックキー: 'family-group:{UUID}' 形式に統一
-  await supabase.rpc('acquire_family_group_lock', {
-    family_group_id: groupId,
-  });
+  // 1. advisory lock (ロックキー: 'family-group:{UUID}' 形式に統一) は、ここ (route) で RPC を呼んで取らない。
+  //    ロックだけを取る RPC は、その RPC の取引の終わりで外れ、下の 2・3 の間は保たれない (cross/02-rls-patterns.md §6.2.1・§6.3)。
+  //    ロックは、2・3 の DB の仕事をする SECURITY DEFINER の関数の中で、仕事と同じ取引で取る。
+  //    下の 2・3 は、その関数の中で行う処理の順を表す
+  //    (ロックだけを取る関数 acquire_family_group_lock は本番に無い。billing/01 F13)
 
   // 2. 楽観的ロック検証
   const { data: group } = await supabase
@@ -117,9 +117,9 @@ sequenceDiagram
   participant B as 退職者 (操作B: dissolve)
   participant DB as Supabase DB
 
-  A->>DB: acquire_family_group_lock(group_id)
+  A->>DB: migrate の関数を呼ぶ (関数の中で family-group の鍵の pg_advisory_xact_lock を取る)
   Note over DB: ロック取得: A
-  B->>DB: acquire_family_group_lock(group_id)
+  B->>DB: dissolve の関数を呼ぶ (関数の中で同じ鍵の pg_advisory_xact_lock を取る)
   Note over DB: B は待機中
 
   A->>DB: 楽観的ロック検証 OK
@@ -246,7 +246,7 @@ sequenceDiagram
 
   API->>API: 楽観的ロック検証
   API->>API: パスワード再認証
-  API->>DB: acquire_family_group_lock(group_id)
+  Note over API,DB: family-group の鍵の pg_advisory_xact_lock は、ロックで守る DB の仕事をする SECURITY DEFINER の関数の中で、仕事と同じ取引で取る (ロックだけを取る RPC では取引の終わりで外れる。cross/02 §6.3)
 
   alt split_members に child が含まれる
     API->>Push: enqueue_push_notification(split_members の各人) (同意要求)
@@ -401,7 +401,7 @@ sequenceDiagram
 
   User->>FamilyAPI: POST /groups/{id}/migrate-to-personal
   Note over FamilyAPI: If-Unmodified-Since ヘッダ必須
-  FamilyAPI->>DB: acquire_family_group_lock(group_id)
+  Note over FamilyAPI,DB: family-group の鍵の pg_advisory_xact_lock は、ロックで守る DB の仕事をする SECURITY DEFINER の関数の中で、仕事と同じ取引で取る (ロックだけを取る RPC では取引の終わりで外れる。cross/02 §6.3)
   FamilyAPI->>DB: 楽観的ロック検証
   FamilyAPI->>Stripe: サブスクリプション作成
   Stripe-->>FamilyAPI: subscription_id
