@@ -582,7 +582,9 @@ export default function MealCaptureModal() {
         setTotalCarbs(data.totalCarbs || 0);
         setTotalFat(data.totalFat || 0);
         setOverallScore(data.overallScore || 75);
-        setVegScore(data.vegScore || 50);
+        // 野菜スコアは 0〜100 で、野菜が無ければ 0 (#2050)。`|| 50` だと 0 が 50 に変わるので、数のときだけそのまま使い、
+        // 数が無いときは画面の既定 (useState の 0) にする。前の解析の値は残さない
+        setVegScore(typeof data.vegScore === 'number' ? data.vegScore : 0);
         setPraiseComment(data.praiseComment || '');
         setNutritionTip(data.nutritionTip || '');
         setNutritionalAdvice(data.nutritionalAdvice || '');
