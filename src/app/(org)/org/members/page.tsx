@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
 import { membershipErrorMessageOfBody } from "@/lib/errors/membership-errors";
 import { normalizeProfileName } from "@/lib/profile-name";
+import { readOwnMembershipAfterNetworkFailure, withMembershipStateNote } from "@/lib/membership/leave-state";
 
 /**
  * メンバーの一覧を読み込めなかったときの文。空の一覧 (「メンバーがいません」) と見分けるために出す (#2050)。
@@ -16,7 +17,8 @@ const MEMBERS_LOAD_ERROR = 'メンバーの一覧を読み込めませんでし�
 /**
  * 除名・脱退の通信そのものが失敗した (fetch が reject した: オフライン・接続が切れたなど) ときに「除名失敗: 」「脱退失敗: 」の後ろに出す理由 (#2059)。
  * 応答が届かないので、除名・脱退できたかどうかは応答からは分からない。黙っていると、できたかどうかが分からないまま終わるため。
- * 除名は、サーバーが済ませてから応答が切れたこともあるので、この文を出したあとに一覧を読み直して今の状態を見せる (#2064 R5)
+ * 除名は、サーバーが済ませてから応答が切れたこともあるので、この文を出したあとに一覧を読み直して今の状態を見せる (#2064 R5)。
+ * 脱退も同じ理由で、この文を出す前に自分のプロフィールを読み直し、組織を抜けていれば成功のときと同じくホームへ移る (#2064)
  */
 const MEMBERSHIP_NETWORK_FAILURE_REASON = '通信エラーが発生しました。通信状況を確認して、もう一度お試しください';
 
@@ -146,7 +148,17 @@ export default function MembersPage() {
     } catch (error) {
       // 通信が失敗した (#2059。catch が無いと失敗の文が出ず、onClick の promise が reject のまま終わっていた)
       console.error('Failed to leave organization:', error);
-      alert(`脱退失敗: ${MEMBERSHIP_NETWORK_FAILURE_REASON}`);
+      // サーバーが脱退を済ませてから応答が切れたこともあるので、自分のプロフィールを読み直して確かめる (#2064。除名の読み直しと同じ型。
+      // 確かめないと、画面は組織のまま残り、もう一度押すと「脱退失敗」が出ていた)。
+      // 読み直しの応答を待つあいだも書き込みの待ち (writeInFlightRef / leaving) を戻さない (ボタンを止めたままにする)
+      const membership = await readOwnMembershipAfterNetworkFailure(supabase, 'org');
+      if (membership === 'left') {
+        // 組織を抜けている: 成功のときと同じ遷移
+        router.push('/home');
+        return;
+      }
+      // 抜けていない: これまでどおり失敗の文。確かめられなかったときは「状態を確かめられませんでした」を添える
+      alert(withMembershipStateNote(`脱退失敗: ${MEMBERSHIP_NETWORK_FAILURE_REASON}`, membership));
     } finally {
       writeInFlightRef.current = false;
       setLeaving(false);

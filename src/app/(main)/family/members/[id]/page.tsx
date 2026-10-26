@@ -15,6 +15,10 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
 import { membershipErrorMessageOfBody } from '@/lib/errors/membership-errors';
+import { withMembershipStateNote, type MembershipStateAfterNetworkFailure } from '@/lib/membership/leave-state';
+
+/** 除名・共有設定の通信そのものが失敗した (fetch が reject した) ときの文 */
+const NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
 
 interface FamilyMember {
   id: string;
@@ -166,7 +170,7 @@ export default function FamilyMemberDetailPage() {
       if (field === 'share_meals') setShareMeals(!value);
       if (field === 'share_health') setShareHealth(!value);
       if (field === 'share_menu') setShareMenu(!value);
-      alert('通信エラーが発生しました');
+      alert(NETWORK_FAILURE_MESSAGE);
     } finally {
       setSavingShare(false);
     }
@@ -191,9 +195,44 @@ export default function FamilyMemberDetailPage() {
       }
       router.replace('/family/members');
     } catch {
-      alert('通信エラーが発生しました');
+      // サーバーが除名を済ませてから応答が切れたこともあるので、そのメンバーの行を読み直して確かめる (#2064。
+      // 家族のメンバーの画面の除名と同じ型。確かめないと、除名したメンバーの詳細が残り、もう一度押すと失敗の文が出ていた)。
+      // 読み直しの応答を待つあいだもボタンを止めたままにする (actionLoading を戻さない)
+      const state = await readMemberStateAfterNetworkFailure(member.id, familyId);
+      if (state === 'left') {
+        // 家族から外れている: 成功のときと同じ遷移
+        router.replace('/family/members');
+        return;
+      }
+      // 外れていない: これまでどおり通信エラーの文。確かめられなかったときは「状態を確かめられませんでした」を添える
+      alert(withMembershipStateNote(NETWORK_FAILURE_MESSAGE, state));
     } finally {
       setActionLoading(false);
+    }
+  };
+
+  /**
+   * 除名の通信が失敗したあとに、そのメンバーが今も家族にいるか (status が active の行があるか) を読み直す。
+   * remove_family_member は family_members.status を 'removed' にするので、active の行が無ければ外れている。
+   * 例外は投げない (問い合わせの失敗・例外は unknown)
+   */
+  const readMemberStateAfterNetworkFailure = async (
+    targetMemberId: string,
+    targetFamilyId: string,
+  ): Promise<MembershipStateAfterNetworkFailure> => {
+    try {
+      const { data: activeRow, error: activeRowError } = await supabase
+        .from('family_members')
+        .select('id')
+        .eq('id', targetMemberId)
+        .eq('family_id', targetFamilyId)
+        .eq('status', 'active')
+        .maybeSingle();
+      if (activeRowError) return 'unknown';
+      return activeRow ? 'still-member' : 'left';
+    } catch (readFailure) {
+      console.error('[family/members/[id]] failed to confirm removal after network failure:', readFailure);
+      return 'unknown';
     }
   };
 
