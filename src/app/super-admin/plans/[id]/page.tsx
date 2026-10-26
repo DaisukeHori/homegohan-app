@@ -11,6 +11,9 @@
  * まだ送っていない入力を黙って消さない。保存のあとは、送った欄の比べる元を送った値にしてから読み直す)。
  * ただし読み直したプランが編集できない状態 (廃止) なら、どの読み直しでも書きかけを残さず、全部を読み直した値にする
  * (廃止のあとは入力欄が編集できず保存のボタンも出ないので、残すと送る道の無い値を、廃止済みのプランの値として見せ続ける)。
+ * 保存と状態の変更 (公開・非公開・再公開・廃止・廃止の取り消し) は、どちらかの応答とそのあとの読み直しを待つあいだ、
+ * もう一方 (と別の状態の変更) を送らない (#2059。route は読んだ status を条件に書くので、重ねると自分の操作どうしで
+ * 後に着いた方が 409 CONFLICT_STALE_DATA になり、「別の運営が先に変えた」旨の文が出てしまう)。
  * 一度表示したあとの読み直し (保存・状態の変更のあと・409 のあと) は画面を外さずに行い、失敗しても画面と入力欄を残して、
  * 文と「再試行」を出す (読み直しの失敗で画面ごとエラーに置き換えない。#1917)。読み直しが 404 / 403 で断られたときは、
  * 読み込み直しても変わらないので、その理由の文を出し、「再試行」は出さない。
@@ -221,6 +224,12 @@ export default function PlanDetailPage() {
   // 状態の変更 (公開・非公開・廃止・廃止の取り消し) の応答と、そのあとの読み直しを待っているか。
   // 待つあいだは状態のボタンを止める (二度押しで 2 本目を送ると、変えられているのに断られて失敗の文が出るため。#2050)
   const [isChangingStatus, setIsChangingStatus] = useState(false);
+  // 保存か状態の変更のどちらかの応答 (とそのあとの読み直し) を待っているか (#2059)。route は直前に読んだ status を条件に書くので、
+  // 2 つを重ねると後に着いた方が 409 CONFLICT_STALE_DATA で断られ、画面は自分の操作どうしの競合を「別の運営が先にこのプランを
+  // 変えていました」と出してしまう。待つあいだは保存と状態のボタンを両方止め、押されても送らない。
+  // ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り (クーポン・機能パッケージの詳細と同じ形。#2053)
+  const writeInFlightRef = useRef(false);
+  const isWriting = isSaving || isChangingStatus;
   // 一度プランを表示したか (表示したあとの読み直しは、画面を外さずに行う。#1917)
   const hasLoadedRef = useRef(false);
   // 入力欄のいまの値 (描画を待たずに読むための写し。入力欄は setEdits でだけ変える)
@@ -372,6 +381,8 @@ export default function PlanDetailPage() {
   };
 
   const handleSave = async () => {
+    // 状態の変更の応答 (とそのあとの読み直し) を待つあいだは送らない (#2059。writeInFlightRef)
+    if (writeInFlightRef.current) return;
     setSaveError('');
     setSaveSuccess(false);
     setSaveInfo('');
@@ -383,6 +394,7 @@ export default function PlanDetailPage() {
       setSaveInfo(NO_PLAN_CHANGES_MESSAGE);
       return;
     }
+    writeInFlightRef.current = true;
     setIsSaving(true);
     setReloadNotice(null);
     try {
@@ -421,17 +433,20 @@ export default function PlanDetailPage() {
     } catch {
       setSaveError('ネットワークエラー');
     } finally {
+      writeInFlightRef.current = false;
       setIsSaving(false);
     }
   };
 
   const handleStatusChange = async (newStatus: 'public' | 'private') => {
-    if (isChangingStatus) return;
+    // 保存・ほかの状態の変更の応答 (とそのあとの読み直し) を待つあいだは送らない (#2059。writeInFlightRef)
+    if (writeInFlightRef.current) return;
     const confirm = window.confirm(
       newStatus === 'public' ? 'このプランを公開しますか？' : 'このプランを非公開にしますか？'
     );
     if (!confirm) return;
 
+    writeInFlightRef.current = true;
     setIsChangingStatus(true);
     setReloadNotice(null);
     try {
@@ -445,13 +460,15 @@ export default function PlanDetailPage() {
     } catch {
       alert('ステータス変更に失敗しました (ネットワークエラー)');
     } finally {
+      writeInFlightRef.current = false;
       setIsChangingStatus(false);
     }
   };
 
   // #1041 修正: public/private --> deprecated への廃止移行を許可 (以前は恒久ロックされていた)
   const handleDeprecate = async () => {
-    if (isChangingStatus) return;
+    // 保存・ほかの状態の変更の応答 (とそのあとの読み直し) を待つあいだは送らない (#2059。writeInFlightRef)
+    if (writeInFlightRef.current) return;
     const endsAtInput = window.prompt('廃止予定日 (YYYY-MM-DD) を入力してください');
     if (!endsAtInput) return;
     const endsAtDate = new Date(`${endsAtInput}T00:00:00.000Z`);
@@ -463,6 +480,7 @@ export default function PlanDetailPage() {
     const orgRowNote = plan && !countsOrganizationsFor(plan) ? `\n\n${ORG_SUBSCRIPTION_PLAN_ROW_NOTE}` : '';
     if (!window.confirm(`このプランを ${endsAtInput} 廃止予定で廃止しますか？${orgRowNote}`)) return;
 
+    writeInFlightRef.current = true;
     setIsChangingStatus(true);
     setReloadNotice(null);
     try {
@@ -475,14 +493,17 @@ export default function PlanDetailPage() {
     } catch {
       alert('廃止処理に失敗しました (ネットワークエラー)');
     } finally {
+      writeInFlightRef.current = false;
       setIsChangingStatus(false);
     }
   };
 
   // deprecated --> private への緊急ロールバック (public には戻さない)
   const handleUndeprecate = async () => {
-    if (isChangingStatus) return;
+    // 保存・ほかの状態の変更の応答 (とそのあとの読み直し) を待つあいだは送らない (#2059。writeInFlightRef)
+    if (writeInFlightRef.current) return;
     if (!window.confirm('廃止を取り消し、非公開状態に戻しますか？')) return;
+    writeInFlightRef.current = true;
     setIsChangingStatus(true);
     setReloadNotice(null);
     try {
@@ -495,6 +516,7 @@ export default function PlanDetailPage() {
     } catch {
       alert('廃止取り消しに失敗しました (ネットワークエラー)');
     } finally {
+      writeInFlightRef.current = false;
       setIsChangingStatus(false);
     }
   };
@@ -534,7 +556,7 @@ export default function PlanDetailPage() {
           {plan.status === 'draft' && (
             <button
               onClick={() => handleStatusChange('public')}
-              disabled={isChangingStatus}
+              disabled={isWriting}
               className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors disabled:opacity-50"
             >
               公開する
@@ -543,7 +565,7 @@ export default function PlanDetailPage() {
           {plan.status === 'public' && (
             <button
               onClick={() => handleStatusChange('private')}
-              disabled={isChangingStatus}
+              disabled={isWriting}
               className="px-3 py-1.5 bg-yellow-500 text-white rounded-lg text-xs font-medium hover:bg-yellow-600 transition-colors disabled:opacity-50"
             >
               非公開にする
@@ -552,7 +574,7 @@ export default function PlanDetailPage() {
           {plan.status === 'private' && (
             <button
               onClick={() => handleStatusChange('public')}
-              disabled={isChangingStatus}
+              disabled={isWriting}
               className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors disabled:opacity-50"
             >
               再公開する
@@ -569,7 +591,7 @@ export default function PlanDetailPage() {
           {(plan.status === 'public' || plan.status === 'private') && (
             <button
               onClick={handleDeprecate}
-              disabled={isChangingStatus}
+              disabled={isWriting}
               className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-xs font-medium hover:bg-red-600 transition-colors disabled:opacity-50"
             >
               廃止する
@@ -578,7 +600,7 @@ export default function PlanDetailPage() {
           {plan.status === 'deprecated' && (
             <button
               onClick={handleUndeprecate}
-              disabled={isChangingStatus}
+              disabled={isWriting}
               className="px-3 py-1.5 bg-slate-500 text-white rounded-lg text-xs font-medium hover:bg-slate-600 transition-colors disabled:opacity-50"
             >
               廃止を取り消す
@@ -708,8 +730,9 @@ export default function PlanDetailPage() {
             <div className="flex justify-end pt-2">
               <button
                 onClick={handleSave}
-                // 読み直しの最中は保存しない (読み直しが入力欄を今のプランの値に合わせる前の値を送らないため。#1917)
-                disabled={isSaving || isReloading}
+                // 読み直しの最中は保存しない (読み直しが入力欄を今のプランの値に合わせる前の値を送らないため。#1917)。
+                // 状態の変更の応答を待つあいだも保存しない (重ねると自分の操作どうしで 409 になる。#2059)
+                disabled={isWriting || isReloading}
                 className="px-5 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors disabled:opacity-50"
               >
                 {isSaving ? '保存中...' : '保存する'}
