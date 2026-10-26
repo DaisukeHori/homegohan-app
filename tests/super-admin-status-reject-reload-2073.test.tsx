@@ -535,9 +535,9 @@ describe('A/B テストの一覧: 状態の変更の通信が reject された�
 
 describe('機能フラグの一覧: 切り替え・削除の通信が reject されたら一覧を読み直す (#2073 と同じ型)', () => {
   const LIST_PATH = '/api/super-admin/flags';
-  const FLAG_KEY = 'reject_flag_2073';
+  const FLAG_NAME = 'reject_flag_2073';
   const flagRow = (enabled: boolean) => ({
-    key: FLAG_KEY,
+    key: FLAG_NAME,
     description: '',
     enabled,
     rollout_strategy: null,
@@ -547,7 +547,7 @@ describe('機能フラグの一覧: 切り替え・削除の通信が reject さ
   });
   const noticeText = () => container.querySelector('[data-testid="flags-reload-notice"]')?.textContent ?? null;
   const rowOf = () =>
-    Array.from(container.querySelectorAll('tbody tr')).find((tr) => tr.querySelector('code')?.textContent === FLAG_KEY) as
+    Array.from(container.querySelectorAll('tbody tr')).find((tr) => tr.querySelector('code')?.textContent === FLAG_NAME) as
       | HTMLTableRowElement
       | undefined;
   const toggle = () => rowOf()?.querySelectorAll('button')[0] as HTMLButtonElement | undefined;
@@ -568,11 +568,11 @@ describe('機能フラグの一覧: 切り替え・削除の通信が reject さ
         if (options.failGet?.(gets)) return jsonResponse(500, { error: { message: 'サーバーエラーが発生しました' } });
         return jsonResponse(200, { data: current === null ? [] : [flagRow(current)] });
       }
-      if (url.pathname === `${LIST_PATH}/${FLAG_KEY}` && method === 'PATCH') {
+      if (url.pathname === `${LIST_PATH}/${FLAG_NAME}` && method === 'PATCH') {
         current = (body as { enabled: boolean }).enabled;
         throw networkFailure();
       }
-      if (url.pathname === `${LIST_PATH}/${FLAG_KEY}` && method === 'DELETE') {
+      if (url.pathname === `${LIST_PATH}/${FLAG_NAME}` && method === 'DELETE') {
         current = null;
         throw networkFailure();
       }
@@ -591,7 +591,7 @@ describe('機能フラグの一覧: 切り替え・削除の通信が reject さ
     expect(s.serverState()).toBe(true);
     expect(callsOf('GET', LIST_PATH)).toHaveLength(2);
     expect(shownState()).toBe('ON');
-    expect(noticeText()).toBe(`「${FLAG_KEY}」の切り替えの応答を受け取れませんでした（通信エラー）。${LIST_RELOADED_GUIDE}`);
+    expect(noticeText()).toBe(`「${FLAG_NAME}」の切り替えの応答を受け取れませんでした（通信エラー）。${LIST_RELOADED_GUIDE}`);
     expect(alertSpy).not.toHaveBeenCalled();
   });
 
@@ -604,7 +604,7 @@ describe('機能フラグの一覧: 切り替え・削除の通信が reject さ
     expect(s.serverState()).toBeNull();
     expect(callsOf('GET', LIST_PATH)).toHaveLength(2);
     expect(shownState()).toBe('absent');
-    expect(noticeText()).toBe(`「${FLAG_KEY}」の削除の応答を受け取れませんでした（通信エラー）。${LIST_RELOADED_GUIDE}`);
+    expect(noticeText()).toBe(`「${FLAG_NAME}」の削除の応答を受け取れませんでした（通信エラー）。${LIST_RELOADED_GUIDE}`);
     expect(alertSpy).not.toHaveBeenCalled();
   });
 
@@ -614,17 +614,17 @@ describe('機能フラグの一覧: 切り替え・削除の通信が reject さ
 
     await click(toggle(), '切り替えのボタン');
 
-    expect(noticeText()).toBe(`「${FLAG_KEY}」の切り替えの応答を受け取れませんでした（通信エラー）。${LIST_RELOAD_FAILED_GUIDE}`);
+    expect(noticeText()).toBe(`「${FLAG_NAME}」の切り替えの応答を受け取れませんでした（通信エラー）。${LIST_RELOAD_FAILED_GUIDE}`);
     expect(shownState()).toBe('OFF');
     expect(toggle()?.disabled).toBe(true);
     expect(deleteButton()?.disabled).toBe(true);
     await forceClick(toggle(), '切り替えのボタン');
-    expect(callsOf('PATCH', `${LIST_PATH}/${FLAG_KEY}`)).toHaveLength(1);
+    expect(callsOf('PATCH', `${LIST_PATH}/${FLAG_NAME}`)).toHaveLength(1);
 
     await click(findButton('再試行'), '「再試行」ボタン');
 
     expect(shownState()).toBe('ON');
-    expect(noticeText()).toBe(`「${FLAG_KEY}」の切り替えの応答を受け取れませんでした（通信エラー）。${LIST_RELOADED_GUIDE}`);
+    expect(noticeText()).toBe(`「${FLAG_NAME}」の切り替えの応答を受け取れませんでした（通信エラー）。${LIST_RELOADED_GUIDE}`);
     expect(toggle()?.disabled).toBe(false);
     expect(findButton('再試行')).toBeUndefined();
   });
