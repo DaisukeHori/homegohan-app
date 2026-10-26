@@ -2332,7 +2332,7 @@ describe('#2025 利用者のセッションで 3 列を書く経路が無い', (
 | W-6 `/api/ai/nutrition` (`nutritionData`) | `veg_score` | 利 | `veg_score` を書かない | 栄養素・`quality_tags` だけ |
 | W-7 `/api/ai/nutrition` (`imageUrl`) | `veg_score` | 利 | `veg_score` を書かない (プロンプトからも外す) | 栄養素・`quality_tags`・`dishes` など |
 | W-8 `analyze-meal-photo` の背景の処理 | `veg_score` ほか | 利 (JWT) | service_role `queueDb` + 本人の行の確認 (解析の前)。route が Edge を呼ぶ直前に利用者の client で要求の印を付け (`markPhotoAnalysisRequest`。`updated_at` だけ。#2050)、確認のあと印を付け (`claimPhotoAnalysis`)、解析のあと印のままか確かめ (`isPhotoAnalysisCurrent`)、印のままの行にだけ update (`.eq('updated_at', 印)`。#121 の CAS。§7.15 の「書き込みの順序」の箇条)。解析は写真から (Gemini)。`prefetchedGeminiResult` は Next.js の route が `mealId` のとき渡さず、Edge の背景の処理も受け取らない | 本人の行だけ。`veg_score` 0〜100 (写真の解析の g から)。印が付かない・印のままでない・update が 0 行なら書かない (§9.3 (b)) |
-| W-8 の入口 Next.js `POST /api/ai/analyze-meal-photo` | (書かない。Edge へ転送) | 利 (route) | `mealId` のときは `prefetchedGeminiResult` を転送しない。`mealId` 無しは今までどおり転送 | `mealId` 無しの同期の応答は今までどおり |
+| W-8 の入口 Next.js `POST /api/ai/analyze-meal-photo` | (3 列は書かない。`updated_at` だけを要求の印として書く (`markPhotoAnalysisRequest`・利用者の client・#2050)。Edge へ転送) | 利 (route) | `mealId` が UUID の形でない真の値なら 400 (`AI_MENU_MEAL_ID_INVALID_MESSAGE`)。Edge を呼ぶ直前に要求の印を付け、その `updated_at` を `invokedAt` として送る (#2050)。`mealId` のときは `prefetchedGeminiResult` を転送しない。`mealId` 無しは今までどおり転送 | `mealId` 無しの同期の応答は今までどおり |
 | W-9〜W-11 作成 3 route | `is_completed: false` | 利 | 送らない | 列の既定 false |
 | W-12 週間生成の復元 (request・status・pending・cleanup の 4 route) | 3 列を含む全列 | 利 | `restoreOwnPlannedMealsSnapshot`: 利用者のセッションで本人の日を確かめ → service_role (`getSupabaseAdmin()`) で INSERT | 本人の日の行は消した値のまま戻る。本人の日でない行は戻さない (failed) |
 | W-13 `save-meal.ts`・`generate-menu-*` | `is_completed: false`・読み | S | 変えない | 通る |
@@ -2787,7 +2787,7 @@ route・テーブル・列・Storage のパス・環境変数の新設は無い�
 | `src/lib/planned-meals-snapshot.ts` | 追記 | `restoreOwnPlannedMealsSnapshot` を足す。`restorePlannedMealsSnapshot`・`extractPlannedMealsSnapshot` は保持 |
 | `POST /api/ai/nutrition` | 変更 | `veg_score` を書かない (§7.13)。route は残す (呼ぶ画面は無いが、テストと互換のため消さない。消すかは §21 Q-4) |
 | `analyze-meal-photo/index.ts` | 変更 | 書き込みを service_role (`queueDb`) に。`mealId` の経路 (背景の処理) では `prefetchedGeminiResult` を使わない (§7.15)。解析の前に本人の行の確認と印 (`claimPhotoAnalysis`)、写真の結果は印のままの行にだけ書く (#121 の CAS。`_shared/meal-photo-cas.ts`。§7.15 の「書き込みの順序」の箇条) |
-| `src/app/api/ai/analyze-meal-photo/route.ts` | 変更 | `mealId` のときは `prefetchedGeminiResult` を Edge へ渡さない (§7.15)。`mealId` 無しは今までどおり |
+| `src/app/api/ai/analyze-meal-photo/route.ts` | 変更 | `mealId` のときは `prefetchedGeminiResult` を Edge へ渡さない (§7.15)。`mealId` 無しは今までどおり。`mealId` が UUID の形でない真の値なら 400 (`AI_MENU_MEAL_ID_INVALID_MESSAGE`)・Edge を呼ぶ直前に要求の印を付け (`markPhotoAnalysisRequest`)、その `updated_at` を `invokedAt` として送る (#2050) |
 | `nutrition-pipeline.ts` の `estimateVegetableScore` | 変更 | export + `vegScoreOfVegetableGrams` (§7.16。値は同じ) |
 | `calculate-segment-stats/index.ts` の `nutrition_score` | 変更 | 係数 20 → `NUTRITION_SCORE_PER_VEG_SCORE` (§7.17) |
 | `update_org_challenge_progress` (SQL)・badges・family menu・`generate-menu-*`・`save-meal.ts` | 保持 | 変えない |
