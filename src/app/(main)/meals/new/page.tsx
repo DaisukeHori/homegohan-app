@@ -1525,7 +1525,7 @@ export default function MealCaptureModal() {
                 { label: 'タンパク質', value: totalProtein, unit: 'g', color: colors.blue },
                 { label: '炭水化物', value: totalCarbs, unit: 'g', color: colors.warning },
                 { label: '脂質', value: totalFat, unit: 'g', color: colors.purple },
-                { label: '野菜', value: vegScore, unit: '点', color: colors.success },
+                { label: '野菜', value: vegScore, unit: '点', color: colors.success, testId: 'meal-result-veg-score' },
               ].map((n, i) => (
                 <div key={i} className="p-2 rounded-xl text-center" style={{ background: colors.bg }}>
                   <p style={{ fontSize: 9, color: colors.textMuted, margin: '0 0 2px 0' }}>{n.label}</p>
