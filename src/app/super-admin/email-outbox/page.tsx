@@ -250,14 +250,25 @@ export default function EmailOutboxPage() {
 
   /**
    * 再送の通信が reject されたあとの一覧の読み直しと知らせ (#2073)。表示中の一覧の条件で先頭から読み直す。
-   * 読み直せなければ「再試行」を出し、読み直せるまで「再送」を止める。あとから出した読み込みに追い越されたら、
-   * その読み込みが一覧を今の状態にするので、ここでは何もしない
+   * 読み直せなければ「再試行」を出し、読み直せるまで「再送」を止める。あとから出した先頭からの読み込み (別の行の再送の
+   * reject のあとの読み直しなど) に追い越されたら、その読み込みが一覧を今の状態にするので、ここでは何もしない
+   * (続きの読み込み (「さらに読み込む」) は先頭を読み直さないので、読み込みの最中には出さない。loadMore を参照)
    */
   const rereadAfterNoResponse = async (template: string) => {
     const outcome = await load(appliedRef.current, null, { reread: true });
     if (outcome.kind === 'superseded') return;
     if (outcome.kind === 'failed') markListStale(true);
     setNotice({ kind: 'no-response', template, reloaded: outcome.kind === 'loaded' });
+  };
+
+  /**
+   * 「さらに読み込む」。一覧の読み込み (読み直しを含む) の最中は出さない: 再送の通信の reject のあとの読み直しの最中に
+   * 続きを読むと、続きの読み込みが読み直しを追い越して読み直しの結果を捨て、古い「届けられなかった」の行と「再送」が
+   * 知らせも無いまま残る (もう一度押すと、自分の再送が済んでいたのに 409 になる。#2073)
+   */
+  const loadMore = () => {
+    if (status !== 'idle' || !nextCursor) return;
+    void load(appliedRef.current, nextCursor);
   };
 
   /** 「再試行」: 再送の通信の reject のあとの、失敗した一覧の読み直しをやり直す (#2073) */
@@ -540,8 +551,8 @@ export default function EmailOutboxPage() {
           <div className="border-t border-slate-200 p-3 text-center">
             <button
               type="button"
-              onClick={() => void load(applied, nextCursor)}
-              disabled={isLoadingMore}
+              onClick={loadMore}
+              disabled={isLoading || isLoadingMore}
               className={SECONDARY_BUTTON_CLASS}
             >
               {isLoadingMore ? '読み込み中…' : 'さらに読み込む'}
