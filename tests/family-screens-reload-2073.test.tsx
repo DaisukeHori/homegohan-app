@@ -33,6 +33,7 @@ import {
   familyRoleLabel,
   orgRoleLabel,
 } from '@/lib/membership/role-labels';
+import { readOwnShareSettingsAfterNetworkFailure } from '@/lib/membership/share-settings-state';
 import { SELF_DISSOLVE_CONFIRM_KEYWORD, SELF_DISSOLVE_COPY, selfDissolveApiPath } from '@/lib/membership/self-dissolve';
 
 const USER_ID = '33333333-3333-4333-8333-333333333333';
@@ -55,6 +56,12 @@ const ORG_PROPOSAL_SENT = '譲渡提案を送信しました。対象者がメ�
 const LOAD_FAILURE = { code: '57014', message: 'canceling statement due to statement timeout' };
 /** .single() で行が無いときの PostgREST の失敗 */
 const NO_ROWS = { code: 'PGRST116', message: 'JSON object requested, multiple (or no) rows returned' };
+/** .maybeSingle() に行が 2 行以上返ったときの PostgREST の失敗 (絞り込みが足りず、他の人・過去の行まで読めたとき) */
+const MULTIPLE_ROWS = {
+  code: 'PGRST116',
+  message: 'JSON object requested, multiple (or no) rows returned',
+  details: 'The result contains 2 rows',
+};
 
 type QueryResult = { data: unknown; error: unknown };
 type QueryKind = 'single' | 'maybeSingle' | 'list';
@@ -91,6 +98,26 @@ function respond(ctx: QueryContext): Promise<QueryResult> {
   if (ctx.kind === 'maybeSingle') return Promise.resolve({ data: null, error: null });
   return Promise.resolve({ data: [], error: null });
 }
+
+/**
+ * 問い合わせの eq の条件に expected がすべて含まれているか。
+ * 読み直しの応答は、この判定で正しい絞り込みのときだけ行を返す (絞り込みを外したり取り違えたりすると、
+ * 本物のデータベースでは別の行が返るか行が見つからない。応答を絞り込みに依存させて、そうした変更でテストを赤にする)
+ */
+function filtersMatch(ctx: QueryContext, expected: Record<string, unknown>): boolean {
+  return Object.entries(expected).every(([column, value]) => ctx.filters[column] === value);
+}
+
+/** 送った問い合わせのうち、表 (と select の列) が一致するものの eq の条件 (送った順) */
+const filtersOf = (table: string, columns?: string) =>
+  supabaseState.queries
+    .filter((q) => q.table === table && (columns === undefined || q.columns === columns))
+    .map((q) => q.filters);
+
+/** 共有の設定の読み直し (readOwnShareSettingsAfterNetworkFailure) の select の列 */
+const SHARE_REREAD_COLUMNS = 'share_meals, share_health, share_menu';
+/** 共有の設定の読み直しの絞り込み: 自分の active な行 (1 人 1 行まで)。他の人の行・脱退した行を読まない */
+const OWN_ACTIVE_MEMBER_FILTERS = { user_id: USER_ID, status: 'active' };
 
 const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn(), refresh: () => undefined }));
 const params = vi.hoisted(() => ({
@@ -377,6 +404,40 @@ describe('#2073 S8 譲渡の提案の送信のあとの確かめ (transferPropos
       throw new TypeError('Failed to fetch');
     };
     expect(await readPendingTransferProposal(supabase, 'organization', ORG_ID)).toEqual({ ok: false });
+  });
+});
+
+describe('#2073 S2 共有の設定の読み直し (readOwnShareSettingsAfterNetworkFailure)', () => {
+  const OWN_SHARE = { share_meals: false, share_health: true, share_menu: false };
+
+  /** 自分の active な行だけに OWN_SHARE を返す (RLS では同じ家族の他の人の行も読めるので、絞らないと 2 行以上が返る) */
+  function ownRowReadable() {
+    supabaseState.responders.family_members = (ctx: QueryContext) =>
+      filtersMatch(ctx, OWN_ACTIVE_MEMBER_FILTERS) ? { data: { ...OWN_SHARE }, error: null } : { data: null, error: MULTIPLE_ROWS };
+  }
+
+  it('自分の active な行 (user_id = 自分・status = active) だけを 1 行読み、その share_* を返す', async () => {
+    ownRowReadable();
+
+    expect(await readOwnShareSettingsAfterNetworkFailure(createClient())).toEqual({ ok: true, settings: OWN_SHARE });
+    expect(supabaseState.queries).toEqual([
+      { table: 'family_members', kind: 'maybeSingle', columns: SHARE_REREAD_COLUMNS, filters: OWN_ACTIVE_MEMBER_FILTERS },
+    ]);
+  });
+
+  it('問い合わせの失敗・行が無い・例外は、確かめられなかった (ok: false) にする', async () => {
+    const supabase = createClient();
+    supabaseState.responders.family_members = () => ({ data: null, error: LOAD_FAILURE });
+    expect(await readOwnShareSettingsAfterNetworkFailure(supabase)).toEqual({ ok: false });
+    supabaseState.responders.family_members = () => ({ data: null, error: null });
+    expect(await readOwnShareSettingsAfterNetworkFailure(supabase)).toEqual({ ok: false });
+    supabaseState.responders.family_members = () => {
+      throw new TypeError('Failed to fetch');
+    };
+    expect(await readOwnShareSettingsAfterNetworkFailure(supabase)).toEqual({ ok: false });
+    supabaseState.getUserThrows = true;
+    ownRowReadable();
+    expect(await readOwnShareSettingsAfterNetworkFailure(supabase)).toEqual({ ok: false });
   });
 });
 
@@ -762,6 +823,8 @@ describe('#2073 メンバーの詳細: 読み込めなかったのを別の状�
       if (ctx.kind === 'maybeSingle') {
         // 共有の設定の読み直し (自分の active な行)
         if (shareRereadFails) return { data: null, error: LOAD_FAILURE };
+        // RLS では同じ家族の他の人の行も読めるので、自分の active な行に絞らないと 2 行以上が返って失敗する
+        if (!filtersMatch(ctx, OWN_ACTIVE_MEMBER_FILTERS)) return { data: null, error: MULTIPLE_ROWS };
         return { data: { ...serverShare }, error: null };
       }
       if (ctx.columns === 'role') return { data: { role: 'adult' }, error: null };
@@ -867,6 +930,8 @@ describe('#2073 メンバーの詳細: 読み込めなかったのを別の状�
 
     expect(callsOf('PATCH', SHARE_PATH)).toHaveLength(1);
     expect(queryCount('family_members', 'maybeSingle')).toBe(1);
+    // 読み直すのは自分の active な行だけ (他の人の値を出さない)
+    expect(filtersOf('family_members', SHARE_REREAD_COLUMNS)).toEqual([OWN_ACTIVE_MEMBER_FILTERS]);
     expect(healthSwitch().getAttribute('aria-checked')).toBe('true');
     expect(alertSpy).not.toHaveBeenCalled();
     expect(unhandled).toEqual([]);
@@ -964,7 +1029,12 @@ describe('#2073 設定のメンバーシップ: 読み込めなかったのを�
       data: { family_id: FAMILY_ID, organization_id: null, org_role: null, nickname: '太郎' },
       error: null,
     });
-    supabaseState.responders.family_members = () => ({ data: { id: MEMBER_A_ID, role: 'adult', ...serverShare }, error: null });
+    supabaseState.responders.family_members = (ctx: QueryContext) => {
+      // 画面を開いたときの読み込みも、共有の設定の読み直しも、自分の active な行を読む。
+      // RLS では同じ家族の他の人の行も読めるので、絞らないと 2 行以上が返って失敗する
+      if (!filtersMatch(ctx, OWN_ACTIVE_MEMBER_FILTERS)) return { data: null, error: MULTIPLE_ROWS };
+      return { data: { id: MEMBER_A_ID, role: 'adult', ...serverShare }, error: null };
+    };
     supabaseState.responders.family_groups = () => ({ data: { id: FAMILY_ID, name: '山田家' }, error: null });
   }
 
@@ -1031,6 +1101,8 @@ describe('#2073 設定のメンバーシップ: 読み込めなかったのを�
     await click(healthSwitch(), '健康記録の共有の切り替え');
 
     expect(callsOf('PATCH', SHARE_PATH)).toHaveLength(1);
+    // 読み直すのは自分の active な行だけ (他の人の値を出さない)
+    expect(filtersOf('family_members', SHARE_REREAD_COLUMNS)).toEqual([OWN_ACTIVE_MEMBER_FILTERS]);
     expect(healthSwitch()?.getAttribute('aria-checked')).toBe('true');
     expect(byTestId('settings-share-error')).toBeNull();
     expect(unhandled).toEqual([]);
@@ -1722,6 +1794,8 @@ describe('#2073 S2 大人の招待: 送信の通信が切れたら、招待の�
 describe('#2073 S2 昇格の依頼: 送信・取り消しの通信が切れたら、承認待ちの依頼を読み直す', () => {
   const PROMOTE_PATH = `/api/family/members/${MEMBER_A_ID}/promote`;
   const EMAIL = 'taro@example.com';
+  /** 昇格の依頼の読み込み・読み直しの絞り込み (この子どもの承認待ちの依頼) */
+  const PROMOTION_PENDING_FILTERS = { member_id: MEMBER_A_ID, status: 'pending' };
   let serverPending: { id: string; email: string; status: string; expires_at: string } | null;
   let pendingReadFails: boolean;
 
@@ -1733,8 +1807,11 @@ describe('#2073 S2 昇格の依頼: 送信・取り消しの通信が切れた�
       data: { id: MEMBER_A_ID, display_name: 'たろう', role: 'child', user_id: null },
       error: null,
     });
-    supabaseState.responders.family_promotion_requests = () =>
-      pendingReadFails ? { data: null, error: LOAD_FAILURE } : { data: serverPending, error: null };
+    // この子どもの承認待ちの依頼だけを返す (絞り込みを外すと、本物では他の子ども・処理済みの依頼まで読める)
+    supabaseState.responders.family_promotion_requests = (ctx: QueryContext) => {
+      if (pendingReadFails) return { data: null, error: LOAD_FAILURE };
+      return { data: filtersMatch(ctx, PROMOTION_PENDING_FILTERS) ? serverPending : null, error: null };
+    };
   });
 
   const pendingRow = (id: string, email: string) => ({ id, email, status: 'pending', expires_at: '2999-01-01T00:00:00.000Z' });
@@ -1757,6 +1834,10 @@ describe('#2073 S2 昇格の依頼: 送信・取り消しの通信が切れた�
     await fillAndSend();
 
     expect(callsOf('POST', PROMOTE_PATH)).toHaveLength(1);
+    // 開いたときと、通信が切れたあとの読み直しは、どちらもこの子どもの承認待ちの依頼に絞る
+    const promotionReads = filtersOf('family_promotion_requests');
+    expect(promotionReads.length).toBeGreaterThanOrEqual(2);
+    expect(promotionReads).toEqual(promotionReads.map(() => PROMOTION_PENDING_FILTERS));
     expect(text()).toContain('参加リクエストを送信しました');
     expect(text()).toContain(EMAIL);
     expect(text()).not.toContain(NETWORK_ERROR);
@@ -2068,6 +2149,8 @@ describe('#2073 S2 家族の作成: 作成の通信が切れたら、自分の�
 
 describe('#2073 S8 組織のオーナーの譲渡: 提案の送信の通信が切れたら、提案を作れたか確かめる', () => {
   const PROPOSE_PATH = '/api/org/owner-transfer/propose';
+  /** 組織のオーナーの譲渡で読む pending の提案の絞り込み (選んだ組織の pending) */
+  const ORG_PENDING_FILTERS = { scope: 'organization', scope_id: ORG_ID, status: 'pending' };
   let serverPending: { id: string; to_user_id: string } | null;
   let pendingReadFails: boolean;
 
@@ -2078,8 +2161,11 @@ describe('#2073 S8 組織のオーナーの譲渡: 提案の送信の通信が�
       if (ctx.kind === 'single') return { data: { org_role: 'owner', organization_id: ORG_ID }, error: null };
       return { data: [{ id: MEMBER_A_ID, nickname: '花子', org_role: 'member', joined_org_at: null }], error: null };
     };
-    supabaseState.responders.ownership_transfer_proposals = () =>
-      pendingReadFails ? { data: null, error: LOAD_FAILURE } : { data: serverPending, error: null };
+    // 選んだ組織の pending の提案だけを返す (範囲・対象を取り違えると、本物では提案が見つからない)
+    supabaseState.responders.ownership_transfer_proposals = (ctx: QueryContext) => {
+      if (pendingReadFails) return { data: null, error: LOAD_FAILURE };
+      return { data: filtersMatch(ctx, ORG_PENDING_FILTERS) ? serverPending : null, error: null };
+    };
   });
 
   async function selectAndPropose() {
@@ -2106,8 +2192,9 @@ describe('#2073 S8 組織のオーナーの譲渡: 提案の送信の通信が�
     await selectAndPropose();
 
     expect(callsOf('POST', PROPOSE_PATH)).toHaveLength(1);
-    // 送る前と、通信が切れたあとの 2 回、pending の提案を読む
+    // 送る前と、通信が切れたあとの 2 回、選んだ組織の pending の提案を読む
     expect(queryCount('ownership_transfer_proposals', 'maybeSingle')).toBe(2);
+    expect(filtersOf('ownership_transfer_proposals')).toEqual([ORG_PENDING_FILTERS, ORG_PENDING_FILTERS]);
     expect(alertSpy).toHaveBeenCalledWith(ORG_PROPOSAL_SENT);
     expect(router.push).toHaveBeenCalledWith('/org/members');
     expect(text()).not.toContain(ORG_NETWORK_ERROR);
@@ -2174,6 +2261,8 @@ describe('#2073 S8 組織のオーナーの譲渡: 提案の送信の通信が�
 
 describe('#2073 S8 家族の代表者の譲渡: 提案の送信の通信が切れたら、提案を作れたか確かめる', () => {
   const PROPOSE_PATH = '/api/family/representative-transfer/propose';
+  /** 家族の代表者の譲渡で読む pending の提案の絞り込み (自分の家族の pending) */
+  const FAMILY_PENDING_FILTERS = { scope: 'family', scope_id: FAMILY_ID, status: 'pending' };
   let serverPending: { id: string; to_user_id: string } | null;
   let pendingReadFails: boolean;
 
@@ -2185,8 +2274,11 @@ describe('#2073 S8 家族の代表者の譲渡: 提案の送信の通信が切�
       if (ctx.kind === 'maybeSingle') return { data: { role: 'representative' }, error: null };
       return { data: [{ id: 'fm-a', role: 'adult', display_name: '花子', user_id: MEMBER_A_ID }], error: null };
     };
-    supabaseState.responders.ownership_transfer_proposals = () =>
-      pendingReadFails ? { data: null, error: LOAD_FAILURE } : { data: serverPending, error: null };
+    // 自分の家族の pending の提案だけを返す (範囲・対象を取り違えると、本物では提案が見つからない)
+    supabaseState.responders.ownership_transfer_proposals = (ctx: QueryContext) => {
+      if (pendingReadFails) return { data: null, error: LOAD_FAILURE };
+      return { data: filtersMatch(ctx, FAMILY_PENDING_FILTERS) ? serverPending : null, error: null };
+    };
   });
 
   async function selectAndPropose() {
@@ -2213,12 +2305,9 @@ describe('#2073 S8 家族の代表者の譲渡: 提案の送信の通信が切�
     await selectAndPropose();
 
     expect(callsOf('POST', PROPOSE_PATH)).toHaveLength(1);
+    // 送る前と、通信が切れたあとの 2 回、自分の家族の pending の提案を読む
     expect(queryCount('ownership_transfer_proposals', 'maybeSingle')).toBe(2);
-    expect(supabaseState.queries.find((q) => q.table === 'ownership_transfer_proposals')?.filters).toMatchObject({
-      scope: 'family',
-      scope_id: FAMILY_ID,
-      status: 'pending',
-    });
+    expect(filtersOf('ownership_transfer_proposals')).toEqual([FAMILY_PENDING_FILTERS, FAMILY_PENDING_FILTERS]);
     expect(text()).toContain('譲渡提案を送信しました');
     expect(findButton('譲渡を提案')).toBeUndefined();
     expect(text()).not.toContain(NETWORK_ERROR);
