@@ -15,7 +15,8 @@ const MEMBERS_LOAD_ERROR = 'メンバーの一覧を読み込めませんでし�
 
 /**
  * 除名・脱退の通信そのものが失敗した (fetch が reject した: オフライン・接続が切れたなど) ときに「除名失敗: 」「脱退失敗: 」の後ろに出す理由 (#2059)。
- * 応答が届かないので、除名・脱退できたかどうかはこの画面では分からない。黙っていると、できたかどうかが分からないまま終わるため
+ * 応答が届かないので、除名・脱退できたかどうかは応答からは分からない。黙っていると、できたかどうかが分からないまま終わるため。
+ * 除名は、サーバーが済ませてから応答が切れたこともあるので、この文を出したあとに一覧を読み直して今の状態を見せる (#2064 R5)
  */
 const MEMBERSHIP_NETWORK_FAILURE_REASON = '通信エラーが発生しました。通信状況を確認して、もう一度お試しください';
 
@@ -118,6 +119,10 @@ export default function MembersPage() {
       // 通信が失敗した (#2059。catch が無いと失敗の文が出ず、onClick の promise が reject のまま終わっていた)
       console.error('Failed to remove member:', error);
       alert(`除名失敗: ${MEMBERSHIP_NETWORK_FAILURE_REASON}`);
+      // サーバーが除名を済ませてから応答が切れたこともあるので、一覧を読み直す (#2064 R5。読み直さないと、除名したメンバーが一覧に残り、
+      // もう一度「除名」を押すとエラーの文が出ていた)。読み直しが失敗したときは fetchData が一覧の「読み込めませんでした」を出す。
+      // 成功のときの読み直しと同じく、読み直しの応答を待つあいだも書き込みの待ち (writeInFlightRef) を戻さない (上の writeInFlightRef の理由と同じ)
+      await fetchData();
     } finally {
       writeInFlightRef.current = false;
       setRemovingId(null);

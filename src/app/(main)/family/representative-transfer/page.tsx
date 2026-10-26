@@ -2,10 +2,20 @@
 
 // src/app/(main)/family/representative-transfer/page.tsx
 // (設計書 03-ui-spec.md §10.2, 02-flow-spec.md §10)
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
+
+/**
+ * 譲渡の候補 (または自分のプロフィール・家族の中の自分の役割) を読み込めなかったときの文。
+ * 候補がいない (「代表者を引き継げるメンバーがいません」) ・代表者でない (「この操作は代表者のみが行えます」) と見分けるために出す
+ * (#2064 R4 と同じ形。組織のオーナーの譲渡の画面の CANDIDATES_LOAD_ERROR と同じ扱い)。失敗の理由 (英語の内部の文) は画面に出さない
+ */
+const CANDIDATES_LOAD_ERROR = '代表者の譲渡の候補を読み込めませんでした。しばらくしてから、もう一度お試しください。';
+
+/** 代表者でない人が開いたときの文 */
+const REPRESENTATIVE_ONLY_MESSAGE = 'この操作は代表者のみが行えます';
 
 interface FamilyMember {
   id: string;
@@ -27,44 +37,67 @@ export default function FamilyRepresentativeTransferPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  // 代表者でないときの文。あるあいだは画面の代わりにこの文と「戻る」を出す (送信の失敗の error とは別にする。
+  // 以前は error に入れていたが、家族の ID を入れたあとなので表示の条件 (!familyId) に合わず、「引き継げるメンバーがいません」と出ていた)
+  const [accessError, setAccessError] = useState<string | null>(null);
+  // 候補を読み込めなかったときの文。あるあいだは候補の一覧と「引き継げるメンバーがいません」の代わりにこの文と「再試行」を出す (#2064 R4 と同じ形)
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const init = async () => {
+  const loadCandidates = useCallback(async () => {
+    setLoading(true);
+    // 別の画面へ移るときは、移るまで読み込み中の表示のままにする (これまでどおり)
+    let redirecting = false;
+    try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
+        redirecting = true;
         router.push('/login');
         return;
       }
       setCurrentUserId(user.id);
 
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
         .select('family_id')
         .eq('id', user.id)
         .single();
 
+      if (profileError) {
+        // 自分のプロフィールを読めなかった (家族に入っていないのとは別。家族の作成の画面へ送らない)
+        setLoadError(CANDIDATES_LOAD_ERROR);
+        return;
+      }
       if (!profile?.family_id) {
+        redirecting = true;
         router.replace('/family/setup');
         return;
       }
       setFamilyId(profile.family_id);
 
-      // 自分のロールを確認
-      const { data: myMember } = await supabase
+      // 自分のロールを確認。行が無いときは代表者でない扱い (maybeSingle は 0 行で error にしない)。
+      // 抜けた (status が active でない) 行が同じ家族に残っていても 1 行に絞れるよう、active の行だけを見る
+      // (active の行は 1 人 1 行まで。部分 UNIQUE uniq_family_members_user)
+      const { data: myMember, error: myMemberError } = await supabase
         .from('family_members')
         .select('role')
         .eq('family_id', profile.family_id)
         .eq('user_id', user.id)
-        .single();
+        .eq('status', 'active')
+        .maybeSingle();
 
+      if (myMemberError) {
+        // 役割を読めなかった (代表者でないのとは別。「代表者のみ」と見せない)
+        setLoadError(CANDIDATES_LOAD_ERROR);
+        return;
+      }
       if (myMember?.role !== 'representative') {
-        setError('この操作は代表者のみが行えます');
-        setLoading(false);
+        setAccessError(REPRESENTATIVE_ONLY_MESSAGE);
+        setLoadError(null);
         return;
       }
 
       // 候補 (adult のみ、自分を除く)
-      const { data: membersData } = await supabase
+      const { data: membersData, error: membersError } = await supabase
         .from('family_members')
         .select('id, role, display_name, user_id')
         .eq('family_id', profile.family_id)
@@ -72,14 +105,34 @@ export default function FamilyRepresentativeTransferPage() {
         .in('role', ['adult'])
         .neq('user_id', user.id);
 
+      if (membersError) {
+        // 読み込めなかった (候補がいないのとは別。「引き継げるメンバーがいません」と見せない)
+        setLoadError(CANDIDATES_LOAD_ERROR);
+        return;
+      }
+
       // 画面に出す名前 (display_name が無ければ本人のプロフィールの今の名前) は API で決める (#1584)
       const names = await fetchFamilyMemberNames();
       setCandidates(applyFamilyMemberNames((membersData ?? []) as FamilyMember[], names));
-      setLoading(false);
-    };
-
-    init();
+      setLoadError(null);
+    } catch (loadFailure) {
+      // 問い合わせが例外を投げた (以前は catch も finally も無く、読み込み中の表示のまま止まり、未処理の reject になっていた)
+      console.error('[family/representative-transfer] load error:', loadFailure);
+      setLoadError(CANDIDATES_LOAD_ERROR);
+    } finally {
+      if (!redirecting) setLoading(false);
+    }
   }, [supabase, router]);
+
+  useEffect(() => {
+    void loadCandidates();
+  }, [loadCandidates]);
+
+  // 候補の読み込みをやり直す (読み込めなかったときの「再試行」)。
+  // 「再試行」は読み込めなかったとき (フォームを出していないとき) だけ出すので、譲渡の提案の送信とは重ならない
+  const retryLoad = () => {
+    void loadCandidates();
+  };
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -130,10 +183,10 @@ export default function FamilyRepresentativeTransferPage() {
     );
   }
 
-  if (error && candidates.length === 0 && !familyId) {
+  if (accessError) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center gap-4 p-6">
-        <p className="text-gray-600 text-sm text-center">{error}</p>
+        <p className="text-gray-600 text-sm text-center">{accessError}</p>
         <button
           onClick={() => router.back()}
           className="px-4 py-2 rounded-full bg-gray-100 text-gray-600 text-sm"
@@ -180,7 +233,23 @@ export default function FamilyRepresentativeTransferPage() {
       </div>
 
       <div className="p-6">
-        {candidates.length === 0 ? (
+        {loadError ? (
+          <div
+            role="alert"
+            data-testid="family-transfer-load-error"
+            className="flex items-center justify-between gap-3 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm"
+          >
+            <span>{loadError}</span>
+            <button
+              type="button"
+              onClick={retryLoad}
+              className="shrink-0 px-3 py-1.5 bg-white border border-red-300 rounded-lg text-red-700 hover:bg-red-100 transition-colors"
+            >
+              再試行
+            </button>
+          </div>
+        ) : candidates.length === 0 ? (
+          // 読み込みに成功して候補が 0 人のときだけ出す
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-8 text-center">
             <p className="text-gray-400 text-sm">
               代表者を引き継げるメンバーがいません。

@@ -5,6 +5,13 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { normalizeProfileName } from "@/lib/profile-name";
 
+/**
+ * 譲渡の候補 (または自分のプロフィール) を読み込めなかったときの文。
+ * 候補がいない (「譲渡可能なメンバーがいません」) と見分けるために出す (#2064 R4。組織のメンバーの一覧の MEMBERS_LOAD_ERROR と同じ形)。
+ * 読み込みは Supabase の問い合わせで、失敗の理由 (英語の内部の文) は画面に出さない
+ */
+const CANDIDATES_LOAD_ERROR = '譲渡の候補を読み込めませんでした。しばらくしてから、もう一度お試しください。';
+
 interface CandidateMember {
   id: string;
   nickname: string | null;
@@ -23,46 +30,70 @@ export default function OwnerTransferPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 候補を読み込めなかったときの文。あるあいだは候補の一覧と「譲渡可能なメンバーがいません」の代わりにこの文と「再試行」を出す (#2064 R4)
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const fetchCandidates = async () => {
+    setLoading(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        router.push('/login');
+        return;
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from('user_profiles')
+        .select('org_role, organization_id')
+        .eq('id', user.id)
+        .single();
+
+      if (profileError) {
+        // 自分のプロフィールを読めなかった (オーナーでないのとは別。メンバーの一覧へ戻さない)
+        setLoadError(CANDIDATES_LOAD_ERROR);
+        return;
+      }
+      if (profile?.org_role !== 'owner' || !profile.organization_id) {
+        router.push('/org/members');
+        return;
+      }
+
+      setOrganizationId(profile.organization_id);
+
+      // owner 以外の org メンバーを候補として表示
+      const { data: members, error: membersError } = await supabase
+        .from('user_profiles')
+        .select('id, nickname, org_role, joined_org_at')
+        .eq('organization_id', profile.organization_id)
+        .neq('id', user.id)
+        .neq('org_role', 'owner')
+        .order('joined_org_at', { ascending: true });
+
+      if (membersError) {
+        // 読み込めなかった (候補がいないのとは別。「譲渡可能なメンバーがいません」と見せない)
+        setLoadError(CANDIDATES_LOAD_ERROR);
+        return;
+      }
+      setCandidates(members ?? []);
+      setLoadError(null);
+    } catch (fetchError) {
+      // 問い合わせが例外を投げた (catch が無いと未処理の reject になり、空の一覧の案内が出ていた)
+      console.error('Failed to fetch owner transfer candidates:', fetchError);
+      setLoadError(CANDIDATES_LOAD_ERROR);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchCandidates = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-          router.push('/login');
-          return;
-        }
-
-        const { data: profile } = await supabase
-          .from('user_profiles')
-          .select('org_role, organization_id')
-          .eq('id', user.id)
-          .single();
-
-        if (profile?.org_role !== 'owner' || !profile.organization_id) {
-          router.push('/org/members');
-          return;
-        }
-
-        setOrganizationId(profile.organization_id);
-
-        // owner 以外の org メンバーを候補として表示
-        const { data: members } = await supabase
-          .from('user_profiles')
-          .select('id, nickname, org_role, joined_org_at')
-          .eq('organization_id', profile.organization_id)
-          .neq('id', user.id)
-          .neq('org_role', 'owner')
-          .order('joined_org_at', { ascending: true });
-
-        setCandidates(members ?? []);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchCandidates();
+    void fetchCandidates();
   }, []);
+
+  // 候補の読み込みをやり直す (読み込めなかったときの「再試行」)。
+  // 「再試行」は読み込めなかったとき (フォームを出していないとき) だけ出すので、譲渡の提案の送信とは重ならない
+  const retryLoad = () => {
+    void fetchCandidates();
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -123,7 +154,23 @@ export default function OwnerTransferPage() {
         </p>
       </div>
 
-      {candidates.length === 0 ? (
+      {loadError ? (
+        <div
+          role="alert"
+          data-testid="owner-transfer-load-error"
+          className="flex items-center justify-between gap-3 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm"
+        >
+          <span>{loadError}</span>
+          <button
+            type="button"
+            onClick={retryLoad}
+            className="shrink-0 px-3 py-1.5 bg-white border border-red-300 rounded-lg text-red-700 hover:bg-red-100 transition-colors"
+          >
+            再試行
+          </button>
+        </div>
+      ) : candidates.length === 0 ? (
+        // 読み込みに成功して候補が 0 人のときだけ出す
         <div className="bg-white rounded-2xl p-8 shadow-sm border border-gray-100 text-center text-gray-500">
           譲渡可能なメンバーがいません。先にメンバーを招待してください。
         </div>
