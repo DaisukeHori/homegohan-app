@@ -126,7 +126,7 @@
 | 文書 | 関係 |
 |---|---|
 | cross/02-rls-patterns.md §3.3 (行 43-48) | 書いた時点の文は「service_role を使う場所: Supabase Edge Function のみ」(今は Next.js の `getSupabaseAdmin()` も挙げる)。本書は Next.js の API で service_role を使わず、SECURITY DEFINER の関数で読む (§5) |
-| cross/02 §10 (行 585) | anon が EXECUTE できる関数は理由つきの許可一覧だけ (`tests/integration/security/anon-definer-execute.test.ts:95-100`)。本書の関数は一覧に足す (§7.8) |
+| cross/02 §10 の表の Security の行 | anon が EXECUTE できる関数は理由つきの許可一覧だけ (`tests/integration/security/anon-definer-execute.test.ts:95-100`)。本書の関数は一覧に足す (§7.8) |
 | cross/14-parental-consent.md §0 (行 18-19) | 年齢の判定は `user_profiles.birth_date` だけ。18 歳未満の本人のアカウントは保護者の同意の経路。本書は 18 歳未満の名前を公開の場に出さない (§6.1 (4)) |
 | cross/20-terms-privacy-text.md §2.2 F-19 (行 213)・F-33 (行 227)・F-49 (行 243) | `user_profiles` の SELECT が本人の行だけであること・家族の中の表示名の見え方。公開レシピの作者としての表示名の記載は無い (§6.4) |
 | cross/20 §9.3 (行 2000) | 内容が変わる文面の直しは版を上げる。本書の文の追加は版を上げる改定に当たる (§6.4・§21 Q-1) |
@@ -1889,7 +1889,7 @@ sequenceDiagram
 |---|---|---|---|
 | `docs/design/cross/CLAUDE.md` | ファイル一覧の表 | `21-recipe-author-display-name.md` の行を足す (「公開レシピの作者の表示名 (SECURITY DEFINER の関数で公開の作者だけ・本人の選択・凍結と年齢の扱い)」/ #1917 の続き)。「10・11 は欠番」の文はそのまま | 設計のマージと同日 |
 | `docs/design/cross/02-rls-patterns.md` | §3.3 の末尾 | 「他人の `user_profiles` の表示名を公開レシピの作者として出す経路は、SECURITY DEFINER の関数 `recipe_author_display_names` (cross/21。RLS のポリシーは足していない)」の 1 行 | 段 A のマージと同日 |
-| 同 | §10 の表の Security の行 (行 585) | anon が EXECUTE できる DEFINER の関数の許可一覧が 3 本になること (関数名を添える) | 同上 |
+| 同 | §10 の表の Security の行 | anon が EXECUTE できる DEFINER の関数の許可一覧が 3 本になること (関数名を添える) | 同上 |
 | `docs/design/cross/20-terms-privacy-text.md` | §7 第8条 3 項と第9条・§10.3 主張の表 (privacy-8#13・privacy-9#12〜#17)・§9.1 (版)・§2.2 (F の行を 1 つ足す: 公開レシピの作者名の表示の経路と、作者名の表示を書いた版への同意の条件 (cross/21 §6.4)) | §7.12 の文と行。版はオーナーの選択 (§21 Q-1) に従う。cross/20 は A 型の正規の経路か docs PR で改定する | 段 C |
 | `docs/design/cross/20-terms-privacy-text.md` | §9.3 (版を上げる規律) | 「作者名の表示の文 (第9条) を消す・言い換える版を作るときは、`recipe_author_display_names` の `c_privacy_versions_without_author_name` を直す (cross/21 §7.1・C-10)」の 1 行 | 段 A のマージと同日 |
 | `docs/design/cross/14-parental-consent.md` | §8 (別 Issue・注記) | 「18 歳未満の本人のアカウントの公開レシピの作者名は公開の場に出さない (cross/21 §6.1 (4))」の 1 行 | 段 A のマージと同日 |

@@ -19,6 +19,9 @@ export default function FlagsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toggling, setToggling] = useState<string | null>(null);
+  // 削除の応答を待っているフラグの key。待つあいだは削除のボタンを止める
+  // (二度押しで 2 本目の DELETE を送ると、削除できているのに断られて失敗の文が出るため。#2050)
+  const [deletingKey, setDeletingKey] = useState<string | null>(null);
 
   const fetchFlags = async () => {
     try {
@@ -75,7 +78,9 @@ export default function FlagsPage() {
   };
 
   const handleDelete = async (key: string) => {
+    if (deletingKey !== null) return;
     if (!confirm(`フラグ "${key}" を削除しますか？`)) return;
+    setDeletingKey(key);
     try {
       const res = await fetch(`/api/super-admin/flags/${key}`, { method: "DELETE" });
       if (!res.ok) {
@@ -85,6 +90,8 @@ export default function FlagsPage() {
       setFlags((prev) => prev.filter((f) => f.key !== key));
     } catch (err) {
       alert(err instanceof Error ? err.message : "削除に失敗しました");
+    } finally {
+      setDeletingKey(null);
     }
   };
 
@@ -193,7 +200,8 @@ export default function FlagsPage() {
                   <td className="px-6 py-4">
                     <button
                       onClick={() => handleDelete(flag.key)}
-                      className="text-red-400 hover:text-red-300 text-sm transition-colors"
+                      disabled={deletingKey !== null}
+                      className="text-red-400 hover:text-red-300 text-sm transition-colors disabled:opacity-50"
                     >
                       削除
                     </button>
