@@ -1776,6 +1776,37 @@ describe('#2073 設定のメンバーシップ: 読み込めなかったのを�
       expect(byTestId('settings-membership-load-error')).toBeNull();
       expect(text()).toContain(FAMILY_NAME);
     });
+
+    it('一度も読めていないときの「再試行」は、応答を待つあいだ全体を読み込み中にし、読み込めなかった文と「再試行」を隠す (重ねて押させない)。読めたら所属を出す', async () => {
+      bothMembershipsReadable();
+      supabaseState.responders.user_profiles = () => ({ data: null, error: LOAD_FAILURE });
+      await renderElement(createElement(MembershipSettingsPage));
+      // 一度も読めていない: 所属の区画の代わりに、読み込めなかった文と「再試行」だけを出す
+      expect(byTestId('settings-membership-load-error')).toContain('所属の情報を読み込めませんでした');
+      expect(spinner()).toBeNull();
+      expect(text()).not.toContain(ORG_NAME);
+      expect(notMemberCount()).toBe(0);
+
+      const retry = deferred<QueryResult>();
+      supabaseState.responders.user_profiles = () => retry.promise;
+      await click(findButton('再試行'), '「再試行」');
+
+      // 応答を待つあいだ: 全体が読み込み中で、読み込めなかった文と「再試行」は出ていない
+      expect(queryCount('user_profiles', 'single')).toBe(2);
+      expect(spinner()).not.toBeNull();
+      expect(byTestId('settings-membership-load-error')).toBeNull();
+      expect(findButton('再試行')).toBeUndefined();
+
+      await act(async () => {
+        retry.resolve({ data: { family_id: FAMILY_ID, organization_id: ORG_ID, org_role: 'member', nickname: '太郎' }, error: null });
+      });
+      await settle();
+      expect(spinner()).toBeNull();
+      expect(byTestId('settings-membership-load-error')).toBeNull();
+      expect(text()).toContain(FAMILY_NAME);
+      expect(text()).toContain(ORG_NAME);
+      expect(notMemberCount()).toBe(0);
+    });
   });
 
   describe('家族の役割を日本語の名前で出す', () => {
