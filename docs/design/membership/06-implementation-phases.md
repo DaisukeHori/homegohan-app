@@ -55,7 +55,7 @@ P0-P7 のタスク分解。各 phase で **並列起動可否** を明示。
 ### deliverables
 - `src/app/(org)/org/members/page.tsx` (メンバ一覧 + 操作)
 - `src/app/(org)/org/settings/owner-transfer/page.tsx`
-- `src/app/(org)/org/transfer-accept/[proposal_id]/page.tsx`
+- `src/app/(main)/org/transfer-accept/[proposal_id]/page.tsx`
 - API: `/api/org/members/{user_id}/remove`, `/api/org/leave`, `/api/org/owner-transfer/propose`, `/api/org/owner-transfer/{id}/accept`
 - transfer-proposed メールテンプレート + 送信
 
