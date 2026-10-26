@@ -109,6 +109,8 @@ function mockServer(options: {
     if (failure) return failure;
     current = { ...current, ...body };
     delete current.ends_at;
+    // expected_status (画面が見ていた status。#2064) は書く条件で、列には書かない (route と同じ)
+    delete current.expected_status;
     const written = { ...current };
     patchesInFlight += 1;
     try {
@@ -233,7 +235,7 @@ describe('プランの詳細: 保存の応答を待つあいだは状態の変�
     // 応答が届いたら、また押せる
     expect(button('非公開にする').disabled).toBe(false);
     await clickButton('非公開にする');
-    expect(patchBodies()).toEqual([{ display_name: '重ねないプラン (改)' }, { status: 'private' }]);
+    expect(patchBodies()).toEqual([{ display_name: '重ねないプラン (改)' }, { status: 'private', expected_status: 'public' }]);
     expect(server.serverRow()).toMatchObject({ status: 'private', display_name: '重ねないプラン (改)' });
     expect(statusBadge()).toBe('非公開');
     expect(text()).not.toContain(STALE_NOTICE_HEAD);
@@ -290,7 +292,7 @@ describe('プランの詳細: 保存の応答を待つあいだは状態の変�
 
     expect(button('非公開にする').disabled).toBe(false);
     await clickButton('非公開にする');
-    expect(patchBodies()).toEqual([{ display_name: '重ねないプラン (失敗)' }, { status: 'private' }]);
+    expect(patchBodies()).toEqual([{ display_name: '重ねないプラン (失敗)' }, { status: 'private', expected_status: 'public' }]);
     expect(statusBadge()).toBe('非公開');
   });
 
@@ -302,7 +304,7 @@ describe('プランの詳細: 保存の応答を待つあいだは状態の変�
     expect(patchBodies()).toEqual([]);
     expect(button('非公開にする').disabled).toBe(false);
     await clickButton('非公開にする');
-    expect(patchBodies()).toEqual([{ status: 'private' }]);
+    expect(patchBodies()).toEqual([{ status: 'private', expected_status: 'public' }]);
   });
 });
 
@@ -316,7 +318,7 @@ describe('プランの詳細: 状態の変更の応答を待つあいだは保�
     await clickButton('非公開にする');
     expect(button('保存する').disabled).toBe(true);
     await clickButton('保存する');
-    expect(patchBodies()).toEqual([{ status: 'private' }]);
+    expect(patchBodies()).toEqual([{ status: 'private', expected_status: 'public' }]);
 
     await openGate(statusGate);
     expect(statusBadge()).toBe('非公開');
@@ -326,7 +328,7 @@ describe('プランの詳細: 状態の変更の応答を待つあいだは保�
     expect(button('保存する').disabled).toBe(false);
     await clickButton('保存する');
     expect(text()).toContain('保存しました');
-    expect(patchBodies()).toEqual([{ status: 'private' }, { display_name: '重ねないプラン (書きかけ)' }]);
+    expect(patchBodies()).toEqual([{ status: 'private', expected_status: 'public' }, { display_name: '重ねないプラン (書きかけ)' }]);
     expect(server.serverRow()).toMatchObject({ status: 'private', display_name: '重ねないプラン (書きかけ)' });
     expect(text()).not.toContain(STALE_NOTICE_HEAD);
   });
@@ -340,7 +342,7 @@ describe('プランの詳細: 状態の変更の応答を待つあいだは保�
     await clickButton('再公開する');
     expect(button('保存する').disabled).toBe(true);
     await clickButton('保存する');
-    expect(patchBodies()).toEqual([{ status: 'public' }]);
+    expect(patchBodies()).toEqual([{ status: 'public', expected_status: 'private' }]);
 
     await openGate(statusGate);
     expect(statusBadge()).toBe('公開中');
@@ -356,7 +358,7 @@ describe('プランの詳細: 状態の変更の応答を待つあいだは保�
     await clickButton('公開する');
     expect(button('保存する').disabled).toBe(true);
     await clickButton('保存する');
-    expect(patchBodies()).toEqual([{ status: 'public' }]);
+    expect(patchBodies()).toEqual([{ status: 'public', expected_status: 'draft' }]);
 
     await openGate(statusGate);
     expect(statusBadge()).toBe('公開中');
@@ -390,10 +392,10 @@ describe('プランの詳細: 状態の変更の応答を待つあいだは保�
 
     holdReload = true;
     await clickButton('非公開にする');
-    expect(patchBodies()).toEqual([{ status: 'private' }]);
+    expect(patchBodies()).toEqual([{ status: 'private', expected_status: 'public' }]);
     expect(button('保存する').disabled).toBe(true);
     await clickButton('保存する');
-    expect(patchBodies()).toEqual([{ status: 'private' }]);
+    expect(patchBodies()).toEqual([{ status: 'private', expected_status: 'public' }]);
 
     await openGate(reloadGate);
     expect(button('保存する').disabled).toBe(false);
@@ -412,7 +414,7 @@ describe('プランの詳細: 状態の変更の応答を待つあいだは保�
       save.click();
     });
     await settle();
-    expect(patchBodies()).toEqual([{ status: 'private' }]);
+    expect(patchBodies()).toEqual([{ status: 'private', expected_status: 'public' }]);
 
     await openGate(statusGate);
     expect(statusBadge()).toBe('非公開');
@@ -432,7 +434,7 @@ describe('プランの詳細: 状態の変更の応答を待つあいだは保�
       deprecate.click();
     });
     await settle();
-    expect(patchBodies()).toEqual([{ status: 'private' }]);
+    expect(patchBodies()).toEqual([{ status: 'private', expected_status: 'public' }]);
 
     await openGate(statusGate);
     expect(statusBadge()).toBe('非公開');
@@ -453,7 +455,7 @@ describe('プランの詳細: 状態の変更の応答を待つあいだは保�
 
     expect(button('保存する').disabled).toBe(false);
     await clickButton('保存する');
-    expect(patchBodies()).toEqual([{ status: 'private' }, { display_name: '重ねないプラン (状態の失敗)' }]);
+    expect(patchBodies()).toEqual([{ status: 'private', expected_status: 'public' }, { display_name: '重ねないプラン (状態の失敗)' }]);
     expect(text()).toContain('保存しました');
   });
 });

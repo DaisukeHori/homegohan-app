@@ -370,7 +370,7 @@
 ### 4.12 UC-OP-12: 監査ログ閲覧
 
 **フロー**:
-1. `/admin/audit-logs` で全ログ
+1. `/super-admin/audit-logs` で全ログ
 2. フィルタ:
    - アクション種別 (BAN / role_change / setting_change 等)
    - 担当者 (admin)
@@ -1598,8 +1598,8 @@ CREATE TABLE infra_alerts (
 - `POST /api/admin/moderation/auto-rules`
 
 ### 8.3 監査ログ
-- `GET /api/admin/audit-logs`
-- `POST /api/admin/audit-logs/export`
+- `GET /api/super-admin/audit-logs` (`format=csv` で CSV)
+- `POST /api/admin/audit-logs/export` (未実装 (operator/02 §6))
 
 ### 8.4 機能フラグ
 - `GET /api/super-admin/feature-flags`
@@ -1719,7 +1719,7 @@ CREATE TABLE infra_alerts (
 - 統計ダッシュボード
 - エスカレーション機能
 
-#### 9.1.4 `/admin/audit-logs` 拡張
+#### 9.1.4 `/super-admin/audit-logs` 拡張
 - 高度フィルタ
 - CSV エクスポート
 

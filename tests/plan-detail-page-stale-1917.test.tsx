@@ -195,7 +195,7 @@ describe('状態の変更が 409 CONFLICT_STALE_DATA で断られたとき (#191
 
     await click('廃止する');
 
-    expect(patchBodies()[0]).toEqual({ status: 'deprecated', ends_at: '2027-01-01T00:00:00.000Z' });
+    expect(patchBodies()[0]).toEqual({ status: 'deprecated', ends_at: '2027-01-01T00:00:00.000Z', expected_status: 'private' });
     expect(state.gets).toBe(2);
     expect(alertSpy).not.toHaveBeenCalled();
     expect(text()).toContain('公開中');
@@ -651,7 +651,7 @@ describe('成功したあとの読み直しは、書きかけの入力欄を残�
     await click('再公開する');
 
     expect(api.gets()).toBe(2);
-    expect(patchBodies()).toEqual([{ status: 'public' }]);
+    expect(patchBodies()).toEqual([{ status: 'public', expected_status: 'private' }]);
     expect(text()).toContain('公開中');
     expect(findButton('非公開にする')).toBeDefined();
     expect(alertSpy).not.toHaveBeenCalled();
@@ -660,7 +660,7 @@ describe('成功したあとの読み直しは、書きかけの入力欄を残�
 
     await click('保存する');
 
-    expect(patchBodies()).toEqual([{ status: 'public' }, { display_name: '書きかけの表示名' }]);
+    expect(patchBodies()).toEqual([{ status: 'public', expected_status: 'private' }, { display_name: '書きかけの表示名' }]);
   });
 
   it('状態の変更の応答を待つあいだに変えた欄も、成功したあとの読み直しで残す', async () => {
@@ -737,7 +737,7 @@ describe('読み直したプランが廃止なら、書きかけの入力欄を�
     await click('廃止する');
 
     expect(api.gets()).toBe(2); // 初回 + 廃止のあとの読み直し
-    expect(patchBodies()).toEqual([{ status: 'deprecated', ends_at: '2027-01-01T00:00:00.000Z' }]);
+    expect(patchBodies()).toEqual([{ status: 'deprecated', ends_at: '2027-01-01T00:00:00.000Z', expected_status: 'private' }]);
     expect(alertSpy).not.toHaveBeenCalled();
     expect(findButton('廃止を取り消す')).toBeDefined();
     expect(notice()).toBeNull();
