@@ -10,8 +10,9 @@
 //     (supabase/functions/_shared/meal-image.ts の buildPhotoDishList)。解析を頼む前の献立に無かった image_generated_at を持つ
 //     'meal_photo' の料理が現れたら、この解析の結果が書かれたとみる。料理が 0 品の結果 (料理を読み取れなかった) は印が無いので、
 //     料理が 0 品になり、かつ中身 (料理名・画像・説明・料理) が頼む前から変わったことで見分ける。
-//   - updated_at は印に使えない: Edge は解析の前に行に CAS の印を付ける (updated_at を進める。_shared/meal-photo-cas.ts)ので、
-//     updated_at は解析の前にも一度変わる。
+//   - updated_at は印に使えない: route が Edge を呼ぶ直前に要求の印を付け (markPhotoAnalysisRequest)、Edge も解析の前に
+//     CAS の印を付ける (claimPhotoAnalysis。どちらも updated_at を進める。_shared/meal-photo-cas.ts) ので、updated_at は
+//     解析の前に 2 回変わる。
 //   - 解析のあいだに行がほかの書き手に書かれると、Edge は写真の結果を書かずにやめる (#2041 の CAS)。解析そのものが失敗したときも
 //     書かれない。どちらも結果の印は現れないので、上限 (回数と全体の時間) で止めて timeout を返す。画面はその旨を出す。
 
