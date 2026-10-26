@@ -19,6 +19,8 @@
  *     読み直した旨を出す (自分の操作が済んでいたときにも合う文。alert にしない)
  *   - 読み直しに失敗したら、その旨と「再試行」を出し、読み直せるまで状態の変更のボタンを止める (押しても送らない)
  *   - クーポン・機能パッケージの 409 のあとの読み直しが失敗したときも「再試行」を出す
+ *   - 読み直しのあいだは、その画面の状態の変更を出さない (読み直しの古い一覧・状態が、あとから変えた結果を上書きしないため)。
+ *     メール送信の一覧は、再送を 1 行ずつにし、一覧の読み込み (「絞り込む」「再読み込み」「さらに読み込む」・読み直し) と重ねない
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
@@ -639,34 +641,44 @@ describe('メール送信の一覧: 再送の通信が reject されたら一覧
   const CREATED_AT = '2026-10-16T05:00:01.000000+00:00';
   /** route の 409 (dead でない行の再送) の文。自分の再送が済んでいたのにこれが出てはいけない */
   const NOT_REQUEUEABLE_MESSAGE = '届けられなかったメールだけを再送できます';
-  const outboxRow = (status: 'dead' | 'queued') => ({
-    id: ROW_ID,
-    created_at: CREATED_AT,
-    updated_at: CREATED_AT,
+  /** 一覧の行の見分け (1 行目 = ROW_ID。2 行の画面の試験は 2 行目も使う) */
+  interface OutboxRowKey {
+    id: string;
+    template: string;
+    createdAt: string;
+  }
+  const ROW_A: OutboxRowKey = { id: ROW_ID, template: TEMPLATE, createdAt: CREATED_AT };
+  const outboxRowOf = (row: OutboxRowKey, status: 'dead' | 'queued') => ({
+    id: row.id,
+    created_at: row.createdAt,
+    updated_at: row.createdAt,
     status,
-    template: TEMPLATE,
+    template: row.template,
     recipient: 't***@example.com',
     redacted: false,
     user_id: null,
     attempts: status === 'dead' ? 1 : 0,
     requeue_count: status === 'dead' ? 0 : 1,
-    next_attempt_at: CREATED_AT,
+    next_attempt_at: row.createdAt,
     lease_expires_at: null,
     last_error_code: 'validation_error',
     last_error_message: 'The domain is not verified',
     last_status_code: 403,
     sent_at: null,
-    dead_at: status === 'dead' ? CREATED_AT : null,
-    requeued_at: status === 'dead' ? null : CREATED_AT,
+    dead_at: status === 'dead' ? row.createdAt : null,
+    requeued_at: status === 'dead' ? null : row.createdAt,
   });
+  const outboxRow = (status: 'dead' | 'queued') => outboxRowOf(ROW_A, status);
   const noticeText = () => container.querySelector('[data-testid="email-outbox-reload-notice"] p')?.textContent ?? null;
   const noticeRole = () => container.querySelector('[data-testid="email-outbox-reload-notice"] p')?.getAttribute('role') ?? null;
   const tableRows = () => Array.from(container.querySelectorAll('tbody tr'));
-  const rowOf = () => tableRows().find((tr) => tr.textContent?.includes(TEMPLATE));
-  const requeueButton = () =>
-    Array.from(rowOf()?.querySelectorAll('button') ?? []).find((b) => b.textContent?.trim() === '再送') as
+  const rowOfTemplate = (template: string) => tableRows().find((tr) => tr.textContent?.includes(template));
+  const requeueButtonOf = (template: string) =>
+    Array.from(rowOfTemplate(template)?.querySelectorAll('button') ?? []).find((b) => b.textContent?.trim() === '再送') as
       | HTMLButtonElement
       | undefined;
+  const rowOf = () => rowOfTemplate(TEMPLATE);
+  const requeueButton = () => requeueButtonOf(TEMPLATE);
 
   /**
    * サーバーの代わり。GET は今の行を status の絞り込みどおりに返す (route と同じく、絞り込みに合わない行は返さない)。
@@ -836,5 +848,186 @@ describe('メール送信の一覧: 再送の通信が reject されたら一覧
     await click(requeueButton(), '「再送」ボタン');
     expect(s.serverStatus()).toBe('queued');
     expect(callsOf('POST', REQUEUE_PATH)).toHaveLength(2);
+  });
+
+  describe('再送は 1 行ずつで、一覧の読み込みと重ねない (3 周目のレビューの指摘: 読み直しの最中にほかの行を再送できた)', () => {
+    const ROW_B: OutboxRowKey = {
+      id: '20732073-2073-4073-8073-207320732075',
+      template: 'support_ticket_reply',
+      createdAt: '2026-10-16T05:00:00.000000+00:00',
+    };
+    const requeuePathOf = (id: string) => `${LIST_PATH}/${id}/requeue`;
+    const filterForm = () => container.querySelector('form[aria-label="メールの絞り込み"]') as HTMLFormElement | null;
+
+    /**
+     * 2 行 (A = ROW_A・B = ROW_B。どちらも dead) のサーバーの代わり。GET は今の行を status の絞り込みどおりに新しい順で返す。
+     * GET は、届いた時点の行を読んでから止める (holdGet が true の n 回目は releaseHeld まで応答を返さない)。止めているあいだに
+     * ほかの行の再送が書かれても、その GET は書かれる前の行を返す (読み直しの GET が再送の書き込みより先に読まれた)。
+     * POST は dead の行だけ queued にする (dead でなければ 409 not_dead)。holdPost が true の POST は releaseHeld まで
+     * 書かずに止める。rejectPost が 'after-write' の POST は、書いてから reject する (応答が切れた)
+     */
+    function mockTwoRowOutboxServer(options: {
+      rejectPost?: (id: string) => 'after-write' | undefined;
+      holdPost?: (id: string) => boolean;
+      holdGet?: (n: number) => boolean;
+      nextCursor?: string;
+    }) {
+      const current = new Map<string, 'dead' | 'queued'>([
+        [ROW_A.id, 'dead'],
+        [ROW_B.id, 'dead'],
+      ]);
+      let gets = 0;
+      const held: Array<() => void> = [];
+      const hold = () => new Promise<void>((resolve) => held.push(resolve));
+      mockFetch(async (method, url) => {
+        if (method === 'GET' && url.pathname === LIST_PATH) {
+          gets += 1;
+          if (url.searchParams.has('cursor')) {
+            return jsonResponse(200, { data: [], meta: { limit: 50, has_more: false, next_cursor: null } });
+          }
+          const wanted = url.searchParams.get('status');
+          const data = [ROW_A, ROW_B]
+            .filter((row) => current.get(row.id) === wanted)
+            .map((row) => outboxRowOf(row, current.get(row.id) ?? 'dead'));
+          if (options.holdGet?.(gets)) await hold();
+          const nextCursor = options.nextCursor ?? null;
+          return jsonResponse(200, { data, meta: { limit: 50, has_more: nextCursor !== null, next_cursor: nextCursor } });
+        }
+        const row = [ROW_A, ROW_B].find((r) => method === 'POST' && url.pathname === requeuePathOf(r.id));
+        if (row) {
+          if (options.holdPost?.(row.id)) await hold();
+          if (current.get(row.id) !== 'dead') {
+            return jsonResponse(409, {
+              error: { code: 'OP_EMAIL_OUTBOX_NOT_REQUEUEABLE', message: NOT_REQUEUEABLE_MESSAGE, details: { reason: 'not_dead' } },
+            });
+          }
+          current.set(row.id, 'queued');
+          if (options.rejectPost?.(row.id) === 'after-write') throw networkFailure();
+          return jsonResponse(200, { data: { id: row.id, status: 'queued' } });
+        }
+        throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+      });
+      return {
+        serverStatusOf: (id: string) => current.get(id),
+        /** 止めている GET / POST の応答を全部進める */
+        releaseHeld: () => held.splice(0).forEach((release) => release()),
+      };
+    }
+
+    async function release(s: { releaseHeld: () => void }) {
+      await act(async () => {
+        s.releaseHeld();
+      });
+      await settle();
+    }
+
+    it('A の再送の reject のあとの読み直しの最中は、B の「再送」も止める (読み直しの古い一覧が B の再送の成功を上書きしない)', async () => {
+      const s = mockTwoRowOutboxServer({
+        rejectPost: (id) => (id === ROW_A.id ? 'after-write' : undefined),
+        holdGet: (n) => n === 2,
+      });
+      await renderElement(createElement(EmailOutboxPage));
+      expect(requeueButtonOf(ROW_B.template)?.disabled).toBe(false);
+
+      await click(requeueButtonOf(ROW_A.template), '「再送」ボタン (A)');
+
+      // 読み直しの GET が応答を待っているあいだ: 一覧は残すが、B の「再送」も止める (押しても送らない)
+      expect(s.serverStatusOf(ROW_A.id)).toBe('queued');
+      expect(callsOf('GET', LIST_PATH)).toHaveLength(2);
+      expect(rowOfTemplate(ROW_B.template)?.textContent).toContain('届けられなかった');
+      expect(requeueButtonOf(ROW_B.template)?.disabled).toBe(true);
+      await forceClick(requeueButtonOf(ROW_B.template), '「再送」ボタン (B)');
+      expect(callsOf('POST', requeuePathOf(ROW_B.id))).toHaveLength(0);
+      expect(s.serverStatusOf(ROW_B.id)).toBe('dead');
+
+      await release(s);
+
+      // 知らせと一覧は読み直しの結果 (A は送信待ちに移って一覧から外れ、B は届けられなかったのまま)
+      expect(rowOfTemplate(ROW_A.template)).toBeUndefined();
+      expect(rowOfTemplate(ROW_B.template)?.textContent).toContain('届けられなかった');
+      expect(noticeText()).toBe(`「${ROW_A.template}」の再送の応答を受け取れませんでした（通信エラー）。${LIST_RELOADED_GUIDE}`);
+      // 読み直しのあとは B を再送でき、409 にならない
+      expect(requeueButtonOf(ROW_B.template)?.disabled).toBe(false);
+      await click(requeueButtonOf(ROW_B.template), '「再送」ボタン (B)');
+      expect(s.serverStatusOf(ROW_B.id)).toBe('queued');
+      expect(callsOf('POST', requeuePathOf(ROW_B.id))).toHaveLength(1);
+      expect(rowOfTemplate(ROW_B.template)?.textContent).toContain('送信待ち');
+      expect(container.querySelector('[role="status"]')?.textContent).toBe('再送を受け付けました');
+      expect(text()).not.toContain(NOT_REQUEUEABLE_MESSAGE);
+    });
+
+    it('再送の応答を待つあいだは、ほかの行の「再送」と一覧の読み込み (「絞り込む」「再読み込み」「さらに読み込む」) を止める', async () => {
+      const s = mockTwoRowOutboxServer({ holdPost: (id) => id === ROW_A.id, nextCursor: 'cursor-2' });
+      await renderElement(createElement(EmailOutboxPage));
+      expect(findButton('再読み込み')?.disabled).toBe(false);
+      expect(findButton('さらに読み込む')?.disabled).toBe(false);
+
+      await click(requeueButtonOf(ROW_A.template), '「再送」ボタン (A)');
+
+      // A の POST が応答を待っているあいだ: B の「再送」と一覧の読み込みのボタンを止め、押されても (送信の操作でも) 送らない
+      expect(callsOf('POST', requeuePathOf(ROW_A.id))).toHaveLength(1);
+      expect(requeueButtonOf(ROW_A.template)?.disabled).toBe(true);
+      expect(requeueButtonOf(ROW_B.template)?.disabled).toBe(true);
+      expect(findButton('絞り込む')?.disabled).toBe(true);
+      expect(findButton('再読み込み')?.disabled).toBe(true);
+      expect(findButton('さらに読み込む')?.disabled).toBe(true);
+      await forceClick(requeueButtonOf(ROW_B.template), '「再送」ボタン (B)');
+      await forceClick(findButton('再読み込み'), '「再読み込み」ボタン');
+      await forceClick(findButton('さらに読み込む'), '「さらに読み込む」ボタン');
+      expect(filterForm(), '絞り込みのフォームが見つからない').not.toBeNull();
+      await act(async () => {
+        filterForm()!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      });
+      await settle();
+      expect(callsOf('POST', requeuePathOf(ROW_B.id))).toHaveLength(0);
+      expect(callsOf('GET', LIST_PATH)).toHaveLength(1);
+
+      await release(s);
+
+      // A の再送の成功の描き替えと知らせが残る (あとから届いた一覧で上書きされない)。ボタンは戻る
+      expect(s.serverStatusOf(ROW_A.id)).toBe('queued');
+      expect(rowOfTemplate(ROW_A.template)?.textContent).toContain('送信待ち');
+      expect(requeueButtonOf(ROW_A.template)).toBeUndefined();
+      expect(container.querySelector('[role="status"]')?.textContent).toBe('再送を受け付けました');
+      expect(requeueButtonOf(ROW_B.template)?.disabled).toBe(false);
+      expect(findButton('絞り込む')?.disabled).toBe(false);
+      expect(findButton('再読み込み')?.disabled).toBe(false);
+      expect(findButton('さらに読み込む')?.disabled).toBe(false);
+    });
+
+    it('再描画の前に続けて押しても (同じ act の中の押下)、再送どうし・再送と一覧の読み込みを重ねない', async () => {
+      const s = mockTwoRowOutboxServer({ holdPost: () => true });
+      await renderElement(createElement(EmailOutboxPage));
+      const buttonA = requeueButtonOf(ROW_A.template);
+      const buttonB = requeueButtonOf(ROW_B.template);
+      const reloadButton = findButton('再読み込み');
+      expect(buttonA && buttonB && reloadButton, '「再送」(A・B) と「再読み込み」が見つからない').toBeTruthy();
+
+      // A の「再送」の直後に B の「再送」と「再読み込み」: A の POST だけを送る
+      await act(async () => {
+        buttonA!.click();
+        buttonB!.click();
+        reloadButton!.click();
+      });
+      await settle();
+      expect(callsOf('POST', requeuePathOf(ROW_A.id))).toHaveLength(1);
+      expect(callsOf('POST', requeuePathOf(ROW_B.id))).toHaveLength(0);
+      expect(callsOf('GET', LIST_PATH)).toHaveLength(1);
+      await release(s);
+      expect(container.querySelector('[role="status"]')?.textContent).toBe('再送を受け付けました');
+
+      // 「再読み込み」の直後に B の「再送」: 一覧の読み込みだけを出す
+      const buttonBAfter = requeueButtonOf(ROW_B.template);
+      const reloadAfter = findButton('再読み込み');
+      expect(buttonBAfter && reloadAfter, '「再送」(B) と「再読み込み」が見つからない').toBeTruthy();
+      await act(async () => {
+        reloadAfter!.click();
+        buttonBAfter!.click();
+      });
+      await settle();
+      expect(callsOf('GET', LIST_PATH)).toHaveLength(2);
+      expect(callsOf('POST', requeuePathOf(ROW_B.id))).toHaveLength(0);
+      expect(s.serverStatusOf(ROW_B.id)).toBe('dead');
+    });
   });
 });

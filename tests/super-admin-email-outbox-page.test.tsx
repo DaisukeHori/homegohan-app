@@ -7,6 +7,7 @@
  *   - dead の行にだけ「再送」。伏せ字の行は無効にして理由を出す
  *   - 再送の成功で行を queued に描き替え、role="status" で知らせる。409 / 404 は API の説明を出す
  *   - 再送の通信の reject は一覧を読み直し、自分の再送が済んでいたときにも合う文を出す (#2073。詳しくは super-admin-status-reject-reload-2073.test.tsx)
+ *   - 再送は 1 行ずつで、一覧の読み込みと重ねない (#2073。同じく super-admin-status-reject-reload-2073.test.tsx)
  *   - さらに読み込む (カーソル)
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
