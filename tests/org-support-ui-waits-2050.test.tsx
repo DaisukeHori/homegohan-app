@@ -711,6 +711,48 @@ describe('サポートの利用者: 応答を待つ間に別の利用者を選�
     expect(findButton('追加')!.disabled).toBe(true);
   });
 
+  it('応答を待つ間に別の利用者を選んで書き始めたメモは、前の利用者へのメモの成功の応答で消さない', async () => {
+    const postA = deferred<Response>();
+    mockSupportApi({ postA: () => postA.promise });
+    await renderPage(SupportUsersPage);
+    await vi.waitFor(() => expect(detailName()).toBe(NICKNAME_A));
+
+    await typeInto(noteInput(), '1 つ目のメモ');
+    await click(findButton('追加'), '「追加」ボタン');
+    await click(otherRow(), '別の利用者の行');
+    await vi.waitFor(() => expect(detailName()).toBe(NICKNAME_B));
+    await typeInto(noteInput(), 'B さんへの書きかけ');
+
+    await act(async () => {
+      postA.resolve(jsonResponse(201, { note: {} }));
+    });
+    await settle();
+
+    expect(noteInput()!.value).toBe('B さんへの書きかけ');
+    expect(detailName()).toBe(NICKNAME_B);
+  });
+
+  it('メモの追加の応答を待つ間に入力欄を書き直したら、成功の応答で書き直したメモを消さない', async () => {
+    const postA = deferred<Response>();
+    mockSupportApi({ postA: () => postA.promise });
+    await renderPage(SupportUsersPage);
+    await vi.waitFor(() => expect(detailName()).toBe(NICKNAME_A));
+
+    await typeInto(noteInput(), '1 つ目のメモ');
+    await click(findButton('追加'), '「追加」ボタン');
+    await typeInto(noteInput(), '2 つ目のメモ');
+
+    await act(async () => {
+      postA.resolve(jsonResponse(201, { note: {} }));
+    });
+    await settle();
+
+    expect(noteInput()!.value).toBe('2 つ目のメモ');
+    // 送ったのは 1 つ目のメモ
+    const [, init] = callsOf('POST', notesPath(USER_ID))[0];
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({ note: '1 つ目のメモ' });
+  });
+
   it('メモの追加の応答を待つ間に別の利用者を選ぶと、失敗の応答が届いても選んだ利用者の詳細に失敗の文を出さない', async () => {
     const postA = deferred<Response>();
     mockSupportApi({ postA: () => postA.promise });

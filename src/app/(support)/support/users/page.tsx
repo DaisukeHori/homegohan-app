@@ -170,6 +170,7 @@ function SupportUsersContent() {
     if (!newNote.trim() || !selectedUserId) return;
     // 送り先の利用者 (応答が届いた時点で別の利用者を選んでいたら、その応答で画面を書かない)
     const targetUserId = selectedUserId;
+    const sentNote = newNote;
     const isStillSelected = () => selectedUserIdRef.current === targetUserId;
 
     setAddingNote(true);
@@ -178,7 +179,7 @@ function SupportUsersContent() {
       const res = await fetch(`/api/support/users/${targetUserId}/notes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ note: newNote }),
+        body: JSON.stringify({ note: sentNote }),
       });
 
       if (!res.ok) {
@@ -191,7 +192,8 @@ function SupportUsersContent() {
       // 別の利用者を選んでいたら、その利用者の詳細の欄と書きかけのメモに触れない
       // (送った利用者の詳細を読み直すと、いま選んでいる利用者の欄が前の利用者で上書きされる。#2050)
       if (!isStillSelected()) return;
-      setNewNote("");
+      // 入力欄は、送ったメモのままなら空にする (待つ間に書き直した・選び直して書いたメモは消さない)
+      setNewNote((current) => (current === sentNote ? "" : current));
       fetchUserDetail(targetUserId);
     } catch (error) {
       console.error("Failed to add note:", error);
