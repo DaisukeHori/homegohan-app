@@ -360,6 +360,8 @@ export default function PlanDetailPage() {
    */
   const reloadAfterSuccess = useCallback(async () => {
     const outcome = await fetchPlan({ keepEdits: true });
+    // 読み直せたら文を消す (読み直しが失敗しているあいだの保存は、その文と「再試行」を消さずに送るので、ここで消す。#2064)
+    if (outcome.kind === 'loaded') setReloadNotice(null);
     if (outcome.kind === 'failed') setReloadNotice({ kind: 'reload-failed' });
     if (outcome.kind === 'unavailable') setReloadNotice({ kind: 'unavailable', reason: outcome.reason, message: outcome.message });
   }, [fetchPlan]);

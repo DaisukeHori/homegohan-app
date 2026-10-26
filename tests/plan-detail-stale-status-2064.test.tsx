@@ -283,6 +283,56 @@ describe('廃止の成功 → 読み直しの失敗のあと、古い「公開�
   });
 });
 
+describe('読み直しが失敗しているあいだの保存は、その文と「再試行」を消さない (#2064)', () => {
+  /** 表示名の欄に打つ */
+  async function typeDisplayName(value: string) {
+    const input = Array.from(container.querySelectorAll('label'))
+      .find((l) => l.textContent === '表示名 *')!
+      .parentElement!.querySelector('input') as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setter.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
+  it('保存が断られたら、読み直しの失敗の文と「再試行」を残し、状態のボタンも止めたまま', async () => {
+    const server = mockServer({ failGet: (n) => n === 2 });
+    await render();
+    await clickButton('非公開にする');
+    expect(text()).toContain(RELOAD_FAILED_HEAD);
+    // 保存だけを 500 で断る
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      if ((init?.method ?? 'GET').toUpperCase() === 'PATCH') return jsonResponse(500, { error: { message: '内部エラー' } });
+      return original(input, init);
+    });
+
+    await typeDisplayName('古い状態のプラン (改)');
+    await clickButton('保存する');
+    expect(text()).toContain('内部エラー');
+    expect(text()).toContain(RELOAD_FAILED_HEAD);
+    expect(button('再試行').disabled).toBe(false);
+    for (const b of visibleStatusButtons()) expect(b.disabled, `「${b.textContent}」が止まっていない`).toBe(true);
+    expect(server.serverRow().status).toBe('private');
+  });
+
+  it('保存に成功して読み直せたら、文を消し、読み直した状態のボタンを押せる', async () => {
+    mockServer({ failGet: (n) => n === 2 });
+    await render();
+    await clickButton('非公開にする');
+    expect(text()).toContain(RELOAD_FAILED_HEAD);
+
+    await typeDisplayName('古い状態のプラン (改)');
+    await clickButton('保存する');
+    expect(text()).toContain('保存しました');
+    expect(container.querySelector('[data-testid="plan-reload-notice"]')).toBeNull();
+    expect(statusBadge()).toBe('非公開');
+    expect(button('再公開する').disabled).toBe(false);
+    expect(button('廃止する').disabled).toBe(false);
+  });
+});
+
 describe('画面を開いているあいだに別の運営が廃止した: 古い「公開中」のまま「非公開にする」で廃止を取り消さない (#2064)', () => {
   it('本文に画面が見ていた status (public) を入れ、route が 409 を返すので廃止は取り消されない。画面は読み直して廃止を出す', async () => {
     const server = mockServer({});
