@@ -676,16 +676,26 @@ describe('メール送信の一覧: 再送の通信が reject されたら一覧
   function mockOutboxServer(options: {
     rejectPost?: (n: number) => 'after-write' | 'before-write' | undefined;
     failGet?: (n: number) => boolean;
+    /** 先頭のページ (cursor なし) の GET が返す続きのカーソル。続きのページ (cursor あり) は空で返す */
+    nextCursor?: string;
+    /** true の n 回目の GET は、返したあとに得られる release() を呼ぶまで応答を止める */
+    holdGet?: (n: number) => boolean;
   }) {
     let current: 'dead' | 'queued' = 'dead';
     let gets = 0;
     let posts = 0;
-    mockFetch((method, url) => {
+    const held: Array<() => void> = [];
+    mockFetch(async (method, url) => {
       if (method === 'GET' && url.pathname === LIST_PATH) {
         gets += 1;
+        if (options.holdGet?.(gets)) await new Promise<void>((resolve) => held.push(resolve));
         if (options.failGet?.(gets)) return jsonResponse(500, { error: { message: '内部エラー' } });
+        if (url.searchParams.has('cursor')) {
+          return jsonResponse(200, { data: [], meta: { limit: 50, has_more: false, next_cursor: null } });
+        }
         const data = url.searchParams.get('status') === current ? [outboxRow(current)] : [];
-        return jsonResponse(200, { data, meta: { limit: 50, has_more: false, next_cursor: null } });
+        const nextCursor = options.nextCursor ?? null;
+        return jsonResponse(200, { data, meta: { limit: 50, has_more: nextCursor !== null, next_cursor: nextCursor } });
       }
       if (method === 'POST' && url.pathname === REQUEUE_PATH) {
         posts += 1;
@@ -702,7 +712,11 @@ describe('メール送信の一覧: 再送の通信が reject されたら一覧
       }
       throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
     });
-    return { serverStatus: () => current };
+    return {
+      serverStatus: () => current,
+      /** 止めている GET の応答を全部返す */
+      releaseHeld: () => held.splice(0).forEach((release) => release()),
+    };
   }
 
   it('サーバーが再送を済ませてから応答が切れたら、一覧を読み直して今の状態を見せ、自分の操作でも合う文を出す (通信の失敗の alert にしない)', async () => {
@@ -773,6 +787,40 @@ describe('メール送信の一覧: 再送の通信が reject されたら一覧
     expect(noticeText()).toBe(`「${TEMPLATE}」の再送の応答を受け取れませんでした（通信エラー）。${LIST_RELOADED_GUIDE}`);
     expect(findButton('再試行')).toBeUndefined();
     expect(alertSpy).not.toHaveBeenCalled();
+  });
+
+  it('読み直しの最中は「さらに読み込む」を止める (続きの読み込みが読み直しを追い越して、古い行と「再送」が知らせも無く残らない)', async () => {
+    const s = mockOutboxServer({ rejectPost: () => 'after-write', nextCursor: 'cursor-2', holdGet: (n) => n === 2 });
+    await renderElement(createElement(EmailOutboxPage));
+    expect(findButton('さらに読み込む')?.disabled).toBe(false);
+
+    await click(requeueButton(), '「再送」ボタン');
+
+    // 読み直しの GET が応答を待っているあいだ: 一覧は残すが、「さらに読み込む」は止める (押しても続きを読まない)
+    expect(s.serverStatus()).toBe('queued');
+    expect(callsOf('GET', LIST_PATH)).toHaveLength(2);
+    expect(rowOf()?.textContent).toContain('届けられなかった');
+    expect(findButton('さらに読み込む')?.disabled).toBe(true);
+    await forceClick(findButton('さらに読み込む'), '「さらに読み込む」ボタン');
+    const cursorCalls = () =>
+      callsOf('GET', LIST_PATH).filter(([input]) => new URL(String(input), 'http://localhost').searchParams.has('cursor'));
+    expect(cursorCalls()).toHaveLength(0);
+
+    await act(async () => {
+      s.releaseHeld();
+    });
+    await settle();
+
+    // 読み直しの結果が捨てられずに一覧が今の状態になり、自分の操作でも合う文が出る
+    expect(callsOf('GET', LIST_PATH)).toHaveLength(2);
+    expect(rowOf()).toBeUndefined();
+    expect(requeueButton()).toBeUndefined();
+    expect(noticeText()).toBe(`「${TEMPLATE}」の再送の応答を受け取れませんでした（通信エラー）。${LIST_RELOADED_GUIDE}`);
+    // 読み直しのあとは続きを読める (読み直しで先頭のページの続きのカーソルを取り直す)
+    expect(findButton('さらに読み込む')?.disabled).toBe(false);
+    await click(findButton('さらに読み込む'), '「さらに読み込む」ボタン');
+    expect(cursorCalls()).toHaveLength(1);
+    expect(new URL(String(cursorCalls()[0][0]), 'http://localhost').searchParams.get('cursor')).toBe('cursor-2');
   });
 
   it('「再試行」で読み直したあとは「再送」を戻す (書く前に切れていた行はもう一度再送できる)', async () => {
