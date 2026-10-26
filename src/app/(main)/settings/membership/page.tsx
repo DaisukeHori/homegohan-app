@@ -13,6 +13,23 @@ import { ChevronLeft, Users, Building2, AlertTriangle } from 'lucide-react';
 import type { MembershipScope } from '@/lib/emails/membership/scope-label';
 import { SELF_DISSOLVE_COPY } from '@/lib/membership/self-dissolve';
 import { SelfDissolveSection } from '@/components/membership/SelfDissolveSection';
+import {
+  readOwnMembershipAfterNetworkFailure,
+  withMembershipStateNote,
+  type MembershipLeaveScope,
+} from '@/lib/membership/leave-state';
+
+/**
+ * 脱退の通信そのものが失敗した (fetch が reject した) ときに「…の脱退に失敗しました: 」の後ろに出す理由 (#2064)。
+ * 以前は fetch の例外の文 (英語の「Failed to fetch」など) をそのまま出していた。組織のメンバーの画面の脱退と同じ文
+ */
+const LEAVE_NETWORK_FAILURE_REASON = '通信エラーが発生しました。通信状況を確認して、もう一度お試しください';
+
+/** 脱退に失敗したときの文の頭 (所属ごと) */
+const LEAVE_FAILURE_PREFIX = {
+  family: '家族からの脱退に失敗しました',
+  org: '組織からの脱退に失敗しました',
+} as const satisfies Record<MembershipLeaveScope, string>;
 
 // スイッチコンポーネント
 const Switch = ({
@@ -227,45 +244,51 @@ export default function MembershipSettingsPage() {
     [familyInfo, shareSettings],
   );
 
-  // 家族脱退
-  const handleLeaveFamily = async () => {
+  /**
+   * 家族・組織の脱退。成功したら確認の区画を閉じて設定へ移る。
+   * 通信そのものが失敗した (fetch が reject した) ときは、サーバーが脱退を済ませてから応答が切れたこともあるので、
+   * 自分のプロフィールを読み直して確かめる (#2064。以前は確かめず、画面は家族 / 組織に入ったまま残り、もう一度押すと失敗の文が出ていた)。
+   * 抜けていれば成功のときと同じ遷移、抜けていなければ失敗の文、確かめられなければ失敗の文に「状態を確かめられませんでした」を添える。
+   * 読み直しの応答を待つあいだも「脱退する」を止めたままにする (leaveLoading を戻さない)
+   */
+  const leaveMembership = async (scope: MembershipLeaveScope) => {
+    const closeModal = () => {
+      if (scope === 'family') setShowLeaveFamilyModal(false);
+      else setShowLeaveOrgModal(false);
+    };
     setLeaveLoading(true);
     setLeaveError(null);
     try {
-      const res = await fetch('/api/family/leave', { method: 'POST' });
+      // 組織脱退は P2 担当 endpoint を呼ぶだけ
+      const res = await fetch(scope === 'family' ? '/api/family/leave' : '/api/org/leave', { method: 'POST' });
       const json = await res.json().catch(() => null);
       if (!res.ok) {
         // 本文の message は操作ごとの固定の文なので、理由は code から引く (#1478)
-        throw new Error(`家族からの脱退に失敗しました: ${membershipErrorMessageOfBody(json)}`);
+        setLeaveError(`${LEAVE_FAILURE_PREFIX[scope]}: ${membershipErrorMessageOfBody(json)}`);
+        return;
       }
-      setShowLeaveFamilyModal(false);
+      closeModal();
       router.push('/settings');
-    } catch (err: unknown) {
-      setLeaveError(err instanceof Error ? err.message : '脱退処理に失敗しました');
+    } catch (leaveFailure) {
+      console.error('[settings/membership] leave error:', leaveFailure);
+      const membership = await readOwnMembershipAfterNetworkFailure(supabase, scope);
+      if (membership === 'left') {
+        // 抜けている: 成功のときと同じ遷移
+        closeModal();
+        router.push('/settings');
+        return;
+      }
+      setLeaveError(withMembershipStateNote(`${LEAVE_FAILURE_PREFIX[scope]}: ${LEAVE_NETWORK_FAILURE_REASON}`, membership));
     } finally {
       setLeaveLoading(false);
     }
   };
 
-  // 組織脱退 (P2 担当 endpoint を呼ぶだけ)
-  const handleLeaveOrg = async () => {
-    setLeaveLoading(true);
-    setLeaveError(null);
-    try {
-      const res = await fetch('/api/org/leave', { method: 'POST' });
-      const json = await res.json().catch(() => null);
-      if (!res.ok) {
-        // 本文の message は操作ごとの固定の文なので、理由は code から引く (#1478)
-        throw new Error(`組織からの脱退に失敗しました: ${membershipErrorMessageOfBody(json)}`);
-      }
-      setShowLeaveOrgModal(false);
-      router.push('/settings');
-    } catch (err: unknown) {
-      setLeaveError(err instanceof Error ? err.message : '脱退処理に失敗しました');
-    } finally {
-      setLeaveLoading(false);
-    }
-  };
+  // 家族脱退
+  const handleLeaveFamily = () => leaveMembership('family');
+
+  // 組織脱退
+  const handleLeaveOrg = () => leaveMembership('org');
 
   if (loading) {
     return (
