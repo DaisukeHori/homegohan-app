@@ -120,7 +120,7 @@ vi.mock('@/lib/supabase/client', () => {
   return { createClient: () => client };
 });
 
-const { default: TransferAcceptPage } = await import('@/app/(org)/org/transfer-accept/[proposal_id]/page');
+const { default: TransferAcceptPage } = await import('@/app/(main)/org/transfer-accept/[proposal_id]/page');
 const { default: OrgLayout } = await import('@/app/(org)/layout');
 const { default: OrgDepartmentsPage } = await import('@/app/(org)/org/departments/page');
 const { default: OrgInvitesPage } = await import('@/app/(org)/org/invites/page');

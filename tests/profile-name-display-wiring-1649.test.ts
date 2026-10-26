@@ -57,7 +57,7 @@ const DISPLAY_SCREENS = [
   'src/app/(main)/family/transfer-accept/[proposal_id]/page.tsx',
   'src/app/(org)/org/members/page.tsx',
   'src/app/(org)/org/settings/owner-transfer/page.tsx',
-  'src/app/(org)/org/transfer-accept/[proposal_id]/page.tsx',
+  'src/app/(main)/org/transfer-accept/[proposal_id]/page.tsx',
   'src/app/(operator)/operator/membership/families/[id]/transfer/page.tsx',
   'src/app/(operator)/operator/membership/orgs/[id]/transfer/page.tsx',
   'src/app/(support)/layout.tsx',

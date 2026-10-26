@@ -29,7 +29,7 @@ vi.mock('@/lib/supabase/client', () => ({
   createClient: () => state.client,
 }));
 
-import TransferAcceptPage from '@/app/(org)/org/transfer-accept/[proposal_id]/page';
+import TransferAcceptPage from '@/app/(main)/org/transfer-accept/[proposal_id]/page';
 
 const h = React.createElement;
 
