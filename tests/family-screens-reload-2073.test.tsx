@@ -820,7 +820,7 @@ describe('#2073 メンバーの詳細: 読み込めなかったのを別の状�
     shareRereadFails = false;
     profileResponds(inFamily);
     supabaseState.responders.family_members = (ctx: QueryContext) => {
-      if (ctx.kind === 'maybeSingle') {
+      if (ctx.kind === 'maybeSingle' && ctx.columns === SHARE_REREAD_COLUMNS) {
         // 共有の設定の読み直し (自分の active な行)
         if (shareRereadFails) return { data: null, error: LOAD_FAILURE };
         // RLS では同じ家族の他の人の行も読めるので、自分の active な行に絞らないと 2 行以上が返って失敗する
