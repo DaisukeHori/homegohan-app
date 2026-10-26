@@ -1,5 +1,11 @@
 "use client";
 
+// 組織のオーナーの譲渡の承諾の画面 (/org/transfer-accept/[proposal_id]。提案のメールのリンクの行き先)。
+// 譲渡先は一般メンバー (org_role = member) のこともあるので、組織の管理画面の枠 (src/app/(org)/layout.tsx。owner / admin でない人を
+// /home へ送る) の外の、ログインした利用者の枠 (src/app/(main)/) に置く (#2068。家族の譲渡の承諾の画面と同じ枠)。
+// ルートグループの名前は URL に出ないので、URL は変わらない。提案の本人かどうかは、この画面 (to_user_id と自分の比較) と、
+// API・DB (ownership_transfer_proposals の RLS・承諾と拒否の関数の to_user_id = auth.uid() の確かめ) が受け持つ
+
 import { useCallback, useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";

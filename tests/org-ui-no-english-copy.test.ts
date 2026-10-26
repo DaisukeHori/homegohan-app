@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * 組織の管理画面 (src/app/(org) 配下) に、英語だけの固定の文言が残っていないことのソース走査テスト
+ * 組織の管理画面 (src/app/(org) 配下と、管理画面の枠の外に置いた src/app/(main)/org 配下) に、英語だけの固定の文言が残っていないことのソース走査テスト
  *
  * 問題:
  *   日本語の画面なのに、サイドバーのログアウトのボタンに「Sign Out」、ダッシュボードの見出しに「Health Cockpit」、
@@ -28,8 +28,11 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 const ROOT = path.resolve(__dirname, '..');
-/** 走査する画面のディレクトリ (組織の管理画面のルートグループ) */
-const SCAN_ROOT = 'src/app/(org)';
+/**
+ * 走査する画面のディレクトリ: 組織の管理画面のルートグループと、管理画面の枠の外に置いた組織の画面
+ * (オーナーの譲渡の承諾の画面 /org/transfer-accept/[proposal_id]。一般メンバーも開くので (main) に置く。#2068)
+ */
+const SCAN_ROOTS = ['src/app/(org)', 'src/app/(main)/org'];
 
 /** 画面に出る属性 */
 const DISPLAY_ATTRIBUTES = new Set(['placeholder', 'title', 'alt', 'aria-label', 'label']);
@@ -152,7 +155,7 @@ function listScreenFiles(): string[] {
       else if (entry.name.endsWith('.tsx')) result.push(rel);
     }
   };
-  walk(SCAN_ROOT);
+  for (const scanRoot of SCAN_ROOTS) walk(scanRoot);
   return result.sort();
 }
 
@@ -208,6 +211,7 @@ describe('組織の管理画面 (src/app/(org)) に英語だけの固定の文�
   it('走査する画面のファイルがある (サイドバーのレイアウトとダッシュボードを含む)', () => {
     expect(files).toContain('src/app/(org)/layout.tsx');
     expect(files).toContain('src/app/(org)/org/dashboard/page.tsx');
+    expect(files).toContain('src/app/(main)/org/transfer-accept/[proposal_id]/page.tsx');
   });
 
   it('許可リストに無い英語だけの文言が無い', () => {

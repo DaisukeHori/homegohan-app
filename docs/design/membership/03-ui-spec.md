@@ -534,5 +534,5 @@ paste_group 内の食事を 1 回の操作でまとめて書き換える機能 (
 | `src/app/(main)/settings/membership/page.tsx` | 共有設定 |
 | `src/app/(org)/org/members/page.tsx` | org メンバ一覧 |
 | `src/app/(org)/org/settings/owner-transfer/page.tsx` | org owner 譲渡 |
-| `src/app/(org)/org/transfer-accept/[proposal_id]/page.tsx` | 譲渡承諾 |
+| `src/app/(main)/org/transfer-accept/[proposal_id]/page.tsx` | 譲渡承諾 |
 | `src/app/(operator)/operator/membership/...` | 運営 UI (05-operator-emergency-ui.md 参照) |
