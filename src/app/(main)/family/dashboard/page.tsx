@@ -1,10 +1,16 @@
 'use client';
 
 // (設計書 03-ui-spec.md §3.2, 12.2)
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
+
+/**
+ * 自分のプロフィールを読み込めなかった・問い合わせが例外を投げたときの文 (#2073 S3)。家族に入っていない (家族の作成の画面へ移す) と
+ * 見分けるために出す (家族のメンバーの画面の FAMILY_MEMBERS_LOAD_ERROR と同じ扱い)。失敗の理由 (英語の内部の文) は画面に出さない
+ */
+const FAMILY_DASHBOARD_LOAD_ERROR = '家族の情報を読み込めませんでした。しばらくしてから、もう一度お試しください。';
 
 interface FamilyMember {
   id: string;
@@ -28,24 +34,38 @@ export default function FamilyDashboardPage() {
   const [familyGroup, setFamilyGroup] = useState<FamilyGroup | null>(null);
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // 読み込めなかったときの文。あるあいだは画面の代わりにこの文と「再試行」を出す (#2073 S3。以前は自分のプロフィールを読めないと
+  // 家族に入っていないとして家族の作成の画面へ移し、try / catch が無く、問い合わせが例外を投げると読み込み中の表示のまま止まり、未処理の reject になっていた)
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const init = async () => {
+  // 家族グループとメンバーを読む。画面を開いたときと「再試行」で呼ぶ
+  const loadDashboard = useCallback(async () => {
+    setLoading(true);
+    // 別の画面へ移るときは、移るまで読み込み中の表示のままにする (これまでどおり)
+    let redirecting = false;
+    try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
+        redirecting = true;
         router.push('/login');
         return;
       }
 
       // user_profiles から family_id を取得
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
         .select('family_id')
         .eq('id', user.id)
         .single();
 
+      if (profileError) {
+        // 自分のプロフィールを読めなかった (家族に入っていないのとは別。家族の作成の画面へ送らない)
+        setLoadError(FAMILY_DASHBOARD_LOAD_ERROR);
+        return;
+      }
       if (!profile?.family_id) {
         // 家族グループ未参加 → setup へ
+        redirecting = true;
         router.replace('/family/setup');
         return;
       }
@@ -59,7 +79,7 @@ export default function FamilyDashboardPage() {
 
       if (groupError || !group) {
         setError('家族グループの取得に失敗しました');
-        setLoading(false);
+        setLoadError(null);
         return;
       }
 
@@ -78,13 +98,20 @@ export default function FamilyDashboardPage() {
         // 画面に出す名前 (display_name が無ければ本人のプロフィールの今の名前) は API で決める (#1584)
         const names = await fetchFamilyMemberNames();
         setMembers(applyFamilyMemberNames((membersData ?? []) as FamilyMember[], names));
+        setError(null);
       }
-
-      setLoading(false);
-    };
-
-    init();
+      setLoadError(null);
+    } catch (loadFailure) {
+      console.error('[family/dashboard] load error:', loadFailure);
+      setLoadError(FAMILY_DASHBOARD_LOAD_ERROR);
+    } finally {
+      if (!redirecting) setLoading(false);
+    }
   }, [supabase, router]);
+
+  useEffect(() => {
+    void loadDashboard();
+  }, [loadDashboard]);
 
   const roleLabel = (role: string) => {
     if (role === 'representative') return '代表';
@@ -102,6 +129,29 @@ export default function FamilyDashboardPage() {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-gray-400 text-sm">読み込み中…</div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center gap-4 p-6">
+        <div
+          role="alert"
+          data-testid="family-dashboard-load-error"
+          className="w-full max-w-md rounded-2xl bg-red-50 border border-red-200 p-6 text-center"
+        >
+          <p className="text-sm text-red-600">{loadError}</p>
+          <div className="mt-4 flex justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => void loadDashboard()}
+              className="px-4 py-2 rounded-full bg-white border border-red-300 text-red-600 text-sm"
+            >
+              再試行
+            </button>
+          </div>
+        </div>
       </div>
     );
   }

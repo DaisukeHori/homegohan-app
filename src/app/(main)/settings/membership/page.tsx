@@ -18,6 +18,23 @@ import {
   withMembershipStateNote,
   type MembershipLeaveScope,
 } from '@/lib/membership/leave-state';
+import {
+  readOwnShareSettingsAfterNetworkFailure,
+  withShareSettingsUnconfirmedNote,
+} from '@/lib/membership/share-settings-state';
+
+/**
+ * 所属 (自分のプロフィール・家族・組織) を読み込めなかったときの文 (#2073 S3)。所属していない (「所属していません」と
+ * 家族グループの作成への案内) と見分けるために出す (家族のメンバーの画面の FAMILY_MEMBERS_LOAD_ERROR と同じ扱い)。
+ * 失敗の理由 (英語の内部の文) は画面に出さない
+ */
+const MEMBERSHIP_LOAD_ERROR = '所属の情報を読み込めませんでした。しばらくしてから、もう一度お試しください。';
+
+/** 共有の設定の更新に失敗したときの文 (応答が届いたうえでの失敗) */
+const SHARE_UPDATE_FAILED_MESSAGE = '共有設定の更新に失敗しました';
+
+/** 共有の設定の更新の通信そのものが失敗した (fetch が reject した) ときの文 */
+const SHARE_NETWORK_FAILURE_MESSAGE = '共有設定の更新に失敗しました: 通信エラーが発生しました';
 
 /**
  * 脱退の通信そのものが失敗した (fetch が reject した) ときに「…の脱退に失敗しました: 」の後ろに出す理由 (#2064)。
@@ -100,6 +117,11 @@ export default function MembershipSettingsPage() {
   const [showLeaveOrgModal, setShowLeaveOrgModal] = useState(false);
   const [leaveLoading, setLeaveLoading] = useState(false);
   const [leaveError, setLeaveError] = useState<string | null>(null);
+  // 共有の設定の更新に失敗したときの文 (#2073 S2)
+  const [shareError, setShareError] = useState<string | null>(null);
+  // 所属を読み込めなかったときの文。あるあいだは所属の区画の代わりにこの文と「再試行」を出す (#2073 S3。以前は読み込めなかったのを
+  // 所属していないと見せ、家族グループの作成への案内を出していた)
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // #1917 解散の区画を開いている所属 (null は閉じている) と、解散が済んだときの文
   const [dissolveTarget, setDissolveTarget] = useState<MembershipScope | null>(null);
@@ -123,16 +145,22 @@ export default function MembershipSettingsPage() {
         }
 
         // user_profiles から family_id / organization_id を取得
-        const { data: profile } = await supabase
+        const { data: profile, error: profileError } = await supabase
           .from('user_profiles')
           .select('family_id, organization_id, org_role, nickname')
           .eq('id', user.id)
           .single();
+        if (profileError) {
+          // 自分のプロフィールを読めなかった (所属していないのとは別。「所属していません」と見せない)
+          setLoadError(MEMBERSHIP_LOAD_ERROR);
+          return;
+        }
 
         // 家族情報
         let nextFamily: FamilyInfo | null = null;
+        let nextShareSettings: ShareSettings | null = null;
         if (profile?.family_id) {
-          const [{ data: familyMember }, { data: familyGroup }] = await Promise.all([
+          const [{ data: familyMember, error: familyMemberError }, { data: familyGroup, error: familyGroupError }] = await Promise.all([
             supabase
               .from('family_members')
               .select('id, role, share_meals, share_health, share_menu')
@@ -147,6 +175,11 @@ export default function MembershipSettingsPage() {
               .maybeSingle(),
           ]);
 
+          if (familyMemberError || familyGroupError) {
+            // 読み込めなかった (家族にいないのとは別)
+            setLoadError(MEMBERSHIP_LOAD_ERROR);
+            return;
+          }
           if (familyMember && familyGroup) {
             nextFamily = {
               family_id: profile.family_id,
@@ -158,23 +191,27 @@ export default function MembershipSettingsPage() {
                 share_menu: familyMember.share_menu,
               },
             };
-            setShareSettings({
+            nextShareSettings = {
               share_meals: familyMember.share_meals,
               share_health: familyMember.share_health,
               share_menu: familyMember.share_menu,
-            });
+            };
           }
         }
-        setFamilyInfo(nextFamily);
 
         // 組織情報
         let nextOrg: OrgInfo | null = null;
         if (profile?.organization_id) {
-          const { data: org } = await supabase
+          const { data: org, error: orgError } = await supabase
             .from('organizations')
             .select('id, name')
             .eq('id', profile.organization_id)
             .maybeSingle();
+          if (orgError) {
+            // 読み込めなかった (組織に入っていないのとは別)
+            setLoadError(MEMBERSHIP_LOAD_ERROR);
+            return;
+          }
           if (org) {
             nextOrg = {
               organization_id: profile.organization_id,
@@ -183,9 +220,14 @@ export default function MembershipSettingsPage() {
             };
           }
         }
+        // 全部読めてから出す
+        setFamilyInfo(nextFamily);
+        if (nextShareSettings) setShareSettings(nextShareSettings);
         setOrgInfo(nextOrg);
+        setLoadError(null);
       } catch (err) {
         console.error('[settings/membership] load error:', err);
+        setLoadError(MEMBERSHIP_LOAD_ERROR);
       } finally {
         if (mode === 'initial') setLoading(false);
       }
@@ -217,31 +259,49 @@ export default function MembershipSettingsPage() {
   const handleShareToggle = useCallback(
     async (key: keyof ShareSettings) => {
       if (!familyInfo) return;
+      const previous = shareSettings;
       const next = { ...shareSettings, [key]: !shareSettings[key] };
       setShareSettings(next);
+      setShareError(null);
       setSaving(true);
       try {
-        // P4 担当 endpoint が実装されたら /api/family/members/me/share PATCH に切替
-        const res = await fetch('/api/family/members/me/share', {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ [key]: next[key] }),
-        });
-        if (!res.ok) {
-          // endpoint 未実装 (501) は許容: 楽観的更新のまま続行
-          if (res.status !== 501) {
-            throw new Error('共有設定の更新に失敗しました');
+        let res: Response;
+        try {
+          // P4 担当 endpoint が実装されたら /api/family/members/me/share PATCH に切替
+          res = await fetch('/api/family/members/me/share', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ [key]: next[key] }),
+          });
+        } catch (networkFailure) {
+          console.error('[settings/membership] share toggle error:', networkFailure);
+          // サーバーが更新を済ませてから応答が切れたこともあるので、元に戻さず、サーバーの今の値を読み直して出す (#2073 S2。
+          // 以前は元に戻していたので、例えば健康記録の共有はサーバーで有効なのに、画面は無効と見せていた)。
+          // 読み直しの応答を待つあいだも切り替えを止めたままにする (saving を戻さない)
+          const reread = await readOwnShareSettingsAfterNetworkFailure(supabase);
+          if (!reread.ok) {
+            // 確かめられなかった: 最後に分かっているサーバーの値 (切り替える前) に戻し、確かめられなかった旨を添える
+            setShareSettings(previous);
+            setShareError(withShareSettingsUnconfirmedNote(SHARE_NETWORK_FAILURE_MESSAGE));
+            return;
           }
+          setShareSettings(reread.settings);
+          // 更新できていれば、成功のときと同じ (文を出さない)
+          if (reread.settings[key] !== next[key]) setShareError(SHARE_NETWORK_FAILURE_MESSAGE);
+          return;
         }
-      } catch (err) {
-        console.error('[settings/membership] share toggle error:', err);
-        // ロールバック
-        setShareSettings(shareSettings);
+        // endpoint 未実装 (501) は許容: 楽観的更新のまま続行
+        if (!res.ok && res.status !== 501) {
+          // 応答が届いたうえでの失敗は、更新されていないので元に戻す (これまでどおり)
+          console.error('[settings/membership] share toggle failed:', res.status);
+          setShareSettings(previous);
+          setShareError(SHARE_UPDATE_FAILED_MESSAGE);
+        }
       } finally {
         setSaving(false);
       }
     },
-    [familyInfo, shareSettings],
+    [familyInfo, shareSettings, supabase],
   );
 
   /**
@@ -321,205 +381,229 @@ export default function MembershipSettingsPage() {
             {dissolvedNotice}
           </p>
         )}
-        {/* 所属組織セクション */}
-        <section className="bg-white rounded-2xl shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-100">
-            <div className="flex items-center gap-2">
-              <Building2 size={16} color="#5B8BC7" />
-              <h2 className="text-sm font-semibold text-gray-700">所属組織</h2>
-            </div>
+        {loadError ? (
+          <div
+            role="alert"
+            data-testid="settings-membership-load-error"
+            className="flex items-center justify-between gap-3 rounded-2xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700"
+          >
+            <span>{loadError}</span>
+            <button
+              type="button"
+              onClick={() => void loadData('initial')}
+              className="shrink-0 px-3 py-1.5 bg-white border border-red-300 rounded-lg text-red-700 hover:bg-red-100 transition-colors"
+            >
+              再試行
+            </button>
           </div>
-          <div className="px-4 py-4">
-            {orgInfo ? (
-              <div className="space-y-3">
-                <div>
-                  <p className="text-sm font-medium text-gray-800">{orgInfo.org_name}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    役割: {orgInfo.org_role}
-                  </p>
-                </div>
-                {orgInfo.org_role === 'owner' ? (
-                  // #1917: オーナーは脱退できない (IS_ORG_OWNER) ので、譲渡と解散を出す (docs/design/family/11-self-dissolve.md §15.1)
-                  <div className="flex items-center gap-3">
-                    <button
-                      className="text-sm text-blue-500 font-medium"
-                      onClick={() => router.push('/org/settings/owner-transfer')}
-                    >
-                      オーナーを譲渡
-                    </button>
-                    <button
-                      className="text-sm text-red-500 font-medium"
-                      onClick={() => { setDissolvedNotice(null); setDissolveTarget('organization'); }}
-                    >
-                      組織を解散
-                    </button>
+        ) : (
+          <>
+          {/* 所属組織セクション */}
+          <section className="bg-white rounded-2xl shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <Building2 size={16} color="#5B8BC7" />
+                <h2 className="text-sm font-semibold text-gray-700">所属組織</h2>
+              </div>
+            </div>
+            <div className="px-4 py-4">
+              {orgInfo ? (
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">{orgInfo.org_name}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      役割: {orgInfo.org_role}
+                    </p>
                   </div>
-                ) : (
-                  <button
-                    className="text-sm text-red-500 font-medium"
-                    onClick={() => { setLeaveError(null); setShowLeaveOrgModal(true); }}
-                  >
-                    組織から脱退
-                  </button>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <p className="text-sm text-gray-500">所属していません</p>
-                {/* 組織をユーザー自身で作る機能は無く、参加は招待メールのリンクからだけ。
-                    以前の「組織を作成・参加」ボタンは /org (組織の管理者専用) に送るだけで行き止まりだった (#1143, #1123) */}
-                <p className="text-xs text-gray-400">
-                  組織への参加は、組織から届いた招待メールのリンクから行えます。
-                </p>
-              </div>
-            )}
-          </div>
-        </section>
-        {orgInfo && dissolveTarget === 'organization' && (
-          <SelfDissolveSection
-            scope="organization"
-            scopeId={orgInfo.organization_id}
-            scopeName={orgInfo.org_name}
-            surface="settings"
-            onDissolved={() => handleDissolved('organization')}
-            onCancel={() => setDissolveTarget(null)}
-            onUnauthorized={() => router.push('/login')}
-          />
-        )}
-
-        {/* 所属家族セクション */}
-        <section className="bg-white rounded-2xl shadow-sm overflow-hidden">
-          <div className="px-4 py-3 border-b border-gray-100">
-            <div className="flex items-center gap-2">
-              <Users size={16} color="#E07A5F" />
-              <h2 className="text-sm font-semibold text-gray-700">所属家族</h2>
-            </div>
-          </div>
-          <div className="px-4 py-4">
-            {familyInfo ? (
-              <div className="space-y-3">
-                <div>
-                  <p className="text-sm font-medium text-gray-800">{familyInfo.family_name}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">
-                    役割:{' '}
-                    {familyInfo.role === 'representative'
-                      ? '代表'
-                      : familyInfo.role === 'child'
-                      ? '子供'
-                      : '大人'}
-                  </p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <button
-                    className="text-sm text-blue-500 font-medium"
-                    onClick={() => router.push('/family/members')}
-                  >
-                    家族を表示
-                  </button>
-                  {familyInfo.role === 'representative' ? (
-                    // #1917: 代表者は脱退できない (IS_FAMILY_REPRESENTATIVE) ので、譲渡と解散を出す (docs/design/family/11-self-dissolve.md §15.1)
-                    <>
+                  {orgInfo.org_role === 'owner' ? (
+                    // #1917: オーナーは脱退できない (IS_ORG_OWNER) ので、譲渡と解散を出す (docs/design/family/11-self-dissolve.md §15.1)
+                    <div className="flex items-center gap-3">
                       <button
                         className="text-sm text-blue-500 font-medium"
-                        onClick={() => router.push('/family/representative-transfer')}
+                        onClick={() => router.push('/org/settings/owner-transfer')}
                       >
-                        代表者を譲渡
+                        オーナーを譲渡
                       </button>
                       <button
                         className="text-sm text-red-500 font-medium"
-                        onClick={() => { setDissolvedNotice(null); setDissolveTarget('family'); }}
+                        onClick={() => { setDissolvedNotice(null); setDissolveTarget('organization'); }}
                       >
-                        家族グループを解散
+                        組織を解散
                       </button>
-                    </>
+                    </div>
                   ) : (
                     <button
                       className="text-sm text-red-500 font-medium"
-                      onClick={() => { setLeaveError(null); setShowLeaveFamilyModal(true); }}
+                      onClick={() => { setLeaveError(null); setShowLeaveOrgModal(true); }}
                     >
-                      家族から脱退
+                      組織から脱退
                     </button>
                   )}
                 </div>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <p className="text-sm text-gray-500">所属していません</p>
-                <button
-                  className="text-sm text-blue-500 font-medium"
-                  onClick={() => router.push('/family/setup')}
-                >
-                  家族グループを作成・参加
-                </button>
-              </div>
-            )}
-          </div>
-        </section>
-        {familyInfo && dissolveTarget === 'family' && (
-          <SelfDissolveSection
-            scope="family"
-            scopeId={familyInfo.family_id}
-            scopeName={familyInfo.family_name}
-            surface="settings"
-            onDissolved={() => handleDissolved('family')}
-            onCancel={() => setDissolveTarget(null)}
-            onUnauthorized={() => router.push('/login')}
-          />
-        )}
-
-        {/* 家族への共有設定セクション */}
-        {familyInfo && (
-          <section className="bg-white rounded-2xl shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-100">
-              <h2 className="text-sm font-semibold text-gray-700">家族への共有設定</h2>
-              <p className="text-xs text-gray-400 mt-0.5">
-                後で変更できます
-              </p>
-            </div>
-            <div className="px-4 py-3 space-y-1">
-              {/* 食事記録 */}
-              <div className="flex items-center justify-between py-3">
-                <div>
-                  <p className="text-sm font-medium text-gray-700">食事記録を家族に見せる</p>
-                  <p className="text-xs text-gray-400 mt-0.5">献立・食べたもの</p>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm text-gray-500">所属していません</p>
+                  {/* 組織をユーザー自身で作る機能は無く、参加は招待メールのリンクからだけ。
+                      以前の「組織を作成・参加」ボタンは /org (組織の管理者専用) に送るだけで行き止まりだった (#1143, #1123) */}
+                  <p className="text-xs text-gray-400">
+                    組織への参加は、組織から届いた招待メールのリンクから行えます。
+                  </p>
                 </div>
-                <Switch
-                  checked={shareSettings.share_meals}
-                  onChange={() => handleShareToggle('share_meals')}
-                  label="食事記録の共有"
-                  disabled={saving}
-                />
-              </div>
-              <div className="h-px bg-gray-100" />
-              {/* 健康記録 */}
-              <div className="flex items-center justify-between py-3">
-                <div>
-                  <p className="text-sm font-medium text-gray-700">健康記録を家族に見せる</p>
-                  <p className="text-xs text-gray-400 mt-0.5">体重・血圧</p>
-                </div>
-                <Switch
-                  checked={shareSettings.share_health}
-                  onChange={() => handleShareToggle('share_health')}
-                  label="健康記録の共有"
-                  disabled={saving}
-                />
-              </div>
-              <div className="h-px bg-gray-100" />
-              {/* 週間献立 */}
-              <div className="flex items-center justify-between py-3">
-                <div>
-                  <p className="text-sm font-medium text-gray-700">週間献立を家族に見せる</p>
-                  <p className="text-xs text-gray-400 mt-0.5">週間の献立プラン</p>
-                </div>
-                <Switch
-                  checked={shareSettings.share_menu}
-                  onChange={() => handleShareToggle('share_menu')}
-                  label="週間献立の共有"
-                  disabled={saving}
-                />
-              </div>
+              )}
             </div>
           </section>
+          {orgInfo && dissolveTarget === 'organization' && (
+            <SelfDissolveSection
+              scope="organization"
+              scopeId={orgInfo.organization_id}
+              scopeName={orgInfo.org_name}
+              surface="settings"
+              onDissolved={() => handleDissolved('organization')}
+              onCancel={() => setDissolveTarget(null)}
+              onUnauthorized={() => router.push('/login')}
+            />
+          )}
+
+          {/* 所属家族セクション */}
+          <section className="bg-white rounded-2xl shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <Users size={16} color="#E07A5F" />
+                <h2 className="text-sm font-semibold text-gray-700">所属家族</h2>
+              </div>
+            </div>
+            <div className="px-4 py-4">
+              {familyInfo ? (
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-sm font-medium text-gray-800">{familyInfo.family_name}</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      役割:{' '}
+                      {familyInfo.role === 'representative'
+                        ? '代表'
+                        : familyInfo.role === 'child'
+                        ? '子供'
+                        : '大人'}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      className="text-sm text-blue-500 font-medium"
+                      onClick={() => router.push('/family/members')}
+                    >
+                      家族を表示
+                    </button>
+                    {familyInfo.role === 'representative' ? (
+                      // #1917: 代表者は脱退できない (IS_FAMILY_REPRESENTATIVE) ので、譲渡と解散を出す (docs/design/family/11-self-dissolve.md §15.1)
+                      <>
+                        <button
+                          className="text-sm text-blue-500 font-medium"
+                          onClick={() => router.push('/family/representative-transfer')}
+                        >
+                          代表者を譲渡
+                        </button>
+                        <button
+                          className="text-sm text-red-500 font-medium"
+                          onClick={() => { setDissolvedNotice(null); setDissolveTarget('family'); }}
+                        >
+                          家族グループを解散
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        className="text-sm text-red-500 font-medium"
+                        onClick={() => { setLeaveError(null); setShowLeaveFamilyModal(true); }}
+                      >
+                        家族から脱退
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <p className="text-sm text-gray-500">所属していません</p>
+                  <button
+                    className="text-sm text-blue-500 font-medium"
+                    onClick={() => router.push('/family/setup')}
+                  >
+                    家族グループを作成・参加
+                  </button>
+                </div>
+              )}
+            </div>
+          </section>
+          {familyInfo && dissolveTarget === 'family' && (
+            <SelfDissolveSection
+              scope="family"
+              scopeId={familyInfo.family_id}
+              scopeName={familyInfo.family_name}
+              surface="settings"
+              onDissolved={() => handleDissolved('family')}
+              onCancel={() => setDissolveTarget(null)}
+              onUnauthorized={() => router.push('/login')}
+            />
+          )}
+
+          {/* 家族への共有設定セクション */}
+          {familyInfo && (
+            <section className="bg-white rounded-2xl shadow-sm overflow-hidden">
+              <div className="px-4 py-3 border-b border-gray-100">
+                <h2 className="text-sm font-semibold text-gray-700">家族への共有設定</h2>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  後で変更できます
+                </p>
+              </div>
+              <div className="px-4 py-3 space-y-1">
+                {/* 食事記録 */}
+                <div className="flex items-center justify-between py-3">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">食事記録を家族に見せる</p>
+                    <p className="text-xs text-gray-400 mt-0.5">献立・食べたもの</p>
+                  </div>
+                  <Switch
+                    checked={shareSettings.share_meals}
+                    onChange={() => handleShareToggle('share_meals')}
+                    label="食事記録の共有"
+                    disabled={saving}
+                  />
+                </div>
+                <div className="h-px bg-gray-100" />
+                {/* 健康記録 */}
+                <div className="flex items-center justify-between py-3">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">健康記録を家族に見せる</p>
+                    <p className="text-xs text-gray-400 mt-0.5">体重・血圧</p>
+                  </div>
+                  <Switch
+                    checked={shareSettings.share_health}
+                    onChange={() => handleShareToggle('share_health')}
+                    label="健康記録の共有"
+                    disabled={saving}
+                  />
+                </div>
+                <div className="h-px bg-gray-100" />
+                {/* 週間献立 */}
+                <div className="flex items-center justify-between py-3">
+                  <div>
+                    <p className="text-sm font-medium text-gray-700">週間献立を家族に見せる</p>
+                    <p className="text-xs text-gray-400 mt-0.5">週間の献立プラン</p>
+                  </div>
+                  <Switch
+                    checked={shareSettings.share_menu}
+                    onChange={() => handleShareToggle('share_menu')}
+                    label="週間献立の共有"
+                    disabled={saving}
+                  />
+                </div>
+                {shareError && (
+                  <p role="alert" data-testid="settings-share-error" className="pt-2 text-sm text-red-500">
+                    {shareError}
+                  </p>
+                )}
+              </div>
+            </section>
+          )}
+          </>
         )}
       </div>
 
