@@ -1,28 +1,29 @@
 /**
- * #2025: planned_meals の 3 列 (is_completed / completed_at / veg_score) をサーバの計算値だけにする。完了は RPC
- * planned_meals_set_completed だけにする (migration 20261025130000_planned_meals_set_completed_rpc.sql)。
- * 設計: docs/design/cross/23-planned-meals-score-integrity.md §7.20
+ * #2025: planned_meals の 3 列 (is_completed / completed_at / veg_score) を利用者が書けなくし、完了は RPC
+ * planned_meals_set_completed だけにする (migration 20261025130000_planned_meals_set_completed_rpc.sql と
+ * 20261026120000_planned_meals_score_columns_server_only.sql)。設計: docs/design/cross/23-planned-meals-score-integrity.md §7.20
  *
  * 修正前は RLS "Users can manage own planned meals" (FOR ALL) と表の INSERT / UPDATE の権限で、利用者が PostgREST から
  * 自分の行の veg_score / is_completed に任意の値を入れ、比較ランキング (veg_score_avg / breakfast_rate) と組織のチャレンジの
  * veg_score を操作できた。
- *
- * 段 A (設計書 §15): RPC の it (I-1〜I-4・I-8) と RPC の戻し口 (I-13)。
- * 段 B: サーバの書き手の本人の確認 (I-10・I-11) と、完了の route を本物の PostgREST で (I-14・I-15)。
- * 段 C で 3 列の it (I-5〜I-7・I-9) と権限の戻し口 (I-12) を足す。
  *
  * 確かめること (I-n はこのファイルの it の番号。括弧の S-n は設計書 §0.3 のシナリオ):
  *   - I-1 (S-1・S-3): 本人は RPC で自分の献立を完了にできる。completed_at は DB の時刻 (呼ぶ前後の時刻の間)。updated_at が進む
  *   - I-2 (S-2・S-24): もう一度 RPC で完了にしても completed_at は変わらない。未完了にすると NULL
  *   - I-3 (S-20): 他人の献立の id・無い id は RPC が PLANNED_MEAL_NOT_FOUND (P0002)。行は変わらない
  *   - I-4 (S-19): 未認証 (anon) は RPC を実行できない (42501)
+ *   - I-5 (S-4・S-8・S-10): 本人でも PostgREST の UPDATE で 3 列は書けない (42501・行は変わらない)。他の列 (dish_name) は書ける
+ *   - I-6 (S-9・S-10): 本人でも PostgREST の INSERT / upsert に 3 列を含めると 42501 (行はできない)。3 列を含まなければ作れ、is_completed は false
+ *   - I-7: anon の INSERT / UPDATE も 42501
  *   - I-8 (S-25): service_role は今までどおり 3 列を読み書きできる (集計・献立の生成の口は残る)
+ *   - I-9: 列の権限の実体: authenticated の INSERT / UPDATE できる列 = 全列 − 3 列。anon の INSERT / UPDATE は無い。SELECT は全列
  *   - I-10 (S-16): 週間生成の復元 (restoreOwnPlannedMealsSnapshot) は、本人の日の行を service_role で 3 列ごと戻し、本人の日でない行は戻さない
  *   - I-11 (S-11・S-12): 写真の解析の Edge Function と同じ本人の行の確認 (service_role・user_daily_meals!inner(user_id)・user_daily_meals.user_id) は、
  *          本人の mealId で 1 行、他人の mealId で 0 行 (Edge は 0 行なら書かない。Edge のソースが同じ問い合わせを使うことは
  *          tests/planned-meals-score-integrity-writers-scan.test.ts の項目 2 が見る)
- *   - I-13 (S-23): RPC の戻し口を 1 つのトランザクションで流して巻き戻す: 関数が消え、planned_meals の列の権限は変わらない。
- *          巻き戻ったあとの DB は関数があるまま
+ *   - I-12 (S-22): 権限の戻し口を 1 つのトランザクションで流して巻き戻す (DB には残らない): authenticated の 3 列の UPDATE と、
+ *          anon / authenticated の表の INSERT / UPDATE が戻る。TRUNCATE は付かない。RPC は残る。巻き戻ったあとの DB は本冊が当たったまま
+ *   - I-13 (S-23): RPC の戻し口を同じく流して巻き戻す: 関数が消え、planned_meals の列の権限は変わらない。巻き戻ったあとの DB は関数があるまま
  *   - I-14 (S-6): PATCH /api/meal-plans/meals/[id] の route の関数を、本物の PostgREST につないだ利用者の client で呼ぶ。本文が { isCompleted } だけ
  *          (料理の無い献立。route の updateData が空になる形) でも 200 で、行が完了 / 未完了になる (空の UPDATE を PostgREST に送ると
  *          0 行になり .single() が失敗して 500 になる。偽物の DB の単体テストではこれを検出できない)
@@ -40,9 +41,11 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import ws from 'ws';
 import {
+  PLANNED_MEALS_SERVER_ONLY_COLUMNS,
   PLANNED_MEALS_SET_COMPLETED_RPC,
   PLANNED_MEAL_NOT_FOUND_CODE,
   PLANNED_MEAL_NOT_FOUND_SQLSTATE,
+  VEG_SCORE_MAX,
   plannedMealsSetCompletedArgs,
 } from '@homegohan/shared';
 import { restoreOwnPlannedMealsSnapshot, type PlannedMealSnapshotRow } from '@/lib/planned-meals-snapshot';
@@ -81,6 +84,8 @@ vi.mock('@/lib/supabase/server', () => ({
 const TABLE = 'planned_meals';
 /** 権限の無い書き込み・RLS の WITH CHECK に反した書き込みの SQLSTATE */
 const INSUFFICIENT_PRIVILEGE = '42501';
+/** 操作に使う野菜スコア (順位を上げようとする値) */
+const FORGED_VEG_SCORE = VEG_SCORE_MAX;
 /** service_role が書く野菜スコア (正本の尺度の中の値) */
 const SERVER_VEG_SCORE = 80;
 /** 献立の日 (JST の暦日。集計の対象かどうかはここでは見ない) */
@@ -101,7 +106,7 @@ const CLIENT_COMPLETED_AT = '2000-01-01T00:00:00.000Z';
 interface TestUser {
   id: string;
   jwt: string;
-  /** サインイン済みの利用者の client (auth.getUser() が本人を返す) */
+  /** サインイン済みの利用者の client (route の createClient の代わり。auth.getUser() が本人を返す) */
   session: SupabaseClient;
 }
 
@@ -188,6 +193,9 @@ interface DbState {
   tableGrants: string[];
   rpcExists: number;
 }
+
+/** 戻し口が付け直す表の権限 (本番のベースラインの形。TRUNCATE は付けない) */
+const RESTORED_TABLE_WRITE_GRANTS = ['anon:INSERT', 'anon:UPDATE', 'authenticated:INSERT', 'authenticated:UPDATE'] as const;
 
 function findMarkedText(body: unknown): string | null {
   if (typeof body === 'string') return body.includes(ROLLBACK_RESULT_MARKER) ? body : null;
@@ -286,7 +294,51 @@ describe('#2025 planned_meals: 完了は RPC だけ', () => {
   }, TEST_TIMEOUT_MS);
 });
 
-describe('#2025 planned_meals: サーバの書き手 (service_role) の口は残る', () => {
+describe('#2025 planned_meals: 3 列は利用者のセッションから書けない', () => {
+  it('I-5 (S-4・S-8・S-10): 本人でも PostgREST の UPDATE で 3 列は書けない (42501・行は変わらない)。他の列は書ける', async () => {
+    const db = asUser(owner.jwt);
+    const before = await mealRow(ownerMealId);
+    for (const payload of [
+      { veg_score: FORGED_VEG_SCORE },
+      { is_completed: true },
+      { completed_at: new Date().toISOString() },
+      { is_completed: true, completed_at: new Date().toISOString() },
+      { dish_name: 'mixed', veg_score: FORGED_VEG_SCORE },
+    ]) {
+      const { error } = await db.from(TABLE).update(payload).eq('id', ownerMealId);
+      expect(error?.code, JSON.stringify(payload)).toBe(INSUFFICIENT_PRIVILEGE);
+    }
+    expect(await mealRow(ownerMealId)).toEqual(before);
+    const ok = await db.from(TABLE).update({ dish_name: 'it2025-renamed' }).eq('id', ownerMealId).select('id');
+    expect(ok.error).toBeNull();
+    expect(ok.data).toEqual([{ id: ownerMealId }]);
+    expect(await mealRow(ownerMealId)).toMatchObject({ dish_name: 'it2025-renamed' });
+  }, TEST_TIMEOUT_MS);
+
+  it('I-6 (S-9・S-10): 本人でも INSERT / upsert に 3 列を含めると 42501。含めなければ作れ、is_completed は false', async () => {
+    const db = asUser(owner.jwt);
+    const base = { daily_meal_id: ownerDayId, meal_type: 'dinner', dish_name: 'it2025-insert' };
+    for (const column of PLANNED_MEALS_SERVER_ONLY_COLUMNS) {
+      const value = column === 'veg_score' ? FORGED_VEG_SCORE : column === 'is_completed' ? true : new Date().toISOString();
+      const inserted = await db.from(TABLE).insert({ ...base, [column]: value });
+      expect(inserted.error?.code, `${column} の INSERT`).toBe(INSUFFICIENT_PRIVILEGE);
+      const upserted = await db.from(TABLE).upsert({ ...base, [column]: value });
+      expect(upserted.error?.code, `${column} の upsert`).toBe(INSUFFICIENT_PRIVILEGE);
+    }
+    const { count } = await srAdmin.from(TABLE).select('id', { count: 'exact', head: true }).eq('daily_meal_id', ownerDayId).eq('dish_name', base.dish_name);
+    expect(count).toBe(0);
+    const ok = await db.from(TABLE).insert(base).select('id, is_completed, completed_at, veg_score').single();
+    expect(ok.error).toBeNull();
+    expect(ok.data).toMatchObject({ is_completed: false, completed_at: null, veg_score: null });
+  }, TEST_TIMEOUT_MS);
+
+  it('I-7: anon の INSERT / UPDATE は 42501', async () => {
+    const inserted = await anon().from(TABLE).insert({ daily_meal_id: ownerDayId, meal_type: 'snack', dish_name: 'it2025-anon' });
+    expect(inserted.error?.code).toBe(INSUFFICIENT_PRIVILEGE);
+    const updated = await anon().from(TABLE).update({ dish_name: 'it2025-anon' }).eq('id', ownerMealId);
+    expect(updated.error?.code).toBe(INSUFFICIENT_PRIVILEGE);
+  }, TEST_TIMEOUT_MS);
+
   it('I-8 (S-25): service_role は今までどおり 3 列を読み書きできる', async () => {
     const { data, error } = await srAdmin
       .from(TABLE)
@@ -297,6 +349,22 @@ describe('#2025 planned_meals: サーバの書き手 (service_role) の口は残
     expect(data).toEqual([{ veg_score: SERVER_VEG_SCORE, is_completed: true }]);
     const inserted = await srAdmin.from(TABLE).insert({ daily_meal_id: otherDayId, meal_type: 'breakfast', dish_name: 'it2025-sr', is_completed: false }).select('id');
     expect(inserted.error).toBeNull();
+  }, TEST_TIMEOUT_MS);
+
+  it('I-9: 列の権限の実体 (information_schema): authenticated の INSERT / UPDATE は全列 − 3 列、anon は無し、SELECT は全列', async () => {
+    const rows = await pgQuery<{ grantee: string; privilege_type: string; column_name: string }>(`
+      SELECT grantee, privilege_type, column_name FROM information_schema.column_privileges
+       WHERE table_schema = 'public' AND table_name = '${TABLE}' AND grantee IN ('anon', 'authenticated')
+    `);
+    const all = (await pgQuery<{ column_name: string }>(`SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = '${TABLE}'`)).map((r) => r.column_name);
+    const expectedWritable = all.filter((c) => !(PLANNED_MEALS_SERVER_ONLY_COLUMNS as readonly string[]).includes(c)).sort();
+    const of = (grantee: string, privilege: string) => rows.filter((r) => r.grantee === grantee && r.privilege_type === privilege).map((r) => r.column_name).sort();
+    expect(of('authenticated', 'INSERT')).toEqual(expectedWritable);
+    expect(of('authenticated', 'UPDATE')).toEqual(expectedWritable);
+    expect(of('authenticated', 'SELECT')).toEqual([...all].sort());
+    expect(of('anon', 'INSERT')).toEqual([]);
+    expect(of('anon', 'UPDATE')).toEqual([]);
+    expect(of('anon', 'SELECT')).toEqual([...all].sort());
   }, TEST_TIMEOUT_MS);
 });
 
@@ -394,6 +462,18 @@ describe('#2025 完了の route を本物の PostgREST で (route の関数を�
 });
 
 describe('#2025 戻し口を流したときの状態 (1 つのトランザクションで流して巻き戻す)', () => {
+  it('I-12 (S-22): 権限の戻し口で authenticated の 3 列の UPDATE と、anon / authenticated の表の INSERT / UPDATE が戻る。TRUNCATE は付かない。巻き戻ったあとの DB は本冊が当たったまま', async () => {
+    const after = await stateAfterRolledBack(readRollback('planned_meals_score_columns_server_only'));
+    for (const column of PLANNED_MEALS_SERVER_ONLY_COLUMNS) expect(after.authUpdatable).toContain(column);
+    for (const grant of RESTORED_TABLE_WRITE_GRANTS) expect(after.tableGrants).toContain(grant);
+    expect(after.tableGrants.filter((g) => g.endsWith(':TRUNCATE'))).toEqual([]);
+    expect(after.rpcExists).toBe(1);
+
+    const now = await currentState();
+    for (const column of PLANNED_MEALS_SERVER_ONLY_COLUMNS) expect(now.authUpdatable).not.toContain(column);
+    for (const grant of RESTORED_TABLE_WRITE_GRANTS) expect(now.tableGrants).not.toContain(grant);
+  }, TEST_TIMEOUT_MS);
+
   it('I-13 (S-23): RPC の戻し口で関数が消え、planned_meals の列の権限は変わらない。巻き戻ったあとの DB は関数があるまま', async () => {
     const before = await currentState();
     const after = await stateAfterRolledBack(readRollback('planned_meals_set_completed_rpc'));
