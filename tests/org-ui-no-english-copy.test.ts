@@ -288,6 +288,35 @@ function collectRawErrorTexts(node: ts.Node, out: ts.Node[]): void {
   ts.forEachChild(node, (child) => collectRawErrorTexts(child, out));
 }
 
+/**
+ * 値の位置にある文字を集める (collectValueStrings と同じ位置)。テンプレート文字列は文字の部分をつないだ 1 つの文として見る
+ * (`${summary} (HTTP ${status})` の「 (HTTP 」は日本語の文の一部なので数えない。`HTTP ${status}` だけの文は数える)。
+ * テンプレートの式の中 (`${message ?? `HTTP ${status}`}`) も値の位置として見る
+ */
+function collectFailureValueTexts(node: ts.Node, out: { node: ts.Node; text: string }[]): void {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+    out.push({ node, text: node.text });
+  } else if (ts.isTemplateExpression(node)) {
+    out.push({ node, text: [node.head.text, ...node.templateSpans.map((span) => span.literal.text)].join(' ') });
+    for (const span of node.templateSpans) collectFailureValueTexts(span.expression, out);
+  } else if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
+    collectFailureValueTexts(node.expression, out);
+  } else if (ts.isConditionalExpression(node)) {
+    collectFailureValueTexts(node.whenTrue, out);
+    collectFailureValueTexts(node.whenFalse, out);
+  } else if (ts.isBinaryExpression(node)) {
+    const op = node.operatorToken.kind;
+    if (
+      op === ts.SyntaxKind.AmpersandAmpersandToken ||
+      op === ts.SyntaxKind.BarBarToken ||
+      op === ts.SyntaxKind.QuestionQuestionToken
+    ) {
+      collectFailureValueTexts(node.right, out);
+      if (op !== ts.SyntaxKind.AmpersandAmpersandToken) collectFailureValueTexts(node.left, out);
+    }
+  }
+}
+
 /** `!x.ok` の条件か */
 function isNotOkCondition(node: ts.Expression): boolean {
   const inner = ts.isParenthesizedExpression(node) ? node.expression : node;
@@ -316,11 +345,11 @@ function findFailureCopyViolations(file: string, source: string): CopyFinding[] 
     findings.push({ file, line: line + 1, text });
   };
   const checkShown = (expression: ts.Node) => {
-    const strings: ts.Node[] = [];
-    collectValueStrings(expression, strings);
-    for (const literal of strings) {
-      const trimmed = literalText(literal).replace(/\s+/g, ' ').trim();
-      if (trimmed && isEnglishOnly(trimmed)) push(literal, `英語だけの文: ${trimmed}`);
+    const texts: { node: ts.Node; text: string }[] = [];
+    collectFailureValueTexts(expression, texts);
+    for (const { node, text } of texts) {
+      const trimmed = text.replace(/\s+/g, ' ').trim();
+      if (trimmed && isEnglishOnly(trimmed)) push(node, `英語だけの文: ${trimmed}`);
     }
     const raw: ts.Node[] = [];
     collectRawErrorTexts(expression, raw);
@@ -499,6 +528,8 @@ describe('走査の仕組み: 運営の画面の失敗の文の違反を見つ�
         setNotice({ ok: false, text: String(e) });
         setError(displayableAdminError(err, "読み込みに失敗しました"));
         setError(\`機能フラグを読み込めませんでした (HTTP \${res.status})\`);
+        alert(\`\${failureSummary} (HTTP \${res.status})\`);
+        setError(\`操作できませんでした（\${message ?? \`HTTP \${res.status}\`}）\`);
       }
       return <p>{error.message}</p>;
     }
@@ -511,7 +542,8 @@ describe('走査の仕組み: 運営の画面の失敗の文の違反を見つ�
       [
         `${lineOf('const body = await res.json();')} !ok の中の .catch の無い本文の読み: res.json()`,
         `${lineOf('err instanceof Error ? err.message')} 例外の文面: err.message`,
-        `${lineOf('alert(')} 英語だけの文: HTTP`,
+        `${lineOf('alert(`HTTP')} 英語だけの文: HTTP`,
+        `${lineOf('操作できませんでした')} 英語だけの文: HTTP`,
         `${lineOf('String(e)')} 例外の文面: String(e)`,
         `${lineOf('{error.message}')} 例外の文面: error.message`,
       ].sort(),
