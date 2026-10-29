@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { normalizeProfileName } from "@/lib/profile-name";
+import { transferProposalStatusMessage } from "@/lib/membership/transfer-proposal-status";
 
 /** 提案が無い (または RLS で見えない) ときの文 */
 const PROPOSAL_NOT_FOUND_MESSAGE = '提案が見つかりません';
@@ -270,17 +271,11 @@ export default function TransferAcceptPage() {
   if (!proposal) return null;
 
   const isExpired = new Date(proposal.expires_at) < new Date();
-  const isNotPending = proposal.status !== 'pending';
   const isWrongUser = currentUserId && currentUserId !== proposal.to_user_id;
 
-  const statusMessage = () => {
-    if (proposal.status === 'accepted') return 'この提案はすでに承諾済みです';
-    if (proposal.status === 'rejected') return 'この提案は拒否済みです';
-    if (isExpired) return 'この提案は期限切れです';
-    return null;
-  };
-
-  const statusMsg = statusMessage();
+  // 承諾・拒否ができない提案の理由の文 (家族の承諾の画面と同じ対応表。#2073 S5)。
+  // 以前は状態が expired (新しい提案に置き換わった。期限の日時はまだ先) の提案を承諾・拒否できるものとして扱い、ボタンを出していた
+  const statusMsg = transferProposalStatusMessage(proposal.status, isExpired);
 
   return (
     <div className="p-8 max-w-lg mx-auto">

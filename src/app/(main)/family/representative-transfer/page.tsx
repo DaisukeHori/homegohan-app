@@ -6,6 +6,14 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
+import { MEMBERSHIP_STATE_UNCONFIRMED_NOTE } from '@/lib/membership/leave-state';
+import {
+  readPendingTransferProposal,
+  transferProposalStateAfterNetworkFailure,
+} from '@/lib/membership/transfer-proposal-state';
+
+/** 提案の送信の通信そのものが失敗した (fetch が reject した) ときの文 */
+const NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
 
 /**
  * 譲渡の候補 (または自分のプロフィール・家族の中の自分の役割) を読み込めなかったときの文。
@@ -147,14 +155,18 @@ export default function FamilyRepresentativeTransferPage() {
       return;
     }
 
+    const toUserId = selectedUserId;
+    const targetFamilyId = familyId;
     setSubmitting(true);
+    // 送る前の pending の提案。通信が失敗したときに、今回の提案を作れていたかを見分けるために使う (#2073 S8)
+    const pendingBefore = await readPendingTransferProposal(supabase, 'family', targetFamilyId);
     try {
       const res = await fetch('/api/family/representative-transfer/propose', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          family_id: familyId,
-          to_user_id: selectedUserId,
+          family_id: targetFamilyId,
+          to_user_id: toUserId,
           reason: reason.trim() || undefined,
         }),
       });
@@ -168,8 +180,19 @@ export default function FamilyRepresentativeTransferPage() {
 
       setSuccess(true);
     } catch (err) {
-      setError('通信エラーが発生しました');
       console.error('[family/representative-transfer] error:', err);
+      // サーバーが提案を作り、譲渡先へメールを送ってから応答が切れたこともあるので、pending の提案を読み直して確かめる (#2073 S8。
+      // 以前は確かめずに通信エラーの文を出し、もう一度送ると、譲渡先に提案のメールが 2 通届き、1 通目のリンクは期限切れになっていた)。
+      // 読み直しの応答を待つあいだも「譲渡を提案」を止めたままにする (submitting を戻さない)
+      const pendingAfter = await readPendingTransferProposal(supabase, 'family', targetFamilyId);
+      const state = transferProposalStateAfterNetworkFailure(pendingBefore, pendingAfter, toUserId);
+      if (state === 'sent') {
+        // 提案を作れている: 成功のときと同じ表示 (送り直しのボタンを出さない)
+        setSuccess(true);
+        return;
+      }
+      // 作れていない: これまでどおり通信エラーの文。確かめられなかったときは「状態を確かめられませんでした」を添える
+      setError(state === 'unknown' ? `${NETWORK_FAILURE_MESSAGE} (${MEMBERSHIP_STATE_UNCONFIRMED_NOTE})` : NETWORK_FAILURE_MESSAGE);
     } finally {
       setSubmitting(false);
     }

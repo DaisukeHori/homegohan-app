@@ -3,9 +3,15 @@
 // (設計書 03-ui-spec.md §12.2, 02-flow-spec.md §6)
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { createClient } from '@/lib/supabase/client';
+import { MEMBERSHIP_STATE_UNCONFIRMED_NOTE, readOwnMembershipAfterNetworkFailure } from '@/lib/membership/leave-state';
+
+/** 作成の通信そのものが失敗した (fetch が reject した) ときの文 */
+const NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
 
 export default function FamilySetupPage() {
   const router = useRouter();
+  const supabase = createClient();
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,8 +46,21 @@ export default function FamilySetupPage() {
 
       router.push('/family/dashboard');
     } catch (err) {
-      setError('通信エラーが発生しました');
       console.error('[family/setup] error:', err);
+      // サーバーが家族グループを作ってから応答が切れたこともあるので、自分のプロフィールを読み直して確かめる (#2073 S2。
+      // 以前は確かめずに通信エラーの文を出し、もう一度送ると「既に家族グループに所属しています。まず現在の家族から脱退してください」と出ていた)。
+      // 作成の RPC は、同じトランザクションで本人の user_profiles.family_id を新しい家族にする。
+      // 読み直しの応答を待つあいだも「作成」を止めたままにする (loading を戻さない)
+      const membership = await readOwnMembershipAfterNetworkFailure(supabase, 'family');
+      if (membership === 'still-member') {
+        // 家族に入っている (作れている): 成功のときと同じ遷移
+        router.push('/family/dashboard');
+        return;
+      }
+      // 作れていない: これまでどおり通信エラーの文。確かめられなかったときは「状態を確かめられませんでした」を添える
+      setError(
+        membership === 'unknown' ? `${NETWORK_FAILURE_MESSAGE} (${MEMBERSHIP_STATE_UNCONFIRMED_NOTE})` : NETWORK_FAILURE_MESSAGE,
+      );
     } finally {
       setLoading(false);
     }

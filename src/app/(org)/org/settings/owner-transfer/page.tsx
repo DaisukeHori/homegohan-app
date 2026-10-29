@@ -4,6 +4,18 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { normalizeProfileName } from "@/lib/profile-name";
+import { orgRoleLabel } from "@/lib/membership/role-labels";
+import { MEMBERSHIP_STATE_UNCONFIRMED_NOTE } from "@/lib/membership/leave-state";
+import {
+  readPendingTransferProposal,
+  transferProposalStateAfterNetworkFailure,
+} from "@/lib/membership/transfer-proposal-state";
+
+/** 提案の送信の通信そのものが失敗した (fetch が reject した) ときの文 */
+const NETWORK_FAILURE_MESSAGE = 'ネットワークエラーが発生しました';
+
+/** 提案を送れたときの文 (応答が届いたとき・通信が失敗したあとに作れていたと確かめたとき) */
+const PROPOSAL_SENT_MESSAGE = '譲渡提案を送信しました。対象者がメールから承諾すると、オーナーが変更されます。';
 
 /**
  * 譲渡の候補 (または自分のプロフィール) を読み込めなかったときの文。
@@ -98,17 +110,21 @@ export default function OwnerTransferPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedUserId || !organizationId) return;
+    const toUserId = selectedUserId;
+    const targetOrganizationId = organizationId;
 
     setSubmitting(true);
     setError(null);
 
+    // 送る前の pending の提案。通信が失敗したときに、今回の提案を作れていたかを見分けるために使う (#2073 S8)
+    const pendingBefore = await readPendingTransferProposal(supabase, 'organization', targetOrganizationId);
     try {
       const res = await fetch('/api/org/owner-transfer/propose', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          organization_id: organizationId,
-          to_user_id: selectedUserId,
+          organization_id: targetOrganizationId,
+          to_user_id: toUserId,
           reason: reason.trim() || null,
         }),
       });
@@ -120,19 +136,25 @@ export default function OwnerTransferPage() {
         return;
       }
 
-      alert('譲渡提案を送信しました。対象者がメールから承諾すると、オーナーが変更されます。');
+      alert(PROPOSAL_SENT_MESSAGE);
       router.push('/org/members');
-    } catch {
-      setError('ネットワークエラーが発生しました');
+    } catch (submitFailure) {
+      console.error('Failed to send owner transfer proposal:', submitFailure);
+      // サーバーが提案を作り、譲渡先へメールを送ってから応答が切れたこともあるので、pending の提案を読み直して確かめる (#2073 S8。
+      // 以前は確かめずに失敗の文を出し、もう一度送ると、譲渡先に提案のメールが 2 通届き、1 通目のリンクは期限切れになっていた)。
+      // 読み直しの応答を待つあいだも「譲渡を提案」を止めたままにする (submitting を戻さない)
+      const pendingAfter = await readPendingTransferProposal(supabase, 'organization', targetOrganizationId);
+      const state = transferProposalStateAfterNetworkFailure(pendingBefore, pendingAfter, toUserId);
+      if (state === 'sent') {
+        // 提案を作れている: 成功のときと同じ遷移 (送り直しのボタンを出さない)
+        alert(PROPOSAL_SENT_MESSAGE);
+        router.push('/org/members');
+        return;
+      }
+      // 作れていない: これまでどおり失敗の文。確かめられなかったときは「状態を確かめられませんでした」を添える
+      setError(state === 'unknown' ? `${NETWORK_FAILURE_MESSAGE} (${MEMBERSHIP_STATE_UNCONFIRMED_NOTE})` : NETWORK_FAILURE_MESSAGE);
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const roleLabel = (role: string) => {
-    switch (role) {
-      case 'admin': return '管理者';
-      default: return 'メンバー';
     }
   };
 
@@ -202,7 +224,7 @@ export default function OwnerTransferPage() {
                   <div className="flex-1">
                     <p className="font-medium text-gray-900">{normalizeProfileName(candidate.nickname) ?? '(名前なし)'}</p>
                     <p className="text-xs text-gray-500">
-                      {roleLabel(candidate.org_role)}
+                      {orgRoleLabel(candidate.org_role)}
                       {candidate.joined_org_at && (
                         <> — {new Date(candidate.joined_org_at).toLocaleDateString('ja-JP')} 加入</>
                       )}
