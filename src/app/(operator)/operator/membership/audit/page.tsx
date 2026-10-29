@@ -8,6 +8,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { lastPageToRefetch } from '@/lib/list-pagination';
+import { displayableOperatorError, fetchOperatorJson } from '@/lib/membership/operator-screen-messages';
 
 type AuditRow = {
   id: string;
@@ -19,6 +20,17 @@ type AuditRow = {
   metadata: Record<string, unknown>;
   created_at: string;
 };
+
+/** 一覧の API の応答 ({ data, meta }) */
+type AuditListBody = {
+  data?: AuditRow[];
+  meta?: { total?: number };
+};
+
+/** 読み込みの失敗の文の対象 */
+const AUDIT_SUBJECT = '監査ログ';
+/** 読み込みの失敗で、例外の文が出せないときの固定の文 */
+const AUDIT_LOAD_FAILED_FALLBACK = `${AUDIT_SUBJECT}を読み込めませんでした`;
 
 type MetaDetailModalProps = {
   row: AuditRow;
@@ -117,12 +129,8 @@ export default function MembershipAuditPage() {
       sp.set('page', String(page));
       sp.set('limit', String(limit));
 
-      const res = await fetch(`/api/operator/membership/audit?${sp.toString()}`);
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error?.message ?? `HTTP ${res.status}`);
-      }
-      const json = await res.json();
+      // 通信の失敗・本文に文の無い失敗も日本語の文にする (ブラウザの英字の文・「HTTP 502」だけを出さない。#2080 U5)
+      const json = (await fetchOperatorJson(`/api/operator/membership/audit?${sp.toString()}`, AUDIT_SUBJECT)) as AuditListBody;
       // 件数より後ろのページは、空のページを見せずに最後のページへ取り直す (#1917)
       const refetchPage = lastPageToRefetch({ rows: (json.data ?? []).length, page, total: json.meta?.total ?? 0, perPage: limit });
       if (refetchPage !== null) {
@@ -132,7 +140,7 @@ export default function MembershipAuditPage() {
       setRows(json.data ?? []);
       setTotal(json.meta?.total ?? 0);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'データ取得に失敗しました');
+      setError(displayableOperatorError(err, AUDIT_LOAD_FAILED_FALLBACK));
     } finally {
       setLoading(false);
     }

@@ -109,6 +109,17 @@ export async function fetchOperatorRows<T>(url: string, subject: string): Promis
   return data as T[];
 }
 
+/**
+ * 強制譲渡の通信が切れたあと、読み直した譲渡先の候補から、譲渡が済んだかを決める (#2080 U5)。
+ * 候補の API は、今の代表者 (家族。family_members.role = 'representative') ・オーナー (組織。user_profiles.org_role = 'owner') を
+ * 候補から外す。選んだメンバーが候補にいなければ、譲渡が済んで代表者・オーナーになっている。
+ * (同じ間に選んだメンバーが家族・組織を抜けたときも候補から外れる。そのときもこの画面から同じメンバーへ譲渡し直すことはできないので、
+ * 一覧へ戻して一覧の今の状態を見せる)
+ */
+export function isForceTransferDone(candidates: readonly { id: string }[], selectedId: string): boolean {
+  return !candidates.some((candidate) => candidate.id === selectedId);
+}
+
 /** 強制の操作の POST の結果。'no-response' は通信そのものが失敗した (サーバーで済んだかどうかは分からない) */
 export type OperatorForceActionResult = 'ok' | 'no-response';
 

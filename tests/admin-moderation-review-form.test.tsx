@@ -366,7 +366,9 @@ describe('ModerationReviewForm: 表示', () => {
     await renderForm({ status: 'rejected' });
 
     expect(allText()).toContain('このアイテムは既に審査済みです');
-    expect(allText()).toContain('rejected');
+    // 状態は内部の英字の値 (rejected) でなく日本語の表示名で出す (#2080 U6)
+    expect(allText()).toContain('ステータス: 却下済み');
+    expect(allText()).not.toContain('rejected');
     expect(document.querySelector('form')).toBeNull();
   });
 
