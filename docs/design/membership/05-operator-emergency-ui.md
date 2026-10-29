@@ -280,22 +280,22 @@ END $$;
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│ メンバシップ監査ログ                                      │
+│ メンバシップ 監査ログ                                     │
 ├──────────────────────────────────────────────────────────┤
-│ Filter:                                                  │
-│  Scope:  [All ▼]   Action: [All ▼]   日付: [from-to]   │
+│ 絞り込み:                                                │
+│  対象: [すべて ▼]  操作: [すべて ▼]  開始日 〜 終了日    │
 │                                                          │
-│ Time             Scope     Action                Actor   │
-│ 2026-05-10 22:00 family    invite_accepted      花子    │
-│ 2026-05-10 21:55 family    paste_executed       花子    │
-│ 2026-05-09 18:00 org       owner_transferred    田中    │
-│ 2026-05-08 09:30 org       operator_force_      [SYS]  │
-│                            owner_transfer       (op:佐藤) │
+│ 日時             対象  操作                  操作した人  │
+│ 2026-05-10 22:00 家族  招待の承諾            acacacac... │
+│ 2026-05-10 21:55 家族  食事の家族への貼り付け acacacac...│
+│ 2026-05-09 18:00 組織  オーナーの譲渡        1a2b3c4d... │
+│ 2026-05-08 09:30 組織  運営によるオーナーの  運営        │
+│                        強制譲渡              (0e0e0e0e)  │
 │ ...                                                      │
 └──────────────────────────────────────────────────────────┘
 ```
 
-クリックで詳細 modal (metadata JSON 表示)。
+クリックで詳細 modal (metadata JSON 表示)。操作 (`action`)・対象 (`scope`) は内部の英字の値を出さず、`src/lib/membership/audit-labels.ts` の表示名を一覧の列・絞り込みの選択肢・詳細 modal に出す (表に無い値は「不明な操作」「不明な対象」の固定の文で、内部の値は添えない。表のキーは `membership_audit_action_check`・`membership_audit_scope_check` の全値で、`tests/membership-audit-labels-contract-2086.test.ts` が突き合わせる。操作の絞り込みの選択肢は全値。#2086 V5)。
 
 ---
 
