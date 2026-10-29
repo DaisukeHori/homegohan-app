@@ -66,7 +66,7 @@
 
 今の実装の super_admin の画面のサイドバー (`src/app/super-admin/layout.tsx` の `superAdminNavItems`・`superAdminOperationsNavItems`) の並び: 見出し「プラン管理」の下に「プラン管理・機能パッケージ・クーポン」、見出し「運用」の下に「アプリログ (`/super-admin/logs`)・監査ログ (`/super-admin/audit-logs`)・メール送信・バックアップ・DR・インフラ監視・LLM 使用量・機能フラグ・A/B テスト」。監査ログは super_admin 専用の「運用」の中にあり、最上位の項目ではない (「運用」の見出しは #1386 で足し、#2051 で監査ログ・インフラ監視・LLM 使用量・機能フラグ・A/B テストを「運用」に並べた)。
 
-`/admin/moderation` と `/admin/moderation/{type}/{id}` の画面の仕様は、本書に節が無い。隠したコンテンツを戻す欄 (「非表示の解除」のカード) と一覧の「非表示中」のバッジは `operator/13-hidden-content-restore.md` §9 が正本。
+`/admin/moderation` と `/admin/moderation/{type}/{id}` の画面の仕様は、本書に節が無い。隠したコンテンツを戻す欄 (「非表示の解除」のカード) と一覧の「非表示中」のバッジは `operator/13-hidden-content-restore.md` §9 が正本。 通報の状態 (pending / approved / rejected / escalated) と種類 (food / recipe / ai_content) は、一覧のステータスの列・件数の見出し・タイプの札、詳細の「ステータス」「タイプ」、審査の欄 (`ModerationReviewForm` の「ステータス: …」) のどこでも、対応表 `src/lib/admin/moderation-labels.ts` を通した日本語 (未審査 / 承認済み / 却下済み / エスカレーション・食事画像 / レシピ / AI コンテンツ) で出し、表に無い値は「不明な状態」「不明な種類」 (内部の英字の値は出さない。#2080 U6)。
 
 ---
 

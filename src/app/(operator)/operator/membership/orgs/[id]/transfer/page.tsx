@@ -10,6 +10,16 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import ForceActionConfirmModal from '@/components/operator/membership/ForceActionConfirmModal';
+import {
+  FORCE_TRANSFER_NOT_DONE_GUIDE,
+  FORCE_TRANSFER_RELOAD_FAILED_GUIDE,
+  OperatorScreenError,
+  displayableOperatorError,
+  fetchOperatorRows,
+  isForceTransferDone,
+  operatorForceActionNoResponseMessage,
+  postOperatorForceAction,
+} from '@/lib/membership/operator-screen-messages';
 import { normalizeProfileName } from '@/lib/profile-name';
 import { orgRoleLabel } from '@/lib/membership/role-labels';
 
@@ -32,6 +42,13 @@ function formatLastLogin(v: string | null): string {
   }
 }
 
+/** 戻る先の一覧 */
+const LIST_PATH = '/operator/membership/orgs/inactive';
+/** 読み込みの失敗の文の対象 */
+const CANDIDATES_SUBJECT = '譲渡の候補';
+/** 候補の読み込みの失敗で、例外の文が出せないときの固定の文 */
+const CANDIDATES_LOAD_FAILED_FALLBACK = `${CANDIDATES_SUBJECT}を読み込めませんでした`;
+
 export default function OrgTransferPage() {
   // パスの値は useParams で読む。props の params は Next 15 から Promise で、Next 14 では use(params) が例外になった (#1275)。
   // useParams はどちらでも同じに使えるので、こちらにそろえている (#1444)。
@@ -46,23 +63,20 @@ export default function OrgTransferPage() {
   const [reason, setReason] = useState('');
   const [showConfirm, setShowConfirm] = useState(false);
 
+  const candidatesUrl = `/api/operator/membership/org/${orgId}/candidates`;
+
   const fetchCandidates = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/operator/membership/org/${orgId}/candidates`);
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error?.message ?? `HTTP ${res.status}`);
-      }
-      const json = await res.json();
-      setCandidates(json.data ?? []);
+      setCandidates(await fetchOperatorRows<Candidate>(candidatesUrl, CANDIDATES_SUBJECT));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'データ取得に失敗しました');
+      // 通信の失敗・本文に文の無い失敗も日本語の文にする (ブラウザの英字の文・「HTTP 502」だけを出さない。#2080 U5)
+      setError(displayableOperatorError(err, CANDIDATES_LOAD_FAILED_FALLBACK));
     } finally {
       setLoading(false);
     }
-  }, [orgId]);
+  }, [candidatesUrl]);
 
   useEffect(() => { fetchCandidates(); }, [fetchCandidates]);
 
@@ -70,16 +84,26 @@ export default function OrgTransferPage() {
 
   async function handleTransferConfirm() {
     if (!selectedId) return;
-    const res = await fetch(`/api/operator/membership/org/${orgId}/transfer`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to_user_id: selectedId, reason }),
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.error?.message ?? `HTTP ${res.status}`);
+    // 失敗の応答は、日本語の文の例外を投げる (確認の枠が出す)
+    const result = await postOperatorForceAction(
+      `/api/operator/membership/org/${orgId}/transfer`,
+      { to_user_id: selectedId, reason },
+      'transfer',
+    );
+    if (result === 'no-response') {
+      // 応答を受け取れなかった。サーバーが譲渡を済ませてから切れたこともあるので、候補を読み直して確かめる (#2080 U5)
+      let reloaded: Candidate[];
+      try {
+        reloaded = await fetchOperatorRows<Candidate>(candidatesUrl, CANDIDATES_SUBJECT);
+      } catch {
+        throw new OperatorScreenError(operatorForceActionNoResponseMessage('transfer', FORCE_TRANSFER_RELOAD_FAILED_GUIDE));
+      }
+      if (!isForceTransferDone(reloaded, selectedId)) {
+        setCandidates(reloaded);
+        throw new OperatorScreenError(operatorForceActionNoResponseMessage('transfer', FORCE_TRANSFER_NOT_DONE_GUIDE));
+      }
     }
-    router.push('/operator/membership/orgs/inactive');
+    router.push(LIST_PATH);
   }
 
   const canSubmit = selectedId !== null && reason.trim().length > 0;
@@ -88,7 +112,7 @@ export default function OrgTransferPage() {
     <div>
       <div className="mb-6">
         <Link
-          href="/operator/membership/orgs/inactive"
+          href={LIST_PATH}
           className="text-sm text-blue-600 hover:underline"
         >
           &#8592; 一覧に戻る
@@ -165,7 +189,7 @@ export default function OrgTransferPage() {
           {/* ボタン */}
           <div className="flex justify-end gap-3">
             <Link
-              href="/operator/membership/orgs/inactive"
+              href={LIST_PATH}
               className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
             >
               キャンセル

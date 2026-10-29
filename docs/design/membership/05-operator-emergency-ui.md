@@ -316,7 +316,7 @@ type Props = {
 };
 ```
 
-実行ボタンを押すと API 呼び出し → 成功時に audit log entry + 全メンバ通知メール (運営強制操作通知, 04-email-templates.md §7)。
+実行ボタンを押すと API 呼び出し → 成功時に audit log entry + 全メンバ通知メール (運営強制操作通知, 04-email-templates.md §7)。 失敗の文 (#2080 U5): 枠は画面が投げた日本語の文 (`OperatorScreenError`。`src/lib/membership/operator-screen-messages.ts`) だけを出し、それ以外の例外 (ブラウザの英字の文) は「<強制譲渡|強制解散>に失敗しました」。失敗の応答は API の文、本文に文が無ければ「<操作>に失敗しました (HTTP <番号>)」。通信そのものが失敗した (fetch の reject) ときは「<操作>の応答を受け取れませんでした（通信エラー）」に続けて対象を読み直す: 強制譲渡は譲渡の候補 (選んだメンバーが候補から外れていれば済んだとみなして一覧 `/operator/membership/{orgs|families}/inactive` へ戻す)・強制解散は一覧 (対象が解散されずに残っていなければ済んだとみなして枠を閉じる。組織の一覧は `dissolved: true` の行を残っていないと数える)。済んでいなければ「まだ譲渡されていません / まだ解散されていません」、読み直せなければ「済んだか分かりません」の文を枠に出す。画面の読み込み (候補・一覧・監査ログ) の失敗も「<対象>を読み込めませんでした（通信エラー）」/「… (HTTP <番号>)」。
 
 ### 6.2 inactive list table
 **file (新規)**: `src/components/operator/membership/InactiveOwnerTable.tsx`
