@@ -16,6 +16,7 @@ import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
 import { MODERATION_TYPES, type ModerationType } from '@/lib/admin/moderation-schemas';
 import { isModerationBacked } from '@/lib/admin/moderation-backend';
+import { moderationStatusLabel, moderationTypeLabel } from '@/lib/admin/moderation-labels';
 
 interface PageProps {
   searchParams: Promise<{ status?: string; type?: string; page?: string }>;
@@ -87,7 +88,7 @@ export default async function AdminModerationPage(props: PageProps) {
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">モデレーション</h1>
         <span className="text-sm text-gray-500">
-          {status === 'pending' ? '未審査' : status} 件数: {total.toLocaleString()}
+          {moderationStatusLabel(status)} 件数: {total.toLocaleString()}
         </span>
       </div>
 
@@ -144,8 +145,8 @@ export default async function AdminModerationPage(props: PageProps) {
               items.map((item) => (
                 <tr key={item.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-3">
-                    <span className="inline-block bg-purple-50 text-purple-700 text-xs px-2 py-0.5 rounded font-mono">
-                      {item.type}
+                    <span className="inline-block bg-purple-50 text-purple-700 text-xs px-2 py-0.5 rounded">
+                      {moderationTypeLabel(item.type)}
                     </span>
                   </td>
                   <td className="px-4 py-3">
@@ -182,7 +183,8 @@ export default async function AdminModerationPage(props: PageProps) {
                               : 'bg-orange-50 text-orange-700'
                       }`}
                     >
-                      {item.status}
+                      {/* 状態・種類は内部の英字の値を出さず、日本語の表示名にする (#2080 U6) */}
+                      {moderationStatusLabel(item.status)}
                     </span>
                     {/* #1538: コンテンツが運営の判定で隠れている通報 (status に関わらず) */}
                     {item.hidden_at && (

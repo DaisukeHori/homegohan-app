@@ -9,11 +9,26 @@ import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { FamilyInviteAcceptModal } from '@/components/membership/FamilyInviteAcceptModal';
 import { InviteLayout } from '@/components/membership/InviteLayout';
+import {
+  readInviteAcceptStateAfterFailure,
+  withInviteAcceptStateNote,
+} from '@/lib/membership/invite-accept-state';
+
+/** 組織の招待の承諾の通信そのものが失敗した (fetch が reject した・応答の本文を読めなかった) ときの文 */
+const ORG_NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
+
+/** 組織の招待が承諾済み・拒否済み・取り消し済み (409 INVITE_ALREADY_USED) のときの文 */
+const ORG_INVITE_ALREADY_USED_MESSAGE = 'この招待は既に使用済みです。';
+
+/** 組織の招待の承諾が済んだときの遷移先 */
+const ORG_DASHBOARD_PATH = '/org/dashboard';
 
 interface InviteDetails {
   status: 'pending' | 'accepted' | 'rejected' | 'expired' | 'revoked';
   // get_invite_details RPC (最新の定義は supabase/migrations/20261016200000_rpc_profile_name_placeholder.sql:62) の実返却キーに合わせる
   scope: 'family' | 'organization';
+  /** 招待の家族 / 組織の id。承諾の通信が切れたあと、ここに入ったかを確かめる (#2080 U1) */
+  scope_id: string;
   email: string;
   scope_name: string;
   invited_by_name: string;
@@ -61,8 +76,24 @@ export default function InvitePage() {
     init();
   }, [token, supabase]);
 
+  /**
+   * 組織の招待を承諾できていたかを自分のプロフィールで確かめる (#2080 U1。家族の招待の承諾 FamilyInviteAcceptModal と同じ型)。
+   * 招待の組織に入っていれば成功のときと同じ遷移にする。入っていなければ message (確かめられなかったときは
+   * 「状態を確かめられませんでした」を添える) を出す。読み直しの応答を待つあいだも「承諾する」を止めたままにする
+   */
+  const confirmOrgAcceptedOrShow = async (inviteOrgId: string, message: string) => {
+    const state = await readInviteAcceptStateAfterFailure(supabase, 'org', inviteOrgId);
+    if (state === 'joined') {
+      router.push(ORG_DASHBOARD_PATH);
+      return;
+    }
+    setOrgError(withInviteAcceptStateNote(message, state));
+  };
+
   // org invite accept
   const handleOrgAccept = async () => {
+    if (!invite) return;
+    const inviteOrgId = invite.scope_id;
     setOrgError(null);
     setOrgLoading(true);
     try {
@@ -78,7 +109,9 @@ export default function InvitePage() {
             setOrgError('既に組織に所属しています。');
             break;
           case 'INVITE_ALREADY_USED':
-            setOrgError('この招待は既に使用済みです。');
+            // 前に押した承諾をサーバーが済ませてから応答が切れたときも、押し直すとこれになる (承諾の RPC は招待の
+            // status = 'accepted' を先に見る)。招待の組織に入っていれば、承諾できているので成功のときと同じ遷移にする
+            await confirmOrgAcceptedOrShow(inviteOrgId, ORG_INVITE_ALREADY_USED_MESSAGE);
             break;
           case 'INVITE_REVOKED':
             setOrgError('この招待は取り消されています。');
@@ -91,9 +124,12 @@ export default function InvitePage() {
         }
         return;
       }
-      router.push('/org/dashboard');
-    } catch {
-      setOrgError('通信エラーが発生しました');
+      router.push(ORG_DASHBOARD_PATH);
+    } catch (err) {
+      console.error('[invite] org accept error:', err);
+      // サーバーが承諾を済ませてから応答が切れた (または応答の本文を読めなかった) こともあるので、
+      // 自分のプロフィールを読み直して確かめる (#2080 U1)
+      await confirmOrgAcceptedOrShow(inviteOrgId, ORG_NETWORK_FAILURE_MESSAGE);
     } finally {
       setOrgLoading(false);
     }
@@ -233,6 +269,7 @@ export default function InvitePage() {
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6">
         <FamilyInviteAcceptModal
           token={token}
+          familyId={invite.scope_id}
           familyName={invite.scope_name}
           inviterName={invite.invited_by_name}
           expiresAt={invite.expires_at}

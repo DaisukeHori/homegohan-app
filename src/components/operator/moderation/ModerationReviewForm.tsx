@@ -22,6 +22,7 @@
 import { useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { moderationStatusLabel } from '@/lib/admin/moderation-labels';
 
 export type ModerationReviewFormProps = {
   /** モデレーション対象のタイプ (food / recipe) */
@@ -62,12 +63,6 @@ type ApiSuccessBody = {
   data?: { status?: unknown; ban_applied?: unknown };
 };
 
-const STATUS_LABEL: Record<string, string> = {
-  approved: '承認',
-  rejected: '却下 (削除)',
-  escalated: 'エスカレーション',
-};
-
 export default function ModerationReviewForm({ type, id, status, isSuperAdmin }: ModerationReviewFormProps) {
   const router = useRouter();
   const [action, setAction] = useState('');
@@ -82,7 +77,7 @@ export default function ModerationReviewForm({ type, id, status, isSuperAdmin }:
     return (
       <div className="space-y-4">
         <p role="status" className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">
-          審査を確定しました。ステータス: {STATUS_LABEL[done.status] ?? done.status}
+          審査を確定しました。ステータス: {moderationStatusLabel(done.status)}
           {done.banApplied === true ? ' / 投稿者を BAN しました' : ''}
         </p>
         <Link
@@ -99,7 +94,8 @@ export default function ModerationReviewForm({ type, id, status, isSuperAdmin }:
     return (
       <div className="text-center py-8 text-gray-400">
         <p className="text-sm">このアイテムは既に審査済みです</p>
-        <p className="text-xs mt-1">ステータス: {status}</p>
+        {/* 状態は内部の英字の値 (approved など) を出さず、日本語の表示名にする (#2080 U6) */}
+        <p className="text-xs mt-1">ステータス: {moderationStatusLabel(status)}</p>
       </div>
     );
   }

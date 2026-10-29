@@ -13,6 +13,20 @@ import { familyRoleLabel } from '@/lib/membership/role-labels';
  */
 const FAMILY_DASHBOARD_LOAD_ERROR = '家族の情報を読み込めませんでした。しばらくしてから、もう一度お試しください。';
 
+/** 家族グループの行が無い (または RLS で見えない) ときの文 (これまでどおり) */
+const FAMILY_GROUP_NOT_FOUND_MESSAGE = '家族グループの取得に失敗しました';
+
+/**
+ * .single() で行が 0 件 (または RLS で見えない) ときの PostgREST の失敗のコード。
+ * 行が無いのは「読み込めなかった」ではないので、これだけは読み込みの失敗と分ける (家族のメンバーの画面と同じ)
+ */
+const POSTGREST_NO_ROWS_CODE = 'PGRST116';
+
+/** 問い合わせの失敗が「行が無い」ではない (= 読み込めなかった) か */
+function isLoadFailure(error: { code?: string } | null): boolean {
+  return error !== null && error.code !== POSTGREST_NO_ROWS_CODE;
+}
+
 interface FamilyMember {
   id: string;
   role: 'representative' | 'adult' | 'child';
@@ -78,13 +92,17 @@ export default function FamilyDashboardPage() {
         .eq('id', profile.family_id)
         .single();
 
-      if (groupError || !group) {
-        setError('家族グループの取得に失敗しました');
+      if (isLoadFailure(groupError)) {
+        // 読み込めなかった (行が無いのとは別。「再試行」を出す。#2080 U3)
+        setLoadError(FAMILY_DASHBOARD_LOAD_ERROR);
+        return;
+      }
+      if (!group) {
+        // 行が無い (PGRST116) か、RLS で見えない (これまでどおり)
+        setError(FAMILY_GROUP_NOT_FOUND_MESSAGE);
         setLoadError(null);
         return;
       }
-
-      setFamilyGroup(group as FamilyGroup);
 
       // family_members を取得
       const { data: membersData, error: membersError } = await supabase
@@ -94,13 +112,17 @@ export default function FamilyDashboardPage() {
         .eq('status', 'active');
 
       if (membersError) {
-        setError('メンバー情報の取得に失敗しました');
-      } else {
-        // 画面に出す名前 (display_name が無ければ本人のプロフィールの今の名前) は API で決める (#1584)
-        const names = await fetchFamilyMemberNames();
-        setMembers(applyFamilyMemberNames((membersData ?? []) as FamilyMember[], names));
-        setError(null);
+        // 読み込めなかった (メンバーがいないのとは別。家族グループの名前だけの画面・空の一覧と見せず、「再試行」を出す。#2080 U3)
+        setLoadError(FAMILY_DASHBOARD_LOAD_ERROR);
+        return;
       }
+
+      // 画面に出す名前 (display_name が無ければ本人のプロフィールの今の名前) は API で決める (#1584)
+      const names = await fetchFamilyMemberNames();
+      // 全部読めてから出す
+      setFamilyGroup(group as FamilyGroup);
+      setMembers(applyFamilyMemberNames((membersData ?? []) as FamilyMember[], names));
+      setError(null);
       setLoadError(null);
     } catch (loadFailure) {
       console.error('[family/dashboard] load error:', loadFailure);

@@ -685,13 +685,14 @@ describe('#2073 S3 家族のダッシュボード: 読み込めなかったの�
     expect(text()).toContain('山田家');
   });
 
-  it('「再試行」で自分のプロフィールは読めたが、家族グループを読めなかったら、読み込めなかった文を消して、家族グループの取得の失敗の文を出す', async () => {
+  // 家族グループを読み込めなかったとき (行が無いのではない) は、読み込めなかった文と「再試行」を出す (#2080 U3。tests/family-screens-2080.test.tsx)
+  it('「再試行」で自分のプロフィールは読めたが、家族グループの行が無ければ (PGRST116)、読み込めなかった文を消して、家族グループの取得の失敗の文を出す', async () => {
     familyReadable();
     profileResponds(profileLoadFails);
     await renderElement(createElement(FamilyDashboardPage));
     expect(byTestId('family-dashboard-load-error')).not.toBeNull();
     profileResponds(inFamily);
-    supabaseState.responders.family_groups = () => ({ data: null, error: LOAD_FAILURE });
+    supabaseState.responders.family_groups = () => ({ data: null, error: NO_ROWS });
 
     await click(findButton('再試行'), '「再試行」');
 
@@ -1032,7 +1033,8 @@ describe('#2073 メンバーの詳細: 読み込めなかったのを別の状�
     expect(byTestId('family-member-detail-load-error')).not.toBeNull();
   });
 
-  describe('自分の役割の行が無い (PGRST116) ときは、読み込めなかったとせず、権限なしとする', () => {
+  // 自分の役割は自分の active な行から .maybeSingle() で読む (#2080 U2)。行が無いときは失敗ではなく data: null が返る
+  describe('自分の役割の行が無いときは、読み込めなかったとせず、権限なしとする', () => {
     const OTHER_NAME = '花子';
     /** 他人 (大人) の詳細を開く。自分の役割の問い合わせは myRole で返す */
     function otherMemberReadable(myRole: () => QueryResult) {
@@ -1049,7 +1051,7 @@ describe('#2073 メンバーの詳細: 読み込めなかったのを別の状�
     }
 
     it('読み込めなかった文を出さず、メンバーの情報を出し、管理の操作 (家族から外す) を出さない', async () => {
-      otherMemberReadable(() => ({ data: null, error: NO_ROWS }));
+      otherMemberReadable(() => ({ data: null, error: null }));
       await renderElement(createElement(FamilyMemberDetailPage));
 
       expect(byTestId('family-member-detail-load-error')).toBeNull();
@@ -1091,7 +1093,7 @@ describe('#2073 メンバーの詳細: 読み込めなかったのを別の状�
     await click(healthSwitch(), '健康の共有の切り替え');
 
     expect(callsOf('PATCH', SHARE_PATH)).toHaveLength(1);
-    expect(queryCount('family_members', 'maybeSingle')).toBe(1);
+    expect(filtersOf('family_members', SHARE_REREAD_COLUMNS).length).toBe(1);
     // 読み直すのは自分の active な行だけ (他の人の値を出さない)
     expect(filtersOf('family_members', SHARE_REREAD_COLUMNS)).toEqual([OWN_ACTIVE_MEMBER_FILTERS]);
     expect(healthSwitch().getAttribute('aria-checked')).toBe('true');
@@ -1138,7 +1140,7 @@ describe('#2073 メンバーの詳細: 読み込めなかったのを別の状�
     const base = supabaseState.responders.family_members as Responder;
     let rereadStarted = false;
     supabaseState.responders.family_members = (ctx: QueryContext) => {
-      if (ctx.kind === 'maybeSingle') {
+      if (ctx.kind === 'maybeSingle' && ctx.columns === SHARE_REREAD_COLUMNS) {
         rereadStarted = true;
         return reread.promise;
       }
@@ -1172,7 +1174,7 @@ describe('#2073 メンバーの詳細: 読み込めなかったのを別の状�
     await click(healthSwitch(), '健康の共有の切り替え');
 
     expect(healthSwitch().getAttribute('aria-checked')).toBe('false');
-    expect(queryCount('family_members', 'maybeSingle')).toBe(0);
+    expect(filtersOf('family_members', SHARE_REREAD_COLUMNS).length).toBe(0);
     expect(alertSpy).toHaveBeenCalledWith('共有設定の更新に失敗しました');
   });
 
@@ -1272,7 +1274,7 @@ describe('#2073 メンバーの詳細: 読み込めなかったのを別の状�
 
       expect(sharePatchBodies(SHARE_PATH)).toEqual([{ [field]: true }]);
       expect(switchStates()).toEqual(shareRowToChecked(shareOnlyOn(nextShareField(field))));
-      expect(queryCount('family_members', 'maybeSingle')).toBe(0);
+      expect(filtersOf('family_members', SHARE_REREAD_COLUMNS).length).toBe(0);
     });
   });
 
@@ -1307,7 +1309,8 @@ describe('#2073 メンバーの詳細: 読み込めなかったのを別の状�
       expect(container.querySelectorAll('[role="switch"]')).toHaveLength(SHARE_FIELDS.length);
     });
 
-    it('「再試行」で自分のプロフィールは読めたが、メンバーの行を読めなかったら、読み込めなかった文を消して、メンバーの情報の取得の失敗の文を出す', async () => {
+    // メンバーの行を読み込めなかったとき (行が無いのではない) は、読み込めなかった文と「再試行」を出す (#2080 U3。tests/family-screens-2080.test.tsx)
+    it('「再試行」で自分のプロフィールは読めたが、メンバーの行が無ければ (PGRST116)、読み込めなかった文を消して、メンバーの情報の取得の失敗の文を出す', async () => {
       selfMemberReadable();
       profileResponds(profileLoadFails);
       await renderElement(createElement(FamilyMemberDetailPage));
@@ -1315,7 +1318,7 @@ describe('#2073 メンバーの詳細: 読み込めなかったのを別の状�
       profileResponds(inFamily);
       const base = supabaseState.responders.family_members as Responder;
       supabaseState.responders.family_members = (ctx: QueryContext) =>
-        ctx.kind === 'single' && ctx.filters.id === MEMBER_A_ID ? { data: null, error: LOAD_FAILURE } : base(ctx);
+        ctx.kind === 'single' && ctx.filters.id === MEMBER_A_ID ? { data: null, error: NO_ROWS } : base(ctx);
 
       await click(findButton('再試行'), '「再試行」');
 

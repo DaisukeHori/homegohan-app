@@ -23,6 +23,7 @@ import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
 import { MODERATION_TYPES, type ModerationType } from '@/lib/admin/moderation-schemas';
 import { isModerationBacked } from '@/lib/admin/moderation-backend';
+import { moderationStatusLabel, moderationTypeLabel } from '@/lib/admin/moderation-labels';
 import ModerationReviewForm from '@/components/operator/moderation/ModerationReviewForm';
 import ModerationRestoreForm from '@/components/operator/moderation/ModerationRestoreForm';
 import {
@@ -110,8 +111,8 @@ export default async function AdminModerationDetailPage(props: PageProps) {
             <div>
               <dt className="text-gray-500">タイプ</dt>
               <dd>
-                <span className="inline-block bg-purple-50 text-purple-700 text-xs px-2 py-0.5 rounded font-mono">
-                  {resolvedItem.type}
+                <span className="inline-block bg-purple-50 text-purple-700 text-xs px-2 py-0.5 rounded">
+                  {moderationTypeLabel(resolvedItem.type)}
                 </span>
               </dd>
             </div>
@@ -129,7 +130,8 @@ export default async function AdminModerationDetailPage(props: PageProps) {
                           : 'bg-orange-50 text-orange-700'
                   }`}
                 >
-                  {resolvedItem.status}
+                  {/* 状態・種類は内部の英字の値を出さず、日本語の表示名にする (#2080 U6) */}
+                  {moderationStatusLabel(resolvedItem.status)}
                 </span>
               </dd>
             </div>
