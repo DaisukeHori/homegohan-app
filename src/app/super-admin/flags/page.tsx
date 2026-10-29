@@ -12,6 +12,13 @@
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import {
+  adminActionHttpFailedMessage,
+  adminLoadFailedFallback,
+  adminScreenErrorOfResponse,
+  displayableAdminError,
+  fetchAdminJson,
+} from "@/lib/admin/admin-screen-messages";
+import {
   NO_RESPONSE_LIST_RELOADED_GUIDE,
   NO_RESPONSE_LIST_RELOAD_FAILED_GUIDE,
   statusChangeNoResponseMessage,
@@ -27,6 +34,9 @@ interface FeatureFlag {
   active_user_count: number | null;
   updated_at: string;
 }
+
+/** 読み込みの失敗の文の対象 (「機能フラグを読み込めませんでした (HTTP 502)」。#2086 V6) */
+const FLAGS_SUBJECT = "機能フラグ";
 
 /** 書き込みの操作の名前 (通信が reject されたときの文に使う。#2073) */
 type FlagWriteOperation = "切り替え" | "削除";
@@ -74,15 +84,12 @@ export default function FlagsPage() {
 
   const fetchFlags = async () => {
     try {
-      const res = await fetch("/api/super-admin/flags");
-      if (!res.ok) {
-        const body = await res.json();
-        throw new Error(body.error?.message ?? `HTTP ${res.status}`);
-      }
-      const { data } = await res.json();
+      const body = await fetchAdminJson("/api/super-admin/flags", FLAGS_SUBJECT);
+      const data = (body as { data?: FeatureFlag[] | null }).data;
       setFlags(data ?? []);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "読み込みに失敗しました");
+      // 画面に出すのは日本語の文だけ (ブラウザの英字の例外・JSON の SyntaxError の文は出さない。#2086 V6)
+      setError(displayableAdminError(err, adminLoadFailedFallback(FLAGS_SUBJECT)));
     } finally {
       setIsLoading(false);
     }
@@ -152,14 +159,14 @@ export default function FlagsPage() {
         return;
       }
       if (!res.ok) {
-        const body = await res.json();
-        throw new Error(body.error?.message ?? `HTTP ${res.status}`);
+        // 本文は JSON でないこともある (プロキシの 502 の HTML など) ので読み失敗で例外にしない (#2086 V6)
+        throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(`「${key}」の切り替え`, status));
       }
       setFlags((prev) => prev.map((f) => f.key === key ? { ...f, enabled: !currentEnabled } : f));
       // 読み直しの応答まで待ってからボタンを戻す (待たずに次の書き込みを送ると、この読み直しの古い一覧で上書きされうるため)
       await reloadFlags();
     } catch (err) {
-      alert(err instanceof Error ? err.message : "更新に失敗しました");
+      alert(displayableAdminError(err, `「${key}」の切り替えに失敗しました`));
     } finally {
       writeInFlightRef.current = false;
       setToggling(null);
@@ -184,12 +191,11 @@ export default function FlagsPage() {
         return;
       }
       if (!res.ok) {
-        const body = await res.json();
-        throw new Error(body.error?.message ?? `HTTP ${res.status}`);
+        throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(`「${key}」の削除`, status));
       }
       setFlags((prev) => prev.filter((f) => f.key !== key));
     } catch (err) {
-      alert(err instanceof Error ? err.message : "削除に失敗しました");
+      alert(displayableAdminError(err, `「${key}」の削除に失敗しました`));
     } finally {
       writeInFlightRef.current = false;
       setDeletingKey(null);

@@ -7,7 +7,7 @@ import {
   operationFailureMessage,
   operationNetworkFailureMessage,
 } from "@/lib/admin/api-error-message";
-import { ORG_WRITE_OPERATION, orgWriteNoResponseMessage } from "@/lib/org-write-no-response";
+import { isOrgWriteReloadFailedMessage, ORG_WRITE_OPERATION, orgWriteNoResponseMessage } from "@/lib/org-write-no-response";
 
 interface Department {
   id: string;
@@ -176,7 +176,11 @@ export default function OrgDepartmentsPage() {
   const retryLoad = () => {
     if (writeInFlightRef.current) return;
     setLoading(true);
-    void fetchDepartments();
+    void fetchDepartments().then((loaded) => {
+      // 読み直せたら、書き込みの通信が切れて読み直しにも失敗したときの案内 (「「再試行」で読み込み直してから…」) を消す
+      // (残すと、一覧を読み込めたのにまだ読み込めていないように読める。#2086 V9)。ほかの文 (応答が届いたうえでの失敗の理由など) は残す
+      if (loaded) setErrorMessage((current) => (isOrgWriteReloadFailedMessage(current) ? null : current));
+    });
   };
 
   // フォームを閉じる・開き直すときは、前の操作の失敗の文を残さない

@@ -27,6 +27,13 @@ const MEMBERS_LOAD_ERROR = 'メンバーの一覧を読み込めませんでし�
  */
 const MEMBERSHIP_NETWORK_FAILURE_REASON = '通信エラーが発生しました。通信状況を確認して、もう一度お試しください';
 
+/**
+ * 自分が組織に属していない (自分のプロフィールは読めて、organization_id が無い) ときに一覧の代わりに出す文 (#2086 V8)。
+ * 除名の通信が切れたあいだに自分が組織から外された (別の管理者の除名・運営の強制解散など) ときも、読み直しでこの文に変わる
+ * (前の一覧と「除名」のボタンを残さない)
+ */
+const MEMBERS_NOT_IN_ORG = '組織に所属していません';
+
 /** 一覧の 1 人。API が返す 4 つの項目 (id・表示名・組織内の役割・参加した日) だけ (#2073 S4) */
 type Member = OrgMemberName;
 
@@ -52,6 +59,8 @@ export default function MembersPage() {
   const isWriting = removingId !== null || leaving;
   // 一覧を読み込めなかったときの文。あるあいだは一覧と「メンバーがいません」の代わりにこの文と「再試行」を出す (#2050)
   const [loadError, setLoadError] = useState<string | null>(null);
+  // 自分が組織に属していないと読めたか。あるあいだは一覧と「メンバーがいません」の代わりに「組織に所属していません」を出す (#2086 V8)
+  const [notInOrg, setNotInOrg] = useState(false);
 
   // 一覧を読めたら true (除名の通信が切れたあとの文で、読み直せたかどうかの案内を出し分けるために返す。#2080 U4)。
   // false を返すときは必ず先に setLoadError で「読み込めませんでした」と「再試行」を出す (文の「「再試行」で読み込み直して」と画面を合わせる)
@@ -79,9 +88,12 @@ export default function MembersPage() {
         return false;
       }
       if (!profile?.organization_id) {
-        // 組織に属していない (読み込めたうえで、一覧が空)
+        // 組織に属していない (読み込めたうえで、一覧が空)。前の一覧と自分の役割を空にする (#2086 V8。残すと、除名の通信が切れた
+        // あいだに組織から外されたとき、前の一覧と「除名」・脱退・譲渡のボタンが残ったまま「一覧を読み込み直した」と案内していた)
+        setMembers([]);
+        setCurrentUser(null);
+        setNotInOrg(true);
         setLoadError(null);
-        setLoading(false);
         return true;
       }
 
@@ -101,6 +113,7 @@ export default function MembersPage() {
         return false;
       }
       setMembers(parsed.data.members);
+      setNotInOrg(false);
       setLoadError(null);
       return true;
     } catch (error) {
@@ -211,8 +224,8 @@ export default function MembersPage() {
     <div className="p-8 space-y-8">
       <div className="flex justify-between items-center">
         <div>
-          {/* 読み込めなかったときは人数を出さない (「0 名」と見せない) */}
-          <h1 className="text-2xl font-bold text-gray-900">{loadError ? '組織メンバー' : `組織メンバー (${members.length} 名)`}</h1>
+          {/* 読み込めなかったとき・組織に属していないときは人数を出さない (「0 名」と見せない) */}
+          <h1 className="text-2xl font-bold text-gray-900">{loadError || notInOrg ? '組織メンバー' : `組織メンバー (${members.length} 名)`}</h1>
           <p className="text-gray-500 text-sm">メンバーの管理・除名・脱退</p>
         </div>
         <div className="flex gap-3">
@@ -271,6 +284,12 @@ export default function MembersPage() {
                       再試行
                     </button>
                   </div>
+                </td>
+              </tr>
+            ) : notInOrg ? (
+              <tr>
+                <td colSpan={4} data-testid="member-not-in-org" className="p-8 text-center text-gray-400">
+                  {MEMBERS_NOT_IN_ORG}
                 </td>
               </tr>
             ) : members.length === 0 ? (

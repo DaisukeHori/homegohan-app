@@ -19,11 +19,33 @@ import { z } from 'zod';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { normalizeUuid } from '@/lib/http-params';
-import { OperatorForceOwnerTransferResultSchema } from '@/lib/membership/operator-force-transfer-result';
+import {
+  OPERATOR_FORCE_TRANSFER_ALREADY_DONE_STATUS,
+  OPERATOR_FORCE_TRANSFER_ALREADY_OWNER_CODE,
+  OPERATOR_FORCE_TRANSFER_ALREADY_OWNER_MESSAGE,
+  OperatorForceOwnerTransferResultSchema,
+} from '@/lib/membership/operator-force-transfer-result';
 
 export const dynamic = 'force-dynamic';
 
 const ROUTE_NAME = 'POST /api/operator/membership/org/[id]/transfer';
+
+/**
+ * 譲渡先がすでに今のオーナーのときの 409 (#2086 V1)。監査 (admin_audit_logs) も通知メールも出さない。
+ * 1 回目の譲渡が済んだあと、route が監査・通知を待つ間にプロキシが時間切れ (504 など) を返し、運営が「実行する」を押し直すと、
+ * RPC は今のオーナー (= 1 回目の譲渡先) を旧オーナーとして同じ人へ譲渡し直し、全員に 2 通目の通知 (「旧オーナー」欄が新オーナー本人) を送ってしまう
+ */
+function alreadyOwnerResponse() {
+  return NextResponse.json(
+    {
+      error: {
+        code: OPERATOR_FORCE_TRANSFER_ALREADY_OWNER_CODE,
+        message: OPERATOR_FORCE_TRANSFER_ALREADY_OWNER_MESSAGE,
+      },
+    },
+    { status: OPERATOR_FORCE_TRANSFER_ALREADY_DONE_STATUS },
+  );
+}
 
 const BodySchema = z.object({
   to_user_id: z.string().uuid(),
@@ -73,6 +95,14 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       preOrgError = error;
     } catch (err) {
       preOrgError = err;
+    }
+
+    // 譲渡先がすでに今のオーナーなら、RPC を呼ばずに 409 で止める (#2086 V1。押し直しで譲渡・監査・通知を二重にしない)。
+    // owner_id は DB の uuid の文字列 (小文字) で、to_user_id も上で小文字にそろえてある。
+    // 控えを読めなかったときは止めずに RPC へ進み、RPC の戻り値の旧オーナーで同じ判定をする (下)。控えの読み込みは
+    // 通知のための best-effort で、譲渡そのものは止めない (#1917 のテスト: 控えを読めなくても譲渡と通知は RPC の戻り値で行う)
+    if (preOrg && preOrg.owner_id === to_user_id) {
+      return alreadyOwnerResponse();
     }
 
     const supabase = await createClient();
@@ -125,6 +155,18 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         : null;
     // 応答の data は従来どおり、更新した後の組織の行
     const org = rpcResult.success ? rpcResult.data.organization : rpcData;
+
+    // RPC が組織の行のロックの下で読んだ旧オーナーが譲渡先と同じ = 譲渡先はすでにオーナーだった (#2086 V1)。
+    // RPC の前の控えを読めなかったときと、控えを読んだあと RPC の前に別の運営が同じ人へ譲渡したときにここへ来る。
+    // オーナーは変わっていないので、運営の監査 (admin_audit_logs) にも通知メールにも出さずに 409 で止める
+    // (RPC は membership_audit に旧オーナー = 新オーナーの行を 1 行書いている。それはログで追えるようにする)
+    if (beforeTransfer?.ownerId === to_user_id) {
+      log.warn(
+        '譲渡先はすでにオーナーだったため、運営の監査と通知メールを出さずに 409 を返しました (RPC は membership_audit に旧オーナー = 新オーナーの行を書いています)',
+        { organization_id: orgId, to_user_id },
+      );
+      return alreadyOwnerResponse();
+    }
 
     // 監査ログ (#1571)。RPC が書く membership_audit とは別に、運営の操作として admin_audit_logs にも 1 行残す
     // (操作した人の IP・User-Agent はこちらにだけ残る)。記録に失敗しても操作は完了のまま (失敗は db-logger に残る)

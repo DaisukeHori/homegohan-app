@@ -9,6 +9,10 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
+import { AdminScreenError, adminLoadFailedFallback, adminLoadFailedMessage, displayableAdminError } from '@/lib/admin/admin-screen-messages';
+
+/** 読み込みの失敗の文の対象 (「リードの一覧を読み込めませんでした (HTTP 502)」。#2086 V6) */
+const LEADS_SUBJECT = 'リードの一覧';
 
 type Stage = 'approach' | 'meeting' | 'proposal' | 'negotiation' | 'won' | 'lost';
 
@@ -64,17 +68,24 @@ export default function SalesLeadsPage() {
       const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
       if (stageFilter) params.set('stage', stageFilter);
 
-      const res = await fetch(`/api/admin/sales/leads?${params}`);
+      let res: Response;
+      try {
+        res = await fetch(`/api/admin/sales/leads?${params}`);
+      } catch {
+        // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
+        throw new AdminScreenError(adminLoadFailedMessage(LEADS_SUBJECT, null));
+      }
       if (res.status === 401) { router.push('/login'); return; }
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
       if (res.status === 403) { setError(await forbiddenMessageOfResponse(res)); return; }
-      if (!res.ok) throw new Error('一覧取得に失敗しました');
+      if (!res.ok) throw new AdminScreenError(adminLoadFailedMessage(LEADS_SUBJECT, res.status));
 
       const json = await res.json();
       setLeads(json.data ?? []);
       setTotal(json.meta?.total ?? 0);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '不明なエラー');
+      // 画面に出すのは日本語の文だけ (JSON でない本文の SyntaxError などの英字の文は出さない。#2086 V6)
+      setError(displayableAdminError(e, adminLoadFailedFallback(LEADS_SUBJECT)));
     } finally {
       setIsLoading(false);
     }

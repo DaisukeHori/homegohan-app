@@ -3,6 +3,10 @@
 import { useEffect, useState } from "react";
 import FinanceQuickLinks from "@/components/operator/finance/FinanceQuickLinks";
 import type { FinanceDashboard } from "@/lib/admin/finance-schemas";
+import { adminLoadFailedFallback, displayableAdminError, fetchAdminJson } from "@/lib/admin/admin-screen-messages";
+
+/** 読み込みの失敗の文の対象 (「売上・経理のダッシュボードを読み込めませんでした (HTTP 502)」。#2086 V6) */
+const DASHBOARD_SUBJECT = "売上・経理のダッシュボード";
 
 /**
  * 売上・経理のダッシュボード。
@@ -16,16 +20,11 @@ export default function FinanceDashboardPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch("/api/admin/finance/dashboard")
-      .then((r) => r.json())
-      .then((json) => {
-        if (json.error) {
-          setError(json.error.message);
-        } else {
-          setData(json.data as FinanceDashboard);
-        }
-      })
-      .catch((e: unknown) => setError(String(e)))
+    // 失敗は日本語の文の例外にする (本文の無い 502 の「HTTP 502」・通信の reject の英字の文・JSON でない本文の SyntaxError を、
+    // String(e) で「SyntaxError: …」「TypeError: Failed to fetch」と出さない。本文の error が文字列の形でも文を出す。#2086 V6)
+    fetchAdminJson("/api/admin/finance/dashboard", DASHBOARD_SUBJECT)
+      .then((body) => setData((body as { data?: FinanceDashboard }).data ?? null))
+      .catch((e: unknown) => setError(displayableAdminError(e, adminLoadFailedFallback(DASHBOARD_SUBJECT))))
       .finally(() => setLoading(false));
   }, []);
 

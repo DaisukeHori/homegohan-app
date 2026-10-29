@@ -8,6 +8,16 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
+import {
+  AdminScreenError,
+  adminActionHttpFailedMessage,
+  adminActionNoResponseMessage,
+  adminScreenErrorOfResponse,
+  displayableAdminError,
+} from '@/lib/admin/admin-screen-messages';
+
+/** 失敗の文の操作の名前 (「チケットの作成に失敗しました (HTTP 502)」。#2086 V6) */
+const TICKET_CREATE_ACTION = 'チケットの作成';
 import Link from 'next/link';
 
 type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
@@ -45,11 +55,17 @@ export default function NewTicketPage() {
 
     setIsSubmitting(true);
     try {
-      const res = await fetch('/api/admin/support/tickets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      });
+      let res: Response;
+      try {
+        res = await fetch('/api/admin/support/tickets', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(formData),
+        });
+      } catch {
+        // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
+        throw new AdminScreenError(adminActionNoResponseMessage(TICKET_CREATE_ACTION));
+      }
 
       if (res.status === 401) {
         router.push('/login');
@@ -61,14 +77,15 @@ export default function NewTicketPage() {
         return;
       }
       if (!res.ok) {
-        const json = await res.json();
-        throw new Error(json.error?.message ?? 'チケット作成に失敗しました');
+        // 本文は JSON でないこともある (プロキシの 502 の HTML など) ので読み失敗で例外にしない (#2086 V6)
+        throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(TICKET_CREATE_ACTION, status));
       }
 
       const json = await res.json();
       router.push(`/admin/support/${json.data.id}`);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '不明なエラー');
+      // 画面に出すのは日本語の文だけ (JSON でない本文の SyntaxError などの英字の文は出さない。#2086 V6)
+      setError(displayableAdminError(e, `${TICKET_CREATE_ACTION}に失敗しました`));
     } finally {
       setIsSubmitting(false);
     }

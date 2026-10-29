@@ -3,6 +3,16 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import {
+  AdminScreenError,
+  adminActionHttpFailedMessage,
+  adminActionNoResponseMessage,
+  adminScreenErrorOfResponse,
+  displayableAdminError,
+} from "@/lib/admin/admin-screen-messages";
+
+/** 失敗の文の操作の名前 (#2086 V6) */
+const EXPERIMENT_CREATE_ACTION = "実験の作成";
 
 interface Variant {
   key: string;
@@ -47,28 +57,32 @@ export default function NewExperimentPage() {
 
     setIsSubmitting(true);
     try {
-      const res = await fetch("/api/super-admin/experiments", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          key: form.key,
-          name: form.name,
-          hypothesis: form.hypothesis || undefined,
-          primary_metric: form.primary_metric || undefined,
-          start_date: form.start_date || undefined,
-          end_date: form.end_date || undefined,
-          variants,
-        }),
-      });
-
+      // 失敗は日本語の文の例外にする (本文の無い 502 の「HTTP 502」・通信の reject の英字の文・JSON でない本文の SyntaxError を出さない。#2086 V6)
+      let res: Response;
+      try {
+        res = await fetch("/api/super-admin/experiments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            key: form.key,
+            name: form.name,
+            hypothesis: form.hypothesis || undefined,
+            primary_metric: form.primary_metric || undefined,
+            start_date: form.start_date || undefined,
+            end_date: form.end_date || undefined,
+            variants,
+          }),
+        });
+      } catch {
+        throw new AdminScreenError(adminActionNoResponseMessage(EXPERIMENT_CREATE_ACTION));
+      }
       if (!res.ok) {
-        const body = await res.json();
-        throw new Error(body.error?.message ?? `HTTP ${res.status}`);
+        throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(EXPERIMENT_CREATE_ACTION, status));
       }
 
       router.push("/super-admin/experiments");
     } catch (err) {
-      alert(err instanceof Error ? err.message : "作成に失敗しました");
+      alert(displayableAdminError(err, `${EXPERIMENT_CREATE_ACTION}に失敗しました`));
     } finally {
       setIsSubmitting(false);
     }

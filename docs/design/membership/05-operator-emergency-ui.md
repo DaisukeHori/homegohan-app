@@ -280,22 +280,22 @@ END $$;
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│ メンバシップ監査ログ                                      │
+│ メンバシップ 監査ログ                                     │
 ├──────────────────────────────────────────────────────────┤
-│ Filter:                                                  │
-│  Scope:  [All ▼]   Action: [All ▼]   日付: [from-to]   │
+│ 絞り込み:                                                │
+│  対象: [すべて ▼]  操作: [すべて ▼]  開始日 〜 終了日    │
 │                                                          │
-│ Time             Scope     Action                Actor   │
-│ 2026-05-10 22:00 family    invite_accepted      花子    │
-│ 2026-05-10 21:55 family    paste_executed       花子    │
-│ 2026-05-09 18:00 org       owner_transferred    田中    │
-│ 2026-05-08 09:30 org       operator_force_      [SYS]  │
-│                            owner_transfer       (op:佐藤) │
+│ 日時             対象  操作                  操作した人  │
+│ 2026-05-10 22:00 家族  招待の承諾            acacacac... │
+│ 2026-05-10 21:55 家族  食事の家族への貼り付け acacacac...│
+│ 2026-05-09 18:00 組織  オーナーの譲渡        1a2b3c4d... │
+│ 2026-05-08 09:30 組織  運営によるオーナーの  運営        │
+│                        強制譲渡              (0e0e0e0e)  │
 │ ...                                                      │
 └──────────────────────────────────────────────────────────┘
 ```
 
-クリックで詳細 modal (metadata JSON 表示)。
+クリックで詳細 modal (metadata JSON 表示)。操作 (`action`)・対象 (`scope`) は内部の英字の値を出さず、`src/lib/membership/audit-labels.ts` の表示名を一覧の列・絞り込みの選択肢・詳細 modal に出す (表に無い値は「不明な操作」「不明な対象」の固定の文で、内部の値は添えない。表のキーは `membership_audit_action_check`・`membership_audit_scope_check` の全値で、`tests/membership-audit-labels-contract-2086.test.ts` が突き合わせる。操作の絞り込みの選択肢は全値。#2086 V5)。
 
 ---
 
@@ -316,7 +316,7 @@ type Props = {
 };
 ```
 
-実行ボタンを押すと API 呼び出し → 成功時に audit log entry + 全メンバ通知メール (運営強制操作通知, 04-email-templates.md §7)。 失敗の文 (#2080 U5): 枠は画面が投げた日本語の文 (`OperatorScreenError`。`src/lib/membership/operator-screen-messages.ts`) だけを出し、それ以外の例外 (ブラウザの英字の文) は「<強制譲渡|強制解散>に失敗しました」。失敗の応答は API の文、本文に文が無ければ「<操作>に失敗しました (HTTP <番号>)」。通信そのものが失敗した (fetch の reject) ときは「<操作>の応答を受け取れませんでした（通信エラー）」に続けて対象を読み直す: 強制譲渡は譲渡の候補 (選んだメンバーが候補から外れていれば済んだとみなして一覧 `/operator/membership/{orgs|families}/inactive` へ戻す)・強制解散は一覧 (対象が解散されずに残っていなければ済んだとみなして枠を閉じる。組織の一覧は `dissolved: true` の行を残っていないと数える)。済んでいなければ「まだ譲渡されていません / まだ解散されていません」、読み直せなければ「済んだか分かりません」の文を枠に出す。画面の読み込み (候補・一覧・監査ログ) の失敗も「<対象>を読み込めませんでした（通信エラー）」/「… (HTTP <番号>)」。
+実行ボタンを押すと API 呼び出し → 成功時に audit log entry + 全メンバ通知メール (運営強制操作通知, 04-email-templates.md §7)。 失敗の文 (#2080 U5): 枠は画面が投げた日本語の文 (`OperatorScreenError`。`src/lib/membership/operator-screen-messages.ts`) だけを出し、それ以外の例外 (ブラウザの英字の文) は「<強制譲渡|強制解散>に失敗しました」。失敗の応答は API の文、本文に文が無ければ「<操作>に失敗しました (HTTP <番号>)」。通信そのものが失敗した (fetch の reject) ときは「<操作>の応答を受け取れませんでした（通信エラー）」に続けて対象を読み直す: 強制譲渡は譲渡の候補 (選んだメンバーが候補から外れていれば済んだとみなして一覧 `/operator/membership/{orgs|families}/inactive` へ戻す)・強制解散は一覧 (対象が解散されずに残っていなければ済んだとみなして枠を閉じる。組織の一覧は `dissolved: true` の行を残っていないと数える)。済んでいなければ「まだ譲渡されていません / まだ解散されていません」の文を出し、読み直せなければ下記 (#2086 V1) のとおり枠を閉じて「済んだか分かりません」の文を画面に出す。画面の読み込み (候補・一覧・監査ログ) の失敗も「<対象>を読み込めませんでした（通信エラー）」/「… (HTTP <番号>)」。 本文に API の文が無い 502 / 503 / 504 (手前のプロキシ・ホスティングの応答。route は RPC の commit のあとに監査と通知メールを待つので、その間の時間切れでは操作は済んでいる) も応答を受け取れなかったものとして、「<操作>の応答を受け取れませんでした (HTTP <番号>)」に続けて同じく対象を読み直す (#2086 V1。`OPERATOR_FORCE_ACTION_NO_RESPONSE_STATUSES`)。読み直しにも失敗したら、済んだか分からないまま押し直させない: 枠を閉じ、強制譲渡の画面は候補と「強制譲渡を実行」を出さずに「再試行」を出し (読み直して選んだメンバーが候補から外れていれば一覧へ戻し、まだ候補にいれば済んでいない旨を出して候補を戻す)、強制解散の一覧は一覧を出さずに「更新」で読み直せるまで止める (#2086 V1)。強制譲渡の 409 `ALREADY_REPRESENTATIVE` / `ALREADY_OWNER` (§7。押し直しを route が止めた) は済んでいたものとして一覧へ戻す。
 
 ### 6.2 inactive list table
 **file (新規)**: `src/components/operator/membership/InactiveOwnerTable.tsx`
@@ -339,9 +339,9 @@ type InactiveOwner = {
 GET  /api/operator/membership/orgs/inactive?days=90
 GET  /api/operator/membership/families/inactive?days=90
 GET  /api/operator/membership/audit?scope=&action=&from=&to=&page=&limit=
-POST /api/operator/membership/org/{id}/transfer    body: { to_user_id, reason }
+POST /api/operator/membership/org/{id}/transfer    body: { to_user_id, reason }  (to_user_id がすでに今のオーナーなら 409 ALREADY_OWNER。監査・通知を出さない。#2086 V1)
 POST /api/operator/membership/org/{id}/dissolve    body: { reason }
-POST /api/operator/membership/family/{id}/transfer body: { to_user_id, reason }  (to_user_id が退会の手続き中なら 409 REPRESENTATIVE_ACCOUNT_DELETING。20261023150000)
+POST /api/operator/membership/family/{id}/transfer body: { to_user_id, reason }  (to_user_id が退会の手続き中なら 409 REPRESENTATIVE_ACCOUNT_DELETING。20261023150000。すでに今の代表者なら 409 ALREADY_REPRESENTATIVE。監査・通知を出さない。#2086 V1)
 POST /api/operator/membership/family/{id}/dissolve body: { reason }
 ```
 
@@ -354,6 +354,7 @@ RPC が `RAISE EXCEPTION '<コード>'` で返す既知のコードは汎用の 
 - 組織の強制解散の `ORG_ALREADY_DISSOLVED` → 409・`ORG_NOT_FOUND` → 404 (`src/lib/errors/membership-errors.ts` の `ErrorStatusMap` と `MEMBERSHIP_ERROR_MESSAGES`)
 - 家族の強制解散の `FAMILY_ALREADY_DISSOLVED` → 409・`FAMILY_NOT_FOUND` → 404 (同じ表。`supabase/migrations/20261026100000_operator_force_dissolve_family_missing.sql` から RPC が RAISE する。それより前は無い家族・解散済みの家族でも RPC が成功し、route が監査を書いて 200 を返していた)
 - それ以外 → 500 `INTERNAL_ERROR` (RPC の文面は本文に入れない)
+- 強制譲渡の 2 本は、譲渡先がすでに今の代表者 / オーナーなら 409 `ALREADY_REPRESENTATIVE` / `ALREADY_OWNER`「この人はすでに代表者です / オーナーです。一覧で今の状態を確かめてください」で止め、運営の監査 (`admin_audit_logs`) も通知メールも出さない (#2086 V1。`src/lib/membership/operator-force-transfer-result.ts`)。判定は 2 か所: RPC の前に読む今の代表者 / オーナー (一致すれば RPC を呼ばない。読めなければ止めずに RPC へ進む) と、RPC がロックの下で読んで返す旧代表者 / 旧オーナー (戻り値の `old_rep_id` / `old_owner_id`。一致すれば監査・通知の前に止め、warn のログに残す。このときは RPC が `membership_audit` に旧 = 新の行を 1 行書いている。RPC の置き換えはしていない)
 
 ---
 

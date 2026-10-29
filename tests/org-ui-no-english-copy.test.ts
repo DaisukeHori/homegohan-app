@@ -25,6 +25,21 @@
  *   日本語の文に混じる英字 (「Email アドレス」など) は数えない。
  *
  * 許可リスト (ALLOWED): 英語だけでも日本語の画面で正しいものだけ。理由を書き、使われていない行があれば失敗する。
+ *
+ * 運営の画面 (src/app/super-admin・src/app/admin。#2086 V6) は、失敗の文だけを見る (見出しやプロバイダの名前など、英字のままで正しい
+ * 表示が多いので、英語だけの文言の走査 (SCAN_ROOTS) には入れない)。以前の画面は、本文に文の無い失敗 (プロキシの 502 など) を
+ * 「HTTP 502」と英字だけで出し、fetch の reject ではブラウザの英字の例外の文 (Failed to fetch) を、失敗の応答の本文が JSON でないと
+ * res.json() の英字の SyntaxError の文を、エラー欄・alert にそのまま出していた。見るもの (FAILURE_COPY_SCAN_ROOTS):
+ *   F1. 利用者に見せる呼び出し (alert / confirm / setError… / set…Message) の引数と、文言のプロパティ (message / text) の値に、
+ *       英語だけの文字 (`HTTP ${status}` の「HTTP 」など) が無い。テンプレート文字列は文字の部分をつないで 1 つの文として見る
+ *       (`${summary} (HTTP ${status})` も文字の部分が英字だけなので数える。summary が日本語かは走査で分からないので、
+ *       src/lib/admin/admin-screen-messages.ts の withHttpStatus に通す)
+ *   F2. 同じ場所と JSX の子に、例外の文面 (`err.message`・`e instanceof Error ? e.message : …`・`String(e)`。例外を受ける名前の変数の
+ *       .message と String()) を入れていない。画面に出す例外の文は src/lib/admin/admin-screen-messages.ts の displayableAdminError で
+ *       日本語の文の例外 (AdminScreenError) だけを出す
+ *   F3. 失敗の応答 (`if (!res.ok) { … }` の中) の本文を `.json()` で読むときは `.catch(…)` を付ける (JSON でない本文で SyntaxError を投げない)
+ *   見ないもの (検出できない書き方。レビューで見る): 例外の文面を変数に入れてから出す (`const m = err.message; setError(m)`)・
+ *   `!res.ok` 以外の条件の分岐の中の `.json()`。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -44,7 +59,13 @@ const ROOT = path.resolve(__dirname, '..');
  */
 const FAMILY_SCREEN_ROOT = 'src/app/(main)/family';
 const SETTINGS_MEMBERSHIP_ROOT = 'src/app/(main)/settings/membership';
-const SCAN_ROOTS: readonly string[] = [...ORG_SCREEN_ROOTS, FAMILY_SCREEN_ROOT, SETTINGS_MEMBERSHIP_ROOT];
+/**
+ * 運営のメンバーシップの監査ログの画面 (#2086 V5)。見出し・絞り込み・詳細の枠に Scope / Action / Actor / All・(system)・[SYS] op: と
+ * 英語だけの文言を出していた。運営のメンバーシップの画面のうち、英語だけの文言の走査にはこの画面だけを足す
+ * (ほかの運営の画面は内部の値の走査 (RAW_VALUE_ONLY_SCAN_ROOTS) だけ)
+ */
+const OPERATOR_MEMBERSHIP_AUDIT_ROOT = 'src/app/(operator)/operator/membership/audit';
+const SCAN_ROOTS: readonly string[] = [...ORG_SCREEN_ROOTS, FAMILY_SCREEN_ROOT, SETTINGS_MEMBERSHIP_ROOT, OPERATOR_MEMBERSHIP_AUDIT_ROOT];
 /**
  * 内部の値をそのまま出していないかだけを見る画面 (英語だけの文言の走査は SCAN_ROOTS だけ)。
  * 運営の家族の代表者・組織のオーナーの付け替えの画面が、候補の役割を「adult」「member」と英字のまま出していた (#2073)
@@ -57,6 +78,11 @@ const RAW_VALUE_ONLY_SCAN_ROOTS = [
   'src/app/admin/moderation',
   'src/components/operator/moderation',
 ];
+
+/**
+ * 失敗の文だけを見る運営の画面の根 (#2086 V6)。運営の審査の画面 (src/app/admin/moderation) もこの根の下にあり、同じ規則で見る
+ */
+const FAILURE_COPY_SCAN_ROOTS = ['src/app/super-admin', 'src/app/admin'];
 
 /** 画面に出る属性 */
 const DISPLAY_ATTRIBUTES = new Set(['placeholder', 'title', 'alt', 'aria-label', 'label']);
@@ -173,9 +199,11 @@ function findEnglishOnlyCopy(file: string, source: string): CopyFinding[] {
 /**
  * 内部の値をそのまま画面に出していると見なすプロパティ (DB の状態・役割の列。英字の値が入る)。
  * 役割は src/lib/membership/role-labels.ts の orgRoleLabel / familyRoleLabel に通して出す
- * (#2073: 設定のメンバーシップが組織の役割を「役割: owner」と出していた)
+ * (#2073: 設定のメンバーシップが組織の役割を「役割: owner」と出していた)。
+ * 監査ログの操作・対象 (membership_audit.action / scope) は src/lib/membership/audit-labels.ts に通して出す
+ * (#2086 V5: 運営の監査ログの画面が operator_force_owner_transfer・organization をそのまま出していた)
  */
-const RAW_INTERNAL_VALUE_PROPERTIES = new Set(['status', 'role', 'org_role', 'invited_role']);
+const RAW_INTERNAL_VALUE_PROPERTIES = new Set(['status', 'role', 'org_role', 'invited_role', 'action', 'scope']);
 
 /**
  * 値の位置にあるプロパティの参照 (`x.status`・`x?.status`) と、同じ名前の変数そのもの (`status`。部品が状態を props で受けて
@@ -244,6 +272,124 @@ function listScreenFiles(roots: readonly string[] = SCAN_ROOTS): string[] {
   return result.sort();
 }
 
+/** 例外を受ける変数の名前 (tests/lib-raw-error-message-scan.test.ts と同じ規則) */
+const ERROR_VARIABLE_NAME = /^(?:e|err|error|exception|ex)$|(?:Error|Err)$/;
+/** 失敗の文を持つプロパティ (行の文 { ok, text }・知らせ { kind, message } など) */
+const FAILURE_COPY_PROPERTIES = new Set(['message', 'text']);
+
+/** 例外の文面を画面に出す式か (`err.message`・`err?.message`・`String(err)`) */
+function isRawErrorText(node: ts.Node): boolean {
+  if (ts.isPropertyAccessExpression(node) && node.name.text === 'message') {
+    return ts.isIdentifier(node.expression) && ERROR_VARIABLE_NAME.test(node.expression.text);
+  }
+  if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'String') {
+    const [arg] = node.arguments;
+    return arg !== undefined && ts.isIdentifier(arg) && ERROR_VARIABLE_NAME.test(arg.text);
+  }
+  return false;
+}
+
+/** 式の中 (入れ子の式・三項・?? を含む) の、例外の文面を出す式を集める */
+function collectRawErrorTexts(node: ts.Node, out: ts.Node[]): void {
+  if (isRawErrorText(node)) {
+    out.push(node);
+    return;
+  }
+  ts.forEachChild(node, (child) => collectRawErrorTexts(child, out));
+}
+
+/**
+ * 値の位置にある文字を集める (collectValueStrings と同じ位置)。テンプレート文字列は文字の部分をつないだ 1 つの文として見る
+ * (`機能フラグを読み込めませんでした (HTTP ${status})` は日本語を含むので数えない。`HTTP ${status}` だけの文は数える)。
+ * テンプレートの式の中 (`${message ?? `HTTP ${status}`}`) も値の位置として見る
+ */
+function collectFailureValueTexts(node: ts.Node, out: { node: ts.Node; text: string }[]): void {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+    out.push({ node, text: node.text });
+  } else if (ts.isTemplateExpression(node)) {
+    out.push({ node, text: [node.head.text, ...node.templateSpans.map((span) => span.literal.text)].join(' ') });
+    for (const span of node.templateSpans) collectFailureValueTexts(span.expression, out);
+  } else if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
+    collectFailureValueTexts(node.expression, out);
+  } else if (ts.isConditionalExpression(node)) {
+    collectFailureValueTexts(node.whenTrue, out);
+    collectFailureValueTexts(node.whenFalse, out);
+  } else if (ts.isBinaryExpression(node)) {
+    const op = node.operatorToken.kind;
+    if (
+      op === ts.SyntaxKind.AmpersandAmpersandToken ||
+      op === ts.SyntaxKind.BarBarToken ||
+      op === ts.SyntaxKind.QuestionQuestionToken
+    ) {
+      collectFailureValueTexts(node.right, out);
+      if (op !== ts.SyntaxKind.AmpersandAmpersandToken) collectFailureValueTexts(node.left, out);
+    }
+  }
+}
+
+/** `!x.ok` の条件か */
+function isNotOkCondition(node: ts.Expression): boolean {
+  const inner = ts.isParenthesizedExpression(node) ? node.expression : node;
+  return (
+    ts.isPrefixUnaryExpression(inner) &&
+    inner.operator === ts.SyntaxKind.ExclamationToken &&
+    ts.isPropertyAccessExpression(inner.operand) &&
+    inner.operand.name.text === 'ok'
+  );
+}
+
+/** `x.json()` の呼び出しが `.catch(…)` を付けずに使われているか */
+function isUncaughtJsonCall(node: ts.Node): boolean {
+  if (!ts.isCallExpression(node) || node.arguments.length > 0) return false;
+  if (!ts.isPropertyAccessExpression(node.expression) || node.expression.name.text !== 'json') return false;
+  const parent = node.parent;
+  return !(ts.isPropertyAccessExpression(parent) && parent.name.text === 'catch');
+}
+
+/** 1 つのソースから、運営の画面の失敗の文の違反 (F1・F2・F3) を集める (#2086 V6) */
+function findFailureCopyViolations(file: string, source: string): CopyFinding[] {
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const findings: CopyFinding[] = [];
+  const push = (node: ts.Node, text: string) => {
+    const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+    findings.push({ file, line: line + 1, text });
+  };
+  const checkShown = (expression: ts.Node) => {
+    const texts: { node: ts.Node; text: string }[] = [];
+    collectFailureValueTexts(expression, texts);
+    for (const { node, text } of texts) {
+      const trimmed = text.replace(/\s+/g, ' ').trim();
+      if (trimmed && isEnglishOnly(trimmed)) push(node, `英語だけの文: ${trimmed}`);
+    }
+    const raw: ts.Node[] = [];
+    collectRawErrorTexts(expression, raw);
+    for (const node of raw) push(node, `例外の文面: ${node.getText(sf)}`);
+  };
+  const checkUncaughtJson = (node: ts.Node) => {
+    if (isUncaughtJsonCall(node)) push(node, `!ok の中の .catch の無い本文の読み: ${node.getText(sf)}`);
+    ts.forEachChild(node, checkUncaughtJson);
+  };
+
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node)) {
+      const name = calleeName(node.expression);
+      if (name && USER_FACING_CALL.test(name) && node.arguments.length > 0) checkShown(node.arguments[0]);
+    } else if (ts.isPropertyAssignment(node)) {
+      const name = ts.isIdentifier(node.name) || ts.isStringLiteral(node.name) ? node.name.text : null;
+      if (name && FAILURE_COPY_PROPERTIES.has(name)) checkShown(node.initializer);
+    } else if (ts.isJsxExpression(node) && node.expression && (ts.isJsxElement(node.parent) || ts.isJsxFragment(node.parent))) {
+      const raw: ts.Node[] = [];
+      collectRawErrorTexts(node.expression, raw);
+      for (const r of raw) push(r, `例外の文面: ${r.getText(sf)}`);
+    } else if (ts.isIfStatement(node) && isNotOkCondition(node.expression)) {
+      checkUncaughtJson(node.thenStatement);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return findings;
+}
+
 describe('走査の仕組み: 英語だけの文言を見つけられる', () => {
   const FIXTURE = `
     "use client";
@@ -291,7 +437,7 @@ describe('走査の仕組み: 英語だけの文言を見つけられる', () =>
 
 describe('走査の仕組み: 内部の状態の値をそのまま出している箇所を見つけられる (#2073 S5)', () => {
   const FIXTURE = `
-    export default function Page({ proposal, invite, x, orgInfo, c, member, status }: { proposal?: { status: string }; invite: { status: string; role: string }; x: { status: string }; orgInfo: { org_role: string }; c: { org_role: string | null }; member: { role: string }; status: string }) {
+    export default function Page({ proposal, invite, x, orgInfo, c, member, status, row }: { proposal?: { status: string }; invite: { status: string; role: string }; x: { status: string }; orgInfo: { org_role: string }; c: { org_role: string | null }; member: { role: string }; status: string; row: { action: string; scope: string; scope_id: string } }) {
       return (
         <div>
           <p>この提案は既に処理されています (ステータス: {proposal?.status})</p>
@@ -308,14 +454,20 @@ describe('走査の仕組み: 内部の状態の値をそのまま出してい�
           <p>ステータス: {status}</p>
           <p>{statusLabel(status)}</p>
           <p>{status === 'pending' ? '未審査' : null}</p>
+          <td>{row.action}</td>
+          <dd>{row.scope} / {row.scope_id}</dd>
+          <td>{membershipAuditActionLabel(row.action)}</td>
+          <span>{row.scope === 'organization' ? '組織' : '家族'}</span>
         </div>
       );
     }
   `;
 
-  it('JSX の子に出している状態・役割の参照 (テンプレートの式・?? の左・同じ名前の変数そのものを含む) を見つけ、比べる式・関数に通した値・属性は数えない', () => {
+  it('JSX の子に出している状態・役割・監査ログの操作と対象の参照 (テンプレートの式・?? の左・同じ名前の変数そのものを含む) を見つけ、比べる式・関数に通した値・属性は数えない', () => {
     const texts = findRawInternalValueRendering('fixture.tsx', FIXTURE).map((f) => f.text);
-    expect(texts.sort()).toEqual(['invite.status', 'proposal?.status', 'orgInfo.org_role', 'c.org_role', 'member.role', 'status'].sort());
+    expect(texts.sort()).toEqual(
+      ['invite.status', 'proposal?.status', 'orgInfo.org_role', 'c.org_role', 'member.role', 'status', 'row.action', 'row.scope'].sort(),
+    );
   });
 });
 
@@ -329,6 +481,7 @@ describe('組織の管理画面・家族の画面に英語だけの固定の文�
     expect(files).toContain('src/app/(main)/org/transfer-accept/[proposal_id]/page.tsx');
     expect(files).toContain('src/app/(main)/family/transfer-accept/[proposal_id]/page.tsx');
     expect(files).toContain('src/app/(main)/settings/membership/page.tsx');
+    expect(files).toContain('src/app/(operator)/operator/membership/audit/page.tsx');
   });
 
   it('URL が /org で始まる画面のディレクトリ (共通の定数の根の下) のファイルを、どれも走査している (#2073: 家族の画面の根を足しても組織の画面を落とさない)', () => {
@@ -345,6 +498,7 @@ describe('組織の管理画面・家族の画面に英語だけの固定の文�
     expect(rawValueFiles).toContain('src/app/admin/moderation/page.tsx');
     expect(rawValueFiles).toContain('src/app/admin/moderation/[type]/[id]/page.tsx');
     expect(rawValueFiles).toContain('src/components/operator/moderation/ModerationReviewForm.tsx');
+    expect(rawValueFiles).toContain('src/app/(operator)/operator/membership/audit/page.tsx');
     const rawRendering = rawValueFiles
       .flatMap((file) => findRawInternalValueRendering(file, fs.readFileSync(path.join(ROOT, file), 'utf8')))
       .map((f) => `${f.file}:${f.line} {${f.text}}`);
@@ -369,5 +523,74 @@ describe('組織の管理画面・家族の画面に英語だけの固定の文�
     for (const removed of ['Sign Out', 'Health Cockpit', 'Total Members', 'users']) {
       expect(texts.has(removed), `「${removed}」が残っている`).toBe(false);
     }
+  });
+});
+
+describe('走査の仕組み: 運営の画面の失敗の文の違反を見つけられる (#2086 V6)', () => {
+  // #2086 V6 の前の機能フラグの画面の形 (本文の無い 502 の「HTTP 502」・例外の文面・JSON でない本文の SyntaxError)
+  const FIXTURE = `
+    async function load() {
+      try {
+        const res = await fetch("/api/super-admin/flags");
+        if (!res.ok) {
+          const body = await res.json();
+          throw new Error(body.error?.message ?? \`HTTP \${res.status}\`);
+        }
+        const safe = await res.json();
+        if (!res.ok) {
+          const tolerant = await res.json().catch(() => null);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "読み込みに失敗しました");
+        alert(\`HTTP \${res.status}\`);
+        setNotice({ ok: false, text: String(e) });
+        setError(displayableAdminError(err, "読み込みに失敗しました"));
+        setError(\`機能フラグを読み込めませんでした (HTTP \${res.status})\`);
+        alert(\`\${failureSummary} (HTTP \${res.status})\`);
+        setError(\`操作できませんでした（\${message ?? \`HTTP \${res.status}\`}）\`);
+      }
+      return <p>{error.message}</p>;
+    }
+  `;
+
+  it('例外の文面・英語だけの文・!ok の中の .catch の無い本文の読みを、行つきで見つけ、日本語の文と部品に通した例外は数えない', () => {
+    const findings = findFailureCopyViolations('fixture.tsx', FIXTURE);
+    const lineOf = (needle: string) => FIXTURE.split('\n').findIndex((l) => l.includes(needle)) + 1;
+    expect(findings.map((f) => `${f.line} ${f.text}`).sort()).toEqual(
+      [
+        `${lineOf('const body = await res.json();')} !ok の中の .catch の無い本文の読み: res.json()`,
+        `${lineOf('err instanceof Error ? err.message')} 例外の文面: err.message`,
+        `${lineOf('alert(`HTTP')} 英語だけの文: HTTP`,
+        `${lineOf('操作できませんでした')} 英語だけの文: HTTP`,
+        `${lineOf('failureSummary')} 英語だけの文: (HTTP )`,
+        `${lineOf('String(e)')} 例外の文面: String(e)`,
+        `${lineOf('{error.message}')} 例外の文面: error.message`,
+      ].sort(),
+    );
+  });
+});
+
+describe('運営の画面 (super-admin・admin) の失敗の文に英字の文・例外の文面が出ない (#2086 V6)', () => {
+  const files = listScreenFiles(FAILURE_COPY_SCAN_ROOTS);
+
+  it('走査する画面のファイルがある (#2086 V6 で直した画面を含む)', () => {
+    for (const file of [
+      'src/app/super-admin/flags/page.tsx',
+      'src/app/super-admin/flags/new/page.tsx',
+      'src/app/super-admin/experiments/page.tsx',
+      'src/app/super-admin/experiments/[id]/page.tsx',
+      'src/app/super-admin/llm/quotas/page.tsx',
+      'src/app/admin/finance/exports/page.tsx',
+      'src/app/admin/support/[id]/page.tsx',
+    ]) {
+      expect(files).toContain(file);
+    }
+  });
+
+  it('失敗の文に英語だけの文・例外の文面が無く、失敗の応答の本文を .catch なしで読んでいない', () => {
+    const violations = files
+      .flatMap((file) => findFailureCopyViolations(file, fs.readFileSync(path.join(ROOT, file), 'utf8')))
+      .map((f) => `${f.file}:${f.line} ${f.text}`);
+    expect(violations).toEqual([]);
   });
 });

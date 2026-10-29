@@ -7,6 +7,13 @@
  */
 import { useState, useEffect, useCallback, useRef, use } from 'react';
 import { forbiddenMessageForScreen, forbiddenMessageOfResponse, isStaleDataConflict } from '@/lib/admin/api-error-message';
+import {
+  AdminScreenError,
+  adminActionHttpFailedMessage,
+  adminActionNoResponseMessage,
+  adminScreenErrorOfResponse,
+  displayableAdminError,
+} from '@/lib/admin/admin-screen-messages';
 import { todayLocal } from '@/lib/date-utils';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -26,6 +33,9 @@ const STALE_STAGE_RELOAD_FAILED_MESSAGE =
 const HTTP_FORBIDDEN = 403;
 /** ステージの変更の失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917) */
 const STAGE_CHANGE_FAILURE_MESSAGE = 'ステージ変更失敗';
+/** 活動の記録・ステージの変更の失敗の文の操作の名前 (「活動の記録に失敗しました (HTTP 502)」。#2086 V6) */
+const ADD_ACTIVITY_ACTION = '活動の記録';
+const STAGE_CHANGE_ACTION = 'ステージの変更';
 
 /**
  * リードの読み込み (fetchLead) の結果。
@@ -170,27 +180,33 @@ export default function LeadDetailPage(props: PageProps) {
     writeInFlightRef.current = true;
     setIsAddingActivity(true);
     try {
-      const res = await fetch(`/api/admin/sales/leads/${params.id}/activities`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          activity_type: activityType,
-          details: {
-            summary: activitySummary,
-            next_action: activityNextAction || undefined,
-            date: todayLocal(),
-          },
-        }),
-      });
+      let res: Response;
+      try {
+        res = await fetch(`/api/admin/sales/leads/${params.id}/activities`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            activity_type: activityType,
+            details: {
+              summary: activitySummary,
+              next_action: activityNextAction || undefined,
+              date: todayLocal(),
+            },
+          }),
+        });
+      } catch {
+        // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
+        throw new AdminScreenError(adminActionNoResponseMessage(ADD_ACTIVITY_ACTION));
+      }
       if (!res.ok) {
-        const json = await res.json();
-        throw new Error(json.error?.message ?? '記録失敗');
+        // 本文は JSON でないこともある (プロキシの 502 の HTML など) ので読み失敗で例外にしない (#2086 V6)
+        throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(ADD_ACTIVITY_ACTION, status));
       }
       setActivitySummary('');
       setActivityNextAction('');
       await fetchLead();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '活動記録の追加に失敗しました');
+      setError(displayableAdminError(e, '活動記録の追加に失敗しました'));
     } finally {
       writeInFlightRef.current = false;
       setIsAddingActivity(false);
@@ -202,11 +218,17 @@ export default function LeadDetailPage(props: PageProps) {
     writeInFlightRef.current = true;
     setIsChangingStage(true);
     try {
-      const res = await fetch(`/api/admin/sales/leads/${params.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage: newStage }),
-      });
+      let res: Response;
+      try {
+        res = await fetch(`/api/admin/sales/leads/${params.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ stage: newStage }),
+        });
+      } catch {
+        // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
+        throw new AdminScreenError(adminActionNoResponseMessage(STAGE_CHANGE_ACTION));
+      }
       if (!res.ok) {
         const body: unknown = await res.json().catch(() => null);
         if (isStaleDataConflict(res.status, body)) {
@@ -218,12 +240,13 @@ export default function LeadDetailPage(props: PageProps) {
           return;
         }
         // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 と失敗は「ステージ変更失敗」(#1917)
-        if (res.status === HTTP_FORBIDDEN) throw new Error(forbiddenMessageForScreen(body, STAGE_CHANGE_FAILURE_MESSAGE));
-        throw new Error(STAGE_CHANGE_FAILURE_MESSAGE);
+        if (res.status === HTTP_FORBIDDEN) throw new AdminScreenError(forbiddenMessageForScreen(body, STAGE_CHANGE_FAILURE_MESSAGE));
+        throw new AdminScreenError(STAGE_CHANGE_FAILURE_MESSAGE);
       }
       await fetchLead();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'ステージ変更に失敗しました');
+      // 画面に出すのは日本語の文だけ (ブラウザの英字の例外の文などは出さない。#2086 V6)
+      setError(displayableAdminError(e, 'ステージ変更に失敗しました'));
     } finally {
       writeInFlightRef.current = false;
       setIsChangingStage(false);

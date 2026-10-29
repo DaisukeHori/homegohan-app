@@ -10,10 +10,20 @@
 //     それ以外の例外 (ブラウザの英字の文など) は固定の日本語の文にする
 //   - 書き込み (強制譲渡・強制解散) の通信が切れたら 'no-response' を返す。画面は対象を読み直し、済んでいれば一覧へ戻す。
 //     済んでいなければ・読み直せなければ、その事実に合う文を出す (「できませんでした」とは言わない。済んでいたときにも事実と合うように)
+//   - 本文に API の文が無い 502 / 503 / 504 (手前のプロキシ・ホスティングの応答。route の応答ではない) も 'no-response' と同じに扱う (#2086 V1)。
+//     譲渡の route は RPC の commit のあとに監査と全メンバーへの通知メールを待つので、その間の時間切れでは譲渡は済んでいる。
+//     失敗と見せて押し直させると、同じ人への譲渡がもう一度通り、監査と通知メールが二重になる
+//   - 読み直しにも失敗して済んだか分からないときは、画面は確認の枠を閉じ、読み直せるまで同じ操作を押させない (#2086 V1)
+//   - 強制譲渡で、譲渡先がすでに今の代表者 / オーナーの 409 (route が押し直しを止めた) は、済んでいたものとして 'already-done' を返す (#2086 V1)
 //
 // このファイルはブラウザからも読むので、サーバー専用のものを import しない。
 
-import { extractApiErrorMessage } from '@/lib/admin/api-error-message';
+import { extractApiErrorCode, extractApiErrorMessage } from '@/lib/admin/api-error-message';
+import {
+  OPERATOR_FORCE_TRANSFER_ALREADY_DONE_STATUS,
+  OPERATOR_FORCE_TRANSFER_ALREADY_OWNER_CODE,
+  OPERATOR_FORCE_TRANSFER_ALREADY_REPRESENTATIVE_CODE,
+} from '@/lib/membership/operator-force-transfer-result';
 
 /** 画面にそのまま出してよい日本語の文を持つ例外 */
 export class OperatorScreenError extends Error {
@@ -52,30 +62,38 @@ export function operatorForceActionFailedFallback(action: OperatorForceAction): 
   return `${OPERATOR_FORCE_ACTION_LABELS[action]}に失敗しました`;
 }
 
-/** 強制の操作の通信そのものが失敗した (応答を受け取れなかった) ときの文の頭 */
-export function operatorForceActionNoResponseSummary(action: OperatorForceAction): string {
-  return `${OPERATOR_FORCE_ACTION_LABELS[action]}の応答を受け取れませんでした（通信エラー）`;
+/**
+ * 強制の操作の応答を受け取れなかったときの文の頭。
+ * status が null なら通信そのものの失敗 (fetch の reject)、数ならプロキシなどが返した本文に API の文の無い 502 / 503 / 504
+ */
+export function operatorForceActionNoResponseSummary(action: OperatorForceAction, status: number | null): string {
+  if (status === null) return `${OPERATOR_FORCE_ACTION_LABELS[action]}の応答を受け取れませんでした（通信エラー）`;
+  return `${OPERATOR_FORCE_ACTION_LABELS[action]}の応答を受け取れませんでした (HTTP ${status})`;
 }
 
 /** 強制譲渡: 候補を読み直したら、選んだメンバーがまだ譲渡先の候補にいた (代表者・オーナーになっていない) ときに続ける文 */
 export const FORCE_TRANSFER_NOT_DONE_GUIDE =
   '候補を読み込み直したところ、選んだメンバーはまだ譲渡先の候補にいて、譲渡されていません。必要ならもう一度実行してください';
 
-/** 強制譲渡: 候補の読み直しにも失敗したときに続ける文 */
+/** 強制譲渡: 候補の読み直しにも失敗したときに続ける文。画面は確認の枠を閉じ、「再試行」で候補を読み直せるまで譲渡を押させない (#2086 V1) */
 export const FORCE_TRANSFER_RELOAD_FAILED_GUIDE =
-  '候補も読み込めなかったため、譲渡が済んだか分かりません。一覧に戻って状態を確かめてから、必要ならもう一度操作してください';
+  '候補も読み込めなかったため、譲渡が済んだか分かりません。「再試行」で候補を読み込み直して確かめるまで、もう一度は実行できません';
 
 /** 強制解散: 一覧を読み直したら、対象がまだ解散されずに一覧にあったときに続ける文 */
 export const FORCE_DISSOLVE_NOT_DONE_GUIDE =
   '一覧を読み込み直したところ、まだ解散されていません。必要ならもう一度実行してください';
 
-/** 強制解散: 一覧の読み直しにも失敗したときに続ける文 */
+/** 強制解散: 一覧の読み直しにも失敗したときに続ける文。画面は確認の枠を閉じて一覧を出さず、「更新」で読み直せるまで解散を押させない (#2086 V1) */
 export const FORCE_DISSOLVE_RELOAD_FAILED_GUIDE =
   '一覧も読み込めなかったため、解散が済んだか分かりません。「更新」で一覧を読み込み直して状態を確かめてから、必要ならもう一度操作してください';
 
-/** 文の頭と、読み直しの結果に合わせた続きの文をつなぐ */
-export function operatorForceActionNoResponseMessage(action: OperatorForceAction, guide: string): string {
-  return `${operatorForceActionNoResponseSummary(action)}。${guide}`;
+/** 文の頭と、読み直しの結果に合わせた続きの文をつなぐ。status は operatorForceActionNoResponseSummary と同じ */
+export function operatorForceActionNoResponseMessage(
+  action: OperatorForceAction,
+  status: number | null,
+  guide: string,
+): string {
+  return `${operatorForceActionNoResponseSummary(action, status)}。${guide}`;
 }
 
 /**
@@ -120,13 +138,36 @@ export function isForceTransferDone(candidates: readonly { id: string }[], selec
   return !candidates.some((candidate) => candidate.id === selectedId);
 }
 
-/** 強制の操作の POST の結果。'no-response' は通信そのものが失敗した (サーバーで済んだかどうかは分からない) */
-export type OperatorForceActionResult = 'ok' | 'no-response';
+/**
+ * 本文に API の文が無いときに、応答を受け取れなかった (サーバーで済んだか分からない) ものとして扱う HTTP ステータス (#2086 V1)。
+ * 502 Bad Gateway・503 Service Unavailable・504 Gateway Timeout は、route ではなく手前のプロキシ・ホスティング (関数の時間切れなど) が返す。
+ * route がこれらを返すときは本文に API の文を入れるので、文がある応答はこれまでどおり失敗として出す
+ */
+export const OPERATOR_FORCE_ACTION_NO_RESPONSE_STATUSES: readonly number[] = [502, 503, 504];
+
+/** 強制譲渡で、譲渡先がすでに今の代表者 / オーナーだったときに route が返す code (この 409 は済んでいたものとして扱う。#2086 V1) */
+const FORCE_ACTION_ALREADY_DONE_CODES: Readonly<Record<OperatorForceAction, readonly string[]>> = {
+  transfer: [OPERATOR_FORCE_TRANSFER_ALREADY_REPRESENTATIVE_CODE, OPERATOR_FORCE_TRANSFER_ALREADY_OWNER_CODE],
+  // 強制解散の押し直しは RPC が 409 FAMILY_ALREADY_DISSOLVED / ORG_ALREADY_DISSOLVED で止め、二重にならない。文をそのまま出す
+  dissolve: [],
+};
+
+/**
+ * 強制の操作の POST の結果。
+ *   - ok: 成功の応答
+ *   - already-done: 強制譲渡の譲渡先がすでに今の代表者 / オーナーだった (route が押し直しを止めた。済んでいたものとして扱う)
+ *   - no-response: 応答を受け取れなかった (サーバーで済んだかどうかは分からない)。status は null なら fetch の reject、
+ *     数なら本文に API の文の無い 502 / 503 / 504
+ */
+export type OperatorForceActionResult =
+  | { readonly kind: 'ok' }
+  | { readonly kind: 'already-done' }
+  | { readonly kind: 'no-response'; readonly status: number | null };
 
 /**
  * 強制の操作 (強制譲渡・強制解散) を POST する。
- * 成功の応答なら 'ok'、通信そのものが失敗したら 'no-response' (画面は対象を読み直す)。
- * 失敗の応答は、本文の API の文 (無ければ HTTP のステータスを添えた固定の文) の OperatorScreenError を投げる。
+ * 成功の応答なら ok、応答を受け取れなかったら no-response (画面は対象を読み直す)、強制譲渡の譲渡先がすでに今の代表者 / オーナーの 409 なら already-done。
+ * ほかの失敗の応答は、本文の API の文 (無ければ HTTP のステータスを添えた固定の文) の OperatorScreenError を投げる。
  */
 export async function postOperatorForceAction(
   url: string,
@@ -141,11 +182,21 @@ export async function postOperatorForceAction(
       body: JSON.stringify(body),
     });
   } catch {
-    return 'no-response';
+    return { kind: 'no-response', status: null };
   }
-  if (res.ok) return 'ok';
+  if (res.ok) return { kind: 'ok' };
   const errorBody: unknown = await res.json().catch(() => null);
-  throw new OperatorScreenError(
-    extractApiErrorMessage(errorBody) ?? operatorForceActionHttpFailedMessage(action, res.status),
-  );
+  const apiMessage = extractApiErrorMessage(errorBody);
+  if (apiMessage === null && OPERATOR_FORCE_ACTION_NO_RESPONSE_STATUSES.includes(res.status)) {
+    return { kind: 'no-response', status: res.status };
+  }
+  const code = extractApiErrorCode(errorBody);
+  if (
+    res.status === OPERATOR_FORCE_TRANSFER_ALREADY_DONE_STATUS &&
+    code !== null &&
+    FORCE_ACTION_ALREADY_DONE_CODES[action].includes(code)
+  ) {
+    return { kind: 'already-done' };
+  }
+  throw new OperatorScreenError(apiMessage ?? operatorForceActionHttpFailedMessage(action, res.status));
 }

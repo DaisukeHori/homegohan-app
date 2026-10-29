@@ -68,6 +68,12 @@ export function isStatusChangeConflict(status: number, body: unknown, invalidTra
   return code === STALE_DATA_ERROR_CODE || code === invalidTransitionCode;
 }
 
+/**
+ * 401 (ログインが切れた) の画面の固定の文 (#2086 V4)。読み込み直しても変わらないので、運営の画面の読み直しはこの文を出し「再試行」を出さない。
+ * 手動のプラン付与の AUTH_UNAUTHENTICATED の文 (src/lib/billing/manual-grant.ts の MANUAL_GRANT_CLIENT_MESSAGES) と同じ文
+ */
+export const UNAUTHENTICATED_SCREEN_MESSAGE = 'ログインし直してください';
+
 /** 403 の画面の固定の文の既定 (運営の route の 403 OP_PERMISSION_DENIED の、ロールが足りないときの文と同じ) */
 export const FORBIDDEN_SCREEN_MESSAGE = '権限がありません';
 
