@@ -4,6 +4,10 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import RefundRecordDialog from "@/components/operator/finance/RefundRecordDialog";
+import { adminLoadFailedFallback, displayableAdminError, fetchAdminJson } from "@/lib/admin/admin-screen-messages";
+
+/** 読み込みの失敗の文の対象 (「請求書を読み込めませんでした (HTTP 502)」。#2086 V6) */
+const INVOICE_SUBJECT = "請求書";
 
 interface InvoiceDetail {
   id: string;
@@ -63,13 +67,11 @@ export default function InvoiceDetailPage() {
 
   useEffect(() => {
     if (!id) return;
-    fetch(`/api/admin/finance/invoices/${id}`)
-      .then((r) => r.json())
-      .then((json) => {
-        if (json.error) setError(json.error.message);
-        else setInvoice(json.data as InvoiceDetail);
-      })
-      .catch((e: unknown) => setError(String(e)))
+    // 失敗は日本語の文の例外にする (本文の無い 502 の「HTTP 502」・通信の reject の英字の文・JSON でない本文の SyntaxError を、
+    // String(e) で「SyntaxError: …」「TypeError: Failed to fetch」と出さない。本文の error が文字列の形でも文を出す。#2086 V6)
+    fetchAdminJson(`/api/admin/finance/invoices/${id}`, INVOICE_SUBJECT)
+      .then((body) => setInvoice((body as { data?: InvoiceDetail }).data ?? null))
+      .catch((e: unknown) => setError(displayableAdminError(e, adminLoadFailedFallback(INVOICE_SUBJECT))))
       .finally(() => setLoading(false));
   }, [id]);
 
