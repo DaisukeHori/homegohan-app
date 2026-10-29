@@ -58,9 +58,18 @@ export function adminLoadFailedFallback(subject: string): string {
   return `${subject}を読み込めませんでした`;
 }
 
+/**
+ * 日本語の文 (summary) に HTTP のステータスを添える (「ステータス変更に失敗しました (HTTP 502)」)。
+ * 画面のソースに `${summary} (HTTP ${status})` と書くと、運営の画面の走査 (tests/org-ui-no-english-copy.test.ts) からは
+ * 「HTTP 502」だけの文と見分けられないので、この関数に通す
+ */
+export function withHttpStatus(summary: string, status: number): string {
+  return `${summary} (HTTP ${status})`;
+}
+
 /** 書き込みの操作が失敗の応答を返し、本文に画面に出せる文が無いときの文 (プロキシの 502 など) */
 export function adminActionHttpFailedMessage(action: string, status: number): string {
-  return `${action}に失敗しました (HTTP ${status})`;
+  return withHttpStatus(`${action}に失敗しました`, status);
 }
 
 /**

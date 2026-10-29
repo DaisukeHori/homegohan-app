@@ -35,7 +35,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { isStaleDataConflict } from '@/lib/admin/api-error-message';
-import { screenApiErrorMessage } from '@/lib/admin/admin-screen-messages';
+import { screenApiErrorMessage, withHttpStatus } from '@/lib/admin/admin-screen-messages';
 import { rereadUnavailableMessage } from '@/lib/super-admin/detail-reread';
 import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE, countsOrganizationsFor } from '@/lib/super-admin/plan-subscribers';
 import {
@@ -481,7 +481,7 @@ export default function PlanDetailPage() {
       return;
     }
     // 本文の文は日本語のときだけ出す (英字だけの文は出さない。#2086 V6)
-    alert(screenApiErrorMessage(data) ?? `${failureSummary} (HTTP ${res.status})`);
+    alert(screenApiErrorMessage(data) ?? withHttpStatus(failureSummary, res.status));
   };
 
   /**

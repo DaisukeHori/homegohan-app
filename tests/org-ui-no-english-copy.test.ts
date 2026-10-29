@@ -31,7 +31,9 @@
  * 「HTTP 502」と英字だけで出し、fetch の reject ではブラウザの英字の例外の文 (Failed to fetch) を、失敗の応答の本文が JSON でないと
  * res.json() の英字の SyntaxError の文を、エラー欄・alert にそのまま出していた。見るもの (FAILURE_COPY_SCAN_ROOTS):
  *   F1. 利用者に見せる呼び出し (alert / confirm / setError… / set…Message) の引数と、文言のプロパティ (message / text) の値に、
- *       英語だけの文字 (`HTTP ${status}` の「HTTP 」など) が無い
+ *       英語だけの文字 (`HTTP ${status}` の「HTTP 」など) が無い。テンプレート文字列は文字の部分をつないで 1 つの文として見る
+ *       (`${summary} (HTTP ${status})` も文字の部分が英字だけなので数える。summary が日本語かは走査で分からないので、
+ *       src/lib/admin/admin-screen-messages.ts の withHttpStatus に通す)
  *   F2. 同じ場所と JSX の子に、例外の文面 (`err.message`・`e instanceof Error ? e.message : …`・`String(e)`。例外を受ける名前の変数の
  *       .message と String()) を入れていない。画面に出す例外の文は src/lib/admin/admin-screen-messages.ts の displayableAdminError で
  *       日本語の文の例外 (AdminScreenError) だけを出す
@@ -290,7 +292,7 @@ function collectRawErrorTexts(node: ts.Node, out: ts.Node[]): void {
 
 /**
  * 値の位置にある文字を集める (collectValueStrings と同じ位置)。テンプレート文字列は文字の部分をつないだ 1 つの文として見る
- * (`${summary} (HTTP ${status})` の「 (HTTP 」は日本語の文の一部なので数えない。`HTTP ${status}` だけの文は数える)。
+ * (`機能フラグを読み込めませんでした (HTTP ${status})` は日本語を含むので数えない。`HTTP ${status}` だけの文は数える)。
  * テンプレートの式の中 (`${message ?? `HTTP ${status}`}`) も値の位置として見る
  */
 function collectFailureValueTexts(node: ts.Node, out: { node: ts.Node; text: string }[]): void {
@@ -544,6 +546,7 @@ describe('走査の仕組み: 運営の画面の失敗の文の違反を見つ�
         `${lineOf('err instanceof Error ? err.message')} 例外の文面: err.message`,
         `${lineOf('alert(`HTTP')} 英語だけの文: HTTP`,
         `${lineOf('操作できませんでした')} 英語だけの文: HTTP`,
+        `${lineOf('failureSummary')} 英語だけの文: (HTTP )`,
         `${lineOf('String(e)')} 例外の文面: String(e)`,
         `${lineOf('{error.message}')} 例外の文面: error.message`,
       ].sort(),

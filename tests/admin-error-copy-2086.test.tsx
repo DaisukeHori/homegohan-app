@@ -28,6 +28,7 @@ import {
   fetchAdminJson,
   screenApiErrorMessage,
   sendAdminRequest,
+  withHttpStatus,
 } from '@/lib/admin/admin-screen-messages';
 
 const ROW_ID = '20862086-2086-4086-8086-208620862186';
@@ -138,6 +139,7 @@ describe('admin-screen-messages: 画面に出す失敗の文の部品 (#2086 V6)
     expect(adminLoadFailedFallback('機能フラグ')).toBe('機能フラグを読み込めませんでした');
     expect(adminActionHttpFailedMessage('保存', 502)).toBe('保存に失敗しました (HTTP 502)');
     expect(adminActionNoResponseMessage('保存')).toBe('保存の応答を受け取れませんでした（通信エラー）');
+    expect(withHttpStatus('ステータス変更に失敗しました', 502)).toBe('ステータス変更に失敗しました (HTTP 502)');
   });
 
   it('fetchAdminJson: 失敗の応答 (JSON でない本文)・通信の reject・200 の読めない本文を、日本語の文の AdminScreenError にする', async () => {
@@ -175,7 +177,7 @@ describe('admin-screen-messages: 画面に出す失敗の文の部品 (#2086 V6)
       new AdminScreenError('作成の応答を受け取れませんでした（通信エラー）'),
     );
 
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 204 })));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })));
     await expect(sendAdminRequest('/api/x', { method: 'DELETE' }, '削除')).resolves.toBeNull();
   });
 });
@@ -339,6 +341,11 @@ describe('問い合わせの詳細: 書き込みの通信の失敗の文を日�
     updated_at: '2026-10-29T00:00:00.000Z',
     messages: [],
   };
+
+  beforeEach(() => {
+    // メッセージの一覧の末尾へのスクロール (テストの DOM には無い)
+    Element.prototype.scrollIntoView = vi.fn();
+  });
 
   it('ステータスの変更の通信が reject されたら「ステータスの変更の応答を受け取れませんでした（通信エラー）」を出す (Failed to fetch を出さない)', async () => {
     vi.stubGlobal('fetch', vi.fn(async (_input: string, init?: RequestInit) => {
