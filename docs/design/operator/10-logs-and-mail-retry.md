@@ -1856,7 +1856,7 @@ export function parseEmailOutboxQuery(searchParams: URLSearchParams): ParseEmail
 | 見出し | 「メール送信」。説明「アプリが送るメールの送信待ち・送信済み・届けられなかったもの (email_outbox)。宛先は伏せて表示します」 |
 | 絞り込み | 状態 (ラジオ: 届けられなかった (既定) / 送信待ち / 送信済み)、文面の名前 (text・完全一致・候補は表示中の行から datalist) |
 | 表の列 | 日時 (作成・JST)、状態、文面の名前、宛先 (マスク)、試行 (attempts / 再送 requeue_count)、次の試行 or 送信日時 or 失敗日時、失敗 (last_error_code・status_code・message の 200 文字)、操作 |
-| 操作 | dead の行だけ「再送」ボタン (`redacted` の行は無効化し「宛先を伏せた行は再送できません」)。押すと `window.confirm` なしで POST → 成功したら行を queued に描き替えて `role="status"` で「再送を受け付けました」。409 / 404 は API の `error.message` を表示 |
+| 操作 | dead の行だけ「再送」ボタン (`redacted` の行は無効化し「宛先を伏せた行は再送できません」)。押すと `window.confirm` なしで POST → 成功したら行を queued に描き替えて `role="status"` で「再送を受け付けました」。409 / 404 は API の `error.message` を表示。再送の通信が reject されたら一覧を先頭から読み直し、`「<文面の名前>」の再送の応答を受け取れませんでした（通信エラー）` を出す。読み直しが失敗したら「再試行」を出し、読み直せるまで「再送」を止める。再送は 1 行ずつで、応答 (reject のときは読み直し) を待つあいだはほかの行の「再送」と「絞り込む」「再読み込み」「さらに読み込む」「再試行」を止める (#2073) |
 | 空のとき | 「条件に合うメールはありません」。続きは「さらに読み込む」(カーソル) |
 | 導線 | `layout.tsx` の `superAdminOperationsNavItems` に `{ href: '/super-admin/email-outbox', label: 'メール送信', icon: '✉️' }` を足す (アプリログの次) |
 
