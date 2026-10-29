@@ -13,6 +13,7 @@ import {
   todayLocal,
 } from '@homegohan/shared';
 import { createClient } from '@/lib/supabase/client';
+import { readSignedInUser } from '@/lib/auth/signed-in-user';
 import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
 import { membershipErrorMessageOfBody } from '@/lib/errors/membership-errors';
 import { familyRoleLabel } from '@/lib/membership/role-labels';
@@ -111,12 +112,20 @@ export default function FamilyMemberDetailPage() {
     // 別の画面へ移るときは、移るまで読み込み中の表示のままにする (これまでどおり)
     let redirecting = false;
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        redirecting = true;
-        router.push('/login');
+      // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
+      // 確かめられなかったときは読み込みの失敗と「再試行」を出す (#2086 V3。以前は通信が切れているだけでもログインの画面へ移していた)。
+      // ログインのあとにこの画面へ戻れるよう next を付ける
+      const signedIn = await readSignedInUser(supabase);
+      if (signedIn.kind === 'load-failed') {
+        setLoadError(MEMBER_DETAIL_LOAD_ERROR);
         return;
       }
+      if (signedIn.kind === 'signed-out') {
+        redirecting = true;
+        router.push(`/login?next=${encodeURIComponent(`/family/members/${memberId}`)}`);
+        return;
+      }
+      const { user } = signedIn;
       setCurrentUserId(user.id);
 
       const { data: profile, error: profileError } = await supabase
@@ -142,6 +151,9 @@ export default function FamilyMemberDetailPage() {
         .select('id, role, display_name, user_id, child_profile, birth_date, share_meals, share_health, share_menu, joined_at')
         .eq('id', memberId)
         .eq('family_id', profile.family_id)
+        // 今のメンバーの行だけを開く (#2086 V10。脱退・除名した行は消えずに status が left / removed で残るので、
+        // 絞らないと古い URL から脱退済み・除名済みの人を今のメンバーのように見せていた。無ければ「取得に失敗しました」)
+        .eq('status', 'active')
         .single();
 
       if (isLoadFailure(memberError)) {
@@ -150,7 +162,7 @@ export default function FamilyMemberDetailPage() {
         return;
       }
       if (!memberData) {
-        // 行が無い (PGRST116) か、RLS で見えない (これまでどおり)
+        // 行が無い (PGRST116)・RLS で見えない・今のメンバーでない (脱退・除名した行。#2086 V10)
         setError(MEMBER_NOT_FOUND_MESSAGE);
         setLoadError(null);
         return;

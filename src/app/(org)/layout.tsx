@@ -9,6 +9,7 @@ import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storag
 import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { isOrgAdmin as isOrgAdminProfile } from "@/lib/auth/org-admin";
 import { readOrgSidebarInfo } from "@/lib/org-sidebar";
+import { readSignedInUser } from "@/lib/auth/signed-in-user";
 
 /**
  * 自分のプロフィール (組織の管理者かどうか) を読み込めなかったときの文。
@@ -52,12 +53,20 @@ export default function OrgLayout({
   const checkRole = useCallback(async () => {
     setLoading(true);
     try {
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
-
-      if (authError || !user) {
+      // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないとき
+      // (セッションが無い・切れている) だけにし、確かめられなかったときは読み込みの失敗と「再試行」を出す (#2086 V3。
+      // 以前は error があればログインの画面へ移していたので、通信が切れているだけで組織の画面 (オーナーの譲渡など) を開けなかった)
+      const signedIn = await readSignedInUser(supabase);
+      if (signedIn.kind === 'load-failed') {
+        setLoadError(ORG_ADMIN_LOAD_ERROR);
+        setLoading(false);
+        return;
+      }
+      if (signedIn.kind === 'signed-out') {
         router.push("/login");
         return;
       }
+      const { user } = signedIn;
 
       const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
