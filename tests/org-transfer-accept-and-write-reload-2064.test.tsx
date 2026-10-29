@@ -11,7 +11,8 @@
  *   - R5 と同じ型 (書き込みの通信が reject したとき、一覧を読み直さない):
  *     - 承諾の画面の承諾・拒否 / 部署の追加・削除 / 招待の送信・取消 / チャレンジの作成・開始。
  *       サーバーが書き込みを済ませてから応答が切れた場合でも、古い一覧 (古いボタン) が残っていた。
- *       直したあとは、通信エラーの文を出したうえで読み直す (読み直しが失敗したら、一覧の「読み込めませんでした」に任せる)
+ *       直したあとは、通信エラーの文を出したうえで読み直す (読み直しが失敗したら、一覧の「読み込めませんでした」に任せる)。
+ *       組織の管理画面 (部署・招待・チャレンジ) の文は #2080 U4 で「<操作>の応答を受け取れませんでした（通信エラー）」に変えた
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
@@ -543,8 +544,8 @@ describe('#2064 R5 と同じ型 組織の部署: 追加・削除の通信が失�
 
     expect(callsOf('DELETE', DEPARTMENTS_PATH)).toHaveLength(1);
     expect(callsOf('GET', DEPARTMENTS_PATH)).toHaveLength(2);
-    expect(byTestId('department-error')).toContain('部署を削除できませんでした');
-    expect(byTestId('department-error')).toContain('通信エラー');
+    // 文は「削除できませんでした」と言わない (読み直した一覧で削除が済んでいるため。#2080 U4)
+    expect(byTestId('department-error')).toContain('部署の削除の応答を受け取れませんでした（通信エラー）');
     expect(text()).not.toContain('営業部');
     expect(findButton('🗑')).toBeUndefined();
     expect(text()).toContain('0件の部署');
@@ -560,7 +561,7 @@ describe('#2064 R5 と同じ型 組織の部署: 追加・削除の通信が失�
 
     expect(callsOf('POST', DEPARTMENTS_PATH)).toHaveLength(1);
     expect(callsOf('GET', DEPARTMENTS_PATH)).toHaveLength(2);
-    expect(byTestId('department-error')).toContain('部署を追加できませんでした');
+    expect(byTestId('department-error')).toContain('部署の追加の応答を受け取れませんでした（通信エラー）');
     expect(text()).toContain('2件の部署');
     expect(nameInput()!.value).toBe('開発部');
   });
@@ -572,7 +573,7 @@ describe('#2064 R5 と同じ型 組織の部署: 追加・削除の通信が失�
     await click(findButton('🗑'), '削除ボタン');
 
     expect(callsOf('GET', DEPARTMENTS_PATH)).toHaveLength(2);
-    expect(byTestId('department-error')).toContain('部署を削除できませんでした');
+    expect(byTestId('department-error')).toContain('部署の削除の応答を受け取れませんでした（通信エラー）');
     expect(byTestId('department-load-error')).toContain('部署の一覧を読み込めませんでした');
     const retry = findButton('再試行');
     expect(retry).toBeDefined();
@@ -624,7 +625,7 @@ describe('#2064 R5 と同じ型 組織の招待: 送信・取消の通信が失�
     expect(callsOf('POST', REVOKE_PATH)).toHaveLength(1);
     expect(callsOf('GET', INVITES_PATH)).toHaveLength(2);
     expect(alertSpy).toHaveBeenCalledTimes(1);
-    expect(String(alertSpy.mock.calls[0][0])).toContain('通信エラー');
+    expect(String(alertSpy.mock.calls[0][0])).toContain('招待の取り消しの応答を受け取れませんでした（通信エラー）');
     expect(text()).toContain('取消済');
     expect(findButton('取消')).toBeUndefined();
   });
@@ -639,7 +640,7 @@ describe('#2064 R5 と同じ型 組織の招待: 送信・取消の通信が失�
 
     expect(callsOf('POST', INVITES_PATH)).toHaveLength(1);
     expect(callsOf('GET', INVITES_PATH)).toHaveLength(2);
-    expect(text()).toContain('通信エラーが発生しました');
+    expect(text()).toContain('招待の送信の応答を受け取れませんでした（通信エラー）');
     // 入力欄の値は textContent に入らないので、履歴に出たときだけ文字に現れる
     expect(text()).toContain('second-invitee@example.com');
     expect(text()).toContain('first-invitee@example.com');
@@ -695,7 +696,7 @@ describe('#2064 R5 と同じ型 組織のチャレンジ: 作成・開始の通�
 
     expect(callsOf('PUT', CHALLENGES_PATH)).toHaveLength(1);
     expect(callsOf('GET', CHALLENGES_PATH)).toHaveLength(2);
-    expect(text()).toContain('チャレンジの状態を変更できませんでした');
+    expect(text()).toContain('チャレンジの状態の変更の応答を受け取れませんでした（通信エラー）');
     expect(findButton('開始')).toBeUndefined();
     expect(findButton('終了')).toBeDefined();
     expect(findButton('終了')!.disabled).toBe(false);
@@ -710,7 +711,7 @@ describe('#2064 R5 と同じ型 組織のチャレンジ: 作成・開始の通�
 
     expect(callsOf('POST', CHALLENGES_PATH)).toHaveLength(1);
     expect(callsOf('GET', CHALLENGES_PATH)).toHaveLength(2);
-    expect(text()).toContain('チャレンジを作成できませんでした');
+    expect(text()).toContain('チャレンジの作成の応答を受け取れませんでした（通信エラー）');
     expect(text()).toContain('野菜チャレンジ');
   });
 });

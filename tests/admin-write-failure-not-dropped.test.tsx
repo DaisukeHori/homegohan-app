@@ -353,7 +353,7 @@ describe('組織の部署: 追加・更新・削除の失敗を画面に出す',
     expect(nameInput()!.value).toBe('第一営業部');
   });
 
-  it('追加が通信エラーでも理由を出す', async () => {
+  it('追加が通信エラーでも、応答を受け取れなかったことを知らせる (追加できなかったとは言わない。#2080 U4)', async () => {
     mockDepartmentsApi({ post: () => Promise.reject(new TypeError('Failed to fetch')) });
     await renderPage(OrgDepartmentsPage);
     await click(findButton('+ 部署を追加'), '「+ 部署を追加」ボタン');
@@ -361,8 +361,8 @@ describe('組織の部署: 追加・更新・削除の失敗を画面に出す',
 
     await submitForm();
 
-    expect(deptError()).toContain('部署を追加できませんでした');
-    expect(deptError()).toContain('通信エラー');
+    expect(deptError()).toContain('部署の追加の応答を受け取れませんでした（通信エラー）');
+    expect(deptError()).not.toContain('部署を追加できませんでした');
   });
 
   it('参照されている部署の削除 (409 DEPARTMENT_IN_USE) は理由を出し、一覧から消さない', async () => {
@@ -382,16 +382,17 @@ describe('組織の部署: 追加・更新・削除の失敗を画面に出す',
     expect(text()).toContain('営業部');
   });
 
+  // 通信エラーのときは、削除が済んでいることもあるので「削除できませんでした」と言わない (#2080 U4)
   it.each([
-    ['本文が JSON でない 502', () => htmlResponse(502), 'HTTP 502'],
-    ['通信エラー', () => Promise.reject(new TypeError('Failed to fetch')), '通信エラー'],
-  ])('削除が %s でも理由を出す', async (_label, del, reason) => {
+    ['本文が JSON でない 502', () => htmlResponse(502), '部署を削除できませんでした', 'HTTP 502'],
+    ['通信エラー', () => Promise.reject(new TypeError('Failed to fetch')), '部署の削除の応答を受け取れませんでした', '（通信エラー）'],
+  ])('削除が %s でも理由を出す', async (_label, del, summary, reason) => {
     mockDepartmentsApi({ del });
     await renderPage(OrgDepartmentsPage);
 
     await click(findButton('🗑'), '削除ボタン');
 
-    expect(deptError()).toContain('部署を削除できませんでした');
+    expect(deptError()).toContain(summary);
     expect(deptError()).toContain(reason);
   });
 
@@ -455,17 +456,18 @@ describe('組織の招待: 取消の失敗を黙って捨てない', () => {
     });
   }
 
+  // 通信エラーのときは、取消が済んでいることもあるので「取り消しに失敗しました」と言わず、応答を受け取れなかったことを知らせる (#2080 U4)
   it.each([
-    ['本文が JSON でない 502', () => htmlResponse(502)],
-    ['通信エラー', () => Promise.reject(new TypeError('Failed to fetch'))],
-  ])('取消が %s でも、取り消せなかったことを知らせる', async (_label, revoke) => {
+    ['本文が JSON でない 502', () => htmlResponse(502), '招待の取り消しに失敗しました'],
+    ['通信エラー', () => Promise.reject(new TypeError('Failed to fetch')), '招待の取り消しの応答を受け取れませんでした（通信エラー）'],
+  ])('取消が %s でも、黙らずに知らせる', async (_label, revoke, expected) => {
     mockInvitesApi(revoke);
     await renderPage(OrgInvitesPage);
 
     await click(findButton('取消'), '「取消」ボタン');
 
     expect(alertSpy).toHaveBeenCalledTimes(1);
-    expect(String(alertSpy.mock.calls[0][0])).toContain('招待の取り消しに失敗しました');
+    expect(String(alertSpy.mock.calls[0][0])).toContain(expected);
   });
 
   it('取消が本文つきで断られたら、これまでどおり本文の文を知らせる', async () => {

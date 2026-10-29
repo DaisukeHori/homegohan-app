@@ -12,6 +12,7 @@ import {
   isOrgChallengeType,
 } from "@/lib/org-challenges";
 import { operationFailureMessage, operationNetworkFailureMessage } from "@/lib/admin/api-error-message";
+import { ORG_WRITE_OPERATION, orgWriteNoResponseMessage } from "@/lib/org-write-no-response";
 
 /** チャレンジの一覧を読み込めなかったときの文の頭 (後ろに理由を添える)。空の一覧 (「チャレンジがありません」) と見分けるために出す (#2050) */
 const LOAD_FAILURE_SUMMARY = "チャレンジの一覧を読み込めませんでした";
@@ -142,20 +143,23 @@ export default function OrgChallengesPage() {
   const writeInFlightRef = useRef(false);
   const isWriting = submitting || changingStatusId !== null;
 
-  const fetchChallenges = useCallback(async () => {
+  // 一覧を読めたら true (書き込みの通信が切れたあとの文で、読み直せたかどうかの案内を出し分けるために返す。#2080 U4)
+  const fetchChallenges = useCallback(async (): Promise<boolean> => {
     try {
       const res = await fetch("/api/org/challenges");
       if (!res.ok) {
         const body: unknown = await res.json().catch(() => null);
         setLoadError(operationFailureMessage(LOAD_FAILURE_SUMMARY, res.status, body));
-        return;
+        return false;
       }
       const data = await res.json();
       setChallenges(data.challenges);
       setLoadError(null);
+      return true;
     } catch (error) {
       console.error("Failed to fetch challenges:", error);
       setLoadError(operationNetworkFailureMessage(LOAD_FAILURE_SUMMARY));
+      return false;
     } finally {
       setLoading(false);
     }
@@ -199,12 +203,15 @@ export default function OrgChallengesPage() {
       }
     } catch (error) {
       console.error("Failed to create challenge:", error);
-      setErrorMessage("チャレンジを作成できませんでした。通信状況を確認して、もう一度お試しください");
       // サーバーがチャレンジを作ってから応答が切れたこともあるので、一覧を読み直して今の状態を見せる (#2064 R5 と同じ型。
       // 読み直さないと、作れていたチャレンジが一覧に出ず、もう一度送って同じチャレンジを重ねて作りうる)。フォームと入力は残す。
       // 読み直しが失敗したときは fetchChallenges が一覧の「読み込めませんでした」を出す。
       // 成功のときの読み直しと同じく、読み直しの応答を待つあいだも書き込みの待ち (writeInFlightRef) を戻さない
-      await fetchChallenges();
+      const reloaded = await fetchChallenges();
+      // 文は「作成できませんでした」と言わない (読み直した一覧で作成が済んでいることもあるため。#2080 U4)。読み直しの結果で案内を出し分ける
+      setErrorMessage(
+        orgWriteNoResponseMessage(ORG_WRITE_OPERATION.challengeCreate, reloaded ? "reloaded" : "reload_failed"),
+      );
     } finally {
       writeInFlightRef.current = false;
       setSubmitting(false);
@@ -232,12 +239,15 @@ export default function OrgChallengesPage() {
       }
     } catch (error) {
       console.error("Failed to update challenge:", error);
-      setErrorMessage("チャレンジの状態を変更できませんでした。通信状況を確認して、もう一度お試しください");
       // サーバーが状態を変えてから応答が切れたこともあるので、一覧を読み直す (#2064 R5 と同じ型。読み直さないと、
       // 状態の変わったチャレンジに前の状態のボタンが残り、次の押下で古い状態からの変更を送っていた)。
       // 読み直しが失敗したときは fetchChallenges が一覧の「読み込めませんでした」を出す。
       // 成功のときの読み直しと同じく、読み直しの応答を待つあいだも書き込みの待ち (writeInFlightRef) を戻さない
-      await fetchChallenges();
+      const reloaded = await fetchChallenges();
+      // 文は「状態を変更できませんでした」と言わない (読み直した一覧で変更が済んでいることもあるため。#2080 U4)
+      setErrorMessage(
+        orgWriteNoResponseMessage(ORG_WRITE_OPERATION.challengeStatusChange, reloaded ? "reloaded" : "reload_failed"),
+      );
     } finally {
       writeInFlightRef.current = false;
       setChangingStatusId(null);
@@ -298,7 +308,11 @@ export default function OrgChallengesPage() {
       </div>
 
       {errorMessage && (
-        <div role="alert" className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm">
+        <div
+          role="alert"
+          data-testid="challenge-error"
+          className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm"
+        >
           {errorMessage}
         </div>
       )}

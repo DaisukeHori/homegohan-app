@@ -8,6 +8,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import { ORG_UNKNOWN_VALUE_LABEL } from "@/lib/org-plans";
 import { operationFailureMessage, operationNetworkFailureMessage } from "@/lib/admin/api-error-message";
+import { ORG_WRITE_OPERATION, orgWriteNoResponseMessage } from "@/lib/org-write-no-response";
 
 interface Invite {
   id: string;
@@ -19,7 +20,7 @@ interface Invite {
   invite_url?: string;
 }
 
-/** 招待の取消が失敗したときの文 */
+/** 招待の取消が失敗した (応答が届いたうえで断られた) ときの文。通信が切れたときは使わない (#2080 U4) */
 const REVOKE_FAILURE_MESSAGE = "招待の取り消しに失敗しました";
 /** 招待の履歴を読み込めなかったときの文の頭 (後ろに理由を添える)。空の履歴 (「招待はありません」) と見分けるために出す (#2050) */
 const LOAD_FAILURE_SUMMARY = "招待の履歴を読み込めませんでした";
@@ -47,13 +48,14 @@ export default function OrgInvitesPage() {
   const writeInFlightRef = useRef(false);
   const isWriting = submitting || revokingId !== null;
 
-  const fetchInvites = useCallback(async () => {
+  // 履歴を読めたら true (書き込みの通信が切れたあとの文で、読み直せたかどうかの案内を出し分けるために返す。#2080 U4)
+  const fetchInvites = useCallback(async (): Promise<boolean> => {
     try {
       const res = await fetch("/api/org/invites");
       if (!res.ok) {
         const body: unknown = await res.json().catch(() => null);
         setLoadError(operationFailureMessage(LOAD_FAILURE_SUMMARY, res.status, body));
-        return;
+        return false;
       }
       const data = await res.json();
       // GET /api/org/invites の応答 (src/schemas/membership/organization-invite.ts の OrgInviteListResponseSchema)。
@@ -70,9 +72,11 @@ export default function OrgInvitesPage() {
         })),
       );
       setLoadError(null);
+      return true;
     } catch (error) {
       console.error("Failed to fetch invites:", error);
       setLoadError(operationNetworkFailureMessage(LOAD_FAILURE_SUMMARY));
+      return false;
     } finally {
       setLoading(false);
     }
@@ -114,12 +118,13 @@ export default function OrgInvitesPage() {
       }
     } catch (error) {
       console.error("Failed to create invite:", error);
-      setSubmitError("通信エラーが発生しました");
       // サーバーが招待を作ってから応答が切れたこともあるので、履歴を読み直して今の状態を見せる (#2064 R5 と同じ型。
       // 読み直さないと、作れていた招待が履歴に出ず、もう一度送って同じ相手へ招待を重ねて送りうる)。フォームと入力は残す。
       // 読み直しが失敗したときは fetchInvites が履歴の「読み込めませんでした」を出す。
       // 成功のときの読み直しと同じく、読み直しの応答を待つあいだも書き込みの待ち (writeInFlightRef) を戻さない
-      await fetchInvites();
+      const reloaded = await fetchInvites();
+      // 文は失敗したとは言わない (読み直した履歴で招待が作れていることもあるため。#2080 U4)。読み直しの結果で案内を出し分ける
+      setSubmitError(orgWriteNoResponseMessage(ORG_WRITE_OPERATION.inviteCreate, reloaded ? "reloaded" : "reload_failed"));
     } finally {
       writeInFlightRef.current = false;
       setSubmitting(false);
@@ -148,12 +153,14 @@ export default function OrgInvitesPage() {
       }
     } catch (error) {
       console.error("Failed to revoke invite:", error);
-      alert(`${REVOKE_FAILURE_MESSAGE}（通信エラー）`);
       // サーバーが取消を済ませてから応答が切れたこともあるので、履歴を読み直す (#2064 R5 と同じ型。読み直さないと、
       // 取り消した招待が「保留中」のまま取消のボタンを出し、もう一度押すと失敗の文が出ていた)。
       // 読み直しが失敗したときは fetchInvites が履歴の「読み込めませんでした」を出す。
       // 成功のときの読み直しと同じく、読み直しの応答を待つあいだも書き込みの待ち (writeInFlightRef) を戻さない
-      await fetchInvites();
+      const reloaded = await fetchInvites();
+      // 文は「取り消しに失敗しました」と言わない (読み直した履歴で取消が済んでいることもあるため。#2080 U4)。
+      // 読み直しの結果が分かってから、その結果に合わせた案内を出す
+      alert(orgWriteNoResponseMessage(ORG_WRITE_OPERATION.inviteRevoke, reloaded ? "reloaded" : "reload_failed"));
     } finally {
       writeInFlightRef.current = false;
       setRevokingId(null);
@@ -270,7 +277,7 @@ export default function OrgInvitesPage() {
           </div>
 
           {submitError && (
-            <div className="rounded-xl bg-red-50 border border-red-200 p-3 text-xs text-red-600">
+            <div data-testid="invite-submit-error" className="rounded-xl bg-red-50 border border-red-200 p-3 text-xs text-red-600">
               {submitError}
             </div>
           )}
