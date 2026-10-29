@@ -42,3 +42,15 @@ export function orgWriteNoResponseMessage(operation: OrgWriteOperation, reload: 
     reload === 'reloaded' ? NO_RESPONSE_LIST_RELOADED_GUIDE : NO_RESPONSE_LIST_RELOAD_FAILED_GUIDE,
   );
 }
+
+/**
+ * 書き込みの通信が reject し、一覧の読み直しにも失敗したときの文 (orgWriteNoResponseMessage(…, 'reload_failed')) か (#2086 V9)。
+ * この文は「「再試行」で読み込み直してから…」と促すので、「再試行」で一覧を読み直せたら画面から消す。そのために見分ける。
+ * ほかの文 (読み直せたときの文・応答が届いたうえでの失敗の理由など) は消さない (false)。
+ */
+export function isOrgWriteReloadFailedMessage(message: string | null): boolean {
+  if (message === null) return false;
+  return Object.values(ORG_WRITE_OPERATION).some(
+    (operation) => orgWriteNoResponseMessage(operation, 'reload_failed') === message,
+  );
+}
