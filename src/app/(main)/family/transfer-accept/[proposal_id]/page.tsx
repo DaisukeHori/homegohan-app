@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { normalizeProfileName } from '@/lib/profile-name';
+import { transferProposalStatusMessage } from '@/lib/membership/transfer-proposal-status';
 
 /** 提案が無い (または RLS で見えない) ときの文 */
 const PROPOSAL_NOT_FOUND_MESSAGE = '譲渡提案が見つかりません';
@@ -298,7 +299,9 @@ export default function FamilyTransferAcceptPage() {
   if (!proposal) return null;
 
   const isExpired = new Date(proposal.expires_at) < new Date();
-  const isNotPending = proposal.status !== 'pending';
+  // 承諾・拒否ができない提案の理由の文 (#2073 S5。以前は処理済みの提案に「既に処理されています (ステータス: accepted)」と
+  // 内部の英字の値をそのまま出していた。組織の承諾の画面と同じ対応表の日本語の文にする)
+  const statusMsg = transferProposalStatusMessage(proposal.status, isExpired);
   const isNotRecipient = currentUserId && proposal.to_user_id !== currentUserId;
 
   return (
@@ -330,15 +333,9 @@ export default function FamilyTransferAcceptPage() {
         </div>
 
         {/* 状態に応じたメッセージ */}
-        {isExpired && (
-          <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 text-center">
-            <p className="text-sm text-gray-500">この提案は期限切れです</p>
-          </div>
-        )}
-
-        {isNotPending && !isExpired && (
-          <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 text-center">
-            <p className="text-sm text-gray-500">この提案は既に処理されています (ステータス: {proposal?.status})</p>
+        {statusMsg && (
+          <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 text-center" data-testid="transfer-proposal-status">
+            <p className="text-sm text-gray-500">{statusMsg}</p>
           </div>
         )}
 
@@ -356,7 +353,7 @@ export default function FamilyTransferAcceptPage() {
         )}
 
         {/* アクションボタン (pending かつ自分宛て かつ 期限内) */}
-        {proposal?.status === 'pending' && !isExpired && !isNotRecipient && (
+        {statusMsg === null && !isNotRecipient && (
           <div className="space-y-3">
             <button
               onClick={handleAccept}

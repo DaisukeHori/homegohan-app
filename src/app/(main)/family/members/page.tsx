@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
+import { familyRoleLabel } from '@/lib/membership/role-labels';
 import { membershipErrorMessageOfBody } from '@/lib/errors/membership-errors';
 import { readOwnMembershipAfterNetworkFailure, withMembershipStateNote } from '@/lib/membership/leave-state';
 
@@ -229,12 +230,6 @@ export default function FamilyMembersPage() {
     }
   };
 
-  const roleLabel = (role: string) => {
-    if (role === 'representative') return '代表';
-    if (role === 'adult') return '大人';
-    return '子供';
-  };
-
   const roleIcon = (role: string, childProfile: Record<string, unknown> | null) => {
     if (role === 'representative') return '👑';
     if (role === 'adult') return '👤';
@@ -336,7 +331,7 @@ export default function FamilyMembersPage() {
                     <div className="font-medium text-gray-800">
                       {member.display_name ?? '名前未設定'}
                     </div>
-                    <div className="text-xs text-gray-400">{roleLabel(member.role)}</div>
+                    <div className="text-xs text-gray-400">{familyRoleLabel(member.role)}</div>
                   </div>
                   <div className="flex items-center gap-2">
                     <button

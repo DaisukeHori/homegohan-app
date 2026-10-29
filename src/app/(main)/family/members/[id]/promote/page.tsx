@@ -8,6 +8,28 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { PARENTAL_CONSENT_COPY } from '@homegohan/shared';
 import { createClient } from '@/lib/supabase/client';
+import { MEMBERSHIP_STATE_UNCONFIRMED_NOTE } from '@/lib/membership/leave-state';
+
+/** 送信・取り消しの通信そのものが失敗した (fetch が reject した) ときの文 */
+const NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
+
+/**
+ * 自分のプロフィール・子供の行・承認待ちの依頼を読み込めなかったときの文 (#2073 S3)。家族に入っていない (家族の作成の画面へ移す) ・
+ * メンバーが無い・承認待ちの依頼が無いと見分けるために出す (家族のメンバーの画面の FAMILY_MEMBERS_LOAD_ERROR と同じ扱い)。
+ * 失敗の理由 (英語の内部の文) は画面に出さない
+ */
+const PROMOTE_LOAD_ERROR = '参加リクエストの情報を読み込めませんでした。しばらくしてから、もう一度お試しください。';
+
+/**
+ * .single() で行が 0 件 (または RLS で見えない) ときの PostgREST の失敗のコード。
+ * 行が無いのは「読み込めなかった」ではないので、これだけは読み込みの失敗と分ける
+ */
+const POSTGREST_NO_ROWS_CODE = 'PGRST116';
+
+/** 問い合わせの失敗が「行が無い」ではない (= 読み込めなかった) か */
+function isLoadFailure(error: { code?: string } | null): boolean {
+  return error !== null && error.code !== POSTGREST_NO_ROWS_CODE;
+}
 
 interface FamilyMember {
   id: string;
@@ -39,33 +61,60 @@ export default function PromoteMemberPage() {
   const [revoking, setRevoking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null); // 送信先 email
+  // 読み込めなかったときの文。あるあいだは画面の代わりにこの文と「再試行」を出す (#2073 S3。以前は自分のプロフィールを読めないと
+  // 家族に入っていないとして家族の作成の画面へ移し、子供の行を読めないと「メンバーが見つかりません」、承認待ちの依頼を読めないと
+  // 依頼が無いと見せ、問い合わせが例外を投げると読み込み中の表示のまま止まっていた)
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const loadPendingRequest = useCallback(async () => {
-    // ★#1232: token 列は列単位 GRANT で読めないため select('*') 禁止。明示列リストで取得。
-    const { data } = await supabase
-      .from('family_promotion_requests')
-      .select('id, email, status, expires_at')
-      .eq('member_id', memberId)
-      .eq('status', 'pending')
-      .maybeSingle();
-    setPendingRequest((data as PendingPromotionRequest | null) ?? null);
+  /**
+   * 承認待ちの依頼を読む。読めなければ ok: false (例外は投げない)。
+   * 画面を開いたときと、送信・取り消しの通信が失敗したあと (サーバーが済ませていたかを確かめる。#2073 S2) に使う
+   */
+  const readPendingRequest = useCallback(async (): Promise<
+    { ok: true; request: PendingPromotionRequest | null } | { ok: false }
+  > => {
+    try {
+      // ★#1232: token 列は列単位 GRANT で読めないため select('*') 禁止。明示列リストで取得。
+      const { data, error: readError } = await supabase
+        .from('family_promotion_requests')
+        .select('id, email, status, expires_at')
+        .eq('member_id', memberId)
+        .eq('status', 'pending')
+        .maybeSingle();
+      if (readError) return { ok: false };
+      return { ok: true, request: (data as PendingPromotionRequest | null) ?? null };
+    } catch (readFailure) {
+      console.error('[family/members/promote] failed to read pending request:', readFailure);
+      return { ok: false };
+    }
   }, [supabase, memberId]);
 
-  useEffect(() => {
-    const init = async () => {
+  // 子供の行と承認待ちの依頼を読む。画面を開いたときと「再試行」で呼ぶ
+  const loadPage = useCallback(async () => {
+    setLoading(true);
+    // 別の画面へ移るときは、移るまで読み込み中の表示のままにする (これまでどおり)
+    let redirecting = false;
+    try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
+        redirecting = true;
         router.push('/login');
         return;
       }
 
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
         .select('family_id')
         .eq('id', user.id)
         .single();
 
+      if (profileError) {
+        // 自分のプロフィールを読めなかった (家族に入っていないのとは別。家族の作成の画面へ送らない)
+        setLoadError(PROMOTE_LOAD_ERROR);
+        return;
+      }
       if (!profile?.family_id) {
+        redirecting = true;
         router.replace('/family/setup');
         return;
       }
@@ -77,31 +126,47 @@ export default function PromoteMemberPage() {
         .eq('family_id', profile.family_id)
         .single();
 
-      if (memberError || !memberData) {
+      if (isLoadFailure(memberError)) {
+        // 読み込めなかった (メンバーが無いのとは別。「メンバーが見つかりません」と見せない)
+        setLoadError(PROMOTE_LOAD_ERROR);
+        return;
+      }
+      setLoadError(null);
+      if (!memberData) {
         setError('メンバーが見つかりません');
-        setLoading(false);
         return;
       }
 
       if (memberData.role !== 'child') {
         setError('この操作は子供メンバーにのみ使用できます');
-        setLoading(false);
         return;
       }
 
       if (memberData.user_id) {
         setError('このメンバーは既にアカウントを持っています');
-        setLoading(false);
         return;
       }
 
+      const pending = await readPendingRequest();
+      if (!pending.ok) {
+        // 読み込めなかった (承認待ちの依頼が無いのとは別。送信のフォームを出さない)
+        setLoadError(PROMOTE_LOAD_ERROR);
+        return;
+      }
       setMember(memberData as FamilyMember);
-      await loadPendingRequest();
-      setLoading(false);
-    };
+      setPendingRequest(pending.request);
+      setError(null);
+    } catch (loadFailure) {
+      console.error('[family/members/promote] load error:', loadFailure);
+      setLoadError(PROMOTE_LOAD_ERROR);
+    } finally {
+      if (!redirecting) setLoading(false);
+    }
+  }, [supabase, router, memberId, readPendingRequest]);
 
-    init();
-  }, [supabase, router, memberId, loadPendingRequest]);
+  useEffect(() => {
+    void loadPage();
+  }, [loadPage]);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -112,12 +177,15 @@ export default function PromoteMemberPage() {
       return;
     }
 
+    const requestEmail = email.trim().toLowerCase();
+    // 送る前の承認待ちの依頼 (画面に出している依頼)。通信が失敗したときに、新しい依頼を作れていたかを見分けるために使う
+    const requestIdBefore = pendingRequest?.id ?? null;
     setSubmitting(true);
     try {
       const res = await fetch(`/api/family/members/${memberId}/promote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim().toLowerCase() }),
+        body: JSON.stringify({ email: requestEmail }),
       });
 
       const json = await res.json();
@@ -136,10 +204,28 @@ export default function PromoteMemberPage() {
         return;
       }
 
-      setSuccess(json.data?.request?.email ?? email.trim().toLowerCase());
+      setSuccess(json.data?.request?.email ?? requestEmail);
     } catch (err) {
-      setError('通信エラーが発生しました');
       console.error('[family/members/promote] error:', err);
+      // サーバーが依頼を作ってから応答が切れたこともあるので、承認待ちの依頼を読み直して確かめる (#2073 S2。
+      // 以前は確かめずに通信エラーの文を出し、もう一度送ると、ご本人に確認のメールが 2 通届き、1 通目のリンクは取り消し済みになっていた)。
+      // 読み直しの応答を待つあいだも送信を止めたままにする (submitting を戻さない)
+      const pending = await readPendingRequest();
+      if (!pending.ok) {
+        // 確かめられなかった
+        setError(`${NETWORK_FAILURE_MESSAGE} (${MEMBERSHIP_STATE_UNCONFIRMED_NOTE})`);
+        return;
+      }
+      const request = pending.request;
+      if (request && request.id !== requestIdBefore && request.email.toLowerCase() === requestEmail) {
+        // 新しい依頼を作れている: 成功のときと同じ表示
+        setPendingRequest(request);
+        setSuccess(request.email);
+        return;
+      }
+      // 作れていない: 読み直した依頼を出し、これまでどおり通信エラーの文
+      setPendingRequest(request);
+      setError(NETWORK_FAILURE_MESSAGE);
     } finally {
       setSubmitting(false);
     }
@@ -160,8 +246,25 @@ export default function PromoteMemberPage() {
       setPendingRequest(null);
       setShowForm(false);
     } catch (err) {
-      setError('通信エラーが発生しました');
       console.error('[family/members/promote] revoke error:', err);
+      // サーバーが取り消しを済ませてから応答が切れたこともあるので、承認待ちの依頼を読み直して確かめる (#2073 S2。
+      // 以前は確かめずに通信エラーの文を出し、取り消した依頼が画面に残り、もう一度押すと失敗の文が出ていた)。
+      // 読み直しの応答を待つあいだも取り消しを止めたままにする (revoking を戻さない)
+      const revokedId = pendingRequest?.id ?? null;
+      const pending = await readPendingRequest();
+      if (!pending.ok) {
+        // 確かめられなかった
+        setError(`${NETWORK_FAILURE_MESSAGE} (${MEMBERSHIP_STATE_UNCONFIRMED_NOTE})`);
+        return;
+      }
+      if (pending.request === null || pending.request.id !== revokedId) {
+        // 取り消せている (承認待ちの依頼が無い・別の依頼に変わっている): 読み直した状態を出す
+        setPendingRequest(pending.request);
+        setShowForm(false);
+        return;
+      }
+      // 取り消せていない: これまでどおり通信エラーの文
+      setError(NETWORK_FAILURE_MESSAGE);
     } finally {
       setRevoking(false);
     }
@@ -171,6 +274,36 @@ export default function PromoteMemberPage() {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-gray-400 text-sm">読み込み中…</div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center gap-4 p-6">
+        <div
+          role="alert"
+          data-testid="family-promote-load-error"
+          className="w-full max-w-md rounded-2xl bg-red-50 border border-red-200 p-6 text-center"
+        >
+          <p className="text-sm text-red-600">{loadError}</p>
+          <div className="mt-4 flex justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => void loadPage()}
+              className="px-4 py-2 rounded-full bg-white border border-red-300 text-red-600 text-sm"
+            >
+              再試行
+            </button>
+            <button
+              type="button"
+              onClick={() => router.back()}
+              className="px-4 py-2 rounded-full bg-gray-100 text-gray-600 text-sm"
+            >
+              戻る
+            </button>
+          </div>
+        </div>
       </div>
     );
   }

@@ -434,7 +434,8 @@ describe('#2064 F1 家族の代表者の譲渡の承諾: 承諾・拒否の通�
     expect(callsOf('POST', ACCEPT_PATH)).toHaveLength(1);
     expect(proposalQueryCount()).toBe(2);
     expect(text()).toContain(FAMILY_NETWORK_ERROR);
-    expect(text()).toContain('この提案は既に処理されています');
+    // 処理済みの文は内部の英字の値ではなく日本語 (#2073 S5)
+    expect(text()).toContain('この提案はすでに承諾済みです');
     expect(findButton(ACCEPT_LABEL)).toBeUndefined();
     expect(findButton(DECLINE_LABEL)).toBeUndefined();
     expect(unhandled).toEqual([]);
@@ -449,7 +450,7 @@ describe('#2064 F1 家族の代表者の譲渡の承諾: 承諾・拒否の通�
     expect(callsOf('POST', DECLINE_PATH)).toHaveLength(1);
     expect(proposalQueryCount()).toBe(2);
     expect(text()).toContain(FAMILY_NETWORK_ERROR);
-    expect(text()).toContain('この提案は既に処理されています');
+    expect(text()).toContain('この提案は拒否済みです');
     expect(findButton(ACCEPT_LABEL)).toBeUndefined();
   });
 
