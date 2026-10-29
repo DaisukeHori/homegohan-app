@@ -441,3 +441,4 @@ server → caller の family_members 行を UPDATE
 | tests/e2e/membership/09-meal-paste.spec.ts | ペースト実行, paste_group 表示, 編集独立性 |
 | tests/e2e/membership/10-share-settings.spec.ts | share_meals OFF で家族から見えなくなる, ON で復活 |
 | tests/e2e/membership/11-operator-emergency.spec.ts | 強制 owner 譲渡, 強制 representative 譲渡, 強制解散 |
+| tests/e2e/membership/15-self-dissolve.spec.ts | 代表者 / オーナーの解散と、そのあとの退会 |

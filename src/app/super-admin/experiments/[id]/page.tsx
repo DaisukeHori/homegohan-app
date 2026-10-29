@@ -14,6 +14,9 @@
  * 実験を読み直して今の状態とボタンを見せ、「状態の変更の応答を受け取れませんでした」の文を出す (alert にしない。#2073)。
  * 読み直さないと、古い状態のボタンをもう一度押して 409 になり、自分の操作なのに「別の操作で実験の状態が先に変わっていました」と出る。
  * そのあとの読み直しが失敗したら「再試行」を出し、読み直せるまで状態のボタンを止める (画面の状態が古いかもしれないため)。
+ * 状態の変更が 200 で返ったのに本文を読み切れない (JSON でない・data が無い) ときも、変更は済んでいるのに画面の状態が古いままになるので、
+ * 通信の reject と同じく読み直して今の状態を見せる (クーポン・機能パッケージの詳細と同じ。#2080)。
+ * 409 のあとの読み直しが失敗したときも、読み直せるまで状態のボタンを止める (クーポン・機能パッケージ・プランの詳細と同じ。#2080)。
  */
 
 import { useState, useEffect, useCallback, useRef, use } from "react";
@@ -86,7 +89,7 @@ type ExperimentLoadOutcome =
 /**
  * 画面の上に出す、409 のあと・通信の reject のあとの読み直しについての文 (#2064・#2073)。
  *   - stale                    : 409 のあとに読み直した (今の状態を添える)
- *   - stale-reload-failed      : 409 のあとの読み直しに失敗した (「再試行」を出す)
+ *   - stale-reload-failed      : 409 のあとの読み直しに失敗した (「再試行」を出し、状態のボタンを止める。#2080)
  *   - no-response              : 状態の変更の通信が reject されたあとに読み直した (今の状態を添える)
  *   - no-response-reload-failed: 通信が reject されたあとの読み直しに失敗した (「再試行」を出し、状態のボタンを止める)
  *   - unavailable              : 読み直しが 404 / 403 で断られた (「再試行」は出さない)
@@ -189,12 +192,15 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
     void loadExperiment();
   }, [loadExperiment]);
 
-  /** 通信の reject のあとの読み直しが失敗し、まだ読み直せていないか (#2073)。そのあいだは状態のボタンを止める */
-  const noResponseStaleRef = useRef(false);
-  const [isNoResponseStale, setIsNoResponseStale] = useState(false);
-  const markNoResponseStale = useCallback((stale: boolean) => {
-    noResponseStaleRef.current = stale;
-    setIsNoResponseStale(stale);
+  /**
+   * 409 のあと・通信の reject のあとの読み直しが失敗し、まだ読み直せていないか (#2073・#2080)。そのあいだは状態のボタンを止める
+   * (画面の状態が DB と食い違っているかもしれないのに、その状態を元にしたボタンを押させない)。ref は描画を待たずに handler で読むための写し
+   */
+  const reloadFailedRef = useRef(false);
+  const [isReloadFailed, setIsReloadFailed] = useState(false);
+  const markReloadFailed = useCallback((failed: boolean) => {
+    reloadFailedRef.current = failed;
+    setIsReloadFailed(failed);
   }, []);
 
   /**
@@ -206,8 +212,9 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
   const reloadAfterUncertain = useCallback(async (cause: "stale" | "no-response") => {
     const outcome = await loadExperiment();
     if (outcome.kind === "superseded") return;
-    // 通信の reject のあとの読み直しが失敗したときだけ、読み直せるまで状態のボタンを止める (#2073)
-    markNoResponseStale(cause === "no-response" && outcome.kind === "failed");
+    // 読み直しが失敗したら、どちらの理由でも、読み直せるまで状態のボタンを止める (#2073・#2080)。
+    // 404 / 403 (unavailable) は読み込み直しても変わらないので止めない (プランの詳細と同じ)
+    markReloadFailed(outcome.kind === "failed");
     if (outcome.kind === "loaded") {
       setReloadNotice({ kind: cause, status: outcome.experiment.status });
     } else if (outcome.kind === "failed") {
@@ -215,7 +222,7 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
     } else {
       setReloadNotice({ kind: "unavailable", message: outcome.message });
     }
-  }, [loadExperiment, markNoResponseStale]);
+  }, [loadExperiment, markReloadFailed]);
 
   /** 409 (遷移表に無い変更・別の操作が先に状態を変えた) のあとの読み直し */
   const reloadAfterStale = useCallback(() => reloadAfterUncertain("stale"), [reloadAfterUncertain]);
@@ -235,8 +242,8 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
 
   const handleStatusChange = async (status: ExperimentStatusChangeTarget) => {
     // 応答 (とそのあとの読み直し) を待つあいだは送らない (#2050。ref は再描画の前の続けての押下の守り。#2064)。
-    // 通信の reject のあとの読み直しが失敗して、まだ読み直せていないあいだも送らない (#2073)
-    if (writeInFlightRef.current || noResponseStaleRef.current) return;
+    // 409 のあと・通信の reject のあとの読み直しが失敗して、まだ読み直せていないあいだも送らない (#2073・#2080)
+    if (writeInFlightRef.current || reloadFailedRef.current) return;
     if (!confirm(EXPERIMENT_STATUS_CHANGE_CONFIRM_MESSAGES[status])) return;
     writeInFlightRef.current = true;
     setIsChangingStatus(true);
@@ -265,7 +272,13 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
         return;
       }
       const updated = (body as { data?: Experiment } | null)?.data;
-      if (updated) setExperiment(updated);
+      if (!updated) {
+        // 200 なので変更は済んでいるが、本文 (書いたあとの行) を読み切れなかった (JSON でない・data が無い)。
+        // 画面の状態は古いままなので、通信の reject と同じく読み直して今の状態を見せる (#2080)
+        await reloadAfterUncertain("no-response");
+        return;
+      }
+      setExperiment(updated);
     } finally {
       writeInFlightRef.current = false;
       setIsChangingStatus(false);
@@ -273,8 +286,8 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
   };
 
   const isBusy = isChangingStatus || isReloading;
-  // 状態のボタンを止めるか (応答・読み直しを待つあいだと、通信の reject のあとの読み直しが失敗しているあいだ。#2073)
-  const statusButtonsDisabled = isBusy || isNoResponseStale;
+  // 状態のボタンを止めるか (応答・読み直しを待つあいだと、409 のあと・通信の reject のあとの読み直しが失敗しているあいだ。#2073・#2080)
+  const statusButtonsDisabled = isBusy || isReloadFailed;
 
   if (isLoading) {
     return (

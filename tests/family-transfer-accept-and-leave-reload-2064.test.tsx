@@ -852,14 +852,17 @@ describe('#2064 F2 家族のメンバーの詳細: 除名の通信が失敗 (rej
   function detailReadable(reread: () => QueryResult | Promise<QueryResult>) {
     supabaseState.responders.user_profiles = () => ({ data: { family_id: FAMILY_ID }, error: null });
     supabaseState.responders.family_members = (ctx: QueryContext) => {
-      if (ctx.kind === 'maybeSingle') return reread();
+      // 自分の役割 (select('role')。#2080 U2 から自分の active な行を maybeSingle で読む) は除名のあとの読み直しではない
+      if (ctx.kind === 'maybeSingle' && ctx.columns !== 'role') return reread();
       if (ctx.filters.user_id === USER_ID) return { data: { role: 'representative' }, error: null };
       return { data: DETAIL, error: null };
     };
   }
 
   const activeRereads = () =>
-    supabaseState.queries.filter((q) => q.table === 'family_members' && q.kind === 'maybeSingle' && q.filters.status === 'active');
+    supabaseState.queries.filter(
+      (q) => q.table === 'family_members' && q.kind === 'maybeSingle' && q.columns !== 'role' && q.filters.status === 'active',
+    );
 
   it('サーバーが除名を済ませてから応答が切れたとき、読み直して行が無ければ、成功のときと同じく一覧へ戻る (失敗の文は出さない)', async () => {
     detailReadable(() => ({ data: null, error: null }));
