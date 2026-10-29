@@ -7,10 +7,11 @@ import Link from "next/link";
 import { membershipErrorMessageOfBody } from "@/lib/errors/membership-errors";
 import { normalizeProfileName } from "@/lib/profile-name";
 import { readOwnMembershipAfterNetworkFailure, withMembershipStateNote } from "@/lib/membership/leave-state";
+import { OrgMemberNamesResponseSchema, type OrgMemberName } from "@/schemas/membership/organization-member-name";
 
 /**
  * メンバーの一覧を読み込めなかったときの文。空の一覧 (「メンバーがいません」) と見分けるために出す (#2050)。
- * 読み込みは Supabase の問い合わせで、失敗の理由 (英語の内部の文) は画面に出さない
+ * 読み込みは自分のプロフィール (Supabase の問い合わせ) と一覧の API (GET /api/org/members) で、失敗の理由 (英語の内部の文) は画面に出さない
  */
 const MEMBERS_LOAD_ERROR = 'メンバーの一覧を読み込めませんでした。しばらくしてから、もう一度お試しください。';
 
@@ -22,12 +23,8 @@ const MEMBERS_LOAD_ERROR = 'メンバーの一覧を読み込めませんでし�
  */
 const MEMBERSHIP_NETWORK_FAILURE_REASON = '通信エラーが発生しました。通信状況を確認して、もう一度お試しください';
 
-interface Member {
-  id: string;
-  nickname: string | null;
-  org_role: string;
-  joined_org_at: string | null;
-}
+/** 一覧の 1 人。API が返す 4 つの項目 (id・表示名・組織内の役割・参加した日) だけ (#2073 S4) */
+type Member = OrgMemberName;
 
 interface CurrentUser {
   id: string;
@@ -77,17 +74,20 @@ export default function MembersPage() {
 
       setCurrentUser({ id: user.id, org_role: profile.org_role ?? 'member' });
 
-      const { data: membersData, error: membersError } = await supabase
-        .from('user_profiles')
-        .select('id, nickname, org_role, joined_org_at')
-        .eq('organization_id', profile.organization_id)
-        .order('joined_org_at', { ascending: true });
-
-      if (membersError) {
+      // ほかのメンバーの行は RLS で読めないので、サーバーの API が確かめてから返す (#2073 S4。
+      // 以前は user_profiles を直接読み、本番では自分の行しか返らなかった)。返る項目は表示名・組織内の役割・参加した日・id だけ
+      const res = await fetch('/api/org/members', { cache: 'no-store' });
+      if (!res.ok) {
         setLoadError(MEMBERS_LOAD_ERROR);
         return;
       }
-      setMembers(membersData ?? []);
+      const parsed = OrgMemberNamesResponseSchema.safeParse(await res.json());
+      if (!parsed.success) {
+        // 応答の形が違う (読み込めなかったのと同じに扱う。空の一覧と見せない)
+        setLoadError(MEMBERS_LOAD_ERROR);
+        return;
+      }
+      setMembers(parsed.data.members);
       setLoadError(null);
     } catch (error) {
       console.error('Failed to fetch members:', error);
