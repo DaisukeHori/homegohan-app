@@ -12,7 +12,7 @@ import {
   isOrgChallengeType,
 } from "@/lib/org-challenges";
 import { operationFailureMessage, operationNetworkFailureMessage } from "@/lib/admin/api-error-message";
-import { ORG_WRITE_OPERATION, orgWriteNoResponseMessage } from "@/lib/org-write-no-response";
+import { isOrgWriteReloadFailedMessage, ORG_WRITE_OPERATION, orgWriteNoResponseMessage } from "@/lib/org-write-no-response";
 
 /** チャレンジの一覧を読み込めなかったときの文の頭 (後ろに理由を添える)。空の一覧 (「チャレンジがありません」) と見分けるために出す (#2050) */
 const LOAD_FAILURE_SUMMARY = "チャレンジの一覧を読み込めませんでした";
@@ -261,7 +261,11 @@ export default function OrgChallengesPage() {
   const retryLoad = () => {
     if (writeInFlightRef.current) return;
     setLoading(true);
-    void fetchChallenges();
+    void fetchChallenges().then((loaded) => {
+      // 読み直せたら、書き込みの通信が切れて読み直しにも失敗したときの案内 (「「再試行」で読み込み直してから…」) を消す
+      // (残すと、一覧を読み込めたのにまだ読み込めていないように読める。#2086 V9)。ほかの文 (応答が届いたうえでの失敗の理由など) は残す
+      if (loaded) setErrorMessage((current) => (isOrgWriteReloadFailedMessage(current) ? null : current));
+    });
   };
 
   /** 種類を選んだら、単位と目標値の初期値をその種類に合わせる */

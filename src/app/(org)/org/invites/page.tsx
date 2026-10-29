@@ -8,7 +8,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import { ORG_UNKNOWN_VALUE_LABEL } from "@/lib/org-plans";
 import { operationFailureMessage, operationNetworkFailureMessage } from "@/lib/admin/api-error-message";
-import { ORG_WRITE_OPERATION, orgWriteNoResponseMessage } from "@/lib/org-write-no-response";
+import { isOrgWriteReloadFailedMessage, ORG_WRITE_OPERATION, orgWriteNoResponseMessage } from "@/lib/org-write-no-response";
 
 interface Invite {
   id: string;
@@ -174,7 +174,11 @@ export default function OrgInvitesPage() {
   const retryLoad = () => {
     if (writeInFlightRef.current) return;
     setLoading(true);
-    void fetchInvites();
+    void fetchInvites().then((loaded) => {
+      // 読み直せたら、書き込みの通信が切れて読み直しにも失敗したときの案内 (「「再試行」で読み込み直してから…」) を消す
+      // (残すと、履歴を読み込めたのにまだ読み込めていないように読める。#2086 V9)。ほかの文 (応答が届いたうえでの失敗の理由など) は残す
+      if (loaded) setSubmitError((current) => (isOrgWriteReloadFailedMessage(current) ? null : current));
+    });
   };
 
   const copyInviteLink = (token: string, id: string) => {
