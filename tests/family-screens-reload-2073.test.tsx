@@ -1093,7 +1093,7 @@ describe('#2073 メンバーの詳細: 読み込めなかったのを別の状�
     await click(healthSwitch(), '健康の共有の切り替え');
 
     expect(callsOf('PATCH', SHARE_PATH)).toHaveLength(1);
-    expect(queryCount('family_members', 'maybeSingle')).toBe(1);
+    expect(filtersOf('family_members', SHARE_REREAD_COLUMNS).length).toBe(1);
     // 読み直すのは自分の active な行だけ (他の人の値を出さない)
     expect(filtersOf('family_members', SHARE_REREAD_COLUMNS)).toEqual([OWN_ACTIVE_MEMBER_FILTERS]);
     expect(healthSwitch().getAttribute('aria-checked')).toBe('true');
@@ -1140,7 +1140,7 @@ describe('#2073 メンバーの詳細: 読み込めなかったのを別の状�
     const base = supabaseState.responders.family_members as Responder;
     let rereadStarted = false;
     supabaseState.responders.family_members = (ctx: QueryContext) => {
-      if (ctx.kind === 'maybeSingle') {
+      if (ctx.kind === 'maybeSingle' && ctx.columns === SHARE_REREAD_COLUMNS) {
         rereadStarted = true;
         return reread.promise;
       }
@@ -1174,7 +1174,7 @@ describe('#2073 メンバーの詳細: 読み込めなかったのを別の状�
     await click(healthSwitch(), '健康の共有の切り替え');
 
     expect(healthSwitch().getAttribute('aria-checked')).toBe('false');
-    expect(queryCount('family_members', 'maybeSingle')).toBe(0);
+    expect(filtersOf('family_members', SHARE_REREAD_COLUMNS).length).toBe(0);
     expect(alertSpy).toHaveBeenCalledWith('共有設定の更新に失敗しました');
   });
 
@@ -1274,7 +1274,7 @@ describe('#2073 メンバーの詳細: 読み込めなかったのを別の状�
 
       expect(sharePatchBodies(SHARE_PATH)).toEqual([{ [field]: true }]);
       expect(switchStates()).toEqual(shareRowToChecked(shareOnlyOn(nextShareField(field))));
-      expect(queryCount('family_members', 'maybeSingle')).toBe(0);
+      expect(filtersOf('family_members', SHARE_REREAD_COLUMNS).length).toBe(0);
     });
   });
 
