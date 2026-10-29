@@ -19,6 +19,7 @@
 import { act, createElement, Suspense } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { orgMemberListKeyOf, orgMemberListResponse } from './helpers/org-member-list-fetch';
 
 const USER_ID = '33333333-3333-4333-8333-333333333333';
 const MEMBER_A_ID = '55555555-5555-4555-8555-555555555555';
@@ -27,6 +28,8 @@ const MEMBER_B_ID = '66666666-6666-4666-8666-666666666666';
 const supabaseState = vi.hoisted(() => ({
   /** メンバーの画面の Supabase の問い合わせの結果 (テストごとに差し替える) */
   profile: { data: null as unknown, error: null as unknown },
+  /** メンバーの一覧の API (GET /api/org/members。#2073 S4) の結果。以前の問い合わせと同じ { data, error } で書く
+   *  (tests/helpers/org-member-list-fetch.ts が API の応答に直す) */
   members: { data: null as unknown, error: null as unknown },
 }));
 
@@ -42,14 +45,13 @@ vi.mock('next/link', () => ({
     createElement('a', { href: props.href, className: props.className }, props.children),
 }));
 
-// メンバーの画面は Supabase の問い合わせで一覧を読む
+// メンバーの画面は自分のプロフィールを Supabase の問い合わせで読む (一覧は API。下の mockFetch)
 vi.mock('@/lib/supabase/client', () => {
   const builder = () => {
     const query = {
       select: () => query,
       eq: () => query,
       single: () => Promise.resolve(supabaseState.profile),
-      order: () => Promise.resolve(supabaseState.members),
     };
     return query;
   };
@@ -121,6 +123,9 @@ type Handler = (method: string, url: URL, body: unknown) => Response | Promise<R
 
 function mockFetch(handler: Handler) {
   fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+    // メンバーの一覧の API の GET は supabaseState.members から返す (#2073 S4)
+    const listKey = orgMemberListKeyOf(input, init);
+    if (listKey !== null) return orgMemberListResponse(listKey, supabaseState.members);
     const url = new URL(String(input), 'http://localhost');
     const method = (init?.method ?? 'GET').toUpperCase();
     const body = init?.body ? (JSON.parse(String(init.body)) as unknown) : undefined;

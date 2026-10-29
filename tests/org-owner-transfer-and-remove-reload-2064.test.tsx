@@ -15,6 +15,7 @@
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { orgMemberListKeyOf, orgMemberListResponse, type OrgMemberListSource } from './helpers/org-member-list-fetch';
 
 const USER_ID = '33333333-3333-4333-8333-333333333333';
 const MEMBER_A_ID = '55555555-5555-4555-8555-555555555555';
@@ -41,13 +42,14 @@ const supabaseState = vi.hoisted(() => ({
   getUserThrows: false,
   /** user_profiles の 1 行 (single) = 自分のプロフィール */
   profile: { data: null, error: null } as unknown,
-  /** user_profiles の一覧 (await) = 組織のメンバー・譲渡の候補 */
+  /** 組織のメンバー・譲渡の候補の一覧の API (GET /api/org/members・/api/org/owner-transfer/candidates) の結果 (#2073 S4)。
+   *  以前の Supabase の問い合わせと同じ { data, error } で書き、tests/helpers/org-member-list-fetch.ts が API の応答に直す */
   orgMembers: { data: null, error: null } as unknown,
   /** family_members の 1 行 (single / maybeSingle) = 家族の中の自分 */
   myFamilyMember: { data: null, error: null } as unknown,
   /** family_members の一覧 (await) = 代表者の譲渡の候補 */
   familyCandidates: { data: null, error: null } as unknown,
-  /** 一覧の問い合わせを送った回数 */
+  /** 一覧の問い合わせ (組織は一覧の API の GET) を送った回数 */
   orgMembersQueryCount: 0,
   familyCandidatesQueryCount: 0,
 }));
@@ -68,16 +70,13 @@ vi.mock('next/link', () => ({
     createElement('a', { href: props.href, className: props.className }, props.children),
 }));
 
-// 画面は Supabase の問い合わせで読む。表と、1 行 (single / maybeSingle) か一覧 (await) かで結果を分ける
+// 画面は自分のプロフィール (と家族の画面の一覧) を Supabase の問い合わせで読む。表と、1 行 (single / maybeSingle) か一覧 (await) かで結果を分ける。
+// 組織のメンバー・譲渡の候補の一覧は API で読む (#2073 S4。beforeEach の fetch の差し替え)
 vi.mock('@/lib/supabase/client', () => {
   const builder = (table: string) => {
     const one = () =>
       resolveSource(table === 'user_profiles' ? supabaseState.profile : supabaseState.myFamilyMember);
     const list = () => {
-      if (table === 'user_profiles') {
-        supabaseState.orgMembersQueryCount += 1;
-        return resolveSource(supabaseState.orgMembers);
-      }
       supabaseState.familyCandidatesQueryCount += 1;
       return resolveSource(supabaseState.familyCandidates);
     };
@@ -160,7 +159,15 @@ beforeEach(() => {
   vi.stubGlobal('alert', alertSpy);
   // 家族の名前の補完 (/api/family/members/names) は本題ではないので失敗させる (画面は display_name のまま出す)
   fetchMock = vi.fn(async () => new Response('{}', { status: 500 }));
-  vi.stubGlobal('fetch', fetchMock);
+  // 組織のメンバー・譲渡の候補の一覧の API の GET は supabaseState.orgMembers から返す。それ以外は fetchMock へ
+  vi.stubGlobal('fetch', async (input: string, init?: RequestInit) => {
+    const key = orgMemberListKeyOf(input, init);
+    if (key !== null) {
+      supabaseState.orgMembersQueryCount += 1;
+      return orgMemberListResponse(key, supabaseState.orgMembers as OrgMemberListSource);
+    }
+    return fetchMock(input, init);
+  });
   router.push.mockReset();
   router.replace.mockReset();
   router.back.mockReset();

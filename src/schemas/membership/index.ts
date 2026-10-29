@@ -6,6 +6,7 @@ export * from './organization';
 export * from './organization-invite';
 export * from './organization-invite-action';
 export * from './organization-member';
+export * from './organization-member-name';
 export * from './organization-owner-transfer';
 export * from './family-group';
 export * from './family-invite';

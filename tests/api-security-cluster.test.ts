@@ -550,6 +550,8 @@ describe('#186 /api/upload POST', () => {
 // ─────────────────────────────────────────────
 // org/members は cookies() を使う旧スタイルのため直接 import すると型エラーになりやすい。
 // ここでは select 引数の変更が反映されているかをファイル内容で確認するスモークテストとする。
+// #2073 S4 で GET は service_role で読むようになり、列は共通の定数 ORG_MEMBER_NAME_COLUMNS (4 つ。厳密な集合は
+// tests/legal-text-1901.test.ts の T-32・route の単体テスト src/__tests__/api/org/members/list.test.ts が見る)
 describe('#187 /api/org/members select 列制限', () => {
   it('select 引数に * が含まれないこと (ソースファイル確認)', async () => {
     const fs = await import('fs');
@@ -558,7 +560,10 @@ describe('#187 /api/org/members select 列制限', () => {
     const source = fs.readFileSync(filePath, 'utf-8');
     // select('*') が残っていないことを確認
     expect(source).not.toMatch(/\.select\(['"`]\*['"`]\)/);
-    // 必要カラムが明示されていることを確認
-    expect(source).toMatch(/select\(['"`]id,/);
+    // 必要カラムが明示されていることを確認 (列の定数を使い、その定数に * が無い)
+    expect(source).toContain('.select(ORG_MEMBER_NAME_COLUMNS)');
+    const { ORG_MEMBER_NAME_COLUMNS } = await import('@/schemas/membership/organization-member-name');
+    expect(ORG_MEMBER_NAME_COLUMNS).not.toContain('*');
+    expect(ORG_MEMBER_NAME_COLUMNS.startsWith('id,')).toBe(true);
   });
 });
