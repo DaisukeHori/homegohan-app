@@ -21,7 +21,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RECIPE_AUTHOR_FALLBACK_NAME, recipeAuthorName } from '@/lib/recipes/author-name';
 
-const RECIPE_ID = 'r0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+const RECIPE_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 
 const h = vi.hoisted(() => ({
   /** user_profiles を引いたときの nickname (引かれた id のどれにもこの値を返す) */

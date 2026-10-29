@@ -11,6 +11,8 @@
  * 読んでから書くまでに別の運営が変えていたら 0 行で、読み直した行に送った変更がもう入っていれば 200 (書かず記録もしない)、
  * 入っていなければ 409 CONFLICT_STALE_DATA (cross/04 §4.2)。これで遷移表に無い遷移 (例: private を読んで public に戻す間に別の運営が deprecated にすると、書けば deprecated → public になる) は書かれず、
  * 監査の status_from は書いた時点の実際の直前の値と必ず一致する。
+ * 本文に画面が見ていた status (expected_status) があれば、DB の status と同じときだけ書き、違えば書かずに 409 CONFLICT_STALE_DATA (#2064。
+ * 画面の status が古いまま、確認の文と違う遷移 (廃止 → 非公開 = 廃止の取り消し など) を書かない。画面の状態の変更は必ず送る)。
  * 削除 (DELETE) も同じで、draft のままのときだけ消す (0 行なら読み直して、無ければ 404、あれば 409 CONFLICT_STALE_DATA)。
  *
  * 廃止の安全弁 (#1127・#1912) は、書く前に route が契約者を数え (countPlanSubscribers)、さらに書く文の中で DB のトリガー
@@ -22,6 +24,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import {
@@ -123,13 +126,17 @@ export async function GET(_request: NextRequest, props: RouteContext) {
       return NextResponse.json(PLAN_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
-    // 価格変更履歴を追加取得
-    const { data: priceHistory } = await supabase
+    // 価格変更履歴を追加取得。読めなかった (DB の失敗) ときは 500。空の履歴にしない (#1917 の続き。以前は失敗を捨て、
+    // 価格を一度も変えていないプランに見えていた)
+    const { data: priceHistory, error: priceHistoryError } = await supabase
       .from('plan_price_history')
       .select('*')
       .eq('plan_id', params.id)
       .order('created_at', { ascending: false })
       .limit(20);
+    if (priceHistoryError) {
+      return internalError('GET /api/super-admin/plans/[id]', priceHistoryError, { table: 'plan_price_history' }, { shape: 'nested' });
+    }
 
     return NextResponse.json({ data: { ...plan, price_history: priceHistory ?? [] } });
   } catch (err) {
@@ -137,7 +144,7 @@ export async function GET(_request: NextRequest, props: RouteContext) {
       return NextResponse.json({ error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } }, { status: 401 });
     }
     if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } }, { status: 403 });
+      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: operatorForbiddenMessageOf(err) } }, { status: 403 });
     }
     console.error('[super-admin/plans/[id] GET]', err);
     return NextResponse.json({ error: { code: 'OP_INTERNAL_ERROR', message: '内部エラー' } }, { status: 500 });
@@ -186,6 +193,14 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
     }
 
     const input = parseResult.data;
+
+    // 画面が見ていた status (expected_status。#2064) が DB の status と違えば、書かずに 409 CONFLICT_STALE_DATA にする。
+    // 遷移の可否は下で DB の status で決めるので、画面の status が古いまま送られると (状態の変更のあとの読み直しが失敗した・
+    // 画面を開いているあいだに別の運営が変えた)、確認の文と違う遷移 (例: 画面は公開中で「非公開にする」でも、DB が廃止なら
+    // 廃止 → 非公開 = 廃止の取り消し) を書いてしまう。遷移の検査 (422)・廃止済みの変更の拒否 (422) より先に断る
+    if (input.expected_status !== undefined && input.expected_status !== existing.status) {
+      return NextResponse.json(STALE_PLAN_RESPONSE, { status: 409 });
+    }
 
     // status 遷移が指定されている場合は許可された遷移か検証する
     // (#1041 修正: public/private 到達後に status 変更が恒久ロックされていたバグ)
@@ -262,6 +277,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
         'display_order',
         'status',
         'ends_at',
+        // 書く値でなく、書く条件 (画面が見ていた status。上で DB の status と同じことを確かめた。#2064)
+        'expected_status',
       ];
       const inputKeys = Object.keys(input).filter((k) => input[k as keyof typeof input] !== undefined);
       const disallowedKeys = inputKeys.filter((k) => !allowedKeys.includes(k));
@@ -281,7 +298,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
 
     if (existing.status === 'deprecated') {
       // deprecated では private への遷移 (un-deprecate) のみ許可 (それ以外は変更不可)
-      const allowedKeys: string[] = ['status'];
+      // expected_status は書く値でなく、書く条件 (画面が見ていた status。上で DB の status と同じことを確かめた。#2064)
+      const allowedKeys: string[] = ['status', 'expected_status'];
       const inputKeys = Object.keys(input).filter((k) => input[k as keyof typeof input] !== undefined);
       const disallowedKeys = inputKeys.filter((k) => !allowedKeys.includes(k));
       if (disallowedKeys.length > 0) {
@@ -311,7 +329,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
     const statusChanged = input.status !== undefined && input.status !== existing.status;
 
     // 判定に使った値のままのときだけ書く (冒頭のコメント)。status は遷移の可否と変えてよい項目の判定に使ったので常に条件にする
-    let updateQuery = supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    let updateQuery = getSupabaseAdmin()
       .from('subscription_plans')
       .update(updateData)
       .eq('id', params.id)
@@ -384,7 +403,7 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
       return NextResponse.json({ error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } }, { status: 401 });
     }
     if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } }, { status: 403 });
+      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: operatorForbiddenMessageOf(err) } }, { status: 403 });
     }
     console.error('[super-admin/plans/[id] PATCH]', err);
     return NextResponse.json({ error: { code: 'OP_INTERNAL_ERROR', message: '内部エラー' } }, { status: 500 });
@@ -424,7 +443,8 @@ export async function DELETE(request: NextRequest, props: RouteContext) {
     }
 
     // draft のままのときだけ消す (読んでから消すまでに別の運営が公開していたら 0 行。公開したプランを消さない)
-    const { data: deleted, error: deleteErr } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { data: deleted, error: deleteErr } = await getSupabaseAdmin()
       .from('subscription_plans')
       .delete()
       .eq('id', params.id)
@@ -474,7 +494,7 @@ export async function DELETE(request: NextRequest, props: RouteContext) {
       return NextResponse.json({ error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } }, { status: 401 });
     }
     if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } }, { status: 403 });
+      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: operatorForbiddenMessageOf(err) } }, { status: 403 });
     }
     console.error('[super-admin/plans/[id] DELETE]', err);
     return NextResponse.json({ error: { code: 'OP_INTERNAL_ERROR', message: '内部エラー' } }, { status: 500 });

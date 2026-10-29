@@ -545,11 +545,12 @@ describe('GET /api/super-admin/coupons/[id]/redemptions -> super_admin.coupon.vi
 
 describe('変更系も recordAdminAudit で記録する (例: POST /api/admin/support/tickets)', () => {
   it('ip_address は x-forwarded-for の先頭の 1 つだけ、User-Agent も残す', async () => {
-    userScopedClient = makeClient({
+    // チケットと最初のメッセージは service_role で書く (運営の直接の書き込みを塞いだ。#1917 の続き)。監査ログは本人のセッション
+    serviceRoleClient = makeClient({
       support_tickets: [{ data: { id: TICKET_ID }, error: null }],
       support_ticket_messages: [{ data: null, error: null }],
-      admin_audit_logs: [INSERT_OK],
     });
+    userScopedClient = makeClient({ admin_audit_logs: [INSERT_OK] });
     const { NextRequest } = await import('next/server');
     const req = new NextRequest('http://localhost/api/admin/support/tickets', {
       method: 'POST',

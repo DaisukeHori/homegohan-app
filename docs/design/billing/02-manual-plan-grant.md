@@ -73,12 +73,12 @@
 | `docs/design/cross/02-rls-patterns.md` | §6.2 ロックキーの命名 |
 | `docs/design/CLAUDE.md` | RLS 必須・service_role は限定・監査ログ必須・snake_case |
 
-### 2.2 現行の事実 (origin/main `88b803f5` で採取し、`d2aac552` で突き合わせ直した。2026-10-17)
+### 2.2 現行の事実 (origin/main `88b803f5` で採取し、`d2aac552` で突き合わせ直した。2026-10-17。F2 は後の `20261024140000` (PR #2006)、F15 は後の #2007 の `{ shape: 'nested' }` の引数を添えた)
 
 | # | 事実 | 出どころ |
 |---|---|---|
 | F1 | 手動付与の route・画面は無い。`src/app/api/super-admin/` は `admins`・`audit-logs`・`backups`・`coupons`・`db-stats`・`email-outbox`・`embeddings`・`experiments`・`exports`・`feature-packages`・`flags`・`infra`・`llm`・`logs`・`plans`・`settings` (`users` は無い)。`src/app/api/admin/users/[id]/` は `route.ts` (GET / PATCH)・`freeze`・`login-history` (#1720 段 D)・`role` | `git ls-tree` (origin/main `b508f749` で数え直した) |
-| F2 | `personal_subscriptions` の RLS: INSERT / UPDATE は `personal_subscriptions_insert_admin` / `_update_admin` (admin / super_admin の JWT)・SELECT は本人 + admin / super_admin / finance / support・DELETE 禁止。anon は書けない | `supabase/migrations/20261016210000_billing_core.sql:49-63` |
+| F2 | `personal_subscriptions` の RLS: SELECT は本人 + admin / super_admin / finance / support・DELETE 禁止。INSERT / UPDATE のポリシー `personal_subscriptions_insert_admin` / `_update_admin` (admin / super_admin の JWT) は billing/01 で作られ、`20261024140000` で消えた (anon・authenticated の INSERT / UPDATE / DELETE の権限も外した)。いまは誰も PostgREST から書けず、書くのはサーバーが呼ぶ SECURITY DEFINER の関数だけ | `supabase/migrations/20261016210000_billing_core.sql:49-63`・`supabase/migrations/20261024140000_announcements_moderation_flags_select_only.sql:167-171` |
 | F3 | **admin の JWT から直接 INSERT しても `plan_key_cached` は同期できない**: 特権列ガード `guard_user_profiles_privileged` は `current_user IN ('authenticated','anon')` の UPDATE で `plan_key_cached` の変更を 42501 にする。運営のセッションも `authenticated` ロールなので、本人の JWT では書けない。写像 (SECURITY DEFINER・所有者 postgres) だけが書ける | 同 `:502-549` |
 | F4 | 写像 `billing_apply_stripe_subscription` のロック順: advisory `billing-user:<uuid>` → `stripe-subscription:<sub>` → 契約の行 (`FOR NO KEY UPDATE`) → `family_groups` の行 → `user_profiles` の行。家族の同期は `plan_type='family'` のとき `UPDATE family_groups SET plan_key, member_limit=LEAST(COALESCE(max_members,4),20) WHERE representative_id=<利用者> AND status='active'`、終了のときは「同じ利用者に同じプランの live な行が無いとき」だけ `free` / 4 に戻す。`plan_key_cached` は live な行から `ORDER BY created_at DESC, id LIMIT 1` で再計算 | 同 `:190-420` (billing/01 §6.4 (9) の 2.・3.・10.) |
 | F5 | 写像の 6. は「同じ利用者の別の live 行 (別の Stripe の契約、または手動付与) があれば `BILL_LIVE_ROW_CONFLICT`」。M 行が live の間に Stripe の契約が届けば、イベントは `failed`・500 で監査 `system.stripe.event_failed` (billing/01 S12・§13.3) | 同 `:296-308` |
@@ -91,7 +91,7 @@
 | F12 | 既存の運営の変更系の型: super_admin 専用は `POST /api/super-admin/coupons/[id]/apply` (`requireRole(['super_admin'])` → `getSupabaseAdmin()` で RPC → `recordAdminAudit` を user-scoped の client で・severity `warn`)。admin + super_admin は `POST /api/admin/users/[id]/freeze` (永久 BAN だけ super_admin)。401 は `AUTH_UNAUTHENTICATED`・403 は `OP_PERMISSION_DENIED`・404 は `NOT_FOUND`「ユーザーが見つかりません」 | 各 route |
 | F13 | `requireRole(roles)` は既定で AAL2 を求める (`MFA_REQUIRED_ROLES = super_admin / admin / finance / org_industrial_doctor`。support は対象外)。`src/app/api/{admin,super-admin,support,operator}` の全 handler が `requireRole` / `requireSuperAdmin` / `respondNotSupported` を呼ぶことを `tests/operator-mfa-entry-points-scan.test.ts` が見張る | `src/lib/auth/helpers.ts:154-180`・`src/lib/auth/mfa/policy.ts:17` |
 | F14 | 変更系 (POST / PUT / PATCH / DELETE) の handler は `tests/admin-mutation-audit-coverage-1571.test.ts` の `EXPECTED` に載り、`recordAdminAudit` を `request` つきのリテラルで呼ぶ。`admin_audit_logs` へ直接 INSERT する route・`x-forwarded-for` を直読みする route は `tests/admin-view-audit-1326.test.ts` (b) で 0 件 | 各テスト |
-| F15 | 本文を読む handler は最初の 2 行で `rejectNullCharacterBody(request)` を呼び、`src/__tests__/api/null-character-routes.test.ts` の `ENTRIES` に載る | 同テスト |
+| F15 | 本文を読む handler は最初の 2 行で `rejectNullCharacterBody(request)` を呼び (本冊の route は本文が nested なので、#2007 の後は `rejectNullCharacterBody(request, { shape: 'nested' })`)、`src/__tests__/api/null-character-routes.test.ts` の `ENTRIES` に載る | 同テスト |
 | F16 | 監査ログの本人の JWT からの INSERT は `action_type NOT LIKE 'system.%'` かつ運営の 6 ロールだけ。`system.*` と `actor_id NULL` は service_role / SECURITY DEFINER だけが書く (#1736) | `20261016238000_admin_audit_logs_insert_actor_only.sql:53-71` |
 | F17 | pg_cron のジョブの登録の書き方 (DO ブロック・`to_regclass('cron.job')` のガード・同じ名前の登録解除 → `cron.schedule('名前', '分 時 * * *', 'SELECT …;')`)。毎日のジョブは 03:10 / 03:15 / 03:20 / 03:25 / 03:45 / 03:55 / 01:30 / 00:20・00:35 JST。毎時 5 分 (`5 * * * *`) と 5 分ごと (`*/5`・`2-59/5`) のジョブもある。`operator/08` §3.0・§3.1 の注記が「migration が pg_cron に登録しているジョブは 11 つ」と名前の一覧を持ち、`tests/log-cleanup-dau-snapshot-contract.test.ts` が全 migration の `cron.schedule` の名前と数を突き合わせる | `20261010150000:216-233`・`20261016100000:160-170`・`docs/design/operator/08-cron-batches.md:15-22, 152-156` |
 | F18 | DB の型 (`src/types/database.types.ts`・`packages/shared/src/database.types.ts`) は migration の `CREATE FUNCTION` (トリガー関数を除く。EXECUTE の有無を問わない: `invoke_purge_hidden_content` も載る) を全部持つことを `tests/database-types-migrations-contract.test.ts` が求める | 同テスト・`src/types/database.types.ts:8902` |
@@ -476,7 +476,7 @@ COMMENT ON FUNCTION public.billing_revoke_manual_subscription(uuid) IS
 
 | 相手 | 相手が持つもの → 待つもの | 1 トランザクションのジョブが持つもの → 待つもの |
 |---|---|---|
-| 強制解散 `operator_force_dissolve_family` (最新の定義 `20261017130000_operator_mfa_db_gate.sql:301` で `family_groups` を `FOR NO KEY UPDATE` → `:304` で `UPDATE user_profiles … WHERE family_id`。ロックの順は `20261008090100_family_lock_order.sql:204`・`:207` と同じ。#1917 で後始末は `family_dissolve_apply` に移ったが、順は同じ)・利用者の解散 `dissolve_family_by_representative` (`20261019120000_self_dissolve.sql`。家族の行 → `family_members` → `user_profiles`。family/11 §11.3)・脱退 `leave_family` (`20261008090100_family_lock_order.sql:376`)・メンバーの削除 `remove_family_member` (同 `:422`) | `family_groups` の行 (G) → `user_profiles` の行 (U1) | `user_profiles` の行 (U1。U1 の周で書いた) → `family_groups` の行 (G。U2 の周の家族の同期) |
+| 強制解散 `operator_force_dissolve_family` (最新の定義 `20261026100000_operator_force_dissolve_family_missing.sql` (家族の行を `FOR NO KEY UPDATE` (`:57`) → 無い家族・解散済みで止める → `family_dissolve_apply` (`:67`)。`user_profiles` の `family_id` を NULL にする `UPDATE user_profiles … WHERE family_id` は `family_dissolve_apply` の中)。ロックの順 (家族の行 → `user_profiles`) は `20261008090100_family_lock_order.sql:204`・`:207` と同じ。#1917 で後始末は `family_dissolve_apply` に移ったが、順は同じ)・利用者の解散 `dissolve_family_by_representative` (`20261019120000_self_dissolve.sql`。家族の行 → `family_members` → `user_profiles`。family/11 §11.3)・脱退 `leave_family` (`20261008090100_family_lock_order.sql:376`)・メンバーの削除 `remove_family_member` (同 `:422`) | `family_groups` の行 (G) → `user_profiles` の行 (U1) | `user_profiles` の行 (U1。U1 の周で書いた) → `family_groups` の行 (G。U2 の周の家族の同期) |
 | 代表者の交代 (U2 → U1。トリガー `billing_family_plan_follow_representative` は `family_groups` の行のあとに新しい代表者の advisory を取る。`20261016210000_billing_core.sql:451-460`) | `family_groups` の行 (G) → advisory `billing-user:<U1>` | advisory `billing-user:<U1>` (U1 の周で取った) → `family_groups` の行 (G) |
 
 利用者ごとに COMMIT すれば、ジョブが同時に持つのは 1 人分の鍵と行だけで、その順は写像・付与・取り消しと同じ (advisory → 契約の行 → `family_groups` の行 → `user_profiles` の行) になる。写像 (1 人分) が家族の関数・交代と循環しない理由 (billing_core.sql:451-460 の注記) がそのまま当てはまる。
@@ -601,7 +601,7 @@ $$;
 
 ### 6.5 migration が触らないもの
 
-触らないもの: `personal_subscriptions` の列・CHECK・索引・RLS ポリシー (`personal_subscriptions_insert_admin` / `_update_admin` / `_select` / `_no_delete`。F2)・`billing_apply_stripe_subscription`・`billing_claim_stripe_event`・`billing_finish_stripe_event`・`billing_family_plan_follow_representative` とそのトリガー・特権列ガード 2 本・`get_effective_plan`・`apply_coupon`・`subscription_plans`・`family_groups`・`user_profiles`・`admin_audit_logs` のポリシー・`supabase/baseline/**` (凍結。billing/01 §6.5)。本冊の migration が作る PROCEDURE は §6.4 の (5) の 1 本だけで、既存のプロシージャは無い。
+触らないもの: `personal_subscriptions` の列・CHECK・索引・RLS ポリシー (`_select` / `_no_delete`。`personal_subscriptions_insert_admin` / `_update_admin` は本冊の後の `20261024140000` で消えた。F2)・`billing_apply_stripe_subscription`・`billing_claim_stripe_event`・`billing_finish_stripe_event`・`billing_family_plan_follow_representative` とそのトリガー・特権列ガード 2 本・`get_effective_plan`・`apply_coupon`・`subscription_plans`・`family_groups`・`user_profiles`・`admin_audit_logs` のポリシー・`supabase/baseline/**` (凍結。billing/01 §6.5)。本冊の migration が作る PROCEDURE は §6.4 の (5) の 1 本だけで、既存のプロシージャは無い。
 
 本冊の関数が既存の表に書くのは `personal_subscriptions` (INSERT 1 行・`status` / `cancelled_at` / `cancel_at` の UPDATE)・`family_groups` (`plan_key` / `member_limit`)・`user_profiles` (`plan_key_cached`)・`admin_audit_logs` (INSERT) だけで、どれも写像 (billing/01 §6.4 (9)) がすでに書いている列。
 
@@ -665,25 +665,25 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 | 写像 `billing_apply_stripe_subscription` の 6. (F5) | 読 | 同じ利用者の別の live 行 | 変えない。M 行が live なら `BILL_LIVE_ROW_CONFLICT` (S9・S10) |
 | 家族のトリガー `billing_family_plan_follow_representative` (F6) | 読 (live な家族プランの行) | `plan_type='family'` の live 行 | 変えない。M 行も拾う (S7・S8) |
 | `family_groups.member_limit` の人数の上限の判定: `create_family_invite` (最新の定義 `20261022130000_family_invite_plan_gate.sql:38`。`:68` で読み `:71` で `MEMBER_LIMIT_EXCEEDED`)・`accept_family_invite` (`20261017030000_parental_consent_and_birth_date.sql:833`。`:873` で読み `:911`)・`add_family_child` (同 `:354`。`:403` で読み `:410`) ← `src/app/api/family/invites/route.ts:157`・`invites/[id]/accept/route.ts:59`・`members/child/route.ts:94` | 読 (`family_groups` の行の `member_limit`・`status`) | 招待の作成・承諾・子供の追加のときのメンバー数 < `member_limit` | 変えない。付与・取り消し・期限切れの関数が `member_limit` を写像と同じ式で書き換えるので、`family_pro` の付与の後は 8、取り消し・期限切れの後は 4 で判定する。すでに上限を超えたグループでは新しい招待の作成・承諾・子供の追加だけが止まり、既存のメンバーは外さない (§16 の 6) |
-| `src/app/(main)/family/dashboard/page.tsx:56` (`.select('id, name, member_limit, status')`。`:132` で `n/<member_limit> 人`)・`src/app/(main)/family/members/page.tsx:60` (`.select('id, name, member_limit')`。`:191` で同じ表示) | 読 (本人のセッション。`family_groups.member_limit`) | 自分の家族グループの 1 行 | 変えない。付与・取り消し・期限切れの後は関数が書いた `member_limit` がそのまま出る (上限を超えたグループは `6/4 人` のように出る。§16 の 6) |
-| `family_groups` の `status` / `representative_id` を書く入口: 強制解散 `src/app/api/operator/membership/family/[id]/dissolve/route.ts:66` → `operator_force_dissolve_family` (最新の定義 `20261019120000_self_dissolve.sql` の 4 → `family_dissolve_apply`。`status='dissolved'`・メンバーを `left`・`user_profiles.family_id` を NULL・`representative_id` を NULL。`plan_key` / `member_limit` は書かない)・利用者の解散 `src/app/api/family/dissolve/route.ts` → `dissolve_family_by_representative` (→ `family_dissolve_apply`。`status='dissolved'`・メンバーを `left`・`user_profiles.family_id` を NULL・`representative_id` を NULL。`plan_key` / `member_limit` は書かない。family/11)・強制の代表者の交代 `operator/membership/family/[id]/transfer/route.ts:79` → `operator_force_representative_transfer` (最新の定義 `20261023140000_operator_transfer_return_old_owner.sql:105`)・利用者どうしの交代 `family/representative-transfer/[id]/accept/route.ts:52` → `accept_family_representative_transfer` (`20261017030000:947`)。交代の提案 `representative-transfer/propose/route.ts` は `family_groups` を書かない | 書 (`status` / `representative_id`) | — | 変えない。代表者の交代は上の家族のトリガーの行 (S8)。強制解散は §7.3 の「M `active` (家族プラン・代表者) × 強制解散」の行 (代表者の M 行も `plan_key_cached` も変わらず、解散したグループの `plan_key` / `member_limit` はそのまま残る。付与・取り消し・期限切れの家族の同期は `status='active'` のグループだけを書くので、解散したグループには触れない) |
+| `src/app/(main)/family/dashboard/page.tsx:56` (`.select('id, name, member_limit, status')`。`:132` で `n/<member_limit> 人`)・`src/app/(main)/family/members/page.tsx:102` (`.select('id, name, member_limit')`。`:315` で同じ表示) | 読 (本人のセッション。`family_groups.member_limit`) | 自分の家族グループの 1 行 | 変えない。付与・取り消し・期限切れの後は関数が書いた `member_limit` がそのまま出る (上限を超えたグループは `6/4 人` のように出る。§16 の 6) |
+| `family_groups` の `status` / `representative_id` を書く入口: 強制解散 `src/app/api/operator/membership/family/[id]/dissolve/route.ts:67` → `operator_force_dissolve_family` (最新の定義 `20261026100000_operator_force_dissolve_family_missing.sql`。無い家族は `FAMILY_NOT_FOUND`・解散済みは `FAMILY_ALREADY_DISSOLVED` で止め、それ以外は `family_dissolve_apply`。`status='dissolved'`・メンバーを `left`・`user_profiles.family_id` を NULL・`representative_id` を NULL。`plan_key` / `member_limit` は書かない)・利用者の解散 `src/app/api/family/dissolve/route.ts` → `dissolve_family_by_representative` (→ `family_dissolve_apply`。`status='dissolved'`・メンバーを `left`・`user_profiles.family_id` を NULL・`representative_id` を NULL。`plan_key` / `member_limit` は書かない。family/11)・強制の代表者の交代 `operator/membership/family/[id]/transfer/route.ts:83` → `operator_force_representative_transfer` (最新の定義 `20261023140000_operator_transfer_return_old_owner.sql:105`)・利用者どうしの交代 `family/representative-transfer/[id]/accept/route.ts:55` → `accept_family_representative_transfer` (`20261017030000:947`)。交代の提案 `representative-transfer/propose/route.ts` は `family_groups` を書かない | 書 (`status` / `representative_id`) | — | 変えない。代表者の交代は上の家族のトリガーの行 (S8)。強制解散は §7.3 の「M `active` (家族プラン・代表者) × 強制解散」の行 (代表者の M 行も `plan_key_cached` も変わらず、解散したグループの `plan_key` / `member_limit` はそのまま残る。付与・取り消し・期限切れの家族の同期は `status='active'` のグループだけを書くので、解散したグループには触れない) |
 | `src/lib/billing/repository.ts` `findLiveSubscription` / `service.ts` `startCheckout`・`scheduleCancellation`・`revokeCancellation`・`getBillingSummary` (F9・F10) | 読 | live 5 値・`stripe_subscription_id` | 変えない。M 行は購入 409・解約の予約 409・要約 `source: 'manual'` |
 | `src/lib/billing/core.ts:724-741` `summarizeSubscription` (`getBillingSummary` の要約。`GET /api/billing/subscription` → `/account/billing`・`/frozen/billing`) | 読 | `findLiveSubscription` の 1 行 (live 5 値) の `status`・`stripe_subscription_id`・`cancel_at_period_end` (`source` = `stripe_subscription_id` の有無・`can_purchase = !live`・`can_cancel` / `can_resume = live && stripeBacked && …`) | 変えない (核。§14.2 で触らない)。live な M 行は `source: 'manual'`・`can_purchase: false`・`can_cancel: false`・`can_resume: false` で、利用者の画面に解約・再開のボタンは出ない (S16 の `/frozen/billing` も同じ要約)。取り消し (S3)・期限切れの後は live 行が無いので `status: null`・`source: null`・`can_purchase: true` |
 | `src/lib/billing/account-deletion.ts` (退会の段階 `billing`) ← `listStripeBackedSubscriptions` | 読 | `stripe_subscription_id IS NOT NULL` | 変えない。M 行は列挙されず Stripe を呼ばない (S17) |
-| `src/app/api/admin/users/[id]/route.ts:93-100` (運営のユーザー詳細の `active_subscription`) | 読 | session client・live 5 値の最新 1 行の `plan_key, status, current_period_end` | 変えない。M 行は `next_billing_at = current_period_end` (= 期限か NULL) として出る。画面 `/admin/users/[id]` の「現在のサブスクリプション」の節はそのまま。本冊の節 (§10) が由来と期限を別に出す |
-| `src/app/api/admin/finance/exports/route.ts:131-142` (`subscriptions` の CSV) | 読 | 9 列・status で絞らない | 変えない。M 行も出る (`stripe_*` は列に無い) |
-| `src/app/api/admin/finance/invoices/[id]/route.ts:44-52` (運営の請求書の詳細。請求先の利用者を引く) | 読 | `stripe_subscription_id = <イベントの subscription>` の 1 行 | 変えない。M 行は `stripe_subscription_id IS NULL` なので一致せず、請求書の詳細の対象にならない (M 行には Stripe の請求書が無い) |
-| `src/app/api/admin/finance/reconciliation/route.ts:68`・`dashboard/route.ts:45-56` | 読 | live 4 値 / 集計 | 変えない (実データ化は配線の残りの冊) |
+| `src/app/api/admin/users/[id]/route.ts:103-110` (運営のユーザー詳細の `active_subscription`) | 読 | session client・live 5 値の最新 1 行の `plan_key, status, current_period_end` | 変えない。M 行は `next_billing_at = current_period_end` (= 期限か NULL) として出る。画面 `/admin/users/[id]` の「現在のサブスクリプション」の節はそのまま。本冊の節 (§10) が由来と期限を別に出す |
+| `src/app/api/admin/finance/exports/route.ts:140-150` (`subscriptions` の CSV) | 読 | 9 列・status で絞らない | 変えない。M 行も出る (`stripe_*` は列に無い) |
+| `src/app/api/admin/finance/invoices/[id]/route.ts:50-64` (運営の請求書の詳細。請求先の利用者を引く) | 読 | `stripe_subscription_id = <イベントの subscription>` の 1 行 | 変えない。M 行は `stripe_subscription_id IS NULL` なので一致せず、請求書の詳細の対象にならない (M 行には Stripe の請求書が無い) |
+| `src/app/api/admin/finance/reconciliation/route.ts:81-83`・`dashboard/route.ts:64-81` | 読 | live 4 値 / 集計 | 変えない (実データ化は配線の残りの冊) |
 | `src/lib/super-admin/plan-subscribers.ts` (F22) | 読 | live 5 値 | 変えない (S19) |
 | `src/app/api/super-admin/plans/[id]/price-impact/route.ts` (価格変更の影響の試算) | — (`personal_subscriptions` を集計しない。route の冒頭の注記 `:8`。価格の変更は新規契約だけに効く) | — | 変えない。M 行は試算に入らない (既存の契約の行を数えない route なので、M 行が増えても結果は変わらない) |
-| `apply_coupon` (F21) ← `src/lib/plan/coupon.ts:129` `applyCoupon` (service_role の client で RPC) ← `src/app/api/super-admin/coupons/[id]/apply/route.ts:63` (`POST /api/super-admin/coupons/{id}/apply`。S18 の呼び口) | 読・書 | 行を `FOR NO KEY UPDATE`・`active_coupon_redemption_id` | 変えない (3 つとも触らない)。本冊の UPDATE は `status` / `cancelled_at` / `cancel_at` だけ (S18) |
+| `apply_coupon` (F21) ← `src/lib/plan/coupon.ts:149` `applyCoupon` (service_role の client で RPC) ← `src/app/api/super-admin/coupons/[id]/apply/route.ts:71` (`POST /api/super-admin/coupons/{id}/apply`。S18 の呼び口) | 読・書 | 行を `FOR NO KEY UPDATE`・`active_coupon_redemption_id` | 変えない (3 つとも触らない)。本冊の UPDATE は `status` / `cancelled_at` / `cancel_at` だけ (S18) |
 | `src/lib/account-export-tables.ts:249-255` (本人の書き出し) | 読 | `omit` 6 列 | 変えない (列を足さない)。M 行は `status` / `current_period_end` / `cancelled_at` がそのまま出る |
 | `src/lib/feature-flags.ts:217-229` (`loadUserContext`。機能フラグの判定) | 読 (`user_profiles.plan_key_cached`) | 空なら `free` | 変えない。本冊の関数が同期するので、付与後は M 行の `plan_key` でプランの段階公開が効き、取り消し・期限切れの後は `free` に戻る |
 | `src/app/api/feature-flags/route.ts:45-56` (機能フラグの一覧の判定) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。上と同じ |
 | `src/lib/super-admin/flag-active-users.ts:73-93` (フラグの対象人数の集計) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。M 行の利用者はそのプランの人数に入る |
 | `supabase/functions/_shared/ai-chat-flag.ts:52-108` (Edge Function の AI 相談のスイッチ) | 読 (`plan_key_cached`) | 空なら `free` (`DEFAULT_PLAN_KEY`) | 変えない。上と同じ (本冊は Edge Function を変えない) |
-| `src/app/api/admin/users/route.ts:73,178` (運営のユーザー一覧の `plan_key`。`UserListItemSchema`) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。M 行の利用者は付与したプランで出る (由来は出さない。由来と期限は本冊の節 §10 だけ) |
-| `src/app/api/admin/users/[id]/route.ts:140` (運営のユーザー詳細の `plan_key`) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。上と同じ |
+| `src/app/api/admin/users/route.ts:91,193` (運営のユーザー一覧の `plan_key`。`UserListItemSchema`) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。M 行の利用者は付与したプランで出る (由来は出さない。由来と期限は本冊の節 §10 だけ) |
+| `src/app/api/admin/users/[id]/route.ts:149` (運営のユーザー詳細の `plan_key`) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。上と同じ |
 | `src/lib/account-export-tables.ts:142` (本人の書き出しの `user_profiles`) | 読 (`plan_key_cached`) | 列をそのまま | 変えない。M 行の `plan_key` がそのまま出る |
 | `user_profiles` の本人の UPDATE (特権列ガード) | 書 (本人) | `plan_key_cached` は 42501 | 変えない。本冊の関数は SECURITY DEFINER (所有者 postgres) なのでガードに当たらない (F3) |
 | `admin_audit_logs` の INSERT ポリシー (F16) | 書 | 本人の JWT は `system.*` を書けない | route は `admin.billing.*` を user-scoped の client で (通る)。`system.billing.manual_grant_expired` は SECURITY DEFINER の関数が書く (RLS を通らない) |
@@ -1301,7 +1301,7 @@ export interface ManualGrantClientFailure {
 export type ManualGrantClientResult<T> = ManualGrantClientSuccess<T> | ManualGrantClientFailure;
 
 /**
- * 運営 API の失敗の本文 (nested) と、rejectNullCharacterBody の flat の本文 ({ error, code }) の両方から code だけを読む。
+ * 運営 API の失敗の本文 (nested。手動付与の route の rejectNullCharacterBody の 400 も { shape: 'nested' } で nested) と、flat の本文 ({ error, code }) の両方から code だけを読む。
  * 本文の文面 (error.message) は読まない (src/lib/auth/mfa/client.ts:87-96 と同じ。tests/lib-raw-error-message-scan.test.ts が
  * src/lib の結果に「エラーらしい名前の .message」を入れることを違反に数える。F27)
  */
@@ -1399,7 +1399,7 @@ export async function revokeManualPlanRequest(userId: string, body: ManualPlanRe
  */
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { AuthError, ForbiddenError } from '@/lib/auth/errors'; import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { createClient } from '@/lib/supabase/server';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
@@ -1444,7 +1444,7 @@ function errorJson(code: string, message: string, status: number): NextResponse 
 /** requireRole の失敗 → 401 / 403 (既存の super-admin の route と同じ形)。それ以外は投げ直す */
 function authFailure(err: unknown): NextResponse {
   if (err instanceof AuthError) return errorJson('AUTH_UNAUTHENTICATED', '認証が必要です', HTTP_UNAUTHORIZED);
-  if (err instanceof ForbiddenError) return errorJson('OP_PERMISSION_DENIED', '権限がありません', HTTP_FORBIDDEN);
+  if (err instanceof ForbiddenError) return errorJson('OP_PERMISSION_DENIED', operatorForbiddenMessageOf(err), HTTP_FORBIDDEN);
   throw err;
 }
 
@@ -1484,7 +1484,7 @@ export async function GET(_request: Request, props: Params): Promise<NextRespons
 
 export async function POST(request: Request, props: Params): Promise<NextResponse> {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   let actor;
   try {
@@ -1529,7 +1529,7 @@ export async function POST(request: Request, props: Params): Promise<NextRespons
 
 export async function DELETE(request: Request, props: Params): Promise<NextResponse> {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   let actor;
   try {
@@ -1978,7 +1978,7 @@ sequenceDiagram
 | `INVALID_CHARACTER` | 400 | `rejectNullCharacterBody` (nested の形 `{ error: { code, message } }`。#1917 の続き) | 既存の文 |
 | `OP_INVALID_INPUT` | 400 | JSON でない (`invalidJsonBodyResponse`) / Zod (`invalidInputResponse`。`message` は最初の issue の文: `有効期限は今日より後の日付を指定してください` ほか) / DB 関数の `BILL_MANUAL_EXPIRES_AT_PAST` (`MANUAL_GRANT_ERROR_MESSAGES.OP_INVALID_INPUT`) | 入力値が不正です (既定) / 有効期限は今日より後の日付を指定してください |
 | `AUTH_UNAUTHENTICATED` | 401 | `requireRole` (`AuthError`) | 認証が必要です |
-| `OP_PERMISSION_DENIED` | 403 | `requireRole` (`ForbiddenError`。ロール不足・凍結・`MfaRequiredError`) | 権限がありません |
+| `OP_PERMISSION_DENIED` | 403 | `requireRole` (`ForbiddenError`。ロール不足・凍結・`MfaRequiredError`) | `MfaRequiredError` なら「二段階認証の確認が必要です」(登録が要るなら「二段階認証の登録が必要です」)、それ以外は「権限がありません」(`operatorForbiddenMessageOf`) |
 | `OP_SELF_MODIFY` [NEW: cross/04 に未記載。`POST /api/super-admin/admins/[id]/mfa/reset` が先に使っている] | 403 | route (`POST` / `DELETE` の `selfModifyFailure`。パスの id = 実行者。§9.0 の 4 = 本文の検証・service・DB より前) / service (`grantManualPlan` / `revokeManualPlan` の先頭。二重の守り。route を経たときは届かない) | 自分自身のプランは、ここでは変更できません |
 | `NOT_FOUND` | 404 | route (UUID の形でない) / service (`user_profiles` に無い) / DB 関数の `BILL_UNKNOWN_USER` | ユーザーが見つかりません |
 | `OP_SUBSCRIPTION_ALREADY_ACTIVE` | 409 | DB 関数の `BILL_LIVE_ROW_CONFLICT` | すでに有効な契約があります |
@@ -2306,7 +2306,7 @@ grep の語 = 本冊が足す・変える名前。段 = §14.1。
 | # | 項目 | 本冊の仮置き |
 |---|---|---|
 | 1 | 誰が手動付与できるか (admin も含めるか)。既存の文書に定めが無い | **super_admin だけ** (課金なしで有料の権利を与える = 遡及適用のクーポンや永久 BAN と同じ級の操作。AAL2 の門に載る)。admin も含めるなら `requireRole(['admin', 'super_admin'])` にし、画面の `isSuperAdmin` を `isAdmin` に替えるだけ (§8.5・§8.7。テスト 15・49 の期待も)。業務判断なので、異議があれば戻す |
-| 2 | `personal_subscriptions` の admin の RLS (`personal_subscriptions_insert_admin` / `_update_admin`。F2) を残すか。本冊の経路は関数だけで、このポリシーは使わない。残すと admin の JWT から PostgREST で `plan_key_cached` と同期しない行を作れる (F3) | 残す (本冊は「追加だけ」。ポリシーの削除は含めない)。消すなら別の migration (`DROP POLICY` 2 本と `.down.sql`) で、`tests/integration/security/billing-personal-subscriptions-rls.test.ts` の billing/01 §13 のテスト 68 (`it('admin can still INSERT/UPDATE; anon has no INSERT/UPDATE/DELETE privilege')`) と billing/01 §6.2 の文の追随が要る。推奨は消す側 |
+| 2 | `personal_subscriptions` の admin の RLS (`personal_subscriptions_insert_admin` / `_update_admin`。F2) を残すか。本冊の経路は関数だけで、このポリシーは使わない。残すと admin の JWT から PostgREST で `plan_key_cached` と同期しない行を作れる (F3) | 決着: 消した。本冊は「追加だけ」でポリシーの削除を含めず、別の migration `20261024140000_announcements_moderation_flags_select_only.sql` (PR #2006。`.down.sql` あり) が 2 本を DROP し、anon・authenticated の INSERT / UPDATE / DELETE の権限も外した。`tests/integration/security/billing-personal-subscriptions-rls.test.ts` の billing/01 §13 のテスト 68 は `it('admin cannot INSERT/UPDATE/DELETE directly (42501); anon and authenticated have no INSERT/UPDATE/DELETE privilege')` に改めた |
 | 3 | 利用者向け `/account/billing` の M 行の表示。いまは「次回更新日: <current_period_end>」(F9・`src/app/(main)/account/billing/page.tsx:259`)。期限つきの M 行では「有効期限」が正しい見出し | 本冊の段では変えない (核の画面)。変えるなら `source === 'manual'` のとき見出しを「有効期限」に (段 C の後の小さな PR) |
 | 4 | 期限を過ぎてからジョブ (00:11 JST) までの最長 11 分、権利が残る (`get_effective_plan` は `current_period_end` を見ない。R5 で `get_effective_plan` は変えない) | 許容する (有料の権利が数分長く残るだけ)。ゼロにするなら `get_effective_plan` に `stripe_subscription_id IS NULL AND current_period_end <= now()` を除く条件を足す改定 (billing/01 R5 の例外) が要る |
 | 5 | 期限切れのジョブの途中で 1 人分の処理が例外になったとき (デッドロックは §6.4 で起きない形にした。残るのは想定外の DB の失敗) | 利用者ごとに COMMIT するので、それまでの利用者の期限切れは残り、例外の利用者とその後の利用者は翌日の実行で処理する (その間、権利が最長 24 時間残る)。失敗は `cron.job_run_details` に残る。例外を握りつぶして次の利用者に進む形 (`EXCEPTION` の節) は採らない (失敗がジョブの記録に残らなくなる。PL/pgSQL では `EXCEPTION` の節の中で `COMMIT` もできない) |

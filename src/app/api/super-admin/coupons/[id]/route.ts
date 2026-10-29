@@ -5,13 +5,28 @@
  *
  * operator/01-data-model.md §3.5 / operator/04-plan-management.md §4.1 準拠
  * 権限: super_admin のみ
+ *
+ * 状態の遷移 (#2064): PATCH で status を送ったときは今の status を読み、遷移表 (COUPON_STATUS_TRANSITIONS。
+ * 画面のボタンと同じ active → paused・paused → active。expired は終端) に無い変更 (同じ状態への変更を含む) を
+ * 409 OP_COUPON_INVALID_TRANSITION で断る (書かず、監査ログも残さない)。DB には遷移を止めるトリガーが無い。
+ * 更新は読んだ status のままのときだけ書く条件つきで、読んでから書くまでに別の操作 (2 つのタブ・2 人) が状態を変えていたら
+ * 0 行 → 読み直して、無ければ 404、あれば 409 CONFLICT_STALE_DATA (書かず、監査ログも残さない)。
+ * status を送らない更新は遷移を検査せず、今までどおり条件なしで書く (A/B テストの PATCH (#2059) と同じ形)
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { createClient } from '@/lib/supabase/server';
-import { COUPON_VALID_UNTIL_BEFORE_FROM_MESSAGE, CouponUpdateSchema } from '@/lib/super-admin/coupons-schemas';
+import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
+import {
+  COUPON_INVALID_TRANSITION_ERROR_CODE,
+  COUPON_VALID_UNTIL_BEFORE_FROM_MESSAGE,
+  CouponUpdateSchema,
+  couponStatusTransitionMessage,
+  isAllowedCouponStatusTransition,
+} from '@/lib/super-admin/coupons-schemas';
+import { STALE_DATA_ERROR_CODE, STALE_DATA_HTTP_STATUS } from '@/lib/admin/api-error-message';
 import { internalError } from '@/lib/api/errors';
 import { couponValidityDay, couponValidUntilTimestamp } from '@/lib/super-admin/coupon-validity';
 import { recordAdminAudit } from '@/lib/admin/audit';
@@ -24,6 +39,14 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 /** クーポンが無い (UUID の形でない id を含む) */
 const COUPON_NOT_FOUND_RESPONSE = { error: { code: 'OP_COUPON_NOT_FOUND', message: 'クーポンが見つかりません' } } as const;
+
+/** 遷移表に無い状態の変更を断るときの HTTP ステータス (409 Conflict。今の状態と衝突する) */
+const COUPON_INVALID_TRANSITION_HTTP_STATUS = 409;
+
+/** 読んでから書くまでに別の操作がクーポンの状態を変えていた (条件つきの更新が 0 行) */
+const COUPON_STALE_STATUS_RESPONSE = {
+  error: { code: STALE_DATA_ERROR_CODE, message: '別の操作でクーポンの状態が先に変わりました。読み込み直してください' },
+} as const;
 
 export async function GET(_request: NextRequest, props: RouteContext) {
   const params = await props.params;
@@ -55,7 +78,7 @@ export async function GET(_request: NextRequest, props: RouteContext) {
       return NextResponse.json({ error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } }, { status: 401 });
     }
     if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } }, { status: 403 });
+      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: operatorForbiddenMessageOf(err) } }, { status: 403 });
     }
     console.error('[super-admin/coupons/[id] GET]', err);
     return NextResponse.json({ error: { code: 'OP_INTERNAL_ERROR', message: '内部エラー' } }, { status: 500 });
@@ -110,7 +133,7 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
 
     const { data: existing, error: fetchErr } = await supabase
       .from('coupons')
-      .select('id, code, valid_from')
+      .select('id, code, valid_from, status')
       .eq('id', params.id)
       .maybeSingle();
 
@@ -134,19 +157,49 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
       ]);
     }
 
-    const { data: updated, error } = await supabase
-      .from('coupons')
-      .update(updateData)
-      .eq('id', params.id)
-      .select()
-      .maybeSingle();
+    // 状態を変えるときは、読んだ今の status を遷移表で検査する (#2064)。読んだ status は更新の条件にも使う
+    const currentStatus: string | null = input.status !== undefined ? existing.status : null;
+    if (input.status !== undefined && !isAllowedCouponStatusTransition(existing.status, input.status)) {
+      return NextResponse.json(
+        {
+          error: {
+            code: COUPON_INVALID_TRANSITION_ERROR_CODE,
+            message: couponStatusTransitionMessage(existing.status, input.status),
+          },
+        },
+        { status: COUPON_INVALID_TRANSITION_HTTP_STATUS },
+      );
+    }
+
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    let updateQuery = getSupabaseAdmin().from('coupons').update(updateData).eq('id', params.id);
+    // 状態の変更は、読んだ status のままのときだけ書く (二度押し・2 つのタブで、2 本目が古い状態の検査のまま書かないように。#2064)
+    if (currentStatus !== null) {
+      updateQuery = updateQuery.eq('status', currentStatus);
+    }
+    const { data: updated, error } = await updateQuery.select().maybeSingle();
 
     if (error) {
       return internalError('PATCH /api/super-admin/coupons/[id]', error, { userId: user.id }, { shape: 'nested' });
     }
-    // 読んでから書くまでに消された (更新した行が無い) ときは 404 (#1917)
     if (!updated) {
-      return NextResponse.json(COUPON_NOT_FOUND_RESPONSE, { status: 404 });
+      // 読んでから書くまでに消された (更新した行が無い) ときは 404 (#1917)
+      if (currentStatus === null) {
+        return NextResponse.json(COUPON_NOT_FOUND_RESPONSE, { status: 404 });
+      }
+      // 状態の条件で 0 行: 読み直して、行が消えていれば 404、あれば別の操作が先に状態を変えたので 409 (書かず、監査も残さない)
+      const { data: reread, error: rereadError } = await supabase
+        .from('coupons')
+        .select('id')
+        .eq('id', params.id)
+        .maybeSingle();
+      if (rereadError) {
+        return internalError('PATCH /api/super-admin/coupons/[id]', rereadError, { userId: user.id, table: 'coupons' }, { shape: 'nested' });
+      }
+      if (!reread) {
+        return NextResponse.json(COUPON_NOT_FOUND_RESPONSE, { status: 404 });
+      }
+      return NextResponse.json(COUPON_STALE_STATUS_RESPONSE, { status: STALE_DATA_HTTP_STATUS });
     }
 
     // 監査ログ記録
@@ -168,7 +221,7 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
       return NextResponse.json({ error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } }, { status: 401 });
     }
     if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } }, { status: 403 });
+      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: operatorForbiddenMessageOf(err) } }, { status: 403 });
     }
     console.error('[super-admin/coupons/[id] PATCH]', err);
     return NextResponse.json({ error: { code: 'OP_INTERNAL_ERROR', message: '内部エラー' } }, { status: 500 });
@@ -207,7 +260,8 @@ export async function DELETE(request: NextRequest, props: RouteContext) {
       );
     }
 
-    const { error: deleteErr } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { error: deleteErr } = await getSupabaseAdmin()
       .from('coupons')
       .delete()
       .eq('id', params.id);
@@ -235,7 +289,7 @@ export async function DELETE(request: NextRequest, props: RouteContext) {
       return NextResponse.json({ error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } }, { status: 401 });
     }
     if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } }, { status: 403 });
+      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: operatorForbiddenMessageOf(err) } }, { status: 403 });
     }
     console.error('[super-admin/coupons/[id] DELETE]', err);
     return NextResponse.json({ error: { code: 'OP_INTERNAL_ERROR', message: '内部エラー' } }, { status: 500 });

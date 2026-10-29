@@ -436,7 +436,7 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
     }
   });
 
-  it('値を読む場所が決まっている変数 (AI_ULTIMATE_MODE_DAILY_LIMIT・AUTH_LOGIN_ALERT・AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・CSP_REPORT_ONLY・DSR_RESPONSE_DUE_DAYS・EMAIL_OUTBOX_*・EXPO_ACCESS_TOKEN・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・FEATURE_FLAG_CACHE_TTL_MS・IAP_RECONCILE_*・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・OPERATOR_MFA_ENFORCE_FROM・OPS_ALERT_*・ORG_CHALLENGE_SHOW_NAMES・PHOTO_SIGNED_URL_TTL_SECONDS・PUSH_OUTBOX_*) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
+  it('値を読む場所が決まっている変数 (AI_ULTIMATE_MODE_DAILY_LIMIT・AUTH_LOGIN_ALERT・AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・CSP_REPORT_ONLY・DISH_FAVORITES_MAX_PER_USER・DSR_RESPONSE_DUE_DAYS・EMAIL_OUTBOX_*・EXPO_ACCESS_TOKEN・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・FEATURE_FLAG_CACHE_TTL_MS・IAP_RECONCILE_*・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・OPERATOR_MFA_ENFORCE_FROM・OPS_ALERT_*・ORG_CHALLENGE_SHOW_NAMES・PHOTO_SIGNED_URL_TTL_SECONDS・PUSH_OUTBOX_*) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
     const sealed = ENV_VARS.filter((entry) => entry.readOnlyBy !== undefined);
 
     expect(sealed.map((entry) => [entry.name, entry.readOnlyBy]).sort()).toEqual([
@@ -451,6 +451,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       ['CRON_SECRET_PREVIOUS', 'src/lib/cron-auth.ts'],
       // #1169 本番の CSP を「報告だけ」にするスイッチ。proxy (src/proxy.ts) が読むので、何も import しない csp.ts の isCspReportOnly 1 か所で読む
       ['CSP_REPORT_ONLY', 'src/lib/security/csp.ts'],
+      // #2011 献立の料理のお気に入りの件数の上限。正の整数でなければ既定値にする読み方を 1 か所に置く
+      ['DISH_FAVORITES_MAX_PER_USER', 'src/modules/dish-favorites/server.ts'],
       // #1178 個人情報の請求の応答期限 (日)。1〜365 の整数でなければ既定の 30 日にする読み方を 1 か所に置く
       ['DSR_RESPONSE_DUE_DAYS', 'src/lib/data-subject-requests/config.ts'],
       // #1193 メールの送信待ちの試行の上限と 1 回の件数。不正な値の扱い (既定値に戻して warn) を送信待ちの cron の route 1 か所に置く
@@ -507,6 +509,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       getOptionalEnv('CRON_SECRET_PREVIOUS');
       // @ts-expect-error DSR_RESPONSE_DUE_DAYS の値を読むのは src/lib/data-subject-requests/config.ts だけ
       getOptionalEnv('DSR_RESPONSE_DUE_DAYS');
+      // @ts-expect-error DISH_FAVORITES_MAX_PER_USER の値を読むのは src/modules/dish-favorites/server.ts だけ (#2011)
+      getOptionalEnv('DISH_FAVORITES_MAX_PER_USER');
       // @ts-expect-error LEGAL_CONSENT_ENFORCE の値を読むのは lib/legal-consent.ts だけ (読み方を 1 つにしておく)
       getOptionalEnv('LEGAL_CONSENT_ENFORCE');
       // @ts-expect-error LEGAL_CONSENT_NOTICE も同じ

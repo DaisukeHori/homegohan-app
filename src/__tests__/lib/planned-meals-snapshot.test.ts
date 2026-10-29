@@ -13,11 +13,17 @@
  * - 検証 NG 行 / lookup 失敗 / bulk insert 失敗 (→ 行単位フォールバック) で
  *   restored / skipped / failed の行単位の集計が保たれること
  * - 同一スロットに複数行あるケースが壊れないこと
+ *
+ * #2025: restoreOwnPlannedMealsSnapshot (本人の日の確認は利用者のセッション、書き戻しは service role):
+ * - 本人の日 (user_daily_meals) の行だけを writer で書き戻し、本人の日でない行・daily_meal_id の無い行は failed に数える
+ * - 本人の日の問い合わせが失敗したら 1 行も書かない
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   restorePlannedMealsSnapshot,
+  restoreOwnPlannedMealsSnapshot,
   extractPlannedMealsSnapshot,
   SLOT_LOOKUP_CHUNK_SIZE,
   type PlannedMealSnapshotRow,
@@ -423,5 +429,138 @@ describe('extractPlannedMealsSnapshot', () => {
   it('generated_data がオブジェクトでない場合(文字列・数値等)は空配列を返す', () => {
     expect(extractPlannedMealsSnapshot('unexpected-string')).toEqual([]);
     expect(extractPlannedMealsSnapshot(42)).toEqual([]);
+  });
+});
+
+// ==================== #2025 restoreOwnPlannedMealsSnapshot ====================
+
+/**
+ * 利用者のセッションの偽物。user_daily_meals の select('id').in('id', ids) は、本人の日 (ownDailyMealIds) だけを返す
+ * (RLS で本人の日しか読めないことを真似る)。failOnIds を含む問い合わせは失敗する
+ */
+function buildFakeUserDb(params: { ownDailyMealIds: string[]; failOnIds?: string[] }) {
+  const own = new Set(params.ownDailyMealIds);
+  const failOn = new Set(params.failOnIds ?? []);
+  const lookups: Array<{ table: string; columns: string; column: string; values: string[] }> = [];
+  const from = vi.fn((tableName: string) => ({
+    select: (columns: string) => ({
+      in: async (column: string, values: string[]) => {
+        lookups.push({ table: tableName, columns, column, values });
+        if (values.some((value) => failOn.has(value))) return { data: null, error: { message: 'ownership lookup failed' } };
+        return { data: values.filter((value) => own.has(value)).map((id) => ({ id })), error: null };
+      },
+    }),
+  }));
+  // 本物の型の from (PostgrestQueryBuilder) は持たないので、関数の形だけを合わせて渡す
+  const userDb = { from } as unknown as Pick<SupabaseClient, 'from'>;
+  return { userDb, from, lookups };
+}
+
+/** 本人の日の確認のテストの行 (id・daily_meal_id・meal_type だけを変える) */
+const row = (id: string, dailyMealId: string, mealType: string): PlannedMealSnapshotRow =>
+  makeRow({ id, daily_meal_id: dailyMealId, meal_type: mealType });
+
+describe('restoreOwnPlannedMealsSnapshot (#2025)', () => {
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    errorSpy.mockRestore();
+  });
+
+  it('restoreOwnPlannedMealsSnapshot: 空の snapshot は問い合わせずに 0 件', async () => {
+    const { userDb, from } = buildFakeUserDb({ ownDailyMealIds: ['day-own'] });
+    const writer = buildFakeSupabase();
+    const result = await restoreOwnPlannedMealsSnapshot({ userDb, writer: writer.supabase, snapshot: [] });
+    expect(result).toEqual({ restored: 0, skipped: 0, failed: 0 });
+    expect(from).not.toHaveBeenCalled();
+    expect(writer.mockFrom).not.toHaveBeenCalled();
+  });
+
+  it('本人の日の行だけ writer で INSERT し、本人の日でない行と daily_meal_id の無い行は failed に数えて writer に渡さない', async () => {
+    const { userDb, lookups } = buildFakeUserDb({ ownDailyMealIds: ['day-own'] });
+    const writer = buildFakeSupabase();
+    // 3 列 (is_completed / completed_at / veg_score) を持つ行をそのまま書き戻す
+    const ownRow = { id: 'meal-own', daily_meal_id: 'day-own', meal_type: 'breakfast', is_completed: true, completed_at: '2026-01-10T03:00:00Z', veg_score: 80 };
+    const otherRow = { id: 'meal-other', daily_meal_id: 'day-other', meal_type: 'lunch', is_completed: true, veg_score: 100 };
+    const noDayRow = { id: 'meal-no-day', daily_meal_id: '', meal_type: 'dinner' };
+
+    const result = await restoreOwnPlannedMealsSnapshot({
+      userDb,
+      writer: writer.supabase,
+      snapshot: [ownRow, otherRow, noDayRow] as PlannedMealSnapshotRow[],
+    });
+
+    expect(result).toEqual({ restored: 1, skipped: 0, failed: 2 });
+    // 本人の日の確認は利用者のセッションで user_daily_meals を読む (空の daily_meal_id は問い合わせに入れない)
+    expect(lookups).toEqual([{ table: 'user_daily_meals', columns: 'id', column: 'id', values: ['day-own', 'day-other'] }]);
+    // writer に渡ったのは本人の日の行だけで、3 列ごとそのまま
+    expect(writer.mockInsert).toHaveBeenCalledTimes(1);
+    expect(writer.mockInsert).toHaveBeenCalledWith([ownRow]);
+    expect(writer.table).toEqual([ownRow]);
+  });
+
+  it('本人の日が 1 つも無ければ writer を呼ばず、全部を failed に数える', async () => {
+    const { userDb } = buildFakeUserDb({ ownDailyMealIds: [] });
+    const writer = buildFakeSupabase();
+    const result = await restoreOwnPlannedMealsSnapshot({
+      userDb,
+      writer: writer.supabase,
+      snapshot: [row('meal-a', 'day-other', 'lunch'), row('meal-b', 'day-other', 'dinner')],
+    });
+    expect(result).toEqual({ restored: 0, skipped: 0, failed: 2 });
+    expect(writer.mockFrom).not.toHaveBeenCalled();
+  });
+
+  it('本人の日の問い合わせが失敗したら writer を呼ばず、全部を failed に数える', async () => {
+    const { userDb } = buildFakeUserDb({ ownDailyMealIds: ['day-1', 'day-2'], failOnIds: ['day-2'] });
+    const writer = buildFakeSupabase();
+    const result = await restoreOwnPlannedMealsSnapshot({
+      userDb,
+      writer: writer.supabase,
+      snapshot: [row('meal-1', 'day-1', 'lunch'), row('meal-2', 'day-2', 'lunch'), row('meal-3', 'day-1', 'dinner')],
+    });
+    expect(result).toEqual({ restored: 0, skipped: 0, failed: 3 });
+    expect(writer.mockFrom).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[restoreOwnPlannedMealsSnapshot] ownership lookup failed'),
+      'ownership lookup failed',
+    );
+  });
+
+  it('本人の日の問い合わせは SLOT_LOOKUP_CHUNK_SIZE ごとに分ける', async () => {
+    const dayIds = Array.from({ length: SLOT_LOOKUP_CHUNK_SIZE + 1 }, (_, i) => `day-${i}`);
+    const { userDb, lookups } = buildFakeUserDb({ ownDailyMealIds: dayIds });
+    const writer = buildFakeSupabase();
+    const snapshot = dayIds.map((dayId, i) => row(`meal-${i}`, dayId, 'lunch'));
+
+    const result = await restoreOwnPlannedMealsSnapshot({ userDb, writer: writer.supabase, snapshot });
+
+    expect(lookups.map((lookup) => lookup.values.length)).toEqual([SLOT_LOOKUP_CHUNK_SIZE, 1]);
+    expect(lookups.flatMap((lookup) => lookup.values)).toEqual(dayIds);
+    expect(result).toEqual({ restored: dayIds.length, skipped: 0, failed: 0 });
+  });
+
+  it('writer 側の skipped・failed に本人の日でない行の数を足す', async () => {
+    const { userDb } = buildFakeUserDb({ ownDailyMealIds: ['day-own'] });
+    // writer 側: lunch のスロットは埋まっている (skip)、meal-bad は insert が失敗する (failed)
+    const writer = buildFakeSupabase({
+      existing: [{ id: 'new-lunch', daily_meal_id: 'day-own', meal_type: 'lunch' }],
+      rejectInsertIds: ['meal-bad'],
+    });
+    const result = await restoreOwnPlannedMealsSnapshot({
+      userDb,
+      writer: writer.supabase,
+      snapshot: [
+        row('meal-lunch', 'day-own', 'lunch'),
+        row('meal-dinner', 'day-own', 'dinner'),
+        row('meal-bad', 'day-own', 'snack'),
+        row('meal-other-1', 'day-other', 'lunch'),
+        row('meal-other-2', 'day-other', 'dinner'),
+      ],
+    });
+    // writer: restored 1 (dinner)・skipped 1 (lunch)・failed 1 (meal-bad) + 本人の日でない 2 行
+    expect(result).toEqual({ restored: 1, skipped: 1, failed: 3 });
   });
 });

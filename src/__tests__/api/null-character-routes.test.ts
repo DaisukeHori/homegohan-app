@@ -197,6 +197,7 @@ const ENTRIES: Entry[] = [
   { file: 'family/members/me/share/route.ts', method: 'PATCH', load: async () => (await import('@/app/api/family/members/me/share/route')).PATCH },
   { file: 'family/promotions/[token]/accept/route.ts', method: 'POST', load: async () => (await import('@/app/api/family/promotions/[token]/accept/route')).POST },
   { file: 'family/representative-transfer/propose/route.ts', method: 'POST', load: async () => (await import('@/app/api/family/representative-transfer/propose/route')).POST },
+  { file: 'favorites/route.ts', method: 'POST', load: async () => (await import('@/app/api/favorites/route')).POST },
   { file: 'handson-tour/skip/route.ts', method: 'POST', load: async () => (await import('@/app/api/handson-tour/skip/route')).POST },
   { file: 'health/blood-tests/route.ts', method: 'POST', load: async () => (await import('@/app/api/health/blood-tests/route')).POST },
   { file: 'health/challenges/route.ts', method: 'POST', load: async () => (await import('@/app/api/health/challenges/route')).POST },

@@ -180,6 +180,32 @@ describe('PATCH /api/super-admin/feature-packages/[id]', () => {
     expect(res.status).toBe(401);
   });
 
+  // #2064: 遷移表 (active → deprecated。deprecated は終端) に無い変更は 409 で断り、書かず監査ログも残さない
+  // (以前は同じ状態への変更 active → active や廃止の取り消しが 200 で通り、監査ログが残った)
+  it('409 OP_FEATURE_PACKAGE_INVALID_TRANSITION for active → active: 状態は変わらず、監査ログも残らない', async () => {
+    const countAudits = async () => {
+      const { count, error } = await supabaseAdmin
+        .from('admin_audit_logs')
+        .select('id', { count: 'exact', head: true })
+        .eq('target_id', testPackageId);
+      if (error) throw new Error(`Failed to count the audit logs: ${error.message}`);
+      return count ?? 0;
+    };
+    const auditsBefore = await countAudits();
+    const res = await apiCall(
+      'PATCH',
+      `/api/super-admin/feature-packages/${testPackageId}`,
+      superAdminUser.jwt,
+      { status: 'active' }
+    );
+    expect(res.status).toBe(409);
+    expect((res.body as { error: { code: string } }).error.code).toBe('OP_FEATURE_PACKAGE_INVALID_TRANSITION');
+    const { data: row, error } = await supabaseAdmin.from('feature_packages').select('status').eq('id', testPackageId).single();
+    if (error) throw new Error(`Failed to read the feature package: ${error.message}`);
+    expect(row.status).toBe('active');
+    expect(await countAudits()).toBe(auditsBefore);
+  });
+
   it('400 for invalid status value', async () => {
     const id = testPackageId ?? '00000000-0000-0000-0000-000000000000';
     const res = await apiCall(

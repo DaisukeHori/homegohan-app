@@ -325,7 +325,7 @@ export async function POST(request: Request) {
   if (discrepancies.length > 0) {
     await notifySlack({
       channel: '#stripe-alerts',
-      message: `Stripe reconciliation: ${discrepancies.length} 件の不一致を検出。要確認: ${process.env.NEXT_PUBLIC_APP_URL}/admin/audit-logs`,
+      message: `Stripe reconciliation: ${discrepancies.length} 件の不一致を検出。要確認: ${process.env.NEXT_PUBLIC_APP_URL}/super-admin/audit-logs`,
     });
   }
 

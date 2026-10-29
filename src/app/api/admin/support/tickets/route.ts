@@ -9,7 +9,7 @@
  * (絞り込みの条件と件数だけ。返したチケットの ID や件名は入れない)。
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested, invalidJsonNested } from '@/lib/api/error-responses';
 import { readJsonBody } from '@/lib/http-params';
@@ -150,7 +150,8 @@ export async function POST(request: NextRequest) {
     const supabase = await createClient();
 
     // トランザクション的に ticket + 最初のメッセージを作成
-    const { data: ticket, error: ticketError } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { data: ticket, error: ticketError } = await getSupabaseAdmin()
       .from('support_tickets')
       .insert({ user_id, subject, category, priority, status: 'open' })
       .select()
@@ -161,7 +162,8 @@ export async function POST(request: NextRequest) {
     }
 
     // 最初のメッセージを作成 (運営側が起票したため is_internal = false)
-    const { error: msgError } = await supabase.from('support_ticket_messages').insert({
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { error: msgError } = await getSupabaseAdmin().from('support_ticket_messages').insert({
       ticket_id: ticket.id,
       sender_id: currentUser.id,
       is_internal: false,

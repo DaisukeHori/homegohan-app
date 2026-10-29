@@ -41,6 +41,13 @@ export async function POST(
     );
   }
 
+  // JSON としては読めてもオブジェクトでない本文 (null・配列・数・文字列) も 400 (#1917 の続き。null は下の parsed.family_id の読み出しが例外になり 500 になっていた)
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return NextResponse.json(
+      { error: { code: MembershipErrorCode.INVALID_REQUEST, message: 'リクエストボディが不正です' } },
+      { status: 400 },
+    );
+  }
   const parsed = body as { family_id?: string };
 
   if (!parsed.family_id) {

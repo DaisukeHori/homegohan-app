@@ -16,6 +16,7 @@
  *   - route の外の文 (この文の定数と関数・相談の提案の実行の結果 src/lib/ai/consultation-action-executor.ts の result.error と
  *     検証の失敗の文 (errors.push / errors: [...])) は tests/ai-api-error-messages.test.ts が見張る
  */
+import { MEAL_LABELS, type MealType } from '@homegohan/shared';
 import { CALENDAR_DATE_REQUIREMENT_JA, invalidCalendarDateMessage } from '@/lib/api/user-api-error-messages';
 
 // ===== 写真の読み取り (analyze-* / classify-photo) =====
@@ -145,6 +146,91 @@ export const AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE = 'この種類の操�
  * 以前は英語の文を返していた。#1983 で日本語の文になったが、英語の文が入り直したときの守りとして残す)
  */
 export const AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE = '提案された値の形が正しくないため、保存できませんでした';
+
+// ===== 相談の提案の実行の値の検証 (src/lib/ai/consultation-action-executor.ts の result.error) =====
+
+/**
+ * 提案の実行 (runConsultationAction) の値の項目のキー → 失敗の文に出す日本語の名前 (#1917 の続き)。
+ * result.error は応答の本文 (execute の { result }・messages の actionResult) と ai_action_logs.result に入るので、
+ * 文には「日本語の名前 (キー)」の形で出す (aiConsultationFieldLabel。健康の記録の healthFieldLabel と同じ形)。
+ * 以前は 'date は必須です'・'dishes は配列で指定してください' のように、英字のキーが括弧の外に出ていた。
+ * AI が送るキーで引くので、プロトタイプのキー ('constructor' など) に当たらないよう Map で持つ
+ */
+const AI_CONSULTATION_FIELD_NAMES: ReadonlyMap<string, string> = new Map([
+  // 献立の生成 (generate_day_menu / generate_week_menu / generate_single_meal) と献立の更新 (update_meal) の引数
+  ['date', '日付'],
+  ['startDate', '開始日'],
+  ['mealType', '食事の区分'],
+  ['mealId', '献立'],
+  // 献立の更新 (update_meal の updates)
+  ['dish_name', '料理名'],
+  ['memo', 'メモ'],
+  ['mode', '食事のモード'],
+  ['dishes', '料理の一覧'],
+  ['image_url', '画像の URL'],
+  ['calories_kcal', 'エネルギー'],
+  ['protein_g', 'たんぱく質'],
+  ['fat_g', '脂質'],
+  ['carbs_g', '炭水化物'],
+  // 買い物リストの品の更新 (update_shopping_item の updates)
+  ['item_name', '品名'],
+  ['quantity', '数量'],
+  ['category', '分類'],
+  // 栄養目標の更新 (update_nutrition_target の targets。たんぱく質・脂質・炭水化物は上と同じ名前)
+  ['daily_calories', '1 日のエネルギー'],
+  ['fiber_g', '食物繊維'],
+  ['sodium_g', '食塩相当量'],
+]);
+
+/** 表に無いキーの日本語の名前 (英字のキーだけの文にしないため、括弧の外は日本語にする) */
+const AI_CONSULTATION_FIELD_FALLBACK_NAME = '項目';
+
+/** 提案の実行の値の項目のキーを、失敗の文に出す「日本語の名前 (キー)」にする (表に無いキーは「項目 (キー)」) */
+export function aiConsultationFieldLabel(key: string): string {
+  return `${AI_CONSULTATION_FIELD_NAMES.get(key) ?? AI_CONSULTATION_FIELD_FALLBACK_NAME} (${key})`;
+}
+/** 提案の実行の値の文字列の項目が、空・長すぎる・文字列でない (1〜maxLength 文字の文字列だけを受け付ける項目) */
+export function aiConsultationNonEmptyTextMaxMessage(field: string, maxLength: number): string {
+  return `${aiConsultationFieldLabel(field)} は 1〜${maxLength} 文字の文字列で指定してください`;
+}
+/** 提案の実行の値の文字列の項目が、長すぎる・文字列でも null でもない (null で空にできる項目) */
+export function aiConsultationOptionalTextMaxMessage(field: string, maxLength: number): string {
+  return `${aiConsultationFieldLabel(field)} は ${maxLength} 文字以内の文字列か null で指定してください`;
+}
+/** 提案の実行の値の数の項目が、数でない (栄養目標) */
+export function aiConsultationNumberMessage(field: string): string {
+  return `${aiConsultationFieldLabel(field)} は数値で指定してください`;
+}
+/** 提案の実行の値の数の項目が、範囲の外 (栄養目標) */
+export function aiConsultationRangeMessage(field: string, min: number, max: number): string {
+  return `${aiConsultationFieldLabel(field)} は ${min} 〜 ${max} の範囲で指定してください`;
+}
+/** 提案の実行の値の数の項目が、数でない・範囲の外 (献立の栄養の値) */
+export function aiConsultationNumberRangeMessage(field: string, min: number, max: number): string {
+  return `${aiConsultationFieldLabel(field)} は ${min} 〜 ${max} の範囲の数値で指定してください`;
+}
+/** 献立の更新 (update_meal) の料理の一覧が配列でない */
+export const AI_CONSULTATION_DISHES_NOT_ARRAY_MESSAGE = `${aiConsultationFieldLabel('dishes')} は配列で指定してください`;
+/** 献立の更新 (update_meal) の画像の URL が文字列でない */
+export const AI_CONSULTATION_IMAGE_URL_NOT_STRING_MESSAGE = `${aiConsultationFieldLabel('image_url')} は文字列で指定してください`;
+/** 1 日の献立の生成 (generate_day_menu) に日付が無い */
+export const AI_CONSULTATION_DATE_REQUIRED_MESSAGE = `${aiConsultationFieldLabel('date')} を指定してください`;
+/** 1 週間の献立の生成 (generate_week_menu) に開始日が無い */
+export const AI_CONSULTATION_START_DATE_REQUIRED_MESSAGE = `${aiConsultationFieldLabel('startDate')} を指定してください`;
+/** 献立の完了 (complete_meal) の切り替えが DB の失敗でできなかった (本人の献立でないときは既存の '権限がありません'。#2025) */
+export const AI_ACTION_COMPLETE_MEAL_FAILED_MESSAGE = '食事の完了を更新できませんでした';
+/** 1 食の献立の生成 (generate_single_meal) に日付か食事の区分が無い */
+export const AI_CONSULTATION_DATE_AND_MEAL_TYPE_REQUIRED_MESSAGE =
+  `${aiConsultationFieldLabel('date')} と${aiConsultationFieldLabel('mealType')} を指定してください`;
+/** 献立の更新 (update_meal) に献立の ID が無い */
+export const AI_CONSULTATION_MEAL_ID_REQUIRED_MESSAGE = `${aiConsultationFieldLabel('mealId')} を指定してください`;
+/**
+ * 1 食の献立の生成 (generate_single_meal) を始めた (result.message)。食事の区分は日本語の名前 (MEAL_LABELS) で出す
+ * (以前は「2026-10-10のdinnerを生成中...」と英字の値が文に出ていた。#1917 の続き)
+ */
+export function aiConsultationSingleMealStartedMessage(date: string, mealType: MealType): string {
+  return `${date}の${MEAL_LABELS[mealType]}を生成中...`;
+}
 
 // ===== 画像の生成 (image/generate) =====
 

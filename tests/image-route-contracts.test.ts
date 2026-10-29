@@ -311,6 +311,44 @@ describe('image route contracts', () => {
     });
   });
 
+  it('analyze-meal-photo: mealId があるときは prefetchedGeminiResult を Edge Function へ渡さない (#2025)', async () => {
+    // mealId の経路は Edge の背景の処理が planned_meals の veg_score を書く。利用者が料理と材料の g (「キャベツ 120 g」) を
+    // 送り込めると veg_score を好きな値にできるので、写真から解析し直させる (Edge の側でも使わない。cross/23 §7.15)
+    const prefetchedGeminiResult = {
+      dishes: [
+        {
+          name: '野菜炒め',
+          role: 'main',
+          cookingMethod: 'stir_fried',
+          visiblePortionWeightG: 120,
+          visibleIngredients: [{ name: 'キャベツ', amount_g: 120 }],
+        },
+      ],
+    };
+    mockInvoke.mockResolvedValue({
+      data: { message: 'Photo analysis started in background' },
+      error: null,
+    });
+
+    const { POST } = await import('../src/app/api/ai/analyze-meal-photo/route');
+    const response = await POST(new Request('http://localhost/api/ai/analyze-meal-photo', {
+      method: 'POST',
+      body: JSON.stringify({
+        images: [{ base64: 'abc', mimeType: 'image/jpeg' }],
+        mealId: MEAL_ID,
+        mealType: 'dinner',
+        prefetchedGeminiResult,
+      }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    const calledBody = (mockInvoke.mock.calls[0][1] as { body: Record<string, unknown> }).body;
+    expect(calledBody.prefetchedGeminiResult).toBeUndefined();
+    expect(calledBody.mealId).toBe(MEAL_ID);
+    expect(calledBody.images).toEqual([{ base64: 'abc', mimeType: 'image/jpeg' }]);
+  });
+
   it('analyze-meal-photo attaches catalog matches for returned dishes', async () => {
     mockInvoke.mockResolvedValue({
       data: {
@@ -855,7 +893,7 @@ describe('image route contracts', () => {
       method: 'POST',
       body: JSON.stringify({
         images: [{ base64: 'A'.repeat(2000), mimeType: 'image/jpeg' }],
-        mealId: 'meal-123',
+        mealId: MEAL_ID,
         mealType: 'dinner',
       }),
     }));
@@ -866,7 +904,7 @@ describe('image route contracts', () => {
     expect((await response.json()).message).toBe('写真の解析を始めました');
     expect(mockInvoke).toHaveBeenCalledWith('analyze-meal-photo', {
       body: expect.objectContaining({
-        mealId: 'meal-123',
+        mealId: MEAL_ID,
         invokedAt: expect.any(String),
       }),
       headers: RECORDED_HEADERS,
@@ -876,5 +914,128 @@ describe('image route contracts', () => {
     const calledBody = (mockInvoke.mock.calls[0][1] as any).body;
     expect(calledBody.invokedAt >= beforeInvoke).toBe(true);
     expect(calledBody.invokedAt <= afterInvoke).toBe(true);
+  });
+
+  // #2050: mealId があるときは、Edge を呼ぶ直前に利用者の client で行に要求の印を付け (updated_at だけを送る)、
+  // 進んだ updated_at (DB の時刻) を invokedAt として送る。route の時計を送ると、先に送った解析の Edge が遅れて印を付けたとき、
+  // 後に送った解析の印が付かない (tests/analyze-meal-photo-cas-request-order.test.ts が順序を見る)
+  it('#2050: analyze-meal-photo は要求の印 (進んだ updated_at) を invokedAt として Edge Function に渡す', async () => {
+    // 呼び出しの記録は it をまたいで残る (beforeEach の restoreAllMocks は vi.fn の記録を消さない) ので、ここで消す
+    for (const mock of [mockFrom, mockUpdate, mockEq, mockSelect]) mock.mockClear();
+    const markedUpdatedAt = '2026-10-26T01:02:03.123456+00:00';
+    selectChainData = [{ updated_at: markedUpdatedAt }];
+    mockInvoke.mockResolvedValue({ data: { message: 'Photo analysis started in background' }, error: null });
+
+    const { POST } = await import('../src/app/api/ai/analyze-meal-photo/route');
+    const response = await POST(new Request('http://localhost/api/ai/analyze-meal-photo', {
+      method: 'POST',
+      body: JSON.stringify({ images: [{ base64: 'abc', mimeType: 'image/jpeg' }], mealId: MEAL_ID, mealType: 'dinner' }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mockFrom).toHaveBeenCalledWith('planned_meals');
+    expect(mockUpdate).toHaveBeenCalledTimes(1);
+    expect(Object.keys(mockUpdate.mock.calls[0][0] as Record<string, unknown>)).toEqual(['updated_at']);
+    expect(mockEq).toHaveBeenCalledWith('id', MEAL_ID);
+    expect(mockSelect).toHaveBeenCalledWith('updated_at');
+    const calledBody = (mockInvoke.mock.calls[0][1] as { body: Record<string, unknown> }).body;
+    expect(calledBody.invokedAt).toBe(markedUpdatedAt);
+  });
+
+  it('#2050: analyze-meal-photo は要求の印を付けられない (DB の失敗) とき、Edge Function を呼ばずに 500', async () => {
+    selectChainError = { message: 'db down' };
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { POST } = await import('../src/app/api/ai/analyze-meal-photo/route');
+    const response = await POST(new Request('http://localhost/api/ai/analyze-meal-photo', {
+      method: 'POST',
+      body: JSON.stringify({ images: [{ base64: 'abc', mimeType: 'image/jpeg' }], mealId: MEAL_ID, mealType: 'dinner' }),
+    }));
+
+    expect(response.status).toBe(500);
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  // #2050: mealId は planned_meals.id (uuid の列)。UUID の形でない値を DB に渡すと PostgREST が 22P02 で失敗し、要求の印の update で 500 になる。
+  // 数える前・DB に触れる前・Edge を呼ぶ前に 400 で断る (形の違う文字列も、文字列でない値も)
+  it.each([
+    ['UUID の形でない文字列', 'meal-123'],
+    ['UUID の後ろに文字が付いた文字列', `${MEAL_ID}x`],
+    ['数値', 12345],
+    ['真偽値', true],
+    ['オブジェクト', { id: MEAL_ID }],
+  ])('#2050: analyze-meal-photo は mealId が %s のとき、数えず・行に印を付けず・Edge を呼ばずに 400', async (_label, mealId) => {
+    // 呼び出しの記録は it をまたいで残る (beforeEach の restoreAllMocks は vi.fn の記録を消さない) ので、ここで消す
+    for (const mock of [mockFrom, mockUpdate, mockEq, mockSelect]) mock.mockClear();
+    mockInvoke.mockResolvedValue({ data: { message: 'Photo analysis started in background' }, error: null });
+
+    const { POST } = await import('../src/app/api/ai/analyze-meal-photo/route');
+    const response = await POST(new Request('http://localhost/api/ai/analyze-meal-photo', {
+      method: 'POST',
+      body: JSON.stringify({ images: [{ base64: 'abc', mimeType: 'image/jpeg' }], mealId, mealType: 'dinner' }),
+    }));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: '献立の指定が正しくありません' });
+    expect(mockConsumeAiUsage).not.toHaveBeenCalled();
+    expect(mockFrom).not.toHaveBeenCalledWith('planned_meals');
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it('#2050: analyze-meal-photo は大文字の UUID の mealId を受け付け、要求の印を付けて Edge Function を呼ぶ', async () => {
+    for (const mock of [mockFrom, mockUpdate, mockEq, mockSelect]) mock.mockClear();
+    const markedUpdatedAt = '2026-10-26T01:02:03.123456+00:00';
+    selectChainData = [{ updated_at: markedUpdatedAt }];
+    mockInvoke.mockResolvedValue({ data: { message: 'Photo analysis started in background' }, error: null });
+    const upperMealId = MEAL_ID.toUpperCase();
+
+    const { POST } = await import('../src/app/api/ai/analyze-meal-photo/route');
+    const response = await POST(new Request('http://localhost/api/ai/analyze-meal-photo', {
+      method: 'POST',
+      body: JSON.stringify({ images: [{ base64: 'abc', mimeType: 'image/jpeg' }], mealId: upperMealId, mealType: 'dinner' }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mockEq).toHaveBeenCalledWith('id', upperMealId);
+    const calledBody = (mockInvoke.mock.calls[0][1] as { body: Record<string, unknown> }).body;
+    expect(calledBody.mealId).toBe(upperMealId);
+    expect(calledBody.invokedAt).toBe(markedUpdatedAt);
+  });
+
+  it.each([
+    ['空の文字列', ''],
+    ['null', null],
+  ])('#2050: analyze-meal-photo は mealId が %s のとき、今までどおり同期の解析 (行に印を付けず、mealId も invokedAt も送らない)', async (_label, mealId) => {
+    for (const mock of [mockFrom, mockUpdate, mockEq, mockSelect]) mock.mockClear();
+    mockInvoke.mockResolvedValue({ data: { dishes: [{ name: 'カレー', role: 'main', cal: 620 }] }, error: null });
+
+    const { POST } = await import('../src/app/api/ai/analyze-meal-photo/route');
+    const response = await POST(new Request('http://localhost/api/ai/analyze-meal-photo', {
+      method: 'POST',
+      body: JSON.stringify({ images: [{ base64: 'abc', mimeType: 'image/jpeg' }], mealId, mealType: 'dinner' }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mockUpdate).not.toHaveBeenCalled();
+    const calledBody = (mockInvoke.mock.calls[0][1] as { body: Record<string, unknown> }).body;
+    expect(calledBody.mealId).toBeUndefined();
+    expect(calledBody.invokedAt).toBeUndefined();
+  });
+
+  it('#2050: analyze-meal-photo は mealId が無い (同期の解析) とき、行に要求の印を付けず invokedAt を送らない', async () => {
+    // 呼び出しの記録は it をまたいで残る (beforeEach の restoreAllMocks は vi.fn の記録を消さない) ので、ここで消す
+    for (const mock of [mockFrom, mockUpdate, mockEq, mockSelect]) mock.mockClear();
+    mockInvoke.mockResolvedValue({ data: { dishes: [{ name: 'カレー', role: 'main', cal: 620 }] }, error: null });
+
+    const { POST } = await import('../src/app/api/ai/analyze-meal-photo/route');
+    await POST(new Request('http://localhost/api/ai/analyze-meal-photo', {
+      method: 'POST',
+      body: JSON.stringify({ images: [{ base64: 'abc', mimeType: 'image/jpeg' }], mealType: 'dinner' }),
+    }));
+
+    expect(mockUpdate).not.toHaveBeenCalled();
+    const calledBody = (mockInvoke.mock.calls[0][1] as { body: Record<string, unknown> }).body;
+    expect(calledBody.invokedAt).toBeUndefined();
   });
 });

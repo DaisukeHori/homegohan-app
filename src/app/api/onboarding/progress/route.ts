@@ -36,6 +36,11 @@ export async function POST(request: Request) {
     } catch {
       return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 })
     }
+    // JSON としては読めてもオブジェクトでない本文 (null・配列・数・文字列) も 400 (#1917 の続き。null は下の分割代入が例外になり、
+    // 外側の catch の internalError で 500 になっていた。配列・数は項目の無い本文として別の文の 400 になっていたので同じ文にそろえる)
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 })
+    }
     const { currentStep, answers, totalQuestions } = body
 
     if (typeof currentStep !== 'number' || !answers || typeof totalQuestions !== 'number') {

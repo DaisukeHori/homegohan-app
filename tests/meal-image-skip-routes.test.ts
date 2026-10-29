@@ -74,7 +74,8 @@ interface DbError {
 }
 interface Write {
   table: string;
-  op: 'insert' | 'update' | 'upsert';
+  /** rpc は完了の切り替え (planned_meals_set_completed。#2025)。table は `rpc:<関数名>` */
+  op: 'insert' | 'update' | 'upsert' | 'rpc';
   payload: unknown;
 }
 
@@ -94,7 +95,7 @@ const h = vi.hoisted(() => ({
     queueError: null as { code: string; message: string } | null,
     /** meal_image_jobs の insert の結果を行ごとに決める (#1532。queueError より優先) */
     queueErrorFor: null as ((row: Record<string, unknown>) => { code: string; message: string } | null) | null,
-    writes: [] as Array<{ table: string; op: 'insert' | 'update' | 'upsert'; payload: unknown }>,
+    writes: [] as Array<{ table: string; op: 'insert' | 'update' | 'upsert' | 'rpc'; payload: unknown }>,
     queueInserts: [] as Array<Record<string, unknown>>,
   },
   checkRateLimit: vi.fn(),
@@ -178,7 +179,13 @@ function makeUserDb() {
       Promise.resolve(result()).then(resolve, reject);
     return builder;
   };
-  return { from, auth: { getUser: async () => ({ data: { user: { id: USER_ID } }, error: null }) } };
+  // 完了の切り替えは RPC planned_meals_set_completed (#2025)。呼ばれたことを記録し、RPC の返す 1 行を返す。
+  // saves の抽出は planned_meals の insert / update だけを数えるので、完了の切り替えは「保存」に数えない
+  const rpc = async (fn: string, args: { p_meal_id: string; p_completed: boolean }) => {
+    h.state.writes.push({ table: `rpc:${fn}`, op: 'rpc', payload: args });
+    return { data: [{ id: MEAL_ID, is_completed: args.p_completed, completed_at: null, updated_at: null }], error: null };
+  };
+  return { from, rpc, auth: { getUser: async () => ({ data: { user: { id: USER_ID } }, error: null }) } };
 }
 
 /** service role のクライアントの作り物 (meal_image_jobs への行ごとの insert) */

@@ -92,13 +92,14 @@ const INVITE_B = uuid(502);
 function worldTables(): Record<string, Row[]> {
   return {
     user_profiles: [
-      profileRow(OWNER_A, { nickname: '山田オーナー', organization_id: ORG_A, org_role: 'owner', roles: ['user'] }),
-      profileRow(ADMIN_A, { nickname: '佐藤管理者', organization_id: ORG_A, org_role: 'admin', roles: ['user'], department_id: DEPT_A }),
-      profileRow(MEMBER_A, { nickname: '鈴木メンバー', organization_id: ORG_A, org_role: 'member', roles: ['user'], department_id: DEPT_A }),
-      profileRow(RESIDUAL_IN_ORG, { nickname: '高橋', organization_id: ORG_A, org_role: 'member', roles: ['user', 'org_admin'] }),
+      // 所属している行は参加した日 (joined_org_at。date 型) を持つ (メンバーの一覧の GET が返す 4 つの項目の 1 つ。#2073 S4)
+      profileRow(OWNER_A, { nickname: '山田オーナー', organization_id: ORG_A, org_role: 'owner', roles: ['user'], joined_org_at: '2026-01-01' }),
+      profileRow(ADMIN_A, { nickname: '佐藤管理者', organization_id: ORG_A, org_role: 'admin', roles: ['user'], department_id: DEPT_A, joined_org_at: '2026-01-02' }),
+      profileRow(MEMBER_A, { nickname: '鈴木メンバー', organization_id: ORG_A, org_role: 'member', roles: ['user'], department_id: DEPT_A, joined_org_at: '2026-01-03' }),
+      profileRow(RESIDUAL_IN_ORG, { nickname: '高橋', organization_id: ORG_A, org_role: 'member', roles: ['user', 'org_admin'], joined_org_at: '2026-01-04' }),
       profileRow(RESIDUAL_NO_ORG, { nickname: '田中', roles: ['user', 'org_admin'] }),
       profileRow(OUTSIDER, { nickname: '伊藤' }),
-      profileRow(OWNER_B, { nickname: '渡辺他組織', organization_id: ORG_B, org_role: 'owner', roles: ['user'] }),
+      profileRow(OWNER_B, { nickname: '渡辺他組織', organization_id: ORG_B, org_role: 'owner', roles: ['user'], joined_org_at: '2026-01-01' }),
     ],
     organizations: [
       { id: ORG_A, name: 'A 株式会社', plan: 'standard', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
@@ -486,9 +487,15 @@ describe('組織の絞り込み: 呼び出した人の organization_id だけを
     const body = await json(await members.GET(new Request(url('/api/org/members'))));
 
     expect(body.members.map((m: Row) => m.id).sort()).toEqual([OWNER_A, ADMIN_A, MEMBER_A, RESIDUAL_IN_ORG].sort());
-    const query = sessionDb.recorded('user_profiles', 'select').at(-1)!;
+    // ほかのメンバーの行は RLS で読めないので、認可のあとに service_role で読む (#2073 S4)。列は id・表示名・組織内の役割・参加した日だけ
+    const query = adminDb.recorded('user_profiles', 'select').at(-1)!;
     expect(query.eq).toContainEqual(['organization_id', ORG_A]);
-    expect(query.select).toBe('id, nickname, roles, created_at, updated_at, organization_id');
+    expect(query.select).toBe('id, nickname, org_role, joined_org_at');
+    for (const member of body.members as Row[]) {
+      expect(Object.keys(member).sort()).toEqual(['id', 'joined_org_at', 'nickname', 'org_role']);
+    }
+    // 利用者のクライアントで読むのは、認可のための自分の行だけ
+    expect(sessionDb.recorded('user_profiles', 'select').map((q) => q.eq)).toEqual([[['id', OWNER_A]]]);
   });
 
   it('members POST: 招待の組織・差出人は認可で確定した値 (本文の organization_id や nickname は使わない)', async () => {
@@ -1042,7 +1049,13 @@ describe('500 の本文は汎用メッセージだけ (生のエラー文は db-
   });
 
   it('members GET: 認可の後の想定外の例外', async () => {
-    failAfterAuthorization(RAW);
+    // 認可のあとの読みは service_role (#2073 S4)。その読みで例外を投げる
+    adminDb = {
+      ...adminDb,
+      from: vi.fn(() => {
+        throw new Error(RAW);
+      }) as unknown as SchemaDb['from'],
+    };
 
     await expectGeneric(await members.GET(new Request(url('/api/org/members'))), { error: '処理中にエラーが発生しました' }, 'GET /api/org/members');
   });

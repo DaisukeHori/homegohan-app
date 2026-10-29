@@ -258,6 +258,27 @@ describe('ResetPasswordPage', () => {
     expect(mockSignOutWithCleanup).not.toHaveBeenCalled();
     expect(mockReplace).not.toHaveBeenCalled();
   });
+
+  it('6b. HTTP のエラーでない例外 (Supabase Auth の英文など) は、英文を出さず固定の文「更新に失敗しました。」を出す (#1917 の続き)', async () => {
+    mockApiPost.mockRejectedValue(new Error('Auth session missing!'));
+
+    const { getByPlaceholderText, getByText } = render(<ResetPasswordPage />);
+    await waitFor(() => {
+      expect(mockGetSession).toHaveBeenCalled();
+    });
+
+    fireEvent.changeText(getByPlaceholderText('8文字以上'), 'NewPassword1');
+    fireEvent.changeText(getByPlaceholderText('もう一度入力'), 'NewPassword1');
+    fireEvent.press(getByText('パスワードを更新'));
+
+    await waitFor(() => {
+      expect(Alert.alert).toHaveBeenCalledWith('更新失敗', '更新に失敗しました。');
+    });
+    const shown = (Alert.alert as jest.Mock).mock.calls.flatMap((call: unknown[]) => call.filter((v): v is string => typeof v === 'string'));
+    expect(shown.join('\n')).not.toContain('Auth session missing');
+    expect(mockSignOutWithCleanup).not.toHaveBeenCalled();
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
   /** Alert に出した文の全部 (タイトルと本文) */
   const alertedTexts = () => (Alert.alert as jest.Mock).mock.calls.flatMap((call: unknown[]) => call.filter((v): v is string => typeof v === 'string'));
   const NO_SESSION = { data: { session: null } };

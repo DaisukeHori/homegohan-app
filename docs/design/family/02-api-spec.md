@@ -239,7 +239,7 @@
 
 **動作**:
 1. `If-Unmodified-Since` 検証
-2. `acquire_family_group_lock(group_id)` 取得 (ラッパー経由)
+2. `pg_advisory_xact_lock(hashtext('family-group:' || group_id::TEXT))` を、ロックで守る DB の仕事をする SECURITY DEFINER の関数の中で、仕事と同じ取引で取る (ロックだけを取る RPC では、その RPC の取引の終わりで外れる。cross/02-rls-patterns.md §6.2.1・§6.3)
 3. パスワード再認証
 4. `family_members` で旧 owner → `admin`、新 owner → `owner`
 5. `family_groups.owner_id` 更新 (実 DB の列は `representative_id`)。グループの `plan_key` / `member_limit` は、`family_groups` のトリガー `family_groups_billing_plan_follow_representative` が新しい代表者の live な家族プランの契約に合わせる (新しい代表者の advisory `billing-user:<uuid>` を取り、課金の写像と直列。旧代表者の契約は旧代表者のまま。billing/01 §6.4 (10)・01-data-model §4.1 の注)
@@ -271,7 +271,7 @@ UC-ORG-17 シナリオ。
 
 **動作**:
 1. 楽観的ロック検証
-2. `acquire_family_group_lock(group_id)` 取得 (ラッパー経由)
+2. `pg_advisory_xact_lock(hashtext('family-group:' || group_id::TEXT))` を、ロックで守る DB の仕事をする SECURITY DEFINER の関数の中で、仕事と同じ取引で取る (ロックだけを取る RPC では、その RPC の取引の終わりで外れる。cross/02-rls-patterns.md §6.2.1・§6.3)
 3. Stripe サブスクリプション作成
 4. `family_groups.plan_key` 更新、`status = 'active'`、`frozen_at = NULL`
 5. `family_activity_log` に `group_migrated_to_personal` 記録

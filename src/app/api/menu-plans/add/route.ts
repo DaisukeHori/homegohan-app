@@ -9,6 +9,7 @@ import type { Database, Json } from '@/types/database.types';
 import { internalError } from '@/lib/api/errors';
 import { WEEKLY_MENU_REQUEST_FAILED_MESSAGE } from '@/lib/weekly-menu-request-error';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { invalidJsonNested } from '@/lib/api/error-responses';
 
 type WeeklyMenuRequestInsert = Database['public']['Tables']['weekly_menu_requests']['Insert'];
 type WeeklyMenuInsert = Database['public']['Tables']['weekly_menus']['Insert'];
@@ -20,7 +21,11 @@ export async function POST(request: Request) {
   const supabase = await createClient();
 
   try {
-    const body = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return invalidJsonNested();
+    }
     const searchParams = new URL(request.url).searchParams;
     const source = searchParams.get('source') ?? 'normal';
 

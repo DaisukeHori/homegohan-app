@@ -207,6 +207,7 @@ const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   'recipe_collections.user_id': 'CASCADE',
   'recipe_comments.user_id': 'CASCADE',
   'recipe_likes.user_id': 'CASCADE',
+  'dish_favorites.user_id': 'CASCADE',
   'recipe_requests.user_id': 'CASCADE',
   'shopping_list_requests.user_id': 'CASCADE',
   'shopping_lists.user_id': 'CASCADE',

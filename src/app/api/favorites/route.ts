@@ -1,106 +1,85 @@
-import { createClient } from '@/lib/supabase/server';
-import { createLogger, generateRequestId } from '@/lib/db-logger';
-import { clampIntParam } from '@/lib/http-params';
 import { NextResponse } from 'next/server';
+import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { clampIntParam, readJsonBody } from '@/lib/http-params';
+import {
+  DISH_FAVORITES_LIST_LIMIT_DEFAULT,
+  DISH_FAVORITES_LIST_LIMIT_MAX,
+  DISH_FAVORITES_LIST_LIMIT_MIN,
+  DISH_FAVORITES_LIST_OFFSET_MAX,
+  DISH_FAVORITES_LIMIT_CODE,
+  DISH_FAVORITE_DISH_MAX_BYTES,
+  DISH_FAVORITE_INVALID_MESSAGE,
+  DISH_FAVORITE_SORT_DEFAULT,
+  DISH_FAVORITE_VALIDATION_CODE,
+  DishFavoriteSortSchema,
+  SaveDishFavoriteBodySchema,
+  dishFavoritesLimitMessage,
+  dishFavoritesQueryOf,
+  dishJsonByteLength,
+} from '@/modules/dish-favorites/core';
+import { dishFavoritesMaxPerUser, listDishFavorites, saveDishFavorite } from '@/modules/dish-favorites/server';
+
+const GET_ROUTE_NAME = 'GET /api/favorites';
+const POST_ROUTE_NAME = 'POST /api/favorites';
 
 /**
  * GET /api/favorites
- * ログインユーザーのお気に入りレシピ一覧を返す (#109)
- * recipe_likes テーブルから recipe_id (dish name) を取得する
- * #302: id / recipe_uuid カラムが本番 DB に存在しない場合の 500 を修正
+ * ログインユーザーの、献立の料理のお気に入り (dish_favorites) の一覧 (docs/design/cross/22-dish-favorites.md §7.5.1)。
+ * 以前は recipe_likes を料理名で読んでいた (#109 / #302)。応答の形 { favorites, total } は同じ。行の形は DishFavorite (snake_case)。
+ * limit / offset は clampIntParam で丸める (#1226)。件数より後ろのページは resolveBeyondLastPage (server.ts) が空のページにする。
  */
+export async function GET(request: Request) {
+  const supabase = await createClient();
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
-/** フィルタ・ソート・ページングを適用したクエリを実行する (any 型で柔軟に処理) */
-async function queryFavorites(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  columns: string,
-  params: { userId: string; query: string; sort: string; offset: number; limit: number },
-) {
-  let q: any = supabase
-    .from('recipe_likes')
-    .select(columns, { count: 'exact' })
-    .eq('user_id', params.userId);
+  const { searchParams } = new URL(request.url);
+  const limit = clampIntParam(searchParams.get('limit'), {
+    min: DISH_FAVORITES_LIST_LIMIT_MIN,
+    max: DISH_FAVORITES_LIST_LIMIT_MAX,
+    default: DISH_FAVORITES_LIST_LIMIT_DEFAULT,
+  });
+  const offset = clampIntParam(searchParams.get('offset'), { min: 0, max: DISH_FAVORITES_LIST_OFFSET_MAX, default: 0 });
+  // 検索語は NULL 文字を除き、前後の空白を除き、先頭 DISH_FAVORITES_QUERY_MAX_CHARS 文字で切る (DB に NULL 文字を渡すと 500 になる。400 にはせず丸める)
+  const q = dishFavoritesQueryOf(searchParams.get('q'));
+  const sortParsed = DishFavoriteSortSchema.safeParse(searchParams.get('sort'));
+  const sort = sortParsed.success ? sortParsed.data : DISH_FAVORITE_SORT_DEFAULT;
 
-  if (params.query) q = q.ilike('recipe_id', `%${params.query}%`);
-
-  switch (params.sort) {
-    case 'oldest': q = q.order('created_at', { ascending: true }); break;
-    case 'name':   q = q.order('recipe_id',   { ascending: true }); break;
-    default:       q = q.order('created_at',   { ascending: false });
-  }
-
-  return (await q.range(params.offset, params.offset + params.limit - 1)) as {
-    data: any[] | null;
-    error: { code: string; message: string } | null;
-    count: number | null;
-    status: number;
-  };
+  const listed = await listDishFavorites(supabase, user.id, { q, sort, offset, limit }, GET_ROUTE_NAME);
+  if (!listed.ok) return internalError(GET_ROUTE_NAME, listed.error, { userId: user.id, table: 'dish_favorites' });
+  return NextResponse.json({ favorites: listed.favorites, total: listed.total });
 }
 
-export async function GET(request: Request) {
-  const requestId = generateRequestId();
-  const logger = createLogger('GET /api/favorites', requestId);
+/**
+ * POST /api/favorites
+ * 献立の料理の写し (body.dish) を本人のお気に入りに保存する。同じ名前があれば写しを置き換えて 200、無ければ 201。
+ * 本文: { dish: DishSnapshot, source_planned_meal_id?: uuid | null } (core.ts の SaveDishFavoriteBodySchema)。
+ */
+export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
 
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
-  const userLogger = logger.withUser(user.id);
-
-  const { searchParams } = new URL(request.url);
-  // #1226: limit / offset は clampIntParam で丸める。以前は limit が Math.min(Number(...), 200) で
-  // 上限しか見ておらず、offset は無加工だったため、?limit=abc・?offset=abc (NaN) は空の一覧になり、
-  // ?limit=-50 や桁あふれする offset は不正な範囲が .range() に渡って
-  // PostgREST のエラー → 生のメッセージ付きの 500 になっていた。
-  // 数字でない値・空は既定値へ、範囲外の値は端に寄せる。
-  const limit = clampIntParam(searchParams.get('limit'), { min: 1, max: 200, default: 100 });
-  const offset = clampIntParam(searchParams.get('offset'), { min: 0, max: 100000, default: 0 });
-  const query = searchParams.get('q')?.trim() ?? '';
-  const sort = searchParams.get('sort') ?? 'newest'; // newest | oldest | name
-  const params = { userId: user.id, query, sort, offset, limit };
-
-  // カラムリスト: フル → id なし → 最小セット の順でフォールバック
-  // 本番 DB で id / recipe_uuid が CREATE TABLE IF NOT EXISTS のスキップで
-  // 追加されていない場合に 500 を回避する (#302)
-  const columnSets = [
-    'id, recipe_id, recipe_uuid, created_at',
-    'user_id, recipe_id, recipe_uuid, created_at',
-    'user_id, recipe_id, created_at',
-  ];
-
-  try {
-    let lastError: { code: string; message: string } | null = null;
-
-    for (const columns of columnSets) {
-      const r = await queryFavorites(supabase, columns, params);
-      if (!r.error) {
-        return NextResponse.json({
-          favorites: (r.data ?? []).map((row: any) => ({
-            id: row.id ?? `${row.user_id}:${row.recipe_id}`,
-            recipeName: row.recipe_id,
-            recipeUuid: row.recipe_uuid ?? null,
-            likedAt: row.created_at,
-          })),
-          total: r.count ?? 0,
-        });
-      }
-      // offset が件数より先だと PostgREST は 416 (Range Not Satisfiable) を返す (#1226)。
-      // 上限までに丸めても、お気に入りの数より大きい offset はこの形で残る。
-      // 500 にはせず、空のページと本当の total を返す (total は先頭 1 件の問い合わせで取り直す)。
-      if (r.status === 416) {
-        const firstRow = await queryFavorites(supabase, columns, { ...params, offset: 0, limit: 1 });
-        if (!firstRow.error) return NextResponse.json({ favorites: [], total: firstRow.count ?? 0 });
-      }
-      // 42703 = column not found → 次の columns セットを試す
-      if (r.error.code !== '42703') throw r.error;
-      lastError = r.error;
-      userLogger.warn(`column not found (${r.error.message}), retrying with narrower select`);
-    }
-
-    throw lastError ?? new Error('Failed to query recipe_likes');
-  } catch (error: any) {
-    return internalError('GET /api/favorites', error, { userId: user.id, requestId });
+  const read = await readJsonBody(request);
+  if (!read.ok) return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+  const parsed = SaveDishFavoriteBodySchema.safeParse(read.body);
+  if (!parsed.success || dishJsonByteLength(parsed.data.dish) > DISH_FAVORITE_DISH_MAX_BYTES) {
+    return NextResponse.json({ error: DISH_FAVORITE_INVALID_MESSAGE, code: DISH_FAVORITE_VALIDATION_CODE }, { status: 400 });
   }
+
+  const saved = await saveDishFavorite(supabase, user.id, parsed.data, dishFavoritesMaxPerUser());
+  if (!saved.ok) {
+    if (saved.reason === 'limit') {
+      return NextResponse.json({ error: dishFavoritesLimitMessage(saved.max), code: DISH_FAVORITES_LIMIT_CODE }, { status: 409 });
+    }
+    return internalError(POST_ROUTE_NAME, saved.error, { userId: user.id, table: 'dish_favorites' });
+  }
+  return NextResponse.json({ favorite: saved.favorite, created: saved.created }, { status: saved.created ? 201 : 200 });
 }

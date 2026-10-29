@@ -24,7 +24,7 @@
  * 書いた時点の実際の直前のステージと必ず一致する (別の担当者が変えたステージを、履歴に残さずに戻すこともない)。
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested, invalidJsonNested } from '@/lib/api/error-responses';
 import { updateLeadSchema } from '@/lib/admin/sales-schemas';
@@ -194,7 +194,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
     }
 
     // ステージを送ったときは、直前に読んだ stage のままのときだけ書く (読んでから書くまでに別の担当者が変えていたら 0 行)
-    const updateQuery = supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const updateQuery = getSupabaseAdmin()
       .from('sales_leads')
       .update({ ...updates, updated_at: new Date().toISOString() })
       .eq('id', params.id);
@@ -232,7 +233,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
     // ステージ変更の場合は活動履歴に自動記録 (from_stage は条件つきの更新で確かめた直前の値)
     // 書き込みに失敗しても、リードの更新は書けているので応答は 200 のまま (監査ログと同じ fail-open)。失敗は db-logger に error で残す
     if (updates.stage !== undefined && updates.stage !== existingLead.stage) {
-      const { error: activityError } = await supabase.from('sales_lead_activities').insert({
+      // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+      const { error: activityError } = await getSupabaseAdmin().from('sales_lead_activities').insert({
         lead_id: params.id,
         actor_id: currentUser.id,
         activity_type: 'stage_change',

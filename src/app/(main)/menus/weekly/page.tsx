@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo, useReducer } 
 import {
   weekViewReducer, initialWeekViewState,
   modalReducer, initialModalState,
-  aiGenerationReducer, initialAiGenerationState, useAiConsentGenerationFailure,
+  aiGenerationReducer, initialAiGenerationState, photoAnalyzeStateForSession, useAiConsentGenerationFailure,
   nutritionReducer, initialNutritionState,
   recipeReducer, initialRecipeState,
   uiFlagReducer, initialUiFlagState,
@@ -69,6 +69,15 @@ import { useAiConsent } from "@/hooks/useAiConsent";
 import { AiConsentRequiredError, aiFetch, handleStoredAiConsentFailure, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import { aiDailyLimitMessageOfResponse } from "@/lib/ai/daily-limit-client";
 import { mealCoverRepresentsDish } from "@/lib/meal-image";
+import {
+  PHOTO_RESULT_MEAL_MISSING_MESSAGE,
+  PHOTO_RESULT_MEAL_MISSING_TITLE,
+  PHOTO_RESULT_TIMEOUT_MESSAGE,
+  PHOTO_RESULT_TIMEOUT_TITLE,
+  findMealInWeek,
+  photoResultBaseline,
+  waitForMealPhotoResult,
+} from "@/lib/meal-photo-result-watch";
 import { AI_CONSENT_COPY } from "@/lib/ai/consent-config";
 import { weeklyMenuRequestErrorMessageForDisplay } from "@/lib/weekly-menu-request-error";
 import { shoppingListRequestErrorMessageForDisplay } from "@/lib/shopping-list-request-error";
@@ -78,6 +87,14 @@ import { ImageGenerateModal } from "./_components/modals/ImageGenerateModal";
 import { PhotoEditModal } from "./_components/modals/PhotoEditModal";
 import { NutritionDetailModal } from "./_components/modals/NutritionDetailModal";
 import { ImproveMealModal } from "./_components/modals/ImproveMealModal";
+import { dishSnapshotFromMenuDish } from '@/modules/dish-favorites/core';
+import {
+  addRecipeIngredientsToShoppingList,
+  RECIPE_SHOPPING_ADDED_TITLE,
+  RECIPE_SHOPPING_NO_INGREDIENTS_MESSAGE,
+  RECIPE_SHOPPING_NO_INGREDIENTS_TITLE,
+  recipeShoppingAddedMessage,
+} from './_state/recipeShoppingList';
 
 // #182/#322: dynamic import で初期バンドルを削減 (LCP 改善)
 const V4GenerateModal = dynamic(
@@ -147,6 +164,12 @@ interface MealPlanDay {
 
 interface WeekPlan {
   days: MealPlanDay[];
+}
+
+/** GET /api/meal-plans (週の範囲) の本文の、写真の解析の結果を待つときに読む部分 (#2047) */
+interface MealPlansWeekResponse {
+  dailyMeals?: MealPlanDay[] | null;
+  shoppingList?: { items?: ShoppingListItem[] } | null;
 }
 
 // 買い物リスト範囲選択の型は #1031 で shoppingStore (_state/shoppingStore.ts) に一本化
@@ -586,6 +609,8 @@ export default function WeeklyMenuPage() {
 
   const photoEditMeal = modal.photoEditMeal;
   const setPhotoEditMeal = useCallback((m: PlannedMeal | null) => dispatchModal({ type: 'MODAL_SET_PHOTO_EDIT_MEAL', payload: m }), []);
+  // 写真から入力のモーダルを開いた回の番号 (#2047。modalReducer の photoEditSession)
+  const photoEditSession = modal.photoEditSession;
 
   const imageGenerateMeal = modal.imageGenerateMeal;
   const setImageGenerateMeal = useCallback((m: PlannedMeal | null) => dispatchModal({ type: 'MODAL_SET_IMAGE_GENERATE_MEAL', payload: m }), []);
@@ -715,10 +740,12 @@ export default function WeeklyMenuPage() {
   const setImproveNextDay = useCallback((v: boolean) => dispatchAiGen({ type: 'IMPROVE_NEXT_DAY_SET', payload: v }), []);
 
   const isAnalyzingPhoto = aiGen.isAnalyzingPhoto;
-  const setIsAnalyzingPhoto = useCallback((v: boolean) => {
-    if (v) dispatchAiGen({ type: 'PHOTO_ANALYZE_START' });
-    else dispatchAiGen({ type: 'PHOTO_ANALYZE_END' });
-  }, []);
+  // 写真の解析を始める: 解析している写真を送ったモーダルの回 (photoEditSession) を控える (#2047)
+  const startPhotoAnalyze = useCallback((session: number) => dispatchAiGen({ type: 'PHOTO_ANALYZE_START', payload: { session } }), []);
+  const endPhotoAnalyze = useCallback(() => dispatchAiGen({ type: 'PHOTO_ANALYZE_END' }), []);
+  // いま開いている写真から入力のモーダル (回) から見た写真の解析の状態 (#2047)。
+  // 'own' = このモーダルで送った写真を解析中 / 'other' = 前のモーダルで送った写真の結果を待っている / 'idle' = 解析していない
+  const photoEditAnalyzeState = photoAnalyzeStateForSession(aiGen, photoEditSession);
 
   const isGeneratingMealImage = aiGen.isGeneratingMealImage;
   const setIsGeneratingMealImage = useCallback((v: boolean) => {
@@ -795,6 +822,17 @@ export default function WeeklyMenuPage() {
 
   const isFavoriteLoading = recipe.isFavoriteLoading;
   const setIsFavoriteLoading = useCallback((v: boolean) => dispatchRecipe({ type: 'FAVORITE_LOADING_SET', payload: v }), []);
+
+  const favoriteId = recipe.favoriteId;
+  const setFavoriteId = useCallback((v: string | null) => dispatchRecipe({ type: 'FAVORITE_ID_SET', payload: v }), []);
+  /**
+   * 料理のモーダルの回 (#2011)。モーダルが開く・閉じる・別の料理になるたびに status の effect が 1 つ進める。
+   * status・POST・DELETE の応答は、送った時点の回と今の回が同じときだけ ♥ の印・favoriteId・取得中の印に入れる
+   * (押したあとに閉じて別の料理を開くと、前の料理の応答が今の料理の印と id を書き換えるため)
+   */
+  const favoriteSessionRef = useRef(0);
+  /** 料理のモーダルが開いているか (買い物リストの追加は activeModal だけを閉じ selectedRecipe を残す) */
+  const isRecipeModalOpen = activeModal === 'recipe' && selectedRecipe !== null;
 
   const aiSuggestions = recipe.aiSuggestions;
   const setAiSuggestions = useCallback((v: unknown[]) => dispatchRecipe({ type: 'AI_SUGGESTIONS_SET', payload: v }), []);
@@ -1506,6 +1544,11 @@ export default function WeeklyMenuPage() {
         improveWatchRef.current.active = false;
         improveWatchRef.current = null;
       }
+      // 写真の解析の結果を待つ読み直しも、アンマウントのあとに何も置かないように印を下ろす (#2047)
+      if (photoResultWatchRef.current) {
+        photoResultWatchRef.current.active = false;
+        photoResultWatchRef.current = null;
+      }
       // 再生成の Realtime は週の生成と別のチャンネルで持つ (#1657)
       if (regenerateChannelRef.current) {
         supabaseRef.current.removeChannel(regenerateChannelRef.current);
@@ -1921,18 +1964,26 @@ export default function WeeklyMenuPage() {
   const setImageReferencePreviews = useFormDraftStore((s) => s.setImageReferencePreviews);
   const imageGenerateInputRef = useRef<HTMLInputElement>(null);
 
-  // レシピモーダルが開いたとき、お気に入り状態を取得
+  // ♥ の状態を dish_favorites から名前で引く。モーダルが開くたびに引き直す。取得中は ♥ を disabled にする (#2011)
   useEffect(() => {
-    if (!selectedRecipe) {
-      setIsFavorite(false);
+    favoriteSessionRef.current += 1;
+    const session = favoriteSessionRef.current;
+    if (!isRecipeModalOpen || !selectedRecipe) {
+      // 閉じた: 前の回の取得・押下の応答は捨てられるので、取得中の印をここで下ろす
+      setIsFavoriteLoading(false);
       return;
     }
-    const encodedId = encodeURIComponent(selectedRecipe);
-    fetch(`/api/recipes/${encodedId}/like`)
-      .then(res => res.ok ? res.json() : null)
-      .then(data => { if (data) setIsFavorite(data.liked); })
-      .catch(() => {/* 取得失敗は無視 */});
-  }, [selectedRecipe]);
+    setIsFavoriteLoading(true);
+    fetch(`/api/favorites/status?name=${encodeURIComponent(selectedRecipe)}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { favorited?: boolean; id?: string | null } | null) => {
+        if (favoriteSessionRef.current !== session || !data) return;
+        setIsFavorite(data.favorited === true);
+        setFavoriteId(typeof data.id === 'string' ? data.id : null);
+      })
+      .catch(() => {/* 取得失敗は無視 (印は今の値のまま) */})
+      .finally(() => { if (favoriteSessionRef.current === session) setIsFavoriteLoading(false); });
+  }, [selectedRecipe, isRecipeModalOpen]);
 
   const openAddMealModal = (mealType: MealType, dayIndex: number) => {
     setAddMealKey(mealType);
@@ -2143,6 +2194,15 @@ export default function WeeklyMenuPage() {
   const improveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // 献立改善の監視 1 回分の印 (#1657)。次の改善の開始・中止 (handleCancelGeneration)・アンマウントで active が false になる
   const improveWatchRef = useRef<{ active: boolean } | null>(null);
+  // 写真の解析 (写真から入力) の結果を待つ監視 1 回分の印 (#2047)。アンマウントで active が false になる
+  // (次の解析の開始でも下ろすが、解析は一度に 1 つ (analyzePhotoWithAI の先頭で止める) なので、待っているあいだに次の解析は始まらない)
+  const photoResultWatchRef = useRef<{ active: boolean } | null>(null);
+  // いま画面に出している週の初日。写真の解析の結果を待ち終えたとき、待っているあいだに週が変わっていたら、
+  // 解析を頼んだ週の献立を画面に置かない (キャッシュにだけ置く) ために見る (#2047)
+  const displayedWeekStartRef = useRef(weekStart);
+  useEffect(() => {
+    displayedWeekStartRef.current = weekStart;
+  }, [weekStart]);
 
   // V4生成のRealtimeが切断した場合のフォールバックポーリング用の参照
   const v4PollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -3481,90 +3541,69 @@ export default function WeeklyMenuPage() {
     });
   };
 
-  // お気に入りトグル (楽観的更新 + 失敗時ロールバック)
+  // お気に入りトグル (楽観的更新 + 失敗時ロールバック)。保存は料理の写しを POST、解除は id で DELETE (#2011)。
+  // 応答は押した時点のモーダルの回がまだ続いているときだけ反映する (閉じた・別の料理を開いたあとの応答は捨てる。alert も出さない)
   const handleToggleFavorite = async () => {
     if (!selectedRecipe || isFavoriteLoading) return;
+    const session = favoriteSessionRef.current;
+    const isCurrentSession = () => favoriteSessionRef.current === session;
     const prev = isFavorite;
     setIsFavorite(!prev);
     setIsFavoriteLoading(true);
     try {
-      const encodedId = encodeURIComponent(selectedRecipe);
-      const method = prev ? 'DELETE' : 'POST';
-      const res = await fetch(`/api/recipes/${encodedId}/like`, { method });
-      if (!res.ok) {
-        // rollback
+      if (prev) {
+        if (!favoriteId) { setIsFavorite(prev); return; }
+        const res = await fetch(`/api/favorites/${encodeURIComponent(favoriteId)}`, { method: 'DELETE' });
+        if (!isCurrentSession()) return;
+        // 404 = もう消えている。どちらも「未保存」が正しい状態
+        if (res.ok || res.status === 404) { setFavoriteId(null); } else { setIsFavorite(prev); }
+        return;
+      }
+      const dish = (selectedRecipeData?.dishes as unknown[] | undefined)?.[0];
+      const body = {
+        dish: dishSnapshotFromMenuDish(dish && typeof dish === 'object' ? (dish as Record<string, unknown>) : {}, selectedRecipe),
+        source_planned_meal_id: typeof selectedRecipeData?.plannedMealId === 'string' ? selectedRecipeData.plannedMealId : null,
+      };
+      const res = await fetch('/api/favorites', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!isCurrentSession()) return;
+      if (res.ok) {
+        const data = (await res.json()) as { favorite?: { id?: string } };
+        if (!isCurrentSession()) return;
+        setFavoriteId(typeof data.favorite?.id === 'string' ? data.favorite.id : null);
+      } else {
         setIsFavorite(prev);
+        // 409 (上限) と 400 (内容) は理由の文を見せる (本文の error は日本語の固定の文)
+        if (res.status === 409 || res.status === 400) {
+          const err = (await res.json().catch(() => null)) as { error?: string } | null;
+          if (isCurrentSession() && err?.error) alert(err.error);
+        }
       }
     } catch {
-      setIsFavorite(prev);
+      if (isCurrentSession()) setIsFavorite(prev);
     } finally {
-      setIsFavoriteLoading(false);
+      if (isCurrentSession()) setIsFavoriteLoading(false);
     }
   };
 
-  // Add recipe ingredients to shopping list
+  // 料理の材料を買い物リストに追加する (#2023)。材料の集め方 (dishes の各料理 + 直下の ingredients・重複の除去) と
+  // 名前と分量への分け方 (1 行の文字列と構造の形の両方。ingredientInputsOf) は _state/recipeShoppingList.ts
   const addRecipeToShoppingList = async () => {
     if (!selectedRecipeData || !currentPlan) return;
-    try {
-      // 材料を収集：dishes内の各料理の材料 + 旧形式のingredientsを統合
-      let allIngredients: string[] = [];
-      
-      // dishes配列から材料を収集
-      if (selectedRecipeData.dishes && Array.isArray(selectedRecipeData.dishes)) {
-        selectedRecipeData.dishes.forEach((dish: any) => {
-          if (dish.ingredients && Array.isArray(dish.ingredients)) {
-            allIngredients = [...allIngredients, ...dish.ingredients];
-          }
-        });
-      }
-      
-      // 旧形式の材料も追加（フォールバック）
-      if (selectedRecipeData.ingredients && Array.isArray(selectedRecipeData.ingredients)) {
-        allIngredients = [...allIngredients, ...selectedRecipeData.ingredients];
-      }
-      
-      // 重複を除去
-      allIngredients = [...new Set(allIngredients)];
-      
-      if (allIngredients.length === 0) {
-        setSuccessMessage({ title: '材料なし', message: '材料情報がありません。「AIで変更」で再生成してください。' });
-        return;
-      }
-      
-      // 文字列形式 "鶏むね肉 200g" を {name, amount} 形式にパース
-      const parsedIngredients = allIngredients.map((ing: string) => {
-        // 最後のスペースで分割して分量を抽出（例: "鶏むね肉 200g" → name: "鶏むね肉", amount: "200g"）
-        const match = ing.match(/^(.+?)\s+(\d+.*|少々|適量|適宜)$/);
-        if (match) {
-          return { name: match[1], amount: match[2] };
-        }
-        return { name: ing, amount: null };
-      });
-      
-      const res = await fetch('/api/shopping-list/add-recipe', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          shoppingListId: activeShoppingList?.id,
-          ingredients: parsedIngredients 
-        })
-      });
-      if (res.ok) {
-        const { items } = await res.json();
-        setShoppingList([...useShoppingStore.getState().shoppingList, ...items]);
-        setActiveModal(null);
-        setSuccessMessage({ 
-          title: '買い物リストに追加しました ✓', 
-          message: `${parsedIngredients.length}件の材料を追加しました` 
-        });
-      } else {
-        const err = await res.json();
-        alert(`エラー: ${err.error || '追加に失敗しました'}`);
-      }
-    } catch (e) { 
-      console.error('Add to shopping list error:', e);
-      alert("追加に失敗しました"); 
+    const result = await addRecipeIngredientsToShoppingList({
+      recipeData: selectedRecipeData,
+      shoppingListId: activeShoppingList?.id,
+    });
+    if (result.kind === 'no-ingredients') {
+      setSuccessMessage({ title: RECIPE_SHOPPING_NO_INGREDIENTS_TITLE, message: RECIPE_SHOPPING_NO_INGREDIENTS_MESSAGE });
+      return;
     }
+    if (result.kind === 'failed') {
+      alert(result.alertMessage);
+      return;
+    }
+    setShoppingList([...useShoppingStore.getState().shoppingList, ...result.items]);
+    setActiveModal(null);
+    setSuccessMessage({ title: RECIPE_SHOPPING_ADDED_TITLE, message: recipeShoppingAddedMessage(result.count) });
   };
 
   // Generate weekly menu with AI
@@ -4289,11 +4328,12 @@ export default function WeeklyMenuPage() {
   };
 
   // Open photo edit modal
+  // 開くたびに新しい回 (photoEditSession) にし、写真を空にする。手で変更のモーダルからの「写真から入力」もここを通る (#2047:
+  // 解析の結果を待つあいだに開き直したモーダルを、待ち始めたときのモーダルと見分け、送った写真を新しい回に持ち越さない)
   const openPhotoEdit = (meal: PlannedMeal) => {
-    setPhotoEditMeal(meal);
+    dispatchModal({ type: 'MODAL_OPEN_PHOTO_EDIT', payload: meal });
     setPhotoFiles([]);
     setPhotoPreviews([]);
-    setActiveModal('photoEdit');
   };
 
   // Handle photo selection（複数枚対応）
@@ -4324,13 +4364,28 @@ export default function WeeklyMenuPage() {
   const analyzePhotoWithAI = async () => {
     const { photoFiles } = useFormDraftStore.getState();
     if (photoFiles.length === 0 || !photoEditMeal || !currentPlan) return;
+    // 写真の解析は一度に 1 つ (#2047)。前のモーダルで送った写真の結果を待っているあいだは始めない
+    // (モーダルの解析のボタンも押せない。PhotoEditModal の isOtherPhotoAnalyzing)
+    if (isAnalyzingPhoto) return;
 
-    setIsAnalyzingPhoto(true);
+    // 解析を頼むモーダルの回。待ち終えたとき、モーダルがまだこの回なら閉じる (開き直したモーダルは閉じない)
+    const session = photoEditSession;
+    startPhotoAnalyze(session);
+    const mealId = photoEditMeal.id;
+    const targetDate = formatLocalDate(weekStart);
+    const endDate = addDaysStr(targetDate, 6);
+    /** 解析を頼んだ週の献立を読む。読めなければ null */
+    const fetchTargetWeek = async (): Promise<MealPlansWeekResponse | null> => {
+      const weekRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
+      if (!weekRes.ok) return null;
+      const week: MealPlansWeekResponse = await weekRes.json();
+      return week;
+    };
 
     try {
       // 「同意しない」なら写真を AI に送らない
       if ((await ensureAiConsent()) === "declined") {
-        setIsAnalyzingPhoto(false);
+        endPhotoAnalyze();
         return;
       }
       // 複数枚の写真をBase64に変換して送信
@@ -4348,45 +4403,90 @@ export default function WeeklyMenuPage() {
         });
       }));
       
+      // 解析を頼む前の献立を控える (結果が書かれたかを比べる元。#2047)。画面の献立は古いことがある (前の解析の結果が、
+      // 待つのをやめたあとに書かれた など) ので、サーバーから読み直したものを使う。読めなければ画面の献立を使う
+      const baselineWeek = await fetchTargetWeek().catch(() => null);
+      const baseline = photoResultBaseline(findMealInWeek(baselineWeek, mealId) ?? photoEditMeal);
+
       const res = await aiFetch('/api/ai/analyze-meal-photo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           images: imageDataArray,
-          mealId: photoEditMeal.id,
+          mealId,
           mealType: photoEditMeal.mealType,
         })
       });
 
       // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さない (写真は残す)
       if (await isAiConsentRequiredResponse(res)) {
-        setIsAnalyzingPhoto(false);
+        endPhotoAnalyze();
         return;
       }
       
       if (res.ok) {
-        setActiveModal(null);
-        setPhotoEditMeal(null);
-        setPhotoFiles([]);
-        setPhotoPreviews([]);
+        // mealId つきの解析は非同期 (#2047): route の 200 は「Edge が背景で解析を始めた」で、解析 (10〜20 秒) はまだ終わっていない。
+        // 結果が献立に書かれたことが分かるまで、上限つきで読み直す (src/lib/meal-photo-result-watch.ts)。
+        // 待っているあいだは、写真から入力のモーダルを開いたまま「AIが解析中...」を出す (食事の記録の画面などの写真の入力と同じく、
+        // 解析が終わるまでその場で待つ)。利用者がモーダルを閉じても読み直しは続け、結果が書かれたら献立に置く。
+        // 閉じたあとに開いた写真から入力のモーダル (別の献立・同じ献立の開き直し) は別の回なので「AIが解析中...」を出さず、
+        // 写真は選べるが解析のボタンは待ち終えるまで押せない (解析は一度に 1 つ。photoEditAnalyzeState === 'other')
+        if (photoResultWatchRef.current) photoResultWatchRef.current.active = false;
+        const photoResultWatch = { active: true };
+        photoResultWatchRef.current = photoResultWatch;
 
-        // 写真解析は同期的に行われるので、すぐにデータを再取得
-        const targetDate = formatLocalDate(weekStart);
-        const endDate = addDaysStr(targetDate, 6);
-        const pollRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
-        if (pollRes.ok) {
-          const { dailyMeals, shoppingList: shoppingListData } = await pollRes.json();
+        const outcome = await waitForMealPhotoResult({
+          mealId,
+          baseline,
+          fetchWeek: fetchTargetWeek,
+          isActive: () => photoResultWatch.active,
+        });
+        // アンマウントで印が下りていたら、何も置かない
+        if (outcome.status === 'cancelled' || !photoResultWatch.active) return;
+        photoResultWatchRef.current = null;
+
+        if (outcome.week) {
+          const { dailyMeals, shoppingList: shoppingListData } = outcome.week;
           if (dailyMeals && dailyMeals.length > 0) {
             const newPlan = { days: dailyMeals };
             const newShoppingList = shoppingListData?.items || [];
-            setCurrentPlan(newPlan);
-            if (newShoppingList.length > 0) setShoppingList(newShoppingList);
-            updateCalendarMealDatesFromDailyMeals(dailyMeals);
-            // キャッシュも更新
+            // キャッシュは解析を頼んだ週に置く。画面に出すのは、いまもその週を出しているときだけ
             weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
+            if (formatLocalDate(displayedWeekStartRef.current) === targetDate) {
+              setCurrentPlan(newPlan);
+              if (newShoppingList.length > 0) setShoppingList(newShoppingList);
+              updateCalendarMealDatesFromDailyMeals(dailyMeals);
+            }
           }
         }
-        setIsAnalyzingPhoto(false);
+
+        // 写真から入力のモーダルが、まだ解析を頼んだ回のものなら閉じる (開き直したモーダルは、同じ献立でも閉じない)。
+        // 選んだ写真は、いまも送った写真のままのときだけ消す (解析中はそのモーダルの中で写真を足す・消すことができない (PhotoEditModal)。
+        // 写真が変わっているのは、待っているあいだに利用者がモーダルを閉じた (onClose が消す)・開き直した (openPhotoEdit が消してから
+        // 選ぶ) ときで、開き直したモーダルの写真は消さない)
+        dispatchModal({ type: 'MODAL_CLOSE_PHOTO_EDIT_SESSION', payload: session });
+        if (useFormDraftStore.getState().photoFiles === photoFiles) {
+          setPhotoFiles([]);
+          setPhotoPreviews([]);
+        }
+        endPhotoAnalyze();
+
+        // 上限まで待っても結果が書かれなかった (解析が長い・失敗した・解析のあいだに献立が書かれて結果を捨てた #2041 の CAS) なら、
+        // 黙って終えずにその旨を出す。閉じたら献立を読み直す (そのあいだに書かれていれば出る)
+        if (outcome.status === 'timeout') {
+          setSuccessMessage({
+            title: PHOTO_RESULT_TIMEOUT_TITLE,
+            message: PHOTO_RESULT_TIMEOUT_MESSAGE,
+            type: 'info',
+            refreshOnDismiss: true,
+          });
+        } else if (outcome.status === 'meal_missing') {
+          setSuccessMessage({
+            title: PHOTO_RESULT_MEAL_MISSING_TITLE,
+            message: PHOTO_RESULT_MEAL_MISSING_MESSAGE,
+            type: 'error',
+          });
+        }
       } else {
         const err = await res.json();
         // #1050 round-2 (UX2-02残): alert() ではなく完了モーダル(type:'error')に集約。
@@ -4398,7 +4498,7 @@ export default function WeeklyMenuPage() {
           type: 'error',
           onRetry: () => analyzePhotoWithAI(),
         });
-        setIsAnalyzingPhoto(false);
+        endPhotoAnalyze();
       }
     } catch (error) {
       console.error('Photo analysis error:', error);
@@ -4408,7 +4508,7 @@ export default function WeeklyMenuPage() {
         type: 'error',
         onRetry: () => analyzePhotoWithAI(),
       });
-      setIsAnalyzingPhoto(false);
+      endPhotoAnalyze();
     }
   };
 
@@ -5468,6 +5568,8 @@ export default function WeeklyMenuPage() {
                       dishes: [normalizedDish],
                       // 全料理の材料（買い物リスト用）
                       allIngredients: dishesArray.flatMap(dd => dd.ingredients || []),
+                      // お気に入りの写しの source_planned_meal_id (#2011。参照だけ)
+                      plannedMealId: meal.id,
                     });
                     setActiveModal('recipe');
                   }}
@@ -6477,7 +6579,7 @@ export default function WeeklyMenuPage() {
                 onAddDish={addManualDish}
                 onRemoveDish={removeManualDish}
                 onUpdateDish={updateManualDish}
-                onOpenPhotoEdit={() => { setActiveModal('photoEdit'); setPhotoEditMeal(manualEditMeal); }}
+                onOpenPhotoEdit={() => openPhotoEdit(manualEditMeal)}
                 onOpenImageGenerate={openImageGenerate}
                 onSave={saveManualEdit}
               />
@@ -6510,7 +6612,8 @@ export default function WeeklyMenuPage() {
             {/* Photo Edit Modal */}
             {activeModal === 'photoEdit' && photoEditMeal && (
               <PhotoEditModal
-                isAnalyzingPhoto={isAnalyzingPhoto}
+                isAnalyzingPhoto={photoEditAnalyzeState === 'own'}
+                isOtherPhotoAnalyzing={photoEditAnalyzeState === 'other'}
                 onClose={() => { setActiveModal(null); setPhotoEditMeal(null); setPhotoFiles([]); setPhotoPreviews([]); }}
                 onPhotoSelect={(files: FileList) => {
                   const newFiles = Array.from(files);

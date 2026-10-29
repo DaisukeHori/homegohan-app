@@ -14,7 +14,7 @@ import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { sanitizeLogEntry } from '@/lib/db-logger';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_INTERNAL_ERROR_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_INTERNAL_ERROR_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 // #1044 (F6-20): level は enum に限定、message は上限文字数を設ける
 const ALLOWED_LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
@@ -37,7 +37,12 @@ export async function POST(request: NextRequest) {
   const nullCharacterRejection = await rejectNullCharacterBody(request);
   if (nullCharacterRejection) return nullCharacterRejection;
   try {
-    const { level, message, metadata } = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const requestBody = await request.json().catch(() => null);
+    if (!requestBody || typeof requestBody !== 'object' || Array.isArray(requestBody)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
+    const { level, message, metadata } = requestBody;
 
     if (!message || !level) {
       return NextResponse.json({ error: LOG_FIELDS_REQUIRED_MESSAGE }, { status: 400 });

@@ -173,6 +173,53 @@ export async function restorePlannedMealsSnapshot(
 }
 
 /**
+ * #2025: 献立のスナップショットを、本人の日 (user_daily_meals) に属する行だけ service_role (writer) で書き戻す。
+ *
+ * planned_meals の is_completed / completed_at / veg_score は利用者のセッションから INSERT できない
+ * (docs/design/cross/23-planned-meals-score-integrity.md §7.3)。消した行を完了の印・時刻・野菜スコアごと戻すため、
+ * 書くのは writer。writer は RLS を通らないので、書く前に userDb (利用者のセッション。RLS で本人の日しか読めない) で
+ * daily_meal_id が本人の日かを確かめ、本人の日でない行・daily_meal_id の無い行は書かずに failed に数える。
+ * 確かめる問い合わせが失敗したときは 1 行も書かない (全部を failed に数える)。
+ */
+export async function restoreOwnPlannedMealsSnapshot(params: {
+  userDb: Pick<SupabaseClient, 'from'>;
+  writer: Pick<SupabaseClient, 'from'>;
+  snapshot: PlannedMealSnapshotRow[];
+}): Promise<RestorePlannedMealsResult> {
+  const { userDb, writer, snapshot } = params;
+  if (snapshot.length === 0) return { restored: 0, skipped: 0, failed: 0 };
+
+  const dailyMealIds = Array.from(
+    new Set(
+      snapshot
+        .map((row) => row?.daily_meal_id)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0),
+    ),
+  );
+  const ownDailyMealIds = new Set<string>();
+  for (let i = 0; i < dailyMealIds.length; i += SLOT_LOOKUP_CHUNK_SIZE) {
+    const ids = dailyMealIds.slice(i, i + SLOT_LOOKUP_CHUNK_SIZE);
+    const { data, error } = await userDb.from('user_daily_meals').select('id').in('id', ids);
+    if (error) {
+      console.error(
+        `[restoreOwnPlannedMealsSnapshot] ownership lookup failed for daily_meals ${ids.join(',')}:`,
+        error.message,
+      );
+      return { restored: 0, skipped: 0, failed: snapshot.length };
+    }
+    for (const row of (data ?? []) as Array<{ id: string }>) ownDailyMealIds.add(row.id);
+  }
+
+  const ownRows = snapshot.filter(
+    (row) => typeof row?.daily_meal_id === 'string' && ownDailyMealIds.has(row.daily_meal_id),
+  );
+  const notOwn = snapshot.length - ownRows.length;
+  if (ownRows.length === 0) return { restored: 0, skipped: 0, failed: notOwn };
+  const result = await restorePlannedMealsSnapshot(writer, ownRows);
+  return { ...result, failed: result.failed + notOwn };
+}
+
+/**
  * weekly_menu_requests.generated_data (jsonb, request/route.ts が
  * `{ snapshot: PlannedMealSnapshotRow[] }` の形で保存) から復元用スナップショットを
  * 安全に取り出す。

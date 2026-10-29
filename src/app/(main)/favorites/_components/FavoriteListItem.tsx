@@ -2,6 +2,7 @@
 
 import { Utensils, Heart, Clock } from "lucide-react";
 import { motion } from "framer-motion";
+import type { DishFavorite } from "@/modules/dish-favorites/core";
 
 const colors = {
   card: "#FFFFFF",
@@ -13,12 +14,8 @@ const colors = {
   favRedLight: "#FFF0F0",
 };
 
-export interface FavoriteListItemData {
-  id: string;
-  recipeName: string;
-  recipeUuid: string | null;
-  likedAt: string;
-}
+/** 一覧の 1 行 (献立の料理のお気に入り。docs/design/cross/22-dish-favorites.md §7.11) */
+export type FavoriteListItemData = Pick<DishFavorite, "id" | "dish_name" | "created_at">;
 
 export interface FavoriteListItemProps {
   item: FavoriteListItemData;
@@ -71,7 +68,7 @@ export function FavoriteListItem({
       <button
         type="button"
         onClick={onOpen}
-        aria-label={`${item.recipeName} のレシピを見る`}
+        aria-label={`${item.dish_name} のレシピを見る`}
         style={{
           flex: 1,
           minWidth: 0,
@@ -121,7 +118,7 @@ export function FavoriteListItem({
               whiteSpace: "nowrap",
             }}
           >
-            {item.recipeName}
+            {item.dish_name}
           </span>
           <span
             style={{
@@ -134,7 +131,7 @@ export function FavoriteListItem({
             }}
           >
             <Clock size={11} />
-            {formatDate(item.likedAt)} に追加
+            {formatDate(item.created_at)} に追加
           </span>
         </span>
       </button>

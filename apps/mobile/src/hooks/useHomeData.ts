@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabase";
 import { getApi } from "../lib/api";
-import { formatCalendarDate, pantryExpiringSoonUntil, todayCalendarDate, todayLocal } from "@homegohan/shared";
+import { formatCalendarDate, pantryExpiringSoonUntil, todayCalendarDate, todayLocal, PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs } from "@homegohan/shared";
 import { handleAiConsentRequiredError } from "../lib/ai-consent";
 
 interface DailySummary {
@@ -657,10 +657,8 @@ export const useHomeData = (userId: string | undefined) => {
         : Math.max(prev.completedCount - 1, 0),
     }));
 
-    const { error } = await supabase
-      .from("planned_meals")
-      .update({ is_completed: newStatus, completed_at: newStatus ? new Date().toISOString() : null })
-      .eq("id", mealId);
+    // 完了は RPC。completed_at は DB が決める (planned_meals の is_completed / completed_at は直接書けない。#2025)
+    const { error } = await supabase.rpc(PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs(mealId, newStatus));
 
     if (error) {
       console.error("Toggle completion error:", error);

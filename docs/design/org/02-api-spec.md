@@ -117,6 +117,8 @@
 
 ### `GET /api/org/members`
 
+**実装 (現行。#2073 S4)**: `src/app/api/org/members/route.ts` の GET。呼べるのは所属組織の owner / admin だけ (`requireOrgAdmin`。一般メンバーは 403・未ログインは 401)。下の認証・クエリパラメータ・応答は旧案で、いまの応答は `{ members: [{ id, nickname, org_role, joined_org_at }] }` (`src/schemas/membership/organization-member-name.ts` の `OrgMemberNamesResponseSchema`。参加した日の古い順・ページングなし)。ほかのメンバーの行は、確かめたあとに service_role で読む (`user_profiles` の SELECT の RLS は本人の行だけ)。メールアドレス・社員番号・部署・最終ログイン・ライセンスは返さない (プライバシーポリシー第9条 5 項。cross/20 F-19)。オーナーの譲渡の候補は `GET /api/org/owner-transfer/candidates` (オーナーだけ。自分とオーナーを除いた同じ 4 つの項目。membership/02-flow-spec.md §5)。
+
 **認証**: `org_admin` | `org_manager` | `org_viewer`
 
 **クエリパラメータ**:
@@ -895,7 +897,7 @@ yamada@example.com,org_member,営業部,山田太郎,EMP001,2024-04-01
 ```
 
 **処理**:
-1. `acquire_advisory_lock('bulk-revoke:' || org_id)` 取得 (cross/02-rls-patterns.md §6.3 ラッパー経由)
+1. `pg_advisory_xact_lock(hashtext('bulk-revoke:' || org_id))` を、2〜4 を行う SECURITY DEFINER の関数の中で、2〜4 と同じ取引で取る (ロックだけを取る RPC では、その RPC の取引の終わりで外れる。cross/02-rls-patterns.md §6.3)
 2. `org_license_assignments SET status='revoked', revoked_at=NOW()` (batch UPDATE)
 3. `sync_org_license_pool_usage` トリガーで used_licenses 減算
 4. `org_license_audit_log` に記録

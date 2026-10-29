@@ -51,7 +51,7 @@ const NOTE = '申し立てを確認。規約違反ではなかった';
 type Json = Record<string, unknown>;
 
 function restoreRequest(body: unknown, rawBody?: string): Request {
-  return new Request('http://localhost/api/admin/moderation/food/flag-1/restore', {
+  return new Request('http://localhost/api/admin/moderation/food/f1a90000-0000-4000-8000-000000000001/restore', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'user-agent': 'vitest-agent' },
     body: rawBody ?? JSON.stringify(body),
@@ -62,7 +62,7 @@ const call = (type: string, id: string, request: Request) => POST(request, { par
 
 function foodFlagRow(overrides: Json = {}): Json {
   return {
-    id: 'flag-1',
+    id: 'f1a90000-0000-4000-8000-000000000001',
     status: 'rejected',
     reason: null,
     resolution_note: null,
@@ -78,7 +78,7 @@ function foodFlagRow(overrides: Json = {}): Json {
 
 function recipeFlagRow(overrides: Json = {}): Json {
   return {
-    id: 'rflag-1',
+    id: 'f1a90000-0000-4000-8000-000000000002',
     status: 'rejected',
     reason: null,
     reviewed_by: null,
@@ -108,7 +108,7 @@ function seedFakes(adminQueues: Record<string, Queue>, auditResult: { error?: un
 /** 複製なしの food が最後まで戻る流れの積み方。上書きしたい結果だけ渡す */
 function plainFoodQueues(overrides: { flag?: Queue[number]; meal?: Queue; flags?: Queue } = {}) {
   return {
-    moderation_flags: [overrides.flag ?? { data: foodFlagRow(), error: null }, ...(overrides.flags ?? [{ data: [{ id: 'flag-1' }], error: null }])],
+    moderation_flags: [overrides.flag ?? { data: foodFlagRow(), error: null }, ...(overrides.flags ?? [{ data: [{ id: 'f1a90000-0000-4000-8000-000000000001' }], error: null }])],
     meals: overrides.meal ?? [{ data: mealDbRow(), error: null }, { data: [{ id: 'meal-1' }], error: null }],
   };
 }
@@ -145,12 +145,12 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 入口 (RT-1〜RT-4
   it('RT-1: 401 未認証 / 403 ロール不足', async () => {
     const { AuthError, ForbiddenError } = await import('@/lib/auth/errors');
     mockRequireRole.mockRejectedValueOnce(new AuthError('AUTH_UNAUTHENTICATED'));
-    const unauth = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const unauth = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
     expect(unauth.status).toBe(401);
     expect(((await unauth.json()) as { error: { code: string } }).error.code).toBe('AUTH_UNAUTHENTICATED');
 
     mockRequireRole.mockRejectedValueOnce(new ForbiddenError('PERM_DENIED'));
-    const forbidden = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const forbidden = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
     expect(forbidden.status).toBe(403);
     expect(((await forbidden.json()) as { error: { code: string } }).error.code).toBe('OP_PERMISSION_DENIED');
     expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
@@ -168,7 +168,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 入口 (RT-1〜RT-4
     expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
     expect(mockCreateClient).not.toHaveBeenCalled();
 
-    const invalidJson = await call('food', 'flag-1', restoreRequest(null, '{"restore_note": '));
+    const invalidJson = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest(null, '{"restore_note": '));
     expect(invalidJson.status).toBe(400);
     expect(((await invalidJson.json()) as { error: { code: string } }).error.code).toBe('INVALID_JSON');
     expect(mockCreateClient).not.toHaveBeenCalled();
@@ -176,7 +176,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 入口 (RT-1〜RT-4
 
   it('RT-1: 400 VALIDATION_ERROR (restore_note 無し・空白だけ・5001 字)。details に Zod の flatten。Supabase の client を作らない', async () => {
     for (const body of [{}, { restore_note: '   \n ' }, { restore_note: 'あ'.repeat(5001) }, { restore_note: 5 }]) {
-      const res = await call('food', 'flag-1', restoreRequest(body));
+      const res = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest(body));
       expect(res.status).toBe(400);
       const json = (await res.json()) as { error: { code: string; details: { fieldErrors: Record<string, string[]> } } };
       expect(json.error.code).toBe('VALIDATION_ERROR');
@@ -184,12 +184,12 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 入口 (RT-1〜RT-4
     }
     // 5000 字ちょうどと前後の空白は通る (本文の検証を通って、先の通報の読み取りまで進む)
     seedFakes({ moderation_flags: [{ data: null, error: null }] });
-    const edge = await call('food', 'flag-1', restoreRequest({ restore_note: `  ${'あ'.repeat(5000)}  ` }));
+    const edge = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: `  ${'あ'.repeat(5000)}  ` }));
     expect(edge.status).toBe(404);
   });
 
   it('RT-1: 400 INVALID_CHARACTER (NULL 文字)。認証にも Supabase にも触れない', async () => {
-    const res = await call('food', 'flag-1', restoreRequest({ restore_note: 'メモ\u0000' }));
+    const res = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: 'メモ\u0000' }));
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe('INVALID_CHARACTER');
     expect(mockRequireRole).not.toHaveBeenCalled();
@@ -199,12 +199,12 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 入口 (RT-1〜RT-4
 
   it('RT-2: 通報が無ければ 404。通報の読み取りが失敗したら 500 (404 に丸めない)。どちらも何も更新せず監査ログも残さない', async () => {
     seedFakes({ moderation_flags: [{ data: null, error: null }] });
-    const notFound = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const notFound = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
     expect(notFound.status).toBe(404);
     expect(((await notFound.json()) as { error: { code: string } }).error.code).toBe('NOT_FOUND');
 
     seedFakes({ moderation_flags: [{ data: null, error: { message: SENTINEL } }] });
-    const failed = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const failed = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
     expect(failed.status).toBe(500);
     const text = JSON.stringify(await failed.json());
     expect(text).toContain('INTERNAL_ERROR');
@@ -216,13 +216,13 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 入口 (RT-1〜RT-4
 
   it('RT-3: 通報の content_id が null なら 410 OP_CONTENT_GONE。行が無ければ 410。何も更新せず監査ログも残さない', async () => {
     seedFakes({ moderation_flags: [{ data: foodFlagRow({ meal_id: null, meals: null }), error: null }] });
-    const noContent = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const noContent = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
     expect(noContent.status).toBe(410);
     expect(((await noContent.json()) as { error: { code: string } }).error.code).toBe('OP_CONTENT_GONE');
     expect(tablesCalled(adminFake)).toEqual(['moderation_flags']);
 
     seedFakes({ moderation_flags: [{ data: foodFlagRow(), error: null }], meals: [{ data: null, error: null }] });
-    const gone = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const gone = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
     expect(gone.status).toBe(410);
     expect(((await gone.json()) as { error: { code: string } }).error.code).toBe('OP_CONTENT_GONE');
     expect(updatesOf(adminFake, 'moderation_flags')).toHaveLength(0);
@@ -235,7 +235,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 入口 (RT-1〜RT-4
       moderation_flags: [{ data: foodFlagRow(), error: null }],
       meals: [{ data: mealDbRow({ hidden_at: null, hidden_by: null, hidden_reason: null }), error: null }],
     });
-    const notHidden = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const notHidden = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
     expect(notHidden.status).toBe(409);
     const notHiddenJson = (await notHidden.json()) as { error: { code: string; message: string }; data: Json };
     expect(notHiddenJson.error.code).toBe('OP_CONTENT_NOT_HIDDEN');
@@ -245,7 +245,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 入口 (RT-1〜RT-4
 
     const ninety = new Date(Date.now() - 90 * MS_PER_DAY).toISOString();
     seedFakes({ moderation_flags: [{ data: foodFlagRow(), error: null }], meals: [{ data: mealDbRow({ hidden_at: ninety }), error: null }] });
-    const expired = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const expired = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
     expect(expired.status).toBe(409);
     const expiredJson = (await expired.json()) as { error: { code: string; message: string }; data: Json };
     expect(expiredJson.error.code).toBe('OP_CONTENT_RESTORE_WINDOW_EXPIRED');
@@ -261,11 +261,11 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 戻す (RT-5〜RT-7
   it('RT-5: food (複製なし): 通報 → 行の順で更新し、200。監査ログは admin.moderation.restore・info・target_type moderation_item:food・details。本人の client で書き、request を渡す', async () => {
     seedFakes(plainFoodQueues());
 
-    const res = await call('food', 'flag-1', restoreRequest({ restore_note: `  ${NOTE}  ` }));
+    const res = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: `  ${NOTE}  ` }));
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
-      data: { success: true, content_hidden: false, restored_ids: ['meal-1'], approved_flag_ids: ['flag-1'] },
+      data: { success: true, content_hidden: false, restored_ids: ['meal-1'], approved_flag_ids: ['f1a90000-0000-4000-8000-000000000001'] },
     });
     // 通報 (moderation_flags) の更新が、行 (meals) の更新より先
     const order = tablesCalled(adminFake);
@@ -281,14 +281,14 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 戻す (RT-5〜RT-7
     expect(audit).toMatchObject({
       actor_id: 'admin-1',
       action_type: 'admin.moderation.restore',
-      target_id: 'flag-1',
+      target_id: 'f1a90000-0000-4000-8000-000000000001',
       target_type: 'moderation_item:food',
       severity: 'info',
       user_agent: 'vitest-agent',
     });
     expect(audit.details).toMatchObject({
       moderation_type: 'food',
-      flag_id: 'flag-1',
+      flag_id: 'f1a90000-0000-4000-8000-000000000001',
       content_id: 'meal-1',
       content_user_id: 'owner-x',
       restore_note: NOTE,
@@ -299,7 +299,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 戻す (RT-5〜RT-7
       restored_ids: ['meal-1'],
       restored: true,
       restore_error: null,
-      approved_flag_ids: ['flag-1'],
+      approved_flag_ids: ['f1a90000-0000-4000-8000-000000000001'],
       status_saved: true,
       status_error: null,
       restore_window_days: 89,
@@ -310,7 +310,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 戻す (RT-5〜RT-7
     seedFakes({
       moderation_flags: [
         { data: foodFlagRow(), error: null },
-        { data: [{ id: 'flag-1' }, { id: 'flag-2' }, { id: 'flag-3' }], error: null },
+        { data: [{ id: 'f1a90000-0000-4000-8000-000000000001' }, { id: 'flag-2' }, { id: 'flag-3' }], error: null },
       ],
       meals: [
         { data: mealDbRow({ paste_group_id: 'group-1' }), error: null },
@@ -328,12 +328,12 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 戻す (RT-5〜RT-7
       ],
     });
 
-    const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const res = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
 
     expect(res.status).toBe(200);
     const json = (await res.json()) as { data: { restored_ids: string[]; approved_flag_ids: string[] } };
     expect(json.data.restored_ids).toEqual(['meal-3', 'meal-1', 'meal-2']);
-    expect(json.data.approved_flag_ids).toEqual(['flag-1', 'flag-2', 'flag-3']);
+    expect(json.data.approved_flag_ids).toEqual(['f1a90000-0000-4000-8000-000000000001', 'flag-2', 'flag-3']);
     const [groupRead] = buildersFor(adminFake, 'meals').slice(1, 2);
     expect(groupRead.gte).toHaveBeenCalledWith('hidden_at', RECENT);
     expect(groupRead.eq).toHaveBeenCalledWith('paste_group_id', 'group-1');
@@ -350,14 +350,14 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 戻す (RT-5〜RT-7
 
   it('RT-7: recipe: recipe_flags は reviewed_by / reviewed_at で approved (resolution_note を書かない)。meals には触らない', async () => {
     seedFakes({
-      recipe_flags: [{ data: recipeFlagRow(), error: null }, { data: [{ id: 'rflag-1' }], error: null }],
+      recipe_flags: [{ data: recipeFlagRow(), error: null }, { data: [{ id: 'f1a90000-0000-4000-8000-000000000002' }], error: null }],
       recipes: [
         { data: { id: 'recipe-1', user_id: 'owner-y', hidden_at: RECENT, hidden_by: 'moderator-0', hidden_reason: 'moderation:delete_only' }, error: null },
         { data: [{ id: 'recipe-1' }], error: null },
       ],
     });
 
-    const res = await call('recipe', 'rflag-1', restoreRequest({ restore_note: NOTE }));
+    const res = await call('recipe', 'f1a90000-0000-4000-8000-000000000002', restoreRequest({ restore_note: NOTE }));
 
     expect(res.status).toBe(200);
     const payload = updatesOf(adminFake, 'recipe_flags')[0].update.mock.calls[0]?.[0] as Json;
@@ -372,14 +372,14 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 戻す (RT-5〜RT-7
   it('RT-12: content_moderator でも 200 (隠す操作と同じ 3 ロール)。super_admin 限定の分岐は無い', async () => {
     mockRequireRole.mockResolvedValue(moderatorActor);
     seedFakes(plainFoodQueues());
-    const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const res = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
     expect(res.status).toBe(200);
     expect(auditRow().actor_id).toBe('mod-1');
   });
 
   it('RT-13: user_profiles (BAN) には触らない', async () => {
     seedFakes(plainFoodQueues());
-    await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
     const tables = [...tablesCalled(adminFake), ...tablesCalled(userFake)];
     expect(tables).not.toContain('user_profiles');
     expect(tables.every((table) => ['moderation_flags', 'meals', 'admin_audit_logs'].includes(table))).toBe(true);
@@ -389,7 +389,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 戻す (RT-5〜RT-7
     seedFakes({
       recipe_flags: [
         { data: recipeFlagRow({ recipes: { user_id: null, image_url: null, hidden_at: RECENT } }), error: null },
-        { data: [{ id: 'rflag-1' }], error: null },
+        { data: [{ id: 'f1a90000-0000-4000-8000-000000000002' }], error: null },
       ],
       recipes: [
         { data: { id: 'recipe-1', user_id: null, hidden_at: RECENT, hidden_by: null, hidden_reason: 'moderation:delete_only' }, error: null },
@@ -397,10 +397,10 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 戻す (RT-5〜RT-7
       ],
     });
 
-    const res = await call('recipe', 'rflag-1', restoreRequest({ restore_note: NOTE }));
+    const res = await call('recipe', 'f1a90000-0000-4000-8000-000000000002', restoreRequest({ restore_note: NOTE }));
 
     expect(res.status).toBe(200);
-    expect(auditRow().details).toMatchObject({ content_user_id: null, hidden_by_before: null, restored: true, approved_flag_ids: ['rflag-1'] });
+    expect(auditRow().details).toMatchObject({ content_user_id: null, hidden_by_before: null, restored: true, approved_flag_ids: ['f1a90000-0000-4000-8000-000000000002'] });
   });
 });
 
@@ -408,7 +408,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 失敗 (RT-8, RT-9,
   it('RT-8: 通報の更新が失敗したら 500 INTERNAL_ERROR (固定の文)。行は更新しない。監査ログは warn・status_saved false・status_error に元のエラー文。応答の本文に生のエラー文を出さない', async () => {
     seedFakes(plainFoodQueues({ flags: [{ data: null, error: { message: SENTINEL } }] }));
 
-    const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const res = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
 
     expect(res.status).toBe(500);
     const text = JSON.stringify(await res.json());
@@ -426,26 +426,26 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 失敗 (RT-8, RT-9,
   it('RT-9: 行の更新が失敗したら 500 OP_CONTENT_RESTORE_FAILED (固定の文・data.approved_flag_ids)。監査ログは warn・status_saved true・restored false・restore_error・target_ids・restored_ids (先に書いた組の行。無ければ空)。構造化ログに step: rows', async () => {
     seedFakes(plainFoodQueues({ meal: [{ data: mealDbRow(), error: null }, { data: null, error: { message: SENTINEL } }] }));
 
-    const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const res = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
 
     expect(res.status).toBe(500);
     const json = (await res.json()) as { error: { code: string; message: string }; data: Json };
     expect(json.error.code).toBe('OP_CONTENT_RESTORE_FAILED');
     expect(json.error.message).toBe('コンテンツを表示に戻せませんでした。通報の状態は承認済みにしました。もう一度同じ操作を実行してください。');
-    expect(json.data).toEqual({ content_hidden: true, approved_flag_ids: ['flag-1'] });
+    expect(json.data).toEqual({ content_hidden: true, approved_flag_ids: ['f1a90000-0000-4000-8000-000000000001'] });
     expect(JSON.stringify(json)).not.toContain(SENTINEL);
     const audit = auditRow();
     expect(audit.severity).toBe('warn');
     expect(audit.details).toMatchObject({
-      status_saved: true, restored: false, restore_error: SENTINEL, approved_flag_ids: ['flag-1'], target_ids: ['meal-1'], restored_ids: [],
+      status_saved: true, restored: false, restore_error: SENTINEL, approved_flag_ids: ['f1a90000-0000-4000-8000-000000000001'], target_ids: ['meal-1'], restored_ids: [],
     });
     expect(mockLoggerError).toHaveBeenCalledTimes(1);
-    expect(mockLoggerError.mock.calls[0][2]).toMatchObject({ step: 'rows', flag_id: 'flag-1', content_id: 'meal-1' });
+    expect(mockLoggerError.mock.calls[0][2]).toMatchObject({ step: 'rows', flag_id: 'f1a90000-0000-4000-8000-000000000001', content_id: 'meal-1' });
   });
 
   it('RT-9: 通報された行の組が失敗したときは、先に書いた (b) の組の行が restored_ids に残る', async () => {
     seedFakes({
-      moderation_flags: [{ data: foodFlagRow(), error: null }, { data: [{ id: 'flag-1' }], error: null }],
+      moderation_flags: [{ data: foodFlagRow(), error: null }, { data: [{ id: 'f1a90000-0000-4000-8000-000000000001' }], error: null }],
       meals: [
         { data: mealDbRow({ paste_group_id: 'group-1' }), error: null },
         { data: [{ id: 'meal-3', hidden_at: LATER, photo_url: 'https://example.com/a.jpg', memo: 'メモ' }], error: null },
@@ -454,7 +454,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 失敗 (RT-8, RT-9,
       ],
     });
 
-    const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const res = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
 
     expect(res.status).toBe(500);
     expect(auditRow().details).toMatchObject({ restored: false, restored_ids: ['meal-3'], target_ids: ['meal-1', 'meal-3'] });
@@ -462,7 +462,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 失敗 (RT-8, RT-9,
 
   it('RT-11: 監査ログの INSERT に失敗しても 200 (fail-open)', async () => {
     seedFakes(plainFoodQueues(), { error: { message: 'audit down' } });
-    const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const res = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
     expect(res.status).toBe(200);
     expect(buildersFor(userFake, 'admin_audit_logs')).toHaveLength(1);
   });
@@ -470,7 +470,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 失敗 (RT-8, RT-9,
   it('RT-14: 行の読み取りが失敗したら (P-8) 500 INTERNAL_ERROR「コンテンツの状態を読み取れませんでした。…」(data を付けない)。通報も行も更新しない。監査ログは warn・status_saved false・status_error null・restored false・restore_error に元のエラー文・hidden_at_before null。構造化ログに step: read', async () => {
     seedFakes({ moderation_flags: [{ data: foodFlagRow(), error: null }], meals: [{ data: null, error: { message: SENTINEL } }] });
 
-    const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const res = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
 
     expect(res.status).toBe(500);
     const json = (await res.json()) as { error: { code: string; message: string }; data?: Json };
@@ -494,7 +494,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 失敗 (RT-8, RT-9,
       meals: [{ data: mealDbRow({ paste_group_id: 'group-1' }), error: null }, { data: null, error: { message: SENTINEL } }],
     });
 
-    const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const res = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
 
     expect(res.status).toBe(500);
     const json = (await res.json()) as { error: { message: string }; data?: Json };
@@ -509,13 +509,13 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 失敗 (RT-8, RT-9,
   it('RT-16: 行の更新が 0 行で、読み直しが失敗したら (P-22) 500 OP_CONTENT_RESTORE_FAILED (固定の文・data.approved_flag_ids)。監査ログは warn・status_saved true・restored false・restore_error。構造化ログに step: reread', async () => {
     seedFakes(plainFoodQueues({ meal: [{ data: mealDbRow(), error: null }, { data: [], error: null }, { data: null, error: { message: SENTINEL } }] }));
 
-    const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const res = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
 
     expect(res.status).toBe(500);
     const json = (await res.json()) as { error: { code: string }; data: Json };
     expect(json.error.code).toBe('OP_CONTENT_RESTORE_FAILED');
-    expect(json.data).toEqual({ content_hidden: true, approved_flag_ids: ['flag-1'] });
-    expect(auditRow().details).toMatchObject({ status_saved: true, restored: false, restore_error: SENTINEL, approved_flag_ids: ['flag-1'] });
+    expect(json.data).toEqual({ content_hidden: true, approved_flag_ids: ['f1a90000-0000-4000-8000-000000000001'] });
+    expect(auditRow().details).toMatchObject({ status_saved: true, restored: false, restore_error: SENTINEL, approved_flag_ids: ['f1a90000-0000-4000-8000-000000000001'] });
     expect(auditRow().severity).toBe('warn');
     expect(mockLoggerError.mock.calls[0][2]).toMatchObject({ step: 'reread' });
   });
@@ -523,7 +523,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 失敗 (RT-8, RT-9,
 
 describe('POST /api/admin/moderation/[type]/[id]/restore — 0 行 (raced) (RT-10, RT-18)', () => {
   /** 通報された行の組の更新が 0 行になり、読み直しが rereadRow を返す流れ */
-  function racedQueues(rereadRow: unknown, approved: Array<{ id: string }> = [{ id: 'flag-1' }]) {
+  function racedQueues(rereadRow: unknown, approved: Array<{ id: string }> = [{ id: 'f1a90000-0000-4000-8000-000000000001' }]) {
     return plainFoodQueues({
       meal: [{ data: mealDbRow(), error: null }, { data: [], error: null }, { data: rereadRow, error: null }],
       flags: [{ data: approved, error: null }],
@@ -545,7 +545,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 0 行 (raced) (RT-1
     ];
     for (const c of cases) {
       seedFakes(racedQueues(c.reread));
-      const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+      const res = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
       const json = (await res.json()) as { error: { code: string }; data?: Json };
       expect(res.status, c.name).toBe(c.status);
       expect(json.error.code, c.name).toBe(c.code);
@@ -553,19 +553,19 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 0 行 (raced) (RT-1
       expect(auditCount(), c.name).toBe(1);
       const audit = auditRow();
       expect(audit.severity, c.name).toBe('warn');
-      expect(audit.details, c.name).toMatchObject({ approved_flag_ids: ['flag-1'], restored: false, restore_error: c.error, status_saved: true });
+      expect(audit.details, c.name).toMatchObject({ approved_flag_ids: ['f1a90000-0000-4000-8000-000000000001'], restored: false, restore_error: c.error, status_saved: true });
     }
   });
 
   it('RT-18: 通報の更新が 0 件 (approved_flag_ids が空) で、通報された行の更新も 0 行・ほかの組も 0 行なら、409 / 410 を返し監査ログを残さない (何も書いていない: §6.6)', async () => {
     seedFakes(racedQueues(mealDbRow({ hidden_at: null, hidden_by: null, hidden_reason: null }), []));
-    const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const res = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
     expect(res.status).toBe(409);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe('OP_CONTENT_NOT_HIDDEN');
     expect(auditCount()).toBe(0);
 
     seedFakes(racedQueues(null, []));
-    const gone = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const gone = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
     expect(gone.status).toBe(410);
     expect(auditCount()).toBe(0);
   });
@@ -582,7 +582,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 0 行 (raced) (RT-1
       ],
     });
 
-    const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
+    const res = await call('food', 'f1a90000-0000-4000-8000-000000000001', restoreRequest({ restore_note: NOTE }));
 
     expect(res.status).toBe(409);
     expect(auditCount()).toBe(1);

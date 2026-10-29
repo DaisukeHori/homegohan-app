@@ -49,9 +49,15 @@ vi.mock('@/lib/ai/fast-llm', () => ({
 
 const mockGetUser = vi.fn();
 const mockFrom = vi.fn();
+// 完了の切り替えは RPC planned_meals_set_completed (#2025)。RPC の返す 1 行を真似る
+const mockRpc = vi.fn(async (_fn: string, args: { p_meal_id: string; p_completed: boolean }) => ({
+  data: [{ id: args.p_meal_id, is_completed: args.p_completed, completed_at: null, updated_at: null }],
+  error: null,
+}));
 const supabaseClient = {
   auth: { getUser: mockGetUser },
   from: mockFrom,
+  rpc: mockRpc,
 };
 
 // 画像のジョブ (meal_image_jobs) の取り消し・積み込みは service role のクライアント (getAiQueueWriter) で行う (#1465)。
@@ -62,6 +68,7 @@ vi.mock('@/lib/supabase/server', () => ({
   getSupabaseAdmin: () => queueClient,
 }));
 
+import { PLANNED_MEALS_SET_COMPLETED_RPC } from '@homegohan/shared';
 import { buildDishImagePayload } from '../lib/meal-image-jobs';
 import { POST as mealsPOST } from '../src/app/api/meals/route';
 import { PATCH as mealsPATCH } from '../src/app/api/meals/[id]/route';
@@ -293,11 +300,12 @@ describe('PATCH /api/meals/[id] (#1205)', () => {
     const { update } = mockDb();
     const response = await patch({ is_completed: true, completed_at: '2026-10-07T12:00:00.000Z' });
     expect(response.status).toBe(200);
+    // 完了 (is_completed / completed_at) は update に入らず、RPC で切り替える (#2025。本文の completed_at は読まない)
     expect(update.mock.calls[0][0]).toEqual({
-      is_completed: true,
-      completed_at: '2026-10-07T12:00:00.000Z',
       updated_at: expect.any(String),
     });
+    expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(mockRpc).toHaveBeenCalledWith(PLANNED_MEALS_SET_COMPLETED_RPC, { p_meal_id: MEAL_ID, p_completed: true });
   });
 
   it('上限ちょうど・0 は通る', async () => {
@@ -425,7 +433,10 @@ describe('PATCH /api/meal-plans/meals/[id] (#1205)', () => {
     const { update } = mockDb();
     const response = await patch({ isCompleted: true });
     expect(response.status).toBe(200);
-    expect('calories_kcal' in (update.mock.calls[0][0] as Record<string, unknown>)).toBe(false);
+    // 料理の無い献立に完了の指定だけ: 書く列が無いので update を呼ばず (calories_kcal も書かない)、RPC で切り替える (#2025)
+    expect(update).not.toHaveBeenCalled();
+    expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(mockRpc).toHaveBeenCalledWith(PLANNED_MEALS_SET_COMPLETED_RPC, { p_meal_id: MEAL_ID, p_completed: true });
   });
 });
 
@@ -528,9 +539,26 @@ describe('POST /api/ai/nutrition (#1205)', () => {
       });
       expect(response.status).toBe(200);
       const payload = update.mock.calls[0][0] as Record<string, unknown>;
-      expect(payload).toMatchObject({ calories_kcal: 524, protein_g: 20.5, veg_score: 4 });
+      expect(payload).toMatchObject({ calories_kcal: 524, protein_g: 20.5 });
+      expect('veg_score' in payload).toBe(false);
       expect('fat_g' in payload).toBe(false);
       expect('carbs_g' in payload).toBe(false);
+    });
+
+    it('nutritionData の veg_score は update の本文に入らない (栄養素と quality_tags だけ)', async () => {
+      const { update } = mockDb();
+      const response = await post({
+        plannedMealId: MEAL_ID,
+        nutritionData: { calories_kcal: 500, veg_score: 100, quality_tags: ['野菜多め'] },
+      });
+      expect(response.status).toBe(200);
+      expect(update).toHaveBeenCalledTimes(1);
+      // 野菜スコアは利用者から受け取らない (#2025。サーバの計算値 = 写真の解析だけが書く)
+      expect(update.mock.calls[0][0]).toEqual({
+        calories_kcal: 500,
+        quality_tags: ['野菜多め'],
+        updated_at: expect.any(String),
+      });
     });
   });
 
@@ -557,6 +585,20 @@ describe('POST /api/ai/nutrition (#1205)', () => {
         fat_g: 12.5,
         carbs_g: null,
       });
+      expect('veg_score' in (update.mock.calls[0][0] as Record<string, unknown>)).toBe(false);
+    });
+
+    it('AI の応答の veg_score は update の本文に入らない。プロンプトに veg_score が無い', async () => {
+      const { update } = mockDb();
+      aiReturns({ calories_kcal: 480, veg_score: 5, quality_tags: ['主食'], dishes: [] });
+      const response = await post({ plannedMealId: MEAL_ID, imageUrl: 'https://example.com/a.jpg' });
+      expect(response.status).toBe(200);
+      const payload = update.mock.calls[0][0] as Record<string, unknown>;
+      expect(payload).toMatchObject({ calories_kcal: 480, quality_tags: ['主食'] });
+      expect('veg_score' in payload).toBe(false);
+      // AI へ渡したプロンプト (messages の全文) に野菜スコアの項目が無い
+      expect(mockChatCreate).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(mockChatCreate.mock.calls[0])).not.toContain('veg_score');
     });
 
     it('AI の応答に含まれない項目は書かない (既存の値を消さない)', async () => {
@@ -566,7 +608,7 @@ describe('POST /api/ai/nutrition (#1205)', () => {
       expect(response.status).toBe(200);
       const payload = update.mock.calls[0][0] as Record<string, unknown>;
       expect(payload.calories_kcal).toBe(480);
-      for (const field of ['protein_g', 'fat_g', 'carbs_g']) {
+      for (const field of ['protein_g', 'fat_g', 'carbs_g', 'veg_score']) {
         expect(field in payload).toBe(false);
       }
     });

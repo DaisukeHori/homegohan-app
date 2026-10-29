@@ -395,38 +395,38 @@ async function bulkRevoke(
   reason: string,
   actorId: string
 ): Promise<BulkRevokeResult> {
-  // advisory lock: 同一 org への並行 bulk-revoke を防ぐ (cross/02-rls-patterns.md §ラッパー経由必須)
-  await supabase.rpc('acquire_advisory_lock', { lock_key: 'bulk-revoke:' + orgId });
-
-  const { data, error } = await supabase
-    .from('org_license_assignments')
-    .update({
-      status: 'revoked',
-      revoked_at: new Date().toISOString(),
-      revoked_by: actorId,
-      revoke_reason: reason,
-    })
-    .eq('organization_id', orgId)
-    .in('user_id', userIds)
-    .eq('status', 'active')
-    .select('id, user_id, license_pool_id');
-
-  // TRIGGER sync_org_license_pool_usage が自動的に used_licenses を減算
-
-  // 監査ログ一括書き込み
-  await supabase.from('org_license_audit_log').insert(
-    data.map(a => ({
-      organization_id: orgId,
-      license_pool_id: a.license_pool_id,
-      assignment_id: a.id,
-      actor_id: actorId,
-      action_type: 'bulk_revoke',
-      details: { reason, user_id: a.user_id },
-    }))
-  );
-
-  return { revoked: data.length };
+  // advisory lock: 同一 org への並行 bulk-revoke を防ぐロック (hashtext('bulk-revoke:' || org_id)) は、ロックだけを取る別の RPC では保たれない (その RPC の取引の終わりで外れる。cross/02-rls-patterns.md §6.3)
+  // ロック・UPDATE・監査の書き込みは、下の SECURITY DEFINER の関数の中で同じ取引で行い、ここではその関数を 1 回呼ぶ (関数の名前は例)。route が同組織の `org_admin` であることを確かめたあと (org/02-api-spec.md の bulk-revoke の認証)、service_role の client (`getSupabaseAdmin()`。cross/02-rls-patterns.md §3.3) で呼ぶ。actorId はその確かめた操作者
+  const { data, error } = await supabase.rpc('org_bulk_revoke_assignments', {
+    p_organization_id: orgId,
+    p_user_ids: userIds,
+    p_reason: reason,
+    p_actor_id: actorId,
+  });
+  if (error) throw error;
+  return { revoked: data };
 }
+```
+
+```sql
+CREATE OR REPLACE FUNCTION public.org_bulk_revoke_assignments(
+  p_organization_id UUID, p_user_ids UUID[], p_reason TEXT, p_actor_id UUID
+) RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE v_revoked INTEGER; BEGIN
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('bulk-revoke:' || p_organization_id::TEXT));
+  WITH revoked AS (
+    UPDATE public.org_license_assignments
+       SET status = 'revoked', revoked_at = pg_catalog.now(), revoked_by = p_actor_id, revoke_reason = p_reason
+     WHERE organization_id = p_organization_id AND user_id = ANY (p_user_ids) AND status = 'active'
+    RETURNING id, user_id, license_pool_id
+  ) -- TRIGGER sync_org_license_pool_usage が自動的に used_licenses を減算 (UPDATE と同じ取引)
+  INSERT INTO public.org_license_audit_log (organization_id, license_pool_id, assignment_id, actor_id, action_type, details)
+  SELECT p_organization_id, r.license_pool_id, r.id, p_actor_id, 'bulk_revoke', pg_catalog.jsonb_build_object('reason', p_reason, 'user_id', r.user_id)
+    FROM revoked AS r;  -- 監査ログ一括書き込み
+  GET DIAGNOSTICS v_revoked = ROW_COUNT; RETURN v_revoked;
+END $$;
+REVOKE ALL ON FUNCTION public.org_bulk_revoke_assignments(UUID, UUID[], TEXT, UUID) FROM PUBLIC, anon, authenticated;  -- 既定では anon / authenticated も EXECUTE できるので外す
+GRANT EXECUTE ON FUNCTION public.org_bulk_revoke_assignments(UUID, UUID[], TEXT, UUID) TO service_role;  -- service_role だけが呼ぶ (20261016210000_billing_core.sql:422-423 と同じ形)
 ```
 
 ### 6.3 bulk-revoke 後の家族グループ処理

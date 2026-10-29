@@ -8,6 +8,7 @@ import { createClient } from '@/lib/supabase/server';
 import { requireSuperAdmin } from '@/lib/auth/operator-permissions';
 import { authFailureNested, operatorMfaRequiredNested } from '@/lib/api/error-responses';
 import { internalError } from '@/lib/api/errors';
+import { operatorMembershipRpcErrorNested } from '@/lib/membership/operator-rpc-errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,6 +23,10 @@ export async function GET() {
       // 同じ 403 と日本語の固定の文にする (汎用の 500 にしない。#1917)
       const mfaRequired = operatorMfaRequiredNested(error);
       if (mfaRequired) return mfaRequired;
+      // 権限の判定 (INSUFFICIENT_PERMISSION) で止めたら、ゲートが権限で止めたときと同じ 403 と日本語の固定の文にする
+      // (汎用の 500 にしない。#1917 の続き。コードの一覧は src/lib/membership/operator-rpc-errors.ts)
+      const knownRpcError = operatorMembershipRpcErrorNested('list_orgs_with_inactive_owner', error);
+      if (knownRpcError) return knownRpcError;
       return internalError('GET /api/operator/membership/orgs/inactive', error, {}, { shape: 'nested' });
     }
 

@@ -170,8 +170,8 @@ await supabase.from('admin_audit_logs').insert({
 
 ---
 
-### POST /api/admin/users/{id}/ban
-ユーザー BAN
+### POST /api/admin/users/{id}/freeze
+ユーザーの凍結 (BAN。`src/app/api/admin/users/[id]/freeze/route.ts` の POST。画面は `/admin/users/[id]/freeze` の `src/components/admin/UserFreezeForm.tsx`)
 
 **リクエスト**:
 ```json
@@ -189,20 +189,20 @@ await supabase.from('admin_audit_logs').insert({
 - `ban_type`: `temporary` | `permanent`
 - `reason_category`: `spam` | `abuse` | `policy_violation` | `other`
 - `duration_days`: `temporary` の場合必須、1〜365
-- super_admin のみ `permanent` BAN 可能
+- super_admin のみ `permanent` BAN 可能。`notify_user` (省略時 true) なら、凍結の UPDATE が 1 行だったあとに凍結した本人の登録メールアドレス (auth.users) へ通知メール (`template` `account_frozen`。件名「【ほめゴハン】アカウントが凍結されました」) を送信待ち (`email_outbox`) に積む。`notification_message` (前後の空白を除いて `FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH` = 1000 文字まで) は本文の「▼ 運営からのメッセージ」の段に入る (空なら段は無い)。送るのは `src/lib/admin/send-freeze-notification-email.ts` で best-effort (積めなくても 200)。結果は応答の `data.notification` と監査の details に残る。403 / 404 / 409 / 500 では送らない (cross/24)
 
-**レスポンス**: `200 { "data": { "ban_id": "uuid", "unban_at": "2026-05-13T00:00:00Z" } }`
+**レスポンス**: `200 { "data": { "ban_id": "uuid", "unban_at": "2026-05-13T00:00:00Z", "notification": { "status": "sent" } } }`。`notification.status` は `sent` (送信待ちに受け付けた。送るのは worker) / `skipped` (`RESEND_API_KEY` が無く未送信) / `failed` (宛先を取得できない・送信待ちに登録できない・宛先停止リスト・文面の不備) / `not_requested` (`notify_user` が false)。`sent`・`not_requested` 以外は `notification.reason` (`not_configured` / `no_recipient` / `send_failed`) も返す (cross/24 §7.3)
 
-**副作用**: `admin_audit_logs` INSERT (severity='warn')。実装は `POST /api/admin/users/{id}/freeze`。対象が super_admin なら 403 `OP_TARGET_PROTECTED`。凍結の UPDATE は読んだ時点の「super_admin でない」状態のままのときだけ書く条件つき (読んだ `roles` が NULL なら `roles IS NULL`、そうでなければ `roles` が `super_admin` を含まない。`src/lib/admin/user-ban.ts` の `SUPER_ADMIN_ROLES_LITERAL`。PostgREST の or は UPDATE で 42703 になるので使わない)。読んでから書くまでに変わっていたら 0 行 → 読み直して、無ければ 404 `NOT_FOUND`、あれば 409 `CONFLICT_STALE_DATA` (書かず、監査も残さない)。モデレーションの BAN (`applyUserBan`) も同じ条件で、0 行なら読み直して kind `not_found` / `super_admin` / `internal`
+**副作用**: `admin_audit_logs` INSERT (`admin.user.ban`・severity='warn')。対象が super_admin なら 403 `OP_TARGET_PROTECTED`。凍結の UPDATE は読んだ時点の「super_admin でない」状態のままのときだけ書く条件つき (読んだ `roles` が NULL なら `roles IS NULL`、そうでなければ `roles` が `super_admin` を含まない。`src/lib/admin/user-ban.ts` の `SUPER_ADMIN_ROLES_LITERAL`。PostgREST の or は UPDATE で 42703 になるので使わない)。読んでから書くまでに変わっていたら 0 行 → 読み直して、無ければ 404 `NOT_FOUND`、あれば 409 `CONFLICT_STALE_DATA` (書かず、監査も残さない)。モデレーションの BAN (`applyUserBan`) も同じ条件で、0 行なら読み直して kind `not_found` / `super_admin` / `internal`。details は `ban_id`・`ban_type`・`reason_category`・`reason_detail`・`duration_days`・`notify_user`・`unban_at`・`notification_message` (true のときの文、無ければ null)・`notification { status, reason, outbox_id }` (cross/24 §6.5。この details は `POST /api/admin/users/{id}/freeze` の監査。モデレーションの BAN は `admin.user.ban` を書かない — 監査は `admin.moderation.{action}`)。
 
 ---
 
-### POST /api/admin/users/{id}/unban
-BAN 解除
+### DELETE /api/admin/users/{id}/freeze
+凍結の解除 (BAN の解除。同じ route の DELETE)
 
-**リクエスト**: `{ "reason": "誤検知と判断" }`
+**リクエスト**: `{ "reason": "誤検知と判断" }` (`reason` は必須)。応答は `200 { "data": { "success": true } }`、監査は `admin.user.unban` (severity='warn')。対象が無い (UUID でない id を含む) ときは 404 `NOT_FOUND`
 
-**権限**: `admin`, `super_admin`
+**権限**: `admin`, `super_admin`。実装は `DELETE /api/admin/users/{id}/freeze` (応答は `200 { "data": { "success": true } }`)。副作用は `admin_audit_logs` INSERT (`admin.user.unban`・severity='warn')。解除の UPDATE は凍結中 (`frozen_at` が NULL でない) のときだけ書く条件つきで、別の運営が先に解除していると 0 行 → 読み直して、無ければ 404 `NOT_FOUND`、あれば 409 `CONFLICT_STALE_DATA` (書かず、監査も残さない。POST の凍結の 409 と同じ扱い。#1917)
 
 ---
 
@@ -362,7 +362,7 @@ BAN 解除
 | 400 | `VALIDATION_ERROR` / `INVALID_JSON` / `INVALID_CHARACTER` | 本文が JSON でない (:136-139)・Zod の検査に通らない (:144-147)・本文に NULL 文字がある (:111-112) |
 | 401 | `AUTH_UNAUTHENTICATED` | 未ログイン (:119) |
 | 403 | `OP_PERMISSION_DENIED` | `admin` / `super_admin` でない (:125) |
-| 409 | `OWNER_ALREADY_IN_ORG` / `OWNER_ACCOUNT_DELETING` | オーナーにする人がすでに別の組織に所属している (:167-172) / オーナーにする人が退会の手続き中 (退会の印 `account_deletion_guards` があり、DB のトリガー `trg_organizations_owner_not_deleting` (関数 `organizations_owner_not_deleting()`) が組織の行の INSERT を止めた。`supabase/migrations/20261023130000_account_deletion_owner_guard.sql`。:184-189。文は「指定した owner は退会の手続き中です」。#1917 の続き) |
+| 409 | `OWNER_ALREADY_IN_ORG` / `OWNER_ACCOUNT_DELETING` | オーナーにする人がすでに別の組織に所属している (:167-172) / オーナーにする人が退会の手続き中 (退会の印 `account_deletion_guards` があり、DB のトリガー `trg_organizations_owner_not_deleting` (関数 `organizations_owner_not_deleting()`) が組織の行の INSERT を止めた。`supabase/migrations/20261023130000_account_deletion_owner_guard.sql`。:184-189。文は「指定したオーナー (owner_id) は退会の手続き中です」。#1917 の続き) |
 | 500 | `INTERNAL_ERROR` | 組織の行の作成 (:190-194)・オーナーの `user_profiles` の更新 (:221-227) に失敗 |
 
 **権限**: `admin`, `super_admin`
@@ -521,8 +521,8 @@ BAN 解除
 
 ## 6. 監査ログ API
 
-### GET /api/admin/audit-logs
-監査ログ一覧
+### GET /api/super-admin/audit-logs
+監査ログ一覧 (画面は `/super-admin/audit-logs`。`format=csv` を付けると CSV で返し、画面の CSV エクスポートはこれを呼ぶ)
 
 **クエリ**:
 
@@ -541,7 +541,7 @@ BAN 解除
 ---
 
 ### POST /api/admin/audit-logs/export
-未実装 (`src/app/api/admin/audit-logs` に route は無い)。監査ログ CSV エクスポート
+未実装 (route は無い。今の CSV エクスポートは上の `GET /api/super-admin/audit-logs?format=csv`)。監査ログの非同期の CSV エクスポート
 
 **リクエスト**: `{ "from": "2026-01-01", "to": "2026-05-06", "format": "csv" }`
 
@@ -828,7 +828,7 @@ MRR 時系列
 ---
 
 ### GET /api/admin/finance/invoices
-請求書一覧。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数 (`meta.total`) を返す。数え直しも失敗したら 500。一覧の行の読み込みのそれ以外の DB の失敗は 500 (200 の空の一覧にしない。cross/04 §6.2。#1917)。詳細の `GET /api/admin/finance/invoices/{id}` は、請求書の行 (`stripe_webhook_events`) の読み込みの DB の失敗を 500 にし、行が無いときだけ 404 (#1917)。利用者の引き当て (`personal_subscriptions`) の読み込みの失敗は 200 のまま (`user_id` は `null`)
+請求書一覧。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数 (`meta.total`) を返す。数え直しも失敗したら 500。一覧の行の読み込みのそれ以外の DB の失敗は 500 (200 の空の一覧にしない。cross/04 §6.2。#1917)。詳細の `GET /api/admin/finance/invoices/{id}` は、請求書の行 (`stripe_webhook_events`) の読み込みの DB の失敗を 500 にし、行が無いときだけ 404 (#1917)。利用者の引き当て (`personal_subscriptions`) の読み込みの DB の失敗も 500 (200 の `user_id: null` にしない。`user_id` が `null` なのは紐づく契約の行が無いときだけ。cross/04 §5.2。#1917)
 
 ### POST /api/admin/finance/invoices/{id}/resend
 請求書再送
@@ -875,7 +875,7 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 
 ## 10. サポート API
 
-### GET /api/support/tickets
+### GET /api/admin/support/tickets
 チケット一覧。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数 (`meta.total`) を返す。数え直しも失敗したら 500。一覧の行の読み込みのそれ以外の DB の失敗は 500 (200 の空の一覧にしない。cross/04 §6.2。#1917)。チケットの作成 (POST) は 本文が JSON として読めないときは 400 `INVALID_JSON` (外側の catch の 500 に落とさない。#1917)
 
 **クエリ**: `?status=open&priority=high&assignee_id=uuid&page=1`
@@ -884,7 +884,7 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 
 ---
 
-### POST /api/support/tickets
+### POST /api/admin/support/tickets
 チケット作成 (ユーザー側から)
 
 **リクエスト**:
@@ -899,12 +899,12 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 
 ---
 
-### GET /api/support/tickets/{id}
-チケット詳細 (メッセージ一覧含む)。 チケットの行 (`support_tickets`) の読み込みの DB の失敗は 500 (404 にしない)。404 は行が無いとき (UUID の形でない id は DB に渡さずに 404) だけ (cross/04 §5.2。#1917)。メッセージ (`support_ticket_messages`) の読み込みの失敗は 200 のまま (`messages` は空)
+### GET /api/admin/support/tickets/{id}
+チケット詳細 (メッセージ一覧含む)。 チケットの行 (`support_tickets`) の読み込みの DB の失敗は 500 (404 にしない)。404 は行が無いとき (UUID の形でない id は DB に渡さずに 404) だけ (cross/04 §5.2。#1917)。メッセージ (`support_ticket_messages`) の読み込みの DB の失敗も 500 (200 の空の `messages` にしない。`messages` が空なのはメッセージが 0 件のときだけ。cross/04 §5.2。#1917)
 
 ---
 
-### POST /api/support/tickets/{id}/messages
+### POST /api/admin/support/tickets/{id}/messages
 メッセージ追加。チケットの読み込みの DB の失敗は 500 (404 は行が無いとき (UUID の形でない id を含む) だけ)。 本文が JSON として読めないときは 400 `INVALID_JSON` (外側の catch の 500 に落とさない。#1917)
 
 **リクエスト**:
@@ -926,7 +926,7 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 
 ---
 
-### PATCH /api/support/tickets/{id}
+### PATCH /api/admin/support/tickets/{id}
 ステータス・担当者変更。更新の DB の失敗は 500 (404 は更新した行が無いとき (UUID の形でない id を含む) だけ)。担当者 (`assignee_id`) が存在しない (外部キー違反) は 400 `VALIDATION_ERROR`。 本文が JSON として読めないときは 400 `INVALID_JSON` (外側の catch の 500 に落とさない。#1917)。`POST /api/admin/support/tickets/{id}/assign` も同じ
 
 **リクエスト**: `{ "status": "resolved", "assignee_id": "uuid" }`
@@ -983,7 +983,7 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 - 同時の更新: 書くときは「直前に読んだ `status` と `updated_at` のままなら書く」条件つきにする (`updated_at` は UPDATE のたびにトリガーで進む。`NULL` なら `.is` で比べる)。
   0 行なら読み直し、送った項目 (`status` / 正規化した `adminNotes`) がどれも今の値と同じなら 200 で今の行を返し (書かない。本文を返すので `changed: false` として記録する)、
   違えば 409 `CONFLICT_STALE_DATA` (書かず、記録もしない)。監査の `status_from` と `resolved_at` の元にした値は、書いた時点の実際の直前の値と必ず一致し、
-  読んでから書くまでの間に別の運営が書いた管理者メモを上書きしない (条件は API が読んだ値で、画面を開いてから保存するまでの変更は見分けない)。読み直しの失敗は 500、行が消えていれば 404。Web の画面 (`/support/inquiries`) は 409 `CONFLICT_STALE_DATA` を受けたら一覧と開いている問い合わせの詳細を読み直し、画面の文 (読み込み直した旨) を出す。管理者メモの入力欄は、書きかけ (開いた・読み直した・保存したときのメモから変えている) なら読み直しで消さず、保存されているメモと違えば入力欄の下に出す。書きかけでなければ入力欄を読み直したメモにする (開いたときの古いメモを次の更新で送り、別の運営が書いたメモを上書きしないため。#1917)。画面は管理者メモを、入力欄に手を付けた (開いた・読み直した・保存したときのメモから変えた) ときだけ送り、手を付けていなければ `adminNotes` を送らない (API は自分が読んだ値で比べるので、開いたあとに別の運営が書いたメモを、ステータスだけを変えた操作で上書きしないため。空にした入力欄も送らない。#1917)。409 のあとの詳細の読み直しに失敗したら、更新の欄の文は読み込み直せなかった旨にし (「読み込み直した」と出さない)、内容の欄の「再試行」で読み直せたら読み込み直した旨に変える (#1917。`src/app/(support)/support/inquiries/page.tsx`)
+  読んでから書くまでの間に別の運営が書いた管理者メモを上書きしない (条件は API が読んだ値で、画面を開いてから保存するまでの変更は見分けない)。読み直しの失敗は 500、行が消えていれば 404。Web の画面 (`/support/inquiries`) は 409 `CONFLICT_STALE_DATA` を受けたら一覧と開いている問い合わせの詳細を読み直し、画面の文 (読み込み直した旨) を出す。管理者メモの入力欄は、書きかけ (開いた・読み直した・保存したときのメモから変えている) なら読み直しで消さず、保存されているメモと違えば入力欄の下に出す。書きかけでなければ入力欄を読み直したメモにする (開いたときの古いメモを次の更新で送り、別の運営が書いたメモを上書きしないため。#1917)。画面は管理者メモを、入力欄に手を付けた (開いた・読み直した・保存したときのメモから変えた) ときだけ送り、手を付けていなければ `adminNotes` を送らない (API は自分が読んだ値で比べるので、開いたあとに別の運営が書いたメモを、ステータスだけを変えた操作で上書きしないため。空にした入力欄も送らない。#1917)。409 のあとの詳細の読み直しに失敗したら、更新の欄の文は読み込み直せなかった旨にし (「読み込み直した」と出さない)、内容の欄の「再試行」で読み直せたら読み込み直した旨に変える (#1917。`src/app/(support)/support/inquiries/page.tsx`)。読み直しの失敗が 401 / 403 / 404 (ログインが切れた・権限が外れた・二段階認証の確認が要る・問い合わせが消えた) のときは、「再試行」での読み込み直しを促さず、更新していないことと理由が内容の欄に出ていることを伝える (再試行しても読めないため。営業リードの画面の 409 のあとの読み直しと同じ分け方)
 
 エラーコードは `VALIDATION_ERROR` / `INVALID_JSON` (400)、`AUTH_UNAUTHENTICATED` (401)、`OP_PERMISSION_DENIED` (403)、`NOT_FOUND` (404)、`CONFLICT_STALE_DATA` (409)、`INTERNAL_ERROR` (500)。
 
@@ -1223,7 +1223,7 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 
 - ステージを変えると、活動履歴 (`sales_lead_activities`) に `stage_change` (`details: { from_stage, to_stage }`) を残す (この書き込みに失敗しても、リードは更新できているので 200 のまま (監査ログと同じ fail-open)。失敗は db-logger に error で残す。#1917)
 - 同時の更新: 本文に `stage` があるときは「直前に読んだ `stage` のままなら書く」条件つきにする。0 行なら読み直し、リードがあれば 409 `CONFLICT_STALE_DATA`
-  (書かず、活動履歴も監査ログも残さない)、無ければ 404。`from_stage` は書いた時点の実際の直前のステージと必ず一致する。`stage` が無い更新には条件を付けず、更新が 0 行 (読んでから書くまでにリードが消えた) なら 404 (`src/app/api/admin/sales/leads/[id]/route.ts:212-215`)。画面 (`/admin/sales/{id}`) は 409 `CONFLICT_STALE_DATA` を受けたらリードを読み直し、読み直した旨の画面の文を出す (サーバーの「画面を開き直して」は出さない。読み直しに失敗したら読み込み直せなかった旨の文。#1917。`src/app/admin/sales/[id]/page.tsx`)
+  (書かず、活動履歴も監査ログも残さない)、無ければ 404。`from_stage` は書いた時点の実際の直前のステージと必ず一致する。`stage` が無い更新には条件を付けず、更新が 0 行 (読んでから書くまでにリードが消えた) なら 404 (`src/app/api/admin/sales/leads/[id]/route.ts:212-215`)。画面 (`/admin/sales/{id}`) は 409 `CONFLICT_STALE_DATA` を受けたらリードを読み直し、読み直した旨の画面の文を出す (サーバーの「画面を開き直して」は出さない。読み直しに失敗したら読み込み直せなかった旨の文。読み直しが 404 (リードが消えた)・403 (権限が外れた)・401 (ログインが切れた) なら、その理由の文 (「リードが見つかりません」、403 は応答の本文の文が二段階認証の確認・登録が要る・凍結の文ならその文・それ以外は「権限がありません」、ログインの画面へ移す) を読み込み直せなかった旨の文で上書きしない。404 のときは前に読んだリードを画面に残さず、一覧へ戻る道を出す。#1917。`src/app/admin/sales/[id]/page.tsx`)
 - 読み込み・更新・読み直しの DB の失敗は 500 `INTERNAL_ERROR` (404 にしない)。UUID の形でない id は DB に渡さず 404 `NOT_FOUND` (本文の検査の 400 のあと。uuid 型の列に渡すと 22P02 で「DB の失敗」に入るため。#1917)。詳細の `GET /api/admin/sales/leads/{id}` も同じで、リード・活動履歴の読み込みの DB の失敗は 500 (404 は行が無いとき (UUID の形でない id を含む) だけ。活動履歴の読み込みの失敗を空の履歴にしない。#1917)
 
 ---
@@ -1284,7 +1284,7 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 ---
 
 ### PATCH /api/super-admin/experiments/{id}
-実験更新 (start/stop/cancel)。 実験の行 (`experiments`) の読み込みの DB の失敗は 500 (404 にしない)。404 は行が無いとき (UUID の形でない id は DB に渡さずに 404) だけ (cross/04 §5.2。#1917)。詳細 (GET)・削除 (DELETE) の読み込みも同じ
+実験更新 (start/stop/cancel)。 実験の行 (`experiments`) の読み込みの DB の失敗は 500 (404 にしない)。404 は行が無いとき (UUID の形でない id は DB に渡さずに 404) だけ (cross/04 §5.2。#1917)。詳細 (GET)・削除 (DELETE) の読み込みも同じ。**状態の遷移** (#2059): `status` を送ったときは今の `status` を読み、遷移表 (`src/lib/super-admin/experiments-schemas.ts` の `EXPERIMENT_STATUS_TRANSITIONS`。画面のボタンと同じ) = `draft` → `running` (一覧の「開始」・詳細の「実験開始」)・`running` → `completed` (「完了」) / `cancelled` (詳細の「中止」)・`completed` と `cancelled` からは変えない、に無い変更を 409 `OP_EXPERIMENT_INVALID_TRANSITION` で断る (同じ状態への変更 `running` → `running` なども断る。書かず、監査ログも残さない)。DB には遷移を止めるトリガーが無い (CHECK `experiments_status_check` は値の範囲だけ) ので、守りはこの route だけ。状態の更新は読んだ `status` のままのときだけ書く条件つき (`.eq('status', 読んだ status)`) で、読んでから書くまでに別の操作が状態を変えていたら 0 行 → 読み直して、無ければ 404 `NOT_FOUND`、あれば 409 `CONFLICT_STALE_DATA` (書かず、監査ログも残さない。cross/04 §4.2)。`status` を送らない更新 (`name`・`hypothesis`・`end_date`・`result`) は遷移を検査せず、今までどおり条件なしで書く
 
 ### GET /api/super-admin/experiments/{id}/results
 実験結果 (p値、信頼区間、サブグループ分析)。実験の読み込みの DB の失敗は 500 (404 は行が無いとき (UUID の形でない id を含む) だけ。#1917)
@@ -1358,10 +1358,10 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 ---
 
 ### GET /api/super-admin/plans/{id}
-プラン詳細。 プランの行 (`subscription_plans`) の読み込みの DB の失敗は 500 (404 にしない)。404 は行が無いとき (UUID の形でない id は DB に渡さずに 404) だけ (cross/04 §5.2。#1917)。編集 (PATCH)・削除 (DELETE)・価格の変更 (POST price-change)・影響の見積もり (GET price-impact) の読み込みも同じ。詳細 (GET) の価格変更の履歴 (`plan_price_history`) の読み込みの失敗は 200 のまま (`price_history` は空)
+プラン詳細。 プランの行 (`subscription_plans`) の読み込みの DB の失敗は 500 (404 にしない)。404 は行が無いとき (UUID の形でない id は DB に渡さずに 404) だけ (cross/04 §5.2。#1917)。編集 (PATCH)・削除 (DELETE)・価格の変更 (POST price-change)・影響の見積もり (GET price-impact) の読み込みも同じ。詳細 (GET) の価格変更の履歴 (`plan_price_history`) の読み込みの DB の失敗も 500 (200 の空の `price_history` にしない。`price_history` が空なのは価格を一度も変えていないときだけ。cross/04 §5.2。#1917)
 
 ### PATCH /api/super-admin/plans/{id}
-プラン編集 (draft のみ自由編集、public 以降は価格変更 API 経由)。同時の変更: 遷移の可否・status ごとに変えてよい項目・廃止の `ends_at` の要否は直前に読んだ `status` (と `ends_at`) で決め、更新はその `status` のまま (廃止で既存の `ends_at` に頼るときは `ends_at` が NULL でないことも) のときだけ書く条件つき。0 行なら読み直し、送った変更がもう入っていれば 200 (書かず記録もしない)、入っていなければ 409 `CONFLICT_STALE_DATA`、行が無ければ 404 `OP_PLAN_NOT_FOUND` (cross/04 §4.2)。廃止の `ends_at` の要否は書いた後の値で決める (本文の `ends_at: null` は既存の値があっても 400 `OP_PLAN_DEPRECATE_ENDS_AT_REQUIRED`)。監査 `update_plan` は `status` を変えたときだけ `status_from` / `status_to` を持ち、`status_from` は書いた時点の実際の直前の値。削除 (`DELETE /api/super-admin/plans/{id}`。draft のみ・それ以外は 422 `OP_PLAN_NOT_DRAFT`) も `status = 'draft'` のままのときだけ消し、0 行なら読み直して、無ければ 404 `OP_PLAN_NOT_FOUND`、あれば 409 `CONFLICT_STALE_DATA` (どちらも記録しない)。画面 (`/super-admin/plans/{id}`) は保存・公開・非公開・廃止・廃止の取り消しが 409 `CONFLICT_STALE_DATA` なら、プランを読み直して今の状態とボタンを出し、読み直した旨を画面の上に出す (表示名・説明・表示順の書きかけは残す。表示したあとの読み直しは画面を外さず、失敗したら画面と入力欄を残して文と「再試行」を出す。#1917。`src/app/super-admin/plans/[id]/page.tsx`)
+プラン編集 (draft のみ自由編集、public 以降は価格変更 API 経由)。同時の変更: 遷移の可否・status ごとに変えてよい項目・廃止の `ends_at` の要否は直前に読んだ `status` (と `ends_at`) で決め、更新はその `status` のまま (廃止で既存の `ends_at` に頼るときは `ends_at` が NULL でないことも) のときだけ書く条件つき。0 行なら読み直し、送った変更がもう入っていれば 200 (書かず記録もしない)、入っていなければ 409 `CONFLICT_STALE_DATA`、行が無ければ 404 `OP_PLAN_NOT_FOUND` (cross/04 §4.2)。廃止の `ends_at` の要否は書いた後の値で決める (本文の `ends_at: null` は既存の値があっても 400 `OP_PLAN_DEPRECATE_ENDS_AT_REQUIRED`)。監査 `update_plan` は `status` を変えたときだけ `status_from` / `status_to` を持ち、`status_from` は書いた時点の実際の直前の値。本文の `expected_status` (任意。`draft` / `public` / `private` / `deprecated` のどれか。それ以外は 400 `OP_INVALID_INPUT`) は画面が見ていた `status` で、列には書かない (監査の `changes` にも入れない)。送られたら DB の `status` と同じときだけ書き、違えば書かずに 409 `CONFLICT_STALE_DATA` (記録しない。遷移の検査 422 `OP_PLAN_INVALID_TRANSITION`・廃止済みの変更の拒否 422 `OP_PLAN_DEPRECATED_LOCKED` より先に断る)。遷移は DB の `status` で検査するので、画面の `status` が古いと確認の文と違う遷移 (画面は公開中で「非公開にする」でも、DB が廃止なら廃止 → 非公開 = 廃止の取り消し) を書いてしまうのを止める (#2064)。送らない呼び出しはこれまでどおり DB の `status` だけで決める。削除 (`DELETE /api/super-admin/plans/{id}`。draft のみ・それ以外は 422 `OP_PLAN_NOT_DRAFT`) も `status = 'draft'` のままのときだけ消し、0 行なら読み直して、無ければ 404 `OP_PLAN_NOT_FOUND`、あれば 409 `CONFLICT_STALE_DATA` (どちらも記録しない)。画面 (`/super-admin/plans/{id}`) は保存・公開・非公開・廃止・廃止の取り消しが 409 `CONFLICT_STALE_DATA` なら、プランを読み直して今の状態とボタンを出し、読み直した旨を画面の上に出す (表示名・説明・表示順の書きかけは残す。表示したあとの読み直しは画面を外さず、失敗したら画面と入力欄を残して文と「再試行」を出す。読み直しが 404 / 403 なら、その理由の文 (403 は応答の本文の文が二段階認証の確認・登録が要る・凍結の文ならその文、それ以外は「権限がありません」。`src/lib/admin/api-error-message.ts` の `forbiddenMessageForScreen`) を出し「再試行」は出さない。#1917。`src/app/super-admin/plans/[id]/page.tsx`)。画面の状態の変更 (公開・非公開・再公開・廃止・廃止の取り消し) は、画面が見ていた `status` を `expected_status` に入れて送る。表示したあとの読み直しが 404 / 403 以外で失敗して (通信の reject を含む) まだ読み直せていないあいだ (「再試行」で読み直せるまで。保存を押してもその文と「再試行」は消さない) と、読み直しを待つあいだ (「再試行」を含む) は、状態のボタンを止め、押されても送らない (#2064)。読み直しが 404 / 403 の場合、それだけでは止めない。ただし、先にほかの失敗で止めていた後で、読み直しが 404 / 403 になったときは、止めたままにして「再試行」を出さない。画面の保存は、表示名・説明・表示順のうち最後に読んだ・保存した値から変えた欄だけを送る (条件つきの更新は `status` だけなので、手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を古い値で上書きするため。説明の空欄は `null`。何も変えていなければ送らず、その旨を出す。保存に成功したら送った値を新しい初めの値にし、続く読み直しが失敗しても保存済みの欄を次の保存で送り直さない・「再試行」で書きかけとして残さない。#1917)。保存・状態の変更に成功したあとの読み直しも、表示名・説明・表示順の書きかけ (最後に読んだ・保存した値から変えている欄。保存のあとは送った値と比べる) を残し、ほかの欄は読み直した値にする (応答を待つあいだ・読み直しを待つあいだに打った、まだ送っていない入力を黙って消さない。#1917 の続き)。ただし読み直したプランが廃止 (入力欄が編集できず、保存のボタンも出ない) なら、どの読み直し (409 のあと・成功のあと・「再試行」) でも書きかけを残さず、全部の欄を読み直した値にする (送る道の無い保存していない値を、廃止済みのプランの値として DB と食い違えて見せない。409 のあとの文にも「残しています」を添えない。#1917 の続き)
 
 **廃止の安全弁** (`status: 'deprecated'` への遷移。#1127・#1912。実装 `src/lib/super-admin/plan-subscribers.ts` の `countPlanSubscribers`): 廃止の前に、契約が終わっていない契約者を service_role で数え、1 件でもいれば 409 `OP_PLAN_HAS_SUBSCRIBERS` で止める (数えられなかったときは 500 `OP_PLAN_SUBSCRIBER_CHECK_FAILED`)。数えてから書くまでの間に入った契約は、書く文の中の DB のトリガー `guard_plan_deprecate_subscribers` (migration `20261024130000`。プランの行を FOR UPDATE でロックし直して commit 前の契約者が増える書き込みを待ってから、同じ数え方で数え直す) が `OP_PLAN_HAS_SUBSCRIBERS` (P0001。DETAIL は内訳の JSON) で止め、route は同じ 409 (内訳はトリガーの DETAIL) を返す。内訳を読めなければ 500 `OP_PLAN_SUBSCRIBER_CHECK_FAILED` (廃止はしていない)。契約者が増える書き込み = 個人契約・家族のグループ・組織の、作成・数えられる status (個人 = 上の live 5 値・家族と組織 = `active`) への切り替え・プランの付け替え。どれも同じ migration のトリガー `trg_subscriber_plan_key_share` (3 表の BEFORE INSERT OR UPDATE) でプランの行に FOR KEY SHARE を取るので、廃止の FOR UPDATE と待ち合う (外部キーの確認だけでは、plan_key を変えずに status だけを live にする UPDATE と、外部キーの無い組織を待たないため。#1917 の続き)。廃止がロックを取った後に来た書き込みは廃止の commit を待ち、廃止の後の契約になる。
 
@@ -1524,7 +1524,7 @@ deprecated → private にロールバック (緊急用)
 ---
 
 ### PATCH /api/super-admin/feature-packages/{id}
-パッケージ更新
+パッケージ更新。画面 (`/super-admin/feature-packages/{id}`) の保存は、表示名・説明・機能フラグ・表示順のうち最後に読んだ・保存した値から変えた欄だけを送る (送られた項目をそのまま書くので、手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を古い値で上書きするため。機能フラグは並びで比べる。説明の空欄は `null`。何も変えていなければ送らず、その旨を出す。保存に成功したら、応答の行 (書いたあとの最新の行) を新しい比べる元にし、手を付けていない入力欄もその行の値に揃える (送らなかった欄に別の運営の変更が入っていても、次の保存で開いたときの古い値を送らない。応答を待つあいだに変えた欄は書きかけとして残し、次の保存で送る)。#1917)。廃止に成功したら、全体を読み直さずに応答の行 (書いたあとの最新の行) で表示を新しくし、保存と同じく、手を付けていない入力欄だけをその行の値に揃え、書きかけ (廃止を押したときの最後に読んだ・保存した行の値から変えている欄。応答を待つあいだに変えた欄も) は残す (まだ保存していない入力を黙って消さない。#1917 の続き) **状態の遷移** (#2064): `status` を送ったときは今の `status` を読み、遷移表 (`src/lib/super-admin/feature-packages-schemas.ts` の `FEATURE_PACKAGE_STATUS_TRANSITIONS`。画面のボタンと同じ) = `active` → `deprecated` (詳細の「廃止する」)・`deprecated` からは変えない (廃止の取り消しは無い)、に無い変更を 409 `OP_FEATURE_PACKAGE_INVALID_TRANSITION` で断る (同じ状態への変更 `active` → `active` なども断る。書かず、監査ログも残さない)。DB には遷移を止めるトリガーが無い (CHECK `feature_packages_status_check` は値の範囲だけ) ので、守りはこの route だけ。今の `status` の読み込みの DB の失敗は 500、行が無ければ 404 `OP_PACKAGE_NOT_FOUND`。状態の更新は読んだ `status` のままのときだけ書く条件つき (`.eq('status', 読んだ status)`) で、読んでから書くまでに別の操作が状態を変えていたら 0 行 → 読み直して、無ければ 404 `OP_PACKAGE_NOT_FOUND`、あれば 409 `CONFLICT_STALE_DATA` (書かず、監査ログも残さない。cross/04 §4.2)。`status` を送らない更新 (表示名・説明・機能フラグ・表示順) は読まず・遷移を検査せず、今までどおり条件なしで書く。画面は廃止がこの 2 つの 409 で断られたら、全体を「読み込み中」にせずに行を読み直して状態の表示とボタンを今の状態にし (書きかけは残し、手を付けていない入力欄だけ読み直した行の値に揃える)、「廃止できませんでした（別の操作で機能パッケージの状態が先に変わっていました。今の状態を読み込み直しました）」を出す (読み直しが失敗したら、その旨とページの読み込み直しを促す文。英字の状態の値は出さない)
 
 ### DELETE /api/super-admin/feature-packages/{id}
 パッケージ削除。 パッケージの行 (`feature_packages`) の読み込みの DB の失敗は 500 (404 にしない)。404 は行が無いとき (UUID の形でない id は DB に渡さずに 404) だけ (cross/04 §5.2。#1917)。詳細 (GET) の読み込みも同じ
@@ -1588,7 +1588,7 @@ deprecated → private にロールバック (緊急用)
 ---
 
 ### PATCH /api/super-admin/coupons/{id}
-クーポン編集 (送った欄だけを変える。どれも省略可)
+クーポン編集 (送った欄だけを変える。どれも省略可)。画面 (`/super-admin/coupons/{id}`) の保存は、表示名・有効期限・最大利用回数のうち最後に読んだ・保存した値から変えた欄だけを送る (手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を古い値で上書きするため。有効期限は JST の暦日で比べる。表示名・最大利用回数の空欄は `null`。何も変えていなければ送らず、その旨を出す。保存に成功したら、応答の行 (書いたあとの最新の行) を新しい比べる元にし、手を付けていない入力欄もその行の値に揃える (送らなかった欄に別の運営の変更が入っていても、次の保存で開いたときの古い値を送らない。応答を待つあいだに変えた欄は書きかけとして残し、次の保存で送る)。#1917)。一時停止・再開に成功したら、全体を読み直さずに応答の行 (書いたあとの最新の行) で表示を新しくし、保存と同じく、手を付けていない入力欄だけをその行の値に揃え、書きかけ (押したときの最後に読んだ・保存した行の値から変えている欄。応答を待つあいだに変えた欄も) は残す (まだ保存していない入力を黙って消さない。#1917 の続き)
 
 **リクエスト**:
 ```json
@@ -1604,7 +1604,7 @@ deprecated → private にロールバック (緊急用)
 ```
 
 - `display_name`: 200 文字まで (`null` で消す)
-- `status`: `active` / `paused` / `expired`。一時停止は `paused` にする (専用の API は無い)
+- `status`: `active` / `paused` / `expired`。一時停止は `paused` にする (専用の API は無い)。**状態の遷移** (#2064): 今の `status` を読み、遷移表 (`src/lib/super-admin/coupons-schemas.ts` の `COUPON_STATUS_TRANSITIONS`。画面のボタンと同じ) = `active` → `paused` (詳細の「一時停止」)・`paused` → `active` (「再開する」)・`expired` からは変えない (期限切れからの再開は無い)、に無い変更を 409 `OP_COUPON_INVALID_TRANSITION` で断る (同じ状態への変更・`expired` への変更も断る。書かず、本文のほかの欄も書かず、監査ログも残さない)。DB には遷移を止めるトリガーが無い (CHECK `coupons_status_check` は値の範囲だけ) ので、守りはこの route だけ。状態の更新は読んだ `status` のままのときだけ書く条件つき (`.eq('status', 読んだ status)`) で、読んでから書くまでに別の操作が状態を変えていたら 0 行 → 読み直して、無ければ 404 `OP_COUPON_NOT_FOUND`、あれば 409 `CONFLICT_STALE_DATA` (書かず、監査ログも残さない。cross/04 §4.2)。`status` を送らない更新は遷移を検査せず、今までどおり条件なしで書く。画面は一時停止・再開がこの 2 つの 409 で断られたら、全体を「読み込み中」にせずにクーポンを読み直して状態の表示とボタンを今の状態にし (書きかけは残し、手を付けていない入力欄だけ読み直した行の値に揃える)、「<一時停止 / 再開>できませんでした（別の操作でクーポンの状態が先に変わっていました。今の状態を読み込み直しました）」を出す (読み直しが失敗したら、その旨とページの読み込み直しを促す文。英字の状態の値は出さない)
 - `valid_until`: JST の暦日 (YYYY-MM-DD の実在する日付)。DB にはその日の JST 23:59:59.999999 にして書く (#1483。POST と同じ)
 - `max_uses`: 1 以上の整数 (`null` で無制限)
 - `applicable_plans`: プランの id (UUID) の配列 / `applicable_to`: `all` / `personal` / `family` / `org`
@@ -1841,12 +1841,12 @@ Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#113
 | `OP_COUPON_EXPIRED` | 422 | クーポン期限切れ |
 | `OP_TRIAL_ALREADY_USED` | 422 | 同一プランの試用は 1 回のみ |
 | `OP_NOT_SUPPORTED` | 501 | [NEW] 未対応の機能 (本文は予定を書かず、いまの事実だけを言う。#1911)。認可を通った人にだけ返す (データエクスポート・AI コンテンツの審査) |
-| `DSR_INVALID_TRANSITION` | 409 | [NEW] 個人情報の請求の更新 (`PATCH /api/admin/data-requests/{id}`) が状態遷移表に無い (同じ状態の指定・本人確認待ち / 終わった請求への更新を含む。cross/15 §7.4・§13) |
+| `DSR_INVALID_TRANSITION` / `OP_EXPERIMENT_INVALID_TRANSITION` / `OP_COUPON_INVALID_TRANSITION` / `OP_FEATURE_PACKAGE_INVALID_TRANSITION` | 409 | [NEW] 状態の変更が遷移表に無い。`DSR_INVALID_TRANSITION` は個人情報の請求の更新 (`PATCH /api/admin/data-requests/{id}`) が状態遷移表に無い (同じ状態の指定・本人確認待ち / 終わった請求への更新を含む。cross/15 §7.4・§13)。`OP_EXPERIMENT_INVALID_TRANSITION` は A/B テストの状態の変更 (`PATCH /api/super-admin/experiments/{id}`。§15)・`OP_COUPON_INVALID_TRANSITION` はクーポンの状態の変更 (`PATCH /api/super-admin/coupons/{id}`。§19)・`OP_FEATURE_PACKAGE_INVALID_TRANSITION` は機能パッケージの状態の変更 (`PATCH /api/super-admin/feature-packages/{id}`。§18) が遷移表に無い (cross/04 §4.2) |
 | `DSR_RESPONSE_NOTE_REQUIRED` | 422 | [NEW] 個人情報の請求を対応済み・対応できずにするのに本人への応答が空 (`PATCH /api/admin/data-requests/{id}`。cross/15 §13) |
-| `CONFLICT_PRECONDITION_REQUIRED` / `CONFLICT_OPTIMISTIC_LOCK` / `CONFLICT_STALE_DATA` | 428 / 412 / 409 | 楽観的ロック (cross/04 §4.2)。`PATCH /api/admin/data-requests/{id}` で、`If-Unmodified-Since` が無い / GET が返した `updated_at` と違う / 条件つきの UPDATE が 0 行。`CONFLICT_STALE_DATA` は組織のプランの変更 (`PATCH /api/admin/organizations/{id}`) でも使う: 直前に読んだ `plan` のままなら書く条件つきの UPDATE が 0 行で、読み直した `plan` が送られたプランと違う (同じなら 200 で書かず記録もしない。#1912)。同じ形で、問い合わせの更新 (`PATCH` / `PUT /api/admin/inquiries/{id}`。条件は読んだ `status` と `updated_at`)・AI の 1 日の上限の保存 (`PATCH /api/super-admin/llm/quotas`。条件は読んだ `daily_limit`、行が無かったときは作るだけ)・リードのステージの変更 (`PATCH /api/admin/sales/leads/{id}`。条件は読んだ `stage`。読み直してリードがあれば常に 409)・プランの編集と削除 (`PATCH` / `DELETE /api/super-admin/plans/{id}`。条件は読んだ `status` (削除は `draft`)、廃止で既存の `ends_at` に頼るときは `ends_at` が NULL でないことも。編集は送った変更がもう入っていれば 200)・利用者の凍結 (`POST /api/admin/users/{id}/freeze`。条件は読んだ時点の super_admin でない状態のまま。読み直して対象があれば常に 409) でも使う。送った値が今の値と同じだったときの扱いは違う: 組織のプラン・AI の 1 日の上限・プランの編集 (読み直した行に送った変更がもう入っていたとき) は 200 で書かず記録もしないが、問い合わせの更新は 200 で書かずに今の行 (本文を含む) を返すので、`changed: false` として記録する (:984) |
+| `CONFLICT_PRECONDITION_REQUIRED` / `CONFLICT_OPTIMISTIC_LOCK` / `CONFLICT_STALE_DATA` | 428 / 412 / 409 | 楽観的ロック (cross/04 §4.2)。`PATCH /api/admin/data-requests/{id}` で、`If-Unmodified-Since` が無い / GET が返した `updated_at` と違う / 条件つきの UPDATE が 0 行。`CONFLICT_STALE_DATA` は組織のプランの変更 (`PATCH /api/admin/organizations/{id}`) でも使う: 直前に読んだ `plan` のままなら書く条件つきの UPDATE が 0 行で、読み直した `plan` が送られたプランと違う (同じなら 200 で書かず記録もしない。#1912)。同じ形で、問い合わせの更新 (`PATCH` / `PUT /api/admin/inquiries/{id}`。条件は読んだ `status` と `updated_at`)・AI の 1 日の上限の保存 (`PATCH /api/super-admin/llm/quotas`。条件は読んだ `daily_limit`、行が無かったときは作るだけ)・リードのステージの変更 (`PATCH /api/admin/sales/leads/{id}`。条件は読んだ `stage`。読み直してリードがあれば常に 409)・プランの編集と削除 (`PATCH` / `DELETE /api/super-admin/plans/{id}`。条件は読んだ `status` (削除は `draft`)、廃止で既存の `ends_at` に頼るときは `ends_at` が NULL でないことも。編集は送った変更がもう入っていれば 200。編集は、本文の `expected_status` (画面が見ていた status) が DB の `status` と違えば、書かずに記録もせず 409 (遷移の検査 422 より先)。このため、2 人の運営がほぼ同時に同じプランで「公開する」を押すと、後の人の要求は 409 になる (`expected_status` は `draft` で、DB はもう `public`))・利用者の凍結 (`POST /api/admin/users/{id}/freeze`。条件は読んだ時点の super_admin でない状態のまま。読み直して対象があれば常に 409)・利用者の凍結の解除 (`DELETE /api/admin/users/{id}/freeze`。条件は凍結中 (`frozen_at` が NULL でない) のまま。読み直して対象があれば常に 409)・A/B テストの状態の変更 (`PATCH /api/super-admin/experiments/{id}`。条件は読んだ `status`。読み直して実験があれば常に 409)・クーポンの状態の変更 (`PATCH /api/super-admin/coupons/{id}`。条件は読んだ `status`)・機能パッケージの状態の変更 (`PATCH /api/super-admin/feature-packages/{id}`。条件は読んだ `status`。クーポン・機能パッケージはどちらも 0 行なら読み直して、無ければ 404・あれば 409) でも使う。送った値が今の値と同じだったときの扱いは違う: 組織のプラン・AI の 1 日の上限・プランの編集 (読み直した行に送った変更がもう入っていたとき) は 200 で書かず記録もしないが、問い合わせの更新は 200 で書かずに今の行 (本文を含む) を返すので、`changed: false` として記録する (:984)。遷移表に無い A/B テストの状態の変更は 409 `OP_EXPERIMENT_INVALID_TRANSITION` (§15・cross/04)。遷移表に無いクーポン・機能パッケージの状態の変更は 409 `OP_COUPON_INVALID_TRANSITION` / `OP_FEATURE_PACKAGE_INVALID_TRANSITION` (§19・§18・cross/04) |
 | `OP_EMAIL_OUTBOX_NOT_FOUND` | 404 | [NEW] 再送 (`POST /api/super-admin/email-outbox/{id}/requeue`) の行が無い (`10-logs-and-mail-retry.md` §11) |
 | `OP_EMAIL_OUTBOX_NOT_REQUEUEABLE` | 409 | [NEW] 再送できない行。`details.reason` が `not_dead` (届けられなかった行でない) か `redacted` (宛先を伏せた行) (`10-logs-and-mail-retry.md` §11) |
-| `AUTH_2FA_REQUIRED` | 403 | 二段階認証の確認が要る (必須ロールで認証アプリを登録済み・セッションが aal1)。`requireRole` が `MfaRequiredError` (`ForbiddenError` の派生) を投げ、運営の API は route の既存の 403 の code (`FORBIDDEN` / `OP_PERMISSION_DENIED`) で返す (本文の message は、`authFailureNested` を通す route では「二段階認証の確認が必要です」、403 を固定のリテラルで返す route では「権限がありません」。`cross/12-operator-mfa.md` §19.3)。この code を本文に出すのは自己サービスの `/api/auth/mfa/*` だけ。画面 (layout / page) は `requireRoleForPage` が MFA の画面へ回す (`cross/12-operator-mfa.md` §13.4・§19.3) |
+| `AUTH_2FA_REQUIRED` | 403 | 二段階認証の確認が要る (必須ロールで認証アプリを登録済み・セッションが aal1)。`requireRole` が `MfaRequiredError` (`ForbiddenError` の派生) を投げ、運営の API は route の既存の 403 の code (`FORBIDDEN` / `OP_PERMISSION_DENIED`) で返す (本文の message は、`authFailureNested` を通す route でも、403 を固定の code (`OP_PERMISSION_DENIED` など) で返して文を `operatorForbiddenMessageOf` (`src/lib/api/error-responses.ts`) で決める route でも「二段階認証の確認が必要です」(登録が要るなら「二段階認証の登録が必要です」)。`cross/12-operator-mfa.md` §19.3)。この code を本文に出すのは自己サービスの `/api/auth/mfa/*` だけ。画面 (layout / page) は `requireRoleForPage` が MFA の画面へ回す (`cross/12-operator-mfa.md` §13.4・§19.3) |
 | `AUTH_2FA_ENROLLMENT_REQUIRED` | 403 | [NEW] 二段階認証の登録が要る (必須ロールで未登録・猶予なし・セッションが aal1)。扱いは `AUTH_2FA_REQUIRED` と同じ (`cross/12-operator-mfa.md` §19) |
 
 ## 24. テスト方針

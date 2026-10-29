@@ -22,6 +22,7 @@
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import {
@@ -48,6 +49,7 @@ import {
 import { notSupportedResponse } from '@/lib/admin/not-supported';
 import { recordAdminAudit, type AdminAuditSeverity } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { isUuid } from '@/lib/http-params';
 
 export const dynamic = 'force-dynamic';
 
@@ -113,7 +115,7 @@ export async function POST(request: Request, props: Params) {
       return errorResponse(401, 'AUTH_UNAUTHENTICATED', '認証が必要です');
     }
     if (err instanceof ForbiddenError) {
-      return errorResponse(403, 'OP_PERMISSION_DENIED', '権限がありません');
+      return errorResponse(403, 'OP_PERMISSION_DENIED', operatorForbiddenMessageOf(err));
     }
     throw err;
   }
@@ -147,6 +149,12 @@ export async function POST(request: Request, props: Params) {
   // 監査ログだけ本人の権限の client (RLS audit_logs_insert_admins)
   const supabaseAdmin = getSupabaseAdmin();
   const supabase = await createClient();
+
+  // UUID の形でない id は DB に渡さず、通報が無いときと同じ 404 (moderation_flags.id / recipe_flags.id は uuid の列。
+  // 渡すと 22P02 で失敗し、下の catch の 500 に入る。#1917 の続き)
+  if (!isUuid(id)) {
+    return errorResponse(404, 'NOT_FOUND', 'モデレーションアイテムが見つかりません');
+  }
 
   let item;
   try {

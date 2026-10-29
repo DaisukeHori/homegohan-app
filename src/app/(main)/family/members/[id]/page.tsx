@@ -2,7 +2,7 @@
 
 // src/app/(main)/family/members/[id]/page.tsx
 // (設計書 03-ui-spec.md §3.2, 02-flow-spec.md §13)
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
@@ -15,6 +15,23 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
 import { membershipErrorMessageOfBody } from '@/lib/errors/membership-errors';
+import { familyRoleLabel } from '@/lib/membership/role-labels';
+import { withMembershipStateNote, type MembershipStateAfterNetworkFailure } from '@/lib/membership/leave-state';
+import {
+  readOwnShareSettingsAfterNetworkFailure,
+  withShareSettingsUnconfirmedNote,
+  type FamilyShareSettings,
+} from '@/lib/membership/share-settings-state';
+
+/** 除名・共有設定の通信そのものが失敗した (fetch が reject した) ときの文 */
+const NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
+
+/**
+ * 自分のプロフィール・家族の中の自分の役割を読み込めなかったときの文 (#2073 S3)。家族に入っていない (家族の作成の画面へ移す) ・
+ * 権限が無い (操作を出さない) と見分けるために出す (家族のメンバーの画面の FAMILY_MEMBERS_LOAD_ERROR と同じ扱い)。
+ * 失敗の理由 (英語の内部の文) は画面に出さない
+ */
+const MEMBER_DETAIL_LOAD_ERROR = 'メンバーの情報を読み込めませんでした。しばらくしてから、もう一度お試しください。';
 
 interface FamilyMember {
   id: string;
@@ -38,6 +55,17 @@ interface ParentalConsentRecord {
   signed_at: string;
   revoked_at: string | null;
   revoked_reason: string | null;
+}
+
+/**
+ * .single() で行が 0 件 (または RLS で見えない) ときの PostgREST の失敗のコード。
+ * 行が無いのは「読み込めなかった」ではないので、これだけは読み込みの失敗と分ける
+ */
+const POSTGREST_NO_ROWS_CODE = 'PGRST116';
+
+/** 問い合わせの失敗が「行が無い」ではない (= 読み込めなかった) か */
+function isLoadFailure(error: { code?: string } | null): boolean {
+  return error !== null && error.code !== POSTGREST_NO_ROWS_CODE;
 }
 
 /** 'YYYY-MM-DD' → 'YYYY年M月D日' (暦日の文字列をそのまま読む。時差でずらさない) */
@@ -70,23 +98,37 @@ export default function FamilyMemberDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [consent, setConsent] = useState<ParentalConsentRecord | null>(null);
+  // 読み込めなかったときの文。あるあいだは画面の代わりにこの文と「再試行」を出す (#2073 S3。以前は自分のプロフィールを読めないと
+  // 家族に入っていないとして家族の作成の画面へ移し、問い合わせが例外を投げると読み込み中の表示のまま止まっていた)
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const init = async () => {
+  // メンバーと自分の役割を読む。画面を開いたときと「再試行」で呼ぶ
+  const loadPage = useCallback(async () => {
+    setLoading(true);
+    // 別の画面へ移るときは、移るまで読み込み中の表示のままにする (これまでどおり)
+    let redirecting = false;
+    try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
+        redirecting = true;
         router.push('/login');
         return;
       }
       setCurrentUserId(user.id);
 
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
         .select('family_id')
         .eq('id', user.id)
         .single();
 
+      if (profileError) {
+        // 自分のプロフィールを読めなかった (家族に入っていないのとは別。家族の作成の画面へ送らない)
+        setLoadError(MEMBER_DETAIL_LOAD_ERROR);
+        return;
+      }
       if (!profile?.family_id) {
+        redirecting = true;
         router.replace('/family/setup');
         return;
       }
@@ -101,7 +143,7 @@ export default function FamilyMemberDetailPage() {
 
       if (memberError || !memberData) {
         setError('メンバー情報の取得に失敗しました');
-        setLoading(false);
+        setLoadError(null);
         return;
       }
 
@@ -125,28 +167,47 @@ export default function FamilyMemberDetailPage() {
         setConsent((consentData as ParentalConsentRecord | null) ?? null);
       }
 
-      // 現在ユーザーのロールを取得
-      const { data: myMember } = await supabase
+      // 現在ユーザーのロールを取得 (行が無い (PGRST116) ときは権限なし。読み込めなかったときは、権限なしと見せない)
+      const { data: myMember, error: myMemberError } = await supabase
         .from('family_members')
         .select('role')
         .eq('family_id', profile.family_id)
         .eq('user_id', user.id)
         .single();
+      if (isLoadFailure(myMemberError)) {
+        setLoadError(MEMBER_DETAIL_LOAD_ERROR);
+        return;
+      }
 
       setCurrentRole(myMember?.role ?? null);
-      setLoading(false);
-    };
-
-    init();
+      setError(null);
+      setLoadError(null);
+    } catch (loadFailure) {
+      // 問い合わせが例外を投げた (以前は try / catch が無く、読み込み中の表示のまま止まり、未処理の reject になっていた)
+      console.error('[family/members/[id]] load error:', loadFailure);
+      setLoadError(MEMBER_DETAIL_LOAD_ERROR);
+    } finally {
+      if (!redirecting) setLoading(false);
+    }
   }, [supabase, router, memberId]);
+
+  useEffect(() => {
+    void loadPage();
+  }, [loadPage]);
 
   const isSelf = member?.user_id === currentUserId;
   const isOwnerOrAdmin = currentRole === 'representative' || currentRole === 'adult';
 
-  const handleShareUpdate = async (field: 'share_meals' | 'share_health' | 'share_menu', value: boolean) => {
-    if (field === 'share_meals') setShareMeals(value);
-    if (field === 'share_health') setShareHealth(value);
-    if (field === 'share_menu') setShareMenu(value);
+  /** 画面の 3 つの共有の設定をまとめて置き換える */
+  const showShareSettings = (settings: FamilyShareSettings) => {
+    setShareMeals(settings.share_meals);
+    setShareHealth(settings.share_health);
+    setShareMenu(settings.share_menu);
+  };
+
+  const handleShareUpdate = async (field: keyof FamilyShareSettings, value: boolean) => {
+    const previous: FamilyShareSettings = { share_meals: shareMeals, share_health: shareHealth, share_menu: shareMenu };
+    showShareSettings({ ...previous, [field]: value });
 
     setSavingShare(true);
     try {
@@ -156,17 +217,24 @@ export default function FamilyMemberDetailPage() {
         body: JSON.stringify({ [field]: value }),
       });
       if (!res.ok) {
-        // ロールバック
-        if (field === 'share_meals') setShareMeals(!value);
-        if (field === 'share_health') setShareHealth(!value);
-        if (field === 'share_menu') setShareMenu(!value);
+        // 応答が届いたうえでの失敗は、更新されていないので元に戻す (これまでどおり)
+        showShareSettings(previous);
         alert('共有設定の更新に失敗しました');
       }
     } catch {
-      if (field === 'share_meals') setShareMeals(!value);
-      if (field === 'share_health') setShareHealth(!value);
-      if (field === 'share_menu') setShareMenu(!value);
-      alert('通信エラーが発生しました');
+      // サーバーが更新を済ませてから応答が切れたこともあるので、元に戻さず、サーバーの今の値を読み直して出す (#2073 S2。
+      // 以前は元に戻していたので、例えば健康の記録の共有はサーバーで有効なのに、画面は無効と見せていた)。
+      // 読み直しの応答を待つあいだも切り替えを止めたままにする (savingShare を戻さない)
+      const reread = await readOwnShareSettingsAfterNetworkFailure(supabase);
+      if (!reread.ok) {
+        // 確かめられなかった: 最後に分かっているサーバーの値 (切り替える前) に戻し、確かめられなかった旨を添える
+        showShareSettings(previous);
+        alert(withShareSettingsUnconfirmedNote(NETWORK_FAILURE_MESSAGE));
+      } else {
+        showShareSettings(reread.settings);
+        // 更新できていれば、成功のときと同じ (文を出さない)
+        if (reread.settings[field] !== value) alert(NETWORK_FAILURE_MESSAGE);
+      }
     } finally {
       setSavingShare(false);
     }
@@ -191,22 +259,81 @@ export default function FamilyMemberDetailPage() {
       }
       router.replace('/family/members');
     } catch {
-      alert('通信エラーが発生しました');
+      // サーバーが除名を済ませてから応答が切れたこともあるので、そのメンバーの行を読み直して確かめる (#2064。
+      // 家族のメンバーの画面の除名と同じ型。確かめないと、除名したメンバーの詳細が残り、もう一度押すと失敗の文が出ていた)。
+      // 読み直しの応答を待つあいだもボタンを止めたままにする (actionLoading を戻さない)
+      const state = await readMemberStateAfterNetworkFailure(member.id, familyId);
+      if (state === 'left') {
+        // 家族から外れている: 成功のときと同じ遷移
+        router.replace('/family/members');
+        return;
+      }
+      // 外れていない: これまでどおり通信エラーの文。確かめられなかったときは「状態を確かめられませんでした」を添える
+      alert(withMembershipStateNote(NETWORK_FAILURE_MESSAGE, state));
     } finally {
       setActionLoading(false);
     }
   };
 
-  const roleLabel = (role: string) => {
-    if (role === 'representative') return '代表';
-    if (role === 'adult') return '大人';
-    return '子供';
+  /**
+   * 除名の通信が失敗したあとに、そのメンバーが今も家族にいるか (status が active の行があるか) を読み直す。
+   * remove_family_member は family_members.status を 'removed' にするので、active の行が無ければ外れている。
+   * 例外は投げない (問い合わせの失敗・例外は unknown)
+   */
+  const readMemberStateAfterNetworkFailure = async (
+    targetMemberId: string,
+    targetFamilyId: string,
+  ): Promise<MembershipStateAfterNetworkFailure> => {
+    try {
+      const { data: activeRow, error: activeRowError } = await supabase
+        .from('family_members')
+        .select('id')
+        .eq('id', targetMemberId)
+        .eq('family_id', targetFamilyId)
+        .eq('status', 'active')
+        .maybeSingle();
+      if (activeRowError) return 'unknown';
+      return activeRow ? 'still-member' : 'left';
+    } catch (readFailure) {
+      console.error('[family/members/[id]] failed to confirm removal after network failure:', readFailure);
+      return 'unknown';
+    }
   };
 
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-gray-400 text-sm">読み込み中…</div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center gap-4 p-6">
+        <div
+          role="alert"
+          data-testid="family-member-detail-load-error"
+          className="w-full max-w-md rounded-2xl bg-red-50 border border-red-200 p-6 text-center"
+        >
+          <p className="text-sm text-red-600">{loadError}</p>
+          <div className="mt-4 flex justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => void loadPage()}
+              className="px-4 py-2 rounded-full bg-white border border-red-300 text-red-600 text-sm"
+            >
+              再試行
+            </button>
+            <button
+              type="button"
+              onClick={() => router.back()}
+              className="px-4 py-2 rounded-full bg-gray-100 text-gray-600 text-sm"
+            >
+              戻る
+            </button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -243,7 +370,7 @@ export default function FamilyMemberDetailPage() {
             <h1 className="text-2xl font-bold text-gray-900">
               {member.display_name ?? '名前未設定'}
             </h1>
-            <p className="text-xs text-gray-400 mt-0.5">{roleLabel(member.role)}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{familyRoleLabel(member.role)}</p>
           </div>
         </div>
       </div>
@@ -257,7 +384,7 @@ export default function FamilyMemberDetailPage() {
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-gray-500">役割</span>
-              <span className="text-gray-800 font-medium">{roleLabel(member.role)}</span>
+              <span className="text-gray-800 font-medium">{familyRoleLabel(member.role)}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-gray-500">参加日</span>

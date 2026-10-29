@@ -163,14 +163,26 @@ export const FREEZE_REASON_MAX_LENGTH = 2000;
 export const FREEZE_DURATION_DAYS_MIN = 1;
 /** 一時 BAN の日数の上限 (365 日。モデレーションの一時 BAN と同じ範囲) */
 export const FREEZE_DURATION_DAYS_MAX = 365;
+/**
+ * 凍結の通知メールに載せる運営からのメッセージ (notification_message) の文字数の上限 (#2026。cross/24 §6.6・§13)。
+ * 前後の空白を除いたあとの UTF-16 の長さ。メールの本文の 1 つの段に入る量で、監査 admin.user.ban の details にも同じ文を残すので、
+ * 監査の行が膨らまないようにこの長さに留める。画面 (UserFreezeForm) も送る前にこれで確かめる。入力の形の上限なので環境変数にはしない
+ */
+export const FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH = 1000;
 
 export const FreezeBodySchema = z.object({
   ban_type: z.enum(['temporary', 'permanent']),
   reason_category: z.enum(['spam', 'abuse', 'policy_violation', 'other']),
   reason_detail: z.string().min(1).max(FREEZE_REASON_MAX_LENGTH),
   duration_days: z.number().int().min(FREEZE_DURATION_DAYS_MIN).max(FREEZE_DURATION_DAYS_MAX).optional(),
+  /** true なら凍結した本人の登録メールアドレスへ通知メールを送信待ちに積む (cross/24)。省略時 true */
   notify_user: z.boolean().optional().default(true),
-  notification_message: z.string().max(1000).optional(),
+  /**
+   * 通知メールの「▼ 運営からのメッセージ」の段に入れる任意の文 (cross/24 §7.2)。前後の空白を除いてから長さを見る
+   * (trim を max より先に並べる。Zod は検査を並べた順に適用する)。空 (空白だけ) は「無し」として扱う (route が `|| null` にする)。
+   * notify_user が false なら受け取っても使わず、監査にも残さない
+   */
+  notification_message: z.string().trim().max(FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH).optional(),
 });
 
 export type FreezeBody = z.infer<typeof FreezeBodySchema>;

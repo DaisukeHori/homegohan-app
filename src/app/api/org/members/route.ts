@@ -1,4 +1,4 @@
-import { createClient as createServerClient } from '@/lib/supabase/server';
+import { createClient as createServerClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { requireOrgAdmin, type OrgAdminContext } from '@/lib/auth/helpers';
@@ -12,21 +12,37 @@ import {
 import { AddOrgMemberRequestBodySchema } from '@/schemas/membership/organization-invite';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { ORG_API_INTERNAL_ERROR_MESSAGE, ORG_API_INVITE_ADMIN_ONLY_MESSAGE, orgAuthFailureFlat } from '@/lib/org-api-errors';
+import {
+  ORG_MEMBER_NAME_COLUMNS,
+  OrgMemberNameSchema,
+  type OrgMemberNamesResponse,
+} from '@/schemas/membership/organization-member-name';
 // メンバー一覧取得 (所属組織の owner / admin のみ。判定は共通の requireOrgAdmin()、#1161)
+//
+// 組織のメンバーの一覧の画面 (src/app/(org)/org/members/page.tsx) が呼ぶ (#2073 S4)。
+// user_profiles の SELECT の RLS は本人の行だけなので、ログイン中の利用者のクライアントで読むと自分の行しか返らなかった。
+// そこで、次の順に確かめてから、確かめた組織のメンバーだけを service_role で読む:
+//   1. JWT の本人 (requireOrgAdmin の getUser。無ければ 401)
+//   2. 本人の所属組織と、そこでの役割が owner / admin であること (本人の行は RLS で読める。違えば 403。一般メンバーも 403)
+//   3. service_role の読みは 2 で確かめた organization_id で絞る (ほかの組織の行は読まない)
+// 返すのは id・表示名・組織内の役割・参加した日の 4 つだけ (プライバシーポリシー第9条 5 項。ORG_MEMBER_NAME_COLUMNS)。
+// 並びは参加した日の古い順 (画面の以前の問い合わせと同じ)
 export async function GET(_request: Request) {
   try {
     const { profile: adminProfile } = await requireOrgAdmin();
 
-    const supabase = await createServerClient();
-    const { data: members, error } = await supabase
+    // service_role の client は、上の確認を通ったあとの読みにだけ使う
+    const { data: rows, error } = await getSupabaseAdmin()
       .from('user_profiles')
-      .select('id, nickname, roles, created_at, updated_at, organization_id')
+      .select(ORG_MEMBER_NAME_COLUMNS)
       .eq('organization_id', adminProfile.organization_id)
-      .order('created_at', { ascending: false });
+      .order('joined_org_at', { ascending: true });
 
-    if (error) throw error;
+    if (error) throw new Error(error.message);
 
-    return NextResponse.json({ members });
+    // 4 つのキーだけにそろえる (select の列を誤って足しても応答には出さない)。形が違えば 500
+    const body: OrgMemberNamesResponse = { members: OrgMemberNameSchema.array().parse(rows ?? []) };
+    return NextResponse.json(body);
 
   } catch (error) {
     // 401 / 403 は日本語の固定の文 (src/lib/org-api-errors.ts)。例外の文面は本文に入れない

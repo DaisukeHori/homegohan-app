@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   ORG_CHALLENGE_MIN_PARTICIPANTS,
@@ -11,6 +11,10 @@ import {
   formatParticipantCount,
   isOrgChallengeType,
 } from "@/lib/org-challenges";
+import { operationFailureMessage, operationNetworkFailureMessage } from "@/lib/admin/api-error-message";
+
+/** チャレンジの一覧を読み込めなかったときの文の頭 (後ろに理由を添える)。空の一覧 (「チャレンジがありません」) と見分けるために出す (#2050) */
+const LOAD_FAILURE_SUMMARY = "チャレンジの一覧を読み込めませんでした";
 
 // #1132: 管理者に見せるのは集計 (参加者数と平均) だけ。参加者一人ひとりの進み具合・順位は、誰にも見せない (参加者どうしを除く)。
 // 少人数から個人が分かってしまわないよう、参加した人 (延べ) が最小人数に満たない間は参加者数を出さない。
@@ -125,16 +129,33 @@ export default function OrgChallengesPage() {
   const [formData, setFormData] = useState(INITIAL_FORM);
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // 一覧を読み込めなかったときの文。あるあいだは一覧と「チャレンジがありません」の代わりにこの文と「再試行」を出す (#2050)
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // 状態の変更 (開始・終了) の応答を待っているチャレンジの id。待つあいだは状態のボタンを止める
+  // (二度押しで 2 本目を送ると、変えられているのに断られて失敗の文が出るため。#2050)
+  const [changingStatusId, setChangingStatusId] = useState<string | null>(null);
+  // 作成か状態の変更のどちらかの書き込みとそのあとの読み直しの応答を待っているか (10/26 の整合ゲート 1026e。#2050)。
+  // 書き込みのあとの読み直しは一覧を丸ごと差し替えるので、2 つの書き込みを重ねると、先に送った読み直しの応答が後に届いたとき、
+  // その古い一覧 (例: 開始したチャレンジがまだ下書きの一覧) で表示が上書きされ、開始したチャレンジの「開始」をもう一度押せてしまう
+  // (#2053 のクーポン・機能パッケージと同じ型)。待つあいだは作成と開始・終了のボタン (と一覧の「再試行」。#2059) を止め、押されても送らない。
+  // ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
+  const writeInFlightRef = useRef(false);
+  const isWriting = submitting || changingStatusId !== null;
 
   const fetchChallenges = useCallback(async () => {
     try {
       const res = await fetch("/api/org/challenges");
-      if (res.ok) {
-        const data = await res.json();
-        setChallenges(data.challenges);
+      if (!res.ok) {
+        const body: unknown = await res.json().catch(() => null);
+        setLoadError(operationFailureMessage(LOAD_FAILURE_SUMMARY, res.status, body));
+        return;
       }
+      const data = await res.json();
+      setChallenges(data.challenges);
+      setLoadError(null);
     } catch (error) {
       console.error("Failed to fetch challenges:", error);
+      setLoadError(operationNetworkFailureMessage(LOAD_FAILURE_SUMMARY));
     } finally {
       setLoading(false);
     }
@@ -146,6 +167,9 @@ export default function OrgChallengesPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // 開始・終了 (とその読み直し) の応答を待つあいだは送らない (writeInFlightRef)
+    if (writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
     setSubmitting(true);
     setErrorMessage(null);
 
@@ -166,21 +190,32 @@ export default function OrgChallengesPage() {
       });
 
       if (res.ok) {
-        fetchChallenges();
         setShowForm(false);
         setFormData(INITIAL_FORM);
+        // 読み直しの応答まで待ってからボタンを戻す (待たずに次の書き込みを送ると、この読み直しの古い一覧で上書きされうるため)
+        await fetchChallenges();
       } else {
         setErrorMessage(await readErrorMessage(res, "チャレンジを作成できませんでした"));
       }
     } catch (error) {
       console.error("Failed to create challenge:", error);
       setErrorMessage("チャレンジを作成できませんでした。通信状況を確認して、もう一度お試しください");
+      // サーバーがチャレンジを作ってから応答が切れたこともあるので、一覧を読み直して今の状態を見せる (#2064 R5 と同じ型。
+      // 読み直さないと、作れていたチャレンジが一覧に出ず、もう一度送って同じチャレンジを重ねて作りうる)。フォームと入力は残す。
+      // 読み直しが失敗したときは fetchChallenges が一覧の「読み込めませんでした」を出す。
+      // 成功のときの読み直しと同じく、読み直しの応答を待つあいだも書き込みの待ち (writeInFlightRef) を戻さない
+      await fetchChallenges();
     } finally {
+      writeInFlightRef.current = false;
       setSubmitting(false);
     }
   };
 
   const handleStatusChange = async (challengeId: string, newStatus: string) => {
+    // 作成 (とその読み直し) の応答を待つあいだも送らない (writeInFlightRef)
+    if (writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
+    setChangingStatusId(challengeId);
     setErrorMessage(null);
     try {
       const res = await fetch("/api/org/challenges", {
@@ -190,14 +225,33 @@ export default function OrgChallengesPage() {
       });
 
       if (res.ok) {
-        fetchChallenges();
+        // 読み直し (ボタンが次の状態のものに変わる) まで待ってからボタンを戻す
+        await fetchChallenges();
       } else {
         setErrorMessage(await readErrorMessage(res, "チャレンジの状態を変更できませんでした"));
       }
     } catch (error) {
       console.error("Failed to update challenge:", error);
       setErrorMessage("チャレンジの状態を変更できませんでした。通信状況を確認して、もう一度お試しください");
+      // サーバーが状態を変えてから応答が切れたこともあるので、一覧を読み直す (#2064 R5 と同じ型。読み直さないと、
+      // 状態の変わったチャレンジに前の状態のボタンが残り、次の押下で古い状態からの変更を送っていた)。
+      // 読み直しが失敗したときは fetchChallenges が一覧の「読み込めませんでした」を出す。
+      // 成功のときの読み直しと同じく、読み直しの応答を待つあいだも書き込みの待ち (writeInFlightRef) を戻さない
+      await fetchChallenges();
+    } finally {
+      writeInFlightRef.current = false;
+      setChangingStatusId(null);
     }
+  };
+
+  // 一覧の読み込みをやり直す (読み込めなかったときの「再試行」)。
+  // 書き込みとそのあとの読み直しの応答を待つあいだは送らない (#2059)。待つあいだに送ると、この読み込みが書き込みより前の一覧を読み、
+  // 書き込みのあとの読み直しより後に届いたとき、その古い一覧で表示が上書きされ、作ったものが表示から消える (もう一度作って重複させうる)。
+  // ボタンも isWriting で止める。ref は再描画の前に押されたとき (ボタンがまだ止まっていない) の守り
+  const retryLoad = () => {
+    if (writeInFlightRef.current) return;
+    setLoading(true);
+    void fetchChallenges();
   };
 
   /** 種類を選んだら、単位と目標値の初期値をその種類に合わせる */
@@ -344,7 +398,7 @@ export default function OrgChallengesPage() {
             <div className="flex gap-3">
               <button
                 type="submit"
-                disabled={submitting}
+                disabled={isWriting}
                 className="px-6 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
               >
                 {submitting ? "作成中..." : "作成"}
@@ -361,6 +415,23 @@ export default function OrgChallengesPage() {
         )}
       </AnimatePresence>
 
+      {loadError ? (
+        <div
+          role="alert"
+          data-testid="challenge-load-error"
+          className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm flex items-center justify-between gap-3"
+        >
+          <span>{loadError}</span>
+          <button
+            type="button"
+            onClick={retryLoad}
+            disabled={isWriting}
+            className="shrink-0 px-3 py-1.5 bg-white border border-red-300 rounded-lg text-red-700 hover:bg-red-100 transition-colors disabled:opacity-50"
+          >
+            再試行
+          </button>
+        </div>
+      ) : (
       <div className="space-y-4">
         {challenges.map((challenge) => (
           <motion.div
@@ -405,7 +476,8 @@ export default function OrgChallengesPage() {
                 {challenge.status === "draft" && (
                   <button
                     onClick={() => handleStatusChange(challenge.id, "active")}
-                    className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors"
+                    disabled={isWriting}
+                    className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors disabled:opacity-50"
                   >
                     開始
                   </button>
@@ -413,7 +485,8 @@ export default function OrgChallengesPage() {
                 {challenge.status === "active" && (
                   <button
                     onClick={() => handleStatusChange(challenge.id, "completed")}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+                    disabled={isWriting}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
                   >
                     終了
                   </button>
@@ -428,6 +501,7 @@ export default function OrgChallengesPage() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

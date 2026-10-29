@@ -127,7 +127,7 @@ Issue 本文との食い違い (本書を正とする): Issue の「該当箇所
 
 | 案 | 中身 | 退ける理由 / 採る理由 |
 |---|---|---|
-| A. `inquiries` を拡張する | `inquiry_type` の CHECK に 4 種を足し、本人確認・期限の列を足す (Issue の文面どおり) | 退ける。`inquiries` は anon が WITH CHECK (true) で INSERT できる表で、法定請求を本人確認なしの行と同じ表に置くと、運営画面・RLS・退会時の伏せ字 (prepare_account_deletion) すべてに分岐が要る。cross/ の既存の CHECK・ポリシーの変更は後方互換の原則 (R-13) に反する。Issue の「inquiry_type に足す」は症状の指し先であって、求めているのは専用の受付とデータモデル (タイトル) |
+| A. `inquiries` を拡張する | `inquiry_type` の CHECK に 4 種を足し、本人確認・期限の列を足す (Issue の文面どおり) | 退ける。`inquiries` は anon が本人確認なしで INSERT できる表 (WITH CHECK は `status = 'pending'`・`admin_notes` と `resolved_at` が NULL・`user_id` が NULL か本人。`20261025120000_operator_session_writes_select_only.sql`) で、法定請求を本人確認なしの行と同じ表に置くと、運営画面・RLS・退会時の伏せ字 (prepare_account_deletion) すべてに分岐が要る。cross/ の既存の CHECK・ポリシーの変更は後方互換の原則 (R-13) に反する。Issue の「inquiry_type に足す」は症状の指し先であって、求めているのは専用の受付とデータモデル (タイトル) |
 | B. 専用の表 + 状態履歴の表 (`data_subject_request_events`) | 遷移ごとに 1 行の履歴表を持つ | 退ける。履歴は `admin_audit_logs` (UPDATE / DELETE 不可・7 年保持) が既に担う。表を増やすと RLS・export の分類・退会時の扱いが 2 倍になる |
 | C. 専用の表 1 つ + 本人確認はメールのリンク + 書き込みはサーバーだけ | 本書 | **採る。** 縁の発生源 (本人が書ける列・履歴表・パスワード再認証の分岐) をすべて消し、残るのは「行を作る」INSERT 1 つと「確認する / 確認メールを送り直す / 取り下げる / 運営が更新する」の 4 つの条件つき UPDATE だけ |
 | D. 本人確認を JWT の `amr` (直近の認証時刻) で行う | 再ログインから N 分以内なら確認済みとみなす | 退ける。OAuth と PKCE の経路で `amr` の方法・時刻が一定でなく、Sonnet が迷う。確認の記録 (いつ・どう確認したか) も残らない |
@@ -1124,7 +1124,7 @@ export function sendDsrResolvedEmail(admin: DsrAdminClient, row: DsrNotification
 |---|---|---|---|
 | `AUTH_UNAUTHENTICATED` | 401 | 全 route | 本人: `{ error: 'ログインが必要です', code }` (#1917 で英語の 'Unauthorized' から変えた) / 運営: `{ error: { code, message: '認証が必要です' } }` |
 | `AUTH_ACCOUNT_FROZEN` | 403 | 本人向け | 凍結中の /api 呼び出しは middleware (lib/supabase/middleware.ts) が先に止めるので、実際の本文は middleware の `{ error: { code, message: 'アカウントが凍結されています' } }`。route の authenticateDsrRequester (`requireUserAllowingMissingProfile` の ForbiddenError) → `{ error: 'アカウントが凍結されています', code }` (flat) は middleware を通った場合の二重の守り |
-| `OP_PERMISSION_DENIED` | 403 | 運営向け | `{ error: { code, message: '権限がありません' } }` |
+| `OP_PERMISSION_DENIED` | 403 | 運営向け | `{ error: { code, message } }`。message は `authFailureResponse` (`src/lib/admin/inquiries.ts`) が `operatorForbiddenMessageOf` で決める: 二段階認証が未完了 (`MfaRequiredError`) なら「二段階認証の確認が必要です」(登録が要るなら「二段階認証の登録が必要です」)、それ以外は「権限がありません」 |
 | `INVALID_CHARACTER` | 400 | 本文を読む route (rejectNullCharacterBody) | 既存の固定文 |
 | `INVALID_JSON` | 400 | 本文を読む route | 本人: `{ error: 'リクエストボディが不正です', code }` |
 | `VALIDATION_ERROR` | 400 | zod の失敗・id の形式 | `{ error: '入力内容を確認してください', code, details: flatten }` (運営は nested + details) |

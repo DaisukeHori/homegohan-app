@@ -2,10 +2,35 @@
 
 // src/app/(main)/family/transfer-accept/[proposal_id]/page.tsx
 // (設計書 03-ui-spec.md §10.2, 02-flow-spec.md §10)
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { normalizeProfileName } from '@/lib/profile-name';
+import { transferProposalStatusMessage } from '@/lib/membership/transfer-proposal-status';
+
+/** 提案が無い (または RLS で見えない) ときの文 */
+const PROPOSAL_NOT_FOUND_MESSAGE = '譲渡提案が見つかりません';
+
+/**
+ * 提案 (と提案者・家族名) を読み込めなかったときの文。提案が無い (「譲渡提案が見つかりません」) と見分けるために出す
+ * (#2064。組織のオーナーの譲渡の承諾の画面の PROPOSAL_LOAD_ERROR と同じ文・同じ扱い)。
+ * 読み込みは Supabase の問い合わせで、失敗の理由 (英語の内部の文) は画面に出さない
+ */
+const PROPOSAL_LOAD_ERROR = '譲渡の提案を読み込めませんでした。しばらくしてから、もう一度お試しください。';
+
+/** 承諾・拒否の通信そのものが失敗した (fetch が reject した) ときの文 */
+const NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
+
+/**
+ * .single() で行が 0 件 (または RLS で見えない) ときの PostgREST の失敗のコード。
+ * 行が無いのは「読み込めなかった」ではないので、これだけは読み込みの失敗と分ける
+ */
+const POSTGREST_NO_ROWS_CODE = 'PGRST116';
+
+/** 問い合わせの失敗が「行が無い」ではない (= 読み込めなかった) か */
+function isLoadFailure(error: { code?: string } | null): boolean {
+  return error !== null && error.code !== POSTGREST_NO_ROWS_CODE;
+}
 
 interface TransferProposal {
   id: string;
@@ -30,16 +55,25 @@ export default function FamilyTransferAcceptPage() {
   const [fromName, setFromName] = useState<string | null>(null);
   const [familyName, setFamilyName] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  // 承諾・拒否が失敗したときの文
   const [error, setError] = useState<string | null>(null);
+  // 提案が無い (または RLS で見えない) か。あるあいだは提案の代わりに「譲渡提案が見つかりません」と「戻る」を出す
+  const [notFound, setNotFound] = useState(false);
+  // 提案を読み込めなかったときの文。あるあいだは提案の代わりにこの文と「再試行」を出す
+  // (#2064。以前は error を見ず、読み込めなかったのを「譲渡提案が見つかりません」と見せていた)
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<'accept' | 'decline' | null>(null);
   const [result, setResult] = useState<'accepted' | 'declined' | null>(null);
 
-  useEffect(() => {
-    const init = async () => {
+  // 提案・提案者・家族名を読む。画面を開いたとき・「再試行」・承諾 / 拒否の通信エラーのあとに呼ぶ。
+  // 読み込み中の表示 (loading) は呼び出し側が決める (承諾 / 拒否のあとの読み直しは、提案の表示を残したまま読み直す)。
+  // 戻り値は、ログインの画面へ移ったか (移るときは、移るまで読み込み中の表示のままにする。これまでどおり)
+  const fetchProposal = useCallback(async (): Promise<{ redirecting: boolean }> => {
+    try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
         router.push('/login');
-        return;
+        return { redirecting: true };
       }
       setCurrentUserId(user.id);
 
@@ -49,42 +83,81 @@ export default function FamilyTransferAcceptPage() {
         .eq('id', proposal_id)
         .single();
 
-      if (proposalError || !proposalData) {
-        setError('譲渡提案が見つかりません');
-        setLoading(false);
-        return;
+      if (isLoadFailure(proposalError)) {
+        // 読み込めなかった (提案が無いのとは別。「譲渡提案が見つかりません」と見せない)
+        setLoadError(PROPOSAL_LOAD_ERROR);
+        return { redirecting: false };
       }
-
-      setProposal(proposalData as TransferProposal);
+      if (!proposalData) {
+        // 行が無い (PGRST116) か、RLS で見えない
+        setNotFound(true);
+        setLoadError(null);
+        return { redirecting: false };
+      }
 
       // 提案者情報
       // user_profiles に email 列は無い (メールアドレスは auth.users にしか無く、他人のものは画面にも出さない)。
-      // 他人の行は RLS で読めないことが多く、読めなければ「代表者」と表示する
-      const { data: fromProfile } = await supabase
+      // 他人の行は RLS で読めないことが多く、読めなければ (PGRST116)「代表者」と表示する。読み込めなかったときは読み込みの失敗
+      const { data: fromProfile, error: fromProfileError } = await supabase
         .from('user_profiles')
         .select('nickname')
         .eq('id', proposalData.from_user_id)
         .single();
-      setFromName(normalizeProfileName(fromProfile?.nickname) ?? '代表者');
+      if (isLoadFailure(fromProfileError)) {
+        setLoadError(PROPOSAL_LOAD_ERROR);
+        return { redirecting: false };
+      }
 
-      // 家族グループ名
+      // 家族グループ名 (行が無い・RLS で見えないときは「家族グループ」と出す。読み込めなかったときは読み込みの失敗)
+      let nextFamilyName: string | null = null;
       if (proposalData.scope === 'family') {
-        const { data: group } = await supabase
+        const { data: group, error: groupError } = await supabase
           .from('family_groups')
           .select('name')
           .eq('id', proposalData.scope_id)
           .single();
-        setFamilyName(group?.name ?? '家族グループ');
+        if (isLoadFailure(groupError)) {
+          setLoadError(PROPOSAL_LOAD_ERROR);
+          return { redirecting: false };
+        }
+        nextFamilyName = group?.name ?? '家族グループ';
       }
 
-      setLoading(false);
-    };
-
-    init();
+      // 3 つとも読めてから出す (一部だけ読めた状態で承諾・拒否を出さない)
+      setProposal(proposalData as TransferProposal);
+      setFromName(normalizeProfileName(fromProfile?.nickname) ?? '代表者');
+      setFamilyName(nextFamilyName);
+      setNotFound(false);
+      setLoadError(null);
+      return { redirecting: false };
+    } catch (fetchError) {
+      // 問い合わせが例外を投げた (以前は try / catch が無く、読み込み中の表示のまま止まり、未処理の reject になっていた)
+      console.error('[family/transfer-accept] failed to fetch ownership transfer proposal:', fetchError);
+      setLoadError(PROPOSAL_LOAD_ERROR);
+      return { redirecting: false };
+    }
   }, [supabase, router, proposal_id]);
+
+  const loadPage = useCallback(async () => {
+    setLoading(true);
+    const { redirecting } = await fetchProposal();
+    if (!redirecting) setLoading(false);
+  }, [fetchProposal]);
+
+  useEffect(() => {
+    void loadPage();
+  }, [loadPage]);
+
+  // 読み込みをやり直す (読み込めなかったときの「再試行」)。
+  // 「再試行」は読み込めなかったとき (承諾・拒否のボタンを出していないとき) だけ出すので、承諾・拒否とは重ならない
+  const retryLoad = () => {
+    setError(null);
+    void loadPage();
+  };
 
   const handleAccept = async () => {
     setActionLoading('accept');
+    setError(null);
     try {
       const res = await fetch(`/api/family/representative-transfer/${proposal_id}/accept`, {
         method: 'POST',
@@ -96,7 +169,11 @@ export default function FamilyTransferAcceptPage() {
       }
       setResult('accepted');
     } catch {
-      setError('通信エラーが発生しました');
+      setError(NETWORK_FAILURE_MESSAGE);
+      // サーバーが承諾を済ませてから応答が切れたこともあるので、提案を読み直して今の状態を見せる (#2064。組織の承諾の画面と同じ形。
+      // 読み直さないと、承諾済みの提案に承諾・拒否のボタンが残り、もう一度押すと失敗の文が出ていた)。
+      // 読み直しの応答を待つあいだもボタンを止めたままにする (actionLoading を戻さない)。読み直しが失敗したら「読み込めませんでした」を出す
+      await fetchProposal();
     } finally {
       setActionLoading(null);
     }
@@ -105,6 +182,7 @@ export default function FamilyTransferAcceptPage() {
   const handleDecline = async () => {
     if (!window.confirm('譲渡提案を拒否しますか？')) return;
     setActionLoading('decline');
+    setError(null);
     try {
       const res = await fetch(`/api/family/representative-transfer/${proposal_id}/decline`, {
         method: 'POST',
@@ -116,7 +194,9 @@ export default function FamilyTransferAcceptPage() {
       }
       setResult('declined');
     } catch {
-      setError('通信エラーが発生しました');
+      setError(NETWORK_FAILURE_MESSAGE);
+      // サーバーが拒否を済ませてから応答が切れたこともあるので、提案を読み直す (承諾の通信エラーと同じ)
+      await fetchProposal();
     } finally {
       setActionLoading(null);
     }
@@ -170,10 +250,42 @@ export default function FamilyTransferAcceptPage() {
     );
   }
 
-  if (error && !proposal) {
+  if (loadError) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center gap-4 p-6">
-        <p className="text-gray-600 text-sm text-center">{error}</p>
+        <div
+          role="alert"
+          data-testid="family-transfer-accept-load-error"
+          className="w-full max-w-md rounded-2xl bg-red-50 border border-red-200 p-6 text-center"
+        >
+          {/* 承諾・拒否の通信エラーのあとの読み直しが失敗したときは、通信エラーの文も残す */}
+          {error && <p className="text-sm text-red-600 mb-2">{error}</p>}
+          <p className="text-sm text-red-600">{loadError}</p>
+          <div className="mt-4 flex justify-center gap-3">
+            <button
+              type="button"
+              onClick={retryLoad}
+              className="px-4 py-2 rounded-full bg-white border border-red-300 text-red-600 text-sm"
+            >
+              再試行
+            </button>
+            <button
+              type="button"
+              onClick={() => router.back()}
+              className="px-4 py-2 rounded-full bg-gray-100 text-gray-600 text-sm"
+            >
+              戻る
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (notFound) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center gap-4 p-6">
+        <p className="text-gray-600 text-sm text-center">{PROPOSAL_NOT_FOUND_MESSAGE}</p>
         <button
           onClick={() => router.back()}
           className="px-4 py-2 rounded-full bg-gray-100 text-gray-600 text-sm"
@@ -184,9 +296,13 @@ export default function FamilyTransferAcceptPage() {
     );
   }
 
-  const isExpired = proposal && new Date(proposal.expires_at) < new Date();
-  const isNotPending = proposal && proposal.status !== 'pending';
-  const isNotRecipient = proposal && currentUserId && proposal.to_user_id !== currentUserId;
+  if (!proposal) return null;
+
+  const isExpired = new Date(proposal.expires_at) < new Date();
+  // 承諾・拒否ができない提案の理由の文 (#2073 S5。以前は処理済みの提案に「既に処理されています (ステータス: accepted)」と
+  // 内部の英字の値をそのまま出していた。組織の承諾の画面と同じ対応表の日本語の文にする)
+  const statusMsg = transferProposalStatusMessage(proposal.status, isExpired);
+  const isNotRecipient = currentUserId && proposal.to_user_id !== currentUserId;
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
@@ -217,15 +333,9 @@ export default function FamilyTransferAcceptPage() {
         </div>
 
         {/* 状態に応じたメッセージ */}
-        {isExpired && (
-          <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 text-center">
-            <p className="text-sm text-gray-500">この提案は期限切れです</p>
-          </div>
-        )}
-
-        {isNotPending && !isExpired && (
-          <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 text-center">
-            <p className="text-sm text-gray-500">この提案は既に処理されています (ステータス: {proposal?.status})</p>
+        {statusMsg && (
+          <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 text-center" data-testid="transfer-proposal-status">
+            <p className="text-sm text-gray-500">{statusMsg}</p>
           </div>
         )}
 
@@ -243,7 +353,7 @@ export default function FamilyTransferAcceptPage() {
         )}
 
         {/* アクションボタン (pending かつ自分宛て かつ 期限内) */}
-        {proposal?.status === 'pending' && !isExpired && !isNotRecipient && (
+        {statusMsg === null && !isNotRecipient && (
           <div className="space-y-3">
             <button
               onClick={handleAccept}

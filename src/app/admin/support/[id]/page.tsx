@@ -9,6 +9,7 @@
 import { useState, useEffect, useCallback, useRef, use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
 import { describeReplyEmailOutcome } from '@/lib/admin/support-reply-email-status';
 
 interface Message {
@@ -33,6 +34,13 @@ interface Ticket {
   updated_at: string;
   messages: Message[];
 }
+
+/** 403 (Forbidden) の HTTP ステータス */
+const HTTP_FORBIDDEN = 403;
+/** 担当者の割り当ての失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917) */
+const ASSIGN_FAILURE_MESSAGE = '割り当て失敗';
+/** 状態の変更の失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917) */
+const STATUS_CHANGE_FAILURE_MESSAGE = 'ステータス変更失敗';
 
 const STATUS_LABELS: Record<string, string> = {
   open: '未対応',
@@ -78,6 +86,12 @@ export default function TicketDetailPage(props: PageProps) {
   const [isAssigning, setIsAssigning] = useState(false);
 
   const [statusChanging, setStatusChanging] = useState(false);
+  // 返信・担当者の設定・ステータスの変更のどれかの書き込みとそのあとの読み直しの応答を待っているか (10/26 の整合ゲート 1026e。#2050)。
+  // どの書き込みのあとの読み直しもチケットを丸ごと差し替えるので、2 つを重ねると、先に送った読み直しの応答が後に届いたとき、
+  // その古いチケット (例: 変える前のステータス) で表示が上書きされる (#2053 のクーポン・機能パッケージと同じ型)。
+  // 待つあいだは 3 つの書き込みのボタンを止め、押されても送らない。ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
+  const writeInFlightRef = useRef(false);
+  const isWriting = isSending || isAssigning || statusChanging;
 
   const fetchTicket = useCallback(async () => {
     setIsLoading(true);
@@ -85,7 +99,8 @@ export default function TicketDetailPage(props: PageProps) {
     try {
       const res = await fetch(`/api/admin/support/tickets/${params.id}`);
       if (res.status === 401) { router.push('/login'); return; }
-      if (res.status === 403) { setError('権限がありません'); return; }
+      // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
+      if (res.status === HTTP_FORBIDDEN) { setError(await forbiddenMessageOfResponse(res)); return; }
       if (res.status === 404) { setError('チケットが見つかりません'); return; }
       if (!res.ok) throw new Error('取得失敗');
       const json = await res.json();
@@ -104,7 +119,8 @@ export default function TicketDetailPage(props: PageProps) {
   }, [ticket?.messages]);
 
   const handleSendMessage = async () => {
-    if (!messageBody.trim()) return;
+    if (!messageBody.trim() || writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
     setIsSending(true);
     setEmailNotice(null);
     try {
@@ -126,12 +142,14 @@ export default function TicketDetailPage(props: PageProps) {
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '送信失敗');
     } finally {
+      writeInFlightRef.current = false;
       setIsSending(false);
     }
   };
 
   const handleAssign = async () => {
-    if (!assigneeId.trim()) return;
+    if (!assigneeId.trim() || writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
     setIsAssigning(true);
     try {
       const res = await fetch(`/api/admin/support/tickets/${params.id}/assign`, {
@@ -139,16 +157,21 @@ export default function TicketDetailPage(props: PageProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ assignee_id: assigneeId }),
       });
-      if (!res.ok) throw new Error('割り当て失敗');
+      // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 と失敗は「割り当て失敗」(#1917)
+      if (res.status === HTTP_FORBIDDEN) throw new Error(await forbiddenMessageOfResponse(res, ASSIGN_FAILURE_MESSAGE));
+      if (!res.ok) throw new Error(ASSIGN_FAILURE_MESSAGE);
       await fetchTicket();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '割り当て失敗');
+      setError(e instanceof Error ? e.message : ASSIGN_FAILURE_MESSAGE);
     } finally {
+      writeInFlightRef.current = false;
       setIsAssigning(false);
     }
   };
 
   const handleStatusChange = async (status: string) => {
+    if (writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
     setStatusChanging(true);
     try {
       const res = await fetch(`/api/admin/support/tickets/${params.id}`, {
@@ -156,11 +179,14 @@ export default function TicketDetailPage(props: PageProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
-      if (!res.ok) throw new Error('ステータス変更失敗');
+      // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 と失敗は「ステータス変更失敗」(#1917)
+      if (res.status === HTTP_FORBIDDEN) throw new Error(await forbiddenMessageOfResponse(res, STATUS_CHANGE_FAILURE_MESSAGE));
+      if (!res.ok) throw new Error(STATUS_CHANGE_FAILURE_MESSAGE);
       await fetchTicket();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'ステータス変更失敗');
+      setError(e instanceof Error ? e.message : STATUS_CHANGE_FAILURE_MESSAGE);
     } finally {
+      writeInFlightRef.current = false;
       setStatusChanging(false);
     }
   };
@@ -259,7 +285,7 @@ export default function TicketDetailPage(props: PageProps) {
                   <button
                     key={s}
                     onClick={() => handleStatusChange(s)}
-                    disabled={statusChanging || ticket.status === s}
+                    disabled={isWriting || ticket.status === s}
                     className={`w-full text-left px-3 py-1.5 text-xs rounded border transition-colors ${
                       ticket.status === s
                         ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
@@ -284,7 +310,7 @@ export default function TicketDetailPage(props: PageProps) {
               />
               <button
                 onClick={handleAssign}
-                disabled={isAssigning || !assigneeId.trim()}
+                disabled={isWriting || !assigneeId.trim()}
                 className="w-full px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {isAssigning ? '割り当て中...' : '担当者を設定'}
@@ -371,7 +397,7 @@ export default function TicketDetailPage(props: PageProps) {
               <div className="flex justify-end">
                 <button
                   onClick={handleSendMessage}
-                  disabled={isSending || !messageBody.trim()}
+                  disabled={isWriting || !messageBody.trim()}
                   className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {isSending ? '送信中...' : isInternal ? 'メモを保存' : '返信を送信'}

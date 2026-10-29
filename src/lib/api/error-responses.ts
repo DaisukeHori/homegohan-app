@@ -31,6 +31,11 @@ import { NextResponse } from 'next/server';
 import { AuthError, ForbiddenError, MfaRequiredError, type MfaRequiredCode } from '@/lib/auth/errors';
 import { INTERNAL_ERROR_MESSAGE } from '@/lib/api/errors';
 import { dbErrorMentionsCode, type DbRaisedErrorLike } from '@/lib/errors/db-raised-code';
+import {
+  API_ACCOUNT_FROZEN_MESSAGE,
+  API_MFA_ENROLLMENT_REQUIRED_MESSAGE,
+  API_MFA_REQUIRED_MESSAGE,
+} from '@/lib/api/forbidden-reason-messages';
 
 /** 401: ログインしていない・セッションが切れた・プロフィールが無い */
 export const API_UNAUTHENTICATED_MESSAGE = 'ログインが必要です';
@@ -38,12 +43,8 @@ export const API_UNAUTHENTICATED_MESSAGE = 'ログインが必要です';
 export const API_FORBIDDEN_MESSAGE = 'この操作を行う権限がありません';
 /** 403: 組織に所属していない (requireOrgMember の PERM_NOT_ORG_MEMBER) */
 export const API_NOT_ORG_MEMBER_MESSAGE = '組織に所属していません';
-/** 403: アカウントが凍結されている (AUTH_ACCOUNT_FROZEN。src/lib/auth/helpers.ts の assertNotFrozen と同じ文) */
-export const API_ACCOUNT_FROZEN_MESSAGE = 'アカウントが凍結されています';
-/** 403: 二段階認証の確認が要る (AUTH_2FA_REQUIRED。src/lib/auth/mfa/assurance.ts と同じ文) */
-export const API_MFA_REQUIRED_MESSAGE = '二段階認証の確認が必要です';
-/** 403: 二段階認証の登録が要る (AUTH_2FA_ENROLLMENT_REQUIRED。src/lib/auth/mfa/assurance.ts と同じ文) */
-export const API_MFA_ENROLLMENT_REQUIRED_MESSAGE = '二段階認証の登録が必要です';
+// 403 の理由の文 (凍結・二段階認証の確認・二段階認証の登録) は、運営の画面も読むので next/server を読まないファイルに置く
+export { API_ACCOUNT_FROZEN_MESSAGE, API_MFA_ENROLLMENT_REQUIRED_MESSAGE, API_MFA_REQUIRED_MESSAGE };
 /** 400: 本文が JSON として読めない */
 export const API_INVALID_JSON_MESSAGE = 'リクエストボディが不正です';
 /** 404: 対象が見つからない (他人のもの・消されたものを含む。在るかどうかを区別して見せない) */
@@ -137,6 +138,23 @@ export interface ApiNestedErrorBody {
 /** 403 の本文の文 (例外の文面は使わない) */
 export function forbiddenMessageOf(err: ForbiddenError, table: ForbiddenMessageTable = DEFAULT_FORBIDDEN_MESSAGES): string {
   return table.get(err.code) ?? API_FORBIDDEN_MESSAGE;
+}
+
+/**
+ * 403: 運営の route (admin・super-admin) が OP_PERMISSION_DENIED の本文に従来から書いてきた文
+ * (operator/02-api-spec.md のエラー表の route。画面・E2E が読むので変えない)
+ */
+export const API_OP_PERMISSION_DENIED_MESSAGE = '権限がありません';
+
+/**
+ * 運営の route の 403 (code は OP_PERMISSION_DENIED のまま) の本文の文。
+ * 二段階認証が未完了 (MfaRequiredError) なら、その理由の日本語の固定の文 (forbiddenMessageOf の既定の表) にし、
+ * それ以外 (ロールが足りない・凍結など) は従来の API_OP_PERMISSION_DENIED_MESSAGE のまま (#1917)。
+ * ゲート (requireRole) の後でセッションの状態が変わったとき、二段階認証が要るのに権限が無いように見せないため
+ * (ロールの変更の route (src/app/api/admin/users/[id]/role/route.ts) が先に直した形を、運営の route でそろえる)
+ */
+export function operatorForbiddenMessageOf(err: ForbiddenError): string {
+  return err instanceof MfaRequiredError ? forbiddenMessageOf(err) : API_OP_PERMISSION_DENIED_MESSAGE;
 }
 
 function responseInit(status: number, headers: HeadersInit | undefined): ResponseInit {

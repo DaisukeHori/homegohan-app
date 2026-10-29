@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { isFeatureEnabled } from '@/lib/feature-flags';
 import { NextResponse } from 'next/server';
@@ -15,7 +15,7 @@ import {
 import { cancelPendingMealImageJobs } from '../../../../../../lib/meal-image-jobs';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
-import { restorePlannedMealsSnapshot, type PlannedMealSnapshotRow } from '@/lib/planned-meals-snapshot';
+import { restoreOwnPlannedMealsSnapshot, type PlannedMealSnapshotRow } from '@/lib/planned-meals-snapshot';
 import { addDaysToDate, todayLocal } from '@/lib/date-utils';
 import { isCalendarDate } from '@/lib/jst-day-ranges';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
@@ -309,7 +309,8 @@ export async function POST(request: Request) {
         // #1042: 生成失敗時、削除済みの旧献立をスナップショットから復元する。
         // 部分的に新しい献立が既に書き込まれているスロットは上書きしない（skip）。
         if (deletedMealsSnapshot.length > 0) {
-          const restoreResult = await restorePlannedMealsSnapshot(supabase, deletedMealsSnapshot);
+          // planned_meals の 3 列は利用者から INSERT できない (#2025)。本人の日を確かめてから service role で戻す
+          const restoreResult = await restoreOwnPlannedMealsSnapshot({ userDb: supabase, writer: getSupabaseAdmin(), snapshot: deletedMealsSnapshot });
           console.log(
             `🔁 Restored meals after generation failure: restored=${restoreResult.restored} skipped=${restoreResult.skipped} failed=${restoreResult.failed}`,
           );

@@ -32,6 +32,11 @@ import { login } from "../fixtures/auth";
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 const SS_DIR = path.resolve(__dirname, "recipe-shopping");
+/**
+ * ♥ の取得 (GET /api/favorites/status) と押下 (POST / DELETE) の応答で ♥ の disabled が解けるまでの待ちの上限 (#2011)。
+ * bug-31-favorite-button.spec.ts の同じ名前の定数と同じ値
+ */
+const FAVORITE_REQUEST_SETTLE_TIMEOUT_MS = 10_000;
 
 // ディレクトリ存在確認
 if (!fs.existsSync(SS_DIR)) {
@@ -168,6 +173,12 @@ test("S3: ハートボタン: クリックで aria-pressed 変化確認", async 
     return;
   }
 
+  // モーダルを開くと ♥ の状態 (GET /api/favorites/status) を引き、取得中は ♥ が disabled (#2011)。
+  // 押す前の aria-pressed を取得の前に読むと、保存済みの料理で「押しても変わらない」に見えるので、応答を待ってから読む。
+  // モーダルが開かずに下の if で return するときに待ちの失敗が残らないよう、失敗は null にする
+  const favoriteStatusResponse = page
+    .waitForResponse((res) => res.url().includes('/api/favorites/status'), { timeout: FAVORITE_REQUEST_SETTLE_TIMEOUT_MS })
+    .catch(() => null);
   await recipeBtn.click();
   await ss(page, "S3-modal-opened");
 
@@ -186,6 +197,8 @@ test("S3: ハートボタン: クリックで aria-pressed 変化確認", async 
     return;
   }
 
+  await favoriteStatusResponse;
+  await expect(favBtn).not.toBeDisabled({ timeout: FAVORITE_REQUEST_SETTLE_TIMEOUT_MS });
   const ariaBeforeClick = await favBtn.getAttribute("aria-pressed");
   const heartFillBefore = await favBtn.locator("svg").getAttribute("fill").catch(() => null);
   console.log(`クリック前: aria-pressed=${ariaBeforeClick}, fill=${heartFillBefore}`);

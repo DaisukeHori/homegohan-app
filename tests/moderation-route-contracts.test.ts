@@ -132,7 +132,7 @@ const BAN_DB_ERROR_SENTINEL = 'permission denied for table user_profiles (sentin
 /** BAN の失敗を確かめる通報の行 (コンテンツ ID は無く、隠す処理は走らない。所有者は owner-x) */
 function banFlagRowWithoutContent() {
   return {
-    id: 'flag-1',
+    id: 'f1a90000-0000-4000-8000-000000000001',
     status: 'pending',
     reason: null,
     resolution_note: null,
@@ -187,8 +187,8 @@ describe('GET /api/admin/moderation/[type]/[id]', () => {
 
   it('food: 見つからない場合は 404 (service-role 経由)', async () => {
     fakeSupabase = createFakeSupabase({ moderation_flags: [{ data: null, error: null }] });
-    const res = await GET(new Request('http://localhost/api/admin/moderation/food/x'), {
-      params: { type: 'food', id: 'x' },
+    const res = await GET(new Request('http://localhost/api/admin/moderation/food/f1a90000-0000-4000-8000-000000000001'), {
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
     expect(res.status).toBe(404);
     // #1041 round-2 (D/F): requireRole 通過後に service-role が使われること
@@ -199,8 +199,8 @@ describe('GET /api/admin/moderation/[type]/[id]', () => {
     fakeSupabase = createFakeSupabase({
       moderation_flags: [{ data: null, error: { message: 'connection lost' } }],
     });
-    const res = await GET(new Request('http://localhost/api/admin/moderation/food/x'), {
-      params: { type: 'food', id: 'x' },
+    const res = await GET(new Request('http://localhost/api/admin/moderation/food/f1a90000-0000-4000-8000-000000000001'), {
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
     expect(res.status).toBe(500);
     const json = (await res.json()) as { error: { code: string } };
@@ -212,7 +212,7 @@ describe('GET /api/admin/moderation/[type]/[id]', () => {
       moderation_flags: [
         {
           data: {
-            id: 'flag-1',
+            id: 'f1a90000-0000-4000-8000-000000000001',
             status: 'pending',
             reason: null,
             resolution_note: null,
@@ -227,8 +227,8 @@ describe('GET /api/admin/moderation/[type]/[id]', () => {
         },
       ],
     });
-    const res = await GET(new Request('http://localhost/api/admin/moderation/food/flag-1'), {
-      params: { type: 'food', id: 'flag-1' },
+    const res = await GET(new Request('http://localhost/api/admin/moderation/food/f1a90000-0000-4000-8000-000000000001'), {
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
     expect(res.status).toBe(200);
     const json = (await res.json()) as { data: { user_id: string; content_url: string; content_id: string } };
@@ -242,8 +242,8 @@ describe('GET /api/admin/moderation/[type]/[id]', () => {
     const { AuthError } = await import('@/lib/auth/errors');
     mockRequireRole.mockRejectedValue(new AuthError('AUTH_UNAUTHENTICATED'));
     fakeSupabase = createFakeSupabase({});
-    const res = await GET(new Request('http://localhost/api/admin/moderation/food/x'), {
-      params: { type: 'food', id: 'x' },
+    const res = await GET(new Request('http://localhost/api/admin/moderation/food/f1a90000-0000-4000-8000-000000000001'), {
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
     expect(res.status).toBe(401);
     // 認可前に service-role へ切り替わってはならない (権限昇格穴の防止)
@@ -254,8 +254,8 @@ describe('GET /api/admin/moderation/[type]/[id]', () => {
     const { ForbiddenError } = await import('@/lib/auth/errors');
     mockRequireRole.mockRejectedValue(new ForbiddenError('PERM_DENIED'));
     fakeSupabase = createFakeSupabase({});
-    const res = await GET(new Request('http://localhost/api/admin/moderation/food/x'), {
-      params: { type: 'food', id: 'x' },
+    const res = await GET(new Request('http://localhost/api/admin/moderation/food/f1a90000-0000-4000-8000-000000000001'), {
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
     expect(res.status).toBe(403);
     expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
@@ -269,16 +269,16 @@ describe('GET /api/admin/moderation/[type]/[id]', () => {
       ],
     });
 
-    const res1 = await GET(new Request('http://localhost/api/admin/moderation/food/x'), {
-      params: { type: 'food', id: 'x' },
+    const res1 = await GET(new Request('http://localhost/api/admin/moderation/food/f1a90000-0000-4000-8000-000000000001'), {
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
     const text1 = await res1.text();
     expect(res1.status).toBe(404);
     expect(text1.length).toBeGreaterThan(0);
     expect(JSON.parse(text1).error.code).toBe('NOT_FOUND');
 
-    const res2 = await GET(new Request('http://localhost/api/admin/moderation/food/y'), {
-      params: { type: 'food', id: 'y' },
+    const res2 = await GET(new Request('http://localhost/api/admin/moderation/food/f1a90000-0000-4000-8000-000000000003'), {
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000003' },
     });
     const text2 = await res2.text();
     expect(res2.status).toBe(404);
@@ -289,7 +289,7 @@ describe('GET /api/admin/moderation/[type]/[id]', () => {
 
 describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
   function postRequest(body: Record<string, unknown>) {
-    return new Request('http://localhost/api/admin/moderation/food/flag-1', {
+    return new Request('http://localhost/api/admin/moderation/food/f1a90000-0000-4000-8000-000000000001', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -301,7 +301,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
       moderation_flags: [
         {
           data: {
-            id: 'flag-1',
+            id: 'f1a90000-0000-4000-8000-000000000001',
             status: 'pending',
             reason: null,
             resolution_note: null,
@@ -328,7 +328,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
 
     const res = await POST(
       postRequest({ action: 'delete_and_temp_ban', ban_duration_days: 7, resolution_note: 'bad content' }),
-      { params: { type: 'food', id: 'flag-1' } },
+      { params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' } },
     );
 
     expect(res.status).toBe(200);
@@ -361,7 +361,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
       moderation_flags: [
         {
           data: {
-            id: 'flag-1',
+            id: 'f1a90000-0000-4000-8000-000000000001',
             status: 'pending',
             reason: null,
             resolution_note: null,
@@ -383,7 +383,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
     });
 
     const res = await POST(postRequest({ action: 'delete_and_temp_ban', ban_duration_days: 7 }), {
-      params: { type: 'food', id: 'flag-1' },
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
 
     expect(res.status).toBe(500);
@@ -408,7 +408,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
     });
 
     const res = await POST(postRequest({ action: 'delete_and_temp_ban', ban_duration_days: 7 }), {
-      params: { type: 'food', id: 'flag-1' },
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
 
     expect(res.status).toBe(500);
@@ -430,7 +430,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
     });
 
     const res = await POST(postRequest({ action: 'delete_and_temp_ban', ban_duration_days: 7 }), {
-      params: { type: 'food', id: 'flag-1' },
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
 
     expect(res.status).toBe(500);
@@ -443,7 +443,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
   it('ban_duration_days なしで delete_and_temp_ban は 400', async () => {
     fakeSupabase = createFakeSupabase({});
     const res = await POST(postRequest({ action: 'delete_and_temp_ban' }), {
-      params: { type: 'food', id: 'flag-1' },
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
     expect(res.status).toBe(400);
   });
@@ -452,7 +452,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
     mockRequireRole.mockResolvedValue(adminActor); // admin (not super_admin)
     fakeSupabase = createFakeSupabase({});
     const res = await POST(postRequest({ action: 'delete_and_perm_ban' }), {
-      params: { type: 'food', id: 'flag-1' },
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
     expect(res.status).toBe(403);
   });
@@ -463,7 +463,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
       moderation_flags: [
         {
           data: {
-            id: 'flag-1',
+            id: 'f1a90000-0000-4000-8000-000000000001',
             status: 'pending',
             reason: null,
             resolution_note: null,
@@ -485,7 +485,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
     });
 
     const res = await POST(postRequest({ action: 'delete_and_perm_ban' }), {
-      params: { type: 'food', id: 'flag-1' },
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
     expect(res.status).toBe(200);
     const json = (await res.json()) as { data: { ban_applied: boolean } };
@@ -498,7 +498,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
       moderation_flags: [
         {
           data: {
-            id: 'flag-1',
+            id: 'f1a90000-0000-4000-8000-000000000001',
             status: 'pending',
             reason: null,
             resolution_note: null,
@@ -517,7 +517,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
     });
 
     const res = await POST(postRequest({ action: 'delete_and_temp_ban', ban_duration_days: 3 }), {
-      params: { type: 'food', id: 'flag-1' },
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
     expect(res.status).not.toBe(200);
     const json = (await res.json()) as { data: { ban_applied: boolean } };
@@ -559,7 +559,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
 
   it('対象が見つからない場合は 404', async () => {
     fakeSupabase = createFakeSupabase({ moderation_flags: [{ data: null, error: null }] });
-    const res = await POST(postRequest({ action: 'approve' }), { params: { type: 'food', id: 'missing' } });
+    const res = await POST(postRequest({ action: 'approve' }), { params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' } });
     expect(res.status).toBe(404);
   });
 
@@ -569,7 +569,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
       moderation_flags: [
         {
           data: {
-            id: 'flag-1',
+            id: 'f1a90000-0000-4000-8000-000000000001',
             status: 'pending',
             reason: null,
             resolution_note: null,
@@ -592,7 +592,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
 
     const res = await POST(
       postRequest({ action: 'delete_and_temp_ban', ban_duration_days: 7, resolution_note: 'bad content' }),
-      { params: { type: 'food', id: 'flag-1' } },
+      { params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' } },
     );
 
     expect(res.status).toBe(200);
@@ -610,7 +610,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
       moderation_flags: [
         {
           data: {
-            id: 'flag-1',
+            id: 'f1a90000-0000-4000-8000-000000000001',
             status: 'pending',
             reason: null,
             resolution_note: null,
@@ -629,7 +629,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
 
     const res = await POST(
       postRequest({ action: 'delete_and_temp_ban', ban_duration_days: 7, resolution_note: 'orphan content' }),
-      { params: { type: 'food', id: 'flag-1' } },
+      { params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' } },
     );
 
     expect(res.status).toBe(422);
@@ -647,7 +647,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
 // ─── #1101: delete_* は通報されたコンテンツを「隠す」(行を消さない) ──────────────────────
 
 describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツを隠す (#1101)', () => {
-  function postRequest(body: Record<string, unknown>, type = 'food', id = 'flag-1') {
+  function postRequest(body: Record<string, unknown>, type = 'food', id = 'f1a90000-0000-4000-8000-000000000001') {
     return new Request(`http://localhost/api/admin/moderation/${type}/${id}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -658,7 +658,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
   /** moderation_flags から取得される行 (通報されたコンテンツ meal-1 の所有者は owner-x、通報者は reporter-x) */
   function foodFlagRow(overrides: Record<string, unknown> = {}) {
     return {
-      id: 'flag-1',
+      id: 'f1a90000-0000-4000-8000-000000000001',
       status: 'pending',
       reason: null,
       resolution_note: null,
@@ -689,7 +689,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       const before = Date.now();
 
       const res = await POST(postRequest({ action, resolution_note: 'internal note: repeat offender' }), {
-        params: { type: 'food', id: 'flag-1' },
+        params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
       });
 
       // 成功時の本文は今までどおり (隠したかどうかは本文に足さない)
@@ -704,7 +704,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       expect(Date.parse(payload.hidden_at as string)).toBeGreaterThanOrEqual(before);
       expect(payload).toMatchObject({ hidden_by: 'admin-1', hidden_reason: `moderation:${action}` });
       expect(JSON.stringify(payload)).not.toContain('internal note');
-      // 通報の ID (flag-1) ではなく、コンテンツ本体の ID (meal-1) の行を、まだ隠れていない場合だけ更新する
+      // 通報の ID (f1a90000-0000-4000-8000-000000000001) ではなく、コンテンツ本体の ID (meal-1) の行を、まだ隠れていない場合だけ更新する
       expect(meal.in).toHaveBeenCalledWith('id', ['meal-1']);
       expect(meal.is).toHaveBeenCalledWith('hidden_at', null);
       // 行は消さない
@@ -737,7 +737,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       admin_audit_logs: [ok],
     });
 
-    const res = await POST(postRequest({ action, ...extra }), { params: { type: 'food', id: 'flag-1' } });
+    const res = await POST(postRequest({ action, ...extra }), { params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' } });
 
     expect(res.status).toBe(200);
     expect(((await res.json()) as { data: { ban_applied: boolean } }).data.ban_applied).toBe(true);
@@ -773,7 +773,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       admin_audit_logs: [ok],
     });
 
-    const res = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'flag-1' } });
+    const res = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' } });
 
     expect(res.status).toBe(200);
     const [, group, meal] = buildersFor(fakeSupabase, 'meals');
@@ -796,7 +796,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       admin_audit_logs: [ok],
     });
 
-    const res = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'flag-1' } });
+    const res = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' } });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ data: { success: true, status: 'rejected', ban_applied: null } });
@@ -822,7 +822,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       admin_audit_logs: [ok],
     });
 
-    const res = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'flag-1' } });
+    const res = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' } });
 
     expect(res.status).toBe(200);
     expect(auditInsertPayload(fakeSupabase).details).toMatchObject({
@@ -842,7 +842,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
         admin_audit_logs: [ok],
       });
 
-      const res = await POST(postRequest({ action }), { params: { type: 'food', id: 'flag-1' } });
+      const res = await POST(postRequest({ action }), { params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' } });
 
       expect(res.status).toBe(200);
       expect(firstCallIndex(fakeSupabase, 'meals')).toBe(-1);
@@ -863,7 +863,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       admin_audit_logs: [ok],
     });
 
-    const res = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'flag-1' } });
+    const res = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' } });
 
     expect(res.status).toBe(500);
     const text = await res.text();
@@ -894,7 +894,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
     });
     expect(audit.severity).toBe('warn');
     expect(mockLoggerError).toHaveBeenCalledTimes(1);
-    expect(mockLoggerError.mock.calls[0][2]).toMatchObject({ content_id: 'meal-1', flag_id: 'flag-1' });
+    expect(mockLoggerError.mock.calls[0][2]).toMatchObject({ content_id: 'meal-1', flag_id: 'f1a90000-0000-4000-8000-000000000001' });
   });
 
   it('delete_only: 隠せなかったあとで同じ操作をやり直すと (通報は pending のまま残っている)、隠してから判定を保存し、200 を返す', async () => {
@@ -904,7 +904,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       meals: [mealLookup, { data: null, error: { message: 'connection reset' } }],
       admin_audit_logs: [ok],
     });
-    const first = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'flag-1' } });
+    const first = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' } });
     expect(first.status).toBe(500);
     expect(buildersFor(fakeSupabase, 'moderation_flags')[0].update).not.toHaveBeenCalled();
 
@@ -914,7 +914,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       meals: [mealLookup, mealHidden],
       admin_audit_logs: [ok],
     });
-    const retry = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'flag-1' } });
+    const retry = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' } });
 
     expect(retry.status).toBe(200);
     expect(await retry.json()).toEqual({ data: { success: true, status: 'rejected', ban_applied: null } });
@@ -930,7 +930,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
     });
 
     const res = await POST(postRequest({ action: 'delete_and_temp_ban', ban_duration_days: 7 }), {
-      params: { type: 'food', id: 'flag-1' },
+      params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' },
     });
 
     expect(res.status).toBe(500);
@@ -960,7 +960,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
         admin_audit_logs: [ok],
       });
 
-      const res = await POST(postRequest({ action, ...extra }), { params: { type: 'food', id: 'flag-1' } });
+      const res = await POST(postRequest({ action, ...extra }), { params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' } });
 
       expect(res.status).toBe(500);
       const text = await res.text();
@@ -994,7 +994,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       moderation_flags: [{ data: foodFlagRow(), error: null }, { data: null, error: { message: 'deadlock detected' } }],
     });
 
-    const res = await POST(postRequest({ action: 'approve' }), { params: { type: 'food', id: 'flag-1' } });
+    const res = await POST(postRequest({ action: 'approve' }), { params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' } });
 
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ error: { code: 'INTERNAL_ERROR', message: '更新に失敗しました' } });
@@ -1008,7 +1008,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       admin_audit_logs: [ok],
     });
 
-    const res = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'flag-1' } });
+    const res = await POST(postRequest({ action: 'delete_only' }), { params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' } });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ data: { success: true, status: 'rejected', ban_applied: null } });
@@ -1021,7 +1021,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       recipe_flags: [
         {
           data: {
-            id: 'rflag-1',
+            id: 'f1a90000-0000-4000-8000-000000000002',
             status: 'pending',
             reason: null,
             reviewed_by: null,
@@ -1040,8 +1040,8 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
       admin_audit_logs: [ok],
     });
 
-    const res = await POST(postRequest({ action: 'delete_only' }, 'recipe', 'rflag-1'), {
-      params: { type: 'recipe', id: 'rflag-1' },
+    const res = await POST(postRequest({ action: 'delete_only' }, 'recipe', 'f1a90000-0000-4000-8000-000000000002'), {
+      params: { type: 'recipe', id: 'f1a90000-0000-4000-8000-000000000002' },
     });
 
     expect(res.status).toBe(200);
@@ -1099,7 +1099,7 @@ describe('GET /api/admin/moderation/queue (#1128: ai_content は 501)', () => {
         {
           data: [
             {
-              id: 'flag-1',
+              id: 'f1a90000-0000-4000-8000-000000000001',
               status: 'pending',
               reason: null,
               created_at: '2026-01-01T00:00:00Z',
@@ -1152,7 +1152,7 @@ describe('GET /api/admin/moderation (#1128: aiFlags は未対応と分かる)', 
 describe('#1538 hidden_at (一覧と詳細の応答)', () => {
   it('#1538 GET /{type}/{id}: meals.hidden_at を hidden_at として返す (隠れていなければ null)', async () => {
     const row = (hiddenAt: string | null) => ({
-      id: 'flag-1',
+      id: 'f1a90000-0000-4000-8000-000000000001',
       status: 'rejected',
       reason: null,
       resolution_note: null,
@@ -1169,12 +1169,12 @@ describe('#1538 hidden_at (一覧と詳細の応答)', () => {
         { data: row(null), error: null },
       ],
     });
-    const request = new Request('http://localhost/api/admin/moderation/food/flag-1');
+    const request = new Request('http://localhost/api/admin/moderation/food/f1a90000-0000-4000-8000-000000000001');
 
-    const hidden = await GET(request, { params: { type: 'food', id: 'flag-1' } });
+    const hidden = await GET(request, { params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' } });
     expect(((await hidden.json()) as { data: { hidden_at: string | null } }).data.hidden_at).toBe('2026-10-01T00:00:00+00:00');
 
-    const shown = await GET(request, { params: { type: 'food', id: 'flag-1' } });
+    const shown = await GET(request, { params: { type: 'food', id: 'f1a90000-0000-4000-8000-000000000001' } });
     expect(((await shown.json()) as { data: { hidden_at: string | null } }).data.hidden_at).toBeNull();
   });
 
@@ -1184,7 +1184,7 @@ describe('#1538 hidden_at (一覧と詳細の応答)', () => {
         {
           data: [
             {
-              id: 'flag-1',
+              id: 'f1a90000-0000-4000-8000-000000000001',
               status: 'rejected',
               reason: null,
               created_at: '2026-01-01T00:00:00Z',
@@ -1199,7 +1199,7 @@ describe('#1538 hidden_at (一覧と詳細の応答)', () => {
         {
           data: [
             {
-              id: 'rflag-1',
+              id: 'f1a90000-0000-4000-8000-000000000002',
               status: 'pending',
               created_at: '2026-01-01T00:00:00Z',
               recipes: { user_id: 'owner-y', image_url: null, hidden_at: null },

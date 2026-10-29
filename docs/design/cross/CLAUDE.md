@@ -25,6 +25,10 @@
 | `18-csp-nonce.md` | 本番の CSP の nonce 方式・違反の報告の受け口 | #1169 |
 | `19-private-photo-buckets.md` | 食事写真と冷蔵庫写真のバケットを非公開にする (公開 URL を使う経路の全列挙・保存済みの URL の扱い) | #1365 |
 | `20-terms-privacy-text.md` | 利用規約・プライバシーポリシーの全文 (逐語の正典)・各条項 ⇄ 製品の根拠・版の上げ方 | #1901 |
+| `21-recipe-author-display-name.md` | 公開レシピの作者の表示名 (SECURITY DEFINER の関数で公開の作者だけ・本人の選択・凍結と年齢の扱い) | #1917 の続き |
+| `22-dish-favorites.md` | 献立の料理のお気に入り (料理の写しを本人だけの表 `dish_favorites` に・名前の鍵で 1 件・お気に入りの画面の詳細) | #2011 |
+| `23-planned-meals-score-integrity.md` | `planned_meals` の `veg_score` / `is_completed` / `completed_at` をサーバの計算値だけにする (列の権限・完了の RPC・写真の解析の service_role) | #2025 |
+| `24-freeze-notify-mail.md` | 運営の凍結の通知メール (凍結した本人へ `account_frozen` を送信待ちに積む・画面のチェックと任意のメッセージ・監査と応答に結果) | #2026 |
 
 10・11 は欠番 (13a は分冊前の 13 の番号を引き継いでいる)。
 

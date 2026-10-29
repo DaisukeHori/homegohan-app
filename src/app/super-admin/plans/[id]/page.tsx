@@ -6,16 +6,41 @@
  *
  * 保存・公開・非公開・廃止・廃止の取り消しが 409 CONFLICT_STALE_DATA (読んでから書くまでに別の運営が先にプランを変えた) で
  * 断られたら、画面が自分でプランを読み直し、読み直した旨を画面の上に出す (運営が手で読み込み直さなくてよいように。#1917)。
- * 表示名・説明・表示順の入力欄は、最後に読んだ値から変えている (書きかけ) ものだけ残し、ほかは読み直した値にする。
+ * 表示名・説明・表示順の入力欄は、最後に読んだ・保存した値から変えている (書きかけ) ものだけ残し、ほかは読み直した値にする。
+ * 保存・状態の変更に成功したあとの読み直しも同じく書きかけの欄を残す (応答を待つあいだ・読み直しを待つあいだに打った、
+ * まだ送っていない入力を黙って消さない。保存のあとは、送った欄の比べる元を送った値にしてから読み直す)。
+ * ただし読み直したプランが編集できない状態 (廃止) なら、どの読み直しでも書きかけを残さず、全部を読み直した値にする
+ * (廃止のあとは入力欄が編集できず保存のボタンも出ないので、残すと送る道の無い値を、廃止済みのプランの値として見せ続ける)。
+ * 保存と状態の変更 (公開・非公開・再公開・廃止・廃止の取り消し) は、どちらかの応答とそのあとの読み直しを待つあいだ、
+ * もう一方 (と別の状態の変更) を送らない (#2059。route は読んだ status を条件に書くので、重ねると自分の操作どうしで
+ * 後に着いた方が 409 CONFLICT_STALE_DATA になり、「別の運営が先に変えた」旨の文が出てしまう)。
  * 一度表示したあとの読み直し (保存・状態の変更のあと・409 のあと) は画面を外さずに行い、失敗しても画面と入力欄を残して、
- * 文と「再試行」を出す (読み直しの失敗で画面ごとエラーに置き換えない。#1917)。
+ * 文と「再試行」を出す (読み直しの失敗で画面ごとエラーに置き換えない。#1917)。読み直しが 404 / 403 で断られたときは、
+ * 読み込み直しても変わらないので、その理由の文を出し、「再試行」は出さない。
+ * 状態の変更 (公開・非公開・再公開・廃止・廃止の取り消し) は、画面が見ていた status を本文の expected_status に入れて送る。route は
+ * それが DB の status と違えば書かずに 409 CONFLICT_STALE_DATA にする (#2064。route は遷移を DB の status で検査するので、画面の
+ * status が古いと確認の文と違う遷移 (公開中に見えて「非公開にする」でも、DB が廃止なら廃止の取り消し) を書いてしまうため)。
+ * あわせて、表示したあとの読み直しが失敗しているあいだ (「再試行」で読み直せるまで) と、読み直しを待つあいだは、状態のボタンを止める
+ * (画面の status が DB と食い違っているかもしれないのに、その status を元にしたボタンを出し続けないため。#2064)。
+ * 保存は、表示名・説明・表示順のうち最後に読んだ・保存した値から変えた欄だけを送る (手を付けていない欄を、画面を開いたあとに
+ * 別の運営が変えた値の上に古い値で書かない。#1917)。保存に成功したら、送った欄の値をそのまま新しい初めの値にする
+ * (続く読み直しが失敗しても、保存済みの欄を次の保存で送り直さない・「再試行」で書きかけとして残さない。#1917)。
+ * 状態の変更の通信そのものが失敗した (fetch が reject した) ときは、サーバーが変更を済ませてから応答が切れたこともあるので、
+ * プランを読み直して今の状態を見せ、「状態の変更の応答を受け取れませんでした」の文を画面の上に出す (alert にしない。#2073)。
+ * 読み直さないと、画面は古い status のボタンのまま残り、もう一度押すと expected_status が古いので 409 になって、自分の操作なのに
+ * 「別の運営が先にこのプランを変えていました」と出る。読み直しが失敗したら「再試行」を出し、読み直せるまで状態のボタンを止める (#2064)。
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { isStaleDataConflict } from '@/lib/admin/api-error-message';
+import { forbiddenMessageForScreen, isStaleDataConflict } from '@/lib/admin/api-error-message';
 import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE, countsOrganizationsFor } from '@/lib/super-admin/plan-subscribers';
+import {
+  NO_RESPONSE_STATE_RELOADED_GUIDE,
+  NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
+  statusChangeNoResponseMessage,
+} from '@/lib/super-admin/status-change-no-response';
 
 type Plan = {
   id: string;
@@ -60,13 +85,53 @@ function editsOf(plan: Plan): PlanEdits {
   return { displayName: plan.display_name, description: plan.description ?? '', displayOrder: plan.display_order };
 }
 
-/** 入力欄が書きかけか (最後に読んだプランから作った初めの値から、どれかの欄を変えている) */
+/** 入力欄が書きかけか (最後に読んだ・保存した初めの値から、どれかの欄を変えている) */
 function isEdited(current: PlanEdits, loaded: PlanEdits): boolean {
-  return (
-    current.displayName !== loaded.displayName ||
-    current.description !== loaded.description ||
-    current.displayOrder !== loaded.displayOrder
-  );
+  return Object.keys(changedPlanFields(current, loaded)).length > 0;
+}
+
+/**
+ * 状態の変更で送る本文 (PATCH /api/super-admin/plans/{id})。expected_status は画面が見ていた status (#2064)。
+ * ends_at は廃止のときだけ (廃止予定日)
+ */
+type PlanStatusChangeBody = {
+  status: 'public' | 'private' | 'deprecated';
+  expected_status: string;
+  ends_at?: string;
+};
+
+/** 保存で送る本文 (PATCH /api/super-admin/plans/{id} の表示名・説明・表示順) */
+type PlanSaveBody = {
+  display_name?: string;
+  description?: string | null;
+  display_order?: number;
+};
+
+/**
+ * 保存で送る本文。最後に読んだ・保存した初めの値から変えた欄だけを入れる。
+ * 手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を、開いたときの古い値で上書きしてしまう
+ * (route は送られた項目をそのまま書き、読んだ値を条件にするのは status だけ。#1917)。説明の空欄は null にする (これまでと同じ)
+ */
+function changedPlanFields(current: PlanEdits, loaded: PlanEdits): PlanSaveBody {
+  const body: PlanSaveBody = {};
+  if (current.displayName !== loaded.displayName) body.display_name = current.displayName;
+  if (current.description !== loaded.description) body.description = current.description || null;
+  if (current.displayOrder !== loaded.displayOrder) body.display_order = current.displayOrder;
+  return body;
+}
+
+/**
+ * 保存に成功したあとの新しい初めの値。送った欄 (body にある欄) は送った値 (sent) に、送らなかった欄は保存の前の
+ * 初めの値 (loaded) のままにする。保存の応答の行は使わない (#1724: plan は GET からだけ作る)。
+ * 続く読み直しが失敗したとき、保存済みの欄が書きかけに見えて次の保存で送り直され、そのあいだに別の運営が変えた値を
+ * 古い値で上書きするのを防ぐ (#1917)。説明は送るとき空欄を null にするが、初めの値は入力欄の形 ('') のまま比べる
+ */
+function editsAfterSave(loaded: PlanEdits, sent: PlanEdits, body: PlanSaveBody): PlanEdits {
+  return {
+    displayName: body.display_name !== undefined ? sent.displayName : loaded.displayName,
+    description: body.description !== undefined ? sent.description : loaded.description,
+    displayOrder: body.display_order !== undefined ? sent.displayOrder : loaded.displayOrder,
+  };
 }
 
 /**
@@ -74,12 +139,33 @@ function isEdited(current: PlanEdits, loaded: PlanEdits): boolean {
  *   - stale              : 409 CONFLICT_STALE_DATA のあとに読み直した
  *   - stale-reload-failed: 409 CONFLICT_STALE_DATA のあとの読み直しに失敗した (「再試行」を出す)
  *   - reload-failed      : 保存・状態の変更に成功したあとの読み直しに失敗した (「再試行」を出す)
- * editsKept は、入力欄の書きかけを読み直しで消さずに残したか
+ *   - no-response              : 状態の変更の通信が reject された (応答を受け取れなかった) あとに読み直した (#2073)
+ *   - no-response-reload-failed: 状態の変更の通信が reject されたあとの読み直しに失敗した (「再試行」を出す。#2073)
+ * editsKept は、入力欄の書きかけを読み直しで消さずに残したか。
+ * unavailable の message は画面に出す理由の文。404 は PLAN_NOT_FOUND_ON_RELOAD_MESSAGE。
+ * 403 は応答の本文の文が理由の文 (二段階認証の確認が要る など。#2014 の operatorForbiddenMessageOf) ならその文、
+ * それ以外 (ロールが足りない・本文が読めない) は「権限がありません」(forbiddenMessageForScreen。読み込み直しても変わらないので
+ * どちらも「再試行」は出さない。#1917)
  */
 type ReloadNotice =
   | { kind: 'stale'; editsKept: boolean }
   | { kind: 'stale-reload-failed'; editsKept: boolean }
-  | { kind: 'reload-failed' };
+  | { kind: 'reload-failed' }
+  | { kind: 'no-response'; editsKept: boolean }
+  | { kind: 'no-response-reload-failed'; editsKept: boolean }
+  | { kind: 'unavailable'; reason: PlanUnavailableReason; message: string };
+
+/** 「再試行」を出す文の種類 (読み直しに失敗して、まだ読み直せていない) */
+function isRetryableNotice(notice: ReloadNotice): boolean {
+  return notice.kind === 'stale-reload-failed' || notice.kind === 'reload-failed' || notice.kind === 'no-response-reload-failed';
+}
+
+/**
+ * 表示したあとの読み直しが、読み込み直しても変わらない理由で断られた (「再試行」を出さない。#1917)。
+ *   - not-found: 404 (読み直しの間にプランが消えた)
+ *   - forbidden: 403 (読み直しの間に運営の権限が外れた・二段階認証の確認が要るようになった)
+ */
+type PlanUnavailableReason = 'not-found' | 'forbidden';
 
 /**
  * 409 CONFLICT_STALE_DATA のあとに読み直したときの文。
@@ -92,8 +178,29 @@ const STALE_PLAN_MESSAGE =
 const STALE_PLAN_RELOAD_FAILED_MESSAGE =
   '別の運営が先にこのプランを変えていました。最新の内容を読み込み直せませんでした。「再試行」で読み込み直してから、もう一度操作してください';
 
+/**
+ * 状態の変更の通信が reject された (応答を受け取れなかった) ときの文の操作の名前 (#2073)。
+ * 応答が無いので変更が済んだかは分からない。済んでいたとき (自分の操作) にも合うよう「失敗した」「別の運営が」とは言わない
+ */
+const STATUS_CHANGE_OPERATION_NAME = '状態の変更';
+
+/** 状態の変更の通信が reject され、プランを読み直せたときの文 (#2073) */
+const NO_RESPONSE_RELOADED_MESSAGE = statusChangeNoResponseMessage(STATUS_CHANGE_OPERATION_NAME, NO_RESPONSE_STATE_RELOADED_GUIDE);
+
+/** 状態の変更の通信が reject され、読み直しにも失敗したときの文 (「再試行」を出す。#2073) */
+const NO_RESPONSE_RELOAD_FAILED_MESSAGE = statusChangeNoResponseMessage(
+  STATUS_CHANGE_OPERATION_NAME,
+  NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
+);
+
 /** 保存・状態の変更に成功したあとの読み直しに失敗したときの文 */
 const PLAN_RELOAD_FAILED_MESSAGE = '最新の内容を読み込めませんでした。「再試行」で読み込み直してください';
+
+/** 読み直しが 404 (プランが消えた) で断られたときの文。読み込み直しても変わらないので「再試行」は出さない */
+const PLAN_NOT_FOUND_ON_RELOAD_MESSAGE = 'プランが見つかりません。一覧に戻って確かめてください';
+
+/** 保存を押したが、どの入力欄も最後に読んだ・保存した値から変えていなかったときの文 (送らない。#1917) */
+const NO_PLAN_CHANGES_MESSAGE = '変更した項目がないので、保存していません';
 
 /** 入力欄の書きかけを残したときに添える文 */
 const EDITS_KEPT_SUFFIX = '（入力中の表示名・説明・表示順はそのまま残しています）';
@@ -106,11 +213,36 @@ function reloadNoticeText(notice: ReloadNotice): string {
       return `${STALE_PLAN_RELOAD_FAILED_MESSAGE}${notice.editsKept ? EDITS_KEPT_SUFFIX : ''}`;
     case 'reload-failed':
       return PLAN_RELOAD_FAILED_MESSAGE;
+    case 'no-response':
+      return `${NO_RESPONSE_RELOADED_MESSAGE}${notice.editsKept ? EDITS_KEPT_SUFFIX : ''}`;
+    case 'no-response-reload-failed':
+      return `${NO_RESPONSE_RELOAD_FAILED_MESSAGE}${notice.editsKept ? EDITS_KEPT_SUFFIX : ''}`;
+    case 'unavailable':
+      return notice.message;
   }
 }
 
-/** 読み直しの結果。superseded は、読み直しの最中に新しい読み直しが始まったので結果を捨てた */
-type PlanReloadOutcome = { kind: 'loaded'; editsKept: boolean } | { kind: 'failed' } | { kind: 'superseded' };
+/**
+ * 読み直しの結果。superseded は、読み直しの最中に新しい読み直しが始まったので結果を捨てた。
+ * unavailable は、表示したあとの読み直しが 404 / 403 で断られた (読み込み直しても変わらない理由。#1917)
+ */
+type PlanReloadOutcome =
+  | { kind: 'loaded'; editsKept: boolean }
+  | { kind: 'failed' }
+  | { kind: 'unavailable'; reason: PlanUnavailableReason; message: string }
+  | { kind: 'superseded' };
+
+/** 表示したあとの読み直しの HTTP ステータスのうち、読み込み直しても変わらない理由 (#1917) */
+const HTTP_FORBIDDEN = 403;
+const HTTP_NOT_FOUND = 404;
+
+/**
+ * 表示名・説明・表示順を編集できる状態か (下書き・公開中・非公開)。廃止したプランは編集できない
+ * (route も廃止中は状態の変更のほかを断る)。入力欄の disabled と保存のボタン、読み直しで書きかけを残すかの判定に使う
+ */
+function isEditableStatus(status: string): boolean {
+  return status === 'draft' || status === 'public' || status === 'private';
+}
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   draft: { label: '下書き', color: 'bg-slate-100 text-slate-600' },
@@ -129,6 +261,8 @@ export default function PlanDetailPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saveSuccess, setSaveSuccess] = useState(false);
+  // 保存を押したが送らなかったときの文 (変えた欄が無い。#1917)
+  const [saveInfo, setSaveInfo] = useState('');
 
   // 編集フィールド
   const [displayName, setDisplayName] = useState('');
@@ -139,11 +273,27 @@ export default function PlanDetailPage() {
   // 画面の上に出す、読み直しについての文 (#1917)
   const [reloadNotice, setReloadNotice] = useState<ReloadNotice | null>(null);
   const [isReloading, setIsReloading] = useState(false);
+  // 表示したあとの読み直しを待っているか (描画を待たずに読むための写し。状態の変更の handler の守りに使う。#2064)
+  const reloadingRef = useRef(false);
+  // 表示したあとの読み直しが失敗し、まだ読み直せていないか (画面の plan.status が DB と食い違っているかもしれない。#2064)。
+  // そのあいだは状態のボタンを止める。読み直しに成功したら外す。ref は描画を待たずに handler で読むための写し
+  const [isPlanStale, setIsPlanStale] = useState(false);
+  const planStaleRef = useRef(false);
+  // 状態の変更 (公開・非公開・廃止・廃止の取り消し) の応答と、そのあとの読み直しを待っているか。
+  // 待つあいだは状態のボタンを止める (二度押しで 2 本目を送ると、変えられているのに断られて失敗の文が出るため。#2050)
+  const [isChangingStatus, setIsChangingStatus] = useState(false);
+  // 保存か状態の変更のどちらかの応答 (とそのあとの読み直し) を待っているか (#2059)。route は直前に読んだ status を条件に書くので、
+  // 2 つを重ねると後に着いた方が 409 CONFLICT_STALE_DATA で断られ、画面は自分の操作どうしの競合を「別の運営が先にこのプランを
+  // 変えていました」と出してしまう。待つあいだは保存と状態のボタンを両方止め、押されても送らない。
+  // ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り (クーポン・機能パッケージの詳細と同じ形。#2053)
+  const writeInFlightRef = useRef(false);
+  const isWriting = isSaving || isChangingStatus;
   // 一度プランを表示したか (表示したあとの読み直しは、画面を外さずに行う。#1917)
   const hasLoadedRef = useRef(false);
   // 入力欄のいまの値 (描画を待たずに読むための写し。入力欄は setEdits でだけ変える)
   const editsRef = useRef<PlanEdits>({ displayName: '', description: '', displayOrder: 0 });
-  // 最後に読んだプランから作った入力欄の初めの値 (読み直しのとき、書きかけの欄を見分ける。#1917)
+  // 入力欄の初めの値。最後に読んだプランから作り、保存に成功したら送った欄を送った値にする
+  // (読み直しのとき書きかけの欄を見分け、保存のとき変えた欄だけを送る。#1917)
   const loadedEditsRef = useRef<PlanEdits>({ displayName: '', description: '', displayOrder: 0 });
   // 読み直しを重ねたとき、古い読み直しの結果で上書きしないための連番
   const fetchSeq = useRef(0);
@@ -154,34 +304,66 @@ export default function PlanDetailPage() {
     setDisplayName(next.displayName);
     setDescription(next.description);
     setDisplayOrder(next.displayOrder);
+    // 入力欄が変わったら、「変更した項目がないので、保存していません」は古いので消す
+    setSaveInfo('');
   }, []);
+
+  /** 画面の plan.status が DB と食い違っているかもしれないか (表示したあとの読み直しの失敗) を記録する (#2064) */
+  const markPlanStale = useCallback((stale: boolean) => {
+    planStaleRef.current = stale;
+    setIsPlanStale(stale);
+  }, []);
+
+  /**
+   * 状態の変更を送らずに止めるか (#2064)。保存・ほかの状態の変更の応答 (とそのあとの読み直し) を待つあいだ (#2059)、
+   * 表示したあとの読み直しを待つあいだ (「再試行」を含む)、読み直しが失敗してまだ読み直せていないあいだ。
+   * ref で見るので、再描画の前に続けて押されても止まる
+   */
+  const isStatusChangeBlocked = useCallback(
+    () => writeInFlightRef.current || reloadingRef.current || planStaleRef.current,
+    [],
+  );
 
   /**
    * プランを読む。初めの読み込みは画面を「読み込み中」にし、失敗したら画面をエラーにする。
    * 表示したあとの読み直しは画面を外さず、失敗しても画面と入力欄を残す (結果は戻り値で返し、文は呼び出し側が決める。#1917)。
-   * keepEdits のときは、入力欄のうち最後に読んだ値から変えている (書きかけの) 欄を残し、ほかは読んだ値にする
+   * keepEdits のときは、入力欄のうち最後に読んだ・保存した値から変えている (書きかけの) 欄を残し、ほかは読んだ値にする。
+   * ただし読んだプランが編集できない状態 (廃止) なら keepEdits でも全部を読んだ値にする (入力欄は編集できず保存のボタンも
+   * 出ないので、書きかけを残すと、送る道の無い保存していない値を、廃止済みのプランの値として DB と食い違えて見せ続ける)
    */
   const fetchPlan = useCallback(async (options: { keepEdits?: boolean } = {}): Promise<PlanReloadOutcome> => {
     const seq = ++fetchSeq.current;
     const isReload = hasLoadedRef.current;
     if (isReload) {
+      reloadingRef.current = true;
       setIsReloading(true);
     } else {
       setIsLoading(true);
     }
     try {
       const res = await fetch(`/api/super-admin/plans/${planId}`);
-      const data = await res.json() as { data?: Plan; error?: { message: string } };
+      // 403 の本文が JSON として読めなくても「権限がありません」を出せるよう、読めない本文は null にする (#1917)
+      const body: unknown = await res.json().catch(() => null);
       if (seq !== fetchSeq.current) return { kind: 'superseded' };
+      const data = (body ?? {}) as { data?: Plan; error?: { message: string } };
       if (!res.ok || !data.data) {
         if (!isReload) setError(data.error?.message ?? 'プランの取得に失敗しました');
+        // 表示したあとの読み直しが 404 / 403 なら、その理由を返す (「読み込み直せませんでした。再試行で…」で覆わない。#1917)。
+        // 403 は本文の文 (二段階認証の確認が要る など) を捨てずに出す (#2014 の route の文を、読み直しのときにも打ち消さない)
+        if (isReload && res.status === HTTP_NOT_FOUND) {
+          return { kind: 'unavailable', reason: 'not-found', message: PLAN_NOT_FOUND_ON_RELOAD_MESSAGE };
+        }
+        if (isReload && res.status === HTTP_FORBIDDEN) {
+          return { kind: 'unavailable', reason: 'forbidden', message: forbiddenMessageForScreen(body) };
+        }
+        if (isReload) markPlanStale(true);
         return { kind: 'failed' };
       }
       const loaded = data.data;
       const fresh = editsOf(loaded);
       const previous = loadedEditsRef.current;
       const current = editsRef.current;
-      const keep = options.keepEdits === true && isReload;
+      const keep = options.keepEdits === true && isReload && isEditableStatus(loaded.status);
       const next: PlanEdits = {
         displayName: keep && current.displayName !== previous.displayName ? current.displayName : fresh.displayName,
         description: keep && current.description !== previous.description ? current.description : fresh.description,
@@ -193,6 +375,7 @@ export default function PlanDetailPage() {
         next.displayOrder !== fresh.displayOrder;
       loadedEditsRef.current = fresh;
       hasLoadedRef.current = true;
+      markPlanStale(false);
       setPlan(loaded);
       setError('');
       setEdits(next);
@@ -200,48 +383,82 @@ export default function PlanDetailPage() {
     } catch {
       if (seq !== fetchSeq.current) return { kind: 'superseded' };
       if (!isReload) setError('ネットワークエラー');
+      if (isReload) markPlanStale(true);
       return { kind: 'failed' };
     } finally {
       if (seq === fetchSeq.current) {
+        reloadingRef.current = false;
         setIsLoading(false);
         setIsReloading(false);
       }
     }
-  }, [planId, setEdits]);
+  }, [planId, setEdits, markPlanStale]);
 
   useEffect(() => {
     void fetchPlan();
   }, [fetchPlan]);
 
-  /** 保存・状態の変更に成功したあとの読み直し。失敗したら画面を残して文と「再試行」を出す (#1917) */
+  /**
+   * 保存・状態の変更に成功したあとの読み直し。失敗したら画面を残して文と「再試行」を出す (#1917)。
+   * 書きかけの入力欄は残す (keepEdits)。保存の応答を待つあいだ・この読み直しを待つあいだに打った、まだ送っていない入力を
+   * 読み直した値で黙って消さない。保存のあとは、呼ぶ前に送った欄の比べる元を送った値にしている (handleSave の editsAfterSave)
+   * ので、送った値のままの欄は読み直した値になり、送ったあとに変えた欄だけが残る。
+   * 読み直したプランが廃止 (自分の「廃止する」・待つあいだに別の運営が廃止) なら、書きかけも残さず読み直した値にする (fetchPlan)
+   */
   const reloadAfterSuccess = useCallback(async () => {
-    const outcome = await fetchPlan();
+    const outcome = await fetchPlan({ keepEdits: true });
+    // 読み直せたら文を消す (読み直しが失敗しているあいだの保存は、その文と「再試行」を消さずに送るので、ここで消す。#2064)
+    if (outcome.kind === 'loaded') setReloadNotice(null);
     if (outcome.kind === 'failed') setReloadNotice({ kind: 'reload-failed' });
+    if (outcome.kind === 'unavailable') setReloadNotice({ kind: 'unavailable', reason: outcome.reason, message: outcome.message });
   }, [fetchPlan]);
 
   /**
-   * 409 CONFLICT_STALE_DATA (別の運営が先にプランを変えた) のあとの読み直し。書きかけの入力欄は残し、
+   * 状態が分からなくなったあとの読み直し。cause は読み直す理由:
+   *   - stale      : 409 CONFLICT_STALE_DATA (別の運営が先にプランを変えた)
+   *   - no-response: 状態の変更の通信が reject された (応答を受け取れず、変更が済んだか分からない。#2073)
+   * 書きかけの入力欄は残し (読み直したプランが廃止なら残さない。そのときは「残しています」も添えない)、
    * 結果に合わせて文を出す (読み直せなかったのに「読み込み直した」と出さない。#1917)
    */
-  const reloadAfterStale = useCallback(async () => {
+  const reloadAfterUncertain = useCallback(async (cause: 'stale' | 'no-response') => {
     const editedBefore = isEdited(editsRef.current, loadedEditsRef.current);
     const outcome = await fetchPlan({ keepEdits: true });
     if (outcome.kind === 'loaded') {
-      setReloadNotice({ kind: 'stale', editsKept: outcome.editsKept });
+      setReloadNotice({ kind: cause, editsKept: outcome.editsKept });
     } else if (outcome.kind === 'failed') {
-      setReloadNotice({ kind: 'stale-reload-failed', editsKept: editedBefore });
+      setReloadNotice({ kind: cause === 'stale' ? 'stale-reload-failed' : 'no-response-reload-failed', editsKept: editedBefore });
+    } else if (outcome.kind === 'unavailable') {
+      // プランが消えた・権限が外れた: その理由を出す (「再試行」で読み込み直すよう促さない。#1917)
+      setReloadNotice({ kind: 'unavailable', reason: outcome.reason, message: outcome.message });
     }
   }, [fetchPlan]);
 
-  /** 「再試行」: 失敗した読み直しをやり直す。409 のあとの読み直しなら、成功したら 409 のあとの文にする */
+  /** 409 CONFLICT_STALE_DATA (別の運営が先にプランを変えた) のあとの読み直し */
+  const reloadAfterStale = useCallback(() => reloadAfterUncertain('stale'), [reloadAfterUncertain]);
+
+  /**
+   * 状態の変更の通信が reject された (応答を受け取れなかった) あとの読み直し (#2073)。サーバーが変更を済ませてから応答が
+   * 切れたこともあるので、今の状態を見せる (読み直さないと、古い status のボタンをもう一度押して 409 になり、自分の操作なのに
+   * 「別の運営が先に…」と出る)。読み直しが失敗したら fetchPlan が isPlanStale を立てるので、状態のボタンは止まる (#2064)
+   */
+  const reloadAfterNoResponse = useCallback(() => reloadAfterUncertain('no-response'), [reloadAfterUncertain]);
+
+  /**
+   * 「再試行」: 失敗した読み直しをやり直す。409 のあと・通信の reject のあとの読み直しなら、成功したらそれぞれの読み直した文にする
+   */
   const retryReload = useCallback(async () => {
     if (reloadNotice?.kind === 'stale-reload-failed') {
       await reloadAfterStale();
       return;
     }
+    if (reloadNotice?.kind === 'no-response-reload-failed') {
+      await reloadAfterNoResponse();
+      return;
+    }
     const outcome = await fetchPlan({ keepEdits: true });
     if (outcome.kind === 'loaded') setReloadNotice(null);
-  }, [fetchPlan, reloadAfterStale, reloadNotice]);
+    if (outcome.kind === 'unavailable') setReloadNotice({ kind: 'unavailable', reason: outcome.reason, message: outcome.message });
+  }, [fetchPlan, reloadAfterStale, reloadAfterNoResponse, reloadNotice]);
 
   /**
    * 状態の変更 (公開・非公開・廃止・廃止の取り消し) の応答を処理する。成功なら読み直す。
@@ -262,11 +479,55 @@ export default function PlanDetailPage() {
     alert(typeof message === 'string' ? message : `${failureSummary} (HTTP ${res.status})`);
   };
 
+  /**
+   * 状態の変更 (公開・非公開・再公開・廃止・廃止の取り消し) を送り、応答を処理する。
+   * 応答とそのあとの読み直しを待つあいだは、保存とほかの状態の変更を送らない (#2059)。
+   * 通信そのものが失敗した (fetch が reject した) ときは、プランを読み直して今の状態を見せる (alert にしない。#2073)
+   */
+  const sendStatusChange = async (body: PlanStatusChangeBody, failureSummary: string) => {
+    writeInFlightRef.current = true;
+    setIsChangingStatus(true);
+    setReloadNotice(null);
+    try {
+      let res: Response;
+      try {
+        res = await fetch(`/api/super-admin/plans/${planId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } catch {
+        // 応答を受け取れなかった (オフライン・接続が切れたなど)。変更が済んだかは分からないので、読み直して今の状態を見せる (#2073)
+        await reloadAfterNoResponse();
+        return;
+      }
+      // #1041 修正: 失敗時 (422/400/403 等) に無反応にせず、必ずエラーを表示する
+      await handleStatusResponse(res, failureSummary);
+    } finally {
+      writeInFlightRef.current = false;
+      setIsChangingStatus(false);
+    }
+  };
+
   const handleSave = async () => {
-    setIsSaving(true);
+    // 状態の変更の応答 (とそのあとの読み直し) を待つあいだは送らない (#2059。writeInFlightRef)
+    if (writeInFlightRef.current) return;
     setSaveError('');
     setSaveSuccess(false);
-    setReloadNotice(null);
+    setSaveInfo('');
+    // 送るのは、最後に読んだ・保存した値から変えた欄だけ (手を付けていない欄を古い値で上書きしない。#1917)。
+    // 送った値は写しておく (応答を待つあいだに入力欄が変わっても、保存済みの値として記録するのは送った値)
+    const sent = editsRef.current;
+    const changes = changedPlanFields(sent, loadedEditsRef.current);
+    if (Object.keys(changes).length === 0) {
+      setSaveInfo(NO_PLAN_CHANGES_MESSAGE);
+      return;
+    }
+    writeInFlightRef.current = true;
+    setIsSaving(true);
+    // 読み直しが失敗してまだ読み直せていないあいだは、その文と「再試行」を残す (消すと、状態のボタンが止まったまま
+    // 読み直す道が見えなくなる。保存に成功すれば続く読み直しで文が決まる。#2064)
+    if (!planStaleRef.current) setReloadNotice(null);
     try {
       const res = await fetch(`/api/super-admin/plans/${planId}`, {
         method: 'PATCH',
@@ -276,11 +537,8 @@ export default function PlanDetailPage() {
         // 保存のたびに subscription_plans.banner_url が null で上書きされていた。
         // PATCH の route は送られなかった項目を更新しない (`!== undefined` のときだけ updateData に入れる) ので、
         // 送らなければ banner_url はそのまま残る。
-        body: JSON.stringify({
-          display_name: displayName,
-          description: description || null,
-          display_order: displayOrder,
-        }),
+        // #1917: 入力欄のある 3 項目も、最後に読んだ・保存した値から変えた欄だけを送る (changedPlanFields)
+        body: JSON.stringify(changes),
       });
       const data: unknown = await res.json().catch(() => null);
       if (!res.ok) {
@@ -295,6 +553,9 @@ export default function PlanDetailPage() {
         setSaveError(typeof message === 'string' ? message : '保存に失敗しました');
         return;
       }
+      // 送った欄は保存済みなので、送った値を新しい初めの値にする。続く読み直しが失敗しても、次の保存でこの欄を
+      // 送り直さず (そのあいだに別の運営が変えた値を古い値で上書きしない)、「再試行」で書きかけとして残さない (#1917)
+      loadedEditsRef.current = editsAfterSave(loadedEditsRef.current, sent, changes);
       setSaveSuccess(true);
       // #1724: PATCH の応答はプランの行だけで、価格変更の履歴 (price_history) を含まない。
       // 応答で plan を丸ごと置き換えると履歴の一覧が空になるので、画面の状態は GET (fetchPlan) だけから作る
@@ -303,32 +564,32 @@ export default function PlanDetailPage() {
     } catch {
       setSaveError('ネットワークエラー');
     } finally {
+      writeInFlightRef.current = false;
       setIsSaving(false);
     }
   };
 
   const handleStatusChange = async (newStatus: 'public' | 'private') => {
+    // 保存・ほかの状態の変更の応答 (とそのあとの読み直し) を待つあいだ (#2059)・読み直しを待つあいだ・読み直しが失敗している
+    // あいだ (#2064) は送らない
+    if (!plan || isStatusChangeBlocked()) return;
+    // 画面が見ていた status。route は DB の status と違えば書かずに 409 にする (確認の文と違う遷移を書かない。#2064)
+    const expectedStatus = plan.status;
     const confirm = window.confirm(
       newStatus === 'public' ? 'このプランを公開しますか？' : 'このプランを非公開にしますか？'
     );
     if (!confirm) return;
 
-    setReloadNotice(null);
-    try {
-      const res = await fetch(`/api/super-admin/plans/${planId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: newStatus }),
-      });
-      // #1041 修正: 失敗時 (422/400/403 等) に無反応にせず、必ずエラーを表示する
-      await handleStatusResponse(res, 'ステータス変更に失敗しました');
-    } catch {
-      alert('ステータス変更に失敗しました (ネットワークエラー)');
-    }
+    await sendStatusChange({ status: newStatus, expected_status: expectedStatus }, 'ステータス変更に失敗しました');
   };
 
   // #1041 修正: public/private --> deprecated への廃止移行を許可 (以前は恒久ロックされていた)
   const handleDeprecate = async () => {
+    // 保存・ほかの状態の変更の応答 (とそのあとの読み直し) を待つあいだ (#2059)・読み直しを待つあいだ・読み直しが失敗している
+    // あいだ (#2064) は送らない
+    if (!plan || isStatusChangeBlocked()) return;
+    // 画面が見ていた status (公開中か非公開)。route は DB の status と違えば書かずに 409 にする (#2064)
+    const expectedStatus = plan.status;
     const endsAtInput = window.prompt('廃止予定日 (YYYY-MM-DD) を入力してください');
     if (!endsAtInput) return;
     const endsAtDate = new Date(`${endsAtInput}T00:00:00.000Z`);
@@ -337,36 +598,24 @@ export default function PlanDetailPage() {
       return;
     }
     // #1912: 組織のプランの行 (org_*) では組織の件数を数えない。確認の文に注記を添える (件数は出さない)
-    const orgRowNote = plan && !countsOrganizationsFor(plan) ? `\n\n${ORG_SUBSCRIPTION_PLAN_ROW_NOTE}` : '';
+    const orgRowNote = !countsOrganizationsFor(plan) ? `\n\n${ORG_SUBSCRIPTION_PLAN_ROW_NOTE}` : '';
     if (!window.confirm(`このプランを ${endsAtInput} 廃止予定で廃止しますか？${orgRowNote}`)) return;
 
-    setReloadNotice(null);
-    try {
-      const res = await fetch(`/api/super-admin/plans/${planId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'deprecated', ends_at: endsAtDate.toISOString() }),
-      });
-      await handleStatusResponse(res, '廃止処理に失敗しました');
-    } catch {
-      alert('廃止処理に失敗しました (ネットワークエラー)');
-    }
+    await sendStatusChange(
+      { status: 'deprecated', ends_at: endsAtDate.toISOString(), expected_status: expectedStatus },
+      '廃止処理に失敗しました',
+    );
   };
 
   // deprecated --> private への緊急ロールバック (public には戻さない)
   const handleUndeprecate = async () => {
+    // 保存・ほかの状態の変更の応答 (とそのあとの読み直し) を待つあいだ (#2059)・読み直しを待つあいだ・読み直しが失敗している
+    // あいだ (#2064) は送らない
+    if (!plan || isStatusChangeBlocked()) return;
+    // 画面が見ていた status (廃止)。route は DB の status と違えば書かずに 409 にする (#2064)
+    const expectedStatus = plan.status;
     if (!window.confirm('廃止を取り消し、非公開状態に戻しますか？')) return;
-    setReloadNotice(null);
-    try {
-      const res = await fetch(`/api/super-admin/plans/${planId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'private' }),
-      });
-      await handleStatusResponse(res, '廃止取り消しに失敗しました');
-    } catch {
-      alert('廃止取り消しに失敗しました (ネットワークエラー)');
-    }
+    await sendStatusChange({ status: 'private', expected_status: expectedStatus }, '廃止取り消しに失敗しました');
   };
 
   if (isLoading) {
@@ -382,7 +631,9 @@ export default function PlanDetailPage() {
   }
 
   const statusInfo = STATUS_LABELS[plan.status] ?? { label: plan.status, color: 'bg-slate-100 text-slate-600' };
-  const isEditable = plan.status === 'draft' || plan.status === 'public' || plan.status === 'private';
+  const isEditable = isEditableStatus(plan.status);
+  // 状態のボタンを止めるか (isStatusChangeBlocked と同じ条件を state で。#2059・#2064)
+  const statusButtonsDisabled = isWriting || isReloading || isPlanStale;
   // #1912: 組織のプランの行 (org_*) は組織の段階とは無関係で、組織の件数を数えない。廃止・価格変更の前に注記を出す
   const showOrgRowNote = !countsOrganizationsFor(plan);
 
@@ -404,7 +655,8 @@ export default function PlanDetailPage() {
           {plan.status === 'draft' && (
             <button
               onClick={() => handleStatusChange('public')}
-              className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors"
+              disabled={statusButtonsDisabled}
+              className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors disabled:opacity-50"
             >
               公開する
             </button>
@@ -412,7 +664,8 @@ export default function PlanDetailPage() {
           {plan.status === 'public' && (
             <button
               onClick={() => handleStatusChange('private')}
-              className="px-3 py-1.5 bg-yellow-500 text-white rounded-lg text-xs font-medium hover:bg-yellow-600 transition-colors"
+              disabled={statusButtonsDisabled}
+              className="px-3 py-1.5 bg-yellow-500 text-white rounded-lg text-xs font-medium hover:bg-yellow-600 transition-colors disabled:opacity-50"
             >
               非公開にする
             </button>
@@ -420,7 +673,8 @@ export default function PlanDetailPage() {
           {plan.status === 'private' && (
             <button
               onClick={() => handleStatusChange('public')}
-              className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors"
+              disabled={statusButtonsDisabled}
+              className="px-3 py-1.5 bg-green-500 text-white rounded-lg text-xs font-medium hover:bg-green-600 transition-colors disabled:opacity-50"
             >
               再公開する
             </button>
@@ -436,7 +690,8 @@ export default function PlanDetailPage() {
           {(plan.status === 'public' || plan.status === 'private') && (
             <button
               onClick={handleDeprecate}
-              className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-xs font-medium hover:bg-red-600 transition-colors"
+              disabled={statusButtonsDisabled}
+              className="px-3 py-1.5 bg-red-500 text-white rounded-lg text-xs font-medium hover:bg-red-600 transition-colors disabled:opacity-50"
             >
               廃止する
             </button>
@@ -444,7 +699,8 @@ export default function PlanDetailPage() {
           {plan.status === 'deprecated' && (
             <button
               onClick={handleUndeprecate}
-              className="px-3 py-1.5 bg-slate-500 text-white rounded-lg text-xs font-medium hover:bg-slate-600 transition-colors"
+              disabled={statusButtonsDisabled}
+              className="px-3 py-1.5 bg-slate-500 text-white rounded-lg text-xs font-medium hover:bg-slate-600 transition-colors disabled:opacity-50"
             >
               廃止を取り消す
             </button>
@@ -459,7 +715,7 @@ export default function PlanDetailPage() {
           className="mb-4 bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-lg text-sm flex items-center justify-between gap-4"
         >
           <span>{reloadNoticeText(reloadNotice)}</span>
-          {reloadNotice.kind !== 'stale' && (
+          {isRetryableNotice(reloadNotice) && (
             <button
               type="button"
               onClick={() => void retryReload()}
@@ -555,6 +811,14 @@ export default function PlanDetailPage() {
               {saveError}
             </div>
           )}
+          {saveInfo && (
+            <div
+              data-testid="plan-save-info"
+              className="bg-slate-50 border border-slate-200 text-slate-600 px-4 py-3 rounded-lg text-sm"
+            >
+              {saveInfo}
+            </div>
+          )}
           {saveSuccess && (
             <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm">
               保存しました
@@ -565,8 +829,9 @@ export default function PlanDetailPage() {
             <div className="flex justify-end pt-2">
               <button
                 onClick={handleSave}
-                // 読み直しの最中は保存しない (読み直しが入力欄を今のプランの値に合わせる前の値を送らないため。#1917)
-                disabled={isSaving || isReloading}
+                // 読み直しの最中は保存しない (読み直しが入力欄を今のプランの値に合わせる前の値を送らないため。#1917)。
+                // 状態の変更の応答を待つあいだも保存しない (重ねると自分の操作どうしで 409 になる。#2059)
+                disabled={isWriting || isReloading}
                 className="px-5 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors disabled:opacity-50"
               >
                 {isSaving ? '保存中...' : '保存する'}

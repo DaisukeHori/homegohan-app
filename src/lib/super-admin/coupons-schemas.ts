@@ -15,6 +15,54 @@ import { CalendarDateSchema } from '@/lib/calendar-date-schema';
 export const DISCOUNT_TYPES = ['fixed', 'percentage'] as const;
 export const COUPON_APPLICABLE_TO = ['all', 'personal', 'family', 'org'] as const;
 export const COUPON_STATUSES = ['active', 'paused', 'expired'] as const;
+export type CouponStatus = (typeof COUPON_STATUSES)[number];
+
+/** クーポンの状態の画面の名前 (クーポン詳細の状態のバッジと同じ) */
+export const COUPON_STATUS_LABELS: Readonly<Record<CouponStatus, string>> = {
+  active: '有効',
+  paused: '停止中',
+  expired: '期限切れ',
+};
+
+/**
+ * クーポンの状態の遷移表 (#2064)。画面のボタンと同じ 2 つだけを許す:
+ *   active → paused (詳細の「一時停止」)・paused → active (詳細の「再開する」)。expired からはどこへも変えない (終端)
+ * ここに無い変更 (同じ状態への変更・期限切れからの再開・expired への変更) は PATCH が 409 で断る。
+ * DB には遷移を止めるトリガーが無い (CHECK coupons_status_check は値の範囲だけ) ので、守りは PATCH の route だけ
+ */
+export const COUPON_STATUS_TRANSITIONS: Readonly<Record<CouponStatus, readonly CouponStatus[]>> = {
+  active: ['paused'],
+  paused: ['active'],
+  expired: [],
+};
+
+export function isCouponStatus(value: unknown): value is CouponStatus {
+  return typeof value === 'string' && (COUPON_STATUSES as readonly string[]).includes(value);
+}
+
+/** from (今の状態) から to へ変えてよいか。from が知らない値なら、どこへも変えない */
+export function isAllowedCouponStatusTransition(from: string, to: CouponStatus): boolean {
+  return isCouponStatus(from) && COUPON_STATUS_TRANSITIONS[from].includes(to);
+}
+
+/** 遷移表に無い状態の変更を断るときのエラーの code (HTTP は 409) */
+export const COUPON_INVALID_TRANSITION_ERROR_CODE = 'OP_COUPON_INVALID_TRANSITION';
+
+/** 状態の値を「画面の名前 (値)」にする (表に無い値は「不明な状態 (値)」。英字の値を括弧の外に出さない) */
+function couponStatusLabel(status: string): string {
+  const label = isCouponStatus(status) ? COUPON_STATUS_LABELS[status] : '不明な状態';
+  return `${label} (${status})`;
+}
+
+/** 遷移表にある遷移を「a → b」の形で並べた文 (断るときの文に添える) */
+const ALLOWED_COUPON_TRANSITIONS_TEXT = COUPON_STATUSES.flatMap((from) =>
+  COUPON_STATUS_TRANSITIONS[from].map((to) => `${couponStatusLabel(from)} → ${couponStatusLabel(to)}`),
+).join('・');
+
+/** 遷移表に無い状態の変更を断るときの文。変えられる遷移も添える */
+export function couponStatusTransitionMessage(from: string, to: CouponStatus): string {
+  return `クーポンの状態は ${couponStatusLabel(from)} から ${couponStatusLabel(to)} へは変えられません (変えられるのは ${ALLOWED_COUPON_TRANSITIONS_TEXT} だけです)`;
+}
 
 /**
  * 有効期限の日が有効開始日より前のときの 400 OP_INVALID_INPUT の文。

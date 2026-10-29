@@ -16,7 +16,7 @@
  * 追加のあとのリードの updated_at の更新に失敗しても、活動は追加できているので 201 のまま (fail-open)。失敗は db-logger に error で残す。
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AUTH_CODES_ERROR_AND_OP_PERMISSION_DENIED, authFailureNested, invalidJsonNested } from '@/lib/api/error-responses';
 import { createActivitySchema } from '@/lib/admin/sales-schemas';
@@ -126,7 +126,8 @@ export async function POST(request: NextRequest, props: RouteContext) {
       return NextResponse.json(LEAD_NOT_FOUND_RESPONSE, { status: 404 });
     }
 
-    const { data: activity, error: activityError } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { data: activity, error: activityError } = await getSupabaseAdmin()
       .from('sales_lead_activities')
       .insert({
         lead_id: params.id,
@@ -142,7 +143,8 @@ export async function POST(request: NextRequest, props: RouteContext) {
     }
 
     // リードの updated_at を更新。失敗しても活動は追加できているので 201 のまま (失敗は db-logger に error で残す)
-    const { error: touchError } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { error: touchError } = await getSupabaseAdmin()
       .from('sales_leads')
       .update({ updated_at: new Date().toISOString() })
       .eq('id', params.id);

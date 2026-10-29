@@ -746,7 +746,7 @@ IDごとに簡潔にまとめます。
 | protein_g    | numeric     |                | たんぱく質        |
 | fat_g        | numeric     |                | 脂質           |
 | carbs_g      | numeric     |                | 炭水化物         |
-| veg_score    | integer     |                | 野菜スコア（0〜5程度） |
+| veg_score    | integer     |                | 野菜スコア（この表に書くコードは無い。献立の planned_meals.veg_score は写真の解析 (analyze-meal-photo の背景の処理) だけが書く 0〜100 の整数。cross/23 §6.3） |
 | quality_tags | text[]      |                | 「高タンパク」などのタグ |
 | raw_json     | jsonb       |                | AIレスポンス生データ  |
 | created_at   | timestamptz | default now()  |              |
@@ -844,7 +844,7 @@ export interface MealNutritionEstimate {
   proteinG: number | null;
   fatG: number | null;
   carbsG: number | null;
-  vegScore: number | null; // 0-5
+  vegScore: number | null; // この表に書くコードは無い (planned_meals.veg_score は写真の解析だけが書く 0〜100 の整数。cross/23 §6.3)
   qualityTags: string[];
   rawJson: any;
   createdAt: ISODateTimeString;
@@ -1313,7 +1313,7 @@ export interface UserBadge {
 
    1. 画像URL＋指示文をVisionモデルに渡す
    2. JSON形式での出力を強制（栄養推定スキーマを明示）
-   3. 例として、以下のようなJSON出力を期待：
+   3. 例として、以下のようなJSON出力を期待（下の例の veg_score は最初の設計の形。今の実装は veg_score を AI に出させず、planned_meals.veg_score は写真の解析 (analyze-meal-photo の背景の処理) が料理の g から 0〜100 の整数で計算する。cross/23 §6.3）：
 
 ```json
 {

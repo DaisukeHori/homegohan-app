@@ -2,7 +2,7 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE, AI_CONSULTATION_MESSAGE_NOT_FOUND_MESSAGE, AI_CONSULTATION_IMPORTANT_LIST_MOVED_MESSAGE } from '@/lib/ai/ai-api-messages';
 import { isUuid } from '@/lib/http-params';
 
@@ -59,7 +59,11 @@ export async function POST(
       return NextResponse.json({ error: AI_CONSULTATION_MESSAGE_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
-    const body = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
     const newImportantState = body.isImportant ?? !message.is_important;
     const reason = body.reason || null;
 
