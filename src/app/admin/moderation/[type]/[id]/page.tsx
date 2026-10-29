@@ -13,6 +13,9 @@
  *
  * #1538: 隠れているコンテンツには「表示」の項目と、右の列に「非表示の解除」のカード (ModerationRestoreForm) を出す。
  * 設計: docs/design/operator/13-hidden-content-restore.md §9.1
+ *
+ * #2086 V7: 「無い」(notFound()) にするのは API の 404 だけ。それ以外の失敗 (500 / 503 / 403・通信の失敗・壊れた応答) は
+ * 「審査のアイテムを読み込めませんでした」と「再読み込み」を出す (以前は 404 以外の失敗も notFound() にして、消えたと誤解させていた)。
  */
 
 export const dynamic = 'force-dynamic';
@@ -26,6 +29,8 @@ import { isModerationBacked } from '@/lib/admin/moderation-backend';
 import { moderationStatusLabel, moderationTypeLabel } from '@/lib/admin/moderation-labels';
 import ModerationReviewForm from '@/components/operator/moderation/ModerationReviewForm';
 import ModerationRestoreForm from '@/components/operator/moderation/ModerationRestoreForm';
+import ModerationLoadFailure from '@/components/operator/moderation/ModerationLoadFailure';
+import { MODERATION_DETAIL_LOAD_FAILED_MESSAGE, readModerationDetailBody } from '@/lib/admin/moderation-load-failure';
 import {
   HIDDEN_CONTENT_RESTORE_WINDOW_DAYS,
   HIDDEN_CONTENT_RETENTION_DAYS,
@@ -52,8 +57,46 @@ type ModerationItem = {
   hidden_at: string | null;
 };
 
-interface ModerationDetailApiResponse {
-  data: ModerationItem;
+/** API の 404 (アイテムが無い)。これだけを notFound() にする */
+const HTTP_NOT_FOUND = 404;
+
+/** 詳細を読んだ結果。notFound は API の 404、failed はそれ以外の読み込みの失敗 */
+type ModerationDetailLoad = { kind: 'ok'; item: ModerationItem } | { kind: 'notFound' } | { kind: 'failed' };
+
+async function loadModerationDetail(type: string, id: string): Promise<ModerationDetailLoad> {
+  try {
+    const res = await adminFetch(`/api/admin/moderation/${type}/${id}`);
+    if (res.status === HTTP_NOT_FOUND) return { kind: 'notFound' };
+    if (!res.ok) {
+      console.error('[admin/moderation detail page] API error:', res.status);
+      return { kind: 'failed' };
+    }
+    const item = readModerationDetailBody<ModerationItem>(await res.json());
+    if (!item) {
+      console.error('[admin/moderation detail page] unexpected response body');
+      return { kind: 'failed' };
+    }
+    return { kind: 'ok', item };
+  } catch (err) {
+    console.error('[admin/moderation detail page] fetch failed:', err);
+    return { kind: 'failed' };
+  }
+}
+
+/** パンくずに出す、通報の ID の先頭の文字数 */
+const BREADCRUMB_ID_PREFIX_LENGTH = 8;
+
+/** パンくず (一覧へ戻る道)。読み込みの失敗の画面にも出す */
+function Breadcrumb({ id }: { id: string }) {
+  return (
+    <nav className="mb-4 text-sm text-gray-500">
+      <Link href="/admin/moderation" className="hover:text-orange-500 transition-colors">
+        モデレーション
+      </Link>
+      {' / '}
+      <span className="text-gray-900">審査 #{id.slice(0, BREADCRUMB_ID_PREFIX_LENGTH)}</span>
+    </nav>
+  );
 }
 
 export default async function AdminModerationDetailPage(props: PageProps) {
@@ -67,29 +110,26 @@ export default async function AdminModerationDetailPage(props: PageProps) {
     notFound();
   }
 
-  // GET /api/admin/moderation/{type}/{id} 経由でデータ取得
-  const res = await adminFetch(`/api/admin/moderation/${type}/${id}`);
-  if (res.status === 404) {
-    notFound();
-  }
-  if (!res.ok) {
-    notFound();
+  // GET /api/admin/moderation/{type}/{id} 経由でデータ取得。404 だけを「無い」にする (#2086 V7)
+  const load = await loadModerationDetail(type, id);
+  if (load.kind !== 'ok') {
+    if (load.kind === 'notFound') notFound();
+    return (
+      <div className="max-w-3xl">
+        <Breadcrumb id={id} />
+        <h1 className="text-2xl font-bold text-gray-900 mb-6">コンテンツ審査</h1>
+        <ModerationLoadFailure message={MODERATION_DETAIL_LOAD_FAILED_MESSAGE} />
+      </div>
+    );
   }
 
-  const json = (await res.json()) as ModerationDetailApiResponse;
-  const resolvedItem = json.data;
+  const resolvedItem = load.item;
   const isSuperAdmin = actor.roles.includes('super_admin');
 
   return (
     <div className="max-w-3xl">
       {/* パンくず */}
-      <nav className="mb-4 text-sm text-gray-500">
-        <Link href="/admin/moderation" className="hover:text-orange-500 transition-colors">
-          モデレーション
-        </Link>
-        {' / '}
-        <span className="text-gray-900">審査 #{id.slice(0, 8)}</span>
-      </nav>
+      <Breadcrumb id={id} />
 
       <h1 className="text-2xl font-bold text-gray-900 mb-6">コンテンツ審査</h1>
 
