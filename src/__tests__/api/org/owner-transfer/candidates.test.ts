@@ -129,6 +129,16 @@ describe('GET /api/org/owner-transfer/candidates: オーナーには自分とオ
     expect(candidatesOf(body).map((m) => m.id)).not.toContain(OWNER_ID);
   });
 
+  it('確かめたあとの読みの時点で自分の役割が owner でなくなっていても (譲渡の承諾と重なったなど)、自分は候補に入らない', async () => {
+    // 利用者のクライアント (確かめる側) ではオーナー、service_role の読みの時点では admin になっている
+    setProfiles(BASE_PROFILES.map((row) => (row.id === OWNER_ID ? { ...row, org_role: 'admin' } : row)));
+    callAs(OWNER_ID);
+    const { status, body } = await callGet();
+
+    expect(status).toBe(200);
+    expect(candidatesOf(body).map((m) => m.id)).toEqual([EARLY_MEMBER_ID, ADMIN_ID, MEMBER_ID]);
+  });
+
   it('自分とは別に owner の役割の行があっても、候補に入れない', async () => {
     setProfiles([...BASE_PROFILES, profileRow(SECOND_OWNER_ID, '2 人目のオーナー', ORG_A, 'owner', '2026-08-01T00:00:00.000Z')]);
     callAs(OWNER_ID);
