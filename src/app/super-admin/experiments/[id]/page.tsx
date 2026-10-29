@@ -89,7 +89,7 @@ type ExperimentLoadOutcome =
 /**
  * 画面の上に出す、409 のあと・通信の reject のあとの読み直しについての文 (#2064・#2073)。
  *   - stale                    : 409 のあとに読み直した (今の状態を添える)
- *   - stale-reload-failed      : 409 のあとの読み直しに失敗した (「再試行」を出す)
+ *   - stale-reload-failed      : 409 のあとの読み直しに失敗した (「再試行」を出し、状態のボタンを止める。#2080)
  *   - no-response              : 状態の変更の通信が reject されたあとに読み直した (今の状態を添える)
  *   - no-response-reload-failed: 通信が reject されたあとの読み直しに失敗した (「再試行」を出し、状態のボタンを止める)
  *   - unavailable              : 読み直しが 404 / 403 で断られた (「再試行」は出さない)
