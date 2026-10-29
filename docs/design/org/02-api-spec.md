@@ -1071,7 +1071,7 @@ describe('GET /api/org/members - 権限テスト', () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.data).toBeInstanceOf(Array);
-    expect(body.pagination).toBeDefined();
+    expect(body.pagination).toBeDefined(); // 旧案 (§5)。いまの応答は { members: [{ id, nickname, org_role, joined_org_at }] } でページングなし。このファイルは無い
   });
 
   it('returns 403 when org_member calls PATCH /api/org/members', async () => {
