@@ -9,7 +9,13 @@ import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
+import { AdminScreenError, adminLoadFailedMessage, displayableAdminError } from '@/lib/admin/admin-screen-messages';
 import { lastPageToRefetch } from '@/lib/list-pagination';
+
+/** 読み込みの失敗の文の対象 (「チケットの一覧を読み込めませんでした（通信エラー）」。#2086 V6) */
+const TICKETS_SUBJECT = 'チケットの一覧';
+/** 一覧の読み込みが失敗の応答・読めない本文で終わったときの文 */
+const TICKETS_LOAD_FAILURE_MESSAGE = 'チケット一覧の取得に失敗しました';
 
 type TicketStatus = 'open' | 'in_progress' | 'pending' | 'resolved' | 'closed';
 type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
@@ -83,7 +89,13 @@ export default function SupportTicketsPage() {
       if (activeTab !== 'all') params.set('status', activeTab);
       if (priorityFilter) params.set('priority', priorityFilter);
 
-      const res = await fetch(`/api/admin/support/tickets?${params}`);
+      let res: Response;
+      try {
+        res = await fetch(`/api/admin/support/tickets?${params}`);
+      } catch {
+        // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
+        throw new AdminScreenError(adminLoadFailedMessage(TICKETS_SUBJECT, null));
+      }
       if (res.status === 401) {
         router.push('/login');
         return;
@@ -94,7 +106,7 @@ export default function SupportTicketsPage() {
         return;
       }
       if (!res.ok) {
-        throw new Error('チケット一覧の取得に失敗しました');
+        throw new AdminScreenError(TICKETS_LOAD_FAILURE_MESSAGE);
       }
       const json = await res.json();
       // 件数より後ろのページ (最後のページの唯一の行が消えたあとの読み直しなど) は、空のページを見せずに最後のページへ取り直す (#1917)
@@ -106,7 +118,8 @@ export default function SupportTicketsPage() {
       setTickets(json.data ?? []);
       setTotal(json.meta?.total ?? 0);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '不明なエラー');
+      // 画面に出すのは日本語の文だけ (JSON でない本文の SyntaxError などの英字の文は出さない。#2086 V6)
+      setError(displayableAdminError(e, TICKETS_LOAD_FAILURE_MESSAGE));
     } finally {
       setIsLoading(false);
     }
