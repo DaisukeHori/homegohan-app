@@ -32,11 +32,16 @@ import {
 } from '@/lib/admin/admin-screen-messages';
 
 const ROW_ID = '20862086-2086-4086-8086-208620862186';
-const routerPush = vi.fn();
+// useRouter は描画のたびに同じ物を返す (router を依存に持つ読み込みが描画のたびに走らないように)
+const nav = vi.hoisted(() => {
+  const push = vi.fn();
+  return { push, router: { push, replace: () => undefined, refresh: () => undefined, back: () => undefined } };
+});
+const routerPush = nav.push;
 
 vi.mock('next/navigation', () => ({
-  useParams: () => ({ id: ROW_ID }),
-  useRouter: () => ({ push: routerPush, replace: vi.fn(), refresh: vi.fn(), back: vi.fn() }),
+  useParams: () => ({ id: '20862086-2086-4086-8086-208620862186' }),
+  useRouter: () => nav.router,
 }));
 
 vi.mock('next/link', () => ({
@@ -343,8 +348,8 @@ describe('問い合わせの詳細: 書き込みの通信の失敗の文を日�
   };
 
   beforeEach(() => {
-    // メッセージの一覧の末尾へのスクロール (テストの DOM には無い)
-    Element.prototype.scrollIntoView = vi.fn();
+    // メッセージの一覧の末尾へのスクロール (テストの DOM には無いので、何もしない関数を置く)
+    Element.prototype.scrollIntoView = () => undefined;
   });
 
   it('ステータスの変更の通信が reject されたら「ステータスの変更の応答を受け取れませんでした（通信エラー）」を出す (Failed to fetch を出さない)', async () => {
