@@ -59,7 +59,13 @@ const ROOT = path.resolve(__dirname, '..');
  */
 const FAMILY_SCREEN_ROOT = 'src/app/(main)/family';
 const SETTINGS_MEMBERSHIP_ROOT = 'src/app/(main)/settings/membership';
-const SCAN_ROOTS: readonly string[] = [...ORG_SCREEN_ROOTS, FAMILY_SCREEN_ROOT, SETTINGS_MEMBERSHIP_ROOT];
+/**
+ * 運営のメンバーシップの監査ログの画面 (#2086 V5)。見出し・絞り込み・詳細の枠に Scope / Action / Actor / All・(system)・[SYS] op: と
+ * 英語だけの文言を出していた。運営のメンバーシップの画面のうち、英語だけの文言の走査にはこの画面だけを足す
+ * (ほかの運営の画面は内部の値の走査 (RAW_VALUE_ONLY_SCAN_ROOTS) だけ)
+ */
+const OPERATOR_MEMBERSHIP_AUDIT_ROOT = 'src/app/(operator)/operator/membership/audit';
+const SCAN_ROOTS: readonly string[] = [...ORG_SCREEN_ROOTS, FAMILY_SCREEN_ROOT, SETTINGS_MEMBERSHIP_ROOT, OPERATOR_MEMBERSHIP_AUDIT_ROOT];
 /**
  * 内部の値をそのまま出していないかだけを見る画面 (英語だけの文言の走査は SCAN_ROOTS だけ)。
  * 運営の家族の代表者・組織のオーナーの付け替えの画面が、候補の役割を「adult」「member」と英字のまま出していた (#2073)
@@ -193,9 +199,11 @@ function findEnglishOnlyCopy(file: string, source: string): CopyFinding[] {
 /**
  * 内部の値をそのまま画面に出していると見なすプロパティ (DB の状態・役割の列。英字の値が入る)。
  * 役割は src/lib/membership/role-labels.ts の orgRoleLabel / familyRoleLabel に通して出す
- * (#2073: 設定のメンバーシップが組織の役割を「役割: owner」と出していた)
+ * (#2073: 設定のメンバーシップが組織の役割を「役割: owner」と出していた)。
+ * 監査ログの操作・対象 (membership_audit.action / scope) は src/lib/membership/audit-labels.ts に通して出す
+ * (#2086 V5: 運営の監査ログの画面が operator_force_owner_transfer・organization をそのまま出していた)
  */
-const RAW_INTERNAL_VALUE_PROPERTIES = new Set(['status', 'role', 'org_role', 'invited_role']);
+const RAW_INTERNAL_VALUE_PROPERTIES = new Set(['status', 'role', 'org_role', 'invited_role', 'action', 'scope']);
 
 /**
  * 値の位置にあるプロパティの参照 (`x.status`・`x?.status`) と、同じ名前の変数そのもの (`status`。部品が状態を props で受けて
@@ -429,7 +437,7 @@ describe('走査の仕組み: 英語だけの文言を見つけられる', () =>
 
 describe('走査の仕組み: 内部の状態の値をそのまま出している箇所を見つけられる (#2073 S5)', () => {
   const FIXTURE = `
-    export default function Page({ proposal, invite, x, orgInfo, c, member, status }: { proposal?: { status: string }; invite: { status: string; role: string }; x: { status: string }; orgInfo: { org_role: string }; c: { org_role: string | null }; member: { role: string }; status: string }) {
+    export default function Page({ proposal, invite, x, orgInfo, c, member, status, row }: { proposal?: { status: string }; invite: { status: string; role: string }; x: { status: string }; orgInfo: { org_role: string }; c: { org_role: string | null }; member: { role: string }; status: string; row: { action: string; scope: string; scope_id: string } }) {
       return (
         <div>
           <p>この提案は既に処理されています (ステータス: {proposal?.status})</p>
@@ -446,14 +454,20 @@ describe('走査の仕組み: 内部の状態の値をそのまま出してい�
           <p>ステータス: {status}</p>
           <p>{statusLabel(status)}</p>
           <p>{status === 'pending' ? '未審査' : null}</p>
+          <td>{row.action}</td>
+          <dd>{row.scope} / {row.scope_id}</dd>
+          <td>{membershipAuditActionLabel(row.action)}</td>
+          <span>{row.scope === 'organization' ? '組織' : '家族'}</span>
         </div>
       );
     }
   `;
 
-  it('JSX の子に出している状態・役割の参照 (テンプレートの式・?? の左・同じ名前の変数そのものを含む) を見つけ、比べる式・関数に通した値・属性は数えない', () => {
+  it('JSX の子に出している状態・役割・監査ログの操作と対象の参照 (テンプレートの式・?? の左・同じ名前の変数そのものを含む) を見つけ、比べる式・関数に通した値・属性は数えない', () => {
     const texts = findRawInternalValueRendering('fixture.tsx', FIXTURE).map((f) => f.text);
-    expect(texts.sort()).toEqual(['invite.status', 'proposal?.status', 'orgInfo.org_role', 'c.org_role', 'member.role', 'status'].sort());
+    expect(texts.sort()).toEqual(
+      ['invite.status', 'proposal?.status', 'orgInfo.org_role', 'c.org_role', 'member.role', 'status', 'row.action', 'row.scope'].sort(),
+    );
   });
 });
 
@@ -467,6 +481,7 @@ describe('組織の管理画面・家族の画面に英語だけの固定の文�
     expect(files).toContain('src/app/(main)/org/transfer-accept/[proposal_id]/page.tsx');
     expect(files).toContain('src/app/(main)/family/transfer-accept/[proposal_id]/page.tsx');
     expect(files).toContain('src/app/(main)/settings/membership/page.tsx');
+    expect(files).toContain('src/app/(operator)/operator/membership/audit/page.tsx');
   });
 
   it('URL が /org で始まる画面のディレクトリ (共通の定数の根の下) のファイルを、どれも走査している (#2073: 家族の画面の根を足しても組織の画面を落とさない)', () => {
@@ -483,6 +498,7 @@ describe('組織の管理画面・家族の画面に英語だけの固定の文�
     expect(rawValueFiles).toContain('src/app/admin/moderation/page.tsx');
     expect(rawValueFiles).toContain('src/app/admin/moderation/[type]/[id]/page.tsx');
     expect(rawValueFiles).toContain('src/components/operator/moderation/ModerationReviewForm.tsx');
+    expect(rawValueFiles).toContain('src/app/(operator)/operator/membership/audit/page.tsx');
     const rawRendering = rawValueFiles
       .flatMap((file) => findRawInternalValueRendering(file, fs.readFileSync(path.join(ROOT, file), 'utf8')))
       .map((f) => `${f.file}:${f.line} {${f.text}}`);
