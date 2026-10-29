@@ -53,12 +53,19 @@ export default function MembersPage() {
   // 一覧を読み込めなかったときの文。あるあいだは一覧と「メンバーがいません」の代わりにこの文と「再試行」を出す (#2050)
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // 一覧を読めたら true (除名の通信が切れたあとの文で、読み直せたかどうかの案内を出し分けるために返す。#2080 U4)
+  // 一覧を読めたら true (除名の通信が切れたあとの文で、読み直せたかどうかの案内を出し分けるために返す。#2080 U4)。
+  // false を返すときは必ず先に setLoadError で「読み込めませんでした」と「再試行」を出す (文の「「再試行」で読み込み直して」と画面を合わせる)
   const fetchData = async (): Promise<boolean> => {
     setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return false;
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        // 自分を確かめられなかった (getUser は通信の失敗を投げずに { user: null, error } で返す。オフラインのときの普通の結果)。
+        // 読み込めなかったことを出す (空の一覧や、除名の前の古い一覧を今の状態として残さない。
+        // 除名の通信が切れたあとの「「再試行」で読み込み直して」の案内と画面を合わせる。#2080 U4)
+        setLoadError(MEMBERS_LOAD_ERROR);
+        return false;
+      }
 
       const { data: profile, error: profileError } = await supabase
         .from('user_profiles')

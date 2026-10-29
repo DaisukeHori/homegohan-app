@@ -10,6 +10,9 @@
  * 走査はソースの構文木 (TypeScript) で行う。コメント・文字列の中は見ない。
  * 限界 (見張りであって証明ではない): fetch を別の関数・別のファイルに包んで呼ぶ書き方と、method を変数で渡す書き方は数えない。
  * 表の「reread」は、その画面が文の部品を import し、文の関数を呼んでいることまでを見る (読み直しの振る舞いそのものは見ない)。
+ * あわせて、その画面の一覧の読み直しの関数 (返り値の型が Promise<boolean>) が、読めなかった (false を返す) 経路でどれも直前に
+ * setLoadError を呼んでいるかを見る (alert が「「再試行」で読み込み直して」と言うのに画面に「再試行」が無い、を防ぐ)。
+ * これも見張りであって証明ではない: 返り値の型を書かない関数と、setLoadError を別の関数に包んで呼ぶ書き方は見ない。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -143,7 +146,81 @@ function importsOf(source: ts.SourceFile): string[] {
     .map((decl) => (ts.isStringLiteral(decl.moduleSpecifier) ? decl.moduleSpecifier.text : ''));
 }
 
-const scanned = new Map<string, { methods: string[]; imports: string[]; noResponseCalls: number }>();
+/** 一覧の読み直しの関数 (読めたら true を返す: `async (): Promise<boolean> => …`) が読めなかったことを画面に出す関数の名前 */
+const LOAD_ERROR_SETTER = 'setLoadError';
+
+type ReloadFunction = {
+  name: string;
+  /** `return false` の数 */
+  falseReturns: number;
+  /** `return false` のうち、同じブロックの直前の文が setLoadError(…) でないもの (行番号) */
+  falseReturnsWithoutLoadError: number[];
+};
+
+/** 返り値の型が Promise<boolean> の関数か */
+function returnsPromiseOfBoolean(fn: ts.ArrowFunction | ts.FunctionExpression): boolean {
+  const type = fn.type;
+  return (
+    !!type &&
+    ts.isTypeReferenceNode(type) &&
+    ts.isIdentifier(type.typeName) &&
+    type.typeName.text === 'Promise' &&
+    type.typeArguments?.length === 1 &&
+    type.typeArguments[0]?.kind === ts.SyntaxKind.BooleanKeyword
+  );
+}
+
+function isLoadErrorSetterCall(statement: ts.Statement | undefined): boolean {
+  return (
+    !!statement &&
+    ts.isExpressionStatement(statement) &&
+    ts.isCallExpression(statement.expression) &&
+    ts.isIdentifier(statement.expression.expression) &&
+    statement.expression.expression.text === LOAD_ERROR_SETTER
+  );
+}
+
+/**
+ * 一覧の読み直しの関数 (`const fetchX = async (): Promise<boolean> => …` か、useCallback で包んだもの) を集め、
+ * 読めなかった (false を返す) 経路がどれも setLoadError を直前に呼んでいるかを数える。
+ * 中に入れ子の関数があれば、その中の return は数えない
+ */
+function reloadFunctionsOf(source: ts.SourceFile): ReloadFunction[] {
+  const found: ReloadFunction[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      let init: ts.Expression | undefined = node.initializer;
+      if (ts.isCallExpression(init) && ts.isIdentifier(init.expression) && init.expression.text === 'useCallback') {
+        init = init.arguments[0];
+      }
+      if (init && (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) && returnsPromiseOfBoolean(init)) {
+        const entry: ReloadFunction = { name: node.name.text, falseReturns: 0, falseReturnsWithoutLoadError: [] };
+        const walk = (inner: ts.Node) => {
+          if (inner !== init && ts.isFunctionLike(inner)) return;
+          if (ts.isReturnStatement(inner) && inner.expression?.kind === ts.SyntaxKind.FalseKeyword) {
+            entry.falseReturns += 1;
+            const parent = inner.parent;
+            const previous = ts.isBlock(parent) ? parent.statements[parent.statements.indexOf(inner) - 1] : undefined;
+            if (!isLoadErrorSetterCall(previous)) {
+              entry.falseReturnsWithoutLoadError.push(source.getLineAndCharacterOfPosition(inner.getStart()).line + 1);
+            }
+          }
+          ts.forEachChild(inner, walk);
+        };
+        walk(init);
+        found.push(entry);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  return found;
+}
+
+const scanned = new Map<
+  string,
+  { methods: string[]; imports: string[]; noResponseCalls: number; reloadFunctions: ReloadFunction[] }
+>();
 for (const file of ORG_SCREEN_ROOTS.flatMap((root) => listSourceFiles(root))) {
   const text = fs.readFileSync(path.join(ROOT, file), 'utf8');
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -153,6 +230,7 @@ for (const file of ORG_SCREEN_ROOTS.flatMap((root) => listSourceFiles(root))) {
       methods,
       imports: importsOf(source),
       noResponseCalls: callCountOf(source, NO_RESPONSE_FUNCTION),
+      reloadFunctions: reloadFunctionsOf(source),
     });
   }
 }
@@ -172,6 +250,19 @@ describe('組織の管理画面の書き込みの通信の表 (#2080 U4 の同�
       const found = scanned.get(file);
       expect(found?.imports).toContain(NO_RESPONSE_MODULE);
       expect(found?.noResponseCalls ?? 0).toBeGreaterThan(0);
+    },
+  );
+
+  it.each(Object.entries(EXPECTED).filter(([, entries]) => entries.some((e) => e.kind === 'reread')))(
+    '%s: 一覧の読み直しの関数は、読めなかった (false を返す) 経路でどれも先に setLoadError を呼ぶ (alert の「再試行」の案内と画面を合わせる。R1 指摘 1 の同じ型)',
+    (file) => {
+      const reloadFunctions = scanned.get(file)?.reloadFunctions ?? [];
+      // 読み直しの関数 (Promise<boolean>) が 1 つも見つからないなら、書き方が変わって見張れていない
+      expect(reloadFunctions.length).toBeGreaterThan(0);
+      for (const fn of reloadFunctions) {
+        expect(fn.falseReturns, `${fn.name} に false を返す経路が無い`).toBeGreaterThan(0);
+        expect(fn.falseReturnsWithoutLoadError, `${fn.name} の setLoadError を呼ばずに false を返す行`).toEqual([]);
+      }
     },
   );
 

@@ -33,8 +33,13 @@ const FAILURE_WORDING = [
   '通信エラーが発生しました',
 ];
 
+/** supabase.auth.getUser の結果 (本物は通信の失敗を投げずに { data: { user: null }, error } で返す) */
+type GetUserResult = { data: { user: { id: string } | null }; error: unknown };
+
 const supabaseState = vi.hoisted(() => ({
   profile: { data: null, error: null } as { data: unknown; error: unknown },
+  /** getUser が順に返す結果。空なら自分 (USER_ID) を返す */
+  getUserResults: [] as GetUserResult[],
 }));
 
 vi.mock('next/navigation', () => ({
@@ -81,7 +86,10 @@ vi.mock('@/lib/supabase/client', () => {
     single: () => Promise.resolve(supabaseState.profile),
   };
   const client = {
-    auth: { getUser: () => Promise.resolve({ data: { user: { id: USER_ID } }, error: null }) },
+    auth: {
+      getUser: () =>
+        Promise.resolve(supabaseState.getUserResults.shift() ?? { data: { user: { id: USER_ID } }, error: null }),
+    },
     from: () => query,
   };
   return { createClient: () => client };
@@ -194,6 +202,7 @@ beforeEach(() => {
     throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
   });
   supabaseState.profile = { data: null, error: null };
+  supabaseState.getUserResults = [];
   unhandled = [];
   process.on('unhandledRejection', onUnhandled);
 });
@@ -604,5 +613,68 @@ describe('#2080 U4 組織のメンバー: 除名の通信が切れたときの�
     expect(byTestId('member-load-error')).not.toBeNull();
     expect(findButton('再試行')).toBeDefined();
     expect(unhandled).toEqual([]);
+  });
+
+  /**
+   * オフラインのとき、読み直しの最初の supabase.auth.getUser は投げずに { data: { user: null }, error } を返す
+   * (@supabase/auth-js は通信の失敗を AuthRetryableFetchError にし、_getUser の catch が投げずに返す)。
+   * 直す前は、この経路で fetchData が「読み込めませんでした」を出さずに false を返し、alert は「「再試行」で読み込み直して」と言うのに、
+   * 画面には「再試行」が無く、除名の前の一覧が今の状態のまま残っていた (R1 指摘 1)
+   */
+  const AUTH_NETWORK_FAILURE: GetUserResult = {
+    data: { user: null },
+    error: Object.assign(new Error('Failed to fetch'), { name: 'AuthRetryableFetchError', status: 0, __isAuthError: true }),
+  };
+
+  it.each<[string, GetUserResult]>([
+    ['自分を確かめる通信も失敗した (getUser が error を返す)', AUTH_NETWORK_FAILURE],
+    ['自分を確かめられなかった (getUser が user なし・error なしで返す)', { data: { user: null }, error: null }],
+  ])(
+    '除名の通信が切れ、読み直しで%s ときも、alert の「再試行」の案内と画面の「読み込めませんでした」「再試行」が合う',
+    async (_case, getUserResult) => {
+      mockServer(false);
+      await renderElement(createElement(MembersPage));
+      expect(text()).toContain('Aさん');
+      // 開いたときの getUser は済んでいる。次の getUser (除名のあとの読み直し) から返す
+      supabaseState.getUserResults = [getUserResult];
+      let loadErrorWhenAlerted: string | null = null;
+      alertSpy.mockImplementation(() => {
+        loadErrorWhenAlerted = byTestId('member-load-error');
+      });
+
+      await click(removeButtonOfA(), 'Aさんの「除名」ボタン');
+
+      expect(callsOf('POST', REMOVE_PATH)).toHaveLength(1);
+      expect(onlyAlert()).toBe(noResponse('除名', RELOAD_FAILED_GUIDE));
+      // alert を出した時点で、画面はもう「読み込めませんでした」を出している (案内と画面が食い違わない)
+      expect(loadErrorWhenAlerted).toContain('メンバーの一覧を読み込めませんでした');
+      expect(byTestId('member-load-error')).toContain('メンバーの一覧を読み込めませんでした');
+      expect(findButton('再試行')).toBeDefined();
+      // 除名の前の一覧 (除名が済んでいたかもしれない A さん) を今の状態として残さない・人数も出さない
+      expect(text()).not.toContain('Aさん');
+      expect(text()).not.toContain('組織メンバー (');
+      // 一覧の API は読みに行かない (自分を確かめられていないので)
+      expect(callsOf('GET', MEMBERS_PATH)).toHaveLength(1);
+      expect(unhandled).toEqual([]);
+
+      // 「再試行」で読み直すと、済んでいた除名が写った一覧が出る
+      await click(findButton('再試行'), '「再試行」ボタン');
+      expect(byTestId('member-load-error')).toBeNull();
+      expect(text()).not.toContain('Aさん');
+      expect(text()).toContain('組織メンバー (2 名)');
+    },
+  );
+
+  it('開いたときに自分を確かめられなかったら、「メンバーがいません」と出さずに「読み込めませんでした」と「再試行」を出す', async () => {
+    mockServer(false);
+    supabaseState.getUserResults = [AUTH_NETWORK_FAILURE];
+
+    await renderElement(createElement(MembersPage));
+
+    expect(byTestId('member-load-error')).toContain('メンバーの一覧を読み込めませんでした');
+    expect(findButton('再試行')).toBeDefined();
+    expect(text()).not.toContain('メンバーがいません');
+    expect(text()).not.toContain('組織メンバー (0 名)');
+    expect(callsOf('GET', MEMBERS_PATH)).toHaveLength(0);
   });
 });
