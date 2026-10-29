@@ -8,7 +8,8 @@
  *     同じ形の家族の代表者の譲渡の画面 (/family/representative-transfer) も同じ
  *   - R5: 組織のメンバーの画面で、除名の通信が失敗 (reject) したとき一覧を読み直さなかった。
  *     サーバーが除名を済ませてから応答が切れた場合でも、除名したメンバーが一覧に残っていた。
- *     直したあとは、通信エラーの文を出したうえで一覧を読み直す (読み直しが失敗したら、一覧の「読み込めませんでした」に任せる)
+ *     直したあとは、通信エラーの文を出したうえで一覧を読み直す (読み直しが失敗したら、一覧の「読み込めませんでした」に任せる)。
+ *     文は #2080 U4 で「除名の応答を受け取れませんでした（通信エラー）」+ 読み直しの結果に合わせた案内に変えた (除名失敗とは言わない)
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
@@ -28,7 +29,10 @@ const FAMILY_MEMBER_B_ID = '99999999-9999-4999-8999-999999999999';
 const OWNER_TRANSFER_EMPTY = '譲渡可能なメンバーがいません。先にメンバーを招待してください。';
 const OWNER_TRANSFER_LOAD_ERROR = '譲渡の候補を読み込めませんでした。しばらくしてから、もう一度お試しください。';
 const MEMBERS_LOAD_ERROR = 'メンバーの一覧を読み込めませんでした。しばらくしてから、もう一度お試しください。';
-const NETWORK_FAILURE_REASON = '通信エラーが発生しました。通信状況を確認して、もう一度お試しください';
+/** 除名の通信が失敗したときに出す文 (#2080 U4。除名できなかったとは言わず、読み直しの結果で後半を出し分ける) */
+const REMOVE_NO_RESPONSE = '除名の応答を受け取れませんでした（通信エラー）';
+const REMOVE_NO_RESPONSE_RELOADED = `${REMOVE_NO_RESPONSE}。一覧を読み込み直したので、今の状態を確かめてから、必要ならもう一度操作してください`;
+const REMOVE_NO_RESPONSE_RELOAD_FAILED = `${REMOVE_NO_RESPONSE}。一覧を読み込めませんでした。「再試行」で読み込み直してから、もう一度操作してください`;
 const FAMILY_TRANSFER_EMPTY = '代表者を引き継げるメンバーがいません。';
 const FAMILY_TRANSFER_LOAD_ERROR = '代表者の譲渡の候補を読み込めませんでした。しばらくしてから、もう一度お試しください。';
 const FAMILY_REPRESENTATIVE_ONLY = 'この操作は代表者のみが行えます';
@@ -399,7 +403,7 @@ describe('#2064 R5 組織のメンバー: 除名の通信が失敗 (reject) し�
 
     expect(removeCalls()).toHaveLength(1);
     expect(alertSpy).toHaveBeenCalledTimes(1);
-    expect(alertSpy).toHaveBeenCalledWith(`除名失敗: ${NETWORK_FAILURE_REASON}`);
+    expect(alertSpy).toHaveBeenCalledWith(REMOVE_NO_RESPONSE_RELOADED);
     expect(supabaseState.orgMembersQueryCount).toBe(2);
     expect(text()).not.toContain('Aさん');
     expect(text()).toContain('Bさん');
@@ -423,7 +427,7 @@ describe('#2064 R5 組織のメンバー: 除名の通信が失敗 (reject) し�
 
     await click(findButton('除名'), 'Aさんの「除名」ボタン');
 
-    expect(alertSpy).toHaveBeenCalledWith(`除名失敗: ${NETWORK_FAILURE_REASON}`);
+    expect(alertSpy).toHaveBeenCalledWith(REMOVE_NO_RESPONSE_RELOAD_FAILED);
     expect(supabaseState.orgMembersQueryCount).toBe(2);
     const box = container.querySelector('[data-testid="member-load-error"]');
     expect(box?.textContent).toContain(MEMBERS_LOAD_ERROR);

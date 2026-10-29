@@ -7,6 +7,7 @@ import {
   operationFailureMessage,
   operationNetworkFailureMessage,
 } from "@/lib/admin/api-error-message";
+import { ORG_WRITE_OPERATION, orgWriteNoResponseMessage } from "@/lib/org-write-no-response";
 
 interface Department {
   id: string;
@@ -18,7 +19,10 @@ interface Department {
   createdAt: string;
 }
 
-/** 部署の追加・更新・削除が失敗したときの文の頭 (後ろに理由を添える) */
+/**
+ * 部署の追加・更新・削除が失敗した (応答が届いたうえで断られた) ときの文の頭 (後ろに理由を添える)。
+ * 通信が切れたときは使わない (読み直した一覧で操作が済んでいることもあるため。#2080 U4)
+ */
 const CREATE_FAILURE_SUMMARY = "部署を追加できませんでした";
 const UPDATE_FAILURE_SUMMARY = "部署を更新できませんでした";
 const DELETE_FAILURE_SUMMARY = "部署を削除できませんでした";
@@ -57,20 +61,23 @@ export default function OrgDepartmentsPage() {
   const writeInFlightRef = useRef(false);
   const isWriting = submitting || deletingId !== null;
 
-  const fetchDepartments = useCallback(async () => {
+  // 一覧を読めたら true (書き込みの通信が切れたあとの文で、読み直せたかどうかの案内を出し分けるために返す。#2080 U4)
+  const fetchDepartments = useCallback(async (): Promise<boolean> => {
     try {
       const res = await fetch("/api/org/departments");
       if (!res.ok) {
         const body: unknown = await res.json().catch(() => null);
         setLoadError(operationFailureMessage(LOAD_FAILURE_SUMMARY, res.status, body));
-        return;
+        return false;
       }
       const data = await res.json();
       setDepartments(data.departments);
       setLoadError(null);
+      return true;
     } catch (error) {
       console.error("Failed to fetch departments:", error);
       setLoadError(operationNetworkFailureMessage(LOAD_FAILURE_SUMMARY));
+      return false;
     } finally {
       setLoading(false);
     }
@@ -86,6 +93,7 @@ export default function OrgDepartmentsPage() {
     if (!formName.trim() || writeInFlightRef.current) return;
 
     const summary = editingDept ? UPDATE_FAILURE_SUMMARY : CREATE_FAILURE_SUMMARY;
+    const operation = editingDept ? ORG_WRITE_OPERATION.departmentUpdate : ORG_WRITE_OPERATION.departmentCreate;
     writeInFlightRef.current = true;
     setSubmitting(true);
     setErrorMessage(null);
@@ -113,12 +121,13 @@ export default function OrgDepartmentsPage() {
       await fetchDepartments();
     } catch (error) {
       console.error("Failed to save department:", error);
-      setErrorMessage(`${summary}（通信エラー）`);
       // サーバーが追加・更新を済ませてから応答が切れたこともあるので、一覧を読み直して今の状態を見せる (#2064 R5 と同じ型。
       // 読み直さないと、追加できていた部署が一覧に出ず、もう一度送って同じ部署を重ねて作りうる)。フォームと入力した名前は残す。
       // 読み直しが失敗したときは fetchDepartments が一覧の「読み込めませんでした」を出す。
       // 成功のときの読み直しと同じく、読み直しの応答を待つあいだも書き込みの待ち (writeInFlightRef) を戻さない
-      await fetchDepartments();
+      const reloaded = await fetchDepartments();
+      // 文は「追加・更新できませんでした」と言わない (読み直した一覧で済んでいることもあるため。#2080 U4)。読み直しの結果で案内を出し分ける
+      setErrorMessage(orgWriteNoResponseMessage(operation, reloaded ? "reloaded" : "reload_failed"));
     } finally {
       writeInFlightRef.current = false;
       setSubmitting(false);
@@ -145,12 +154,15 @@ export default function OrgDepartmentsPage() {
       await fetchDepartments();
     } catch (error) {
       console.error("Failed to delete department:", error);
-      setErrorMessage(`${DELETE_FAILURE_SUMMARY}（通信エラー）`);
       // サーバーが削除を済ませてから応答が切れたこともあるので、一覧を読み直す (#2064 R5 と同じ型。読み直さないと、
       // 削除した部署が一覧に残り、もう一度削除を押すと 404 で「部署を削除できませんでした」が出ていた)。
       // 読み直しが失敗したときは fetchDepartments が一覧の「読み込めませんでした」を出す。
       // 成功のときの読み直しと同じく、読み直しの応答を待つあいだも書き込みの待ち (writeInFlightRef) を戻さない
-      await fetchDepartments();
+      const reloaded = await fetchDepartments();
+      // 文は「削除できませんでした」と言わない (読み直した一覧で削除が済んでいることもあるため。#2080 U4)
+      setErrorMessage(
+        orgWriteNoResponseMessage(ORG_WRITE_OPERATION.departmentDelete, reloaded ? "reloaded" : "reload_failed"),
+      );
     } finally {
       writeInFlightRef.current = false;
       setDeletingId(null);

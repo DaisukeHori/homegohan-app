@@ -20,8 +20,11 @@ import { orgMemberListKeyOf, orgMemberListResponse } from './helpers/org-member-
 const USER_ID = '33333333-3333-4333-8333-333333333333';
 const MEMBER_A_ID = '55555555-5555-4555-8555-555555555555';
 
-/** 除名・脱退の通信が失敗したときに出す理由 (画面の文と同じもの) */
+/** 脱退の通信が失敗したときに出す理由 (画面の文と同じもの) */
 const NETWORK_FAILURE_REASON = '通信エラーが発生しました。通信状況を確認して、もう一度お試しください';
+/** 除名の通信が失敗し、一覧を読み直せたときに出す文 (#2080 U4。除名できなかったとは言わない) */
+const REMOVE_NO_RESPONSE_RELOADED =
+  '除名の応答を受け取れませんでした（通信エラー）。一覧を読み込み直したので、今の状態を確かめてから、必要ならもう一度操作してください';
 
 const supabaseState = vi.hoisted(() => ({
   /** メンバーの画面の自分のプロフィールの Supabase の問い合わせの結果 (テストごとに差し替える) */
@@ -428,7 +431,7 @@ describe('#2059 Q2 組織のメンバー: 除名・脱退の通信が失敗し�
     ];
   }
 
-  it('除名の通信が失敗 (fetch が reject) したら「除名失敗」と通信エラーの文を出し、ボタンを戻す', async () => {
+  it('除名の通信が失敗 (fetch が reject) したら、応答を受け取れなかった文を出し、ボタンを戻す (#2080 U4: 「除名失敗」とは言わない)', async () => {
     mockFetch(() => Promise.reject(new TypeError('Failed to fetch')));
     supabaseState.profile = { data: { org_role: 'owner', organization_id: 'org-1' }, error: null };
     supabaseState.members = { data: membersOf('owner'), error: null };
@@ -438,7 +441,7 @@ describe('#2059 Q2 組織のメンバー: 除名・脱退の通信が失敗し�
 
     expect(callsOf('POST', `/api/org/members/${MEMBER_A_ID}/remove`)).toHaveLength(1);
     expect(alertSpy).toHaveBeenCalledTimes(1);
-    expect(alertSpy).toHaveBeenCalledWith(`除名失敗: ${NETWORK_FAILURE_REASON}`);
+    expect(alertSpy).toHaveBeenCalledWith(REMOVE_NO_RESPONSE_RELOADED);
     // 除名できたかどうかは分からないので一覧を読み直す (#2064 R5)。サーバーの一覧に Aさんが残っているので、Aさんの「除名」はもう一度押せる
     expect(supabaseState.membersQueryCount).toBe(2);
     expect(findButton('除名')!.disabled).toBe(false);
@@ -471,6 +474,7 @@ describe('#2059 Q2 組織のメンバー: 除名・脱退の通信が失敗し�
     const message = String(alertSpy.mock.calls[0][0]);
     expect(message.startsWith('除名失敗: ')).toBe(true);
     expect(message).not.toContain(NETWORK_FAILURE_REASON);
+    expect(message).not.toContain('応答を受け取れませんでした');
   });
 });
 
