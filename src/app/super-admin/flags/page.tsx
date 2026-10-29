@@ -1,7 +1,21 @@
 "use client";
 
-import { useState, useEffect } from "react";
+/**
+ * /super-admin/flags — 機能フラグの一覧
+ *
+ * 切り替え・削除の通信そのものが失敗した (fetch が reject した) ときは、サーバーが変更を済ませてから応答が切れたこともあるので、
+ * 一覧を読み直して今の値を見せ、「「<フラグ>」の切り替え (削除) の応答を受け取れませんでした」の文を一覧の上に出す
+ * (alert にしない。#2073)。読み直さないと、ON にできていても OFF のまま・消せていても行が残ったまま見える。
+ * そのあとの読み直しが失敗したら「再試行」を出し、読み直せるまで切り替えと削除を止める (一覧の値が古いかもしれないため)。
+ */
+
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
+import {
+  NO_RESPONSE_LIST_RELOADED_GUIDE,
+  NO_RESPONSE_LIST_RELOAD_FAILED_GUIDE,
+  statusChangeNoResponseMessage,
+} from "@/lib/super-admin/status-change-no-response";
 
 interface FeatureFlag {
   key: string;
@@ -14,11 +28,49 @@ interface FeatureFlag {
   updated_at: string;
 }
 
+/** 書き込みの操作の名前 (通信が reject されたときの文に使う。#2073) */
+type FlagWriteOperation = "切り替え" | "削除";
+
+/**
+ * 書き込みの通信が reject されたあとの一覧の読み直しについての文 (#2073)。
+ * reloaded は一覧を読み直せたか (false なら「再試行」を出し、切り替えと削除を止める)
+ */
+interface NoResponseNotice {
+  key: string;
+  operation: FlagWriteOperation;
+  reloaded: boolean;
+}
+
+function noResponseNoticeText(notice: NoResponseNotice): string {
+  return statusChangeNoResponseMessage(
+    `「${notice.key}」の${notice.operation}`,
+    notice.reloaded ? NO_RESPONSE_LIST_RELOADED_GUIDE : NO_RESPONSE_LIST_RELOAD_FAILED_GUIDE,
+  );
+}
+
 export default function FlagsPage() {
   const [flags, setFlags] = useState<FeatureFlag[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toggling, setToggling] = useState<string | null>(null);
+  // 削除の応答を待っているフラグの key。待つあいだは削除のボタンを止める
+  // (二度押しで 2 本目の DELETE を送ると、削除できているのに断られて失敗の文が出るため。#2050)
+  const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  // 切り替えか削除のどちらかの書き込み (切り替えはそのあとの一覧の読み直しまで) の応答を待っているか (10/26 の整合ゲート 1026e。#2050)。
+  // 切り替えのあとの読み直しは一覧を丸ごと差し替えるので、ほかの切り替え・削除と重ねると、応答が送った順と逆に届いたとき、
+  // 後に届いた古い一覧 (例: 後から切り替えたフラグが前の値の一覧・消したフラグがまだある一覧) で表示が上書きされる
+  // (#2053 のクーポン・機能パッケージと同じ型)。待つあいだはすべての切り替えと削除のボタンを止め、押されても送らない。
+  // ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
+  const writeInFlightRef = useRef(false);
+  // 書き込みの通信が reject されたあとの一覧の読み直しについての文 (#2073)
+  const [noResponseNotice, setNoResponseNotice] = useState<NoResponseNotice | null>(null);
+  // 通信の reject のあとの読み直しが失敗し、まだ読み直せていないか (#2073)。そのあいだは切り替えと削除を止める。
+  // ref は描画を待たずに handler で読むための写し
+  const listStaleRef = useRef(false);
+  // 「再試行」の読み直しを待っているか
+  const [isReloading, setIsReloading] = useState(false);
+  const isWriting = toggling !== null || deletingKey !== null || isReloading;
+  const listStale = noResponseNotice !== null && !noResponseNotice.reloaded;
 
   const fetchFlags = async () => {
     try {
@@ -40,44 +92,97 @@ export default function FlagsPage() {
     fetchFlags();
   }, []);
 
-  // 切り替えのあとに一覧を読み直して、対象ユーザー数 (active_user_count) を新しい値にする (#1148)。
-  // 読み直せなくても、切り替えそのものは済んでいるので、画面は手元の値のまま (エラーにしない)
-  const reloadFlagsQuietly = async () => {
+  /**
+   * 一覧を読み直す。読めたら一覧を今の値にして true を返す。読めなければ一覧は手元の値のまま false を返す
+   * (読み直しの失敗で画面ごとエラーにしない)。
+   * 使うところ: 切り替えのあと (対象ユーザー数 active_user_count を新しい値にする。#1148。読み直せなくても切り替えそのものは
+   * 済んでいるので、結果は使わない) と、書き込みの通信が reject されたあと (#2073)
+   */
+  const reloadFlags = async (): Promise<boolean> => {
     try {
       const res = await fetch("/api/super-admin/flags");
-      if (!res.ok) return;
-      const { data } = await res.json();
-      if (Array.isArray(data)) setFlags(data);
+      if (!res.ok) return false;
+      const body: unknown = await res.json().catch(() => null);
+      const data = (body as { data?: unknown } | null)?.data;
+      if (!Array.isArray(data)) return false;
+      setFlags(data as FeatureFlag[]);
+      return true;
     } catch {
-      // 手元の値のまま
+      return false;
+    }
+  };
+
+  /** 書き込みの通信が reject されたあとの読み直しと文 (#2073) */
+  const reloadAfterNoResponse = async (key: string, operation: FlagWriteOperation) => {
+    const reloaded = await reloadFlags();
+    listStaleRef.current = !reloaded;
+    setNoResponseNotice({ key, operation, reloaded });
+  };
+
+  /** 「再試行」: 通信の reject のあとの失敗した読み直しをやり直す (#2073) */
+  const retryReload = async () => {
+    if (writeInFlightRef.current || !noResponseNotice) return;
+    writeInFlightRef.current = true;
+    setIsReloading(true);
+    try {
+      await reloadAfterNoResponse(noResponseNotice.key, noResponseNotice.operation);
+    } finally {
+      writeInFlightRef.current = false;
+      setIsReloading(false);
     }
   };
 
   const handleToggle = async (key: string, currentEnabled: boolean) => {
+    // 書き込みを待つあいだ (#2050) と、通信の reject のあとの読み直しが失敗しているあいだ (#2073) は送らない
+    if (writeInFlightRef.current || listStaleRef.current) return;
+    writeInFlightRef.current = true;
     setToggling(key);
+    setNoResponseNotice(null);
     try {
-      const res = await fetch(`/api/super-admin/flags/${key}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: !currentEnabled }),
-      });
+      let res: Response;
+      try {
+        res = await fetch(`/api/super-admin/flags/${key}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: !currentEnabled }),
+        });
+      } catch {
+        // 応答を受け取れなかった (オフライン・接続が切れたなど)。切り替えが済んだかは分からないので、一覧を読み直して今の値を見せる (#2073)
+        await reloadAfterNoResponse(key, "切り替え");
+        return;
+      }
       if (!res.ok) {
         const body = await res.json();
         throw new Error(body.error?.message ?? `HTTP ${res.status}`);
       }
       setFlags((prev) => prev.map((f) => f.key === key ? { ...f, enabled: !currentEnabled } : f));
-      void reloadFlagsQuietly();
+      // 読み直しの応答まで待ってからボタンを戻す (待たずに次の書き込みを送ると、この読み直しの古い一覧で上書きされうるため)
+      await reloadFlags();
     } catch (err) {
       alert(err instanceof Error ? err.message : "更新に失敗しました");
     } finally {
+      writeInFlightRef.current = false;
       setToggling(null);
     }
   };
 
   const handleDelete = async (key: string) => {
+    // 切り替え (とその読み直し) の応答を待つあいだも送らない (writeInFlightRef)。
+    // 通信の reject のあとの読み直しが失敗しているあいだも送らない (#2073)
+    if (writeInFlightRef.current || listStaleRef.current) return;
     if (!confirm(`フラグ "${key}" を削除しますか？`)) return;
+    writeInFlightRef.current = true;
+    setDeletingKey(key);
+    setNoResponseNotice(null);
     try {
-      const res = await fetch(`/api/super-admin/flags/${key}`, { method: "DELETE" });
+      let res: Response;
+      try {
+        res = await fetch(`/api/super-admin/flags/${key}`, { method: "DELETE" });
+      } catch {
+        // 応答を受け取れなかった。削除が済んだかは分からないので、一覧を読み直して今の一覧を見せる (#2073)
+        await reloadAfterNoResponse(key, "削除");
+        return;
+      }
       if (!res.ok) {
         const body = await res.json();
         throw new Error(body.error?.message ?? `HTTP ${res.status}`);
@@ -85,6 +190,9 @@ export default function FlagsPage() {
       setFlags((prev) => prev.filter((f) => f.key !== key));
     } catch (err) {
       alert(err instanceof Error ? err.message : "削除に失敗しました");
+    } finally {
+      writeInFlightRef.current = false;
+      setDeletingKey(null);
     }
   };
 
@@ -120,6 +228,24 @@ export default function FlagsPage() {
           + 新規フラグ
         </Link>
       </div>
+
+      {noResponseNotice && (
+        <div className="mb-6 flex items-start justify-between gap-4 bg-amber-900/40 border border-amber-500 rounded-xl p-4 text-amber-200 text-sm">
+          <p role="alert" data-testid="flags-reload-notice">
+            {noResponseNoticeText(noResponseNotice)}
+          </p>
+          {!noResponseNotice.reloaded && (
+            <button
+              type="button"
+              onClick={() => void retryReload()}
+              disabled={isWriting}
+              className="shrink-0 bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
+            >
+              {isReloading ? "読み込み中..." : "再試行"}
+            </button>
+          )}
+        </div>
+      )}
 
       {flags.length === 0 ? (
         <div className="bg-slate-800 rounded-xl p-12 text-center text-slate-400">
@@ -163,10 +289,10 @@ export default function FlagsPage() {
                   <td className="px-6 py-4">
                     <button
                       onClick={() => handleToggle(flag.key, flag.enabled)}
-                      disabled={toggling === flag.key}
+                      disabled={isWriting || listStale}
                       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
                         flag.enabled ? "bg-green-500" : "bg-slate-600"
-                      } ${toggling === flag.key ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                      } ${isWriting || listStale ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
                     >
                       <span
                         className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
@@ -193,7 +319,8 @@ export default function FlagsPage() {
                   <td className="px-6 py-4">
                     <button
                       onClick={() => handleDelete(flag.key)}
-                      className="text-red-400 hover:text-red-300 text-sm transition-colors"
+                      disabled={isWriting || listStale}
+                      className="text-red-400 hover:text-red-300 text-sm transition-colors disabled:opacity-50"
                     >
                       削除
                     </button>

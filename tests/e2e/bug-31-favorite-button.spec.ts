@@ -8,6 +8,12 @@
  *   3. ページリロード後も状態が保持されること (API persist 確認)
  */
 import { test, expect } from "./fixtures/fresh-user";
+/**
+ * ♥ の取得 (GET /api/favorites/status) と押下 (POST / DELETE) の応答で ♥ の disabled が解けるまでの待ちの上限 (#2011)。
+ * モーダルを開くたびに status を引き直し、取得中と押下中は ♥ が disabled になる。
+ * 1 本目の今の待ちと multi-context-parallel-ops.spec.ts の B5-5 の待ちと同じ値
+ */
+const FAVORITE_REQUEST_SETTLE_TIMEOUT_MS = 10_000;
 
 test.describe("recipe modal favorite button (Bug-31)", () => {
   /**
@@ -41,7 +47,7 @@ test.describe("recipe modal favorite button (Bug-31)", () => {
 
     // モーダルオープン直後は API でお気に入り状態を取得中のため disabled になる場合がある
     // disabled が解除されるまで待つ
-    await expect(favBtn).not.toBeDisabled({ timeout: 10_000 });
+    await expect(favBtn).not.toBeDisabled({ timeout: FAVORITE_REQUEST_SETTLE_TIMEOUT_MS });
 
     // 既にお気に入り登録済みの場合は一度解除してから再登録する
     const initialPressed = await favBtn.getAttribute("aria-pressed");
@@ -97,12 +103,9 @@ test.describe("recipe modal favorite button (Bug-31)", () => {
     const favBtn = tourPendingUser.locator('[data-testid="favorite-button"]');
     await expect(favBtn).toBeVisible({ timeout: 5_000 });
 
-    // まず disabled でないことを確認 (disabled なら API未完了でスキップ)
-    const isDisabled = await favBtn.isDisabled().catch(() => true);
-    if (isDisabled) {
-      test.skip(true, 'favorite ボタンが disabled — API 応答待ち or 未サポート状態');
-      return;
-    }
+    // モーダルを開くたびに ♥ の状態 (GET /api/favorites/status) を取り直し、取得中は disabled になる (#2011)。
+    // disabled のまま読んで skip すると、再読込後の保持を確かめずに緑になるので、1 本目と同じく解除を待つ
+    await expect(favBtn).not.toBeDisabled({ timeout: FAVORITE_REQUEST_SETTLE_TIMEOUT_MS });
 
     // まず未選択であることを確認
     const initialState = await favBtn.getAttribute("aria-pressed");
@@ -115,6 +118,8 @@ test.describe("recipe modal favorite button (Bug-31)", () => {
     // お気に入りに追加
     await favBtn.click();
     await expect(favBtn).toHaveAttribute("aria-pressed", "true");
+    // aria-pressed は押した時点で塗る (楽観的更新)。押下中は disabled なので、解除 = POST の応答 (保存が DB に入った) を待ってから閉じる
+    await expect(favBtn).not.toBeDisabled({ timeout: FAVORITE_REQUEST_SETTLE_TIMEOUT_MS });
 
     // モーダルを閉じる: recipe モーダルの閉じるボタンはアイコンのみ (テキスト "閉じる" なし)
     // getByRole('button', { name: /閉じる/ }) は別ボタンにヒットしてページ遷移を起こす (#240)

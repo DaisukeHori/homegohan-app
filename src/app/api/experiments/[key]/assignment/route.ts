@@ -9,8 +9,8 @@
  * 権限: 認証済みユーザーであれば誰でも呼び出し可能 (自分自身の割当のみ取得)。
  *
  * #1041 round-2 (B) 修正: `experiments` は `experiments_select_super_admin`
- * (FOR ALL, super_admin のみ) の RLS で守られており、`experiment_assignments`
- * は SELECT/DELETE が super_admin のみで INSERT ポリシーが無い (service_role 前提)。
+ * (super_admin のみ。#1917 の続きで FOR SELECT だけ) の RLS で守られており、`experiment_assignments`
+ * は SELECT が super_admin のみで書き込みのポリシーが無い (service_role 前提。#1917 の続きで DELETE も消した)。
  * requireUser() (一般ユーザー) + user-scoped client のままでは実験 SELECT が
  * 常に空になり 404、assignment INSERT も拒否され、running にしても runtime で
  * 完全に無効なままだった。requireUser() 通過後に service-role

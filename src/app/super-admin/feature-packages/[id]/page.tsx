@@ -2,11 +2,25 @@
 
 /**
  * /super-admin/feature-packages/[id] — 機能パッケージ詳細・編集
+ *
+ * 廃止の通信そのものが失敗した (fetch が reject した) ときは、サーバーが廃止を済ませてから応答が切れたこともあるので、
+ * 機能パッケージを読み直して今の状態とボタンを見せ、「廃止の応答を受け取れませんでした」の文を出す (#2073)。
+ * 読み直さないと、古い「廃止する」をもう一度押して 409 (遷移表に無い変更) になり、自分の操作なのに
+ * 「別の操作で機能パッケージの状態が先に変わっていました」と出る。
+ * 廃止のあとの読み直し (409 のあと・通信の reject のあと) が失敗したら、文と「再試行」を出し、読み直せるまで「廃止する」を止める
+ * (クーポンの詳細・プランの詳細と同じ。#2064・#2073)
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { isStatusChangeConflict, operationFailureMessage } from '@/lib/admin/api-error-message';
+import { FEATURE_PACKAGE_INVALID_TRANSITION_ERROR_CODE } from '@/lib/super-admin/feature-packages-schemas';
+import {
+  NO_RESPONSE_STATE_RELOADED_GUIDE,
+  NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
+  statusChangeNoResponseMessage,
+} from '@/lib/super-admin/status-change-no-response';
 
 type FeaturePackage = {
   id: string;
@@ -19,6 +33,98 @@ type FeaturePackage = {
   created_at: string;
   updated_at: string;
 };
+
+/** 機能フラグの入力欄 (改行かカンマ区切り) を、フラグの並びにする */
+function parseFeatureFlags(raw: string): string[] {
+  return raw.split(/[\n,]/).map((f) => f.trim()).filter(Boolean);
+}
+
+/** 入力欄 (表示名・説明・機能フラグ・表示順) の値。機能フラグは入力欄の文字 (改行かカンマ区切り) のまま */
+type FeaturePackageInputs = { displayName: string; description: string; featureFlagsRaw: string; displayOrder: number };
+
+/** 機能パッケージの行から作る入力欄の値 (機能フラグは 1 行に 1 つ) */
+function featurePackageInputsOf(pkg: FeaturePackage): FeaturePackageInputs {
+  return {
+    displayName: pkg.display_name,
+    description: pkg.description ?? '',
+    featureFlagsRaw: pkg.feature_flags.join('\n'),
+    displayOrder: pkg.display_order,
+  };
+}
+
+/**
+ * 保存に成功したあとの 1 つの入力欄の値 (#1917)。保存を押したときの値 (atSave) から応答を待つあいだに変えていなければ
+ * 保存の応答の行の値 (saved) にし、変えていれば書きかけとして残す (次の保存で送る)
+ */
+function inputAfterSave<T extends string | number>(current: T, atSave: T, saved: T): T {
+  return current === atSave ? saved : current;
+}
+
+/** 保存で送る本文 (PATCH /api/super-admin/feature-packages/{id} の表示名・説明・機能フラグ・表示順) */
+type FeaturePackageSaveBody = {
+  display_name?: string;
+  description?: string | null;
+  feature_flags?: string[];
+  display_order?: number;
+};
+
+/**
+ * 保存で送る本文。最後に読んだ・保存した機能パッケージ (pkg) から変えた欄だけを入れる (#1917)。
+ * 手を付けていない欄を送ると、画面を開いたあとに別の運営が変えたその欄を、開いたときの古い値で上書きしてしまう
+ * (route は送られた項目をそのまま書く)。機能フラグは並びで比べる。説明の空欄は null にする (これまでと同じ)。
+ * 手を付けていない入力欄は、読み込み・保存の成功・廃止の成功・廃止の 409 と通信の reject のあとの読み直しのたびに pkg の値に揃える (handleSave・handleDeprecate・retryReread の applyLatestPackage) ので、ここで pkg と違う欄は運営が変えた欄
+ */
+function changedFeaturePackageFields(
+  inputs: { displayName: string; description: string; flags: string[]; displayOrder: number },
+  pkg: FeaturePackage,
+): FeaturePackageSaveBody {
+  const body: FeaturePackageSaveBody = {};
+  if (inputs.displayName !== pkg.display_name) body.display_name = inputs.displayName;
+  if (inputs.description !== (pkg.description ?? '')) body.description = inputs.description || null;
+  const flagsChanged =
+    inputs.flags.length !== pkg.feature_flags.length || inputs.flags.some((flag, i) => flag !== pkg.feature_flags[i]);
+  if (flagsChanged) body.feature_flags = inputs.flags;
+  if (inputs.displayOrder !== pkg.display_order) body.display_order = inputs.displayOrder;
+  return body;
+}
+
+/** 保存を押したが、どの入力欄も最後に読んだ・保存した値から変えていなかったときの文 (送らない。#1917) */
+const NO_FEATURE_PACKAGE_CHANGES_MESSAGE = '変更した項目がないので、保存していません';
+
+/** 廃止が失敗したときの文の頭 (後ろに理由を添える) */
+const DEPRECATE_FAILURE_SUMMARY = '廃止できませんでした';
+
+/**
+ * 廃止が 409 (遷移表に無い変更・同時の変更) で断られ、機能パッケージを読み直せたときの理由の文 (#2064)。
+ * 画面の status が古かった (別の操作で廃止されていた)。英字の状態の値は出さない
+ */
+const STATUS_CONFLICT_RELOADED_REASON = '別の操作で機能パッケージの状態が先に変わっていました。今の状態を読み込み直しました';
+
+/** 廃止が 409 で断られ、読み直しも失敗したときの理由の文 (「再試行」を出す。#2064・#2073) */
+const STATUS_CONFLICT_RELOAD_FAILED_REASON =
+  '別の操作で機能パッケージの状態が先に変わっていました。今の状態を読み込めませんでした。「再試行」で読み込み直してから、もう一度操作してください';
+
+/** 廃止の通信が reject されたときの文の操作の名前 (#2073) */
+const DEPRECATE_OPERATION_NAME = '廃止';
+
+/**
+ * 廃止のあとに読み直す理由 (#2073)。
+ *   - conflict   : 409 (遷移表に無い変更・同時の変更) で断られた (画面の status が古かった)
+ *   - no-response: 通信が reject された (応答を受け取れず、廃止が済んだか分からない)
+ */
+type DeprecateRereadCause = 'conflict' | 'no-response';
+
+/** 廃止のあとに読み直した (reloaded) か、読み直せなかったかの文 (#2064・#2073) */
+function deprecateRereadMessage(cause: DeprecateRereadCause, reloaded: boolean): string {
+  if (cause === 'conflict') {
+    return `${DEPRECATE_FAILURE_SUMMARY}（${reloaded ? STATUS_CONFLICT_RELOADED_REASON : STATUS_CONFLICT_RELOAD_FAILED_REASON}）`;
+  }
+  // 応答を受け取れなかった: 廃止が済んでいた (自分の操作) ときにも合うよう「できませんでした」「別の操作で」とは言わない
+  return statusChangeNoResponseMessage(
+    DEPRECATE_OPERATION_NAME,
+    reloaded ? NO_RESPONSE_STATE_RELOADED_GUIDE : NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
+  );
+}
 
 export default function FeaturePackageDetailPage() {
   const params = useParams();
@@ -36,6 +142,22 @@ export default function FeaturePackageDetailPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState('');
   const [saveSuccess, setSaveSuccess] = useState(false);
+  // 保存を押したが送らなかったときの文 (変えた欄が無い。#1917)
+  const [saveInfo, setSaveInfo] = useState('');
+  // 廃止の応答を待っているか・失敗したときの文
+  const [isDeprecating, setIsDeprecating] = useState(false);
+  const [deprecateError, setDeprecateError] = useState('');
+  // 保存か廃止のどちらかの応答を待っているか (#2050)。どちらの応答も、その行 (書いたあとの行) をそのまま画面の行にするので、
+  // 2 つを重ねると、応答が送った順と逆に届いたとき、後に届いた古い方の行 (例: 廃止の前の status) が画面に残る。
+  // 待つあいだは両方のボタンを止め、押されても送らない。ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
+  const writeInFlightRef = useRef(false);
+  // 廃止のあとの読み直しが失敗し、まだ読み直せていないときの理由 (#2073)。あるあいだは文と「再試行」を出し、「廃止する」を止める。
+  // ref は描画を待たずに handler で読むための写し
+  const [pendingReread, setPendingReread] = useState<DeprecateRereadCause | null>(null);
+  const pendingRereadRef = useRef<DeprecateRereadCause | null>(null);
+  // 「再試行」の読み直しを待っているか
+  const [isRereading, setIsRereading] = useState(false);
+  const isWriting = isSaving || isDeprecating || isRereading;
 
   const fetchPkg = useCallback(async () => {
     setIsLoading(true);
@@ -46,11 +168,13 @@ export default function FeaturePackageDetailPage() {
         setError(data.error?.message ?? '取得に失敗しました');
         return;
       }
-      setPkg(data.data!);
-      setDisplayName(data.data!.display_name);
-      setDescription(data.data!.description ?? '');
-      setFeatureFlagsRaw(data.data!.feature_flags.join('\n'));
-      setDisplayOrder(data.data!.display_order);
+      const loaded = data.data!;
+      const inputs = featurePackageInputsOf(loaded);
+      setPkg(loaded);
+      setDisplayName(inputs.displayName);
+      setDescription(inputs.description);
+      setFeatureFlagsRaw(inputs.featureFlagsRaw);
+      setDisplayOrder(inputs.displayOrder);
     } catch {
       setError('ネットワークエラー');
     } finally {
@@ -62,52 +186,157 @@ export default function FeaturePackageDetailPage() {
     fetchPkg();
   }, [fetchPkg]);
 
+  /**
+   * 書いたあと・読み直したあとの最新の行 (latest) を画面の行にする。入力欄は、inputsBefore (押したときの最後に読んだ・保存した行の値)
+   * から変えていない欄だけ latest の値に揃え、書きかけは残す (inputAfterSave。#1917)
+   */
+  const applyLatestPackage = (latest: FeaturePackage, inputsBefore: FeaturePackageInputs) => {
+    const latestInputs = featurePackageInputsOf(latest);
+    setPkg(latest);
+    setDisplayName((current) => inputAfterSave(current, inputsBefore.displayName, latestInputs.displayName));
+    setDescription((current) => inputAfterSave(current, inputsBefore.description, latestInputs.description));
+    setFeatureFlagsRaw((current) => inputAfterSave(current, inputsBefore.featureFlagsRaw, latestInputs.featureFlagsRaw));
+    setDisplayOrder((current) => inputAfterSave(current, inputsBefore.displayOrder, latestInputs.displayOrder));
+  };
+
+  /** 廃止のあとの読み直しを待っている理由を記録する (null で外す。#2073) */
+  const markPendingReread = (pending: DeprecateRereadCause | null) => {
+    pendingRereadRef.current = pending;
+    setPendingReread(pending);
+  };
+
+  /** 409 のあと・通信の reject のあとに機能パッケージを読み直す (全体を「読み込み中」にしない)。読めなければ null (#2064・#2073) */
+  const rereadPackage = async (): Promise<FeaturePackage | null> => {
+    try {
+      const res = await fetch(`/api/super-admin/feature-packages/${pkgId}`);
+      if (!res.ok) return null;
+      const data = await res.json() as { data?: FeaturePackage };
+      return data.data ?? null;
+    } catch {
+      return null;
+    }
+  };
+
   const handleSave = async () => {
-    const flags = featureFlagsRaw.split(/[\n,]/).map((f) => f.trim()).filter(Boolean);
+    // 廃止の応答を待つあいだは送らない (#2050。writeInFlightRef)
+    if (!pkg || writeInFlightRef.current) return;
+    setSaveInfo('');
+    const flags = parseFeatureFlags(featureFlagsRaw);
     if (flags.length === 0) {
       setSaveError('機能フラグを少なくとも1つ入力してください');
       return;
     }
-    setIsSaving(true);
     setSaveError('');
     setSaveSuccess(false);
+    // 送るのは、最後に読んだ・保存した値から変えた欄だけ (手を付けていない欄を古い値で上書きしない。#1917)。
+    // 押したときの入力欄の値は写しておく (応答を待つあいだに変えた欄を、保存の成功のあとに見分けるため)
+    const inputsAtSave: FeaturePackageInputs = { displayName, description, featureFlagsRaw, displayOrder };
+    const changes = changedFeaturePackageFields({ displayName, description, flags, displayOrder }, pkg);
+    if (Object.keys(changes).length === 0) {
+      setSaveInfo(NO_FEATURE_PACKAGE_CHANGES_MESSAGE);
+      return;
+    }
+    writeInFlightRef.current = true;
+    setIsSaving(true);
 
     try {
       const res = await fetch(`/api/super-admin/feature-packages/${pkgId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          display_name: displayName,
-          description: description || null,
-          feature_flags: flags,
-          display_order: displayOrder,
-        }),
+        body: JSON.stringify(changes),
       });
       const data = await res.json() as { data?: FeaturePackage; error?: { message: string } };
       if (!res.ok) {
         setSaveError(data.error?.message ?? '保存に失敗しました');
         return;
       }
-      setPkg(data.data!);
+      // 保存の応答の行 (書いたあとの最新の行) を新しい比べる元にし、手を付けていない入力欄もその行の値に揃える (#1917)。
+      // 送らなかった欄には、画面を開いたあとに別の運営が変えた値が入っていることがある。比べる元だけを新しくして入力欄を
+      // 古い値のままにすると、その欄が変えた欄に見え、次の保存 (何も変えずに押しても) で開いたときの古い値を送って、
+      // 別の運営の変更を上書きしてしまう。応答を待つあいだに変えた欄は書きかけとして残す (次の保存で送る)
+      applyLatestPackage(data.data!, inputsAtSave);
       setSaveSuccess(true);
+      // 保存の応答の行は書いたあとの最新の行 (status も今の値) なので、廃止のあとの読み直しの失敗は解ける (#2073)
+      const pending = pendingRereadRef.current;
+      if (pending) {
+        setDeprecateError(deprecateRereadMessage(pending, true));
+        markPendingReread(null);
+      }
     } catch {
       setSaveError('ネットワークエラー');
     } finally {
+      writeInFlightRef.current = false;
       setIsSaving(false);
     }
   };
 
+  /**
+   * 廃止のあとに読み直し、結果に合わせて文を出す (#2064・#2073)。inputsBefore は押したときの最後に読んだ・保存した行の
+   * 入力欄の値 (書きかけを残すため)。読み直せなかったら「再試行」を待つ理由として記録し、「廃止する」を止める
+   */
+  const rereadAfterDeprecate = async (cause: DeprecateRereadCause, inputsBefore: FeaturePackageInputs) => {
+    const latest = await rereadPackage();
+    if (latest) applyLatestPackage(latest, inputsBefore);
+    setDeprecateError(deprecateRereadMessage(cause, latest !== null));
+    markPendingReread(latest ? null : cause);
+  };
+
+  /** 「再試行」: 廃止のあとの失敗した読み直しをやり直す (#2073) */
+  const retryReread = async () => {
+    const pending = pendingRereadRef.current;
+    if (!pkg || !pending || writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
+    setIsRereading(true);
+    try {
+      await rereadAfterDeprecate(pending, featurePackageInputsOf(pkg));
+    } finally {
+      writeInFlightRef.current = false;
+      setIsRereading(false);
+    }
+  };
+
+  /**
+   * 廃止。失敗の応答を黙って捨てず、理由を画面に出す (403 は理由の文 (二段階認証の確認が要る など) だけを通す。operationFailureMessage)。
+   * 成功したら PATCH の応答の行 (書いたあとの最新の行) で表示を新しくする。全体を「読み込み中」にして読み直さない。
+   * 入力欄は保存の経路と同じく、手を付けていない欄だけ応答の行の値に揃え、書きかけは残す (inputAfterSave。#1917)。
+   * 保存の応答を待つあいだは送らない (#2050。writeInFlightRef)。
+   * 409 で、画面の status が古かった (遷移表に無い変更 OP_FEATURE_PACKAGE_INVALID_TRANSITION・同時の変更 CONFLICT_STALE_DATA) ときは、
+   * 機能パッケージを読み直して状態の表示とボタンを今の状態にし、日本語の文を出す (書きかけは残す。#2064)。
+   * 通信が reject されたときも読み直す (サーバーが廃止を済ませてから応答が切れたことがあるため。#2073)。
+   * 読み直しが失敗して、まだ読み直せていないあいだは送らない (#2073。画面の status が古いかもしれない)
+   */
   const handleDeprecate = async () => {
+    if (!pkg || writeInFlightRef.current || pendingRereadRef.current) return;
     if (!confirm('この機能パッケージを廃止しますか？')) return;
+    // 押したときの最後に読んだ・保存した行から作る入力欄の値 (入力欄がこれと同じなら手を付けていない欄)
+    const loadedInputs = featurePackageInputsOf(pkg);
+    setDeprecateError('');
+    writeInFlightRef.current = true;
+    setIsDeprecating(true);
     try {
       const res = await fetch(`/api/super-admin/feature-packages/${pkgId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'deprecated' }),
       });
-      if (res.ok) fetchPkg();
+      if (!res.ok) {
+        const body: unknown = await res.json().catch(() => null);
+        if (isStatusChangeConflict(res.status, body, FEATURE_PACKAGE_INVALID_TRANSITION_ERROR_CODE)) {
+          await rereadAfterDeprecate('conflict', loadedInputs);
+          return;
+        }
+        setDeprecateError(operationFailureMessage(DEPRECATE_FAILURE_SUMMARY, res.status, body));
+        return;
+      }
+      // 応答は { data: 書いたあとの行 } (保存の経路と同じ形。route は .update().select() の行を返す)
+      applyLatestPackage((await res.json() as { data: FeaturePackage }).data, loadedInputs);
     } catch {
-      alert('廃止処理に失敗しました');
+      // 応答を受け取れなかった (通信が reject した: オフライン・接続が切れたなど。成功の応答の本文を読み切れなかったときも)。
+      // 廃止が済んだかは分からないので、読み直して今の状態を見せる (#2073。rereadAfterDeprecate は投げない)
+      await rereadAfterDeprecate('no-response', loadedInputs);
+    } finally {
+      writeInFlightRef.current = false;
+      setIsDeprecating(false);
     }
   };
 
@@ -123,7 +352,7 @@ export default function FeaturePackageDetailPage() {
     );
   }
 
-  const flags = featureFlagsRaw.split(/[\n,]/).map((f) => f.trim()).filter(Boolean);
+  const flags = parseFeatureFlags(featureFlagsRaw);
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -144,12 +373,32 @@ export default function FeaturePackageDetailPage() {
         {pkg.status === 'active' && (
           <button
             onClick={handleDeprecate}
-            className="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg text-xs font-medium hover:bg-red-50 transition-colors"
+            // 応答を待つあいだ・廃止のあとの読み直しが失敗してまだ読み直せていないあいだは止める (#2050・#2073)
+            disabled={isWriting || pendingReread !== null}
+            className="px-3 py-1.5 border border-red-300 text-red-600 rounded-lg text-xs font-medium hover:bg-red-50 transition-colors disabled:opacity-50"
           >
             廃止する
           </button>
         )}
       </div>
+
+      {deprecateError && (
+        <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm flex items-center justify-between gap-4">
+          <p role="alert" data-testid="status-change-error">
+            {deprecateError}
+          </p>
+          {pendingReread && (
+            <button
+              type="button"
+              onClick={() => void retryReread()}
+              disabled={isWriting}
+              className="shrink-0 underline whitespace-nowrap hover:text-red-900 disabled:opacity-50"
+            >
+              {isRereading ? '読み込み中...' : '再試行'}
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-5">
         <div>
@@ -162,7 +411,7 @@ export default function FeaturePackageDetailPage() {
           <input
             type="text"
             value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
+            onChange={(e) => { setDisplayName(e.target.value); setSaveInfo(''); }}
             className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
           />
         </div>
@@ -171,7 +420,7 @@ export default function FeaturePackageDetailPage() {
           <label className="block text-sm font-medium text-slate-700 mb-1">説明</label>
           <textarea
             value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            onChange={(e) => { setDescription(e.target.value); setSaveInfo(''); }}
             rows={2}
             className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
           />
@@ -181,7 +430,7 @@ export default function FeaturePackageDetailPage() {
           <label className="block text-sm font-medium text-slate-700 mb-1">機能フラグ</label>
           <textarea
             value={featureFlagsRaw}
-            onChange={(e) => setFeatureFlagsRaw(e.target.value)}
+            onChange={(e) => { setFeatureFlagsRaw(e.target.value); setSaveInfo(''); }}
             rows={5}
             className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-orange-500"
           />
@@ -199,7 +448,7 @@ export default function FeaturePackageDetailPage() {
           <input
             type="number"
             value={displayOrder}
-            onChange={(e) => setDisplayOrder(Number(e.target.value))}
+            onChange={(e) => { setDisplayOrder(Number(e.target.value)); setSaveInfo(''); }}
             min="0"
             className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
           />
@@ -208,6 +457,14 @@ export default function FeaturePackageDetailPage() {
         {saveError && (
           <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
             {saveError}
+          </div>
+        )}
+        {saveInfo && (
+          <div
+            data-testid="save-info"
+            className="bg-slate-50 border border-slate-200 text-slate-600 px-4 py-3 rounded-lg text-sm"
+          >
+            {saveInfo}
           </div>
         )}
         {saveSuccess && (
@@ -219,7 +476,7 @@ export default function FeaturePackageDetailPage() {
         <div className="flex justify-end pt-2">
           <button
             onClick={handleSave}
-            disabled={isSaving}
+            disabled={isWriting}
             className="px-5 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors disabled:opacity-50"
           >
             {isSaving ? '保存中...' : '保存する'}

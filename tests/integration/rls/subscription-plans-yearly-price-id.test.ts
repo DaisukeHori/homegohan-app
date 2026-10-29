@@ -15,7 +15,9 @@
  *   A. カタログ: 列の型・NULL 許容・既定値、列コメント、RLS ポリシーが期待どおりで、ほかの定義が変わっていない
  *   B. 読み書き: 列を指定しない INSERT では NULL。月額・年額の Price ID を別々に書けて、片方を書いてももう片方は変わらない。
  *      255 文字まで入り、256 文字は拒否される
- *   C. 書き込み権限: super_admin だけが書ける (匿名・一般ユーザー・admin の書き込みは行を変えない)
+ *   C. 書き込み権限: 本人のセッションでは誰も書けない (匿名・一般ユーザー・admin・super_admin の書き込みは行を変えない)。
+ *      書くのは service_role の client (運営の API と、価格の変更の関数)。super_admin の書き込みのポリシー
+ *      subscription_plans_mutate_super_admin と書き込みの権限は 20261025120000 で外した (#1917 の続き)
  *   D. migration を 2 回流しても失敗せず (冪等)、すでに書いた値は消えない
  *
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
@@ -132,7 +134,7 @@ describe('#1102 A. subscription_plans の Stripe Price ID 列 (カタログ)', (
     expect(comments.stripe_yearly_price_id).toContain('stripe_price_id');
   });
 
-  it('RLS は有効のままで、ポリシーは 3 本 (super_admin の全操作 / 運営 (admin・super_admin) の SELECT / 公開・非公開プランの SELECT) から増減していない', async () => {
+  it('RLS は有効のままで、ポリシーは 2 本 (運営 (admin・super_admin) の SELECT / 公開・非公開プランの SELECT。super_admin の全操作は 20261025120000 で消した) から増減していない', async () => {
     const policies = await pgQuery<{ policyname: string; cmd: string }>(`
       SELECT policyname, cmd
       FROM pg_policies
@@ -140,7 +142,6 @@ describe('#1102 A. subscription_plans の Stripe Price ID 列 (カタログ)', (
       ORDER BY policyname
     `);
     expect(policies).toEqual([
-      { policyname: 'subscription_plans_mutate_super_admin', cmd: 'ALL' },
       // #1176 段 E: 運営の枝を select_public から分けた (TO authenticated・判定の関数つき。docs/design/cross/12-operator-mfa.md §11.4・§23 N-33)
       { policyname: 'subscription_plans_select_operator', cmd: 'SELECT' },
       { policyname: 'subscription_plans_select_public', cmd: 'SELECT' },
@@ -284,7 +285,7 @@ describe('#1102 B. 月額・年額の Price ID を別々に書ける', () => {
 // ---------------------------------------------------------------
 // C. 書き込み権限 (列を足しても、書ける人は増えない)
 // ---------------------------------------------------------------
-describe('#1102 C. stripe_yearly_price_id を書けるのは super_admin だけ', () => {
+describe('#1102 C. stripe_yearly_price_id を本人のセッションで書ける人はいない (書くのは service_role だけ。#1917 の続き)', () => {
   let superAdmin: TestUser;
   let admin: TestUser;
   let member: TestUser;
@@ -322,20 +323,14 @@ describe('#1102 C. stripe_yearly_price_id を書けるのは super_admin だけ'
     expect((await readPriceIds(planId)).stripe_yearly_price_id).toBe('price_year_original');
   });
 
-  it('super_admin は、自分のセッションで月額・年額の Price ID を書ける (価格変更 API と同じ経路)', async () => {
+  it('super_admin も、自分のセッションでは月額・年額の Price ID を書けない (42501。価格の変更は API が service_role で関数を呼ぶ)', async () => {
     const res = await asUser(superAdmin.jwt)
       .from('subscription_plans')
       .update({ stripe_price_id: 'price_month_by_sa', stripe_yearly_price_id: 'price_year_by_sa' })
       .eq('id', planId)
       .select('id, stripe_price_id, stripe_yearly_price_id');
-    expect(res.error).toBeNull();
-    expect(res.data).toEqual([
-      { id: planId, stripe_price_id: 'price_month_by_sa', stripe_yearly_price_id: 'price_year_by_sa' },
-    ]);
-    expect(await readPriceIds(planId)).toEqual({
-      stripe_price_id: 'price_month_by_sa',
-      stripe_yearly_price_id: 'price_year_by_sa',
-    });
+    expect(res.error?.code).toBe('42501');
+    expect((await readPriceIds(planId)).stripe_yearly_price_id).toBe('price_year_original');
   });
 });
 

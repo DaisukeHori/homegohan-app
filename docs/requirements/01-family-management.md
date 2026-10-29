@@ -817,7 +817,7 @@ CREATE INDEX idx_family_invites_email ON family_invites(email);
 CREATE INDEX idx_family_invites_pending ON family_invites(family_group_id) WHERE accepted_at IS NULL AND cancelled_at IS NULL;
 ```
 
-**RLS ポリシー** (具体的 SQL):
+**RLS ポリシー** (具体的 SQL): 注: この SQL は初版の下書きで、本番には無い。`family_members.role` の値は `representative` / `adult` / `child` (型 `family_role_enum`) で、`'owner'` / `'admin'` は無い。`family_invites` の今のポリシーは SELECT の `family_invites_select_adult` (家族の大人) だけで、利用者 (anon / authenticated) の INSERT / UPDATE / DELETE / TRUNCATE の権限は外してあり、招待の作成・取り消し・拒否・承諾は SECURITY DEFINER の RPC (`create_family_invite` / `revoke_family_invite` / `reject_family_invite` / `accept_family_invite`) だけが書く (`supabase/migrations/20261022150000_family_invites_rpc_only_writes.sql`)。正は `docs/design/membership/01-data-model.md` §3.5 (RLS policy) と migration (要件の文は当初のまま残す)。
 
 ```sql
 -- anon ロールに対しては RLS を有効化したまま、SELECT は service_role 経由でのみ

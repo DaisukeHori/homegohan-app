@@ -347,6 +347,14 @@ POST /api/operator/membership/family/{id}/dissolve body: { reason }
 
 各 endpoint で `requireRole(['super_admin'])` を最初に check。
 
+RPC が `RAISE EXCEPTION '<コード>'` で返す既知のコードは汎用の 500 にせず、4xx と日本語の固定の文で返す (#1917 の続き。RPC ごとのコードの表は `src/lib/membership/operator-rpc-errors.ts`・強制の譲渡の 2 本は route が個別に写す):
+
+- `OPERATOR_MFA_REQUIRED` → 403 (ゲートが二段階認証で止めたときと同じ code と文。`operatorMfaRequiredNested`)
+- 権限の判定 (`OPERATOR_PERMISSION_REQUIRED`・`NOT_OPERATOR`・`INSUFFICIENT_PERMISSION`) → 403 `FORBIDDEN`「この操作を行う権限がありません」
+- 組織の強制解散の `ORG_ALREADY_DISSOLVED` → 409・`ORG_NOT_FOUND` → 404 (`src/lib/errors/membership-errors.ts` の `ErrorStatusMap` と `MEMBERSHIP_ERROR_MESSAGES`)
+- 家族の強制解散の `FAMILY_ALREADY_DISSOLVED` → 409・`FAMILY_NOT_FOUND` → 404 (同じ表。`supabase/migrations/20261026100000_operator_force_dissolve_family_missing.sql` から RPC が RAISE する。それより前は無い家族・解散済みの家族でも RPC が成功し、route が監査を書いて 200 を返していた)
+- それ以外 → 500 `INTERNAL_ERROR` (RPC の文面は本文に入れない)
+
 ---
 
 ## 8. 通知ロジック

@@ -6,6 +6,45 @@ import { z } from 'zod';
 // 日付は YYYY-MM-DD の実在する日付だけを通す (#1482。正規表現だけでは 2026-02-30 が通り、DB の date 型への変換で失敗する)
 import { CalendarDateSchema } from '@/lib/calendar-date-schema';
 
+/** 実験の状態 (DB の CHECK experiments_status_check と同じ 4 つ) */
+export const EXPERIMENT_STATUSES = ['draft', 'running', 'completed', 'cancelled'] as const;
+export type ExperimentStatus = (typeof EXPERIMENT_STATUSES)[number];
+
+/**
+ * 実験の状態の遷移表 (#2059)。画面のボタンと同じ 3 つだけを許す:
+ *   draft → running (一覧の「開始」・詳細の「実験開始」)・running → completed (「完了」)・running → cancelled (詳細の「中止」)
+ * ここに無い変更 (同じ状態への変更・終わった実験の再開・下書きへの戻しなど) は PATCH が 409 で断る。
+ * DB には遷移を止めるトリガーが無い (CHECK は値の範囲だけ) ので、守りは PATCH の route だけ
+ */
+export const EXPERIMENT_STATUS_TRANSITIONS: Readonly<Record<ExperimentStatus, readonly ExperimentStatus[]>> = {
+  draft: ['running'],
+  running: ['completed', 'cancelled'],
+  completed: [],
+  cancelled: [],
+};
+
+export function isExperimentStatus(value: unknown): value is ExperimentStatus {
+  return typeof value === 'string' && (EXPERIMENT_STATUSES as readonly string[]).includes(value);
+}
+
+/** from (今の状態) から to へ変えてよいか。from が知らない値なら、どこへも変えない */
+export function isAllowedExperimentStatusTransition(from: string, to: ExperimentStatus): boolean {
+  return isExperimentStatus(from) && EXPERIMENT_STATUS_TRANSITIONS[from].includes(to);
+}
+
+/** 遷移表に無い状態の変更を断るときのエラーの code (HTTP は 409) */
+export const EXPERIMENT_INVALID_TRANSITION_ERROR_CODE = 'OP_EXPERIMENT_INVALID_TRANSITION';
+
+/** 遷移表にある遷移を「a → b」の形で並べた文 (断るときの文に添える) */
+const ALLOWED_EXPERIMENT_TRANSITIONS_TEXT = EXPERIMENT_STATUSES.flatMap((from) =>
+  EXPERIMENT_STATUS_TRANSITIONS[from].map((to) => `${from} → ${to}`),
+).join('・');
+
+/** 遷移表に無い状態の変更を断るときの文。変えられる遷移も添える */
+export function experimentStatusTransitionMessage(from: string, to: ExperimentStatus): string {
+  return `実験の状態は ${from} から ${to} へは変えられません (変えられるのは ${ALLOWED_EXPERIMENT_TRANSITIONS_TEXT} だけです)`;
+}
+
 export const ExperimentVariantSchema = z.object({
   key: z.string().min(1).max(50),
   weight: z.number().int().min(0).max(100),
@@ -26,7 +65,7 @@ export const CreateExperimentSchema = z.object({
 );
 
 export const UpdateExperimentSchema = z.object({
-  status: z.enum(['draft', 'running', 'completed', 'cancelled']).optional(),
+  status: z.enum(EXPERIMENT_STATUSES).optional(),
   name: z.string().min(1).max(200).optional(),
   hypothesis: z.string().max(1000).optional(),
   end_date: CalendarDateSchema.optional(),
@@ -46,7 +85,7 @@ export interface Experiment {
   primary_metric: string | null;
   start_date: string | null;
   end_date: string | null;
-  status: 'draft' | 'running' | 'completed' | 'cancelled';
+  status: ExperimentStatus;
   result: Record<string, unknown> | null;
   created_by: string;
   created_at: string;

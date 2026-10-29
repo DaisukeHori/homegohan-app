@@ -2284,6 +2284,39 @@ export type Database = {
           },
         ]
       }
+      dish_favorites: {
+        Row: {
+          created_at: string
+          dish: Json
+          dish_name: string
+          dish_name_key: string
+          id: string
+          source_planned_meal_id: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          dish: Json
+          dish_name: string
+          dish_name_key: string
+          id?: string
+          source_planned_meal_id?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          dish?: Json
+          dish_name?: string
+          dish_name_key?: string
+          id?: string
+          source_planned_meal_id?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       email_blacklist: {
         Row: {
           added_at: string
@@ -9672,6 +9705,15 @@ export type Database = {
       pii_hmac_hex: {
         Args: { p_domain: string; p_value: string }
         Returns: string
+      }
+      planned_meals_set_completed: {
+        Args: { p_completed: boolean; p_meal_id: string }
+        Returns: {
+          completed_at: string
+          id: string
+          is_completed: boolean
+          updated_at: string
+        }[]
       }
       prepare_account_deletion: { Args: { p_user_id: string }; Returns: Json }
       preview_family_invite: {

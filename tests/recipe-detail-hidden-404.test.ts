@@ -88,6 +88,10 @@ vi.mock('@/lib/db-logger', () => ({
 
 import { GET } from '@/app/api/recipes/[id]/route';
 
+/** パスの id (UUID の形でない id は DB に渡さず 404 にするので、UUID の形にする。#1917) */
+const RECIPE_ID = '30000000-0000-4000-8000-000000000001';
+const HIDDEN_RECIPE_ID = '30000000-0000-4000-8000-000000000002';
+
 function call(id: string) {
   return GET(new Request(`http://localhost/api/recipes/${id}`), { params: { id } });
 }
@@ -114,7 +118,7 @@ describe('GET /api/recipes/[id]: 見えないレシピは 404 (#1445)', () => {
   it('運営が隠したレシピを本人以外が開く (RLS で 0 行) と 404。500 にしない・エラーのログも残さない', async () => {
     h.row = null;
 
-    const res = await call('recipe-hidden');
+    const res = await call(HIDDEN_RECIPE_ID);
 
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: '対象が見つかりません' });
@@ -125,7 +129,7 @@ describe('GET /api/recipes/[id]: 見えないレシピは 404 (#1445)', () => {
     h.user = null;
     h.row = null;
 
-    const res = await call('recipe-hidden');
+    const res = await call(HIDDEN_RECIPE_ID);
 
     expect(res.status).toBe(404);
   });
@@ -134,7 +138,7 @@ describe('GET /api/recipes/[id]: 見えないレシピは 404 (#1445)', () => {
     h.user = { id: 'owner-1' };
     h.row = recipeRow({ hidden_at: '2026-10-09T00:00:00Z' });
 
-    const res = await call('recipe-1');
+    const res = await call(RECIPE_ID);
 
     expect(res.status).toBe(200);
     const json = (await res.json()) as { recipe: { id: string; isOwner: boolean } };
@@ -144,7 +148,7 @@ describe('GET /api/recipes/[id]: 見えないレシピは 404 (#1445)', () => {
   it('DB の本当のエラーは今までどおり汎用の 500 (生のエラー文は本文に出さない)', async () => {
     h.dbError = { code: '57014', message: 'canceling statement due to statement timeout (secret_xyz)' };
 
-    const res = await call('recipe-1');
+    const res = await call(RECIPE_ID);
 
     expect(res.status).toBe(500);
     const text = await res.text();

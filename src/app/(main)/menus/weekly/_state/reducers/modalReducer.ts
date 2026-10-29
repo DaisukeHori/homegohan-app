@@ -43,6 +43,9 @@ export interface ModalState {
   manualEditMeal: PlannedMeal | null;
   deletingMeal: PlannedMeal | null;
   photoEditMeal: PlannedMeal | null;
+  // 写真から入力のモーダルを開いた回の番号 (開くたびに 1 増える。#2047)。解析の結果を待つあいだ (最大 2 分) に
+  // 利用者が閉じて開き直したモーダルを、待ち始めたときのモーダルと見分ける (同じ献立を開き直しても別の回になる)
+  photoEditSession: number;
   imageGenerateMeal: PlannedMeal | null;
 
   // 改善対象
@@ -77,6 +80,12 @@ export type ModalAction =
   | { type: 'MODAL_SET_MANUAL_EDIT_MEAL'; payload: PlannedMeal | null }
   | { type: 'MODAL_SET_DELETING_MEAL'; payload: PlannedMeal | null }
   | { type: 'MODAL_SET_PHOTO_EDIT_MEAL'; payload: PlannedMeal | null }
+  // 写真から入力のモーダルを、その献立で新しい回として開く (photoEditSession を 1 増やす。#2047)
+  | { type: 'MODAL_OPEN_PHOTO_EDIT'; payload: PlannedMeal }
+  // 写真の解析の結果を待ち終えたとき (#2047): 写真から入力のモーダルが、まだ解析を頼んだ回 (payload = photoEditSession) のものなら閉じる。
+  // 待っているあいだに利用者が閉じた・別の献立や同じ献立のモーダルを開き直した・ほかのモーダルを開いたなら、それは閉じない
+  // (その時点の状態で判定する)
+  | { type: 'MODAL_CLOSE_PHOTO_EDIT_SESSION'; payload: number }
   | { type: 'MODAL_SET_IMAGE_GENERATE_MEAL'; payload: PlannedMeal | null }
   | { type: 'IMPROVE_TARGETS_SET'; payload: MealType[] }
   | { type: 'WEEKLY_SUMMARY_MODAL_OPEN' }
@@ -106,6 +115,7 @@ export const initialModalState: ModalState = {
   manualEditMeal: null,
   deletingMeal: null,
   photoEditMeal: null,
+  photoEditSession: 0,
   imageGenerateMeal: null,
   improveMealTargets: [],
   showWeeklySummaryModal: false,
@@ -155,6 +165,18 @@ export function modalReducer(
 
     case 'MODAL_SET_PHOTO_EDIT_MEAL':
       return { ...state, photoEditMeal: action.payload };
+
+    case 'MODAL_OPEN_PHOTO_EDIT':
+      return {
+        ...state,
+        activeModal: 'photoEdit',
+        photoEditMeal: action.payload,
+        photoEditSession: state.photoEditSession + 1,
+      };
+
+    case 'MODAL_CLOSE_PHOTO_EDIT_SESSION':
+      if (state.activeModal !== 'photoEdit' || state.photoEditSession !== action.payload) return state;
+      return { ...state, activeModal: null, photoEditMeal: null };
 
     case 'MODAL_SET_IMAGE_GENERATE_MEAL':
       return { ...state, imageGenerateMeal: action.payload };

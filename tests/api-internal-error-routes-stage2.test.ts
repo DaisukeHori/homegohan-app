@@ -74,6 +74,8 @@ function makeClient() {
 vi.mock('@/lib/supabase/server', () => ({
   // createClient() は async (Next 15 では cookies() が Promise のため)。モックも Promise を返し、await を忘れた呼び出しはここで落ちるようにする
   createClient: async () => makeClient(),
+  // 運営の書き込み (super-admin/settings の upsert) は service_role の client で書く (#1917 の続き)。同じ順の結果の列を使う
+  getSupabaseAdmin: () => makeClient(),
 }));
 
 // 構造化ログ: app_logs へは書かず、呼び出しを記録する
@@ -130,6 +132,8 @@ const SECRETS = ['secret_constraint_xyz', 'secret_table_xyz', 'secret_value_xyz'
 
 const FLAT_BODY = { error: INTERNAL_ERROR_MESSAGE, code: INTERNAL_ERROR_CODE };
 const NESTED_BODY = { error: { code: INTERNAL_ERROR_CODE, message: INTERNAL_ERROR_MESSAGE } };
+/** GET /api/recipes/[id] のパスの id (UUID の形でない id は DB に渡さず 404 にするので、UUID の形にする。#1917) */
+const RECIPE_ID = '30000000-0000-4000-8000-000000000001';
 
 const url = (path: string) => `http://localhost${path}`;
 const get = (path: string) => new NextRequest(url(path));
@@ -175,7 +179,7 @@ describe('#1172 第 2 段: DB のエラーで 500 を返す route は、汎用�
     ['GET /api/performance/checkins', () => performanceCheckins.GET(get('/api/performance/checkins')), 'user-1'],
     ['GET /api/onboarding/status', () => onboardingStatus.GET(), 'user-1'],
     ['GET /api/ai/consultation/important-messages', () => importantMessages.GET(get('/api/ai/consultation/important-messages')), 'user-1'],
-    ['GET /api/recipes/[id]', () => recipeById.GET(get('/api/recipes/r-1'), { params: { id: 'r-1' } }), 'user-1'],
+    ['GET /api/recipes/[id]', () => recipeById.GET(get(`/api/recipes/${RECIPE_ID}`), { params: { id: RECIPE_ID } }), 'user-1'],
   ] as const)('%s', async (routeName, call, userId) => {
     h.queue = [FAIL];
 

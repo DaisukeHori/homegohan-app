@@ -57,6 +57,7 @@ const PUBLIC_TEMPLATES: Readonly<Record<string, readonly string[]>> = {
   self_dissolve: [],
   account_deleted: [], // 宛先を伏せるのは呼び出し元の redactAfterSend (退会した本人のアドレスを残さないため。秘密の宣言ではない)
   login_new_device: ['country_code'], // 新しい端末からのログインの通知 (cross/16 §18)。country_code は ISO 3166-1 の 2 文字の国コードで、リンクでもトークンでもない (名前が _code で終わるので走査が拾う)。リンクは getSiteUrl() + 固定のパス 2 つだけ
+  account_frozen: [], // 凍結の通知 (cross/24 §7.2)。リンクは getSiteUrl() + 固定のパス 2 つ (FROZEN_PAGE_PATH / CONTACT_PAGE_PATH。識別子が _url で終わらないので走査は拾わない)。秘密なし
 };
 
 /** リンク・トークンらしい項目の名前 */

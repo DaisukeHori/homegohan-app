@@ -4,13 +4,30 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { normalizeProfileName } from "@/lib/profile-name";
+import { OwnerTransferCandidatesResponseSchema, type OrgMemberName } from "@/schemas/membership/organization-member-name";
+import { orgRoleLabel } from "@/lib/membership/role-labels";
+import { MEMBERSHIP_STATE_UNCONFIRMED_NOTE } from "@/lib/membership/leave-state";
+import {
+  readPendingTransferProposal,
+  transferProposalStateAfterNetworkFailure,
+} from "@/lib/membership/transfer-proposal-state";
 
-interface CandidateMember {
-  id: string;
-  nickname: string | null;
-  org_role: string;
-  joined_org_at: string | null;
-}
+/** 提案の送信の通信そのものが失敗した (fetch が reject した) ときの文 */
+const NETWORK_FAILURE_MESSAGE = 'ネットワークエラーが発生しました';
+
+/** 提案を送れたときの文 (応答が届いたとき・通信が失敗したあとに作れていたと確かめたとき) */
+const PROPOSAL_SENT_MESSAGE = '譲渡提案を送信しました。対象者がメールから承諾すると、オーナーが変更されます。';
+
+/**
+ * 譲渡の候補 (または自分のプロフィール) を読み込めなかったときの文。
+ * 候補がいない (「譲渡可能なメンバーがいません」) と見分けるために出す (#2064 R4。組織のメンバーの一覧の MEMBERS_LOAD_ERROR と同じ形)。
+ * 読み込みは自分のプロフィール (Supabase の問い合わせ) と候補の API (GET /api/org/owner-transfer/candidates) で、
+ * 失敗の理由 (英語の内部の文) は画面に出さない
+ */
+const CANDIDATES_LOAD_ERROR = '譲渡の候補を読み込めませんでした。しばらくしてから、もう一度お試しください。';
+
+/** 候補の 1 人。API が返す 4 つの項目 (id・表示名・組織内の役割・参加した日) だけ (#2073 S4) */
+type CandidateMember = OrgMemberName;
 
 export default function OwnerTransferPage() {
   const router = useRouter();
@@ -23,61 +40,89 @@ export default function OwnerTransferPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 候補を読み込めなかったときの文。あるあいだは候補の一覧と「譲渡可能なメンバーがいません」の代わりにこの文と「再試行」を出す (#2064 R4)
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const fetchCandidates = async () => {
+    setLoading(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        router.push('/login');
+        return;
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from('user_profiles')
+        .select('org_role, organization_id')
+        .eq('id', user.id)
+        .single();
+
+      if (profileError) {
+        // 自分のプロフィールを読めなかった (オーナーでないのとは別。メンバーの一覧へ戻さない)
+        setLoadError(CANDIDATES_LOAD_ERROR);
+        return;
+      }
+      if (profile?.org_role !== 'owner' || !profile.organization_id) {
+        router.push('/org/members');
+        return;
+      }
+
+      setOrganizationId(profile.organization_id);
+
+      // 自分とオーナーを除いた組織のメンバーを候補として表示する。ほかのメンバーの行は RLS で読めないので、
+      // サーバーの API がオーナーであることを確かめてから返す (#2073 S4。以前は user_profiles を直接読み、本番では候補が 1 人も出なかった)
+      const res = await fetch('/api/org/owner-transfer/candidates', { cache: 'no-store' });
+      if (!res.ok) {
+        // 読み込めなかった (候補がいないのとは別。「譲渡可能なメンバーがいません」と見せない)
+        setLoadError(CANDIDATES_LOAD_ERROR);
+        return;
+      }
+      const parsed = OwnerTransferCandidatesResponseSchema.safeParse(await res.json());
+      if (!parsed.success) {
+        // 応答の形が違う (読み込めなかったのと同じに扱う)
+        setLoadError(CANDIDATES_LOAD_ERROR);
+        return;
+      }
+      setCandidates(parsed.data.candidates);
+      setLoadError(null);
+    } catch (fetchError) {
+      // 問い合わせが例外を投げた (catch が無いと未処理の reject になり、空の一覧の案内が出ていた)
+      console.error('Failed to fetch owner transfer candidates:', fetchError);
+      setLoadError(CANDIDATES_LOAD_ERROR);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchCandidates = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-          router.push('/login');
-          return;
-        }
-
-        const { data: profile } = await supabase
-          .from('user_profiles')
-          .select('org_role, organization_id')
-          .eq('id', user.id)
-          .single();
-
-        if (profile?.org_role !== 'owner' || !profile.organization_id) {
-          router.push('/org/members');
-          return;
-        }
-
-        setOrganizationId(profile.organization_id);
-
-        // owner 以外の org メンバーを候補として表示
-        const { data: members } = await supabase
-          .from('user_profiles')
-          .select('id, nickname, org_role, joined_org_at')
-          .eq('organization_id', profile.organization_id)
-          .neq('id', user.id)
-          .neq('org_role', 'owner')
-          .order('joined_org_at', { ascending: true });
-
-        setCandidates(members ?? []);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchCandidates();
+    void fetchCandidates();
   }, []);
+
+  // 候補の読み込みをやり直す (読み込めなかったときの「再試行」)。
+  // 「再試行」は読み込めなかったとき (フォームを出していないとき) だけ出すので、譲渡の提案の送信とは重ならない
+  const retryLoad = () => {
+    void fetchCandidates();
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedUserId || !organizationId) return;
+    const toUserId = selectedUserId;
+    const targetOrganizationId = organizationId;
 
     setSubmitting(true);
     setError(null);
 
+    // 送る前の pending の提案。通信が失敗したときに、今回の提案を作れていたかを見分けるために使う (#2073 S8)
+    const pendingBefore = await readPendingTransferProposal(supabase, 'organization', targetOrganizationId);
     try {
       const res = await fetch('/api/org/owner-transfer/propose', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          organization_id: organizationId,
-          to_user_id: selectedUserId,
+          organization_id: targetOrganizationId,
+          to_user_id: toUserId,
           reason: reason.trim() || null,
         }),
       });
@@ -89,19 +134,25 @@ export default function OwnerTransferPage() {
         return;
       }
 
-      alert('譲渡提案を送信しました。対象者がメールから承諾すると、オーナーが変更されます。');
+      alert(PROPOSAL_SENT_MESSAGE);
       router.push('/org/members');
-    } catch {
-      setError('ネットワークエラーが発生しました');
+    } catch (submitFailure) {
+      console.error('Failed to send owner transfer proposal:', submitFailure);
+      // サーバーが提案を作り、譲渡先へメールを送ってから応答が切れたこともあるので、pending の提案を読み直して確かめる (#2073 S8。
+      // 以前は確かめずに失敗の文を出し、もう一度送ると、譲渡先に提案のメールが 2 通届き、1 通目のリンクは期限切れになっていた)。
+      // 読み直しの応答を待つあいだも「譲渡を提案」を止めたままにする (submitting を戻さない)
+      const pendingAfter = await readPendingTransferProposal(supabase, 'organization', targetOrganizationId);
+      const state = transferProposalStateAfterNetworkFailure(pendingBefore, pendingAfter, toUserId);
+      if (state === 'sent') {
+        // 提案を作れている: 成功のときと同じ遷移 (送り直しのボタンを出さない)
+        alert(PROPOSAL_SENT_MESSAGE);
+        router.push('/org/members');
+        return;
+      }
+      // 作れていない: これまでどおり失敗の文。確かめられなかったときは「状態を確かめられませんでした」を添える
+      setError(state === 'unknown' ? `${NETWORK_FAILURE_MESSAGE} (${MEMBERSHIP_STATE_UNCONFIRMED_NOTE})` : NETWORK_FAILURE_MESSAGE);
     } finally {
       setSubmitting(false);
-    }
-  };
-
-  const roleLabel = (role: string) => {
-    switch (role) {
-      case 'admin': return '管理者';
-      default: return 'メンバー';
     }
   };
 
@@ -123,7 +174,23 @@ export default function OwnerTransferPage() {
         </p>
       </div>
 
-      {candidates.length === 0 ? (
+      {loadError ? (
+        <div
+          role="alert"
+          data-testid="owner-transfer-load-error"
+          className="flex items-center justify-between gap-3 bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm"
+        >
+          <span>{loadError}</span>
+          <button
+            type="button"
+            onClick={retryLoad}
+            className="shrink-0 px-3 py-1.5 bg-white border border-red-300 rounded-lg text-red-700 hover:bg-red-100 transition-colors"
+          >
+            再試行
+          </button>
+        </div>
+      ) : candidates.length === 0 ? (
+        // 読み込みに成功して候補が 0 人のときだけ出す
         <div className="bg-white rounded-2xl p-8 shadow-sm border border-gray-100 text-center text-gray-500">
           譲渡可能なメンバーがいません。先にメンバーを招待してください。
         </div>
@@ -155,7 +222,7 @@ export default function OwnerTransferPage() {
                   <div className="flex-1">
                     <p className="font-medium text-gray-900">{normalizeProfileName(candidate.nickname) ?? '(名前なし)'}</p>
                     <p className="text-xs text-gray-500">
-                      {roleLabel(candidate.org_role)}
+                      {orgRoleLabel(candidate.org_role)}
                       {candidate.joined_org_at && (
                         <> — {new Date(candidate.joined_org_at).toLocaleDateString('ja-JP')} 加入</>
                       )}

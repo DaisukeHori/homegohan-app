@@ -6,6 +6,7 @@ import { Heart, Search, X, ChevronLeft, RefreshCw, SortAsc } from "lucide-react"
 import { AnimatePresence } from "framer-motion";
 import { FavoriteRecipeModal } from "./_components/FavoriteRecipeModal";
 import { FavoriteListItem } from "./_components/FavoriteListItem";
+import { DISH_FAVORITES_PAGE_SIZE, type DishFavorite, type DishFavoriteSort } from "@/modules/dish-favorites/core";
 
 // カラーパレット（アプリ共通）
 const colors = {
@@ -21,16 +22,12 @@ const colors = {
   favRedLight: "#FFF0F0",
 };
 
-type FavoriteItem = {
-  id: string;
-  recipeName: string;
-  recipeUuid: string | null;
-  likedAt: string;
-};
-
-type SortOption = "newest" | "oldest" | "name";
-
-const PAGE_SIZE = 50;
+// 一覧の 1 件は献立の料理の写し (dish_favorites。docs/design/cross/22-dish-favorites.md §7.10)
+type FavoriteItem = DishFavorite;
+type SortOption = DishFavoriteSort;
+const PAGE_SIZE = DISH_FAVORITES_PAGE_SIZE;
+/** 知らせ (買い物リストの結果) を消すまでの時間 (ミリ秒)。読める長さで、次の操作の邪魔にならない程度 */
+const NOTICE_HIDE_MS = 3000;
 
 export default function FavoritesPage() {
   const router = useRouter();
@@ -51,19 +48,57 @@ export default function FavoritesPage() {
   const [hasMore, setHasMore] = useState(false);
   // 初回フェッチかどうか（初回のみ全画面ローディングを表示し、以降の検索/並び替えは小スピナーに留める）
   const isFirstFetchRef = useRef(true);
-  // UX2-06: recipeUuid を保持しているのに未使用で、削除しかできなかった問題への対応。
-  // タップでレシピ詳細（材料・作り方・買い物追加）を表示する。
+  // UX2-06 / #2011: タップでレシピ詳細（材料・作り方・栄養・買い物追加）を表示する。
+  // 詳細は一覧の 1 件 (DishFavorite) が持つ料理の写しで描く (問い合わせない)。
   // selectedFavorite は閉じるアニメーション中も内容を保持するため isRecipeModalOpen とは
   // 別の state にしている（isRecipeModalOpen=false で閉じアニメーションのみ発火させる）。
   const [selectedFavorite, setSelectedFavorite] = useState<FavoriteItem | null>(null);
   const [isRecipeModalOpen, setIsRecipeModalOpen] = useState(false);
+  /** 買い物リストに足したときの知らせ (RecipeModal には文を出す場所が無いので、画面の下に短く出す。#2011) */
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), NOTICE_HIDE_MS);
+    return () => clearTimeout(timer);
+  }, [notice]);
+  /**
+   * 詳細がいま出している行の id (閉じていれば null)。削除の応答の時点で読む。
+   * handleRemove の閉包の selectedFavorite は押した時点の値なので、それで比べると、
+   * 応答の前に詳細を閉じて別の行を開いたとき、その別の行の詳細を閉じてしまう (#2011)
+   */
+  const openFavoriteIdRef = useRef<string | null>(null);
+  // 詳細を開く・閉じるは openRecipeDetail・closeRecipeDetail だけが行う
+  const openRecipeDetail = (item: FavoriteItem) => {
+    openFavoriteIdRef.current = item.id;
+    setSelectedFavorite(item);
+    setIsRecipeModalOpen(true);
+  };
+  /** selectedFavorite は閉じるアニメーションの間も中身を保つため残す */
+  const closeRecipeDetail = () => {
+    openFavoriteIdRef.current = null;
+    setIsRecipeModalOpen(false);
+  };
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQuery(searchQuery), 300);
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
+  /** 応答待ちの一覧の GET の本数 (最初の読み込み・取り直し・次のページ)。0 でない間は handleRemove が何も送らない */
+  const fetchesInFlightRef = useRef(0);
+  /**
+   * 応答待ちの削除 (handleRemove の後始末 (一覧・total・offset) が済むと解ける Promise。無ければ null)。
+   * 一覧の GET はこれを待ってから送る。先に送ると、消す前の一覧が後から届いて消した行が戻ったり、
+   * 消したあとの一覧に削除の後始末が重なって total と offset が 1 ずつずれたりする
+   */
+  const removalRef = useRef<Promise<void> | null>(null);
+  /**
+   * 一覧 (favorites) の写し。一覧を変える 3 か所 (取り直し・次のページ・削除) で state と同じ配列を同時に入れる。
+   * 削除の応答で「消した行が読み込んだ一覧にあったか」を描画を待たずに読む (詳細だけが出していた行は一覧に無いことがある)
+   */
+  const favoritesRef = useRef<FavoriteItem[]>([]);
   const fetchFavorites = useCallback(async (nextOffset = 0) => {
+    fetchesInFlightRef.current += 1;
     if (nextOffset === 0) {
       if (isFirstFetchRef.current) {
         setLoading(true);
@@ -74,23 +109,26 @@ export default function FavoritesPage() {
       setLoadingMore(true);
     }
     try {
+      // 待つのは取り直し (nextOffset 0) だけになる: 次のページは削除の応答待ちの間に押せない (「次の50件を表示」の disabled)。
+      // 取り直しの応答は一覧・total・offset を置き換えるので、削除の後始末のあとに届けば正しい
+      const pendingRemoval = removalRef.current;
+      if (pendingRemoval) await pendingRemoval;
       const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(nextOffset), sort });
       if (debouncedQuery) params.set("q", debouncedQuery);
       const res = await fetch(`/api/favorites?${params}`);
       if (!res.ok) throw new Error("Failed to fetch favorites");
       const data = await res.json();
       const fetched: FavoriteItem[] = data.favorites ?? [];
-      if (nextOffset === 0) {
-        setFavorites(fetched);
-      } else {
-        setFavorites((prev) => [...prev, ...fetched]);
-      }
+      const nextFavorites = nextOffset === 0 ? fetched : [...favoritesRef.current, ...fetched];
+      favoritesRef.current = nextFavorites;
+      setFavorites(nextFavorites);
       setTotal(data.total ?? 0);
       setOffset(nextOffset + fetched.length);
       setHasMore(fetched.length === PAGE_SIZE);
     } catch (err) {
       console.error(err);
     } finally {
+      fetchesInFlightRef.current -= 1;
       setLoading(false);
       setLoadingMore(false);
       setIsSearching(false);
@@ -103,26 +141,45 @@ export default function FavoritesPage() {
     fetchFavorites(0);
   }, [fetchFavorites]);
 
+  // お気に入りから消す (id の DELETE /api/favorites/{id})。200 と 404 (もう無い) のとき:
+  //   - 消した行が読み込んだ一覧にあれば、一覧から外し、total と offset を 1 ずつ戻す。offset は次のページの GET の offset で、
+  //     サーバーでは消した行の後ろが 1 つ前に詰まるので、戻さないと「次の50件を表示」で次のページの先頭の 1 行が読まれない
+  //   - 一覧に無ければ (詳細を開いたあとに検索語が確定して一覧が置き換わり、詳細だけが出していた行)、一覧と offset は
+  //     そのまま。total に入っていたかは分からないので 1 ページ目から読み直す。
+  //     読み直しが既に削除の応答を待っていれば (fetchesInFlightRef が 0 でない)、それが最新の検索語と並びで読むので足さない
+  //   詳細がいま消した行を出しているときだけ閉じる (応答の時点の openFavoriteIdRef で比べる)。
+  //   削除の応答待ち (removingId) と一覧の GET の応答待ち (fetchesInFlightRef) の間は何も送らない
   const handleRemove = async (item: FavoriteItem) => {
-    if (removingId) return;
+    if (removingId || fetchesInFlightRef.current > 0) return;
     setRemovingId(item.id);
+    let settleRemoval = () => {};
+    removalRef.current = new Promise<void>((resolve) => {
+      settleRemoval = () => resolve();
+    });
     try {
-      const encodedName = encodeURIComponent(item.recipeName);
-      const res = await fetch(`/api/recipes/${encodedName}/like`, { method: "DELETE" });
-      if (res.ok) {
-        setFavorites((prev) => prev.filter((f) => f.id !== item.id));
-        setTotal((prev) => Math.max(0, prev - 1));
+      const res = await fetch(`/api/favorites/${encodeURIComponent(item.id)}`, { method: "DELETE" });
+      if (res.ok || res.status === 404) {
+        const remaining = favoritesRef.current.filter((f) => f.id !== item.id);
+        if (remaining.length < favoritesRef.current.length) {
+          favoritesRef.current = remaining;
+          setFavorites(remaining);
+          setTotal((prev) => Math.max(0, prev - 1));
+          setOffset((prev) => Math.max(0, prev - 1));
+        } else if (fetchesInFlightRef.current === 0) {
+          // この fetchFavorites は押した時点の検索語と並びのもの。そのあとに変わっていれば effect の読み直しが
+          // removalRef を待っている (fetchesInFlightRef が 0 でない) のでここには来ない。送るのは finally で removalRef が解けてから
+          void fetchFavorites(0);
+        }
+        if (openFavoriteIdRef.current === item.id) closeRecipeDetail();
       }
     } catch (err) {
       console.error(err);
     } finally {
+      // 後始末 (上の set*) のあとで解く。待っている取り直しの GET はここから送られる
+      removalRef.current = null;
+      settleRemoval();
       setRemovingId(null);
     }
-  };
-
-  const openRecipeDetail = (item: FavoriteItem) => {
-    setSelectedFavorite(item);
-    setIsRecipeModalOpen(true);
   };
 
   const formatDate = (iso: string) => {
@@ -320,7 +377,8 @@ export default function FavoritesPage() {
               {hasMore && (
                 <button
                   onClick={() => fetchFavorites(offset)}
-                  disabled={loadingMore}
+                  // 削除の応答待ちの間も押せない (offset が削除の後始末で 1 戻る前の値で GET が出て、次のページの先頭の 1 行が読まれないため)
+                  disabled={loadingMore || removingId !== null}
                   style={{
                     marginTop: 8,
                     padding: "12px 16px",
@@ -348,12 +406,28 @@ export default function FavoritesPage() {
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `}</style>
 
-      {/* UX2-06: レシピ詳細（材料・作り方・買い物追加） */}
+      {/* UX2-06 / #2011: レシピ詳細（材料・作り方・栄養・買い物追加）。料理の写しを献立のモーダルで描く */}
+      {/*
+        isRemoving はどの行の削除の応答待ちでも true (handleRemove は応答待ちの間の 2 本目を黙って捨てるので、♥ の disabled をそれに合わせる)。
+        onRemove は押した時点の openFavoriteIdRef を読み、詳細がいま selectedFavorite を出していなければ何もしない
+        (閉じる途中のパネルは最後に開いていたときの props のまま押せるので、閉じる途中に 2 回押して DELETE が 2 本出ないように)
+      */}
       <FavoriteRecipeModal
         isOpen={isRecipeModalOpen}
         favorite={selectedFavorite}
-        onClose={() => setIsRecipeModalOpen(false)}
+        isRemoving={removingId !== null}
+        onRemove={() => {
+          if (!selectedFavorite || openFavoriteIdRef.current !== selectedFavorite.id) return;
+          void handleRemove(selectedFavorite);
+        }}
+        onNotice={setNotice}
+        onClose={closeRecipeDetail}
       />
+      {notice && (
+        <div role="status" style={{ position: "fixed", left: 16, right: 16, bottom: 96, padding: "10px 14px", borderRadius: 12, background: colors.text, color: colors.card, fontSize: 13, zIndex: 300, pointerEvents: "none" }}>
+          {notice}
+        </div>
+      )}
     </div>
   );
 }

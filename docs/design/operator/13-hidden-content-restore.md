@@ -886,7 +886,7 @@ export const MODERATION_RESTORE_AUDIT_ACTION = 'admin.moderation.restore';
 
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { AuthError, ForbiddenError } from '@/lib/auth/errors'; import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import {
@@ -965,7 +965,7 @@ const RACED_RESTORE_ERROR: Record<HiddenContentRestorability['kind'], string> = 
 
 export async function POST(request: Request, props: Params) {
   // 本文の NULL 文字は、認証・DB に触れる前に 400 で断る (#1657)
-  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  const nullCharacterRejection = await rejectNullCharacterBody(request, { shape: 'nested' });
   if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
 
@@ -977,7 +977,7 @@ export async function POST(request: Request, props: Params) {
       return errorResponse(401, 'AUTH_UNAUTHENTICATED', '認証が必要です');
     }
     if (err instanceof ForbiddenError) {
-      return errorResponse(403, 'OP_PERMISSION_DENIED', '権限がありません');
+      return errorResponse(403, 'OP_PERMISSION_DENIED', operatorForbiddenMessageOf(err));
     }
     throw err;
   }
@@ -1565,7 +1565,7 @@ export default function ModerationRestoreForm({
 |---|---|---|---|---|---|
 | 本文に NULL 文字 | route (`rejectNullCharacterBody`) | `INVALID_CHARACTER` | 400 | `src/lib/api/null-character.ts` の `NULL_CHARACTER_ERROR_MESSAGE` | 認証・DB より前 |
 | 未認証 | `requireRole` | `AUTH_UNAUTHENTICATED` | 401 | 認証が必要です | 既存と同じ |
-| ロール不足・凍結・AAL 不足 | `requireRole` | `OP_PERMISSION_DENIED` (`ForbiddenError` 全般) | 403 | 権限がありません | 既存と同じ (`AUTH_ACCOUNT_FROZEN` / `AUTH_2FA_*` も `ForbiddenError` なので同じ文) |
+| ロール不足・凍結・AAL 不足 | `requireRole` | `OP_PERMISSION_DENIED` (`ForbiddenError` 全般) | 403 | `MfaRequiredError` (`AUTH_2FA_*`) なら「二段階認証の確認が必要です」/「二段階認証の登録が必要です」、それ以外は「権限がありません」 | 文は `operatorForbiddenMessageOf` (`src/lib/api/error-responses.ts`) で決める (code はどれも `OP_PERMISSION_DENIED`。`cross/12-operator-mfa.md` §19.3 の (b)) |
 | `type` が不正 | route | `VALIDATION_ERROR` | 400 | 種類 (type) は次のいずれかを指定してください (food, recipe, ai_content) (`src/lib/admin/moderation-schemas.ts` の `MODERATION_TYPE_INVALID_MESSAGE`。#1917 の続きで項目名と受け付ける値を括弧に入れた) | 既存と同じ |
 | `type = ai_content` | route (`notSupportedResponse`) | `OP_NOT_SUPPORTED` | 501 | `AI_CONTENT_NOT_SUPPORTED_MESSAGE` | 本文の検証より前 |
 | 本文が JSON でない | route | `INVALID_JSON` | 400 | リクエストボディが不正です | |
@@ -1719,7 +1719,7 @@ export default function ModerationRestoreForm({
 
 ### 13.4 整合ゲート (実装後・本番)
 
-- 本番の `meals` / `recipes` で `hidden_at IS NOT NULL` の行の件数を読む (読み取りだけ)。0 件なら、捨て伝票 (運営のテスト用のレシピ) を通報 → `delete_only` → restore で 1 往復し、戻ったこと・監査ログ 2 行・翌日のジョブが消していないことを確かめて、捨て伝票を消す。
+- 本番の `meals` / `recipes` で `hidden_at IS NOT NULL` の行の件数を読む (読み取りだけ)。0 件なら、試験用のデータ (運営のテスト用のレシピ) を通報 → `delete_only` → restore で 1 往復し、戻ったこと・監査ログ 2 行・翌日のジョブが消していないことを確かめて、試験用のデータを消す。
 - 一覧の「非表示中」のバッジと詳細の「非表示の解除」の欄が、隠れている間だけ出ることを画面で確かめる。
 - 段 A・段 B の PR の差分 (`git diff --name-only origin/main...<枝>`) に、`supabase/**`・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/env.ts`・`.env.example`・`ENV_SETUP.md` が無いことを確かめる (R-17。DB と環境変数を変えない。環境変数を読まないことは CT-7 が見る)。
 
@@ -1887,7 +1887,7 @@ grep の語で見つかる既存のテストと、その直し方。直さずに
 1. **Issue #1538 の最後のコメント (2026-10-17) は「項目 4: 戻す操作 (必要になったら作る)」と書き、本書の前提 (オーナーの選択 (2026-10-18): 戻す操作を「今作る」。) と食い違う。** 本書はオーナーの選択に従う。Issue のコメントの現在形化は、Issue 化のときにオーケストレーターが行う。
 2. **権限の細部**: 本書は「隠す操作と同じロール」として `content_moderator` を含めた (D-10)。content_moderator は `MFA_REQUIRED_ROLES` に無いので、admin / super_admin と違い AAL2 を求めない (cross/12 の方針どおり)。戻す操作を admin / super_admin だけに絞る (content_moderator は隠せるが戻せない) か、現状のまま (隠す側と同じ) かは、オーナーの判断があれば従う。本書の既定は現状のまま。
 3. **戻せる期間の代償** (§6.1): 隠してから 89 日〜次の 03:25 のあいだ (最長 2 日弱) は、行がまだあるのに戻せない。許容する前提で設計した。
-4. **本番の隠した行の件数** は読んでいない (§2.2)。0 件なら整合ゲートは捨て伝票で確かめる (§13.4)。
+4. **本番の隠した行の件数** は読んでいない (§2.2)。0 件なら整合ゲートは試験用のデータで確かめる (§13.4)。
 5. **`OP_CONTENT_HIDE_FAILED` が cross/04 の表に無い** (実コードと 02 §5 にはある)。§17 の行 3 で本書の 4 つと一緒に足す (本書の範囲の外の既存の抜け)。
 6. **別の時刻で隠れた複製のうち、隠れたあとでさらに中身を書き換えられたもの** は、通報された行から戻らず、画面からは戻せない (§6.3・§19)。完全に閉じるには隠す側が操作の単位を行に残す (列を足す) 必要があり、本書の範囲 (DB を変えない) の外。必要になったら隠す側の改修として別に扱う。
 7. **起点を失った複製** (§19・S-25): 自分を指す通報を持たない食事の複製は、起点の通報された行が消える (持ち主の削除・退会で、通報も CASCADE で消える) か、起点の行の戻せる期間を過ぎると、画面から戻せない。通報を持たない隠れた行を見つけて戻す入口 (§4.2 の案 D と、隠した行の一覧の画面) は本書の範囲の外。必要になったら、その画面と API を別の設計で足す。

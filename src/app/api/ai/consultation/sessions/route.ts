@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server';
 import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 /** 新しいセッションの文脈に入れる、最近の食事の日数 (JST の今日から何日前までか) */
 const RECENT_MEAL_DAYS = 7;
@@ -69,7 +69,11 @@ export async function POST(request: Request) {
   if (unavailable) return unavailable;
 
   try {
-    const body = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
     
     // ユーザーの現在の状態をスナップショット
     const { data: profile } = await supabase

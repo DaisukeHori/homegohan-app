@@ -12,7 +12,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { extractApiErrorMessage } from '@/lib/admin/api-error-message';
+import { extractApiErrorMessage, forbiddenMessageForScreen } from '@/lib/admin/api-error-message';
 import { formatJstDateTime } from '@/lib/admin/format-datetime';
 
 /** GET /api/announcements が返す 1 件 (この画面で使う列だけ) */
@@ -29,10 +29,13 @@ const CREATE_ERROR = 'お知らせを作成できませんでした。しばら�
 const UNAUTHENTICATED_ERROR = 'ログインの有効期限が切れました。ログインし直してください。';
 const FORBIDDEN_ERROR = '権限がありません。';
 
-/** 失敗した応答のステータスから、画面に出す文言を決める (API の生のエラー文は出さない) */
-function failureMessage(status: number, fallback: string): string {
+/**
+ * 失敗した応答のステータスから、画面に出す文言を決める (API の生のエラー文は出さない)。
+ * 403 だけは、本文の文が理由の文 (二段階認証の確認が要る・凍結) ならその文を出す (forbiddenMessageForScreen。#1917)
+ */
+function failureMessage(status: number, fallback: string, body: unknown): string {
   if (status === 401) return UNAUTHENTICATED_ERROR;
-  if (status === 403) return FORBIDDEN_ERROR;
+  if (status === 403) return forbiddenMessageForScreen(body, FORBIDDEN_ERROR);
   return fallback;
 }
 
@@ -75,11 +78,12 @@ export default function AnnouncementsManager() {
     setLoadError(null);
     try {
       const res = await fetch('/api/announcements');
-      const body: unknown = res.ok ? await res.json() : null;
+      // 失敗の本文は 403 の理由の文を読むためだけに読む (読めなければ null)
+      const body: unknown = res.ok ? await res.json() : await res.json().catch(() => null);
       if (loadId !== latestLoad.current) return;
 
       if (!res.ok) {
-        setLoadError(failureMessage(res.status, LOAD_ERROR));
+        setLoadError(failureMessage(res.status, LOAD_ERROR, body));
         return;
       }
       const list = (body as { announcements?: unknown } | null)?.announcements;
@@ -130,7 +134,8 @@ export default function AnnouncementsManager() {
         const body: unknown = await res.json().catch(() => null);
         setFormError(extractApiErrorMessage(body) ?? CREATE_ERROR);
       } else {
-        setFormError(failureMessage(res.status, CREATE_ERROR));
+        const body: unknown = await res.json().catch(() => null);
+        setFormError(failureMessage(res.status, CREATE_ERROR, body));
       }
     } catch {
       setFormError(CREATE_ERROR);

@@ -349,7 +349,8 @@ describe('POST /api/operator/membership/family/[id]/dissolve: 通知メールの
 
 describe('POST /api/operator/membership/family/[id]/dissolve: RPC のエラー', () => {
   it('RPC が失敗: 500 INTERNAL_ERROR を返し、通知メールは送らない', async () => {
-    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'NOT_OPERATOR', code: 'P0001' } });
+    // 分からない失敗 (RPC の既知のコードを含まない) は従来どおり 500
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'SOME_UNKNOWN_DB_FAILURE', code: 'XX000' } });
 
     const res = await call();
     const json = await res.json();
@@ -358,7 +359,37 @@ describe('POST /api/operator/membership/family/[id]/dissolve: RPC のエラー',
     expect(json.error.code).toBe('INTERNAL_ERROR');
     // DB の生のエラー文は本文に出さない (#1172 / #1434)
     expect(json.error.message).toBe('処理中にエラーが発生しました');
-    expect(JSON.stringify(json)).not.toContain('NOT_OPERATOR');
+    expect(JSON.stringify(json)).not.toContain('SOME_UNKNOWN_DB_FAILURE');
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(fake.auth.admin.getUserById).not.toHaveBeenCalled();
+  });
+
+  it('RPC が既知のコード (NOT_OPERATOR) で止めた: 403 と日本語の固定の文を返し (汎用の 500 にしない。#1917 の続き)、通知メールは送らない', async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'NOT_OPERATOR', code: 'P0001' } });
+
+    const res = await call();
+    const json = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(json.error).toEqual({ code: 'FORBIDDEN', message: 'この操作を行う権限がありません' });
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(fake.auth.admin.getUserById).not.toHaveBeenCalled();
+  });
+
+  // 20261026100000_operator_force_dissolve_family_missing.sql: 無い家族・解散済みの家族は RPC が止める。
+  // 修正前は RPC が成功し、route は監査を書いて 200 { data: null } を返していた (運営の画面は成功に見えた)
+  it.each([
+    ['FAMILY_NOT_FOUND', 404, '家族が見つかりません。'],
+    ['FAMILY_ALREADY_DISSOLVED', 409, 'この家族グループはすでに解散しています。'],
+  ])('RPC が %s で止めた: %i と日本語の固定の文を返し (200 にしない)、通知メールは送らない', async (code, status, message) => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: code, code: 'P0001' } });
+
+    const res = await call();
+    const json = await res.json();
+
+    expect(res.status).toBe(status);
+    expect(json.error).toEqual({ code, message });
+    expect(json.data).toBeUndefined();
     expect(mocks.sendEmail).not.toHaveBeenCalled();
     expect(fake.auth.admin.getUserById).not.toHaveBeenCalled();
   });

@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { requireServiceRole } from '../_shared/auth.ts';
+import { nutritionScoreOfVegScoreAverage } from '../_shared/veg-score.ts';
 import { chunkArray, embeddedOne, fetchAllRows, throwIfError } from '../_shared/bulk-query.ts';
 import { createLogger, generateRequestId } from '../_shared/db-logger.ts';
 import {
@@ -318,7 +319,7 @@ async function fetchBulkData(periodStart: string, periodEnd: string, metricCodes
   //   書く種類は daily_record (健康の記録 health_records の連続日数) だけ。食事の記録からは書かれないので、
   //   ハンズオンのお試しの記録 (is_sandbox = true) が連続日数に入る経路も無い (行が無いので、2 つの指標は全員 0)。
   //   meal_record / breakfast を書く処理を足すときは、お試しの記録 (meals.is_sandbox / user_daily_meals.is_sandbox) を数えないこと
-  //   (下の meals・planned_meals の読み込みと同じ扱い。#1500)。運営が隠した食事 (meals.hidden_at が入った行。#1101) も同じく数えないこと (#1445。いまは書き手が無いので入る経路も無い: #1538・tests/health-streaks-hidden-1538.test.ts)。
+  //   (下の meals・planned_meals の読み込みと同じ扱い。#1500)。運営が隠した食事 (meals.hidden_at が入った行。#1101) も同じく数えないこと (#1445。いまは書き手が無いので入る経路も無い: #1538・tests/health-streaks-hidden-1538.test.ts)。この 2 種類の行を書く処理は service_role で書くこと (利用者のセッション (authenticated) の RLS は daily_record の行しか INSERT / UPDATE を通さない。migration 20261024110000・#1999)。
   const [mealStreakRows, breakfastStreakRows, mealRows, plannedRows, totalMeals] =
     await Promise.all([
       fetchAllRows<{ user_id: string; current_streak: number | null }>('health_streaks (meal_record) の取得', () =>
@@ -421,8 +422,8 @@ function computeMetricFromBulk(userId: string, metricCode: string, bulk: BulkDat
     case 'nutrition_score': {
       const sum = bulk.vegScoreSum.get(userId) ?? 0;
       const cnt = bulk.vegScoreCount.get(userId) ?? 0;
-      const vegAvg = cnt > 0 ? sum / cnt : 0;
-      return Math.round(vegAvg * 20);
+      // veg_score は 0〜100 (写真の解析の尺度。#2025)。以前は 1〜5 点を前提に × 20 していた
+      return cnt > 0 ? nutritionScoreOfVegScoreAverage(sum / cnt) : 0;
     }
     case 'menu_execution_rate': {
       const total = bulk.plannedTotal.get(userId) ?? 0;

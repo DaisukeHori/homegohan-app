@@ -9,8 +9,10 @@
  *
  * 期待する認可 (修正後):
  *   - SELECT: チケット所有者は自分のチケットの is_internal=false のみ。staff (support/admin/super_admin) は全件
- *   - INSERT: sender_id = auth.uid() を全員に必須。所有者は自チケットへ is_internal=false のみ、staff は任意チケットへ可
- *   - UPDATE / DELETE: ポリシー無し (暗黙 DENY)
+ *   - INSERT: sender_id = auth.uid() を全員に必須。所有者は自チケットへ is_internal=false のみ。
+ *     staff の投稿は運営画面の API (POST /api/admin/support/tickets/{id}/messages) が service_role で書く。staff が自分のセッションで
+ *     PostgREST から直接投稿する運営の枝は外した (20261025120000・#1917 の続き。直接の投稿は 42501)
+ *   - UPDATE / DELETE: ポリシー無し・anon / authenticated の権限も無し (42501。20261025120000 で権限を外した)
  *
  * PostgREST を supabase-js で直接叩いて検証する (アプリ層のガードを経由しない経路が攻撃面のため)。
  *
@@ -311,13 +313,15 @@ describe('#1233 support_ticket_messages INSERT', () => {
     expect(error!.code).toBe('42501');
   });
 
-  it('I-8: staff は任意のチケット T へ内部メモを投稿できる', async () => {
+  it('I-8: staff も自分のセッションでは他人のチケット T へ内部メモを直接投稿できない (42501。投稿は運営画面の API が service_role で書く。#1917 の続き)', async () => {
     const body = `#1233 I-8 ${TS}`;
     const { error } = await authedClient(staff.jwt)
       .from('support_ticket_messages')
       .insert({ ticket_id: ticketT, sender_id: staff.userId, is_internal: true, body });
-    expect(error).toBeNull();
-    await expectInsertedAndCleanup(body);
+    expect(error).not.toBeNull();
+    expect(error!.code).toBe('42501');
+    const { data: rows } = await srAdmin.from('support_ticket_messages').select('id').eq('body', body);
+    expect(rows ?? []).toEqual([]);
   });
 
   it('I-9: staff でも他人 (所有者 O) になりすまして投稿できない (42501)', async () => {
@@ -330,29 +334,27 @@ describe('#1233 support_ticket_messages INSERT', () => {
 });
 
 // ================================================================
-// UPDATE / DELETE (ポリシー無し = 暗黙 DENY)
+// UPDATE / DELETE (ポリシー無し・権限も無し = 42501。#1917 の続きで権限を外す前は 0 行で黙って終わった)
 // ================================================================
 describe('#1233 support_ticket_messages UPDATE / DELETE', () => {
-  it('U-1: 攻撃者 A は他人のメッセージ M1 を書き換えられない (0 行・本文不変)', async () => {
-    const { data, error } = await authedClient(attacker.jwt)
+  it('U-1: 攻撃者 A は他人のメッセージ M1 を書き換えられない (42501・本文不変)', async () => {
+    const { error } = await authedClient(attacker.jwt)
       .from('support_ticket_messages')
       .update({ body: `#1233 tampered ${TS}` })
       .eq('id', m1)
       .select('id');
-    expect(error).toBeNull();
-    expect(data).toEqual([]);
+    expect(error?.code).toBe('42501');
     const { data: row } = await srAdmin.from('support_ticket_messages').select('body').eq('id', m1).single();
     expect(row?.body).toBe(`#1233 M1 owner public ${TS}`);
   });
 
-  it('D-1: 攻撃者 A は他人のメッセージ M1 を削除できない (0 行・行は残る)', async () => {
-    const { data, error } = await authedClient(attacker.jwt)
+  it('D-1: 攻撃者 A は他人のメッセージ M1 を削除できない (42501・行は残る)', async () => {
+    const { error } = await authedClient(attacker.jwt)
       .from('support_ticket_messages')
       .delete()
       .eq('id', m1)
       .select('id');
-    expect(error).toBeNull();
-    expect(data).toEqual([]);
+    expect(error?.code).toBe('42501');
     const { data: row } = await srAdmin.from('support_ticket_messages').select('id').eq('id', m1);
     expect((row ?? []).length).toBe(1);
   });

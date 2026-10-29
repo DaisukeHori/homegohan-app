@@ -883,14 +883,13 @@ describe('POST /api/admin/moderation/[type]/[id]', () => {
       expectError(res, 404, 'NOT_FOUND');
     });
 
-    // 既知の不具合: UUID でない id を DB にそのまま渡し、DB エラーが 500 INTERNAL_ERROR になる
-    // (users/[id]/freeze は同じ入力で 404 を返す)。400 / 404 などの 4xx が期待。直ったら `.fails` を外すこと。
-    it.fails('[既知の不具合] 4xx for an id that is not a UUID (現状は 500 INTERNAL_ERROR)', async () => {
+    // UUID でない id は DB に渡さず、通報が無いときと同じ 404 NOT_FOUND (以前は DB の 22P02 が 500 INTERNAL_ERROR になっていた。
+    // users/[id]/freeze と同じ。#1917 の続き)
+    it('404 for an id that is not a UUID (500 にしない)', async () => {
       const res = await apiCall('POST', '/api/admin/moderation/food/not-a-uuid', adminUser.jwt, {
         action: 'approve',
       });
-      expect(res.status).toBeGreaterThanOrEqual(400);
-      expect(res.status).toBeLessThan(500);
+      expectError(res, 404, 'NOT_FOUND');
     });
 
     // #1128: AI コンテンツの審査は準備中 (未対応)。404 (該当なし) ではなく 501 で未対応と伝える
@@ -1012,6 +1011,50 @@ describe('DELETE /api/admin/users/[id]/freeze (BAN 解除)', () => {
       frozen_by: null,
       unban_at: null,
     });
+  });
+
+  // #1917: 解除の UPDATE は凍結中 (frozen_at が NULL でない) のときだけ書く条件つき。凍結されていなければ 409 で、監査を残さない
+  it('409 CONFLICT_STALE_DATA for a user that is not frozen, without writing an audit log (#1917)', async () => {
+    await clearFrozenInDb(targetUser.userId);
+    const unbanLog = () =>
+      latestAuditLog({ actorId: adminUser.userId, actionType: 'admin.user.unban', targetId: targetUser.userId });
+    const before = await unbanLog();
+
+    const res = await apiCall('DELETE', `/api/admin/users/${targetUser.userId}/freeze`, adminUser.jwt, {
+      reason: 'Not frozen',
+    });
+    expectError(res, 409, 'CONFLICT_STALE_DATA');
+    expect((await unbanLog())?.id ?? null).toBe(before?.id ?? null);
+    expect(await readFrozen(targetUser.userId)).toEqual({
+      frozen_at: null,
+      frozen_reason: null,
+      frozen_by: null,
+      unban_at: null,
+    });
+  });
+
+  it('200 then 409 - a second unfreeze from a stale screen is refused and writes no second audit log (#1917)', async () => {
+    await freezeInDb(targetUser.userId, adminUser.userId);
+    const first = await apiCall('DELETE', `/api/admin/users/${targetUser.userId}/freeze`, adminUser.jwt, {
+      reason: 'First unfreeze',
+    });
+    expect(dataOf(first)).toEqual({ success: true });
+    const firstLog = await latestAuditLog({
+      actorId: adminUser.userId,
+      actionType: 'admin.user.unban',
+      targetId: targetUser.userId,
+    });
+    expect(firstLog?.details).toMatchObject({ reason: 'First unfreeze' });
+
+    // 別の運営 (super_admin) が古い画面から同じ解除を送る
+    const secondActorLog = () =>
+      latestAuditLog({ actorId: superAdminUser.userId, actionType: 'admin.user.unban', targetId: targetUser.userId });
+    const secondBefore = await secondActorLog();
+    const second = await apiCall('DELETE', `/api/admin/users/${targetUser.userId}/freeze`, superAdminUser.jwt, {
+      reason: 'Second unfreeze from a stale screen',
+    });
+    expectError(second, 409, 'CONFLICT_STALE_DATA');
+    expect((await secondActorLog())?.id ?? null).toBe(secondBefore?.id ?? null);
   });
 
   it.each([

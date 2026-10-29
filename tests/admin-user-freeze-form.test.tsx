@@ -13,6 +13,9 @@
  *   - 409 CONFLICT_STALE_DATA (読んでから書くまでに対象が super_admin になった等) は API の文を出し、ページを読み直す。
  *     同じ 409 でも別の code や、403 などは文を出すだけ (読み直さない)
  *   - 永久 BAN の選択肢は super_admin だけ。送信中は二重に送れない
+ *   - 凍結の通知メール (#2026。cross/24 §6.4・§7.6・§12): チェック「利用者に凍結をメールで知らせる」(既定 on) を notify_user として必ず送り、
+ *     on のときだけ出るメッセージの欄の文を trim して notification_message に入れる (空白だけなら送らない・1000 文字超は送らずに知らせる)。
+ *     成功の文に応答の data.notification の結果を添える。本物の route につなぐ it は sender (sendFreezeNotificationEmail) を差し替える
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する
  * (tests/admin-moderation-review-form.test.tsx と同じ方法)。
@@ -33,7 +36,29 @@ vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
 }));
 
-const mockRequireRole = vi.fn();
+const { mockRequireRole, mockSendFreezeNotificationEmail } = vi.hoisted(() => ({
+  mockRequireRole: vi.fn(),
+  mockSendFreezeNotificationEmail: vi.fn(),
+}));
+
+vi.mock('@/lib/admin/send-freeze-notification-email', () => ({
+  sendFreezeNotificationEmail: mockSendFreezeNotificationEmail,
+}));
+
+/** route の構造化ログ (app_logs へは書かない) */
+const loggedEntries: Array<{ level: string; message: string }> = [];
+vi.mock('@/lib/db-logger', () => {
+  const logger = {
+    debug: (message: string) => loggedEntries.push({ level: 'debug', message }),
+    info: (message: string) => loggedEntries.push({ level: 'info', message }),
+    warn: (message: string) => loggedEntries.push({ level: 'warn', message }),
+    error: (message: string) => loggedEntries.push({ level: 'error', message }),
+  };
+  return {
+    createLogger: () => ({ ...logger, withUser: () => logger }),
+    generateRequestId: () => 'req_test',
+  };
+});
 
 vi.mock('@/lib/auth/helpers', () => ({
   requireRole: (...args: unknown[]) => mockRequireRole(...args),
@@ -51,7 +76,16 @@ vi.mock('@/lib/supabase/server', () => ({
 
 const { default: UserFreezeForm, freezeEndpoint } = await import('@/components/admin/UserFreezeForm');
 const route = await import('@/app/api/admin/users/[id]/freeze/route');
-const { FreezeBodySchema, UnfreezeBodySchema, FREEZE_DURATION_DAYS_MAX } = await import('@/lib/admin/users-schemas');
+const { FreezeBodySchema, UnfreezeBodySchema, FREEZE_DURATION_DAYS_MAX, FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH } = await import(
+  '@/lib/admin/users-schemas'
+);
+const {
+  FREEZE_NOTIFICATION_NOT_REQUESTED_MESSAGE,
+  FREEZE_NOTIFICATION_SENT_MESSAGE,
+  FREEZE_NOTIFICATION_UNKNOWN_MESSAGE,
+  describeFreezeNotificationOutcome,
+  freezeNotificationOutcomeOf,
+} = await import('@/lib/admin/freeze-notification-status');
 
 // React に「テスト環境 (act で包む)」であることを伝える
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -148,7 +182,9 @@ const auditActions = () => sessionDb.rows('admin_audit_logs').map((row) => row.a
 
 beforeEach(() => {
   vi.clearAllMocks();
+  loggedEntries.length = 0;
   mockRequireRole.mockResolvedValue(ACTOR);
+  mockSendFreezeNotificationEmail.mockResolvedValue({ outcome: { status: 'sent' }, outbox_id: 'ob-1' });
   serviceDb = createSchemaDb({ tables: { user_profiles: [profileRow(TARGET_ID, { roles: ['user'] })] } });
   sessionDb = createSchemaDb({ tables: { admin_audit_logs: [] } });
   fetchMock = vi.fn();
@@ -206,6 +242,7 @@ describe('UserFreezeForm: 送る内容', () => {
       reason_category: 'policy_violation',
       reason_detail: '規約違反の投稿',
       duration_days: 14,
+      notify_user: true,
     });
     expect(FreezeBodySchema.safeParse(body).success).toBe(true);
   });
@@ -227,7 +264,7 @@ describe('UserFreezeForm: 送る内容', () => {
     expect(document.getElementById('duration_days')).toBeNull();
     await clickButton(FREEZE_BUTTON);
 
-    expect(lastCall().body).toEqual({ ban_type: 'permanent', reason_category: 'abuse', reason_detail: '不正な決済' });
+    expect(lastCall().body).toEqual({ ban_type: 'permanent', reason_category: 'abuse', reason_detail: '不正な決済', notify_user: true });
     expect(allText()).toContain('永久 BAN で凍結しました');
   });
 
@@ -400,6 +437,23 @@ describe('UserFreezeForm: 失敗のとき', () => {
     expect(auditActions()).toEqual([]);
   });
 
+  it('本物の route で、古い画面から解除した (別の運営が先に解除済み): 409 の文が出て読み直し、監査を残さない (#1917)', async () => {
+    // 画面は凍結中 (isBanned) のまま、DB の行は凍結されていない (beforeEach の行は frozen_at が無い)
+    wireFetchToRoute();
+    await renderForm({ isBanned: true });
+    await typeInto(fieldById<HTMLTextAreaElement>('reason'), '誤検知だった');
+    await clickButton(UNFREEZE_BUTTON);
+
+    expect(lastCall().init.method).toBe('DELETE');
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe(
+      '対象のユーザーは凍結されていないため、凍結を解除しませんでした。画面を読み込み直して、もう一度確認してください',
+    );
+    expect(refreshMock).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('[role="status"]')).toBeNull();
+    expect(buttonByText(UNFREEZE_BUTTON)).toBeDefined();
+    expect(auditActions()).toEqual([]);
+  });
+
   it('403 OP_TARGET_PROTECTED: API の文を出すだけで、読み直さない', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse(403, { error: { code: 'OP_TARGET_PROTECTED', message: 'super_admin ユーザーを凍結することはできません' } }),
@@ -473,5 +527,193 @@ describe('UserFreezeForm: 二重に送れない', () => {
       resolve(jsonResponse(200, { data: { ban_id: 'b', unban_at: null } }));
     });
     expect(allText()).toContain('凍結しました');
+  });
+});
+
+describe('UserFreezeForm: 凍結の通知メール (#2026。cross/24 §6.4・§7.6)', () => {
+  const notifyCheckbox = () => fieldById<HTMLInputElement>('notify_user');
+  const messageField = () => document.getElementById('notification_message') as HTMLTextAreaElement | null;
+
+  async function toggleNotify() {
+    await act(async () => {
+      notifyCheckbox().click();
+    });
+  }
+
+  it('F-1 チェックは既定で on で、メッセージの欄が出る', async () => {
+    await renderForm();
+    expect(notifyCheckbox().type).toBe('checkbox');
+    expect(notifyCheckbox().checked).toBe(true);
+    expect(allText()).toContain('利用者に凍結をメールで知らせる (アカウントの登録メールアドレス宛)');
+    expect(messageField()).not.toBeNull();
+    expect(messageField()!.maxLength).toBe(FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH);
+    expect(allText()).toContain(`利用者へのメッセージ (任意・${FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH} 文字まで)`);
+    expect(allText()).toContain(`0 / ${FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH} 文字`);
+    // 解除のフォームには出さない
+    await renderForm({ isBanned: true });
+    expect(document.getElementById('notify_user')).toBeNull();
+    expect(messageField()).toBeNull();
+  });
+
+  it('F-2 チェックを外すとメッセージの欄が消え、notify_user: false を送り notification_message を送らない', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { ban_id: 'b', unban_at: null, notification: { status: 'not_requested' } } }));
+    await renderForm();
+    await fillFreeze();
+    await typeInto(messageField()!, '書いたが送らない');
+    await toggleNotify();
+    expect(notifyCheckbox().checked).toBe(false);
+    expect(messageField()).toBeNull();
+    await clickButton(FREEZE_BUTTON);
+
+    expect(lastCall().body).toEqual({
+      ban_type: 'temporary',
+      reason_category: 'spam',
+      reason_detail: '大量のスパム投稿',
+      duration_days: 7,
+      notify_user: false,
+    });
+    expect(FreezeBodySchema.safeParse(lastCall().body).success).toBe(true);
+  });
+
+  it('F-2 チェックを外してから入れ直すと、書いた文が欄に戻る', async () => {
+    await renderForm();
+    await typeInto(messageField()!, '戻る文');
+    await toggleNotify();
+    expect(messageField()).toBeNull();
+    await toggleNotify();
+    expect(messageField()!.value).toBe('戻る文');
+  });
+
+  it('F-3 メッセージを書くと trim して notification_message に入れる。空白だけなら送らない', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { ban_id: 'b', unban_at: null, notification: { status: 'sent' } } }));
+    await renderForm();
+    await fillFreeze();
+    const message = '投稿内容について確認が取れるまで利用を停止しています。\n詳しくはお問い合わせください。';
+    await typeInto(messageField()!, `  ${message}  `);
+    // 文字数は前後の空白を除いて数える
+    expect(allText()).toContain(`${message.length} / ${FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH} 文字`);
+    await clickButton(FREEZE_BUTTON);
+
+    expect(lastCall().body).toEqual({
+      ban_type: 'temporary',
+      reason_category: 'spam',
+      reason_detail: '大量のスパム投稿',
+      duration_days: 7,
+      notify_user: true,
+      notification_message: message,
+    });
+    expect(FreezeBodySchema.safeParse(lastCall().body).success).toBe(true);
+
+    // 空白だけ: notification_message を送らない
+    await act(async () => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    await renderForm();
+    await fillFreeze();
+    await typeInto(messageField()!, '   \n  ');
+    await clickButton(FREEZE_BUTTON);
+    expect(lastCall().body).not.toHaveProperty('notification_message');
+    expect(lastCall().body.notify_user).toBe(true);
+  });
+
+  it('F-4 メッセージが 1001 文字 (on) は送らずに知らせる。ちょうど 1000 文字は送る', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { ban_id: 'b', unban_at: null, notification: { status: 'sent' } } }));
+    await renderForm();
+    await fillFreeze();
+    await typeInto(messageField()!, 'あ'.repeat(FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH + 1));
+    await clickButton(FREEZE_BUTTON);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe('利用者へのメッセージは 1000 文字以内で入力してください');
+
+    // 前後の空白は数えない: 1000 文字 + 空白で送る
+    await typeInto(messageField()!, ` ${'あ'.repeat(FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH)} `);
+    await clickButton(FREEZE_BUTTON);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(lastCall().body.notification_message).toBe('あ'.repeat(FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH));
+    expect(FreezeBodySchema.safeParse(lastCall().body).success).toBe(true);
+  });
+
+  it('F-4 チェックが off なら、欄に残った長い文は検査せずに送る (notification_message は送らない)', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { ban_id: 'b', unban_at: null, notification: { status: 'not_requested' } } }));
+    await renderForm();
+    await fillFreeze();
+    await typeInto(messageField()!, 'あ'.repeat(FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH + 1));
+    await toggleNotify();
+    await clickButton(FREEZE_BUTTON);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(lastCall().body).not.toHaveProperty('notification_message');
+    expect(lastCall().body.notify_user).toBe(false);
+  });
+
+  it.each([
+    [{ status: 'sent' }, FREEZE_NOTIFICATION_SENT_MESSAGE],
+    [{ status: 'not_requested' }, FREEZE_NOTIFICATION_NOT_REQUESTED_MESSAGE],
+    [{ status: 'failed', reason: 'no_recipient' }, 'メール未送信: 利用者のメールアドレスを取得できなかったため、通知されていません。凍結は済んでいます'],
+    [undefined, FREEZE_NOTIFICATION_UNKNOWN_MESSAGE],
+  ])('F-5 成功の文に通知の結果を添える: sent / not_requested / failed (no_recipient) / 応答に notification が無い (%j)', async (notification, notice) => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { ban_id: 'b', unban_at: null, ...(notification ? { notification } : {}) } }));
+    await renderForm();
+    await fillFreeze();
+    await clickButton(FREEZE_BUTTON);
+    expect(document.querySelector('[role="status"]')?.textContent).toBe(`7 日間の一時 BAN で凍結しました。${notice}`);
+    expect(notice).toBe(describeFreezeNotificationOutcome(freezeNotificationOutcomeOf(notification)));
+  });
+
+  it('F-5 永久 BAN の成功の文にも通知の結果を添える', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { data: { ban_id: 'b', unban_at: null, notification: { status: 'sent' } } }));
+    await renderForm({ isSuperAdmin: true });
+    await fillFreeze();
+    await clickRadio('permanent');
+    await clickButton(FREEZE_BUTTON);
+    expect(document.querySelector('[role="status"]')?.textContent).toBe(`永久 BAN で凍結しました。${FREEZE_NOTIFICATION_SENT_MESSAGE}`);
+  });
+
+  it('F-6 本物の route (sender は差し替え) で、チェック on なら sender が { userId, banId, frozenAt, unbanAt, operatorMessage } で呼ばれ、off なら呼ばれない', async () => {
+    wireFetchToRoute();
+    await renderForm();
+    await fillFreeze();
+    await typeInto(messageField()!, '  運営からのお知らせ  ');
+    await clickButton(FREEZE_BUTTON);
+
+    expect(mockSendFreezeNotificationEmail).toHaveBeenCalledTimes(1);
+    const params = mockSendFreezeNotificationEmail.mock.calls[0][0] as {
+      userId: string;
+      banId: string;
+      frozenAt: Date;
+      unbanAt: Date | null;
+      operatorMessage: string | null;
+    };
+    const audit = sessionDb.rows('admin_audit_logs')[0];
+    const details = audit.details as Record<string, unknown>;
+    expect(params.userId).toBe(TARGET_ID);
+    expect(params.banId).toBe(details.ban_id);
+    expect(params.frozenAt.toISOString()).toBe(targetNow()?.frozen_at);
+    expect(params.unbanAt?.toISOString()).toBe(targetNow()?.unban_at);
+    expect(params.operatorMessage).toBe('運営からのお知らせ');
+    expect(details.notification_message).toBe('運営からのお知らせ');
+    expect(details.notification).toEqual({ status: 'sent', reason: null, outbox_id: 'ob-1' });
+    expect(document.querySelector('[role="status"]')?.textContent).toBe(`7 日間の一時 BAN で凍結しました。${FREEZE_NOTIFICATION_SENT_MESSAGE}`);
+
+    // チェック off: 凍結は済むが sender は呼ばれない
+    serviceDb = createSchemaDb({ tables: { user_profiles: [profileRow(TARGET_ID, { roles: ['user'] })] } });
+    sessionDb = createSchemaDb({ tables: { admin_audit_logs: [] } });
+    mockSendFreezeNotificationEmail.mockClear();
+    await act(async () => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    await renderForm();
+    await fillFreeze();
+    await toggleNotify();
+    await clickButton(FREEZE_BUTTON);
+
+    expect(mockSendFreezeNotificationEmail).not.toHaveBeenCalled();
+    expect(targetNow()?.frozen_at).toEqual(expect.any(String));
+    const offDetails = sessionDb.rows('admin_audit_logs')[0].details as Record<string, unknown>;
+    expect(offDetails.notify_user).toBe(false);
+    expect(offDetails.notification_message).toBeNull();
+    expect(offDetails.notification).toEqual({ status: 'not_requested', reason: null, outbox_id: null });
+    expect(document.querySelector('[role="status"]')?.textContent).toBe(`7 日間の一時 BAN で凍結しました。${FREEZE_NOTIFICATION_NOT_REQUESTED_MESSAGE}`);
   });
 });

@@ -9,10 +9,21 @@ import { analyzeWithEvidence, ImageInput, GeminiAnalysisResult } from '../_share
 import { buildPhotoDishList } from '../_shared/meal-image.ts'
 import { cancelPendingMealImageJobs } from '../_shared/meal-image-jobs.ts'
 import { buildPhotoOverwriteNutrition } from '../_shared/meal-photo-update.ts'
+import { claimPhotoAnalysis, isPhotoAnalysisCurrent, parseInvokedAt } from '../_shared/meal-photo-cas.ts'
 import { createLogger } from '../_shared/db-logger.ts'
 import { getCorsHeaders } from '../_shared/cors.ts'
 import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from '../_shared/ai-usage.ts'
 import { requireAiConsentForUser } from '../_shared/ai-consent-guard.ts'
+
+/**
+ * 写真の解析の対象の献立が、本人の行として見つからない (他人の mealId・消えた献立)。#2025。
+ * 値は packages/shared/src/planned-meals-integrity.ts の PLANNED_MEAL_NOT_FOUND_CODE と同じ
+ * (Edge は packages/shared を import しない。一致は tests/veg-score-scale-contract.test.ts が見る)
+ */
+const PLANNED_MEAL_NOT_FOUND_CODE = 'PLANNED_MEAL_NOT_FOUND'
+
+/** 400: 本文の invokedAt (Next.js の route が Edge を呼ぶ直前に付けた要求の印の時刻) が日時として読めない */
+const INVALID_INVOKED_AT_MESSAGE = 'invokedAt must be an ISO 8601 date-time'
 
 console.log("Analyze Meal Photo Function v2 loaded")
 
@@ -53,13 +64,14 @@ Deno.serve(async (req) => {
     if (aiConsentDenied) return aiConsentDenied
 
     const body = await req.json()
-    const { images, imageBase64, mimeType, mealId, mealType, prefetchedGeminiResult } = body as {
+    const { images, imageBase64, mimeType, mealId, mealType, prefetchedGeminiResult, invokedAt } = body as {
       images?: ImageInput[];
       imageBase64?: string;
       mimeType?: string;
       mealId?: string;
       mealType?: string;
       prefetchedGeminiResult?: GeminiAnalysisResult;
+      invokedAt?: unknown;
     }
 
     const imageDataArray: ImageInput[] =
@@ -69,6 +81,16 @@ Deno.serve(async (req) => {
 
     if (imageDataArray.length === 0) {
       return new Response(JSON.stringify({ error: 'Image is required' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 400,
+      })
+    }
+
+    // mealId の経路の invokedAt (#121。route が付けた要求の印 = DB の updated_at。#2050)。書き込みの順序の守り (_shared/meal-photo-cas.ts) に使う。
+    // マイクロ秒まで読む。読めなければ数える前に 400
+    const parsedInvokedAt = parseInvokedAt(mealId ? invokedAt : undefined)
+    if (!parsedInvokedAt.ok) {
+      return new Response(JSON.stringify({ error: INVALID_INVOKED_AT_MESSAGE }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 400,
       })
@@ -120,13 +142,15 @@ Deno.serve(async (req) => {
     }
 
     // 非同期でバックグラウンドタスクを実行（EdgeRuntime.waitUntil で Edge が早期終了しないよう登録）
+    // mealId の経路は planned_meals (veg_score を含む) に書くので、利用者が送った解析の結果 (prefetchedGeminiResult) を使わず、
+    // 写真から解析し直す。料理と材料の g を利用者が指定できると veg_score を好きな値にできる (#2025)
     const backgroundPromise = analyzeMealPhotoBackgroundTask({
       images: imageDataArray,
       mealId,
       mealType,
-      prefetchedGeminiResult,
       userId: user.id,
-      authHeader
+      authHeader,
+      invokedAt: parsedInvokedAt.invokedAt,
     }).catch((error) => {
       console.error('Background task error:', error)
     })
@@ -152,20 +176,21 @@ Deno.serve(async (req) => {
   }
 })
 
-async function analyzeMealPhotoBackgroundTask({ 
+async function analyzeMealPhotoBackgroundTask({
   images,
   mealId,
   mealType,
-  prefetchedGeminiResult,
   userId,
-  authHeader
+  authHeader,
+  invokedAt,
 }: {
   images: ImageInput[];
   mealId: string;
   mealType?: string;
-  prefetchedGeminiResult?: GeminiAnalysisResult;
   userId: string;
   authHeader: string;
+  /** Next.js の route が Edge を呼ぶ直前に付けた要求の印 (DB の updated_at。ISO 8601・マイクロ秒まで。#2050)。利用者の JWT で直接呼んだときは null */
+  invokedAt: string | null;
 }) {
   console.log(`Starting photo analysis v2 for mealId: ${mealId}, user: ${userId}`)
   
@@ -176,13 +201,48 @@ async function analyzeMealPhotoBackgroundTask({
   )
 
   try {
-    // v2パイプラインで解析
-    const result = await analyzeWithEvidence(images, mealType || 'lunch', supabase, prefetchedGeminiResult)
+    // planned_meals の書き込みは service_role の client (queueDb) で行う。利用者の権限では veg_score を書けない (#2025)。
+    // service_role は RLS を通らないので、印を付ける前・書く前に本人の行であることを必ず確かめる (save-meal.ts の「最終防衛線」と同じ考え)。
+    // 鍵が無いと createClient が投げ、外側の catch がログに残す (解析も書き込みもしない)。
+    // 変数名 queueDb は今の取り消しの client と同じ (tests/ai-queue-writes-contract.test.ts がこの名前で取り消しの client を見る)
+    const queueDb = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SERVICE_ROLE_JWT') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+    )
+
+    // 本人の行か (user_daily_meals.user_id = userId)。無ければ印も付けずに終える (他人の mealId・消えた献立)
+    const { data: owned, error: ownedError } = await queueDb
+      .from('planned_meals')
+      .select('id, user_daily_meals!inner(user_id)')
+      .eq('id', mealId)
+      .eq('user_daily_meals.user_id', userId)
+      .maybeSingle()
+    if (ownedError) throw ownedError
+    if (!owned) throw new Error(PLANNED_MEAL_NOT_FOUND_CODE)
+
+    // 書き込みの順序の守り (#121 の CAS。_shared/meal-photo-cas.ts)。解析の前に行に印を付ける (updated_at を進める)。
+    // invokedAt は Next.js の route が Edge を呼ぶ直前に付けた要求の印 (DB の updated_at)。後から送った要求の印・後から送った解析の印が
+    // この印を消す (または付けさせない) ので、終わる順番・Edge の動き出す順番によらず、最後に送った写真の結果だけが残る (#2050)。
+    // invokedAt のあとに行が書かれていたら、この要求は古いので解析せずに終える
+    const claim = await claimPhotoAnalysis(queueDb, { mealId, invokedAt })
+    if (claim.status === 'superseded') {
+      console.warn('Photo analysis skipped: the meal was updated after this request was invoked', { mealId, invokedAt })
+      return
+    }
+
+    // v2パイプラインで解析 (mealId の経路は Gemini で認識する。利用者が送った解析の結果を使わない。#2025)
+    const result = await analyzeWithEvidence(images, mealType || 'lunch', supabase)
     console.log('Analysis result:', {
       dishes: result.dishes.length,
       totalCalories: result.totalCalories,
       confidenceScore: result.evidence.confidenceScore,
     })
+
+    // 解析のあいだに、後から送った解析が印を付けた・ほかの書き手が行を書いたなら、アップロードも取り消しも書き込みもしない
+    if (!(await isPhotoAnalysisCurrent(queueDb, { mealId, token: claim.token }))) {
+      console.warn('Photo analysis result discarded: the meal was updated during the analysis', { mealId, invokedAt })
+      return
+    }
 
     // 画像をSupabase Storageにアップロード
     const first = images?.[0]
@@ -226,14 +286,9 @@ async function analyzeMealPhotoBackgroundTask({
     const photoDishes = buildPhotoDishList(dishes, imageUrl)
     const dishName = result.dishes.map(d => d.name).join('、')
     
-    // planned_mealsを更新（全栄養素）
     try {
-      // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。ユーザーの JWT のクライアントでは取り消せないので、
-      // 本人 (JWT で確かめた userId) の行に絞って service role で取り消す
-      const queueDb = createClient(
-        Deno.env.get('SUPABASE_URL') ?? '',
-        Deno.env.get('SERVICE_ROLE_JWT') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-      )
+      // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。本人 (JWT で確かめた userId) の行に絞って service role で取り消す。
+      // 取り消しの失敗は今までどおり警告だけにして、写真の上書きは続ける
       await cancelPendingMealImageJobs({
         supabase: queueDb,
         userId,
@@ -244,17 +299,18 @@ async function analyzeMealPhotoBackgroundTask({
       console.warn('Failed to cancel pending meal image jobs for photo update:', cancelError)
     }
 
-    const { error: updateError } = await supabase
+    // updated_at が印のままの行にだけ書く (確かめてから書くまでのあいだに書かれた場合も、ここで止まる)。本人の行は上で確かめてある
+    const { data: written, error: updateError } = await queueDb
       .from('planned_meals')
       .update({
-      dish_name: dishName || '写真から入力',
-      dishes: photoDishes,
+        dish_name: dishName || '写真から入力',
+        dishes: photoDishes,
         image_url: imageUrl,
         description: result.praiseComment,
         // 栄養素 (基本・拡張・糖質)。書く列は meal-photo-update.ts に集約している。
         // 糖質 (sugar_g) を炭水化物・食物繊維と一緒に上書きしないと、上書き前の AI 献立の古い糖質が残る (#1146)
         ...buildPhotoOverwriteNutrition(result),
-        // スコア
+        // 野菜スコア (0〜100。_shared/veg-score.ts の尺度。#2025 の正本)
         veg_score: result.vegScore,
         // メタデータ
         is_simple: result.dishes.length <= 1,
@@ -262,8 +318,14 @@ async function analyzeMealPhotoBackgroundTask({
         updated_at: new Date().toISOString(),
       })
       .eq('id', mealId)
+      .eq('updated_at', claim.token)
+      .select('id')
 
     if (updateError) throw updateError
+    if (!written || written.length === 0) {
+      console.warn('Photo analysis result discarded: the meal was updated before the write', { mealId, invokedAt })
+      return
+    }
 
     console.log(`✅ Photo analysis v2 completed for ${dishName}`)
     console.log(`   Confidence: ${result.evidence.confidenceScore}, Verification: ${result.evidence.verification.reason}`)

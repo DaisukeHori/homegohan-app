@@ -10,7 +10,27 @@ import type { TargetSlot } from '@/types/domain';
 import { isMealType, MEAL_ORDER, type MealType } from '@homegohan/shared';
 import { addDaysToDate } from '@/lib/date-utils';
 import { isCalendarDate } from '@/lib/jst-day-ranges';
-import { AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE, aiInvalidDateMessage } from '@/lib/ai/ai-api-messages';
+import {
+  AI_ACTION_COMPLETE_MEAL_FAILED_MESSAGE,
+  AI_CONSULTATION_ACTION_INVALID_VALUES_MESSAGE,
+  AI_CONSULTATION_DATE_AND_MEAL_TYPE_REQUIRED_MESSAGE,
+  AI_CONSULTATION_DATE_REQUIRED_MESSAGE,
+  AI_CONSULTATION_DISHES_NOT_ARRAY_MESSAGE,
+  AI_CONSULTATION_IMAGE_URL_NOT_STRING_MESSAGE,
+  AI_CONSULTATION_MEAL_ID_REQUIRED_MESSAGE,
+  AI_CONSULTATION_START_DATE_REQUIRED_MESSAGE,
+  aiConsultationNonEmptyTextMaxMessage,
+  aiConsultationNumberMessage,
+  aiConsultationNumberRangeMessage,
+  aiConsultationOptionalTextMaxMessage,
+  aiConsultationRangeMessage,
+  aiConsultationSingleMealStartedMessage,
+  aiInvalidDateMessage,
+} from '@/lib/ai/ai-api-messages';
+import {
+  HEALTH_GOAL_TARGET_UNIT_NULL_MESSAGE,
+  HEALTH_GOAL_TARGET_VALUE_NULL_MESSAGE,
+} from '@/lib/health-api-messages';
 import {
   sanitizeHealthGoalCreate,
   sanitizeHealthGoalUpdate,
@@ -18,6 +38,7 @@ import {
   stripUndefined,
 } from '@/lib/health-payloads';
 import { updateHealthStreak } from '@/lib/health-streaks';
+import { setPlannedMealCompleted } from '@/modules/planned-meals-integrity/server';
 import { todayLocal } from '@/lib/date-utils';
 import { invokeGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { isFeatureEnabled } from '@/lib/feature-flags';
@@ -56,7 +77,7 @@ import { weeklyMenuRequestWeeklyOriginDataForDates } from '@/lib/ai/weekly-menu-
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { createLogger } from '@/lib/db-logger';
 import { errorCodeOf, toLoggableError } from '@/lib/api/errors';
-import { PLANNED_MEAL_NUTRIENT_LIMITS } from '@/lib/planned-meal-validation';
+import { MEAL_TYPE_MESSAGE, PLANNED_MEAL_NUTRIENT_LIMITS } from '@/lib/planned-meal-validation';
 import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
 
 // セキュリティ上禁止されたフィールド
@@ -100,16 +121,11 @@ const CONSULTATION_TEXT_FIELD_MAX_LENGTH = {
   category: 100,
 } as const;
 
-/**
- * 検証の失敗の文 (errors) は result.error として応答の本文 (execute の { result }・messages の actionResult) と
- * ai_action_logs.result に入る (#1917)。ここの文は日本語の固定の文にする (項目の名前 (key) と上限の数だけを埋める)
+/*
+ * 検証の失敗の文 (errors) と、この下の result.error は、応答の本文 (execute の { result }・messages の actionResult) と
+ * ai_action_logs.result に入る (#1917)。文は日本語の固定の文にし、項目は「日本語の名前 (キー)」の形で出す
+ * (src/lib/ai/ai-api-messages.ts の aiConsultation* の関数と AI_CONSULTATION_* の定数。英字のキーを括弧の外に出さない。#1917 の続き)
  */
-function nonEmptyTextMaxMessage(field: string, maxLength: number): string {
-  return `${field} は 1〜${maxLength} 文字の文字列で指定してください`;
-}
-function optionalTextMaxMessage(field: string, maxLength: number): string {
-  return `${field} は ${maxLength} 文字以内の文字列か null で指定してください`;
-}
 
 function isPlainObject(value: unknown): value is PlainRecord {
   return value != null && typeof value === 'object' && !Array.isArray(value);
@@ -143,11 +159,11 @@ function sanitizeNutritionTargetUpdate(input: unknown): { data: Record<string, n
     if (!Object.prototype.hasOwnProperty.call(input, key)) continue;
     const value = input[key];
     if (!isFiniteNumber(value)) {
-      errors.push(`${key} は数値で指定してください`);
+      errors.push(aiConsultationNumberMessage(key));
       continue;
     }
     if (value < range.min || value > range.max) {
-      errors.push(`${key} は ${range.min} 〜 ${range.max} の範囲で指定してください`);
+      errors.push(aiConsultationRangeMessage(key, range.min, range.max));
       continue;
     }
     data[key] = value;
@@ -172,7 +188,7 @@ function sanitizeMealUpdate(input: unknown): { data: PlainRecord; errors: string
     if (typeof value === 'string' && value.trim().length > 0 && value.length <= CONSULTATION_TEXT_FIELD_MAX_LENGTH.dish_name) {
       data.dish_name = value;
     } else {
-      errors.push(nonEmptyTextMaxMessage('dish_name', CONSULTATION_TEXT_FIELD_MAX_LENGTH.dish_name));
+      errors.push(aiConsultationNonEmptyTextMaxMessage('dish_name', CONSULTATION_TEXT_FIELD_MAX_LENGTH.dish_name));
     }
   }
 
@@ -182,7 +198,7 @@ function sanitizeMealUpdate(input: unknown): { data: PlainRecord; errors: string
     if (!Object.prototype.hasOwnProperty.call(input, key)) continue;
     const value = input[key];
     if (!isFiniteNumber(value) || value < range.min || value > range.max) {
-      errors.push(`${key} は ${range.min} 〜 ${range.max} の範囲の数値で指定してください`);
+      errors.push(aiConsultationNumberRangeMessage(key, range.min, range.max));
       continue;
     }
     data[key] = value;
@@ -195,7 +211,7 @@ function sanitizeMealUpdate(input: unknown): { data: PlainRecord; errors: string
     } else if (typeof value === 'string' && value.length <= CONSULTATION_TEXT_FIELD_MAX_LENGTH.memo) {
       data.memo = value;
     } else {
-      errors.push(optionalTextMaxMessage('memo', CONSULTATION_TEXT_FIELD_MAX_LENGTH.memo));
+      errors.push(aiConsultationOptionalTextMaxMessage('memo', CONSULTATION_TEXT_FIELD_MAX_LENGTH.memo));
     }
   }
 
@@ -204,7 +220,7 @@ function sanitizeMealUpdate(input: unknown): { data: PlainRecord; errors: string
     if (typeof value === 'string' && value.trim().length > 0 && value.length <= CONSULTATION_TEXT_FIELD_MAX_LENGTH.mode) {
       data.mode = value;
     } else {
-      errors.push(nonEmptyTextMaxMessage('mode', CONSULTATION_TEXT_FIELD_MAX_LENGTH.mode));
+      errors.push(aiConsultationNonEmptyTextMaxMessage('mode', CONSULTATION_TEXT_FIELD_MAX_LENGTH.mode));
     }
   }
 
@@ -213,7 +229,7 @@ function sanitizeMealUpdate(input: unknown): { data: PlainRecord; errors: string
     if (Array.isArray(value)) {
       data.dishes = value;
     } else {
-      errors.push('dishes は配列で指定してください');
+      errors.push(AI_CONSULTATION_DISHES_NOT_ARRAY_MESSAGE);
     }
   }
 
@@ -222,7 +238,7 @@ function sanitizeMealUpdate(input: unknown): { data: PlainRecord; errors: string
     if (typeof value === 'string') {
       data.image_url = value;
     } else {
-      errors.push('image_url は文字列で指定してください');
+      errors.push(AI_CONSULTATION_IMAGE_URL_NOT_STRING_MESSAGE);
     }
   }
 
@@ -244,7 +260,7 @@ function sanitizeShoppingItemUpdate(input: unknown): { data: PlainRecord; errors
     if (typeof value === 'string' && value.trim().length > 0 && value.length <= CONSULTATION_TEXT_FIELD_MAX_LENGTH.item_name) {
       data.item_name = value;
     } else {
-      errors.push(nonEmptyTextMaxMessage('item_name', CONSULTATION_TEXT_FIELD_MAX_LENGTH.item_name));
+      errors.push(aiConsultationNonEmptyTextMaxMessage('item_name', CONSULTATION_TEXT_FIELD_MAX_LENGTH.item_name));
     }
   }
 
@@ -255,7 +271,7 @@ function sanitizeShoppingItemUpdate(input: unknown): { data: PlainRecord; errors
     } else if (typeof value === 'string' && value.length <= CONSULTATION_TEXT_FIELD_MAX_LENGTH.quantity) {
       data.quantity = value;
     } else {
-      errors.push(optionalTextMaxMessage('quantity', CONSULTATION_TEXT_FIELD_MAX_LENGTH.quantity));
+      errors.push(aiConsultationOptionalTextMaxMessage('quantity', CONSULTATION_TEXT_FIELD_MAX_LENGTH.quantity));
     }
   }
 
@@ -264,7 +280,7 @@ function sanitizeShoppingItemUpdate(input: unknown): { data: PlainRecord; errors
     if (typeof value === 'string' && value.trim().length > 0 && value.length <= CONSULTATION_TEXT_FIELD_MAX_LENGTH.category) {
       data.category = value;
     } else {
-      errors.push(nonEmptyTextMaxMessage('category', CONSULTATION_TEXT_FIELD_MAX_LENGTH.category));
+      errors.push(aiConsultationNonEmptyTextMaxMessage('category', CONSULTATION_TEXT_FIELD_MAX_LENGTH.category));
     }
   }
 
@@ -404,7 +420,7 @@ export async function runConsultationAction(
       const { date, ultimateMode } = action.action_params;
 
       if (!date) {
-        result = { error: 'date は必須です' };
+        result = { error: AI_CONSULTATION_DATE_REQUIRED_MESSAGE };
         break;
       }
 
@@ -524,7 +540,7 @@ export async function runConsultationAction(
       const { startDate, ultimateMode } = action.action_params;
 
       if (!startDate) {
-        result = { error: 'startDate は必須です' };
+        result = { error: AI_CONSULTATION_START_DATE_REQUIRED_MESSAGE };
         break;
       }
       // 日付は暦の計算 (addDaysToDate) でずらすので、YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433)
@@ -661,7 +677,7 @@ export async function runConsultationAction(
       } = action.action_params;
 
       if (!date || !mealType) {
-        result = { error: 'date と mealType は必須です' };
+        result = { error: AI_CONSULTATION_DATE_AND_MEAL_TYPE_REQUIRED_MESSAGE };
         break;
       }
 
@@ -676,7 +692,8 @@ export async function runConsultationAction(
       // AI 出力は信頼できないため実行時にも二重で防御する。
       // 判定は MEAL_ORDER (= AI_ALLOWED_MEAL_TYPES) の型ガード isMealType で行う (#1631)
       if (typeof mealType !== 'string' || !isMealType(mealType)) {
-        result = { error: `mealType は ${AI_ALLOWED_MEAL_TYPES.join('/')} のいずれかである必要があります` };
+        // 文は食事の入力の検証と同じ「食事の区分 (mealType) は次のいずれかを…」(MEAL_TYPE_MESSAGE。値の並びは同じ MEAL_ORDER。#1917 の続き)
+        result = { error: MEAL_TYPE_MESSAGE };
         break;
       }
 
@@ -791,7 +808,8 @@ export async function runConsultationAction(
       result = {
         requestId: requestData.id,
         status: 'processing',
-        message: `${date}の${mealType}を生成中...`,
+        // 食事の区分は日本語の名前で出す (英字の値 'dinner' を文に出さない。#1917 の続き)
+        message: aiConsultationSingleMealStartedMessage(date, mealType),
       };
       break;
     }
@@ -801,7 +819,7 @@ export async function runConsultationAction(
       console.log('update_meal action:', { mealId, updates });
 
       if (!mealId) {
-        result = { error: 'mealIdが指定されていません' };
+        result = { error: AI_CONSULTATION_MEAL_ID_REQUIRED_MESSAGE };
         break;
       }
 
@@ -1015,25 +1033,23 @@ export async function runConsultationAction(
 
     case 'complete_meal': {
       const { mealId, isCompleted } = action.action_params;
-      // セキュリティチェック - user_daily_meals JOIN 経由でユーザー確認
-      const { data: meal } = await supabase
-        .from('planned_meals')
-        .select('id, user_daily_meals!inner(user_id)')
-        .eq('id', mealId)
-        .eq('user_daily_meals.user_id', user.id)
-        .maybeSingle();
-
-      if (!meal) {
-        result = { error: '権限がありません' };
+      // 本人の行かどうかは RPC (planned_meals_set_completed) が確かめる。他人の行・無い行・UUID の形でない id は not_found。
+      // completed_at は DB が決める (planned_meals の is_completed / completed_at は利用者のセッションから直接書けない。#2025)
+      const completion = await setPlannedMealCompleted(supabase, {
+        mealId: typeof mealId === 'string' ? mealId : '',
+        completed: isCompleted !== false,
+      });
+      if (!completion.ok) {
+        if (completion.reason === 'not_found') {
+          result = { error: '権限がありません' };
+          break;
+        }
+        success = false;
+        result = { mealId, error: AI_ACTION_COMPLETE_MEAL_FAILED_MESSAGE };
         break;
       }
-
-      const { error: updateError } = await supabase
-        .from('planned_meals')
-        .update({ is_completed: isCompleted !== false })
-        .eq('id', mealId);
-      success = !updateError;
-      result = { mealId, completed: isCompleted !== false };
+      success = true;
+      result = { mealId, completed: completion.row.is_completed };
       break;
     }
 
@@ -1485,7 +1501,13 @@ export async function runConsultationAction(
       }
       // target_value / target_unit は NOT NULL の列。null を送ると DB エラーになるので、先に弾く
       if (safeUpdates.target_value === null || safeUpdates.target_unit === null) {
-        result = { error: 'target_value と target_unit は空にできません' };
+        // 文は /api/health/goals の PATCH と同じ (空にしようとした項目の文だけを出す。#1917 の続き)
+        result = {
+          error: [
+            ...(safeUpdates.target_value === null ? [HEALTH_GOAL_TARGET_VALUE_NULL_MESSAGE] : []),
+            ...(safeUpdates.target_unit === null ? [HEALTH_GOAL_TARGET_UNIT_NULL_MESSAGE] : []),
+          ].join(', '),
+        };
         break;
       }
 

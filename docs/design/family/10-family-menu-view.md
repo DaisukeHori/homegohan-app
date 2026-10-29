@@ -244,7 +244,7 @@ migration の本番適用は段 A のマージ後にオーケストレーター�
 | 案 | 中身 | 判定 |
 |---|---|---|
 | B-1 RLS を広げる | `user_daily_meals` / `planned_meals` に家族の SELECT ポリシーを足し、route は利用者のクライアントで `.in('user_id', …)` | 29 のファイル (§3.1) が `user_id` の絞りを RLS に頼っており、家族の行が混ざる (例: 栄養の集計・ホームの今日の献立・食事の詳細)。全部を洗うのは本件の範囲を超え、将来の読み取りにも同じ罠が残る。採らない |
-| B-2 route が service_role で読む | 名前の API と同じく、RLS で読めた相手の分だけ service_role で引く | 読み取りの条件 (同意) が TS に置かれ、関数より漏れやすい。`cross/02` §3.3 の「service_role は Edge Function に限る」方針にも近づけない。採らない |
+| B-2 route が service_role で読む | 名前の API と同じく、RLS で読めた相手の分だけ service_role で引く | 読み取りの条件 (同意) が TS に置かれ、関数より漏れやすい。`cross/02` §3.3 の「service_role は Edge Function に限る」方針 (本書を書いた時点の文。今の §3.3 は Next.js の `getSupabaseAdmin()` も client を作る場所に挙げる) にも近づけない。採らない |
 | B-3 SECURITY DEFINER の関数 2 本 | 判定を関数 1 本に閉じ、献立は鍵を絞った jsonb の配列 1 つで返す (行の集合は PostgREST の `max_rows` で打ち切られる。§11.1)。RLS は変えない。route は利用者のクライアントの `rpc` | 既存の読み取りを変えない。同意の判定が 1 か所。anon / PUBLIC の EXECUTE を外す規律 (#1103) に乗る。**採る** |
 
 ### 7.2 F の問い — 縁の発生源を消すより単純な構造は無いか

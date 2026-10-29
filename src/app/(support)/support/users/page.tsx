@@ -1,15 +1,26 @@
 "use client";
 
-import { useEffect, useState, useCallback, Suspense } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { normalizeProfileName } from "@/lib/profile-name";
 import { UsersListResponseSchema, type UserListItem } from "@/lib/admin/users-schemas";
+import {
+  forbiddenMessageOfResponse,
+  operationFailureMessage,
+  operationNetworkFailureMessage,
+} from "@/lib/admin/api-error-message";
 
 // 一覧に出す件数 (GET /api/admin/users の per_page。API の既定と同じ 50 件)
 const USERS_PER_PAGE = 50;
 
 const USERS_LOAD_ERROR = "ユーザー一覧を取得できませんでした。しばらくしてから、もう一度お試しください。";
+/** メモの追加が失敗したときの文の頭 (後ろに理由を添える) */
+const NOTE_ADD_FAILURE_SUMMARY = "メモを追加できませんでした";
+/** 利用者の詳細を読み込めなかったときの文の頭 (後ろに理由を添える)。前の利用者の詳細を出したままにしないために出す (#2050) */
+const DETAIL_LOAD_FAILURE_SUMMARY = "ユーザーの詳細を読み込めませんでした";
+/** 403 (Forbidden) の HTTP ステータス */
+const HTTP_FORBIDDEN = 403;
 
 /** 日時 (ISO 8601) を一覧の日付の表示にする。値が無ければ "-" */
 function formatDate(value: string | null): string {
@@ -51,10 +62,19 @@ function SupportUsersContent() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(initialUserId);
+  // いま選んでいる利用者の id (描画を待たずに読むための写し。選択は selectUser でだけ変える)。
+  // 応答が届いた時点で別の利用者を選んでいたら、その応答で詳細の欄・メモの失敗の文を書かない (#2050)
+  const selectedUserIdRef = useRef<string | null>(initialUserId);
   const [userDetail, setUserDetail] = useState<UserDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  // 詳細を読み込めなかったときの文
+  const [detailError, setDetailError] = useState<string | null>(null);
+  // 利用者を素早く選び直したとき、古い詳細の応答で詳細の欄を上書きしないための連番
+  const detailSeq = useRef(0);
   const [newNote, setNewNote] = useState("");
   const [addingNote, setAddingNote] = useState(false);
+  // メモの追加が失敗したときの文 (失敗の応答を黙って捨てない)
+  const [noteError, setNoteError] = useState<string | null>(null);
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -64,9 +84,11 @@ function SupportUsersContent() {
 
       const res = await fetch(`/api/admin/users?${params}`);
       if (!res.ok) {
-        // 取得できなかったことを「ユーザーが見つかりません」と見せない
+        // 取得できなかったことを「ユーザーが見つかりません」と見せない。
+        // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 と失敗は USERS_LOAD_ERROR (#1917)
+        const message = res.status === HTTP_FORBIDDEN ? await forbiddenMessageOfResponse(res, USERS_LOAD_ERROR) : USERS_LOAD_ERROR;
         setUsers([]);
-        setLoadError(USERS_LOAD_ERROR);
+        setLoadError(message);
         return;
       }
       // 応答は { data: UserListItem[], meta } (route と同じスキーマで確かめる)。
@@ -89,18 +111,37 @@ function SupportUsersContent() {
     }
   }, [searchQuery]);
 
+  // 利用者を選ぶ・閉じる (null)。描画を待たずに読む写し (selectedUserIdRef) も同時に変える
+  const selectUser = useCallback((userId: string | null) => {
+    selectedUserIdRef.current = userId;
+    setSelectedUserId(userId);
+  }, []);
+
   const fetchUserDetail = useCallback(async (userId: string) => {
+    const seq = ++detailSeq.current;
     setDetailLoading(true);
+    setDetailError(null);
     try {
       const res = await fetch(`/api/support/users/${userId}`);
-      if (res.ok) {
-        const data = await res.json();
-        setUserDetail(data);
+      if (seq !== detailSeq.current) return;
+      if (!res.ok) {
+        // 読めなかった利用者の詳細の代わりに、前に出していた (別の) 利用者の詳細を残さない
+        const body: unknown = await res.json().catch(() => null);
+        if (seq !== detailSeq.current) return; // 本文を読んでいる間に選び直していたら、古い失敗は捨てる
+        setUserDetail(null);
+        setDetailError(operationFailureMessage(DETAIL_LOAD_FAILURE_SUMMARY, res.status, body));
+        return;
       }
+      const data = await res.json();
+      if (seq !== detailSeq.current) return;
+      setUserDetail(data);
     } catch (error) {
       console.error("Failed to fetch user detail:", error);
+      if (seq !== detailSeq.current) return;
+      setUserDetail(null);
+      setDetailError(operationNetworkFailureMessage(DETAIL_LOAD_FAILURE_SUMMARY));
     } finally {
-      setDetailLoading(false);
+      if (seq === detailSeq.current) setDetailLoading(false);
     }
   }, []);
 
@@ -109,30 +150,55 @@ function SupportUsersContent() {
   }, [fetchUsers]);
 
   useEffect(() => {
+    // 前の利用者のメモの追加の失敗の文と書きかけのメモは、別の利用者の詳細に残さない
+    // (書きかけを残すと、前の利用者に宛てたメモを、いま選んだ利用者に追加してしまうため。#2050)
+    setNoteError(null);
+    setNewNote("");
+    // 前の利用者の詳細は、選んだ利用者の詳細が届くまでも出さない
+    setUserDetail(null);
     if (selectedUserId) {
       fetchUserDetail(selectedUserId);
     } else {
-      setUserDetail(null);
+      // 閉じたら、読み込み中の詳細の応答も捨てる
+      detailSeq.current += 1;
+      setDetailLoading(false);
+      setDetailError(null);
     }
   }, [selectedUserId, fetchUserDetail]);
 
   const handleAddNote = async () => {
     if (!newNote.trim() || !selectedUserId) return;
-    
+    // 送り先の利用者 (応答が届いた時点で別の利用者を選んでいたら、その応答で画面を書かない)
+    const targetUserId = selectedUserId;
+    const sentNote = newNote;
+    const isStillSelected = () => selectedUserIdRef.current === targetUserId;
+
     setAddingNote(true);
+    setNoteError(null);
     try {
-      const res = await fetch(`/api/support/users/${selectedUserId}/notes`, {
+      const res = await fetch(`/api/support/users/${targetUserId}/notes`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ note: newNote }),
+        body: JSON.stringify({ note: sentNote }),
       });
 
-      if (res.ok) {
-        setNewNote("");
-        fetchUserDetail(selectedUserId);
+      if (!res.ok) {
+        // 追加できていないことを画面に出し、入力したメモは残す (もう一度追加できるように)
+        const body: unknown = await res.json().catch(() => null);
+        if (!isStillSelected()) return;
+        setNoteError(operationFailureMessage(NOTE_ADD_FAILURE_SUMMARY, res.status, body));
+        return;
       }
+      // 別の利用者を選んでいたら、その利用者の詳細の欄と書きかけのメモに触れない
+      // (送った利用者の詳細を読み直すと、いま選んでいる利用者の欄が前の利用者で上書きされる。#2050)
+      if (!isStillSelected()) return;
+      // 入力欄は、送ったメモのままなら空にする (待つ間に書き直した・選び直して書いたメモは消さない)
+      setNewNote((current) => (current === sentNote ? "" : current));
+      fetchUserDetail(targetUserId);
     } catch (error) {
       console.error("Failed to add note:", error);
+      if (!isStillSelected()) return;
+      setNoteError(operationNetworkFailureMessage(NOTE_ADD_FAILURE_SUMMARY));
     } finally {
       setAddingNote(false);
     }
@@ -184,7 +250,7 @@ function SupportUsersContent() {
                   className={`p-4 cursor-pointer transition-colors ${
                     selectedUserId === user.id ? "bg-teal-50" : "hover:bg-gray-50"
                   }`}
-                  onClick={() => setSelectedUserId(user.id)}
+                  onClick={() => selectUser(user.id)}
                 >
                   <div className="flex items-center justify-between">
                     <div>
@@ -243,7 +309,7 @@ function SupportUsersContent() {
                       <p className="text-sm text-gray-500">{userDetail.user.id.substring(0, 8)}...</p>
                     </div>
                     <button
-                      onClick={() => setSelectedUserId(null)}
+                      onClick={() => selectUser(null)}
                       className="text-gray-400 hover:text-gray-600"
                     >
                       ✕
@@ -346,8 +412,44 @@ function SupportUsersContent() {
                         追加
                       </button>
                     </div>
+                    {noteError && (
+                      <div
+                        role="alert"
+                        data-testid="note-add-error"
+                        className="mt-2 bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-lg text-sm"
+                      >
+                        {noteError}
+                      </div>
+                    )}
                   </div>
                 </>
+              ) : detailError ? (
+                <div className="space-y-3">
+                  <div className="flex justify-end">
+                    <button
+                      onClick={() => selectUser(null)}
+                      className="text-gray-400 hover:text-gray-600"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div
+                    role="alert"
+                    data-testid="user-detail-load-error"
+                    className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded-lg text-sm"
+                  >
+                    {detailError}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (selectedUserId) void fetchUserDetail(selectedUserId);
+                    }}
+                    className="px-3 py-1.5 bg-white border border-red-300 rounded-lg text-sm text-red-700 hover:bg-red-100 transition-colors"
+                  >
+                    再試行
+                  </button>
+                </div>
               ) : null}
             </motion.div>
           )}

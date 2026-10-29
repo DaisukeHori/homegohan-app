@@ -1,7 +1,7 @@
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { NextResponse } from 'next/server';
-import { restorePlannedMealsSnapshot, extractPlannedMealsSnapshot } from '@/lib/planned-meals-snapshot';
+import { restoreOwnPlannedMealsSnapshot, extractPlannedMealsSnapshot } from '@/lib/planned-meals-snapshot';
 import { internalError } from '@/lib/api/errors';
 import { isWeeklyMenuRequestStale, markWeeklyMenuRequestStaleIfUnchanged } from '@/lib/weekly-menu-request-stale';
 import {
@@ -17,6 +17,7 @@ import {
 } from '@/lib/ai/weekly-menu-request-origin';
 import { API_UNAUTHENTICATED_MESSAGE, API_INVALID_JSON_MESSAGE } from '@/lib/api/error-responses';
 import { aiRequiredFieldMessage, AI_MENU_REQUEST_NOT_FOUND_MESSAGE } from '@/lib/ai/ai-api-messages';
+import { isUuid } from '@/lib/http-params';
 
 // #1203: stale 判定時の復元（スナップショットの書き戻し）が打ち切られないよう、実行時間の上限を明示する。
 export const maxDuration = 60; // Vercel Pro: 60s OK
@@ -31,6 +32,10 @@ export async function GET(request: Request) {
   const requestId = searchParams.get('requestId');
   if (!requestId) {
     return NextResponse.json({ error: aiRequiredFieldMessage('献立の生成の受付の ID') }, { status: 400 });
+  }
+  // UUID の形でない requestId は DB に渡さず、行が無いときと同じ not_found (uuid 型の列に渡すと 22P02 で失敗し、下の catch の 500 に入っていた。#1917 の続き)
+  if (!isUuid(requestId)) {
+    return NextResponse.json({ status: 'not_found', requestId });
   }
 
   try {
@@ -83,7 +88,8 @@ export async function GET(request: Request) {
         const snapshot = extractPlannedMealsSnapshot(failedRow.generated_data);
         let restoreResult: { restored: number; skipped: number; failed: number } | null = null;
         if (snapshot.length > 0) {
-          restoreResult = await restorePlannedMealsSnapshot(supabase, snapshot);
+          // planned_meals の 3 列は利用者から INSERT できない (#2025)。本人の日を確かめてから service role で戻す
+          restoreResult = await restoreOwnPlannedMealsSnapshot({ userDb: supabase, writer: getSupabaseAdmin(), snapshot });
           console.log(
             `🔁 [stale sweeper/status] Restored meals for request ${requestId}: restored=${restoreResult.restored} skipped=${restoreResult.skipped} failed=${restoreResult.failed}`,
           );
@@ -154,16 +160,24 @@ export async function POST(request: Request) {
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
-  let body: { requestId?: string };
+  let body: { requestId?: unknown };
   try {
     body = await request.json();
   } catch {
+    return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+  }
+  // JSON としては読めてもオブジェクトでない本文 (null・配列・数・文字列) も 400 (#1917 の続き。null は下の分割代入が例外になり 500 になっていた)
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
     return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
   }
 
   const { requestId } = body;
   if (!requestId) {
     return NextResponse.json({ error: aiRequiredFieldMessage('献立の生成の受付の ID') }, { status: 400 });
+  }
+  // UUID の形でない requestId は DB に渡さず 404 (受付が無い id と同じ。uuid 型の列に渡すと 22P02 で失敗し、下の catch の 500 に入っていた。#1917 の続き)
+  if (!isUuid(requestId)) {
+    return NextResponse.json({ error: AI_MENU_REQUEST_NOT_FOUND_MESSAGE }, { status: 404 });
   }
 
   try {

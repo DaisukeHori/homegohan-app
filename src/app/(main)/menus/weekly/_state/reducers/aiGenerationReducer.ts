@@ -24,6 +24,10 @@ export interface AiGenerationState {
   isImprovingMeal: boolean;
   improveNextDay: boolean;
   isAnalyzingPhoto: boolean;
+  // 解析している写真を送った「写真から入力」のモーダルの回 (modalReducer の photoEditSession)。解析していなければ null (#2047)。
+  // 解析の結果を待つあいだ (最大 2 分) に利用者が閉じて別の献立や同じ献立のモーダルを開き直したとき、
+  // その新しいモーダルに「AIが解析中...」を出さず、待ち終えたときにそのモーダルを閉じないために、回で見分ける
+  analyzingPhotoSession: number | null;
   isGeneratingMealImage: boolean;
 }
 
@@ -46,7 +50,7 @@ export type AiGenerationAction =
   | { type: 'IMPROVE_MEAL_START'; payload?: { nextDay?: boolean } }
   | { type: 'IMPROVE_MEAL_END' }
   | { type: 'IMPROVE_NEXT_DAY_SET'; payload: boolean }
-  | { type: 'PHOTO_ANALYZE_START' }
+  | { type: 'PHOTO_ANALYZE_START'; payload: { session: number } }
   | { type: 'PHOTO_ANALYZE_END' }
   | { type: 'IMAGE_GEN_START' }
   | { type: 'IMAGE_GEN_END' };
@@ -65,6 +69,7 @@ export const initialAiGenerationState: AiGenerationState = {
   isImprovingMeal: false,
   improveNextDay: false,
   isAnalyzingPhoto: false,
+  analyzingPhotoSession: null,
   isGeneratingMealImage: false,
 };
 
@@ -180,10 +185,10 @@ export function aiGenerationReducer(
       return { ...state, improveNextDay: action.payload };
 
     case 'PHOTO_ANALYZE_START':
-      return { ...state, isAnalyzingPhoto: true };
+      return { ...state, isAnalyzingPhoto: true, analyzingPhotoSession: action.payload.session };
 
     case 'PHOTO_ANALYZE_END':
-      return { ...state, isAnalyzingPhoto: false };
+      return { ...state, isAnalyzingPhoto: false, analyzingPhotoSession: null };
 
     case 'IMAGE_GEN_START':
       return { ...state, isGeneratingMealImage: true };
@@ -194,4 +199,25 @@ export function aiGenerationReducer(
     default:
       return state;
   }
+}
+
+// -------------------------------------------------------
+// Selectors
+// -------------------------------------------------------
+
+/**
+ * 写真から入力のモーダル (回 = session) から見た、写真の解析の状態 (#2047)。
+ * - 'idle': 解析していない
+ * - 'own': このモーダルで送った写真を解析している (結果を待っているあいだも含む)。「AIが解析中...」を出し、送った写真を変えられない
+ * - 'other': 前のモーダル (閉じた別の献立のもの・同じ献立で開き直す前のもの) で送った写真を解析している。
+ *   写真は選べるが、解析は一度に 1 つなので、解析のボタンは待ち終えるまで押せない
+ */
+export type PhotoAnalyzeStateForSession = 'idle' | 'own' | 'other';
+
+export function photoAnalyzeStateForSession(
+  state: Pick<AiGenerationState, 'isAnalyzingPhoto' | 'analyzingPhotoSession'>,
+  session: number,
+): PhotoAnalyzeStateForSession {
+  if (!state.isAnalyzingPhoto) return 'idle';
+  return state.analyzingPhotoSession === session ? 'own' : 'other';
 }

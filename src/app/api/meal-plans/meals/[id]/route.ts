@@ -20,8 +20,10 @@ import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/
 import { internalError } from '@/lib/api/errors';
 import { isUuid, uuidOrNull } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { MEAL_NOT_FOUND_MESSAGE } from '@/lib/api/user-api-error-messages';
+import { setPlannedMealCompleted } from '@/modules/planned-meals-integrity/server';
+import { PLANNED_MEAL_COMPLETION_INVALID_MESSAGE, PlannedMealCompletionInputSchema } from '@/modules/planned-meals-integrity/core';
 
 export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
@@ -33,7 +35,11 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
   if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
-    const json = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const json = await request.json().catch(() => null);
+    if (!json || typeof json !== 'object' || Array.isArray(json)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
     const {
       isCompleted,
       dishName,
@@ -53,6 +59,13 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     });
     if (!validation.ok) {
       return NextResponse.json(plannedMealValidationErrorBody(validation), { status: 400 });
+    }
+
+    // 完了の指定 (isCompleted) が無ければ null。boolean でなければ 400 (DB に触れる前)。
+    // 完了は RPC planned_meals_set_completed で切り替える (completed_at は DB が決める。#2025)
+    const completionInput = isCompleted === undefined ? null : PlannedMealCompletionInputSchema.safeParse(isCompleted);
+    if (completionInput && !completionInput.success) {
+      return NextResponse.json({ error: PLANNED_MEAL_COMPLETION_INVALID_MESSAGE }, { status: 400 });
     }
 
     // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る)
@@ -84,12 +97,8 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       return NextResponse.json({ error: MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
+    // is_completed / completed_at は列の権限が無い (送ると 42501) ので入れない。完了は下の RPC で切り替える (#2025)
     const updateData: Record<string, any> = {};
-    
-    if (isCompleted !== undefined) {
-      updateData.is_completed = isCompleted;
-      updateData.completed_at = isCompleted ? new Date().toISOString() : null;
-    }
     if (dishName !== undefined) updateData.dish_name = dishName;
     if (mode !== undefined) updateData.mode = mode;
     if (dishes !== undefined) updateData.dishes = dishes;
@@ -216,12 +225,13 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       }
     }
 
-    const { data, error } = await supabase
-      .from('planned_meals')
-      .update(updateData)
-      .eq('id', existingMeal.id)
-      .select()
-      .single();
+    // 本文に書く列が無いと updateData は空になる (完了の指定だけの本文 { isCompleted } で、料理の無い献立。
+    // 料理のある献立は buildDishImagePayload の dishes / image_url が入る)。空の UPDATE を PostgREST に送ると
+    // 0 行になり .single() が PGRST116 で失敗する (500) ので、そのときは行を読むだけにする (応答の meal は今までどおり行の全列)
+    const hasColumnUpdates = Object.keys(updateData).length > 0;
+    const { data, error } = hasColumnUpdates
+      ? await supabase.from('planned_meals').update(updateData).eq('id', existingMeal.id).select().single()
+      : await supabase.from('planned_meals').select().eq('id', existingMeal.id).single();
 
     if (error) {
       // 料理画像の 1 回を数えたあと、献立を保存できなかった (AI へは何も送っていない) ので数え戻す (#1149 の数え戻し)
@@ -250,9 +260,24 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       }
     }
 
+    // 完了の指定があれば RPC で切り替え、meal に RPC の値 (is_completed / completed_at / updated_at) を重ねる (#2025)。
+    // 画像のジョブを積んだ後に呼ぶ: 料理を 'pending' で保存した後に RPC の失敗で抜けると、ジョブが無いまま
+    // 「料理画像を生成中です」が残るため。RPC の DB の失敗は下の catch が internalError で 500 にする (上の if (error) throw と同じ)
+    let completionRow: Record<string, unknown> = {};
+    if (completionInput) {
+      const completion = await setPlannedMealCompleted(supabase, { mealId: existingMeal.id, completed: completionInput.data });
+      if (!completion.ok) {
+        if (completion.reason === 'not_found') {
+          return NextResponse.json({ error: MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
+        }
+        throw completion.error;
+      }
+      completionRow = completion.row;
+    }
+
     return NextResponse.json({
       success: true,
-      meal: data,
+      meal: { ...data, ...completionRow },
       // #1022 (Suggestion): 画像生成がスロットルされた場合のみ additive にフラグを付与する
       ...(imageGenerationThrottled ? { imageGenerationThrottled: true } : {}),
       // #1149 今日の AI の利用回数の上限に達して、料理画像だけを見送ったとき
@@ -268,6 +293,11 @@ export async function DELETE(request: Request, props: { params: Promise<{ id: st
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
+
+  // UUID の形でない id は DB に渡さず 404 (PATCH と同じ。uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る。#1917)
+  if (!isUuid(params.id)) {
+    return NextResponse.json({ error: MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
+  }
 
   try {
     // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。本人の行に絞って service role で取り消す

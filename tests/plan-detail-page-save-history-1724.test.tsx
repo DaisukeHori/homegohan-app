@@ -113,6 +113,20 @@ async function renderPage() {
   });
 }
 
+/**
+ * 表示名の入力欄を変える (保存は変えた欄だけを送り、何も変えていなければ送らないため。#1917)。
+ * React の制御された入力欄へ値を入れる (value の setter を通してから input イベントを出す)
+ */
+async function editDisplayName(value: string) {
+  const input = container.querySelector('input[type="text"]') as HTMLInputElement;
+  expect(input, '表示名の入力欄が見つからない').not.toBeNull();
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+  await act(async () => {
+    setter.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
 beforeEach(() => {
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -134,6 +148,7 @@ describe('プラン詳細画面: 保存のあとも価格変更の履歴が残�
     await renderPage();
     expect(planFetchCount()).toBe(1);
 
+    await editDisplayName(SAVED_DISPLAY_NAME);
     await click('保存する');
 
     await vi.waitFor(() => expect(container.textContent).toContain('保存しました'));
@@ -153,6 +168,7 @@ describe('プラン詳細画面: 保存のあとも価格変更の履歴が残�
     stubApi(jsonResponse(422, { error: { code: 'OP_PLAN_STATUS_LOCKED', message: '変更できない項目があります' } }));
     await renderPage();
 
+    await editDisplayName(SAVED_DISPLAY_NAME);
     await click('保存する');
 
     await vi.waitFor(() => expect(container.textContent).toContain('変更できない項目があります'));

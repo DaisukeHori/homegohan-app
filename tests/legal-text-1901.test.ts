@@ -36,6 +36,8 @@ import {
 import { PRIVACY_PROCESSORS, PRIVACY_SECTION_COUNT, PRIVACY_SECTION_HEADINGS, privacyText } from '@/lib/legal/privacy-text';
 import { TERMS_ARTICLE_COUNT, TERMS_ARTICLE_HEADINGS, TERMS_MEDICAL_DISCLAIMER, termsText } from '@/lib/legal/terms-text';
 import { LEGAL_CLAIMS, LEGAL_CLAIM_COUNT } from './legal-claims-1901';
+import { ORG_SCREEN_ROOTS } from './helpers/org-screen-roots';
+import { ORG_MEMBER_NAME_COLUMNS } from '@/schemas/membership/organization-member-name';
 import { stripAllTags } from './helpers/strip-tags';
 
 vi.mock('next/link', async () => {
@@ -152,6 +154,7 @@ const PRIVACY_DATA_TABLES: Readonly<Record<string, string>> = {
   recipe_collections: 'レシピ',
   recipe_collection_items: 'レシピ',
   recipe_likes: 'レシピ',
+  dish_favorites: 'レシピ',
   recipe_comments: 'レシピ',
   health_records: '健康',
   health_goals: '健康',
@@ -824,7 +827,20 @@ describe('#1901 プライバシーポリシーの委託先・送り先・端末�
   });
 
   it('T-32 組織の管理者の画面が読む項目は、プライバシーポリシー第9条に書いた項目を超えず、承諾済みの招待は宛先のメールアドレスとともに一覧に残る', () => {
-    expect(readRepo('src/app/(org)/org/members/page.tsx')).toContain(".select('id, nickname, org_role, joined_org_at')");
+    // 組織のメンバーの一覧とオーナーの譲渡の候補は、route が service_role で読む (#2073 S4。user_profiles の SELECT の RLS は本人の行だけ)。
+    // 読む列は ORG_MEMBER_NAME_COLUMNS の 4 つ (id・表示名・組織内の役割・参加した日) だけで、2 つの route の GET の select はどれもこの定数
+    expect(new Set(ORG_MEMBER_NAME_COLUMNS.split(/[\s,]+/).filter((c) => c !== ''))).toEqual(
+      new Set(['id', 'nickname', 'org_role', 'joined_org_at']),
+    );
+    for (const file of ['src/app/api/org/members/route.ts', 'src/app/api/org/owner-transfer/candidates/route.ts']) {
+      const text = readRepo(file);
+      const start = text.indexOf('export async function GET');
+      expect(start, file).toBeGreaterThan(-1);
+      const next = text.indexOf('export async function', start + 1);
+      const get = text.slice(start, next === -1 ? undefined : next);
+      const selects = get.match(/\.select\([^)]*\)/g) ?? [];
+      expect(selects, `${file} の GET の select`).toEqual(['.select(ORG_MEMBER_NAME_COLUMNS)']);
+    }
     const orgInvites = readRepo('src/app/api/org/invites/route.ts');
     const selected = /\.select\(\s*`([^`]*)`/.exec(orgInvites);
     expect(selected, 'org の招待の GET の select').not.toBeNull();
@@ -833,7 +849,8 @@ describe('#1901 プライバシーポリシーの委託先・送り先・端末�
       // 役割は invited_role (create_org_invite が書く列)・状態は status (取り消し・拒否を一覧に出す)。旧い role 列は読まない
       new Set(['id', 'email', 'invited_role', 'status', 'department_id', 'token', 'expires_at', 'accepted_at', 'created_at', 'departments(name)']),
     );
-    for (const file of listCodeFiles(['src/app/(org)', 'src/app/api/org'])) {
+    // 組織の画面 (src/app/(org) と、管理画面の枠の外に置いた src/app/(main)/org。#2068) は共通の定数 ORG_SCREEN_ROOTS から取る (#2073)
+    for (const file of listCodeFiles([...ORG_SCREEN_ROOTS, 'src/app/api/org'])) {
       const text = readRepo(file);
       expect(text, file).not.toContain('last_sign_in_at');
       expect(text, file).not.toContain('employee_');

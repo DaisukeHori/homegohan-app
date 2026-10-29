@@ -9,8 +9,11 @@
  * 解除は隠し項目 _method=DELETE で送っていたが route は読まないので、届いても POST (凍結) に入るところだった。
  * ここで fetch を使い、JSON で送る (#1101 の ModerationReviewForm と同じ形)。
  *
- * - 凍結: POST /api/admin/users/{id}/freeze に { ban_type, reason_category, reason_detail, duration_days? }。
+ * - 凍結: POST /api/admin/users/{id}/freeze に { ban_type, reason_category, reason_detail, duration_days?, notify_user, notification_message? }。
  *   duration_days は一時 BAN のときだけ (数値で)。永久 BAN は super_admin のときだけ選べる (API も 403 で断る)
+ * - 通知 (#2026。docs/design/cross/24-freeze-notify-mail.md §6.4): 「利用者に凍結をメールで知らせる」のチェック (既定 on) を notify_user として必ず送り、
+ *   on で任意のメッセージが空でなければ前後の空白を除いて notification_message として送る (FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH 文字まで)。
+ *   成功の文には応答の data.notification の結果 (送信待ちに登録した / 送っていない / 未送信と理由) を添える
  * - 凍結解除: DELETE /api/admin/users/{id}/freeze に { reason }
  * - 送る前に API と同じ範囲 (src/lib/admin/users-schemas.ts の FreezeBodySchema / UnfreezeBodySchema) で確かめ、外れていれば送らずに知らせる
  * - 成功したら結果を出し、router.refresh() でページ (見出し・パンくず・凍結の状態) を読み直す
@@ -26,11 +29,13 @@ import { extractApiErrorMessage, isStaleDataConflict } from '@/lib/admin/api-err
 import {
   FREEZE_DURATION_DAYS_MAX,
   FREEZE_DURATION_DAYS_MIN,
+  FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH,
   FREEZE_REASON_MAX_LENGTH,
   FreezeBodySchema,
   UnfreezeBodySchema,
   type FreezeBody,
 } from '@/lib/admin/users-schemas';
+import { describeFreezeNotificationOutcome, freezeNotificationOutcomeOf } from '@/lib/admin/freeze-notification-status';
 
 export type UserFreezeFormProps = {
   /** 対象の利用者の ID */
@@ -72,12 +77,16 @@ export default function UserFreezeForm({ userId, isBanned, isSuperAdmin }: UserF
   const [banType, setBanType] = useState<BanType>('temporary');
   const [durationDays, setDurationDays] = useState(DEFAULT_DURATION_DAYS);
   const [unfreezeReason, setUnfreezeReason] = useState('');
+  /** 利用者に凍結をメールで知らせるか (API の notify_user。既定 on) */
+  const [notifyUser, setNotifyUser] = useState(true);
+  /** 通知メールに入れる運営からのメッセージ (任意) */
+  const [notificationMessage, setNotificationMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** 成功したときの文。入っている間は「済み」の表示にする */
   const [done, setDone] = useState<string | null>(null);
 
-  async function send(method: 'POST' | 'DELETE', body: Record<string, unknown>, failureLabel: string): Promise<boolean> {
+  async function send(method: 'POST' | 'DELETE', body: Record<string, unknown>, failureLabel: string): Promise<{ ok: true; json: unknown } | { ok: false }> {
     setSubmitting(true);
     try {
       const res = await fetch(freezeEndpoint(userId), {
@@ -86,23 +95,23 @@ export default function UserFreezeForm({ userId, isBanned, isSuperAdmin }: UserF
         body: JSON.stringify(body),
       });
       const json: unknown = await res.json().catch(() => null);
-      if (res.ok) return true;
+      if (res.ok) return { ok: true, json };
 
       if (isStaleDataConflict(res.status, json)) {
         // 読んでから書くまでに対象が変わっていた (API は書いていない)。文を出し、ページを読み直していまの状態を出す
         setError(extractApiErrorMessage(json) ?? `${failureLabel}できませんでした。画面を読み込み直して、もう一度確認してください`);
         router.refresh();
-        return false;
+        return { ok: false };
       }
       if (res.status === 401) {
         setError('ログインの有効期限が切れました。ログインし直してください');
-        return false;
+        return { ok: false };
       }
       setError(extractApiErrorMessage(json) ?? `${failureLabel}できませんでした (HTTP ${res.status})。もう一度お試しください`);
-      return false;
+      return { ok: false };
     } catch {
       setError(`通信に失敗しました。もう一度お試しください (${failureLabel}できたか分からないときは、ページを開き直して状態を確認してください)`);
-      return false;
+      return { ok: false };
     } finally {
       setSubmitting(false);
     }
@@ -147,13 +156,25 @@ export default function UserFreezeForm({ userId, isBanned, isSuperAdmin }: UserF
       body.duration_days = days;
       temporaryDays = days;
     }
+    body.notify_user = notifyUser;
+    const message = notificationMessage.trim();
+    if (notifyUser && message.length > FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH) {
+      setError(`利用者へのメッセージは ${FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH} 文字以内で入力してください`);
+      return;
+    }
+    if (notifyUser && message !== '') {
+      body.notification_message = message;
+    }
     if (!FreezeBodySchema.safeParse(body).success) {
       setError('入力に誤りがあります。各項目を確認してください');
       return;
     }
 
-    if (await send('POST', body, '凍結')) {
-      setDone(temporaryDays === null ? '永久 BAN で凍結しました' : `${temporaryDays} 日間の一時 BAN で凍結しました`);
+    const sent = await send('POST', body, '凍結');
+    if (sent.ok) {
+      const data = (sent.json as { data?: { notification?: unknown } } | null)?.data;
+      const notice = describeFreezeNotificationOutcome(freezeNotificationOutcomeOf(data?.notification));
+      setDone(`${temporaryDays === null ? '永久 BAN で凍結しました' : `${temporaryDays} 日間の一時 BAN で凍結しました`}。${notice}`);
       router.refresh();
     }
   }
@@ -178,7 +199,7 @@ export default function UserFreezeForm({ userId, isBanned, isSuperAdmin }: UserF
       return;
     }
 
-    if (await send('DELETE', body, '凍結解除')) {
+    if ((await send('DELETE', body, '凍結解除')).ok) {
       setDone('凍結を解除しました');
       router.refresh();
     }
@@ -338,6 +359,45 @@ export default function UserFreezeForm({ userId, isBanned, isSuperAdmin }: UserF
             disabled={submitting}
             className="w-32 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
           />
+        </div>
+      )}
+
+      <div className="mb-4">
+        <label className="flex items-center gap-2 text-sm cursor-pointer">
+          <input
+            id="notify_user"
+            name="notify_user"
+            type="checkbox"
+            checked={notifyUser}
+            onChange={(e) => setNotifyUser(e.target.checked)}
+            disabled={submitting}
+          />
+          利用者に凍結をメールで知らせる (アカウントの登録メールアドレス宛)
+        </label>
+        <p className="mt-1 text-xs text-gray-500">
+          メールには、凍結の日時・種類・解除の予定・凍結中にできること・お問い合わせ先が入ります。理由カテゴリと詳細理由は入りません。
+        </p>
+      </div>
+
+      {notifyUser && (
+        <div className="mb-6">
+          <label htmlFor="notification_message" className="block text-sm font-medium text-gray-700 mb-1">
+            利用者へのメッセージ (任意・{FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH} 文字まで)
+          </label>
+          <textarea
+            id="notification_message"
+            name="notification_message"
+            rows={4}
+            maxLength={FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH}
+            value={notificationMessage}
+            onChange={(e) => setNotificationMessage(e.target.value)}
+            disabled={submitting}
+            placeholder="ここに書いた文は「運営からのメッセージ」としてそのままメールの本文に入ります"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+          />
+          <p className="mt-1 text-xs text-gray-500">
+            {notificationMessage.trim().length} / {FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH} 文字
+          </p>
         </div>
       )}
 

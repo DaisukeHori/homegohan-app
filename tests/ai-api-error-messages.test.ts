@@ -16,12 +16,24 @@
  *      (v4 / v5 の枠の検証の戻り値・提案の実行の結果を含む) と、検証の失敗の文 (`errors.push(…)` の引数・`errors: [...]` の要素。
  *      提案の実行では `errors.join` を通して result.error に入る) に、英語だけの文が残っていない
  *      (提案の実行の結果に実際に出る文は tests/consultation-action-validation-messages.test.ts が確かめる)
+ *   4. 3 と同じ所の文に、括弧の外の英字の項目名・値が無い (#1917 の続き。テンプレートの式の部分は値を読まずに印
+ *      UNRESOLVED_SUBSTITUTION にするので、括弧の外に式を差し込む文は違反になる。項目の名前は ai-api-messages.ts の
+ *      aiConsultation* の関数・AI_CONSULTATION_* の定数で作り、その戻り値と値は 1 と 2 で確かめる)。
+ *      以前は提案の実行の 'date は必須です'・'mealIdが指定されていません'・`${key} は数値で指定してください` が
+ *      この見張りの外にあり、英字の項目名が括弧の外に出ていた
  */
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { MEAL_ORDER } from '@homegohan/shared';
 import * as messages from '@/lib/ai/ai-api-messages';
-import { englishIdentifiersOutsideParentheses, isEnglishOnly, JAPANESE, routeFilesUnder, sourceOf } from './helpers/api-error-text-scan';
+import {
+  englishIdentifiersOutsideParentheses,
+  isEnglishOnly,
+  JAPANESE,
+  routeFilesUnder,
+  sourceOf,
+  UNRESOLVED_SUBSTITUTION,
+} from './helpers/api-error-text-scan';
 
 /** 見張る AI の route の根 */
 const API_AI_ROUTES_ROOT = 'src/app/api/ai';
@@ -65,6 +77,29 @@ describe('ai-api-messages.ts の文は日本語', () => {
     expect(messages.aiTargetSlotDuplicateMessage('2026-10-10', 'dinner')).toBe('同じ枠 (2026-10-10 の dinner) が 2 回指定されています');
   });
 
+  it('相談の提案の実行の文は、項目を「日本語の名前 (キー)」の形にし、数を入れた日本語の文 (#1917 の続き)', () => {
+    expect(messages.aiConsultationFieldLabel('dish_name')).toBe('料理名 (dish_name)');
+    expect(messages.aiConsultationFieldLabel('startDate')).toBe('開始日 (startDate)');
+    // 表に無いキーも、括弧の外は日本語にする
+    expect(messages.aiConsultationFieldLabel('unknown_key')).toBe('項目 (unknown_key)');
+    // プロトタイプのキーで表の外の値を引かない
+    expect(messages.aiConsultationFieldLabel('constructor')).toBe('項目 (constructor)');
+    expect(messages.aiConsultationNonEmptyTextMaxMessage('item_name', 200)).toBe('品名 (item_name) は 1〜200 文字の文字列で指定してください');
+    expect(messages.aiConsultationOptionalTextMaxMessage('memo', 1000)).toBe('メモ (memo) は 1000 文字以内の文字列か null で指定してください');
+    expect(messages.aiConsultationNumberMessage('sodium_g')).toBe('食塩相当量 (sodium_g) は数値で指定してください');
+    expect(messages.aiConsultationRangeMessage('daily_calories', 500, 6000)).toBe(
+      '1 日のエネルギー (daily_calories) は 500 〜 6000 の範囲で指定してください',
+    );
+    expect(messages.aiConsultationNumberRangeMessage('fat_g', 0, 300)).toBe('脂質 (fat_g) は 0 〜 300 の範囲の数値で指定してください');
+    expect(messages.AI_CONSULTATION_DISHES_NOT_ARRAY_MESSAGE).toBe('料理の一覧 (dishes) は配列で指定してください');
+    expect(messages.AI_CONSULTATION_IMAGE_URL_NOT_STRING_MESSAGE).toBe('画像の URL (image_url) は文字列で指定してください');
+    expect(messages.AI_CONSULTATION_DATE_REQUIRED_MESSAGE).toBe('日付 (date) を指定してください');
+    expect(messages.AI_CONSULTATION_START_DATE_REQUIRED_MESSAGE).toBe('開始日 (startDate) を指定してください');
+    expect(messages.AI_CONSULTATION_DATE_AND_MEAL_TYPE_REQUIRED_MESSAGE).toBe('日付 (date) と食事の区分 (mealType) を指定してください');
+    expect(messages.AI_CONSULTATION_MEAL_ID_REQUIRED_MESSAGE).toBe('献立 (mealId) を指定してください');
+    expect(messages.aiConsultationSingleMealStartedMessage('2026-10-10', 'midnight_snack')).toBe('2026-10-10の夜食を生成中...');
+  });
+
   /**
    * 文を作る関数ごとの戻り値 (関数の名前 → 戻り値)。差し込む値は、本番で入る値 (食事の区分は v4 / v5 が渡す正本 MEAL_ORDER の 5 値・
    * 重複の枠は英字の区分の値) にする。ai-api-messages.ts に関数を足したら、ここにも足す (下の it が export の一覧との一致を確かめる)
@@ -79,6 +114,17 @@ describe('ai-api-messages.ts の文は日本語', () => {
     aiTargetSlotMealTypeInvalidMessage: messages.aiTargetSlotMealTypeInvalidMessage(0, MEAL_ORDER),
     aiTargetSlotPlannedMealIdInvalidMessage: messages.aiTargetSlotPlannedMealIdInvalidMessage(0),
     aiTargetSlotDuplicateMessage: messages.aiTargetSlotDuplicateMessage('2026-10-10', 'lunch'),
+    // 相談の提案の実行の文 (表に無いキーでも括弧の外は日本語)
+    aiConsultationFieldLabel: messages.aiConsultationFieldLabel('unknown_key'),
+    aiConsultationNonEmptyTextMaxMessage: messages.aiConsultationNonEmptyTextMaxMessage('dish_name', 1),
+    aiConsultationOptionalTextMaxMessage: messages.aiConsultationOptionalTextMaxMessage('quantity', 1),
+    aiConsultationNumberMessage: messages.aiConsultationNumberMessage('protein_g'),
+    aiConsultationRangeMessage: messages.aiConsultationRangeMessage('fiber_g', 0, 1),
+    aiConsultationNumberRangeMessage: messages.aiConsultationNumberRangeMessage('carbs_g', 0, 1),
+    // 食事の区分は v4 / v5 と同じ正本 MEAL_ORDER の 5 値を全部入れる (英字の値が文に出ないこと)
+    aiConsultationSingleMealStartedMessage: MEAL_ORDER.map((mealType) =>
+      messages.aiConsultationSingleMealStartedMessage('2026-10-10', mealType),
+    ).join(' / '),
   };
 
   it('文を作る関数の戻り値の一覧は、ai-api-messages.ts が export する関数を全部持つ (足した関数が下の確かめから漏れない)', () => {
@@ -127,16 +173,34 @@ describe('走査が見ない所の文にも、英語だけの文が残ってい�
   const ERRORS_ARRAY_NAME = /errors$/i;
 
   /**
-   * ファイルの中で、失敗の文として本文・結果に入る所に直接書いた文字列・テンプレートのうち、英語だけのもの。
+   * テンプレートの式の部分を値として読まずに印 (UNRESOLVED_SUBSTITUTION) にした文 (文字列はそのまま)。文字列でなければ null。
+   * 括弧の外に式を差し込む文 (`${key} は数値で指定してください`) は、印が括弧の外の英字の項目名として拾われる。
+   * 括弧の中の式 (`… (${values.join(' / ')})`) は括弧ごと外れるので拾わない
+   */
+  function markedTextOf(node: ts.Node): string | null {
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
+    if (ts.isTemplateExpression(node)) {
+      return node.head.text + node.templateSpans.map((span) => ` ${UNRESOLVED_SUBSTITUTION} ${span.literal.text}`).join('');
+    }
+    return null;
+  }
+
+  /**
+   * ファイルの中で、失敗の文として本文・結果に入る所に直接書いた文字列・テンプレートのうち、check が違反とするもの。
    *   - どこかのオブジェクトの `error` / `message` のプロパティ (本文を作る呼び出しの外: 相談の提案の実行の結果 `result = { error: … }`・
    *     v4 / v5 の枠の検証の戻り値 `{ valid: false, error: … }`)
    *   - 検証の失敗の文を積む配列への `errors.push(…)` の引数と、`{ errors: [...] }` の要素 (提案の実行の検証の戻り値。`errors.join` で result.error に入る)
    */
-  function englishTextProperties(file: string, sf: ts.SourceFile = sourceOf(file)): string[] {
+  function textViolations(
+    file: string,
+    sf: ts.SourceFile,
+    render: (node: ts.Node) => string | null,
+    isViolation: (text: string) => boolean,
+  ): string[] {
     const found: string[] = [];
     const check = (node: ts.Node) => {
-      const trimmed = literalTextOf(node)?.replace(/\s+/g, ' ').trim();
-      if (trimmed && isEnglishOnly(trimmed)) {
+      const trimmed = render(node)?.replace(/\s+/g, ' ').trim();
+      if (trimmed && isViolation(trimmed)) {
         found.push(`${file}:${sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1} 「${trimmed}」`);
       }
     };
@@ -161,6 +225,16 @@ describe('走査が見ない所の文にも、英語だけの文が残ってい�
     };
     visit(sf);
     return found;
+  }
+
+  /** 英語だけの文 (テンプレートは式の部分を除いて文字の部分をつなぐ) */
+  function englishTextProperties(file: string, sf: ts.SourceFile = sourceOf(file)): string[] {
+    return textViolations(file, sf, literalTextOf, isEnglishOnly);
+  }
+
+  /** 括弧の外に英字の項目名・値 (テンプレートの式の部分の印を含む) がある文 (#1917 の続き) */
+  function englishIdentifierTexts(file: string, sf: ts.SourceFile = sourceOf(file)): string[] {
+    return textViolations(file, sf, markedTextOf, (text) => englishIdentifiersOutsideParentheses(text).length > 0);
   }
 
   it('見張りの部品が、error / message・errors.push・errors: [...] の文字列とテンプレートの英語の文を拾い、日本語の文と errors 以外の配列は拾わない (例: 以前の v4 の枠の検証の文・提案の実行の検証の文)', () => {
@@ -198,8 +272,44 @@ describe('走査が見ない所の文にも、英語だけの文が残ってい�
     ]);
   });
 
-  it.each([...routeFilesUnder(API_AI_ROUTES_ROOT), 'src/lib/ai/consultation-action-executor.ts'])('%s の error / message の文', (file) => {
+  it('見張りの部品が、括弧の外の英字の項目名と、括弧の外に差し込む式を拾い、括弧の中の項目名・式と日本語だけの文は拾わない (例: 以前の提案の実行の文)', () => {
+    const fixture = ts.createSourceFile(
+      'fixture.ts',
+      [
+        'function f(key: string, values: string[], date: string, mealType: string) {',
+        '  const errors: string[] = [];',
+        "  if (key === 'a') return { error: 'date は必須です' };",
+        "  if (key === 'b') return { error: 'mealIdが指定されていません' };",
+        "  if (key === 'c') return { error: '日付 (date) を指定してください' };",
+        '  if (key === \'d\') return { error: `食事の区分 (mealType) は次のいずれかを指定してください (${values.join(\' / \')})` };',
+        '  if (key === \'e\') return { message: `${date}の${mealType}を生成中...` };',
+        "  errors.push('dishes は配列で指定してください');",
+        '  errors.push(`${key} は数値で指定してください`);',
+        "  errors.push('献立を指定してください');",
+        "  return { data: {}, errors: ['target_value と target_unit は空にできません', '目標値 (target_value) は空にできません'] };",
+        '}',
+      ].join('\n'),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    expect(englishIdentifierTexts('fixture.ts', fixture)).toEqual([
+      'fixture.ts:3 「date は必須です」',
+      'fixture.ts:4 「mealIdが指定されていません」',
+      `fixture.ts:7 「${UNRESOLVED_SUBSTITUTION} の ${UNRESOLVED_SUBSTITUTION} を生成中...」`,
+      'fixture.ts:8 「dishes は配列で指定してください」',
+      `fixture.ts:9 「${UNRESOLVED_SUBSTITUTION} は数値で指定してください」`,
+      'fixture.ts:11 「target_value と target_unit は空にできません」',
+    ]);
+  });
+
+  const SCANNED_FILES = [...routeFilesUnder(API_AI_ROUTES_ROOT), 'src/lib/ai/consultation-action-executor.ts'];
+
+  it.each(SCANNED_FILES)('%s の error / message の文', (file) => {
     expect(englishTextProperties(file)).toEqual([]);
+  });
+
+  it.each(SCANNED_FILES)('%s の error / message の文に、括弧の外の英字の項目名・値が無い (#1917 の続き)', (file) => {
+    expect(englishIdentifierTexts(file)).toEqual([]);
   });
 
   it('AI の route を走査している', () => {

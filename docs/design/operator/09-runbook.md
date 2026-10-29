@@ -130,7 +130,7 @@ npm run test:smoke -- --base-url=https://homegohan.app
 
 ```
 Step 1: 不一致内容の確認
-  - /admin/audit-logs で action_type='system.stripe.reconcile_discrepancy' を検索
+  - /super-admin/audit-logs で action_type='system.stripe.reconcile_discrepancy' を検索
   - details に { type, stripe_subscription_id, stripe_status, db_status } が記録されている
 
 Step 2: Stripe Dashboard で実態確認
@@ -236,7 +236,7 @@ curl -H "Authorization: Bearer ${CRON_SECRET}" https://homegohan.app/api/cron/ia
 
 ```
 Step 1: 被害確認
-  - /admin/audit-logs で action_type='super_admin.plan.deprecate' の最新ログを確認
+  - /super-admin/audit-logs で action_type='super_admin.plan.deprecate' の最新ログを確認
   - 影響を受けた org_license_pools を確認:
     SELECT * FROM org_license_pools
     WHERE plan_key='org_pro' AND auto_renew_was_force_disabled_at IS NOT NULL;
@@ -261,7 +261,7 @@ Step 5: 影響組織への通知確認
   - API が自動送信する「誤操作のため更新有効化を戻しました」通知を確認
 
 Step 6: 監査ログ確認
-  - /admin/audit-logs で severity='critical' を確認
+  - /super-admin/audit-logs で severity='critical' を確認
 ```
 
 ---

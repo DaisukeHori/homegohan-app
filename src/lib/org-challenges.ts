@@ -9,6 +9,7 @@
 // ここには「どの種類が使えるか」「画面に出す名前と単位」「順位表に名前を出すかどうか」だけを置く。
 
 import { formatLocalDate } from '@/lib/date-utils';
+import { VEG_SCORE_MAX } from '@homegohan/shared';
 
 /** 食事の記録から自動で計算できる種類。DB の関数 update_org_challenge_progress が対象にする challenge_type と同じ */
 export const ORG_CHALLENGE_TYPES = ['breakfast_rate', 'veg_score', 'cooking_rate'] as const;
@@ -53,12 +54,12 @@ export const ORG_CHALLENGE_TYPE_META: Record<OrgChallengeType, OrgChallengeTypeM
   veg_score: {
     label: '野菜スコアの平均',
     unit: '点',
-    // 野菜スコアは、食事の記録に付く野菜の点数。書き込み元によって尺度が違う (写真の解析は 0〜100 点、AI の推定は 1〜5 点)
-    // ため、点数の範囲は説明に書かない。目標値は 0〜100 の範囲で、初期値は入れない (尺度を決めてから管理者が入れる)
+    // 野菜スコアは写真の解析が書く 0〜100 点 (VEG_SCORE_MIN / VEG_SCORE_MAX。docs/design/cross/23-planned-meals-score-integrity.md §6.3)。
+    // 目標値の上限はその尺度の上限で、初期値は入れない (管理者が入れる)
     description:
       'チャレンジの期間に食べた食事 (完了にしたもの) のうち、野菜スコア (食事の記録に付く野菜の点数) が付いているものの平均です。点数が付いていない食事は数えません。',
     targetMin: 0,
-    targetMax: 100,
+    targetMax: VEG_SCORE_MAX,
     defaultTarget: null,
   },
   cooking_rate: {

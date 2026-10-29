@@ -21,7 +21,7 @@
  */
 import { NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import {
@@ -145,7 +145,8 @@ async function updateInquiry(request: Request, { params }: RouteContext, method:
   }
   const input = bodyResult.data;
 
-  // 更新対象は inquiries の RLS (admin / super_admin / support のみ UPDATE 可) に任せ、本人のセッションで行う
+  // 読むのは本人のセッション (inquiries の RLS で admin / super_admin / support が読める)。書くのは下の service_role だけ
+  // (運営の UPDATE のポリシーは #1917 の続きで消した。書く前に requireRole(INQUIRY_ADMIN_ROLES) を通す)
   const supabase = await createClient();
   const { data: currentData, error: readError } = await supabase
     .from('inquiries')
@@ -188,7 +189,8 @@ async function updateInquiry(request: Request, { params }: RouteContext, method:
   if (statusChanged || notesChanged) {
     // 直前に読んだ status と updated_at のままのときだけ書く (読んでから書くまでに別の運営が変えていたら 0 行)。
     // updated_at の列は NULL を許すので、読んだ値が NULL なら .eq ではなく .is で比べる (PostgREST の eq.null は NULL に一致しない)
-    const updateQuery = supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const updateQuery = getSupabaseAdmin()
       .from('inquiries')
       .update(update)
       .eq('id', id)

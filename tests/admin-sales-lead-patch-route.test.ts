@@ -28,13 +28,24 @@ let leadSelectCount = 0;
 /** sales_leads への update を失敗させる (DB に送らずにエラーを返す) */
 let leadUpdateFault: DbError | null = null;
 
-function interleavingFrom(table: string) {
+/** sales_leads・sales_lead_activities に書いた client (本人のセッション / service_role)。書き込みは service_role だけ (#1917 の続き) */
+let writeClients: Array<{ client: 'session' | 'admin'; table: string }> = [];
+
+function interleavingFrom(table: string, client: 'session' | 'admin') {
   const query = sessionDb.from(table);
+  if (table === 'sales_lead_activities') {
+    const insert = query.insert.bind(query);
+    query.insert = (values) => {
+      writeClients.push({ client, table });
+      return insert(values);
+    };
+  }
   if (table !== 'sales_leads') return query;
   let isUpdate = false;
   const update = query.update.bind(query);
   query.update = (values) => {
     isUpdate = true;
+    writeClients.push({ client, table });
     return update(values);
   };
   type Result = Awaited<ReturnType<typeof query.single>>;
@@ -60,8 +71,8 @@ function interleavingFrom(table: string) {
 }
 
 vi.mock('@/lib/supabase/server', () => ({
-  createClient: () => ({ ...makeClient(sessionDb, sessionUser), from: interleavingFrom }),
-  getSupabaseAdmin: () => makeClient(sessionDb, null),
+  createClient: () => ({ ...makeClient(sessionDb, sessionUser), from: (table: string) => interleavingFrom(table, 'session') }),
+  getSupabaseAdmin: () => ({ ...makeClient(sessionDb, null), from: (table: string) => interleavingFrom(table, 'admin') }),
 }));
 
 const route = await import('@/app/api/admin/sales/leads/[id]/route');
@@ -140,6 +151,7 @@ beforeEach(() => {
   leadSelectFault = null;
   leadUpdateFault = null;
   leadSelectCount = 0;
+  writeClients = [];
   setup();
 });
 
@@ -160,6 +172,11 @@ describe('PATCH /api/admin/sales/leads/[id]: ステージの変更', () => {
     expect(stageHistory()).toEqual([{ from_stage: 'approach', to_stage: 'meeting' }]);
     expect(auditRows()).toHaveLength(1);
     expect(auditRows()[0]).toMatchObject({ action_type: 'admin.sales.lead.update', target_id: LEAD_ID });
+    // リードの更新と活動履歴の追加は service_role で書く (運営の直接の書き込みを塞いだ。#1917 の続き)
+    expect(writeClients).toEqual([
+      { client: 'admin', table: 'sales_leads' },
+      { client: 'admin', table: 'sales_lead_activities' },
+    ]);
   });
 
   it('続けて変えても、2 回目は 1 回目が書いたステージを条件にして書ける', async () => {

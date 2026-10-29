@@ -352,6 +352,14 @@ const EXPECTED_ACL: Array<{
     serviceRole: true,
     why: '利用者本人が自分の家族 / 組織を解散する RPC (#1917)',
   },
+  // ---- #2025 献立の完了の RPC (docs/design/cross/23-planned-meals-score-integrity.md §7.1・§16) ----
+  {
+    sig: 'planned_meals_set_completed(uuid,boolean)',
+    anon: false,
+    authenticated: true,
+    serviceRole: true,
+    why: '献立の「食べた」を本人の行だけ切り替える RPC (cross/23 §7.1)',
+  },
 ];
 
 describe('#1103 (7) B: 関数ごとの EXECUTE 権限 (決定表)', () => {

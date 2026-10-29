@@ -15,7 +15,7 @@ import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { ORG_API_INTERNAL_ERROR_MESSAGE, orgAuthFailureNested } from '@/lib/org-api-errors';
 import { requireOrgAdmin } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
-import { normalizeUuid, readJsonBody } from '@/lib/http-params';
+import { isUuid, normalizeUuid, readJsonBody } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 const MAX_NAME_LENGTH = 100;
@@ -88,6 +88,11 @@ async function fetchMemberCounts(organizationId: string): Promise<Map<string, nu
     counts.set(row.department_id, (counts.get(row.department_id) ?? 0) + 1);
   }
   return counts;
+}
+
+/** 404: 部署が無い (他の組織の部署・消えた部署・UUID の形でない id を含む) */
+function departmentNotFoundResponse() {
+  return NextResponse.json({ error: { code: 'NOT_FOUND', message: '部署が見つかりません' } }, { status: 404 });
 }
 
 function invalidJsonResponse() {
@@ -163,6 +168,8 @@ export async function PUT(request: NextRequest) {
     const id = normalizeUuid(rawId);
     const name = validateName(body.name);
     if (!name) return invalidNameResponse();
+    // UUID の形でない id は DB に渡さず 404 (部署が無い id と同じ。uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入っていた。#1917 の続き)
+    if (!isUuid(id)) return departmentNotFoundResponse();
 
     const supabase = await createClient();
     const { data, error } = await supabase
@@ -175,9 +182,7 @@ export async function PUT(request: NextRequest) {
     if (error) {
       return internalError('PUT', '部署の更新に失敗しました', error);
     }
-    if (!data) {
-      return NextResponse.json({ error: { code: 'NOT_FOUND', message: '部署が見つかりません' } }, { status: 404 });
-    }
+    if (!data) return departmentNotFoundResponse();
     const counts = await fetchMemberCounts(profile.organization_id);
     return NextResponse.json({ department: toDto(data as DepartmentRow, counts.get(id) ?? 0) });
   } catch (err) {
@@ -193,6 +198,8 @@ export async function DELETE(request: NextRequest) {
     if (!id) {
       return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: '部署を指定してください' } }, { status: 400 });
     }
+    // UUID の形でない id は DB に渡さず 404 (部署が無い id と同じ。uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入っていた。#1917 の続き)
+    if (!isUuid(id)) return departmentNotFoundResponse();
     const supabase = await createClient();
     const { data, error } = await supabase
       .from('departments')
@@ -217,9 +224,7 @@ export async function DELETE(request: NextRequest) {
       }
       return internalError('DELETE', '部署の削除に失敗しました', error);
     }
-    if (!data || data.length === 0) {
-      return NextResponse.json({ error: { code: 'NOT_FOUND', message: '部署が見つかりません' } }, { status: 404 });
-    }
+    if (!data || data.length === 0) return departmentNotFoundResponse();
     return NextResponse.json({ success: true });
   } catch (err) {
     return handleError('DELETE', err);

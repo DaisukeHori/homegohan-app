@@ -19,9 +19,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { CouponApplySchema } from '@/lib/super-admin/coupons-schemas';
-import { applyCoupon, CouponApplyError, couponApplyErrorMessageOf } from '@/lib/plan/coupon';
+import { applyCoupon, CouponApplyError, couponApplyErrorMessageOf, COUPON_NOT_FOUND_MESSAGE } from '@/lib/plan/coupon';
+import { isUuid } from '@/lib/http-params';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { couponInvalidInputResponse } from '@/lib/super-admin/coupon-errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
@@ -57,6 +59,12 @@ export async function POST(request: NextRequest, props: RouteContext) {
     }
 
     const input = parseResult.data;
+
+    // UUID の形でない id は DB に渡さず、クーポンが無いときと同じ 404 OP_COUPON_NOT_FOUND (apply_coupon の p_coupon_id は uuid。
+    // 渡すと 22P02 で失敗し、業務エラーでないので外側の catch の 500 に入る。#1917 の続き)
+    if (!isUuid(params.id)) {
+      return NextResponse.json({ error: { code: 'OP_COUPON_NOT_FOUND', message: COUPON_NOT_FOUND_MESSAGE } }, { status: 404 });
+    }
 
     let result;
     try {
@@ -106,7 +114,7 @@ export async function POST(request: NextRequest, props: RouteContext) {
       return NextResponse.json({ error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } }, { status: 401 });
     }
     if (err instanceof ForbiddenError) {
-      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: '権限がありません' } }, { status: 403 });
+      return NextResponse.json({ error: { code: 'OP_PERMISSION_DENIED', message: operatorForbiddenMessageOf(err) } }, { status: 403 });
     }
     console.error('[super-admin/coupons/[id]/apply POST]', err);
     return NextResponse.json({ error: { code: 'OP_INTERNAL_ERROR', message: '内部エラー' } }, { status: 500 });
