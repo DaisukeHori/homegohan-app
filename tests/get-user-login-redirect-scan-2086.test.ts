@@ -51,13 +51,8 @@ const KNOWN_REMAINING: Readonly<Record<string, { count: number; reason: string }
     count: 1,
     reason: '家族の代表者の譲渡の提案 (送る側) の画面。#2086 の仕分けの根拠に挙がっていない (承諾の画面ではない)',
   },
-  'src/app/(main)/settings/page.tsx': { count: 2, reason: '設定の画面。#2086 の範囲の外' },
   'src/app/(main)/settings/membership/page.tsx': { count: 1, reason: '所属の設定の画面。#2086 の範囲の外' },
   'src/app/(support)/layout.tsx': { count: 1, reason: 'サポートの画面の枠。#2086 の範囲の外' },
-  'src/app/handson-tour/layout.tsx': {
-    count: 1,
-    reason: 'サーバーで動く枠 (Server Component)。端末のオフラインでは動かない (サーバーから Supabase への通信の失敗は別の扱い)',
-  },
   'src/app/legal-consent/page.tsx': { count: 1, reason: 'サーバーで動く画面 (Server Component)。端末のオフラインでは動かない' },
   'src/app/legal-consent/account/page.tsx': { count: 1, reason: 'サーバーで動く画面 (Server Component)。端末のオフラインでは動かない' },
 };

@@ -28,6 +28,11 @@ vi.mock('next/navigation', () => ({
   useRouter: () => router,
 }));
 
+// 拒否の確認のダイアログのフォーカストラップは関心外 (jsdom では tabbable の判定ができず例外になる)。中身をそのまま出す
+vi.mock('focus-trap-react', () => ({
+  default: ({ children }: { children: React.ReactNode }) => children,
+}));
+
 type PromotionStatus = 'pending' | 'accepted' | 'rejected' | 'revoked' | 'expired';
 type RpcResult = { data: unknown; error: unknown };
 
