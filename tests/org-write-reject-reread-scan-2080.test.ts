@@ -1,5 +1,5 @@
 /**
- * #2080 U4 の続き: 組織の管理画面 (src/app/(org)) の書き込みの通信 (fetch の POST / PATCH / PUT / DELETE) を走査し、
+ * #2080 U4 の続き: 組織の画面 (走査の根は tests/helpers/org-screen-roots.ts の ORG_SCREEN_ROOTS) の書き込みの通信 (fetch の POST / PATCH / PUT / DELETE) を走査し、
  * 1 か所ずつ「通信が reject されたら一覧を読み直し、『<操作>の応答を受け取れませんでした（通信エラー）』を出す」か
  * 「対象外 (理由つき)」かに分けた表と突き合わせる (運営の画面の super-admin-write-reject-reread-scan-2073.test.ts と同じ形)。
  *
@@ -15,9 +15,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { ORG_SCREEN_ROOTS } from './helpers/org-screen-roots';
 
 const ROOT = path.resolve(__dirname, '..');
-const SCAN_ROOT = 'src/app/(org)';
 const WRITE_METHODS = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 
 /** 通信の reject のあとの文の部品と、その関数の名前 */
@@ -32,6 +32,21 @@ type WriteHandling =
 
 /** 画面ごとの書き込みの通信の表 (ファイルの中の出てくる順) */
 const EXPECTED: Readonly<Record<string, readonly WriteHandling[]>> = {
+  'src/app/(main)/org/transfer-accept/[proposal_id]/page.tsx': [
+    {
+      kind: 'exempt',
+      method: 'POST',
+      what: 'オーナーの譲渡の承諾',
+      reason:
+        '一覧ではなく提案を読み直し、承諾済み・拒否済みならその旨を出す (#2064 R5 と同じ型)。通信が切れたときの文は「ネットワークエラーが発生しました」で、承諾できなかったとは言わないので、読み直した状態と食い違わない',
+    },
+    {
+      kind: 'exempt',
+      method: 'POST',
+      what: 'オーナーの譲渡の拒否',
+      reason: '承諾と同じ (提案を読み直す。通信が切れたときの文は拒否できなかったとは言わない)',
+    },
+  ],
   'src/app/(org)/org/challenges/page.tsx': [
     { kind: 'reread', method: 'POST', what: 'チャレンジの作成' },
     { kind: 'reread', method: 'PUT', what: 'チャレンジの状態の変更 (開始・終了)' },
@@ -129,7 +144,7 @@ function importsOf(source: ts.SourceFile): string[] {
 }
 
 const scanned = new Map<string, { methods: string[]; imports: string[]; noResponseCalls: number }>();
-for (const file of listSourceFiles(SCAN_ROOT)) {
+for (const file of ORG_SCREEN_ROOTS.flatMap((root) => listSourceFiles(root))) {
   const text = fs.readFileSync(path.join(ROOT, file), 'utf8');
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const methods = writeMethodsOf(source);
