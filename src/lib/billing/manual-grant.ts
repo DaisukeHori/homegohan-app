@@ -3,6 +3,12 @@
 import { z } from 'zod';
 import { FREE_PLAN_KEY, SUBSCRIPTION_STATUSES } from '@/lib/billing/core';
 import { CalendarDateSchema } from '@/lib/calendar-date-schema';
+import { FORBIDDEN_SCREEN_MESSAGE, UNAUTHENTICATED_SCREEN_MESSAGE } from '@/lib/admin/api-error-message';
+import {
+  API_ACCOUNT_FROZEN_MESSAGE,
+  API_MFA_ENROLLMENT_REQUIRED_MESSAGE,
+  API_MFA_REQUIRED_MESSAGE,
+} from '@/lib/api/forbidden-reason-messages';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 定数 (根拠つき)
@@ -233,12 +239,20 @@ export function isGrantablePlan(plan: { plan_key: string; plan_type: string; sta
  * どの入力の誤り (有効期限・理由の長さ・JSON) にも当てはまる文にする
  */
 export const MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE = `入力を確かめてください (有効期限は今日より後の日付、理由は ${MANUAL_GRANT_REASON_MAX_LENGTH} 文字まで)`;
-/** 画面の文 (画面はエラーの本文の文面を読まず、code から引く。OP_INVALID_INPUT だけは画面用の文に差し替える) */
+/**
+ * 画面の文 (画面はエラーの本文の文面を読まず、code から引く。OP_INVALID_INPUT だけは画面用の文に差し替える)。
+ * 403 の理由 (二段階認証の確認・登録が要る・凍結) の code は、運営の route が 403 OP_PERMISSION_DENIED の文に理由の文を入れたとき、
+ * manual-grant-client が理由の文を code に直して返す (FORBIDDEN_REASON_CODE_BY_MESSAGE。#2086 V4)。
+ * 文はほかの運営の画面の 403 の理由の文 (forbiddenMessageForScreen) と同じ。401 / 403 の既定の文も運営の画面と同じ
+ */
 export const MANUAL_GRANT_CLIENT_MESSAGES: Readonly<Record<string, string>> = {
   ...MANUAL_GRANT_ERROR_MESSAGES,
   OP_INVALID_INPUT: MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE,
-  AUTH_UNAUTHENTICATED: 'ログインし直してください',
-  OP_PERMISSION_DENIED: '権限がありません',
+  AUTH_UNAUTHENTICATED: UNAUTHENTICATED_SCREEN_MESSAGE,
+  OP_PERMISSION_DENIED: FORBIDDEN_SCREEN_MESSAGE,
+  AUTH_ACCOUNT_FROZEN: API_ACCOUNT_FROZEN_MESSAGE,
+  AUTH_2FA_REQUIRED: API_MFA_REQUIRED_MESSAGE,
+  AUTH_2FA_ENROLLMENT_REQUIRED: API_MFA_ENROLLMENT_REQUIRED_MESSAGE,
   INTERNAL_ERROR: '処理中にエラーが発生しました。しばらくしてからお試しください',
 };
 /** code が無い・知らない code のときの文 */

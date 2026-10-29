@@ -12,6 +12,10 @@
  * 読み直さないと、古い状態のボタンをもう一度押して 409 になり、自分の操作なのに「別の操作で…先に変わっていました」と出る。
  * そのあとの読み直しが失敗したら「再試行」を出し、読み直せるまで状態のボタンを止める (一覧の状態が古いかもしれないため)。
  * 409 のあとの読み直しが失敗したときも、読み直せるまで状態のボタンを止める (詳細の画面と同じ。#2080)。
+ * 一覧の読み直しが 401 / 403 で断られたら、読み込み直しても変わらないので、理由の文 (401 は「ログインし直してください」・
+ * 403 は二段階認証の確認が要る などの理由の文か「権限がありません」) を出し、「再試行」は出さず、状態のボタンも止めない
+ * (詳細の画面と同じ分け方。#2086 V4)。
+ * 読み込み・状態の変更の失敗の文は日本語だけにする (本文の無い 502 の「HTTP 502」だけの文・通信の reject の英字の文を出さない。#2086 V6)。
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -26,6 +30,17 @@ import {
   isExperimentStatusConflict,
   type ExperimentStatusChangeTarget,
 } from "@/lib/super-admin/experiment-status-display";
+import {
+  adminActionHttpFailedMessage,
+  adminLoadFailedMessage,
+  screenApiErrorMessage,
+} from "@/lib/admin/admin-screen-messages";
+import { rereadUnavailableMessage } from "@/lib/super-admin/detail-reread";
+
+/** 読み込みの失敗の文の対象 (「実験の一覧を読み込めませんでした (HTTP 502)」。#2086 V6) */
+const EXPERIMENTS_SUBJECT = "実験の一覧";
+/** 状態の変更の失敗の文の操作の名前 (「状態の変更に失敗しました (HTTP 502)」。#2086 V6) */
+const STATUS_CHANGE_ACTION = "状態の変更";
 
 interface Experiment {
   id: string;
@@ -47,11 +62,13 @@ const STATUS_BADGE: Record<string, { label: string; color: string }> = {
 };
 
 /**
- * 一覧の読み込みの結果。superseded は、読み込みの最中に新しい読み込みが始まったので結果を捨てた
+ * 一覧の読み込みの結果。superseded は、読み込みの最中に新しい読み込みが始まったので結果を捨てた。
+ * unavailable は、表示したあとの読み直しが 401 / 403 で断られた (読み込み直しても変わらない理由。#2086 V4)
  */
 type ExperimentsLoadOutcome =
   | { kind: "loaded"; experiments: Experiment[] }
   | { kind: "failed" }
+  | { kind: "unavailable"; message: string }
   | { kind: "superseded" };
 
 /**
@@ -60,12 +77,14 @@ type ExperimentsLoadOutcome =
  *   - stale-reload-failed      : 409 のあとの読み直しに失敗した (「再試行」を出し、状態のボタンを止める。#2080)
  *   - no-response              : 状態の変更の通信が reject されたあとに読み直した (状態は一覧の行で見せる)
  *   - no-response-reload-failed: 通信が reject されたあとの読み直しに失敗した (「再試行」を出し、状態のボタンを止める)
+ *   - unavailable              : 読み直しが 401 / 403 で断られた (理由の文を出す。「再試行」は出さず、状態のボタンも止めない。#2086 V4)
  */
 type ReloadNotice =
   | { kind: "stale"; id: string; name: string; status: string | null }
   | { kind: "stale-reload-failed"; id: string; name: string }
   | { kind: "no-response"; id: string; name: string }
-  | { kind: "no-response-reload-failed"; id: string; name: string };
+  | { kind: "no-response-reload-failed"; id: string; name: string }
+  | { kind: "unavailable"; id: string; name: string; message: string };
 
 function reloadNoticeText(notice: ReloadNotice): string {
   switch (notice.kind) {
@@ -79,14 +98,9 @@ function reloadNoticeText(notice: ReloadNotice): string {
       return notice.status === null
         ? experimentListStaleGoneMessage(notice.name)
         : experimentListStaleReloadedMessage(notice.name, notice.status);
+    case "unavailable":
+      return notice.message;
   }
-}
-
-/** API の失敗の本文から文を取り出す (取り出せなければ null) */
-function apiErrorMessageOf(body: unknown): string | null {
-  if (typeof body !== "object" || body === null) return null;
-  const message = (body as { error?: { message?: unknown } }).error?.message;
-  return typeof message === "string" ? message : null;
 }
 
 export default function ExperimentsPage() {
@@ -119,17 +133,24 @@ export default function ExperimentsPage() {
       const body: unknown = await res.json().catch(() => null);
       if (seq !== loadSeqRef.current) return { kind: "superseded" };
       if (!res.ok) {
-        if (!isReload) setError(apiErrorMessageOf(body) ?? `HTTP ${res.status}`);
-        return { kind: "failed" };
+        if (!isReload) {
+          // 本文に日本語の文が無ければ「実験の一覧を読み込めませんでした (HTTP 502)」(#2086 V6)
+          setError(screenApiErrorMessage(body) ?? adminLoadFailedMessage(EXPERIMENTS_SUBJECT, res.status));
+          return { kind: "failed" };
+        }
+        // 表示したあとの読み直しが 401 / 403 なら、読み込み直しても変わらない理由を返す (一覧の 404 は行の消えたことを意味しないので failed。#2086 V4)
+        const unavailableMessage = rereadUnavailableMessage(res.status, body, null);
+        return unavailableMessage === null ? { kind: "failed" } : { kind: "unavailable", message: unavailableMessage };
       }
       const loaded = (body as { data?: Experiment[] | null } | null)?.data ?? [];
       hasLoadedRef.current = true;
       setExperiments(loaded);
       setError(null);
       return { kind: "loaded", experiments: loaded };
-    } catch (err) {
+    } catch {
       if (seq !== loadSeqRef.current) return { kind: "superseded" };
-      if (!isReload) setError(err instanceof Error ? err.message : "読み込みに失敗しました");
+      // 通信そのものの失敗 (ブラウザの英字の例外の文は出さない。#2086 V6)
+      if (!isReload) setError(adminLoadFailedMessage(EXPERIMENTS_SUBJECT, null));
       return { kind: "failed" };
     } finally {
       if (seq === loadSeqRef.current && !isReload) setIsLoading(false);
@@ -159,9 +180,12 @@ export default function ExperimentsPage() {
     async (target: { id: string; name: string }, cause: "stale" | "no-response") => {
       const outcome = await loadExperiments();
       if (outcome.kind === "superseded") return;
-      // 読み直しが失敗したら、どちらの理由でも、読み直せるまで状態のボタンを止める (#2073・#2080)
+      // 読み直しが失敗したら、どちらの理由でも、読み直せるまで状態のボタンを止める (#2073・#2080)。
+      // 401 / 403 (unavailable) は読み込み直しても変わらないので止めない (詳細の画面と同じ。#2086 V4)
       markReloadFailed(outcome.kind === "failed");
-      if (outcome.kind === "loaded") {
+      if (outcome.kind === "unavailable") {
+        setReloadNotice({ kind: "unavailable", id: target.id, name: target.name, message: outcome.message });
+      } else if (outcome.kind === "loaded") {
         if (cause === "no-response") {
           setReloadNotice({ kind: "no-response", id: target.id, name: target.name });
           return;
@@ -218,7 +242,7 @@ export default function ExperimentsPage() {
           await reloadAfterUncertain({ id: target.id, name: target.name }, "stale");
           return;
         }
-        alert(apiErrorMessageOf(body) ?? `HTTP ${res.status}`);
+        alert(screenApiErrorMessage(body) ?? adminActionHttpFailedMessage(STATUS_CHANGE_ACTION, res.status));
         return;
       }
       setExperiments((prev) => prev.map((e) => e.id === target.id ? { ...e, status } : e));

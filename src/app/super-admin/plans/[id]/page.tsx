@@ -34,7 +34,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { forbiddenMessageForScreen, isStaleDataConflict } from '@/lib/admin/api-error-message';
+import { isStaleDataConflict } from '@/lib/admin/api-error-message';
+import { screenApiErrorMessage } from '@/lib/admin/admin-screen-messages';
+import { rereadUnavailableMessage } from '@/lib/super-admin/detail-reread';
 import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE, countsOrganizationsFor } from '@/lib/super-admin/plan-subscribers';
 import {
   NO_RESPONSE_STATE_RELOADED_GUIDE,
@@ -145,7 +147,7 @@ function editsAfterSave(loaded: PlanEdits, sent: PlanEdits, body: PlanSaveBody):
  * unavailable の message は画面に出す理由の文。404 は PLAN_NOT_FOUND_ON_RELOAD_MESSAGE。
  * 403 は応答の本文の文が理由の文 (二段階認証の確認が要る など。#2014 の operatorForbiddenMessageOf) ならその文、
  * それ以外 (ロールが足りない・本文が読めない) は「権限がありません」(forbiddenMessageForScreen。読み込み直しても変わらないので
- * どちらも「再試行」は出さない。#1917)
+ * どちらも「再試行」は出さない。#1917)。401 (ログインが切れた) は「ログインし直してください」(「再試行」は出さない。#2086 V4)
  */
 type ReloadNotice =
   | { kind: 'stale'; editsKept: boolean }
@@ -164,8 +166,16 @@ function isRetryableNotice(notice: ReloadNotice): boolean {
  * 表示したあとの読み直しが、読み込み直しても変わらない理由で断られた (「再試行」を出さない。#1917)。
  *   - not-found: 404 (読み直しの間にプランが消えた)
  *   - forbidden: 403 (読み直しの間に運営の権限が外れた・二段階認証の確認が要るようになった)
+ *   - unauthenticated: 401 (読み直しの間にログインが切れた。#2086 V4)
  */
-type PlanUnavailableReason = 'not-found' | 'forbidden';
+type PlanUnavailableReason = 'not-found' | 'forbidden' | 'unauthenticated';
+
+/** 読み直しの HTTP ステータスから、読み込み直しても変わらない理由の種類を決める (#2086 V4。文は rereadUnavailableMessage) */
+const PLAN_UNAVAILABLE_REASON_BY_STATUS: Readonly<Record<number, PlanUnavailableReason>> = {
+  401: 'unauthenticated',
+  403: 'forbidden',
+  404: 'not-found',
+};
 
 /**
  * 409 CONFLICT_STALE_DATA のあとに読み直したときの文。
@@ -224,17 +234,13 @@ function reloadNoticeText(notice: ReloadNotice): string {
 
 /**
  * 読み直しの結果。superseded は、読み直しの最中に新しい読み直しが始まったので結果を捨てた。
- * unavailable は、表示したあとの読み直しが 404 / 403 で断られた (読み込み直しても変わらない理由。#1917)
+ * unavailable は、表示したあとの読み直しが 404 / 403 / 401 で断られた (読み込み直しても変わらない理由。#1917・#2086 V4)
  */
 type PlanReloadOutcome =
   | { kind: 'loaded'; editsKept: boolean }
   | { kind: 'failed' }
   | { kind: 'unavailable'; reason: PlanUnavailableReason; message: string }
   | { kind: 'superseded' };
-
-/** 表示したあとの読み直しの HTTP ステータスのうち、読み込み直しても変わらない理由 (#1917) */
-const HTTP_FORBIDDEN = 403;
-const HTTP_NOT_FOUND = 404;
 
 /**
  * 表示名・説明・表示順を編集できる状態か (下書き・公開中・非公開)。廃止したプランは編集できない
@@ -345,16 +351,16 @@ export default function PlanDetailPage() {
       // 403 の本文が JSON として読めなくても「権限がありません」を出せるよう、読めない本文は null にする (#1917)
       const body: unknown = await res.json().catch(() => null);
       if (seq !== fetchSeq.current) return { kind: 'superseded' };
-      const data = (body ?? {}) as { data?: Plan; error?: { message: string } };
+      const data = (body ?? {}) as { data?: Plan };
       if (!res.ok || !data.data) {
-        if (!isReload) setError(data.error?.message ?? 'プランの取得に失敗しました');
-        // 表示したあとの読み直しが 404 / 403 なら、その理由を返す (「読み込み直せませんでした。再試行で…」で覆わない。#1917)。
+        // 本文の文は日本語のときだけ出す (英字だけの文は出さない。#2086 V6)
+        if (!isReload) setError(screenApiErrorMessage(body) ?? 'プランの取得に失敗しました');
+        // 表示したあとの読み直しが 404 / 403 / 401 なら、その理由を返す (「読み込み直せませんでした。再試行で…」で覆わない。#1917・#2086 V4)。
         // 403 は本文の文 (二段階認証の確認が要る など) を捨てずに出す (#2014 の route の文を、読み直しのときにも打ち消さない)
-        if (isReload && res.status === HTTP_NOT_FOUND) {
-          return { kind: 'unavailable', reason: 'not-found', message: PLAN_NOT_FOUND_ON_RELOAD_MESSAGE };
-        }
-        if (isReload && res.status === HTTP_FORBIDDEN) {
-          return { kind: 'unavailable', reason: 'forbidden', message: forbiddenMessageForScreen(body) };
+        const unavailableReason = res.ok ? undefined : PLAN_UNAVAILABLE_REASON_BY_STATUS[res.status];
+        const unavailableMessage = res.ok ? null : rereadUnavailableMessage(res.status, body, PLAN_NOT_FOUND_ON_RELOAD_MESSAGE);
+        if (isReload && unavailableReason !== undefined && unavailableMessage !== null) {
+          return { kind: 'unavailable', reason: unavailableReason, message: unavailableMessage };
         }
         if (isReload) markPlanStale(true);
         return { kind: 'failed' };
@@ -474,9 +480,8 @@ export default function PlanDetailPage() {
       await reloadAfterStale();
       return;
     }
-    const message =
-      typeof data === 'object' && data !== null ? (data as { error?: { message?: unknown } }).error?.message : undefined;
-    alert(typeof message === 'string' ? message : `${failureSummary} (HTTP ${res.status})`);
+    // 本文の文は日本語のときだけ出す (英字だけの文は出さない。#2086 V6)
+    alert(screenApiErrorMessage(data) ?? `${failureSummary} (HTTP ${res.status})`);
   };
 
   /**
@@ -548,9 +553,8 @@ export default function PlanDetailPage() {
           await reloadAfterStale();
           return;
         }
-        const message =
-          typeof data === 'object' && data !== null ? (data as { error?: { message?: unknown } }).error?.message : undefined;
-        setSaveError(typeof message === 'string' ? message : '保存に失敗しました');
+        // 本文の文は日本語のときだけ出す (英字だけの文は出さない。#2086 V6)
+        setSaveError(screenApiErrorMessage(data) ?? '保存に失敗しました');
         return;
       }
       // 送った欄は保存済みなので、送った値を新しい初めの値にする。続く読み直しが失敗しても、次の保存でこの欄を
