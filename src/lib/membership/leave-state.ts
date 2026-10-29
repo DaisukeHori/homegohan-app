@@ -34,16 +34,26 @@ const MEMBERSHIP_COLUMN_OF_SCOPE = {
 } as const satisfies Record<MembershipLeaveScope, string>;
 
 /**
- * 脱退の通信が失敗したあとに、自分のプロフィールを読み直して、脱退できていたかを返す。
- * 例外は投げない (問い合わせの失敗・例外・ログインが切れている は unknown)
+ * 書き込みの通信が失敗したあとに読み直した、本人の所属の id (user_profiles.family_id / organization_id)。
+ *   - confirmed: true: 読めた。membershipId は所属の id (入っていなければ null)
+ *   - confirmed: false: 確かめる問い合わせも失敗した
  */
-export async function readOwnMembershipAfterNetworkFailure(
+export type OwnMembershipIdAfterNetworkFailure =
+  | { confirmed: true; membershipId: string | null }
+  | { confirmed: false };
+
+/**
+ * 書き込みの通信が失敗したあとに、自分のプロフィールを読み直して、所属の id を返す (#2080 U1。招待の承諾では、
+ * 入っているかだけでなく、招待の家族 / 組織に入っているかを見るため id が要る)。
+ * 例外は投げない (問い合わせの失敗・例外・ログインが切れている は confirmed: false)
+ */
+export async function readOwnMembershipIdAfterNetworkFailure(
   supabase: BrowserSupabaseClient,
   scope: MembershipLeaveScope,
-): Promise<MembershipStateAfterNetworkFailure> {
+): Promise<OwnMembershipIdAfterNetworkFailure> {
   try {
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return 'unknown';
+    if (!user) return { confirmed: false };
 
     const { data: profile, error: profileError } = await supabase
       .from('user_profiles')
@@ -51,14 +61,27 @@ export async function readOwnMembershipAfterNetworkFailure(
       .eq('id', user.id)
       .single();
     // 自分のプロフィールの行は必ずあるので、行が無い (PGRST116) も確かめられなかった扱いにする
-    if (profileError || !profile) return 'unknown';
+    if (profileError || !profile) return { confirmed: false };
 
     const membershipId: unknown = profile[MEMBERSHIP_COLUMN_OF_SCOPE[scope]];
-    return membershipId ? 'still-member' : 'left';
+    return { confirmed: true, membershipId: membershipId ? String(membershipId) : null };
   } catch (readFailure) {
     console.error('[membership] failed to confirm membership after network failure:', readFailure);
-    return 'unknown';
+    return { confirmed: false };
   }
+}
+
+/**
+ * 脱退の通信が失敗したあとに、自分のプロフィールを読み直して、脱退できていたかを返す。
+ * 例外は投げない (問い合わせの失敗・例外・ログインが切れている は unknown)
+ */
+export async function readOwnMembershipAfterNetworkFailure(
+  supabase: BrowserSupabaseClient,
+  scope: MembershipLeaveScope,
+): Promise<MembershipStateAfterNetworkFailure> {
+  const read = await readOwnMembershipIdAfterNetworkFailure(supabase, scope);
+  if (!read.confirmed) return 'unknown';
+  return read.membershipId ? 'still-member' : 'left';
 }
 
 /** 失敗の文に、状態を確かめられなかったときだけ MEMBERSHIP_STATE_UNCONFIRMED_NOTE を添える */
