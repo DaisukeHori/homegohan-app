@@ -116,7 +116,7 @@ CREATE INDEX IF NOT EXISTS idx_dept_history_org  ON department_history(organizat
 -- IMPORTANT: Materialized View には RLS を適用できない。
 -- このビューは service_role 専用。直接クエリでの RLS 適用が必要な場合は
 -- ベーステーブル (user_profiles) に直接クエリすること。
--- Edge Function 内での service_role 使用時は admin_audit_logs に記録必須。
+-- admin_audit_logs に記録する操作は operator/07 §4 の一覧が決める (cross/02 §3.3)。
 CREATE MATERIALIZED VIEW IF NOT EXISTS org_members AS
 SELECT
   up.id             AS user_id,

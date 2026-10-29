@@ -11,6 +11,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import ForceActionConfirmModal from '@/components/operator/membership/ForceActionConfirmModal';
 import { normalizeProfileName } from '@/lib/profile-name';
+import { familyRoleLabel } from '@/lib/membership/role-labels';
 
 type Candidate = {
   id: string;
@@ -137,7 +138,7 @@ export default function FamilyTransferPage() {
                         {c.email ?? normalizeProfileName(c.nickname) ?? c.id}
                       </p>
                       <p className="text-xs text-gray-500">
-                        {c.role} &mdash; 最終ログイン: {formatLastLogin(c.last_login_at)}
+                        {familyRoleLabel(c.role)} &mdash; 最終ログイン: {formatLastLogin(c.last_login_at)}
                       </p>
                     </div>
                   </label>

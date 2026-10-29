@@ -263,6 +263,56 @@ describe('POST /api/admin/users/[id]/freeze', () => {
     });
   });
 
+  // #2026 凍結の通知メール (cross/24 §12 I-1)。結合テストの環境は RESEND_API_KEY の有無で sent (email_outbox に 1 行) か skipped (行なし) になる
+  it('I-1 notify_user: true で凍結すると 200 で data.notification.status が sent か skipped (RESEND_API_KEY の有無) で、監査の details.notification.status が同じ値。sent なら email_outbox に template account_frozen・user_id = 対象の行が 1 行', async () => {
+    const res = await apiCall('POST', `/api/admin/users/${targetUser.userId}/freeze`, adminUser.jwt, {
+      ban_type: 'temporary',
+      reason_category: 'spam',
+      reason_detail: 'Integration test freeze (notify)',
+      duration_days: 1,
+      notify_user: true,
+    });
+    expect(res.status).toBe(200);
+    const body = res.body as { data: { ban_id: string; notification: { status: string; reason?: string } } };
+    expect(['sent', 'skipped']).toContain(body.data.notification.status);
+
+    const { data: logs } = await supabaseAdmin
+      .from('admin_audit_logs')
+      .select('details')
+      .eq('actor_id', adminUser.userId)
+      .eq('action_type', 'admin.user.ban')
+      .eq('target_id', targetUser.userId)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    expect(logs).toHaveLength(1);
+    const details = logs![0].details as { ban_id: string; notification: { status: string; reason: string | null; outbox_id: string | null } };
+    expect(details.ban_id).toBe(body.data.ban_id);
+    expect(details.notification.status).toBe(body.data.notification.status);
+
+    const { data: outboxRows, error: outboxError } = await supabaseAdmin
+      .from('email_outbox')
+      .select('id, template, user_id, idempotency_key, redact_after_send, html_body')
+      .eq('idempotency_key', `account-frozen:${body.data.ban_id}`);
+    expect(outboxError).toBeNull();
+    try {
+      if (body.data.notification.status === 'sent') {
+        expect(outboxRows).toHaveLength(1);
+        expect(outboxRows![0]).toMatchObject({
+          id: details.notification.outbox_id,
+          template: 'account_frozen',
+          user_id: targetUser.userId,
+          redact_after_send: false,
+          html_body: null,
+        });
+      } else {
+        expect(details.notification).toEqual({ status: 'skipped', reason: 'not_configured', outbox_id: null });
+        expect(outboxRows).toHaveLength(0);
+      }
+    } finally {
+      await supabaseAdmin.from('email_outbox').delete().eq('idempotency_key', `account-frozen:${body.data.ban_id}`);
+    }
+  });
+
   // 凍結の UPDATE は「読んだ時点の super_admin でない状態のまま」の条件つき (roles が NULL なら roles IS NULL、そうでなければ
   // roles が super_admin を含まない)。本物の PostgREST で、どちらの条件も 1 行に当たる (凍結できる) ことと、super_admin は凍結されないことを確かめる
   // (上の『200 for admin』が roles = ['user'] の条件を通る)

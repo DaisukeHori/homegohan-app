@@ -13,7 +13,7 @@ import {
 } from "@/lib/planned-meal-validation";
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { MEAL_SAVE_FAILED_MESSAGE } from '@/lib/api/user-api-error-messages';
 
 export async function POST(request: Request) {
@@ -23,6 +23,11 @@ export async function POST(request: Request) {
   const supabase = await createClient();
 
   try {
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const requestBody = await request.json().catch(() => null);
+    if (!requestBody || typeof requestBody !== 'object' || Array.isArray(requestBody)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
     const {
       dayDate,
       mealType,
@@ -32,7 +37,7 @@ export async function POST(request: Request) {
       nutritionalAdvice,
       catalogProductId,
       sandbox,
-    } = await request.json();
+    } = requestBody;
     
     const searchParams = new URL(request.url).searchParams;
     const source = searchParams.get('source') ?? 'normal';
@@ -170,7 +175,6 @@ export async function POST(request: Request) {
       // （数値でない・負 → null、上限超え → 上限、小数 → 四捨五入）。0 と未入力は従来どおり null。
       calories_kcal: sanitizeAiNutrient('calories_kcal', totalCalories) || null,
       image_url: imageUrl,
-      is_completed: false,
       dishes: photoDishes.length > 0 ? photoDishes : null,
       is_simple: photoDishes.length <= 1,
       source_type: source === 'handson_tour' ? 'handson_tour' : 'manual',

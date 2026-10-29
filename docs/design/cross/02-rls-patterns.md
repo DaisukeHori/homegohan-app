@@ -42,10 +42,10 @@ ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;
 
 ### 3.3 service_role バイパスのガイドライン
 
-- **service_role を使う場所**: Supabase Edge Function のみ
-- **禁止**: Next.js Server Actions・API Routes 内での `createClient(SERVICE_ROLE_KEY)` 直接使用
+- **service_role の client を作る場所**: Supabase Edge Function と、Next.js では `lib/supabase/server.ts` の `getSupabaseAdmin()`。例外は `tests/supabase-service-role-client-scan.test.ts` の理由つきの許可の一覧 (`SUPABASE_JS_CLIENT_ALLOWLIST`) で service_role を使うとしたファイルだけで、今は `src/lib/db-logger.ts` (ブラウザ向けのページからも import されるので `next/headers` を読む `lib/supabase/server.ts` を import できない。`app_logs` への INSERT にだけ使う)
+- **禁止**: Next.js (Server Actions・API Routes・`src/lib`・`lib`) での自前の `createClient(SERVICE_ROLE_KEY)` (`getSupabaseAdmin()` と上の一覧のほか)。同じテストが `src`・`lib` を走査して見張る (`supabase/functions`・`scripts` は走査の対象外。使う前の確認の順も見ない)。使う前に何を確かめるかは route ごとに決まり (ログインした利用者の route は認可か本人の確認、Webhook は署名、cron は秘密の照合、など)、決まりは各 route の設計書にある (ルートの `CLAUDE.md` の「ロール認可」の節も見る)
 - **コードレビュー必須**: `service_role` が使われる PR は security ラベルを付与、実装リーダーがレビュー
-- Edge Function での service_role 使用時は必ず `admin_audit_logs` に記録
+- `admin_audit_logs` に記録する操作は `operator/07-audit-monitoring.md` §4 の「監査対象操作の網羅リスト」が決める
 
 ### 3.4 表の TRUNCATE の権限
 
@@ -209,7 +209,7 @@ CREATE POLICY "{table}_public_read"
   ON {table_name} FOR SELECT
   USING (true);
 
--- INSERT / UPDATE / DELETE は service_role のみ (= Edge Function)
+-- INSERT / UPDATE / DELETE は service_role のみ (Edge Function か、Next.js の getSupabaseAdmin()。§3.3)
 -- ポリシー不要 (service_role はバイパス)
 ```
 
@@ -348,69 +348,48 @@ RETURNING *;
 
 **命名規則**: `{ドメイン}-{エンティティ}:{UUID}` 形式（ハイフン区切り）
 
-### 6.2.1 `acquire_family_group_lock` ヘルパー関数
+### 6.2.1 家族グループの鍵 (`family-group:{UUID}`)
 
-家族グループ操作 (migrate-to-personal / transfer-ownership / dissolve → archived) に統一して使用するロック取得ヘルパー。
+家族グループの操作 (migrate-to-personal / transfer-ownership / dissolve → archived) で使う鍵。ロックは、その操作の DB の仕事をする SECURITY DEFINER の関数の中で、仕事と同じ取引で取る (§6.3)。
 
 ```sql
--- supabase/migrations/2026MMDD012_advisory_lock_helpers.sql
-
-CREATE OR REPLACE FUNCTION acquire_family_group_lock(family_group_id UUID)
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-BEGIN
-  PERFORM pg_advisory_xact_lock(hashtext('family-group:' || family_group_id::TEXT));
-END;
-$$;
-
-COMMENT ON FUNCTION acquire_family_group_lock(UUID) IS
-  '家族グループへの排他操作 (凍結/移行/譲渡/解散) 前に呼び出すアドバイザリロック。
-   トランザクション終了時に自動解放。プレフィックス: family-group:{UUID}';
+-- 仕事をする関数の本文の中で取る。関数の取引の終わりで外れる
+PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('family-group:' || p_family_group_id::TEXT));
+-- 続けて、ロックで守る仕事 (読み・確かめ・UPDATE) を同じ関数の中で行う
 ```
+
+- ロックだけを取る関数 `acquire_family_group_lock(UUID)` は、本番に無い (`pg_proc` に無い。billing/01 F13)。
+- この形 (ロックだけを取る関数を route から呼び、そのあと route で仕事をする) では、ロックはその関数の取引の終わりで外れ、後に続く仕事の間は保たれない (§6.3)。
 
 ### 6.3 実装例
 
+- `pg_advisory_xact_lock` は、取った取引 (トランザクション) の終わりで外れる。
+- ロックだけを取る RPC を route から呼んでから route で仕事をすると、ロックはその RPC の取引の終わりで外れる。そのため、後に続く仕事の間は保たれない。
+- ロックは、仕事をする SECURITY DEFINER の関数の中で、仕事と同じ取引で取る。route はその関数を呼ぶ。
+- ロックだけを取る関数 `acquire_advisory_lock` / `acquire_family_group_lock` は、本番に無い (`pg_proc` に無い。billing/01 F13)。TS の `withAdvisoryLock` も実コードに無い。
+
 ```sql
--- supabase/migrations/xxxx_advisory_lock_helper.sql
--- pg_advisory_xact_lock を直接 RPC 呼び出しすることはできないため、
--- ラッパー関数 acquire_advisory_lock を用意する
-CREATE OR REPLACE FUNCTION acquire_advisory_lock(lock_key TEXT)
-RETURNS void
-LANGUAGE plpgsql
+-- 例: ロックと、ロックで守る仕事を 1 つの関数に入れる (鍵は §6.2 の命名)
+CREATE OR REPLACE FUNCTION public.example_locked_operation(p_pool_id UUID)
+RETURNS void LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = ''
 AS $$
 BEGIN
-  PERFORM pg_advisory_xact_lock(hashtext(lock_key));
-END;
-$$;
+  -- 1. 引数の検証は関数の中で行う。呼び出し元の確認 (本人か・役割) は、利用者の JWT でも呼べる関数なら関数の中で auth.uid() と役割を確かめる (20261008120000_shopping_list_active_lock.sql:136-142)。service_role だけが呼ぶ関数なら下の REVOKE / GRANT で絞り、利用者の確認は呼ぶ route が行う (§3.3)
+  -- 2. 同じ鍵を取る処理どうしを直列にする。関数の取引の終わりで外れる
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtext('license_pool:' || p_pool_id::TEXT));
+  -- 3. ロックで守る仕事 (読み・確かめ・UPDATE) は、同じ関数の中で続けて行う
+END $$;
+REVOKE ALL ON FUNCTION public.example_locked_operation(UUID) FROM PUBLIC, anon, authenticated;  -- 既定では新しい関数を anon / authenticated も EXECUTE できる (20251126124224_create_meal_planner_tables.sql:13060-13061)
+GRANT EXECUTE ON FUNCTION public.example_locked_operation(UUID) TO service_role;  -- 例は service_role だけが呼ぶ場合 (20261016210000_billing_core.sql:422-423 と同じ形)
 ```
 
-```typescript
-// src/lib/advisory-lock.ts
+実コードの例 (どれも、仕事をする SECURITY DEFINER の関数の中で、仕事と同じ取引でロックを取る。行はロックの行):
 
-/**
- * acquire_advisory_lock RPC 経由でトランザクション内ロックを取得
- * トランザクション終了時に自動解放される
- * 注意: pg_advisory_xact_lock は Supabase RPC から直接呼び出せないため
- *       必ず acquire_advisory_lock ラッパーを経由すること
- */
-export async function withAdvisoryLock<T>(
-  key: string,
-  fn: () => Promise<T>
-): Promise<T> {
-  const supabase = createServiceRoleClient(); // Edge Function 内のみ
-
-  await supabase.rpc('acquire_advisory_lock', {
-    lock_key: key,
-  });
-
-  return fn();
-}
-```
+- `supabase/migrations/20261008120000_shopping_list_active_lock.sql:91` (`replace_active_shopping_list`)
+- `supabase/migrations/20261008120000_shopping_list_active_lock.sql:165` (`get_or_create_active_shopping_list`)
+- `supabase/migrations/20261016210000_billing_core.sql:254-255` (`billing_apply_stripe_subscription`)
 
 ### 6.4 行ロック (SELECT FOR UPDATE)
 
@@ -497,6 +476,12 @@ COMMIT;
 
 運営ロールの MFA (cross/12 §11.4。段 E): 運営ロール (`user_profiles.roles` の super_admin / admin / finance / org_industrial_doctor) の条件の項は `(<条件> AND (SELECT public.operator_mfa_satisfied()))` にし、そのポリシーは `TO authenticated` にする。運営ロールを確かめる SECURITY DEFINER の関数は、役割の判定の直後に `IF NOT public.operator_mfa_satisfied() THEN RAISE EXCEPTION 'OPERATOR_MFA_REQUIRED'` を足す (cross/12 §11.4。`tests/integration/security/operator-mfa-db-gate.test.ts` の DB-1・DB-2 が見張る)。
 
+### 8.4 献立 (meal planner) ドメイン
+
+| テーブル | 適用パターン | 備考 |
+|---------|------------|------|
+| `planned_meals` | self (`user_daily_meals` 経由の USING) + 列の権限 (`veg_score`・`is_completed`・`completed_at` は authenticated の INSERT / UPDATE から外す。`20261026120000_planned_meals_score_columns_server_only.sql`。anon の INSERT / UPDATE は無い) | 完了は RPC `planned_meals_set_completed`。設計は cross/23 |
+
 ---
 
 ## 9. マイグレーション: rls_hardening.sql テンプレート
@@ -579,11 +564,12 @@ COMMIT;
 | テスト種別 | 対象 | ツール |
 |---------|------|------|
 | Integration | 各 RLS パターンが意図通り動作するか (SELECT / INSERT / UPDATE / DELETE) | Vitest + Supabase Local |
-| Integration | service_role バイパスが Edge Function 以外で使われていないか | CI での grep チェック |
+| Contract | service_role の client が `getSupabaseAdmin()` と理由つきの許可の一覧のほかで作られていないか (`src`・`lib` を構文木で走査。`supabase/functions`・`scripts` と、使う前の確認の順は見ない) | Vitest (`tests/supabase-service-role-client-scan.test.ts`) |
 | Security | 別ユーザーが他人の行を読めないことを確認 | Vitest + Supabase Local |
 | Security | 監査ログの UPDATE / DELETE が拒否されることを確認 | Vitest + Supabase Local |
 | Security | public の関数 (SECURITY DEFINER / SECURITY INVOKER) のうち anon が EXECUTE できるものが、理由つきの許可一覧のものだけか (Supabase の既定の権限と PUBLIC の EXECUTE が残らないか。INVOKER のトリガー関数は除外の条件で外す) | Vitest + Supabase Local (`tests/integration/security/anon-definer-execute.test.ts`・`anon-invoker-execute.test.ts`) |
 | Security | public の表・ビューに、anon / authenticated の TRUNCATE が無いか (既定の権限も。§3.4) | Vitest + Supabase Local (`tests/integration/security/db-privilege-hardening.test.ts`) |
+| Security | `planned_meals` の列の権限が information_schema のとおりか (authenticated の INSERT / UPDATE は 3 列を除く全列。§8.4) | Vitest + Supabase Local (`tests/integration/rls/planned-meals-score-integrity.test.ts` I-9) |
 
 ### 10.1 RLS テストの基本パターン
 

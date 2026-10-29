@@ -497,7 +497,7 @@ export const toPlannedMeal = (data: any): PlannedMeal => ({
   isSimple: data.is_simple ?? true,
   cookingTimeMinutes: data.cooking_time_minutes,
   memo: data.memo || null,
-  vegScore: data.veg_score || null,
+  vegScore: data.veg_score ?? null, // 0 (野菜が無い) を null (未計算) にしない (#2050)
   qualityTags: data.quality_tags || null,
   displayOrder: data.display_order ?? 0,
   isGenerating: data.is_generating ?? false,

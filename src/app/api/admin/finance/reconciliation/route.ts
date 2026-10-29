@@ -76,10 +76,14 @@ export async function GET(request: NextRequest) {
     });
 
     // DB 側サマリー (finance も閲覧可)
-    const { data: dbSubs } = await supabase
+    // 読めなかった (DB の失敗) ときは 500。0 件にしない (#1917 の続き。以前は失敗を捨て、DB の契約が 0 件 = Stripe との食い違いのように見えていた)
+    const { data: dbSubs, error: dbSubsError } = await supabase
       .from('personal_subscriptions')
       .select('id, status, stripe_subscription_id')
       .in('status', ['active', 'trialing', 'past_due', 'grace']);
+    if (dbSubsError) {
+      return internalError(LIST_ROUTE_NAME, dbSubsError, { userId: user.id, table: 'personal_subscriptions' }, { shape: 'nested' });
+    }
 
     const dbSummary = {
       total_active_in_db: dbSubs?.length ?? 0,

@@ -16,6 +16,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import type { RoleName } from '@/lib/auth/types';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { normalizeProfileName } from '@/lib/profile-name';
@@ -215,7 +216,7 @@ export function authFailureResponse(err: unknown): NextResponse | null {
     return errorResponse(401, 'AUTH_UNAUTHENTICATED', '認証が必要です');
   }
   if (err instanceof ForbiddenError) {
-    return errorResponse(403, 'OP_PERMISSION_DENIED', '権限がありません');
+    return errorResponse(403, 'OP_PERMISSION_DENIED', operatorForbiddenMessageOf(err));
   }
   return null;
 }

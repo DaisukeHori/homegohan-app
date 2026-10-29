@@ -690,6 +690,15 @@ const ALLOWLIST: ReadonlyArray<{ file: string; rule: Rule; count: number; reason
     reason: '最近の AI セッション数の 30 日前の今の時刻 (今からの相対時刻)。暦日ではない',
   },
   {
+    file: 'supabase/functions/_shared/meal-photo-cas.ts',
+    rule: 'G',
+    count: 1,
+    reason:
+      '写真の解析の書き込みの順序の守り (#121 の CAS)。invokedAt は Next.js の route が Edge を呼ぶ直前に付けた要求の印 ' +
+      '(献立の行の updated_at。#2050。入口の parseInvokedAt で ISO 8601 の日時として検査した値) で、献立の行の updated_at が ' +
+      'それより後に書かれたかを比べる。暦日ではない',
+  },
+  {
     file: 'supabase/functions/_shared/hidden-content-purge.ts',
     rule: 'G',
     count: 2,

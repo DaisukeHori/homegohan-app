@@ -66,8 +66,8 @@ test.describe("/api/recipes/[id]/comments", () => {
         headers: { "Content-Type": "application/json" },
       },
     );
-    // 存在しない recipe への投稿は 404 / 400 / 422 のどれかになる想定
-    expect([400, 404, 422, 500]).toContain(res.status());
+    // 存在しない recipe への投稿は 404 / 400 / 422 のどれか (500 は許さない)。本文の項目が body で content が無いので、いまは 400 (コメントを入力してください)
+    expect([400, 404, 422]).toContain(res.status());
   });
 });
 

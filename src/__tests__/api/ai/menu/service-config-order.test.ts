@@ -54,6 +54,8 @@ vi.mock('@/lib/meal-image-jobs', () => ({
 
 vi.mock('@/lib/planned-meals-snapshot', () => ({
   restorePlannedMealsSnapshot: vi.fn(async () => ({ restored: 0, skipped: 0, failed: 0 })),
+  // weekly/request は復元に restoreOwnPlannedMealsSnapshot を使う (#2025)。差し替えの名前を route に揃える
+  restoreOwnPlannedMealsSnapshot: vi.fn(async () => ({ restored: 0, skipped: 0, failed: 0 })),
 }));
 
 // internalError() が使う構造化ログ。変数名がここに渡ることを見る (#1182)

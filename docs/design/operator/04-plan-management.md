@@ -21,7 +21,7 @@
 #### 作成 (draft 状態で作成)
 
 **バリデーション規則**:
-- `plan_key`: 英数字 + アンダースコアのみ、50 文字以内、UNIQUE
+- `plan_key`: 英小文字・数字・アンダースコアのみ (`/^[a-z0-9_]+$/`)、1〜100 文字、UNIQUE (`src/lib/super-admin/plans-schemas.ts` の `PlanCreateSchema`)
 - `plan_type`: `personal` | `family` | `org` (変更不可)
 - `plan_key` と `plan_type` の組み合わせ (#1912): `personal` / `family` は組織のプランの値 (`isOrgPlanKey` = `standard` / `premium` / `enterprise`・`org_` で始まる key) を使えない。`org` は `org_` で始まる key にする (`PlanCreateSchema` の refine。違反は 400 `OP_INVALID_INPUT`)
 - `monthly_price_jpy`: 0 以上の整数 (NULL = カスタム/無料)

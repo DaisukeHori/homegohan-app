@@ -14,14 +14,16 @@ const h = vi.hoisted(() => ({
   requireRole: vi.fn(),
   selectResult: { data: [] as unknown[] | null, error: null as unknown },
   upsert: vi.fn(),
+  /** upsert を送った client (本人のセッション / service_role。書き込みは service_role だけ。#1917 の続き) */
+  upsertClient: vi.fn(),
   from: vi.fn(),
   selectColumns: vi.fn(),
 }));
 
 vi.mock('@/lib/auth/helpers', () => ({ requireRole: h.requireRole }));
 
-vi.mock('@/lib/supabase/server', () => ({
-  createClient: () => ({
+vi.mock('@/lib/supabase/server', () => {
+  const fakeClient = (client: 'session' | 'admin') => ({
     from: (table: string) => {
       h.from(table);
       return {
@@ -31,12 +33,14 @@ vi.mock('@/lib/supabase/server', () => ({
         },
         upsert: async (row: unknown) => {
           h.upsert(row);
+          h.upsertClient(client);
           return { error: null };
         },
       };
     },
-  }),
-}));
+  });
+  return { createClient: () => fakeClient('session'), getSupabaseAdmin: () => fakeClient('admin') };
+});
 
 vi.mock('@/lib/db-logger', () => ({
   createLogger: vi.fn(() => ({ debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), withUser: vi.fn() })),
@@ -175,6 +179,8 @@ describe('PUT /api/super-admin/settings', () => {
     expect(h.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'support_email', value: 'new@example.com', updated_by: 'admin-1' }),
     );
+    // 書き込みは service_role の client から (運営の直接の書き込みのポリシーは消した。#1917 の続き)
+    expect(h.upsertClient.mock.calls).toEqual([['admin']]);
   });
 
   it('認可の判定は、使われていない key の判定より先 (super_admin 以外には 409 ではなく 403)', async () => {

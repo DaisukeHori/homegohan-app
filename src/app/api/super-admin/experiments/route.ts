@@ -4,7 +4,7 @@
  * operator/02-api-spec.md §15 準拠
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { authFailureNested } from '@/lib/api/error-responses';
 import { CreateExperimentSchema } from '@/lib/super-admin/experiments-schemas';
@@ -87,7 +87,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { data, error } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { data, error } = await getSupabaseAdmin()
       .from('experiments')
       .insert({
         ...parsed.data,

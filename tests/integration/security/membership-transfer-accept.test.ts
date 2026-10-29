@@ -264,6 +264,28 @@ describe('#1236 accept_org_owner_transfer: 承諾時点の所属を再検証す�
 
   it('E3: 現メンバーの承諾は成立する (200、owner 入れ替え)', async () => {
     const proposalId = await propose(legit.id);
+
+    // #2068: 譲渡先は一般メンバー (org_role = member)。承諾の画面 (/org/transfer-accept/[proposal_id]) と同じ読み込み
+    // (提案・組織名) を本人の JWT でできる。提案の行は当事者だけが読める (RLS ownership_transfer_select) ので、
+    // 同じ組織の別のメンバーには見えない
+    expect((await profileOf(legit.id)).org_role).toBe('member');
+    const { data: seen, error: seenError } = await asUser(legit.jwt)
+      .from('ownership_transfer_proposals')
+      .select('id, from_user_id, to_user_id, status, proposed_at, expires_at, scope_id')
+      .eq('id', proposalId)
+      .single();
+    expect(seenError).toBeNull();
+    expect(seen).toMatchObject({ id: proposalId, from_user_id: owner.id, to_user_id: legit.id, status: 'pending', scope_id: orgA });
+    const { data: orgRow, error: orgError } = await asUser(legit.jwt).from('organizations').select('name').eq('id', orgA).single();
+    expect(orgError).toBeNull();
+    expect(orgRow?.name).toBe(`#1236 Org A ${TS}`);
+    const { data: seenByOther, error: seenByOtherError } = await asUser(expiring.jwt)
+      .from('ownership_transfer_proposals')
+      .select('id')
+      .eq('id', proposalId);
+    expect(seenByOtherError).toBeNull();
+    expect(seenByOther ?? []).toEqual([]);
+
     const res = await apiCall<{ ok?: boolean }>('POST', `/api/org/owner-transfer/${proposalId}/accept`, legit.jwt);
     expect(res.status).toBe(200);
 

@@ -121,7 +121,7 @@ CREATE POLICY "subscription_plans_select_public" ON subscription_plans
   );
 
 -- INSERT / UPDATE / DELETE: super_admin のみ
-CREATE POLICY "subscription_plans_mutate_super_admin" ON subscription_plans
+CREATE POLICY "subscription_plans_mutate_super_admin" ON subscription_plans -- 消した (supabase/migrations/20261025120000_operator_session_writes_select_only.sql)。正は migration
   FOR ALL USING (
     EXISTS (
       SELECT 1 FROM user_profiles
@@ -179,7 +179,7 @@ ALTER TABLE feature_packages ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "feature_packages_select_authenticated" ON feature_packages
   FOR SELECT TO authenticated USING (status = 'active');
 
-CREATE POLICY "feature_packages_mutate_super_admin" ON feature_packages
+CREATE POLICY "feature_packages_mutate_super_admin" ON feature_packages -- 消した (supabase/migrations/20261025120000_operator_session_writes_select_only.sql。運営の SELECT は feature_packages_select_super_admin を作った)。正は migration
   FOR ALL USING (
     EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND 'super_admin' = ANY(roles))
   );
@@ -281,7 +281,7 @@ CREATE POLICY "coupons_select_sales_or_above" ON coupons
     )
   );
 
-CREATE POLICY "coupons_mutate_sales_or_above" ON coupons
+CREATE POLICY "coupons_mutate_sales_or_above" ON coupons -- 消した (supabase/migrations/20261025120000_operator_session_writes_select_only.sql)。正は migration
   FOR ALL USING (
     EXISTS (
       SELECT 1 FROM user_profiles
@@ -420,7 +420,7 @@ CREATE POLICY "personal_subscriptions_select" ON personal_subscriptions
     )
   );
 
--- INSERT / UPDATE: admin / super_admin だけ (本人は書けない。billing/01 §6.2)。
+-- INSERT / UPDATE: admin / super_admin だけ (本人は書けない。billing/01 §6.2)。この 2 本 (下の CREATE POLICY) は後の supabase/migrations/20261024140000_announcements_moderation_flags_select_only.sql (PR #2006) で消え、いまは admin / super_admin も PostgREST から書けない (書くのはサーバーが呼ぶ SECURITY DEFINER の関数だけ)。
 -- Stripe の写しは service_role (RLS を通らない) の billing_apply_stripe_subscription が書く。
 -- 本人の解約の予約・取り消しは API (POST /api/billing/subscription/cancel・/api/billing/subscription/resume) が Stripe に送り、写像が写す
 CREATE POLICY "personal_subscriptions_insert_admin" ON personal_subscriptions
@@ -660,10 +660,10 @@ CREATE POLICY "tickets_select" ON support_tickets
     )
   );
 
-CREATE POLICY "tickets_insert_user" ON support_tickets
+CREATE POLICY "tickets_insert_user" ON support_tickets -- 変えた (supabase/migrations/20261025120000_operator_session_writes_select_only.sql。TO authenticated・運営の判定の列を指定させない)。正は migration
   FOR INSERT WITH CHECK (user_id = auth.uid());
 
-CREATE POLICY "tickets_update_support" ON support_tickets
+CREATE POLICY "tickets_update_support" ON support_tickets -- 消した (supabase/migrations/20261025120000_operator_session_writes_select_only.sql)。正は migration
   FOR UPDATE USING (
     EXISTS (
       SELECT 1 FROM user_profiles
@@ -683,7 +683,7 @@ CREATE POLICY "ticket_messages_select" ON support_ticket_messages
     )
   );
 
-CREATE POLICY "ticket_messages_insert" ON support_ticket_messages
+CREATE POLICY "ticket_messages_insert" ON support_ticket_messages -- 変えた (supabase/migrations/20261025120000_operator_session_writes_select_only.sql。TO authenticated・内部メモ (is_internal) でない・本人のチケットだけ)。正は migration
   FOR INSERT WITH CHECK (sender_id = auth.uid());
 ```
 
@@ -730,7 +730,7 @@ CREATE INDEX idx_sales_lead_activities_lead_created ON sales_lead_activities(lea
 ALTER TABLE sales_leads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sales_lead_activities ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "sales_leads_access" ON sales_leads
+CREATE POLICY "sales_leads_access" ON sales_leads -- 消した (supabase/migrations/20261025120000_operator_session_writes_select_only.sql。運営の SELECT は sales_leads_select を作った)。正は migration
   FOR ALL USING (
     EXISTS (
       SELECT 1 FROM user_profiles
@@ -739,7 +739,7 @@ CREATE POLICY "sales_leads_access" ON sales_leads
     )
   );
 
-CREATE POLICY "sales_activities_access" ON sales_lead_activities
+CREATE POLICY "sales_activities_access" ON sales_lead_activities -- 消した (supabase/migrations/20261025120000_operator_session_writes_select_only.sql。運営の SELECT は sales_activities_select を作った)。正は migration
   FOR ALL USING (
     EXISTS (
       SELECT 1 FROM user_profiles
@@ -827,7 +827,7 @@ CREATE TABLE experiment_assignments (
 
 ALTER TABLE experiments ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "experiments_select_super_admin" ON experiments
+CREATE POLICY "experiments_select_super_admin" ON experiments -- 変えた (supabase/migrations/20261025120000_operator_session_writes_select_only.sql。FOR SELECT TO authenticated・operator_mfa_satisfied())。正は migration
   FOR ALL USING (
     EXISTS (SELECT 1 FROM user_profiles WHERE id = auth.uid() AND 'super_admin' = ANY(roles))
   );
@@ -1126,7 +1126,7 @@ CREATE INDEX idx_password_history_user ON password_history(user_id, changed_at D
 
 ALTER TABLE password_history ENABLE ROW LEVEL SECURITY;
 
--- service_role のみアクセス (パスワード検証は Edge Function 内)
+-- service_role のみアクセス (照合は RPC auth_password_check。下の段落)
 CREATE POLICY "password_history_no_direct_access" ON password_history
   FOR ALL USING (false);
 ```

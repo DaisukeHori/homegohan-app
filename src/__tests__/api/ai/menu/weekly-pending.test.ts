@@ -101,12 +101,13 @@ vi.mock('@/lib/supabase/server', () => ({
   getSupabaseAdmin: vi.fn(() => ({ from: mockAdminFrom })),
 }));
 
-const mockRestorePlannedMealsSnapshot = vi.fn(async (..._args: any[]) => ({ restored: 0, skipped: 0, failed: 0 }));
+const mockRestoreOwnPlannedMealsSnapshot = vi.fn(async (..._args: any[]) => ({ restored: 0, skipped: 0, failed: 0 }));
 vi.mock('@/lib/planned-meals-snapshot', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/planned-meals-snapshot')>();
   return {
     ...actual,
-    restorePlannedMealsSnapshot: mockRestorePlannedMealsSnapshot,
+    // 復元は本人の日の確認 + service role の restoreOwnPlannedMealsSnapshot (#2025)
+    restoreOwnPlannedMealsSnapshot: mockRestoreOwnPlannedMealsSnapshot,
   };
 });
 
@@ -160,7 +161,7 @@ describe('GET /api/ai/menu/weekly/pending', () => {
     expect(res.status).toBe(200);
     expect(json.hasPending).toBe(true);
     expect(json.requestId).toBe('req-1');
-    expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+    expect(mockRestoreOwnPlannedMealsSnapshot).not.toHaveBeenCalled();
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 
@@ -183,7 +184,7 @@ describe('GET /api/ai/menu/weekly/pending', () => {
     pendingResultQueue.push({ data: pendingRow({ created_at: ago(STALE_MINUTES + 5), updated_at: staleUpdatedAt }), error: null });
     // 書き換えた行の generated_data を更新の戻り値で受け取る (#1042: 通常の読み取りでは読まない)
     updateResultQueue.push({ data: [{ id: 'req-1', generated_data: { snapshot: [snapshotRow] } }], error: null });
-    mockRestorePlannedMealsSnapshot.mockResolvedValueOnce({ restored: 1, skipped: 0, failed: 0 });
+    mockRestoreOwnPlannedMealsSnapshot.mockResolvedValueOnce({ restored: 1, skipped: 0, failed: 0 });
 
     const res = await GET(makeRequest());
     const json = await res.json();
@@ -192,8 +193,9 @@ describe('GET /api/ai/menu/weekly/pending', () => {
     expect(json.hasPending).toBe(false);
     expect(json.restore).toEqual({ restored: 1, skipped: 0, failed: 0 });
 
-    expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledTimes(1);
-    expect(mockRestorePlannedMealsSnapshot).toHaveBeenCalledWith(mockSupabase, [snapshotRow]);
+    expect(mockRestoreOwnPlannedMealsSnapshot).toHaveBeenCalledTimes(1);
+    // 本人の日の確認は利用者のセッション (userDb)、書き戻しは service role (writer = getSupabaseAdmin()) で行う (#2025)
+    expect(mockRestoreOwnPlannedMealsSnapshot).toHaveBeenCalledWith({ userDb: mockSupabase, writer: { from: mockAdminFrom }, snapshot: [snapshotRow] });
 
     // service role で、本人の行に絞って、読んだときの状態・生存信号がそのままの行だけを書き換える (#1465・#1507)
     expect(mockAdminFrom).toHaveBeenCalledWith('weekly_menu_requests');
@@ -225,7 +227,7 @@ describe('GET /api/ai/menu/weekly/pending', () => {
     expect(res.status).toBe(200);
     expect(json.hasPending).toBe(false);
     expect(json.restore).toBeUndefined();
-    expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+    expect(mockRestoreOwnPlannedMealsSnapshot).not.toHaveBeenCalled();
   });
 
   it('stale 判定時の復元が打ち切られないよう maxDuration を明示している (#1203)', () => {
@@ -245,7 +247,7 @@ describe('GET /api/ai/menu/weekly/pending: 止まりの判定は cleanup と同�
     expect(json.hasPending).toBe(true);
     expect(json.requestId).toBe('req-1');
     expect(mockUpdate).not.toHaveBeenCalled();
-    expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+    expect(mockRestoreOwnPlannedMealsSnapshot).not.toHaveBeenCalled();
   });
 
   it('読んでから書くまでに進んだ行 (比較つきの更新が 0 行) は failed にせず、生成中の行として返す (復元もしない)', async () => {
@@ -258,7 +260,7 @@ describe('GET /api/ai/menu/weekly/pending: 止まりの判定は cleanup と同�
     expect(json.hasPending).toBe(true);
     expect(json.requestId).toBe('req-1');
     expect(json.restore).toBeUndefined();
-    expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+    expect(mockRestoreOwnPlannedMealsSnapshot).not.toHaveBeenCalled();
   });
 
   it('failed への更新が拒まれたときは、生成中の行として返し、復元もしない (行は書き換わっていない)', async () => {
@@ -269,7 +271,7 @@ describe('GET /api/ai/menu/weekly/pending: 止まりの判定は cleanup と同�
     const json = await (await GET(makeRequest())).json();
 
     expect(json.hasPending).toBe(true);
-    expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
+    expect(mockRestoreOwnPlannedMealsSnapshot).not.toHaveBeenCalled();
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
   });

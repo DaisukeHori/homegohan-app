@@ -146,7 +146,7 @@ actor_id NULL・action_type `system.*` で書く。読んで判断する側は a
 `(記録なし)` の行は、設計で予定していたが API が無い (操作そのものが未実装) ため、記録する箇所も無いもの。
 
 ```
-admin.user.ban                      - ユーザー BAN (POST /api/admin/users/{id}/freeze。凍結の更新は読んだ時点の super_admin でない状態のままのときだけ書く。0 行なら読み直し、対象が無ければ 404、あれば (読んでから書くまでに super_admin になった等) 常に 409 CONFLICT_STALE_DATA で、どちらも書かず記録もしない)
+admin.user.ban                      - ユーザー BAN (POST /api/admin/users/{id}/freeze。凍結の更新は読んだ時点の super_admin でない状態のままのときだけ書く。0 行なら読み直し、対象が無ければ 404、あれば (読んでから書くまでに super_admin になった等) 常に 409 CONFLICT_STALE_DATA で、どちらも書かず記録もしない)。details に `notification_message` と `notification { status, reason, outbox_id }` (凍結の通知メールの結果。cross/24 §6.5)
 admin.user.unban                    - BAN 解除 (DELETE /api/admin/users/{id}/freeze)
 admin.user.role_change              - ロール変更 (PATCH / PUT /api/admin/users/{id}/role。details は previous_roles と new_roles)
                                       previous_roles は admin_set_user_roles が対象の行を FOR NO KEY UPDATE でロックして読んだ変える前の roles
@@ -316,7 +316,7 @@ super_admin.app_logs.list           - アプリログの一覧・本文の検索
 
 実コードの名前が下の一覧と違うもの (#1571 の時点。名前は変えていない):
 - プランの作成・更新・削除は `create_plan` / `update_plan` / `delete_plan` (POST /api/super-admin/plans・PATCH / DELETE /api/super-admin/plans/{id})。
-  公開・非公開・廃止・廃止の取り消しは `update_plan` の中の変更として記録する (status を変えたときは details に `status_from` / `status_to` も入れる。更新は直前に読んだ status のまま (廃止で既存の ends_at に頼るときは ends_at が NULL でないことも) のとき、削除は draft のままのときだけ行い、読んでから書くまでに別の運営が変えていたら書かず記録もしない。0 行なら読み直し、プランが無ければ 404、編集は送った変更がもう入っていれば 200、それ以外は 409 CONFLICT_STALE_DATA。status_from は書いた時点の実際の直前の値)。価格変更は `change_price` (POST /api/super-admin/plans/{id}/price-change)。
+  公開・非公開・廃止・廃止の取り消しは `update_plan` の中の変更として記録する (status を変えたときは details に `status_from` / `status_to` も入れる。更新は直前に読んだ status のまま (廃止で既存の ends_at に頼るときは ends_at が NULL でないことも) のとき、削除は draft のままのときだけ行い、読んでから書くまでに別の運営が変えていたら書かず記録もしない。0 行なら読み直し、プランが無ければ 404、編集は送った変更がもう入っていれば 200、それ以外は 409 CONFLICT_STALE_DATA。本文の expected_status (画面が見ていた status) が DB の status と違うときは、書かずに 409 CONFLICT_STALE_DATA を返し、記録もしない (遷移の検査より先)。status_from は書いた時点の実際の直前の値)。価格変更は `change_price` (POST /api/super-admin/plans/{id}/price-change)。
 - A/B テスト (/api/super-admin/experiments) の作成・更新・削除は `super_admin.plan.create` / `super_admin.plan.update` を使っている。
 - 機能パッケージは `create_feature_package` / `update_feature_package` / `delete_feature_package`。
 - 機能フラグの作成・更新・削除は、すべて `super_admin.feature_flag.toggle`。
@@ -835,7 +835,7 @@ Step 6: ポストモーテム (P0/P1 は 48 時間以内)
 ```mermaid
 sequenceDiagram
   participant Admin
-  participant API as /api/admin/users/{id}/ban
+  participant API as /api/admin/users/{id}/freeze
   participant DB as Supabase DB
   participant Slack
 
@@ -871,7 +871,7 @@ sequenceDiagram
 3. `it('rejects INSERT when actor_id does not match auth.uid()')`
 4. `it('returns 0 rows when admin role (non-super_admin) selects audit_logs')`
 5. `it('super_admin can SELECT all audit_logs')`
-6. `it('E2E: BAN action creates audit_log entry visible to super_admin')`
+6. `it('E2E: BAN action creates audit_log entry visible to super_admin')` (未作成: 下の例の `tests/e2e/operator/operator-ban-audit-log.spec.ts` はまだ無い)
 7. `it('writes an error row to app_logs when an API route handles an unexpected exception')`
 8. `it('Slack alert is sent when error rate exceeds 1% threshold')` (未実装: Better Stack を採用しないため、エラー率のアラートは §8.1 の旧案のまま)
 
@@ -983,11 +983,11 @@ describe('admin_audit_logs RLS ポリシー', () => {
   });
 });
 
-// tests/e2e/operator/operator-ban-audit-log.spec.ts
+// tests/e2e/operator/operator-ban-audit-log.spec.ts (未作成の例。このファイルはまだ無い。data-testid の名前も例で、今の画面には無い)
 test('BAN action creates audit_log entry visible to super_admin', async ({
   page,
 }) => {
-  await page.goto('/operator/users');
+  await page.goto('/admin/users');
   const targetRow = page.locator('[data-testid=user-row]').first();
   const targetUserId = await targetRow.getAttribute('data-user-id');
 
@@ -998,7 +998,7 @@ test('BAN action creates audit_log entry visible to super_admin', async ({
   ).toBeVisible();
 
   // 監査ログページで確認
-  await page.goto('/operator/audit-logs');
+  await page.goto('/super-admin/audit-logs');
   const latestLog = page.locator('[data-testid=audit-log-entry]').first();
   await expect(latestLog).toContainText('user_ban');
   await expect(latestLog).toContainText(targetUserId ?? '');

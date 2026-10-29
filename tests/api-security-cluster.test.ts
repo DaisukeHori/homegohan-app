@@ -171,8 +171,8 @@ describe('#166 /api/contact POST rate limit', () => {
 
   it('通常リクエストは 429 にならない', async () => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
-    const insertChain = { select: vi.fn().mockReturnThis(), single: vi.fn().mockResolvedValue({ data: { id: '1' }, error: null }) };
-    mockFrom.mockReturnValue({ insert: vi.fn().mockReturnValue(insertChain) });
+    // route は保存した行を読み返さない (RETURNING を付けない)。insert の結果だけを返す
+    mockFrom.mockReturnValue({ insert: vi.fn().mockResolvedValue({ data: null, error: null }) });
 
     const res = await contactPOST(makeRequest('10.0.0.1'));
     expect(res.status).not.toBe(429);
@@ -182,11 +182,7 @@ describe('#166 /api/contact POST rate limit', () => {
     // モジュールを動的 import して rate limit map を含む状態にする
     // 11 回連続リクエスト (same IP)
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
-    const insertChain = {
-      select: vi.fn().mockReturnThis(),
-      single: vi.fn().mockResolvedValue({ data: { id: '1' }, error: null }),
-    };
-    mockFrom.mockReturnValue({ insert: vi.fn().mockReturnValue(insertChain) });
+    mockFrom.mockReturnValue({ insert: vi.fn().mockResolvedValue({ data: null, error: null }) });
 
     const ip = `rate-limit-test-${Date.now()}`;
     let lastRes: any;
@@ -202,14 +198,17 @@ describe('#166 /api/contact POST rate limit', () => {
 // ─────────────────────────────────────────────
 import { GET as commentsGET } from '../src/app/api/recipes/[id]/comments/route';
 
+/** レシピのパスの id (UUID の形でない id は DB に渡さず 404 にするので、UUID の形にする。#1917) */
+const RECIPE_ID = '30000000-0000-4000-8000-000000000001';
+
 describe('#168 /api/recipes/[id]/comments GET', () => {
   beforeEach(() => vi.resetAllMocks());
 
   it('未認証は401を返す', async () => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
 
-    const res = await commentsGET(new Request('http://localhost/api/recipes/r1/comments'), {
-      params: { id: 'r1' },
+    const res = await commentsGET(new Request(`http://localhost/api/recipes/${RECIPE_ID}/comments`), {
+      params: { id: RECIPE_ID },
     });
     expect(res.status).toBe(401);
   });
@@ -241,8 +240,8 @@ describe('#168 /api/recipes/[id]/comments GET', () => {
     };
     mockFrom.mockImplementation(() => ({ select: vi.fn().mockReturnValue(selectChain) }));
 
-    const res = await commentsGET(new Request('http://localhost/api/recipes/r1/comments'), {
-      params: { id: 'r1' },
+    const res = await commentsGET(new Request(`http://localhost/api/recipes/${RECIPE_ID}/comments`), {
+      params: { id: RECIPE_ID },
     });
     expect(res.status).toBe(200);
     const { comments } = await res.json();
@@ -262,7 +261,7 @@ import { GET as recipeGET } from '../src/app/api/recipes/[id]/route';
 
 describe('#169 /api/recipes/[id] GET view_count', () => {
   const recipeRow = {
-    id: 'r1',
+    id: RECIPE_ID,
     user_id: 'uid-owner',
     is_public: true,
     name: 'Test',
@@ -315,8 +314,8 @@ describe('#169 /api/recipes/[id] GET view_count', () => {
       select: vi.fn().mockReturnValue(selectChainDetail),
     });
 
-    const res = await recipeGET(new Request('http://localhost/api/recipes/r1'), {
-      params: { id: 'r1' },
+    const res = await recipeGET(new Request(`http://localhost/api/recipes/${RECIPE_ID}`), {
+      params: { id: RECIPE_ID },
     });
     expect(res.status).toBe(200);
     // #257: view_count 更新は increment_recipe_view_count RPC 経由。
@@ -342,11 +341,11 @@ describe('#169 /api/recipes/[id] GET view_count', () => {
       table === 'recipes' ? { select: vi.fn().mockReturnValue(selectChainDetail) } : emptyLookup(),
     );
 
-    const res = await recipeGET(new Request('http://localhost/api/recipes/r1'), {
-      params: { id: 'r1' },
+    const res = await recipeGET(new Request(`http://localhost/api/recipes/${RECIPE_ID}`), {
+      params: { id: RECIPE_ID },
     });
     expect(res.status).toBe(200);
-    expect(mockRpc).toHaveBeenCalledWith('increment_recipe_view_count', { recipe_id: 'r1' });
+    expect(mockRpc).toHaveBeenCalledWith('increment_recipe_view_count', { recipe_id: RECIPE_ID });
   });
 });
 
@@ -556,6 +555,8 @@ describe('#186 /api/upload POST', () => {
 // ─────────────────────────────────────────────
 // org/members は cookies() を使う旧スタイルのため直接 import すると型エラーになりやすい。
 // ここでは select 引数の変更が反映されているかをファイル内容で確認するスモークテストとする。
+// #2073 S4 で GET は service_role で読むようになり、列は共通の定数 ORG_MEMBER_NAME_COLUMNS (4 つ。厳密な集合は
+// tests/legal-text-1901.test.ts の T-32・route の単体テスト src/__tests__/api/org/members/list.test.ts が見る)
 describe('#187 /api/org/members select 列制限', () => {
   it('select 引数に * が含まれないこと (ソースファイル確認)', async () => {
     const fs = await import('fs');
@@ -564,7 +565,10 @@ describe('#187 /api/org/members select 列制限', () => {
     const source = fs.readFileSync(filePath, 'utf-8');
     // select('*') が残っていないことを確認
     expect(source).not.toMatch(/\.select\(['"`]\*['"`]\)/);
-    // 必要カラムが明示されていることを確認
-    expect(source).toMatch(/select\(['"`]id,/);
+    // 必要カラムが明示されていることを確認 (列の定数を使い、その定数に * が無い)
+    expect(source).toContain('.select(ORG_MEMBER_NAME_COLUMNS)');
+    const { ORG_MEMBER_NAME_COLUMNS } = await import('@/schemas/membership/organization-member-name');
+    expect(ORG_MEMBER_NAME_COLUMNS).not.toContain('*');
+    expect(ORG_MEMBER_NAME_COLUMNS.startsWith('id,')).toBe(true);
   });
 });

@@ -16,7 +16,7 @@ import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/
 import { internalError } from '@/lib/api/errors';
 import { uuidOrNull } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 /** 400: 日付 (dayDate) と食事の種類 (mealType) が無い */
 const DAY_DATE_AND_MEAL_TYPE_REQUIRED_MESSAGE = '日付 (dayDate) と食事の種類 (mealType) を指定してください';
@@ -30,6 +30,11 @@ export async function POST(request: Request) {
   if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const requestBody = await request.json().catch(() => null);
+    if (!requestBody || typeof requestBody !== 'object' || Array.isArray(requestBody)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
     const {
       dayDate,
       mealType,
@@ -43,7 +48,7 @@ export async function POST(request: Request) {
       catalogProductId,
       sourceType,
       imageUrl,
-    } = await request.json();
+    } = requestBody;
 
     if (!dayDate || !mealType) {
       return NextResponse.json({ error: DAY_DATE_AND_MEAL_TYPE_REQUIRED_MESSAGE }, { status: 400 });
@@ -177,7 +182,6 @@ export async function POST(request: Request) {
         description: description || null,
         ingredients: ingredients || null,
         image_url: dishImagePayload.mealCoverImageUrl,
-        is_completed: false,
         source_type: sourceType || 'manual',
       };
 

@@ -9,7 +9,7 @@ import { sendEmail } from '@/lib/emails/send';
 import { isEmailFailure } from '@/lib/emails/send-result';
 import { maskEmailAddress } from '@/lib/emails/outbox';
 import { renderContactAdminNotificationEmail } from '@/lib/emails/support/contact-admin-notification';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 
 // #1044 (F6-19): 入力を Zod で厳密検証する
 const contactInquirySchema = z.object({
@@ -96,7 +96,11 @@ export async function POST(request: NextRequest) {
   const supabase = await createClient();
 
   try {
-    const body = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
 
     // #1044 (F6-19): Zod による厳密バリデーション
     const parseResult = contactInquirySchema.safeParse(body);
@@ -112,19 +116,23 @@ export async function POST(request: NextRequest) {
     const { data: { user } } = await supabase.auth.getUser();
     const userId = user?.id || null;
 
-    // DBに保存
-    const { data, error } = await supabase
+    // DBに保存。id は route で決めて渡し、保存した行を読み返さない (RETURNING を付けない)。
+    // /contact は未ログインでも送れるが、inquiries の SELECT のポリシーは authenticated だけで、anon が読める行は無い。
+    // INSERT … RETURNING (insert().select()) は SELECT のポリシーも新しい行に当てるので、読み返すと未ログインの送信が
+    // RLS の違反で落ちて 500 になる (tests/integration/rls/contact-anon-insert.test.ts)。
+    // 書き込みは今までどおり本人のセッション (ポリシー "Anyone can create inquiries" の条件つき) で行う。
+    const inquiryId = crypto.randomUUID();
+    const { error } = await supabase
       .from('inquiries')
       .insert({
+        id: inquiryId,
         user_id: userId,
         inquiry_type: inquiryType,
         email,
         subject,
         message,
         status: 'pending',
-      })
-      .select()
-      .single();
+      });
 
     if (error) {
       console.error('Failed to save inquiry:', error);
@@ -134,13 +142,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 管理者へメール通知（env未設定時はsilent succeed）
-    await sendAdminNotification(data);
+    // 管理者へメール通知（env未設定時はsilent succeed）。保存した値 (検証済みの入力と route で決めた id) を渡す
+    await sendAdminNotification({ id: inquiryId, inquiry_type: inquiryType, email, subject, message });
 
     return NextResponse.json({
       success: true,
       message: 'お問い合わせを受け付けました。内容を確認の上、ご連絡いたします。',
-      inquiryId: data.id,
+      inquiryId,
     });
 
   } catch (error: any) {

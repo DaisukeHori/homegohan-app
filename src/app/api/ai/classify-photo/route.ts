@@ -20,7 +20,7 @@ import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { isMealType, MEAL_LABELS } from '@homegohan/shared';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AI_IMAGE_REQUIRED_MESSAGE, AI_PHOTO_UNKNOWN_TYPE_CODE } from '@/lib/ai/ai-api-messages';
 
 interface ImageInput {
@@ -276,7 +276,11 @@ export async function POST(request: Request) {
 
   try {
     const startedAt = Date.now();
-    const body = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
     const includeMealAnalysis = Boolean(body.includeMealAnalysis);
     const mealType = typeof body.mealType === 'string' ? body.mealType : undefined;
     const images: ImageInput[] = Array.isArray(body.images) && body.images.length > 0

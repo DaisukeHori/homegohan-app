@@ -1714,7 +1714,7 @@ if __name__ == "__main__":
 ```ts
 // tsc:skip — 既存の関数の使い方 (実装の指針。route の全文ではない)
 // 認可:          const actor = await requireRole(['super_admin']);            // src/lib/auth/helpers (AuthError → 401 / ForbiddenError → 403)
-// 本文の NUL:    const rejected = await rejectNullCharacterBody(request); if (rejected) return rejected;   // handler の最初の文
+// 本文の NUL:    const rejected = await rejectNullCharacterBody(request, { shape: 'nested' }); if (rejected) return rejected;   // handler の最初の文
 // 本人の client: const supabase = await createClient();                      // @/lib/supabase/server (RLS が効く。SELECT は super_admin のポリシー)
 // 本文の読み取り: const bodyResult = await readJsonBody(request); if (!bodyResult.ok) return invalidJsonBodyResponse();   // @/lib/super-admin/validation-errors (#1654)
 // 検証:          const parsed = drTestRecordBodySchema.safeParse(bodyResult.body); if (!parsed.success) return invalidInputResponse(parsed.error.issues);

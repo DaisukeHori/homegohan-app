@@ -5,8 +5,8 @@
  * operator/03-ui-spec.md §17 準拠
  * 権限: sales, admin, super_admin
  */
-import { useState, useEffect, useCallback, use } from 'react';
-import { isStaleDataConflict } from '@/lib/admin/api-error-message';
+import { useState, useEffect, useCallback, useRef, use } from 'react';
+import { forbiddenMessageForScreen, forbiddenMessageOfResponse, isStaleDataConflict } from '@/lib/admin/api-error-message';
 import { todayLocal } from '@/lib/date-utils';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -21,6 +21,39 @@ const STALE_STAGE_MESSAGE =
 /** 409 CONFLICT_STALE_DATA のあとのリードの読み直しにも失敗したときの文 (読み直せていないので「読み込み直した」とは言わない。#1917) */
 const STALE_STAGE_RELOAD_FAILED_MESSAGE =
   '別の担当者が先にこのリードのステージを変えていました。最新の内容を読み込み直せなかったので、画面を読み込み直してから、もう一度変更してください';
+
+/** 403 (Forbidden) の HTTP ステータス */
+const HTTP_FORBIDDEN = 403;
+/** ステージの変更の失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917) */
+const STAGE_CHANGE_FAILURE_MESSAGE = 'ステージ変更失敗';
+
+/**
+ * リードの読み込み (fetchLead) の結果。
+ *   - loaded      : 読めた
+ *   - unauthorized: 401 (ログインの画面へ移した)
+ *   - forbidden   : 403 (「権限がありません」か、応答の本文の理由の文 (二段階認証の確認が要る など) を出した)
+ *   - not-found   : 404 (「リードが見つかりません」を出した)
+ *   - failed      : そのほかの失敗 (「リードの取得に失敗しました」を出した)
+ */
+type LeadLoadOutcome = 'loaded' | 'unauthorized' | 'forbidden' | 'not-found' | 'failed';
+
+/**
+ * 409 CONFLICT_STALE_DATA のあとの読み直しの結果から、画面に出す文を決める (null = fetchLead が出した文をそのまま残す)。
+ * 読み直しの間にリードが消えた (404)・権限が外れた (403)・ログインが切れた (401) ときは、その理由のほうが確かなので
+ * 「画面を読み込み直して」の文で上書きしない (消えたリードに読み込み直しを促さない。#1917)
+ */
+function staleStageMessageOf(outcome: LeadLoadOutcome): string | null {
+  switch (outcome) {
+    case 'loaded':
+      return STALE_STAGE_MESSAGE;
+    case 'failed':
+      return STALE_STAGE_RELOAD_FAILED_MESSAGE;
+    case 'unauthorized':
+    case 'forbidden':
+    case 'not-found':
+      return null;
+  }
+}
 
 type Stage = 'approach' | 'meeting' | 'proposal' | 'negotiation' | 'won' | 'lost';
 type ActivityType = 'call' | 'email' | 'meeting' | 'note' | 'stage_change';
@@ -96,23 +129,35 @@ export default function LeadDetailPage(props: PageProps) {
 
   // ステージ変更
   const [isChangingStage, setIsChangingStage] = useState(false);
+  // 活動の記録かステージの変更のどちらかの書き込みとそのあとの読み直しの応答を待っているか (10/26 の整合ゲート 1026e。#2050)。
+  // どちらの書き込みのあとの読み直しもリードを丸ごと差し替えるので、2 つを重ねると、先に送った読み直しの応答が後に届いたとき、
+  // その古いリード (例: 変える前のステージ) で表示が上書きされる (#2053 のクーポン・機能パッケージと同じ型)。
+  // 待つあいだは両方のボタンを止め、押されても送らない。ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
+  const writeInFlightRef = useRef(false);
+  const isWriting = isAddingActivity || isChangingStage;
 
-  /** リードを読む。読めたら true (409 のあとの読み直しで、結果に合わせて文を決めるため。#1917) */
-  const fetchLead = useCallback(async (): Promise<boolean> => {
+  /** リードを読み、結果の種類を返す (409 のあとの読み直しで、結果に合わせて文を決めるため。#1917) */
+  const fetchLead = useCallback(async (): Promise<LeadLoadOutcome> => {
     setIsLoading(true);
     setError(null);
     try {
       const res = await fetch(`/api/admin/sales/leads/${params.id}`);
-      if (res.status === 401) { router.push('/login'); return false; }
-      if (res.status === 403) { setError('権限がありません'); return false; }
-      if (res.status === 404) { setError('リードが見つかりません'); return false; }
+      if (res.status === 401) { router.push('/login'); return 'unauthorized'; }
+      // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
+      if (res.status === HTTP_FORBIDDEN) { setError(await forbiddenMessageOfResponse(res)); return 'forbidden'; }
+      if (res.status === 404) {
+        // リードが消えていたら、前に読んだリードを画面に残さない (消えたリードのステージを変えられるように見せない。#1917)
+        setLead(null);
+        setError('リードが見つかりません');
+        return 'not-found';
+      }
       if (!res.ok) throw new Error('取得失敗');
       const json = await res.json();
       setLead(json.data);
-      return true;
+      return 'loaded';
     } catch {
       setError('リードの取得に失敗しました');
-      return false;
+      return 'failed';
     } finally {
       setIsLoading(false);
     }
@@ -121,7 +166,8 @@ export default function LeadDetailPage(props: PageProps) {
   useEffect(() => { fetchLead(); }, [fetchLead]);
 
   const handleAddActivity = async () => {
-    if (!activitySummary.trim()) return;
+    if (!activitySummary.trim() || writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
     setIsAddingActivity(true);
     try {
       const res = await fetch(`/api/admin/sales/leads/${params.id}/activities`, {
@@ -146,12 +192,14 @@ export default function LeadDetailPage(props: PageProps) {
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : '活動記録の追加に失敗しました');
     } finally {
+      writeInFlightRef.current = false;
       setIsAddingActivity(false);
     }
   };
 
   const handleStageChange = async (newStage: Stage) => {
-    if (!lead || lead.stage === newStage) return;
+    if (!lead || lead.stage === newStage || writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
     setIsChangingStage(true);
     try {
       const res = await fetch(`/api/admin/sales/leads/${params.id}`, {
@@ -163,17 +211,21 @@ export default function LeadDetailPage(props: PageProps) {
         const body: unknown = await res.json().catch(() => null);
         if (isStaleDataConflict(res.status, body)) {
           // 別の担当者が先にステージを変えていた (API は書かずに 409 CONFLICT_STALE_DATA を返す)。今のステージを読み直して、その旨を出す。
-          // 文は読み直しの結果を待ってから決める (読み直せなかったのに「読み込み直した」と出さない。#1917)
-          const reloaded = await fetchLead();
-          setError(reloaded ? STALE_STAGE_MESSAGE : STALE_STAGE_RELOAD_FAILED_MESSAGE);
+          // 文は読み直しの結果を待ってから決める (読み直せなかったのに「読み込み直した」と出さない。
+          // 404 / 403 のときは fetchLead が出した理由の文を残す。#1917)
+          const message = staleStageMessageOf(await fetchLead());
+          if (message !== null) setError(message);
           return;
         }
-        throw new Error('ステージ変更失敗');
+        // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 と失敗は「ステージ変更失敗」(#1917)
+        if (res.status === HTTP_FORBIDDEN) throw new Error(forbiddenMessageForScreen(body, STAGE_CHANGE_FAILURE_MESSAGE));
+        throw new Error(STAGE_CHANGE_FAILURE_MESSAGE);
       }
       await fetchLead();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'ステージ変更に失敗しました');
     } finally {
+      writeInFlightRef.current = false;
       setIsChangingStage(false);
     }
   };
@@ -286,7 +338,7 @@ export default function LeadDetailPage(props: PageProps) {
                   <button
                     key={stage}
                     onClick={() => handleStageChange(stage)}
-                    disabled={isChangingStage || lead.stage === stage}
+                    disabled={isWriting || lead.stage === stage}
                     className={`w-full text-left px-3 py-1.5 text-xs rounded border transition-colors ${
                       lead.stage === stage
                         ? 'border-blue-500 bg-blue-50 text-blue-700 font-medium'
@@ -345,7 +397,7 @@ export default function LeadDetailPage(props: PageProps) {
               <div className="flex justify-end">
                 <button
                   onClick={handleAddActivity}
-                  disabled={isAddingActivity || !activitySummary.trim()}
+                  disabled={isWriting || !activitySummary.trim()}
                   className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {isAddingActivity ? '記録中...' : '活動を記録'}

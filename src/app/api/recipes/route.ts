@@ -5,10 +5,11 @@ import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
 import { recipeAuthorName } from '@/lib/recipes/author-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { escapeLikePattern, quotePostgrestValue } from '@/lib/admin/users-search';
 import { loadRecipeViewerLookups } from '@/lib/recipes/viewer-lookups';
+import { RECIPE_NAME_REQUIRED_MESSAGE, RecipeCreateBodySchema } from '@/lib/recipes/recipe-body';
 
 /** 一覧の構造化ログの function_name */
 const LIST_ROUTE_NAME = 'GET /api/recipes';
@@ -142,8 +143,16 @@ export async function POST(request: Request) {
   if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
-    const body = await request.json();
-    
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない・配列) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
+    // 名前 (recipes.name は NOT NULL) の無い本文は DB に渡さず 400。以前は name: undefined のまま insert し、NOT NULL 違反で 500 になっていた (#1917 の続き)
+    if (!RecipeCreateBodySchema.safeParse(body).success) {
+      return NextResponse.json({ error: RECIPE_NAME_REQUIRED_MESSAGE }, { status: 400 });
+    }
+
     const recipeData = {
       user_id: user.id,
       name: body.name,

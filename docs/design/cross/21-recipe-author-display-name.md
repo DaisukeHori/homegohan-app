@@ -19,7 +19,7 @@
 - 本番の DB には書き込まない (本書の事実は 2026-10-24 の読み取りだけ。§3.4)。
 - ローンチ前。本番の `auth.users` は 195 行・`user_profiles` は 65 行・`recipes` と `recipe_comments` は 0 行 (2026-10-24 の SELECT。§3.4)。既存の行の書き換えは無い。
 - `user_profiles` の SELECT の RLS (本人の行だけ) は変えない。他人の行を公開の場に出す経路は、本書が足す 1 本の関数だけ。
-- Next.js の API で service_role を使わない (cross/02 §3.3)。
+- Next.js の API で service_role を使わない (本書の決め。書いた時点の cross/02 §3.3 の文「service_role を使う場所: Supabase Edge Function のみ」に合わせた。今の §3.3 は Next.js の `getSupabaseAdmin()` も挙げる)。
 - 範囲外: 作者名を描く画面を新しく作ること (今は Web・モバイルのどこにも作者名を描く画面が無い。§3.3 F-13)。プロフィールの画面に足すのは「名前を出すか」の切り替え 1 つだけ。新しい要求は発明しない。
 
 ---
@@ -49,14 +49,14 @@
 | R-4 | 凍結中の人 (`isAccountFrozen` が真) の作者名は出さない (「匿名」)。一時凍結の期限が過ぎた人は出す | 決めること 1 | §6.1 (3), §7.1 |
 | R-5 | 18 歳未満の本人のアカウント (`user_profiles.birth_date` で 18 歳未満。`ADULT_AGE_YEARS`) の作者名は出さない。生年月日の無い人も出さない | 決めること 1・cross/14 §0 (年齢は `birth_date` だけで判定) | §6.1 (4), §7.1 |
 | R-6 | 他人の `user_profiles` を読むのは、公開レシピ (`is_public = true` かつ `hidden_at IS NULL`) の作者か、そのレシピへのコメントを書いた人の、表示名 1 列だけ。それ以外の列・それ以外の人は読めない | 決めること 2 (最小の情報) | §5, §6.2, §7.1 |
-| R-7 | Next.js の API と `viewer-lookups.ts` は service_role を使わない。`user_profiles` の RLS ポリシーは足さない・変えない | cross/02 §3.3・CLAUDE.md §3 | §5, §7.1, §9.3 |
+| R-7 | Next.js の API と `viewer-lookups.ts` は service_role を使わない。`user_profiles` の RLS ポリシーは足さない・変えない | cross/02 §3.3・CLAUDE.md §3 (どちらも書いた時点の文) | §5, §7.1, §9.3 |
 | R-8 | 読む経路は SECURITY DEFINER の関数 1 本。`SET search_path = ''`・完全修飾・引数の型まで含めた完全形で REVOKE してから必要なロールにだけ GRANT (#1039 / #1020 の定型) | `supabase/migrations/20261023130000_account_deletion_owner_guard.sql` の定型 | §7.1 |
 | R-9 | 未ログインの人にも出す (公開レシピは未ログインでも読める。利用規約第13条 2 項「ログインしていない方を含め、誰でも閲覧できる状態」)。関数は anon も呼べる | 決めること 3・`src/lib/legal/terms-text.ts:299` | §6.3, §7.1, §7.8 |
 | R-10 | 本人には、自分のレシピ・コメントの `authorName` に自分の名前が今までどおり出る (非公開のレシピ・名前を出さない設定のときも) | fix 枝の `tests/integration/security/recipes-api-logged-in.test.ts` (本人の非公開のレシピに本人の nickname が出る) | §6.1 (5), §7.1 |
 | R-11 | 本人が「名前を出さない」を選べる。置き場はプロフィールの編集 (`/profile` のニックネームの欄のすぐ下)。既定は「出す」 | 決めること 5 | §6.5, §7.6, §7.7 |
 | R-12 | API の返り値の形 (`authorName: string`・コメントの `user_id` を返さない (#168)) は変えない | 既存の契約 | §8 |
 | R-13 | 名前が読めなかったときは今までどおり 500 (名前が無いように見せない) | fix 枝の `viewer-lookups.ts` の決まり | §10 |
-| R-14 | プライバシーポリシーの文面 (利用目的・第三者提供 (第8条)・見え方 (第9条) ほか) が足りるかを条ごとに判定し、足りないなら逐語の文と版の選択肢を出す | 決めること 4 | §6.4, §7.12, §21 Q-1 |
+| R-14 | プライバシーポリシーの文面 (利用目的・第三者提供 (第8条)・見え方 (第9条) ほか) が足りるかを条ごとに判定し、足りないなら逐語の文と版の選択肢を出す (選択肢は §21 Q-1。回答は (a)) | 決めること 4 | §6.4, §7.12, §21 Q-1 |
 | R-15 | migration と `.down.sql`・関数の権限・TS の定数・版の一覧と旧版の控えの突き合わせを DB を使わない契約テストで固定し、実 DB の結合テストで R-1〜R-6・R-9・R-10・R-19 を確かめる | `tests/rpc-profile-name-placeholder-migration-contract.test.ts` の前例 | §7.9, §7.10, §12 |
 | R-16 | 段の順序で、レシピの API が 500 を返す時間を作らない (関数が無い状態でコードを出さない)。文面 (段 C) が効く前に、他人の表示名を返す経路 (関数とその EXECUTE) を本番に置かない | 段分けの原則・§6.4 の判定 | §6.4, §9.2, §15, §19 |
 | R-17 | 設計の正典コードに `as any`・マジックナンバーを置かない (年齢の境・関数名・文面は名前付きの定数) | 設計の絶対条件 | §7, §13 |
@@ -92,7 +92,7 @@
 
 - 核は関数 1 本 (`recipe_author_display_names`) と lib 1 つ (`viewer-lookups.ts`) で、消費先の route 3 本は同じ lib の呼び出し側 (1 レーン)。核と配線に分けると、配線の冊は「`lookups.nicknames` を `lookups.authorNames` に改める」1 行の冊になる。
 - プライバシーポリシーの文面は本書では編集しない (cross/20 が正典)。本書は逐語の文と版の選択肢を出し (§7.12・§21 Q-1)、改定は cross/20 の改定版か docs PR で行う。
-- 段分け (§15) は、DB (段 A)・API と設定 (段 B)・文面 (段 C。オーナーの選択のあと) の 3 つ。本番は 文面 (段 C) が効く → 段 A の適用 → 段 A のマージ → 段 B のマージ の順で、後ろの 3 つを同じ座で続けて行う。
+- 段分け (§15) は、DB (段 A)・API と設定 (段 B)・文面 (段 C。版は §21 Q-1 の回答 (a) の v2026.4) の 3 つ。本番は 文面 (段 C) が効く → 段 A の適用 → 段 A のマージ → 段 B のマージ の順で、後ろの 3 つを同じ座で続けて行う。
 
 ### 0.5 用語
 
@@ -125,8 +125,8 @@
 
 | 文書 | 関係 |
 |---|---|
-| cross/02-rls-patterns.md §3.3 (行 43-48) | Next.js の API で service_role を使わない。本書は SECURITY DEFINER の関数で読む (§5) |
-| cross/02 §10 (行 585) | anon が EXECUTE できる関数は理由つきの許可一覧だけ (`tests/integration/security/anon-definer-execute.test.ts:95-100`)。本書の関数は一覧に足す (§7.8) |
+| cross/02-rls-patterns.md §3.3 (行 43-48) | 書いた時点の文は「service_role を使う場所: Supabase Edge Function のみ」(今は Next.js の `getSupabaseAdmin()` も挙げる)。本書は Next.js の API で service_role を使わず、SECURITY DEFINER の関数で読む (§5) |
+| cross/02 §10 の表の Security の行 | anon が EXECUTE できる関数は理由つきの許可一覧だけ (`tests/integration/security/anon-definer-execute.test.ts:95-100`)。本書の関数は一覧に足す (§7.8) |
 | cross/14-parental-consent.md §0 (行 18-19) | 年齢の判定は `user_profiles.birth_date` だけ。18 歳未満の本人のアカウントは保護者の同意の経路。本書は 18 歳未満の名前を公開の場に出さない (§6.1 (4)) |
 | cross/20-terms-privacy-text.md §2.2 F-19 (行 213)・F-33 (行 227)・F-49 (行 243) | `user_profiles` の SELECT が本人の行だけであること・家族の中の表示名の見え方。公開レシピの作者としての表示名の記載は無い (§6.4) |
 | cross/20 §9.3 (行 2000) | 内容が変わる文面の直しは版を上げる。本書の文の追加は版を上げる改定に当たる (§6.4・§21 Q-1) |
@@ -187,7 +187,7 @@ v1.0〜v1.1 は origin/main `c9ee3e59` で取った。`c9ee3e59..cae0e288` の�
 | F-25 | 利用規約第13条 2 項: 「ユーザーが公開の状態にしたユーザーコンテンツは、ログインしていない方を含め、誰でも閲覧できる状態になります。」 | `src/lib/legal/terms-text.ts:299` |
 | F-26 | プライバシーポリシー第3条はニックネームを取得する情報に載せる。第4条の利用目的は「本サービスの提供（アカウントの管理、記録の保存と表示、…）」。第6条は AI 事業者への送信にニックネームが含まれることと「ニックネームには実名を使わないことをお勧めします」を書く。第8条 3 項は「家族グループのメンバーや組織の管理者に対する表示は…（第9条）」(第8条の 1 項・3 項・4 項の文は F-30)。第9条の見出しは「家族グループと組織での見え方」で、公開レシピの作者としてニックネームが他の利用者 (未ログインを含む) に出ることは、どの条にも書いていない | `src/lib/legal/privacy-text.ts:290, 342, 356-360` |
 | F-27 | 第12条の表: 「公開の状態のユーザーコンテンツ」は「退会後も、ユーザーとの紐づけを外して匿名の状態で残します」。第15条: 18 歳未満は保護者の同意が必要・13 歳未満の本人名義のアカウントは作らない。18 歳未満の本人の公開レシピの作者名の扱いは文面に無い | `src/lib/legal/privacy-text.ts:420, 493` |
-| F-28 | いまの版は両文書とも v2026.3 (施行日 2026-10-22)。PR #1997 (OPEN・`feat/siwa-d-legal`) がプライバシーポリシーに Apple を足して両文書を v2026.4 にし、`effectiveDate` は仮置きの 2026-11-01、施行日の前にお知らせで予告してからマージする手順。予告の文は Issue #1139 のコメントに置いてあり、「Apple についての記載を加えるもの」と書いている | `packages/shared/src/legal-versions.ts` (`LEGAL_DOCUMENTS`)・PR #1997 の本文・Issue #1139 のコメント |
+| F-28 | いまの版は両文書とも v2026.3 (施行日 2026-10-22)。PR #1997 (OPEN・`feat/siwa-d-legal`) がプライバシーポリシーに Apple を足して両文書を v2026.4 にし、コードの `effectiveDate` は 2026-11-01 (マージの直前に公開日へ置き換える目印つき)。施行日は 2026-11-01 (日) (mobile/08 §21 Q-13 の記録)、施行日の前にお知らせで予告してからマージする手順。予告の文は Issue #1139 のコメントに置いてあり、「Apple についての記載を加えるもの」と書いている | `packages/shared/src/legal-versions.ts` (`LEGAL_DOCUMENTS`)・PR #1997 の本文・Issue #1139 のコメント |
 | F-29 | 文面の 1 文 = 主張の表 `tests/legal-claims-1901.ts` の 1 行 (`LEGAL_CLAIM_COUNT = 424`。`fragment` が文の中に 1 回だけ現れ、`chars` が文の字数 (文末の 。を除く))。文を足すと行と `LEGAL_CLAIM_COUNT` を足す | `tests/legal-claims-1901.ts:25, 354-364`・`tests/legal-text-1901.test.ts:1058-1073` |
 | F-30 | プライバシーポリシー第8条 (第三者提供): 1 項「当社は、次の場合を除き、あらかじめユーザーの同意を得ることなく、個人データを第三者に提供しません。」(以下 (a)〜(d) の法令の場合)。3 項「家族グループのメンバーや組織の管理者に対する表示は、ユーザー自身の共有の設定、または組織への所属に基づいて行います（第9条）。」(他の人への表示の根拠として挙げるのは家族グループと組織だけ)。4 項「当社は、個人データの共同利用を行いません。本人の同意を得ずに行う第三者提供（オプトアウトによる提供）も行いません。」。主張の表の行は privacy-8#1〜#12 (3 項は privacy-8#8・4 項の 2 文目は privacy-8#10) | `src/lib/legal/privacy-text.ts:340, 342, 343`・`tests/legal-claims-1901.ts:342-353` |
 | F-31 | 同意の記録: `user_profiles.privacy_version_accepted` (varchar(20)・特権列) は、同意した版の文字列。書くのは `accept_legal_documents` だけ (authenticated に EXECUTE。版の形 `^[0-9A-Za-z._-]{1,20}$` だけを確かめ、「いま有効な版」かは確かめない。DB は版の中身を知らない。確かめるのは `POST /api/legal/accept`)。同意ゲート: 本番は 2026-10-10 から `LEGAL_CONSENT_ENFORCE=on` で、いまの版に同意していないサインイン中の人 (生年月日の未入力と、保護者の同意とのつながりの無い 18 歳未満も同じ) の `/api/*` は、許可リスト (`LEGAL_CONSENT_EXEMPT_API_PATHS`。レシピの route は無い) を除き 403 `LEGAL_CONSENT_REQUIRED`。ゲートは Next の middleware だけで、PostgREST を直接呼ぶ経路には掛からない | `supabase/migrations/20261008200700_legal_documents_acceptance.sql:20, 47`・`supabase/migrations/20261017030000_parental_consent_and_birth_date.sql:445, 465, 527`・`lib/supabase/middleware.ts:267`・`packages/shared/src/legal-consent-api.ts`・`CLAUDE.md:138` |
@@ -277,7 +277,7 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 | 案 | 中身 | 最小の情報か | cross/02 §3.3 との整合 | 未ログインに出せるか | 変更の大きさ | 判定 |
 |---|---|---|---|---|---|---|
 | A (採用) | SECURITY DEFINER の関数 `recipe_author_display_names(uuid[])` が、公開の作者の表示名だけを返す。route は RLS のクライアントで `rpc` を呼ぶ | 名前 1 列・公開の作者だけ・本人の選択と同意・凍結・年齢の条件を関数が持つ | 整合する (service_role を使わない。関数の権限は定型で絞る。anon の許可一覧に 1 本足す) | 出せる (anon に EXECUTE) | migration 1 本 + lib 1 つ + route の呼び出しの 1 語 × 5 + 設定の列と画面 | 採用 |
-| B | route が `getSupabaseAdmin()` (service_role) で `user_profiles` の `nickname` を `.in('id', authorIds)` で読む | 列は絞れるが、「公開の作者だけ」の条件をコードで書く必要があり、未ログインの route には認可が無い | 違反 (§3.3「API Routes 内での service_role を禁止」。CLAUDE.md:83 は認可のあとだけ) | 出せる | 小さい | 不採用 |
+| B | route が `getSupabaseAdmin()` (service_role) で `user_profiles` の `nickname` を `.in('id', authorIds)` で読む | 列は絞れるが、「公開の作者だけ」の条件をコードで書く必要があり、未ログインの route には認可が無い | 違反 (書いた時点の §3.3「API Routes 内での service_role を禁止」。CLAUDE.md:83 は認可のあとだけ) | 出せる | 小さい | 不採用 |
 | C | `user_profiles` に SELECT のポリシーを足す (公開の作者の行を誰でも読める) | 行の全列 (健康・家族の構成・生年月日など 130 列) が読めてしまう。PostgREST は列の権限をポリシーごとに絞れない。列の権限を anon / authenticated から外すと本人の読み込みも壊れる | RLS の変更そのもの | 出せる | ポリシー 1 本だが露出が大きい | 不採用 |
 | C' | 所有者 postgres の VIEW (`security_invoker` でない) で `id` と表示名だけを出す | 列は絞れる。条件も書ける | VIEW は Supabase の advisor が「SECURITY DEFINER view」として警告する対象。前例は 1 つだけで、権限の契約テストの型 (関数の ACL) に乗らない | 出せる | VIEW 1 つ | 不採用 (A と同じ露出で、既存の検査の型に乗る A を取る) |
 | D | `recipes` / `recipe_comments` に作者名の列を持ち、書くときに写す (トリガーで nickname の変更に追随) | 名前だけだが、書く経路 (API・AI の保存・RPC) の全部とトリガーが要る。設定・凍結・年齢の条件を列に写し続けるのは無理がある | 整合する | 出せる | 大きい (書く経路の全列挙) | 不採用 |
@@ -365,11 +365,11 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 
 | 選択肢 | 中身 | 利点 | 代償 |
 |---|---|---|---|
-| (a) 推奨 | v2026.4 (PR #1997。施行日 2026-11-01 の仮置き・予告のあとマージ) に入れる | 再同意が 1 回で済む。予告の工程が 1 回 | PR #1997 の文面と主張の表に本書の 7 文を足す (`LEGAL_CLAIM_COUNT` を +7)。Issue #1139 の予告の文を「Apple の記載と、公開レシピの作者名の表示」に改めてから投稿する。関数の一覧 `c_privacy_versions_without_author_name` は `v2025.1`・`v2026.1`・`v2026.2`・`v2026.3`。段 A の本番の適用と段 A・段 B のマージは、PR #1997 のマージ・デプロイ (施行日) のあとにそろえる |
+| (a) 推奨 | v2026.4 (PR #1997。施行日 2026-11-01 (日)・予告のあとマージ) に入れる | 再同意が 1 回で済む。予告の工程が 1 回 | PR #1997 の文面と主張の表に本書の 7 文を足す (`LEGAL_CLAIM_COUNT` を +7)。Issue #1139 の予告の文を「Apple の記載と、公開レシピの作者名の表示」に改めてから投稿する。関数の一覧 `c_privacy_versions_without_author_name` は `v2025.1`・`v2026.1`・`v2026.2`・`v2026.3`。段 A の本番の適用と段 A・段 B のマージは、PR #1997 のマージ・デプロイ (施行日) のあとにそろえる |
 | (b) | 別の版 (v2026.5) にする | PR #1997 と Issue #1139 の予告を触らない | 予告 → 施行の工程がもう 1 回。再同意が 2 回続く。関数の一覧に `v2026.4` も入れる (5 つ)。段 A の本番の適用と段 A・段 B のマージは v2026.5 の施行日まで待つ |
 | (c) 選べない | 版を上げずに文だけ足す | — | §9.3 の規律に反する (他人に見える範囲が広がる改定を「内容が変わらない」とは言えない)。加えて、作者名の表示を書いた版と書く前の版が同じ文字列になり、K-同意 で同意した人を見分けられない (その版を一覧に入れると誰の名前も出ず、入れないと文を読んでいない人の名前が出て第8条 1 項・4 項と両立しない)。オーナーには (a)(b) の 2 つを聞く |
 
-本書の既定 (オーナーの回答が無い間): (a) として段 C と関数の一覧を書く。段 A の関数は anon / authenticated に EXECUTE を付け、適用した時点から公開の作者の表示名を `/rest/v1/rpc` で直接引ける (作者の uuid は未ログインの一覧の `userId` で返る)。K-同意 があるので、作者名の表示を書いた版がデプロイされる前は、他の人に名前が返る人は通常の経路では居ない (`POST /api/legal/accept` はいまの版だけを記録する。F-31) が、文面と挙動の順序をそろえるため、どの選択肢でも、段 A の本番の適用・段 A のマージ・段 B のマージを、文面 (段 C) が効いたあとに同じ座で続けて行う (§15 の本番の順序)。段 A・段 B の実装と実装ゲートは、それより前に済ませておいてよい (C-10 は文面が効く前と後のどちらでも緑。§7.9)。
+§21 Q-1 の回答は (a) で、段 C と関数の一覧は (a) として書いてある。段 A の関数は anon / authenticated に EXECUTE を付け、適用した時点から公開の作者の表示名を `/rest/v1/rpc` で直接引ける (作者の uuid は未ログインの一覧の `userId` で返る)。K-同意 があるので、作者名の表示を書いた版がデプロイされる前は、他の人に名前が返る人は通常の経路では居ない (`POST /api/legal/accept` はいまの版だけを記録する。F-31) が、文面と挙動の順序をそろえるため、どの選択肢でも、段 A の本番の適用・段 A のマージ・段 B のマージを、文面 (段 C) が効いたあとに同じ座で続けて行う (§15 の本番の順序)。段 A・段 B の実装と実装ゲートは、それより前に済ませておいてよい (C-10 は文面が効く前と後のどちらでも緑。§7.9)。
 
 ### 6.5 本人が名前を出さない選択 (決めること 5)
 
@@ -383,7 +383,7 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 
 ### 6.6 段分け (決めること 6)
 
-§15。段 A (DB)・段 B (API・設定)・段 C (文面。オーナーの選択のあと)。本番は 段 C の文面が効く → 段 A の適用 → 段 A のマージ → 段 B のマージ の順 (R-16。段 A の適用は段 B のマージより前で、文面が効いたあと)。
+§15。段 A (DB)・段 B (API・設定)・段 C (文面。§21 Q-1 の回答 (a) の v2026.4)。本番は 段 C の文面が効く → 段 A の適用 → 段 A のマージ → 段 B のマージ の順 (R-16。段 A の適用は段 B のマージより前で、文面が効いたあと)。
 
 ---
 
@@ -401,7 +401,7 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 -- 背景:
 --   user_profiles の SELECT の RLS は "Users can view own profile" (本人の行だけ)。レシピの API (src/lib/recipes/viewer-lookups.ts) は
 --   RLS の効くクライアントで作者の user_profiles.nickname を引くので、他人の作者名はいつも既定の呼称 '匿名' になっていた。
---   Next.js の API では service_role を使わない (docs/design/cross/02-rls-patterns.md §3.3)。RLS のポリシーを足すと行の全列が読めてしまう。
+--   Next.js の API では service_role を使わない (本書の決め。書いた時点の docs/design/cross/02-rls-patterns.md §3.3 の文に合わせた)。RLS のポリシーを足すと行の全列が読めてしまう。
 --
 -- 変更:
 --   1. 列 user_profiles.show_recipe_author_name boolean NOT NULL DEFAULT true: 本人が「公開したレシピとコメントに作者名を出す」を選ぶ。
@@ -1824,7 +1824,7 @@ sequenceDiagram
 
 | 段 | 中身 | 前提 | 本番の順序 |
 |---|---|---|---|
-| C (文面) | §7.12 の 7 文 (第8条 3 項に 1 文・第9条に 6 文)・第9条の見出し・主張の表 7 行・版 (選択肢に従う) | オーナーの選択 (§21 Q-1)。fix/api-read-errors が main に入っていること (主張の表の evidence が `src/lib/recipes/viewer-lookups.ts` を指し、T-35 がパスの実在を確かめる) | 下の ① |
+| C (文面) | §7.12 の 7 文 (第8条 3 項に 1 文・第9条に 6 文)・第9条の見出し・主張の表 7 行・版 (選択肢に従う) | §21 Q-1 の回答 (a)。fix/api-read-errors が main に入っていること (主張の表の evidence が `src/lib/recipes/viewer-lookups.ts` を指し、T-35 がパスの実在を確かめる。PR #2009 (`2a7a96e2`) で main に入り、満たされた) | 下の ① |
 | A (DB) | §7.1 migration・§7.2 戻し口・§7.9 契約テストの C-1〜C-7・C-9・C-10 (C-8 は段 B)・§7.10 結合テストの I-1〜I-6・I-11・I-13・I-14・I-18・`database.types.ts` 2 本の生成し直し・§7.8 許可一覧 | fix/api-read-errors が main に入っていること (結合テストの API 経由の部分は段 B へ)。`tests/database-types-migrations-contract.test.ts` が関数と列を見るので、型の生成し直しは同じ PR。関数の一覧 `c_privacy_versions_without_author_name` はオーナーの選択 (§21 Q-1) に合わせる (C-10 は文面が効く前も後も緑。§7.9) | 下の ②・③。実装ゲートは先に通してよいが、本番への適用とマージは ① のあとまで待つ |
 | B (API・設定) | §7.3 `viewer-lookups.ts`・§7.4 `author-name.ts`・§7.5 route の 1 語 × 5・§7.6 型と変換・§7.7 画面・§7.9 の C-8 (契約テストのファイルに it を 1 つ足す)・§7.11 単体テストの直し (5 ファイル)・§7.10 の I-7〜I-10・I-12・I-15〜I-17・P-1〜P-3 | 段 A が本番に適用済み・main に入っていること (関数が無いと全部の一覧・詳細が 500。R-16) | 下の ④。マージ = 公開 |
 
@@ -1864,7 +1864,7 @@ sequenceDiagram
 | `tests/integration/security/legal-documents-acceptance.test.ts` | `guard_user_profiles_privileged` | ガードの列が減ると赤 | ガードを触らない | — |
 | `tests/integration-ci-coverage.test.ts:90-99` | `tests/integration/security` | 新しい結合テストが CI の指定に当たらないと赤 | `tests/integration/security/` に置く (指定に当たる) | A・B |
 | `tests/integration/rls/hidden-content-visibility.test.ts` (B2〜B4) | `Users can view public recipes` | `recipes` の RLS を変えると赤 | 変えない | — |
-| `src/__tests__/api/null-character-routes.test.ts:168-174` | `recipes/route.ts`・`profile/route.ts` | 本文を読む route の一覧。新しい route は無い | 変更なし | — |
+| `src/__tests__/api/null-character-routes.test.ts:243-244, 249` | `profile/route.ts` (`:243-244`)・`recipes/route.ts` (`:249`) | 本文を読む route の一覧。新しい route は無い | 変更なし | — |
 | `tests/supabase-service-role-client-scan.test.ts` | `createClient(`・`SUPABASE_JS_CLIENT_ALLOWLIST` | service_role のクライアントを自前で作ると赤 | 作らない | — |
 | `tests/api-raw-error-message-scan.test.ts`・`tests/lib-raw-error-message-scan.test.ts` | `error.message` | 生のエラーの文を本文に返すと赤 | `internalError` のまま | — |
 | `tests/env-source-scan.test.ts` | `process.env` | 新しい環境変数は無い | 変更なし | — |
@@ -1891,12 +1891,13 @@ sequenceDiagram
 |---|---|---|---|
 | `docs/design/cross/CLAUDE.md` | ファイル一覧の表 | `21-recipe-author-display-name.md` の行を足す (「公開レシピの作者の表示名 (SECURITY DEFINER の関数で公開の作者だけ・本人の選択・凍結と年齢の扱い)」/ #1917 の続き)。「10・11 は欠番」の文はそのまま | 設計のマージと同日 |
 | `docs/design/cross/02-rls-patterns.md` | §3.3 の末尾 | 「他人の `user_profiles` の表示名を公開レシピの作者として出す経路は、SECURITY DEFINER の関数 `recipe_author_display_names` (cross/21。RLS のポリシーは足していない)」の 1 行 | 段 A のマージと同日 |
-| 同 | §10 の表の Security の行 (行 585) | anon が EXECUTE できる DEFINER の関数の許可一覧が 3 本になること (関数名を添える) | 同上 |
+| 同 | §10 の表の Security の行 | anon が EXECUTE できる DEFINER の関数の許可一覧が 3 本になること (関数名を添える) | 同上 |
 | `docs/design/cross/20-terms-privacy-text.md` | §7 第8条 3 項と第9条・§10.3 主張の表 (privacy-8#13・privacy-9#12〜#17)・§9.1 (版)・§2.2 (F の行を 1 つ足す: 公開レシピの作者名の表示の経路と、作者名の表示を書いた版への同意の条件 (cross/21 §6.4)) | §7.12 の文と行。版はオーナーの選択 (§21 Q-1) に従う。cross/20 は A 型の正規の経路か docs PR で改定する | 段 C |
 | `docs/design/cross/20-terms-privacy-text.md` | §9.3 (版を上げる規律) | 「作者名の表示の文 (第9条) を消す・言い換える版を作るときは、`recipe_author_display_names` の `c_privacy_versions_without_author_name` を直す (cross/21 §7.1・C-10)」の 1 行 | 段 A のマージと同日 |
 | `docs/design/cross/14-parental-consent.md` | §8 (別 Issue・注記) | 「18 歳未満の本人のアカウントの公開レシピの作者名は公開の場に出さない (cross/21 §6.1 (4))」の 1 行 | 段 A のマージと同日 |
 | `CLAUDE.md` (root) | 行 83 (他ユーザーの行を読むときは認可のあとに `getSupabaseAdmin()`) | 例外の 1 文: 「公開レシピの作者の表示名だけは、認可の無い一覧・詳細でも SECURITY DEFINER の関数 `recipe_author_display_names` で読む (cross/21)」 | 段 B のマージと同日 |
-| Issue #1139 のコメント (予告の文) | 「Apple についての記載を加えるもの」 | 選択肢 (a) のとき、公開レシピの作者名の表示の記載も加えることを文に足す (投稿の前) | 段 C (オーナーの選択のあと) |
+| `docs/design/mobile/08-sign-in-with-apple.md` | §7.2 の状態比較表のプライバシーポリシーの行 (行 345)・§9.6 (行 633。`v2026.4` は Apple の記載だけとしている)・§11.8 (d) (主張の表)・§14.2 の `tests/legal-text-1901.test.ts` の行 (T-35 の `LEGAL_CLAIM_COUNT` = 426。行 2182) | 選択肢 (a) のとき、`v2026.4` に本書 §7.12 の作者名の表示の文 (第8条 3 項・第9条) と主張の表 7 行も入ることを書き足し、T-35 の数を 7 増やす | 段 C と同じ日 |
+| Issue #1139 のコメント (予告の文) | 「Apple についての記載を加えるもの」 | 選択肢 (a) のとき (§21 Q-1 の回答は (a))、公開レシピの作者名の表示の記載も加えることを文に足す (投稿の前) | 段 C |
 | `supabase/baseline/prod_function_acl.sql` | 関数の ACL の控え | 次にベースラインを作り直すときに本関数の行が入る (手で直さない) | 次のベースラインの更新 |
 
 ---
@@ -1919,6 +1920,7 @@ sequenceDiagram
 | `age_years_jst`・`normalize_profile_name` | 本文から呼ぶ。作り直さない |
 | `accept_legal_documents`・`POST /api/legal/accept`・同意ゲート・`user_profiles.privacy_version_accepted` | 保持 (変えない)。関数が `privacy_version_accepted` を読む (K-同意)。同意すると次の読み込みから名前が出る (§9.3) |
 | `LEGAL_DOCUMENTS` (`packages/shared/src/legal-versions.ts`)・`docs/legal/archive/` | 段 A では変えない (段 C の選択肢 (b) のときだけ版を上げる)。C-10 が関数の一覧と突き合わせる |
+| 献立の料理のお気に入り (cross/22) | 献立の料理のお気に入りは `recipe_likes` を使わず `dish_favorites` (cross/22)。`viewer-lookups.ts` の `likedRecipeIds` は公開レシピの「いいね」だけ |
 
 ---
 
@@ -1957,7 +1959,7 @@ sequenceDiagram
 
 | # | 事項 | 本書の置き方 | 誰が決めるか |
 |---|---|---|---|
-| Q-1 | プライバシーポリシーの文 (§7.12。第8条 3 項に 1 文・第9条に 6 文。主張の表 +7) の版の置き方: (a) v2026.4 (PR #1997・施行日 2026-11-01 の仮置き) に入れ、Issue #1139 の予告の文に作者名の表示を足してから投稿する / (b) 別の版 v2026.5 | (a) を既定にして段 C と関数の一覧 (`v2025.1`〜`v2026.3`) を書いた。(b) なら関数の一覧に `v2026.4` を足す。どちらでも、段 A の本番の適用と段 A・段 B のマージは文面が効いたあと (§15 の本番の順序)。版を上げずに文だけ足す案 (c) は、cross/20 §9.3 の規律に反し、K-同意 で同意した人を見分けられず第8条 1 項・4 項と両立しないので選べない (§6.4) | オーナーの選択 (2026-10-24): (a) v2026.4 に入れる |
+| Q-1 | プライバシーポリシーの文 (§7.12。第8条 3 項に 1 文・第9条に 6 文。主張の表 +7) の版の置き方: (a) v2026.4 (PR #1997・施行日 2026-11-01 (日)。mobile/08 §21 Q-13 の記録) に入れ、Issue #1139 の予告の文に作者名の表示を足してから投稿する / (b) 別の版 v2026.5 | (a) として段 C と関数の一覧 (`v2025.1`〜`v2026.3`) を書いた。(b) なら関数の一覧に `v2026.4` を足す。どちらでも、段 A の本番の適用と段 A・段 B のマージは文面が効いたあと (§15 の本番の順序)。版を上げずに文だけ足す案 (c) は、cross/20 §9.3 の規律に反し、K-同意 で同意した人を見分けられず第8条 1 項・4 項と両立しないので選べない (§6.4) | オーナーの選択 (2026-10-24): (a) v2026.4 に入れる |
 | Q-2 | 作者名を描く画面が今は無い (F-13)。API の `authorName` を一覧・詳細のどこに描くかは別の発注 | 本書は API の値と設定の切り替えまで。画面は別 Issue の候補 | オーナー |
 | Q-3 | 18 歳未満の本人の作者名を出さない (§6.1 (4)) ことは本書の既定。保護者の同意書に「公開レシピの作者名」を足して出す案は取らない | 出さないまま。変えるなら cross/14 の同意書の版上げを伴う別の設計 | オーナー |
 | Q-4 | 凍結中の作者名を出さない (§6.1 (3)) ことは本書の既定 | 出さないまま | オーナー |

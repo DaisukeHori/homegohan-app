@@ -3,8 +3,14 @@ import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
 import { recipeAuthorName } from '@/lib/recipes/author-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { isUuid } from '@/lib/http-params';
 import { loadRecipeViewerLookups } from '@/lib/recipes/viewer-lookups';
+
+/** Postgres の外部キー違反 (insert の参照先の行が無い) */
+const POSTGRES_FOREIGN_KEY_VIOLATION = '23503';
+/** recipe_comments.recipe_id → recipes.id の外部キーの名前 (supabase/migrations/20251126124224_create_meal_planner_tables.sql) */
+const RECIPE_COMMENTS_RECIPE_FK = 'recipe_comments_recipe_id_fkey';
 
 // コメント一覧取得 (user_id は公開しない)
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
@@ -15,6 +21,11 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) {
     return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
+  }
+
+  // UUID の形でない id は DB に渡さず 404 (uuid 型の列に渡すと 22P02 で失敗し、「DB の失敗は 500」に入る。#1917)
+  if (!isUuid(params.id)) {
+    return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
   }
 
   // 書いた人の表示名は埋め込まずに関数 recipe_author_display_names で引く (recipe_comments.user_id の外部キーは auth.users 宛で、
@@ -60,7 +71,16 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
   if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
-    const body = await request.json();
+    // UUID の形でない id は DB に渡さず 404 (レシピが無いときと同じ。uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る。#1917)
+    if (!isUuid(params.id)) {
+      return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
+    }
+
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
 
     // #259: content 長さ制限 (1〜5000文字)
     const content = typeof body.content === 'string' ? body.content.trim() : '';
@@ -100,6 +120,11 @@ export async function POST(request: Request, props: { params: Promise<{ id: stri
       .select('id, content, rating, created_at')
       .single();
 
+    // レシピが無い (消された) ときは recipe_id の外部キー違反になる。500 にせず、レシピが無いときの 404 にする (#1917)。
+    // ほかの外部キー (user_id) の違反は含めない (今までどおり 500)
+    if (error?.code === POSTGRES_FOREIGN_KEY_VIOLATION && error.message.includes(RECIPE_COMMENTS_RECIPE_FK)) {
+      return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
+    }
     if (error) throw error;
 
     return NextResponse.json({

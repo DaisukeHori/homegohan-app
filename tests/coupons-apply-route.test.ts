@@ -37,6 +37,7 @@ vi.mock('@/lib/plan/coupon', async (importOriginal) => {
     // 本文の文の選び方は実物を使う (#1917。業務エラーの日本語の固定の文だけを本文に出す)
     couponApplyErrorMessageOf: actual.couponApplyErrorMessageOf,
     COUPON_APPLY_FAILED_MESSAGE: actual.COUPON_APPLY_FAILED_MESSAGE,
+    COUPON_NOT_FOUND_MESSAGE: actual.COUPON_NOT_FOUND_MESSAGE,
   };
 });
 
@@ -48,6 +49,8 @@ vi.mock('@/lib/supabase/server', () => ({
 const { POST } = await import('@/app/api/super-admin/coupons/[id]/apply/route');
 
 const actor = { id: 'sa-1', email: 'sa@example.com', roles: ['super_admin'], organization_id: null };
+/** クーポンの id (apply_coupon の p_coupon_id は uuid なので、UUID の形の値) */
+const COUPON_ID = 'c0a90000-0000-4000-8000-000000000001';
 const adminClientMarker = {
   marker: 'user-scoped-client' as const,
   from: vi.fn(() => ({ insert: vi.fn(() => Promise.resolve({ data: null, error: null })) })),
@@ -55,7 +58,7 @@ const adminClientMarker = {
 const serviceRoleMarker = { marker: 'service-role-client' as const };
 
 function postRequest(body: Record<string, unknown>) {
-  return new Request('http://localhost/api/super-admin/coupons/coupon-1/apply', {
+  return new Request(`http://localhost/api/super-admin/coupons/${COUPON_ID}/apply`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -76,13 +79,13 @@ beforeEach(() => {
 
 describe('POST /api/super-admin/coupons/[id]/apply (#1041 round-2 E)', () => {
   it('requireRole 通過後に service-role (getSupabaseAdmin) を取得し、applyCoupon に渡す', async () => {
-    const res = await POST(postRequest({}), { params: { id: 'coupon-1' } });
+    const res = await POST(postRequest({}), { params: { id: COUPON_ID } });
 
     expect(res.status).toBe(200);
     expect(mockGetSupabaseAdmin).toHaveBeenCalled();
     expect(mockApplyCoupon).toHaveBeenCalledWith(
       serviceRoleMarker,
-      expect.objectContaining({ couponId: 'coupon-1', approvedBy: 'sa-1' }),
+      expect.objectContaining({ couponId: COUPON_ID, approvedBy: 'sa-1' }),
     );
   });
 
@@ -90,7 +93,7 @@ describe('POST /api/super-admin/coupons/[id]/apply (#1041 round-2 E)', () => {
     const { AuthError } = await import('@/lib/auth/errors');
     mockRequireRole.mockRejectedValue(new AuthError('AUTH_UNAUTHENTICATED'));
 
-    const res = await POST(postRequest({}), { params: { id: 'coupon-1' } });
+    const res = await POST(postRequest({}), { params: { id: COUPON_ID } });
 
     expect(res.status).toBe(401);
     expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
@@ -101,7 +104,7 @@ describe('POST /api/super-admin/coupons/[id]/apply (#1041 round-2 E)', () => {
     const { ForbiddenError } = await import('@/lib/auth/errors');
     mockRequireRole.mockRejectedValue(new ForbiddenError('PERM_DENIED'));
 
-    const res = await POST(postRequest({}), { params: { id: 'coupon-1' } });
+    const res = await POST(postRequest({}), { params: { id: COUPON_ID } });
 
     expect(res.status).toBe(403);
     expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
@@ -110,7 +113,7 @@ describe('POST /api/super-admin/coupons/[id]/apply (#1041 round-2 E)', () => {
   it('CouponApplyError は対応する HTTP ステータスにマッピングされる', async () => {
     mockApplyCoupon.mockRejectedValue(new FakeCouponApplyError('OP_COUPON_LIMIT_REACHED', '上限到達'));
 
-    const res = await POST(postRequest({}), { params: { id: 'coupon-1' } });
+    const res = await POST(postRequest({}), { params: { id: COUPON_ID } });
 
     expect(res.status).toBe(422);
     const json = (await res.json()) as { error: { code: string } };
@@ -135,7 +138,7 @@ describe('POST /api/super-admin/coupons/[id]/apply (#1224 エラーコードと 
   ])('%s は %i (文は業務エラーの日本語の固定の文のまま)', async (code, status, message) => {
     mockApplyCoupon.mockRejectedValue(new FakeCouponApplyError(code, message));
 
-    const res = await POST(postRequest({}), { params: { id: 'coupon-1' } });
+    const res = await POST(postRequest({}), { params: { id: COUPON_ID } });
 
     expect(res.status).toBe(status);
     const json = (await res.json()) as { error: { code: string; message: string } };
@@ -146,7 +149,7 @@ describe('POST /api/super-admin/coupons/[id]/apply (#1224 エラーコードと 
     const { COUPON_APPLY_FAILED_MESSAGE } = await import('@/lib/plan/coupon');
     mockApplyCoupon.mockRejectedValue(new FakeCouponApplyError('OP_COUPON_INVALID', 'Coupon is not active'));
 
-    const res = await POST(postRequest({}), { params: { id: 'coupon-1' } });
+    const res = await POST(postRequest({}), { params: { id: COUPON_ID } });
 
     expect(res.status).toBe(422);
     const text = await res.text();
@@ -159,7 +162,7 @@ describe('POST /api/super-admin/coupons/[id]/apply (#1224 エラーコードと 
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     mockApplyCoupon.mockRejectedValue({ code: '23503', message: 'violates foreign key constraint' });
 
-    const res = await POST(postRequest({}), { params: { id: 'coupon-1' } });
+    const res = await POST(postRequest({}), { params: { id: COUPON_ID } });
 
     expect(res.status).toBe(500);
     const json = (await res.json()) as { error: { code: string } };
@@ -168,8 +171,25 @@ describe('POST /api/super-admin/coupons/[id]/apply (#1224 エラーコードと 
     consoleError.mockRestore();
   });
 
+  it('#1917 の続き: パスの id が UUID の形でなければ、クーポンが無いときと同じ 404 OP_COUPON_NOT_FOUND。applyCoupon (DB) を呼ばず、監査ログも書かない', async () => {
+    const res = await POST(postRequest({}), { params: { id: 'not-a-uuid' } });
+
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: { code: 'OP_COUPON_NOT_FOUND', message: 'クーポンが見つかりません' } });
+    expect(mockApplyCoupon).not.toHaveBeenCalled();
+    expect(adminClientMarker.from).not.toHaveBeenCalled();
+  });
+
+  it('#1917 の続き: パスの id が UUID の形でなくても、本文の誤りは今までどおり 400 (クーポンが無いときと同じ順)', async () => {
+    const res = await POST(postRequest({ subscription_target: 'team' }), { params: { id: 'not-a-uuid' } });
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe('OP_INVALID_INPUT');
+    expect(mockApplyCoupon).not.toHaveBeenCalled();
+  });
+
   it('400: subscription_id が UUID でなければ applyCoupon を呼ばない', async () => {
-    const res = await POST(postRequest({ subscription_id: 'not-a-uuid' }), { params: { id: 'coupon-1' } });
+    const res = await POST(postRequest({ subscription_id: 'not-a-uuid' }), { params: { id: COUPON_ID } });
 
     expect(res.status).toBe(400);
     const json = (await res.json()) as { error: { code: string } };
@@ -185,7 +205,7 @@ describe('POST /api/super-admin/coupons/[id]/apply (#1224 エラーコードと 
     ['subscription_id が UUID でない', { subscription_id: 'not-a-uuid' }, ['subscription_id']],
     ['subscription_target が範囲外', { subscription_target: 'team' }, ['subscription_target']],
   ] as const)('400 の本文 (%s): message は最初の issue の文で、details に issues が入る (#1641)', async (_label, body, path) => {
-    const res = await POST(postRequest(body), { params: { id: 'coupon-1' } });
+    const res = await POST(postRequest(body), { params: { id: COUPON_ID } });
 
     expect(res.status).toBe(400);
     const json = (await res.json()) as {
@@ -205,7 +225,7 @@ describe('POST /api/super-admin/coupons/[id]/apply (#1224 エラーコードと 
     const insert = vi.fn(() => Promise.resolve({ data: null, error: null }));
     adminClientMarker.from.mockReturnValueOnce({ insert });
 
-    const res = await POST(postRequest({ reason: '遡及適用' }), { params: { id: 'coupon-1' } });
+    const res = await POST(postRequest({ reason: '遡及適用' }), { params: { id: COUPON_ID } });
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
@@ -215,7 +235,7 @@ describe('POST /api/super-admin/coupons/[id]/apply (#1224 エラーコードと 
     expect(insert).toHaveBeenCalledWith(
       expect.objectContaining({
         actor_id: 'sa-1',
-        target_id: 'coupon-1',
+        target_id: COUPON_ID,
         target_type: 'coupon',
         action_type: 'apply_coupon',
         severity: 'warn',

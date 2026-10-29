@@ -1,6 +1,9 @@
 // @vitest-environment node
 /**
- * 組織の管理画面 (src/app/(org) 配下) に、英語だけの固定の文言が残っていないことのソース走査テスト
+ * 組織の管理画面 (src/app/(org) 配下と、管理画面の枠の外に置いた src/app/(main)/org 配下)・家族の画面 (src/app/(main)/family 配下。#2073)・
+ * 設定のメンバーシップ (src/app/(main)/settings/membership。#2073) に、英語だけの固定の文言
+ *  (と、内部の英字の状態・役割の値をそのまま出す箇所) が残っていないことのソース走査テスト。
+ * 内部の値をそのまま出す箇所は、運営のメンバーシップの画面 (src/app/(operator)/operator/membership) も見る
  *
  * 問題:
  *   日本語の画面なのに、サイドバーのログアウトのボタンに「Sign Out」、ダッシュボードの見出しに「Health Cockpit」、
@@ -26,10 +29,26 @@ import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { ORG_SCREEN_ROOTS, isUnderRoot, orgUrlTopDirs } from './helpers/org-screen-roots';
 
 const ROOT = path.resolve(__dirname, '..');
-/** 走査する画面のディレクトリ (組織の管理画面のルートグループ) */
-const SCAN_ROOT = 'src/app/(org)';
+/**
+ * 走査する画面のディレクトリ: 組織の管理画面のルートグループと、管理画面の枠の外に置いた組織の画面
+ * (オーナーの譲渡の承諾の画面 /org/transfer-accept/[proposal_id]。一般メンバーも開くので (main) に置く。#2068)。
+ * 組織の画面の根は、組織の画面を走査するテストで共通の定数 ORG_SCREEN_ROOTS から取る (#2073)。
+ * それに、家族の画面 (#2073 S5。家族の代表者の譲渡の承諾の画面が、処理済みの提案に「(ステータス: accepted)」と内部の英字の値を出していた) と、
+ * 設定のメンバーシップ (#2073。組織の役割を「役割: owner」と英字のまま出していた) を足す。
+ * 家族の画面と設定のメンバーシップは、この走査だけが見る根なので、共通の定数には入れない
+ * (共通の定数を広げると、それを使う組織の画面の別の走査 (API のエラーの日本語・見出しの文言) の範囲まで変わる)
+ */
+const FAMILY_SCREEN_ROOT = 'src/app/(main)/family';
+const SETTINGS_MEMBERSHIP_ROOT = 'src/app/(main)/settings/membership';
+const SCAN_ROOTS: readonly string[] = [...ORG_SCREEN_ROOTS, FAMILY_SCREEN_ROOT, SETTINGS_MEMBERSHIP_ROOT];
+/**
+ * 内部の値をそのまま出していないかだけを見る画面 (英語だけの文言の走査は SCAN_ROOTS だけ)。
+ * 運営の家族の代表者・組織のオーナーの付け替えの画面が、候補の役割を「adult」「member」と英字のまま出していた (#2073)
+ */
+const RAW_VALUE_ONLY_SCAN_ROOTS = ['src/app/(operator)/operator/membership'];
 
 /** 画面に出る属性 */
 const DISPLAY_ATTRIBUTES = new Set(['placeholder', 'title', 'alt', 'aria-label', 'label']);
@@ -143,7 +162,64 @@ function findEnglishOnlyCopy(file: string, source: string): CopyFinding[] {
   return findings;
 }
 
-function listScreenFiles(): string[] {
+/**
+ * 内部の値をそのまま画面に出していると見なすプロパティ (DB の状態・役割の列。英字の値が入る)。
+ * 役割は src/lib/membership/role-labels.ts の orgRoleLabel / familyRoleLabel に通して出す
+ * (#2073: 設定のメンバーシップが組織の役割を「役割: owner」と出していた)
+ */
+const RAW_INTERNAL_VALUE_PROPERTIES = new Set(['status', 'role', 'org_role', 'invited_role']);
+
+/** 値の位置にあるプロパティの参照 (`x.status`・`x?.status`) を集める (式そのもの・三項の枝・&& / || / ?? の右・括弧・テンプレートの式) */
+function collectValuePropertyAccesses(node: ts.Node, out: ts.PropertyAccessExpression[]): void {
+  if (ts.isPropertyAccessExpression(node)) {
+    out.push(node);
+  } else if (ts.isTemplateExpression(node)) {
+    for (const span of node.templateSpans) collectValuePropertyAccesses(span.expression, out);
+  } else if (ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)) {
+    collectValuePropertyAccesses(node.expression, out);
+  } else if (ts.isConditionalExpression(node)) {
+    collectValuePropertyAccesses(node.whenTrue, out);
+    collectValuePropertyAccesses(node.whenFalse, out);
+  } else if (ts.isBinaryExpression(node)) {
+    const op = node.operatorToken.kind;
+    if (
+      op === ts.SyntaxKind.AmpersandAmpersandToken ||
+      op === ts.SyntaxKind.BarBarToken ||
+      op === ts.SyntaxKind.QuestionQuestionToken
+    ) {
+      collectValuePropertyAccesses(node.right, out);
+      if (op !== ts.SyntaxKind.AmpersandAmpersandToken) collectValuePropertyAccesses(node.left, out);
+    }
+  } else if (ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
+    collectValuePropertyAccesses(node.expression, out);
+  }
+}
+
+/**
+ * 1 つのソースから、内部の値 (状態の列) を JSX の子にそのまま出している箇所を集める (#2073 S5)。
+ * 文字列の走査では値の中身 (accepted など) が見えないので、参照の形で見る。対応表の関数に通した値 (`statusLabel(x.status)`) や、
+ * 比べる式 (`x.status === 'pending'`) は数えない
+ */
+function findRawInternalValueRendering(file: string, source: string): CopyFinding[] {
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const findings: CopyFinding[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isJsxExpression(node) && node.expression && (ts.isJsxElement(node.parent) || ts.isJsxFragment(node.parent))) {
+      const accesses: ts.PropertyAccessExpression[] = [];
+      collectValuePropertyAccesses(node.expression, accesses);
+      for (const access of accesses) {
+        if (!RAW_INTERNAL_VALUE_PROPERTIES.has(access.name.text)) continue;
+        const { line } = sf.getLineAndCharacterOfPosition(access.getStart(sf));
+        findings.push({ file, line: line + 1, text: access.getText(sf) });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return findings;
+}
+
+function listScreenFiles(roots: readonly string[] = SCAN_ROOTS): string[] {
   const result: string[] = [];
   const walk = (dir: string) => {
     for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
@@ -152,7 +228,7 @@ function listScreenFiles(): string[] {
       else if (entry.name.endsWith('.tsx')) result.push(rel);
     }
   };
-  walk(SCAN_ROOT);
+  for (const scanRoot of roots) walk(scanRoot);
   return result.sort();
 }
 
@@ -201,13 +277,60 @@ describe('走査の仕組み: 英語だけの文言を見つけられる', () =>
   });
 });
 
-describe('組織の管理画面 (src/app/(org)) に英語だけの固定の文言が無い', () => {
+describe('走査の仕組み: 内部の状態の値をそのまま出している箇所を見つけられる (#2073 S5)', () => {
+  const FIXTURE = `
+    export default function Page({ proposal, invite, x, orgInfo, c, member }: { proposal?: { status: string }; invite: { status: string; role: string }; x: { status: string }; orgInfo: { org_role: string }; c: { org_role: string | null }; member: { role: string } }) {
+      return (
+        <div>
+          <p>この提案は既に処理されています (ステータス: {proposal?.status})</p>
+          <p>{\`状態: \${invite.status}\`}</p>
+          <p>{x.status === 'pending' ? '待機中' : null}</p>
+          <span>{statusLabel(invite.status)}</span>
+          <span className={x.status}>{'固定'}</span>
+          <p>役割: {orgInfo.org_role}</p>
+          <p>{c.org_role ?? '—'} &mdash; 最終ログイン</p>
+          <p>{member.role}</p>
+          <p>{orgRoleLabel(orgInfo.org_role)}</p>
+          <p>{orgInfo.org_role === 'owner' ? 'オーナー' : null}</p>
+          <span data-role={member.role}>{familyRoleLabel(member.role)}</span>
+        </div>
+      );
+    }
+  `;
+
+  it('JSX の子に出している状態・役割の参照 (テンプレートの式・?? の左を含む) を見つけ、比べる式・関数に通した値・属性は数えない', () => {
+    const texts = findRawInternalValueRendering('fixture.tsx', FIXTURE).map((f) => f.text);
+    expect(texts.sort()).toEqual(['invite.status', 'proposal?.status', 'orgInfo.org_role', 'c.org_role', 'member.role'].sort());
+  });
+});
+
+describe('組織の管理画面・家族の画面に英語だけの固定の文言が無い', () => {
   const files = listScreenFiles();
   const findings = files.flatMap((file) => findEnglishOnlyCopy(file, fs.readFileSync(path.join(ROOT, file), 'utf8')));
 
   it('走査する画面のファイルがある (サイドバーのレイアウトとダッシュボードを含む)', () => {
     expect(files).toContain('src/app/(org)/layout.tsx');
     expect(files).toContain('src/app/(org)/org/dashboard/page.tsx');
+    expect(files).toContain('src/app/(main)/org/transfer-accept/[proposal_id]/page.tsx');
+    expect(files).toContain('src/app/(main)/family/transfer-accept/[proposal_id]/page.tsx');
+    expect(files).toContain('src/app/(main)/settings/membership/page.tsx');
+  });
+
+  it('URL が /org で始まる画面のディレクトリ (共通の定数の根の下) のファイルを、どれも走査している (#2073: 家族の画面の根を足しても組織の画面を落とさない)', () => {
+    const orgDirs = orgUrlTopDirs();
+    expect(orgDirs.length).toBeGreaterThan(0);
+    const unscanned = orgDirs.filter((dir) => !files.some((file) => isUnderRoot(file, dir)));
+    expect(unscanned).toEqual([]);
+  });
+
+  it('内部の状態・役割の値 (英字) を画面にそのまま出していない (#2073)', () => {
+    const rawValueFiles = [...files, ...listScreenFiles(RAW_VALUE_ONLY_SCAN_ROOTS)];
+    expect(rawValueFiles).toContain('src/app/(operator)/operator/membership/families/[id]/transfer/page.tsx');
+    expect(rawValueFiles).toContain('src/app/(operator)/operator/membership/orgs/[id]/transfer/page.tsx');
+    const rawRendering = rawValueFiles
+      .flatMap((file) => findRawInternalValueRendering(file, fs.readFileSync(path.join(ROOT, file), 'utf8')))
+      .map((f) => `${f.file}:${f.line} {${f.text}}`);
+    expect(rawRendering).toEqual([]);
   });
 
   it('許可リストに無い英語だけの文言が無い', () => {

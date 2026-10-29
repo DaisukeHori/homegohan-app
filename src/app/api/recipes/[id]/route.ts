@@ -3,13 +3,18 @@ import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
 import { recipeAuthorName } from '@/lib/recipes/author-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_FORBIDDEN_MESSAGE, API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_FORBIDDEN_MESSAGE, API_INVALID_JSON_MESSAGE, API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { isUuid } from '@/lib/http-params';
 import { loadRecipeViewerLookups } from '@/lib/recipes/viewer-lookups';
+import { RECIPE_NAME_REQUIRED_MESSAGE, isRecipeName } from '@/lib/recipes/recipe-body';
 
 // レシピ詳細取得
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
+  // UUID の形でない id は DB に渡さず、行が無い id と同じ 404 (uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る。#1917)
+  if (!isUuid(params.id)) {
+    return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
+  }
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 
@@ -117,6 +122,16 @@ export async function PUT(request: Request, props: { params: Promise<{ id: strin
       return NextResponse.json({ error: API_FORBIDDEN_MESSAGE }, { status: 403 });
     }
 
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400 (DB に触れる前に断る)。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
+    // 名前を送るなら 1 文字以上の文字列 (recipes.name は NOT NULL。null・空を送ると更新が失敗して 500 になっていた。#1917 の続き)。送らなければ変えない
+    if (body.name !== undefined && !isRecipeName(body.name)) {
+      return NextResponse.json({ error: RECIPE_NAME_REQUIRED_MESSAGE }, { status: 400 });
+    }
+
     // 所有者確認。読めなかったときは 403 にしない (DB の失敗は 500。行が無い・他人のレシピのときだけ 403。#1917)
     const { data: existing, error: existingError } = await supabase
       .from('recipes')
@@ -131,8 +146,6 @@ export async function PUT(request: Request, props: { params: Promise<{ id: strin
       return NextResponse.json({ error: API_FORBIDDEN_MESSAGE }, { status: 403 });
     }
 
-    const body = await request.json();
-    
     const updateData: any = {};
     if (body.name !== undefined) updateData.name = body.name;
     if (body.description !== undefined) updateData.description = body.description;

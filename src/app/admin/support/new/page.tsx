@@ -7,6 +7,7 @@
  */
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
 import Link from 'next/link';
 
 type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
@@ -54,8 +55,9 @@ export default function NewTicketPage() {
         router.push('/login');
         return;
       }
+      // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
       if (res.status === 403) {
-        setError('権限がありません');
+        setError(await forbiddenMessageOfResponse(res));
         return;
       }
       if (!res.ok) {

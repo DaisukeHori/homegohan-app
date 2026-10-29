@@ -261,6 +261,35 @@ describe('PATCH /api/super-admin/experiments/[id]', () => {
     expect(body.data.status).toBe('running');
   });
 
+  // #2059: 遷移表 (draft → running・running → completed・running → cancelled) に無い変更は 409 で断り、
+  // 書かず監査ログも残さない (以前は同じ状態への変更・下書きへの戻しが 200 で通り、監査ログが毎回残った)
+  it.each([
+    ['running → running (同じ状態への変更)', 'running'],
+    ['running → draft (下書きへの戻し)', 'draft'],
+  ])('409 OP_EXPERIMENT_INVALID_TRANSITION for %s: 状態は変わらず、監査ログも残らない', async (_label, status) => {
+    const countAudits = async () => {
+      const { count, error } = await supabaseAdmin
+        .from('admin_audit_logs')
+        .select('id', { count: 'exact', head: true })
+        .eq('target_id', testExperimentId);
+      if (error) throw new Error(`Failed to count the audit logs: ${error.message}`);
+      return count ?? 0;
+    };
+    const auditsBefore = await countAudits();
+    const res = await apiCall(
+      'PATCH',
+      `/api/super-admin/experiments/${testExperimentId}`,
+      superAdminUser.jwt,
+      { status }
+    );
+    expect(res.status).toBe(409);
+    expect((res.body as { error: { code: string } }).error.code).toBe('OP_EXPERIMENT_INVALID_TRANSITION');
+    const { data: row, error } = await supabaseAdmin.from('experiments').select('status').eq('id', testExperimentId).single();
+    if (error) throw new Error(`Failed to read the experiment: ${error.message}`);
+    expect(row.status).toBe('running');
+    expect(await countAudits()).toBe(auditsBefore);
+  });
+
   it('400 for invalid status value', async () => {
     const id = testExperimentId ?? '00000000-0000-0000-0000-000000000000';
     const res = await apiCall(

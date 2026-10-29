@@ -203,8 +203,8 @@ If-Unmodified-Since: 2026-05-07T12:34:56Z   # 直前 GET の updated_at
 **処理**:
 ```typescript
 async function migrateToPersonal(groupId: string, actorId: string, ifUnmodifiedSince: string) {
-  // 1. advisory lock (同一 family_group への並行操作を直列化)
-  await supabase.rpc('acquire_family_group_lock', { family_group_id: groupId });
+  // 1. advisory lock (同一 family_group への並行操作を直列化) は、ロックで守る DB の仕事をする SECURITY DEFINER の関数の中で、仕事と同じ取引で取る (鍵 'family-group:{UUID}')
+  //    ロックだけを取る RPC をここで呼ぶと、その RPC の取引の終わりで外れ、後に続く処理の間は保たれない (cross/02-rls-patterns.md §6.2.1・§6.3)
 
   // 2. 最新状態取得
   const { data: group } = await supabase
@@ -256,14 +256,14 @@ async function migrateToPersonal(groupId: string, actorId: string, ifUnmodifiedS
 
 ### 7.4 advisory lock の実装
 
-ロック取得には `cross/02-rls-patterns.md §6.2.1` で定義した共通ヘルパーを使用する。
+ロックは、ロックで守る DB の仕事をする SECURITY DEFINER の関数の中で、仕事と同じ取引で `pg_advisory_xact_lock` で取る (`cross/02-rls-patterns.md §6.2.1`・§6.3。ロックだけを取る関数 `acquire_family_group_lock` は本番に無い)。
 ロックキーは `'family-group:{UUID}'` 形式で統一。
 
-```typescript
-// org/05 でのロック使用例
-await supabase.rpc('acquire_family_group_lock', {
-  family_group_id: groupId,
-});
+```sql
+-- org/05 でのロックの取り方 (仕事をする関数の本文の中。ロックだけを取る RPC では、その RPC の取引の終わりで外れる)
+PERFORM pg_catalog.pg_advisory_xact_lock(
+  pg_catalog.hashtext('family-group:' || p_family_group_id::TEXT));
+-- 続けて、ロックで守る仕事を同じ関数の中で行う
 ```
 
 ## 8. Grace Period 期限経過後のバッチ処理

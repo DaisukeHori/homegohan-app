@@ -35,6 +35,7 @@ import {
   type DrTestResult,
   type DrTestSmokeResult,
 } from '@/lib/backups/core';
+import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
 import { formatJstDateTime } from '@/lib/admin/format-datetime';
 import { jstToday } from '@/lib/jst-day-ranges';
 
@@ -204,8 +205,13 @@ export default function SuperAdminBackupsPage() {
   const reload = useCallback(async () => {
     try {
       const res = await fetch(SUPER_ADMIN_BACKUPS_API_PATH);
+      if (res.status === HTTP_FORBIDDEN) {
+        // 403 は本文の理由の文 (二段階認証の確認が要る など) があればそちらを出す (#1917)
+        setLoad({ status: 'error', message: await forbiddenMessageOfResponse(res, LOAD_FORBIDDEN_TEXT) });
+        return;
+      }
       if (res.status !== HTTP_OK) {
-        setLoad({ status: 'error', message: res.status === HTTP_FORBIDDEN ? LOAD_FORBIDDEN_TEXT : LOAD_FAILED_TEXT });
+        setLoad({ status: 'error', message: LOAD_FAILED_TEXT });
         return;
       }
       const json: BackupStatusResponse = await res.json();
@@ -251,7 +257,12 @@ export default function SuperAdminBackupsPage() {
         setErrors(drTestErrorsFromResponse(json));
         return;
       }
-      setErrors({ fields: {}, form: [res.status === HTTP_FORBIDDEN ? SUBMIT_FORBIDDEN_TEXT : SUBMIT_FAILED_TEXT] });
+      if (res.status === HTTP_FORBIDDEN) {
+        // 403 は本文の理由の文 (二段階認証の確認が要る など) があればそちらを出す (#1917)
+        setErrors({ fields: {}, form: [await forbiddenMessageOfResponse(res, SUBMIT_FORBIDDEN_TEXT)] });
+        return;
+      }
+      setErrors({ fields: {}, form: [SUBMIT_FAILED_TEXT] });
     } catch {
       setErrors({ fields: {}, form: [SUBMIT_FAILED_TEXT] });
     } finally {

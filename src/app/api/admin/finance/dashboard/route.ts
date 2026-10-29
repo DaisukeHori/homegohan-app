@@ -24,24 +24,34 @@ export async function GET() {
     // (Vercel (UTC) では月初の JST 0:00〜8:59 に今月・先月が 1 か月前にずれ、JST の開発機では毎日 1 日前にずれた)
     const { thisMonthStart, lastMonthStart, lastMonthEnd } = jstMonthBoundaries();
 
+    // 読み込みはどれも、行が無いときだけ「無い」(0・フォールバック) にし、読めなかった (DB の失敗) ときは 500 にする (#1917 の続き。
+    // 以前は error を受けずに捨て、DB の失敗でも売上・利用者数が 0 のように見えていた)。1 行を読むところは .limit(1) の
+    // .maybeSingle() (行が無いのは失敗ではない。.single() は 0 行を失敗にする)
+
     // 今月の最新スナップショット
-    const { data: currentSnap } = await supabase
+    const { data: currentSnap, error: currentSnapError } = await supabase
       .from('revenue_snapshots')
       .select('*')
       .gte('date', thisMonthStart)
       .order('date', { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
+    if (currentSnapError) {
+      return internalError('GET /api/admin/finance/dashboard', currentSnapError, { userId: user.id, table: 'revenue_snapshots' }, { shape: 'nested' });
+    }
 
     // 先月の最新スナップショット (比較用)
-    const { data: lastMonthSnap } = await supabase
+    const { data: lastMonthSnap, error: lastMonthSnapError } = await supabase
       .from('revenue_snapshots')
       .select('*')
       .gte('date', lastMonthStart)
       .lte('date', lastMonthEnd)
       .order('date', { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
+    if (lastMonthSnapError) {
+      return internalError('GET /api/admin/finance/dashboard', lastMonthSnapError, { userId: user.id, table: 'revenue_snapshots' }, { shape: 'nested' });
+    }
 
     // スナップショットがなければ personal_subscriptions から直接集計
     let currentMrrJpy = currentSnap?.total_mrr_jpy ?? 0;
@@ -53,10 +63,13 @@ export async function GET() {
 
     if (!currentSnap) {
       // フォールバック: personal_subscriptions から直接集計
-      const { data: activeSubs } = await supabase
+      const { data: activeSubs, error: activeSubsError } = await supabase
         .from('personal_subscriptions')
         .select('plan_key, subscription_plans(monthly_price_jpy)')
         .in('status', ['active', 'trialing']);
+      if (activeSubsError) {
+        return internalError('GET /api/admin/finance/dashboard', activeSubsError, { userId: user.id, table: 'personal_subscriptions' }, { shape: 'nested' });
+      }
 
       if (activeSubs) {
         personalActiveUsers = activeSubs.length;
@@ -68,14 +81,17 @@ export async function GET() {
     }
 
     // MAU は daily_active_users から
-    const { data: dauRecord } = await supabase
+    const { data: dauRecord, error: dauRecordError } = await supabase
       .from('daily_active_users')
       .select('mau')
       .eq('plan_type', 'all')
       .eq('plan_key', '')
       .order('date', { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
+    if (dauRecordError) {
+      return internalError('GET /api/admin/finance/dashboard', dauRecordError, { userId: user.id, table: 'daily_active_users' }, { shape: 'nested' });
+    }
     mau = dauRecord?.mau ?? 0;
 
     // チャーンレート計算

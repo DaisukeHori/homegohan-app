@@ -17,7 +17,7 @@ import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/
 import { internalError } from '@/lib/api/errors';
 import { uuidOrNull } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { REQUIRED_FIELDS_MISSING_MESSAGE } from '@/lib/api/user-api-error-messages';
 
 /**
@@ -89,7 +89,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
-    const body = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
     const { 
       date, 
       mealType, 
@@ -233,7 +237,6 @@ export async function POST(request: Request) {
       ingredients: ingredients,
       image_url: dishImagePayload.mealCoverImageUrl,
       dishes: imageDishes,
-      is_completed: false,
       source_type: sourceType || 'manual',
     };
 

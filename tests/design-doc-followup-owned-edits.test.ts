@@ -98,6 +98,13 @@ const OWNED_EDITS: readonly OwnedEdit[] = [
     target: 'docs/design/cross/20-terms-privacy-text.md',
     pattern: /「(組織のオーナーと家族グループの代表者は、オーナーまたは代表者を譲渡するまで[^」]*)」→「([^」]*)」/,
   },
+  {
+    // cross/24 §17: operator/02 §4 の凍結の notify_user の説明の 1 行 (行 192)。実装の PR (段 A) が同じ PR で書き換える。
+    // 後の文は件名の入れ子の「【ほめゴハン】…」を含むので、2 番目の組が取るのは最初の 」 まで (後の文の逐語の頭)
+    owner: 'docs/design/cross/24-freeze-notify-mail.md',
+    target: 'docs/design/operator/02-api-spec.md',
+    pattern: /「(`notify_user` \(省略時 true\) は監査の details に残すだけ[^」]*)」→「([^」]*)」/,
+  },
 ];
 
 function read(rel: string): string {

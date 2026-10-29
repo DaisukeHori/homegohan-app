@@ -3,7 +3,7 @@
  *
  * 以前の画面は、入力欄の無い banner_url をいつも空文字で始め、保存のたびに `banner_url: null` を送っていた。
  * PATCH の route は送られた項目をそのまま書くので、保存のたびに subscription_plans.banner_url が null で上書きされていた。
- * 画面は入力欄のある項目 (表示名・説明・表示順) だけを送り、route は送られなかった項目を書かない。
+ * 画面は入力欄のある項目 (表示名・説明・表示順) のうち、変えた欄だけを送り (#1917)、route は送られなかった項目を書かない。
  *
  * ここでは画面の fetch を本物の route (GET / PATCH) へつなぎ、DB は 1 行を持つだけのフェイクにして、
  * 「保存の前後で DB の banner_url が変わらない」ことを画面から route まで通して確かめる。
@@ -45,9 +45,14 @@ vi.mock('@/lib/admin/audit', () => ({
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: () => Promise.resolve(fakeDb.client),
-  getSupabaseAdmin: () => {
-    throw new Error('この試験では service_role を使わない (廃止の操作をしない)');
-  },
+  // プランの更新 (subscription_plans) は service_role の client で書く (運営の直接の書き込みを塞いだ。#1917 の続き)。
+  // 同じ代わりの DB に書く。廃止の操作 (契約者の数え上げ) はしないので、ほかの表には触れない
+  getSupabaseAdmin: () => ({
+    from: (table: string) => {
+      if (table !== 'subscription_plans') throw new Error(`この試験では service_role で ${table} を使わない (廃止の操作をしない)`);
+      return fakeDb.client.from(table);
+    },
+  }),
 }));
 
 // route は UUID の形でない id を DB に渡さず 404 にする (#1917) ので、id は UUID の形にする
@@ -222,16 +227,16 @@ describe('プラン詳細画面: 保存しても banner_url が消えない (#17
     expect(fakeDb.state.row.display_name).toBe(EDITED_DISPLAY_NAME);
     // banner_url は保存の前と同じ (null で上書きされない)
     expect(fakeDb.state.row.banner_url).toBe(BANNER_URL);
-    // 画面に入力欄の無い banner_url は送らない。送るのは入力欄のある 3 項目だけ
+    // 画面に入力欄の無い banner_url は送らない。入力欄のある 3 項目のうちでも、変えた表示名だけを送る (#1917)
     expect(patchBodies).toHaveLength(1);
-    expect(Object.keys(patchBodies[0]!).sort()).toEqual(['description', 'display_name', 'display_order']);
+    expect(patchBodies[0]).toEqual({ display_name: EDITED_DISPLAY_NAME });
     // route も、送られなかった banner_url を更新の値に入れない
     expect(fakeDb.state.updates).toHaveLength(1);
     expect(fakeDb.state.updates[0]).not.toHaveProperty('banner_url');
     expect(mockRecordAdminAudit).toHaveBeenCalledTimes(1);
   });
 
-  it('何も変えずに保存しても、DB の行の中身 (banner_url・説明・表示順) は変わらない', async () => {
+  it('何も変えずに保存しても、DB の行の中身 (banner_url・説明・表示順) は変わらない (変えた欄が無いので送らない。#1917)', async () => {
     const before = planRow();
     fakeDb = createPlanDb(before);
     connectPageToRoute();
@@ -239,9 +244,11 @@ describe('プラン詳細画面: 保存しても banner_url が消えない (#17
 
     await clickSave();
 
-    await vi.waitFor(() => expect(container.textContent).toContain('保存しました'));
-    // updated_at は route が保存のたびに付けるので、比べる対象から外す (toEqual は undefined の項目を無いものとして比べる)
-    expect({ ...fakeDb.state.row, updated_at: undefined }).toEqual(before);
-    expect(fakeDb.state.row.banner_url).toBe(BANNER_URL);
+    await vi.waitFor(() => expect(container.textContent).toContain('変更した項目がないので、保存していません'));
+    expect(container.textContent).not.toContain('保存しました');
+    expect(patchBodies).toHaveLength(0);
+    expect(fakeDb.state.updates).toHaveLength(0);
+    expect(fakeDb.state.row).toEqual(before);
+    expect(mockRecordAdminAudit).not.toHaveBeenCalled();
   });
 });

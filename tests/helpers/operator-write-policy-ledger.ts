@@ -10,15 +10,16 @@
  * migration でこの型のポリシーを足す・消す・名前を変えるときは、同じ変更で台帳の行を足す・消す・直す (足すときは分類と理由を書く)。
  * 台帳は過去の状態の写しを持たない。どの migration がこの型の何を消したかの記録は、その migration の頭のコメントと PR に置く
  * (最初の棚卸しは #1917 の続き = announcements_moderation_flags_select_only の migration の頭のコメントの「同じ型の全域の探索」)。
+ * 運営の API が本人のセッションの client でこの型のポリシーに頼って書く形は残さない: 運営の API は requireRole の後で service_role の
+ * client で書く (20261025120000_operator_session_writes_select_only.sql がその形の 17 本を消した・運営の枝を外した)。
+ * この型のポリシーを新しく足すときは、運営の API がそれに頼って書かないこと (分類のどちらかに当たること) を確かめる。
  */
 
 /** 分類 */
-export type OperatorWritePolicyCategory = 'sessionClientApi' | 'noOperatorWriteApi' | 'auditSink';
+export type OperatorWritePolicyCategory = 'noOperatorWriteApi' | 'auditSink';
 
 /** 分類の意味 */
 export const OPERATOR_WRITE_POLICY_CATEGORY_LABELS: Readonly<Record<OperatorWritePolicyCategory, string>> = {
-  sessionClientApi:
-    '別の案件: 運営 (や組織の管理者) の API が本人のセッションの client でこのポリシーに頼って書く。ポリシーを絞ると API が書けなくなるので、API を service_role に移す変更と一緒に直す',
   noOperatorWriteApi: '当たらない: 運営が書く API が無い (通るべき API が無いので「API を通らない書き込み」の型に当たらない)',
   auditSink: '当たらない: 監査ログそのもの (書き込みが監査の記録。WITH CHECK が actor_id = 本人・system.* でないことに固定する)',
 };
@@ -38,31 +39,14 @@ export interface OperatorWritePolicyLedgerEntry {
 /** いまの状態の、この型のポリシーの全部 (表・ポリシーの名前の順) */
 export const OPERATOR_WRITE_POLICY_LEDGER: readonly OperatorWritePolicyLedgerEntry[] = [
   { table: 'admin_audit_logs', policy: 'audit_logs_insert_admins', command: 'INSERT', category: 'auditSink', reason: 'src/lib/admin/audit.ts の recordAdminAudit が本人のセッションで書く監査の記録そのもの (20261017130000:375)' },
-  { table: 'admin_user_notes', policy: 'Admins can manage user notes', command: 'ALL', category: 'sessionClientApi', reason: 'src/app/api/admin/users/[id]/route.ts・src/app/api/support/users/[id]/notes/route.ts が本人のセッションで INSERT' },
-  { table: 'coupons', policy: 'coupons_mutate_sales_or_above', command: 'ALL', category: 'sessionClientApi', reason: 'src/app/api/super-admin/coupons/** が本人のセッションで INSERT / UPDATE / DELETE' },
   { table: 'csat_feedbacks', policy: 'csat_access', command: 'ALL', category: 'noOperatorWriteApi', reason: '運営の API は読むだけ (src/app/api/admin/finance/nps/route.ts)' },
-  { table: 'departments', policy: 'Org admins can manage departments', command: 'ALL', category: 'sessionClientApi', reason: 'src/app/api/org/departments/route.ts が本人のセッションで INSERT / UPDATE / DELETE' },
   { table: 'email_blacklist', policy: 'email_blacklist_admin', command: 'ALL', category: 'noOperatorWriteApi', reason: '書くのはメールの抑止 (src/lib/emails/suppression.ts) の service_role だけ' },
-  { table: 'experiment_assignments', policy: 'experiment_assignments_delete_super_admin', command: 'DELETE', category: 'sessionClientApi', reason: 'src/app/api/super-admin/experiments/[id]/route.ts の DELETE が本人のセッションで消す' },
-  { table: 'experiments', policy: 'experiments_select_super_admin', command: 'ALL', category: 'sessionClientApi', reason: 'src/app/api/super-admin/experiments/** が本人のセッションで INSERT / UPDATE / DELETE' },
-  { table: 'feature_flags', policy: 'feature_flags_super_admin_all', command: 'ALL', category: 'sessionClientApi', reason: 'src/app/api/super-admin/flags/** が本人のセッションで INSERT / UPDATE / DELETE' },
-  { table: 'feature_packages', policy: 'feature_packages_mutate_super_admin', command: 'ALL', category: 'sessionClientApi', reason: 'src/app/api/super-admin/feature-packages/**・flags/route.ts が本人のセッションで書く' },
   { table: 'help_articles', policy: 'help_articles_manage', command: 'ALL', category: 'noOperatorWriteApi', reason: 'アプリに help_articles を読み書きする経路が無い' },
   { table: 'infra_alerts', policy: 'infra_alerts_access', command: 'ALL', category: 'noOperatorWriteApi', reason: '運営の API は読むだけ (src/app/api/super-admin/infra/alerts/route.ts)' },
-  { table: 'inquiries', policy: 'Admins can update inquiries', command: 'UPDATE', category: 'sessionClientApi', reason: 'src/app/api/admin/inquiries/[id]/route.ts の PATCH が本人のセッションで UPDATE' },
-  { table: 'organization_challenges', policy: 'Org admins can manage challenges', command: 'ALL', category: 'sessionClientApi', reason: 'src/app/api/org/challenges/route.ts が本人のセッションで INSERT / UPDATE' },
-  { table: 'organization_invites', policy: 'Org admins can delete invites', command: 'DELETE', category: 'sessionClientApi', reason: 'src/app/api/org/invites/route.ts の DELETE が本人のセッションで消す (組織の owner / admin の枝。20261022180000)' },
   { table: 'organization_reports', policy: 'Org admins can manage reports', command: 'ALL', category: 'noOperatorWriteApi', reason: 'アプリに organization_reports を読み書きする経路が無い' },
   { table: 'organizations', policy: 'organizations_delete_super_admin', command: 'DELETE', category: 'noOperatorWriteApi', reason: '運営が組織の行を消す API は無い。20261023100000 (#1963) がこのポリシーを残すと決めた (所属が残る間は 23514 で止まる)' },
   { table: 'plan_store_products', policy: 'plan_store_products_mutate_super_admin', command: 'ALL', category: 'noOperatorWriteApi', reason: 'アプリは読むだけ (src/app/api/billing/iap/catalog/route.ts・src/lib/billing/iap-repository.ts)' },
-  { table: 'sales_lead_activities', policy: 'sales_activities_access', command: 'ALL', category: 'sessionClientApi', reason: 'src/app/api/admin/sales/leads/** が本人のセッションで INSERT' },
-  { table: 'sales_leads', policy: 'sales_leads_access', command: 'ALL', category: 'sessionClientApi', reason: 'src/app/api/admin/sales/leads/** が本人のセッションで INSERT / UPDATE' },
   { table: 'sport_presets', policy: 'sport_presets_mutate_super_admin', command: 'ALL', category: 'noOperatorWriteApi', reason: 'アプリは読むだけ (src/app/api/performance/sports/route.ts・src/app/api/onboarding/complete/route.ts)' },
-  { table: 'subscription_plans', policy: 'subscription_plans_mutate_super_admin', command: 'ALL', category: 'sessionClientApi', reason: 'src/app/api/super-admin/plans/** が本人のセッションで INSERT / UPDATE / DELETE' },
-  { table: 'support_ticket_messages', policy: 'ticket_messages_insert', command: 'INSERT', category: 'sessionClientApi', reason: 'src/app/api/admin/support/tickets/** が本人のセッションで INSERT' },
-  { table: 'support_tickets', policy: 'tickets_insert_staff', command: 'INSERT', category: 'sessionClientApi', reason: 'src/app/api/admin/support/tickets/route.ts の POST が本人のセッションで INSERT' },
-  { table: 'support_tickets', policy: 'tickets_update_support', command: 'UPDATE', category: 'sessionClientApi', reason: 'src/app/api/admin/support/tickets/[id]/** が本人のセッションで UPDATE' },
-  { table: 'system_settings', policy: 'Super admins can update system settings', command: 'ALL', category: 'sessionClientApi', reason: 'src/app/api/super-admin/settings/route.ts が本人のセッションで UPSERT' },
 ];
 
 /** 突き合わせに使う 1 行の形 (「表|ポリシー 種類」) */

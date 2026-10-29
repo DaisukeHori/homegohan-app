@@ -20,8 +20,10 @@ import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/
 import { internalError } from '@/lib/api/errors';
 import { isUuid, uuidOrNull } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { MEAL_NOT_FOUND_MESSAGE } from '@/lib/api/user-api-error-messages';
+import { setPlannedMealCompleted } from '@/modules/planned-meals-integrity/server';
+import { PLANNED_MEAL_COMPLETION_INVALID_MESSAGE, PlannedMealCompletionInputSchema } from '@/modules/planned-meals-integrity/core';
 
 /**
  * 特定の食事を取得（planned_mealsベース）
@@ -86,7 +88,11 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
     }
 
-    const body = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
 
     // #1205: 栄養素の型・範囲を、DB に触れる前に確認する（不正なら 400）。
     // 下の allowlist はキー名を絞るだけで値は見ないため、ここで値を確認する。
@@ -101,12 +107,19 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     if (!validation.ok) {
       return NextResponse.json(plannedMealValidationErrorBody(validation), { status: 400 });
     }
-    
-    // 許可されたフィールドのみ更新
+
+    // 完了の指定 (is_completed) が無ければ null。boolean でなければ 400 (DB に触れる前)。
+    // 完了は RPC planned_meals_set_completed で切り替え、completed_at は本文にあっても読まない (時刻は DB が決める。#2025)
+    const completionInput = body.is_completed === undefined ? null : PlannedMealCompletionInputSchema.safeParse(body.is_completed);
+    if (completionInput && !completionInput.success) {
+      return NextResponse.json({ error: PLANNED_MEAL_COMPLETION_INVALID_MESSAGE }, { status: 400 });
+    }
+
+    // 許可されたフィールドのみ更新。is_completed / completed_at は列の権限が無い (送ると 42501) ので入れない (#2025)
     const allowedFields = [
       'dish_name', 'mode', 'description', 'image_url', 'ingredients',
       'calories_kcal', 'protein_g', 'fat_g', 'carbs_g',
-      'is_completed', 'completed_at', 'dishes', 'is_simple', 'cooking_time_minutes', 'source_type'
+      'dishes', 'is_simple', 'cooking_time_minutes', 'source_type'
     ];
     
     const updateData: Record<string, any> = {};
@@ -297,11 +310,27 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       }
     }
 
+    // 完了の指定があれば RPC で切り替え、応答の行に RPC の値 (is_completed / completed_at / updated_at) を重ねる (#2025)。
+    // 画像のジョブを積んだ後に呼ぶ: 料理を 'pending' で保存した後に RPC の失敗で抜けると、ジョブが無いまま
+    // 「料理画像を生成中です」が残るため。RPC が失敗しても他の列と画像のジョブは保存済みのまま (画面は失敗時に読み直す)
+    let completionRow: Record<string, unknown> = {};
+    if (completionInput) {
+      const completion = await setPlannedMealCompleted(supabase, { mealId: params.id, completed: completionInput.data });
+      if (!completion.ok) {
+        if (completion.reason === 'not_found') {
+          return NextResponse.json({ error: MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
+        }
+        return internalError('PATCH /api/meals/[id]', completion.error, { userId: user.id, requestId: requestId ?? undefined });
+      }
+      completionRow = completion.row;
+    }
+
     // #1022 (Suggestion): 画像生成がスロットルされた場合のみ additive にフラグを付与する
     return NextResponse.json(
       // #1149 今日の AI の利用回数の上限に達して、料理画像だけを見送ったときは aiSkipped (AI_DAILY_LIMIT) を足す
       {
         ...data,
+        ...completionRow,
         ...(imageGenerationThrottled ? { imageGenerationThrottled: true } : {}),
         ...aiDailyLimitSkippedField(imageUsage),
       },

@@ -18,7 +18,7 @@ import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { isUuid } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { aiRequiredFieldMessage, AI_MENU_MEAL_NOT_FOUND_MESSAGE, AI_IMAGE_URL_INVALID_MESSAGE, AI_NUTRITION_ESTIMATE_FAILED_MESSAGE, AI_NUTRITION_INPUT_REQUIRED_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 /**
@@ -34,7 +34,12 @@ export async function POST(request: Request) {
   const supabase = await createClient();
 
   try {
-    const { plannedMealId, imageUrl, nutritionData } = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const requestBody = await request.json().catch(() => null);
+    if (!requestBody || typeof requestBody !== 'object' || Array.isArray(requestBody)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
+    const { plannedMealId, imageUrl, nutritionData } = requestBody;
 
     // 1. ユーザー確認
     const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -94,7 +99,7 @@ export async function POST(request: Request) {
         .update({
           // 検証済みの値（送られていない項目は含まれず、既存の値を残す）
           ...validation.nutrients,
-          veg_score: nutritionData.veg_score,
+          // 野菜スコアは利用者から受け取らない (#2025。サーバの計算値 = 写真の解析だけが書く)
           quality_tags: nutritionData.quality_tags,
           updated_at: new Date().toISOString(),
         })
@@ -141,7 +146,6 @@ export async function POST(request: Request) {
           "protein_g": number,
           "fat_g": number,
           "carbs_g": number,
-          "veg_score": number (1-5),
           "quality_tags": ["タグ1", "タグ2"],
           "dishes": [{ "name": "料理名", "role": "main/side/soup" }]
         }
@@ -205,7 +209,7 @@ export async function POST(request: Request) {
 
         const updatePayload: Record<string, unknown> = {
           ...aiNutrients,
-          veg_score: result.veg_score,
+          // 野菜スコアは書かない (#2025。fast LLM の 1〜5 点は写真の解析の 0〜100 点と尺度が違い、正本ではない)
           quality_tags: result.quality_tags,
           dishes: photoDishes.length > 0 ? photoDishes : existing.dishes ?? null,
           image_url: imageUrl,

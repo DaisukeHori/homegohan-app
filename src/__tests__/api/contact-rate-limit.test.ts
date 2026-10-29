@@ -7,9 +7,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // 共通ヘルパーの限度値そのものは src/__tests__/lib/rate-limit.test.ts で確かめる。
 
 const mockGetUser = vi.fn();
-const mockSingle = vi.fn();
-const mockSelectAfterInsert = vi.fn(() => ({ single: mockSingle }));
-const mockInsert = vi.fn(() => ({ select: mockSelectAfterInsert }));
+/** route は保存した行を読み返さない (RETURNING を付けない)。insert の結果だけを返す */
+const mockInsert = vi.fn((_row: Record<string, unknown>) => Promise.resolve({ data: null, error: null }));
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn().mockResolvedValue({
@@ -70,10 +69,6 @@ vi.mock('@/lib/emails/send', () => ({ sendEmail: mockSendEmail }));
 beforeEach(() => {
   vi.clearAllMocks();
   mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
-  mockSingle.mockResolvedValue({
-    data: { id: 'inquiry-1', inquiry_type: 'general', email: 'user@example.com', subject: 's', message: 'm' },
-    error: null,
-  });
   // 管理者通知メール (送信待ちへの登録) を有効にして、送られないことも確かめられるようにする
   vi.stubEnv('ADMIN_NOTIFICATION_EMAIL', 'admin@example.com');
   mockSendEmail.mockResolvedValue({ ok: true, id: 'outbox-id-1', attempts: 0, skipped: false, error: null });

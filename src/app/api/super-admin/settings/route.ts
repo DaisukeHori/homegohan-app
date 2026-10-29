@@ -17,7 +17,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { authFailureNested } from '@/lib/api/error-responses';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import {
   SETTING_READ_ONLY_CODE,
@@ -93,7 +93,8 @@ export async function PUT(request: NextRequest) {
     }
 
     const supabase = await createClient();
-    const { error } = await supabase
+    // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
+    const { error } = await getSupabaseAdmin()
       .from('system_settings')
       .upsert({
         key: key.trim(),

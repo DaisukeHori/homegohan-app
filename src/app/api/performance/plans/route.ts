@@ -4,7 +4,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { toPerformancePlan, fromPerformancePlan } from '@/lib/converter'
 import { internalError } from '@/lib/api/errors'
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character'
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
+import { API_INVALID_JSON_MESSAGE, API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
+import { isUuid } from '@/lib/http-params'
 
 /** 400: 調整の種類 (adjustmentType) と理由 (rationale) が無い */
 const ADJUSTMENT_FIELDS_REQUIRED_MESSAGE = '調整の種類 (adjustmentType) と理由 (rationale) を指定してください'
@@ -74,7 +75,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
-    const body = await request.json()
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null)
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 })
+    }
     const {
       adjustmentType,
       adjustmentValue,
@@ -159,11 +164,19 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 })
     }
 
-    const body = await request.json()
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const body = await request.json().catch(() => null)
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 })
+    }
     const { planId, status, endDate } = body
 
     if (!planId) {
       return NextResponse.json({ error: PLAN_ID_REQUIRED_MESSAGE }, { status: 400 })
+    }
+    // UUID の形でない planId は DB に渡さず 404 (計画が無い id と同じ。uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る。#1917 の続き)
+    if (!isUuid(planId)) {
+      return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 })
     }
 
     const updates: Record<string, any> = {
@@ -178,10 +191,14 @@ export async function PATCH(request: NextRequest) {
       .eq('id', planId)
       .eq('user_id', user.id)
       .select()
-      .single()
+      .maybeSingle()
 
+    // DB の失敗は 500。更新した行が無い (他人の計画・消えた計画) ときだけ 404 (#1917 の続き。.single() は 0 行を失敗にして 500 にしていた)
     if (error) {
       return internalError('PATCH /api/performance/plans', error, { userId: user.id })
+    }
+    if (!data) {
+      return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 })
     }
 
     return NextResponse.json({

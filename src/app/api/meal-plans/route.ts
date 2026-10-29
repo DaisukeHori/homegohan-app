@@ -91,8 +91,9 @@ export async function GET(request: Request) {
     meals: (day.planned_meals || []).map(toPlannedMeal),
   }));
 
-  // アクティブな買い物リストを取得
-  const { data: shoppingListData } = await supabase
+  // アクティブな買い物リストを取得。無いときだけ null。読めなかった (DB の失敗) ときは 500 (#1917 の続き。以前は失敗を捨て、
+  // 買い物リストが無いように見えていた)
+  const { data: shoppingListData, error: shoppingListError } = await supabase
     .from('shopping_lists')
     .select(`
       *,
@@ -103,6 +104,9 @@ export async function GET(request: Request) {
     .order('created_at', { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (shoppingListError) {
+    return internalError('GET /api/meal-plans', shoppingListError, { userId: user.id, table: 'shopping_lists' });
+  }
 
   const shoppingList = shoppingListData ? {
     id: shoppingListData.id,

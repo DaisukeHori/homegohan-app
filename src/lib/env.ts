@@ -422,6 +422,14 @@ export const SERVER_ENV_VARS = {
     // 読み方 (正の整数でなければ既定値) を 1 か所に置く
     readOnlyBy: 'src/lib/menu-plan-date-offset.ts',
   },
+  DISH_FAVORITES_MAX_PER_USER: {
+    required: false,
+    description:
+      '献立の料理のお気に入り (dish_favorites) を 1 人が保存できる件数の上限 (正の整数) (#2011。docs/design/cross/22-dish-favorites.md §13)',
+    whenMissing: '上限は 300 件 (DISH_FAVORITES_MAX_PER_USER_DEFAULT)。正の整数でない値も 300 件',
+    // 読み方 (正の整数でなければ既定値) を 1 か所に置く
+    readOnlyBy: 'src/modules/dish-favorites/server.ts',
+  },
   ORG_CHALLENGE_SHOW_NAMES: {
     required: false,
     description:

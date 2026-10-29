@@ -1,7 +1,35 @@
 "use client";
 
-import { useState, useEffect, use } from "react";
+/**
+ * /super-admin/experiments/[id] — A/B テストの詳細
+ *
+ * 状態の変更 (実験開始・完了・中止) が 409 で断られたら (遷移表に無い変更 OP_EXPERIMENT_INVALID_TRANSITION・
+ * 読んでから書くまでに別の操作が状態を変えた CONFLICT_STALE_DATA。どちらも別のタブ・別の運営が先に状態を変えたとき)、
+ * 画面が自分で実験を読み直し、読み直した旨と今の状態を画面の表示名 (下書き・実行中・完了・中止) で画面の上に出す (#2064)。
+ * route の文は DB の値の英字の状態名を埋めるので出さない。読み直しは画面を外さずに行い、失敗したら文と「再試行」を出す。
+ * 読み直しが 404 / 403 で断られたら、読み込み直しても変わらないので、その理由の文を出し「再試行」は出さない
+ * (プランの詳細の reloadAfterStale と同じ形)。確認の文・状態のバッジも英字の状態名を出さない。
+ * 状態の変更は、応答とそのあとの読み直しを待つあいだ、ほかの状態の変更を送らない (#2050。ref でも守る)。
+ * 状態の変更の通信そのものが失敗した (fetch が reject した) ときは、サーバーが変更を済ませてから応答が切れたこともあるので、
+ * 実験を読み直して今の状態とボタンを見せ、「状態の変更の応答を受け取れませんでした」の文を出す (alert にしない。#2073)。
+ * 読み直さないと、古い状態のボタンをもう一度押して 409 になり、自分の操作なのに「別の操作で実験の状態が先に変わっていました」と出る。
+ * そのあとの読み直しが失敗したら「再試行」を出し、読み直せるまで状態のボタンを止める (画面の状態が古いかもしれないため)。
+ */
+
+import { useState, useEffect, useCallback, useRef, use } from "react";
 import Link from "next/link";
+import { forbiddenMessageForScreen } from "@/lib/admin/api-error-message";
+import {
+  EXPERIMENT_NOT_FOUND_ON_RELOAD_MESSAGE,
+  EXPERIMENT_NO_RESPONSE_RELOAD_FAILED_MESSAGE,
+  EXPERIMENT_STALE_RELOAD_FAILED_MESSAGE,
+  EXPERIMENT_STATUS_CHANGE_CONFIRM_MESSAGES,
+  experimentNoResponseReloadedMessage,
+  experimentStaleReloadedMessage,
+  experimentStatusLabel,
+  isExperimentStatusConflict,
+  type ExperimentStatusChangeTarget,
+} from "@/lib/super-admin/experiment-status-display";
 
 interface ExperimentResults {
   experiment_id: string;
@@ -41,60 +69,212 @@ const STATUS_BADGE: Record<string, string> = {
   cancelled: "bg-red-800 text-red-200",
 };
 
+/** 読み込み・読み直しが 404 / 403 で断られたかを見分ける HTTP ステータス */
+const HTTP_NOT_FOUND = 404;
+const HTTP_FORBIDDEN = 403;
+
+/**
+ * 実験の読み込みの結果。superseded は、読み込みの最中に新しい読み込みが始まったので結果を捨てた。
+ * unavailable は、表示したあとの読み直しが 404 / 403 で断られた (読み込み直しても変わらない理由)
+ */
+type ExperimentLoadOutcome =
+  | { kind: "loaded"; experiment: Experiment }
+  | { kind: "failed" }
+  | { kind: "unavailable"; message: string }
+  | { kind: "superseded" };
+
+/**
+ * 画面の上に出す、409 のあと・通信の reject のあとの読み直しについての文 (#2064・#2073)。
+ *   - stale                    : 409 のあとに読み直した (今の状態を添える)
+ *   - stale-reload-failed      : 409 のあとの読み直しに失敗した (「再試行」を出す)
+ *   - no-response              : 状態の変更の通信が reject されたあとに読み直した (今の状態を添える)
+ *   - no-response-reload-failed: 通信が reject されたあとの読み直しに失敗した (「再試行」を出し、状態のボタンを止める)
+ *   - unavailable              : 読み直しが 404 / 403 で断られた (「再試行」は出さない)
+ */
+type ReloadNotice =
+  | { kind: "stale"; status: string }
+  | { kind: "stale-reload-failed" }
+  | { kind: "no-response"; status: string }
+  | { kind: "no-response-reload-failed" }
+  | { kind: "unavailable"; message: string };
+
+function reloadNoticeText(notice: ReloadNotice): string {
+  switch (notice.kind) {
+    case "stale":
+      return experimentStaleReloadedMessage(notice.status);
+    case "stale-reload-failed":
+      return EXPERIMENT_STALE_RELOAD_FAILED_MESSAGE;
+    case "no-response":
+      return experimentNoResponseReloadedMessage(notice.status);
+    case "no-response-reload-failed":
+      return EXPERIMENT_NO_RESPONSE_RELOAD_FAILED_MESSAGE;
+    case "unavailable":
+      return notice.message;
+  }
+}
+
+/** API の失敗の本文から文を取り出す (取り出せなければ null) */
+function apiErrorMessageOf(body: unknown): string | null {
+  if (typeof body !== "object" || body === null) return null;
+  const message = (body as { error?: { message?: unknown } }).error?.message;
+  return typeof message === "string" ? message : null;
+}
+
 export default function ExperimentDetailPage(props: { params: Promise<{ id: string }> }) {
   const params = use(props.params);
   const [experiment, setExperiment] = useState<Experiment | null>(null);
   const [results, setResults] = useState<ExperimentResults | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // 状態の変更 (開始・完了・中止) の応答と、409 のあとの読み直しを待っているか。待つあいだは状態のボタンを止める
+  // (二度押しで 2 本目を送ると、変えられているのに断られて失敗の文が出るため。#2050)
+  const [isChangingStatus, setIsChangingStatus] = useState(false);
+  // ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り (クーポン・プランの詳細と同じ形。#2064)
+  const writeInFlightRef = useRef(false);
+  // 画面の上に出す、409 のあとの読み直しについての文 (#2064)
+  const [reloadNotice, setReloadNotice] = useState<ReloadNotice | null>(null);
+  // 「再試行」の読み直しを待っているか
+  const [isReloading, setIsReloading] = useState(false);
+  // 一度実験を表示したか (表示したあとの読み直しは、画面を外さずに行う)
+  const hasLoadedRef = useRef(false);
+  // 読み込みを重ねたとき、古い読み込みの結果で上書きしないための連番
+  const loadSeqRef = useRef(0);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [expRes, resRes] = await Promise.all([
-          fetch(`/api/super-admin/experiments/${params.id}`),
-          fetch(`/api/super-admin/experiments/${params.id}/results`),
-        ]);
-
-        if (!expRes.ok) {
-          const body = await expRes.json();
-          throw new Error(body.error?.message ?? `HTTP ${expRes.status}`);
+  /**
+   * 実験 (と結果) を読む。初めの読み込みは失敗したら画面をエラーにする。
+   * 表示したあとの読み直しは画面を外さず、失敗しても画面を残す (結果は戻り値で返し、文は呼び出し側が決める)
+   */
+  const loadExperiment = useCallback(async (): Promise<ExperimentLoadOutcome> => {
+    const seq = ++loadSeqRef.current;
+    const isReload = hasLoadedRef.current;
+    try {
+      const [expRes, resRes] = await Promise.all([
+        fetch(`/api/super-admin/experiments/${params.id}`),
+        fetch(`/api/super-admin/experiments/${params.id}/results`),
+      ]);
+      // 403 の本文が JSON として読めなくても「権限がありません」を出せるよう、読めない本文は null にする
+      const expBody: unknown = await expRes.json().catch(() => null);
+      if (seq !== loadSeqRef.current) return { kind: "superseded" };
+      const loaded = (expBody as { data?: Experiment } | null)?.data;
+      if (!expRes.ok || !loaded) {
+        if (!isReload) setError(apiErrorMessageOf(expBody) ?? `HTTP ${expRes.status}`);
+        if (isReload && expRes.status === HTTP_NOT_FOUND) {
+          return { kind: "unavailable", message: EXPERIMENT_NOT_FOUND_ON_RELOAD_MESSAGE };
         }
-
-        const expData = await expRes.json();
-        setExperiment(expData.data);
-
-        if (resRes.ok) {
-          const resData = await resRes.json();
-          setResults(resData.data);
+        if (isReload && expRes.status === HTTP_FORBIDDEN) {
+          return { kind: "unavailable", message: forbiddenMessageForScreen(expBody) };
         }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "読み込みに失敗しました");
-      } finally {
-        setIsLoading(false);
+        return { kind: "failed" };
       }
-    };
-    fetchData();
+      hasLoadedRef.current = true;
+      setExperiment(loaded);
+      setError(null);
+
+      if (resRes.ok) {
+        const resBody: unknown = await resRes.json().catch(() => null);
+        const loadedResults = (resBody as { data?: ExperimentResults } | null)?.data;
+        if (seq === loadSeqRef.current && loadedResults) setResults(loadedResults);
+      }
+      return { kind: "loaded", experiment: loaded };
+    } catch (err) {
+      if (seq !== loadSeqRef.current) return { kind: "superseded" };
+      if (!isReload) setError(err instanceof Error ? err.message : "読み込みに失敗しました");
+      return { kind: "failed" };
+    } finally {
+      if (seq === loadSeqRef.current && !isReload) setIsLoading(false);
+    }
   }, [params.id]);
 
-  const handleStatusChange = async (status: string) => {
-    if (!confirm(`ステータスを "${status}" に変更しますか？`)) return;
+  useEffect(() => {
+    void loadExperiment();
+  }, [loadExperiment]);
+
+  /** 通信の reject のあとの読み直しが失敗し、まだ読み直せていないか (#2073)。そのあいだは状態のボタンを止める */
+  const noResponseStaleRef = useRef(false);
+  const [isNoResponseStale, setIsNoResponseStale] = useState(false);
+  const markNoResponseStale = useCallback((stale: boolean) => {
+    noResponseStaleRef.current = stale;
+    setIsNoResponseStale(stale);
+  }, []);
+
+  /**
+   * 状態が分からなくなったあとの読み直し。cause は読み直す理由:
+   *   - stale      : 409 (遷移表に無い変更・別の操作が先に状態を変えた)
+   *   - no-response: 状態の変更の通信が reject された (応答を受け取れず、変更が済んだか分からない。#2073)
+   * 結果に合わせて文を出す (読み直せなかったのに「読み込み直した」と出さない)
+   */
+  const reloadAfterUncertain = useCallback(async (cause: "stale" | "no-response") => {
+    const outcome = await loadExperiment();
+    if (outcome.kind === "superseded") return;
+    // 通信の reject のあとの読み直しが失敗したときだけ、読み直せるまで状態のボタンを止める (#2073)
+    markNoResponseStale(cause === "no-response" && outcome.kind === "failed");
+    if (outcome.kind === "loaded") {
+      setReloadNotice({ kind: cause, status: outcome.experiment.status });
+    } else if (outcome.kind === "failed") {
+      setReloadNotice({ kind: cause === "stale" ? "stale-reload-failed" : "no-response-reload-failed" });
+    } else {
+      setReloadNotice({ kind: "unavailable", message: outcome.message });
+    }
+  }, [loadExperiment, markNoResponseStale]);
+
+  /** 409 (遷移表に無い変更・別の操作が先に状態を変えた) のあとの読み直し */
+  const reloadAfterStale = useCallback(() => reloadAfterUncertain("stale"), [reloadAfterUncertain]);
+
+  /** 「再試行」: 409 のあと・通信の reject のあとの失敗した読み直しをやり直す */
+  const retryReload = async () => {
+    if (writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
+    setIsReloading(true);
     try {
-      const res = await fetch(`/api/super-admin/experiments/${params.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-      if (!res.ok) {
-        const body = await res.json();
-        throw new Error(body.error?.message ?? `HTTP ${res.status}`);
-      }
-      const { data } = await res.json();
-      setExperiment(data);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "更新に失敗しました");
+      await reloadAfterUncertain(reloadNotice?.kind === "no-response-reload-failed" ? "no-response" : "stale");
+    } finally {
+      writeInFlightRef.current = false;
+      setIsReloading(false);
     }
   };
+
+  const handleStatusChange = async (status: ExperimentStatusChangeTarget) => {
+    // 応答 (とそのあとの読み直し) を待つあいだは送らない (#2050。ref は再描画の前の続けての押下の守り。#2064)。
+    // 通信の reject のあとの読み直しが失敗して、まだ読み直せていないあいだも送らない (#2073)
+    if (writeInFlightRef.current || noResponseStaleRef.current) return;
+    if (!confirm(EXPERIMENT_STATUS_CHANGE_CONFIRM_MESSAGES[status])) return;
+    writeInFlightRef.current = true;
+    setIsChangingStatus(true);
+    setReloadNotice(null);
+    try {
+      let res: Response;
+      try {
+        res = await fetch(`/api/super-admin/experiments/${params.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status }),
+        });
+      } catch {
+        // 応答を受け取れなかった (オフライン・接続が切れたなど)。変更が済んだかは分からないので、読み直して今の状態を見せる (#2073)
+        await reloadAfterUncertain("no-response");
+        return;
+      }
+      const body: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        if (isExperimentStatusConflict(res.status, body)) {
+          // 別のタブ・別の運営が先に状態を変えていた (API は書いていない)。実験を読み直し、その旨を画面の上に出す
+          await reloadAfterStale();
+          return;
+        }
+        alert(apiErrorMessageOf(body) ?? `HTTP ${res.status}`);
+        return;
+      }
+      const updated = (body as { data?: Experiment } | null)?.data;
+      if (updated) setExperiment(updated);
+    } finally {
+      writeInFlightRef.current = false;
+      setIsChangingStatus(false);
+    }
+  };
+
+  const isBusy = isChangingStatus || isReloading;
+  // 状態のボタンを止めるか (応答・読み直しを待つあいだと、通信の reject のあとの読み直しが失敗しているあいだ。#2073)
+  const statusButtonsDisabled = isBusy || isNoResponseStale;
 
   if (isLoading) {
     return (
@@ -124,12 +304,31 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
         </Link>
       </div>
 
+      {reloadNotice && (
+        <div
+          data-testid="experiment-reload-notice"
+          role="alert"
+          className="mb-6 flex items-start justify-between gap-4 bg-amber-900/40 border border-amber-500 rounded-xl p-4 text-amber-200 text-sm"
+        >
+          <p>{reloadNoticeText(reloadNotice)}</p>
+          {(reloadNotice.kind === "stale-reload-failed" || reloadNotice.kind === "no-response-reload-failed") && (
+            <button
+              onClick={() => void retryReload()}
+              disabled={isBusy}
+              className="shrink-0 bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
+            >
+              再試行
+            </button>
+          )}
+        </div>
+      )}
+
       <div className="flex items-start justify-between mb-8">
         <div>
           <div className="flex items-center gap-3 mb-2">
             <h1 className="text-2xl font-bold text-white">{experiment.name}</h1>
             <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${badgeClass}`}>
-              {experiment.status}
+              {experimentStatusLabel(experiment.status)}
             </span>
           </div>
           <code className="text-slate-400 font-mono text-sm">{experiment.key}</code>
@@ -139,7 +338,8 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
           {experiment.status === "draft" && (
             <button
               onClick={() => handleStatusChange("running")}
-              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+              disabled={statusButtonsDisabled}
+              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
             >
               実験開始
             </button>
@@ -148,13 +348,15 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
             <>
               <button
                 onClick={() => handleStatusChange("completed")}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                disabled={statusButtonsDisabled}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
               >
                 完了
               </button>
               <button
                 onClick={() => handleStatusChange("cancelled")}
-                className="bg-red-700 hover:bg-red-800 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+                disabled={statusButtonsDisabled}
+                className="bg-red-700 hover:bg-red-800 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
               >
                 中止
               </button>

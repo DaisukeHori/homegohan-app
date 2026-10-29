@@ -1,5 +1,5 @@
--- migration: 20261024150000_recipe_author_display_names.sql
--- 戻し方: supabase/rollbacks/20261024150000_recipe_author_display_names.down.sql
+-- migration: 20261101090000_recipe_author_display_names.sql
+-- 戻し方: supabase/rollbacks/20261101090000_recipe_author_display_names.down.sql
 -- #1917 の続き (docs/design/cross/21-recipe-author-display-name.md): 公開レシピの一覧・詳細・コメントの作者名を、本人以外にも表示名で出す。
 --
 -- 背景:

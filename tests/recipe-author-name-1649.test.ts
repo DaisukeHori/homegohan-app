@@ -22,7 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RECIPE_AUTHOR_FALLBACK_NAME, recipeAuthorName } from '@/lib/recipes/author-name';
 import { RECIPE_AUTHOR_DISPLAY_NAMES_RPC } from '@/lib/recipes/viewer-lookups';
 
-const RECIPE_ID = 'r0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+const RECIPE_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 
 const h = vi.hoisted(() => ({
   /** 作者の表示名の関数が返す名前 (渡された id のどれにもこの値を返す) */

@@ -13,7 +13,7 @@ import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AI_MENU_MEAL_ID_INVALID_MESSAGE, AI_MENU_MEAL_NOT_FOUND_MESSAGE, AI_MENU_MEAL_REGENERATION_STARTED_MESSAGE } from '@/lib/ai/ai-api-messages';
 
 // Vercel Proプランでは最大300秒まで延長可能
@@ -28,7 +28,12 @@ export async function POST(request: Request) {
   const supabase = await createClient();
 
   try {
-    const { mealId, preferences, note } = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const requestBody = await request.json().catch(() => null);
+    if (!requestBody || typeof requestBody !== 'object' || Array.isArray(requestBody)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
+    const { mealId, preferences, note } = requestBody;
 
     // 1. ユーザー認証
     const { data: { user }, error: userError } = await supabase.auth.getUser();

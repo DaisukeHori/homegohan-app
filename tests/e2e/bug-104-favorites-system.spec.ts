@@ -4,11 +4,16 @@
  *
  * #109: /favorites ページが存在する
  * #104: お気に入りレシピが GET /api/favorites で取得できる
- * #106: DELETE 時に like_count/likeCount が返される
+ * #106: DELETE 時に like_count/likeCount が返される (成功の応答の形。レシピの名前の id は 404 になる #1917 の続き)
+ * #2011: 献立の料理のお気に入りは料理の写しを dish_favorites に保存する (POST / GET / DELETE /api/favorites。E-1)
  */
 import { test, expect } from "./fixtures/fresh-user";
 
 const TEST_RECIPE_NAME = "テスト用照り焼きチキン";
+/** レシピが無いときの 404 の本文 (src/lib/api/error-responses.ts の API_NOT_FOUND_MESSAGE。この spec は next/server を読み込まないので文を写す) */
+const NOT_FOUND_BODY = { error: "対象が見つかりません" };
+/** E-1 で保存する献立の料理の名前 (dish_favorites.dish_name。#2011) */
+const TEST_DISH_FAVORITE_NAME = "テスト用の鶏の照り焼き (E-1)";
 
 test.describe("Favorites system (#104 #106 #109)", () => {
   test("GET /favorites page loads and shows correct header", async ({ tourPendingUser }) => {
@@ -37,47 +42,69 @@ test.describe("Favorites system (#104 #106 #109)", () => {
     expect(typeof body.total).toBe("number");
   });
 
-  test("GET /api/recipes/:name/like returns isLiked status", async ({ tourPendingUser }) => {
+  // recipe_likes.recipe_id は uuid の列 (recipes.id への外部キー)。レシピの名前 (UUID の形でない id) は DB に渡さず、
+  // GET は いいねの行が無いときと同じ { liked: false }、POST・DELETE はレシピが無いときと同じ 404 (#1917 の続き)
+  test("GET /api/recipes/:name/like は UUID の形でない id に { liked: false } を返す", async ({ tourPendingUser }) => {
     const testRecipeName = encodeURIComponent(TEST_RECIPE_NAME);
     const res = await tourPendingUser.request.get(`/api/recipes/${testRecipeName}/like`);
     expect(res.status()).toBe(200);
-    const body = await res.json();
-    expect(typeof body.liked).toBe("boolean");
+    expect(await res.json()).toEqual({ liked: false });
   });
 
-  test("POST /api/recipes/:name/like returns likeCount (#106 DELETE fix check)", async ({ tourPendingUser }) => {
-    // テスト用レシピ名
+  test("POST /api/recipes/:name/like は UUID の形でない id を 404 にする (500 にしない)", async ({ tourPendingUser }) => {
     const testRecipeName = encodeURIComponent(TEST_RECIPE_NAME);
-
-    // いいね追加 (冪等)
     const postRes = await tourPendingUser.request.post(`/api/recipes/${testRecipeName}/like`);
-    // 200 or 400 (already liked) どちらも許容
-    expect([200, 400, 500]).toContain(postRes.status());
-
-    if (postRes.status() === 200) {
-      const postBody = await postRes.json();
-      expect(typeof postBody.likeCount).toBe("number");
-      expect(postBody.liked).toBe(true);
-    }
+    expect(postRes.status()).toBe(404);
+    expect(await postRes.json()).toEqual(NOT_FOUND_BODY);
   });
 
-  test("DELETE /api/recipes/:name/like removes the like", async ({ tourPendingUser }) => {
+  test("DELETE /api/recipes/:name/like は UUID の形でない id を 404 にする (500 にしない)", async ({ tourPendingUser }) => {
     const testRecipeName = encodeURIComponent(TEST_RECIPE_NAME);
-
-    // まずいいねを追加 (冪等)
-    await tourPendingUser.request.post(`/api/recipes/${testRecipeName}/like`);
-
-    // いいね削除 → likeCount が返ること (#106)
     const deleteRes = await tourPendingUser.request.delete(`/api/recipes/${testRecipeName}/like`);
-    // 削除されていない場合は 404/500 になる可能性があるが、成功すれば likeCount を検証
-    if (deleteRes.status() === 200) {
-      const body = await deleteRes.json();
-      expect(typeof body.likeCount).toBe("number");
-      expect(body.liked).toBe(false);
-    } else {
-      // like が存在しない or エラーは許容
-      expect([200, 404, 500]).toContain(deleteRes.status());
-    }
+    expect(deleteRes.status()).toBe(404);
+    expect(await deleteRes.json()).toEqual(NOT_FOUND_BODY);
+  });
+
+  // #2011 E-1: 献立の料理の写しを保存して、一覧に出て、消せる (API だけ。献立の生成に依らない。docs/design/cross/22-dish-favorites.md §12)
+  test("E-1 POST /api/favorites に料理の写しを送ると 201 で、GET /api/favorites に出て、DELETE /api/favorites/{id} で消える", async ({ tourPendingUser }) => {
+    const dish = {
+      name: TEST_DISH_FAVORITE_NAME,
+      role: "main",
+      calories_kcal: 320,
+      ingredients: [{ name: "鶏もも肉", amount_g: 200, note: null }, "醤油 大さじ1"],
+      recipe_steps: ["鶏肉を焼く", "たれを絡める"],
+    };
+
+    const postRes = await tourPendingUser.request.post("/api/favorites", { data: { dish } });
+    expect(postRes.status()).toBe(201);
+    const posted = await postRes.json();
+    expect(posted.created).toBe(true);
+    expect(posted.favorite.dish_name).toBe(TEST_DISH_FAVORITE_NAME);
+    expect(posted.favorite.dish.ingredients).toEqual(dish.ingredients);
+    expect(posted.favorite.dish.recipe_steps).toEqual(dish.recipe_steps);
+    expect(posted.favorite).not.toHaveProperty("user_id");
+    const favoriteId: string = posted.favorite.id;
+
+    const listRes = await tourPendingUser.request.get(`/api/favorites?q=${encodeURIComponent(TEST_DISH_FAVORITE_NAME)}`);
+    expect(listRes.status()).toBe(200);
+    const listed = await listRes.json();
+    expect(listed.total).toBe(1);
+    expect(listed.favorites.map((favorite: { id: string }) => favorite.id)).toEqual([favoriteId]);
+
+    const statusRes = await tourPendingUser.request.get(`/api/favorites/status?name=${encodeURIComponent(TEST_DISH_FAVORITE_NAME)}`);
+    expect(statusRes.status()).toBe(200);
+    expect(await statusRes.json()).toEqual({ favorited: true, id: favoriteId });
+
+    const deleteRes = await tourPendingUser.request.delete(`/api/favorites/${favoriteId}`);
+    expect(deleteRes.status()).toBe(200);
+    expect(await deleteRes.json()).toEqual({ success: true });
+
+    const afterRes = await tourPendingUser.request.get(`/api/favorites?q=${encodeURIComponent(TEST_DISH_FAVORITE_NAME)}`);
+    expect(await afterRes.json()).toEqual({ favorites: [], total: 0 });
+    // 消した行をもう一度消すと 404
+    const againRes = await tourPendingUser.request.delete(`/api/favorites/${favoriteId}`);
+    expect(againRes.status()).toBe(404);
+    expect(await againRes.json()).toEqual(NOT_FOUND_BODY);
   });
 
   test("favorites search filter works", async ({ tourPendingUser }) => {

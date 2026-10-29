@@ -3,7 +3,8 @@ import { NextResponse } from 'next/server';
 import { toShoppingListItem, toShoppingList } from '@/lib/converter';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { API_INVALID_JSON_MESSAGE, API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { isUuid } from '@/lib/http-params';
 
 
 /** 400: 追加先の買い物リスト (shoppingListId) が無い */
@@ -12,6 +13,10 @@ const SHOPPING_LIST_ID_REQUIRED_MESSAGE = '買い物リスト (shoppingListId) �
 const ITEM_NAME_REQUIRED_MESSAGE = '品目の名前を入力してください';
 /** 400: 対象の品目 (itemIds) が無い・空 */
 const ITEM_IDS_REQUIRED_MESSAGE = '対象の品目 (itemIds) を 1 つ以上指定してください';
+/** 400: 追加先の買い物リスト (shoppingListId) が UUID の形でない */
+const SHOPPING_LIST_ID_INVALID_MESSAGE = '買い物リスト (shoppingListId) の形式が正しくありません';
+/** 400: 対象の品目 (itemIds) に UUID の形でない値がある */
+const ITEM_IDS_INVALID_MESSAGE = '対象の品目 (itemIds) の形式が正しくありません';
 
 /**
  * 買い物リスト取得API（日付ベースモデル: shopping_lists → shopping_list_items）
@@ -27,7 +32,11 @@ export async function GET(request: Request) {
 
   try {
     if (shoppingListId) {
-      // 特定の買い物リストを取得
+      // UUID の形でない id は DB に渡さず 404 (リストが無い id と同じ。uuid 型の列に渡すと 22P02 で失敗し、下の「DB の失敗は 500」に入る。#1917 の続き)
+      if (!isUuid(shoppingListId)) {
+        return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
+      }
+      // 特定の買い物リストを取得。DB の失敗は 500、他人のリスト・消えたリストは 404 (#1917 の続き。.single() は 0 行を失敗にして 500 にしていた)
       const { data, error } = await supabase
         .from('shopping_lists')
         .select(`
@@ -36,12 +45,15 @@ export async function GET(request: Request) {
         `)
         .eq('id', shoppingListId)
         .eq('user_id', user.id)
-        .single();
+        .maybeSingle();
 
       if (error) throw error;
+      if (!data) {
+        return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
+      }
 
       return NextResponse.json({ 
-        shoppingList: data ? toShoppingList(data) : null
+        shoppingList: toShoppingList(data)
       });
     } else {
       // アクティブな買い物リストを取得
@@ -80,17 +92,40 @@ export async function POST(request: Request) {
   if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
-    const json = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const json = await request.json().catch(() => null);
+    if (!json || typeof json !== 'object' || Array.isArray(json)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
     const { shoppingListId, itemName, category, quantity } = json;
 
     if (!shoppingListId) {
       return NextResponse.json({ error: SHOPPING_LIST_ID_REQUIRED_MESSAGE }, { status: 400 });
+    }
+    // UUID の形でない shoppingListId は DB に渡さず 400 (uuid 型の列に渡すと 22P02 で失敗し、下の catch の 500 に入っていた。#1917 の続き)
+    if (!isUuid(shoppingListId)) {
+      return NextResponse.json({ error: SHOPPING_LIST_ID_INVALID_MESSAGE }, { status: 400 });
     }
 
     // #262: itemName が null/undefined/空文字の場合は 400
     const name = (itemName ?? '').trim();
     if (!name) {
       return NextResponse.json({ error: ITEM_NAME_REQUIRED_MESSAGE }, { status: 400 });
+    }
+
+    // 追加先は本人の買い物リストだけ (shopping_list_items の RLS「Users can manage own shopping list」と同じ条件)。
+    // 他人のリスト・消えたリストに insert すると RLS の違反の DB の失敗になり 500 になっていたので、先に確かめて 404 にする (#1917 の続き)。
+    // 確かめられなかった (DB の失敗) ときは 500
+    const { data: shoppingList, error: shoppingListError } = await supabase
+      .from('shopping_lists')
+      .select('id')
+      .eq('id', shoppingListId)
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    if (shoppingListError) throw shoppingListError;
+    if (!shoppingList) {
+      return NextResponse.json({ error: API_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
     const { data, error } = await supabase
@@ -129,11 +164,19 @@ export async function DELETE(request: Request) {
   if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
   try {
-    const json = await request.json();
+    // 本文が JSON として読めない (壊れた JSON・オブジェクトでない) ときは 400。route 全体の catch に流して 500 にしない (#1917)
+    const json = await request.json().catch(() => null);
+    if (!json || typeof json !== 'object' || Array.isArray(json)) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
     const { itemIds } = json;
 
     if (!itemIds || !Array.isArray(itemIds) || itemIds.length === 0) {
       return NextResponse.json({ error: ITEM_IDS_REQUIRED_MESSAGE }, { status: 400 });
+    }
+    // UUID の形でない値が 1 つでもあれば DB に渡さず 400 (uuid 型の列に .in で渡すと 22P02 で失敗し、下の catch の 500 に入っていた。#1917 の続き)
+    if (!itemIds.every(isUuid)) {
+      return NextResponse.json({ error: ITEM_IDS_INVALID_MESSAGE }, { status: 400 });
     }
 
     const { error } = await supabase

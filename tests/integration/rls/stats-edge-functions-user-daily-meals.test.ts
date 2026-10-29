@@ -283,37 +283,38 @@ describe('calculate-segment-stats: 実スキーマで指標・統計・ランキ
     if (sandboxMealError) throw new Error(`meals (sandbox): ${sandboxMealError.message}`);
 
     // 同じ日 (2026-10-08) に 4 食ずつ。メニュー実行率が 100 / 75 / 50 / 25 / 0 になるようにする
-    //   s1: 4/4 完了 (スコア 5, 4, 3, なし)  → 実行率 100, 朝食 100, 野菜 4.0, 栄養 80
-    //   s2: 3/4 完了 (スコア 4, 4, 4, なし)  → 実行率  75, 朝食 100, 野菜 4.0, 栄養 80
-    //   s3: 2/4 完了 (スコア 3, 3, 3, なし)  → 実行率  50, 朝食 100, 野菜 3.0, 栄養 60
-    //   s4: 昼だけ完了 (スコア 2 が 4 つ)     → 実行率  25, 朝食   0, 野菜 2.0, 栄養 40
-    //   s5: 何も完了していない (スコア 1 が 4 つ) → 実行率 0, 朝食   0, 野菜 1.0, 栄養 20
+    // 野菜スコアは写真の解析の尺度 0〜100 (#2025)。栄養スコアは野菜スコアの平均を 0〜100 に正規化した値 (係数 1)
+    //   s1: 4/4 完了 (スコア 100, 80, 60, なし) → 実行率 100, 朝食 100, 野菜 80, 栄養 80
+    //   s2: 3/4 完了 (スコア 80, 80, 80, なし)  → 実行率  75, 朝食 100, 野菜 80, 栄養 80
+    //   s3: 2/4 完了 (スコア 60, 60, 60, なし)  → 実行率  50, 朝食 100, 野菜 60, 栄養 60
+    //   s4: 昼だけ完了 (スコア 40 が 4 つ)       → 実行率  25, 朝食   0, 野菜 40, 栄養 40
+    //   s5: 何も完了していない (スコア 20 が 4 つ) → 実行率 0, 朝食   0, 野菜 20, 栄養 20
     const done = '2026-10-08T03:00:00Z';
     await seedDay(userIds[0], D, [
-      { type: 'breakfast', completedAt: done, veg: 5 }, { type: 'lunch', completedAt: done, veg: 4 },
-      { type: 'dinner', completedAt: done, veg: 3 }, { type: 'snack', completedAt: done },
+      { type: 'breakfast', completedAt: done, veg: 100 }, { type: 'lunch', completedAt: done, veg: 80 },
+      { type: 'dinner', completedAt: done, veg: 60 }, { type: 'snack', completedAt: done },
     ]);
     await seedDay(userIds[1], D, [
-      { type: 'breakfast', completedAt: done, veg: 4 }, { type: 'lunch', completedAt: done, veg: 4 },
-      { type: 'dinner', completedAt: done, veg: 4 }, { type: 'snack', completed: false },
+      { type: 'breakfast', completedAt: done, veg: 80 }, { type: 'lunch', completedAt: done, veg: 80 },
+      { type: 'dinner', completedAt: done, veg: 80 }, { type: 'snack', completed: false },
     ]);
     await seedDay(userIds[2], D, [
-      { type: 'breakfast', completedAt: done, veg: 3 }, { type: 'lunch', completedAt: done, veg: 3 },
-      { type: 'dinner', completed: false, veg: 3 }, { type: 'snack', completed: false },
+      { type: 'breakfast', completedAt: done, veg: 60 }, { type: 'lunch', completedAt: done, veg: 60 },
+      { type: 'dinner', completed: false, veg: 60 }, { type: 'snack', completed: false },
     ]);
     await seedDay(userIds[3], D, [
-      { type: 'breakfast', completed: false, veg: 2 }, { type: 'lunch', completedAt: done, veg: 2 },
-      { type: 'dinner', completed: false, veg: 2 }, { type: 'snack', completed: false, veg: 2 },
+      { type: 'breakfast', completed: false, veg: 40 }, { type: 'lunch', completedAt: done, veg: 40 },
+      { type: 'dinner', completed: false, veg: 40 }, { type: 'snack', completed: false, veg: 40 },
     ]);
     await seedDay(userIds[4], D, [
-      { type: 'breakfast', completed: false, veg: 1 }, { type: 'lunch', completed: false, veg: 1 },
-      { type: 'dinner', completed: false, veg: 1 }, { type: 'snack', completed: false, veg: 1 },
+      { type: 'breakfast', completed: false, veg: 20 }, { type: 'lunch', completed: false, veg: 20 },
+      { type: 'dinner', completed: false, veg: 20 }, { type: 'snack', completed: false, veg: 20 },
     ]);
     // s5 の別の日にハンズオン (is_sandbox) の完了済みの食事。実際の食事ではないので、s5 の指標を押し上げてはいけない
     await seedDay(
       userIds[4],
       PREV,
-      [{ type: 'breakfast', completedAt: '2026-10-06T23:00:00Z', veg: 5 }, { type: 'lunch', completedAt: done, veg: 5 }],
+      [{ type: 'breakfast', completedAt: '2026-10-06T23:00:00Z', veg: 100 }, { type: 'lunch', completedAt: done, veg: 100 }],
       { sandbox: true },
     );
     // 1 人だけ 1,100 件 (先に入れた 1,000 件は未完了、最後に入れた 100 件が完了)。このセグメントには入らない (perf_modes が違う)。
@@ -379,7 +380,7 @@ describe('calculate-segment-stats: 実スキーマで指標・統計・ランキ
   it('S-2: planned_meals 由来の指標が、所有者ごとに正しい値で保存される (修正前は全員 0)', async () => {
     expect(await metricValues(metricIds.exec)).toEqual([100, 75, 50, 25, 0]);
     expect(await metricValues(metricIds.bf)).toEqual([100, 100, 100, 0, 0]);
-    expect(await metricValues(metricIds.veg)).toEqual([4, 4, 3, 2, 1]);
+    expect(await metricValues(metricIds.veg)).toEqual([80, 80, 60, 40, 20]);
     expect(await metricValues(metricIds.nut)).toEqual([80, 80, 60, 40, 20]);
   });
 
