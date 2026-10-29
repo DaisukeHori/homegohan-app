@@ -3,7 +3,13 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { displayableAdminError, sendAdminRequest } from "@/lib/admin/admin-screen-messages";
+import {
+  AdminScreenError,
+  adminActionHttpFailedMessage,
+  adminActionNoResponseMessage,
+  adminScreenErrorOfResponse,
+  displayableAdminError,
+} from "@/lib/admin/admin-screen-messages";
 
 /** 失敗の文の操作の名前 (#2086 V6) */
 const FLAG_CREATE_ACTION = "機能フラグの作成";
@@ -47,11 +53,19 @@ export default function NewFlagPage() {
       };
 
       // 失敗は日本語の文の例外にする (本文の無い 502 の「HTTP 502」・通信の reject の英字の文・JSON でない本文の SyntaxError を出さない。#2086 V6)
-      await sendAdminRequest(
-        "/api/super-admin/flags",
-        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) },
-        FLAG_CREATE_ACTION,
-      );
+      let res: Response;
+      try {
+        res = await fetch("/api/super-admin/flags", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } catch {
+        throw new AdminScreenError(adminActionNoResponseMessage(FLAG_CREATE_ACTION));
+      }
+      if (!res.ok) {
+        throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(FLAG_CREATE_ACTION, status));
+      }
 
       router.push("/super-admin/flags");
     } catch (err) {

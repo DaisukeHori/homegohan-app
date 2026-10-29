@@ -114,19 +114,3 @@ export async function fetchAdminJson(url: string, subject: string): Promise<unkn
   if (body === null) throw new AdminScreenError(adminLoadFailedMessage(subject, null));
   return body;
 }
-
-/**
- * 運営の API に書き込みを送り、成功の応答の JSON の本文を返す (本文が JSON でなければ null)。
- * 通信そのものの失敗は「<操作>の応答を受け取れませんでした（通信エラー）」、失敗の応答は本文の日本語の文
- * (無ければ「<操作>に失敗しました (HTTP <番号>)」) の AdminScreenError を投げる
- */
-export async function sendAdminRequest(url: string, init: RequestInit, action: string): Promise<unknown> {
-  let res: Response;
-  try {
-    res = await fetch(url, init);
-  } catch {
-    throw new AdminScreenError(adminActionNoResponseMessage(action));
-  }
-  if (!res.ok) throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(action, status));
-  return res.json().catch(() => null);
-}

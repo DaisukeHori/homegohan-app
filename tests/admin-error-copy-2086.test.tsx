@@ -27,7 +27,6 @@ import {
   displayableAdminError,
   fetchAdminJson,
   screenApiErrorMessage,
-  sendAdminRequest,
   withHttpStatus,
 } from '@/lib/admin/admin-screen-messages';
 
@@ -167,23 +166,6 @@ describe('admin-screen-messages: 画面に出す失敗の文の部品 (#2086 V6)
 
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse(200, { data: [1] })));
     await expect(fetchAdminJson('/api/x', '一覧')).resolves.toEqual({ data: [1] });
-  });
-
-  it('sendAdminRequest: 失敗の応答は「<操作>に失敗しました (HTTP n)」、通信の reject は「<操作>の応答を受け取れませんでした（通信エラー）」', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => proxyBadGateway()));
-    await expect(sendAdminRequest('/api/x', { method: 'POST' }, '作成')).rejects.toEqual(
-      new AdminScreenError('作成に失敗しました (HTTP 502)'),
-    );
-
-    vi.stubGlobal('fetch', vi.fn(async () => {
-      throw networkFailure();
-    }));
-    await expect(sendAdminRequest('/api/x', { method: 'POST' }, '作成')).rejects.toEqual(
-      new AdminScreenError('作成の応答を受け取れませんでした（通信エラー）'),
-    );
-
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 204 })));
-    await expect(sendAdminRequest('/api/x', { method: 'DELETE' }, '削除')).resolves.toBeNull();
   });
 });
 

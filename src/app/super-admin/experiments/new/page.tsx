@@ -3,7 +3,13 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { displayableAdminError, sendAdminRequest } from "@/lib/admin/admin-screen-messages";
+import {
+  AdminScreenError,
+  adminActionHttpFailedMessage,
+  adminActionNoResponseMessage,
+  adminScreenErrorOfResponse,
+  displayableAdminError,
+} from "@/lib/admin/admin-screen-messages";
 
 /** 失敗の文の操作の名前 (#2086 V6) */
 const EXPERIMENT_CREATE_ACTION = "実験の作成";
@@ -52,9 +58,9 @@ export default function NewExperimentPage() {
     setIsSubmitting(true);
     try {
       // 失敗は日本語の文の例外にする (本文の無い 502 の「HTTP 502」・通信の reject の英字の文・JSON でない本文の SyntaxError を出さない。#2086 V6)
-      await sendAdminRequest(
-        "/api/super-admin/experiments",
-        {
+      let res: Response;
+      try {
+        res = await fetch("/api/super-admin/experiments", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -66,9 +72,13 @@ export default function NewExperimentPage() {
             end_date: form.end_date || undefined,
             variants,
           }),
-        },
-        EXPERIMENT_CREATE_ACTION,
-      );
+        });
+      } catch {
+        throw new AdminScreenError(adminActionNoResponseMessage(EXPERIMENT_CREATE_ACTION));
+      }
+      if (!res.ok) {
+        throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(EXPERIMENT_CREATE_ACTION, status));
+      }
 
       router.push("/super-admin/experiments");
     } catch (err) {

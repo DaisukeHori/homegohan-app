@@ -3,12 +3,6 @@
 import { z } from 'zod';
 import { FREE_PLAN_KEY, SUBSCRIPTION_STATUSES } from '@/lib/billing/core';
 import { CalendarDateSchema } from '@/lib/calendar-date-schema';
-import { FORBIDDEN_SCREEN_MESSAGE, UNAUTHENTICATED_SCREEN_MESSAGE } from '@/lib/admin/api-error-message';
-import {
-  API_ACCOUNT_FROZEN_MESSAGE,
-  API_MFA_ENROLLMENT_REQUIRED_MESSAGE,
-  API_MFA_REQUIRED_MESSAGE,
-} from '@/lib/api/forbidden-reason-messages';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 定数 (根拠つき)
@@ -243,16 +237,19 @@ export const MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE = `入力を確かめて�
  * 画面の文 (画面はエラーの本文の文面を読まず、code から引く。OP_INVALID_INPUT だけは画面用の文に差し替える)。
  * 403 の理由 (二段階認証の確認・登録が要る・凍結) の code は、運営の route が 403 OP_PERMISSION_DENIED の文に理由の文を入れたとき、
  * manual-grant-client が理由の文を code に直して返す (FORBIDDEN_REASON_CODE_BY_MESSAGE。#2086 V4)。
- * 文はほかの運営の画面の 403 の理由の文 (forbiddenMessageForScreen) と同じ。401 / 403 の既定の文も運営の画面と同じ
+ * 文はほかの運営の画面の 403 の理由の文 (src/lib/api/forbidden-reason-messages.ts。forbiddenMessageForScreen が出す文) と同じ。
+ * 401 / 403 の既定の文も運営の画面 (src/lib/admin/api-error-message.ts の UNAUTHENTICATED_SCREEN_MESSAGE・FORBIDDEN_SCREEN_MESSAGE) と同じ。
+ * このファイルは zod・core・calendar-date-schema のほかを import しない (tests/billing-manual-grant.test.ts) ので文を書き写し、
+ * 同じ文であることは tests/admin-reread-unauthenticated-2086.test.tsx が見る
  */
 export const MANUAL_GRANT_CLIENT_MESSAGES: Readonly<Record<string, string>> = {
   ...MANUAL_GRANT_ERROR_MESSAGES,
   OP_INVALID_INPUT: MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE,
-  AUTH_UNAUTHENTICATED: UNAUTHENTICATED_SCREEN_MESSAGE,
-  OP_PERMISSION_DENIED: FORBIDDEN_SCREEN_MESSAGE,
-  AUTH_ACCOUNT_FROZEN: API_ACCOUNT_FROZEN_MESSAGE,
-  AUTH_2FA_REQUIRED: API_MFA_REQUIRED_MESSAGE,
-  AUTH_2FA_ENROLLMENT_REQUIRED: API_MFA_ENROLLMENT_REQUIRED_MESSAGE,
+  AUTH_UNAUTHENTICATED: 'ログインし直してください',
+  OP_PERMISSION_DENIED: '権限がありません',
+  AUTH_ACCOUNT_FROZEN: 'アカウントが凍結されています',
+  AUTH_2FA_REQUIRED: '二段階認証の確認が必要です',
+  AUTH_2FA_ENROLLMENT_REQUIRED: '二段階認証の登録が必要です',
   INTERNAL_ERROR: '処理中にエラーが発生しました。しばらくしてからお試しください',
 };
 /** code が無い・知らない code のときの文 */

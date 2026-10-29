@@ -22,7 +22,9 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { rereadUnavailableMessage } from '@/lib/super-admin/detail-reread';
 import { fetchManualPlanView, MANUAL_GRANT_CLIENT_UNKNOWN_CODE } from '@/lib/billing/manual-grant-client';
-import { manualGrantErrorMessage } from '@/lib/billing/manual-grant';
+import { MANUAL_GRANT_CLIENT_MESSAGES, manualGrantErrorMessage } from '@/lib/billing/manual-grant';
+import { FORBIDDEN_SCREEN_MESSAGE, UNAUTHENTICATED_SCREEN_MESSAGE } from '@/lib/admin/api-error-message';
+import { FORBIDDEN_REASON_CODE_BY_MESSAGE } from '@/lib/api/forbidden-reason-messages';
 
 const ROW_ID = '20862086-2086-4086-8086-208620862086';
 
@@ -417,6 +419,15 @@ describe('手動のプラン付与: 403 の本文の文が理由の文ならそ�
     plans: [{ plan_key: 'pro', display_name: 'プロ', plan_type: 'personal', max_members: null }],
     history: [],
   };
+
+  it('画面の文の表 (manual-grant.ts は import を増やせないので書き写す) が、理由の文の表・運営の画面の 401 / 403 の文と同じ', () => {
+    expect(FORBIDDEN_REASON_CODE_BY_MESSAGE.size).toBeGreaterThan(0);
+    for (const [message, code] of FORBIDDEN_REASON_CODE_BY_MESSAGE) {
+      expect(MANUAL_GRANT_CLIENT_MESSAGES[code], code).toBe(message);
+    }
+    expect(MANUAL_GRANT_CLIENT_MESSAGES.AUTH_UNAUTHENTICATED).toBe(UNAUTHENTICATED_SCREEN_MESSAGE);
+    expect(MANUAL_GRANT_CLIENT_MESSAGES.OP_PERMISSION_DENIED).toBe(FORBIDDEN_SCREEN_MESSAGE);
+  });
 
   it('client: 403 の文が理由の文なら、その理由の code にして返す (本文の文そのものは結果に入れない)', async () => {
     mockFetch(() => mfaForbiddenResponse());
