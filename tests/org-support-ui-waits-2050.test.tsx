@@ -14,6 +14,7 @@
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { orgMemberListKeyOf, orgMemberListResponse } from './helpers/org-member-list-fetch';
 
 const USER_ID = '33333333-3333-4333-8333-333333333333';
 const OTHER_USER_ID = '44444444-4444-4444-8444-444444444444';
@@ -21,7 +22,10 @@ const OTHER_USER_ID = '44444444-4444-4444-8444-444444444444';
 const supabaseState = vi.hoisted(() => ({
   /** メンバーの画面の Supabase の問い合わせの結果 (テストごとに差し替える) */
   profile: { data: null as unknown, error: null as unknown },
+  /** メンバーの一覧の API (GET /api/org/members。#2073 S4) の結果。以前の問い合わせと同じ { data, error } で書く
+   *  (tests/helpers/org-member-list-fetch.ts が API の応答に直す) */
   members: { data: null as unknown, error: null as unknown },
+  /** メンバーの一覧の API の GET を送った回数 */
   membersQueryCount: 0,
 }));
 
@@ -36,17 +40,13 @@ vi.mock('next/link', () => ({
     createElement('a', { href: props.href, className: props.className }, props.children),
 }));
 
-// メンバーの画面は Supabase の問い合わせで一覧を読む
+// メンバーの画面は自分のプロフィールを Supabase の問い合わせで読む (一覧は API。下の mockFetch)
 vi.mock('@/lib/supabase/client', () => {
   const builder = (table: string) => {
     const query = {
       select: () => query,
       eq: () => query,
       single: () => Promise.resolve(supabaseState.profile),
-      order: () => {
-        supabaseState.membersQueryCount += 1;
-        return Promise.resolve(supabaseState.members);
-      },
       table,
     };
     return query;
@@ -121,6 +121,12 @@ type Handler = (method: string, url: URL, body: unknown) => Response | Promise<R
 
 function mockFetch(handler: Handler) {
   fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+    // メンバーの一覧の API の GET は supabaseState.members から返す (#2073 S4)
+    const listKey = orgMemberListKeyOf(input, init);
+    if (listKey !== null) {
+      supabaseState.membersQueryCount += 1;
+      return orgMemberListResponse(listKey, supabaseState.members);
+    }
     const url = new URL(String(input), 'http://localhost');
     const method = (init?.method ?? 'GET').toUpperCase();
     const body = init?.body ? (JSON.parse(String(init.body)) as unknown) : undefined;
@@ -516,7 +522,7 @@ describe('組織のチャレンジ: 一覧を読み込めなかったら「チ�
 describe('組織のメンバー: 一覧を読み込めなかったら「メンバーがいません」と出さない (P4 と同じ型)', () => {
   const MEMBER = { id: USER_ID, nickname: '管理者さん', org_role: 'admin', joined_org_at: '2026-10-01T03:00:00.000Z' };
 
-  it('メンバーの問い合わせが失敗したら、失敗の文と「再試行」を出し、再試行で読めたら一覧を出す', async () => {
+  it('メンバーの一覧の API が失敗したら、失敗の文と「再試行」を出し、再試行で読めたら一覧を出す', async () => {
     mockFetch((method, url) => {
       throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
     });

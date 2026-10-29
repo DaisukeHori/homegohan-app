@@ -16,6 +16,7 @@
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { orgMemberListKeyOf, orgMemberListResponse, type OrgMemberListSource } from './helpers/org-member-list-fetch';
 import {
   readPendingTransferProposal,
   transferProposalStateAfterNetworkFailure,
@@ -82,6 +83,10 @@ const supabaseState = vi.hoisted(() => ({
   queries: [] as Array<{ table: string; kind: string; columns: string; filters: Record<string, unknown> }>,
   /** auth.getUser が投げるか */
   getUserThrows: false,
+  /** 組織のメンバー・譲渡の候補の一覧の API (GET /api/org/members・/api/org/owner-transfer/candidates。#2073 S4) の結果。
+   *  以前の Supabase の問い合わせと同じ { data, error } で書き、tests/helpers/org-member-list-fetch.ts が API の応答に直す。
+   *  null なら一覧の API の GET も各テストの fetch の差し替えへそのまま渡す */
+  orgMemberList: null as unknown,
 }));
 
 function respond(ctx: QueryContext): Promise<QueryResult> {
@@ -268,6 +273,11 @@ type Handler = (method: string, url: URL, init?: RequestInit) => Response | Prom
 
 function mockFetch(handler: Handler) {
   fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+    // 組織のメンバー・譲渡の候補の一覧の API の GET は supabaseState.orgMemberList から返す (#2073 S4)
+    const listKey = orgMemberListKeyOf(input, init);
+    if (listKey !== null && supabaseState.orgMemberList !== null) {
+      return orgMemberListResponse(listKey, supabaseState.orgMemberList as OrgMemberListSource);
+    }
     const url = new URL(String(input), 'http://localhost');
     const method = (init?.method ?? 'GET').toUpperCase();
     return handler(method, url, init);
@@ -347,6 +357,7 @@ beforeEach(() => {
   supabaseState.getUserThrows = false;
   supabaseState.responders = {};
   supabaseState.queries = [];
+  supabaseState.orgMemberList = null;
   unhandled = [];
   process.on('unhandledRejection', onUnhandled);
 });
@@ -2692,8 +2703,10 @@ describe('#2073 S8 組織のオーナーの譲渡: 提案の送信の通信が�
     pendingReadFails = false;
     supabaseState.responders.user_profiles = (ctx: QueryContext) => {
       if (ctx.kind === 'single') return { data: { org_role: 'owner', organization_id: ORG_ID }, error: null };
-      return { data: [{ id: MEMBER_A_ID, nickname: '花子', org_role: 'member', joined_org_at: null }], error: null };
+      return { data: null, error: NO_ROWS };
     };
+    // 譲渡の候補は一覧の API (GET /api/org/owner-transfer/candidates) で読む (#2073 S4)
+    supabaseState.orgMemberList = { data: [{ id: MEMBER_A_ID, nickname: '花子', org_role: 'member', joined_org_at: null }], error: null };
     // 選んだ組織の pending の提案だけを返す (範囲・対象を取り違えると、本物では提案が見つからない)
     supabaseState.responders.ownership_transfer_proposals = (ctx: QueryContext) => {
       if (pendingReadFails) return { data: null, error: LOAD_FAILURE };

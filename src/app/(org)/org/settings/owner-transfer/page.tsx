@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { normalizeProfileName } from "@/lib/profile-name";
+import { OwnerTransferCandidatesResponseSchema, type OrgMemberName } from "@/schemas/membership/organization-member-name";
 import { orgRoleLabel } from "@/lib/membership/role-labels";
 import { MEMBERSHIP_STATE_UNCONFIRMED_NOTE } from "@/lib/membership/leave-state";
 import {
@@ -20,16 +21,13 @@ const PROPOSAL_SENT_MESSAGE = '譲渡提案を送信しました。対象者が�
 /**
  * 譲渡の候補 (または自分のプロフィール) を読み込めなかったときの文。
  * 候補がいない (「譲渡可能なメンバーがいません」) と見分けるために出す (#2064 R4。組織のメンバーの一覧の MEMBERS_LOAD_ERROR と同じ形)。
- * 読み込みは Supabase の問い合わせで、失敗の理由 (英語の内部の文) は画面に出さない
+ * 読み込みは自分のプロフィール (Supabase の問い合わせ) と候補の API (GET /api/org/owner-transfer/candidates) で、
+ * 失敗の理由 (英語の内部の文) は画面に出さない
  */
 const CANDIDATES_LOAD_ERROR = '譲渡の候補を読み込めませんでした。しばらくしてから、もう一度お試しください。';
 
-interface CandidateMember {
-  id: string;
-  nickname: string | null;
-  org_role: string;
-  joined_org_at: string | null;
-}
+/** 候補の 1 人。API が返す 4 つの項目 (id・表示名・組織内の役割・参加した日) だけ (#2073 S4) */
+type CandidateMember = OrgMemberName;
 
 export default function OwnerTransferPage() {
   const router = useRouter();
@@ -72,21 +70,21 @@ export default function OwnerTransferPage() {
 
       setOrganizationId(profile.organization_id);
 
-      // owner 以外の org メンバーを候補として表示
-      const { data: members, error: membersError } = await supabase
-        .from('user_profiles')
-        .select('id, nickname, org_role, joined_org_at')
-        .eq('organization_id', profile.organization_id)
-        .neq('id', user.id)
-        .neq('org_role', 'owner')
-        .order('joined_org_at', { ascending: true });
-
-      if (membersError) {
+      // 自分とオーナーを除いた組織のメンバーを候補として表示する。ほかのメンバーの行は RLS で読めないので、
+      // サーバーの API がオーナーであることを確かめてから返す (#2073 S4。以前は user_profiles を直接読み、本番では候補が 1 人も出なかった)
+      const res = await fetch('/api/org/owner-transfer/candidates', { cache: 'no-store' });
+      if (!res.ok) {
         // 読み込めなかった (候補がいないのとは別。「譲渡可能なメンバーがいません」と見せない)
         setLoadError(CANDIDATES_LOAD_ERROR);
         return;
       }
-      setCandidates(members ?? []);
+      const parsed = OwnerTransferCandidatesResponseSchema.safeParse(await res.json());
+      if (!parsed.success) {
+        // 応答の形が違う (読み込めなかったのと同じに扱う)
+        setLoadError(CANDIDATES_LOAD_ERROR);
+        return;
+      }
+      setCandidates(parsed.data.candidates);
       setLoadError(null);
     } catch (fetchError) {
       // 問い合わせが例外を投げた (catch が無いと未処理の reject になり、空の一覧の案内が出ていた)

@@ -130,6 +130,13 @@ server → rpc('revoke_org_invite', { p_invite_id }) (SECURITY DEFINER。利用�
 ## 4. organization メンバ除名 + 自発脱退
 
 ```
+[admin] /org/members (メンバーの一覧)
+GET /api/org/members
+server → requireOrgAdmin (JWT の本人・所属組織・org_role が owner / admin。本人の行は RLS で読む。違えば 403・未ログインは 401)
+       → 確かめた organization_id の user_profiles を service_role で読む (user_profiles の SELECT の RLS は本人の行だけのため。#2073 S4)
+       → 返すのは id・nickname・org_role・joined_org_at だけ (ORG_MEMBER_NAME_COLUMNS。参加した日の古い順)
+       → 200 { members: [...] }
+
 [admin] /org/members/{id} → [このメンバを外す]
 POST /api/org/members/{user_id}/remove
 server → rpc('remove_org_member', { p_organization_id, p_user_id })
@@ -151,6 +158,13 @@ server → rpc('leave_org')
 ## 5. organization owner 譲渡 (2 step)
 
 ```
+[owner=Alice] /org/settings/owner-transfer (候補の一覧)
+GET /api/org/owner-transfer/candidates
+server → requireOrgAdmin + org_role = 'owner' (管理者・一般メンバーは 403・未ログインは 401)
+       → 確かめた organization_id の user_profiles のうち、自分と org_role = 'owner' を除いた行を service_role で読む (#2073 S4)
+       → 返すのは id・nickname・org_role・joined_org_at だけ (参加した日の古い順)
+       → 200 { candidates: [...] }
+
 [owner=Alice] /org/settings/owner-transfer → [Bob を新 owner にする]
 POST /api/org/owner-transfer/propose
        body: { to_user_id: bob_id }
