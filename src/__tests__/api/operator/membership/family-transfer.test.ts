@@ -936,3 +936,80 @@ describe('POST /api/operator/membership/family/[id]/transfer: 大文字の to_us
     });
   });
 });
+
+describe('POST /api/operator/membership/family/[id]/transfer: 譲渡先がすでに今の代表者なら、譲渡し直さず 409 で止める (#2086 V1)', () => {
+  // 1 回目の譲渡は済んだが、route が監査・通知メールを待つ間にプロキシが 504 を返し、運営が「実行する」を押し直した筋書き。
+  // 押し直しで RPC が通ると、旧代表者 = 新代表者 (1 回目の譲渡先) の監査が増え、全員に 2 通目の通知メールが届く
+  // (2 通目は「旧オーナー」欄が新代表者本人のアドレスで、本当の旧代表者には一般メンバー向けの本文が届く)
+  const ALREADY_BODY = {
+    error: { code: 'ALREADY_REPRESENTATIVE', message: 'この人はすでに代表者です。一覧で今の状態を確かめてください' },
+  };
+
+  it('1 回目の譲渡が済んだあとの同じ譲渡先への押し直しは、RPC を呼ばず、監査も通知メールも増やさずに 409 ALREADY_REPRESENTATIVE を返す', async () => {
+    const first = await call();
+    expect(first.status).toBe(200);
+    const emailsAfterFirst = sentEmails().length;
+    expect(emailsAfterFirst).toBeGreaterThan(0);
+    expect(auditRows()).toHaveLength(1);
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);
+
+    const second = await call();
+
+    expect(second.status).toBe(409);
+    expect(await second.json()).toEqual(ALREADY_BODY);
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);
+    expect(auditRows()).toHaveLength(1);
+    expect(sentEmails()).toHaveLength(emailsAfterFirst);
+    expect(sentTo(NEW_EMAIL)).toHaveLength(1);
+    expect(fake.tables.family_groups[0].representative_id).toBe(NEW_REP_ID);
+  });
+
+  it('大文字の to_user_id で今の代表者を指しても 409 で止める (小文字にそろえて比べる。#1790)', async () => {
+    fake.tables.family_groups[0].representative_id = NEW_REP_ID;
+
+    const res = await call({ to_user_id: NEW_REP_ID.toUpperCase(), reason: REASON });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual(ALREADY_BODY);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    expect(mocks.auditInsert).not.toHaveBeenCalled();
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('RPC の前の読み込みに失敗しても、RPC がロックの下で読んだ旧代表者が譲渡先と同じなら、監査も通知メールも出さずに 409 を返し、構造化ログに残す', async () => {
+    fake.tables.family_groups[0].representative_id = NEW_REP_ID;
+    fake.readErrors.family_groups = { message: 'connection reset by peer', code: '08006' };
+
+    const res = await call();
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual(ALREADY_BODY);
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);
+    expect(mocks.auditInsert).not.toHaveBeenCalled();
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(mocks.logWarn).toHaveBeenCalledWith(expect.any(String), { family_id: FAMILY_ID, to_user_id: NEW_REP_ID });
+  });
+
+  it('RPC の前に読んだ代表者は別の人でも、RPC の直前に別の運営が同じ人へ譲渡していた (ロックの下の旧代表者が譲渡先と同じ) ら、409 で監査も通知も出さない', async () => {
+    mocks.rpc.mockImplementation(async (_name: string, args: RpcArgs) => {
+      // 運営 B の譲渡が先に commit した
+      reassignRepresentative(fake, fake.tables.family_groups[0], NEW_REP_ID);
+      return simulateRepresentativeTransfer(fake, args);
+    });
+
+    const res = await call();
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual(ALREADY_BODY);
+    expect(mocks.auditInsert).not.toHaveBeenCalled();
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('今の代表者でない人への譲渡はこれまでどおり 200 (RPC の前の読み込みは止める理由にしない)', async () => {
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);
+    expect(auditRows()).toHaveLength(1);
+  });
+});

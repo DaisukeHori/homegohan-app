@@ -62,6 +62,12 @@ export default function OrgTransferPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reason, setReason] = useState('');
   const [showConfirm, setShowConfirm] = useState(false);
+  // 譲渡の応答を受け取れず、候補の読み直しにも失敗して、済んだか分からない譲渡 (#2086 V1)。
+  // あるあいだは候補と「強制譲渡を実行」を出さず (押し直すと同じ人への譲渡がもう一度通り、監査と通知メールが二重になる)、
+  // 「再試行」で候補を読み直せたら済んだかを決める。status は応答を受け取れなかった理由 (null は通信の失敗、数は本文の無い 502 / 503 / 504)
+  const [unknownTransfer, setUnknownTransfer] = useState<{ toUserId: string; status: number | null } | null>(null);
+  // 読み直したら譲渡はまだ済んでいなかった、という知らせ (「再試行」の読み直しのあと。もう一度実行できる)
+  const [notice, setNotice] = useState<string | null>(null);
 
   const candidatesUrl = `/api/operator/membership/org/${orgId}/candidates`;
 
@@ -84,26 +90,63 @@ export default function OrgTransferPage() {
 
   async function handleTransferConfirm() {
     if (!selectedId) return;
+    setNotice(null);
     // 失敗の応答は、日本語の文の例外を投げる (確認の枠が出す)
     const result = await postOperatorForceAction(
       `/api/operator/membership/org/${orgId}/transfer`,
       { to_user_id: selectedId, reason },
       'transfer',
     );
-    if (result === 'no-response') {
-      // 応答を受け取れなかった。サーバーが譲渡を済ませてから切れたこともあるので、候補を読み直して確かめる (#2080 U5)
+    if (result.kind === 'no-response') {
+      // 応答を受け取れなかった (通信の失敗・本文の無い 502 / 503 / 504)。サーバーが譲渡を済ませてから切れたこともあるので、
+      // 候補を読み直して確かめる (#2080 U5・#2086 V1)
       let reloaded: Candidate[];
       try {
         reloaded = await fetchOperatorRows<Candidate>(candidatesUrl, CANDIDATES_SUBJECT);
       } catch {
-        throw new OperatorScreenError(operatorForceActionNoResponseMessage('transfer', FORCE_TRANSFER_RELOAD_FAILED_GUIDE));
+        // 済んだか分からない。確認の枠を閉じ、「再試行」で読み直せるまで譲渡を押させない (#2086 V1)
+        setShowConfirm(false);
+        setUnknownTransfer({ toUserId: selectedId, status: result.status });
+        setError(operatorForceActionNoResponseMessage('transfer', result.status, FORCE_TRANSFER_RELOAD_FAILED_GUIDE));
+        return;
       }
       if (!isForceTransferDone(reloaded, selectedId)) {
         setCandidates(reloaded);
-        throw new OperatorScreenError(operatorForceActionNoResponseMessage('transfer', FORCE_TRANSFER_NOT_DONE_GUIDE));
+        throw new OperatorScreenError(
+          operatorForceActionNoResponseMessage('transfer', result.status, FORCE_TRANSFER_NOT_DONE_GUIDE),
+        );
       }
     }
+    // 成功・読み直して済んでいた・譲渡先がすでに今の代表者 / オーナーだった (already-done。押し直しを route が止めた) なら一覧へ戻す
     router.push(LIST_PATH);
+  }
+
+  /**
+   * エラーの「再試行」。済んだか分からない譲渡があれば、候補を読み直して済んだかを決める (#2086 V1):
+   * 選んだメンバーが候補から外れていれば済んでいたので一覧へ戻し、まだ候補にいれば済んでいない旨を出して候補を戻す (もう一度実行できる)。
+   * 読み直しにも失敗したら、済んだか分からない文のまま止め続ける。済んだか分からない譲渡が無ければ、候補を読み込み直すだけ
+   */
+  async function handleRetry() {
+    if (!unknownTransfer) {
+      await fetchCandidates();
+      return;
+    }
+    setLoading(true);
+    try {
+      const reloaded = await fetchOperatorRows<Candidate>(candidatesUrl, CANDIDATES_SUBJECT);
+      if (isForceTransferDone(reloaded, unknownTransfer.toUserId)) {
+        router.push(LIST_PATH);
+        return;
+      }
+      setCandidates(reloaded);
+      setUnknownTransfer(null);
+      setError(null);
+      setNotice(operatorForceActionNoResponseMessage('transfer', unknownTransfer.status, FORCE_TRANSFER_NOT_DONE_GUIDE));
+    } catch {
+      // 済んだか分からない文 (error) のまま止め続ける
+    } finally {
+      setLoading(false);
+    }
   }
 
   const canSubmit = selectedId !== null && reason.trim().length > 0;
@@ -128,10 +171,24 @@ export default function OrgTransferPage() {
       )}
 
       {error && (
-        <div className="mb-4 p-4 bg-red-50 text-red-700 rounded-lg text-sm">{error}</div>
+        <div className="mb-4 p-4 bg-red-50 text-red-700 rounded-lg text-sm space-y-2">
+          <p>{error}</p>
+          <button
+            type="button"
+            onClick={handleRetry}
+            disabled={loading}
+            className="px-3 py-1 text-sm font-medium text-red-700 bg-white border border-red-300 rounded-lg hover:bg-red-50 disabled:opacity-50"
+          >
+            再試行
+          </button>
+        </div>
       )}
 
-      {!loading && !error && (
+      {notice && !error && (
+        <div className="mb-4 p-4 bg-amber-50 text-amber-800 rounded-lg text-sm">{notice}</div>
+      )}
+
+      {!loading && !error && !unknownTransfer && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-6">
           {/* 候補メンバ一覧 */}
           <div>
@@ -205,7 +262,7 @@ export default function OrgTransferPage() {
         </div>
       )}
 
-      {showConfirm && selected && (
+      {showConfirm && selected && !unknownTransfer && (
         <ForceActionConfirmModal
           scope="organization"
           scopeName={`組織 (${orgId})`}
