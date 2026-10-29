@@ -33,6 +33,9 @@ const NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
  */
 const MEMBER_DETAIL_LOAD_ERROR = 'メンバーの情報を読み込めませんでした。しばらくしてから、もう一度お試しください。';
 
+/** 開いたメンバーの行が無い (または RLS で見えない) ときの文 (これまでどおり) */
+const MEMBER_NOT_FOUND_MESSAGE = 'メンバー情報の取得に失敗しました';
+
 interface FamilyMember {
   id: string;
   role: 'representative' | 'adult' | 'child';
@@ -141,8 +144,14 @@ export default function FamilyMemberDetailPage() {
         .eq('family_id', profile.family_id)
         .single();
 
-      if (memberError || !memberData) {
-        setError('メンバー情報の取得に失敗しました');
+      if (isLoadFailure(memberError)) {
+        // 読み込めなかった (行が無いのとは別。「再試行」を出す。#2080 U3)
+        setLoadError(MEMBER_DETAIL_LOAD_ERROR);
+        return;
+      }
+      if (!memberData) {
+        // 行が無い (PGRST116) か、RLS で見えない (これまでどおり)
+        setError(MEMBER_NOT_FOUND_MESSAGE);
         setLoadError(null);
         return;
       }
@@ -167,14 +176,18 @@ export default function FamilyMemberDetailPage() {
         setConsent((consentData as ParentalConsentRecord | null) ?? null);
       }
 
-      // 現在ユーザーのロールを取得 (行が無い (PGRST116) ときは権限なし。読み込めなかったときは、権限なしと見せない)
+      // 現在ユーザーのロールを、自分の active な行から取得する (#2080 U2。脱退・除名した行は消えずに status が left / removed で残り、
+      // 招待で同じ家族に戻ると自分の行が 2 本になる。以前は status で絞らず .single() で読んでいたので、2 本の人は失敗して権限なしに見えていた。
+      // active な行は 1 人 1 行まで (部分 UNIQUE uniq_family_members_user)。
+      // 行が無いときは権限なし。読み込めなかったときは、権限なしと見せない)
       const { data: myMember, error: myMemberError } = await supabase
         .from('family_members')
         .select('role')
         .eq('family_id', profile.family_id)
         .eq('user_id', user.id)
-        .single();
-      if (isLoadFailure(myMemberError)) {
+        .eq('status', 'active')
+        .maybeSingle();
+      if (myMemberError) {
         setLoadError(MEMBER_DETAIL_LOAD_ERROR);
         return;
       }

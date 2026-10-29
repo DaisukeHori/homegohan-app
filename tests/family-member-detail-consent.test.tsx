@@ -66,7 +66,11 @@ function query(table: string) {
       if (table === 'family_members' && columns === 'role') return { data: { role: 'representative' }, error: null };
       return { data: state.member, error: null };
     },
-    maybeSingle: async () => ({ data: state.consent, error: null }),
+    maybeSingle: async () => {
+      // 自分の役割は自分の active な行から .maybeSingle() で読む (#2080 U2)
+      if (table === 'family_members' && columns === 'role') return { data: { role: 'representative' }, error: null };
+      return { data: state.consent, error: null };
+    },
   };
   return chain;
 }

@@ -4,9 +4,22 @@
 // 承諾モーダル: share_meals/share_health/share_menu の checkbox + 承諾/拒否/後で ボタン
 
 import { useState } from 'react';
+import { createClient } from '@/lib/supabase/client';
+import {
+  readInviteAcceptStateAfterFailure,
+  withInviteAcceptStateNote,
+} from '@/lib/membership/invite-accept-state';
+
+/** 承諾の通信そのものが失敗した (fetch が reject した・応答の本文を読めなかった) ときの文 */
+const NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
+
+/** 招待が承諾済み・拒否済み・取り消し済み (409 INVITE_ALREADY_USED) のときの文 */
+const INVITE_ALREADY_USED_MESSAGE = 'この招待は既に使用済みです。';
 
 export interface FamilyInviteAcceptModalProps {
   token: string;
+  /** 招待の家族の id (get_invite_details の scope_id)。承諾の通信が切れたあと、この家族に入ったかを確かめる (#2080 U1) */
+  familyId: string;
   familyName: string;
   inviterName: string;
   expiresAt: string;            // ISO 文字列
@@ -17,6 +30,7 @@ export interface FamilyInviteAcceptModalProps {
 
 export function FamilyInviteAcceptModal({
   token,
+  familyId,
   familyName,
   inviterName,
   expiresAt,
@@ -33,7 +47,23 @@ export function FamilyInviteAcceptModal({
   // (onboarding/resume ページのリセット確認モーダルと同パターン)
   const [showRejectConfirm, setShowRejectConfirm] = useState(false);
 
+  const supabase = createClient();
+
   const expiresDate = new Date(expiresAt).toLocaleDateString('ja-JP');
+
+  /**
+   * 承諾できていたかを自分のプロフィールで確かめる (#2080 U1)。招待の家族に入っていれば成功のときと同じ遷移にする。
+   * 入っていなければ message (確かめられなかったときは「状態を確かめられませんでした」を添える) を出す。
+   * 読み直しの応答を待つあいだも「承諾する」を止めたままにする (呼ぶ側の finally まで loading を戻さない)
+   */
+  const confirmAcceptedOrShow = async (message: string) => {
+    const state = await readInviteAcceptStateAfterFailure(supabase, 'family', familyId);
+    if (state === 'joined') {
+      onAccepted?.();
+      return;
+    }
+    setError(withInviteAcceptStateNote(message, state));
+  };
 
   const handleAccept = async () => {
     setError(null);
@@ -61,7 +91,9 @@ export function FamilyInviteAcceptModal({
             setError('既に家族グループに所属しています。');
             break;
           case 'INVITE_ALREADY_USED':
-            setError('この招待は既に使用済みです。');
+            // 前に押した承諾をサーバーが済ませてから応答が切れたときも、押し直すとこれになる (承諾の RPC は招待の
+            // status = 'accepted' を先に見る)。招待の家族に入っていれば、承諾できているので成功のときと同じ遷移にする
+            await confirmAcceptedOrShow(INVITE_ALREADY_USED_MESSAGE);
             break;
           case 'INVITE_REVOKED':
             setError('この招待は取り消されています。');
@@ -77,8 +109,11 @@ export function FamilyInviteAcceptModal({
 
       onAccepted?.();
     } catch (err) {
-      setError('通信エラーが発生しました');
       console.error('[FamilyInviteAcceptModal] accept error:', err);
+      // サーバーが承諾を済ませてから応答が切れた (または応答の本文を読めなかった) こともあるので、
+      // 自分のプロフィールを読み直して確かめる (#2080 U1。以前は確かめずに通信エラーの文を出し、
+      // もう一度押すと「この招待は既に使用済みです。」と出て、承諾できていないように見えていた)
+      await confirmAcceptedOrShow(NETWORK_FAILURE_MESSAGE);
     } finally {
       setLoading(false);
     }
