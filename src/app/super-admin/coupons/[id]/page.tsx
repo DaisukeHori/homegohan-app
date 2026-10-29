@@ -11,6 +11,9 @@
  * 状態の変更のあとの読み直し (409 のあと・通信の reject のあと) が失敗したら、文と「再試行」を出し、読み直せるまで
  * 状態の変更のボタンを止める (画面の status が DB と食い違っているかもしれないのに、その status を元にしたボタンを出し続けない。
  * プランの詳細と同じ。#2064・#2073)
+ * 読み直しが 404 (読み直しの間にクーポンが消えた。uses_count 0 のクーポンは削除できる) か 403 (権限が外れた・二段階認証の確認が要る)
+ * で断られたら、読み込み直しても変わらないので、その理由の文を出し「再試行」は出さず、状態の変更のボタンを戻す
+ * (プラン・A/B テストの詳細と同じ。#2080)
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -24,6 +27,7 @@ import {
   NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
   statusChangeNoResponseMessage,
 } from '@/lib/super-admin/status-change-no-response';
+import { rereadDetailRow } from '@/lib/super-admin/detail-reread';
 
 type Coupon = {
   id: string;
@@ -130,14 +134,19 @@ function statusChangeFailureSummary(newStatus: CouponStatusChange): string {
 }
 
 /**
- * 状態の変更が 409 (遷移表に無い変更・同時の変更) で断られ、クーポンを読み直せたときの理由の文 (#2064)。
+ * 状態の変更が 409 (遷移表に無い変更・同時の変更) で断られたときの理由の文の頭 (#2064)。
  * 画面の status が古かった (別の操作で一時停止・再開・期限切れにされていた)。英字の状態の値は出さない
  */
-const STATUS_CONFLICT_RELOADED_REASON = '別の操作でクーポンの状態が先に変わっていました。今の状態を読み込み直しました';
+const STATUS_CONFLICT_REASON_HEAD = '別の操作でクーポンの状態が先に変わっていました';
+
+/** 状態の変更が 409 で断られ、クーポンを読み直せたときの理由の文 (#2064) */
+const STATUS_CONFLICT_RELOADED_REASON = `${STATUS_CONFLICT_REASON_HEAD}。今の状態を読み込み直しました`;
 
 /** 状態の変更が 409 で断られ、読み直しも失敗したときの理由の文 (「再試行」を出す。#2064・#2073) */
-const STATUS_CONFLICT_RELOAD_FAILED_REASON =
-  '別の操作でクーポンの状態が先に変わっていました。今の状態を読み込めませんでした。「再試行」で読み込み直してから、もう一度操作してください';
+const STATUS_CONFLICT_RELOAD_FAILED_REASON = `${STATUS_CONFLICT_REASON_HEAD}。今の状態を読み込めませんでした。「再試行」で読み込み直してから、もう一度操作してください`;
+
+/** 読み直しが 404 (読み直しの間にクーポンが消えた) で断られたときの文。読み込み直しても変わらないので「再試行」は出さない (#2080) */
+const COUPON_NOT_FOUND_ON_RELOAD_MESSAGE = 'クーポンが見つかりません。一覧に戻って確かめてください';
 
 /**
  * 状態の変更のあとに読み直す理由 (#2073)。
@@ -149,16 +158,33 @@ type StatusRereadCause = 'conflict' | 'no-response';
 /** 状態の変更のあとの読み直しが失敗し、「再試行」で読み直すのを待っている操作 (#2073) */
 type PendingStatusReread = { newStatus: CouponStatusChange; cause: StatusRereadCause };
 
-/** 状態の変更のあとに読み直した (reloaded) か、読み直せなかったかの文 (#2064・#2073) */
-function statusRereadMessage(newStatus: CouponStatusChange, cause: StatusRereadCause, reloaded: boolean): string {
+/**
+ * 状態の変更のあとの読み直しの結果 (#2064・#2073・#2080)。
+ *   - reloaded   : 読み直せた
+ *   - failed     : 読み直せなかった (「再試行」を出し、状態の変更のボタンを止める)
+ *   - unavailable: 404 / 403 で断られた (message は理由の文。読み込み直しても変わらないので「再試行」は出さない)
+ */
+type StatusRereadResult = { kind: 'reloaded' } | { kind: 'failed' } | { kind: 'unavailable'; message: string };
+
+/** 状態の変更のあとに読み直した・読み直せなかった・読み直しが断られたときの文 (#2064・#2073・#2080) */
+function statusRereadMessage(newStatus: CouponStatusChange, cause: StatusRereadCause, result: StatusRereadResult): string {
   if (cause === 'conflict') {
-    return `${statusChangeFailureSummary(newStatus)}（${reloaded ? STATUS_CONFLICT_RELOADED_REASON : STATUS_CONFLICT_RELOAD_FAILED_REASON}）`;
+    const reason =
+      result.kind === 'reloaded'
+        ? STATUS_CONFLICT_RELOADED_REASON
+        : result.kind === 'failed'
+          ? STATUS_CONFLICT_RELOAD_FAILED_REASON
+          : `${STATUS_CONFLICT_REASON_HEAD}。${result.message}`;
+    return `${statusChangeFailureSummary(newStatus)}（${reason}）`;
   }
   // 応答を受け取れなかった: 変更が済んでいた (自分の操作) ときにも合うよう「できませんでした」「別の操作で」とは言わない
-  return statusChangeNoResponseMessage(
-    STATUS_CHANGE_LABELS[newStatus],
-    reloaded ? NO_RESPONSE_STATE_RELOADED_GUIDE : NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
-  );
+  const guide =
+    result.kind === 'reloaded'
+      ? NO_RESPONSE_STATE_RELOADED_GUIDE
+      : result.kind === 'failed'
+        ? NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE
+        : result.message;
+  return statusChangeNoResponseMessage(STATUS_CHANGE_LABELS[newStatus], guide);
 }
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
@@ -289,17 +315,11 @@ export default function CouponDetailPage() {
     setPendingReread(pending);
   };
 
-  /** 409 のあと・通信の reject のあとにクーポンを読み直す (全体を「読み込み中」にしない)。読めなければ null (#2064・#2073) */
-  const rereadCoupon = async (): Promise<Coupon | null> => {
-    try {
-      const res = await fetch(`/api/super-admin/coupons/${couponId}`);
-      if (!res.ok) return null;
-      const data = await res.json() as { data?: Coupon };
-      return data.data ?? null;
-    } catch {
-      return null;
-    }
-  };
+  /**
+   * 409 のあと・通信の reject のあとにクーポンを読み直す (全体を「読み込み中」にしない。#2064・#2073)。
+   * 404 / 403 は unavailable (理由の文つき。#2080)、それ以外の失敗は failed
+   */
+  const rereadCoupon = () => rereadDetailRow<Coupon>(`/api/super-admin/coupons/${couponId}`, COUPON_NOT_FOUND_ON_RELOAD_MESSAGE);
 
   const handleSave = async () => {
     // 状態の変更の応答を待つあいだは送らない (#2050。writeInFlightRef)
@@ -338,7 +358,7 @@ export default function CouponDetailPage() {
       // 保存の応答の行は書いたあとの最新の行 (status も今の値) なので、状態の変更のあとの読み直しの失敗は解ける (#2073)
       const pending = pendingRereadRef.current;
       if (pending) {
-        setStatusError(statusRereadMessage(pending.newStatus, pending.cause, true));
+        setStatusError(statusRereadMessage(pending.newStatus, pending.cause, { kind: 'reloaded' }));
         markPendingReread(null);
       }
     } catch {
@@ -351,13 +371,16 @@ export default function CouponDetailPage() {
 
   /**
    * 状態の変更のあとに読み直し、結果に合わせて文を出す (#2064・#2073)。inputsBefore は押したときの最後に読んだ・保存した行の
-   * 入力欄の値 (書きかけを残すため)。読み直せなかったら「再試行」を待つ操作として記録し、状態の変更のボタンを止める
+   * 入力欄の値 (書きかけを残すため)。読み直せなかったら「再試行」を待つ操作として記録し、状態の変更のボタンを止める。
+   * 404 / 403 で断られたら、理由の文を出し、「再試行」は待たない (読み込み直しても変わらないので、ボタンを止め続けない。#2080)
    */
   const rereadAfterStatusChange = async (newStatus: CouponStatusChange, cause: StatusRereadCause, inputsBefore: CouponInputs) => {
-    const latest = await rereadCoupon();
-    if (latest) applyLatestCoupon(latest, inputsBefore);
-    setStatusError(statusRereadMessage(newStatus, cause, latest !== null));
-    markPendingReread(latest ? null : { newStatus, cause });
+    const outcome = await rereadCoupon();
+    if (outcome.kind === 'loaded') applyLatestCoupon(outcome.row, inputsBefore);
+    const result: StatusRereadResult =
+      outcome.kind === 'loaded' ? { kind: 'reloaded' } : outcome.kind === 'failed' ? { kind: 'failed' } : outcome;
+    setStatusError(statusRereadMessage(newStatus, cause, result));
+    markPendingReread(outcome.kind === 'failed' ? { newStatus, cause } : null);
   };
 
   /** 「再試行」: 状態の変更のあとの失敗した読み直しをやり直す (#2073) */

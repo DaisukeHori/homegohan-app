@@ -11,6 +11,7 @@
  * 一覧を読み直して今の状態を見せ、「「<実験の名前>」の状態の変更の応答を受け取れませんでした」の文を出す (alert にしない。#2073)。
  * 読み直さないと、古い状態のボタンをもう一度押して 409 になり、自分の操作なのに「別の操作で…先に変わっていました」と出る。
  * そのあとの読み直しが失敗したら「再試行」を出し、読み直せるまで状態のボタンを止める (一覧の状態が古いかもしれないため)。
+ * 409 のあとの読み直しが失敗したときも、読み直せるまで状態のボタンを止める (詳細の画面と同じ。#2080)。
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -56,7 +57,7 @@ type ExperimentsLoadOutcome =
 /**
  * 一覧の上に出す、409 のあと・通信の reject のあとの読み直しについての文 (#2064・#2073)。name は操作した実験の名前 (押したときの一覧の名前)。
  *   - stale                    : 409 のあとに読み直した。status は読み直した今の状態 (一覧に無ければ null)
- *   - stale-reload-failed      : 409 のあとの読み直しに失敗した (「再試行」を出す)
+ *   - stale-reload-failed      : 409 のあとの読み直しに失敗した (「再試行」を出し、状態のボタンを止める。#2080)
  *   - no-response              : 状態の変更の通信が reject されたあとに読み直した (状態は一覧の行で見せる)
  *   - no-response-reload-failed: 通信が reject されたあとの読み直しに失敗した (「再試行」を出し、状態のボタンを止める)
  */
@@ -139,13 +140,13 @@ export default function ExperimentsPage() {
     void loadExperiments();
   }, [loadExperiments]);
 
-  // 通信の reject のあとの一覧の読み直しが失敗し、まだ読み直せていないか (#2073)。そのあいだは状態のボタンを止める。
+  // 409 のあと・通信の reject のあとの一覧の読み直しが失敗し、まだ読み直せていないか (#2073・#2080)。そのあいだは状態のボタンを止める。
   // ref は描画を待たずに handler で読むための写し
-  const noResponseStaleRef = useRef(false);
-  const [isNoResponseStale, setIsNoResponseStale] = useState(false);
-  const markNoResponseStale = useCallback((stale: boolean) => {
-    noResponseStaleRef.current = stale;
-    setIsNoResponseStale(stale);
+  const reloadFailedRef = useRef(false);
+  const [isReloadFailed, setIsReloadFailed] = useState(false);
+  const markReloadFailed = useCallback((failed: boolean) => {
+    reloadFailedRef.current = failed;
+    setIsReloadFailed(failed);
   }, []);
 
   /**
@@ -158,8 +159,8 @@ export default function ExperimentsPage() {
     async (target: { id: string; name: string }, cause: "stale" | "no-response") => {
       const outcome = await loadExperiments();
       if (outcome.kind === "superseded") return;
-      // 通信の reject のあとの読み直しが失敗したときだけ、読み直せるまで状態のボタンを止める (#2073)
-      markNoResponseStale(cause === "no-response" && outcome.kind === "failed");
+      // 読み直しが失敗したら、どちらの理由でも、読み直せるまで状態のボタンを止める (#2073・#2080)
+      markReloadFailed(outcome.kind === "failed");
       if (outcome.kind === "loaded") {
         if (cause === "no-response") {
           setReloadNotice({ kind: "no-response", id: target.id, name: target.name });
@@ -175,7 +176,7 @@ export default function ExperimentsPage() {
         });
       }
     },
-    [loadExperiments, markNoResponseStale],
+    [loadExperiments, markReloadFailed],
   );
 
   /** 「再試行」: 409 のあと・通信の reject のあとの失敗した読み直しをやり直す */
@@ -192,8 +193,8 @@ export default function ExperimentsPage() {
   };
 
   const handleStatusChange = async (target: Experiment, status: ExperimentStatusChangeTarget) => {
-    // 応答 (とそのあとの読み直し) を待つあいだ (#2050) と、通信の reject のあとの読み直しが失敗しているあいだ (#2073) は送らない
-    if (changingRef.current || noResponseStaleRef.current) return;
+    // 応答 (とそのあとの読み直し) を待つあいだ (#2050) と、409 のあと・通信の reject のあとの読み直しが失敗しているあいだ (#2073・#2080) は送らない
+    if (changingRef.current || reloadFailedRef.current) return;
     changingRef.current = true;
     setChangingId(target.id);
     setReloadNotice(null);
@@ -228,8 +229,8 @@ export default function ExperimentsPage() {
   };
 
   const isBusy = changingId !== null || isReloading;
-  // 状態のボタンを止めるか (応答・読み直しを待つあいだと、通信の reject のあとの読み直しが失敗しているあいだ。#2073)
-  const statusButtonsDisabled = isBusy || isNoResponseStale;
+  // 状態のボタンを止めるか (応答・読み直しを待つあいだと、409 のあと・通信の reject のあとの読み直しが失敗しているあいだ。#2073・#2080)
+  const statusButtonsDisabled = isBusy || isReloadFailed;
 
   if (isLoading) {
     return (
