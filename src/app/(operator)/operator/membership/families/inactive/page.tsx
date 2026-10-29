@@ -93,17 +93,23 @@ export default function InactiveFamiliesPage() {
       { reason: dissolveReason },
       'dissolve',
     );
-    if (result === 'no-response') {
-      // 応答を受け取れなかった。サーバーが解散を済ませてから切れたこともあるので、一覧を読み直して確かめる (#2080 U5)
+    if (result.kind === 'no-response') {
+      // 応答を受け取れなかった (通信の失敗・本文の無い 502 / 503 / 504)。サーバーが解散を済ませてから切れたこともあるので、
+      // 一覧を読み直して確かめる (#2080 U5・#2086 V1)
       let reloaded: FamilyRow[];
       try {
         reloaded = await fetchOperatorRows<FamilyRow>(LIST_URL, LIST_SUBJECT);
       } catch {
-        throw new OperatorScreenError(operatorForceActionNoResponseMessage('dissolve', FORCE_DISSOLVE_RELOAD_FAILED_GUIDE));
+        // 済んだか分からない。確認の枠を閉じ、一覧 (行の「解散」) も出さずに、「更新」で読み直せるまで解散を押させない (#2086 V1)
+        setDissolveTarget(null);
+        setError(operatorForceActionNoResponseMessage('dissolve', result.status, FORCE_DISSOLVE_RELOAD_FAILED_GUIDE));
+        return;
       }
       setRows(reloaded);
       if (isStillDissolvable(reloaded, targetId)) {
-        throw new OperatorScreenError(operatorForceActionNoResponseMessage('dissolve', FORCE_DISSOLVE_NOT_DONE_GUIDE));
+        throw new OperatorScreenError(
+          operatorForceActionNoResponseMessage('dissolve', result.status, FORCE_DISSOLVE_NOT_DONE_GUIDE),
+        );
       }
       // 解散が済んでいた (一覧から外れた)。確認の枠を閉じて、読み直した一覧を見せる
       setDissolveTarget(null);

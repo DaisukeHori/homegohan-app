@@ -524,7 +524,7 @@ describe.each(TRANSFER_CASES)('#2086 V1 $name: 本文の無い 502 / 503 / 504 �
     expect(unhandled).toEqual([]);
   });
 
-  it.each(GATEWAY_STATUSES)('本文の無い %i で、読み直しても選んだメンバーがまだ候補にいたら、「応答を受け取れませんでした (HTTP %i)」と済んでいない文を出し、押し直せる', async (status) => {
+  it.each(GATEWAY_STATUSES)('本文の無い %i で、読み直しても選んだメンバーがまだ候補にいたら、「応答を受け取れませんでした (HTTP <番号>)」と済んでいない文を出し、押し直せる', async (status) => {
     route('GET', c.candidatesUrl, () => json(200, { data: [c.candidateA, c.candidateB] }));
     route('POST', c.transferUrl, () => plain(status));
     await renderElement(c.page());
@@ -668,7 +668,7 @@ describe.each(DISSOLVE_CASES)('#2086 V1 $name: 本文の無い 502 / 503 / 504 �
     expect(unhandled).toEqual([]);
   });
 
-  it.each(GATEWAY_STATUSES)('本文の無い %i で、読み直しても対象がまだ一覧にあったら、「応答を受け取れませんでした (HTTP %i)」と済んでいない文を出す', async (status) => {
+  it.each(GATEWAY_STATUSES)('本文の無い %i で、読み直しても対象がまだ一覧にあったら、「応答を受け取れませんでした (HTTP <番号>)」と済んでいない文を出す', async (status) => {
     route('GET', c.listUrl, () => json(200, { data: [c.rowA, c.rowB] }));
     route('POST', c.dissolveUrl, () => plain(status));
     await renderElement(c.page());
