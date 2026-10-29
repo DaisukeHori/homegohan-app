@@ -52,18 +52,17 @@ export function FamilyInviteAcceptModal({
   const expiresDate = new Date(expiresAt).toLocaleDateString('ja-JP');
 
   /**
-   * 承諾できていたかを自分のプロフィールで確かめる (#2080 U1)。招待の家族に入っていれば成功のときと同じ遷移にして true を返す。
-   * 入っていなければ message (確かめられなかったときは「状態を確かめられませんでした」を添える) を出して false を返す。
+   * 承諾できていたかを自分のプロフィールで確かめる (#2080 U1)。招待の家族に入っていれば成功のときと同じ遷移にする。
+   * 入っていなければ message (確かめられなかったときは「状態を確かめられませんでした」を添える) を出す。
    * 読み直しの応答を待つあいだも「承諾する」を止めたままにする (呼ぶ側の finally まで loading を戻さない)
    */
-  const confirmAcceptedOrShow = async (message: string): Promise<boolean> => {
+  const confirmAcceptedOrShow = async (message: string) => {
     const state = await readInviteAcceptStateAfterFailure(supabase, 'family', familyId);
     if (state === 'joined') {
       onAccepted?.();
-      return true;
+      return;
     }
     setError(withInviteAcceptStateNote(message, state));
-    return false;
   };
 
   const handleAccept = async () => {
