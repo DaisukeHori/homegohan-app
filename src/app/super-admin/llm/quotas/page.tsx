@@ -21,6 +21,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { isStaleDataConflict } from "@/lib/admin/api-error-message";
 import {
+  AdminScreenError,
+  adminActionHttpFailedMessage,
+  adminActionNoResponseMessage,
+  adminLoadFailedFallback,
+  displayableAdminError,
+  fetchAdminJson,
+  screenApiErrorMessage,
+} from "@/lib/admin/admin-screen-messages";
+import {
   AI_DAILY_LIMIT_READ_ONLY_NOTES,
   aiDailyLimitRowReadOnlyReason,
   parseLimitInput,
@@ -121,16 +130,10 @@ function isDraftEdited(draft: Draft | undefined, loaded: Draft | undefined): boo
   return draft.limit !== loaded.limit || draft.reason !== loaded.reason;
 }
 
-/** 失敗の応答の本文から、画面に出す文 (API の error.message。無ければ HTTP ステータス) */
-function errorMessageOfBody(body: unknown, status: number): string {
-  const message =
-    typeof body === "object" && body !== null ? (body as { error?: { message?: unknown } }).error?.message : undefined;
-  return typeof message === "string" ? message : `HTTP ${status}`;
-}
-
-async function errorMessageOf(res: Response): Promise<string> {
-  return errorMessageOfBody(await res.json().catch(() => null), res.status);
-}
+/** 読み込みの失敗の文の対象 (「AI の利用上限を読み込めませんでした (HTTP 502)」。#2086 V6) */
+const QUOTAS_SUBJECT = "AI の利用上限";
+/** 保存の失敗の文の操作の名前 (「保存に失敗しました (HTTP 502)」。#2086 V6) */
+const SAVE_ACTION = "保存";
 
 export default function LLMQuotasPage() {
   const [rows, setRows] = useState<QuotaRow[]>([]);
@@ -183,9 +186,8 @@ export default function LLMQuotasPage() {
       setError(null);
     }
     try {
-      const res = await fetch("/api/super-admin/llm/quotas");
-      if (!res.ok) throw new Error(await errorMessageOf(res));
-      const json = (await res.json()) as QuotaListResponse;
+      // 失敗は日本語の文の例外にする (本文の無い 502 の「HTTP 502」・通信の reject の英字の文・JSON でない本文の SyntaxError を出さない。#2086 V6)
+      const json = (await fetchAdminJson("/api/super-admin/llm/quotas", QUOTAS_SUBJECT)) as QuotaListResponse;
       if (seq !== loadSeq.current) return "superseded";
       hasLoadedRef.current = true;
       // 409 の文の出ている行 (入力欄を残すと伝えている行)
@@ -219,7 +221,7 @@ export default function LLMQuotasPage() {
       return "loaded";
     } catch (err) {
       if (seq !== loadSeq.current) return "superseded";
-      const message = err instanceof Error ? err.message : "読み込みに失敗しました";
+      const message = displayableAdminError(err, adminLoadFailedFallback(QUOTAS_SUBJECT));
       if (isReload) {
         // 表と書きかけは残し、表の上に文と「再試行」を出す (#1917)
         failedReloadOptions.current = options;
@@ -270,11 +272,17 @@ export default function LLMQuotasPage() {
     }
     setSavingPlan(planKey);
     try {
-      const res = await fetch("/api/super-admin/llm/quotas", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan_key: planKey, daily_limit: dailyLimit, reason: draft.reason.trim() }),
-      });
+      let res: Response;
+      try {
+        res = await fetch("/api/super-admin/llm/quotas", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ plan_key: planKey, daily_limit: dailyLimit, reason: draft.reason.trim() }),
+        });
+      } catch {
+        // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
+        throw new AdminScreenError(adminActionNoResponseMessage(SAVE_ACTION));
+      }
       if (!res.ok) {
         const body: unknown = await res.json().catch(() => null);
         if (isStaleDataConflict(res.status, body)) {
@@ -286,14 +294,14 @@ export default function LLMQuotasPage() {
           await load({ keepDrafts: true });
           return;
         }
-        throw new Error(errorMessageOfBody(body, res.status));
+        throw new AdminScreenError(screenApiErrorMessage(body) ?? adminActionHttpFailedMessage(SAVE_ACTION, res.status));
       }
       updateRowMessages((prev) => ({ ...prev, [planKey]: { ok: true, text: `保存しました（${limitLabel(dailyLimit)}）` } }));
       await load();
     } catch (err) {
       updateRowMessages((prev) => ({
         ...prev,
-        [planKey]: { ok: false, text: err instanceof Error ? err.message : "保存に失敗しました" },
+        [planKey]: { ok: false, text: displayableAdminError(err, `${SAVE_ACTION}に失敗しました`) },
       }));
     } finally {
       setSavingPlan(null);

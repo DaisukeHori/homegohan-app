@@ -3,11 +3,14 @@
 import { useState, useEffect, useCallback } from "react";
 import { lastPageToRefetch } from "@/lib/list-pagination";
 import { forbiddenMessageOfResponse } from "@/lib/admin/api-error-message";
+import { adminLoadFailedFallback, displayableAdminError, fetchAdminJson } from "@/lib/admin/admin-screen-messages";
 
 /** 403 (Forbidden) の HTTP ステータス */
 const HTTP_FORBIDDEN = 403;
 /** CSV の書き出しの失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917) */
 const CSV_EXPORT_FAILURE_MESSAGE = "CSV エクスポートに失敗しました";
+/** 読み込みの失敗の文の対象 (「監査ログを読み込めませんでした (HTTP 502)」。#2086 V6) */
+const AUDIT_LOGS_SUBJECT = "監査ログ";
 
 interface AuditLogEntry {
   id: string;
@@ -57,12 +60,9 @@ export default function AuditLogsPage() {
       if (fromDate) params.set("from", fromDate);
       if (toDate) params.set("to", toDate);
 
-      const res = await fetch(`/api/super-admin/audit-logs?${params}`);
-      if (!res.ok) {
-        const body = await res.json();
-        throw new Error(body.error?.message ?? `HTTP ${res.status}`);
-      }
-      const { data, meta } = await res.json();
+      // 失敗は日本語の文の例外にする (本文の無い 502 の「HTTP 502」・通信の reject の英字の文・JSON でない本文の SyntaxError を出さない。#2086 V6)
+      const body = await fetchAdminJson(`/api/super-admin/audit-logs?${params}`, AUDIT_LOGS_SUBJECT);
+      const { data, meta } = body as { data?: AuditLogEntry[] | null; meta?: { total?: number } | null };
       // 件数より後ろのページは、空のページを見せずに最後のページへ取り直す (#1917)
       const refetchPage = lastPageToRefetch({ rows: (data ?? []).length, page, total: meta?.total ?? 0, perPage: PER_PAGE });
       if (refetchPage !== null) {
@@ -72,7 +72,7 @@ export default function AuditLogsPage() {
       setLogs(data ?? []);
       setTotal(meta?.total ?? 0);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "読み込みに失敗しました");
+      setError(displayableAdminError(err, adminLoadFailedFallback(AUDIT_LOGS_SUBJECT)));
     } finally {
       setIsLoading(false);
     }
@@ -90,7 +90,14 @@ export default function AuditLogsPage() {
     if (fromDate) params.set("from", fromDate);
     if (toDate) params.set("to", toDate);
 
-    const res = await fetch(`/api/super-admin/audit-logs?${params}`);
+    let res: Response;
+    try {
+      res = await fetch(`/api/super-admin/audit-logs?${params}`);
+    } catch {
+      // 通信そのものの失敗 (以前は捕まえず、押しても何も出なかった。#2086 V6)
+      alert(`${CSV_EXPORT_FAILURE_MESSAGE}（通信エラー）`);
+      return;
+    }
     if (res.status === HTTP_FORBIDDEN) {
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 は「CSV エクスポートに失敗しました」(#1917)
       alert(await forbiddenMessageOfResponse(res, CSV_EXPORT_FAILURE_MESSAGE));
