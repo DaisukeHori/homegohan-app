@@ -759,7 +759,7 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 | `src/lib/billing/manual-grant.ts` | 定数・Zod・型・純関数・エラー (I/O なし) | `zod`・`@/lib/billing/core` (純)・`@/lib/calendar-date-schema` (純)。テスト 1 が見張る |
 | `src/lib/billing/manual-grant-repository.ts` | service_role の RPC と SELECT | `@/lib/supabase/server` (`getSupabaseAdmin`)・`manual-grant.ts`・`core.ts` |
 | `src/lib/billing/manual-grant-service.ts` | ユースケース (facade。route はこれだけを呼ぶ) | `manual-grant.ts`・`manual-grant-repository.ts` (型と例外)・`@/lib/jst-day-ranges` |
-| `src/lib/billing/manual-grant-client.ts` | 画面 (client component) の通信の facade | `zod`・`manual-grant.ts`。サーバー専用のもの (`next/headers`・`@/lib/supabase/server`・`@/lib/auth/helpers`) を import しない |
+| `src/lib/billing/manual-grant-client.ts` | 画面 (client component) の通信の facade | `zod`・`manual-grant.ts`・`@/lib/admin/api-error-message` (`extractApiErrorMessage`)・`@/lib/api/forbidden-reason-messages` (`FORBIDDEN_REASON_CODE_BY_MESSAGE`。#2086 V4)。サーバー専用のもの (`next/headers`・`@/lib/supabase/server`・`@/lib/auth/helpers`) を import しない |
 | `src/app/api/super-admin/users/[id]/manual-plan/route.ts` | HTTP handler 3 本 | 既存の共通 (`requireRole`・`recordAdminAudit`・`rejectNullCharacterBody`・`internalError`・`validation-errors`・`http-params`) + service + repository の生成 |
 | `src/components/admin/ManualPlanGrantSection.tsx` | 画面の節 (`'use client'`) | `react`・`manual-grant-client.ts`・`manual-grant.ts` |
 
@@ -1006,12 +1006,23 @@ export function isGrantablePlan(plan: { plan_key: string; plan_type: string; sta
  * どの入力の誤り (有効期限・理由の長さ・JSON) にも当てはまる文にする
  */
 export const MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE = `入力を確かめてください (有効期限は今日より後の日付、理由は ${MANUAL_GRANT_REASON_MAX_LENGTH} 文字まで)`;
-/** 画面の文 (画面はエラーの本文の文面を読まず、code から引く。OP_INVALID_INPUT だけは画面用の文に差し替える) */
+/**
+ * 画面の文 (画面はエラーの本文の文面を読まず、code から引く。OP_INVALID_INPUT だけは画面用の文に差し替える)。
+ * 403 の理由 (二段階認証の確認・登録が要る・凍結) の code は、運営の route が 403 OP_PERMISSION_DENIED の文に理由の文を入れたとき、
+ * manual-grant-client が理由の文を code に直して返す (FORBIDDEN_REASON_CODE_BY_MESSAGE。#2086 V4)。
+ * 文はほかの運営の画面の 403 の理由の文 (src/lib/api/forbidden-reason-messages.ts。forbiddenMessageForScreen が出す文) と同じ。
+ * 401 / 403 の既定の文も運営の画面 (src/lib/admin/api-error-message.ts の UNAUTHENTICATED_SCREEN_MESSAGE・FORBIDDEN_SCREEN_MESSAGE) と同じ。
+ * このファイルは zod・core・calendar-date-schema のほかを import しない (tests/billing-manual-grant.test.ts) ので文を書き写し、
+ * 同じ文であることは tests/admin-reread-unauthenticated-2086.test.tsx が見る
+ */
 export const MANUAL_GRANT_CLIENT_MESSAGES: Readonly<Record<string, string>> = {
   ...MANUAL_GRANT_ERROR_MESSAGES,
   OP_INVALID_INPUT: MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE,
   AUTH_UNAUTHENTICATED: 'ログインし直してください',
   OP_PERMISSION_DENIED: '権限がありません',
+  AUTH_ACCOUNT_FROZEN: 'アカウントが凍結されています',
+  AUTH_2FA_REQUIRED: '二段階認証の確認が必要です',
+  AUTH_2FA_ENROLLMENT_REQUIRED: '二段階認証の登録が必要です',
   INTERNAL_ERROR: '処理中にエラーが発生しました。しばらくしてからお試しください',
 };
 /** code が無い・知らない code のときの文 */
@@ -1268,6 +1279,8 @@ export async function revokeManualPlan(deps: ManualGrantDeps, input: RevokeManua
 // ⚠️ client component が import するので、このファイルと import 先 (manual-grant.ts → core.ts / calendar-date-schema.ts) はサーバー専用のもの
 // (next/headers・@/lib/supabase/server・@/lib/auth/helpers) を import しない。
 import { z } from 'zod';
+import { extractApiErrorMessage } from '@/lib/admin/api-error-message';
+import { FORBIDDEN_REASON_CODE_BY_MESSAGE } from '@/lib/api/forbidden-reason-messages';
 import {
   ManualPlanGrantResponseSchema,
   ManualPlanRevokeResponseSchema,
@@ -1302,11 +1315,24 @@ export type ManualGrantClientResult<T> = ManualGrantClientSuccess<T> | ManualGra
 
 /**
  * 運営 API の失敗の本文 (nested。手動付与の route の rejectNullCharacterBody の 400 も { shape: 'nested' } で nested) と、flat の本文 ({ error, code }) の両方から code だけを読む。
- * 本文の文面 (error.message) は読まない (src/lib/auth/mfa/client.ts:87-96 と同じ。tests/lib-raw-error-message-scan.test.ts が
- * src/lib の結果に「エラーらしい名前の .message」を入れることを違反に数える。F27)
+ * 本文の文面 (error.message) は結果に入れない (src/lib/auth/mfa/client.ts:87-96 と同じ。tests/lib-raw-error-message-scan.test.ts が
+ * src/lib の結果に「エラーらしい名前の .message」を入れることを違反に数える。F27)。
+ * ただし 403 の文が理由の文 (二段階認証の確認・登録が要る・凍結。src/lib/api/forbidden-reason-messages.ts の表) のときだけ、
+ * その理由の code (AUTH_2FA_REQUIRED など) を返す。運営の route は二段階認証が理由でも code を OP_PERMISSION_DENIED のまま
+ * 文だけを理由の文にする (#2014) ので、code だけを見ると二段階認証が要るのに「権限がありません」と出てしまう (#2086 V4。
+ * ほかの運営の画面の forbiddenMessageForScreen と同じ規則で、表にある固定の文だけを理由として扱う。表に無い文は捨てる)
  */
 const NestedErrorBodySchema = z.object({ error: z.object({ code: z.string().min(1) }) });
 const FlatErrorBodySchema = z.object({ code: z.string().min(1) });
+
+/** 403 (Forbidden) の HTTP ステータス */
+const HTTP_FORBIDDEN = 403;
+
+/** 403 の本文の文が理由の文なら、その理由の code。理由の文でなければ null (#2086 V4) */
+function forbiddenReasonCodeOf(body: unknown): string | null {
+  const text = extractApiErrorMessage(body);
+  return text === null ? null : (FORBIDDEN_REASON_CODE_BY_MESSAGE.get(text) ?? null);
+}
 
 function failureCodeOf(body: unknown): string {
   const nested = NestedErrorBodySchema.safeParse(body);
@@ -1316,7 +1342,8 @@ function failureCodeOf(body: unknown): string {
 }
 
 function failureOf(status: number, body: unknown): ManualGrantClientFailure {
-  return { ok: false, status, code: failureCodeOf(body) };
+  const reasonCode = status === HTTP_FORBIDDEN ? forbiddenReasonCodeOf(body) : null;
+  return { ok: false, status, code: reasonCode ?? failureCodeOf(body) };
 }
 
 const NO_RESPONSE_FAILURE: ManualGrantClientFailure = {
@@ -1587,7 +1614,9 @@ export async function DELETE(request: Request, props: Params): Promise<NextRespo
  *   - 契約なし → 付与のフォーム (プラン・有効期限 (任意)・理由) → 確認ダイアログ → POST
  *   - 手動付与の契約あり → 取り消しのフォーム (理由) → 確認ダイアログ → DELETE
  *   - Stripe の契約あり → 「Stripe の契約があるため、手動付与はできません」(解約は利用者の操作か Stripe で)
- * 成功は GET で読み直して表示を更新し、失敗は manualGrantErrorMessage(code) を出す (応答の本文の文面は読まない。400 OP_INVALID_INPUT は画面用の文)。
+ * 成功は GET で読み直して表示を更新し、失敗は manualGrantErrorMessage(code) を出す (応答の本文の文面は出さない。400 OP_INVALID_INPUT は画面用の文)。
+ * 403 の文が理由の文 (二段階認証の確認が要る など) なら、manual-grant-client がその理由の code にして返すので、読み直し・読み込み・
+ * 付与・取り消しのどれでも理由の文を出す (ほかの運営の画面の forbiddenMessageForScreen と同じ規則。#2086 V4)。
  * 通信は src/lib/billing/manual-grant-client.ts だけで行う (URL をここで組み立てない)。
  */
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
@@ -1935,7 +1964,7 @@ const canGrantManualPlan = isSuperAdmin && actor.id !== profile.id;
 | `current.source === 'manual'` | 現在の契約 (プラン・由来「手動付与」・有効期限) と取り消しのフォーム: 理由 (必須)・[取り消す] → 確認ダイアログ `REVOKE_CONFIRM_MESSAGE` → `DELETE`。成功で「<plan_key> の付与を取り消しました」と読み直し |
 | `current.source === 'stripe'` | 現在の契約 (プラン・由来「Stripe」・次回更新) と「Stripe の契約があるため、手動付与はできません (解約は利用者の操作か Stripe で行います)」。フォームは描かない |
 | `history` が 1 件以上 | 履歴 (付与 / 取り消し / 期限切れ・プラン・期限・理由・日時) |
-| 失敗 | 本文の `code` から `manualGrantErrorMessage` の文 (応答の本文の `message` は読まない。`OP_INVALID_INPUT` は `MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE`「入力を確かめてください (有効期限は今日より後の日付、理由は 500 文字まで)」)。401 も文を出すだけ (運営の画面の移動は layout の `requireRoleForPage` が受け持つ)。付与・取り消しの応答を受け取れなかった (`status === MANUAL_GRANT_CLIENT_NO_STATUS`。通信の reject・2xx なのに本文が形に合わない) ときは、済んだか分からないので GET で読み直し、「<付与\|取り消し>の応答を受け取れませんでした（通信エラー）」に続けて読み直した旨を出す (`statusChangeNoResponseMessage`。読み直した契約で操作が済んでいれば入力欄を空にする)。読み直しが 401 / 403 / 404 ならその code の文 (「再試行」なし)、それ以外の失敗なら「再試行」を出し、読み直せるまで付与・取り消しを止める (#2080) |
+| 失敗 | 本文の `code` から `manualGrantErrorMessage` の文 (応答の本文の `message` は画面に出さない。ただし 403 の `message` が理由の文 (`src/lib/api/forbidden-reason-messages.ts` の `FORBIDDEN_REASON_CODE_BY_MESSAGE` の表。二段階認証の確認・登録が要る・凍結) のときだけ、client がその理由の code (`AUTH_2FA_REQUIRED` / `AUTH_2FA_ENROLLMENT_REQUIRED` / `AUTH_ACCOUNT_FROZEN`) にして返し、画面はその code の文 (理由の文と同じ) を出す。運営の route は二段階認証が理由でも code を `OP_PERMISSION_DENIED` のまま文だけを理由の文にするため。ほかの運営の画面の `forbiddenMessageForScreen` と同じ規則 (#2086 V4)。`OP_INVALID_INPUT` は `MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE`「入力を確かめてください (有効期限は今日より後の日付、理由は 500 文字まで)」)。401 も文を出すだけ (運営の画面の移動は layout の `requireRoleForPage` が受け持つ)。付与・取り消しの応答を受け取れなかった (`status === MANUAL_GRANT_CLIENT_NO_STATUS`。通信の reject・2xx なのに本文が形に合わない) ときは、済んだか分からないので GET で読み直し、「<付与\|取り消し>の応答を受け取れませんでした（通信エラー）」に続けて読み直した旨を出す (`statusChangeNoResponseMessage`。読み直した契約で操作が済んでいれば入力欄を空にする)。読み直しが 401 / 403 / 404 ならその code の文 (「再試行」なし)、それ以外の失敗なら「再試行」を出し、読み直せるまで付与・取り消しを止める (#2080) |
 
 - 有効期限の表示は JST の日時 (`toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })`)。「2026-12-31 まで」の付与は `2027/1/1 0:00:00` と出る (期限の意味 = その時刻の前まで使える)。日付だけに丸めると「2027/1/1」が「1 月 1 日も使える」に読めるので丸めない。
 - 既存の「現在のサブスクリプション」の節 (`active_subscription`。`next_billing_at`) はそのまま残す。
@@ -2210,7 +2239,7 @@ grep の語 = 本冊が足す・変える名前。段 = §14.1。
 | `tests/organizations-owner-id-not-null-migration-contract.test.ts` (`src` 全体の `.from('organizations').insert/upsert` が `owner_id` を渡す) | 新しいファイル (走査の対象に入る) | 変更なし (`organizations` を書かない) | — |
 | `tests/role-check-source-scan.test.ts` (`roles` の手書きの判定・`isOrgAdmin` の直接呼び出しが無い) | `src/app/api` の新しい route | 変更なし (`actor.roles` を読まない。§8.5) | — |
 | `tests/api-raw-error-message-scan.test.ts` (応答の本文に `err.message` / `error.details` を入れない) | 新しい route の本文 | 変更なし (`ManualGrantError` も code から `MANUAL_GRANT_ERROR_MESSAGES` を引く。`internalError` で 500。`invalidInputResponse` は Zod の issues で (b) の 4xx の例外) | — |
-| `tests/lib-raw-error-message-scan.test.ts` (`src/lib` のヘルパーが、オブジェクトのプロパティの値に「エラーらしい名前の `.message` / `.details` / `.hint`」を入れない。文面が固定の文かどうかは見ない。F27) | `src/lib/billing/manual-grant-*.ts` | 変更なし (`ALLOWED` に足さない)。client は失敗の本文から `code` だけを読み (`failureCodeOf`。`src/lib/auth/mfa/client.ts:87-96` と同じ)、結果 `ManualGrantClientFailure` に `message` を持たない (テスト 58)。repository の `error.message` / `error.details` は `new ManualGrantRpcError(…)` の引数の中だけ (例外の中は数えない) | — |
+| `tests/lib-raw-error-message-scan.test.ts` (`src/lib` のヘルパーが、オブジェクトのプロパティの値に「エラーらしい名前の `.message` / `.details` / `.hint`」を入れない。文面が固定の文かどうかは見ない。F27) | `src/lib/billing/manual-grant-*.ts` | 変更なし (`ALLOWED` に足さない)。client は失敗の本文から `code` だけを読み (`failureCodeOf`。`src/lib/auth/mfa/client.ts:87-96` と同じ。ただし 403 の文が理由の文なら理由の `code` に直す。§8.4・#2086 V4)、結果 `ManualGrantClientFailure` に `message` を持たない (テスト 58)。repository の `error.message` / `error.details` は `new ManualGrantRpcError(…)` の引数の中だけ (例外の中は数えない) | — |
 | `tests/supabase-service-role-client-scan.test.ts` (service_role の client は `getSupabaseAdmin` だけ) | `manual-grant-repository.ts` | 変更なし (`getSupabaseAdmin` だけ。`@supabase/supabase-js` を import しない) | — |
 | `tests/next15-async-request-api-scan.test.ts` (`createClient()`・`params` に `await`) | 新しい route | 変更なし (`await props.params`・`await createClient()`) | — |
 | `tests/schema-checked-supabase.test.ts` / `tests/schema-checked-db.test.ts` (`.from()` / `.rpc()` の名前が型にある) | `.rpc('billing_grant_manual_subscription')`・`.rpc('billing_revoke_manual_subscription')` | 型の再生成 (段 A) で緑。段 B は段 A のマージ後 | A → B |

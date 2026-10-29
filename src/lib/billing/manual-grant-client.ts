@@ -3,6 +3,8 @@
 // ⚠️ client component が import するので、このファイルと import 先 (manual-grant.ts → core.ts / calendar-date-schema.ts) はサーバー専用のもの
 // (next/headers・@/lib/supabase/server・@/lib/auth/helpers) を import しない。
 import { z } from 'zod';
+import { extractApiErrorMessage } from '@/lib/admin/api-error-message';
+import { FORBIDDEN_REASON_CODE_BY_MESSAGE } from '@/lib/api/forbidden-reason-messages';
 import {
   ManualPlanGrantResponseSchema,
   ManualPlanRevokeResponseSchema,
@@ -37,11 +39,24 @@ export type ManualGrantClientResult<T> = ManualGrantClientSuccess<T> | ManualGra
 
 /**
  * 運営 API の失敗の本文 (nested。手動付与の route の rejectNullCharacterBody の 400 も { shape: 'nested' } で nested) と、flat の本文 ({ error, code }) の両方から code だけを読む。
- * 本文の文面 (error.message) は読まない (src/lib/auth/mfa/client.ts:87-96 と同じ。tests/lib-raw-error-message-scan.test.ts が
- * src/lib の結果に「エラーらしい名前の .message」を入れることを違反に数える。F27)
+ * 本文の文面 (error.message) は結果に入れない (src/lib/auth/mfa/client.ts:87-96 と同じ。tests/lib-raw-error-message-scan.test.ts が
+ * src/lib の結果に「エラーらしい名前の .message」を入れることを違反に数える。F27)。
+ * ただし 403 の文が理由の文 (二段階認証の確認・登録が要る・凍結。src/lib/api/forbidden-reason-messages.ts の表) のときだけ、
+ * その理由の code (AUTH_2FA_REQUIRED など) を返す。運営の route は二段階認証が理由でも code を OP_PERMISSION_DENIED のまま
+ * 文だけを理由の文にする (#2014) ので、code だけを見ると二段階認証が要るのに「権限がありません」と出てしまう (#2086 V4。
+ * ほかの運営の画面の forbiddenMessageForScreen と同じ規則で、表にある固定の文だけを理由として扱う。表に無い文は捨てる)
  */
 const NestedErrorBodySchema = z.object({ error: z.object({ code: z.string().min(1) }) });
 const FlatErrorBodySchema = z.object({ code: z.string().min(1) });
+
+/** 403 (Forbidden) の HTTP ステータス */
+const HTTP_FORBIDDEN = 403;
+
+/** 403 の本文の文が理由の文なら、その理由の code。理由の文でなければ null (#2086 V4) */
+function forbiddenReasonCodeOf(body: unknown): string | null {
+  const text = extractApiErrorMessage(body);
+  return text === null ? null : (FORBIDDEN_REASON_CODE_BY_MESSAGE.get(text) ?? null);
+}
 
 function failureCodeOf(body: unknown): string {
   const nested = NestedErrorBodySchema.safeParse(body);
@@ -51,7 +66,8 @@ function failureCodeOf(body: unknown): string {
 }
 
 function failureOf(status: number, body: unknown): ManualGrantClientFailure {
-  return { ok: false, status, code: failureCodeOf(body) };
+  const reasonCode = status === HTTP_FORBIDDEN ? forbiddenReasonCodeOf(body) : null;
+  return { ok: false, status, code: reasonCode ?? failureCodeOf(body) };
 }
 
 const NO_RESPONSE_FAILURE: ManualGrantClientFailure = {

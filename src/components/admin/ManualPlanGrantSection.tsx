@@ -7,7 +7,9 @@
  *   - 契約なし → 付与のフォーム (プラン・有効期限 (任意)・理由) → 確認ダイアログ → POST
  *   - 手動付与の契約あり → 取り消しのフォーム (理由) → 確認ダイアログ → DELETE
  *   - Stripe の契約あり → 「Stripe の契約があるため、手動付与はできません」(解約は利用者の操作か Stripe で)
- * 成功は GET で読み直して表示を更新し、失敗は manualGrantErrorMessage(code) を出す (応答の本文の文面は読まない。400 OP_INVALID_INPUT は画面用の文)。
+ * 成功は GET で読み直して表示を更新し、失敗は manualGrantErrorMessage(code) を出す (応答の本文の文面は出さない。400 OP_INVALID_INPUT は画面用の文)。
+ * 403 の文が理由の文 (二段階認証の確認が要る など) なら、manual-grant-client がその理由の code にして返すので、読み直し・読み込み・
+ * 付与・取り消しのどれでも理由の文を出す (ほかの運営の画面の forbiddenMessageForScreen と同じ規則。#2086 V4)。
  * 通信は src/lib/billing/manual-grant-client.ts だけで行う (URL をここで組み立てない)。
  *
  * 付与・取り消しの応答を受け取れなかった (通信が reject された・2xx なのに本文が形に合わない。manual-grant-client の

@@ -10,6 +10,13 @@ import { useState, useEffect, useCallback, useRef, use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
+import {
+  AdminScreenError,
+  adminActionHttpFailedMessage,
+  adminActionNoResponseMessage,
+  adminScreenErrorOfResponse,
+  displayableAdminError,
+} from '@/lib/admin/admin-screen-messages';
 import { describeReplyEmailOutcome } from '@/lib/admin/support-reply-email-status';
 
 interface Message {
@@ -41,6 +48,10 @@ const HTTP_FORBIDDEN = 403;
 const ASSIGN_FAILURE_MESSAGE = '割り当て失敗';
 /** 状態の変更の失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917) */
 const STATUS_CHANGE_FAILURE_MESSAGE = 'ステータス変更失敗';
+/** 書き込みの通信そのものが失敗したときの文の操作の名前 (「メッセージの送信の応答を受け取れませんでした（通信エラー）」。#2086 V6) */
+const SEND_MESSAGE_ACTION = 'メッセージの送信';
+const ASSIGN_ACTION = '割り当て';
+const STATUS_CHANGE_ACTION = 'ステータスの変更';
 
 const STATUS_LABELS: Record<string, string> = {
   open: '未対応',
@@ -124,14 +135,20 @@ export default function TicketDetailPage(props: PageProps) {
     setIsSending(true);
     setEmailNotice(null);
     try {
-      const res = await fetch(`/api/admin/support/tickets/${params.id}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: messageBody, is_internal: isInternal }),
-      });
+      let res: Response;
+      try {
+        res = await fetch(`/api/admin/support/tickets/${params.id}/messages`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ body: messageBody, is_internal: isInternal }),
+        });
+      } catch {
+        // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
+        throw new AdminScreenError(adminActionNoResponseMessage(SEND_MESSAGE_ACTION));
+      }
       if (!res.ok) {
-        const json = await res.json();
-        throw new Error(json.error?.message ?? '送信失敗');
+        // 本文は JSON でないこともある (プロキシの 502 の HTML など) ので読み失敗で例外にしない (#2086 V6)
+        throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(SEND_MESSAGE_ACTION, status));
       }
       // 外部返信は顧客へメールで知らせる。メッセージ自体は保存済みなので、送れなかったときは案内だけ出す
       // (内部メモは通知しないため、応答に email が無い)
@@ -140,7 +157,8 @@ export default function TicketDetailPage(props: PageProps) {
       setMessageBody('');
       await fetchTicket();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '送信失敗');
+      // 画面に出すのは日本語の文だけ (ブラウザの英字の例外の文などは出さない。#2086 V6)
+      setError(displayableAdminError(e, '送信失敗'));
     } finally {
       writeInFlightRef.current = false;
       setIsSending(false);
@@ -152,17 +170,23 @@ export default function TicketDetailPage(props: PageProps) {
     writeInFlightRef.current = true;
     setIsAssigning(true);
     try {
-      const res = await fetch(`/api/admin/support/tickets/${params.id}/assign`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ assignee_id: assigneeId }),
-      });
+      let res: Response;
+      try {
+        res = await fetch(`/api/admin/support/tickets/${params.id}/assign`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ assignee_id: assigneeId }),
+        });
+      } catch {
+        // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
+        throw new AdminScreenError(adminActionNoResponseMessage(ASSIGN_ACTION));
+      }
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 と失敗は「割り当て失敗」(#1917)
-      if (res.status === HTTP_FORBIDDEN) throw new Error(await forbiddenMessageOfResponse(res, ASSIGN_FAILURE_MESSAGE));
-      if (!res.ok) throw new Error(ASSIGN_FAILURE_MESSAGE);
+      if (res.status === HTTP_FORBIDDEN) throw new AdminScreenError(await forbiddenMessageOfResponse(res, ASSIGN_FAILURE_MESSAGE));
+      if (!res.ok) throw new AdminScreenError(ASSIGN_FAILURE_MESSAGE);
       await fetchTicket();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : ASSIGN_FAILURE_MESSAGE);
+      setError(displayableAdminError(e, ASSIGN_FAILURE_MESSAGE));
     } finally {
       writeInFlightRef.current = false;
       setIsAssigning(false);
@@ -174,17 +198,23 @@ export default function TicketDetailPage(props: PageProps) {
     writeInFlightRef.current = true;
     setStatusChanging(true);
     try {
-      const res = await fetch(`/api/admin/support/tickets/${params.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status }),
-      });
+      let res: Response;
+      try {
+        res = await fetch(`/api/admin/support/tickets/${params.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status }),
+        });
+      } catch {
+        // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
+        throw new AdminScreenError(adminActionNoResponseMessage(STATUS_CHANGE_ACTION));
+      }
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 と失敗は「ステータス変更失敗」(#1917)
-      if (res.status === HTTP_FORBIDDEN) throw new Error(await forbiddenMessageOfResponse(res, STATUS_CHANGE_FAILURE_MESSAGE));
-      if (!res.ok) throw new Error(STATUS_CHANGE_FAILURE_MESSAGE);
+      if (res.status === HTTP_FORBIDDEN) throw new AdminScreenError(await forbiddenMessageOfResponse(res, STATUS_CHANGE_FAILURE_MESSAGE));
+      if (!res.ok) throw new AdminScreenError(STATUS_CHANGE_FAILURE_MESSAGE);
       await fetchTicket();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : STATUS_CHANGE_FAILURE_MESSAGE);
+      setError(displayableAdminError(e, STATUS_CHANGE_FAILURE_MESSAGE));
     } finally {
       writeInFlightRef.current = false;
       setStatusChanging(false);

@@ -3,6 +3,10 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { MonitoringNotConnectedNotice } from "@/components/operator/infra/MonitoringNotConnectedNotice";
+import { adminLoadFailedFallback, displayableAdminError, fetchAdminJson } from "@/lib/admin/admin-screen-messages";
+
+/** 読み込みの失敗の文の対象 (「アラートを読み込めませんでした (HTTP 502)」。#2086 V6) */
+const ALERTS_SUBJECT = "アラート";
 
 interface InfraAlert {
   id: string;
@@ -28,15 +32,11 @@ export default function InfraPage() {
       setError(null);
       try {
         const resolved = filter === "all" ? "" : filter === "resolved" ? "true" : "false";
-        const res = await fetch(`/api/super-admin/infra/alerts?resolved=${resolved}`);
-        if (!res.ok) {
-          const body = await res.json();
-          throw new Error(body.error?.message ?? `HTTP ${res.status}`);
-        }
-        const { data } = await res.json();
+        // 失敗は日本語の文の例外にする (本文の無い 502 の「HTTP 502」・通信の reject の英字の文・JSON でない本文の SyntaxError を出さない。#2086 V6)
+        const { data } = (await fetchAdminJson(`/api/super-admin/infra/alerts?resolved=${resolved}`, ALERTS_SUBJECT)) as { data?: InfraAlert[] | null };
         setAlerts(data ?? []);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "読み込みに失敗しました");
+        setError(displayableAdminError(err, adminLoadFailedFallback(ALERTS_SUBJECT)));
       } finally {
         setIsLoading(false);
       }

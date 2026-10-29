@@ -1,6 +1,16 @@
 "use client";
 
 import { useState } from "react";
+import {
+  AdminScreenError,
+  adminActionHttpFailedMessage,
+  adminActionNoResponseMessage,
+  adminScreenErrorOfResponse,
+  displayableAdminError,
+} from "@/lib/admin/admin-screen-messages";
+
+/** 失敗の文の操作の名前 (「CSV のエクスポートに失敗しました (HTTP 502)」。#2086 V6) */
+const EXPORT_ACTION = "CSV のエクスポート";
 
 type ExportType = "revenue" | "invoices" | "subscriptions" | "nps";
 
@@ -59,15 +69,22 @@ export default function ExportsPage() {
         format: "csv",
       };
 
-      const res = await fetch("/api/admin/finance/exports", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      let res: Response;
+      try {
+        res = await fetch("/api/admin/finance/exports", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      } catch {
+        // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
+        throw new AdminScreenError(adminActionNoResponseMessage(EXPORT_ACTION));
+      }
 
       if (!res.ok) {
-        const json = await res.json() as { error?: { message?: string } };
-        throw new Error(json.error?.message ?? `HTTP ${res.status}`);
+        // 本文は JSON でないこともある (プロキシの 502 の HTML など) ので読み失敗で例外にしない。
+        // 日本語の文が無ければ「CSV のエクスポートに失敗しました (HTTP 502)」(#2086 V6)
+        throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(EXPORT_ACTION, status));
       }
 
       // CSV をダウンロード
@@ -87,7 +104,8 @@ export default function ExportsPage() {
 
       setSuccess(true);
     } catch (e: unknown) {
-      setError(String(e));
+      // 画面に出すのは日本語の文だけ (以前は String(e) で「Error: HTTP 502」「TypeError: Failed to fetch」と出していた。#2086 V6)
+      setError(displayableAdminError(e, `${EXPORT_ACTION}に失敗しました`));
     } finally {
       setLoading(false);
     }

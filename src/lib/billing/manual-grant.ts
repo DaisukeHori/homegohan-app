@@ -233,12 +233,23 @@ export function isGrantablePlan(plan: { plan_key: string; plan_type: string; sta
  * どの入力の誤り (有効期限・理由の長さ・JSON) にも当てはまる文にする
  */
 export const MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE = `入力を確かめてください (有効期限は今日より後の日付、理由は ${MANUAL_GRANT_REASON_MAX_LENGTH} 文字まで)`;
-/** 画面の文 (画面はエラーの本文の文面を読まず、code から引く。OP_INVALID_INPUT だけは画面用の文に差し替える) */
+/**
+ * 画面の文 (画面はエラーの本文の文面を読まず、code から引く。OP_INVALID_INPUT だけは画面用の文に差し替える)。
+ * 403 の理由 (二段階認証の確認・登録が要る・凍結) の code は、運営の route が 403 OP_PERMISSION_DENIED の文に理由の文を入れたとき、
+ * manual-grant-client が理由の文を code に直して返す (FORBIDDEN_REASON_CODE_BY_MESSAGE。#2086 V4)。
+ * 文はほかの運営の画面の 403 の理由の文 (src/lib/api/forbidden-reason-messages.ts。forbiddenMessageForScreen が出す文) と同じ。
+ * 401 / 403 の既定の文も運営の画面 (src/lib/admin/api-error-message.ts の UNAUTHENTICATED_SCREEN_MESSAGE・FORBIDDEN_SCREEN_MESSAGE) と同じ。
+ * このファイルは zod・core・calendar-date-schema のほかを import しない (tests/billing-manual-grant.test.ts) ので文を書き写し、
+ * 同じ文であることは tests/admin-reread-unauthenticated-2086.test.tsx が見る
+ */
 export const MANUAL_GRANT_CLIENT_MESSAGES: Readonly<Record<string, string>> = {
   ...MANUAL_GRANT_ERROR_MESSAGES,
   OP_INVALID_INPUT: MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE,
   AUTH_UNAUTHENTICATED: 'ログインし直してください',
   OP_PERMISSION_DENIED: '権限がありません',
+  AUTH_ACCOUNT_FROZEN: 'アカウントが凍結されています',
+  AUTH_2FA_REQUIRED: '二段階認証の確認が必要です',
+  AUTH_2FA_ENROLLMENT_REQUIRED: '二段階認証の登録が必要です',
   INTERNAL_ERROR: '処理中にエラーが発生しました。しばらくしてからお試しください',
 };
 /** code が無い・知らない code のときの文 */

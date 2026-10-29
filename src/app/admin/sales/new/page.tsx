@@ -8,6 +8,16 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
+import {
+  AdminScreenError,
+  adminActionHttpFailedMessage,
+  adminActionNoResponseMessage,
+  adminScreenErrorOfResponse,
+  displayableAdminError,
+} from '@/lib/admin/admin-screen-messages';
+
+/** 失敗の文の操作の名前 (「リードの作成に失敗しました (HTTP 502)」。#2086 V6) */
+const LEAD_CREATE_ACTION = 'リードの作成';
 import Link from 'next/link';
 
 type LeadSource = 'website' | 'referral' | 'event' | 'cold_call' | 'other';
@@ -52,24 +62,31 @@ export default function NewLeadPage() {
       if (formData.estimated_acv) payload.estimated_acv = parseInt(formData.estimated_acv, 10);
       if (formData.notes) payload.notes = formData.notes;
 
-      const res = await fetch('/api/admin/sales/leads', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      let res: Response;
+      try {
+        res = await fetch('/api/admin/sales/leads', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch {
+        // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
+        throw new AdminScreenError(adminActionNoResponseMessage(LEAD_CREATE_ACTION));
+      }
 
       if (res.status === 401) { router.push('/login'); return; }
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
       if (res.status === 403) { setError(await forbiddenMessageOfResponse(res)); return; }
       if (!res.ok) {
-        const json = await res.json();
-        throw new Error(json.error?.message ?? 'リード作成に失敗しました');
+        // 本文は JSON でないこともある (プロキシの 502 の HTML など) ので読み失敗で例外にしない (#2086 V6)
+        throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(LEAD_CREATE_ACTION, status));
       }
 
       const json = await res.json();
       router.push(`/admin/sales/${json.data.id}`);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '不明なエラー');
+      // 画面に出すのは日本語の文だけ (JSON でない本文の SyntaxError などの英字の文は出さない。#2086 V6)
+      setError(displayableAdminError(e, `${LEAD_CREATE_ACTION}に失敗しました`));
     } finally {
       setIsSubmitting(false);
     }
