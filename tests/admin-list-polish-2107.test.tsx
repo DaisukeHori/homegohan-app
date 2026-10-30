@@ -6,6 +6,9 @@
  *     直したあと: URL の page (parsePageParam で読む) のページを読み、meta.total で件数とページ送り (前へ・次へ) を出す。
  *     件数より後ろのページは、空のページを見せずに最後のページへ移す (lastPageToRefetch・router.replace)。
  *     ページを移した先の読み込みが失敗したら、前のページの行を出さずに失敗の文を出す。
+ *     「開始」の 409・通信の reject のあとに読み直した一覧 (表示しているページ) に押した実験が無くても「見つかりませんでした」と
+ *     言わない (応答を待つ間にページを移した・新しい実験が増えて次のページへ押し出された・最後のページへ移した)。
+ *     詳細の API で読み、あれば今の状態を添えて「表示しているページにありません」と出し、404 のときだけ「見つかりませんでした」と出す。
  * Y11: 営業 (/admin/sales)・問い合わせ (/admin/support) の一覧は、以前は絞り込み・ページを変えた後の読み込みが失敗すると、
  *     前の条件の行と件数を失敗の文と一緒に出していた (新しい条件の結果と見誤りうる)。
  *     直したあと: 条件を変えて読み込みを始めるときに行を空にする。失敗 (500・403・通信の失敗) では前の条件の行も件数も出さない。
@@ -67,9 +70,10 @@ afterEach(() => {
 });
 
 async function flush() {
+  // 応答の本文の読み込み (Response.json) をまたぐ読み込みの連鎖 (状態の変更 → 一覧の読み直し → 詳細の読み込み) が終わるまで回す
   for (let i = 0; i < 5; i += 1) {
     await act(async () => {
-      await Promise.resolve();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
   }
 }
@@ -223,37 +227,390 @@ describe('#2107 Y9 A/B テストの一覧 (/super-admin/experiments) のペー�
     expect(container.querySelector('[data-testid="experiments-total"]')).toBeNull();
   });
 
-  it('「開始」の応答を待つ間にページを移したら、通信の reject のあとの読み直しは今のページを読む (前のページの行を出さない)', async () => {
-    nav.searchParams = new URLSearchParams({ page: '1' });
-    let rejectPatch: (err: Error) => void = () => undefined;
+  // ─── 状態の変更 (開始) の 409・通信の reject のあとの読み直し: 一覧に無い = 消えた、と言わない ─────────────
+  // 一覧はページで送るので、読み直した一覧 (表示しているページ) に押した実験が無くても消えたとは限らない
+  // (応答を待つ間にページを移した・新しい実験が増えて次のページへ押し出された・件数より後ろになって最後のページへ移した)。
+  // 画面は詳細の API で読み、あれば今の状態を文に添えて「表示しているページにありません」と出し、404 のときだけ「見つかりません」と出す
+
+  const HTTP_CONFLICT = 409;
+  const HTTP_NOT_FOUND = 404;
+  const STALE_BODY = { error: { code: 'CONFLICT_STALE_DATA', message: '別の操作で実験の状態が先に変わりました。読み込み直してください' } };
+  const NOT_FOUND_BODY = { error: { code: 'NOT_FOUND', message: '実験が見つかりません' } };
+  const DETAIL_PATH = (id: string) => `${LIST_PATH}/${id}`;
+  const OFF_PAGE_TEXT = 'この実験は表示しているページにありません';
+  const GONE_TEXT = 'この実験は見つかりませんでした';
+
+  /** 状態の変更の応答 (409 か通信の reject) と、それを受けた画面の文の頭 */
+  const PATCH_FAILURES = [
+    {
+      what: '409',
+      settle: (patch: { resolve: (r: Response) => void; reject: (e: Error) => void }) => patch.resolve(jsonResponse(HTTP_CONFLICT, STALE_BODY)),
+      offPageText: (name: string) => `別の操作で「${name}」の状態が先に変わっていました（今の状態: 実行中）`,
+    },
+    {
+      what: '通信の reject',
+      settle: (patch: { resolve: (r: Response) => void; reject: (e: Error) => void }) => patch.reject(new TypeError('Failed to fetch')),
+      offPageText: (name: string) => `「${name}」の状態の変更の応答を受け取れませんでした（通信エラー）。今の状態（実行中）を読み込み直しました`,
+    },
+  ] as const;
+
+  type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void; reject: (err: Error) => void };
+  function deferred<T>(): Deferred<T> {
+    let resolve!: (value: T) => void;
+    let reject!: (err: Error) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  /** 一覧の GET (page ごと)・詳細の GET (id ごと)・PATCH を分けて返す */
+  function mockRoutes(routes: {
+    list: (page: number) => Response | Promise<Response>;
+    detail?: (id: string) => Response | Promise<Response>;
+    patch: () => Response | Promise<Response>;
+  }) {
     fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost');
-      if ((init?.method ?? 'GET') === 'PATCH') {
-        return new Promise<Response>((_resolve, reject) => {
-          rejectPatch = reject;
-        });
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (method === 'PATCH') return routes.patch();
+      if (method === 'GET' && url.pathname === LIST_PATH) return routes.list(Number(url.searchParams.get('page')));
+      if (method === 'GET' && routes.detail && url.pathname.startsWith(`${LIST_PATH}/`)) {
+        return routes.detail(decodeURIComponent(url.pathname.slice(LIST_PATH.length + 1)));
       }
-      if (url.pathname !== LIST_PATH) throw new Error(`想定外の呼び出し: ${url.pathname}`);
-      const page = Number(url.searchParams.get('page'));
-      return jsonResponse(HTTP_OK, { data: pageRows(page, TOTAL_THREE_PAGES), meta: { total: TOTAL_THREE_PAGES, page, per_page: PER_PAGE } });
+      throw new Error(`想定外の呼び出し: ${method} ${url.pathname}`);
     });
     vi.stubGlobal('fetch', fetchMock);
+  }
+
+  const listResponse = (rows: unknown[], page: number, total: number) =>
+    jsonResponse(HTTP_OK, { data: rows, meta: { total, page, per_page: PER_PAGE } });
+  const detailResponse = (n: number, status: string) => jsonResponse(HTTP_OK, { data: { ...experiment(n), status } });
+  const noticeText = () => container.querySelector('[data-testid="experiment-reload-notice"]')?.textContent ?? null;
+  const noticeLinkHref = () =>
+    container.querySelector<HTMLAnchorElement>('[data-testid="experiment-reload-notice"] a')?.getAttribute('href') ?? null;
+  const shownKeys = () => Array.from(container.querySelectorAll('code')).map((c) => c.textContent);
+  const detailCalls = (id: string) => fetchMock.mock.calls.filter(([input]) => new URL(String(input), 'http://localhost').pathname === DETAIL_PATH(id));
+  const startButtons = () => Array.from(container.querySelectorAll('button')).filter((b) => b.textContent?.trim() === '開始');
+  const retryButton = () => Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === '再試行');
+
+  async function settlePatch(patch: Deferred<Response>, failure: (typeof PATCH_FAILURES)[number]) {
+    await act(async () => {
+      failure.settle(patch);
+    });
+    await flush();
+  }
+
+  it.each(PATCH_FAILURES)(
+    '「開始」の応答 ($what) を待つ間にページを移したら、今のページを読み直し、押した実験を「見つかりません」とせず詳細の API の今の状態を出す',
+    async (failure) => {
+      nav.searchParams = new URLSearchParams({ page: '1' });
+      const patch = deferred<Response>();
+      mockRoutes({
+        list: (page) => listResponse(pageRows(page, TOTAL_THREE_PAGES), page, TOTAL_THREE_PAGES),
+        detail: () => detailResponse(1, 'running'),
+        patch: () => patch.promise,
+      });
+      const Page = await loadPage();
+      await renderPage(Page);
+      await click(startButtons()[0]);
+
+      // 応答を待つ間に「次へ」で 2 ページ目へ移った
+      nav.searchParams = new URLSearchParams({ page: '2' });
+      await renderPage(Page);
+      await settlePatch(patch, failure);
+
+      // 読み直しは今の (2) ページを読み、前のページの行を出さない
+      expect(requestedUrls(LIST_PATH).map((u) => u.searchParams.get('page'))).toEqual(['1', '2', '2']);
+      expect(shownKeys()).toContain(`experiment_${PER_PAGE + 1}`);
+      expect(shownKeys()).not.toContain('experiment_1');
+      // 押した実験 (1 ページ目の実験1) は詳細の API で読み、今の状態を文に添える (消えたとは言わない)
+      expect(detailCalls('exp-1')).toHaveLength(1);
+      const notice = noticeText();
+      expect(notice).toContain(failure.offPageText('実験1'));
+      expect(notice).toContain(OFF_PAGE_TEXT);
+      expect(notice).not.toContain(GONE_TEXT);
+      expect(notice).not.toContain('running');
+      expect(noticeLinkHref()).toBe('/super-admin/experiments/exp-1');
+      // 読み直せたので、状態のボタンは止めない・「再試行」は出さない
+      expect(retryButton()).toBeUndefined();
+      expect(startButtons().every((b) => !b.disabled)).toBe(true);
+    },
+  );
+
+  it('ページを移さなくても、新しい実験が増えて押した実験が次のページへ押し出されたら、詳細の API の今の状態を出す (409)', async () => {
+    let listCalls = 0;
+    mockRoutes({
+      list: (page) => {
+        listCalls += 1;
+        if (listCalls === 1) return listResponse(pageRows(1, PER_PAGE), page, PER_PAGE);
+        // 読み直し: 新しい実験 (作成日の降順で先頭) が 1 件増え、実験1 が 2 ページ目へ押し出された
+        const pushed = [{ ...experiment(PER_PAGE + 1), name: '新しい実験' }, ...pageRows(1, PER_PAGE).slice(1)];
+        return listResponse(pushed, page, PER_PAGE + 1);
+      },
+      detail: () => detailResponse(1, 'running'),
+      patch: () => jsonResponse(HTTP_CONFLICT, STALE_BODY),
+    });
+    await renderPage(await loadPage());
+    await click(startButtons()[0]);
+
+    expect(detailCalls('exp-1')).toHaveLength(1);
+    expect(noticeText()).toContain('別の操作で「実験1」の状態が先に変わっていました（今の状態: 実行中）');
+    expect(noticeText()).toContain(OFF_PAGE_TEXT);
+    expect(noticeText()).not.toContain(GONE_TEXT);
+  });
+
+  it('読み直した一覧に押した実験があれば、詳細の API は読まずに一覧の行で知らせる (リンクも出さない)', async () => {
+    let listCalls = 0;
+    mockRoutes({
+      list: (page) => {
+        listCalls += 1;
+        const rows = pageRows(1, PER_PAGE);
+        return listResponse(listCalls === 1 ? rows : [{ ...rows[0], status: 'running' }, ...rows.slice(1)], page, PER_PAGE);
+      },
+      detail: () => detailResponse(1, 'completed'),
+      patch: () => jsonResponse(HTTP_CONFLICT, STALE_BODY),
+    });
+    await renderPage(await loadPage());
+    await click(startButtons()[0]);
+
+    expect(detailCalls('exp-1')).toHaveLength(0);
+    expect(noticeText()).toContain('今の状態: 実行中');
+    expect(noticeText()).toContain('一覧を読み込み直したので');
+    expect(noticeText()).not.toContain(OFF_PAGE_TEXT);
+    expect(noticeLinkHref()).toBeNull();
+  });
+
+  it.each([
+    { what: '409', patch: () => jsonResponse(HTTP_CONFLICT, STALE_BODY), head: '別の操作で「実験1」の状態が先に変わっていました' },
+    { what: '通信の reject', patch: () => Promise.reject(new TypeError('Failed to fetch')), head: '「実験1」の状態の変更の応答を受け取れませんでした（通信エラー）' },
+  ])('一覧に無く、詳細の API も 404 なら、そのときだけ「見つかりませんでした」を出す ($what)', async ({ patch, head }) => {
+    let listCalls = 0;
+    mockRoutes({
+      list: (page) => {
+        listCalls += 1;
+        const rows = pageRows(1, PER_PAGE);
+        return listCalls === 1 ? listResponse(rows, page, PER_PAGE) : listResponse(rows.slice(1), page, PER_PAGE - 1);
+      },
+      detail: () => jsonResponse(HTTP_NOT_FOUND, NOT_FOUND_BODY),
+      patch,
+    });
+    await renderPage(await loadPage());
+    await click(startButtons()[0]);
+
+    expect(detailCalls('exp-1')).toHaveLength(1);
+    expect(noticeText()).toContain(head);
+    expect(noticeText()).toContain(GONE_TEXT);
+    expect(noticeText()).not.toContain(OFF_PAGE_TEXT);
+    expect(noticeLinkHref()).toBeNull();
+    expect(retryButton()).toBeUndefined();
+  });
+
+  it.each([
+    {
+      what: '409',
+      patch: () => jsonResponse(HTTP_CONFLICT, STALE_BODY),
+      failedText: '別の操作で「実験1」の状態が先に変わっていました。今の状態を読み込めませんでした',
+      listFailedText: '一覧を読み込み直せませんでした',
+      offPageText: '別の操作で「実験1」の状態が先に変わっていました（今の状態: 実行中）',
+    },
+    {
+      what: '通信の reject',
+      patch: () => Promise.reject(new TypeError('Failed to fetch')),
+      failedText: '「実験1」の状態の変更の応答を受け取れませんでした（通信エラー）。今の状態を読み込めませんでした',
+      listFailedText: '一覧を読み込めませんでした',
+      offPageText: '「実験1」の状態の変更の応答を受け取れませんでした（通信エラー）。今の状態（実行中）を読み込み直しました',
+    },
+  ])(
+    '一覧に無く、詳細の API の読み込みが失敗したら「再試行」を出して状態のボタンを止め、再試行で読めたら今の状態を出す ($what)',
+    async ({ patch, failedText, listFailedText, offPageText }) => {
+      let listCalls = 0;
+      let detailCount = 0;
+      mockRoutes({
+        list: (page) => {
+          listCalls += 1;
+          const rows = pageRows(1, PER_PAGE + 1);
+          // 読み直しからは実験1 が 2 ページ目へ押し出されている
+          return listCalls === 1 ? listResponse(rows, page, PER_PAGE + 1) : listResponse([experiment(PER_PAGE + 2), ...rows.slice(1)], page, PER_PAGE + 2);
+        },
+        detail: () => {
+          detailCount += 1;
+          return detailCount === 1 ? jsonResponse(HTTP_INTERNAL_ERROR, SERVER_ERROR_BODY) : detailResponse(1, 'running');
+        },
+        patch,
+      });
+      await renderPage(await loadPage());
+      await click(startButtons()[0]);
+
+      // 一覧は読み直せているので「一覧を読み込み直せませんでした」とは言わず、今の状態を読めなかった旨と「再試行」を出す
+      expect(noticeText()).toContain(failedText);
+      expect(noticeText()).not.toContain(listFailedText);
+      expect(noticeText()).not.toContain(GONE_TEXT);
+      expect(retryButton()).toBeDefined();
+      expect(startButtons().length).toBeGreaterThan(0);
+      expect(startButtons().every((b) => b.disabled)).toBe(true);
+
+      await click(retryButton()!);
+
+      expect(detailCalls('exp-1')).toHaveLength(2);
+      expect(noticeText()).toContain(offPageText);
+      expect(noticeText()).toContain(OFF_PAGE_TEXT);
+      expect(retryButton()).toBeUndefined();
+      expect(startButtons().every((b) => !b.disabled)).toBe(true);
+    },
+  );
+
+  it('一覧に無く、詳細の API が 403 なら、理由の文を出し「再試行」は出さず、状態のボタンも止めない', async () => {
+    let listCalls = 0;
+    mockRoutes({
+      list: (page) => {
+        listCalls += 1;
+        const rows = pageRows(1, PER_PAGE);
+        return listCalls === 1 ? listResponse(rows, page, PER_PAGE) : listResponse(rows.slice(1), page, PER_PAGE - 1);
+      },
+      detail: () => jsonResponse(HTTP_FORBIDDEN, FORBIDDEN_BODY),
+      patch: () => jsonResponse(HTTP_CONFLICT, STALE_BODY),
+    });
+    await renderPage(await loadPage());
+    await click(startButtons()[0]);
+
+    expect(noticeText()).toBe('権限がありません');
+    expect(retryButton()).toBeUndefined();
+    expect(startButtons().every((b) => !b.disabled)).toBe(true);
+  });
+
+  it('詳細の API を読む間に運営がページを移したら、移した先の画面に前のページの実験についての文を出さない', async () => {
+    nav.searchParams = new URLSearchParams({ page: '1' });
+    const detail = deferred<Response>();
+    let page1Calls = 0;
+    mockRoutes({
+      list: (page) => {
+        if (page !== 1) return listResponse(pageRows(page, TOTAL_THREE_PAGES), page, TOTAL_THREE_PAGES);
+        page1Calls += 1;
+        const rows = pageRows(1, TOTAL_THREE_PAGES);
+        return page1Calls === 1 ? listResponse(rows, page, TOTAL_THREE_PAGES) : listResponse([experiment(TOTAL_THREE_PAGES + 1), ...rows.slice(1)], page, TOTAL_THREE_PAGES + 1);
+      },
+      detail: () => detail.promise,
+      patch: () => jsonResponse(HTTP_CONFLICT, STALE_BODY),
+    });
     const Page = await loadPage();
     await renderPage(Page);
-    await click(Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === '開始')!);
+    await click(startButtons()[0]);
+    expect(detailCalls('exp-1')).toHaveLength(1);
 
-    // 応答を待つ間に「次へ」で 2 ページ目へ移った
     nav.searchParams = new URLSearchParams({ page: '2' });
     await renderPage(Page);
     await act(async () => {
-      rejectPatch(new TypeError('Failed to fetch'));
+      detail.resolve(detailResponse(1, 'running'));
     });
     await flush();
 
-    expect(requestedUrls(LIST_PATH).map((u) => u.searchParams.get('page'))).toEqual(['1', '2', '2']);
-    const keys = Array.from(container.querySelectorAll('code')).map((c) => c.textContent);
-    expect(keys).toContain(`experiment_${PER_PAGE + 1}`);
-    expect(keys).not.toContain('experiment_1');
+    expect(shownKeys()).toContain(`experiment_${PER_PAGE + 1}`);
+    expect(noticeText()).toBeNull();
+  });
+
+  it('運営がページを移したら、一覧の上の文を消す (前のページの実験についての文)', async () => {
+    nav.searchParams = new URLSearchParams({ page: '1' });
+    let page1Calls = 0;
+    mockRoutes({
+      list: (page) => {
+        if (page !== 1) return listResponse(pageRows(page, TOTAL_THREE_PAGES), page, TOTAL_THREE_PAGES);
+        page1Calls += 1;
+        const rows = pageRows(1, TOTAL_THREE_PAGES);
+        return listResponse(page1Calls === 1 ? rows : [{ ...rows[0], status: 'running' }, ...rows.slice(1)], page, TOTAL_THREE_PAGES);
+      },
+      patch: () => jsonResponse(HTTP_CONFLICT, STALE_BODY),
+    });
+    const Page = await loadPage();
+    await renderPage(Page);
+    await click(startButtons()[0]);
+    expect(noticeText()).toContain('今の状態: 実行中');
+
+    nav.searchParams = new URLSearchParams({ page: '2' });
+    await renderPage(Page);
+    expect(noticeText()).toBeNull();
+  });
+
+  describe('読み直しで件数より後ろになり、画面が自分で最後のページへ移したとき', () => {
+    /** 3 ページ目の唯一の行 (実験101) を押す。読み直しでは件数が 1 減り、3 ページ目は空 → 2 ページ目へ移す */
+    const LAST_N = TOTAL_THREE_PAGES;
+    const SHRUNK_TOTAL = TOTAL_THREE_PAGES - 1;
+
+    function mockShrink(detail: () => Response | Promise<Response>, page2Rows: () => unknown[]) {
+      let page3Calls = 0;
+      mockRoutes({
+        list: (page) => {
+          if (page === 3) {
+            page3Calls += 1;
+            return page3Calls === 1 ? listResponse(pageRows(3, TOTAL_THREE_PAGES), page, TOTAL_THREE_PAGES) : listResponse([], page, SHRUNK_TOTAL);
+          }
+          if (page === 2) return listResponse(page2Rows(), page, SHRUNK_TOTAL);
+          return listResponse(pageRows(page, SHRUNK_TOTAL), page, SHRUNK_TOTAL);
+        },
+        detail,
+        patch: () => jsonResponse(HTTP_CONFLICT, STALE_BODY),
+      });
+    }
+
+    it('押した実験が消えていた (詳細の API が 404) なら、移した先の画面にも「見つかりませんでした」を出す', async () => {
+      nav.searchParams = new URLSearchParams({ page: '3' });
+      mockShrink(() => jsonResponse(HTTP_NOT_FOUND, NOT_FOUND_BODY), () => pageRows(2, SHRUNK_TOTAL));
+      const Page = await loadPage();
+      await renderPage(Page);
+      await click(startButtons()[0]);
+
+      expect(nav.router.replace).toHaveBeenCalledWith('/super-admin/experiments?page=2');
+      expect(detailCalls(`exp-${LAST_N}`)).toHaveLength(1);
+      // router.replace で URL が ?page=2 になった
+      nav.searchParams = new URLSearchParams({ page: '2' });
+      await renderPage(Page);
+
+      expect(shownKeys()).toContain(`experiment_${PER_PAGE + 1}`);
+      expect(noticeText()).toContain(`別の操作で「実験${LAST_N}」の状態が先に変わっていました`);
+      expect(noticeText()).toContain(GONE_TEXT);
+    });
+
+    it('押した実験が移した先のページにあれば、その行で今の状態を知らせる (「表示しているページにありません」と言わない)', async () => {
+      nav.searchParams = new URLSearchParams({ page: '3' });
+      // 別の実験が消えて、押した実験 (実験101) が 2 ページ目の末尾へ繰り上がった
+      mockShrink(
+        () => detailResponse(LAST_N, 'running'),
+        () => [...pageRows(2, TOTAL_THREE_PAGES).slice(1), { ...experiment(LAST_N), status: 'running' }],
+      );
+      const Page = await loadPage();
+      await renderPage(Page);
+      await click(startButtons()[0]);
+      nav.searchParams = new URLSearchParams({ page: '2' });
+      await renderPage(Page);
+
+      expect(shownKeys()).toContain(`experiment_${LAST_N}`);
+      expect(noticeText()).toContain(`別の操作で「実験${LAST_N}」の状態が先に変わっていました（今の状態: 実行中）`);
+      expect(noticeText()).toContain('一覧を読み込み直したので');
+      expect(noticeText()).not.toContain(OFF_PAGE_TEXT);
+      expect(noticeLinkHref()).toBeNull();
+    });
+
+    it('詳細の API を読む間に運営が別のページへ移したら、文を出さない', async () => {
+      nav.searchParams = new URLSearchParams({ page: '3' });
+      const detail = deferred<Response>();
+      mockShrink(() => detail.promise, () => pageRows(2, SHRUNK_TOTAL));
+      const Page = await loadPage();
+      await renderPage(Page);
+      await click(startButtons()[0]);
+      expect(detailCalls(`exp-${LAST_N}`)).toHaveLength(1);
+
+      // 画面が移す 2 ページ目ではなく、運営が 1 ページ目へ移した
+      nav.searchParams = new URLSearchParams({ page: '1' });
+      await renderPage(Page);
+      await act(async () => {
+        detail.resolve(jsonResponse(HTTP_NOT_FOUND, NOT_FOUND_BODY));
+      });
+      await flush();
+
+      expect(shownKeys()).toContain('experiment_1');
+      expect(noticeText()).toBeNull();
+    });
   });
 });
 

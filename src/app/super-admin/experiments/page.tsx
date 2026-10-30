@@ -22,7 +22,14 @@
  * 読むページは URL の page (parsePageParam で読む。1 以上の整数でなければ 1 ページ目)。meta.total で件数と「前へ」「次へ」
  * (URL の page を変えるリンク) を出す。件数より後ろのページは、空のページを見せずに最後のページへ移す (lastPageToRefetch)。
  * ページを移した先の読み込みは初めの読み込みと同じ扱いにする (前のページの行を残さず、失敗したら失敗の文だけを出す)。
- * 一覧の上の 409・通信の reject のあとの文は前のページの行についての文なので、ページを移したら消す
+ * 一覧の上の 409・通信の reject のあとの文は前のページの行についての文なので、運営がページを移したら消す
+ * (読み直しで件数より後ろになって画面が自分で最後のページへ移したときは、読み直しの結果の文なので移した先にも出す)。
+ * ページで送るので、409・通信の reject のあとに読み直した一覧 (表示しているページ) に押した実験が無くても、実験が消えたとは限らない
+ * (応答を待つ間にページを移した・作成日の降順の一覧に新しい実験が増えて次のページへ押し出された)。そのときは詳細の API
+ * (/api/super-admin/experiments/{id}) でその実験を読み、あれば今の状態を文に添えて「表示しているページにありません」と出し
+ * (詳細の画面へのリンクを添える)、404 のときだけ「見つかりませんでした」と出す。詳細の読み込みが失敗したら「再試行」を出し、
+ * 読み直せるまで状態のボタンを止める。401 / 403 なら理由の文を出す (一覧の読み直しと同じ分け方)。
+ * 一覧の行にあるかどうかは、文を描くときに表示している行で決める (行にあれば状態は行のバッジで見せる)
  */
 
 import { Suspense, useState, useEffect, useCallback, useLayoutEffect, useRef } from "react";
@@ -32,11 +39,16 @@ import { lastPageOf, lastPageToRefetch, parsePageParam } from "@/lib/list-pagina
 import { EXPERIMENTS_LIST_PER_PAGE_DEFAULT } from "@/lib/super-admin/experiments-schemas";
 import {
   EXPERIMENT_STATUS_LABELS,
+  experimentListNoResponseGoneMessage,
+  experimentListNoResponseOffPageMessage,
   experimentListNoResponseReloadFailedMessage,
   experimentListNoResponseReloadedMessage,
+  experimentListNoResponseStateReloadFailedMessage,
   experimentListStaleGoneMessage,
+  experimentListStaleOffPageMessage,
   experimentListStaleReloadFailedMessage,
   experimentListStaleReloadedMessage,
+  experimentListStaleStateReloadFailedMessage,
   isExperimentStatusConflict,
   type ExperimentStatusChangeTarget,
 } from "@/lib/super-admin/experiment-status-display";
@@ -84,44 +96,98 @@ const STATUS_BADGE: Record<string, { label: string; color: string }> = {
 /**
  * 一覧の読み込みの結果。superseded は、読み込みの最中に新しい読み込みが始まったので結果を捨てた。
  * unavailable は、表示したあとの読み直しが 401 / 403 で断られた (読み込み直しても変わらない理由。#2086 V4)。
- * moved は、読んだページが件数より後ろだったので最後のページへ移した (結果は移った先の読み込みで出す。#2107 Y9)
+ * moved は、読んだページが件数より後ろだったので最後のページへ移した (結果は移った先の読み込みで出す。page は移した先のページ。#2107 Y9)
  */
 type ExperimentsLoadOutcome =
   | { kind: "loaded"; experiments: Experiment[] }
   | { kind: "failed" }
   | { kind: "unavailable"; message: string }
   | { kind: "superseded" }
-  | { kind: "moved" };
+  | { kind: "moved"; page: number };
+
+/** 読み直しで読めなかったもの (list: 一覧・experiment: 一覧に無かった実験の詳細。#2107 Y9) */
+type FailedRead = "list" | "experiment";
 
 /**
  * 一覧の上に出す、409 のあと・通信の reject のあとの読み直しについての文 (#2064・#2073)。name は操作した実験の名前 (押したときの一覧の名前)。
- *   - stale                    : 409 のあとに読み直した。status は読み直した今の状態 (一覧に無ければ null)
+ *   - stale                    : 409 のあとに読み直した
  *   - stale-reload-failed      : 409 のあとの読み直しに失敗した (「再試行」を出し、状態のボタンを止める。#2080)
- *   - no-response              : 状態の変更の通信が reject されたあとに読み直した (状態は一覧の行で見せる)
+ *   - no-response              : 状態の変更の通信が reject されたあとに読み直した
  *   - no-response-reload-failed: 通信が reject されたあとの読み直しに失敗した (「再試行」を出し、状態のボタンを止める)
  *   - unavailable              : 読み直しが 401 / 403 で断られた (理由の文を出す。「再試行」は出さず、状態のボタンも止めない。#2086 V4)
+ * stale・no-response の status は、読み直した操作した実験の今の状態 (一覧の行か、一覧に無ければ詳細の API で読んだ値)。
+ * null は詳細の API も 404 だった (実験が無い)。一覧はページで送るので、一覧の行にあるかどうかは描くときに表示している行で決める
+ * (行にあれば状態は行のバッジで見せ、無ければ status を文に添えて「表示しているページにありません」と出す。#2107 Y9)。
+ * failedRead は読めなかったもの (#2107 Y9)
  */
 type ReloadNotice =
   | { kind: "stale"; id: string; name: string; status: string | null }
-  | { kind: "stale-reload-failed"; id: string; name: string }
-  | { kind: "no-response"; id: string; name: string }
-  | { kind: "no-response-reload-failed"; id: string; name: string }
+  | { kind: "stale-reload-failed"; id: string; name: string; failedRead: FailedRead }
+  | { kind: "no-response"; id: string; name: string; status: string | null }
+  | { kind: "no-response-reload-failed"; id: string; name: string; failedRead: FailedRead }
   | { kind: "unavailable"; id: string; name: string; message: string };
 
-function reloadNoticeText(notice: ReloadNotice): string {
+/** 一覧の上の文。row は表示している一覧の行のうち、操作した実験の行 (無ければ undefined。#2107 Y9) */
+function reloadNoticeText(notice: ReloadNotice, row: Experiment | undefined): string {
   switch (notice.kind) {
-    case "stale-reload-failed":
-      return experimentListStaleReloadFailedMessage(notice.name);
-    case "no-response":
-      return experimentListNoResponseReloadedMessage(notice.name);
-    case "no-response-reload-failed":
-      return experimentListNoResponseReloadFailedMessage(notice.name);
     case "stale":
+      if (row) return experimentListStaleReloadedMessage(notice.name, row.status);
       return notice.status === null
         ? experimentListStaleGoneMessage(notice.name)
-        : experimentListStaleReloadedMessage(notice.name, notice.status);
+        : experimentListStaleOffPageMessage(notice.name, notice.status);
+    case "stale-reload-failed":
+      return notice.failedRead === "list"
+        ? experimentListStaleReloadFailedMessage(notice.name)
+        : experimentListStaleStateReloadFailedMessage(notice.name);
+    case "no-response":
+      // 一覧の行にあれば、状態は行のバッジで見せる
+      if (row) return experimentListNoResponseReloadedMessage(notice.name);
+      return notice.status === null
+        ? experimentListNoResponseGoneMessage(notice.name)
+        : experimentListNoResponseOffPageMessage(notice.name, notice.status);
+    case "no-response-reload-failed":
+      return notice.failedRead === "list"
+        ? experimentListNoResponseReloadFailedMessage(notice.name)
+        : experimentListNoResponseStateReloadFailedMessage(notice.name);
     case "unavailable":
       return notice.message;
+  }
+}
+
+/** 一覧の上の文に、詳細の画面へのリンクを添えるか (読み直せた実験が表示している一覧の行に無いとき。#2107 Y9) */
+function reloadNoticeLinksToDetail(notice: ReloadNotice, row: Experiment | undefined): boolean {
+  return (notice.kind === "stale" || notice.kind === "no-response") && notice.status !== null && row === undefined;
+}
+
+/** 詳細の API が「実験が無い」と答えるときの HTTP ステータス (行が無いときだけ 404。DB の失敗は 500。route の GET) */
+const EXPERIMENT_NOT_FOUND_HTTP_STATUS = 404;
+
+/**
+ * 一覧 (表示しているページ) に無かった、操作した実験の今の状態を詳細の API で読む (#2107 Y9)。投げない。
+ *   - found      : 読めた (今の状態)
+ *   - gone       : 404 (実験が無い)
+ *   - unavailable: 401 / 403 (読み込み直しても変わらない理由の文。一覧の読み直しと同じ分け方。#2086 V4)
+ *   - failed     : 500・通信の reject・本文が読めない・状態が文字列でない (「再試行」で変わりうる)
+ */
+type ExperimentStateRead =
+  | { kind: "found"; status: string }
+  | { kind: "gone" }
+  | { kind: "unavailable"; message: string }
+  | { kind: "failed" };
+
+async function readExperimentState(id: string): Promise<ExperimentStateRead> {
+  try {
+    const res = await fetch(`/api/super-admin/experiments/${encodeURIComponent(id)}`);
+    const body: unknown = await res.json().catch(() => null);
+    if (!res.ok) {
+      if (res.status === EXPERIMENT_NOT_FOUND_HTTP_STATUS) return { kind: "gone" };
+      const unavailableMessage = rereadUnavailableMessage(res.status, body, null);
+      return unavailableMessage === null ? { kind: "failed" } : { kind: "unavailable", message: unavailableMessage };
+    }
+    const status = (body as { data?: { status?: unknown } | null } | null)?.data?.status;
+    return typeof status === "string" ? { kind: "found", status } : { kind: "failed" };
+  } catch {
+    return { kind: "failed" };
   }
 }
 
@@ -167,6 +233,14 @@ function ExperimentsList() {
   const loadedPageRef = useRef<number | null>(null);
   // 読み込みを重ねたとき、古い読み込みの結果で上書きしないための連番
   const loadSeqRef = useRef(0);
+  // 件数より後ろのページから最後のページへ画面が自分で移した先のページ (#2107 Y9)。その読み込みは一覧の上の文を消さない
+  // (409・通信の reject のあとの読み直しでページが移ったとき、読み直しの結果の文は移した先の画面に出す)。読み込みを始めるたびに消す
+  const keepNoticeForPageRef = useRef<number | null>(null);
+  // 今の URL のページ (handler で描画を待たずに読むための写し。ページを移したかどうかを見る。#2107 Y9)
+  const pageRef = useRef(page);
+  useLayoutEffect(() => {
+    pageRef.current = page;
+  }, [page]);
 
   // 409 のあと・通信の reject のあとの一覧の読み直しが失敗し、まだ読み直せていないか (#2073・#2080)。そのあいだは状態のボタンを止める。
   // ref は描画を待たずに handler で読むための写し
@@ -186,15 +260,21 @@ function ExperimentsList() {
     const isReload = loadedPageRef.current === page;
     // 件数より後ろのページから最後のページへ移すときは、読み込み中のまま移った先の読み込みへ渡す (空の一覧を一瞬も見せない)
     let moved = false;
+    // 画面が自分で移した先のページの読み込みか (一覧の上の文を消さない。#2107 Y9)
+    const keepNotice = keepNoticeForPageRef.current === page;
+    keepNoticeForPageRef.current = null;
     if (!isReload) {
-      // 別のページ (初めの読み込みを含む) を読む。前のページの行・件数と、その行についての一覧の上の文を残さない (#2107 Y9)
+      // 別のページ (初めの読み込みを含む) を読む。前のページの行・件数と、その行についての一覧の上の文を残さない (#2107 Y9)。
+      // ただし画面が自分で移した先のページなら、文は移す前の読み直しの結果なので残す
       loadedPageRef.current = null;
       setIsLoading(true);
       setError(null);
       setExperiments([]);
       setTotal(0);
-      setReloadNotice(null);
-      markReloadFailed(false);
+      if (!keepNotice) {
+        setReloadNotice(null);
+        markReloadFailed(false);
+      }
     }
     try {
       const params = new URLSearchParams({ page: String(page), per_page: String(EXPERIMENTS_PER_PAGE) });
@@ -224,8 +304,9 @@ function ExperimentsList() {
       const refetchPage = lastPageToRefetch({ rows: loaded.length, page, total: metaTotal, perPage: EXPERIMENTS_PER_PAGE });
       if (refetchPage !== null) {
         moved = true;
+        keepNoticeForPageRef.current = refetchPage;
         router.replace(experimentsPageHref(refetchPage));
-        return { kind: "moved" };
+        return { kind: "moved", page: refetchPage };
       }
       loadedPageRef.current = page;
       setExperiments(loaded);
@@ -263,28 +344,55 @@ function ExperimentsList() {
    */
   const reloadAfterUncertain = useCallback(
     async (target: { id: string; name: string }, cause: "stale" | "no-response") => {
+      // 読み直すページ (loadExperimentsRef は今の URL のページを読む)
+      const reloadedPage = pageRef.current;
       const outcome = await loadExperimentsRef.current();
-      // 移した先のページの読み込みは、初めの読み込みと同じ扱い (一覧の上の文は出さない。#2107 Y9)
-      if (outcome.kind === "superseded" || outcome.kind === "moved") return;
+      if (outcome.kind === "superseded") return;
+      const failed = (failedRead: FailedRead): ReloadNotice =>
+        cause === "stale"
+          ? { kind: "stale-reload-failed", id: target.id, name: target.name, failedRead }
+          : { kind: "no-response-reload-failed", id: target.id, name: target.name, failedRead };
+      const reloaded = (status: string | null): ReloadNotice =>
+        cause === "stale"
+          ? { kind: "stale", id: target.id, name: target.name, status }
+          : { kind: "no-response", id: target.id, name: target.name, status };
+      const unavailable = (message: string): ReloadNotice => ({ kind: "unavailable", id: target.id, name: target.name, message });
+      let notice: ReloadNotice;
+      if (outcome.kind === "unavailable") {
+        notice = unavailable(outcome.message);
+      } else if (outcome.kind === "failed") {
+        notice = failed("list");
+      } else {
+        const current = outcome.kind === "loaded" ? outcome.experiments.find((e) => e.id === target.id) : undefined;
+        if (current) {
+          notice = reloaded(current.status);
+        } else {
+          // 一覧はページで送るので、表示しているページに無いだけでは消えたと言わない (応答を待つ間にページを移した・
+          // 新しい実験が増えて次のページへ押し出された・件数より後ろになって最後のページへ移した)。
+          // 詳細の API で読み、あれば今の状態を添え、404 のときだけ「見つかりません」(#2107 Y9)
+          const seq = loadSeqRef.current;
+          const read = await readExperimentState(target.id);
+          // 詳細を読む間に運営がページを移した (別の読み込みが始まった) なら、移した先の画面は初めの読み込みと同じ扱い (文を出さない)。
+          // 最後のページへ画面が自分で移したとき (moved) は、移した先の読み込みが文を残すので、運営が別のページへ移したときだけ捨てる
+          const navigatedAway =
+            outcome.kind === "moved"
+              ? pageRef.current !== reloadedPage && pageRef.current !== outcome.page
+              : seq !== loadSeqRef.current;
+          if (navigatedAway) return;
+          notice =
+            read.kind === "found"
+              ? reloaded(read.status)
+              : read.kind === "gone"
+                ? reloaded(null)
+                : read.kind === "unavailable"
+                  ? unavailable(read.message)
+                  : failed("experiment");
+        }
+      }
       // 読み直しが失敗したら、どちらの理由でも、読み直せるまで状態のボタンを止める (#2073・#2080)。
       // 401 / 403 (unavailable) は読み込み直しても変わらないので止めない (詳細の画面と同じ。#2086 V4)
-      markReloadFailed(outcome.kind === "failed");
-      if (outcome.kind === "unavailable") {
-        setReloadNotice({ kind: "unavailable", id: target.id, name: target.name, message: outcome.message });
-      } else if (outcome.kind === "loaded") {
-        if (cause === "no-response") {
-          setReloadNotice({ kind: "no-response", id: target.id, name: target.name });
-          return;
-        }
-        const current = outcome.experiments.find((e) => e.id === target.id);
-        setReloadNotice({ kind: "stale", id: target.id, name: target.name, status: current?.status ?? null });
-      } else {
-        setReloadNotice({
-          kind: cause === "stale" ? "stale-reload-failed" : "no-response-reload-failed",
-          id: target.id,
-          name: target.name,
-        });
-      }
+      markReloadFailed(notice.kind === "stale-reload-failed" || notice.kind === "no-response-reload-failed");
+      setReloadNotice(notice);
     },
     [markReloadFailed],
   );
@@ -343,6 +451,8 @@ function ExperimentsList() {
   const statusButtonsDisabled = isBusy || isReloadFailed;
   // ページ送り (#2107 Y9)。件数から出した最後のページ (0 件でも 1)
   const totalPages = lastPageOf(total, EXPERIMENTS_PER_PAGE);
+  // 一覧の上の文の実験の、表示している一覧の行 (無ければ undefined。行にあるかで文を決める。#2107 Y9)
+  const noticeRow = reloadNotice ? experiments.find((e) => e.id === reloadNotice.id) : undefined;
 
   if (isLoading) {
     return <ExperimentsLoadingSpinner />;
@@ -381,7 +491,18 @@ function ExperimentsList() {
           role="alert"
           className="mb-6 flex items-start justify-between gap-4 bg-amber-900/40 border border-amber-500 rounded-xl p-4 text-amber-200 text-sm"
         >
-          <p>{reloadNoticeText(reloadNotice)}</p>
+          <p>
+            {reloadNoticeText(reloadNotice, noticeRow)}
+            {/* 表示しているページに無い実験は、詳細の画面で確かめられるようにする (#2107 Y9) */}
+            {reloadNoticeLinksToDetail(reloadNotice, noticeRow) && (
+              <Link
+                href={`/super-admin/experiments/${reloadNotice.id}`}
+                className="ml-2 underline text-amber-100 hover:text-white"
+              >
+                詳細を開く
+              </Link>
+            )}
+          </p>
           {(reloadNotice.kind === "stale-reload-failed" || reloadNotice.kind === "no-response-reload-failed") && (
             <button
               onClick={() =>
