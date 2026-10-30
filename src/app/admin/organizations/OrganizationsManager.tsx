@@ -7,6 +7,9 @@
  * 権限 (admin / super_admin) の確認は、同じフォルダの page.tsx (サーバー) で行う。
  * API (GET / POST /api/admin/organizations・PATCH /api/admin/organizations/{id}) も、同じロールだけを通す。
  *
+ * プランの出し方 (#2112 Z3): 行のプランの札と変更の通知は表示名 (src/lib/admin/org-plan-labels.ts の adminOrgPlanLabel。
+ * 表に無い値はそのまま・null は「-」)、プランの選択肢 (行の変更・作成・検索) は ORG_PLAN_LABELS の表示名で出す。送る値は内部の値のまま。
+ *
  * プランの変更: 組織のプランの段階は運営だけが変える (#1912)。組織の管理者の設定画面は表示だけで、変えるのはこの画面の
  * 一覧の行のプランの欄 (PATCH /api/admin/organizations/{id})。
  * 変更が 409 CONFLICT_STALE_DATA (別の運営が先にプランを変えた) か 404 NOT_FOUND (組織がもう無い) で断られたときは、
@@ -48,7 +51,8 @@ import {
 } from '@/lib/admin/admin-create-no-response';
 import { formatJstDateTime } from '@/lib/admin/format-datetime';
 import { isUuid } from '@/lib/http-params';
-import { ORG_PLAN_VALUES, type OrgPlanValue } from '@/lib/org-plans';
+import { ORG_PLAN_LABELS, ORG_PLAN_VALUES, type OrgPlanValue } from '@/lib/org-plans';
+import { adminOrgPlanLabel } from '@/lib/admin/org-plan-labels';
 
 /** API (OrgSearchSchema / OrgCreateSchema) が受け付けるプラン (organizations.plan に書ける値) */
 const PLANS = ORG_PLAN_VALUES;
@@ -287,7 +291,7 @@ function OrgPlanCell({
   return (
     <div>
       <div className="flex items-center gap-2">
-        <span className="inline-block rounded bg-blue-50 px-2 py-0.5 font-mono text-xs text-blue-800">{org.plan ?? '-'}</span>
+        <span className="inline-block rounded bg-blue-50 px-2 py-0.5 text-xs text-blue-800">{adminOrgPlanLabel(org.plan)}</span>
         <label htmlFor={selectId} className="sr-only">
           {`${org.name} のプラン`}
         </label>
@@ -301,7 +305,7 @@ function OrgPlanCell({
           {current === '' && <option value="">選ぶ</option>}
           {PLANS.map((value) => (
             <option key={value} value={value}>
-              {value}
+              {ORG_PLAN_LABELS[value]}
             </option>
           ))}
         </select>
@@ -639,7 +643,7 @@ export default function OrganizationsManager() {
         ? { ...current, organizations: current.organizations.map((org) => (org.id === updated.id ? updated : org)) }
         : current,
     );
-    setPlanNotice(`組織「${updated.name}」のプランを ${updated.plan ?? '-'} に変更しました。`);
+    setPlanNotice(`組織「${updated.name}」のプランを ${adminOrgPlanLabel(updated.plan)} に変更しました。`);
   }, []);
 
   // 送信中と、作成の応答を受け取れずに送信を止めているあいだは、入力欄と送信を止める (止めているあいだに書き足した入力を、
@@ -695,7 +699,7 @@ export default function OrganizationsManager() {
             >
               {PLANS.map((value) => (
                 <option key={value} value={value}>
-                  {value}
+                  {ORG_PLAN_LABELS[value]}
                 </option>
               ))}
             </select>
@@ -794,7 +798,7 @@ export default function OrganizationsManager() {
               <option value="">すべてのプラン</option>
               {PLANS.map((value) => (
                 <option key={value} value={value}>
-                  {value}
+                  {ORG_PLAN_LABELS[value]}
                 </option>
               ))}
             </select>

@@ -9,6 +9,7 @@
  *    状態・区分の列 (status / severity / category / priority / source / applicable_to / plan_key / plan_type / plan / type /
  *    subscription_target / processing_status) を、JSX の子 (`{row.status}`・`{status}` の素の名前も) か、setX(…) に渡すテンプレート文字列の文
  *    (「${updated.plan} に変更しました」の通知など) にそのまま出している箇所が無いこと。
+ *    列の名前によらず、値の一覧の定数を map した引数 (`PLANS.map((value) => <option>{value}</option>)` の `{value}`。選択肢の文字など) も数える。
  *    数えないもの (Issue #2112 の仕分けで除いたもの): `<code>` の子 (識別子として意図して code の字体で出すもの) と、
  *    plan_key を表示名 (display_name) と組にして出すもの (同じ要素の子か、すぐ外側の要素の中に display_name がある)。
  *    className の font-mono だけでは除かない (Issue は font-mono の plan_key 単独 (利用者の一覧のプランの列など) を直す対象に挙げている)。
@@ -68,6 +69,8 @@ const { INVOICE_PROCESSING_STATUS_LABELS, invoiceProcessingStatusLabel } = await
   '@/lib/admin/invoice-processing-status-labels'
 );
 const { FREE_PLAN_DISPLAY_NAME, PAID_PLAN_KEYS, planDisplayName } = await import('@homegohan/shared');
+const { ORG_PLAN_LABELS, ORG_PLAN_VALUES, ORG_UNKNOWN_VALUE_LABEL, orgPlanLabel } = await import('@/lib/org-plans');
+const { adminOrgPlanLabel } = await import('@/lib/admin/org-plan-labels');
 
 const ROOT = path.resolve(__dirname, '..');
 /** ひらがな・カタカナ・CJK 統合漢字 (拡張 A を含む)・全角の英数記号 */
@@ -89,6 +92,7 @@ const TABLES: ReadonlyArray<[string, Readonly<Record<string, string>>, readonly 
   ['COUPON_APPLICABLE_TO_LABELS', COUPON_APPLICABLE_TO_LABELS, COUPON_APPLICABLE_TO, couponApplicableToLabel],
   ['COUPON_SUBSCRIPTION_TARGET_LABELS', COUPON_SUBSCRIPTION_TARGET_LABELS, COUPON_SUBSCRIPTION_TARGETS, couponSubscriptionTargetLabel],
   ['INVOICE_PROCESSING_STATUS_LABELS', INVOICE_PROCESSING_STATUS_LABELS, INVOICE_PROCESSING_STATUSES, invoiceProcessingStatusLabel],
+  ['ORG_PLAN_LABELS (運営の組織の画面の adminOrgPlanLabel)', ORG_PLAN_LABELS, ORG_PLAN_VALUES, adminOrgPlanLabel],
 ];
 
 describe('#2112 Z3 表示名の表', () => {
@@ -150,6 +154,15 @@ describe('#2112 Z3 表示名の表', () => {
     // どのプランも名前が重ならない (運営が別のプランと取り違えない)
     expect(new Set(Object.values(ADMIN_PLAN_KEY_LABELS)).size).toBe(OFFICIAL_PLAN_KEYS.length);
   });
+
+  it('組織のプランの運営の画面の表示名: 組織の設定の画面と同じ名前・null は「-」・表に無い値は「-」に隠さずそのまま (利用者の画面の orgPlanLabel と違う)', () => {
+    for (const value of ORG_PLAN_VALUES) expect(adminOrgPlanLabel(value)).toBe(orgPlanLabel(value));
+    expect(adminOrgPlanLabel(null)).toBe(ORG_UNKNOWN_VALUE_LABEL);
+    expect(adminOrgPlanLabel(undefined)).toBe(ORG_UNKNOWN_VALUE_LABEL);
+    expect(adminOrgPlanLabel('org_pro')).toBe('org_pro');
+    expect(orgPlanLabel('org_pro')).toBe(ORG_UNKNOWN_VALUE_LABEL);
+    expect(new Set(Object.values(ORG_PLAN_LABELS)).size).toBe(ORG_PLAN_VALUES.length);
+  });
 });
 
 // ─── 走査 ─────────────────────────────────────────────────────────────────────
@@ -183,20 +196,22 @@ const ALLOWED: Record<string, string> = {
     'アプリのログの発生元の絞り込みの選択肢 (log.source と同じ識別子)。Issue #2112 の仕分けの対象外',
   'src/app/super-admin/infra/metrics/page.tsx\tlatest.source':
     'メトリクスの発生元 (取り込み元のサービスの識別子)。Issue #2112 の仕分けの対象外',
+  'src/app/super-admin/infra/metrics/page.tsx\ts':
+    'メトリクスの発生元の絞り込みの選択肢 (SOURCES.map の値。latest.source と同じ識別子)。Issue #2112 の仕分けの対象外',
+  'src/app/super-admin/logs/page.tsx\tlevel':
+    'アプリのログのレベルの絞り込みの選択肢 (LEVELS.map の値。debug / info / warn / error)。ログの調べ物で使う識別子で、発生元と同じく Issue #2112 の仕分けの対象外',
   'src/components/admin/UserFreezeForm.tsx\tres.status':
     '失敗の文の「(HTTP 500)」の HTTP の状態コード (数)。状態・区分の英字の内部の値ではない',
 };
 
 /**
  * 並走の案件 (同じ Issue #2112) が直すので、この案件では触らない箇所。並走の案件のマージで消えるため、使われていなくても失敗にしない。
+ * 登録するのは、並走の案件の枝でその箇所が直っていることを確かめたものだけ (理由に、直す枝と直し方を書く)。
+ * 直す案件の無い箇所は、ここに入れず、この案件で直すか許可リスト (ALLOWED) に理由つきで入れる (ここに入れると恒久に見逃すため)。
  */
 const PARALLEL_OWNED: Record<string, string> = {
-  'src/app/admin/organizations/OrganizationsManager.tsx\torg.plan':
-    '組織のプラン (standard / premium / enterprise)。組織の画面は Z2 (fix/org-create-checks) の範囲。表示名の表は src/lib/org-plans.ts の ORG_PLAN_LABELS',
-  'src/app/admin/organizations/OrganizationsManager.tsx\tupdated.plan':
-    '組織のプランの変更の通知「プランを ${updated.plan} に変更しました」。組織の画面は Z2 (fix/org-create-checks) の範囲',
   'src/app/super-admin/plans/[id]/page.tsx\tplan.plan_type':
-    'プラン詳細の種別。Z1 (fix/plan-launch-screen) が plans-schemas の PLAN_TYPE_LABELS で直す',
+    'プラン詳細の種別。Z1 (fix/plan-launch-screen) が plans-schemas の PLAN_TYPE_LABELS (planTypeLabel) で直す (その枝で直っていることを確かめた)',
 };
 
 /** 定数の名前 (大文字・数字・_) */
@@ -285,6 +300,29 @@ function isConstantTableAccess(access: ValueAccess): boolean {
   return ts.isPropertyAccessExpression(access) && ts.isIdentifier(access.expression) && CONSTANT_NAME.test(access.expression.text);
 }
 
+/**
+ * 値の一覧の定数を map した引数か (`PLANS.map((value) => <option>{value}</option>)` の value。大文字の名前の配列の map)。
+ * 列の名前 (RAW_VALUE_PROPERTIES) によらず内部の値そのものなので数える (選択肢の文字を英字のまま出していた #2112 Z3 の取りこぼし)
+ */
+function isConstantListMapParam(access: ValueAccess): boolean {
+  if (!ts.isIdentifier(access)) return false;
+  for (let node: ts.Node | undefined = access.parent; node; node = node.parent) {
+    if (!ts.isArrowFunction(node) && !ts.isFunctionExpression(node)) continue;
+    const declares = node.parameters.some((param) => ts.isIdentifier(param.name) && param.name.text === access.text);
+    if (!declares) continue;
+    const call = node.parent;
+    return (
+      ts.isCallExpression(call) &&
+      call.arguments[0] === node &&
+      ts.isPropertyAccessExpression(call.expression) &&
+      call.expression.name.text === 'map' &&
+      ts.isIdentifier(call.expression.expression) &&
+      CONSTANT_NAME.test(call.expression.expression.text)
+    );
+  }
+  return false;
+}
+
 /** 要素の子の式に display_name の参照があるか */
 function hasDisplayNameChild(element: ts.JsxElement | ts.JsxFragment, sf: ts.SourceFile): boolean {
   return element.children.some((child) => ts.isJsxExpression(child) && child.getText(sf).includes('.display_name'));
@@ -316,7 +354,7 @@ function findRawValueRendering(file: string, source: string): RawFinding[] {
         const accesses: ValueAccess[] = [];
         collectValueAccesses(node.expression, accesses);
         for (const access of accesses) {
-          if (!RAW_VALUE_PROPERTIES.has(accessName(access))) continue;
+          if (!RAW_VALUE_PROPERTIES.has(accessName(access)) && !isConstantListMapParam(access)) continue;
           if (isConstantTableAccess(access) || isPairedWithDisplayName(access, parent, sf)) continue;
           report(access);
         }
@@ -367,6 +405,7 @@ describe('#2112 Z3 運営の画面の走査: 状態・区分の英字の内部�
       'src/app/super-admin/coupons/[id]/page.tsx',
       'src/app/admin/finance/invoices/[id]/page.tsx',
       'src/components/admin/ManualPlanGrantSection.tsx',
+      'src/app/admin/organizations/OrganizationsManager.tsx',
     ]) {
       expect(files).toContain(file);
     }
@@ -393,6 +432,10 @@ describe('#2112 Z3 運営の画面の走査: 状態・区分の英字の内部�
       'function L(setStatus: (s: string) => void, item: { status: string }) { setStatus(item.status); }',
       // 表に無い値だけをそのまま出す `TYPE_LABELS[type] || type` (labelOrRaw と同じ)
       'const M = ({ type }: { type: string }) => <span>{TYPE_LABELS[type] || type}</span>;',
+      // 値の一覧の定数を map した引数 (列の名前によらない。組織のプランの選択肢 `{value}`)。表示名の表で引けば数えない・小文字の名前の配列は数えない
+      'const N = () => <select>{PLANS.map((value) => (<option key={value} value={value}>{value}</option>))}</select>;',
+      'const O = () => <select>{PLANS.map((value) => (<option key={value} value={value}>{ORG_PLAN_LABELS[value]}</option>))}</select>;',
+      'const P = ({ items }: { items: string[] }) => <ul>{items.map((value) => <li key={value}>{value}</li>)}</ul>;',
     ].join('\n');
     expect(findRawValueRendering('example.tsx', before).map((f) => f.text)).toEqual([
       't.category',
@@ -404,6 +447,7 @@ describe('#2112 Z3 運営の画面の走査: 状態・区分の英字の内部�
       'v.plan_key',
       'd.plan_key',
       'd.plan',
+      'value',
     ]);
   });
 
