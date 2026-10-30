@@ -40,9 +40,10 @@ export function rereadUnavailableMessage(status: number, body: unknown, notFound
 
 /**
  * 詳細の行を読み直す (GET url の本文 { data: 行 })。投げない。
- * notFoundMessage は 404 のときに画面に出す文 (「<もの>が見つかりません。一覧に戻って確かめてください」)
+ * notFoundMessage は 404 のときに画面に出す文 (「<もの>が見つかりません。一覧に戻って確かめてください」)。
+ * null なら 404 も failed にする (価格の変更の読み直しのように、404 を読み込み直しても変わらない理由として扱わない読み直し。#2101 integrity-1030c)
  */
-export async function rereadDetailRow<T>(url: string, notFoundMessage: string): Promise<DetailRereadOutcome<T>> {
+export async function rereadDetailRow<T>(url: string, notFoundMessage: string | null): Promise<DetailRereadOutcome<T>> {
   try {
     const res = await fetch(url);
     if (!res.ok) {
