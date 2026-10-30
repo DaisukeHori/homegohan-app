@@ -26,6 +26,7 @@ import { adminFetch } from '@/lib/admin/fetch';
 import { canViewUserEmail } from '@/lib/admin/user-emails';
 import { normalizeProfileName } from '@/lib/profile-name';
 import { adminPlanKeyLabel } from '@/lib/admin/plan-key-labels';
+import { operatorRoleLabel } from '@/lib/admin/operator-role-labels';
 import {
   USER_LIST_ALL_STATUSES,
   USER_LIST_ALL_STATUSES_LABEL,
@@ -188,9 +189,10 @@ export default async function AdminUsersPage(props: PageProps) {
                         {(Array.isArray(user.roles) ? user.roles : ['user']).map((role) => (
                           <span
                             key={role}
-                            className="inline-block bg-gray-100 text-gray-600 text-xs px-1.5 py-0.5 rounded font-mono"
+                            title={role}
+                            className="inline-block bg-gray-100 text-gray-600 text-xs px-1.5 py-0.5 rounded"
                           >
-                            {role}
+                            {operatorRoleLabel(role)}
                           </span>
                         ))}
                       </div>
