@@ -6,8 +6,8 @@
  * 押し直すと、サポートの返信 (顧客へのメール)・チケット・リードが二重に作られた (この 3 つの表には一意の制約が無い)。
  * 直したあと (不変条件):
  *   - 返信 (admin/support/[id]): 応答を受け取れなかったら、チケットを読み直す。送る前に無かった、送った本文と同じ種類 (外部返信 / 内部メモ) の行が
- *     あれば済んだとして入力欄を空にし、その旨を出す。無ければ本文を残して「まだ送られていません」。読み直しにも失敗したら送信を止め、
- *     「再試行」(読み直し) で確かめるまで送らせない
+ *     あれば済んだとして入力欄を空にし、その旨を出す。無ければ本文を残して送信を止めたまま「まだ見つかりません」(行がまだ無いことは
+ *     送られていないことの確かめにならない。#2107 Y1)。読み直しにも失敗したら送信を止め、「再試行」(読み直し) で確かめるまで送らせない
  *   - 作成 (admin/support/new・admin/sales/new): 応答を受け取れなかったら、送信を止め、「済んだか分かりません。一覧で確かめてから作り直してください」と
  *     一覧へのリンクを出す。押し直しても送らない。続けて押しても 1 回しか送らない
  *   - 本文に API の文がある 502 / 503 / 504 と、ほかの失敗 (500 など) は、これまでどおり失敗として文を出し、押し直せる
@@ -272,15 +272,15 @@ describe('問い合わせの詳細: 返信の送信の応答を受け取れな�
     expect(findButton('返信を送信')!.disabled).toBe(true);
   });
 
-  it('本文の無い 504 のあと、読み直しても返信が無ければ本文を残し「まだ送られていません」。押し直せる', async () => {
+  it('本文の無い 504 のあと、読み直しても返信が無ければ本文を残し、送信を止めたまま「まだ見つかりません」(#2107 Y1)', async () => {
     const fetchMock = stubTicketFetch([() => jsonResponse(200, { data: TICKET })], () => proxyResponse(504));
     await openAndType(REPLY);
     await click(findButton('返信を送信'), '「返信を送信」ボタン');
 
     expect(textarea()!.value).toBe(REPLY);
     expect(text()).toContain('メッセージの送信の応答を受け取れませんでした (HTTP 504)');
-    expect(text()).toContain('まだ送られていません');
-    expect(findButton('返信を送信')!.disabled).toBe(false);
+    expect(text()).toContain('まだ見つかりません');
+    expect(findButton('返信を送信')!.disabled).toBe(true);
     expect(postCalls(fetchMock)).toHaveLength(1);
   });
 
@@ -290,7 +290,7 @@ describe('問い合わせの詳細: 返信の送信の応答を受け取れな�
     await click(findButton('返信を送信'), '「返信を送信」ボタン');
 
     expect(textarea()!.value).toBe(KNOWN_MESSAGE.body);
-    expect(text()).toContain('まだ送られていません');
+    expect(text()).toContain('まだ見つかりません');
   });
 
   it('内部メモを送って応答が切れたとき、同じ本文の外部返信の行は「届いた」と数えない', async () => {
@@ -305,7 +305,7 @@ describe('問い合わせの詳細: 返信の送信の応答を受け取れな�
 
     expect(textarea()!.value).toBe(REPLY);
     expect(text()).toContain('メッセージの送信の応答を受け取れませんでした (HTTP 503)');
-    expect(text()).toContain('まだ送られていません');
+    expect(text()).toContain('まだ見つかりません');
   });
 
   it('内部メモが届いていれば済んだとして空にする (メールの文は添えない)', async () => {
@@ -351,7 +351,7 @@ describe('問い合わせの詳細: 返信の送信の応答を受け取れな�
     expect(findButton('再試行')).toBeUndefined();
   });
 
-  it('「再試行」で読み直して届いていなければ、本文を残して送信を戻す', async () => {
+  it('「再試行」で読み直して届いていなければ、本文を残して送信を止めたまま「再試行」を出し続ける (#2107 Y1)', async () => {
     const fetchMock = stubTicketFetch(
       [() => jsonResponse(200, { data: TICKET }), () => proxyResponse(502), () => jsonResponse(200, { data: TICKET })],
       () => proxyResponse(504),
@@ -361,9 +361,9 @@ describe('問い合わせの詳細: 返信の送信の応答を受け取れな�
     await click(findButton('再試行'), '「再試行」ボタン');
 
     expect(textarea()!.value).toBe(REPLY);
-    expect(text()).toContain('まだ送られていません');
-    expect(findButton('返信を送信')!.disabled).toBe(false);
-    expect(findButton('再試行')).toBeUndefined();
+    expect(text()).toContain('まだ見つかりません');
+    expect(findButton('返信を送信')!.disabled).toBe(true);
+    expect(findButton('再試行')).toBeDefined();
     expect(postCalls(fetchMock)).toHaveLength(1);
   });
 

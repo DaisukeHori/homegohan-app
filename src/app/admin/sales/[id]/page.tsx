@@ -320,8 +320,9 @@ export default function LeadDetailPage(props: PageProps) {
         // 本文に API の文の無い 502 / 503 / 504 は応答を受け取れなかったもの (AdminActionNoResponseError。#2101 X2)
         throw await adminActionErrorOfResponse(res, ADD_ACTIVITY_ACTION);
       }
-      setActivitySummary('');
-      setActivityNextAction('');
+      // 入力が送った値のままなら空にする (記録の応答を待つあいだも入力欄は書き換えられるので、書き足した文は消さない。#2107 Y7 と同じ型)
+      setActivitySummary((current) => (current === sent.summary ? '' : current));
+      setActivityNextAction((current) => (current === (sent.nextAction ?? '') ? '' : current));
       await fetchLead();
     } catch (e: unknown) {
       if (e instanceof AdminActionNoResponseError) {
