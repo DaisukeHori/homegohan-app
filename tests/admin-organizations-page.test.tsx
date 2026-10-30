@@ -1064,7 +1064,9 @@ describe('401 (ログインが切れた) は本文の文ではなく「ログイ
     mockApi({ list: unauthenticatedResponse });
     await renderPage();
 
-    expect(alerts()).toEqual([RELOGIN_MESSAGE]);
+    // 一覧の失敗の欄 (「再読み込み」のボタンを含む) に出す
+    expect(alerts()).toHaveLength(1);
+    expect(alerts()[0]).toContain(RELOGIN_MESSAGE);
     expect(text()).not.toContain(API_UNAUTHENTICATED_MESSAGE);
     expect(text()).not.toContain('組織はまだありません');
   });
