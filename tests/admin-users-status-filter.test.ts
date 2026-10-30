@@ -116,4 +116,18 @@ describe('GET /api/admin/users — status フィルタの意味論', () => {
     expect(latestCalls.some((c) => c.method === 'is')).toBe(false);
     expect(latestCalls.some((c) => c.method === 'or')).toBe(false);
   });
+
+  // #2107 Y10: 退会で user_profiles の行は消える (auth.users への外部キーが ON DELETE CASCADE) ので、削除済みの行は無い。
+  // 以前は status=deleted に絞り込みが無く、全ステータス (生きているユーザー) を返していた。
+  // 実際の DB で 0 件になることは tests/integration/operator/admin-users.test.ts で確かめる
+  it('status=deleted は 1 行も当たらない絞り込み (主キーの id IS NULL) をかけ、凍結の絞り込みはかけない', async () => {
+    const req = new Request('http://localhost/api/admin/users?status=deleted');
+    const res = await GET(req);
+    expect(res.status).toBe(200);
+
+    const isCalls = latestCalls.filter((c) => c.method === 'is');
+    expect(isCalls.map((c) => c.args)).toEqual([['id', null]]);
+    expect(latestCalls.some((c) => c.method === 'not')).toBe(false);
+    expect(latestCalls.some((c) => c.method === 'or')).toBe(false);
+  });
 });
