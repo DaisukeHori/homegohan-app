@@ -243,13 +243,13 @@ type LoadState =
  *   - loaded      : 読めた (data)
  *   - unauthorized: 401 (ログインが切れた)。message は「ログインし直してください」
  *   - forbidden   : 403 (権限が外れた・二段階認証の確認が要る など)。message は本文の理由の文か、この画面の固定の文
- *   - failed      : ほかの失敗 (500・本文の無い 502・通信の reject・形の違う本文)。読み込み直せば変わりうる
+ *   - load-failed : ほかの失敗 (500・本文の無い 502・通信の reject・形の違う本文)。読み込み直せば変わりうる
  * unauthorized / forbidden は読み込み直しても変わらないので、記録の応答を受け取れなかったあとの読み直しでは「確かめ直す」を出さない
  */
 type BackupsLoadResult =
   | { outcome: 'loaded'; data: BackupStatusResponse['data'] }
   | { outcome: 'unauthorized' | 'forbidden'; message: string }
-  | { outcome: 'failed' };
+  | { outcome: 'load-failed' };
 
 export default function SuperAdminBackupsPage() {
   const [load, setLoad] = useState<LoadState>({ status: 'loading' });
@@ -286,19 +286,19 @@ export default function SuperAdminBackupsPage() {
       }
       if (res.status !== HTTP_OK) {
         setLoad({ status: 'error', message: LOAD_FAILED_TEXT });
-        return { outcome: 'failed' };
+        return { outcome: 'load-failed' };
       }
       const json: unknown = await res.json();
       // 訓練の記録の一覧の無い形を読めたとは扱わない (読み直しで「記録されていない」と誤って決めない。#2101 X2)
       if (!isBackupStatusResponse(json)) {
         setLoad({ status: 'error', message: LOAD_FAILED_TEXT });
-        return { outcome: 'failed' };
+        return { outcome: 'load-failed' };
       }
       setLoad({ status: 'loaded', data: json.data });
       return { outcome: 'loaded', data: json.data };
     } catch {
       setLoad({ status: 'error', message: LOAD_FAILED_TEXT });
-      return { outcome: 'failed' };
+      return { outcome: 'load-failed' };
     }
   }, []);
 
@@ -332,7 +332,7 @@ export default function SuperAdminBackupsPage() {
       case 'forbidden':
         markUnconfirmed({ ...pending, message: adminCreateStoppedMessage(pending.summary, result.message), retryable: false });
         return;
-      case 'failed':
+      case 'load-failed':
         markUnconfirmed({ ...pending, message: adminCreateStoppedMessage(pending.summary), retryable: true });
         return;
     }
