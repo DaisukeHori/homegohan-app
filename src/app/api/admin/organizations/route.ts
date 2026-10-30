@@ -13,7 +13,6 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { isRaisedExceptionWithCode } from '@/lib/errors/db-raised-code';
-import { internalError } from '@/lib/api/errors';
 import { z } from 'zod';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
@@ -153,86 +152,56 @@ export async function POST(request: Request) {
   const { name, plan, owner_id } = parseResult.data;
   const supabase = await createClient();
 
-  // owner_id は必ず INSERT に含める (active な行では NOT NULL (CHECK organizations_active_has_owner)。#1103 項目 10 → #1917)。
+  // owner_id は必ず渡す (active な行では NOT NULL (CHECK organizations_active_has_owner)。#1103 項目 10 → #1917)。
   // 明示的に指定がない場合は呼び出し元 admin を owner とする
   const effectiveOwnerId = owner_id ?? actor.id;
 
-  // owner が既に他組織に所属しているかチェック (user_profiles_org_consistency 制約対応)
+  // 組織の行・オーナーの所属 (organization_id・org_role = 'owner')・席の行を、DB 関数 admin_create_organization の 1 つのトランザクションで書く
+  // (#2107 Y4。supabase/migrations/20261030150000_create_organization_atomic.sql)。関数はオーナーの user_profiles の行をロックしてから
+  // 所属を確かめるので、同じオーナーの同時の作成・応答が切れたあとの押し直しは 1 つだけ通る。途中で止まれば組織の行も残らない
+  // (以前は所属の確認・組織の INSERT・席の行・所属の更新を別々の要求で行い、確認と更新の間に 2 つ目が通ると組織が 2 つでき、
+  // 所属の更新に失敗しても組織が残った)。route は表に直接書かない
   const supabaseAdmin = getSupabaseAdmin();
+  const { data: created, error: createError } = await supabaseAdmin.rpc('admin_create_organization', {
+    p_name: name,
+    p_plan: plan,
+    p_owner_id: effectiveOwnerId,
+  });
 
-  // 読めなかった (DB の失敗) ときは 500。所属なしとして作成へ進まない (#1917 の続き。以前は失敗を捨て、所属の確認を素通りしていた)。
-  // プロフィールの行が無いときは今までどおり所属なしとして進む
-  const { data: ownerProfile, error: ownerProfileError } = await supabaseAdmin
-    .from('user_profiles')
-    .select('organization_id')
-    .eq('id', effectiveOwnerId)
-    .maybeSingle();
-  if (ownerProfileError) {
-    return internalError('POST /api/admin/organizations', ownerProfileError, { userId: actor.id, table: 'user_profiles' }, { shape: 'nested' });
-  }
-
-  if (ownerProfile?.organization_id) {
-    return NextResponse.json(
-      { error: { code: 'OWNER_ALREADY_IN_ORG', message: '指定したオーナー (owner_id) は既に別の組織に所属しています' } },
-      { status: 409 },
-    );
-  }
-
-  const { data: org, error: insertError } = await supabaseAdmin
-    .from('organizations')
-    .insert({ name, plan, owner_id: effectiveOwnerId })
-    .select('id, name, plan, owner_id, created_at, updated_at')
-    .single();
-
-  if (insertError || !org) {
-    // 退会の途中の人はオーナーにしない (#1917 の続き。DB のトリガー trg_organizations_owner_not_deleting (関数 organizations_owner_not_deleting()) が INSERT を止める。
-    // supabase/migrations/20261023130000_account_deletion_owner_guard.sql)。作らずに 409 で返す。
-    // トリガーが P0001 + このコードの完全一致で止めた形だけを拾う。コードの判定は共通の関数で行い、route では (ログのほかに) `.message` を読まない (#1917)
-    if (isRaisedExceptionWithCode(insertError, OWNER_ACCOUNT_DELETING)) {
+  if (createError) {
+    // DB 関数が P0001 + コードの完全一致で止めた形だけを拾う。コードの判定は共通の関数で行い、route では (ログのほかに) `.message` を読まない (#1917)
+    // オーナーがすでに組織に所属している (応答が切れたあとの押し直しで、直前に自分が作った組織のこともある。#2107 Y5)
+    if (isRaisedExceptionWithCode(createError, OWNER_ALREADY_IN_ORG)) {
       return NextResponse.json(
-        { error: { code: OWNER_ACCOUNT_DELETING, message: '指定したオーナー (owner_id) は退会の手続き中です' } },
+        { error: { code: OWNER_ALREADY_IN_ORG, message: OWNER_ALREADY_IN_ORG_MESSAGE } },
         { status: 409 },
       );
     }
-    console.error('[api/admin/organizations] POST insert error:', insertError?.message);
+    // 退会の途中の人はオーナーにしない (#1917 の続き。DB のトリガー trg_organizations_owner_not_deleting (関数 organizations_owner_not_deleting()) が
+    // 関数の中の organizations の INSERT を止める。supabase/migrations/20261023130000_account_deletion_owner_guard.sql)。作らずに 409 で返す
+    if (isRaisedExceptionWithCode(createError, OWNER_ACCOUNT_DELETING)) {
+      return NextResponse.json(
+        { error: { code: OWNER_ACCOUNT_DELETING, message: OWNER_ACCOUNT_DELETING_MESSAGE } },
+        { status: 409 },
+      );
+    }
+    console.error('[api/admin/organizations] POST create error:', createError.message);
     return NextResponse.json(
       { error: { code: 'INTERNAL_ERROR', message: '組織の作成に失敗しました' } },
       { status: 500 },
     );
   }
 
-  // Round 3 C-3: 新規 org 作成時に org_license_pools 行を INSERT
-  // service_role クライアントで RLS をバイパスして確実に挿入
-  try {
-    const { error: poolErr } = await supabaseAdmin
-      .from('org_license_pools')
-      .insert({
-        organization_id: org.id,
-        total_licenses: null, // unlimited by default
-        used_licenses: 0,
-      });
-    if (poolErr) {
-      console.error('[admin/organizations] org_license_pools INSERT failed', poolErr);
-      // 致命ではないが警告 (ライセンス管理は後続で補完可能)
-    }
-  } catch (adminErr) {
-    console.error('[admin/organizations] supabaseAdmin init failed', adminErr);
-  }
-
-  // owner の user_profiles を更新 (org_role='owner', organization_id 設定)
-  const { error: profileUpdateError } = await supabaseAdmin
-    .from('user_profiles')
-    .update({ organization_id: org.id, org_role: 'owner' })
-    .eq('id', effectiveOwnerId);
-
-  if (profileUpdateError) {
-    console.error('[api/admin/organizations] POST profile update error:', profileUpdateError.message);
-    // org 作成は成功しているが user_profiles が更新できない場合はエラー
+  // 関数は作った組織を返す。形が違えば (起きないはず)、作れたとは言わずに一覧で確かめさせる (作成そのものは commit 済みのことがある)
+  const parsedOrg = CreatedOrganizationSchema.safeParse(created);
+  if (!parsedOrg.success) {
+    console.error('[api/admin/organizations] POST create returned an unexpected shape');
     return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'オーナーのプロフィール更新に失敗しました' } },
+      { error: { code: 'INTERNAL_ERROR', message: ORG_CREATED_UNREADABLE_MESSAGE } },
       { status: 500 },
     );
   }
+  const org = parsedOrg.data;
 
   // 監査ログ
   await recordAdminAudit({
@@ -322,3 +291,32 @@ function listFailedResponse() {
  * RAISE するコード (supabase/migrations/20261023130000_account_deletion_owner_guard.sql)。応答の code にもそのまま使う
  */
 const OWNER_ACCOUNT_DELETING = 'OWNER_ACCOUNT_DELETING';
+
+/** 退会の手続き中のオーナーを断るときの文 (英字の項目名 owner_id を運営に見せない。#2107 Y5 の同じ型) */
+const OWNER_ACCOUNT_DELETING_MESSAGE = '指定したオーナーは退会の手続き中です';
+
+/**
+ * 作る組織のオーナーがすでに組織に所属しているときに、DB 関数 admin_create_organization が RAISE するコード
+ * (supabase/migrations/20261030150000_create_organization_atomic.sql)。応答の code にもそのまま使う
+ */
+const OWNER_ALREADY_IN_ORG = 'OWNER_ALREADY_IN_ORG';
+
+/**
+ * オーナーがすでに組織に所属しているときの文 (#2107 Y5)。応答が切れたあとに押し直すと、直前に自分が作った組織で断られるので、
+ * 「別の組織」とは言わず、一覧で確かめさせる。英字の項目名 (owner_id) を運営に見せない (画面はこの文をそのまま出す)
+ */
+const OWNER_ALREADY_IN_ORG_MESSAGE =
+  '指定したオーナーはすでに組織に所属しています (直前に作成した組織かもしれません。一覧で確かめてください)';
+
+/** DB 関数が作った組織を返したが、形が違って読めなかったときの文 (作成は済んでいることがあるので、一覧で確かめさせる) */
+const ORG_CREATED_UNREADABLE_MESSAGE = '組織の作成の結果を読み取れませんでした。一覧で確かめてください';
+
+/** DB 関数 admin_create_organization が返す、作った組織 (応答の organization。以前の route の応答と同じ列) */
+const CreatedOrganizationSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  plan: z.string().nullable(),
+  owner_id: z.string().uuid(),
+  created_at: z.string().nullable(),
+  updated_at: z.string().nullable(),
+});
