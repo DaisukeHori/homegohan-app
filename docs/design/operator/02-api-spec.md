@@ -1823,14 +1823,14 @@ Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#113
 | `OP_PERMISSION_DENIED` | 403 | ロール不足 |
 | `OP_TARGET_PROTECTED` | 403 | 保護ユーザーへの操作不可 (super_admin BAN 等) |
 | `OP_AUDIT_LOG_IMMUTABLE` | 403 | 監査ログ書き換え不可 |
-| `OP_FEATURE_FLAG_IN_USE` | 409 | 削除しようとしたフラグが利用中 |
+| `OP_FEATURE_FLAG_IN_USE` | 409 | 削除しようとしたフラグが利用中・作成でキーが既にある (`POST /api/super-admin/flags`。§7) |
 | `PLAN_NOT_FOUND` | 404 | AI の利用上限の保存 (`PATCH /api/super-admin/llm/quotas`) で、`plan_key` のプランが `subscription_plans` に無く、組織のプランの値 (`ORG_PLAN_VALUES`) でもない (§8) |
 | `PLAN_READ_ONLY` | 409 | AI の利用上限の保存 (`PATCH /api/super-admin/llm/quotas`) で、`plan_key` が `subscription_plans` の組織のプランの行 (`plan_type = 'org'` の `org_*`)。組織の上限は `standard` / `premium` / `enterprise` の行で決まり、`org_*` の行の値は判定に使われない (§8。#1912) |
 | `SETTING_READ_ONLY` | 409 | システム設定の保存 (`PUT /api/super-admin/settings`) で、使われていない key (旧 `feature_flags` 行) を書き換えようとした (§7。#1457) |
 | `OP_PACKAGE_IN_USE` | 409 | 削除しようとしたパッケージが利用中 |
 | `AI_DAILY_LIMIT` | 429 | 今日の AI の利用回数の上限に達した (利用者の AI の呼び出し。本文は `{ error, code, limit, retryAfter }`、`Retry-After` は次の JST 0 時までの秒数。operator/06-ai-llm.md §5) |
 | `OP_RE_AUTH_REQUIRED` | 401 | 再認証必須 |
-| `OP_PLAN_KEY_CONFLICT` | 409 | plan_key 重複 |
+| `OP_EXPERIMENT_KEY_DUPLICATE` / `OP_COUPON_CODE_DUPLICATE` / `OP_PACKAGE_KEY_DUPLICATE` / `OP_PLAN_KEY_DUPLICATE` | 409 | 作成でキーが既にある (一意の制約の違反 23505)。`OP_EXPERIMENT_KEY_DUPLICATE` は A/B テストの `key` (`POST /api/super-admin/experiments`。§15)・`OP_COUPON_CODE_DUPLICATE` はクーポンの `code` (`POST /api/super-admin/coupons`。§19)・`OP_PACKAGE_KEY_DUPLICATE` は機能パッケージの `package_key` (`POST /api/super-admin/feature-packages`。§18)・`OP_PLAN_KEY_DUPLICATE` はプランの `plan_key` (`POST /api/super-admin/plans`。§17) |
 | `OP_PLAN_DEPRECATED` | 422 | deprecated プランへの新規加入不可 |
 | `OP_COUPON_ALREADY_ACTIVE` | 409 | 1 契約に対し有効クーポンが既に存在 |
 | `OP_SUBSCRIPTION_ALREADY_ACTIVE` | 409 | active/trialing が既に存在 |
