@@ -1,11 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { motion } from "framer-motion";
 import { normalizeProfileName } from "@/lib/profile-name";
+import { loginPathWithNext, readSignedInUser } from "@/lib/auth/signed-in-user";
+
+/**
+ * 自分 (ログインしているか・サポートの権限) を読み込めなかったときの文 (#2093 W4)。権限が無い (ホームへ移す) ・
+ * ログインしていない (ログインの画面へ移す) と見分けるために出す (組織の管理画面の枠の ORG_ADMIN_LOAD_ERROR と同じ扱い)。
+ * 失敗の理由 (英語の内部の文) は画面に出さない
+ */
+const SUPPORT_LAYOUT_LOAD_ERROR = "サポートの画面を開けませんでした。しばらくしてから、もう一度お試しください。";
+
+/**
+ * .single() で行が 0 件 (または RLS で見えない) ときの PostgREST の失敗のコード。
+ * プロフィールの行が無いのは「読み込めなかった」ではなく権限が無い扱い (これまでどおりホームへ移す)
+ */
+const POSTGREST_NO_ROWS_CODE = "PGRST116";
 
 const supportNavItems = [
   { href: "/support", label: "ダッシュボード", icon: "📊" },
@@ -20,42 +34,99 @@ export default function SupportLayout({
 }) {
   const router = useRouter();
   const pathname = usePathname();
+  // ログインのあとに戻る先 (今の画面)。checkAccess の依存に入れると画面を移るたびに読み直すので、ref で今の値を読む (#2093 W4)
+  const pathnameRef = useRef(pathname);
+  useEffect(() => {
+    pathnameRef.current = pathname;
+  }, [pathname]);
   const [isLoading, setIsLoading] = useState(true);
   const [userName, setUserName] = useState("");
+  // 自分を読み込めなかったときの文。あるあいだは画面の代わりにこの文と「再試行」を出す (#2093 W4。以前は通信が切れているだけで
+  // ログインの画面へ移し、プロフィールを読めないと「サポート権限がありません」と出してホームへ移し、例外は未処理の reject になっていた)
+  const [loadError, setLoadError] = useState<string | null>(null);
   const supabase = createClient();
 
-  useEffect(() => {
-    const checkAccess = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        router.push("/login");
+  // 自分とサポートの権限を確かめる。画面を開いたときと「再試行」で呼ぶ
+  const checkAccess = useCallback(async () => {
+    setIsLoading(true);
+    // 別の画面へ移るときは、移るまで読み込み中の表示のままにする (これまでどおり)
+    let redirecting = false;
+    try {
+      // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
+      // 確かめられなかったときは読み込みの失敗と「再試行」を出す。ログインのあとにこの画面へ戻れるよう next を付ける
+      const signedIn = await readSignedInUser(supabase);
+      if (signedIn.kind === "load-failed") {
+        setLoadError(SUPPORT_LAYOUT_LOAD_ERROR);
         return;
       }
+      if (signedIn.kind === "signed-out") {
+        redirecting = true;
+        router.push(loginPathWithNext(pathnameRef.current));
+        return;
+      }
+      const { user } = signedIn;
 
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from("user_profiles")
         .select("roles, nickname")
         .eq("id", user.id)
         .single();
 
+      if (profileError && profileError.code !== POSTGREST_NO_ROWS_CODE) {
+        // 読み込めなかった (権限が無いのとは別。「サポート権限がありません」と出さず、ホームへ移さない)
+        setLoadError(SUPPORT_LAYOUT_LOAD_ERROR);
+        return;
+      }
+
       const roles = profile?.roles || [];
       const hasAccess = roles.some((r: string) => ['admin', 'super_admin', 'support'].includes(r));
       if (!profile || !hasAccess) {
+        redirecting = true;
         alert("サポート権限がありません");
         router.push("/home");
         return;
       }
 
       setUserName(normalizeProfileName(profile.nickname) ?? "Support");
-      setIsLoading(false);
-    };
-    checkAccess();
+      setLoadError(null);
+    } catch (checkError) {
+      // 問い合わせが例外を投げた (以前は catch が無く、未処理の reject になり、読み込み中の表示のまま止まっていた)
+      console.error("Failed to check support access:", checkError);
+      setLoadError(SUPPORT_LAYOUT_LOAD_ERROR);
+    } finally {
+      if (!redirecting) setIsLoading(false);
+    }
   }, [router, supabase]);
+
+  useEffect(() => {
+    void checkAccess();
+  }, [checkAccess]);
 
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-teal-50 to-cyan-100">
         <div className="w-12 h-12 border-4 border-teal-500 border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-teal-50 to-cyan-100 p-8">
+        <div
+          role="alert"
+          data-testid="support-layout-load-error"
+          className="max-w-md bg-red-50 border border-red-200 rounded-2xl p-8 text-center"
+        >
+          <p className="text-red-700 font-medium">{loadError}</p>
+          <button
+            type="button"
+            onClick={() => void checkAccess()}
+            className="mt-4 px-4 py-2 rounded-xl bg-white border border-red-300 text-red-700 font-medium hover:bg-red-100 transition-colors"
+          >
+            再試行
+          </button>
+        </div>
       </div>
     );
   }

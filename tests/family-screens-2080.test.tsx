@@ -39,7 +39,8 @@ const INVITE_ALREADY_USED_MESSAGE = 'この招待は既に使用済みです。'
 const DASHBOARD_LOAD_ERROR = '家族の情報を読み込めませんでした';
 const MEMBER_DETAIL_LOAD_ERROR = 'メンバーの情報を読み込めませんでした';
 const GROUP_NOT_FOUND = '家族グループの取得に失敗しました';
-const MEMBER_NOT_FOUND = 'メンバー情報の取得に失敗しました';
+/** 開くメンバーの行が無いときの文 (#2093 W10) */
+const MEMBER_NOT_FOUND = 'このメンバーは見つかりません (家族から外れた可能性があります)。一覧に戻って確かめてください';
 const REMOVE_ACTION = '家族から外す';
 
 /** 行が無いのではなく、読み込めなかった失敗 */

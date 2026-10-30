@@ -478,11 +478,12 @@ describe('#2059 Q2 組織のメンバー: 除名・脱退の通信が失敗し�
   });
 });
 
-describe('#2059 Q3 と同じ形 組織のメンバー: 脱退の応答を待つ間は「再試行」を止める', () => {
-  it('一覧を読み込めなかった画面で脱退を押し、応答を待つ間に「再試行」を押しても一覧を読み直さない', async () => {
-    const leave = deferred<Response>();
+describe('#2059 Q3 と同じ形 組織のメンバー: 一覧を読み込めなかった画面と、脱退の応答を待つ間', () => {
+  // 以前は「一覧を読み込めなかった画面で脱退を押し、応答を待つ間に「再試行」を押しても一覧を読み直さない」を見ていた。
+  // #2093 W9 で、一覧を読み込めなかった画面には「組織を脱退」を出さなくした (前に読めたときの役割でボタンを出し続けていたため) ので、
+  // その組み合わせは起きない。代わりに、読み込めなかった画面に脱退のボタンが無いことと、脱退の応答を待つ間の表示を見る
+  it('一覧を読み込めなかった画面には「組織を脱退」を出さず、「再試行」で読めたら出す (#2093 W9)', async () => {
     mockFetch((method, url) => {
-      if (method === 'POST' && url.pathname === '/api/org/leave') return leave.promise;
       throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
     });
     supabaseState.profile = { data: { org_role: 'member', organization_id: 'org-1' }, error: null };
@@ -490,16 +491,30 @@ describe('#2059 Q3 と同じ形 組織のメンバー: 脱退の応答を待つ�
     await renderElement(createElement(MembersPage));
 
     expect(container.querySelector('[data-testid="member-load-error"]')).not.toBeNull();
+    expect(findButton('組織を脱退')).toBeUndefined();
     expect(supabaseState.membersQueryCount).toBe(1);
-    await click(findButton('組織を脱退'), '「組織を脱退」ボタン');
 
-    const retry = findButton('再試行');
-    expect(retry, '「再試行」ボタン').toBeDefined();
-    expect(retry!.disabled).toBe(true);
-    await click(retry, '「再試行」ボタン');
-    expect(supabaseState.membersQueryCount).toBe(1);
-    // 脱退の「処理中...」も出たまま (読み込み中の表示で隠さない)
+    supabaseState.members = { data: [], error: null };
+    await click(findButton('再試行'), '「再試行」ボタン');
+    expect(supabaseState.membersQueryCount).toBe(2);
+    expect(container.querySelector('[data-testid="member-load-error"]')).toBeNull();
+    expect(findButton('組織を脱退')).toBeDefined();
+  });
+
+  it('脱退の応答を待つ間は「処理中...」を出したまま (読み込み中の表示で隠さない) で、応答が来たらホームへ移る', async () => {
+    const leave = deferred<Response>();
+    mockFetch((method, url) => {
+      if (method === 'POST' && url.pathname === '/api/org/leave') return leave.promise;
+      throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+    });
+    supabaseState.profile = { data: { org_role: 'member', organization_id: 'org-1' }, error: null };
+    supabaseState.members = { data: [], error: null };
+    await renderElement(createElement(MembersPage));
+
+    await click(findButton('組織を脱退'), '「組織を脱退」ボタン');
     expect(findButton('処理中...')).toBeDefined();
+    expect(findButton('処理中...')!.disabled).toBe(true);
+    expect(supabaseState.membersQueryCount).toBe(1);
 
     await act(async () => {
       leave.resolve(jsonResponse(200, { ok: true }));

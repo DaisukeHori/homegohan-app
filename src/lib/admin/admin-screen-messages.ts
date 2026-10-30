@@ -14,6 +14,7 @@
 // このファイルはブラウザからも読むので、サーバー専用のものを import しない。
 
 import { extractApiErrorMessage } from '@/lib/admin/api-error-message';
+import { OPERATOR_FORCE_ACTION_NO_RESPONSE_STATUSES } from '@/lib/membership/operator-screen-messages';
 
 /** 画面にそのまま出してよい日本語の文を持つ例外 */
 export class AdminScreenError extends Error {
@@ -113,4 +114,123 @@ export async function fetchAdminJson(url: string, subject: string): Promise<unkn
   const body: unknown = await res.json().catch(() => null);
   if (body === null) throw new AdminScreenError(adminLoadFailedMessage(subject, null));
   return body;
+}
+
+/**
+ * 本文に API の文が無いときに、書き込みの応答を受け取れなかった (サーバーで済んだか分からない) ものとして扱う HTTP ステータス (#2093 W1)。
+ * 502 Bad Gateway・503 Service Unavailable・504 Gateway Timeout は、route ではなく手前のプロキシ・ホスティング (関数の時間切れなど) が返す。
+ * 運営のメンバーシップの強制操作 (#2086 V1) と同じ 3 つ。route がこれらを返すときは本文に API の文を入れるので、文がある応答はこれまでどおり失敗として出す
+ */
+export const ADMIN_ACTION_NO_RESPONSE_STATUSES: readonly number[] = OPERATOR_FORCE_ACTION_NO_RESPONSE_STATUSES;
+
+/**
+ * 書き込みの応答を受け取れなかったときの文 (#2093 W1)。
+ * status が null なら通信そのものの失敗 (fetch の reject。「（通信エラー）」)、数なら本文に API の文の無い 502 / 503 / 504 (「(HTTP n)」)
+ */
+export function adminActionNoResponseSummary(action: string, status: number | null): string {
+  if (status === null) return adminActionNoResponseMessage(action);
+  return withHttpStatus(`${action}の応答を受け取れませんでした`, status);
+}
+
+/**
+ * 書き込みの応答を受け取れなかった (サーバーで済んだか分からない) ことを表す例外 (#2093 W1)。
+ * 文は adminActionNoResponseSummary の文で、画面にそのまま出してよい。画面はこれを受けたら、対象を読み直すか、送信を止めて確かめさせる
+ * (押し直しで二重に作らない)。status は adminActionNoResponseSummary と同じ
+ */
+export class AdminActionNoResponseError extends AdminScreenError {
+  readonly status: number | null;
+
+  constructor(action: string, status: number | null) {
+    super(adminActionNoResponseSummary(action, status));
+    this.name = 'AdminActionNoResponseError';
+    this.status = status;
+  }
+}
+
+/** 書き込みの要求を送る。通信そのものが失敗 (fetch の reject) したら AdminActionNoResponseError を投げる (#2093 W1) */
+export async function sendAdminAction(url: string, init: RequestInit, action: string): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch {
+    throw new AdminActionNoResponseError(action, null);
+  }
+}
+
+/**
+ * 書き込みの失敗の応答から、画面に出す例外を作る (#2093 W1)。
+ * 本文に API の文の無い 502 / 503 / 504 は AdminActionNoResponseError (サーバーで済んだか分からない)。
+ * ほかは adminScreenErrorOfResponse と同じ (本文の日本語の文、無ければ「<操作>に失敗しました (HTTP n)」)
+ */
+export async function adminActionErrorOfResponse(res: Response, action: string): Promise<AdminScreenError> {
+  const body = await readFailureBody(res);
+  if (extractApiErrorMessage(body) === null && ADMIN_ACTION_NO_RESPONSE_STATUSES.includes(res.status)) {
+    return new AdminActionNoResponseError(action, res.status);
+  }
+  return new AdminScreenError(screenApiErrorMessage(body) ?? adminActionHttpFailedMessage(action, res.status));
+}
+
+/**
+ * 作成の応答を受け取れなかったときに続ける文 (#2093 W1)。
+ * 作成の表 (support_tickets・sales_leads) には一意の制約が無く、読み直しで同じものかを決める鍵も無いので、画面は送信を止め、一覧で確かめさせる
+ */
+export const ADMIN_CREATE_UNCONFIRMED_GUIDE = '済んだか分かりません。一覧で確かめてから作り直してください';
+
+/** 作成の応答を受け取れなかったときの文 (「チケットの作成の応答を受け取れませんでした（通信エラー）。済んだか分かりません。…」) */
+export function adminCreateUnconfirmedMessage(summary: string): string {
+  return `${summary}。${ADMIN_CREATE_UNCONFIRMED_GUIDE}`;
+}
+
+/**
+ * 作成の成功の応答 (2xx) を受けたが、本文が読めず作成したものを開けないときの文 (#2093 W1)。
+ * 作成は済んでいるので、画面は送信を止めて一覧で確かめさせる (押し直すと二重になる)
+ */
+export function adminCreatedButNotOpenedMessage(subject: string): string {
+  return `${subject}は作成されましたが、作成した${subject}を開けませんでした。一覧で確かめてください`;
+}
+
+/** 作成の成功の応答の本文 ({ data: { id } }) から、作成したものの id を取り出す。読めない・形が違えば null (#2093 W1) */
+export function createdIdOfBody(body: unknown): string | null {
+  const data = typeof body === 'object' && body !== null ? (body as { data?: unknown }).data : undefined;
+  const id = typeof data === 'object' && data !== null ? (data as { id?: unknown }).id : undefined;
+  return typeof id === 'string' && id !== '' ? id : null;
+}
+
+/**
+ * 運営の API の一覧 ({ data: [...] }) を GET で読む。data が配列でない応答 (200 なのに本文が読めない・形が違う) は
+ * 読み込めなかったものとして「<対象>を読み込めませんでした（通信エラー）」の AdminScreenError を投げる
+ * (壊れた応答を「0 件」と見せない。#2093 W7。運営のメンバーシップの画面の fetchOperatorRows と同じ扱い)。
+ * ほかの失敗は fetchAdminJson と同じ
+ */
+export async function fetchAdminRows<T>(url: string, subject: string): Promise<T[]> {
+  const body = await fetchAdminJson(url, subject);
+  const data = typeof body === 'object' && body !== null ? (body as { data?: unknown }).data : undefined;
+  if (!Array.isArray(data)) throw new AdminScreenError(adminLoadFailedMessage(subject, null));
+  return data as T[];
+}
+
+/**
+ * 作成 (POST) の成功の応答の本文 ({ data: { id } }) から、作った行の id を読む。
+ * 本文が JSON として読めない・id が無いときは null (作成は済んでいるので、呼び出し側は作成の失敗とは言わない。#2093 W7)
+ */
+export async function createdRowIdOfResponse(res: Response): Promise<string | null> {
+  const body: unknown = await res.json().catch(() => null);
+  return createdIdOfBody(body);
+}
+
+/**
+ * 作成は成功の応答で済んだが、応答の本文が読めず、作った行の画面へ移れないときの文 (#2093 W7)。
+ * 作成は済んでいるので「失敗しました」とも「通信エラー」とも言わず、一覧で確かめるよう促す
+ */
+export function adminCreatedButUnreadableMessage(action: string): string {
+  return `${action}は済みましたが、応答を読み込めませんでした。一覧から開いて確かめてください`;
+}
+
+/**
+ * 書き込み (PATCH) の成功の応答の本文 ({ data: 書いたあとの行 }) から行を読む。
+ * 本文が JSON として読めない・data が無いときは null (書き込みは済んでいるかもしれないので、呼び出し側は失敗とは言わない。#2093 W7)
+ */
+export async function savedRowOfResponse<T>(res: Response): Promise<T | null> {
+  const body: unknown = await res.json().catch(() => null);
+  const data = typeof body === 'object' && body !== null ? (body as { data?: unknown }).data : undefined;
+  return typeof data === 'object' && data !== null ? (data as T) : null;
 }

@@ -4,9 +4,10 @@
 // (設計書 03-ui-spec.md §2 — 5 パターン分岐)
 // org/family 共通版: scope ('family'|'organization') による分岐
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { readSignedInUser } from '@/lib/auth/signed-in-user';
 import { FamilyInviteAcceptModal } from '@/components/membership/FamilyInviteAcceptModal';
 import { InviteLayout } from '@/components/membership/InviteLayout';
 import {
@@ -19,6 +20,16 @@ const ORG_NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
 
 /** 組織の招待が承諾済み・拒否済み・取り消し済み (409 INVITE_ALREADY_USED) のときの文 */
 const ORG_INVITE_ALREADY_USED_MESSAGE = 'この招待は既に使用済みです。';
+
+/**
+ * 自分 (ログインしているか) か招待の情報を読み込めなかったときの文 (#2093 W4)。招待が無い (「招待情報が見つかりません」) と
+ * 見分けるために出す (以前は通信の失敗も「招待情報が見つかりません」と出していたので、オフラインで開いた招待のリンクが無効に見えた)。
+ * 失敗の理由 (英語の内部の文) は画面に出さない
+ */
+const INVITE_LOAD_ERROR = '招待の情報を読み込めませんでした。しばらくしてから、もう一度お試しください。';
+
+/** 招待が無い (get_invite_details が null を返した) ときの文 */
+const INVITE_NOT_FOUND_MESSAGE = '招待情報が見つかりません';
 
 /** 組織の招待の承諾が済んだときの遷移先 */
 const ORG_DASHBOARD_PATH = '/org/dashboard';
@@ -48,33 +59,56 @@ export default function InvitePage() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // 読み込めなかったときの文。あるあいだは画面の代わりにこの文と「再試行」を出す (#2093 W4)
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // org accept/reject state
   const [orgLoading, setOrgLoading] = useState(false);
   const [orgError, setOrgError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const init = async () => {
-      // 認証状態確認
-      const { data: { user } } = await supabase.auth.getUser();
-      setIsLoggedIn(!!user);
+  // 自分と招待の情報を読む。画面を開いたときと「再試行」で呼ぶ。例外は投げない
+  const loadPage = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    setError(null);
+    try {
+      // 認証状態確認。getUser は通信の失敗を投げずに { user: null, error } で返すので、readSignedInUser で見分ける。
+      // 確かめられなかったときは、ログインしていないとしてログインの案内を出さず、読み込みの失敗と「再試行」を出す (#2093 W4)
+      const signedIn = await readSignedInUser(supabase);
+      if (signedIn.kind === 'load-failed') {
+        setLoadError(INVITE_LOAD_ERROR);
+        return;
+      }
+      const user = signedIn.kind === 'signed-in' ? signedIn.user : null;
+      setIsLoggedIn(user !== null);
       setCurrentEmail(user?.email ?? null);
 
-      // invite 詳細取得 (get_invite_details RPC は認証不要 SECURITY DEFINER)
+      // invite 詳細取得 (get_invite_details RPC は認証不要 SECURITY DEFINER。招待が無ければ null を返し、例外は上げない)
       const { data, error: rpcError } = await supabase.rpc('get_invite_details', { p_token: token });
 
-      if (rpcError || !data) {
-        setError('招待情報が見つかりません');
-        setLoading(false);
+      if (rpcError) {
+        // 読み込めなかった (招待が無いのとは別。「招待情報が見つかりません」と見せない)
+        setLoadError(INVITE_LOAD_ERROR);
+        return;
+      }
+      if (!data) {
+        setError(INVITE_NOT_FOUND_MESSAGE);
         return;
       }
 
       setInvite(data as InviteDetails);
+    } catch (loadFailure) {
+      // 問い合わせが例外を投げた (以前は catch が無く、未処理の reject になり、確認中の表示のまま止まっていた)
+      console.error('[invite] load error:', loadFailure);
+      setLoadError(INVITE_LOAD_ERROR);
+    } finally {
       setLoading(false);
-    };
-
-    init();
+    }
   }, [token, supabase]);
+
+  useEffect(() => {
+    void loadPage();
+  }, [loadPage]);
 
   /**
    * 組織の招待を承諾できていたかを自分のプロフィールで確かめる (#2080 U1。家族の招待の承諾 FamilyInviteAcceptModal と同じ型)。
@@ -154,6 +188,37 @@ export default function InvitePage() {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-gray-400 text-sm">招待情報を確認しています…</div>
       </div>
+    );
+  }
+
+  // 読み込めなかった (招待が無いのとは別。「再試行」を出す)
+  if (loadError) {
+    return (
+      <InviteLayout scope="organization">
+        <div
+          role="alert"
+          data-testid="invite-load-error"
+          className="max-w-sm w-full rounded-2xl bg-red-50 border border-red-200 p-6 text-center space-y-4"
+        >
+          <p className="text-red-700 text-sm font-medium">{loadError}</p>
+          <div className="flex justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => void loadPage()}
+              className="px-4 py-2 rounded-full bg-white border border-red-300 text-red-700 font-medium text-sm hover:bg-red-100 transition-colors"
+            >
+              再試行
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push('/')}
+              className="px-4 py-2 rounded-full bg-gray-200 text-gray-600 font-medium text-sm hover:bg-gray-300 transition-colors"
+            >
+              ホームへ戻る
+            </button>
+          </div>
+        </div>
+      </InviteLayout>
     );
   }
 

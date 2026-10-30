@@ -35,7 +35,9 @@ export type OperatorForceRepresentativeTransferResult = z.infer<typeof OperatorF
  * プロキシが時間切れ (504 など) を返すと、譲渡は済んでいるのに画面は失敗と見る。そこで「実行する」を押し直すと、RPC は
  * 今の代表者 / オーナー (= 1 回目の譲渡先) を旧代表者 / 旧オーナーとして同じ人へ譲渡し直し、監査と通知メールが二重になる
  * (2 通目は「旧オーナー」欄が新オーナー本人のアドレス)。route はこれを、RPC の前の読み込み (譲渡先が今の代表者 / オーナー) と
- * RPC の戻り値 (ロックの下で読んだ旧代表者 / 旧オーナーが譲渡先と同じ) の両方で見つけ、監査も通知も出さずにこの 409 で止める。
+ * RPC (ロックの下で読んだ旧代表者 / 旧オーナーが譲渡先と同じなら、何も書かずに同じ語 ALREADY_REPRESENTATIVE / ALREADY_OWNER で断る。
+ * supabase/migrations/20261030120000_operator_force_transfer_reject_same.sql。#2093 W5) の両方で見つけ、監査も通知も出さずにこの 409 で止める。
+ * その migration を当てる前の DB の RPC は断らずに書くので、route は RPC の戻り値の旧代表者 / 旧オーナーが譲渡先と同じときも 409 にする。
  * 画面 (src/lib/membership/operator-screen-messages.ts の postOperatorForceAction) は、この code を譲渡が済んでいたものとして扱う。
  * このファイルはブラウザからも読む (zod だけに依存する)
  */

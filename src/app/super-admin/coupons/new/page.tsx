@@ -10,7 +10,19 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { todayLocal } from '@/lib/date-utils';
+import {
+  AdminScreenError,
+  adminActionHttpFailedMessage,
+  adminActionNoResponseMessage,
+  adminCreatedButUnreadableMessage,
+  adminScreenErrorOfResponse,
+  createdRowIdOfResponse,
+  displayableAdminError,
+} from '@/lib/admin/admin-screen-messages';
 import { PLAN_CATALOG, formatJpy, planDisplayName, type PaidPlanKey } from '@homegohan/shared';
+
+/** 作成の失敗の文の操作の名前 (「クーポンの作成に失敗しました (HTTP 502)」。#2093 W7) */
+const COUPON_CREATE_ACTION = 'クーポンの作成';
 
 const COUPON_PREVIEW_PLAN_KEY: PaidPlanKey = 'pro'; // 粗利のプレビューの基準 = 個人 Pro の月額 (billing/03 §8.9)
 
@@ -56,33 +68,43 @@ export default function CouponNewPage() {
     setError('');
 
     try {
-      const res = await fetch('/api/super-admin/coupons', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code: code.toUpperCase(),
-          display_name: displayName || undefined,
-          discount_type: discountType,
-          discount_value: Number(discountValue),
-          applicable_to: applicableTo,
-          // JST の暦日 (YYYY-MM-DD) のまま送る。API が開始日の JST 0:00・期限の日の JST 23:59:59 の時刻にして書く (#1483)
-          valid_from: validFrom,
-          valid_until: validUntil,
-          max_uses: maxUses ? Number(maxUses) : null,
-          per_user_limit: Number(perUserLimit),
-          duration_months: durationMonths ? Number(durationMonths) : null,
-          gross_margin_preview_jpy: grossMarginPreview,
-        }),
-      });
-
-      const data = await res.json() as { data?: { id: string }; error?: { message: string } };
+      // 失敗は日本語の文の例外にする。ok を先に確かめ、JSON でない 502 を「ネットワークエラー」と見せない
+      // (本文に日本語の文が無ければ「<作成>に失敗しました (HTTP 502)」、通信そのものの失敗は「<作成>の応答を受け取れませんでした」。#2093 W7)
+      let res: Response;
+      try {
+        res = await fetch('/api/super-admin/coupons', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code: code.toUpperCase(),
+            display_name: displayName || undefined,
+            discount_type: discountType,
+            discount_value: Number(discountValue),
+            applicable_to: applicableTo,
+            // JST の暦日 (YYYY-MM-DD) のまま送る。API が開始日の JST 0:00・期限の日の JST 23:59:59 の時刻にして書く (#1483)
+            valid_from: validFrom,
+            valid_until: validUntil,
+            max_uses: maxUses ? Number(maxUses) : null,
+            per_user_limit: Number(perUserLimit),
+            duration_months: durationMonths ? Number(durationMonths) : null,
+            gross_margin_preview_jpy: grossMarginPreview,
+          }),
+        });
+      } catch {
+        throw new AdminScreenError(adminActionNoResponseMessage(COUPON_CREATE_ACTION));
+      }
       if (!res.ok) {
-        setError(data.error?.message ?? '作成に失敗しました');
+        throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(COUPON_CREATE_ACTION, status));
+      }
+      // 成功の応答の本文が読めない: 作成は済んでいるので失敗とは言わず、一覧で確かめるよう促す (作った行の画面へは移れない)
+      const createdId = await createdRowIdOfResponse(res);
+      if (createdId === null) {
+        setError(adminCreatedButUnreadableMessage(COUPON_CREATE_ACTION));
         return;
       }
-      router.push(`/super-admin/coupons/${data.data!.id}`);
-    } catch {
-      setError('ネットワークエラーが発生しました');
+      router.push(`/super-admin/coupons/${createdId}`);
+    } catch (err) {
+      setError(displayableAdminError(err, `${COUPON_CREATE_ACTION}に失敗しました`));
     } finally {
       setIsLoading(false);
     }

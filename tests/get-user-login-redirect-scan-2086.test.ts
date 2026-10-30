@@ -12,7 +12,8 @@
  * 限界 (見張りであって証明ではない): 結果を変数で受けてから user だけを読む書き方・別の関数に包んで /login へ移す書き方・
  * window.location を使う書き方のうち '/login' を変数で渡すものは数えない。
  *
- * 表 (KNOWN_REMAINING) は、この Issue の範囲の外で残っている箇所。範囲の画面 (FIXED_SCREENS) は 0 件でなければならない。
+ * 表 (KNOWN_REMAINING) は、残っている箇所 (いまはサーバーで動く画面だけ)。直した画面 (FIXED_SCREENS) は 0 件でなければならない。
+ * #2093 W4 で、#2086 の範囲の外として残していた 7 画面 (家族・設定・サポート) を readSignedInUser に替え、FIXED_SCREENS へ移した。
  * 新しく増えたら赤になるので、readSignedInUser で直すか、表に理由つきで足す。直して減ったら表から消す。
  */
 import fs from 'node:fs';
@@ -27,7 +28,12 @@ const LOGIN_PATH_PREFIX = '/login';
 /** readSignedInUser の import (引用符はファイルごとに ' と " のどちらもある) */
 const SIGNED_IN_USER_IMPORT = /from ['"]@\/lib\/auth\/signed-in-user['"]/;
 
-/** #2086 V3 で直した画面 (getUser の error を見ずに /login へ移す分岐が 0 件で、readSignedInUser を使う) */
+/**
+ * 直した画面 (getUser の error を見ずに /login へ移す分岐が 0 件で、readSignedInUser を使う)。
+ * 前の 7 つは #2086 V3、後ろの 8 つは #2093 W4 (招待の画面は、走査が数えない形だったが同じ根なので同じに直した)。
+ * 組織のメンバーの画面 (#2093 W9) は getUser の error を取り出して readSignedInUser と同じ分け方 (classifyGetUserResult) で見分けるので、
+ * 走査は数えない (振る舞いは tests/membership-getuser-remaining-2093.test.tsx が見る)
+ */
 const FIXED_SCREENS = [
   'src/app/(main)/org/transfer-accept/[proposal_id]/page.tsx',
   'src/app/(main)/family/transfer-accept/[proposal_id]/page.tsx',
@@ -36,23 +42,21 @@ const FIXED_SCREENS = [
   'src/app/(main)/family/members/[id]/page.tsx',
   'src/app/(main)/family/members/[id]/promote/page.tsx',
   'src/app/family/promotions/[token]/page.tsx',
+  'src/app/(main)/family/dashboard/page.tsx',
+  'src/app/(main)/family/members/page.tsx',
+  'src/app/(main)/family/members/invite/page.tsx',
+  'src/app/(main)/family/members/child/new/page.tsx',
+  'src/app/(main)/family/representative-transfer/page.tsx',
+  'src/app/(main)/settings/membership/page.tsx',
+  'src/app/(support)/layout.tsx',
+  'src/app/invite/[token]/page.tsx',
 ] as const;
 
 /**
- * この Issue の範囲の外で残っている箇所 (ファイル → 件数)。理由はファイルごとに書く。
- * 範囲 (#2086 の仕分けが名指しした承諾・譲渡の画面と、同じ画面の続きの画面) の外なので、別の Issue で扱う。
+ * 残っている箇所 (ファイル → 件数)。理由はファイルごとに書く。
+ * どちらもサーバーで動く画面で、端末のオフラインでは起きない (#2093 W4 の仕分け)。
  */
 const KNOWN_REMAINING: Readonly<Record<string, { count: number; reason: string }>> = {
-  'src/app/(main)/family/dashboard/page.tsx': { count: 1, reason: '家族のダッシュボード。#2086 の範囲の外 (承諾・譲渡の画面ではない)' },
-  'src/app/(main)/family/members/page.tsx': { count: 1, reason: '家族のメンバーの一覧。#2086 の範囲の外' },
-  'src/app/(main)/family/members/invite/page.tsx': { count: 1, reason: '家族の招待の画面。#2086 の範囲の外' },
-  'src/app/(main)/family/members/child/new/page.tsx': { count: 1, reason: '子供の追加の画面。#2086 の範囲の外' },
-  'src/app/(main)/family/representative-transfer/page.tsx': {
-    count: 1,
-    reason: '家族の代表者の譲渡の提案 (送る側) の画面。#2086 の仕分けの根拠に挙がっていない (承諾の画面ではない)',
-  },
-  'src/app/(main)/settings/membership/page.tsx': { count: 1, reason: '所属の設定の画面。#2086 の範囲の外' },
-  'src/app/(support)/layout.tsx': { count: 1, reason: 'サポートの画面の枠。#2086 の範囲の外' },
   'src/app/legal-consent/page.tsx': { count: 1, reason: 'サーバーで動く画面 (Server Component)。端末のオフラインでは動かない' },
   'src/app/legal-consent/account/page.tsx': { count: 1, reason: 'サーバーで動く画面 (Server Component)。端末のオフラインでは動かない' },
 };
@@ -155,7 +159,7 @@ function scan(): Record<string, number> {
 describe('#2086 V3 getUser の error を見ずに /login へ移す分岐の見張り', () => {
   const found = scan();
 
-  it('範囲の画面には、getUser の error を見ずに /login へ移す分岐が無く、readSignedInUser で見分けている', () => {
+  it('直した画面には、getUser の error を見ずに /login へ移す分岐が無く、readSignedInUser で見分けている', () => {
     for (const file of FIXED_SCREENS) {
       expect(found[file] ?? 0, file).toBe(0);
       const sourceText = fs.readFileSync(path.join(ROOT, file), 'utf8');

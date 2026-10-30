@@ -10,12 +10,27 @@
  * #1102 (オーナー判断 2026-10-08): 価格変更は新規契約だけに適用する。適用範囲の選択 (次回更新時から / 即時) は
  * 実際には既存契約へ反映されない偽の選択肢だったため、画面から外した。既存の契約者の請求額は変わらない。
  * 月額・年額は、変える方だけを送る (両方を同時に変えてもよい)。
+ *
+ * 失敗の応答は ok を先に確かめ、本文の日本語の文か「<対象>を読み込めませんでした (HTTP n)」「<操作>に失敗しました (HTTP n)」を出す。
+ * 通信そのものの失敗だけを「（通信エラー）」にする (JSON でない 502 を「ネットワークエラー」と見せない。#2093 W7)。
+ * プランの読み込みが失敗したら「読み込み中」のまま止めず、読み込めなかった文を出す。
+ * 価格の変更の成功の応答の本文は使わないので読まない (読めなくても、済んだので履歴の画面へ移る)。
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE, countsOrganizationsFor } from '@/lib/super-admin/plan-subscribers';
+import {
+  AdminScreenError,
+  adminActionHttpFailedMessage,
+  adminActionNoResponseMessage,
+  adminLoadFailedFallback,
+  adminLoadFailedMessage,
+  adminScreenErrorOfResponse,
+  displayableAdminError,
+  fetchAdminJson,
+} from '@/lib/admin/admin-screen-messages';
 
 type ImpactData = {
   /** 新規契約のみなので常に 0 (既存契約は現行価格のまま) */
@@ -41,6 +56,13 @@ type Plan = {
 /** 適用範囲は新規契約のみ (選択肢ではなく、固定の説明として表示する) */
 const APPLIES_TO_LABEL = '新規契約のみ';
 
+/** 読み込みの失敗の文の対象 (「プランを読み込めませんでした (HTTP 502)」。#2093 W7) */
+const PLAN_SUBJECT = 'プラン';
+/** シミュレーションの失敗の文の操作の名前 (「影響のシミュレーションに失敗しました (HTTP 502)」。#2093 W7) */
+const SIMULATE_ACTION = '影響のシミュレーション';
+/** 価格の変更の失敗の文の操作の名前 (「価格変更に失敗しました (HTTP 502)」。#2093 W7) */
+const PRICE_CHANGE_ACTION = '価格変更';
+
 export default function PriceChangePage() {
   const params = useParams();
   const router = useRouter();
@@ -57,18 +79,24 @@ export default function PriceChangePage() {
   const [step, setStep] = useState<1 | 2>(1);
   const [error, setError] = useState('');
   const [simulateError, setSimulateError] = useState('');
+  // プランの読み込みの失敗の文 (「読み込み中」のまま止めない。#2093 W7)
+  const [loadError, setLoadError] = useState('');
 
   useEffect(() => {
     const fetchPlan = async () => {
-      const res = await fetch(`/api/super-admin/plans/${planId}`);
-      const data = await res.json() as { data?: Plan };
-      if (data.data) {
-        setPlan(data.data);
-        setNewMonthlyPrice(data.data.monthly_price_jpy != null ? String(data.data.monthly_price_jpy) : '');
-        setNewYearlyPrice(data.data.yearly_price_jpy != null ? String(data.data.yearly_price_jpy) : '');
+      try {
+        const body = await fetchAdminJson(`/api/super-admin/plans/${planId}`, PLAN_SUBJECT);
+        const loaded = (body as { data?: Plan | null }).data;
+        // 200 なのに本文に行が無いときも読み込めなかった文にする
+        if (!loaded) throw new AdminScreenError(adminLoadFailedMessage(PLAN_SUBJECT, null));
+        setPlan(loaded);
+        setNewMonthlyPrice(loaded.monthly_price_jpy != null ? String(loaded.monthly_price_jpy) : '');
+        setNewYearlyPrice(loaded.yearly_price_jpy != null ? String(loaded.yearly_price_jpy) : '');
+      } catch (err) {
+        setLoadError(displayableAdminError(err, adminLoadFailedFallback(PLAN_SUBJECT)));
       }
     };
-    fetchPlan();
+    void fetchPlan();
   }, [planId]);
 
   // #1041 round-4 (W1): 月額・年額入力欄は常に現在価格で prefill されているため、
@@ -96,15 +124,20 @@ export default function PriceChangePage() {
     try {
       const params = new URLSearchParams();
       if (newMonthlyPrice) params.set('new_monthly_price_jpy', newMonthlyPrice);
-      const res = await fetch(`/api/super-admin/plans/${planId}/price-impact?${params.toString()}`);
-      const data = await res.json() as { data?: ImpactData; error?: { message: string } };
-      if (!res.ok) {
-        setSimulateError(data.error?.message ?? 'シミュレーションに失敗しました');
-        return;
+      let res: Response;
+      try {
+        res = await fetch(`/api/super-admin/plans/${planId}/price-impact?${params.toString()}`);
+      } catch {
+        throw new AdminScreenError(adminActionNoResponseMessage(SIMULATE_ACTION));
       }
-      setImpact(data.data!);
-    } catch {
-      setSimulateError('ネットワークエラー');
+      // ok を先に確かめる (JSON でない 502 を「ネットワークエラー」と見せない。#2093 W7)
+      if (!res.ok) throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(SIMULATE_ACTION, status));
+      const body: unknown = await res.json().catch(() => null);
+      const loadedImpact = (body as { data?: ImpactData | null } | null)?.data;
+      if (!loadedImpact) throw new AdminScreenError(adminActionNoResponseMessage(SIMULATE_ACTION));
+      setImpact(loadedImpact);
+    } catch (err) {
+      setSimulateError(displayableAdminError(err, `${SIMULATE_ACTION}に失敗しました`));
     } finally {
       setIsSimulating(false);
     }
@@ -131,32 +164,43 @@ export default function PriceChangePage() {
       // 変更されたフィールドのみ送る。月額・年額の両方を変えたときは、両方を送る (1 回のリクエストで
       // 両方を Stripe へ同期できる。#1102)。
       // (monthlyChanged/yearlyChanged はコンポーネント本体で算出済みのものを使う #1041 round-4 (W1))
-      const res = await fetch(`/api/super-admin/plans/${planId}/price-change`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          new_monthly_price_jpy: monthlyChanged ? Number(newMonthlyPrice) : null,
-          new_yearly_price_jpy: yearlyChanged ? Number(newYearlyPrice) : null,
-          // 価格変更は新規契約のみに適用される (#1102)。API はこの値だけを受け付ける
-          applies_to: 'new_only',
-          reason,
-          effective_at: new Date(effectiveAt).toISOString(),
-        }),
-      });
-      const data = await res.json() as { error?: { message: string } };
-      if (!res.ok) {
-        setError(data.error?.message ?? '価格変更に失敗しました');
-        return;
+      let res: Response;
+      try {
+        res = await fetch(`/api/super-admin/plans/${planId}/price-change`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            new_monthly_price_jpy: monthlyChanged ? Number(newMonthlyPrice) : null,
+            new_yearly_price_jpy: yearlyChanged ? Number(newYearlyPrice) : null,
+            // 価格変更は新規契約のみに適用される (#1102)。API はこの値だけを受け付ける
+            applies_to: 'new_only',
+            reason,
+            effective_at: new Date(effectiveAt).toISOString(),
+          }),
+        });
+      } catch {
+        // 応答を受け取れなかった。サーバーが済ませてから切れたこともあるので「失敗しました」とは言わない
+        throw new AdminScreenError(adminActionNoResponseMessage(PRICE_CHANGE_ACTION));
       }
+      // ok を先に確かめる (JSON でない 502 を「ネットワークエラー」と見せない。#2093 W7)
+      if (!res.ok) throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(PRICE_CHANGE_ACTION, status));
+      // 成功の応答の本文は使わないので読まない (読めなくても価格の変更は済んでいる)
       router.push(`/super-admin/plans/${planId}?tab=history`);
-    } catch {
-      setError('ネットワークエラー');
+    } catch (err) {
+      setError(displayableAdminError(err, `${PRICE_CHANGE_ACTION}に失敗しました`));
     } finally {
       setIsExecuting(false);
     }
   };
 
   if (!plan) {
+    if (loadError) {
+      return (
+        <div role="alert" className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+          {loadError}
+        </div>
+      );
+    }
     return <div className="flex items-center justify-center h-48 text-slate-400">読み込み中...</div>;
   }
 

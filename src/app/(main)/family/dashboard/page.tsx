@@ -4,6 +4,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { loginPathWithNext, readSignedInUser } from '@/lib/auth/signed-in-user';
 import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
 import { familyRoleLabel } from '@/lib/membership/role-labels';
 
@@ -12,6 +13,9 @@ import { familyRoleLabel } from '@/lib/membership/role-labels';
  * 見分けるために出す (家族のメンバーの画面の FAMILY_MEMBERS_LOAD_ERROR と同じ扱い)。失敗の理由 (英語の内部の文) は画面に出さない
  */
 const FAMILY_DASHBOARD_LOAD_ERROR = '家族の情報を読み込めませんでした。しばらくしてから、もう一度お試しください。';
+
+/** この画面のパス (ログインのあとに戻る先) */
+const FAMILY_DASHBOARD_PATH = '/family/dashboard';
 
 /** 家族グループの行が無い (または RLS で見えない) ときの文 (これまでどおり) */
 const FAMILY_GROUP_NOT_FOUND_MESSAGE = '家族グループの取得に失敗しました';
@@ -59,12 +63,20 @@ export default function FamilyDashboardPage() {
     // 別の画面へ移るときは、移るまで読み込み中の表示のままにする (これまでどおり)
     let redirecting = false;
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        redirecting = true;
-        router.push('/login');
+      // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
+      // 確かめられなかったときは読み込みの失敗と「再試行」を出す (#2093 W4。以前は通信が切れているだけでもログインの画面へ移していた)。
+      // ログインのあとにこの画面へ戻れるよう next を付ける
+      const signedIn = await readSignedInUser(supabase);
+      if (signedIn.kind === 'load-failed') {
+        setLoadError(FAMILY_DASHBOARD_LOAD_ERROR);
         return;
       }
+      if (signedIn.kind === 'signed-out') {
+        redirecting = true;
+        router.push(loginPathWithNext(FAMILY_DASHBOARD_PATH));
+        return;
+      }
+      const { user } = signedIn;
 
       // user_profiles から family_id を取得
       const { data: profile, error: profileError } = await supabase
