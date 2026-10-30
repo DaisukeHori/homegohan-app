@@ -55,6 +55,15 @@ export function parseUserListStatusParam(raw: string | undefined): UserListStatu
   return USER_LIST_STATUSES.find((status) => status === raw) ?? USER_LIST_DEFAULT_STATUS;
 }
 
+/**
+ * 利用者の一覧 (GET /api/admin/users) の sort で受ける並びの鍵 (#2120 W3-2)。registered_at は登録日 (user_profiles.created_at)、
+ * last_login は最終ログイン (user_profiles.last_login_at)。これ以外は API が 400 (VALIDATION_ERROR)。
+ * 以前は meal_count も受けていたが、user_profiles に食事の記録数の列は無く、route は登録日の順で返しながら監査の
+ * filters.sort には meal_count と残していた (記録と実際の並びが食い違う)。画面はどれも sort を送らない
+ */
+export const USER_LIST_SORT_KEYS = ['registered_at', 'last_login'] as const;
+export type UserListSortKey = (typeof USER_LIST_SORT_KEYS)[number];
+
 export const UsersSearchSchema = z.object({
   q: z.string().optional(),
   // #2112 Z5: route が plan_key_cached で一覧と件数の数え直しを絞る (free は plan_key_cached が NULL の利用者を含む。
@@ -70,7 +79,7 @@ export const UsersSearchSchema = z.object({
   registered_from: OptionalCalendarDateSchema,
   registered_to: OptionalCalendarDateSchema,
   last_login_before: OptionalCalendarDateSchema,
-  sort: z.enum(['registered_at', 'last_login', 'meal_count']).optional(),
+  sort: z.enum(USER_LIST_SORT_KEYS).optional(),
   order: z.enum(['asc', 'desc']).optional().default('desc'),
   page: z.coerce.number().int().min(1).optional().default(1),
   per_page: z.coerce.number().int().min(1).max(200).optional().default(50),
