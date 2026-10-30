@@ -34,8 +34,14 @@ const NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
  */
 const MEMBER_DETAIL_LOAD_ERROR = 'メンバーの情報を読み込めませんでした。しばらくしてから、もう一度お試しください。';
 
-/** 開いたメンバーの行が無い (または RLS で見えない) ときの文 (これまでどおり) */
-const MEMBER_NOT_FOUND_MESSAGE = 'メンバー情報の取得に失敗しました';
+/**
+ * 開いたメンバーの行が無い (または RLS で見えない・脱退・除名した行) ときの文 (#2093 W10。以前は「メンバー情報の取得に失敗しました」で、
+ * 読み込みの失敗 (MEMBER_DETAIL_LOAD_ERROR と「再試行」) と読め、開き直しを繰り返しかねなかった)。一覧へ戻る導線と一緒に出す
+ */
+const MEMBER_NOT_FOUND_MESSAGE = 'このメンバーは見つかりません (家族から外れた可能性があります)。一覧に戻って確かめてください';
+
+/** 家族のメンバーの一覧のパス (メンバーが見つからないときに戻る先) */
+const FAMILY_MEMBERS_PATH = '/family/members';
 
 interface FamilyMember {
   id: string;
@@ -152,7 +158,7 @@ export default function FamilyMemberDetailPage() {
         .eq('id', memberId)
         .eq('family_id', profile.family_id)
         // 今のメンバーの行だけを開く (#2086 V10。脱退・除名した行は消えずに status が left / removed で残るので、
-        // 絞らないと古い URL から脱退済み・除名済みの人を今のメンバーのように見せていた。無ければ「取得に失敗しました」)
+        // 絞らないと古い URL から脱退済み・除名済みの人を今のメンバーのように見せていた。無ければ「見つかりません」。#2093 W10)
         .eq('status', 'active')
         .single();
 
@@ -282,7 +288,7 @@ export default function FamilyMemberDetailPage() {
         alert(`除名に失敗しました: ${membershipErrorMessageOfBody(json)}`);
         return;
       }
-      router.replace('/family/members');
+      router.replace(FAMILY_MEMBERS_PATH);
     } catch {
       // サーバーが除名を済ませてから応答が切れたこともあるので、そのメンバーの行を読み直して確かめる (#2064。
       // 家族のメンバーの画面の除名と同じ型。確かめないと、除名したメンバーの詳細が残り、もう一度押すと失敗の文が出ていた)。
@@ -290,7 +296,7 @@ export default function FamilyMemberDetailPage() {
       const state = await readMemberStateAfterNetworkFailure(member.id, familyId);
       if (state === 'left') {
         // 家族から外れている: 成功のときと同じ遷移
-        router.replace('/family/members');
+        router.replace(FAMILY_MEMBERS_PATH);
         return;
       }
       // 外れていない: これまでどおり通信エラーの文。確かめられなかったときは「状態を確かめられませんでした」を添える
@@ -363,16 +369,27 @@ export default function FamilyMemberDetailPage() {
     );
   }
 
+  // メンバーが見つからない (読み込めなかったのとは別。「再試行」ではなく一覧へ戻る導線を出す。#2093 W10)
   if (error || !member) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center gap-4 p-6">
-        <p className="text-gray-600 text-sm text-center">{error ?? 'メンバーが見つかりません'}</p>
-        <button
-          onClick={() => router.back()}
-          className="px-4 py-2 rounded-full bg-gray-100 text-gray-600 text-sm"
-        >
-          戻る
-        </button>
+        <p data-testid="family-member-detail-not-found" className="text-gray-600 text-sm text-center">
+          {error ?? MEMBER_NOT_FOUND_MESSAGE}
+        </p>
+        <div className="flex justify-center gap-3">
+          <Link
+            href={FAMILY_MEMBERS_PATH}
+            className="px-4 py-2 rounded-full bg-green-500 text-white text-sm font-medium hover:bg-green-600 transition-colors"
+          >
+            メンバーの一覧へ
+          </Link>
+          <button
+            onClick={() => router.back()}
+            className="px-4 py-2 rounded-full bg-gray-100 text-gray-600 text-sm"
+          >
+            戻る
+          </button>
+        </div>
       </div>
     );
   }

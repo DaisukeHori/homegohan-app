@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { loginPathWithNext, readSignedInUser } from '@/lib/auth/signed-in-user';
 import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
 import { familyRoleLabel } from '@/lib/membership/role-labels';
 import { membershipErrorMessageOfBody } from '@/lib/errors/membership-errors';
@@ -18,6 +19,9 @@ const FAMILY_MEMBERS_LOAD_ERROR = '家族のメンバーを読み込めません
 
 /** 家族グループの行が無い (または RLS で見えない) ときの文 (これまでどおり) */
 const FAMILY_GROUP_NOT_FOUND_MESSAGE = '家族グループの取得に失敗しました';
+
+/** この画面のパス (ログインのあとに戻る先) */
+const FAMILY_MEMBERS_PATH = '/family/members';
 
 /** 除名・脱退の通信そのものが失敗した (fetch が reject した) ときの文 */
 const NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
@@ -75,11 +79,19 @@ export default function FamilyMembersPage() {
   // 戻り値は、別の画面へ移ったか (移るときは、移るまで読み込み中の表示のままにする。これまでどおり)
   const loadMembers = useCallback(async (): Promise<{ redirecting: boolean }> => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        router.push('/login');
+      // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
+      // 確かめられなかったときは読み込みの失敗と「再試行」を出す (#2093 W4。以前は通信が切れているだけでもログインの画面へ移していた)。
+      // ログインのあとにこの画面へ戻れるよう next を付ける
+      const signedIn = await readSignedInUser(supabase);
+      if (signedIn.kind === 'load-failed') {
+        setLoadError(FAMILY_MEMBERS_LOAD_ERROR);
+        return { redirecting: false };
+      }
+      if (signedIn.kind === 'signed-out') {
+        router.push(loginPathWithNext(FAMILY_MEMBERS_PATH));
         return { redirecting: true };
       }
+      const { user } = signedIn;
       setCurrentUserId(user.id);
 
       const { data: profile, error: profileError } = await supabase

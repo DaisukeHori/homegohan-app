@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
@@ -9,7 +9,7 @@ import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storag
 import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { isOrgAdmin as isOrgAdminProfile } from "@/lib/auth/org-admin";
 import { readOrgSidebarInfo } from "@/lib/org-sidebar";
-import { readSignedInUser } from "@/lib/auth/signed-in-user";
+import { loginPathWithNext, readSignedInUser } from "@/lib/auth/signed-in-user";
 
 /**
  * 自分のプロフィール (組織の管理者かどうか) を読み込めなかったときの文。
@@ -40,6 +40,11 @@ export default function OrgLayout({
 }) {
   const router = useRouter();
   const pathname = usePathname();
+  // ログインのあとに戻る先 (今の画面)。checkRole の依存に入れると画面を移るたびに読み直すので、ref で今の値を読む (#2093 W4)
+  const pathnameRef = useRef(pathname);
+  useEffect(() => {
+    pathnameRef.current = pathname;
+  }, [pathname]);
   const supabase = createClient();
   const [isOrgAdmin, setIsOrgAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -63,7 +68,8 @@ export default function OrgLayout({
         return;
       }
       if (signedIn.kind === 'signed-out') {
-        router.push("/login");
+        // ログインのあとにこの画面へ戻れるよう next を付ける (#2093 W4。以前は付けずに /login へ移していた)
+        router.push(loginPathWithNext(pathnameRef.current));
         return;
       }
       const { user } = signedIn;

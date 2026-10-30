@@ -1263,7 +1263,7 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 ---
 
 ### POST /api/super-admin/experiments
-実験作成
+実験作成。`key` が既にある (一意の制約 `experiments_key_key` の違反 23505) ときは 409 `OP_EXPERIMENT_KEY_DUPLICATE`「同じキーの実験がすでにあります」(#2093 W1)
 
 **リクエスト**:
 ```json

@@ -157,7 +157,8 @@ const PROPOSAL_LOAD_ERROR = '譲渡の提案を読み込めませんでした。
 const CANDIDATES_LOAD_ERROR = '譲渡の候補を読み込めませんでした。しばらくしてから、もう一度お試しください。';
 const ORG_ADMIN_LOAD_ERROR = '組織の管理画面を開けませんでした。しばらくしてから、もう一度お試しください。';
 const MEMBER_DETAIL_LOAD_ERROR = 'メンバーの情報を読み込めませんでした。しばらくしてから、もう一度お試しください。';
-const MEMBER_NOT_FOUND_MESSAGE = 'メンバー情報の取得に失敗しました';
+/** 開くメンバーの行が無いときの文 (#2093 W10 で「取得に失敗しました」から「見つかりません」の文に変えた) */
+const MEMBER_NOT_FOUND_MESSAGE = 'このメンバーは見つかりません (家族から外れた可能性があります)。一覧に戻って確かめてください';
 const PROMOTE_LOAD_ERROR = '参加リクエストの情報を読み込めませんでした。しばらくしてから、もう一度お試しください。';
 
 let container: HTMLDivElement;
@@ -275,7 +276,8 @@ const SCREENS = [
     element: () => createElement(OrgLayout, null, createElement('div', null, '中身')),
     loadErrorTestId: 'org-layout-load-error',
     loadError: ORG_ADMIN_LOAD_ERROR,
-    loginUrl: '/login',
+    // #2093 W4 から next (今の画面。usePathname) を付ける
+    loginUrl: `/login?next=${encodeURIComponent('/org/settings/owner-transfer')}`,
   },
   {
     name: '家族のメンバーの詳細 (/family/members/[id])',
@@ -357,7 +359,7 @@ describe('#2086 V3 承諾の通信が切れたあとの読み直しで getUser �
 });
 
 describe('#2086 V10 家族のメンバーの詳細は、今のメンバー (status = active) の行だけを開く', () => {
-  it.each(['left', 'removed'] as const)('開くメンバーの行が %s なら、今のメンバーとして見せず「取得に失敗しました」を出す', async (status) => {
+  it.each(['left', 'removed'] as const)('開くメンバーの行が %s なら、今のメンバーとして見せず「見つかりません」を出す', async (status) => {
     state.memberRow = memberRow(status);
     await render(createElement(FamilyMemberDetailPage));
 

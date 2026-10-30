@@ -1323,7 +1323,7 @@ describe('#2073 メンバーの詳細: 読み込めなかったのを別の状�
       await click(findButton('再試行'), '「再試行」');
 
       expect(byTestId('family-member-detail-load-error')).toBeNull();
-      expect(text()).toContain('メンバー情報の取得に失敗しました');
+      expect(text()).toContain('このメンバーは見つかりません (家族から外れた可能性があります)。一覧に戻って確かめてください');
     });
   });
 });

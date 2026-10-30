@@ -3,6 +3,11 @@
  * operator/03-ui-spec.md §5 準拠
  *
  * DB 直叩きを廃止し GET /api/admin/users 経由に統一。
+ *
+ * #2093 W3: 一覧の読み込みの失敗 (API の失敗・通信の失敗・data が配列でない壊れた応答) は 0 件と分ける。
+ * 「ユーザーが見つかりません」・件数 0 を出さず、「ユーザーの一覧を読み込めませんでした」と「再読み込み」を出す
+ * (以前は失敗を console.error で捨てて 0 件のまま描き、運営が、いる利用者をいないと誤りうる状態だった。審査の一覧の #2086 V7 と同じ型)。
+ * #2093 W8: URL の page が 1 以上の整数でなければ 1 ページ目を読む (?page=abc で API に page=NaN を送らない)。
  */
 
 export const dynamic = 'force-dynamic';
@@ -13,8 +18,10 @@ import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
 import { canViewUserEmail } from '@/lib/admin/user-emails';
 import { normalizeProfileName } from '@/lib/profile-name';
-import type { UserListItem, UsersListResponse } from '@/lib/admin/users-schemas';
-import { lastPageToRefetch } from '@/lib/list-pagination';
+import type { UserListItem } from '@/lib/admin/users-schemas';
+import { lastPageToRefetch, parsePageParam } from '@/lib/list-pagination';
+import { USERS_LIST_LOAD_FAILED_MESSAGE, readUsersListBody, type UsersListLoad } from '@/lib/admin/users-load-failure';
+import ModerationLoadFailure from '@/components/operator/moderation/ModerationLoadFailure';
 
 interface PageProps {
   searchParams: Promise<{ q?: string; status?: string; page?: string }>;
@@ -30,7 +37,8 @@ export default async function AdminUsersPage(props: PageProps) {
 
   const q = searchParams.q ?? '';
   const status = searchParams.status ?? 'active';
-  const page = Math.max(1, parseInt(searchParams.page ?? '1', 10));
+  // 1 以上の整数でない page (?page=abc・2abc・1.5 など) は 1 ページ目 (#2093 W8)
+  const page = parsePageParam(searchParams.page);
   const perPage = 50;
 
   // GET /api/admin/users 経由でデータ取得
@@ -40,19 +48,15 @@ export default async function AdminUsersPage(props: PageProps) {
   params.set('page', String(page));
   params.set('per_page', String(perPage));
 
-  // 応答の形は route と同じ型 (src/lib/admin/users-schemas.ts の UsersListResponse) で読む (#1717)
-  let users: UserListItem[] = [];
-  let total = 0;
-  // 一覧を読めたか (API の失敗・fetch の例外のときは false。そのときは最後のページへ移さない)
-  let listed = false;
+  // 読み込みの失敗 (!res.ok・例外・壊れた応答) は ok: false。0 件 (ok: true・users が空) と分けて描く (#2093 W3)。
+  // 行は route と同じ型 (src/lib/admin/users-schemas.ts の UserListItem) で読む (#1717)
+  let load: UsersListLoad<UserListItem> = { ok: false };
 
   try {
     const res = await adminFetch(`/api/admin/users?${params.toString()}`);
     if (res.ok) {
-      const json = (await res.json()) as UsersListResponse;
-      users = json.data ?? [];
-      total = json.meta?.total ?? 0;
-      listed = true;
+      load = readUsersListBody<UserListItem>(await res.json());
+      if (!load.ok) console.error('[admin/users page] unexpected response body');
     } else {
       console.error('[admin/users page] API error:', res.status);
     }
@@ -60,11 +64,14 @@ export default async function AdminUsersPage(props: PageProps) {
     console.error('[admin/users page] fetch failed:', err);
   }
 
+  const users = load.ok ? load.users : [];
+  const total = load.ok ? load.total : 0;
+
   // 件数より後ろのページ (最後のページの唯一の行が消えたあと・URL のページ番号) は、空のページを見せずに最後のページへ移す (#1917)。
   // 一覧を読めたときだけ判定する (API の失敗を、何も知らせずにページを移す動きに変えない)。
   // status は空 (全ステータス) でも必ず付ける (付けないと次の読み込みで既定の active に戻る。下の「前へ」「次へ」と同じ)。
   // redirect は例外で抜けるので、上の try の外で呼ぶ
-  const refetchPage = listed ? lastPageToRefetch({ rows: users.length, page, total, perPage }) : null;
+  const refetchPage = load.ok ? lastPageToRefetch({ rows: users.length, page, total, perPage }) : null;
   if (refetchPage !== null) {
     const lastPageParams = new URLSearchParams();
     lastPageParams.set('q', q);
@@ -79,7 +86,8 @@ export default async function AdminUsersPage(props: PageProps) {
     <div>
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">ユーザー管理</h1>
-        <span className="text-sm text-gray-500">全 {total.toLocaleString()} 件</span>
+        {/* 読み込めなかったときは件数を出さない (「全 0 件」と見せない。#2093 W3) */}
+        {load.ok && <span className="text-sm text-gray-500">全 {total.toLocaleString()} 件</span>}
       </div>
 
       {/* 検索・フィルタ */}
@@ -108,88 +116,93 @@ export default async function AdminUsersPage(props: PageProps) {
         </button>
       </form>
 
+      {/* 読み込みの失敗: 0 件の文・表を出さず、失敗の文と「再読み込み」を出す (#2093 W3。部品は審査の画面と共通) */}
+      {!load.ok && <ModerationLoadFailure message={USERS_LIST_LOAD_FAILED_MESSAGE} />}
+
       {/* ユーザーテーブル */}
-      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">ユーザー</th>
-              {canSeeEmail && (
-                <th className="px-4 py-3 text-left font-medium text-gray-600">メール</th>
-              )}
-              <th className="px-4 py-3 text-left font-medium text-gray-600">プラン</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">ロール</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">ステータス</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">登録日</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">操作</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {users.length === 0 ? (
+      {load.ok && (
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <td colSpan={canSeeEmail ? 7 : 6} className="px-4 py-8 text-center text-gray-400">
-                  ユーザーが見つかりません
-                </td>
+                <th className="px-4 py-3 text-left font-medium text-gray-600">ユーザー</th>
+                {canSeeEmail && (
+                  <th className="px-4 py-3 text-left font-medium text-gray-600">メール</th>
+                )}
+                <th className="px-4 py-3 text-left font-medium text-gray-600">プラン</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-600">ロール</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-600">ステータス</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-600">登録日</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-600">操作</th>
               </tr>
-            ) : (
-              users.map((user) => (
-                <tr key={user.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3">
-                    <div className="font-medium text-gray-900">
-                      {normalizeProfileName(user.nickname) ?? '(名前なし)'}
-                    </div>
-                    <div className="text-xs text-gray-400 font-mono">{user.id.slice(0, 8)}...</div>
-                  </td>
-                  {canSeeEmail && (
-                    <td className="px-4 py-3 text-gray-700 break-all">{user.email ?? '-'}</td>
-                  )}
-                  <td className="px-4 py-3">
-                    <span className="inline-block bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded font-mono">
-                      {user.plan_key ?? 'free'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-1">
-                      {(Array.isArray(user.roles) ? user.roles : ['user']).map((role) => (
-                        <span
-                          key={role}
-                          className="inline-block bg-gray-100 text-gray-600 text-xs px-1.5 py-0.5 rounded font-mono"
-                        >
-                          {role}
-                        </span>
-                      ))}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    {user.is_banned ? (
-                      <span className="inline-block bg-red-50 text-red-700 text-xs px-2 py-0.5 rounded font-medium">
-                        BAN
-                      </span>
-                    ) : (
-                      <span className="inline-block bg-green-50 text-green-700 text-xs px-2 py-0.5 rounded font-medium">
-                        active
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-gray-500 text-xs">
-                    {user.registered_at
-                      ? new Date(user.registered_at).toLocaleDateString('ja-JP')
-                      : '-'}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/admin/users/${user.id}`}
-                      className="text-orange-500 hover:text-orange-700 text-xs font-medium"
-                    >
-                      詳細
-                    </Link>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {users.length === 0 ? (
+                <tr>
+                  <td colSpan={canSeeEmail ? 7 : 6} className="px-4 py-8 text-center text-gray-400">
+                    ユーザーが見つかりません
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+              ) : (
+                users.map((user) => (
+                  <tr key={user.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-3">
+                      <div className="font-medium text-gray-900">
+                        {normalizeProfileName(user.nickname) ?? '(名前なし)'}
+                      </div>
+                      <div className="text-xs text-gray-400 font-mono">{user.id.slice(0, 8)}...</div>
+                    </td>
+                    {canSeeEmail && (
+                      <td className="px-4 py-3 text-gray-700 break-all">{user.email ?? '-'}</td>
+                    )}
+                    <td className="px-4 py-3">
+                      <span className="inline-block bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded font-mono">
+                        {user.plan_key ?? 'free'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1">
+                        {(Array.isArray(user.roles) ? user.roles : ['user']).map((role) => (
+                          <span
+                            key={role}
+                            className="inline-block bg-gray-100 text-gray-600 text-xs px-1.5 py-0.5 rounded font-mono"
+                          >
+                            {role}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      {user.is_banned ? (
+                        <span className="inline-block bg-red-50 text-red-700 text-xs px-2 py-0.5 rounded font-medium">
+                          BAN
+                        </span>
+                      ) : (
+                        <span className="inline-block bg-green-50 text-green-700 text-xs px-2 py-0.5 rounded font-medium">
+                          active
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">
+                      {user.registered_at
+                        ? new Date(user.registered_at).toLocaleDateString('ja-JP')
+                        : '-'}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Link
+                        href={`/admin/users/${user.id}`}
+                        className="text-orange-500 hover:text-orange-700 text-xs font-medium"
+                      >
+                        詳細
+                      </Link>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* ページネーション */}
       {totalPages > 1 && (
