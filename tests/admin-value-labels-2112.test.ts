@@ -301,8 +301,8 @@ function isConstantTableAccess(access: ValueAccess): boolean {
 }
 
 /**
- * 同じファイルで、定数が日本語の文字列だけの配列で宣言されているか (`const COLUMNS = ['日時', '端末'] as const`。表の見出しなど。
- * 内部の値ではなく画面の文そのもの)
+ * 同じファイルで、定数が文字列だけの配列で、日本語の文字列を含んで宣言されているか (`const COLUMNS = ['日時', 'IP', '国'] as const`。
+ * 表の見出しなど。内部の値の一覧は英字だけなので、日本語を含む一覧は画面の文そのもの)
  */
 function isJapaneseTextList(name: string, sf: ts.SourceFile): boolean {
   let result = false;
@@ -312,8 +312,8 @@ function isJapaneseTextList(name: string, sf: ts.SourceFile): boolean {
       while (ts.isAsExpression(init) || ts.isSatisfiesExpression(init) || ts.isParenthesizedExpression(init)) init = init.expression;
       result =
         ts.isArrayLiteralExpression(init) &&
-        init.elements.length > 0 &&
-        init.elements.every((element) => ts.isStringLiteralLike(element) && JAPANESE.test(element.text));
+        init.elements.every((element) => ts.isStringLiteralLike(element)) &&
+        init.elements.some((element) => ts.isStringLiteralLike(element) && JAPANESE.test(element.text));
     }
     if (!result) ts.forEachChild(node, visit);
   };
@@ -324,7 +324,7 @@ function isJapaneseTextList(name: string, sf: ts.SourceFile): boolean {
 /**
  * 値の一覧の定数を map した引数か (`PLANS.map((value) => <option>{value}</option>)` の value。大文字の名前の配列の map)。
  * 列の名前 (RAW_VALUE_PROPERTIES) によらず内部の値そのものなので数える (選択肢の文字を英字のまま出していた #2112 Z3 の取りこぼし)。
- * 同じファイルで日本語の文字列だけの配列として宣言した定数 (表の見出しの一覧など) は数えない
+ * 同じファイルで日本語を含む文字列の配列として宣言した定数 (表の見出しの一覧など) は数えない
  */
 function isConstantListMapParam(access: ValueAccess, sf: ts.SourceFile): boolean {
   if (!ts.isIdentifier(access)) return false;
@@ -459,8 +459,8 @@ describe('#2112 Z3 運営の画面の走査: 状態・区分の英字の内部�
       'const N = () => <select>{PLANS.map((value) => (<option key={value} value={value}>{value}</option>))}</select>;',
       'const O = () => <select>{PLANS.map((value) => (<option key={value} value={value}>{ORG_PLAN_LABELS[value]}</option>))}</select>;',
       'const P = ({ items }: { items: string[] }) => <ul>{items.map((value) => <li key={value}>{value}</li>)}</ul>;',
-      // 日本語の文字列だけの定数の配列 (表の見出しなど) は数えない
-      "const HEADINGS = ['日時', '端末'] as const;",
+      // 日本語を含む文字列の定数の配列 (表の見出しなど。英字だけの見出し IP が混じっても) は数えない
+      "const HEADINGS = ['日時', 'IP', '端末'] as const;",
       'const Q = () => <tr>{HEADINGS.map((column) => <th key={column}>{column}</th>)}</tr>;',
     ].join('\n');
     expect(findRawValueRendering('example.tsx', before).map((f) => f.text)).toEqual([
