@@ -258,18 +258,23 @@ export function planStatusTransitionMessage(from: string, to: string): string {
 
 /**
  * 422 OP_PLAN_STATUS_LOCKED の文: 公開中・非公開のプランで、Stripe の Price を作ったあとに Stripe の商品の ID を変えようとした (#2112 Z1-1)。
- * Price は商品に紐づくので、作ったあとに商品を変えると、月額と年額の Price が別の商品に分かれる
+ * Price は商品に紐づくので、作ったあとに商品を変えると、月額と年額の Price が別の商品に分かれる。
+ * 断るのは PATCH の全体 (一緒に送った表示名・説明・表示順も書かない) なので、そう言う。画面が開いたあとに別の運営が Price を作ると
+ * 画面の欄はまだ入力できるので、Product ID を元に戻せば残りを保存できる。項目は画面の欄の名前で言い、英字の列名は出さない (#2120 W2-1 と同じ型)
  */
 export const STRIPE_PRODUCT_ID_LOCKED_MESSAGE =
-  'Stripe の Price を作ったあとの公開中・非公開のプランでは、Stripe の商品の ID (stripe_product_id) は変更できません (Price は商品に紐づくため)';
+  'Stripe の Price を作ったあとの公開中・非公開のプランでは、Price は商品に紐づくため Stripe の Product ID を変更できません。保存しませんでした (表示名・説明なども含めて書いていません)。Product ID を元の値に戻してから、もう一度保存してください';
 
 /**
  * 409 OP_PLAN_PRICE_CHANGE_IN_PROGRESS の文: 公開中・非公開のプランで、価格の変更 (Stripe の Price の作成) が進行中のあいだに
  * Stripe の商品の ID を変えようとした (#2112 Z1-1)。進行中の価格の変更は読んだときの商品で Price を作るので、その間は変えない
- * (DB のトリガー guard_plan_stripe_product_id_price_change が止める)。価格の変更が済むと Price ができて変えられなくなることが多い
+ * (DB のトリガー guard_plan_stripe_product_id_price_change が止める)。トリガーは UPDATE の文の全体を止めるので、一緒に送った
+ * 表示名・説明・表示順も書いていない。画面は読み直さずに入力欄の値を残すので、読み込み直しは勧めない (読み込み直すと書きかけが消える)。
+ * 英字の列名は出さない (#2120 W2-1。以前は「Stripe の商品の ID (stripe_product_id) は変更していません。…画面を読み込み直して確かめてください」で、
+ * ほかの項目は保存できたように読めた)
  */
 export const STRIPE_PRODUCT_ID_PRICE_CHANGE_IN_PROGRESS_MESSAGE =
-  'このプランの価格の変更 (Stripe の Price の作成) が進行中のため、Stripe の商品の ID (stripe_product_id) は変更していません。価格の変更が済んでから、画面を読み込み直して確かめてください';
+  'このプランの価格の変更 (Stripe の Price の作成) が進行中のため、保存しませんでした (表示名・説明なども含めて書いていません)。入力した値は残っているので、価格の変更が済んでからもう一度保存してください';
 
 /** 公開中・非公開のプランで、Stripe の商品の ID を変えてよいかの判定に使うプランの値 */
 export interface PlanStripeProductState {

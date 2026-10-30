@@ -37,7 +37,8 @@
  * 画面からできなかった。公開中・非公開のプランでは、Stripe の Price をまだ作っていないあいだだけ入力できる (isStripeProductIdEditable。route と同じ判定)。
  * 読み直しで書きかけを残すのも、読み直したプランで入力できるときだけ。価格の変更 (Stripe の Price の作成) が進行中で保存が
  * 409 OP_PLAN_PRICE_CHANGE_IN_PROGRESS になったときは、別の運営の変更 (CONFLICT_STALE_DATA) ではないので読み直さず、ほかの失敗と同じく
- * route の文を出して入力欄の値を残す。
+ * route の文を出して入力欄の値を残す (その文は、表示名・説明なども含めて保存していないことを言い、読み込み直しは勧めない。#2120 W2-1)。
+ * 廃止したプランの Product ID の欄は止め、「入れてから…」ではなく変えられないことを説明に出す (#2120 W2-2)。
  * #2112 Z1-2: 価格変更履歴のタブは、適用範囲を日本語の名前 (PRICE_APPLIES_TO_LABELS) で出し、旧年額・新年額の列と、月額の Stripe の Price ID が
  * 変わった行の印 (new_stripe_price_id があるとき) を出す。以前は適用範囲が英字の値 (new_only) のままで、年額だけの変更・Price の登録が見えなかった。
  * 同じ型で、基本情報の種別も日本語の名前 (PLAN_TYPE_LABELS。一覧と同じ語) で出す (以前は personal などの英字の値)。
@@ -262,6 +263,21 @@ const STRIPE_PRODUCT_ID_HELP =
 
 /** 公開中・非公開のプランで、Stripe の Price を作ったあとなので Product ID を変えられないときの説明 (#2112 Z1-1) */
 const STRIPE_PRODUCT_ID_LOCKED_HELP = 'Stripe の Price を作ったあとなので、Stripe の Product ID は変えられません (Price は商品に紐づくため)。';
+
+/**
+ * 廃止したプランの Product ID の欄の説明 (#2120 W2-2)。廃止したプランは欄が止まり (route も廃止中は状態の変更のほかを断る)、
+ * 「入れてから…」(STRIPE_PRODUCT_ID_HELP) の操作はできないので、それを案内しない
+ */
+const STRIPE_PRODUCT_ID_DEPRECATED_HELP = '廃止したプランは変えられないので、Stripe の Product ID も変えられません。';
+
+/**
+ * Stripe の Product ID の欄の説明。表示名などを編集できない状態 (isEditableStatus が false = 廃止) なら廃止の説明、
+ * 編集できるが Price を作ったあとなら止めた理由、入力できるなら入れ方 (#2112 Z1-1・#2120 W2-2)
+ */
+function stripeProductIdHelp(isEditable: boolean, stripeProductIdEditable: boolean): string {
+  if (!isEditable) return STRIPE_PRODUCT_ID_DEPRECATED_HELP;
+  return stripeProductIdEditable ? STRIPE_PRODUCT_ID_HELP : STRIPE_PRODUCT_ID_LOCKED_HELP;
+}
 
 /** 価格変更履歴の、月額の Stripe の Price ID が変わった行の印 (new_stripe_price_id があるとき。#2112 Z1-2) */
 const MONTHLY_STRIPE_PRICE_CHANGED_MARK = '月額の Price ID が変わった';
@@ -912,7 +928,7 @@ function PlanDetailContent() {
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-slate-50"
             />
             <p data-testid="plan-stripe-product-id-help" className="text-xs text-slate-500 mt-1">
-              {isEditable && !stripeProductIdEditable ? STRIPE_PRODUCT_ID_LOCKED_HELP : STRIPE_PRODUCT_ID_HELP}
+              {stripeProductIdHelp(isEditable, stripeProductIdEditable)}
             </p>
           </div>
 

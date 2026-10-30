@@ -106,6 +106,15 @@ const NEW_YEARLY = 6200;
 
 /** 画面の文 (page の定数と同じ文。画面の文が変わったら赤になる) */
 const PRODUCT_LOCKED_HELP = 'Stripe の Price を作ったあとなので、Stripe の Product ID は変えられません (Price は商品に紐づくため)。';
+/** 廃止したプランの Product ID の欄の説明 (page の STRIPE_PRODUCT_ID_DEPRECATED_HELP。#2120 W2-2) */
+const PRODUCT_DEPRECATED_HELP = '廃止したプランは変えられないので、Stripe の Product ID も変えられません。';
+/** 入力できるときの Product ID の欄の説明の一部 (page の STRIPE_PRODUCT_ID_HELP。廃止したプランでは出さない。#2120 W2-2) */
+const PRODUCT_INPUT_GUIDE = '入れてから価格の変更で「Stripe の Price を作る」を押すと';
+/**
+ * 保存の全体を断ったときの文の要点 (#2120 W2-1)。409 OP_PLAN_PRICE_CHANGE_IN_PROGRESS・422 OP_PLAN_STATUS_LOCKED (Product ID だけ) は
+ * 一緒に送った表示名・説明・表示順も書かないので、文がそう言う
+ */
+const NOT_SAVED = '保存しませんでした (表示名・説明なども含めて書いていません)';
 const PRODUCT_MISSING_REASON =
   'このプランには Stripe の Product ID が入っていないので、Stripe の Price は作れません。プラン詳細の基本情報で Stripe の Product ID を入れて保存してから、今の価格のまま進めて「Stripe の Price を作る」を押してください。';
 const KEY_MISSING_REASON = 'この環境には Stripe の鍵が無いので、Stripe の Price は作れません。';
@@ -463,12 +472,108 @@ describe('Z1-1: プラン詳細の基本情報で Stripe の Product ID を入�
     expect(productInput().disabled).toBe(false);
   });
 
+  it('#2120 W2-1: 表示名と Product ID を一緒に保存して 409 OP_PLAN_PRICE_CHANGE_IN_PROGRESS なら、表示名も保存していないと言い、読み込み直しを勧めず英字の列名を出さず、両方の入力を残す', async () => {
+    fakeDb = createDb(planRow());
+    connectPageToRoute();
+    await renderDetail();
+
+    await typeInto(displayNameInput(), 'Pro プラン');
+    await typeInto(productInput(), PRODUCT_ID);
+    fakeDb.state.updateError = PRICE_CHANGE_IN_PROGRESS_DB_ERROR;
+    await click(buttonWith('保存する'), '「保存する」のボタン');
+    await vi.waitFor(() => expect(text()).toContain(STRIPE_PRODUCT_ID_PRICE_CHANGE_IN_PROGRESS_MESSAGE));
+
+    // 送ったのは表示名と Product ID の両方 (1 本の UPDATE)。トリガーが文の全体を止めたので、どちらも DB に入っていない
+    expect(patchBodies).toEqual([{ display_name: 'Pro プラン', stripe_product_id: PRODUCT_ID }]);
+    expect(fakeDb.state.updates).toEqual([]);
+    expect(fakeDb.state.plan).toMatchObject({ display_name: 'Pro', stripe_product_id: null });
+    // 画面の文: ほかの項目も保存していないことを言う。読み込み直しは勧めない (書きかけが消える)。英字の列名は出さない
+    expect(text()).toContain(NOT_SAVED);
+    expect(text()).toContain('入力した値は残っているので、価格の変更が済んでからもう一度保存してください');
+    expect(text()).not.toContain('読み込み直');
+    expect(text()).not.toContain('stripe_product_id');
+    expect(text()).not.toContain('保存しました');
+    // 入力欄の値は残る (読み直していない)
+    expect(displayNameInput().value).toBe('Pro プラン');
+    expect(productInput().value).toBe(PRODUCT_ID);
+  });
+
+  it('#2120 W2-1 と同じ型: 開いたあとに Price が作られたプランで表示名と Product ID を保存して 422 なら、表示名も保存していないと言い、Product ID を戻すと表示名を保存できる', async () => {
+    fakeDb = createDb(planRow({ stripe_product_id: PRODUCT_ID }));
+    connectPageToRoute();
+    await renderDetail();
+    expect(productInput().disabled).toBe(false);
+
+    await typeInto(displayNameInput(), 'Pro プラン');
+    await typeInto(productInput(), OTHER_PRODUCT_ID);
+    // 画面を開いたあと (route が読む前) に、別の運営が価格の変更で月額の Price を作った
+    fakeDb.state.plan = { ...fakeDb.state.plan, stripe_price_id: MONTHLY_PRICE_ID };
+    await click(buttonWith('保存する'), '「保存する」のボタン');
+    await vi.waitFor(() => expect(text()).toContain(STRIPE_PRODUCT_ID_LOCKED_MESSAGE));
+
+    expect(fakeDb.state.updates).toEqual([]);
+    expect(fakeDb.state.plan).toMatchObject({ display_name: 'Pro', stripe_product_id: PRODUCT_ID });
+    expect(text()).toContain(NOT_SAVED);
+    expect(text()).not.toContain('stripe_product_id');
+    expect(text()).not.toContain('保存しました');
+    expect(displayNameInput().value).toBe('Pro プラン');
+    expect(productInput().value).toBe(OTHER_PRODUCT_ID);
+
+    // 文のとおり Product ID を元の値に戻して保存すると、送るのは表示名だけで、書ける
+    patchBodies.length = 0;
+    await typeInto(productInput(), PRODUCT_ID);
+    await click(buttonWith('保存する'), '「保存する」のボタン');
+    await vi.waitFor(() => expect(text()).toContain('保存しました'));
+    expect(patchBodies).toEqual([{ display_name: 'Pro プラン' }]);
+    expect(fakeDb.state.plan).toMatchObject({ display_name: 'Pro プラン', stripe_product_id: PRODUCT_ID });
+  });
+
   it('廃止したプランは入力できない (ほかの欄と同じ)', async () => {
     fakeDb = createDb(planRow({ status: 'deprecated', ends_at: '2026-12-31T00:00:00.000Z' }));
     connectPageToRoute();
     await renderDetail();
 
     expect(productInput().disabled).toBe(true);
+  });
+
+  it('#2120 W2-2: 廃止したプランの Product ID の欄には、できない操作 (入れてから…) でなく、変えられないことを出す (Product ID や Price があっても無くても)', async () => {
+    for (const ids of [
+      {},
+      { stripe_product_id: PRODUCT_ID },
+      { stripe_product_id: PRODUCT_ID, stripe_price_id: MONTHLY_PRICE_ID, stripe_yearly_price_id: YEARLY_PRICE_ID },
+    ]) {
+      const label = JSON.stringify(ids);
+      fakeDb = createDb(planRow({ status: 'deprecated', ends_at: '2026-12-31T00:00:00.000Z', ...ids }));
+      connectPageToRoute();
+      await renderDetail();
+
+      expect(productInput().disabled, label).toBe(true);
+      expect(productHelp(), label).toBe(PRODUCT_DEPRECATED_HELP);
+      expect(productHelp(), label).not.toContain(PRODUCT_INPUT_GUIDE);
+      expect(productHelp(), label).not.toBe(PRODUCT_LOCKED_HELP);
+
+      await act(async () => {
+        root.unmount();
+      });
+      root = createRoot(container);
+    }
+  });
+
+  it('#2120 W2-2: 入力できるプランの欄には入れ方を出し、廃止の説明は出さない', async () => {
+    for (const status of ['draft', 'public', 'private'] as const) {
+      fakeDb = createDb(planRow({ status }));
+      connectPageToRoute();
+      await renderDetail();
+
+      expect(productInput().disabled, status).toBe(false);
+      expect(productHelp(), status).toContain(PRODUCT_INPUT_GUIDE);
+      expect(productHelp(), status).not.toBe(PRODUCT_DEPRECATED_HELP);
+
+      await act(async () => {
+        root.unmount();
+      });
+      root = createRoot(container);
+    }
   });
 });
 
@@ -533,6 +638,34 @@ describe('Z1-1: PATCH /api/super-admin/plans/{id} の stripe_product_id (#2112)'
     expect(fakeDb.state.updates).toEqual([]);
     expect(fakeDb.state.plan.stripe_product_id).toBeNull();
     expect(mockRecordAdminAudit).not.toHaveBeenCalled();
+  });
+
+  it('#2120 W2-1: 表示名と一緒に送っても、価格の変更が進行中なら 409 で表示名も書かず、文はそれを言い英字の列名を含まない', async () => {
+    fakeDb = createDb(planRow());
+    fakeDb.state.updateError = PRICE_CHANGE_IN_PROGRESS_DB_ERROR;
+    const res = await PATCH(patchRequest({ display_name: 'Pro プラン', stripe_product_id: PRODUCT_ID }), routeContext());
+    expect(res.status).toBe(409);
+    const json = (await res.json()) as { error: { code: string; message: string } };
+    expect(json.error.code).toBe('OP_PLAN_PRICE_CHANGE_IN_PROGRESS');
+    expect(json.error.message).toBe(
+      'このプランの価格の変更 (Stripe の Price の作成) が進行中のため、保存しませんでした (表示名・説明なども含めて書いていません)。入力した値は残っているので、価格の変更が済んでからもう一度保存してください',
+    );
+    expect(json.error.message).not.toMatch(/[a-z]+_[a-z_]+/);
+    expect(fakeDb.state.updates).toEqual([]);
+    expect(fakeDb.state.plan).toMatchObject({ display_name: 'Pro', stripe_product_id: null });
+    expect(mockRecordAdminAudit).not.toHaveBeenCalled();
+  });
+
+  it('#2120 W2-1 と同じ型: Price を作ったあとの 422 (Product ID だけを断る) も、表示名と一緒なら表示名も書かず、文はそれを言い英字の列名を含まない', async () => {
+    fakeDb = createDb(planRow({ stripe_product_id: PRODUCT_ID, stripe_price_id: MONTHLY_PRICE_ID }));
+    const res = await PATCH(patchRequest({ display_name: 'Pro プラン', stripe_product_id: 'prod_other' }), routeContext());
+    expect(res.status).toBe(422);
+    const json = (await res.json()) as { error: { code: string; message: string } };
+    expect(json.error).toEqual({ code: 'OP_PLAN_STATUS_LOCKED', message: STRIPE_PRODUCT_ID_LOCKED_MESSAGE });
+    expect(json.error.message).toContain(NOT_SAVED);
+    expect(json.error.message).not.toMatch(/[a-z]+_[a-z_]+/);
+    expect(fakeDb.state.updates).toEqual([]);
+    expect(fakeDb.state.plan).toMatchObject({ display_name: 'Pro', stripe_product_id: PRODUCT_ID });
   });
 
   it('ほかの DB の失敗は、これまでどおり 500 (進行中の 409 にしない)', async () => {
