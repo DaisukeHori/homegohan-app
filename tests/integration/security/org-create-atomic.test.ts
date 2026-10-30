@@ -15,6 +15,10 @@
  *   一覧 (GET) は行のオーナーの id を返し、組織名の検索の % と _ を文字どおりに一致させる (OC-10)。一覧は service_role で読む
  *   (organizations の SELECT のポリシーは所属している人の行だけで、運営の client では、運営が所属していない組織が一覧に出なかった)。
  *
+ * #2120 W1 (同じ関数の続き): 関数はオーナーの所属と一緒に加入日 (joined_org_at = 今日) と在籍の印 (is_active_in_org = true) を書く
+ *   (招待の承諾と同じ値。supabase/migrations/20261031100000_create_organization_owner_joined_at.sql)。修正前は 2 つとも書かず、
+ *   組織のメンバーの一覧 (GET /api/org/members。加入日の昇順) でオーナーの加入日が空 (画面は「-」) になり、一覧の最後に並んだ (OC-11)。
+ *
  * 呼び出しは本物の経路 (PostgREST・Next の route)。先の作成をコミット前のまま開いておくのは、ローカルスタックの postgres-meta
  * (/pg/query、service_role キーが必要) を使う (tests/integration/helpers/lock-holder.ts)。
  *
@@ -123,6 +127,12 @@ const OWNER_NOT_FOUND_MESSAGE = '指定したオーナーのユーザーが見�
 const ADVISORY_WAIT_EVENT = 'advisory';
 /** 同時に送る作成の数 */
 const CONCURRENT_CREATES = 2;
+/** DB の date 型の値の形 (YYYY-MM-DD) */
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+/** 日時の文字 (ISO 8601) の先頭の日付の部分の長さ (YYYY-MM-DD) */
+const DATE_PART_LENGTH = 'YYYY-MM-DD'.length;
+/** 1 日のミリ秒 (オーナーより後に加入したメンバーの加入日を、オーナーの加入日の翌日にするため) */
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 const createdUserIds: string[] = [];
 const createdOrgIds: string[] = [];
@@ -192,6 +202,19 @@ async function profileOf(userId: string): Promise<{ nickname: string | null; org
   if (error) throw new Error(`user_profiles: ${error.message}`);
   return data as { nickname: string | null; organization_id: string | null; org_role: string | null } | null;
 }
+
+/** オーナーの加入日と在籍の印 (#2120 W1) */
+async function membershipOf(userId: string): Promise<{ joined_org_at: string | null; is_active_in_org: boolean | null } | null> {
+  const { data, error } = await srAdmin.from('user_profiles').select('joined_org_at, is_active_in_org').eq('id', userId).maybeSingle();
+  if (error) throw new Error(`user_profiles: ${error.message}`);
+  return data as { joined_org_at: string | null; is_active_in_org: boolean | null } | null;
+}
+
+/**
+ * 関数が書く加入日 (CURRENT_DATE) と同じ日。関数の戻り値の created_at (組織の行の now()) は同じトランザクションの時刻で、
+ * 同じ接続の TimeZone で文字にされるので、その日付の部分は CURRENT_DATE と同じ
+ */
+const createdDateOf = (createdAt: string): string => createdAt.slice(0, DATE_PART_LENGTH);
 
 async function poolOf(orgId: string): Promise<Array<{ total_licenses: number | null; used_licenses: number }>> {
   const { data, error } = await srAdmin.from('org_license_pools').select('total_licenses, used_licenses').eq('organization_id', orgId);
@@ -417,5 +440,56 @@ describe('運営の作成 API の居ないオーナーと、一覧の検索 (#21
     const onlyPercent = await search('%');
     expect(onlyPercent.every((row) => row.name.includes('%')), JSON.stringify(onlyPercent.map((row) => row.name))).toBe(true);
     expect(onlyPercent.map((row) => row.id)).not.toContain(ids.get('oc10 100x')!.orgId);
+  }, TEST_TIMEOUT_MS);
+});
+
+describe('運営が作った組織のオーナーの加入日 (#2120 W1)', () => {
+  it('OC-11: 関数はオーナーの加入日 (今日) と在籍の印を書き (プロフィールの行が無い人でも)、組織のメンバーの一覧 (GET /api/org/members) でオーナーの加入日が空にならず、後から加入したメンバーより前に並ぶ (修正前は加入日が空で一覧の最後)', async () => {
+    for (const withProfile of [true, false]) {
+      const owner = await createUser(`oc11-${withProfile ? 'profile' : 'no-profile'}`, withProfile);
+      const created = await createOrg(owner.id, `oc11-${withProfile}`);
+      expect(created.ok, JSON.stringify(created)).toBe(true);
+      const org = created.data as { id: string; created_at: string };
+      const joinedDate = createdDateOf(org.created_at);
+      expect(joinedDate).toMatch(DATE_RE);
+      expect(await membershipOf(owner.id)).toEqual({ joined_org_at: joinedDate, is_active_in_org: true });
+    }
+
+    // 運営の作成 API (route) を通しても同じ。そのあとオーナーより後に加入したメンバーを 1 人足し、オーナーの JWT で一覧を読む
+    const owner = await createUser('oc11-api');
+    const operatorUser = await createTestUserWithRoles({ email: testEmail('org-create-atomic-oc11-admin', TS), roles: ['user', 'admin'] });
+    operatorUsers.push(operatorUser);
+    const createRes = await apiCall<{ organization?: { id: string; created_at: string } }>('POST', '/api/admin/organizations', operatorUser.jwt, {
+      name: orgName('oc11-api'),
+      owner_id: owner.id,
+    });
+    expect(createRes.status, JSON.stringify(createRes.body)).toBe(HTTP_OK);
+    const orgId = createRes.body.organization?.id;
+    expect(typeof orgId).toBe('string');
+    createdOrgIds.push(orgId!);
+    const ownerMembership = await membershipOf(owner.id);
+    expect(ownerMembership?.is_active_in_org).toBe(true);
+    const ownerJoined = ownerMembership?.joined_org_at ?? null;
+    expect(ownerJoined).toMatch(DATE_RE);
+    expect(ownerJoined).toBe(createdDateOf(createRes.body.organization!.created_at));
+
+    const member = await createUser('oc11-member');
+    const memberJoined = new Date(Date.parse(`${ownerJoined}T00:00:00Z`) + DAY_MS).toISOString().slice(0, DATE_PART_LENGTH);
+    const { error: memberError } = await srAdmin
+      .from('user_profiles')
+      .update({ organization_id: orgId, org_role: 'member', is_active_in_org: true, joined_org_at: memberJoined })
+      .eq('id', member.id);
+    expect(memberError).toBeNull();
+
+    const listRes = await apiCall<{ members?: Array<{ id: string; org_role: string; joined_org_at: string | null }> }>(
+      'GET',
+      '/api/org/members',
+      owner.jwt,
+    );
+    expect(listRes.status, JSON.stringify(listRes.body)).toBe(HTTP_OK);
+    expect(listRes.body.members?.map(({ id, org_role, joined_org_at }) => ({ id, org_role, joined_org_at }))).toEqual([
+      { id: owner.id, org_role: 'owner', joined_org_at: ownerJoined },
+      { id: member.id, org_role: 'member', joined_org_at: memberJoined },
+    ]);
   }, TEST_TIMEOUT_MS);
 });

@@ -218,7 +218,8 @@ describe('#1103 項目 10 / #1917 型とコード', () => {
     const route = read('src/app/api/admin/organizations/route.ts');
     expect(route).toContain('const effectiveOwnerId = owner_id ?? actor.id;');
     expect(squash(route)).toContain("supabaseAdmin.rpc('admin_create_organization', { p_name: name, p_plan: plan, p_owner_id: effectiveOwnerId, })");
-    const createFn = squash(stripComments(read(`${MIGRATIONS_DIR}/20261030150000_create_organization_atomic.sql`)));
+    // 関数の最新の定義 (#2120 W1 でオーナーの加入日を足して作り直した)
+    const createFn = squash(stripComments(read(`${MIGRATIONS_DIR}/20261031100000_create_organization_owner_joined_at.sql`)));
     expect(createFn).toContain('INSERT INTO organizations (name, plan, owner_id) VALUES (p_name, p_plan, p_owner_id)');
   });
 });
