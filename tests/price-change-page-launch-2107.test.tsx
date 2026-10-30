@@ -11,6 +11,9 @@
  *   - 応答を受け取れなかったあとの読み直しは、価格が同じでも Price ID がまだ無ければ済んだとしない
  * Y6: 応答を受け取れなかったあと、読み直したプランが送った内容になっていないときの文に「まだ処理中のことがあります」を添える
  *   (route の 1 回目がまだ走っていることがある。押し直すと進行中の 409 になる)
+ * main の #2101 integrity-1030c (読み直しの 401 / 403 の理由の文。src/lib/super-admin/detail-reread.ts の rereadDetailRow) との合流:
+ *   販売開始の Price の登録の応答を受け取れず、読み直しが 401 なら「済んだか分かりません」に「ログインし直してください」を添え、
+ *   済んだとせず (履歴へ移らない)、送信を止めたまま
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
@@ -36,6 +39,7 @@ vi.mock('next/link', () => ({
 }));
 
 const { default: PriceChangePage } = await import('@/app/super-admin/plans/[id]/price-change/page');
+const { UNAUTHENTICATED_SCREEN_MESSAGE } = await import('@/lib/admin/api-error-message');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -273,6 +277,39 @@ describe('Y2: 販売開始の Stripe の Price を画面から作れる (#2107)'
     await click(buttonWith(CREATE_PRICE_LABEL), '「Stripe の Price を作る」のボタン');
 
     expect(routerPush).toHaveBeenCalledWith(HISTORY_PATH);
+  });
+});
+
+describe('Y2 と #2101 integrity-1030c の合流: 販売開始の Price の登録の応答切れのあとの読み直しが 401 (#2107)', () => {
+  it('読み直しが 401 なら、済んだとせず (履歴へ移らない)、「済んだか分かりません」に「ログインし直してください」を添え、送信を止めたまま', async () => {
+    mockServer({
+      plans: [
+        () => jsonResponse(200, { data: planWith() }),
+        () => jsonResponse(401, { error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } }),
+      ],
+      changes: [() => { throw networkFailure(); }],
+    });
+    await renderPage();
+
+    await goToConfirmWithoutChangingPrices();
+    await click(buttonWith(CREATE_PRICE_LABEL), '「Stripe の Price を作る」のボタン');
+
+    expect(routerPush).not.toHaveBeenCalled();
+    const unconfirmed = container.querySelector('[data-testid="price-change-unconfirmed"]')?.textContent ?? '';
+    expect(unconfirmed).toContain('済んだか分かりません。履歴で確かめてください');
+    expect(unconfirmed).toContain(UNAUTHENTICATED_SCREEN_MESSAGE);
+    expect(text()).not.toContain('Unauthorized');
+    expect(text()).not.toContain(STILL_PROCESSING);
+    expect(Array.from(container.querySelectorAll('a')).some((a) => a.getAttribute('href') === HISTORY_PATH)).toBe(true);
+
+    // 送信を止めたまま: 「Stripe の Price を作る」は押せず、押しても 2 回目を送らない (Stripe の Price を二重に作らない)
+    const createButton = buttonWith(CREATE_PRICE_LABEL);
+    expect(createButton?.disabled).toBe(true);
+    await act(async () => {
+      createButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await settle();
+    expect(changeBodies()).toHaveLength(1);
   });
 });
 

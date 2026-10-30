@@ -21,6 +21,8 @@
  * いまは応答を受け取れなかったら (AdminActionNoResponseError) プランを読み直し、価格が送った値になっていれば済んだとして履歴の画面へ移る。
  * 送った値になっていなければ、画面のプランを読み直した値にして、済んでいないことを出す (もう一度実行できる。同じ価格の押し直しは
  * route が 409 OP_PRICE_UNCHANGED で断る)。読み直せなければ送信を止め、「済んだか分かりません。履歴で確かめてください」と履歴へのリンクを出す。
+ * 読み直しが 401 / 403 で断られたら、その理由の文 (401 は「ログインし直してください」・403 は理由の文) を添える
+ * (#2101 integrity-1030c。src/lib/super-admin/detail-reread.ts の rereadUnavailableMessage と同じ文)。
  * 409 OP_PRICE_UNCHANGED (すでにこの価格) は済んだものとして履歴の画面へ移る (src/lib/super-admin/price-change-unchanged.ts)。
  *
  * #2107 Y2: 以前は今の価格と違う間隔があるときだけ送れたので、販売開始の手順 (docs/design/billing/03-paid-plans-and-iap.md §12 の順 3。
@@ -53,10 +55,12 @@ import {
   isPriceUnchangedBody,
   pendingPriceChange,
   priceChangeAlreadyApplied,
+  sentPricesMatchPlan,
   type PlanCurrentPricesWithStripe,
   type PriceChangeSentPrices,
 } from '@/lib/super-admin/price-change-unchanged';
 import { planDetailHref } from '@/lib/super-admin/plan-detail-tab';
+import { rereadDetailRow } from '@/lib/super-admin/detail-reread';
 
 type ImpactData = {
   /** 新規契約のみなので常に 0 (既存契約は現行価格のまま) */
@@ -238,31 +242,31 @@ export default function PriceChangePage() {
   }, [newMonthlyPrice, newYearlyPrice, planId, hasAnyChange]);
 
   /**
-   * 価格の変更の応答を受け取れなかったあと、プランを読み直して、価格が送った値になっているか (済んだか) を確かめる (#2101 X1)。
-   * 送った値になっていれば済んだとして履歴の画面へ移る。なっていなければ画面のプランを読み直した値にして、済んでいないことを出す。
-   * 読み直せなければ、済んだか分からないので送信を止め、履歴で確かめさせる
+   * 価格の変更の応答を受け取れなかったあと、プランを読み直して、送った内容になっているか (済んだか) を確かめる (#2101 X1)。
+   * 「済んだか」は route と同じ判定 (priceChangeAlreadyApplied): 価格が送った値で、Stripe の同期が要るプランなら送った間隔の
+   * Price ID も入っていること (#2107 Y2)。済んでいれば履歴の画面へ移る。済んでいなければ画面のプランを読み直した値にして、
+   * 済んでいないことを出す (価格はなっているが Price ID がまだ無いときと、価格がまだのときで文を分ける。#2107 Y2・Y6)。
+   * 読み直せなければ、済んだか分からないので送信を止め、履歴で確かめさせる。
+   * 読み直しが 401 / 403 なら、読み込み直しても変わらない理由の文 (「ログインし直してください」・403 の理由の文) を添える
+   * (404 は理由の文にしない。これまでどおり済んだか分からない文だけ。#2101 integrity-1030c)
    */
   const confirmUnconfirmedPriceChange = async (sent: PriceChangeSentPrices, summary: string) => {
-    let reloaded: Plan;
-    try {
-      const body = await fetchAdminJson(`/api/super-admin/plans/${planId}`, PLAN_SUBJECT);
-      const loaded = (body as { data?: Plan | null }).data;
-      if (!loaded) throw new AdminScreenError(adminLoadFailedMessage(PLAN_SUBJECT, null));
-      reloaded = loaded;
-    } catch {
+    const reread = await rereadDetailRow<Plan>(`/api/super-admin/plans/${planId}`, null);
+    if (reread.kind !== 'loaded') {
       unconfirmedRef.current = true;
-      setUnconfirmedMessage(`${summary}。${PRICE_CHANGE_UNCONFIRMED_GUIDE}`);
+      const guides = reread.kind === 'unavailable' ? [PRICE_CHANGE_UNCONFIRMED_GUIDE, reread.message] : [PRICE_CHANGE_UNCONFIRMED_GUIDE];
+      setUnconfirmedMessage([summary, ...guides].join('。'));
       return;
     }
+    const reloaded = reread.row;
     // 「済んだか」は route と同じ判定 (Stripe の同期が要れば、価格が同じでも送った間隔の Price ID が入るまで済んでいない。#2107 Y2)
     if (priceChangeAlreadyApplied(planStripeStateOf(reloaded), sent, stripePriceSyncExpectedOf(reloaded))) {
       router.push(historyHref);
       return;
     }
     setPlan(reloaded);
-    const pricesReached =
-      (sent.new_monthly_price_jpy == null || sent.new_monthly_price_jpy === reloaded.monthly_price_jpy) &&
-      (sent.new_yearly_price_jpy == null || sent.new_yearly_price_jpy === reloaded.yearly_price_jpy);
+    // 価格は送った値になっているが Price ID がまだ無い (販売開始の Price の登録が済んでいない) か、価格そのものがまだか で文を選ぶ
+    const pricesReached = sentPricesMatchPlan(reloaded, sent);
     setError(`${summary}。${pricesReached ? STRIPE_PRICE_NOT_CREATED_GUIDE : PRICE_CHANGE_NOT_APPLIED_GUIDE}`);
   };
 
