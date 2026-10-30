@@ -31,6 +31,7 @@ import {
   REPLY_RELOAD_UNAVAILABLE_GUIDE,
   REPLY_REOPEN_TO_RETRY_GUIDE,
   isReplyDelivered,
+  isReplyInputAsSent,
   replyNoResponseMessage,
 } from '@/lib/admin/support-reply-no-response';
 import { rereadDetailRow } from '@/lib/super-admin/detail-reread';
@@ -218,7 +219,7 @@ export default function TicketDetailPage(props: PageProps) {
     if (isReplyDelivered(reloaded.messages, pending.knownIds, pending)) {
       markBlockedSend(null);
       // 済んでいた。入力欄が送った本文のままなら空にする (待つあいだに書き足した文は消さない)
-      setMessageBody((current) => (current.trim() === pending.body.trim() ? '' : current));
+      setMessageBody((current) => (isReplyInputAsSent(current, pending.body) ? '' : current));
       setError(null);
       // 外部返信は保存のあとにメールを送るので、応答が切れたときはメールが届いたかは分からない。内部メモはメールにしない
       setEmailNotice(
@@ -267,8 +268,9 @@ export default function TicketDetailPage(props: PageProps) {
       // (内部メモは通知しないため、応答に email が無い)
       const created = await res.json().catch(() => null);
       setEmailNotice(describeReplyEmailOutcome(created?.email));
-      // 入力欄が送った本文のままなら空にする (送信の応答を待つあいだも入力欄は書き換えられるので、書き足した文は消さない。#2107 Y7 と同じ型)
-      setMessageBody((current) => (current === sent.body ? '' : current));
+      // 入力欄が送った本文のままなら空にする (送信の応答を待つあいだも入力欄は書き換えられるので、書き足した文は消さない。#2107 Y7 と同じ型)。
+      // 読み直しの経路と同じ比べ方 (前後の空白・改行だけの違いは書き足しと見なさない。#2120 W4)
+      setMessageBody((current) => (isReplyInputAsSent(current, sent.body) ? '' : current));
       await fetchTicket();
     } catch (e: unknown) {
       if (e instanceof AdminActionNoResponseError) {
