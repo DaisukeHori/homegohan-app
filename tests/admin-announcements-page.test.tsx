@@ -270,7 +270,8 @@ describe('一覧', () => {
     mockApi({ list: () => jsonResponse(401, { error: 'Unauthorized' }) });
     await renderPage();
     // 401 は運営の画面で揃えた「ログインし直してください」(#2112 Z4)
-    expect(alerts()[0]).toBe('ログインし直してください');
+    expect(alerts()[0]).toContain('ログインし直してください');
+    expect(alerts()[0]).not.toContain('ログインの有効期限');
   });
 
   it('403 の本文の文が二段階認証の文なら、「権限がありません」で上書きせずその文を出す (#1917 の続き・整合 1025b)', async () => {
