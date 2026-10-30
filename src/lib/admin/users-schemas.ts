@@ -57,6 +57,8 @@ export function parseUserListStatusParam(raw: string | undefined): UserListStatu
 
 export const UsersSearchSchema = z.object({
   q: z.string().optional(),
+  // #2112 Z5: route が plan_key_cached で一覧と件数の数え直しを絞る (free は plan_key_cached が NULL の利用者を含む。
+  // 前後の空白を除いて空なら指定なし)。以前は受け取って監査の検索条件に残すだけで、一覧を絞っていなかった
   plan: z.string().optional(),
   role: z.string().optional(),
   status: z.enum(USER_LIST_STATUSES).optional(),
