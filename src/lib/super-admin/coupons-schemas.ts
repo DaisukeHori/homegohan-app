@@ -33,6 +33,25 @@ export const COUPON_APPLICABLE_TO_LABELS: Readonly<Record<CouponApplicableTo, st
 export function couponApplicableToLabel(value: string): string {
   return labelOrRaw(COUPON_APPLICABLE_TO_LABELS, value);
 }
+/** クーポンを適用した契約の種類 (coupon_redemptions.subscription_target。DB の CHECK と同じ 2 値) */
+export const COUPON_SUBSCRIPTION_TARGETS = ['personal', 'org'] as const;
+export type CouponSubscriptionTarget = (typeof COUPON_SUBSCRIPTION_TARGETS)[number];
+
+/**
+ * クーポンを適用した契約の種類の画面の名前 (#2112 Z3。適用対象の表示名と同じ語)。
+ * 以前、クーポン詳細の適用履歴の「対象」の列は英字の内部の値 (personal / org) のまま出していた。
+ * Record なので、COUPON_SUBSCRIPTION_TARGETS に値を足すと表示名の漏れが型の誤りになる
+ */
+export const COUPON_SUBSCRIPTION_TARGET_LABELS: Readonly<Record<CouponSubscriptionTarget, string>> = {
+  personal: COUPON_APPLICABLE_TO_LABELS.personal,
+  org: COUPON_APPLICABLE_TO_LABELS.org,
+};
+
+/** 適用した契約の種類の表示名。表に無い値 (将来の値・壊れた応答) はそのまま */
+export function couponSubscriptionTargetLabel(value: string): string {
+  return labelOrRaw(COUPON_SUBSCRIPTION_TARGET_LABELS, value);
+}
+
 export const COUPON_STATUSES = ['active', 'paused', 'expired'] as const;
 export type CouponStatus = (typeof COUPON_STATUSES)[number];
 
@@ -167,7 +186,7 @@ export type CouponRedemptionsQueryInput = z.infer<typeof CouponRedemptionsQueryS
  * operator/04-plan-management.md §4.1 「新クーポン適用フロー」準拠。
  */
 export const CouponApplySchema = z.object({
-  subscription_target: z.enum(['personal', 'org']),
+  subscription_target: z.enum(COUPON_SUBSCRIPTION_TARGETS),
   subscription_id: z.string().uuid(),
   reason: z.string().min(1).max(1000).optional(),
 });

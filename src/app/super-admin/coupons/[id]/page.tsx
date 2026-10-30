@@ -21,7 +21,11 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { couponValidityDay, couponValidUntilPatchValue } from '@/lib/super-admin/coupon-validity';
 import { isStatusChangeConflict, operationFailureMessage } from '@/lib/admin/api-error-message';
-import { COUPON_INVALID_TRANSITION_ERROR_CODE, couponApplicableToLabel } from '@/lib/super-admin/coupons-schemas';
+import {
+  COUPON_INVALID_TRANSITION_ERROR_CODE,
+  couponApplicableToLabel,
+  couponSubscriptionTargetLabel,
+} from '@/lib/super-admin/coupons-schemas';
 import {
   NO_RESPONSE_STATE_RELOADED_GUIDE,
   NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
@@ -674,7 +678,7 @@ export default function CouponDetailPage() {
                     {new Date(r.redeemed_at).toLocaleDateString('ja-JP')}
                   </td>
                   <td className="px-4 py-3 text-slate-600 text-xs">
-                    {r.subscription_target} / {r.user_id ? r.user_id.slice(0, 8) : r.organization_id?.slice(0, 8)}...
+                    {couponSubscriptionTargetLabel(r.subscription_target)} / {r.user_id ? r.user_id.slice(0, 8) : r.organization_id?.slice(0, 8)}...
                   </td>
                   <td className="px-4 py-3 text-right font-medium text-slate-800">
                     ¥{r.discount_amount_jpy.toLocaleString()}

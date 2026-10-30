@@ -7,6 +7,8 @@
  *  - Z3-2 (同じ型): 問い合わせの詳細の優先度・カテゴリ (一覧では日本語)・一覧のカテゴリ、サポートの利用者の画面の問い合わせの状態、
  *    リードの流入経路、利用者の詳細の契約の状態・監査ログの重要度、監査ログの画面とバックアップの画面の重要度、フラグの公開の範囲の種類、
  *    クーポンの適用対象、利用者の一覧・詳細・NPS のプラン (plan_key。空は free) が英字の内部の値のままだった。
+ *  - 同じ型の取りこぼし (R1 のレビュー): 請求書の詳細の処理の状態の札 (completed など)、利用者の詳細の「手動のプラン付与」の今のプラン・履歴・
+ *    付与と取り消しの成功の文 (plan_key)、クーポン詳細の適用履歴の「対象」(personal / org) も英字の内部の値のままだった。
  *
  * 直したあと: 値の一覧と同じ場所の表 (Record<値, string>) の表示名で出す。表に無い値はそのまま出す (知らない値を隠さない)。
  * assert は画面に出た文字 (葉の要素の文字・選択肢の文字) を見る。
@@ -78,7 +80,11 @@ const { ADMIN_PLAN_KEY_LABELS } = await import('@/lib/admin/plan-key-labels');
 const { ADMIN_SUBSCRIPTION_STATUS_LABELS } = await import('@/lib/admin/subscription-status-labels');
 const { ADMIN_AUDIT_SEVERITIES, ADMIN_AUDIT_SEVERITY_LABELS } = await import('@/lib/admin/audit-severity-labels');
 const { ROLLOUT_STRATEGY_TYPE_LABELS } = await import('@/lib/super-admin/flags-schemas');
-const { COUPON_APPLICABLE_TO_LABELS } = await import('@/lib/super-admin/coupons-schemas');
+const { COUPON_APPLICABLE_TO_LABELS, COUPON_SUBSCRIPTION_TARGETS, COUPON_SUBSCRIPTION_TARGET_LABELS } = await import(
+  '@/lib/super-admin/coupons-schemas'
+);
+const { INVOICE_PROCESSING_STATUSES } = await import('@/lib/admin/finance-schemas');
+const { INVOICE_PROCESSING_STATUS_LABELS } = await import('@/lib/admin/invoice-processing-status-labels');
 const { default: AdminUsersPage } = await import('@/app/admin/users/page');
 const { default: AdminUserDetailPage } = await import('@/app/admin/users/[id]/page');
 
@@ -594,6 +600,235 @@ describe('#2112 Z3-2 クーポンの一覧・詳細の適用対象', () => {
     expect(text).toContain(`適用対象: ${COUPON_APPLICABLE_TO_LABELS.family}`);
     expect(text).toContain('適用対象: 家族');
     expect(text).not.toContain('適用対象: family');
+  });
+
+  it('詳細の適用履歴: 「対象」の列は表示名 (個人 / 組織。以前は personal / org のまま)', async () => {
+    nav.params = { id: ROW_ID };
+    const redemption = (n: number, target: string) => ({
+      id: `r-${n}`,
+      coupon_id: ROW_ID,
+      user_id: target === 'org' ? null : OTHER_ID,
+      organization_id: target === 'org' ? OTHER_ID : null,
+      subscription_target: target,
+      discount_amount_jpy: 100,
+      redeemed_at: '2026-10-10T03:00:00.000Z',
+      ended_at: null,
+    });
+    const rows = [...COUPON_SUBSCRIPTION_TARGETS, UNKNOWN_VALUE].map((target, i) => redemption(i + 1, target));
+    routeFetch({
+      [`/api/super-admin/coupons/${ROW_ID}`]: () => fetchJson({ data: coupon('all') }),
+      [`/api/super-admin/coupons/${ROW_ID}/redemptions`]: () =>
+        fetchJson({ data: rows, meta: { total: rows.length, page: 1, per_page: rows.length } }),
+    });
+    const { default: CouponDetailPage } = await import('@/app/super-admin/coupons/[id]/page');
+    await renderClient(createElement(CouponDetailPage as ComponentType));
+    const tab = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('適用履歴'));
+    if (!tab) throw new Error('適用履歴のタブがありません');
+    await act(async () => {
+      tab.click();
+    });
+    await flush();
+    const targets = Array.from(container.querySelectorAll('tbody tr')).map(
+      (tr) => tr.querySelectorAll('td')[1]?.textContent?.split(' / ')[0] ?? '',
+    );
+    expect(targets).toEqual([COUPON_SUBSCRIPTION_TARGET_LABELS.personal, COUPON_SUBSCRIPTION_TARGET_LABELS.org, UNKNOWN_VALUE]);
+    expect(targets).toEqual(['個人', '組織', UNKNOWN_VALUE]);
+    for (const raw of COUPON_SUBSCRIPTION_TARGETS) expect(targets).not.toContain(raw);
+  });
+});
+
+// ─── 請求書の詳細 (/admin/finance/invoices/{id}) ───────────────────────────────
+
+describe('#2112 Z3-2 請求書の詳細 (/admin/finance/invoices/{id}) の処理の状態の札', () => {
+  function invoiceOf(processingStatus: string) {
+    return {
+      id: ROW_ID,
+      stripe_event_id: 'evt_2112',
+      event_type: 'invoice.paid',
+      processing_status: processingStatus,
+      user_id: null,
+      stripe_customer_id: null,
+      stripe_subscription_id: null,
+      stripe_invoice_id: null,
+      amount_paid: null,
+      amount_due: null,
+      currency: 'jpy',
+      invoice_number: 'HG-2112',
+      invoice_pdf: null,
+      period_start: null,
+      period_end: null,
+      stripe_links: { customer: null, subscription: null, invoice: null },
+      received_at: '2026-10-01T00:00:00Z',
+      processed_at: null,
+      error_message: null,
+    };
+  }
+
+  async function renderInvoice(processingStatus: string) {
+    nav.params = { id: ROW_ID };
+    routeFetch({ [`/api/admin/finance/invoices/${ROW_ID}`]: () => fetchJson({ data: invoiceOf(processingStatus) }) });
+    const { default: InvoiceDetailPage } = await import('@/app/admin/finance/invoices/[id]/page');
+    await renderClient(createElement(InvoiceDetailPage as ComponentType));
+    return leafTexts(container);
+  }
+
+  it.each(INVOICE_PROCESSING_STATUSES.map((status) => [status]))('%s は表示名の札で出す (英字の内部の値を出さない)', async (status) => {
+    const texts = await renderInvoice(status);
+    expect(texts).toContain('請求書詳細');
+    expect(texts).toContain(INVOICE_PROCESSING_STATUS_LABELS[status]);
+    for (const raw of INVOICE_PROCESSING_STATUSES) expect(texts).not.toContain(raw);
+  });
+
+  it.each([
+    ['completed', '処理済み'],
+    ['failed', '失敗'],
+    [UNKNOWN_VALUE, UNKNOWN_VALUE],
+  ])('%s の札は「%s」(表に無い値はそのまま出す)', async (status, label) => {
+    expect(await renderInvoice(status)).toContain(label);
+  });
+});
+
+// ─── 利用者の詳細の「手動のプラン付与」(src/components/admin/ManualPlanGrantSection.tsx) ──
+
+describe('#2112 Z3-2 利用者の詳細の「手動のプラン付与」のプラン (今の契約・履歴・付与と取り消しの文)', () => {
+  const MANUAL_PLAN_PATH = `/api/super-admin/users/${ROW_ID}/manual-plan`;
+  const SUBSCRIPTION_ID = '00000000-0000-4000-8000-000000002112';
+  const GRANTED_PLAN_KEY = 'family_pro';
+  const GRANTED_PLAN_LABEL = '家族 Pro';
+  const PLANS = [{ plan_key: GRANTED_PLAN_KEY, display_name: GRANTED_PLAN_LABEL, plan_type: 'family', max_members: null }];
+  const manualCurrent = {
+    subscription_id: SUBSCRIPTION_ID,
+    plan_key: GRANTED_PLAN_KEY,
+    status: 'active',
+    source: 'manual',
+    starts_at: '2026-10-29T00:00:00.000Z',
+    expires_at: null,
+  };
+  const history = [
+    {
+      id: '00000000-0000-4000-8000-000000002113',
+      action_type: 'admin.billing.manual_grant',
+      actor_id: superAdminActor.id,
+      created_at: '2026-10-29T00:00:00.000Z',
+      plan_key: GRANTED_PLAN_KEY,
+      expires_at: null,
+      reason: '検証のため',
+    },
+    {
+      id: '00000000-0000-4000-8000-000000002114',
+      action_type: 'system.billing.manual_grant_expired',
+      actor_id: null,
+      created_at: '2026-10-28T00:00:00.000Z',
+      plan_key: null,
+      expires_at: null,
+      reason: null,
+    },
+  ];
+
+  /** method ごとに応答を順に返す fetch の偽物 (知らない呼び出しはテストの誤りとして投げる) */
+  function manualPlanFetch(responses: Record<'GET' | 'POST' | 'DELETE', unknown[]>) {
+    const queues = { GET: [...responses.GET], POST: [...responses.POST], DELETE: [...responses.DELETE] };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown, init?: RequestInit) => {
+        const url = new URL(String(input), 'http://localhost');
+        const method = (init?.method ?? 'GET') as keyof typeof queues;
+        const body = url.pathname === MANUAL_PLAN_PATH ? queues[method]?.shift() : undefined;
+        if (body === undefined) throw new Error(`想定外の呼び出し: ${method} ${url.pathname}`);
+        return fetchJson(body);
+      }),
+    );
+  }
+
+  async function renderSection() {
+    const { ManualPlanGrantSection } = await import('@/components/admin/ManualPlanGrantSection');
+    await renderClient(createElement(ManualPlanGrantSection, { userId: ROW_ID }));
+    const section = container.querySelector('[data-testid="manual-plan-grant"]');
+    if (!section) throw new Error('手動のプラン付与の節がありません');
+    return section;
+  }
+
+  async function setValue(selector: string, value: string) {
+    const field = container.querySelector<HTMLSelectElement | HTMLTextAreaElement>(selector);
+    if (!field) throw new Error(`${selector} がありません`);
+    await act(async () => {
+      const proto = field instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLTextAreaElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, 'value')?.set?.call(field, value);
+      field.dispatchEvent(new Event(field instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }));
+    });
+  }
+
+  async function submit(testId: string) {
+    const button = container.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`);
+    if (!button?.form) throw new Error(`${testId} のフォームがありません`);
+    await act(async () => {
+      button.form?.requestSubmit(button);
+    });
+    await flush();
+  }
+
+  const resultText = () => container.querySelector('[data-testid="manual-plan-grant-result"]')?.textContent ?? '';
+
+  beforeEach(() => {
+    vi.stubGlobal('confirm', vi.fn(() => true));
+  });
+
+  it('今の契約のプランと履歴のプランは表示名 (以前は family_pro のまま)。履歴の plan_key が無い行は「-」', async () => {
+    manualPlanFetch({ GET: [{ data: { current: manualCurrent, plans: PLANS, history } }], POST: [], DELETE: [] });
+    const section = await renderSection();
+    const current = section.querySelector('[data-testid="manual-plan-grant-current"]');
+    if (!current) throw new Error('今の契約の欄がありません');
+    expect(leafTexts(current)).toContain(ADMIN_PLAN_KEY_LABELS.family_pro);
+    expect(leafTexts(current)).toContain(GRANTED_PLAN_LABEL);
+    const historyBox = section.querySelector('[data-testid="manual-plan-grant-history"]');
+    if (!historyBox) throw new Error('履歴がありません');
+    expect(leafTexts(historyBox)).toContain(GRANTED_PLAN_LABEL);
+    expect(leafTexts(historyBox)).toContain('-');
+    expect(leafTexts(section)).not.toContain(GRANTED_PLAN_KEY);
+  });
+
+  it('付与の成功の文は「家族 Pro を付与しました」(以前は「family_pro を付与しました」)', async () => {
+    manualPlanFetch({
+      GET: [
+        { data: { current: null, plans: PLANS, history: [] } },
+        { data: { current: manualCurrent, plans: PLANS, history: [] } },
+      ],
+      POST: [
+        { data: { subscription_id: SUBSCRIPTION_ID, user_id: ROW_ID, plan_key: GRANTED_PLAN_KEY, status: 'active', expires_at: null } },
+      ],
+      DELETE: [],
+    });
+    await renderSection();
+    await setValue('[data-testid="manual-plan-grant-plan"]', GRANTED_PLAN_KEY);
+    await setValue('[data-testid="manual-plan-grant-reason"]', '検証のため');
+    await submit('manual-plan-grant-submit');
+    expect(resultText().startsWith(`${GRANTED_PLAN_LABEL} を付与しました`)).toBe(true);
+    expect(resultText()).not.toContain(GRANTED_PLAN_KEY);
+  });
+
+  it('取り消しの成功の文は「家族 Pro の付与を取り消しました」(以前は「family_pro の付与を取り消しました」)', async () => {
+    manualPlanFetch({
+      GET: [
+        { data: { current: manualCurrent, plans: PLANS, history: [] } },
+        { data: { current: null, plans: PLANS, history: [] } },
+      ],
+      POST: [],
+      DELETE: [
+        {
+          data: {
+            subscription_id: SUBSCRIPTION_ID,
+            user_id: ROW_ID,
+            plan_key: GRANTED_PLAN_KEY,
+            status_from: 'active',
+            status_to: 'cancelled',
+          },
+        },
+      ],
+    });
+    await renderSection();
+    await setValue('[data-testid="manual-plan-revoke-reason"]', '検証の終了');
+    await submit('manual-plan-revoke-submit');
+    expect(resultText()).toBe(`${GRANTED_PLAN_LABEL} の付与を取り消しました`);
   });
 });
 
