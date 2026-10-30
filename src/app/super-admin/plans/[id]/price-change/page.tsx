@@ -464,7 +464,13 @@ export default function PriceChangePage() {
                 <input
                   type="number"
                   value={newYearlyPrice}
-                  onChange={(e) => setNewYearlyPrice(e.target.value)}
+                  onChange={(e) => {
+                    setNewYearlyPrice(e.target.value);
+                    // #2128 V4: 年額も月額 (#1212) と同じく、入力を変えたら古いシミュレーション結果は無効 (再シミュレーションを必須にする)
+                    setImpact(null);
+                  }}
+                  // #2128 V4: 年額もシミュレーション中は固定する (月額と同じ扱い。#1212)
+                  disabled={isSimulating}
                   min="0"
                   className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
                 />

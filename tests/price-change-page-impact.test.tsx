@@ -7,7 +7,7 @@
  *   - 適用範囲の選択欄 (select) は無い。「新規契約のみ」を固定の説明として表示する
  *   - 影響シミュレーションの結果は常に「既存契約への影響なし」。影響契約数・MRR 変化・未実装 (#1102) の注記は出さない
  *   - 価格変更 API へは、変えた方の金額だけを送る (月額・年額を両方変えたら両方を 1 回のリクエストで送る)。applies_to は new_only
- * また、入力 (新月額) を変えたら古いシミュレーション結果を捨てて再実行を必須にする (#1212)。
+ * また、入力 (新月額) を変えたら古いシミュレーション結果を捨てて再実行を必須にする (#1212)。新年額も同じ (#2128 V4)。
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
@@ -369,5 +369,71 @@ describe('価格変更画面: 入力を変えたら古いシミュレーショ�
     // 応答後は再び変更でき、結果が表示される
     expect(monthlyInput.disabled).toBe(false);
     expect(text()).toContain('既存契約への影響なし');
+  });
+});
+
+describe('価格変更画面: 年額も月額と同じく、入力を変えたら古いシミュレーション結果を捨てる (#2128 V4)', () => {
+  it('シミュレーションのあと新しい年額を変えると結果と「確認ステップへ」が消え、再シミュレーションすると変えた年額で確認ステップへ進む', async () => {
+    await simulateMonthly();
+    expect(text()).toContain('影響シミュレーション結果');
+    expect(findButton('確認ステップへ')).toBeDefined();
+
+    await setYearlyPrice(NEW_YEARLY_PRICE);
+
+    expect(numberInput(1).value).toBe(NEW_YEARLY_PRICE);
+    expect(text()).not.toContain('影響シミュレーション結果');
+    expect(text()).not.toContain('既存契約への影響なし');
+    expect(findButton('確認ステップへ')).toBeUndefined();
+
+    // 再シミュレーションすると、また結果が出て、確認ステップには変えた年額が出る
+    await click(findButton('影響をシミュレーション'));
+    expect(text()).toContain('既存契約への影響なし');
+    await click(findButton('確認ステップへ'));
+    expect(text()).toContain('旧月額 → 新月額:¥1,500 → ¥1,600');
+    expect(text()).toContain('旧年額 → 新年額:¥15,000 → ¥16,000');
+  });
+
+  it('年額だけ変えてシミュレーションしたあと、年額をさらに変えても結果が消える', async () => {
+    await setYearlyPrice(NEW_YEARLY_PRICE);
+    await click(findButton('影響をシミュレーション'));
+    expect(findButton('確認ステップへ')).toBeDefined();
+
+    await setYearlyPrice('17000');
+
+    expect(numberInput(1).value).toBe('17000');
+    expect(text()).not.toContain('影響シミュレーション結果');
+    expect(findButton('確認ステップへ')).toBeUndefined();
+  });
+
+  it('シミュレーション中は新しい年額も固定し、応答のあとは再び変更できる', async () => {
+    // price-impact だけ、テスト側が好きなタイミングで応答できるようにする
+    let respondImpact!: (response: unknown) => void;
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('/price-impact')) {
+        return new Promise((resolve) => {
+          respondImpact = resolve;
+        });
+      }
+      return jsonResponse({ data: PLAN });
+    });
+    const yearlyInput = numberInput(1);
+
+    await setYearlyPrice(NEW_YEARLY_PRICE);
+    expect(yearlyInput.disabled).toBe(false);
+    await click(findButton('影響をシミュレーション'));
+
+    // 応答待ちの間は変更できない
+    expect(text()).toContain('シミュレーション中...');
+    expect(yearlyInput.disabled).toBe(true);
+
+    await act(async () => {
+      respondImpact(jsonResponse(impactResponse()));
+    });
+
+    // 応答後は再び変更でき、結果が表示される
+    expect(yearlyInput.disabled).toBe(false);
+    expect(yearlyInput.value).toBe(NEW_YEARLY_PRICE);
+    expect(text()).toContain('既存契約への影響なし');
+    expect(findButton('確認ステップへ')).toBeDefined();
   });
 });
