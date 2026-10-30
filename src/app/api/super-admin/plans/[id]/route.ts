@@ -19,6 +19,13 @@
  * guard_plan_deprecate_subscribers がプランの行を FOR UPDATE でロックし直し、commit 前の契約者が増える書き込み (契約の作成・live への
  * 切り替え・プランの付け替え。どれもトリガー trg_subscriber_plan_key_share でプランの行に FOR KEY SHARE を取る) を待ってから数え直す (#1917)。
  * 数えてから書くまでの間に契約が入ったときは、トリガーが OP_PLAN_HAS_SUBSCRIBERS で止め、route は数え上げと同じ 409 を返す。
+ *
+ * Stripe の商品の ID (stripe_product_id。#2112 Z1-1): 公開中・非公開のプランでも、月額・年額のどちらの Stripe の Price もまだ無い
+ * あいだだけ変えられる (isStripeProductIdEditable。販売開始の手順で、公開中のプランに商品の ID を入れるため。以前は公開中・非公開では
+ * いつも 422 OP_PLAN_STATUS_LOCKED で、手順 (docs/design/billing/01-billing-core.md §17.3 の 1.) の PATCH が通らなかった)。
+ * Price を作ったあとは 422 OP_PLAN_STATUS_LOCKED (STRIPE_PRODUCT_ID_LOCKED_MESSAGE)。読んでから書くまでに別の運営が価格の変更で
+ * Price を作っていたら書かないよう、公開中・非公開で商品の ID を送ったときは、両方の Price ID が NULL のままであることも書く条件にする
+ * (0 行なら、ほかの条件と同じく読み直して 200 か 409 CONFLICT_STALE_DATA)。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -29,7 +36,9 @@ import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import {
   PlanUpdateSchema,
+  STRIPE_PRODUCT_ID_LOCKED_MESSAGE,
   isAllowedPlanStatusTransition,
+  isStripeProductIdEditable,
   planStatusLockedFieldsMessage,
   planStatusTransitionMessage,
 } from '@/lib/super-admin/plans-schemas';
@@ -289,16 +298,20 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
         'ends_at',
         // 書く値でなく、書く条件 (画面が見ていた status。上で DB の status と同じことを確かめた。#2064)
         'expected_status',
+        // Stripe の商品の ID は、Stripe の Price をまだ作っていないあいだだけ (販売開始の手順。#2112 Z1-1)
+        ...(isStripeProductIdEditable(existing) ? ['stripe_product_id'] : []),
       ];
       const inputKeys = Object.keys(input).filter((k) => input[k as keyof typeof input] !== undefined);
       const disallowedKeys = inputKeys.filter((k) => !allowedKeys.includes(k));
       if (disallowedKeys.length > 0) {
+        // Price を作ったあとの商品の ID だけを断るときは、その理由を言う (#2112 Z1-1)。ほかの項目もあれば項目の一覧の文
+        const onlyStripeProductId = disallowedKeys.length === 1 && disallowedKeys[0] === 'stripe_product_id';
         return NextResponse.json(
           {
             error: {
               code: 'OP_PLAN_STATUS_LOCKED',
               // 項目名は「画面の名前 (項目名)」の形で括弧に入れる (#1917 の続き)
-              message: planStatusLockedFieldsMessage(disallowedKeys),
+              message: onlyStripeProductId ? STRIPE_PRODUCT_ID_LOCKED_MESSAGE : planStatusLockedFieldsMessage(disallowedKeys),
             },
           },
           { status: 422 }
@@ -348,6 +361,11 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
     if (statusChanged && input.status === 'deprecated' && input.ends_at === undefined) {
       // 廃止の ends_at を既存の値に頼った (本文に ends_at が無い): 読んでから書くまでに消されていたら書かない
       updateQuery = updateQuery.not('ends_at', 'is', null);
+    }
+    if (input.stripe_product_id !== undefined && existing.status !== 'draft') {
+      // 公開中・非公開の商品の ID は、Stripe の Price がまだ無いことを確かめて許した (#2112 Z1-1): 読んでから書くまでに
+      // 別の運営が価格の変更で Price を作っていたら書かない (Price の紐づく商品を、作ったあとで変えない)
+      updateQuery = updateQuery.is('stripe_price_id', null).is('stripe_yearly_price_id', null);
     }
     const { data: updated, error: updateErr } = await updateQuery.select().maybeSingle();
 
