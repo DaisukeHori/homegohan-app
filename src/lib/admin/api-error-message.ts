@@ -97,18 +97,23 @@ export async function forbiddenMessageOfResponse(res: Response, fallback: string
   return forbiddenMessageForScreen(body, fallback);
 }
 
+/** 401 (Unauthorized。ログインが切れた) の HTTP ステータス */
+const HTTP_UNAUTHORIZED_STATUS = 401;
+
 /** 403 (Forbidden) の HTTP ステータス */
 const HTTP_FORBIDDEN_STATUS = 403;
 
 /**
  * 運営の画面の操作 (状態の変更・メモの追加など) が失敗の応答で断られたときに、画面に出す文。
  * 「<操作の名前>（<理由>）」の形にする。理由は次の順に決める。
+ *   - 401: 「ログインし直してください」(UNAUTHENTICATED_SCREEN_MESSAGE。本文の「認証が必要です」は出さない。#2112 Z4)
  *   - 403: forbiddenMessageForScreen (理由の文 (二段階認証の確認・登録が要る・凍結) はそのまま、それ以外は「権限がありません」)
  *   - 本文の文 (extractApiErrorMessage。{ error: '…' } と { error: { message } } のどちらでも)
  *   - 本文が読めない (JSON でない・形が違う): HTTP ステータス
  * 失敗の応答を黙って捨てないために使う (運営は操作が効いたか分からなくなるため)
  */
 export function operationFailureMessage(summary: string, status: number, body: unknown): string {
+  if (status === HTTP_UNAUTHORIZED_STATUS) return `${summary}（${UNAUTHENTICATED_SCREEN_MESSAGE}）`;
   if (status === HTTP_FORBIDDEN_STATUS) return `${summary}（${forbiddenMessageForScreen(body)}）`;
   const message = extractApiErrorMessage(body);
   return `${summary}（${message ?? `HTTP ${status}`}）`;

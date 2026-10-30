@@ -33,6 +33,7 @@ import {
   displayableAdminError,
   readFailureBody,
   screenApiErrorMessage,
+  screenFailureMessage,
 } from "@/lib/admin/admin-screen-messages";
 import { rereadUnavailableMessage } from "@/lib/super-admin/detail-reread";
 import {
@@ -362,7 +363,7 @@ export default function LLMQuotasPage() {
           await load({ keepDrafts: true });
           return;
         }
-        throw new AdminScreenError(screenApiErrorMessage(body) ?? adminActionHttpFailedMessage(SAVE_ACTION, res.status));
+        throw new AdminScreenError(screenFailureMessage(res.status, body) ?? adminActionHttpFailedMessage(SAVE_ACTION, res.status));
       }
       updateRowMessages((prev) => ({ ...prev, [planKey]: { ok: true, text: `保存しました（${limitLabel(dailyLimit)}）` } }));
       await load();

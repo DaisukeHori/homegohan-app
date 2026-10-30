@@ -6,7 +6,12 @@
  * 権限: sales, admin, super_admin
  */
 import { useState, useEffect, useCallback, useRef, use } from 'react';
-import { forbiddenMessageForScreen, forbiddenMessageOfResponse, isStaleDataConflict } from '@/lib/admin/api-error-message';
+import {
+  UNAUTHENTICATED_SCREEN_MESSAGE,
+  forbiddenMessageForScreen,
+  forbiddenMessageOfResponse,
+  isStaleDataConflict,
+} from '@/lib/admin/api-error-message';
 import {
   AdminActionNoResponseError,
   AdminScreenError,
@@ -39,6 +44,7 @@ const STALE_STAGE_RELOAD_FAILED_MESSAGE =
   '別の担当者が先にこのリードのステージを変えていました。最新の内容を読み込み直せなかったので、画面を読み込み直してから、もう一度変更してください';
 
 /** 403 (Forbidden) の HTTP ステータス */
+const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
 /** ステージの変更の失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917) */
 const STAGE_CHANGE_FAILURE_MESSAGE = 'ステージ変更失敗';
@@ -209,7 +215,7 @@ export default function LeadDetailPage(props: PageProps) {
     try {
       const res = await fetch(`/api/admin/sales/leads/${params.id}`);
       // ログインのあとに、このリードへ戻れるよう next を付ける (#2101 X2。#2093 W4 と同じ)
-      if (res.status === 401) { router.push(loginPathWithNext(leadDetailPath(params.id))); return { outcome: 'unauthorized' }; }
+      if (res.status === HTTP_UNAUTHORIZED) { router.push(loginPathWithNext(leadDetailPath(params.id))); return { outcome: 'unauthorized' }; }
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
       if (res.status === HTTP_FORBIDDEN) { setError(await forbiddenMessageOfResponse(res)); return { outcome: 'forbidden' }; }
       if (res.status === 404) {
@@ -377,6 +383,8 @@ export default function LeadDetailPage(props: PageProps) {
           if (message !== null) setError(message);
           return;
         }
+        // 401 は「ステージ変更失敗」ではなく、運営の画面で揃えた「ログインし直してください」(#2112 Z4)
+        if (res.status === HTTP_UNAUTHORIZED) throw new AdminScreenError(UNAUTHENTICATED_SCREEN_MESSAGE);
         // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 と失敗は「ステージ変更失敗」(#1917)
         if (res.status === HTTP_FORBIDDEN) throw new AdminScreenError(forbiddenMessageForScreen(body, STAGE_CHANGE_FAILURE_MESSAGE));
         throw new AdminScreenError(STAGE_CHANGE_FAILURE_MESSAGE);

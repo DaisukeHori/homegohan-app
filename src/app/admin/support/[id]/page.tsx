@@ -10,7 +10,7 @@ import { useState, useEffect, useCallback, useRef, use } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { loginPathWithNext } from '@/lib/auth/signed-in-user';
-import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
+import { UNAUTHENTICATED_SCREEN_MESSAGE, forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
 import {
   AdminActionNoResponseError,
   AdminScreenError,
@@ -56,6 +56,7 @@ interface Ticket {
 }
 
 /** 403 (Forbidden) の HTTP ステータス */
+const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
 /** 担当者の割り当ての失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917) */
 const ASSIGN_FAILURE_MESSAGE = '割り当て失敗';
@@ -162,7 +163,7 @@ export default function TicketDetailPage(props: PageProps) {
     setError(null);
     try {
       const res = await fetch(`/api/admin/support/tickets/${params.id}`);
-      if (res.status === 401) { router.push(loginPathWithNext(pathname)); return; }
+      if (res.status === HTTP_UNAUTHORIZED) { router.push(loginPathWithNext(pathname)); return; }
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
       if (res.status === HTTP_FORBIDDEN) { setError(await forbiddenMessageOfResponse(res)); return; }
       if (res.status === 404) { setError('チケットが見つかりません'); return; }
@@ -313,6 +314,8 @@ export default function TicketDetailPage(props: PageProps) {
         // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
         throw new AdminScreenError(adminActionNoResponseMessage(ASSIGN_ACTION));
       }
+      // 401 は「割り当て失敗」ではなく、運営の画面で揃えた「ログインし直してください」(#2112 Z4)
+      if (res.status === HTTP_UNAUTHORIZED) throw new AdminScreenError(UNAUTHENTICATED_SCREEN_MESSAGE);
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 と失敗は「割り当て失敗」(#1917)
       if (res.status === HTTP_FORBIDDEN) throw new AdminScreenError(await forbiddenMessageOfResponse(res, ASSIGN_FAILURE_MESSAGE));
       if (!res.ok) throw new AdminScreenError(ASSIGN_FAILURE_MESSAGE);
@@ -341,6 +344,8 @@ export default function TicketDetailPage(props: PageProps) {
         // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
         throw new AdminScreenError(adminActionNoResponseMessage(STATUS_CHANGE_ACTION));
       }
+      // 401 は「ステータス変更失敗」ではなく、運営の画面で揃えた「ログインし直してください」(#2112 Z4)
+      if (res.status === HTTP_UNAUTHORIZED) throw new AdminScreenError(UNAUTHENTICATED_SCREEN_MESSAGE);
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 と失敗は「ステータス変更失敗」(#1917)
       if (res.status === HTTP_FORBIDDEN) throw new AdminScreenError(await forbiddenMessageOfResponse(res, STATUS_CHANGE_FAILURE_MESSAGE));
       if (!res.ok) throw new AdminScreenError(STATUS_CHANGE_FAILURE_MESSAGE);

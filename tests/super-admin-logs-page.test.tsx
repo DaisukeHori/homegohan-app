@@ -534,7 +534,8 @@ describe('運用ログ画面: 失敗', () => {
     await click(button('再読み込み'));
 
     const alert = container.querySelector('[role="alert"]')?.textContent ?? '';
-    expect(alert).toContain('ログインし直してください');
+    // 運営の画面で揃えた 401 の文 (#2112 Z4)
+    expect(alert).toBe('ログインし直してください');
     expect(alert).not.toContain('AUTH_UNAUTHENTICATED');
   });
 

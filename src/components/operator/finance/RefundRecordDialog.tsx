@@ -12,6 +12,7 @@
 
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import { BottomSheet } from '@/components/common/BottomSheet';
+import { UNAUTHENTICATED_SCREEN_MESSAGE } from '@/lib/admin/api-error-message';
 import {
   REFUND_AMOUNT_MAX,
   REFUND_REASON_MAX_LENGTH,
@@ -35,6 +36,8 @@ export type RefundRecordDialogProps = {
 };
 
 const STRIPE_DASHBOARD_PREFIX = 'https://dashboard.stripe.com/';
+/** 401 (Unauthorized。ログインが切れた) の HTTP ステータス */
+const HTTP_UNAUTHORIZED = 401;
 
 export default function RefundRecordDialog({
   isOpen,
@@ -121,7 +124,12 @@ export default function RefundRecordDialog({
       } | null;
 
       if (!res.ok) {
-        setError(json?.error?.message ?? '監査ログに記録できませんでした。返金はまだ行わず、もう一度お試しください');
+        // 401 は本文の文 (「認証が必要です」) ではなく、運営の画面で揃えた「ログインし直してください」(#2112 Z4)
+        setError(
+          res.status === HTTP_UNAUTHORIZED
+            ? UNAUTHENTICATED_SCREEN_MESSAGE
+            : (json?.error?.message ?? '監査ログに記録できませんでした。返金はまだ行わず、もう一度お試しください'),
+        );
         return;
       }
 
