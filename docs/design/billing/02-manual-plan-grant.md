@@ -929,7 +929,7 @@ export const ManualPlanCurrentViewSchema = z.object({
   subscription_id: z.uuid(),
   plan_key: z.string(),
   status: z.enum(SUBSCRIPTION_STATUSES),
-  source: z.enum(['stripe', 'manual']),
+  source: z.enum(['stripe', 'manual', 'store']), // store = App Store・Google Play の契約 (billing/03 で足した)
   starts_at: z.string(),
   /** M 行の有効期限 (current_period_end。NULL = 期限なし)。S 行では次回の更新日 */
   expires_at: z.string().nullable(),
@@ -1074,7 +1074,7 @@ function toManualGrantRpcError(error: { code?: string; message?: string; details
 }
 
 const PLAN_COLUMNS = 'plan_key, display_name, plan_type, status, max_members';
-const SUBSCRIPTION_COLUMNS = 'id, plan_key, status, stripe_subscription_id, starts_at, current_period_end';
+const SUBSCRIPTION_COLUMNS = 'id, plan_key, status, stripe_subscription_id, iap_store, starts_at, current_period_end';
 const HISTORY_COLUMNS = 'id, action_type, actor_id, created_at, details';
 
 export interface ManualGrantRepository {
@@ -1135,7 +1135,7 @@ export function createManualGrantRepository(admin: Admin = getSupabaseAdmin()): 
         subscription_id: data.id,
         plan_key: data.plan_key,
         status: data.status,
-        source: data.stripe_subscription_id === null ? 'manual' : 'stripe',
+        source: data.stripe_subscription_id === null ? (data.iap_store === null ? 'manual' : 'store') : 'stripe', // store = ストアの契約 (billing/03 §8.6)
         starts_at: data.starts_at,
         expires_at: data.current_period_end,
       };
@@ -1602,7 +1602,7 @@ export async function DELETE(request: Request, props: Params): Promise<NextRespo
 - 自分自身の判定は 2 か所に置く: route (`POST` / `DELETE` の `selfModifyFailure`。§9.0 の 4。本文を読む前) と service (`grantManualPlan` / `revokeManualPlan` の先頭。二重の守り)。route の判定を消して service だけに任せると、自分の id に不正な本文を送ったときに 403 でなく 400 になる (テスト 16 が赤になる)。`GET` には置かない (読むだけ)。
 
 ### 8.6 `src/components/admin/ManualPlanGrantSection.tsx` (画面の節)
-下の全文は段 C (PR #1854) の時点の記録 (先頭のコメントだけは PR #2091 (#2086 V4) で 403 の理由の文の規則に追随) で、そのあとに足した分 (PR #1928 のストアの契約の文と `MANUAL_PLAN_SOURCE_LABELS` の `store`、#2080 U7〜U9 (PR #2082) の応答を受け取れなかったあとの読み直し・「再試行」・`MANUAL_PLAN_OPERATION_LABELS`・`RELOAD_UNAVAILABLE_STATUSES`) は無い。今の全文は実ファイル `src/components/admin/ManualPlanGrantSection.tsx`、画面の挙動は §10 が正。
+下の全文は段 C (PR #1854) の時点の記録 (先頭のコメントは PR #2091 (#2086 V4) で 403 の理由の文の規則に、`MANUAL_PLAN_SOURCE_LABELS` は §8.1 の `source` に合わせて PR #1928 の `store` まで追随) で、そのあとに足した分 (PR #1928 のストアの契約の文、#2080 U7〜U9 (PR #2082) の応答を受け取れなかったあとの読み直し・「再試行」・`MANUAL_PLAN_OPERATION_LABELS`・`RELOAD_UNAVAILABLE_STATUSES`) は無い。今の全文は実ファイル `src/components/admin/ManualPlanGrantSection.tsx`、画面の挙動は §10 が正。
 ```tsx
 // tsc:skip place=src/components/admin/ManualPlanGrantSection.tsx
 'use client';
@@ -1639,7 +1639,7 @@ export const MANUAL_GRANT_HISTORY_LABELS: Readonly<Record<ManualGrantHistoryEntr
   'system.billing.manual_grant_expired': '期限切れ',
 };
 /** 由来の表示 */
-export const MANUAL_PLAN_SOURCE_LABELS: Readonly<Record<'stripe' | 'manual', string>> = { stripe: 'Stripe', manual: '手動付与' };
+export const MANUAL_PLAN_SOURCE_LABELS: Readonly<Record<'stripe' | 'manual' | 'store', string>> = { stripe: 'Stripe', manual: '手動付与', store: 'ストア (アプリ内課金)' };
 /** 日時の表示 (JST)。期限は「その日の終わり」なので、翌日の 0 時を 1 日戻した日付で出さず、日時のまま出す */
 export const MANUAL_PLAN_DISPLAY_LOCALE = 'ja-JP';
 export const MANUAL_PLAN_DISPLAY_TIME_ZONE = 'Asia/Tokyo';
