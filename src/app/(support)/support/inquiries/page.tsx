@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { UNAUTHENTICATED_SCREEN_MESSAGE, isStaleDataConflict } from "@/lib/admin/api-error-message";
+import { INQUIRY_STATUS_LABELS } from "@/lib/admin/inquiry-labels";
 
 // 一覧の 1 件 (概要)。問い合わせ本文と管理者メモは、詳細 (GET /api/admin/inquiries/[id]) でだけ返る
 interface InquirySummary {
@@ -31,11 +32,12 @@ const TYPE_LABELS: Record<string, string> = {
   feature: "機能要望",
 };
 
+// 状態の表示名は src/lib/admin/inquiry-labels.ts の表から引く (サポートの利用者の画面の問い合わせの履歴と同じ語。#2112 Z3)
 const STATUS_OPTIONS = [
-  { value: "pending", label: "未対応", color: "bg-yellow-100 text-yellow-700" },
-  { value: "in_progress", label: "対応中", color: "bg-blue-100 text-blue-700" },
-  { value: "resolved", label: "解決済", color: "bg-green-100 text-green-700" },
-  { value: "closed", label: "完了", color: "bg-gray-100 text-gray-600" },
+  { value: "pending", label: INQUIRY_STATUS_LABELS.pending, color: "bg-yellow-100 text-yellow-700" },
+  { value: "in_progress", label: INQUIRY_STATUS_LABELS.in_progress, color: "bg-blue-100 text-blue-700" },
+  { value: "resolved", label: INQUIRY_STATUS_LABELS.resolved, color: "bg-green-100 text-green-700" },
+  { value: "closed", label: INQUIRY_STATUS_LABELS.closed, color: "bg-gray-100 text-gray-600" },
 ];
 
 // 一覧 API (GET /api/admin/inquiries) の 1 ページの件数

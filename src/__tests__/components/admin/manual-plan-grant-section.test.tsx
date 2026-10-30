@@ -7,6 +7,9 @@
  *
  * @/lib/billing/manual-grant-client の通信の 3 関数だけを vi.fn にし、manualGrantErrorMessage・定数は本物を使う。
  * tests/mfa-pages-browser.test.tsx の OperatorMfaResetSection の it と同じく react-dom/client + act。
+ *
+ * プラン (今の契約・履歴・成功の文) は plan_key ではなく運営の画面の表示名 (adminPlanKeyLabel。pro → 「個人 Pro」・family_pro → 「家族 Pro」)
+ * で出る (#2112 Z3)。公式の 9 種に無い plan_key (family_plus) は表示名が無いので plan_key のまま出る。
  */
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -20,6 +23,10 @@ import {
   type ManualPlanRevokeResult,
   type ManualPlanView,
 } from '@/lib/billing/manual-grant';
+
+/** pro・family_pro の運営の画面の表示名 (src/lib/admin/plan-key-labels.ts の ADMIN_PLAN_KEY_LABELS。#2112 Z3) */
+const PRO_LABEL = '個人 Pro';
+const FAMILY_PRO_LABEL = '家族 Pro';
 
 const mocks = vi.hoisted(() => ({
   fetchManualPlanView: vi.fn(),
@@ -226,7 +233,7 @@ describe('ManualPlanGrantSection (billing/02 §8.6・§10)', () => {
       resolveGrant(ok(granted));
     });
     await flush();
-    expect(byTestId('manual-plan-grant-result')?.textContent).toBe(`pro を付与しました (有効期限: ${NO_EXPIRY_DISPLAY})`);
+    expect(byTestId('manual-plan-grant-result')?.textContent).toBe(`${PRO_LABEL} を付与しました (有効期限: ${NO_EXPIRY_DISPLAY})`);
     expect(byTestId('manual-plan-grant-error')).toBeNull();
     expect(mocks.fetchManualPlanView).toHaveBeenCalledTimes(2);
     expect(byTestId('manual-plan-grant-current')).not.toBeNull();
@@ -263,7 +270,7 @@ describe('ManualPlanGrantSection (billing/02 §8.6・§10)', () => {
     // 現在の契約: プラン・由来「手動付与」・有効期限 (JST の日時。日付に丸めない)
     const current = byTestId('manual-plan-grant-current');
     expect(Array.from(current?.querySelectorAll('dt') ?? []).map((n) => n.textContent)).toEqual(['プラン', '由来', '有効期限']);
-    expect(Array.from(current?.querySelectorAll('dd') ?? []).map((n) => n.textContent)).toEqual(['pro', '手動付与', EXPIRES_AT_DISPLAY]);
+    expect(Array.from(current?.querySelectorAll('dd') ?? []).map((n) => n.textContent)).toEqual([PRO_LABEL, '手動付与', EXPIRES_AT_DISPLAY]);
     expect(MANUAL_PLAN_SOURCE_LABELS.manual).toBe('手動付与');
     // 付与のフォームは描かない・Stripe の注記も出さない
     expect(byTestId('manual-plan-grant-submit')).toBeNull();
@@ -293,7 +300,7 @@ describe('ManualPlanGrantSection (billing/02 §8.6・§10)', () => {
     await submitForm(submit());
     expect(mocks.revokeManualPlanRequest).toHaveBeenCalledTimes(1);
     expect(mocks.revokeManualPlanRequest).toHaveBeenCalledWith(TARGET_USER_ID, { reason: REASON });
-    expect(byTestId('manual-plan-grant-result')?.textContent).toBe('pro の付与を取り消しました');
+    expect(byTestId('manual-plan-grant-result')?.textContent).toBe(`${PRO_LABEL} の付与を取り消しました`);
     expect(mocks.fetchManualPlanView).toHaveBeenCalledTimes(2);
     expect(byTestId('manual-plan-grant-current')).toBeNull();
     expect(byTestId('manual-plan-grant-submit')).not.toBeNull();
@@ -320,7 +327,7 @@ describe('ManualPlanGrantSection (billing/02 §8.6・§10)', () => {
     await submitForm(byTestId<HTMLButtonElement>('manual-plan-grant-submit'));
     expect(mocks.fetchManualPlanView).toHaveBeenCalledTimes(3);
     expect(submit()).not.toBeNull();
-    expect(byTestId('manual-plan-grant-result')?.textContent).toBe(`pro を付与しました (有効期限: ${EXPIRES_AT_DISPLAY})`);
+    expect(byTestId('manual-plan-grant-result')?.textContent).toBe(`${PRO_LABEL} を付与しました (有効期限: ${EXPIRES_AT_DISPLAY})`);
     expect(byTestId('manual-plan-grant-error')).toBeNull();
 
     // 失敗は manualGrantErrorMessage(code) の文。応答の本文の文面は読まない (client は code だけを返す)。
@@ -376,7 +383,7 @@ describe('ManualPlanGrantSection (billing/02 §8.6・§10)', () => {
     });
     await flush();
     expect(byTestId('manual-plan-grant-error')).toBeNull();
-    expect(byTestId('manual-plan-grant-result')?.textContent).toBe('pro の付与を取り消しました');
+    expect(byTestId('manual-plan-grant-result')?.textContent).toBe(`${PRO_LABEL} の付与を取り消しました`);
     expect(mocks.fetchManualPlanView).toHaveBeenCalledTimes(4);
     expect(byTestId('manual-plan-grant-current')).toBeNull();
     expect(byTestId('manual-plan-revoke-submit')).toBeNull();
@@ -432,7 +439,7 @@ describe('ManualPlanGrantSection (billing/02 §8.6・§10)', () => {
     // Stripe の契約: 由来「Stripe」・「次回更新」・注記。フォームは 1 つも描かない
     const current = byTestId('manual-plan-grant-current');
     expect(Array.from(current?.querySelectorAll('dt') ?? []).map((n) => n.textContent)).toEqual(['プラン', '由来', '次回更新']);
-    expect(Array.from(current?.querySelectorAll('dd') ?? []).map((n) => n.textContent)).toEqual(['pro', 'Stripe', EXPIRES_AT_DISPLAY]);
+    expect(Array.from(current?.querySelectorAll('dd') ?? []).map((n) => n.textContent)).toEqual([PRO_LABEL, 'Stripe', EXPIRES_AT_DISPLAY]);
     expect(MANUAL_PLAN_SOURCE_LABELS.stripe).toBe('Stripe');
     expect(byTestId('manual-plan-grant-stripe-note')?.textContent).toBe(
       'Stripe の契約があるため、手動付与はできません (解約は利用者の操作か Stripe で行います)。',
@@ -453,7 +460,7 @@ describe('ManualPlanGrantSection (billing/02 §8.6・§10)', () => {
     });
     const text = (row: Element) => row.textContent ?? '';
     expect(text(rows[0])).toContain('期限切れ');
-    expect(text(rows[0])).toContain('pro');
+    expect(text(rows[0])).toContain(PRO_LABEL);
     expect(text(rows[0])).toContain(`期限: ${EXPIRES_AT_DISPLAY}`);
     expect(text(rows[0])).toContain('2026/10/11 0:00:00');
     expect(text(rows[1])).toContain('取り消し');
@@ -484,7 +491,7 @@ describe('ManualPlanGrantSection (billing/02 §8.6・§10)', () => {
 
     const current = byTestId('manual-plan-grant-current');
     expect(Array.from(current?.querySelectorAll('dt') ?? []).map((n) => n.textContent)).toEqual(['プラン', '由来', '次回更新']);
-    expect(Array.from(current?.querySelectorAll('dd') ?? []).map((n) => n.textContent)).toEqual(['family_pro', 'ストア (アプリ内課金)', EXPIRES_AT_DISPLAY]);
+    expect(Array.from(current?.querySelectorAll('dd') ?? []).map((n) => n.textContent)).toEqual([FAMILY_PRO_LABEL, 'ストア (アプリ内課金)', EXPIRES_AT_DISPLAY]);
     expect(MANUAL_PLAN_SOURCE_LABELS.store).toBe('ストア (アプリ内課金)');
     expect(byTestId('manual-plan-grant-store-note')?.textContent).toBe(
       'ストアの契約があります。手動付与はできません (解約は利用者が App Store・Google Play の定期購読の管理で行います)。',
@@ -600,7 +607,7 @@ describe('ManualPlanGrantSection (billing/02 §8.6・§10)', () => {
     mocks.revokeManualPlanRequest.mockResolvedValueOnce(ok(revoked));
     mocks.fetchManualPlanView.mockResolvedValueOnce(ok(viewOf()));
     await submitForm(byTestId<HTMLButtonElement>('manual-plan-revoke-submit'));
-    expect(byTestId('manual-plan-grant-result')?.textContent).toBe('pro の付与を取り消しました');
+    expect(byTestId('manual-plan-grant-result')?.textContent).toBe(`${PRO_LABEL} の付与を取り消しました`);
 
     const plan = () => byTestId<HTMLSelectElement>('manual-plan-grant-plan');
     const expiresOn = () => byTestId<HTMLInputElement>('manual-plan-grant-expires-on');
@@ -637,7 +644,7 @@ describe('ManualPlanGrantSection (billing/02 §8.6・§10)', () => {
     mocks.fetchManualPlanView.mockResolvedValueOnce(ok(afterGrant));
     await submitForm(submit());
     expect(byTestId('manual-plan-grant-error')).toBeNull();
-    expect(byTestId('manual-plan-grant-result')?.textContent).toBe(`pro を付与しました (有効期限: ${EXPIRES_AT_DISPLAY})`);
+    expect(byTestId('manual-plan-grant-result')?.textContent).toBe(`${PRO_LABEL} を付与しました (有効期限: ${EXPIRES_AT_DISPLAY})`);
   });
 
   it('ManualPlanGrantSection: a failed load shows manualGrantErrorMessage(code) and no form/current/history; a failed reload after a grant keeps the result and the next successful reload clears the load error', async () => {
@@ -689,7 +696,7 @@ describe('ManualPlanGrantSection (billing/02 §8.6・§10)', () => {
     await submitForm(byTestId<HTMLButtonElement>('manual-plan-grant-submit'));
     expect(mocks.fetchManualPlanView).toHaveBeenCalledTimes(2);
     expect(byTestId('manual-plan-grant-load-error')?.textContent).toBe('処理中にエラーが発生しました。しばらくしてからお試しください');
-    expect(byTestId('manual-plan-grant-result')?.textContent).toBe(`pro を付与しました (有効期限: ${NO_EXPIRY_DISPLAY})`);
+    expect(byTestId('manual-plan-grant-result')?.textContent).toBe(`${PRO_LABEL} を付与しました (有効期限: ${NO_EXPIRY_DISPLAY})`);
 
     // 読み直しに失敗した間は前の表示 (契約なし) のまま。もう一度送って読み直しが成功すると、読み込みの失敗の文は消える
     await setFieldValue(byTestId<HTMLSelectElement>('manual-plan-grant-plan'), 'pro');

@@ -1602,7 +1602,7 @@ export async function DELETE(request: Request, props: Params): Promise<NextRespo
 - 自分自身の判定は 2 か所に置く: route (`POST` / `DELETE` の `selfModifyFailure`。§9.0 の 4。本文を読む前) と service (`grantManualPlan` / `revokeManualPlan` の先頭。二重の守り)。route の判定を消して service だけに任せると、自分の id に不正な本文を送ったときに 403 でなく 400 になる (テスト 16 が赤になる)。`GET` には置かない (読むだけ)。
 
 ### 8.6 `src/components/admin/ManualPlanGrantSection.tsx` (画面の節)
-下の全文は段 C (PR #1854) の時点の記録 (先頭のコメントは PR #2091 (#2086 V4) で 403 の理由の文の規則に、`MANUAL_PLAN_SOURCE_LABELS` は §8.1 の `source` に合わせて PR #1928 の `store` まで追随) で、そのあとに足した分 (PR #1928 のストアの契約の文、#2080 U7〜U9 (PR #2082) の応答を受け取れなかったあとの読み直し・「再試行」・`MANUAL_PLAN_OPERATION_LABELS`・`RELOAD_UNAVAILABLE_STATUSES`) は無い。今の全文は実ファイル `src/components/admin/ManualPlanGrantSection.tsx`、画面の挙動は §10 が正。
+下の全文は段 C (PR #1854) の時点の記録 (先頭のコメントは PR #2091 (#2086 V4) で 403 の理由の文の規則に、`MANUAL_PLAN_SOURCE_LABELS` は §8.1 の `source` に合わせて PR #1928 の `store` まで追随) で、そのあとに足した分 (PR #1928 のストアの契約の文、#2080 U7〜U9 (PR #2082) の応答を受け取れなかったあとの読み直し・「再試行」・`MANUAL_PLAN_OPERATION_LABELS`・`RELOAD_UNAVAILABLE_STATUSES`、#2112 Z3 のプランの表示名 (`adminPlanKeyLabel`)) は無い。今の全文は実ファイル `src/components/admin/ManualPlanGrantSection.tsx`、画面の挙動は §10 が正。
 ```tsx
 // tsc:skip place=src/components/admin/ManualPlanGrantSection.tsx
 'use client';
@@ -1960,11 +1960,11 @@ const canGrantManualPlan = isSuperAdmin && actor.id !== profile.id;
 |---|---|
 | 実行者が super_admin でない (admin / support) | 節を描かない (API も 403) |
 | 実行者が super_admin で、対象が自分 | 節を描かない (API は 403 `OP_SELF_MODIFY`) |
-| `current === null` (契約なし) | 付与のフォーム: プランの選択 (`plans`。`display_name (plan_key)`)・有効期限 (`type="date"`。任意)・理由 (必須・500 文字まで)・[付与する] (プランと理由がそろうまで押せない) → 確認ダイアログ `GRANT_CONFIRM_MESSAGE` → `POST`。成功で「<plan_key> を付与しました (有効期限: …)」と読み直し |
-| `current.source === 'manual'` | 現在の契約 (プラン・由来「手動付与」・有効期限) と取り消しのフォーム: 理由 (必須)・[取り消す] → 確認ダイアログ `REVOKE_CONFIRM_MESSAGE` → `DELETE`。成功で「<plan_key> の付与を取り消しました」と読み直し |
+| `current === null` (契約なし) | 付与のフォーム: プランの選択 (`plans`。`display_name (plan_key)`)・有効期限 (`type="date"`。任意)・理由 (必須・500 文字まで)・[付与する] (プランと理由がそろうまで押せない) → 確認ダイアログ `GRANT_CONFIRM_MESSAGE` → `POST`。成功で「<プランの表示名> を付与しました (有効期限: …)」と読み直し (プランの表示名は `src/lib/admin/plan-key-labels.ts` の `adminPlanKeyLabel`。表に無い plan_key はそのまま。#2112 Z3) |
+| `current.source === 'manual'` | 現在の契約 (プラン (表示名)・由来「手動付与」・有効期限) と取り消しのフォーム: 理由 (必須)・[取り消す] → 確認ダイアログ `REVOKE_CONFIRM_MESSAGE` → `DELETE`。成功で「<プランの表示名> の付与を取り消しました」と読み直し |
 | `current.source === 'stripe'` | 現在の契約 (プラン・由来「Stripe」・次回更新) と「Stripe の契約があるため、手動付与はできません (解約は利用者の操作か Stripe で行います)」。フォームは描かない |
 | `current.source === 'store'` | 現在の契約 (プラン・由来「ストア (アプリ内課金)」・次回更新) と「ストアの契約があります。手動付与はできません (解約は利用者が App Store・Google Play の定期購読の管理で行います)」。フォームは描かない |
-| `history` が 1 件以上 | 履歴 (付与 / 取り消し / 期限切れ・プラン・期限・理由・日時) |
+| `history` が 1 件以上 | 履歴 (付与 / 取り消し / 期限切れ・プラン (表示名。plan_key が無い行は「-」)・期限・理由・日時) |
 | 失敗 | 本文の `code` から `manualGrantErrorMessage` の文 (応答の本文の `message` は画面に出さない。ただし 403 の `message` が理由の文 (`src/lib/api/forbidden-reason-messages.ts` の `FORBIDDEN_REASON_CODE_BY_MESSAGE` の表。二段階認証の確認・登録が要る・凍結) のときだけ、client がその理由の code (`AUTH_2FA_REQUIRED` / `AUTH_2FA_ENROLLMENT_REQUIRED` / `AUTH_ACCOUNT_FROZEN`) にして返し、画面はその code の文 (理由の文と同じ) を出す。運営の route は二段階認証が理由でも code を `OP_PERMISSION_DENIED` のまま文だけを理由の文にするため。ほかの運営の画面の `forbiddenMessageForScreen` と同じ規則 (#2086 V4)。`OP_INVALID_INPUT` は `MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE`「入力を確かめてください (有効期限は今日より後の日付、理由は 500 文字まで)」)。401 も文を出すだけ (運営の画面の移動は layout の `requireRoleForPage` が受け持つ)。付与・取り消しの応答を受け取れなかった (`status === MANUAL_GRANT_CLIENT_NO_STATUS`。通信の reject・2xx なのに本文が形に合わない) ときは、済んだか分からないので GET で読み直し、「<付与\|取り消し>の応答を受け取れませんでした（通信エラー）」に続けて読み直した旨を出す (`statusChangeNoResponseMessage`。読み直した契約で操作が済んでいれば入力欄を空にする)。読み直しが 401 / 403 / 404 なら「<付与\|取り消し>の応答を受け取れませんでした（通信エラー）。」に続けてその code の文 (「再試行」なし)、それ以外の失敗なら「再試行」を出し、読み直せるまで付与・取り消しを止める (#2080) |
 
 - 有効期限の表示は JST の日時 (`toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })`)。「2026-12-31 まで」の付与は `2027/1/1 0:00:00` と出る (期限の意味 = その時刻の前まで使える)。日付だけに丸めると「2027/1/1」が「1 月 1 日も使える」に読めるので丸めない。

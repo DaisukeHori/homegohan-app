@@ -3,9 +3,32 @@
  * operator/02-api-spec.md §7 準拠
  */
 import { z } from 'zod';
+import { labelOrRaw } from '@/lib/admin/value-labels';
+
+/** 公開の範囲の種類 (feature_flags.rollout_strategy.type) */
+export const ROLLOUT_STRATEGY_TYPES = ['all', 'percentage', 'plan', 'role', 'org'] as const;
+export type RolloutStrategyType = (typeof ROLLOUT_STRATEGY_TYPES)[number];
+
+/**
+ * 公開の範囲の種類の表示名 (#2112 Z3。フラグの作成の画面 src/app/super-admin/flags/new/page.tsx の選択肢と同じ語)。
+ * 以前、フラグの一覧 (src/app/super-admin/flags/page.tsx) は種類を英字の内部の値 (percentage など) のまま出していた。
+ * Record なので、ROLLOUT_STRATEGY_TYPES に値を足すと表示名の漏れが型の誤りになる
+ */
+export const ROLLOUT_STRATEGY_TYPE_LABELS: Readonly<Record<RolloutStrategyType, string>> = {
+  all: '全ユーザー',
+  percentage: '段階公開',
+  plan: 'プラン別',
+  role: 'ロール別',
+  org: '組織別',
+};
+
+/** 公開の範囲の種類の表示名。表に無い値 (将来の値・壊れた応答) はそのまま */
+export function rolloutStrategyTypeLabel(value: string): string {
+  return labelOrRaw(ROLLOUT_STRATEGY_TYPE_LABELS, value);
+}
 
 export const RolloutStrategySchema = z.object({
-  type: z.enum(['all', 'percentage', 'plan', 'role', 'org']),
+  type: z.enum(ROLLOUT_STRATEGY_TYPES),
   value: z.number().min(0).max(100).optional(),
   plans: z.array(z.string()).optional(),
   roles: z.array(z.string()).optional(),

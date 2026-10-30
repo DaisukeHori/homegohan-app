@@ -46,6 +46,7 @@ import {
   confirmCreatedRow,
 } from '@/lib/admin/admin-create-no-response';
 import { formatJstDateTime } from '@/lib/admin/format-datetime';
+import { adminAuditSeverityLabel } from '@/lib/admin/audit-severity-labels';
 import { jstToday } from '@/lib/jst-day-ranges';
 
 // ── 定数 ──────────────────────────────────────────────────────────────────
@@ -842,7 +843,7 @@ function AuditRowTable({
             <tr>
               <th className="px-3 py-2">日時</th>
               <th className="px-3 py-2">action_type</th>
-              <th className="px-3 py-2">severity</th>
+              <th className="px-3 py-2">重要度</th>
               {showStageReason ? <th className="px-3 py-2">stage / reason</th> : null}
               <th className="px-3 py-2">details</th>
             </tr>
@@ -852,7 +853,8 @@ function AuditRowTable({
               <tr key={row.id} className="border-t border-slate-100 align-top">
                 <td className="whitespace-nowrap px-3 py-2">{formatJstDateTime(row.created_at)}</td>
                 <td className="px-3 py-2 font-mono text-xs">{row.action_type}</td>
-                <td className="px-3 py-2">{row.severity}</td>
+                {/* 重要度は表示名で出す (以前は英字の内部の値 info / warn / critical のまま。#2112 Z3) */}
+                <td className="px-3 py-2">{adminAuditSeverityLabel(row.severity)}</td>
                 {showStageReason ? <td className="px-3 py-2 font-mono text-xs">{stageReasonText(row.details)}</td> : null}
                 <td className="px-3 py-2">
                   <pre className="max-w-xl overflow-x-auto whitespace-pre-wrap break-all text-xs text-slate-600">

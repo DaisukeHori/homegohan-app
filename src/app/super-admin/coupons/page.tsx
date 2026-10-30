@@ -12,6 +12,7 @@ import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
 import { listRowsOfBody } from '@/lib/admin/admin-screen-messages';
 import { couponValidityDay, isCouponExpiredAt } from '@/lib/super-admin/coupon-validity';
+import { couponApplicableToLabel } from '@/lib/super-admin/coupons-schemas';
 
 type Coupon = {
   id: string;
@@ -117,7 +118,7 @@ export default async function CouponsPage() {
                   <td className="px-4 py-3 font-medium text-slate-800">
                     {formatDiscount(coupon)}
                   </td>
-                  <td className="px-4 py-3 text-slate-600">{coupon.applicable_to}</td>
+                  <td className="px-4 py-3 text-slate-600">{couponApplicableToLabel(coupon.applicable_to)}</td>
                   <td className="px-4 py-3">
                     <span className={isExpired ? 'text-red-500' : 'text-slate-600'}>
                       {couponValidityDay(coupon.valid_until)}

@@ -6,6 +6,10 @@
  *
  * #2093 W3: 「無い」(notFound()) にするのは API の 404 だけ。それ以外の失敗 (500 / 503 / 403・通信の失敗・壊れた応答) は
  * 「ユーザーを読み込めませんでした」と「再読み込み」を出す (以前は 404 以外の失敗も notFound() にして、利用者が消えたように見せていた)。
+ *
+ * #2112 Z3: プラン・契約の状態・監査ログの重要度は、英字の内部の値 (free・past_due・warn など) をやめ、表示名の表
+ * (src/lib/admin/plan-key-labels.ts・subscription-status-labels.ts・audit-severity-labels.ts) を通して出す。表に無い値はそのまま出す。
+ * 監査ログの操作 (action_type) は識別子として code の字体のまま出す。
  */
 
 export const dynamic = 'force-dynamic';
@@ -16,6 +20,9 @@ import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
 import { canViewUserEmail } from '@/lib/admin/user-emails';
 import { normalizeProfileName } from '@/lib/profile-name';
+import { adminPlanKeyLabel } from '@/lib/admin/plan-key-labels';
+import { adminSubscriptionStatusLabel } from '@/lib/admin/subscription-status-labels';
+import { adminAuditSeverityLabel } from '@/lib/admin/audit-severity-labels';
 import { isMfaRequiredRoleSet } from '@/lib/auth/mfa/policy';
 import { OperatorMfaResetSection } from '@/components/admin/OperatorMfaResetSection';
 import { ManualPlanGrantSection } from '@/components/admin/ManualPlanGrantSection';
@@ -247,8 +254,8 @@ export default async function AdminUserDetailPage(props: PageProps) {
           <div>
             <dt className="text-gray-500 mb-1">プラン</dt>
             <dd>
-              <span className="inline-block bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded font-mono">
-                {profile.plan_key ?? 'free'}
+              <span className="inline-block bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded">
+                {adminPlanKeyLabel(profile.plan_key)}
               </span>
             </dd>
           </div>
@@ -341,11 +348,11 @@ export default async function AdminUserDetailPage(props: PageProps) {
           <dl className="grid grid-cols-3 gap-4 text-sm">
             <div>
               <dt className="text-gray-500 mb-1">プラン</dt>
-              <dd className="font-mono">{activeSubscription.plan_key}</dd>
+              <dd>{adminPlanKeyLabel(activeSubscription.plan_key)}</dd>
             </div>
             <div>
               <dt className="text-gray-500 mb-1">ステータス</dt>
-              <dd>{activeSubscription.status}</dd>
+              <dd>{adminSubscriptionStatusLabel(activeSubscription.status)}</dd>
             </div>
             <div>
               <dt className="text-gray-500 mb-1">次回更新</dt>
@@ -380,7 +387,7 @@ export default async function AdminUserDetailPage(props: PageProps) {
                         : 'bg-gray-100 text-gray-600'
                   }`}
                 >
-                  {log.severity}
+                  {adminAuditSeverityLabel(log.severity)}
                 </span>
                 <div className="flex-1 min-w-0">
                   <span className="font-mono text-gray-700">{log.action_type}</span>

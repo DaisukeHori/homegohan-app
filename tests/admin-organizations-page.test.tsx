@@ -5,7 +5,9 @@
  * 組織の API (GET / POST /api/admin/organizations) はあったが、使う画面が無かった (モバイルの管理画面は #1389 で削除済み)。
  * 画面で確かめること:
  *   - 一覧: GET の結果を、組織名・プラン・作成日時 (日本時間)・ID で表示する。読み込み中・0 件・失敗の表示がある。
- *     失敗したときに「組織が 0 件」に見せない (API が返したメッセージを出す)
+ *     失敗したときに「組織が 0 件」に見せない (API が返したメッセージを出す)。
+ *     プランは表示名 (スタンダード など) で出し、プランの選択肢の文字とプランの変更の通知も表示名にする (送る値は内部の値のまま。
+ *     表に無い値はそのまま・null は「-」。#2112 Z3)
  *   - 検索: 組織名 (q) とプラン (plan) を付けて取り直し、1 ページ目に戻る。素早く条件を変えても、古い応答で上書きしない
  *   - ページ送り: 前へ / 次へで page を変え、検索条件は引き継ぐ。範囲と総件数を出す
  *   - 作成: 組織名・プラン・(任意で) オーナーのユーザー ID を POST し、成功したら 1 ページ目から取り直す。
@@ -233,8 +235,8 @@ describe('一覧', () => {
     expect(listParams(0)).toEqual({ page: '1', per_page: '30' });
     expect(alerts()).toEqual([]);
     expect(rows()).toEqual([
-      ['株式会社ビー', 'premium', '2026/10/08 00:30', '00000002...'],
-      ['株式会社エー', 'enterprise', '2026/10/08 13:30', '00000001...'],
+      ['株式会社ビー', 'プレミアム', '2026/10/08 00:30', '00000002...'],
+      ['株式会社エー', 'エンタープライズ', '2026/10/08 13:30', '00000001...'],
       ['プラン未設定の組織', '-', '-', '00000003...'],
     ]);
     expect(text()).toContain('全 3 件');
@@ -341,20 +343,20 @@ describe('検索', () => {
     expect(lastListParams()).toEqual({ q: 'テスト', plan: 'premium', page: '1', per_page: '30' });
   });
 
-  it('プランの選択肢は「すべてのプラン」と、API が受け付ける standard / premium / enterprise', () => {
+  it('プランの選択肢は「すべてのプラン」と、API が受け付ける standard / premium / enterprise。文字は表示名で、送る値は内部の値 (#2112 Z3)', () => {
     mockApi({ list: () => jsonResponse(200, listBody([])) });
     return renderPage().then(() => {
       const options = (select: HTMLSelectElement) => Array.from(select.options).map((o) => [o.value, o.textContent]);
       expect(options(searchPlan())).toEqual([
         ['', 'すべてのプラン'],
-        ['standard', 'standard'],
-        ['premium', 'premium'],
-        ['enterprise', 'enterprise'],
+        ['standard', 'スタンダード'],
+        ['premium', 'プレミアム'],
+        ['enterprise', 'エンタープライズ'],
       ]);
       expect(options(createPlan())).toEqual([
-        ['standard', 'standard'],
-        ['premium', 'premium'],
-        ['enterprise', 'enterprise'],
+        ['standard', 'スタンダード'],
+        ['premium', 'プレミアム'],
+        ['enterprise', 'エンタープライズ'],
       ]);
     });
   });
@@ -1112,13 +1114,15 @@ describe('プランの変更', () => {
     planSelect(id).closest('td')?.querySelector('button') as HTMLButtonElement | undefined;
   const patchCalls = () => callsOf('PATCH');
 
-  it('行のプランの欄は、今のプランを選んだ状態の選択肢 (standard / premium / enterprise) と「変更」で、ラベルは組織名を含む', async () => {
+  it('行のプランの欄は、今のプランを選んだ状態の選択肢 (standard / premium / enterprise。文字は表示名) と「変更」で、ラベルは組織名を含む', async () => {
     mockApi({ list: () => jsonResponse(200, listBody([ORG_1, ORG_2])) });
     await renderPage();
 
     expect(planSelect(ORG_1.id).value).toBe('standard');
     expect(planSelect(ORG_2.id).value).toBe('premium');
     expect(Array.from(planSelect(ORG_1.id).options).map((o) => o.value)).toEqual(['standard', 'premium', 'enterprise']);
+    // 選択肢の文字は表示名で、英字の内部の値を出さない (#2112 Z3)
+    expect(Array.from(planSelect(ORG_1.id).options).map((o) => o.textContent)).toEqual(['スタンダード', 'プレミアム', 'エンタープライズ']);
     expect(container.querySelector(`label[for="org-plan-${ORG_1.id}"]`)?.textContent).toBe('株式会社エー のプラン');
     expect(changeButton(ORG_1.id)?.textContent).toBe('変更');
   });
@@ -1152,12 +1156,12 @@ describe('プランの変更', () => {
     expect(changed).toEqual([[ORG_1.id, { plan: 'enterprise' }]]);
     expect(callsOf('GET')).toHaveLength(1);
     expect(rows().map((cells) => cells.slice(0, 2))).toEqual([
-      ['株式会社エー', 'enterprise'],
-      ['株式会社ビー', 'premium'],
+      ['株式会社エー', 'エンタープライズ'],
+      ['株式会社ビー', 'プレミアム'],
     ]);
     expect(planSelect(ORG_1.id).value).toBe('enterprise');
     expect(changeButton(ORG_1.id)?.disabled).toBe(true);
-    expect(statuses()).toContain('組織「株式会社エー」のプランを enterprise に変更しました。');
+    expect(statuses()).toContain('組織「株式会社エー」のプランを エンタープライズ に変更しました。');
     expect(alerts()).toEqual([]);
   });
 
@@ -1177,16 +1181,16 @@ describe('プランの変更', () => {
     await choose(planSelect(ORG_1.id), 'premium');
     await click(changeButton(ORG_1.id), '変更ボタン');
     expect(alerts()).toEqual(['組織のプランを変更できませんでした']);
-    expect(rows()[0][1]).toBe('standard');
+    expect(rows()[0][1]).toBe('スタンダード');
     expect(planSelect(ORG_1.id).value).toBe('premium');
 
     await click(changeButton(ORG_1.id), '変更ボタン');
     expect(alerts()).toEqual(['バリデーションエラー']);
-    expect(rows()[0][1]).toBe('standard');
+    expect(rows()[0][1]).toBe('スタンダード');
 
     await click(changeButton(ORG_1.id), '変更ボタン');
     expect(alerts()).toEqual(['プランを変更できませんでした。しばらくしてから、もう一度お試しください。']);
-    expect(rows()[0][1]).toBe('standard');
+    expect(rows()[0][1]).toBe('スタンダード');
     expect(statuses()).toEqual([]);
     expect(callsOf('GET')).toHaveLength(1);
   });
@@ -1217,7 +1221,7 @@ describe('プランの変更', () => {
     // 読み直しは、検索の条件 (組織名・プラン・ページ) を変えない
     expect(callsOf('GET')).toHaveLength(3);
     expect(listParams(2)).toEqual(listParams(1));
-    expect(rows().map((cells) => cells.slice(0, 2))).toEqual([['株式会社エー', 'enterprise']]);
+    expect(rows().map((cells) => cells.slice(0, 2))).toEqual([['株式会社エー', 'エンタープライズ']]);
     expect(planSelect(SEARCHED.id).value).toBe('enterprise');
     expect(changeButton(SEARCHED.id)?.disabled).toBe(true);
     expect(alerts()).toEqual([
@@ -1257,7 +1261,7 @@ describe('プランの変更', () => {
 
     expect(callsOf('GET')).toHaveLength(1);
     expect(alerts()).toEqual(['プランを変更できませんでした。しばらくしてから、もう一度お試しください。']);
-    expect(rows()[0][1]).toBe('standard');
+    expect(rows()[0][1]).toBe('スタンダード');
   });
 
   it('次の変更を始めると、前の結果の表示 (変更の通知・読み直しの文) は消える', async () => {
@@ -1287,7 +1291,7 @@ describe('プランの変更', () => {
     await choose(planSelect(ORG_2.id), 'standard');
     await click(changeButton(ORG_2.id), '変更ボタン');
     expect(alerts()).toEqual([]);
-    expect(statuses()).toEqual(['組織「株式会社ビー」のプランを standard に変更しました。']);
+    expect(statuses()).toEqual(['組織「株式会社ビー」のプランを スタンダード に変更しました。']);
 
     // さらに次の変更を始めた時点で、前の成功の通知も消える
     await choose(planSelect(ORG_2.id), 'enterprise');
@@ -1299,7 +1303,7 @@ describe('プランの変更', () => {
       slowThird.resolve(jsonResponse(200, { organization: { ...ORG_2, plan: 'enterprise' } }));
     });
     await settle();
-    expect(statuses()).toEqual(['組織「株式会社ビー」のプランを enterprise に変更しました。']);
+    expect(statuses()).toEqual(['組織「株式会社ビー」のプランを エンタープライズ に変更しました。']);
   });
 
   it('想定外の形の応答 (organization が無い) は成功と見せず、汎用のエラーにする', async () => {
@@ -1312,7 +1316,7 @@ describe('プランの変更', () => {
     await choose(planSelect(ORG_1.id), 'premium');
     await click(changeButton(ORG_1.id), '変更ボタン');
     expect(alerts()).toEqual(['プランを変更できませんでした。しばらくしてから、もう一度お試しください。']);
-    expect(rows()[0][1]).toBe('standard');
+    expect(rows()[0][1]).toBe('スタンダード');
     expect(statuses()).toEqual([]);
   });
 
@@ -1336,11 +1340,11 @@ describe('プランの変更', () => {
       slow.resolve(jsonResponse(200, { organization: { ...ORG_1, plan: 'premium' } }));
     });
     await settle();
-    expect(rows()[0][1]).toBe('premium');
+    expect(rows()[0][1]).toBe('プレミアム');
     expect(planSelect(ORG_1.id).disabled).toBe(false);
   });
 
-  it('一覧に無い値のプラン (null・内部の値) は、その値のまま出し、選択肢の先頭は「選ぶ」で「変更」は押せない', async () => {
+  it('一覧に無い値のプラン (null・表に無い内部の値) は、内部の値はそのまま・null は「-」で出し、選択肢の先頭は「選ぶ」で「変更」は押せない', async () => {
     const odd = org(3, { name: '内部の値の組織', plan: 'org_pro' });
     const none = org(4, { name: 'プラン未設定', plan: null });
     mockApi({ list: () => jsonResponse(200, listBody([odd, none])) });
@@ -1353,6 +1357,7 @@ describe('プランの変更', () => {
     for (const id of [odd.id, none.id]) {
       expect(planSelect(id).value).toBe('');
       expect(Array.from(planSelect(id).options).map((o) => o.value)).toEqual(['', 'standard', 'premium', 'enterprise']);
+      expect(Array.from(planSelect(id).options).map((o) => o.textContent)).toEqual(['選ぶ', 'スタンダード', 'プレミアム', 'エンタープライズ']);
       expect(changeButton(id)?.disabled).toBe(true);
     }
   });
@@ -1399,7 +1404,7 @@ describe('別の一覧へ移ると、前の一覧の行についてのプラン�
   async function showChangedNotice() {
     await choose(planSelect(org(1).id), 'enterprise');
     await click(changeButton(org(1).id), '変更ボタン');
-    expect(statuses()).toContain('組織「組織1」のプランを enterprise に変更しました。');
+    expect(statuses()).toContain('組織「組織1」のプランを エンタープライズ に変更しました。');
   }
 
   const staleApi = (): Api => ({
@@ -1527,7 +1532,7 @@ describe('別の一覧へ移ると、前の一覧の行についてのプラン�
       expect(statuses()).toEqual([]);
       expect(alerts()).toEqual([]);
       // 新しい一覧は取得したときの値のまま (遅れて届いた応答で書き換えない)
-      expect(rows()[0].slice(0, 2)).toEqual(['組織1', 'standard']);
+      expect(rows()[0].slice(0, 2)).toEqual(['組織1', 'スタンダード']);
     });
 
     it('組織を作成して 1 ページ目から取り直したあとに届いた 404 では、読み直しの文を出さない', async () => {
@@ -1560,8 +1565,8 @@ describe('別の一覧へ移ると、前の一覧の行についてのプラン�
       expect(callsOf('POST')).toHaveLength(0);
 
       await resolveWith(pending, jsonResponse(200, { organization: org(1, { plan: 'enterprise' }) }));
-      expect(statuses()).toContain('組織「組織1」のプランを enterprise に変更しました。');
-      expect(rows()[0].slice(0, 2)).toEqual(['組織1', 'enterprise']);
+      expect(statuses()).toContain('組織「組織1」のプランを エンタープライズ に変更しました。');
+      expect(rows()[0].slice(0, 2)).toEqual(['組織1', 'エンタープライズ']);
     });
 
     it('別の一覧へ移っていなければ、届いた 409 で読み直しの文を出して一覧を読み直す (移ったときだけ捨てる)', async () => {

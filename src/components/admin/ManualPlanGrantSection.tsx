@@ -20,6 +20,10 @@
  * (付与の理由が取り消しの理由の欄に残らないように。成功のときと同じ)。
  * 読み直しが失敗したら「再試行」を出し、読み直せるまで付与・取り消しのボタンを止める (表示の契約が古いかもしれないため)。
  * 読み直しが 401 / 403 / 404 で断られたら、読み込み直しても変わらないので、その理由の文を出し「再試行」は出さない。
+ *
+ * プラン (今の契約・履歴・付与と取り消しの成功の文) は、英字の内部の値 (plan_key) ではなく、同じ画面の「現在のサブスクリプション」と
+ * 同じ表示名 (src/lib/admin/plan-key-labels.ts の adminPlanKeyLabel。表に無い plan_key はそのまま) で出す (#2112 Z3)。
+ * 付与のフォームの選択肢は「表示名 (plan_key)」の組のまま (付与する plan_key を運営が確かめられるように)。
  */
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import {
@@ -34,6 +38,7 @@ import {
   grantManualPlanRequest,
   revokeManualPlanRequest,
 } from '@/lib/billing/manual-grant-client';
+import { adminPlanKeyLabel } from '@/lib/admin/plan-key-labels';
 import {
   NO_RESPONSE_STATE_RELOADED_GUIDE,
   NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
@@ -159,7 +164,7 @@ export function ManualPlanGrantSection({ userId }: { userId: string }) {
     setError(null);
     const result = await grantManualPlanRequest(userId, { plan_key: planKey, expires_on: expiresOn === '' ? null : expiresOn, reason });
     if (result.ok) {
-      setMessage(`${result.data.plan_key} を付与しました (有効期限: ${formatDateTime(result.data.expires_at)})`);
+      setMessage(`${adminPlanKeyLabel(result.data.plan_key)} を付与しました (有効期限: ${formatDateTime(result.data.expires_at)})`);
       setPlanKey('');
       setExpiresOn('');
       setReason('');
@@ -182,7 +187,7 @@ export function ManualPlanGrantSection({ userId }: { userId: string }) {
     setError(null);
     const result = await revokeManualPlanRequest(userId, { reason });
     if (result.ok) {
-      setMessage(`${result.data.plan_key} の付与を取り消しました`);
+      setMessage(`${adminPlanKeyLabel(result.data.plan_key)} の付与を取り消しました`);
       setReason('');
       await load();
     } else if (result.status === MANUAL_GRANT_CLIENT_NO_STATUS) {
@@ -206,7 +211,7 @@ export function ManualPlanGrantSection({ userId }: { userId: string }) {
         <dl data-testid="manual-plan-grant-current" className="grid grid-cols-3 gap-4 text-sm mb-4">
           <div>
             <dt className="text-gray-500 mb-1">プラン</dt>
-            <dd className="font-mono">{view.current.plan_key}</dd>
+            <dd>{adminPlanKeyLabel(view.current.plan_key)}</dd>
           </div>
           <div>
             <dt className="text-gray-500 mb-1">由来</dt>
@@ -346,7 +351,7 @@ export function ManualPlanGrantSection({ userId }: { userId: string }) {
                 {MANUAL_GRANT_HISTORY_LABELS[entry.action_type]}
               </span>
               <div className="flex-1 min-w-0">
-                <span className="font-mono text-gray-700">{entry.plan_key ?? '-'}</span>
+                <span className="text-gray-700">{entry.plan_key ? adminPlanKeyLabel(entry.plan_key) : '-'}</span>
                 {entry.expires_at !== null && <span className="ml-2 text-xs text-gray-500">期限: {formatDateTime(entry.expires_at)}</span>}
                 {entry.reason !== null && <p className="text-xs text-gray-600 break-words">{entry.reason}</p>}
               </div>

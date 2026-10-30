@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import RefundRecordDialog from "@/components/operator/finance/RefundRecordDialog";
 import { adminLoadFailedFallback, displayableAdminError, fetchAdminJson } from "@/lib/admin/admin-screen-messages";
+import { invoiceProcessingStatusLabel } from "@/lib/admin/invoice-processing-status-labels";
 
 /** 読み込みの失敗の文の対象 (「請求書を読み込めませんでした (HTTP 502)」。#2086 V6) */
 const INVOICE_SUBJECT = "請求書";
@@ -35,6 +36,10 @@ interface InvoiceDetail {
   error_message: string | null;
 }
 
+/**
+ * 処理の状態の札。色は内部の値で引き、文字は表示名 (未処理・処理済み など) で出す (#2112 Z3。以前は英字の内部の値のままだった)。
+ * 表に無い値はそのまま出す
+ */
 function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
     completed: "bg-green-100 text-green-700",
@@ -44,7 +49,7 @@ function StatusBadge({ status }: { status: string }) {
   };
   return (
     <span className={`inline-block text-xs font-semibold px-2 py-1 rounded ${colors[status] ?? "bg-slate-100 text-slate-600"}`}>
-      {status}
+      {invoiceProcessingStatusLabel(status)}
     </span>
   );
 }

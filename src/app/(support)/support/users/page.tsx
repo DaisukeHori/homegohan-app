@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { normalizeProfileName } from "@/lib/profile-name";
+import { inquiryStatusLabel } from "@/lib/admin/inquiry-labels";
 import { UsersListResponseSchema, type UserListItem } from "@/lib/admin/users-schemas";
 import {
   UNAUTHENTICATED_SCREEN_MESSAGE,
@@ -382,7 +383,7 @@ function SupportUsersContent() {
                           <div key={inq.id} className="bg-gray-50 rounded-lg p-3">
                             <p className="text-sm text-gray-800 line-clamp-1">{inq.subject}</p>
                             <p className="text-xs text-gray-500 mt-1">
-                              {new Date(inq.created_at).toLocaleDateString('ja-JP')} - {inq.status}
+                              {new Date(inq.created_at).toLocaleDateString('ja-JP')} - {inquiryStatusLabel(inq.status)}
                             </p>
                           </div>
                         ))}

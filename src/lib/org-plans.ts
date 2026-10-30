@@ -35,7 +35,8 @@ export const ORG_PLAN_DEFAULT: OrgPlanValue = 'standard';
  * 組織のプランの値 (organizations.plan) の利用者向けの表示名。組織の設定の画面 (/org/settings。owner / admin が見る。表示だけで変えられない) と、
  * 組織の管理画面のサイドバーの見出し (src/app/(org)/layout.tsx。src/lib/org-sidebar.ts の readOrgSidebarInfo 経由) が使う。
  * キーは ORG_PLAN_VALUES と同じ (satisfies で足りない・余るキーを型で止め、tests/org-plan-labels.test.tsx が値でも突き合わせる)。
- * 運営の画面は内部の値をそのまま出す (この表を通さない)
+ * 運営の組織の画面 (src/app/admin/organizations/OrganizationsManager.tsx) もこの表の表示名で出す (#2112 Z3)。ただし運営の画面は表に無い値を
+ * 「-」にせず内部の値のまま出すので、orgPlanLabel ではなく src/lib/admin/org-plan-labels.ts の adminOrgPlanLabel を通す
  */
 export const ORG_PLAN_LABELS = {
   standard: 'スタンダード',

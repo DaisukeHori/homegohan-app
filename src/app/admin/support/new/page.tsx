@@ -4,6 +4,7 @@
  * 運営側チケット起票画面
  * operator/03-ui-spec.md §15, §16 準拠
  * 権限: support, admin, super_admin
+ * カテゴリ・優先度の選択肢は src/lib/admin/support-schemas.ts の値の一覧と表示名から作る (一覧・詳細と同じ語。#2112 Z3)
  */
 import { useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
@@ -26,9 +27,15 @@ const TICKET_SUBJECT = 'チケット';
 /** 作成の応答を受け取れなかったときに確かめさせる一覧 (#2093 W1) */
 const TICKET_LIST_HREF = '/admin/support';
 import Link from 'next/link';
+import {
+  TICKET_CATEGORIES,
+  TICKET_CATEGORY_LABELS,
+  TICKET_PRIORITIES,
+  TICKET_PRIORITY_LABELS,
+  type TicketCategory,
+  type TicketPriority,
+} from '@/lib/admin/support-schemas';
 
-type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
-type TicketCategory = 'account' | 'billing' | 'feature' | 'bug' | 'other';
 
 export default function NewTicketPage() {
   const router = useRouter();
@@ -208,11 +215,11 @@ export default function NewTicketPage() {
                   onChange={(e) => setFormData((f) => ({ ...f, category: e.target.value as TicketCategory }))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="account">アカウント</option>
-                  <option value="billing">課金</option>
-                  <option value="feature">機能リクエスト</option>
-                  <option value="bug">バグ</option>
-                  <option value="other">その他</option>
+                  {TICKET_CATEGORIES.map((category) => (
+                    <option key={category} value={category}>
+                      {TICKET_CATEGORY_LABELS[category]}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
@@ -225,10 +232,11 @@ export default function NewTicketPage() {
                   onChange={(e) => setFormData((f) => ({ ...f, priority: e.target.value as TicketPriority }))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="low">低</option>
-                  <option value="medium">中</option>
-                  <option value="high">高</option>
-                  <option value="urgent">緊急</option>
+                  {TICKET_PRIORITIES.map((priority) => (
+                    <option key={priority} value={priority}>
+                      {TICKET_PRIORITY_LABELS[priority]}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>

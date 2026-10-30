@@ -102,6 +102,14 @@ export type RevenueQuery = z.infer<typeof RevenueQuerySchema>;
 // Invoice (stripe_webhook_events 由来)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * 請求書 (stripe_webhook_events の行) の処理の状態 (processing_status) の値の一覧。
+ * DB の CHECK (supabase/migrations/20251126124224_create_meal_planner_tables.sql の stripe_webhook_events.processing_status) と同じ 4 値。
+ * 運営の画面の表示名は src/lib/admin/invoice-processing-status-labels.ts (画面はこのファイルの値を import しないので、型だけを読む)
+ */
+export const INVOICE_PROCESSING_STATUSES = ['pending', 'processing', 'completed', 'failed'] as const;
+export type InvoiceProcessingStatus = (typeof INVOICE_PROCESSING_STATUSES)[number];
+
 export const InvoiceItemSchema = z.object({
   id: z.string(),
   stripe_event_id: z.string(),
@@ -123,7 +131,7 @@ export type InvoiceItem = z.infer<typeof InvoiceItemSchema>;
 
 export const InvoiceQuerySchema = z.object({
   ...financeListPageFields,
-  status: z.enum(['pending', 'processing', 'completed', 'failed']).optional(),
+  status: z.enum(INVOICE_PROCESSING_STATUSES).optional(),
   // received_at (timestamptz) と比べる。日付か、タイムゾーンつきの日時だけ (#2107 Y12)
   from: OptionalFinanceTimestampBoundSchema,
   to: OptionalFinanceTimestampBoundSchema,

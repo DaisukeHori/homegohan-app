@@ -3,9 +3,21 @@
 import { useEffect, useState } from "react";
 import type { NpsSummary, CsatSummary } from "@/lib/admin/finance-schemas";
 import { adminLoadFailedFallback, displayableAdminError, fetchAdminJson } from "@/lib/admin/admin-screen-messages";
+import { ADMIN_PLAN_KEY_LABELS, adminPlanKeyLabel, type OfficialPlanKey } from "@/lib/admin/plan-key-labels";
 
 /** 読み込みの失敗の文の対象 (「NPS の集計を読み込めませんでした (HTTP 502)」。#2086 V6) */
 const NPS_SUBJECT = "NPS の集計";
+
+/** プランの絞り込みの選択肢 (送る値は plan_key。並びは以前の選択肢と同じ) */
+const NPS_PLAN_FILTER_KEYS: readonly OfficialPlanKey[] = [
+  "free",
+  "pro",
+  "family_basic",
+  "family_pro",
+  "org_starter",
+  "org_standard",
+  "org_pro",
+];
 
 interface NpsApiResponse {
   nps: NpsSummary;
@@ -75,13 +87,12 @@ export default function NpsPage() {
           <label className="block text-xs text-slate-500 mb-1">プラン</label>
           <select value={planKey} onChange={(e) => setPlanKey(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm">
             <option value="">すべて</option>
-            <option value="free">free</option>
-            <option value="pro">pro</option>
-            <option value="family_basic">family_basic</option>
-            <option value="family_pro">family_pro</option>
-            <option value="org_starter">org_starter</option>
-            <option value="org_standard">org_standard</option>
-            <option value="org_pro">org_pro</option>
+            {/* 選択肢の文字はプランの表示名 (以前は英字の内部の値 free などのまま。#2112 Z3)。送る値は plan_key のまま */}
+            {NPS_PLAN_FILTER_KEYS.map((key) => (
+              <option key={key} value={key}>
+                {ADMIN_PLAN_KEY_LABELS[key]}
+              </option>
+            ))}
           </select>
         </div>
         <button
@@ -184,7 +195,8 @@ export default function NpsPage() {
                       </span>
                       {c.plan_key && (
                         <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded">
-                          {c.plan_key}
+                          {/* プランは表示名で出す (以前は英字の内部の値 free などのまま。#2112 Z3) */}
+                          {adminPlanKeyLabel(c.plan_key)}
                         </span>
                       )}
                       {c.responded_at && (

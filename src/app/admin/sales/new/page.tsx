@@ -4,6 +4,7 @@
  * 新規 Lead 起票画面
  * operator/03-ui-spec.md §17 準拠
  * 権限: sales, admin, super_admin
+ * 流入経路の選択肢は src/lib/admin/sales-schemas.ts の値の一覧と表示名から作る (詳細と同じ語。#2112 Z3)
  */
 import { useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
@@ -26,8 +27,8 @@ const LEAD_SUBJECT = 'リード';
 /** 作成の応答を受け取れなかったときに確かめさせる一覧 (#2093 W1) */
 const LEAD_LIST_HREF = '/admin/sales';
 import Link from 'next/link';
+import { LEAD_SOURCES, LEAD_SOURCE_LABELS, type LeadSource } from '@/lib/admin/sales-schemas';
 
-type LeadSource = 'website' | 'referral' | 'event' | 'cold_call' | 'other';
 
 export default function NewLeadPage() {
   const router = useRouter();
@@ -258,11 +259,11 @@ export default function NewLeadPage() {
                   onChange={(e) => setFormData((f) => ({ ...f, source: e.target.value as LeadSource }))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="website">ウェブサイト</option>
-                  <option value="referral">紹介</option>
-                  <option value="event">イベント</option>
-                  <option value="cold_call">コールドコール</option>
-                  <option value="other">その他</option>
+                  {LEAD_SOURCES.map((source) => (
+                    <option key={source} value={source}>
+                      {LEAD_SOURCE_LABELS[source]}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
