@@ -339,7 +339,7 @@ await supabase.from('admin_audit_logs').insert({
 ---
 
 ### POST /api/admin/organizations
-組織の作成 (運営)。実装は `src/app/api/admin/organizations/route.ts:110-244`
+組織の作成 (運営)。実装は `src/app/api/admin/organizations/route.ts` の `POST` と、DB 関数 `admin_create_organization` (`supabase/migrations/20261030150000_create_organization_atomic.sql`。#2107 Y4)
 
 **リクエスト**:
 ```json
@@ -349,7 +349,7 @@ await supabase.from('admin_audit_logs').insert({
 - `plan`: `ORG_PLAN_VALUES` (`standard` / `premium` / `enterprise`) のどれか。省略すると `ORG_PLAN_DEFAULT` (`standard`)
 - `owner_id`: 省略すると呼び出した運営をオーナーにする (作る組織は active なので `organizations.owner_id` は NOT NULL)
 
-**処理**: service_role (`getSupabaseAdmin`) で、organizations の行・`org_license_pools` の行 (`total_licenses` = NULL・`used_licenses` = 0。失敗してもログだけで続ける)・オーナーの `user_profiles` (`organization_id` と `org_role = 'owner'`) を書く。オーナーにする人が退会の途中 (退会の本体が findBlocker の前に付ける退会の印が新しい) なら、organizations の行の INSERT を DB のトリガー `trg_organizations_owner_not_deleting` (関数 `organizations_owner_not_deleting()`) が止め、何も書かずに 409 `OWNER_ACCOUNT_DELETING` を返す (#1917 の続き。退会の最後の `deleteUser` が `organizations_owner_id_fkey` (RESTRICT) で失敗しないように。退会が `deleteUser` の前に止まると (409・途中の失敗)、退会の本体が返す前に印を消すので、そのあとは作れる。`20261024120000`)
+**処理**: service_role (`getSupabaseAdmin`) で DB 関数 `admin_create_organization(p_name, p_plan, p_owner_id)` を 1 回呼び、organizations の行・オーナーの `user_profiles` (`organization_id` と `org_role = 'owner'`。行が無ければ初期設定の前の人として仮置きの値 (`'Guest'` / `'unspecified'`) で作る)・`org_license_pools` の行 (`total_licenses` = NULL・`used_licenses` = 0) を 1 つのトランザクションで書く (route は表に直接書かない。途中で止まれば組織の行も残らない)。関数は新しい組織の行の INSERT のあと、オーナーの `user_profiles` の行を `FOR NO KEY UPDATE` で読んで所属を確かめ、すでに組織に所属していれば何も書かずに `OWNER_ALREADY_IN_ORG` で止める (同じオーナーの同時の作成・応答が切れたあとの押し直しは 1 つだけ通る。以前は所属の確認・組織・席の行・所属の更新を別々の要求で書き、確認と更新の間に 2 つ目が通ると組織が 2 つでき、所属の更新に失敗しても組織が残った。#2107 Y4)。オーナーにする人が退会の途中 (退会の本体が findBlocker の前に付ける退会の印が新しい) なら、関数の中の organizations の行の INSERT を DB のトリガー `trg_organizations_owner_not_deleting` (関数 `organizations_owner_not_deleting()`) が止め、何も書かずに 409 `OWNER_ACCOUNT_DELETING` を返す (#1917 の続き。退会の最後の `deleteUser` が `organizations_owner_id_fkey` (RESTRICT) で失敗しないように。退会が `deleteUser` の前に止まると (409・途中の失敗)、退会の本体が返す前に印を消すので、そのあとは作れる。`20261024120000`)
 
 **レスポンス**: `{ "organization": { "id", "name", "plan", "owner_id", "created_at", "updated_at" } }`
 
@@ -362,8 +362,8 @@ await supabase.from('admin_audit_logs').insert({
 | 400 | `VALIDATION_ERROR` / `INVALID_JSON` / `INVALID_CHARACTER` | 本文が JSON でない (:136-139)・Zod の検査に通らない (:144-147)・本文に NULL 文字がある (:111-112) |
 | 401 | `AUTH_UNAUTHENTICATED` | 未ログイン (:119) |
 | 403 | `OP_PERMISSION_DENIED` | `admin` / `super_admin` でない (:125) |
-| 409 | `OWNER_ALREADY_IN_ORG` / `OWNER_ACCOUNT_DELETING` | オーナーにする人がすでに別の組織に所属している (:167-172) / オーナーにする人が退会の手続き中 (退会の印 `account_deletion_guards` があり、DB のトリガー `trg_organizations_owner_not_deleting` (関数 `organizations_owner_not_deleting()`) が組織の行の INSERT を止めた。`supabase/migrations/20261023130000_account_deletion_owner_guard.sql`。:184-189。文は「指定したオーナー (owner_id) は退会の手続き中です」。#1917 の続き) |
-| 500 | `INTERNAL_ERROR` | 組織の行の作成 (:190-194)・オーナーの `user_profiles` の更新 (:221-227) に失敗 |
+| 409 | `OWNER_ALREADY_IN_ORG` / `OWNER_ACCOUNT_DELETING` | オーナーにする人がすでに組織に所属している (DB 関数 `admin_create_organization` がオーナーの行のロックの下で判定。文は「指定したオーナーはすでに組織に所属しています (直前に作成した組織かもしれません。一覧で確かめてください)」。応答が切れたあとの押し直しでは直前に自分が作った組織で断られるので「別の組織」とは言わず、英字の項目名を出さない。#2107 Y5) / オーナーにする人が退会の手続き中 (退会の印 `account_deletion_guards` があり、DB のトリガー `trg_organizations_owner_not_deleting` (関数 `organizations_owner_not_deleting()`) が組織の行の INSERT を止めた。`supabase/migrations/20261023130000_account_deletion_owner_guard.sql`。文は「指定したオーナーは退会の手続き中です」。#1917 の続き) |
+| 500 | `INTERNAL_ERROR` | DB 関数 `admin_create_organization` が上の 2 つ以外で失敗した (オーナーが `auth.users` に居ない外部キーの違反を含む。何も書かれていない)・関数の戻りが組織の形でない (文は「組織の作成の結果を読み取れませんでした。一覧で確かめてください」) |
 
 **権限**: `admin`, `super_admin`
 
