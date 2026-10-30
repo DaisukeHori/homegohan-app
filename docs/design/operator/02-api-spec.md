@@ -81,7 +81,7 @@ await supabase.from('admin_audit_logs').insert({
 | `q` | string | 全文検索 (email/name/user_id)。email の部分一致は `admin` / `super_admin` のみ (`support` は name/user_id のみ)。`%` `_` は文字どおりに一致する |
 | `plan` | string | plan_key でフィルタ |
 | `role` | string | ロールでフィルタ |
-| `status` | `active\|banned\|deleted` | ステータス |
+| `status` | `active\|banned\|deleted` | ステータス。`deleted` は常に 0 件 (退会は `auth.users` の行を消し、`user_profiles` の行も外部キーの ON DELETE CASCADE で消えるので、削除済みの行は無い。以前は絞らずに全ステータスを返していた。#2107 Y10) |
 | `registered_from` | date | 登録日 FROM (JST の暦日。その日の JST 0 時以上。実在しない日付・受け付ける範囲 (0101-01-02〜9998-12-30) の外の日付は 400) |
 | `registered_to` | date | 登録日 TO (JST の暦日。その日を含む = 翌日の JST 0 時未満。実在しない日付・受け付ける範囲 (0101-01-02〜9998-12-30) の外の日付は 400) |
 | `last_login_before` | date | 最終ログイン日がこの日より前 (JST の暦日。その日の JST 0 時より前。未ログインは含まない。実在しない日付・受け付ける範囲 (0101-01-02〜9998-12-30) の外の日付は 400) |
@@ -828,7 +828,7 @@ MRR 時系列
 ---
 
 ### GET /api/admin/finance/invoices
-請求書一覧。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数 (`meta.total`) を返す。クエリの誤り (`page` / `per_page` が 1 以上の整数でない・`per_page` が 200 より大きい・`status` が一覧に無いなど) は DB に触れずに 400 `VALIDATION_ERROR`「パラメータが不正です (項目)」(`src/lib/admin/finance-query-errors.ts`。売上の一覧 `GET /api/admin/finance/revenue`・整合チェック `GET /api/admin/finance/reconciliation` も同じ。#2101 X6)。数え直しも失敗したら 500。一覧の行の読み込みのそれ以外の DB の失敗は 500 (200 の空の一覧にしない。cross/04 §6.2。#1917)。詳細の `GET /api/admin/finance/invoices/{id}` は、請求書の行 (`stripe_webhook_events`) の読み込みの DB の失敗を 500 にし、行が無いときだけ 404 (#1917)。利用者の引き当て (`personal_subscriptions`) の読み込みの DB の失敗も 500 (200 の `user_id: null` にしない。`user_id` が `null` なのは紐づく契約の行が無いときだけ。cross/04 §5.2。#1917)
+請求書一覧。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数 (`meta.total`) を返す。クエリの誤り (`page` / `per_page` が 1 以上の整数でない・`per_page` が 200 より大きい・`status` が一覧に無い・`from` / `to` が実在する日付 (YYYY-MM-DD) でもタイムゾーンつきの ISO 8601 の日時でもない (売上の `from` / `to` は `revenue_snapshots.date` と比べるので日付だけ。空は絞らない。#2107 Y12) など) は DB に触れずに 400 `VALIDATION_ERROR`「パラメータが不正です (項目)」(`src/lib/admin/finance-query-errors.ts`。売上の一覧 `GET /api/admin/finance/revenue`・整合チェック `GET /api/admin/finance/reconciliation` も同じ。#2101 X6)。数え直しも失敗したら 500。一覧の行の読み込みのそれ以外の DB の失敗は 500 (200 の空の一覧にしない。cross/04 §6.2。#1917)。詳細の `GET /api/admin/finance/invoices/{id}` は、請求書の行 (`stripe_webhook_events`) の読み込みの DB の失敗を 500 にし、行が無いときだけ 404 (#1917)。利用者の引き当て (`personal_subscriptions`) の読み込みの DB の失敗も 500 (200 の `user_id: null` にしない。`user_id` が `null` なのは紐づく契約の行が無いときだけ。cross/04 §5.2。#1917)
 
 ### POST /api/admin/finance/invoices/{id}/resend
 請求書再送

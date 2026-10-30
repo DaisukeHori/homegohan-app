@@ -75,7 +75,10 @@ export function experimentListStaleReloadedMessage(name: string, currentStatus: 
   return `別の操作で「${name}」の状態が先に変わっていました（今の状態: ${experimentStatusLabel(currentStatus)}）。一覧を読み込み直したので、状態を確かめてから、もう一度操作してください`;
 }
 
-/** 一覧: 409 のあとに一覧を読み直したら、その実験が無かったときの文 */
+/**
+ * 一覧: 409 のあとに読み直した一覧にその実験が無く、詳細の API も 404 (実験が無い) だったときの文。
+ * 一覧はページで送るので、一覧 (表示しているページ) に無いだけでは出さない (詳細の API で無いと確かめてから出す。#2107 Y9)
+ */
 export function experimentListStaleGoneMessage(name: string): string {
   return `別の操作で「${name}」の状態が先に変わっていました。一覧を読み込み直しましたが、この実験は見つかりませんでした`;
 }
@@ -83,6 +86,26 @@ export function experimentListStaleGoneMessage(name: string): string {
 /** 一覧: 409 のあとの一覧の読み直しに失敗したときの文 (「再試行」を出す) */
 export function experimentListStaleReloadFailedMessage(name: string): string {
   return `別の操作で「${name}」の状態が先に変わっていました。一覧を読み込み直せませんでした。「再試行」で読み込み直してから、もう一度操作してください`;
+}
+
+/**
+ * 一覧のページ送り (#2107 Y9) のもとで、読み直した一覧 (表示しているページ) にその実験が無いときに続ける文。
+ * 一覧はページで送るので、ページに無いことは実験が消えたことを意味しない (応答を待つ間にページを移した・
+ * 新しい実験が増えて次のページへ押し出された)。画面はその実験を詳細の API で読み、今の状態を文に添える
+ */
+const LIST_OFF_PAGE_GUIDE = 'この実験は表示しているページにありません。詳細の画面で状態を確かめてから';
+
+/** 一覧: 409 のあとに読み直した一覧 (表示しているページ) にその実験が無く、詳細の API で今の状態を読めたときの文 (#2107 Y9) */
+export function experimentListStaleOffPageMessage(name: string, currentStatus: string): string {
+  return `別の操作で「${name}」の状態が先に変わっていました（今の状態: ${experimentStatusLabel(currentStatus)}）。${LIST_OFF_PAGE_GUIDE}、もう一度操作してください`;
+}
+
+/**
+ * 一覧: 409 のあとに読み直した一覧にその実験が無く、詳細の API で今の状態を読めなかったときの文 (「再試行」を出す。#2107 Y9)。
+ * 一覧は読み直せているので「一覧を読み込み直せませんでした」とは言わない
+ */
+export function experimentListStaleStateReloadFailedMessage(name: string): string {
+  return `別の操作で「${name}」の状態が先に変わっていました。今の状態を読み込めませんでした。「再試行」で読み込み直してから、もう一度操作してください`;
 }
 
 /**
@@ -110,4 +133,25 @@ export function experimentListNoResponseReloadedMessage(name: string): string {
 /** 一覧: 通信が reject され、一覧の読み直しにも失敗したときの文 (「再試行」を出す。#2073) */
 export function experimentListNoResponseReloadFailedMessage(name: string): string {
   return statusChangeNoResponseMessage(`「${name}」の${EXPERIMENT_STATUS_CHANGE_OPERATION_NAME}`, NO_RESPONSE_LIST_RELOAD_FAILED_GUIDE);
+}
+
+/**
+ * 一覧: 通信が reject され、読み直した一覧 (表示しているページ) にその実験が無く、詳細の API で今の状態を読めたときの文 (#2107 Y9)。
+ * 状態は一覧の行のバッジで見せられないので、今の状態を文に添える
+ */
+export function experimentListNoResponseOffPageMessage(name: string, currentStatus: string): string {
+  return `${statusChangeNoResponseSummary(`「${name}」の${EXPERIMENT_STATUS_CHANGE_OPERATION_NAME}`)}。今の状態（${experimentStatusLabel(currentStatus)}）を読み込み直しました。${LIST_OFF_PAGE_GUIDE}、必要ならもう一度操作してください`;
+}
+
+/** 一覧: 通信が reject され、読み直した一覧にその実験が無く、詳細の API も 404 (実験が無い) だったときの文 (#2107 Y9) */
+export function experimentListNoResponseGoneMessage(name: string): string {
+  return `${statusChangeNoResponseSummary(`「${name}」の${EXPERIMENT_STATUS_CHANGE_OPERATION_NAME}`)}。一覧を読み込み直しましたが、この実験は見つかりませんでした`;
+}
+
+/**
+ * 一覧: 通信が reject され、読み直した一覧にその実験が無く、詳細の API でも今の状態を読めなかったときの文 (「再試行」を出す。#2107 Y9)。
+ * 一覧は読み直せているので「一覧を読み込めませんでした」とは言わない
+ */
+export function experimentListNoResponseStateReloadFailedMessage(name: string): string {
+  return statusChangeNoResponseMessage(`「${name}」の${EXPERIMENT_STATUS_CHANGE_OPERATION_NAME}`, NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE);
 }

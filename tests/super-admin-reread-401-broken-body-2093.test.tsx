@@ -50,6 +50,8 @@ const routerPush = nav.push;
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: '20932093-2093-4093-8093-209320932093' }),
   useRouter: () => nav.router,
+  // 一覧 (/super-admin/experiments) は URL の page を読む (#2107 Y9)
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock('next/link', () => ({
