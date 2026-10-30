@@ -115,9 +115,9 @@
 | カラム | 表示内容 |
 |------|--------|
 | ユーザー | アバター + 名前 + email |
-| プラン | バッジ (plan_key) |
+| プラン | バッジ (プランの表示名。`src/lib/admin/plan-key-labels.ts` の `adminPlanKeyLabel`: plan_key が空なら「無料プラン」、表に無い plan_key はそのまま。#2112 Z3) |
 | ロール | バッジ一覧 |
-| ステータス | active / banned (赤) |
+| ステータス | アクティブ / BAN 済み (赤)。表示名は `USER_LIST_STATUS_LABELS` (#2112 Z3) |
 | 最終ログイン | 相対時刻 |
 | 食事記録数 | 数値 |
 | アクション | 詳細ボタン |
@@ -182,6 +182,8 @@
 | 売上/月 | JPY |
 | 担当営業 | 名前 |
 | アクション | 詳細 / 課金詳細 |
+
+プランの出し方 (#2112 Z3): 行のプランの badge とプランの変更の通知は、組織のプランの表示名 (`src/lib/org-plans.ts` の `ORG_PLAN_LABELS`。スタンダード / プレミアム / エンタープライズ。組織の設定の画面と同じ名前) で出す。表に無い値は「-」に隠さず内部の値のまま、null は「-」(`src/lib/admin/org-plan-labels.ts` の `adminOrgPlanLabel`)。プランの選択肢 (行の変更・組織の作成・検索) の文字も表示名で、送る値は内部の値 (standard / premium / enterprise) のまま。
 
 ---
 
@@ -313,7 +315,7 @@
 |------|------|
 | コード | モノスペースフォント |
 | 割引 | `20%` or `¥5,000 OFF` |
-| 対象 | all / personal / org |
+| 対象 | 全て / 個人 / 家族 / 組織 (適用対象の表示名は `src/lib/super-admin/coupons-schemas.ts` の `COUPON_APPLICABLE_TO_LABELS`。#2112 Z3) |
 | 有効期限 | 日付 |
 | 利用数 | `42 / 100` |
 | ステータス | badge |
@@ -349,9 +351,9 @@
 | チケット ID | #1234 |
 | ユーザー | email |
 | 件名 | 最大 50 文字 |
-| カテゴリ | badge |
-| 優先度 | badge (urgent は赤) |
-| ステータス | badge |
+| カテゴリ | badge (表示名は `src/lib/admin/support-schemas.ts` の `TICKET_CATEGORY_LABELS`。詳細の画面も同じ表。#2112 Z3) |
+| 優先度 | badge (urgent は赤。表示名は `TICKET_PRIORITY_LABELS`。詳細の画面も同じ表。#2112 Z3) |
+| ステータス | badge (表示名は `TICKET_STATUS_LABELS`。#2112 Z3) |
 | 担当者 | アバター |
 | SLA | 残時間 (超過は赤) |
 | 作成日 | 相対時刻 |
@@ -457,7 +459,7 @@ Step 3: スケジュール
 - アクション種別 (マルチセレクト)
 - 操作者
 - 対象
-- 重要度 (info / warn / critical)
+- 重要度 (info / warn / critical。選択肢と一覧の札の表示名は `src/lib/admin/audit-severity-labels.ts` の `ADMIN_AUDIT_SEVERITY_LABELS` (情報 / 警告 / 重大)。#2112 Z3)
 - 期間
 
 **テーブル**:
