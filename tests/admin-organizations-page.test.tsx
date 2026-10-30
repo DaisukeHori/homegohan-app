@@ -36,6 +36,10 @@ const { default: OrganizationsManager } = await import('@/app/admin/organization
 // ─────────────────────────────────────────────────────────────────────────────
 
 const OWNER_ID = '11111111-2222-4333-8444-555555555555';
+/** 操作している運営の id (page.tsx が渡す。オーナーを指定しない作成ではこの人がオーナー。#2112 Z2) */
+const CURRENT_USER_ID = '99999999-8888-4777-8666-555555555555';
+/** 別の運営 (や別の人) の id */
+const OTHER_OWNER_ID = '22222222-3333-4444-8555-666666666666';
 
 /** GET /api/admin/organizations が返す 1 件。時刻は UTC (日本時間 = +9 時間) */
 function org(n: number, overrides: Record<string, unknown> = {}) {
@@ -184,7 +188,7 @@ const OWNER_ALREADY_IN_ORG_MESSAGE =
 
 async function renderPage() {
   await act(async () => {
-    root.render(<OrganizationsManager />);
+    root.render(<OrganizationsManager currentUserId={CURRENT_USER_ID} />);
   });
   await settle();
 }
@@ -761,10 +765,10 @@ describe('作成', () => {
 
 describe('作成の応答を受け取れなかったとき (#2107 Y4): 失敗と言わずに同じ名前の組織を読み直して確かめ、確かめられなければ送信を止める', () => {
   const NAME = '株式会社テスト';
-  /** 送る前からあった、同じ名前・同じプランの組織 */
-  const EARLIER = org(5, { name: NAME, plan: 'premium' });
+  /** 送る前からあった、同じ名前・同じプラン・同じオーナーの組織 */
+  const EARLIER = org(5, { name: NAME, plan: 'premium', owner_id: OWNER_ID });
   /** 応答が切れたあいだにサーバーが作った組織 */
-  const CREATED = org(6, { name: NAME, plan: 'premium' });
+  const CREATED = org(6, { name: NAME, plan: 'premium', owner_id: OWNER_ID });
   const NETWORK_SUMMARY = '組織の作成の応答を受け取れませんでした（通信エラー）';
   const GATEWAY_TIMEOUT_SUMMARY = '組織の作成の応答を受け取れませんでした (HTTP 504)';
   const UNCONFIRMED = '済んだか分かりません。一覧で確かめてから作り直してください';
@@ -788,10 +792,10 @@ describe('作成の応答を受け取れなかったとき (#2107 Y4): 失敗と
     };
   }
 
-  async function submit(plan = 'premium') {
+  async function submit(plan = 'premium', ownerId: string = OWNER_ID) {
     await type(createName(), NAME);
     await choose(createPlan(), plan);
-    await type(createOwner(), OWNER_ID);
+    await type(createOwner(), ownerId);
     await click(findButton('作成する'), '作成ボタン');
   }
 
@@ -886,6 +890,78 @@ describe('作成の応答を受け取れなかったとき (#2107 Y4): 失敗と
 
     expect(stoppedMessage()).toBe(`${NETWORK_SUMMARY}。${UNCONFIRMED}。${NOT_FOUND_GUIDE}。${REOPEN_GUIDE}`);
     expect(findButton('作成する')?.disabled).toBe(true);
+  });
+
+  describe('オーナーも比べる (#2112 Z2: 別の運営が同じ名前・同じプランで別のオーナーの組織を作っても、自分の作成が済んだと取り違えない)', () => {
+    it('応答が切れたあいだに同じ名前・同じプランで別のオーナーの組織が新しくできていても「保存されていました」と言わず、入力を残して送信を止める', async () => {
+      const othersOrg = org(8, { name: NAME, plan: 'premium', owner_id: OTHER_OWNER_ID });
+      mockApi(
+        confirmApi([() => jsonResponse(200, listBody([])), () => jsonResponse(200, listBody([othersOrg]))], () => {
+          throw new TypeError('Failed to fetch');
+        }),
+      );
+      await renderPage();
+      await submit();
+
+      expect(stoppedMessage()).toBe(`${NETWORK_SUMMARY}。${UNCONFIRMED}。${NOT_FOUND_GUIDE}。${REOPEN_GUIDE}`);
+      expect(text()).not.toContain('保存されていました');
+      expect(statuses()).toEqual([]);
+      expect(createName().value).toBe(NAME);
+      expect(createOwner().value).toBe(OWNER_ID);
+      expect(findButton('作成する')?.disabled).toBe(true);
+      expect(findButton('確かめ直す')).toBeDefined();
+    });
+
+    it('オーナーを指定しなかったときは、操作している自分 (page.tsx が渡す id) がオーナーの組織だけを送った組織とみなす', async () => {
+      let rereadRows: unknown[] = [org(8, { name: NAME, plan: 'premium', owner_id: OTHER_OWNER_ID })];
+      mockApi(
+        confirmApi([() => jsonResponse(200, listBody([])), () => jsonResponse(200, listBody(rereadRows))], () => {
+          throw new TypeError('Failed to fetch');
+        }),
+      );
+      await renderPage();
+      await submit('premium', '');
+
+      // owner_id は送らない (route が操作している運営をオーナーにする)
+      expect(postBody()).toEqual({ name: NAME, plan: 'premium' });
+      // 別のオーナーの組織だけなら、済んだとは言わない
+      expect(stoppedMessage()).toBe(`${NETWORK_SUMMARY}。${UNCONFIRMED}。${NOT_FOUND_GUIDE}。${REOPEN_GUIDE}`);
+      expect(text()).not.toContain('保存されていました');
+
+      // 自分がオーナーの組織ができていたら、確かめ直しで済んだ扱いにする
+      rereadRows = [org(9, { name: NAME, plan: 'premium', owner_id: CURRENT_USER_ID }), ...rereadRows];
+      await click(findButton('確かめ直す'), '確かめ直すボタン');
+      expect(stoppedMessage()).toBeNull();
+      expect(statuses()).toContain(`${NETWORK_SUMMARY}。読み込み直したところ、組織は保存されていました`);
+      expect(callsOf('POST')).toHaveLength(1);
+    });
+
+    it('オーナーの id を大文字で入れても、読み直した組織の小文字の id と同じオーナーとみなす', async () => {
+      mockApi(
+        confirmApi([() => jsonResponse(200, listBody([])), () => jsonResponse(200, listBody([CREATED]))], () => {
+          throw new TypeError('Failed to fetch');
+        }),
+      );
+      await renderPage();
+      await submit('premium', OWNER_ID.toUpperCase());
+
+      expect(statuses()).toContain(`${NETWORK_SUMMARY}。読み込み直したところ、組織は保存されていました`);
+      expect(stoppedMessage()).toBeNull();
+    });
+
+    it('読み直した組織にオーナーの id が無い (一覧の API が返さない) ときは、送った組織とみなさない', async () => {
+      const withoutOwner = org(6, { name: NAME, plan: 'premium' });
+      mockApi(
+        confirmApi([() => jsonResponse(200, listBody([])), () => jsonResponse(200, listBody([withoutOwner]))], () => {
+          throw new TypeError('Failed to fetch');
+        }),
+      );
+      await renderPage();
+      await submit();
+
+      expect(stoppedMessage()).toBe(`${NETWORK_SUMMARY}。${UNCONFIRMED}。${NOT_FOUND_GUIDE}。${REOPEN_GUIDE}`);
+      expect(text()).not.toContain('保存されていました');
+    });
   });
 
   it.each([

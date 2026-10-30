@@ -10,6 +10,10 @@
  *  - 件数も数え直せなければ 500
  *  - それ以外の読み出しの失敗・想定外の例外は、200 の空の一覧にせず 500 (画面が「組織はまだありません」と見分けられるように)
  *  - 普通の読み出しは 200 で行と件数を返す (絞り込み・範囲・並び順はこれまでどおり)
+ *  - 一覧と件数は service_role で読む (organizations の SELECT のポリシーは所属している人の行だけで、運営の client では
+ *    自分の組織しか読めず、一覧が欠けていた。#2112 Z2。実 DB では tests/integration/security/org-create-atomic.test.ts の OC-10)
+ *  - 行はオーナーの id (owner_id) も返す (画面が、作成の応答を受け取れなかったあとの確かめでオーナーも比べる。#2112 Z2)
+ *  - 組織名の検索 (q) の % と _ (と \) は文字どおりに一致させる (「100%」で全部の組織に当てない。#2112 Z2)
  *
  * PostgREST の呼び出しは、ここで作る小さな偽物 (fakeOrganizationsClient) が受ける。偽物は route が組み立てた
  * クエリ (列・件数の数え方・head・絞り込み・範囲・並び順) を記録し、テストが決めた応答を返す。
@@ -83,22 +87,25 @@ vi.mock('@/lib/auth/helpers', () => ({
   requireRole: vi.fn(async () => ({ id: '00000000-0000-4000-8000-000000000001' })),
 }));
 
+// 一覧は service_role で読む (organizations の SELECT のポリシーは所属している人の行だけで、運営の client では自分の組織しか読めない。#2112 Z2)。
+// 運営の client (createClient) で読むと、このテストは失敗する
 vi.mock('@/lib/supabase/server', () => ({
-  createClient: async () => fakeOrganizationsClient(),
-  getSupabaseAdmin: () => {
-    throw new Error('GET は service_role を使わない');
+  createClient: async () => {
+    throw new Error('GET は運営の client で organizations を読まない (所属している組織しか見えない)');
   },
+  getSupabaseAdmin: () => fakeOrganizationsClient(),
 }));
 
 const route = await import('@/app/api/admin/organizations/route');
 
-const LIST_COLUMNS = 'id, name, plan, created_at, updated_at';
+const LIST_COLUMNS = 'id, name, plan, owner_id, created_at, updated_at';
 
 function row(n: number) {
   return {
     id: `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`,
     name: `組織${n}`,
     plan: 'standard',
+    owner_id: `${String(n).padStart(8, '0')}-1111-4000-8000-000000000000`,
     created_at: '2026-10-08T04:30:00.000Z',
     updated_at: '2026-10-08T04:30:00.000Z',
   };
@@ -153,6 +160,34 @@ describe('GET /api/admin/organizations: 普通の読み出し', () => {
     expect(queries[0].ilike).toEqual([]);
     expect(queries[0].eq).toEqual([]);
     expect(queries[0].range).toEqual([0, 29]);
+  });
+});
+
+describe('GET /api/admin/organizations: 組織名の検索の % と _ (#2112 Z2)', () => {
+  it.each([
+    ['%', '%\\%%'],
+    ['100%', '%100\\%%'],
+    ['a_b', '%a\\_b%'],
+    ['a\\b', '%a\\\\b%'],
+    ['株式会社テスト', '%株式会社テスト%'],
+  ])('q=%s は、ワイルドカード (%% _) とエスケープの文字を文字どおりに一致させる形 (%s) で絞り込む (q=%% で全部の組織にしない)', async (q, pattern) => {
+    respond = () => ok([], 0);
+    const { status } = await get(`?${new URLSearchParams({ q }).toString()}`);
+
+    expect(status).toBe(200);
+    expect(queries).toHaveLength(1);
+    expect(queries[0].ilike).toEqual([['name', pattern]]);
+  });
+
+  it('件数より後ろのページで件数を数え直すときも、同じエスケープの絞り込みで数える', async () => {
+    respond = (_query, index) => (index === 0 ? RANGE_NOT_SATISFIABLE : ok(null, 1));
+    const { status } = await get(`?${new URLSearchParams({ q: '100%', page: '2' }).toString()}`);
+
+    expect(status).toBe(200);
+    expect(queries.map((query) => query.ilike)).toEqual([
+      [['name', '%100\\%%']],
+      [['name', '%100\\%%']],
+    ]);
   });
 });
 
