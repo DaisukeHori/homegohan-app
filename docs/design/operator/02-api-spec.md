@@ -328,11 +328,11 @@ await supabase.from('admin_audit_logs').insert({
 ---
 
 ### GET /api/admin/organizations
-組織の一覧 (運営)。実装は `src/app/api/admin/organizations/route.ts:37-108`
+組織の一覧 (運営)。実装は `src/app/api/admin/organizations/route.ts:37-108`。一覧と件数は `requireRole` のあとに service_role (`getSupabaseAdmin`) で読む (organizations の SELECT のポリシーは所属している人の行 (`organizations_select_member`) だけで、運営のセッションでは運営が所属していない組織が出ない。利用者の一覧 (#1028) と同じ。#2112 Z2)
 
-**クエリパラメータ**: `q` (組織名の部分一致)・`plan` (`ORG_PLAN_VALUES` のどれか。`src/lib/org-plans.ts:22`)・`page` (default: 1)・`per_page` (default: 30, max: 100)。不正なら 400 `VALIDATION_ERROR` (:60-65)
+**クエリパラメータ**: `q` (組織名の部分一致。`%` `_` は文字どおりに一致する (`selectOrganizations` が `escapeLikePattern` を通してから `ilike` に渡す。#2112 Z2))・`plan` (`ORG_PLAN_VALUES` のどれか。`src/lib/org-plans.ts:22`)・`page` (default: 1)・`per_page` (default: 30, max: 100)。不正なら 400 `VALIDATION_ERROR` (:60-65)
 
-**レスポンス**: `{ "organizations": [{ "id", "name", "plan", "created_at", "updated_at" }], "meta": { "total", "page", "per_page" } }` (新しい順)。件数より後ろのページ (PostgREST の 416 / PGRST103) は、同じ絞り込みで件数だけを数え直して、空の一覧と本当の件数 (`meta.total`) を 200 で返す (画面は件数から最後のページへ取り直す。:81-90・:286-299)。それ以外の読み出しの失敗・想定外の例外と、件数を数え直せないときは 500 `INTERNAL_ERROR` (空の一覧にしない。:92-97・:103-107・:301-307)
+**レスポンス**: `{ "organizations": [{ "id", "name", "plan", "owner_id", "created_at", "updated_at" }], "meta": { "total", "page", "per_page" } }` (新しい順。`owner_id` は、組織の作成の応答を受け取れなかった画面が、読み直した組織のオーナーを送ったオーナーと比べるのに使う。#2112 Z2)。件数より後ろのページ (PostgREST の 416 / PGRST103) は、同じ絞り込みで件数だけを数え直して、空の一覧と本当の件数 (`meta.total`) を 200 で返す (画面は件数から最後のページへ取り直す。:81-90・:286-299)。それ以外の読み出しの失敗・想定外の例外と、件数を数え直せないときは 500 `INTERNAL_ERROR` (空の一覧にしない。:92-97・:103-107・:301-307)
 
 **権限**: `admin`, `super_admin` (未ログインは 401 `AUTH_UNAUTHENTICATED` :43・ほかの利用者は 403 `OP_PERMISSION_DENIED` :49)
 
@@ -363,7 +363,7 @@ await supabase.from('admin_audit_logs').insert({
 | 401 | `AUTH_UNAUTHENTICATED` | 未ログイン (:119) |
 | 403 | `OP_PERMISSION_DENIED` | `admin` / `super_admin` でない (:125) |
 | 409 | `OWNER_ALREADY_IN_ORG` / `OWNER_ACCOUNT_DELETING` | オーナーにする人がすでに組織に所属している (DB 関数 `admin_create_organization` がオーナーの行のロックの下で判定。文は「指定したオーナーはすでに組織に所属しています (直前に作成した組織かもしれません。一覧で確かめてください)」。応答が切れたあとの押し直しでは直前に自分が作った組織で断られるので「別の組織」とは言わず、英字の項目名を出さない。#2107 Y5) / オーナーにする人が退会の手続き中 (退会の印 `account_deletion_guards` があり、DB のトリガー `trg_organizations_owner_not_deleting` (関数 `organizations_owner_not_deleting()`) が組織の行の INSERT を止めた。`supabase/migrations/20261023130000_account_deletion_owner_guard.sql`。文は「指定したオーナーは退会の手続き中です」。#1917 の続き) |
-| 500 | `INTERNAL_ERROR` | DB 関数 `admin_create_organization` が上の 2 つ以外で失敗した (オーナーが `auth.users` に居ない外部キーの違反を含む。何も書かれていない)・関数の戻りが組織の形でない (文は「組織の作成の結果を読み取れませんでした。一覧で確かめてください」) |
+| 422 / 500 | `OWNER_NOT_FOUND` / `INTERNAL_ERROR` | オーナーにする人が `auth.users` に居ない (オーナーの ID の打ち間違いなど。DB 関数の organizations の行の INSERT が外部キー `organizations_owner_id_fkey` の違反 (23503) で止まり、何も書かれていない。文は「指定したオーナーのユーザーが見つかりません」。押し直しても同じ。#2112 Z2) / DB 関数 `admin_create_organization` が上の 3 つ以外で失敗した (何も書かれていない)・関数の戻りが組織の形でない (文は「組織の作成の結果を読み取れませんでした。一覧で確かめてください」) |
 
 **権限**: `admin`, `super_admin`
 

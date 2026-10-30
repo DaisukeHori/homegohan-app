@@ -9,6 +9,8 @@
  *   tests/integration/security/org-create-atomic.test.ts。
  * Y5: 409 の文は「指定したオーナー (owner_id) は既に別の組織に所属しています」だった。応答が切れたあとの押し直しでは、さっき自分が
  *   作った組織を「別の組織」と言い、英字の内部名 (owner_id) も運営に見えた。文を変え、英字を外す。同じ型の退会の手続き中の文も直す。
+ * #2112 Z2: auth.users に居ない owner_id (打ち間違い) は、関数の organizations の INSERT が外部キーの違反 (23503) で止まり、
+ *   理由を言わない 500「組織の作成に失敗しました」になっていた。422 OWNER_NOT_FOUND (ID が誤っていると分かる文) にする。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSchemaDb, type DbError, type SchemaDb } from './helpers/schema-checked-db';
@@ -53,6 +55,10 @@ const CREATE_AUDIT_ACTION = 'admin.organization.create';
 const OWNER_ALREADY_IN_ORG_MESSAGE =
   '指定したオーナーはすでに組織に所属しています (直前に作成した組織かもしれません。一覧で確かめてください)';
 const OWNER_ACCOUNT_DELETING_MESSAGE = '指定したオーナーは退会の手続き中です';
+/** オーナーにする人が auth.users に居ないときの文 (#2112 Z2) */
+const OWNER_NOT_FOUND_MESSAGE = '指定したオーナーのユーザーが見つかりません';
+/** PostgreSQL の外部キーの違反の SQLSTATE */
+const PG_FOREIGN_KEY_VIOLATION = '23503';
 const CREATE_FAILED = { error: { code: 'INTERNAL_ERROR', message: '組織の作成に失敗しました' } };
 /** 英字 (運営に見せる文に、内部の項目名・コードを出さない) */
 const LATIN_LETTERS = /[A-Za-z]/;
@@ -151,9 +157,28 @@ describe('POST /api/admin/organizations: 作成・席の行・オーナーの所
   });
 
   it.each([
+    ['オーナーを指定した', { name: ORG_NAME, owner_id: OWNER_ID }, OWNER_ID],
+    ['オーナーを省いた (呼び出した運営がオーナー)', { name: ORG_NAME }, ACTOR_ID],
+  ])('オーナーが auth.users に居ない (外部キーの違反 23503) ときは、理由を言わない 500 にせず 422 OWNER_NOT_FOUND。文は英字を含まない。監査を書かない (#2112 Z2: %s)', async (_label, body, ownerId) => {
+    rpcResult = {
+      data: null,
+      error: { code: PG_FOREIGN_KEY_VIOLATION, message: 'insert or update on table "organizations" violates foreign key constraint "organizations_owner_id_fkey"' },
+    };
+    const res = await post(body);
+
+    expect(res.status).toBe(422);
+    const responseBody = await json(res);
+    expect(responseBody).toEqual({ error: { code: 'OWNER_NOT_FOUND', message: OWNER_NOT_FOUND_MESSAGE } });
+    expect(responseBody.error.message).not.toMatch(LATIN_LETTERS);
+    expect(rpcCalls).toEqual([{ name: RPC, args: { p_name: ORG_NAME, p_plan: 'standard', p_owner_id: ownerId } }]);
+    expectNoDirectTableAccess();
+    expect(auditRows()).toEqual([]);
+  });
+
+  it.each([
     ['P0001 でもほかのコード', { code: PG_RAISE_EXCEPTION, message: 'CONFLICT_RETRY' }],
     ['ほかの SQLSTATE で同じ文', { code: '23505', message: 'OWNER_ALREADY_IN_ORG' }],
-    ['外部キーの違反 (auth.users に居ない人)', { code: '23503', message: 'insert or update on table "organizations" violates foreign key constraint' }],
+    ['P0001 で外部キーの違反の SQLSTATE の文', { code: PG_RAISE_EXCEPTION, message: PG_FOREIGN_KEY_VIOLATION }],
     ['接続の失敗', { code: '08006', message: 'connection reset by peer' }],
   ])('%s の失敗は 500 INTERNAL_ERROR (409 と取り違えない)。監査を書かない', async (_label, error: DbError) => {
     rpcResult = { data: null, error };
