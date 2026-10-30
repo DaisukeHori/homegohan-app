@@ -13,10 +13,12 @@ import InactiveOwnerTable, { type InactiveOwner } from '@/components/operator/me
 import {
   FORCE_DISSOLVE_NOT_DONE_GUIDE,
   FORCE_DISSOLVE_RELOAD_FAILED_GUIDE,
+  FORCE_DISSOLVE_RELOAD_UNAVAILABLE_GUIDE,
   OperatorScreenError,
   displayableOperatorError,
   fetchOperatorRows,
   operatorForceActionNoResponseMessage,
+  operatorForceActionReloadFailure,
   postOperatorForceAction,
 } from '@/lib/membership/operator-screen-messages';
 
@@ -99,10 +101,16 @@ export default function InactiveFamiliesPage() {
       let reloaded: FamilyRow[];
       try {
         reloaded = await fetchOperatorRows<FamilyRow>(LIST_URL, LIST_SUBJECT);
-      } catch {
+      } catch (reloadError) {
         // 済んだか分からない。確認の枠を閉じ、一覧 (行の「解散」) も出さずに、「更新」で読み直せるまで解散を押させない (#2086 V1)
         setDissolveTarget(null);
-        setError(operatorForceActionNoResponseMessage('dissolve', result.status, FORCE_DISSOLVE_RELOAD_FAILED_GUIDE));
+        // 読み直しが 401 / 403 なら「更新」を促さず理由の文を出す (読み込み直しても変わらない。#2101 X4)
+        setError(
+          operatorForceActionReloadFailure('dissolve', result.status, reloadError, {
+            reloadFailedGuide: FORCE_DISSOLVE_RELOAD_FAILED_GUIDE,
+            unavailableGuide: FORCE_DISSOLVE_RELOAD_UNAVAILABLE_GUIDE,
+          }).message,
+        );
         return;
       }
       setRows(reloaded);

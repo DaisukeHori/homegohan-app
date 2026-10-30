@@ -6,7 +6,8 @@
  * 権限: sales, admin, super_admin
  */
 import { useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { loginPathWithNext } from '@/lib/auth/signed-in-user';
 import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
 import {
   AdminActionNoResponseError,
@@ -30,6 +31,8 @@ type LeadSource = 'website' | 'referral' | 'event' | 'cold_call' | 'other';
 
 export default function NewLeadPage() {
   const router = useRouter();
+  // ログインが切れた (401) ときに、ログインし直したあとこの画面へ戻れるよう next に付けるパス (#2101 X5)
+  const pathname = usePathname();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // 作成の応答を受け取れなかった (済んだか分からない)・作成できたが開けなかったときの文 (#2093 W1)。
@@ -90,7 +93,7 @@ export default function NewLeadPage() {
         LEAD_CREATE_ACTION,
       );
 
-      if (res.status === 401) { router.push('/login'); return; }
+      if (res.status === 401) { router.push(loginPathWithNext(pathname)); return; }
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
       if (res.status === 403) { setError(await forbiddenMessageOfResponse(res)); return; }
       if (!res.ok) {

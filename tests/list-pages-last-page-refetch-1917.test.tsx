@@ -19,6 +19,7 @@ import { lastPageOf, lastPageToRefetch } from '@/lib/list-pagination';
 const router = vi.hoisted(() => ({ push: () => undefined, replace: () => undefined, refresh: () => undefined }));
 vi.mock('next/navigation', () => ({
   useRouter: () => router,
+  usePathname: () => '/admin',
 }));
 
 // React に「テスト環境 (act で包む)」であることを伝える

@@ -29,6 +29,7 @@ vi.mock('next/navigation', () => ({
   useRouter: () => nav.router,
   useParams: () => ({ id: '55555555-5555-4555-8555-555555555555' }),
   useSearchParams: () => nav.searchParams,
+  usePathname: () => '/admin',
 }));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

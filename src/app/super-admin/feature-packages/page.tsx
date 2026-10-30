@@ -10,6 +10,7 @@ export const dynamic = 'force-dynamic';
 import Link from 'next/link';
 import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
+import { listRowsOfBody } from '@/lib/admin/admin-screen-messages';
 
 interface FeaturePackage {
   id: string;
@@ -19,11 +20,6 @@ interface FeaturePackage {
   feature_flags: string[] | null;
   status: string;
   display_order: number;
-}
-
-interface FeaturePackagesApiResponse {
-  data: FeaturePackage[];
-  meta: { total: number; page: number; per_page: number };
 }
 
 export default async function FeaturePackagesPage() {
@@ -37,8 +33,14 @@ export default async function FeaturePackagesPage() {
   try {
     const res = await adminFetch('/api/super-admin/feature-packages?per_page=100');
     if (res.ok) {
-      const json = (await res.json()) as FeaturePackagesApiResponse;
-      packages = json.data ?? [];
+      // 200 なのに本文が読めない・data が配列でない壊れた応答は、0 件と見せずに取得の失敗として扱う (#2101 X8)
+      const rows = listRowsOfBody<FeaturePackage>(await res.json().catch(() => null));
+      if (rows === null) {
+        fetchError = true;
+        console.error('[super-admin/feature-packages page] malformed list body');
+      } else {
+        packages = rows;
+      }
     } else {
       fetchError = true;
       console.error('[super-admin/feature-packages page] API error:', res.status);

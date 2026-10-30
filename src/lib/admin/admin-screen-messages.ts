@@ -203,9 +203,29 @@ export function createdIdOfBody(body: unknown): string | null {
  */
 export async function fetchAdminRows<T>(url: string, subject: string): Promise<T[]> {
   const body = await fetchAdminJson(url, subject);
+  const rows = listRowsOfBody<T>(body);
+  if (rows === null) throw new AdminScreenError(adminLoadFailedMessage(subject, null));
+  return rows;
+}
+
+/**
+ * 運営の API の一覧の成功の応答の本文 ({ data: [...] }) から行の配列を取り出す。
+ * 本文が読めない (null)・data が配列でない (形の壊れた 200) ときは null を返す (#2101 X8)。
+ * 呼び出し側は null を読み込みの失敗として扱い、「0 件」と見せない (json.data ?? [] で 0 件にしない。#2093 W7 と同じ型)
+ */
+export function listRowsOfBody<T>(body: unknown): T[] | null {
   const data = typeof body === 'object' && body !== null ? (body as { data?: unknown }).data : undefined;
-  if (!Array.isArray(data)) throw new AdminScreenError(adminLoadFailedMessage(subject, null));
-  return data as T[];
+  return Array.isArray(data) ? (data as T[]) : null;
+}
+
+/**
+ * 運営の API の一覧の成功の応答の本文 ({ meta: { total } }) から全体の件数を取り出す。数でない・無いときは 0
+ * (行の配列は listRowsOfBody で確かめてから使う。件数だけの欠けで画面を失敗にはしない)
+ */
+export function listTotalOfBody(body: unknown): number {
+  const meta = typeof body === 'object' && body !== null ? (body as { meta?: unknown }).meta : undefined;
+  const total = typeof meta === 'object' && meta !== null ? (meta as { total?: unknown }).total : undefined;
+  return typeof total === 'number' && Number.isFinite(total) ? total : 0;
 }
 
 /**
