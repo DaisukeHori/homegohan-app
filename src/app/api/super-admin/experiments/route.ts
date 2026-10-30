@@ -4,8 +4,8 @@
  * operator/02-api-spec.md §15 準拠
  *
  * 作成で同じキーの実験がすでにある (一意の制約 experiments_key_key の違反 23505) ときは 409 OP_EXPERIMENT_KEY_DUPLICATE (#2093 W1)。
- * 機能フラグ・機能パッケージ・クーポン・プランの作成と同じ形。以前は 500 で、作成の応答が切れたあとに押し直すと、作成は済んでいるのに
- * 画面に「実験の作成に失敗しました (HTTP 500)」と出た
+ * 機能フラグ・機能パッケージ・クーポン・プランの作成と同じ形。以前は 500 (「処理中にエラーが発生しました」) で、作成の応答が切れたあとに
+ * 押し直すと、作成は済んでいるのに失敗の文が出た
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
