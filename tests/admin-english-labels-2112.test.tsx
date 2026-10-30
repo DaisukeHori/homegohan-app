@@ -516,7 +516,7 @@ describe('#2112 Z3-2 機能フラグの一覧 (/super-admin/flags) の公開の�
         fetchJson({
           data: [
             {
-              key: 'flag_percentage',
+              key: 'flag_rollout_half',
               description: '段階公開のフラグ',
               enabled: true,
               rollout_strategy: { type: 'percentage', value: 30 },

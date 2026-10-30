@@ -164,6 +164,9 @@ const PARALLEL_OWNED: Record<string, string> = {
     'プラン詳細の種別。Z1 (fix/plan-launch-screen) が plans-schemas の PLAN_TYPE_LABELS で直す',
 };
 
+/** 定数の名前 (大文字・数字・_) */
+const CONSTANT_NAME = /^[A-Z][A-Z0-9_]*$/;
+
 interface RawFinding {
   file: string;
   line: number;
@@ -209,6 +212,20 @@ function isCodeStyledElement(element: ts.JsxElement, sf: ts.SourceFile): boolean
   );
 }
 
+/** 定数の表 (ROLLOUT_STRATEGY_TYPE_LABELS.plan など。大文字の名前) の参照か。表示名を引いているので数えない */
+function isConstantTableAccess(access: ts.PropertyAccessExpression): boolean {
+  return ts.isIdentifier(access.expression) && CONSTANT_NAME.test(access.expression.text);
+}
+
+/**
+ * plan_key を表示名 (display_name) と組にして出しているか (`{plan.display_name} ({plan.plan_key})`・`{row.display_name ?? row.plan_key}`)。
+ * 同じ要素の子に display_name の参照があれば組と見なす (Issue #2112 の仕分けで除いた「plan_key と表示名の組」)
+ */
+function isPairedWithDisplayName(access: ts.PropertyAccessExpression, element: ts.JsxElement | ts.JsxFragment, sf: ts.SourceFile): boolean {
+  if (access.name.text !== 'plan_key') return false;
+  return element.children.some((child) => ts.isJsxExpression(child) && child.getText(sf).includes('.display_name'));
+}
+
 function findRawValueRendering(file: string, source: string): RawFinding[] {
   const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const findings: RawFinding[] = [];
@@ -220,6 +237,7 @@ function findRawValueRendering(file: string, source: string): RawFinding[] {
         collectValueAccesses(node.expression, accesses);
         for (const access of accesses) {
           if (!RAW_VALUE_PROPERTIES.has(access.name.text)) continue;
+          if (isConstantTableAccess(access) || isPairedWithDisplayName(access, node.parent, sf)) continue;
           const { line } = sf.getLineAndCharacterOfPosition(access.getStart(sf));
           findings.push({ file, line: line + 1, text: access.getText(sf) });
         }
@@ -275,6 +293,10 @@ describe('#2112 Z3 運営の画面の走査: 状態・区分の英字の内部�
       'const B = ({ u }: { u: { plan_key: string | null } }) => <span className="font-mono">{u.plan_key ?? "free"}</span>;',
       'const C = ({ u }: { u: { plan_key: string | null } }) => <span>{u.plan_key ?? "free"}</span>;',
       'const D = ({ r }: { r: { severity: string } }) => <td>{`重要度: ${r.severity}`}</td>;',
+      // 数えないもの: 表示名との組・定数の表の参照・code の字体
+      'const E = ({ p }: { p: { display_name: string; plan_key: string } }) => <strong>{p.display_name} ({p.plan_key})</strong>;',
+      'const F = () => <option value="plan">{ROLLOUT_STRATEGY_TYPE_LABELS.plan}</option>;',
+      'const G = ({ p }: { p: { plan_key: string } }) => <code>{p.plan_key}</code>;',
     ].join('\n');
     expect(findRawValueRendering('example.tsx', before).map((f) => f.text)).toEqual(['t.category', 't.priority', 'u.plan_key', 'r.severity']);
   });
