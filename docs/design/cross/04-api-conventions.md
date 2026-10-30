@@ -275,6 +275,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `OP_EXPERIMENT_INVALID_TRANSITION` | **[NEW]** A/B テストの状態の変更が遷移表に無い (同じ状態への変更を含む。`PATCH /api/super-admin/experiments/{id}`。`operator/02-api-spec.md` §15) | 409 |
 | `OP_COUPON_INVALID_TRANSITION` | **[NEW]** クーポンの状態の変更が遷移表に無い (同じ状態への変更・期限切れからの再開を含む。`PATCH /api/super-admin/coupons/{id}`。`operator/02-api-spec.md` §19) | 409 |
 | `OP_FEATURE_PACKAGE_INVALID_TRANSITION` | **[NEW]** 機能パッケージの状態の変更が遷移表に無い (同じ状態への変更・廃止の取り消しを含む。`PATCH /api/super-admin/feature-packages/{id}`。`operator/02-api-spec.md` §18) | 409 |
+| `OP_PRICE_UNCHANGED` | **[NEW]** 価格の変更で、送られた価格がすべて今の価格と同じ (応答が切れたあとの押し直しなど。Stripe の同期が要り Price ID がまだ無い間隔を除く)。Stripe も DB も触らない (`POST /api/super-admin/plans/{id}/price-change`。`operator/02-api-spec.md` §17。#2101 X1) | 409 |
 
 #### BILL 系
 
