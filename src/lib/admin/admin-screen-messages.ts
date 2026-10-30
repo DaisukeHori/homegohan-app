@@ -187,3 +187,10 @@ export function adminCreateUnconfirmedMessage(summary: string): string {
 export function adminCreatedButNotOpenedMessage(subject: string): string {
   return `${subject}は作成されましたが、作成した${subject}を開けませんでした。一覧で確かめてください`;
 }
+
+/** 作成の成功の応答の本文 ({ data: { id } }) から、作成したものの id を取り出す。読めない・形が違えば null (#2093 W1) */
+export function createdIdOfBody(body: unknown): string | null {
+  const data = typeof body === 'object' && body !== null ? (body as { data?: unknown }).data : undefined;
+  const id = typeof data === 'object' && data !== null ? (data as { id?: unknown }).id : undefined;
+  return typeof id === 'string' && id !== '' ? id : null;
+}
