@@ -184,6 +184,12 @@ const confirmReads = () =>
 /** その読み込みかどうか (mockApi の list で応答を分ける) */
 const isConfirmRead = (url: URL) => url.searchParams.get('per_page') === '100';
 
+/** 401 の route の本文の文 (画面には出さない。#2112) */
+const API_UNAUTHENTICATED_MESSAGE = '認証が必要です';
+/** 運営の画面で揃えた 401 の文 (UNAUTHENTICATED_SCREEN_MESSAGE と同じ。#2112) */
+const RELOGIN_MESSAGE = 'ログインし直してください';
+const unauthenticatedResponse = () => jsonResponse(401, errorBody('AUTH_UNAUTHENTICATED', API_UNAUTHENTICATED_MESSAGE));
+
 /** オーナーがすでに組織に所属しているときの 409 の文 (POST /api/admin/organizations。#2107 Y5) */
 const OWNER_ALREADY_IN_ORG_MESSAGE =
   '指定したオーナーはすでに組織に所属しています (直前に作成した組織かもしれません。一覧で確かめてください)';
@@ -1001,8 +1007,9 @@ describe('作成の応答を受け取れなかったとき (#2107 Y4): 失敗と
     ],
     [
       '401',
-      () => jsonResponse(401, errorBody('AUTH_UNAUTHENTICATED', '認証が必要です')),
-      `${NETWORK_SUMMARY}。${UNCONFIRMED}。ログインの有効期限が切れました。ログインし直してください。${REOPEN_GUIDE}`,
+      () => jsonResponse(401, errorBody('AUTH_UNAUTHENTICATED', API_UNAUTHENTICATED_MESSAGE)),
+      // 401 は運営の画面で揃えた「ログインし直してください」(本文の「認証が必要です」は出さない。#2112)
+      `${NETWORK_SUMMARY}。${UNCONFIRMED}。ログインし直してください。${REOPEN_GUIDE}`,
       false,
     ],
     [
@@ -1021,6 +1028,8 @@ describe('作成の応答を受け取れなかったとき (#2107 Y4): 失敗と
     await submit();
 
     expect(stoppedMessage()).toBe(message);
+    // 読み直しの失敗の本文の 401 の文 (「認証が必要です」) は出さない (#2112)
+    expect(stoppedMessage()).not.toContain(API_UNAUTHENTICATED_MESSAGE);
     expect(findButton('確かめ直す') !== undefined).toBe(retryable);
     expect(findButton('作成する')?.disabled).toBe(true);
     expect(callsOf('POST')).toHaveLength(1);
@@ -1044,6 +1053,62 @@ describe('作成の応答を受け取れなかったとき (#2107 Y4): 失敗と
 // ─────────────────────────────────────────────────────────────────────────────
 // アクセシビリティ
 // ─────────────────────────────────────────────────────────────────────────────
+
+describe('401 (ログインが切れた) は本文の文ではなく「ログインし直してください」(#2112)', () => {
+  const ORG_1 = org(1, { name: '株式会社エー', plan: 'standard' });
+  const planSelect = (id: string) => container.querySelector(`#org-plan-${id}`) as HTMLSelectElement;
+  const changeButton = (id: string) =>
+    planSelect(id).closest('td')?.querySelector('button') as HTMLButtonElement | undefined;
+
+  it('一覧の読み込みが 401 なら「ログインし直してください」を出し、「認証が必要です」も「組織が 0 件」も出さない', async () => {
+    mockApi({ list: unauthenticatedResponse });
+    await renderPage();
+
+    expect(alerts()).toEqual([RELOGIN_MESSAGE]);
+    expect(text()).not.toContain(API_UNAUTHENTICATED_MESSAGE);
+    expect(text()).not.toContain('組織はまだありません');
+  });
+
+  it('組織の作成が 401 なら「ログインし直してください」を出し (読み直しの確かめはしない)、入力を残す', async () => {
+    mockApi({ list: () => jsonResponse(200, listBody([])), create: unauthenticatedResponse });
+    await renderPage();
+    await type(createName(), '株式会社テスト');
+    await click(findButton('作成する'), '作成ボタン');
+
+    expect(callsOf('POST')).toHaveLength(1);
+    expect(alerts()).toEqual([RELOGIN_MESSAGE]);
+    expect(text()).not.toContain(API_UNAUTHENTICATED_MESSAGE);
+    // 401 は応答を受け取れた失敗なので、送る前の 1 回のほかに同じ名前の組織を読み直さない
+    expect(confirmReads()).toHaveLength(1);
+    expect(createName().value).toBe('株式会社テスト');
+    expect(findButton('作成する')?.disabled).toBe(false);
+  });
+
+  it('プランの変更が 401 なら、行の欄に「ログインし直してください」を出し、行のプランは変えず一覧も読み直さない', async () => {
+    mockApi({ list: () => jsonResponse(200, listBody([ORG_1])), changePlan: unauthenticatedResponse });
+    await renderPage();
+    await choose(planSelect(ORG_1.id), 'premium');
+    await click(changeButton(ORG_1.id), '変更ボタン');
+
+    expect(callsOf('PATCH')).toHaveLength(1);
+    expect(alerts()).toEqual([RELOGIN_MESSAGE]);
+    expect(text()).not.toContain(API_UNAUTHENTICATED_MESSAGE);
+    expect(rows().map((cells) => cells.slice(0, 2))).toEqual([['株式会社エー', 'スタンダード']]);
+    expect(screenListCalls()).toHaveLength(1);
+  });
+
+  it('401 でない失敗は今までどおり本文の文を出す (401 の文にしない)', async () => {
+    mockApi({
+      list: () => jsonResponse(200, listBody([ORG_1])),
+      changePlan: () => jsonResponse(500, errorBody('INTERNAL_ERROR', '組織のプランを変更できませんでした')),
+    });
+    await renderPage();
+    await choose(planSelect(ORG_1.id), 'premium');
+    await click(changeButton(ORG_1.id), '変更ボタン');
+
+    expect(alerts()).toEqual(['組織のプランを変更できませんでした']);
+  });
+});
 
 describe('アクセシビリティ', () => {
   beforeEach(async () => {
