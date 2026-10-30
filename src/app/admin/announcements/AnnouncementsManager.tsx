@@ -14,11 +14,20 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { extractApiErrorMessage, forbiddenMessageForScreen } from '@/lib/admin/api-error-message';
 import { formatJstDateTime } from '@/lib/admin/format-datetime';
+import { ADMIN_ACTION_NO_RESPONSE_STATUSES, adminActionNoResponseSummary } from '@/lib/admin/admin-screen-messages';
+import {
+  adminCreateFoundGuide,
+  adminCreateNoResponseMessage,
+  adminCreateNotFoundGuide,
+  adminCreateStoppedMessage,
+  confirmCreatedRow,
+} from '@/lib/admin/admin-create-no-response';
 
-/** GET /api/announcements が返す 1 件 (この画面で使う列だけ) */
+/** GET /api/announcements が返す 1 件 (この画面で使う列だけ。content は作成の応答を受け取れなかったときの読み直しで比べる。#2101 X2) */
 interface Announcement {
   id: string;
   title: string;
+  content: string | null;
   is_public: boolean | null;
   published_at: string | null;
   created_at: string | null;
@@ -28,6 +37,38 @@ const LOAD_ERROR = 'お知らせ一覧を取得できませんでした。しば
 const CREATE_ERROR = 'お知らせを作成できませんでした。しばらくしてから、もう一度お試しください。';
 const UNAUTHENTICATED_ERROR = 'ログインの有効期限が切れました。ログインし直してください。';
 const FORBIDDEN_ERROR = '権限がありません。';
+/** 応答を受け取れなかったときの文の操作の名前 (「お知らせの作成の応答を受け取れませんでした（通信エラー）」。#2101 X2) */
+const CREATE_ACTION = 'お知らせの作成';
+/** 読み直したときの文の対象の名前 (「読み込み直したところ、お知らせは保存されていました」。#2101 X2) */
+const CREATE_SUBJECT = 'お知らせ';
+const HTTP_UNAUTHORIZED = 401;
+const HTTP_FORBIDDEN = 403;
+
+/** 送ったお知らせ (前後の空白を除いた値。route はこの値をそのまま insert する) */
+interface SentAnnouncement {
+  readonly title: string;
+  readonly content: string;
+  readonly isPublic: boolean;
+}
+
+/**
+ * 作成の応答を受け取れなかった (サーバーで済んだか分からない) お知らせ (#2101 X2)。これがあるあいだは送信を止める。
+ *   - retryable: 「確かめ直す」で読み直せば決まりうるか (読み直しの失敗が通信・サーバーの一時的なもの、
+ *     読み直した一覧に送ったお知らせがまだ無い (サーバーが書き込みの途中かもしれない))。
+ *     読み直しが 401 / 403 (押しても必ず失敗する) と、比べる元が無くて決められない (ambiguous) ときは false
+ */
+interface UnconfirmedCreate {
+  readonly sent: SentAnnouncement;
+  readonly knownIds: ReadonlySet<string> | null;
+  readonly summary: string;
+  readonly message: string;
+  readonly retryable: boolean;
+}
+
+/** 読み直したお知らせが、送ったお知らせと同じ内容か (公開の設定も比べる。route は is_public に送った値をそのまま書く) */
+function isSameAnnouncement(row: Announcement, sent: SentAnnouncement): boolean {
+  return row.title === sent.title && row.content === sent.content && (row.is_public ?? false) === sent.isPublic;
+}
 
 /**
  * 失敗した応答のステータスから、画面に出す文言を決める (API の生のエラー文は出さない)。
@@ -69,10 +110,23 @@ export default function AnnouncementsManager() {
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // 作成の応答を受け取れなかった (済んだか分からない) お知らせ (#2101 X2)。これがあるあいだは送信を止める。
+  // ref は再描画の前に続けて押されたときの守り
+  const [unconfirmed, setUnconfirmed] = useState<UnconfirmedCreate | null>(null);
+  const unconfirmedRef = useRef<UnconfirmedCreate | null>(null);
+  // 送信と、そのあとの読み直しを待っているあいだは true (再描画の前に続けて押されたときも送らない守り。#2101 X2)
+  const submitLockedRef = useRef(false);
+
   // 一覧を読み込むたびに増やす通し番号。遅れて届いた古い応答で、新しい一覧を上書きしないために使う
   const latestLoad = useRef(0);
+  // 最後に失敗した一覧の読み込みの HTTP ステータス (通信の失敗・形の違いは null)。読み直しの 401 / 403 を見分ける (#2101 X2)
+  const lastLoadFailureStatus = useRef<number | null>(null);
 
-  const loadAnnouncements = useCallback(async () => {
+  /**
+   * 一覧を読み、画面に出して返す。読めなかったときは画面に文を出して null を返す。
+   * あとから出した読み込みに追い越されたら (遅れて届いた古い応答)、画面を変えずに undefined を返す
+   */
+  const loadAnnouncements = useCallback(async (): Promise<Announcement[] | null | undefined> => {
     const loadId = ++latestLoad.current;
     setLoading(true);
     setLoadError(null);
@@ -80,21 +134,28 @@ export default function AnnouncementsManager() {
       const res = await fetch('/api/announcements');
       // 失敗の本文は 403 の理由の文を読むためだけに読む (読めなければ null)
       const body: unknown = res.ok ? await res.json() : await res.json().catch(() => null);
-      if (loadId !== latestLoad.current) return;
+      if (loadId !== latestLoad.current) return undefined;
 
       if (!res.ok) {
         setLoadError(failureMessage(res.status, LOAD_ERROR, body));
-        return;
+        lastLoadFailureStatus.current = res.status;
+        return null;
       }
       const list = (body as { announcements?: unknown } | null)?.announcements;
       if (!Array.isArray(list)) {
         // 想定外の形を「お知らせが 0 件」と見せない
         setLoadError(LOAD_ERROR);
-        return;
+        lastLoadFailureStatus.current = null;
+        return null;
       }
-      setAnnouncements(newestFirst(list as Announcement[]));
+      const sorted = newestFirst(list as Announcement[]);
+      setAnnouncements(sorted);
+      return sorted;
     } catch {
-      if (loadId === latestLoad.current) setLoadError(LOAD_ERROR);
+      if (loadId !== latestLoad.current) return undefined;
+      setLoadError(LOAD_ERROR);
+      lastLoadFailureStatus.current = null;
+      return null;
     } finally {
       if (loadId === latestLoad.current) setLoading(false);
     }
@@ -104,9 +165,60 @@ export default function AnnouncementsManager() {
     void loadAnnouncements();
   }, [loadAnnouncements]);
 
+  const markUnconfirmed = (pending: UnconfirmedCreate | null) => {
+    unconfirmedRef.current = pending;
+    setUnconfirmed(pending);
+  };
+
+  /** 作成が済んだ (応答で・読み直しで) ときに入力を空にする */
+  const clearForm = () => {
+    setTitle('');
+    setContent('');
+    setIsPublic(false);
+  };
+
+  /**
+   * 作成の応答を受け取れなかったあと、一覧を読み直して送ったお知らせができていたかを確かめる (#2101 X2)。
+   * できていれば済んだとして入力を空にし、送信の止めを外す。
+   * まだ無い (サーバーが書き込みの途中かもしれない)・読み直しにも失敗した・前からあった行か決められないときは、送信を止めたままにする
+   * (押し直すと 2 つできうる。押し直すのは、一覧で確かめてから画面を開き直したときだけ)
+   */
+  const confirmUnconfirmedCreate = async (pending: Omit<UnconfirmedCreate, 'message' | 'retryable'>) => {
+    const reloaded = await loadAnnouncements();
+    if (reloaded === undefined || reloaded === null) {
+      // 読み直せなかった (あとから出した読み込みに追い越されたときも、この読み直しでは確かめられていない)。送信を止める。
+      // 401 / 403 は読み直しても必ず失敗するので「確かめ直す」を出さない (理由の文は一覧の欄に出ている)
+      const status = reloaded === null ? lastLoadFailureStatus.current : null;
+      markUnconfirmed({
+        ...pending,
+        message: adminCreateStoppedMessage(pending.summary),
+        retryable: status !== HTTP_UNAUTHORIZED && status !== HTTP_FORBIDDEN,
+      });
+      return;
+    }
+    const outcome = confirmCreatedRow(reloaded, pending.knownIds, (row) => isSameAnnouncement(row, pending.sent));
+    if (outcome === 'ambiguous') {
+      markUnconfirmed({ ...pending, message: adminCreateStoppedMessage(pending.summary), retryable: false });
+      return;
+    }
+    if (outcome === 'not-found') {
+      // まだ無いことは作られていないことの確かめにならない (サーバーが書き込みの途中なら、押し直すと 2 つできる)。止めたまま確かめ直させる
+      markUnconfirmed({
+        ...pending,
+        message: adminCreateStoppedMessage(pending.summary, adminCreateNotFoundGuide(CREATE_SUBJECT)),
+        retryable: true,
+      });
+      return;
+    }
+    markUnconfirmed(null);
+    clearForm();
+    setFormError(null);
+    setNotice(adminCreateNoResponseMessage(pending.summary, adminCreateFoundGuide(CREATE_SUBJECT)));
+  };
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (submitting) return;
+    if (submitting || submitLockedRef.current || unconfirmedRef.current !== null) return;
 
     setFormError(null);
     setNotice(null);
@@ -118,16 +230,31 @@ export default function AnnouncementsManager() {
       return;
     }
 
-    const publishing = isPublic;
+    const sent: SentAnnouncement = { title: trimmedTitle, content: trimmedContent, isPublic };
+    // 応答を受け取れなかったときに、読み直した一覧と比べるための、送る前の一覧の行 (読めていなければ null。#2101 X2)
+    const knownIds: ReadonlySet<string> | null =
+      announcements === null ? null : new Set(announcements.map((announcement) => announcement.id));
+    submitLockedRef.current = true;
     setSubmitting(true);
     let created = false;
+    // 応答を受け取れなかった (サーバーで済んだか分からない) ときの文の頭 (#2101 X2)
+    let noResponseSummary: string | null = null;
     try {
-      const res = await fetch('/api/announcements', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: trimmedTitle, content: trimmedContent, isPublic: publishing }),
-      });
-      if (res.ok) {
+      // 通信そのものが失敗 (fetch の reject) したら null
+      let res: Response | null;
+      try {
+        res = await fetch('/api/announcements', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: sent.title, content: sent.content, isPublic: sent.isPublic }),
+        });
+      } catch {
+        res = null;
+      }
+      if (res === null) {
+        // 通信そのものの失敗。サーバーが作ってから応答が切れたこともあるので、失敗とは言わずに読み直す (#2101 X2)
+        noResponseSummary = adminActionNoResponseSummary(CREATE_ACTION, null);
+      } else if (res.ok) {
         created = true;
       } else if (res.status === 400) {
         // 入力の誤り: API が返したメッセージをそのまま出す
@@ -135,20 +262,42 @@ export default function AnnouncementsManager() {
         setFormError(extractApiErrorMessage(body) ?? CREATE_ERROR);
       } else {
         const body: unknown = await res.json().catch(() => null);
-        setFormError(failureMessage(res.status, CREATE_ERROR, body));
+        if (extractApiErrorMessage(body) === null && ADMIN_ACTION_NO_RESPONSE_STATUSES.includes(res.status)) {
+          // 本文に API の文の無い 502 / 503 / 504 は、手前のプロキシ・ホスティングの応答 (関数の時間切れなど)。
+          // サーバーで済んだか分からないので、失敗とは言わずに読み直す (#2101 X2)
+          noResponseSummary = adminActionNoResponseSummary(CREATE_ACTION, res.status);
+        } else {
+          setFormError(failureMessage(res.status, CREATE_ERROR, body));
+        }
+      }
+      if (noResponseSummary !== null) {
+        await confirmUnconfirmedCreate({ sent, knownIds, summary: noResponseSummary });
       }
     } catch {
       setFormError(CREATE_ERROR);
     } finally {
+      submitLockedRef.current = false;
       setSubmitting(false);
     }
 
     if (created) {
-      setTitle('');
-      setContent('');
-      setIsPublic(false);
-      setNotice(publishing ? 'お知らせを公開しました。' : 'お知らせを下書きとして保存しました。');
+      clearForm();
+      setNotice(sent.isPublic ? 'お知らせを公開しました。' : 'お知らせを下書きとして保存しました。');
       await loadAnnouncements();
+    }
+  }
+
+  /** 「確かめ直す」: 済んだか分からない作成を、一覧を読み直して確かめる (#2101 X2) */
+  async function handleRetryConfirm() {
+    const pending = unconfirmedRef.current;
+    if (pending === null || !pending.retryable || submitLockedRef.current) return;
+    submitLockedRef.current = true;
+    setSubmitting(true);
+    try {
+      await confirmUnconfirmedCreate(pending);
+    } finally {
+      submitLockedRef.current = false;
+      setSubmitting(false);
     }
   }
 
@@ -231,10 +380,28 @@ export default function AnnouncementsManager() {
               {notice}
             </p>
           )}
+          {unconfirmed && (
+            <div
+              role="alert"
+              className="flex items-center justify-between gap-4 rounded border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800"
+            >
+              <span>{unconfirmed.message}</span>
+              {unconfirmed.retryable && (
+                <button
+                  type="button"
+                  onClick={() => void handleRetryConfirm()}
+                  disabled={submitting}
+                  className="shrink-0 rounded border border-yellow-300 bg-white px-3 py-1 text-sm font-medium text-yellow-800 hover:bg-yellow-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  確かめ直す
+                </button>
+              )}
+            </div>
+          )}
 
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || unconfirmed !== null}
             className="rounded-lg bg-orange-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-orange-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {submitting ? '作成中...' : '作成する'}

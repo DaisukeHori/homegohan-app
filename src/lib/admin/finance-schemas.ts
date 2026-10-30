@@ -53,13 +53,26 @@ export const RevenueSnapshotSchema = z.object({
 
 export type RevenueSnapshot = z.infer<typeof RevenueSnapshotSchema>;
 
+/** 会計の一覧 (売上・請求書・整合チェック) の 1 ページの件数の上限。#2101 より前の RevenueQuerySchema / InvoiceQuerySchema の max(200) と同じ値 */
+export const FINANCE_LIST_PER_PAGE_MAX = 200;
+/** 会計の一覧の per_page を省略したときの 1 ページの件数。#2101 より前のどの一覧の既定 (50) とも同じ値 */
+export const FINANCE_LIST_PER_PAGE_DEFAULT = 50;
+
+/**
+ * 会計の一覧の page / per_page (#2101 X6)。1 以上の整数でなければ (数でない・0・負・小数)・per_page が上限より大きければ、
+ * route が DB に触れずに 400 で断る (src/lib/admin/finance-query-errors.ts の financeInvalidQueryResponse)
+ */
+const financeListPageFields = {
+  page: z.coerce.number().int().positive().optional().default(1),
+  per_page: z.coerce.number().int().positive().max(FINANCE_LIST_PER_PAGE_MAX).optional().default(FINANCE_LIST_PER_PAGE_DEFAULT),
+};
+
 export const RevenueQuerySchema = z.object({
   from: z.string().optional(),
   to: z.string().optional(),
   granularity: z.enum(['day', 'week', 'month']).optional().default('month'),
   segment: z.enum(['personal', 'family', 'org', 'all']).optional().default('all'),
-  page: z.coerce.number().int().positive().optional().default(1),
-  per_page: z.coerce.number().int().positive().max(200).optional().default(50),
+  ...financeListPageFields,
 });
 
 export type RevenueQuery = z.infer<typeof RevenueQuerySchema>;
@@ -88,8 +101,7 @@ export const InvoiceItemSchema = z.object({
 export type InvoiceItem = z.infer<typeof InvoiceItemSchema>;
 
 export const InvoiceQuerySchema = z.object({
-  page: z.coerce.number().int().positive().optional().default(1),
-  per_page: z.coerce.number().int().positive().max(200).optional().default(50),
+  ...financeListPageFields,
   status: z.enum(['pending', 'processing', 'completed', 'failed']).optional(),
   from: z.string().optional(),
   to: z.string().optional(),
@@ -114,6 +126,19 @@ export const ReconciliationItemSchema = z.object({
 });
 
 export type ReconciliationItem = z.infer<typeof ReconciliationItemSchema>;
+
+/**
+ * 整合チェックの一覧 (GET /api/admin/finance/reconciliation) のクエリ (#2101 X6)。
+ * 以前の route は `parseInt(page)` だけで読み、?page=abc の NaN を `.range(NaN, …)` に渡して 500 にし、
+ * ?page=0 では負の offset を作っていた。per_page の上限も無かった (いまは会計の他の一覧と同じ 200)
+ */
+export const ReconciliationQuerySchema = z.object({
+  from: z.string().optional(),
+  to: z.string().optional(),
+  ...financeListPageFields,
+});
+
+export type ReconciliationQuery = z.infer<typeof ReconciliationQuerySchema>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NPS / CSAT

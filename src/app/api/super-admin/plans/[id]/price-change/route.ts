@@ -48,6 +48,13 @@
  *   4. 監査の old_* は 3 が返した変える前の値 (previous) で書く
  *   1 の後、3 まで行かずに返るとき (Stripe の同期の失敗・例外) は、予約を消してから返す (releasePlanPriceChange)。
  *
+ * #2101 X1 押し直しの二重: 以前は、応答が切れた (fetch の reject・本文の無い 502 / 504) あとに運営が押し直すと、1 回目で済んでいても
+ * 同じ金額でもう一度 Stripe に新しい Price を作り、1 回目に作った Price を無効化し、履歴と監査に 2 行目が入った (予約は同時の実行だけを断る)。
+ * いまは 1 の後、2 の前に、送られた価格 (送った方だけ) がロックの下で読んだ今の価格とすべて同じなら、Stripe も DB も触らず、
+ * 監査も書かずに 409 OP_PRICE_UNCHANGED を返す (予約は消す。src/lib/super-admin/price-change-unchanged.ts)。
+ * Stripe の同期が要る環境で、送った間隔の Stripe Price ID がまだ無いときは、同じ価格でも続ける (販売開始の手順で Price を作って ID を入れる。
+ * docs/design/billing/03-paid-plans-and-iap.md §12 の順 3)。
+ *
  * (#1041 round-3 (C2) / round-4 (C) の「stripe_price_id は 1 本しか保持できない」制約は、
  * #1102 で年額用の列 stripe_yearly_price_id を足して解消した。)
  */
@@ -65,6 +72,7 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { invalidInputResponse, invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
 import { isUuid } from '@/lib/http-params';
+import { PRICE_UNCHANGED_CODE, PRICE_UNCHANGED_MESSAGE, priceChangeAlreadyApplied } from '@/lib/super-admin/price-change-unchanged';
 import {
   PRICE_CHANGE_IN_PROGRESS_MESSAGE,
   PRICE_CHANGE_RESERVATION_LOST_MESSAGE,
@@ -312,7 +320,7 @@ export async function POST(request: NextRequest, props: RouteContext) {
     }
     const { plan, token } = begin;
 
-    // apply が返るまでは予約を持っている。apply まで行かずに返るとき (Stripe の同期の失敗・例外) は、finally で予約を消す
+    // apply が返るまでは予約を持っている。apply まで行かずに返るとき (価格が同じ・Stripe の同期の失敗・例外) は、finally で予約を消す
     let reservationHeld = true;
     try {
       // #1041 (F4-06) 修正: STRIPE_SECRET_KEY が設定されている場合は「本番で Stripe 同期が
@@ -320,6 +328,13 @@ export async function POST(request: NextRequest, props: RouteContext) {
       // 偽成功 (DB のみ更新して 200 を返す) にせず 502 で失敗させる (fail-closed)。
       // STRIPE_SECRET_KEY が未設定の場合のみ、意図された dev/mock モードとして続行する。
       const stripeSyncExpected = Boolean(process.env.STRIPE_SECRET_KEY && plan.stripe_product_id);
+
+      // #2101 X1: 送られた価格がロックの下で読んだ今の価格とすべて同じなら、もう済んでいる (応答が切れたあとの押し直しなど)。
+      // Stripe に 2 つ目の Price を作らず (1 回目の Price を無効化せず)、履歴と監査に 2 行目を書かない。Stripe を呼ぶ前に判定する。
+      // Stripe の同期が要り、送った間隔の Stripe Price ID がまだ無いときは続ける (販売開始の手順。billing/03 §12 の順 3)
+      if (priceChangeAlreadyApplied(plan, input, stripeSyncExpected)) {
+        return NextResponse.json({ error: { code: PRICE_UNCHANGED_CODE, message: PRICE_UNCHANGED_MESSAGE } }, { status: 409 });
+      }
 
       // 月額・年額それぞれの Stripe 同期結果 (Edge Function の interval ガードによる deactivate 結果を含む。
       // 監査ログ details に記録するため、DB 更新前に受け取っておく)。

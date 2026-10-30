@@ -38,7 +38,13 @@ const VALUE_EDIT_REASON =
 /** 画面ごとの書き込みの通信の表 (ファイルの中の出てくる順) */
 const EXPECTED: Readonly<Record<string, readonly WriteHandling[]>> = {
   'src/app/super-admin/backups/page.tsx': [
-    { kind: 'exempt', method: 'POST', what: '復旧の訓練の記録の追加', reason: CREATE_REASON },
+    {
+      kind: 'exempt',
+      method: 'POST',
+      what: '復旧の訓練の記録の追加',
+      reason:
+        '作成 (状態の変更ではない)。応答を受け取れなかったら訓練の記録の一覧を読み直し、送った内容の行ができていたかを確かめ、確かめられなければ送信を止める (#2101 X2。振る舞いは admin-create-no-response-2101.test.tsx が確かめる)。#2073 の範囲 (状態の変更) の外',
+    },
   ],
   'src/app/super-admin/coupons/[id]/page.tsx': [
     { kind: 'exempt', method: 'PATCH', what: 'クーポンの保存', reason: VALUE_EDIT_REASON },
@@ -78,7 +84,8 @@ const EXPECTED: Readonly<Record<string, readonly WriteHandling[]>> = {
       kind: 'exempt',
       method: 'POST',
       what: 'プランの価格の変更',
-      reason: '価格の変更の作成 (状態の変更ではない)。応答が切れたあとの押し直しは別の課題 (二重の作成) で、#2073 の範囲の外',
+      reason:
+        '価格の変更の作成 (状態の変更ではない)。#2073 の範囲の外。応答が切れたあとの押し直しの二重は #2101 X1 で、画面がプランを読み直して送った価格になっているかを確かめ、route が同じ価格を 409 OP_PRICE_UNCHANGED で断る (tests/price-change-page-no-response-2101.test.tsx・tests/price-change-unchanged-route-2101.test.ts)',
     },
   ],
   'src/app/super-admin/plans/new/page.tsx': [{ kind: 'exempt', method: 'POST', what: 'プランの作成', reason: CREATE_REASON }],

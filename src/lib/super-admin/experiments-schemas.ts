@@ -53,6 +53,24 @@ export function experimentStatusTransitionMessage(from: string, to: ExperimentSt
   return `実験の状態は ${from} から ${to} へは変えられません (変えられるのは ${ALLOWED_EXPERIMENT_TRANSITIONS_TEXT} だけです)`;
 }
 
+/** 一覧 (GET /api/super-admin/experiments) の 1 ページの件数の上限。#2101 より前の `Math.min(100, …)` と同じ値 */
+export const EXPERIMENTS_LIST_PER_PAGE_MAX = 100;
+/** 一覧の per_page を省略したときの 1 ページの件数。#2101 より前の既定 ('50') と同じ値 */
+export const EXPERIMENTS_LIST_PER_PAGE_DEFAULT = 50;
+
+/**
+ * 一覧 (GET /api/super-admin/experiments) の page / per_page (#2101 X6)。1 以上の整数でなければ (数でない・0・負・小数)・
+ * per_page が上限より大きければ、route が DB に触れずに 400 OP_INVALID_QUERY で断る。
+ * 以前の `Math.max(1, parseInt(page))` は ?page=abc の NaN を通し (Math.max(1, NaN) は NaN)、`.range(NaN, …)` が 500 になり、
+ * 応答の meta.page は null だった。クーポン・機能パッケージ・プランの一覧 (CouponsQuerySchema など) と同じ形
+ */
+export const ExperimentsListQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional().default(1),
+  per_page: z.coerce.number().int().min(1).max(EXPERIMENTS_LIST_PER_PAGE_MAX).optional().default(EXPERIMENTS_LIST_PER_PAGE_DEFAULT),
+});
+
+export type ExperimentsListQuery = z.infer<typeof ExperimentsListQuerySchema>;
+
 export const ExperimentVariantSchema = z.object({
   key: z.string().min(1).max(50),
   weight: z.number().int().min(0).max(100),
