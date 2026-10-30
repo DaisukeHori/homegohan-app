@@ -96,8 +96,8 @@ const QUOTAS_API_PATH = "/api/super-admin/llm/quotas";
  *   - reload-failed: 一覧の読み直しに失敗した (表の上に「再試行」が出ている)
  *   - reload-unavailable: 一覧の読み直しが 401 / 403 で断られた (表の上に理由の文が出ている。「再試行」は出ない。#2093 W6)
  * 段階は一覧の読み込み (load) が結果に合わせて進める。どの経路の読み込みでも、読めたら reloaded にし、
- * 失敗したら reloading を reload-failed にする (「再試行」だけでなく、ほかの行の保存のあとの読み直しで読めたときも、
- * 「読み込み直せなかった」の文を残さない)
+ * 失敗したら reloaded でない段階を reload-failed (401 / 403 なら reload-unavailable) にする (「再試行」だけでなく、ほかの行の
+ * 保存のあとの読み直しで読めたときも、「読み込み直せなかった」の文を残さない。表の上の「再試行」の有無と行の文を食い違わせない)
  */
 type StaleStage = "reloading" | "reloaded" | "reload-failed" | "reload-unavailable";
 
@@ -292,11 +292,12 @@ export default function LLMQuotasPage() {
       } else {
         setError(message);
       }
-      // 409 のあとの読み直しの最中だった行の文を「読み込み直せなかった」文にする。すでに読み直せた行 (reloaded) は、
-      // 409 のあとに一度読み直せているのでそのまま (#1917)。401 / 403 なら「再試行」を促さない文にする (#2093 W6)
+      // 409 のあとの読み直しの最中だった行・まだ読み直せていない行の文を「読み込み直せなかった」文にする。すでに読み直せた行 (reloaded) は、
+      // 409 のあとに一度読み直せているのでそのまま (#1917)。401 / 403 なら「再試行」を促さない文にし、それ以外の失敗なら
+      // 「再試行」を促す文にする (表の上の「再試行」の有無と行の文を食い違わせない。#2093 W6)
       const failedStage: StaleStage = unavailable ? "reload-unavailable" : "reload-failed";
       updateRowMessages((prev) =>
-        advanceStaleMessages(prev, (stage) => (stage === "reloading" ? failedStage : stage)),
+        advanceStaleMessages(prev, (stage) => (stage === "reloaded" ? stage : failedStage)),
       );
       return "failed";
     } finally {

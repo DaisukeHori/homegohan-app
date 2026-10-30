@@ -344,6 +344,24 @@ describe('AI の利用上限: 保存のあと・409 のあとの読み直しが 
     expect(container.querySelector<HTMLInputElement>('input[aria-label="free の新しい上限"]')?.value).toBe('20');
   });
 
+  it('409 のあとの読み直しが 500 (「再試行」を促す行の文) のあと、「再試行」が 401 になったら、表の上の「再試行」も行の文の「再試行」も消す', async () => {
+    mockQuotasServer({
+      patch: () => jsonResponse(409, { error: { code: 'CONFLICT_STALE_DATA', message: '画面を読み込み直してください' } }),
+      getOverride: (n) => (n === 2 ? serverErrorResponse() : n === 3 ? unauthenticatedResponse() : undefined),
+    });
+    await renderElement(createElement(LLMQuotasPage));
+
+    await saveFree();
+    expect(rowStatus()).toContain('再試行');
+    await click(findButton('再試行'), '「再試行」ボタン');
+
+    expect(callsOf('GET', QUOTAS_PATH)).toHaveLength(3);
+    expect(reloadError()).toContain(RELOGIN_MESSAGE);
+    expect(findButton('再試行')).toBeUndefined();
+    expect(rowStatus()).not.toContain('再試行');
+    expect(rowStatus()).toContain('入力した値と理由は残しています');
+  });
+
   it('読み直しの 403 の文が理由の文でなければ「権限がありません」(英字の文を出さない)', async () => {
     mockQuotasServer({
       patch: () => jsonResponse(200, { data: { plan_key: 'free', daily_limit: 20 } }),
