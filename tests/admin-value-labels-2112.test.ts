@@ -301,10 +301,32 @@ function isConstantTableAccess(access: ValueAccess): boolean {
 }
 
 /**
- * 値の一覧の定数を map した引数か (`PLANS.map((value) => <option>{value}</option>)` の value。大文字の名前の配列の map)。
- * 列の名前 (RAW_VALUE_PROPERTIES) によらず内部の値そのものなので数える (選択肢の文字を英字のまま出していた #2112 Z3 の取りこぼし)
+ * 同じファイルで、定数が日本語の文字列だけの配列で宣言されているか (`const COLUMNS = ['日時', '端末'] as const`。表の見出しなど。
+ * 内部の値ではなく画面の文そのもの)
  */
-function isConstantListMapParam(access: ValueAccess): boolean {
+function isJapaneseTextList(name: string, sf: ts.SourceFile): boolean {
+  let result = false;
+  const visit = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name && node.initializer) {
+      let init: ts.Expression = node.initializer;
+      while (ts.isAsExpression(init) || ts.isSatisfiesExpression(init) || ts.isParenthesizedExpression(init)) init = init.expression;
+      result =
+        ts.isArrayLiteralExpression(init) &&
+        init.elements.length > 0 &&
+        init.elements.every((element) => ts.isStringLiteralLike(element) && JAPANESE.test(element.text));
+    }
+    if (!result) ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return result;
+}
+
+/**
+ * 値の一覧の定数を map した引数か (`PLANS.map((value) => <option>{value}</option>)` の value。大文字の名前の配列の map)。
+ * 列の名前 (RAW_VALUE_PROPERTIES) によらず内部の値そのものなので数える (選択肢の文字を英字のまま出していた #2112 Z3 の取りこぼし)。
+ * 同じファイルで日本語の文字列だけの配列として宣言した定数 (表の見出しの一覧など) は数えない
+ */
+function isConstantListMapParam(access: ValueAccess, sf: ts.SourceFile): boolean {
   if (!ts.isIdentifier(access)) return false;
   for (let node: ts.Node | undefined = access.parent; node; node = node.parent) {
     if (!ts.isArrowFunction(node) && !ts.isFunctionExpression(node)) continue;
@@ -317,7 +339,8 @@ function isConstantListMapParam(access: ValueAccess): boolean {
       ts.isPropertyAccessExpression(call.expression) &&
       call.expression.name.text === 'map' &&
       ts.isIdentifier(call.expression.expression) &&
-      CONSTANT_NAME.test(call.expression.expression.text)
+      CONSTANT_NAME.test(call.expression.expression.text) &&
+      !isJapaneseTextList(call.expression.expression.text, sf)
     );
   }
   return false;
@@ -354,7 +377,7 @@ function findRawValueRendering(file: string, source: string): RawFinding[] {
         const accesses: ValueAccess[] = [];
         collectValueAccesses(node.expression, accesses);
         for (const access of accesses) {
-          if (!RAW_VALUE_PROPERTIES.has(accessName(access)) && !isConstantListMapParam(access)) continue;
+          if (!RAW_VALUE_PROPERTIES.has(accessName(access)) && !isConstantListMapParam(access, sf)) continue;
           if (isConstantTableAccess(access) || isPairedWithDisplayName(access, parent, sf)) continue;
           report(access);
         }
@@ -436,6 +459,9 @@ describe('#2112 Z3 運営の画面の走査: 状態・区分の英字の内部�
       'const N = () => <select>{PLANS.map((value) => (<option key={value} value={value}>{value}</option>))}</select>;',
       'const O = () => <select>{PLANS.map((value) => (<option key={value} value={value}>{ORG_PLAN_LABELS[value]}</option>))}</select>;',
       'const P = ({ items }: { items: string[] }) => <ul>{items.map((value) => <li key={value}>{value}</li>)}</ul>;',
+      // 日本語の文字列だけの定数の配列 (表の見出しなど) は数えない
+      "const HEADINGS = ['日時', '端末'] as const;",
+      'const Q = () => <tr>{HEADINGS.map((column) => <th key={column}>{column}</th>)}</tr>;',
     ].join('\n');
     expect(findRawValueRendering('example.tsx', before).map((f) => f.text)).toEqual([
       't.category',
