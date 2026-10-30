@@ -26,6 +26,14 @@
  *   PR-3 begin をコミット前のまま開いておくと、もう 1 本の begin はプランの行のロックで待ち、コミットの後に in_progress を返す
  *   PR-4 release は自分の token の予約だけを消す。無いプランは not_found、draft は draft、期限が 0 以下は 22023
  *   PR-5 関数 3 本は service_role だけが EXECUTE でき、予約の表は利用者が読み書きできない (RLS 有効・権限なし)
+ * (3) 価格の変更が進行中のあいだ、プランの Stripe の商品の ID を変えさせないトリガー guard_plan_stripe_product_id_price_change
+ *     (#2112 Z1-1。supabase/migrations/20261030160000_plan_stripe_product_id_price_change_guard.sql)
+ *   PG-1 begin をコミット前のまま開いておくと、商品の ID の UPDATE はプランの行のロックで待ち、コミットの後に予約を読んで
+ *        OP_PLAN_PRICE_CHANGE_IN_PROGRESS (P0001) で止まる。商品の ID は変わらない (Price ID がまだ NULL でも)
+ *   PG-2 予約が期限内なら商品の ID の UPDATE は止まる。同じ値の UPDATE・表示名の UPDATE・予約の持ち主の apply は止めない。
+ *        予約が消えれば (release) 変えられる
+ *   PG-3 期限 (PRICE_CHANGE_RESERVATION_STALE_SECONDS) を過ぎた予約では止めない
+ *   PG-4 トリガーの関数は誰も EXECUTE できない (持ち主のほかの権限なし)
  *
  * 競合の再現はタイミングに頼らない (tests/integration/helpers/lock-holder.ts): postgres-meta (/pg/query) で先の処理を流して
  * 放されるまで開いたままにする接続を作り、後の処理を service_role の PostgREST で呼んで、それが先の接続に待たされて
@@ -43,7 +51,11 @@ import ws from 'ws';
 import { createLockHolderKit } from '../helpers/lock-holder';
 import { cleanupTestUser, createTestUserWithRoles, testEmail, type TestUser } from '../helpers/users';
 import { PLAN_HAS_SUBSCRIBERS_DB_ERROR, parsePlanSubscriberCountsDetail } from '@/lib/super-admin/plan-subscribers';
-import { PLAN_PRICE_CHANGE_RPC } from '@/lib/super-admin/plan-price-change-reservation';
+import {
+  PLAN_PRICE_CHANGE_IN_PROGRESS_DB_ERROR,
+  PLAN_PRICE_CHANGE_RPC,
+  PRICE_CHANGE_RESERVATION_STALE_SECONDS,
+} from '@/lib/super-admin/plan-price-change-reservation';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -129,7 +141,10 @@ interface Plan {
   planKey: string;
 }
 
-async function createPlan(label: string, options: { planType?: 'personal' | 'org'; status?: string } = {}): Promise<Plan> {
+async function createPlan(
+  label: string,
+  options: { planType?: 'personal' | 'org'; status?: string; withoutStripePrices?: boolean } = {},
+): Promise<Plan> {
   const planType = options.planType ?? 'personal';
   planSeq += 1;
   const planKey = `${planType === 'org' ? 'org_' : ''}it_1917_${label}_${planSeq}_${TS}`;
@@ -142,8 +157,9 @@ async function createPlan(label: string, options: { planType?: 'personal' | 'org
       status: options.status ?? 'public',
       monthly_price_jpy: 1000,
       yearly_price_jpy: 10000,
-      stripe_price_id: `price_month_${planSeq}_${TS}`,
-      stripe_yearly_price_id: `price_year_${planSeq}_${TS}`,
+      // 販売開始の前のプラン (Price ID がまだ無い) は withoutStripePrices (#2112 Z1-1 の PG-*)
+      stripe_price_id: options.withoutStripePrices ? null : `price_month_${planSeq}_${TS}`,
+      stripe_yearly_price_id: options.withoutStripePrices ? null : `price_year_${planSeq}_${TS}`,
       version: 1,
     })
     .select('id')
@@ -749,5 +765,137 @@ describe('(2) 価格の変更の予約', () => {
       `SELECT relrowsecurity FROM pg_class WHERE oid = 'public.plan_price_change_reservations'::regclass`,
     );
     expect(rls).toEqual([{ relrowsecurity: true }]);
+  });
+});
+
+describe('(3) 価格の変更が進行中のあいだ、商品の ID を変えさせないトリガー guard_plan_stripe_product_id_price_change (#2112 Z1-1)', () => {
+  const PRODUCT_A = `prod_it_2112_a_${TS}`;
+  const PRODUCT_B = `prod_it_2112_b_${TS}`;
+  /** 期限 (PRICE_CHANGE_RESERVATION_STALE_SECONDS) を過ぎた予約にするために reserved_at を戻す時間 (期限の 2 倍) */
+  const GUARD_STALE_RESERVATION_AGE_MS = 2 * PRICE_CHANGE_RESERVATION_STALE_SECONDS * MS_PER_SECOND;
+
+  /** 販売開始の前 (Price ID が無い) の公開中のプランに、商品 A を入れて作る */
+  async function createLaunchPlan(label: string): Promise<Plan> {
+    const plan = await createPlan(label, { withoutStripePrices: true });
+    const { error } = await srAdmin.from('subscription_plans').update({ stripe_product_id: PRODUCT_A }).eq('id', plan.id);
+    if (error) throw new Error(`stripe_product_id の準備: ${error.message}`);
+    return plan;
+  }
+
+  /** route の PATCH と同じく、service_role で商品の ID を UPDATE する */
+  function setProduct(planId: string, productId: string | null) {
+    return srAdmin
+      .from('subscription_plans')
+      .update({ stripe_product_id: productId })
+      .eq('id', planId)
+      .select('stripe_product_id')
+      .maybeSingle();
+  }
+
+  async function productOf(planId: string): Promise<string | null> {
+    const { data, error } = await srAdmin.from('subscription_plans').select('stripe_product_id').eq('id', planId).single();
+    if (error || !data) throw new Error(`subscription_plans select: ${error?.message}`);
+    return (data as { stripe_product_id: string | null }).stripe_product_id;
+  }
+
+  it(
+    'PG-1: begin がコミット前の間、商品の ID の UPDATE はプランの行のロックで待ち、コミットの後に予約を読んで止まる',
+    async () => {
+      const plan = await createLaunchPlan('pg1');
+
+      const holder = holders.startHolder(
+        '価格の変更の予約 (begin_plan_price_change。この後 Stripe の Price を作る)',
+        `SELECT public.${PLAN_PRICE_CHANGE_RPC.begin}('${plan.id}'::uuid, ${STALE_AFTER_SECONDS});`,
+      );
+      await holder.sleeping;
+
+      const [held, changed] = await holders.runBehindHolder(holder, {
+        fn: 'subscription_plans',
+        step: '商品の ID の UPDATE が価格の変更の予約のコミットを待つ',
+        call: async () => setProduct(plan.id, PRODUCT_B),
+      });
+
+      expect(held.ok, JSON.stringify(held.body)).toBe(true);
+      expect(changed.error?.message).toBe(PLAN_PRICE_CHANGE_IN_PROGRESS_DB_ERROR);
+      expect(changed.error?.code).toBe('P0001');
+      expect(await productOf(plan.id)).toBe(PRODUCT_A);
+      // 予約はそのまま (進行中の価格の変更は、読んだときの商品 A で Price を作って apply できる)
+      expect(await reservationsOf(plan.id)).toHaveLength(1);
+    },
+    RACE_TIMEOUT_MS,
+  );
+
+  it('PG-2: 期限内の予約があると商品の ID の UPDATE は止まり、同じ値・表示名の UPDATE と予約の持ち主の apply は止めない。予約が消えれば変えられる', async () => {
+    const plan = await createLaunchPlan('pg2');
+    const reservation = await begin(plan.id);
+    if (reservation.result !== 'reserved') throw new Error(`予約できませんでした: ${JSON.stringify(reservation)}`);
+    expect(reservation.plan.stripe_product_id).toBe(PRODUCT_A);
+
+    for (const next of [PRODUCT_B, null]) {
+      const blocked = await setProduct(plan.id, next);
+      expect(blocked.error?.message, String(next)).toBe(PLAN_PRICE_CHANGE_IN_PROGRESS_DB_ERROR);
+      expect(await productOf(plan.id), String(next)).toBe(PRODUCT_A);
+    }
+
+    // 商品の ID が変わらない UPDATE はトリガーの WHEN で外れる
+    const same = await setProduct(plan.id, PRODUCT_A);
+    expect(same.error).toBeNull();
+    const { error: nameError } = await srAdmin.from('subscription_plans').update({ display_name: `#2112 pg2 ${TS}` }).eq('id', plan.id);
+    expect(nameError).toBeNull();
+
+    // 予約の持ち主の apply (Price ID を書く) は止めない。apply が予約を消すので、その後は Price ID の有無 (route の判定) だけになる
+    expect(await apply(plan.id, reservation.token, { monthlyPrice: `price_it_2112_${TS}` })).toMatchObject({ result: 'applied' });
+    expect(await reservationsOf(plan.id)).toEqual([]);
+
+    // 別のプランで: release で予約が消えれば変えられる
+    const other = await createLaunchPlan('pg2-release');
+    const otherReservation = await begin(other.id);
+    if (otherReservation.result !== 'reserved') throw new Error(`予約できませんでした: ${JSON.stringify(otherReservation)}`);
+    expect((await setProduct(other.id, PRODUCT_B)).error?.message).toBe(PLAN_PRICE_CHANGE_IN_PROGRESS_DB_ERROR);
+    await srAdmin.rpc(PLAN_PRICE_CHANGE_RPC.release, { p_plan_id: other.id, p_token: otherReservation.token });
+    const released = await setProduct(other.id, PRODUCT_B);
+    expect(released.error).toBeNull();
+    expect(released.data).toEqual({ stripe_product_id: PRODUCT_B });
+  });
+
+  it('PG-3: 期限 (PRICE_CHANGE_RESERVATION_STALE_SECONDS) を過ぎた予約では止めない', async () => {
+    const plan = await createLaunchPlan('pg3');
+    const reservation = await begin(plan.id);
+    if (reservation.result !== 'reserved') throw new Error(`予約できませんでした: ${JSON.stringify(reservation)}`);
+
+    // 期限の少し手前 (期限内) ではまだ止める
+    const { error: recentError } = await srAdmin
+      .from('plan_price_change_reservations')
+      .update({ reserved_at: new Date(Date.now() - (PRICE_CHANGE_RESERVATION_STALE_SECONDS * MS_PER_SECOND) / 2).toISOString() })
+      .eq('plan_id', plan.id);
+    expect(recentError).toBeNull();
+    expect((await setProduct(plan.id, PRODUCT_B)).error?.message).toBe(PLAN_PRICE_CHANGE_IN_PROGRESS_DB_ERROR);
+
+    const { error: ageError } = await srAdmin
+      .from('plan_price_change_reservations')
+      .update({ reserved_at: new Date(Date.now() - GUARD_STALE_RESERVATION_AGE_MS).toISOString() })
+      .eq('plan_id', plan.id);
+    expect(ageError).toBeNull();
+    const changed = await setProduct(plan.id, PRODUCT_B);
+    expect(changed.error).toBeNull();
+    expect(changed.data).toEqual({ stripe_product_id: PRODUCT_B });
+  });
+
+  it('PG-4: トリガーの関数は誰も EXECUTE できない (持ち主のほか)。トリガーは BEFORE UPDATE OF stripe_product_id の行トリガー', async () => {
+    const grants = await holders.pgQuery<{ grantee: string }>(`
+      SELECT CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END AS grantee
+      FROM pg_proc p
+      JOIN pg_namespace n ON n.oid = p.pronamespace
+      CROSS JOIN LATERAL aclexplode(p.proacl) a
+      WHERE n.nspname = 'public' AND p.proname = 'guard_plan_stripe_product_id_price_change'
+        AND a.privilege_type = 'EXECUTE' AND a.grantee <> p.proowner`);
+    expect(grants).toEqual([]);
+
+    const triggers = await holders.pgQuery<{ definition: string }>(`
+      SELECT pg_get_triggerdef(t.oid) AS definition
+      FROM pg_trigger t
+      WHERE t.tgrelid = 'public.subscription_plans'::regclass AND t.tgname = 'trg_guard_plan_stripe_product_id_price_change'`);
+    expect(triggers).toHaveLength(1);
+    expect(triggers[0]!.definition).toContain('BEFORE UPDATE OF stripe_product_id ON public.subscription_plans FOR EACH ROW');
   });
 });
