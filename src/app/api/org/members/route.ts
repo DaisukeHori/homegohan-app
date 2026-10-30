@@ -17,6 +17,7 @@ import {
   OrgMemberNameSchema,
   type OrgMemberNamesResponse,
 } from '@/schemas/membership/organization-member-name';
+import { orderOrgMemberList } from '@/lib/membership/org-member-list-order';
 // メンバー一覧取得 (所属組織の owner / admin のみ。判定は共通の requireOrgAdmin()、#1161)
 //
 // 組織のメンバーの一覧の画面 (src/app/(org)/org/members/page.tsx) が呼ぶ (#2073 S4)。
@@ -26,17 +27,19 @@ import {
 //   2. 本人の所属組織と、そこでの役割が owner / admin であること (本人の行は RLS で読める。違えば 403。一般メンバーも 403)
 //   3. service_role の読みは 2 で確かめた organization_id で絞る (ほかの組織の行は読まない)
 // 返すのは id・表示名・組織内の役割・参加した日の 4 つだけ (プライバシーポリシー第9条 5 項。ORG_MEMBER_NAME_COLUMNS)。
-// 並びは参加した日の古い順 (画面の以前の問い合わせと同じ)
+// 並びは参加した日の古い順 (画面の以前の問い合わせと同じ)。同じ日はオーナー → 管理者 → メンバー、その中は id の順で、
+// 参加した日が空の行は最後 (#2128 V3。orderOrgMemberList)
 export async function GET(_request: Request) {
   try {
     const { profile: adminProfile } = await requireOrgAdmin();
 
     // service_role の client は、上の確認を通ったあとの読みにだけ使う
-    const { data: rows, error } = await getSupabaseAdmin()
-      .from('user_profiles')
-      .select(ORG_MEMBER_NAME_COLUMNS)
-      .eq('organization_id', adminProfile.organization_id)
-      .order('joined_org_at', { ascending: true });
+    const { data: rows, error } = await orderOrgMemberList(
+      getSupabaseAdmin()
+        .from('user_profiles')
+        .select(ORG_MEMBER_NAME_COLUMNS)
+        .eq('organization_id', adminProfile.organization_id),
+    );
 
     if (error) throw new Error(error.message);
 
