@@ -795,8 +795,11 @@ describe('作成の応答を受け取れなかったとき (#2107 Y4): 失敗と
     await click(findButton('作成する'), '作成ボタン');
   }
 
-  /** 送信を止めている欄 (黄色の alert) の文 */
-  const stoppedMessage = () => alerts().find((message) => message.includes(UNCONFIRMED)) ?? null;
+  /** 送信を止めている欄 (黄色の alert) の文 (「確かめ直す」のボタンの文字は除く) */
+  const stoppedMessage = () => {
+    const alert = Array.from(container.querySelectorAll('[role="alert"]')).find((el) => el.textContent?.includes(UNCONFIRMED));
+    return alert?.querySelector('span')?.textContent ?? null;
+  };
 
   it('通信エラーのあと、送る前に無かった同じ名前・プランの組織が読み直しにあれば、済んだとして入力を空にして知らせ、1 ページ目から取り直す (押し直させない)', async () => {
     mockApi(
