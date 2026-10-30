@@ -19,6 +19,7 @@ import { isAccountFrozen } from '@/lib/auth/frozen';
 import { jstDayStartTimestamp } from '@/lib/date-utils';
 import { jstOptionalDayRangeTimestamps } from '@/lib/jst-day-ranges';
 import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
+import { FREE_PLAN_KEY } from '@/lib/billing/core';
 
 export const dynamic = 'force-dynamic';
 
@@ -74,6 +75,11 @@ export async function GET(request: Request) {
     searchFilter = buildUserSearchFilter(searchTerm, emailMatchedIds);
   }
 
+  // プランの絞り込み (#2112 Z5)。前後の空白を除いて空なら「指定なし」(検索語 q と同じ扱い。監査の検索条件にも残らない)。
+  // 以前は plan を受け取って監査の検索条件に残すだけで一覧を絞らず、全プランの利用者を返していた
+  // (監査には plan で絞ったように残った)。監査には、一覧の絞り込みに使ったこの値を残す
+  const planFilter = params.plan?.trim() || undefined;
+
   // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectUsers) から作る。
   // 絞り込みを 2 か所に書くと、片方だけ直したときに件数と一覧がずれるため。
   // 凍結の判定の時刻も 1 回だけ決める (一覧と件数で同じ時刻を使う)
@@ -106,6 +112,15 @@ export async function GET(request: Request) {
     // ロールフィルタ
     if (params.role) {
       query = query.contains('roles', [params.role]);
+    }
+
+    // プランフィルタ (#2112 Z5): 応答の plan_key と同じ意味で絞る。応答は plan_key_cached が空 (NULL) の利用者を
+    // 'free' として返すので、plan=free は plan_key_cached が NULL か 'free' の行。それ以外は plan_key_cached の一致。
+    // 一覧と件数の数え直しの両方に効く (selectUsers の中にあるため)
+    if (planFilter === FREE_PLAN_KEY) {
+      query = query.or(`plan_key_cached.is.null,plan_key_cached.eq.${FREE_PLAN_KEY}`);
+    } else if (planFilter) {
+      query = query.eq('plan_key_cached', planFilter);
     }
 
     // ステータスフィルタ
@@ -196,7 +211,7 @@ export async function GET(request: Request) {
     id: u.id,
     email: emails.get(u.id) ?? null,
     nickname: u.nickname,
-    plan_key: u.plan_key_cached ?? 'free',
+    plan_key: u.plan_key_cached ?? FREE_PLAN_KEY,
     roles: u.roles ?? ['user'],
     // #1030: 一時 BAN は unban_at 経過後に自動解除扱いとする (判定時比較)。
     is_banned: isAccountFrozen({
@@ -226,7 +241,7 @@ export async function GET(request: Request) {
       details: buildListViewDetails(
         {
           q: params.q?.trim(),
-          plan: params.plan,
+          plan: planFilter,
           role: params.role,
           status: params.status,
           registered_from: params.registered_from,
