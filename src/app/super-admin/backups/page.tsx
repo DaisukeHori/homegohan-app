@@ -36,7 +36,7 @@ import {
   type DrTestResult,
   type DrTestSmokeResult,
 } from '@/lib/backups/core';
-import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
+import { UNAUTHENTICATED_SCREEN_MESSAGE, forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
 import { AdminActionNoResponseError, adminActionErrorOfResponse } from '@/lib/admin/admin-screen-messages';
 import {
   adminCreateFoundGuide,
@@ -53,6 +53,7 @@ import { jstToday } from '@/lib/jst-day-ranges';
 const HTTP_OK = 200;
 const HTTP_CREATED = 201;
 const HTTP_BAD_REQUEST = 400;
+const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
 
 /** 大きさの表示の単位 (1 MiB = 1024 × 1024 バイト) */
@@ -162,8 +163,8 @@ const FIELD_LABELS: Readonly<Record<DrTestField, string>> = {
 /**
  * 記録の応答を受け取れなかった (サーバーで済んだか分からない) 訓練の記録 (#2101 X2)。これがあるあいだは送信を止める。
  *   - knownIds: 送る前に画面が持っていた訓練の記録の行の id (読めていなければ null)
- *   - retryable: 「確かめ直す」で読み直せば決まりうるか (読み直しの失敗、読み直した記録に送った記録がまだ無い (サーバーが書き込みの途中かもしれない))。
- *     比べる元が無くて決められない (ambiguous) ときは false
+ *   - retryable: 「確かめ直す」で読み直せば決まりうるか (読み直しの失敗 (401 / 403 を除く)、読み直した記録に送った記録がまだ無い (サーバーが書き込みの途中かもしれない))。
+ *     比べる元が無くて決められない (ambiguous) とき・読み直しが 401 / 403 で断られた (読み込み直しても変わらない。integrity-1030c) ときは false
  */
 interface UnconfirmedDrTest {
   readonly body: Readonly<Record<DrTestField, unknown>>;
@@ -237,6 +238,19 @@ type LoadState =
   | { status: 'loaded'; data: BackupStatusResponse['data'] }
   | { status: 'error'; message: string };
 
+/**
+ * 状態の読み込み (reload) の結果 (#2101 integrity-1030c。src/app/admin/sales/[id]/page.tsx の LeadLoadResult と同じ分け方):
+ *   - loaded      : 読めた (data)
+ *   - unauthorized: 401 (ログインが切れた)。message は「ログインし直してください」
+ *   - forbidden   : 403 (権限が外れた・二段階認証の確認が要る など)。message は本文の理由の文か、この画面の固定の文
+ *   - failed      : ほかの失敗 (500・本文の無い 502・通信の reject・形の違う本文)。読み込み直せば変わりうる
+ * unauthorized / forbidden は読み込み直しても変わらないので、記録の応答を受け取れなかったあとの読み直しでは「確かめ直す」を出さない
+ */
+type BackupsLoadResult =
+  | { outcome: 'loaded'; data: BackupStatusResponse['data'] }
+  | { outcome: 'unauthorized' | 'forbidden'; message: string }
+  | { outcome: 'failed' };
+
 export default function SuperAdminBackupsPage() {
   const [load, setLoad] = useState<LoadState>({ status: 'loading' });
   const [form, setForm] = useState<DrTestFormState>(initialFormState);
@@ -252,30 +266,39 @@ export default function SuperAdminBackupsPage() {
   // 送信と、そのあとの読み直しを待っているあいだは true (再描画の前に続けて押されたときも送らない守り。#2101 X2)
   const submitLockedRef = useRef(false);
 
-  /** 状態を読み、画面に出す。読めたら読んだ data を、読めなければ null を返す (記録の応答を受け取れなかったあとの読み直しで比べる。#2101 X2) */
-  const reload = useCallback(async (): Promise<BackupStatusResponse['data'] | null> => {
+  /**
+   * 状態を読み、画面に出す。結果を 401 / 403 / ほかの失敗に分けて返す
+   * (記録の応答を受け取れなかったあとの読み直しで、読めた data と比べ、401 / 403 なら「確かめ直す」を出さない。#2101 X2・integrity-1030c)
+   */
+  const reload = useCallback(async (): Promise<BackupsLoadResult> => {
     try {
       const res = await fetch(SUPER_ADMIN_BACKUPS_API_PATH);
+      if (res.status === HTTP_UNAUTHORIZED) {
+        // 401 は読み込み直しても変わらない。時間をおいて開き直す文ではなく、ログインし直す文を出す (#2101 integrity-1030c)
+        setLoad({ status: 'error', message: UNAUTHENTICATED_SCREEN_MESSAGE });
+        return { outcome: 'unauthorized', message: UNAUTHENTICATED_SCREEN_MESSAGE };
+      }
       if (res.status === HTTP_FORBIDDEN) {
         // 403 は本文の理由の文 (二段階認証の確認が要る など) があればそちらを出す (#1917)
-        setLoad({ status: 'error', message: await forbiddenMessageOfResponse(res, LOAD_FORBIDDEN_TEXT) });
-        return null;
+        const message = await forbiddenMessageOfResponse(res, LOAD_FORBIDDEN_TEXT);
+        setLoad({ status: 'error', message });
+        return { outcome: 'forbidden', message };
       }
       if (res.status !== HTTP_OK) {
         setLoad({ status: 'error', message: LOAD_FAILED_TEXT });
-        return null;
+        return { outcome: 'failed' };
       }
       const json: unknown = await res.json();
       // 訓練の記録の一覧の無い形を読めたとは扱わない (読み直しで「記録されていない」と誤って決めない。#2101 X2)
       if (!isBackupStatusResponse(json)) {
         setLoad({ status: 'error', message: LOAD_FAILED_TEXT });
-        return null;
+        return { outcome: 'failed' };
       }
       setLoad({ status: 'loaded', data: json.data });
-      return json.data;
+      return { outcome: 'loaded', data: json.data };
     } catch {
       setLoad({ status: 'error', message: LOAD_FAILED_TEXT });
-      return null;
+      return { outcome: 'failed' };
     }
   }, []);
 
@@ -296,15 +319,24 @@ export default function SuperAdminBackupsPage() {
    * 記録の応答を受け取れなかったあと、状態を読み直して送った記録ができていたかを確かめる (#2101 X2)。
    * できていれば済んだとして入力を初めに戻し、送信の止めを外す。
    * まだ無い (サーバーが書き込みの途中かもしれない)・読み直しにも失敗した・前からあった行か決められないときは、送信を止めたままにする
-   * (押し直すと監査ログに 2 行入りうる。押し直すのは、記録の一覧で確かめてから画面を開き直したときだけ)
+   * (押し直すと監査ログに 2 行入りうる。押し直すのは、記録の一覧で確かめてから画面を開き直したときだけ)。
+   * 読み直しが 401 / 403 なら、読み込み直しても必ず同じ理由で断られるので「確かめ直す」を出さず、理由の文
+   * (「ログインし直してください」・403 の理由の文) を添える (#2101 integrity-1030c。お知らせ・営業のリードの活動と同じ)
    */
   const confirmUnconfirmedDrTest = async (pending: Omit<UnconfirmedDrTest, 'message' | 'retryable'>) => {
-    const data = await reload();
-    if (data === null) {
-      markUnconfirmed({ ...pending, message: adminCreateStoppedMessage(pending.summary), retryable: true });
-      return;
+    const result = await reload();
+    switch (result.outcome) {
+      case 'loaded':
+        break;
+      case 'unauthorized':
+      case 'forbidden':
+        markUnconfirmed({ ...pending, message: adminCreateStoppedMessage(pending.summary, result.message), retryable: false });
+        return;
+      case 'failed':
+        markUnconfirmed({ ...pending, message: adminCreateStoppedMessage(pending.summary), retryable: true });
+        return;
     }
-    const outcome = confirmCreatedRow(data.dr_tests, pending.knownIds, (row) => isSameDrTest(row, pending.body));
+    const outcome = confirmCreatedRow(result.data.dr_tests, pending.knownIds, (row) => isSameDrTest(row, pending.body));
     if (outcome === 'ambiguous') {
       markUnconfirmed({ ...pending, message: adminCreateStoppedMessage(pending.summary), retryable: false });
       return;
