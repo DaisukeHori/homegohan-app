@@ -25,7 +25,7 @@
  * 一覧の上の 409・通信の reject のあとの文は前のページの行についての文なので、ページを移したら消す
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { Suspense, useState, useEffect, useCallback, useLayoutEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { lastPageOf, lastPageToRefetch, parsePageParam } from "@/lib/list-pagination";
@@ -125,7 +125,25 @@ function reloadNoticeText(notice: ReloadNotice): string {
   }
 }
 
+/** 読み込み中の表示 (初めの読み込み・ページを移した先の読み込み・URL を読む前) */
+function ExperimentsLoadingSpinner() {
+  return (
+    <div className="p-8 flex justify-center">
+      <div className="w-10 h-10 border-4 border-purple-500 border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
+}
+
+/** URL の page (useSearchParams) を読むので Suspense で包む (他の画面の useSearchParams と同じ形。#2107 Y9) */
 export default function ExperimentsPage() {
+  return (
+    <Suspense fallback={<ExperimentsLoadingSpinner />}>
+      <ExperimentsList />
+    </Suspense>
+  );
+}
+
+function ExperimentsList() {
   const router = useRouter();
   // 読むページは URL の page (1 以上の整数でなければ 1 ページ目。#2107 Y9)
   const searchParams = useSearchParams();
@@ -229,6 +247,14 @@ export default function ExperimentsPage() {
     void loadExperiments();
   }, [loadExperiments]);
 
+  // 今の URL のページを読む loadExperiments の写し。状態の変更のあとの読み直しは、応答を待つ間にページを移していても
+  // 押したときのページでなく今のページを読む (押したときの関数のままだと前のページを読み、今のページの読み込みを追い越して
+  // URL と違うページの行を出す。#2107 Y9)
+  const loadExperimentsRef = useRef(loadExperiments);
+  useLayoutEffect(() => {
+    loadExperimentsRef.current = loadExperiments;
+  }, [loadExperiments]);
+
   /**
    * 状態が分からなくなったあとの一覧の読み直し。cause は読み直す理由:
    *   - stale      : 409 (遷移表に無い変更・別の操作が先に状態を変えた)
@@ -237,7 +263,7 @@ export default function ExperimentsPage() {
    */
   const reloadAfterUncertain = useCallback(
     async (target: { id: string; name: string }, cause: "stale" | "no-response") => {
-      const outcome = await loadExperiments();
+      const outcome = await loadExperimentsRef.current();
       // 移した先のページの読み込みは、初めの読み込みと同じ扱い (一覧の上の文は出さない。#2107 Y9)
       if (outcome.kind === "superseded" || outcome.kind === "moved") return;
       // 読み直しが失敗したら、どちらの理由でも、読み直せるまで状態のボタンを止める (#2073・#2080)。
@@ -260,7 +286,7 @@ export default function ExperimentsPage() {
         });
       }
     },
-    [loadExperiments, markReloadFailed],
+    [markReloadFailed],
   );
 
   /** 「再試行」: 409 のあと・通信の reject のあとの失敗した読み直しをやり直す */
@@ -319,11 +345,7 @@ export default function ExperimentsPage() {
   const totalPages = lastPageOf(total, EXPERIMENTS_PER_PAGE);
 
   if (isLoading) {
-    return (
-      <div className="p-8 flex justify-center">
-        <div className="w-10 h-10 border-4 border-purple-500 border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
+    return <ExperimentsLoadingSpinner />;
   }
 
   if (error) {

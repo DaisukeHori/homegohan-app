@@ -222,6 +222,39 @@ describe('#2107 Y9 A/B テストの一覧 (/super-admin/experiments) のペー�
     expect(container.querySelectorAll('code')).toHaveLength(0);
     expect(container.querySelector('[data-testid="experiments-total"]')).toBeNull();
   });
+
+  it('「開始」の応答を待つ間にページを移したら、通信の reject のあとの読み直しは今のページを読む (前のページの行を出さない)', async () => {
+    nav.searchParams = new URLSearchParams({ page: '1' });
+    let rejectPatch: (err: Error) => void = () => undefined;
+    fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost');
+      if ((init?.method ?? 'GET') === 'PATCH') {
+        return new Promise<Response>((_resolve, reject) => {
+          rejectPatch = reject;
+        });
+      }
+      if (url.pathname !== LIST_PATH) throw new Error(`想定外の呼び出し: ${url.pathname}`);
+      const page = Number(url.searchParams.get('page'));
+      return jsonResponse(HTTP_OK, { data: pageRows(page, TOTAL_THREE_PAGES), meta: { total: TOTAL_THREE_PAGES, page, per_page: PER_PAGE } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const Page = await loadPage();
+    await renderPage(Page);
+    await click(Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === '開始')!);
+
+    // 応答を待つ間に「次へ」で 2 ページ目へ移った
+    nav.searchParams = new URLSearchParams({ page: '2' });
+    await renderPage(Page);
+    await act(async () => {
+      rejectPatch(new TypeError('Failed to fetch'));
+    });
+    await flush();
+
+    expect(requestedUrls(LIST_PATH).map((u) => u.searchParams.get('page'))).toEqual(['1', '2', '2']);
+    const keys = Array.from(container.querySelectorAll('code')).map((c) => c.textContent);
+    expect(keys).toContain(`experiment_${PER_PAGE + 1}`);
+    expect(keys).not.toContain('experiment_1');
+  });
 });
 
 // ─── Y11: 営業・問い合わせの一覧の読み込みの失敗で前の条件の行を出さない ─────────────────
