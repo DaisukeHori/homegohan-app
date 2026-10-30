@@ -43,6 +43,32 @@ export function leadingUsers(count: number): FakeAuthUser[] {
   }));
 }
 
+/**
+ * enum の列の並び。PostgreSQL は enum の値を宣言の順で並べる (文字列の順ではない)。
+ * org_role は org_role_enum ('owner', 'admin', 'member' の順に宣言。tests/org-member-list-order-2128.test.ts が migration と突き合わせる)
+ */
+export const FAKE_ENUM_COLUMN_ORDERS: Readonly<Record<string, readonly string[]>> = {
+  org_role: ['owner', 'admin', 'member'],
+};
+
+type SortKey = { column: string; ascending: boolean; nullsFirst: boolean };
+
+/** 2 つの値を 1 つの並びの鍵で比べる (NULL の位置は nullsFirst、enum の列は宣言の順) */
+function compareBy(key: SortKey, a: Row, b: Row): number {
+  const { column, ascending, nullsFirst } = key;
+  const left = a[column] ?? null;
+  const right = b[column] ?? null;
+  if (left === null && right === null) return 0;
+  if (left === null) return nullsFirst ? -1 : 1;
+  if (right === null) return nullsFirst ? 1 : -1;
+  if (left === right) return 0;
+  const enumOrder = FAKE_ENUM_COLUMN_ORDERS[column];
+  const leftRank = enumOrder ? enumOrder.indexOf(String(left)) : (left as string | number);
+  const rightRank = enumOrder ? enumOrder.indexOf(String(right)) : (right as string | number);
+  if (leftRank === rightRank) return 0;
+  return leftRank < rightRank === ascending ? -1 : 1;
+}
+
 export function createFakeServiceRole(init: { tables: Tables; users: FakeAuthUser[] }) {
   const { tables, users } = init;
 
@@ -54,27 +80,27 @@ export function createFakeServiceRole(init: { tables: Tables; users: FakeAuthUse
   const readErrors: Record<string, unknown> = {};
   /** select(...) に渡された列の指定 (存在しない列を読んでいないかの確認に使う) */
   const selects: Array<{ table: string; columns: string | undefined }> = [];
+  /** order(...) に渡された並びの鍵 (呼んだ順。並びを DB に任せているかの確認に使う) */
+  const orders: Array<{ table: string } & SortKey> = [];
 
   const from = vi.fn((table: string): FakeQuery => {
     const filters: Array<(row: Row) => boolean> = [];
     let columns: string[] | null = null;
-    let sortBy: { column: string; ascending: boolean; nullsFirst: boolean } | null = null;
+    // PostgREST と同じく、order を重ねると先に指定した鍵ほど強い (order=a.asc,b.asc)
+    const sortKeys: SortKey[] = [];
 
     // select に書いた列だけを返す (select していない列を実装が読んでいたらテストで気づける)
     const execute = (): { rows: Row[]; error: unknown } => {
       events.push(`read:${table}`);
       if (table in readErrors) return { rows: [], error: readErrors[table] };
       const matched = (tables[table] ?? []).filter((row) => filters.every((matches) => matches(row)));
-      if (sortBy) {
-        const { column, ascending, nullsFirst } = sortBy;
+      if (sortKeys.length > 0) {
         matched.sort((a, b) => {
-          const left = a[column] ?? null;
-          const right = b[column] ?? null;
-          if (left === null && right === null) return 0;
-          if (left === null) return nullsFirst ? -1 : 1;
-          if (right === null) return nullsFirst ? 1 : -1;
-          if (left === right) return 0;
-          return (left as string | number) < (right as string | number) === ascending ? -1 : 1;
+          for (const key of sortKeys) {
+            const compared = compareBy(key, a, b);
+            if (compared !== 0) return compared;
+          }
+          return 0;
         });
       }
       const rows = matched.map((row) =>
@@ -118,7 +144,9 @@ export function createFakeServiceRole(init: { tables: Tables; users: FakeAuthUse
       // PostgreSQL の既定どおり、NULL は昇順なら最後、降順なら最初 (nullsFirst で上書きできる)
       order(column, options) {
         const ascending = options?.ascending ?? true;
-        sortBy = { column, ascending, nullsFirst: options?.nullsFirst ?? !ascending };
+        const key: SortKey = { column, ascending, nullsFirst: options?.nullsFirst ?? !ascending };
+        sortKeys.push(key);
+        orders.push({ table, ...key });
         return query;
       },
       single: async () => toSingle(false),
@@ -154,7 +182,7 @@ export function createFakeServiceRole(init: { tables: Tables; users: FakeAuthUse
     },
   };
 
-  return { client: { from, auth }, from, auth, tables, users, events, readErrors, selects, authFailures };
+  return { client: { from, auth }, from, auth, tables, users, events, readErrors, selects, orders, authFailures };
 }
 
 /** 本文中の「▼ <見出し>」の次の行を返す (見出しが無ければ undefined) */
