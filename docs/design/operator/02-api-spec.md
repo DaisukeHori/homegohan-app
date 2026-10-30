@@ -79,7 +79,7 @@ await supabase.from('admin_audit_logs').insert({
 | パラメータ | 型 | 説明 |
 |----------|---|------|
 | `q` | string | 全文検索 (email/name/user_id)。email の部分一致は `admin` / `super_admin` のみ (`support` は name/user_id のみ)。`%` `_` は文字どおりに一致する |
-| `plan` | string | plan_key でフィルタ |
+| `plan` | string | plan_key でフィルタ (`user_profiles.plan_key_cached` で絞る。`free` は `plan_key_cached` が NULL の利用者も含む = 応答の `plan_key` と同じ意味。前後の空白を除いて空なら指定なし。一覧と件数の数え直しの両方に効く。#2112 Z5) |
 | `role` | string | ロールでフィルタ |
 | `status` | `active\|banned\|deleted` | ステータス。`deleted` は常に 0 件 (退会は `auth.users` の行を消し、`user_profiles` の行も外部キーの ON DELETE CASCADE で消えるので、削除済みの行は無い。以前は絞らずに全ステータスを返していた。#2107 Y10) |
 | `registered_from` | date | 登録日 FROM (JST の暦日。その日の JST 0 時以上。実在しない日付・受け付ける範囲 (0101-01-02〜9998-12-30) の外の日付は 400) |
