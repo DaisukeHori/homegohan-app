@@ -22,6 +22,14 @@
  * 送った値になっていなければ、画面のプランを読み直した値にして、済んでいないことを出す (もう一度実行できる。同じ価格の押し直しは
  * route が 409 OP_PRICE_UNCHANGED で断る)。読み直せなければ送信を止め、「済んだか分かりません。履歴で確かめてください」と履歴へのリンクを出す。
  * 409 OP_PRICE_UNCHANGED (すでにこの価格) は済んだものとして履歴の画面へ移る (src/lib/super-admin/price-change-unchanged.ts)。
+ *
+ * #2107 Y2: 以前は今の価格と違う間隔があるときだけ送れたので、販売開始の手順 (docs/design/billing/03-paid-plans-and-iap.md §12 の順 3。
+ * migration が入れた価格のまま Stripe の Price を作り ID を入れる) が画面からできなかった。いまは送る間隔を route と同じ判定
+ * (pendingPriceChange) で決める: 今と違う価格の間隔と、Stripe の同期が要るプラン (GET の stripe_price_sync_expected) で
+ * Price ID がまだ無い間隔 (今と同じ価格でも) を送る。価格を変えずに Price を作るだけのときは、実行のボタンを「Stripe の Price を作る」にする。
+ * 応答を受け取れなかったあとの「済んだか」も route と同じ判定 (priceChangeAlreadyApplied) で、価格が同じでも Price ID がまだ無ければ済んだとしない。
+ * #2107 Y3: 履歴の画面は planDetailHref(id, 'history') (プラン詳細は URL の tab を初めのタブにする)。
+ * #2107 Y6: 読み直したプランが送った内容になっていないときは「まだ処理中のことがあります」を添える (route の 1 回目がまだ走っていることがある)。
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -41,7 +49,14 @@ import {
   fetchAdminJson,
   readFailureBody,
 } from '@/lib/admin/admin-screen-messages';
-import { isPriceUnchangedBody, sentPricesMatchPlan, type PriceChangeSentPrices } from '@/lib/super-admin/price-change-unchanged';
+import {
+  isPriceUnchangedBody,
+  pendingPriceChange,
+  priceChangeAlreadyApplied,
+  type PlanCurrentPricesWithStripe,
+  type PriceChangeSentPrices,
+} from '@/lib/super-admin/price-change-unchanged';
+import { planDetailHref } from '@/lib/super-admin/plan-detail-tab';
 
 type ImpactData = {
   /** 新規契約のみなので常に 0 (既存契約は現行価格のまま) */
@@ -62,7 +77,28 @@ type Plan = {
   monthly_price_jpy: number | null;
   yearly_price_jpy: number | null;
   status: string;
+  /** 月額の Stripe Price ID (#1102)。まだ無いときは null */
+  stripe_price_id?: string | null;
+  /** 年額の Stripe Price ID (#1102)。まだ無いときは null */
+  stripe_yearly_price_id?: string | null;
+  /** 価格の変更で Stripe の Price を作るか (Stripe の鍵があり、stripe_product_id がある。GET が返す。#2107 Y2) */
+  stripe_price_sync_expected?: boolean;
 };
+
+/** route と同じ判定に渡すプランの値 (Price ID が本文に無いときは「まだ無い」) */
+function planStripeStateOf(plan: Plan): PlanCurrentPricesWithStripe {
+  return {
+    monthly_price_jpy: plan.monthly_price_jpy,
+    yearly_price_jpy: plan.yearly_price_jpy,
+    stripe_price_id: plan.stripe_price_id ?? null,
+    stripe_yearly_price_id: plan.stripe_yearly_price_id ?? null,
+  };
+}
+
+/** Stripe の Price を作るか (GET の本文に無い・true でないときは作らない = 今と同じ価格の間隔は送らない) */
+function stripePriceSyncExpectedOf(plan: Plan): boolean {
+  return plan.stripe_price_sync_expected === true;
+}
 
 /** 適用範囲は新規契約のみ (選択肢ではなく、固定の説明として表示する) */
 const APPLIES_TO_LABEL = '新規契約のみ';
@@ -77,8 +113,25 @@ const PRICE_CHANGE_ACTION = '価格変更';
 const HTTP_CONFLICT = 409;
 /** 価格の変更の応答を受け取れず、プランも読み直せなかったときの案内 (送信を止め、履歴で確かめさせる。#2101 X1) */
 const PRICE_CHANGE_UNCONFIRMED_GUIDE = '済んだか分かりません。履歴で確かめてください';
-/** 価格の変更の応答を受け取れず、読み直したプランが送った価格になっていなかったときの案内 (#2101 X1) */
-const PRICE_CHANGE_NOT_APPLIED_GUIDE = '読み直したプランの価格は、送った価格になっていません。内容を確かめて、もう一度実行してください';
+/**
+ * 価格の変更の応答を受け取れず、読み直したプランが送った価格になっていなかったときの案内 (#2101 X1)。
+ * route の 1 回目がまだ走っていることがあるので、その旨を添え、すぐ押し直させずに履歴で確かめさせる
+ * (押し直すと進行中の 409 になる。#2107 Y6)
+ */
+const PRICE_CHANGE_NOT_APPLIED_GUIDE =
+  '読み直したプランの価格は、送った価格になっていません。まだ処理中のことがあります。しばらくしてから読み込み直して履歴で確かめ、必要ならもう一度実行してください';
+/** 価格は送った値だが、Stripe の Price ID がまだ入っていなかったとき (販売開始の Price の登録。#2107 Y2・Y6) */
+const STRIPE_PRICE_NOT_CREATED_GUIDE =
+  '読み直したプランには、まだ Stripe の Price が入っていません。まだ処理中のことがあります。しばらくしてから読み込み直して履歴で確かめ、必要ならもう一度実行してください';
+/** 確認の画面で、今と同じ価格のまま Stripe の Price を作る間隔に添える文 (#2107 Y2) */
+const STRIPE_PRICE_CREATED_NOTE = 'Stripe の Price を作ります';
+/** 入力の画面で、価格を変えずに Stripe の Price を作るだけのときの案内 (#2107 Y2) */
+const STRIPE_PRICE_MISSING_NOTE =
+  'このプランは、月額・年額のどちらかの Stripe の Price がまだありません。今と同じ価格のまま進めると、その Stripe の Price を作って登録します (販売開始の手順)。';
+/** 実行のボタンの文 (価格を変えるとき) */
+const EXECUTE_PRICE_CHANGE_LABEL = '価格変更を実行する';
+/** 実行のボタンの文 (価格は変えず、Price ID がまだ無い間隔の Stripe の Price を作るだけのとき。#2107 Y2) */
+const CREATE_STRIPE_PRICE_LABEL = 'Stripe の Price を作る';
 
 export default function PriceChangePage() {
   const params = useParams();
@@ -103,7 +156,8 @@ export default function PriceChangePage() {
   // 再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り。送信中・済んだか分からないあいだは送らない (#2101 X1)
   const executingRef = useRef(false);
   const unconfirmedRef = useRef(false);
-  const historyHref = `/super-admin/plans/${planId}?tab=history`;
+  // 価格変更履歴のタブを開く (プラン詳細は URL の tab を初めのタブにする。#2107 Y3)
+  const historyHref = planDetailHref(planId, 'history');
 
   useEffect(() => {
     const fetchPlan = async () => {
@@ -129,7 +183,24 @@ export default function PriceChangePage() {
   // handleExecute の全てで同じ値を使う (ロジック重複を避ける)。
   const monthlyChanged = newMonthlyPrice !== '' && Number(newMonthlyPrice) !== plan?.monthly_price_jpy;
   const yearlyChanged = newYearlyPrice !== '' && Number(newYearlyPrice) !== plan?.yearly_price_jpy;
-  const hasAnyChange = monthlyChanged || yearlyChanged;
+  // #2107 Y2: 送る間隔は route と同じ判定 (pendingPriceChange) で決める。今と違う価格の間隔に加え、Stripe の同期が要るプランで
+  // Price ID がまだ無い間隔は、今と同じ価格でも送る (販売開始の Price の登録)。ID のある間隔・Stripe の同期が要らないプランは、
+  // これまでどおり今と同じ価格なら送らない (送ると変えていない方の Price が作り直される。#1041 round-3 (C2))
+  const toSend: PriceChangeSentPrices = plan
+    ? pendingPriceChange(
+        planStripeStateOf(plan),
+        {
+          new_monthly_price_jpy: newMonthlyPrice !== '' ? Number(newMonthlyPrice) : null,
+          new_yearly_price_jpy: newYearlyPrice !== '' ? Number(newYearlyPrice) : null,
+        },
+        stripePriceSyncExpectedOf(plan),
+      )
+    : { new_monthly_price_jpy: null, new_yearly_price_jpy: null };
+  const monthlySent = toSend.new_monthly_price_jpy != null;
+  const yearlySent = toSend.new_yearly_price_jpy != null;
+  const hasAnyChange = monthlySent || yearlySent;
+  // 価格は変えず、Stripe の Price を作るだけか (実行のボタンの文を変える。#2107 Y2)
+  const createsStripePriceOnly = hasAnyChange && !monthlyChanged && !yearlyChanged;
 
   const handleSimulate = useCallback(async () => {
     if (!newMonthlyPrice && !newYearlyPrice) {
@@ -183,12 +254,16 @@ export default function PriceChangePage() {
       setUnconfirmedMessage(`${summary}。${PRICE_CHANGE_UNCONFIRMED_GUIDE}`);
       return;
     }
-    if (sentPricesMatchPlan(reloaded, sent)) {
+    // 「済んだか」は route と同じ判定 (Stripe の同期が要れば、価格が同じでも送った間隔の Price ID が入るまで済んでいない。#2107 Y2)
+    if (priceChangeAlreadyApplied(planStripeStateOf(reloaded), sent, stripePriceSyncExpectedOf(reloaded))) {
       router.push(historyHref);
       return;
     }
     setPlan(reloaded);
-    setError(`${summary}。${PRICE_CHANGE_NOT_APPLIED_GUIDE}`);
+    const pricesReached =
+      (sent.new_monthly_price_jpy == null || sent.new_monthly_price_jpy === reloaded.monthly_price_jpy) &&
+      (sent.new_yearly_price_jpy == null || sent.new_yearly_price_jpy === reloaded.yearly_price_jpy);
+    setError(`${summary}。${pricesReached ? STRIPE_PRICE_NOT_CREATED_GUIDE : PRICE_CHANGE_NOT_APPLIED_GUIDE}`);
   };
 
   const handleExecute = async () => {
@@ -211,10 +286,8 @@ export default function PriceChangePage() {
     // 両方を Stripe へ同期できる。#1102)。
     // (monthlyChanged/yearlyChanged はコンポーネント本体で算出済みのものを使う #1041 round-4 (W1))
     // 応答を受け取れなかったときに、読み直したプランと比べるのもこの値 (#2101 X1)
-    const sent: PriceChangeSentPrices = {
-      new_monthly_price_jpy: monthlyChanged ? Number(newMonthlyPrice) : null,
-      new_yearly_price_jpy: yearlyChanged ? Number(newYearlyPrice) : null,
-    };
+    // #2107 Y2: 送る間隔は toSend (Stripe の同期が要るプランで Price ID がまだ無い間隔は、今と同じ価格でも送る)
+    const sent: PriceChangeSentPrices = toSend;
     executingRef.current = true;
     setIsExecuting(true);
     setError('');
@@ -371,6 +444,13 @@ export default function PriceChangePage() {
               </div>
             )}
 
+            {/* #2107 Y2: Stripe の Price がまだ無い間隔は、今と同じ価格のままでも送れる (販売開始の Price の登録) */}
+            {createsStripePriceOnly && (
+              <p data-testid="price-change-creates-stripe-price" className="text-xs text-slate-600">
+                {STRIPE_PRICE_MISSING_NOTE}
+              </p>
+            )}
+
             {/* #1041 round-4 (W1): 何も変更していない状態で叩けないよう無効化する */}
             {!hasAnyChange && (
               <p className="text-xs text-slate-400">変更がありません (月額または年額を変更してください)</p>
@@ -431,6 +511,9 @@ export default function PriceChangePage() {
                   <strong>
                     ¥{(plan.monthly_price_jpy ?? 0).toLocaleString()} → ¥{Number(newMonthlyPrice).toLocaleString()}
                   </strong>
+                ) : monthlySent ? (
+                  // #2107 Y2: 価格は変えず、月額の Stripe の Price を作る (Price ID がまだ無い)
+                  <strong>¥{(plan.monthly_price_jpy ?? 0).toLocaleString()} (同じ価格。{STRIPE_PRICE_CREATED_NOTE})</strong>
                 ) : (
                   <span className="text-slate-400">変更なし (¥{(plan.monthly_price_jpy ?? 0).toLocaleString()})</span>
                 )}
@@ -443,6 +526,9 @@ export default function PriceChangePage() {
                   <strong>
                     ¥{(plan.yearly_price_jpy ?? 0).toLocaleString()} → ¥{Number(newYearlyPrice).toLocaleString()}
                   </strong>
+                ) : yearlySent ? (
+                  // #2107 Y2: 価格は変えず、年額の Stripe の Price を作る (Price ID がまだ無い)
+                  <strong>¥{(plan.yearly_price_jpy ?? 0).toLocaleString()} (同じ価格。{STRIPE_PRICE_CREATED_NOTE})</strong>
                 ) : (
                   <span className="text-slate-400">変更なし (¥{(plan.yearly_price_jpy ?? 0).toLocaleString()})</span>
                 )}
@@ -512,7 +598,7 @@ export default function PriceChangePage() {
                 disabled={isExecuting || !reason || !hasAnyChange || unconfirmedMessage !== ''}
                 className="px-6 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors disabled:opacity-50"
               >
-                {isExecuting ? '実行中...' : '価格変更を実行する'}
+                {isExecuting ? '実行中...' : createsStripePriceOnly ? CREATE_STRIPE_PRICE_LABEL : EXECUTE_PRICE_CHANGE_LABEL}
               </button>
             </div>
           </div>

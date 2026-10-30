@@ -29,14 +29,18 @@
  * プランを読み直して今の状態を見せ、「状態の変更の応答を受け取れませんでした」の文を画面の上に出す (alert にしない。#2073)。
  * 読み直さないと、画面は古い status のボタンのまま残り、もう一度押すと expected_status が古いので 409 になって、自分の操作なのに
  * 「別の運営が先にこのプランを変えていました」と出る。読み直しが失敗したら「再試行」を出し、読み直せるまで状態のボタンを止める (#2064)。
+ * 初めのタブは URL の tab (`?tab=history` など。src/lib/super-admin/plan-detail-tab.ts) で決める。価格の変更の画面は、済んだあとと
+ * 「済んだか分からない」の案内で `?tab=history` へ送る。以前は URL の tab を読まず、履歴へ送っても基本情報のタブが開いた (#2107 Y3)。
+ * useSearchParams は Suspense の境界の中で呼ぶ (src/app/(support)/support/users/page.tsx と同じ)。
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams } from 'next/navigation';
+import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
+import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { isStaleDataConflict } from '@/lib/admin/api-error-message';
 import { screenApiErrorMessage, withHttpStatus } from '@/lib/admin/admin-screen-messages';
 import { rereadUnavailableMessage } from '@/lib/super-admin/detail-reread';
+import { PLAN_DETAIL_TABS, PLAN_DETAIL_TAB_QUERY_KEY, planDetailTabOf, type PlanDetailTab } from '@/lib/super-admin/plan-detail-tab';
 import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE, countsOrganizationsFor } from '@/lib/super-admin/plan-subscribers';
 import {
   NO_RESPONSE_STATE_RELOADED_GUIDE,
@@ -257,9 +261,23 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   deprecated: { label: '廃止', color: 'bg-red-100 text-red-700' },
 };
 
+/** 読み込み中の表示 (Suspense の境界の待ちと、プランの読み込みの待ちで同じもの) */
+function PlanDetailLoading() {
+  return <div className="flex items-center justify-center h-48 text-slate-400">読み込み中...</div>;
+}
+
 export default function PlanDetailPage() {
+  return (
+    <Suspense fallback={<PlanDetailLoading />}>
+      <PlanDetailContent />
+    </Suspense>
+  );
+}
+
+function PlanDetailContent() {
   const params = useParams();
   const planId = params.id as string;
+  const searchParams = useSearchParams();
 
   const [plan, setPlan] = useState<Plan | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -274,7 +292,8 @@ export default function PlanDetailPage() {
   const [displayName, setDisplayName] = useState('');
   const [description, setDescription] = useState('');
   const [displayOrder, setDisplayOrder] = useState(0);
-  const [activeTab, setActiveTab] = useState<'basic' | 'price' | 'history'>('basic');
+  // 初めのタブは URL の tab (無い・知らない値なら基本情報。#2107 Y3)
+  const [activeTab, setActiveTab] = useState<PlanDetailTab>(() => planDetailTabOf(searchParams.get(PLAN_DETAIL_TAB_QUERY_KEY)));
 
   // 画面の上に出す、読み直しについての文 (#1917)
   const [reloadNotice, setReloadNotice] = useState<ReloadNotice | null>(null);
@@ -623,7 +642,7 @@ export default function PlanDetailPage() {
   };
 
   if (isLoading) {
-    return <div className="flex items-center justify-center h-48 text-slate-400">読み込み中...</div>;
+    return <PlanDetailLoading />;
   }
 
   if (error || !plan) {
@@ -742,10 +761,12 @@ export default function PlanDetailPage() {
       )}
 
       {/* タブ */}
-      <div className="flex gap-1 mb-6 border-b border-slate-200">
-        {(['basic', 'price', 'history'] as const).map((tab) => (
+      <div role="tablist" className="flex gap-1 mb-6 border-b border-slate-200">
+        {PLAN_DETAIL_TABS.map((tab) => (
           <button
             key={tab}
+            role="tab"
+            aria-selected={activeTab === tab}
             onClick={() => setActiveTab(tab)}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               activeTab === tab
