@@ -1837,7 +1837,7 @@ Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#113
 | `OP_PLAN_NOT_GRANTABLE` | 422 | [NEW] 手動付与できないプラン (`POST /api/super-admin/users/{id}/manual-plan`。billing/02 §12.1) |
 | `OP_NO_MANUAL_SUBSCRIPTION` | 409 | [NEW] 取り消す手動付与の行が無い (`DELETE /api/super-admin/users/{id}/manual-plan`。billing/02 §12.1) |
 | `OP_SELF_MODIFY` | 403 | [NEW] 自分自身を対象にできない運営の操作 (`POST /api/super-admin/admins/{id}/mfa/reset`・`POST` / `DELETE /api/super-admin/users/{id}/manual-plan`) |
-| `OP_STRIPE_SYNC_FAILED` | 502 | Stripe API 呼び出し失敗 |
+| `OP_STRIPE_SYNC_FAILED` / `OP_STRIPE_SYNC_UNAVAILABLE` / `OP_PRICE_UNCHANGED` | 502 / 503 / 409 | Stripe API 呼び出し失敗 / Edge Function 未デプロイ / 価格の変更で、送った価格がすべて今の価格と同じ (Stripe の同期が要り、送った間隔の Stripe Price ID がまだ無いときを除く)。Stripe も DB も触らず監査も書かない (`POST /api/super-admin/plans/{id}/price-change`。§17。判定は `src/lib/super-admin/price-change-unchanged.ts` の `priceChangeAlreadyApplied`) |
 | `OP_COUPON_EXPIRED` | 422 | クーポン期限切れ |
 | `OP_TRIAL_ALREADY_USED` | 422 | 同一プランの試用は 1 回のみ |
 | `OP_NOT_SUPPORTED` | 501 | [NEW] 未対応の機能 (本文は予定を書かず、いまの事実だけを言う。#1911)。認可を通った人にだけ返す (データエクスポート・AI コンテンツの審査) |
