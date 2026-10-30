@@ -203,6 +203,19 @@ function mockBackups(reads: readonly Responder[]) {
   vi.stubGlobal('fetch', fetchMock);
 }
 
+/** GET は状態 (backupsOk) を返し、POST は post の応答を返す */
+function mockBackupsWithPost(post: Responder) {
+  fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+    if (methodOf(init) === 'POST') {
+      expect(input).toBe(SUPER_ADMIN_DR_TESTS_API_PATH);
+      return post();
+    }
+    expect(input).toBe(SUPER_ADMIN_BACKUPS_API_PATH);
+    return backupsOk();
+  });
+  vi.stubGlobal('fetch', fetchMock);
+}
+
 const drForm = () => container.querySelector<HTMLFormElement>('[data-testid="dr-test-form"]');
 const drSubmitButton = () => drForm()?.querySelector<HTMLButtonElement>('button[type="submit"]') ?? null;
 const drUnconfirmed = () => container.querySelector('[data-testid="dr-test-form-unconfirmed"]')?.textContent ?? '';
@@ -224,6 +237,39 @@ async function expectDrSubmitStopped() {
   expect(postCount()).toBe(before);
 }
 
+/** 送信の失敗の固定の文 (画面と同じもの) */
+const SUBMIT_FAILED_TEXT = '記録できませんでした。時間をおいてもう一度送ってください';
+const drFormError = () => container.querySelector('[data-testid="dr-test-form-error"]')?.textContent ?? '';
+
+describe('DR 訓練の記録: 送信そのものが 401 なら「ログインし直してください」を出す (#2112 Z4-1)', () => {
+  it('送信が 401 なら、「時間をおいてもう一度送ってください」ではなく「ログインし直してください」を form の上に出す', async () => {
+    mockBackupsWithPost(unauthorized);
+    await renderElement(createElement(SuperAdminBackupsPage));
+    await typeInto(container.querySelector('#dr-test-notes'), 'pitr ok', 'メモの欄');
+    await submitDrForm();
+
+    expect(postCount()).toBe(1);
+    expect(drFormError()).toBe(UNAUTHENTICATED_SCREEN_MESSAGE);
+    expect(text()).not.toContain(SUBMIT_FAILED_TEXT);
+    // 送れなかった入力は残し、読み込みの欄・済んだか分からない文は出さない
+    expect(container.querySelector<HTMLTextAreaElement>('#dr-test-notes')?.value).toBe('pitr ok');
+    expect(container.querySelector('[data-testid="backups-load-error"]')).toBeNull();
+    expect(container.querySelector('[data-testid="dr-test-form-unconfirmed"]')).toBeNull();
+    expectNoLeak();
+  });
+
+  it('送信が 500 なら、これまでどおり固定の失敗の文 (401 の文にしない)', async () => {
+    mockBackupsWithPost(internalError);
+    await renderElement(createElement(SuperAdminBackupsPage));
+    await submitDrForm();
+
+    expect(postCount()).toBe(1);
+    expect(drFormError()).toBe(SUBMIT_FAILED_TEXT);
+    expect(text()).not.toContain(UNAUTHENTICATED_SCREEN_MESSAGE);
+    expectNoLeak();
+  });
+});
+
 describe('DR 訓練の記録: 応答を受け取れなかったあとの読み直しが 401 / 403 なら「確かめ直す」を出さない (#2101 integrity-1030c)', () => {
   it('読み直しが 401 なら、「ログインし直してください」を添え、「確かめ直す」は出さず、送信を止めたまま', async () => {
     mockBackups([backupsOk, unauthorized]);
@@ -238,7 +284,7 @@ describe('DR 訓練の記録: 応答を受け取れなかったあとの読み�
     expect(unconfirmed).toContain(UNAUTHENTICATED_SCREEN_MESSAGE);
     expect(unconfirmed).toContain(REOPEN_GUIDE);
     expect(findButton('確かめ直す')).toBeUndefined();
-    // 読み込みの欄も、時間をおけば読めうる文ではなく、ログインし直す文にする
+    // 読み込みの欄は変えない (理由の文は送信を止めた文だけに出す。#2112 Z4)。時間をおけば読めうる文も出さない
     expect(text()).not.toContain(LOAD_FAILED_TEXT);
     expectNoLeak();
     await expectDrSubmitStopped();
@@ -296,6 +342,27 @@ describe('DR 訓練の記録: 応答を受け取れなかったあとの読み�
     expectNoLeak();
     await expectDrSubmitStopped();
   });
+
+  it.each([
+    ['401', unauthorized, UNAUTHENTICATED_SCREEN_MESSAGE],
+    ['403 (二段階認証の確認が要る)', forbiddenByMfa, API_MFA_REQUIRED_MESSAGE],
+    ['403 (ロールが足りない)', forbiddenByRole, BACKUPS_FORBIDDEN_TEXT],
+  ] as const)(
+    '読み直しが %s なら、理由の文は送信を止めた文だけに出し、読み込みの欄には出さない (同じ理由を 2 か所に出さない。#2112 Z4)',
+    async (_label, reread, reason) => {
+      mockBackups([backupsOk, reread]);
+      await renderElement(createElement(SuperAdminBackupsPage));
+      await submitDrForm();
+
+      expect(drUnconfirmed()).toContain(reason);
+      // 読み込みの欄 (backups-load-error) は出さず、読めていた取得の状態・訓練の記録はそのまま
+      expect(container.querySelector('[data-testid="backups-load-error"]')).toBeNull();
+      expect(container.querySelector('[data-testid="dr-tests-latest"]')).not.toBeNull();
+      // 画面全体で理由の文は 1 回だけ
+      expect(text().split(reason).length - 1).toBe(1);
+      expectNoLeak();
+    },
+  );
 
   it('初めの読み込みが 401 なら、読み込みの欄に「ログインし直してください」を出す (時間をおいて開き直す文にしない)', async () => {
     mockBackups([unauthorized]);
