@@ -32,7 +32,12 @@ import {
   fetchAdminRows,
   AdminScreenError,
 } from '@/lib/admin/admin-screen-messages';
-import { fetchOperatorJson, fetchOperatorRows, OperatorScreenError } from '@/lib/membership/operator-screen-messages';
+import {
+  fetchOperatorJson,
+  fetchOperatorRows,
+  OperatorLoadUnavailableError,
+  OperatorScreenError,
+} from '@/lib/membership/operator-screen-messages';
 
 const ROW_ID = '20932093-2093-4093-8093-209320932093';
 // useRouter は描画のたびに同じ物を返す (router を依存に持つ読み込みが描画のたびに走らないように)
@@ -399,21 +404,29 @@ describe('AI の利用上限: 保存のあと・409 のあとの読み直しが 
 });
 
 describe('運営のメンバーシップの画面: 読み込みの 401 は「ログインし直してください」(#2093 W6)', () => {
+  // 401 / 403 は、読み込み直しても変わらないことを画面が見分けられるよう OperatorLoadUnavailableError (OperatorScreenError の子) で投げる (#2101 X4)
   it('fetchOperatorJson / fetchOperatorRows は 401 を「ログインし直してください」の OperatorScreenError にする (本文の文・「HTTP 401」を出さない)', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => unauthenticatedResponse()));
-    await expect(fetchOperatorJson('/api/operator/membership/audit', '監査ログ')).rejects.toEqual(new OperatorScreenError(RELOGIN_MESSAGE));
-    await expect(fetchOperatorRows('/api/operator/membership/orgs/inactive', '組織の一覧')).rejects.toEqual(
-      new OperatorScreenError(RELOGIN_MESSAGE),
+    await expect(fetchOperatorJson('/api/operator/membership/audit', '監査ログ')).rejects.toEqual(
+      new OperatorLoadUnavailableError(RELOGIN_MESSAGE),
     );
+    await expect(fetchOperatorRows('/api/operator/membership/orgs/inactive', '組織の一覧')).rejects.toEqual(
+      new OperatorLoadUnavailableError(RELOGIN_MESSAGE),
+    );
+    await expect(fetchOperatorJson('/api/operator/membership/audit', '監査ログ')).rejects.toBeInstanceOf(OperatorScreenError);
 
     // 本文の無い 401 (プロキシなど) も同じ
     vi.stubGlobal('fetch', vi.fn(async () => htmlResponse(401)));
-    await expect(fetchOperatorJson('/api/operator/membership/audit', '監査ログ')).rejects.toEqual(new OperatorScreenError(RELOGIN_MESSAGE));
+    await expect(fetchOperatorJson('/api/operator/membership/audit', '監査ログ')).rejects.toEqual(
+      new OperatorLoadUnavailableError(RELOGIN_MESSAGE),
+    );
   });
 
   it('401 以外は今までどおり (本文の文、無ければ「読み込めませんでした (HTTP n)」)', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => mfaForbiddenResponse()));
-    await expect(fetchOperatorJson('/api/operator/membership/audit', '監査ログ')).rejects.toEqual(new OperatorScreenError(MFA_REQUIRED_MESSAGE));
+    await expect(fetchOperatorJson('/api/operator/membership/audit', '監査ログ')).rejects.toEqual(
+      new OperatorLoadUnavailableError(MFA_REQUIRED_MESSAGE),
+    );
     vi.stubGlobal('fetch', vi.fn(async () => proxyBadGateway()));
     await expect(fetchOperatorJson('/api/operator/membership/audit', '監査ログ')).rejects.toEqual(
       new OperatorScreenError('監査ログを読み込めませんでした (HTTP 502)'),

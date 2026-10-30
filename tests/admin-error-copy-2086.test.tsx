@@ -41,6 +41,7 @@ const routerPush = nav.push;
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: '20862086-2086-4086-8086-208620862186' }),
   useRouter: () => nav.router,
+  usePathname: () => '/admin',
 }));
 
 vi.mock('next/link', () => ({

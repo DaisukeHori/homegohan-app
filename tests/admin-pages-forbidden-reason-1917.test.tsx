@@ -20,6 +20,7 @@ const nav = vi.hoisted(() => ({ router: { push: () => undefined, replace: () => 
 vi.mock('next/navigation', () => ({
   useRouter: () => nav.router,
   useParams: () => ({ id: '44444444-4444-4444-8444-444444444444' }),
+  usePathname: () => '/admin',
 }));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

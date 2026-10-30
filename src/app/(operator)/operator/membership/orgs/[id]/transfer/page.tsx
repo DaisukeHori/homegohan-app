@@ -13,11 +13,14 @@ import ForceActionConfirmModal from '@/components/operator/membership/ForceActio
 import {
   FORCE_TRANSFER_NOT_DONE_GUIDE,
   FORCE_TRANSFER_RELOAD_FAILED_GUIDE,
+  FORCE_TRANSFER_RELOAD_UNAVAILABLE_GUIDE,
+  OperatorLoadUnavailableError,
   OperatorScreenError,
   displayableOperatorError,
   fetchOperatorRows,
   isForceTransferDone,
   operatorForceActionNoResponseMessage,
+  operatorForceActionReloadFailure,
   postOperatorForceAction,
 } from '@/lib/membership/operator-screen-messages';
 import { normalizeProfileName } from '@/lib/profile-name';
@@ -48,6 +51,11 @@ const LIST_PATH = '/operator/membership/orgs/inactive';
 const CANDIDATES_SUBJECT = '譲渡の候補';
 /** 候補の読み込みの失敗で、例外の文が出せないときの固定の文 */
 const CANDIDATES_LOAD_FAILED_FALLBACK = `${CANDIDATES_SUBJECT}を読み込めませんでした`;
+/** 譲渡の応答を受け取れなかったあとの候補の読み直しが失敗したときに続ける文 (「再試行」で確かめる / 401・403 で読み込み直しても変わらない。#2101 X4) */
+const TRANSFER_RELOAD_GUIDES = {
+  reloadFailedGuide: FORCE_TRANSFER_RELOAD_FAILED_GUIDE,
+  unavailableGuide: FORCE_TRANSFER_RELOAD_UNAVAILABLE_GUIDE,
+} as const;
 
 export default function OrgTransferPage() {
   // パスの値は useParams で読む。props の params は Next 15 から Promise で、Next 14 では use(params) が例外になった (#1275)。
@@ -58,6 +66,9 @@ export default function OrgTransferPage() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // エラーに「再試行」を出すか。読み込みが 401 (ログインが切れた)・403 (権限が外れた) で断られたときは、読み込み直しても
+  // 変わらないので false (押しても必ず同じ理由で断られる「再試行」を出さない。#2101 X4)
+  const [errorRetryable, setErrorRetryable] = useState(true);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reason, setReason] = useState('');
@@ -79,6 +90,7 @@ export default function OrgTransferPage() {
     } catch (err) {
       // 通信の失敗・本文に文の無い失敗も日本語の文にする (ブラウザの英字の文・「HTTP 502」だけを出さない。#2080 U5)
       setError(displayableOperatorError(err, CANDIDATES_LOAD_FAILED_FALLBACK));
+      setErrorRetryable(!(err instanceof OperatorLoadUnavailableError));
     } finally {
       setLoading(false);
     }
@@ -103,11 +115,14 @@ export default function OrgTransferPage() {
       let reloaded: Candidate[];
       try {
         reloaded = await fetchOperatorRows<Candidate>(candidatesUrl, CANDIDATES_SUBJECT);
-      } catch {
-        // 済んだか分からない。確認の枠を閉じ、「再試行」で読み直せるまで譲渡を押させない (#2086 V1)
+      } catch (reloadError) {
+        // 済んだか分からない。確認の枠を閉じ、「再試行」で読み直せるまで譲渡を押させない (#2086 V1)。
+        // 読み直しが 401 / 403 なら、理由の文を出し「再試行」は出さない (譲渡は止めたまま。#2101 X4)
         setShowConfirm(false);
         setUnknownTransfer({ toUserId: selectedId, status: result.status });
-        setError(operatorForceActionNoResponseMessage('transfer', result.status, FORCE_TRANSFER_RELOAD_FAILED_GUIDE));
+        const failure = operatorForceActionReloadFailure('transfer', result.status, reloadError, TRANSFER_RELOAD_GUIDES);
+        setError(failure.message);
+        setErrorRetryable(failure.retryable);
         return;
       }
       if (!isForceTransferDone(reloaded, selectedId)) {
@@ -142,8 +157,13 @@ export default function OrgTransferPage() {
       setUnknownTransfer(null);
       setError(null);
       setNotice(operatorForceActionNoResponseMessage('transfer', unknownTransfer.status, FORCE_TRANSFER_NOT_DONE_GUIDE));
-    } catch {
-      // 済んだか分からない文 (error) のまま止め続ける
+    } catch (reloadError) {
+      // 済んだか分からない文 (error) のまま止め続ける。読み直しが 401 / 403 なら、理由の文にして「再試行」を外す (#2101 X4)
+      if (reloadError instanceof OperatorLoadUnavailableError) {
+        const failure = operatorForceActionReloadFailure('transfer', unknownTransfer.status, reloadError, TRANSFER_RELOAD_GUIDES);
+        setError(failure.message);
+        setErrorRetryable(failure.retryable);
+      }
     } finally {
       setLoading(false);
     }
@@ -173,14 +193,16 @@ export default function OrgTransferPage() {
       {error && (
         <div className="mb-4 p-4 bg-red-50 text-red-700 rounded-lg text-sm space-y-2">
           <p>{error}</p>
-          <button
-            type="button"
-            onClick={handleRetry}
-            disabled={loading}
-            className="px-3 py-1 text-sm font-medium text-red-700 bg-white border border-red-300 rounded-lg hover:bg-red-50 disabled:opacity-50"
-          >
-            再試行
-          </button>
+          {errorRetryable && (
+            <button
+              type="button"
+              onClick={handleRetry}
+              disabled={loading}
+              className="px-3 py-1 text-sm font-medium text-red-700 bg-white border border-red-300 rounded-lg hover:bg-red-50 disabled:opacity-50"
+            >
+              再試行
+            </button>
+          )}
         </div>
       )}
 

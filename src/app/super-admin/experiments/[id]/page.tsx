@@ -161,9 +161,12 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
       const loaded = (expBody as { data?: Experiment } | null)?.data;
       if (!expRes.ok || !loaded) {
         if (!isReload) {
-          // 本文に日本語の文が無ければ「実験を読み込めませんでした (HTTP 502)」。200 なのに本文が読めないときは通信エラーの文 (#2086 V6)
+          // 本文に日本語の文が無ければ「実験を読み込めませんでした (HTTP 502)」。200 なのに本文が読めないときは通信エラーの文 (#2086 V6)。
+          // 401 / 403 は読み直しと同じ理由の文 (「ログインし直してください」・403 の理由の文) にする (#2101 X4。初めの読み込みの 404 は従来どおり)
+          const initialUnavailableMessage = expRes.ok ? null : rereadUnavailableMessage(expRes.status, expBody, null);
           setError(
-            screenApiErrorMessage(expBody) ??
+            initialUnavailableMessage ??
+              screenApiErrorMessage(expBody) ??
               adminLoadFailedMessage(EXPERIMENT_SUBJECT, expRes.ok ? null : expRes.status),
           );
           return { kind: "failed" };

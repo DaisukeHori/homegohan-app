@@ -33,6 +33,18 @@ export class OperatorScreenError extends Error {
   }
 }
 
+/**
+ * 読み込みが、読み込み直しても変わらない理由で断られた (401 ログインが切れた・403 権限が外れた) ことを表す例外 (#2101 X4)。
+ * 文は画面にそのまま出してよい理由の文 (401 は「ログインし直してください」、403 は本文の API の文)。
+ * 画面はこれを受けたら「再試行」を出さない (押しても必ず同じ理由で断られる)
+ */
+export class OperatorLoadUnavailableError extends OperatorScreenError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OperatorLoadUnavailableError';
+  }
+}
+
 /** 例外から画面に出す文を決める。OperatorScreenError の文だけを出し、それ以外 (ブラウザの英字の文など) は fallback */
 export function displayableOperatorError(err: unknown, fallback: string): string {
   return err instanceof OperatorScreenError ? err.message : fallback;
@@ -79,6 +91,12 @@ export const FORCE_TRANSFER_NOT_DONE_GUIDE =
 export const FORCE_TRANSFER_RELOAD_FAILED_GUIDE =
   '候補も読み込めなかったため、譲渡が済んだか分かりません。「再試行」で候補を読み込み直して確かめるまで、もう一度は実行できません';
 
+/**
+ * 強制譲渡: 候補の読み直しが 401 / 403 で断られたときに続ける文 (#2101 X4)。このあとに理由の文 (「ログインし直してください」など) を続ける。
+ * 画面は確認の枠を閉じ、候補と「強制譲渡を実行」を出さず、「再試行」も出さない (読み込み直しても変わらないため)
+ */
+export const FORCE_TRANSFER_RELOAD_UNAVAILABLE_GUIDE = '候補も読み込めなかったため、譲渡が済んだか分かりません';
+
 /** 強制解散: 一覧を読み直したら、対象がまだ解散されずに一覧にあったときに続ける文 */
 export const FORCE_DISSOLVE_NOT_DONE_GUIDE =
   '一覧を読み込み直したところ、まだ解散されていません。必要ならもう一度実行してください';
@@ -86,6 +104,12 @@ export const FORCE_DISSOLVE_NOT_DONE_GUIDE =
 /** 強制解散: 一覧の読み直しにも失敗したときに続ける文。画面は確認の枠を閉じて一覧を出さず、「更新」で読み直せるまで解散を押させない (#2086 V1) */
 export const FORCE_DISSOLVE_RELOAD_FAILED_GUIDE =
   '一覧も読み込めなかったため、解散が済んだか分かりません。「更新」で一覧を読み込み直して状態を確かめてから、必要ならもう一度操作してください';
+
+/**
+ * 強制解散: 一覧の読み直しが 401 / 403 で断られたときに続ける文 (#2101 X4)。このあとに理由の文を続ける
+ * (「更新」で読み込み直すよう促さない。読み込み直しても変わらないため)
+ */
+export const FORCE_DISSOLVE_RELOAD_UNAVAILABLE_GUIDE = '一覧も読み込めなかったため、解散が済んだか分かりません';
 
 /** 文の頭と、読み直しの結果に合わせた続きの文をつなぐ。status は operatorForceActionNoResponseSummary と同じ */
 export function operatorForceActionNoResponseMessage(
@@ -96,15 +120,40 @@ export function operatorForceActionNoResponseMessage(
   return `${operatorForceActionNoResponseSummary(action, status)}。${guide}`;
 }
 
+/**
+ * 応答を受け取れなかったあとの読み直しが失敗したときの文 (#2101 X4)。
+ * 読み直しの例外が OperatorLoadUnavailableError (401 / 403) なら unavailableGuide に理由の文を続け、retryable は false
+ * (画面は「再試行」を出さない)。それ以外 (500・通信の失敗・壊れた応答) は reloadFailedGuide (「再試行」で確かめる文) で retryable は true
+ */
+export function operatorForceActionReloadFailure(
+  action: OperatorForceAction,
+  status: number | null,
+  reloadError: unknown,
+  guides: { readonly reloadFailedGuide: string; readonly unavailableGuide: string },
+): { readonly message: string; readonly retryable: boolean } {
+  if (reloadError instanceof OperatorLoadUnavailableError) {
+    // 理由の文 (「ログインし直してください」・403 の本文の文) は OperatorScreenError の画面に出してよい文
+    const reason = displayableOperatorError(reloadError, guides.reloadFailedGuide);
+    return {
+      message: operatorForceActionNoResponseMessage(action, status, `${guides.unavailableGuide}。${reason}`),
+      retryable: false,
+    };
+  }
+  return { message: operatorForceActionNoResponseMessage(action, status, guides.reloadFailedGuide), retryable: true };
+}
+
 /** 401 (ログインが切れた) の HTTP ステータス */
 const HTTP_UNAUTHORIZED = 401;
+/** 403 (権限が外れた・二段階認証の確認が要る) の HTTP ステータス */
+const HTTP_FORBIDDEN = 403;
 
 /**
  * 運営の API を GET で読み、JSON の本文を返す。
  * 通信の失敗・失敗の応答・JSON でない本文は、どれも画面に出せる日本語の文の OperatorScreenError を投げる
  * (失敗の応答の本文に API の文があればそれを、無ければ HTTP のステータスを添えた固定の文)。
  * 401 (ログインが切れた) は、本文の文 (「認証が必要です」) や「読み込めませんでした (HTTP 401)」ではなく、
- * ほかの運営の画面の読み直しと同じ「ログインし直してください」にする (UNAUTHENTICATED_SCREEN_MESSAGE。#2093 W6)
+ * ほかの運営の画面の読み直しと同じ「ログインし直してください」にする (UNAUTHENTICATED_SCREEN_MESSAGE。#2093 W6)。
+ * 401 と 403 は、読み込み直しても変わらないので OperatorLoadUnavailableError (OperatorScreenError の子) で投げる (画面は「再試行」を出さない。#2101 X4)
  */
 export async function fetchOperatorJson(url: string, subject: string): Promise<unknown> {
   let res: Response;
@@ -113,8 +162,12 @@ export async function fetchOperatorJson(url: string, subject: string): Promise<u
   } catch {
     throw new OperatorScreenError(operatorLoadFailedMessage(subject, null));
   }
-  if (res.status === HTTP_UNAUTHORIZED) throw new OperatorScreenError(UNAUTHENTICATED_SCREEN_MESSAGE);
+  if (res.status === HTTP_UNAUTHORIZED) throw new OperatorLoadUnavailableError(UNAUTHENTICATED_SCREEN_MESSAGE);
   const body: unknown = await res.json().catch(() => null);
+  if (res.status === HTTP_FORBIDDEN) {
+    // 読み込み直しても変わらない (#2101 X4)。文は従来どおり本文の API の文 (無ければ「読み込めませんでした (HTTP 403)」)
+    throw new OperatorLoadUnavailableError(extractApiErrorMessage(body) ?? operatorLoadFailedMessage(subject, res.status));
+  }
   if (!res.ok) {
     throw new OperatorScreenError(extractApiErrorMessage(body) ?? operatorLoadFailedMessage(subject, res.status));
   }

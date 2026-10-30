@@ -7,9 +7,17 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { loginPathWithNext } from '@/lib/auth/signed-in-user';
 import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
-import { AdminScreenError, adminLoadFailedFallback, adminLoadFailedMessage, displayableAdminError } from '@/lib/admin/admin-screen-messages';
+import {
+  AdminScreenError,
+  adminLoadFailedFallback,
+  adminLoadFailedMessage,
+  displayableAdminError,
+  listRowsOfBody,
+  listTotalOfBody,
+} from '@/lib/admin/admin-screen-messages';
 
 /** 読み込みの失敗の文の対象 (「リードの一覧を読み込めませんでした (HTTP 502)」。#2086 V6) */
 const LEADS_SUBJECT = 'リードの一覧';
@@ -51,6 +59,8 @@ const ALL_STAGES: Stage[] = ['approach', 'meeting', 'proposal', 'negotiation', '
 
 export default function SalesLeadsPage() {
   const router = useRouter();
+  // ログインが切れた (401) ときに、ログインし直したあとこの画面へ戻れるよう next に付けるパス (#2101 X5)
+  const pathname = usePathname();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -75,23 +85,29 @@ export default function SalesLeadsPage() {
         // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
         throw new AdminScreenError(adminLoadFailedMessage(LEADS_SUBJECT, null));
       }
-      if (res.status === 401) { router.push('/login'); return; }
+      if (res.status === 401) { router.push(loginPathWithNext(pathname)); return; }
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
       if (res.status === 403) { setError(await forbiddenMessageOfResponse(res)); return; }
       if (!res.ok) throw new AdminScreenError(adminLoadFailedMessage(LEADS_SUBJECT, res.status));
 
-      const json = await res.json();
-      setLeads(json.data ?? []);
-      setTotal(json.meta?.total ?? 0);
+      const json: unknown = await res.json().catch(() => null);
+      // 200 なのに本文が読めない・data が配列でない壊れた応答は、0 件と見せずに読み込めなかったものとして扱う (#2101 X8)
+      const rows = listRowsOfBody<Lead>(json);
+      if (rows === null) throw new AdminScreenError(adminLoadFailedMessage(LEADS_SUBJECT, null));
+      setLeads(rows);
+      setTotal(listTotalOfBody(json));
     } catch (e: unknown) {
       // 画面に出すのは日本語の文だけ (JSON でない本文の SyntaxError などの英字の文は出さない。#2086 V6)
       setError(displayableAdminError(e, adminLoadFailedFallback(LEADS_SUBJECT)));
     } finally {
       setIsLoading(false);
     }
-  }, [page, stageFilter, router]);
+  }, [page, stageFilter, router, pathname]);
 
   useEffect(() => { fetchLeads(); }, [fetchLeads]);
+
+  // 読み込みに失敗して出せる行が無い。「見込み顧客 0 件」・空のカンバン・「リードはありません」と 0 件に見せない (#2101 X8)
+  const loadFailedWithoutRows = error !== null && leads.length === 0;
 
   const leadsByStage = ALL_STAGES.reduce<Record<Stage, Lead[]>>((acc, stage) => {
     acc[stage] = leads.filter((l) => l.stage === stage);
@@ -105,7 +121,7 @@ export default function SalesLeadsPage() {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">営業 CRM</h1>
-            <p className="text-sm text-gray-500 mt-1">見込み顧客 {total} 件</p>
+            {!loadFailedWithoutRows && <p className="text-sm text-gray-500 mt-1">見込み顧客 {total} 件</p>}
           </div>
           <div className="flex items-center gap-3">
             {/* ビュー切替 */}
@@ -158,7 +174,7 @@ export default function SalesLeadsPage() {
 
         {isLoading ? (
           <div className="text-center py-12 text-gray-500">読み込み中...</div>
-        ) : viewMode === 'kanban' ? (
+        ) : loadFailedWithoutRows ? null : viewMode === 'kanban' ? (
           /* カンバンビュー */
           <div className="flex gap-4 overflow-x-auto pb-4">
             {ALL_STAGES.map((stage) => (

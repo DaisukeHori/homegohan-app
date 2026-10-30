@@ -11,7 +11,8 @@
  * - 行を押すと詳細 (/admin/data-requests/[id]) へ。ページングは DSR_ADMIN_LIST_LIMITS.default 件ずつ
  */
 import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { loginPathWithNext } from '@/lib/auth/signed-in-user';
 import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
 import {
   DSR_ADMIN_API_PATH,
@@ -90,6 +91,8 @@ function isSummaryList(body: unknown): body is { data: DsrAdminSummaryDto[]; met
 
 export default function AdminDataRequestsPage() {
   const router = useRouter();
+  // ログインが切れた (401) ときに、ログインし直したあとこの画面へ戻れるよう next に付けるパス (#2101 X5)
+  const pathname = usePathname();
   const [tab, setTab] = useState<TabKey>(DEFAULT_TAB);
   const [finished, setFinished] = useState<FinishedStatus>('fulfilled');
   const [page, setPage] = useState(1);
@@ -106,7 +109,7 @@ export default function AdminDataRequestsPage() {
         cache: 'no-store',
       });
       if (res.status === HTTP_UNAUTHORIZED) {
-        router.push('/login');
+        router.push(loginPathWithNext(pathname));
         return;
       }
       if (res.status === HTTP_FORBIDDEN) {
@@ -128,7 +131,7 @@ export default function AdminDataRequestsPage() {
     } finally {
       setLoading(false);
     }
-  }, [tab, finished, page, router]);
+  }, [tab, finished, page, router, pathname]);
 
   useEffect(() => {
     void load();

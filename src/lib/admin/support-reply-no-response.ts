@@ -50,6 +50,12 @@ export const REPLY_NOT_DELIVERED_GUIDE = '読み込み直したところ、ま�
 export const REPLY_RELOAD_FAILED_GUIDE =
   'チケットも読み込めなかったため、送られたか分かりません。「再試行」で読み込み直して確かめるまで、もう一度は送れません';
 
+/**
+ * 読み直しが、読み込み直しても変わらない理由 (401 ログインが切れた・403 権限が外れた・404 チケットが消えた) で断られたときに続ける文 (#2101 X3)。
+ * このあとに理由の文 (「ログインし直してください」など) を続ける。画面は送信を止めたまま、「再試行」は出さない (押しても必ず断られるため)
+ */
+export const REPLY_RELOAD_UNAVAILABLE_GUIDE = 'チケットも読み込めなかったため、送られたか分かりません';
+
 /** 応答を受け取れなかったときの文の頭 (summary) と、読み直しの結果に合わせた続きの文をつなぐ */
 export function replyNoResponseMessage(summary: string, ...guides: readonly string[]): string {
   return [summary, ...guides].join('。');

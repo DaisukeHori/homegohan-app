@@ -38,6 +38,7 @@ const router = vi.hoisted(() => ({ push: () => undefined, refresh: () => undefin
 vi.mock('next/navigation', () => ({
   useRouter: () => router,
   useSearchParams: () => new URLSearchParams(),
+  usePathname: () => '/admin',
 }));
 
 vi.mock('next/link', () => ({

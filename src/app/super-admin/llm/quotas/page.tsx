@@ -160,9 +160,9 @@ function isQuotaListResponse(body: unknown): body is QuotaListResponse {
 /**
  * 一覧を GET で読む。失敗は画面に出せる日本語の文の例外にする (本文の無い 502 の「HTTP 502」・通信の reject の英字の文・
  * JSON でない本文の SyntaxError を出さない。#2086 V6)。200 の本文が読めない・data が配列でないときも読み込めなかった文にする (#2093 W7)。
- * isReload (表を出したあとの読み直し) で 401 / 403 なら、理由の文の QuotasRereadUnavailableError を投げる (#2093 W6)
+ * 401 / 403 なら、理由の文の QuotasRereadUnavailableError を投げる (表を出したあとの読み直し #2093 W6・初めの読み込み #2101 X4)
  */
-async function fetchQuotaList(isReload: boolean): Promise<QuotaListResponse> {
+async function fetchQuotaList(): Promise<QuotaListResponse> {
   let res: Response;
   try {
     res = await fetch(QUOTAS_API_PATH);
@@ -171,7 +171,7 @@ async function fetchQuotaList(isReload: boolean): Promise<QuotaListResponse> {
   }
   if (!res.ok) {
     const body = await readFailureBody(res);
-    const unavailableMessage = isReload ? rereadUnavailableMessage(res.status, body, null) : null;
+    const unavailableMessage = rereadUnavailableMessage(res.status, body, null);
     if (unavailableMessage !== null) throw new QuotasRereadUnavailableError(unavailableMessage);
     throw new AdminScreenError(screenApiErrorMessage(body) ?? adminLoadFailedMessage(QUOTAS_SUBJECT, res.status));
   }
@@ -204,6 +204,8 @@ export default function LLMQuotasPage() {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // 初めの読み込みの失敗に「再試行」を出すか (401 / 403 は読み込み直しても変わらないので出さない。#2101 X4)
+  const [errorRetryable, setErrorRetryable] = useState(true);
   // 一度表を出したあとの読み直しの最中か・失敗したか (表は外さない。#1917)
   const [isReloading, setIsReloading] = useState(false);
   const [reloadError, setReloadError] = useState<ReloadError | null>(null);
@@ -248,7 +250,7 @@ export default function LLMQuotasPage() {
       setError(null);
     }
     try {
-      const json = await fetchQuotaList(isReload);
+      const json = await fetchQuotaList();
       if (seq !== loadSeq.current) return "superseded";
       hasLoadedRef.current = true;
       // 409 の文の出ている行 (入力欄を残すと伝えている行)
@@ -291,6 +293,7 @@ export default function LLMQuotasPage() {
         setReloadError({ text: `${RELOAD_FAILED_MESSAGE}（${message}）`, retryable: !unavailable });
       } else {
         setError(message);
+        setErrorRetryable(!unavailable);
       }
       // 409 のあとの読み直しの最中だった行・まだ読み直せていない行の文を「読み込み直せなかった」文にする。すでに読み直せた行 (reloaded) は、
       // 409 のあとに一度読み直せているのでそのまま (#1917)。401 / 403 なら「再試行」を促さない文にし、それ以外の失敗なら
@@ -396,13 +399,15 @@ export default function LLMQuotasPage() {
       ) : error ? (
         <div role="alert" className="bg-red-900/50 border border-red-500 rounded-xl p-4 text-red-300 flex items-center justify-between gap-4">
           <span>{error}</span>
-          <button
-            type="button"
-            onClick={() => void load()}
-            className="shrink-0 px-3 py-1 rounded-lg text-sm font-medium border border-red-400 text-red-200 hover:bg-red-900"
-          >
-            再試行
-          </button>
+          {errorRetryable && (
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="shrink-0 px-3 py-1 rounded-lg text-sm font-medium border border-red-400 text-red-200 hover:bg-red-900"
+            >
+              再試行
+            </button>
+          )}
         </div>
       ) : (
         <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">

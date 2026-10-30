@@ -135,13 +135,14 @@ export default function ExperimentsPage() {
       const body: unknown = await res.json().catch(() => null);
       if (seq !== loadSeqRef.current) return { kind: "superseded" };
       if (!res.ok) {
+        // 401 / 403 なら、読み込み直しても変わらない理由の文 (「ログインし直してください」・403 の理由の文) にする
+        // (一覧の 404 は行の消えたことを意味しないので failed。#2086 V4)。初めの読み込みも同じ文にする (#2101 X4)
+        const unavailableMessage = rereadUnavailableMessage(res.status, body, null);
         if (!isReload) {
           // 本文に日本語の文が無ければ「実験の一覧を読み込めませんでした (HTTP 502)」(#2086 V6)
-          setError(screenApiErrorMessage(body) ?? adminLoadFailedMessage(EXPERIMENTS_SUBJECT, res.status));
+          setError(unavailableMessage ?? screenApiErrorMessage(body) ?? adminLoadFailedMessage(EXPERIMENTS_SUBJECT, res.status));
           return { kind: "failed" };
         }
-        // 表示したあとの読み直しが 401 / 403 なら、読み込み直しても変わらない理由を返す (一覧の 404 は行の消えたことを意味しないので failed。#2086 V4)
-        const unavailableMessage = rereadUnavailableMessage(res.status, body, null);
         return unavailableMessage === null ? { kind: "failed" } : { kind: "unavailable", message: unavailableMessage };
       }
       const data = (body as { data?: unknown } | null)?.data;

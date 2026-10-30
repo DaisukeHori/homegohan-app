@@ -7,9 +7,16 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { loginPathWithNext } from '@/lib/auth/signed-in-user';
 import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
-import { AdminScreenError, adminLoadFailedMessage, displayableAdminError } from '@/lib/admin/admin-screen-messages';
+import {
+  AdminScreenError,
+  adminLoadFailedMessage,
+  displayableAdminError,
+  listRowsOfBody,
+  listTotalOfBody,
+} from '@/lib/admin/admin-screen-messages';
 import { lastPageToRefetch } from '@/lib/list-pagination';
 
 /** 読み込みの失敗の文の対象 (「チケットの一覧を読み込めませんでした（通信エラー）」。#2086 V6) */
@@ -71,6 +78,8 @@ const STATUS_TABS: Array<{ key: TicketStatus | 'all'; label: string }> = [
 
 export default function SupportTicketsPage() {
   const router = useRouter();
+  // ログインが切れた (401) ときに、ログインし直したあとこの画面へ戻れるよう next に付けるパス (#2101 X5)
+  const pathname = usePathname();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -97,7 +106,7 @@ export default function SupportTicketsPage() {
         throw new AdminScreenError(adminLoadFailedMessage(TICKETS_SUBJECT, null));
       }
       if (res.status === 401) {
-        router.push('/login');
+        router.push(loginPathWithNext(pathname));
         return;
       }
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
@@ -108,28 +117,34 @@ export default function SupportTicketsPage() {
       if (!res.ok) {
         throw new AdminScreenError(TICKETS_LOAD_FAILURE_MESSAGE);
       }
-      const json = await res.json();
+      const json: unknown = await res.json().catch(() => null);
+      // 200 なのに本文が読めない・data が配列でない壊れた応答は、0 件と見せずに読み込めなかったものとして扱う (#2101 X8)
+      const rows = listRowsOfBody<Ticket>(json);
+      if (rows === null) throw new AdminScreenError(TICKETS_LOAD_FAILURE_MESSAGE);
+      const total = listTotalOfBody(json);
       // 件数より後ろのページ (最後のページの唯一の行が消えたあとの読み直しなど) は、空のページを見せずに最後のページへ取り直す (#1917)
-      const refetchPage = lastPageToRefetch({ rows: (json.data ?? []).length, page, total: json.meta?.total ?? 0, perPage });
+      const refetchPage = lastPageToRefetch({ rows: rows.length, page, total, perPage });
       if (refetchPage !== null) {
         setPage(refetchPage);
         return;
       }
-      setTickets(json.data ?? []);
-      setTotal(json.meta?.total ?? 0);
+      setTickets(rows);
+      setTotal(total);
     } catch (e: unknown) {
       // 画面に出すのは日本語の文だけ (JSON でない本文の SyntaxError などの英字の文は出さない。#2086 V6)
       setError(displayableAdminError(e, TICKETS_LOAD_FAILURE_MESSAGE));
     } finally {
       setIsLoading(false);
     }
-  }, [page, activeTab, priorityFilter, router]);
+  }, [page, activeTab, priorityFilter, router, pathname]);
 
   useEffect(() => {
     fetchTickets();
   }, [fetchTickets]);
 
   const totalPages = Math.ceil(total / perPage);
+  // 読み込みに失敗して出せる行が無い。「全 0 件」「チケットはありません」と 0 件に見せない (#2101 X8)
+  const loadFailedWithoutRows = error !== null && tickets.length === 0;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -138,7 +153,7 @@ export default function SupportTicketsPage() {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">サポートチケット</h1>
-            <p className="text-sm text-gray-500 mt-1">全 {total} 件</p>
+            {!loadFailedWithoutRows && <p className="text-sm text-gray-500 mt-1">全 {total} 件</p>}
           </div>
           <Link
             href="/admin/support/new"
@@ -191,7 +206,7 @@ export default function SupportTicketsPage() {
         <div className="bg-white rounded-lg shadow overflow-hidden">
           {isLoading ? (
             <div className="text-center py-12 text-gray-500">読み込み中...</div>
-          ) : tickets.length === 0 ? (
+          ) : loadFailedWithoutRows ? null : tickets.length === 0 ? (
             <div className="text-center py-12 text-gray-500">チケットはありません</div>
           ) : (
             <table className="min-w-full divide-y divide-gray-200">
