@@ -4,7 +4,9 @@
  * 運営の組織の作成を 1 つのトランザクションで書く関数 admin_create_organization の、番号の付け直しや後の migration の上書きで
  * 崩れやすい所を、ファイルの文面だけで確かめる。実 DB での振る舞い (同じオーナーの同時の作成は 1 つだけ通る・権限) は
  * tests/integration/security/org-create-atomic.test.ts。
- *   1. 最新の定義はこの migration で、SECURITY DEFINER・search_path = public・RETURNS jsonb
+ *   1. この関数を定義する migration はこれと、オーナーの加入日を足した 20261031100000 (#2120 W1) の 2 つだけで、最新の定義は後者。
+ *      最新の定義は SECURITY DEFINER・search_path = public・RETURNS jsonb (2〜4 と 6 は最新の定義で確かめる。加入日の差分は
+ *      tests/create-organization-owner-joined-at-migration-contract.test.ts)
  *   2. 本文の順は CLAUDE.md の組織のロック順 ((2) 組織の行 → (3) user_profiles → (4) org_license_pools) に合う:
  *      organizations の INSERT → プロフィールの行が無ければ作る → オーナーの行を FOR NO KEY UPDATE で読む → 所属していれば
  *      OWNER_ALREADY_IN_ORG → 所属を書く → 席の行 → 戻り値。所属の確認は、その行のロックより後で、どの書き込み (所属・席の行) よりも前
@@ -20,6 +22,8 @@ import { describe, expect, it } from 'vitest';
 const ROOT = path.resolve(__dirname, '..');
 const MIGRATIONS_DIR = path.join(ROOT, 'supabase', 'migrations');
 const MIGRATION = '20261030150000_create_organization_atomic';
+/** この関数を作り直した最新の migration (オーナーの加入日と在籍の印を書く。#2120 W1) */
+const LATEST_MIGRATION = '20261031100000_create_organization_owner_joined_at';
 const ROLLBACK_PATH = path.join(ROOT, 'supabase', 'rollbacks', `${MIGRATION}.down.sql`);
 /** この migration を足したときの origin/main の最大の版 (これより大きくなければ本番へ当たらない) */
 const PREVIOUS_MAX_VERSION = '20261030120000';
@@ -40,7 +44,9 @@ const migrations = fs
   .map((file) => ({ file, sql: read(path.join(MIGRATIONS_DIR, file)) }));
 
 const sql = read(path.join(MIGRATIONS_DIR, `${MIGRATION}.sql`));
-const code = squash(stripLineComments(sql));
+/** 最新の定義 (本文の順・権限はこちらで確かめる) */
+const latestSql = read(path.join(MIGRATIONS_DIR, `${LATEST_MIGRATION}.sql`));
+const code = squash(stripLineComments(latestSql));
 
 /** 関数の定義 (CREATE OR REPLACE FUNCTION ... AS $$ ... $$) の見出しと本文 */
 function definitionOf(source: string): { header: string; body: string } {
@@ -54,7 +60,7 @@ function definitionOf(source: string): { header: string; body: string } {
   return { header: rest.slice(0, opener!.index), body: rest.slice(bodyStart, bodyEnd) };
 }
 
-const { header, body: rawBody } = definitionOf(sql);
+const { header, body: rawBody } = definitionOf(latestSql);
 const body = squash(stripLineComments(rawBody));
 
 /** 本文の中で pattern が最初に現れる位置。無ければテストを落とす */
@@ -65,11 +71,11 @@ function indexOf(pattern: RegExp, label: string): number {
 }
 
 describe('admin_create_organization の定義', () => {
-  it('この関数を定義する migration はこれだけ (後の migration が上書きしていない)。版は前の最大より大きい', () => {
+  it('この関数を定義する migration はこれと最新の 20261031100000 だけ (ほかの migration が上書きしていない)。版は前の最大より大きい', () => {
     const definers = migrations
       .filter(({ sql: text }) => new RegExp(String.raw`CREATE\s+OR\s+REPLACE\s+FUNCTION\s+(?:"?public"?\.)?"?${FN}"?\s*\(`, 'i').test(text))
       .map(({ file }) => file);
-    expect(definers).toEqual([`${MIGRATION}.sql`]);
+    expect(definers).toEqual([`${MIGRATION}.sql`, `${LATEST_MIGRATION}.sql`]);
     expect(MIGRATION.slice(0, PREVIOUS_MAX_VERSION.length) > PREVIOUS_MAX_VERSION).toBe(true);
     expect(sql.split('\n', 1)[0]).toBe(`-- migration: ${MIGRATION}.sql`);
     expect(sql).toContain(`supabase/rollbacks/${MIGRATION}.down.sql`);
@@ -98,7 +104,7 @@ describe('admin_create_organization の定義', () => {
       '所属の確認',
     );
     const writeMembership = indexOf(
-      /UPDATE user_profiles SET organization_id = v_org\.id, org_role = 'owner' WHERE id = p_owner_id;/,
+      /UPDATE user_profiles SET organization_id = v_org\.id, org_role = 'owner', joined_org_at = CURRENT_DATE, is_active_in_org = TRUE WHERE id = p_owner_id;/,
       '所属の書き込み',
     );
     const insertPool = indexOf(
