@@ -17,6 +17,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+import { resolveHeavyUnitTimeouts } from './helpers/heavy-unit-test-timeout';
+import { testsWithUnexpectedTimeout } from './helpers/local-ci-slot-test-timeout';
 
 const ROOT = path.resolve(__dirname, '..');
 const SCAN_ROOTS = ['src', 'lib'] as const;
@@ -212,5 +214,9 @@ describe('送れなかった理由を error へ直接渡さない (#1577 の 7)'
     }
     expect(callers).toBeGreaterThan(MIN_SEND_EMAIL_CALLERS);
     expect(found, 'src/lib/emails/send-result.ts の logEmailFailures を通す').toEqual([]);
+  });
+
+  it('このファイルのどのテストも、延ばした時間切れで切れる (全体の既定の 5 秒のまま残っていない。#2093)', ({ task }) => {
+    expect(testsWithUnexpectedTimeout(task.file, [resolveHeavyUnitTimeouts(process.env).testTimeout])).toEqual([]);
   });
 });
