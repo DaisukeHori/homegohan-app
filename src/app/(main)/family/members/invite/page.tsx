@@ -4,6 +4,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { loginPathWithNext, readSignedInUser } from '@/lib/auth/signed-in-user';
 import { MEMBERSHIP_STATE_UNCONFIRMED_NOTE } from '@/lib/membership/leave-state';
 
 /** 招待の送信の通信そのものが失敗した (fetch が reject した) ときの文 */
@@ -17,6 +18,9 @@ const INVITE_PAGE_LOAD_ERROR = '家族の情報を読み込めませんでした
 
 /** 招待の履歴を読み込めなかったときの文 (#2073。以前は履歴が無いときと同じく、何も出さなかった) */
 const INVITES_LOAD_ERROR = '招待の履歴を読み込めませんでした。';
+
+/** この画面のパス (ログインのあとに戻る先) */
+const FAMILY_INVITE_PATH = '/family/members/invite';
 
 interface FamilyInvite {
   id: string;
@@ -71,11 +75,19 @@ export default function FamilyInvitePage() {
   // 自分の家族と招待の履歴を読む。画面を開いたときと「再試行」で呼ぶ
   const loadPage = useCallback(async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        router.push('/login');
+      // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
+      // 確かめられなかったときは読み込みの失敗と「再試行」を出す (#2093 W4。以前は通信が切れているだけでもログインの画面へ移していた)。
+      // ログインのあとにこの画面へ戻れるよう next を付ける
+      const signedIn = await readSignedInUser(supabase);
+      if (signedIn.kind === 'load-failed') {
+        setLoadError(INVITE_PAGE_LOAD_ERROR);
         return;
       }
+      if (signedIn.kind === 'signed-out') {
+        router.push(loginPathWithNext(FAMILY_INVITE_PATH));
+        return;
+      }
+      const { user } = signedIn;
 
       const { data: profile, error: profileError } = await supabase
         .from('user_profiles')

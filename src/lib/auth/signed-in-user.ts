@@ -55,3 +55,15 @@ export async function readSignedInUser(supabase: AuthUserReader): Promise<Signed
     return { kind: 'load-failed' };
   }
 }
+
+/** ログインの画面のパス */
+const LOGIN_PATH = '/login';
+
+/**
+ * ログインしていない (signed-out) ときに移すログインの画面の URL。ログインのあとに元の画面へ戻れるよう next を付ける (#2093 W4。
+ * 以前は next を付けずに /login へ移していたので、ログインし直しても元の画面へ戻らなかった)。
+ * next はログインの画面が getSafeRedirectPath で確かめる (同じオリジンの相対パスだけを通す)
+ */
+export function loginPathWithNext(nextPath: string): string {
+  return `${LOGIN_PATH}?next=${encodeURIComponent(nextPath)}`;
+}

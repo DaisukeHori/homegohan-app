@@ -626,9 +626,10 @@ describe('#2080 U4 組織のメンバー: 除名の通信が切れたときの�
     error: Object.assign(new Error('Failed to fetch'), { name: 'AuthRetryableFetchError', status: 0, __isAuthError: true }),
   };
 
+  // getUser が user なし・error なしで返す (ログインしていない) ときは、#2093 W9 からログインの画面へ移す
+  // (「再試行」を出しても変わらないため)。その経路は下のテストと tests/membership-getuser-remaining-2093.test.tsx が見る
   it.each<[string, GetUserResult]>([
     ['自分を確かめる通信も失敗した (getUser が error を返す)', AUTH_NETWORK_FAILURE],
-    ['自分を確かめられなかった (getUser が user なし・error なしで返す)', { data: { user: null }, error: null }],
   ])(
     '除名の通信が切れ、読み直しで%s ときも、alert の「再試行」の案内と画面の「読み込めませんでした」「再試行」が合う',
     async (_case, getUserResult) => {
@@ -664,6 +665,22 @@ describe('#2080 U4 組織のメンバー: 除名の通信が切れたときの�
       expect(text()).toContain('組織メンバー (2 名)');
     },
   );
+
+  it('除名の通信が切れ、読み直しでログインしていない (user も error も無い) と分かったら、「再試行」の案内を出さず、前の一覧も残さない (#2093 W9)', async () => {
+    mockServer(false);
+    await renderElement(createElement(MembersPage));
+    expect(text()).toContain('Aさん');
+    supabaseState.getUserResults = [{ data: { user: null }, error: null }];
+
+    await click(removeButtonOfA(), 'Aさんの「除名」ボタン');
+
+    expect(callsOf('POST', REMOVE_PATH)).toHaveLength(1);
+    // ログインの画面へ移るので、「「再試行」で読み込み直して」の案内を出さない (画面に「再試行」が無い)
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(byTestId('member-load-error')).toBeNull();
+    expect(text()).not.toContain('Aさん');
+    expect(unhandled).toEqual([]);
+  });
 
   it('開いたときに自分を確かめられなかったら、「メンバーがいません」と出さずに「読み込めませんでした」と「再試行」を出す', async () => {
     mockServer(false);
