@@ -291,7 +291,13 @@ describe('#2107 Y9 A/B テストの一覧 (/super-admin/experiments) のペー�
   const noticeLinkHref = () =>
     container.querySelector<HTMLAnchorElement>('[data-testid="experiment-reload-notice"] a')?.getAttribute('href') ?? null;
   const shownKeys = () => Array.from(container.querySelectorAll('code')).map((c) => c.textContent);
-  const detailCalls = (id: string) => fetchMock.mock.calls.filter(([input]) => new URL(String(input), 'http://localhost').pathname === DETAIL_PATH(id));
+  /** 詳細の GET の呼び出し (同じパスの PATCH は数えない) */
+  const detailCalls = (id: string) =>
+    fetchMock.mock.calls.filter(
+      ([input, init]) =>
+        ((init as RequestInit | undefined)?.method ?? 'GET').toUpperCase() === 'GET' &&
+        new URL(String(input), 'http://localhost').pathname === DETAIL_PATH(id),
+    );
   const startButtons = () => Array.from(container.querySelectorAll('button')).filter((b) => b.textContent?.trim() === '開始');
   const retryButton = () => Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === '再試行');
 
