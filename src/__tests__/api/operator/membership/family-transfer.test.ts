@@ -142,14 +142,14 @@ function reassignRepresentative(fake: FakeServiceRole, family: Row, newRepId: un
 }
 
 /**
- * operator_force_representative_transfer の挙動 (最新の定義は supabase/migrations/20261023140000_operator_transfer_return_old_owner.sql) を再現する。
+ * #2093 W5 の前の operator_force_representative_transfer の挙動 (supabase/migrations/20261023140000_operator_transfer_return_old_owner.sql の定義) を再現する。
  * 家族の行をロックしてから representative_id (旧代表者) を読み、representative_id を新代表者へ書き換え、
  * {"family_group": 書き換えた「後の」行, "old_rep_id": ロックの下で読んだ旧代表者} を返す (#1917)。
  * 書き換えた後の行の representative_id は新代表者なので、それを旧代表者として使う実装は #1209 と同じ理由で壊れる。
  * 新代表者の id は Postgres の uuid と同じく大文字小文字を区別せずに比べ、保存するのは行の user_id (小文字) にする (#1790)。
  * そのため大文字の to_user_id をそのまま RPC に渡しても譲渡は成り立ち、route の側の突き合わせのずれだけがテストに出る
  */
-function simulateRepresentativeTransfer(fake: FakeServiceRole, args: RpcArgs) {
+function simulateRepresentativeTransferWithoutRejectSame(fake: FakeServiceRole, args: RpcArgs) {
   fake.events.push(`rpc:${RPC_NAME}`);
   const members = fake.tables.family_members;
   const target = members.find(
@@ -170,11 +170,30 @@ function simulateRepresentativeTransfer(fake: FakeServiceRole, args: RpcArgs) {
 }
 
 /**
+ * operator_force_representative_transfer の最新の定義 (supabase/migrations/20261030120000_operator_force_transfer_reject_same.sql。#2093 W5) を再現する。
+ * 家族の行のロックの下で読んだ旧代表者が新代表者と同じなら、何も書かずに ALREADY_REPRESENTATIVE (P0001) で断る
+ * (membership_audit に旧代表者 = 新代表者の行を残さない)。それ以外は 20261023140000 の定義と同じ。
+ * uuid は Postgres と同じく大文字小文字を区別せずに比べる (#1790)
+ */
+function simulateRepresentativeTransfer(fake: FakeServiceRole, args: RpcArgs) {
+  const family = fake.tables.family_groups.find((f) => f.id === args.p_family_id);
+  if (
+    family &&
+    typeof family.representative_id === 'string' &&
+    family.representative_id.toLowerCase() === args.p_new_rep_id.toLowerCase()
+  ) {
+    fake.events.push(`rpc:${RPC_NAME}`);
+    return { data: null, error: { message: 'ALREADY_REPRESENTATIVE', code: 'P0001' } };
+  }
+  return simulateRepresentativeTransferWithoutRejectSame(fake, args);
+}
+
+/**
  * #1917 の migration の前の定義 (20261017130000_operator_mfa_db_gate.sql) の RPC: 書き換えた後の行だけを返し、旧代表者を返さない。
  * migration を当てる前の DB に新しい route が当たったときの形
  */
 function simulateRepresentativeTransferBeforeMigration(fake: FakeServiceRole, args: RpcArgs) {
-  const result = simulateRepresentativeTransfer(fake, args);
+  const result = simulateRepresentativeTransferWithoutRejectSame(fake, args);
   if (result.error) return result;
   return { data: result.data.family_group, error: null };
 }
@@ -976,7 +995,15 @@ describe('POST /api/operator/membership/family/[id]/transfer: 譲渡先がすで
     expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 
-  it('RPC の前の読み込みに失敗しても、RPC がロックの下で読んだ旧代表者が譲渡先と同じなら、監査も通知メールも出さずに 409 を返し、構造化ログに残す', async () => {
+  // RPC の 2 つの定義: 最新 (20261030120000。ロックの下の旧代表者が譲渡先と同じなら ALREADY_REPRESENTATIVE で断り、何も書かない。#2093 W5) と、
+  // その前 (20261023140000。断らずに旧 = 新で書き、戻り値の old_rep_id で route が気づく。migration を当てる前の DB)。どちらでも 409
+  const RPC_DEFINITIONS = [
+    ['最新の定義 (RPC が ALREADY_REPRESENTATIVE で断る)', simulateRepresentativeTransfer],
+    ['20261023140000 の定義 (RPC は断らず、戻り値の旧代表者で route が止める)', simulateRepresentativeTransferWithoutRejectSame],
+  ] as const;
+
+  it.each(RPC_DEFINITIONS)('%s: RPC の前の読み込みに失敗しても、RPC がロックの下で読んだ旧代表者が譲渡先と同じなら、監査も通知メールも出さずに 409 を返し、構造化ログに残す', async (_label, simulate) => {
+    mocks.rpc.mockImplementation(async (_name: string, args: RpcArgs) => simulate(fake, args));
     fake.tables.family_groups[0].representative_id = NEW_REP_ID;
     fake.readErrors.family_groups = { message: 'connection reset by peer', code: '08006' };
 
@@ -990,19 +1017,53 @@ describe('POST /api/operator/membership/family/[id]/transfer: 譲渡先がすで
     expect(mocks.logWarn).toHaveBeenCalledWith(expect.any(String), { family_id: FAMILY_ID, to_user_id: NEW_REP_ID });
   });
 
-  it('RPC の前に読んだ代表者は別の人でも、RPC の直前に別の運営が同じ人へ譲渡していた (ロックの下の旧代表者が譲渡先と同じ) ら、409 で監査も通知も出さない', async () => {
+  it.each(RPC_DEFINITIONS)('%s: RPC の前に読んだ代表者は別の人でも、RPC の直前に別の運営が同じ人へ譲渡していた (ロックの下の旧代表者が譲渡先と同じ) ら、409 で監査も通知も出さない', async (_label, simulate) => {
     mocks.rpc.mockImplementation(async (_name: string, args: RpcArgs) => {
       // 運営 B の譲渡が先に commit した
       reassignRepresentative(fake, fake.tables.family_groups[0], NEW_REP_ID);
-      return simulateRepresentativeTransfer(fake, args);
+      return simulate(fake, args);
     });
 
     const res = await call();
 
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual(ALREADY_BODY);
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);
     expect(mocks.auditInsert).not.toHaveBeenCalled();
     expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(mocks.logError).not.toHaveBeenCalled();
+    expect(mocks.logWarn).toHaveBeenCalledWith(expect.any(String), { family_id: FAMILY_ID, to_user_id: NEW_REP_ID });
+  });
+
+  it('RPC が ALREADY_REPRESENTATIVE で断ったときの本文は日本語の固定の文で、RPC の文面 (英字の語) を message に入れない (#2093 W5)', async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'ALREADY_REPRESENTATIVE', code: 'P0001' } });
+
+    const res = await call();
+    const json = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(json).toEqual(ALREADY_BODY);
+    expect(json.error.message).not.toContain('ALREADY_REPRESENTATIVE');
+    expect(mocks.auditInsert).not.toHaveBeenCalled();
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('前後に文が付いた RPC の文面 (ERROR: ALREADY_REPRESENTATIVE) も 409 (語として照合する)', async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'ERROR: ALREADY_REPRESENTATIVE' } });
+
+    const res = await call();
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual(ALREADY_BODY);
+  });
+
+  it('ALREADY_REPRESENTATIVE を含むだけの別の語 (ALREADY_REPRESENTATIVE_X) は 409 にしない (汎用の 500)', async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'ALREADY_REPRESENTATIVE_X', code: 'P0001' } });
+
+    const res = await call();
+
+    expect(res.status).toBe(500);
+    expect(mocks.auditInsert).not.toHaveBeenCalled();
   });
 
   it('今の代表者でない人への譲渡はこれまでどおり 200 (RPC の前の読み込みは止める理由にしない)', async () => {

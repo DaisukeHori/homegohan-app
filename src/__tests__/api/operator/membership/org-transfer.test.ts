@@ -133,14 +133,14 @@ function reassignOwner(fake: FakeServiceRole, org: Row, newOwnerId: unknown): un
 }
 
 /**
- * operator_force_owner_transfer の挙動 (最新の定義は supabase/migrations/20261023140000_operator_transfer_return_old_owner.sql) を再現する。
+ * #2093 W5 の前の operator_force_owner_transfer の挙動 (supabase/migrations/20261023140000_operator_transfer_return_old_owner.sql の定義) を再現する。
  * 組織の行をロックしてから owner_id (旧オーナー) を読み、owner_id を新オーナーへ書き換え、
  * {"organization": 書き換えた「後の」行, "old_owner_id": ロックの下で読んだ旧オーナー} を返す (#1917)。
  * 書き換えた後の行の owner_id は新オーナーなので、それを旧オーナーとして使う実装は #1209 と同じ理由で壊れる。
  * 新オーナーの id は Postgres の uuid と同じく大文字小文字を区別せずに比べ、保存するのは行の id (小文字) にする (#1790)。
  * そのため大文字の to_user_id をそのまま RPC に渡しても譲渡は成り立ち、route の側の突き合わせのずれだけがテストに出る
  */
-function simulateOwnerTransfer(fake: FakeServiceRole, args: RpcArgs) {
+function simulateOwnerTransferWithoutRejectSame(fake: FakeServiceRole, args: RpcArgs) {
   fake.events.push(`rpc:${RPC_NAME}`);
   const target = fake.tables.user_profiles.find(
     (p) =>
@@ -154,11 +154,26 @@ function simulateOwnerTransfer(fake: FakeServiceRole, args: RpcArgs) {
 }
 
 /**
+ * operator_force_owner_transfer の最新の定義 (supabase/migrations/20261030120000_operator_force_transfer_reject_same.sql。#2093 W5) を再現する。
+ * 組織の行のロックの下で読んだ旧オーナーが新オーナーと同じなら、何も書かずに ALREADY_OWNER (P0001) で断る
+ * (membership_audit に旧オーナー = 新オーナーの行を残さない)。それ以外は 20261023140000 の定義と同じ。
+ * uuid は Postgres と同じく大文字小文字を区別せずに比べる (#1790)
+ */
+function simulateOwnerTransfer(fake: FakeServiceRole, args: RpcArgs) {
+  const org = fake.tables.organizations.find((o) => o.id === args.p_organization_id);
+  if (org && typeof org.owner_id === 'string' && org.owner_id.toLowerCase() === args.p_new_owner_id.toLowerCase()) {
+    fake.events.push(`rpc:${RPC_NAME}`);
+    return { data: null, error: { message: 'ALREADY_OWNER', code: 'P0001' } };
+  }
+  return simulateOwnerTransferWithoutRejectSame(fake, args);
+}
+
+/**
  * #1917 の migration の前の定義 (20261022160000_release_membership_owner_race.sql) の RPC: 書き換えた後の行だけを返し、旧オーナーを返さない。
  * migration を当てる前の DB に新しい route が当たったときの形
  */
 function simulateOwnerTransferBeforeMigration(fake: FakeServiceRole, args: RpcArgs) {
-  const result = simulateOwnerTransfer(fake, args);
+  const result = simulateOwnerTransferWithoutRejectSame(fake, args);
   if (result.error) return result;
   return { data: result.data.organization, error: null };
 }
@@ -932,7 +947,15 @@ describe('POST /api/operator/membership/org/[id]/transfer: 譲渡先がすでに
     expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 
-  it('RPC の前の読み込みに失敗しても、RPC がロックの下で読んだ旧オーナーが譲渡先と同じなら、監査も通知メールも出さずに 409 を返し、構造化ログに残す', async () => {
+  // RPC の 2 つの定義: 最新 (20261030120000。ロックの下の旧オーナーが譲渡先と同じなら ALREADY_OWNER で断り、何も書かない。#2093 W5) と、
+  // その前 (20261023140000。断らずに旧 = 新で書き、戻り値の old_owner_id で route が気づく。migration を当てる前の DB)。どちらでも 409
+  const RPC_DEFINITIONS = [
+    ['最新の定義 (RPC が ALREADY_OWNER で断る)', simulateOwnerTransfer],
+    ['20261023140000 の定義 (RPC は断らず、戻り値の旧オーナーで route が止める)', simulateOwnerTransferWithoutRejectSame],
+  ] as const;
+
+  it.each(RPC_DEFINITIONS)('%s: RPC の前の読み込みに失敗しても、RPC がロックの下で読んだ旧オーナーが譲渡先と同じなら、監査も通知メールも出さずに 409 を返し、構造化ログに残す', async (_label, simulate) => {
+    mocks.rpc.mockImplementation(async (_name: string, args: RpcArgs) => simulate(fake, args));
     fake.tables.organizations[0].owner_id = NEW_OWNER_ID;
     fake.readErrors.organizations = { message: 'connection reset by peer', code: '08006' };
 
@@ -946,19 +969,53 @@ describe('POST /api/operator/membership/org/[id]/transfer: 譲渡先がすでに
     expect(mocks.logWarn).toHaveBeenCalledWith(expect.any(String), { organization_id: ORG_ID, to_user_id: NEW_OWNER_ID });
   });
 
-  it('RPC の前に読んだオーナーは別の人でも、RPC の直前に別の運営が同じ人へ譲渡していた (ロックの下の旧オーナーが譲渡先と同じ) ら、409 で監査も通知も出さない', async () => {
+  it.each(RPC_DEFINITIONS)('%s: RPC の前に読んだオーナーは別の人でも、RPC の直前に別の運営が同じ人へ譲渡していた (ロックの下の旧オーナーが譲渡先と同じ) ら、409 で監査も通知も出さない', async (_label, simulate) => {
     mocks.rpc.mockImplementation(async (_name: string, args: RpcArgs) => {
       // 運営 B の譲渡が先に commit した
       reassignOwner(fake, fake.tables.organizations[0], NEW_OWNER_ID);
-      return simulateOwnerTransfer(fake, args);
+      return simulate(fake, args);
     });
 
     const res = await call();
 
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual(ALREADY_BODY);
+    expect(mocks.rpc).toHaveBeenCalledTimes(1);
     expect(mocks.auditInsert).not.toHaveBeenCalled();
     expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(mocks.logError).not.toHaveBeenCalled();
+    expect(mocks.logWarn).toHaveBeenCalledWith(expect.any(String), { organization_id: ORG_ID, to_user_id: NEW_OWNER_ID });
+  });
+
+  it('RPC が ALREADY_OWNER で断ったときの本文は日本語の固定の文で、RPC の文面 (英字の語) を message に入れない (#2093 W5)', async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'ALREADY_OWNER', code: 'P0001' } });
+
+    const res = await call();
+    const json = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(json).toEqual(ALREADY_BODY);
+    expect(json.error.message).not.toContain('ALREADY_OWNER');
+    expect(mocks.auditInsert).not.toHaveBeenCalled();
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('前後に文が付いた RPC の文面 (ERROR: ALREADY_OWNER) も 409 (語として照合する)', async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'ERROR: ALREADY_OWNER' } });
+
+    const res = await call();
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual(ALREADY_BODY);
+  });
+
+  it('ALREADY_OWNER を含むだけの別の語 (ALREADY_OWNER_X) は 409 にしない (汎用の 500)', async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'ALREADY_OWNER_X', code: 'P0001' } });
+
+    const res = await call();
+
+    expect(res.status).toBe(500);
+    expect(mocks.auditInsert).not.toHaveBeenCalled();
   });
 
   it('今のオーナーでない人への譲渡はこれまでどおり 200 (RPC の前の読み込みは止める理由にしない)', async () => {
