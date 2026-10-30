@@ -329,3 +329,12 @@ describe.each([
     await expect(Page()).rejects.toThrow('supabase is down');
   });
 });
+
+describe('/admin/organizations の入口が画面の本体に渡すもの', () => {
+  it('操作している運営の id を渡す (オーナーを指定しない組織の作成ではこの人がオーナーになり、応答を受け取れなかったあとの確かめで比べる。#2112 Z2)', async () => {
+    login('admin');
+    const element = (await AdminOrganizationsPage()) as ReactElement<{ currentUserId?: unknown }>;
+    expect(element.type).toBe(OrganizationsManager);
+    expect(element.props.currentUserId).toBe('operator-1');
+  });
+});
