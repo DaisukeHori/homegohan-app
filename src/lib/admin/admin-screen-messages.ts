@@ -194,3 +194,43 @@ export function createdIdOfBody(body: unknown): string | null {
   const id = typeof data === 'object' && data !== null ? (data as { id?: unknown }).id : undefined;
   return typeof id === 'string' && id !== '' ? id : null;
 }
+
+/**
+ * 運営の API の一覧 ({ data: [...] }) を GET で読む。data が配列でない応答 (200 なのに本文が読めない・形が違う) は
+ * 読み込めなかったものとして「<対象>を読み込めませんでした（通信エラー）」の AdminScreenError を投げる
+ * (壊れた応答を「0 件」と見せない。#2093 W7。運営のメンバーシップの画面の fetchOperatorRows と同じ扱い)。
+ * ほかの失敗は fetchAdminJson と同じ
+ */
+export async function fetchAdminRows<T>(url: string, subject: string): Promise<T[]> {
+  const body = await fetchAdminJson(url, subject);
+  const data = typeof body === 'object' && body !== null ? (body as { data?: unknown }).data : undefined;
+  if (!Array.isArray(data)) throw new AdminScreenError(adminLoadFailedMessage(subject, null));
+  return data as T[];
+}
+
+/**
+ * 作成 (POST) の成功の応答の本文 ({ data: { id } }) から、作った行の id を読む。
+ * 本文が JSON として読めない・id が無いときは null (作成は済んでいるので、呼び出し側は作成の失敗とは言わない。#2093 W7)
+ */
+export async function createdRowIdOfResponse(res: Response): Promise<string | null> {
+  const body: unknown = await res.json().catch(() => null);
+  return createdIdOfBody(body);
+}
+
+/**
+ * 作成は成功の応答で済んだが、応答の本文が読めず、作った行の画面へ移れないときの文 (#2093 W7)。
+ * 作成は済んでいるので「失敗しました」とも「通信エラー」とも言わず、一覧で確かめるよう促す
+ */
+export function adminCreatedButUnreadableMessage(action: string): string {
+  return `${action}は済みましたが、応答を読み込めませんでした。一覧から開いて確かめてください`;
+}
+
+/**
+ * 書き込み (PATCH) の成功の応答の本文 ({ data: 書いたあとの行 }) から行を読む。
+ * 本文が JSON として読めない・data が無いときは null (書き込みは済んでいるかもしれないので、呼び出し側は失敗とは言わない。#2093 W7)
+ */
+export async function savedRowOfResponse<T>(res: Response): Promise<T | null> {
+  const body: unknown = await res.json().catch(() => null);
+  const data = typeof body === 'object' && body !== null ? (body as { data?: unknown }).data : undefined;
+  return typeof data === 'object' && data !== null ? (data as T) : null;
+}

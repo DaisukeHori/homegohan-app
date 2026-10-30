@@ -24,6 +24,22 @@ import {
   statusChangeNoResponseMessage,
 } from '@/lib/super-admin/status-change-no-response';
 import { rereadDetailRow } from '@/lib/super-admin/detail-reread';
+import {
+  AdminScreenError,
+  adminActionHttpFailedMessage,
+  adminActionNoResponseMessage,
+  adminLoadFailedFallback,
+  adminLoadFailedMessage,
+  adminScreenErrorOfResponse,
+  displayableAdminError,
+  fetchAdminJson,
+  savedRowOfResponse,
+} from '@/lib/admin/admin-screen-messages';
+
+/** 読み込みの失敗の文の対象 (「機能パッケージを読み込めませんでした (HTTP 502)」。#2093 W7) */
+const FEATURE_PACKAGE_SUBJECT = '機能パッケージ';
+/** 保存の失敗の文の操作の名前 (「保存に失敗しました (HTTP 502)」「保存の応答を受け取れませんでした（通信エラー）」。#2093 W7) */
+const SAVE_ACTION = '保存';
 
 type FeaturePackage = {
   id: string;
@@ -187,21 +203,19 @@ export default function FeaturePackageDetailPage() {
   const fetchPkg = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/super-admin/feature-packages/${pkgId}`);
-      const data = await res.json() as { data?: FeaturePackage; error?: { message: string } };
-      if (!res.ok) {
-        setError(data.error?.message ?? '取得に失敗しました');
-        return;
-      }
-      const loaded = data.data!;
+      // 失敗の応答は ok を先に確かめて本文の日本語の文か「機能パッケージを読み込めませんでした (HTTP 502)」にし、通信そのものの失敗と
+      // 200 の読めない本文だけを「（通信エラー）」にする (JSON でない 502 を「ネットワークエラー」と見せない。#2093 W7)
+      const body = await fetchAdminJson(`/api/super-admin/feature-packages/${pkgId}`, FEATURE_PACKAGE_SUBJECT);
+      const loaded = (body as { data?: FeaturePackage | null }).data;
+      if (!loaded) throw new AdminScreenError(adminLoadFailedMessage(FEATURE_PACKAGE_SUBJECT, null));
       const inputs = featurePackageInputsOf(loaded);
       setPkg(loaded);
       setDisplayName(inputs.displayName);
       setDescription(inputs.description);
       setFeatureFlagsRaw(inputs.featureFlagsRaw);
       setDisplayOrder(inputs.displayOrder);
-    } catch {
-      setError('ネットワークエラー');
+    } catch (err) {
+      setError(displayableAdminError(err, adminLoadFailedFallback(FEATURE_PACKAGE_SUBJECT)));
     } finally {
       setIsLoading(false);
     }
@@ -260,21 +274,26 @@ export default function FeaturePackageDetailPage() {
     setIsSaving(true);
 
     try {
-      const res = await fetch(`/api/super-admin/feature-packages/${pkgId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(changes),
-      });
-      const data = await res.json() as { data?: FeaturePackage; error?: { message: string } };
-      if (!res.ok) {
-        setSaveError(data.error?.message ?? '保存に失敗しました');
-        return;
+      let res: Response;
+      try {
+        res = await fetch(`/api/super-admin/feature-packages/${pkgId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(changes),
+        });
+      } catch {
+        throw new AdminScreenError(adminActionNoResponseMessage(SAVE_ACTION));
       }
+      // ok を先に確かめる (JSON でない 502 を「ネットワークエラー」と見せない。本文に日本語の文が無ければ「保存に失敗しました (HTTP 502)」。#2093 W7)
+      if (!res.ok) throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(SAVE_ACTION, status));
+      // 成功の応答の本文が読めない: 保存は済んでいるかもしれないので、失敗とは言わず応答を受け取れなかった文にする (#2093 W7)
+      const saved = await savedRowOfResponse<FeaturePackage>(res);
+      if (!saved) throw new AdminScreenError(adminActionNoResponseMessage(SAVE_ACTION));
       // 保存の応答の行 (書いたあとの最新の行) を新しい比べる元にし、手を付けていない入力欄もその行の値に揃える (#1917)。
       // 送らなかった欄には、画面を開いたあとに別の運営が変えた値が入っていることがある。比べる元だけを新しくして入力欄を
       // 古い値のままにすると、その欄が変えた欄に見え、次の保存 (何も変えずに押しても) で開いたときの古い値を送って、
       // 別の運営の変更を上書きしてしまう。応答を待つあいだに変えた欄は書きかけとして残す (次の保存で送る)
-      applyLatestPackage(data.data!, inputsAtSave);
+      applyLatestPackage(saved, inputsAtSave);
       setSaveSuccess(true);
       // 保存の応答の行は書いたあとの最新の行 (status も今の値) なので、廃止のあとの読み直しの失敗は解ける (#2073)
       const pending = pendingRereadRef.current;
@@ -282,8 +301,8 @@ export default function FeaturePackageDetailPage() {
         setDeprecateError(deprecateRereadMessage(pending, { kind: 'reloaded' }));
         markPendingReread(null);
       }
-    } catch {
-      setSaveError('ネットワークエラー');
+    } catch (err) {
+      setSaveError(displayableAdminError(err, `${SAVE_ACTION}に失敗しました`));
     } finally {
       writeInFlightRef.current = false;
       setIsSaving(false);

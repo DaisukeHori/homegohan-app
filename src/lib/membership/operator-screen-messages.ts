@@ -18,7 +18,7 @@
 //
 // このファイルはブラウザからも読むので、サーバー専用のものを import しない。
 
-import { extractApiErrorCode, extractApiErrorMessage } from '@/lib/admin/api-error-message';
+import { UNAUTHENTICATED_SCREEN_MESSAGE, extractApiErrorCode, extractApiErrorMessage } from '@/lib/admin/api-error-message';
 import {
   OPERATOR_FORCE_TRANSFER_ALREADY_DONE_STATUS,
   OPERATOR_FORCE_TRANSFER_ALREADY_OWNER_CODE,
@@ -96,10 +96,15 @@ export function operatorForceActionNoResponseMessage(
   return `${operatorForceActionNoResponseSummary(action, status)}。${guide}`;
 }
 
+/** 401 (ログインが切れた) の HTTP ステータス */
+const HTTP_UNAUTHORIZED = 401;
+
 /**
  * 運営の API を GET で読み、JSON の本文を返す。
  * 通信の失敗・失敗の応答・JSON でない本文は、どれも画面に出せる日本語の文の OperatorScreenError を投げる
  * (失敗の応答の本文に API の文があればそれを、無ければ HTTP のステータスを添えた固定の文)。
+ * 401 (ログインが切れた) は、本文の文 (「認証が必要です」) や「読み込めませんでした (HTTP 401)」ではなく、
+ * ほかの運営の画面の読み直しと同じ「ログインし直してください」にする (UNAUTHENTICATED_SCREEN_MESSAGE。#2093 W6)
  */
 export async function fetchOperatorJson(url: string, subject: string): Promise<unknown> {
   let res: Response;
@@ -108,6 +113,7 @@ export async function fetchOperatorJson(url: string, subject: string): Promise<u
   } catch {
     throw new OperatorScreenError(operatorLoadFailedMessage(subject, null));
   }
+  if (res.status === HTTP_UNAUTHORIZED) throw new OperatorScreenError(UNAUTHENTICATED_SCREEN_MESSAGE);
   const body: unknown = await res.json().catch(() => null);
   if (!res.ok) {
     throw new OperatorScreenError(extractApiErrorMessage(body) ?? operatorLoadFailedMessage(subject, res.status));
