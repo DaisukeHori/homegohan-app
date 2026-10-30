@@ -162,11 +162,18 @@ export async function sendAdminAction(url: string, init: RequestInit, action: st
  * ほかは adminScreenErrorOfResponse と同じ (本文の日本語の文、無ければ「<操作>に失敗しました (HTTP n)」)
  */
 export async function adminActionErrorOfResponse(res: Response, action: string): Promise<AdminScreenError> {
-  const body = await readFailureBody(res);
-  if (extractApiErrorMessage(body) === null && ADMIN_ACTION_NO_RESPONSE_STATUSES.includes(res.status)) {
-    return new AdminActionNoResponseError(action, res.status);
+  return adminActionErrorOfBody(await readFailureBody(res), res.status, action);
+}
+
+/**
+ * adminActionErrorOfResponse の、失敗の応答の本文を読んだあとの部分 (#2101 X1)。
+ * 本文の code で分ける画面 (価格の変更の 409 OP_PRICE_UNCHANGED) は、本文を readFailureBody で 1 回だけ読み、ここに渡す
+ */
+export function adminActionErrorOfBody(body: unknown, status: number, action: string): AdminScreenError {
+  if (extractApiErrorMessage(body) === null && ADMIN_ACTION_NO_RESPONSE_STATUSES.includes(status)) {
+    return new AdminActionNoResponseError(action, status);
   }
-  return new AdminScreenError(screenApiErrorMessage(body) ?? adminActionHttpFailedMessage(action, res.status));
+  return new AdminScreenError(screenApiErrorMessage(body) ?? adminActionHttpFailedMessage(action, status));
 }
 
 /**

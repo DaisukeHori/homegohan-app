@@ -8,6 +8,8 @@
  *   - 予約 (begin_plan_price_change) がロックの下で読んだ今の価格と、送られた価格 (送った方だけ) がすべて同じなら 409 OP_PRICE_UNCHANGED。
  *     Stripe (Edge Function) を呼ばず、apply を呼ばず (履歴と価格を書かない)、監査を書かず、予約は release で消す
  *   - Stripe の同期が要らない環境 (mock) でも同じ (履歴と監査の 2 行目を作らない)
+ *   - Stripe の同期が要る環境で、送った間隔の Stripe Price ID がまだ無いときは、同じ価格でも続ける
+ *     (販売開始の手順 docs/design/billing/03-paid-plans-and-iap.md §12 の順 3 は、migration が入れた価格のままこの API で Price を作り ID を入れる)
  *   - 送った価格のどれかが今の価格と違えば、これまでどおり変更する
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -31,6 +33,7 @@ import {
   PRICE_UNCHANGED_CODE,
   PRICE_UNCHANGED_MESSAGE,
   isPriceUnchangedBody,
+  priceChangeAlreadyApplied,
   sentPricesMatchPlan,
 } from '@/lib/super-admin/price-change-unchanged';
 
@@ -121,6 +124,51 @@ describe('送られた価格が今の価格と同じなら 409 OP_PRICE_UNCHANGE
   });
 
   it.each([
+    ['月額の Stripe Price ID がまだ無い (月額だけを送る)', { stripe_price_id: null }, { new_monthly_price_jpy: CURRENT.monthly_price_jpy }],
+    ['年額の Stripe Price ID がまだ無い (年額だけを送る)', { stripe_yearly_price_id: null }, { new_monthly_price_jpy: null, new_yearly_price_jpy: CURRENT.yearly_price_jpy }],
+    [
+      '月額・年額の Stripe Price ID がまだ無い (両方を送る)',
+      { stripe_price_id: null, stripe_yearly_price_id: null },
+      { new_monthly_price_jpy: CURRENT.monthly_price_jpy, new_yearly_price_jpy: CURRENT.yearly_price_jpy },
+    ],
+  ])('販売開始の手順 (billing/03 §12 の順 3): 同じ価格でも、%s ときは Stripe で Price を作って apply し、200', async (_label, ids, body) => {
+    process.env.STRIPE_SECRET_KEY = 'sk_test_x';
+    fakeSupabase = priceChangeSupabase({ begin: reserved({ ...existingPlan(), ...ids }) });
+    const fetchMock = stubEdge(edgeOk({ month: { new_stripe_price_id: 'price_new' }, year: { new_stripe_price_id: 'price_year_new' } }));
+
+    const res = await POST(priceChangeRequest(body), { params: { id: PLAN_ID } });
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(rpcOrder(fakeSupabase)).toEqual([PLAN_PRICE_CHANGE_RPC.begin, PLAN_PRICE_CHANGE_RPC.apply]);
+  });
+
+  it('販売開始の手順で Price ID が入ったあとの押し直し (同じ価格・Price ID あり) は 409', async () => {
+    process.env.STRIPE_SECRET_KEY = 'sk_test_x';
+    // 月額の Price ID が無いのは年額のほう。月額だけを送るなら、月額の Price ID はもう入っている
+    fakeSupabase = priceChangeSupabase({ begin: reserved({ ...existingPlan(), stripe_yearly_price_id: null }) });
+    const fetchMock = stubEdge(edgeOk({ month: { new_stripe_price_id: 'price_dup' } }));
+
+    const res = await POST(priceChangeRequest({ new_monthly_price_jpy: CURRENT.monthly_price_jpy }), { params: { id: PLAN_ID } });
+
+    expect(res.status).toBe(409);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('Stripe の同期が要らない環境 (mock・Stripe の商品が無い) では、Price ID が無くても同じ価格は 409', async () => {
+    process.env.STRIPE_SECRET_KEY = 'sk_test_x';
+    fakeSupabase = priceChangeSupabase({ begin: reserved({ ...existingPlan(), stripe_product_id: null, stripe_price_id: null }) });
+    const fetchMock = stubEdge(edgeOk({}));
+
+    const res = await POST(priceChangeRequest({ new_monthly_price_jpy: CURRENT.monthly_price_jpy }), { params: { id: PLAN_ID } });
+
+    expect(res.status).toBe(409);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(rpcOrder(fakeSupabase)).toEqual([PLAN_PRICE_CHANGE_RPC.begin, PLAN_PRICE_CHANGE_RPC.release]);
+    expect(auditDetails(fakeSupabase)).toBeUndefined();
+  });
+
+  it.each([
     ['月額が今と違う', { new_monthly_price_jpy: 1200 }],
     ['月額は今と同じだが年額が今と違う', { new_monthly_price_jpy: CURRENT.monthly_price_jpy, new_yearly_price_jpy: 12000 }],
     ['年額だけを送り、今と違う', { new_monthly_price_jpy: null, new_yearly_price_jpy: 12000 }],
@@ -138,7 +186,7 @@ describe('送られた価格が今の価格と同じなら 409 OP_PRICE_UNCHANGE
   });
 });
 
-describe('sentPricesMatchPlan / isPriceUnchangedBody (#2101 X1)', () => {
+describe('sentPricesMatchPlan / priceChangeAlreadyApplied / isPriceUnchangedBody (#2101 X1)', () => {
   const plan = { monthly_price_jpy: 1000, yearly_price_jpy: 10000 };
 
   it('送った方だけを比べる', () => {
@@ -160,6 +208,22 @@ describe('sentPricesMatchPlan / isPriceUnchangedBody (#2101 X1)', () => {
   it('今の価格が未設定 (null) のときは、送った値と同じにならない', () => {
     expect(sentPricesMatchPlan({ monthly_price_jpy: null, yearly_price_jpy: null }, { new_monthly_price_jpy: 0 })).toBe(false);
     expect(sentPricesMatchPlan({ monthly_price_jpy: 0, yearly_price_jpy: null }, { new_monthly_price_jpy: 0 })).toBe(true);
+  });
+
+  it('priceChangeAlreadyApplied: 価格が同じでも、Stripe の同期が要り送った間隔の Price ID が無ければ false', () => {
+    const withIds = { ...plan, stripe_price_id: 'price_m', stripe_yearly_price_id: 'price_y' };
+    expect(priceChangeAlreadyApplied(withIds, { new_monthly_price_jpy: 1000 }, true)).toBe(true);
+    expect(priceChangeAlreadyApplied(withIds, { new_monthly_price_jpy: 1200 }, true)).toBe(false);
+    expect(priceChangeAlreadyApplied(withIds, { new_monthly_price_jpy: 1200 }, false)).toBe(false);
+    const noMonthly = { ...withIds, stripe_price_id: null };
+    expect(priceChangeAlreadyApplied(noMonthly, { new_monthly_price_jpy: 1000 }, true)).toBe(false);
+    expect(priceChangeAlreadyApplied(noMonthly, { new_monthly_price_jpy: 1000 }, false)).toBe(true);
+    // 送っていない間隔の Price ID は見ない
+    expect(priceChangeAlreadyApplied(noMonthly, { new_yearly_price_jpy: 10000 }, true)).toBe(true);
+    const noYearly = { ...withIds, stripe_yearly_price_id: '' };
+    expect(priceChangeAlreadyApplied(noYearly, { new_yearly_price_jpy: 10000 }, true)).toBe(false);
+    expect(priceChangeAlreadyApplied(noYearly, { new_monthly_price_jpy: 1000, new_yearly_price_jpy: 10000 }, true)).toBe(false);
+    expect(priceChangeAlreadyApplied(noYearly, { new_monthly_price_jpy: 1000 }, true)).toBe(true);
   });
 
   it('409 の本文の code が OP_PRICE_UNCHANGED のときだけ true', () => {
