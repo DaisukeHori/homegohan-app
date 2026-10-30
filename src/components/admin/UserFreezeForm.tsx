@@ -25,7 +25,7 @@
 import { useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { extractApiErrorMessage, isStaleDataConflict } from '@/lib/admin/api-error-message';
+import { UNAUTHENTICATED_SCREEN_MESSAGE, extractApiErrorMessage, isStaleDataConflict } from '@/lib/admin/api-error-message';
 import {
   FREEZE_DURATION_DAYS_MAX,
   FREEZE_DURATION_DAYS_MIN,
@@ -104,7 +104,8 @@ export default function UserFreezeForm({ userId, isBanned, isSuperAdmin }: UserF
         return { ok: false };
       }
       if (res.status === 401) {
-        setError('ログインの有効期限が切れました。ログインし直してください');
+        // 運営の画面で揃えた 401 の文 (#2112 Z4)
+        setError(UNAUTHENTICATED_SCREEN_MESSAGE);
         return { ok: false };
       }
       setError(extractApiErrorMessage(json) ?? `${failureLabel}できませんでした (HTTP ${res.status})。もう一度お試しください`);

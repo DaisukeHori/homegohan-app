@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { isStaleDataConflict } from "@/lib/admin/api-error-message";
+import { UNAUTHENTICATED_SCREEN_MESSAGE, isStaleDataConflict } from "@/lib/admin/api-error-message";
 import { INQUIRY_STATUS_LABELS } from "@/lib/admin/inquiry-labels";
 
 // 一覧の 1 件 (概要)。問い合わせ本文と管理者メモは、詳細 (GET /api/admin/inquiries/[id]) でだけ返る
@@ -122,8 +122,13 @@ async function readFailureBody(res: Response): Promise<unknown> {
   }
 }
 
-// 失敗の理由 (API の error.message) があれば添えて、なければ HTTP ステータスを添える
+/** 401 (Unauthorized。ログインが切れた) の HTTP ステータス */
+const HTTP_UNAUTHORIZED = 401;
+
+// 失敗の理由 (API の error.message) があれば添えて、なければ HTTP ステータスを添える。
+// 401 は本文の文 (「認証が必要です」) ではなく、運営の画面で揃えた「ログインし直してください」を添える (#2112 Z4)
 function failureMessageOf(body: unknown, status: number, summary: string): string {
+  if (status === HTTP_UNAUTHORIZED) return `${summary}（${UNAUTHENTICATED_SCREEN_MESSAGE}）`;
   const message =
     typeof body === "object" && body !== null ? (body as { error?: { message?: unknown } }).error?.message : undefined;
   if (typeof message === "string" && message) return `${summary}（${message}）`;

@@ -32,6 +32,10 @@
  * 応答を受け取れなかったあとの「済んだか」も route と同じ判定 (priceChangeAlreadyApplied) で、価格が同じでも Price ID がまだ無ければ済んだとしない。
  * #2107 Y3: 履歴の画面は planDetailHref(id, 'history') (プラン詳細は URL の tab を初めのタブにする)。
  * #2107 Y6: 読み直したプランが送った内容になっていないときは「まだ処理中のことがあります」を添える (route の 1 回目がまだ走っていることがある)。
+ * #2112 Z1-1: Stripe の同期が要らない (GET の stripe_price_sync_expected が false) プランで、Price ID がまだ無い間隔があり、今と同じ価格のままのときは、
+ * 「変更がありません」に加えて、なぜ Stripe の Price を作れないか (Product ID が未設定・この環境に Stripe の鍵が無い) を出す
+ * (stripePriceUnavailableReasonOf)。以前は「変更がありません」とだけ出し、販売開始の手順がどこで止まっているかが分からなかった。
+ * 適用範囲の名前は src/lib/super-admin/plans-schemas.ts の PRICE_APPLIES_TO_LABELS から引く (プラン詳細の履歴のタブと同じ。#2112 Z1-2)。
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -60,6 +64,7 @@ import {
   type PriceChangeSentPrices,
 } from '@/lib/super-admin/price-change-unchanged';
 import { planDetailHref } from '@/lib/super-admin/plan-detail-tab';
+import { PRICE_APPLIES_TO_LABELS } from '@/lib/super-admin/plans-schemas';
 import { rereadDetailRow } from '@/lib/super-admin/detail-reread';
 
 type ImpactData = {
@@ -87,6 +92,8 @@ type Plan = {
   stripe_yearly_price_id?: string | null;
   /** 価格の変更で Stripe の Price を作るか (Stripe の鍵があり、stripe_product_id がある。GET が返す。#2107 Y2) */
   stripe_price_sync_expected?: boolean;
+  /** Stripe の商品 (Product) の ID。まだ無いときは null (Stripe の Price を作れない理由を出し分けるのに使う。#2112 Z1-1) */
+  stripe_product_id?: string | null;
 };
 
 /** route と同じ判定に渡すプランの値 (Price ID が本文に無いときは「まだ無い」) */
@@ -104,8 +111,37 @@ function stripePriceSyncExpectedOf(plan: Plan): boolean {
   return plan.stripe_price_sync_expected === true;
 }
 
-/** 適用範囲は新規契約のみ (選択肢ではなく、固定の説明として表示する) */
-const APPLIES_TO_LABEL = '新規契約のみ';
+/** 適用範囲は新規契約のみ (選択肢ではなく、固定の説明として表示する。名前は履歴のタブと同じ表から引く。#2112 Z1-2) */
+const APPLIES_TO_LABEL = PRICE_APPLIES_TO_LABELS.new_only;
+
+/**
+ * Stripe の Price を作れない理由 (#2112 Z1-1)。
+ *   - product-missing: プランに Stripe の Product ID が無い (プラン詳細の基本情報で入れる)
+ *   - key-missing    : Product ID はあるが、この環境に Stripe の鍵が無い (GET の stripe_price_sync_expected が false)
+ */
+type StripePriceUnavailableReason = 'product-missing' | 'key-missing';
+
+/**
+ * Price ID がまだ無い間隔があるのに、Stripe の Price を作れないときの理由 (作れる・作るものが無いときは null。#2112 Z1-1)。
+ * 価格が無い間隔 (月額・年額が null) は Price を作らないので数えない
+ */
+function stripePriceUnavailableReasonOf(plan: Plan): StripePriceUnavailableReason | null {
+  if (stripePriceSyncExpectedOf(plan)) return null;
+  const monthlyMissing = plan.monthly_price_jpy != null && !plan.stripe_price_id;
+  const yearlyMissing = plan.yearly_price_jpy != null && !plan.stripe_yearly_price_id;
+  if (!monthlyMissing && !yearlyMissing) return null;
+  return plan.stripe_product_id ? 'key-missing' : 'product-missing';
+}
+
+/** 価格を変えないとき、Stripe の Price を作れない理由の文 (#2112 Z1-1) */
+const STRIPE_PRICE_UNAVAILABLE_MESSAGES: Readonly<Record<StripePriceUnavailableReason, string>> = {
+  'product-missing':
+    'このプランには Stripe の Product ID が入っていないので、Stripe の Price は作れません。プラン詳細の基本情報で Stripe の Product ID を入れて保存してから、今の価格のまま進めて「Stripe の Price を作る」を押してください。',
+  'key-missing': 'この環境には Stripe の鍵が無いので、Stripe の Price は作れません。',
+};
+
+/** 理由の文に添える、プラン詳細の基本情報へのリンクの文 (Product ID が無いときだけ。#2112 Z1-1) */
+const OPEN_PLAN_BASIC_TAB_LABEL = 'プラン詳細の基本情報を開く';
 
 /** 読み込みの失敗の文の対象 (「プランを読み込めませんでした (HTTP 502)」。#2093 W7) */
 const PLAN_SUBJECT = 'プラン';
@@ -205,6 +241,8 @@ export default function PriceChangePage() {
   const hasAnyChange = monthlySent || yearlySent;
   // 価格は変えず、Stripe の Price を作るだけか (実行のボタンの文を変える。#2107 Y2)
   const createsStripePriceOnly = hasAnyChange && !monthlyChanged && !yearlyChanged;
+  // 今と同じ価格のままで、Price ID がまだ無い間隔の Stripe の Price を作れない理由 (#2112 Z1-1)
+  const stripePriceUnavailableReason = plan && !hasAnyChange ? stripePriceUnavailableReasonOf(plan) : null;
 
   const handleSimulate = useCallback(async () => {
     if (!newMonthlyPrice && !newYearlyPrice) {
@@ -458,6 +496,21 @@ export default function PriceChangePage() {
             {/* #1041 round-4 (W1): 何も変更していない状態で叩けないよう無効化する */}
             {!hasAnyChange && (
               <p className="text-xs text-slate-400">変更がありません (月額または年額を変更してください)</p>
+            )}
+
+            {/* #2112 Z1-1: Price ID がまだ無いのに今の価格のままでは送れないときは、Stripe の Price を作れない理由を出す */}
+            {stripePriceUnavailableReason && (
+              <div
+                data-testid="price-change-stripe-price-unavailable"
+                className="bg-amber-50 border border-amber-200 text-amber-800 px-3 py-2 rounded text-xs"
+              >
+                <p>{STRIPE_PRICE_UNAVAILABLE_MESSAGES[stripePriceUnavailableReason]}</p>
+                {stripePriceUnavailableReason === 'product-missing' && (
+                  <Link href={planDetailHref(planId, 'basic')} className="mt-1 inline-block font-medium underline">
+                    {OPEN_PLAN_BASIC_TAB_LABEL}
+                  </Link>
+                )}
+              </div>
             )}
 
             <button

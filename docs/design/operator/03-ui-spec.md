@@ -536,7 +536,7 @@ Step 3: スケジュール
 - 表示名 / 説明 (Markdown エディタ)
 - 種別 / 上限値 (メンバー数)
 - バナー画像アップロード
-- 試用期間 / 最低契約期間
+- 試用期間 / 最低契約期間 / Stripe の Product ID (`stripe_product_id` の入力欄。保存で `PATCH /api/super-admin/plans/{id}` に送る (前後の空白を外し、空欄は `null` で外す)。下書きはいつも、公開中・非公開は月額・年額のどちらの Stripe の Price もまだ無いあいだだけ入力でき、Price を作ったあとは欄を止めて理由を出す (`src/lib/super-admin/plans-schemas.ts` の `isStripeProductIdEditable`。価格の変更が進行中で保存が 409 `OP_PLAN_PRICE_CHANGE_IN_PROGRESS` なら、その文を出して入力欄の値を残す。販売開始の手順で、公開中のプランに Product ID を入れてから価格の変更で「Stripe の Price を作る」を押すため。#2112 Z1-1)。種別は日本語の名前 (`PLAN_TYPE_LABELS`: 個人 / 家族 / 組織)
 
 **価格設定タブ**:
 - 月額 / 年額 (JPY)
@@ -575,7 +575,7 @@ Step 3: スケジュール
   - [廃止をロールバック] (deprecated → private, super_admin 限定)
 
 **価格変更履歴タブ**:
-- 変更日 / 旧価格 → 新価格 / 適用範囲 / 変更者。`?tab=history` で開くとこのタブが初めから選ばれる (`?tab=price` は価格設定・無い / 知らない値は基本情報。価格の変更の画面が済んだあとに送る先。#2107 Y3)
+- 変更日 / 旧月額 / 新月額 / 旧年額 / 新年額 / 適用範囲 / Stripe の Price / 理由 (`plan_price_history` の新しい順に 20 件。`GET /api/super-admin/plans/{id}` の `price_history`)。適用範囲は日本語の名前 (`src/lib/super-admin/plans-schemas.ts` の `PRICE_APPLIES_TO_LABELS`: `new_only` = 新規契約のみ・`on_renewal` = 更新時から・`immediately` = 即時。知らない値はそのまま)。Stripe の Price の列は、月額の新しい Price ID (`new_stripe_price_id`) がある行に「月額の Price ID が変わった」の印を出す (ID の値は出さない。年額の Price ID は履歴に残らないので印も無い)。変更者は出さない。#2112 Z1-2。`?tab=history` で開くとこのタブが初めから選ばれる (`?tab=price` は価格設定・無い / 知らない値は基本情報。価格の変更の画面が済んだあとに送る先。#2107 Y3)
 
 ---
 

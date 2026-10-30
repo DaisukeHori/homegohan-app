@@ -209,10 +209,7 @@ const ALLOWED: Record<string, string> = {
  * 登録するのは、並走の案件の枝でその箇所が直っていることを確かめたものだけ (理由に、直す枝と直し方を書く)。
  * 直す案件の無い箇所は、ここに入れず、この案件で直すか許可リスト (ALLOWED) に理由つきで入れる (ここに入れると恒久に見逃すため)。
  */
-const PARALLEL_OWNED: Record<string, string> = {
-  'src/app/super-admin/plans/[id]/page.tsx\tplan.plan_type':
-    'プラン詳細の種別。Z1 (fix/plan-launch-screen) が plans-schemas の PLAN_TYPE_LABELS (planTypeLabel) で直す (その枝で直っていることを確かめた)',
-};
+const PARALLEL_OWNED: Record<string, string> = {};
 
 /** 定数の名前 (大文字・数字・_) */
 const CONSTANT_NAME = /^[A-Z][A-Z0-9_]*$/;
