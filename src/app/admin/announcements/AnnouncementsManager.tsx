@@ -51,6 +51,21 @@ interface SentAnnouncement {
   readonly isPublic: boolean;
 }
 
+/** 入力欄の値 (前後の空白を除く前の、入力のままの値) */
+interface AnnouncementInput {
+  readonly title: string;
+  readonly content: string;
+  readonly isPublic: boolean;
+}
+
+/**
+ * 入力が、送ったときの入力のままか (タイトル・本文・公開の設定のすべてが同じ)。作成の応答を受け取れなかったあとの読み直しで済んでいたと分かったとき、
+ * 送ったときの入力のままなら空にし、送信を止めているあいだに書き換えていれば残す (#2107 Y7。営業のリードの活動と同じ)
+ */
+function isSameAnnouncementInput(current: AnnouncementInput, sent: AnnouncementInput): boolean {
+  return current.title === sent.title && current.content === sent.content && current.isPublic === sent.isPublic;
+}
+
 /**
  * 作成の応答を受け取れなかった (サーバーで済んだか分からない) お知らせ (#2101 X2)。これがあるあいだは送信を止める。
  *   - retryable: 「確かめ直す」で読み直せば決まりうるか (読み直しの失敗が通信・サーバーの一時的なもの、
@@ -59,6 +74,8 @@ interface SentAnnouncement {
  */
 interface UnconfirmedCreate {
   readonly sent: SentAnnouncement;
+  /** 送ったときの入力 (済んでいたと分かったとき、入力がこのままなら空にする。#2107 Y7) */
+  readonly sentInput: AnnouncementInput;
   readonly knownIds: ReadonlySet<string> | null;
   readonly summary: string;
   readonly message: string;
@@ -109,6 +126,12 @@ export default function AnnouncementsManager() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // いまの入力欄の値。送信を止めているあいだも入力欄は書き換えられるので、読み直しを待つあいだに書き換えられた値を
+  // 読み直しのあとで比べられるよう、入力が変わるたびに写しておく (#2107 Y7)
+  const currentInputRef = useRef<AnnouncementInput>({ title, content, isPublic });
+  useEffect(() => {
+    currentInputRef.current = { title, content, isPublic };
+  }, [title, content, isPublic]);
 
   // 作成の応答を受け取れなかった (済んだか分からない) お知らせ (#2101 X2)。これがあるあいだは送信を止める。
   // ref は再描画の前に続けて押されたときの守り
@@ -179,7 +202,7 @@ export default function AnnouncementsManager() {
 
   /**
    * 作成の応答を受け取れなかったあと、一覧を読み直して送ったお知らせができていたかを確かめる (#2101 X2)。
-   * できていれば済んだとして入力を空にし、送信の止めを外す。
+   * できていれば済んだとして、入力が送ったときのままなら空にし (書き換えていれば残す。#2107 Y7)、送信の止めを外す。
    * まだ無い (サーバーが書き込みの途中かもしれない)・読み直しにも失敗した・前からあった行か決められないときは、送信を止めたままにする
    * (押し直すと 2 つできうる。押し直すのは、一覧で確かめてから画面を開き直したときだけ)
    */
@@ -211,7 +234,8 @@ export default function AnnouncementsManager() {
       return;
     }
     markUnconfirmed(null);
-    clearForm();
+    // 済んでいた。入力が送ったときのままなら空にする (送信を止めているあいだに書き換えた入力は消さない。#2107 Y7)
+    if (isSameAnnouncementInput(currentInputRef.current, pending.sentInput)) clearForm();
     setFormError(null);
     setNotice(adminCreateNoResponseMessage(pending.summary, adminCreateFoundGuide(CREATE_SUBJECT)));
   };
@@ -231,6 +255,7 @@ export default function AnnouncementsManager() {
     }
 
     const sent: SentAnnouncement = { title: trimmedTitle, content: trimmedContent, isPublic };
+    const sentInput: AnnouncementInput = { title, content, isPublic };
     // 応答を受け取れなかったときに、読み直した一覧と比べるための、送る前の一覧の行 (読めていなければ null。#2101 X2)
     const knownIds: ReadonlySet<string> | null =
       announcements === null ? null : new Set(announcements.map((announcement) => announcement.id));
@@ -271,7 +296,7 @@ export default function AnnouncementsManager() {
         }
       }
       if (noResponseSummary !== null) {
-        await confirmUnconfirmedCreate({ sent, knownIds, summary: noResponseSummary });
+        await confirmUnconfirmedCreate({ sent, sentInput, knownIds, summary: noResponseSummary });
       }
     } catch {
       setFormError(CREATE_ERROR);

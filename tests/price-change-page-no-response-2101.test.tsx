@@ -16,6 +16,7 @@ import { act, createElement, Suspense } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PRICE_UNCHANGED_CODE, PRICE_UNCHANGED_MESSAGE } from '@/lib/super-admin/price-change-unchanged';
+import { PRICE_CHANGE_IN_PROGRESS_MESSAGE } from '@/lib/super-admin/plan-price-change-reservation';
 
 const ROW_ID = '21012101-2101-4101-8101-210121012101';
 const nav = vi.hoisted(() => {
@@ -277,8 +278,8 @@ describe('409 OP_PRICE_UNCHANGED (すでにこの価格) は済んだものと�
     expectNoLeak();
   });
 
-  it('ほかの 409 (別の運営が変更中) はこれまでどおり本文の文を出し、履歴へ移らない (プランを読み直さない)', async () => {
-    const IN_PROGRESS = '別の運営がこのプランの価格を変更しています。しばらくしてから画面を読み込み直して、もう一度確認してください';
+  it('ほかの 409 (価格の変更が進行中) はこれまでどおり本文の文を出し、履歴へ移らない (プランを読み直さない)', async () => {
+    const IN_PROGRESS = PRICE_CHANGE_IN_PROGRESS_MESSAGE;
     mockServer({
       plans: [() => jsonResponse(200, { data: planWith(OLD_MONTHLY) })],
       changes: [() => jsonResponse(409, { error: { code: 'CONFLICT_STALE_DATA', message: IN_PROGRESS } })],

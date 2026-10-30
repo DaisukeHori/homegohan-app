@@ -26,6 +26,7 @@ import {
   REPLY_NOT_DELIVERED_GUIDE,
   REPLY_RELOAD_FAILED_GUIDE,
   REPLY_RELOAD_UNAVAILABLE_GUIDE,
+  REPLY_REOPEN_TO_RETRY_GUIDE,
   isReplyDelivered,
   replyNoResponseMessage,
 } from '@/lib/admin/support-reply-no-response';
@@ -104,8 +105,9 @@ interface UnconfirmedSend {
 }
 
 /**
- * 送れたか分からない送信を止めているあいだの、止めている理由 (#2093 W1・#2101 X3)。
- * message は止めている理由の文 (「<操作>の応答を受け取れませんでした …。チケットも読み込めなかったため、送られたか分かりません …」)。
+ * 送れたか分からない送信を止めているあいだの、止めている理由 (#2093 W1・#2101 X3・#2107 Y1)。
+ * message は止めている理由の文 (「<操作>の応答を受け取れませんでした …。チケットも読み込めなかったため、送られたか分かりません …」・
+ * 読み直しても返信がまだ無かったときの「… 送った内容はまだ見つかりません …」)。
  * エラー欄 (error) とは別に持つので、担当者の設定・ステータスの変更のあとのチケットの読み込み (fetchTicket の setError(null)) で消えない。
  * retryable は「再試行」(チケットの読み直し) を出すか。読み直しが 401 (ログインが切れた)・403 (権限が外れた)・404 (チケットが消えた) で
  * 断られたときは、読み込み直しても変わらないので false (押しても必ず失敗する「再試行」を出さない。送信は止めたまま)
@@ -142,7 +144,7 @@ export default function TicketDetailPage(props: PageProps) {
   const [isAssigning, setIsAssigning] = useState(false);
 
   const [statusChanging, setStatusChanging] = useState(false);
-  // 送信の応答を受け取れなかったあと、チケットの読み直しにも失敗して、送れたか分からない送信 (#2093 W1)。
+  // 送信の応答を受け取れなかったあと、チケットの読み直しにも失敗した・読み直しても返信がまだ無くて、送れたか分からない送信 (#2093 W1・#2107 Y1)。
   // これがあるあいだは送信のボタンを止め、「再試行」でチケットを読み直して確かめるまで送らせない (押し直すと返信が 2 行入り、顧客にメールが 2 通届く)。
   // ref は再描画の前に続けて押されたときの守り。止めている理由の文はエラー欄と別に出す (ほかの操作のあとの読み込みで消さない。#2101 X3)
   const [blockedSend, setBlockedSend] = useState<BlockedSend | null>(null);
@@ -187,7 +189,9 @@ export default function TicketDetailPage(props: PageProps) {
 
   /**
    * 送信の応答を受け取れなかったあと、チケットを読み直して送った返信が届いていたかを確かめる (#2093 W1)。
-   * 届いていれば済んだとして入力欄を空にし、届いていなければ本文を残して送り直せるようにする。
+   * 届いていれば済んだとして入力欄を空にし、送信の止めを外す。
+   * まだ無ければ、本文を残したまま送信を止め、「再試行」で確かめ直させる (サーバーが書き込みの途中なら、押し直すと顧客にメールが 2 通届く。
+   * 押し直すのはチケットを開き直したときだけ。#2107 Y1)。
    * 読み直しにも失敗したら、送れたか分からないので送信を止める:
    *   - 500・通信の失敗・本文が読めない: 「再試行」でこの関数をもう一度呼ぶ
    *   - 401 / 403 / 404: 読み込み直しても変わらないので、理由の文 (「ログインし直してください」・403 の理由の文・
@@ -206,10 +210,10 @@ export default function TicketDetailPage(props: PageProps) {
       return;
     }
     const reloaded = outcome.row;
-    markBlockedSend(null);
     setTicket(reloaded);
     setAssigneeId(reloaded.assignee_id ?? '');
     if (isReplyDelivered(reloaded.messages, pending.knownIds, pending)) {
+      markBlockedSend(null);
       // 済んでいた。入力欄が送った本文のままなら空にする (待つあいだに書き足した文は消さない)
       setMessageBody((current) => (current.trim() === pending.body.trim() ? '' : current));
       setError(null);
@@ -221,8 +225,15 @@ export default function TicketDetailPage(props: PageProps) {
       );
       return;
     }
+    // まだ無いことは送られていないことの確かめにならない (サーバーが書き込みの途中なら、押し直すと同じ返信が 2 行入り、
+    // 顧客にメールが 2 通届く)。送信を止めたまま「再試行」で確かめ直させる。押し直すのはチケットを開き直したときだけ (#2107 Y1)
     setEmailNotice(null);
-    setError(replyNoResponseMessage(pending.summary, REPLY_NOT_DELIVERED_GUIDE));
+    setError(null);
+    markBlockedSend({
+      pending,
+      message: replyNoResponseMessage(pending.summary, REPLY_NOT_DELIVERED_GUIDE, REPLY_REOPEN_TO_RETRY_GUIDE),
+      retryable: true,
+    });
   };
 
   const handleSendMessage = async () => {
@@ -253,7 +264,8 @@ export default function TicketDetailPage(props: PageProps) {
       // (内部メモは通知しないため、応答に email が無い)
       const created = await res.json().catch(() => null);
       setEmailNotice(describeReplyEmailOutcome(created?.email));
-      setMessageBody('');
+      // 入力欄が送った本文のままなら空にする (送信の応答を待つあいだも入力欄は書き換えられるので、書き足した文は消さない。#2107 Y7 と同じ型)
+      setMessageBody((current) => (current === sent.body ? '' : current));
       await fetchTicket();
     } catch (e: unknown) {
       if (e instanceof AdminActionNoResponseError) {

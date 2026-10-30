@@ -49,6 +49,7 @@ import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { invalidInputResponse, invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
 import { isUuid } from '@/lib/http-params';
+import { isStripePriceSyncExpected } from '@/lib/super-admin/price-change-unchanged';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -138,7 +139,16 @@ export async function GET(_request: NextRequest, props: RouteContext) {
       return internalError('GET /api/super-admin/plans/[id]', priceHistoryError, { table: 'plan_price_history' }, { shape: 'nested' });
     }
 
-    return NextResponse.json({ data: { ...plan, price_history: priceHistory ?? [] } });
+    // stripe_price_sync_expected: 価格の変更で Stripe の Price を作るか (Stripe の鍵があり、プランに stripe_product_id がある)。
+    // 価格の変更の画面が、Price ID がまだ無い間隔を今と同じ価格のまま送れるか (販売開始の Price の登録) を決めるのに使う。
+    // route (POST .../price-change) と同じ判定 (#2107 Y2)。鍵の値は返さない
+    return NextResponse.json({
+      data: {
+        ...plan,
+        price_history: priceHistory ?? [],
+        stripe_price_sync_expected: isStripePriceSyncExpected(process.env.STRIPE_SECRET_KEY, plan.stripe_product_id),
+      },
+    });
   } catch (err) {
     if (err instanceof AuthError) {
       return NextResponse.json({ error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } }, { status: 401 });

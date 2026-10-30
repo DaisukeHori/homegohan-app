@@ -28,9 +28,17 @@ import { FORBIDDEN_REASON_CODE_BY_MESSAGE } from '@/lib/api/forbidden-reason-mes
 
 const ROW_ID = '20862086-2086-4086-8086-208620862086';
 
-vi.mock('next/navigation', () => ({
-  useParams: () => ({ id: ROW_ID }),
-}));
+vi.mock('next/navigation', () => {
+  // 一覧 (/super-admin/experiments) は URL の page を useSearchParams で読み、件数より後ろのページを router.replace で移す (#2107 Y9)。
+  // プラン詳細は URL の tab を初めのタブにする (#2107 Y3)
+  // router は描画のたびに同じものを返す (一覧の読み込みの useCallback が router に依存するので、毎回別の値だと読み込みが止まらない)
+  const router = { push: () => undefined, replace: () => undefined, refresh: () => undefined };
+  return {
+    useParams: () => ({ id: ROW_ID }),
+    useRouter: () => router,
+    useSearchParams: () => new URLSearchParams(),
+  };
+});
 
 vi.mock('next/link', () => ({
   default: (props: { href: string; children?: React.ReactNode; className?: string }) =>

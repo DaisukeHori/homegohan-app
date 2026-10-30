@@ -23,6 +23,8 @@ const PLAN_ID = '20642064-2064-4064-8064-206420642065';
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: PLAN_ID }),
+  // プラン詳細は URL の tab を初めのタブにする (#2107 Y3)
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock('next/link', () => ({
