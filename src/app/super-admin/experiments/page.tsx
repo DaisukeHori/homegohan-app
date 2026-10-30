@@ -127,23 +127,27 @@ type ReloadNotice =
   | { kind: "no-response-reload-failed"; id: string; name: string; failedRead: FailedRead }
   | { kind: "unavailable"; id: string; name: string; message: string };
 
-/** 一覧の上の文。row は表示している一覧の行のうち、操作した実験の行 (無ければ undefined。#2107 Y9) */
+/**
+ * 一覧の上の文。row は表示している一覧の行のうち、操作した実験の行 (無ければ undefined。#2107 Y9)。
+ * status が null (詳細の API が 404) なら、行があっても (最後のページへ移す前の古い行) 「見つかりませんでした」。
+ * 状態は読み直した値 (notice.status) で出す (最後のページへ移す前の古い行の状態を出さない)
+ */
 function reloadNoticeText(notice: ReloadNotice, row: Experiment | undefined): string {
   switch (notice.kind) {
     case "stale":
-      if (row) return experimentListStaleReloadedMessage(notice.name, row.status);
-      return notice.status === null
-        ? experimentListStaleGoneMessage(notice.name)
+      if (notice.status === null) return experimentListStaleGoneMessage(notice.name);
+      return row
+        ? experimentListStaleReloadedMessage(notice.name, notice.status)
         : experimentListStaleOffPageMessage(notice.name, notice.status);
     case "stale-reload-failed":
       return notice.failedRead === "list"
         ? experimentListStaleReloadFailedMessage(notice.name)
         : experimentListStaleStateReloadFailedMessage(notice.name);
     case "no-response":
+      if (notice.status === null) return experimentListNoResponseGoneMessage(notice.name);
       // 一覧の行にあれば、状態は行のバッジで見せる
-      if (row) return experimentListNoResponseReloadedMessage(notice.name);
-      return notice.status === null
-        ? experimentListNoResponseGoneMessage(notice.name)
+      return row
+        ? experimentListNoResponseReloadedMessage(notice.name)
         : experimentListNoResponseOffPageMessage(notice.name, notice.status);
     case "no-response-reload-failed":
       return notice.failedRead === "list"

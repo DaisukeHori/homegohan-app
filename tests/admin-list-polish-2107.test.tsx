@@ -568,6 +568,10 @@ describe('#2107 Y9 A/B テストの一覧 (/super-admin/experiments) のペー�
 
       expect(nav.router.replace).toHaveBeenCalledWith('/super-admin/experiments?page=2');
       expect(detailCalls(`exp-${LAST_N}`)).toHaveLength(1);
+      // URL が変わる前 (移す前の 3 ページ目の古い行が出ている間) も、古い行の状態 (下書き) で「読み込み直した」と言わない
+      expect(shownKeys()).toContain(`experiment_${LAST_N}`);
+      expect(noticeText()).toContain(GONE_TEXT);
+      expect(noticeText()).not.toContain('今の状態');
       // router.replace で URL が ?page=2 になった
       nav.searchParams = new URLSearchParams({ page: '2' });
       await renderPage(Page);
@@ -587,6 +591,9 @@ describe('#2107 Y9 A/B テストの一覧 (/super-admin/experiments) のペー�
       const Page = await loadPage();
       await renderPage(Page);
       await click(startButtons()[0]);
+      // URL が変わる前 (移す前の 3 ページ目の古い行 (下書き) が出ている間) も、読み直した今の状態で知らせる
+      expect(noticeText()).toContain('今の状態: 実行中');
+      expect(noticeText()).not.toContain('下書き');
       nav.searchParams = new URLSearchParams({ page: '2' });
       await renderPage(Page);
 
