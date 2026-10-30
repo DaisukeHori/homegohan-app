@@ -17,7 +17,7 @@
  *  A. operator/02 の各行で、「読み直しが <ステータス> / <ステータス> …」の列挙が 2 つ以上あれば、どれも同じ集合
  *  B. billing/02 §8: §8.1 の source の値の集合 = §8.2 の source を作る式が作る値の集合 = §8.6 の
  *     MANUAL_PLAN_SOURCE_LABELS の型のキー = その表のキー。§8.2 の式が読む data.<列> は SUBSCRIPTION_COLUMNS にある
- *  C. mobile/05 の閉包の表で、行に「(… の file:line は origin/main `<sha>` の行番号)」の宣言があるなら、
+ *  C. mobile/05 の閉包の表で、行に「(…の file:line は origin/main `<sha>` の行番号)」の宣言があるなら、
  *     その行の「無くなった」呼び出しの file:line は `<別の sha>` の を直前に付けて、数えた時点の sha を名指しする
  *
  * 限界: A は同じ行の中の食い違いだけを見る (行をまたぐ食い違いと、実コードのステータスの表との突き合わせは見ない)。
@@ -129,8 +129,8 @@ describe('B. billing/02 §8: source の値は §8.1 の Zod・§8.2 の作る式
 });
 
 describe('C. mobile/05 の閉包の表: 行の sha の宣言のもとで、無くなった呼び出しの file:line は数えた時点の sha を名指しする', () => {
-  /** 行の中の sha の宣言 「(<範囲> の file:line は origin/main `<sha>` の行番号)」 */
-  const ROW_SHA_DECLARATION = /\(([^()]*?) の file:line は origin\/main `([0-9a-f]+)` の行番号\)/;
+  /** 行の中の sha の宣言 「(<範囲>の file:line は origin/main `<sha>` の行番号)」(<範囲> は「この行」「global の 10 行」など) */
+  const ROW_SHA_DECLARATION = /\(([^()]*?)の file:line は origin\/main `([0-9a-f]+)` の行番号\)/;
   /** file:line の参照 (`path:123`)。直前に「`<sha>` の 」があればその sha を取る */
   const FILE_LINE_REF = /(?:`([0-9a-f]+)` の )?`[^`\s]+:\d+(?:-\d+)?`/g;
   /** 呼び出しが無くなったことを書く語 */
