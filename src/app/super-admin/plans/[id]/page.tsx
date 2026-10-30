@@ -47,7 +47,7 @@ import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { isStaleDataConflict } from '@/lib/admin/api-error-message';
-import { screenApiErrorMessage, withHttpStatus } from '@/lib/admin/admin-screen-messages';
+import { screenFailureMessage, withHttpStatus } from '@/lib/admin/admin-screen-messages';
 import { rereadUnavailableMessage } from '@/lib/super-admin/detail-reread';
 import { PLAN_DETAIL_TABS, PLAN_DETAIL_TAB_QUERY_KEY, planDetailTabOf, type PlanDetailTab } from '@/lib/super-admin/plan-detail-tab';
 import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE, countsOrganizationsFor } from '@/lib/super-admin/plan-subscribers';
@@ -429,8 +429,9 @@ function PlanDetailContent() {
       if (seq !== fetchSeq.current) return { kind: 'superseded' };
       const data = (body ?? {}) as { data?: Plan };
       if (!res.ok || !data.data) {
-        // 本文の文は日本語のときだけ出す (英字だけの文は出さない。#2086 V6)
-        if (!isReload) setError(screenApiErrorMessage(body) ?? 'プランの取得に失敗しました');
+        // 本文の文は日本語のときだけ出す (英字だけの文は出さない。#2086 V6)。
+        // 401 は本文の文 (「認証が必要です」) ではなく、読み直しの 401 と同じ「ログインし直してください」(A/B テストの詳細の初めの読み込みと同じ。#2112)
+        if (!isReload) setError(screenFailureMessage(res.status, body) ?? 'プランの取得に失敗しました');
         // 表示したあとの読み直しが 404 / 403 / 401 なら、その理由を返す (「読み込み直せませんでした。再試行で…」で覆わない。#1917・#2086 V4)。
         // 403 は本文の文 (二段階認証の確認が要る など) を捨てずに出す (#2014 の route の文を、読み直しのときにも打ち消さない)
         const unavailableReason = res.ok ? undefined : PLAN_UNAVAILABLE_REASON_BY_STATUS[res.status];
@@ -561,8 +562,8 @@ function PlanDetailContent() {
       await reloadAfterStale();
       return;
     }
-    // 本文の文は日本語のときだけ出す (英字だけの文は出さない。#2086 V6)
-    alert(screenApiErrorMessage(data) ?? withHttpStatus(failureSummary, res.status));
+    // 本文の文は日本語のときだけ出す (英字だけの文は出さない。#2086 V6)。401 は「ログインし直してください」(#2112)
+    alert(screenFailureMessage(res.status, data) ?? withHttpStatus(failureSummary, res.status));
   };
 
   /**
@@ -634,8 +635,9 @@ function PlanDetailContent() {
           await reloadAfterStale();
           return;
         }
-        // 本文の文は日本語のときだけ出す (英字だけの文は出さない。#2086 V6)
-        setSaveError(screenApiErrorMessage(data) ?? '保存に失敗しました');
+        // 本文の文は日本語のときだけ出す (英字だけの文は出さない。#2086 V6)。
+        // 401 は「ログインし直してください」(Stripe の Product ID の保存 (販売開始の手順) もこの道を通る。#2112)
+        setSaveError(screenFailureMessage(res.status, data) ?? '保存に失敗しました');
         return;
       }
       // 送った欄は保存済みなので、送った値を新しい初めの値にする。続く読み直しが失敗しても、次の保存でこの欄を
