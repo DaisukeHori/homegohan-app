@@ -24,14 +24,16 @@
  * 読み直した一覧が 0 行で、今のページが件数から出る最後のページより後ろ (最後のページの唯一の行が消えたあとに同じページで読み直したときなど) のときは、
  * 空のページを「組織はまだありません」と見せずに、件数から最後のページへ取り直す (GET は範囲外のページで空の一覧と本当の件数を返す)。
  *
- * API が返すのは id・組織名・プラン・作成/更新日時だけ。設計書 §7 にある Seat 数・期限・売上/月・担当営業は、
- * まだ出せない。
+ * API が返すのは id・組織名・プラン・オーナーの id・作成/更新日時だけ (オーナーの id は表に出さず、下の作成の確かめにだけ使う)。
+ * 設計書 §7 にある Seat 数・期限・売上/月・担当営業は、まだ出せない。
  *
  * 組織の作成の応答を受け取れなかったとき (fetch の reject・本文に API の文の無い 502 / 503 / 504) は、失敗とは言わずに
  * 同じ名前の組織を読み直して、送った組織ができていたかを確かめる (#2107 Y4。#2101 X2 の src/lib/admin/admin-create-no-response.ts と同じ考え方)。
  * 比べる元は、送る直前に同じ条件で読んだ同じ名前の組織 (送る前に無かった行で決め、ブラウザの時計は使わない)。
+ * 送った組織とみなすのは、組織名・プラン・オーナー (指定しなければ操作している自分。route と同じ) がどれも同じ行だけ
+ * (別の運営が同じ名前・同じプランで別のオーナーの組織を作っていても、自分の作成が済んだとは言わない。#2112 Z2)。
  * できていれば済んだとして入力を空にし、確かめられなければ (まだ無い・読み直しの失敗・比べる元が無い) 送信を止める
- * (押し直すと、同じオーナーの 2 つ目の作成として 409 になるか、オーナーを指定しなかったときは組織が 2 つできうる)。
+ * (押し直すと、同じオーナーの 2 つ目の作成として 409 OWNER_ALREADY_IN_ORG になる。オーナーを指定しないときは作った運営がオーナーになるので同じ)。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
@@ -142,6 +144,11 @@ interface Organization {
   id: string;
   name: string;
   plan: string | null;
+  /**
+   * オーナーの id (GET の一覧が返す。#2112 Z2)。作成の確かめで、読み直した組織が送ったオーナーのものかを比べるのにだけ使う。
+   * プランの変更の応答 (PATCH) は返さないので、置き換えた行には無い
+   */
+  owner_id?: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -175,6 +182,11 @@ function parseOrganizationBody(body: unknown): Organization | null {
 interface SentOrganization {
   readonly name: string;
   readonly plan: OrgPlan;
+  /**
+   * 作る組織のオーナーの id (小文字)。オーナーを指定したらその id、指定しなければ操作している自分の id
+   * (route は owner_id が無ければ呼び出した運営をオーナーにする。#2112 Z2)
+   */
+  readonly ownerId: string;
 }
 
 /**
@@ -214,9 +226,13 @@ async function readSameNameOrganizations(name: string): Promise<SameNameRead> {
   }
 }
 
-/** 読み直した組織が、送った組織と同じ内容か (組織名とプラン。route は送った値をそのまま書く) */
+/**
+ * 読み直した組織が、送った組織と同じ内容か (組織名・プラン・オーナー。route は送った値をそのまま書く)。
+ * オーナーも比べるのは、応答が切れたあいだに別の運営が同じ名前・同じプランで別のオーナーの組織を作っても、
+ * 自分の作成が済んだと取り違えないため (#2112 Z2)。オーナーの id は大文字でも送れるので、小文字にして比べる
+ */
 function isSameOrganization(row: Organization, sent: SentOrganization): boolean {
-  return row.name === sent.name && row.plan === sent.plan;
+  return row.name === sent.name && row.plan === sent.plan && row.owner_id?.toLowerCase() === sent.ownerId;
 }
 
 /** 読み直しに失敗した理由の文 (401 はログインし直し、403 は本文の理由の文、ほかは「組織の一覧を読み込めませんでした」の形) */
@@ -347,7 +363,12 @@ function parseListBody(body: unknown, query: Query): ListResult | null {
   };
 }
 
-export default function OrganizationsManager() {
+export default function OrganizationsManager({
+  currentUserId,
+}: {
+  /** 操作している運営の id (page.tsx が requireRoleForPage の結果から渡す)。オーナーを指定しない作成では、この人がオーナーになる */
+  currentUserId: string;
+}) {
   // 一覧
   const [query, setQuery] = useState<Query>({ q: '', plan: '', page: 1 });
   const [qDraft, setQDraft] = useState('');
@@ -538,7 +559,11 @@ export default function OrganizationsManager() {
       return;
     }
 
-    const sent: SentOrganization = { name: trimmedName, plan };
+    const sent: SentOrganization = {
+      name: trimmedName,
+      plan,
+      ownerId: (trimmedOwnerId !== '' ? trimmedOwnerId : currentUserId).toLowerCase(),
+    };
     submitLockedRef.current = true;
     setCreating(true);
     let created = false;

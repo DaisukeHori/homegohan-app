@@ -17,6 +17,7 @@ import { z } from 'zod';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { ORG_PLAN_DEFAULT, ORG_PLAN_VALUES } from '@/lib/org-plans';
+import { escapeLikePattern } from '@/lib/admin/users-search';
 
 export const dynamic = 'force-dynamic';
 
@@ -67,7 +68,10 @@ export async function GET(request: Request) {
   }
 
   const { q, plan, page, per_page } = parseResult.data;
-  const supabase = await createClient();
+  // requireRole を通った運営だけが来る。organizations の SELECT のポリシーは所属している人の行 (organizations_select_member) だけで、
+  // 運営の client では自分の組織しか読めない (一覧が欠け、作成の応答を受け取れなかったあとの確かめも作った組織を読めなかった。#2112 Z2)。
+  // 利用者の一覧 (src/app/api/admin/users/route.ts。#1028) と同じく、一覧と件数は service_role で読む
+  const supabase = getSupabaseAdmin();
 
   try {
     // 一覧と、範囲外のページのときの件数の取り直し (countOrganizations) は、同じ絞り込み (selectOrganizations) を使う。
@@ -185,6 +189,16 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     }
+    // オーナーにする人が auth.users に居ない (運営がオーナーの ID を打ち間違えたなど。#2112 Z2)。関数の a の organizations の INSERT が
+    // 外部キー organizations_owner_id_fkey (auth.users を参照) の違反 (23503) で止まり、何も書かれていない。関数の中のほかの外部キーは
+    // ここでは違反しない (b のオーナーの user_profiles は a が通ったあと = オーナーが auth.users に居る・e の席の行は作った組織を指す)。
+    // 押し直しても同じなので、一般の 500 にせず、ID が誤っていることが分かる文で返す
+    if (createError.code === PG_FOREIGN_KEY_VIOLATION) {
+      return NextResponse.json(
+        { error: { code: OWNER_NOT_FOUND, message: OWNER_NOT_FOUND_MESSAGE } },
+        { status: 422 },
+      );
+    }
     console.error('[api/admin/organizations] POST create error:', createError.message);
     return NextResponse.json(
       { error: { code: 'INTERNAL_ERROR', message: '組織の作成に失敗しました' } },
@@ -228,6 +242,12 @@ const HTTP_RANGE_NOT_SATISFIABLE = 416;
 /** 同じときに PostgREST が返す error.code */
 const POSTGREST_RANGE_NOT_SATISFIABLE_CODE = 'PGRST103';
 
+/**
+ * 一覧の行の列。owner_id は、組織の作成の応答を受け取れなかった画面が、読み直した組織が自分の送った作成か (送ったオーナーか) を
+ * 比べるのに使う (運営だけの API。#2112 Z2。src/app/admin/organizations/OrganizationsManager.tsx の isSameOrganization)
+ */
+const ORG_LIST_COLUMNS = 'id, name, plan, owner_id, created_at, updated_at';
+
 /** 一覧の絞り込み (GET のクエリの q・plan) */
 interface OrgListFilters {
   q?: string;
@@ -235,18 +255,20 @@ interface OrgListFilters {
 }
 
 type OrgSearchInput = z.infer<typeof OrgSearchSchema>;
-type SessionClient = Awaited<ReturnType<typeof createClient>>;
+/** 一覧を読む client (service_role。GET の本体の説明) */
+type ListClient = ReturnType<typeof getSupabaseAdmin>;
 
 /**
  * organizations を一覧の列で読み、絞り込み (組織名の部分一致・プラン) を付ける。件数は exact で数える。
  * head: true のときは行を返さず件数だけを数える (範囲外のページのときの件数の取り直し)
  */
-function selectOrganizations(supabase: SessionClient, filters: OrgListFilters, options: { head?: boolean } = {}) {
+function selectOrganizations(supabase: ListClient, filters: OrgListFilters, options: { head?: boolean } = {}) {
   let query = supabase
     .from('organizations')
-    .select('id, name, plan, created_at, updated_at', { count: 'exact', head: options.head === true });
+    .select(ORG_LIST_COLUMNS, { count: 'exact', head: options.head === true });
   if (filters.q) {
-    query = query.ilike('name', `%${filters.q}%`);
+    // 組織名の % と _ (と \) は文字どおりに一致させる (「100%」で全部の組織に当てない。利用者の一覧の検索と同じ。#2112 Z2)
+    query = query.ilike('name', `%${escapeLikePattern(filters.q)}%`);
   }
   if (filters.plan) {
     query = query.eq('plan', filters.plan);
@@ -260,7 +282,7 @@ function isBeyondLastPage(error: { code?: string | null }, status: number): bool
 }
 
 /** 同じ絞り込みの件数だけを数え直す。数えられなければ null (呼び出し側は 500 にする) */
-async function countOrganizations(supabase: SessionClient, filters: OrgListFilters): Promise<number | null> {
+async function countOrganizations(supabase: ListClient, filters: OrgListFilters): Promise<number | null> {
   try {
     const { count, error } = await selectOrganizations(supabase, filters, { head: true });
     if (error || count === null) {
@@ -307,6 +329,15 @@ const OWNER_ALREADY_IN_ORG = 'OWNER_ALREADY_IN_ORG';
  */
 const OWNER_ALREADY_IN_ORG_MESSAGE =
   '指定したオーナーはすでに組織に所属しています (直前に作成した組織かもしれません。一覧で確かめてください)';
+
+/** PostgreSQL の外部キーの違反の SQLSTATE (オーナーにする人が auth.users に居ない。organizations_owner_id_fkey) */
+const PG_FOREIGN_KEY_VIOLATION = '23503';
+
+/** オーナーにする人が auth.users に居ないときの応答の code (#2112 Z2) */
+const OWNER_NOT_FOUND = 'OWNER_NOT_FOUND';
+
+/** オーナーにする人が auth.users に居ないときの文 (英字の項目名 owner_id を運営に見せない。画面はこの文をそのまま出す) */
+const OWNER_NOT_FOUND_MESSAGE = '指定したオーナーのユーザーが見つかりません';
 
 /** DB 関数が作った組織を返したが、形が違って読めなかったときの文 (作成は済んでいることがあるので、一覧で確かめさせる) */
 const ORG_CREATED_UNREADABLE_MESSAGE = '組織の作成の結果を読み取れませんでした。一覧で確かめてください';
