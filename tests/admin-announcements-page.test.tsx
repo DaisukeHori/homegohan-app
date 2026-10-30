@@ -472,7 +472,7 @@ describe('作成', () => {
     expect(titleInput().value).toBe('題名'); // 入力は残る
   });
 
-  it('通信エラー (fetch が失敗) でも汎用のメッセージを出し、入力を残す', async () => {
+  it('通信エラー (fetch が失敗) は失敗と言わずに一覧を読み直し、作成されていなければ入力を残して押し直せる (#2101 X2)', async () => {
     fetchMock.mockImplementation(async (_input: string, init?: RequestInit) => {
       if (init?.method === 'POST') throw new TypeError('Failed to fetch');
       return jsonResponse(200, listBody([]));
@@ -481,7 +481,11 @@ describe('作成', () => {
     await fillForm('題名', '本文');
     await click(findButton('作成する'), '作成ボタン');
 
-    expect(alerts()[0]).toContain('お知らせを作成できませんでした');
+    // 英字の例外の文は出さず、サーバーで済んだか分からないので読み直した結果を出す (振る舞いの全体は admin-create-no-response-2101.test.tsx)
+    expect(alerts()[0]).toContain('お知らせの作成の応答を受け取れませんでした（通信エラー）');
+    expect(alerts()[0]).toContain('まだ保存されていません');
+    expect(alerts()[0]).not.toContain('Failed to fetch');
+    expect(callsOf('GET')).toHaveLength(2);
     expect(titleInput().value).toBe('題名');
     expect(findButton('作成する')?.disabled).toBe(false);
   });

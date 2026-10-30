@@ -8,12 +8,21 @@
 import { useState, useEffect, useCallback, useRef, use } from 'react';
 import { forbiddenMessageForScreen, forbiddenMessageOfResponse, isStaleDataConflict } from '@/lib/admin/api-error-message';
 import {
+  AdminActionNoResponseError,
   AdminScreenError,
-  adminActionHttpFailedMessage,
+  adminActionErrorOfResponse,
   adminActionNoResponseMessage,
-  adminScreenErrorOfResponse,
+  adminCreateUnconfirmedMessage,
   displayableAdminError,
+  sendAdminAction,
 } from '@/lib/admin/admin-screen-messages';
+import {
+  adminCreateFoundGuide,
+  adminCreateNoResponseMessage,
+  adminCreateNotFoundGuide,
+  confirmCreatedRow,
+} from '@/lib/admin/admin-create-no-response';
+import { loginPathWithNext } from '@/lib/auth/signed-in-user';
 import { todayLocal } from '@/lib/date-utils';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -36,6 +45,10 @@ const STAGE_CHANGE_FAILURE_MESSAGE = 'ステージ変更失敗';
 /** 活動の記録・ステージの変更の失敗の文の操作の名前 (「活動の記録に失敗しました (HTTP 502)」。#2086 V6) */
 const ADD_ACTIVITY_ACTION = '活動の記録';
 const STAGE_CHANGE_ACTION = 'ステージの変更';
+/** 活動の記録の応答を受け取れなかったあとの読み直しの文の対象の名前 (「読み込み直したところ、活動は保存されていました」。#2101 X2) */
+const ACTIVITY_SUBJECT = '活動';
+/** リードの詳細の画面のパス (ログインのあとに戻る先。#2101 X2) */
+const leadDetailPath = (leadId: string) => `/admin/sales/${leadId}`;
 
 /**
  * リードの読み込み (fetchLead) の結果。
@@ -46,6 +59,9 @@ const STAGE_CHANGE_ACTION = 'ステージの変更';
  *   - failed      : そのほかの失敗 (「リードの取得に失敗しました」を出した)
  */
 type LeadLoadOutcome = 'loaded' | 'unauthorized' | 'forbidden' | 'not-found' | 'failed';
+
+/** リードの読み込みの結果 (読めたときは読んだリードを持つ。活動の記録の応答を受け取れなかったあとの読み直しで比べる。#2101 X2) */
+type LeadLoadResult = { outcome: 'loaded'; lead: Lead } | { outcome: Exclude<LeadLoadOutcome, 'loaded'> };
 
 /**
  * 409 CONFLICT_STALE_DATA のあとの読み直しの結果から、画面に出す文を決める (null = fetchLead が出した文をそのまま残す)。
@@ -122,6 +138,35 @@ const ACTIVITY_ICONS: Record<ActivityType, string> = {
 
 const ALL_STAGES: Stage[] = ['approach', 'meeting', 'proposal', 'negotiation', 'won', 'lost'];
 
+/** 送った活動 (route は details をそのまま insert する。next_action は空なら送らない) */
+interface SentActivity {
+  readonly activityType: ActivityType;
+  readonly summary: string;
+  readonly nextAction: string | undefined;
+  readonly date: string;
+}
+
+/**
+ * 記録の応答を受け取れなかった (サーバーで済んだか分からない) 活動 (#2101 X2)。これがあるあいだは「活動を記録」を止める。
+ *   - retryable: 「確かめ直す」で読み直せば決まりうるか (読み直しの失敗が通信・サーバーの一時的なもの)。403 (押しても必ず失敗する) は false
+ */
+interface UnconfirmedActivity {
+  readonly sent: SentActivity;
+  readonly knownIds: ReadonlySet<string>;
+  readonly summary: string;
+  readonly retryable: boolean;
+}
+
+/** 読み直した活動が、送った活動と同じ内容か (種類・本文・次のアクション・日付) */
+function isSameActivity(activity: Activity, sent: SentActivity): boolean {
+  return (
+    activity.activity_type === sent.activityType &&
+    activity.details.summary === sent.summary &&
+    activity.details.next_action === sent.nextAction &&
+    activity.details.date === sent.date
+  );
+}
+
 type PageProps = { params: Promise<{ id: string }> };
 
 export default function LeadDetailPage(props: PageProps) {
@@ -136,6 +181,14 @@ export default function LeadDetailPage(props: PageProps) {
   const [activitySummary, setActivitySummary] = useState('');
   const [activityNextAction, setActivityNextAction] = useState('');
   const [isAddingActivity, setIsAddingActivity] = useState(false);
+  // 活動の記録の応答を受け取れなかったあと、読み直しで記録できていたと確かめたときの文 (#2101 X2)
+  const [activityNotice, setActivityNotice] = useState<string | null>(null);
+  // 記録の応答を受け取れず、読み直しにも失敗して、記録できたか分からない活動 (#2101 X2)。
+  // sales_lead_activities には一意の制約が無く、押し直すと活動が 2 行できるので、これがあるあいだは「活動を記録」を止める。
+  // リードの読み直し (fetchLead) が error を消しても、この文は消えない (別の state)。ref は再描画の前に続けて押されたときの守り
+  const [unconfirmedActivity, setUnconfirmedActivity] = useState<UnconfirmedActivity | null>(null);
+  const unconfirmedActivityRef = useRef<UnconfirmedActivity | null>(null);
+  const [isConfirmingActivity, setIsConfirmingActivity] = useState(false);
 
   // ステージ変更
   const [isChangingStage, setIsChangingStage] = useState(false);
@@ -144,30 +197,36 @@ export default function LeadDetailPage(props: PageProps) {
   // その古いリード (例: 変える前のステージ) で表示が上書きされる (#2053 のクーポン・機能パッケージと同じ型)。
   // 待つあいだは両方のボタンを止め、押されても送らない。ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
   const writeInFlightRef = useRef(false);
-  const isWriting = isAddingActivity || isChangingStage;
+  const isWriting = isAddingActivity || isChangingStage || isConfirmingActivity;
 
   /** リードを読み、結果の種類を返す (409 のあとの読み直しで、結果に合わせて文を決めるため。#1917) */
-  const fetchLead = useCallback(async (): Promise<LeadLoadOutcome> => {
+  const fetchLead = useCallback(async (): Promise<LeadLoadResult> => {
     setIsLoading(true);
     setError(null);
     try {
       const res = await fetch(`/api/admin/sales/leads/${params.id}`);
-      if (res.status === 401) { router.push('/login'); return 'unauthorized'; }
+      // ログインのあとに、このリードへ戻れるよう next を付ける (#2101 X2。#2093 W4 と同じ)
+      if (res.status === 401) { router.push(loginPathWithNext(leadDetailPath(params.id))); return { outcome: 'unauthorized' }; }
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
-      if (res.status === HTTP_FORBIDDEN) { setError(await forbiddenMessageOfResponse(res)); return 'forbidden'; }
+      if (res.status === HTTP_FORBIDDEN) { setError(await forbiddenMessageOfResponse(res)); return { outcome: 'forbidden' }; }
       if (res.status === 404) {
         // リードが消えていたら、前に読んだリードを画面に残さない (消えたリードのステージを変えられるように見せない。#1917)
         setLead(null);
         setError('リードが見つかりません');
-        return 'not-found';
+        return { outcome: 'not-found' };
       }
       if (!res.ok) throw new Error('取得失敗');
       const json = await res.json();
-      setLead(json.data);
-      return 'loaded';
+      const loaded = (json as { data?: unknown } | null)?.data;
+      // 活動履歴の無い形を読めたとは扱わない (読み直しで「記録されていない」と誤って決めない。#2101 X2)
+      if (typeof loaded !== 'object' || loaded === null || !Array.isArray((loaded as { activities?: unknown }).activities)) {
+        throw new Error('取得失敗');
+      }
+      setLead(loaded as Lead);
+      return { outcome: 'loaded', lead: loaded as Lead };
     } catch {
       setError('リードの取得に失敗しました');
-      return 'failed';
+      return { outcome: 'failed' };
     } finally {
       setIsLoading(false);
     }
@@ -175,41 +234,110 @@ export default function LeadDetailPage(props: PageProps) {
 
   useEffect(() => { fetchLead(); }, [fetchLead]);
 
+  const markUnconfirmedActivity = (pending: UnconfirmedActivity | null) => {
+    unconfirmedActivityRef.current = pending;
+    setUnconfirmedActivity(pending);
+  };
+
+  /**
+   * 活動の記録の応答を受け取れなかったあと、リードを読み直して送った活動ができていたかを確かめる (#2101 X2)。
+   * できていれば済んだとして入力を空にし、無ければ入力を残して押し直せるようにする。
+   * 読み直しにも失敗したら、記録できたか分からないので「活動を記録」を止める (「確かめ直す」でこの関数をもう一度呼ぶ)
+   */
+  const confirmUnconfirmedActivity = async (pending: Omit<UnconfirmedActivity, 'retryable'>) => {
+    const result = await fetchLead();
+    switch (result.outcome) {
+      case 'loaded':
+        break;
+      case 'not-found':
+        // リードが消えた (画面はリードが見つからない文を出す)。もう記録はできないので止めておく必要は無い
+        markUnconfirmedActivity(null);
+        return;
+      case 'unauthorized':
+      case 'forbidden':
+        // ログインの画面へ移した / 権限が外れた (理由の文は fetchLead が出した)。読み直しても必ず失敗するので「確かめ直す」を出さない
+        markUnconfirmedActivity({ ...pending, retryable: false });
+        return;
+      case 'failed':
+        markUnconfirmedActivity({ ...pending, retryable: true });
+        return;
+    }
+    markUnconfirmedActivity(null);
+    const outcome = confirmCreatedRow(result.lead.activities, pending.knownIds, (activity) => isSameActivity(activity, pending.sent));
+    if (outcome === 'created') {
+      // 済んでいた。入力欄が送った値のままなら空にする (待つあいだに書き足した文は消さない)
+      setActivitySummary((current) => (current === pending.sent.summary ? '' : current));
+      setActivityNextAction((current) => (current === (pending.sent.nextAction ?? '') ? '' : current));
+      setActivityNotice(adminCreateNoResponseMessage(pending.summary, adminCreateFoundGuide(ACTIVITY_SUBJECT)));
+      return;
+    }
+    // 送る前のリードは必ず読めている (knownIds がある) ので ambiguous にはならない。無かったものとして押し直せるようにする
+    setError(adminCreateNoResponseMessage(pending.summary, adminCreateNotFoundGuide(ACTIVITY_SUBJECT)));
+  };
+
   const handleAddActivity = async () => {
-    if (!activitySummary.trim() || writeInFlightRef.current) return;
+    if (!lead || !activitySummary.trim() || writeInFlightRef.current || unconfirmedActivityRef.current !== null) return;
     writeInFlightRef.current = true;
     setIsAddingActivity(true);
+    setActivityNotice(null);
+    // 応答を受け取れなかったときに、読み直した活動履歴と比べるための、送る前の活動と送った内容 (#2101 X2)
+    const knownIds: ReadonlySet<string> = new Set(lead.activities.map((activity) => activity.id));
+    const sent: SentActivity = {
+      activityType,
+      summary: activitySummary,
+      nextAction: activityNextAction || undefined,
+      date: todayLocal(),
+    };
     try {
-      let res: Response;
-      try {
-        res = await fetch(`/api/admin/sales/leads/${params.id}/activities`, {
+      // 通信そのものの失敗は AdminActionNoResponseError (ブラウザの英字の例外の文を出さない。#2086 V6)
+      const res = await sendAdminAction(
+        `/api/admin/sales/leads/${params.id}/activities`,
+        {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            activity_type: activityType,
+            activity_type: sent.activityType,
             details: {
-              summary: activitySummary,
-              next_action: activityNextAction || undefined,
-              date: todayLocal(),
+              summary: sent.summary,
+              next_action: sent.nextAction,
+              date: sent.date,
             },
           }),
-        });
-      } catch {
-        // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
-        throw new AdminScreenError(adminActionNoResponseMessage(ADD_ACTIVITY_ACTION));
-      }
+        },
+        ADD_ACTIVITY_ACTION,
+      );
       if (!res.ok) {
-        // 本文は JSON でないこともある (プロキシの 502 の HTML など) ので読み失敗で例外にしない (#2086 V6)
-        throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(ADD_ACTIVITY_ACTION, status));
+        // 本文は JSON でないこともある (プロキシの 502 の HTML など) ので読み失敗で例外にしない (#2086 V6)。
+        // 本文に API の文の無い 502 / 503 / 504 は応答を受け取れなかったもの (AdminActionNoResponseError。#2101 X2)
+        throw await adminActionErrorOfResponse(res, ADD_ACTIVITY_ACTION);
       }
       setActivitySummary('');
       setActivityNextAction('');
       await fetchLead();
     } catch (e: unknown) {
-      setError(displayableAdminError(e, '活動記録の追加に失敗しました'));
+      if (e instanceof AdminActionNoResponseError) {
+        // サーバーで記録が済んでから応答が切れたこともある。失敗と見せて押し直させず、リードを読み直して確かめる (#2101 X2)
+        await confirmUnconfirmedActivity({ sent, knownIds, summary: e.message });
+      } else {
+        setError(displayableAdminError(e, '活動記録の追加に失敗しました'));
+      }
     } finally {
       writeInFlightRef.current = false;
       setIsAddingActivity(false);
+    }
+  };
+
+  /** 「確かめ直す」: 記録できたか分からない活動を、リードを読み直して確かめる (#2101 X2) */
+  const handleRetryConfirmActivity = async () => {
+    const pending = unconfirmedActivityRef.current;
+    if (pending === null || !pending.retryable || writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
+    setIsConfirmingActivity(true);
+    try {
+      await confirmUnconfirmedActivity(pending);
+    } finally {
+      writeInFlightRef.current = false;
+      setIsConfirmingActivity(false);
     }
   };
 
@@ -235,7 +363,7 @@ export default function LeadDetailPage(props: PageProps) {
           // 別の担当者が先にステージを変えていた (API は書かずに 409 CONFLICT_STALE_DATA を返す)。今のステージを読み直して、その旨を出す。
           // 文は読み直しの結果を待ってから決める (読み直せなかったのに「読み込み直した」と出さない。
           // 404 / 403 のときは fetchLead が出した理由の文を残す。#1917)
-          const message = staleStageMessageOf(await fetchLead());
+          const message = staleStageMessageOf((await fetchLead()).outcome);
           if (message !== null) setError(message);
           return;
         }
@@ -417,10 +545,29 @@ export default function LeadDetailPage(props: PageProps) {
                 placeholder="次のアクション (任意)"
                 className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 mb-3"
               />
-              <div className="flex justify-end">
+              {activityNotice && (
+                <p role="status" className="bg-green-50 border border-green-200 text-green-800 px-3 py-2 rounded mb-3 text-sm">
+                  {activityNotice}
+                </p>
+              )}
+              {unconfirmedActivity && (
+                <div role="alert" className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-3 py-2 rounded mb-3 text-sm">
+                  {adminCreateUnconfirmedMessage(unconfirmedActivity.summary)}
+                </div>
+              )}
+              <div className="flex justify-end gap-2">
+                {unconfirmedActivity?.retryable && (
+                  <button
+                    onClick={handleRetryConfirmActivity}
+                    disabled={isWriting}
+                    className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {isConfirmingActivity ? '確認中...' : '確かめ直す'}
+                  </button>
+                )}
                 <button
                   onClick={handleAddActivity}
-                  disabled={isWriting || !activitySummary.trim()}
+                  disabled={isWriting || !activitySummary.trim() || unconfirmedActivity !== null}
                   className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {isAddingActivity ? '記録中...' : '活動を記録'}

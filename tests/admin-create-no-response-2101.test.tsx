@@ -27,6 +27,7 @@ import {
   type BackupAuditRow,
 } from '@/lib/backups/core';
 import { jstToday } from '@/lib/jst-day-ranges';
+import { confirmCreatedRow } from '@/lib/admin/admin-create-no-response';
 import { todayLocal } from '@/lib/date-utils';
 
 const nav = vi.hoisted(() => {
@@ -639,5 +640,34 @@ describe('DR 訓練の記録: 応答を受け取れなかったら記録の一�
     expect(text()).toContain('記録できませんでした');
     expect(text()).not.toContain('応答を受け取れませんでした');
     expect(drSubmitButton()?.disabled).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 決め方の部品 (src/lib/admin/admin-create-no-response.ts)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('confirmCreatedRow: 読み直した一覧に送った内容の行ができていたか (#2101 X2)', () => {
+  const rows = [
+    { id: 'a', value: 'x' },
+    { id: 'b', value: 'y' },
+  ];
+  const isX = (row: { value: string }) => row.value === 'x';
+
+  it('送る前に無かった行に同じ内容があれば created', () => {
+    expect(confirmCreatedRow(rows, new Set(['b']), isX)).toBe('created');
+  });
+
+  it('同じ内容の行が送る前からあった行だけなら not-created (前からある行を作成されたと数えない)', () => {
+    expect(confirmCreatedRow(rows, new Set(['a', 'b']), isX)).toBe('not-created');
+  });
+
+  it('新しい行でも内容が違えば not-created', () => {
+    expect(confirmCreatedRow(rows, new Set(['a']), isX)).toBe('not-created');
+  });
+
+  it('比べる元が無い (送る前に一覧を読めていない) とき、同じ内容の行があれば ambiguous、無ければ not-created', () => {
+    expect(confirmCreatedRow(rows, null, isX)).toBe('ambiguous');
+    expect(confirmCreatedRow(rows, null, (row) => row.value === 'z')).toBe('not-created');
   });
 });

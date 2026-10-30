@@ -8,13 +8,14 @@
  * 選択肢・ラベル・上限・パス・型・400 の文の読み方は src/lib/backups/core.ts から import する (page に書き写さない)。
  */
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   BACKUP_TIERS,
   BACKUP_TIER_LABELS,
   DR_TEST_BACKUP_KEY_MAX_LENGTH,
   DR_TEST_ENVIRONMENTS,
   DR_TEST_ENVIRONMENT_LABELS,
+  DR_TEST_FIELDS,
   DR_TEST_KINDS,
   DR_TEST_KIND_LABELS,
   DR_TEST_NOTES_MAX_LENGTH,
@@ -36,6 +37,18 @@ import {
   type DrTestSmokeResult,
 } from '@/lib/backups/core';
 import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
+import {
+  AdminActionNoResponseError,
+  adminActionErrorOfResponse,
+  adminCreateUnconfirmedMessage,
+} from '@/lib/admin/admin-screen-messages';
+import {
+  ADMIN_CREATE_REOPEN_TO_RETRY_GUIDE,
+  adminCreateFoundGuide,
+  adminCreateNoResponseMessage,
+  adminCreateNotFoundGuide,
+  confirmCreatedRow,
+} from '@/lib/admin/admin-create-no-response';
 import { formatJstDateTime } from '@/lib/admin/format-datetime';
 import { jstToday } from '@/lib/jst-day-ranges';
 
@@ -68,6 +81,10 @@ const LOAD_FORBIDDEN_TEXT = 'この画面を見る権限がありません';
 const SUBMIT_FORBIDDEN_TEXT = '記録する権限がありません';
 const SUBMIT_FAILED_TEXT = '記録できませんでした。時間をおいてもう一度送ってください';
 const SUBMIT_SUCCEEDED_TEXT = '記録しました';
+/** 応答を受け取れなかったときの文の操作の名前 (「DR 訓練の記録の応答を受け取れませんでした（通信エラー）」。#2101 X2) */
+const DR_TEST_RECORD_ACTION = 'DR 訓練の記録';
+/** 読み直したときの文の対象の名前 (「読み込み直したところ、DR 訓練の記録は保存されていました」。#2101 X2) */
+const DR_TEST_RECORD_SUBJECT = 'DR 訓練の記録';
 
 // ── form ──────────────────────────────────────────────────────────────────
 
@@ -146,6 +163,34 @@ const FIELD_LABELS: Readonly<Record<DrTestField, string>> = {
   notes: 'メモ (成功以外は理由)',
 };
 
+/**
+ * 記録の応答を受け取れなかった (サーバーで済んだか分からない) 訓練の記録 (#2101 X2)。これがあるあいだは送信を止める。
+ *   - knownIds: 送る前に画面が持っていた訓練の記録の行の id (読めていなければ null)
+ *   - retryable: 「確かめ直す」で読み直せば決まりうるか。比べる元が無くて決められない (ambiguous) ときは false
+ */
+interface UnconfirmedDrTest {
+  readonly body: Readonly<Record<DrTestField, unknown>>;
+  readonly knownIds: ReadonlySet<string> | null;
+  readonly summary: string;
+  readonly message: string;
+  readonly retryable: boolean;
+}
+
+/**
+ * 読み直した訓練の記録の行が、送った本文と同じ内容か。
+ * route は検証した本文をそのまま details に書く (recordAdminAudit の details)。値は文字・数・null だけなので、項目ごとに === で比べる
+ */
+function isSameDrTest(row: BackupAuditRow, body: Readonly<Record<DrTestField, unknown>>): boolean {
+  return DR_TEST_FIELDS.every((field) => row.details?.[field] === body[field]);
+}
+
+/** 状態の応答の形か (data に訓練の記録の一覧がある)。中の行の形は API (backupAuditRowSchema) が確かめて返す */
+function isBackupStatusResponse(json: unknown): json is BackupStatusResponse {
+  if (typeof json !== 'object' || json === null) return false;
+  const data = (json as { data?: unknown }).data;
+  return typeof data === 'object' && data !== null && Array.isArray((data as { dr_tests?: unknown }).dr_tests);
+}
+
 // ── details の読み取り (中身を見ない record から、表示する値だけを型で確かめて読む) ──
 
 type Details = BackupAuditRow['details'];
@@ -201,23 +246,39 @@ export default function SuperAdminBackupsPage() {
   const [errors, setErrors] = useState<DrTestFieldErrors>(EMPTY_ERRORS);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  // 記録の応答を受け取れなかったあと、読み直しで記録できていたと確かめたときの文 (#2101 X2)
+  const [confirmedNotice, setConfirmedNotice] = useState<string | null>(null);
+  // 記録の応答を受け取れなかった (済んだか分からない) 訓練の記録 (#2101 X2)。押し直すと監査ログに 2 行入るので、これがあるあいだは送信を止める。
+  // ref は再描画の前に続けて押されたときの守り
+  const [unconfirmed, setUnconfirmed] = useState<UnconfirmedDrTest | null>(null);
+  const unconfirmedRef = useRef<UnconfirmedDrTest | null>(null);
+  // 送信と、そのあとの読み直しを待っているあいだは true (再描画の前に続けて押されたときも送らない守り。#2101 X2)
+  const submitLockedRef = useRef(false);
 
-  const reload = useCallback(async () => {
+  /** 状態を読み、画面に出す。読めたら読んだ data を、読めなければ null を返す (記録の応答を受け取れなかったあとの読み直しで比べる。#2101 X2) */
+  const reload = useCallback(async (): Promise<BackupStatusResponse['data'] | null> => {
     try {
       const res = await fetch(SUPER_ADMIN_BACKUPS_API_PATH);
       if (res.status === HTTP_FORBIDDEN) {
         // 403 は本文の理由の文 (二段階認証の確認が要る など) があればそちらを出す (#1917)
         setLoad({ status: 'error', message: await forbiddenMessageOfResponse(res, LOAD_FORBIDDEN_TEXT) });
-        return;
+        return null;
       }
       if (res.status !== HTTP_OK) {
         setLoad({ status: 'error', message: LOAD_FAILED_TEXT });
-        return;
+        return null;
       }
-      const json: BackupStatusResponse = await res.json();
+      const json: unknown = await res.json();
+      // 訓練の記録の一覧の無い形を読めたとは扱わない (読み直しで「記録されていない」と誤って決めない。#2101 X2)
+      if (!isBackupStatusResponse(json)) {
+        setLoad({ status: 'error', message: LOAD_FAILED_TEXT });
+        return null;
+      }
       setLoad({ status: 'loaded', data: json.data });
+      return json.data;
     } catch {
       setLoad({ status: 'error', message: LOAD_FAILED_TEXT });
+      return null;
     }
   }, []);
 
@@ -229,17 +290,64 @@ export default function SuperAdminBackupsPage() {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
+  const markUnconfirmed = (pending: UnconfirmedDrTest | null) => {
+    unconfirmedRef.current = pending;
+    setUnconfirmed(pending);
+  };
+
+  /**
+   * 記録の応答を受け取れなかったあと、状態を読み直して送った記録ができていたかを確かめる (#2101 X2)。
+   * できていれば済んだとして入力を初めに戻し、無ければ入力を残して押し直せるようにする。
+   * 読み直しにも失敗した・前からあった行か決められないときは、送信を止める
+   */
+  const confirmUnconfirmedDrTest = async (pending: Omit<UnconfirmedDrTest, 'message' | 'retryable'>) => {
+    const data = await reload();
+    if (data === null) {
+      markUnconfirmed({ ...pending, message: adminCreateUnconfirmedMessage(pending.summary), retryable: true });
+      return;
+    }
+    const outcome = confirmCreatedRow(data.dr_tests, pending.knownIds, (row) => isSameDrTest(row, pending.body));
+    if (outcome === 'ambiguous') {
+      markUnconfirmed({
+        ...pending,
+        message: adminCreateNoResponseMessage(adminCreateUnconfirmedMessage(pending.summary), ADMIN_CREATE_REOPEN_TO_RETRY_GUIDE),
+        retryable: false,
+      });
+      return;
+    }
+    markUnconfirmed(null);
+    if (outcome === 'created') {
+      setErrors(EMPTY_ERRORS);
+      setForm(initialFormState());
+      setConfirmedNotice(adminCreateNoResponseMessage(pending.summary, adminCreateFoundGuide(DR_TEST_RECORD_SUBJECT)));
+      return;
+    }
+    setErrors({ fields: {}, form: [adminCreateNoResponseMessage(pending.summary, adminCreateNotFoundGuide(DR_TEST_RECORD_SUBJECT))] });
+  };
+
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (submitting) return;
+    if (submitting || submitLockedRef.current || unconfirmedRef.current !== null) return;
+    submitLockedRef.current = true;
     setSubmitting(true);
     setSubmitted(false);
+    setConfirmedNotice(null);
+    const body = toRequestBody(form);
+    // 応答を受け取れなかったときに、読み直した記録と比べるための、送る前の記録の行 (読めていなければ null。#2101 X2)
+    const knownIds: ReadonlySet<string> | null =
+      load.status === 'loaded' ? new Set(load.data.dr_tests.map((row) => row.id)) : null;
     try {
-      const res = await fetch(SUPER_ADMIN_DR_TESTS_API_PATH, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(toRequestBody(form)),
-      });
+      let res: Response;
+      try {
+        res = await fetch(SUPER_ADMIN_DR_TESTS_API_PATH, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } catch {
+        // 通信そのものの失敗。サーバーが記録してから応答が切れたこともあるので、失敗とは言わずに読み直す (#2101 X2)
+        throw new AdminActionNoResponseError(DR_TEST_RECORD_ACTION, null);
+      }
       if (res.status === HTTP_CREATED) {
         setErrors(EMPTY_ERRORS);
         setForm(initialFormState());
@@ -262,10 +370,33 @@ export default function SuperAdminBackupsPage() {
         setErrors({ fields: {}, form: [await forbiddenMessageOfResponse(res, SUBMIT_FORBIDDEN_TEXT)] });
         return;
       }
+      // 本文に API の文の無い 502 / 503 / 504 は応答を受け取れなかったもの (手前のプロキシ・ホスティングの応答。#2101 X2)。
+      // ほかの失敗はこれまでどおり固定の文 (本文の文は出さない)
+      const failure = await adminActionErrorOfResponse(res, DR_TEST_RECORD_ACTION);
+      if (failure instanceof AdminActionNoResponseError) throw failure;
       setErrors({ fields: {}, form: [SUBMIT_FAILED_TEXT] });
-    } catch {
-      setErrors({ fields: {}, form: [SUBMIT_FAILED_TEXT] });
+    } catch (e: unknown) {
+      if (e instanceof AdminActionNoResponseError) {
+        await confirmUnconfirmedDrTest({ body, knownIds, summary: e.message });
+      } else {
+        setErrors({ fields: {}, form: [SUBMIT_FAILED_TEXT] });
+      }
     } finally {
+      submitLockedRef.current = false;
+      setSubmitting(false);
+    }
+  };
+
+  /** 「確かめ直す」: 済んだか分からない記録を、状態を読み直して確かめる (#2101 X2) */
+  const handleRetryConfirm = async () => {
+    const pending = unconfirmedRef.current;
+    if (pending === null || !pending.retryable || submitLockedRef.current) return;
+    submitLockedRef.current = true;
+    setSubmitting(true);
+    try {
+      await confirmUnconfirmedDrTest(pending);
+    } finally {
+      submitLockedRef.current = false;
       setSubmitting(false);
     }
   };
@@ -402,6 +533,30 @@ export default function SuperAdminBackupsPage() {
             <p role="status" data-testid="dr-test-form-success" className="text-sm text-green-700">
               {SUBMIT_SUCCEEDED_TEXT}
             </p>
+          ) : null}
+          {confirmedNotice !== null ? (
+            <p role="status" data-testid="dr-test-form-confirmed" className="text-sm text-green-700">
+              {confirmedNotice}
+            </p>
+          ) : null}
+          {unconfirmed !== null ? (
+            <div
+              role="alert"
+              data-testid="dr-test-form-unconfirmed"
+              className="flex items-center justify-between gap-4 rounded border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-800"
+            >
+              <span>{unconfirmed.message}</span>
+              {unconfirmed.retryable ? (
+                <button
+                  type="button"
+                  onClick={() => void handleRetryConfirm()}
+                  disabled={submitting}
+                  className="shrink-0 rounded border border-yellow-300 bg-white px-3 py-1 text-sm font-medium text-yellow-800 hover:bg-yellow-50 disabled:opacity-50"
+                >
+                  確かめ直す
+                </button>
+              ) : null}
+            </div>
           ) : null}
 
           <div className="grid gap-4 md:grid-cols-2">
@@ -553,7 +708,7 @@ export default function SuperAdminBackupsPage() {
 
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || unconfirmed !== null}
             className="rounded bg-orange-500 px-4 py-2 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50"
           >
             {submitting ? '記録中…' : '記録する'}
