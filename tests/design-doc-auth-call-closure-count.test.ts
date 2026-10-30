@@ -5,7 +5,7 @@
  * (取り込みの再レビューの指摘)。数を直すたびに、同じ文書の別の節の数が置き去りにならないようにする。
  *   1. §9.1 の太字の合計「**N 呼び出し** (Web W・apps/mobile M = `apps/mobile/src` S と画面 `apps/mobile/app` A)」がちょうど 1 回あり、
  *      W + M = N・S + A = M
- *   2. 閉包の表 (`| 群 | 呼び出し (origin/main の file:line) | 行数 | …`) の「行数」の和 = N、W-* の行の和 = W、M-* の行の和 = M
+ *   2. 閉包の表 (`| 群 | 呼び出し (origin/main の file:line または名前) | 行数 | …`) の「行数」の和 = N、W-* の行の和 = W、M-* の行の和 = M
  *   3. 文書の「全 K 呼び出し」はどれも K = N (§9.13 の「変えないもの」を含む。1 回以上ある)
  * 実コードとの突き合わせ (git grep の数) は、数えた時点の sha を本文に書く記録なので、ここでは見ない。
  */
@@ -15,7 +15,7 @@ import { describe, expect, it } from 'vitest';
 
 const ROOT = path.resolve(__dirname, '..');
 const DOC_PATH = 'docs/design/mobile/05-auth-session.md';
-const TABLE_HEADER = '| 群 | 呼び出し (origin/main の file:line) | 行数 |';
+const TABLE_HEADER = '| 群 | 呼び出し (origin/main の file:line または名前) | 行数 |';
 /** 閉包の表の「行数」の列の位置 (群・呼び出し・行数・扱い の 3 番目) */
 const COUNT_COLUMN_INDEX = 2;
 
