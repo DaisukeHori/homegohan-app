@@ -12,7 +12,7 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { buildListViewDetails, recordAdminAudit } from '@/lib/admin/audit';
-import { UsersSearchSchema, type UserListItem, type UsersListResponse } from '@/lib/admin/users-schemas';
+import { UsersSearchSchema, type UserListItem, type UserListSortKey, type UsersListResponse } from '@/lib/admin/users-schemas';
 import { canViewUserEmail, fetchUserEmails, findUserIdsByEmail } from '@/lib/admin/user-emails';
 import { buildUserSearchFilter } from '@/lib/admin/users-search';
 import { isAccountFrozen } from '@/lib/auth/frozen';
@@ -25,6 +25,16 @@ export const dynamic = 'force-dynamic';
 
 /** ログの発生元 (src/lib/admin/user-emails.ts がメール取得の失敗を記録するときに使う) */
 const LOG_SOURCE = 'GET /api/admin/users';
+
+/**
+ * sort の鍵ごとの並べる user_profiles の列 (#2120 W3-2)。鍵 (USER_LIST_SORT_KEYS) を足すと列の漏れが型の誤りになる。
+ * sort が無ければ登録日の順 (USER_LIST_DEFAULT_SORT)
+ */
+const USER_LIST_SORT_COLUMNS: Readonly<Record<UserListSortKey, 'created_at' | 'last_login_at'>> = {
+  registered_at: 'created_at',
+  last_login: 'last_login_at',
+};
+const USER_LIST_DEFAULT_SORT: UserListSortKey = 'registered_at';
 
 export async function GET(request: Request) {
   let actor;
@@ -167,10 +177,7 @@ export async function GET(request: Request) {
   };
 
   // ソート
-  const sortColumn =
-    params.sort === 'last_login'
-      ? 'last_login_at'
-      : 'created_at';
+  const sortColumn = USER_LIST_SORT_COLUMNS[params.sort ?? USER_LIST_DEFAULT_SORT];
 
   // ページネーション
   const from = (params.page - 1) * params.per_page;
