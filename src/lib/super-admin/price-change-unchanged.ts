@@ -11,6 +11,12 @@
  * 画面 (src/app/super-admin/plans/[id]/price-change/page.tsx) は、応答を受け取れなかったときにプランを読み直し、同じ判定で
  * 「送った価格になっている = 済んだ」を決める。409 OP_PRICE_UNCHANGED も済んだものとして履歴へ移る。
  *
+ * #2107 Y2・Y8: 判定は間隔 (月額・年額) ごとに行う (pendingPriceChange)。今と同じ価格で、Stripe の同期が要らないか Price ID が入っている間隔は
+ * 「もう済んでいる」ので、送られても外す。route は外した残りだけを Stripe と DB に渡し (片方の間隔だけ ID が無いプランに両方を送っても、
+ * ID のある間隔の Price を作り直して無効化しない)、残りが無ければ 409 OP_PRICE_UNCHANGED にする。画面も同じ判定で送る間隔を決めるので、
+ * Stripe の同期が要るプラン (GET /api/super-admin/plans/{id} の stripe_price_sync_expected) で Price ID がまだ無い間隔は、
+ * 今と同じ価格のまま送れる (販売開始の Price の登録)。「Stripe の同期が要るか」は route と GET の両方が isStripePriceSyncExpected で決める。
+ *
  * このファイルはブラウザからも読むので、サーバー専用のものを import しない。
  */
 
@@ -52,21 +58,65 @@ export interface PlanCurrentPricesWithStripe extends PlanCurrentPrices {
 }
 
 /**
+ * Stripe の同期が要るか (route が Edge Function stripe-price-sync を呼んで Price を作るか)。
+ * Stripe の鍵 (STRIPE_SECRET_KEY) があり、プランに Stripe の商品 (stripe_product_id) があるときだけ true。
+ * 鍵が無い・商品が無いときは mock (DB だけを書く)。route と GET /api/super-admin/plans/{id} の stripe_price_sync_expected が同じこの判定を使う。
+ * 鍵の値はここで受け取るだけで返さない (このファイルはブラウザからも読むので、process.env はサーバーの呼び出し側で読んで渡す)
+ */
+export function isStripePriceSyncExpected(stripeSecretKey: string | null | undefined, stripeProductId: string | null | undefined): boolean {
+  return Boolean(stripeSecretKey && stripeProductId);
+}
+
+/**
+ * 1 つの間隔がもう済んでいるか: 送った価格が今の価格と同じで、Stripe の同期が要らないか、その間隔の Stripe Price ID が入っている。
+ * 送っていない間隔 (null) は済んでいるとも済んでいないとも言わないので、呼び出し側で除く
+ */
+function intervalAlreadyApplied(sentPrice: number, currentPrice: number | null, stripePriceId: string | null, stripeSyncExpected: boolean): boolean {
+  if (sentPrice !== currentPrice) return false;
+  return !stripeSyncExpected || Boolean(stripePriceId);
+}
+
+/** 価格の変更で、まだ済んでいない間隔の価格 (済んでいる間隔・送っていない間隔は null) */
+export interface PendingPriceChange {
+  new_monthly_price_jpy: number | null;
+  new_yearly_price_jpy: number | null;
+}
+
+/**
+ * 送った価格のうち、まだ済んでいない間隔だけを残す (#2107 Y2・Y8)。
+ * 今と違う価格の間隔は残す。今と同じ価格の間隔は、Stripe の同期が要り、その間隔の Stripe Price ID がまだ無いときだけ残す
+ * (販売開始の Price の登録。docs/design/billing/03-paid-plans-and-iap.md §12 の順 3)。ほかは外す (null)。
+ * route はこの残りだけを Stripe と DB と監査に渡す。画面は入力した価格をこれに通して、送る間隔を決める
+ */
+export function pendingPriceChange(
+  plan: PlanCurrentPricesWithStripe,
+  sent: PriceChangeSentPrices,
+  stripeSyncExpected: boolean,
+): PendingPriceChange {
+  const monthly = sent.new_monthly_price_jpy ?? null;
+  const yearly = sent.new_yearly_price_jpy ?? null;
+  return {
+    new_monthly_price_jpy:
+      monthly !== null && !intervalAlreadyApplied(monthly, plan.monthly_price_jpy, plan.stripe_price_id, stripeSyncExpected) ? monthly : null,
+    new_yearly_price_jpy:
+      yearly !== null && !intervalAlreadyApplied(yearly, plan.yearly_price_jpy, plan.stripe_yearly_price_id, stripeSyncExpected) ? yearly : null,
+  };
+}
+
+/**
  * route の判定: 送られた価格の変更はもう済んでいるか (Stripe も DB も触らず 409 OP_PRICE_UNCHANGED にするか)。
- * 送った価格がすべて今の価格と同じで、かつ Stripe の同期が要らないか、送った間隔の Stripe Price ID がどれも入っているとき true。
- * Stripe の同期が要る環境で、送った間隔の Stripe Price ID がまだ無いときは false (販売開始の手順で Price を作って ID を入れる。
- * docs/design/billing/03-paid-plans-and-iap.md §12 の順 3)
+ * 送った間隔がどれもまだ済んでいない間隔として残らない (pendingPriceChange が両方 null) とき true。
+ * つまり送った価格がすべて今の価格と同じで、かつ Stripe の同期が要らないか、送った間隔の Stripe Price ID がどれも入っているとき。
+ * 何も送っていなければ false (変更が無いものを「済んだ」とは言わない)
  */
 export function priceChangeAlreadyApplied(
   plan: PlanCurrentPricesWithStripe,
   sent: PriceChangeSentPrices,
   stripeSyncExpected: boolean,
 ): boolean {
-  if (!sentPricesMatchPlan(plan, sent)) return false;
-  if (!stripeSyncExpected) return true;
-  const monthlyPriceMissing = sent.new_monthly_price_jpy != null && !plan.stripe_price_id;
-  const yearlyPriceMissing = sent.new_yearly_price_jpy != null && !plan.stripe_yearly_price_id;
-  return !monthlyPriceMissing && !yearlyPriceMissing;
+  if ((sent.new_monthly_price_jpy ?? null) === null && (sent.new_yearly_price_jpy ?? null) === null) return false;
+  const pending = pendingPriceChange(plan, sent, stripeSyncExpected);
+  return pending.new_monthly_price_jpy === null && pending.new_yearly_price_jpy === null;
 }
 
 /** 失敗の応答の本文 ({ error: { code } }) が 409 OP_PRICE_UNCHANGED のものか */

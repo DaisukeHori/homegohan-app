@@ -30,6 +30,8 @@ const ROW_ID = '20862086-2086-4086-8086-208620862086';
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: ROW_ID }),
+  // プラン詳細は URL の tab を初めのタブにする (#2107 Y3)
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock('next/link', () => ({

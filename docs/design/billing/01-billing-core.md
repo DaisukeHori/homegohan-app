@@ -4040,7 +4040,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 - 特定商取引法に基づく表記 (`/legal`) に販売の内容の項目 (「販売価格」「支払方法」「支払時期」「サービス提供時期」「解約について」ほか) を足し、`/faq`・トップ (`/`) の FAQ に有料プランの答えを足す PR (有料プランの販売 #1912) のマージ (文面は業務・法務の判断で、本冊の段の外。#1911 (#1916) がこれらの項目と「有料プランは準備中です（販売開始前）」を取り除いたので、いまは項目ごと無い。それを見張る `tests/public-claims-guard.test.ts` の describe `#1155 特定商取引法ページ (/legal)`・`#1155 FAQ (/faq とトップページの FAQ)` の it と、`tests/e2e/b10-unexplored-areas.spec.ts` の 4-1 (`/pricing` の 0 件のときの段落) と 4-3 (`/legal` の販売の項目が無い) も同じ PR で直す。§15.2・§18 の 14)。販売を始めたのに、特定商取引法に基づく表記に販売の項目が無いままにならないようにするため。
 
 手順:
-1. `pro`・`family_basic`・`family_pro` の Product を作り、`PATCH /api/super-admin/plans/[id]` で `stripe_product_id` を入れる → `POST /api/super-admin/plans/[id]/price-change` で月額・年額を同期する (既存の機構 F16。Edge Function の secrets にも `STRIPE_SECRET_KEY` が要る)。`subscription_plans.stripe_price_id` が入った時点で `/pricing` に出る (§10.1)。
+1. `pro`・`family_basic`・`family_pro` の Product を作り、`PATCH /api/super-admin/plans/[id]` で `stripe_product_id` を入れる → `POST /api/super-admin/plans/[id]/price-change` で月額・年額を同期する (既存の機構 F16。Edge Function の secrets にも `STRIPE_SECRET_KEY` が要る)。運営の画面では、プランの「価格変更」を開き、価格を今のまま (migration が入れた値) で進めて「Stripe の Price を作る」を押す (Price ID がまだ無い間隔だけを今と同じ価格で送る。#2107 Y2)。`subscription_plans.stripe_price_id` が入った時点で `/pricing` に出る (§10.1)。
 - あとで鍵を外した (ローテーションの失敗など) 間は、`/pricing` と確認画面は出たまま「申し込む」が 503 (`EXT_STRIPE_NOT_CONFIGURED`・「お支払いを受け付けていません」) になる。gateway の生成で止まるので、Stripe にも DB にも何も作られない (顧客も作らない)。鍵を戻せば解ける。
 
 ### 17.4 受け入れの確認 (整合ゲートで読み取り)
