@@ -80,7 +80,7 @@ const STALE_PLAN_RESPONSE = {
 
 /**
  * 価格の変更 (Stripe の Price の作成) が進行中なので、Stripe の商品の ID を書かなかった (409。#2112 Z1-1)。
- * DB のトリガー guard_plan_stripe_product_id_price_change が書く文の中で止めた (一緒に送った表示名・説明なども含めて何も書いていない。
+ * DB のトリガー trg_guard_plan_stripe_product_id_price_change (関数 guard_plan_stripe_product_id_price_change) が書く文の中で止めた (一緒に送った表示名・説明なども含めて何も書いていない。
  * 文もそう言う。#2120 W2-1)
  */
 const PRICE_CHANGE_IN_PROGRESS_RESPONSE = {
