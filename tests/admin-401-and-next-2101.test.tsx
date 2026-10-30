@@ -14,7 +14,8 @@
  *     送信は止めたまま。止めている理由の文はエラー欄と別に出し、担当者の設定・ステータスの変更のあとも消えない
  *   - X4 強制譲渡・強制解散の読み直しの 401 / 403 は理由の文を添え、「再試行」も「更新」も促さない (譲渡・解散は止めたまま)。
  *     候補の初めの読み込みの 401 / 403 も「再試行」を出さない。A/B テストの一覧・詳細・AI の利用上限の初めの読み込みの 401 / 403 は
- *     読み直しと同じ理由の文にし、「再試行」を出さない
+ *     読み直しと同じ理由の文にし、「再試行」を出さない。メール送信の一覧の再送の通信が切れたあとの読み直しの 401 / 403 (同じ型) も
+ *     理由の文を出し、「再試行」を出さない
  *   - X5 401 では /login?next=<今の画面のパス> へ移す。運営の画面に '/login' の直書きを増やさない (見張り)
  *   - X8 200 で data が配列でなければ読み込みの失敗の文を出し、「0 件」「〜がありません」と見せない
  *
@@ -91,6 +92,7 @@ const { default: InactiveOrgsPage } = await import('@/app/(operator)/operator/me
 const { default: ExperimentsPage } = await import('@/app/super-admin/experiments/page');
 const { default: ExperimentDetailPage } = await import('@/app/super-admin/experiments/[id]/page');
 const { default: LLMQuotasPage } = await import('@/app/super-admin/llm/quotas/page');
+const { default: EmailOutboxPage } = await import('@/app/super-admin/email-outbox/page');
 const { default: CouponsPage } = await import('@/app/super-admin/coupons/page');
 const { default: FeaturePackagesPage } = await import('@/app/super-admin/feature-packages/page');
 const { default: PlansPage } = await import('@/app/super-admin/plans/page');
@@ -517,6 +519,66 @@ describe.each([
     expect(text()).not.toContain('「更新」で一覧を読み込み直して');
     expect(container.querySelector('tbody')).toBeNull();
     expect(countCalls(`POST ${c.dissolveUrl}`)).toBe(1);
+  });
+});
+
+describe('X4 (同じ型) メール送信の一覧: 再送の通信が切れたあとの一覧の読み直しが 401 / 403 なら、理由の文を出し「再試行」を出さない', () => {
+  const LIST_URL = '/api/super-admin/email-outbox';
+  const ROW_ID = '21012101-8888-4888-8888-888888888888';
+  const REQUEUE_URL = `${LIST_URL}/${ROW_ID}/requeue`;
+  const TEMPLATE = 'family_invite';
+  const CREATED_AT = '2026-10-30T05:00:01.000000+00:00';
+  const deadRow = {
+    id: ROW_ID,
+    created_at: CREATED_AT,
+    updated_at: CREATED_AT,
+    status: 'dead',
+    template: TEMPLATE,
+    recipient: 't***@example.com',
+    redacted: false,
+    user_id: null,
+    attempts: 1,
+    requeue_count: 0,
+    next_attempt_at: CREATED_AT,
+    lease_expires_at: null,
+    last_error_code: 'validation_error',
+    last_error_message: 'The domain is not verified',
+    last_status_code: 403,
+    sent_at: null,
+    dead_at: CREATED_AT,
+    requeued_at: null,
+  };
+  const listBody = { data: [deadRow], meta: { limit: 50, has_more: false, next_cursor: null } };
+  const noticeParagraph = () => container.querySelector('[data-testid="email-outbox-reload-notice"] p');
+  const requeueButton = () =>
+    Array.from(container.querySelectorAll<HTMLButtonElement>('tbody tr button')).find((b) => b.textContent?.trim() === '再送');
+
+  it.each([
+    { status: '401', reread: unauthenticated, reason: RELOGIN_MESSAGE },
+    { status: '403', reread: mfaForbidden, reason: API_MFA_REQUIRED_MESSAGE },
+  ])('読み直しが $status なら「…の再送の応答を受け取れませんでした（通信エラー）。<理由の文>」を出し、「再試行」を出さない', async ({ reread, reason }) => {
+    route('GET', LIST_URL, sequence(() => jsonResponse(HTTP_OK, listBody), reread));
+    route('POST', REQUEUE_URL, networkFailure);
+    await renderElement(createElement(EmailOutboxPage));
+
+    await click(requeueButton(), '「再送」ボタン');
+
+    expect(countCalls(`POST ${REQUEUE_URL}`)).toBe(1);
+    expect(countCalls(`GET ${LIST_URL}`)).toBe(2);
+    expect(noticeParagraph()?.textContent).toBe(`「${TEMPLATE}」の再送の応答を受け取れませんでした（通信エラー）。${reason}`);
+    expect(noticeParagraph()?.getAttribute('role')).toBe('alert');
+    expect(findButton(RETRY_LABEL)).toBeUndefined();
+  });
+
+  it('読み直しが 500 なら、これまでどおり「再試行」を出す', async () => {
+    route('GET', LIST_URL, sequence(() => jsonResponse(HTTP_OK, listBody), () => jsonResponse(500, { error: { message: '内部エラー' } })));
+    route('POST', REQUEUE_URL, networkFailure);
+    await renderElement(createElement(EmailOutboxPage));
+
+    await click(requeueButton(), '「再送」ボタン');
+
+    expect(noticeParagraph()?.textContent).toContain('「再試行」で読み込み直してから');
+    expect(findButton(RETRY_LABEL)).toBeDefined();
   });
 });
 
