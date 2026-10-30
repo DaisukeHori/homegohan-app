@@ -639,3 +639,81 @@ describe('GET /api/super-admin/plans/[id]/price-impact (#1102: 新規契約の�
     expect(res.status).toBe(400);
   });
 });
+
+// ─────────────────────────────────────────
+// PATCH /api/super-admin/plans/[id] の stripe_product_id (#2112 Z1-1)
+// ─────────────────────────────────────────
+
+describe('PATCH /api/super-admin/plans/[id] stripe_product_id (#2112 Z1-1: 販売開始の Product ID)', () => {
+  /** 公開中・販売開始の前 (Product ID も Price ID も無い) のプラン。この describe だけで使う */
+  let launchPlanId: string;
+  const productId = `prod_test_launch_${TS}`;
+
+  beforeAll(async () => {
+    const { data, error } = await supabaseAdmin
+      .from('subscription_plans')
+      .insert({
+        plan_key: `test_launch_plan_${TS}`,
+        display_name: `Launch Test Plan ${TS}`,
+        plan_type: 'personal',
+        status: 'public',
+        monthly_price_jpy: 580,
+        yearly_price_jpy: 5800,
+        version: 1,
+      })
+      .select('id')
+      .single();
+    if (error || !data) throw new Error(`Failed to create the launch plan: ${error?.message}`);
+    launchPlanId = data.id;
+  }, 30000);
+
+  afterAll(async () => {
+    if (!launchPlanId) return;
+    await supabaseAdmin.from('subscription_plans').update({ status: 'draft' }).eq('id', launchPlanId);
+    await supabaseAdmin.from('subscription_plans').delete().eq('id', launchPlanId);
+  }, 30000);
+
+  const readPlan = async () => {
+    const { data, error } = await supabaseAdmin
+      .from('subscription_plans')
+      .select('status, stripe_product_id, stripe_price_id, stripe_yearly_price_id')
+      .eq('id', launchPlanId)
+      .single();
+    if (error || !data) throw new Error(`Failed to read the launch plan: ${error?.message}`);
+    return data;
+  };
+
+  it('公開中で Stripe の Price がまだ無ければ 200 で入り (前後の空白は外す)、状態は公開中のまま', async () => {
+    const res = await apiCall('PATCH', `/api/super-admin/plans/${launchPlanId}`, superAdminUser.jwt, {
+      stripe_product_id: ` ${productId} `,
+    });
+    expect(res.status).toBe(200);
+    expect(await readPlan()).toEqual({ status: 'public', stripe_product_id: productId, stripe_price_id: null, stripe_yearly_price_id: null });
+    // GET の stripe_price_sync_expected は鍵の有無で決まる (ここでは鍵の無い環境なので false)
+    const detail = await apiCall('GET', `/api/super-admin/plans/${launchPlanId}`, superAdminUser.jwt);
+    expect((detail.body as { data: { stripe_product_id: string } }).data.stripe_product_id).toBe(productId);
+  });
+
+  it('月額の Stripe Price ID が入ったあとは 422 OP_PLAN_STATUS_LOCKED で、行は変わらない', async () => {
+    const { error } = await supabaseAdmin
+      .from('subscription_plans')
+      .update({ stripe_price_id: `price_test_launch_${TS}` })
+      .eq('id', launchPlanId);
+    if (error) throw new Error(`Failed to set the price id: ${error.message}`);
+
+    const res = await apiCall('PATCH', `/api/super-admin/plans/${launchPlanId}`, superAdminUser.jwt, {
+      stripe_product_id: 'prod_other',
+    });
+    expect(res.status).toBe(422);
+    expect((res.body as { error: { code: string } }).error.code).toBe('OP_PLAN_STATUS_LOCKED');
+    expect((await readPlan()).stripe_product_id).toBe(productId);
+  });
+
+  it('空の文字列は 400 OP_INVALID_INPUT', async () => {
+    const res = await apiCall('PATCH', `/api/super-admin/plans/${launchPlanId}`, superAdminUser.jwt, {
+      stripe_product_id: '',
+    });
+    expect(res.status).toBe(400);
+    expect((res.body as { error: { code: string } }).error.code).toBe('OP_INVALID_INPUT');
+  });
+});
