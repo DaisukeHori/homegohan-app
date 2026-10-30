@@ -38,6 +38,17 @@ export function isReplyDelivered(
   return messages.some((message) => !knownIds.has(message.id) && message.is_internal === sent.isInternal && message.body === body);
 }
 
+/**
+ * 返信が済んだ (応答で・読み直しで) ときに、入力欄が送った本文のままか。送った本文のままなら入力欄を空にし、
+ * 送信の応答を待つあいだに書き足した文は消さない (#2107 Y7)。
+ * route は前後の空白を除いた本文を保存するので、前後の空白・改行だけの違いは書き足しと見なさない。
+ * 送れた (201) 経路と読み直しの経路の両方がこの関数で比べる (経路によって比べ方がずれると、
+ * 空白だけを書き足したときに送った本文が入力欄に残り、押し直すと顧客に同じ返信のメールが 2 通届きうる。#2120 W4)
+ */
+export function isReplyInputAsSent(current: string, sentBody: string): boolean {
+  return current.trim() === sentBody.trim();
+}
+
 /** 読み直したら届いていたときに続ける文 */
 export const REPLY_DELIVERED_GUIDE = '読み込み直したところ、送った内容は保存されていました';
 
