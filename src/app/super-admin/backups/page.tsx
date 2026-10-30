@@ -105,11 +105,15 @@ interface DrTestFormState {
 }
 
 /**
- * 入力が、送ったときの入力のままか (すべての項目が同じ)。記録の応答を受け取れなかったあとの読み直しで済んでいたと分かったとき、
- * 送ったときの入力のままなら初めに戻し、送信を止めているあいだに書き換えていれば残す (#2107 Y7。営業のリードの活動と同じ)
+ * 入力が、送ったときの入力のままか (いまの入力から作る本文 (toRequestBody) が、送った本文と項目ごとに同じ)。記録の応答を受け取れなかったあとの
+ * 読み直しで済んでいたと分かったとき・記録の応答が届いたとき、送ったときの入力のままなら初めに戻し、送信を止めているあいだに書き換えていれば残す (#2107 Y7)。
+ * 送る本文では R2 のキー・復元した時点・復旧にかかった分の前後の空白を除くので、その前後の空白だけの違いは、押し直すと同じ記録がもう 1 行できる入力であり、
+ * 書き換えと見なさない。メモは入力のまま送って保存するので、前後の空白の違いも書き換えとして残す (保存される値で比べる。問い合わせの返信・お知らせと同じ規則。#2128 V2)
  */
 function isSameDrTestForm(current: DrTestFormState, sent: DrTestFormState): boolean {
-  return DR_TEST_FIELDS.every((field) => current[field] === sent[field]);
+  const currentBody = toRequestBody(current);
+  const sentBody = toRequestBody(sent);
+  return DR_TEST_FIELDS.every((field) => currentBody[field] === sentBody[field]);
 }
 
 function initialFormState(): DrTestFormState {

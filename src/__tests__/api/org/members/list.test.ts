@@ -158,13 +158,13 @@ describe('GET /api/org/members: 管理者には同じ組織のメンバーの名
 
   it('service_role の読みが 4 つ以外の列を返しても、応答には 4 つだけを出す', async () => {
     callAs(ADMIN_ID);
+    const leakyResult = { data: ALL_PROFILES.filter((row) => row.organization_id === ORG_A), error: null };
+    // order は重ねて呼ばれる (#2128 V3) ので、order も自分を返し、await で結果を返す
     const leaky = {
       select: () => leaky,
       eq: () => leaky,
-      order: async () => ({
-        data: ALL_PROFILES.filter((row) => row.organization_id === ORG_A),
-        error: null,
-      }),
+      order: () => leaky,
+      then: (onFulfilled: (value: typeof leakyResult) => unknown) => Promise.resolve(leakyResult).then(onFulfilled),
     };
     mocks.adminClient.mockReturnValue({ from: () => leaky });
     const { status, body } = await callGet();
@@ -182,6 +182,86 @@ describe('GET /api/org/members: 管理者には同じ組織のメンバーの名
     await callGet();
 
     expect(mocks.order).toEqual(['user:user_profiles', 'admin']);
+  });
+});
+
+describe('GET /api/org/members: 同じ日に参加した人の並びは決まっている (#2128 V3)', () => {
+  // 同じ日 (SAME_DAY) に参加した 5 人と、それより前の 1 人・参加した日が空の 2 人 (承認待ちなど) を置く。
+  // id の順は、役割の順とも表の行の順とも違うようにしてある (役割の順に並ぶのは id の順だからではない、と分かるように)
+  const SAME_DAY = '2026-10-20';
+  const EARLIER_DAY = '2026-10-19';
+  const SAME_DAY_OWNER_ID = '90000000-0000-4000-8000-000000000009';
+  const SAME_DAY_ADMIN_ID = '80000000-0000-4000-8000-000000000008';
+  const SAME_DAY_MEMBER_LOW_ID = '70000000-0000-4000-8000-000000000007';
+  const SAME_DAY_MEMBER_HIGH_ID = 'a1000000-0000-4000-8000-0000000000a1';
+  const SAME_DAY_ADMIN_LOW_ID = '11000000-0000-4000-8000-000000000011';
+  const EARLIER_MEMBER_ID = 'f0000000-0000-4000-8000-0000000000f0';
+  const PENDING_HIGH_ID = 'e0000000-0000-4000-8000-0000000000e0';
+  const PENDING_LOW_ID = '12000000-0000-4000-8000-000000000012';
+  const ORG_C = 'c0000000-0000-4000-8000-00000000000c';
+
+  const SAME_DAY_PROFILES: Row[] = [
+    profileRow(SAME_DAY_MEMBER_HIGH_ID, 'メンバー (id が大きい)', ORG_C, 'member', SAME_DAY),
+    profileRow(PENDING_HIGH_ID, '承認待ち (id が大きい)', ORG_C, 'member', null),
+    profileRow(SAME_DAY_ADMIN_ID, '管理者', ORG_C, 'admin', SAME_DAY),
+    profileRow(SAME_DAY_MEMBER_LOW_ID, 'メンバー (id が小さい)', ORG_C, 'member', SAME_DAY),
+    profileRow(EARLIER_MEMBER_ID, '前の日のメンバー', ORG_C, 'member', EARLIER_DAY),
+    profileRow(SAME_DAY_OWNER_ID, 'オーナー', ORG_C, 'owner', SAME_DAY),
+    profileRow(PENDING_LOW_ID, '承認待ち (id が小さい)', ORG_C, 'member', null),
+    profileRow(SAME_DAY_ADMIN_LOW_ID, '管理者 (id が小さい)', ORG_C, 'admin', SAME_DAY),
+  ];
+
+  /** 前の日の人 → 同じ日のオーナー → 管理者 (id の順) → メンバー (id の順) → 参加した日が空の人 (id の順) */
+  const EXPECTED_IDS = [
+    EARLIER_MEMBER_ID,
+    SAME_DAY_OWNER_ID,
+    SAME_DAY_ADMIN_LOW_ID,
+    SAME_DAY_ADMIN_ID,
+    SAME_DAY_MEMBER_LOW_ID,
+    SAME_DAY_MEMBER_HIGH_ID,
+    PENDING_LOW_ID,
+    PENDING_HIGH_ID,
+  ];
+
+  function useSameDayOrg(profiles: Row[]) {
+    admin = createFakeServiceRole({ tables: { user_profiles: profiles }, users: [] });
+    mocks.adminClient.mockReturnValue(admin.client);
+    mocks.getUser.mockResolvedValue({ data: { user: { id: SAME_DAY_ADMIN_ID } }, error: null });
+    user = createFakeServiceRole({
+      tables: { user_profiles: profiles.filter((row) => row.id === SAME_DAY_ADMIN_ID) },
+      users: [],
+    });
+    mocks.userFrom.mockImplementation(user.from);
+  }
+
+  it('同じ日に参加した人は、オーナー → 管理者 → メンバーの順で、その中は id の順。参加した日が空の人は最後', async () => {
+    useSameDayOrg(SAME_DAY_PROFILES);
+    const { status, body } = await callGet();
+
+    expect(status).toBe(200);
+    expect(membersOf(body).map((m) => m.id)).toEqual(EXPECTED_IDS);
+    expect(membersOf(body).map((m) => m.org_role)).toEqual(['member', 'owner', 'admin', 'admin', 'member', 'member', 'member', 'member']);
+  });
+
+  it('DB の行の順が変わっても、返る順は同じ (読み込みのたびに入れ替わらない)', async () => {
+    useSameDayOrg([...SAME_DAY_PROFILES].reverse());
+    const reversed = await callGet();
+    useSameDayOrg([...SAME_DAY_PROFILES.slice(3), ...SAME_DAY_PROFILES.slice(0, 3)]);
+    const rotated = await callGet();
+
+    expect(membersOf(reversed.body).map((m) => m.id)).toEqual(EXPECTED_IDS);
+    expect(membersOf(rotated.body).map((m) => m.id)).toEqual(EXPECTED_IDS);
+  });
+
+  it('並びは DB に任せる: 参加した日の昇順 (空は最後)・役割の昇順 (enum の宣言の順)・id の昇順の 3 つの order を、この順に送る', async () => {
+    useSameDayOrg(SAME_DAY_PROFILES);
+    await callGet();
+
+    expect(admin.orders).toEqual([
+      { table: 'user_profiles', column: 'joined_org_at', ascending: true, nullsFirst: false },
+      { table: 'user_profiles', column: 'org_role', ascending: true, nullsFirst: false },
+      { table: 'user_profiles', column: 'id', ascending: true, nullsFirst: false },
+    ]);
   });
 });
 
