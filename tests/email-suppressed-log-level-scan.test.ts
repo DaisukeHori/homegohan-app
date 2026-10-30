@@ -17,7 +17,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { applyHeavyUnitTestTimeout, resolveHeavyUnitTimeouts } from './helpers/heavy-unit-test-timeout';
+import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
+import { resolveHeavyUnitTimeouts } from './helpers/heavy-unit-test-timeout';
 import { testsWithUnexpectedTimeout } from './helpers/local-ci-slot-test-timeout';
 
 // 1 件のテストの中で src と lib の .ts / .tsx を全部読む (TypeScript の構文木によるリポジトリの走査) ので、負荷の高い機械で
