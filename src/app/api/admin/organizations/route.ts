@@ -68,7 +68,10 @@ export async function GET(request: Request) {
   }
 
   const { q, plan, page, per_page } = parseResult.data;
-  const supabase = await createClient();
+  // requireRole を通った運営だけが来る。organizations の SELECT のポリシーは所属している人の行 (organizations_select_member) だけで、
+  // 運営の client では自分の組織しか読めない (一覧が欠け、作成の応答を受け取れなかったあとの確かめも作った組織を読めなかった。#2112 Z2)。
+  // 利用者の一覧 (src/app/api/admin/users/route.ts。#1028) と同じく、一覧と件数は service_role で読む
+  const supabase = getSupabaseAdmin();
 
   try {
     // 一覧と、範囲外のページのときの件数の取り直し (countOrganizations) は、同じ絞り込み (selectOrganizations) を使う。
@@ -252,13 +255,14 @@ interface OrgListFilters {
 }
 
 type OrgSearchInput = z.infer<typeof OrgSearchSchema>;
-type SessionClient = Awaited<ReturnType<typeof createClient>>;
+/** 一覧を読む client (service_role。GET の本体の説明) */
+type ListClient = ReturnType<typeof getSupabaseAdmin>;
 
 /**
  * organizations を一覧の列で読み、絞り込み (組織名の部分一致・プラン) を付ける。件数は exact で数える。
  * head: true のときは行を返さず件数だけを数える (範囲外のページのときの件数の取り直し)
  */
-function selectOrganizations(supabase: SessionClient, filters: OrgListFilters, options: { head?: boolean } = {}) {
+function selectOrganizations(supabase: ListClient, filters: OrgListFilters, options: { head?: boolean } = {}) {
   let query = supabase
     .from('organizations')
     .select(ORG_LIST_COLUMNS, { count: 'exact', head: options.head === true });
@@ -278,7 +282,7 @@ function isBeyondLastPage(error: { code?: string | null }, status: number): bool
 }
 
 /** 同じ絞り込みの件数だけを数え直す。数えられなければ null (呼び出し側は 500 にする) */
-async function countOrganizations(supabase: SessionClient, filters: OrgListFilters): Promise<number | null> {
+async function countOrganizations(supabase: ListClient, filters: OrgListFilters): Promise<number | null> {
   try {
     const { count, error } = await selectOrganizations(supabase, filters, { head: true });
     if (error || count === null) {

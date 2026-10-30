@@ -10,6 +10,8 @@
  *  - 件数も数え直せなければ 500
  *  - それ以外の読み出しの失敗・想定外の例外は、200 の空の一覧にせず 500 (画面が「組織はまだありません」と見分けられるように)
  *  - 普通の読み出しは 200 で行と件数を返す (絞り込み・範囲・並び順はこれまでどおり)
+ *  - 一覧と件数は service_role で読む (organizations の SELECT のポリシーは所属している人の行だけで、運営の client では
+ *    自分の組織しか読めず、一覧が欠けていた。#2112 Z2。実 DB では tests/integration/security/org-create-atomic.test.ts の OC-10)
  *  - 行はオーナーの id (owner_id) も返す (画面が、作成の応答を受け取れなかったあとの確かめでオーナーも比べる。#2112 Z2)
  *  - 組織名の検索 (q) の % と _ (と \) は文字どおりに一致させる (「100%」で全部の組織に当てない。#2112 Z2)
  *
@@ -85,11 +87,13 @@ vi.mock('@/lib/auth/helpers', () => ({
   requireRole: vi.fn(async () => ({ id: '00000000-0000-4000-8000-000000000001' })),
 }));
 
+// 一覧は service_role で読む (organizations の SELECT のポリシーは所属している人の行だけで、運営の client では自分の組織しか読めない。#2112 Z2)。
+// 運営の client (createClient) で読むと、このテストは失敗する
 vi.mock('@/lib/supabase/server', () => ({
-  createClient: async () => fakeOrganizationsClient(),
-  getSupabaseAdmin: () => {
-    throw new Error('GET は service_role を使わない');
+  createClient: async () => {
+    throw new Error('GET は運営の client で organizations を読まない (所属している組織しか見えない)');
   },
+  getSupabaseAdmin: () => fakeOrganizationsClient(),
 }));
 
 const route = await import('@/app/api/admin/organizations/route');

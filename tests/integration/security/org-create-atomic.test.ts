@@ -12,7 +12,8 @@
  *   直列になり、後の方は先の方の commit を待ってから所属を読んで止まる。
  *
  * #2112 Z2 (同じ API の続き): auth.users に居ないオーナーの作成は、理由を言わない 500 ではなく 422 OWNER_NOT_FOUND (OC-9)。
- *   一覧 (GET) は行のオーナーの id を返し、組織名の検索の % と _ を文字どおりに一致させる (OC-10)。
+ *   一覧 (GET) は行のオーナーの id を返し、組織名の検索の % と _ を文字どおりに一致させる (OC-10)。一覧は service_role で読む
+ *   (organizations の SELECT のポリシーは所属している人の行だけで、運営の client では、運営が所属していない組織が一覧に出なかった)。
  *
  * 呼び出しは本物の経路 (PostgREST・Next の route)。先の作成をコミット前のまま開いておくのは、ローカルスタックの postgres-meta
  * (/pg/query、service_role キーが必要) を使う (tests/integration/helpers/lock-holder.ts)。
@@ -386,7 +387,7 @@ describe('運営の作成 API の居ないオーナーと、一覧の検索 (#21
     expect(await profileOf(missing)).toBeNull();
   }, TEST_TIMEOUT_MS);
 
-  it('OC-10: 一覧は行のオーナーの id を返し、組織名の検索の % と _ は文字どおりに一致する (「100%」で「100x」の組織に当てない)', async () => {
+  it('OC-10: 一覧は運営が所属していない組織も返し (行のオーナーの id つき)、組織名の検索の % と _ は文字どおりに一致する (「100%」で「100x」の組織に当てない)', async () => {
     const operatorUser = await createTestUserWithRoles({ email: testEmail('org-create-atomic-oc10-admin', TS), roles: ['user', 'admin'] });
     operatorUsers.push(operatorUser);
     const labels = ['oc10 100%', 'oc10 100x', 'oc10 a_b', 'oc10 axb'] as const;
