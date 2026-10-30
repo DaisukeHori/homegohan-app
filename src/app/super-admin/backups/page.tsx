@@ -96,6 +96,14 @@ interface DrTestFormState {
   notes: string;
 }
 
+/**
+ * 入力が、送ったときの入力のままか (すべての項目が同じ)。記録の応答を受け取れなかったあとの読み直しで済んでいたと分かったとき、
+ * 送ったときの入力のままなら初めに戻し、送信を止めているあいだに書き換えていれば残す (#2107 Y7。営業のリードの活動と同じ)
+ */
+function isSameDrTestForm(current: DrTestFormState, sent: DrTestFormState): boolean {
+  return DR_TEST_FIELDS.every((field) => current[field] === sent[field]);
+}
+
 function initialFormState(): DrTestFormState {
   return {
     kind: DR_TEST_KINDS[0],
@@ -167,6 +175,8 @@ const FIELD_LABELS: Readonly<Record<DrTestField, string>> = {
  */
 interface UnconfirmedDrTest {
   readonly body: Readonly<Record<DrTestField, unknown>>;
+  /** 送ったときの入力 (済んでいたと分かったとき、入力がこのままなら初めに戻す。#2107 Y7) */
+  readonly sentForm: Readonly<DrTestFormState>;
   readonly knownIds: ReadonlySet<string> | null;
   readonly summary: string;
   readonly message: string;
@@ -294,7 +304,7 @@ export default function SuperAdminBackupsPage() {
 
   /**
    * 記録の応答を受け取れなかったあと、状態を読み直して送った記録ができていたかを確かめる (#2101 X2)。
-   * できていれば済んだとして入力を初めに戻し、送信の止めを外す。
+   * できていれば済んだとして、入力が送ったときのままなら初めに戻し (書き換えていれば残す。#2107 Y7)、送信の止めを外す。
    * まだ無い (サーバーが書き込みの途中かもしれない)・読み直しにも失敗した・前からあった行か決められないときは、送信を止めたままにする
    * (押し直すと監査ログに 2 行入りうる。押し直すのは、記録の一覧で確かめてから画面を開き直したときだけ)
    */
@@ -320,7 +330,8 @@ export default function SuperAdminBackupsPage() {
     }
     markUnconfirmed(null);
     setErrors(EMPTY_ERRORS);
-    setForm(initialFormState());
+    // 済んでいた。入力が送ったときのままなら初めに戻す (送信を止めているあいだに書き換えた入力は消さない。#2107 Y7)
+    setForm((current) => (isSameDrTestForm(current, pending.sentForm) ? initialFormState() : current));
     setConfirmedNotice(adminCreateNoResponseMessage(pending.summary, adminCreateFoundGuide(DR_TEST_RECORD_SUBJECT)));
   };
 
@@ -331,7 +342,8 @@ export default function SuperAdminBackupsPage() {
     setSubmitting(true);
     setSubmitted(false);
     setConfirmedNotice(null);
-    const body = toRequestBody(form);
+    const sentForm = form;
+    const body = toRequestBody(sentForm);
     // 応答を受け取れなかったときに、読み直した記録と比べるための、送る前の記録の行 (読めていなければ null。#2101 X2)
     const knownIds: ReadonlySet<string> | null =
       load.status === 'loaded' ? new Set(load.data.dr_tests.map((row) => row.id)) : null;
@@ -349,7 +361,8 @@ export default function SuperAdminBackupsPage() {
       }
       if (res.status === HTTP_CREATED) {
         setErrors(EMPTY_ERRORS);
-        setForm(initialFormState());
+        // 入力が送ったときのままなら初めに戻す (記録の応答を待つあいだも入力欄は書き換えられるので、書き換えた入力は消さない。#2107 Y7)
+        setForm((current) => (isSameDrTestForm(current, sentForm) ? initialFormState() : current));
         setSubmitted(true);
         await reload();
         return;
@@ -376,7 +389,7 @@ export default function SuperAdminBackupsPage() {
       setErrors({ fields: {}, form: [SUBMIT_FAILED_TEXT] });
     } catch (e: unknown) {
       if (e instanceof AdminActionNoResponseError) {
-        await confirmUnconfirmedDrTest({ body, knownIds, summary: e.message });
+        await confirmUnconfirmedDrTest({ body, sentForm, knownIds, summary: e.message });
       } else {
         setErrors({ fields: {}, form: [SUBMIT_FAILED_TEXT] });
       }
