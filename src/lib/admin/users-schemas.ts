@@ -19,6 +19,30 @@ export const USER_LIST_DEFAULT_STATUS: UserListStatus = 'active';
 /** 運営のユーザーの一覧の「全ステータス」(URL の status が空。API には status を付けずに送る) */
 export const USER_LIST_ALL_STATUSES = '';
 
+/** 絞り込みの select の「全ステータス」(USER_LIST_ALL_STATUSES) の表示名 */
+export const USER_LIST_ALL_STATUSES_LABEL = '全ステータス';
+
+/**
+ * 運営のユーザーの一覧 (/admin/users) の絞り込みの select の、状態ごとの表示名 (#2107 Y10)。
+ * select の選択肢は「全ステータス」と USER_LIST_STATUSES から作る。Record なので、USER_LIST_STATUSES に値を足すと
+ * 表示名の漏れが型の誤りになる (選択肢が URL の status の読み方 parseUserListStatusParam とずれない)。
+ * 以前は選択肢を画面に手で書き (全ステータス・アクティブ・BAN 済み)、?status=deleted に合う選択肢が無いため
+ * select が一番上の「全ステータス」を示し、そのまま「検索」を押すと status が空 (全ステータス) で送られていた。
+ */
+export const USER_LIST_STATUS_LABELS: Record<UserListStatus, string> = {
+  active: 'アクティブ',
+  banned: 'BAN 済み',
+  deleted: '削除済み',
+};
+
+/**
+ * 削除済みの絞り込みの一覧が 0 件のときの文 (#2107 Y10)。
+ * 退会 (src/lib/account-deletion.ts の auth.admin.deleteUser) は auth.users の行を消し、user_profiles の行も外部キーの
+ * ON DELETE CASCADE (user_profiles_id_fkey) で消えるので、GET /api/admin/users の status=deleted は常に 0 件になる。
+ * 「ユーザーが見つかりません」だけでは、退会したユーザーがいないと読めるため、一覧に出ない理由を出す
+ */
+export const USER_LIST_DELETED_EMPTY_MESSAGE = '退会したユーザーは記録が消えるため、削除済みの一覧には出ません';
+
 /**
  * 画面 (/admin/users) の URL の status (searchParams.status) を、ユーザーの一覧の API に送る状態に読む (#2101 X7)。
  * 無ければ既定の active、空 (「全ステータス」) は空のまま (API には付けない)。USER_LIST_STATUSES に無い値

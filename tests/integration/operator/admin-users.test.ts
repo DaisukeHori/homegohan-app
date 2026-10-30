@@ -104,6 +104,25 @@ describe('GET /api/admin/users', () => {
     expect(items.every((u) => u.email === null)).toBe(true);
   });
 
+  // #2107 Y10: 退会で user_profiles の行は消える (auth.users への外部キーが ON DELETE CASCADE) ので、削除済みの絞り込みは常に 0 件。
+  // 以前は status=deleted に絞り込みが無く、生きているユーザー (ここでは対象のユーザー) を削除済みの一覧として返していた
+  it('status=deleted は、いるユーザーを返さず 0 件 (同じ検索の status=active では返る) (#2107 Y10)', async () => {
+    const q = encodeURIComponent(targetUser.email);
+    const active = await apiCall('GET', `/api/admin/users?q=${q}&status=active`, adminUser.jwt);
+    expect(active.status).toBe(200);
+    const activeItems = (active.body as { data: Array<{ id: string }> }).data;
+    expect(activeItems.map((u) => u.id)).toContain(targetUser.userId);
+
+    const deleted = await apiCall('GET', `/api/admin/users?q=${q}&status=deleted`, adminUser.jwt);
+    expect(deleted.status).toBe(200);
+    expect(deleted.body).toMatchObject({ data: [], meta: { total: 0 } });
+
+    // 検索語なし (全ユーザー) でも 0 件
+    const deletedAll = await apiCall('GET', '/api/admin/users?status=deleted', adminUser.jwt);
+    expect(deletedAll.status).toBe(200);
+    expect(deletedAll.body).toMatchObject({ data: [], meta: { total: 0 } });
+  });
+
   it('403 for general user', async () => {
     const res = await apiCall('GET', '/api/admin/users', generalUser.jwt);
     expect(res.status).toBe(403);
