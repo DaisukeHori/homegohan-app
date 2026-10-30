@@ -283,7 +283,7 @@ describe('保存が 409 CONFLICT_STALE_DATA で断られたとき (#1917)', () =
     expect(descriptionInput().value).toBe('別の運営の説明');
     expect(displayOrderInput().value).toBe('5');
     expect(notice()?.textContent).toContain('読み込み直したので');
-    expect(notice()?.textContent).toContain('入力中の表示名・説明・表示順はそのまま残しています');
+    expect(notice()?.textContent).toContain('入力中の表示名・説明・表示順・Stripe の Product ID はそのまま残しています');
     expect(text()).not.toContain('画面を読み込み直して');
     expect(text()).not.toContain('保存しました');
 
