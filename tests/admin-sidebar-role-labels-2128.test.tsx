@@ -185,19 +185,23 @@ function sourceFiles(dir: string): string[] {
 
 /**
  * ソースの中の、画面に出うる文字 (JSX の文字・文字列・テンプレート文字列) のうち、英字の super_admin / Super Admin を含むもの。
- * コメントは構文木に入らないので見ない。import の指定子と、ロールの値そのもの ('super_admin') は除く
+ * コメントは構文木に入らないので見ない。import の指定子と、ロールの値そのものの文字列 ('super_admin') は除く
  */
 function englishSuperAdminTexts(source: string, fileName: string): Array<{ line: number; text: string }> {
   const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const found: Array<{ line: number; text: string }> = [];
   const add = (node: ts.Node, text: string) => {
-    if (!ENGLISH_SUPER_ADMIN.test(text) || text.trim() === ROLE_VALUE) return;
+    if (!ENGLISH_SUPER_ADMIN.test(text)) return;
     found.push({ line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1, text: text.trim() });
   };
   const visit = (node: ts.Node) => {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) return;
+    // JSX の文字はそのまま画面に出るので、'super_admin' だけでも数える
     if (ts.isJsxText(node)) add(node, node.text);
-    else if (ts.isStringLiteralLike(node)) add(node, node.text);
+    // 文字列は、ロールの値そのもの ('super_admin'。ロールの判定・一覧) を除く
+    else if (ts.isStringLiteralLike(node)) {
+      if (node.text !== ROLE_VALUE) add(node, node.text);
+    }
     else if (ts.isTemplateExpression(node)) {
       add(node.head, node.head.text);
       for (const span of node.templateSpans) add(span.literal, span.literal.text);
