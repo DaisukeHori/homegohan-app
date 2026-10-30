@@ -130,7 +130,7 @@ describe('admin_create_organization の定義', () => {
 
   it('実行権限は service_role だけ (PUBLIC・anon・authenticated から外す)', () => {
     expect(code).toContain(`REVOKE ALL ON FUNCTION ${SIGNATURE} FROM PUBLIC, anon, authenticated, service_role;`);
-    const grants = [...code.matchAll(new RegExp(String.raw`GRANT EXECUTE ON FUNCTION ${SIGNATURE.replace(/[().]/g, '\\$&')} TO ([^;]+);`, 'g'))].map(
+    const grants = [...code.matchAll(new RegExp(String.raw`GRANT EXECUTE ON FUNCTION ${SIGNATURE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} TO ([^;]+);`, 'g'))].map(
       (m) => m[1],
     );
     expect(grants).toEqual(['service_role']);
