@@ -387,7 +387,8 @@ describe('DR 訓練の記録: 応答を受け取れなかったあとの読み�
 describe('DR 訓練の記録: 401 / 403 の理由を「DR 訓練を記録」の欄に出したら、読み込みの欄に前の失敗の文も同じ理由も残さない (#2112 Z4)', () => {
   // 読み込みの欄がすでに失敗の文 (LOAD_FAILED_TEXT の「時間をおいてもう一度開いてください」・401 / 403 の理由の文) を出しているときに、
   // 書き込みの側 (送信を止めた文・form の上の文) が 401 / 403 の理由を出すと、読み込みの欄の文は理由と食い違う案内か、同じ理由の 2 か所目になる。
-  // 読み込みの欄は LOAD_FAILED_REASON_IN_FORM_TEXT にし、理由の文は画面に 1 回だけ出す
+  // 理由を書き込みの側に出しているあいだ、読み込みの欄は LOAD_FAILED_REASON_IN_FORM_TEXT にし、理由の文は画面に 1 回だけ出す
+  // (理由を出さなくなれば、読み込みの欄は元の文に戻る)
   const REASONS = [
     ['401', unauthorized, UNAUTHENTICATED_SCREEN_MESSAGE],
     ['403 (二段階認証の確認が要る)', forbiddenByMfa, API_MFA_REQUIRED_MESSAGE],
@@ -495,6 +496,54 @@ describe('DR 訓練の記録: 401 / 403 の理由を「DR 訓練を記録」の�
     expect(postCount()).toBe(1);
     expect(drFormError()).toBe(SUBMIT_FAILED_TEXT);
     expect(loadAreaText()).toBe(LOAD_FAILED_TEXT);
+    expectNoLeak();
+  });
+
+  /** POST は posts を、GET は gets を順に返す (どちらも最後のものを繰り返す) */
+  function mockBackupsSequence(posts: readonly Responder[], gets: readonly Responder[]) {
+    let postIndex = 0;
+    let getIndex = 0;
+    fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (methodOf(init) === 'POST') {
+        expect(input).toBe(SUPER_ADMIN_DR_TESTS_API_PATH);
+        const responder = posts[Math.min(postIndex, posts.length - 1)]!;
+        postIndex += 1;
+        return responder();
+      }
+      expect(input).toBe(SUPER_ADMIN_BACKUPS_API_PATH);
+      const responder = gets[Math.min(getIndex, gets.length - 1)]!;
+      getIndex += 1;
+      return responder();
+    });
+    vi.stubGlobal('fetch', fetchMock);
+  }
+
+  it('送信が 401 のあと、送り直して応答を受け取れず読み直しも 401: 前の送信の form の上の文を残さず、理由の文は送信を止めた文の 1 か所だけ', async () => {
+    mockBackupsSequence([unauthorized, () => { throw networkFailure(); }], [backupsOk, unauthorized]);
+    await renderElement(createElement(SuperAdminBackupsPage));
+    await submitDrForm();
+    expect(drFormError()).toBe(UNAUTHENTICATED_SCREEN_MESSAGE);
+
+    await submitDrForm();
+    expect(postCount()).toBe(2);
+    expect(container.querySelector('[data-testid="dr-test-form-error"]')).toBeNull();
+    expect(drUnconfirmed()).toContain(UNAUTHENTICATED_SCREEN_MESSAGE);
+    expect(occurrencesOf(UNAUTHENTICATED_SCREEN_MESSAGE)).toBe(1);
+    expectNoLeak();
+    await expectDrSubmitStopped();
+  });
+
+  it('初めの読み込みが 500・送信が 401 のあと、送り直して 500 なら、読み込みの欄は元の「時間をおいて…」に戻る (理由を出していないのに「理由は…欄に」と出さない)', async () => {
+    mockBackupsSequence([unauthorized, internalError], [internalError]);
+    await renderElement(createElement(SuperAdminBackupsPage));
+    await submitDrForm();
+    expect(loadAreaText()).toBe(LOAD_FAILED_REASON_IN_FORM_TEXT);
+
+    await submitDrForm();
+    expect(postCount()).toBe(2);
+    expect(drFormError()).toBe(SUBMIT_FAILED_TEXT);
+    expect(loadAreaText()).toBe(LOAD_FAILED_TEXT);
+    expect(text()).not.toContain(UNAUTHENTICATED_SCREEN_MESSAGE);
     expectNoLeak();
   });
 
