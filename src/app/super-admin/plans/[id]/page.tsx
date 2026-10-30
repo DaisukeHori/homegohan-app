@@ -38,6 +38,7 @@
  * 読み直しで書きかけを残すのも、読み直したプランで入力できるときだけ。
  * #2112 Z1-2: 価格変更履歴のタブは、適用範囲を日本語の名前 (PRICE_APPLIES_TO_LABELS) で出し、旧年額・新年額の列と、月額の Stripe の Price ID が
  * 変わった行の印 (new_stripe_price_id があるとき) を出す。以前は適用範囲が英字の値 (new_only) のままで、年額だけの変更・Price の登録が見えなかった。
+ * 同じ型で、基本情報の種別も日本語の名前 (PLAN_TYPE_LABELS。一覧と同じ語) で出す (以前は personal などの英字の値)。
  */
 
 import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
@@ -48,7 +49,7 @@ import { screenApiErrorMessage, withHttpStatus } from '@/lib/admin/admin-screen-
 import { rereadUnavailableMessage } from '@/lib/super-admin/detail-reread';
 import { PLAN_DETAIL_TABS, PLAN_DETAIL_TAB_QUERY_KEY, planDetailTabOf, type PlanDetailTab } from '@/lib/super-admin/plan-detail-tab';
 import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE, countsOrganizationsFor } from '@/lib/super-admin/plan-subscribers';
-import { isStripeProductIdEditable, priceAppliesToLabel } from '@/lib/super-admin/plans-schemas';
+import { isStripeProductIdEditable, planTypeLabel, priceAppliesToLabel } from '@/lib/super-admin/plans-schemas';
 import {
   NO_RESPONSE_STATE_RELOADED_GUIDE,
   NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
@@ -850,7 +851,10 @@ function PlanDetailContent() {
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-500 mb-1">種別</label>
-              <span className="text-sm text-slate-700">{plan.plan_type}</span>
+              {/* 種別は日本語の名前 (一覧と同じ語。知らない値はそのまま。#2112 Z1 の同じ型) */}
+              <span data-testid="plan-type-label" className="text-sm text-slate-700">
+                {planTypeLabel(plan.plan_type)}
+              </span>
             </div>
           </div>
 

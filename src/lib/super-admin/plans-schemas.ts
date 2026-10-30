@@ -27,6 +27,21 @@ export const OFFICIAL_PLAN_KEYS = [
 ] as const;
 
 export const PLAN_TYPES = ['personal', 'family', 'org'] as const;
+
+/**
+ * プランの種別の画面の名前 (#2112 Z1 の同じ型: プラン詳細の基本情報が英字の値 (personal など) をそのまま出していた)。
+ * プランの一覧 (src/app/super-admin/plans/page.tsx の TYPE_LABELS) と同じ語。値を足すと、ここに名前を足さないと型の誤りになる
+ */
+export const PLAN_TYPE_LABELS: Readonly<Record<(typeof PLAN_TYPES)[number], string>> = {
+  personal: '個人',
+  family: '家族',
+  org: '組織',
+};
+
+/** 種別の値の画面の名前。表に無い値は、そのまま出す (知らない値を隠さない) */
+export function planTypeLabel(value: string): string {
+  return (PLAN_TYPE_LABELS as Readonly<Record<string, string>>)[value] ?? value;
+}
 export const PLAN_STATUSES = ['draft', 'public', 'private', 'deprecated'] as const;
 
 /**

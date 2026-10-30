@@ -74,6 +74,8 @@ const { default: PlanDetailPage } = await import('@/app/super-admin/plans/[id]/p
 const { default: PriceChangePage } = await import('@/app/super-admin/plans/[id]/price-change/page');
 const { GET, PATCH } = await import('@/app/api/super-admin/plans/[id]/route');
 const {
+  PLAN_TYPES,
+  PLAN_TYPE_LABELS,
   PRICE_APPLIES_TO,
   PRICE_APPLIES_TO_LABELS,
   PRICE_HISTORY_APPLIES_TO,
@@ -81,6 +83,7 @@ const {
   STRIPE_PRODUCT_ID_EMPTY_MESSAGE,
   STRIPE_PRODUCT_ID_LOCKED_MESSAGE,
   isStripeProductIdEditable,
+  planTypeLabel,
   priceAppliesToLabel,
 } = await import('@/lib/super-admin/plans-schemas');
 
@@ -570,6 +573,34 @@ describe('Z1-2: プラン詳細の価格変更履歴のタブ (#2112)', () => {
     const emptyCell = container.querySelector('tbody td');
     expect(emptyCell?.textContent).toBe('価格変更履歴がありません');
     expect(emptyCell?.getAttribute('colspan')).toBe(String(container.querySelectorAll('thead th').length));
+  });
+});
+
+describe('Z1 の同じ型: プラン詳細の基本情報の種別 (#2112)', () => {
+  it('種別は日本語の名前で出し、英字の値 (personal・family・org) は出さない', async () => {
+    for (const [planType, label] of [
+      ['personal', '個人'],
+      ['family', '家族'],
+      ['org', '組織'],
+    ] as const) {
+      fakeDb = createDb(planRow({ plan_type: planType, plan_key: planType === 'org' ? 'org_starter' : 'pro' }));
+      connectPageToRoute();
+      await renderDetail();
+      expect(container.querySelector('[data-testid="plan-type-label"]')?.textContent, planType).toBe(label);
+      await act(async () => {
+        root.unmount();
+      });
+      root = createRoot(container);
+    }
+  });
+
+  it('PLAN_TYPE_LABELS は PLAN_TYPES の全部の値を持ち、プランの一覧の TYPE_LABELS と同じ語', () => {
+    expect(Object.keys(PLAN_TYPE_LABELS).sort()).toEqual([...PLAN_TYPES].sort());
+    const listSource = fs.readFileSync(path.resolve(__dirname, '..', 'src/app/super-admin/plans/page.tsx'), 'utf-8');
+    for (const [value, label] of Object.entries(PLAN_TYPE_LABELS)) {
+      expect(listSource).toContain(`${value}: { label: '${label}'`);
+    }
+    expect(planTypeLabel('unknown_type')).toBe('unknown_type');
   });
 });
 
