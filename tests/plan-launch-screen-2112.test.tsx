@@ -11,7 +11,11 @@
  * 直したあと (不変条件):
  *   - プラン詳細の基本情報に Stripe の Product ID の入力欄があり、保存で PATCH に送り (前後の空白を外す・空欄は null)、DB に入る
  *   - 公開中・非公開のプランでも、月額・年額のどちらの Stripe の Price もまだ無いあいだは変えられる。Price を作ったあとは 422 で理由の文。
- *     読んでから書くまでに Price が作られたら書かない (409 CONFLICT_STALE_DATA)
+ *     読んでから書くまでに Price が作られたら (月額でも年額でも) 書かない (409 CONFLICT_STALE_DATA)。価格の変更が進行中 (予約を取って
+ *     Stripe の Price を作っている最中。Price ID はまだ NULL) なら、DB のトリガーが止めて 409 OP_PLAN_PRICE_CHANGE_IN_PROGRESS
+ *     (画面は「別の運営が先に変えた」とは出さず、その文を出して入力欄の値を残す)。下書きは Price ID があっても書く
+ *   - 409 のあとの読み直しで、Product ID の書きかけは読み直したプランでも入力できるときだけ残し (残したら「残しています」を添える)、
+ *     Price ができていたら読み直した値に戻して欄を止める
  *   - 価格の変更の画面は、Price ID がまだ無い間隔があるのに作れないとき、理由 (Product ID が未設定・鍵が無い) を出す
  * Z1-2 (以前): 価格変更履歴のタブは適用範囲を英字の値 (new_only) のまま出し、年額と Stripe の Price ID の列が無かった。
  * 直したあと: 適用範囲は日本語の名前 (PRICE_APPLIES_TO_LABELS。DB の CHECK の 3 値すべて)・旧年額 / 新年額の列・月額の Price ID が変わった印
@@ -82,6 +86,7 @@ const {
   PlanUpdateSchema,
   STRIPE_PRODUCT_ID_EMPTY_MESSAGE,
   STRIPE_PRODUCT_ID_LOCKED_MESSAGE,
+  STRIPE_PRODUCT_ID_PRICE_CHANGE_IN_PROGRESS_MESSAGE,
   isStripeProductIdEditable,
   planTypeLabel,
   priceAppliesToLabel,
@@ -92,6 +97,9 @@ const {
 /** 販売開始の前の Stripe の商品の ID */
 const PRODUCT_ID = 'prod_launch_pro';
 const MONTHLY_PRICE_ID = 'price_monthly_pro';
+const YEARLY_PRICE_ID = 'price_yearly_pro';
+/** 別の運営が入れた Stripe の商品の ID (読み直しで出る値) */
+const OTHER_PRODUCT_ID = 'prod_by_other_operator';
 const MONTHLY = 580;
 const YEARLY = 5800;
 const NEW_YEARLY = 6200;
@@ -102,6 +110,12 @@ const PRODUCT_MISSING_REASON =
   'このプランには Stripe の Product ID が入っていないので、Stripe の Price は作れません。プラン詳細の基本情報で Stripe の Product ID を入れて保存してから、今の価格のまま進めて「Stripe の Price を作る」を押してください。';
 const KEY_MISSING_REASON = 'この環境には Stripe の鍵が無いので、Stripe の Price は作れません。';
 const MONTHLY_PRICE_CHANGED_MARK = '月額の Price ID が変わった';
+/** 409 CONFLICT_STALE_DATA のあとに読み直した文と、書きかけを残したときに添える文 (page の STALE_PLAN_MESSAGE・EDITS_KEPT_SUFFIX) */
+const STALE_PLAN_MESSAGE =
+  '別の運営が先にこのプランを変えていました。最新の内容を読み込み直したので、状態を確かめてから、もう一度操作してください';
+const EDITS_KEPT_SUFFIX = '（入力中の表示名・説明・表示順・Stripe の Product ID はそのまま残しています）';
+/** 価格の変更が進行中なので商品の ID の書き込みを止めた DB のトリガーの失敗 (PostgREST の error。#2112 Z1-1) */
+const PRICE_CHANGE_IN_PROGRESS_DB_ERROR = { message: 'OP_PLAN_PRICE_CHANGE_IN_PROGRESS', code: 'P0001', details: null, hint: null };
 
 type Row = Record<string, unknown>;
 
@@ -152,7 +166,8 @@ function historyRow(overrides: Row = {}): Row {
 /**
  * subscription_plans の 1 行と plan_price_history を持つフェイクの DB。
  * eq / is / not ('is', null) の条件を本当に行に当て、条件が合わない更新は 0 行 (data: null) にする (route の条件つきの更新を確かめるため)。
- * beforeUpdate は、route が読んでから書くまでのあいだの割り込み (別の運営の変更) を 1 回だけ起こす
+ * beforeUpdate は、route が読んでから書くまでのあいだの割り込み (別の運営の変更) を 1 回だけ起こす。
+ * updateError は、更新の文が DB で失敗したとき (トリガーが止めた) の error を 1 回だけ返す (行は変えない)
  */
 function createDb(initialPlan: Row, history: Row[] = []) {
   const state = {
@@ -160,18 +175,24 @@ function createDb(initialPlan: Row, history: Row[] = []) {
     history,
     updates: [] as Row[],
     beforeUpdate: null as null | ((plan: Row) => Row),
+    updateError: null as null | Row,
   };
 
   function builder(table: string) {
     const filters: Array<(row: Row) => boolean> = [];
     let pendingUpdate: Row | null = null;
-    function run(): { data: unknown; error: null } {
+    function run(): { data: unknown; error: Row | null } {
       if (table === 'plan_price_history') return { data: state.history, error: null };
       if (table !== 'subscription_plans') throw new Error(`想定していないテーブル: ${table}`);
       if (pendingUpdate) {
         if (state.beforeUpdate) {
           state.plan = state.beforeUpdate(state.plan);
           state.beforeUpdate = null;
+        }
+        if (state.updateError) {
+          const error = state.updateError;
+          state.updateError = null;
+          return { data: null, error };
         }
         if (!filters.every((matches) => matches(state.plan))) return { data: null, error: null };
         state.updates.push(pendingUpdate);
@@ -259,6 +280,9 @@ async function renderDetail() {
 
 const productInput = () => container.querySelector<HTMLInputElement>('[data-testid="plan-stripe-product-id"]')!;
 const productHelp = () => container.querySelector('[data-testid="plan-stripe-product-id-help"]')?.textContent ?? '';
+const reloadNotice = () => container.querySelector('[data-testid="plan-reload-notice"] span')?.textContent ?? '';
+/** 表示名の入力欄 (基本情報のタブの最初の文字の欄。Product ID の欄より前にある) */
+const displayNameInput = () => container.querySelector<HTMLInputElement>('input[type="text"]:not([data-testid])')!;
 const text = () => container.textContent ?? '';
 const buttonWith = (label: string) => Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes(label));
 
@@ -355,6 +379,90 @@ describe('Z1-1: プラン詳細の基本情報で Stripe の Product ID を入�
     expect(productHelp()).not.toBe(PRODUCT_LOCKED_HELP);
   });
 
+  it('Product ID を打って保存し、別の運営の状態の変更で 409 になっても、読み直したプランで入力できるなら打った値を残し「残しています」を添える', async () => {
+    fakeDb = createDb(planRow());
+    connectPageToRoute();
+    await renderDetail();
+
+    await typeInto(productInput(), PRODUCT_ID);
+    // 読んでから書くまでに別の運営が非公開にした (Price はまだ無いので、読み直したプランでも入力できる)
+    fakeDb.state.beforeUpdate = (plan) => ({ ...plan, status: 'private' });
+    await click(buttonWith('保存する'), '「保存する」のボタン');
+    await vi.waitFor(() => expect(text()).toContain(STALE_PLAN_MESSAGE));
+
+    expect(fakeDb.state.updates).toEqual([]);
+    expect(fakeDb.state.plan).toMatchObject({ status: 'private', stripe_product_id: null });
+    expect(productInput().value).toBe(PRODUCT_ID);
+    expect(productInput().disabled).toBe(false);
+    expect(reloadNotice()).toBe(`${STALE_PLAN_MESSAGE}${EDITS_KEPT_SUFFIX}`);
+  });
+
+  it('Product ID を打って保存し、別の運営が Price を作って 409 になったら、読み直した値に戻して欄を止め、「残しています」は添えない', async () => {
+    for (const interrupt of [{ stripe_price_id: MONTHLY_PRICE_ID }, { stripe_yearly_price_id: YEARLY_PRICE_ID }]) {
+      const label = JSON.stringify(interrupt);
+      fakeDb = createDb(planRow());
+      connectPageToRoute();
+      await renderDetail();
+
+      await typeInto(productInput(), PRODUCT_ID);
+      fakeDb.state.beforeUpdate = (plan) => ({ ...plan, ...interrupt });
+      await click(buttonWith('保存する'), '「保存する」のボタン');
+      await vi.waitFor(() => expect(text(), label).toContain(STALE_PLAN_MESSAGE));
+
+      expect(fakeDb.state.updates, label).toEqual([]);
+      // 送る道の無い書きかけは残さない (読み直した値 = 未設定に戻す)
+      expect(productInput().value, label).toBe('');
+      expect(productInput().disabled, label).toBe(true);
+      expect(productHelp(), label).toBe(PRODUCT_LOCKED_HELP);
+      expect(reloadNotice(), label).toBe(STALE_PLAN_MESSAGE);
+
+      await act(async () => {
+        root.unmount();
+      });
+      root = createRoot(container);
+    }
+  });
+
+  it('Product ID を書きかけていなければ、409 のあとの読み直しで別の運営が入れた Product ID を出す (表示名の書きかけは残す)', async () => {
+    fakeDb = createDb(planRow());
+    connectPageToRoute();
+    await renderDetail();
+
+    await typeInto(displayNameInput(), 'Pro プラン');
+    // 読んでから書くまでに別の運営が非公開にし、Product ID も入れた
+    fakeDb.state.beforeUpdate = (plan) => ({ ...plan, status: 'private', stripe_product_id: OTHER_PRODUCT_ID });
+    await click(buttonWith('保存する'), '「保存する」のボタン');
+    await vi.waitFor(() => expect(text()).toContain(STALE_PLAN_MESSAGE));
+
+    expect(productInput().value).toBe(OTHER_PRODUCT_ID);
+    expect(productInput().disabled).toBe(false);
+    expect(displayNameInput().value).toBe('Pro プラン');
+    expect(reloadNotice()).toBe(`${STALE_PLAN_MESSAGE}${EDITS_KEPT_SUFFIX}`);
+    // もう一度保存すると、送るのは表示名だけ (読み直した Product ID は書きかけではない)
+    patchBodies.length = 0;
+    await click(buttonWith('保存する'), '「保存する」のボタン');
+    await vi.waitFor(() => expect(text()).toContain('保存しました'));
+    expect(patchBodies).toEqual([{ display_name: 'Pro プラン' }]);
+    expect(fakeDb.state.plan.stripe_product_id).toBe(OTHER_PRODUCT_ID);
+  });
+
+  it('価格の変更が進行中で 409 OP_PLAN_PRICE_CHANGE_IN_PROGRESS なら、その文を出し (「別の運営が先に」とは出さない)、打った値を残す', async () => {
+    fakeDb = createDb(planRow());
+    connectPageToRoute();
+    await renderDetail();
+
+    await typeInto(productInput(), PRODUCT_ID);
+    fakeDb.state.updateError = PRICE_CHANGE_IN_PROGRESS_DB_ERROR;
+    await click(buttonWith('保存する'), '「保存する」のボタン');
+    await vi.waitFor(() => expect(text()).toContain(STRIPE_PRODUCT_ID_PRICE_CHANGE_IN_PROGRESS_MESSAGE));
+
+    expect(text()).not.toContain(STALE_PLAN_MESSAGE);
+    expect(text()).not.toContain('保存しました');
+    expect(fakeDb.state.plan.stripe_product_id).toBeNull();
+    expect(productInput().value).toBe(PRODUCT_ID);
+    expect(productInput().disabled).toBe(false);
+  });
+
   it('廃止したプランは入力できない (ほかの欄と同じ)', async () => {
     fakeDb = createDb(planRow({ status: 'deprecated', ends_at: '2026-12-31T00:00:00.000Z' }));
     connectPageToRoute();
@@ -399,16 +507,55 @@ describe('Z1-1: PATCH /api/super-admin/plans/{id} の stripe_product_id (#2112)'
     expect(json.error.message).toContain('試用の日数 (trial_days)');
   });
 
-  it('読んでから書くまでに別の運営が価格の変更で Price を作っていたら、書かずに 409 CONFLICT_STALE_DATA', async () => {
+  it('読んでから書くまでに別の運営が価格の変更で Price (月額でも年額だけでも) を作っていたら、書かずに 409 CONFLICT_STALE_DATA', async () => {
+    for (const interrupt of [{ stripe_price_id: MONTHLY_PRICE_ID }, { stripe_yearly_price_id: YEARLY_PRICE_ID }]) {
+      const label = JSON.stringify(interrupt);
+      vi.clearAllMocks();
+      fakeDb = createDb(planRow());
+      fakeDb.state.beforeUpdate = (plan) => ({ ...plan, ...interrupt });
+      const res = await PATCH(patchRequest({ stripe_product_id: PRODUCT_ID }), routeContext());
+      expect(res.status, label).toBe(409);
+      const json = (await res.json()) as { error: { code: string } };
+      expect(json.error.code, label).toBe('CONFLICT_STALE_DATA');
+      expect(fakeDb.state.updates, label).toEqual([]);
+      expect(fakeDb.state.plan.stripe_product_id, label).toBeNull();
+      expect(mockRecordAdminAudit, label).not.toHaveBeenCalled();
+    }
+  });
+
+  it('価格の変更が進行中 (予約あり・Price ID はまだ NULL) で DB のトリガーが止めたら、409 OP_PLAN_PRICE_CHANGE_IN_PROGRESS で書かない', async () => {
     fakeDb = createDb(planRow());
-    fakeDb.state.beforeUpdate = (plan) => ({ ...plan, stripe_price_id: MONTHLY_PRICE_ID });
+    fakeDb.state.updateError = PRICE_CHANGE_IN_PROGRESS_DB_ERROR;
     const res = await PATCH(patchRequest({ stripe_product_id: PRODUCT_ID }), routeContext());
     expect(res.status).toBe(409);
-    const json = (await res.json()) as { error: { code: string } };
-    expect(json.error.code).toBe('CONFLICT_STALE_DATA');
+    const json = (await res.json()) as { error: { code: string; message: string } };
+    expect(json.error).toEqual({ code: 'OP_PLAN_PRICE_CHANGE_IN_PROGRESS', message: STRIPE_PRODUCT_ID_PRICE_CHANGE_IN_PROGRESS_MESSAGE });
     expect(fakeDb.state.updates).toEqual([]);
     expect(fakeDb.state.plan.stripe_product_id).toBeNull();
     expect(mockRecordAdminAudit).not.toHaveBeenCalled();
+  });
+
+  it('ほかの DB の失敗は、これまでどおり 500 (進行中の 409 にしない)', async () => {
+    fakeDb = createDb(planRow());
+    fakeDb.state.updateError = { message: 'connection reset', code: '08006', details: null, hint: null };
+    const res = await PATCH(patchRequest({ stripe_product_id: PRODUCT_ID }), routeContext());
+    expect(res.status).toBe(500);
+    expect(fakeDb.state.plan.stripe_product_id).toBeNull();
+  });
+
+  it('下書きは、月額・年額の Price ID があっても 200 で書く (Price ID の条件を付けない。下書きは全部の項目を変えられる)', async () => {
+    fakeDb = createDb(planRow({ status: 'draft', stripe_price_id: MONTHLY_PRICE_ID, stripe_yearly_price_id: YEARLY_PRICE_ID }));
+    const res = await PATCH(patchRequest({ stripe_product_id: PRODUCT_ID }), routeContext());
+    expect(res.status).toBe(200);
+    expect(fakeDb.state.updates).toHaveLength(1);
+    expect(fakeDb.state.updates[0]).toMatchObject({ stripe_product_id: PRODUCT_ID });
+    expect(fakeDb.state.plan).toMatchObject({
+      status: 'draft',
+      stripe_product_id: PRODUCT_ID,
+      stripe_price_id: MONTHLY_PRICE_ID,
+      stripe_yearly_price_id: YEARLY_PRICE_ID,
+    });
+    expect(mockRecordAdminAudit).toHaveBeenCalledTimes(1);
   });
 
   it('空・空白だけの文字列は 400 OP_INVALID_INPUT で書かない (外すときは null)', async () => {

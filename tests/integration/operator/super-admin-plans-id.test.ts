@@ -18,6 +18,8 @@ import {
 } from '../helpers/users';
 import { supabaseAdmin } from '../helpers/supabase';
 import { apiCall, apiCallNoAuth } from '../helpers/api';
+import { PLAN_PRICE_CHANGE_RPC, PRICE_CHANGE_RESERVATION_STALE_SECONDS } from '@/lib/super-admin/plan-price-change-reservation';
+import { STRIPE_PRODUCT_ID_PRICE_CHANGE_IN_PROGRESS_MESSAGE } from '@/lib/super-admin/plans-schemas';
 
 const TS = Date.now();
 
@@ -692,6 +694,49 @@ describe('PATCH /api/super-admin/plans/[id] stripe_product_id (#2112 Z1-1: 販�
     // GET の stripe_price_sync_expected は鍵の有無で決まる (ここでは鍵の無い環境なので false)
     const detail = await apiCall('GET', `/api/super-admin/plans/${launchPlanId}`, superAdminUser.jwt);
     expect((detail.body as { data: { stripe_product_id: string } }).data.stripe_product_id).toBe(productId);
+  });
+
+  it('価格の変更が進行中 (予約あり・Price ID はまだ無い) のあいだは 409 OP_PLAN_PRICE_CHANGE_IN_PROGRESS で書かず、予約が消えれば書ける', async () => {
+    // 価格の変更の route と同じく、service_role で予約を取る (この後 Stripe の Price を作る段にいる)
+    const { data: reserved, error: beginError } = await supabaseAdmin.rpc(PLAN_PRICE_CHANGE_RPC.begin, {
+      p_plan_id: launchPlanId,
+      p_stale_after_seconds: PRICE_CHANGE_RESERVATION_STALE_SECONDS,
+    });
+    if (beginError) throw new Error(`Failed to reserve the price change: ${beginError.message}`);
+    const reservation = reserved as { result: string; token?: string };
+    expect(reservation.result).toBe('reserved');
+
+    const blocked = await apiCall('PATCH', `/api/super-admin/plans/${launchPlanId}`, superAdminUser.jwt, {
+      stripe_product_id: 'prod_other',
+    });
+    expect(blocked.status).toBe(409);
+    expect((blocked.body as { error: { code: string; message: string } }).error).toEqual({
+      code: 'OP_PLAN_PRICE_CHANGE_IN_PROGRESS',
+      message: STRIPE_PRODUCT_ID_PRICE_CHANGE_IN_PROGRESS_MESSAGE,
+    });
+    expect(await readPlan()).toMatchObject({ stripe_product_id: productId, stripe_price_id: null, stripe_yearly_price_id: null });
+
+    // 商品の ID を変えない編集 (表示名) は止めない
+    const rename = await apiCall('PATCH', `/api/super-admin/plans/${launchPlanId}`, superAdminUser.jwt, {
+      display_name: `Launch Test Plan ${TS} (renamed)`,
+    });
+    expect(rename.status).toBe(200);
+
+    const { error: releaseError } = await supabaseAdmin.rpc(PLAN_PRICE_CHANGE_RPC.release, {
+      p_plan_id: launchPlanId,
+      p_token: reservation.token,
+    });
+    if (releaseError) throw new Error(`Failed to release the price change: ${releaseError.message}`);
+    const changed = await apiCall('PATCH', `/api/super-admin/plans/${launchPlanId}`, superAdminUser.jwt, {
+      stripe_product_id: 'prod_other',
+    });
+    expect(changed.status).toBe(200);
+    expect((await readPlan()).stripe_product_id).toBe('prod_other');
+    // 後のテストのために戻す
+    const restored = await apiCall('PATCH', `/api/super-admin/plans/${launchPlanId}`, superAdminUser.jwt, {
+      stripe_product_id: productId,
+    });
+    expect(restored.status).toBe(200);
   });
 
   it('月額の Stripe Price ID が入ったあとは 422 OP_PLAN_STATUS_LOCKED で、行は変わらない', async () => {

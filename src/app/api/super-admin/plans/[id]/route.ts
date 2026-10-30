@@ -26,6 +26,12 @@
  * Price を作ったあとは 422 OP_PLAN_STATUS_LOCKED (STRIPE_PRODUCT_ID_LOCKED_MESSAGE)。読んでから書くまでに別の運営が価格の変更で
  * Price を作っていたら書かないよう、公開中・非公開で商品の ID を送ったときは、両方の Price ID が NULL のままであることも書く条件にする
  * (0 行なら、ほかの条件と同じく読み直して 200 か 409 CONFLICT_STALE_DATA)。
+ * 価格の変更がまだ Price ID を書いていない (予約を取って Stripe の Price を作っている最中) あいだは、Price ID の条件では防げない
+ * (進行中の価格の変更は読んだときの商品で Price を作り、あとで Price ID を書く)。そのあいだは DB のトリガー
+ * guard_plan_stripe_product_id_price_change (supabase/migrations/20261030160000_plan_stripe_product_id_price_change_guard.sql) が、
+ * 書く文の中で (プランの行のロックの後) 期限内の予約を見て止め、route は 409 OP_PLAN_PRICE_CHANGE_IN_PROGRESS
+ * (STRIPE_PRODUCT_ID_PRICE_CHANGE_IN_PROGRESS_MESSAGE) を返す。別の運営の変更ではないので CONFLICT_STALE_DATA にはしない
+ * (画面は「別の運営が先に変えた」と出して読み直さず、この文を出して入力欄の値を残す)。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -37,6 +43,7 @@ import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import {
   PlanUpdateSchema,
   STRIPE_PRODUCT_ID_LOCKED_MESSAGE,
+  STRIPE_PRODUCT_ID_PRICE_CHANGE_IN_PROGRESS_MESSAGE,
   isAllowedPlanStatusTransition,
   isStripeProductIdEditable,
   planStatusLockedFieldsMessage,
@@ -59,6 +66,7 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { invalidInputResponse, invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
 import { isUuid } from '@/lib/http-params';
 import { isStripePriceSyncExpected } from '@/lib/super-admin/price-change-unchanged';
+import { isPlanPriceChangeInProgressDbError } from '@/lib/super-admin/plan-price-change-reservation';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -68,6 +76,14 @@ const PLAN_NOT_FOUND_RESPONSE = { error: { code: 'OP_PLAN_NOT_FOUND', message: '
 /** 読んでから書くまでに別の運営がプランを変えていた (条件つきの更新が 0 行で、読み直した行に送った変更が入っていない) */
 const STALE_PLAN_RESPONSE = {
   error: { code: 'CONFLICT_STALE_DATA', message: '別の運営が先にこのプランを変えました。画面を読み込み直して、もう一度確認してください' },
+} as const;
+
+/**
+ * 価格の変更 (Stripe の Price の作成) が進行中なので、Stripe の商品の ID を書かなかった (409。#2112 Z1-1)。
+ * DB のトリガー guard_plan_stripe_product_id_price_change が書く文の中で止めた (何も書いていない)
+ */
+const PRICE_CHANGE_IN_PROGRESS_RESPONSE = {
+  error: { code: 'OP_PLAN_PRICE_CHANGE_IN_PROGRESS', message: STRIPE_PRODUCT_ID_PRICE_CHANGE_IN_PROGRESS_MESSAGE },
 } as const;
 
 /** 契約者を数えられなかったので廃止を止めたとき (500)。DB の生のエラー文は返さない (#1172) */
@@ -364,12 +380,17 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
     }
     if (input.stripe_product_id !== undefined && existing.status !== 'draft') {
       // 公開中・非公開の商品の ID は、Stripe の Price がまだ無いことを確かめて許した (#2112 Z1-1): 読んでから書くまでに
-      // 別の運営が価格の変更で Price を作っていたら書かない (Price の紐づく商品を、作ったあとで変えない)
+      // 別の運営が価格の変更で Price を作っていたら書かない (Price の紐づく商品を、作ったあとで変えない)。
+      // まだ Price ID を書いていない進行中の価格の変更は、DB のトリガーが止める (下の updateErr。冒頭のコメント)
       updateQuery = updateQuery.is('stripe_price_id', null).is('stripe_yearly_price_id', null);
     }
     const { data: updated, error: updateErr } = await updateQuery.select().maybeSingle();
 
     if (updateErr) {
+      // #2112 Z1-1: 価格の変更 (Stripe の Price の作成) が進行中なので、商品の ID の書き込みを DB のトリガーが止めた (何も書いていない)
+      if (isPlanPriceChangeInProgressDbError(updateErr)) {
+        return NextResponse.json(PRICE_CHANGE_IN_PROGRESS_RESPONSE, { status: 409 });
+      }
       // #1917: 上の数え上げから書くまでの間に契約が入った (DB のトリガー guard_plan_deprecate_subscribers が、書く文の中で
       // commit 前の契約を待ってから数え直して止めた)。上の数え上げと同じ 409 にする (内訳はトリガーの DETAIL)
       if (isPlanHasSubscribersDbError(updateErr)) {

@@ -263,6 +263,14 @@ export function planStatusTransitionMessage(from: string, to: string): string {
 export const STRIPE_PRODUCT_ID_LOCKED_MESSAGE =
   'Stripe の Price を作ったあとの公開中・非公開のプランでは、Stripe の商品の ID (stripe_product_id) は変更できません (Price は商品に紐づくため)';
 
+/**
+ * 409 OP_PLAN_PRICE_CHANGE_IN_PROGRESS の文: 公開中・非公開のプランで、価格の変更 (Stripe の Price の作成) が進行中のあいだに
+ * Stripe の商品の ID を変えようとした (#2112 Z1-1)。進行中の価格の変更は読んだときの商品で Price を作るので、その間は変えない
+ * (DB のトリガー guard_plan_stripe_product_id_price_change が止める)。価格の変更が済むと Price ができて変えられなくなることが多い
+ */
+export const STRIPE_PRODUCT_ID_PRICE_CHANGE_IN_PROGRESS_MESSAGE =
+  'このプランの価格の変更 (Stripe の Price の作成) が進行中のため、Stripe の商品の ID (stripe_product_id) は変更していません。価格の変更が済んでから、画面を読み込み直して確かめてください';
+
 /** 公開中・非公開のプランで、Stripe の商品の ID を変えてよいかの判定に使うプランの値 */
 export interface PlanStripeProductState {
   status: string;

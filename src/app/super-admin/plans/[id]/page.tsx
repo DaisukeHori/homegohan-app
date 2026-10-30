@@ -35,7 +35,9 @@
  * #2112 Z1-1: 基本情報のタブに Stripe の Product ID (stripe_product_id) の入力欄を置き、表示名・説明・表示順と同じく、変えたときだけ
  * 保存で送る (空欄は null)。以前は価格設定のタブに表示だけがあり、販売開始の手順 (Product ID を入れてから、価格の変更で Stripe の Price を作る) が
  * 画面からできなかった。公開中・非公開のプランでは、Stripe の Price をまだ作っていないあいだだけ入力できる (isStripeProductIdEditable。route と同じ判定)。
- * 読み直しで書きかけを残すのも、読み直したプランで入力できるときだけ。
+ * 読み直しで書きかけを残すのも、読み直したプランで入力できるときだけ。価格の変更 (Stripe の Price の作成) が進行中で保存が
+ * 409 OP_PLAN_PRICE_CHANGE_IN_PROGRESS になったときは、別の運営の変更 (CONFLICT_STALE_DATA) ではないので読み直さず、ほかの失敗と同じく
+ * route の文を出して入力欄の値を残す。
  * #2112 Z1-2: 価格変更履歴のタブは、適用範囲を日本語の名前 (PRICE_APPLIES_TO_LABELS) で出し、旧年額・新年額の列と、月額の Stripe の Price ID が
  * 変わった行の印 (new_stripe_price_id があるとき) を出す。以前は適用範囲が英字の値 (new_only) のままで、年額だけの変更・Price の登録が見えなかった。
  * 同じ型で、基本情報の種別も日本語の名前 (PLAN_TYPE_LABELS。一覧と同じ語) で出す (以前は personal などの英字の値)。
