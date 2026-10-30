@@ -7,9 +7,12 @@
  *     読み込み・書き込みの共通の関数 (fetchAdminJson・adminScreenErrorOfResponse・adminActionErrorOfBody・operationFailureMessage) は、
  *     401 の本文の文 (「認証が必要です」) をそのまま出していた (価格の変更の画面は初めの読み込みの 401 と読み直しの 401 で文がずれた)
  *   - チケットの担当者の設定・ステータスの変更は、401 でも「割り当て失敗」「ステータス変更失敗」とだけ出した (ログインし直せばよいと分からない)
+ *   - 運営のメンバーシップの画面 (/operator/membership) の強制譲渡・強制解散の POST (postOperatorForceAction) は、
+ *     401 の本文の文 (「認証が必要です」) を確認の枠に出した (同じ画面の読み込みの 401 は「ログインし直してください」で、文がずれた)
  * 直したあと (不変条件):
  *   - 共通の関数は 401 なら本文の文に関わらず「ログインし直してください」にする (ほかの status は今までどおり)
  *   - チケットの担当者の設定・ステータスの変更の 401 は「ログインし直してください」
+ *   - 強制譲渡・強制解散の POST の 401 は「ログインし直してください」(本文の無い 502 / 503 / 504 の「応答を受け取れなかった」は今までどおり)
  *   - 運営の画面のソースに 401 の文を直書きしない (UNAUTHENTICATED_SCREEN_MESSAGE を使う)
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
@@ -31,6 +34,14 @@ import {
   fetchAdminJson,
   screenFailureMessage,
 } from '@/lib/admin/admin-screen-messages';
+import {
+  OPERATOR_FORCE_ACTION_LABELS,
+  OperatorLoadUnavailableError,
+  OperatorScreenError,
+  type OperatorForceAction,
+  operatorForceActionHttpFailedMessage,
+  postOperatorForceAction,
+} from '@/lib/membership/operator-screen-messages';
 
 const TICKET_ID = '21122112-2112-4112-8112-211221122112';
 
@@ -143,6 +154,49 @@ describe('共通の関数: 401 は本文の文に関わらず「ログインし�
     expect(operationFailureMessage('メモの追加に失敗しました', HTTP_INTERNAL_SERVER_ERROR, null)).toBe(
       `メモの追加に失敗しました（HTTP ${HTTP_INTERNAL_SERVER_ERROR}）`,
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 運営のメンバーシップの画面: 強制譲渡・強制解散の POST の 401
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe.each<{ action: OperatorForceAction; url: string }>([
+  { action: 'transfer', url: '/api/operator/membership/family/x/transfer' },
+  { action: 'dissolve', url: '/api/operator/membership/org/x/dissolve' },
+])('postOperatorForceAction ($action): 401 は本文の文 (「認証が必要です」) ではなく「ログインし直してください」(#2112 Z4)', ({ action, url }) => {
+  async function postWith(response: () => Response): Promise<unknown> {
+    vi.stubGlobal('fetch', vi.fn(async () => response()));
+    return postOperatorForceAction(url, { reason: 'テスト' }, action).catch((err: unknown) => err);
+  }
+
+  it('401 (本文が API の文の JSON でも、JSON でなくても) は「ログインし直してください」の OperatorScreenError を投げる', async () => {
+    for (const response of [unauthenticated, () => htmlResponse(HTTP_UNAUTHORIZED)]) {
+      const failure = await postWith(response);
+      expect(failure).toBeInstanceOf(OperatorScreenError);
+      // 書き込みの失敗なので、読み込みの「読み込み直しても変わらない」の印 (OperatorLoadUnavailableError) は付けない
+      expect(failure).not.toBeInstanceOf(OperatorLoadUnavailableError);
+      expect((failure as OperatorScreenError).message).toBe(RELOGIN_MESSAGE);
+      expect((failure as OperatorScreenError).message).not.toContain(API_UNAUTHENTICATED_MESSAGE);
+      expect((failure as OperatorScreenError).message).not.toContain(OPERATOR_FORCE_ACTION_LABELS[action]);
+    }
+  });
+
+  it('本文に API の文の無い 502 は今までどおり「応答を受け取れなかった」(no-response)、500 の本文の文・本文の無い 500 も今までどおり', async () => {
+    await expect(postWith(() => htmlResponse(HTTP_BAD_GATEWAY))).resolves.toEqual({ kind: 'no-response', status: HTTP_BAD_GATEWAY });
+
+    const withMessage = await postWith(() => jsonResponse(HTTP_INTERNAL_SERVER_ERROR, { error: { message: '内部エラー' } }));
+    expect(withMessage).toBeInstanceOf(OperatorScreenError);
+    expect((withMessage as OperatorScreenError).message).toBe('内部エラー');
+
+    const withoutMessage = await postWith(() => htmlResponse(HTTP_INTERNAL_SERVER_ERROR));
+    expect((withoutMessage as OperatorScreenError).message).toBe(
+      operatorForceActionHttpFailedMessage(action, HTTP_INTERNAL_SERVER_ERROR),
+    );
+  });
+
+  it('成功の応答は今までどおり ok', async () => {
+    await expect(postWith(() => jsonResponse(HTTP_OK, { data: {} }))).resolves.toEqual({ kind: 'ok' });
   });
 });
 
@@ -274,6 +328,9 @@ describe('見張り: 運営の画面のソースに 401 の文を直書きしな
     'src/app/(support)',
     'src/components/admin',
     'src/components/operator',
+    // 運営のメンバーシップの画面 (強制譲渡・強制解散・監査ログ) と、その通信と文の置き場所 (#2112 Z4)
+    'src/app/(operator)',
+    'src/lib/membership',
   ];
   /** 画面のソースの拡張子 */
   const SOURCE_FILE = /\.tsx?$/;
@@ -301,6 +358,8 @@ describe('見張り: 運営の画面のソースに 401 の文を直書きしな
     expect(sources).toContain('src/app/super-admin/backups/page.tsx');
     expect(sources).toContain('src/app/admin/announcements/AnnouncementsManager.tsx');
     expect(sources).toContain('src/components/admin/UserFreezeForm.tsx');
+    expect(sources).toContain('src/app/(operator)/operator/membership/families/[id]/transfer/page.tsx');
+    expect(sources).toContain('src/lib/membership/operator-screen-messages.ts');
   });
 
   it('「ログインの有効期限が切れ…」を直書きしているのは、まだ揃えていないファイルだけ', () => {

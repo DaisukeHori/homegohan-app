@@ -113,8 +113,10 @@ function jsonResponse(status: number, body: unknown): Response {
 /** 本文が JSON でない応答 (手前のプロキシ・ホスティングの応答) */
 const proxyResponse = (status: number) =>
   new Response('<html><body>Gateway Timeout</body></html>', { status, headers: { 'content-type': 'text/html' } });
+/** 401 の route の本文の文 (画面に出さない。#2112 Z4) */
+const API_UNAUTHENTICATED_MESSAGE = '認証が必要です';
 /** 401 (ログインが切れた) の route の応答 */
-const unauthenticated = () => jsonResponse(HTTP_UNAUTHORIZED, { error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } });
+const unauthenticated = () => jsonResponse(HTTP_UNAUTHORIZED, { error: { code: 'AUTH_UNAUTHENTICATED', message: API_UNAUTHENTICATED_MESSAGE } });
 /** 403 (二段階認証の確認が要る) の route の応答。理由の文は画面にそのまま出す */
 const mfaForbidden = () => jsonResponse(HTTP_FORBIDDEN, { error: { code: 'OP_MFA_REQUIRED', message: API_MFA_REQUIRED_MESSAGE } });
 /** 通信の reject (応答が切れた・届かなかった) */
@@ -480,6 +482,21 @@ describe.each([
 
     expect(findButton(RETRY_LABEL)).toBeDefined();
   });
+
+  it('譲渡の POST が 401 なら、確認の枠に本文の文 (「認証が必要です」) ではなく「ログインし直してください」を出す (#2112 Z4。読み込みの 401 と同じ文)', async () => {
+    route('GET', c.candidatesUrl, () => jsonResponse(HTTP_OK, { data: [c.candidateA, c.candidateB] }));
+    route('POST', c.transferUrl, unauthenticated);
+    await renderElement(c.page());
+
+    await confirmTransferToA();
+
+    expect(text()).toContain(RELOGIN_MESSAGE);
+    expect(text()).not.toContain(API_UNAUTHENTICATED_MESSAGE);
+    // 応答は受け取れている (401) ので、済んだかを確かめる候補の読み直しはしない
+    expect(countCalls(`GET ${c.candidatesUrl}`)).toBe(1);
+    expect(countCalls(`POST ${c.transferUrl}`)).toBe(1);
+    expect(nav.push).not.toHaveBeenCalled();
+  });
 });
 
 describe.each([
@@ -518,6 +535,24 @@ describe.each([
     );
     expect(text()).not.toContain('「更新」で一覧を読み込み直して');
     expect(container.querySelector('tbody')).toBeNull();
+    expect(countCalls(`POST ${c.dissolveUrl}`)).toBe(1);
+  });
+
+  it('解散の POST が 401 なら、確認の枠に本文の文 (「認証が必要です」) ではなく「ログインし直してください」を出す (#2112 Z4。読み込みの 401 と同じ文)', async () => {
+    route('GET', c.listUrl, () => jsonResponse(HTTP_OK, { data: c.rows }));
+    route('POST', c.dissolveUrl, unauthenticated);
+    await renderElement(c.page());
+
+    const row = Array.from(container.querySelectorAll('tbody tr')).find((tr) => tr.textContent?.includes(c.rowName));
+    await click(Array.from(row?.querySelectorAll('button') ?? []).find((b) => b.textContent?.trim() === '解散'), '行の「解散」');
+    await typeInto(container.querySelector('textarea'), '代表者が長期不在のため');
+    await click(findButton('次へ'), '「次へ」');
+    await click(findButton('実行する'), '確認の枠の「実行する」');
+
+    expect(text()).toContain(RELOGIN_MESSAGE);
+    expect(text()).not.toContain(API_UNAUTHENTICATED_MESSAGE);
+    // 応答は受け取れている (401) ので、済んだかを確かめる一覧の読み直しはしない
+    expect(countCalls(`GET ${c.listUrl}`)).toBe(1);
     expect(countCalls(`POST ${c.dissolveUrl}`)).toBe(1);
   });
 });
