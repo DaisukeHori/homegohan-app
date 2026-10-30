@@ -32,6 +32,14 @@ export function isAllowedExperimentStatusTransition(from: string, to: Experiment
   return isExperimentStatus(from) && EXPERIMENT_STATUS_TRANSITIONS[from].includes(to);
 }
 
+/**
+ * 作成で、同じキー (experiments.key。一意の制約 experiments_key_key) の実験がすでにあるときのエラーの code と文 (HTTP は 409。#2093 W1)。
+ * 機能フラグの作成 (OP_FEATURE_FLAG_IN_USE)・機能パッケージ・クーポン・プランの作成と同じく、一意の違反 (23505) を 500 にしない。
+ * 作成の応答が切れたあとに押し直したときも、作成は済んでいるのに「作成に失敗しました (HTTP 500)」と出さない
+ */
+export const EXPERIMENT_KEY_DUPLICATE_ERROR_CODE = 'OP_EXPERIMENT_KEY_DUPLICATE';
+export const EXPERIMENT_KEY_DUPLICATE_MESSAGE = '同じキーの実験がすでにあります';
+
 /** 遷移表に無い状態の変更を断るときのエラーの code (HTTP は 409) */
 export const EXPERIMENT_INVALID_TRANSITION_ERROR_CODE = 'OP_EXPERIMENT_INVALID_TRANSITION';
 
