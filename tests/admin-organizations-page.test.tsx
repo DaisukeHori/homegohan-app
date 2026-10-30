@@ -169,6 +169,19 @@ const lastListParams = () => listParams(callsOf('GET').length - 1);
 
 const postBody = (callIndex = 0) => JSON.parse(String((callsOf('POST')[callIndex][1] as RequestInit).body));
 
+/** 一覧の欄の取得 (1 ページ 30 件)。作成の前後に同じ名前の組織を確かめる読み込み (confirmReads) は数えない */
+const screenListCalls = () =>
+  callsOf('GET').filter(([input]) => new URL(String(input), 'http://localhost').searchParams.get('per_page') === '30');
+/** 作成の前と、応答を受け取れなかったあとに、同じ名前の組織を確かめる読み込み (1 ページ 100 件・q = 組織名。#2107 Y4) */
+const confirmReads = () =>
+  callsOf('GET').filter(([input]) => new URL(String(input), 'http://localhost').searchParams.get('per_page') === '100');
+/** その読み込みかどうか (mockApi の list で応答を分ける) */
+const isConfirmRead = (url: URL) => url.searchParams.get('per_page') === '100';
+
+/** オーナーがすでに組織に所属しているときの 409 の文 (POST /api/admin/organizations。#2107 Y5) */
+const OWNER_ALREADY_IN_ORG_MESSAGE =
+  '指定したオーナーはすでに組織に所属しています (直前に作成した組織かもしれません。一覧で確かめてください)';
+
 async function renderPage() {
   await act(async () => {
     root.render(<OrganizationsManager />);
@@ -567,8 +580,14 @@ describe('作成', () => {
     expect(init.headers).toEqual({ 'Content-Type': 'application/json' });
     expect(postBody()).toEqual({ name: '株式会社テスト', plan: 'premium', owner_id: OWNER_ID });
 
-    // 一覧を取り直し、作成した組織が出る
-    expect(callsOf('GET')).toHaveLength(2);
+    // 一覧を取り直し、作成した組織が出る (送る前に、同じ名前の組織を 1 回確かめる。#2107 Y4)
+    expect(screenListCalls()).toHaveLength(2);
+    expect(confirmReads()).toHaveLength(1);
+    expect(Object.fromEntries(new URL(String(confirmReads()[0][0]), 'http://localhost').searchParams)).toEqual({
+      q: '株式会社テスト',
+      page: '1',
+      per_page: '100',
+    });
     expect(names()).toEqual(['株式会社テスト', '組織1']);
     // フォームは初期状態に戻り、結果を知らせる
     expect(createName().value).toBe('');
@@ -610,11 +629,11 @@ describe('作成', () => {
     expect(lastListParams()).toEqual({ q: 'テスト', plan: 'enterprise', page: '1', per_page: '30' });
   });
 
-  it('API のエラーメッセージ (409: すでに別の組織に所属しているオーナー) をそのまま出す。入力は消さず、一覧も取り直さない', async () => {
+  it('API のエラーメッセージ (409: すでに組織に所属しているオーナー。英字の項目名を含まない文) をそのまま出す。入力は消さず、一覧も取り直さない', async () => {
     mockApi({
       list: () => jsonResponse(200, listBody([org(1)])),
       create: () =>
-        jsonResponse(409, errorBody('OWNER_ALREADY_IN_ORG', '指定したオーナー (owner_id) は既に別の組織に所属しています')),
+        jsonResponse(409, errorBody('OWNER_ALREADY_IN_ORG', OWNER_ALREADY_IN_ORG_MESSAGE)),
     });
     await renderPage();
     await type(createName(), '株式会社テスト');
@@ -623,15 +642,16 @@ describe('作成', () => {
     await click(findButton('作成する'), '作成ボタン');
 
     expect(callsOf('POST')).toHaveLength(1);
-    expect(alerts()).toEqual(['指定したオーナー (owner_id) は既に別の組織に所属しています']);
+    expect(alerts()).toEqual([OWNER_ALREADY_IN_ORG_MESSAGE]);
     expect(statuses()).toEqual([]);
     // 入力は残る (直してもう一度送れる)
     expect(createName().value).toBe('株式会社テスト');
     expect(createPlan().value).toBe('enterprise');
     expect(createOwner().value).toBe(OWNER_ID);
     expect(findButton('作成する')?.disabled).toBe(false);
-    // 作成されていないので、一覧は取り直さない
-    expect(callsOf('GET')).toHaveLength(1);
+    // 作成されていないので、一覧は取り直さない (送る前の同じ名前の確かめの 1 回だけ)
+    expect(screenListCalls()).toHaveLength(1);
+    expect(confirmReads()).toHaveLength(1);
   });
 
   it.each([
@@ -649,25 +669,21 @@ describe('作成', () => {
     expect(alerts()).toEqual([message]);
   });
 
-  it('メッセージを読み取れない失敗や通信エラーでは、汎用の日本語のメッセージを出し、入力を残す', async () => {
+  it('メッセージを読み取れない失敗 (JSON でない 500) では、汎用の日本語のメッセージを出し、入力を残す (502 / 503 / 504 と通信エラーは下の「応答を受け取れなかったとき」)', async () => {
     mockApi({
       list: () => jsonResponse(200, listBody([])),
-      create: () => new Response('<html>Bad Gateway</html>', { status: 502 }),
+      create: () => new Response('<html>Internal Server Error</html>', { status: 500 }),
     });
     await renderPage();
     await type(createName(), '株式会社テスト');
     await click(findButton('作成する'), '作成ボタン');
     expect(alerts()).toHaveLength(1);
     expect(alerts()[0]).toContain('組織を作成できませんでした');
-    expect(alerts()[0]).not.toContain('Bad Gateway');
-
-    fetchMock.mockImplementation(async (_input: string, init?: RequestInit) => {
-      if (init?.method === 'POST') throw new TypeError('Failed to fetch');
-      return jsonResponse(200, listBody([]));
-    });
-    await click(findButton('作成する'), '作成ボタン');
-    expect(alerts()[0]).toContain('組織を作成できませんでした');
+    expect(alerts()[0]).not.toContain('Internal Server Error');
     expect(createName().value).toBe('株式会社テスト');
+    // 失敗として出したので、読み直さない (送る前の確かめの 1 回だけ)
+    expect(confirmReads()).toHaveLength(1);
+    expect(findButton('作成する')?.disabled).toBe(false);
   });
 
   it('組織名が空白だけのときは送らず、日本語のメッセージを出す', async () => {
@@ -710,7 +726,7 @@ describe('作成', () => {
     expect(callsOf('POST')).toHaveLength(1);
 
     await act(async () => {
-      slow.resolve(jsonResponse(409, errorBody('OWNER_ALREADY_IN_ORG', '指定したオーナー (owner_id) は既に別の組織に所属しています')));
+      slow.resolve(jsonResponse(409, errorBody('OWNER_ALREADY_IN_ORG', OWNER_ALREADY_IN_ORG_MESSAGE)));
     });
     await settle();
     expect(findButton('作成する')?.disabled).toBe(false);
@@ -725,7 +741,7 @@ describe('作成', () => {
       create: () =>
         ++calls === 1
           ? jsonResponse(200, { organization: org(1) })
-          : jsonResponse(409, errorBody('OWNER_ALREADY_IN_ORG', '指定したオーナー (owner_id) は既に別の組織に所属しています')),
+          : jsonResponse(409, errorBody('OWNER_ALREADY_IN_ORG', OWNER_ALREADY_IN_ORG_MESSAGE)),
     });
     await renderPage();
     await type(createName(), '一つ目');
@@ -735,7 +751,215 @@ describe('作成', () => {
     await type(createName(), '二つ目');
     await click(findButton('作成する'), '作成ボタン');
     expect(statuses()).toEqual([]);
-    expect(alerts()).toEqual(['指定したオーナー (owner_id) は既に別の組織に所属しています']);
+    expect(alerts()).toEqual([OWNER_ALREADY_IN_ORG_MESSAGE]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 作成の応答を受け取れなかったとき (#2107 Y4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('作成の応答を受け取れなかったとき (#2107 Y4): 失敗と言わずに同じ名前の組織を読み直して確かめ、確かめられなければ送信を止める', () => {
+  const NAME = '株式会社テスト';
+  /** 送る前からあった、同じ名前・同じプランの組織 */
+  const EARLIER = org(5, { name: NAME, plan: 'premium' });
+  /** 応答が切れたあいだにサーバーが作った組織 */
+  const CREATED = org(6, { name: NAME, plan: 'premium' });
+  const NETWORK_SUMMARY = '組織の作成の応答を受け取れませんでした（通信エラー）';
+  const GATEWAY_TIMEOUT_SUMMARY = '組織の作成の応答を受け取れませんでした (HTTP 504)';
+  const UNCONFIRMED = '済んだか分かりません。一覧で確かめてから作り直してください';
+  const NOT_FOUND_GUIDE = '読み込み直したところ、組織はまだ見つかりません。保存の途中のこともあるので、少し待ってから確かめ直してください';
+  const REOPEN_GUIDE = 'もう一度送るときは、画面を開き直してください';
+
+  /**
+   * 同じ名前の組織を確かめる読み込みの応答を、呼ばれた順に返す (最後の 1 つは使い続ける)。
+   * 一覧の欄の取得は、送る前からあった 1 件 (組織1) を返す
+   */
+  function confirmApi(confirmResponses: Array<() => Response>, create: () => Response | Promise<Response>): Api {
+    let index = 0;
+    return {
+      list: (url) => {
+        if (!isConfirmRead(url)) return jsonResponse(200, listBody([org(1)]));
+        const respond = confirmResponses[Math.min(index, confirmResponses.length - 1)];
+        index += 1;
+        return respond();
+      },
+      create,
+    };
+  }
+
+  async function submit(plan = 'premium') {
+    await type(createName(), NAME);
+    await choose(createPlan(), plan);
+    await type(createOwner(), OWNER_ID);
+    await click(findButton('作成する'), '作成ボタン');
+  }
+
+  /** 送信を止めている欄 (黄色の alert) の文 (「確かめ直す」のボタンの文字は除く) */
+  const stoppedMessage = () => {
+    const alert = Array.from(container.querySelectorAll('[role="alert"]')).find((el) => el.textContent?.includes(UNCONFIRMED));
+    return alert?.querySelector('span')?.textContent ?? null;
+  };
+
+  it('通信エラーのあと、送る前に無かった同じ名前・プランの組織が読み直しにあれば、済んだとして入力を空にして知らせ、1 ページ目から取り直す (押し直させない)', async () => {
+    mockApi(
+      confirmApi([() => jsonResponse(200, listBody([EARLIER])), () => jsonResponse(200, listBody([CREATED, EARLIER]))], () => {
+        throw new TypeError('Failed to fetch');
+      }),
+    );
+    await renderPage();
+    await submit();
+
+    expect(callsOf('POST')).toHaveLength(1);
+    expect(confirmReads()).toHaveLength(2);
+    expect(statuses()).toContain(`${NETWORK_SUMMARY}。読み込み直したところ、組織は保存されていました`);
+    expect(alerts()).toEqual([]);
+    expect(createName().value).toBe('');
+    expect(createPlan().value).toBe('standard');
+    expect(createOwner().value).toBe('');
+    expect(findButton('作成する')?.disabled).toBe(false);
+    // 一覧は 1 ページ目から取り直す (作成の成功と同じ)
+    expect(screenListCalls()).toHaveLength(2);
+    expect(lastListParams()).toEqual({ page: '1', per_page: '30' });
+  });
+
+  it('本文に API の文の無い 504 のあと、読み直しにまだ無ければ送信を止め (押しても送らない)、「確かめ直す」でできていたら済んだ扱いにする', async () => {
+    let created = false;
+    mockApi(
+      confirmApi(
+        [
+          () => jsonResponse(200, listBody([EARLIER])),
+          () => jsonResponse(200, listBody(created ? [CREATED, EARLIER] : [EARLIER])),
+        ],
+        () => new Response('<html>Gateway Timeout</html>', { status: 504 }),
+      ),
+    );
+    await renderPage();
+    await submit();
+
+    expect(stoppedMessage()).toBe(`${GATEWAY_TIMEOUT_SUMMARY}。${UNCONFIRMED}。${NOT_FOUND_GUIDE}。${REOPEN_GUIDE}`);
+    expect(findButton('作成する')?.disabled).toBe(true);
+    // 止めているあいだは入力欄も止める (確かめ直しで済んでいたと分かったときに、書き足した入力を消さない)
+    expect(createName().disabled).toBe(true);
+    expect(createName().value).toBe(NAME);
+
+    // 止めているあいだは、送信の操作をしても送らない
+    await act(async () => {
+      createName().form?.requestSubmit();
+    });
+    await settle();
+    expect(callsOf('POST')).toHaveLength(1);
+
+    // サーバーの書き込みが終わったあとに確かめ直すと、済んだ扱いになり、送信の止めが外れる
+    created = true;
+    await click(findButton('確かめ直す'), '確かめ直すボタン');
+    expect(callsOf('POST')).toHaveLength(1);
+    expect(stoppedMessage()).toBeNull();
+    expect(statuses()).toContain(`${GATEWAY_TIMEOUT_SUMMARY}。読み込み直したところ、組織は保存されていました`);
+    expect(createName().value).toBe('');
+    expect(findButton('作成する')?.disabled).toBe(false);
+  });
+
+  it('読み直しに出たのが送る前からあった同じ名前・プランの組織だけなら、作られたとは言わず送信を止める', async () => {
+    mockApi(
+      confirmApi([() => jsonResponse(200, listBody([EARLIER]))], () => {
+        throw new TypeError('Failed to fetch');
+      }),
+    );
+    await renderPage();
+    await submit();
+
+    expect(stoppedMessage()).toBe(`${NETWORK_SUMMARY}。${UNCONFIRMED}。${NOT_FOUND_GUIDE}。${REOPEN_GUIDE}`);
+    expect(statuses()).toEqual([]);
+    expect(findButton('作成する')?.disabled).toBe(true);
+    expect(findButton('確かめ直す')).toBeDefined();
+  });
+
+  it('プランが違う同じ名前の組織は、送った組織とみなさない', async () => {
+    mockApi(
+      confirmApi([() => jsonResponse(200, listBody([])), () => jsonResponse(200, listBody([org(7, { name: NAME, plan: 'enterprise' })]))], () => {
+        throw new TypeError('Failed to fetch');
+      }),
+    );
+    await renderPage();
+    await submit('premium');
+
+    expect(stoppedMessage()).toBe(`${NETWORK_SUMMARY}。${UNCONFIRMED}。${NOT_FOUND_GUIDE}。${REOPEN_GUIDE}`);
+    expect(findButton('作成する')?.disabled).toBe(true);
+  });
+
+  it.each([
+    ['送る前の読み込みに失敗した', () => jsonResponse(500, errorBody('INTERNAL_ERROR', '組織の一覧を取得できませんでした'))],
+    ['送る前の読み込みで同じ名前の組織が 100 件を超えていた (全部を比べられない)', () => jsonResponse(200, listBody([EARLIER], 101))],
+  ])('%s (比べる元が無い) ときに読み直しで同じ組織があれば、前からあったか決められないので送信を止め、「確かめ直す」は出さない', async (_label, baseline) => {
+    mockApi(
+      confirmApi([baseline, () => jsonResponse(200, listBody([CREATED, EARLIER]))], () => {
+        throw new TypeError('Failed to fetch');
+      }),
+    );
+    await renderPage();
+    await submit();
+
+    expect(stoppedMessage()).toBe(`${NETWORK_SUMMARY}。${UNCONFIRMED}。${REOPEN_GUIDE}`);
+    expect(findButton('確かめ直す')).toBeUndefined();
+    expect(findButton('作成する')?.disabled).toBe(true);
+    expect(statuses()).toEqual([]);
+  });
+
+  it.each([
+    [
+      '通信エラー',
+      () => {
+        throw new TypeError('Failed to fetch');
+      },
+      `${NETWORK_SUMMARY}。${UNCONFIRMED}。組織の一覧を読み込めませんでした（通信エラー）。${REOPEN_GUIDE}`,
+      true,
+    ],
+    [
+      '500',
+      () => jsonResponse(500, errorBody('INTERNAL_ERROR', '組織の一覧を取得できませんでした')),
+      `${NETWORK_SUMMARY}。${UNCONFIRMED}。組織の一覧を取得できませんでした。${REOPEN_GUIDE}`,
+      true,
+    ],
+    [
+      '401',
+      () => jsonResponse(401, errorBody('AUTH_UNAUTHENTICATED', '認証が必要です')),
+      `${NETWORK_SUMMARY}。${UNCONFIRMED}。ログインの有効期限が切れました。ログインし直してください。${REOPEN_GUIDE}`,
+      false,
+    ],
+    [
+      '403',
+      () => jsonResponse(403, errorBody('OP_PERMISSION_DENIED', 'この操作の権限がありません')),
+      `${NETWORK_SUMMARY}。${UNCONFIRMED}。この操作の権限がありません。${REOPEN_GUIDE}`,
+      false,
+    ],
+  ])('読み直しが %s で失敗したら送信を止め、理由の文を出す (401 / 403 は読み直しても変わらないので「確かめ直す」を出さない)', async (_label, reread, message, retryable) => {
+    mockApi(
+      confirmApi([() => jsonResponse(200, listBody([])), reread], () => {
+        throw new TypeError('Failed to fetch');
+      }),
+    );
+    await renderPage();
+    await submit();
+
+    expect(stoppedMessage()).toBe(message);
+    expect(findButton('確かめ直す') !== undefined).toBe(retryable);
+    expect(findButton('作成する')?.disabled).toBe(true);
+    expect(callsOf('POST')).toHaveLength(1);
+  });
+
+  it('本文に API の文がある 502 / 503 / 504 は、これまでどおり失敗の文を出す (読み直さない。送信は止めない)', async () => {
+    mockApi(
+      confirmApi([() => jsonResponse(200, listBody([]))], () =>
+        jsonResponse(503, errorBody('SERVICE_UNAVAILABLE', '組織の作成を受け付けられませんでした')),
+      ),
+    );
+    await renderPage();
+    await submit();
+
+    expect(alerts()).toEqual(['組織の作成を受け付けられませんでした']);
+    expect(confirmReads()).toHaveLength(1);
+    expect(findButton('作成する')?.disabled).toBe(false);
   });
 });
 
