@@ -828,7 +828,7 @@ MRR 時系列
 ---
 
 ### GET /api/admin/finance/invoices
-請求書一覧。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数 (`meta.total`) を返す。数え直しも失敗したら 500。一覧の行の読み込みのそれ以外の DB の失敗は 500 (200 の空の一覧にしない。cross/04 §6.2。#1917)。詳細の `GET /api/admin/finance/invoices/{id}` は、請求書の行 (`stripe_webhook_events`) の読み込みの DB の失敗を 500 にし、行が無いときだけ 404 (#1917)。利用者の引き当て (`personal_subscriptions`) の読み込みの DB の失敗も 500 (200 の `user_id: null` にしない。`user_id` が `null` なのは紐づく契約の行が無いときだけ。cross/04 §5.2。#1917)
+請求書一覧。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数 (`meta.total`) を返す。クエリの誤り (`page` / `per_page` が 1 以上の整数でない・`per_page` が 200 より大きい・`status` が一覧に無いなど) は DB に触れずに 400 `VALIDATION_ERROR`「パラメータが不正です (項目)」(`src/lib/admin/finance-query-errors.ts`。売上の一覧 `GET /api/admin/finance/revenue`・整合チェック `GET /api/admin/finance/reconciliation` も同じ。#2101 X6)。数え直しも失敗したら 500。一覧の行の読み込みのそれ以外の DB の失敗は 500 (200 の空の一覧にしない。cross/04 §6.2。#1917)。詳細の `GET /api/admin/finance/invoices/{id}` は、請求書の行 (`stripe_webhook_events`) の読み込みの DB の失敗を 500 にし、行が無いときだけ 404 (#1917)。利用者の引き当て (`personal_subscriptions`) の読み込みの DB の失敗も 500 (200 の `user_id: null` にしない。`user_id` が `null` なのは紐づく契約の行が無いときだけ。cross/04 §5.2。#1917)
 
 ### POST /api/admin/finance/invoices/{id}/resend
 請求書再送
@@ -1256,7 +1256,7 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 ## 15. A/B テスト API
 
 ### GET /api/super-admin/experiments
-実験一覧。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数 (`meta.total`) を返す。数え直しも失敗したら 500。一覧の行の読み込みのそれ以外の DB の失敗は 500 (200 の空の一覧にしない。cross/04 §6.2。#1917)
+実験一覧。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数 (`meta.total`) を返す。数え直しも失敗したら 500。一覧の行の読み込みのそれ以外の DB の失敗は 500 (200 の空の一覧にしない。cross/04 §6.2。#1917)。クエリの `page` (default: 1)・`per_page` (default: 50, max: 100) は `src/lib/super-admin/experiments-schemas.ts` の `ExperimentsListQuerySchema` で読み、1 以上の整数でない・上限より大きいときは DB に触れずに 400 `OP_INVALID_QUERY` (本文の形は §19 冒頭。#2101 X6)
 
 **権限**: `super_admin`
 
