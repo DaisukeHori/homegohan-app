@@ -124,6 +124,12 @@ export async function GET(request: Request) {
       query = query.or(
         `frozen_at.is.null,and(frozen_at.not.is.null,unban_at.not.is.null,unban_at.lte.${nowIso})`,
       );
+    } else if (params.status === 'deleted') {
+      // #2107 Y10: 退会 (src/lib/account-deletion.ts の auth.admin.deleteUser) は auth.users の行を消し、user_profiles の行も
+      // 外部キーの ON DELETE CASCADE (user_profiles_id_fkey) で消える。user_profiles に削除済みのユーザーの行は無いので、
+      // 削除済みの絞り込みは 1 行も当たらない (主キーの id は null にならない)。一覧と件数の数え直しの両方に効く。
+      // 以前はこの分岐が無く、status=deleted で絞らずに生きているユーザーを返していた (削除済みの一覧に生きているユーザーが並んだ)
+      query = query.is('id', null);
     }
 
     // 登録日フィルタ (#1433): 登録日 FROM の JST 0 時以上、登録日 TO の翌日の JST 0 時未満。

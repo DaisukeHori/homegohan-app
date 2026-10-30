@@ -192,9 +192,11 @@ describe('#2101 X7 ユーザーの一覧 (/admin/users) の URL の status', () 
     expect(new Set(links)).toEqual(new Set(['active']));
   });
 
-  it.each(USER_LIST_STATUSES.map((s) => [s]))('enum の値 (%s) はそのまま送る', async (status) => {
-    await renderUsers({ status });
+  // 選択も同じ値 (#2107 Y10。以前は deleted の選択肢が無く、?status=deleted の select が「全ステータス」を示していた)
+  it.each(USER_LIST_STATUSES.map((s) => [s]))('enum の値 (%s) はそのまま送り、選択も同じ値', async (status) => {
+    const { page } = await renderUsers({ status });
     expect(apiQuery().status).toBe(status);
+    expect(selectedStatus(page!)).toBe(status);
   });
 
   it('空の status (「全ステータス」) は、今までどおり status を付けずに送り、選択も「全ステータス」のまま', async () => {

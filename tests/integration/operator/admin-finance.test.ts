@@ -102,6 +102,21 @@ describe('GET /api/admin/finance/revenue', () => {
     expect(res.status).toBe(200);
   });
 
+  // from / to は revenue_snapshots.date (date の列) と比べるので、実在する日付 (YYYY-MM-DD) でなければ DB に触れずに 400 (#2107 Y12。
+  // 以前は不正な値を DB の比較に渡して 500)
+  for (const query of ['from=not-a-date', 'to=2026-02-30']) {
+    it(`400 VALIDATION_ERROR for an invalid date (${query}) (#2107 Y12)`, async () => {
+      const res = await apiCall('GET', `/api/admin/finance/revenue?${query}`, financeUser.jwt);
+      expect(res.status).toBe(400);
+      expect((res.body as { error?: { code?: string } }).error?.code).toBe('VALIDATION_ERROR');
+    });
+  }
+
+  it('200 for calendar dates in from / to (#2107 Y12)', async () => {
+    const res = await apiCall('GET', '/api/admin/finance/revenue?from=2026-01-01&to=2026-01-31', financeUser.jwt);
+    expect(res.status).toBe(200);
+  });
+
   it('403 for general user', async () => {
     const res = await apiCall('GET', '/api/admin/finance/revenue', generalUser.jwt);
     expect(res.status).toBe(403);
