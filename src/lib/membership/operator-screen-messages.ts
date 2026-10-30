@@ -132,8 +132,10 @@ export function operatorForceActionReloadFailure(
   guides: { readonly reloadFailedGuide: string; readonly unavailableGuide: string },
 ): { readonly message: string; readonly retryable: boolean } {
   if (reloadError instanceof OperatorLoadUnavailableError) {
+    // 理由の文 (「ログインし直してください」・403 の本文の文) は OperatorScreenError の画面に出してよい文
+    const reason = displayableOperatorError(reloadError, guides.reloadFailedGuide);
     return {
-      message: operatorForceActionNoResponseMessage(action, status, `${guides.unavailableGuide}。${reloadError.message}`),
+      message: operatorForceActionNoResponseMessage(action, status, `${guides.unavailableGuide}。${reason}`),
       retryable: false,
     };
   }
