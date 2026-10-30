@@ -15,7 +15,8 @@
  *   - /super-admin のサイドバー: 見出しは「運営最上位の画面」で、英字の Super Admin / super_admin は出さない
  *   - /admin の入口のカード: /super-admin のカードの名前はサイドバーのリンクと同じ「運営最上位の画面」
  *   - 凍結のフォーム: 永久 BAN の選択肢の注記は「運営最上位のみ」
- *   - 同じ型: 運営の画面 (src/app/admin・src/app/super-admin・src/components/admin) のソースに、画面に出る文字として
+ *   - 審査のフォーム (/admin/moderation の個別の画面): 永久 BAN の選択肢の文は「削除 + 永久 BAN (運営最上位のみ)」
+ *   - 同じ型: 運営の画面 (src/app/admin・src/app/super-admin・src/components/admin・src/components/operator) のソースに、画面に出る文字として
  *     英字の super_admin / Super Admin が残っていない (ロールの判定に使う 'super_admin' そのものの文字列は除く)
  */
 import fs from 'node:fs';
@@ -59,6 +60,7 @@ const { default: AdminLayout } = await import('@/app/admin/layout');
 const { default: SuperAdminLayout } = await import('@/app/super-admin/layout');
 const { default: AdminHomePage } = await import('@/app/admin/page');
 const { default: UserFreezeForm } = await import('@/components/admin/UserFreezeForm');
+const { default: ModerationReviewForm } = await import('@/components/operator/moderation/ModerationReviewForm');
 
 const ROOT = path.resolve(__dirname, '..');
 
@@ -162,12 +164,24 @@ describe('凍結のフォームの永久 BAN の注記 (V1-2 と同じ型)', () 
   });
 });
 
+describe('審査のフォームの永久 BAN の選択肢 (V1-2 と同じ型)', () => {
+  it('super_admin に出す選択肢は「削除 + 永久 BAN (運営最上位のみ)」で、英字の super_admin は出さない', () => {
+    mount(<ModerationReviewForm type="food" id="flag-1" status="pending" isSuperAdmin />);
+    const option = document.querySelector('select option[value="delete_and_perm_ban"]');
+    expect(option?.textContent).toBe('削除 + 永久 BAN (運営最上位のみ)');
+    expect(visibleText('select')).not.toMatch(/super_admin|Super Admin/);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 同じ型: 運営の画面のソースに、画面に出る文字として英字の super_admin / Super Admin が残っていない
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** 調べる運営の画面 (#2128 の範囲) */
-const SCANNED_DIRS = ['src/app/admin', 'src/app/super-admin', 'src/components/admin'];
+/**
+ * 調べる運営の画面 (#2128 の範囲)。src/components/operator は /admin・/super-admin の画面が使う部品
+ * (審査のフォームなど) を置く所なので、一緒に見る
+ */
+const SCANNED_DIRS = ['src/app/admin', 'src/app/super-admin', 'src/components/admin', 'src/components/operator'];
 
 /** 画面に出す文字としての英字の super_admin / Super Admin */
 const ENGLISH_SUPER_ADMIN = /super_admin|super admin/i;
@@ -226,7 +240,7 @@ describe('同じ型: 運営の画面のソースに英字の super_admin / Super
     expect(englishSuperAdminTexts(sample, 'sample.tsx').map(({ line }) => line)).toEqual([4, 5, 6, 7]);
   });
 
-  it('src/app/admin・src/app/super-admin・src/components/admin に、画面に出る英字の super_admin / Super Admin が無い', () => {
+  it('src/app/admin・src/app/super-admin・src/components/admin・src/components/operator に、画面に出る英字の super_admin / Super Admin が無い', () => {
     const files = SCANNED_DIRS.flatMap((dir) => sourceFiles(path.join(ROOT, dir)));
     expect(files.length).toBeGreaterThan(SCANNED_DIRS.length);
     const violations = files.flatMap((file) =>
