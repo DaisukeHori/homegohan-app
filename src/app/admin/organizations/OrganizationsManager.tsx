@@ -37,7 +37,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { extractApiErrorCode, extractApiErrorMessage } from '@/lib/admin/api-error-message';
+import { UNAUTHENTICATED_SCREEN_MESSAGE, extractApiErrorCode, extractApiErrorMessage } from '@/lib/admin/api-error-message';
 import {
   ADMIN_ACTION_NO_RESPONSE_STATUSES,
   adminActionNoResponseSummary,
@@ -80,8 +80,6 @@ const CONFIRM_READ_SUBJECT = '組織の一覧';
 const CONFIRM_PER_PAGE = 100;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
-/** 読み直しが 401 で断られたときの理由 (読み直しても変わらないので「確かめ直す」を出さない) */
-const CONFIRM_UNAUTHENTICATED_GUIDE = 'ログインの有効期限が切れました。ログインし直してください';
 /** 読み直しが 403 で断られ、本文に理由の文が無いときの理由 */
 const CONFIRM_FORBIDDEN_GUIDE = '権限がありません';
 
@@ -235,11 +233,25 @@ function isSameOrganization(row: Organization, sent: SentOrganization): boolean 
   return row.name === sent.name && row.plan === sent.plan && row.owner_id?.toLowerCase() === sent.ownerId;
 }
 
-/** 読み直しに失敗した理由の文 (401 はログインし直し、403 は本文の理由の文、ほかは「組織の一覧を読み込めませんでした」の形) */
+/**
+ * 読み直しに失敗した理由の文 (401 は運営の画面で揃えた「ログインし直してください」(UNAUTHENTICATED_SCREEN_MESSAGE。#2112)、
+ * 403 は本文の理由の文、ほかは「組織の一覧を読み込めませんでした」の形)。
+ * 401 は読み直しても変わらないので「確かめ直す」を出さない
+ */
 function confirmReadFailureGuide(status: number | null, body: unknown): string {
-  if (status === HTTP_UNAUTHORIZED) return CONFIRM_UNAUTHENTICATED_GUIDE;
+  if (status === HTTP_UNAUTHORIZED) return UNAUTHENTICATED_SCREEN_MESSAGE;
   if (status === HTTP_FORBIDDEN) return screenApiErrorMessage(body) ?? CONFIRM_FORBIDDEN_GUIDE;
   return screenApiErrorMessage(body) ?? adminLoadFailedMessage(CONFIRM_READ_SUBJECT, status);
+}
+
+/**
+ * 一覧の読み込み・プランの変更・組織の作成が失敗の応答で断られたときの文。
+ * 401 (ログインが切れた) は本文の文 (「認証が必要です」) ではなく、運営の画面で揃えた「ログインし直してください」
+ * (UNAUTHENTICATED_SCREEN_MESSAGE。作成の確かめの読み直しの 401 と同じ文。#2112)。ほかは本文の文、無ければ fallback
+ */
+function failureMessageOf(status: number, body: unknown, fallback: string): string {
+  if (status === HTTP_UNAUTHORIZED) return UNAUTHENTICATED_SCREEN_MESSAGE;
+  return extractApiErrorMessage(body) ?? fallback;
 }
 
 function isOrgPlan(value: string | null): value is OrgPlan {
@@ -288,7 +300,7 @@ function OrgPlanCell({
           onStale({ code, orgName: org.name }, listGeneration);
           return;
         }
-        setError(extractApiErrorMessage(body) ?? PLAN_CHANGE_ERROR);
+        setError(failureMessageOf(res.status, body, PLAN_CHANGE_ERROR));
         return;
       }
       const updated = parseOrganizationBody(body);
@@ -427,7 +439,7 @@ export default function OrganizationsManager({
       if (loadId !== latestLoad.current) return;
 
       if (!res.ok) {
-        setLoadError(extractApiErrorMessage(body) ?? LOAD_ERROR);
+        setLoadError(failureMessageOf(res.status, body, LOAD_ERROR));
         return;
       }
       const parsed = parseListBody(body, target);
@@ -598,13 +610,12 @@ export default function OrganizationsManager({
         created = true;
       } else {
         const body: unknown = await res.json().catch(() => null);
-        const apiMessage = extractApiErrorMessage(body);
-        if (apiMessage === null && ADMIN_ACTION_NO_RESPONSE_STATUSES.includes(res.status)) {
+        if (extractApiErrorMessage(body) === null && ADMIN_ACTION_NO_RESPONSE_STATUSES.includes(res.status)) {
           // 本文に API の文の無い 502 / 503 / 504 は、手前のプロキシ・ホスティングの応答 (関数の時間切れなど)。
           // サーバーで済んだか分からないので、失敗とは言わずに読み直す
           noResponseSummary = adminActionNoResponseSummary(CREATE_ACTION, res.status);
         } else {
-          setCreateError(apiMessage ?? CREATE_ERROR);
+          setCreateError(failureMessageOf(res.status, body, CREATE_ERROR));
         }
       }
       if (noResponseSummary !== null) {
