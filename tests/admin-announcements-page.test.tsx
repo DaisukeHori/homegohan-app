@@ -269,7 +269,9 @@ describe('一覧', () => {
     root = createRoot(container);
     mockApi({ list: () => jsonResponse(401, { error: 'Unauthorized' }) });
     await renderPage();
-    expect(alerts()[0]).toContain('ログインの有効期限が切れました');
+    // 401 は運営の画面で揃えた「ログインし直してください」(#2112 Z4)
+    expect(alerts()[0]).toContain('ログインし直してください');
+    expect(alerts()[0]).not.toContain('ログインの有効期限');
   });
 
   it('403 の本文の文が二段階認証の文なら、「権限がありません」で上書きせずその文を出す (#1917 の続き・整合 1025b)', async () => {
@@ -458,6 +460,18 @@ describe('作成', () => {
     await fillForm('題名', '本文');
     await click(findButton('作成する'), '作成ボタン');
     expect(alerts()).toEqual(['権限がありません。']);
+  });
+
+  it('作成が 401 (ログインが切れた) なら、運営の画面で揃えた「ログインし直してください」を出す。入力は残る (#2112 Z4)', async () => {
+    mockApi({
+      list: () => jsonResponse(200, listBody([])),
+      create: () => jsonResponse(401, { error: '認証が必要です' }),
+    });
+    await renderPage();
+    await fillForm('題名', '本文');
+    await click(findButton('作成する'), '作成ボタン');
+    expect(alerts()).toEqual(['ログインし直してください']);
+    expect(titleInput().value).toBe('題名');
   });
 
   it('作成の 403 の本文の文が二段階認証の文なら、その文を出す (#1917 の続き・整合 1025b)', async () => {

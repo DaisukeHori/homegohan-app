@@ -365,6 +365,35 @@ describe('A/B テストの詳細・一覧: 読み直しが 401 / 403 なら理�
     expect(findButton('開始')?.disabled).toBe(false);
   });
 
+  it('詳細: 状態の変更そのものが 401 なら、本文の文ではなく「ログインし直してください」を出す (#2112 Z4)', async () => {
+    mockFetch((method, url) => {
+      if (url.pathname === `${PATH}/results`) return jsonResponse(404, { error: { message: '結果がありません' } });
+      if (url.pathname !== PATH) throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+      if (method === 'GET') return jsonResponse(200, { data: { ...EXPERIMENT } });
+      return unauthenticatedResponse();
+    });
+    await renderElement(createElement(ExperimentDetailPage, { params: Promise.resolve({ id: ROW_ID }) }));
+
+    await click(findButton('完了'), '「完了」ボタン');
+
+    expect(callsOf('PATCH', PATH)).toHaveLength(1);
+    expect(vi.mocked(globalThis.alert)).toHaveBeenCalledWith(RELOGIN_MESSAGE);
+  });
+
+  it('一覧: 状態の変更そのものが 401 なら、本文の文ではなく「ログインし直してください」を出す (#2112 Z4)', async () => {
+    mockFetch((method, url) => {
+      if (method === 'GET' && url.pathname === LIST_PATH) return jsonResponse(200, { data: [{ ...EXPERIMENT, status: 'draft' }] });
+      if (method === 'PATCH' && url.pathname === `${LIST_PATH}/${ROW_ID}`) return unauthenticatedResponse();
+      throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+    });
+    await renderElement(createElement(ExperimentsPage));
+
+    await click(findButton('開始'), '「開始」ボタン');
+
+    expect(callsOf('PATCH', `${LIST_PATH}/${ROW_ID}`)).toHaveLength(1);
+    expect(vi.mocked(globalThis.alert)).toHaveBeenCalledWith(RELOGIN_MESSAGE);
+  });
+
   it('一覧: 一覧の読み直しが 500 なら今までどおり「再試行」を出し、「開始」を止める', async () => {
     mockListServer((n) => (n === 2 ? serverErrorResponse() : undefined));
     await renderElement(createElement(ExperimentsPage));

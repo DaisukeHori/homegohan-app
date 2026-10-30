@@ -12,7 +12,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { extractApiErrorMessage, forbiddenMessageForScreen } from '@/lib/admin/api-error-message';
+import { UNAUTHENTICATED_SCREEN_MESSAGE, extractApiErrorMessage, forbiddenMessageForScreen } from '@/lib/admin/api-error-message';
 import { formatJstDateTime } from '@/lib/admin/format-datetime';
 import { ADMIN_ACTION_NO_RESPONSE_STATUSES, adminActionNoResponseSummary } from '@/lib/admin/admin-screen-messages';
 import {
@@ -35,7 +35,6 @@ interface Announcement {
 
 const LOAD_ERROR = 'お知らせ一覧を取得できませんでした。しばらくしてから、もう一度お試しください。';
 const CREATE_ERROR = 'お知らせを作成できませんでした。しばらくしてから、もう一度お試しください。';
-const UNAUTHENTICATED_ERROR = 'ログインの有効期限が切れました。ログインし直してください。';
 const FORBIDDEN_ERROR = '権限がありません。';
 /** 応答を受け取れなかったときの文の操作の名前 (「お知らせの作成の応答を受け取れませんでした（通信エラー）」。#2101 X2) */
 const CREATE_ACTION = 'お知らせの作成';
@@ -92,7 +91,8 @@ function isSameAnnouncement(row: Announcement, sent: SentAnnouncement): boolean 
  * 403 だけは、本文の文が理由の文 (二段階認証の確認が要る・凍結) ならその文を出す (forbiddenMessageForScreen。#1917)
  */
 function failureMessage(status: number, fallback: string, body: unknown): string {
-  if (status === 401) return UNAUTHENTICATED_ERROR;
+  // 401 は運営の画面で揃えた「ログインし直してください」(#2112 Z4)
+  if (status === HTTP_UNAUTHORIZED) return UNAUTHENTICATED_SCREEN_MESSAGE;
   if (status === 403) return forbiddenMessageForScreen(body, FORBIDDEN_ERROR);
   return fallback;
 }

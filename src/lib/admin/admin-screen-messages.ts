@@ -13,7 +13,7 @@
 //
 // このファイルはブラウザからも読むので、サーバー専用のものを import しない。
 
-import { extractApiErrorMessage } from '@/lib/admin/api-error-message';
+import { UNAUTHENTICATED_SCREEN_MESSAGE, extractApiErrorMessage } from '@/lib/admin/api-error-message';
 import { OPERATOR_FORCE_ACTION_NO_RESPONSE_STATUSES } from '@/lib/membership/operator-screen-messages';
 
 /** 画面にそのまま出してよい日本語の文を持つ例外 */
@@ -43,6 +43,19 @@ const JAPANESE_TEXT = /[぀-ヿ㐀-鿿＀-￯]/;
 export function screenApiErrorMessage(body: unknown): string | null {
   const message = extractApiErrorMessage(body);
   return message !== null && JAPANESE_TEXT.test(message) ? message : null;
+}
+
+/** 401 (Unauthorized。ログインが切れた) の HTTP ステータス */
+const HTTP_UNAUTHORIZED = 401;
+
+/**
+ * 失敗の応答の status と本文から、画面に出してよい文を取り出す (#2112 Z4)。
+ * 401 (ログインが切れた) は、本文の文 (「認証が必要です」など) ではなく、運営の画面で揃えた「ログインし直してください」
+ * (UNAUTHENTICATED_SCREEN_MESSAGE) にする。ほかは screenApiErrorMessage と同じ (日本語を含む本文の文だけ。無ければ null)
+ */
+export function screenFailureMessage(status: number, body: unknown): string | null {
+  if (status === HTTP_UNAUTHORIZED) return UNAUTHENTICATED_SCREEN_MESSAGE;
+  return screenApiErrorMessage(body);
 }
 
 /** 読み込みが失敗したときの文。status が null なら通信そのものの失敗 (fetch の reject・応答の本文が読めない) */
@@ -88,20 +101,20 @@ export function readFailureBody(res: Response): Promise<unknown> {
 
 /**
  * 失敗の応答から、画面に出す日本語の文の AdminScreenError を作る。
- * 本文に画面に出せる文 (日本語を含む) があればそれ、無ければ fallbackOf(HTTP のステータス) の文
+ * 401 は「ログインし直してください」(#2112 Z4)。ほかは本文に画面に出せる文 (日本語を含む) があればそれ、無ければ fallbackOf(HTTP のステータス) の文
  */
 export async function adminScreenErrorOfResponse(
   res: Response,
   fallbackOf: (status: number) => string,
 ): Promise<AdminScreenError> {
   const body = await readFailureBody(res);
-  return new AdminScreenError(screenApiErrorMessage(body) ?? fallbackOf(res.status));
+  return new AdminScreenError(screenFailureMessage(res.status, body) ?? fallbackOf(res.status));
 }
 
 /**
  * 運営の API を GET で読み、JSON の本文を返す。
  * 通信の失敗・失敗の応答・JSON でない本文は、どれも画面に出せる日本語の文の AdminScreenError を投げる
- * (失敗の応答の本文に日本語の文があればそれを、無ければ HTTP のステータスを添えた固定の文)
+ * (401 は「ログインし直してください」。#2112 Z4。ほかの失敗の応答は本文に日本語の文があればそれを、無ければ HTTP のステータスを添えた固定の文)
  */
 export async function fetchAdminJson(url: string, subject: string): Promise<unknown> {
   let res: Response;
@@ -159,7 +172,7 @@ export async function sendAdminAction(url: string, init: RequestInit, action: st
 /**
  * 書き込みの失敗の応答から、画面に出す例外を作る (#2093 W1)。
  * 本文に API の文の無い 502 / 503 / 504 は AdminActionNoResponseError (サーバーで済んだか分からない)。
- * ほかは adminScreenErrorOfResponse と同じ (本文の日本語の文、無ければ「<操作>に失敗しました (HTTP n)」)
+ * ほかは adminScreenErrorOfResponse と同じ (401 は「ログインし直してください」(#2112 Z4)、それ以外は本文の日本語の文、無ければ「<操作>に失敗しました (HTTP n)」)
  */
 export async function adminActionErrorOfResponse(res: Response, action: string): Promise<AdminScreenError> {
   return adminActionErrorOfBody(await readFailureBody(res), res.status, action);
@@ -173,7 +186,7 @@ export function adminActionErrorOfBody(body: unknown, status: number, action: st
   if (extractApiErrorMessage(body) === null && ADMIN_ACTION_NO_RESPONSE_STATUSES.includes(status)) {
     return new AdminActionNoResponseError(action, status);
   }
-  return new AdminScreenError(screenApiErrorMessage(body) ?? adminActionHttpFailedMessage(action, status));
+  return new AdminScreenError(screenFailureMessage(status, body) ?? adminActionHttpFailedMessage(action, status));
 }
 
 /**

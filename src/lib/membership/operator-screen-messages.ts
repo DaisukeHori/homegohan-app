@@ -15,6 +15,8 @@
 //     失敗と見せて押し直させると、同じ人への譲渡がもう一度通り、監査と通知メールが二重になる
 //   - 読み直しにも失敗して済んだか分からないときは、画面は確認の枠を閉じ、読み直せるまで同じ操作を押させない (#2086 V1)
 //   - 強制譲渡で、譲渡先がすでに今の代表者 / オーナーの 409 (route が押し直しを止めた) は、済んでいたものとして 'already-done' を返す (#2086 V1)
+//   - 401 (ログインが切れた) は、読み込みも書き込み (強制譲渡・強制解散) も、本文の文 (「認証が必要です」) ではなく
+//     ほかの運営の画面と同じ「ログインし直してください」(UNAUTHENTICATED_SCREEN_MESSAGE) にする (読み込みは #2093 W6・書き込みは #2112 Z4)
 //
 // このファイルはブラウザからも読むので、サーバー専用のものを import しない。
 
@@ -226,6 +228,8 @@ export type OperatorForceActionResult =
 /**
  * 強制の操作 (強制譲渡・強制解散) を POST する。
  * 成功の応答なら ok、応答を受け取れなかったら no-response (画面は対象を読み直す)、強制譲渡の譲渡先がすでに今の代表者 / オーナーの 409 なら already-done。
+ * 401 (ログインが切れた) は、本文の文 (「認証が必要です」) ではなく、同じ画面の読み込み (fetchOperatorJson) と同じ
+ * 「ログインし直してください」(UNAUTHENTICATED_SCREEN_MESSAGE) の OperatorScreenError を投げる (#2112 Z4)。
  * ほかの失敗の応答は、本文の API の文 (無ければ HTTP のステータスを添えた固定の文) の OperatorScreenError を投げる。
  */
 export async function postOperatorForceAction(
@@ -244,6 +248,8 @@ export async function postOperatorForceAction(
     return { kind: 'no-response', status: null };
   }
   if (res.ok) return { kind: 'ok' };
+  // 401 は route の認可 (requireSuperAdmin の AuthError) の断り。本文の文 (「認証が必要です」) ではなく、同じ画面の読み込みの 401 と同じ文にする (#2112 Z4)
+  if (res.status === HTTP_UNAUTHORIZED) throw new OperatorScreenError(UNAUTHENTICATED_SCREEN_MESSAGE);
   const errorBody: unknown = await res.json().catch(() => null);
   const apiMessage = extractApiErrorMessage(errorBody);
   if (apiMessage === null && OPERATOR_FORCE_ACTION_NO_RESPONSE_STATUSES.includes(res.status)) {

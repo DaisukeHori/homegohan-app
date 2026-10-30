@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { lastPageToRefetch } from "@/lib/list-pagination";
-import { forbiddenMessageOfResponse } from "@/lib/admin/api-error-message";
+import { UNAUTHENTICATED_SCREEN_MESSAGE, forbiddenMessageOfResponse } from "@/lib/admin/api-error-message";
 import {
   AdminScreenError,
   adminLoadFailedFallback,
@@ -11,9 +11,14 @@ import {
   fetchAdminJson,
 } from "@/lib/admin/admin-screen-messages";
 
+/** 401 (Unauthorized。ログインが切れた) の HTTP ステータス */
+const HTTP_UNAUTHORIZED = 401;
 /** 403 (Forbidden) の HTTP ステータス */
 const HTTP_FORBIDDEN = 403;
-/** CSV の書き出しの失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917) */
+/**
+ * CSV の書き出しの失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917)。
+ * 401 はこの文ではなく「ログインし直してください」(#2112 Z4)
+ */
 const CSV_EXPORT_FAILURE_MESSAGE = "CSV エクスポートに失敗しました";
 /** 読み込みの失敗の文の対象 (「監査ログを読み込めませんでした (HTTP 502)」。#2086 V6) */
 const AUDIT_LOGS_SUBJECT = "監査ログ";
@@ -105,6 +110,12 @@ export default function AuditLogsPage() {
     } catch {
       // 通信そのものの失敗 (以前は捕まえず、押しても何も出なかった。#2086 V6)
       alert(`${CSV_EXPORT_FAILURE_MESSAGE}（通信エラー）`);
+      return;
+    }
+    if (res.status === HTTP_UNAUTHORIZED) {
+      // 401 は「CSV エクスポートに失敗しました」ではなく、同じ画面の一覧の読み込みの 401 (fetchAdminJson) と同じ
+      // 「ログインし直してください」(押し直しても変わらない。#2112 Z4)
+      alert(UNAUTHENTICATED_SCREEN_MESSAGE);
       return;
     }
     if (res.status === HTTP_FORBIDDEN) {

@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { normalizeProfileName } from "@/lib/profile-name";
 import { UsersListResponseSchema, type UserListItem } from "@/lib/admin/users-schemas";
 import {
+  UNAUTHENTICATED_SCREEN_MESSAGE,
   forbiddenMessageOfResponse,
   operationFailureMessage,
   operationNetworkFailureMessage,
@@ -19,6 +20,8 @@ const USERS_LOAD_ERROR = "ユーザー一覧を取得できませんでした。
 const NOTE_ADD_FAILURE_SUMMARY = "メモを追加できませんでした";
 /** 利用者の詳細を読み込めなかったときの文の頭 (後ろに理由を添える)。前の利用者の詳細を出したままにしないために出す (#2050) */
 const DETAIL_LOAD_FAILURE_SUMMARY = "ユーザーの詳細を読み込めませんでした";
+/** 401 (Unauthorized。ログインが切れた) の HTTP ステータス */
+const HTTP_UNAUTHORIZED = 401;
 /** 403 (Forbidden) の HTTP ステータス */
 const HTTP_FORBIDDEN = 403;
 
@@ -85,8 +88,15 @@ function SupportUsersContent() {
       const res = await fetch(`/api/admin/users?${params}`);
       if (!res.ok) {
         // 取得できなかったことを「ユーザーが見つかりません」と見せない。
+        // 401 は「しばらくしてから、もう一度お試しください」(USERS_LOAD_ERROR) ではなく、同じ画面の詳細の読み込み・メモの追加の 401
+        // (operationFailureMessage) と同じ「ログインし直してください」(時間をおいても読めない。#2112 Z4)。
         // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 と失敗は USERS_LOAD_ERROR (#1917)
-        const message = res.status === HTTP_FORBIDDEN ? await forbiddenMessageOfResponse(res, USERS_LOAD_ERROR) : USERS_LOAD_ERROR;
+        const message =
+          res.status === HTTP_UNAUTHORIZED
+            ? UNAUTHENTICATED_SCREEN_MESSAGE
+            : res.status === HTTP_FORBIDDEN
+              ? await forbiddenMessageOfResponse(res, USERS_LOAD_ERROR)
+              : USERS_LOAD_ERROR;
         setUsers([]);
         setLoadError(message);
         return;
