@@ -68,17 +68,6 @@ interface UnconfirmedCreate {
   readonly retryable: boolean;
 }
 
-/** お知らせの一覧の読み込みの失敗 (画面に出す文を持つ。status は HTTP の失敗のときだけ) */
-class AnnouncementListLoadError extends Error {
-  readonly status: number | null;
-
-  constructor(message: string, status: number | null) {
-    super(message);
-    this.name = 'AnnouncementListLoadError';
-    this.status = status;
-  }
-}
-
 /** 読み直したお知らせが、送ったお知らせと同じ内容か (公開の設定も比べる。route は is_public に送った値をそのまま書く) */
 function isSameAnnouncement(row: Announcement, sent: SentAnnouncement): boolean {
   return row.title === sent.title && row.content === sent.content && (row.is_public ?? false) === sent.isPublic;
@@ -150,17 +139,25 @@ export default function AnnouncementsManager() {
       const body: unknown = res.ok ? await res.json() : await res.json().catch(() => null);
       if (loadId !== latestLoad.current) return undefined;
 
-      if (!res.ok) throw new AnnouncementListLoadError(failureMessage(res.status, LOAD_ERROR, body), res.status);
+      if (!res.ok) {
+        setLoadError(failureMessage(res.status, LOAD_ERROR, body));
+        lastLoadFailureStatus.current = res.status;
+        return null;
+      }
       const list = (body as { announcements?: unknown } | null)?.announcements;
-      // 想定外の形を「お知らせが 0 件」と見せない
-      if (!Array.isArray(list)) throw new AnnouncementListLoadError(LOAD_ERROR, null);
+      if (!Array.isArray(list)) {
+        // 想定外の形を「お知らせが 0 件」と見せない
+        setLoadError(LOAD_ERROR);
+        lastLoadFailureStatus.current = null;
+        return null;
+      }
       const sorted = newestFirst(list as Announcement[]);
       setAnnouncements(sorted);
       return sorted;
-    } catch (error: unknown) {
+    } catch {
       if (loadId !== latestLoad.current) return undefined;
-      setLoadError(error instanceof AnnouncementListLoadError ? error.message : LOAD_ERROR);
-      lastLoadFailureStatus.current = error instanceof AnnouncementListLoadError ? error.status : null;
+      setLoadError(LOAD_ERROR);
+      lastLoadFailureStatus.current = null;
       return null;
     } finally {
       if (loadId === latestLoad.current) setLoading(false);
