@@ -11,6 +11,9 @@
  *   同じオーナーの同時の作成は、オーナーの行のロック (と、organizations の INSERT のトリガーが取るオーナーの advisory lock) で
  *   直列になり、後の方は先の方の commit を待ってから所属を読んで止まる。
  *
+ * #2112 Z2 (同じ API の続き): auth.users に居ないオーナーの作成は、理由を言わない 500 ではなく 422 OWNER_NOT_FOUND (OC-9)。
+ *   一覧 (GET) は行のオーナーの id を返し、組織名の検索の % と _ を文字どおりに一致させる (OC-10)。
+ *
  * 呼び出しは本物の経路 (PostgREST・Next の route)。先の作成をコミット前のまま開いておくのは、ローカルスタックの postgres-meta
  * (/pg/query、service_role キーが必要) を使う (tests/integration/helpers/lock-holder.ts)。
  *
@@ -51,6 +54,7 @@ const GATEWAY_FAST_FAIL_MS = 1500;
 const HTTP_BAD_GATEWAY = 502;
 const HTTP_OK = 200;
 const HTTP_CONFLICT = 409;
+const HTTP_UNPROCESSABLE = 422;
 
 const fetchRetryingGateway502: typeof fetch = async (input, init) => {
   for (let attempt = 0; ; attempt++) {
@@ -112,6 +116,8 @@ const OWNER_ACCOUNT_DELETING = 'OWNER_ACCOUNT_DELETING';
 /** 運営の作成 API が 409 OWNER_ALREADY_IN_ORG で返す文 (src/app/api/admin/organizations/route.ts。#2107 Y5) */
 const OWNER_ALREADY_IN_ORG_MESSAGE =
   '指定したオーナーはすでに組織に所属しています (直前に作成した組織かもしれません。一覧で確かめてください)';
+/** 運営の作成 API が 422 OWNER_NOT_FOUND で返す文 (オーナーにする人が auth.users に居ない。#2112 Z2) */
+const OWNER_NOT_FOUND_MESSAGE = '指定したオーナーのユーザーが見つかりません';
 /** advisory lock の待ち (pg_stat_activity の wait_event)。organizations の INSERT のトリガーがオーナーの id で取る */
 const ADVISORY_WAIT_EVENT = 'advisory';
 /** 同時に送る作成の数 */
@@ -360,5 +366,55 @@ describe('同じオーナーの作成が同時に走ったとき', () => {
     expect((await ownedOrgs(owner.id)).map((row) => row.id)).toEqual([orgId]);
     expect(await orgsNamed(orgName('oc8'))).toEqual([orgId]);
     expect(await poolOf(orgId!)).toHaveLength(1);
+  }, TEST_TIMEOUT_MS);
+});
+
+describe('運営の作成 API の居ないオーナーと、一覧の検索 (#2112 Z2)', () => {
+  it('OC-9: auth.users に居ないオーナーを指定すると 422 OWNER_NOT_FOUND (理由の分かる文。修正前は 500「組織の作成に失敗しました」) で、組織を作らない', async () => {
+    const operatorUser = await createTestUserWithRoles({ email: testEmail('org-create-atomic-oc9-admin', TS), roles: ['user', 'admin'] });
+    operatorUsers.push(operatorUser);
+    const missing = randomUUID();
+
+    const res = await apiCall<{ error?: { code?: string; message?: string } }>('POST', '/api/admin/organizations', operatorUser.jwt, {
+      name: orgName('oc9'),
+      owner_id: missing,
+    });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(HTTP_UNPROCESSABLE);
+    expect(res.body.error).toEqual({ code: 'OWNER_NOT_FOUND', message: OWNER_NOT_FOUND_MESSAGE });
+    expect(await orgsNamed(orgName('oc9'))).toEqual([]);
+    expect(await profileOf(missing)).toBeNull();
+  }, TEST_TIMEOUT_MS);
+
+  it('OC-10: 一覧は行のオーナーの id を返し、組織名の検索の % と _ は文字どおりに一致する (「100%」で「100x」の組織に当てない)', async () => {
+    const operatorUser = await createTestUserWithRoles({ email: testEmail('org-create-atomic-oc10-admin', TS), roles: ['user', 'admin'] });
+    operatorUsers.push(operatorUser);
+    const labels = ['oc10 100%', 'oc10 100x', 'oc10 a_b', 'oc10 axb'] as const;
+    const ids = new Map<string, { orgId: string; ownerId: string }>();
+    for (const [index, label] of labels.entries()) {
+      const owner = await createUser(`oc10-${index}`);
+      const created = await createOrg(owner.id, label);
+      expect(created.ok, JSON.stringify(created)).toBe(true);
+      ids.set(label, { orgId: (created.data as { id: string }).id, ownerId: owner.id });
+    }
+
+    type ListBody = { organizations?: Array<{ id: string; name: string; owner_id: string | null }> };
+    const search = async (q: string) => {
+      const res = await apiCall<ListBody>('GET', `/api/admin/organizations?${new URLSearchParams({ q }).toString()}`, operatorUser.jwt);
+      expect(res.status, JSON.stringify(res.body)).toBe(HTTP_OK);
+      return res.body.organizations ?? [];
+    };
+
+    const percent = await search(`oc10 100% ${TS}`);
+    expect(percent.map((row) => row.id)).toEqual([ids.get('oc10 100%')!.orgId]);
+    expect(percent[0].owner_id).toBe(ids.get('oc10 100%')!.ownerId);
+
+    const underscore = await search(`oc10 a_b ${TS}`);
+    expect(underscore.map((row) => row.id)).toEqual([ids.get('oc10 a_b')!.orgId]);
+
+    // q=% は全部の組織にならず、名前に % を含む組織だけ
+    const onlyPercent = await search('%');
+    expect(onlyPercent.every((row) => row.name.includes('%')), JSON.stringify(onlyPercent.map((row) => row.name))).toBe(true);
+    expect(onlyPercent.map((row) => row.id)).not.toContain(ids.get('oc10 100x')!.orgId);
   }, TEST_TIMEOUT_MS);
 });
