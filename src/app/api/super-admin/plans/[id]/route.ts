@@ -27,8 +27,8 @@
  * Price を作っていたら書かないよう、公開中・非公開で商品の ID を送ったときは、両方の Price ID が NULL のままであることも書く条件にする
  * (0 行なら、ほかの条件と同じく読み直して 200 か 409 CONFLICT_STALE_DATA)。
  * 価格の変更がまだ Price ID を書いていない (予約を取って Stripe の Price を作っている最中) あいだは、Price ID の条件では防げない
- * (進行中の価格の変更は読んだときの商品で Price を作り、あとで Price ID を書く)。そのあいだは DB のトリガー
- * guard_plan_stripe_product_id_price_change (supabase/migrations/20261030160000_plan_stripe_product_id_price_change_guard.sql) が、
+ * (進行中の価格の変更は読んだときの商品で Price を作り、あとで Price ID を書く)。そのあいだは DB のトリガー trg_guard_plan_stripe_product_id_price_change
+ * (関数 guard_plan_stripe_product_id_price_change。supabase/migrations/20261030160000_plan_stripe_product_id_price_change_guard.sql) が、
  * 書く文の中で (プランの行のロックの後) 期限内の予約を見て止め、route は 409 OP_PLAN_PRICE_CHANGE_IN_PROGRESS
  * (STRIPE_PRODUCT_ID_PRICE_CHANGE_IN_PROGRESS_MESSAGE) を返す。別の運営の変更ではないので CONFLICT_STALE_DATA にはしない
  * (画面は読み直さず、「別の運営が先に変えた」とも出さずに、この文を出して入力欄の値を残す)。
