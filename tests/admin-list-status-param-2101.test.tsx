@@ -15,10 +15,6 @@
  */
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
-
-// 画面を丸ごと読み込むので、負荷の高い機械で既定の時間切れを超えうる (#1605 の同じ型)。テストとフックを定義する前に置く
-applyHeavyUnitTestTimeout();
 
 const requireRoleForPage = vi.hoisted(() => vi.fn());
 const adminFetch = vi.hoisted(() => vi.fn());

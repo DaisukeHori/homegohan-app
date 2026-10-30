@@ -18,10 +18,6 @@
  */
 import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
-
-// route を丸ごと読み込むので、負荷の高い機械で既定の時間切れを超えうる (#1605 の同じ型)。テストとフックを定義する前に置く
-applyHeavyUnitTestTimeout();
 
 interface RecordedQuery {
   table: string;
@@ -74,8 +70,16 @@ vi.mock('@/lib/db-logger', () => {
   };
 });
 
+// route はファイルの先頭で 1 回だけ読み込む (テストの中で読み込まない。tests/admin-users-load-failure-2093.test.tsx と同じ形)
+const experimentsRoute = await import('@/app/api/super-admin/experiments/route');
+const reconciliationRoute = await import('@/app/api/admin/finance/reconciliation/route');
+const invoicesRoute = await import('@/app/api/admin/finance/invoices/route');
+const revenueRoute = await import('@/app/api/admin/finance/revenue/route');
+
 /** 日本語の文 (ひらがな・カタカナ・漢字を 1 文字でも含む) */
 const JAPANESE_TEXT = /[぀-ヿ㐀-鿿]/;
+/** Zod の既定の文 (英語。'Invalid input: expected number, received NaN' など) */
+const ZOD_DEFAULT_ENGLISH = /Invalid|expected|received/i;
 const HTTP_OK = 200;
 const HTTP_BAD_REQUEST = 400;
 /** 省略したときの 1 ページの件数 (どの route も 50) */
@@ -100,28 +104,28 @@ const CASES: RouteCase[] = [
     table: 'experiments',
     invalidCode: 'OP_INVALID_QUERY',
     perPageMax: 100,
-    call: async (query) => (await import('@/app/api/super-admin/experiments/route')).GET(get('/api/super-admin/experiments', query)),
+    call: (query) => experimentsRoute.GET(get('/api/super-admin/experiments', query)),
   },
   {
     name: 'GET /api/admin/finance/reconciliation',
     table: 'admin_audit_logs',
     invalidCode: 'VALIDATION_ERROR',
     perPageMax: 200,
-    call: async (query) => (await import('@/app/api/admin/finance/reconciliation/route')).GET(get('/api/admin/finance/reconciliation', query)),
+    call: (query) => reconciliationRoute.GET(get('/api/admin/finance/reconciliation', query)),
   },
   {
     name: 'GET /api/admin/finance/invoices',
     table: 'stripe_webhook_events',
     invalidCode: 'VALIDATION_ERROR',
     perPageMax: 200,
-    call: async (query) => (await import('@/app/api/admin/finance/invoices/route')).GET(get('/api/admin/finance/invoices', query)),
+    call: (query) => invoicesRoute.GET(get('/api/admin/finance/invoices', query)),
   },
   {
     name: 'GET /api/admin/finance/revenue',
     table: 'revenue_snapshots',
     invalidCode: 'VALIDATION_ERROR',
     perPageMax: 200,
-    call: async (query) => (await import('@/app/api/admin/finance/revenue/route')).GET(get('/api/admin/finance/revenue', query)),
+    call: (query) => revenueRoute.GET(get('/api/admin/finance/revenue', query)),
   },
 ];
 
@@ -150,6 +154,7 @@ describe.each(CASES)('#2101 X6 $name', ({ table, invalidCode, perPageMax, call }
     const body = (await res.json()) as { error: { code: string; message: string } };
     expect(body.error.code).toBe(invalidCode);
     expect(body.error.message).toMatch(JAPANESE_TEXT);
+    expect(body.error.message).not.toMatch(ZOD_DEFAULT_ENGLISH);
     expect(body.error.message).toContain('page');
     expect(listQueries(table)).toEqual([]);
   });
@@ -160,6 +165,7 @@ describe.each(CASES)('#2101 X6 $name', ({ table, invalidCode, perPageMax, call }
     const body = (await res.json()) as { error: { code: string; message: string } };
     expect(body.error.code).toBe(invalidCode);
     expect(body.error.message).toMatch(JAPANESE_TEXT);
+    expect(body.error.message).not.toMatch(ZOD_DEFAULT_ENGLISH);
     expect(body.error.message).toContain('per_page');
     expect(listQueries(table)).toEqual([]);
   });
