@@ -18,6 +18,7 @@ import {
   validateBirthDate,
 } from '@homegohan/shared';
 import { createClient } from '@/lib/supabase/client';
+import { loginPathWithNext, readSignedInUser } from '@/lib/auth/signed-in-user';
 import {
   MEMBERSHIP_ERROR_MESSAGES,
   MembershipErrorCode,
@@ -34,6 +35,9 @@ const NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
  * 見分けるために出す (家族のメンバーの画面の FAMILY_MEMBERS_LOAD_ERROR と同じ扱い)。失敗の理由 (英語の内部の文) は画面に出さない
  */
 const CHILD_NEW_LOAD_ERROR = '家族の情報を読み込めませんでした。しばらくしてから、もう一度お試しください。';
+
+/** この画面のパス (ログインのあとに戻る先) */
+const CHILD_NEW_PATH = '/family/members/child/new';
 
 /** 子供の追加画面に出す同意書の要約の段落の数 (全文はリンク先の /legal/parental-consent) */
 const CONSENT_SUMMARY_PARAGRAPH_COUNT = 2;
@@ -80,11 +84,19 @@ export default function FamilyChildNewPage() {
   // 自分の家族を読む。画面を開いたときと「再試行」で呼ぶ
   const loadFamily = useCallback(async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        router.push('/login');
+      // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
+      // 確かめられなかったときは読み込みの失敗と「再試行」を出す (#2093 W4。以前は通信が切れているだけでもログインの画面へ移していた)。
+      // ログインのあとにこの画面へ戻れるよう next を付ける
+      const signedIn = await readSignedInUser(supabase);
+      if (signedIn.kind === 'load-failed') {
+        setLoadError(CHILD_NEW_LOAD_ERROR);
         return;
       }
+      if (signedIn.kind === 'signed-out') {
+        router.push(loginPathWithNext(CHILD_NEW_PATH));
+        return;
+      }
+      const { user } = signedIn;
 
       const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
