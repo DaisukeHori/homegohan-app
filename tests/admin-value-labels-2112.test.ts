@@ -216,7 +216,15 @@ function accessName(access: ValueAccess): string {
   return ts.isIdentifier(access) ? access.text : access.name.text;
 }
 
-/** 値の位置にある参照を集める (式そのもの・三項の枝・&& / || / ?? の右・括弧・テンプレートの式) */
+/** 定数の表を値で引く式か (`TYPE_LABELS[type]` など。大文字の名前の表) */
+function isConstantTableLookup(node: ts.Expression): boolean {
+  return ts.isElementAccessExpression(node) && ts.isIdentifier(node.expression) && CONSTANT_NAME.test(node.expression.text);
+}
+
+/**
+ * 値の位置にある参照を集める (式そのもの・三項の枝・&& / || / ?? の右・括弧・テンプレートの式)。
+ * `TYPE_LABELS[type] || type` (表に無い値はそのまま出す。labelOrRaw と同じ) の右は数えない
+ */
 function collectValueAccesses(node: ts.Node, out: ValueAccess[]): void {
   if (ts.isPropertyAccessExpression(node) || ts.isIdentifier(node)) {
     out.push(node);
@@ -234,7 +242,8 @@ function collectValueAccesses(node: ts.Node, out: ValueAccess[]): void {
       op === ts.SyntaxKind.BarBarToken ||
       op === ts.SyntaxKind.QuestionQuestionToken
     ) {
-      collectValueAccesses(node.right, out);
+      const labelFallback = op !== ts.SyntaxKind.AmpersandAmpersandToken && isConstantTableLookup(node.left);
+      if (!labelFallback) collectValueAccesses(node.right, out);
       if (op !== ts.SyntaxKind.AmpersandAmpersandToken) collectValueAccesses(node.left, out);
     }
   } else if (ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
@@ -382,10 +391,13 @@ describe('#2112 Z3 運営の画面の走査: 状態・区分の英字の内部�
       'const F = () => <option value="plan">{ROLLOUT_STRATEGY_TYPE_LABELS.plan}</option>;',
       'const G = ({ p }: { p: { plan_key: string } }) => <code className="font-mono">{p.plan_key}</code>;',
       'function L(setStatus: (s: string) => void, item: { status: string }) { setStatus(item.status); }',
+      // 表に無い値だけをそのまま出す `TYPE_LABELS[type] || type` (labelOrRaw と同じ)
+      'const M = ({ type }: { type: string }) => <span>{TYPE_LABELS[type] || type}</span>;',
     ].join('\n');
     expect(findRawValueRendering('example.tsx', before).map((f) => f.text)).toEqual([
       't.category',
       't.priority',
+      'u.plan_key',
       'u.plan_key',
       'r.severity',
       'status',
