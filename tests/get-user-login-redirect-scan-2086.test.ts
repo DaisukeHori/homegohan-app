@@ -30,7 +30,9 @@ const SIGNED_IN_USER_IMPORT = /from ['"]@\/lib\/auth\/signed-in-user['"]/;
 
 /**
  * 直した画面 (getUser の error を見ずに /login へ移す分岐が 0 件で、readSignedInUser を使う)。
- * 前の 7 つは #2086 V3、後ろの 9 つは #2093 W4・W9 (組織のメンバーの画面と招待の画面は、走査が数えない形だったが同じ根なので同じに直した)
+ * 前の 7 つは #2086 V3、後ろの 8 つは #2093 W4 (招待の画面は、走査が数えない形だったが同じ根なので同じに直した)。
+ * 組織のメンバーの画面 (#2093 W9) は getUser の error を取り出して readSignedInUser と同じ分け方 (classifyGetUserResult) で見分けるので、
+ * 走査は数えない (振る舞いは tests/membership-getuser-remaining-2093.test.tsx が見る)
  */
 const FIXED_SCREENS = [
   'src/app/(main)/org/transfer-accept/[proposal_id]/page.tsx',
@@ -47,7 +49,6 @@ const FIXED_SCREENS = [
   'src/app/(main)/family/representative-transfer/page.tsx',
   'src/app/(main)/settings/membership/page.tsx',
   'src/app/(support)/layout.tsx',
-  'src/app/(org)/org/members/page.tsx',
   'src/app/invite/[token]/page.tsx',
 ] as const;
 

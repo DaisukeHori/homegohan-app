@@ -10,7 +10,7 @@ import { orgRoleLabel } from "@/lib/membership/role-labels";
 import { readOwnMembershipAfterNetworkFailure, withMembershipStateNote } from "@/lib/membership/leave-state";
 import { OrgMemberNamesResponseSchema, type OrgMemberName } from "@/schemas/membership/organization-member-name";
 import { ORG_WRITE_OPERATION, orgWriteNoResponseMessage } from "@/lib/org-write-no-response";
-import { loginPathWithNext, readSignedInUser } from "@/lib/auth/signed-in-user";
+import { classifyGetUserResult, loginPathWithNext } from "@/lib/auth/signed-in-user";
 
 /**
  * メンバーの一覧を読み込めなかったときの文。空の一覧 (「メンバーがいません」) と見分けるために出す (#2050)。
@@ -76,11 +76,13 @@ export default function MembersPage() {
   const fetchData = async (): Promise<boolean> => {
     setLoading(true);
     try {
-      // getUser は通信の失敗を投げずに { user: null, error } で返す (オフラインのときの普通の結果)。readSignedInUser で見分け、
-      // 確かめられなかったときは読み込めなかったことを出す (空の一覧や、除名の前の古い一覧を今の状態として残さない。
-      // 除名の通信が切れたあとの「「再試行」で読み込み直して」の案内と画面を合わせる。#2080 U4)。
+      // getUser は通信の失敗を投げずに { user: null, error } で返す (オフラインのときの普通の結果)。readSignedInUser と同じ分け方
+      // (classifyGetUserResult) で見分け、確かめられなかったときは読み込めなかったことを出す (空の一覧や、除名の前の古い一覧を
+      // 今の状態として残さない。除名の通信が切れたあとの「「再試行」で読み込み直して」の案内と画面を合わせる。#2080 U4)。
+      // getUser が投げたときは下の catch で読み込めなかったことを出す (readSignedInUser の load-failed と同じ)。
       // ログインしていないときは「再試行」を出しても変わらないので、ログインの画面へ移す (#2093 W9。ログインのあとにこの画面へ戻れるよう next を付ける)
-      const signedIn = await readSignedInUser(supabase);
+      const { data: { user: signedInUser }, error: userError } = await supabase.auth.getUser();
+      const signedIn = classifyGetUserResult(signedInUser, userError);
       if (signedIn.kind === 'load-failed') {
         setCurrentUser(null);
         setLoadError(MEMBERS_LOAD_ERROR);
