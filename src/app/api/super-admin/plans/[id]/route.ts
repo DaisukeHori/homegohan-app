@@ -31,7 +31,7 @@
  * guard_plan_stripe_product_id_price_change (supabase/migrations/20261030160000_plan_stripe_product_id_price_change_guard.sql) が、
  * 書く文の中で (プランの行のロックの後) 期限内の予約を見て止め、route は 409 OP_PLAN_PRICE_CHANGE_IN_PROGRESS
  * (STRIPE_PRODUCT_ID_PRICE_CHANGE_IN_PROGRESS_MESSAGE) を返す。別の運営の変更ではないので CONFLICT_STALE_DATA にはしない
- * (画面は「別の運営が先に変えた」と出して読み直さず、この文を出して入力欄の値を残す)。
+ * (画面は読み直さず、「別の運営が先に変えた」とも出さずに、この文を出して入力欄の値を残す)。
  */
 
 import { NextRequest, NextResponse } from 'next/server';
