@@ -84,7 +84,8 @@ const EXPECTED: Readonly<Record<string, readonly WriteHandling[]>> = {
       kind: 'exempt',
       method: 'POST',
       what: 'プランの価格の変更',
-      reason: '価格の変更の作成 (状態の変更ではない)。応答が切れたあとの押し直しは別の課題 (二重の作成) で、#2073 の範囲の外',
+      reason:
+        '価格の変更の作成 (状態の変更ではない)。#2073 の範囲の外。応答が切れたあとの押し直しの二重は #2101 X1 で、画面がプランを読み直して送った価格になっているかを確かめ、route が同じ価格を 409 OP_PRICE_UNCHANGED で断る (tests/price-change-page-no-response-2101.test.tsx・tests/price-change-unchanged-route-2101.test.ts)',
     },
   ],
   'src/app/super-admin/plans/new/page.tsx': [{ kind: 'exempt', method: 'POST', what: 'プランの作成', reason: CREATE_REASON }],

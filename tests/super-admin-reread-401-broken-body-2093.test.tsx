@@ -824,14 +824,18 @@ describe('価格の変更: ok を先に確かめ、JSON でない 502 を「ネ�
     expectNoLeak(text());
   });
 
-  it('実行が本文の無い 502 なら「価格変更に失敗しました (HTTP 502)」を出し、画面を移らない', async () => {
+  // #2101 X1: 本文の無い 502 は応答を受け取れなかったもの (サーバーで済んだか分からない) として、プランを読み直して確かめる。
+  // 読み直したプランが送った価格になっていなければ、済んでいないことを出し、画面を移らない (読み直しの分岐は tests/price-change-page-no-response-2101.test.tsx)
+  it('実行が本文の無い 502 なら「価格変更の応答を受け取れませんでした (HTTP 502)」を出し、プランを読み直す (送った価格でなければ画面を移らない)', async () => {
     mockPriceServer({ change: () => proxyBadGateway() });
     await renderElement(createElement(PriceChangePage));
 
     await execute();
 
     expect(callsOf('POST', CHANGE_PATH)).toHaveLength(1);
-    expect(text()).toContain('価格変更に失敗しました (HTTP 502)');
+    expect(callsOf('GET', PLAN_PATH)).toHaveLength(2);
+    expect(text()).toContain('価格変更の応答を受け取れませんでした (HTTP 502)');
+    expect(text()).not.toContain('価格変更に失敗しました');
     expect(routerPush).not.toHaveBeenCalled();
     expectNoLeak(text());
   });
