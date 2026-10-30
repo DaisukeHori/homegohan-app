@@ -10,7 +10,8 @@
  * 数える形: `X.auth.getUser()` の結果を分割代入し、`error` を取り出していない宣言のうち、
  * それを囲む関数の中に '/login' で始まる文字列 (または template) があるもの。
  * 限界 (見張りであって証明ではない): 結果を変数で受けてから user だけを読む書き方・別の関数に包んで /login へ移す書き方・
- * window.location を使う書き方のうち '/login' を変数で渡すものは数えない。
+ * window.location を使う書き方のうち '/login' を変数で渡すもの・error を取り出しても、error と !user をまとめて /login へ移す書き方
+ * (`if (error || !user) router.push('/login')`) は数えない。
  *
  * 表 (KNOWN_REMAINING) は、残っている箇所 (いまはサーバーで動く画面だけ)。直した画面 (FIXED_SCREENS) は 0 件でなければならない。
  * #2093 W4 で、#2086 の範囲の外として残していた 7 画面 (家族・設定・サポート) を readSignedInUser に替え、FIXED_SCREENS へ移した。

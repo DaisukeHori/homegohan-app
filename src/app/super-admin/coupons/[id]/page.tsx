@@ -11,8 +11,8 @@
  * 状態の変更のあとの読み直し (409 のあと・通信の reject のあと) が失敗したら、文と「再試行」を出し、読み直せるまで
  * 状態の変更のボタンを止める (画面の status が DB と食い違っているかもしれないのに、その status を元にしたボタンを出し続けない。
  * プランの詳細と同じ。#2064・#2073)
- * 読み直しが 404 (読み直しの間にクーポンが消えた。uses_count 0 のクーポンは削除できる) か 403 (権限が外れた・二段階認証の確認が要る)
- * で断られたら、読み込み直しても変わらないので、その理由の文を出し「再試行」は出さず、状態の変更のボタンを戻す
+ * 読み直しが 404 (読み直しの間にクーポンが消えた。uses_count 0 のクーポンは削除できる)・403 (権限が外れた・二段階認証の確認が要る)・
+ * 401 (ログインが切れた) で断られたら、読み込み直しても変わらないので、その理由の文を出し「再試行」は出さず、状態の変更のボタンを戻す
  * (プラン・A/B テストの詳細と同じ。#2080)
  */
 
@@ -178,7 +178,7 @@ type PendingStatusReread = { newStatus: CouponStatusChange; cause: StatusRereadC
  * 状態の変更のあとの読み直しの結果 (#2064・#2073・#2080)。
  *   - reloaded   : 読み直せた
  *   - failed     : 読み直せなかった (「再試行」を出し、状態の変更のボタンを止める)
- *   - unavailable: 404 / 403 で断られた (message は理由の文。読み込み直しても変わらないので「再試行」は出さない)
+ *   - unavailable: 404 / 403 / 401 で断られた (message は理由の文。読み込み直しても変わらないので「再試行」は出さない)
  */
 type StatusRereadResult = { kind: 'reloaded' } | { kind: 'failed' } | { kind: 'unavailable'; message: string };
 
@@ -331,7 +331,8 @@ export default function CouponDetailPage() {
 
   /**
    * 409 のあと・通信の reject のあとにクーポンを読み直す (全体を「読み込み中」にしない。#2064・#2073)。
-   * 404 / 403 は unavailable (理由の文つき。#2080)、それ以外の失敗は failed
+   * 404 / 403 / 401 は unavailable (理由の文つき。401 は「ログインし直してください」。src/lib/super-admin/detail-reread.ts の
+   * rereadUnavailableMessage。#2080)、それ以外の失敗は failed
    */
   const rereadCoupon = () => rereadDetailRow<Coupon>(`/api/super-admin/coupons/${couponId}`, COUPON_NOT_FOUND_ON_RELOAD_MESSAGE);
 
@@ -391,7 +392,7 @@ export default function CouponDetailPage() {
   /**
    * 状態の変更のあとに読み直し、結果に合わせて文を出す (#2064・#2073)。inputsBefore は押したときの最後に読んだ・保存した行の
    * 入力欄の値 (書きかけを残すため)。読み直せなかったら「再試行」を待つ操作として記録し、状態の変更のボタンを止める。
-   * 404 / 403 で断られたら、理由の文を出し、「再試行」は待たない (読み込み直しても変わらないので、ボタンを止め続けない。#2080)
+   * 404 / 403 / 401 で断られたら、理由の文を出し、「再試行」は待たない (読み込み直しても変わらないので、ボタンを止め続けない。#2080)
    */
   const rereadAfterStatusChange = async (newStatus: CouponStatusChange, cause: StatusRereadCause, inputsBefore: CouponInputs) => {
     const outcome = await rereadCoupon();
