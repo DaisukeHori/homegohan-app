@@ -281,6 +281,50 @@ describe('POST /api/super-admin/plans/[id]/price-change', () => {
     expect(after).toEqual({ ...before, yearly_price_jpy: 19000 });
   });
 
+  it('409 OP_PRICE_UNCHANGED when the sent prices are already the current prices (a retry after a lost response): no history row, the plan stays, and the reservation is released (#2101 X1)', async () => {
+    if (!publicPlanId) {
+      console.warn('Skipping — public plan creation failed');
+      return;
+    }
+    const { data: before } = await supabaseAdmin
+      .from('subscription_plans')
+      .select('monthly_price_jpy, yearly_price_jpy, stripe_price_id, stripe_yearly_price_id')
+      .eq('id', publicPlanId)
+      .single();
+    const { count: historyBefore } = await supabaseAdmin
+      .from('plan_price_history')
+      .select('id', { count: 'exact', head: true })
+      .eq('plan_id', publicPlanId);
+
+    const retry = () =>
+      apiCall('POST', `/api/super-admin/plans/${publicPlanId}/price-change`, superAdminUser.jwt, {
+        new_monthly_price_jpy: before?.monthly_price_jpy,
+        new_yearly_price_jpy: before?.yearly_price_jpy,
+        reason: 'Retry after the response was lost (the same prices)',
+        effective_at: new Date().toISOString(),
+      });
+    const res = await retry();
+    expect(res.status).toBe(409);
+    expect((res.body as { error: { code: string } }).error.code).toBe('OP_PRICE_UNCHANGED');
+
+    const { data: after } = await supabaseAdmin
+      .from('subscription_plans')
+      .select('monthly_price_jpy, yearly_price_jpy, stripe_price_id, stripe_yearly_price_id')
+      .eq('id', publicPlanId)
+      .single();
+    expect(after).toEqual(before);
+    const { count: historyAfter } = await supabaseAdmin
+      .from('plan_price_history')
+      .select('id', { count: 'exact', head: true })
+      .eq('plan_id', publicPlanId);
+    expect(historyAfter).toBe(historyBefore);
+
+    // The reservation was released: the next request is not 409 CONFLICT_STALE_DATA (in progress), but the same 409 OP_PRICE_UNCHANGED
+    const again = await retry();
+    expect(again.status).toBe(409);
+    expect((again.body as { error: { code: string } }).error.code).toBe('OP_PRICE_UNCHANGED');
+  });
+
   it.each(['on_renewal', 'immediately'])(
     '400 for applies_to=%s (price changes apply to new contracts only), and the plan is left untouched',
     async (appliesTo) => {
