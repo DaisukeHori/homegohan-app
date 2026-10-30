@@ -79,7 +79,7 @@ await supabase.from('admin_audit_logs').insert({
 | パラメータ | 型 | 説明 |
 |----------|---|------|
 | `q` | string | 全文検索 (email/name/user_id)。email の部分一致は `admin` / `super_admin` のみ (`support` は name/user_id のみ)。`%` `_` は文字どおりに一致する |
-| `plan` | string | plan_key でフィルタ |
+| `plan` | string | plan_key でフィルタ (`user_profiles.plan_key_cached` で絞る。`free` は `plan_key_cached` が NULL の利用者も含む = 応答の `plan_key` と同じ意味。前後の空白を除いて空なら指定なし。一覧と件数の数え直しの両方に効く。#2112 Z5) |
 | `role` | string | ロールでフィルタ |
 | `status` | `active\|banned\|deleted` | ステータス。`deleted` は常に 0 件 (退会は `auth.users` の行を消し、`user_profiles` の行も外部キーの ON DELETE CASCADE で消えるので、削除済みの行は無い。以前は絞らずに全ステータスを返していた。#2107 Y10) |
 | `registered_from` | date | 登録日 FROM (JST の暦日。その日の JST 0 時以上。実在しない日付・受け付ける範囲 (0101-01-02〜9998-12-30) の外の日付は 400) |
@@ -1837,7 +1837,7 @@ Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#113
 | `OP_PLAN_NOT_GRANTABLE` | 422 | [NEW] 手動付与できないプラン (`POST /api/super-admin/users/{id}/manual-plan`。billing/02 §12.1) |
 | `OP_NO_MANUAL_SUBSCRIPTION` | 409 | [NEW] 取り消す手動付与の行が無い (`DELETE /api/super-admin/users/{id}/manual-plan`。billing/02 §12.1) |
 | `OP_SELF_MODIFY` | 403 | [NEW] 自分自身を対象にできない運営の操作 (`POST /api/super-admin/admins/{id}/mfa/reset`・`POST` / `DELETE /api/super-admin/users/{id}/manual-plan`) |
-| `OP_STRIPE_SYNC_FAILED` | 502 | Stripe API 呼び出し失敗 |
+| `OP_STRIPE_SYNC_FAILED` / `OP_STRIPE_SYNC_UNAVAILABLE` / `OP_PRICE_UNCHANGED` | 502 / 503 / 409 | Stripe API 呼び出し失敗 / Edge Function 未デプロイ / 価格の変更で、送った価格がすべて今の価格と同じ (Stripe の同期が要り、送った間隔の Stripe Price ID がまだ無いときを除く)。Stripe も DB も触らず監査も書かない (`POST /api/super-admin/plans/{id}/price-change`。§17。判定は `src/lib/super-admin/price-change-unchanged.ts` の `priceChangeAlreadyApplied`) |
 | `OP_COUPON_EXPIRED` | 422 | クーポン期限切れ |
 | `OP_TRIAL_ALREADY_USED` | 422 | 同一プランの試用は 1 回のみ |
 | `OP_NOT_SUPPORTED` | 501 | [NEW] 未対応の機能 (本文は予定を書かず、いまの事実だけを言う。#1911)。認可を通った人にだけ返す (データエクスポート・AI コンテンツの審査) |

@@ -110,7 +110,7 @@ export async function syncPlanPrices(request: SyncRequest, deps: SyncDeps) {
   //    無効化の失敗はベストエフォート (新しい Price の作成が必須の契約)
   return { month, year };
 }
-// その前に price-change route は begin_plan_price_change でプランごとの予約を取り (予約中なら 409。#1917 の続き。送られた価格がすべて今と同じなら Stripe を呼ばずに 409 OP_PRICE_UNCHANGED。#2101 X1)、その後 apply_plan_price_change が plan_price_history → subscription_plans (変えた interval の列だけ) を 1 つのトランザクションで書き →
+// その前に price-change route は begin_plan_price_change でプランごとの予約を取り (予約中なら 409。#1917 の続き。送られた価格がすべて今と同じなら Stripe を呼ばずに 409 OP_PRICE_UNCHANGED (ただし Stripe の同期が要り、送った間隔の Stripe Price ID がまだ無いときは続ける。billing/03 §12 の順 3。#2101 X1))、その後 apply_plan_price_change が plan_price_history → subscription_plans (変えた interval の列だけ) を 1 つのトランザクションで書き →
 // admin_audit_logs の順に書く。Stripe 同期が必須の環境 (STRIPE_SECRET_KEY あり) で同期に失敗したら、DB は一切更新しない (fail-closed)。
 ```
 
