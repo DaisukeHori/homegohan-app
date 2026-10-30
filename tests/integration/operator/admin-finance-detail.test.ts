@@ -10,8 +10,8 @@
  * ただし NPS / CSAT の集計 (GET nps) と NPS の書き出し (POST exports の export_type=nps) は admin / super_admin だけ。
  * finance は 403 (#1311。財務ロールを NPS / CSAT から外した)。書き出せる種別の一覧 (GET exports) にも、finance には nps を出さない。
  * 入力エラーは 400 を期待する (AC の「422 相当」)。#2101 X6 で、invoices の status・page・per_page と reconciliation の page・per_page は
- * DB に触れずに 400 VALIDATION_ERROR を返すようになった (以前は 500 / 200)。reconciliation の日時 (from / to) はまだ検証が無く 500 になるので、
- * `[既知の不具合]` の it.fails で固定してある。
+ * DB に触れずに 400 VALIDATION_ERROR を返すようになった (以前は 500 / 200)。#2107 Y12 で、invoices と reconciliation の from / to も
+ * 日付 (YYYY-MM-DD) かタイムゾーンつきの日時でなければ DB に触れずに 400 VALIDATION_ERROR を返すようになった (以前は不正な値を DB に渡して 500)。
  * (#1917 で、JSON として読めない本文は 400 INVALID_JSON、件数より後ろのページは 200 の空のページと本当の件数 (meta.total) を返すようになった)
  * (#1433 で、exports の本文と nps の期間は入口で検査して 400 を返すようになった。期間は JST の暦日の日付 YYYY-MM-DD)
  *
@@ -243,6 +243,19 @@ describe('GET /api/admin/finance/invoices', () => {
   it('400 for page that is not a number (#2101 X6)', async () => {
     const res = await apiCall('GET', '/api/admin/finance/invoices?page=abc', financeUser.jwt);
     expectError(res, 400, 'VALIDATION_ERROR');
+  });
+
+  // from / to が日付・日時でなければ DB に触れずに 400 VALIDATION_ERROR (#2107 Y12。以前は不正な値を received_at の比較に渡して 500)
+  for (const query of ['from=not-a-date', 'to=not-a-date', 'from=2026-02-30']) {
+    it(`400 for an invalid date (${query}) (#2107 Y12)`, async () => {
+      const res = await apiCall('GET', `/api/admin/finance/invoices?${query}`, financeUser.jwt);
+      expectError(res, 400, 'VALIDATION_ERROR');
+    });
+  }
+
+  it('200 for a date and a datetime with a time zone in from / to (#2107 Y12)', async () => {
+    const res = await apiCall('GET', '/api/admin/finance/invoices?from=2026-01-01&to=2999-01-01T00:00:00Z', financeUser.jwt);
+    expect(res.status, `status が違う。応答本文: ${JSON.stringify(res.body)}`).toBe(200);
   });
 
   // 件数より後ろのページ (PostgREST の 416 / PGRST103) は 500 にせず、空のページと本当の件数を返す (#1917)。
@@ -836,11 +849,15 @@ describe('GET /api/admin/finance/reconciliation', () => {
     });
   }
 
-  // 既知の不具合: from / to を検証せず、不正な日時をそのまま DB に渡して 500 になる。
-  // 不正な値は 400 (VALIDATION_ERROR) を返すのが期待。直ったら `.fails` を外すこと。
-  it.fails('[既知の不具合] 400 for an invalid from date (現状は検証が無く 500)', async () => {
+  // from / to が日付・日時でなければ DB に触れずに 400 VALIDATION_ERROR (#2107 Y12。以前は検証が無く、不正な値を DB に渡して 500)
+  it('400 for an invalid from date (#2107 Y12)', async () => {
     const res = await apiCall('GET', '/api/admin/finance/reconciliation?from=not-a-date', adminUser.jwt);
-    expect(res.status).toBe(400);
+    expectError(res, 400, 'VALIDATION_ERROR');
+  });
+
+  it('400 for an invalid to date (#2107 Y12)', async () => {
+    const res = await apiCall('GET', '/api/admin/finance/reconciliation?to=2026-13-01', adminUser.jwt);
+    expectError(res, 400, 'VALIDATION_ERROR');
   });
 
   it('403 for general user', async () => {

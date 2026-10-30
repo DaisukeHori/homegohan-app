@@ -24,9 +24,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const ROW_ID = '20802080-2080-4080-8080-208020802080';
 
-vi.mock('next/navigation', () => ({
-  useParams: () => ({ id: ROW_ID }),
-}));
+vi.mock('next/navigation', () => {
+  // 一覧 (/super-admin/experiments) は URL の page を useSearchParams で読み、件数より後ろのページを router.replace で移す (#2107 Y9)。
+  // router は描画のたびに同じものを返す (一覧の読み込みの useCallback が router に依存するので、毎回別の値だと読み込みが止まらない)
+  const router = { push: () => undefined, replace: () => undefined, refresh: () => undefined };
+  return {
+    useParams: () => ({ id: ROW_ID }),
+    useRouter: () => router,
+    useSearchParams: () => new URLSearchParams(),
+  };
+});
 
 vi.mock('next/link', () => ({
   default: (props: { href: string; children?: React.ReactNode; className?: string }) =>

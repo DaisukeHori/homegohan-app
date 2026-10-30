@@ -18,10 +18,18 @@
  * 読み込み・状態の変更の失敗の文は日本語だけにする (本文の無い 502 の「HTTP 502」だけの文・通信の reject の英字の文を出さない。#2086 V6)。
  * 200 なのに本文が読めない・data が配列でない応答は、0 件と見せずに読み込めなかったものとして扱う (初めの読み込みは
  * 「実験の一覧を読み込めませんでした（通信エラー）」、読み直しは一覧を残して「再試行」。詳細の画面と同じ扱い。#2093 W7)。
+ * 一覧はページで送る (#2107 Y9。以前は page / per_page なしで呼び、API の既定の 50 件より後ろの実験を出さず、件数もページ送りも無かった)。
+ * 読むページは URL の page (parsePageParam で読む。1 以上の整数でなければ 1 ページ目)。meta.total で件数と「前へ」「次へ」
+ * (URL の page を変えるリンク) を出す。件数より後ろのページは、空のページを見せずに最後のページへ移す (lastPageToRefetch)。
+ * ページを移した先の読み込みは初めの読み込みと同じ扱いにする (前のページの行を残さず、失敗したら失敗の文だけを出す)。
+ * 一覧の上の 409・通信の reject のあとの文は前のページの行についての文なので、ページを移したら消す
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { lastPageOf, lastPageToRefetch, parsePageParam } from "@/lib/list-pagination";
+import { EXPERIMENTS_LIST_PER_PAGE_DEFAULT } from "@/lib/super-admin/experiments-schemas";
 import {
   EXPERIMENT_STATUS_LABELS,
   experimentListNoResponseReloadFailedMessage,
@@ -35,6 +43,7 @@ import {
 import {
   adminActionHttpFailedMessage,
   adminLoadFailedMessage,
+  listTotalOfBody,
   screenApiErrorMessage,
 } from "@/lib/admin/admin-screen-messages";
 import { rereadUnavailableMessage } from "@/lib/super-admin/detail-reread";
@@ -43,6 +52,15 @@ import { rereadUnavailableMessage } from "@/lib/super-admin/detail-reread";
 const EXPERIMENTS_SUBJECT = "実験の一覧";
 /** 状態の変更の失敗の文の操作の名前 (「状態の変更に失敗しました (HTTP 502)」。#2086 V6) */
 const STATUS_CHANGE_ACTION = "状態の変更";
+/** 一覧の画面のパス (ページ送りのリンク・最後のページへの移動の行き先) */
+const EXPERIMENTS_PAGE_PATH = "/super-admin/experiments";
+/** 1 ページの件数。一覧の API の既定 (per_page を省略したときの件数) と同じ値 (#2107 Y9) */
+const EXPERIMENTS_PER_PAGE = EXPERIMENTS_LIST_PER_PAGE_DEFAULT;
+
+/** page のページの一覧の画面の URL */
+function experimentsPageHref(page: number): string {
+  return `${EXPERIMENTS_PAGE_PATH}?page=${page}`;
+}
 
 interface Experiment {
   id: string;
@@ -65,13 +83,15 @@ const STATUS_BADGE: Record<string, { label: string; color: string }> = {
 
 /**
  * 一覧の読み込みの結果。superseded は、読み込みの最中に新しい読み込みが始まったので結果を捨てた。
- * unavailable は、表示したあとの読み直しが 401 / 403 で断られた (読み込み直しても変わらない理由。#2086 V4)
+ * unavailable は、表示したあとの読み直しが 401 / 403 で断られた (読み込み直しても変わらない理由。#2086 V4)。
+ * moved は、読んだページが件数より後ろだったので最後のページへ移した (結果は移った先の読み込みで出す。#2107 Y9)
  */
 type ExperimentsLoadOutcome =
   | { kind: "loaded"; experiments: Experiment[] }
   | { kind: "failed" }
   | { kind: "unavailable"; message: string }
-  | { kind: "superseded" };
+  | { kind: "superseded" }
+  | { kind: "moved" };
 
 /**
  * 一覧の上に出す、409 のあと・通信の reject のあとの読み直しについての文 (#2064・#2073)。name は操作した実験の名前 (押したときの一覧の名前)。
@@ -106,7 +126,13 @@ function reloadNoticeText(notice: ReloadNotice): string {
 }
 
 export default function ExperimentsPage() {
+  const router = useRouter();
+  // 読むページは URL の page (1 以上の整数でなければ 1 ページ目。#2107 Y9)
+  const searchParams = useSearchParams();
+  const page = parsePageParam(searchParams?.get("page") ?? undefined);
   const [experiments, setExperiments] = useState<Experiment[]>([]);
+  // 一覧の全体の件数 (API の meta.total。#2107 Y9)
+  const [total, setTotal] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   // 状態の変更 (開始・完了) の応答と、409 のあとの読み直しを待っている実験の id。待つあいだは一覧の状態の変更のボタンを止め、
@@ -118,10 +144,20 @@ export default function ExperimentsPage() {
   const [reloadNotice, setReloadNotice] = useState<ReloadNotice | null>(null);
   // 「再試行」の読み直しを待っているか
   const [isReloading, setIsReloading] = useState(false);
-  // 一度一覧を表示したか (表示したあとの読み直しは、一覧を外さずに行う)
-  const hasLoadedRef = useRef(false);
+  // 表示している一覧のページ (まだ表示していなければ null)。表示したページの読み直しは、一覧を外さずに行う。
+  // 別のページの読み込みは初めの読み込みと同じ扱い (前のページの行を残さない。#2107 Y9)
+  const loadedPageRef = useRef<number | null>(null);
   // 読み込みを重ねたとき、古い読み込みの結果で上書きしないための連番
   const loadSeqRef = useRef(0);
+
+  // 409 のあと・通信の reject のあとの一覧の読み直しが失敗し、まだ読み直せていないか (#2073・#2080)。そのあいだは状態のボタンを止める。
+  // ref は描画を待たずに handler で読むための写し
+  const reloadFailedRef = useRef(false);
+  const [isReloadFailed, setIsReloadFailed] = useState(false);
+  const markReloadFailed = useCallback((failed: boolean) => {
+    reloadFailedRef.current = failed;
+    setIsReloadFailed(failed);
+  }, []);
 
   /**
    * 一覧を読む。初めの読み込みは失敗したら画面をエラーにする。
@@ -129,9 +165,22 @@ export default function ExperimentsPage() {
    */
   const loadExperiments = useCallback(async (): Promise<ExperimentsLoadOutcome> => {
     const seq = ++loadSeqRef.current;
-    const isReload = hasLoadedRef.current;
+    const isReload = loadedPageRef.current === page;
+    // 件数より後ろのページから最後のページへ移すときは、読み込み中のまま移った先の読み込みへ渡す (空の一覧を一瞬も見せない)
+    let moved = false;
+    if (!isReload) {
+      // 別のページ (初めの読み込みを含む) を読む。前のページの行・件数と、その行についての一覧の上の文を残さない (#2107 Y9)
+      loadedPageRef.current = null;
+      setIsLoading(true);
+      setError(null);
+      setExperiments([]);
+      setTotal(0);
+      setReloadNotice(null);
+      markReloadFailed(false);
+    }
     try {
-      const res = await fetch("/api/super-admin/experiments");
+      const params = new URLSearchParams({ page: String(page), per_page: String(EXPERIMENTS_PER_PAGE) });
+      const res = await fetch(`/api/super-admin/experiments?${params}`);
       const body: unknown = await res.json().catch(() => null);
       if (seq !== loadSeqRef.current) return { kind: "superseded" };
       if (!res.ok) {
@@ -152,8 +201,18 @@ export default function ExperimentsPage() {
         return { kind: "failed" };
       }
       const loaded = data as Experiment[];
-      hasLoadedRef.current = true;
+      const metaTotal = listTotalOfBody(body);
+      // 件数より後ろのページ (URL のページ番号・最後のページの唯一の行が消えたあとの読み直し) は、最後のページへ移す (#2107 Y9)
+      const refetchPage = lastPageToRefetch({ rows: loaded.length, page, total: metaTotal, perPage: EXPERIMENTS_PER_PAGE });
+      if (refetchPage !== null) {
+        moved = true;
+        router.replace(experimentsPageHref(refetchPage));
+        return { kind: "moved" };
+      }
+      loadedPageRef.current = page;
       setExperiments(loaded);
+      // meta.total が無い・数でない応答でも、出している行より少ない件数にはしない
+      setTotal(Math.max(metaTotal, (page - 1) * EXPERIMENTS_PER_PAGE + loaded.length));
       setError(null);
       return { kind: "loaded", experiments: loaded };
     } catch {
@@ -162,22 +221,13 @@ export default function ExperimentsPage() {
       if (!isReload) setError(adminLoadFailedMessage(EXPERIMENTS_SUBJECT, null));
       return { kind: "failed" };
     } finally {
-      if (seq === loadSeqRef.current && !isReload) setIsLoading(false);
+      if (seq === loadSeqRef.current && !isReload && !moved) setIsLoading(false);
     }
-  }, []);
+  }, [page, router, markReloadFailed]);
 
   useEffect(() => {
     void loadExperiments();
   }, [loadExperiments]);
-
-  // 409 のあと・通信の reject のあとの一覧の読み直しが失敗し、まだ読み直せていないか (#2073・#2080)。そのあいだは状態のボタンを止める。
-  // ref は描画を待たずに handler で読むための写し
-  const reloadFailedRef = useRef(false);
-  const [isReloadFailed, setIsReloadFailed] = useState(false);
-  const markReloadFailed = useCallback((failed: boolean) => {
-    reloadFailedRef.current = failed;
-    setIsReloadFailed(failed);
-  }, []);
 
   /**
    * 状態が分からなくなったあとの一覧の読み直し。cause は読み直す理由:
@@ -188,7 +238,8 @@ export default function ExperimentsPage() {
   const reloadAfterUncertain = useCallback(
     async (target: { id: string; name: string }, cause: "stale" | "no-response") => {
       const outcome = await loadExperiments();
-      if (outcome.kind === "superseded") return;
+      // 移した先のページの読み込みは、初めの読み込みと同じ扱い (一覧の上の文は出さない。#2107 Y9)
+      if (outcome.kind === "superseded" || outcome.kind === "moved") return;
       // 読み直しが失敗したら、どちらの理由でも、読み直せるまで状態のボタンを止める (#2073・#2080)。
       // 401 / 403 (unavailable) は読み込み直しても変わらないので止めない (詳細の画面と同じ。#2086 V4)
       markReloadFailed(outcome.kind === "failed");
@@ -264,6 +315,8 @@ export default function ExperimentsPage() {
   const isBusy = changingId !== null || isReloading;
   // 状態のボタンを止めるか (応答・読み直しを待つあいだと、409 のあと・通信の reject のあとの読み直しが失敗しているあいだ。#2073・#2080)
   const statusButtonsDisabled = isBusy || isReloadFailed;
+  // ページ送り (#2107 Y9)。件数から出した最後のページ (0 件でも 1)
+  const totalPages = lastPageOf(total, EXPERIMENTS_PER_PAGE);
 
   if (isLoading) {
     return (
@@ -287,6 +340,10 @@ export default function ExperimentsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">A/B テスト管理</h1>
           <p className="text-slate-400 mt-1">実験の作成・管理・結果分析</p>
+          {/* 一覧の全体の件数 (このページの行数ではない。#2107 Y9) */}
+          <p data-testid="experiments-total" className="text-slate-400 text-sm mt-1">
+            全 {total.toLocaleString()} 件
+          </p>
         </div>
         <Link
           href="/super-admin/experiments/new"
@@ -399,6 +456,33 @@ export default function ExperimentsPage() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* ページ送り (URL の page を変える。#2107 Y9) */}
+      {totalPages > 1 && (
+        <div data-testid="experiments-pagination" className="mt-4 flex items-center justify-between text-sm text-slate-400">
+          <span>
+            {(page - 1) * EXPERIMENTS_PER_PAGE + 1}〜{Math.min(page * EXPERIMENTS_PER_PAGE, total)} 件 / {total.toLocaleString()} 件
+          </span>
+          <div className="flex gap-2">
+            {page > 1 && (
+              <Link
+                href={experimentsPageHref(page - 1)}
+                className="px-3 py-1 rounded border border-slate-600 hover:bg-slate-700 transition-colors"
+              >
+                前へ
+              </Link>
+            )}
+            {page < totalPages && (
+              <Link
+                href={experimentsPageHref(page + 1)}
+                className="px-3 py-1 rounded border border-slate-600 hover:bg-slate-700 transition-colors"
+              >
+                次へ
+              </Link>
+            )}
+          </div>
         </div>
       )}
     </div>

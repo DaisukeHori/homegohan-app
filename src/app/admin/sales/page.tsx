@@ -4,8 +4,13 @@
  * 営業 CRM 見込み顧客一覧 (カンバン + テーブルビュー)
  * operator/03-ui-spec.md §17 準拠
  * 権限: sales, admin, super_admin
+ *
+ * #2107 Y11: ステージの絞り込みを変えて読み込みを始めるときに行を空にする。そのあとの読み込みが失敗
+ * (500・403・通信の失敗・壊れた応答) しても、前の条件の行と件数を失敗の文と一緒に出さない (新しい条件の結果と見誤らせない)。
+ * 読み込みを重ねたときは、遅れて届いた古い読み込みの結果で新しい条件の画面を上書きしない (読み込みの連番で捨てる)。
+ * 読み込みの最中・失敗のあいだは件数を出さない (前の条件の件数を新しい条件の件数と見せない)
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { loginPathWithNext } from '@/lib/auth/signed-in-user';
@@ -68,12 +73,18 @@ export default function SalesLeadsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'kanban' | 'table'>('kanban');
+  // 読み込みを重ねたとき、古い読み込みの結果で新しい条件の画面を上書きしないための連番 (#2107 Y11)
+  const loadSeqRef = useRef(0);
 
   const perPage = 200;
 
   const fetchLeads = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
+    const isLatest = () => seq === loadSeqRef.current;
     setIsLoading(true);
     setError(null);
+    // 前の条件の行を、新しい条件の読み込みの結果 (とくに失敗) と一緒に出さない (#2107 Y11)
+    setLeads([]);
     try {
       const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
       if (stageFilter) params.set('stage', stageFilter);
@@ -85,12 +96,18 @@ export default function SalesLeadsPage() {
         // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
         throw new AdminScreenError(adminLoadFailedMessage(LEADS_SUBJECT, null));
       }
+      if (!isLatest()) return;
       if (res.status === 401) { router.push(loginPathWithNext(pathname)); return; }
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
-      if (res.status === 403) { setError(await forbiddenMessageOfResponse(res)); return; }
+      if (res.status === 403) {
+        const forbiddenMessage = await forbiddenMessageOfResponse(res);
+        if (isLatest()) setError(forbiddenMessage);
+        return;
+      }
       if (!res.ok) throw new AdminScreenError(adminLoadFailedMessage(LEADS_SUBJECT, res.status));
 
       const json: unknown = await res.json().catch(() => null);
+      if (!isLatest()) return;
       // 200 なのに本文が読めない・data が配列でない壊れた応答は、0 件と見せずに読み込めなかったものとして扱う (#2101 X8)
       const rows = listRowsOfBody<Lead>(json);
       if (rows === null) throw new AdminScreenError(adminLoadFailedMessage(LEADS_SUBJECT, null));
@@ -98,9 +115,9 @@ export default function SalesLeadsPage() {
       setTotal(listTotalOfBody(json));
     } catch (e: unknown) {
       // 画面に出すのは日本語の文だけ (JSON でない本文の SyntaxError などの英字の文は出さない。#2086 V6)
-      setError(displayableAdminError(e, adminLoadFailedFallback(LEADS_SUBJECT)));
+      if (isLatest()) setError(displayableAdminError(e, adminLoadFailedFallback(LEADS_SUBJECT)));
     } finally {
-      setIsLoading(false);
+      if (isLatest()) setIsLoading(false);
     }
   }, [page, stageFilter, router, pathname]);
 
@@ -108,6 +125,8 @@ export default function SalesLeadsPage() {
 
   // 読み込みに失敗して出せる行が無い。「見込み顧客 0 件」・空のカンバン・「リードはありません」と 0 件に見せない (#2101 X8)
   const loadFailedWithoutRows = error !== null && leads.length === 0;
+  // 件数 (total) が今の条件の読み込みの結果か。読み込みの最中・失敗のあいだの total は前の条件の件数なので出さない (#2107 Y11)
+  const showsCurrentTotal = !isLoading && error === null;
 
   const leadsByStage = ALL_STAGES.reduce<Record<Stage, Lead[]>>((acc, stage) => {
     acc[stage] = leads.filter((l) => l.stage === stage);
@@ -121,7 +140,7 @@ export default function SalesLeadsPage() {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">営業 CRM</h1>
-            {!loadFailedWithoutRows && <p className="text-sm text-gray-500 mt-1">見込み顧客 {total} 件</p>}
+            {showsCurrentTotal && <p className="text-sm text-gray-500 mt-1">見込み顧客 {total} 件</p>}
           </div>
           <div className="flex items-center gap-3">
             {/* ビュー切替 */}
