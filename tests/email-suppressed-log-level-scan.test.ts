@@ -17,8 +17,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { resolveHeavyUnitTimeouts } from './helpers/heavy-unit-test-timeout';
+import { applyHeavyUnitTestTimeout, resolveHeavyUnitTimeouts } from './helpers/heavy-unit-test-timeout';
 import { testsWithUnexpectedTimeout } from './helpers/local-ci-slot-test-timeout';
+
+// 1 件のテストの中で src と lib の .ts / .tsx を全部読む (TypeScript の構文木によるリポジトリの走査) ので、負荷の高い機械で
+// vitest の既定の時間切れ (テスト 5 秒) を超えうる (#2093。#2086 の検証で 1 回、時間切れだけで落ちた)。
+// このファイルだけ延ばす (根拠と環境変数での上書きは tests/helpers/heavy-unit-test-timeout.ts。#1488 の続き)。テストとフックを定義する前に置く
+applyHeavyUnitTestTimeout();
 
 const ROOT = path.resolve(__dirname, '..');
 const SCAN_ROOTS = ['src', 'lib'] as const;
@@ -33,6 +38,8 @@ const REASON_ARGUMENT_INDEX = 1;
 const MIN_SCANNED_FILES = 100;
 /** sendEmail を呼ぶ呼び出し側の数の目安 (#1577 の時点で 20 を超える。走査が呼び出し側を見つけられていることの確認) */
 const MIN_SEND_EMAIL_CALLERS = 10;
+/** 識別子の中の Unicode のエスケープ (`sendEm\u0061il` のように書くと、識別子の名前は sendEmail でも本文にその文字列が無い) */
+const UNICODE_ESCAPE = '\\u';
 
 type Violation = 'failure-reasons-element' | 'send-result-error' | 'rethrown-send-error';
 
@@ -130,6 +137,15 @@ function scanSource(source: string, fileName = 'virtual.ts'): { violations: Viol
   return { violations, callsSendEmail };
 }
 
+/**
+ * 構文木を作る前の絞り込み (#2093。走査を速くする)。scanSource が数えるのは、名前が sendEmail / emailFailureReasons の
+ * 識別子 (呼び出しと、その結果を受けた変数) から始まる書き方だけなので、本文にどちらの名前も無く、識別子を Unicode の
+ * エスケープで書く余地も無いソースは、構文木を作らなくても { violations: [], callsSendEmail: false } と同じ (結果は変わらない)
+ */
+function mayHaveEmailCalls(source: string): boolean {
+  return source.includes(SEND_EMAIL) || source.includes(FAILURE_REASONS) || source.includes(UNICODE_ESCAPE);
+}
+
 function listSourceFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
@@ -201,6 +217,37 @@ describe('送れなかった理由を error へ直接渡さない (#1577 の 7)'
     expect(scanSource(good)).toEqual({ violations: [], callsSendEmail: true });
   });
 
+  it('構文木を作る前の絞り込みは、数える書き方を含むソースを落とさない (落としたソースは走査しても何も数えない。#2093)', () => {
+    const bad = `
+      async function a(log) {
+        const failures = emailFailureReasons(results);
+        log.error('m', failures[0], {});
+      }
+      async function b(log) {
+        const sent = await sendEmail(x);
+        log.error('m', sent.error, {});
+      }
+    `;
+    // 識別子を Unicode のエスケープで書いたもの (本文に sendEmail の文字列は無いが、識別子の名前は sendEmail)
+    const escaped = "async function c(log) {\n  const sent = await sendEm\\u0061il(x);\n  log.error('m', sent.error, {});\n}\n";
+    expect(escaped.includes(SEND_EMAIL)).toBe(false);
+    for (const source of [bad, escaped]) {
+      expect(mayHaveEmailCalls(source)).toBe(true);
+      expect(scanSource(source).violations.length).toBeGreaterThan(0);
+    }
+    expect(scanSource(escaped)).toEqual({ violations: ['send-result-error'], callsSendEmail: true });
+
+    // どちらの名前も無いソースは落とす。走査しても何も数えない (落としても結果は同じ)
+    const unrelated = `
+      async function d(log) {
+        const sent = await sendSlack(x);
+        log.error('m', sent.error, {});
+      }
+    `;
+    expect(mayHaveEmailCalls(unrelated)).toBe(false);
+    expect(scanSource(unrelated)).toEqual({ violations: [], callsSendEmail: false });
+  });
+
   it('src/ と lib/ の呼び出し側に、送れなかった理由を error へ直接渡す書き方が無い', () => {
     const files = SCAN_ROOTS.flatMap((root) => listSourceFiles(root)).filter((file) => !file.startsWith(EXCLUDED_DIR));
     expect(files.length).toBeGreaterThan(MIN_SCANNED_FILES);
@@ -208,7 +255,9 @@ describe('送れなかった理由を error へ直接渡さない (#1577 の 7)'
     const found: string[] = [];
     let callers = 0;
     for (const file of files) {
-      const { violations, callsSendEmail } = scanSource(fs.readFileSync(path.join(ROOT, file), 'utf-8'), file);
+      const source = fs.readFileSync(path.join(ROOT, file), 'utf-8');
+      if (!mayHaveEmailCalls(source)) continue;
+      const { violations, callsSendEmail } = scanSource(source, file);
       if (callsSendEmail) callers += 1;
       for (const violation of violations) found.push(`${file}: ${violation}`);
     }
