@@ -7,6 +7,18 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import {
+  AdminScreenError,
+  adminActionHttpFailedMessage,
+  adminActionNoResponseMessage,
+  adminCreatedButUnreadableMessage,
+  adminScreenErrorOfResponse,
+  createdRowIdOfResponse,
+  displayableAdminError,
+} from '@/lib/admin/admin-screen-messages';
+
+/** 作成の失敗の文の操作の名前 (「機能パッケージの作成に失敗しました (HTTP 502)」。#2093 W7) */
+const FEATURE_PACKAGE_CREATE_ACTION = '機能パッケージの作成';
 
 export default function FeaturePackageNewPage() {
   const router = useRouter();
@@ -34,26 +46,36 @@ export default function FeaturePackageNewPage() {
     setError('');
 
     try {
-      const res = await fetch('/api/super-admin/feature-packages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          package_key: packageKey,
-          display_name: displayName,
-          description: description || undefined,
-          feature_flags: flags,
-          display_order: Number(displayOrder),
-        }),
-      });
-
-      const data = await res.json() as { data?: { id: string }; error?: { message: string } };
+      // 失敗は日本語の文の例外にする。ok を先に確かめ、JSON でない 502 を「ネットワークエラー」と見せない
+      // (本文に日本語の文が無ければ「<作成>に失敗しました (HTTP 502)」、通信そのものの失敗は「<作成>の応答を受け取れませんでした」。#2093 W7)
+      let res: Response;
+      try {
+        res = await fetch('/api/super-admin/feature-packages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            package_key: packageKey,
+            display_name: displayName,
+            description: description || undefined,
+            feature_flags: flags,
+            display_order: Number(displayOrder),
+          }),
+        });
+      } catch {
+        throw new AdminScreenError(adminActionNoResponseMessage(FEATURE_PACKAGE_CREATE_ACTION));
+      }
       if (!res.ok) {
-        setError(data.error?.message ?? '作成に失敗しました');
+        throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(FEATURE_PACKAGE_CREATE_ACTION, status));
+      }
+      // 成功の応答の本文が読めない: 作成は済んでいるので失敗とは言わず、一覧で確かめるよう促す (作った行の画面へは移れない)
+      const createdId = await createdRowIdOfResponse(res);
+      if (createdId === null) {
+        setError(adminCreatedButUnreadableMessage(FEATURE_PACKAGE_CREATE_ACTION));
         return;
       }
-      router.push(`/super-admin/feature-packages/${data.data!.id}`);
-    } catch {
-      setError('ネットワークエラーが発生しました');
+      router.push(`/super-admin/feature-packages/${createdId}`);
+    } catch (err) {
+      setError(displayableAdminError(err, `${FEATURE_PACKAGE_CREATE_ACTION}に失敗しました`));
     } finally {
       setIsLoading(false);
     }

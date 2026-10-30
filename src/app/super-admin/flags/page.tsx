@@ -7,6 +7,9 @@
  * 一覧を読み直して今の値を見せ、「「<フラグ>」の切り替え (削除) の応答を受け取れませんでした」の文を一覧の上に出す
  * (alert にしない。#2073)。読み直さないと、ON にできていても OFF のまま・消せていても行が残ったまま見える。
  * そのあとの読み直しが失敗したら「再試行」を出し、読み直せるまで切り替えと削除を止める (一覧の値が古いかもしれないため)。
+ * 読み直しが 401 / 403 で断られたら、読み込み直しても変わらないので、理由の文 (401 は「ログインし直してください」・
+ * 403 は二段階認証の確認が要る などの理由の文か「権限がありません」) を出し、「再試行」は出さず、切り替えと削除も止めない
+ * (A/B テストの一覧などと同じ分け方。#2093 W6)。
  */
 
 import { useState, useEffect, useRef } from "react";
@@ -16,8 +19,9 @@ import {
   adminLoadFailedFallback,
   adminScreenErrorOfResponse,
   displayableAdminError,
-  fetchAdminJson,
+  fetchAdminRows,
 } from "@/lib/admin/admin-screen-messages";
+import { rereadUnavailableMessage } from "@/lib/super-admin/detail-reread";
 import {
   NO_RESPONSE_LIST_RELOADED_GUIDE,
   NO_RESPONSE_LIST_RELOAD_FAILED_GUIDE,
@@ -42,20 +46,28 @@ const FLAGS_SUBJECT = "機能フラグ";
 type FlagWriteOperation = "切り替え" | "削除";
 
 /**
- * 書き込みの通信が reject されたあとの一覧の読み直しについての文 (#2073)。
- * reloaded は一覧を読み直せたか (false なら「再試行」を出し、切り替えと削除を止める)
+ * 一覧の読み直しの結果 (#2073・#2093 W6)。
+ *   - loaded     : 読み直せた
+ *   - failed     : 読み直せなかった (500・通信の reject・本文が読めない)。「再試行」を出し、切り替えと削除を止める
+ *   - unavailable: 401 / 403 で断られた。読み込み直しても変わらないので、理由の文 (message) を出し、「再試行」は出さず、止めない
  */
+type FlagsReloadOutcome = { kind: "loaded" } | { kind: "failed" } | { kind: "unavailable"; message: string };
+
+/** 書き込みの通信が reject されたあとの一覧の読み直しについての文 (#2073)。reload は読み直しの結果 */
 interface NoResponseNotice {
   key: string;
   operation: FlagWriteOperation;
-  reloaded: boolean;
+  reload: FlagsReloadOutcome;
 }
 
 function noResponseNoticeText(notice: NoResponseNotice): string {
-  return statusChangeNoResponseMessage(
-    `「${notice.key}」の${notice.operation}`,
-    notice.reloaded ? NO_RESPONSE_LIST_RELOADED_GUIDE : NO_RESPONSE_LIST_RELOAD_FAILED_GUIDE,
-  );
+  const guide =
+    notice.reload.kind === "loaded"
+      ? NO_RESPONSE_LIST_RELOADED_GUIDE
+      : notice.reload.kind === "failed"
+        ? NO_RESPONSE_LIST_RELOAD_FAILED_GUIDE
+        : notice.reload.message;
+  return statusChangeNoResponseMessage(`「${notice.key}」の${notice.operation}`, guide);
 }
 
 export default function FlagsPage() {
@@ -80,13 +92,12 @@ export default function FlagsPage() {
   // 「再試行」の読み直しを待っているか
   const [isReloading, setIsReloading] = useState(false);
   const isWriting = toggling !== null || deletingKey !== null || isReloading;
-  const listStale = noResponseNotice !== null && !noResponseNotice.reloaded;
+  const listStale = noResponseNotice !== null && noResponseNotice.reload.kind === "failed";
 
   const fetchFlags = async () => {
     try {
-      const body = await fetchAdminJson("/api/super-admin/flags", FLAGS_SUBJECT);
-      const data = (body as { data?: FeatureFlag[] | null }).data;
-      setFlags(data ?? []);
+      // 200 なのに本文が読めない・data が配列でない応答は、0 件と見せずに読み込めなかった文にする (#2093 W7)
+      setFlags(await fetchAdminRows<FeatureFlag>("/api/super-admin/flags", FLAGS_SUBJECT));
     } catch (err) {
       // 画面に出すのは日本語の文だけ (ブラウザの英字の例外・JSON の SyntaxError の文は出さない。#2086 V6)
       setError(displayableAdminError(err, adminLoadFailedFallback(FLAGS_SUBJECT)));
@@ -100,30 +111,38 @@ export default function FlagsPage() {
   }, []);
 
   /**
-   * 一覧を読み直す。読めたら一覧を今の値にして true を返す。読めなければ一覧は手元の値のまま false を返す
-   * (読み直しの失敗で画面ごとエラーにしない)。
+   * 一覧を読み直す。読めたら一覧を今の値にして loaded を返す。読めなければ一覧は手元の値のまま failed か unavailable を返す
+   * (読み直しの失敗で画面ごとエラーにしない)。401 / 403 は unavailable (理由の文つき。一覧の 404 は行の消えたことを
+   * 意味しないので failed。#2093 W6)。
    * 使うところ: 切り替えのあと (対象ユーザー数 active_user_count を新しい値にする。#1148。読み直せなくても切り替えそのものは
    * 済んでいるので、結果は使わない) と、書き込みの通信が reject されたあと (#2073)
    */
-  const reloadFlags = async (): Promise<boolean> => {
+  const reloadFlags = async (): Promise<FlagsReloadOutcome> => {
     try {
       const res = await fetch("/api/super-admin/flags");
-      if (!res.ok) return false;
       const body: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        const unavailableMessage = rereadUnavailableMessage(res.status, body, null);
+        return unavailableMessage === null ? { kind: "failed" } : { kind: "unavailable", message: unavailableMessage };
+      }
       const data = (body as { data?: unknown } | null)?.data;
-      if (!Array.isArray(data)) return false;
+      if (!Array.isArray(data)) return { kind: "failed" };
       setFlags(data as FeatureFlag[]);
-      return true;
+      return { kind: "loaded" };
     } catch {
-      return false;
+      return { kind: "failed" };
     }
   };
 
-  /** 書き込みの通信が reject されたあとの読み直しと文 (#2073) */
+  /**
+   * 書き込みの通信が reject されたあとの読み直しと文 (#2073)。
+   * 読み直せなかった (failed) ときだけ、読み直せるまで切り替えと削除を止める。401 / 403 (unavailable) は読み込み直しても
+   * 変わらないので止めない (#2093 W6)
+   */
   const reloadAfterNoResponse = async (key: string, operation: FlagWriteOperation) => {
-    const reloaded = await reloadFlags();
-    listStaleRef.current = !reloaded;
-    setNoResponseNotice({ key, operation, reloaded });
+    const reload = await reloadFlags();
+    listStaleRef.current = reload.kind === "failed";
+    setNoResponseNotice({ key, operation, reload });
   };
 
   /** 「再試行」: 通信の reject のあとの失敗した読み直しをやり直す (#2073) */
@@ -240,7 +259,7 @@ export default function FlagsPage() {
           <p role="alert" data-testid="flags-reload-notice">
             {noResponseNoticeText(noResponseNotice)}
           </p>
-          {!noResponseNotice.reloaded && (
+          {noResponseNotice.reload.kind === "failed" && (
             <button
               type="button"
               onClick={() => void retryReload()}

@@ -16,6 +16,8 @@
  * 403 は二段階認証の確認が要る などの理由の文か「権限がありません」) を出し、「再試行」は出さず、状態のボタンも止めない
  * (詳細の画面と同じ分け方。#2086 V4)。
  * 読み込み・状態の変更の失敗の文は日本語だけにする (本文の無い 502 の「HTTP 502」だけの文・通信の reject の英字の文を出さない。#2086 V6)。
+ * 200 なのに本文が読めない・data が配列でない応答は、0 件と見せずに読み込めなかったものとして扱う (初めの読み込みは
+ * 「実験の一覧を読み込めませんでした（通信エラー）」、読み直しは一覧を残して「再試行」。詳細の画面と同じ扱い。#2093 W7)。
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -142,7 +144,13 @@ export default function ExperimentsPage() {
         const unavailableMessage = rereadUnavailableMessage(res.status, body, null);
         return unavailableMessage === null ? { kind: "failed" } : { kind: "unavailable", message: unavailableMessage };
       }
-      const loaded = (body as { data?: Experiment[] | null } | null)?.data ?? [];
+      const data = (body as { data?: unknown } | null)?.data;
+      if (!Array.isArray(data)) {
+        // 200 なのに本文が読めない・data が配列でない。0 件と見せずに読み込めなかったものとして扱う (#2093 W7)
+        if (!isReload) setError(adminLoadFailedMessage(EXPERIMENTS_SUBJECT, null));
+        return { kind: "failed" };
+      }
+      const loaded = data as Experiment[];
       hasLoadedRef.current = true;
       setExperiments(loaded);
       setError(null);

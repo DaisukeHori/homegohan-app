@@ -146,3 +146,13 @@ export async function createdRowIdOfResponse(res: Response): Promise<string | nu
 export function adminCreatedButUnreadableMessage(action: string): string {
   return `${action}は済みましたが、応答を読み込めませんでした。一覧から開いて確かめてください`;
 }
+
+/**
+ * 書き込み (PATCH) の成功の応答の本文 ({ data: 書いたあとの行 }) から行を読む。
+ * 本文が JSON として読めない・data が無いときは null (書き込みは済んでいるかもしれないので、呼び出し側は失敗とは言わない。#2093 W7)
+ */
+export async function savedRowOfResponse<T>(res: Response): Promise<T | null> {
+  const body: unknown = await res.json().catch(() => null);
+  const data = typeof body === 'object' && body !== null ? (body as { data?: unknown }).data : undefined;
+  return typeof data === 'object' && data !== null ? (data as T) : null;
+}
