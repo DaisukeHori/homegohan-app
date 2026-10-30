@@ -176,7 +176,7 @@ function parseOrganizationBody(body: unknown): Organization | null {
   return organization as Organization;
 }
 
-/** 送った組織 (前後の空白を除いた組織名とプラン。route はこの値をそのまま書く) */
+/** 送った組織 (前後の空白を除いた組織名・プラン・オーナーの id。route はこの値をそのまま書く) */
 interface SentOrganization {
   readonly name: string;
   readonly plan: OrgPlan;

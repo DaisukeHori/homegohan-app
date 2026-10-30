@@ -690,7 +690,7 @@ describe('二段階認証の解除 (段 C)', () => {
     expect(mocks.resetOperatorMfa).toHaveBeenCalledTimes(3);
   });
 
-  it('OperatorMfaResetSection: 解除が 401 なら、code に関わらず同じページのほかの運営の form (凍結・手動のプラン付与) と同じ「ログインし直してください」を出し、利用者の画面の言い回し (mfaErrorMessage の 401 の文) は出さない。画面は移らない (#2112 Z4)', async () => {
+  it('OperatorMfaResetSection: 解除が 401 なら、code に関わらずほかの運営の form (同じページの手動のプラン付与・凍結のページ /admin/users/{id}/freeze の凍結の form) と同じ「ログインし直してください」を出し、利用者の画面の言い回し (mfaErrorMessage の 401 の文) は出さない。画面は移らない (#2112 Z4)', async () => {
     vi.stubGlobal('confirm', vi.fn(() => true));
     await act(async () => {
       root.render(createElement(OperatorMfaResetSection, { userId: TARGET_USER_ID }));

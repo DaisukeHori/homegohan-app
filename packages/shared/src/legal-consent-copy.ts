@@ -17,7 +17,7 @@ export const LEGAL_CONSENT_COPY = {
    * アプリは Web の同意画面を WebView で開く (13b) ので、アプリがこの値を直接使うことは無い。
    */
   declineButton: '同意しない',
-  /** Web の「同意しない」のボタン (押すとすぐログアウトする)。#1174 の LegalConsentForm.tsx:234 の文そのまま。全角の括弧 */
+  /** Web の「同意しない」のボタン (押すとすぐログアウトする)。#1174 の LegalConsentForm.tsx の「同意しない」のボタンの文そのまま。全角の括弧 */
   declineAndSignOutButton: '同意しない（ログアウトする）',
   /** 同意を送ったら版が変わっていた (409) ときの案内 (POST /api/legal/accept の 409 の本文と同じ文) */
   versionMismatch: '利用規約・プライバシーポリシーが更新されました。画面を読み込み直して、内容をご確認ください。',

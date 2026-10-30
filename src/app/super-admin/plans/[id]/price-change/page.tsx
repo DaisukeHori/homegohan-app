@@ -2,7 +2,7 @@
 
 /**
  * /super-admin/plans/[id]/price-change — 価格変更フロー
- * operator/03-ui-spec.md §24 (価格変更モーダル) / operator/04-plan-management.md §3.3 準拠
+ * operator/03-ui-spec.md §24 (価格の変更の画面) / operator/04-plan-management.md §3.3 準拠
  *
  * Step1: 新価格入力 + 影響シミュレーション
  * Step2: 確認 → 実行
