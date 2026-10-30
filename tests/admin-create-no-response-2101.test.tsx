@@ -7,10 +7,13 @@
  * 直したあと (不変条件。#2093 W1 の support/new・sales/new と同じ型):
  *   - 応答を受け取れなかったら「失敗しました」と言わず、一覧を読み直して、送る前に無かった行で送った内容と同じものがあるかを確かめる
  *   - あれば済んだとして入力を空にし、その旨を出す (押し直させない)
- *   - 無ければ入力を残し「まだ保存されていません」と出して、押し直せるようにする
+ *   - まだ無ければ、入力を残したまま送信を止め (押しても送らない)、「まだ見つかりません」と「確かめ直す」を出す。
+ *     行がまだ無いことは作られていないことの確かめにならない (サーバーが書き込みの途中なら、押し直すと 2 行になる)。
+ *     遅れて書き込みが済んでいれば「確かめ直す」で済んだと分かる。押し直すのは、一覧で確かめてから画面を開き直したときだけ
  *   - 読み直しにも失敗したら送信を止め (押しても送らない)、「済んだか分かりません。一覧で確かめてから作り直してください」と出す。
  *     「確かめ直す」で読み直しを繰り返せる
  *   - 送る前に一覧を読めていなかった (比べる元が無い) のに同じ内容の行があれば、済んだか決められないので送信を止める
+ *   - 送信を止めたときは「もう一度送るときは、画面を開き直してください」を添える
  *   - 本文に API の文がある 502 / 503 / 504 と、ほかの失敗 (500 など) は、これまでどおり失敗として文を出し、押し直せる
  *   - リードの詳細の 401 は、ログインのあとに元のリードへ戻れるよう next を付けてログインの画面へ移す
  *
@@ -27,7 +30,7 @@ import {
   type BackupAuditRow,
 } from '@/lib/backups/core';
 import { jstToday } from '@/lib/jst-day-ranges';
-import { confirmCreatedRow } from '@/lib/admin/admin-create-no-response';
+import { adminCreateNotFoundGuide, adminCreateStoppedMessage, confirmCreatedRow } from '@/lib/admin/admin-create-no-response';
 import { todayLocal } from '@/lib/date-utils';
 
 const nav = vi.hoisted(() => {
@@ -63,6 +66,10 @@ function jsonResponse(status: number, body: unknown) {
 /** 押し直しで二重にならないことを言う文の断片 */
 const UNCONFIRMED_GUIDE = '済んだか分かりません。一覧で確かめてから作り直してください';
 const REOPEN_GUIDE = 'もう一度送るときは、画面を開き直してください';
+/** 読み直しでまだ見つからなかったときの文の断片 (押し直しを促さない) */
+const NOT_FOUND_GUIDE = 'まだ見つかりません。保存の途中のこともあるので、少し待ってから確かめ直してください';
+/** 以前の画面が出していた、押し直しを促す文 (出してはいけない) */
+const RESEND_PROMPT = 'もう一度送ってください';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -200,22 +207,44 @@ describe('お知らせの作成: 応答を受け取れなかったら一覧を�
     expect(text()).toContain(ANN_TITLE);
   });
 
-  it('本文の無い 504 で、読み直した一覧に送った内容が無ければ入力を残し「まだ保存されていません」と出して、押し直せる', async () => {
+  it('本文の無い 504 で、読み直した一覧に送った内容がまだ無ければ、入力を残したまま送信を止め、押しても送らない (書き込みの途中なら 2 つできるため)', async () => {
     mockAnnouncements([[OLD_ANNOUNCEMENT]], () => proxyResponse(504));
     await renderElement(createElement(AnnouncementsManager));
     await createAnnouncement();
 
     expect(postCount()).toBe(1);
     expect(text()).toContain('お知らせの作成の応答を受け取れませんでした (HTTP 504)');
-    expect(text()).toContain('まだ保存されていません');
+    expect(text()).toContain(UNCONFIRMED_GUIDE);
+    expect(text()).toContain(`お知らせは${NOT_FOUND_GUIDE}`);
+    expect(text()).toContain(REOPEN_GUIDE);
+    expect(text()).not.toContain(RESEND_PROMPT);
     expect(annTitleInput()!.value).toBe(ANN_TITLE);
-    expect(findButton('作成する')?.disabled).toBe(false);
+    expect(findButton('作成する')?.disabled).toBe(true);
+    expect(findButton('確かめ直す')).toBeDefined();
 
+    // ボタンが止まっていても、フォームの送信 (Enter など) では送らない
     await submitForm(container.querySelector('form'));
-    expect(postCount()).toBe(2);
+    expect(postCount()).toBe(1);
   });
 
-  it('前からある同じ内容のお知らせ (送る前に一覧にあった行) は、作成されたとは数えない', async () => {
+  it('読み直しでまだ無かったあと、サーバーが遅れて作成を済ませていれば、「確かめ直す」で済んだと分かり、2 つ目を作らない', async () => {
+    mockAnnouncements([[OLD_ANNOUNCEMENT], [OLD_ANNOUNCEMENT], [CREATED_ANNOUNCEMENT, OLD_ANNOUNCEMENT]], () => {
+      throw networkFailure();
+    });
+    await renderElement(createElement(AnnouncementsManager));
+    await createAnnouncement();
+    expect(text()).toContain(NOT_FOUND_GUIDE);
+    expect(findButton('作成する')?.disabled).toBe(true);
+
+    await click(findButton('確かめ直す'), '「確かめ直す」ボタン');
+    expect(postCount()).toBe(1);
+    expect(text()).toContain('読み込み直したところ、お知らせは保存されていました');
+    expect(text()).not.toContain(NOT_FOUND_GUIDE);
+    expect(annTitleInput()!.value).toBe('');
+    expect(findButton('作成する')?.disabled).toBe(false);
+  });
+
+  it('前からある同じ内容のお知らせ (送る前に一覧にあった行) は、作成されたとは数えず、送信を止めたままにする', async () => {
     const sameBefore = announcementRow('ann-same-before');
     mockAnnouncements([[sameBefore]], () => {
       throw networkFailure();
@@ -223,8 +252,24 @@ describe('お知らせの作成: 応答を受け取れなかったら一覧を�
     await renderElement(createElement(AnnouncementsManager));
     await createAnnouncement();
 
-    expect(text()).toContain('まだ保存されていません');
+    expect(text()).toContain(NOT_FOUND_GUIDE);
     expect(text()).not.toContain('保存されていました');
+    expect(findButton('作成する')?.disabled).toBe(true);
+  });
+
+  it('送る前に一覧を読めていなかったときも、読み直した一覧に同じ内容が無ければ送信を止めたままにし、「確かめ直す」を出す', async () => {
+    mockAnnouncements([500, []], () => {
+      throw networkFailure();
+    });
+    await renderElement(createElement(AnnouncementsManager));
+    await createAnnouncement();
+
+    expect(postCount()).toBe(1);
+    expect(text()).toContain(NOT_FOUND_GUIDE);
+    expect(findButton('作成する')?.disabled).toBe(true);
+    expect(findButton('確かめ直す')).toBeDefined();
+    await submitForm(container.querySelector('form'));
+    expect(postCount()).toBe(1);
   });
 
   it('読み直しにも失敗したら送信を止め、押しても送らない。「確かめ直す」で読み直して済んでいれば入力を空にする', async () => {
@@ -393,21 +438,43 @@ describe('営業のリードの活動の記録: 応答を受け取れなかっ�
     expect(nextActionInput()!.value).toBe('');
   });
 
-  it('本文の無い 503 で、読み直した活動履歴に送った内容が無ければ入力を残し「まだ保存されていません」と出して、押し直せる', async () => {
+  it('本文の無い 503 で、読み直した活動履歴に送った内容がまだ無ければ、入力を残したまま「活動を記録」を止め、押しても送らない (書き込みの途中なら 2 行できるため)', async () => {
     mockLead([[OLD_ACTIVITY]], () => proxyResponse(503));
     await renderElement(createElement(LeadDetailPage, { params: fulfilledParams() }));
     await recordActivity();
 
     expect(postCount()).toBe(1);
     expect(text()).toContain('活動の記録の応答を受け取れませんでした (HTTP 503)');
-    expect(text()).toContain('まだ保存されていません');
+    expect(text()).toContain(UNCONFIRMED_GUIDE);
+    expect(text()).toContain(`活動は${NOT_FOUND_GUIDE}`);
+    expect(text()).toContain(REOPEN_GUIDE);
+    expect(text()).not.toContain(RESEND_PROMPT);
     expect(activityTextarea()!.value).toBe(ACTIVITY_SUMMARY);
+    expect(findButton('活動を記録')?.disabled).toBe(true);
+    expect(findButton('確かめ直す')).toBeDefined();
 
     await click(findButton('活動を記録'), '「活動を記録」ボタン');
-    expect(postCount()).toBe(2);
+    expect(postCount()).toBe(1);
   });
 
-  it('同じ文でも、種類・次のアクションが違う活動は、送ったものとは数えない', async () => {
+  it('読み直しでまだ無かったあと、サーバーが遅れて記録を済ませていれば、「確かめ直す」で済んだと分かり、2 行目を作らない', async () => {
+    mockLead([[OLD_ACTIVITY], [OLD_ACTIVITY], [createdActivity(), OLD_ACTIVITY]], () => {
+      throw networkFailure();
+    });
+    await renderElement(createElement(LeadDetailPage, { params: fulfilledParams() }));
+    await recordActivity();
+    expect(text()).toContain(NOT_FOUND_GUIDE);
+    expect(findButton('活動を記録')?.disabled).toBe(true);
+
+    await click(findButton('確かめ直す'), '「確かめ直す」ボタン');
+    expect(postCount()).toBe(1);
+    expect(text()).toContain('読み込み直したところ、活動は保存されていました');
+    expect(text()).not.toContain(NOT_FOUND_GUIDE);
+    expect(activityTextarea()!.value).toBe('');
+    expect(findButton('確かめ直す')).toBeUndefined();
+  });
+
+  it('同じ文でも、種類・次のアクションが違う活動は、送ったものとは数えず、「活動を記録」を止めたままにする', async () => {
     const otherType = createdActivity({ activity_type: 'call' });
     mockLead([[OLD_ACTIVITY], [otherType, OLD_ACTIVITY]], () => {
       throw networkFailure();
@@ -415,11 +482,12 @@ describe('営業のリードの活動の記録: 応答を受け取れなかっ�
     await renderElement(createElement(LeadDetailPage, { params: fulfilledParams() }));
     await recordActivity();
 
-    expect(text()).toContain('まだ保存されていません');
+    expect(text()).toContain(NOT_FOUND_GUIDE);
     expect(text()).not.toContain('保存されていました');
+    expect(findButton('活動を記録')?.disabled).toBe(true);
   });
 
-  it('読み直しにも失敗したら送信を止め、押しても送らない。ステージを変えて読み直しても止めている文は消えず、「確かめ直す」で確かめられる', async () => {
+  it('読み直しにも失敗したら送信を止め、押しても送らない。「確かめ直す」で読み直してまだ無ければ、止めたまま「まだ見つかりません」を出す', async () => {
     mockLead([[OLD_ACTIVITY], 500, [OLD_ACTIVITY]], () => {
       throw networkFailure();
     });
@@ -428,16 +496,20 @@ describe('営業のリードの活動の記録: 応答を受け取れなかっ�
 
     expect(postCount()).toBe(1);
     expect(text()).toContain(UNCONFIRMED_GUIDE);
+    expect(text()).not.toContain(NOT_FOUND_GUIDE);
     expect(findButton('活動を記録')?.disabled).toBe(true);
     await click(findButton('活動を記録'), '「活動を記録」ボタン');
     expect(postCount()).toBe(1);
 
     await click(findButton('確かめ直す'), '「確かめ直す」ボタン');
     expect(postCount()).toBe(1);
-    expect(text()).not.toContain(UNCONFIRMED_GUIDE);
-    expect(text()).toContain('まだ保存されていません');
+    expect(text()).toContain(UNCONFIRMED_GUIDE);
+    expect(text()).toContain(NOT_FOUND_GUIDE);
+    expect(text()).not.toContain(RESEND_PROMPT);
     expect(activityTextarea()!.value).toBe(ACTIVITY_SUMMARY);
-    expect(findButton('活動を記録')?.disabled).toBe(false);
+    expect(findButton('活動を記録')?.disabled).toBe(true);
+    await click(findButton('活動を記録'), '「活動を記録」ボタン');
+    expect(postCount()).toBe(1);
   });
 
   it('止めているあいだにステージを変えてリードを読み直しても、止めている文は消えず送信も止まったまま', async () => {
@@ -578,20 +650,59 @@ describe('DR 訓練の記録: 応答を受け取れなかったら記録の一�
     expect(drNotes()!.value).toBe('');
   });
 
-  it('本文の無い 504 で、読み直した記録に送った内容が無ければ入力を残し「まだ保存されていません」と出して、押し直せる', async () => {
+  it('本文の無い 504 で、読み直した記録に送った内容がまだ無ければ、入力を残したまま送信を止め、押しても送らない (書き込みの途中なら監査ログに 2 行入るため)', async () => {
     mockBackups([[OLD_DR]], () => proxyResponse(504));
     await renderElement(createElement(SuperAdminBackupsPage));
     await typeInto(drNotes(), 'pitr ok');
     await submitForm(drForm());
 
     expect(postCount()).toBe(1);
-    expect(text()).toContain('DR 訓練の記録の応答を受け取れませんでした (HTTP 504)');
-    expect(text()).toContain('まだ保存されていません');
+    const unconfirmed = container.querySelector('[data-testid="dr-test-form-unconfirmed"]')?.textContent ?? '';
+    expect(unconfirmed).toContain('DR 訓練の記録の応答を受け取れませんでした (HTTP 504)');
+    expect(unconfirmed).toContain(UNCONFIRMED_GUIDE);
+    expect(unconfirmed).toContain(`DR 訓練の記録は${NOT_FOUND_GUIDE}`);
+    expect(unconfirmed).toContain(REOPEN_GUIDE);
+    expect(text()).not.toContain(RESEND_PROMPT);
     expect(drNotes()!.value).toBe('pitr ok');
-    expect(drSubmitButton()?.disabled).toBe(false);
+    expect(drSubmitButton()?.disabled).toBe(true);
+    expect(findButton('確かめ直す')).toBeDefined();
 
     await submitForm(drForm());
-    expect(postCount()).toBe(2);
+    expect(postCount()).toBe(1);
+  });
+
+  it('読み直しでまだ無かったあと、サーバーが遅れて記録を済ませていれば、「確かめ直す」で済んだと分かり、2 行目を作らない', async () => {
+    const created = drRow('21012101-2222-4222-8222-000000000005', { ...initialDrBody(), notes: 'pitr ok' });
+    mockBackups([[OLD_DR], [OLD_DR], [created, OLD_DR]], () => {
+      throw networkFailure();
+    });
+    await renderElement(createElement(SuperAdminBackupsPage));
+    await typeInto(drNotes(), 'pitr ok');
+    await submitForm(drForm());
+    expect(text()).toContain(NOT_FOUND_GUIDE);
+    expect(drSubmitButton()?.disabled).toBe(true);
+
+    await click(findButton('確かめ直す'), '「確かめ直す」ボタン');
+    expect(postCount()).toBe(1);
+    expect(text()).toContain('読み込み直したところ、DR 訓練の記録は保存されていました');
+    expect(text()).not.toContain(NOT_FOUND_GUIDE);
+    expect(drNotes()!.value).toBe('');
+    expect(drSubmitButton()?.disabled).toBe(false);
+  });
+
+  it('送る前に記録を読めていなかったときも、読み直した記録に同じ内容が無ければ送信を止めたままにし、「確かめ直す」を出す', async () => {
+    mockBackups([500, [OLD_DR]], () => {
+      throw networkFailure();
+    });
+    await renderElement(createElement(SuperAdminBackupsPage));
+    await submitForm(drForm());
+
+    expect(postCount()).toBe(1);
+    expect(text()).toContain(NOT_FOUND_GUIDE);
+    expect(drSubmitButton()?.disabled).toBe(true);
+    expect(findButton('確かめ直す')).toBeDefined();
+    await submitForm(drForm());
+    expect(postCount()).toBe(1);
   });
 
   it('読み直しにも失敗したら送信を止め、押しても送らない。「確かめ直す」で読み直して済んでいれば入力を戻す', async () => {
@@ -658,16 +769,26 @@ describe('confirmCreatedRow: 読み直した一覧に送った内容の行がで
     expect(confirmCreatedRow(rows, new Set(['b']), isX)).toBe('created');
   });
 
-  it('同じ内容の行が送る前からあった行だけなら not-created (前からある行を作成されたと数えない)', () => {
-    expect(confirmCreatedRow(rows, new Set(['a', 'b']), isX)).toBe('not-created');
+  it('同じ内容の行が送る前からあった行だけなら not-found (前からある行を作成されたと数えない)', () => {
+    expect(confirmCreatedRow(rows, new Set(['a', 'b']), isX)).toBe('not-found');
   });
 
-  it('新しい行でも内容が違えば not-created', () => {
-    expect(confirmCreatedRow(rows, new Set(['a']), isX)).toBe('not-created');
+  it('新しい行でも内容が違えば not-found', () => {
+    expect(confirmCreatedRow(rows, new Set(['a']), isX)).toBe('not-found');
   });
 
-  it('比べる元が無い (送る前に一覧を読めていない) とき、同じ内容の行があれば ambiguous、無ければ not-created', () => {
+  it('比べる元が無い (送る前に一覧を読めていない) とき、同じ内容の行があれば ambiguous、無ければ not-found', () => {
     expect(confirmCreatedRow(rows, null, isX)).toBe('ambiguous');
-    expect(confirmCreatedRow(rows, null, (row) => row.value === 'z')).toBe('not-created');
+    expect(confirmCreatedRow(rows, null, (row) => row.value === 'z')).toBe('not-found');
+  });
+});
+
+describe('adminCreateStoppedMessage: 送信を止めたときの文は押し直しを促さない (#2101 X2)', () => {
+  it('まだ見つからないときの文は、済んだか分からない文・確かめ直す文・画面を開き直す文を並べ、「もう一度送ってください」と言わない', () => {
+    const message = adminCreateStoppedMessage('お知らせの作成の応答を受け取れませんでした (HTTP 504)', adminCreateNotFoundGuide('お知らせ'));
+    expect(message).toBe(
+      `お知らせの作成の応答を受け取れませんでした (HTTP 504)。${UNCONFIRMED_GUIDE}。読み込み直したところ、お知らせは${NOT_FOUND_GUIDE}。${REOPEN_GUIDE}`,
+    );
+    expect(message).not.toContain(RESEND_PROMPT);
   });
 });

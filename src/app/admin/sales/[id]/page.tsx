@@ -12,7 +12,6 @@ import {
   AdminScreenError,
   adminActionErrorOfResponse,
   adminActionNoResponseMessage,
-  adminCreateUnconfirmedMessage,
   displayableAdminError,
   sendAdminAction,
 } from '@/lib/admin/admin-screen-messages';
@@ -20,6 +19,7 @@ import {
   adminCreateFoundGuide,
   adminCreateNoResponseMessage,
   adminCreateNotFoundGuide,
+  adminCreateStoppedMessage,
   confirmCreatedRow,
 } from '@/lib/admin/admin-create-no-response';
 import { loginPathWithNext } from '@/lib/auth/signed-in-user';
@@ -148,12 +148,15 @@ interface SentActivity {
 
 /**
  * 記録の応答を受け取れなかった (サーバーで済んだか分からない) 活動 (#2101 X2)。これがあるあいだは「活動を記録」を止める。
- *   - retryable: 「確かめ直す」で読み直せば決まりうるか (読み直しの失敗が通信・サーバーの一時的なもの)。403 (押しても必ず失敗する) は false
+ *   - message: 止めているあいだに出す文 (adminCreateStoppedMessage)
+ *   - retryable: 「確かめ直す」で読み直せば決まりうるか (読み直しの失敗が通信・サーバーの一時的なもの、
+ *     読み直した活動履歴に送った活動がまだ無い (サーバーが書き込みの途中かもしれない))。401 / 403 (押しても必ず失敗する) は false
  */
 interface UnconfirmedActivity {
   readonly sent: SentActivity;
   readonly knownIds: ReadonlySet<string>;
   readonly summary: string;
+  readonly message: string;
   readonly retryable: boolean;
 }
 
@@ -183,7 +186,7 @@ export default function LeadDetailPage(props: PageProps) {
   const [isAddingActivity, setIsAddingActivity] = useState(false);
   // 活動の記録の応答を受け取れなかったあと、読み直しで記録できていたと確かめたときの文 (#2101 X2)
   const [activityNotice, setActivityNotice] = useState<string | null>(null);
-  // 記録の応答を受け取れず、読み直しにも失敗して、記録できたか分からない活動 (#2101 X2)。
+  // 記録の応答を受け取れず、読み直しにも失敗した・読み直しでまだ見つからないので、記録できたか分からない活動 (#2101 X2)。
   // sales_lead_activities には一意の制約が無く、押し直すと活動が 2 行できるので、これがあるあいだは「活動を記録」を止める。
   // リードの読み直し (fetchLead) が error を消しても、この文は消えない (別の state)。ref は再描画の前に続けて押されたときの守り
   const [unconfirmedActivity, setUnconfirmedActivity] = useState<UnconfirmedActivity | null>(null);
@@ -241,10 +244,11 @@ export default function LeadDetailPage(props: PageProps) {
 
   /**
    * 活動の記録の応答を受け取れなかったあと、リードを読み直して送った活動ができていたかを確かめる (#2101 X2)。
-   * できていれば済んだとして入力を空にし、無ければ入力を残して押し直せるようにする。
-   * 読み直しにも失敗したら、記録できたか分からないので「活動を記録」を止める (「確かめ直す」でこの関数をもう一度呼ぶ)
+   * できていれば済んだとして入力を空にし、「活動を記録」の止めを外す。
+   * まだ無い (サーバーが書き込みの途中かもしれない)・読み直しにも失敗したときは、記録できたか分からないので「活動を記録」を止めたままにする
+   * (押し直すと 2 行できうる。押し直すのは、活動履歴で確かめてから画面を開き直したときだけ。「確かめ直す」でこの関数をもう一度呼ぶ)
    */
-  const confirmUnconfirmedActivity = async (pending: Omit<UnconfirmedActivity, 'retryable'>) => {
+  const confirmUnconfirmedActivity = async (pending: Omit<UnconfirmedActivity, 'message' | 'retryable'>) => {
     const result = await fetchLead();
     switch (result.outcome) {
       case 'loaded':
@@ -256,23 +260,28 @@ export default function LeadDetailPage(props: PageProps) {
       case 'unauthorized':
       case 'forbidden':
         // ログインの画面へ移した / 権限が外れた (理由の文は fetchLead が出した)。読み直しても必ず失敗するので「確かめ直す」を出さない
-        markUnconfirmedActivity({ ...pending, retryable: false });
+        markUnconfirmedActivity({ ...pending, message: adminCreateStoppedMessage(pending.summary), retryable: false });
         return;
       case 'failed':
-        markUnconfirmedActivity({ ...pending, retryable: true });
+        markUnconfirmedActivity({ ...pending, message: adminCreateStoppedMessage(pending.summary), retryable: true });
         return;
     }
-    markUnconfirmedActivity(null);
     const outcome = confirmCreatedRow(result.lead.activities, pending.knownIds, (activity) => isSameActivity(activity, pending.sent));
-    if (outcome === 'created') {
-      // 済んでいた。入力欄が送った値のままなら空にする (待つあいだに書き足した文は消さない)
-      setActivitySummary((current) => (current === pending.sent.summary ? '' : current));
-      setActivityNextAction((current) => (current === (pending.sent.nextAction ?? '') ? '' : current));
-      setActivityNotice(adminCreateNoResponseMessage(pending.summary, adminCreateFoundGuide(ACTIVITY_SUBJECT)));
+    if (outcome !== 'created') {
+      // 送る前のリードは必ず読めている (knownIds がある) ので ambiguous にはならず、ここは not-found。
+      // まだ無いことは記録されていないことの確かめにならない (サーバーが書き込みの途中なら、押し直すと 2 行になる)。止めたまま確かめ直させる
+      markUnconfirmedActivity({
+        ...pending,
+        message: adminCreateStoppedMessage(pending.summary, adminCreateNotFoundGuide(ACTIVITY_SUBJECT)),
+        retryable: true,
+      });
       return;
     }
-    // 送る前のリードは必ず読めている (knownIds がある) ので ambiguous にはならない。無かったものとして押し直せるようにする
-    setError(adminCreateNoResponseMessage(pending.summary, adminCreateNotFoundGuide(ACTIVITY_SUBJECT)));
+    // 済んでいた。入力欄が送った値のままなら空にする (待つあいだに書き足した文は消さない)
+    markUnconfirmedActivity(null);
+    setActivitySummary((current) => (current === pending.sent.summary ? '' : current));
+    setActivityNextAction((current) => (current === (pending.sent.nextAction ?? '') ? '' : current));
+    setActivityNotice(adminCreateNoResponseMessage(pending.summary, adminCreateFoundGuide(ACTIVITY_SUBJECT)));
   };
 
   const handleAddActivity = async () => {
@@ -552,7 +561,7 @@ export default function LeadDetailPage(props: PageProps) {
               )}
               {unconfirmedActivity && (
                 <div role="alert" className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-3 py-2 rounded mb-3 text-sm">
-                  {adminCreateUnconfirmedMessage(unconfirmedActivity.summary)}
+                  {unconfirmedActivity.message}
                 </div>
               )}
               <div className="flex justify-end gap-2">

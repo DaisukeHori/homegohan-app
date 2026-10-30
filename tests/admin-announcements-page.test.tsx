@@ -472,7 +472,7 @@ describe('作成', () => {
     expect(titleInput().value).toBe('題名'); // 入力は残る
   });
 
-  it('通信エラー (fetch が失敗) は失敗と言わずに一覧を読み直し、作成されていなければ入力を残して押し直せる (#2101 X2)', async () => {
+  it('通信エラー (fetch が失敗) は失敗と言わずに一覧を読み直し、まだ見つからなければ入力を残したまま送信を止める (#2101 X2)', async () => {
     fetchMock.mockImplementation(async (_input: string, init?: RequestInit) => {
       if (init?.method === 'POST') throw new TypeError('Failed to fetch');
       return jsonResponse(200, listBody([]));
@@ -483,11 +483,14 @@ describe('作成', () => {
 
     // 英字の例外の文は出さず、サーバーで済んだか分からないので読み直した結果を出す (振る舞いの全体は admin-create-no-response-2101.test.tsx)
     expect(alerts()[0]).toContain('お知らせの作成の応答を受け取れませんでした（通信エラー）');
-    expect(alerts()[0]).toContain('まだ保存されていません');
+    // 行がまだ無いことは作られていないことの確かめにならない (書き込みの途中なら押し直しで 2 つできる) ので、押し直させない
+    expect(alerts()[0]).toContain('まだ見つかりません');
+    expect(alerts()[0]).toContain('済んだか分かりません。一覧で確かめてから作り直してください');
+    expect(alerts()[0]).not.toContain('もう一度送ってください');
     expect(alerts()[0]).not.toContain('Failed to fetch');
     expect(callsOf('GET')).toHaveLength(2);
     expect(titleInput().value).toBe('題名');
-    expect(findButton('作成する')?.disabled).toBe(false);
+    expect(findButton('作成する')?.disabled).toBe(true);
   });
 
   it('空白だけのタイトル・本文は送らず、日本語のメッセージを出す', async () => {

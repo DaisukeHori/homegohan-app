@@ -37,16 +37,12 @@ import {
   type DrTestSmokeResult,
 } from '@/lib/backups/core';
 import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
+import { AdminActionNoResponseError, adminActionErrorOfResponse } from '@/lib/admin/admin-screen-messages';
 import {
-  AdminActionNoResponseError,
-  adminActionErrorOfResponse,
-  adminCreateUnconfirmedMessage,
-} from '@/lib/admin/admin-screen-messages';
-import {
-  ADMIN_CREATE_REOPEN_TO_RETRY_GUIDE,
   adminCreateFoundGuide,
   adminCreateNoResponseMessage,
   adminCreateNotFoundGuide,
+  adminCreateStoppedMessage,
   confirmCreatedRow,
 } from '@/lib/admin/admin-create-no-response';
 import { formatJstDateTime } from '@/lib/admin/format-datetime';
@@ -166,7 +162,8 @@ const FIELD_LABELS: Readonly<Record<DrTestField, string>> = {
 /**
  * 記録の応答を受け取れなかった (サーバーで済んだか分からない) 訓練の記録 (#2101 X2)。これがあるあいだは送信を止める。
  *   - knownIds: 送る前に画面が持っていた訓練の記録の行の id (読めていなければ null)
- *   - retryable: 「確かめ直す」で読み直せば決まりうるか。比べる元が無くて決められない (ambiguous) ときは false
+ *   - retryable: 「確かめ直す」で読み直せば決まりうるか (読み直しの失敗、読み直した記録に送った記録がまだ無い (サーバーが書き込みの途中かもしれない))。
+ *     比べる元が無くて決められない (ambiguous) ときは false
  */
 interface UnconfirmedDrTest {
   readonly body: Readonly<Record<DrTestField, unknown>>;
@@ -297,32 +294,34 @@ export default function SuperAdminBackupsPage() {
 
   /**
    * 記録の応答を受け取れなかったあと、状態を読み直して送った記録ができていたかを確かめる (#2101 X2)。
-   * できていれば済んだとして入力を初めに戻し、無ければ入力を残して押し直せるようにする。
-   * 読み直しにも失敗した・前からあった行か決められないときは、送信を止める
+   * できていれば済んだとして入力を初めに戻し、送信の止めを外す。
+   * まだ無い (サーバーが書き込みの途中かもしれない)・読み直しにも失敗した・前からあった行か決められないときは、送信を止めたままにする
+   * (押し直すと監査ログに 2 行入りうる。押し直すのは、記録の一覧で確かめてから画面を開き直したときだけ)
    */
   const confirmUnconfirmedDrTest = async (pending: Omit<UnconfirmedDrTest, 'message' | 'retryable'>) => {
     const data = await reload();
     if (data === null) {
-      markUnconfirmed({ ...pending, message: adminCreateUnconfirmedMessage(pending.summary), retryable: true });
+      markUnconfirmed({ ...pending, message: adminCreateStoppedMessage(pending.summary), retryable: true });
       return;
     }
     const outcome = confirmCreatedRow(data.dr_tests, pending.knownIds, (row) => isSameDrTest(row, pending.body));
     if (outcome === 'ambiguous') {
+      markUnconfirmed({ ...pending, message: adminCreateStoppedMessage(pending.summary), retryable: false });
+      return;
+    }
+    if (outcome === 'not-found') {
+      // まだ無いことは記録されていないことの確かめにならない (サーバーが書き込みの途中なら、押し直すと 2 行になる)。止めたまま確かめ直させる
       markUnconfirmed({
         ...pending,
-        message: adminCreateNoResponseMessage(adminCreateUnconfirmedMessage(pending.summary), ADMIN_CREATE_REOPEN_TO_RETRY_GUIDE),
-        retryable: false,
+        message: adminCreateStoppedMessage(pending.summary, adminCreateNotFoundGuide(DR_TEST_RECORD_SUBJECT)),
+        retryable: true,
       });
       return;
     }
     markUnconfirmed(null);
-    if (outcome === 'created') {
-      setErrors(EMPTY_ERRORS);
-      setForm(initialFormState());
-      setConfirmedNotice(adminCreateNoResponseMessage(pending.summary, adminCreateFoundGuide(DR_TEST_RECORD_SUBJECT)));
-      return;
-    }
-    setErrors({ fields: {}, form: [adminCreateNoResponseMessage(pending.summary, adminCreateNotFoundGuide(DR_TEST_RECORD_SUBJECT))] });
+    setErrors(EMPTY_ERRORS);
+    setForm(initialFormState());
+    setConfirmedNotice(adminCreateNoResponseMessage(pending.summary, adminCreateFoundGuide(DR_TEST_RECORD_SUBJECT)));
   };
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {

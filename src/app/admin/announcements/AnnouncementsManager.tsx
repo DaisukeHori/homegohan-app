@@ -14,16 +14,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { extractApiErrorMessage, forbiddenMessageForScreen } from '@/lib/admin/api-error-message';
 import { formatJstDateTime } from '@/lib/admin/format-datetime';
+import { ADMIN_ACTION_NO_RESPONSE_STATUSES, adminActionNoResponseSummary } from '@/lib/admin/admin-screen-messages';
 import {
-  ADMIN_ACTION_NO_RESPONSE_STATUSES,
-  adminActionNoResponseSummary,
-  adminCreateUnconfirmedMessage,
-} from '@/lib/admin/admin-screen-messages';
-import {
-  ADMIN_CREATE_REOPEN_TO_RETRY_GUIDE,
   adminCreateFoundGuide,
   adminCreateNoResponseMessage,
   adminCreateNotFoundGuide,
+  adminCreateStoppedMessage,
   confirmCreatedRow,
 } from '@/lib/admin/admin-create-no-response';
 
@@ -57,7 +53,8 @@ interface SentAnnouncement {
 
 /**
  * 作成の応答を受け取れなかった (サーバーで済んだか分からない) お知らせ (#2101 X2)。これがあるあいだは送信を止める。
- *   - retryable: 「確かめ直す」で読み直せば決まりうるか (読み直しの失敗が通信・サーバーの一時的なもの)。
+ *   - retryable: 「確かめ直す」で読み直せば決まりうるか (読み直しの失敗が通信・サーバーの一時的なもの、
+ *     読み直した一覧に送ったお知らせがまだ無い (サーバーが書き込みの途中かもしれない))。
  *     読み直しが 401 / 403 (押しても必ず失敗する) と、比べる元が無くて決められない (ambiguous) ときは false
  */
 interface UnconfirmedCreate {
@@ -182,8 +179,9 @@ export default function AnnouncementsManager() {
 
   /**
    * 作成の応答を受け取れなかったあと、一覧を読み直して送ったお知らせができていたかを確かめる (#2101 X2)。
-   * できていれば済んだとして入力を空にし、無ければ入力を残して押し直せるようにする。
-   * 読み直しにも失敗した・前からあった行か決められないときは、送信を止める
+   * できていれば済んだとして入力を空にし、送信の止めを外す。
+   * まだ無い (サーバーが書き込みの途中かもしれない)・読み直しにも失敗した・前からあった行か決められないときは、送信を止めたままにする
+   * (押し直すと 2 つできうる。押し直すのは、一覧で確かめてから画面を開き直したときだけ)
    */
   const confirmUnconfirmedCreate = async (pending: Omit<UnconfirmedCreate, 'message' | 'retryable'>) => {
     const reloaded = await loadAnnouncements();
@@ -193,28 +191,29 @@ export default function AnnouncementsManager() {
       const status = reloaded === null ? lastLoadFailureStatus.current : null;
       markUnconfirmed({
         ...pending,
-        message: adminCreateUnconfirmedMessage(pending.summary),
+        message: adminCreateStoppedMessage(pending.summary),
         retryable: status !== HTTP_UNAUTHORIZED && status !== HTTP_FORBIDDEN,
       });
       return;
     }
     const outcome = confirmCreatedRow(reloaded, pending.knownIds, (row) => isSameAnnouncement(row, pending.sent));
     if (outcome === 'ambiguous') {
+      markUnconfirmed({ ...pending, message: adminCreateStoppedMessage(pending.summary), retryable: false });
+      return;
+    }
+    if (outcome === 'not-found') {
+      // まだ無いことは作られていないことの確かめにならない (サーバーが書き込みの途中なら、押し直すと 2 つできる)。止めたまま確かめ直させる
       markUnconfirmed({
         ...pending,
-        message: adminCreateNoResponseMessage(adminCreateUnconfirmedMessage(pending.summary), ADMIN_CREATE_REOPEN_TO_RETRY_GUIDE),
-        retryable: false,
+        message: adminCreateStoppedMessage(pending.summary, adminCreateNotFoundGuide(CREATE_SUBJECT)),
+        retryable: true,
       });
       return;
     }
     markUnconfirmed(null);
-    if (outcome === 'created') {
-      clearForm();
-      setFormError(null);
-      setNotice(adminCreateNoResponseMessage(pending.summary, adminCreateFoundGuide(CREATE_SUBJECT)));
-      return;
-    }
-    setFormError(adminCreateNoResponseMessage(pending.summary, adminCreateNotFoundGuide(CREATE_SUBJECT)));
+    clearForm();
+    setFormError(null);
+    setNotice(adminCreateNoResponseMessage(pending.summary, adminCreateFoundGuide(CREATE_SUBJECT)));
   };
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
