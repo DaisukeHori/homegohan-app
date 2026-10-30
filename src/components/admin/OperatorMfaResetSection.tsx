@@ -6,7 +6,8 @@
  * 実行者が super_admin で、対象が MFA_REQUIRED_ROLES のどれかを持つときだけ、ページ (src/app/admin/users/[id]/page.tsx) が描く。
  * 理由・本人確認の方法・「本人確認を行った」のチェックの 3 つがそろうまで [解除する] を押せない。
  * 押すと確認ダイアログ → POST /api/super-admin/admins/{id}/mfa/reset (src/lib/auth/mfa/client.ts の resetOperatorMfa だけで呼ぶ)。
- * 成功は消した数・失敗は mfaErrorMessage(code) を出す。ただし 401 は code に関わらず、同じページのほかの運営の form (凍結・手動のプラン付与) と同じ
+ * 成功は消した数・失敗は mfaErrorMessage(code) を出す。ただし 401 は code に関わらず、ほかの運営の form
+ * (同じページの手動のプラン付与・凍結のページ /admin/users/{id}/freeze の凍結の form) と同じ
  * 「ログインし直してください」(UNAUTHENTICATED_SCREEN_MESSAGE。#2112 Z4。mfaErrorMessage の 401 の code の文は、利用者の二段階認証の画面の言い回し)。
  * 401 も文を出すだけ (運営の画面の移動は layout の requireRoleForPage が受け持つ)。
  * 500 は、監査の後のセッションの終了・factor・コードの削除の失敗のことがあり、もう一度押してよい (残りを消す §14.7)。

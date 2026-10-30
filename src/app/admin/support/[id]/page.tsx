@@ -64,8 +64,9 @@ interface Ticket {
   messages: Message[];
 }
 
-/** 403 (Forbidden) の HTTP ステータス */
+/** 401 (Unauthorized) の HTTP ステータス */
 const HTTP_UNAUTHORIZED = 401;
+/** 403 (Forbidden) の HTTP ステータス */
 const HTTP_FORBIDDEN = 403;
 /** 担当者の割り当ての失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917) */
 const ASSIGN_FAILURE_MESSAGE = '割り当て失敗';

@@ -45,8 +45,9 @@ const STALE_STAGE_MESSAGE =
 const STALE_STAGE_RELOAD_FAILED_MESSAGE =
   '別の担当者が先にこのリードのステージを変えていました。最新の内容を読み込み直せなかったので、画面を読み込み直してから、もう一度変更してください';
 
-/** 403 (Forbidden) の HTTP ステータス */
+/** 401 (Unauthorized) の HTTP ステータス */
 const HTTP_UNAUTHORIZED = 401;
+/** 403 (Forbidden) の HTTP ステータス */
 const HTTP_FORBIDDEN = 403;
 /** ステージの変更の失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917) */
 const STAGE_CHANGE_FAILURE_MESSAGE = 'ステージ変更失敗';
