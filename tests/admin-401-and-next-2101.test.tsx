@@ -750,14 +750,11 @@ describe('X5 見張り: 運営の画面のソースに /login の直書きを増
   /** 文字列の '/login' だけ (クエリ付きの '/login?redirect=…' などは数えない) */
   const BARE_LOGIN_LITERAL = /(['"`])\/login\1/g;
   /**
-   * 既知の残り (ファイル -> 数) と理由。直したら行を消す (数が合わなければ赤)
+   * 既知の残り (ファイル -> 数) と理由。いまは空 = どの運営の画面も '/login' を直書きしていない。
+   * 最後の残りだった src/app/admin/sales/[id]/page.tsx は #2103 (X2) が 401 を loginPathWithNext に替えた。
+   * 直書きが増えたら赤になる (やむを得ず残すときは理由を添えて行を足す)
    */
-  const KNOWN_REMAINING: Readonly<Record<string, { count: number; reason: string }>> = {
-    'src/app/admin/sales/[id]/page.tsx': {
-      count: 1,
-      reason: '並走の案件 admin-create-no-response-2 が同じファイル (営業の活動の記録の作成) を直しているので、衝突を避けてこの PR では触らない',
-    },
-  };
+  const KNOWN_REMAINING: Readonly<Record<string, { count: number; reason: string }>> = {};
 
   function sourceFiles(dir: string): string[] {
     const absolute = join(REPO_ROOT, dir);
@@ -800,6 +797,10 @@ describe('X5 見張り: 運営の画面のソースに /login の直書きを増
       expect(scanned.has(file), `${file} が走査に入っていない`).toBe(true);
       expect(readFileSync(join(REPO_ROOT, file), 'utf8')).toContain('router.push(loginPathWithNext(pathname))');
     }
+    // 元の既知の残り (#2103 X2 が直した): 戻り先はリードの詳細のパス
+    const leadDetail = 'src/app/admin/sales/[id]/page.tsx';
+    expect(scanned.has(leadDetail), `${leadDetail} が走査に入っていない`).toBe(true);
+    expect(readFileSync(join(REPO_ROOT, leadDetail), 'utf8')).toContain('router.push(loginPathWithNext(leadDetailPath(params.id)))');
   });
 });
 
