@@ -9,6 +9,9 @@
  * (500・403・通信の失敗・壊れた応答) しても、前の条件の行と件数を失敗の文と一緒に出さない (新しい条件の結果と見誤らせない)。
  * 読み込みを重ねたときは、遅れて届いた古い読み込みの結果で新しい条件の画面を上書きしない (読み込みの連番で捨てる)。
  * 読み込みの最中・失敗のあいだは件数を出さない (前の条件の件数を新しい条件の件数と見せない)。ページ送りのボタンは残す (前のページへ戻れる)
+ *
+ * #2112 Z3: 状態・優先度・カテゴリの表示名は src/lib/admin/support-schemas.ts の表 (TICKET_*_LABELS) から引く (詳細の画面と同じ語)。
+ * 以前はカテゴリの列が英字の内部の値 (billing など) のままだった。表に無い値はそのまま出す
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
@@ -23,14 +26,22 @@ import {
   listTotalOfBody,
 } from '@/lib/admin/admin-screen-messages';
 import { lastPageToRefetch } from '@/lib/list-pagination';
+import {
+  TICKET_PRIORITIES,
+  TICKET_PRIORITY_LABELS,
+  TICKET_STATUS_LABELS,
+  ticketCategoryLabel,
+  ticketPriorityLabel,
+  ticketStatusLabel,
+  type TicketPriority,
+  type TicketStatus,
+} from '@/lib/admin/support-schemas';
 
 /** 読み込みの失敗の文の対象 (「チケットの一覧を読み込めませんでした（通信エラー）」。#2086 V6) */
 const TICKETS_SUBJECT = 'チケットの一覧';
 /** 一覧の読み込みが失敗の応答・読めない本文で終わったときの文 */
 const TICKETS_LOAD_FAILURE_MESSAGE = 'チケット一覧の取得に失敗しました';
 
-type TicketStatus = 'open' | 'in_progress' | 'pending' | 'resolved' | 'closed';
-type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
 
 interface Ticket {
   id: string;
@@ -44,27 +55,12 @@ interface Ticket {
   updated_at: string;
 }
 
-const STATUS_LABELS: Record<TicketStatus, string> = {
-  open: '未対応',
-  in_progress: '対応中',
-  pending: '保留',
-  resolved: '解決済',
-  closed: 'クローズ',
-};
-
 const STATUS_COLORS: Record<TicketStatus, string> = {
   open: 'bg-blue-100 text-blue-800',
   in_progress: 'bg-yellow-100 text-yellow-800',
   pending: 'bg-gray-100 text-gray-700',
   resolved: 'bg-green-100 text-green-800',
   closed: 'bg-gray-200 text-gray-600',
-};
-
-const PRIORITY_LABELS: Record<TicketPriority, string> = {
-  low: '低',
-  medium: '中',
-  high: '高',
-  urgent: '緊急',
 };
 
 const PRIORITY_COLORS: Record<TicketPriority, string> = {
@@ -76,10 +72,13 @@ const PRIORITY_COLORS: Record<TicketPriority, string> = {
 
 const STATUS_TABS: Array<{ key: TicketStatus | 'all'; label: string }> = [
   { key: 'all', label: 'すべて' },
-  { key: 'open', label: '未対応' },
-  { key: 'in_progress', label: '対応中' },
-  { key: 'resolved', label: '解決済' },
+  { key: 'open', label: TICKET_STATUS_LABELS.open },
+  { key: 'in_progress', label: TICKET_STATUS_LABELS.in_progress },
+  { key: 'resolved', label: TICKET_STATUS_LABELS.resolved },
 ];
+
+/** 優先度の絞り込みの選択肢の並び (高いものから) */
+const PRIORITY_FILTER_ORDER: readonly TicketPriority[] = [...TICKET_PRIORITIES].reverse();
 
 export default function SupportTicketsPage() {
   const router = useRouter();
@@ -206,10 +205,11 @@ export default function SupportTicketsPage() {
               className="text-sm border border-gray-300 rounded px-2 py-1"
             >
               <option value="">すべて</option>
-              <option value="urgent">緊急</option>
-              <option value="high">高</option>
-              <option value="medium">中</option>
-              <option value="low">低</option>
+              {PRIORITY_FILTER_ORDER.map((priority) => (
+                <option key={priority} value={priority}>
+                  {TICKET_PRIORITY_LABELS[priority]}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -249,15 +249,15 @@ export default function SupportTicketsPage() {
                     <td className="px-4 py-3 text-sm font-medium text-gray-900 max-w-xs truncate">
                       {ticket.subject}
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-600">{ticket.category}</td>
+                    <td className="px-4 py-3 text-sm text-gray-600">{ticketCategoryLabel(ticket.category)}</td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs ${PRIORITY_COLORS[ticket.priority]}`}>
-                        {PRIORITY_LABELS[ticket.priority]}
+                        {ticketPriorityLabel(ticket.priority)}
                       </span>
                     </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs ${STATUS_COLORS[ticket.status]}`}>
-                        {STATUS_LABELS[ticket.status]}
+                        {ticketStatusLabel(ticket.status)}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-500">

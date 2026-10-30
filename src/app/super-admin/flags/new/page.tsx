@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { ROLLOUT_STRATEGY_TYPE_LABELS } from "@/lib/super-admin/flags-schemas";
 import {
   AdminScreenError,
   adminActionHttpFailedMessage,
@@ -134,10 +135,11 @@ export default function NewFlagPage() {
               onChange={(e) => setForm({ ...form, rollout_type: e.target.value })}
               className="w-full bg-slate-700 text-white rounded-lg px-4 py-3 border border-slate-600 focus:border-purple-500 outline-none"
             >
-              <option value="all">全ユーザー</option>
-              <option value="percentage">段階公開 (%)</option>
-              <option value="plan">プラン別</option>
-              <option value="role">ロール別</option>
+              {/* 表示名は一覧と同じ表 (ROLLOUT_STRATEGY_TYPE_LABELS) から引く (#2112 Z3) */}
+              <option value="all">{ROLLOUT_STRATEGY_TYPE_LABELS.all}</option>
+              <option value="percentage">{`${ROLLOUT_STRATEGY_TYPE_LABELS.percentage} (%)`}</option>
+              <option value="plan">{ROLLOUT_STRATEGY_TYPE_LABELS.plan}</option>
+              <option value="role">{ROLLOUT_STRATEGY_TYPE_LABELS.role}</option>
             </select>
           </div>
 

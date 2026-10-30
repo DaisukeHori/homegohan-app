@@ -7,6 +7,7 @@
 
 import { z } from 'zod';
 import { CalendarDateSchema } from '@/lib/calendar-date-schema';
+import { labelOrRaw } from '@/lib/admin/value-labels';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 定数
@@ -14,6 +15,24 @@ import { CalendarDateSchema } from '@/lib/calendar-date-schema';
 
 export const DISCOUNT_TYPES = ['fixed', 'percentage'] as const;
 export const COUPON_APPLICABLE_TO = ['all', 'personal', 'family', 'org'] as const;
+export type CouponApplicableTo = (typeof COUPON_APPLICABLE_TO)[number];
+
+/**
+ * クーポンの適用対象の画面の名前 (#2112 Z3。クーポンの作成の画面の選択肢と同じ語)。
+ * 以前、クーポンの一覧・詳細は適用対象を英字の内部の値 (personal など) のまま出していた。
+ * Record なので、COUPON_APPLICABLE_TO に値を足すと表示名の漏れが型の誤りになる
+ */
+export const COUPON_APPLICABLE_TO_LABELS: Readonly<Record<CouponApplicableTo, string>> = {
+  all: '全て',
+  personal: '個人',
+  family: '家族',
+  org: '組織',
+};
+
+/** 適用対象の表示名。表に無い値 (将来の値・壊れた応答) はそのまま */
+export function couponApplicableToLabel(value: string): string {
+  return labelOrRaw(COUPON_APPLICABLE_TO_LABELS, value);
+}
 export const COUPON_STATUSES = ['active', 'paused', 'expired'] as const;
 export type CouponStatus = (typeof COUPON_STATUSES)[number];
 

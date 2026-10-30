@@ -4,6 +4,7 @@
  * リード詳細 + 活動履歴 + ステージ変更
  * operator/03-ui-spec.md §17 準拠
  * 権限: sales, admin, super_admin
+ * 流入経路は src/lib/admin/sales-schemas.ts の表示名で出す (以前は英字の内部の値 cold_call などのまま。表に無い値はそのまま。#2112 Z3)
  */
 import { useState, useEffect, useCallback, useRef, use } from 'react';
 import { forbiddenMessageForScreen, forbiddenMessageOfResponse, isStaleDataConflict } from '@/lib/admin/api-error-message';
@@ -25,6 +26,7 @@ import {
 import { loginPathWithNext } from '@/lib/auth/signed-in-user';
 import { todayLocal } from '@/lib/date-utils';
 import Link from 'next/link';
+import { leadSourceLabel } from '@/lib/admin/sales-schemas';
 import { useRouter } from 'next/navigation';
 
 /**
@@ -475,7 +477,7 @@ export default function LeadDetailPage(props: PageProps) {
                 {lead.source && (
                   <div>
                     <dt className="text-gray-500">流入経路</dt>
-                    <dd className="text-gray-900">{lead.source}</dd>
+                    <dd className="text-gray-900">{leadSourceLabel(lead.source)}</dd>
                   </div>
                 )}
                 {lead.estimated_acv != null && (

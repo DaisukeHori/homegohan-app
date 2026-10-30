@@ -13,6 +13,8 @@
  * #2107 Y10: 絞り込みの select の選択肢は「全ステータス」と USER_LIST_STATUSES から作る (表示名は USER_LIST_STATUS_LABELS)。
  * 以前は選択肢を手で書き、削除済みが無いため ?status=deleted の select が「全ステータス」を示し、そのまま「検索」を押すと
  * 全ステータスに戻っていた。削除済みの一覧は常に 0 件 (退会で記録が消える) なので、0 件の文で理由を出す。
+ * #2112 Z3: 一覧のステータスの列は USER_LIST_STATUS_LABELS の表示名で出す (BAN 中は banned、それ以外は active の名前。絞り込みの select と同じ語)。
+ * 以前は「BAN」「active」と英字の直書きだった。プランの列も英字の内部の値 (free など) をやめ、src/lib/admin/plan-key-labels.ts の表示名で出す。
  */
 
 export const dynamic = 'force-dynamic';
@@ -23,6 +25,7 @@ import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
 import { canViewUserEmail } from '@/lib/admin/user-emails';
 import { normalizeProfileName } from '@/lib/profile-name';
+import { adminPlanKeyLabel } from '@/lib/admin/plan-key-labels';
 import {
   USER_LIST_ALL_STATUSES,
   USER_LIST_ALL_STATUSES_LABEL,
@@ -176,8 +179,8 @@ export default async function AdminUsersPage(props: PageProps) {
                       <td className="px-4 py-3 text-gray-700 break-all">{user.email ?? '-'}</td>
                     )}
                     <td className="px-4 py-3">
-                      <span className="inline-block bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded font-mono">
-                        {user.plan_key ?? 'free'}
+                      <span className="inline-block bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded">
+                        {adminPlanKeyLabel(user.plan_key)}
                       </span>
                     </td>
                     <td className="px-4 py-3">
@@ -195,11 +198,11 @@ export default async function AdminUsersPage(props: PageProps) {
                     <td className="px-4 py-3">
                       {user.is_banned ? (
                         <span className="inline-block bg-red-50 text-red-700 text-xs px-2 py-0.5 rounded font-medium">
-                          BAN
+                          {USER_LIST_STATUS_LABELS.banned}
                         </span>
                       ) : (
                         <span className="inline-block bg-green-50 text-green-700 text-xs px-2 py-0.5 rounded font-medium">
-                          active
+                          {USER_LIST_STATUS_LABELS.active}
                         </span>
                       )}
                     </td>

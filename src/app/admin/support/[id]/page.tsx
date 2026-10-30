@@ -5,6 +5,9 @@
  * operator/03-ui-spec.md §16 準拠
  * 権限: support, admin, super_admin
  * 内部メモ (is_internal=true): 薄黄色背景で視覚的区別
+ *
+ * #2112 Z3: 状態・優先度・カテゴリは src/lib/admin/support-schemas.ts の表 (TICKET_*_LABELS) の表示名で出す (一覧と同じ語)。
+ * 以前は優先度・カテゴリを英字の内部の値 (high・billing など) のまま出し、一覧では「高」と出る値が詳細では high だった。表に無い値はそのまま出す
  */
 import { useState, useEffect, useCallback, useRef, use } from 'react';
 import Link from 'next/link';
@@ -31,6 +34,12 @@ import {
   replyNoResponseMessage,
 } from '@/lib/admin/support-reply-no-response';
 import { rereadDetailRow } from '@/lib/super-admin/detail-reread';
+import {
+  TICKET_STATUSES,
+  ticketCategoryLabel,
+  ticketPriorityLabel,
+  ticketStatusLabel,
+} from '@/lib/admin/support-schemas';
 
 interface Message {
   id: string;
@@ -67,14 +76,6 @@ const ASSIGN_ACTION = '割り当て';
 /** チケットが無い (404) ときの文。送信の応答を受け取れなかったあとの読み直しの 404 も同じ文にする (読み込み直しても変わらない) */
 const TICKET_NOT_FOUND_MESSAGE = 'チケットが見つかりません';
 const STATUS_CHANGE_ACTION = 'ステータスの変更';
-
-const STATUS_LABELS: Record<string, string> = {
-  open: '未対応',
-  in_progress: '対応中',
-  pending: '保留',
-  resolved: '解決済',
-  closed: 'クローズ',
-};
 
 const STATUS_COLORS: Record<string, string> = {
   open: 'bg-blue-100 text-blue-800',
@@ -424,13 +425,13 @@ export default function TicketDetailPage(props: PageProps) {
                 </div>
                 <div>
                   <dt className="text-gray-500">カテゴリ</dt>
-                  <dd className="text-gray-900">{ticket.category}</dd>
+                  <dd className="text-gray-900">{ticketCategoryLabel(ticket.category)}</dd>
                 </div>
                 <div>
                   <dt className="text-gray-500">優先度</dt>
                   <dd>
                     <span className={`inline-flex px-2 py-0.5 rounded text-xs ${PRIORITY_COLORS[ticket.priority] ?? 'bg-gray-100 text-gray-600'}`}>
-                      {ticket.priority}
+                      {ticketPriorityLabel(ticket.priority)}
                     </span>
                   </dd>
                 </div>
@@ -438,7 +439,7 @@ export default function TicketDetailPage(props: PageProps) {
                   <dt className="text-gray-500">ステータス</dt>
                   <dd>
                     <span className={`inline-flex px-2 py-0.5 rounded text-xs ${STATUS_COLORS[ticket.status] ?? 'bg-gray-100 text-gray-600'}`}>
-                      {STATUS_LABELS[ticket.status] ?? ticket.status}
+                      {ticketStatusLabel(ticket.status)}
                     </span>
                   </dd>
                 </div>
@@ -453,7 +454,7 @@ export default function TicketDetailPage(props: PageProps) {
             <div className="bg-white rounded-lg shadow p-4">
               <h2 className="text-sm font-semibold text-gray-700 mb-3">ステータス変更</h2>
               <div className="flex flex-col gap-2">
-                {['open', 'in_progress', 'pending', 'resolved', 'closed'].map((s) => (
+                {TICKET_STATUSES.map((s) => (
                   <button
                     key={s}
                     onClick={() => handleStatusChange(s)}
@@ -464,7 +465,7 @@ export default function TicketDetailPage(props: PageProps) {
                         : 'border-gray-200 hover:bg-gray-50 text-gray-600'
                     } disabled:opacity-50 disabled:cursor-not-allowed`}
                   >
-                    {STATUS_LABELS[s] ?? s}
+                    {ticketStatusLabel(s)}
                   </button>
                 ))}
               </div>

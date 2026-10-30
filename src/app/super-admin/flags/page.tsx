@@ -22,6 +22,7 @@ import {
   fetchAdminRows,
 } from "@/lib/admin/admin-screen-messages";
 import { rereadUnavailableMessage } from "@/lib/super-admin/detail-reread";
+import { rolloutStrategyTypeLabel } from "@/lib/super-admin/flags-schemas";
 import {
   NO_RESPONSE_LIST_RELOADED_GUIDE,
   NO_RESPONSE_LIST_RELOAD_FAILED_GUIDE,
@@ -304,7 +305,8 @@ export default function FlagsPage() {
                   <td className="px-6 py-4 text-slate-300 text-sm">
                     {flag.rollout_strategy ? (
                       <span className="bg-blue-900/50 text-blue-300 text-xs px-2 py-1 rounded">
-                        {flag.rollout_strategy.type}
+                        {/* 種類は表示名で出す (以前は英字の内部の値 percentage などのまま。#2112 Z3) */}
+                        {rolloutStrategyTypeLabel(flag.rollout_strategy.type)}
                         {flag.rollout_strategy.value !== undefined && ` ${flag.rollout_strategy.value}%`}
                       </span>
                     ) : (

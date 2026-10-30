@@ -10,6 +10,11 @@ import {
   displayableAdminError,
   fetchAdminJson,
 } from "@/lib/admin/admin-screen-messages";
+import {
+  ADMIN_AUDIT_SEVERITIES,
+  ADMIN_AUDIT_SEVERITY_LABELS,
+  adminAuditSeverityLabel,
+} from "@/lib/admin/audit-severity-labels";
 
 /** 403 (Forbidden) の HTTP ステータス */
 const HTTP_FORBIDDEN = 403;
@@ -167,9 +172,12 @@ export default function AuditLogsPage() {
             className="bg-slate-700 text-white rounded-lg px-3 py-2 border border-slate-600 focus:border-purple-500 outline-none text-sm"
           >
             <option value="">全重要度</option>
-            <option value="info">info</option>
-            <option value="warn">warn</option>
-            <option value="critical">critical</option>
+            {/* 重要度の選択肢と一覧の札は表示名で出す (以前は英字の内部の値 info / warn / critical のまま。#2112 Z3) */}
+            {ADMIN_AUDIT_SEVERITIES.map((value) => (
+              <option key={value} value={value}>
+                {ADMIN_AUDIT_SEVERITY_LABELS[value]}
+              </option>
+            ))}
           </select>
           <input
             type="date"
@@ -246,7 +254,7 @@ export default function AuditLogsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${SEVERITY_BADGE[log.severity]}`}>
-                        {log.severity}
+                        {adminAuditSeverityLabel(log.severity)}
                       </span>
                     </td>
                     <td className="px-4 py-3">

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { NpsSummary, CsatSummary } from "@/lib/admin/finance-schemas";
 import { adminLoadFailedFallback, displayableAdminError, fetchAdminJson } from "@/lib/admin/admin-screen-messages";
+import { adminPlanKeyLabel } from "@/lib/admin/plan-key-labels";
 
 /** 読み込みの失敗の文の対象 (「NPS の集計を読み込めませんでした (HTTP 502)」。#2086 V6) */
 const NPS_SUBJECT = "NPS の集計";
@@ -184,7 +185,8 @@ export default function NpsPage() {
                       </span>
                       {c.plan_key && (
                         <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded">
-                          {c.plan_key}
+                          {/* プランは表示名で出す (以前は英字の内部の値 free などのまま。#2112 Z3) */}
+                          {adminPlanKeyLabel(c.plan_key)}
                         </span>
                       )}
                       {c.responded_at && (

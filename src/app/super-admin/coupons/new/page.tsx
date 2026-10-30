@@ -20,6 +20,11 @@ import {
   displayableAdminError,
 } from '@/lib/admin/admin-screen-messages';
 import { PLAN_CATALOG, formatJpy, planDisplayName, type PaidPlanKey } from '@homegohan/shared';
+import {
+  COUPON_APPLICABLE_TO,
+  COUPON_APPLICABLE_TO_LABELS,
+  type CouponApplicableTo,
+} from '@/lib/super-admin/coupons-schemas';
 
 /** 作成の失敗の文の操作の名前 (「クーポンの作成に失敗しました (HTTP 502)」。#2093 W7) */
 const COUPON_CREATE_ACTION = 'クーポンの作成';
@@ -40,7 +45,7 @@ export default function CouponNewPage() {
   const [displayName, setDisplayName] = useState('');
   const [discountType, setDiscountType] = useState<'fixed' | 'percentage'>('percentage');
   const [discountValue, setDiscountValue] = useState('');
-  const [applicableTo, setApplicableTo] = useState<'all' | 'personal' | 'family' | 'org'>('all');
+  const [applicableTo, setApplicableTo] = useState<CouponApplicableTo>('all');
   // 有効開始日の初期値は JST の今日 (#1483。API は JST の暦日を受け取り、その日の JST 0:00 から有効にする)
   const [validFrom, setValidFrom] = useState(todayLocal());
   const [validUntil, setValidUntil] = useState('');
@@ -209,13 +214,18 @@ export default function CouponNewPage() {
           <label className="block text-sm font-medium text-slate-700 mb-1">適用対象</label>
           <select
             value={applicableTo}
-            onChange={(e) => setApplicableTo(e.target.value as typeof applicableTo)}
+            onChange={(e) => {
+              const next = COUPON_APPLICABLE_TO.find((value) => value === e.target.value);
+              if (next !== undefined) setApplicableTo(next);
+            }}
             className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
           >
-            <option value="all">全て</option>
-            <option value="personal">個人</option>
-            <option value="family">家族</option>
-            <option value="org">組織</option>
+            {/* 選択肢は値の一覧と表示名の表から作る (一覧・詳細と同じ語。#2112 Z3) */}
+            {COUPON_APPLICABLE_TO.map((value) => (
+              <option key={value} value={value}>
+                {COUPON_APPLICABLE_TO_LABELS[value]}
+              </option>
+            ))}
           </select>
         </div>
 
