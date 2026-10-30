@@ -101,6 +101,15 @@ interface FunctionDefinition {
 /** SQL の行コメント (-- ...) を取り除く (コメントの中の語に反応しないため) */
 const stripLineComments = (sql: string): string => sql.replace(/--.*$/gm, '');
 
+/**
+ * 関数の本文 ($$ … $$) と文字列の定数 ('…'。関数のコメントの文) を取り除いた、文の骨組み
+ * (コメントの文の中の語 (例: FOR NO KEY UPDATE) を文として数えないため)
+ */
+const statementSkeleton = (sql: string): string =>
+  stripLineComments(sql)
+    .replace(/\$\$[\s\S]*?\$\$/g, '')
+    .replace(/'(?:[^']|'')*'/g, "''");
+
 /** 空白をまとめる (字下げ・改行の違いを無視して比べるため) */
 const squash = (sql: string): string => sql.replace(/\s+/g, ' ').trim();
 
@@ -233,7 +242,7 @@ describe('migration の形', () => {
   });
 
   it('権限の付け外し・DROP・データを書き換える文が無い (関数の本文の置き換えだけ。権限は CREATE OR REPLACE で残る)', () => {
-    const outsideBodies = stripLineComments(readMigration()).replace(/\$\$[\s\S]*?\$\$/g, '');
+    const outsideBodies = statementSkeleton(readMigration());
     expect(outsideBodies).toMatch(/CREATE\s+OR\s+REPLACE\s+FUNCTION/i);
     expect(outsideBodies).not.toMatch(/\b(?:GRANT|REVOKE|DROP|ALTER|UPDATE|INSERT|DELETE|TRUNCATE)\b/i);
   });
@@ -263,7 +272,7 @@ describe('戻し口', () => {
     const code = stripLineComments(readRollback());
     const restored = [...code.matchAll(/CREATE\s+OR\s+REPLACE\s+FUNCTION\s+(?:"?public"?\.)?"?(\w+)"?/gi)].map((m) => m[1]).sort();
     expect(restored).toEqual(FUNCTIONS.map(({ name }) => name).sort());
-    expect(code.replace(/\$\$[\s\S]*?\$\$/g, '')).not.toMatch(/\b(?:GRANT|REVOKE|DROP|ALTER|UPDATE|INSERT|DELETE|TRUNCATE)\b/i);
+    expect(statementSkeleton(readRollback())).not.toMatch(/\b(?:GRANT|REVOKE|DROP|ALTER|UPDATE|INSERT|DELETE|TRUNCATE)\b/i);
   });
 });
 

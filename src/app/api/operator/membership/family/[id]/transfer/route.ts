@@ -101,8 +101,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
     // 譲渡先がすでに今の代表者なら、RPC を呼ばずに 409 で止める (#2086 V1。押し直しで譲渡・監査・通知を二重にしない)。
     // representative_id は DB の uuid の文字列 (小文字) で、to_user_id も上で小文字にそろえてある。
-    // 控えを読めなかったときは止めずに RPC へ進み、RPC の戻り値の旧代表者で同じ判定をする (下)。控えの読み込みは
-    // 通知のための best-effort で、譲渡そのものは止めない (#1917 のテスト: 控えを読めなくても譲渡と通知は RPC の戻り値で行う)
+    // 控えを読めなかったときは止めずに RPC へ進む。RPC は家族の行のロックの下で読んだ旧代表者が譲渡先と同じなら、何も書かずに
+    // ALREADY_REPRESENTATIVE で断る (#2093 W5。下の RPC のエラーの分岐)。控えの読み込みは通知のための best-effort で、譲渡そのものは止めない
+    // (#1917 のテスト: 控えを読めなくても譲渡と通知は RPC の戻り値で行う)
     if (preFg && preFg.representative_id === to_user_id) {
       return alreadyRepresentativeResponse();
     }
@@ -118,6 +119,17 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
     if (rpcError) {
       // RPC の生のエラー文は本文に出さない (#1172)。分かるものは固定の文、それ以外は汎用の 500 にして構造化ログに残す
+      if (dbErrorMentionsCode(rpcError, OPERATOR_FORCE_TRANSFER_ALREADY_REPRESENTATIVE_CODE)) {
+        // RPC が家族の行のロックの下で読んだ旧代表者が譲渡先と同じだったので、何も書かずに断った
+        // (supabase/migrations/20261030120000_operator_force_transfer_reject_same.sql。#2093 W5)。RPC の前の控えを読めなかったときと、
+        // 控えを読んだあと RPC の直前に別の運営が同じ人へ譲渡したときにここへ来る。代表者は変わっておらず membership_audit にも行が無いので、
+        // 運営の監査 (admin_audit_logs) にも通知メールにも出さずに、RPC の前の判定と同じ 409 で止める
+        logger.withUser(operatorId).warn('譲渡先はすでに代表者だったため、RPC が書く前に断りました。運営の監査と通知メールを出さずに 409 を返します', {
+          family_id: familyId,
+          to_user_id,
+        });
+        return alreadyRepresentativeResponse();
+      }
       // 譲渡先が退会の手続き中なら 409 (代表者にすると、その退会の最後のアカウントの削除が代表者の外部キーで失敗する。#1917 の続き)。
       // 家族の行のトリガー trg_representative_not_deleting (関数 family_groups_representative_not_deleting)
       // (supabase/migrations/20261023150000_account_deletion_family_representative_guard.sql) が P0001 + このコードの完全一致で止めた形だけを拾う。
@@ -173,12 +185,13 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     const family = rpcResult.success ? rpcResult.data.family_group : rpcData;
 
     // RPC が家族の行のロックの下で読んだ旧代表者が譲渡先と同じ = 譲渡先はすでに代表者だった (#2086 V1)。
-    // RPC の前の控えを読めなかったときと、控えを読んだあと RPC の前に別の運営が同じ人へ譲渡したときにここへ来る。
-    // 代表者は変わっていないので、運営の監査 (admin_audit_logs) にも通知メールにも出さずに 409 で止める
-    // (RPC は membership_audit に旧代表者 = 新代表者の行を 1 行書いている。それはログで追えるようにする)
+    // 今の定義の RPC (20261030120000。#2093 W5) はこの場合 ALREADY_REPRESENTATIVE で断る (上の RPC のエラーの分岐) ので、ここへ来るのは
+    // その migration を当てる前の DB だけ。その RPC は断らずに書くので、RPC の前の控えを読めなかったときと、控えを読んだあと RPC の前に
+    // 別の運営が同じ人へ譲渡したときにここへ来る。代表者は変わっていないので、運営の監査 (admin_audit_logs) にも通知メールにも出さずに
+    // 409 で止める (その RPC は membership_audit に旧代表者 = 新代表者の行を 1 行書いている。それはログで追えるようにする)
     if (beforeTransfer?.representativeId === to_user_id) {
       log.warn(
-        '譲渡先はすでに代表者だったため、運営の監査と通知メールを出さずに 409 を返しました (RPC は membership_audit に旧代表者 = 新代表者の行を書いています)',
+        '譲渡先はすでに代表者だったため、運営の監査と通知メールを出さずに 409 を返しました (migration 20261030120000 の前の RPC は membership_audit に旧代表者 = 新代表者の行を書いています)',
         { family_id: familyId, to_user_id },
       );
       return alreadyRepresentativeResponse();
