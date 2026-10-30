@@ -19,8 +19,25 @@ export const MODERATION_TYPE_INVALID_MESSAGE = `種類 (type) は次のいずれ
 
 // ─── キュー一覧検索 ────────────────────────────────────────────────────────────
 
+/** 審査の一覧で絞り込める状態 (GET /api/admin/moderation/queue の status。これ以外は API が 400) */
+export const MODERATION_QUEUE_STATUSES = ['pending', 'approved', 'rejected', 'escalated'] as const;
+export type ModerationQueueStatus = (typeof MODERATION_QUEUE_STATUSES)[number];
+
+/** 審査の一覧の既定の状態 (status を省略したとき・読めないとき) */
+export const MODERATION_QUEUE_DEFAULT_STATUS: ModerationQueueStatus = 'pending';
+
+/**
+ * 画面の URL の status (searchParams.status) を、審査の一覧の API に送る状態に読む (#2101 X7)。
+ * MODERATION_QUEUE_STATUSES に無い値 (?status=foo など、URL を手で書き換えたとき) は既定の pending にする。
+ * 以前は URL の値をそのまま API に送り、400 の読み込みの失敗が「再読み込み」でも直らなかった
+ * (URL の page の src/lib/list-pagination.ts の parsePageParam と同じ扱い。#2093 W8)
+ */
+export function parseModerationQueueStatusParam(raw: string | undefined): ModerationQueueStatus {
+  return MODERATION_QUEUE_STATUSES.find((status) => status === raw) ?? MODERATION_QUEUE_DEFAULT_STATUS;
+}
+
 export const ModerationQueueSearchSchema = z.object({
-  status: z.enum(['pending', 'approved', 'rejected', 'escalated']).optional().default('pending'),
+  status: z.enum(MODERATION_QUEUE_STATUSES).optional().default(MODERATION_QUEUE_DEFAULT_STATUS),
   type: z.enum(MODERATION_TYPES).optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
   per_page: z.coerce.number().int().min(1).max(100).optional().default(30),
