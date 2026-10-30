@@ -51,6 +51,15 @@
  * #1917 の続き (仕分け triage-1025a) で足したもの: tests/route-input2-1917.test.ts は、同じ型 (テストの中で、レシピ・買い物リスト・
  *   運営の会計ほか 30 余りの handler の route を丸ごと読み込む。tests/route-invalid-input-1917.test.ts と同じ形)。
  *
+ * #2093 で足したもの (#1488 の続き): tests/email-suppressed-log-level-scan.test.ts は、1 件のテストの中で src と lib の .ts / .tsx を
+ *   全部 ts.createSourceFile で読む (TypeScript の構文木によるリポジトリの走査)。main でも 1 件の所要が 2.2〜2.7 秒あり、
+ *   #2086 の検証 (V5・V7) で 1 回、テストの 5 秒の時間切れだけで落ちた。同じ型 (1 件のテストの中で src・lib などを全部構文木にする) で、
+ *   2026-10-30 に負荷の低い 1 号機 (k270) で、構文木を作る単体テストのファイル 80 本をまとめて流したとき、1 件の所要がこのファイル
+ *   (1.04 秒) と同じくらいだった tests/planned-meals-score-integrity-writers-scan.test.ts (1.19 秒) と
+ *   tests/postgrest-embed-relationship-scan.test.ts (1.00 秒) も、落ちる前に入れた (80 本のうち、一覧に無く、別の値を使う
+ *   tests/local-ci-slot-consumers.test.ts でもない残りの 1 件の所要の最大は 0.68 秒)。
+ *   このファイル自身は、構文木を作る前に sendEmail / emailFailureReasons の名前を含まないソースを外して速くした (結果は同じ)。
+ *
  * 時間切れが効くのは遅いときだけで、速く終わるテストの所要は変わらない (止まったテストを見切るまでが長くなるだけ)。
  * 期待値・待つ条件は変えないので、検査は緩まない。全体の既定 (vitest.config.ts) は変えず、一覧のファイルだけに効かせる
  * (各ファイルの先頭で applyHeavyUnitTestTimeout() を呼んで vi.setConfig する。時間切れはテスト・フックを登録したときの
@@ -74,7 +83,8 @@ export const UNIT_HEAVY_HOOK_TIMEOUT_ENV = "UNIT_HEAVY_HOOK_TIMEOUT_MS";
 
 /**
  * 時間切れを延ばすファイル (リポジトリの根からの相対パス)。#1488 の 16 本は 274 本の結果のどこかで時間切れだけで落ちた
- * (#1498 で速くした 2 本は外した)。#1605 で足した 15 本は、時間切れで落ちた 1 本と、同じ型 (テストの中で子プロセスを起こす・route を丸ごと読み込む) の 14 本
+ * (#1498 で速くした 2 本は外した)。#1605 で足した 15 本は、時間切れで落ちた 1 本と、同じ型 (テストの中で子プロセスを起こす・route を丸ごと読み込む) の 14 本。
+ * #2093 で足した 3 本は、時間切れで落ちた 1 本と、同じ型 (テストの中でリポジトリを構文木で走査する) の 2 本
  */
 export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "src/__tests__/api/ai/consultation/ai-chat-gate.test.ts",
@@ -105,6 +115,7 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/design-system-1058.test.ts",
   "tests/edge-function-dep-pinning.test.ts",
   "tests/edge-function-deploy-use-api.test.ts",
+  "tests/email-suppressed-log-level-scan.test.ts",
   "tests/fast-llm-missing-env.test.ts",
   "tests/image-route-contracts.test.ts",
   "tests/local-ci-dev-server-ready.test.ts",
@@ -113,6 +124,8 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/markdown-lite.test.ts",
   "tests/nutrition-analysis-sugar-target.test.ts",
   "tests/og-image-1845.test.tsx",
+  "tests/planned-meals-score-integrity-writers-scan.test.ts",
+  "tests/postgrest-embed-relationship-scan.test.ts",
   "tests/recipes-route.test.ts",
   "tests/route-error-boundaries.test.tsx",
   "tests/route-input2-1917.test.ts",
