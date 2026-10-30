@@ -28,7 +28,12 @@ const redirect = vi.hoisted(() =>
 vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
 }));
-vi.mock('next/navigation', () => ({ redirect, notFound: vi.fn() }));
+// 読み込みの失敗の部品 (ModerationLoadFailure) は useRouter を使う (この試験では描かないが、mock にも置いておく)
+vi.mock('next/navigation', () => ({
+  redirect,
+  notFound: vi.fn(),
+  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
+}));
 vi.mock('@/lib/auth/page-guard', () => ({ requireRoleForPage }));
 vi.mock('@/lib/admin/fetch', () => ({ adminFetch }));
 

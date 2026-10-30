@@ -10,6 +10,9 @@
  * #2093 W8: URL の page が 1 以上の整数でなければ 1 ページ目を読む (?page=abc で API に page=NaN を送らない)。
  * #2101 X7: URL の status が API の一覧 (active / banned / deleted) に無ければ、既定の active として読む
  * (空 =「全ステータス」はそのまま。以前は ?status=foo をそのまま API に送り、400 の読み込みの失敗が再読み込みしても直らなかった)。
+ * #2107 Y10: 絞り込みの select の選択肢は「全ステータス」と USER_LIST_STATUSES から作る (表示名は USER_LIST_STATUS_LABELS)。
+ * 以前は選択肢を手で書き、削除済みが無いため ?status=deleted の select が「全ステータス」を示し、そのまま「検索」を押すと
+ * 全ステータスに戻っていた。削除済みの一覧は常に 0 件 (退会で記録が消える) なので、0 件の文で理由を出す。
  */
 
 export const dynamic = 'force-dynamic';
@@ -20,7 +23,15 @@ import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
 import { canViewUserEmail } from '@/lib/admin/user-emails';
 import { normalizeProfileName } from '@/lib/profile-name';
-import { parseUserListStatusParam, type UserListItem } from '@/lib/admin/users-schemas';
+import {
+  USER_LIST_ALL_STATUSES,
+  USER_LIST_ALL_STATUSES_LABEL,
+  USER_LIST_DELETED_EMPTY_MESSAGE,
+  USER_LIST_STATUSES,
+  USER_LIST_STATUS_LABELS,
+  parseUserListStatusParam,
+  type UserListItem,
+} from '@/lib/admin/users-schemas';
 import { lastPageToRefetch, parsePageParam } from '@/lib/list-pagination';
 import { USERS_LIST_LOAD_FAILED_MESSAGE, readUsersListBody, type UsersListLoad } from '@/lib/admin/users-load-failure';
 import ModerationLoadFailure from '@/components/operator/moderation/ModerationLoadFailure';
@@ -108,9 +119,13 @@ export default async function AdminUsersPage(props: PageProps) {
           defaultValue={status}
           className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
         >
-          <option value="">全ステータス</option>
-          <option value="active">アクティブ</option>
-          <option value="banned">BAN 済み</option>
+          {/* 選択肢は URL の status の読み方 (parseUserListStatusParam) と同じ一覧から作る (#2107 Y10。削除済みも選べる) */}
+          <option value={USER_LIST_ALL_STATUSES}>{USER_LIST_ALL_STATUSES_LABEL}</option>
+          {USER_LIST_STATUSES.map((listStatus) => (
+            <option key={listStatus} value={listStatus}>
+              {USER_LIST_STATUS_LABELS[listStatus]}
+            </option>
+          ))}
         </select>
         <button
           type="submit"
@@ -144,7 +159,8 @@ export default async function AdminUsersPage(props: PageProps) {
               {users.length === 0 ? (
                 <tr>
                   <td colSpan={canSeeEmail ? 7 : 6} className="px-4 py-8 text-center text-gray-400">
-                    ユーザーが見つかりません
+                    {/* 削除済みの一覧は常に 0 件 (退会で user_profiles の行が消える)。いないと読ませずに理由を出す (#2107 Y10) */}
+                    {status === 'deleted' ? USER_LIST_DELETED_EMPTY_MESSAGE : 'ユーザーが見つかりません'}
                   </td>
                 </tr>
               ) : (
