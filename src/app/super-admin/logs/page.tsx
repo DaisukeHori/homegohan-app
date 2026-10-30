@@ -17,6 +17,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { UNAUTHENTICATED_SCREEN_MESSAGE, forbiddenMessageForScreen } from '@/lib/admin/api-error-message';
+import { SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
 // 型だけを import する (値を import すると zod がブラウザ向けの bundle に入る)
 import type { AppLogEntry, AppLogLevel, AppLogListResponse } from '@/lib/super-admin/app-logs';
 
@@ -260,7 +261,8 @@ interface ApiErrorBody {
 function describeFailure(status: number, body: ApiErrorBody | null): string {
   // 401 は運営の画面で揃えた「ログインし直してください」(#2112 Z4)
   if (status === 401) return UNAUTHENTICATED_SCREEN_MESSAGE;
-  if (status === 403) return forbiddenMessageForScreen(body, 'このログを見る権限がありません (super_admin のみ)');
+  // ロールは表示名で出す (#2128 V1-2)
+  if (status === 403) return forbiddenMessageForScreen(body, `このログを見る権限がありません (${SUPER_ADMIN_ONLY_NOTE})`);
   return body?.error?.message ?? `読み込みに失敗しました (HTTP ${status})`;
 }
 

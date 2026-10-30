@@ -7,7 +7,7 @@
  *   サポートチケット・売上・営業 CRM の画面はサイドバーから入れなかった。
  *
  * 修正後に確かめること:
- *   - /admin: ロールに応じたカードを出す (admin: モデレーション・ユーザー管理など / super_admin: それ + super_admin コンソール /
+ *   - /admin: ロールに応じたカードを出す (admin: モデレーション・ユーザー管理など / super_admin: それ + 運営最上位の画面 (/super-admin) /
  *     content_moderator: モデレーションだけ)。ログインしていない人・入れないロールの人は /login へ送る
  *   - サイドバー: 組織管理・お知らせ・サポートチケット・開示等の請求・売上・経理・営業 CRM が admin / super_admin に出て、
  *     content_moderator には出ない。サイドバーとカードは同じ機能を案内する
@@ -165,12 +165,13 @@ describe('/admin (運営コンソールの入口)', () => {
     const links = await cardHrefs();
     expect(links).toEqual(['/admin/moderation']);
     expect(document.body.textContent).toContain('モデレーション');
-    for (const label of ['ユーザー管理', '組織管理', 'お知らせ', 'サポートチケット', '開示等の請求', '売上・経理', '営業 CRM', 'super_admin']) {
+    // /super-admin のカードは「運営最上位の画面」(#2128 V1-2)。英字の super_admin も出さない
+    for (const label of ['ユーザー管理', '組織管理', 'お知らせ', 'サポートチケット', '開示等の請求', '売上・経理', '営業 CRM', '運営最上位', 'super_admin']) {
       expect(document.body.textContent).not.toContain(label);
     }
   });
 
-  it('admin には super_admin コンソールを出さない。super_admin には出す', async () => {
+  it('admin には運営最上位の画面 (/super-admin) のカードを出さない。super_admin には出す', async () => {
     login('admin');
     expect(await cardHrefs()).not.toContain('/super-admin');
 
