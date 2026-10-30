@@ -21,6 +21,8 @@
  * いまは応答を受け取れなかったら (AdminActionNoResponseError) プランを読み直し、価格が送った値になっていれば済んだとして履歴の画面へ移る。
  * 送った値になっていなければ、画面のプランを読み直した値にして、済んでいないことを出す (もう一度実行できる。同じ価格の押し直しは
  * route が 409 OP_PRICE_UNCHANGED で断る)。読み直せなければ送信を止め、「済んだか分かりません。履歴で確かめてください」と履歴へのリンクを出す。
+ * 読み直しが 401 / 403 で断られたら、その理由の文 (401 は「ログインし直してください」・403 は理由の文) を添える
+ * (#2101 integrity-1030c。src/lib/super-admin/detail-reread.ts の rereadUnavailableMessage と同じ文)。
  * 409 OP_PRICE_UNCHANGED (すでにこの価格) は済んだものとして履歴の画面へ移る (src/lib/super-admin/price-change-unchanged.ts)。
  */
 
@@ -42,6 +44,7 @@ import {
   readFailureBody,
 } from '@/lib/admin/admin-screen-messages';
 import { isPriceUnchangedBody, sentPricesMatchPlan, type PriceChangeSentPrices } from '@/lib/super-admin/price-change-unchanged';
+import { rereadDetailRow } from '@/lib/super-admin/detail-reread';
 
 type ImpactData = {
   /** 新規契約のみなので常に 0 (既存契約は現行価格のまま) */
@@ -169,20 +172,19 @@ export default function PriceChangePage() {
   /**
    * 価格の変更の応答を受け取れなかったあと、プランを読み直して、価格が送った値になっているか (済んだか) を確かめる (#2101 X1)。
    * 送った値になっていれば済んだとして履歴の画面へ移る。なっていなければ画面のプランを読み直した値にして、済んでいないことを出す。
-   * 読み直せなければ、済んだか分からないので送信を止め、履歴で確かめさせる
+   * 読み直せなければ、済んだか分からないので送信を止め、履歴で確かめさせる。
+   * 読み直しが 401 / 403 なら、読み込み直しても変わらない理由の文 (「ログインし直してください」・403 の理由の文) を添える
+   * (404 は理由の文にしない。これまでどおり済んだか分からない文だけ。#2101 integrity-1030c)
    */
   const confirmUnconfirmedPriceChange = async (sent: PriceChangeSentPrices, summary: string) => {
-    let reloaded: Plan;
-    try {
-      const body = await fetchAdminJson(`/api/super-admin/plans/${planId}`, PLAN_SUBJECT);
-      const loaded = (body as { data?: Plan | null }).data;
-      if (!loaded) throw new AdminScreenError(adminLoadFailedMessage(PLAN_SUBJECT, null));
-      reloaded = loaded;
-    } catch {
+    const reread = await rereadDetailRow<Plan>(`/api/super-admin/plans/${planId}`, null);
+    if (reread.kind !== 'loaded') {
       unconfirmedRef.current = true;
-      setUnconfirmedMessage(`${summary}。${PRICE_CHANGE_UNCONFIRMED_GUIDE}`);
+      const guides = reread.kind === 'unavailable' ? [PRICE_CHANGE_UNCONFIRMED_GUIDE, reread.message] : [PRICE_CHANGE_UNCONFIRMED_GUIDE];
+      setUnconfirmedMessage([summary, ...guides].join('。'));
       return;
     }
+    const reloaded = reread.row;
     if (sentPricesMatchPlan(reloaded, sent)) {
       router.push(historyHref);
       return;
