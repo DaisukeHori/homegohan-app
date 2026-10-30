@@ -58,11 +58,17 @@ interface AnnouncementInput {
 }
 
 /**
- * 入力が、送ったときの入力のままか (タイトル・本文・公開の設定のすべてが同じ)。作成の応答を受け取れなかったあとの読み直しで済んでいたと分かったとき、
- * 送ったときの入力のままなら空にし、送信を止めているあいだに書き換えていれば残す (#2107 Y7。営業のリードの活動と同じ)
+ * 入力が、送ったときの入力のままか (タイトル・本文は前後の空白・改行を除いて同じ、公開の設定は同じ)。作成の応答を受け取れなかったあとの
+ * 読み直しで済んでいたと分かったとき、送ったときの入力のままなら空にし、送信を止めているあいだに書き換えていれば残す (#2107 Y7)。
+ * 送るのは前後の空白を除いたタイトル・本文 (handleSubmit) なので、前後の空白・改行だけの違いは、押し直すと同じ内容のお知らせが
+ * もう 1 件できる入力であり、書き足しと見なさない (問い合わせの返信の isReplyInputAsSent と同じ規則。#2128 V2)
  */
 function isSameAnnouncementInput(current: AnnouncementInput, sent: AnnouncementInput): boolean {
-  return current.title === sent.title && current.content === sent.content && current.isPublic === sent.isPublic;
+  return (
+    current.title.trim() === sent.title.trim() &&
+    current.content.trim() === sent.content.trim() &&
+    current.isPublic === sent.isPublic
+  );
 }
 
 /**
