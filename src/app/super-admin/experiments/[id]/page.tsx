@@ -26,6 +26,7 @@ import {
   adminActionHttpFailedMessage,
   adminLoadFailedMessage,
   screenApiErrorMessage,
+  screenFailureMessage,
 } from "@/lib/admin/admin-screen-messages";
 import { rereadUnavailableMessage } from "@/lib/super-admin/detail-reread";
 import {
@@ -277,7 +278,7 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
           await reloadAfterStale();
           return;
         }
-        alert(screenApiErrorMessage(body) ?? adminActionHttpFailedMessage(STATUS_CHANGE_ACTION, res.status));
+        alert(screenFailureMessage(res.status, body) ?? adminActionHttpFailedMessage(STATUS_CHANGE_ACTION, res.status));
         return;
       }
       const updated = (body as { data?: Experiment } | null)?.data;

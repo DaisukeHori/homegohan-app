@@ -20,7 +20,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { couponValidityDay, couponValidUntilPatchValue } from '@/lib/super-admin/coupon-validity';
-import { isStatusChangeConflict, operationFailureMessage } from '@/lib/admin/api-error-message';
+import { UNAUTHENTICATED_SCREEN_MESSAGE, isStatusChangeConflict, operationFailureMessage } from '@/lib/admin/api-error-message';
 import { COUPON_INVALID_TRANSITION_ERROR_CODE } from '@/lib/super-admin/coupons-schemas';
 import {
   NO_RESPONSE_STATE_RELOADED_GUIDE,
@@ -83,6 +83,8 @@ type RedemptionsResponse = {
 
 /** 適用履歴の API (GET /api/super-admin/coupons/{id}/redemptions) のページ番号は 1 から */
 const FIRST_REDEMPTIONS_PAGE = 1;
+/** 401 (Unauthorized。ログインが切れた) の HTTP ステータス */
+const HTTP_UNAUTHORIZED = 401;
 
 /** 保存で送る本文 (PATCH /api/super-admin/coupons/{id} の表示名・有効期限・最大利用回数) */
 type CouponSaveBody = {
@@ -285,7 +287,10 @@ export default function CouponDetailPage() {
           setRedemptions([]);
           setRedemptionsTotal(null);
         }
-        setRedemptionsError(data.error?.message ?? '適用履歴の取得に失敗しました');
+        // 401 は本文の文 (「認証が必要です」) ではなく、運営の画面で揃えた「ログインし直してください」(#2112 Z4)
+        setRedemptionsError(
+          res.status === HTTP_UNAUTHORIZED ? UNAUTHENTICATED_SCREEN_MESSAGE : (data.error?.message ?? '適用履歴の取得に失敗しました'),
+        );
         return;
       }
       const rows = data.data;

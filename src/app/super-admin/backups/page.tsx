@@ -261,6 +261,13 @@ type BackupsLoadResult =
   | { outcome: 'unauthorized' | 'forbidden'; message: string }
   | { outcome: 'load-failed' };
 
+/**
+ * 401 / 403 の理由の文をどこに出すか (#2112 Z4。同じ理由を読み込みの欄と送信を止めた文の 2 か所に出さない):
+ *   - load-area: 読み込みの欄 (backups-load-error) に出す (初めの読み込み・記録したあとの読み込み直し)
+ *   - caller   : 読み込みの欄は変えず、呼び出し側が出す (記録の応答を受け取れなかったあとの読み直し。送信を止めた文に添える)
+ */
+type UnavailableReasonPlacement = 'load-area' | 'caller';
+
 export default function SuperAdminBackupsPage() {
   const [load, setLoad] = useState<LoadState>({ status: 'loading' });
   const [form, setForm] = useState<DrTestFormState>(initialFormState);
@@ -278,20 +285,21 @@ export default function SuperAdminBackupsPage() {
 
   /**
    * 状態を読み、画面に出す。結果を 401 / 403 / ほかの失敗に分けて返す
-   * (記録の応答を受け取れなかったあとの読み直しで、読めた data と比べ、401 / 403 なら「確かめ直す」を出さない。#2101 X2・integrity-1030c)
+   * (記録の応答を受け取れなかったあとの読み直しで、読めた data と比べ、401 / 403 なら「確かめ直す」を出さない。#2101 X2・integrity-1030c)。
+   * 401 / 403 の理由の文は reasonPlacement の場所に出す (#2112 Z4)
    */
-  const reload = useCallback(async (): Promise<BackupsLoadResult> => {
+  const reload = useCallback(async (reasonPlacement: UnavailableReasonPlacement = 'load-area'): Promise<BackupsLoadResult> => {
     try {
       const res = await fetch(SUPER_ADMIN_BACKUPS_API_PATH);
       if (res.status === HTTP_UNAUTHORIZED) {
         // 401 は読み込み直しても変わらない。時間をおいて開き直す文ではなく、ログインし直す文を出す (#2101 integrity-1030c)
-        setLoad({ status: 'error', message: UNAUTHENTICATED_SCREEN_MESSAGE });
+        if (reasonPlacement === 'load-area') setLoad({ status: 'error', message: UNAUTHENTICATED_SCREEN_MESSAGE });
         return { outcome: 'unauthorized', message: UNAUTHENTICATED_SCREEN_MESSAGE };
       }
       if (res.status === HTTP_FORBIDDEN) {
         // 403 は本文の理由の文 (二段階認証の確認が要る など) があればそちらを出す (#1917)
         const message = await forbiddenMessageOfResponse(res, LOAD_FORBIDDEN_TEXT);
-        setLoad({ status: 'error', message });
+        if (reasonPlacement === 'load-area') setLoad({ status: 'error', message });
         return { outcome: 'forbidden', message };
       }
       if (res.status !== HTTP_OK) {
@@ -331,10 +339,11 @@ export default function SuperAdminBackupsPage() {
    * まだ無い (サーバーが書き込みの途中かもしれない)・読み直しにも失敗した・前からあった行か決められないときは、送信を止めたままにする
    * (押し直すと監査ログに 2 行入りうる。押し直すのは、記録の一覧で確かめてから画面を開き直したときだけ)。
    * 読み直しが 401 / 403 なら、読み込み直しても必ず同じ理由で断られるので「確かめ直す」を出さず、理由の文
-   * (「ログインし直してください」・403 の理由の文) を添える (#2101 integrity-1030c。お知らせ・営業のリードの活動と同じ)
+   * (「ログインし直してください」・403 の理由の文) を添える (#2101 integrity-1030c。「確かめ直す」を出さないのはお知らせ・営業のリードの活動と同じ。理由の文は、ここでは送信を止めた文に添え、お知らせは一覧の欄に出す)。
+   * この読み直しの 401 / 403 では読み込みの欄を変えない (同じ理由を読み込みの欄と送信を止めた文の 2 か所に出さない。#2112 Z4)
    */
   const confirmUnconfirmedDrTest = async (pending: Omit<UnconfirmedDrTest, 'message' | 'retryable'>) => {
-    const result = await reload();
+    const result = await reload('caller');
     switch (result.outcome) {
       case 'loaded':
         break;
@@ -409,13 +418,19 @@ export default function SuperAdminBackupsPage() {
         setErrors(drTestErrorsFromResponse(json));
         return;
       }
+      if (res.status === HTTP_UNAUTHORIZED) {
+        // 401 は時間をおいて送り直しても変わらない。「時間をおいてもう一度送ってください」ではなく、読み込みと同じ
+        // 「ログインし直してください」を form の上に出す (#2112 Z4)
+        setErrors({ fields: {}, form: [UNAUTHENTICATED_SCREEN_MESSAGE] });
+        return;
+      }
       if (res.status === HTTP_FORBIDDEN) {
         // 403 は本文の理由の文 (二段階認証の確認が要る など) があればそちらを出す (#1917)
         setErrors({ fields: {}, form: [await forbiddenMessageOfResponse(res, SUBMIT_FORBIDDEN_TEXT)] });
         return;
       }
       // 本文に API の文の無い 502 / 503 / 504 は応答を受け取れなかったもの (手前のプロキシ・ホスティングの応答。#2101 X2)。
-      // ほかの失敗はこれまでどおり固定の文 (本文の文は出さない)
+      // ほかの失敗 (500 など) はこれまでどおり固定の文 (本文の文は出さない)
       const failure = await adminActionErrorOfResponse(res, DR_TEST_RECORD_ACTION);
       if (failure instanceof AdminActionNoResponseError) throw failure;
       setErrors({ fields: {}, form: [SUBMIT_FAILED_TEXT] });

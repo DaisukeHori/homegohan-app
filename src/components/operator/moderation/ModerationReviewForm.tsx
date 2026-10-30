@@ -22,6 +22,7 @@
 import { useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { UNAUTHENTICATED_SCREEN_MESSAGE } from '@/lib/admin/api-error-message';
 import { moderationStatusLabel } from '@/lib/admin/moderation-labels';
 
 export type ModerationReviewFormProps = {
@@ -148,7 +149,8 @@ export default function ModerationReviewForm({ type, id, status, isSuperAdmin }:
       }
 
       if (res.status === 401) {
-        setError('ログインの有効期限が切れました。ログインし直してください');
+        // 運営の画面で揃えた 401 の文 (#2112 Z4)
+        setError(UNAUTHENTICATED_SCREEN_MESSAGE);
         return;
       }
       const message = json?.error?.message;
