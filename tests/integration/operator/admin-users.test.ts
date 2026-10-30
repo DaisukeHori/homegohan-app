@@ -123,6 +123,53 @@ describe('GET /api/admin/users', () => {
     expect(deletedAll.body).toMatchObject({ data: [], meta: { total: 0 } });
   });
 
+  // #2112 Z5: plan を受けたら plan_key_cached で絞る (応答の plan_key と同じ意味で、free は plan_key_cached が NULL か 'free')。
+  // 以前は plan を監査の検索条件に残すだけで絞らず、全プランの利用者を返していた。
+  // 検索語 (このファイルのテストの利用者のメールに共通する部分) で、このファイルの利用者だけに絞ってから比べる
+  it('plan=pro は pro の利用者だけ、plan=free は plan_key_cached が NULL か free の利用者だけを返す (#2112 Z5)', async () => {
+    const q = encodeURIComponent(`-${TS}@homegohan.test`);
+    const setPlan = async (userId: string, planKeyCached: string | null) => {
+      const { error } = await supabaseAdmin.from('user_profiles').update({ plan_key_cached: planKeyCached }).eq('id', userId);
+      expect(error).toBeNull();
+    };
+    await setPlan(targetUser.userId, 'pro');
+    await setPlan(generalUser.userId, 'free');
+    try {
+      type ListBody = { data: Array<{ id: string; plan_key: string }>; meta: { total: number } };
+
+      // 絞らないときは pro と free (NULL を含む) の両方が出る
+      const all = await apiCall('GET', `/api/admin/users?q=${q}`, adminUser.jwt);
+      expect(all.status).toBe(200);
+      const allIds = (all.body as ListBody).data.map((u) => u.id);
+      expect(allIds).toEqual(expect.arrayContaining([targetUser.userId, generalUser.userId, supportUser.userId]));
+
+      const pro = await apiCall('GET', `/api/admin/users?q=${q}&plan=pro`, adminUser.jwt);
+      expect(pro.status).toBe(200);
+      const proBody = pro.body as ListBody;
+      expect(proBody.data.map((u) => u.id)).toEqual([targetUser.userId]);
+      expect(proBody.data.every((u) => u.plan_key === 'pro')).toBe(true);
+      expect(proBody.meta.total).toBe(1);
+
+      const free = await apiCall('GET', `/api/admin/users?q=${q}&plan=free`, adminUser.jwt);
+      expect(free.status).toBe(200);
+      const freeBody = free.body as ListBody;
+      const freeIds = freeBody.data.map((u) => u.id);
+      // plan_key_cached が 'free' の利用者 (generalUser) と NULL の利用者 (supportUser など) の両方
+      expect(freeIds).toEqual(expect.arrayContaining([generalUser.userId, supportUser.userId]));
+      expect(freeIds).not.toContain(targetUser.userId);
+      expect(freeBody.data.every((u) => u.plan_key === 'free')).toBe(true);
+      expect(freeBody.meta.total).toBe(freeIds.length);
+
+      // 件数より後ろのページは、同じ plan の絞り込みで数え直した件数を返す
+      const beyond = await apiCall('GET', `/api/admin/users?q=${q}&plan=pro&page=9`, adminUser.jwt);
+      expect(beyond.status).toBe(200);
+      expect(beyond.body).toMatchObject({ data: [], meta: { total: 1 } });
+    } finally {
+      await setPlan(targetUser.userId, null);
+      await setPlan(generalUser.userId, null);
+    }
+  });
+
   it('403 for general user', async () => {
     const res = await apiCall('GET', '/api/admin/users', generalUser.jwt);
     expect(res.status).toBe(403);
