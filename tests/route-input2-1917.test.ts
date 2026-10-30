@@ -645,13 +645,15 @@ describe('P16 の同じ型: 運営の詳細・集計', () => {
     expect(tables()).toEqual(['feature_packages']);
   });
 
-  it('POST /api/admin/organizations: オーナーの所属を確かめられないときは 500。組織を作らない', async () => {
+  it('POST /api/admin/organizations: オーナーの所属の確認と作成を 1 つの DB 関数で行い、その関数が失敗したら 500。表に直接書かない (#2107 Y4)', async () => {
     const { POST } = await import('@/app/api/admin/organizations/route');
-    setResults('user_profiles', FAILED);
+    setResults('rpc:admin_create_organization', FAILED);
     const res = await POST(request('/api/admin/organizations', 'POST', JSON.stringify({ name: '株式会社テスト', owner_id: OTHER_ROW_ID })));
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual(NESTED_INTERNAL);
-    expect(tables()).toEqual(['user_profiles']);
+    expect(await res.json()).toEqual({ error: { code: 'INTERNAL_ERROR', message: '組織の作成に失敗しました' } });
+    expect(h.rpcCalls).toEqual(['admin_create_organization']);
+    expect(tables()).toEqual([]);
+    expect(mocks.recordAdminAudit).not.toHaveBeenCalled();
   });
 });
 

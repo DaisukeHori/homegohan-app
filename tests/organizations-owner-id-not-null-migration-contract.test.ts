@@ -212,7 +212,13 @@ describe('#1103 項目 10 / #1917 型とコード', () => {
         expect(m[2], `${rel} の ${m[1]}`).toContain('owner_id');
       }
     }
-    // 組織を作る入口 (運営の作成 API) を拾えている (読み取りが壊れて素通りしない)
-    expect(sites).toContain('src/app/api/admin/organizations/route.ts');
+    // 組織を作る入口 (運営の作成 API) は、#2107 Y4 から DB 関数 admin_create_organization に作成を任せ、表に直接 INSERT しない。
+    // 関数に owner_id を必ず渡し (省けば呼び出した運営)、関数の INSERT も owner_id を入れる
+    expect(sites).not.toContain('src/app/api/admin/organizations/route.ts');
+    const route = read('src/app/api/admin/organizations/route.ts');
+    expect(route).toContain('const effectiveOwnerId = owner_id ?? actor.id;');
+    expect(squash(route)).toContain("supabaseAdmin.rpc('admin_create_organization', { p_name: name, p_plan: plan, p_owner_id: effectiveOwnerId, })");
+    const createFn = squash(stripComments(read(`${MIGRATIONS_DIR}/20261030150000_create_organization_atomic.sql`)));
+    expect(createFn).toContain('INSERT INTO organizations (name, plan, owner_id) VALUES (p_name, p_plan, p_owner_id)');
   });
 });

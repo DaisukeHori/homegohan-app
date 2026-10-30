@@ -41,7 +41,7 @@
  * 2 人の運営がほぼ同時に同じプランの価格を変えると、後の記録の old_* が実際の直前の値と食い違った。
  * いまはプランごとの予約の行で 1 本ずつにする (src/lib/super-admin/plan-price-change-reservation.ts):
  *   1. beginPlanPriceChange: プランの行をロックして予約を取り、ロックの下で読んだプランの値を返す。
- *      無ければ 404、draft なら 422、別の運営の価格の変更が進行中なら 409 CONFLICT_STALE_DATA (Stripe も DB も触らない)
+ *      無ければ 404、draft なら 422、このプランの価格の変更が進行中 (別の運営・応答が切れたあとの自分の 1 回目) なら 409 CONFLICT_STALE_DATA (Stripe も DB も触らない)
  *   2. Stripe の同期 (予約を取った 1 本だけが Edge Function を呼ぶ。Edge Function はその時点の DB の旧 Price を無効化する)
  *   3. applyPlanPriceChange: 予約が自分のもののままなら、ロックの下で読んだ値を old_* にして履歴を INSERT し、変えた列だけを UPDATE し、
  *      予約を消す (1 つのトランザクション)。予約を失っていたら (期限の後に別の運営が取り直した) 409 CONFLICT_STALE_DATA で何も書かない
@@ -54,6 +54,11 @@
  * 監査も書かずに 409 OP_PRICE_UNCHANGED を返す (予約は消す。src/lib/super-admin/price-change-unchanged.ts)。
  * Stripe の同期が要る環境で、送った間隔の Stripe Price ID がまだ無いときは、同じ価格でも続ける (販売開始の手順で Price を作って ID を入れる。
  * docs/design/billing/03-paid-plans-and-iap.md §12 の順 3)。
+ *
+ * #2107 Y8: 判定は間隔 (月額・年額) ごと。以前は、送った間隔のどれかの Price ID が無ければ input 全体を Stripe に渡したので、
+ * 片方の間隔だけ ID が無いプランに両方を今と同じ価格で送ると、ID のある間隔にも新しい Price が作られ、使っていた Price が無効化された。
+ * いまは今と同じ価格で、Stripe の同期が要らないか Price ID が入っている間隔を外し (pendingPriceChange)、残りだけを Stripe・apply・監査・応答に渡す。
+ * 残りが無ければ 409 OP_PRICE_UNCHANGED。
  *
  * (#1041 round-3 (C2) / round-4 (C) の「stripe_price_id は 1 本しか保持できない」制約は、
  * #1102 で年額用の列 stripe_yearly_price_id を足して解消した。)
@@ -72,7 +77,12 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { invalidInputResponse, invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
 import { isUuid } from '@/lib/http-params';
-import { PRICE_UNCHANGED_CODE, PRICE_UNCHANGED_MESSAGE, priceChangeAlreadyApplied } from '@/lib/super-admin/price-change-unchanged';
+import {
+  PRICE_UNCHANGED_CODE,
+  PRICE_UNCHANGED_MESSAGE,
+  isStripePriceSyncExpected,
+  pendingPriceChange,
+} from '@/lib/super-admin/price-change-unchanged';
 import {
   PRICE_CHANGE_IN_PROGRESS_MESSAGE,
   PRICE_CHANGE_RESERVATION_LOST_MESSAGE,
@@ -327,14 +337,19 @@ export async function POST(request: NextRequest, props: RouteContext) {
       // 必須」という明示的な状態であり、Edge Function 呼び出しに失敗した場合はそれを
       // 偽成功 (DB のみ更新して 200 を返す) にせず 502 で失敗させる (fail-closed)。
       // STRIPE_SECRET_KEY が未設定の場合のみ、意図された dev/mock モードとして続行する。
-      const stripeSyncExpected = Boolean(process.env.STRIPE_SECRET_KEY && plan.stripe_product_id);
+      // 判定は GET /api/super-admin/plans/{id} の stripe_price_sync_expected と同じ (画面が送る間隔を決めるのに使う。#2107 Y2)
+      const stripeSyncExpected = isStripePriceSyncExpected(process.env.STRIPE_SECRET_KEY, plan.stripe_product_id);
 
       // #2101 X1: 送られた価格がロックの下で読んだ今の価格とすべて同じなら、もう済んでいる (応答が切れたあとの押し直しなど)。
       // Stripe に 2 つ目の Price を作らず (1 回目の Price を無効化せず)、履歴と監査に 2 行目を書かない。Stripe を呼ぶ前に判定する。
       // Stripe の同期が要り、送った間隔の Stripe Price ID がまだ無いときは続ける (販売開始の手順。billing/03 §12 の順 3)
-      if (priceChangeAlreadyApplied(plan, input, stripeSyncExpected)) {
+      // #2107 Y8: 判定は間隔ごと。今と同じ価格で、Stripe の同期が要らないか Price ID が入っている間隔は外し、残りだけを以降に渡す
+      // (ID のある間隔の Price を作り直して無効化しない)。残りが無ければ 409
+      const pending = pendingPriceChange(plan, input, stripeSyncExpected);
+      if (pending.new_monthly_price_jpy === null && pending.new_yearly_price_jpy === null) {
         return NextResponse.json({ error: { code: PRICE_UNCHANGED_CODE, message: PRICE_UNCHANGED_MESSAGE } }, { status: 409 });
       }
+      const change: PriceChangeInput = { ...input, ...pending };
 
       // 月額・年額それぞれの Stripe 同期結果 (Edge Function の interval ガードによる deactivate 結果を含む。
       // 監査ログ details に記録するため、DB 更新前に受け取っておく)。
@@ -343,7 +358,7 @@ export async function POST(request: NextRequest, props: RouteContext) {
       if (stripeSyncExpected) {
         // 2. Stripe の同期。予約を持っているのはこの要求だけなので、Edge Function が DB から読んで無効化する旧 Price は、
         //    apply がロックの下で読む値 (監査の old_stripe_price_id / old_stripe_yearly_price_id) と同じ
-        const sync = await syncStripePrices(params.id, plan, input, user.id);
+        const sync = await syncStripePrices(params.id, plan, change, user.id);
         if (!sync.ok) return sync.response;
         monthly = sync.monthly;
         yearly = sync.yearly;
@@ -359,8 +374,8 @@ export async function POST(request: NextRequest, props: RouteContext) {
         applied = await applyPlanPriceChange(rpcClient, {
           planId: params.id,
           token,
-          newMonthlyPriceJpy: input.new_monthly_price_jpy ?? null,
-          newYearlyPriceJpy: input.new_yearly_price_jpy ?? null,
+          newMonthlyPriceJpy: change.new_monthly_price_jpy ?? null,
+          newYearlyPriceJpy: change.new_yearly_price_jpy ?? null,
           newStripePriceId: monthly.newPriceId,
           newStripeYearlyPriceId: yearly.newPriceId,
           changedBy: user.id,
@@ -412,9 +427,9 @@ export async function POST(request: NextRequest, props: RouteContext) {
         details: {
           plan_key: plan.plan_key,
           old_monthly_price_jpy: previous.monthly_price_jpy,
-          new_monthly_price_jpy: input.new_monthly_price_jpy,
+          new_monthly_price_jpy: change.new_monthly_price_jpy,
           old_yearly_price_jpy: previous.yearly_price_jpy,
-          new_yearly_price_jpy: input.new_yearly_price_jpy,
+          new_yearly_price_jpy: change.new_yearly_price_jpy,
           applies_to: input.applies_to,
           reason: input.reason,
           stripe_mock: !stripeSyncExpected,
@@ -440,8 +455,8 @@ export async function POST(request: NextRequest, props: RouteContext) {
         data: {
           plan_id: params.id,
           plan_key: plan.plan_key,
-          new_monthly_price_jpy: input.new_monthly_price_jpy,
-          new_yearly_price_jpy: input.new_yearly_price_jpy,
+          new_monthly_price_jpy: change.new_monthly_price_jpy,
+          new_yearly_price_jpy: change.new_yearly_price_jpy,
           // 月額 (stripe_price_id) / 年額 (stripe_yearly_price_id) の新しい Stripe Price ID。変えなかった方は null
           new_stripe_price_id: monthly.newPriceId,
           new_stripe_yearly_price_id: yearly.newPriceId,

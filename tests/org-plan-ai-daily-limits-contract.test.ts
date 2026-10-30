@@ -126,7 +126,8 @@ describe('#1912 段 A の整合ゲートの指摘: organizations.plan に書け�
     // 一覧の検索 (OrgSearchSchema) と作成 (OrgCreateSchema) の 2 つ
     expect(route.match(/plan: z\.enum\(ORG_PLAN_VALUES\)/g)).toHaveLength(2);
     expect(route).toContain('plan: z.enum(ORG_PLAN_VALUES).optional().default(ORG_PLAN_DEFAULT),');
-    expect(route).toContain('.insert({ name, plan, owner_id: effectiveOwnerId })');
+    // 作成は DB 関数 admin_create_organization に、検査した plan をそのまま渡す (#2107 Y4。関数が organizations に INSERT する)
+    expect(route).toContain("supabaseAdmin.rpc('admin_create_organization', { p_name: name, p_plan: plan, p_owner_id: effectiveOwnerId, })");
 
     const manager = squash(stripTsComments(read(WRITER_FILES.adminManager)));
     expect(manager).toContain('const PLANS = ORG_PLAN_VALUES;');
