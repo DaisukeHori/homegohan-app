@@ -47,7 +47,7 @@ export function validatePlanCreate(data: PlanCreateInput): ValidationResult {
 | status | 変更可能フィールド |
 |--------|----------------|
 | `draft` | 全フィールド自由 |
-| `public` | display_name / description / banner_url / feature_packages のみ。価格は price-change API 経由 |
+| `public` | display_name / description / banner_url / feature_packages のみ。価格は price-change API 経由。`stripe_product_id` は Stripe Price ID (月額・年額) がどちらもまだ無いあいだだけ (販売開始の手順。`isStripeProductIdEditable`。価格の変更が進行中のあいだは 409 `OP_PLAN_PRICE_CHANGE_IN_PROGRESS`。#2112 Z1-1) |
 | `private` | 同上 |
 | `deprecated` | migration_message のみ (ends_at は変更不可) |
 
