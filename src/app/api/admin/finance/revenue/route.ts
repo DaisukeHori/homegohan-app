@@ -11,6 +11,7 @@ import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
 import { RevenueQuerySchema } from '@/lib/admin/finance-schemas';
+import { financeInvalidQueryResponse } from '@/lib/admin/finance-query-errors';
 import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 
 export const dynamic = 'force-dynamic';
@@ -27,7 +28,9 @@ export async function GET(request: NextRequest) {
     const supabase = await createClient();
 
     const { searchParams } = new URL(request.url);
-    const query = RevenueQuerySchema.parse({
+    // クエリの誤り (page / per_page が 1 以上の整数でない・granularity / segment が一覧に無いなど) は、DB に触れずに 400 (#2101 X6。
+    // 以前は .parse の例外が外側の catch に落ちて 500 になっていた)
+    const queryResult = RevenueQuerySchema.safeParse({
       from: searchParams.get('from') ?? undefined,
       to: searchParams.get('to') ?? undefined,
       granularity: searchParams.get('granularity') ?? undefined,
@@ -35,6 +38,10 @@ export async function GET(request: NextRequest) {
       page: searchParams.get('page') ?? undefined,
       per_page: searchParams.get('per_page') ?? undefined,
     });
+    if (!queryResult.success) {
+      return financeInvalidQueryResponse(queryResult.error.issues);
+    }
+    const query = queryResult.data;
 
     // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectSnapshots) から作る
     const selectSnapshots = (options: { head?: boolean } = {}) => {

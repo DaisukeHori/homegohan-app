@@ -14,6 +14,8 @@
  * 400 の読み込みの失敗が再読み込みしても直らなかった)。読めたのに行が 0 件で、件数が今のページより前で尽きているなら
  * (最後のページの最後の 1 件を審査し終えたあと・URL のページ番号)、「審査待ちのアイテムはありません」と見せずに最後のページへ移す
  * (ユーザーの一覧 src/app/admin/users/page.tsx と同じ形。src/lib/list-pagination.ts)。
+ * #2101 X7: URL の status が API の一覧 (pending / approved / rejected / escalated) に無ければ、既定の pending として読む
+ * (以前は ?status=foo をそのまま API に送り、400 の読み込みの失敗が再読み込みしても直らなかった。W8 の page と同じ扱い)。
  */
 
 export const dynamic = 'force-dynamic';
@@ -22,7 +24,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
-import { MODERATION_TYPES, type ModerationType } from '@/lib/admin/moderation-schemas';
+import { MODERATION_TYPES, parseModerationQueueStatusParam, type ModerationType } from '@/lib/admin/moderation-schemas';
 import { isModerationBacked } from '@/lib/admin/moderation-backend';
 import { moderationStatusLabel, moderationTypeLabel } from '@/lib/admin/moderation-labels';
 import {
@@ -54,7 +56,9 @@ export default async function AdminModerationPage(props: PageProps) {
   // 未認証 → /login?next=・2FA 未完了 → MFA の画面・ロール不足 / 凍結 → /login (#1176。docs/design/cross/12-operator-mfa.md §13.4.2)
   await requireRoleForPage(['admin', 'super_admin', 'content_moderator'], { next: '/admin/moderation' });
 
-  const status = searchParams.status ?? 'pending';
+  // API の一覧 (MODERATION_QUEUE_STATUSES) に無い status (?status=foo など) は既定の pending (#2101 X7。そのまま送ると API が 400 にし、
+  // 再読み込みしても直らない読み込みの失敗になる)
+  const status = parseModerationQueueStatusParam(searchParams.status);
   // 審査できる種類 (食事画像・レシピ) だけを絞り込みに使う。それ以外は絞らない (全タイプ)
   const requestedType = searchParams.type ?? '';
   const type =

@@ -9,11 +9,33 @@ import { OptionalCalendarDateSchema } from '@/lib/calendar-date-schema';
 
 // ─── ユーザー一覧検索 ───────────────────────────────────────────────────────────
 
+/** ユーザーの一覧で絞り込める状態 (GET /api/admin/users の status。これ以外は API が 400) */
+export const USER_LIST_STATUSES = ['active', 'banned', 'deleted'] as const;
+export type UserListStatus = (typeof USER_LIST_STATUSES)[number];
+
+/** 運営のユーザーの一覧 (/admin/users) の既定の状態 (URL に status が無いとき・読めないとき) */
+export const USER_LIST_DEFAULT_STATUS: UserListStatus = 'active';
+
+/** 運営のユーザーの一覧の「全ステータス」(URL の status が空。API には status を付けずに送る) */
+export const USER_LIST_ALL_STATUSES = '';
+
+/**
+ * 画面 (/admin/users) の URL の status (searchParams.status) を、ユーザーの一覧の API に送る状態に読む (#2101 X7)。
+ * 無ければ既定の active、空 (「全ステータス」) は空のまま (API には付けない)。USER_LIST_STATUSES に無い値
+ * (?status=foo など、URL を手で書き換えたとき) は既定の active にする。
+ * 以前は URL の値をそのまま API に送り、400 の読み込みの失敗が「再読み込み」でも直らなかった
+ * (URL の page の src/lib/list-pagination.ts の parsePageParam と同じ扱い。#2093 W8)
+ */
+export function parseUserListStatusParam(raw: string | undefined): UserListStatus | typeof USER_LIST_ALL_STATUSES {
+  if (raw === USER_LIST_ALL_STATUSES) return USER_LIST_ALL_STATUSES;
+  return USER_LIST_STATUSES.find((status) => status === raw) ?? USER_LIST_DEFAULT_STATUS;
+}
+
 export const UsersSearchSchema = z.object({
   q: z.string().optional(),
   plan: z.string().optional(),
   role: z.string().optional(),
-  status: z.enum(['active', 'banned', 'deleted']).optional(),
+  status: z.enum(USER_LIST_STATUSES).optional(),
   // #1433: 登録日・最終ログイン日は operator/02-api-spec.md §4 で date (YYYY-MM-DD)。JST の暦日として扱う。
   // 実在しない日付 (2026-02-30 など) と、受け付ける範囲 (CALENDAR_DATE_MIN〜CALENDAR_DATE_MAX。9999-12-31 などの端は
   // 翌日の JST 0 時を求められないので外す) の外の日付は、DB に触れる前に 400。空文字は「指定なし」。

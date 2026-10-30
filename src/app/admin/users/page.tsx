@@ -8,6 +8,8 @@
  * 「ユーザーが見つかりません」・件数 0 を出さず、「ユーザーの一覧を読み込めませんでした」と「再読み込み」を出す
  * (以前は失敗を console.error で捨てて 0 件のまま描き、運営が、いる利用者をいないと誤りうる状態だった。審査の一覧の #2086 V7 と同じ型)。
  * #2093 W8: URL の page が 1 以上の整数でなければ 1 ページ目を読む (?page=abc で API に page=NaN を送らない)。
+ * #2101 X7: URL の status が API の一覧 (active / banned / deleted) に無ければ、既定の active として読む
+ * (空 =「全ステータス」はそのまま。以前は ?status=foo をそのまま API に送り、400 の読み込みの失敗が再読み込みしても直らなかった)。
  */
 
 export const dynamic = 'force-dynamic';
@@ -18,7 +20,7 @@ import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
 import { canViewUserEmail } from '@/lib/admin/user-emails';
 import { normalizeProfileName } from '@/lib/profile-name';
-import type { UserListItem } from '@/lib/admin/users-schemas';
+import { parseUserListStatusParam, type UserListItem } from '@/lib/admin/users-schemas';
 import { lastPageToRefetch, parsePageParam } from '@/lib/list-pagination';
 import { USERS_LIST_LOAD_FAILED_MESSAGE, readUsersListBody, type UsersListLoad } from '@/lib/admin/users-load-failure';
 import ModerationLoadFailure from '@/components/operator/moderation/ModerationLoadFailure';
@@ -36,7 +38,9 @@ export default async function AdminUsersPage(props: PageProps) {
   const canSeeEmail = canViewUserEmail(actor.roles);
 
   const q = searchParams.q ?? '';
-  const status = searchParams.status ?? 'active';
+  // 無ければ active・空 (「全ステータス」) は空のまま。API の一覧 (USER_LIST_STATUSES) に無い status (?status=foo など) は既定の active
+  // (#2101 X7。そのまま送ると API が 400 にし、再読み込みしても直らない読み込みの失敗になる)
+  const status = parseUserListStatusParam(searchParams.status);
   // 1 以上の整数でない page (?page=abc・2abc・1.5 など) は 1 ページ目 (#2093 W8)
   const page = parsePageParam(searchParams.page);
   const perPage = 50;

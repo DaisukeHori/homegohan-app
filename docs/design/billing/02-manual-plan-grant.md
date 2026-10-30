@@ -673,7 +673,7 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 | `src/app/api/admin/users/[id]/route.ts:103-110` (運営のユーザー詳細の `active_subscription`) | 読 | session client・live 5 値の最新 1 行の `plan_key, status, current_period_end` | 変えない。M 行は `next_billing_at = current_period_end` (= 期限か NULL) として出る。画面 `/admin/users/[id]` の「現在のサブスクリプション」の節はそのまま。本冊の節 (§10) が由来と期限を別に出す |
 | `src/app/api/admin/finance/exports/route.ts:140-150` (`subscriptions` の CSV) | 読 | 9 列・status で絞らない | 変えない。M 行も出る (`stripe_*` は列に無い) |
 | `src/app/api/admin/finance/invoices/[id]/route.ts:50-64` (運営の請求書の詳細。請求先の利用者を引く) | 読 | `stripe_subscription_id = <イベントの subscription>` の 1 行 | 変えない。M 行は `stripe_subscription_id IS NULL` なので一致せず、請求書の詳細の対象にならない (M 行には Stripe の請求書が無い) |
-| `src/app/api/admin/finance/reconciliation/route.ts:81-83`・`dashboard/route.ts:64-81` | 読 | live 4 値 / 集計 | 変えない (実データ化は配線の残りの冊) |
+| `src/app/api/admin/finance/reconciliation/route.ts` の DB 側サマリー (`personal_subscriptions` の `.in('status', …)`)・`dashboard/route.ts:64-81` | 読 | live 4 値 / 集計 | 変えない (実データ化は配線の残りの冊) |
 | `src/lib/super-admin/plan-subscribers.ts` (F22) | 読 | live 5 値 | 変えない (S19) |
 | `src/app/api/super-admin/plans/[id]/price-impact/route.ts` (価格変更の影響の試算) | — (`personal_subscriptions` を集計しない。route の冒頭の注記 `:8`。価格の変更は新規契約だけに効く) | — | 変えない。M 行は試算に入らない (既存の契約の行を数えない route なので、M 行が増えても結果は変わらない) |
 | `apply_coupon` (F21) ← `src/lib/plan/coupon.ts:149` `applyCoupon` (service_role の client で RPC) ← `src/app/api/super-admin/coupons/[id]/apply/route.ts:71` (`POST /api/super-admin/coupons/{id}/apply`。S18 の呼び口) | 読・書 | 行を `FOR NO KEY UPDATE`・`active_coupon_redemption_id` | 変えない (3 つとも触らない)。本冊の UPDATE は `status` / `cancelled_at` / `cancel_at` だけ (S18) |

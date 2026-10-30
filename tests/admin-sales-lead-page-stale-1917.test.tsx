@@ -251,7 +251,8 @@ describe('リード詳細: ステージの変更が 409 CONFLICT_STALE_DATA で�
     await changeStage('商談中');
 
     expect(state.gets).toBe(2);
-    expect(routerPush).toHaveBeenCalledWith('/login');
+    // ログインのあとに元のリードへ戻れるよう next を付ける (#2101 X2)
+    expect(routerPush).toHaveBeenCalledWith(`/login?next=${encodeURIComponent(`/admin/sales/${LEAD_ID}`)}`);
     expect(text()).not.toContain('読み込み直せなかった');
     expect(text()).not.toContain('読み込み直したので');
   });
