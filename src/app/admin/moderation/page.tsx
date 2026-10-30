@@ -10,11 +10,16 @@
  * #2086 V7: 一覧の読み込みの失敗 (API の失敗・通信の失敗・data が配列でない壊れた応答) は 0 件と分ける。
  * 「審査待ちのアイテムはありません」・件数 0 を出さず、「審査の一覧を読み込めませんでした」と「再読み込み」を出す
  * (以前は失敗を console.error で捨てて 0 件のまま描き、運営が審査待ちの通報を 0 件と誤解しうる状態だった)。
+ * #2093 W8: URL の page が 1 以上の整数でなければ 1 ページ目を読む (以前は ?page=abc で API に page=NaN を送り、
+ * 400 の読み込みの失敗が再読み込みしても直らなかった)。読めたのに行が 0 件で、件数が今のページより前で尽きているなら
+ * (最後のページの最後の 1 件を審査し終えたあと・URL のページ番号)、「審査待ちのアイテムはありません」と見せずに最後のページへ移す
+ * (ユーザーの一覧 src/app/admin/users/page.tsx と同じ形。src/lib/list-pagination.ts)。
  */
 
 export const dynamic = 'force-dynamic';
 
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
 import { MODERATION_TYPES, type ModerationType } from '@/lib/admin/moderation-schemas';
@@ -26,6 +31,7 @@ import {
   type ModerationQueueLoad,
 } from '@/lib/admin/moderation-load-failure';
 import ModerationLoadFailure from '@/components/operator/moderation/ModerationLoadFailure';
+import { lastPageToRefetch, parsePageParam } from '@/lib/list-pagination';
 
 interface PageProps {
   searchParams: Promise<{ status?: string; type?: string; page?: string }>;
@@ -55,7 +61,8 @@ export default async function AdminModerationPage(props: PageProps) {
     MODERATION_TYPES.includes(requestedType as ModerationType) && isModerationBacked(requestedType as ModerationType)
       ? requestedType
       : '';
-  const page = Math.max(1, parseInt(searchParams.page ?? '1', 10));
+  // 1 以上の整数でない page (?page=abc・2abc・1.5 など) は 1 ページ目 (#2093 W8。NaN を API に送らない)
+  const page = parsePageParam(searchParams.page);
   const perPage = 30;
 
   // GET /api/admin/moderation/queue 経由でデータ取得
@@ -82,6 +89,18 @@ export default async function AdminModerationPage(props: PageProps) {
 
   const items = load.ok ? load.items : [];
   const total = load.ok ? load.total : 0;
+
+  // 件数より後ろのページ (最後のページの最後の 1 件を審査し終えたあと・URL のページ番号) は、空のページを見せずに最後のページへ移す (#2093 W8)。
+  // 一覧を読めたときだけ判定する (読み込みの失敗を、何も知らせずにページを移す動きに変えない)。
+  // type は空 (全タイプ) でも付ける (下の「前へ」「次へ」と同じ形)。redirect は例外で抜けるので、上の try の外で呼ぶ
+  const refetchPage = load.ok ? lastPageToRefetch({ rows: items.length, page, total, perPage }) : null;
+  if (refetchPage !== null) {
+    const lastPageParams = new URLSearchParams();
+    lastPageParams.set('status', status);
+    lastPageParams.set('type', type);
+    lastPageParams.set('page', String(refetchPage));
+    redirect(`/admin/moderation?${lastPageParams.toString()}`);
+  }
   const totalPages = Math.ceil(total / perPage);
 
   return (

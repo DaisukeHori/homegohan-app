@@ -3,6 +3,9 @@
  * operator/03-ui-spec.md §6 準拠
  *
  * DB 直叩きを廃止し GET /api/admin/users/{id} 経由に統一。
+ *
+ * #2093 W3: 「無い」(notFound()) にするのは API の 404 だけ。それ以外の失敗 (500 / 503 / 403・通信の失敗・壊れた応答) は
+ * 「ユーザーを読み込めませんでした」と「再読み込み」を出す (以前は 404 以外の失敗も notFound() にして、利用者が消えたように見せていた)。
  */
 
 export const dynamic = 'force-dynamic';
@@ -19,6 +22,9 @@ import { ManualPlanGrantSection } from '@/components/admin/ManualPlanGrantSectio
 import { z } from 'zod';
 import { LoginHistoryResponseSchema, type LoginHistoryEntry } from '@/lib/auth/sessions/schemas';
 import { LOGIN_HISTORY_PAGE_SIZE } from '@/lib/auth/sessions/constants';
+import { loadAdminUserDetail } from '@/lib/admin/user-detail-load';
+import { USER_DETAIL_LOAD_FAILED_MESSAGE } from '@/lib/admin/users-load-failure';
+import ModerationLoadFailure from '@/components/operator/moderation/ModerationLoadFailure';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -54,10 +60,6 @@ interface UserDetailProfile {
   ban_history: AuditLog[];
 }
 
-interface UserDetailApiResponse {
-  data: UserDetailProfile;
-}
-
 /**
  * ログイン履歴の節 (#1720 段 D。docs/design/cross/16-auth-history-sessions.md §17)。
  * API (GET /api/admin/users/{id}/login-history §14.9) を呼べるのは admin / super_admin だけ (support には節を出さず、呼びもしない)。
@@ -76,6 +78,9 @@ const ENDED_REASON_LABEL: Record<NonNullable<LoginHistoryEntry['ended_reason']>,
   revoked_by_user: '本人が端末の一覧から解除',
   idle_expired: '使われずに期限切れ',
 };
+
+/** パンくずに出す、ユーザーの ID の先頭の文字数 (名前が無いときと、読み込めなかったとき) */
+const USER_ID_PREFIX_LENGTH = 8;
 
 type LoginHistoryLoad = { ok: true; entries: LoginHistoryEntry[] } | { ok: false };
 
@@ -166,17 +171,26 @@ export default async function AdminUserDetailPage(props: PageProps) {
   // 未認証 → /login?next=・2FA 未完了 → MFA の画面・ロール不足 / 凍結 → /login (#1176。docs/design/cross/12-operator-mfa.md §13.4.2)
   const actor = await requireRoleForPage(['admin', 'super_admin', 'support'], { next: `/admin/users/${encodeURIComponent(id)}` });
 
-  // GET /api/admin/users/{id} 経由でデータ取得
-  const res = await adminFetch(`/api/admin/users/${id}`);
-  if (res.status === 404) {
-    notFound();
+  // GET /api/admin/users/{id} 経由でデータ取得。404 だけを「無い」にする (#2093 W3)
+  const load = await loadAdminUserDetail<UserDetailProfile>(id, 'admin/users detail page');
+  if (load.kind !== 'ok') {
+    if (load.kind === 'notFound') notFound();
+    // 読み込みの失敗: 一覧へ戻る道と、失敗の文と「再読み込み」だけを出す (読めていない値・続きの節は描かない)
+    return (
+      <div className="max-w-4xl">
+        <nav className="mb-4 text-sm text-gray-500">
+          <Link href="/admin/users" className="hover:text-orange-500 transition-colors">
+            ユーザー管理
+          </Link>
+          {' / '}
+          <span className="text-gray-900">{id.slice(0, USER_ID_PREFIX_LENGTH)}</span>
+        </nav>
+        <h1 className="text-2xl font-bold text-gray-900 mb-6">ユーザー詳細</h1>
+        <ModerationLoadFailure message={USER_DETAIL_LOAD_FAILED_MESSAGE} />
+      </div>
+    );
   }
-  if (!res.ok) {
-    notFound();
-  }
-
-  const json = (await res.json()) as UserDetailApiResponse;
-  const profile = json.data;
+  const profile = load.profile;
 
   const activeSubscription = profile.active_subscription;
   // 監査ログ (super_admin のみ: ban_history を使用)
@@ -205,7 +219,7 @@ export default async function AdminUserDetailPage(props: PageProps) {
           ユーザー管理
         </Link>
         {' / '}
-        <span className="text-gray-900">{normalizeProfileName(profile.nickname) ?? profile.id.slice(0, 8)}</span>
+        <span className="text-gray-900">{normalizeProfileName(profile.nickname) ?? profile.id.slice(0, USER_ID_PREFIX_LENGTH)}</span>
       </nav>
 
       <h1 className="text-2xl font-bold text-gray-900 mb-6">

@@ -49,6 +49,7 @@ const { default: AdminUsersPage } = await import('@/app/admin/users/page');
 const { default: AdminUserDetailPage } = await import('@/app/admin/users/[id]/page');
 const { default: AdminUserFreezePage } = await import('@/app/admin/users/[id]/freeze/page');
 const { default: AdminModerationPage } = await import('@/app/admin/moderation/page');
+const { parsePageParam, FIRST_PAGE } = await import('@/lib/list-pagination');
 
 const USER_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const adminActor = { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', roles: ['admin'], email: 'admin@example.com' };
@@ -359,6 +360,25 @@ describe('#2093 W8 URL の page が 1 以上の整数でなければ 1 ページ
     await renderOrRedirect(() => AdminModerationPage({ searchParams: Promise.resolve({ page: '2' }) }));
 
     expect(apiQueryOf().page).toBe('2');
+  });
+});
+
+describe('#2093 W8 parsePageParam (URL の page の読み方)', () => {
+  it.each(INVALID_PAGE_PARAMS)('page=%j は最初のページ (1)', (raw) => {
+    expect(parsePageParam(raw)).toBe(FIRST_PAGE);
+  });
+
+  it('page が無いときは最初のページ (1)', () => {
+    expect(parsePageParam(undefined)).toBe(FIRST_PAGE);
+  });
+
+  it.each([
+    ['1', 1],
+    ['2', 2],
+    ['10', 10],
+    [String(Number.MAX_SAFE_INTEGER), Number.MAX_SAFE_INTEGER],
+  ])('page=%j は %d', (raw, expected) => {
+    expect(parsePageParam(raw)).toBe(expected);
   });
 });
 
