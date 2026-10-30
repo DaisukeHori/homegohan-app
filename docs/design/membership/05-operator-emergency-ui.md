@@ -86,7 +86,7 @@ GRANT EXECUTE ON FUNCTION public.list_families_with_inactive_representative TO a
 ---
 
 ## 3. 強制譲渡 RPC
-> 現在形: 実在する関数は `operator_force_owner_transfer` / `operator_force_representative_transfer` で、最新の定義は `supabase/migrations/20261023140000_operator_transfer_return_old_owner.sql` (`:43`・`:105`。どちらも `jsonb` を返す)。下の SQL は設計時の案の記録で、関数名 (`force_transfer_*`) と戻り値 (`organizations` / `family_groups`) は実装と違う。
+> 現在形: 実在する関数は `operator_force_owner_transfer` / `operator_force_representative_transfer` で、最新の定義は `supabase/migrations/20261030120000_operator_force_transfer_reject_same.sql` (`:37`・`:102`。どちらも `jsonb` を返す (`20261023140000_operator_transfer_return_old_owner.sql` から)。譲渡先がすでに今のオーナー / 代表者なら、行のロックの下で何も書かずに `ALREADY_OWNER` / `ALREADY_REPRESENTATIVE` で止める (#2093 W5))。下の SQL は設計時の案の記録で、関数名 (`force_transfer_*`) と戻り値 (`organizations` / `family_groups`) は実装と違う。
 ```sql
 CREATE OR REPLACE FUNCTION public.force_transfer_org_owner(
   p_organization_id UUID,
@@ -354,7 +354,7 @@ RPC が `RAISE EXCEPTION '<コード>'` で返す既知のコードは汎用の 
 - 組織の強制解散の `ORG_ALREADY_DISSOLVED` → 409・`ORG_NOT_FOUND` → 404 (`src/lib/errors/membership-errors.ts` の `ErrorStatusMap` と `MEMBERSHIP_ERROR_MESSAGES`)
 - 家族の強制解散の `FAMILY_ALREADY_DISSOLVED` → 409・`FAMILY_NOT_FOUND` → 404 (同じ表。`supabase/migrations/20261026100000_operator_force_dissolve_family_missing.sql` から RPC が RAISE する。それより前は無い家族・解散済みの家族でも RPC が成功し、route が監査を書いて 200 を返していた)
 - それ以外 → 500 `INTERNAL_ERROR` (RPC の文面は本文に入れない)
-- 強制譲渡の 2 本は、譲渡先がすでに今の代表者 / オーナーなら 409 `ALREADY_REPRESENTATIVE` / `ALREADY_OWNER`「この人はすでに代表者です / オーナーです。一覧で今の状態を確かめてください」で止め、運営の監査 (`admin_audit_logs`) も通知メールも出さない (#2086 V1。`src/lib/membership/operator-force-transfer-result.ts`)。判定は 2 か所: RPC の前に読む今の代表者 / オーナー (一致すれば RPC を呼ばない。読めなければ止めずに RPC へ進む) と、RPC がロックの下で読んで返す旧代表者 / 旧オーナー (戻り値の `old_rep_id` / `old_owner_id`。一致すれば監査・通知の前に止め、warn のログに残す。このときは RPC が `membership_audit` に旧 = 新の行を 1 行書いている。RPC の置き換えはしていない)
+- 強制譲渡の 2 本は、譲渡先がすでに今の代表者 / オーナーなら 409 `ALREADY_REPRESENTATIVE` / `ALREADY_OWNER`「この人はすでに代表者です / オーナーです。一覧で今の状態を確かめてください」で止め、運営の監査 (`admin_audit_logs`) も通知メールも出さない (#2086 V1。`src/lib/membership/operator-force-transfer-result.ts`)。判定は 2 か所: RPC の前に読む今の代表者 / オーナー (一致すれば RPC を呼ばない。読めなければ止めずに RPC へ進む) と、RPC がロックの下で読んで返す旧代表者 / 旧オーナー (戻り値の `old_rep_id` / `old_owner_id`。一致すれば監査・通知の前に止め、warn のログに残す)。RPC の最新の定義 (`supabase/migrations/20261030120000_operator_force_transfer_reject_same.sql`。#2093 W5) は、行のロックの下で読んだ旧代表者 / 旧オーナーが譲渡先と同じなら、役割・`representative_id` / `owner_id`・`membership_audit` のどれも書かずに `ALREADY_REPRESENTATIVE` / `ALREADY_OWNER` (P0001) で止め、route はそれを同じ 409 に写す (warn のログに残す)。戻り値で一致を見る判定は、その migration を当てる前の DB (RPC が断らずに `membership_audit` に旧 = 新の行を 1 行書く) のために残す
 
 ---
 
