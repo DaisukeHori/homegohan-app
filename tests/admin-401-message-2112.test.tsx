@@ -9,11 +9,16 @@
  *   - チケットの担当者の設定・ステータスの変更は、401 でも「割り当て失敗」「ステータス変更失敗」とだけ出した (ログインし直せばよいと分からない)
  *   - 運営のメンバーシップの画面 (/operator/membership) の強制譲渡・強制解散の POST (postOperatorForceAction) は、
  *     401 の本文の文 (「認証が必要です」) を確認の枠に出した (同じ画面の読み込みの 401 は「ログインし直してください」で、文がずれた)
+ *   - 監査ログ (/super-admin/audit-logs) の CSV の書き出しは、401 でも「CSV エクスポートに失敗しました」と出した
+ *     (同じ画面の一覧の読み込みの 401 は fetchAdminJson で「ログインし直してください」)
  * 直したあと (不変条件):
  *   - 共通の関数は 401 なら本文の文に関わらず「ログインし直してください」にする (ほかの status は今までどおり)
  *   - チケットの担当者の設定・ステータスの変更の 401 は「ログインし直してください」
  *   - 強制譲渡・強制解散の POST の 401 は「ログインし直してください」(本文の無い 502 / 503 / 504 の「応答を受け取れなかった」は今までどおり)
+ *   - 監査ログの CSV の書き出しの 401 は「ログインし直してください」(一覧の読み込みの 401 と同じ文。500 は今までどおり)
  *   - 運営の画面のソースに 401 の文を直書きしない (UNAUTHENTICATED_SCREEN_MESSAGE を使う)
+ * ほかの画面の 401 の回帰テスト: /support/users の一覧 (tests/support-users-list-1717.test.tsx)・二段階認証の解除
+ * (tests/mfa-pages-browser.test.tsx)・DR 訓練の記録 (tests/admin-reread-unavailable-after-no-response-2101.test.tsx)
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
@@ -67,6 +72,7 @@ vi.mock('next/link', () => ({
 }));
 
 const { default: TicketDetailPage } = await import('@/app/admin/support/[id]/page');
+const { default: AuditLogsPage } = await import('@/app/super-admin/audit-logs/page');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -316,6 +322,90 @@ describe('チケットの詳細: 担当者の設定・ステータスの変更�
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 監査ログ: 一覧の読み込みと CSV の書き出しの 401
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('監査ログ: 一覧の読み込みと CSV の書き出しの 401 は同じ「ログインし直してください」(#2112 Z4)', () => {
+  const CSV_EXPORT_FAILURE_MESSAGE = 'CSV エクスポートに失敗しました';
+  const isCsv = (url: string) => url.includes('format=csv');
+
+  let container: HTMLDivElement;
+  let root: Root;
+  let alertMock: ReturnType<typeof vi.fn>;
+
+  async function settle() {
+    await act(async () => {
+      for (let i = 0; i < 6; i++) await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  /** 一覧の GET は list、CSV の書き出しの GET は csv の応答を返す */
+  function mockServer(list: () => Response, csv: () => Response) {
+    vi.stubGlobal('fetch', async (input: string | URL) => (isCsv(String(input)) ? csv() : list()));
+    vi.stubGlobal('alert', alertMock);
+  }
+
+  async function renderAuditLogs() {
+    await act(async () => {
+      root.render(createElement(AuditLogsPage));
+    });
+    await settle();
+  }
+
+  async function clickCsvExport() {
+    const button = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === 'CSV エクスポート');
+    expect(button, '「CSV エクスポート」ボタンが見つからない').toBeDefined();
+    await act(async () => {
+      button!.click();
+    });
+    await settle();
+  }
+
+  const alerted = () => alertMock.mock.calls.map((call) => String(call[0]));
+  const emptyList = () => jsonResponse(HTTP_OK, { data: [], meta: { total: 0 } });
+
+  beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    alertMock = vi.fn();
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it('CSV の書き出しが 401 なら、「CSV エクスポートに失敗しました」でも本文の文でもなく「ログインし直してください」を出す', async () => {
+    mockServer(emptyList, unauthenticated);
+    await renderAuditLogs();
+    await clickCsvExport();
+
+    expect(alerted()).toEqual([RELOGIN_MESSAGE]);
+    expect(alerted().join('\n')).not.toContain(CSV_EXPORT_FAILURE_MESSAGE);
+    expect(alerted().join('\n')).not.toContain(API_UNAUTHENTICATED_MESSAGE);
+  });
+
+  it('一覧の読み込みの 401 も同じ「ログインし直してください」(同じ画面で文がずれない)', async () => {
+    mockServer(unauthenticated, unauthenticated);
+    await renderAuditLogs();
+
+    expect(container.textContent).toContain(RELOGIN_MESSAGE);
+    expect(container.textContent).not.toContain(API_UNAUTHENTICATED_MESSAGE);
+  });
+
+  it('CSV の書き出しが 500 なら、これまでどおり「CSV エクスポートに失敗しました」(401 の文にしない)', async () => {
+    mockServer(emptyList, () => jsonResponse(HTTP_INTERNAL_SERVER_ERROR, { error: { code: 'INTERNAL_ERROR', message: '内部エラー' } }));
+    await renderAuditLogs();
+    await clickCsvExport();
+
+    expect(alerted()).toEqual([CSV_EXPORT_FAILURE_MESSAGE]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 見張り: 運営の画面のソースに 401 の文を直書きしない
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -331,11 +421,18 @@ describe('見張り: 運営の画面のソースに 401 の文を直書きしな
     // 運営のメンバーシップの画面 (強制譲渡・強制解散・監査ログ) と、その通信と文の置き場所 (#2112 Z4)
     'src/app/(operator)',
     'src/lib/membership',
+    // 運営の画面の文と読み込みの共通の関数の置き場所 (#2112 Z4)
+    'src/lib/admin',
+    'src/lib/super-admin',
   ];
   /** 画面のソースの拡張子 */
   const SOURCE_FILE = /\.tsx?$/;
-  /** 直書きを見張る 401 の文 (以前の画面にあった言い回し) */
-  const HARDCODED_401_TEXT = /ログインの有効期限が切れ/;
+  /**
+   * 直書きを見張る 401 の文 (以前の運営の画面にあった言い回しと、利用者の画面の言い回し)。
+   * 見張れるのはソースに書いた文だけ (code から文を引く表 (src/lib/auth/mfa/client.ts の mfaErrorMessage など) を通る文は、
+   * 画面ごとの回帰テストが見る: 二段階認証の解除は tests/mfa-pages-browser.test.tsx)
+   */
+  const HARDCODED_401_TEXT = /ログインの有効期限が切れ|ログインが切れました|もう一度ログインしてください/;
   /**
    * まだ直書きが残っているファイル (別の案件の範囲。#2112 Z2 の組織の画面がマージされたあとに揃え、ここから外す)
    */
@@ -362,7 +459,7 @@ describe('見張り: 運営の画面のソースに 401 の文を直書きしな
     expect(sources).toContain('src/lib/membership/operator-screen-messages.ts');
   });
 
-  it('「ログインの有効期限が切れ…」を直書きしているのは、まだ揃えていないファイルだけ', () => {
+  it('401 の文 (「ログインの有効期限が切れ…」など) を直書きしているのは、まだ揃えていないファイルだけ', () => {
     const offenders = sources.filter((file) => HARDCODED_401_TEXT.test(readFileSync(join(ROOT, file), 'utf8')));
     expect(offenders.filter((file) => !PENDING_FILES.has(file))).toEqual([]);
   });

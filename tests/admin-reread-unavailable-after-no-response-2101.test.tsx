@@ -203,15 +203,18 @@ function mockBackups(reads: readonly Responder[]) {
   vi.stubGlobal('fetch', fetchMock);
 }
 
-/** GET は状態 (backupsOk) を返し、POST は post の応答を返す */
-function mockBackupsWithPost(post: Responder) {
+/** GET は reads を順に返し (最後のものを繰り返す。既定は状態 backupsOk)、POST は post の応答を返す */
+function mockBackupsWithPost(post: Responder, reads: readonly Responder[] = [backupsOk]) {
+  let gets = 0;
   fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
     if (methodOf(init) === 'POST') {
       expect(input).toBe(SUPER_ADMIN_DR_TESTS_API_PATH);
       return post();
     }
     expect(input).toBe(SUPER_ADMIN_BACKUPS_API_PATH);
-    return backupsOk();
+    const responder = reads[Math.min(gets, reads.length - 1)]!;
+    gets += 1;
+    return responder();
   });
   vi.stubGlobal('fetch', fetchMock);
 }
@@ -239,7 +242,13 @@ async function expectDrSubmitStopped() {
 
 /** 送信の失敗の固定の文 (画面と同じもの) */
 const SUBMIT_FAILED_TEXT = '記録できませんでした。時間をおいてもう一度送ってください';
+/** 401 / 403 の理由を「DR 訓練を記録」の欄に出したときの、読み込みの欄の文 (画面と同じもの。#2112 Z4) */
+const LOAD_FAILED_REASON_IN_FORM_TEXT = 'バックアップの状態を読み込めませんでした（理由は「DR 訓練を記録」の欄に出しています）';
 const drFormError = () => container.querySelector('[data-testid="dr-test-form-error"]')?.textContent ?? '';
+/** 読み込みの欄 (backups-load-error) の文。出ていなければ null */
+const loadAreaText = () => container.querySelector('[data-testid="backups-load-error"]')?.textContent ?? null;
+/** 画面全体で fragment が出ている回数 */
+const occurrencesOf = (fragment: string) => text().split(fragment).length - 1;
 
 describe('DR 訓練の記録: 送信そのものが 401 なら「ログインし直してください」を出す (#2112 Z4-1)', () => {
   it('送信が 401 なら、「時間をおいてもう一度送ってください」ではなく「ログインし直してください」を form の上に出す', async () => {
@@ -372,6 +381,132 @@ describe('DR 訓練の記録: 応答を受け取れなかったあとの読み�
     expect(loadError).toContain(UNAUTHENTICATED_SCREEN_MESSAGE);
     expect(loadError).not.toContain(LOAD_FAILED_TEXT);
     expectNoLeak();
+  });
+});
+
+describe('DR 訓練の記録: 401 / 403 の理由を「DR 訓練を記録」の欄に出したら、読み込みの欄に前の失敗の文も同じ理由も残さない (#2112 Z4)', () => {
+  // 読み込みの欄がすでに失敗の文 (LOAD_FAILED_TEXT の「時間をおいてもう一度開いてください」・401 / 403 の理由の文) を出しているときに、
+  // 書き込みの側 (送信を止めた文・form の上の文) が 401 / 403 の理由を出すと、読み込みの欄の文は理由と食い違う案内か、同じ理由の 2 か所目になる。
+  // 読み込みの欄は LOAD_FAILED_REASON_IN_FORM_TEXT にし、理由の文は画面に 1 回だけ出す
+  const REASONS = [
+    ['401', unauthorized, UNAUTHENTICATED_SCREEN_MESSAGE],
+    ['403 (二段階認証の確認が要る)', forbiddenByMfa, API_MFA_REQUIRED_MESSAGE],
+    ['403 (ロールが足りない)', forbiddenByRole, BACKUPS_FORBIDDEN_TEXT],
+  ] as const;
+
+  it.each(REASONS)(
+    '「確かめ直す」の読み直しが %s: 1 回目の読み直しの 500 で出た「時間をおいて…」を読み込みの欄に残さず、理由の文は送信を止めた文の 1 か所だけ',
+    async (_label, reread, reason) => {
+      mockBackups([backupsOk, internalError, reread]);
+      await renderElement(createElement(SuperAdminBackupsPage));
+      await submitDrForm();
+      // 1 回目の読み直し (500) は、時間をおけば読めうるので「時間をおいて…」と「確かめ直す」
+      expect(loadAreaText()).toBe(LOAD_FAILED_TEXT);
+      expect(findButton('確かめ直す')).toBeDefined();
+
+      await click(findButton('確かめ直す'), '「確かめ直す」ボタン');
+      expect(postCount()).toBe(1);
+      expect(drUnconfirmed()).toContain(CREATE_UNCONFIRMED_GUIDE);
+      expect(drUnconfirmed()).toContain(reason);
+      expect(findButton('確かめ直す')).toBeUndefined();
+      expect(text()).not.toContain(LOAD_FAILED_TEXT);
+      expect(loadAreaText()).toBe(LOAD_FAILED_REASON_IN_FORM_TEXT);
+      expect(occurrencesOf(reason)).toBe(1);
+      expectNoLeak();
+      await expectDrSubmitStopped();
+    },
+  );
+
+  it.each(REASONS)(
+    '初めの読み込みが 500 のあと、記録の応答を受け取れず、読み直しが %s: 読み込みの欄に「時間をおいて…」を残さず、理由の文は 1 か所だけ',
+    async (_label, reread, reason) => {
+      mockBackups([internalError, reread]);
+      await renderElement(createElement(SuperAdminBackupsPage));
+      expect(loadAreaText()).toBe(LOAD_FAILED_TEXT);
+      await submitDrForm();
+
+      expect(postCount()).toBe(1);
+      expect(drUnconfirmed()).toContain(reason);
+      expect(findButton('確かめ直す')).toBeUndefined();
+      expect(text()).not.toContain(LOAD_FAILED_TEXT);
+      expect(loadAreaText()).toBe(LOAD_FAILED_REASON_IN_FORM_TEXT);
+      expect(occurrencesOf(reason)).toBe(1);
+      expectNoLeak();
+      await expectDrSubmitStopped();
+    },
+  );
+
+  it.each(REASONS)(
+    '初めの読み込みが %s のあと、記録の応答を受け取れず、読み直しも同じ: 読み込みの欄の理由の文を送信を止めた文と重ねて出さない',
+    async (_label, response, reason) => {
+      mockBackups([response]);
+      await renderElement(createElement(SuperAdminBackupsPage));
+      expect(loadAreaText()).toBe(reason);
+      await submitDrForm();
+
+      expect(postCount()).toBe(1);
+      expect(drUnconfirmed()).toContain(reason);
+      expect(loadAreaText()).toBe(LOAD_FAILED_REASON_IN_FORM_TEXT);
+      expect(occurrencesOf(reason)).toBe(1);
+      expectNoLeak();
+      await expectDrSubmitStopped();
+    },
+  );
+
+  it.each([
+    ['初めの読み込みが 500', internalError, LOAD_FAILED_TEXT],
+    ['初めの読み込みが 401', unauthorized, UNAUTHENTICATED_SCREEN_MESSAGE],
+  ] as const)(
+    '%s のあと、送信が 401: 「ログインし直してください」は form の上の 1 か所だけ、読み込みの欄の文は LOAD_FAILED_REASON_IN_FORM_TEXT',
+    async (_label, initial, initialLoadText) => {
+      mockBackupsWithPost(unauthorized, [initial]);
+      await renderElement(createElement(SuperAdminBackupsPage));
+      expect(loadAreaText()).toBe(initialLoadText);
+      await submitDrForm();
+
+      expect(postCount()).toBe(1);
+      expect(drFormError()).toBe(UNAUTHENTICATED_SCREEN_MESSAGE);
+      expect(text()).not.toContain(LOAD_FAILED_TEXT);
+      expect(text()).not.toContain(SUBMIT_FAILED_TEXT);
+      expect(loadAreaText()).toBe(LOAD_FAILED_REASON_IN_FORM_TEXT);
+      expect(occurrencesOf(UNAUTHENTICATED_SCREEN_MESSAGE)).toBe(1);
+      expectNoLeak();
+    },
+  );
+
+  it('初めの読み込みが 500 のあと、送信が 403 (二段階認証の確認が要る): 理由の文は form の上の 1 か所だけ、読み込みの欄に「時間をおいて…」を残さない', async () => {
+    mockBackupsWithPost(forbiddenByMfa, [internalError]);
+    await renderElement(createElement(SuperAdminBackupsPage));
+    await submitDrForm();
+
+    expect(postCount()).toBe(1);
+    expect(drFormError()).toBe(API_MFA_REQUIRED_MESSAGE);
+    expect(text()).not.toContain(LOAD_FAILED_TEXT);
+    expect(loadAreaText()).toBe(LOAD_FAILED_REASON_IN_FORM_TEXT);
+    expect(occurrencesOf(API_MFA_REQUIRED_MESSAGE)).toBe(1);
+    expectNoLeak();
+  });
+
+  it('送信が 500 なら、読み込みの欄の「時間をおいて…」はそのまま (時間をおけば読めうる。理由を form に出していない)', async () => {
+    mockBackupsWithPost(internalError, [internalError]);
+    await renderElement(createElement(SuperAdminBackupsPage));
+    await submitDrForm();
+
+    expect(postCount()).toBe(1);
+    expect(drFormError()).toBe(SUBMIT_FAILED_TEXT);
+    expect(loadAreaText()).toBe(LOAD_FAILED_TEXT);
+    expectNoLeak();
+  });
+
+  it('読めていたあとに送信が 401 なら、読み込みの欄は出さず、取得の状態・訓練の記録はそのまま', async () => {
+    mockBackupsWithPost(unauthorized);
+    await renderElement(createElement(SuperAdminBackupsPage));
+    await submitDrForm();
+
+    expect(drFormError()).toBe(UNAUTHENTICATED_SCREEN_MESSAGE);
+    expect(loadAreaText()).toBeNull();
+    expect(container.querySelector('[data-testid="dr-tests-latest"]')).not.toBeNull();
+    expect(occurrencesOf(UNAUTHENTICATED_SCREEN_MESSAGE)).toBe(1);
   });
 });
 
