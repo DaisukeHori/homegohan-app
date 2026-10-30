@@ -160,8 +160,9 @@ export async function POST(request: Request) {
   // 明示的に指定がない場合は呼び出し元 admin を owner とする
   const effectiveOwnerId = owner_id ?? actor.id;
 
-  // 組織の行・オーナーの所属 (organization_id・org_role = 'owner')・席の行を、DB 関数 admin_create_organization の 1 つのトランザクションで書く
-  // (#2107 Y4。supabase/migrations/20261030150000_create_organization_atomic.sql)。関数はオーナーの user_profiles の行をロックしてから
+  // 組織の行・オーナーの所属 (organization_id・org_role = 'owner'・加入日 joined_org_at = 今日・is_active_in_org = true)・席の行を、
+  // DB 関数 admin_create_organization の 1 つのトランザクションで書く (#2107 Y4。最新の定義は
+  // supabase/migrations/20261031100000_create_organization_owner_joined_at.sql (#2120 W1))。関数はオーナーの user_profiles の行をロックしてから
   // 所属を確かめるので、同じオーナーの同時の作成・応答が切れたあとの押し直しは 1 つだけ通る。途中で止まれば組織の行も残らない
   // (以前は所属の確認・組織の INSERT・席の行・所属の更新を別々の要求で行い、確認と更新の間に 2 つ目が通ると組織が 2 つでき、
   // 所属の更新に失敗しても組織が残った)。route は表に直接書かない
