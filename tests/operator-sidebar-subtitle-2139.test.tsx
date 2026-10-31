@@ -14,11 +14,18 @@
  * #2144 S2: サポートの画面 (src/app/(support)/layout.tsx) のサイドバーの見出しが英字だけの「Support Center」、副題が「ほめゴハン」だった。
  *   このレイアウトは上の見張りの対象に入っておらず、見出しは h1 で見張りのセレクタ (p・span) にも入っていなかった。
  *   直したあとは見出し「サポートセンター」、副題「ほめゴハン 運営」とし、見張りの対象と見出しの要素 (h1〜h6) を足す
+ *
+ * #2150 Q3-1: 運営・サポートの画面に英字だけの文が 3 か所残っていた。
+ *   - サポートの画面のサイドバーの下の自分の名前: nickname が空のときに「👤 Support」と出ていた → 「サポート担当」
+ *   - 売上ダッシュボード (/admin/finance) の副題が「Finance」→「売上と課金」
+ *   - NPS の画面 (/admin/finance/nps) の副題が「Net Promoter Score & Customer Satisfaction」→「推奨度 (NPS) と満足度 (CSAT)」
+ *     (見出しの略語「NPS / CSAT」はそのまま)
+ *   この 3 か所が英字だけの文に戻らないことを、同じ英字だけの判定で見張る
  */
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createRoot } from 'react-dom/client';
 import { act, createElement, type ReactElement, type ReactNode } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('next/link', () => ({
   default: ({ href, children, ...rest }: { href: string; children: ReactNode } & Record<string, unknown>) => (
@@ -37,11 +44,14 @@ vi.mock('next/navigation', () => ({
 
 // サポートの画面 ("use client") は開いたあとに自分とプロフィールを読み、権限があればサイドバーを出す。
 // 読み込みはこのテストの対象ではないので、ログインしていてサポートの権限がある結果だけを返す
+// nickname はテストごとに変える (名前が無いときの呼び名を確かめる。#2150 Q3-1)。既定はサポートの人の名前がある
+const SUPPORT_DEFAULT_NICKNAME = 'サポートの人';
+const supportProfile = vi.hoisted(() => ({ nickname: 'サポートの人' as string | null }));
 const supportClient = vi.hoisted(() => {
   const profileQuery = {
     select: () => profileQuery,
     eq: () => profileQuery,
-    single: async () => ({ data: { roles: ['support'], nickname: 'サポートの人' }, error: null }),
+    single: async () => ({ data: { roles: ['support'], nickname: supportProfile.nickname }, error: null }),
   };
   return {
     auth: {
@@ -66,6 +76,8 @@ const { default: AdminLayout } = await import('@/app/admin/layout');
 const { default: SuperAdminLayout } = await import('@/app/super-admin/layout');
 const { default: OperatorMembershipLayout } = await import('@/app/(operator)/operator/membership/layout');
 const { default: SupportLayout } = await import('@/app/(support)/layout');
+const { default: FinanceDashboardPage } = await import('@/app/admin/finance/page');
+const { default: NpsPage } = await import('@/app/admin/finance/nps/page');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -191,5 +203,176 @@ describe('同じ型: 運営の画面のレイアウトのサイドバーの見�
     // 見出しを取れている (セレクタの書き誤りで空振りしない)
     expect(texts.length).toBeGreaterThan(0);
     expect(texts.filter(isEnglishOnlyText)).toEqual([]);
+  });
+});
+
+// ─── #2150 Q3-1: サポートの画面の自分の名前・売上と NPS の画面の副題 ─────────────────────────
+
+afterEach(() => {
+  supportProfile.nickname = SUPPORT_DEFAULT_NICKNAME;
+  vi.unstubAllGlobals();
+});
+
+/** サポートの画面のサイドバーの下の自分の名前 (👤 の横)。nickname が空のときの呼び名 */
+const SUPPORT_USER_NAME_FALLBACK = 'サポート担当';
+
+/** サイドバーの下の自分の名前の欄の文 (👤 を除く) */
+function supportUserNameText(): string {
+  const cell = Array.from(document.querySelectorAll('aside div')).find(
+    (el) => el.children.length === 0 && (el.textContent ?? '').trim().startsWith('👤'),
+  );
+  if (!cell) throw new Error('サイドバーに自分の名前の欄がありません');
+  return (cell.textContent ?? '').replace('👤', '').trim();
+}
+
+describe('サポートの画面 (/support) のサイドバーの自分の名前 (#2150 Q3-1)', () => {
+  it('nickname があればそのまま出す', async () => {
+    await mountSupportLayout();
+    expect(supportUserNameText()).toBe(SUPPORT_DEFAULT_NICKNAME);
+  });
+
+  // 空・空白だけ・仮置きの名前 (Guest) は normalizeProfileName が「名前が無い」とみなす
+  it.each([
+    { label: 'null', nickname: null },
+    { label: '空文字', nickname: '' },
+    { label: '空白だけ', nickname: '   ' },
+    { label: '仮置きの Guest', nickname: 'Guest' },
+  ])('nickname が $label のときは「サポート担当」と出し、英字だけの Support は出さない', async ({ nickname }) => {
+    supportProfile.nickname = nickname;
+    await mountSupportLayout();
+    const name = supportUserNameText();
+    expect(name).toBe(SUPPORT_USER_NAME_FALLBACK);
+    expect(isEnglishOnlyText(name)).toBe(false);
+    expect(document.querySelector('aside')?.textContent).not.toContain('Support');
+  });
+});
+
+/** 画面の見出しのうち、運用の略語として英字のまま出してよいもの (NPS の画面の見出し) */
+const PAGE_HEADING_ABBREVIATIONS: ReadonlySet<string> = new Set(['NPS / CSAT']);
+
+/**
+ * クライアントの画面の読み込み (fetch → 本文の読み込み → 状態の更新) を流し切るために act で待つ回数。
+ * 読み込みは await 数回で終わる。NPS の画面は読み込み中も見出しを出すので、見出しが出た時点では止めず、毎回この回数だけ待つ
+ */
+const CLIENT_PAGE_FLUSHES = 10;
+
+/** パスごとの応答で fetch を置き換え、クライアントの画面を描いて見出しが出たあとの HTML を document.body に置く */
+async function mountClientPage(Page: () => ReactElement, routes: Record<string, unknown>) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: unknown) => {
+      const path = new URL(String(input), 'http://localhost').pathname;
+      if (!(path in routes)) throw new Error(`想定外の呼び出し: ${path}`);
+      return new Response(JSON.stringify(routes[path]), { headers: { 'content-type': 'application/json' } });
+    }),
+  );
+  document.body.innerHTML = '';
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  await act(async () => {
+    root.render(createElement(Page));
+  });
+  for (let flush = 0; flush < CLIENT_PAGE_FLUSHES; flush += 1) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+  const html = container.innerHTML;
+  await act(async () => {
+    root.unmount();
+  });
+  document.body.innerHTML = html;
+}
+
+/** 画面の上の見出し (h1) と、同じ区画の副題 (p) の文 */
+function pageHeaderTexts(): { heading: string; subtitle: string } {
+  const heading = document.querySelector('h1');
+  if (!heading) throw new Error('画面に見出しがありません');
+  const subtitle = heading.parentElement?.querySelector(':scope > p');
+  if (!subtitle) throw new Error('見出しの区画に副題がありません');
+  return { heading: heading.textContent?.trim() ?? '', subtitle: subtitle.textContent?.trim() ?? '' };
+}
+
+/** 売上ダッシュボードの API の応答 (見出しを出すのに要る形だけ。値は本題ではない) */
+const FINANCE_ROUTES = {
+  '/api/admin/finance/dashboard': {
+    data: {
+      current_mrr_jpy: 0,
+      current_arr_jpy: 0,
+      churn_rate: 0,
+      ltv_jpy: 0,
+      new_mrr_jpy: 0,
+      expansion_mrr_jpy: 0,
+      contraction_mrr_jpy: 0,
+      churned_mrr_jpy: 0,
+      personal_active_users: 0,
+      family_active_groups: 0,
+      org_active_orgs: 0,
+      mau: 0,
+    },
+  },
+  '/api/admin/finance/exports': { data: { available_types: ['revenue'] } },
+};
+
+/** NPS の画面の API の応答 (回答 0 件) */
+const NPS_ROUTES = {
+  '/api/admin/finance/nps': {
+    data: {
+      nps: {
+        total_responses: 0,
+        promoters: 0,
+        passives: 0,
+        detractors: 0,
+        nps_score: 0,
+        avg_score: 0,
+        response_rate: 0,
+        recent_comments: [],
+      },
+      csat: { total_responses: 0, avg_score: 0, score_distribution: {}, recent_feedbacks: [] },
+    },
+  },
+};
+
+const FINANCE_PAGES: ReadonlyArray<{
+  name: string;
+  Page: () => ReactElement;
+  routes: Record<string, unknown>;
+  heading: string;
+  subtitle: string;
+  englishSubtitle: string;
+}> = [
+  {
+    name: 'src/app/admin/finance/page.tsx',
+    Page: FinanceDashboardPage,
+    routes: FINANCE_ROUTES,
+    heading: '売上ダッシュボード',
+    subtitle: '売上と課金',
+    englishSubtitle: 'Finance',
+  },
+  {
+    name: 'src/app/admin/finance/nps/page.tsx',
+    Page: NpsPage,
+    routes: NPS_ROUTES,
+    heading: 'NPS / CSAT',
+    subtitle: '推奨度 (NPS) と満足度 (CSAT)',
+    englishSubtitle: 'Net Promoter Score & Customer Satisfaction',
+  },
+];
+
+describe('売上と NPS の画面の見出し・副題に英字だけの文が無い (#2150 Q3-1)', () => {
+  it('判定が機能している: 以前の英字だけの副題を検出する', () => {
+    for (const { englishSubtitle } of FINANCE_PAGES) expect(isEnglishOnlyText(englishSubtitle)).toBe(true);
+    // 見出しの略語も英字だけなので、許す略語として明示して外す (判定から漏れているのではない)
+    for (const abbreviation of PAGE_HEADING_ABBREVIATIONS) expect(isEnglishOnlyText(abbreviation)).toBe(true);
+  });
+
+  it.each(FINANCE_PAGES)('$name: 見出しと副題は日本語 (英字の副題は出さない)', async ({ Page, routes, heading, subtitle, englishSubtitle }) => {
+    await mountClientPage(Page, routes);
+    const texts = pageHeaderTexts();
+    expect(texts).toEqual({ heading, subtitle });
+    expect(isEnglishOnlyText(texts.subtitle)).toBe(false);
+    expect([texts.heading, texts.subtitle].filter((text) => isEnglishOnlyText(text) && !PAGE_HEADING_ABBREVIATIONS.has(text))).toEqual([]);
+    expect(document.body.textContent).not.toContain(englishSubtitle);
   });
 });
