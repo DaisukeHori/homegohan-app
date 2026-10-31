@@ -1025,7 +1025,7 @@ async function checkPgCronStalled(
  * 利用者向けではないので署名は付けない。
  */
 import type { EmailEnvelope } from '@/lib/emails/envelope';
-import { getEmailFrom } from '@/lib/site-config';
+import { getEmailFrom } from '@/lib/site-config'; import { SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
 import { sanitizeFunctionNameForAlert } from '@/lib/ops-alerts/app-log-error-spike';
 
 export interface CronFailureEmailVars {
@@ -1111,7 +1111,7 @@ export function renderCronFailureEmail(vars: CronFailureEmailVars): EmailEnvelop
  * 載せるのは最新の実行の時刻・有効なジョブの数・しきい値だけ。利用者の情報は載せない。利用者向けではないので署名は付けない。
  */
 import type { EmailEnvelope } from '@/lib/emails/envelope';
-import { getEmailFrom } from '@/lib/site-config';
+import { getEmailFrom } from '@/lib/site-config'; import { SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
 
 export interface PgCronStalledEmailVars {
   /** 宛先 (環境変数 OPS_ALERT_EMAIL) */

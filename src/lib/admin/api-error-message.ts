@@ -83,7 +83,7 @@ export const FORBIDDEN_SCREEN_MESSAGE = '権限がありません';
  * それ以外 (ロールが足りない・本文が読めない・形が違う) は画面の固定の文 (fallback) を出す。
  * 運営の route は、ゲート (requireRole) の後でセッションの状態が変わったとき二段階認証の文を 403 に入れる (#2014) ので、
  * 画面が 403 を固定の「権限がありません」で上書きすると、二段階認証が要るのに権限が無いように見える。
- * 理由の文だけを通すのは、画面ごとの固定の文 (「この画面を見る権限がありません (super_admin のみ)」など) を残し、
+ * 理由の文だけを通すのは、画面ごとの固定の文 (「この画面を見る権限がありません (運営最上位のみ)」など) を残し、
  * 理由でない文 (古い route の英語の文など) を画面に出さないため
  */
 export function forbiddenMessageForScreen(body: unknown, fallback: string = FORBIDDEN_SCREEN_MESSAGE): string {

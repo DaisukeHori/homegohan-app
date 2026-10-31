@@ -1778,6 +1778,7 @@ React に依存しない。fetch を 1 回呼び、結果を判別共用体 `Mfa
 
 ```ts
 import { z } from 'zod';
+import { OPERATOR_ROLE_LABELS } from '@/lib/admin/operator-role-labels';
 
 /** §14 の API のパス。画面はこれ以外の API の URL を組み立てない */
 export const MFA_API_PATHS = {

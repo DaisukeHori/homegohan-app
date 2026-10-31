@@ -1618,6 +1618,7 @@ async function checkEmailDeadLetters(
  */
 import type { EmailEnvelope } from '@/lib/emails/envelope';
 import { getEmailFrom } from '@/lib/site-config';
+import { SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
 import { sanitizeFunctionNameForAlert } from '@/lib/ops-alerts/app-log-error-spike';
 
 export interface EmailDeadLetterEmailVars {

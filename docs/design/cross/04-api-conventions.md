@@ -450,7 +450,7 @@ LIMIT $limit + 1;  -- +1 で has_more を判定
 
 ### 6.2 offset-based (件数を出す一覧)
 
-件数表示が必要な管理画面 (`/admin/*`, `/super-admin/*`) で使う。管理画面の外でも、公開レシピの一覧 `GET /api/recipes` (`page`・`limit` から offset を作る `src/app/api/recipes/route.ts:30-32`。件数より後ろのページは下の `resolveBeyondLastPage` で扱う `:71-77`)・お気に入りの一覧 `GET /api/favorites` (`offset`・`limit`)・運営の所属の監査 `GET /api/operator/membership/audit` (`page`) は offset で読む。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数を返す (`src/lib/api/list-range.ts` の `resolveBeyondLastPage`。数え直しも失敗したら 500。問い合わせ・開示等の請求の一覧は従来どおり `total: null`)。画面は件数から最後のページへ取り直す (`src/lib/list-pagination.ts`)。一覧の行の読み込みのそれ以外の DB の失敗は 200 の空の一覧にせず 500 (`tests/api-list-range-scan.test.ts` が `.range(` を使う route を見張る。#1917)。
+件数表示が必要な管理画面 (`/admin/*`, `/super-admin/*`) で使う。管理画面の外でも、公開レシピの一覧 `GET /api/recipes` (`src/app/api/recipes/route.ts` の `GET` が `page`・`limit` から offset を作る。件数より後ろのページは同じ `GET` が下の `resolveBeyondLastPage` で扱う)・お気に入りの一覧 `GET /api/favorites` (`offset`・`limit`)・運営の所属の監査 `GET /api/operator/membership/audit` (`page`) は offset で読む。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数を返す (`src/lib/api/list-range.ts` の `resolveBeyondLastPage`。数え直しも失敗したら 500。問い合わせ・開示等の請求の一覧は従来どおり `total: null`)。画面は件数から最後のページへ取り直す (`src/lib/list-pagination.ts`)。一覧の行の読み込みのそれ以外の DB の失敗は 200 の空の一覧にせず 500 (`tests/api-list-range-scan.test.ts` が `.range(` を使う route を見張る。#1917)。
 
 ```
 GET /api/v1/admin/users?page=2&limit=50
@@ -466,6 +466,10 @@ Response:
   }
 }
 ```
+
+### 6.2.1 一覧の並び (同じ値の行の順)
+
+一覧は、並びの鍵 (作った日時・始まる日など) のあとに一意の鍵 (主キー `id`。`id` の無い表は一意の別の列) の昇順を重ねて、同じ値の行の順を決める。offset で読む一覧ではページの境目の重なり・抜けを防ぎ、件数の上限つきの一覧と 1 行だけ読む所 (`limit(1)`・`maybeSingle`) では、同じ値のどの行を取るかを決める。鍵は `src/lib/api/list-order.ts` の `LIST_ORDERS` に一覧ごとに書き、route は `orderListBy` で並べる (NULL の位置は、いままでの order で `nullsFirst` を省いていた鍵は PostgreSQL の既定 (昇順は最後・降順は最初) と同じ値を明示し、`nullsFirst` を書いていた鍵はその値を保つ。例: 運営の組織の譲渡の候補 `LIST_ORDERS.operatorOrgTransferCandidates` の `last_login_at` は降順で空を最後)。`tests/list-order-tiebreak-2134.test.ts` が `src/app/api` の全体を走査し、`.order(` を直接書けるのは並びの鍵がもう一意の所 (主キー・一意の制約の列で終わる、`id` で終える) だけ (そのテストの `ALLOWED_DIRECT_ORDERS` に理由つきで書く)。cursor の一覧 (6.1) は従来どおり `created_at DESC, id DESC` で終える。
 
 ### 6.3 制限値
 
