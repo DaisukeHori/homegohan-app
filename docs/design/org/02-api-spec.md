@@ -117,7 +117,7 @@
 
 ### `GET /api/org/members`
 
-**実装 (現行。#2073 S4)**: `src/app/api/org/members/route.ts` の GET。呼べるのは所属組織の owner / admin だけ (`requireOrgAdmin`。一般メンバーは 403・未ログインは 401)。下の認証・クエリパラメータ・応答は旧案で、いまの応答は `{ members: [{ id, nickname, org_role, joined_org_at }] }` (`src/schemas/membership/organization-member-name.ts` の `OrgMemberNamesResponseSchema`。参加した日の古い順・ページングなし)。ほかのメンバーの行は、確かめたあとに service_role で読む (`user_profiles` の SELECT の RLS は本人の行だけ)。メールアドレス・社員番号・部署・最終ログイン・ライセンスは返さない (プライバシーポリシー第9条 5 項。cross/20 F-19)。オーナーの譲渡の候補は `GET /api/org/owner-transfer/candidates` (オーナーだけ。自分とオーナーを除いた同じ 4 つの項目。membership/02-flow-spec.md §5)。
+**実装 (現行。#2073 S4)**: `src/app/api/org/members/route.ts` の GET。呼べるのは所属組織の owner / admin だけ (`requireOrgAdmin`。一般メンバーは 403・未ログインは 401)。下の認証・クエリパラメータ・応答は旧案で、いまの応答は `{ members: [{ id, nickname, org_role, joined_org_at }] }` (`src/schemas/membership/organization-member-name.ts` の `OrgMemberNamesResponseSchema`。参加した日の古い順で、同じ日はオーナー → 管理者 → メンバー・その中は id の順・参加した日が空の行は最後 (`src/lib/membership/org-member-list-order.ts` の `orderOrgMemberList` が DB の order を重ねる。役割の順は enum `org_role_enum` の宣言の順)・ページングなし)。ほかのメンバーの行は、確かめたあとに service_role で読む (`user_profiles` の SELECT の RLS は本人の行だけ)。メールアドレス・社員番号・部署・最終ログイン・ライセンスは返さない (プライバシーポリシー第9条 5 項。cross/20 F-19)。オーナーの譲渡の候補は `GET /api/org/owner-transfer/candidates` (オーナーだけ。自分とオーナーを除いた同じ 4 つの項目。membership/02-flow-spec.md §5)。
 
 **認証**: `org_admin` | `org_manager` | `org_viewer`
 
@@ -388,7 +388,7 @@ yamada@example.com,org_member,営業部,山田太郎,EMP001,2024-04-01
 
 **認証**: 組織の `org_role` が `owner` / `admin` (`requireOrgAdmin`。`src/lib/auth/helpers.ts`)
 
-**クエリパラメータ**: なし (`src/app/api/org/invites/route.ts:39-72` はクエリを読まない。自分の組織の招待を全件、作成の新しい順に返す)
+**クエリパラメータ**: なし (`src/app/api/org/invites/route.ts` の `GET` はクエリを読まない。自分の組織の招待を全件、作成の新しい順に返す。同じ日時は id の順 (`src/lib/api/list-order.ts` の `LIST_ORDERS.orgInvites`))
 
 **レスポンス 200** (`OrgInviteListResponseSchema`。件数の `total` は無い):
 ```json
@@ -419,9 +419,9 @@ yamada@example.com,org_member,営業部,山田太郎,EMP001,2024-04-01
 ### `POST /api/org/invites`
 
 **説明**: 個別招待
-**認証**: 組織の `org_role` が `owner` / `admin` (`requireOrgAdmin`。`src/app/api/org/invites/route.ts:79-97`。未ログインは 401 `NOT_AUTHENTICATED`・それ以外は 403 `INSUFFICIENT_PERMISSION`)
+**認証**: 組織の `org_role` が `owner` / `admin` (`requireOrgAdmin`。`src/app/api/org/invites/route.ts` の `POST` の `requireOrgAdmin()` の失敗の分岐。未ログインは 401 `NOT_AUTHENTICATED`・それ以外は 403 `INSUFFICIENT_PERMISSION`)
 
-**リクエスト** (いまの route が受け取るのは `email`・`role` (`admin` / `member`。既定 `member`)・`custom_message` だけ。`CreateOrgInviteRequestBodySchema` (`src/schemas/membership/organization-invite.ts`)・`route.ts:107-111`。下の `department_id`・`nickname`・`employee_id` は旧案で、受け取らない (未知のキーは取り除く)):
+**リクエスト** (いまの route が受け取るのは `email`・`role` (`admin` / `member`。既定 `member`)・`custom_message` だけ。`CreateOrgInviteRequestBodySchema` (`src/schemas/membership/organization-invite.ts`)・`POST` の `CreateOrgInviteRequestBodySchema.safeParse`。下の `department_id`・`nickname`・`employee_id` は旧案で、受け取らない (未知のキーは取り除く)):
 ```json
 {
   "email": "newmember@example.com",
@@ -433,7 +433,7 @@ yamada@example.com,org_member,営業部,山田太郎,EMP001,2024-04-01
 }
 ```
 
-**レスポンス 201** (旧案。いまは 200 で `{ ok: true, invite }` を返す。`route.ts:127`):
+**レスポンス 201** (旧案。いまは 200 で `{ ok: true, invite }` を返す。`POST` の最後の `NextResponse.json({ ok: true, invite: result.invite })`):
 ```json
 {
   "invite_id": "uuid",

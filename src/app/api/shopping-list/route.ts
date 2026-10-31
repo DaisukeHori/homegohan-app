@@ -5,6 +5,7 @@ import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_INVALID_JSON_MESSAGE, API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { isUuid } from '@/lib/http-params';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 
 /** 400: 追加先の買い物リスト (shoppingListId) が無い */
@@ -57,15 +58,18 @@ export async function GET(request: Request) {
       });
     } else {
       // アクティブな買い物リストを取得
-      const { data, error } = await supabase
-        .from('shopping_lists')
-        .select(`
+      // 最後に作ったリスト 1 行。同じ日時のリストが 2 つあっても、どちらを取るかは id の順で決まる (#2139 T1)
+      const { data, error } = await orderListBy(
+        supabase
+          .from('shopping_lists')
+          .select(`
           *,
           shopping_list_items(*)
         `)
-        .eq('user_id', user.id)
-        .eq('status', status)
-        .order('created_at', { ascending: false })
+          .eq('user_id', user.id)
+          .eq('status', status),
+        LIST_ORDERS.shoppingListLatest,
+      )
         .limit(1)
         .maybeSingle();
 

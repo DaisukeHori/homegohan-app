@@ -85,7 +85,7 @@ import {
   resolveModerationItem,
 } from '@/lib/admin/moderation-backend';
 import { notSupportedResponse } from '@/lib/admin/not-supported';
-import { applyUserBan, BAN_INTERNAL_ERROR_MESSAGE } from '@/lib/admin/user-ban';
+import { applyUserBan, BAN_INTERNAL_ERROR_MESSAGE, PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE } from '@/lib/admin/user-ban';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { isUuid } from '@/lib/http-params';
@@ -283,7 +283,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
   // delete_and_perm_ban は super_admin のみ
   if (action === 'delete_and_perm_ban' && !actor.roles.includes('super_admin')) {
     return NextResponse.json(
-      { error: { code: 'OP_PERMISSION_DENIED', message: '永久 BAN はスーパー管理者 (super_admin) のみ実行可能です' } },
+      { error: { code: 'OP_PERMISSION_DENIED', message: PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE } },
       { status: 403 },
     );
   }

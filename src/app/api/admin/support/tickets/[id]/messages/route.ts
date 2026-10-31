@@ -29,6 +29,7 @@ import { sendTicketReplyEmail } from '@/lib/admin/send-ticket-reply-email';
 import type { ReplyEmailOutcome } from '@/lib/admin/support-reply-email-status';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /** 400: 本文・クエリの検証の失敗の文 (項目ごとの理由は details に添える。message は画面がそのまま出す文なので文字列にする) */
 const VALIDATION_ERROR_MESSAGE = '入力内容を確認してください';
@@ -52,11 +53,14 @@ export async function GET(request: NextRequest, props: RouteContext) {
       ['support', 'admin', 'super_admin'].includes(r),
     );
 
-    let query = supabase
-      .from('support_ticket_messages')
-      .select('id, ticket_id, sender_id, is_internal, body, attachments, created_at')
-      .eq('ticket_id', params.id)
-      .order('created_at', { ascending: true });
+    // 書いた日時の古い順。同じ日時は id の順 (#2139 T1)
+    let query = orderListBy(
+      supabase
+        .from('support_ticket_messages')
+        .select('id, ticket_id, sender_id, is_internal, body, attachments, created_at')
+        .eq('ticket_id', params.id),
+      LIST_ORDERS.adminSupportTicketMessages,
+    );
 
     if (!isInternalAllowed) {
       query = query.eq('is_internal', false);

@@ -60,6 +60,12 @@
  *   tests/local-ci-slot-consumers.test.ts でもない残りの 1 件の所要の最大は 0.68 秒)。
  *   このファイル自身は、構文木を作る前に sendEmail / emailFailureReasons の名前を含まないソースを外して速くした (結果は同じ)。
  *
+ * #2144 で足したもの: tests/ai-consultation-latest-messages-2144.test.ts は、同じ型 (テストの中で、AI 相談の会話の続きの route を
+ *   丸ごと読み込む。tests/consultation-pantry-expiry-jst.test.ts と同じ形)。
+ *
+ * #2150 で足したもの: tests/ai-consultation-context-meals-order-2150.test.ts は、同じ型 (テストの中で、AI 相談の会話の続きの route と
+ *   セッションの route を丸ごと読み込む。tests/ai-consultation-latest-messages-2144.test.ts と同じ形)。
+ *
  * 時間切れが効くのは遅いときだけで、速く終わるテストの所要は変わらない (止まったテストを見切るまでが長くなるだけ)。
  * 期待値・待つ条件は変えないので、検査は緩まない。全体の既定 (vitest.config.ts) は変えず、一覧のファイルだけに効かせる
  * (各ファイルの先頭で applyHeavyUnitTestTimeout() を呼んで vi.setConfig する。時間切れはテスト・フックを登録したときの
@@ -84,7 +90,8 @@ export const UNIT_HEAVY_HOOK_TIMEOUT_ENV = "UNIT_HEAVY_HOOK_TIMEOUT_MS";
 /**
  * 時間切れを延ばすファイル (リポジトリの根からの相対パス)。#1488 の 16 本は 274 本の結果のどこかで時間切れだけで落ちた
  * (#1498 で速くした 2 本は外した)。#1605 で足した 15 本は、時間切れで落ちた 1 本と、同じ型 (テストの中で子プロセスを起こす・route を丸ごと読み込む) の 14 本。
- * #2093 で足した 3 本は、時間切れで落ちた 1 本と、同じ型 (テストの中でリポジトリを構文木で走査する) の 2 本
+ * #2093 で足した 3 本は、時間切れで落ちた 1 本と、同じ型 (テストの中でリポジトリを構文木で走査する) の 2 本。
+ * #2144 で足した 1 本は、同じ型 (テストの中で route を丸ごと読み込む)
  */
 export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "src/__tests__/api/ai/consultation/ai-chat-gate.test.ts",
@@ -104,6 +111,8 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/ai-consent-mobile-entry-points.test.ts",
   "tests/ai-consent-settings-page.test.tsx",
   "tests/ai-consent-stored-failure.test.ts",
+  "tests/ai-consultation-context-meals-order-2150.test.ts",
+  "tests/ai-consultation-latest-messages-2144.test.ts",
   "tests/ai-rate-limit-contracts.test.ts",
   "tests/ai-usage-direct-jwt-edge.test.ts",
   "tests/api-list-beyond-last-page-routes.test.ts",

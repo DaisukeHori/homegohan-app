@@ -10,6 +10,7 @@ import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { escapeLikePattern, quotePostgrestValue } from '@/lib/admin/users-search';
 import { loadRecipeViewerLookups } from '@/lib/recipes/viewer-lookups';
 import { RECIPE_NAME_REQUIRED_MESSAGE, RecipeCreateBodySchema } from '@/lib/recipes/recipe-body';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /** 一覧の構造化ログの function_name */
 const LIST_ROUTE_NAME = 'GET /api/recipes';
@@ -69,9 +70,8 @@ export async function GET(request: Request) {
   };
 
   const { data, error, count } = await resolveBeyondLastPage(
-    await selectRecipes()
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1),
+    // 作った日時の新しい順。同じ日時は id の順で、ページの境目でも順が変わらない (#2139 T1)
+    await orderListBy(selectRecipes(), LIST_ORDERS.recipes).range(offset, offset + limit - 1),
     () => selectRecipes({ head: true }),
     LIST_ROUTE_NAME,
   );

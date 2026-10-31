@@ -233,7 +233,11 @@ describe('GET /api/health/blood-tests: クランプ以外の挙動は変えな�
     expect(mockFrom).toHaveBeenCalledWith('blood_test_results');
     expect(resultsBuilder.select).toHaveBeenCalledWith('*');
     expect(resultsBuilder.eq).toHaveBeenCalledWith('user_id', 'user-1');
-    expect(resultsBuilder.order).toHaveBeenCalledWith('test_date', { ascending: false });
+    // 検査日の新しい順。同じ日の検査は id の順で、上限の境目でどれが入るかも決まる (#2139 T1)
+    expect(resultsBuilder.order.mock.calls).toEqual([
+      ['test_date', { ascending: false, nullsFirst: true }],
+      ['id', { ascending: true, nullsFirst: false }],
+    ]);
   });
 
   it('検査結果と経年レビューを results / longitudinalReview で返す', async () => {

@@ -215,6 +215,29 @@ function arrayLiteralOf(sf: ts.SourceFile, node: ts.Expression, depth: number): 
   return null;
 }
 
+/** `X.key` の X を、オブジェクトの字 (`{ … }` / `{ … } as const` / satisfies を含む) までたどる */
+function objectLiteralOf(sf: ts.SourceFile, node: ts.Expression, depth: number): { sf: ts.SourceFile; object: ts.ObjectLiteralExpression } | null {
+  if (ts.isObjectLiteralExpression(node)) return { sf, object: node };
+  if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isSatisfiesExpression(node)) {
+    return objectLiteralOf(sf, node.expression, depth);
+  }
+  if (ts.isIdentifier(node) && depth < MAX_RESOLVE_DEPTH) {
+    const resolved = resolveConst(sf, node.text);
+    return resolved ? objectLiteralOf(resolved.sf, resolved.init, depth + 1) : null;
+  }
+  return null;
+}
+
+/** オブジェクトの字の、名前が key の要素の値 (`key: 値` / `'key': 値`)。無ければ null */
+function propertyInitializerOf(object: ts.ObjectLiteralExpression, key: string): ts.Expression | null {
+  for (const property of object.properties) {
+    if (!ts.isPropertyAssignment(property)) continue;
+    const name = property.name;
+    if ((ts.isIdentifier(name) || ts.isStringLiteral(name)) && name.text === key) return property.initializer;
+  }
+  return null;
+}
+
 /** テンプレートを、式の部分を値として読んだ文にする */
 function renderTemplate(sf: ts.SourceFile, node: ts.TemplateExpression, depth: number, options: SubstitutionOptions): string {
   return node.head.text + node.templateSpans.map((span) => renderSubstitution(sf, span.expression, depth, options) + span.literal.text).join('');
@@ -222,7 +245,7 @@ function renderTemplate(sf: ts.SourceFile, node: ts.TemplateExpression, depth: n
 
 /**
  * テンプレートの 1 つの式を、走査で読む文にする。文字列の字・定数 (同じファイルと import 元の const)・配列の定数の join・
- * 数 (数の字・Math の関数・数どうしの計算) は値にする。見逃しの一覧にある式は空にし、それ以外の読み取れない式は印 (UNRESOLVED_SUBSTITUTION) にする
+ * オブジェクトの定数の要素 (`LABELS.key`)・数 (数の字・Math の関数・数どうしの計算) は値にする。見逃しの一覧にある式は空にし、それ以外の読み取れない式は印 (UNRESOLVED_SUBSTITUTION) にする
  */
 function renderSubstitution(sf: ts.SourceFile, node: ts.Expression, depth: number, options: SubstitutionOptions): string {
   // 見逃しの一覧は、式の字面のまま (名前をたどる前に) 引く (`maxOffsetDays` を、初期値の関数の呼び出しでなく名前で載せられるように)
@@ -263,6 +286,12 @@ function renderSubstitution(sf: ts.SourceFile, node: ts.Expression, depth: numbe
         return found.array.elements.map((element) => renderSubstitution(found.sf, element, depth, options)).join(separator);
       }
     }
+  }
+  // オブジェクトの定数の要素 (`OPERATOR_ROLE_LABELS.super_admin` など。#2134 U1) は、その要素の値にする
+  if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && depth < MAX_RESOLVE_DEPTH) {
+    const found = objectLiteralOf(sf, node.expression, depth);
+    const initializer = found ? propertyInitializerOf(found.object, node.name.text) : null;
+    if (found && initializer) return renderSubstitution(found.sf, initializer, depth + 1, options);
   }
   if (ts.isIdentifier(node) && depth < MAX_RESOLVE_DEPTH) {
     const resolved = resolveConst(sf, node.text);

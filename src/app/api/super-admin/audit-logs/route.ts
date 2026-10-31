@@ -15,6 +15,7 @@ import { authFailureNested } from '@/lib/api/error-responses';
 import { AuditLogQuerySchema } from '@/lib/super-admin/audit-logs-schemas';
 import { internalError } from '@/lib/api/errors';
 import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /** 一覧の構造化ログの function_name */
 const LIST_ROUTE_NAME = 'GET /api/super-admin/audit-logs';
@@ -55,9 +56,8 @@ export async function GET(request: NextRequest) {
     };
 
     const { data, error, count } = await resolveBeyondLastPage(
-      await selectAuditLogs()
-        .order('created_at', { ascending: false })
-        .range((page - 1) * per_page, page * per_page - 1),
+      // 記録した日時の新しい順。同じ値は id の順で、ページの境目でも順が変わらない (#2139 T1)
+      await orderListBy(selectAuditLogs(), LIST_ORDERS.superAdminAuditLogs).range((page - 1) * per_page, page * per_page - 1),
       () => selectAuditLogs({ head: true }),
       LIST_ROUTE_NAME,
     );

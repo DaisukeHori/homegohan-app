@@ -49,7 +49,11 @@ import {
   type SubstitutionOptions,
 } from './helpers/api-error-text-scan';
 import { MACHINE_FACING_ERROR_TEXT_PATHS } from './helpers/api-error-japanese-scope';
-import { SUPER_ADMIN_BAN_REJECTED_MESSAGE } from '@/lib/admin/user-ban';
+import {
+  PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE,
+  SUPER_ADMIN_BAN_REJECTED_MESSAGE,
+  SUPER_ADMIN_FREEZE_REJECTED_MESSAGE,
+} from '@/lib/admin/user-ban';
 import {
   MEAL_TYPE_MESSAGE,
   PLANNED_MEAL_NUTRIENT_FIELDS,
@@ -212,6 +216,10 @@ describe('src/app/api の失敗の本文の文に、括弧の外の英字の項�
     ],
     ['src/app/api/super-admin/llm/quotas/route.ts', PLAN_READ_ONLY_MESSAGE],
     ['src/app/api/super-admin/flags/[key]/route.ts', `このフラグは次の機能のパッケージで使用中のため削除できません ( ${UNRESOLVED_SUBSTITUTION} )`],
+    // ロールの呼び名を運営の画面の表示名の定数 (OPERATOR_ROLE_LABELS.super_admin・SUPER_ADMIN_ONLY_NOTE) から作る文 (#2134 U1-1)
+    ['src/app/api/admin/users/[id]/freeze/route.ts', PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE],
+    ['src/app/api/admin/users/[id]/freeze/route.ts', SUPER_ADMIN_FREEZE_REJECTED_MESSAGE],
+    ['src/app/api/admin/moderation/[type]/[id]/route.ts', PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE],
   ];
 
   it.each(FIXED_TEMPLATE_TEXTS)('走査は %s の直した文「%s」を、式の部分を値にして集める', (file, text) => {
@@ -309,7 +317,8 @@ describe('Zod の検証の文に、括弧の外の英字の項目名が無い (s
 describe('src/lib の関数・表が作って本文に流す文 (値で確かめる)', () => {
   it('BAN を断る文 (applyUserBan が返し、モデレーションの route が本文の message にする)', () => {
     expect(englishIdentifiersOutsideParentheses(SUPER_ADMIN_BAN_REJECTED_MESSAGE)).toEqual([]);
-    expect(SUPER_ADMIN_BAN_REJECTED_MESSAGE).toContain('(super_admin)');
+    // ロールは運営の画面の表示名 (運営最上位) で書く (#2134 U1-1。審査のフォームがこの文をそのまま出す)
+    expect(SUPER_ADMIN_BAN_REJECTED_MESSAGE).toBe('運営最上位のユーザーは BAN できません');
   });
 
   it('食事の入力の検証の文 (meals・meal-plans の 400 の error。Web の alert・モバイルの Alert がそのまま出す)', () => {
@@ -379,6 +388,25 @@ describe('走査: テンプレートの式の部分を値として読む (#1917 
       `${UNRESOLVED_SUBSTITUTION} から ${UNRESOLVED_SUBSTITUTION} への遷移は許可されていません`,
       '種類 (type) は food, recipe のいずれかです',
       `目標値は ${UNRESOLVED_SUBSTITUTION} 以上です`,
+    ]);
+  });
+
+  it('オブジェクトの定数の要素 (`LABELS.key`。同じファイル・import 元) は値にし、無い要素は印にする (#2134 U1)', () => {
+    const fixture = `
+      import { NextResponse } from 'next/server';
+      const LABELS = { super_admin: '運営最上位', 'org_admin': '組織管理者' } as const;
+      const NOTE = \`\${LABELS.super_admin}のみ\`;
+      export async function POST() {
+        if (a) return NextResponse.json({ error: { message: \`永久 BAN は\${NOTE}実行できます\` } });
+        if (b) return NextResponse.json({ error: \`\${LABELS.org_admin}は変更できません\` });
+        if (c) return NextResponse.json({ error: \`\${LABELS.missing}は変更できません\` });
+        return NextResponse.json({ ok: true });
+      }
+    `;
+    expect(findErrorTexts(FIXTURE_FILE, { text: fixture, substitutions: { exempt: new Map() } }).map((found) => found.text)).toEqual([
+      '永久 BAN は運営最上位のみ実行できます',
+      '組織管理者は変更できません',
+      `${UNRESOLVED_SUBSTITUTION} は変更できません`,
     ]);
   });
 

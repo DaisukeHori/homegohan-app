@@ -598,8 +598,8 @@ re_engagement バッチ (operator/08-cron-batches.md §5.5) が参照する列�
 
 ALTER TABLE user_profiles
   ADD COLUMN IF NOT EXISTS last_login_at    TIMESTAMPTZ,
-  -- 最終ログイン日時。auth.sessions の INSERT のトリガー auth_session_created が書き、行がまだ無かった最初のログインは
-  -- 行を作るときのトリガー user_profiles_fill_login_stats が入れる (cross/16 §11.3)
+  -- 最終ログイン日時。auth.sessions の INSERT のトリガー on_auth_session_created (関数 auth_session_created) が書き、行がまだ無かった最初のログインは
+  -- 行を作るときのトリガー trg_user_profiles_fill_login_stats (関数 user_profiles_fill_login_stats) が入れる (cross/16 §11.3)
   ADD COLUMN IF NOT EXISTS plan_key_cached  VARCHAR(100);
   -- personal_subscriptions の live な行 (trialing / active / paused / past_due / grace) の plan_key の写し。無ければ NULL (= free)
 ```
@@ -1131,7 +1131,7 @@ CREATE POLICY "password_history_no_direct_access" ON password_history
   FOR ALL USING (false);
 ```
 
-書くのはトリガー `password_history_record` (`auth.users.encrypted_password` の変更。直近 10 世代まで残す)、読むのは RPC `auth_password_check` (どちらも SECURITY DEFINER)。PUBLIC・anon・authenticated の表の権限は無い (→ cross/16 §11.1・§11.3・§11.5 が正典)。
+書くのはトリガー `on_auth_user_password_changed` (関数 `password_history_record`) (`auth.users.encrypted_password` の変更。直近 10 世代まで残す)、読むのは RPC `auth_password_check` (どちらも SECURITY DEFINER)。PUBLIC・anon・authenticated の表の権限は無い (→ cross/16 §11.1・§11.3・§11.5 が正典)。
 
 ### 3.24 `failed_invite_lookups`
 
@@ -1182,7 +1182,7 @@ cross/16 (ログイン履歴・セッション) の migration が次を足す (�
 - 列 12 本: `ip_network inet`・`country_code character(2)`・`context_source text NOT NULL DEFAULT 'auth'` (`auth` / `web` / `mobile`)・`device_family text`・`is_new_device` / `is_new_ip` / `is_new_country boolean`・`alert_status text NOT NULL DEFAULT 'done'` (`pending` / `processing` / `done`)・`alert_claimed_at timestamptz`・`alert_attempts integer NOT NULL DEFAULT 0`・`alert_sent_at timestamptz`・`ended_reason text` (`signed_out` / `revoked_by_user` / `idle_expired`)
 - CHECK 3 本: `user_sessions_metadata_context_source_check`・`user_sessions_metadata_alert_status_check`・`user_sessions_metadata_ended_reason_check`
 - 索引 2 本: `idx_sessions_alert_queue (created_at) WHERE alert_status <> 'done'`・`idx_sessions_ended (revoked_at) WHERE revoked_at IS NOT NULL`
-- 本人の UPDATE のポリシー `sessions_revoke_self` を消す。本人 (authenticated) は SELECT (`sessions_self`) だけ。anon と PUBLIC の表の権限は無い。書くのは `auth.sessions` のトリガー (`auth_session_created`・`auth_session_refreshed`・`auth_session_deleted`)・RPC (`auth_session_revoke`・`claim_login_alerts`・`release_login_alert`)・service_role だけ
+- 本人の UPDATE のポリシー `sessions_revoke_self` を消す。本人 (authenticated) は SELECT (`sessions_self`) だけ。anon と PUBLIC の表の権限は無い。書くのは `auth.sessions` のトリガー (`on_auth_session_created`・`on_auth_session_refreshed`・`on_auth_session_deleted`。関数 `auth_session_created`・`auth_session_refreshed`・`auth_session_deleted`)・RPC (`auth_session_revoke`・`claim_login_alerts`・`release_login_alert`)・service_role だけ
 
 ### 3.26 `handson_tour` 連携 — family/09 ハンズオンチュートリアル拡張
 

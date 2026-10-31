@@ -12,6 +12,7 @@ import { AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED, authFailureNested 
 import { InvoiceQuerySchema } from '@/lib/admin/finance-schemas';
 import { financeInvalidQueryResponse } from '@/lib/admin/finance-query-errors';
 import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 export const dynamic = 'force-dynamic';
 
@@ -60,9 +61,8 @@ export async function GET(request: NextRequest) {
 
     const offset = (query.page - 1) * query.per_page;
     const { data: events, count, error } = await resolveBeyondLastPage(
-      await selectInvoiceEvents()
-        .order('received_at', { ascending: false })
-        .range(offset, offset + query.per_page - 1),
+      // 受けた日時の新しい順。同じ日時は id の順で、ページの境目でも順が変わらない (#2139 T1)
+      await orderListBy(selectInvoiceEvents(), LIST_ORDERS.financeInvoices).range(offset, offset + query.per_page - 1),
       () => selectInvoiceEvents({ head: true }),
       LIST_ROUTE_NAME,
     );

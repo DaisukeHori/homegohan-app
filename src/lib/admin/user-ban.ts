@@ -24,6 +24,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { OPERATOR_ROLE_LABELS, SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
 
 export type BanType = 'temporary' | 'permanent';
 
@@ -67,7 +68,15 @@ function hasSuperAdminRole(roles: unknown): boolean {
   return Array.isArray(roles) && roles.includes('super_admin');
 }
 
-export const SUPER_ADMIN_BAN_REJECTED_MESSAGE = 'スーパー管理者 (super_admin) のユーザーを BAN することはできません';
+/**
+ * 運営の画面 (凍結・審査のフォーム) が API の本文の文をそのまま出すので、ロールの呼び名は運営の画面の表示名
+ * (src/lib/admin/operator-role-labels.ts) の語にそろえる (#2134 U1-1)
+ */
+export const SUPER_ADMIN_BAN_REJECTED_MESSAGE = `${OPERATOR_ROLE_LABELS.super_admin}のユーザーは BAN できません`;
+/** 対象が super_admin のとき凍結を断る文 (POST /api/admin/users/{id}/freeze の 403 OP_TARGET_PROTECTED) */
+export const SUPER_ADMIN_FREEZE_REJECTED_MESSAGE = `${OPERATOR_ROLE_LABELS.super_admin}のユーザーは凍結できません`;
+/** super_admin でない運営が永久 BAN を求めたときの文 (凍結の route と審査の route の 403 OP_PERMISSION_DENIED) */
+export const PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE = `永久 BAN は${SUPER_ADMIN_ONLY_NOTE}実行できます`;
 const BAN_TARGET_NOT_FOUND_MESSAGE = 'BAN 対象ユーザーが見つかりません';
 
 export interface ApplyUserBanResult {

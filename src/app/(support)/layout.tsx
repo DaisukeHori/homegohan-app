@@ -21,6 +21,12 @@ const SUPPORT_LAYOUT_LOAD_ERROR = "サポートの画面を開けませんでし
  */
 const POSTGREST_NO_ROWS_CODE = "PGRST116";
 
+/**
+ * サイドバーの下の自分の名前 (👤 の横) に、プロフィールの nickname が空のときに出す呼び名。
+ * 英字だけの文 (以前は「Support」) を出さない (#2150 Q3-1)
+ */
+const SUPPORT_USER_NAME_FALLBACK = "サポート担当";
+
 const supportNavItems = [
   { href: "/support", label: "ダッシュボード", icon: "📊" },
   { href: "/support/inquiries", label: "問い合わせ", icon: "📩" },
@@ -87,7 +93,7 @@ export default function SupportLayout({
         return;
       }
 
-      setUserName(normalizeProfileName(profile.nickname) ?? "Support");
+      setUserName(normalizeProfileName(profile.nickname) ?? SUPPORT_USER_NAME_FALLBACK);
       setLoadError(null);
     } catch (checkError) {
       // 問い合わせが例外を投げた (以前は catch が無く、未処理の reject になり、読み込み中の表示のまま止まっていた)
@@ -145,8 +151,9 @@ export default function SupportLayout({
               🎧
             </div>
             <div>
-              <h1 className="text-lg font-bold">Support Center</h1>
-              <p className="text-xs text-teal-200">ほめゴハン</p>
+              <h1 className="text-lg font-bold">サポートセンター</h1>
+              {/* 副題は運営の画面 (src/app/super-admin/layout.tsx・src/app/(operator)/operator/membership/layout.tsx) の同じ位置と同じ呼び名にそろえる (#2144 S2) */}
+              <p className="text-xs text-teal-200">ほめゴハン 運営</p>
             </div>
           </div>
         </div>

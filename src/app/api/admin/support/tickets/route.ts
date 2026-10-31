@@ -18,6 +18,7 @@ import { internalError } from '@/lib/api/errors';
 import { buildListViewDetails, recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /** 400: 本文・クエリの検証の失敗の文 (項目ごとの理由は details に添える。message は画面がそのまま出す文なので文字列にする) */
 const VALIDATION_ERROR_MESSAGE = '入力内容を確認してください';
@@ -91,9 +92,11 @@ export async function GET(request: NextRequest) {
     // 一覧と、範囲外のページのときの件数の数え直しは、同じ絞り込み (selectTickets) から作る (src/lib/api/list-range.ts)
     const filters: TicketListFilters = { status, priority, assignee_id };
     const { data, error, count } = await resolveBeyondLastPage(
-      await selectTickets(supabase, filters)
-        .order('created_at', { ascending: false })
-        .range((page - 1) * per_page, page * per_page - 1),
+      // 作った日時の新しい順。同じ日時は id の順で、ページの境目でも順が変わらない (#2139 T1)
+      await orderListBy(selectTickets(supabase, filters), LIST_ORDERS.adminSupportTickets).range(
+        (page - 1) * per_page,
+        page * per_page - 1,
+      ),
       () => selectTickets(supabase, filters, { head: true }),
       LIST_ROUTE_NAME,
     );

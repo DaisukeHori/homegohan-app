@@ -1,7 +1,7 @@
 /**
  * user_profiles の特権列を、本人が自分の行を作る (INSERT) ときにも入れられないことの回帰テスト
  *
- * 特権列ガード guard_user_profiles_privileged は BEFORE UPDATE のトリガーで、INSERT には掛かっていなかった。
+ * 特権列ガード (トリガー trg_guard_user_profiles_privileged (関数 guard_user_profiles_privileged)) は BEFORE UPDATE だけに掛かり、INSERT には掛かっていなかった。
  * INSERT のポリシーは WITH CHECK (auth.uid() = id) だけのため、プロフィールの行をまだ持っていない本人
  * (新規登録して初期設定を保存する前) は、自分の行を作るときに roles などの特権列へ任意の値を入れられた。
  *

@@ -450,7 +450,7 @@ describe('組織のプランの行 (org_*) の廃止では、組織の件数を�
 });
 
 describe('数えてから書くまでの間に入った契約は、書く文の中の DB のトリガーが止め、同じ 409 にする (#1917)', () => {
-  /** 数え上げは 0 件で通り、UPDATE が DB のトリガー guard_plan_deprecate_subscribers の RAISE で失敗する */
+  /** 数え上げは 0 件で通り、UPDATE が DB のトリガー trg_guard_plan_deprecate_subscribers (関数 guard_plan_deprecate_subscribers) の RAISE で失敗する */
   async function patchRaisedByTrigger(details: unknown, plan = existingPlan()) {
     fakeSupabase = createFakeSupabase({
       subscription_plans: [

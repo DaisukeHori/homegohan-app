@@ -223,3 +223,41 @@ describe('GET /api/operator/membership/org/[id]/candidates: service-role のク�
     expect(mocks.createServiceRoleClient).not.toHaveBeenCalled();
   });
 });
+
+describe('GET /api/operator/membership/org/[id]/candidates: 同じ最終ログインの人の順 (#2134 U2)', () => {
+  // id の小さい順に A < B < C < D。行の並び (挿入の順) は、期待する順と逆にしておく
+  const TIE_A = '10eebc99-9c0b-4ef8-bb6d-6bb9bd380a01';
+  const TIE_B = '20eebc99-9c0b-4ef8-bb6d-6bb9bd380a02';
+  const TIE_C = '30eebc99-9c0b-4ef8-bb6d-6bb9bd380a03';
+  const TIE_D = '40eebc99-9c0b-4ef8-bb6d-6bb9bd380a04';
+  const SAME_LOGIN = '2026-10-10T09:00:00Z';
+
+  it('最終ログインが同じ人・まだログインしていない人は、それぞれ id の順 (行の並びに左右されない)', async () => {
+    fake = createFakeServiceRole({
+      tables: {
+        user_profiles: [
+          { id: TIE_D, nickname: 'D', organization_id: ORG_ID, org_role: 'member', last_login_at: null },
+          { id: TIE_C, nickname: 'C', organization_id: ORG_ID, org_role: 'member', last_login_at: null },
+          { id: TIE_B, nickname: 'B', organization_id: ORG_ID, org_role: 'member', last_login_at: SAME_LOGIN },
+          { id: TIE_A, nickname: 'A', organization_id: ORG_ID, org_role: 'admin', last_login_at: SAME_LOGIN },
+        ],
+      },
+      users: [],
+    });
+
+    const res = await call();
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.data.map((candidate: { id: string }) => candidate.id)).toEqual([TIE_A, TIE_B, TIE_C, TIE_D]);
+  });
+
+  it('DB に送る並びは 最終ログインの降順 (空は最後) → id の昇順', async () => {
+    await call();
+
+    expect(fake.orders).toEqual([
+      { table: 'user_profiles', column: 'last_login_at', ascending: false, nullsFirst: false },
+      { table: 'user_profiles', column: 'id', ascending: true, nullsFirst: false },
+    ]);
+  });
+});

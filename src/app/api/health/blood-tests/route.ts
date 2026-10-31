@@ -11,6 +11,7 @@ import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitSkippedField, consumeAiUsage } from '@/lib/plan/entitlements';
 import { clampIntParam } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 // 血液検査結果一覧の取得（+ 経年レビュー）
 export async function GET(request: NextRequest) {
@@ -28,12 +29,11 @@ export async function GET(request: NextRequest) {
   // 範囲外は 1〜200 に丸める。
   const limit = clampIntParam(searchParams.get('limit'), { min: 1, max: 200, default: 10 });
 
-  const { data, error } = await supabase
-    .from('blood_test_results')
-    .select('*')
-    .eq('user_id', user.id)
-    .order('test_date', { ascending: false })
-    .limit(limit);
+  // 検査日の新しい順。同じ日の検査は id の順で、上限の境目でどれが入るかも決まる (#2139 T1)
+  const { data, error } = await orderListBy(
+    supabase.from('blood_test_results').select('*').eq('user_id', user.id),
+    LIST_ORDERS.healthBloodTests,
+  ).limit(limit);
 
   if (error) {
     return internalError('GET /api/health/blood-tests', error, { userId: user.id, table: 'blood_test_results' });
@@ -199,11 +199,11 @@ BUN: ${result.bun ?? '-'} mg/dL
 
 // 経年レビューを更新
 async function updateBloodTestLongitudinalReview(supabase: any, userId: string): Promise<any> {
-  const { data: results, error } = await supabase
-    .from('blood_test_results')
-    .select('*')
-    .eq('user_id', userId)
-    .order('test_date', { ascending: true });
+  // 検査日の古い順。同じ日の検査は id の順 (#2139 T1)
+  const { data: results, error } = await orderListBy(
+    supabase.from('blood_test_results').select('*').eq('user_id', userId),
+    LIST_ORDERS.healthBloodTestsChronological,
+  );
 
   if (error || !results || results.length === 0) {
     return null;

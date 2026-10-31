@@ -19,6 +19,7 @@ import { jstDayOfTimestamp } from '@/lib/jst-day-ranges';
 import { normalizeProfileName } from '@/lib/profile-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { normalizeUuid } from '@/lib/http-params';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 // 招待一覧取得
 export async function GET(_request: Request) {
@@ -52,11 +53,11 @@ export async function GET(_request: Request) {
     return NextResponse.json({ data: { invites: [] } });
   }
 
-  const { data: invites, error } = await supabase
-    .from('family_invites')
-    .select('*')
-    .eq('family_id', profile.family_id)
-    .order('created_at', { ascending: false });
+  // 作った日時の新しい順。同じ日時は id の順 (#2139 T1)
+  const { data: invites, error } = await orderListBy(
+    supabase.from('family_invites').select('*').eq('family_id', profile.family_id),
+    LIST_ORDERS.familyInvites,
+  );
 
   if (error) {
     console.error('[api/family/invites] GET error:', error);

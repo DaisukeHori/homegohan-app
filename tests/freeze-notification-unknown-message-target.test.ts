@@ -16,6 +16,7 @@ import {
   FREEZE_NOTIFICATION_UNKNOWN_MESSAGE,
   describeFreezeNotificationOutcome,
 } from '@/lib/admin/freeze-notification-status';
+import { SUPER_ADMIN_SCREEN_LABEL } from '@/lib/admin/operator-role-labels';
 
 const ROOT = path.resolve(__dirname, '..');
 
@@ -38,7 +39,7 @@ describe('凍結の通知の結果が読めないときの文は、結果を確�
     expect(FREEZE_NOTIFICATION_AUDIT_LOGS_PATH).toBe('/super-admin/audit-logs');
     expect(FREEZE_NOTIFICATION_AUDIT_ACTION_TYPE).toBe('admin.user.ban');
     expect(FREEZE_NOTIFICATION_UNKNOWN_MESSAGE).toBe(
-      '通知メールの結果を確認できませんでした (super_admin の監査ログ閲覧 /super-admin/audit-logs で admin.user.ban の行を展開し、details の notification を確認してください)',
+      '通知メールの結果を確認できませんでした (運営最上位の画面の監査ログ閲覧 /super-admin/audit-logs で admin.user.ban の行を展開し、details の notification を確認してください)',
     );
   });
 
@@ -53,7 +54,9 @@ describe('凍結の通知の結果が読めないときの文は、結果を確�
     expect(fs.existsSync(path.join(ROOT, pageFile))).toBe(true);
     expect(withoutComments(read(pageFile))).toContain('JSON.stringify(log.details, null, 2)');
     expect(withoutComments(read(SUPER_ADMIN_LAYOUT))).toMatch(/requireRoleForPage\(\['super_admin'\]/);
-    expect(FREEZE_NOTIFICATION_UNKNOWN_MESSAGE).toContain('super_admin');
+    // 開ける人は、運営の画面の呼び名 (運営最上位の画面。src/lib/admin/operator-role-labels.ts) で書く (#2134 U1)
+    expect(FREEZE_NOTIFICATION_UNKNOWN_MESSAGE).toContain(SUPER_ADMIN_SCREEN_LABEL);
+    expect(FREEZE_NOTIFICATION_UNKNOWN_MESSAGE).not.toMatch(/super_admin|スーパー管理者/);
   });
 
   it('文が名指す監査の種別は、凍結の route が通知の結果 (notification) を残す種別と同じ', () => {

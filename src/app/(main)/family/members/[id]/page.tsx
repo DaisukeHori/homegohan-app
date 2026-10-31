@@ -13,6 +13,7 @@ import {
   todayLocal,
 } from '@homegohan/shared';
 import { createClient } from '@/lib/supabase/client';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 import { readSignedInUser } from '@/lib/auth/signed-in-user';
 import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
 import { membershipErrorMessageOfBody } from '@/lib/errors/membership-errors';
@@ -184,11 +185,13 @@ export default function FamilyMemberDetailPage() {
 
       // #1173: 子供なら保護者の同意の記録 (最新の 1 行) を読む。読めなければカードを出さない
       if (memberData.role === 'child') {
-        const { data: consentData } = await supabase
-          .from('parental_consents')
-          .select('id, signed_name, consent_version, signed_at, revoked_at, revoked_reason')
-          .eq('family_member_id', memberId)
-          .order('signed_at', { ascending: false })
+        const { data: consentData } = await orderListBy(
+          supabase
+            .from('parental_consents')
+            .select('id, signed_name, consent_version, signed_at, revoked_at, revoked_reason')
+            .eq('family_member_id', memberId),
+          LIST_ORDERS.familyMemberParentalConsent,
+        )
           .limit(1)
           .maybeSingle();
         setConsent((consentData as ParentalConsentRecord | null) ?? null);

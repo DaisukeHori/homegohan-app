@@ -20,6 +20,7 @@ import { jstDayStartTimestamp } from '@/lib/date-utils';
 import { jstOptionalDayRangeTimestamps } from '@/lib/jst-day-ranges';
 import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { FREE_PLAN_KEY } from '@/lib/billing/core';
+import { LIST_ORDERS, orderListBy, type ListOrder } from '@/lib/api/list-order';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,12 +28,13 @@ export const dynamic = 'force-dynamic';
 const LOG_SOURCE = 'GET /api/admin/users';
 
 /**
- * sort の鍵ごとの並べる user_profiles の列 (#2120 W3-2)。鍵 (USER_LIST_SORT_KEYS) を足すと列の漏れが型の誤りになる。
- * sort が無ければ登録日の順 (USER_LIST_DEFAULT_SORT)
+ * sort の鍵と向きごとの user_profiles の並び (#2120 W3-2)。鍵 (USER_LIST_SORT_KEYS) を足すと並びの漏れが型の誤りになる。
+ * sort が無ければ登録日の順 (USER_LIST_DEFAULT_SORT)。同じ値の行は id の順で、ページの境目でも順が変わらない (#2139 T1)。
+ * NULL の位置はいままでどおり (昇順は最後・降順は最初。まだログインしていない人の last_login_at は空)
  */
-const USER_LIST_SORT_COLUMNS: Readonly<Record<UserListSortKey, 'created_at' | 'last_login_at'>> = {
-  registered_at: 'created_at',
-  last_login: 'last_login_at',
+const USER_LIST_ORDERS: Readonly<Record<UserListSortKey, Readonly<Record<'asc' | 'desc', ListOrder>>>> = {
+  registered_at: { asc: LIST_ORDERS.adminUsersByRegisteredAtAsc, desc: LIST_ORDERS.adminUsersByRegisteredAtDesc },
+  last_login: { asc: LIST_ORDERS.adminUsersByLastLoginAsc, desc: LIST_ORDERS.adminUsersByLastLoginDesc },
 };
 const USER_LIST_DEFAULT_SORT: UserListSortKey = 'registered_at';
 
@@ -177,7 +179,7 @@ export async function GET(request: Request) {
   };
 
   // ソート
-  const sortColumn = USER_LIST_SORT_COLUMNS[params.sort ?? USER_LIST_DEFAULT_SORT];
+  const listOrder = USER_LIST_ORDERS[params.sort ?? USER_LIST_DEFAULT_SORT][params.order];
 
   // ページネーション
   const from = (params.page - 1) * params.per_page;
@@ -185,9 +187,7 @@ export async function GET(request: Request) {
 
   // 件数より後ろのページ (416 / PGRST103) は、失敗にせず空のページと本当の件数にする (src/lib/api/list-range.ts)
   const { data, error, count } = await resolveBeyondLastPage(
-    await selectUsers()
-      .order(sortColumn, { ascending: params.order === 'asc' })
-      .range(from, to),
+    await orderListBy(selectUsers(), listOrder).range(from, to),
     () => selectUsers({ head: true }),
     LOG_SOURCE,
   );

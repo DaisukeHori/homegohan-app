@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /** 400: 食材の名前が空 */
 const PANTRY_NAME_REQUIRED_MESSAGE = '食材の名前を入力してください';
@@ -12,11 +13,11 @@ export async function GET(request: Request) {
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
 
-  const { data, error } = await supabase
-    .from('pantry_items')
-    .select('*')
-    .eq('user_id', user.id)
-    .order('expiration_date', { ascending: true });
+  // 期限の近い順・期限の無い品は最後。同じ期限は id の順 (#2139 T1)
+  const { data, error } = await orderListBy(
+    supabase.from('pantry_items').select('*').eq('user_id', user.id),
+    LIST_ORDERS.pantryItemsByExpiration,
+  );
 
   if (error) return internalError('GET /api/pantry', error, { userId: user.id });
 

@@ -2,7 +2,7 @@
  * #1917 の続き: 運営のプランの操作で、ロックの外で読んだ値に頼っていた 2 か所の直し (実 DB)
  * (supabase/migrations/20261024130000_plan_deprecate_lock_and_price_change_reservation.sql)
  *
- * (1) 廃止の安全弁のトリガー guard_plan_deprecate_subscribers
+ * (1) 廃止の安全弁のトリガー trg_guard_plan_deprecate_subscribers (関数 guard_plan_deprecate_subscribers)
  *   DL-1 契約の作成 (personal_subscriptions の INSERT) をコミット前のまま開いておくと、廃止の UPDATE はその後ろで待ち、
  *        コミットの後に数え直して OP_PLAN_HAS_SUBSCRIBERS (P0001。DETAIL は内訳の JSON) で止める。プランは公開中のまま
  *        (route は数えてから書くまでの間のこの契約を見落としていた)
@@ -26,7 +26,7 @@
  *   PR-3 begin をコミット前のまま開いておくと、もう 1 本の begin はプランの行のロックで待ち、コミットの後に in_progress を返す
  *   PR-4 release は自分の token の予約だけを消す。無いプランは not_found、draft は draft、期限が 0 以下は 22023
  *   PR-5 関数 3 本は service_role だけが EXECUTE でき、予約の表は利用者が読み書きできない (RLS 有効・権限なし)
- * (3) 価格の変更が進行中のあいだ、プランの Stripe の商品の ID を変えさせないトリガー guard_plan_stripe_product_id_price_change
+ * (3) 価格の変更が進行中のあいだ、プランの Stripe の商品の ID を変えさせないトリガー trg_guard_plan_stripe_product_id_price_change (関数 guard_plan_stripe_product_id_price_change)
  *     (#2112 Z1-1。supabase/migrations/20261030160000_plan_stripe_product_id_price_change_guard.sql)
  *   PG-1 begin をコミット前のまま開いておくと、商品の ID の UPDATE はプランの行のロックで待ち、コミットの後に予約を読んで
  *        OP_PLAN_PRICE_CHANGE_IN_PROGRESS (P0001) で止まる。商品の ID は変わらない (Price ID がまだ NULL でも)
@@ -291,7 +291,7 @@ afterAll(async () => {
   await Promise.all([cleanupTestUser(superAdmin.userId), cleanupTestUser(subscriber.userId)]);
 }, SETUP_TIMEOUT_MS);
 
-describe('(1) 廃止の安全弁のトリガー guard_plan_deprecate_subscribers', () => {
+describe('(1) 廃止の安全弁のトリガー trg_guard_plan_deprecate_subscribers (関数 guard_plan_deprecate_subscribers)', () => {
   it(
     'DL-1: 契約の作成がコミット前の間、廃止の UPDATE はその後ろで待ち、コミットの後に数え直して止める',
     async () => {
@@ -768,7 +768,7 @@ describe('(2) 価格の変更の予約', () => {
   });
 });
 
-describe('(3) 価格の変更が進行中のあいだ、商品の ID を変えさせないトリガー guard_plan_stripe_product_id_price_change (#2112 Z1-1)', () => {
+describe('(3) 価格の変更が進行中のあいだ、商品の ID を変えさせないトリガー trg_guard_plan_stripe_product_id_price_change (関数 guard_plan_stripe_product_id_price_change) (#2112 Z1-1)', () => {
   const PRODUCT_A = `prod_it_2112_a_${TS}`;
   const PRODUCT_B = `prod_it_2112_b_${TS}`;
   /** 期限 (PRICE_CHANGE_RESERVATION_STALE_SECONDS) を過ぎた予約にするために reserved_at を戻す時間 (期限の 2 倍) */

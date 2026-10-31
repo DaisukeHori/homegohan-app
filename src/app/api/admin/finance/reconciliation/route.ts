@@ -13,6 +13,7 @@ import { AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED, authFailureNested 
 import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { ReconciliationQuerySchema } from '@/lib/admin/finance-schemas';
 import { financeInvalidQueryResponse } from '@/lib/admin/finance-query-errors';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 export const dynamic = 'force-dynamic';
 
@@ -57,9 +58,8 @@ export async function GET(request: NextRequest) {
 
     const offset = (page - 1) * perPage;
     const { data: logs, count, error: logsError } = await resolveBeyondLastPage(
-      await selectDiscrepancyLogs()
-        .order('created_at', { ascending: false })
-        .range(offset, offset + perPage - 1),
+      // 記録した日時の新しい順。同じ日時は id の順で、ページの境目でも順が変わらない (#2139 T1)
+      await orderListBy(selectDiscrepancyLogs(), LIST_ORDERS.financeReconciliation).range(offset, offset + perPage - 1),
       () => selectDiscrepancyLogs({ head: true }),
       LIST_ROUTE_NAME,
     );

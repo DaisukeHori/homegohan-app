@@ -10,6 +10,7 @@ import {
   orgInviteFailureResponse,
 } from '@/lib/membership/org-invite';
 import { toOrgInviteListItem } from '@/lib/membership/org-invite-list';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 import {
   CreateOrgInviteRequestBodySchema,
   type OrgInviteListResponse,
@@ -41,9 +42,11 @@ export async function GET(request: Request) {
     const { profile } = await requireOrgAdmin();
     const supabase = await createClient();
 
-    const { data: invites, error } = await supabase
-      .from('organization_invites')
-      .select(`
+    // 作った日時の新しい順。同じ日時は id の順 (#2134 U2。LIST_ORDERS.orgInvites)
+    const { data: invites, error } = await orderListBy(
+      supabase
+        .from('organization_invites')
+        .select(`
         id,
         email,
         invited_role,
@@ -55,8 +58,9 @@ export async function GET(request: Request) {
         created_at,
         departments(name)
       `)
-      .eq('organization_id', profile.organization_id)
-      .order('created_at', { ascending: false });
+        .eq('organization_id', profile.organization_id),
+      LIST_ORDERS.orgInvites,
+    );
 
     if (error) throw error;
 

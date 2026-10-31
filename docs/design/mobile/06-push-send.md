@@ -172,7 +172,7 @@ payload (トリガーが入れる・`render.ts` の Zod `WeeklyMenuResultPayload
 
 ```mermaid
 flowchart LR
-  G[書き手 8 経路 §3.2.1<br/>weekly_menu_requests.status → completed / failed] -->|トリガー enqueue_weekly_menu_result_push: 2 日以上・中止 / 止まりでない行だけ| E[enqueue_push_notification<br/>端末の行ごとに 1 行 INSERT]
+  G[書き手 8 経路 §3.2.1<br/>weekly_menu_requests.status → completed / failed] -->|トリガー weekly_menu_requests_enqueue_push (関数 enqueue_weekly_menu_result_push): 2 日以上・中止 / 止まりでない行だけ| E[enqueue_push_notification<br/>端末の行ごとに 1 行 INSERT]
   E --> T[(push_outbox)]
   W[GET /api/cron/push-outbox<br/>Vercel Cron 毎分] -->|claim_push_outbox| T
   W -->|user_profiles / notification_preferences を読む<br/>凍結・同意・設定・夜間| P[(user_profiles / notification_preferences)]
@@ -189,7 +189,7 @@ flowchart LR
 | 部品 | 場所 | 責務 |
 |---|---|---|
 | 送信待ちの表 | `push_outbox` (migration §5.1) | 1 端末 × 1 通知 = 1 行。状態 queued / sent / dead。種類・payload・token・試行回数・次の試行時刻・リース・最後の失敗・ticket の ID・receipt の結果 |
-| 登録 (enqueue) | RPC `enqueue_push_notification` (§5.2 (1)) + トリガー `enqueue_weekly_menu_result_push` (§5.3) | トリガーが §3.2.1 の条件で積むかを決め、RPC が利用者の端末の行ごとに 1 行入れる。端末が無ければ 0 行。`dedupe_key` で二重登録を防ぐ。文面は入れない (worker が種類と payload から作る) |
+| 登録 (enqueue) | RPC `enqueue_push_notification` (§5.2 (1)) + トリガー `weekly_menu_requests_enqueue_push` (関数 `enqueue_weekly_menu_result_push`) (§5.3) | トリガーが §3.2.1 の条件で積むかを決め、RPC が利用者の端末の行ごとに 1 行入れる。端末が無ければ 0 行。`dedupe_key` で二重登録を防ぐ。文面は入れない (worker が種類と payload から作る) |
 | 種類の一覧 | `packages/shared/src/push-notification-kinds.ts` (§6.2) | kind の値・行き先・夜間の方針・ttl・priority。サーバーとアプリで同じ値 |
 | 文面 | `src/lib/push/render.ts` (§6.2) | kind と payload から title / body / data を作る (payload は Zod で検証) |
 | 送信 (worker) | `src/lib/push/outbox.ts` (純粋な処理。§6.3) + `src/lib/push/outbox-store.ts` (DB。§6.5) + `src/lib/push/expo-transport.ts` (Expo。§6.4) + `src/app/api/cron/push-outbox/route.ts` (glue。§6.6) | 取る → 送る条件 (token の形を含む) → 夜間 → 文面 → Expo (100 件ずつ。要求ごと拒まれた塊は 1 件ずつ送り直す) → complete / fail / defer → receipt の確認 → 掃除。1 回の実行は 60 秒に収める |
@@ -755,7 +755,7 @@ export function isPushNotificationKind(value: unknown): value is PushNotificatio
 import { z } from 'zod';
 import type { RenderedPushMessage } from './outbox';
 
-/** 献立の結果 (weekly_menu_completed / weekly_menu_failed) の payload。トリガー enqueue_weekly_menu_result_push が入れる */
+/** 献立の結果 (weekly_menu_completed / weekly_menu_failed) の payload。トリガー weekly_menu_requests_enqueue_push (関数 enqueue_weekly_menu_result_push) が入れる */
 export const WeeklyMenuResultPayloadSchema = z.object({
   request_id: z.uuid(),
   start_date: z.iso.date(),
@@ -1416,7 +1416,7 @@ import: `randomUUID` (`crypto`)・`NextResponse`・`requireCronAuth` (`@/lib/cro
 
 | 状態 | 操作 | 遷移先 | ガード | 副作用 |
 |---|---|---|---|---|
-| (無) | トリガー `enqueue_weekly_menu_result_push` (§7.1 の 2 つ目の表の「積まない」行) | (無) | 中止・止まりの印・`target_slots` が 2 日未満 | 何もしない (`weekly_menu_requests` の更新はそのまま) |
+| (無) | トリガー `weekly_menu_requests_enqueue_push` (関数 `enqueue_weekly_menu_result_push`) (§7.1 の 2 つ目の表の「積まない」行) | (無) | 中止・止まりの印・`target_slots` が 2 日未満 | 何もしない (`weekly_menu_requests` の更新はそのまま) |
 | (無) | `enqueue_push_notification` (トリガーの「積む」行から) | queued | 利用者の端末の行があること。token の長さが 1..256 (外れる端末の行は飛ばす)。`dedupe_key` が重ならないこと | 端末の行ごとに 1 行 |
 | queued | `claim_push_outbox` | queued (リース) | `next_attempt_at <= now`・リース無し / 切れ | `lease_expires_at` / `worker_id` |
 | queued (リース) | `complete_push_outbox` | sent | 同じ worker | `sent_at`・`receipt_id`・attempts + 1 |
