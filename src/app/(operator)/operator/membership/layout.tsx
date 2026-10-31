@@ -62,7 +62,8 @@ export default async function OperatorMembershipLayout({
             </div>
             <div>
               <p className="text-sm font-bold text-white">緊急介入</p>
-              <p className="text-xs text-slate-400">Membership Admin</p>
+              {/* 副題は運営最上位の画面 (src/app/super-admin/layout.tsx) の同じ位置と同じ呼び名にそろえる (#2139 T2) */}
+              <p className="text-xs text-slate-400">ほめゴハン 運営</p>
             </div>
           </div>
         </div>
