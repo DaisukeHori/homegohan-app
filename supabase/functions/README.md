@@ -162,7 +162,7 @@ pg_cron やサーバーの内部から、利用者の JWT でない Bearer（秘
 
 #### v4 を削除できない理由
 
-1. `POST /api/ai/nutrition-analysis` が、フラグに関係なく v4 を直接呼びます（Web は `src/hooks/useHomeData.ts`、モバイルは `apps/mobile/src/hooks/useHomeData.ts` の `executeNutritionSuggestion` から呼ばれます）。
+1. `POST /api/ai/nutrition-analysis` が、フラグに関係なく v4 を直接呼びます（Web のホームの `src/hooks/useHomeData.ts` の `executeNutritionSuggestion` から呼ばれます。アプリのホームは Web の画面の WebView（`apps/mobile/app/(tabs)/home.tsx`）なので、同じ経路です）。
 2. v5 と `_shared/save-meal.ts` が、`generate-menu-v4/` にある共通部品を import しています。`index.ts` 以外は消せません。
    - `step-utils.ts`（v5 と `_shared/save-meal.ts` が使用）
    - `reference-menu-utils.ts`（v5 が使用）

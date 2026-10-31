@@ -301,7 +301,8 @@ describe('モーダルの上に開く部品は、「同意が必要です」の�
     );
     const prompting = promptingNames(components);
     // AiSkippedNotice は案内を通さずに同意画面へ直接移る (router.push(AI_CONSENT_SCREEN_PATH))
-    for (const name of ['AIAdvisorSheet', 'useHomeData', 'AiSkippedNotice']) {
+    // (ホームのデータの hook useHomeData は、アプリから使われていなかったので消した。#2157)
+    for (const name of ['AIAdvisorSheet', 'AiSkippedNotice']) {
       expect(prompting.has(name), name).toBe(true);
     }
   });

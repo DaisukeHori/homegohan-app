@@ -57,7 +57,7 @@ const AI_ENTRY_FILES = [
   // 通常の操作で届かない画面として消した。#1598。それらの機能は WebView の Web の画面が受け持つ)
   'app/health/blood-tests.tsx',
   'src/components/ai/AIAdvisorSheet.tsx',
-  'src/hooks/useHomeData.ts',
+  // (ホームのデータの hook src/hooks/useHomeData.ts は、アプリから使われていなかったので消した。#2157。ホームは Web の画面の WebView)
   'src/hooks/useV4MenuGeneration.ts',
 ];
 
