@@ -70,7 +70,7 @@ export default function NpsPage() {
     <div className="p-8">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-800">NPS / CSAT</h1>
-        <p className="text-sm text-slate-500 mt-1">Net Promoter Score & Customer Satisfaction</p>
+        <p className="text-sm text-slate-500 mt-1">推奨度 (NPS) と満足度 (CSAT)</p>
       </div>
 
       {/* フィルタ */}
