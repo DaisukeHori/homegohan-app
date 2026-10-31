@@ -912,7 +912,7 @@ export type RankingSection = z.infer<typeof rankingSectionSchema>;
 
 ### 8.1 `PUT /api/org/challenges` (管理者)
 
-`updates.status` があるとき、`isOrgChallengeStatus` の確認 (`src/app/api/org/challenges/route.ts:244`) の後、現在の行 (`status`, `challenge_type`) を読み (既存の `updates.status === 'active'` の読み取り `:249` をこの 1 回に統合)、`isOrgChallengeStatusTransitionAllowed(current.status, updates.status)` が false なら `409 { error: 'このチャレンジの状態は変えられません', code: 'CHALLENGE_STATUS_LOCKED' }` を返して何も書かない。行が無い (他組織・存在しない) ときは既存どおり更新 0 行で 200。`CHALLENGE_TYPE_DISABLED` (400) の確認は遷移の確認の後。`.update(updateData)` (`:275`) の `error` を `mapChallengeLockError` に通し、該当すれば同じ 409 (読んでから書くまでに状態が変わった場合)。写しは `CHALLENGE_PERIOD_LOCKED` も 409 にするが、PUT の `updateData` は title / description / target_value / target_unit / reward_description / status だけで、ガードが止める列 (start_date / end_date / challenge_type / department_id / organization_id) を書かないので、PUT からは実際には返らない (§11)。本文の形 (平たい `{ error, code }`) は既存の `INVALID_STATUS` と同じ。
+`updates.status` があるとき、`src/app/api/org/challenges/route.ts` の `PUT` の `isOrgChallengeStatus(updates.status)` の確認の後、`PUT` は現在の行 (`status`, `challenge_type`) を 1 回読み、遷移の確認と `CHALLENGE_TYPE_DISABLED` の確認に使う。`isOrgChallengeStatusTransitionAllowed(current.status, updates.status)` が false なら `409 { error: 'このチャレンジの状態は変えられません', code: 'CHALLENGE_STATUS_LOCKED' }` を返して何も書かない。行が無い (他組織・存在しない) ときは既存どおり更新 0 行で 200。`CHALLENGE_TYPE_DISABLED` (400) の確認は遷移の確認の後。`PUT` の `.update(updateData)` の `error` を `mapChallengeLockError` に通し、該当すれば同じ 409 (読んでから書くまでに状態が変わった場合)。写しは `CHALLENGE_PERIOD_LOCKED` も 409 にするが、PUT の `updateData` は title / description / target_value / target_unit / reward_description / status だけで、ガードが止める列 (start_date / end_date / challenge_type / department_id / organization_id) を書かないので、PUT からは実際には返らない (§11)。本文の形 (平たい `{ error, code }`) は既存の `INVALID_STATUS` と同じ。
 
 ```ts
 // tsc:skip
@@ -1083,7 +1083,7 @@ if (!mine) {
 | `23502` (not_null_violation) | PostgREST の 4xx | `organization_challenges.status` の NOT NULL | status を NULL にする INSERT (UPDATE はガードが先に断る) | PostgreSQL の既定の文 |
 | `CHALLENGE_PERIOD_LOCKED` [NEW] | PostgREST の 4xx (直接の UPDATE) / 409 (API。`mapChallengeLockError` の写し。§8.1 の PUT は止める列を書かないので、実際には返らない) | DB のトリガー `trg_org_challenge_guard_update` (関数 `org_challenge_guard_update`)・PUT /api/org/challenges (DB の RAISE の写しだけ。API で先に確かめる経路は無い) | draft 以外での start_date / end_date / challenge_type / department_id、常時の organization_id の変更 | PostgREST: RAISE EXCEPTION (ERRCODE P0001) の文。API: `{ error: 'このチャレンジの状態は変えられません', code: 'CHALLENGE_PERIOD_LOCKED' }` (§8.1 の写しと同じ文。code だけ違う) |
 | `INVALID_STATUS` | 400 | 既存 | DB が受け付けない status | 変えない |
-| `CHALLENGE_TYPE_DISABLED` | 400 (POST / PUT `/api/org/challenges`。§8.1 の PUT はこちら) / 409 (POST `/api/org/challenges/[id]/join`) | 既存 (`src/app/api/org/challenges/route.ts:152`・`:259`、`src/app/api/org/challenges/[id]/join/route.ts:54`) | 変えない | — |
+| `CHALLENGE_TYPE_DISABLED` | 400 (POST / PUT `/api/org/challenges`。§8.1 の PUT はこちら) / 409 (POST `/api/org/challenges/[id]/join`) | 既存 (`src/app/api/org/challenges/route.ts` の `POST` と `PUT` の `CHALLENGE_TYPE_DISABLED` の分岐、`src/app/api/org/challenges/[id]/join/route.ts` の `challengeError('CHALLENGE_TYPE_DISABLED', …)`) | 変えない | — |
 | `CHALLENGE_NOT_ACTIVE` / `CHALLENGE_ENDED` / `CHALLENGE_NOT_FOUND` / `PERM_DEPARTMENT_MISMATCH` | 既存 | 既存 | 変えない | — |
 
 `cross/04-api-conventions.md` の一覧表には既存の `CHALLENGE_*` も載っていない。§17 で追記候補にする (本書では編集しない)。

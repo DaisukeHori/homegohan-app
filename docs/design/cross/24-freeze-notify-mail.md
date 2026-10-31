@@ -481,6 +481,8 @@ https://homegohan-app.vercel.app
  * 形は #1183 のサポートの返信メールの結果 (src/lib/admin/support-reply-email-status.ts) と同じで、not_requested (チェックを外した) を足したもの。
  */
 
+import { SUPER_ADMIN_SCREEN_LABEL } from '@/lib/admin/operator-role-labels';
+
 /**
  * sent は送信待ち (email_outbox) に受け付けた (届いたかどうかは含まない。送るのは worker: #1193)。
  * skipped はメール送信の設定が無く登録していない。failed は登録の時点で分かる失敗。not_requested は notify_user が false で送らなかった

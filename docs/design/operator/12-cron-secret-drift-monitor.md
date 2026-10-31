@@ -1219,6 +1219,7 @@ async function checkCronSecretDrift(
  */
 import type { EmailEnvelope } from '@/lib/emails/envelope';
 import { getEmailFrom } from '@/lib/site-config';
+import { SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
 
 /** 種類: drift = ずれ (pg_cron からの呼び出しが止まる) / rotation = 入れ替えの途中・残り (いまは通る) */
 export type CronSecretAlertKind = 'drift' | 'rotation';
