@@ -21,6 +21,11 @@
  *   - NPS の画面 (/admin/finance/nps) の副題が「Net Promoter Score & Customer Satisfaction」→「推奨度 (NPS) と満足度 (CSAT)」
  *     (見出しの略語「NPS / CSAT」はそのまま)
  *   この 3 か所が英字だけの文に戻らないことを、同じ英字だけの判定で見張る
+ *
+ * #2150 Q3b-1: NPS の画面の節の見出し (h2) 2 つが英字だけの「NPS (Net Promoter Score)」「CSAT (Customer Satisfaction)」だった。
+ *   上の見張りは画面の見出し (h1) と副題だけを見ており、英字だけの判定も括弧を含む文を英字だけとみなさなかったので拾わなかった。
+ *   直したあとは「推奨度 (NPS)」「満足度 (CSAT)」(h1 の副題「推奨度 (NPS) と満足度 (CSAT)」に合わせる)。
+ *   売上と NPS の画面の見張りを画面の h1〜h6 すべてに広げ、英字だけの判定も括弧つきの英字の文を拾うように直す
  */
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createRoot } from 'react-dom/client';
@@ -90,8 +95,12 @@ const OPERATOR_SIDEBAR_SUBTITLE = 'ほめゴハン 運営';
  */
 const ENV_BADGE_LABELS: ReadonlySet<string> = new Set(['PROD', 'STAGING', 'PREVIEW', 'LOCAL / STAGING']);
 
-/** 英字だけの文 (2 文字以上の英字で始まり英字で終わり、間は英字・空白・記号だけ。日本語を 1 文字も含まない) */
-const ENGLISH_ONLY_TEXT = /^[A-Za-z][A-Za-z\s./&-]*[A-Za-z]$/;
+/**
+ * 英字だけの文 (2 文字以上で、英字で始まり英字か閉じ括弧で終わり、間は英字・空白・記号・括弧だけ。日本語を 1 文字も含まない)。
+ * 括弧つきの英字の文 (以前の NPS の画面の h2「NPS (Net Promoter Score)」) も英字だけと判定する。
+ * 以前は括弧を許しておらず、この形を見逃していた (#2150 Q3b-1)
+ */
+const ENGLISH_ONLY_TEXT = /^[A-Za-z][A-Za-z\s./&()-]*[A-Za-z)]$/;
 
 function isEnglishOnlyText(text: string): boolean {
   return ENGLISH_ONLY_TEXT.test(text.trim());
@@ -195,6 +204,9 @@ describe('同じ型: 運営の画面のレイアウトのサイドバーの見�
     expect(isEnglishOnlyText('緊急介入')).toBe(false);
     expect(isEnglishOnlyText('inactive owner 検索')).toBe(false);
     expect(isEnglishOnlyText('M')).toBe(false);
+    // 括弧つきの英字の文も英字だけ。括弧の中だけが英字で、外に日本語がある文は数えない (#2150 Q3b-1)
+    expect(isEnglishOnlyText('NPS (Net Promoter Score)')).toBe(true);
+    expect(isEnglishOnlyText('推奨度 (NPS)')).toBe(false);
   });
 
   it.each(OPERATOR_LAYOUTS)('$name のサイドバーの上の見出し・副題に英字だけの文が無い', async ({ mount }) => {
@@ -285,6 +297,16 @@ async function mountClientPage(Page: () => ReactElement, routes: Record<string, 
   document.body.innerHTML = html;
 }
 
+/**
+ * 画面の見出しの要素 (h1〜h6) すべての文 (出てくる順)。
+ * 画面の上の見出し (h1) だけでなく、節の見出し (h2 など) も英字だけの文を見張る (#2150 Q3b-1)
+ */
+function pageHeadingTexts(): string[] {
+  return Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6'))
+    .map((el) => el.textContent?.trim() ?? '')
+    .filter((text) => text !== '');
+}
+
 /** 画面の上の見出し (h1) と、同じ区画の副題 (p) の文 */
 function pageHeaderTexts(): { heading: string; subtitle: string } {
   const heading = document.querySelector('h1');
@@ -315,7 +337,7 @@ const FINANCE_ROUTES = {
   '/api/admin/finance/exports': { data: { available_types: ['revenue'] } },
 };
 
-/** NPS の画面の API の応答 (回答 0 件) */
+/** NPS の画面の API の応答 (最近のコメントの節の見出しも出すよう、コメントを 1 件入れる) */
 const NPS_ROUTES = {
   '/api/admin/finance/nps': {
     data: {
@@ -327,7 +349,7 @@ const NPS_ROUTES = {
         nps_score: 0,
         avg_score: 0,
         response_rate: 0,
-        recent_comments: [],
+        recent_comments: [{ id: 'nps-comment-1', score: 0, comment: 'テストのコメント', plan_key: null, responded_at: null }],
       },
       csat: { total_responses: 0, avg_score: 0, score_distribution: {}, recent_feedbacks: [] },
     },
@@ -341,6 +363,10 @@ const FINANCE_PAGES: ReadonlyArray<{
   heading: string;
   subtitle: string;
   englishSubtitle: string;
+  /** 画面の h1〜h6 の文 (出てくる順) */
+  headings: readonly string[];
+  /** 以前の英字だけの節の見出し (#2150 Q3b-1) */
+  englishHeadings: readonly string[];
 }> = [
   {
     name: 'src/app/admin/finance/page.tsx',
@@ -349,6 +375,8 @@ const FINANCE_PAGES: ReadonlyArray<{
     heading: '売上ダッシュボード',
     subtitle: '売上と課金',
     englishSubtitle: 'Finance',
+    headings: ['売上ダッシュボード', 'ユーザー数'],
+    englishHeadings: [],
   },
   {
     name: 'src/app/admin/finance/nps/page.tsx',
@@ -357,12 +385,18 @@ const FINANCE_PAGES: ReadonlyArray<{
     heading: 'NPS / CSAT',
     subtitle: '推奨度 (NPS) と満足度 (CSAT)',
     englishSubtitle: 'Net Promoter Score & Customer Satisfaction',
+    headings: ['NPS / CSAT', '推奨度 (NPS)', '満足度 (CSAT)', '最近の NPS コメント'],
+    englishHeadings: ['NPS (Net Promoter Score)', 'CSAT (Customer Satisfaction)'],
   },
 ];
 
 describe('売上と NPS の画面の見出し・副題に英字だけの文が無い (#2150 Q3-1)', () => {
   it('判定が機能している: 以前の英字だけの副題を検出する', () => {
     for (const { englishSubtitle } of FINANCE_PAGES) expect(isEnglishOnlyText(englishSubtitle)).toBe(true);
+    // 以前の英字だけの節の見出し (括弧つき) も検出する (#2150 Q3b-1)
+    for (const { englishHeadings } of FINANCE_PAGES) {
+      for (const englishHeading of englishHeadings) expect(isEnglishOnlyText(englishHeading)).toBe(true);
+    }
     // 見出しの略語も英字だけなので、許す略語として明示して外す (判定から漏れているのではない)
     for (const abbreviation of PAGE_HEADING_ABBREVIATIONS) expect(isEnglishOnlyText(abbreviation)).toBe(true);
   });
@@ -374,5 +408,14 @@ describe('売上と NPS の画面の見出し・副題に英字だけの文が�
     expect(isEnglishOnlyText(texts.subtitle)).toBe(false);
     expect([texts.heading, texts.subtitle].filter((text) => isEnglishOnlyText(text) && !PAGE_HEADING_ABBREVIATIONS.has(text))).toEqual([]);
     expect(document.body.textContent).not.toContain(englishSubtitle);
+  });
+
+  it.each(FINANCE_PAGES)('$name: 画面の h1〜h6 すべてに英字だけの文が無い (#2150 Q3b-1)', async ({ Page, routes, headings, englishHeadings }) => {
+    await mountClientPage(Page, routes);
+    const texts = pageHeadingTexts();
+    expect(texts.filter((text) => isEnglishOnlyText(text) && !PAGE_HEADING_ABBREVIATIONS.has(text))).toEqual([]);
+    // 見出しを全部取れている (セレクタの書き誤り・読み込みの待ち不足で空振りしない)
+    expect(texts).toEqual(headings);
+    for (const englishHeading of englishHeadings) expect(document.body.textContent).not.toContain(englishHeading);
   });
 });

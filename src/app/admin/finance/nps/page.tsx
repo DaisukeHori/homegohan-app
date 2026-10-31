@@ -113,7 +113,7 @@ export default function NpsPage() {
         <div className="space-y-6">
           {/* NPS スコア */}
           <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6">
-            <h2 className="text-base font-semibold text-slate-700 mb-5">NPS (Net Promoter Score)</h2>
+            <h2 className="text-base font-semibold text-slate-700 mb-5">推奨度 (NPS)</h2>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
               <div className="text-center p-4 bg-indigo-50 rounded-xl">
                 <div className="text-3xl font-bold text-indigo-700">{data.nps.nps_score}</div>
@@ -157,7 +157,7 @@ export default function NpsPage() {
 
           {/* CSAT */}
           <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6">
-            <h2 className="text-base font-semibold text-slate-700 mb-5">CSAT (Customer Satisfaction)</h2>
+            <h2 className="text-base font-semibold text-slate-700 mb-5">満足度 (CSAT)</h2>
             <div className="grid grid-cols-2 gap-4 mb-6">
               <div className="text-center p-4 bg-indigo-50 rounded-xl">
                 <div className="text-3xl font-bold text-indigo-700">{data.csat.avg_score}</div>
