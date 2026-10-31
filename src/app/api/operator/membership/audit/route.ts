@@ -16,6 +16,7 @@ import { authFailureNested } from '@/lib/api/error-responses';
 import { z } from 'zod';
 import { internalError } from '@/lib/api/errors';
 import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 export const dynamic = 'force-dynamic';
 
@@ -65,8 +66,8 @@ export async function GET(request: NextRequest) {
     };
 
     const { data, error, count } = await resolveBeyondLastPage(
-      await selectMembershipAudit()
-        .order('created_at', { ascending: false })
+      // 記録した日時の新しい順。同じ日時は id の順で、ページの境目でも順が変わらない (#2134 U2。LIST_ORDERS.operatorMembershipAudit)
+      await orderListBy(selectMembershipAudit(), LIST_ORDERS.operatorMembershipAudit)
         .range((page - 1) * limit, page * limit - 1),
       () => selectMembershipAudit({ head: true }),
       LIST_ROUTE_NAME,

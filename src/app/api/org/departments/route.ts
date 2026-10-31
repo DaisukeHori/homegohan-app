@@ -17,6 +17,7 @@ import { requireOrgAdmin } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { isUuid, normalizeUuid, readJsonBody } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 const MAX_NAME_LENGTH = 100;
 const DEPARTMENT_COLUMNS = 'id, name, parent_id, manager_id, display_order, created_at';
@@ -106,12 +107,14 @@ export async function GET() {
   try {
     const { profile } = await requireOrgAdmin();
     const supabase = await createClient();
-    const { data, error } = await supabase
-      .from('departments')
-      .select(DEPARTMENT_COLUMNS)
-      .eq('organization_id', profile.organization_id)
-      .order('display_order', { ascending: true })
-      .order('created_at', { ascending: true });
+    // 表示の順 → 作った日時の古い順 → id の順 (#2134 U2。LIST_ORDERS.orgDepartments)
+    const { data, error } = await orderListBy(
+      supabase
+        .from('departments')
+        .select(DEPARTMENT_COLUMNS)
+        .eq('organization_id', profile.organization_id),
+      LIST_ORDERS.orgDepartments,
+    );
     if (error) {
       return internalError('GET', '部署一覧の取得に失敗しました', error);
     }
