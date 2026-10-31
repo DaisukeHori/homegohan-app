@@ -346,7 +346,7 @@ function seed() {
   world.tables.user_profiles = [
     { id: SUPPORT_ID, nickname: 'サポート担当', roles: ['support'], organization_id: null, frozen_at: null, unban_at: null },
     { id: ADMIN_ID, nickname: '管理者', roles: ['admin'], organization_id: null, frozen_at: null, unban_at: null },
-    { id: SUPER_ADMIN_ID, nickname: 'スーパー管理者', roles: ['super_admin'], organization_id: null, frozen_at: null, unban_at: null },
+    { id: SUPER_ADMIN_ID, nickname: '運営最上位の担当', roles: ['super_admin'], organization_id: null, frozen_at: null, unban_at: null },
     { id: GENERAL_ID, nickname: '一般', roles: ['user'], organization_id: null, frozen_at: null, unban_at: null },
     { id: CUSTOMER_ID, nickname: 'たろう', roles: ['user'], organization_id: null, frozen_at: null, unban_at: null },
   ];

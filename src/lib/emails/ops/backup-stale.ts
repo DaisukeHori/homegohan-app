@@ -9,6 +9,7 @@
 // 利用者向けではない運用メールなので、署名 (emailSignature) は付けない。
 import type { EmailEnvelope } from '../envelope';
 import { getEmailFrom, getSiteUrl } from '@/lib/site-config';
+import { SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
 import { SUPER_ADMIN_BACKUPS_PATH } from '@/lib/backups/core';
 
 export interface BackupStaleEmailVars {
@@ -61,7 +62,7 @@ export function renderBackupStaleEmail(vars: BackupStaleEmailVars): EmailEnvelop
 ▼ 確かめる場所
 1. GitHub の Actions の画面の db-backup のワークフロー
    (止まっていない・失敗していないか。push の無い期間が続くと、GitHub が定期実行を止めることがあります)
-2. 運営のバックアップ・DR の画面 (super_admin のみ)
+2. 運営のバックアップ・DR の画面 (${SUPER_ADMIN_ONLY_NOTE})
    ${backupsPageUrl}
 
 このメールは自動で送られています。
