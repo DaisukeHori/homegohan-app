@@ -14,6 +14,7 @@ import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import {
   FeaturePackageCreateSchema,
   FeaturePackagesQuerySchema,
+  PACKAGE_KEY_DUPLICATE_MESSAGE,
 } from '@/lib/super-admin/feature-packages-schemas';
 import { internalError } from '@/lib/api/errors';
 import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
@@ -121,7 +122,7 @@ export async function POST(request: NextRequest) {
     if (error) {
       if (error.code === '23505') {
         return NextResponse.json(
-          { error: { code: 'OP_PACKAGE_KEY_DUPLICATE', message: 'パッケージのキー (package_key) は既に存在します' } },
+          { error: { code: 'OP_PACKAGE_KEY_DUPLICATE', message: PACKAGE_KEY_DUPLICATE_MESSAGE } },
           { status: 409 }
         );
       }
