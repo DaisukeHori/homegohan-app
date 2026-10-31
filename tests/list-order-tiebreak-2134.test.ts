@@ -26,10 +26,14 @@ const ROOT = process.cwd();
 
 /**
  * .order( を走査する場所 (#2134 で org と operator/membership、#2139 T1 で src/app/api の全体、#2144 S3 で route から呼ぶ
- * helper (src/lib・src/modules)・hook (src/hooks)・画面 (src/app の (main) など・src/components・src/contexts) に広げた)。
- * ブラウザで動くコード (hook・画面) も、PostgREST に送る並びは同じなので走査に入れる。テスト (src/__tests__) の偽物は入れない
+ * helper (src/lib・src/modules)・hook (src/hooks)・画面 (src/app の (main) など・src/components・src/contexts) に広げた。
+ * #2150 でリポジトリ直下の lib を足した: src/lib/catalog-products.ts などは直下の lib の実装を再輸出するだけで、
+ * 問い合わせは直下の lib に書いてある)。
+ * ブラウザで動くコード (hook・画面) も、PostgREST に送る並びは同じなので走査に入れる。テスト (src/__tests__) の偽物は入れない。
+ * Edge Function (supabase/functions) は Deno で動き LIST_ORDERS を import できないので走査に入れない
+ * (generate-menu-v4 / v5 の並びは tests/edge-generate-menu-context-order-2150.test.ts が見る)
  */
-const SCANNED_ROUTE_DIRS = ['src/app', 'src/lib', 'src/hooks', 'src/modules', 'src/components', 'src/contexts'];
+const SCANNED_ROUTE_DIRS = ['src/app', 'src/lib', 'src/hooks', 'src/modules', 'src/components', 'src/contexts', 'lib'];
 
 const ASC_NULLS_LAST = { ascending: true, nullsFirst: false };
 const DESC_NULLS_FIRST = { ascending: false, nullsFirst: true };
@@ -46,6 +50,7 @@ const desc = (column: string): ListOrderKey => ({ column, options: DESC_NULLS_FI
  */
 const REVERSED_OF: Partial<Record<keyof typeof LIST_ORDERS, keyof typeof LIST_ORDERS>> = {
   aiConsultationMessagesNewestFirst: 'aiConsultationMessages',
+  aiConsultationContextRecentMealsNewestFirst: 'aiConsultationContextMealsByDay',
 };
 
 /** 鍵をそっくり逆にしたもの (テストの側で独立に求める) */
@@ -260,6 +265,20 @@ const EXPECTED: Record<keyof typeof LIST_ORDERS, { table: string; keys: ListOrde
   aiConsultationContextShoppingItems: {
     table: 'shopping_list_items',
     keys: [asc('category'), ID_TIEBREAK_KEY],
+    uses: [{ file: 'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts', handler: null }],
+  },
+  // ---- #2150: AI 相談の文脈の献立と食事 (埋め込んだ user_daily_meals の日で親の行を並べる) ----
+  aiConsultationContextMealsByDay: {
+    table: 'planned_meals',
+    keys: [asc('user_daily_meals(day_date)'), ID_TIEBREAK_KEY],
+    uses: [
+      { file: 'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts', handler: null },
+      { file: 'src/app/api/ai/consultation/sessions/route.ts', handler: 'POST' },
+    ],
+  },
+  aiConsultationContextRecentMealsNewestFirst: {
+    table: 'planned_meals',
+    keys: [desc('user_daily_meals(day_date)'), { column: 'id', options: DESC_NULLS_FIRST }],
     uses: [{ file: 'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts', handler: null }],
   },
   pantryItemsByExpiration: {
@@ -517,6 +536,13 @@ const EXPECTED: Record<keyof typeof LIST_ORDERS, { table: string; keys: ListOrde
     table: 'parental_consents',
     keys: [desc('signed_at'), ID_TIEBREAK_KEY],
     uses: [{ file: 'src/app/(main)/family/members/[id]/page.tsx', handler: null }],
+  },
+
+  // ---- #2150: リポジトリ直下の lib ----
+  catalogProductSearch: {
+    table: 'catalog_products',
+    keys: [desc('updated_at'), ID_TIEBREAK_KEY],
+    uses: [{ file: 'lib/catalog-products.ts', handler: null }],
   },
 };
 
@@ -785,7 +811,8 @@ describe('#2134 U2 / #2139 T1 / #2144 S3 一覧の並びの同じ値の順', () 
     const usesByName: Record<string, { uses: ListOrderUse[] }> = EXPECTED;
     const tableVia = usesByName[name].uses.find((use) => use.file === file)?.tableVia;
     if (tableVia === undefined) {
-      expect(body).toContain(`.from('${table}')`);
+      // 引用符は ' と " のどちらでもよい (リポジトリ直下の lib は " で書く)
+      expect([`.from('${table}')`, `.from("${table}")`].some((call) => body.includes(call)), `${file}: .from(<${table}>)`).toBe(true);
     } else {
       expect(body).toContain(`.from(${tableVia.expression})`);
       expect(sourceOf(file)).toContain(tableVia.definition);
