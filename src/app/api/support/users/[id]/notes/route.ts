@@ -7,6 +7,7 @@ import { isUuid, readJsonBody } from '@/lib/http-params';
 import { normalizeProfileName } from '@/lib/profile-name';
 import { NextResponse } from 'next/server';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 // 権限: support / admin / super_admin (共通の requireRole()、#1161)
 
@@ -141,16 +142,19 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     // admin_user_notes.admin_id の外部キーは auth.users 宛で user_profiles とは繋がっていないため、
     // user_profiles!admin_user_notes_admin_id_fkey(nickname) の埋め込みは PostgREST が解決できず、
     // この GET は常に失敗していた。書いた人のニックネームは下で別に引く
-    const { data: notes, error } = await supabaseAdmin
-      .from('admin_user_notes')
-      .select(`
+    // 書いた日時の新しい順。同じ日時は id の順 (#2139 T1)
+    const { data: notes, error } = await orderListBy(
+      supabaseAdmin
+        .from('admin_user_notes')
+        .select(`
         id,
         note,
         created_at,
         admin_id
       `)
-      .eq('user_id', params.id)
-      .order('created_at', { ascending: false });
+        .eq('user_id', params.id),
+      LIST_ORDERS.supportUserNotes,
+    );
 
     if (error) {
       return internalError('GET', new Error(error.message), {

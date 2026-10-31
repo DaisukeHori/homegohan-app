@@ -166,13 +166,37 @@ describe('#2120 W3-2 GET /api/admin/users の sort', () => {
     if (auditedSort !== undefined) query.set('sort', auditedSort);
     const res = await GET(new Request(`http://localhost/api/admin/users?${query.toString()}`));
     expect(res.status).toBe(HTTP_OK);
-    expect(orderCalls(builders[0])).toEqual([{ method: 'order', args: [column, { ascending: true }] }]);
+    // 昇順 (NULL は最後。いままでの昇順の既定と同じ)。同じ値の行は id の順で、ページの境目でも順が変わらない (#2139 T1)
+    expect(orderCalls(builders[0])).toEqual([
+      { method: 'order', args: [column, { ascending: true, nullsFirst: false }] },
+      { method: 'order', args: ['id', { ascending: true, nullsFirst: false }] },
+    ]);
     expect(mockRecordAdminAudit).toHaveBeenCalledTimes(1);
     const details = mockRecordAdminAudit.mock.calls[0][0].details as { filters: Record<string, unknown> };
     if (auditedSort === undefined) {
       expect(details.filters).not.toHaveProperty('sort');
     } else {
       expect(details.filters.sort).toBe(auditedSort);
+    }
+  });
+
+  it.each([
+    ['registered_at', 'created_at'],
+    ['last_login', 'last_login_at'],
+    [undefined, 'created_at'],
+  ])('#2139 T1 sort=%s の降順 (order=desc・order が無いときの既定) は %s の新しい順・NULL は最初で、同じ値の行は id の順', async (sort, column) => {
+    for (const order of ['desc', undefined]) {
+      builders.length = 0;
+      const query = new URLSearchParams();
+      if (order !== undefined) query.set('order', order);
+      if (sort !== undefined) query.set('sort', sort);
+      const res = await GET(new Request(`http://localhost/api/admin/users?${query.toString()}`));
+      expect(res.status).toBe(HTTP_OK);
+      // NULL の位置はいままでの降順の既定 (最初) と同じ。まだログインしていない人 (last_login_at が空) は最初に出る
+      expect(orderCalls(builders[0])).toEqual([
+        { method: 'order', args: [column, { ascending: false, nullsFirst: true }] },
+        { method: 'order', args: ['id', { ascending: true, nullsFirst: false }] },
+      ]);
     }
   });
 });

@@ -6,6 +6,7 @@ import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { HEALTH_CHALLENGE_TEMPLATE_INVALID_MESSAGE } from '@/lib/health-api-messages';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { sanitizeHealthChallengeCreate } from '@/lib/health-payloads';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 // チャレンジ一覧の取得
 export async function GET(request: NextRequest) {
@@ -19,11 +20,8 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const status = searchParams.get('status') || 'active';
 
-  let query = supabase
-    .from('health_challenges')
-    .select('*')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false });
+  // 作った日時の新しい順。同じ日時は id の順 (#2139 T1)
+  let query = orderListBy(supabase.from('health_challenges').select('*').eq('user_id', user.id), LIST_ORDERS.healthChallenges);
 
   if (status !== 'all') {
     query = query.eq('status', status);

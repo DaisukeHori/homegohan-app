@@ -20,6 +20,7 @@ import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { invalidInputResponse, invalidJsonBodyResponse, invalidQueryResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /** 一覧の構造化ログの function_name */
 const LIST_ROUTE_NAME = 'GET /api/super-admin/plans';
@@ -57,9 +58,8 @@ export async function GET(request: NextRequest) {
     };
 
     const { data, error, count } = await resolveBeyondLastPage(
-      await selectPlans()
-        .order('display_order', { ascending: true })
-        .range(offset, offset + per_page - 1),
+      // 表示の順。同じ値は id の順で、ページの境目でも順が変わらない (#2139 T1)
+      await orderListBy(selectPlans(), LIST_ORDERS.superAdminPlans).range(offset, offset + per_page - 1),
       () => selectPlans({ head: true }),
       LIST_ROUTE_NAME,
     );

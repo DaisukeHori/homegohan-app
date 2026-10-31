@@ -17,6 +17,7 @@ import { isAccountFrozen } from '@/lib/auth/frozen';
 import { internalError } from '@/lib/api/errors';
 import { isUuid, readJsonBody } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 export const dynamic = 'force-dynamic';
 
@@ -100,12 +101,15 @@ export async function GET(request: Request, props: Params) {
   // アクティブサブスクリプション
   let activeSubscription = null;
   try {
-    const { data: sub } = await supabase
-      .from('personal_subscriptions')
-      .select('plan_key, status, current_period_end')
-      .eq('user_id', id)
-      .in('status', ['active', 'trialing', 'paused', 'past_due', 'grace'])
-      .order('created_at', { ascending: false })
+    // 最後に作った契約 1 行。同じ日時の契約が 2 つあっても、どちらを取るかは id の順で決まる (#2139 T1)
+    const { data: sub } = await orderListBy(
+      supabase
+        .from('personal_subscriptions')
+        .select('plan_key, status, current_period_end')
+        .eq('user_id', id)
+        .in('status', ['active', 'trialing', 'paused', 'past_due', 'grace']),
+      LIST_ORDERS.adminUserCurrentSubscription,
+    )
       .limit(1)
       .maybeSingle();
 
@@ -123,12 +127,15 @@ export async function GET(request: Request, props: Params) {
   // BAN 履歴 (admin_audit_logs から取得)
   let banHistory: unknown[] = [];
   try {
-    const { data: banLogs } = await supabase
-      .from('admin_audit_logs')
-      .select('*')
-      .eq('target_id', id)
-      .in('action_type', ['admin.user.ban', 'admin.user.unban', 'admin.user.freeze', 'admin.user.unfreeze'])
-      .order('created_at', { ascending: false })
+    // 記録した日時の新しい順。同じ日時は id の順で、上限の境目でどの行が入るかも決まる (#2139 T1)
+    const { data: banLogs } = await orderListBy(
+      supabase
+        .from('admin_audit_logs')
+        .select('*')
+        .eq('target_id', id)
+        .in('action_type', ['admin.user.ban', 'admin.user.unban', 'admin.user.freeze', 'admin.user.unfreeze']),
+      LIST_ORDERS.adminUserBanHistory,
+    )
       .limit(20);
     banHistory = banLogs ?? [];
   } catch {

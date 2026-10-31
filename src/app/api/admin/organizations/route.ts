@@ -18,6 +18,7 @@ import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { ORG_PLAN_DEFAULT, ORG_PLAN_VALUES } from '@/lib/org-plans';
 import { escapeLikePattern } from '@/lib/admin/users-search';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 export const dynamic = 'force-dynamic';
 
@@ -79,9 +80,11 @@ export async function GET(request: Request) {
     const filters: OrgListFilters = { q, plan };
     const from = (page - 1) * per_page;
     const to = from + per_page - 1;
-    const { data, error, count, status } = await selectOrganizations(supabase, filters)
-      .range(from, to)
-      .order('created_at', { ascending: false });
+    // 作った日時の新しい順。同じ日時は id の順で、ページの境目でも順が変わらない (#2139 T1)
+    const { data, error, count, status } = await orderListBy(selectOrganizations(supabase, filters), LIST_ORDERS.adminOrganizations).range(
+      from,
+      to,
+    );
 
     // 件数より後ろのページ (最後のページの唯一の行が消えたあと、同じページで読み直したときなど) は、PostgREST が
     // 416 (PGRST103) を返す。これを失敗にも「0 件」にもせず、空のページと本当の件数を返す (画面は件数から最後のページへ

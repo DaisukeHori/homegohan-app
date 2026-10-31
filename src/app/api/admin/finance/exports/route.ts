@@ -24,6 +24,7 @@ import { ExportRequestSchema } from '@/lib/admin/finance-schemas';
 import { jstOptionalDayRangeTimestamps } from '@/lib/jst-day-ranges';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 export const dynamic = 'force-dynamic';
 
@@ -126,11 +127,14 @@ export async function POST(request: NextRequest) {
       csvContent = toCsv(headers, (data ?? []) as Record<string, unknown>[]);
       filename = `revenue_${new Date().toISOString().slice(0, 10)}.csv`;
     } else if (req.export_type === 'invoices') {
-      let dbQuery = supabase
-        .from('stripe_webhook_events')
-        .select('id, event_type, processing_status, received_at, processed_at, error_message')
-        .in('event_type', ['invoice.paid', 'invoice.payment_failed'])
-        .order('received_at', { ascending: false });
+      // 受けた日時の新しい順。同じ日時は id の順 (#2139 T1)
+      let dbQuery = orderListBy(
+        supabase
+          .from('stripe_webhook_events')
+          .select('id, event_type, processing_status, received_at, processed_at, error_message')
+          .in('event_type', ['invoice.paid', 'invoice.payment_failed']),
+        LIST_ORDERS.financeExportInvoices,
+      );
       if (fromTimestamp) dbQuery = dbQuery.gte('received_at', fromTimestamp);
       if (toTimestampExclusive) dbQuery = dbQuery.lt('received_at', toTimestampExclusive);
       const { data } = await dbQuery;
@@ -138,10 +142,13 @@ export async function POST(request: NextRequest) {
       csvContent = toCsv(headers, (data ?? []) as Record<string, unknown>[]);
       filename = `invoices_${new Date().toISOString().slice(0, 10)}.csv`;
     } else if (req.export_type === 'subscriptions') {
-      let dbQuery = supabase
-        .from('personal_subscriptions')
-        .select('id, user_id, plan_key, status, starts_at, current_period_start, current_period_end, cancelled_at, created_at')
-        .order('created_at', { ascending: false });
+      // 作った日時の新しい順。同じ日時は id の順 (#2139 T1)
+      let dbQuery = orderListBy(
+        supabase
+          .from('personal_subscriptions')
+          .select('id, user_id, plan_key, status, starts_at, current_period_start, current_period_end, cancelled_at, created_at'),
+        LIST_ORDERS.financeExportSubscriptions,
+      );
       if (fromTimestamp) dbQuery = dbQuery.gte('created_at', fromTimestamp);
       if (toTimestampExclusive) dbQuery = dbQuery.lt('created_at', toTimestampExclusive);
       const { data } = await dbQuery;
@@ -149,10 +156,11 @@ export async function POST(request: NextRequest) {
       csvContent = toCsv(headers, (data ?? []) as Record<string, unknown>[]);
       filename = `subscriptions_${new Date().toISOString().slice(0, 10)}.csv`;
     } else if (req.export_type === 'nps') {
-      let dbQuery = supabase
-        .from('nps_surveys')
-        .select('id, user_id, score, comment, plan_key, sent_at, responded_at')
-        .order('sent_at', { ascending: false });
+      // 送った日時の新しい順。同じ日時は id の順 (#2139 T1)
+      let dbQuery = orderListBy(
+        supabase.from('nps_surveys').select('id, user_id, score, comment, plan_key, sent_at, responded_at'),
+        LIST_ORDERS.financeExportNps,
+      );
       if (fromTimestamp) dbQuery = dbQuery.gte('sent_at', fromTimestamp);
       if (toTimestampExclusive) dbQuery = dbQuery.lt('sent_at', toTimestampExclusive);
       const { data } = await dbQuery;

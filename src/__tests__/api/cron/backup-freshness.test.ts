@@ -288,7 +288,9 @@ describe('GET /api/cron/backup-freshness: 鮮度の判定 (#1129)', () => {
       ['eq', ['action_type', 'backup.daily.completed']],
       ['eq', ['target_type', 'database_backup']],
       ['is', ['actor_id', null]],
-      ['order', ['created_at', { ascending: false }]],
+      // 新しい順 (NULL の位置はいままでの降順の既定と同じ)。同じ日時の行が 2 つあっても、どちらを取るかは id の順で決まる (#2139 T1)
+      ['order', ['created_at', { ascending: false, nullsFirst: true }]],
+      ['order', ['id', { ascending: true, nullsFirst: false }]],
       ['limit', [1]],
       ['maybeSingle', []],
     ]);

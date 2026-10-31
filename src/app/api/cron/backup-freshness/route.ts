@@ -44,6 +44,7 @@ import {
   backupAuditAction,
   isBackupStale,
 } from '@/lib/backups/core';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 // sendEmail (Resend の SDK と node:crypto) は Node.js ランタイムで動く。Edge にはしない
 export const runtime = 'nodejs';
@@ -110,13 +111,16 @@ async function checkBackupFreshness(): Promise<NextResponse> {
     const supabase = getSupabaseAdmin();
 
     // 1. 取得の行 (actor_id NULL・target_type database_backup) の最新 1 行。select は文字列リテラル (select-columns-exist の走査)
-    const latest = await supabase
-      .from('admin_audit_logs')
-      .select('created_at')
-      .eq('action_type', DAILY_COMPLETED_ACTION)
-      .eq('target_type', BACKUP_AUDIT_TARGET_TYPE)
-      .is('actor_id', null)
-      .order('created_at', { ascending: false })
+    //    同じ日時の行が 2 つあっても、どちらを取るかは id の順で決まる (#2139 T1)
+    const latest = await orderListBy(
+      supabase
+        .from('admin_audit_logs')
+        .select('created_at')
+        .eq('action_type', DAILY_COMPLETED_ACTION)
+        .eq('target_type', BACKUP_AUDIT_TARGET_TYPE)
+        .is('actor_id', null),
+      LIST_ORDERS.cronBackupFreshnessLatest,
+    )
       .limit(1)
       .maybeSingle();
     if (latest.error) {

@@ -9,6 +9,7 @@ import { WEEKLY_MENU_REQUEST_ULTIMATE_MODE_SELECT } from '@/lib/ai/weekly-menu-r
 import { isUltimateModeWeeklyMenuRequest } from '@homegohan/shared';
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { aiRequiredFieldMessage } from '@/lib/ai/ai-api-messages';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 // #1203: stale 判定時の復元（スナップショットの書き戻し）が打ち切られないよう、実行時間の上限を明示する。
 export const maxDuration = 60; // Vercel Pro: 60s OK
@@ -36,13 +37,16 @@ export async function GET(request: Request) {
     // select しない。止まった行を failed にしたときだけ、更新の戻り値で受け取る。
     // 止まったかの判定は cleanup と同じ生存信号 (created_at・updated_at・worker_acquired_at) で行う (#1507)
     // 究極モードの生成かは generated_data.ultimateMode だけを取り出して読む (#1582。mode は v4 / v5 のエンジンで、究極モードを表さない)
-    const { data: pendingRequest, error } = await supabase
-      .from('weekly_menu_requests')
-      .select(`id, status, mode, start_date, created_at, updated_at, worker_acquired_at, ${WEEKLY_MENU_REQUEST_ULTIMATE_MODE_SELECT}`)
-      .eq('user_id', user.id)
-      .or('mode.eq.weekly,mode.eq.v4,mode.eq.v5,mode.is.null')
-      .in('status', ['queued', 'pending', 'processing'])
-      .order('created_at', { ascending: false })
+    // 最後に作った依頼 1 行。同じ日時の依頼が 2 つあっても、どちらを取るかは id の順で決まる (#2139 T1)
+    const { data: pendingRequest, error } = await orderListBy(
+      supabase
+        .from('weekly_menu_requests')
+        .select(`id, status, mode, start_date, created_at, updated_at, worker_acquired_at, ${WEEKLY_MENU_REQUEST_ULTIMATE_MODE_SELECT}`)
+        .eq('user_id', user.id)
+        .or('mode.eq.weekly,mode.eq.v4,mode.eq.v5,mode.is.null')
+        .in('status', ['queued', 'pending', 'processing']),
+      LIST_ORDERS.menuWeeklyPendingRequest,
+    )
       .limit(1)
       .single();
 

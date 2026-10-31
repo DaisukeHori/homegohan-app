@@ -6,6 +6,7 @@ import { internalError } from '@/lib/api/errors';
 import { isWeeklyMenuRequestStale, markWeeklyMenuRequestStaleIfUnchanged } from '@/lib/weekly-menu-request-stale';
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { aiInvalidDateMessage } from '@/lib/ai/ai-api-messages';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 // 単一食事の生成中リクエストがあるか確認
 export async function GET(request: Request) {
@@ -31,13 +32,16 @@ export async function GET(request: Request) {
 
     // pending または processing の単一食事リクエストを確認
     // (止まったかの判定に使う生存信号 created_at・updated_at・worker_acquired_at も読む。cleanup と同じ判定。#1507)
-    let query = supabase
-      .from('weekly_menu_requests')
-      .select('id, status, target_date, target_meal_type, target_meal_id, mode, created_at, updated_at, worker_acquired_at')
-      .eq('user_id', user.id)
-      .in('mode', ['single', 'regenerate'])
-      .in('status', ['pending', 'processing'])
-      .order('created_at', { ascending: false });
+    // 作った日時の新しい順。同じ日時は id の順 (#2139 T1)
+    let query = orderListBy(
+      supabase
+        .from('weekly_menu_requests')
+        .select('id, status, target_date, target_meal_type, target_meal_id, mode, created_at, updated_at, worker_acquired_at')
+        .eq('user_id', user.id)
+        .in('mode', ['single', 'regenerate'])
+        .in('status', ['pending', 'processing']),
+      LIST_ORDERS.menuMealPendingRequests,
+    );
 
     // 週の範囲でフィルタ
     if (startDate && endDate) {

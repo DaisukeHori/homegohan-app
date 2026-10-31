@@ -6,6 +6,7 @@ import { readJsonBody } from '@/lib/http-params';
 import { NextResponse } from 'next/server';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { recordAdminAudit } from '@/lib/admin/audit';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /** 監査ログ (admin_audit_logs) の action_type。docs/design/operator/07-audit-monitoring.md §4.1 */
 const ANNOUNCEMENT_CREATE_AUDIT_ACTION = 'admin.announcement.create';
@@ -42,7 +43,8 @@ export async function GET(request: Request) {
     }
 
     const supabase = await createClient();
-    let query = supabase.from('announcements').select('*').order('created_at', { ascending: false });
+    // 作った日時の新しい順。同じ日時は id の順 (#2139 T1)
+    let query = orderListBy(supabase.from('announcements').select('*'), LIST_ORDERS.announcements);
 
     if (mode === 'public') {
       // 一般公開用

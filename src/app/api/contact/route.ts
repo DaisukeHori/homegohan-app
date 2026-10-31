@@ -10,6 +10,7 @@ import { isEmailFailure } from '@/lib/emails/send-result';
 import { maskEmailAddress } from '@/lib/emails/outbox';
 import { renderContactAdminNotificationEmail } from '@/lib/emails/support/contact-admin-notification';
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 // #1044 (F6-19): 入力を Zod で厳密検証する
 const contactInquirySchema = z.object({
@@ -170,11 +171,11 @@ export async function GET() {
   }
 
   try {
-    const { data, error } = await supabase
-      .from('inquiries')
-      .select(INQUIRY_SAFE_COLUMNS)
-      .eq('user_id', user.id)
-      .order('created_at', { ascending: false });
+    // 作った日時の新しい順。同じ日時は id の順 (#2139 T1)
+    const { data, error } = await orderListBy(
+      supabase.from('inquiries').select(INQUIRY_SAFE_COLUMNS).eq('user_id', user.id),
+      LIST_ORDERS.contactMyInquiries,
+    );
 
     if (error) throw error;
 

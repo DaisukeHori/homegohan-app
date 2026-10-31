@@ -25,6 +25,7 @@ import { createLogger } from '@/lib/db-logger';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { isUuid, readJsonBody } from '@/lib/http-params';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /** 400: 本文・クエリの検証の失敗の文 (項目ごとの理由は details に添える。message は画面がそのまま出す文なので文字列にする) */
 const VALIDATION_ERROR_MESSAGE = '入力内容を確認してください';
@@ -66,11 +67,14 @@ export async function GET(_request: NextRequest, props: RouteContext) {
 
     const supabase = await createClient();
 
-    const { data, error } = await supabase
-      .from('sales_lead_activities')
-      .select('id, lead_id, actor_id, activity_type, details, created_at')
-      .eq('lead_id', params.id)
-      .order('created_at', { ascending: false });
+    // 記録した日時の新しい順。同じ日時は id の順 (#2139 T1)
+    const { data, error } = await orderListBy(
+      supabase
+        .from('sales_lead_activities')
+        .select('id, lead_id, actor_id, activity_type, details, created_at')
+        .eq('lead_id', params.id),
+      LIST_ORDERS.adminSalesLeadActivities,
+    );
 
     if (error) {
       return internalError('GET /api/admin/sales/leads/[id]/activities', error, {}, { shape: 'nested' });

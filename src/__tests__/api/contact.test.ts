@@ -13,7 +13,20 @@ const mockInsert = vi.fn((_row: Record<string, unknown>) =>
 );
 
 const mockOrder = vi.fn();
-const mockEq = vi.fn(() => ({ order: mockOrder }));
+/** order を重ねられる鎖 (並びは作った日時の新しい順 → id の順と 2 回重ねる。#2139 T1)。await すると最後の mockOrder の戻り値になる */
+interface OrderChain {
+  order: (...args: unknown[]) => OrderChain;
+  then: (onFulfilled: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) => Promise<unknown>;
+}
+let lastOrderResult: unknown;
+const orderChain: OrderChain = {
+  order: (...args: unknown[]) => {
+    lastOrderResult = mockOrder(...args);
+    return orderChain;
+  },
+  then: (onFulfilled, onRejected) => Promise.resolve(lastOrderResult).then(onFulfilled, onRejected),
+};
+const mockEq = vi.fn(() => orderChain);
 const mockSelect = vi.fn((_columns?: string) => ({ eq: mockEq }));
 
 // #1193 お問い合わせの管理者通知は sendEmail (送信待ちへの登録) を通る。送信そのものは send.test.ts が受け持つ

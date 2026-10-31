@@ -19,6 +19,7 @@ import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { isUuid } from '@/lib/http-params';
 import { buildListViewDetails, recordAdminAudit } from '@/lib/admin/audit';
 import { couponInvalidQueryResponse } from '@/lib/super-admin/coupon-errors';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -76,9 +77,8 @@ export async function GET(request: NextRequest, props: RouteContext) {
         .eq('coupon_id', couponId);
 
     const { data: redemptions, error, count } = await resolveBeyondLastPage(
-      await selectRedemptions()
-        .order('redeemed_at', { ascending: false })
-        .range(offset, offset + per_page - 1),
+      // 使った日時の新しい順。同じ値は id の順で、ページの境目でも順が変わらない (#2139 T1)
+      await orderListBy(selectRedemptions(), LIST_ORDERS.superAdminCouponRedemptions).range(offset, offset + per_page - 1),
       () => selectRedemptions({ head: true }),
       LIST_ROUTE_NAME,
     );

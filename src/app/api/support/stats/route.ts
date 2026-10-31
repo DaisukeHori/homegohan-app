@@ -6,6 +6,7 @@ import { API_INTERNAL_ERROR_MESSAGE, authFailureFlat } from '@/lib/api/error-res
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { normalizeProfileName } from '@/lib/profile-name';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /**
  * 500 の本文は汎用メッセージだけにする (#1172: Supabase / Postgres の生のエラー文を返さない)。
@@ -71,10 +72,11 @@ export async function GET(_request: Request) {
         .eq('status', 'pending'),
       // 最近の問い合わせ。inquiries.user_id の外部キーは auth.users 宛で user_profiles とは繋がっていないため、
       // user_profiles(nickname) の埋め込みは PostgREST が解決できない。ニックネームは下で別に引く
-      supabase
-        .from('inquiries')
-        .select('id, inquiry_type, subject, status, created_at, user_id')
-        .order('created_at', { ascending: false })
+      // 新しい順。同じ日時は id の順で、上限の境目でどれが入るかも決まる (#2139 T1)
+      orderListBy(
+        supabase.from('inquiries').select('id, inquiry_type, subject, status, created_at, user_id'),
+        LIST_ORDERS.supportRecentInquiries,
+      )
         .limit(10),
       // 自分が対応した件数（今週）。admin_audit_logs に admin_id 列は無く、操作した人は actor_id
       supabase
