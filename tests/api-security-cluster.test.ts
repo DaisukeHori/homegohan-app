@@ -310,6 +310,8 @@ describe('#169 /api/recipes/[id] GET view_count', () => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
 
     const selectChainDetail = {
+      // 埋め込んだコメントの並び (#2166 X6)
+      order: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
       // #1445: 詳細は .maybeSingle() で読む (0 行を 404 にするため)
       maybeSingle: vi.fn().mockResolvedValue({ data: recipeRow, error: null }),
@@ -337,6 +339,8 @@ describe('#169 /api/recipes/[id] GET view_count', () => {
     // (increment_recipe_view_count) で行われるため、詳細取得の select().eq().maybeSingle()
     // は1回だけ呼ばれ、そのまま recipeRow を返す。
     const selectChainDetail = {
+      // 埋め込んだコメントの並び (#2166 X6)
+      order: vi.fn().mockReturnThis(),
       eq: vi.fn().mockReturnThis(),
       // #1445: 詳細は .maybeSingle() で読む (0 行を 404 にするため)
       maybeSingle: vi.fn().mockResolvedValue({ data: recipeRow, error: null }),
