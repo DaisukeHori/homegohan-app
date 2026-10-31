@@ -11,10 +11,11 @@
  *  1. supabase/migrations の全部の CREATE TRIGGER 文から (トリガー, 関数) の組を読む (読めない CREATE TRIGGER 文が無い)
  *  2. 探す名前 = 組の関数の名前のうち、どのトリガーの名前でもないもの (トリガーと同じ名前の関数は「トリガー <名前>」と書いても正しい)
  *  3. src・tests・docs・apps・scripts・supabase (migrations・rollbacks・functions)・CLAUDE.md の全文で、
- *     「トリガー」のすぐ後 (空白・改行・コメントの行の頭の * や //・--・#・> と、` や ( だけを挟む) に 2. の名前が来る所が無い。
+ *     「トリガー」のすぐ後 (空白・改行・コメントの行の頭の * や //・--・#・> と、` や ( だけを挟む) に 2. の名前が来る所と、
+ *     「トリガー」の後の ( の中 (「トリガー 2 種 (…)」「…のトリガー・…の RPC は … (…)」の形も) で 2. の名前を関数と呼ばずに書く所が無い。
  *     例外は FROZEN_MIGRATION_HITS (編集しない既存の migration。CLAUDE.md「既存の migration ファイルは編集せず」) と、
  *     PENDING_DESIGN_DOC_HITS (設計書の分。設計書の追随を当てたあとに、この例外を消して 0 件を求める) の数まで
- *  4. 3. の見つけ方が、行をまたぐ書き方・` で囲む書き方・( で始める書き方を見つけ、直した書き方 (トリガーの名前を書き、
+ *  4. 3. の見つけ方が、行をまたぐ書き方・` で囲む書き方・( で始める書き方・見出しと ( の中の並びを組にする書き方を見つけ、直した書き方 (トリガーの名前を書き、
  *     関数の名前は「関数 …」と書く) には反応しないことを、写しの文で確かめる
  * を確かめる。
  */
@@ -45,6 +46,8 @@ const [SESSION_CREATED_FN, SESSION_REFRESHED_FN, SESSION_DELETED_FN] = [
 const [COUNT_JOIN_FN, FINALIZE_FN] = ['org_challenge_count_join', 'org_challenge_finalize'] as const;
 /** トリガー trg_family_members_revoke_parental_consent_on_delete が呼ぶ関数 */
 const CONSENT_ON_DELETE_FN = 'revoke_parental_consent_on_member_delete';
+/** auth.users のトリガー on_auth_user_password_changed が呼ぶ関数 */
+const PASSWORD_HISTORY_FN = 'password_history_record';
 
 /** 走査する場所 (リポジトリの根からの相対パス。ファイルでもディレクトリでもよい) */
 const SCAN_ROOTS = ['src', 'tests', 'docs', 'apps', 'scripts', 'supabase', 'CLAUDE.md'];
@@ -81,11 +84,12 @@ const FROZEN_MIGRATION_HITS: readonly (readonly [file: string, fn: string, count
 const PENDING_DESIGN_DOC_HITS: readonly (readonly [file: string, fn: string, count: number])[] = [
   ['docs/design/billing/01-billing-core.md', 'billing_family_plan_follow_representative', 2],
   ['docs/design/billing/02-manual-plan-grant.md', 'billing_family_plan_follow_representative', 4],
-  ['docs/design/cross/02-rls-patterns.md', 'password_history_record', 1],
+  ['docs/design/cross/01-auth-session.md', PASSWORD_HISTORY_FN, 1],
+  ['docs/design/cross/02-rls-patterns.md', PASSWORD_HISTORY_FN, 1],
   ['docs/design/cross/04-api-conventions.md', 'org_challenge_guard_update', 2],
   ['docs/design/cross/14-parental-consent.md', 'revoke_parental_consent_on_member_delete', 1],
   ['docs/design/cross/16-auth-history-sessions.md', 'auth_session_created', 4],
-  ['docs/design/cross/16-auth-history-sessions.md', 'password_history_record', 2],
+  ['docs/design/cross/16-auth-history-sessions.md', PASSWORD_HISTORY_FN, 2],
   ['docs/design/cross/16-auth-history-sessions.md', 'user_profiles_fill_login_stats', 3],
   ['docs/design/cross/20-terms-privacy-text.md', 'auth_session_created', 1],
   ['docs/design/family/10-family-menu-view.md', 'guard_family_members_privileged', 1],
@@ -97,7 +101,7 @@ const PENDING_DESIGN_DOC_HITS: readonly (readonly [file: string, fn: string, cou
   ['docs/design/operator/01-data-model.md', 'auth_session_created', 2],
   ['docs/design/operator/01-data-model.md', 'auth_session_deleted', 1],
   ['docs/design/operator/01-data-model.md', 'auth_session_refreshed', 1],
-  ['docs/design/operator/01-data-model.md', 'password_history_record', 1],
+  ['docs/design/operator/01-data-model.md', PASSWORD_HISTORY_FN, 1],
   ['docs/design/operator/01-data-model.md', 'user_profiles_fill_login_stats', 1],
   ['docs/design/operator/02-api-spec.md', 'guard_meal_paste_group_id', 1],
   ['docs/design/operator/02-api-spec.md', 'guard_organizations_plan_value', 1],
@@ -165,11 +169,42 @@ type Hit = { line: number; fn: string };
 const LISTED_NAME = '`?\\w+(?:\\(\\))?`?';
 
 /**
+ * 「トリガー」の後の ( の中で、関数を関数と呼んでいる所 (「(関数 …)」の括弧と、「関数 a・b」の並び)。
+ * ここは関数の名前があってよいので、見る前に同じ長さの空白に置き換える (位置は変えない)
+ */
+const FUNCTION_LABELED_SPANS = [/\(関数[^()]*\)/g, new RegExp(`関数(?:\\s*${LISTED_NAME}(?:\\s*[・/、,と]\\s*${LISTED_NAME})*)?`, 'g')];
+
+/** 空白に置き換える (改行は残す。行の数を変えない) */
+const blankOut = (span: string): string => span.replace(/[^\n]/g, ' ');
+
+/**
+ * text の open の位置の ( の中身 (位置は open + 1 から)。対になる ) か、文の終わり (「。」・表の区切り | ・空の行) の手前まで。
+ * 中の ( … ) は入れ子として飛ばす
+ */
+function parenthesizedBody(text: string, open: number): string {
+  let depth = 0;
+  for (let at = open; at < text.length; at += 1) {
+    const char = text[at];
+    if (char === '(') depth += 1;
+    else if (char === ')') {
+      depth -= 1;
+      if (depth === 0) return text.slice(open + 1, at);
+    } else if (char === '。' || char === '|' || (char === '\n' && text[at + 1] === '\n')) {
+      return text.slice(open + 1, at);
+    }
+  }
+  return text.slice(open + 1);
+}
+
+/**
  * 「トリガー」が関数の名前を指している所 (行は 1 始まり。「トリガー」の行)。次の 2 つの形を探す。
  *  - 「トリガー」のすぐ後に fns のどれかが来る。間に挟んでよいのは空白・改行・` ・ ( だけ
  *    (trg_… は挟めないので、トリガーの名前の中の関数の名前には反応しない)
- *  - 「トリガー」の後の ( の中の並び (「トリガー 4 本 (`a` / `b`)」「トリガー (`a`・`b`)」。・ / 、 , で区切る) に fns のどれかがある。
- *    並びは「。」などで終わるので、「トリガー (trg_…。関数 …)」の「関数 …」は並びに入らない
+ *  - 「トリガー」の後の ( の中に fns のどれかがある。( の前に挟んでよいのは「N 本」「N 種」と、
+ *    「・」「、」で続く見出し (「記録のトリガー・照合の RPC は … (`a`・`b`)」のように、見出しと並びを順に組にする書き方。
+ *    見出しに「関数」が入るものは除く)。( の中は、対になる ) か「。」などの文の終わりまで見る
+ *    (「トリガー 4 本 (`a` / `b`)」「トリガー 2 種 (… の a と …)」)。( の中で関数を関数と呼ぶ所
+ *    (「(関数 …)」「関数 a・b」) は見ないので、「トリガー (trg_…。関数 …)」「トリガー 2 種 (… の trg_… (関数 a) と …)」には反応しない
  * 行の頭のコメントの印 (* ・ // ・ -- ・ # ・ >) は外してから見る (行の数は変えない) ので、行をまたいでも見つける。
  * 名前の後に英数字・_ が続くものは数えない (長い名前から先に試す)。同じ名前の同じ所は 1 回だけ数える。
  */
@@ -182,17 +217,18 @@ function triggerCalledByFunctionName(text: string, fns: readonly string[]): Hit[
     .map(escapeRegExp)
     .join('|');
   const direct = new RegExp(`トリガー[\\s\`(]*(${alternatives})(?![A-Za-z0-9_])`, 'g');
-  const listed = new RegExp(`トリガー\\s*(?:\\d+\\s*本\\s*)?\\((${LISTED_NAME}(?:\\s*[・/、,]\\s*${LISTED_NAME})*)`, 'g');
+  const parenthesized = /トリガー(?:\s*\d+\s*[本種]|[・、](?:(?!関数)[^。()|\n])*?)?\s*\(/g;
   /** 関数の名前の位置 → (「トリガー」の位置, 名前) */
   const found = new Map<number, { triggerAt: number; fn: string }>();
   for (const match of normalized.matchAll(direct)) {
     const nameAt = match.index + match[0].length - match[1].length;
     found.set(nameAt, { triggerAt: match.index, fn: match[1] });
   }
-  for (const match of normalized.matchAll(listed)) {
-    const listAt = match.index + match[0].length - match[1].length;
-    for (const name of match[1].matchAll(/\w+/g)) {
-      if (fnSet.has(name[0])) found.set(listAt + name.index, { triggerAt: match.index, fn: name[0] });
+  for (const match of normalized.matchAll(parenthesized)) {
+    const open = match.index + match[0].length - 1;
+    const body = FUNCTION_LABELED_SPANS.reduce((rest, span) => rest.replace(span, blankOut), parenthesizedBody(normalized, open));
+    for (const name of body.matchAll(/\w+/g)) {
+      if (fnSet.has(name[0])) found.set(open + 1 + name.index, { triggerAt: match.index, fn: name[0] });
     }
   }
   return [...found]
@@ -306,7 +342,7 @@ describe('トリガーの呼び名 (#2128 docs-1031c の R2 指摘 1・#2134 U3)
     expect(tables.filter(([file]) => !fs.existsSync(path.join(ROOT, file))).map(([file]) => file)).toEqual([]);
   });
 
-  it('見つけ方が空振りしない: 行をまたぐ・` で囲む・( で始める書き方を見つけ、直した書き方には反応しない', () => {
+  it('見つけ方が空振りしない: 行をまたぐ・` で囲む・( で始める・見出しと並びを組にする書き方を見つけ、直した書き方には反応しない', () => {
     // 直す前の route.ts の書き方 (「DB のトリガー」の次の行に関数の名前)
     const splitComment = ` * そのあいだは DB のトリガー\n * ${FN} (supabase/migrations/…) が、`;
     expect(triggerCalledByFunctionName(splitComment, fnsToFind)).toEqual([{ line: 1, fn: FN }]);
@@ -350,6 +386,20 @@ describe('トリガーの呼び名 (#2128 docs-1031c の R2 指摘 1・#2134 U3)
         fnsToFind,
       ),
     ).toEqual([{ line: 1, fn: CONSENT_ON_DELETE_FN }]);
+    // 直す前の cross/01 §13.1 の書き方 (「トリガー・RPC」の見出しと ( の中の並びを順に組にする)
+    expect(
+      triggerCalledByFunctionName(
+        `→ 記録のトリガー・照合の RPC は cross/16 §11 が正典 (\`${PASSWORD_HISTORY_FN}\`・\`auth_password_check\`)。`,
+        fnsToFind,
+      ),
+    ).toEqual([{ line: 1, fn: PASSWORD_HISTORY_FN }]);
+    // 直す前の plan-subscribers.ts の書き方 (「トリガー 2 種 (」の中で、パスの後に関数の名前。行をまたぐ)
+    expect(
+      triggerCalledByFunctionName(
+        ` * トリガー 2 種 (supabase/migrations/…_reservation.sql の ${DEPRECATE_FN} と\n * trg_subscriber_plan_key_share の WHEN・関数)`,
+        fnsToFind,
+      ),
+    ).toEqual([{ line: 1, fn: DEPRECATE_FN }]);
     // 1 つの関数を 2 本のトリガーが呼ぶ関数の名前も見つける
     expect(triggerCalledByFunctionName(`(DB のトリガー ${HIDDEN_FN})`, fnsToFind)).toEqual([{ line: 1, fn: HIDDEN_FN }]);
 
@@ -382,7 +432,20 @@ describe('トリガーの呼び名 (#2128 docs-1031c の R2 指摘 1・#2134 U3)
         fnsToFind,
       ),
     ).toEqual([]);
-    // 関数を関数と呼ぶ書き方 (「トリガー関数 (…)」も)・トリガーと離れた所の関数の名前には反応しない
+    expect(
+      triggerCalledByFunctionName(
+        `→ 記録のトリガー (\`on_auth_user_password_changed\`。関数 \`${PASSWORD_HISTORY_FN}\`)・照合の RPC (\`auth_password_check\`) は cross/16 §11 が正典。`,
+        fnsToFind,
+      ),
+    ).toEqual([]);
+    expect(
+      triggerCalledByFunctionName(
+        ` * トリガー 2 種 (supabase/migrations/…_reservation.sql の ${DEPRECATE_TRIGGER} (関数 ${DEPRECATE_FN}) と\n * trg_subscriber_plan_key_share の WHEN・関数)`,
+        fnsToFind,
+      ),
+    ).toEqual([]);
+    // 関数を関数と呼ぶ書き方 (「トリガー関数 (…)」「トリガー・関数の名前 (…)」も)・トリガーと離れた所の関数の名前には反応しない
+    expect(triggerCalledByFunctionName(`トリガー・関数の名前 (\`${TRIGGER}\`・\`${FN}\`)`, fnsToFind)).toEqual([]);
     expect(triggerCalledByFunctionName('トリガー関数 2 本 (`org_challenge_count_join` / `org_challenge_finalize`)', fnsToFind)).toEqual([]);
     expect(triggerCalledByFunctionName(`トリガーの関数 ${FN} が RAISE する`, fnsToFind)).toEqual([]);
     expect(triggerCalledByFunctionName(`-- 行トリガー ${TRIGGER}\n--   (関数 ${FN})`, fnsToFind)).toEqual([]);
