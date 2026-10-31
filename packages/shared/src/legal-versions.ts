@@ -20,6 +20,7 @@
  * v2026.2 は #1917 (docs/design/family/11-self-dissolve.md §18) で、退会の条件 (譲渡するか解散するまで) を改めた版。
  *   改定前の版 (v2026.1) の文面は docs/legal/archive/v2026.1/ に控えてある。
  * v2026.3 は billing/03 (#1912) で有料プランの条文を足した版。改定前の版 (v2026.2) の文面は docs/legal/archive/v2026.2/ に控えてある。
+ * v2026.4 は mobile/08 (Sign in with Apple) で委託先に Apple (ログイン) を足した版。改定前の版 (v2026.3) の文面は docs/legal/archive/v2026.3/ に控えてある。
  *
  * version の形式:
  *   DB の terms_acceptances.document_version は varchar(20)。同意を記録する DB 関数 accept_legal_documents も同じ形式
@@ -54,10 +55,15 @@ export interface LegalDocumentInfo {
  * アプリ内課金・家族プラン、決済の事業者 (Stripe) と RevenueCat への提供と外部送信、保存期間) を利用規約第10条・第11条 1 項・
  * 第16条 2 項・第17条・第24条とプライバシーポリシー第3条・第4条・第7条・第10条・第12条に足すので、両文書を v2026.3 に上げる。
  * v2026.3 の施行日は公開 (デプロイ) の日 (cross/20 §9.4 の 3・billing/03 §11.6)。
+ *
+ * mobile/08 (#1139。docs/design/mobile/08-sign-in-with-apple.md §11.8): Apple アカウントでのログインを始めるにあたり、プライバシーポリシーの
+ * 委託先 (第7条)・取得する情報 (第3条のアカウントの行)・外部送信 (第10条) に Apple (ログイン) を足すので、両文書を v2026.4 に上げる。
+ * 利用規約の本文は変わらないが、両文書の版は同じ値で動かす (既存の改定と同じ)。
+ * v2026.4 の施行日は、予告に書いた施行日 (その日に公開 (デプロイ) する。§11.8 (i))。
  */
 export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentInfo>> = {
-  terms_of_service: { version: 'v2026.3', effectiveDate: '2026-10-22' },
-  privacy_policy: { version: 'v2026.3', effectiveDate: '2026-10-22' },
+  terms_of_service: { version: 'v2026.4', effectiveDate: '2026-11-01' },
+  privacy_policy: { version: 'v2026.4', effectiveDate: '2026-11-01' },
 };
 
 /** 画面に出す文書名 */

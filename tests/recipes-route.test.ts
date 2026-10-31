@@ -11,6 +11,7 @@
  *   - max_time : 1〜1440 に丸めて .lte に渡す。未指定・空・数字でない値は絞り込まない
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { RECIPE_AUTHOR_DISPLAY_NAMES_RPC } from '@/lib/recipes/viewer-lookups';
 import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
 
 // 負荷の高い機械で vitest の既定の時間切れ (テスト 5 秒・フック 10 秒) を超えて落ちたことがあるので、このファイルだけ延ばす
@@ -19,6 +20,8 @@ applyHeavyUnitTestTimeout();
 
 const mockGetUser = vi.fn();
 const mockFrom = vi.fn();
+/** 作者の表示名の関数 (recipe_author_display_names) を呼ぶ rpc のモック (結果は lookupResults から返す) */
+const mockRpc = vi.fn();
 
 // 構造化ログ (#1172): DB エラーのとき internalError() が app_logs へ記録する。このテストでは DB へ書かない
 vi.mock('@/lib/db-logger', () => {
@@ -33,6 +36,7 @@ vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn(async () => ({
     auth: { getUser: mockGetUser },
     from: mockFrom,
+    rpc: mockRpc,
   })),
 }));
 
@@ -49,7 +53,7 @@ type QueryResult = {
 type LookupResult = { data: unknown[] | null; error: { message: string } | null };
 
 /**
- * 作者の名前 (user_profiles) と自分のいいね (recipe_likes) を引くクエリのモック (src/lib/recipes/viewer-lookups.ts)。
+ * 自分のいいね (recipe_likes) を引くクエリのモック (src/lib/recipes/viewer-lookups.ts)。
  * select / eq / in は自分自身を返し、await すると結果を返す
  */
 function lookupQuery(result: LookupResult) {
@@ -66,18 +70,18 @@ function lookupQuery(result: LookupResult) {
   return builder;
 }
 
-/** user_profiles / recipe_likes の結果 (既定は 0 行) */
-const lookupResults: Record<'user_profiles' | 'recipe_likes', LookupResult> = {
-  user_profiles: { data: [], error: null },
+/** 作者の表示名の関数と recipe_likes の結果 (既定は 0 行) */
+const lookupResults: Record<typeof RECIPE_AUTHOR_DISPLAY_NAMES_RPC | 'recipe_likes', LookupResult> = {
+  [RECIPE_AUTHOR_DISPLAY_NAMES_RPC]: { data: [], error: null },
   recipe_likes: { data: [], error: null },
 };
-/** 最後の呼び出しで作った user_profiles / recipe_likes のクエリ */
-const lookupBuilders: Partial<Record<'user_profiles' | 'recipe_likes', ReturnType<typeof lookupQuery>>> = {};
+/** 最後の呼び出しで作った recipe_likes のクエリ */
+const lookupBuilders: Partial<Record<'recipe_likes', ReturnType<typeof lookupQuery>>> = {};
 
 /**
  * recipes 一覧のクエリビルダーのモック。
  * select / or / eq / lte / order は自分自身を返し、最後の range だけが結果を返す。
- * user_profiles / recipe_likes は lookupResults の結果を返す (それ以外のテーブルは呼ばれない)
+ * recipe_likes は lookupResults の結果を返す (それ以外のテーブルは呼ばれない。作者の表示名は mockRpc)
  */
 function setupRecipesQuery(
   result: QueryResult = { data: [], error: null, count: 0 },
@@ -98,7 +102,7 @@ function setupRecipesQuery(
   builder.range.mockResolvedValue(result);
   mockFrom.mockImplementation((table: string) => {
     if (table === 'recipes') return builder;
-    if (table === 'user_profiles' || table === 'recipe_likes') {
+    if (table === 'recipe_likes') {
       const lookup = lookupQuery(lookupResults[table]);
       lookupBuilders[table] = lookup;
       return lookup;
@@ -124,10 +128,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   // 既定は未認証 (公開レシピのみ)
   mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
-  lookupResults.user_profiles = { data: [], error: null };
+  lookupResults[RECIPE_AUTHOR_DISPLAY_NAMES_RPC] = { data: [], error: null };
   lookupResults.recipe_likes = { data: [], error: null };
-  delete lookupBuilders.user_profiles;
   delete lookupBuilders.recipe_likes;
+  // 未ログインで行のある一覧も名前の rpc を通るので、既定で 0 行を返す (ほかの関数は呼ばれない)
+  mockRpc.mockImplementation(async (fn: string) =>
+    fn === RECIPE_AUTHOR_DISPLAY_NAMES_RPC ? lookupResults[RECIPE_AUTHOR_DISPLAY_NAMES_RPC] : { data: null, error: null },
+  );
 });
 
 afterEach(() => {
@@ -284,7 +291,7 @@ describe('GET /api/recipes: クランプ以外の挙動は変えない', () => {
     ]);
   });
 
-  it('認証済みなら公開レシピと自分のレシピを取る。作者の名前と自分のいいねは埋め込まず、別のクエリで引く (#1917)', async () => {
+  it('認証済みなら公開レシピと自分のレシピを取る。作者の表示名と自分のいいねは埋め込まず、関数と別のクエリで引く (#1917・cross/21)', async () => {
     mockGetUser.mockResolvedValue({ data: { user }, error: null });
     const builder = setupRecipesQuery({ data: [{ id: 'r1', user_id: 'user-2' }, { id: 'r2', user_id: 'user-2' }], error: null, count: 2 });
 
@@ -294,27 +301,29 @@ describe('GET /api/recipes: クランプ以外の挙動は変えない', () => {
     // user_profiles(nickname)・recipe_likes(user_id) の埋め込みは PostgREST が解決できない (PGRST200 / PGRST201) ので使わない
     expect(builder.select).toHaveBeenCalledWith('*', { count: 'exact' });
     expect(builder.or).toHaveBeenCalledWith('is_public.eq.true,user_id.eq.user-1');
-    // 作者の名前は、一覧の作者 (重複を除く) の user_profiles を引く
-    expect(lookupBuilders.user_profiles?.select).toHaveBeenCalledWith('id, nickname');
-    expect(lookupBuilders.user_profiles?.in).toHaveBeenCalledWith('id', ['user-2']);
+    // 作者の表示名は、一覧の作者 (重複を除く) の id を関数 recipe_author_display_names に渡して引く
+    expect(mockRpc).toHaveBeenCalledWith(RECIPE_AUTHOR_DISPLAY_NAMES_RPC, { p_user_ids: ['user-2'] });
     // いいねは、自分のものを一覧のレシピで絞って引く
     expect(lookupBuilders.recipe_likes?.select).toHaveBeenCalledWith('recipe_id');
     expect(lookupBuilders.recipe_likes?.eq).toHaveBeenCalledWith('user_id', 'user-1');
     expect(lookupBuilders.recipe_likes?.in).toHaveBeenCalledWith('recipe_id', ['r1', 'r2']);
   });
 
-  it('未ログインなら作者の名前もいいねも DB に問い合わせない (RLS で読めず、いいねも無い)', async () => {
+  it('未ログインでも作者の表示名は関数で引く。いいねは DB に問い合わせない', async () => {
+    lookupResults[RECIPE_AUTHOR_DISPLAY_NAMES_RPC] = { data: [{ author_id: 'user-2', display_name: 'ほり' }], error: null };
     setupRecipesQuery({ data: [{ id: 'r1', user_id: 'user-2' }], error: null, count: 1 });
 
     const { res, json } = await callGet();
 
     expect(res.status).toBe(200);
     expect(mockFrom.mock.calls.map((call) => call[0])).toEqual(['recipes']);
-    expect(json.recipes[0]).toMatchObject({ authorName: '匿名', isLiked: false });
+    expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(mockRpc).toHaveBeenCalledWith(RECIPE_AUTHOR_DISPLAY_NAMES_RPC, { p_user_ids: ['user-2'] });
+    expect(json.recipes[0]).toMatchObject({ authorName: 'ほり', isLiked: false });
   });
 
   it.each([
-    ['作者の名前 (user_profiles)', 'user_profiles'],
+    ['作者の表示名 (recipe_author_display_names)', RECIPE_AUTHOR_DISPLAY_NAMES_RPC],
     ['自分のいいね (recipe_likes)', 'recipe_likes'],
   ] as const)('%s が読めなかったときは、名前が無い・いいねしていないように見せず 500 (DB の生の文面は本文に出さない)', async (_name, table) => {
     mockGetUser.mockResolvedValue({ data: { user }, error: null });
@@ -358,9 +367,9 @@ describe('GET /api/recipes: クランプ以外の挙動は変えない', () => {
     expect(searchFilter).toBe('name.ilike."%a,b)\\\\%\\\\_%",description.ilike."%a,b)\\\\%\\\\_%"');
   });
 
-  it('取得した行を camelCase に変換し、別のクエリで引いた作者の名前と自分のいいねを反映する', async () => {
+  it('取得した行を camelCase に変換し、関数が返した表示名と自分のいいねを反映する', async () => {
     mockGetUser.mockResolvedValue({ data: { user }, error: null });
-    lookupResults.user_profiles = { data: [{ id: 'user-2', nickname: 'ほり' }], error: null };
+    lookupResults[RECIPE_AUTHOR_DISPLAY_NAMES_RPC] = { data: [{ author_id: 'user-2', display_name: 'ほり' }], error: null };
     lookupResults.recipe_likes = { data: [{ recipe_id: 'r1' }], error: null };
     setupRecipesQuery({
       data: [

@@ -83,8 +83,8 @@ export async function GET(request: Request) {
   }
 
   const rows = data || [];
-  // 作者の名前と自分のいいねは、埋め込まずに別のクエリで引く (どちらの埋め込みも PostgREST が解決できない。
-  // src/lib/recipes/viewer-lookups.ts)。読めなかったときも 500 (名前が無い・いいねしていないように見せない)
+  // 作者の表示名は関数 recipe_author_display_names で (未ログインでも)、自分のいいねは別のクエリで引く (どちらも埋め込まない。
+  // PostgREST が解決できない。src/lib/recipes/viewer-lookups.ts・cross/21)。読めなかったときも 500 (名前が無い・いいねしていないように見せない)
   const lookups = await loadRecipeViewerLookups(supabase, user?.id ?? null, {
     authorIds: rows.map((item) => item.user_id),
     recipeIds: rows.map((item) => item.id),
@@ -97,7 +97,7 @@ export async function GET(request: Request) {
   const recipes = rows.map((item: any) => ({
     id: item.id,
     userId: item.user_id,
-    authorName: recipeAuthorName(lookups.nicknames.get(item.user_id)),
+    authorName: recipeAuthorName(lookups.authorNames.get(item.user_id)),
     name: item.name,
     description: item.description,
     caloriesKcal: item.calories_kcal,

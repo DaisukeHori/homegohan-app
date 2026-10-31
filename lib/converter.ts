@@ -142,6 +142,7 @@ export const toUserProfile = (db: DbUserProfile): UserProfile => ({
   profileCompleteness: db.profile_completeness ?? 0,
   lastProfileUpdate: db.last_profile_update ?? null,
   aiLearningEnabled: db.ai_learning_enabled ?? true,
+  showRecipeAuthorName: db.show_recipe_author_name ?? true,
 
   // === Performance OS v3 ===
   performanceProfile: db.performance_profile ?? null,
@@ -276,6 +277,7 @@ export const fromUserProfile = (profile: Partial<UserProfile>): Record<string, a
   if (profile.profileCompleteness !== undefined) result.profile_completeness = profile.profileCompleteness;
   if (profile.lastProfileUpdate !== undefined) result.last_profile_update = profile.lastProfileUpdate;
   if (profile.aiLearningEnabled !== undefined) result.ai_learning_enabled = profile.aiLearningEnabled;
+  if (profile.showRecipeAuthorName !== undefined) result.show_recipe_author_name = profile.showRecipeAuthorName;
 
   // Performance OS v3
   if (profile.performanceProfile !== undefined) result.performance_profile = profile.performanceProfile;
