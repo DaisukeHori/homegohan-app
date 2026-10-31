@@ -27,6 +27,10 @@ import {
   UserProfileUpdateBodySchema,
   type UserProfileColumnKind,
 } from '@/lib/profile-update-schema';
+import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
+
+// route を丸ごと読み込むので、負荷の高い機械で既定の時間切れを超えうる (#1605 の同じ型)。テストとフックを定義する前に置く
+applyHeavyUnitTestTimeout();
 
 const USER_ID = '40000000-0000-4000-8000-000000000001';
 const UPDATED_ROW = { id: USER_ID, nickname: 'テスト', show_recipe_author_name: true };
