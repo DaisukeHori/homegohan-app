@@ -882,7 +882,9 @@ describe('#1901 プライバシーポリシーの委託先・送り先・端末�
 
     const names = PRIVACY_PROCESSORS.map((p) => p.name);
     for (const name of ['Stripe', 'RevenueCat']) expect(names).toContain(name);
-    expect(names).not.toContain('Apple');
+    const apple = PRIVACY_PROCESSORS.find((p) => p.name === 'Apple');
+    expect(apple?.purpose, 'Apple はログインの事業者として載る (mobile/08 §11.8)').toBe('Apple アカウントでのログイン');
+    for (const word of LEGAL_TEXT_PAID_TERMS) expect(`${apple?.purpose} ${apple?.data}`).not.toContain(word);
     expect(TERMS_ARTICLE_HEADINGS[9]).toBe('第10条（料金）');
   });
 

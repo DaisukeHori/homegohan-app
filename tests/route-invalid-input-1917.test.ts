@@ -33,6 +33,7 @@ import {
 } from '@/lib/api/error-responses';
 import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE } from '@/lib/api/errors';
 import { MEAL_NOT_FOUND_MESSAGE } from '@/lib/api/user-api-error-messages';
+import { RECIPE_AUTHOR_DISPLAY_NAMES_RPC } from '@/lib/recipes/viewer-lookups';
 
 // route を丸ごと読み込むので、負荷の高い機械で既定の時間切れを超えうる (#1605 の同じ型)。テストとフックを定義する前に置く
 applyHeavyUnitTestTimeout();
@@ -56,8 +57,12 @@ const h = vi.hoisted(() => ({
 /** 結果を決めていないテーブルが返す行 (本人の行。所有者の確認・セッションの確認を通る) */
 const DEFAULT_ROW = { id: ROW_ID, user_id: USER_ID, is_important: false, importance_reason: null };
 
-/** 名前・いいねを引くテーブル (src/lib/recipes/viewer-lookups.ts) は空の一覧 */
-const LIST_TABLES = new Set(['user_profiles', 'recipe_likes']);
+/**
+ * 作者の表示名といいねの引き当て (src/lib/recipes/viewer-lookups.ts) は空の一覧。
+ * 名前は表 (user_profiles) からでなく関数 recipe_author_display_names から引く (cross/21) ので、rpc の結果 ('rpc:<名前>') を一覧にする。
+ * 一覧でない DEFAULT_ROW を返すと、引き当ての `.map` が TypeError を投げ、route の catch に入って 500 になる (言っていることを確かめられない)
+ */
+const LIST_TABLES = new Set([`rpc:${RECIPE_AUTHOR_DISPLAY_NAMES_RPC}`, 'recipe_likes']);
 
 function resultOf(table: string): QueryResult {
   const fixed = h.results[table];
@@ -233,6 +238,15 @@ describe('POST /api/recipes/[id]/comments', () => {
     return POST(request(`/api/recipes/${id}/comments`, 'POST', body), ctx({ id }));
   };
 
+  /**
+   * 名前を関数で引いたあと、コメントの insert (from('recipe_comments')) まで届いたこと。
+   * 応答の 404 / 500 が insert の結果から来ていて、名前の引き当ての途中の例外 (catch の 500) から来ていないことを確かめる
+   */
+  const expectReachedInsert = () => {
+    expect(h.rpcCalls).toEqual([RECIPE_AUTHOR_DISPLAY_NAMES_RPC]);
+    expect(h.fromCalls).toEqual(['recipe_comments']);
+  };
+
   it('UUID の形でない id は 404 (レシピが無いときと同じ)。DB に触れない', async () => {
     const res = await post(NOT_UUID, '{"content":"おいしい"}');
     expect(res.status).toBe(404);
@@ -258,6 +272,7 @@ describe('POST /api/recipes/[id]/comments', () => {
     const res = await post(ROW_ID, '{"content":"おいしい"}');
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual(FLAT_NOT_FOUND);
+    expectReachedInsert();
   });
 
   it('レシピ以外の外部キー違反 (user_id) は 404 にせず 500', async () => {
@@ -271,6 +286,7 @@ describe('POST /api/recipes/[id]/comments', () => {
     const res = await post(ROW_ID, '{"content":"おいしい"}');
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual(FLAT_INTERNAL);
+    expectReachedInsert();
   });
 
   it('DB の失敗は今までどおり 500', async () => {
@@ -278,6 +294,7 @@ describe('POST /api/recipes/[id]/comments', () => {
     const res = await post(ROW_ID, '{"content":"おいしい"}');
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual(FLAT_INTERNAL);
+    expectReachedInsert();
   });
 });
 

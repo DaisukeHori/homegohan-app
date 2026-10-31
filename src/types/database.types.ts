@@ -7565,6 +7565,7 @@ export type Database = {
           roles: string[] | null
           servings_config: Json | null
           shopping_frequency: string | null
+          show_recipe_author_name: boolean
           skin_condition: string | null
           sleep_quality: string | null
           sleep_time: string | null
@@ -7704,6 +7705,7 @@ export type Database = {
           roles?: string[] | null
           servings_config?: Json | null
           shopping_frequency?: string | null
+          show_recipe_author_name?: boolean
           skin_condition?: string | null
           sleep_quality?: string | null
           sleep_time?: string | null
@@ -7843,6 +7845,7 @@ export type Database = {
           roles?: string[] | null
           servings_config?: Json | null
           shopping_frequency?: string | null
+          show_recipe_author_name?: boolean
           skin_condition?: string | null
           sleep_quality?: string | null
           sleep_time?: string | null
@@ -8403,6 +8406,7 @@ export type Database = {
           roles: string[] | null
           servings_config: Json | null
           shopping_frequency: string | null
+          show_recipe_author_name: boolean
           skin_condition: string | null
           sleep_quality: string | null
           sleep_time: string | null
@@ -9492,6 +9496,7 @@ export type Database = {
           roles: string[] | null
           servings_config: Json | null
           shopping_frequency: string | null
+          show_recipe_author_name: boolean
           skin_condition: string | null
           sleep_quality: string | null
           sleep_time: string | null
@@ -9784,6 +9789,13 @@ export type Database = {
           skipped_with_consents_count: number
         }[]
       }
+      recipe_author_display_names: {
+        Args: { p_user_ids: string[] }
+        Returns: {
+          author_id: string
+          display_name: string
+        }[]
+      }
       reconcile_user_sessions_metadata: { Args: never; Returns: number }
       record_ai_usage: {
         Args: { p_feature: string; p_user_id: string }
@@ -10037,6 +10049,7 @@ export type Database = {
           roles: string[] | null
           servings_config: Json | null
           shopping_frequency: string | null
+          show_recipe_author_name: boolean
           skin_condition: string | null
           sleep_quality: string | null
           sleep_time: string | null

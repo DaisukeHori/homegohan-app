@@ -49,7 +49,7 @@ function recipesQuery() {
   return builder;
 }
 
-/** 作者の名前 (user_profiles) と自分のいいね (recipe_likes) を引くクエリ (#1917。埋め込まずに別のクエリで引く)。どちらも 0 行 */
+/** 自分のいいね (recipe_likes) を引くクエリ (#1917。埋め込まずに別のクエリで引く)。0 行 (作者の表示名は rpc。名前は 0 件 = 既定の呼称) */
 function emptyLookupQuery() {
   const builder = {
     select: () => builder,
@@ -66,7 +66,7 @@ vi.mock('@/lib/supabase/server', () => ({
     rpc: async () => ({ data: null, error: null }),
     from: (table: string) => {
       if (table === 'recipes') return recipesQuery();
-      if (table === 'user_profiles' || table === 'recipe_likes') return emptyLookupQuery();
+      if (table === 'recipe_likes') return emptyLookupQuery();
       throw new Error(`unexpected table: ${table}`);
     },
   }),
