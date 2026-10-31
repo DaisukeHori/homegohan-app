@@ -21,6 +21,12 @@ const SUPPORT_LAYOUT_LOAD_ERROR = "サポートの画面を開けませんでし
  */
 const POSTGREST_NO_ROWS_CODE = "PGRST116";
 
+/**
+ * サイドバーの下の自分の名前 (👤 の横) に、プロフィールの nickname が空のときに出す呼び名。
+ * 英字だけの文 (以前は「Support」) を出さない (#2150 Q3-1)
+ */
+const SUPPORT_USER_NAME_FALLBACK = "サポート担当";
+
 const supportNavItems = [
   { href: "/support", label: "ダッシュボード", icon: "📊" },
   { href: "/support/inquiries", label: "問い合わせ", icon: "📩" },
@@ -87,7 +93,7 @@ export default function SupportLayout({
         return;
       }
 
-      setUserName(normalizeProfileName(profile.nickname) ?? "Support");
+      setUserName(normalizeProfileName(profile.nickname) ?? SUPPORT_USER_NAME_FALLBACK);
       setLoadError(null);
     } catch (checkError) {
       // 問い合わせが例外を投げた (以前は catch が無く、未処理の reject になり、読み込み中の表示のまま止まっていた)
