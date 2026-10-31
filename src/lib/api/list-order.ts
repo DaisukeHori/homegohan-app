@@ -11,6 +11,7 @@
 // orderListBy(問い合わせ, LIST_ORDERS.<一覧>) で並べる (.order( を直接書かない。src/app・src/lib・src/hooks・src/modules・
 // src/components・src/contexts とリポジトリ直下の lib の全体を tests/list-order-tiebreak-2134.test.ts が走査で守る。
 // 並びの鍵がもう一意の所 (主キー・一意の制約の列で終わる、id で終える) だけは、そのテストの許可の表に理由つきで書く)。
+// 親の表の select に埋め込んだ一覧の行は orderEmbeddedListBy(問い合わせ, LIST_ORDERS.<一覧>) で並べる。
 // NULL の位置は、いままでの order で nullsFirst を省いていた鍵は PostgreSQL の既定 (昇順は最後・降順は最初) と同じ値を明示し、nullsFirst を書いていた鍵はその値を保つ (例: operatorOrgTransferCandidates の last_login_at は降順で空を最後)。
 
 /** PostgREST の order に渡す 1 つの並びの鍵 */
@@ -25,9 +26,12 @@ export interface ListOrder {
   keys: readonly ListOrderKey[];
 }
 
-/** order を重ねられる問い合わせ (supabase-js の PostgrestFilterBuilder など) */
+/**
+ * order を重ねられる問い合わせ (supabase-js の PostgrestFilterBuilder など)。
+ * referencedTable は、select に埋め込んだ表の行を並べるときだけ渡す (orderEmbeddedListBy)
+ */
 export interface OrderableQuery<Query> {
-  order(column: string, options: { ascending: boolean; nullsFirst: boolean }): Query;
+  order(column: string, options: { ascending: boolean; nullsFirst: boolean; referencedTable?: string }): Query;
 }
 
 /** 最後に重ねる一意の鍵 (主キー id を持つ表の一覧) */
@@ -228,7 +232,10 @@ export const LIST_ORDERS = {
   performancePlans: withIdTiebreak('performance_plans', [descending('start_date')]),
   /** GET /api/performance/sports: 競技の候補 (分類の順 → 名前の順) */
   performanceSports: withIdTiebreak('sport_presets', [ascending('category'), ascending('name_ja')]),
-  /** GET /api/recipes/[id]/comments: レシピのコメント (書いた日時の新しい順) */
+  /**
+   * GET /api/recipes/[id]/comments: レシピのコメント (書いた日時の新しい順)。
+   * GET /api/recipes/[id] がレシピに埋め込んで返すコメントも同じ鍵で並べる (orderEmbeddedListBy。#2166 X6)
+   */
   recipeComments: withIdTiebreak('recipe_comments', [descending('created_at')]),
   /** GET /api/recipes: レシピ (作った日時の新しい順・ページ送り) */
   recipes: withIdTiebreak('recipes', [descending('created_at')]),
@@ -308,7 +315,31 @@ export const LIST_ORDERS = {
   catalogProductSearch: withIdTiebreak('catalog_products', [descending('updated_at')]),
 } as const satisfies Record<string, ListOrder>;
 
+/**
+ * 鍵の順で order を重ねる (先に重ねた鍵ほど強い)。referencedTable を渡すと、親の行ではなく select に埋め込んだその表の行を並べる
+ * (orderListBy と orderEmbeddedListBy の共通の中身)
+ */
+function orderByKeys<Query extends OrderableQuery<Query>>(
+  query: Query,
+  keys: readonly ListOrderKey[],
+  referencedTable: string | undefined,
+): Query {
+  return keys.reduce(
+    (ordered, key) => ordered.order(key.column, referencedTable === undefined ? key.options : { ...key.options, referencedTable }),
+    query,
+  );
+}
+
 /** 問い合わせに鍵の順で order を重ねる (先に重ねた鍵ほど強い。PostgREST の order=a.asc,b.asc) */
 export function orderListBy<Query extends OrderableQuery<Query>>(query: Query, order: { keys: readonly ListOrderKey[] }): Query {
-  return order.keys.reduce((ordered, key) => ordered.order(key.column, key.options), query);
+  return orderByKeys(query, order.keys, undefined);
+}
+
+/**
+ * 親の表の select に埋め込んだ一覧 (select の `<一覧の表>(…)`) の行を、その一覧の鍵の順で並べる (#2166 X6)。
+ * 埋め込んだ表は一覧の表 (order.table) で、どの鍵もそれを referencedTable にして渡す (PostgREST の <表>.order=a.asc,b.asc)。
+ * 親の行の順は変えない。select の埋め込みに別名を付けた所では使えない (referencedTable は別名を指すため)
+ */
+export function orderEmbeddedListBy<Query extends OrderableQuery<Query>>(query: Query, order: ListOrder): Query {
+  return orderByKeys(query, order.keys, order.table);
 }
