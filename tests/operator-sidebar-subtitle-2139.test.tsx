@@ -413,9 +413,9 @@ describe('売上と NPS の画面の見出し・副題に英字だけの文が�
   it.each(FINANCE_PAGES)('$name: 画面の h1〜h6 すべてに英字だけの文が無い (#2150 Q3b-1)', async ({ Page, routes, headings, englishHeadings }) => {
     await mountClientPage(Page, routes);
     const texts = pageHeadingTexts();
+    expect(texts.filter((text) => isEnglishOnlyText(text) && !PAGE_HEADING_ABBREVIATIONS.has(text))).toEqual([]);
     // 見出しを全部取れている (セレクタの書き誤り・読み込みの待ち不足で空振りしない)
     expect(texts).toEqual(headings);
-    expect(texts.filter((text) => isEnglishOnlyText(text) && !PAGE_HEADING_ABBREVIATIONS.has(text))).toEqual([]);
     for (const englishHeading of englishHeadings) expect(document.body.textContent).not.toContain(englishHeading);
   });
 });
