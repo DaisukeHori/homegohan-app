@@ -9,11 +9,11 @@
  * そろえたが、R1 の修正は「トリガー」と関数の名前が別の行に分かれたコメント (「…DB のトリガー」の次の行が「 * guard_…」) を
  * 見落とした (1 行ずつの grep では見えない)。ここでは、
  *  1. migration から、トリガーの名前と、トリガーが呼ぶ関数の名前を読む (どちらもこのテストの定数と同じで、互いに違う)
- *  2. src・tests・docs (docs/design を除く)・apps・scripts・supabase (migrations・rollbacks・functions)・CLAUDE.md の全文で、
+ *  2. src・tests・docs・apps・scripts・supabase (migrations・rollbacks・functions)・CLAUDE.md の全文で、
  *     「トリガー」のすぐ後 (空白・改行・コメントの行の頭の * や //・--・#・> と、` や ( だけを挟む) に関数の名前が来る所が無い
  *  3. 2. の見つけ方が、行をまたぐ書き方・` で囲む書き方・( で始める書き方を見つけ、直した書き方 (トリガーの名前を書き、
  *     関数の名前は「関数 …」と書く) には反応しないことを、写しの文で確かめる
- * を確かめる。docs/design (設計正典) はこのブランチでは直さない (operator/02 §17 の 1 か所は design-doc.patch で直す)。
+ * を確かめる。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -31,8 +31,6 @@ const TRIGGER = 'trg_guard_plan_stripe_product_id_price_change';
 
 /** 走査する場所 (リポジトリの根からの相対パス。ファイルでもディレクトリでもよい) */
 const SCAN_ROOTS = ['src', 'tests', 'docs', 'apps', 'scripts', 'supabase', 'CLAUDE.md'];
-/** 走査しない場所 (リポジトリの根からの相対パス)。docs/design は設計正典で、このブランチでは直さないため */
-const SCAN_EXCLUDED = ['docs/design'];
 /** 中に入らないディレクトリの名前 (依存・生成物) */
 const SKIPPED_DIR_NAMES = new Set(['node_modules', '.next', '.expo', 'dist', 'build', 'coverage', 'Pods', '.turbo', '.git']);
 /** 読むファイルの拡張子 (文字のファイル) */
@@ -45,7 +43,6 @@ function textFilesUnder(root: string): string[] {
   if (fs.statSync(full).isFile()) return [root];
   const out: string[] = [];
   const walk = (rel: string) => {
-    if (SCAN_EXCLUDED.includes(rel)) return;
     for (const entry of fs.readdirSync(path.join(ROOT, rel), { withFileTypes: true })) {
       const child = path.posix.join(rel, entry.name);
       if (entry.isDirectory()) {
@@ -83,19 +80,19 @@ describe('Stripe の商品の ID を守るトリガーの呼び名 (#2128 docs-1
     expect(TRIGGER).not.toBe(FN);
   });
 
-  it('src・tests・docs (docs/design を除く)・apps・scripts・supabase・CLAUDE.md で、関数の名前を「トリガー」と呼ぶ所が無い', () => {
+  it('src・tests・docs・apps・scripts・supabase・CLAUDE.md で、関数の名前を「トリガー」と呼ぶ所が無い', () => {
     const files = SCAN_ROOTS.flatMap(textFilesUnder);
-    expect(files, 'src・tests・supabase・CLAUDE.md のファイルを走査している').toEqual(
+    expect(files, 'src・tests・docs/design・supabase・CLAUDE.md のファイルを走査している').toEqual(
       expect.arrayContaining([
         'src/app/api/super-admin/plans/[id]/route.ts',
         'src/lib/super-admin/plan-price-change-reservation.ts',
         'src/lib/super-admin/plans-schemas.ts',
         'tests/integration/security/plan-deprecate-lock-price-change-reservation.test.ts',
+        'docs/design/operator/02-api-spec.md',
         'supabase/migrations/20261030160000_plan_stripe_product_id_price_change_guard.sql',
         'CLAUDE.md',
       ]),
     );
-    expect(files.filter((file) => file.startsWith('docs/design/')), 'docs/design は走査しない').toEqual([]);
     const found = files.flatMap((file) => {
       const text = fs.readFileSync(path.join(ROOT, file), 'utf-8');
       if (!text.includes(FN)) return [];
