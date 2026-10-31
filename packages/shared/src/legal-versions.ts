@@ -62,8 +62,8 @@ export interface LegalDocumentInfo {
  * v2026.4 の施行日は、予告に書いた施行日 (その日に公開 (デプロイ) する。§11.8 (i))。
  */
 export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentInfo>> = {
-  terms_of_service: { version: 'v2026.4', effectiveDate: '2026-11-01' }, // 仮置き: マージ直前に公開日へ置き換える
-  privacy_policy: { version: 'v2026.4', effectiveDate: '2026-11-01' }, // 仮置き: マージ直前に公開日へ置き換える
+  terms_of_service: { version: 'v2026.4', effectiveDate: '2026-11-01' },
+  privacy_policy: { version: 'v2026.4', effectiveDate: '2026-11-01' },
 };
 
 /** 画面に出す文書名 */
