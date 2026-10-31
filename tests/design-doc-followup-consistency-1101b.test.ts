@@ -138,7 +138,7 @@ function anchorProblem(descriptor: string, targetLines: readonly string[], lineN
   const sectionAnchor = /^§(\d+(?:\.\d+)*)$/.exec(descriptor);
   if (sectionAnchor) {
     const heading = headingBefore(targetLines, lineNumber - 1);
-    const inSection = new RegExp(`^#{2,6} ${sectionAnchor[1].replace(/\./g, '\\.')}[. ]`).test(heading);
+    const inSection = new RegExp(`^#{2,6} ${sectionAnchor[1].replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[. ]`).test(heading);
     return inSection && target.trim() !== '' ? undefined : `行 ${lineNumber} は §${sectionAnchor[1]} の中身の行ではない`;
   }
   return `「${descriptor}」は名指しの形が分からない (行番号ではなく名前で指す)`;
