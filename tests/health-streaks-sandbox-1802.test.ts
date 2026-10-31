@@ -59,7 +59,6 @@ const FILES_TOUCHING_HEALTH_STREAKS: Record<string, string> = {
   'src/app/api/health/records/quick/route.ts': '保存した後に daily_record を読んで応答に入れるだけ',
   'src/app/api/health/streaks/route.ts': '利用者が自分の行を読む・消す (DELETE) だけ。数を進めない',
   'src/hooks/useHomeData.ts': 'ホームで daily_record を読むだけ',
-  'apps/mobile/src/hooks/useHomeData.ts': 'モバイルのホームで daily_record を読むだけ',
   'src/lib/account-export-tables.ts': 'アカウントの書き出しで自分の行を読むだけ',
   'supabase/functions/calculate-segment-stats/index.ts': '比較ランキングの集計で meal_record / breakfast を読むだけ (書く処理は無い。#1528)',
 };
@@ -201,7 +200,7 @@ const FILES = listSourceFiles();
 describe('#1802: 連続日数 (health_streaks) にハンズオンのお試しの記録が入らない', () => {
   it('走査の対象が空でない (走査の場所を間違えて、何も見ずに通ることを防ぐ)', () => {
     expect(FILES).toContain('src/lib/health-streaks.ts');
-    expect(FILES).toContain('apps/mobile/src/hooks/useHomeData.ts');
+    expect(FILES).toContain('apps/mobile/app/(tabs)/home.tsx');
     expect(FILES).toContain('supabase/functions/calculate-segment-stats/index.ts');
   });
 
