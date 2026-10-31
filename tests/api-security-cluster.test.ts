@@ -216,20 +216,24 @@ describe('#168 /api/recipes/[id]/comments GET', () => {
   // 認証済みユーザーでコメント一覧を取得するケースで検証する。
   it('認証済みユーザーはコメント一覧を取得できる (user_id は含まれない)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'uid-reader' } }, error: null });
+    const commentsResult = {
+      data: [
+        {
+          id: 'c1',
+          content: 'おいしい',
+          rating: 5,
+          created_at: '2024-01-01',
+          user_id: 'uid-alice',
+        },
+      ],
+      error: null,
+    };
+    // 並びは order を 2 回重ねる (書いた日時の新しい順 → id の順。#2139 T1)。最後に await した所で結果を返す
     const selectChain = {
       eq: vi.fn().mockReturnThis(),
-      order: vi.fn().mockResolvedValue({
-        data: [
-          {
-            id: 'c1',
-            content: 'おいしい',
-            rating: 5,
-            created_at: '2024-01-01',
-            user_id: 'uid-alice',
-          },
-        ],
-        error: null,
-      }),
+      order: vi.fn().mockReturnThis(),
+      then: (onFulfilled: (value: typeof commentsResult) => unknown, onRejected?: (reason: unknown) => unknown) =>
+        Promise.resolve(commentsResult).then(onFulfilled, onRejected),
     };
     // 書いた人の名前は user_profiles を別のクエリで引く (#1917。埋め込みは PostgREST が解決できない)
     const profileChain = {
