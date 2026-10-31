@@ -36,7 +36,7 @@
 | 4 | 権限の外し方 (列の GRANT か、RLS の WITH CHECK か、トリガーか) | **列の権限**: 表の INSERT / UPDATE を anon / authenticated から REVOKE し、authenticated に 3 列を除く 56 列の INSERT (列) / UPDATE (列) を GRANT し直す。RLS のポリシー・SELECT・DELETE・service_role は変えない (§6.4・§5) |
 | 5 | モバイルの古いビルドが直接書いていた場合に壊れないか (版の互換) | 古いビルドの完了の切り替えは 42501 で失敗し、既存の失敗時の処理 (楽観的更新を戻して読み直す) で画面は元に戻る。壊れるのはその操作だけで、ほかの画面は変わらない。ローンチ前で利用者はゼロなので、互換のための猶予は作らない (§6.5) |
 | 6 | モジュラーモノリスの切り方・Zod の正典・エラー表・テスト | 共通の定数と RPC の名前は `packages/shared/src/planned-meals-integrity.ts` (Web・モバイル・テストが読む)。Web は `src/modules/planned-meals-integrity/` (`core.ts` = Zod・文言、`server.ts` = RPC の呼び出し)。Edge は `supabase/functions/_shared/veg-score.ts` (尺度と計算)。エラー表は §10。テストは §12 (§6.6) |
-| 7 | 段分けと本番への当て方 (権限を外す migration は、書き手を付け替えた後にしか当てられない) | migration を 2 本に分ける。段 A = RPC を足す migration (追加だけ) + 共通の定数、段 B = 書き手の付け替え (Web・モバイル・Edge)、段 C = 権限を外す migration。段 C のマージの前にオーナーへ migration の中身を確認する決まりで、段 A は #2033・段 B は #2034・段 C は #2048 でマージ済み (§15) |
+| 7 | 段分けと本番への当て方 (権限を外す migration は、書き手を付け替えた後にしか当てられない) | migration を 2 本に分ける。段 A = RPC を足す migration (追加だけ) + 共通の定数、段 B = 書き手の付け替え (Web・Edge)、段 C = 権限を外す migration。段 C のマージの前にオーナーへ migration の中身を確認する決まりで、段 A は #2033・段 B は #2034・段 C は #2048 でマージ済み (§15) |
 
 ### 0.2 要件行列
 
@@ -65,7 +65,7 @@
 |---|---|---|
 | S-1 | Web のホームで今日の昼食の「食べた」を押す | `supabase.rpc('planned_meals_set_completed', { p_meal_id, p_completed: true })`。行は `is_completed = true`・`completed_at = now()` (DB の時刻)。画面は楽観的更新のまま |
 | S-2 | S-1 の直後にもう一度押す (未完了に戻す) | RPC `p_completed: false`。`is_completed = false`・`completed_at = NULL` |
-| S-3 | モバイル (本書の後のビルド) のホームで「食べた」を押す | S-1 と同じ RPC。`apps/mobile/src/hooks/useHomeData.ts` が `supabase.rpc` を呼ぶ |
+| S-3 | モバイル (本書の後のビルド) のホームで「食べた」を押す | S-1 と同じ RPC。アプリのホームは Web の画面の WebView (`apps/mobile/app/(tabs)/home.tsx`) で、Web の `src/hooks/useHomeData.ts` が `supabase.rpc` を呼ぶ |
 | S-4 | モバイルの古いビルド (`.from('planned_meals').update({ is_completed, completed_at })`) で「食べた」を押す | PostgREST が 42501 (permission denied for table planned_meals)。既存の失敗時の処理で楽観的更新を戻し `fetchAll()` で読み直す。行は変わらない |
 | S-5 | Web の食事の詳細 (`/meals/[id]`) で「食べた」を押す。画面は今までどおり `is_completed` と端末の時刻の `completed_at` を `PATCH /api/meals/[id]` に送る | route は `completed_at` を無視し、RPC で完了にする。応答の `completed_at` は DB の時刻。`allowedFields` から `is_completed`・`completed_at` は消えている |
 | S-6 | 献立表 (`/menus/weekly`) で完了を切り替える (`PATCH /api/meal-plans/meals/[id]` の本文は `{ isCompleted }` だけ。料理の無い献立もある) | route が RPC で切り替え、`meal` に RPC の値を載せて 200 で返す。ほかの列の変更が無いので既存の UPDATE は流さず、行を読み直す (空の UPDATE は PostgREST が 0 行にして `.single()` が失敗するため) |
@@ -93,7 +93,7 @@
 
 ### 0.4 分冊判定
 
-目安 (設計書 800 行超 / 消費先レーン 3 以上 / 共有面 2 つ以上) のうち、行数と消費先 (Web の route と hook・モバイルの hook・Edge Function の 3 本) と共有面 (`planned_meals` の権限・`packages/shared`・`supabase/functions/_shared`) に当たる。ただし核 (migration 2 本・RPC・共通の定数) は 1 本の契約で閉じ、配線は「既存の書き手を RPC か service_role に付け替えるだけ」で判断の余地が無いので、**1 冊**にし、実装は段で分ける (§15: 段 A = RPC の migration と共通の定数、段 B = 書き手の付け替え、段 C = 権限の migration)。段ごとに 2 枚レビューを閉じ、段の間に本番への適用 (段 A の migration・段 B のデプロイ) を挟む。
+目安 (設計書 800 行超 / 消費先レーン 3 以上 / 共有面 2 つ以上) のうち、行数と共有面 (`planned_meals` の権限・`packages/shared`・`supabase/functions/_shared`) に当たる (消費先は Web の route と hook・Edge Function の 2 本。アプリのホームは Web の画面の WebView で、Web の hook を通る)。ただし核 (migration 2 本・RPC・共通の定数) は 1 本の契約で閉じ、配線は「既存の書き手を RPC か service_role に付け替えるだけ」で判断の余地が無いので、**1 冊**にし、実装は段で分ける (§15: 段 A = RPC の migration と共通の定数、段 B = 書き手の付け替え、段 C = 権限の migration)。段ごとに 2 枚レビューを閉じ、段の間に本番への適用 (段 A の migration・段 B のデプロイ) を挟む。
 
 ### 0.5 用語
 
@@ -117,7 +117,7 @@
 ## 1. 目的・スコープ
 
 - 目的: 比較ランキングと組織のチャレンジが指標に使う `planned_meals` の 3 列を、利用者が PostgREST から直接書けない形にし、書く口をサーバの処理 (完了の RPC・写真の解析の service_role) に限る。`veg_score` はサーバの計算値だけになる。`is_completed` は口が RPC に限られ `completed_at` がサーバの時刻になるが、完了にするかどうかは本人の申告のまま (§0.1 の 2・§21 Q-2)。
-- 対象: `planned_meals` の INSERT / UPDATE の権限 (列単位)・完了の RPC・3 列を書く既存の経路の付け替え (Web の route 11 本 = 完了の PATCH 2 本・作成 3 本・`/api/ai/nutrition`・写真の解析 `/api/ai/analyze-meal-photo` (`mealId` のときは `prefetchedGeminiResult` を Edge へ渡さない)・週間生成の復元の 4 本 (と `src/lib/planned-meals-snapshot.ts` の 1 関数)、Web の hook 1 本・モバイルの hook 1 本・AI 相談の 1 アクション・Edge Function 3 本)・野菜スコアの尺度の定数・比較ランキングの `nutrition_score` の係数・テスト。
+- 対象: `planned_meals` の INSERT / UPDATE の権限 (列単位)・完了の RPC・3 列を書く既存の経路の付け替え (Web の route 11 本 = 完了の PATCH 2 本・作成 3 本・`/api/ai/nutrition`・写真の解析 `/api/ai/analyze-meal-photo` (`mealId` のときは `prefetchedGeminiResult` を Edge へ渡さない)・週間生成の復元の 4 本 (と `src/lib/planned-meals-snapshot.ts` の 1 関数)、Web の hook 1 本 (アプリのホームは Web の画面の WebView で、この hook を通る)・AI 相談の 1 アクション・Edge Function 3 本)・野菜スコアの尺度の定数・比較ランキングの `nutrition_score` の係数・テスト。
 - 対象外: 冒頭の前提の「範囲外」のとおり。
 
 ## 2. 関連要件・既存設計
@@ -142,7 +142,7 @@
 
 | # | 経路 | 書く列 | client | file:line (origin/main) | 本書の後 |
 |---|---|---|---|---|---|
-| W-1 | モバイルのホームの完了の切り替え `toggleMealCompletion` | `is_completed`・`completed_at` | 利 | `apps/mobile/src/hooks/useHomeData.ts:661-662` (`.update({ is_completed, completed_at }).eq('id')`) | RPC (§7.14) |
+| W-1 | モバイルのホームの完了の切り替え `toggleMealCompletion` | `is_completed`・`completed_at` | 利 | `apps/mobile/src/hooks/useHomeData.ts` の `toggleMealCompletion` (`.update({ is_completed, completed_at }).eq('id')`。この hook はアプリから import されていなかった) | 無し (hook を消した。アプリのホームは Web の画面の WebView (`apps/mobile/app/(tabs)/home.tsx`) で、W-2 を通る) |
 | W-2 | Web のホームの完了の切り替え `toggleMealCompletion` | `is_completed`・`completed_at` | 利 (ブラウザの client) | `src/hooks/useHomeData.ts:930-936` | RPC (§7.14) |
 | W-3 | Web の食事の詳細の `toggleCompletion` → `PATCH /api/meals/[id]` | `is_completed`・`completed_at` (本文から `allowedFields` で通す) | 利 (route の `createClient()`) | `src/app/(main)/meals/[id]/page.tsx:189-197` → `src/app/api/meals/[id]/route.ts:113-116` | route が RPC (§7.9) |
 | W-4 | 献立表の `handleUpdateMeal(..., { isCompleted })` → `PATCH /api/meal-plans/meals/[id]` | `is_completed`・`completed_at` (`isCompleted` から) | 利 | `src/app/(main)/menus/weekly/page.tsx:2866` → `src/app/api/meal-plans/meals/[id]/route.ts:93-96` | route が RPC (§7.9) |
@@ -165,7 +165,7 @@
 - `prefetchedGeminiResult` を送る画面は食事の記録の画面 (`src/app/(main)/meals/new/page.tsx:558`。判別 `classify-photo` が返した解析の結果を送り返す) だけで、`mealId` 無し (同期・書き込み無し) で呼ぶ。献立表の写真から入力 (`mealId` つき) は送らない。したがって `mealId` と `prefetchedGeminiResult` を一緒に受け取る口は画面には要らず、利用者が本文を作って送ったときにだけ使われる (Next.js の route 経由でも、Edge を JWT で直接でも)。
 - `mealId` つきで呼ぶ経路は 1 本ある: 献立表 (`/menus/weekly`) の写真から入力 (`src/app/(main)/menus/weekly/page.tsx` の `analyzePhotoWithAI` の `aiFetch('/api/ai/analyze-meal-photo', …)` (mealId つき)) → `POST /api/ai/analyze-meal-photo` (`src/app/api/ai/analyze-meal-photo/route.ts` の `supabase.functions.invoke('analyze-meal-photo', …)`) → Edge `analyze-meal-photo` の背景の処理 (W-8)。`veg_score` に値が入るのはこの経路だけで、本番の `veg_score` が全行 NULL なのは、本番でこの経路がまだ使われていないため (2026-10-25 の SELECT。§3.5)。apps/mobile に `analyze-meal-photo` を呼ぶ箇所は無い。
 - 止まった生成の後片付けが使う `weekly_menu_requests.generated_data.snapshot` は、利用者からは書けない (`20261011010000_ai_queue_service_role_writes.sql` が `weekly_menu_requests` の INSERT / UPDATE / DELETE を anon / authenticated から外した。書くのは `getAiQueueWriter()` と Edge Function の service_role)。中身は `weekly/request` が利用者のセッションの `select('*')` で読んだ本人の行。
-- 読み手 (変えない): `supabase/functions/calculate-segment-stats/index.ts:349・386-394・416-425` (service_role。`veg_score_avg`・`nutrition_score = round(vegAvg × 20)`・`breakfast_rate`・`menu_execution_rate`)、`update_org_challenge_progress` (`20261014100100_org_challenge_progress.sql:155・174`。`avg(pm.veg_score)`)、`src/app/api/badges/route.ts:54-77`、`src/hooks/useHomeData.ts:573-585` (`veg_score` で並べる)、`apps/mobile/src/hooks/useHomeData.ts` の `fetchBestMealThisWeek`、`src/lib/org-challenges.ts:53-62` (`targetMax: 100`。注釈に「写真の解析は 0〜100 点、AI の推定は 1〜5 点」)、`generate-menu-v4` / `v5` の `status: meal.is_completed ? "completed" : ...`、`src/lib/membership/family-menu.ts:147` (SECURITY DEFINER の `family_menu_planned_meals`) と、その応答を検める zod `src/schemas/membership/family-menu.ts:31・77` (`FamilyMenuMealSchema` / `FamilyMenuRpcRowSchema` の `is_completed`)、`src/app/api/ai/menu/day/regenerate/route.ts:103-106・122` (`is_completed` を select し、完了の食事を作り直しの対象から外す)、`src/app/api/ai/menu/v4/generate/route.ts:255・296`・`v5/generate/route.ts:228・262`・`src/app/api/ai/consultation/sessions/route.ts:95`・`sessions/[sessionId]/messages/route.ts:177・186・274`・`src/app/api/ai/nutrition-analysis/route.ts:82`・`src/app/api/export/meals/route.ts:70・119`・`src/app/api/support/users/[id]/route.ts:84` (`is_completed` を読む)、`lib/converter.ts:487・498` (`toPlannedMeal` が `is_completed`・`veg_score` を写す。`veg_score` は `|| null` なので 0 は null になる。指標の集計はこの関数を通らない)、`apps/mobile/src/components/menu/V4GenerateModal.tsx:106・127`。なお `lib/converter.ts:306` (`toMealNutritionEstimate`) の `veg_score` は別の表 `meal_nutrition_estimates` の列で、本書の対象外。
+- 読み手 (変えない): `supabase/functions/calculate-segment-stats/index.ts:349・386-394・416-425` (service_role。`veg_score_avg`・`nutrition_score = round(vegAvg × 20)`・`breakfast_rate`・`menu_execution_rate`)、`update_org_challenge_progress` (`20261014100100_org_challenge_progress.sql:155・174`。`avg(pm.veg_score)`)、`src/app/api/badges/route.ts:54-77`、`src/hooks/useHomeData.ts:573-585` (`veg_score` で並べる。アプリのホームは Web の画面の WebView (`apps/mobile/app/(tabs)/home.tsx`) で、この hook を通る)、`src/lib/org-challenges.ts:53-62` (`targetMax: 100`。注釈に「写真の解析は 0〜100 点、AI の推定は 1〜5 点」)、`generate-menu-v4` / `v5` の `status: meal.is_completed ? "completed" : ...`、`src/lib/membership/family-menu.ts:147` (SECURITY DEFINER の `family_menu_planned_meals`) と、その応答を検める zod `src/schemas/membership/family-menu.ts:31・77` (`FamilyMenuMealSchema` / `FamilyMenuRpcRowSchema` の `is_completed`)、`src/app/api/ai/menu/day/regenerate/route.ts:103-106・122` (`is_completed` を select し、完了の食事を作り直しの対象から外す)、`src/app/api/ai/menu/v4/generate/route.ts:255・296`・`v5/generate/route.ts:228・262`・`src/app/api/ai/consultation/sessions/route.ts:95`・`sessions/[sessionId]/messages/route.ts:177・186・274`・`src/app/api/ai/nutrition-analysis/route.ts:82`・`src/app/api/export/meals/route.ts:70・119`・`src/app/api/support/users/[id]/route.ts:84` (`is_completed` を読む)、`lib/converter.ts:487・498` (`toPlannedMeal` が `is_completed`・`veg_score` を写す。`veg_score` は `|| null` なので 0 は null になる。指標の集計はこの関数を通らない)、`apps/mobile/src/components/menu/V4GenerateModal.tsx:106・127`。なお `lib/converter.ts:306` (`toMealNutritionEstimate`) の `veg_score` は別の表 `meal_nutrition_estimates` の列で、本書の対象外。
 
 ### 3.2 DB (`20251126124224_create_meal_planner_tables.sql`。本番と同じ)
 
@@ -188,7 +188,7 @@
 - 実 DB: `tests/integration/rls/planned-meals-value-checks.test.ts` の 4 つの it (利用者のセッションが `is_completed` を書く。`:576-591` = 1 行ずつの切り替え (`:579`・`:584`・`:588`)・`:602-610` = 同じ日の食事の一括更新 (`:605` の `.update({ is_completed: true }).eq('daily_meal_id', …)`)・`:618-633` = 範囲外の値を同じ値で書き直す本文に `is_completed: true` (`:628`)・`:674-689` = migration を流し直した後の切り替え (`:683`))・`tests/integration/rls/stats-edge-functions-user-daily-meals.test.ts:148-150・382-383・594` (service_role で 3 列を seed・`:594` は service_role の UPDATE。`nutrition_score` の期待値 80/60/40/20 は `veg_score` 4/3/2/1 × 20)・`org-challenge-progress.test.ts:211-212`・`org-challenge-diff-privacy.test.ts:306`・`security/badges-api.test.ts:126・150`・`security/support-routes.test.ts:119` (service_role で seed。影響なし)。
 - 単体: `tests/calculate-segment-stats-planned-meals.test.ts:131-134・437-438・648-649・812` (`nutrition_score = veg × 20`)・`tests/planned-meal-nutrient-validation-routes.test.ts:527-531・548・564` (`veg_score` が update の本文に入ることを期待) と `:292-301`・`:423-428` (完了の切り替えの本文が update に入ることを期待。偽物の client に `rpc` が無い)・`tests/meal-image-skip-routes.test.ts:130-180・513・525` (route の偽物の DB に `rpc` が無い)・`tests/analyze-meal-photo-sugar.test.ts:430-454` (planned_meals の update が 1 か所で `veg_score` を手書きすること。本書の後も同じ)。
 - 静的: `tests/migration-file-version-integrity.test.ts` (見出し・戻し口の対)・`tests/database-types-migrations-contract.test.ts` (新しい関数が型ファイル 2 本にあること)・`tests/db-privilege-hardening-migration-contract.test.ts` (後の migration と戻し口が利用者へ表の TRUNCATE / ALL を付けないこと)・`tests/operator-write-policy-ledger.test.ts` (運営ロールのポリシー。本書は触らない)・`tests/supabase-service-role-client-scan.test.ts`・`tests/env-source-scan.test.ts`・`tests/postgrest-embed-relationship-scan.test.ts` (src・lib の埋め込み。Edge は見ない)・`tests/edge-function-verify-jwt.test.ts` (config は変えない)・`tests/ai-queue-writes-contract.test.ts:216-217` (`analyze-meal-photo/index.ts` の取り消しの client を `const queueDb = createClient(...)` と `supabase: queueDb` の名前で見る。§7.15 は名前を保つ)・`tests/image-route-contracts.test.ts:263-312` (`mealId` 無しで `prefetchedGeminiResult` を Edge へ渡すこと。§7.15 は `mealId` 無しなら今までどおり渡す)。
-- モバイル: `apps/mobile/__tests__/home/home.test.tsx` は `toggleMealCompletion` を jest.fn で差し替える (hook の中身は見ない)。
+- モバイル: `apps/mobile/__tests__/home/home.test.tsx` はホームのタブが `WebViewScreen` で Web の `/home` を開くことを見る (アプリのホームは Web の画面の WebView (`apps/mobile/app/(tabs)/home.tsx`) で、完了の切り替えを持たない)。
 - 週間生成の復元: `src/__tests__/api/ai/menu/weekly-request.test.ts:153-155・245-246`・`weekly-status.test.ts:103-108・209`・`weekly-pending.test.ts:104-109・196`・`weekly-cleanup.test.ts:109-114・186・255-256` (`restorePlannedMealsSnapshot` を差し替え、利用者のセッションの client で呼ばれることを期待)・`src/__tests__/lib/planned-meals-snapshot.test.ts` (関数そのもの)・`src/__tests__/api/ai/menu/service-config-order.test.ts:55-57` (`weekly/request` を含む 5 route を読み込み、`@/lib/planned-meals-snapshot` を `restorePlannedMealsSnapshot` だけの factory で差し替える。DB は最初の呼び出しで投げるので復元には届かない)。
 
 ### 3.5 本番の読み取り (2026-10-25。Supabase MCP の SELECT だけ。書き込みなし)
@@ -230,7 +230,7 @@
 ```
 
 - 閉じ方は「列の権限」の 1 枚。RLS のポリシーは変えない (行の所有は今までどおり USING が守る)。列の権限は PostgREST の INSERT / UPDATE / upsert すべてに効き、後で誰かが書き込みのポリシーを足しても 3 列は開かない。
-- 完了の口は RPC 1 本。Web の hook・モバイルの hook は `supabase.rpc` を直接呼び、route 2 本と AI 相談は `src/modules/planned-meals-integrity/server.ts` の `setPlannedMealCompleted` を通して同じ RPC を呼ぶ。
+- 完了の口は RPC 1 本。Web の hook (アプリのホームは Web の画面の WebView で、この hook を通る) は `supabase.rpc` を直接呼び、route 2 本と AI 相談は `src/modules/planned-meals-integrity/server.ts` の `setPlannedMealCompleted` を通して同じ RPC を呼ぶ。
 - 野菜スコアの口は Edge の 1 か所。`POST /api/ai/nutrition` からは `veg_score` を外す (呼ぶ画面も無い)。
 - 尺度は定数にし、`nutrition_score` の係数は定数から導く (`100 / VEG_SCORE_MAX`)。
 
@@ -246,7 +246,7 @@
 |---|---|---|
 | S-1 | hook → `supabase.rpc('planned_meals_set_completed', { p_meal_id, p_completed: true })` → 関数: `auth.uid()` あり → UPDATE (EXISTS で本人) → `completed_at = now()` → RETURNING 1 行 → FOUND | 期待どおり |
 | S-2 | 同じ RPC `p_completed: false` → `completed_at = NULL` | 期待どおり |
-| S-3 | モバイルの hook → `supabase.rpc(...)` (S-1 と同じ) | 期待どおり |
+| S-3 | アプリのホーム (Web の画面の WebView) → Web の hook → `supabase.rpc(...)` (S-1 と同じ) | 期待どおり |
 | S-4 | 古いビルド → PostgREST `PATCH /rest/v1/planned_meals?id=eq.…` 本文 `{ is_completed, completed_at }` → 列の権限で 42501 → hook の `if (error)` → 楽観的更新を戻し `fetchAll()` | 期待どおり (操作だけ失敗) |
 | S-5 | page → `PATCH /api/meals/[id]` `{ is_completed, completed_at }` → route: `allowedFields` に無いので `updateData` に入らない → `completion = PlannedMealCompletionInputSchema.safeParse(body.is_completed)` → 既存の UPDATE (`updated_at` 等) → `setPlannedMealCompleted(supabase, { mealId, completed })` → RPC → 応答 `{ ...data, ...row }` | 期待どおり (`completed_at` は DB の時刻) |
 | S-6 | page → `PATCH /api/meal-plans/meals/[id]` `{ isCompleted }` → route: `isCompleted` を Zod で読む → `updateData` は空 (料理の無い献立) か `dishes`・`image_url` だけ (料理のある献立は `buildDishImagePayload` が書き戻す) → 空なら `select().eq('id').single()` で行を読む / 空でなければ既存の UPDATE → RPC → `meal: { ...data, ...row }` | 期待どおり (空の UPDATE を PostgREST に送らない) |
@@ -283,7 +283,7 @@
 | A (採用) | 列の権限 (表の INSERT / UPDATE を REVOKE → 56 列を GRANT) + 完了の RPC + 写真の解析は service_role | 3 列は PostgREST のどの書き方でも 42501。ポリシーを足されても開かない (二重に閉じる前例と同じ考え)。RLS は触らない。RPC で `completed_at` と対の整合がサーバの計算値になる | 56 列の列挙が要る (後で列を足す migration は同じファイルで GRANT が要る。§7.19 の契約テストが見張る)。書き手 9 本の付け替え | 採る |
 | B | RLS の WITH CHECK で 3 列の変更を禁じる (`is_completed IS NOT DISTINCT FROM (SELECT is_completed FROM planned_meals WHERE id = …)` のように旧値と比べる) | ポリシーだけで済む | WITH CHECK から旧の行を引く副問い合わせは同じ行を読むので RLS の再帰になり、書き方が複雑で読み手が迷う。INSERT では旧値が無く、`is_completed = false AND veg_score IS NULL` のような固定の式が要る。後で FOR ALL のポリシーを足すと開く | 採らない |
 | C | トリガーで `current_user IN ('authenticated', 'anon')` のときだけ 3 列の変更を 42501 にする (`guard_organizations_privileged` の型) | 列挙が要らない。既存の型 | 守りが「関数の本文」に隠れ、権限の表 (`information_schema`) に現れない。トリガーは `session_replication_role = replica` で動かない。完了の RPC は別に要る (SECURITY DEFINER の中は `current_user = postgres` なので通る) | 採らない |
-| D | 完了の切り替えも route の service_role (`getSupabaseAdmin()`) で書く (RPC 無し) | DB の関数が増えない | Web の hook・モバイルの hook が route 経由になり、モバイルは Next.js を経由する client が要る (今は PostgREST を直接呼ぶ)。完了の 5 経路すべてで、所有権の確認を route ごとに書くことになる (本書を書いた時点の cross/02 §3.3 の文 (service_role は Edge Function のみ) からも外れた。§7.12 の復元は、確認を 1 関数に閉じる) | 採らない |
+| D | 完了の切り替えも route の service_role (`getSupabaseAdmin()`) で書く (RPC 無し) | DB の関数が増えない | Web の hook が route 経由になる (今は PostgREST を直接呼ぶ)。完了の経路 (Web の hook・route 2 本・AI 相談) すべてで、所有権の確認を route ごとに書くことになる (本書を書いた時点の cross/02 §3.3 の文 (service_role は Edge Function のみ) からも外れた。§7.12 の復元は、確認を 1 関数に閉じる) | 採らない |
 | E | `veg_score` も RPC (`planned_meals_set_veg_score`) にする | 口が揃う | 利用者が EXECUTE できる RPC なら値を入れられるので意味が無く、service_role だけが呼べる RPC は service_role の UPDATE と同じ | 採らない |
 
 ### 5.2 F の問い (縁の発生源を消すより単純な構造は無いか)
@@ -303,7 +303,7 @@
 
 ### 6.1 書き手の全列挙 (決めること 1)
 
-§3.1 の表。利用者のセッションで 3 列を書く 9 本 (W-1〜W-7・W-8・W-12) と `is_completed: false` を送る 3 本 (W-9〜W-11) を §7 で付け替える。service_role の W-13 と、service_role だけが呼べる SQL 関数の W-14 (未使用) は変えない。
+§3.1 の表。利用者のセッションで 3 列を書く 9 本 (W-1〜W-7・W-8・W-12) と `is_completed: false` を送る 3 本 (W-9〜W-11) を §7 で付け替える (W-1 は付け替えず hook ごと消した。アプリのホームは Web の画面の WebView で、W-2 を通る)。service_role の W-13 と、service_role だけが呼べる SQL 関数の W-14 (未使用) は変えない。
 
 ### 6.2 完了 (決めること 2)
 
@@ -340,7 +340,7 @@
 
 | 置き場 | 中身 | 読む側 |
 |---|---|---|
-| `packages/shared/src/planned-meals-integrity.ts` (新) | 3 列の名前・RPC の名前と引数の組み立て・`PLANNED_MEAL_NOT_FOUND` の判定・尺度の定数 (Web / モバイル用の写し) | Web の hook・route・モジュール、モバイルの hook、テスト |
+| `packages/shared/src/planned-meals-integrity.ts` (新) | 3 列の名前・RPC の名前と引数の組み立て・`PLANNED_MEAL_NOT_FOUND` の判定・尺度の定数 (Web / モバイル用の写し) | Web の hook・route・モジュール、テスト |
 | `src/modules/planned-meals-integrity/core.ts` (新) | Zod (route の本文の `is_completed` / `isCompleted`・RPC の返す行)・文言 | route・`server.ts`・テスト |
 | `src/modules/planned-meals-integrity/server.ts` (新) | `setPlannedMealCompleted(db, { mealId, completed })` (RPC の呼び出しと結果の形) | route 2 本・AI 相談の executor |
 | `src/lib/planned-meals-snapshot.ts` (既存に追記) | `restoreOwnPlannedMealsSnapshot({ userDb, writer, snapshot })` (本人の日の確認 + service_role の復元) | 週間生成の 4 route (§7.12) |
@@ -1076,7 +1076,7 @@ export async function restoreOwnPlannedMealsSnapshot(params: {
 
 - 足す 2 行の注は列の名前 (`veg_score`) を書かず「野菜スコア」と書く。§7.21 の項目 4 は route のファイル全体 (注を含む) に `veg_score` の文字列が 0 件であることを見る (差分の後に残る `veg_score` は、消す 3 か所 (origin/main の `:102`・`:149`・`:213`) のほかに無い)。
 
-### 7.14 hook 2 本の差分 (完了は RPC)
+### 7.14 hook の差分 (完了は RPC)
 
 #### 7.14.1 `src/hooks/useHomeData.ts` (Web のホーム)
 
@@ -1091,17 +1091,9 @@ import { formatLocalDate, pantryExpiringSoonUntil, PLANNED_MEALS_SET_COMPLETED_R
 
 楽観的更新 (`completedAt: newStatus ? new Date().toISOString() : null`) と失敗時の戻し・`fetchHomeData()` は今のまま (画面の時刻は読み直しで DB の値に置き換わる)。
 
-#### 7.14.2 `apps/mobile/src/hooks/useHomeData.ts` (モバイルのホーム)
+#### 7.14.2 モバイルのホーム
 
-```ts
-// tsc:skip (既存ファイルの差分の断片)
-// import に足す (formatCalendarDate と同じ行から)
-import { formatCalendarDate, pantryExpiringSoonUntil, todayCalendarDate, todayLocal, PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs } from "@homegohan/shared";
-
-    const { error } = await supabase.rpc(PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs(mealId, newStatus));
-```
-
-楽観的更新・失敗時の戻し・`fetchAll()` は今のまま。
+アプリのホームは Web の画面の WebView (`apps/mobile/app/(tabs)/home.tsx`) で、完了の切り替えは §7.14.1 の `src/hooks/useHomeData.ts` を通る。アプリにホームのデータの hook は置かない (`apps/mobile/src/hooks/useHomeData.ts` はアプリから import されていなかったので消した。`tests/mobile-home-hook-removed-2157.test.ts` が見る)。
 
 ### 7.15 写真の解析の差分 (`supabase/functions/analyze-meal-photo/index.ts`: 背景の処理の書き込みを service_role に・`mealId` の経路では `prefetchedGeminiResult` を使わない / `src/app/api/ai/analyze-meal-photo/route.ts`: `mealId` のときは `prefetchedGeminiResult` を Edge へ渡さない。下の Edge の囲みの (2)〜(4) は #121 の CAS を戻す前の旧い形で、今の順は本節の「書き込みの順序」の箇条と §11.3)
 
@@ -2280,7 +2272,7 @@ describe('#2025 利用者のセッションで 3 列を書く経路が無い', (
 | `src/__tests__/modules/planned-meals-integrity/server.test.ts` (新) | `setPlannedMealCompleted`: UUID でない id は rpc を呼ばず not_found / rpc の引数 (`PLANNED_MEALS_SET_COMPLETED_RPC`・`{ p_meal_id, p_completed }`) / P0002 の error → not_found / ほかの error → db / 配列と単体の data を同じに読む / 形が違う行は db |
 | `tests/planned-meal-completion-routes.test.ts` (新) | `PATCH /api/meals/[id]`・`PATCH /api/meal-plans/meals/[id]`・AI 相談の `complete_meal` の 3 経路: 完了の指定が無ければ rpc を呼ばない / boolean でなければ 400 で DB に触れない / 本文の `completed_at` は update に入らない / rpc の行が応答に重なる / not_found は 404 (AI 相談は '権限がありません') / rpc の失敗は 500 (AI 相談は固定の文) / 既存の update が失敗したら rpc を呼ばない / `PATCH /api/meal-plans/meals/[id]` に完了の指定だけ (料理の無い献立) を送ると update を呼ばず `select` で行を読み、rpc の行を重ねて 200。作成の 3 route の insert に `is_completed` が無い。偽物の DB は `tests/helpers/recording-supabase.ts` (`rpc` を記録する) |
 | `src/__tests__/hooks/useHomeData-completion.test.ts` (新) | Web のホームの `toggleMealCompletion` が `supabase.rpc(PLANNED_MEALS_SET_COMPLETED_RPC, { p_meal_id, p_completed })` を呼び、`.from('planned_meals').update` を呼ばない。失敗時に楽観的更新を戻して `fetchHomeData` を呼ぶ (`@/lib/supabase/client` を差し替える) |
-| `apps/mobile/__tests__/hooks/useHomeData-completion.test.ts` (新) | モバイルのホームの `toggleMealCompletion` が `supabase.rpc(...)` を呼び、失敗時に戻して `fetchAll` を呼ぶ (`../lib/supabase` を jest で差し替える) |
+| `tests/mobile-home-hook-removed-2157.test.ts` | アプリのホームは Web の画面の WebView (`apps/mobile/app/(tabs)/home.tsx`) で、アプリに完了を書く hook を置かない (完了の切り替えは上の `src/__tests__/hooks/useHomeData-completion.test.ts` が見る) |
 | `tests/planned-meal-nutrient-validation-routes.test.ts` (書き換え) | §16 |
 | `tests/meal-image-skip-routes.test.ts` (書き換え) | §16 |
 | `tests/calculate-segment-stats-planned-meals.test.ts` (書き換え) | §16 |
@@ -2299,8 +2291,8 @@ describe('#2025 利用者のセッションで 3 列を書く経路が無い', (
 |---|---|---|---|---|
 | `planned_meals_set_completed` (DB) | `(p_meal_id uuid, p_completed boolean) RETURNS TABLE (id uuid, is_completed boolean, completed_at timestamptz, updated_at timestamptz)` | §7.1 | authenticated (hook・route・AI 相談)。service_role は EXECUTE を持つが呼ぶ箇所は無く、呼ぶと `auth.uid()` が NULL なので `PLANNED_MEAL_UNAUTHENTICATED` (42501) で何も書かない (service_role が完了を書くときは表を直接 UPDATE する。§9.3 (a)・§10) | `PLANNED_MEAL_NOT_FOUND` (P0002)・`PLANNED_MEAL_UNAUTHENTICATED` (42501)・`PLANNED_MEAL_INVALID_ARGUMENT` (22023)・anon は EXECUTE 無しの 42501 |
 | `PLANNED_MEALS_SERVER_ONLY_COLUMNS` | `readonly ['is_completed', 'completed_at', 'veg_score']` | `@homegohan/shared` (§7.5) | テスト・走査 | – |
-| `PLANNED_MEALS_SET_COMPLETED_RPC` | `'planned_meals_set_completed'` | `@homegohan/shared` | hook 2 本・`server.ts`・テスト | – |
-| `plannedMealsSetCompletedArgs` | `(mealId: string, completed: boolean) => { p_meal_id: string; p_completed: boolean }` | `@homegohan/shared` | hook 2 本・`server.ts` | – |
+| `PLANNED_MEALS_SET_COMPLETED_RPC` | `'planned_meals_set_completed'` | `@homegohan/shared` | Web の hook・`server.ts`・テスト | – |
+| `plannedMealsSetCompletedArgs` | `(mealId: string, completed: boolean) => { p_meal_id: string; p_completed: boolean }` | `@homegohan/shared` | Web の hook・`server.ts` | – |
 | `isPlannedMealNotFoundRpcError` | `(error: unknown) => boolean` | `@homegohan/shared` | `server.ts` | – |
 | `PLANNED_MEAL_NOT_FOUND_CODE` / `PLANNED_MEAL_NOT_FOUND_SQLSTATE` | `'PLANNED_MEAL_NOT_FOUND'` / `'P0002'` | `@homegohan/shared` | `server.ts`・テスト | – |
 | `VEG_SCORE_MIN` / `VEG_SCORE_MAX` / `isVegScore` | `0` / `100` / `(value: unknown) => value is number` | `@homegohan/shared` (写し) と `_shared/veg-score.ts` (正本) | `src/lib/org-challenges.ts` (`targetMax`)・テスト | – |
@@ -2324,7 +2316,7 @@ describe('#2025 利用者のセッションで 3 列を書く経路が無い', (
 
 | 書き手 (§3.1) | 列 | client (今) | 本書の後の経路 | 結果 |
 |---|---|---|---|---|
-| W-1 モバイルのホーム | `is_completed`・`completed_at` | 利 | RPC | 本人の行だけ。`completed_at` は DB |
+| W-1 モバイルのホーム | `is_completed`・`completed_at` | 利 | RPC (W-2 と同じ。アプリのホームは Web の画面の WebView (`apps/mobile/app/(tabs)/home.tsx`)) | 本人の行だけ。`completed_at` は DB |
 | W-2 Web のホーム | 同 | 利 (ブラウザ) | RPC | 同 |
 | W-3 食事の詳細 → `PATCH /api/meals/[id]` | 同 | 利 (route) | route → `setPlannedMealCompleted` → RPC。本文の `completed_at` は無視 | 同。他の列は従来の UPDATE |
 | W-4 献立表 → `PATCH /api/meal-plans/meals/[id]` | 同 | 利 (route) | 同 (`isCompleted`)。ほかに書く列が無ければ既存の UPDATE を流さず行を読む (§7.9.2 の (4)) | 同。他の列があれば従来の UPDATE |
@@ -2343,7 +2335,7 @@ describe('#2025 利用者のセッションで 3 列を書く経路が無い', (
 | 読み手 `calculate-segment-stats` | 3 列の SELECT | S | 変えない (`nutrition_score` の係数だけ。§7.17) | 通る |
 | 読み手 `update_org_challenge_progress` (SQL) | `veg_score` の SELECT | S (関数の中) | 変えない | 通る |
 | 読み手 `src/app/api/badges/route.ts` | `is_completed` の SELECT | 利 (route) | 変えない | 通る |
-| 読み手 hook 2 本 (`src/hooks/useHomeData.ts`・`apps/mobile/src/hooks/useHomeData.ts`) | `veg_score`・`is_completed` の SELECT | 利 | 変えない (書く側だけ RPC。§7.14) | 通る |
+| 読み手 hook 1 本 (`src/hooks/useHomeData.ts`。アプリのホームは Web の画面の WebView (`apps/mobile/app/(tabs)/home.tsx`) で、同じ hook が読む) | `veg_score`・`is_completed` の SELECT | 利 | 変えない (書く側だけ RPC。§7.14) | 通る |
 | 読み手 家族の献立 (`family_menu_planned_meals`・`src/lib/membership/family-menu.ts`・zod `src/schemas/membership/family-menu.ts:31・77`) | `is_completed` の SELECT | SECURITY DEFINER (利用者のセッションが RPC で呼ぶ) | 変えない (列の SELECT の権限は変えない) | 通る |
 | 読み手 `src/app/api/export/meals/route.ts`・`src/app/api/ai/consultation/sessions/route.ts`・`sessions/[sessionId]/messages/route.ts`・`src/app/api/ai/menu/day/regenerate/route.ts`・`src/app/api/ai/nutrition-analysis/route.ts`・`src/app/api/ai/menu/v4/generate/route.ts`・`v5/generate/route.ts` | `is_completed` の SELECT | 利 (route の `createClient()`) | 変えない | 通る |
 | 読み手 `src/app/api/support/users/[id]/route.ts` | `is_completed` の SELECT | S (認可の後の `getSupabaseAdmin()`) | 変えない | 通る |
@@ -2357,7 +2349,7 @@ describe('#2025 利用者のセッションで 3 列を書く経路が無い', (
 | anon の INSERT / UPDATE | 表ごと (RLS で実質 0 行) | 無し (42501) |
 | SELECT / DELETE / REFERENCES / TRIGGER / MAINTAIN・service_role・postgres | – | 変えない |
 | RLS のポリシー | `Users can manage own planned meals` (ALL・USING のみ) | 変えない |
-| 完了の書き手 | 利用者のセッションの直接 UPDATE 5 か所 | RPC 1 本 (hook 2 本と `server.ts` 経由の 3 か所から) |
+| 完了の書き手 | 利用者のセッションの直接 UPDATE 5 か所 | RPC 1 本 (Web の hook と `server.ts` 経由の 3 か所から。アプリのホームは Web の画面の WebView で、Web の hook を通る) |
 | `completed_at` の値 | 端末の時刻 (W-1〜W-4) か無し (W-5) | DB の `now()` か既存か NULL |
 | `is_completed` と `completed_at` の対 | 崩れうる (W-5 は時刻を書かない) | 常に対 (完了 ⇔ 時刻あり) |
 | `veg_score` の書き手 | W-6 (利用者の値・検証なし)・W-7 (1〜5)・W-8 (0〜100・利用者の JWT) | W-8 だけ (0〜100・service_role・本人の行の確認・印 (`updated_at`) のままの行にだけ書く) |
@@ -2577,7 +2569,7 @@ sequenceDiagram
 | `src/__tests__/modules/planned-meals-integrity/server.test.ts` | `UUID の形でない id は rpc を呼ばず not_found` / `rpc を PLANNED_MEALS_SET_COMPLETED_RPC と { p_meal_id, p_completed } で 1 回呼ぶ` / `P0002 / PLANNED_MEAL_NOT_FOUND の error は not_found` / `ほかの error は db (error をそのまま持つ)` / `data が配列でも単体でも同じ行を返す` / `行の形が違えば db (PLANNED_MEAL_COMPLETION_ROW_SHAPE_FAILURE_MESSAGE)` |
 | `tests/planned-meal-completion-routes.test.ts` | 3 経路 (`PATCH /api/meals/[id]`・`PATCH /api/meal-plans/meals/[id]`・AI 相談 `complete_meal`) × `完了の指定が無ければ rpc を呼ばない (ほかの列の update は今までどおり)` / `boolean でない完了の指定は 400 で DB に触れない (AI 相談は対象外)` / `本文の completed_at は update の本文に入らない (PATCH /api/meals/[id])` / `rpc の行 (is_completed / completed_at / updated_at) が応答に重なる` / `not_found は 404 MEAL_NOT_FOUND_MESSAGE (AI 相談は '権限がありません')` / `rpc の失敗は 500 internalError (AI 相談は AI_ACTION_COMPLETE_MEAL_FAILED_MESSAGE で success: false)` / `ほかの列の update が失敗したら rpc を呼ばない` / `完了の指定だけで書く列が無いとき (PATCH /api/meal-plans/meals/[id]・料理の無い献立) は update を呼ばず select で行を読み、rpc の行を重ねて 200` / `insertData に is_completed が無い (POST /api/meals・POST /api/meal-plans/meals・POST /api/meal-plans/add-from-photo)` |
 | `src/__tests__/hooks/useHomeData-completion.test.ts` | `toggleMealCompletion は supabase.rpc(PLANNED_MEALS_SET_COMPLETED_RPC, { p_meal_id, p_completed }) を呼び、planned_meals を update しない` / `rpc が失敗したら楽観的更新を戻し fetchHomeData を呼ぶ` |
-| `apps/mobile/__tests__/hooks/useHomeData-completion.test.ts` | `toggleMealCompletion は supabase.rpc(...) を呼び、planned_meals を update しない` / `rpc が失敗したら楽観的更新を戻し fetchAll を呼ぶ` |
+| `tests/mobile-home-hook-removed-2157.test.ts` | `アプリのホームのタブは WebViewScreen で Web の /home を開く` / `apps/mobile に useHomeData の hook のファイルが無い` |
 | `tests/planned-meal-nutrient-validation-routes.test.ts` (書き換え) | `nutritionData の veg_score は update の本文に入らない (栄養素と quality_tags だけ)` / `AI の応答の veg_score は update の本文に入らない。プロンプトに veg_score が無い` |
 | `src/__tests__/lib/planned-meals-snapshot.test.ts` (追記) | `restoreOwnPlannedMealsSnapshot: 空の snapshot は問い合わせずに 0 件` / `本人の日の行だけ writer で INSERT し、本人の日でない行と daily_meal_id の無い行は failed に数えて writer に渡さない` / `本人の日の問い合わせが失敗したら writer を呼ばず、全部を failed に数える` / `本人の日の問い合わせは SLOT_LOOKUP_CHUNK_SIZE ごとに分ける` / `writer 側の skipped・failed に本人の日でない行の数を足す` |
 | `src/__tests__/api/ai/menu/weekly-request.test.ts`・`weekly-status.test.ts`・`weekly-pending.test.ts`・`weekly-cleanup.test.ts` (書き換え) | 既存の復元の it の期待を `restoreOwnPlannedMealsSnapshot` が `{ userDb: <利用者のセッションの偽物>, writer: <getSupabaseAdmin() の偽物>, snapshot }` で呼ばれる形に (it 名は今のまま。cleanup の直列の it も同じ) |
@@ -2605,8 +2597,8 @@ I-n は §7.20、C-n は §7.19、走査 n は §7.21 の項目。
 |---|---|
 | S-1 | I-1 (RPC の振る舞い)・`src/__tests__/hooks/useHomeData-completion.test.ts` (Web のホームが RPC を呼ぶ) |
 | S-2 | I-2・`src/__tests__/hooks/useHomeData-completion.test.ts` |
-| S-3 | I-1・`apps/mobile/__tests__/hooks/useHomeData-completion.test.ts` |
-| S-4 | I-5 (`is_completed` / `completed_at` の直接の UPDATE が 42501)・`apps/mobile/__tests__/hooks/useHomeData-completion.test.ts` (失敗時に戻して読み直す) |
+| S-3 | I-1・`src/__tests__/hooks/useHomeData-completion.test.ts`・`tests/mobile-home-hook-removed-2157.test.ts` (アプリのホームは Web の画面の WebView) |
+| S-4 | I-5 (`is_completed` / `completed_at` の直接の UPDATE が 42501)・`src/__tests__/hooks/useHomeData-completion.test.ts` (失敗時に戻して読み直す) |
 | S-5 | `tests/planned-meal-completion-routes.test.ts` (`PATCH /api/meals/[id]`)・I-15 (本物の PostgREST で、本文の `completed_at` を無視して DB の時刻) |
 | S-6 | `tests/planned-meal-completion-routes.test.ts` (`PATCH /api/meal-plans/meals/[id]`)・I-14 (本物の PostgREST で、`{ isCompleted }` だけの本文・料理の無い献立が 200) |
 | S-7 | `tests/planned-meal-completion-routes.test.ts` (AI 相談 `complete_meal`) |
@@ -2677,7 +2669,7 @@ I-n は §7.20、C-n は §7.19、走査 n は §7.21 の項目。
 | 型 | `PlannedMealsServerOnlyColumn`・`PlannedMealsSetCompletedArgs`・`PlannedMealsSetCompletedRow`・`PlannedMealCompletionRow`・`PlannedMealsIntegrityDb`・`SetPlannedMealCompletedResult` | A / B |
 | Zod | `PlannedMealCompletionInputSchema`・`PlannedMealsSetCompletedRowSchema` | B |
 | 型の生成物 | `Functions.planned_meals_set_completed` (2 ファイル) | A |
-| テスト (新) | `tests/planned-meals-score-integrity-migration-contract.test.ts`・`tests/integration/rls/planned-meals-score-integrity.test.ts`・`tests/planned-meals-score-integrity-writers-scan.test.ts`・`tests/veg-score-scale-contract.test.ts`・`src/__tests__/modules/planned-meals-integrity/core.test.ts`・`server.test.ts`・`tests/planned-meal-completion-routes.test.ts`・`src/__tests__/hooks/useHomeData-completion.test.ts`・`apps/mobile/__tests__/hooks/useHomeData-completion.test.ts`・`tests/analyze-meal-photo-cas.test.ts`・`tests/integration/rls/planned-meals-photo-analysis-cas.test.ts`・`tests/analyze-meal-photo-cas-request-order.test.ts` (この 3 本は B の続き。前の 2 本は #2041、最後の 1 本は #2050) | A / B / C (§15) |
+| テスト (新) | `tests/planned-meals-score-integrity-migration-contract.test.ts`・`tests/integration/rls/planned-meals-score-integrity.test.ts`・`tests/planned-meals-score-integrity-writers-scan.test.ts`・`tests/veg-score-scale-contract.test.ts`・`src/__tests__/modules/planned-meals-integrity/core.test.ts`・`server.test.ts`・`tests/planned-meal-completion-routes.test.ts`・`src/__tests__/hooks/useHomeData-completion.test.ts`・`tests/mobile-home-hook-removed-2157.test.ts`・`tests/analyze-meal-photo-cas.test.ts`・`tests/integration/rls/planned-meals-photo-analysis-cas.test.ts`・`tests/analyze-meal-photo-cas-request-order.test.ts` (この 3 本は B の続き。前の 2 本は #2041、最後の 1 本は #2050) | A / B / C (§15) |
 
 route・テーブル・列・Storage のパス・環境変数の新設は無い。
 
@@ -2688,7 +2680,7 @@ route・テーブル・列・Storage のパス・環境変数の新設は無い�
 | 段 | 中身 | 触るファイル | 本番 |
 |---|---|---|---|
 | A (DB の口と共通の定数。追加だけ) | §7.1・§7.2 の migration と戻し口 / §7.5 `packages/shared` (+ `index.ts`) / §7.6 `_shared/veg-score.ts` / §7.18 型の生成物 2 ファイル / `tests/integration/security/anon-definer-execute.test.ts` の `EXPECTED_ACL` に 1 行 (§16・§17) / テスト: §7.19 の C-1〜C-3・C-8 (RPC の分)・C-10 (RPC の分)・§7.20 の I-1〜I-4・I-8・I-13 (RPC の戻し口)・`tests/veg-score-scale-contract.test.ts` の定数の一致と `vegScoreOfVegetableGrams` / `nutritionScoreOfVegScoreAverage` の it (`PLANNED_MEAL_NOT_FOUND_CODE` と `analyze-meal-photo/index.ts` の一致・`org-challenges.ts` の `targetMax` の it は段 B で足す) | `supabase/migrations/*`・`supabase/rollbacks/*`・`packages/shared/src/planned-meals-integrity.ts`・`packages/shared/src/index.ts`・`supabase/functions/_shared/veg-score.ts`・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`tests/integration/security/anon-definer-execute.test.ts`・テスト | マージで migration が当たる (追加だけ。アプリはまだ RPC を呼ばない) |
-| B (書き手の付け替え) | §7.7・§7.8 モジュール / §7.9 route 2 本 / §7.10 executor + `ai-api-messages.ts` の定数 / §7.11 作成 3 route / §7.12 週間生成の復元 (`planned-meals-snapshot.ts` の `restoreOwnPlannedMealsSnapshot` と 4 route) / §7.13 nutrition route / §7.14 hook 2 本 / §7.15 Edge analyze-meal-photo と Next.js の `src/app/api/ai/analyze-meal-photo/route.ts` / §7.16 pipeline / §7.17 segment stats / `src/lib/org-challenges.ts` の `targetMax: VEG_SCORE_MAX` と注釈 / テスト: §7.21・§7.22 の単体と書き換え (`tests/planned-meal-nutrient-validation-routes.test.ts`・`tests/meal-image-skip-routes.test.ts`・`tests/calculate-segment-stats-planned-meals.test.ts`・`tests/integration/rls/planned-meals-value-checks.test.ts`・`stats-edge-functions-user-daily-meals.test.ts`・`src/__tests__/api/ai/menu/weekly-*.test.ts` の 4 本・`src/__tests__/api/ai/menu/service-config-order.test.ts`・`src/__tests__/lib/planned-meals-snapshot.test.ts`・`tests/image-route-contracts.test.ts`・`tests/e2e/b11-performance.spec.ts`)・§7.20 の I-10・I-11・I-14・I-15 | §16 の表の「段 B」の行 | マージで Vercel と Edge Function がデプロイされる。この時点で古い書き方の経路は無くなるが、利用者の権限はまだ残る。PR には `security` ラベルを付ける (cross/02 §3.3「`service_role` が使われる PR は security ラベルを付与」。週間生成の復元の 4 route と `analyze-meal-photo` の service_role の書き込みが新しく入る。オーケストレーターが PR を作るときに付ける) |
+| B (書き手の付け替え) | §7.7・§7.8 モジュール / §7.9 route 2 本 / §7.10 executor + `ai-api-messages.ts` の定数 / §7.11 作成 3 route / §7.12 週間生成の復元 (`planned-meals-snapshot.ts` の `restoreOwnPlannedMealsSnapshot` と 4 route) / §7.13 nutrition route / §7.14 hook / §7.15 Edge analyze-meal-photo と Next.js の `src/app/api/ai/analyze-meal-photo/route.ts` / §7.16 pipeline / §7.17 segment stats / `src/lib/org-challenges.ts` の `targetMax: VEG_SCORE_MAX` と注釈 / テスト: §7.21・§7.22 の単体と書き換え (`tests/planned-meal-nutrient-validation-routes.test.ts`・`tests/meal-image-skip-routes.test.ts`・`tests/calculate-segment-stats-planned-meals.test.ts`・`tests/integration/rls/planned-meals-value-checks.test.ts`・`stats-edge-functions-user-daily-meals.test.ts`・`src/__tests__/api/ai/menu/weekly-*.test.ts` の 4 本・`src/__tests__/api/ai/menu/service-config-order.test.ts`・`src/__tests__/lib/planned-meals-snapshot.test.ts`・`tests/image-route-contracts.test.ts`・`tests/e2e/b11-performance.spec.ts`)・§7.20 の I-10・I-11・I-14・I-15 | §16 の表の「段 B」の行 | マージで Vercel と Edge Function がデプロイされる。この時点で古い書き方の経路は無くなるが、利用者の権限はまだ残る。PR には `security` ラベルを付ける (cross/02 §3.3「`service_role` が使われる PR は security ラベルを付与」。週間生成の復元の 4 route と `analyze-meal-photo` の service_role の書き込みが新しく入る。オーケストレーターが PR を作るときに付ける) |
 | C (権限を外す) | §7.3・§7.4 の migration と戻し口 / テスト: §7.19 の C-4〜C-7・C-9・C-10 (権限の分)・§7.20 の I-5〜I-7・I-9・I-12 (権限の戻し口) | `supabase/migrations/*`・`supabase/rollbacks/*`・`tests/planned-meals-score-integrity-migration-contract.test.ts`・`tests/integration/rls/planned-meals-score-integrity.test.ts` (段 C で赤になる既存のテストは段 B で書き換え済み: §16 の段 B の行。段 C の PR は既存のテストを書き換えない) | **マージの前にオーナーへ migration の中身を確認する。** 段 B が本番で動いていることを確かめてからマージする (§19) |
 
 - 段 A の全件テストは、`tests/planned-meals-score-integrity-migration-contract.test.ts` の C-4〜C-7・C-9 が権限の migration を要求するので、段 A の時点ではその describe を `describe.skip` にせず、**C-4〜C-7・C-9 の describe を段 C の PR で足す** (段 A の PR には C-1〜C-3・C-8・C-10 の RPC の分だけ入れる。C-1 の「2 本とも」と C-10 の 4 ファイルは段 C で 2 本に広げる)。§7.20 も同じく、段 A では RPC の it (I-1〜I-4・I-8・I-13)、段 B で I-10・I-11、段 C で 3 列の it (I-5〜I-7・I-9・I-12) を足す。
@@ -2728,7 +2720,7 @@ route・テーブル・列・Storage のパス・環境変数の新設は無い�
 | `tests/route-invalid-input-1917.test.ts:507・510` | `PATCH /api/meal-plans/meals/[id]`・`PATCH /api/meals/[id]` | 反応しない見込み (壊れた JSON・UUID でない id の 400 / 404 は変えない)。実行して確かめる | – | B |
 | `src/__tests__/api/null-character-routes.test.ts` | 本文を読む route の一覧 | 反応しない (route を足さない) | – | – |
 | `tests/health-streaks-sandbox-1802.test.ts`・`tests/ai-consent-skipped.test.ts` ほか `useHomeData` を読むテスト | `useHomeData` | 反応しない見込み (health_streaks の書き手・同意の判定を見る)。実行して確かめる | – | B |
-| `apps/mobile/__tests__/home/home.test.tsx:122` | `toggleMealCompletion: jest.fn()` | 反応しない (hook を差し替える) | – | – |
+| `apps/mobile/__tests__/home/home.test.tsx` | `WebViewScreen` の `path="/home"` | 反応しない (アプリのホームは Web の画面の WebView で、完了の切り替えは Web の `src/hooks/useHomeData.ts` を通る) | – | – |
 | `tests/faq-guide-wording-1859.test.ts:104-105` | `status: meal.is_completed ? "completed"` (generate-menu-v4 / v5) | 反応しない (読み手は変えない) | – | – |
 | `tests/legal-text-1901.test.ts`・`tests/legal-claims-1901.ts` | `planned_meals` (プライバシーポリシーの表 → 行の対応) | 反応しない (表・列を足さない) | – | – |
 | `tests/schema-checked-db.test.ts`・`tests/helpers/schema-checked-db.ts` | `planned_meals` | 反応しない (スキーマの形は変えない)。route のテストで `createSchemaDb` を使うなら `rpc` が無いので `recording-supabase` を使う (§7.22) | – | B |
@@ -2779,7 +2771,7 @@ route・テーブル・列・Storage のパス・環境変数の新設は無い�
 | RLS `Users can manage own planned meals` | 保持 | 変えない (行の所有は USING が守る) |
 | `planned_meals` の表の権限 (anon / authenticated の INSERT / UPDATE) | 置換 | 段 C で列の権限に (§7.3) |
 | トリガー 3 本 (`trg_fill_planned_meals_magnesium_mg`・`trg_planned_meals_updated_at`・`trg_planned_meals_validate_values`) | 保持 | 変えない。RPC の UPDATE でも `updated_at` が進む |
-| `apps/mobile/src/hooks/useHomeData.ts`・`src/hooks/useHomeData.ts` の `toggleMealCompletion` | 変更 | 直接の UPDATE → RPC (§7.14) |
+| `src/hooks/useHomeData.ts` の `toggleMealCompletion` | 変更 | 直接の UPDATE → RPC (§7.14)。アプリのホームは Web の画面の WebView (`apps/mobile/app/(tabs)/home.tsx`) で、この hook を通る |
 | `PATCH /api/meals/[id]`・`PATCH /api/meal-plans/meals/[id]` | 変更 | 完了は RPC。本文の鍵と応答の形は保つ (§7.9) |
 | `consultation-action-executor.ts` の `complete_meal` | 変更 | RPC (§7.10) |
 | `POST /api/meals`・`POST /api/meal-plans/meals`・`POST /api/meal-plans/add-from-photo` | 変更 | `is_completed: false` を送らない (§7.11) |
