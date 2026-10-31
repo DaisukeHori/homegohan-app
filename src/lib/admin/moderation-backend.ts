@@ -32,6 +32,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ModerationType } from './moderation-schemas';
+import { LIST_ORDERS, orderListBy } from '../api/list-order';
 import { parsePhotoObjectUrl, signPhotoUrlsForAuthorizedViewer, type PhotoSigningAdmin } from '../photo-storage-signing';
 
 /** 現時点で実バックエンドテーブルが存在するモデレーション対象タイプ */
@@ -153,22 +154,18 @@ export async function fetchModerationList(
   limit: number,
 ): Promise<NormalizedModerationItem[]> {
   if (type === 'food') {
-    const { data, error } = await supabase
-      .from('moderation_flags')
-      .select('*, meals(user_id, photo_url, hidden_at)')
-      .eq('status', status)
-      .order('created_at', { ascending: true })
-      .limit(limit);
+    const { data, error } = await orderListBy(
+      supabase.from('moderation_flags').select('*, meals(user_id, photo_url, hidden_at)').eq('status', status),
+      LIST_ORDERS.adminModerationFoodFlags,
+    ).limit(limit);
     if (error) throw error;
     return (data ?? []).map((row) => normalizeFoodRow(row as RawRow));
   }
 
-  const { data, error } = await supabase
-    .from('recipe_flags')
-    .select('*, recipes(user_id, image_url, hidden_at)')
-    .eq('status', status)
-    .order('created_at', { ascending: true })
-    .limit(limit);
+  const { data, error } = await orderListBy(
+    supabase.from('recipe_flags').select('*, recipes(user_id, image_url, hidden_at)').eq('status', status),
+    LIST_ORDERS.adminModerationRecipeFlags,
+  ).limit(limit);
   if (error) throw error;
   return (data ?? []).map((row) => normalizeRecipeRow(row as RawRow));
 }

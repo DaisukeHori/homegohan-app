@@ -8,6 +8,7 @@
 import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ipNetworkOf } from './ip-network';
+import { LIST_ORDERS, orderListBy } from '../../api/list-order';
 
 export type ContextSource = 'auth' | 'web' | 'mobile';
 export type EndedReason = 'signed_out' | 'revoked_by_user' | 'idle_expired';
@@ -52,24 +53,20 @@ function storeError(operation: string, cause: unknown): Error {
 
 /** 本人の client (RLS)。live の行を last_active_at の降順で */
 export async function listLiveSessions(client: SupabaseClient, userId: string): Promise<SessionRow[]> {
-  const { data, error } = await client
-    .from(TABLE)
-    .select(SESSION_ROW_COLUMNS)
-    .eq('user_id', userId)
-    .is('revoked_at', null)
-    .order('last_active_at', { ascending: false });
+  const { data, error } = await orderListBy(
+    client.from(TABLE).select(SESSION_ROW_COLUMNS).eq('user_id', userId).is('revoked_at', null),
+    LIST_ORDERS.authLiveSessions,
+  );
   if (error) throw storeError('読み取り', error);
   return SessionRowSchema.array().parse(data ?? []);
 }
 
 /** 本人の client (RLS) または service_role。終わった行を含め created_at の降順で limit 件 */
 export async function listLoginHistory(client: SupabaseClient, userId: string, limit: number): Promise<SessionRow[]> {
-  const { data, error } = await client
-    .from(TABLE)
-    .select(SESSION_ROW_COLUMNS)
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .limit(limit);
+  const { data, error } = await orderListBy(
+    client.from(TABLE).select(SESSION_ROW_COLUMNS).eq('user_id', userId),
+    LIST_ORDERS.authLoginHistory,
+  ).limit(limit);
   if (error) throw storeError('読み取り', error);
   return SessionRowSchema.array().parse(data ?? []);
 }
@@ -99,14 +96,15 @@ export async function listPriorLogins(
   admin: SupabaseClient,
   input: { userId: string; sessionId: string; createdAt: string; limit: number },
 ): Promise<PriorLoginRow[]> {
-  const { data, error } = await admin
-    .from(TABLE)
-    .select(PRIOR_LOGIN_COLUMNS)
-    .eq('user_id', input.userId)
-    .neq('session_id', input.sessionId)
-    .lt('created_at', input.createdAt)
-    .order('created_at', { ascending: false })
-    .limit(input.limit);
+  const { data, error } = await orderListBy(
+    admin
+      .from(TABLE)
+      .select(PRIOR_LOGIN_COLUMNS)
+      .eq('user_id', input.userId)
+      .neq('session_id', input.sessionId)
+      .lt('created_at', input.createdAt),
+    LIST_ORDERS.authPriorLogins,
+  ).limit(input.limit);
   if (error) throw storeError('読み取り', error);
   return PriorLoginRowSchema.array().parse(data ?? []);
 }

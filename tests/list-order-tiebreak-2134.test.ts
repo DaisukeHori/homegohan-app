@@ -1,16 +1,17 @@
 /**
- * #2134 U2 / #2139 T1: 一覧の並びは、最後に一意の鍵 (id、id の無い表は別の一意の列) の昇順を重ねて、同じ値の行の順を決める
+ * #2134 U2 / #2139 T1 / #2144 S3: 一覧の並びは、最後に一意の鍵 (id、id の無い表は別の一意の列) の昇順を重ねて、同じ値の行の順を決める
  * (ソースの突き合わせ)。
  *
  * 一覧を 1 つの鍵 (作った日時・始まる日・参加した日など) だけで並べると、同じ値の行の順は DB 任せで、開くたびに
  * 入れ替わりうる (ページ送りでは境目で同じ行が 2 回出る・どのページにも出ない、1 行だけ読む所ではどの行を取るかが決まらない)。
- * いまは src/lib/api/list-order.ts の LIST_ORDERS に一覧ごとの鍵を書き、route は orderListBy で並べる。
+ * いまは src/lib/api/list-order.ts の LIST_ORDERS に一覧ごとの鍵を書き、route と、route や画面から呼ぶ helper・hook・画面は
+ * orderListBy で並べる。
  * ここでは次を確かめる:
  *   1. LIST_ORDERS の各一覧の鍵 (いままでの鍵のあとに id の昇順)。NULL の位置は、いままでの order と同じ
  *   2. orderListBy は鍵をこの順に order へ渡し、最後の order の戻り値を返す
- *   3. 一覧を使う route は orderListBy(…, LIST_ORDERS.<一覧>) で並べ、その一覧の表を読む。
- *      LIST_ORDERS.<一覧> を使う route は、どれも EXPECTED のその一覧の uses に書いてある
- *   4. src/app/api の全部のファイルは .order( を直接書かない。並びの鍵がもう一意の所 (主キー・一意の制約の列で終わる、
+ *   3. 一覧を使うファイルは orderListBy(…, LIST_ORDERS.<一覧>) で並べ、その一覧の表を読む。
+ *      LIST_ORDERS.<一覧> を使うファイルは、どれも EXPECTED のその一覧の uses に書いてある
+ *   4. SCANNED_ROUTE_DIRS の全部のファイルは .order( を直接書かない。並びの鍵がもう一意の所 (主キー・一意の制約の列で終わる、
  *      id で終える) だけは ALLOWED_DIRECT_ORDERS に理由つきで書き、そこに書いた列の順のとおりにだけ .order( を書く
  * 実物の PostgREST が鍵の列を受け付けることは tests/integration/rls/list-order-tiebreak.test.ts が確かめる。
  */
@@ -18,11 +19,16 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ID_TIEBREAK_KEY, LIST_ORDERS, NON_ID_TIEBREAK_COLUMNS, orderListBy, type ListOrderKey } from '@/lib/api/list-order';
+import { AI_CONSENT_TABLE } from '../supabase/functions/_shared/ai-consent';
 
 const ROOT = process.cwd();
 
-/** .order( を走査する場所 (#2134 で org と operator/membership、#2139 T1 で src/app/api の全体に広げた) */
-const SCANNED_ROUTE_DIRS = ['src/app/api'];
+/**
+ * .order( を走査する場所 (#2134 で org と operator/membership、#2139 T1 で src/app/api の全体、#2144 S3 で route から呼ぶ
+ * helper (src/lib・src/modules)・hook (src/hooks)・画面 (src/app の (main) など・src/components・src/contexts) に広げた)。
+ * ブラウザで動くコード (hook・画面) も、PostgREST に送る並びは同じなので走査に入れる。テスト (src/__tests__) の偽物は入れない
+ */
+const SCANNED_ROUTE_DIRS = ['src/app', 'src/lib', 'src/hooks', 'src/modules', 'src/components', 'src/contexts'];
 
 const ASC_NULLS_LAST = { ascending: true, nullsFirst: false };
 const DESC_NULLS_FIRST = { ascending: false, nullsFirst: true };
@@ -37,7 +43,19 @@ const desc = (column: string): ListOrderKey => ({ column, options: DESC_NULLS_FI
 interface ListOrderUse {
   file: string;
   handler: 'GET' | 'POST' | null;
+  /**
+   * 表の名前を定数で .from( に渡すファイルの、その定数 (省くと .from('<表>') を探す)。
+   * expression を .from( に渡し、ファイルに definition の文があり、その値が value であることを見る
+   */
+  tableVia?: { expression: string; definition: string; value: string };
 }
+
+/** src/lib/auth/sessions/store.ts は表の名前を TABLE に置いて読む */
+const SESSIONS_STORE_TABLE_VIA = {
+  expression: 'TABLE',
+  definition: "const TABLE = 'user_sessions_metadata';",
+  value: 'user_sessions_metadata',
+};
 
 /** 一覧ごとの、期待する表と鍵 (最後の一意の鍵を含む) と、それで並べる route */
 const EXPECTED: Record<keyof typeof LIST_ORDERS, { table: string; keys: ListOrderKey[]; uses: ListOrderUse[] }> = {
@@ -232,6 +250,7 @@ const EXPECTED: Record<keyof typeof LIST_ORDERS, { table: string; keys: ListOrde
       { file: 'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts', handler: null },
       { file: 'src/app/api/ai/menu/v4/generate/route.ts', handler: 'POST' },
       { file: 'src/app/api/ai/menu/v5/generate/route.ts', handler: 'POST' },
+      { file: 'src/hooks/useHomeData.ts', handler: null },
     ],
   },
 
@@ -403,6 +422,82 @@ const EXPECTED: Record<keyof typeof LIST_ORDERS, { table: string; keys: ListOrde
       { file: 'src/app/api/support/users/[id]/route.ts', handler: 'GET' },
     ],
   },
+
+  // ---- #2144 S3: src/app/api の外 (route や画面から呼ぶ helper・hook・画面) ----
+  billingPublicPlans: {
+    table: 'subscription_plans',
+    keys: [asc('display_order'), ID_TIEBREAK_KEY],
+    uses: [{ file: 'src/lib/billing/public-plans.ts', handler: null }],
+  },
+  billingGrantablePlans: {
+    table: 'subscription_plans',
+    keys: [asc('display_order'), ID_TIEBREAK_KEY],
+    uses: [{ file: 'src/lib/billing/manual-grant-repository.ts', handler: null }],
+  },
+  billingLiveSubscription: {
+    table: 'personal_subscriptions',
+    keys: [desc('created_at'), ID_TIEBREAK_KEY],
+    uses: [
+      { file: 'src/lib/billing/repository.ts', handler: null },
+      { file: 'src/lib/billing/manual-grant-repository.ts', handler: null },
+    ],
+  },
+  billingManualGrantHistory: {
+    table: 'admin_audit_logs',
+    keys: [desc('created_at'), ID_TIEBREAK_KEY],
+    uses: [{ file: 'src/lib/billing/manual-grant-repository.ts', handler: null }],
+  },
+  authLiveSessions: {
+    table: 'user_sessions_metadata',
+    keys: [desc('last_active_at'), asc('session_id')],
+    uses: [{ file: 'src/lib/auth/sessions/store.ts', handler: null, tableVia: SESSIONS_STORE_TABLE_VIA }],
+  },
+  authLoginHistory: {
+    table: 'user_sessions_metadata',
+    keys: [desc('created_at'), asc('session_id')],
+    uses: [{ file: 'src/lib/auth/sessions/store.ts', handler: null, tableVia: SESSIONS_STORE_TABLE_VIA }],
+  },
+  authPriorLogins: {
+    table: 'user_sessions_metadata',
+    keys: [desc('created_at'), asc('session_id')],
+    uses: [{ file: 'src/lib/auth/sessions/store.ts', handler: null, tableVia: SESSIONS_STORE_TABLE_VIA }],
+  },
+  adminModerationFoodFlags: {
+    table: 'moderation_flags',
+    keys: [asc('created_at'), ID_TIEBREAK_KEY],
+    uses: [{ file: 'src/lib/admin/moderation-backend.ts', handler: null }],
+  },
+  adminModerationRecipeFlags: {
+    table: 'recipe_flags',
+    keys: [asc('created_at'), ID_TIEBREAK_KEY],
+    uses: [{ file: 'src/lib/admin/moderation-backend.ts', handler: null }],
+  },
+  aiConsentHistory: {
+    table: 'external_data_consents',
+    keys: [desc('consented_at'), ID_TIEBREAK_KEY],
+    uses: [
+      {
+        file: 'src/lib/ai/consent.ts',
+        handler: null,
+        tableVia: { expression: 'TABLE', definition: 'const TABLE = AI_CONSENT_TABLE;', value: AI_CONSENT_TABLE },
+      },
+    ],
+  },
+  homeLatestBadge: {
+    table: 'user_badges',
+    keys: [desc('obtained_at'), asc('badge_id')],
+    uses: [{ file: 'src/hooks/useHomeData.ts', handler: null }],
+  },
+  homeBestVegMeal: {
+    table: 'planned_meals',
+    keys: [{ column: 'veg_score', options: DESC_NULLS_LAST }, ID_TIEBREAK_KEY],
+    uses: [{ file: 'src/hooks/useHomeData.ts', handler: null }],
+  },
+  familyMemberParentalConsent: {
+    table: 'parental_consents',
+    keys: [desc('signed_at'), ID_TIEBREAK_KEY],
+    uses: [{ file: 'src/app/(main)/family/members/[id]/page.tsx', handler: null }],
+  },
 };
 
 /** user_id で絞って読む health_records の理由 (同じ文を 5 か所に書くので 1 つにまとめる) */
@@ -502,6 +597,41 @@ const ALLOWED_DIRECT_ORDERS: Record<string, { columns: string[]; reason: string 
     columns: ['key'],
     reason: 'system_settings の主キーは key (system_settings_pkey)',
   },
+
+  // ---- #2144 S3: src/app/api の外 ----
+  'src/hooks/useHomeData.ts': {
+    columns: ['day_date', 'day_date', 'record_date'],
+    reason: `${USER_DAILY_MEALS_UNIQUE_REASON}。${HEALTH_RECORDS_UNIQUE_REASON}。期限の近い品・最新のバッジ・ベストの食事は LIST_ORDERS で並べる`,
+  },
+  'src/lib/account-deletion-storage.ts': {
+    columns: ['id', 'id', 'id', 'id', 'id', 'id'],
+    reason: 'どの表も主キー id だけで並べる (一意。ページ送りで全部の行を読む)',
+  },
+  'src/lib/account-export.ts': {
+    columns: ['<column>'],
+    reason:
+      '表ごとの orderBy (src/lib/account-export-tables.ts。省くと id) の列を順に重ねる。orderBy が主キーの全列を含むことは tests/account-export-tables.test.ts が見る',
+  },
+  'src/lib/api/list-order.ts': {
+    columns: ['<key.column>'],
+    reason: 'orderListBy そのもの (LIST_ORDERS の鍵を順に重ねる。どの一覧も一意の鍵で終わることはこのテストが見る)',
+  },
+  'src/lib/data-subject-requests/service.ts': {
+    columns: ['created_at', 'id', 'due_at', 'created_at', 'id'],
+    reason: 'どちらの一覧も id の降順で終える (一意)',
+  },
+  'src/lib/health-insight-meals.ts': {
+    columns: ['day_date'],
+    reason: USER_DAILY_MEALS_UNIQUE_REASON,
+  },
+  'src/lib/super-admin/flag-active-users.ts': {
+    columns: ['id'],
+    reason: '主キー id だけで並べる (一意。ページ送りで全部の利用者を読む)',
+  },
+  'src/modules/dish-favorites/server.ts': {
+    columns: ['created_at', 'dish_name_key', 'created_at', 'id'],
+    reason: '選んだ並び (作った日時の古い順・名前の順・作った日時の新しい順) のあと、どれも id の昇順で終える (一意)',
+  },
 };
 
 /**
@@ -574,7 +704,7 @@ const EXPECTED_USES = Object.entries(EXPECTED).flatMap(([name, expected]) =>
   expected.uses.map((use) => [name, use.file, use.handler ?? 'ファイルの全体', expected.table] as const),
 );
 
-describe('#2134 U2 / #2139 T1 一覧の並びの同じ値の順', () => {
+describe('#2134 U2 / #2139 T1 / #2144 S3 一覧の並びの同じ値の順', () => {
   it('LIST_ORDERS の一覧は、期待する表から、いままでの鍵のあとに一意の鍵の昇順を重ねて読む', () => {
     expect(Object.keys(LIST_ORDERS).sort()).toEqual(Object.keys(EXPECTED).sort());
     for (const [name, expected] of Object.entries(EXPECTED)) {
@@ -622,10 +752,18 @@ describe('#2134 U2 / #2139 T1 一覧の並びの同じ値の順', () => {
     const body = handlerBodyOf(file, handler === 'ファイルの全体' ? null : handler);
     expect(body).toContain('orderListBy(');
     expect(body).toMatch(new RegExp(`LIST_ORDERS\\.${name}\\b`));
-    expect(body).toContain(`.from('${table}')`);
+    const usesByName: Record<string, { uses: ListOrderUse[] }> = EXPECTED;
+    const tableVia = usesByName[name].uses.find((use) => use.file === file)?.tableVia;
+    if (tableVia === undefined) {
+      expect(body).toContain(`.from('${table}')`);
+    } else {
+      expect(body).toContain(`.from(${tableVia.expression})`);
+      expect(sourceOf(file)).toContain(tableVia.definition);
+      expect(tableVia.value).toBe(table);
+    }
   });
 
-  it('LIST_ORDERS.<一覧> を使う src/app/api のファイルは、どれも EXPECTED のその一覧の uses に書いてある', () => {
+  it('LIST_ORDERS.<一覧> を使う走査の範囲のファイルは、どれも EXPECTED のその一覧の uses に書いてある', () => {
     const unexpected: string[] = [];
     for (const file of SCANNED_ROUTE_DIRS.flatMap(sourceFiles)) {
       for (const [, name] of sourceOf(file).matchAll(/LIST_ORDERS\.(\w+)/g)) {
