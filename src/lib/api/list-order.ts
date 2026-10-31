@@ -5,6 +5,7 @@
 // 開くたびに入れ替わりうる (ページ送りのある一覧では、ページの境目で同じ行が 2 回出る・どのページにも出ない、もありうる)。
 // そこでどの一覧も、最後に一意の鍵 id の昇順を重ねて順を決める (組織のメンバーの一覧の orderOrgMemberList と同じ考え方。
 // src/lib/membership/org-member-list-order.ts)。
+// 新しい側の件数の上限まで読み、古い順へ並べ直して使う所だけは、元の一覧をそっくり逆にした並び (reversed。最後の鍵は id の降順) で読む。
 //
 // 一覧ごとの鍵は LIST_ORDERS に書き、route は orderListBy(問い合わせ, LIST_ORDERS.<一覧>) で並べる
 // (route に .order( を直接書かない。src/app/api の全体を tests/list-order-tiebreak-2134.test.ts が走査で守る。
@@ -59,6 +60,24 @@ function withIdTiebreak(table: string, keys: readonly ListOrderKey[]): ListOrder
 function withNonIdTiebreak(table: keyof typeof NON_ID_TIEBREAK_COLUMNS, keys: readonly ListOrderKey[]): ListOrder {
   return { table, keys: [...keys, ascending(NON_ID_TIEBREAK_COLUMNS[table])] };
 }
+
+/**
+ * 並びをそっくり逆にする (どの鍵も、向きと NULL の位置の両方を逆にする)。
+ * 逆にした並びで先頭から n 件を読んで逆順に戻すと、元の並びで読んだときの末尾の n 件と同じ行が同じ順で並ぶ
+ * (同じ値の行の順も、最後の一意の鍵の向きごと逆になるので崩れない)
+ */
+function reversed(order: ListOrder): ListOrder {
+  return {
+    table: order.table,
+    keys: order.keys.map((key) => ({
+      column: key.column,
+      options: { ascending: !key.options.ascending, nullsFirst: !key.options.nullsFirst },
+    })),
+  };
+}
+
+/** AI 相談の 1 つのセッションのメッセージの並び (書いた日時の古い順。同じ日時は id の順) */
+const AI_CONSULTATION_MESSAGES_ORDER = withIdTiebreak('ai_consultation_messages', [ascending('created_at')]);
 
 /** 一覧ごとの並び (route の名前で引く) */
 export const LIST_ORDERS = {
@@ -124,8 +143,14 @@ export const LIST_ORDERS = {
   adminUsersByLastLoginDesc: withIdTiebreak('user_profiles', [descending('last_login_at')]),
 
   // ---- AI 相談 ----
-  /** AI 相談の 1 つのセッションのメッセージ (書いた日時の古い順): 一覧の GET・会話の続きの POST・閉じる・要約 */
-  aiConsultationMessages: withIdTiebreak('ai_consultation_messages', [ascending('created_at')]),
+  /** AI 相談の 1 つのセッションのメッセージ (書いた日時の古い順): 一覧の GET・閉じる・要約 (会話の続きの POST は下の新しい順で読む) */
+  aiConsultationMessages: AI_CONSULTATION_MESSAGES_ORDER,
+  /**
+   * 会話の続きの POST で AI に渡す過去のメッセージ: aiConsultationMessages をそっくり逆にした並び (書いた日時の新しい順。
+   * 同じ日時は id の降順)。新しい側から件数の上限まで読み、古い順へ並べ直して渡す (#2144。古い順のまま件数で切ると、
+   * 件数を超えた会話では、いま保存した利用者のメッセージが文脈から落ちる)
+   */
+  aiConsultationMessagesNewestFirst: reversed(AI_CONSULTATION_MESSAGES_ORDER),
   /** 重要の印を付けたメッセージ (書いた日時の新しい順・件数の上限つき): 一覧の GET・AI に渡す文脈 */
   aiConsultationImportantMessages: withIdTiebreak('ai_consultation_messages', [descending('created_at')]),
   /** GET /api/ai/consultation/sessions: セッションの一覧 (更新した日時の新しい順) */

@@ -145,8 +145,9 @@ export default function SupportLayout({
               🎧
             </div>
             <div>
-              <h1 className="text-lg font-bold">Support Center</h1>
-              <p className="text-xs text-teal-200">ほめゴハン</p>
+              <h1 className="text-lg font-bold">サポートセンター</h1>
+              {/* 副題は運営の画面 (src/app/super-admin/layout.tsx・src/app/(operator)/operator/membership/layout.tsx) の同じ位置と同じ呼び名にそろえる (#2144 S2) */}
+              <p className="text-xs text-teal-200">ほめゴハン 運営</p>
             </div>
           </div>
         </div>
