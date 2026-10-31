@@ -87,12 +87,9 @@ function collapseWhitespace(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
 }
 
-/** 文から必須の印「*」を除く (「package_key *」→「package_key」) */
+/** 文から必須の印「*」を除く (「package_key *」・「package_key*」→「package_key」) */
 function withoutRequiredMark(text: string): string {
-  return text
-    .split(' ')
-    .filter((word) => word !== REQUIRED_MARK)
-    .join(' ');
+  return collapseWhitespace(text.split(REQUIRED_MARK).join(' '));
 }
 
 /**
@@ -256,6 +253,13 @@ describe('欄名の取り出し (#2157 R2)', () => {
       'own:stage / reason',
     ]);
     expect(texts.filter(isEnglishOnlyLabel).map((label) => label.text)).toEqual(['action_type', 'details', 'stage / reason']);
+  });
+
+  it('欄名につけた必須の印「*」は空白が無くても除く', () => {
+    const source = `const D = () => <label>plan_key*</label>;`;
+    const texts = elementTextsInSource(FIXTURE_FILE, source, LABEL_TAGS);
+    expect(texts.map((label) => label.text)).toEqual(['plan_key']);
+    expect(texts.filter(isEnglishOnlyLabel).map((label) => label.text)).toEqual(['plan_key']);
   });
 
   it('列名・欄名の要素の中の列名・欄名の要素は、その要素の欄名として数える', () => {
