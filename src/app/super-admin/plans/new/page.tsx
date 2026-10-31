@@ -126,7 +126,7 @@ export default function PlanNewPage() {
       </div>
 
       <div className="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded-lg mb-6 text-sm">
-        <strong>設計上の制約:</strong> 9 種公式プランから選択してください。プランの種別・plan_key は変更できません。
+        <strong>設計上の制約:</strong> 9 種公式プランから選択してください。プランの種別・プランの鍵 (plan_key) は変更できません。
         追加設定 (価格、説明等) はテンプレート選択後に入力します。
       </div>
 
