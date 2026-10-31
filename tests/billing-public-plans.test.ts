@@ -3,7 +3,7 @@
  * (src/lib/billing/public-plans.ts の listPublicPlans。listPurchasablePlans を置き換えた)。
  *
  * - 読み取りに失敗したら例外を投げずに空を返し、error ログに残す (/pricing はエラーページにせずフリーのカードだけを描く)
- * - 成功したら行をそのまま返す。条件は public・個人/家族・free でない・月額の金額が正・display_order 順 (Stripe の Price では絞らない)
+ * - 成功したら行をそのまま返す。条件は public・個人/家族・free でない・月額の金額が正・display_order 順 → id 順 (Stripe の Price では絞らない)
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PublicPlan } from '@/lib/billing/core';
@@ -18,10 +18,16 @@ const mocks = vi.hoisted(() => {
       return builder;
     };
   }
-  builder.order = async (...args: unknown[]) => {
-    calls.push({ method: 'order', args });
-    return result;
+  // order は重ねて呼べて (表示の順のあとに id を重ねる。#2144 S3)、await すると結果を返す
+  const ordered = {
+    order: (...args: unknown[]) => {
+      calls.push({ method: 'order', args });
+      return ordered;
+    },
+    then: (resolve: (value: typeof result) => unknown, reject?: (reason: unknown) => unknown) =>
+      Promise.resolve(result).then(resolve, reject),
   };
+  builder.order = (...args: unknown[]) => ordered.order(...args);
   return { calls, result, builder, loggerError: vi.fn() };
 });
 
@@ -81,7 +87,9 @@ describe('billing/01 §10.1・billing/03 §8.6 listPublicPlans', () => {
       { method: 'in', args: ['plan_type', ['personal', 'family']] },
       { method: 'neq', args: ['plan_key', 'free'] },
       { method: 'gt', args: ['monthly_price_jpy', 0] },
-      { method: 'order', args: ['display_order', { ascending: true }] },
+      { method: 'order', args: ['display_order', { ascending: true, nullsFirst: false }] },
+      // 同じ表示の順のプランは id の順 (#2144 S3。LIST_ORDERS.billingPublicPlans)
+      { method: 'order', args: ['id', { ascending: true, nullsFirst: false }] },
     ]);
 
     // data が null でも空を返す
