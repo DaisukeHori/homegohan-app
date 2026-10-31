@@ -7,6 +7,7 @@
 import Link from 'next/link';
 import { MfaGraceBanner } from '@/components/admin/MfaGraceBanner';
 import { requireRoleForPage } from '@/lib/auth/page-guard';
+import { SUPER_ADMIN_SCREEN_LABEL } from '@/lib/admin/operator-role-labels';
 
 /** 認証・2FA の画面から戻る先 (/super-admin の page は /super-admin/plans へ回すだけ。docs/design/cross/12-operator-mfa.md §13.4.2) */
 const SUPER_ADMIN_AREA_NEXT = '/super-admin/plans';
@@ -59,7 +60,8 @@ export default async function SuperAdminLayout({
               S
             </div>
             <div>
-              <p className="text-sm font-bold text-white">Super Admin</p>
+              {/* 見出しはロールの表示名 (運営最上位) にそろえる (#2128 V1-2) */}
+              <p className="text-sm font-bold text-white">{SUPER_ADMIN_SCREEN_LABEL}</p>
               <p className="text-xs text-slate-400">ほめゴハン 運営</p>
             </div>
           </div>

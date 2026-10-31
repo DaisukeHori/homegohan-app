@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { lastPageToRefetch } from "@/lib/list-pagination";
 import { UNAUTHENTICATED_SCREEN_MESSAGE, forbiddenMessageOfResponse } from "@/lib/admin/api-error-message";
+import { SUPER_ADMIN_ONLY_NOTE } from "@/lib/admin/operator-role-labels";
 import {
   AdminScreenError,
   adminLoadFailedFallback,
@@ -149,7 +150,8 @@ export default function AuditLogsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">監査ログ閲覧</h1>
           <p className="text-slate-400 mt-1">
-            全操作履歴 — super_admin のみ閲覧可 (7年保管)
+            {/* ロールは表示名で出す (#2128 V1-2) */}
+            全操作履歴 — {SUPER_ADMIN_ONLY_NOTE}閲覧可 (7年保管)
           </p>
         </div>
         <button

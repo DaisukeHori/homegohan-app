@@ -32,6 +32,16 @@ export const OPERATOR_ROLE_LABELS: Readonly<Record<RoleName, string>> = {
   super_admin: '運営最上位',
 };
 
+/**
+ * super_admin だけが開ける画面 (/super-admin) の呼び名 (#2128 V1-2)。
+ * ロールの表示名 (OPERATOR_ROLE_LABELS.super_admin) と同じ語を使い、新しい語を作らない。
+ * /admin のサイドバーのリンク・入口のカード・/super-admin のサイドバーの見出しで使う
+ */
+export const SUPER_ADMIN_SCREEN_LABEL = `${OPERATOR_ROLE_LABELS.super_admin}の画面`;
+
+/** super_admin だけが使える操作・画面に添える注記 (例「運営最上位のみ」。#2128 V1-2) */
+export const SUPER_ADMIN_ONLY_NOTE = `${OPERATOR_ROLE_LABELS.super_admin}のみ`;
+
 /** ロールの運営の画面の表示名。表に無い値はそのまま */
 export function operatorRoleLabel(role: string): string {
   return labelOrRaw(OPERATOR_ROLE_LABELS, role);

@@ -13,7 +13,7 @@
  *   - 失敗 (コンテンツを隠せなかった 500 OP_CONTENT_HIDE_FAILED など) は API の文面を出し、フォームを閉じない。
  *     隠せなかったとき API は判定を保存しない (pending のまま) ので、画面を開き直してもフォームが出て、やり直せる
  *   - 送信中は二重に送れない
- *   - 審査済み (pending 以外) ではフォームを出さない。永久 BAN の選択肢は super_admin だけ
+ *   - 審査済み (pending 以外) ではフォームを出さない。永久 BAN の選択肢は super_admin だけ (文の注記は「運営最上位のみ」。#2128 V1-2)
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する
  * (tests/admin-finance-refund-dialog.test.tsx と同じ方法)。
@@ -382,6 +382,14 @@ describe('ModerationReviewForm: 表示', () => {
     root = createRoot(container);
     await renderForm({ isSuperAdmin: true });
     expect(optionValues()).toContain('delete_and_perm_ban');
+  });
+
+  it('永久 BAN の選択肢の文は「削除 + 永久 BAN (運営最上位のみ)」で、英字の super_admin を出さない (#2128 V1-2)', async () => {
+    await renderForm({ isSuperAdmin: true });
+    const select = fieldByLabel('アクション') as HTMLSelectElement;
+    const permBan = Array.from(select.options).find((o) => o.value === 'delete_and_perm_ban');
+    expect(permBan?.textContent).toBe('削除 + 永久 BAN (運営最上位のみ)');
+    expect(Array.from(select.options).map((o) => o.textContent ?? '').join(' ')).not.toMatch(/super_admin|Super Admin/);
   });
 
   it('「削除」を選ぶと、他のユーザーから見えなくなる (本人には見える・保管される) 説明が出る。承認・エスカレーションでは出ない', async () => {
