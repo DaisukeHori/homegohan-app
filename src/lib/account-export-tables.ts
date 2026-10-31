@@ -179,7 +179,7 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
     scope: viaParent('recipe_collections', 'collection_id'),
     orderBy: ['collection_id', 'recipe_id'],
   },
-  // recipe_likes / recipe_comments は RLS 上「誰でも閲覧可」。必ず user_id で絞る
+  // recipe_likes は RLS 上、誰でも読める。recipe_comments は「読めるレシピのコメントと自分のコメント」(cross/25)。どちらも必ず user_id で絞る
   { table: 'recipe_likes', scope: self('user_id'), orderBy: ['user_id', 'recipe_id'] },
   // 献立の料理のお気に入り (dish_favorites。docs/design/cross/22-dish-favorites.md §6.5)。RLS は本人だけだが、ほかの表と同じく user_id で絞る。
   // 並びは created_at + 主キー id (ページの境目で重複・欠落しない)
