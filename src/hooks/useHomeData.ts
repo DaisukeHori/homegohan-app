@@ -586,8 +586,10 @@ export const useHomeData = () => {
         .eq('user_daily_meals.user_id', userId)
         .gte('user_daily_meals.day_date', formatLocalDate(sevenDaysAgo))
         .eq('is_completed', true)
-        .not('image_url', 'is', null);
-      // 型引数を明示する (推論させると select の結合の型の展開が深くなりすぎて tsc が止まる: TS2589)
+        .not('image_url', 'is', null)
+        // 行は toPlannedMeal (引数は any) に渡すだけなので、結果の型を行の形に置き換える。select の結合の型のまま
+        // orderListBy に渡すと、型の展開が深くなりすぎて tsc が止まる (TS2589)
+        .returns<Record<string, unknown>[]>();
       const { data } = await orderListBy<typeof bestMealQuery>(bestMealQuery, LIST_ORDERS.homeBestVegMeal).limit(1);
 
       if (data && data.length > 0) {
