@@ -133,7 +133,9 @@ Deno.serve(async (req) => {
     }
     
     // offset指定がある場合はrangeを使用
+    // 主キー id の昇順で並べてからページで切る (並びが無いと、ページの境目の行が重なる・抜けることがある。cross/04 §6.2.1)
     const { data: rows, error: fetchError } = await query
+      .order("id", { ascending: true })
       .range(offset, offset + limit - 1);
 
     if (fetchError) {
