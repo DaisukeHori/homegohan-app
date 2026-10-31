@@ -262,6 +262,11 @@ const EXPECTED: Record<keyof typeof LIST_ORDERS, { table: string; keys: ListOrde
     keys: [desc('created_at'), ID_TIEBREAK_KEY],
     uses: [{ file: 'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts', handler: null }],
   },
+  aiConsultationRecipeCollections: {
+    table: 'recipe_collections',
+    keys: [desc('created_at'), ID_TIEBREAK_KEY],
+    uses: [{ file: 'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts', handler: null }],
+  },
   aiConsultationContextShoppingItems: {
     table: 'shopping_list_items',
     keys: [asc('category'), ID_TIEBREAK_KEY],

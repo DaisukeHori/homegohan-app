@@ -864,7 +864,7 @@ describe('cross/21 recipe_author_display_names の migration (静的)', () => {
     expect(flat).toContain(`REVOKE ALL ON FUNCTION ${FUNCTION_SIGNATURE} FROM PUBLIC, anon, authenticated, service_role;`);
     expect(flat).toContain(`GRANT EXECUTE ON FUNCTION ${FUNCTION_SIGNATURE} TO anon, authenticated;`);
     expect(flat).not.toMatch(/GRANT (ALL|TRUNCATE)/);
-    expect(flat).not.toMatch(new RegExp(`GRANT EXECUTE ON FUNCTION ${FUNCTION_SIGNATURE.replace(/[().\[\]]/g, '\\$&')} TO [^;]*service_role`));
+    expect(flat).not.toMatch(new RegExp(`GRANT EXECUTE ON FUNCTION ${FUNCTION_SIGNATURE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} TO [^;]*service_role`));
     expect(flat).toContain(`CREATE INDEX IF NOT EXISTS ${INDEX_NAME} ON public.recipe_comments (user_id);`);
   });
 
@@ -879,7 +879,7 @@ describe('cross/21 recipe_author_display_names の migration (静的)', () => {
     expect(down).not.toMatch(/\bGRANT\b/);
   });
 
-  // C-8 は段 B の PR で足す (段 A の PR には置かない。§15)
+  // C-8 は段 B が足した検査 (§15)
   it('C-8: viewer-lookups.ts は関数の名前の定数で rpc を呼び、user_profiles を直接 select しない', () => {
     const src = read(VIEWER_LOOKUPS);
     expect(src).toContain(`export const RECIPE_AUTHOR_DISPLAY_NAMES_RPC = '${FUNCTION_NAME}';`);
@@ -979,6 +979,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
 import { ADULT_AGE_YEARS, PROFILE_NAME_PLACEHOLDER } from '@homegohan/shared';
 import { apiCall } from '../helpers/api';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 import { supabaseAdmin } from '../helpers/supabase';
 import { cleanupTestUser, createTestUserWithRoles, type TestUser } from '../helpers/users';
 
@@ -1155,11 +1156,12 @@ beforeAll(async () => {
   if (deleteCommentError) throw new Error(`recipe_comments (deleteCommenter): ${deleteCommentError.message}`);
   // tempFrozenExpired の公開レシピ (上の for で作った 1 件) と、そこへの toggleCommenter のコメント
   // (I-10 で、レシピの公開の状態を切り替えたとき、コメントの書き手の名前も追随することを確かめる)
-  const { data: toggleRecipe, error: toggleRecipeError } = await supabaseAdmin
-    .from('recipes')
-    .select('id')
-    .eq('user_id', people.tempFrozenExpired.user.userId)
-    .single();
+  // 準備のフックの select はゲートウェイの一時的な失敗だけをやり直す (tests/integration-setup-transient-retry.test.ts の決まり)
+  const { data: toggleRecipe, error: toggleRecipeError } = await retryIdempotentSetup(
+    supabaseAdmin,
+    'beforeAll: tempFrozenExpired の公開レシピの select',
+    (db) => db.from('recipes').select('id').eq('user_id', people.tempFrozenExpired.user.userId).single(),
+  );
   if (toggleRecipeError || !toggleRecipe) throw new Error(`recipes (tempFrozenExpired): ${toggleRecipeError?.message}`);
   toggleRecipeId = toggleRecipe.id as string;
   const { error: toggleCommentError } = await supabaseAdmin
@@ -1454,7 +1456,7 @@ describe('I-18: 作者名の表示を書いた版への同意 (K-同意)', () =>
 });
 ```
 
-import する helper は origin/main に実在する export だけ: `supabaseAdmin` (`tests/integration/helpers/supabase.ts`。service_role の Proxy。`.from(...)`・`.auth.admin.deleteUser(...)` をそのまま呼べる)・`createTestUserWithRoles` / `cleanupTestUser` / `TestUser` (`tests/integration/helpers/users.ts`。`TestUser` は `userId`・`jwt` を持つ。`cleanupTestUser` は消えた人に呼んでも投げない)・`apiCall` (`tests/integration/helpers/api.ts`)。`client` / `anon` / `asUser` / `pgQuery` は上のとおり本テストの中に置く (`anon-definer-execute.test.ts` の冒頭と同じ作り)。
+import する helper は origin/main に実在する export だけ: `retryIdempotentSetup` (`tests/integration/helpers/setup-transient-retry.ts`。準備のフックの select / upsert はこれを通す決まり。`tests/integration-setup-transient-retry.test.ts` が見張る)・`supabaseAdmin` (`tests/integration/helpers/supabase.ts`。service_role の Proxy。`.from(...)`・`.auth.admin.deleteUser(...)` をそのまま呼べる)・`createTestUserWithRoles` / `cleanupTestUser` / `TestUser` (`tests/integration/helpers/users.ts`。`TestUser` は `userId`・`jwt` を持つ。`cleanupTestUser` は消えた人に呼んでも投げない)・`apiCall` (`tests/integration/helpers/api.ts`)。`client` / `anon` / `asUser` / `pgQuery` は上のとおり本テストの中に置く (`anon-definer-execute.test.ts` の冒頭と同じ作り)。
 
 ### 7.11 既存の単体テストの直し (fix 枝の 5 ファイル。断片)
 

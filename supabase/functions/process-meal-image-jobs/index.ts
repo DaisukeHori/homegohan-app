@@ -193,8 +193,11 @@ async function fetchPendingJobs(plannedMealId: string | undefined, limit: number
     .from("meal_image_jobs")
     .select("id, user_id, planned_meal_id, dish_index, subject_hash, prompt, model, reference_image_urls, attempt_count")
     .eq("status", "pending")
+    // 同じ優先度・同じ作成時刻のジョブ (1 回の保存でまとめて積んだ料理) のどれを先に取るかを決めるため、
+    // 最後に主キー id の昇順を重ねる (Deno なので LIST_ORDERS は使えない。cross/04 §6.2.1)
     .order("priority", { ascending: false })
     .order("created_at", { ascending: true })
+    .order("id", { ascending: true })
     .limit(limit);
 
   if (plannedMealId) {

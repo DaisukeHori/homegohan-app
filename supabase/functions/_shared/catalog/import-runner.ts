@@ -168,7 +168,10 @@ export async function handleCatalogImportRequest(req: Request, options: HandlerO
       .select("id, category_code, category_name, list_url, crawl_priority")
       .eq("source_id", source.id)
       .eq("is_active", true)
+      // 同じ優先度のカテゴリのどれを件数の上限までに取り込むかを決めるため、最後に主キー id の昇順を重ねる
+      // (Deno なので LIST_ORDERS は使えない。cross/04 §6.2.1)
       .order("crawl_priority", { ascending: true })
+      .order("id", { ascending: true })
       .limit(maxCategories);
 
     if (categoryCode) {

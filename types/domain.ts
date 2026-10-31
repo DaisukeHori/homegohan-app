@@ -296,6 +296,8 @@ export interface UserProfile {
   profileCompleteness: number;
   lastProfileUpdate: ISODateTimeString | null;
   aiLearningEnabled: boolean;
+  /** 公開したレシピとコメントに、ニックネームを作者名として他の人に表示する (user_profiles.show_recipe_author_name。既定 true。cross/21) */
+  showRecipeAuthorName: boolean;
 
   // === Performance OS v3 ===
   performanceProfile: PerformanceProfile | null;
