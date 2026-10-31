@@ -11,6 +11,8 @@
 //      (宣言の順は tests/org-member-list-order-2128.test.ts が migration と突き合わせる)
 //   3. その中は id の順 (一意の鍵で終えるので、同じ日・同じ役割の人の順も変わらない)
 
+import { orderListBy, type OrderableQuery } from '@/lib/api/list-order';
+
 /** PostgREST の order に渡す 1 つの並びの鍵 */
 export interface OrgMemberListOrderKey {
   column: 'joined_org_at' | 'org_role' | 'id';
@@ -24,12 +26,7 @@ export const ORG_MEMBER_LIST_ORDER: readonly OrgMemberListOrderKey[] = [
   { column: 'id', options: { ascending: true, nullsFirst: false } },
 ];
 
-/** order を重ねられる問い合わせ (supabase-js の PostgrestFilterBuilder など) */
-interface OrderableQuery<Query> {
-  order(column: string, options: { ascending: boolean; nullsFirst: boolean }): Query;
-}
-
-/** 問い合わせに ORG_MEMBER_LIST_ORDER の順で order を重ねる */
+/** 問い合わせに ORG_MEMBER_LIST_ORDER の順で order を重ねる (重ね方はほかの一覧と同じ orderListBy。src/lib/api/list-order.ts) */
 export function orderOrgMemberList<Query extends OrderableQuery<Query>>(query: Query): Query {
-  return ORG_MEMBER_LIST_ORDER.reduce((ordered, key) => ordered.order(key.column, key.options), query);
+  return orderListBy(query, { keys: ORG_MEMBER_LIST_ORDER });
 }

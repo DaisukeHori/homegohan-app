@@ -16,6 +16,7 @@
 import { NextResponse } from 'next/server';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireOrgMember } from '@/lib/auth/org-member';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 import {
   CHALLENGE_COLUMNS,
   fetchChallengeAggregates,
@@ -46,13 +47,16 @@ export async function GET() {
     const { user, profile } = await requireOrgMember();
     const supabase = await createClient();
 
-    const { data: rows, error } = await supabase
-      .from('organization_challenges')
-      .select(CHALLENGE_COLUMNS)
-      .eq('organization_id', profile.organization_id)
-      .in('status', [...ORG_CHALLENGE_MEMBER_STATUSES])
-      .in('challenge_type', [...ORG_CHALLENGE_TYPES])
-      .order('start_date', { ascending: false });
+    // 始まる日の新しい順。同じ日に始まるチャレンジは id の順 (#2134 U2。LIST_ORDERS.orgMyChallenges)
+    const { data: rows, error } = await orderListBy(
+      supabase
+        .from('organization_challenges')
+        .select(CHALLENGE_COLUMNS)
+        .eq('organization_id', profile.organization_id)
+        .in('status', [...ORG_CHALLENGE_MEMBER_STATUSES])
+        .in('challenge_type', [...ORG_CHALLENGE_TYPES]),
+      LIST_ORDERS.orgMyChallenges,
+    );
     if (error) throw error;
 
     const challenges = ((rows ?? []) as unknown as ChallengeRow[]).filter((row) => isVisibleToMember(row, profile));
