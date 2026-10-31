@@ -18,6 +18,7 @@ import { internalError } from '@/lib/api/errors';
 import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { buildListViewDetails, recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /** 400: 本文・クエリの検証の失敗の文 (項目ごとの理由は details に添える。message は画面がそのまま出す文なので文字列にする) */
 const VALIDATION_ERROR_MESSAGE = '入力内容を確認してください';
@@ -79,9 +80,8 @@ export async function GET(request: NextRequest) {
     };
 
     const { data, error, count } = await resolveBeyondLastPage(
-      await selectLeads()
-        .order('updated_at', { ascending: false })
-        .range((page - 1) * per_page, page * per_page - 1),
+      // 更新した日時の新しい順。同じ日時は id の順で、ページの境目でも順が変わらない (#2139 T1)
+      await orderListBy(selectLeads(), LIST_ORDERS.adminSalesLeads).range((page - 1) * per_page, page * per_page - 1),
       () => selectLeads({ head: true }),
       LIST_ROUTE_NAME,
     );

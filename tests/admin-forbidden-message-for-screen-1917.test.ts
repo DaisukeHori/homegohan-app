@@ -21,6 +21,7 @@ import {
   operationFailureMessage,
   operationNetworkFailureMessage,
 } from '@/lib/admin/api-error-message';
+import { SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
 import {
   API_ACCOUNT_FROZEN_MESSAGE,
   API_FORBIDDEN_MESSAGE,
@@ -32,7 +33,7 @@ import {
 } from '@/lib/api/error-responses';
 import { FORBIDDEN_REASON_MESSAGES } from '@/lib/api/forbidden-reason-messages';
 
-const SCREEN_FALLBACK = 'この画面を見る権限がありません (super_admin のみ)';
+const SCREEN_FALLBACK = `この画面を見る権限がありません (${SUPER_ADMIN_ONLY_NOTE})`;
 
 const nested = (message: unknown) => ({ error: { code: 'OP_PERMISSION_DENIED', message } });
 

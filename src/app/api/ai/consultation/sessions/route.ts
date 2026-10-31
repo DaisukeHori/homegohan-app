@@ -5,9 +5,15 @@ import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /** 新しいセッションの文脈に入れる、最近の食事の日数 (JST の今日から何日前までか) */
 const RECENT_MEAL_DAYS = 7;
+/**
+ * 新しいセッションの文脈に入れる、最近の食事の件数の上限 (いままでの値。7 日 × 1 日 3 食 = 21 件より多い)。
+ * 7 日前からの日の古い側からこの件数を読む (先の日の献立もあるので、新しい側から読むと過去の食事が落ちる。#2150)
+ */
+const RECENT_MEAL_LIMIT = 30;
 
 // セッション一覧取得
 export async function GET(request: Request) {
@@ -18,9 +24,11 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const status = searchParams.get('status') || 'active';
 
-  let query = supabase
-    .from('ai_consultation_sessions')
-    .select(`
+  // 更新した日時の新しい順。同じ日時は id の順で、上限の境目でどれが入るかも決まる (#2139 T1)
+  let query = orderListBy(
+    supabase
+      .from('ai_consultation_sessions')
+      .select(`
       id,
       title,
       status,
@@ -30,8 +38,9 @@ export async function GET(request: Request) {
       updated_at,
       ai_consultation_messages(id)
     `)
-    .eq('user_id', user.id)
-    .order('updated_at', { ascending: false });
+      .eq('user_id', user.id),
+    LIST_ORDERS.aiConsultationSessions,
+  );
 
   if (status !== 'all') {
     query = query.eq('status', status);
@@ -84,10 +93,12 @@ export async function POST(request: Request) {
 
     // 最近の食事データ（日付ベースモデル）
     // 7 日前は JST の暦日で求める (#1433。day_date は JST の暦日)
+    // 日の古い順。同じ日の食事は id の順で、件数の上限の境目でどれが入るかも決まる (#2150)
     const sevenDaysAgo = jstDayOffset(-RECENT_MEAL_DAYS);
-    const { data: recentMeals } = await supabase
-      .from('planned_meals')
-      .select(`
+    const { data: recentMeals } = await orderListBy(
+      supabase
+        .from('planned_meals')
+        .select(`
         meal_type,
         dish_name,
         calories_kcal,
@@ -95,9 +106,11 @@ export async function POST(request: Request) {
         is_completed,
         user_daily_meals!inner(day_date, user_id)
       `)
-      .eq('user_daily_meals.user_id', user.id)
-      .gte('user_daily_meals.day_date', sevenDaysAgo)
-      .limit(30);
+        .eq('user_daily_meals.user_id', user.id)
+        .gte('user_daily_meals.day_date', sevenDaysAgo),
+      LIST_ORDERS.aiConsultationContextMealsByDay,
+    )
+      .limit(RECENT_MEAL_LIMIT);
 
     // 健康記録
     const { data: healthRecords } = await supabase
@@ -108,27 +121,34 @@ export async function POST(request: Request) {
       .limit(7);
 
     // 過去のセッション要約を取得（最新10件）
-    const { data: pastSessions } = await supabase
-      .from('ai_consultation_sessions')
-      .select('id, title, summary, key_topics, context_snapshot, summary_generated_at')
-      .eq('user_id', user.id)
-      .eq('status', 'closed')
+    // 同じ日時は id の順 (#2139 T1)。並びは not の前に重ねる (not のあとの問い合わせの型を orderListBy に渡すと、
+    // 型の深さの上限 TS2589 に当たる)
+    const { data: pastSessions } = await orderListBy(
+      supabase
+        .from('ai_consultation_sessions')
+        .select('id, title, summary, key_topics, context_snapshot, summary_generated_at')
+        .eq('user_id', user.id)
+        .eq('status', 'closed'),
+      LIST_ORDERS.aiConsultationPastSummaries,
+    )
       .not('summary', 'is', null)
-      .order('updated_at', { ascending: false })
       .limit(10);
 
     // 重要メッセージを取得（最新20件）
-    const { data: importantMessages } = await supabase
-      .from('ai_consultation_messages')
-      .select(`
+    // 同じ日時は id の順 (#2139 T1)
+    const { data: importantMessages } = await orderListBy(
+      supabase
+        .from('ai_consultation_messages')
+        .select(`
         content,
         importance_reason,
         created_at,
         ai_consultation_sessions!inner(user_id, title)
       `)
-      .eq('is_important', true)
-      .eq('ai_consultation_sessions.user_id', user.id)
-      .order('created_at', { ascending: false })
+        .eq('is_important', true)
+        .eq('ai_consultation_sessions.user_id', user.id),
+      LIST_ORDERS.aiConsultationImportantMessages,
+    )
       .limit(20);
 
     const contextSnapshot = {

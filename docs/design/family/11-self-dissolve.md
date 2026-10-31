@@ -566,7 +566,7 @@ BEGIN
   UPDATE public.family_members SET status = 'left' WHERE family_id = p_family_id AND status = 'active';
   UPDATE public.user_profiles SET family_id = NULL WHERE family_id = p_family_id;
 
-  -- representative_id を同じ文で NULL にする。BEFORE UPDATE OF representative_id のトリガー (billing_family_plan_follow_representative) は
+  -- representative_id を同じ文で NULL にする。BEFORE UPDATE OF representative_id のトリガー (family_groups_billing_plan_follow_representative。関数 billing_family_plan_follow_representative) は
   -- NEW.status が active でないので何もしない (20261016210000_billing_core.sql)
   UPDATE public.family_groups
     SET status = 'dissolved', dissolved_at = pg_catalog.now(), representative_id = NULL

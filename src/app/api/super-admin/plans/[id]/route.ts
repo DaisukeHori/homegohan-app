@@ -16,7 +16,7 @@
  * 削除 (DELETE) も同じで、draft のままのときだけ消す (0 行なら読み直して、無ければ 404、あれば 409 CONFLICT_STALE_DATA)。
  *
  * 廃止の安全弁 (#1127・#1912) は、書く前に route が契約者を数え (countPlanSubscribers)、さらに書く文の中で DB のトリガー
- * guard_plan_deprecate_subscribers がプランの行を FOR UPDATE でロックし直し、commit 前の契約者が増える書き込み (契約の作成・live への
+ * trg_guard_plan_deprecate_subscribers (関数 guard_plan_deprecate_subscribers) がプランの行を FOR UPDATE でロックし直し、commit 前の契約者が増える書き込み (契約の作成・live への
  * 切り替え・プランの付け替え。どれもトリガー trg_subscriber_plan_key_share でプランの行に FOR KEY SHARE を取る) を待ってから数え直す (#1917)。
  * 数えてから書くまでの間に契約が入ったときは、トリガーが OP_PLAN_HAS_SUBSCRIBERS で止め、route は数え上げと同じ 409 を返す。
  *
@@ -27,8 +27,8 @@
  * Price を作っていたら書かないよう、公開中・非公開で商品の ID を送ったときは、両方の Price ID が NULL のままであることも書く条件にする
  * (0 行なら、ほかの条件と同じく読み直して 200 か 409 CONFLICT_STALE_DATA)。
  * 価格の変更がまだ Price ID を書いていない (予約を取って Stripe の Price を作っている最中) あいだは、Price ID の条件では防げない
- * (進行中の価格の変更は読んだときの商品で Price を作り、あとで Price ID を書く)。そのあいだは DB のトリガー
- * guard_plan_stripe_product_id_price_change (supabase/migrations/20261030160000_plan_stripe_product_id_price_change_guard.sql) が、
+ * (進行中の価格の変更は読んだときの商品で Price を作り、あとで Price ID を書く)。そのあいだは DB のトリガー trg_guard_plan_stripe_product_id_price_change
+ * (関数 guard_plan_stripe_product_id_price_change。supabase/migrations/20261030160000_plan_stripe_product_id_price_change_guard.sql) が、
  * 書く文の中で (プランの行のロックの後) 期限内の予約を見て止め、route は 409 OP_PLAN_PRICE_CHANGE_IN_PROGRESS
  * (STRIPE_PRODUCT_ID_PRICE_CHANGE_IN_PROGRESS_MESSAGE) を返す。別の運営の変更ではないので CONFLICT_STALE_DATA にはしない
  * (画面は読み直さず、「別の運営が先に変えた」とも出さずに、この文を出して入力欄の値を残す)。
@@ -67,6 +67,7 @@ import { invalidInputResponse, invalidJsonBodyResponse, readJsonBody } from '@/l
 import { isUuid } from '@/lib/http-params';
 import { isStripePriceSyncExpected } from '@/lib/super-admin/price-change-unchanged';
 import { isPlanPriceChangeInProgressDbError } from '@/lib/super-admin/plan-price-change-reservation';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -80,7 +81,7 @@ const STALE_PLAN_RESPONSE = {
 
 /**
  * 価格の変更 (Stripe の Price の作成) が進行中なので、Stripe の商品の ID を書かなかった (409。#2112 Z1-1)。
- * DB のトリガー guard_plan_stripe_product_id_price_change が書く文の中で止めた (一緒に送った表示名・説明なども含めて何も書いていない。
+ * DB のトリガー trg_guard_plan_stripe_product_id_price_change (関数 guard_plan_stripe_product_id_price_change) が書く文の中で止めた (一緒に送った表示名・説明なども含めて何も書いていない。
  * 文もそう言う。#2120 W2-1)
  */
 const PRICE_CHANGE_IN_PROGRESS_RESPONSE = {
@@ -155,11 +156,11 @@ export async function GET(_request: NextRequest, props: RouteContext) {
 
     // 価格変更履歴を追加取得。読めなかった (DB の失敗) ときは 500。空の履歴にしない (#1917 の続き。以前は失敗を捨て、
     // 価格を一度も変えていないプランに見えていた)
-    const { data: priceHistory, error: priceHistoryError } = await supabase
-      .from('plan_price_history')
-      .select('*')
-      .eq('plan_id', params.id)
-      .order('created_at', { ascending: false })
+    // 変えた日時の新しい順。同じ日時は id の順で、上限の境目でどれが入るかも決まる (#2139 T1)
+    const { data: priceHistory, error: priceHistoryError } = await orderListBy(
+      supabase.from('plan_price_history').select('*').eq('plan_id', params.id),
+      LIST_ORDERS.superAdminPlanPriceHistory,
+    )
       .limit(20);
     if (priceHistoryError) {
       return internalError('GET /api/super-admin/plans/[id]', priceHistoryError, { table: 'plan_price_history' }, { shape: 'nested' });
@@ -392,7 +393,7 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
       if (isPlanPriceChangeInProgressDbError(updateErr)) {
         return NextResponse.json(PRICE_CHANGE_IN_PROGRESS_RESPONSE, { status: 409 });
       }
-      // #1917: 上の数え上げから書くまでの間に契約が入った (DB のトリガー guard_plan_deprecate_subscribers が、書く文の中で
+      // #1917: 上の数え上げから書くまでの間に契約が入った (DB のトリガー trg_guard_plan_deprecate_subscribers (関数 guard_plan_deprecate_subscribers) が、書く文の中で
       // commit 前の契約を待ってから数え直して止めた)。上の数え上げと同じ 409 にする (内訳はトリガーの DETAIL)
       if (isPlanHasSubscribersDbError(updateErr)) {
         const dbCounts = parsePlanSubscriberCountsDetail(updateErr.details);

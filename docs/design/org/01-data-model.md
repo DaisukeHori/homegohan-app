@@ -63,7 +63,7 @@ ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS organization_id        UUID R
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS department_id          UUID REFERENCES departments(id) ON DELETE SET NULL;
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS employee_id            VARCHAR(50);
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS joined_org_at          DATE;
-ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS is_active_in_org       BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS is_active_in_org       BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS consent_org_health_data BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS consent_org_data_at    TIMESTAMPTZ;
 

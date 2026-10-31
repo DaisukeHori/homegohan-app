@@ -30,6 +30,7 @@
 import { isIP } from 'node:net';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 import { AI_CONSENT_TABLE } from '../../../supabase/functions/_shared/ai-consent';
 import {
   AI_CONSENT_PROVIDERS,
@@ -59,12 +60,10 @@ export type ConsentDb = Pick<SupabaseClient, 'from'>;
  */
 export async function getAiConsentStatus(userId: string, db?: ConsentDb): Promise<AiConsentStatus> {
   const client: ConsentDb = db ?? (await createClient());
-  const { data, error } = await client
-    .from(TABLE)
-    .select('id, provider, consented, consented_at, revoked_at, policy_version')
-    .eq('user_id', userId)
-    .order('consented_at', { ascending: false })
-    .limit(HISTORY_LIMIT);
+  const { data, error } = await orderListBy(
+    client.from(TABLE).select('id, provider, consented, consented_at, revoked_at, policy_version').eq('user_id', userId),
+    LIST_ORDERS.aiConsentHistory,
+  ).limit(HISTORY_LIMIT);
   if (error) {
     throw new Error(`getAiConsentStatus: ${error.message}`);
   }

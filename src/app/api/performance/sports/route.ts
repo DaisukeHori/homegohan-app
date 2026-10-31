@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/server'
 import { NextRequest, NextResponse } from 'next/server'
 import { toSportPreset } from '@/lib/converter'
 import { internalError } from '@/lib/api/errors'
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order'
 
 /**
  * GET /api/performance/sports
@@ -20,11 +21,8 @@ export async function GET(request: NextRequest) {
     const category = searchParams.get('category')
     const search = searchParams.get('search')
 
-    let query = supabase
-      .from('sport_presets')
-      .select('*')
-      .order('category')
-      .order('name_ja')
+    // 分類の順 → 名前の順。同じ名前は id の順 (#2139 T1)
+    let query = orderListBy(supabase.from('sport_presets').select('*'), LIST_ORDERS.performanceSports)
 
     if (category) {
       query = query.eq('category', category)

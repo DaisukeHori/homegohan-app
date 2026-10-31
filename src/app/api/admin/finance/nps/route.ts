@@ -43,6 +43,7 @@ import {
   type NpsRecentRow,
 } from '@/lib/admin/nps-summary';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 export const dynamic = 'force-dynamic';
 
@@ -82,27 +83,30 @@ export async function GET(request: NextRequest) {
 
     // 直近の一覧。期間・プランの絞り込みは集計 (関数) と同じ条件にし、新しい順に RECENT_LIMIT 件だけ取る
     // NPS: 期間は送信日 (sent_at)。回答済み (responded_at あり) だけ。並びは回答日の新しい順
-    let npsRecent = supabase
-      .from('nps_surveys')
-      .select('id, score, comment, plan_key, responded_at')
-      .not('responded_at', 'is', null);
+    // 同じ日時は id の順で、上限の境目でどの行が入るかも決まる (#2139 T1)。
+    // 並びは not の前に重ねる (not のあとの問い合わせの型を orderListBy に渡すと、型の深さの上限 TS2589 に当たる)
+    let npsRecent = orderListBy(
+      supabase.from('nps_surveys').select('id, score, comment, plan_key, responded_at'),
+      LIST_ORDERS.financeNpsRecent,
+    ).not('responded_at', 'is', null);
     if (fromTimestamp) npsRecent = npsRecent.gte('sent_at', fromTimestamp);
     if (toTimestampExclusive) npsRecent = npsRecent.lt('sent_at', toTimestampExclusive);
     if (planKey) npsRecent = npsRecent.eq('plan_key', planKey);
 
     // CSAT: 期間は作成日 (created_at)。プランの列は無い
-    let csatRecent = supabase
-      .from('csat_feedbacks')
-      .select('id, score, comment, ticket_id, created_at');
+    let csatRecent = orderListBy(
+      supabase.from('csat_feedbacks').select('id, score, comment, ticket_id, created_at'),
+      LIST_ORDERS.financeCsatRecent,
+    );
     if (fromTimestamp) csatRecent = csatRecent.gte('created_at', fromTimestamp);
     if (toTimestampExclusive) csatRecent = csatRecent.lt('created_at', toTimestampExclusive);
 
     // 4 つの問い合わせは互いに独立なので並列に流す
     const [npsSummaryRes, npsRecentRes, csatSummaryRes, csatRecentRes] = await Promise.all([
       supabase.rpc('get_nps_summary', { p_from: rpcFrom, p_to: rpcTo, p_plan_key: planKey }),
-      npsRecent.order('responded_at', { ascending: false }).limit(RECENT_LIMIT),
+      npsRecent.limit(RECENT_LIMIT),
       supabase.rpc('get_csat_summary', { p_from: rpcFrom, p_to: rpcTo }),
-      csatRecent.order('created_at', { ascending: false }).limit(RECENT_LIMIT),
+      csatRecent.limit(RECENT_LIMIT),
     ]);
 
     // 1 つでも失敗したまま続けると、取れなかった数字を 0 として画面に出してしまう (誤った集計を返す)。

@@ -551,7 +551,7 @@ CREATE POLICY "password_history_no_direct_access"
   ON password_history FOR ALL
   USING (false);
 
--- 書くのはトリガー password_history_record、読むのは RPC auth_password_check (どちらも SECURITY DEFINER。
+-- 書くのはトリガー on_auth_user_password_changed (関数 password_history_record)、読むのは RPC auth_password_check (どちらも SECURITY DEFINER。
 -- cross/16 §11.3・§11.5)。PUBLIC・anon・authenticated の表の権限は無い
 
 COMMIT;

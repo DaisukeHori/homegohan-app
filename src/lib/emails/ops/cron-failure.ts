@@ -7,6 +7,7 @@
  */
 import type { EmailEnvelope } from '@/lib/emails/envelope';
 import { getEmailFrom } from '@/lib/site-config';
+import { SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
 import { sanitizeFunctionNameForAlert } from '@/lib/ops-alerts/app-log-error-spike';
 
 export interface CronFailureEmailVars {
@@ -70,7 +71,7 @@ export function renderCronFailureEmail(vars: CronFailureEmailVars): EmailEnvelop
       '',
       '▼ 確認のしかた',
       'pg_cron: Supabase の SQL エディタで cron.job_run_details の status = failed の行の return_message を見る (手順は docs/design/operator/09-runbook.md §5.1)。',
-      'Vercel Cron: 運用ログの画面 (super_admin のみ) で function_name を route 名に絞る。',
+      `Vercel Cron: 運用ログの画面 (${SUPER_ADMIN_ONLY_NOTE}) で function_name を route 名に絞る。`,
       vars.logs_url,
       '',
       `確認した時刻: ${JST_MINUTE_FORMAT.format(vars.detected_at)} (日本時間)`,

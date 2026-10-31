@@ -7,6 +7,7 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { isUuid, normalizeUuid } from '@/lib/http-params';
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { MEAL_NOT_FOUND_MESSAGE, REQUIRED_FIELDS_MISSING_MESSAGE } from '@/lib/api/user-api-error-messages';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 // 食事タイプのカテゴリ（順序変更の制約用）
 const MEAL_CATEGORIES: Record<MealType, number> = {
@@ -45,12 +46,11 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: MEAL_NOT_FOUND_MESSAGE }, { status: 404 });
     }
 
-    // その日の全ての食事を取得（display_order順）
-    const { data: meals, error: fetchError } = await supabase
-      .from('planned_meals')
-      .select('id, meal_type, display_order')
-      .eq('daily_meal_id', dayId)
-      .order('display_order', { ascending: true });
+    // その日の全ての食事を取得（display_order順。同じ表示の順の食事は id の順で、入れ替える相手が決まる。#2139 T1）
+    const { data: meals, error: fetchError } = await orderListBy(
+      supabase.from('planned_meals').select('id, meal_type, display_order').eq('daily_meal_id', dayId),
+      LIST_ORDERS.mealPlanDayMeals,
+    );
 
     if (fetchError) throw fetchError;
     if (!meals || meals.length === 0) {

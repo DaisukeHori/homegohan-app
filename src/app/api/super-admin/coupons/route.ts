@@ -22,6 +22,7 @@ import { recordAdminAudit } from '@/lib/admin/audit';
 import { couponInvalidInputResponse, couponInvalidQueryResponse } from '@/lib/super-admin/coupon-errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /** 一覧の構造化ログの function_name */
 const LIST_ROUTE_NAME = 'GET /api/super-admin/coupons';
@@ -60,9 +61,8 @@ export async function GET(request: NextRequest) {
     };
 
     const { data, error, count } = await resolveBeyondLastPage(
-      await selectCoupons()
-        .order('created_at', { ascending: false })
-        .range(offset, offset + per_page - 1),
+      // 作った日時の新しい順。同じ値は id の順で、ページの境目でも順が変わらない (#2139 T1)
+      await orderListBy(selectCoupons(), LIST_ORDERS.superAdminCoupons).range(offset, offset + per_page - 1),
       () => selectCoupons({ head: true }),
       LIST_ROUTE_NAME,
     );

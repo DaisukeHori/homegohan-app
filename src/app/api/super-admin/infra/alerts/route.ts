@@ -14,6 +14,7 @@ import { authFailureNested } from '@/lib/api/error-responses';
 import { InfraAlertsQuerySchema } from '@/lib/super-admin/infra-schemas';
 import { internalError } from '@/lib/api/errors';
 import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /** 一覧の構造化ログの function_name */
 const LIST_ROUTE_NAME = 'GET /api/super-admin/infra/alerts';
@@ -50,9 +51,8 @@ export async function GET(request: NextRequest) {
     };
 
     const { data, error, count } = await resolveBeyondLastPage(
-      await selectAlerts()
-        .order('triggered_at', { ascending: false })
-        .range((page - 1) * per_page, page * per_page - 1),
+      // 起きた日時の新しい順。同じ値は id の順で、ページの境目でも順が変わらない (#2139 T1)
+      await orderListBy(selectAlerts(), LIST_ORDERS.superAdminInfraAlerts).range((page - 1) * per_page, page * per_page - 1),
       () => selectAlerts({ head: true }),
       LIST_ROUTE_NAME,
     );

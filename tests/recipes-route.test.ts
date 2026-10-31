@@ -277,7 +277,11 @@ describe('GET /api/recipes: クランプ以外の挙動は変えない', () => {
     expect(builder.select).toHaveBeenCalledWith('*', { count: 'exact' });
     expect(builder.eq).toHaveBeenCalledWith('is_public', true);
     expect(builder.or).not.toHaveBeenCalled();
-    expect(builder.order).toHaveBeenCalledWith('created_at', { ascending: false });
+    // 作った日時の新しい順。同じ日時は id の順で、ページの境目でも順が変わらない (#2139 T1)
+    expect(builder.order.mock.calls).toEqual([
+      ['created_at', { ascending: false, nullsFirst: true }],
+      ['id', { ascending: true, nullsFirst: false }],
+    ]);
   });
 
   it('認証済みなら公開レシピと自分のレシピを取る。作者の名前と自分のいいねは埋め込まず、別のクエリで引く (#1917)', async () => {

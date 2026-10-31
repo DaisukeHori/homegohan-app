@@ -4,7 +4,7 @@
  *
  * 組織のプランの段階は運営だけが変える (#1912。オーナーの選択 (2026-10-22・選択式)「運営だけが変える (推奨)」:
  * 「組織の管理者の設定画面では段階を表示だけにし、変更は運営の画面からだけにする (組織の契約は運営が決める)」)。
- * 組織の管理者の経路 (PUT /api/org/settings) は plan を受け取らず、DB のトリガー guard_organizations_plan_value が
+ * 組織の管理者の経路 (PUT /api/org/settings) は plan を受け取らず、DB のトリガー trg_guard_organizations_plan_value (関数 guard_organizations_plan_value) が
  * ログインした利用者 (authenticated) と anon が plan を変えること自体を拒む (20261022170000_org_plan_operator_only.sql)。
  * そのため、ここでは service_role (getSupabaseAdmin) で書く (運営も JWT はログインした利用者なので、利用者の client では止まる)。
  *

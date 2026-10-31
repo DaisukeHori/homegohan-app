@@ -35,11 +35,17 @@ const JUST_NOW_MINUTES = 0.05;
 
 const mockGetUser = vi.fn();
 
-// 利用者のクライアント: select(...).eq('user_id', ...).or(...).in(...).order(...).limit(1).single()
+// 利用者のクライアント: select(...).eq('user_id', ...).or(...).in(...).order(...).order(...).limit(1).single()
+// (並びは作った日時の新しい順 → id の順と order を 2 回重ねる。#2139 T1)
 const pendingResultQueue: Array<{ data: any; error: any }> = [];
 const mockSingle = vi.fn(() => Promise.resolve(pendingResultQueue.shift() ?? { data: null, error: null }));
 const mockLimit = vi.fn(() => ({ single: mockSingle }));
-const mockOrder = vi.fn(() => ({ limit: mockLimit }));
+interface PendingOrderChain {
+  order: (column: string, options: { ascending: boolean; nullsFirst: boolean }) => PendingOrderChain;
+  limit: typeof mockLimit;
+}
+const mockOrder = vi.fn((_column: string, _options: { ascending: boolean; nullsFirst: boolean }): PendingOrderChain => pendingOrderChain);
+const pendingOrderChain: PendingOrderChain = { order: mockOrder, limit: mockLimit };
 const mockIn = vi.fn(() => ({ order: mockOrder }));
 const mockOr = vi.fn(() => ({ in: mockIn }));
 const mockEq = vi.fn(() => ({ or: mockOr }));
@@ -163,6 +169,11 @@ describe('GET /api/ai/menu/weekly/pending', () => {
     expect(json.requestId).toBe('req-1');
     expect(mockRestoreOwnPlannedMealsSnapshot).not.toHaveBeenCalled();
     expect(mockUpdate).not.toHaveBeenCalled();
+    // 最後に作った依頼 1 行。同じ日時の依頼が 2 つあっても、どちらを取るかは id の順で決まる (#2139 T1)
+    expect(mockOrder.mock.calls).toEqual([
+      ['created_at', { ascending: false, nullsFirst: true }],
+      ['id', { ascending: true, nullsFirst: false }],
+    ]);
   });
 
   it('非 stale ポーリングでは generated_data を select しない(二次クエリも発行しない)。生存信号の列は読む', async () => {

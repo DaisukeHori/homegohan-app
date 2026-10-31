@@ -268,7 +268,7 @@ export const STRIPE_PRODUCT_ID_LOCKED_MESSAGE =
 /**
  * 409 OP_PLAN_PRICE_CHANGE_IN_PROGRESS の文: 公開中・非公開のプランで、価格の変更 (Stripe の Price の作成) が進行中のあいだに
  * Stripe の商品の ID を変えようとした (#2112 Z1-1)。進行中の価格の変更は読んだときの商品で Price を作るので、その間は変えない
- * (DB のトリガー guard_plan_stripe_product_id_price_change が止める)。トリガーは UPDATE の文の全体を止めるので、一緒に送った
+ * (DB のトリガー trg_guard_plan_stripe_product_id_price_change (関数 guard_plan_stripe_product_id_price_change) が止める)。トリガーは UPDATE の文の全体を止めるので、一緒に送った
  * 表示名・説明・表示順も書いていない。画面は読み直さずに入力欄の値を残すので、読み込み直しは勧めない (読み込み直すと書きかけが消える)。
  * 価格の変更が済むと Price ができて Product ID は変えられなくなることが多い (そのときの保存は 422 STRIPE_PRODUCT_ID_LOCKED_MESSAGE)。
  * 英字の列名は出さない (#2120 W2-1。以前は「Stripe の商品の ID (stripe_product_id) は変更していません。…画面を読み込み直して確かめてください」で、
