@@ -1038,6 +1038,7 @@ export function manualGrantErrorMessage(code: string): string {
 // tsc:skip place=src/lib/billing/manual-grant-repository.ts — ManualGrantRepository の実装 (billing/02 §8.2)。service_role の client で RPC と SELECT を行う。
 // 呼ぶ側は必ず認可 (requireRole(['super_admin'])) のあと。DB の型は §6 の migration を当てて再生成したもの (段 A)。
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 import { LIVE_SUBSCRIPTION_STATUSES, isSubscriptionStatus } from '@/lib/billing/core';
 import {
   GRANTABLE_PLAN_STATUSES,
@@ -1102,12 +1103,10 @@ export function createManualGrantRepository(admin: Admin = getSupabaseAdmin()): 
       return data !== null;
     },
     async listGrantablePlans() {
-      const { data, error } = await admin
-        .from('subscription_plans')
-        .select(PLAN_COLUMNS)
-        .in('plan_type', [...GRANTABLE_PLAN_TYPES])
-        .in('status', [...GRANTABLE_PLAN_STATUSES])
-        .order('display_order', { ascending: true });
+      const { data, error } = await orderListBy(
+        admin.from('subscription_plans').select(PLAN_COLUMNS).in('plan_type', [...GRANTABLE_PLAN_TYPES]).in('status', [...GRANTABLE_PLAN_STATUSES]),
+        LIST_ORDERS.billingGrantablePlans,
+      );
       if (error) throw error;
       // free は plan_type が personal なので SELECT では落ちない。isGrantablePlan (DB 関数の 2. と同じ条件) で落とす
       return (data ?? [])
@@ -1120,12 +1119,10 @@ export function createManualGrantRepository(admin: Admin = getSupabaseAdmin()): 
         }));
     },
     async findLiveSubscription(userId) {
-      const { data, error } = await admin
-        .from('personal_subscriptions')
-        .select(SUBSCRIPTION_COLUMNS)
-        .eq('user_id', userId)
-        .in('status', [...LIVE_SUBSCRIPTION_STATUSES])
-        .order('created_at', { ascending: false })
+      const { data, error } = await orderListBy(
+        admin.from('personal_subscriptions').select(SUBSCRIPTION_COLUMNS).eq('user_id', userId).in('status', [...LIVE_SUBSCRIPTION_STATUSES]),
+        LIST_ORDERS.billingLiveSubscription,
+      )
         .limit(1)
         .maybeSingle();
       if (error) throw error;
@@ -1141,13 +1138,10 @@ export function createManualGrantRepository(admin: Admin = getSupabaseAdmin()): 
       };
     },
     async listHistory(userId) {
-      const { data, error } = await admin
-        .from('admin_audit_logs')
-        .select(HISTORY_COLUMNS)
-        .eq('target_id', userId)
-        .in('action_type', [...MANUAL_GRANT_AUDIT_ACTION_VALUES])
-        .order('created_at', { ascending: false })
-        .limit(MANUAL_GRANT_HISTORY_LIMIT);
+      const { data, error } = await orderListBy(
+        admin.from('admin_audit_logs').select(HISTORY_COLUMNS).eq('target_id', userId).in('action_type', [...MANUAL_GRANT_AUDIT_ACTION_VALUES]),
+        LIST_ORDERS.billingManualGrantHistory,
+      ).limit(MANUAL_GRANT_HISTORY_LIMIT);
       if (error) throw error;
       return (data ?? []).map((row) => {
         const details = ManualGrantAuditDetailsSchema.safeParse(row.details);

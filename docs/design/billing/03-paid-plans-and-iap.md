@@ -2453,10 +2453,11 @@ export async function POST(): Promise<NextResponse> {
 ### 8.6 `src/lib/billing/public-plans.ts` と `src/lib/billing/core.ts` の差分
 
 ```ts
-// tsc:skip place=src/lib/billing/public-plans.ts — origin/main 4b1e1abe のファイル (#1911 が注とログの文を直した版) を土台にした全文。listPurchasablePlans (呼び出し元は src/app/pricing/page.tsx:10,22 だけ。git grep で確かめた) を listPublicPlans に置き換える。main との差分は (1) 関数の名前、(2) 絞り込み .not('stripe_price_id', 'is', null) を .gt('monthly_price_jpy', 0) に、(3) 列に max_members、(4) 戻り値の型 PublicPlan、(5) 先頭の注・関数の注・ログの文 (#1911 の「準備中と書かない」はそのまま守る) の 5 つ
+// tsc:skip place=src/lib/billing/public-plans.ts — origin/main 4b1e1abe のファイル (#1911 が注とログの文を直した版) を土台にした全文。listPurchasablePlans (呼び出し元は src/app/pricing/page.tsx:10,22 だけ。git grep で確かめた) を listPublicPlans に置き換える。main との差分は (1) 関数の名前、(2) 絞り込み .not('stripe_price_id', 'is', null) を .gt('monthly_price_jpy', 0) に、(3) 列に max_members、(4) 戻り値の型 PublicPlan、(5) 先頭の注・関数の注・ログの文 (#1911 の「準備中と書かない」はそのまま守る)、(6) 並びを LIST_ORDERS.billingPublicPlans で orderListBy に渡す (cross/04 §6.2.1) の 6 つ
 /** 公開の面に出すプランの読み取り (billing/01 §10.1・billing/03 §8.6) */
 import { createLogger } from '@/lib/db-logger';
 import { createClient } from '@/lib/supabase/server';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 import { FREE_PLAN_KEY, PURCHASABLE_PLAN_TYPES, type PublicPlan } from '@/lib/billing/core';
 
 const logger = createLogger('billing/public-plans');
@@ -2472,14 +2473,16 @@ const PLAN_COLUMNS =
  */
 export async function listPublicPlans(): Promise<PublicPlan[]> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from('subscription_plans')
-    .select(PLAN_COLUMNS)
-    .eq('status', 'public')
-    .in('plan_type', [...PURCHASABLE_PLAN_TYPES])
-    .neq('plan_key', FREE_PLAN_KEY)
-    .gt('monthly_price_jpy', 0)
-    .order('display_order', { ascending: true });
+  const { data, error } = await orderListBy(
+    supabase
+      .from('subscription_plans')
+      .select(PLAN_COLUMNS)
+      .eq('status', 'public')
+      .in('plan_type', [...PURCHASABLE_PLAN_TYPES])
+      .neq('plan_key', FREE_PLAN_KEY)
+      .gt('monthly_price_jpy', 0),
+    LIST_ORDERS.billingPublicPlans,
+  );
   if (error) {
     logger.error('公開のプランの一覧を読めませんでした (/pricing はフリーのカードだけを描く)', error);
     return [];
