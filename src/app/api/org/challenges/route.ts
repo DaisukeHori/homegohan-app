@@ -5,6 +5,7 @@ import { requireOrgAdmin } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { isUuid, readJsonBody } from '@/lib/http-params';
 import { fetchChallengeAggregates } from '@/lib/org-challenge-api';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 import {
   ORG_CHALLENGE_MIN_PARTICIPANTS,
   ORG_CHALLENGE_TYPE_META,
@@ -59,9 +60,11 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
 
-    let query = supabase
-      .from('organization_challenges')
-      .select(`
+    // 作った日時の新しい順。同じ日時は id の順 (#2134 U2。LIST_ORDERS.orgChallenges)
+    let query = orderListBy(
+      supabase
+        .from('organization_challenges')
+        .select(`
         id,
         title,
         description,
@@ -76,8 +79,9 @@ export async function GET(request: Request) {
         created_at,
         departments(name)
       `)
-      .eq('organization_id', profile.organization_id)
-      .order('created_at', { ascending: false });
+        .eq('organization_id', profile.organization_id),
+      LIST_ORDERS.orgChallenges,
+    );
 
     if (status) {
       query = query.eq('status', status);

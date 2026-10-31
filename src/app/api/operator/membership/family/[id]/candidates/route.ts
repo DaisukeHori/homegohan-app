@@ -10,6 +10,7 @@ import { authFailureNested } from '@/lib/api/error-responses';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { internalError } from '@/lib/api/errors';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,15 +25,18 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
 
     const admin = getSupabaseAdmin();
 
-    // adult ロールの active メンバを candidate とする
-    const { data: members, error } = await admin
-      .from('family_members')
-      .select('user_id, role, joined_at')
-      .eq('family_id', familyId)
-      .eq('status', 'active')
-      .in('role', ['adult', 'representative'])
-      .neq('role', 'representative')
-      .order('joined_at', { ascending: true });
+    // adult ロールの active メンバを candidate とする。
+    // 家族に入った日時の古い順。同じ日時は id の順 (#2134 U2。LIST_ORDERS.operatorFamilyTransferCandidates)
+    const { data: members, error } = await orderListBy(
+      admin
+        .from('family_members')
+        .select('user_id, role, joined_at')
+        .eq('family_id', familyId)
+        .eq('status', 'active')
+        .in('role', ['adult', 'representative'])
+        .neq('role', 'representative'),
+      LIST_ORDERS.operatorFamilyTransferCandidates,
+    );
 
     if (error) {
       return internalError(ROUTE_NAME, error, { userId: operatorId }, { shape: 'nested' });

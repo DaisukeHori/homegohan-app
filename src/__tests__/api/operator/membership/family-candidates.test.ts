@@ -230,3 +230,38 @@ describe('GET /api/operator/membership/family/[id]/candidates: service-role の�
     expect(mocks.createServiceRoleClient).not.toHaveBeenCalled();
   });
 });
+
+describe('GET /api/operator/membership/family/[id]/candidates: 同じ日時に入った人の順 (#2134 U2)', () => {
+  // family_members の行の id は ROW_1 < ROW_2。行の並び (挿入の順) は、期待する順と逆にしておく
+  const ROW_1 = '01eebc99-9c0b-4ef8-bb6d-6bb9bd380b01';
+  const ROW_2 = '02eebc99-9c0b-4ef8-bb6d-6bb9bd380b02';
+  const SAME_JOINED = '2026-04-01T00:00:00Z';
+
+  it('家族に入った日時が同じ大人は、family_members の行の id の順 (行の並びに左右されない)', async () => {
+    fake = createFakeServiceRole({
+      tables: {
+        family_members: [
+          { id: ROW_2, family_id: FAMILY_ID, user_id: ADULT_2_ID, role: 'adult', status: 'active', joined_at: SAME_JOINED },
+          { id: ROW_1, family_id: FAMILY_ID, user_id: ADULT_1_ID, role: 'adult', status: 'active', joined_at: SAME_JOINED },
+        ],
+        user_profiles: [],
+      },
+      users: [],
+    });
+
+    const res = await call();
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.data.map((candidate: { id: string }) => candidate.id)).toEqual([ADULT_1_ID, ADULT_2_ID]);
+  });
+
+  it('DB に送る並びは 家族に入った日時の昇順 (空は最後) → id の昇順', async () => {
+    await call();
+
+    expect(fake.orders).toEqual([
+      { table: 'family_members', column: 'joined_at', ascending: true, nullsFirst: false },
+      { table: 'family_members', column: 'id', ascending: true, nullsFirst: false },
+    ]);
+  });
+});
