@@ -35,7 +35,7 @@
 | 5 | 戻し口 | `supabase/rollbacks/<同じ番号>_recipe_comments_select_scope.down.sql`。ベースラインの定義に逐語で戻す (§6.5・§7.2) |
 | 6 | テスト (契約・結合・API) | 契約 (静的) 1 本 (新)・結合 (実 DB・PostgREST 直) 1 本 (新)・API の結合 2 件 (既存の `recipes-api-logged-in.test.ts` に追記) (§6.6・§12) |
 | 7 | 消費経路の閉包 (設計後に読めなくなる正当な読み手が無いか) | 無い。RLS の上の読み手は 4 経路で、どれも「見えるレシピのコメント」か「本人の行」しか要らない。SECURITY DEFINER の関数と service_role は RLS を通らない (§6.7・§9.1 (b)) |
-| 8 | プライバシーポリシー第9条との一致 | 一致する (他人に見えるのは公開で隠されていないレシピへのコメントだけ。本人の行と作者のレシピのコメントは第9条の射程の外側で、第三者提供ではない) (§6.8) |
+| 8 | プライバシーポリシー第9条との一致 | 作者のいるレシピでは一致する (他人に見えるのは、公開で隠されていないレシピへのコメントだけ。本人の行と作者のレシピのコメントは第9条の射程の外側で、第三者提供ではない)。例外が 1 つある。作者のいない非公開で隠されていないレシピ (P-7a) は、`recipes` の RLS がレシピそのものを全員に返す。なので、そのコメントも他人に見える。これは `recipes` 側の規則で、本書の範囲の外 (§21 Q-5)。本番の行は 0 で、この状態を作るアプリの経路は無い (§6.8) |
 | 9 | 承認の要否と適用の前提 | 要る (権限を絞る migration)。前提 = 本番の `recipe_comments` が 0 行 (2026-11-01) なので告知は要らない。適用の直前にもう一度 SELECT で確かめる (§6.9・§19) |
 | 10 | 他の文書の追随 | cross/CLAUDE.md の表に 1 行・cross/21 の F-16・F-19b・§7.12 の文 (§17) |
 
@@ -43,7 +43,7 @@
 
 | # | 要件 | 根拠 | 本書の置き場 |
 |---|---|---|---|
-| R-1 | ログインした利用者が PostgREST を直接呼んでも、他人の非公開のレシピ・運営が隠したレシピへの他人のコメントは読めない (エラーにならず 0 行) | Issue #2166 X1・第9条 | §7.1・§9.1 (a) |
+| R-1 | ログインした利用者が PostgREST を直接呼んでも、他人の非公開のレシピ・運営が隠したレシピへの他人のコメントは読めない (エラーにならず 0 行)。対象は `recipes` の RLS がその人に返さないレシピ。作者のいない非公開で隠されていないレシピ (P-7a) は、`recipes` の RLS が全員に返すので対象外 (§6.8・§21 Q-5) | Issue #2166 X1・第9条 | §7.1・§9.1 (a) |
 | R-2 | 公開で隠されていないレシピへのコメントは、今までどおりログインした誰でも読める | 第9条 2 文目・cross/21 の K-公開 | §7.1・§9.1 (a) |
 | R-3 | レシピの作者は、自分のレシピ (非公開・隠したものを含む) へのコメントを読める | `recipes` の RLS が作者に自分の行を見せる (cross/21 F-16) と整合 | §6.1・§9.1 (a) |
 | R-4 | コメントを書いた本人は、自分のコメントをレシピの見え方に関わらず読める・書き出せる・消せる・直せる | 書き出し `src/lib/account-export-tables.ts` の `self('user_id')`・`Users can delete own comments`・`Users can update own comments` | §6.2・§9.1 (a) |
@@ -60,7 +60,7 @@
 | R-15 | 本番への適用はオーナーの名指しの承認の後 | 前提 | §19 |
 | R-16 | マジックナンバーを書かない。テストで値を RegExp に入れるときは特殊文字を逃がす | 共通の規律 | §7.3〜§7.5・§13 |
 
-### 0.3 ユーザーシナリオ (16 本。トレースは §4.3・テストとの対応は §12.1)
+### 0.3 ユーザーシナリオ (17 本。トレースは §4.3・テストとの対応は §12.1)
 
 登場する人: A = レシピの作者、C = コメントを書いた人 (A ではない)、V = ほかのログインした利用者 (A でも C でもない)、anon = 未ログイン、SR = service_role (運営の道具・テストの準備)。レシピ P = A の公開レシピ (`is_public` true・`hidden_at` NULL)。
 
@@ -82,6 +82,7 @@
 | S-14 | 作者のいない公開レシピ (`user_id` NULL。退会した作者のもの・システムのレシピ) へのコメントを V が読む。運営がそのレシピを隠す | 隠す前は読める。隠した後は 0 行 (書き手本人だけ読める) |
 | S-15 | 作者名の関数 `recipe_author_display_names` が (b) で、公開レシピへのコメントの書き手の名前を返す。`GET /api/recipes/[id]/comments` が RLS の読み取りのあとに関数を呼ぶ | 返る (関数は DEFINER で RLS を通らない。cross/21 I-4 のまま) |
 | S-16 | 戻し口を流す | `Anyone can view comments` (USING true) に戻り、V が S-2 の状態のコメントを再び読める。アプリは戻しても動く |
+| S-17 | 作者のいない非公開のレシピ (`user_id` NULL・`is_public` false・`hidden_at` NULL。service_role が `is_public` を指定せずに入れた行。§3.1 F-20) へのコメントを V が読む。運営がそのレシピを隠す | 隠す前は読める (今までどおり。`recipes` の RLS がレシピを全員に返すため。§6.8・§21 Q-5)。隠した後は 0 行 (書き手本人だけ読める) |
 
 ### 0.4 分冊判定
 
@@ -91,7 +92,7 @@
 
 | 語 | 意味 |
 |---|---|
-| 読めるレシピ | `recipes` の SELECT の RLS (`Users can view public recipes` と、作者には `Users can manage own recipes`) が、呼んだ人に返す行。公開で隠されていないレシピ (作者のいないものを含む) と、作者本人の自分のレシピ (非公開・隠したものを含む) |
+| 読めるレシピ | `recipes` の SELECT の RLS (`Users can view public recipes` と、作者には `Users can manage own recipes`) が、呼んだ人に返す行。次の 3 種類がある。(1) 作者のいる、公開で隠されていないレシピ。(2) 作者のいない (`user_id` NULL)、隠されていないレシピ。`is_public` は見ないので、非公開も含む (P-5・P-7a)。(3) 作者本人の自分のレシピ (非公開・隠したものを含む) |
 | 本人の行 | `recipe_comments.user_id = auth.uid()` の行 (コメントを書いた人から見た自分のコメント) |
 | 他人 (V) | ログインしているが、そのコメントの書き手でも、そのレシピの作者でもない利用者。運営のロール (admin など) を持つ人が自分のセッションで読むときも同じ (運営の画面は service_role で読む) |
 | 直接の読み取り | PostgREST (`/rest/v1/recipe_comments`) を利用者の JWT で呼ぶこと。Web・モバイルのアプリにこの経路は無い (§3.2) が、JWT を持つ人は誰でも呼べる |
@@ -100,6 +101,7 @@
 ### 0.6 読み方
 
 - 実装は §7 の正典コードを写す。§8 の契約 (ポリシーの名前・式・ロール) と §13 の定数の名前を変えない。
+- 実装の枝では本書を編集しない。番号の書き入れと改定履歴は、マージの後にオーケストレーターが docs の PR で当てる。本書に直すべき点は design-doc.patch に出し、deviations で報告する (§15)。
 - 表 3 点 (§9) とエラー表 (§10) は、レビューが最初に自分で作り直して突き合わせる対象。
 - 本書の TS のブロックは、`// tsc:skip` を 1 行目に持つものを除き、そのまま型検査を通る形で書いてある (import を省かない)。`// tsc:skip` のブロックは、テストの補助 (`tests/helpers/`・`tests/integration/helpers/`) を相対パスで import するテストファイルと、既存ファイルの差分の断片。
 - 本書の file:line は origin/main `0577f909f` (2026-11-01) の時点。
@@ -134,11 +136,12 @@
 | F-1 | `recipe_comments` の列: `id uuid` (PK・`gen_random_uuid()`)・`recipe_id uuid`・`user_id uuid`・`content text NOT NULL`・`rating integer` (CHECK 1〜5)・`created_at timestamptz` (`now()`)。`updated_at` は無い | `supabase/baseline/prod_schema.sql:6056-6064` |
 | F-2 | ポリシー 4 本: SELECT `Anyone can view comments` (TO authenticated・USING true)・INSERT `Users can create comments` (TO authenticated・WITH CHECK `user_id = auth.uid()`)・DELETE `Users can delete own comments` (TO authenticated・USING `user_id = auth.uid()`)・UPDATE `Users can update own comments` (TO authenticated・USING `user_id = auth.uid()`。WITH CHECK 無し = USING と同じ式が新しい行にも当たる)。RLS は有効・FORCE ではない。ベースライン以後に `recipe_comments` のポリシーを変えた migration は無い (20261101090000 は索引だけ) | `supabase/migrations/20251126124224_create_meal_planner_tables.sql:9602, 9719, 9739, 9960, 10785`・本番の `pg_policies`・`pg_class.relforcerowsecurity = false` (2026-11-01) |
 | F-3 | 表の権限: anon・authenticated・service_role に INSERT / SELECT / UPDATE / DELETE / TRUNCATE / REFERENCES / TRIGGER / MAINTAIN (ベースライン)。TRUNCATE は 20261022190000 が anon / authenticated から外した。anon は SELECT の権限はあるが、ポリシーが `TO authenticated` なので 0 行 | `supabase/baseline/prod_table_acl.sql:382-385`・`20261022190000_db_privilege_hardening.sql` |
-| F-4 | `recipes` の SELECT のポリシー `Users can view public recipes` (TO 句なし = public。anon も当たる): `(hidden_at IS NULL OR auth.uid() = user_id) AND (user_id IS NULL OR is_public = true OR auth.uid() = user_id)`。加えて `Users can manage own recipes` (ALL・public・`auth.uid() = user_id`) が作者に自分の行を見せる。permissive の OR。本番も同じ 2 本 | `20261009000500_hide_moderated_content.sql:169-173`・`20251126124224:9910, 10088`・本番の `pg_policies` |
+| F-4 | `recipes` の SELECT のポリシー `Users can view public recipes` (TO 句なし = public。anon も当たる): `(hidden_at IS NULL OR auth.uid() = user_id) AND (user_id IS NULL OR is_public = true OR auth.uid() = user_id)`。加えて `Users can manage own recipes` (ALL・public・`auth.uid() = user_id`) が作者に自分の行を見せる。permissive の OR。本番も同じ 2 本。`user_id` が NULL の行は 2 つ目の括弧が `is_public` に関わらず真になる。なので、作者のいないレシピは隠されていなければ非公開でも全員 (anon を含む) に見える (20261010000100 の冒頭の注「user_id が NULL の行は RLS … で全員に見える」と同じ) | `20261009000500_hide_moderated_content.sql:169-173`・`20251126124224:9910, 10088`・本番の `pg_policies` |
 | F-5 | 外部キー: `recipe_comments_recipe_id_fkey` → `recipes(id)` ON DELETE CASCADE・`recipe_comments_user_id_fkey` → `auth.users(id)` ON DELETE CASCADE。レシピの削除・退会でコメントは消える。外部キーの動きは RLS を通らない | `prod_schema.sql:9251-9257`・cross/21 F-17・F-19c |
 | F-6 | 索引: `idx_recipe_comments_recipe_id` (`recipe_id`)・`idx_recipe_comments_user_id` (`user_id`。20261101090000)・主キー。`recipes` は主キーと `idx_recipes_user_id`・`idx_recipes_hidden_at` (部分索引) | `prod_schema.sql:8174`・`20261101090000:49-50`・`20261009000500` |
 | F-7 | 作者名の関数 `public.recipe_author_display_names(uuid[])` は SECURITY DEFINER (所有者 postgres)・`SET search_path = ''`・STABLE。(b) の EXISTS は `public.recipe_comments` と `public.recipes` を定義者の権限で読み、公開で隠されていないレシピへのコメントの書き手だけを見る。EXECUTE は anon・authenticated | `20261101090000:58-115` |
 | F-8 | 本番の `recipe_comments` と `recipes` のポリシーは origin/main の定義と一致する。`recipe_comments` の SELECT は `qual = true`・`roles = {authenticated}` | 本番の `pg_policies` (Supabase MCP の SELECT・2026-11-01) |
+| F-20 | 作者のいないレシピのでき方。`recipes.user_id` は NULL を許し、`recipes.is_public` は `boolean DEFAULT false` (NULL も許す)。利用者が作るレシピは `Users can manage own recipes` の WITH CHECK で `user_id` が本人になる (`POST /api/recipes`)。退会では、`prepare_account_deletion` が退会の直前に本人の非公開レシピを消し、残った公開レシピだけが外部キー (ON DELETE SET NULL) で `user_id` NULL になる。なので P-1 は P-5 に、P-3 は P-6 になる。作者のいない非公開のレシピ (P-7a・P-7b) ができるのは、service_role か SQL で `is_public` を true にせずに作者のいない行を入れたとき、または作者のいない行の `is_public` を false にしたときだけ。アプリのコード (`src`・`supabase/functions`・`scripts`) に、そういう書き込みは無い | `prod_schema.sql` の `recipes` の定義・`20251126124224:9910`・`20261010000100_auth_users_fk_on_delete.sql` の冒頭の注 (D)・`git grep "from('recipes')"` origin/main |
 
 ### 3.2 消費経路 (`recipe_comments` を読む・書く所の全列挙。`git grep` origin/main)
 
@@ -238,6 +241,7 @@ recipes の SELECT: Users can view public recipes  (hidden_at IS NULL OR 作者)
 | S-14 | `user_id` NULL のレシピ: V から `(hidden_at IS NULL OR auth.uid() = NULL) AND (user_id IS NULL OR …)` → 隠れていなければ真 → コメントが返る。隠したら `auth.uid() = NULL` は NULL (偽) → EXISTS 偽 → 0 行。書き手 C には本人の行 | 作者なし |
 | S-15 | 関数 (b) は DEFINER → `recipe_comments` の RLS を通らない → 今までどおり。E-1 は RLS で読めた行の `user_id` だけを渡すので、見えないレシピのコメントの書き手の名前を引く機会が無い (今までは引けた = Issue の「公開の作者のコメントなら名前も引ける」) | DEFINER |
 | S-16 | 戻し口: 新しいポリシーを消し、`Anyone can view comments` (USING true) を作る → V が S-2 の行を読める。アプリは E-1〜E-4 とも RLS の結果を使うだけで、どちらの定義でも動く | 戻し口 |
+| S-17 | `user_id` NULL・`is_public` false・`hidden_at` NULL のレシピ: V から `(hidden_at IS NULL → 真) AND (user_id IS NULL → 真)` → `is_public` を見ずに真 → EXISTS 真 → コメントが返る (今までも返った)。隠したら S-14 と同じで 0 行。作者名の関数 (b) は `is_public = true AND hidden_at IS NULL` を見るので、このコメントの書き手の名前は返さない (本文と `user_id` は読める) | 作者なし (非公開) |
 
 ---
 
@@ -272,7 +276,7 @@ recipes の SELECT: Users can view public recipes  (hidden_at IS NULL OR 作者)
 
 - `recipes` は `public.` で完全修飾する (ポリシーの式は作成時に解決され、`pg_policies.qual` には `recipes r` と出る。§7.5 I-9)。
 - `auth.uid()` は `recipe_comments` のほかの 3 本のポリシーと同じ書き方 (`(SELECT auth.uid())` の形にはしない。§20)。
-- `recipes` 側の判定 (F-4) により、「読める人」= ログインした誰でも (公開で隠されていない・作者のいない公開)・作者本人 (自分のレシピは非公開・隠したものも)。
+- `recipes` 側の判定 (F-4) により、「読める人」は次のとおり。ログインした誰でも = 作者のいる公開で隠されていないレシピ (P-1) と、作者のいない隠されていないレシピ (P-5・P-7a。`is_public` に関わらない)。作者本人 = 自分のレシピ (非公開・隠したものも)。
 
 ### 6.2 本人の行 (決めること 2)
 
@@ -320,7 +324,8 @@ recipes の SELECT: Users can view public recipes  (hidden_at IS NULL OR 作者)
 
 | 文 | 設計後の挙動 |
 |---|---|
-| 第9条 2 文目「公開の状態のレシピへのコメントには、ログインしているユーザーに対して、ニックネームが作者名として表示されます」 | 他人 (V) が読めるコメントは、公開で隠されていないレシピへのものだけ (S-1・S-2・S-5・S-14)。未ログインは 0 行 (S-7)。作者名は関数 (b) が同じ条件 (公開かつ隠されていない) で返す (cross/21 §6.1) |
+| 第9条 2 文目「公開の状態のレシピへのコメントには、ログインしているユーザーに対して、ニックネームが作者名として表示されます」 | 他人 (V) が読めるコメントは、`recipes` の RLS が誰にでも返すレシピへのものだけ。作者のいるレシピでは、公開で隠されていないもの (P-1) へのコメントだけ (S-1・S-2・S-5)。作者のいないレシピでは、隠されていないもの (P-5・P-7a) へのコメント (S-14・S-17)。未ログインは 0 行 (S-7)。作者名は関数 (b) が「公開かつ隠されていない」で返す (cross/21 §6.1)。なので P-7a のコメントに書き手の名前は出ない |
+| 作者のいない非公開で隠されていないレシピ (P-7a) へのコメント | 設計の前も後も他人に見える (本文・`user_id`・`recipe_id`。名前は出ない)。`recipes` の RLS がレシピそのものを全員 (anon を含む) に返すので、(a') の EXISTS も真になるため。「公開の状態」より広いのはこの 1 状態だけで、原因はコメントでなく `recipes` 側の規則 (作者のいない行は `is_public` を見ない。F-4)。コメントのポリシーに `is_public` を直接書けば閉じるが、それは (b) の写しになる (§5.1 で不採用)。なので本書では変えない。`recipes` 側を変えれば、構造 A によりコメントも自動で追随する (§21 Q-5)。この状態を作るアプリの経路は無く (F-20)、本番の行も 0 (§3.5)。結合テスト I-2・I-10 が、この挙動を今の形で固定する (§7.5 の `systemPrivate`) |
 | 第8条 3 項 2 文目 (作者名の表示の根拠) | 変わらない (関数の K-同意・K-公開) |
 | 本人の行・作者のレシピのコメント | 本人への表示・自分のレシピへのコメントの表示で、第三者提供ではない。第9条は「公開の状態のレシピへのコメント」が他人に表示される範囲を書いた文で、これらを禁じていない。文は変えない |
 
@@ -361,8 +366,8 @@ recipes の SELECT: Users can view public recipes  (hidden_at IS NULL OR 作者)
 --        USING ((user_id = auth.uid()) OR (EXISTS (SELECT 1 FROM public.recipes r WHERE r.id = recipe_comments.recipe_id)))
 --      - EXISTS の中の recipes は、呼んだ人の権限で読む (recipes の RLS "Users can view public recipes" が公開・本人・隠しを判定する:
 --        (hidden_at IS NULL OR auth.uid() = user_id) AND (user_id IS NULL OR is_public = true OR auth.uid() = user_id)。20261009000500。
---        作者には "Users can manage own recipes" (ALL) も当たる)。レシピを読める人 = ログインした誰でも (公開で隠されていない・
---        作者のいない公開)・作者本人 (非公開・隠した自分のレシピ)。
+--        作者には "Users can manage own recipes" (ALL) も当たる)。レシピを読める人 = ログインした誰でも (作者のいる公開で隠されて
+--        いないレシピと、作者のいない隠されていないレシピ。作者のいないレシピは is_public を見ない)・作者本人 (非公開・隠した自分のレシピ)。
 --      - user_id = auth.uid() は、コメントを書いた本人の行をレシピの見え方に関わらず残す (非公開に戻された・隠されたレシピへの
 --        自分のコメントを、本人が読む・書き出す (GET /api/account/export)・消す・直すため。INSERT ... RETURNING は新しい行に
 --        SELECT のポリシーを当てるので、この句が無いと見えないレシピへの POST /api/recipes/[id]/comments が 42501 → 500 になる)。
@@ -417,7 +422,8 @@ CREATE POLICY "Anyone can view comments" ON public.recipe_comments FOR SELECT TO
  * cross/25 (#2166 X1): recipe_comments の SELECT の範囲を絞る migration の正典の値。
  * tests/recipe-comments-select-scope-migration-contract.test.ts (静的) と
  * tests/integration/rls/recipe-comments-select-scope.test.ts (実 DB) が同じ値を見る (何も import しない)。
- * 値は docs/design/cross/25-recipe-comments-select-scope.md §7.1・§7.2・§13 と同じ。変えるときは設計書と一緒に。
+ * 値は docs/design/cross/25-recipe-comments-select-scope.md §7.1・§7.2・§13 と同じ。実装の枝では設計書を編集しない。
+ * 値を変えたときは、設計書の訂正を design-doc.patch に出し、報告の deviations に書く (訂正はオーケストレーターが当てる)。
  */
 
 /** 対象の表 */
@@ -440,7 +446,8 @@ export const RECIPE_COMMENTS_LEGACY_SELECT_POLICY_STATEMENT =
 /**
  * pg_policies.qual に出る形 (PostgreSQL が式を整形し直したもの: public. が落ち、括弧と改行が足される)。
  * 実測の qual を foldSql に通した形と比べる (この定数は foldSql を通した後の形で書いてある)。
- * 実装で実測と違えば (意味の同じ整形の差)、実測に合わせてここと設計書 §7.5 I-9 を直す
+ * 実装で実測と違えば (意味の同じ整形の差)、実測に合わせてこの定数だけを直す。設計書 §7.3 の訂正は design-doc.patch に出し、
+ * deviations で報告する (実装の枝では設計書を編集しない)
  */
 export const RECIPE_COMMENTS_SELECT_QUAL =
   '((user_id = auth.uid()) OR (EXISTS (SELECT 1 FROM recipes r WHERE (r.id = recipe_comments.recipe_id))))';
@@ -753,12 +760,13 @@ describe('C-9: 設計書 cross/25 の migration の番号', () => {
  * 修正前 (migration を流す前) は I-2・I-3・I-4・I-6・I-9 が赤になる (他人に全行が見える・ポリシーの名前が違う)。
  *
  * 登場する人 (設計書 §0.3): A = レシピの作者、C = コメントを書いた人、V = ほかのログインした利用者、anon = 未ログイン、SR = service_role。
- * レシピ (すべて A のもの。システムのレシピだけ作者なし): publicVisible・privateRecipe・publicHidden・privateHidden・systemVisible・systemHidden。
- * コメント: C が 6 つのレシピすべてに 1 件ずつ。V が publicVisible と privateRecipe に 1 件ずつ。
+ * レシピ (system* の 3 つは作者なし。ほかは A のもの): publicVisible・privateRecipe・publicHidden・privateHidden・systemVisible・systemPrivate・systemHidden。
+ *   systemPrivate は作者なし・非公開・隠していない (設計書 §9.1 の P-7a)。recipes の RLS が全員に返すので、コメントも他人に見える (設計書 §6.8)。
+ * コメント: C が 7 つのレシピすべてに 1 件ずつ。V が publicVisible と privateRecipe に 1 件ずつ。
  *
  * 確かめること (I-n はこのファイルの it の番号。括弧の S-n は設計書 §0.3 のシナリオ):
  *   - I-1 (S-7): anon は 0 行 (エラーにならない)
- *   - I-2 (S-1・S-2・S-5・S-14): V は、公開で隠されていないレシピ (作者のいないものを含む) のコメントと、自分のコメントだけを読める
+ *   - I-2 (S-1・S-2・S-5・S-14・S-17): V は、誰にでも読めるレシピ (作者のいる公開で隠されていないもの・作者のいない隠されていないもの) のコメントと、自分のコメントだけを読める
  *   - I-3 (S-3): C は自分のコメントを全部 (非公開・隠したレシピへのものを含む) と、公開のレシピへの V のコメントを読める
  *   - I-4 (S-4・S-5): A は自分のレシピ (非公開・隠したものを含む) へのコメントを全部読める。作者のいない隠したレシピのコメントは読めない
  *   - I-5: SR は全行を読める
@@ -766,7 +774,7 @@ describe('C-9: 設計書 cross/25 の migration の番号', () => {
  *   - I-7 (S-11・S-13): C は見えないレシピへの自分のコメントを消せる・直せる。V は C のコメントを消せない・直せない (0 行)
  *   - I-8 (S-12): C は見えないレシピへ INSERT ... RETURNING (insert().select()) できる (本人の行の句が RETURNING を通す)
  *   - I-9: カタログ: recipe_comments のポリシーは 4 本で、SELECT は新しい名前・TO authenticated・USING が正典の形。recipes のポリシーは変わっていない
- *   - I-10 (S-9): PostgREST の埋め込み (recipes → recipe_comments) は、見えるレシピとそのコメントだけを返す
+ *   - I-10 (S-9・S-17): PostgREST の埋め込み (recipes → recipe_comments) は、見えるレシピとそのコメントだけを返す
  *   - I-11 (S-16): 戻し口を 1 つのトランザクションで流して巻き戻す (DB には残らない): 旧ポリシー (USING true) に戻る。巻き戻ったあとの DB は本冊が当たったまま
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh)。Next の開発サーバーは要らない (PostgREST を直接呼ぶ)。
@@ -954,15 +962,16 @@ const byPolicyName = (rows: ReadonlyArray<readonly [string, string]>): Array<[st
 let author: TestUser; // A
 let commenter: TestUser; // C
 let viewer: TestUser; // V
-const recipes = { publicVisible: '', privateRecipe: '', publicHidden: '', privateHidden: '', systemVisible: '', systemHidden: '' };
+const recipes = { publicVisible: '', privateRecipe: '', publicHidden: '', privateHidden: '', systemVisible: '', systemPrivate: '', systemHidden: '' };
 type RecipeKey = keyof typeof recipes;
 const RECIPE_KEYS = Object.keys(recipes) as RecipeKey[];
 const commentIds: Record<string, string> = {};
 
-/** C が 6 つ全部に書いたコメントの本文 */
+/** C が 7 つ全部に書いたコメントの本文 */
 const C_ALL = () => RECIPE_KEYS.map((k) => COMMENT('C', k)).sort();
-/** 公開で隠されていないレシピのコメント (C と V の分) */
-const PUBLIC_ONLY = () => [COMMENT('C', 'publicVisible'), COMMENT('C', 'systemVisible'), COMMENT('V', 'publicVisible')].sort();
+/** 誰にでも読めるレシピ (作者のいる公開で隠されていないもの・作者のいない隠されていないもの) のコメント (C と V の分) */
+const READABLE_BY_ANYONE = () =>
+  [COMMENT('C', 'publicVisible'), COMMENT('C', 'systemVisible'), COMMENT('C', 'systemPrivate'), COMMENT('V', 'publicVisible')].sort();
 
 beforeAll(async () => {
   [author, commenter, viewer] = await Promise.all([createUser('author'), createUser('commenter'), createUser('viewer')]);
@@ -971,6 +980,7 @@ beforeAll(async () => {
   recipes.publicHidden = await insertRecipe(author.id, 'publicHidden', true, true);
   recipes.privateHidden = await insertRecipe(author.id, 'privateHidden', false, true);
   recipes.systemVisible = await insertRecipe(null, 'systemVisible', true, false);
+  recipes.systemPrivate = await insertRecipe(null, 'systemPrivate', false, false);
   recipes.systemHidden = await insertRecipe(null, 'systemHidden', true, true);
   for (const key of RECIPE_KEYS) commentIds[`C:${key}`] = await insertComment(commenter.id, recipes[key], COMMENT('C', key));
   commentIds['V:publicVisible'] = await insertComment(viewer.id, recipes.publicVisible, COMMENT('V', 'publicVisible'));
@@ -995,8 +1005,8 @@ describe('I-1〜I-5: 読める行', () => {
     expect(data).toEqual([]);
   });
 
-  it('I-2 (S-1・S-2・S-5・S-14): V は公開で隠されていないレシピのコメントと、自分のコメントだけを読める', async () => {
-    expect(await contentsAs(asUser(viewer.jwt))).toEqual([...PUBLIC_ONLY(), COMMENT('V', 'privateRecipe')].sort());
+  it('I-2 (S-1・S-2・S-5・S-14・S-17): V は誰にでも読めるレシピのコメント (作者のいない非公開のものを含む) と、自分のコメントだけを読める', async () => {
+    expect(await contentsAs(asUser(viewer.jwt))).toEqual([...READABLE_BY_ANYONE(), COMMENT('V', 'privateRecipe')].sort());
   });
 
   it('I-3 (S-3): C は自分のコメントを全部 (非公開・隠したレシピへのものを含む) と、公開のレシピへの V のコメントを読める', async () => {
@@ -1005,7 +1015,13 @@ describe('I-1〜I-5: 読める行', () => {
 
   it('I-4 (S-4・S-5): A は自分のレシピへのコメントを全部読める。作者のいない隠したレシピのコメントは読めない', async () => {
     const own = ['publicVisible', 'privateRecipe', 'publicHidden', 'privateHidden'] as const;
-    const expected = [...own.map((k) => COMMENT('C', k)), COMMENT('C', 'systemVisible'), COMMENT('V', 'publicVisible'), COMMENT('V', 'privateRecipe')].sort();
+    const expected = [
+      ...own.map((k) => COMMENT('C', k)),
+      COMMENT('C', 'systemVisible'),
+      COMMENT('C', 'systemPrivate'),
+      COMMENT('V', 'publicVisible'),
+      COMMENT('V', 'privateRecipe'),
+    ].sort();
     expect(await contentsAs(asUser(author.jwt))).toEqual(expected);
   });
 
@@ -1100,16 +1116,17 @@ describe('I-9: カタログ', () => {
 });
 
 describe('I-10: PostgREST の埋め込み', () => {
-  it('I-10 (S-9): V の recipes → recipe_comments の埋め込みは、見えるレシピとそのコメントだけ', async () => {
+  it('I-10 (S-9・S-17): V の recipes → recipe_comments の埋め込みは、見えるレシピとそのコメントだけ', async () => {
     const { data, error } = await asUser(viewer.jwt)
       .from('recipes')
       .select('id, recipe_comments(content)')
       .like('name', `cross25 recipe % ${TS}`);
     expect(error).toBeNull();
     const byId = new Map((data ?? []).map((r) => [r.id as string, ((r.recipe_comments ?? []) as Array<{ content: string }>).map((c) => c.content).sort()]));
-    expect([...byId.keys()].sort()).toEqual([recipes.publicVisible, recipes.systemVisible].sort());
+    expect([...byId.keys()].sort()).toEqual([recipes.publicVisible, recipes.systemVisible, recipes.systemPrivate].sort());
     expect(byId.get(recipes.publicVisible)).toEqual([COMMENT('C', 'publicVisible'), COMMENT('V', 'publicVisible')].sort());
     expect(byId.get(recipes.systemVisible)).toEqual([COMMENT('C', 'systemVisible')]);
+    expect(byId.get(recipes.systemPrivate)).toEqual([COMMENT('C', 'systemPrivate')]);
   });
 });
 
@@ -1199,7 +1216,7 @@ describe('他人から見た非公開のレシピのコメント (cross/25。#21
 
 ### 9.1 ①全パターン表
 
-(a) レシピの状態 × 読む人 → `recipe_comments` の行の見え方 (直接の読み取りと、RLS の上の API に共通。各セルは 現行 → 設計後。○ = 読める・× = 0 行)
+(a) レシピの状態 × 読む人 → `recipe_comments` の行の見え方 (直接の読み取りと、RLS の上の API に共通。各セルは 現行 → 設計後。○ = 読める・× = 0 行。「非公開」は `is_public` が false か NULL)
 
 | # | レシピの状態 (`is_public` / `hidden_at` / `user_id`) | anon | 他人 (V) | 書き手 (C。自分の行) | 作者 (A) | SR / DEFINER |
 |---|---|---|---|---|---|---|
@@ -1209,15 +1226,16 @@ describe('他人から見た非公開のレシピのコメント (cross/25。#21
 | P-4 | 非公開・隠した・作者あり | × → × | ○ → × | ○ → ○ | ○ → ○ | ○ → ○ |
 | P-5 | 公開・隠されていない・作者なし (`user_id` NULL。退会後・システム) | × → × | ○ → ○ | ○ → ○ | — | ○ → ○ |
 | P-6 | 公開・隠した・作者なし | × → × | ○ → × | ○ → ○ | — | ○ → ○ |
-| P-7 | 非公開・作者なし (隠した / 隠していない) | × → × | ○ → × | ○ → ○ | — | ○ → ○ |
+| P-7a | 非公開・隠されていない・作者なし (service_role が入れた行だけ。F-20) | × → × | ○ → ○ | ○ → ○ | — | ○ → ○ |
+| P-7b | 非公開・隠した・作者なし | × → × | ○ → × | ○ → ○ | — | ○ → ○ |
 | P-8 | レシピが消えた (`DELETE /api/recipes/[id]`・完全削除) | 行なし (CASCADE) | 行なし | 行なし | 行なし | 行なし |
 | P-9 | コメントの書き手が退会 | 行なし (CASCADE) | 行なし | — | 行なし | 行なし |
 
-「他人 (V)」には、運営のロールを持つ人の自分のセッションも含む (運営の画面は service_role で読むので SR の列)。「書き手 (C)」は自分の行だけで、同じレシピへの他人の行は V の列。「作者 (A)」は自分のレシピへの全部の行 (`recipes` の RLS が作者に自分の行を見せるため)。
+「他人 (V)」には、運営のロールを持つ人の自分のセッションも含む (運営の画面は service_role で読むので SR の列)。「書き手 (C)」は自分の行だけで、同じレシピへの他人の行は V の列。「作者 (A)」は自分のレシピへの全部の行 (`recipes` の RLS が作者に自分の行を見せるため)。P-7a の V が ○ → ○ なのは、`recipes` の RLS が作者のいない行の `is_public` を見ず、隠されていなければ全員に返すから (F-4。(a') の EXISTS が真)。第9条との関係は §6.8、`recipes` 側を変えるかは §21 Q-5。
 
 (b) 経路 × 状態 → 設計後の結果 (§3.2 の E-n)
 
-| 経路 | 読む側 | P-1・P-5 (読めるレシピ) | P-2〜P-4・P-6・P-7 (他人には見えないレシピ) | 本書で |
+| 経路 | 読む側 | P-1・P-5・P-7a (誰にでも読めるレシピ) | P-2〜P-4・P-6・P-7b (他人には見えないレシピ) | 本書で |
 |---|---|---|---|---|
 | 直接の読み取り (`/rest/v1/recipe_comments`) | V | 全行 | 本人の行だけ (0 行) | §7.1 |
 | 〃 | C | 全行 | 自分の行 | §7.1 |
@@ -1240,8 +1258,10 @@ describe('他人から見た非公開のレシピのコメント (cross/25。#21
 | 面 | 現行 (origin/main `0577f909f`) | 設計後 |
 |---|---|---|
 | `recipe_comments` の SELECT のポリシー | `Anyone can view comments` (TO authenticated・USING true) | `recipe_comments_select_own_or_visible_recipe` (TO authenticated・USING 本人の行 OR 読めるレシピ) |
-| 他人の非公開・隠したレシピへの他人のコメント (直接の読み取り) | 読める | 0 行 |
-| 公開で隠されていないレシピへのコメント | ログインした誰でも読める | 同じ |
+| 他人の非公開・隠したレシピへの他人のコメント (直接の読み取り。P-2〜P-4) | 読める | 0 行 |
+| 公開で隠されていないレシピへのコメント (P-1・P-5) | ログインした誰でも読める | 同じ |
+| 作者のいない非公開で隠されていないレシピへのコメント (P-7a) | ログインした誰でも読める | 同じ (`recipes` の RLS がレシピを全員に返すため。§6.8・§21 Q-5) |
+| 作者のいない隠したレシピへのコメント (P-6・P-7b) | ログインした誰でも読める | 書き手本人だけ |
 | 自分のコメント (レシピの見え方に関わらず) | 読める・書き出せる・消せる・直せる | 同じ |
 | 作者から見た自分のレシピへのコメント | 読める | 同じ |
 | 未ログイン | 0 行 | 同じ |
@@ -1268,12 +1288,19 @@ describe('他人から見た非公開のレシピのコメント (cross/25。#21
 | P-3 隠した | 運営が戻す (`POST /api/admin/moderation/{type}/{id}/restore`) | P-1 | 運営 | × → ○ | ○ | ○ |
 | P-2 非公開 | 運営が隠す | P-4 | 運営 | × | ○ | ○ |
 | P-5 作者なし・公開 | 運営が隠す | P-6 | 運営 | ○ → × | ○ | — |
-| P-1〜P-4 | 作者が退会 (`recipes.user_id` → NULL。公開のレシピだけ残る。非公開は `prepare_account_deletion` が消す) | P-5 (公開) / 行なし (非公開。コメントも CASCADE) | 退会の処理 | P-5 なら ○ | ○ / 行なし | — |
+| P-6 作者なし・隠した | 運営が戻す | P-5 | 運営 | × → ○ | ○ | — |
+| P-5 作者なし・公開 | service_role が `is_public` を false にする (アプリの経路は無い。F-20) | P-7a | service_role | ○ → ○ (`recipes` の RLS は作者のいない行の `is_public` を見ない) | ○ | — |
+| P-7a 作者なし・非公開 | service_role が `is_public` を true にする | P-5 | service_role | ○ → ○ | ○ | — |
+| P-7a 作者なし・非公開 | 運営が隠す | P-7b | 運営 | ○ → × | ○ | — |
+| P-7b 作者なし・非公開・隠した | 運営が戻す | P-7a | 運営 | × → ○ | ○ | — |
+| P-1 公開 | 作者が退会 (`recipes.user_id` → NULL。F-20) | P-5 | 退会の処理 | ○ → ○ | ○ | — |
+| P-3 公開・隠した | 作者が退会 (`recipes.user_id` → NULL。公開なので消されない) | P-6 | 退会の処理 | × のまま | ○ | — (作者は隠した行を読めたが、退会で消える) |
+| P-2・P-4 非公開 | 作者が退会 (`prepare_account_deletion` が退会の直前に消す) | P-8 (行なし。コメントも CASCADE) | 退会の処理 | 行なし | 行なし | — |
 | どの状態 | 作者がレシピを消す (`DELETE /api/recipes/[id]`) | P-8 | 作者 | 行なし | 行なし | 行なし |
-| P-3・P-4・P-6 | 保管期間の後の完全削除 (`hidden-content-purge`。service_role) | P-8 | 運営の cron | 行なし | 行なし | 行なし |
+| P-3・P-4・P-6・P-7b | 保管期間の後の完全削除 (`hidden-content-purge`。service_role) | P-8 | 運営の cron | 行なし | 行なし | 行なし |
 | どの状態 | コメントの書き手が退会 | P-9 (その人の行だけ) | 退会の処理 (CASCADE) | 行なし | — | 行なし |
 | どの状態 | 書き手が自分のコメントを消す (直接の DELETE) | その行だけ無し | 書き手 (SELECT で本人の行 + DELETE `user_id = auth.uid()`) | — | — | — |
-| P-2〜P-4・P-6・P-7 | 書き手が自分のコメントを直す (直接の UPDATE) | 同じ状態 (本文が変わる) | 書き手 | × のまま | ○ | ○ |
+| P-2〜P-4・P-6・P-7b | 書き手が自分のコメントを直す (直接の UPDATE) | 同じ状態 (本文が変わる) | 書き手 | × のまま | ○ | P-2〜P-4 は ○。P-6・P-7b は作者なしで — |
 | どの状態 | 他人 (V) が C の行を消す・直す | 変わらない (0 行) | UPDATE / DELETE のポリシーが偽 | — | — | — |
 | どの状態 | 作者 (A) が自分のレシピへの C の行を消す・直す (直接の DELETE / UPDATE) | 変わらない (0 行に当たる。エラーにならない) | UPDATE / DELETE のポリシーは `user_id = auth.uid()` だけで、レシピの作者の句は無い (`20251126124224:9739, 9960`。本書は変えない)。A は C の行を SELECT で読めるが、消せない・直せない | 変わらない | ○ のまま | ○ のまま (読めるだけ) |
 | P-1〜P-4 | 作者 (A) が自分のレシピに `POST` で書く | 行が 1 つ増える (その行では A が書き手 C でもある) | INSERT の WITH CHECK `user_id = auth.uid()`。RETURNING は本人の行の句 | P-1 なら ○ / P-2〜P-4 なら × | ○ (A 本人) | ○ |
@@ -1345,7 +1372,7 @@ sequenceDiagram
 | ファイル | it 名 |
 |---|---|
 | `tests/recipe-comments-select-scope-migration-contract.test.ts` (新。静的) | `C-1 migration はちょうど 1 本で、番号は本番のベースラインより大きい` / `C-1 1 行目の見出しと 2 行目の「戻し方」がファイル名を指し、戻し口が実在して 1 行目が対の migration を指す` / `C-2 lock_timeout・旧ポリシーの DROP IF EXISTS・新ポリシーの DROP IF EXISTS・CREATE POLICY の 4 文だけ` / `C-4 CREATE POLICY の文は正典の 1 行と逐語で同じ (FOR SELECT・TO authenticated・USING の式・WITH CHECK 無し)` / `C-3 新しい SELECT 1 本と、変えない INSERT / UPDATE / DELETE の 3 本` / `C-3 番兵: 本冊の直前は旧 SELECT 1 本と同じ 3 本 (読み取りが旧ポリシーを拾っている)` / `C-5 lock_timeout・新ポリシーの DROP・旧ポリシーの DROP・旧ポリシーの CREATE の 4 文だけで、GRANT を書かない` / `C-5 旧ポリシーの CREATE は本番のベースラインの定義と逐語で同じ (引用符を外した形で比べる)` / `C-6 recipes の SELECT のポリシーに最後に効く文は 20261009000500 の ALTER POLICY で、USING の式が正典と同じ` / `C-7 アプリのコードで recipe_comments に触れるのは決まった 4 本だけ (運営の画面・Edge・モバイルに無い)` / `C-8 書き出しの recipe_comments は self(user_id) のままで、「誰でも閲覧可」の古い注が無い` / `C-9 すべて置き場か、すべて実在する番号 (混ざっていない)` |
-| `tests/integration/rls/recipe-comments-select-scope.test.ts` (新。実 DB) | `I-1 (S-7): anon は 0 行 (エラーにならない)` / `I-2 (S-1・S-2・S-5・S-14): V は公開で隠されていないレシピのコメントと、自分のコメントだけを読める` / `I-3 (S-3): C は自分のコメントを全部 (非公開・隠したレシピへのものを含む) と、公開のレシピへの V のコメントを読める` / `I-4 (S-4・S-5): A は自分のレシピへのコメントを全部読める。作者のいない隠したレシピのコメントは読めない` / `I-5: service_role は全行を読める` / `I-6 (S-2・S-6): 非公開に戻す → 公開に戻す、隠す → 戻す で V の見え方が変わる` / `I-7 (S-11・S-13): C は見えないレシピへの自分のコメントを直せる・消せる。V は C のコメントを直せない・消せない (0 行)` / `I-8 (S-12): C は見えないレシピへ insert().select() (RETURNING) できる。他人の user_id では 42501 (INSERT のポリシーは変えない)` / `I-9 recipe_comments のポリシーは 4 本。SELECT は新しい名前・TO authenticated・USING が正典の形・WITH CHECK 無し` / `I-9 recipes の SELECT のポリシーは変わっていない (本書の判定の土台)` / `I-10 (S-9): V の recipes → recipe_comments の埋め込みは、見えるレシピとそのコメントだけ` / `I-11 (S-16): 戻し口を 1 つのトランザクションで流して巻き戻す。旧ポリシー (USING true) に戻り、巻き戻ったあとは本冊が当たったまま` |
+| `tests/integration/rls/recipe-comments-select-scope.test.ts` (新。実 DB) | `I-1 (S-7): anon は 0 行 (エラーにならない)` / `I-2 (S-1・S-2・S-5・S-14・S-17): V は誰にでも読めるレシピのコメント (作者のいない非公開のものを含む) と、自分のコメントだけを読める` / `I-3 (S-3): C は自分のコメントを全部 (非公開・隠したレシピへのものを含む) と、公開のレシピへの V のコメントを読める` / `I-4 (S-4・S-5): A は自分のレシピへのコメントを全部読める。作者のいない隠したレシピのコメントは読めない` / `I-5: service_role は全行を読める` / `I-6 (S-2・S-6): 非公開に戻す → 公開に戻す、隠す → 戻す で V の見え方が変わる` / `I-7 (S-11・S-13): C は見えないレシピへの自分のコメントを直せる・消せる。V は C のコメントを直せない・消せない (0 行)` / `I-8 (S-12): C は見えないレシピへ insert().select() (RETURNING) できる。他人の user_id では 42501 (INSERT のポリシーは変えない)` / `I-9 recipe_comments のポリシーは 4 本。SELECT は新しい名前・TO authenticated・USING が正典の形・WITH CHECK 無し` / `I-9 recipes の SELECT のポリシーは変わっていない (本書の判定の土台)` / `I-10 (S-9・S-17): V の recipes → recipe_comments の埋め込みは、見えるレシピとそのコメントだけ` / `I-11 (S-16): 戻し口を 1 つのトランザクションで流して巻き戻す。旧ポリシー (USING true) に戻り、巻き戻ったあとは本冊が当たったまま` |
 | `tests/integration/security/recipes-api-logged-in.test.ts` (既存に追記) | `A-1: GET /api/recipes/[id]/comments: 他人には非公開のレシピのコメントが 0 件 (200。以前は作者のコメントが返った)` / `A-2: GET /api/recipes/[id]: 他人には非公開のレシピが 404 (今までどおり)` |
 | `tests/integration/security/account-export-scope.test.ts` (既存。it 名だけ) | `A の JWT で、B の公開レシピへの B のコメント (読めるレシピのコメント) と B のいいね (誰でも閲覧可) が読める` |
 
@@ -1371,6 +1398,7 @@ sequenceDiagram
 | S-14 | I-2・I-4・I-10 |
 | S-15 | (既存) `recipe-author-display-names.test.ts` I-4・I-8 (関数は DEFINER のまま)・C-7 (読み手の閉包) |
 | S-16 | I-11・C-5 |
+| S-17 | I-2・I-4・I-10 (`systemPrivate`) |
 
 ---
 
@@ -1411,14 +1439,14 @@ sequenceDiagram
 
 | 段 | 触るファイル (母集合。これ以外は触らない) |
 |---|---|
-| 1 (唯一) | `supabase/migrations/<番号>_recipe_comments_select_scope.sql` (新)・`supabase/rollbacks/<同じ番号>_recipe_comments_select_scope.down.sql` (新)・`tests/helpers/recipe-comments-select-scope.ts` (新)・`tests/recipe-comments-select-scope-migration-contract.test.ts` (新)・`tests/integration/rls/recipe-comments-select-scope.test.ts` (新)・`tests/integration/security/recipes-api-logged-in.test.ts` (追記)・`tests/integration/security/account-export-scope.test.ts` (it 名 1 行)・`src/lib/account-export-tables.ts` (注 1 行)・`docs/design/cross/25-recipe-comments-select-scope.md` (番号の書き入れ・改定履歴の 1 行) |
+| 1 (唯一) | `supabase/migrations/<番号>_recipe_comments_select_scope.sql` (新)・`supabase/rollbacks/<同じ番号>_recipe_comments_select_scope.down.sql` (新)・`tests/helpers/recipe-comments-select-scope.ts` (新)・`tests/recipe-comments-select-scope-migration-contract.test.ts` (新)・`tests/integration/rls/recipe-comments-select-scope.test.ts` (新)・`tests/integration/security/recipes-api-logged-in.test.ts` (追記)・`tests/integration/security/account-export-scope.test.ts` (it 名 1 行)・`src/lib/account-export-tables.ts` (注 1 行)。設計書 (本書) は実装の枝で編集しない (下の順番 4) |
 
 順番:
 
-1. 実装の枝で上の 9 ファイルを書く。番号は枝を切った時点の origin/main の最大より大きい値で仮に付け、マージの直前にもう一度 origin/main の最大と比べて付け直す (付け直すときは 1 行目・2 行目・戻し口の 1 行目・設計書の名指しを全部そろえる。C-1・C-9 が見る)。
+1. 実装の枝で上の 8 ファイルを書く。番号は枝を切った時点の origin/main の最大より大きい値で仮に付け、マージの直前にもう一度 origin/main の最大と比べて付け直す (付け直すときは migration の 1 行目・2 行目と戻し口の 1 行目をそろえる。C-1 が見る)。本書の名指しは置き場 (`<番号はマージ時に確定>`・`<同じ番号>`) のままにする。C-9 は「すべて置き場」でも緑になる (`findMigrationNumberProblems` は番号の名指しが 1 つも無ければ空の配列を返す)。本書に直すべき点 (§7.3 の `RECIPE_COMMENTS_SELECT_QUAL` の実測との差など) が見つかったら、設計書を直さず design-doc.patch に出し、deviations で報告する。
 2. 全件 (単体・契約) と結合 (`tests/integration/rls`・`tests/integration/security`) が緑。
 3. 2 枚同時 PASS → オーナーの承認 → マージ。CI (`deploy-supabase-migrations.yml`) が本番へ当てる。`db:types` の生成し直しは要らない (表・関数を足さない。`tests/database-types-migrations-contract.test.ts` は反応しない)。
-4. 整合ゲート: 本番の `pg_policies` を SELECT で読み (§19)、cross/21・cross/CLAUDE.md の追随 (§17) を docs の PR で当てる。
+4. 整合ゲート: 本番の `pg_policies` を SELECT で読む (§19)。マージの後に、オーケストレーターが docs の PR で次を当てる。本書の migration の名指しへの番号の書き入れ (全部を同時に。C-9 が混ざりを見る)・改定履歴の行 (冒頭の版の表と §22 の両方)・design-doc.patch があればその中身・cross/21 と cross/CLAUDE.md の追随 (§17)。
 
 ---
 
@@ -1450,8 +1478,8 @@ sequenceDiagram
 | `tests/integration-setup-transient-retry.test.ts` | `retryIdempotentSetup` | 反応しない (§7.5 は `user_profiles` の upsert を `retryIdempotentSetup` で行う。ほかの準備は新しい行の INSERT) | – | – |
 | `tests/supabase-service-role-client-scan.test.ts`・`tests/env-source-scan.test.ts` | `createClient(`・`process.env` (src・lib) | 反応しない (製品コードは注の 1 行しか変えない) | – | – |
 | `tests/docs-table-column-count.test.ts` | `docs/` の表 | 本書の表の列の数が揃っていなければ赤 | 本書の表を揃えて書いた (レビューで確かめる) | – |
-| `tests/design-doc-version-header-matches-history.test.ts` | `\| v1.0 \|`・`改定履歴` | 本書は冒頭の版の表と §22 改定履歴の両方を持つ。両方の最後の版が同じ (v1.0) | 改定のたびに両方に行を足す | – |
-| `tests/helpers/design-doc-migration-number.ts` | `<番号はマージ時に確定>`・`<同じ番号>` | 当てはめは本書の C-9 が行う (置き場と番号が混ざると赤) | 番号を書き入れるときは本書の名指しを全部 | 1 |
+| `tests/design-doc-version-header-matches-history.test.ts` | `\| v1.0 \|`・`改定履歴` | 本書は冒頭の版の表と §22 改定履歴の両方を持つ。両方の最後の版が同じ (v1.0) | 改定のたびに両方に行を足す (マージ後の番号の書き入れでは、オーケストレーターの docs の PR が足す) | – |
+| `tests/helpers/design-doc-migration-number.ts` | `<番号はマージ時に確定>`・`<同じ番号>` | 当てはめは本書の C-9 が行う (置き場と番号が混ざると赤。すべて置き場なら緑) | 実装の枝では本書を触らない (置き場のまま緑)。マージの後に、オーケストレーターが docs の PR で名指しを全部同時に番号へ書き換える (§15 の順番 4) | – |
 | `tests/design-doc-followup-owned-edits.test.ts` | `OWNED_EDITS` | 反応しない (本書の §17 は cross/21 の行を「A」→「B」の形で持つが、この見張りは載せた行だけを見る。載せない) | – | – |
 | `scripts/baseline/*`・`supabase/baseline/**` | `catalog_policies`・`prod_schema.sql` | 反応しない (本番の過去の写し。取り直すまで変えない。`verify` はベースラインだけを当てた DB と比べる) | – | – |
 | `apps/mobile/__tests__/**` | `recipe_comments`・`/comments` | 当たらない (モバイルはコメントの API を呼ばない) | – | – |
@@ -1486,7 +1514,7 @@ sequenceDiagram
 ## 19. 受入条件と本番の確認 (本番の DB を伴う 3〜5 はオーナーの承認の後。本書のコードは本番の DB に直接書き込まない)
 
 1. マージ前 (270k の全件): §12 のテストがすべて緑。`tsc`・lint が緑。§16 の番兵がすべて緑。結合テスト (ローカル Supabase) で I-1〜I-11・A-1・A-2 が緑。migration を流す前のローカル DB で I-2・I-3・I-4・I-6・I-9・A-1 が赤になること (直す前の形で赤くなる) を 1 回確かめる (`bash scripts/supabase-local.sh reset` の前後)。
-2. 承認の材料: 本番の `recipe_comments` の行数と、「他人の非公開・隠したレシピへのコメント」の件数 (Supabase MCP の SELECT。2026-11-01 はどちらも 0)。行があれば、設計後に誰から見えなくなるかを件数で添える。
+2. 承認の材料: 本番の `recipe_comments` の行数と、「他人の非公開・隠したレシピへのコメント」の件数 (Supabase MCP の SELECT。2026-11-01 はどちらも 0)。あわせて、作者のいない非公開で隠されていないレシピ (P-7a。設計後も他人に見える) の件数 (2026-11-01 は `recipes` が 0 行なので 0)。行があれば、設計後に誰から見えなくなるかを件数で添える。
 3. 承認 → マージ → CI の `deploy-supabase-migrations.yml` が本番へ当てる (マージが適用を兼ねる。アプリは RLS の結果を使うだけなので、Vercel の反映との順番は問わない)。
 4. 適用後 (整合ゲート): 本番の `pg_policies` を SELECT で読み、`recipe_comments` が 4 本 (`recipe_comments_select_own_or_visible_recipe` SELECT `{authenticated}`・`Users can create comments`・`Users can delete own comments`・`Users can update own comments`) で、`Anyone can view comments` が無いこと。`recipes` の 2 本が変わっていないこと。`list_migrations` に本書の番号があること。
 5. 戻すとき: §7.2 の内容を新しい migration として PR 経由で当てる (本番への直接 SQL は禁止)。アプリは先に戻さなくてよい。
@@ -1506,6 +1534,7 @@ sequenceDiagram
 | Q-2 | UPDATE のポリシー `Users can update own comments` に WITH CHECK が無い (USING が新しい行にも当たるので `user_id` は守られるが、`recipe_id` は他のレシピに付け替えられる) | (a) そのまま / (b) WITH CHECK に `recipe_id` を変えない条件 (トリガーか、`recipe_id = (SELECT recipe_id FROM …)`) を足す | (a)。範囲外。コメントを直す API は無い |
 | Q-3 | 未ログインにも公開レシピのコメントを読ませるか (第9条 2 文目の「ログインしているユーザーに対して」を変える) | (a) 読ませない (今の形) / (b) ポリシーを `TO anon, authenticated` にし、第9条と cross/21 §6.3 を直す | (a)。文を変えない |
 | Q-4 | ポリシーの `auth.uid()` を `(SELECT auth.uid())` の形に揃える全体の書き換え | (a) しない / (b) 全ポリシーをまとめて 1 本の migration で | (a)。行数が増えてから計測の上で |
+| Q-5 | `recipes` の SELECT のポリシー `Users can view public recipes` は、作者のいない行 (`user_id` NULL) の `is_public` を見ない。なので、作者のいない非公開で隠されていないレシピ (P-7a) とそのコメントは、全員に見える (レシピは anon にも、コメントはログインした誰にも。§6.8)。`recipes` 側の規則を変えるか | (a) 変えない (今の形。この状態を作るアプリの経路は無く (F-20)、本番の行は 0) / (b) `recipes` の式の 2 つ目の括弧を `(is_public = true OR auth.uid() = user_id)` にし、作者のいない行も `is_public` を見る (`recipes` の権限を絞る migration。名指しの承認と、作者のいないレシピを読む経路の閉包が要る) | (a)。Issue #2166 X1 の範囲は `recipe_comments` の SELECT。(b) を選べば、構造 A によりコメントも自動で追随し、本書の migration は変えなくてよい (契約テスト C-6 が赤になり、`RECIPES_PUBLIC_SELECT_USING` と P-7a の表・I-2・I-4・I-10 の期待を直す) |
 
 ## 22. 改定履歴
 
