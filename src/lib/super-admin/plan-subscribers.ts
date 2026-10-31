@@ -8,8 +8,8 @@
  * 数えてから書くまでの間に入った契約は、書く文の中の DB のトリガー trg_guard_plan_deprecate_subscribers (関数 guard_plan_deprecate_subscribers) が同じ数え方で数え直して止める (#1917。
  * プランの行を FOR UPDATE でロックし直し、commit 前の契約者が増える書き込み (契約の作成・live への切り替え・プランの付け替え。
  * トリガー trg_subscriber_plan_key_share がプランの行に FOR KEY SHARE を取る) を待つ。PLAN_HAS_SUBSCRIBERS_DB_ERROR)。数え方を変えるときは、
- * トリガー 2 種 (supabase/migrations/20261024130000_plan_deprecate_lock_and_price_change_reservation.sql の guard_plan_deprecate_subscribers と
- * trg_subscriber_plan_key_share の WHEN・関数) も同じに直す
+ * トリガー 2 種 (supabase/migrations/20261024130000_plan_deprecate_lock_and_price_change_reservation.sql の
+ * trg_guard_plan_deprecate_subscribers (関数 guard_plan_deprecate_subscribers) と trg_subscriber_plan_key_share の WHEN・関数) も同じに直す
  * (tests/plan-deprecate-lock-price-change-reservation-migration-contract.test.ts が突き合わせる)。
  *
  * 数える対象は「契約が終わっていないもの」だけ。
