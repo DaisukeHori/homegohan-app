@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CatalogDishMatch, CatalogProductSummary } from "../types/catalog";
+import { LIST_ORDERS, orderListBy } from "@/lib/api/list-order";
 
 const SEARCH_FETCH_LIMIT = 40;
 
@@ -154,9 +155,12 @@ export async function searchCatalogProducts(
   const trimmedQuery = query.trim();
   if (trimmedQuery.length < 2) return [];
 
-  let request = supabase
-    .from("catalog_products")
-    .select(`
+  // 更新した日時の新しい順。一括の取り込みで同じ日時になった商品は id の順で、件数の上限の境目でどれが入るか・
+  // 同じ点数の候補がどの順に出るかも決まる (#2150)
+  let request = orderListBy(
+    supabase
+      .from("catalog_products")
+      .select(`
       id,
       source_id,
       name,
@@ -180,9 +184,9 @@ export async function searchCatalogProducts(
         brand_name
       )
     `)
-    .neq("availability_status", "discontinued")
-    .order("updated_at", { ascending: false })
-    .limit(SEARCH_FETCH_LIMIT);
+      .neq("availability_status", "discontinued"),
+    LIST_ORDERS.catalogProductSearch,
+  ).limit(SEARCH_FETCH_LIMIT);
 
   const clauses = buildSearchClauses(trimmedQuery);
   if (clauses.length > 0) {

@@ -9,6 +9,11 @@ import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /** 新しいセッションの文脈に入れる、最近の食事の日数 (JST の今日から何日前までか) */
 const RECENT_MEAL_DAYS = 7;
+/**
+ * 新しいセッションの文脈に入れる、最近の食事の件数の上限 (いままでの値。7 日 × 1 日 3 食 = 21 件より多い)。
+ * 7 日前からの日の古い側からこの件数を読む (先の日の献立もあるので、新しい側から読むと過去の食事が落ちる。#2150)
+ */
+const RECENT_MEAL_LIMIT = 30;
 
 // セッション一覧取得
 export async function GET(request: Request) {
@@ -88,10 +93,12 @@ export async function POST(request: Request) {
 
     // 最近の食事データ（日付ベースモデル）
     // 7 日前は JST の暦日で求める (#1433。day_date は JST の暦日)
+    // 日の古い順。同じ日の食事は id の順で、件数の上限の境目でどれが入るかも決まる (#2150)
     const sevenDaysAgo = jstDayOffset(-RECENT_MEAL_DAYS);
-    const { data: recentMeals } = await supabase
-      .from('planned_meals')
-      .select(`
+    const { data: recentMeals } = await orderListBy(
+      supabase
+        .from('planned_meals')
+        .select(`
         meal_type,
         dish_name,
         calories_kcal,
@@ -99,9 +106,11 @@ export async function POST(request: Request) {
         is_completed,
         user_daily_meals!inner(day_date, user_id)
       `)
-      .eq('user_daily_meals.user_id', user.id)
-      .gte('user_daily_meals.day_date', sevenDaysAgo)
-      .limit(30);
+        .eq('user_daily_meals.user_id', user.id)
+        .gte('user_daily_meals.day_date', sevenDaysAgo),
+      LIST_ORDERS.aiConsultationContextMealsByDay,
+    )
+      .limit(RECENT_MEAL_LIMIT);
 
     // 健康記録
     const { data: healthRecords } = await supabase
