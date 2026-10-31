@@ -78,7 +78,7 @@ function anchorsMissing(source: string, anchors: number[], needle: string): numb
 function orgCandidatesDrift(doc: string, routeSource: string): string[] {
   return segmentsAfter(doc, ORG_ROUTE_MENTION).flatMap((segment) => {
     const problems: string[] = [];
-    if (/\.?order\('last_login_at'/.test(segment) && !routeSource.includes(ORDER_BY_LAST_LOGIN)) {
+    if (/order\('last_login_at'/.test(segment) && !routeSource.includes(ORDER_BY_LAST_LOGIN)) {
       problems.push(`記述は ${ORDER_BY_LAST_LOGIN} で並べると書くが、route にその式が無い: ${segment}`);
     }
     for (const [, orderName] of segment.matchAll(/LIST_ORDERS\.(\w+)/g)) {
