@@ -1,8 +1,8 @@
 /**
- * #2134 U2: 一覧の並びの鍵 (src/lib/api/list-order.ts の LIST_ORDERS) を、実物の PostgREST が受け付けることを確かめる。
+ * #2134 U2 / #2139 T1: 一覧の並びの鍵 (src/lib/api/list-order.ts の LIST_ORDERS) を、実物の PostgREST が受け付けることを確かめる。
  *
  * 単体テストの偽物は、表に無い列で並べてもエラーにしない。ここでは各一覧の表に、route と同じ鍵 (いままでの鍵のあとに
- * id の昇順) で order を重ねた問い合わせをローカルの PostgREST に送り、エラーにならないこと (= どの鍵の列も表にある) を見る。
+ * 一意の鍵の昇順) で order を重ねた問い合わせをローカルの PostgREST に送り、エラーにならないこと (= どの鍵の列も表にある) を見る。
  * 同じ値の行が id の順になることは PostgreSQL の ORDER BY の約束で、鍵の並びは tests/list-order-tiebreak-2134.test.ts が見る。
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh)。Next の開発サーバーは要らない (PostgREST を直接呼ぶ)。
@@ -35,9 +35,11 @@ const srAdmin = client(serviceKey);
 /** 列の有無を見るだけなので、読む行は 1 行で足りる */
 const PROBE_ROW_LIMIT = 1;
 
-describe('#2134 U2 一覧の並びの鍵を PostgREST が受け付ける', () => {
-  it.each(Object.entries(LIST_ORDERS))('%s: 表の全部の鍵の列で並べてもエラーにならない', async (name, order) => {
-    const { error } = await orderListBy(srAdmin.from(order.table).select('id'), order).limit(PROBE_ROW_LIMIT);
+describe('#2134 U2 / #2139 T1 一覧の並びの鍵を PostgREST が受け付ける', () => {
+  it.each(Object.entries(LIST_ORDERS))('%s: 表の全部の鍵の列を読んで並べてもエラーにならない', async (name, order) => {
+    // id の無い表 (user_badges) もあるので、読むのは並びの鍵の列だけにする (select でも列の有無を確かめる)
+    const columns = [...new Set(order.keys.map((key) => key.column))].join(',');
+    const { error } = await orderListBy(srAdmin.from(order.table).select(columns), order).limit(PROBE_ROW_LIMIT);
     expect(error, `${name} (${order.table})`).toBeNull();
   });
 });

@@ -8,6 +8,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { authFailureNested } from '@/lib/api/error-responses';
 import { InfraMetricsQuerySchema } from '@/lib/super-admin/infra-schemas';
 import { internalError } from '@/lib/api/errors';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 export async function GET(request: NextRequest) {
   try {
@@ -25,11 +26,8 @@ export async function GET(request: NextRequest) {
 
     const { metric_name, source, from, to, limit } = parsed.data;
 
-    let query = supabase
-      .from('infra_metrics')
-      .select('*')
-      .order('recorded_at', { ascending: false })
-      .limit(limit);
+    // 記録した日時の新しい順。同じ日時は id の順で、上限の境目でどれが入るかも決まる (#2139 T1)
+    let query = orderListBy(supabase.from('infra_metrics').select('*'), LIST_ORDERS.superAdminInfraMetrics).limit(limit);
 
     if (metric_name) query = query.eq('metric_name', metric_name);
     if (source) query = query.eq('source', source);

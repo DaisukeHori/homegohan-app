@@ -28,7 +28,7 @@ interface RecordedQuery {
   ilike: Array<[string, string]>;
   eq: Array<[string, unknown]>;
   range: [number, number] | null;
-  order: Array<[string, { ascending?: boolean } | undefined]>;
+  order: Array<[string, { ascending?: boolean; nullsFirst?: boolean } | undefined]>;
 }
 
 interface QueryResult {
@@ -66,7 +66,7 @@ function fakeOrganizationsClient() {
           rec.range = [from, to];
           return builder;
         },
-        order(column: string, options?: { ascending?: boolean }) {
+        order(column: string, options?: { ascending?: boolean; nullsFirst?: boolean }) {
           rec.order.push([column, options]);
           return builder;
         },
@@ -146,7 +146,11 @@ describe('GET /api/admin/organizations: 普通の読み出し', () => {
         ilike: [['name', '%テスト%']],
         eq: [['plan', 'premium']],
         range: [30, 59],
-        order: [['created_at', { ascending: false }]],
+        // 作った日時の新しい順。同じ日時は id の順で、ページの境目でも順が変わらない (#2139 T1)
+        order: [
+          ['created_at', { ascending: false, nullsFirst: true }],
+          ['id', { ascending: true, nullsFirst: false }],
+        ],
       },
     ]);
   });

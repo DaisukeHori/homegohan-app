@@ -25,6 +25,7 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { normalizeUuid } from '@/lib/http-params';
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AI_TARGET_SLOTS_REQUIRED_MESSAGE, aiTargetSlotsTooManyMessage, aiTargetSlotNotObjectMessage, aiTargetSlotDateInvalidMessage, aiTargetSlotMealTypeInvalidMessage, aiTargetSlotPlannedMealIdInvalidMessage, aiTargetSlotDuplicateMessage, aiTargetSlotsSpanTooLongMessage, AI_MENU_PLANNED_MEAL_TYPE_MISMATCH_MESSAGE, AI_MENU_PLANNED_MEAL_DATE_MISMATCH_MESSAGE } from '@/lib/ai/ai-api-messages';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 // 受け付ける食事の区分 (5 値)。値と並びの正本は @homegohan/shared の MEAL_ORDER (#1631。手書きしない)
 const VALID_MEAL_TYPES: readonly MealType[] = MEAL_ORDER;
@@ -232,12 +233,15 @@ export async function POST(request: Request) {
         .eq('user_id', user.id)
         .gte('day_date', contextStartDate)
         .lte('day_date', contextEndDate),
-      supabase
-        .from('pantry_items')
-        .select('name, amount, expiration_date')
-        .eq('user_id', user.id)
-        .gte('expiration_date', todayStr)
-        .order('expiration_date', { ascending: true }),
+      // 期限の近い順。同じ期限は id の順 (#2139 T1)
+      orderListBy(
+        supabase
+          .from('pantry_items')
+          .select('name, amount, expiration_date')
+          .eq('user_id', user.id)
+          .gte('expiration_date', todayStr),
+        LIST_ORDERS.pantryItemsByExpiration,
+      ),
       supabase
         .from('user_profiles')
         .select('*')

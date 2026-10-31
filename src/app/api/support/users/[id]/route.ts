@@ -5,6 +5,7 @@ import { recordAdminAudit } from '@/lib/admin/audit';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { isUuid } from '@/lib/http-params';
 import { NextResponse } from 'next/server';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /** 404: 対象の利用者がいない (UUID の形でない id を含む) */
 const USER_NOT_FOUND_MESSAGE = 'ユーザーが見つかりません';
@@ -88,24 +89,25 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
         .select('*', { count: 'exact', head: true })
         .eq('user_id', params.id)
         .gte('created_at', thirtyDaysAgo.toISOString()),
-      // 問い合わせ履歴
-      supabaseAdmin
-        .from('inquiries')
-        .select('id, inquiry_type, subject, status, created_at')
-        .eq('user_id', params.id)
-        .order('created_at', { ascending: false })
+      // 問い合わせ履歴 (新しい順。同じ日時は id の順で、上限の境目でどれが入るかも決まる。#2139 T1)
+      orderListBy(
+        supabaseAdmin.from('inquiries').select('id, inquiry_type, subject, status, created_at').eq('user_id', params.id),
+        LIST_ORDERS.supportUserInquiries,
+      )
         .limit(10),
-      // 管理者ノート取得
-      supabaseAdmin
-        .from('admin_user_notes')
-        .select(`
+      // 管理者ノート取得 (新しい順。同じ日時は id の順。#2139 T1)
+      orderListBy(
+        supabaseAdmin
+          .from('admin_user_notes')
+          .select(`
           id,
           note,
           created_at,
           admin_id
         `)
-        .eq('user_id', params.id)
-        .order('created_at', { ascending: false }),
+          .eq('user_id', params.id),
+        LIST_ORDERS.supportUserNotes,
+      ),
     ]);
 
     // 取得に失敗したまま続けると、0 件や空の一覧として黙って返してしまう。握りつぶさず 500 にする
