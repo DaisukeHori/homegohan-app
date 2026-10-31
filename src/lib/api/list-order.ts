@@ -143,7 +143,7 @@ export const LIST_ORDERS = {
   adminUsersByLastLoginDesc: withIdTiebreak('user_profiles', [descending('last_login_at')]),
 
   // ---- AI 相談 ----
-  /** AI 相談の 1 つのセッションのメッセージ (書いた日時の古い順): 一覧の GET・会話の続きの POST・閉じる・要約 */
+  /** AI 相談の 1 つのセッションのメッセージ (書いた日時の古い順): 一覧の GET・閉じる・要約 (会話の続きの POST は下の新しい順で読む) */
   aiConsultationMessages: AI_CONSULTATION_MESSAGES_ORDER,
   /**
    * 会話の続きの POST で AI に渡す過去のメッセージ: aiConsultationMessages をそっくり逆にした並び (書いた日時の新しい順。
