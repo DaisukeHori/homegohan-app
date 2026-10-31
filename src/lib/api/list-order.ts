@@ -176,6 +176,12 @@ export const LIST_ORDERS = {
    * 件数を超えた利用者でも、どのコレクションを渡すかを決める (同じ日時は id の順)
    */
   aiConsultationRecipeCollections: withIdTiebreak('recipe_collections', [descending('created_at')]),
+  /**
+   * AI 相談のアクション add_recipe_to_collection (src/lib/ai/consultation-action-executor.ts): 名前で引いたコレクションのうち、
+   * レシピを足す 1 行 (作った日時の古い順の先頭・同じ日時は id の順)。recipe_collections に (user_id, name) の一意の制約は無く、
+   * 同じ名前のコレクションが 2 件以上ありうるので、いつも同じ古い方へ足す (#2166 X4)
+   */
+  aiConsultationCollectionByName: withIdTiebreak('recipe_collections', [ascending('created_at')]),
   /** AI 相談の文脈: 使っている買い物リストの品 (分類の順) */
   aiConsultationContextShoppingItems: withIdTiebreak('shopping_list_items', [ascending('category')]),
   /**
