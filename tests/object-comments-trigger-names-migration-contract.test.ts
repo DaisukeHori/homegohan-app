@@ -8,7 +8,8 @@
  * organization_hold_plan_key_share()) は、既存の migration でトリガーが呼ぶ関数の名前を「トリガー」と呼んでいた。
  * この migration はコメントだけを出し直し、実際のトリガーの名前を書き、関数の名前は「関数 …」と書く。ここでは
  *   1. 番号は、足したときの origin/main の最大より大きく、11/1 に出す枝の番号より小さい
- *   2. migration を番号順に見て、6 つの対象に最後に効く COMMENT はこの migration の文 (後の migration が古い文で上書きしない)
+ *   2. migration を番号順に見て、6 つの対象に最後に効く COMMENT はこの migration の文 (後の migration が古い文で上書きしない)。
+ *      後で出し直した対象 (REISSUED_LATER) は、名指しした migration の文が最後に効く (その文面はその migration の契約テストが確かめる)
  *   3. 新しい文は、前に効いていた文の「トリガー <関数>」(1 か所) を「トリガー <トリガー> (関数 <関数>)」に置き換えただけ
  *      (ほかの文字は変えない)。(トリガー, 関数) の組は migration の CREATE TRIGGER が作るもの。
  *      見つけ方が空振りしないこと (前に効いていた文には反応して赤になる) も確かめる
@@ -114,7 +115,18 @@ const migrations = fs
   .sort()
   .map((file) => ({ file, sql: read(path.join(MIGRATIONS_DIR, file)) }));
 const before = effectiveComments(migrations.filter(({ file }) => file < MIGRATION_FILE));
+/** この migration までを当てたときのコメント (後で出し直した対象も、この migration が出した文を見る) */
+const asOfThis = effectiveComments(migrations.filter(({ file }) => file <= MIGRATION_FILE));
 const after = effectiveComments(migrations);
+
+/**
+ * この migration の後に出し直した対象と、出し直した migration。表に無い対象を後の migration が上書きしたら赤にする
+ * (表 account_deletion_guards は #2150 Q4 が家族の代表者のトリガーを書き足した。
+ * 文面は tests/account-deletion-guards-comment-family-representative-migration-contract.test.ts が確かめる)
+ */
+const REISSUED_LATER: ReadonlyMap<string, string> = new Map([
+  [commentKey('TABLE', 'public.account_deletion_guards'), '20261031140000_account_deletion_guards_comment_family_representative.sql'],
+]);
 
 /**
  * migration の CREATE TRIGGER 文ごとの (トリガー, 関数) の組 (名前の " とスキーマの接頭辞は外す)。
@@ -170,11 +182,17 @@ describe('本番のコメントのトリガーの呼び方 (#2144 S4)', () => {
     expect(migrations.map(({ file }) => file)).toContain(MIGRATION_FILE);
   });
 
-  it('migration を番号順に見て、6 つの対象に最後に効く COMMENT はこの migration の文', () => {
+  it('migration を番号順に見て、6 つの対象に最後に効く COMMENT はこの migration の文 (後で出し直した対象は名指しした migration の文)', () => {
     const own = commentStatementsIn(sql);
     expect(own.map(({ key }) => key)).toEqual(TARGETS.map(keyOf));
     for (const [index, target] of TARGETS.entries()) {
-      expect(after.get(keyOf(target))).toEqual({ file: MIGRATION_FILE, text: own[index].text });
+      expect(asOfThis.get(keyOf(target))).toEqual({ file: MIGRATION_FILE, text: own[index].text });
+      expect(after.get(keyOf(target))?.file, keyOf(target)).toBe(REISSUED_LATER.get(keyOf(target)) ?? MIGRATION_FILE);
+    }
+    // 名指しした migration は、この migration より後で、出し直す対象はこの migration の対象
+    for (const [key, file] of REISSUED_LATER) {
+      expect(file > MIGRATION_FILE, file).toBe(true);
+      expect(TARGETS.map(keyOf)).toContain(key);
     }
   });
 
@@ -195,7 +213,7 @@ describe('本番のコメントのトリガーの呼び方 (#2144 S4)', () => {
         new RegExp(`トリガー ${escapeRegExp(fn)}(?![A-Za-z0-9_])`),
         `トリガー ${trigger} (関数 ${fn})`,
       );
-      expect(after.get(keyOf(target))?.text, keyOf(target)).toBe(expected);
+      expect(asOfThis.get(keyOf(target))?.text, keyOf(target)).toBe(expected);
       expect(namesTriggerCorrectly(expected, target), keyOf(target)).toBe(true);
     }
   });
