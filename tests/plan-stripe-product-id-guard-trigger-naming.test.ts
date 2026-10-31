@@ -30,6 +30,21 @@ const TRIGGER = 'trg_guard_plan_stripe_product_id_price_change';
 /** #2134 U3 の報告の組 (supabase/migrations/20261024130000_plan_deprecate_lock_and_price_change_reservation.sql の CREATE TRIGGER) */
 const DEPRECATE_FN = 'guard_plan_deprecate_subscribers';
 const DEPRECATE_TRIGGER = 'trg_guard_plan_deprecate_subscribers';
+/**
+ * 写しの文に使う関数の名前 (このファイル自身も走査するので、写しの文は名前を直に書かず `${…}` で組み立てる)。
+ * 1 つの関数を 2 本のトリガー (trg_meals_guard_hidden_columns・trg_recipes_guard_hidden_columns) が呼ぶ関数
+ */
+const HIDDEN_FN = 'guard_hidden_content_columns';
+/** auth.sessions のトリガー on_auth_session_created / _refreshed / _deleted が呼ぶ関数 */
+const [SESSION_CREATED_FN, SESSION_REFRESHED_FN, SESSION_DELETED_FN] = [
+  'auth_session_created',
+  'auth_session_refreshed',
+  'auth_session_deleted',
+] as const;
+/** トリガー trg_org_challenge_count_join / trg_org_challenge_finalize が呼ぶ関数 */
+const [COUNT_JOIN_FN, FINALIZE_FN] = ['org_challenge_count_join', 'org_challenge_finalize'] as const;
+/** トリガー trg_family_members_revoke_parental_consent_on_delete が呼ぶ関数 */
+const CONSENT_ON_DELETE_FN = 'revoke_parental_consent_on_member_delete';
 
 /** 走査する場所 (リポジトリの根からの相対パス。ファイルでもディレクトリでもよい) */
 const SCAN_ROOTS = ['src', 'tests', 'docs', 'apps', 'scripts', 'supabase', 'CLAUDE.md'];
@@ -228,15 +243,15 @@ describe('トリガーの呼び名 (#2128 docs-1031c の R2 指摘 1・#2134 U3)
         { trigger: TRIGGER, fn: FN },
         { trigger: DEPRECATE_TRIGGER, fn: DEPRECATE_FN },
         // 1 つの関数を 2 本のトリガーが呼ぶ組も読む
-        { trigger: 'trg_meals_guard_hidden_columns', fn: 'guard_hidden_content_columns' },
-        { trigger: 'trg_recipes_guard_hidden_columns', fn: 'guard_hidden_content_columns' },
+        { trigger: 'trg_meals_guard_hidden_columns', fn: HIDDEN_FN },
+        { trigger: 'trg_recipes_guard_hidden_columns', fn: HIDDEN_FN },
       ]),
     );
   });
 
   it('探す名前は、トリガーの名前ではない関数の名前だけ (トリガーと同じ名前の関数は除く)', () => {
     const triggerNames = new Set(allPairs.map((pair) => pair.trigger));
-    expect(fnsToFind).toEqual(expect.arrayContaining([FN, DEPRECATE_FN, 'guard_hidden_content_columns']));
+    expect(fnsToFind).toEqual(expect.arrayContaining([FN, DEPRECATE_FN, HIDDEN_FN]));
     expect(fnsToFind.filter((fn) => triggerNames.has(fn))).toEqual([]);
     // トリガーと関数が同じ名前の組 (例: update_embedding_jobs_updated_at) の名前は探さない
     const sameNamed = allPairs.filter((pair) => pair.trigger === pair.fn).map((pair) => pair.fn);
@@ -314,31 +329,29 @@ describe('トリガーの呼び名 (#2128 docs-1031c の R2 指摘 1・#2134 U3)
     // ( の中の並びで関数の名前を「トリガー」と呼ぶ書き方 (直す前の operator/01 §3 と org/10 の消費経路の書き方)
     expect(
       triggerCalledByFunctionName(
-        '書くのは `auth.sessions` のトリガー (`auth_session_created`・`auth_session_refreshed`・`auth_session_deleted`)・RPC',
+        `書くのは \`auth.sessions\` のトリガー (\`${SESSION_CREATED_FN}\`・\`${SESSION_REFRESHED_FN}\`・\`${SESSION_DELETED_FN}\`)・RPC`,
         fnsToFind,
       ),
     ).toEqual([
-      { line: 1, fn: 'auth_session_created' },
-      { line: 1, fn: 'auth_session_refreshed' },
-      { line: 1, fn: 'auth_session_deleted' },
+      { line: 1, fn: SESSION_CREATED_FN },
+      { line: 1, fn: SESSION_REFRESHED_FN },
+      { line: 1, fn: SESSION_DELETED_FN },
     ]);
     expect(
-      triggerCalledByFunctionName('書く側 = トリガー 2 本 (`org_challenge_count_join` / `org_challenge_finalize`)・埋め戻し', fnsToFind),
+      triggerCalledByFunctionName(`書く側 = トリガー 2 本 (\`${COUNT_JOIN_FN}\` / \`${FINALIZE_FN}\`)・埋め戻し`, fnsToFind),
     ).toEqual([
-      { line: 1, fn: 'org_challenge_count_join' },
-      { line: 1, fn: 'org_challenge_finalize' },
+      { line: 1, fn: COUNT_JOIN_FN },
+      { line: 1, fn: FINALIZE_FN },
     ]);
     // 直す前の cross/14 の書き方 (並びの頭が関数の名前で、次がトリガーの名前)
     expect(
       triggerCalledByFunctionName(
-        'のトリガー (`revoke_parental_consent_on_member_delete()`・`trg_family_members_revoke_parental_consent_on_delete`) が',
+        `のトリガー (\`${CONSENT_ON_DELETE_FN}()\`・\`trg_family_members_revoke_parental_consent_on_delete\`) が`,
         fnsToFind,
       ),
-    ).toEqual([{ line: 1, fn: 'revoke_parental_consent_on_member_delete' }]);
+    ).toEqual([{ line: 1, fn: CONSENT_ON_DELETE_FN }]);
     // 1 つの関数を 2 本のトリガーが呼ぶ関数の名前も見つける
-    expect(triggerCalledByFunctionName('(DB のトリガー guard_hidden_content_columns)', fnsToFind)).toEqual([
-      { line: 1, fn: 'guard_hidden_content_columns' },
-    ]);
+    expect(triggerCalledByFunctionName(`(DB のトリガー ${HIDDEN_FN})`, fnsToFind)).toEqual([{ line: 1, fn: HIDDEN_FN }]);
 
     // 直した書き方 (トリガーの名前を書き、関数の名前は「関数 …」と書く) には反応しない
     expect(
