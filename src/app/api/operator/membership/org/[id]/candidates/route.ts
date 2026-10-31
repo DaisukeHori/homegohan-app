@@ -10,6 +10,7 @@ import { authFailureNested } from '@/lib/api/error-responses';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { internalError } from '@/lib/api/errors';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,12 +25,15 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
 
     const admin = getSupabaseAdmin();
 
-    const { data, error } = await admin
-      .from('user_profiles')
-      .select('id, nickname, org_role, last_login_at')
-      .eq('organization_id', orgId)
-      .neq('org_role', 'owner')
-      .order('last_login_at', { ascending: false, nullsFirst: false });
+    // 最終ログインの新しい順・まだログインしていない人は最後。同じ値は id の順 (#2134 U2。LIST_ORDERS.operatorOrgTransferCandidates)
+    const { data, error } = await orderListBy(
+      admin
+        .from('user_profiles')
+        .select('id, nickname, org_role, last_login_at')
+        .eq('organization_id', orgId)
+        .neq('org_role', 'owner'),
+      LIST_ORDERS.operatorOrgTransferCandidates,
+    );
 
     if (error) {
       return internalError(ROUTE_NAME, error, { userId: operatorId }, { shape: 'nested' });
