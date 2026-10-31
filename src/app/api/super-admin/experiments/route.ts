@@ -25,6 +25,7 @@ import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { invalidQueryResponse, readJsonBody, SUPER_ADMIN_INVALID_JSON_BODY_MESSAGE } from '@/lib/super-admin/validation-errors';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /** Postgres の一意の制約の違反 (unique_violation)。experiments の一意の制約は key (experiments_key_key) と主キーの id で、id は DB が作る */
 const PG_UNIQUE_VIOLATION = '23505';
@@ -65,9 +66,8 @@ export async function GET(request: NextRequest) {
     };
 
     const { data, error, count } = await resolveBeyondLastPage(
-      await selectExperiments()
-        .order('created_at', { ascending: false })
-        .range((page - 1) * perPage, page * perPage - 1),
+      // 作った日時の新しい順。同じ値は id の順で、ページの境目でも順が変わらない (#2139 T1)
+      await orderListBy(selectExperiments(), LIST_ORDERS.superAdminExperiments).range((page - 1) * perPage, page * perPage - 1),
       () => selectExperiments({ head: true }),
       LIST_ROUTE_NAME,
     );

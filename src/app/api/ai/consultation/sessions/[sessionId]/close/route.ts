@@ -9,6 +9,7 @@ import { internalError } from '@/lib/api/errors';
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE, AI_CONSULTATION_SESSION_ALREADY_CLOSED_MESSAGE } from '@/lib/ai/ai-api-messages';
 import { isUuid } from '@/lib/http-params';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 function stripMarkdownCodeBlock(text: string): string {
   let cleaned = text.trim();
@@ -97,11 +98,11 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
     }
 
     // セッションの全メッセージを取得
-    const { data: messages } = await supabase
-      .from('ai_consultation_messages')
-      .select('role, content, created_at, is_important')
-      .eq('session_id', params.sessionId)
-      .order('created_at', { ascending: true });
+    // 書いた日時の古い順。同じ日時は id の順 (#2139 T1)
+    const { data: messages } = await orderListBy(
+      supabase.from('ai_consultation_messages').select('role, content, created_at, is_important').eq('session_id', params.sessionId),
+      LIST_ORDERS.aiConsultationMessages,
+    );
 
     let summaryData = null;
 

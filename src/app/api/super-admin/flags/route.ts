@@ -15,6 +15,7 @@ import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { readJsonBody, SUPER_ADMIN_INVALID_JSON_BODY_MESSAGE } from '@/lib/super-admin/validation-errors';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 export async function GET() {
   try {
@@ -23,10 +24,11 @@ export async function GET() {
 
     // #1029: feature_flags テーブルから実データを取得する (以前は feature_packages.feature_flags
     // 配列から flags を合成し enabled:true をハードコードして返していた no-op 実装だった)
-    const { data, error } = await supabase
-      .from('feature_flags')
-      .select('key, description, enabled, rollout_strategy, constraints, updated_at')
-      .order('created_at', { ascending: true });
+    // 作った日時の古い順。同じ日時は id の順 (#2139 T1)
+    const { data, error } = await orderListBy(
+      supabase.from('feature_flags').select('key, description, enabled, rollout_strategy, constraints, updated_at'),
+      LIST_ORDERS.superAdminFlags,
+    );
 
     if (error) {
       return internalError('GET /api/super-admin/flags', error, { userId: user.id }, { shape: 'nested' });

@@ -6,6 +6,7 @@ import { sanitizeHealthGoalCreate } from '@/lib/health-payloads';
 import { calculateGoalProgressPercentage } from '@/lib/health-goal-progress';
 import { findGoalTypeDef, isWithinGoalRange } from '@/lib/health-goal-types';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 // 目標一覧の取得
 export async function GET(request: NextRequest) {
@@ -19,11 +20,8 @@ export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const status = searchParams.get('status') || 'active';
 
-  let query = supabase
-    .from('health_goals')
-    .select('*')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false });
+  // 作った日時の新しい順。同じ日時は id の順 (#2139 T1)
+  let query = orderListBy(supabase.from('health_goals').select('*').eq('user_id', user.id), LIST_ORDERS.healthGoals);
 
   if (status !== 'all') {
     query = query.eq('status', status);

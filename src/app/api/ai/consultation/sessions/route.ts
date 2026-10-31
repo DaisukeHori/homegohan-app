@@ -5,6 +5,7 @@ import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /** 新しいセッションの文脈に入れる、最近の食事の日数 (JST の今日から何日前までか) */
 const RECENT_MEAL_DAYS = 7;
@@ -18,9 +19,11 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const status = searchParams.get('status') || 'active';
 
-  let query = supabase
-    .from('ai_consultation_sessions')
-    .select(`
+  // 更新した日時の新しい順。同じ日時は id の順で、上限の境目でどれが入るかも決まる (#2139 T1)
+  let query = orderListBy(
+    supabase
+      .from('ai_consultation_sessions')
+      .select(`
       id,
       title,
       status,
@@ -30,8 +33,9 @@ export async function GET(request: Request) {
       updated_at,
       ai_consultation_messages(id)
     `)
-    .eq('user_id', user.id)
-    .order('updated_at', { ascending: false });
+      .eq('user_id', user.id),
+    LIST_ORDERS.aiConsultationSessions,
+  );
 
   if (status !== 'all') {
     query = query.eq('status', status);
@@ -108,27 +112,33 @@ export async function POST(request: Request) {
       .limit(7);
 
     // 過去のセッション要約を取得（最新10件）
-    const { data: pastSessions } = await supabase
-      .from('ai_consultation_sessions')
-      .select('id, title, summary, key_topics, context_snapshot, summary_generated_at')
-      .eq('user_id', user.id)
-      .eq('status', 'closed')
-      .not('summary', 'is', null)
-      .order('updated_at', { ascending: false })
+    // 同じ日時は id の順 (#2139 T1)
+    const { data: pastSessions } = await orderListBy(
+      supabase
+        .from('ai_consultation_sessions')
+        .select('id, title, summary, key_topics, context_snapshot, summary_generated_at')
+        .eq('user_id', user.id)
+        .eq('status', 'closed')
+        .not('summary', 'is', null),
+      LIST_ORDERS.aiConsultationPastSummaries,
+    )
       .limit(10);
 
     // 重要メッセージを取得（最新20件）
-    const { data: importantMessages } = await supabase
-      .from('ai_consultation_messages')
-      .select(`
+    // 同じ日時は id の順 (#2139 T1)
+    const { data: importantMessages } = await orderListBy(
+      supabase
+        .from('ai_consultation_messages')
+        .select(`
         content,
         importance_reason,
         created_at,
         ai_consultation_sessions!inner(user_id, title)
       `)
-      .eq('is_important', true)
-      .eq('ai_consultation_sessions.user_id', user.id)
-      .order('created_at', { ascending: false })
+        .eq('is_important', true)
+        .eq('ai_consultation_sessions.user_id', user.id),
+      LIST_ORDERS.aiConsultationImportantMessages,
+    )
       .limit(20);
 
     const contextSnapshot = {

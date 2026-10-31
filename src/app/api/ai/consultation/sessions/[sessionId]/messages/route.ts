@@ -20,6 +20,7 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE, AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE } from '@/lib/ai/ai-api-messages';
 import { isUuid } from '@/lib/http-params';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /**
  * AI に渡す日付 (過去の相談の日・重要なメッセージの日・今日) を書くタイムゾーン (#1433)。
@@ -118,11 +119,11 @@ export async function GET(request: Request, props: { params: Promise<{ sessionId
     return NextResponse.json({ error: AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE }, { status: 404 });
   }
 
-  const { data, error } = await supabase
-    .from('ai_consultation_messages')
-    .select('*')
-    .eq('session_id', params.sessionId)
-    .order('created_at', { ascending: true });
+  // 書いた日時の古い順。同じ日時は id の順 (#2139 T1)
+  const { data, error } = await orderListBy(
+    supabase.from('ai_consultation_messages').select('*').eq('session_id', params.sessionId),
+    LIST_ORDERS.aiConsultationMessages,
+  );
 
   if (error) return internalError('GET /api/ai/consultation/sessions/[sessionId]/messages', error, { userId: user.id });
 
@@ -203,44 +204,48 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
     // 7. 栄養目標
     supabase.from('nutrition_targets').select('*').eq('user_id', userId).single(),
 
-    // 8. 獲得バッジ
-    supabase.from('user_badges').select('obtained_at, badges(name, description)')
-      .eq('user_id', userId)
-      .order('obtained_at', { ascending: false })
+    // 8. 獲得バッジ (取った日時の新しい順。同じ日時は badge_id の順で、上限の境目でどれが入るかも決まる。#2139 T1)
+    orderListBy(
+      supabase.from('user_badges').select('obtained_at, badges(name, description)').eq('user_id', userId),
+      LIST_ORDERS.aiConsultationContextBadges,
+    )
       .limit(10),
 
-    // 9. AIインサイト
-    supabase.from('health_insights').select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
+    // 9. AIインサイト (同じ日時は id の順。#2139 T1)
+    orderListBy(supabase.from('health_insights').select('*').eq('user_id', userId), LIST_ORDERS.aiConsultationContextInsights)
       .limit(5),
 
     // 10. アクティブな買い物リスト
     supabase.from('shopping_lists').select('id').eq('user_id', userId).eq('status', 'active').maybeSingle(),
 
-    // 11. 冷蔵庫/パントリー
-    supabase.from('pantry_items').select('id, name, amount, category, expiration_date, added_at')
-      .eq('user_id', userId)
-      .order('expiration_date', { ascending: true, nullsFirst: false }),
+    // 11. 冷蔵庫/パントリー (期限の近い順・期限の無い品は最後。同じ期限は id の順。#2139 T1)
+    orderListBy(
+      supabase.from('pantry_items').select('id, name, amount, category, expiration_date, added_at').eq('user_id', userId),
+      LIST_ORDERS.pantryItemsByExpiration,
+    ),
 
     // 12. レシピコレクション
     supabase.from('recipe_collections').select('id, name, recipe_ids').eq('user_id', userId).limit(10),
 
-    // 13. 過去のセッション要約
-    supabase.from('ai_consultation_sessions').select('id, title, summary, key_topics, context_snapshot, summary_generated_at')
-      .eq('user_id', userId)
-      .eq('status', 'closed')
-      .not('summary', 'is', null)
-      .order('updated_at', { ascending: false })
+    // 13. 過去のセッション要約 (同じ日時は id の順。#2139 T1)
+    orderListBy(
+      supabase.from('ai_consultation_sessions').select('id, title, summary, key_topics, context_snapshot, summary_generated_at')
+        .eq('user_id', userId)
+        .eq('status', 'closed')
+        .not('summary', 'is', null),
+      LIST_ORDERS.aiConsultationPastSummaries,
+    )
       .limit(5),
 
-    // 14. 重要メッセージ
-    supabase.from('ai_consultation_messages').select(`
+    // 14. 重要メッセージ (同じ日時は id の順。#2139 T1)
+    orderListBy(
+      supabase.from('ai_consultation_messages').select(`
       content, importance_reason, created_at, role, metadata,
       ai_consultation_sessions!inner(user_id, title)
     `).eq('is_important', true)
-      .eq('ai_consultation_sessions.user_id', userId)
-      .order('created_at', { ascending: false })
+        .eq('ai_consultation_sessions.user_id', userId),
+      LIST_ORDERS.aiConsultationImportantMessages,
+    )
       .limit(20),
   ]);
 
@@ -279,9 +284,12 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
 
   if (activeShoppingList) {
     dependentQueries.push(
-      supabase.from('shopping_list_items').select('id, item_name, quantity, category, is_checked')
-        .eq('shopping_list_id', activeShoppingList.id)
-        .order('category', { ascending: true })
+      // 分類の順。同じ分類の品は id の順 (#2139 T1)
+      orderListBy(
+        supabase.from('shopping_list_items').select('id, item_name, quantity, category, is_checked')
+          .eq('shopping_list_id', activeShoppingList.id),
+        LIST_ORDERS.aiConsultationContextShoppingItems,
+      )
         .then((r: any) => { shoppingList = r.data || []; })
     );
   }
@@ -1066,11 +1074,14 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
     const systemPrompt = await buildSystemPrompt(supabase, user.id);
 
     // 過去のメッセージを取得（システムプロンプト以外）- 50件まで
-    const { data: historyData } = await supabase
-      .from('ai_consultation_messages')
-      .select('role, content, metadata, is_important')
-      .eq('session_id', params.sessionId)
-      .order('created_at', { ascending: true })
+    // 書いた日時の古い順。同じ日時は id の順 (#2139 T1)
+    const { data: historyData } = await orderListBy(
+      supabase
+        .from('ai_consultation_messages')
+        .select('role, content, metadata, is_important')
+        .eq('session_id', params.sessionId),
+      LIST_ORDERS.aiConsultationMessages,
+    )
       .limit(50);
 
     // メッセージを構築

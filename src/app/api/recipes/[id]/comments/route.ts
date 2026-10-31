@@ -6,6 +6,7 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_INVALID_JSON_MESSAGE, API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { isUuid } from '@/lib/http-params';
 import { loadRecipeViewerLookups } from '@/lib/recipes/viewer-lookups';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /** Postgres の外部キー違反 (insert の参照先の行が無い) */
 const POSTGRES_FOREIGN_KEY_VIOLATION = '23503';
@@ -30,11 +31,11 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
 
   // 書いた人の名前 (user_profiles) は埋め込まずに別のクエリで引く (recipe_comments.user_id の外部キーは auth.users 宛で、
   // `user_profiles(nickname)` の埋め込みは PostgREST が解決できず、この API はいつも 500 になっていた。#1917。src/lib/recipes/viewer-lookups.ts)
-  const { data, error } = await supabase
-    .from('recipe_comments')
-    .select('id, content, rating, created_at, user_id')
-    .eq('recipe_id', params.id)
-    .order('created_at', { ascending: false });
+  // 書いた日時の新しい順。同じ日時は id の順 (#2139 T1)
+  const { data, error } = await orderListBy(
+    supabase.from('recipe_comments').select('id, content, rating, created_at, user_id').eq('recipe_id', params.id),
+    LIST_ORDERS.recipeComments,
+  );
 
   if (error) return internalError('GET /api/recipes/[id]/comments', error, { userId: user.id });
 

@@ -43,6 +43,7 @@ import {
   type NpsRecentRow,
 } from '@/lib/admin/nps-summary';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 export const dynamic = 'force-dynamic';
 
@@ -100,9 +101,10 @@ export async function GET(request: NextRequest) {
     // 4 つの問い合わせは互いに独立なので並列に流す
     const [npsSummaryRes, npsRecentRes, csatSummaryRes, csatRecentRes] = await Promise.all([
       supabase.rpc('get_nps_summary', { p_from: rpcFrom, p_to: rpcTo, p_plan_key: planKey }),
-      npsRecent.order('responded_at', { ascending: false }).limit(RECENT_LIMIT),
+      // 最近の回答は新しい順。同じ日時は id の順で、上限の境目でどの行が入るかも決まる (#2139 T1)
+      orderListBy(npsRecent, LIST_ORDERS.financeNpsRecent).limit(RECENT_LIMIT),
       supabase.rpc('get_csat_summary', { p_from: rpcFrom, p_to: rpcTo }),
-      csatRecent.order('created_at', { ascending: false }).limit(RECENT_LIMIT),
+      orderListBy(csatRecent, LIST_ORDERS.financeCsatRecent).limit(RECENT_LIMIT),
     ]);
 
     // 1 つでも失敗したまま続けると、取れなかった数字を 0 として画面に出してしまう (誤った集計を返す)。

@@ -33,6 +33,7 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { errorCodeOf, internalError, toLoggableError } from '@/lib/api/errors';
 import { createLogger } from '@/lib/db-logger';
 import { isUuid, readJsonBody } from '@/lib/http-params';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /** 400: 本文・クエリの検証の失敗の文 (項目ごとの理由は details に添える。message は画面がそのまま出す文なので文字列にする) */
 const VALIDATION_ERROR_MESSAGE = '入力内容を確認してください';
@@ -117,11 +118,14 @@ export async function GET(request: NextRequest, props: RouteContext) {
     }
 
     // 活動履歴も取得。読めなかったときは空の履歴にしない (500)
-    const { data: activities, error: activitiesError } = await supabase
-      .from('sales_lead_activities')
-      .select('id, lead_id, actor_id, activity_type, details, created_at')
-      .eq('lead_id', params.id)
-      .order('created_at', { ascending: false });
+    // 記録した日時の新しい順。同じ日時は id の順 (#2139 T1)
+    const { data: activities, error: activitiesError } = await orderListBy(
+      supabase
+        .from('sales_lead_activities')
+        .select('id, lead_id, actor_id, activity_type, details, created_at')
+        .eq('lead_id', params.id),
+      LIST_ORDERS.adminSalesLeadActivities,
+    );
 
     if (activitiesError) {
       return internalError(GET_ROUTE_NAME, activitiesError, { userId: currentUser.id, table: 'sales_lead_activities' }, { shape: 'nested' });

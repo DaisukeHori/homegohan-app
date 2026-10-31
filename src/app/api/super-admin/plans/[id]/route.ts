@@ -67,6 +67,7 @@ import { invalidInputResponse, invalidJsonBodyResponse, readJsonBody } from '@/l
 import { isUuid } from '@/lib/http-params';
 import { isStripePriceSyncExpected } from '@/lib/super-admin/price-change-unchanged';
 import { isPlanPriceChangeInProgressDbError } from '@/lib/super-admin/plan-price-change-reservation';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -155,11 +156,11 @@ export async function GET(_request: NextRequest, props: RouteContext) {
 
     // 価格変更履歴を追加取得。読めなかった (DB の失敗) ときは 500。空の履歴にしない (#1917 の続き。以前は失敗を捨て、
     // 価格を一度も変えていないプランに見えていた)
-    const { data: priceHistory, error: priceHistoryError } = await supabase
-      .from('plan_price_history')
-      .select('*')
-      .eq('plan_id', params.id)
-      .order('created_at', { ascending: false })
+    // 変えた日時の新しい順。同じ日時は id の順で、上限の境目でどれが入るかも決まる (#2139 T1)
+    const { data: priceHistory, error: priceHistoryError } = await orderListBy(
+      supabase.from('plan_price_history').select('*').eq('plan_id', params.id),
+      LIST_ORDERS.superAdminPlanPriceHistory,
+    )
       .limit(20);
     if (priceHistoryError) {
       return internalError('GET /api/super-admin/plans/[id]', priceHistoryError, { table: 'plan_price_history' }, { shape: 'nested' });

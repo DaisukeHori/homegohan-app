@@ -10,6 +10,7 @@ import {
 } from '@/lib/weekly-menu-request-stale';
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AI_MENU_NO_STUCK_REQUESTS_MESSAGE, AI_MENU_STUCK_REQUESTS_CLEANED_MESSAGE } from '@/lib/ai/ai-api-messages';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 // #1203: 復元（スナップショットの書き戻し）が途中で打ち切られないよう、実行時間の上限を明示する。
 // 復元は 1 リクエストあたり DB 2 往復前後だが、failed 確定後に復元へ入る順序のため余裕を持たせる。
@@ -148,12 +149,15 @@ export async function GET() {
     return NextResponse.json({ error: API_UNAUTHENTICATED_MESSAGE }, { status: 401 });
   }
 
-  const { data: requests, error } = await supabase
-    .from('weekly_menu_requests')
-    .select('id, mode, status, created_at, updated_at')
-    .eq('user_id', user.id)
-    .in('status', ['queued', 'pending', 'processing'])
-    .order('created_at', { ascending: false })
+  // 作った日時の新しい順。同じ日時は id の順で、上限の境目でどれが入るかも決まる (#2139 T1)
+  const { data: requests, error } = await orderListBy(
+    supabase
+      .from('weekly_menu_requests')
+      .select('id, mode, status, created_at, updated_at')
+      .eq('user_id', user.id)
+      .in('status', ['queued', 'pending', 'processing']),
+    LIST_ORDERS.menuWeeklyCleanupRequests,
+  )
     .limit(10);
 
   if (error) {

@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { clampIntParam } from '@/lib/http-params';
 import { internalError } from '@/lib/api/errors';
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 // ユーザーの全重要メッセージを取得
 export async function GET(request: Request) {
@@ -15,10 +16,11 @@ export async function GET(request: Request) {
   const limit = clampIntParam(searchParams.get('limit'), { min: 1, max: 200, default: 50 });
 
   try {
-    // ユーザーの全セッションから重要メッセージを取得
-    const { data, error } = await supabase
-      .from('ai_consultation_messages')
-      .select(`
+    // ユーザーの全セッションから重要メッセージを取得 (新しい順。同じ日時は id の順。#2139 T1)
+    const { data, error } = await orderListBy(
+      supabase
+        .from('ai_consultation_messages')
+        .select(`
         id,
         role,
         content,
@@ -30,10 +32,10 @@ export async function GET(request: Request) {
           user_id
         )
       `)
-      .eq('is_important', true)
-      .eq('ai_consultation_sessions.user_id', user.id)
-      .order('created_at', { ascending: false })
-      .limit(limit);
+        .eq('is_important', true)
+        .eq('ai_consultation_sessions.user_id', user.id),
+      LIST_ORDERS.aiConsultationImportantMessages,
+    ).limit(limit);
 
     if (error) throw error;
 
