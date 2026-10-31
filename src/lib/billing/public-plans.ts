@@ -1,6 +1,7 @@
 /** 公開の面に出すプランの読み取り (billing/01 §10.1・billing/03 §8.6) */
 import { createLogger } from '@/lib/db-logger';
 import { createClient } from '@/lib/supabase/server';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 import { FREE_PLAN_KEY, PURCHASABLE_PLAN_TYPES, type PublicPlan } from '@/lib/billing/core';
 
 const logger = createLogger('billing/public-plans');
@@ -16,14 +17,16 @@ const PLAN_COLUMNS =
  */
 export async function listPublicPlans(): Promise<PublicPlan[]> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from('subscription_plans')
-    .select(PLAN_COLUMNS)
-    .eq('status', 'public')
-    .in('plan_type', [...PURCHASABLE_PLAN_TYPES])
-    .neq('plan_key', FREE_PLAN_KEY)
-    .gt('monthly_price_jpy', 0)
-    .order('display_order', { ascending: true });
+  const { data, error } = await orderListBy(
+    supabase
+      .from('subscription_plans')
+      .select(PLAN_COLUMNS)
+      .eq('status', 'public')
+      .in('plan_type', [...PURCHASABLE_PLAN_TYPES])
+      .neq('plan_key', FREE_PLAN_KEY)
+      .gt('monthly_price_jpy', 0),
+    LIST_ORDERS.billingPublicPlans,
+  );
   if (error) {
     logger.error('公開のプランの一覧を読めませんでした (/pricing はフリーのカードだけを描く)', error);
     return [];

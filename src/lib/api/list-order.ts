@@ -7,10 +7,11 @@
 // src/lib/membership/org-member-list-order.ts)。
 // 新しい側の件数の上限まで読み、古い順へ並べ直して使う所だけは、元の一覧をそっくり逆にした並び (reversed。最後の鍵は id の降順) で読む。
 //
-// 一覧ごとの鍵は LIST_ORDERS に書き、route は orderListBy(問い合わせ, LIST_ORDERS.<一覧>) で並べる
-// (route に .order( を直接書かない。src/app/api の全体を tests/list-order-tiebreak-2134.test.ts が走査で守る。
+// 一覧ごとの鍵は LIST_ORDERS に書き、route と、route や画面から呼ぶ helper・hook・画面は
+// orderListBy(問い合わせ, LIST_ORDERS.<一覧>) で並べる (.order( を直接書かない。src/app・src/lib・src/hooks・src/modules・
+// src/components・src/contexts の全体を tests/list-order-tiebreak-2134.test.ts が走査で守る。
 // 並びの鍵がもう一意の所 (主キー・一意の制約の列で終わる、id で終える) だけは、そのテストの許可の表に理由つきで書く)。
-// NULL の位置は、いままでの order (nullsFirst を省いた PostgreSQL の既定: 昇順は最後・降順は最初) と同じ値を明示する。
+// NULL の位置は、いままでの order で nullsFirst を省いていた鍵は PostgreSQL の既定 (昇順は最後・降順は最初) と同じ値を明示し、nullsFirst を書いていた鍵はその値を保つ (例: operatorOrgTransferCandidates の last_login_at は降順で空を最後)。
 
 /** PostgREST の order に渡す 1 つの並びの鍵 */
 export interface ListOrderKey {
@@ -34,11 +35,13 @@ export const ID_TIEBREAK_KEY: ListOrderKey = { column: 'id', options: { ascendin
 
 /**
  * 主キー id を持たない表の一覧で、id の代わりに最後に重ねる一意の鍵の列 (表の名前で引く)。
- * user_badges の主キーは (user_id, badge_id) (supabase/migrations/20251126124224_create_meal_planner_tables.sql の
- * user_badges_pkey)。一覧は user_id で絞って読むので、その中では badge_id が一意
+ * 主キーは supabase/migrations/20251126124224_create_meal_planner_tables.sql による。
+ * - user_badges の主キーは (user_id, badge_id) (user_badges_pkey)。一覧は user_id で絞って読むので、その中では badge_id が一意
+ * - user_sessions_metadata の主キーは session_id (user_sessions_metadata_pkey)
  */
 export const NON_ID_TIEBREAK_COLUMNS = {
   user_badges: 'badge_id',
+  user_sessions_metadata: 'session_id',
 } as const;
 
 /** 昇順 (NULL は最後。PostgreSQL の昇順の既定と同じ) */
@@ -163,7 +166,10 @@ export const LIST_ORDERS = {
   aiConsultationContextInsights: withIdTiebreak('health_insights', [descending('created_at')]),
   /** AI 相談の文脈: 使っている買い物リストの品 (分類の順) */
   aiConsultationContextShoppingItems: withIdTiebreak('shopping_list_items', [ascending('category')]),
-  /** 冷蔵庫・パントリーの品 (期限の近い順・期限の無い品は最後): GET /api/pantry・AI 相談の文脈・献立の生成 (v4 / v5) */
+  /**
+   * 冷蔵庫・パントリーの品 (期限の近い順・期限の無い品は最後): GET /api/pantry・AI 相談の文脈・献立の生成 (v4 / v5)・
+   * ホームの期限の近い品 (src/hooks/useHomeData.ts)
+   */
   pantryItemsByExpiration: withIdTiebreak('pantry_items', [ascending('expiration_date')]),
 
   // ---- 献立の生成の依頼 ----
@@ -235,6 +241,39 @@ export const LIST_ORDERS = {
   supportUserInquiries: withIdTiebreak('inquiries', [descending('created_at')]),
   /** GET /api/support/users/[id]/notes と GET /api/support/users/[id]: 管理者のノート (書いた日時の新しい順) */
   supportUserNotes: withIdTiebreak('admin_user_notes', [descending('created_at')]),
+
+  // ---- src/app/api の外 (route や画面から呼ぶ helper・hook・画面) (#2144 S3) ----
+  /** listPublicPlans (src/lib/billing/public-plans.ts): /pricing に出す公開のプラン (表示の順) */
+  billingPublicPlans: withIdTiebreak('subscription_plans', [ascending('display_order')]),
+  /** listGrantablePlans (src/lib/billing/manual-grant-repository.ts): 手動で付与できるプラン (表示の順) */
+  billingGrantablePlans: withIdTiebreak('subscription_plans', [ascending('display_order')]),
+  /**
+   * findLiveSubscription (src/lib/billing/repository.ts と src/lib/billing/manual-grant-repository.ts): 利用者の有効な契約のうち
+   * 最後に作ったもの 1 行
+   */
+  billingLiveSubscription: withIdTiebreak('personal_subscriptions', [descending('created_at')]),
+  /** listHistory (src/lib/billing/manual-grant-repository.ts): 手動付与の履歴 (記録した日時の新しい順・件数の上限つき) */
+  billingManualGrantHistory: withIdTiebreak('admin_audit_logs', [descending('created_at')]),
+  /** listLiveSessions (src/lib/auth/sessions/store.ts): 使っているログイン (最後に使った日時の新しい順)。id が無いので session_id で終える */
+  authLiveSessions: withNonIdTiebreak('user_sessions_metadata', [descending('last_active_at')]),
+  /** listLoginHistory (src/lib/auth/sessions/store.ts): ログインの履歴 (ログインした日時の新しい順・件数の上限つき) */
+  authLoginHistory: withNonIdTiebreak('user_sessions_metadata', [descending('created_at')]),
+  /** listPriorLogins (src/lib/auth/sessions/store.ts): 新しいログインより前のログイン (ログインした日時の新しい順・件数の上限つき) */
+  authPriorLogins: withNonIdTiebreak('user_sessions_metadata', [descending('created_at')]),
+  /** fetchModerationList (src/lib/admin/moderation-backend.ts) の食事の写真の通報 (通報した日時の古い順・件数の上限つき) */
+  adminModerationFoodFlags: withIdTiebreak('moderation_flags', [ascending('created_at')]),
+  /** fetchModerationList (src/lib/admin/moderation-backend.ts) のレシピの通報 (通報した日時の古い順・件数の上限つき) */
+  adminModerationRecipeFlags: withIdTiebreak('recipe_flags', [ascending('created_at')]),
+  /** getAiConsentStatus (src/lib/ai/consent.ts): AI の外部送信の同意の履歴 (同意した日時の新しい順・件数の上限つき) */
+  aiConsentHistory: withIdTiebreak('external_data_consents', [descending('consented_at')]),
+  /** ホーム (src/hooks/useHomeData.ts): 最後に取ったバッジ 1 行。user_badges は id が無いので badge_id で終える */
+  homeLatestBadge: withNonIdTiebreak('user_badges', [descending('obtained_at')]),
+  /** ホーム (src/hooks/useHomeData.ts): この 7 日の食べた食事で野菜のスコアの最も高いもの 1 行 (スコアの無い食事は最後) */
+  homeBestVegMeal: withIdTiebreak('planned_meals', [
+    { column: 'veg_score', options: { ascending: false, nullsFirst: false } },
+  ]),
+  /** 家族のメンバーの画面 (src/app/(main)/family/members/[id]/page.tsx): 子供の保護者の同意の最新の 1 行 (署名した日時の新しい順) */
+  familyMemberParentalConsent: withIdTiebreak('parental_consents', [descending('signed_at')]),
 } as const satisfies Record<string, ListOrder>;
 
 /** 問い合わせに鍵の順で order を重ねる (先に重ねた鍵ほど強い。PostgREST の order=a.asc,b.asc) */
