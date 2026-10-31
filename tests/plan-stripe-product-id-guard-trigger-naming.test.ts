@@ -15,6 +15,9 @@
  *     「トリガー」の後の ( の中 (「トリガー 2 種 (…)」「…のトリガー・…の RPC は … (…)」の形も) で 2. の名前を関数と呼ばずに書く所が無い。
  *     例外は FROZEN_MIGRATION_HITS (編集しない既存の migration。CLAUDE.md「既存の migration ファイルは編集せず」) の数まで。
  *     設計書 (docs/design) も 0 件
+ *  3a. 本番の DB に残るコメント (migration を番号順に当てたとき、対象ごとに最後に効く COMMENT ON の文) にも 3. の書き方が無い。
+ *     例外の表の migration の COMMENT ON の文の中の数 (ファイルは編集しないので数は残る) は、後の migration が出し直している
+ *     (#2144 S4。20261031120000・20261031130000 が出し直した)
  *  4. 3. の見つけ方が、行をまたぐ書き方・` で囲む書き方・( で始める書き方・見出しと ( の中の並びを組にする書き方を見つけ、直した書き方 (トリガーの名前を書き、
  *     関数の名前は「関数 …」と書く) には反応しないことを、写しの文で確かめる
  * を確かめる。
@@ -22,6 +25,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { effectiveComments } from './helpers/sql-comment-statements';
 
 const ROOT = path.resolve(__dirname, '..');
 const MIGRATIONS_DIR = path.posix.join('supabase', 'migrations');
@@ -49,6 +53,24 @@ const CONSENT_ON_DELETE_FN = 'revoke_parental_consent_on_member_delete';
 /** auth.users のトリガー on_auth_user_password_changed が呼ぶ関数 */
 const PASSWORD_HISTORY_FN = 'password_history_record';
 
+/**
+ * 本番のコメントに残っていた書き方を出し直した migration (#2144 S4)。これより前の migration だけを当てたときのコメントには
+ * 3. の書き方が残っていたことを確かめて、3a. の見つけ方が空振りしないことを見る
+ */
+const COMMENTS_REISSUE_MIGRATION = '20261031130000_object_comments_trigger_names.sql';
+/**
+ * COMMENTS_REISSUE_MIGRATION の前の migration だけを当てたとき、本番に最後に効いていたコメントのうち 3. の書き方のもの
+ * ([出した migration, 対象, 関数の名前])。列 user_profiles.last_login_at の分は 20261031120000 (#2141) が先に出し直した
+ */
+const COMMENT_HITS_BEFORE_REISSUE: readonly (readonly [file: string, key: string, fn: string])[] = [
+  ['20261016190000_deletion_record_and_invite_email_hash.sql', 'FUNCTION public.membership_audit_hash_email_in_metadata(jsonb)', 'membership_audit_hash_invite_email'],
+  ['20261016243000_auth_history_sessions.sql', 'COLUMN public.user_sessions_metadata.alert_status', SESSION_CREATED_FN],
+  ['20261023130000_account_deletion_owner_guard.sql', 'TABLE public.account_deletion_guards', 'organizations_owner_not_deleting'],
+  ['20261024130000_plan_deprecate_lock_and_price_change_reservation.sql', 'FUNCTION public.family_group_hold_plan_key_share()', DEPRECATE_FN],
+  ['20261024130000_plan_deprecate_lock_and_price_change_reservation.sql', 'FUNCTION public.organization_hold_plan_key_share()', DEPRECATE_FN],
+  ['20261024130000_plan_deprecate_lock_and_price_change_reservation.sql', 'FUNCTION public.personal_subscription_hold_plan_key_share()', DEPRECATE_FN],
+];
+
 /** 走査する場所 (リポジトリの根からの相対パス。ファイルでもディレクトリでもよい) */
 const SCAN_ROOTS = ['src', 'tests', 'docs', 'apps', 'scripts', 'supabase', 'CLAUDE.md'];
 /** 中に入らないディレクトリの名前 (依存・生成物) */
@@ -60,6 +82,12 @@ const TEXT_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '
  * 編集しない既存の migration に残る「トリガー <関数の名前>」の数 ([ファイル, 関数の名前, 数])。
  * 本番で適用済みの migration は書き換えない (CLAUDE.md「既存の migration ファイルは編集せず、変更は必ず新しい migration として追加する」)。
  * 新しい migration と、ここに無い組は 0 件を求める。
+ * 数には COMMENT ON の文 (本番の DB のコメント) の中のものも入る。ファイルは編集しないので数は減らないが、本番に最後に効くコメントは
+ * 後の migration が出し直している (下の「本番に最後に効くコメント」の it が確かめる。#2144 S4):
+ *   - 20261016243000 の auth_session_created の 2 = 列 user_sessions_metadata.alert_status の COMMENT (20261031130000 が出し直した) と
+ *     列 user_profiles.last_login_at の COMMENT (20261031120000 が出し直した)。user_profiles_fill_login_stats の 1 も last_login_at の COMMENT
+ *   - 20261016190000 の 1・20261023130000 の 3 のうち 1・20261024130000 の 4 のうち 3 = COMMENT ON の文 (20261031130000 が出し直した)
+ *   - ほか (-- のコメントと、関数の本文の中の -- のコメント) は本番のコメントではない
  */
 const FROZEN_MIGRATION_HITS: readonly (readonly [file: string, fn: string, count: number])[] = [
   ['supabase/migrations/20261008090000_family_members_status_guard.sql', 'guard_family_members_privileged', 1],
@@ -290,6 +318,20 @@ describe('トリガーの呼び名 (#2128 docs-1031c の R2 指摘 1・#2134 U3)
     expect(
       overAllowance(countByFileAndFn(hits.filter(({ file }) => isFrozenMigration(file))), allowanceOf(FROZEN_MIGRATION_HITS)),
     ).toEqual([]);
+  });
+
+  it('本番に最後に効くコメント (migration を番号順に当てた COMMENT ON の文) にも、関数の名前を「トリガー」と呼ぶ所が無い', () => {
+    const migrations = migrationFiles().map((file) => ({ file, sql: fs.readFileSync(path.join(ROOT, file), 'utf-8') }));
+    const hitsOf = (files: readonly { file: string; sql: string }[]): string[] =>
+      [...effectiveComments(files)].flatMap(([key, { file, text }]) =>
+        triggerCalledByFunctionName(text ?? '', fnsToFind).map(({ fn }) => `${path.posix.basename(file)} ${key} ${fn}`),
+      );
+    expect(migrations.map(({ file }) => path.posix.basename(file))).toContain(COMMENTS_REISSUE_MIGRATION);
+    expect(hitsOf(migrations)).toEqual([]);
+
+    // 見つけ方が空振りしない: 出し直す前の migration だけを当てたコメントには、出し直した 6 つが残っていた
+    const before = migrations.filter(({ file }) => path.posix.basename(file) < COMMENTS_REISSUE_MIGRATION);
+    expect(hitsOf(before).sort()).toEqual(COMMENT_HITS_BEFORE_REISSUE.map(([file, key, fn]) => `${file} ${key} ${fn}`).sort());
   });
 
   it('例外の表は migration から読んだ探す名前だけを書き、migrations の下にあるファイルだけ', () => {
