@@ -62,6 +62,22 @@ interface BestMeal {
 }
 
 const DOW = ["日", "月", "火", "水", "木", "金", "土"];
+
+// ---- ホームの一覧の並びの鍵 ----
+// Web の src/lib/api/list-order.ts の LIST_ORDERS (pantryItemsByExpiration・homeLatestBadge・homeBestVegMeal) と同じ鍵で並べる。
+// 1 つの鍵だけで並べると、同じ値の行の順は DB 任せで、開くたびに入れ替わりうる (Web と別の行が「最新のバッジ」「今週のベスト」になりうる)。
+// そこで最後に一意の鍵 (id、id の無い user_badges は badge_id) の昇順を重ねる。NULL の位置は PostgreSQL の既定 (昇順は最後・降順は最初) と同じ値を明示する。
+// モバイルは別パッケージで src/ を import しないため鍵をここに写す。Web と同じであることは apps/mobile/__tests__/hooks/useHomeData-list-order.test.ts が表で確かめる。
+/** 昇順・NULL は最後 (PostgreSQL の昇順の既定) */
+const ORDER_ASC_NULLS_LAST = { ascending: true, nullsFirst: false } as const;
+/** 降順・NULL は最初 (PostgreSQL の降順の既定) */
+const ORDER_DESC_NULLS_FIRST = { ascending: false, nullsFirst: true } as const;
+/** 降順・NULL は最後 (野菜のスコアの無い食事を最後にする) */
+const ORDER_DESC_NULLS_LAST = { ascending: false, nullsFirst: false } as const;
+/** id を持つ表で最後に重ねる一意の鍵 */
+const ID_TIEBREAK_COLUMN = "id";
+/** user_badges は主キーが (user_id, badge_id) で id が無い。user_id で絞って読むので、その中では badge_id が一意 */
+const USER_BADGES_TIEBREAK_COLUMN = "badge_id";
 // todayStr is computed fresh on each fetchAll call, not cached at module level
 // 日本の今日。期間の起点も todayCalendarDate() (日本の今日の暦日) から数える (端末のタイムゾーンに左右されない #1049 F7-21)
 function getTodayStr() { return todayLocal(); }
@@ -303,7 +319,8 @@ export const useHomeData = (userId: string | undefined) => {
         .eq("user_id", uid)
         .lte("expiration_date", pantryExpiringSoonUntil(todayStr))
         .gte("expiration_date", todayStr)
-        .order("expiration_date");
+        .order("expiration_date", ORDER_ASC_NULLS_LAST)
+        .order(ID_TIEBREAK_COLUMN, ORDER_ASC_NULLS_LAST);
 
       if (data) setExpiringItems(data);
     } catch (e) {
@@ -345,7 +362,8 @@ export const useHomeData = (userId: string | undefined) => {
         .from("user_badges")
         .select(`obtained_at, badges(name, code)`)
         .eq("user_id", uid)
-        .order("obtained_at", { ascending: false })
+        .order("obtained_at", ORDER_DESC_NULLS_FIRST)
+        .order(USER_BADGES_TIEBREAK_COLUMN, ORDER_ASC_NULLS_LAST)
         .limit(1)
         .maybeSingle();
 
@@ -398,7 +416,8 @@ export const useHomeData = (userId: string | undefined) => {
         .gte("user_daily_meals.day_date", formatCalendarDate(sevenDaysAgo))
         .eq("is_completed", true)
         .not("image_url", "is", null)
-        .order("veg_score", { ascending: false, nullsFirst: false })
+        .order("veg_score", ORDER_DESC_NULLS_LAST)
+        .order(ID_TIEBREAK_COLUMN, ORDER_ASC_NULLS_LAST)
         .limit(1);
 
       if (data && data.length > 0 && (data[0] as any).image_url) {
