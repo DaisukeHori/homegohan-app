@@ -11,6 +11,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { lastPageToRefetch } from '@/lib/list-pagination';
+import { SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
 import {
   displayableOperatorError,
   fetchOperatorJson,
@@ -203,7 +204,7 @@ export default function MembershipAuditPage() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">メンバシップ 監査ログ</h1>
-        <p className="text-sm text-gray-500 mt-1">組織・家族のメンバーシップの操作の記録をすべて閲覧できます (スーパー管理者のみ)</p>
+        <p className="text-sm text-gray-500 mt-1">組織・家族のメンバーシップの操作の記録をすべて閲覧できます ({SUPER_ADMIN_ONLY_NOTE})</p>
       </div>
 
       {/* フィルタ */}

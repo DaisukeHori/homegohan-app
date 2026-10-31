@@ -5,6 +5,7 @@
  */
 import type { EmailEnvelope } from '@/lib/emails/envelope';
 import { getEmailFrom } from '@/lib/site-config';
+import { SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
 
 export interface PgCronStalledEmailVars {
   /** 宛先 (環境変数 OPS_ALERT_EMAIL) */
@@ -62,7 +63,7 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
       '  SELECT jobname, schedule, active FROM cron.job ORDER BY jobid;',
       '  SELECT jobid, status, start_time, end_time FROM cron.job_run_details ORDER BY start_time DESC LIMIT 20;',
       'DB の再起動の直後や、pg_cron の worker が止まったときに起きます。直らなければ Supabase のサポートへ。',
-      '運用ログの画面 (super_admin のみ):',
+      `運用ログの画面 (${SUPER_ADMIN_ONLY_NOTE}):`,
       vars.logs_url,
       '',
       `確認した時刻: ${JST_MINUTE_FORMAT.format(vars.detected_at)} (日本時間)`,
