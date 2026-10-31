@@ -77,7 +77,7 @@
 
 - 規約の文面・版・施行日 (弁護士の確認。`08` §7.2)。
 - 同意の記録の仕組み (`accept_legal_documents`・`terms_acceptances`) は変えない。DB の変更 (migration・RLS) は無い。
-- アプリが Supabase (PostgREST) を直接読む経路 (`apps/mobile/src/hooks/useHomeData.ts`・`apps/mobile/src/lib/recipeCollections.ts` (2026-10-16 に削除した。#1598)・`apps/mobile/src/lib/pushNotifications.ts`・`apps/mobile/app/onboarding/questions.tsx` の `supabase.from(...)`) は、Next の middleware を通らないので本書のゲートの外 (§6.13 の限界・§8)。
+- アプリが Supabase (PostgREST) を直接読む経路 (`apps/mobile/src/lib/recipeCollections.ts` (2026-10-16 に削除した。#1598)・`apps/mobile/src/lib/pushNotifications.ts`・`apps/mobile/app/onboarding/questions.tsx` の `supabase.from(...)`。アプリのホームは Web の画面の WebView (`apps/mobile/app/(tabs)/home.tsx`) で、ホームのデータを直読みしない) は、Next の middleware を通らないので本書のゲートの外 (§6.13 の限界・§8)。
 - モバイルだけに関わる対象外 (`LEGAL_CONSENT_NOTICE` をネイティブに出さないこと・ネイティブのサインアップ画面の同意のチェック) は 13b §1.3。
 
 ---
@@ -1004,7 +1004,7 @@ sequenceDiagram
 
 | 見ないもの | 理由 | 代わり |
 |---|---|---|
-| アプリが Supabase (PostgREST / Storage) を直接読む経路 (`useHomeData.ts`・`recipeCollections.ts`・`pushNotifications.ts`・`onboarding/questions.tsx`) | Next の middleware を通らない | 本書の範囲外 (§8 Q-2。塞ぐなら DB 側の判定) |
+| アプリが Supabase (PostgREST / Storage) を直接読む経路 (`recipeCollections.ts`・`pushNotifications.ts`・`onboarding/questions.tsx`。アプリのホームは Web の画面の WebView (`apps/mobile/app/(tabs)/home.tsx`) で、ホームのデータを直読みしない) | Next の middleware を通らない | 本書の範囲外 (§8 Q-2。塞ぐなら DB 側の判定) |
 | Edge Functions を利用者の JWT で直接呼ぶ経路 | 同上。2026-10-15 の origin/main のアプリには `functions.invoke` / `functions/v1` の呼び出しが無い (grep 0 件) | 足すときは Edge Function 側で判定 (AI 同意の `_shared/ai-consent-guard.ts` の形) |
 | `src/app` の `/api` の外の route handler (`(auth)/auth/callback`・`(auth)/auth/native-bridge`・`handson-tour/replay`) | 画面の分岐を通る (認証の途中は対象外。replay は GET の画面のゲートが掛かる) | 既存の画面のゲート |
 | 動的な区間を固定の値で置き換えること | route の中の分岐 (ID の存在など) は見ない。見るのは middleware が 403 を返すかだけ | middleware は path だけで決めるので十分 |
