@@ -18,7 +18,7 @@
  *       anon・ログインユーザーの誰でも呼べた (anon / authenticated への REVOKE が PUBLIC に効いていなかった)
  *
  * 期待する挙動 (20261008160000_revoke_anon_execute_on_definer_functions.sql の後):
- *   - A: anon が EXECUTE できる public の SECURITY DEFINER 関数は、このファイルの許可リストの 2 本だけ。
+ *   - A: anon が EXECUTE できる public の SECURITY DEFINER 関数は、このファイルの許可リストの 3 本だけ (3 本目は cross/21 の recipe_author_display_names)。
  *        新しい関数が既定の権限のまま作られると、このテストが落ちる。
  *        anon に適用されるポリシーは、anon が実行できない関数を呼ばない (呼ぶと 0 行ではなく 42501 になる)
  *   - B: 関数ごとの EXECUTE 権限 (anon / authenticated / service_role / PUBLIC) が決定表のとおり
@@ -97,6 +97,8 @@ const ANON_EXECUTABLE_DEFINER_ALLOWLIST: Record<string, string> = {
     '招待ページ /invite/[token] が、ログイン前に招待の中身 (組織名・メール・期限) を出すために呼ぶ (src/app/invite/[token]/page.tsx)',
   'get_promotion_details(text)':
     '参加リクエストの承認ページ /family/promotions/[token] が、ログイン前に内容を出すために呼ぶ (src/app/family/promotions/[token]/page.tsx)',
+  'recipe_author_display_names(uuid[])':
+    '公開レシピの一覧・詳細 (GET /api/recipes・GET /api/recipes/[id]) が、未ログインでも作者の表示名を出すために呼ぶ (src/lib/recipes/viewer-lookups.ts。cross/21)',
 };
 
 /** anon が EXECUTE できる public の SECURITY DEFINER 関数 (拡張機能が持つ関数は除く) */
@@ -120,7 +122,7 @@ async function anonExecutableDefinerFunctions() {
   `);
 }
 
-describe('#1103 (7) A: anon が EXECUTE できる SECURITY DEFINER 関数は許可リストの 2 本だけ', () => {
+describe('#1103 (7) A: anon が EXECUTE できる SECURITY DEFINER 関数は許可リストの 3 本だけ', () => {
   it('A1: 許可リストに無い SECURITY DEFINER 関数が、anon に EXECUTE を許していない', async () => {
     const rows = await anonExecutableDefinerFunctions();
     const allowed = new Set(Object.keys(ANON_EXECUTABLE_DEFINER_ALLOWLIST));
@@ -140,7 +142,7 @@ describe('#1103 (7) A: anon が EXECUTE できる SECURITY DEFINER 関数は許�
     ).toEqual([]);
   });
 
-  it('A1b: 許可リストの 2 本は、いまも anon が呼べる (外すと未ログインの招待ページ・承認ページが動かなくなる)', async () => {
+  it('A1b: 許可リストの 3 本は、いまも anon が呼べる (外すと未ログインの招待ページ・承認ページが動かなくなる)', async () => {
     const rows = await anonExecutableDefinerFunctions();
     const actual = rows.map((r) => r.sig);
     const missing = Object.keys(ANON_EXECUTABLE_DEFINER_ALLOWLIST).filter((sig) => !actual.includes(sig));
