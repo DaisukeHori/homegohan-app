@@ -2472,14 +2472,16 @@ const PLAN_COLUMNS =
  */
 export async function listPublicPlans(): Promise<PublicPlan[]> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from('subscription_plans')
-    .select(PLAN_COLUMNS)
-    .eq('status', 'public')
-    .in('plan_type', [...PURCHASABLE_PLAN_TYPES])
-    .neq('plan_key', FREE_PLAN_KEY)
-    .gt('monthly_price_jpy', 0)
-    .order('display_order', { ascending: true });
+  const { data, error } = await orderListBy(
+    supabase
+      .from('subscription_plans')
+      .select(PLAN_COLUMNS)
+      .eq('status', 'public')
+      .in('plan_type', [...PURCHASABLE_PLAN_TYPES])
+      .neq('plan_key', FREE_PLAN_KEY)
+      .gt('monthly_price_jpy', 0),
+    LIST_ORDERS.billingPublicPlans,
+  );
   if (error) {
     logger.error('公開のプランの一覧を読めませんでした (/pricing はフリーのカードだけを描く)', error);
     return [];
