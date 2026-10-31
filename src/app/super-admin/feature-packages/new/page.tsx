@@ -94,7 +94,7 @@ export default function FeaturePackageNewPage() {
       <form onSubmit={handleSubmit} className="bg-white rounded-xl border border-slate-200 p-6 space-y-5">
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">
-            package_key *
+            パッケージの鍵 *
             <span className="text-xs text-slate-400 ml-2">英小文字・数字・アンダースコアのみ</span>
           </label>
           <input

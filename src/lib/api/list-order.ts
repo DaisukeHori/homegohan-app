@@ -171,6 +171,11 @@ export const LIST_ORDERS = {
   aiConsultationContextBadges: withNonIdTiebreak('user_badges', [descending('obtained_at')]),
   /** AI 相談の文脈: AI のインサイト (作った日時の新しい順・件数の上限つき) */
   aiConsultationContextInsights: withIdTiebreak('health_insights', [descending('created_at')]),
+  /**
+   * AI 相談の文脈: レシピのコレクション (作った日時の新しい順・件数の上限つき)。AI はプロンプトに載ったコレクションしか指せないので、
+   * 件数を超えた利用者でも、どのコレクションを渡すかを決める (同じ日時は id の順)
+   */
+  aiConsultationRecipeCollections: withIdTiebreak('recipe_collections', [descending('created_at')]),
   /** AI 相談の文脈: 使っている買い物リストの品 (分類の順) */
   aiConsultationContextShoppingItems: withIdTiebreak('shopping_list_items', [ascending('category')]),
   /**

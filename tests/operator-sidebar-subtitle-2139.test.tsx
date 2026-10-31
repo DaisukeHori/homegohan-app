@@ -31,6 +31,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { createRoot } from 'react-dom/client';
 import { act, createElement, type ReactElement, type ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { isEnglishOnlyText } from './helpers/english-only-text';
 
 vi.mock('next/link', () => ({
   default: ({ href, children, ...rest }: { href: string; children: ReactNode } & Record<string, unknown>) => (
@@ -95,16 +96,8 @@ const OPERATOR_SIDEBAR_SUBTITLE = 'ほめゴハン 運営';
  */
 const ENV_BADGE_LABELS: ReadonlySet<string> = new Set(['PROD', 'STAGING', 'PREVIEW', 'LOCAL / STAGING']);
 
-/**
- * 英字だけの文 (2 文字以上で、英字で始まり英字か閉じ括弧で終わり、間は英字・空白・記号・括弧だけ。日本語を 1 文字も含まない)。
- * 括弧つきの英字の文 (以前の NPS の画面の h2「NPS (Net Promoter Score)」) も英字だけと判定する。
- * 以前は括弧を許しておらず、この形を見逃していた (#2150 Q3b-1)
- */
-const ENGLISH_ONLY_TEXT = /^[A-Za-z][A-Za-z\s./&()-]*[A-Za-z)]$/;
-
-function isEnglishOnlyText(text: string): boolean {
-  return ENGLISH_ONLY_TEXT.test(text.trim());
-}
+// 英字だけの文の判定は表の列名・欄名の見張り (tests/operator-column-labels-2157.test.ts) と同じものを使う。
+// 括弧つきの英字の文 (#2150 Q3b-1)・下線や数字・コロンを含む英字の文 (#2157 R2) も英字だけと判定する
 
 type LayoutComponent = (props: { children: ReactNode }) => Promise<ReactElement>;
 

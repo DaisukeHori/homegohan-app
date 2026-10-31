@@ -866,7 +866,7 @@ function PlanDetailContent() {
         <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">plan_key</label>
+              <label className="block text-xs font-medium text-slate-500 mb-1">プランの鍵</label>
               <code className="font-mono text-sm bg-slate-100 px-2 py-1 rounded">{plan.plan_key}</code>
             </div>
             <div>
