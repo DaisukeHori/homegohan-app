@@ -1286,7 +1286,10 @@ describe('他人から見た非公開のレシピのコメント (cross/25。#21
 | P-2 非公開 | 作者が公開にする | P-1 | 作者 | × → ○ | ○ | ○ |
 | P-1 公開 | 運営が隠す (`hideModeratedContent`。service_role) | P-3 | 運営 (本人は `hidden_*` を書けない。トリガー) | ○ → × | ○ | ○ |
 | P-3 隠した | 運営が戻す (`POST /api/admin/moderation/{type}/{id}/restore`) | P-1 | 運営 | × → ○ | ○ | ○ |
+| P-3 隠した | 作者が非公開に戻す (`PUT /api/recipes/[id]` `isPublic: false`。route は `hidden_at` を見ずに `is_public` を書く (`src/app/api/recipes/[id]/route.ts:158`)) | P-4 | 作者 (RLS `Users can manage own recipes`。トリガー `trg_recipes_guard_hidden_columns` は `hidden_*` の列の更新だけに当たり、`is_public` は止めない) | × のまま | ○ | ○ |
 | P-2 非公開 | 運営が隠す | P-4 | 運営 | × | ○ | ○ |
+| P-4 非公開・隠した | 作者が公開にする (`PUT /api/recipes/[id]` `isPublic: true`。route:158 は `hidden_at` を見ない) | P-3 | 作者 (P-3 → P-4 と同じ) | × のまま (隠されているので) | ○ | ○ |
+| P-4 非公開・隠した | 運営が戻す | P-2 | 運営 | × のまま (非公開なので) | ○ | ○ |
 | P-5 作者なし・公開 | 運営が隠す | P-6 | 運営 | ○ → × | ○ | — |
 | P-6 作者なし・隠した | 運営が戻す | P-5 | 運営 | × → ○ | ○ | — |
 | P-5 作者なし・公開 | service_role が `is_public` を false にする (アプリの経路は無い。F-20) | P-7a | service_role | ○ → ○ (`recipes` の RLS は作者のいない行の `is_public` を見ない) | ○ | — |
@@ -1494,7 +1497,7 @@ sequenceDiagram
 | `docs/design/cross/21-recipe-author-display-name.md` | F-16 (:173) | 「`recipe_comments` の SELECT は `Anyone can view comments` (TO authenticated・USING true) で anon は読めない」→「`recipe_comments` の SELECT は `recipe_comments_select_own_or_visible_recipe` (TO authenticated・USING 本人の行 OR そのレシピを読める人。cross/25) で anon は読めない (本書の時点は `Anyone can view comments` (USING true) だった)」 | マージと同日 |
 | `docs/design/cross/21-recipe-author-display-name.md` | F-19b (:178) | 「fix 枝のコメント `GET` もレシピの見え方を見ずに、`recipe_comments` を RLS (authenticated に USING true) で読む」→「コメント `GET` はレシピの見え方を見ずに `recipe_comments` を RLS で読む (本書の時点は authenticated に USING true。cross/25 の後は、読めるレシピのコメントと本人の行だけが返る)」 | マージと同日 |
 | `docs/design/cross/21-recipe-author-display-name.md` | §7.12 の表 (:1558) | 「`recipe_comments` の SELECT は authenticated だけ (F-16)」→「`recipe_comments` の SELECT は authenticated だけで、読めるレシピのコメントと本人の行に限る (F-16・cross/25)」 | マージと同日 |
-| `docs/design/cross/21-recipe-author-display-name.md` | §4.3 S-2 (:252) | 変更なし (「コメントは `recipe_comments` の RLS (authenticated だけ) で 0 件」は設計後も正しい) | — |
+| `docs/design/cross/21-recipe-author-display-name.md` | §4.3 のトレースの表の S-2 の行 (「未ログイン → `viewerId` null でも RPC は呼ぶ」で始まる行。§0 のシナリオの表の S-2 ではない方) | 変更なし (「コメントは `recipe_comments` の RLS (authenticated だけ) で 0 件」は設計後も正しい) | — |
 | `docs/design/cross/20-terms-privacy-text.md`・`src/lib/legal/privacy-text.ts` | — | 変更なし (第9条・第8条の文は設計後の挙動と一致する。§6.8) | — |
 | `tests/legal-claims-1901.ts:368` (`privacy-9#13` の evidence) と、その写し `docs/design/cross/20-terms-privacy-text.md` §10.3 (:2443) | — | 任意: evidence の末尾に「・docs/design/cross/25-recipe-comments-select-scope.md (§6.8)」を足す (T-35 は evidence のパスの実在を見るので、本書が main に入った後に。tests の行と cross/20 §10.3 の写しを同時に)。足さなくても食い違いではない | 任意 |
 | `docs/design/cross/20-terms-privacy-text.md` | §10.3 の `privacy-3#6` の写し (:2321)・T-34 の表とカテゴリの対応の写し (`recipe_comments: 'レシピ'`。:2773) | 変更なし (第3条の「レシピ」の行の根拠と、表の分類の写し。SELECT のポリシーに触れない。写し元の `tests/legal-claims-1901.ts:246`・`tests/legal-text-1901.test.ts:158` も §16 のとおり反応しない) | — |
