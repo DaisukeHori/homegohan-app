@@ -14,6 +14,7 @@
  */
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { GET } from '@/app/api/recipes/[id]/route';
 import { LIST_ORDERS } from '@/lib/api/list-order';
 import { RECIPE_AUTHOR_DISPLAY_NAMES_RPC } from '@/lib/recipes/viewer-lookups';
 
@@ -100,7 +101,6 @@ describe('#2166 X6 レシピの詳細のコメントの並び', () => {
   });
 
   it('埋め込んだコメントを、コメントの一覧と同じ鍵 (書いた日時の新しい順 → id の順) で並べて読み、レシピの行には並びを付けない', async () => {
-    const { GET } = await import('@/app/api/recipes/[id]/route');
     const res = await GET(new Request(`http://localhost/api/recipes/${RECIPE_ID}`), {
       params: Promise.resolve({ id: RECIPE_ID }),
     });
