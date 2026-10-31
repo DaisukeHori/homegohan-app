@@ -102,6 +102,8 @@ const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/
 /** SQL の 1 つの文字列リテラル ('…'。'' は ' 1 文字) */
 const SQL_LITERAL = String.raw`'((?:[^']|'')*)'`;
 const unquote = (body: string): string => body.replace(/''/g, "'");
+/** SQL の -- のコメントを外す ($$ … $$ の本文を残したまま見るため。ここで見る文字列の中に -- は無い) */
+const stripLineComments = (text: string): string => text.replace(/--.*$/gm, '');
 const keyOf = ({ kind, target }: Target): string => commentKey(kind, target);
 /** 関数の名前を「トリガー」の直後に書く所 (間に空白・` ・ ( だけを挟む) */
 const triggerBeforeFn = (fn: string): RegExp => new RegExp(`トリガー[\\s\`(]*${escapeRegExp(fn)}(?![A-Za-z0-9_])`);
@@ -114,11 +116,14 @@ const migrations = fs
 const before = effectiveComments(migrations.filter(({ file }) => file < MIGRATION_FILE));
 const after = effectiveComments(migrations);
 
-/** migration の CREATE TRIGGER 文ごとの (トリガー, 関数) の組 (名前の " とスキーマの接頭辞は外す) */
+/**
+ * migration の CREATE TRIGGER 文ごとの (トリガー, 関数) の組 (名前の " とスキーマの接頭辞は外す)。
+ * DO $$ … $$ の中の CREATE TRIGGER (auth の表のトリガーは同じ名前が無いときだけ作る) も読むので、本文は残して -- のコメントだけ外す
+ */
 function triggerPairsIn(sql: string): { trigger: string; fn: string }[] {
   const pattern =
     /\bCREATE\s+(?:OR\s+REPLACE\s+)?(?:CONSTRAINT\s+)?TRIGGER\s+"?(\w+)"?[\s\S]*?\bEXECUTE\s+(?:FUNCTION|PROCEDURE)\s+(?:"?\w+"?\.)?"?(\w+)"?\s*\(/gi;
-  return [...sqlTopLevelText(sql).matchAll(pattern)].map(([, trigger, fn]) => ({ trigger, fn }));
+  return [...stripLineComments(sql).matchAll(pattern)].map(([, trigger, fn]) => ({ trigger, fn }));
 }
 
 /** 文が組を「トリガー <トリガー> (関数 <関数>)」と書き、関数の名前を「トリガー」の直後に書かない */
@@ -153,8 +158,6 @@ function statementsOf(text: string): string[] {
   return out.filter((statement) => statement.length > 0);
 }
 
-/** SQL の -- のコメントを外す (戻し口の DO の本文を残したまま見るため。文字列の中に -- は無い) */
-const stripLineComments = (text: string): string => text.replace(/--.*$/gm, '');
 /** 表・行・関数・トリガー・権限を変える文の頭の語 */
 const SCHEMA_OR_DATA_CHANGE = /\b(?:CREATE|ALTER|DROP|INSERT|UPDATE|DELETE|TRUNCATE|GRANT|REVOKE)\b/i;
 const LOCK_TIMEOUT_STATEMENT = /^SET\s+LOCAL\s+lock_timeout\s*=\s*'\d+s'$/i;
