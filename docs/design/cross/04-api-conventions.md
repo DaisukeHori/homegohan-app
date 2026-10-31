@@ -469,7 +469,7 @@ Response:
 
 ### 6.2.1 一覧の並び (同じ値の行の順)
 
-一覧は、並びの鍵 (作った日時・始まる日など) のあとに一意の鍵 (主キー `id`。`id` の無い表は一意の別の列) の昇順を重ねて、同じ値の行の順を決める。offset で読む一覧ではページの境目の重なり・抜けを防ぎ、件数の上限つきの一覧と 1 行だけ読む所 (`limit(1)`・`maybeSingle`) では、同じ値のどの行を取るかを決める。鍵は `src/lib/api/list-order.ts` の `LIST_ORDERS` に一覧ごとに書き、route は `orderListBy` で並べる (NULL の位置は PostgreSQL の既定と同じ値を明示する)。`tests/list-order-tiebreak-2134.test.ts` が `src/app/api` の全体を走査し、`.order(` を直接書けるのは並びの鍵がもう一意の所 (主キー・一意の制約の列で終わる、`id` で終える) だけ (そのテストの `ALLOWED_DIRECT_ORDERS` に理由つきで書く)。cursor の一覧 (6.1) は従来どおり `created_at DESC, id DESC` で終える。
+一覧は、並びの鍵 (作った日時・始まる日など) のあとに一意の鍵 (主キー `id`。`id` の無い表は一意の別の列) の昇順を重ねて、同じ値の行の順を決める。offset で読む一覧ではページの境目の重なり・抜けを防ぎ、件数の上限つきの一覧と 1 行だけ読む所 (`limit(1)`・`maybeSingle`) では、同じ値のどの行を取るかを決める。鍵は `src/lib/api/list-order.ts` の `LIST_ORDERS` に一覧ごとに書き、route は `orderListBy` で並べる (NULL の位置は、いままでの order で `nullsFirst` を省いていた鍵は PostgreSQL の既定 (昇順は最後・降順は最初) と同じ値を明示し、`nullsFirst` を書いていた鍵はその値を保つ。例: 運営の組織の譲渡の候補 `LIST_ORDERS.operatorOrgTransferCandidates` の `last_login_at` は降順で空を最後)。`tests/list-order-tiebreak-2134.test.ts` が `src/app/api` の全体を走査し、`.order(` を直接書けるのは並びの鍵がもう一意の所 (主キー・一意の制約の列で終わる、`id` で終える) だけ (そのテストの `ALLOWED_DIRECT_ORDERS` に理由つきで書く)。cursor の一覧 (6.1) は従来どおり `created_at DESC, id DESC` で終える。
 
 ### 6.3 制限値
 
