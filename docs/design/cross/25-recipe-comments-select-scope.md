@@ -1230,6 +1230,7 @@ describe('他人から見た非公開のレシピのコメント (cross/25。#21
 | E-3 `GET /api/recipes/[id]` の埋め込み | V | 200・全部 | 404 (レシピが見えない) | 変更なし |
 | 〃 | A | 200・全部 | 200・全部 | 変更なし |
 | E-4 書き出し | 本人 | 自分の行 | 自分の行 | 変更なし (注の 1 行だけ §7.6) |
+| E-5 並びの定義 (`LIST_ORDERS.recipeComments`) | — (読まない。E-1 の並びを決めるだけ) | 影響なし | 影響なし | 変更なし |
 | E-6 作者名の関数 (b) | DEFINER | 公開の書き手の名前 | 返さない (関数の K-公開) | 変更なし |
 | 運営の画面・API | — | 読まない | 読まない | — |
 | 退会・削除・完全削除 | CASCADE / SR | 消える | 消える | 変更なし |
@@ -1274,6 +1275,8 @@ describe('他人から見た非公開のレシピのコメント (cross/25。#21
 | どの状態 | 書き手が自分のコメントを消す (直接の DELETE) | その行だけ無し | 書き手 (SELECT で本人の行 + DELETE `user_id = auth.uid()`) | — | — | — |
 | P-2〜P-4・P-6・P-7 | 書き手が自分のコメントを直す (直接の UPDATE) | 同じ状態 (本文が変わる) | 書き手 | × のまま | ○ | ○ |
 | どの状態 | 他人 (V) が C の行を消す・直す | 変わらない (0 行) | UPDATE / DELETE のポリシーが偽 | — | — | — |
+| どの状態 | 作者 (A) が自分のレシピへの C の行を消す・直す (直接の DELETE / UPDATE) | 変わらない (0 行に当たる。エラーにならない) | UPDATE / DELETE のポリシーは `user_id = auth.uid()` だけで、レシピの作者の句は無い (`20251126124224:9739, 9960`。本書は変えない)。A は C の行を SELECT で読めるが、消せない・直せない | 変わらない | ○ のまま | ○ のまま (読めるだけ) |
+| P-1〜P-4 | 作者 (A) が自分のレシピに `POST` で書く | 行が 1 つ増える (その行では A が書き手 C でもある) | INSERT の WITH CHECK `user_id = auth.uid()`。RETURNING は本人の行の句 | P-1 なら ○ / P-2〜P-4 なら × | ○ (A 本人) | ○ |
 | どの状態 (見えないレシピ) | C が `POST` で書く | 行が 1 つ増える (C と A にだけ見える) | INSERT の WITH CHECK `user_id = auth.uid()`。RETURNING は本人の行の句 | × | ○ | ○ |
 
 (b) ポリシーの状態 × 操作 → 状態 (migration と戻し口)
@@ -1455,6 +1458,8 @@ sequenceDiagram
 
 ## 17. 他の文書への追随表 (本書では編集しない。実装の PR の後の docs の PR で)
 
+`docs/` を `recipe_comments`・`Anyone can view comments`・`誰でも閲覧可` で洗った (origin/main `0577f909f` で `git grep`)。当たったのは cross/20・cross/21・cross/22 の 3 冊で、直さないものも、本書の範囲に関わる行は「変更なし」として残す (cross/21 の索引・関数・テストの正典コードの行は本書の変更に関わらないので載せない)。
+
 | 文書 | 行 | 直し方 (「今の文」→「直す文」。逐語) | 期日 |
 |---|---|---|---|
 | `docs/design/cross/CLAUDE.md` | ファイル一覧の表の最後の行 (`24-freeze-notify-mail.md` の行) の次 | 1 行を足す: 1 列目 `25-recipe-comments-select-scope.md`・2 列目「公開レシピのコメントの読み取りの範囲を絞る (`recipe_comments` の SELECT を「そのコメントのレシピを読める人」と「書いた本人」だけに。migration と戻し口・契約テスト・結合テスト)」・3 列目 `#2166 X1`。欠番の注記「10・11 は欠番 (13a は分冊前の 13 の番号を引き継いでいる)。」は変えない | マージと同日 |
@@ -1464,6 +1469,8 @@ sequenceDiagram
 | `docs/design/cross/21-recipe-author-display-name.md` | §4.3 S-2 (:252) | 変更なし (「コメントは `recipe_comments` の RLS (authenticated だけ) で 0 件」は設計後も正しい) | — |
 | `docs/design/cross/20-terms-privacy-text.md`・`src/lib/legal/privacy-text.ts` | — | 変更なし (第9条・第8条の文は設計後の挙動と一致する。§6.8) | — |
 | `tests/legal-claims-1901.ts:368` (`privacy-9#13` の evidence) と、その写し `docs/design/cross/20-terms-privacy-text.md` §10.3 (:2443) | — | 任意: evidence の末尾に「・docs/design/cross/25-recipe-comments-select-scope.md (§6.8)」を足す (T-35 は evidence のパスの実在を見るので、本書が main に入った後に。tests の行と cross/20 §10.3 の写しを同時に)。足さなくても食い違いではない | 任意 |
+| `docs/design/cross/20-terms-privacy-text.md` | §10.3 の `privacy-3#6` の写し (:2321)・T-34 の表とカテゴリの対応の写し (`recipe_comments: 'レシピ'`。:2773) | 変更なし (第3条の「レシピ」の行の根拠と、表の分類の写し。SELECT のポリシーに触れない。写し元の `tests/legal-claims-1901.ts:246`・`tests/legal-text-1901.test.ts:158` も §16 のとおり反応しない) | — |
+| `docs/design/cross/22-dish-favorites.md` | 追随表の `tests/legal-claims-1901.ts:246` (`privacy-3#6`) の行 (:2825) | 変更なし (evidence の F-42 の表の列挙の記述。SELECT のポリシーに触れない) | — |
 | `CLAUDE.md` (ルート) | — | 変更なし (`recipe_comments` の記述は無い) | — |
 | `supabase/baseline/catalog/catalog_policies.csv:329`・`prod_schema.sql:9586` | — | 変更なし (本番のスナップショット。取り直しで追随) | — |
 
