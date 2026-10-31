@@ -76,11 +76,11 @@ export default function NpsPage() {
       {/* フィルタ */}
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-4 mb-6 flex flex-wrap gap-3 items-end">
         <div>
-          <label className="block text-xs text-slate-500 mb-1">期間 FROM</label>
+          <label className="block text-xs text-slate-500 mb-1">期間の始め</label>
           <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm" />
         </div>
         <div>
-          <label className="block text-xs text-slate-500 mb-1">期間 TO</label>
+          <label className="block text-xs text-slate-500 mb-1">期間の終わり</label>
           <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm" />
         </div>
         <div>

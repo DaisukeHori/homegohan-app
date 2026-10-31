@@ -846,10 +846,10 @@ function AuditRowTable({
           <thead className="bg-slate-50 text-xs text-slate-500">
             <tr>
               <th className="px-3 py-2">日時</th>
-              <th className="px-3 py-2">action_type</th>
+              <th className="px-3 py-2">操作</th>
               <th className="px-3 py-2">重要度</th>
-              {showStageReason ? <th className="px-3 py-2">stage / reason</th> : null}
-              <th className="px-3 py-2">details</th>
+              {showStageReason ? <th className="px-3 py-2">段階 / 理由</th> : null}
+              <th className="px-3 py-2">詳細</th>
             </tr>
           </thead>
           <tbody>
