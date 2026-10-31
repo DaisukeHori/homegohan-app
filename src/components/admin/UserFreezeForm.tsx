@@ -36,6 +36,7 @@ import {
   type FreezeBody,
 } from '@/lib/admin/users-schemas';
 import { describeFreezeNotificationOutcome, freezeNotificationOutcomeOf } from '@/lib/admin/freeze-notification-status';
+import { SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
 
 export type UserFreezeFormProps = {
   /** 対象の利用者の ID */
@@ -338,7 +339,8 @@ export default function UserFreezeForm({ userId, isBanned, isSuperAdmin }: UserF
                 onChange={() => setBanType('permanent')}
                 disabled={submitting}
               />
-              永久 BAN (super_admin のみ)
+              {/* ロールは表示名で出す (#2128 V1-2) */}
+              永久 BAN ({SUPER_ADMIN_ONLY_NOTE})
             </label>
           )}
         </div>

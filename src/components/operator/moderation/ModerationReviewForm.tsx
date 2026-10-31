@@ -24,6 +24,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { UNAUTHENTICATED_SCREEN_MESSAGE } from '@/lib/admin/api-error-message';
 import { moderationStatusLabel } from '@/lib/admin/moderation-labels';
+import { SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
 
 export type ModerationReviewFormProps = {
   /** モデレーション対象のタイプ (food / recipe) */
@@ -41,7 +42,7 @@ const ACTION_OPTIONS = [
   { value: 'delete_only', label: 'コンテンツ削除のみ' },
   { value: 'delete_and_warn', label: '削除 + 警告' },
   { value: 'delete_and_temp_ban', label: '削除 + 一時 BAN' },
-  { value: 'delete_and_perm_ban', label: '削除 + 永久 BAN (super_admin のみ)', superAdminOnly: true },
+  { value: 'delete_and_perm_ban', label: `削除 + 永久 BAN (${SUPER_ADMIN_ONLY_NOTE})`, superAdminOnly: true },
   { value: 'escalate', label: 'エスカレーション' },
 ] as const;
 

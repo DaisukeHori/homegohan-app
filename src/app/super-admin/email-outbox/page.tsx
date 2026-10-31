@@ -28,6 +28,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { UNAUTHENTICATED_SCREEN_MESSAGE, forbiddenMessageForScreen } from '@/lib/admin/api-error-message';
+import { SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
 import { rereadUnavailableMessage } from '@/lib/super-admin/detail-reread';
 import {
   NO_RESPONSE_LIST_RELOADED_GUIDE,
@@ -146,7 +147,8 @@ interface ApiErrorBody {
 function describeFailure(status: number, body: ApiErrorBody | null): string {
   // 401 は運営の画面で揃えた「ログインし直してください」(#2112 Z4)
   if (status === 401) return UNAUTHENTICATED_SCREEN_MESSAGE;
-  if (status === 403) return forbiddenMessageForScreen(body, 'この画面を見る権限がありません (super_admin のみ)');
+  // ロールは表示名で出す (#2128 V1-2)
+  if (status === 403) return forbiddenMessageForScreen(body, `この画面を見る権限がありません (${SUPER_ADMIN_ONLY_NOTE})`);
   return body?.error?.message ?? `読み込みに失敗しました (HTTP ${status})`;
 }
 
