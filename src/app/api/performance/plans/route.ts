@@ -6,6 +6,7 @@ import { internalError } from '@/lib/api/errors'
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character'
 import { API_INVALID_JSON_MESSAGE, API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
 import { isUuid } from '@/lib/http-params'
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order'
 
 /** 400: 調整の種類 (adjustmentType) と理由 (rationale) が無い */
 const ADJUSTMENT_FIELDS_REQUIRED_MESSAGE = '調整の種類 (adjustmentType) と理由 (rationale) を指定してください'
@@ -33,11 +34,8 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get('status') || 'active'
     const all = searchParams.get('all') === 'true'
 
-    let query = supabase
-      .from('performance_plans')
-      .select('*')
-      .eq('user_id', user.id)
-      .order('start_date', { ascending: false })
+    // 始まる日の新しい順。同じ日に始まる計画は id の順 (#2139 T1)
+    let query = orderListBy(supabase.from('performance_plans').select('*').eq('user_id', user.id), LIST_ORDERS.performancePlans)
 
     if (!all) {
       query = query.eq('status', status)

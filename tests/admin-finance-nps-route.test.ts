@@ -364,7 +364,11 @@ describe('GET /api/admin/finance/nps — DB への問い合わせ', () => {
     expect(callsOf(chain, 'lt')).toEqual([['sent_at', '2026-03-31T15:00:00.000Z']]);
     expect(callsOf(chain, 'lte')).toEqual([]);
     expect(callsOf(chain, 'eq')).toEqual([['plan_key', 'pro']]);
-    expect(callsOf(chain, 'order')).toEqual([['responded_at', { ascending: false }]]);
+    // 回答日の新しい順 (NULL の位置はいままでの降順の既定と同じ)。同じ日時は id の順で、上限の境目でどれが入るかも決まる (#2139 T1)
+    expect(callsOf(chain, 'order')).toEqual([
+      ['responded_at', { ascending: false, nullsFirst: true }],
+      ['id', { ascending: true, nullsFirst: false }],
+    ]);
     expect(callsOf(chain, 'limit')).toEqual([[10]]);
   });
 
@@ -378,7 +382,11 @@ describe('GET /api/admin/finance/nps — DB への問い合わせ', () => {
     expect(callsOf(chain, 'lt')).toEqual([['created_at', '2026-03-31T15:00:00.000Z']]);
     expect(callsOf(chain, 'lte')).toEqual([]);
     expect(callsOf(chain, 'eq')).toEqual([]);
-    expect(callsOf(chain, 'order')).toEqual([['created_at', { ascending: false }]]);
+    // 作成日の新しい順。同じ日時は id の順 (#2139 T1)
+    expect(callsOf(chain, 'order')).toEqual([
+      ['created_at', { ascending: false, nullsFirst: true }],
+      ['id', { ascending: true, nullsFirst: false }],
+    ]);
     expect(callsOf(chain, 'limit')).toEqual([[10]]);
   });
 

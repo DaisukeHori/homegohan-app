@@ -3,6 +3,7 @@
  * 呼ぶ側は必ず認証のあと (route) か、Webhook の署名のあと。
  */
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 import {
   FREE_PLAN_KEY,
   STRIPE_EVENT_STUCK_MINUTES,
@@ -71,12 +72,10 @@ export function createBillingRepository(admin: Admin = getSupabaseAdmin()): Bill
       return data?.plan_key ?? null;
     },
     async findLiveSubscription(userId) {
-      const { data, error } = await admin
-        .from('personal_subscriptions')
-        .select(SUBSCRIPTION_VIEW_COLUMNS)
-        .eq('user_id', userId)
-        .in('status', [...LIVE_SUBSCRIPTION_STATUSES])
-        .order('created_at', { ascending: false })
+      const { data, error } = await orderListBy(
+        admin.from('personal_subscriptions').select(SUBSCRIPTION_VIEW_COLUMNS).eq('user_id', userId).in('status', [...LIVE_SUBSCRIPTION_STATUSES]),
+        LIST_ORDERS.billingLiveSubscription,
+      )
         .limit(1)
         .maybeSingle();
       if (error) throw error;

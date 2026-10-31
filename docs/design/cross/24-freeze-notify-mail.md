@@ -131,7 +131,7 @@
 | F-2 | POST: `requireRole(['admin','super_admin'])` → Zod → permanent は super_admin だけ → temporary は `duration_days` 必須 → `isUuid` → profile 読み → super_admin は 403 `OP_TARGET_PROTECTED` → `unbanAt` を計算 → 条件つき UPDATE (`frozen_at: new Date().toISOString()`・`frozen_reason`・`frozen_by`・`unban_at`) → 0 行なら読み直して 404 / 409 `CONFLICT_STALE_DATA` → `banId = crypto.randomUUID()` → `recordAdminAudit('admin.user.ban', details { ban_id, ban_type, reason_category, reason_detail, duration_days, notify_user, unban_at }, severity 'warn')` → `{ data: { ban_id, unban_at } }`。`notification_message` は details にも入らず、送る処理も無い。UPDATE と監査は別の呼び出しでトランザクションは無い。凍結中の対象を再び凍結する分岐は無い (上書き) | `src/app/api/admin/users/[id]/freeze/route.ts:59-240` (`unbanAt` :158・UPDATE :165-168・`banId` :213・監査 :214-232・応答 :234-239) |
 | F-3 | DELETE: `UnfreezeBodySchema` → 凍結中 (`frozen_at IS NOT NULL`) のときだけ UPDATE で `frozen_*`・`unban_at` を NULL に → 0 行なら 404 / 409 → `recordAdminAudit('admin.user.unban', details { reason })`。利用者へ知らせる処理は無く、知らせるかどうかの入力も無い | 同 `:242-366` |
 | F-4 | 画面 `UserFreezeForm`: state は `reasonCategory`・`reasonDetail`・`banType`・`durationDays` (既定 '7')・`unfreezeReason`・`submitting`・`error`・`done`。`send()` は boolean を返し、応答の JSON は失敗のときだけ読む。送る本文は `ban_type`・`reason_category`・`reason_detail`・`duration_days` (temporary のとき) で、`notify_user` も `notification_message` も送らない (grep `notify` 0 件)。成功の文は「永久 BAN で凍結しました」/「N 日間の一時 BAN で凍結しました」 | `src/components/admin/UserFreezeForm.tsx` の `send`・`handleFreeze` (本文の組み立てと、成功の `setDone`)・期間の欄・注意の帯 |
-| F-5 | ページ `src/app/admin/users/[id]/freeze/page.tsx` は `GET /api/admin/users/{id}` で `is_banned` を読み、`UserFreezeForm` に `userId`・`isBanned`・`isSuperAdmin` を渡す。利用者の詳細 `/admin/users/[id]` は `ban_history` (監査 `admin.user.ban` / `unban` の行) を super_admin にだけ出す | `src/app/admin/users/[id]/freeze/page.tsx`・`src/app/api/admin/users/[id]/route.ts:130, 158`・`src/app/admin/users/[id]/page.tsx:184` |
+| F-5 | ページ `src/app/admin/users/[id]/freeze/page.tsx` は `GET /api/admin/users/{id}` で `is_banned` を読み、`UserFreezeForm` に `userId`・`isBanned`・`isSuperAdmin` を渡す。利用者の詳細 `/admin/users/[id]` は `ban_history` (監査 `admin.user.ban` / `unban` の行) を super_admin にだけ出す | `src/app/admin/users/[id]/freeze/page.tsx`・`src/app/api/admin/users/[id]/route.ts:130, 158`・`src/app/admin/users/[id]/page.tsx` の `auditLogs` (`ban_history`。super_admin のときだけ) と凍結の画面へのリンク (`/admin/users/${id}/freeze`。`isAdmin` のとき) |
 | F-6 | `sendEmail(envelope, options)` は Resend を呼ばず、封筒を検証 → `RESEND_API_KEY` が無ければ `skipped` (`not_configured`) → 停止リストに載っていれば dead の行を残して `suppressed` の失敗 → `email_outbox` に `queued` で 1 行 (`template`・`to_email`・`from_email`・`reply_to`・`subject`・`text_body`・`html_body`・`user_id`・`idempotency_key`・`redact_after_send`) → `{ ok: true, id }`。例外を投げない。`options` は `idempotencyKey` / `userId` / `redactAfterSend` | `src/lib/emails/send.ts:60-69, 92` |
 | F-7 | `EmailEnvelopeSchema`: `to` (email)・`from` (既定 `getEmailFrom()`)・`subject` (1〜100)・`text` (1〜)・`html?`・`reply_to?`・`template?`・`contains_secret?: literal(true)`。`template` は文面 (`render*Email`) が必ず入れる | `src/lib/emails/envelope.ts:10-27` |
 | F-8 | 本人へ知らせるメールの前例 2 本: `renderAccountDeletedEmail` (`src/lib/emails/account/account-deleted.ts:59-61`。`template: 'account_deleted'`・日本時間の `Intl.DateTimeFormat`・`getSupportEmail()`・`emailSignature()`) と `renderLoginNewDeviceEmail` (`src/lib/emails/account/login-new-device.ts`。リンクは `getSiteUrl()` + 固定のパスの定数)。文面は `src/lib/emails/account/` に置く | 同左 |
@@ -481,6 +481,8 @@ https://homegohan-app.vercel.app
  * 形は #1183 のサポートの返信メールの結果 (src/lib/admin/support-reply-email-status.ts) と同じで、not_requested (チェックを外した) を足したもの。
  */
 
+import { SUPER_ADMIN_SCREEN_LABEL } from '@/lib/admin/operator-role-labels';
+
 /**
  * sent は送信待ち (email_outbox) に受け付けた (届いたかどうかは含まない。送るのは worker: #1193)。
  * skipped はメール送信の設定が無く登録していない。failed は登録の時点で分かる失敗。not_requested は notify_user が false で送らなかった
@@ -529,7 +531,7 @@ export const FREEZE_NOTIFICATION_AUDIT_LOGS_PATH = '/super-admin/audit-logs';
 /** 凍結の監査の種別 (POST /api/admin/users/[id]/freeze が details.notification とともに記録する) */
 export const FREEZE_NOTIFICATION_AUDIT_ACTION_TYPE = 'admin.user.ban';
 /** 応答に結果が無い・読めないときの文 (古い API との食い違いなど)。結果を確かめられる画面と、その画面で探す行を名指す */
-export const FREEZE_NOTIFICATION_UNKNOWN_MESSAGE = `通知メールの結果を確認できませんでした (super_admin の監査ログ閲覧 ${FREEZE_NOTIFICATION_AUDIT_LOGS_PATH} で ${FREEZE_NOTIFICATION_AUDIT_ACTION_TYPE} の行を展開し、details の notification を確認してください)`;
+export const FREEZE_NOTIFICATION_UNKNOWN_MESSAGE = `通知メールの結果を確認できませんでした (${SUPER_ADMIN_SCREEN_LABEL}の監査ログ閲覧 ${FREEZE_NOTIFICATION_AUDIT_LOGS_PATH} で ${FREEZE_NOTIFICATION_AUDIT_ACTION_TYPE} の行を展開し、details の notification を確認してください)`;
 
 /**
  * 応答の data.notification を読む。形が合わなければ null (画面は FREEZE_NOTIFICATION_UNKNOWN_MESSAGE を出す)。
@@ -1073,8 +1075,8 @@ import { describeFreezeNotificationOutcome, freezeNotificationOutcomeOf } from '
 | Zod の失敗 (`notification_message` が 1001 文字以上・`notify_user` が boolean でない・ほか) | 400 | `VALIDATION_ERROR` | 「バリデーションエラー」+ `details` (flatten。画面は読まない) | 無し | 無し |
 | temporary で `duration_days` 無し | 400 | `VALIDATION_ERROR` | 「一時 BAN の場合は日数 (duration_days) が必須です」 | 無し | 無し |
 | 未認証 | 401 | `AUTH_UNAUTHENTICATED` | 「認証が必要です」 | 無し | 無し |
-| ロール不足・二段階認証の未完了・permanent を admin が | 403 | `OP_PERMISSION_DENIED` | `operatorForbiddenMessageOf` / 「永久 BAN はスーパー管理者 (super_admin) のみ実行可能です」 | 無し | 無し |
-| 対象が super_admin | 403 | `OP_TARGET_PROTECTED` | 「スーパー管理者 (super_admin) のユーザーを凍結することはできません」 | 無し | 無し |
+| ロール不足・二段階認証の未完了・permanent を admin が | 403 | `OP_PERMISSION_DENIED` | `operatorForbiddenMessageOf` / 「永久 BAN は運営最上位のみ実行できます」(`PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE`。src/lib/admin/user-ban.ts) | 無し | 無し |
+| 対象が super_admin | 403 | `OP_TARGET_PROTECTED` | 「運営最上位のユーザーは凍結できません」(`SUPER_ADMIN_FREEZE_REJECTED_MESSAGE`。src/lib/admin/user-ban.ts) | 無し | 無し |
 | 対象が無い (UUID でない id を含む) | 404 | `NOT_FOUND` | 「ユーザーが見つかりません」 | 無し | 無し |
 | 読んでから書くまでに対象が変わった | 409 | `CONFLICT_STALE_DATA` | `STALE_FREEZE_TARGET_RESPONSE` の文 | 無し | 無し |
 | DB の失敗 (読み・UPDATE・読み直し) | 500 | `INTERNAL_ERROR` | 「凍結処理に失敗しました」 | 無し | 無し |

@@ -31,6 +31,14 @@ const mixedCase = (id: string) => id.replace(/[a-f]/g, (c, i: number) => (i % 2 
 
 let selectEqCalls: unknown[][];
 let updates: Array<{ values: unknown; eq: unknown[] }>;
+/** その日の食事の取得に重ねた order の引数 (表示の順 → id の順。#2139 T1) */
+let orderCalls: unknown[][];
+
+/** order を重ねられ、await するとその日の食事を返す鎖 */
+interface MealsChain {
+  order: (...args: unknown[]) => MealsChain;
+  then: (onFulfilled: (value: { data: typeof MEALS; error: null }) => unknown, onRejected?: (reason: unknown) => unknown) => Promise<unknown>;
+}
 
 const postRequest = (body: unknown) =>
   new Request('http://localhost/api/meal-plans/meals/reorder', {
@@ -43,6 +51,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   selectEqCalls = [];
   updates = [];
+  orderCalls = [];
   mockGetUser.mockResolvedValue({ data: { user: USER }, error: null });
   mockFrom.mockImplementation((table: string) => {
     if (table !== 'planned_meals') throw new Error(`想定外のテーブル: ${table}`);
@@ -50,7 +59,14 @@ beforeEach(() => {
       select: () => ({
         eq: (...args: unknown[]) => {
           selectEqCalls.push(args);
-          return { order: async () => ({ data: MEALS, error: null }) };
+          const chain: MealsChain = {
+            order: (...orderArgs: unknown[]) => {
+              orderCalls.push(orderArgs);
+              return chain;
+            },
+            then: (onFulfilled, onRejected) => Promise.resolve({ data: MEALS, error: null as null }).then(onFulfilled, onRejected),
+          };
+          return chain;
         },
       }),
       update: (values: unknown) => ({
@@ -80,6 +96,11 @@ describe('POST /api/meal-plans/meals/reorder: 大文字・混在の UUID (#1793)
     expect(updates).toEqual([
       { values: { display_order: 2 }, eq: ['id', LUNCH_1] },
       { values: { display_order: 1 }, eq: ['id', LUNCH_2] },
+    ]);
+    // その日の食事は表示の順で読み、同じ表示の順の食事は id の順 (入れ替える相手が読むたびに変わらない。#2139 T1)
+    expect(orderCalls).toEqual([
+      ['display_order', { ascending: true, nullsFirst: false }],
+      ['id', { ascending: true, nullsFirst: false }],
     ]);
   });
 

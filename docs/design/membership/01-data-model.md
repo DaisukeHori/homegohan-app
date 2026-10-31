@@ -1012,7 +1012,7 @@ ALTER TABLE meals
 CREATE INDEX IF NOT EXISTS idx_meals_paste_group ON meals(paste_group_id) WHERE paste_group_id IS NOT NULL;
 
 -- #1101 (migration 20261009000500): paste_group_id は authenticated / anon が書き換えられない
--- (トリガー guard_meal_paste_group_id。INSERT で NULL 以外・UPDATE で値を変える と 42501 CANNOT_MODIFY_PRIVILEGED_COLUMN)。
+-- (トリガー trg_meals_guard_paste_group_id (関数 guard_meal_paste_group_id)。INSERT で NULL 以外・UPDATE で値を変える と 42501 CANNOT_MODIFY_PRIVILEGED_COLUMN)。
 -- 書けるのは paste_meal_to_family (SECURITY DEFINER) と service_role だけ。運営のモデレーションがこのまとまりで複製を隠すため
 
 -- meals の閲覧 RLS — 自分 + 家族 (share_meals=TRUE のメンバ) の meals を見る

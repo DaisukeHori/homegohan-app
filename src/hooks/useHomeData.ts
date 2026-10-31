@@ -1,6 +1,7 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import { useState, useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { LIST_ORDERS, orderListBy } from "@/lib/api/list-order";
 import { toAnnouncement, toPlannedMeal } from "@/lib/converter";
 import { resolveDisplayName } from "@/lib/user-display";
 import { formatLocalDate, pantryExpiringSoonUntil, PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs } from "@homegohan/shared";
@@ -473,13 +474,15 @@ export const useHomeData = () => {
   // 冷蔵庫の期限切れ間近 (今日から PANTRY_EXPIRING_SOON_DAYS 日後の期限まで。全画面共通の範囲 #1602)
   const fetchExpiringItems = async (userId: string) => {
     try {
-      const { data } = await supabase
-        .from('pantry_items')
-        .select('*')
-        .eq('user_id', userId)
-        .lte('expiration_date', pantryExpiringSoonUntil(todayStr))
-        .gte('expiration_date', todayStr)
-        .order('expiration_date');
+      const { data } = await orderListBy(
+        supabase
+          .from('pantry_items')
+          .select('*')
+          .eq('user_id', userId)
+          .lte('expiration_date', pantryExpiringSoonUntil(todayStr))
+          .gte('expiration_date', todayStr),
+        LIST_ORDERS.pantryItemsByExpiration,
+      );
 
       if (data) {
         setExpiringItems(data.map((item: any) => ({
@@ -536,14 +539,16 @@ export const useHomeData = () => {
       setBadgeCount(count || 0);
 
       // 最新バッジ
-      const { data: latestData } = await supabase
-        .from('user_badges')
-        .select(`
+      const { data: latestData } = await orderListBy(
+        supabase
+          .from('user_badges')
+          .select(`
           obtained_at,
           badges(name, code)
         `)
-        .eq('user_id', userId)
-        .order('obtained_at', { ascending: false })
+          .eq('user_id', userId),
+        LIST_ORDERS.homeLatestBadge,
+      )
         .limit(1)
         .maybeSingle();
 
@@ -569,7 +574,7 @@ export const useHomeData = () => {
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
       
-      const { data } = await supabase
+      const bestMealQuery = supabase
         .from('planned_meals')
         .select(`
           *,
@@ -582,8 +587,10 @@ export const useHomeData = () => {
         .gte('user_daily_meals.day_date', formatLocalDate(sevenDaysAgo))
         .eq('is_completed', true)
         .not('image_url', 'is', null)
-        .order('veg_score', { ascending: false, nullsFirst: false })
-        .limit(1);
+        // 行は toPlannedMeal (引数は any) に渡すだけなので、結果の型を行の形に置き換える。select の結合の型のまま
+        // orderListBy に渡すと、型の展開が深くなりすぎて tsc が止まる (TS2589)
+        .returns<Record<string, unknown>[]>();
+      const { data } = await orderListBy<typeof bestMealQuery>(bestMealQuery, LIST_ORDERS.homeBestVegMeal).limit(1);
 
       if (data && data.length > 0) {
         setBestMealThisWeek(toPlannedMeal(data[0]));

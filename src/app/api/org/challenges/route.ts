@@ -5,6 +5,7 @@ import { requireOrgAdmin } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { isUuid, readJsonBody } from '@/lib/http-params';
 import { fetchChallengeAggregates } from '@/lib/org-challenge-api';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 import {
   ORG_CHALLENGE_MIN_PARTICIPANTS,
   ORG_CHALLENGE_TYPE_META,
@@ -59,9 +60,11 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
 
-    let query = supabase
-      .from('organization_challenges')
-      .select(`
+    // 作った日時の新しい順。同じ日時は id の順 (#2134 U2。LIST_ORDERS.orgChallenges)
+    let query = orderListBy(
+      supabase
+        .from('organization_challenges')
+        .select(`
         id,
         title,
         description,
@@ -76,8 +79,9 @@ export async function GET(request: Request) {
         created_at,
         departments(name)
       `)
-      .eq('organization_id', profile.organization_id)
-      .order('created_at', { ascending: false });
+        .eq('organization_id', profile.organization_id),
+      LIST_ORDERS.orgChallenges,
+    );
 
     if (status) {
       query = query.eq('status', status);
@@ -257,7 +261,7 @@ export async function PUT(request: Request) {
     }
 
     // #1688: 状態を変えるときは、現在の行 (状態・種類) を 1 回だけ読み、遷移表 (src/lib/org-challenge-privacy.ts) に無い変更を
-    // 409 で断る (終わった状態からは変えない・開催中を下書きに戻さない)。DB のトリガー org_challenge_guard_update も同じ表で止める。
+    // 409 で断る (終わった状態からは変えない・開催中を下書きに戻さない)。DB のトリガー trg_org_challenge_guard_update (関数 org_challenge_guard_update) も同じ表で止める。
     // 行が無い (他組織・存在しない) ときは、既存どおり更新 0 行で 200
     if (updates.status !== undefined) {
       const { data: current, error: currentError } = await supabase

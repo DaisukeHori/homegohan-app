@@ -231,8 +231,8 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | コード | 説明 | HTTP |
 |--------|------|------|
 | `CHALLENGE_TYPE_DISABLED` | 食事の記録から計算できない種類 (歩数・体重・カスタム) のチャレンジの作成・開始・参加 (`POST /api/org/challenges` の作成 `route.ts:163`・`PUT /api/org/challenges` の active への変更 `route.ts:284`・`POST /api/org/challenges/[id]/join` の参加 `[id]/join/route.ts:55`) | 400 (作成・開始) / 409 (参加) |
-| `CHALLENGE_STATUS_LOCKED` | **[NEW]** 状態の変更が遷移表 (draft → active / completed / cancelled、active → completed / cancelled) に無い (終わった状態から・active → draft・NULL へ)。`PUT /api/org/challenges` は今の行を読んで先に断り (`route.ts:277`)、読んでから書くまでに変わった場合は DB のトリガー `org_challenge_guard_update` の RAISE (P0001。`supabase/migrations/20261016240000_org_challenge_diff_privacy.sql:151`) を写す (`route.ts:306`〜`:308`。`mapChallengeLockError`)。PostgREST の直接の UPDATE では RAISE の文のまま 4xx。API の PUT は NULL を先に `INVALID_STATUS` (400) で断る | 409 (API) |
-| `CHALLENGE_PERIOD_LOCKED` | **[NEW]** draft 以外での `start_date` / `end_date` / `challenge_type` / `department_id` の変更と、常時の `organization_id` の変更 (DB のトリガー `org_challenge_guard_update` の RAISE。P0001。`20261016240000_org_challenge_diff_privacy.sql:157`・`:166`)。PostgREST の直接の UPDATE では RAISE の文のまま 4xx。`PUT /api/org/challenges` は止める列を書かないので実際には返らないが、返ったときは 409 に写す (`route.ts:306`〜`:308`) | 409 (API) |
+| `CHALLENGE_STATUS_LOCKED` | **[NEW]** 状態の変更が遷移表 (draft → active / completed / cancelled、active → completed / cancelled) に無い (終わった状態から・active → draft・NULL へ)。`PUT /api/org/challenges` は今の行を読んで先に断り (`route.ts:277`)、読んでから書くまでに変わった場合は DB のトリガー `trg_org_challenge_guard_update` (関数 `org_challenge_guard_update`) の RAISE (P0001。`supabase/migrations/20261016240000_org_challenge_diff_privacy.sql:151`) を写す (`route.ts:306`〜`:308`。`mapChallengeLockError`)。PostgREST の直接の UPDATE では RAISE の文のまま 4xx。API の PUT は NULL を先に `INVALID_STATUS` (400) で断る | 409 (API) |
+| `CHALLENGE_PERIOD_LOCKED` | **[NEW]** draft 以外での `start_date` / `end_date` / `challenge_type` / `department_id` の変更と、常時の `organization_id` の変更 (DB のトリガー `trg_org_challenge_guard_update` (関数 `org_challenge_guard_update`) の RAISE。P0001。`20261016240000_org_challenge_diff_privacy.sql:157`・`:166`)。PostgREST の直接の UPDATE では RAISE の文のまま 4xx。`PUT /api/org/challenges` は止める列を書かないので実際には返らないが、返ったときは 409 に写す (`route.ts:306`〜`:308`) | 409 (API) |
 | `CHALLENGE_NOT_FOUND` | チャレンジが無い・id が uuid でない・別の組織のもの (`POST /api/org/challenges/[id]/join` `[id]/join/route.ts:36`)。`GET /api/org/challenges/[id]` (`[id]/route.ts:49`) は、active / completed でないもの・食事の記録から計算できない種類のもの・別の部署向けのものも同じ 404 にする (`[id]/route.ts:63`。`isVisibleToMember`) | 404 |
 | `CHALLENGE_NOT_ACTIVE` | 開催中 (active) でないチャレンジへの参加 (`[id]/join/route.ts:58`) | 409 |
 | `CHALLENGE_ENDED` | 終了日 (JST) を過ぎたチャレンジへの参加 (`[id]/join/route.ts:62`) | 409 |
@@ -450,7 +450,7 @@ LIMIT $limit + 1;  -- +1 で has_more を判定
 
 ### 6.2 offset-based (件数を出す一覧)
 
-件数表示が必要な管理画面 (`/admin/*`, `/super-admin/*`) で使う。管理画面の外でも、公開レシピの一覧 `GET /api/recipes` (`page`・`limit` から offset を作る `src/app/api/recipes/route.ts:30-32`。件数より後ろのページは下の `resolveBeyondLastPage` で扱う `:71-77`)・お気に入りの一覧 `GET /api/favorites` (`offset`・`limit`)・運営の所属の監査 `GET /api/operator/membership/audit` (`page`) は offset で読む。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数を返す (`src/lib/api/list-range.ts` の `resolveBeyondLastPage`。数え直しも失敗したら 500。問い合わせ・開示等の請求の一覧は従来どおり `total: null`)。画面は件数から最後のページへ取り直す (`src/lib/list-pagination.ts`)。一覧の行の読み込みのそれ以外の DB の失敗は 200 の空の一覧にせず 500 (`tests/api-list-range-scan.test.ts` が `.range(` を使う route を見張る。#1917)。
+件数表示が必要な管理画面 (`/admin/*`, `/super-admin/*`) で使う。管理画面の外でも、公開レシピの一覧 `GET /api/recipes` (`src/app/api/recipes/route.ts` の `GET` が `page`・`limit` から offset を作る。件数より後ろのページは同じ `GET` が下の `resolveBeyondLastPage` で扱う)・お気に入りの一覧 `GET /api/favorites` (`offset`・`limit`)・運営の所属の監査 `GET /api/operator/membership/audit` (`page`) は offset で読む。 件数より後ろのページ (PostgREST の 416 / PGRST103) は失敗にせず、空のページと、同じ絞り込みで数え直した本当の件数を返す (`src/lib/api/list-range.ts` の `resolveBeyondLastPage`。数え直しも失敗したら 500。問い合わせ・開示等の請求の一覧は従来どおり `total: null`)。画面は件数から最後のページへ取り直す (`src/lib/list-pagination.ts`)。一覧の行の読み込みのそれ以外の DB の失敗は 200 の空の一覧にせず 500 (`tests/api-list-range-scan.test.ts` が `.range(` を使う route を見張る。#1917)。
 
 ```
 GET /api/v1/admin/users?page=2&limit=50
@@ -466,6 +466,10 @@ Response:
   }
 }
 ```
+
+### 6.2.1 一覧の並び (同じ値の行の順)
+
+一覧は、並びの鍵 (作った日時・始まる日など) のあとに一意の鍵 (主キー `id`。`id` の無い表は一意の別の列) の昇順を重ねて、同じ値の行の順を決める。offset で読む一覧ではページの境目の重なり・抜けを防ぎ、件数の上限つきの一覧と 1 行だけ読む所 (`limit(1)`・`maybeSingle`) では、同じ値のどの行を取るかを決める。鍵は `src/lib/api/list-order.ts` の `LIST_ORDERS` に一覧ごとに書き、route と、route や画面から呼ぶ helper (`src/lib`・`src/modules`)・hook (`src/hooks`)・画面は `orderListBy` で並べる (NULL の位置は、いままでの order で `nullsFirst` を省いていた鍵は PostgreSQL の既定 (昇順は最後・降順は最初) と同じ値を明示し、`nullsFirst` を書いていた鍵はその値を保つ。例: 運営の組織の譲渡の候補 `LIST_ORDERS.operatorOrgTransferCandidates` の `last_login_at` は降順で空を最後)。`tests/list-order-tiebreak-2134.test.ts` が `src/app` (route と画面)・`src/lib`・`src/hooks`・`src/modules`・`src/components`・`src/contexts` の全体を走査し (ブラウザで動く hook・画面も含む。テストの偽物 `src/__tests__` は含まない)、`.order(` を直接書けるのは並びの鍵がもう一意の所 (主キー・一意の制約の列で終わる、`id` で終える) だけ (そのテストの `ALLOWED_DIRECT_ORDERS` に理由つきで書く)。新しい側から件数の上限まで読み、古い順へ並べ直して使う所 (AI 相談の会話の続きの POST が AI に渡す過去のメッセージ `LIST_ORDERS.aiConsultationMessagesNewestFirst`) だけは、元の一覧 (`LIST_ORDERS.aiConsultationMessages`) の鍵をそっくり逆にした並び (向きと NULL の位置の両方が逆で、最後は `id` の降順) で読み、逆順に戻して元の一覧の末尾と同じ行・同じ順にする (古い順のまま件数で切ると、新しい側の行が落ちる)。cursor の一覧 (6.1) は従来どおり `created_at DESC, id DESC` で終える。
 
 ### 6.3 制限値
 

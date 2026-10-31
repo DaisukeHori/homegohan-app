@@ -14,7 +14,7 @@ import {
 import { renderPushMessage } from '@/lib/push/render';
 import { NOTIFICATION_ROUTES, resolveNotificationHref } from '../apps/mobile/src/lib/notificationRoute';
 
-/** 種類ごとの、トリガー (enqueue_weekly_menu_result_push) が入れる形の payload */
+/** 種類ごとの、トリガー (weekly_menu_requests_enqueue_push。関数 enqueue_weekly_menu_result_push) が入れる形の payload */
 const VALID_PAYLOADS: Readonly<Record<PushNotificationKind, Record<string, unknown>>> = {
   weekly_menu_completed: { request_id: '11111111-2222-4333-8444-555555555555', start_date: '2026-10-20', mode: 'v5' },
   weekly_menu_failed: { request_id: '11111111-2222-4333-8444-555555555555', start_date: '2026-10-20', mode: null },

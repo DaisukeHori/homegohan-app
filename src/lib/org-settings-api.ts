@@ -9,7 +9,7 @@
  * プラン (organizations.plan) は組織の管理者の経路では変えない (#1912。オーナーの選択 (2026-10-22・選択式)「運営だけが変える (推奨)」:
  * 「組織の管理者の設定画面では段階を表示だけにし、変更は運営の画面からだけにする (組織の契約は運営が決める)」)。
  * 本文に plan があれば 400 VALIDATION_ERROR で断る (黙って捨てて 200 を返さない)。変えるのは運営の
- * PATCH /api/admin/organizations/{id} (service_role) だけ。DB でもトリガー guard_organizations_plan_value が、
+ * PATCH /api/admin/organizations/{id} (service_role) だけ。DB でもトリガー trg_guard_organizations_plan_value (関数 guard_organizations_plan_value) が、
  * ログインした利用者 (authenticated) と anon が plan を変えること自体を拒む (20261022170000_org_plan_operator_only.sql)。
  */
 

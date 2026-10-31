@@ -16,6 +16,7 @@ import {
   MAX_INSIGHT_RECOMMENDATIONS,
   type GeneratedInsight,
 } from '@/lib/health-insight-rows';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 type UserLogger = ReturnType<ReturnType<typeof createLogger>['withUser']>;
 
@@ -54,13 +55,11 @@ export async function GET(request: NextRequest) {
   const unreadOnly = searchParams.get('unread') === 'true';
   const alertsOnly = searchParams.get('alerts') === 'true';
 
-  let query = supabase
-    .from('health_insights')
-    .select('*')
-    .eq('user_id', user.id)
-    .eq('is_dismissed', false)
-    .order('created_at', { ascending: false })
-    .limit(limit);
+  // 作った日時の新しい順。同じ日時は id の順で、上限の境目でどれが入るかも決まる (#2139 T1)
+  let query = orderListBy(
+    supabase.from('health_insights').select('*').eq('user_id', user.id).eq('is_dismissed', false),
+    LIST_ORDERS.healthInsights,
+  ).limit(limit);
 
   if (unreadOnly) {
     query = query.eq('is_read', false);

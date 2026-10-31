@@ -1,5 +1,5 @@
 // src/__tests__/app/super-admin/index-redirect.test.ts
-// /super-admin に page.tsx が無く、管理画面の「super_admin コンソール」リンクとロール切り替えが 404 になっていた問題の回帰防止。
+// /super-admin の入口 (/admin のサイドバーの『運営最上位の画面』リンクと、メイン画面のロール切り替えの行き先) が守ること:
 //  - /super-admin はプラン管理 (/super-admin/plans) へ redirect する
 //  - 送り先の画面があること
 //  - /super-admin を指すリンクが残っていること (リンクを消して 404 を隠したのではないこと)

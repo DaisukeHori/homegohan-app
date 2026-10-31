@@ -82,7 +82,7 @@
 | F3 | **admin の JWT から直接 INSERT しても `plan_key_cached` は同期できない**: 特権列ガード `guard_user_profiles_privileged` は `current_user IN ('authenticated','anon')` の UPDATE で `plan_key_cached` の変更を 42501 にする。運営のセッションも `authenticated` ロールなので、本人の JWT では書けない。写像 (SECURITY DEFINER・所有者 postgres) だけが書ける | 同 `:502-549` |
 | F4 | 写像 `billing_apply_stripe_subscription` のロック順: advisory `billing-user:<uuid>` → `stripe-subscription:<sub>` → 契約の行 (`FOR NO KEY UPDATE`) → `family_groups` の行 → `user_profiles` の行。家族の同期は `plan_type='family'` のとき `UPDATE family_groups SET plan_key, member_limit=LEAST(COALESCE(max_members,4),20) WHERE representative_id=<利用者> AND status='active'`、終了のときは「同じ利用者に同じプランの live な行が無いとき」だけ `free` / 4 に戻す。`plan_key_cached` は live な行から `ORDER BY created_at DESC, id LIMIT 1` で再計算 | 同 `:190-420` (billing/01 §6.4 (9) の 2.・3.・10.) |
 | F5 | 写像の 6. は「同じ利用者の別の live 行 (別の Stripe の契約、または手動付与) があれば `BILL_LIVE_ROW_CONFLICT`」。M 行が live の間に Stripe の契約が届けば、イベントは `failed`・500 で監査 `system.stripe.event_failed` (billing/01 S12・§13.3) | 同 `:296-308` |
-| F6 | 家族のトリガー `billing_family_plan_follow_representative` (BEFORE INSERT / UPDATE OF `representative_id`) は、代表者の live な行を `JOIN subscription_plans … plan_type='family'` で読む。**行の由来 (S / M) を見ない**ので、M 行にもそのまま効く | 同 `:441-497` |
+| F6 | 家族のトリガー `family_groups_billing_plan_follow_representative` (関数 `billing_family_plan_follow_representative`) (BEFORE INSERT / UPDATE OF `representative_id`) は、代表者の live な行を `JOIN subscription_plans … plan_type='family'` で読む。**行の由来 (S / M) を見ない**ので、M 行にもそのまま効く | 同 `:441-497` |
 | F7 | live = `status IN ('trialing','active','paused','past_due','grace')` (部分 UNIQUE `idx_personal_subscriptions_active_per_user`)。`get_effective_plan` は `trialing / active / grace / past_due` の個人契約 → 家族 → 組織 → `free`。**由来 (S / M) を区別しない** | `20251126124224:14264`・`20261010140000_ai_usage_foundation.sql:95-160` |
 | F8 | `personal_subscriptions` の列: `id`・`user_id`・`plan_key`・`status` (8 値)・`trial_started_at`・`trial_ends_at`・`trial_source`・`paused_at`・`paused_until`・`pause_reason`・`starts_at`・`current_period_start`・`current_period_end`・`cancel_at`・`cancelled_at`・`past_due_since`・`grace_started_at`・`stripe_customer_id`・`stripe_subscription_id`・`stripe_price_id`・`active_coupon_redemption_id`・`notes`・`created_at`・`updated_at`・`stripe_synced_at`・`stripe_status`・`cancel_at_period_end`・`billing_interval`。期限 (終了日) を表す専用の列は無い。`notes` は本人の SELECT ポリシーで読める (本人のデータの書き出しからは `omit` で外しているが、PostgREST の直接の SELECT では読める) | baseline `:5787-5816`・billing_core `:13-17`・`src/lib/account-export-tables.ts:249-255` |
 | F9 | `src/lib/billing/core.ts`: `LIVE_SUBSCRIPTION_STATUSES`・`SUBSCRIPTION_STATUSES`・`FREE_PLAN_KEY`・`PURCHASABLE_PLAN_TYPES = ['personal','family']`・`summarizeSubscription` は M 行に `source: 'manual'`・`can_cancel: false`・`can_resume: false` を返す。`BILLING_AUDIT_ACTIONS` は 9 つで手動付与の名前は無い。`BillingRepository.findLiveSubscription` は由来を問わず live 行を返す | 同ファイル `:85-99, 159-170, 724-749, 859-` |
@@ -95,7 +95,7 @@
 | F16 | 監査ログの本人の JWT からの INSERT は `action_type NOT LIKE 'system.%'` かつ運営の 6 ロールだけ。`system.*` と `actor_id NULL` は service_role / SECURITY DEFINER だけが書く (#1736) | `20261016238000_admin_audit_logs_insert_actor_only.sql:53-71` |
 | F17 | pg_cron のジョブの登録の書き方 (DO ブロック・`to_regclass('cron.job')` のガード・同じ名前の登録解除 → `cron.schedule('名前', '分 時 * * *', 'SELECT …;')`)。毎日のジョブは 03:10 / 03:15 / 03:20 / 03:25 / 03:45 / 03:55 / 01:30 / 00:20・00:35 JST。毎時 5 分 (`5 * * * *`) と 5 分ごと (`*/5`・`2-59/5`) のジョブもある。`operator/08` §3.0・§3.1 の注記が「migration が pg_cron に登録しているジョブは 11 つ」と名前の一覧を持ち、`tests/log-cleanup-dau-snapshot-contract.test.ts` が全 migration の `cron.schedule` の名前と数を突き合わせる | `20261010150000:216-233`・`20261016100000:160-170`・`docs/design/operator/08-cron-batches.md:15-22, 152-156` |
 | F18 | DB の型 (`src/types/database.types.ts`・`packages/shared/src/database.types.ts`) は migration の `CREATE FUNCTION` (トリガー関数を除く。EXECUTE の有無を問わない: `invoke_purge_hidden_content` も載る) を全部持つことを `tests/database-types-migrations-contract.test.ts` が求める | 同テスト・`src/types/database.types.ts:8902` |
-| F19 | `/admin/users/[id]` の page は `requireRoleForPage(['admin','super_admin','support'])` で守られ、`OperatorMfaResetSection` (client component) を `canResetMfa` のときだけ描く。節の形 (`section` + `h2` + form + `data-testid`) の先例。#1720 段 D (#1807) がログイン履歴の節 (`LoginHistorySection`。admin / super_admin) を足した。`tests/admin-user-login-history-page.test.tsx` がこの page を `renderToStaticMarkup` で描く | `src/app/admin/users/[id]/page.tsx:166, 187, 193, 317`・`src/components/admin/OperatorMfaResetSection.tsx` |
+| F19 | `/admin/users/[id]` の page は `requireRoleForPage(['admin','super_admin','support'])` で守られ、`OperatorMfaResetSection` (client component) を `canResetMfa` のときだけ描く。節の形 (`section` + `h2` + form + `data-testid`) の先例。#1720 段 D (#1807) がログイン履歴の節 (`LoginHistorySection`。admin / super_admin) を足した。`tests/admin-user-login-history-page.test.tsx` がこの page を `renderToStaticMarkup` で描く | `src/app/admin/users/[id]/page.tsx` (`requireRoleForPage`・`OperatorMfaResetSection`・`LoginHistorySection`)・`src/components/admin/OperatorMfaResetSection.tsx` |
 | F20 | JST の暦日の入力は `CalendarDateSchema` (`src/lib/calendar-date-schema.ts`) で受け、timestamptz との比較は `jstDayRangeTimestamps(from, to).toTimestampExclusive` (= `to` の翌日の JST 0 時) で作る。「今日」は `jstToday()`。素の日付の文字列を timestamptz の列に渡す書き方は `tests/jst-today-source-scan.test.ts` が止める | `src/lib/jst-day-ranges.ts:43, 73-81` |
 | F21 | `apply_coupon` は `personal_subscriptions.id` を `FOR NO KEY UPDATE` でロックし `active_coupon_redemption_id` だけを書く。M 行にも使える (billing/01 §7.1) | `20261007160700_apply_coupon_rpc.sql:147-152, 260-265` |
 | F22 | `PATCH /api/super-admin/plans/[id]` の廃止は `countPlanSubscribers` が live 5 値の `personal_subscriptions` を数え、1 件でもあれば 409 `OP_PLAN_HAS_SUBSCRIBERS`。由来を問わない | `src/lib/super-admin/plan-subscribers.ts:10-11,112-150` |
@@ -282,7 +282,7 @@ SET LOCAL lock_timeout = '10s';
 --     p_expires_at: 有効期限 (その時刻を過ぎたら日次のプロシージャ billing_expire_manual_subscriptions が expired にする)。NULL = 期限なし。now() より後であること。
 --     戻り値 (jsonb): { subscription_id, user_id, plan_key, status: 'active', expires_at }。
 --     ロックの順 (billing/01 §6.4 (9) の 2.・3.・10. と同じ): advisory billing-user:<uuid> → 契約の行 (FOR NO KEY UPDATE) → family_groups の行 → user_profiles の行。
---     写像 billing_apply_stripe_subscription・家族のトリガー billing_family_plan_follow_representative・apply_coupon と直列になる。
+--     写像 billing_apply_stripe_subscription・家族のトリガー family_groups_billing_plan_follow_representative (関数 billing_family_plan_follow_representative)・apply_coupon と直列になる。
 --     業務エラー (RAISE EXCEPTION '<コード>' USING ERRCODE = 'P0001', DETAIL = <補足>): BILL_UNKNOWN_USER / BILL_PLAN_NOT_GRANTABLE /
 --     BILL_MANUAL_EXPIRES_AT_PAST / BILL_LIVE_ROW_CONFLICT。引数の不足は 22023。監査は呼び出し側 (route) が admin.billing.manual_grant を書く。
 CREATE OR REPLACE FUNCTION public.billing_grant_manual_subscription(
@@ -477,7 +477,7 @@ COMMENT ON FUNCTION public.billing_revoke_manual_subscription(uuid) IS
 | 相手 | 相手が持つもの → 待つもの | 1 トランザクションのジョブが持つもの → 待つもの |
 |---|---|---|
 | 強制解散 `operator_force_dissolve_family` (最新の定義 `20261026100000_operator_force_dissolve_family_missing.sql` (家族の行を `FOR NO KEY UPDATE` (`:57`) → 無い家族・解散済みで止める → `family_dissolve_apply` (`:67`)。`user_profiles` の `family_id` を NULL にする `UPDATE user_profiles … WHERE family_id` は `family_dissolve_apply` の中)。ロックの順 (家族の行 → `user_profiles`) は `20261008090100_family_lock_order.sql:204`・`:207` と同じ。#1917 で後始末は `family_dissolve_apply` に移ったが、順は同じ)・利用者の解散 `dissolve_family_by_representative` (`20261019120000_self_dissolve.sql`。家族の行 → `family_members` → `user_profiles`。family/11 §11.3)・脱退 `leave_family` (`20261008090100_family_lock_order.sql:376`)・メンバーの削除 `remove_family_member` (同 `:422`) | `family_groups` の行 (G) → `user_profiles` の行 (U1) | `user_profiles` の行 (U1。U1 の周で書いた) → `family_groups` の行 (G。U2 の周の家族の同期) |
-| 代表者の交代 (U2 → U1。トリガー `billing_family_plan_follow_representative` は `family_groups` の行のあとに新しい代表者の advisory を取る。`20261016210000_billing_core.sql:451-460`) | `family_groups` の行 (G) → advisory `billing-user:<U1>` | advisory `billing-user:<U1>` (U1 の周で取った) → `family_groups` の行 (G) |
+| 代表者の交代 (U2 → U1。トリガー `family_groups_billing_plan_follow_representative` (関数 `billing_family_plan_follow_representative`) は `family_groups` の行のあとに新しい代表者の advisory を取る。`20261016210000_billing_core.sql:451-460`) | `family_groups` の行 (G) → advisory `billing-user:<U1>` | advisory `billing-user:<U1>` (U1 の周で取った) → `family_groups` の行 (G) |
 
 利用者ごとに COMMIT すれば、ジョブが同時に持つのは 1 人分の鍵と行だけで、その順は写像・付与・取り消しと同じ (advisory → 契約の行 → `family_groups` の行 → `user_profiles` の行) になる。写像 (1 人分) が家族の関数・交代と循環しない理由 (billing_core.sql:451-460 の注記) がそのまま当てはまる。
 
@@ -663,15 +663,15 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 | `src/lib/plan/entitlements.ts:370` `getEffectivePlan` (TS から DB の `get_effective_plan` を呼ぶ口。`src/lib/billing/service.ts:155` の `getBillingSummary` が呼ぶ) | 読 (RPC) | `get_effective_plan(p_user_id)` の戻り値 (空なら `free`) | 変えない。M 行が live なら付与したプランの `plan_key` を返し、要約の `effective_plan_key` になる。取り消し・期限切れの後は家族 / 組織 / `free` |
 | AI の 1 日の上限 `consume_ai_usage_at` (最新の定義は `20261011030000_ai_usage_unmetered_caps_and_grants.sql:79`。`:147` で `get_effective_plan` を呼び、その `plan_key` の `ai_daily_limits` の行 (無ければ `free` の行) で判定する。`20261011020000_ai_daily_limits.sql:132` は同じ関数の前の定義で、`030000` が置き換えた) ← `consume_ai_usage` (`20261011020000:176-185`)・`consume_ai_usage_capped_at` (`20261014100000_ai_usage_feature_daily_cap.sql:114`) ← `src/lib/plan/entitlements.ts:205-209` (`consumeAiUsage`)・`supabase/functions/_shared/ai-usage.ts:139-140` (Edge Function) | 読 (RPC の中で `get_effective_plan`) | `get_effective_plan(p_user_id)` → `ai_daily_limits.plan_key` | 変えない (関数も `ai_daily_limits` も触らない)。M 行が live の間は付与したプランの上限 (S1)、取り消し・期限切れの後は家族 / 組織 / `free` の上限になる。上限に数えない機能 (`ai_unmetered_daily_caps`) はプランを見ないので変わらない |
 | 写像 `billing_apply_stripe_subscription` の 6. (F5) | 読 | 同じ利用者の別の live 行 | 変えない。M 行が live なら `BILL_LIVE_ROW_CONFLICT` (S9・S10) |
-| 家族のトリガー `billing_family_plan_follow_representative` (F6) | 読 (live な家族プランの行) | `plan_type='family'` の live 行 | 変えない。M 行も拾う (S7・S8) |
+| 家族のトリガー `family_groups_billing_plan_follow_representative` (関数 `billing_family_plan_follow_representative`) (F6) | 読 (live な家族プランの行) | `plan_type='family'` の live 行 | 変えない。M 行も拾う (S7・S8) |
 | `family_groups.member_limit` の人数の上限の判定: `create_family_invite` (最新の定義 `20261022130000_family_invite_plan_gate.sql:38`。`:68` で読み `:71` で `MEMBER_LIMIT_EXCEEDED`)・`accept_family_invite` (`20261017030000_parental_consent_and_birth_date.sql:833`。`:873` で読み `:911`)・`add_family_child` (同 `:354`。`:403` で読み `:410`) ← `src/app/api/family/invites/route.ts:157`・`invites/[id]/accept/route.ts:59`・`members/child/route.ts:94` | 読 (`family_groups` の行の `member_limit`・`status`) | 招待の作成・承諾・子供の追加のときのメンバー数 < `member_limit` | 変えない。付与・取り消し・期限切れの関数が `member_limit` を写像と同じ式で書き換えるので、`family_pro` の付与の後は 8、取り消し・期限切れの後は 4 で判定する。すでに上限を超えたグループでは新しい招待の作成・承諾・子供の追加だけが止まり、既存のメンバーは外さない (§16 の 6) |
 | `src/app/(main)/family/dashboard/page.tsx` (`.select('id, name, member_limit, status')`。人数の表示 `{members.length}/{familyGroup?.member_limit ?? '-'} 人` で `n/<member_limit> 人`)・`src/app/(main)/family/members/page.tsx` (`.select('id, name, member_limit')`。同じ表示) | 読 (本人のセッション。`family_groups.member_limit`) | 自分の家族グループの 1 行 | 変えない。付与・取り消し・期限切れの後は関数が書いた `member_limit` がそのまま出る (上限を超えたグループは `6/4 人` のように出る。§16 の 6) |
 | `family_groups` の `status` / `representative_id` を書く入口: 強制解散 `src/app/api/operator/membership/family/[id]/dissolve/route.ts:67` → `operator_force_dissolve_family` (最新の定義 `20261026100000_operator_force_dissolve_family_missing.sql`。無い家族は `FAMILY_NOT_FOUND`・解散済みは `FAMILY_ALREADY_DISSOLVED` で止め、それ以外は `family_dissolve_apply`。`status='dissolved'`・メンバーを `left`・`user_profiles.family_id` を NULL・`representative_id` を NULL。`plan_key` / `member_limit` は書かない)・利用者の解散 `src/app/api/family/dissolve/route.ts` → `dissolve_family_by_representative` (→ `family_dissolve_apply`。`status='dissolved'`・メンバーを `left`・`user_profiles.family_id` を NULL・`representative_id` を NULL。`plan_key` / `member_limit` は書かない。family/11)・強制の代表者の交代 `operator/membership/family/[id]/transfer/route.ts:83` → `operator_force_representative_transfer` (最新の定義 `20261030120000_operator_force_transfer_reject_same.sql` (今は :102))・利用者どうしの交代 `family/representative-transfer/[id]/accept/route.ts:55` → `accept_family_representative_transfer` (`20261017030000:947`)。交代の提案 `representative-transfer/propose/route.ts` は `family_groups` を書かない | 書 (`status` / `representative_id`) | — | 変えない。代表者の交代は上の家族のトリガーの行 (S8)。強制解散は §7.3 の「M `active` (家族プラン・代表者) × 強制解散」の行 (代表者の M 行も `plan_key_cached` も変わらず、解散したグループの `plan_key` / `member_limit` はそのまま残る。付与・取り消し・期限切れの家族の同期は `status='active'` のグループだけを書くので、解散したグループには触れない) |
 | `src/lib/billing/repository.ts` `findLiveSubscription` / `service.ts` `startCheckout`・`scheduleCancellation`・`revokeCancellation`・`getBillingSummary` (F9・F10) | 読 | live 5 値・`stripe_subscription_id` | 変えない。M 行は購入 409・解約の予約 409・要約 `source: 'manual'` |
 | `src/lib/billing/core.ts:724-741` `summarizeSubscription` (`getBillingSummary` の要約。`GET /api/billing/subscription` → `/account/billing`・`/frozen/billing`) | 読 | `findLiveSubscription` の 1 行 (live 5 値) の `status`・`stripe_subscription_id`・`cancel_at_period_end` (`source` = `stripe_subscription_id` の有無・`can_purchase = !live`・`can_cancel` / `can_resume = live && stripeBacked && …`) | 変えない (核。§14.2 で触らない)。live な M 行は `source: 'manual'`・`can_purchase: false`・`can_cancel: false`・`can_resume: false` で、利用者の画面に解約・再開のボタンは出ない (S16 の `/frozen/billing` も同じ要約)。取り消し (S3)・期限切れの後は live 行が無いので `status: null`・`source: null`・`can_purchase: true` |
 | `src/lib/billing/account-deletion.ts` (退会の段階 `billing`) ← `listStripeBackedSubscriptions` | 読 | `stripe_subscription_id IS NOT NULL` | 変えない。M 行は列挙されず Stripe を呼ばない (S17) |
-| `src/app/api/admin/users/[id]/route.ts:103-110` (運営のユーザー詳細の `active_subscription`) | 読 | session client・live 5 値の最新 1 行の `plan_key, status, current_period_end` | 変えない。M 行は `next_billing_at = current_period_end` (= 期限か NULL) として出る。画面 `/admin/users/[id]` の「現在のサブスクリプション」の節はそのまま。本冊の節 (§10) が由来と期限を別に出す |
-| `src/app/api/admin/finance/exports/route.ts:140-150` (`subscriptions` の CSV) | 読 | 9 列・status で絞らない | 変えない。M 行も出る (`stripe_*` は列に無い) |
+| `src/app/api/admin/users/[id]/route.ts` の `GET` (運営のユーザー詳細の `active_subscription`) | 読 | session client・live 5 値の最新 1 行の `plan_key, status, current_period_end` | 変えない。M 行は `next_billing_at = current_period_end` (= 期限か NULL) として出る。画面 `/admin/users/[id]` の「現在のサブスクリプション」の節はそのまま。本冊の節 (§10) が由来と期限を別に出す |
+| `src/app/api/admin/finance/exports/route.ts` の `POST` (`subscriptions` の CSV) | 読 | 9 列・status で絞らない | 変えない。M 行も出る (`stripe_*` は列に無い) |
 | `src/app/api/admin/finance/invoices/[id]/route.ts:50-64` (運営の請求書の詳細。請求先の利用者を引く) | 読 | `stripe_subscription_id = <イベントの subscription>` の 1 行 | 変えない。M 行は `stripe_subscription_id IS NULL` なので一致せず、請求書の詳細の対象にならない (M 行には Stripe の請求書が無い) |
 | `src/app/api/admin/finance/reconciliation/route.ts` の DB 側サマリー (`personal_subscriptions` の `.in('status', …)`)・`dashboard/route.ts:64-81` | 読 | live 4 値 / 集計 | 変えない (実データ化は配線の残りの冊) |
 | `src/lib/super-admin/plan-subscribers.ts` (F22) | 読 | live 5 値 | 変えない (S19) |
@@ -682,7 +682,7 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 | `src/app/api/feature-flags/route.ts:45-56` (機能フラグの一覧の判定) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。上と同じ |
 | `src/lib/super-admin/flag-active-users.ts:73-93` (フラグの対象人数の集計) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。M 行の利用者はそのプランの人数に入る |
 | `supabase/functions/_shared/ai-chat-flag.ts:52-108` (Edge Function の AI 相談のスイッチ) | 読 (`plan_key_cached`) | 空なら `free` (`DEFAULT_PLAN_KEY`) | 変えない。上と同じ (本冊は Edge Function を変えない) |
-| `src/app/api/admin/users/route.ts:91,193` (運営のユーザー一覧の `plan_key`。`UserListItemSchema`) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。M 行の利用者は付与したプランで出る (由来は出さない。由来と期限は本冊の節 §10 だけ) |
+| `src/app/api/admin/users/route.ts` (select の `plan_key_cached` と応答の `plan_key`) (運営のユーザー一覧の `plan_key`。`UserListItemSchema`) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。M 行の利用者は付与したプランで出る (由来は出さない。由来と期限は本冊の節 §10 だけ) |
 | `src/app/api/admin/users/[id]/route.ts:149` (運営のユーザー詳細の `plan_key`) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。上と同じ |
 | `src/lib/account-export-tables.ts:142` (本人の書き出しの `user_profiles`) | 読 (`plan_key_cached`) | 列をそのまま | 変えない。M 行の `plan_key` がそのまま出る |
 | `user_profiles` の本人の UPDATE (特権列ガード) | 書 (本人) | `plan_key_cached` は 42501 | 変えない。本冊の関数は SECURITY DEFINER (所有者 postgres) なのでガードに当たらない (F3) |
@@ -1038,6 +1038,7 @@ export function manualGrantErrorMessage(code: string): string {
 // tsc:skip place=src/lib/billing/manual-grant-repository.ts — ManualGrantRepository の実装 (billing/02 §8.2)。service_role の client で RPC と SELECT を行う。
 // 呼ぶ側は必ず認可 (requireRole(['super_admin'])) のあと。DB の型は §6 の migration を当てて再生成したもの (段 A)。
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 import { LIVE_SUBSCRIPTION_STATUSES, isSubscriptionStatus } from '@/lib/billing/core';
 import {
   GRANTABLE_PLAN_STATUSES,
@@ -1102,12 +1103,10 @@ export function createManualGrantRepository(admin: Admin = getSupabaseAdmin()): 
       return data !== null;
     },
     async listGrantablePlans() {
-      const { data, error } = await admin
-        .from('subscription_plans')
-        .select(PLAN_COLUMNS)
-        .in('plan_type', [...GRANTABLE_PLAN_TYPES])
-        .in('status', [...GRANTABLE_PLAN_STATUSES])
-        .order('display_order', { ascending: true });
+      const { data, error } = await orderListBy(
+        admin.from('subscription_plans').select(PLAN_COLUMNS).in('plan_type', [...GRANTABLE_PLAN_TYPES]).in('status', [...GRANTABLE_PLAN_STATUSES]),
+        LIST_ORDERS.billingGrantablePlans,
+      );
       if (error) throw error;
       // free は plan_type が personal なので SELECT では落ちない。isGrantablePlan (DB 関数の 2. と同じ条件) で落とす
       return (data ?? [])
@@ -1120,12 +1119,10 @@ export function createManualGrantRepository(admin: Admin = getSupabaseAdmin()): 
         }));
     },
     async findLiveSubscription(userId) {
-      const { data, error } = await admin
-        .from('personal_subscriptions')
-        .select(SUBSCRIPTION_COLUMNS)
-        .eq('user_id', userId)
-        .in('status', [...LIVE_SUBSCRIPTION_STATUSES])
-        .order('created_at', { ascending: false })
+      const { data, error } = await orderListBy(
+        admin.from('personal_subscriptions').select(SUBSCRIPTION_COLUMNS).eq('user_id', userId).in('status', [...LIVE_SUBSCRIPTION_STATUSES]),
+        LIST_ORDERS.billingLiveSubscription,
+      )
         .limit(1)
         .maybeSingle();
       if (error) throw error;
@@ -1141,13 +1138,10 @@ export function createManualGrantRepository(admin: Admin = getSupabaseAdmin()): 
       };
     },
     async listHistory(userId) {
-      const { data, error } = await admin
-        .from('admin_audit_logs')
-        .select(HISTORY_COLUMNS)
-        .eq('target_id', userId)
-        .in('action_type', [...MANUAL_GRANT_AUDIT_ACTION_VALUES])
-        .order('created_at', { ascending: false })
-        .limit(MANUAL_GRANT_HISTORY_LIMIT);
+      const { data, error } = await orderListBy(
+        admin.from('admin_audit_logs').select(HISTORY_COLUMNS).eq('target_id', userId).in('action_type', [...MANUAL_GRANT_AUDIT_ACTION_VALUES]),
+        LIST_ORDERS.billingManualGrantHistory,
+      ).limit(MANUAL_GRANT_HISTORY_LIMIT);
       if (error) throw error;
       return (data ?? []).map((row) => {
         const details = ManualGrantAuditDetailsSchema.safeParse(row.details);

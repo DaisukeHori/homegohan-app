@@ -1035,9 +1035,9 @@ M 行を選ぶ述語 `s.stripe_subscription_id IS NULL` を持つ 3 本を、ori
 | 退会 (`deleteAccount` の段階 `billing`) | Stripe を解約 | — | ストアの購読は解約できない (ストアが契約の主体)。行は CASCADE で消え、以後の Webhook は `user_deleted` で何もしない (§6.4 の 1.)。退会の API を呼ぶ 4 つの入口 (Web の設定・凍結中と同意の前の退会の共通の部品 (`/frozen/account`・`/legal-consent/account`)・規約の同意の画面の「登録をやめる」・アプリの設定のアカウント) に固定の文 `STORE_SUBSCRIPTION_DELETION_NOTICE` (「…各ストアの定期購読の管理から解約してください。」) を出し、アプリの確認には「定期購読の管理を開く」のボタンを置く (§10.4・S35)。退会の完了メール (`src/lib/emails/account/account-deleted.ts`。cross/08 §16.1) にも同じ定数と各ストアの管理のページを載せる | — |
 | 本人のデータの書き出し (`account-export-tables.ts`) | `omit` 済み | — | 新しい列 `iap_store`・`iap_product_id`・`iap_is_sandbox` は書き出す (本人の契約の内容)。`iap_synced_at` は `omit` (内部の時刻。`stripe_synced_at` と同じ扱い) | — |
 | `countPlanSubscribers` (運営のプランの廃止の判定) | 数える | 数える | 数える (live 5 値で数える。変更なし) | — |
-| 運営の利用者詳細 `GET /api/admin/users/[id]` (`src/app/api/admin/users/[id]/route.ts:103-121`。`trialing / active / paused / past_due / grace` の最新の 1 行の `plan_key`・`status`・`current_period_end` を `active_subscription` として返す) | 読む | 読む | 読む (変更なし。`plan_key`・`status` (`trialing` / `active` / `past_due`)・`next_billing_at` = `current_period_end` (ストアの `expires_date`) がそのまま出る。出どころ (ストア) は出さない。出どころは運営の手動付与の欄 (`ManualPlanGrantSection` の「ストアの契約があります」。§8.6) が見る) | `active_subscription` = null |
+| 運営の利用者詳細 `GET /api/admin/users/[id]` (`src/app/api/admin/users/[id]/route.ts` の `GET`。`trialing / active / paused / past_due / grace` の最新の 1 行の `plan_key`・`status`・`current_period_end` を `active_subscription` として返す) | 読む | 読む | 読む (変更なし。`plan_key`・`status` (`trialing` / `active` / `past_due`)・`next_billing_at` = `current_period_end` (ストアの `expires_date`) がそのまま出る。出どころ (ストア) は出さない。出どころは運営の手動付与の欄 (`ManualPlanGrantSection` の「ストアの契約があります」。§8.6) が見る) | `active_subscription` = null |
 | 運営の財務の概要 `GET /api/admin/finance/dashboard` (`src/app/api/admin/finance/dashboard/route.ts:64-79`。その月のスナップショットが無いときだけ `trialing / active` の行を `subscription_plans.monthly_price_jpy` で足し上げる) | 数える | 数える | 数える (変更なし。I 行も月額の価格で数える。年額の行・M 行を月額で数えるのも、ストアの手数料を引かないのも、いまの S 行・M 行と同じ扱い) | — |
-| 運営の財務の書き出し `POST /api/admin/finance/exports` の契約の CSV (`export_type` = `subscriptions`。`src/app/api/admin/finance/exports/route.ts:140-150`。`id, user_id, plan_key, status, starts_at, current_period_start, current_period_end, cancelled_at, created_at`)。呼ぶのは運営の画面 `src/app/admin/finance/exports/page.tsx` (`:28-32` の「サブスクリプション」の種類・`:62-66` の POST。応答の CSV をそのままダウンロードする) | 出す | 出す | 出す (変更なし。出どころの列は無い。新しい列 `iap_*` は選ばれないので出ない。画面の説明「personal_subscriptions の契約一覧 (PII: user_id のみ)」も I 行を含めて正しいまま) | — |
+| 運営の財務の書き出し `POST /api/admin/finance/exports` の契約の CSV (`export_type` = `subscriptions`。`src/app/api/admin/finance/exports/route.ts` の `POST` の `export_type === 'subscriptions'` の分岐。`id, user_id, plan_key, status, starts_at, current_period_start, current_period_end, cancelled_at, created_at`)。呼ぶのは運営の画面 `src/app/admin/finance/exports/page.tsx` (`:28-32` の「サブスクリプション」の種類・`:62-66` の POST。応答の CSV をそのままダウンロードする) | 出す | 出す | 出す (変更なし。出どころの列は無い。新しい列 `iap_*` は選ばれないので出ない。画面の説明「personal_subscriptions の契約一覧 (PII: user_id のみ)」も I 行を含めて正しいまま) | — |
 | 運営のクーポンの適用 `POST /api/super-admin/coupons/[id]/apply` (`src/app/api/super-admin/coupons/[id]/apply/route.ts` → `src/lib/plan/coupon.ts:149` の `applyCoupon` → DB 関数 `apply_coupon` (`supabase/migrations/20261007160700_apply_coupon_rpc.sql`。この 1 本だけが定義する)。個人の契約は `p_subscription_id` = `personal_subscriptions.id` の行を出どころも `status` も見ずにロックし (`:147-152`)、`plan_key` の `monthly_price_jpy` から割引額を計算して `coupon_redemptions` に 1 行足し、`:262-264` で `personal_subscriptions.active_coupon_redemption_id` を書く。運営の画面からは呼ばれない (API だけ)) | 記録する | 記録する | 記録する (変更なし。凍結)。`coupon_redemptions` と `active_coupon_redemption_id` は記録だけで、請求の額を変える経路は無い: `apply_coupon` も `applyCoupon` も Stripe・RevenueCat・ストアに何も送らず、Web の Checkout の割引は Stripe のプロモーションコード (`src/lib/billing/core.ts:660` の `allow_promotion_codes: true`) で別の仕組み。だから I 行に記録しても、ストアの請求の額は変わらない (S 行・M 行でいま請求の額が変わらないのと同じ)。本冊の写像 (§6.4) は `active_coupon_redemption_id` を書かないので、取り直し・置き換え (`:superseded`)・期限切れで記録の参照は消えない。運営の手順書の注記は §16.2 の operator/04 の行 | — (契約の行が無いので `OP_SUBSCRIPTION_NOT_FOUND`) |
 | 運営の請求書の詳細 `GET /api/admin/finance/invoices/[id]` (`src/app/api/admin/finance/invoices/[id]/route.ts:50-64`。Stripe のイベントの `subscription` で `stripe_subscription_id` を突き合わせて `user_id` を引く) | 当たる | 当たらない (Stripe の id なし) | 当たらない (変更なし。ストアの請求は Stripe のイベントに無い) | — |
 | 運営の照合 `GET /api/admin/finance/reconciliation` (`src/app/api/admin/finance/reconciliation/route.ts` の DB 側サマリー `dbSummary`。DB の `trialing / active / past_due / grace` の行を status ごとに数え、Stripe の件数と並べる) | 数える | 数える | 数える (変更なし。DB の件数に I 行が入り、Stripe の件数には入らない。M 行がいま DB の件数だけに入るのと同じ扱いで、照合の不一致の記録 (`system.stripe.reconcile_discrepancy`) は Stripe の契約ごとの突き合わせで、I 行 (`stripe_subscription_id` が NULL) は対象にならない) | — |
@@ -2453,10 +2453,11 @@ export async function POST(): Promise<NextResponse> {
 ### 8.6 `src/lib/billing/public-plans.ts` と `src/lib/billing/core.ts` の差分
 
 ```ts
-// tsc:skip place=src/lib/billing/public-plans.ts — origin/main 4b1e1abe のファイル (#1911 が注とログの文を直した版) を土台にした全文。listPurchasablePlans (呼び出し元は src/app/pricing/page.tsx:10,22 だけ。git grep で確かめた) を listPublicPlans に置き換える。main との差分は (1) 関数の名前、(2) 絞り込み .not('stripe_price_id', 'is', null) を .gt('monthly_price_jpy', 0) に、(3) 列に max_members、(4) 戻り値の型 PublicPlan、(5) 先頭の注・関数の注・ログの文 (#1911 の「準備中と書かない」はそのまま守る) の 5 つ
+// tsc:skip place=src/lib/billing/public-plans.ts — origin/main 4b1e1abe のファイル (#1911 が注とログの文を直した版) を土台にした全文。listPurchasablePlans (呼び出し元は src/app/pricing/page.tsx:10,22 だけ。git grep で確かめた) を listPublicPlans に置き換える。main との差分は (1) 関数の名前、(2) 絞り込み .not('stripe_price_id', 'is', null) を .gt('monthly_price_jpy', 0) に、(3) 列に max_members、(4) 戻り値の型 PublicPlan、(5) 先頭の注・関数の注・ログの文 (#1911 の「準備中と書かない」はそのまま守る)、(6) 並びを LIST_ORDERS.billingPublicPlans で orderListBy に渡す (cross/04 §6.2.1) の 6 つ
 /** 公開の面に出すプランの読み取り (billing/01 §10.1・billing/03 §8.6) */
 import { createLogger } from '@/lib/db-logger';
 import { createClient } from '@/lib/supabase/server';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 import { FREE_PLAN_KEY, PURCHASABLE_PLAN_TYPES, type PublicPlan } from '@/lib/billing/core';
 
 const logger = createLogger('billing/public-plans');
@@ -2472,14 +2473,16 @@ const PLAN_COLUMNS =
  */
 export async function listPublicPlans(): Promise<PublicPlan[]> {
   const supabase = await createClient();
-  const { data, error } = await supabase
-    .from('subscription_plans')
-    .select(PLAN_COLUMNS)
-    .eq('status', 'public')
-    .in('plan_type', [...PURCHASABLE_PLAN_TYPES])
-    .neq('plan_key', FREE_PLAN_KEY)
-    .gt('monthly_price_jpy', 0)
-    .order('display_order', { ascending: true });
+  const { data, error } = await orderListBy(
+    supabase
+      .from('subscription_plans')
+      .select(PLAN_COLUMNS)
+      .eq('status', 'public')
+      .in('plan_type', [...PURCHASABLE_PLAN_TYPES])
+      .neq('plan_key', FREE_PLAN_KEY)
+      .gt('monthly_price_jpy', 0),
+    LIST_ORDERS.billingPublicPlans,
+  );
   if (error) {
     logger.error('公開のプランの一覧を読めませんでした (/pricing はフリーのカードだけを描く)', error);
     return [];

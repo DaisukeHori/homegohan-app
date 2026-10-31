@@ -20,6 +20,7 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE, AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE } from '@/lib/ai/ai-api-messages';
 import { isUuid } from '@/lib/http-params';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 
 /**
  * AI に渡す日付 (過去の相談の日・重要なメッセージの日・今日) を書くタイムゾーン (#1433)。
@@ -32,8 +33,29 @@ const PROMPT_DATE_TIME_ZONE = 'Asia/Tokyo';
 const UPCOMING_MEALS_DAYS = 7;
 /** AI 相談のシステムプロンプトに入れる「最近の食事・健康記録」の日数 (今日の何日前から) */
 const RECENT_MEALS_DAYS = 14;
+/**
+ * システムプロンプトに入れる「今後の献立」の件数の上限 (いままでの値。1 週間 × 1 日 3 食 = 21 件より多く、
+ * 間食などがあっても 1 週間ぶんがおおむね入る)。日の古い側からこの件数を読む
+ */
+const UPCOMING_MEALS_LIMIT = 30;
+/**
+ * システムプロンプトに入れる「最近の食事」の件数の上限 (いままでの値。14 日 × 1 日 3 食 = 42 件より多い)。
+ * 日の新しい側からこの件数を読み、古い順へ並べ直して入れる (#2150)
+ */
+const RECENT_MEALS_LIMIT = 50;
+
+/** 献立を日付 → 区分の順に並べ替えるときに見る列 (planned_meals の行と、埋め込んだ user_daily_meals の日) */
+interface DayMealRow {
+  meal_type: string;
+  user_daily_meals?: { day_date?: string | null } | null;
+}
 /** 1 週間の日数 (来週の月曜日 = 今週の月曜日の 1 週間後) */
 const DAYS_PER_WEEK = 7;
+/**
+ * 会話の続きの POST で AI に渡す過去のメッセージの件数の上限 (いま保存した利用者のメッセージを含む。約 25 往復)。
+ * 新しい側からこの件数を読む (#2144)。システムプロンプト (利用者の情報) と合わせて AI の文脈に収まる量に抑える
+ */
+const AI_CONSULTATION_HISTORY_LIMIT = 50;
 
 // #1047 F2-21: アクション自動実行を self-fetch
 // (`${NEXT_PUBLIC_APP_URL}/api/ai/consultation/actions/.../execute`) 経由で行うと、
@@ -118,11 +140,11 @@ export async function GET(request: Request, props: { params: Promise<{ sessionId
     return NextResponse.json({ error: AI_CONSULTATION_SESSION_NOT_FOUND_MESSAGE }, { status: 404 });
   }
 
-  const { data, error } = await supabase
-    .from('ai_consultation_messages')
-    .select('*')
-    .eq('session_id', params.sessionId)
-    .order('created_at', { ascending: true });
+  // 書いた日時の古い順。同じ日時は id の順 (#2139 T1)
+  const { data, error } = await orderListBy(
+    supabase.from('ai_consultation_messages').select('*').eq('session_id', params.sessionId),
+    LIST_ORDERS.aiConsultationMessages,
+  );
 
   if (error) return internalError('GET /api/ai/consultation/sessions/[sessionId]/messages', error, { userId: user.id });
 
@@ -172,23 +194,29 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
     // 2. 今日のdaily_meal ID
     supabase.from('user_daily_meals').select('id').eq('user_id', userId).eq('day_date', today).single(),
 
-    // 3. 明日〜1週間の献立
-    supabase.from('planned_meals').select(`
+    // 3. 明日〜1週間の献立 (日の古い順。同じ日の食事は id の順で、件数の上限の境目でどれが入るかも決まる。#2150)
+    orderListBy(
+      supabase.from('planned_meals').select(`
       id, meal_type, dish_name, calories_kcal, is_completed, mode,
       user_daily_meals!inner(day_date, user_id)
     `).eq('user_daily_meals.user_id', userId)
-      .gt('user_daily_meals.day_date', today)
-      .lte('user_daily_meals.day_date', oneWeekLaterStr)
-      .limit(30),
+        .gt('user_daily_meals.day_date', today)
+        .lte('user_daily_meals.day_date', oneWeekLaterStr),
+      LIST_ORDERS.aiConsultationContextMealsByDay,
+    )
+      .limit(UPCOMING_MEALS_LIMIT),
 
-    // 4. 過去14日の食事
-    supabase.from('planned_meals').select(`
+    // 4. 過去14日の食事 (日の新しい側から件数の上限まで読み、下で古い順へ並べ直す。同じ日の食事は id の降順。#2150)
+    orderListBy(
+      supabase.from('planned_meals').select(`
       id, meal_type, dish_name, dishes, calories_kcal, protein_g, fat_g, carbs_g, is_completed, mode,
       user_daily_meals!inner(day_date, user_id)
     `).eq('user_daily_meals.user_id', userId)
-      .gte('user_daily_meals.day_date', fourteenDaysAgoStr)
-      .lt('user_daily_meals.day_date', today)
-      .limit(50),
+        .gte('user_daily_meals.day_date', fourteenDaysAgoStr)
+        .lt('user_daily_meals.day_date', today),
+      LIST_ORDERS.aiConsultationContextRecentMealsNewestFirst,
+    )
+      .limit(RECENT_MEALS_LIMIT),
 
     // 5. 健康記録（過去14日）
     supabase.from('health_records').select('*')
@@ -203,44 +231,48 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
     // 7. 栄養目標
     supabase.from('nutrition_targets').select('*').eq('user_id', userId).single(),
 
-    // 8. 獲得バッジ
-    supabase.from('user_badges').select('obtained_at, badges(name, description)')
-      .eq('user_id', userId)
-      .order('obtained_at', { ascending: false })
+    // 8. 獲得バッジ (取った日時の新しい順。同じ日時は badge_id の順で、上限の境目でどれが入るかも決まる。#2139 T1)
+    orderListBy(
+      supabase.from('user_badges').select('obtained_at, badges(name, description)').eq('user_id', userId),
+      LIST_ORDERS.aiConsultationContextBadges,
+    )
       .limit(10),
 
-    // 9. AIインサイト
-    supabase.from('health_insights').select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
+    // 9. AIインサイト (同じ日時は id の順。#2139 T1)
+    orderListBy(supabase.from('health_insights').select('*').eq('user_id', userId), LIST_ORDERS.aiConsultationContextInsights)
       .limit(5),
 
     // 10. アクティブな買い物リスト
     supabase.from('shopping_lists').select('id').eq('user_id', userId).eq('status', 'active').maybeSingle(),
 
-    // 11. 冷蔵庫/パントリー
-    supabase.from('pantry_items').select('id, name, amount, category, expiration_date, added_at')
-      .eq('user_id', userId)
-      .order('expiration_date', { ascending: true, nullsFirst: false }),
+    // 11. 冷蔵庫/パントリー (期限の近い順・期限の無い品は最後。同じ期限は id の順。#2139 T1)
+    orderListBy(
+      supabase.from('pantry_items').select('id, name, amount, category, expiration_date, added_at').eq('user_id', userId),
+      LIST_ORDERS.pantryItemsByExpiration,
+    ),
 
     // 12. レシピコレクション
     supabase.from('recipe_collections').select('id, name, recipe_ids').eq('user_id', userId).limit(10),
 
-    // 13. 過去のセッション要約
-    supabase.from('ai_consultation_sessions').select('id, title, summary, key_topics, context_snapshot, summary_generated_at')
-      .eq('user_id', userId)
-      .eq('status', 'closed')
-      .not('summary', 'is', null)
-      .order('updated_at', { ascending: false })
+    // 13. 過去のセッション要約 (同じ日時は id の順。#2139 T1)
+    orderListBy(
+      supabase.from('ai_consultation_sessions').select('id, title, summary, key_topics, context_snapshot, summary_generated_at')
+        .eq('user_id', userId)
+        .eq('status', 'closed')
+        .not('summary', 'is', null),
+      LIST_ORDERS.aiConsultationPastSummaries,
+    )
       .limit(5),
 
-    // 14. 重要メッセージ
-    supabase.from('ai_consultation_messages').select(`
+    // 14. 重要メッセージ (同じ日時は id の順。#2139 T1)
+    orderListBy(
+      supabase.from('ai_consultation_messages').select(`
       content, importance_reason, created_at, role, metadata,
       ai_consultation_sessions!inner(user_id, title)
     `).eq('is_important', true)
-      .eq('ai_consultation_sessions.user_id', userId)
-      .order('created_at', { ascending: false })
+        .eq('ai_consultation_sessions.user_id', userId),
+      LIST_ORDERS.aiConsultationImportantMessages,
+    )
       .limit(20),
   ]);
 
@@ -248,7 +280,8 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
   const profile = profileResult.data;
   const dailyMeal = dailyMealResult.data;
   const upcomingMeals = upcomingResult.data || [];
-  const recentMeals = recentResult.data || [];
+  // 新しい側から読んだので、古い順 (同じ日の食事は id の順) へ戻す
+  const recentMeals = [...(recentResult.data || [])].reverse();
   const healthRecords = healthRecordsResult.data;
   const healthGoals = healthGoalsResult.data;
   const nutritionTargets = nutritionTargetsResult.data;
@@ -279,9 +312,12 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
 
   if (activeShoppingList) {
     dependentQueries.push(
-      supabase.from('shopping_list_items').select('id, item_name, quantity, category, is_checked')
-        .eq('shopping_list_id', activeShoppingList.id)
-        .order('category', { ascending: true })
+      // 分類の順。同じ分類の品は id の順 (#2139 T1)
+      orderListBy(
+        supabase.from('shopping_list_items').select('id, item_name, quantity, category, is_checked')
+          .eq('shopping_list_id', activeShoppingList.id),
+        LIST_ORDERS.aiConsultationContextShoppingItems,
+      )
         .then((r: any) => { shoppingList = r.data || []; })
     );
   }
@@ -414,12 +450,15 @@ ${todayMeals.map((m: any) => {
   const mealTypeRankOf = (mealType: string): number =>
     isMealType(mealType) ? MEAL_ORDER.indexOf(mealType) : MEAL_ORDER.length;
 
-  const sortedUpcomingMeals = [...(upcomingMeals || [])].sort((a, b) => {
+  // 日付の古い順 → 区分の順。同じ日・同じ区分の食事は、読んだ順 (id の順) のまま (Array.prototype.sort は安定)
+  const compareByDayAndMealType = (a: DayMealRow, b: DayMealRow): number => {
     const dateA = a.user_daily_meals?.day_date || '';
     const dateB = b.user_daily_meals?.day_date || '';
     if (dateA !== dateB) return dateA.localeCompare(dateB);
     return mealTypeRankOf(a.meal_type) - mealTypeRankOf(b.meal_type);
-  });
+  };
+
+  const sortedUpcomingMeals = [...(upcomingMeals || [])].sort(compareByDayAndMealType);
   
   const upcomingMealsInfo = sortedUpcomingMeals.length > 0 ? `
 【📆 今後1週間の献立】
@@ -431,10 +470,11 @@ ${sortedUpcomingMeals.map((m: any) => {
 }).join('\n')}
 ` : '';
 
-  // 食事履歴を整形（過去分）
-  const mealHistory = recentMeals && recentMeals.length > 0 ? `
+  // 食事履歴を整形（過去分。今後の献立と同じく、日付の古い順 → 区分の順。#2150）
+  const sortedRecentMeals = [...recentMeals].sort(compareByDayAndMealType);
+  const mealHistory = sortedRecentMeals.length > 0 ? `
 【最近の食事履歴（過去14日）】
-${recentMeals.map((m: any) => {
+${sortedRecentMeals.map((m: any) => {
   const date = m.user_daily_meals?.day_date || '不明';
   const mealTypeJa = mealTypeLabelOf(m.meal_type);
   const status = m.is_completed ? '✓完了' : '未完了';
@@ -1065,18 +1105,24 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
     // システムプロンプトを構築（ユーザー情報を含む）
     const systemPrompt = await buildSystemPrompt(supabase, user.id);
 
-    // 過去のメッセージを取得（システムプロンプト以外）- 50件まで
-    const { data: historyData } = await supabase
-      .from('ai_consultation_messages')
-      .select('role, content, metadata, is_important')
-      .eq('session_id', params.sessionId)
-      .order('created_at', { ascending: true })
-      .limit(50);
+    // 過去のメッセージ (システムプロンプト以外) を、新しい側から AI_CONSULTATION_HISTORY_LIMIT 件まで読み、古い順へ並べ直す (#2144)。
+    // 古い順のまま件数で切ると、件数を超えた会話では、いま保存した利用者のメッセージ (いちばん新しい行) が文脈から落ちる。
+    // 新しい順は一覧の GET の古い順 (aiConsultationMessages) をそっくり逆にした並びなので、逆順に戻すと GET の一覧の末尾と
+    // 同じ行が同じ順で並ぶ (同じ日時は id の順)
+    const { data: latestHistoryData } = await orderListBy(
+      supabase
+        .from('ai_consultation_messages')
+        .select('role, content, metadata, is_important')
+        .eq('session_id', params.sessionId),
+      LIST_ORDERS.aiConsultationMessagesNewestFirst,
+    )
+      .limit(AI_CONSULTATION_HISTORY_LIMIT);
+    const historyData = [...(latestHistoryData || [])].reverse();
 
     // メッセージを構築
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
-      ...(historyData || [])
+      ...historyData
         .filter((m: any) => !m.metadata?.isSystemPrompt)
         .map((m: any) => ({
           role: m.role as 'user' | 'assistant',

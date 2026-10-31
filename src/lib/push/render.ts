@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import type { RenderedPushMessage } from './outbox';
 
-/** 献立の結果 (weekly_menu_completed / weekly_menu_failed) の payload。トリガー enqueue_weekly_menu_result_push が入れる */
+/** 献立の結果 (weekly_menu_completed / weekly_menu_failed) の payload。トリガー weekly_menu_requests_enqueue_push (関数 enqueue_weekly_menu_result_push) が入れる */
 export const WeeklyMenuResultPayloadSchema = z.object({
   request_id: z.uuid(),
   start_date: z.iso.date(),

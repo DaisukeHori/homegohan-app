@@ -345,7 +345,7 @@ Edge Function `notify-push` は作らない (06 §4.3 で退けた案 A)。送�
 登録 (発火元):
   RPC enqueue_push_notification(p_user_id, p_kind, p_payload, p_dedupe_key)  (06 §5.2 (1)。EXECUTE は service_role だけ)
     → 利用者の端末の行 (user_push_tokens) ごとに push_outbox に 1 行 (queued)。端末が無ければ 0 行
-  いまの発火元は weekly_menu_requests のトリガー enqueue_weekly_menu_result_push だけ (06 §5.3)。
+  いまの発火元は weekly_menu_requests のトリガー weekly_menu_requests_enqueue_push (関数 enqueue_weekly_menu_result_push) だけ (06 §5.3)。
   後回しの種類 (§3.4 の 7 種など) は、PUSH_NOTIFICATION_KINDS に足してから発火元がこの RPC を呼ぶ (06 §3.2)
 
 送信 (worker = GET /api/cron/push-outbox。Vercel Cron が毎分呼ぶ。06 §6.6):

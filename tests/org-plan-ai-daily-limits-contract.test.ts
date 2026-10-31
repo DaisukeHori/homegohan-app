@@ -9,7 +9,7 @@
  *
  * organizations.plan を書く経路は (この migration の時点で) 3 つ: a. 運営の組織の作成 (service_role)・b. 組織の設定 (owner / admin の JWT)・
  * c. owner / admin の JWT で PostgREST から直接 UPDATE (RLS organizations_update_admin。アプリの Zod を通らない)。
- * a・b はアプリの Zod が ORG_PLAN_VALUES に限り、b・c は同じ migration のトリガー guard_organizations_plan_value が
+ * a・b はアプリの Zod が ORG_PLAN_VALUES に限り、b・c は同じ migration のトリガー trg_guard_organizations_plan_value (関数 guard_organizations_plan_value) が
  * ORG_PLAN_VALUES に限った (c で有料の plan_key や行の無い値を書けないようにする)。
  * そのあと #1912 (組織のプランの段階は運営だけが変える) で、b は plan を受け取らなくなり (400)、トリガー関数は
  * 20261022170000_org_plan_operator_only.sql が「ログインした利用者と anon はどの値へも変えられない」形に作り直した。

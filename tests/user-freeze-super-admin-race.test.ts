@@ -19,7 +19,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSchemaDb, type Row, type SchemaDb } from './helpers/schema-checked-db';
 import { profileRow, uuid } from './helpers/route-world';
-import { applyUserBan, SUPER_ADMIN_ROLES_LITERAL } from '@/lib/admin/user-ban';
+import { applyUserBan, SUPER_ADMIN_BAN_REJECTED_MESSAGE, SUPER_ADMIN_ROLES_LITERAL } from '@/lib/admin/user-ban';
 
 const { mockRequireRole, mockSendFreezeNotificationEmail } = vi.hoisted(() => ({
   mockRequireRole: vi.fn(),
@@ -249,7 +249,7 @@ describe('applyUserBan (モデレーションの BAN)', () => {
     beforeProfileUpdate = otherOperatorSetsRoles(['user', 'super_admin']);
     const result = await ban();
     expect(result).toMatchObject({ success: false, unbanAt: null, kind: 'super_admin' });
-    expect(result.error).toMatch(/super_admin/);
+    expect(result.error).toBe(SUPER_ADMIN_BAN_REJECTED_MESSAGE);
     expect(targetNow()?.frozen_at).toBeNull();
   });
 

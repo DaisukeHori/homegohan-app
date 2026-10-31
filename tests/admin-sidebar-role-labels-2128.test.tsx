@@ -18,6 +18,9 @@
  *   - 審査のフォーム (/admin/moderation の個別の画面): 永久 BAN の選択肢の文は「削除 + 永久 BAN (運営最上位のみ)」
  *   - 同じ型: 運営の画面 (src/app/admin・src/app/super-admin・src/components/admin・src/components/operator) のソースに、画面に出る文字として
  *     英字の super_admin / Super Admin が残っていない (ロールの判定に使う 'super_admin' そのものの文字列は除く)
+ *   - 同じ型 (#2134 U1): 走査の範囲を、メンバーシップの運営の画面 (src/app/(operator))・二段階認証の画面の文 (src/lib/auth/mfa)・
+ *     運営の内部向けの運用メール (src/lib/emails/ops)・メイン画面のロール別の管理メニュー (src/app/(main)/MainLayout.tsx) に広げ、
+ *     旧い呼び名『スーパー管理者』も数える。監査の種別の値 ('super_admin.mfa.reset' など。画面の文字ではない) は除く
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -179,42 +182,59 @@ describe('審査のフォームの永久 BAN の選択肢 (V1-2 と同じ型)', 
 
 /**
  * 調べる運営の画面 (#2128 の範囲)。src/components/operator は /admin・/super-admin の画面が使う部品
- * (審査のフォームなど) を置く所なので、一緒に見る
+ * (審査のフォームなど) を置く所なので、一緒に見る。
+ * #2134 U1 で、運営に見える文を持つ所を足す: メンバーシップの運営の画面 (src/app/(operator))・二段階認証の画面の文の表
+ * (src/lib/auth/mfa/client.ts の MFA_ERROR_MESSAGES)・運営の内部向けの運用メール (src/lib/emails/ops)・
+ * メイン画面のロール別の管理メニュー (src/app/(main)/MainLayout.tsx。ファイル 1 つだけ。ほかの利用者の画面は見ない)
  */
-const SCANNED_DIRS = ['src/app/admin', 'src/app/super-admin', 'src/components/admin', 'src/components/operator'];
+const SCANNED_PATHS = [
+  'src/app/admin',
+  'src/app/super-admin',
+  'src/components/admin',
+  'src/components/operator',
+  'src/app/(operator)',
+  'src/lib/auth/mfa',
+  'src/lib/emails/ops',
+  'src/app/(main)/MainLayout.tsx',
+];
 
-/** 画面に出す文字としての英字の super_admin / Super Admin */
-const ENGLISH_SUPER_ADMIN = /super_admin|super admin/i;
+/** 画面に出す文字としての旧い呼び名 (英字の super_admin / Super Admin と、日本語の『スーパー管理者』) */
+const OLD_SUPER_ADMIN_NAME = /super_admin|super admin|スーパー管理者/i;
 
 /** ロールの判定・ロールの一覧に使う、ロールの値そのものの文字列 (画面の文字ではない) */
 const ROLE_VALUE = 'super_admin';
 
-function sourceFiles(dir: string): string[] {
-  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const full = path.join(dir, entry.name);
+/** 監査の種別の値 ('super_admin.mfa.reset' など。admin_audit_logs.action_type に入る機械の値で、画面の文字ではない) */
+const AUDIT_ACTION_TYPE_VALUE = /^super_admin(\.[a-z_]+)+$/;
+
+function sourceFiles(target: string): string[] {
+  if (fs.statSync(target).isFile()) return [target];
+  return fs.readdirSync(target, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(target, entry.name);
     if (entry.isDirectory()) return sourceFiles(full);
     return /\.tsx?$/.test(entry.name) ? [full] : [];
   });
 }
 
 /**
- * ソースの中の、画面に出うる文字 (JSX の文字・文字列・テンプレート文字列) のうち、英字の super_admin / Super Admin を含むもの。
- * コメントは構文木に入らないので見ない。import の指定子と、ロールの値そのものの文字列 ('super_admin') は除く
+ * ソースの中の、画面に出うる文字 (JSX の文字・文字列・テンプレート文字列) のうち、旧い呼び名 (英字の super_admin / Super Admin・
+ * 『スーパー管理者』) を含むもの。コメントは構文木に入らないので見ない。import の指定子と、ロールの値そのものの文字列 ('super_admin')・
+ * 監査の種別の値 ('super_admin.mfa.reset' など) は除く
  */
 function englishSuperAdminTexts(source: string, fileName: string): Array<{ line: number; text: string }> {
   const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const found: Array<{ line: number; text: string }> = [];
   const add = (node: ts.Node, text: string) => {
-    if (!ENGLISH_SUPER_ADMIN.test(text)) return;
+    if (!OLD_SUPER_ADMIN_NAME.test(text)) return;
     found.push({ line: sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1, text: text.trim() });
   };
   const visit = (node: ts.Node) => {
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) return;
     // JSX の文字はそのまま画面に出るので、'super_admin' だけでも数える
     if (ts.isJsxText(node)) add(node, node.text);
-    // 文字列は、ロールの値そのもの ('super_admin'。ロールの判定・一覧) を除く
+    // 文字列は、ロールの値そのもの ('super_admin'。ロールの判定・一覧) と監査の種別の値を除く
     else if (ts.isStringLiteralLike(node)) {
-      if (node.text !== ROLE_VALUE) add(node, node.text);
+      if (node.text !== ROLE_VALUE && !AUDIT_ACTION_TYPE_VALUE.test(node.text)) add(node, node.text);
     }
     else if (ts.isTemplateExpression(node)) {
       add(node.head, node.head.text);
@@ -226,7 +246,7 @@ function englishSuperAdminTexts(source: string, fileName: string): Array<{ line:
   return found;
 }
 
-describe('同じ型: 運営の画面のソースに英字の super_admin / Super Admin の表示が残っていない', () => {
+describe('同じ型: 運営の画面のソースに旧い呼び名 (英字の super_admin / Super Admin・スーパー管理者) の表示が残っていない', () => {
   it('走査が機能している: 英字の見出し・注記を検出し、ロールの値そのものとコメントは数えない', () => {
     const sample = [
       "import x from '@/super_admin/x';",
@@ -240,9 +260,31 @@ describe('同じ型: 運営の画面のソースに英字の super_admin / Super
     expect(englishSuperAdminTexts(sample, 'sample.tsx').map(({ line }) => line)).toEqual([4, 5, 6, 7]);
   });
 
-  it('src/app/admin・src/app/super-admin・src/components/admin・src/components/operator に、画面に出る英字の super_admin / Super Admin が無い', () => {
-    const files = SCANNED_DIRS.flatMap((dir) => sourceFiles(path.join(ROOT, dir)));
-    expect(files.length).toBeGreaterThan(SCANNED_DIRS.length);
+  it('走査が機能している (#2134 U1): 直す前の各所の形を検出し、監査の種別の値は数えない', () => {
+    const sample = [
+      "const audit = { reset: 'super_admin.mfa.reset' };",
+      "const severity = { 'super_admin.mfa.reset': 'critical' };",
+      // 直す前の src/app/(operator)/operator/membership/layout.tsx・audit/page.tsx
+      'const a = <span>Super Admin に戻る</span>;',
+      'const b = <p className="x">記録をすべて閲覧できます (スーパー管理者のみ)</p>;',
+      // 直す前の src/lib/auth/mfa/client.ts
+      "const c = ['FORBIDDEN', 'この操作にはスーパー管理者 (super_admin) の権限と、二段階認証の確認が必要です。'];",
+      // 直す前の src/lib/emails/ops (文字列とテンプレートの両方)
+      "const d = ['運用ログの画面 (super_admin のみ):'];",
+      'const e = `▼ 詳しく見る\\n運用ログ画面 (super_admin のみ)\\n${url}`;',
+      // 直す前の src/app/(main)/MainLayout.tsx
+      'const f = { super_admin: { href: "/super-admin", label: "Super Admin" } };',
+    ].join('\n');
+    expect(englishSuperAdminTexts(sample, 'sample.tsx').map(({ line }) => line)).toEqual([3, 4, 5, 6, 7, 8]);
+  });
+
+  it('運営に見える文を持つ所 (SCANNED_PATHS) に、画面に出る旧い呼び名 (英字の super_admin / Super Admin・スーパー管理者) が無い', () => {
+    const files = SCANNED_PATHS.flatMap((target) => sourceFiles(path.join(ROOT, target)));
+    expect(files.length).toBeGreaterThan(SCANNED_PATHS.length);
+    // 足した所が実在し、走査に入っている (パスの書き誤りで空振りしない)
+    for (const target of SCANNED_PATHS) {
+      expect(files.some((file) => file.startsWith(path.join(ROOT, target))), target).toBe(true);
+    }
     const violations = files.flatMap((file) =>
       englishSuperAdminTexts(fs.readFileSync(file, 'utf8'), file).map(
         ({ line, text }) => `${path.relative(ROOT, file)}:${line} ${text}`,
