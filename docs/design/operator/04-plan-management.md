@@ -181,7 +181,7 @@ stateDiagram-v2
 
 ### 3.5a 廃止の安全弁と組織のプランの行 (#1127・#1912)
 
-いまの廃止は `PATCH /api/super-admin/plans/{id}` の `status: 'deprecated'` で行い、廃止の前に契約が終わっていない契約者を数えて 1 件でもいれば 409 `OP_PLAN_HAS_SUBSCRIBERS` で止める (`src/lib/super-admin/plan-subscribers.ts`。API の形は `02-api-spec.md` の `PATCH /api/super-admin/plans/{id}`)。数えてから書くまでの間に入った契約 (作成・live / active への切り替え・プランの付け替え。トリガー `trg_subscriber_plan_key_share` がプランの行に FOR KEY SHARE を取る) は、書く文の中の DB のトリガー `guard_plan_deprecate_subscribers` が commit を待ってから同じ数え方で数え直して止める (#1917 の続き。route を通らない UPDATE も止まる)。
+いまの廃止は `PATCH /api/super-admin/plans/{id}` の `status: 'deprecated'` で行い、廃止の前に契約が終わっていない契約者を数えて 1 件でもいれば 409 `OP_PLAN_HAS_SUBSCRIBERS` で止める (`src/lib/super-admin/plan-subscribers.ts`。API の形は `02-api-spec.md` の `PATCH /api/super-admin/plans/{id}`)。数えてから書くまでの間に入った契約 (作成・live / active への切り替え・プランの付け替え。トリガー `trg_subscriber_plan_key_share` がプランの行に FOR KEY SHARE を取る) は、書く文の中の DB のトリガー `trg_guard_plan_deprecate_subscribers` (関数 `guard_plan_deprecate_subscribers`) が commit を待ってから同じ数え方で数え直して止める (#1917 の続き。route を通らない UPDATE も止まる)。
 
 | プラン | 個人契約 (`plan_key` が一致し `status` が trialing / active / paused / past_due / grace) | 家族グループ (`plan_key` が一致し `status = 'active'`) | 組織 (`organizations.plan` が一致し `status = 'active'`) | 廃止の画面・価格変更の画面 |
 |---|---|---|---|---|

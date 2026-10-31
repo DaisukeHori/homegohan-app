@@ -295,7 +295,7 @@ API・ヘルパー・エラー型・管理画面の表示をすべて削除し�
 
 <!-- DDL/RLS は operator/01-data-model.md §3.23 を参照 (canonical)。本ドキュメントは設計方針のみ記述 -->
 
-→ 記録のトリガー・照合の RPC は cross/16 §11 が正典 (`password_history_record`・`auth_password_check`)。
+→ 記録のトリガー (`on_auth_user_password_changed`。関数 `password_history_record`)・照合の RPC (`auth_password_check`) は cross/16 §11 が正典。
 
 ### 13.2 parental_consents
 
