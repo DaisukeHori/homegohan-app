@@ -21,6 +21,12 @@ export const FEATURE_PACKAGE_STATUS_LABELS: Readonly<Record<FeaturePackageStatus
 };
 
 /**
+ * 作成で、同じ package_key (一意の制約の違反 23505) の機能パッケージがすでにあるときの文 (HTTP は 409・code は OP_PACKAGE_KEY_DUPLICATE)。
+ * 呼び名は運営の画面の欄名 (新規作成・詳細の「パッケージの鍵」) と同じにする (#2166 X2)
+ */
+export const PACKAGE_KEY_DUPLICATE_MESSAGE = '同じパッケージの鍵 (package_key) がすでにあります';
+
+/**
  * 機能パッケージの状態の遷移表 (#2064)。画面のボタンと同じ 1 つだけを許す:
  *   active → deprecated (詳細の「廃止する」)。deprecated からはどこへも変えない (終端。廃止の取り消しは無い)
  * ここに無い変更 (同じ状態への変更・廃止の取り消し) は PATCH が 409 で断る。
