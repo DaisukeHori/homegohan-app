@@ -1497,6 +1497,8 @@ async function findReferenceRecipe(
         .select("title, calories_kcal, protein_g, fat_g, carbs_g, sodium_g, dishes")
         .ilike("title", `%${searchTerm}%`)
         .not("calories_kcal", "is", null)
+        // 主キー id の昇順で並べてから件数で切る (並びが無いと、見る候補が問い合わせごとに変わる。cross/04 §6.2.1)
+        .order("id", { ascending: true })
         .limit(5),
       `dataset_menu_sets.search:${dishName}`,
       [],
