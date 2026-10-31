@@ -112,16 +112,14 @@ export async function POST(request: Request) {
       .limit(7);
 
     // 過去のセッション要約を取得（最新10件）
-    // 同じ日時は id の順 (#2139 T1)
-    const { data: pastSessions } = await orderListBy(
-      supabase
-        .from('ai_consultation_sessions')
-        .select('id, title, summary, key_topics, context_snapshot, summary_generated_at')
-        .eq('user_id', user.id)
-        .eq('status', 'closed')
-        .not('summary', 'is', null),
-      LIST_ORDERS.aiConsultationPastSummaries,
-    )
+    // 同じ日時は id の順 (#2139 T1)。型引数を明示する (問い合わせの型から推論させると TS2589 の深さの上限に当たる)
+    const pastSessionsQuery = supabase
+      .from('ai_consultation_sessions')
+      .select('id, title, summary, key_topics, context_snapshot, summary_generated_at')
+      .eq('user_id', user.id)
+      .eq('status', 'closed')
+      .not('summary', 'is', null);
+    const { data: pastSessions } = await orderListBy<typeof pastSessionsQuery>(pastSessionsQuery, LIST_ORDERS.aiConsultationPastSummaries)
       .limit(10);
 
     // 重要メッセージを取得（最新20件）
