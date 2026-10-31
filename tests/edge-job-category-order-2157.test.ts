@@ -1,16 +1,22 @@
 /**
- * #2157 R3: Edge Function がジョブ・カテゴリを件数の上限つきで取り出す問い合わせの並び (ソースの突き合わせ)。
+ * #2157 R3・#2166 X5: Edge Function が件数の上限つき・offset のページ送りで取り出す問い合わせの並び (ソースの突き合わせ)。
  *
  * 並びの鍵が同じ値の行 (同じ優先度・同じ作成時刻の料理画像のジョブ、同じ優先度のカタログのカテゴリ) のどれを
  * 件数の上限までに取るかは、最後に一意の鍵を重ねないと DB 任せになり、実行ごとに変わりうる。
+ * 並びを書かない問い合わせ (埋め込みの再生成のページ送り、栄養の検証のフォールバックの献立の候補) は、
+ * ページの境目の行が重なる・抜ける、見る候補が問い合わせごとに変わるので、主キー id の昇順で並べる。
  * Edge Function は Deno で動き、Next 側の src/lib/api/list-order.ts (LIST_ORDERS) を import できないので、
  * 同じ並びを .order( で直接書く (cross/04 §6.2.1)。ここでは次の問い合わせの .order( の列・向き・順を見る:
  *   - 料理画像のジョブ (process-meal-image-jobs の fetchPendingJobs の meal_image_jobs):
  *     優先度の降順 → 作成時刻の昇順 → id の昇順
  *   - カタログの取り込みのカテゴリ (_shared/catalog/import-runner.ts の catalog_source_categories の一覧):
  *     取り込みの優先度の昇順 → id の昇順
- * どちらの表も id が主キー (supabase/migrations/20251126124224_create_meal_planner_tables.sql の
- * meal_image_jobs_pkey・catalog_source_categories_pkey)。
+ *   - 埋め込みの再生成 (regenerate-embeddings の dataset_ingredients / dataset_recipes / dataset_menu_sets の
+ *     offset のページ送り): id の昇順
+ *   - 栄養の検証のフォールバック (_shared/nutrition-calculator.ts の dataset_menu_sets を料理名で絞った候補): id の昇順
+ * どの表も id が主キー (supabase/migrations/20251126124224_create_meal_planner_tables.sql の
+ * meal_image_jobs_pkey・catalog_source_categories_pkey・dataset_ingredients_pkey・dataset_recipes_pkey・
+ * dataset_menu_sets_pkey)。
  * 各ファイルの .order( はこの問い合わせの中にしか無いことも見る (同じファイルに並びを書く問い合わせが増えたら、
  * ここに期待する並びを足す)。
  */
@@ -59,6 +65,20 @@ const QUERY_CASES: readonly QueryCase[] = [
       { column: 'id', ascending: true },
     ],
   },
+  {
+    name: '埋め込みの再生成 (dataset_ingredients / dataset_recipes / dataset_menu_sets) の offset のページ送り',
+    file: 'supabase/functions/regenerate-embeddings/index.ts',
+    startMarker: 'let query = supabase',
+    endMarker: '.range(offset, offset + limit - 1)',
+    expected: [{ column: 'id', ascending: true }],
+  },
+  {
+    name: '栄養の検証のフォールバックの献立の候補 (dataset_menu_sets) の取り出し',
+    file: 'supabase/functions/_shared/nutrition-calculator.ts',
+    startMarker: '.from("dataset_menu_sets")',
+    endMarker: '.limit(5)',
+    expected: [{ column: 'id', ascending: true }],
+  },
 ];
 
 /** 始まりの目印から終わりの目印の手前まで。始まりの目印はファイルに 1 回だけ、終わりの目印はそのあとにあること */
@@ -95,7 +115,7 @@ function orderCallsOf(code: string): OrderCall[] {
   return calls.map(([, column, ascending]) => ({ column, ascending: ascending === 'true' }));
 }
 
-describe('#2157 R3 Edge Function がジョブ・カテゴリを取り出す並び', () => {
+describe('#2157 R3・#2166 X5 Edge Function が件数・ページで切って取り出す並び', () => {
   it.each(QUERY_CASES.map((queryCase) => [queryCase.name, queryCase] as const))(
     '%s は、期待する列・向き・順で並べ、最後は主キー id の昇順',
     (_name, queryCase) => {
