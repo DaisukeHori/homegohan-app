@@ -2,7 +2,8 @@
  * #2134 U2 / #2139 T1: 一覧の並びの鍵 (src/lib/api/list-order.ts の LIST_ORDERS) を、実物の PostgREST が受け付けることを確かめる。
  *
  * 単体テストの偽物は、表に無い列で並べてもエラーにしない。ここでは各一覧の表に、route と同じ鍵 (いままでの鍵のあとに
- * 一意の鍵の昇順) で order を重ねた問い合わせをローカルの PostgREST に送り、エラーにならないこと (= どの鍵の列も表にある) を見る。
+ * 一意の鍵の昇順。新しい側から読む一覧は、元の一覧の鍵をそっくり逆にしたもの) で order を重ねた問い合わせをローカルの PostgREST に送り、
+ * エラーにならないこと (= どの鍵の列も表にある) を見る。
  * 同じ値の行が id の順になることは PostgreSQL の ORDER BY の約束で、鍵の並びは tests/list-order-tiebreak-2134.test.ts が見る。
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh)。Next の開発サーバーは要らない (PostgREST を直接呼ぶ)。
