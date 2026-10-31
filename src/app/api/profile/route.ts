@@ -7,6 +7,7 @@ import { calculateNutritionTargets } from '@homegohan/core'
 import { buildNutritionCalculatorInput } from '@/lib/build-nutrition-input'
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character'
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
+import { UserProfileUpdateBodySchema } from '@/lib/profile-update-schema'
 
 /**
  * プロフィールAPI
@@ -22,6 +23,9 @@ const NUTRITION_TRIGGER_FIELDS = [
   'nutrition_goal', 'weight_change_rate',
   'health_conditions', 'medications', 'pregnancy_status',
 ];
+
+// 年代 (age_group) の刻み。年齢を 10 年ごとに切り捨てて '30s' のような値にする
+const AGE_GROUP_DECADE_YEARS = 10;
 
 // snake_case → camelCase のマッピング
 const FIELD_MAP: Record<string, string> = {
@@ -93,7 +97,7 @@ export async function POST(request: Request) {
     
     // 追加項目
     if (body.age) updates.age = parseInt(body.age);
-    if (body.age) updates.age_group = `${Math.floor(parseInt(body.age) / 10) * 10}s`;
+    if (body.age) updates.age_group = `${Math.floor(parseInt(body.age) / AGE_GROUP_DECADE_YEARS) * AGE_GROUP_DECADE_YEARS}s`;
     if (body.occupation) updates.occupation = body.occupation;
     if (body.height) updates.height = parseFloat(body.height);
     if (body.weight) updates.weight = parseFloat(body.weight);
@@ -170,16 +174,19 @@ export async function PUT(request: Request) {
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
     }
+    // 更新できる欄の値が写す先の列の型に合わない (boolean の列に文字列・integer の列に小数・NOT NULL の列に null など) ときも 400。
+    // 検査しないと DB の書き込みで拒まれて internalError の 500 になる (#2166 X7。欄と型は src/lib/profile-update-schema.ts)
+    if (!UserProfileUpdateBodySchema.safeParse(body).success) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 });
+    }
 
     // fromUserProfile を使用して camelCase -> snake_case 変換
     const updates = fromUserProfile(body);
 
-    // 年齢から年代を自動計算
-    if (body.age && !body.ageGroup) {
-      const age = typeof body.age === 'number' ? body.age : parseInt(String(body.age));
-      if (!isNaN(age)) {
-        updates.age_group = `${Math.floor(age / 10) * 10}s`;
-      }
+    // 年齢から年代を自動計算 (age は上の検査で integer の範囲の整数か null)
+    const age = body.age;
+    if (typeof age === 'number' && age !== 0 && !body.ageGroup) {
+      updates.age_group = `${Math.floor(age / AGE_GROUP_DECADE_YEARS) * AGE_GROUP_DECADE_YEARS}s`;
     }
     
     // プロファイル完成度を計算
