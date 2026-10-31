@@ -35,6 +35,11 @@ const UPCOMING_MEALS_DAYS = 7;
 const RECENT_MEALS_DAYS = 14;
 /** 1 週間の日数 (来週の月曜日 = 今週の月曜日の 1 週間後) */
 const DAYS_PER_WEEK = 7;
+/**
+ * 会話の続きの POST で AI に渡す過去のメッセージの件数の上限 (いま保存した利用者のメッセージを含む。約 25 往復)。
+ * 新しい側からこの件数を読む (#2144)。システムプロンプト (利用者の情報) と合わせて AI の文脈に収まる量に抑える
+ */
+const AI_CONSULTATION_HISTORY_LIMIT = 50;
 
 // #1047 F2-21: アクション自動実行を self-fetch
 // (`${NEXT_PUBLIC_APP_URL}/api/ai/consultation/actions/.../execute`) 経由で行うと、
@@ -1073,21 +1078,24 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
     // システムプロンプトを構築（ユーザー情報を含む）
     const systemPrompt = await buildSystemPrompt(supabase, user.id);
 
-    // 過去のメッセージを取得（システムプロンプト以外）- 50件まで
-    // 書いた日時の古い順。同じ日時は id の順 (#2139 T1)
-    const { data: historyData } = await orderListBy(
+    // 過去のメッセージ (システムプロンプト以外) を、新しい側から AI_CONSULTATION_HISTORY_LIMIT 件まで読み、古い順へ並べ直す (#2144)。
+    // 古い順のまま件数で切ると、件数を超えた会話では、いま保存した利用者のメッセージ (いちばん新しい行) が文脈から落ちる。
+    // 新しい順は一覧の GET の古い順 (aiConsultationMessages) をそっくり逆にした並びなので、逆順に戻すと GET の一覧の末尾と
+    // 同じ行が同じ順で並ぶ (同じ日時は id の順)
+    const { data: latestHistoryData } = await orderListBy(
       supabase
         .from('ai_consultation_messages')
         .select('role, content, metadata, is_important')
         .eq('session_id', params.sessionId),
-      LIST_ORDERS.aiConsultationMessages,
+      LIST_ORDERS.aiConsultationMessagesNewestFirst,
     )
-      .limit(50);
+      .limit(AI_CONSULTATION_HISTORY_LIMIT);
+    const historyData = [...(latestHistoryData || [])].reverse();
 
     // メッセージを構築
     const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
-      ...(historyData || [])
+      ...historyData
         .filter((m: any) => !m.metadata?.isSystemPrompt)
         .map((m: any) => ({
           role: m.role as 'user' | 'assistant',
