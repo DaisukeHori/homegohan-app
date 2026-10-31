@@ -303,6 +303,7 @@ describe('トリガーの呼び名 (#2128 docs-1031c の R2 指摘 1・#2134 U3)
         'src/lib/super-admin/plan-price-change-reservation.ts',
         'src/lib/super-admin/plans-schemas.ts',
         'src/lib/super-admin/plan-subscribers.ts',
+        'src/lib/api/list-order.ts',
         'tests/integration/security/plan-deprecate-lock-price-change-reservation.test.ts',
         'docs/design/operator/02-api-spec.md',
         STRIPE_GUARD_MIGRATION,
@@ -402,6 +403,10 @@ describe('トリガーの呼び名 (#2128 docs-1031c の R2 指摘 1・#2134 U3)
     ).toEqual([{ line: 1, fn: DEPRECATE_FN }]);
     // 1 つの関数を 2 本のトリガーが呼ぶ関数の名前も見つける
     expect(triggerCalledByFunctionName(`(DB のトリガー ${HIDDEN_FN})`, fnsToFind)).toEqual([{ line: 1, fn: HIDDEN_FN }]);
+    // 直す前の list-order.ts の書き方 (#2135 U2。この枝を切ったあとに main に入った)
+    expect(
+      triggerCalledByFunctionName(`   * last_login_at はログインのたびにトリガー ${SESSION_CREATED_FN} が書く\n   * (supabase/…)`, fnsToFind),
+    ).toEqual([{ line: 1, fn: SESSION_CREATED_FN }]);
 
     // 直した書き方 (トリガーの名前を書き、関数の名前は「関数 …」と書く) には反応しない
     expect(
@@ -410,6 +415,12 @@ describe('トリガーの呼び名 (#2128 docs-1031c の R2 指摘 1・#2134 U3)
     expect(triggerCalledByFunctionName(`のトリガー \`${TRIGGER}\` (関数 \`${FN}\`) (\`…\`)`, fnsToFind)).toEqual([]);
     expect(
       triggerCalledByFunctionName(`DB のトリガー ${DEPRECATE_TRIGGER} (関数 ${DEPRECATE_FN}) がプランの行を`, fnsToFind),
+    ).toEqual([]);
+    expect(
+      triggerCalledByFunctionName(
+        `   * last_login_at はログインのたびにトリガー on_auth_session_created (関数 ${SESSION_CREATED_FN}) が書く`,
+        fnsToFind,
+      ),
     ).toEqual([]);
     expect(
       triggerCalledByFunctionName(
