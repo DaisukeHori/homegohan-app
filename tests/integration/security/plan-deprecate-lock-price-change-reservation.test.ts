@@ -26,7 +26,7 @@
  *   PR-3 begin をコミット前のまま開いておくと、もう 1 本の begin はプランの行のロックで待ち、コミットの後に in_progress を返す
  *   PR-4 release は自分の token の予約だけを消す。無いプランは not_found、draft は draft、期限が 0 以下は 22023
  *   PR-5 関数 3 本は service_role だけが EXECUTE でき、予約の表は利用者が読み書きできない (RLS 有効・権限なし)
- * (3) 価格の変更が進行中のあいだ、プランの Stripe の商品の ID を変えさせないトリガー guard_plan_stripe_product_id_price_change
+ * (3) 価格の変更が進行中のあいだ、プランの Stripe の商品の ID を変えさせないトリガー trg_guard_plan_stripe_product_id_price_change (関数 guard_plan_stripe_product_id_price_change)
  *     (#2112 Z1-1。supabase/migrations/20261030160000_plan_stripe_product_id_price_change_guard.sql)
  *   PG-1 begin をコミット前のまま開いておくと、商品の ID の UPDATE はプランの行のロックで待ち、コミットの後に予約を読んで
  *        OP_PLAN_PRICE_CHANGE_IN_PROGRESS (P0001) で止まる。商品の ID は変わらない (Price ID がまだ NULL でも)
@@ -768,7 +768,7 @@ describe('(2) 価格の変更の予約', () => {
   });
 });
 
-describe('(3) 価格の変更が進行中のあいだ、商品の ID を変えさせないトリガー guard_plan_stripe_product_id_price_change (#2112 Z1-1)', () => {
+describe('(3) 価格の変更が進行中のあいだ、商品の ID を変えさせないトリガー trg_guard_plan_stripe_product_id_price_change (関数 guard_plan_stripe_product_id_price_change) (#2112 Z1-1)', () => {
   const PRODUCT_A = `prod_it_2112_a_${TS}`;
   const PRODUCT_B = `prod_it_2112_b_${TS}`;
   /** 期限 (PRICE_CHANGE_RESERVATION_STALE_SECONDS) を過ぎた予約にするために reserved_at を戻す時間 (期限の 2 倍) */
