@@ -53,7 +53,7 @@ export default function FinanceDashboardPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">売上ダッシュボード</h1>
-          <p className="text-sm text-slate-500 mt-1">Finance</p>
+          <p className="text-sm text-slate-500 mt-1">売上と課金</p>
         </div>
         <a
           href="https://dashboard.stripe.com"
