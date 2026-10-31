@@ -1038,6 +1038,7 @@ export function manualGrantErrorMessage(code: string): string {
 // tsc:skip place=src/lib/billing/manual-grant-repository.ts — ManualGrantRepository の実装 (billing/02 §8.2)。service_role の client で RPC と SELECT を行う。
 // 呼ぶ側は必ず認可 (requireRole(['super_admin'])) のあと。DB の型は §6 の migration を当てて再生成したもの (段 A)。
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 import { LIVE_SUBSCRIPTION_STATUSES, isSubscriptionStatus } from '@/lib/billing/core';
 import {
   GRANTABLE_PLAN_STATUSES,

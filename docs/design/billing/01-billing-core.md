@@ -2408,6 +2408,7 @@ export function createStripeGateway(fetchImpl: typeof fetch = fetch): StripeGate
 ```ts
 // tsc:skip place=src/lib/billing/repository.ts — 新設モジュール core と再生成後の database.types を使うので単独の検査から外す (§8.0 の手順で、再生成後の型の形を足して置き場所で検査する)
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 import {
   STRIPE_EVENT_STUCK_MINUTES,
   LIVE_SUBSCRIPTION_STATUSES,
@@ -2463,12 +2464,10 @@ export function createBillingRepository(admin: Admin = getSupabaseAdmin()): Bill
       return data?.plan_key ?? null;
     },
     async findLiveSubscription(userId) {
-      const { data, error } = await admin
-        .from('personal_subscriptions')
-        .select(SUBSCRIPTION_VIEW_COLUMNS)
-        .eq('user_id', userId)
-        .in('status', [...LIVE_SUBSCRIPTION_STATUSES])
-        .order('created_at', { ascending: false })
+      const { data, error } = await orderListBy(
+        admin.from('personal_subscriptions').select(SUBSCRIPTION_VIEW_COLUMNS).eq('user_id', userId).in('status', [...LIVE_SUBSCRIPTION_STATUSES]),
+        LIST_ORDERS.billingLiveSubscription,
+      )
         .limit(1)
         .maybeSingle();
       if (error) throw error;
