@@ -7,7 +7,7 @@
  *     plan_type = org の行) には、free を書き換える前の free の値を写す (組織の利用者の上限は変えない)
  *   - (#1912 段 A の整合ゲートの指摘) migration *_org_plan_ai_daily_limits.sql: アプリが organizations.plan に書ける値
  *     (ORG_PLAN_VALUES) のうち (5a) の写す先に入らなかった 'premium'・'enterprise' に、組織の上限 (10) の行を足す。
- *     トリガー guard_organizations_plan_value で、owner / admin の JWT が organizations.plan を ORG_PLAN_VALUES の外
+ *     トリガー trg_guard_organizations_plan_value (関数 guard_organizations_plan_value) で、owner / admin の JWT が organizations.plan を ORG_PLAN_VALUES の外
  *     (有料の plan_key・行の無い値・NULL) へ変えるのを拒んだ (service_role の書き込みは止めない)
  *   - (#1912 組織のプランの段階は運営だけが変える) migration *_org_plan_operator_only.sql: 同じトリガー関数を作り直し、
  *     ログインした利用者 (authenticated) と anon が plan を変えること自体を ORG_PLAN_OPERATOR_ONLY (42501) で拒む

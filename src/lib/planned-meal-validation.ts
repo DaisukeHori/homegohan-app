@@ -28,7 +28,7 @@ import { isMealType, MEAL_ORDER, type MealType } from '@homegohan/shared';
 
 /**
  * planned_meals.meal_type に入れてよい値。packages/shared の MealType (5 値) と、DB の
- * トリガー trg_planned_meals_validate_values (validate_planned_meal_values) と同じ。
+ * トリガー trg_planned_meals_validate_values (関数 validate_planned_meal_values) と同じ。
  * 夜食 (midnight_snack) を含む (UI・献立生成が使う)。
  * 値と並びの正本は @homegohan/shared の MEAL_ORDER で、ここでは手書きしない (#1631)。
  * MEAL_ORDER と同じ集合であることは src/__tests__/lib/planned-meal-validation.test.ts で、DB のトリガーが

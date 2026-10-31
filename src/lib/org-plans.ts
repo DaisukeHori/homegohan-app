@@ -7,7 +7,7 @@
  * どちらも Zod でこの一覧に限る。組織の段階は運営だけが変える (#1912。オーナーの選択 (2026-10-22・選択式)「運営だけが変える (推奨)」):
  * 組織の設定 (PUT /api/org/settings。owner / admin の JWT) は plan を受け取らず 400 で断り (src/lib/org-settings-api.ts)、
  * owner / admin の JWT で PostgREST から直接 UPDATE する経路 (RLS organizations_update_admin。アプリの Zod を通らない) は、
- * DB のトリガー guard_organizations_plan_value が、ログインした利用者 (authenticated) と anon が plan を変えること自体を
+ * DB のトリガー trg_guard_organizations_plan_value (関数 guard_organizations_plan_value) が、ログインした利用者 (authenticated) と anon が plan を変えること自体を
  * ORG_PLAN_OPERATOR_ONLY (42501) で拒む (supabase/migrations/20261022170000_org_plan_operator_only.sql。
  * それより前の 20261021110000_org_plan_ai_daily_limits.sql の定義は、この一覧の外の値だけを拒んでいた)。
  * 列 (organizations.plan) そのものは CHECK の無い text で、service_role の書き込みは DB では限られない。

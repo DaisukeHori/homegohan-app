@@ -830,7 +830,7 @@ describe('組織チャレンジ (#1132): 作成・開始できるのは食事の
     expect(sessionDb.rows('organization_challenges').find((c) => c.id === CHALLENGE_A_STEPS)?.status).toBe(status);
   });
 
-  // #1688: 状態の遷移表 (src/lib/org-challenge-privacy.ts。DB のトリガー org_challenge_guard_update と同じ) に無い変更は 409
+  // #1688: 状態の遷移表 (src/lib/org-challenge-privacy.ts。DB のトリガー trg_org_challenge_guard_update (関数 org_challenge_guard_update) と同じ) に無い変更は 409
   /** CHALLENGE_A の状態を、本人のセッションの DB で書き換えておく (終わった状態のチャレンジを作る) */
   function setChallengeAStatus(status: string) {
     sessionDb = createSchemaDb({

@@ -59,7 +59,7 @@ export const LIST_ORDERS = {
   operatorMembershipAudit: withIdTiebreak('membership_audit', [descending('created_at')]),
   /**
    * GET /api/operator/membership/org/[id]/candidates: 最終ログインの新しい順・まだログインしていない人は最後。
-   * last_login_at はログインのたびにトリガー auth_session_created が書く
+   * last_login_at はログインのたびにトリガー on_auth_session_created (関数 auth_session_created) が書く
    * (supabase/migrations/20261016243000_auth_history_sessions.sql)。移行の前からログインしていない人は空のまま
    */
   operatorOrgTransferCandidates: withIdTiebreak('user_profiles', [
