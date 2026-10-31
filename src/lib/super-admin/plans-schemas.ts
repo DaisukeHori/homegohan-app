@@ -115,12 +115,12 @@ export function isAllowedPlanStatusTransition(
  * 個人・家族のプランに組織のプランの値 (isOrgPlanKey: standard / premium / enterprise と org_ で始まる key) を付けたときの文 (#1912)。
  * 付けると利用者の画面に「組織のプラン」と出てしまう
  */
-export const PERSONAL_FAMILY_PLAN_KEY_MESSAGE = `個人・家族のプランのキー (plan_key) には、組織のプランの値 (${ORG_PLAN_VALUES_WIRE.join(' / ')} と ${ORG_SUBSCRIPTION_PLAN_KEY_PREFIX} で始まる値) を使えません`;
+export const PERSONAL_FAMILY_PLAN_KEY_MESSAGE = `個人・家族のプランの鍵 (plan_key) には、組織のプランの値 (${ORG_PLAN_VALUES_WIRE.join(' / ')} と ${ORG_SUBSCRIPTION_PLAN_KEY_PREFIX} で始まる値) を使えません`;
 
 /**
  * 組織のプランの plan_key が org_ で始まらないときの文 (#1912)。始まらないと利用者の画面に「有料プラン」と出てしまう
  */
-export const ORG_PLAN_KEY_PREFIX_MESSAGE = `組織のプランのキー (plan_key) は、組織のプランの頭の文字 (${ORG_SUBSCRIPTION_PLAN_KEY_PREFIX}) で始まる値にしてください`;
+export const ORG_PLAN_KEY_PREFIX_MESSAGE = `組織のプランの鍵 (plan_key) は、組織のプランの頭の文字 (${ORG_SUBSCRIPTION_PLAN_KEY_PREFIX}) で始まる値にしてください`;
 
 /**
  * 作成で、同じ plan_key (一意の制約の違反 23505) のプランがすでにあるときの文 (HTTP は 409・code は OP_PLAN_KEY_DUPLICATE)。
