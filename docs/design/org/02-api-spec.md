@@ -388,7 +388,7 @@ yamada@example.com,org_member,営業部,山田太郎,EMP001,2024-04-01
 
 **認証**: 組織の `org_role` が `owner` / `admin` (`requireOrgAdmin`。`src/lib/auth/helpers.ts`)
 
-**クエリパラメータ**: なし (`src/app/api/org/invites/route.ts:39-72` はクエリを読まない。自分の組織の招待を全件、作成の新しい順に返す)
+**クエリパラメータ**: なし (`src/app/api/org/invites/route.ts:39-72` はクエリを読まない。自分の組織の招待を全件、作成の新しい順に返す。同じ日時は id の順 (`src/lib/api/list-order.ts` の `LIST_ORDERS.orgInvites`))
 
 **レスポンス 200** (`OrgInviteListResponseSchema`。件数の `total` は無い):
 ```json

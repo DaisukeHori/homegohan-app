@@ -529,7 +529,7 @@ export const FREEZE_NOTIFICATION_AUDIT_LOGS_PATH = '/super-admin/audit-logs';
 /** 凍結の監査の種別 (POST /api/admin/users/[id]/freeze が details.notification とともに記録する) */
 export const FREEZE_NOTIFICATION_AUDIT_ACTION_TYPE = 'admin.user.ban';
 /** 応答に結果が無い・読めないときの文 (古い API との食い違いなど)。結果を確かめられる画面と、その画面で探す行を名指す */
-export const FREEZE_NOTIFICATION_UNKNOWN_MESSAGE = `通知メールの結果を確認できませんでした (super_admin の監査ログ閲覧 ${FREEZE_NOTIFICATION_AUDIT_LOGS_PATH} で ${FREEZE_NOTIFICATION_AUDIT_ACTION_TYPE} の行を展開し、details の notification を確認してください)`;
+export const FREEZE_NOTIFICATION_UNKNOWN_MESSAGE = `通知メールの結果を確認できませんでした (${SUPER_ADMIN_SCREEN_LABEL}の監査ログ閲覧 ${FREEZE_NOTIFICATION_AUDIT_LOGS_PATH} で ${FREEZE_NOTIFICATION_AUDIT_ACTION_TYPE} の行を展開し、details の notification を確認してください)`;
 
 /**
  * 応答の data.notification を読む。形が合わなければ null (画面は FREEZE_NOTIFICATION_UNKNOWN_MESSAGE を出す)。
@@ -1073,8 +1073,8 @@ import { describeFreezeNotificationOutcome, freezeNotificationOutcomeOf } from '
 | Zod の失敗 (`notification_message` が 1001 文字以上・`notify_user` が boolean でない・ほか) | 400 | `VALIDATION_ERROR` | 「バリデーションエラー」+ `details` (flatten。画面は読まない) | 無し | 無し |
 | temporary で `duration_days` 無し | 400 | `VALIDATION_ERROR` | 「一時 BAN の場合は日数 (duration_days) が必須です」 | 無し | 無し |
 | 未認証 | 401 | `AUTH_UNAUTHENTICATED` | 「認証が必要です」 | 無し | 無し |
-| ロール不足・二段階認証の未完了・permanent を admin が | 403 | `OP_PERMISSION_DENIED` | `operatorForbiddenMessageOf` / 「永久 BAN はスーパー管理者 (super_admin) のみ実行可能です」 | 無し | 無し |
-| 対象が super_admin | 403 | `OP_TARGET_PROTECTED` | 「スーパー管理者 (super_admin) のユーザーを凍結することはできません」 | 無し | 無し |
+| ロール不足・二段階認証の未完了・permanent を admin が | 403 | `OP_PERMISSION_DENIED` | `operatorForbiddenMessageOf` / 「永久 BAN は運営最上位のみ実行できます」(`PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE`。src/lib/admin/user-ban.ts) | 無し | 無し |
+| 対象が super_admin | 403 | `OP_TARGET_PROTECTED` | 「運営最上位のユーザーは凍結できません」(`SUPER_ADMIN_FREEZE_REJECTED_MESSAGE`。src/lib/admin/user-ban.ts) | 無し | 無し |
 | 対象が無い (UUID でない id を含む) | 404 | `NOT_FOUND` | 「ユーザーが見つかりません」 | 無し | 無し |
 | 読んでから書くまでに対象が変わった | 409 | `CONFLICT_STALE_DATA` | `STALE_FREEZE_TARGET_RESPONSE` の文 | 無し | 無し |
 | DB の失敗 (読み・UPDATE・読み直し) | 500 | `INTERNAL_ERROR` | 「凍結処理に失敗しました」 | 無し | 無し |

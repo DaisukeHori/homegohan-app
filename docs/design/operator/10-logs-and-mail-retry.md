@@ -1679,7 +1679,7 @@ export function renderEmailDeadLetterEmail(vars: EmailDeadLetterEmailVars): Emai
       ...templateLines,
       '',
       '▼ 確認と再送',
-      '送信待ちの画面 (super_admin のみ)',
+      `送信待ちの画面 (${SUPER_ADMIN_ONLY_NOTE})`,
       vars.outbox_url,
       '状態を「届けられなかった」にすると、失敗の理由を確認できます。原因 (送信元ドメインの検証・API キーなど) を直してから、1 行ずつ「再送」してください。',
       '',

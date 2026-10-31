@@ -13,8 +13,8 @@
  *  3. src・tests・docs・apps・scripts・supabase (migrations・rollbacks・functions)・CLAUDE.md の全文で、
  *     「トリガー」のすぐ後 (空白・改行・コメントの行の頭の * や //・--・#・> と、` や ( だけを挟む) に 2. の名前が来る所と、
  *     「トリガー」の後の ( の中 (「トリガー 2 種 (…)」「…のトリガー・…の RPC は … (…)」の形も) で 2. の名前を関数と呼ばずに書く所が無い。
- *     例外は FROZEN_MIGRATION_HITS (編集しない既存の migration。CLAUDE.md「既存の migration ファイルは編集せず」) と、
- *     PENDING_DESIGN_DOC_HITS (設計書の分。設計書の追随を当てたあとに、この例外を消して 0 件を求める) の数まで
+ *     例外は FROZEN_MIGRATION_HITS (編集しない既存の migration。CLAUDE.md「既存の migration ファイルは編集せず」) の数まで。
+ *     設計書 (docs/design) も 0 件
  *  4. 3. の見つけ方が、行をまたぐ書き方・` で囲む書き方・( で始める書き方・見出しと ( の中の並びを組にする書き方を見つけ、直した書き方 (トリガーの名前を書き、
  *     関数の名前は「関数 …」と書く) には反応しないことを、写しの文で確かめる
  * を確かめる。
@@ -75,43 +75,6 @@ const FROZEN_MIGRATION_HITS: readonly (readonly [file: string, fn: string, count
   ['supabase/migrations/20261022180000_org_tables_rpc_only_writes.sql', 'audit_organization_invite_created', 1],
   ['supabase/migrations/20261023130000_account_deletion_owner_guard.sql', 'organizations_owner_not_deleting', 3],
   ['supabase/migrations/20261024130000_plan_deprecate_lock_and_price_change_reservation.sql', DEPRECATE_FN, 4],
-];
-
-/**
- * 設計書 (docs/design。この枝では編集しない) に残る「トリガー <関数の名前>」の数 ([ファイル, 関数の名前, 数])。
- * 設計書の追随 (トリガーの名前に直す) を当てたら、この例外を消し、docs/design も 0 件を求める。
- */
-const PENDING_DESIGN_DOC_HITS: readonly (readonly [file: string, fn: string, count: number])[] = [
-  ['docs/design/billing/01-billing-core.md', 'billing_family_plan_follow_representative', 2],
-  ['docs/design/billing/02-manual-plan-grant.md', 'billing_family_plan_follow_representative', 4],
-  ['docs/design/cross/01-auth-session.md', PASSWORD_HISTORY_FN, 1],
-  ['docs/design/cross/02-rls-patterns.md', PASSWORD_HISTORY_FN, 1],
-  ['docs/design/cross/04-api-conventions.md', 'org_challenge_guard_update', 2],
-  ['docs/design/cross/14-parental-consent.md', 'revoke_parental_consent_on_member_delete', 1],
-  ['docs/design/cross/16-auth-history-sessions.md', 'auth_session_created', 4],
-  ['docs/design/cross/16-auth-history-sessions.md', PASSWORD_HISTORY_FN, 2],
-  ['docs/design/cross/16-auth-history-sessions.md', 'user_profiles_fill_login_stats', 3],
-  ['docs/design/cross/20-terms-privacy-text.md', 'auth_session_created', 1],
-  ['docs/design/family/10-family-menu-view.md', 'guard_family_members_privileged', 1],
-  ['docs/design/family/11-self-dissolve.md', 'billing_family_plan_follow_representative', 1],
-  ['docs/design/membership/01-data-model.md', 'guard_meal_paste_group_id', 1],
-  ['docs/design/membership/03-ui-spec.md', 'guard_meal_paste_group_id', 1],
-  ['docs/design/mobile/03-push-notification.md', 'enqueue_weekly_menu_result_push', 1],
-  ['docs/design/mobile/06-push-send.md', 'enqueue_weekly_menu_result_push', 4],
-  ['docs/design/operator/01-data-model.md', 'auth_session_created', 2],
-  ['docs/design/operator/01-data-model.md', 'auth_session_deleted', 1],
-  ['docs/design/operator/01-data-model.md', 'auth_session_refreshed', 1],
-  ['docs/design/operator/01-data-model.md', PASSWORD_HISTORY_FN, 1],
-  ['docs/design/operator/01-data-model.md', 'user_profiles_fill_login_stats', 1],
-  ['docs/design/operator/02-api-spec.md', 'guard_meal_paste_group_id', 1],
-  ['docs/design/operator/02-api-spec.md', 'guard_organizations_plan_value', 1],
-  ['docs/design/operator/02-api-spec.md', DEPRECATE_FN, 1],
-  ['docs/design/operator/04-plan-management.md', DEPRECATE_FN, 1],
-  ['docs/design/operator/13-hidden-content-restore.md', 'guard_hidden_content_columns', 1],
-  ['docs/design/org/10-challenge-diff-privacy.md', 'org_challenge_count_join', 3],
-  ['docs/design/org/10-challenge-diff-privacy.md', 'org_challenge_finalize', 4],
-  ['docs/design/org/10-challenge-diff-privacy.md', 'org_challenge_guard_update', 6],
-  ['docs/design/org/10-challenge-diff-privacy.md', 'org_challenge_mark_admin', 3],
 ];
 
 /** root (相対パス) の下の文字のファイル (相対パス。並べて返す) */
@@ -318,28 +281,21 @@ describe('トリガーの呼び名 (#2128 docs-1031c の R2 指摘 1・#2134 U3)
       })),
     );
     const isFrozenMigration = (file: string) => file.startsWith(`${MIGRATIONS_DIR}/`);
-    const isDesignDoc = (file: string) => file.startsWith('docs/design/');
 
-    // 例外の外 (src・tests・CLAUDE.md・apps・scripts・migrations 以外の supabase・docs/design 以外の docs) は 0 件
+    // 例外の外 (src・tests・docs (docs/design を含む)・CLAUDE.md・apps・scripts・migrations 以外の supabase) は 0 件
     expect(
-      hits
-        .filter(({ file }) => !isFrozenMigration(file) && !isDesignDoc(file))
-        .map(({ file, line, fn }) => `${file}:${line} ${fn}`),
+      hits.filter(({ file }) => !isFrozenMigration(file)).map(({ file, line, fn }) => `${file}:${line} ${fn}`),
     ).toEqual([]);
-    // 既存の migration と設計書は、例外の表の数まで (新しい migration・表に無い組は 0 件)
+    // 既存の migration は、例外の表の数まで (新しい migration・表に無い組は 0 件)
     expect(
       overAllowance(countByFileAndFn(hits.filter(({ file }) => isFrozenMigration(file))), allowanceOf(FROZEN_MIGRATION_HITS)),
     ).toEqual([]);
-    expect(
-      overAllowance(countByFileAndFn(hits.filter(({ file }) => isDesignDoc(file))), allowanceOf(PENDING_DESIGN_DOC_HITS)),
-    ).toEqual([]);
   });
 
-  it('例外の表は migration から読んだ探す名前だけを書き、それぞれ migrations・docs/design の下にあるファイルだけ', () => {
-    const tables = [...FROZEN_MIGRATION_HITS, ...PENDING_DESIGN_DOC_HITS];
+  it('例外の表は migration から読んだ探す名前だけを書き、migrations の下にあるファイルだけ', () => {
+    const tables = FROZEN_MIGRATION_HITS;
     expect(tables.filter(([, fn]) => !fnsToFind.includes(fn)).map(([file, fn]) => `${file} ${fn}`)).toEqual([]);
     expect(FROZEN_MIGRATION_HITS.filter(([file]) => !file.startsWith(`${MIGRATIONS_DIR}/`))).toEqual([]);
-    expect(PENDING_DESIGN_DOC_HITS.filter(([file]) => !file.startsWith('docs/design/'))).toEqual([]);
     expect(tables.filter(([file]) => !fs.existsSync(path.join(ROOT, file))).map(([file]) => file)).toEqual([]);
   });
 

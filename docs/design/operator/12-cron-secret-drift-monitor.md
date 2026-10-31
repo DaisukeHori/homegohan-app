@@ -1290,7 +1290,7 @@ export function renderCronSecretDriftEmail(vars: CronSecretDriftEmailVars): Emai
       '▼ 確認のしかた',
       '手元で node scripts/check-cron-secret-drift.mjs --project-ref <ref> を流すと、3 か所の状態を値を出さずに確かめられます (手順は ENV_SETUP.md「値のずれの確かめ方」)。',
       '自動の確認の仕組みと所見の読み方は docs/design/operator/12-cron-secret-drift-monitor.md。',
-      '運用ログの画面 (super_admin のみ):',
+      `運用ログの画面 (${SUPER_ADMIN_ONLY_NOTE}):`,
       vars.logs_url,
       '',
       `確認した時刻: ${JST_MINUTE_FORMAT.format(vars.detected_at)} (日本時間)`,

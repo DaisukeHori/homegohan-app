@@ -1762,7 +1762,7 @@ export type MfaResetResponse = z.infer<typeof MfaResetResponseSchema>;
 | `AUTH_UNAUTHENTICATED` | ログインが切れました。もう一度ログインしてください。 |
 | `AUTH_2FA_NATIVE_SESSION` | アプリの中では、この画面で二段階認証の確認や解除ができません。アプリの確認画面か、ブラウザで行ってください。 |
 | `UNAUTHORIZED` | ログインが切れました。もう一度ログインしてください。 |
-| `FORBIDDEN` | この操作にはスーパー管理者 (super_admin) の権限と、二段階認証の確認が必要です。 |
+| `FORBIDDEN` | この操作には運営最上位の権限と、二段階認証の確認が必要です。 |
 | `OP_SELF_MODIFY` | 自分自身の二段階認証は、ここでは解除できません。バックアップコードか、二段階認証の設定の画面で解除してください。 |
 | `OP_INVALID_INPUT` | 入力内容を確認してください (理由・本人確認の方法・確認のチェックが必要です)。 |
 | `NOT_FOUND` | 対象の利用者が見つかりません。 |
@@ -1893,7 +1893,7 @@ const MFA_ERROR_MESSAGES: ReadonlyMap<string, string> = new Map<string, string>(
   ['AUTH_UNAUTHENTICATED', 'ログインが切れました。もう一度ログインしてください。'],
   ['AUTH_2FA_NATIVE_SESSION', 'アプリの中では、この画面で二段階認証の確認や解除ができません。アプリの確認画面か、ブラウザで行ってください。'],
   ['UNAUTHORIZED', 'ログインが切れました。もう一度ログインしてください。'],
-  ['FORBIDDEN', 'この操作にはスーパー管理者 (super_admin) の権限と、二段階認証の確認が必要です。'],
+  ['FORBIDDEN', `この操作には${OPERATOR_ROLE_LABELS.super_admin}の権限と、二段階認証の確認が必要です。`],
   ['OP_SELF_MODIFY', '自分自身の二段階認証は、ここでは解除できません。バックアップコードか、二段階認証の設定の画面で解除してください。'],
   ['OP_INVALID_INPUT', '入力内容を確認してください (理由・本人確認の方法・確認のチェックが必要です)。'],
   ['NOT_FOUND', '対象の利用者が見つかりません。'],
