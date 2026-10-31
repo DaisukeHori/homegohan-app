@@ -510,14 +510,14 @@ function consentBranches(file: string, sf: ts.SourceFile): ConsentBranch[] {
   return out;
 }
 
-/** 7 の走査が見つける分岐の数の下限 (空振りの見張り)。#1598 のあとの実数は 6 */
-const MIN_CONSENT_BRANCHES = 6;
+/** 7 の走査が見つける分岐の数の下限 (空振りの見張り)。ホームのデータの hook を消した (#2157) あとの実数は 5 */
+const MIN_CONSENT_BRANCHES = 5;
 
 describe('同意が必要と分かった分岐で、例外を投げ直さない (呼び出し側が「失敗しました」を重ねて出さないように)', () => {
   const branches = mobileSources().flatMap((file) => consentBranches(file.slice('apps/mobile/'.length), parse(file)));
 
   it('走査が空振りしていない (判定の関数で分岐している場所を見つけている)', () => {
-    // #1598 で届かない画面を消したあとは 6 か所 (血液検査・AI 相談のシート・ホームのデータ・生成のフック 2・同意の判定そのもの)
+    // 5 か所 (血液検査・AI 相談のシート・生成のフック 2・同意の判定そのもの)。ホームのデータの hook はアプリから使われていなかったので消した (#2157)
     expect(branches.length).toBeGreaterThanOrEqual(MIN_CONSENT_BRANCHES);
     expect(branches.some((b) => b.file === 'src/hooks/useV4MenuGeneration.ts')).toBe(true);
     expect(branches.some((b) => b.file === 'src/components/ai/AIAdvisorSheet.tsx')).toBe(true);
