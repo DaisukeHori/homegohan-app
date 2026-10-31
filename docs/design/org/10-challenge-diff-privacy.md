@@ -976,7 +976,7 @@ if (!mine) {
 
 ### 8.5 `POST` / `DELETE /api/org/challenges/[id]/join`
 
-不変。コメント (`src/app/api/org/challenges/[id]/join/route.ts` の冒頭の JSDoc) は「やめた人の記録は、集計にも順位にも残らない。管理者の集計 (延べ数・確定した平均) は動かない」と書く。
+不変。コメント (`src/app/api/org/challenges/[id]/join/route.ts` の冒頭の JSDoc) は「やめた人の記録は、集計にも順位にも残らない。管理者の集計 (延べ数・確定した平均。#1688) は動かない」と書く。
 
 ---
 
@@ -1236,7 +1236,7 @@ sequenceDiagram
 | `docs/design/operator/08-cron-batches.md` §3.0 の `update-org-challenge-progress` の説明 | 「completed にする UPDATE で平均が確定する (トリガー)」の 1 文 | docs PR |
 | `docs/requirements/02-organization-management.md` §1.4 の表 (チャレンジ参加・進捗 API の行) | #1688 の守りが入った旨 | docs PR |
 | 招待の設計 `docs/design/membership/02-flow-spec.md` (`accept_org_invite` の流れ。最新の定義は `supabase/migrations/20261007150200_invite_accept_creates_missing_profile.sql:97`) | 同じ組織の在籍者が招待を承諾すると `org_role` が招待の役割で上書きされる (所有者が member になりうる)。本件の順位表の守りは印で閉じたので本件の前提ではないが、招待の既存の欠陥として別 Issue で扱うかを決める | #1799 で直した (`supabase/migrations/20261017160000_org_invite_same_org_member.sql`) |
-| `src/app/api/org/challenges/[id]/join/route.ts` の冒頭の JSDoc のコメント | コメントは「…管理者の集計 (延べ数・確定した平均) は動かない」と書く (段 A で入った) | 段 A |
+| `src/app/api/org/challenges/[id]/join/route.ts` の冒頭の JSDoc のコメント | コメントは「管理者の集計 (延べ数・確定した平均。#1688) は動かない」と書く (段 A で入った) | 段 A |
 
 `organization_challenges` / `org_challenges` に触れていて、確かめたうえで直さないと決めた文書 (上の表の 8 行には数えない):
 
