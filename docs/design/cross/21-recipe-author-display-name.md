@@ -864,7 +864,7 @@ describe('cross/21 recipe_author_display_names の migration (静的)', () => {
     expect(flat).toContain(`REVOKE ALL ON FUNCTION ${FUNCTION_SIGNATURE} FROM PUBLIC, anon, authenticated, service_role;`);
     expect(flat).toContain(`GRANT EXECUTE ON FUNCTION ${FUNCTION_SIGNATURE} TO anon, authenticated;`);
     expect(flat).not.toMatch(/GRANT (ALL|TRUNCATE)/);
-    expect(flat).not.toMatch(new RegExp(`GRANT EXECUTE ON FUNCTION ${FUNCTION_SIGNATURE.replace(/[().\[\]]/g, '\\$&')} TO [^;]*service_role`));
+    expect(flat).not.toMatch(new RegExp(`GRANT EXECUTE ON FUNCTION ${FUNCTION_SIGNATURE.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} TO [^;]*service_role`));
     expect(flat).toContain(`CREATE INDEX IF NOT EXISTS ${INDEX_NAME} ON public.recipe_comments (user_id);`);
   });
 
@@ -879,7 +879,7 @@ describe('cross/21 recipe_author_display_names の migration (静的)', () => {
     expect(down).not.toMatch(/\bGRANT\b/);
   });
 
-  // C-8 は段 B の PR で足す (段 A の PR には置かない。§15)
+  // C-8 は段 B が足した検査 (§15)
   it('C-8: viewer-lookups.ts は関数の名前の定数で rpc を呼び、user_profiles を直接 select しない', () => {
     const src = read(VIEWER_LOOKUPS);
     expect(src).toContain(`export const RECIPE_AUTHOR_DISPLAY_NAMES_RPC = '${FUNCTION_NAME}';`);

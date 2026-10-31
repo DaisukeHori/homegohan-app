@@ -445,7 +445,7 @@ export default function FeaturePackageDetailPage() {
 
       <div className="bg-white rounded-xl border border-slate-200 p-6 space-y-5">
         <div>
-          <label className="block text-xs font-medium text-slate-500 mb-1">package_key</label>
+          <label className="block text-xs font-medium text-slate-500 mb-1">パッケージの鍵</label>
           <code className="font-mono text-sm bg-slate-100 px-2 py-1 rounded">{pkg.package_key}</code>
         </div>
 

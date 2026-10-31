@@ -92,7 +92,7 @@ export default async function PlansPage() {
         <table className="w-full text-sm">
           <thead className="bg-slate-50 border-b border-slate-200">
             <tr>
-              <th className="text-left px-4 py-3 font-medium text-slate-600">plan_key</th>
+              <th className="text-left px-4 py-3 font-medium text-slate-600">プランの鍵</th>
               <th className="text-left px-4 py-3 font-medium text-slate-600">表示名</th>
               <th className="text-left px-4 py-3 font-medium text-slate-600">種別</th>
               <th className="text-right px-4 py-3 font-medium text-slate-600">月額</th>

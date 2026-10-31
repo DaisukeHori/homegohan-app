@@ -43,6 +43,11 @@ const UPCOMING_MEALS_LIMIT = 30;
  * 日の新しい側からこの件数を読み、古い順へ並べ直して入れる (#2150)
  */
 const RECENT_MEALS_LIMIT = 50;
+/**
+ * システムプロンプトに入れる「レシピのコレクション」の件数の上限 (いままでの値)。作った日時の新しい側からこの件数を読む
+ * (LIST_ORDERS.aiConsultationRecipeCollections)。AI はプロンプトに載った collectionId しか指せない
+ */
+const RECIPE_COLLECTIONS_LIMIT = 10;
 
 /** 献立を日付 → 区分の順に並べ替えるときに見る列 (planned_meals の行と、埋め込んだ user_daily_meals の日) */
 interface DayMealRow {
@@ -251,8 +256,12 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
       LIST_ORDERS.pantryItemsByExpiration,
     ),
 
-    // 12. レシピコレクション
-    supabase.from('recipe_collections').select('id, name, recipe_ids').eq('user_id', userId).limit(10),
+    // 12. レシピコレクション (作った日時の新しい順。同じ日時は id の順で、件数の上限の境目でどれが入るかも決まる。#2157)
+    orderListBy(
+      supabase.from('recipe_collections').select('id, name, recipe_ids').eq('user_id', userId),
+      LIST_ORDERS.aiConsultationRecipeCollections,
+    )
+      .limit(RECIPE_COLLECTIONS_LIMIT),
 
     // 13. 過去のセッション要約 (同じ日時は id の順。#2139 T1)
     orderListBy(
