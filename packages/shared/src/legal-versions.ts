@@ -20,7 +20,8 @@
  * v2026.2 は #1917 (docs/design/family/11-self-dissolve.md §18) で、退会の条件 (譲渡するか解散するまで) を改めた版。
  *   改定前の版 (v2026.1) の文面は docs/legal/archive/v2026.1/ に控えてある。
  * v2026.3 は billing/03 (#1912) で有料プランの条文を足した版。改定前の版 (v2026.2) の文面は docs/legal/archive/v2026.2/ に控えてある。
- * v2026.4 は mobile/08 (Sign in with Apple) で委託先に Apple (ログイン) を足した版。改定前の版 (v2026.3) の文面は docs/legal/archive/v2026.3/ に控えてある。
+ * v2026.4 は mobile/08 (Sign in with Apple) で委託先に Apple (ログイン) を足し、cross/21 (docs/design/cross/21-recipe-author-display-name.md) で
+ *   公開レシピの作者名の表示 (プライバシーポリシー第8条 3 項・第9条) を足した版。改定前の版 (v2026.3) の文面は docs/legal/archive/v2026.3/ に控えてある。
  *
  * version の形式:
  *   DB の terms_acceptances.document_version は varchar(20)。同意を記録する DB 関数 accept_legal_documents も同じ形式
@@ -58,8 +59,12 @@ export interface LegalDocumentInfo {
  *
  * mobile/08 (#1139。docs/design/mobile/08-sign-in-with-apple.md §11.8): Apple アカウントでのログインを始めるにあたり、プライバシーポリシーの
  * 委託先 (第7条)・取得する情報 (第3条のアカウントの行)・外部送信 (第10条) に Apple (ログイン) を足すので、両文書を v2026.4 に上げる。
+ * 同じ版で、cross/21 (docs/design/cross/21-recipe-author-display-name.md §7.12) が、公開の状態のレシピとそのレシピへのコメントの
+ * 作者名の表示をプライバシーポリシー第8条 3 項と第9条 (見出しも「家族グループ、組織、公開したレシピでの見え方」) に足した。
+ * 作者名を他の人に出す関数 recipe_author_display_names は、この版より前の版にだけ同意した人と同意の記録が無い人の名前を出さない
+ * (cross/21 の K-同意。前の版の一覧は supabase/migrations/20261101090000_recipe_author_display_names.sql の c_privacy_versions_without_author_name)。
  * 利用規約の本文は変わらないが、両文書の版は同じ値で動かす (既存の改定と同じ)。
- * v2026.4 の施行日は、予告に書いた施行日 (その日に公開 (デプロイ) する。§11.8 (i))。
+ * v2026.4 の施行日は公開 (デプロイ) の日の 2026-11-01 (cross/20 §9.4 の 3・mobile/08 §11.8 (f))。
  */
 export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentInfo>> = {
   terms_of_service: { version: 'v2026.4', effectiveDate: '2026-11-01' },

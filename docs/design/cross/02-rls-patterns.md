@@ -46,6 +46,7 @@ ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;
 - **禁止**: Next.js (Server Actions・API Routes・`src/lib`・`lib`) での自前の `createClient(SERVICE_ROLE_KEY)` (`getSupabaseAdmin()` と上の一覧のほか)。同じテストが `src`・`lib` を走査して見張る (`supabase/functions`・`scripts` は走査の対象外。使う前の確認の順も見ない)。使う前に何を確かめるかは route ごとに決まり (ログインした利用者の route は認可か本人の確認、Webhook は署名、cron は秘密の照合、など)、決まりは各 route の設計書にある (ルートの `CLAUDE.md` の「ロール認可」の節も見る)
 - **コードレビュー必須**: `service_role` が使われる PR は security ラベルを付与、実装リーダーがレビュー
 - `admin_audit_logs` に記録する操作は `operator/07-audit-monitoring.md` §4 の「監査対象操作の網羅リスト」が決める
+- 他人の `user_profiles` の表示名を公開レシピの作者として出す経路は、SECURITY DEFINER の関数 `recipe_author_display_names` (cross/21。RLS のポリシーは足していない)。レシピの API (`src/lib/recipes/viewer-lookups.ts`) は service_role を使わず、RLS の効くクライアントでこの関数を呼ぶ。関数が返すのは、呼んだ本人の名前と、公開の作者のうち名前を出す条件 (本人の設定・作者名の表示を書いた版への同意・凍結中でない・18 歳以上) を満たす人の id と表示名だけ
 
 ### 3.4 表の TRUNCATE の権限
 
@@ -567,7 +568,7 @@ COMMIT;
 | Contract | service_role の client が `getSupabaseAdmin()` と理由つきの許可の一覧のほかで作られていないか (`src`・`lib` を構文木で走査。`supabase/functions`・`scripts` と、使う前の確認の順は見ない) | Vitest (`tests/supabase-service-role-client-scan.test.ts`) |
 | Security | 別ユーザーが他人の行を読めないことを確認 | Vitest + Supabase Local |
 | Security | 監査ログの UPDATE / DELETE が拒否されることを確認 | Vitest + Supabase Local |
-| Security | public の関数 (SECURITY DEFINER / SECURITY INVOKER) のうち anon が EXECUTE できるものが、理由つきの許可一覧のものだけか (Supabase の既定の権限と PUBLIC の EXECUTE が残らないか。INVOKER のトリガー関数は除外の条件で外す) | Vitest + Supabase Local (`tests/integration/security/anon-definer-execute.test.ts`・`anon-invoker-execute.test.ts`) |
+| Security | public の関数 (SECURITY DEFINER / SECURITY INVOKER) のうち anon が EXECUTE できるものが、理由つきの許可一覧のものだけか (Supabase の既定の権限と PUBLIC の EXECUTE が残らないか。INVOKER のトリガー関数は除外の条件で外す)。SECURITY DEFINER の許可一覧 (`ANON_EXECUTABLE_DEFINER_ALLOWLIST`) は 3 本: `get_invite_details`・`get_promotion_details`・`recipe_author_display_names` (cross/21) | Vitest + Supabase Local (`tests/integration/security/anon-definer-execute.test.ts`・`anon-invoker-execute.test.ts`) |
 | Security | public の表・ビューに、anon / authenticated の TRUNCATE が無いか (既定の権限も。§3.4) | Vitest + Supabase Local (`tests/integration/security/db-privilege-hardening.test.ts`) |
 | Security | `planned_meals` の列の権限が information_schema のとおりか (authenticated の INSERT / UPDATE は 3 列を除く全列。§8.4) | Vitest + Supabase Local (`tests/integration/rls/planned-meals-score-integrity.test.ts` I-9) |
 
