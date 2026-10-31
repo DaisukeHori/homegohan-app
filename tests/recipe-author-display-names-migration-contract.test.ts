@@ -34,6 +34,7 @@ const FUNCTION_NAME = 'recipe_author_display_names';
 const FUNCTION_SIGNATURE = `public.${FUNCTION_NAME}(uuid[])`;
 const COLUMN_NAME = 'show_recipe_author_name';
 const INDEX_NAME = 'idx_recipe_comments_user_id';
+const VIEWER_LOOKUPS = 'src/lib/recipes/viewer-lookups.ts';
 const ALLOWLIST_TEST = 'tests/integration/security/anon-definer-execute.test.ts';
 const TYPE_FILES = ['src/types/database.types.ts', 'packages/shared/src/database.types.ts'] as const;
 /** 旧版の控えの置き場 (cross/20 §9.1。版ごとのディレクトリの中に privacy.md) */
@@ -136,6 +137,12 @@ describe('cross/21 recipe_author_display_names の migration (静的)', () => {
   });
 
   // C-8 は段 B の PR で足す (段 A の PR には置かない。§15)
+  it('C-8: viewer-lookups.ts は関数の名前の定数で rpc を呼び、user_profiles を直接 select しない', () => {
+    const src = read(VIEWER_LOOKUPS);
+    expect(src).toContain(`export const RECIPE_AUTHOR_DISPLAY_NAMES_RPC = '${FUNCTION_NAME}';`);
+    expect(src).toContain('supabase.rpc(RECIPE_AUTHOR_DISPLAY_NAMES_RPC, { p_user_ids: authorIds })');
+    expect(src).not.toMatch(/from\('user_profiles'\)/);
+  });
 
   it('C-9: anon の許可一覧と 2 つの database.types.ts に関数がある。型に列がある', () => {
     expect(read(ALLOWLIST_TEST)).toContain(`'${FUNCTION_NAME}(uuid[])':`);

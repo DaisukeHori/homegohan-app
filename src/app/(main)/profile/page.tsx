@@ -17,6 +17,7 @@ import type { UserProfile, FitnessGoal, WorkStyle, CookingExperience, DietStyle 
 import { Icons } from "@/components/icons";
 import { ChevronRight, ChevronLeft, Check, Sparkles } from "lucide-react";
 import { normalizeProfileName } from "@/lib/profile-name";
+import { RECIPE_AUTHOR_NAME_SETTING_LABEL, RECIPE_AUTHOR_NAME_SETTING_NOTE } from "@/lib/recipes/author-name";
 
 type TabType = 'basic' | 'goals' | 'sports' | 'health' | 'diet' | 'cooking' | 'lifestyle';
 
@@ -730,6 +731,21 @@ function ProfilePageContent() {
                         className="rounded-xl"
                         placeholder="例: たろう"
                       />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-start gap-2">
+                        <input
+                          id="profile-show-recipe-author-name"
+                          type="checkbox"
+                          className="mt-1"
+                          checked={editForm.showRecipeAuthorName ?? true}
+                          onChange={(e) => updateField('showRecipeAuthorName', e.target.checked)}
+                        />
+                        <Label htmlFor="profile-show-recipe-author-name" className="font-normal">
+                          {RECIPE_AUTHOR_NAME_SETTING_LABEL}
+                        </Label>
+                      </div>
+                      <p className="text-xs text-gray-500 pl-6">{RECIPE_AUTHOR_NAME_SETTING_NOTE}</p>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div className="space-y-2">

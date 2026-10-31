@@ -28,7 +28,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
     }
   }
 
-  // 作者の名前 (user_profiles) と自分のいいね (recipe_likes) は埋め込まない (どちらの埋め込みも PostgREST が解決できず、
+  // 作者の表示名と自分のいいね (recipe_likes) は埋め込まない (user_profiles・recipe_likes のどちらの埋め込みも PostgREST が解決できず、
   // この API はいつも 500 になっていた。#1917。src/lib/recipes/viewer-lookups.ts)。コメントは recipes への外部キーが 1 本なので埋め込める
   const { data, error } = await supabase
     .from('recipes')
@@ -56,7 +56,8 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   }
 
   const comments = data.recipe_comments || [];
-  // 作者 (レシピとコメント) の名前と自分のいいねを別のクエリで引く。読めなかったときも 500 (名前が無い・いいねしていないように見せない)
+  // 作者 (レシピとコメント) の表示名は関数 recipe_author_display_names で (未ログインでも)、自分のいいねは別のクエリで引く
+  // (cross/21)。読めなかったときも 500 (名前が無い・いいねしていないように見せない)
   const lookups = await loadRecipeViewerLookups(supabase, user?.id ?? null, {
     authorIds: [data.user_id, ...comments.map((c: { user_id: string | null }) => c.user_id)],
     recipeIds: [data.id],
@@ -68,7 +69,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   const recipe = {
     id: data.id,
     userId: data.user_id,
-    authorName: recipeAuthorName(lookups.nicknames.get(data.user_id)),
+    authorName: recipeAuthorName(lookups.authorNames.get(data.user_id)),
     name: data.name,
     description: data.description,
     caloriesKcal: data.calories_kcal,
@@ -95,7 +96,7 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
       id: c.id,
       content: c.content,
       rating: c.rating,
-      authorName: recipeAuthorName(lookups.nicknames.get(c.user_id)),
+      authorName: recipeAuthorName(lookups.authorNames.get(c.user_id)),
       createdAt: c.created_at,
     })),
     createdAt: data.created_at,

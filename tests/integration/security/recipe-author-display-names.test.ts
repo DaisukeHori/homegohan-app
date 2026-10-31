@@ -28,19 +28,14 @@
  *        他の人 (未ログイン・ログイン中) に関数から返らない (本人には返る)。oldConsent が作者名の表示を書いた版に同意すると返る
  *        (S-18・R-19。関数を直接呼ぶだけなので段 A。API が関数の結果をそのまま authorName にすることは I-7 が確かめる)
  *
- * 段 A の PR (DB の関数・戻し口) は、関数を直接呼ぶ I-1〜I-6・I-11・I-13・I-14・I-18 だけを置く。レシピの API 経由の
- * I-7〜I-10・I-12・I-15〜I-17 と、それに要る人 (leaver・deleter・deleteCommenter・toggleCommenter)・行 (システムのレシピほか)・
- * apiCall は、段 B の PR (viewer-lookups.ts を関数に差し替える PR) が足す (docs/design/cross/21-recipe-author-display-name.md §15。
- * 段 A の時点の API はまだ関数を呼ばないため)。
- *
  * 同意の版: makePerson は privacy_version_accepted に CONSENTED_PRIVACY_VERSION を入れる (I-18 の 2 人だけ上書きする)。
  *   関数は「作者名の表示を書く前の版の一覧に無い版」を同意済みとみなすので、実在の版 (LEGAL_DOCUMENTS) ではなくテスト専用の値を使う
  *   (文面 (段 C) が効く前は、いまの版が一覧にあり、実在の版を使うと全員が返らなくなるため)。
- *   ローカルの開発サーバーは同意ゲートを強制しない (LEGAL_CONSENT_ENFORCE は既定で off) ので、段 B の API の呼び出しはこの値で止まらない。
+ *   ローカルの開発サーバーは同意ゲートを強制しない (LEGAL_CONSENT_ENFORCE は既定で off) ので、API の呼び出しはこの値で止まらない。
  *
- * 前提: ローカル Supabase (scripts/supabase-local.sh)。段 A の it は Next の開発サーバーを使わない (PostgREST の RPC を直接呼ぶ。
- *   段 B で API 経由の it を足すと開発サーバーが要る)。
+ * 前提: ローカル Supabase (scripts/supabase-local.sh) と Next の開発サーバー。
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
+ *   npm run dev &
  *   npx vitest run --config vitest.integration.config.ts tests/integration/security/recipe-author-display-names.test.ts
  * 作った行とユーザーは afterAll で消す。本番には接続しない。
  * 生年月日・凍結の列は特権列なので service_role (supabaseAdmin) で入れる (本番で入れるのは accept_legal_documents と運営の凍結)。
@@ -51,6 +46,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
 import { ADULT_AGE_YEARS, PROFILE_NAME_PLACEHOLDER } from '@homegohan/shared';
+import { apiCall } from '../helpers/api';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 import { supabaseAdmin } from '../helpers/supabase';
 import { cleanupTestUser, createTestUserWithRoles, type TestUser } from '../helpers/users';
 
@@ -103,8 +100,8 @@ const ADULT_BIRTH_DATE = `${new Date().getFullYear() - ADULT_AGE_YEARS - 12}-01-
 const MINOR_BIRTH_DATE = `${new Date().getFullYear() - ADULT_AGE_YEARS + 2}-01-01`;
 /** 一時凍結の解除予定 (未来・過去) に使う幅 (ミリ秒)。境の 1 日 */
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
-/** beforeAll / afterAll で、テスト用のユーザー (16 人) と行を作る・消すのを待つ時間 (ミリ秒) */
-const SETUP_TIMEOUT_MS = 180_000;
+/** 開発サーバーが最初の要求でルートをコンパイルするのを待つ時間 (ミリ秒) */
+const FIRST_COMPILE_TIMEOUT_MS = 180_000;
 /** 作者名の表示を書いた版に同意済みとして入れる版 (テスト専用の値。§7.1 の一覧 c_privacy_versions_without_author_name に無く、版の形 (英数字・. _ - の 20 文字以内) に合う) */
 const CONSENTED_PRIVACY_VERSION = 'test-cross21-consent';
 /** 作者名の表示を書く前の版 (§7.1 の一覧にある。選択肢 (a)(b) のどちらでも一覧に入る) */
@@ -112,14 +109,24 @@ const OLD_PRIVACY_VERSION = 'v2026.3';
 
 type Person = { user: TestUser; nickname: string };
 type AuthorNameRow = { author_id: string; display_name: string };
+type ListBody = { recipes: Array<{ id: string; userId: string | null; authorName: string }> };
+type DetailBody = { recipe: { authorName: string; comments: Array<{ content: string; authorName: string }> } };
+type CommentPostBody = { comment: { content: string; authorName: string } };
 
 const people: Record<
   | 'author' | 'minor' | 'noBirth' | 'frozen' | 'tempFrozen' | 'tempFrozenExpired' | 'optOut' | 'noName' | 'privateOnly' | 'commenter' | 'viewer'
-  | 'unfreeze' | 'turns18Today' | 'turns18Tomorrow'
+  | 'unfreeze' | 'turns18Today' | 'turns18Tomorrow' | 'leaver' | 'deleter' | 'deleteCommenter' | 'toggleCommenter'
   | 'oldConsent' | 'noConsent',
   Person
 > = {} as never;
 let publicRecipeId: string;
+let systemRecipeId: string;
+/** I-12 で退会させる leaver の公開レシピ */
+let leaverRecipeId: string;
+/** I-16 で deleter 本人が消す公開レシピ */
+let deleterRecipeId: string;
+/** I-10 で公開の状態を切り替える tempFrozenExpired の公開レシピ (toggleCommenter がコメントする) */
+let toggleRecipeId: string;
 
 async function makePerson(key: keyof typeof people, profile: Record<string, unknown>): Promise<void> {
   const nickname = `作者${key}${TS}`;
@@ -156,6 +163,13 @@ beforeAll(async () => {
   // I-14 の 2 人の生年月日は、JST の 0 時をまたがないよう it の中で入れ直す (ここでは 18 歳未満の値で作る)
   await makePerson('turns18Today', { birth_date: MINOR_BIRTH_DATE });
   await makePerson('turns18Tomorrow', { birth_date: MINOR_BIRTH_DATE });
+  // I-12 で退会させる作者 (18 歳以上・名前あり・設定は既定。公開レシピ 1 件とコメント 1 件を持つ)
+  await makePerson('leaver', { birth_date: ADULT_BIRTH_DATE });
+  // I-16 で自分の公開レシピを消す作者と、そのレシピにだけコメントする人 (どちらも 18 歳以上・名前あり・設定は既定。ほかに公開の内容を持たない)
+  await makePerson('deleter', { birth_date: ADULT_BIRTH_DATE });
+  await makePerson('deleteCommenter', { birth_date: ADULT_BIRTH_DATE });
+  // I-10 で tempFrozenExpired の公開レシピにだけコメントする人 (18 歳以上・名前あり・設定は既定。ほかに公開の内容を持たない)
+  await makePerson('toggleCommenter', { birth_date: ADULT_BIRTH_DATE });
   // I-18 の 2 人 (18 歳以上・名前あり・設定は既定。作者名の表示を書く前の版にだけ同意 / 同意の記録なし)
   await makePerson('oldConsent', { birth_date: ADULT_BIRTH_DATE, privacy_version_accepted: OLD_PRIVACY_VERSION });
   await makePerson('noConsent', { birth_date: ADULT_BIRTH_DATE, privacy_version_accepted: null });
@@ -168,6 +182,7 @@ beforeAll(async () => {
     .single();
   if (recipeError || !recipe) throw new Error(`recipes: ${recipeError?.message}`);
   publicRecipeId = recipe.id as string;
+  // (一覧の検索 q=t-cross21- に当たる公開レシピは、ここまでとこの下を合わせて 16 件で、一覧の既定の 20 件に収まる)
   for (const key of ['minor', 'noBirth', 'frozen', 'tempFrozen', 'tempFrozenExpired', 'optOut', 'noName', 'unfreeze', 'turns18Today', 'turns18Tomorrow', 'oldConsent', 'noConsent'] as const) {
     const { error } = await supabaseAdmin
       .from('recipes')
@@ -179,20 +194,65 @@ beforeAll(async () => {
     .from('recipes')
     .insert({ user_id: people.privateOnly.user.userId, name: `t-cross21-private-${TS}`, is_public: false });
   if (privError) throw new Error(`recipes (private): ${privError.message}`);
+  // 作者のいないシステムの公開レシピ (user_id NULL。RLS の user_id IS NULL の枝で誰にでも見える)
+  const { data: sys, error: sysError } = await supabaseAdmin
+    .from('recipes')
+    .insert({ user_id: null, name: `t-cross21-system-${TS}`, is_public: true })
+    .select('id')
+    .single();
+  if (sysError || !sys) throw new Error(`recipes (system): ${sysError?.message}`);
+  systemRecipeId = sys.id as string;
+  // leaver の公開レシピ (I-12 で退会させたあとも user_id NULL で残ることを確かめる)
+  const { data: leaverRecipe, error: leaverError } = await supabaseAdmin
+    .from('recipes')
+    .insert({ user_id: people.leaver.user.userId, name: `t-cross21-leaver-${TS}`, is_public: true })
+    .select('id')
+    .single();
+  if (leaverError || !leaverRecipe) throw new Error(`recipes (leaver): ${leaverError?.message}`);
+  leaverRecipeId = leaverRecipe.id as string;
+  // deleter の公開レシピと、そこへの deleteCommenter のコメント (I-16 で消したあと、両方の名前が返らなくなることを確かめる)
+  const { data: deleterRecipe, error: deleterError } = await supabaseAdmin
+    .from('recipes')
+    .insert({ user_id: people.deleter.user.userId, name: `t-cross21-deleter-${TS}`, is_public: true })
+    .select('id')
+    .single();
+  if (deleterError || !deleterRecipe) throw new Error(`recipes (deleter): ${deleterError?.message}`);
+  deleterRecipeId = deleterRecipe.id as string;
+  const { error: deleteCommentError } = await supabaseAdmin
+    .from('recipe_comments')
+    .insert({ recipe_id: deleterRecipeId, user_id: people.deleteCommenter.user.userId, content: `t-cross21-comment-deleteCommenter-${TS}`, rating: 4 });
+  if (deleteCommentError) throw new Error(`recipe_comments (deleteCommenter): ${deleteCommentError.message}`);
+  // tempFrozenExpired の公開レシピ (上の for で作った 1 件) と、そこへの toggleCommenter のコメント
+  // (I-10 で、レシピの公開の状態を切り替えたとき、コメントの書き手の名前も追随することを確かめる)
+  // 準備のフックの select はゲートウェイの一時的な失敗だけをやり直す (tests/integration-setup-transient-retry.test.ts の決まり)
+  const { data: toggleRecipe, error: toggleRecipeError } = await retryIdempotentSetup(
+    supabaseAdmin,
+    'beforeAll: tempFrozenExpired の公開レシピの select',
+    (db) => db.from('recipes').select('id').eq('user_id', people.tempFrozenExpired.user.userId).single(),
+  );
+  if (toggleRecipeError || !toggleRecipe) throw new Error(`recipes (tempFrozenExpired): ${toggleRecipeError?.message}`);
+  toggleRecipeId = toggleRecipe.id as string;
+  const { error: toggleCommentError } = await supabaseAdmin
+    .from('recipe_comments')
+    .insert({ recipe_id: toggleRecipeId, user_id: people.toggleCommenter.user.userId, content: `t-cross21-comment-toggleCommenter-${TS}`, rating: 4 });
+  if (toggleCommentError) throw new Error(`recipe_comments (toggleCommenter): ${toggleCommentError.message}`);
 
-  // コメント: commenter・optOut・minor (どれも author の公開レシピへ)
-  for (const key of ['commenter', 'optOut', 'minor'] as const) {
+  // コメント: commenter・optOut・minor・leaver (どれも author の公開レシピへ)
+  for (const key of ['commenter', 'optOut', 'minor', 'leaver'] as const) {
     const { error } = await supabaseAdmin
       .from('recipe_comments')
       .insert({ recipe_id: publicRecipeId, user_id: people[key].user.userId, content: `t-cross21-comment-${key}-${TS}`, rating: 4 });
     if (error) throw new Error(`recipe_comments (${key}): ${error.message}`);
   }
-}, SETUP_TIMEOUT_MS);
+
+  await apiCall('GET', `/api/recipes?q=t-cross21-public-${TS}`, null);
+  await apiCall('GET', `/api/recipes/${publicRecipeId}`, null);
+}, FIRST_COMPILE_TIMEOUT_MS);
 
 afterAll(async () => {
   await supabaseAdmin.from('recipes').delete().like('name', `t-cross21-%-${TS}`);
   for (const p of Object.values(people)) if (p) await cleanupTestUser(p.user.userId);
-}, SETUP_TIMEOUT_MS);
+}, FIRST_COMPILE_TIMEOUT_MS);
 
 describe('I-1〜I-6: 関数 recipe_author_display_names', () => {
   it('I-1: anon が呼ぶと、公開の作者の表示名が返る', async () => {
@@ -233,7 +293,74 @@ describe('I-1〜I-6: 関数 recipe_author_display_names', () => {
   });
 });
 
-describe('I-11: 権限・RLS', () => {
+describe('I-7〜I-10: レシピの API 経由', () => {
+  it('I-7: 一覧の authorName は作者の表示名 (未ログイン・ログイン中)。18 歳未満の作者は既定の呼称', async () => {
+    for (const jwt of [null, people.viewer.user.jwt]) {
+      const res = await apiCall<ListBody>('GET', `/api/recipes?q=t-cross21-`, jwt);
+      expect(res.status).toBe(200);
+      const byId = new Map(res.body.recipes.map((r) => [r.id, r]));
+      expect(byId.get(publicRecipeId)?.authorName).toBe(people.author.nickname);
+      const minorRecipe = res.body.recipes.find((r) => r.userId === people.minor.user.userId);
+      expect(minorRecipe?.authorName).toBe(FALLBACK);
+    }
+  });
+
+  it('I-8: 詳細の authorName とコメントの authorName', async () => {
+    const anonRes = await apiCall<DetailBody>('GET', `/api/recipes/${publicRecipeId}`, null);
+    expect(anonRes.status).toBe(200);
+    expect(anonRes.body.recipe.authorName).toBe(people.author.nickname);
+    const res = await apiCall<DetailBody>('GET', `/api/recipes/${publicRecipeId}`, people.viewer.user.jwt);
+    expect(res.status).toBe(200);
+    const byContent = new Map(res.body.recipe.comments.map((c) => [c.content, c.authorName]));
+    expect(byContent.get(`t-cross21-comment-commenter-${TS}`)).toBe(people.commenter.nickname);
+    expect(byContent.get(`t-cross21-comment-optOut-${TS}`)).toBe(FALLBACK);
+    expect(byContent.get(`t-cross21-comment-minor-${TS}`)).toBe(FALLBACK);
+  });
+
+  it('I-9: PUT /api/profile の showRecipeAuthorName で他の人への見え方が変わる。本人の一覧は自分の名前のまま', async () => {
+    const off = await apiCall('PUT', '/api/profile', people.author.user.jwt, { showRecipeAuthorName: false });
+    expect(off.status).toBe(200);
+    const hidden = await apiCall<ListBody>('GET', `/api/recipes?q=t-cross21-public-${TS}`, people.viewer.user.jwt);
+    expect(hidden.body.recipes[0]?.authorName).toBe(FALLBACK);
+    const own = await apiCall<ListBody>('GET', `/api/recipes?q=t-cross21-public-${TS}`, people.author.user.jwt);
+    expect(own.body.recipes[0]?.authorName).toBe(people.author.nickname);
+    const on = await apiCall('PUT', '/api/profile', people.author.user.jwt, { showRecipeAuthorName: true });
+    expect(on.status).toBe(200);
+    const shown = await apiCall<ListBody>('GET', `/api/recipes?q=t-cross21-public-${TS}`, people.viewer.user.jwt);
+    expect(shown.body.recipes[0]?.authorName).toBe(people.author.nickname);
+  });
+
+  it('I-10: 非公開に戻す・隠すと、ほかに公開の内容が無い作者と、そのレシピにだけコメントした人の名前は返らなくなる。戻すと両方返る', async () => {
+    const id = people.tempFrozenExpired.user.userId;
+    const commenterId = people.toggleCommenter.user.userId;
+    const both = { [id]: people.tempFrozenExpired.nickname, [commenterId]: people.toggleCommenter.nickname };
+    const namesOfBoth = async () => Object.fromEntries(await namesAs(anon(), [id, commenterId]));
+    const setRecipe = async (patch: { is_public?: boolean; hidden_at?: string | null }) => {
+      const { error } = await supabaseAdmin.from('recipes').update(patch).eq('id', toggleRecipeId);
+      expect(error).toBeNull();
+    };
+
+    expect(await namesOfBoth(), '切り替える前 (作者と書き手の両方)').toEqual(both);
+    await setRecipe({ is_public: false });
+    expect(await namesOfBoth(), '本人が非公開に戻した').toEqual({});
+    await setRecipe({ is_public: true });
+    expect(await namesOfBoth(), '公開に戻した').toEqual(both);
+    await setRecipe({ hidden_at: new Date().toISOString() });
+    expect(await namesOfBoth(), '運営が隠した').toEqual({});
+    await setRecipe({ hidden_at: null });
+    expect(await namesOfBoth(), '隠すのを戻した').toEqual(both);
+
+    // 非公開・隠すは CASCADE しない: 書き手のコメントの行は残っている (名前が返らなかったのは K-公開 の判定による)
+    const { data: kept, error: keptError } = await supabaseAdmin
+      .from('recipe_comments')
+      .select('user_id')
+      .eq('recipe_id', toggleRecipeId);
+    expect(keptError).toBeNull();
+    expect(kept).toEqual([{ user_id: commenterId }]);
+  });
+});
+
+describe('I-11〜I-12: 権限・RLS・退会', () => {
   it('I-11: EXECUTE は anon と authenticated だけ。user_profiles の SELECT のポリシーは本人の行だけの 1 本', async () => {
     const acl = await pgQuery<{ role: string; can: boolean }>(`
       SELECT r.role, has_function_privilege(r.role, 'public.recipe_author_display_names(uuid[])', 'EXECUTE') AS can
@@ -253,9 +380,44 @@ describe('I-11: 権限・RLS', () => {
     `);
     expect(policies).toEqual([{ policyname: 'Users can view own profile', qual: '(auth.uid() = id)' }]);
   });
+
+  it('I-12: 退会すると公開レシピは user_id が NULL で残り、一覧・詳細の authorName は既定の呼称。コメントは消える', async () => {
+    const leaver = people.leaver;
+    // 退会の前は、公開の作者として表示名が出る (退会で「匿名」に変わったことを確かめるための前提)
+    const before = await apiCall<DetailBody>('GET', `/api/recipes/${leaverRecipeId}`, null);
+    expect(before.status).toBe(200);
+    expect(before.body.recipe.authorName).toBe(leaver.nickname);
+
+    const { error } = await supabaseAdmin.auth.admin.deleteUser(leaver.user.userId);
+    expect(error).toBeNull();
+
+    // recipes_user_id_fkey は ON DELETE SET NULL: 公開レシピは消えずに、作者との紐づけだけが外れる (R-3・第12条)
+    const { data: row, error: rowError } = await supabaseAdmin
+      .from('recipes')
+      .select('user_id, is_public')
+      .eq('id', leaverRecipeId)
+      .maybeSingle();
+    expect(rowError).toBeNull();
+    expect(row).toEqual({ user_id: null, is_public: true });
+
+    for (const jwt of [null, people.viewer.user.jwt]) {
+      const list = await apiCall<ListBody>('GET', `/api/recipes?q=t-cross21-leaver-${TS}`, jwt);
+      expect(list.status).toBe(200);
+      expect(list.body.recipes.map((r) => r.id)).toContain(leaverRecipeId);
+      expect(list.body.recipes.find((r) => r.id === leaverRecipeId)?.authorName).toBe(FALLBACK);
+      const detail = await apiCall<DetailBody>('GET', `/api/recipes/${leaverRecipeId}`, jwt);
+      expect(detail.status).toBe(200);
+      expect(detail.body.recipe.authorName).toBe(FALLBACK);
+    }
+
+    // recipe_comments.user_id の外部キー (auth.users 宛) は ON DELETE CASCADE (F-17): leaver のコメントは消える
+    const res = await apiCall<DetailBody>('GET', `/api/recipes/${publicRecipeId}`, people.viewer.user.jwt);
+    expect(res.status).toBe(200);
+    expect(res.body.recipe.comments.map((c) => c.content)).not.toContain(`t-cross21-comment-leaver-${TS}`);
+  });
 });
 
-describe('I-13〜I-14: 凍結の解除・18 歳の誕生日の境', () => {
+describe('I-13〜I-15: 凍結の解除・18 歳の誕生日の境・システムのレシピ', () => {
   it('I-13: 凍結を解除 (frozen_at を NULL) すると名前が返る', async () => {
     const id = people.unfreeze.user.userId;
     expect((await namesAs(anon(), [id])).has(id), '凍結中').toBe(false);
@@ -281,6 +443,56 @@ describe('I-13〜I-14: 凍結の解除・18 歳の誕生日の境', () => {
     const names = await namesAs(anon(), [today, tomorrow]);
     expect(names.get(today), '今日が 18 歳の誕生日').toBe(people.turns18Today.nickname);
     expect(names.has(tomorrow), '明日が 18 歳の誕生日 (今日は 17 歳)').toBe(false);
+  });
+
+  it('I-15: user_id が NULL のシステムの公開レシピは、一覧と詳細で authorName が既定の呼称', async () => {
+    for (const jwt of [null, people.viewer.user.jwt]) {
+      const list = await apiCall<{ recipes: Array<{ id: string; authorName: string }> }>('GET', `/api/recipes?q=t-cross21-system-${TS}`, jwt);
+      expect(list.status).toBe(200);
+      expect(list.body.recipes.find((r) => r.id === systemRecipeId)?.authorName).toBe(FALLBACK);
+      const detail = await apiCall<{ recipe: { authorName: string } }>('GET', `/api/recipes/${systemRecipeId}`, jwt);
+      expect(detail.status).toBe(200);
+      expect(detail.body.recipe.authorName).toBe(FALLBACK);
+    }
+  });
+});
+
+describe('I-16〜I-17: 本人がレシピを消す・コメントの POST の返り値', () => {
+  it('I-16: 本人が最後の公開レシピを消すと、本人とそのレシピにだけコメントした人の名前は他の人に返らなくなる', async () => {
+    const deleter = people.deleter.user.userId;
+    const onlyCommenter = people.deleteCommenter.user.userId;
+    // 消す前は、公開レシピの作者とそのレシピへのコメントの作者として、両方返る
+    const before = await namesAs(anon(), [deleter, onlyCommenter]);
+    expect(before.get(deleter), '消す前の deleter').toBe(people.deleter.nickname);
+    expect(before.get(onlyCommenter), '消す前の deleteCommenter').toBe(people.deleteCommenter.nickname);
+
+    const res = await apiCall('DELETE', `/api/recipes/${deleterRecipeId}`, people.deleter.user.jwt);
+    expect(res.status).toBe(200);
+
+    // recipe_comments_recipe_id_fkey は ON DELETE CASCADE (F-19c): deleteCommenter のコメントも消える
+    const { data: left, error: leftError } = await supabaseAdmin
+      .from('recipe_comments')
+      .select('id')
+      .eq('recipe_id', deleterRecipeId);
+    expect(leftError).toBeNull();
+    expect(left).toEqual([]);
+
+    const after = await namesAs(anon(), [deleter, onlyCommenter]);
+    expect([...after.keys()], '消したあと').toEqual([]);
+    // 本人には自分の名前 ((a))
+    expect((await namesAs(asUser(people.deleter.user.jwt), [deleter])).get(deleter), 'deleter 本人').toBe(people.deleter.nickname);
+  });
+
+  it('I-17: 名前を出さない設定の本人がコメントを投稿すると、POST の返り値の authorName は本人の表示名', async () => {
+    const content = `t-cross21-comment-optOut-post-${TS}`;
+    const res = await apiCall<CommentPostBody>('POST', `/api/recipes/${publicRecipeId}/comments`, people.optOut.user.jwt, { content });
+    expect(res.status).toBe(200);
+    expect(res.body.comment.authorName).toBe(people.optOut.nickname);
+    // 他の人の詳細では、同じコメントの authorName は既定の呼称 (optOut は設定オフ)
+    const detail = await apiCall<DetailBody>('GET', `/api/recipes/${publicRecipeId}`, people.viewer.user.jwt);
+    expect(detail.status).toBe(200);
+    const byContent = new Map(detail.body.recipe.comments.map((c) => [c.content, c.authorName]));
+    expect(byContent.get(content)).toBe(FALLBACK);
   });
 });
 

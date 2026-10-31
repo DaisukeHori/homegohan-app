@@ -13,18 +13,19 @@
  *   - GET  /api/recipes/[id]/comments   の comments[].authorName
  *   - POST /api/recipes/[id]/comments   の comment.authorName
  *
- * 作者の名前は、レシピ・コメントに埋め込まずに user_profiles を別のクエリで引く (#1917。src/lib/recipes/viewer-lookups.ts)。
- * ここのモックの user_profiles は、引かれた id のどれにも h.nickname を返す。
+ * 作者の名前は、レシピ・コメントに埋め込まずに関数 recipe_author_display_names で引く (#1917・cross/21。src/lib/recipes/viewer-lookups.ts)。
+ * ここのモックの関数は、渡された id のどれにも h.nickname を表示名として返す (route が recipeAuthorName で整える)。
  *
  * Supabase には接続しない (createClient をモック)。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RECIPE_AUTHOR_FALLBACK_NAME, recipeAuthorName } from '@/lib/recipes/author-name';
+import { RECIPE_AUTHOR_DISPLAY_NAMES_RPC } from '@/lib/recipes/viewer-lookups';
 
 const RECIPE_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 
 const h = vi.hoisted(() => ({
-  /** user_profiles を引いたときの nickname (引かれた id のどれにもこの値を返す) */
+  /** 作者の表示名の関数が返す名前 (渡された id のどれにもこの値を返す) */
   nickname: '' as string,
 }));
 
@@ -40,15 +41,9 @@ function queryFor(table: string) {
   const commentRow = { id: 'c-1', content: 'おいしい', rating: 5, created_at: '2026-10-01T00:00:00Z', user_id: 'commenter-1' };
 
   const builder: Record<string, unknown> = {};
-  /** user_profiles の .in('id', ids) で引かれた id */
-  let profileIds: string[] = [];
-  for (const method of ['select', 'eq', 'or', 'lte', 'order', 'insert']) {
+  for (const method of ['select', 'eq', 'in', 'or', 'lte', 'order', 'insert']) {
     builder[method] = () => builder;
   }
-  builder.in = (column: string, values: string[]) => {
-    if (column === 'id') profileIds = values;
-    return builder;
-  };
   if (table === 'recipes') {
     builder.range = async () => ({ data: [recipeRow], error: null, count: 1 });
     builder.maybeSingle = async () => ({ data: recipeRow, error: null });
@@ -56,9 +51,6 @@ function queryFor(table: string) {
     // GET は order のあと await する (thenable)。POST は insert → select → single
     builder.then = (resolve: (value: unknown) => void) => resolve({ data: [commentRow], error: null });
     builder.single = async () => ({ data: commentRow, error: null });
-  } else if (table === 'user_profiles') {
-    builder.then = (resolve: (value: unknown) => void) =>
-      resolve({ data: profileIds.map((id) => ({ id, nickname: h.nickname })), error: null });
   } else if (table === 'recipe_likes') {
     builder.then = (resolve: (value: unknown) => void) => resolve({ data: [], error: null });
   } else {
@@ -70,7 +62,11 @@ function queryFor(table: string) {
 vi.mock('@/lib/supabase/server', () => ({
   createClient: async () => ({
     auth: { getUser: async () => ({ data: { user: { id: 'viewer-1' } }, error: null }) },
-    rpc: async () => ({ data: null, error: null }),
+    // 作者の表示名の関数は、渡された id のどれにも h.nickname を返す。ほかの関数 (詳細の閲覧数の加算) は何も返さない
+    rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
+      fn === RECIPE_AUTHOR_DISPLAY_NAMES_RPC
+        ? { data: (args?.p_user_ids ?? []).map((id) => ({ author_id: id, display_name: h.nickname })), error: null }
+        : { data: null, error: null },
     from: (table: string) => queryFor(table),
   }),
 }));
