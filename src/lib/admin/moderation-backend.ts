@@ -319,7 +319,7 @@ function isSameMealContent(a: MealContent, b: MealContent): boolean {
  * `hidden_at` を入れると、RLS により本人以外 (家族・他のログインユーザー・未ログイン) には
  * 見えなくなる (本人には見える)。隠してから 90 日 (保管期間) を過ぎたら、pg_cron のジョブ
  * `purge-hidden-content` (#1538) が行と、ほかで使っていない画像を完全に消す。
- * `hidden_*` を書き換えられるのは service-role だけ (DB のトリガー guard_hidden_content_columns)
+ * `hidden_*` を書き換えられるのは service-role だけ (DB のトリガー trg_meals_guard_hidden_columns・trg_recipes_guard_hidden_columns (関数 guard_hidden_content_columns))
  * なので、`supabase` には、認可 (requireRole) を通したあとの `getSupabaseAdmin()` を渡すこと。
  *
  * - 食事 (food) は、家族へのペースト (paste_meal_to_family) で同じ写真・メモの行が家族のメンバーの
@@ -329,7 +329,7 @@ function isSameMealContent(a: MealContent, b: MealContent): boolean {
  * - 同じ `paste_group_id` でも、中身が違う行は隠さない。ペーストのあとで持ち主が自分の行 (元の行・複製) の
  *   写真やメモを書き換えられるので、`paste_group_id` が同じでも、通報された中身と同じとは限らない
  *   (書き換えた複製が通報されたとき、元の持ち主の、違反していない元の行まで隠さないため)。
- *   `paste_group_id` 自体は、ログインユーザーが書き換えられない (DB のトリガー guard_meal_paste_group_id。
+ *   `paste_group_id` 自体は、ログインユーザーが書き換えられない (DB のトリガー trg_meals_guard_paste_group_id (関数 guard_meal_paste_group_id)。
  *   書けるのはペーストの関数だけ) ので、他人の行を自分の行と同じまとまりに入れることもできない
  * - 同じまとまりの行を読んでから、隠す行を ID で更新する (2 回に分ける。メモは長くなりうるので、URL の絞り込みに入れない)。
  *   読んだあとの、ほんの短い間に持ち主が中身を書き換えた行は、読んだときの中身で判断する

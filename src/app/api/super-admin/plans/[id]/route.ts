@@ -16,7 +16,7 @@
  * 削除 (DELETE) も同じで、draft のままのときだけ消す (0 行なら読み直して、無ければ 404、あれば 409 CONFLICT_STALE_DATA)。
  *
  * 廃止の安全弁 (#1127・#1912) は、書く前に route が契約者を数え (countPlanSubscribers)、さらに書く文の中で DB のトリガー
- * guard_plan_deprecate_subscribers がプランの行を FOR UPDATE でロックし直し、commit 前の契約者が増える書き込み (契約の作成・live への
+ * trg_guard_plan_deprecate_subscribers (関数 guard_plan_deprecate_subscribers) がプランの行を FOR UPDATE でロックし直し、commit 前の契約者が増える書き込み (契約の作成・live への
  * 切り替え・プランの付け替え。どれもトリガー trg_subscriber_plan_key_share でプランの行に FOR KEY SHARE を取る) を待ってから数え直す (#1917)。
  * 数えてから書くまでの間に契約が入ったときは、トリガーが OP_PLAN_HAS_SUBSCRIBERS で止め、route は数え上げと同じ 409 を返す。
  *
@@ -392,7 +392,7 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
       if (isPlanPriceChangeInProgressDbError(updateErr)) {
         return NextResponse.json(PRICE_CHANGE_IN_PROGRESS_RESPONSE, { status: 409 });
       }
-      // #1917: 上の数え上げから書くまでの間に契約が入った (DB のトリガー guard_plan_deprecate_subscribers が、書く文の中で
+      // #1917: 上の数え上げから書くまでの間に契約が入った (DB のトリガー trg_guard_plan_deprecate_subscribers (関数 guard_plan_deprecate_subscribers) が、書く文の中で
       // commit 前の契約を待ってから数え直して止めた)。上の数え上げと同じ 409 にする (内訳はトリガーの DETAIL)
       if (isPlanHasSubscribersDbError(updateErr)) {
         const dbCounts = parsePlanSubscriberCountsDetail(updateErr.details);

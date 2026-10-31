@@ -5,7 +5,7 @@
  * 廃止前の通知 (90 / 30 / 7 日前) がまだ無いため、廃止したプランで課金だけが続くおそれがある。
  * 課金が始まるまでは「契約者が 0 になってから廃止する」運用にし、PATCH /api/super-admin/plans/[id] が
  * 廃止の前にここで契約者を数えて、1 件でもあれば止める。
- * 数えてから書くまでの間に入った契約は、書く文の中の DB のトリガー guard_plan_deprecate_subscribers が同じ数え方で数え直して止める (#1917。
+ * 数えてから書くまでの間に入った契約は、書く文の中の DB のトリガー trg_guard_plan_deprecate_subscribers (関数 guard_plan_deprecate_subscribers) が同じ数え方で数え直して止める (#1917。
  * プランの行を FOR UPDATE でロックし直し、commit 前の契約者が増える書き込み (契約の作成・live への切り替え・プランの付け替え。
  * トリガー trg_subscriber_plan_key_share がプランの行に FOR KEY SHARE を取る) を待つ。PLAN_HAS_SUBSCRIBERS_DB_ERROR)。数え方を変えるときは、
  * トリガー 2 種 (supabase/migrations/20261024130000_plan_deprecate_lock_and_price_change_reservation.sql の guard_plan_deprecate_subscribers と
@@ -166,7 +166,7 @@ export function totalPlanSubscribers(counts: PlanSubscriberCounts): number {
 }
 
 /**
- * DB のトリガー guard_plan_deprecate_subscribers が、廃止 (status → deprecated) の UPDATE の中で契約者を見つけたときに RAISE する文 (#1917。
+ * DB のトリガー trg_guard_plan_deprecate_subscribers (関数 guard_plan_deprecate_subscribers) が、廃止 (status → deprecated) の UPDATE の中で契約者を見つけたときに RAISE する文 (#1917。
  * supabase/migrations/20261024130000_plan_deprecate_lock_and_price_change_reservation.sql)。
  * route が数えてから書くまでの間に契約が入ったときや、route を通らない UPDATE を止める。SQLSTATE は P0001、DETAIL は内訳の JSON
  */

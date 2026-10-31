@@ -4,7 +4,7 @@
  *
  * 修正前、family_members の UPDATE ポリシー (family_members_update_self_or_adult) は「自分の行、または自分が
  * active な代表者・大人である家族の行」を条件に、status を含む任意の列の更新を許していた。守っていたのは
- * トリガー guard_family_members_privileged の role / family_id / user_id (と、本人以外の共有設定) だけで、
+ * トリガー trg_guard_family_members_privileged (関数 guard_family_members_privileged) の role / family_id / user_id (と、本人以外の共有設定) だけで、
  * status と removed_at は素通しだった。そのため次のことができた。
  *   - 退出 (left)・除名 (removed) された人が、自分の行を active に戻して家族に戻る。人数の上限 (member_limit) も
  *     招待の承諾も経由しないので、上限 2 の家族で active が 3 人になる。家族の active なメンバーに見せる情報
@@ -14,7 +14,7 @@
  *   - active な大人が、代表者を含む他のメンバーを removed にして、remove_family_member の規則を迂回する。
  *
  * 修正後 (20261008090000_family_members_status_guard.sql):
- *   - トリガー guard_family_members_privileged が、ログインユーザー (authenticated / anon) による status と removed_at の
+ *   - トリガー trg_guard_family_members_privileged (関数 guard_family_members_privileged) が、ログインユーザー (authenticated / anon) による status と removed_at の
  *     変更を拒否する (42501 CANNOT_MODIFY_PRIVILEGED_COLUMN)。値を変えない更新 (今と同じ値の送り直し) は通る。
  *   - 退出・除名・解散は SECURITY DEFINER の RPC (leave_family / remove_family_member / operator_force_dissolve_family)
  *     と service_role だけが行う。再び家族に入る正規の経路は、新しい招待の承諾 (accept_family_invite。上限を確認する) だけ。

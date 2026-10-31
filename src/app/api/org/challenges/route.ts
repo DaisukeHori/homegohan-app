@@ -257,7 +257,7 @@ export async function PUT(request: Request) {
     }
 
     // #1688: 状態を変えるときは、現在の行 (状態・種類) を 1 回だけ読み、遷移表 (src/lib/org-challenge-privacy.ts) に無い変更を
-    // 409 で断る (終わった状態からは変えない・開催中を下書きに戻さない)。DB のトリガー org_challenge_guard_update も同じ表で止める。
+    // 409 で断る (終わった状態からは変えない・開催中を下書きに戻さない)。DB のトリガー trg_org_challenge_guard_update (関数 org_challenge_guard_update) も同じ表で止める。
     // 行が無い (他組織・存在しない) ときは、既存どおり更新 0 行で 200
     if (updates.status !== undefined) {
       const { data: current, error: currentError } = await supabase

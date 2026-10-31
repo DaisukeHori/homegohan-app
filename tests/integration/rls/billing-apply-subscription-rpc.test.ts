@@ -1,6 +1,6 @@
 /**
  * billing/01 (課金の核) 段 A: Stripe の Subscription の写像 billing_apply_stripe_subscription と、
- * 家族のグループのプランを代表者の契約に合わせるトリガー billing_family_plan_follow_representative の結合テスト
+ * 家族のグループのプランを代表者の契約に合わせるトリガー family_groups_billing_plan_follow_representative (関数 billing_family_plan_follow_representative) の結合テスト
  * (設計: docs/design/billing/01-billing-core.md §6.4 (9)・(10)・§7.3・§14.2 の 52〜64・80・84・87・91・92・98・99・102〜106)
  *
  * 段 A のテストなので、段 B の src/lib/billing/* を import しない (§14.2 の冒頭)。写像に渡す p_snapshot は、関数の本体が
