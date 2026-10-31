@@ -12,7 +12,7 @@
  *   レシピはその行だけ
  * - 書く順は「通報 (rejected → approved) → 行 (hidden_* を NULL。hidden_at の値ごとに 1 文で、通報された行の組を最後に)」。
  *   通報された行が隠れたままなら、同じ操作をやり直して戻せる
- * - hidden_* を書き換えられるのは service_role だけ (DB のトリガー guard_hidden_content_columns) なので、admin には
+ * - hidden_* を書き換えられるのは service_role だけ (DB のトリガー trg_meals_guard_hidden_columns・trg_recipes_guard_hidden_columns (関数 guard_hidden_content_columns)) なので、admin には
  *   認可 (requireRole) を通したあとの getSupabaseAdmin() を渡すこと
  */
 import type { SupabaseClient } from '@supabase/supabase-js';

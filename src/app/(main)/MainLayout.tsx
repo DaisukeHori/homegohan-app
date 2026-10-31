@@ -10,6 +10,7 @@ import { createClient } from "@/lib/supabase/client";
 import { clearUserScopedLocalStorage } from "@/lib/user-storage";
 import { NATIVE_REBRIDGE_WAIT_MS, isInNativeWebView, notifyNativeSessionExpired } from "@/lib/native-auth-bridge";
 import { isOrgAdmin } from "@/lib/auth/org-admin";
+import { SUPER_ADMIN_SCREEN_LABEL } from "@/lib/admin/operator-role-labels";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { NativeAppTabRouter } from "@/components/native-app/NativeAppTabRouter";
 import { LegalConsentBanner } from "@/components/legal/LegalConsentBanner";
@@ -22,7 +23,8 @@ const ADMIN_MENU_ITEMS: Record<string, { href: string; label: string; icon: stri
   support: { href: "/support", label: "サポート", icon: "🎧", color: "bg-teal-500" },
   org_admin: { href: "/org/dashboard", label: "組織管理", icon: "🏢", color: "bg-blue-500" },
   admin: { href: "/admin", label: "管理者", icon: "🛡", color: "bg-orange-500" },
-  super_admin: { href: "/super-admin", label: "Super Admin", icon: "👑", color: "bg-purple-500" },
+  // 行き先 (/super-admin) の見出しと同じ呼び名にする (src/app/super-admin/layout.tsx。#2134 U1-2)
+  super_admin: { href: "/super-admin", label: SUPER_ADMIN_SCREEN_LABEL, icon: "👑", color: "bg-purple-500" },
 };
 
 const NAV_ITEMS = [

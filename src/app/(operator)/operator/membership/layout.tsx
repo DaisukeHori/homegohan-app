@@ -7,6 +7,7 @@
 import Link from 'next/link';
 import { MfaGraceBanner } from '@/components/admin/MfaGraceBanner';
 import { requireRoleForPage } from '@/lib/auth/page-guard';
+import { SUPER_ADMIN_SCREEN_LABEL } from '@/lib/admin/operator-role-labels';
 
 /**
  * 認証・2FA の画面から戻る先 (/operator/membership には page.tsx が無いので、今の行き先の画面にする。
@@ -104,7 +105,7 @@ export default async function OperatorMembershipLayout({
             className="flex items-center gap-2 px-3 py-2 text-slate-400 hover:text-white text-sm rounded-lg hover:bg-slate-700 transition-colors"
           >
             <span>&#8592;</span>
-            <span>Super Admin に戻る</span>
+            <span>{SUPER_ADMIN_SCREEN_LABEL}に戻る</span>
           </Link>
         </div>
       </aside>

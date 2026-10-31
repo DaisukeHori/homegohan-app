@@ -52,7 +52,7 @@ export async function hasRankingExclusion(
  */
 export const ORG_CHALLENGE_DELETABLE_STATUSES = ['draft', 'cancelled'] as const satisfies readonly OrgChallengeStatus[];
 
-/** 状態 × 遷移先 (§9.3 の状態遷移表と 1 対 1。DB のトリガー org_challenge_guard_update と同じ) */
+/** 状態 × 遷移先 (§9.3 の状態遷移表と 1 対 1。DB のトリガー trg_org_challenge_guard_update (関数 org_challenge_guard_update) と同じ) */
 export const ORG_CHALLENGE_STATUS_TRANSITIONS: Readonly<Record<OrgChallengeStatus, readonly OrgChallengeStatus[]>> = {
   draft: ['active', 'completed', 'cancelled'],
   active: ['completed', 'cancelled'],

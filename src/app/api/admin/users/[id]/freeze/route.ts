@@ -29,7 +29,12 @@ import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { FreezeBodySchema, UnfreezeBodySchema } from '@/lib/admin/users-schemas';
 import { recordAdminAudit } from '@/lib/admin/audit';
-import { SUPER_ADMIN_ROLES_LITERAL, isNullRoles } from '@/lib/admin/user-ban';
+import {
+  PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE,
+  SUPER_ADMIN_FREEZE_REJECTED_MESSAGE,
+  SUPER_ADMIN_ROLES_LITERAL,
+  isNullRoles,
+} from '@/lib/admin/user-ban';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { internalError } from '@/lib/api/errors';
 import { isUuid } from '@/lib/http-params';
@@ -113,7 +118,7 @@ export async function POST(request: Request, props: Params) {
   // permanent BAN は super_admin のみ可能
   if (freezeData.ban_type === 'permanent' && !actor.roles.includes('super_admin')) {
     return NextResponse.json(
-      { error: { code: 'OP_PERMISSION_DENIED', message: '永久 BAN はスーパー管理者 (super_admin) のみ実行可能です' } },
+      { error: { code: 'OP_PERMISSION_DENIED', message: PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE } },
       { status: 403 },
     );
   }
@@ -153,7 +158,7 @@ export async function POST(request: Request, props: Params) {
   // super_admin を凍結しようとした場合は拒否
   if (Array.isArray(profile.roles) && profile.roles.includes('super_admin')) {
     return NextResponse.json(
-      { error: { code: 'OP_TARGET_PROTECTED', message: 'スーパー管理者 (super_admin) のユーザーを凍結することはできません' } },
+      { error: { code: 'OP_TARGET_PROTECTED', message: SUPER_ADMIN_FREEZE_REJECTED_MESSAGE } },
       { status: 403 },
     );
   }

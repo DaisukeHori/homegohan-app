@@ -11,6 +11,7 @@ import { createTestUserWithRoles, cleanupTestUser, cleanupAuditLogs, testEmail, 
 import { supabaseAdmin } from '../helpers/supabase';
 import { apiCall, apiCallNoAuth } from '../helpers/api';
 import { expectError } from '../helpers/admin-test-utils';
+import { SUPER_ADMIN_FREEZE_REJECTED_MESSAGE } from '@/lib/admin/user-ban';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import ws from 'ws';
 
@@ -415,7 +416,11 @@ describe('POST /api/admin/users/[id]/freeze', () => {
       notify_user: false,
     });
     expect(res.status).toBe(403);
-    expect((res.body as { error: { code: string } }).error.code).toBe('OP_TARGET_PROTECTED');
+    expect((res.body as { error: { code: string; message: string } }).error).toEqual({
+      code: 'OP_TARGET_PROTECTED',
+      // 凍結のフォームはこの文をそのまま出すので、ロールの呼び名は運営の画面の表示名 (#2134 U1-1)
+      message: SUPER_ADMIN_FREEZE_REJECTED_MESSAGE,
+    });
     const { data: profile } = await supabaseAdmin
       .from('user_profiles')
       .select('frozen_at')

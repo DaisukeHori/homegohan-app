@@ -2,7 +2,7 @@
  * #1917 の続き: supabase/migrations/20261024130000_plan_deprecate_lock_and_price_change_reservation.sql を、ファイルの読み取りで確かめる
  * (DB には接続しない。実際の挙動 (待ち合い・結果) は tests/integration/security/plan-deprecate-lock-price-change-reservation.test.ts)。
  *
- * (1) 廃止の安全弁のトリガー guard_plan_deprecate_subscribers
+ * (1) 廃止の安全弁のトリガー trg_guard_plan_deprecate_subscribers (関数 guard_plan_deprecate_subscribers)
  *   1. BEFORE UPDATE OF status で、status が deprecated 以外から deprecated に変わる行だけに効く
  *   2. 数える前に、プランの行を FOR UPDATE でロックし直す (契約者が増える書き込みの FOR KEY SHARE (trg_subscriber_plan_key_share・外部キーの確認) と衝突する強さ)
  *   3. 数え方が src/lib/super-admin/plan-subscribers.ts と同じ: 個人の live の status の一覧 (ACTIVE_PERSONAL_SUBSCRIPTION_STATUSES)・

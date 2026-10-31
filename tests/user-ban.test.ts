@@ -14,7 +14,12 @@
  *  - #1172: DB エラー時の error は固定の文 (kind: 'internal')。DB の生のエラー文は cause にだけ入る
  */
 import { describe, expect, it, vi } from 'vitest';
-import { applyUserBan, BAN_INTERNAL_ERROR_MESSAGE, SUPER_ADMIN_ROLES_LITERAL } from '@/lib/admin/user-ban';
+import {
+  applyUserBan,
+  BAN_INTERNAL_ERROR_MESSAGE,
+  SUPER_ADMIN_BAN_REJECTED_MESSAGE,
+  SUPER_ADMIN_ROLES_LITERAL,
+} from '@/lib/admin/user-ban';
 
 interface FakeProfile {
   id: string;
@@ -136,7 +141,8 @@ describe('applyUserBan (#1041 round-2 D)', () => {
     });
 
     expect(result.success).toBe(false);
-    expect(result.error).toMatch(/super_admin/);
+    // 断る文は運営の画面の呼び名で書いた固定の文 (審査のフォームがそのまま出す。#2134 U1-1)
+    expect(result.error).toBe(SUPER_ADMIN_BAN_REJECTED_MESSAGE);
     // こちらで決めた規則で断ったもの (DB の失敗ではない)。cause は付かない
     expect(result.kind).toBe('super_admin');
     expect(result.cause).toBeUndefined();

@@ -11,6 +11,7 @@
 // 別々に数えて別々に知らせる。件名と本文の最初の段落で、どちらの通知かを書き分ける (template の名前は同じ)。
 import type { EmailEnvelope } from '../envelope';
 import { getEmailFrom } from '@/lib/site-config';
+import { SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
 import { sanitizeFunctionNameForAlert, type AppLogErrorSpikeScope } from '@/lib/ops-alerts/app-log-error-spike';
 
 export interface AppLogErrorSpikeEmailVars {
@@ -95,7 +96,7 @@ ${wording.note}
 ${functionLines.join('\n')}
 
 ▼ 詳しく見る
-運用ログ画面 (super_admin のみ)
+運用ログ画面 (${SUPER_ADMIN_ONLY_NOTE})
 ${vars.logs_url}
 レベルを error、期間を直近 ${vars.window_minutes} 分ごろに絞ると、同じログを確認できます。
 

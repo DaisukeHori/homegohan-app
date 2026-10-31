@@ -28,6 +28,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import type { TestUser } from '../helpers/users';
 import { supabaseAdmin } from '../helpers/supabase';
 import { apiCall, apiCallNoAuth, apiCallRaw } from '../helpers/api';
+import { PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE, SUPER_ADMIN_BAN_REJECTED_MESSAGE } from '@/lib/admin/user-ban';
 import {
   TestUserPool,
   dataOf,
@@ -659,6 +660,8 @@ describe('POST /api/admin/moderation/[type]/[id]', () => {
         action: 'delete_and_perm_ban',
       });
       expectError(res, 403, 'OP_PERMISSION_DENIED');
+      // 審査のフォームはこの文をそのまま出すので、ロールの呼び名は運営の画面の表示名 (#2134 U1-1)
+      expect(res.body.error?.message).toBe(PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE);
       expect((await readFoodFlag(flagId)).status).toBe('pending');
       expect((await readFrozen(ownerUser.userId)).frozen_at).toBeNull();
     });
@@ -714,7 +717,8 @@ describe('POST /api/admin/moderation/[type]/[id]', () => {
         targetId: flagId,
       });
       expect(log!.details).toMatchObject({ ban_applied: false });
-      expect(log!.details!.ban_error).toEqual(expect.stringContaining('super_admin'));
+      // 断る文は運営の画面の表示名 (運営最上位) の語 (#2134 U1-1)。緩めずに文そのものを固定する
+      expect(log!.details!.ban_error).toBe(SUPER_ADMIN_BAN_REJECTED_MESSAGE);
     });
 
     it('422 OP_BAN_TARGET_UNRESOLVED when the content owner cannot be identified (the verdict is saved, no false success)', async () => {

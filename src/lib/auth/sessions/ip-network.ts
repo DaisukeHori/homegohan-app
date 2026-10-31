@@ -1,7 +1,7 @@
 /**
  * IP アドレスから「同じ場所」とみなす範囲 (user_sessions_metadata.ip_network) を作る純関数。
  * 設計の正典 docs/design/cross/16-auth-history-sessions.md §13.5。
- * 幅は SQL のトリガー auth_session_created (network(set_masklen(ip, 24 / 48))) と同じ値 (constants.ts。契約テスト §20.3)。
+ * 幅は SQL のトリガー on_auth_session_created (関数 auth_session_created の network(set_masklen(ip, 24 / 48))) と同じ値 (constants.ts。契約テスト §20.3)。
  * 書いた値は inet の列に入り、読むときは Postgres の表記に揃う (比べるのはどちらも DB から読んだ値)。
  */
 import { isIP } from 'node:net';

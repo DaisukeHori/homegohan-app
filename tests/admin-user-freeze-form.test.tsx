@@ -456,13 +456,13 @@ describe('UserFreezeForm: 失敗のとき', () => {
 
   it('403 OP_TARGET_PROTECTED: API の文を出すだけで、読み直さない', async () => {
     fetchMock.mockResolvedValue(
-      jsonResponse(403, { error: { code: 'OP_TARGET_PROTECTED', message: 'super_admin ユーザーを凍結することはできません' } }),
+      jsonResponse(403, { error: { code: 'OP_TARGET_PROTECTED', message: '運営最上位のユーザーは凍結できません' } }),
     );
     await renderForm();
     await fillFreeze();
     await clickButton(FREEZE_BUTTON);
 
-    expect(document.querySelector('[role="alert"]')?.textContent).toBe('super_admin ユーザーを凍結することはできません');
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe('運営最上位のユーザーは凍結できません');
     expect(refreshMock).not.toHaveBeenCalled();
   });
 
