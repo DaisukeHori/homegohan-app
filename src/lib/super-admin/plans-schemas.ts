@@ -122,6 +122,12 @@ export const PERSONAL_FAMILY_PLAN_KEY_MESSAGE = `個人・家族のプランの�
  */
 export const ORG_PLAN_KEY_PREFIX_MESSAGE = `組織のプランのキー (plan_key) は、組織のプランの頭の文字 (${ORG_SUBSCRIPTION_PLAN_KEY_PREFIX}) で始まる値にしてください`;
 
+/**
+ * 作成で、同じ plan_key (一意の制約の違反 23505) のプランがすでにあるときの文 (HTTP は 409・code は OP_PLAN_KEY_DUPLICATE)。
+ * 呼び名は運営の画面の欄名 (プランの一覧の列・詳細の欄・新規作成の説明の「プランの鍵」) と同じにする (#2166 X2)
+ */
+export const PLAN_KEY_DUPLICATE_MESSAGE = '同じプランの鍵 (plan_key) がすでにあります';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // スキーマ定義
 // ─────────────────────────────────────────────────────────────────────────────
