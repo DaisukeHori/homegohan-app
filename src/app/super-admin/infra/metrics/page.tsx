@@ -152,8 +152,8 @@ export default function InfraMetricsPage() {
                 )}
 
                 <div className="flex justify-between text-slate-500 text-xs mt-1">
-                  <span>min: {minVal.toFixed(2)}</span>
-                  <span>max: {maxVal.toFixed(2)}</span>
+                  <span>最小: {minVal.toFixed(2)}</span>
+                  <span>最大: {maxVal.toFixed(2)}</span>
                 </div>
               </div>
             );
