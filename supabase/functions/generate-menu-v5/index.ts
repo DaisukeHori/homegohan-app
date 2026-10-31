@@ -1877,7 +1877,10 @@ async function executeStep1_Generate(
               .select("name, amount, expiration_date")
               .eq("user_id", userId)
               .gte("expiration_date", todayStr)
-              .order("expiration_date", { ascending: true }),
+              // 期限の近い順。同じ期限の品は id の順 (Next の LIST_ORDERS.pantryItemsByExpiration と同じ並び。
+              // Deno からは src/lib/api/list-order.ts を import できないので直接書く。#2150)
+              .order("expiration_date", { ascending: true })
+              .order("id", { ascending: true }),
             `pantry_items.context:${userId}:${todayStr}`,
             [],
           )
@@ -1964,6 +1967,8 @@ async function executeStep1_Generate(
             individual_review
           `)
           .eq("user_id", userId)
+          // 健診の日の新しい順。health_checkups は (user_id, checkup_date) が一意 (health_checkups_user_date_unique) で、
+          // user_id で絞って読むので、同じ値の行は出ない (Next の route も同じ理由で checkup_date だけで並べる。#2150)
           .order("checkup_date", { ascending: false })
           .limit(3),
         `health_checkups.context:${userId}`,
@@ -1995,7 +2000,11 @@ async function executeStep1_Generate(
           .from("recipe_likes")
           .select("recipe_id")
           .eq("user_id", userId)
+          // いいねした日時の新しい順。同じ日時のいいねは recipe_id の降順で、件数の上限の境目でどれが入るかも決まる
+          // (主キーは (user_id, recipe_id) (recipe_likes_pkey) で、user_id で絞って読むので recipe_id が一意。
+          // id の列には一意の制約が無い。#2150)
           .order("created_at", { ascending: false })
+          .order("recipe_id", { ascending: false })
           .limit(30),
         `recipe_likes.context:${userId}`,
         [],

@@ -33,6 +33,22 @@ const PROMPT_DATE_TIME_ZONE = 'Asia/Tokyo';
 const UPCOMING_MEALS_DAYS = 7;
 /** AI 相談のシステムプロンプトに入れる「最近の食事・健康記録」の日数 (今日の何日前から) */
 const RECENT_MEALS_DAYS = 14;
+/**
+ * システムプロンプトに入れる「今後の献立」の件数の上限 (いままでの値。1 週間 × 1 日 3 食 = 21 件より多く、
+ * 間食などがあっても 1 週間ぶんがおおむね入る)。日の古い側からこの件数を読む
+ */
+const UPCOMING_MEALS_LIMIT = 30;
+/**
+ * システムプロンプトに入れる「最近の食事」の件数の上限 (いままでの値。14 日 × 1 日 3 食 = 42 件より多い)。
+ * 日の新しい側からこの件数を読み、古い順へ並べ直して入れる (#2150)
+ */
+const RECENT_MEALS_LIMIT = 50;
+
+/** 献立を日付 → 区分の順に並べ替えるときに見る列 (planned_meals の行と、埋め込んだ user_daily_meals の日) */
+interface DayMealRow {
+  meal_type: string;
+  user_daily_meals?: { day_date?: string | null } | null;
+}
 /** 1 週間の日数 (来週の月曜日 = 今週の月曜日の 1 週間後) */
 const DAYS_PER_WEEK = 7;
 /**
@@ -178,23 +194,29 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
     // 2. 今日のdaily_meal ID
     supabase.from('user_daily_meals').select('id').eq('user_id', userId).eq('day_date', today).single(),
 
-    // 3. 明日〜1週間の献立
-    supabase.from('planned_meals').select(`
+    // 3. 明日〜1週間の献立 (日の古い順。同じ日の食事は id の順で、件数の上限の境目でどれが入るかも決まる。#2150)
+    orderListBy(
+      supabase.from('planned_meals').select(`
       id, meal_type, dish_name, calories_kcal, is_completed, mode,
       user_daily_meals!inner(day_date, user_id)
     `).eq('user_daily_meals.user_id', userId)
-      .gt('user_daily_meals.day_date', today)
-      .lte('user_daily_meals.day_date', oneWeekLaterStr)
-      .limit(30),
+        .gt('user_daily_meals.day_date', today)
+        .lte('user_daily_meals.day_date', oneWeekLaterStr),
+      LIST_ORDERS.aiConsultationContextMealsByDay,
+    )
+      .limit(UPCOMING_MEALS_LIMIT),
 
-    // 4. 過去14日の食事
-    supabase.from('planned_meals').select(`
+    // 4. 過去14日の食事 (日の新しい側から件数の上限まで読み、下で古い順へ並べ直す。同じ日の食事は id の降順。#2150)
+    orderListBy(
+      supabase.from('planned_meals').select(`
       id, meal_type, dish_name, dishes, calories_kcal, protein_g, fat_g, carbs_g, is_completed, mode,
       user_daily_meals!inner(day_date, user_id)
     `).eq('user_daily_meals.user_id', userId)
-      .gte('user_daily_meals.day_date', fourteenDaysAgoStr)
-      .lt('user_daily_meals.day_date', today)
-      .limit(50),
+        .gte('user_daily_meals.day_date', fourteenDaysAgoStr)
+        .lt('user_daily_meals.day_date', today),
+      LIST_ORDERS.aiConsultationContextRecentMealsNewestFirst,
+    )
+      .limit(RECENT_MEALS_LIMIT),
 
     // 5. 健康記録（過去14日）
     supabase.from('health_records').select('*')
@@ -258,7 +280,8 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
   const profile = profileResult.data;
   const dailyMeal = dailyMealResult.data;
   const upcomingMeals = upcomingResult.data || [];
-  const recentMeals = recentResult.data || [];
+  // 新しい側から読んだので、古い順 (同じ日の食事は id の順) へ戻す
+  const recentMeals = [...(recentResult.data || [])].reverse();
   const healthRecords = healthRecordsResult.data;
   const healthGoals = healthGoalsResult.data;
   const nutritionTargets = nutritionTargetsResult.data;
@@ -427,12 +450,15 @@ ${todayMeals.map((m: any) => {
   const mealTypeRankOf = (mealType: string): number =>
     isMealType(mealType) ? MEAL_ORDER.indexOf(mealType) : MEAL_ORDER.length;
 
-  const sortedUpcomingMeals = [...(upcomingMeals || [])].sort((a, b) => {
+  // 日付の古い順 → 区分の順。同じ日・同じ区分の食事は、読んだ順 (id の順) のまま (Array.prototype.sort は安定)
+  const compareByDayAndMealType = (a: DayMealRow, b: DayMealRow): number => {
     const dateA = a.user_daily_meals?.day_date || '';
     const dateB = b.user_daily_meals?.day_date || '';
     if (dateA !== dateB) return dateA.localeCompare(dateB);
     return mealTypeRankOf(a.meal_type) - mealTypeRankOf(b.meal_type);
-  });
+  };
+
+  const sortedUpcomingMeals = [...(upcomingMeals || [])].sort(compareByDayAndMealType);
   
   const upcomingMealsInfo = sortedUpcomingMeals.length > 0 ? `
 【📆 今後1週間の献立】
@@ -444,10 +470,11 @@ ${sortedUpcomingMeals.map((m: any) => {
 }).join('\n')}
 ` : '';
 
-  // 食事履歴を整形（過去分）
-  const mealHistory = recentMeals && recentMeals.length > 0 ? `
+  // 食事履歴を整形（過去分。今後の献立と同じく、日付の古い順 → 区分の順。#2150）
+  const sortedRecentMeals = [...recentMeals].sort(compareByDayAndMealType);
+  const mealHistory = sortedRecentMeals.length > 0 ? `
 【最近の食事履歴（過去14日）】
-${recentMeals.map((m: any) => {
+${sortedRecentMeals.map((m: any) => {
   const date = m.user_daily_meals?.day_date || '不明';
   const mealTypeJa = mealTypeLabelOf(m.meal_type);
   const status = m.is_completed ? '✓完了' : '未完了';

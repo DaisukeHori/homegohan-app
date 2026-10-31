@@ -9,7 +9,7 @@
 //
 // 一覧ごとの鍵は LIST_ORDERS に書き、route と、route や画面から呼ぶ helper・hook・画面は
 // orderListBy(問い合わせ, LIST_ORDERS.<一覧>) で並べる (.order( を直接書かない。src/app・src/lib・src/hooks・src/modules・
-// src/components・src/contexts の全体を tests/list-order-tiebreak-2134.test.ts が走査で守る。
+// src/components・src/contexts とリポジトリ直下の lib の全体を tests/list-order-tiebreak-2134.test.ts が走査で守る。
 // 並びの鍵がもう一意の所 (主キー・一意の制約の列で終わる、id で終える) だけは、そのテストの許可の表に理由つきで書く)。
 // NULL の位置は、いままでの order で nullsFirst を省いていた鍵は PostgreSQL の既定 (昇順は最後・降順は最初) と同じ値を明示し、nullsFirst を書いていた鍵はその値を保つ (例: operatorOrgTransferCandidates の last_login_at は降順で空を最後)。
 
@@ -81,6 +81,13 @@ function reversed(order: ListOrder): ListOrder {
 
 /** AI 相談の 1 つのセッションのメッセージの並び (書いた日時の古い順。同じ日時は id の順) */
 const AI_CONSULTATION_MESSAGES_ORDER = withIdTiebreak('ai_consultation_messages', [ascending('created_at')]);
+
+/**
+ * 献立 (planned_meals) の、その日 (user_daily_meals.day_date) の古い順。同じ日の食事は id の順。
+ * planned_meals は日の列を持たないので、多対 1 の埋め込み user_daily_meals の列で親の行を並べる
+ * (PostgREST の order=user_daily_meals(day_date).asc。問い合わせの select に user_daily_meals を埋め込んでおく)
+ */
+const PLANNED_MEALS_BY_DAY_ORDER = withIdTiebreak('planned_meals', [ascending('user_daily_meals(day_date)')]);
 
 /** 一覧ごとの並び (route の名前で引く) */
 export const LIST_ORDERS = {
@@ -167,8 +174,21 @@ export const LIST_ORDERS = {
   /** AI 相談の文脈: 使っている買い物リストの品 (分類の順) */
   aiConsultationContextShoppingItems: withIdTiebreak('shopping_list_items', [ascending('category')]),
   /**
-   * 冷蔵庫・パントリーの品 (期限の近い順・期限の無い品は最後): GET /api/pantry・AI 相談の文脈・献立の生成 (v4 / v5)・
-   * ホームの期限の近い品 (src/hooks/useHomeData.ts)
+   * AI 相談の文脈の献立 (日の古い順・同じ日の食事は id の順・件数の上限つき): 会話の続きの POST の「明日〜1 週間の献立」と、
+   * 新しいセッションの POST が文脈の控えに入れる「7 日前からの食事」(どちらも古い側から件数の上限まで読む)
+   */
+  aiConsultationContextMealsByDay: PLANNED_MEALS_BY_DAY_ORDER,
+  /**
+   * 会話の続きの POST で AI に渡す「過去 14 日の食事」: aiConsultationContextMealsByDay をそっくり逆にした並び (日の新しい順。
+   * 同じ日の食事は id の降順)。新しい側から件数の上限まで読み、古い順へ並べ直して渡す (古い順のまま件数で切ると、
+   * 件数を超えた利用者では昨日に近い食事が文脈から落ちる)
+   */
+  aiConsultationContextRecentMealsNewestFirst: reversed(PLANNED_MEALS_BY_DAY_ORDER),
+  /**
+   * 冷蔵庫・パントリーの品 (期限の近い順・期限の無い品は最後): GET /api/pantry・AI 相談の文脈・献立の生成の route
+   * (src/app/api/ai/menu/v4/generate・v5/generate)・ホームの期限の近い品 (src/hooks/useHomeData.ts)。
+   * Edge Function の generate-menu-v4 / v5 は Deno で動き、このファイルを import できないので、同じ並び
+   * (expiration_date の昇順 → id の昇順) を .order( で直接書く (tests/edge-generate-menu-context-order-2150.test.ts が見る)
    */
   pantryItemsByExpiration: withIdTiebreak('pantry_items', [ascending('expiration_date')]),
 
@@ -274,6 +294,13 @@ export const LIST_ORDERS = {
   ]),
   /** 家族のメンバーの画面 (src/app/(main)/family/members/[id]/page.tsx): 子供の保護者の同意の最新の 1 行 (署名した日時の新しい順) */
   familyMemberParentalConsent: withIdTiebreak('parental_consents', [descending('signed_at')]),
+
+  // ---- リポジトリ直下の lib/ (src/lib/catalog-products.ts などが再輸出する実装) (#2150 Q1-a) ----
+  /**
+   * searchCatalogProducts (lib/catalog-products.ts): 商品の検索の候補 (更新した日時の新しい順・件数の上限つき)。
+   * 商品の検索の route と写真解析の候補に使う。一括の取り込みで同じ更新の日時になった商品は id の順で、上限の境目でどれが入るかも決まる
+   */
+  catalogProductSearch: withIdTiebreak('catalog_products', [descending('updated_at')]),
 } as const satisfies Record<string, ListOrder>;
 
 /** 問い合わせに鍵の順で order を重ねる (先に重ねた鍵ほど強い。PostgREST の order=a.asc,b.asc) */
