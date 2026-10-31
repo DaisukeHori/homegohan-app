@@ -13,6 +13,7 @@ import {
   todayLocal,
 } from '@homegohan/shared';
 import { createClient } from '@/lib/supabase/client';
+import { readSignedInUser } from '@/lib/auth/signed-in-user';
 import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
 import { membershipErrorMessageOfBody } from '@/lib/errors/membership-errors';
 import { familyRoleLabel } from '@/lib/membership/role-labels';
@@ -32,6 +33,15 @@ const NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
  * 失敗の理由 (英語の内部の文) は画面に出さない
  */
 const MEMBER_DETAIL_LOAD_ERROR = 'メンバーの情報を読み込めませんでした。しばらくしてから、もう一度お試しください。';
+
+/**
+ * 開いたメンバーの行が無い (または RLS で見えない・脱退・除名した行) ときの文 (#2093 W10。以前は「メンバー情報の取得に失敗しました」で、
+ * 読み込みの失敗 (MEMBER_DETAIL_LOAD_ERROR と「再試行」) と読め、開き直しを繰り返しかねなかった)。一覧へ戻る導線と一緒に出す
+ */
+const MEMBER_NOT_FOUND_MESSAGE = 'このメンバーは見つかりません (家族から外れた可能性があります)。一覧に戻って確かめてください';
+
+/** 家族のメンバーの一覧のパス (メンバーが見つからないときに戻る先) */
+const FAMILY_MEMBERS_PATH = '/family/members';
 
 interface FamilyMember {
   id: string;
@@ -108,12 +118,20 @@ export default function FamilyMemberDetailPage() {
     // 別の画面へ移るときは、移るまで読み込み中の表示のままにする (これまでどおり)
     let redirecting = false;
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        redirecting = true;
-        router.push('/login');
+      // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
+      // 確かめられなかったときは読み込みの失敗と「再試行」を出す (#2086 V3。以前は通信が切れているだけでもログインの画面へ移していた)。
+      // ログインのあとにこの画面へ戻れるよう next を付ける
+      const signedIn = await readSignedInUser(supabase);
+      if (signedIn.kind === 'load-failed') {
+        setLoadError(MEMBER_DETAIL_LOAD_ERROR);
         return;
       }
+      if (signedIn.kind === 'signed-out') {
+        redirecting = true;
+        router.push(`/login?next=${encodeURIComponent(`/family/members/${memberId}`)}`);
+        return;
+      }
+      const { user } = signedIn;
       setCurrentUserId(user.id);
 
       const { data: profile, error: profileError } = await supabase
@@ -139,10 +157,19 @@ export default function FamilyMemberDetailPage() {
         .select('id, role, display_name, user_id, child_profile, birth_date, share_meals, share_health, share_menu, joined_at')
         .eq('id', memberId)
         .eq('family_id', profile.family_id)
+        // 今のメンバーの行だけを開く (#2086 V10。脱退・除名した行は消えずに status が left / removed で残るので、
+        // 絞らないと古い URL から脱退済み・除名済みの人を今のメンバーのように見せていた。無ければ「見つかりません」。#2093 W10)
+        .eq('status', 'active')
         .single();
 
-      if (memberError || !memberData) {
-        setError('メンバー情報の取得に失敗しました');
+      if (isLoadFailure(memberError)) {
+        // 読み込めなかった (行が無いのとは別。「再試行」を出す。#2080 U3)
+        setLoadError(MEMBER_DETAIL_LOAD_ERROR);
+        return;
+      }
+      if (!memberData) {
+        // 行が無い (PGRST116)・RLS で見えない・今のメンバーでない (脱退・除名した行。#2086 V10)
+        setError(MEMBER_NOT_FOUND_MESSAGE);
         setLoadError(null);
         return;
       }
@@ -167,14 +194,18 @@ export default function FamilyMemberDetailPage() {
         setConsent((consentData as ParentalConsentRecord | null) ?? null);
       }
 
-      // 現在ユーザーのロールを取得 (行が無い (PGRST116) ときは権限なし。読み込めなかったときは、権限なしと見せない)
+      // 現在ユーザーのロールを、自分の active な行から取得する (#2080 U2。脱退・除名した行は消えずに status が left / removed で残り、
+      // 招待で同じ家族に戻ると自分の行が 2 本になる。以前は status で絞らず .single() で読んでいたので、2 本の人は失敗して権限なしに見えていた。
+      // active な行は 1 人 1 行まで (部分 UNIQUE uniq_family_members_user)。
+      // 行が無いときは権限なし。読み込めなかったときは、権限なしと見せない)
       const { data: myMember, error: myMemberError } = await supabase
         .from('family_members')
         .select('role')
         .eq('family_id', profile.family_id)
         .eq('user_id', user.id)
-        .single();
-      if (isLoadFailure(myMemberError)) {
+        .eq('status', 'active')
+        .maybeSingle();
+      if (myMemberError) {
         setLoadError(MEMBER_DETAIL_LOAD_ERROR);
         return;
       }
@@ -257,7 +288,7 @@ export default function FamilyMemberDetailPage() {
         alert(`除名に失敗しました: ${membershipErrorMessageOfBody(json)}`);
         return;
       }
-      router.replace('/family/members');
+      router.replace(FAMILY_MEMBERS_PATH);
     } catch {
       // サーバーが除名を済ませてから応答が切れたこともあるので、そのメンバーの行を読み直して確かめる (#2064。
       // 家族のメンバーの画面の除名と同じ型。確かめないと、除名したメンバーの詳細が残り、もう一度押すと失敗の文が出ていた)。
@@ -265,7 +296,7 @@ export default function FamilyMemberDetailPage() {
       const state = await readMemberStateAfterNetworkFailure(member.id, familyId);
       if (state === 'left') {
         // 家族から外れている: 成功のときと同じ遷移
-        router.replace('/family/members');
+        router.replace(FAMILY_MEMBERS_PATH);
         return;
       }
       // 外れていない: これまでどおり通信エラーの文。確かめられなかったときは「状態を確かめられませんでした」を添える
@@ -338,16 +369,27 @@ export default function FamilyMemberDetailPage() {
     );
   }
 
+  // メンバーが見つからない (読み込めなかったのとは別。「再試行」ではなく一覧へ戻る導線を出す。#2093 W10)
   if (error || !member) {
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center gap-4 p-6">
-        <p className="text-gray-600 text-sm text-center">{error ?? 'メンバーが見つかりません'}</p>
-        <button
-          onClick={() => router.back()}
-          className="px-4 py-2 rounded-full bg-gray-100 text-gray-600 text-sm"
-        >
-          戻る
-        </button>
+        <p data-testid="family-member-detail-not-found" className="text-gray-600 text-sm text-center">
+          {error ?? MEMBER_NOT_FOUND_MESSAGE}
+        </p>
+        <div className="flex justify-center gap-3">
+          <Link
+            href={FAMILY_MEMBERS_PATH}
+            className="px-4 py-2 rounded-full bg-green-500 text-white text-sm font-medium hover:bg-green-600 transition-colors"
+          >
+            メンバーの一覧へ
+          </Link>
+          <button
+            onClick={() => router.back()}
+            className="px-4 py-2 rounded-full bg-gray-100 text-gray-600 text-sm"
+          >
+            戻る
+          </button>
+        </div>
       </div>
     );
   }

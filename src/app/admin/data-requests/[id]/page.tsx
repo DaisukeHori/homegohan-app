@@ -15,7 +15,8 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, usePathname, useRouter } from 'next/navigation';
+import { loginPathWithNext } from '@/lib/auth/signed-in-user';
 import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
 import {
   DSR_ACTIONABLE_STATUSES,
@@ -119,6 +120,8 @@ export default function AdminDataRequestDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id ?? '';
   const router = useRouter();
+  // ログインが切れた (401) ときに、ログインし直したあとこの画面へ戻れるよう next に付けるパス (#2101 X5)
+  const pathname = usePathname();
 
   const [detail, setDetail] = useState<DsrAdminDetailDto | null>(null);
   const [loading, setLoading] = useState(true);
@@ -145,7 +148,7 @@ export default function AdminDataRequestDetailPage() {
     try {
       const res = await fetch(`${DSR_ADMIN_API_PATH}/${encodeURIComponent(id)}`, { cache: 'no-store' });
       if (res.status === HTTP_UNAUTHORIZED) {
-        router.push('/login');
+        router.push(loginPathWithNext(pathname));
         return;
       }
       if (res.status === HTTP_FORBIDDEN) {
@@ -167,7 +170,7 @@ export default function AdminDataRequestDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [id, router, applyDetail]);
+  }, [id, router, pathname, applyDetail]);
 
   useEffect(() => {
     void load();
@@ -200,7 +203,7 @@ export default function AdminDataRequestDetailPage() {
         return;
       }
       if (res.status === HTTP_UNAUTHORIZED) {
-        router.push('/login');
+        router.push(loginPathWithNext(pathname));
         return;
       }
       if (res.status === HTTP_PRECONDITION_FAILED || res.status === HTTP_CONFLICT) {

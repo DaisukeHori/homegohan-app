@@ -280,6 +280,17 @@ describe('RefundRecordDialog', () => {
     expect(openSpy).not.toHaveBeenCalled();
   });
 
+  it('ログインが切れたとき (401) は、本文の文ではなく「ログインし直してください」を出す (#2112 Z4)', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(401, { error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } }));
+    await renderDialog();
+    await typeInto(fieldByLabel('返金の理由'), REASON);
+
+    await click(buttonByText(SUBMIT_BUTTON, true));
+
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe('ログインし直してください');
+    expect(openSpy).not.toHaveBeenCalled();
+  });
+
   it('応答が JSON でない失敗でも、返金はまだ行わないよう伝える', async () => {
     fetchMock.mockResolvedValue({ ok: false, status: 502, json: () => Promise.reject(new Error('not json')) });
     await renderDialog();

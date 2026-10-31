@@ -9,6 +9,8 @@ import { normalizeProfileName } from "@/lib/profile-name";
 import { orgRoleLabel } from "@/lib/membership/role-labels";
 import { readOwnMembershipAfterNetworkFailure, withMembershipStateNote } from "@/lib/membership/leave-state";
 import { OrgMemberNamesResponseSchema, type OrgMemberName } from "@/schemas/membership/organization-member-name";
+import { ORG_WRITE_OPERATION, orgWriteNoResponseMessage } from "@/lib/org-write-no-response";
+import { classifyGetUserResult, loginPathWithNext } from "@/lib/auth/signed-in-user";
 
 /**
  * メンバーの一覧を読み込めなかったときの文。空の一覧 (「メンバーがいません」) と見分けるために出す (#2050)。
@@ -17,12 +19,24 @@ import { OrgMemberNamesResponseSchema, type OrgMemberName } from "@/schemas/memb
 const MEMBERS_LOAD_ERROR = 'メンバーの一覧を読み込めませんでした。しばらくしてから、もう一度お試しください。';
 
 /**
- * 除名・脱退の通信そのものが失敗した (fetch が reject した: オフライン・接続が切れたなど) ときに「除名失敗: 」「脱退失敗: 」の後ろに出す理由 (#2059)。
- * 応答が届かないので、除名・脱退できたかどうかは応答からは分からない。黙っていると、できたかどうかが分からないまま終わるため。
- * 除名は、サーバーが済ませてから応答が切れたこともあるので、この文を出したあとに一覧を読み直して今の状態を見せる (#2064 R5)。
- * 脱退も同じ理由で、この文を出す前に自分のプロフィールを読み直し、組織を抜けていれば成功のときと同じくホームへ移る (#2064)
+ * 脱退の通信そのものが失敗した (fetch が reject した: オフライン・接続が切れたなど) ときに「脱退失敗: 」の後ろに出す理由 (#2059)。
+ * 応答が届かないので、脱退できたかどうかは応答からは分からない。黙っていると、できたかどうかが分からないまま終わるため。
+ * サーバーが済ませてから応答が切れたこともあるので、この文を出す前に自分のプロフィールを読み直し、組織を抜けていれば成功のときと同じく
+ * ホームへ移る (#2064)。この文を出すのは、読み直して組織を抜けていない (か確かめられなかった) ときだけ。
+ * 除名の通信が切れたときはこの文を使わない (一覧を読み直すだけで、除名が済んだかを見分けないため、失敗とは言えない。
+ * 「除名の応答を受け取れませんでした」の文を出す。#2080 U4)
  */
 const MEMBERSHIP_NETWORK_FAILURE_REASON = '通信エラーが発生しました。通信状況を確認して、もう一度お試しください';
+
+/**
+ * 自分が組織に属していない (自分のプロフィールは読めて、organization_id が無い) ときに一覧の代わりに出す文 (#2086 V8)。
+ * 除名の通信が切れたあいだに自分が組織から外された (別の管理者の除名・運営の強制解散など) ときも、読み直しでこの文に変わる
+ * (前の一覧と「除名」のボタンを残さない)
+ */
+const MEMBERS_NOT_IN_ORG = '組織に所属していません';
+
+/** この画面のパス (ログインのあとに戻る先) */
+const ORG_MEMBERS_PATH = '/org/members';
 
 /** 一覧の 1 人。API が返す 4 つの項目 (id・表示名・組織内の役割・参加した日) だけ (#2073 S4) */
 type Member = OrgMemberName;
@@ -49,12 +63,40 @@ export default function MembersPage() {
   const isWriting = removingId !== null || leaving;
   // 一覧を読み込めなかったときの文。あるあいだは一覧と「メンバーがいません」の代わりにこの文と「再試行」を出す (#2050)
   const [loadError, setLoadError] = useState<string | null>(null);
+  // 自分が組織に属していないと読めたか。あるあいだは一覧と「メンバーがいません」の代わりに「組織に所属していません」を出す (#2086 V8)
+  const [notInOrg, setNotInOrg] = useState(false);
+  // ログインしていないと分かり、ログインの画面へ移しているか (#2093 W9)。移るまでは読み込み中の表示のままにし、
+  // 除名の通信が切れたあとの「「再試行」で読み込み直して」の案内も出さない (画面に「再試行」を出さないため)
+  const redirectingToLoginRef = useRef(false);
 
-  const fetchData = async () => {
+  // 一覧を読めたら true (除名の通信が切れたあとの文で、読み直せたかどうかの案内を出し分けるために返す。#2080 U4)。
+  // false を返すときは必ず先に setLoadError で「読み込めませんでした」と「再試行」を出す (文の「「再試行」で読み込み直して」と画面を合わせる)。
+  // あわせて、前に読めたときの自分の役割 (currentUser) を消す (#2093 W9。残すと、一覧は「読み込めませんでした」で隠れるのに、
+  // 前の役割で「組織を脱退」「オーナーを譲渡」「+ メンバーを招待」を出し続けていた)
+  const fetchData = async (): Promise<boolean> => {
     setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      // getUser は通信の失敗を投げずに { user: null, error } で返す (オフラインのときの普通の結果)。readSignedInUser と同じ分け方
+      // (classifyGetUserResult) で見分け、確かめられなかったときは読み込めなかったことを出す (空の一覧や、除名の前の古い一覧を
+      // 今の状態として残さない。除名の通信が切れたあとの「「再試行」で読み込み直して」の案内と画面を合わせる。#2080 U4)。
+      // getUser が投げたときは下の catch で読み込めなかったことを出す (readSignedInUser の load-failed と同じ)。
+      // ログインしていないときは「再試行」を出しても変わらないので、ログインの画面へ移す (#2093 W9。ログインのあとにこの画面へ戻れるよう next を付ける)
+      const { data: { user: signedInUser }, error: userError } = await supabase.auth.getUser();
+      const signedIn = classifyGetUserResult(signedInUser, userError);
+      if (signedIn.kind === 'load-failed') {
+        setCurrentUser(null);
+        setLoadError(MEMBERS_LOAD_ERROR);
+        return false;
+      }
+      if (signedIn.kind === 'signed-out') {
+        // 移るまでは読み込み中の表示のまま (redirectingToLoginRef)。移れなかったときに出る文は、読み込めなかった文にしておく
+        redirectingToLoginRef.current = true;
+        router.push(loginPathWithNext(ORG_MEMBERS_PATH));
+        setCurrentUser(null);
+        setLoadError(MEMBERS_LOAD_ERROR);
+        return false;
+      }
+      const { user } = signedIn;
 
       const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
@@ -64,13 +106,18 @@ export default function MembersPage() {
 
       if (profileError) {
         // 自分のプロフィールを読めなかった (組織に属していないのとは別。空の一覧と見せない)
+        setCurrentUser(null);
         setLoadError(MEMBERS_LOAD_ERROR);
-        return;
+        return false;
       }
       if (!profile?.organization_id) {
+        // 組織に属していない (読み込めたうえで、一覧が空)。前の一覧と自分の役割を空にする (#2086 V8。残すと、除名の通信が切れた
+        // あいだに組織から外されたとき、前の一覧と「除名」・脱退・譲渡のボタンが残ったまま「一覧を読み込み直した」と案内していた)
+        setMembers([]);
+        setCurrentUser(null);
+        setNotInOrg(true);
         setLoadError(null);
-        setLoading(false);
-        return;
+        return true;
       }
 
       setCurrentUser({ id: user.id, org_role: profile.org_role ?? 'member' });
@@ -79,22 +126,28 @@ export default function MembersPage() {
       // 以前は user_profiles を直接読み、本番では自分の行しか返らなかった)。返る項目は表示名・組織内の役割・参加した日・id だけ
       const res = await fetch('/api/org/members', { cache: 'no-store' });
       if (!res.ok) {
+        setCurrentUser(null);
         setLoadError(MEMBERS_LOAD_ERROR);
-        return;
+        return false;
       }
       const parsed = OrgMemberNamesResponseSchema.safeParse(await res.json());
       if (!parsed.success) {
         // 応答の形が違う (読み込めなかったのと同じに扱う。空の一覧と見せない)
+        setCurrentUser(null);
         setLoadError(MEMBERS_LOAD_ERROR);
-        return;
+        return false;
       }
       setMembers(parsed.data.members);
+      setNotInOrg(false);
       setLoadError(null);
+      return true;
     } catch (error) {
       console.error('Failed to fetch members:', error);
+      setCurrentUser(null);
       setLoadError(MEMBERS_LOAD_ERROR);
+      return false;
     } finally {
-      setLoading(false);
+      if (!redirectingToLoginRef.current) setLoading(false);
     }
   };
 
@@ -121,11 +174,15 @@ export default function MembersPage() {
     } catch (error) {
       // 通信が失敗した (#2059。catch が無いと失敗の文が出ず、onClick の promise が reject のまま終わっていた)
       console.error('Failed to remove member:', error);
-      alert(`除名失敗: ${MEMBERSHIP_NETWORK_FAILURE_REASON}`);
       // サーバーが除名を済ませてから応答が切れたこともあるので、一覧を読み直す (#2064 R5。読み直さないと、除名したメンバーが一覧に残り、
       // もう一度「除名」を押すとエラーの文が出ていた)。読み直しが失敗したときは fetchData が一覧の「読み込めませんでした」を出す。
       // 成功のときの読み直しと同じく、読み直しの応答を待つあいだも書き込みの待ち (writeInFlightRef) を戻さない (上の writeInFlightRef の理由と同じ)
-      await fetchData();
+      const reloaded = await fetchData();
+      // ログインが切れていてログインの画面へ移るときは、「「再試行」で読み込み直して」の案内を出さない (#2093 W9。画面に「再試行」を出さない)
+      if (redirectingToLoginRef.current) return;
+      // 文は「除名失敗」と言わない (読み直した一覧で除名が済んでいることもあるため。#2080 U4)。
+      // 読み直しの結果が分かってから、その結果に合わせた案内を出す
+      alert(orgWriteNoResponseMessage(ORG_WRITE_OPERATION.memberRemove, reloaded ? 'reloaded' : 'reload_failed'));
     } finally {
       writeInFlightRef.current = false;
       setRemovingId(null);
@@ -195,8 +252,8 @@ export default function MembersPage() {
     <div className="p-8 space-y-8">
       <div className="flex justify-between items-center">
         <div>
-          {/* 読み込めなかったときは人数を出さない (「0 名」と見せない) */}
-          <h1 className="text-2xl font-bold text-gray-900">{loadError ? '組織メンバー' : `組織メンバー (${members.length} 名)`}</h1>
+          {/* 読み込めなかったとき・組織に属していないときは人数を出さない (「0 名」と見せない) */}
+          <h1 className="text-2xl font-bold text-gray-900">{loadError || notInOrg ? '組織メンバー' : `組織メンバー (${members.length} 名)`}</h1>
           <p className="text-gray-500 text-sm">メンバーの管理・除名・脱退</p>
         </div>
         <div className="flex gap-3">
@@ -217,12 +274,15 @@ export default function MembersPage() {
               {leaving ? '処理中...' : '組織を脱退'}
             </button>
           )}
-          <Link
-            href="/org/invites"
-            className="px-4 py-2 rounded-xl bg-blue-600 text-white font-medium hover:bg-blue-700 transition-colors text-sm shadow-sm shadow-blue-200"
-          >
-            + メンバーを招待
-          </Link>
+          {/* 組織に属していると読めたときだけ出す (#2093 W9。組織に属していない・読み込めなかったときは招待できない) */}
+          {currentUser && (
+            <Link
+              href="/org/invites"
+              className="px-4 py-2 rounded-xl bg-blue-600 text-white font-medium hover:bg-blue-700 transition-colors text-sm shadow-sm shadow-blue-200"
+            >
+              + メンバーを招待
+            </Link>
+          )}
         </div>
       </div>
 
@@ -255,6 +315,12 @@ export default function MembersPage() {
                       再試行
                     </button>
                   </div>
+                </td>
+              </tr>
+            ) : notInOrg ? (
+              <tr>
+                <td colSpan={4} data-testid="member-not-in-org" className="p-8 text-center text-gray-400">
+                  {MEMBERS_NOT_IN_ORG}
                 </td>
               </tr>
             ) : members.length === 0 ? (

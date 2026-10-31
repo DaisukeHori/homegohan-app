@@ -9,8 +9,9 @@
  * 権限: finance / admin / super_admin。ほかのロール (support など) と一般ユーザーは 403、未認証は 401。
  * ただし NPS / CSAT の集計 (GET nps) と NPS の書き出し (POST exports の export_type=nps) は admin / super_admin だけ。
  * finance は 403 (#1311。財務ロールを NPS / CSAT から外した)。書き出せる種別の一覧 (GET exports) にも、finance には nps を出さない。
- * 入力エラーは 400 を期待する (AC の「422 相当」)。ただし現状の finance ルートは、不正な絞り込み (invoices の status・per_page、reconciliation の
- * page・per_page・日時) を握っておらず 500 / 200 になる (reconciliation は検証自体が無い) 箇所があり、`[既知の不具合]` の it.fails で固定してある。
+ * 入力エラーは 400 を期待する (AC の「422 相当」)。#2101 X6 で、invoices の status・page・per_page と reconciliation の page・per_page は
+ * DB に触れずに 400 VALIDATION_ERROR を返すようになった (以前は 500 / 200)。#2107 Y12 で、invoices と reconciliation の from / to も
+ * 日付 (YYYY-MM-DD) かタイムゾーンつきの日時でなければ DB に触れずに 400 VALIDATION_ERROR を返すようになった (以前は不正な値を DB に渡して 500)。
  * (#1917 で、JSON として読めない本文は 400 INVALID_JSON、件数より後ろのページは 200 の空のページと本当の件数 (meta.total) を返すようになった)
  * (#1433 で、exports の本文と nps の期間は入口で検査して 400 を返すようになった。期間は JST の暦日の日付 YYYY-MM-DD)
  *
@@ -228,16 +229,33 @@ describe('GET /api/admin/finance/invoices', () => {
     expect(body.meta.total).toBeGreaterThanOrEqual(1);
   });
 
-  // 既知の不具合: InvoiceQuerySchema.parse() の ZodError を握っておらず、汎用の catch で 500 になる。
-  // 直ったら `.fails` を外すこと。
-  it.fails('[既知の不具合] 400 for invalid status filter (現状は 500 INTERNAL_ERROR)', async () => {
+  // クエリの誤りは DB に触れずに 400 VALIDATION_ERROR (#2101 X6。以前は InvoiceQuerySchema.parse() の ZodError が汎用の catch で 500 になっていた)
+  it('400 for invalid status filter (#2101 X6)', async () => {
     const res = await apiCall('GET', '/api/admin/finance/invoices?status=INVALID_STATUS', financeUser.jwt);
-    expect(res.status).toBe(400);
+    expectError(res, 400, 'VALIDATION_ERROR');
   });
 
-  it.fails('[既知の不具合] 400 for per_page out of range (現状は 500 INTERNAL_ERROR)', async () => {
+  it('400 for per_page out of range (#2101 X6)', async () => {
     const res = await apiCall('GET', '/api/admin/finance/invoices?per_page=0', financeUser.jwt);
-    expect(res.status).toBe(400);
+    expectError(res, 400, 'VALIDATION_ERROR');
+  });
+
+  it('400 for page that is not a number (#2101 X6)', async () => {
+    const res = await apiCall('GET', '/api/admin/finance/invoices?page=abc', financeUser.jwt);
+    expectError(res, 400, 'VALIDATION_ERROR');
+  });
+
+  // from / to が日付・日時でなければ DB に触れずに 400 VALIDATION_ERROR (#2107 Y12。以前は不正な値を received_at の比較に渡して 500)
+  for (const query of ['from=not-a-date', 'to=not-a-date', 'from=2026-02-30']) {
+    it(`400 for an invalid date (${query}) (#2107 Y12)`, async () => {
+      const res = await apiCall('GET', `/api/admin/finance/invoices?${query}`, financeUser.jwt);
+      expectError(res, 400, 'VALIDATION_ERROR');
+    });
+  }
+
+  it('200 for a date and a datetime with a time zone in from / to (#2107 Y12)', async () => {
+    const res = await apiCall('GET', '/api/admin/finance/invoices?from=2026-01-01&to=2999-01-01T00:00:00Z', financeUser.jwt);
+    expect(res.status, `status が違う。応答本文: ${JSON.stringify(res.body)}`).toBe(200);
   });
 
   // 件数より後ろのページ (PostgREST の 416 / PGRST103) は 500 にせず、空のページと本当の件数を返す (#1917)。
@@ -816,21 +834,31 @@ describe('GET /api/admin/finance/reconciliation', () => {
     expect(body.meta.total).toBe(firstTotal);
   });
 
-  // 既知の不具合: page / per_page / from / to を検証せず、parseInt の結果や不正な日時をそのまま DB に渡す。
-  // page=abc は 200 (meta.page が null)、page=-1・不正な日時は DB エラーの 500 になる。
-  // 不正な値は 400 (VALIDATION_ERROR) を返すのが期待。直ったら `.fails` を外すこと。
-  const invalidQueries = [
-    { name: 'page that is not a number', query: 'page=abc', expected: 400 },
-    { name: 'negative page', query: 'page=-1', expected: 400 },
-    { name: 'per_page=0', query: 'per_page=0', expected: 400 },
-    { name: 'an invalid from date', query: 'from=not-a-date', expected: 400 },
+  // page / per_page が 1 以上の整数でない・per_page が上限 (200) より大きいときは、DB に触れずに 400 VALIDATION_ERROR (#2101 X6。
+  // 以前は parseInt の結果をそのまま DB に渡し、page=abc は 200 (meta.page が null)、page=-1 は DB エラーの 500 だった)
+  const invalidPageQueries = [
+    { name: 'page that is not a number', query: 'page=abc' },
+    { name: 'negative page', query: 'page=-1' },
+    { name: 'per_page=0', query: 'per_page=0' },
+    { name: 'per_page over the max', query: 'per_page=201' },
   ];
-  for (const { name, query, expected } of invalidQueries) {
-    it.fails(`[既知の不具合] ${expected} for ${name} (現状は検証が無く 200 / 500)`, async () => {
+  for (const { name, query } of invalidPageQueries) {
+    it(`400 for ${name} (#2101 X6)`, async () => {
       const res = await apiCall('GET', `/api/admin/finance/reconciliation?${query}`, adminUser.jwt);
-      expect(res.status).toBe(expected);
+      expectError(res, 400, 'VALIDATION_ERROR');
     });
   }
+
+  // from / to が日付・日時でなければ DB に触れずに 400 VALIDATION_ERROR (#2107 Y12。以前は検証が無く、不正な値を DB に渡して 500)
+  it('400 for an invalid from date (#2107 Y12)', async () => {
+    const res = await apiCall('GET', '/api/admin/finance/reconciliation?from=not-a-date', adminUser.jwt);
+    expectError(res, 400, 'VALIDATION_ERROR');
+  });
+
+  it('400 for an invalid to date (#2107 Y12)', async () => {
+    const res = await apiCall('GET', '/api/admin/finance/reconciliation?to=2026-13-01', adminUser.jwt);
+    expectError(res, 400, 'VALIDATION_ERROR');
+  });
 
   it('403 for general user', async () => {
     const res = await apiCall('GET', '/api/admin/finance/reconciliation', generalUser.jwt);

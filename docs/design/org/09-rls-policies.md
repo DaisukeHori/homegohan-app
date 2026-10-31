@@ -239,7 +239,7 @@ CREATE POLICY "org_license_pools_no_delete" ON org_license_pools
   FOR DELETE USING (false);
 ```
 
-実装 (migration `20261022180000_org_tables_rpc_only_writes.sql`・#1917): 利用者 (anon / authenticated) の書き込みのポリシーは置かず、INSERT / UPDATE / DELETE / TRUNCATE の権限も外してある。SELECT はポリシー `org_license_pools_select_member` (同じ組織のメンバー)。席数 (`total_licenses` / `used_licenses`) を書くのは service_role と SECURITY DEFINER の RPC (`accept_org_invite`・`leave_org`・`remove_org_member`・`release_user_membership`・解散の後始末 `org_dissolve_apply` (service_role だけが実行できる)) だけ。
+実装 (migration `20261022180000_org_tables_rpc_only_writes.sql`・#1917): 利用者 (anon / authenticated) の書き込みのポリシーは置かず、INSERT / UPDATE / DELETE / TRUNCATE の権限も外してある。SELECT はポリシー `org_license_pools_select_member` (同じ組織のメンバー)。席数 (`total_licenses` / `used_licenses`) を書くのは service_role と SECURITY DEFINER の RPC (`accept_org_invite`・`leave_org`・`remove_org_member`・`release_user_membership`・解散の後始末 `org_dissolve_apply` (service_role だけが実行できる)・運営の組織の作成 `admin_create_organization` (行を作る。`total_licenses` = NULL・`used_licenses` = 0。service_role だけが実行できる)) だけ。
 
 ## 9. org_license_assignments
 

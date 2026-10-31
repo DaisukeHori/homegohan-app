@@ -26,10 +26,29 @@ import { z } from 'zod';
  * route の途中で落ちたときは、この時間だけそのプランの価格の変更が 409 になる
  */
 export const PRICE_CHANGE_RESERVATION_STALE_SECONDS = 900;
+// ↑ 値を変えるときは、プランの Stripe の商品の ID を守るトリガーの期限 (supabase/migrations/20261030160000_plan_stripe_product_id_price_change_guard.sql
+//   の c_stale_after_seconds) も新しい migration で同じ値にする (tests/plan-stripe-product-id-price-change-guard-migration-contract.test.ts が突き合わせる)
 
-/** 409 CONFLICT_STALE_DATA: 別の運営が同じプランの価格を変更中 (予約が取れなかった)。Stripe も DB も触っていない */
+/**
+ * プランの stripe_product_id を変える UPDATE を、価格の変更の予約が期限内にあるあいだ止めるトリガー
+ * (guard_plan_stripe_product_id_price_change。#2112 Z1-1) が RAISE する文 (P0001)。進行中の価格の変更が Stripe に渡した商品と、
+ * DB の商品が食い違わないようにする。PATCH /api/super-admin/plans/{id} はこれを 409 OP_PLAN_PRICE_CHANGE_IN_PROGRESS に写す
+ */
+export const PLAN_PRICE_CHANGE_IN_PROGRESS_DB_ERROR = 'OP_PLAN_PRICE_CHANGE_IN_PROGRESS';
+
+/** 更新の失敗が、価格の変更が進行中なので商品の ID の書き込みをトリガーが止めたものか */
+export function isPlanPriceChangeInProgressDbError(error: { message?: string } | null | undefined): boolean {
+  return error?.message === PLAN_PRICE_CHANGE_IN_PROGRESS_DB_ERROR;
+}
+
+/**
+ * 409 CONFLICT_STALE_DATA: 同じプランの価格の変更が進行中 (予約が取れなかった)。Stripe も DB も触っていない。
+ * 進行中なのは別の運営の操作とは限らない: 応答が切れた (504 など) あとの押し直しでは、まだ走っている自分の 1 回目のことがある。
+ * 関数が打ち切られて予約が残ったときは、期限 (PRICE_CHANGE_RESERVATION_STALE_SECONDS) まで同じ 409 が続く。
+ * 以前は「別の運営がこのプランの価格を変更しています」と出し、運営自身の 1 回目を別の運営の操作と見せていた (#2107 Y6)
+ */
 export const PRICE_CHANGE_IN_PROGRESS_MESSAGE =
-  '別の運営がこのプランの価格を変更しています。しばらくしてから画面を読み込み直して、もう一度確認してください';
+  'このプランの価格の変更が進行中です (直前のあなたの操作かもしれません)。しばらくしてから読み込み直して履歴で確かめてください';
 
 /** 409 CONFLICT_STALE_DATA: 予約を失った (期限の後に別の運営が取り直した)。DB は書いていない */
 export const PRICE_CHANGE_RESERVATION_LOST_MESSAGE =

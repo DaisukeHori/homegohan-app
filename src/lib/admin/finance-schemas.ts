@@ -3,7 +3,8 @@
  * operator/02-api-spec.md §9, §20 準拠
  */
 import { z } from 'zod';
-import { OptionalCalendarDateSchema } from '@/lib/calendar-date-schema';
+import { CalendarDateSchema, OptionalCalendarDateSchema } from '@/lib/calendar-date-schema';
+import { isValidIsoDateTime } from '@/lib/super-admin/app-logs';
 import { REFUND_AMOUNT_MAX, REFUND_REASON_MAX_LENGTH } from './refund';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -53,13 +54,46 @@ export const RevenueSnapshotSchema = z.object({
 
 export type RevenueSnapshot = z.infer<typeof RevenueSnapshotSchema>;
 
+/** 会計の一覧 (売上・請求書・整合チェック) の 1 ページの件数の上限。#2101 より前の RevenueQuerySchema / InvoiceQuerySchema の max(200) と同じ値 */
+export const FINANCE_LIST_PER_PAGE_MAX = 200;
+/** 会計の一覧の per_page を省略したときの 1 ページの件数。#2101 より前のどの一覧の既定 (50) とも同じ値 */
+export const FINANCE_LIST_PER_PAGE_DEFAULT = 50;
+
+/**
+ * 会計の一覧の page / per_page (#2101 X6)。1 以上の整数でなければ (数でない・0・負・小数)・per_page が上限より大きければ、
+ * route が DB に触れずに 400 で断る (src/lib/admin/finance-query-errors.ts の financeInvalidQueryResponse)
+ */
+const financeListPageFields = {
+  page: z.coerce.number().int().positive().optional().default(1),
+  per_page: z.coerce.number().int().positive().max(FINANCE_LIST_PER_PAGE_MAX).optional().default(FINANCE_LIST_PER_PAGE_DEFAULT),
+};
+
+/**
+ * timestamptz の列 (stripe_webhook_events.received_at・admin_audit_logs.created_at) と比べる会計の一覧の from / to (#2107 Y12)。
+ * 実在する日付 (YYYY-MM-DD。CalendarDateSchema と同じ範囲) か、タイムゾーンつきの ISO 8601 の日時
+ * (2999-01-01T00:00:00Z・2026-10-01T09:00:00+09:00 など。暦も見る src/lib/super-admin/app-logs.ts の isValidIsoDateTime) だけを通す。
+ * 以前の `z.string().optional()` は from=not-a-date をそのまま DB の比較に渡し、PostgreSQL の型の誤りで 500 になっていた。
+ * いまは route が DB に触れずに 400 VALIDATION_ERROR「パラメータが不正です (from)」で断る (financeInvalidQueryResponse)。
+ * 空 (?from=) は以前の `if (query.from)` と同じく「その側を絞らない」(undefined)
+ */
+const OptionalFinanceTimestampBoundSchema = z.preprocess(
+  (value) => (value === '' ? undefined : value),
+  z
+    .string()
+    .refine((value) => CalendarDateSchema.safeParse(value).success || isValidIsoDateTime(value))
+    .optional(),
+);
+
+/**
+ * 売上の一覧の from / to は revenue_snapshots.date (date の列) と比べるので、実在する日付 (YYYY-MM-DD) だけ (#2107 Y12。
+ * 空は「その側を絞らない」)
+ */
 export const RevenueQuerySchema = z.object({
-  from: z.string().optional(),
-  to: z.string().optional(),
+  from: OptionalCalendarDateSchema,
+  to: OptionalCalendarDateSchema,
   granularity: z.enum(['day', 'week', 'month']).optional().default('month'),
   segment: z.enum(['personal', 'family', 'org', 'all']).optional().default('all'),
-  page: z.coerce.number().int().positive().optional().default(1),
-  per_page: z.coerce.number().int().positive().max(200).optional().default(50),
+  ...financeListPageFields,
 });
 
 export type RevenueQuery = z.infer<typeof RevenueQuerySchema>;
@@ -67,6 +101,14 @@ export type RevenueQuery = z.infer<typeof RevenueQuerySchema>;
 // ─────────────────────────────────────────────────────────────────────────────
 // Invoice (stripe_webhook_events 由来)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 請求書 (stripe_webhook_events の行) の処理の状態 (processing_status) の値の一覧。
+ * DB の CHECK (supabase/migrations/20251126124224_create_meal_planner_tables.sql の stripe_webhook_events.processing_status) と同じ 4 値。
+ * 運営の画面の表示名は src/lib/admin/invoice-processing-status-labels.ts (画面はこのファイルの値を import しないので、型だけを読む)
+ */
+export const INVOICE_PROCESSING_STATUSES = ['pending', 'processing', 'completed', 'failed'] as const;
+export type InvoiceProcessingStatus = (typeof INVOICE_PROCESSING_STATUSES)[number];
 
 export const InvoiceItemSchema = z.object({
   id: z.string(),
@@ -88,11 +130,11 @@ export const InvoiceItemSchema = z.object({
 export type InvoiceItem = z.infer<typeof InvoiceItemSchema>;
 
 export const InvoiceQuerySchema = z.object({
-  page: z.coerce.number().int().positive().optional().default(1),
-  per_page: z.coerce.number().int().positive().max(200).optional().default(50),
-  status: z.enum(['pending', 'processing', 'completed', 'failed']).optional(),
-  from: z.string().optional(),
-  to: z.string().optional(),
+  ...financeListPageFields,
+  status: z.enum(INVOICE_PROCESSING_STATUSES).optional(),
+  // received_at (timestamptz) と比べる。日付か、タイムゾーンつきの日時だけ (#2107 Y12)
+  from: OptionalFinanceTimestampBoundSchema,
+  to: OptionalFinanceTimestampBoundSchema,
 });
 
 export type InvoiceQuery = z.infer<typeof InvoiceQuerySchema>;
@@ -114,6 +156,20 @@ export const ReconciliationItemSchema = z.object({
 });
 
 export type ReconciliationItem = z.infer<typeof ReconciliationItemSchema>;
+
+/**
+ * 整合チェックの一覧 (GET /api/admin/finance/reconciliation) のクエリ (#2101 X6)。
+ * 以前の route は `parseInt(page)` だけで読み、?page=abc の NaN を `.range(NaN, …)` に渡して 500 にし、
+ * ?page=0 では負の offset を作っていた。per_page の上限も無かった (いまは会計の他の一覧と同じ 200)
+ */
+export const ReconciliationQuerySchema = z.object({
+  // admin_audit_logs.created_at (timestamptz) と比べる。日付か、タイムゾーンつきの日時だけ (#2107 Y12)
+  from: OptionalFinanceTimestampBoundSchema,
+  to: OptionalFinanceTimestampBoundSchema,
+  ...financeListPageFields,
+});
+
+export type ReconciliationQuery = z.infer<typeof ReconciliationQuerySchema>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // NPS / CSAT

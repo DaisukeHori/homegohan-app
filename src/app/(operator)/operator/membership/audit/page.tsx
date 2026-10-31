@@ -4,10 +4,26 @@
  * /operator/membership/audit
  * membership_audit テーブル一覧 + フィルタ
  * 05-operator-emergency-ui.md §5.4 準拠
+ *
+ * 操作 (action)・対象 (scope) は内部の英字の値を出さず、日本語の表示名 (src/lib/membership/audit-labels.ts) にする。
+ * 表に無い値は「不明な操作」「不明な対象」の固定の文 (#2086 V5)。
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import { lastPageToRefetch } from '@/lib/list-pagination';
+import {
+  displayableOperatorError,
+  fetchOperatorJson,
+  operatorLoadFailedMessage,
+  OperatorScreenError,
+} from '@/lib/membership/operator-screen-messages';
+import {
+  MEMBERSHIP_AUDIT_ACTIONS,
+  MEMBERSHIP_AUDIT_SCOPES,
+  membershipAuditActionLabel,
+  membershipAuditScopeLabel,
+  type MembershipAuditScope,
+} from '@/lib/membership/audit-labels';
 
 type AuditRow = {
   id: string;
@@ -19,6 +35,46 @@ type AuditRow = {
   metadata: Record<string, unknown>;
   created_at: string;
 };
+
+/** 一覧の API の応答 ({ data, meta }) */
+type AuditListBody = {
+  data?: AuditRow[];
+  meta?: { total?: number };
+};
+
+/** 読み込みの失敗の文の対象 */
+const AUDIT_SUBJECT = '監査ログ';
+/** 読み込みの失敗で、例外の文が出せないときの固定の文 */
+const AUDIT_LOAD_FAILED_FALLBACK = `${AUDIT_SUBJECT}を読み込めませんでした`;
+
+/** 絞り込みで「絞らない」の選択肢の文 */
+const FILTER_ALL_LABEL = 'すべて';
+/** 操作した人が無い (DB の関数が書いた) 行の、操作した人の文 */
+const SYSTEM_ACTOR_LABEL = '(システム)';
+/** 運営の強制操作の行の、操作した人の文の頭 (後ろに運営者の ID の先頭を付ける) */
+const OPERATOR_ACTOR_LABEL = '運営';
+/** 運営の強制操作の操作の値の頭 (operator_force_owner_transfer など) */
+const OPERATOR_FORCE_ACTION_PREFIX = 'operator_force';
+/** 一覧の操作した人の列に出す、ID の先頭の文字数 */
+const ACTOR_ID_PREFIX_LENGTH = 8;
+
+/** 対象の札の色 (表に無い対象は灰色) */
+const SCOPE_BADGE_CLASSES: Record<MembershipAuditScope, string> = {
+  organization: 'bg-blue-100 text-blue-700',
+  family: 'bg-green-100 text-green-700',
+};
+const SCOPE_BADGE_UNKNOWN_CLASS = 'bg-gray-100 text-gray-700';
+
+function scopeBadgeClass(scope: string): string {
+  return Object.prototype.hasOwnProperty.call(SCOPE_BADGE_CLASSES, scope)
+    ? SCOPE_BADGE_CLASSES[scope as MembershipAuditScope]
+    : SCOPE_BADGE_UNKNOWN_CLASS;
+}
+
+/** 一覧の API の本文の data が配列か (data が配列でない壊れた応答を「0 件」と見せない。#2086 V7 と同じ型) */
+function hasRows(body: AuditListBody): body is AuditListBody & { data: AuditRow[] } {
+  return Array.isArray(body.data);
+}
 
 type MetaDetailModalProps = {
   row: AuditRow;
@@ -38,7 +94,7 @@ function MetaDetailModal({ row, onClose }: MetaDetailModalProps) {
         </div>
         <dl className="space-y-3 text-sm">
           <div>
-            <dt className="font-medium text-gray-500">ID</dt>
+            <dt className="font-medium text-gray-500">記録の ID</dt>
             <dd className="text-gray-900 font-mono text-xs">{row.id}</dd>
           </div>
           <div>
@@ -46,23 +102,25 @@ function MetaDetailModal({ row, onClose }: MetaDetailModalProps) {
             <dd className="text-gray-900">{new Date(row.created_at).toLocaleString('ja-JP')}</dd>
           </div>
           <div>
-            <dt className="font-medium text-gray-500">Scope / ID</dt>
-            <dd className="text-gray-900">{row.scope} / <span className="font-mono text-xs">{row.scope_id}</span></dd>
+            <dt className="font-medium text-gray-500">対象 / ID</dt>
+            <dd className="text-gray-900">
+              {membershipAuditScopeLabel(row.scope)} / <span className="font-mono text-xs">{row.scope_id}</span>
+            </dd>
           </div>
           <div>
-            <dt className="font-medium text-gray-500">Action</dt>
-            <dd className="text-gray-900">{row.action}</dd>
+            <dt className="font-medium text-gray-500">操作</dt>
+            <dd className="text-gray-900">{membershipAuditActionLabel(row.action)}</dd>
           </div>
           <div>
-            <dt className="font-medium text-gray-500">Actor</dt>
-            <dd className="text-gray-900 font-mono text-xs">{row.actor_id ?? '(system)'}</dd>
+            <dt className="font-medium text-gray-500">操作した人</dt>
+            <dd className="text-gray-900 font-mono text-xs">{row.actor_id ?? SYSTEM_ACTOR_LABEL}</dd>
           </div>
           <div>
-            <dt className="font-medium text-gray-500">Target User</dt>
+            <dt className="font-medium text-gray-500">相手の利用者</dt>
             <dd className="text-gray-900 font-mono text-xs">{row.target_user_id ?? '-'}</dd>
           </div>
           <div>
-            <dt className="font-medium text-gray-500">Metadata</dt>
+            <dt className="font-medium text-gray-500">付随の情報</dt>
             <dd className="bg-gray-50 rounded p-3 font-mono text-xs whitespace-pre-wrap break-all">
               {JSON.stringify(row.metadata, null, 2)}
             </dd>
@@ -73,21 +131,16 @@ function MetaDetailModal({ row, onClose }: MetaDetailModalProps) {
   );
 }
 
+/** 対象の絞り込みの選択肢 (送る値は内部の値、文は表示名) */
 const SCOPE_OPTIONS = [
-  { value: '', label: 'All' },
-  { value: 'organization', label: '組織' },
-  { value: 'family', label: '家族' },
+  { value: '', label: FILTER_ALL_LABEL },
+  ...MEMBERSHIP_AUDIT_SCOPES.map((value) => ({ value, label: membershipAuditScopeLabel(value) })),
 ];
 
+/** 操作の絞り込みの選択肢 (DB の操作の全値。送る値は内部の値、文は表示名) */
 const ACTION_OPTIONS = [
-  { value: '', label: 'All' },
-  { value: 'operator_force_owner_transfer', label: 'operator_force_owner_transfer' },
-  { value: 'operator_force_representative_transfer', label: 'operator_force_representative_transfer' },
-  { value: 'operator_force_dissolve', label: 'operator_force_dissolve' },
-  { value: 'invite_accepted', label: 'invite_accepted' },
-  { value: 'member_left', label: 'member_left' },
-  { value: 'owner_transferred', label: 'owner_transferred' },
-  { value: 'representative_transferred', label: 'representative_transferred' },
+  { value: '', label: FILTER_ALL_LABEL },
+  ...MEMBERSHIP_AUDIT_ACTIONS.map((value) => ({ value, label: membershipAuditActionLabel(value) })),
 ];
 
 export default function MembershipAuditPage() {
@@ -117,22 +170,20 @@ export default function MembershipAuditPage() {
       sp.set('page', String(page));
       sp.set('limit', String(limit));
 
-      const res = await fetch(`/api/operator/membership/audit?${sp.toString()}`);
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error?.message ?? `HTTP ${res.status}`);
-      }
-      const json = await res.json();
+      // 通信の失敗・本文に文の無い失敗も日本語の文にする (ブラウザの英字の文・「HTTP 502」だけを出さない。#2080 U5)
+      const json = (await fetchOperatorJson(`/api/operator/membership/audit?${sp.toString()}`, AUDIT_SUBJECT)) as AuditListBody;
+      // data が配列でない壊れた応答は、読み込めなかったものとして扱う (「ログがありません」(0 件) と見せない。#2086 V7 と同じ型)
+      if (!hasRows(json)) throw new OperatorScreenError(operatorLoadFailedMessage(AUDIT_SUBJECT, null));
       // 件数より後ろのページは、空のページを見せずに最後のページへ取り直す (#1917)
-      const refetchPage = lastPageToRefetch({ rows: (json.data ?? []).length, page, total: json.meta?.total ?? 0, perPage: limit });
+      const refetchPage = lastPageToRefetch({ rows: json.data.length, page, total: json.meta?.total ?? 0, perPage: limit });
       if (refetchPage !== null) {
         setPage(refetchPage);
         return;
       }
-      setRows(json.data ?? []);
+      setRows(json.data);
       setTotal(json.meta?.total ?? 0);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'データ取得に失敗しました');
+      setError(displayableOperatorError(err, AUDIT_LOAD_FAILED_FALLBACK));
     } finally {
       setLoading(false);
     }
@@ -152,14 +203,14 @@ export default function MembershipAuditPage() {
     <div>
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">メンバシップ 監査ログ</h1>
-        <p className="text-sm text-gray-500 mt-1">全ての membership_audit イベントを閲覧できます (super_admin のみ)</p>
+        <p className="text-sm text-gray-500 mt-1">組織・家族のメンバーシップの操作の記録をすべて閲覧できます (スーパー管理者のみ)</p>
       </div>
 
       {/* フィルタ */}
       <form onSubmit={handleSearch} className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-6">
         <div className="flex flex-wrap items-end gap-4">
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Scope</label>
+            <label className="block text-xs text-gray-500 mb-1">対象</label>
             <select
               value={scope}
               onChange={(e) => setScope(e.target.value)}
@@ -171,19 +222,19 @@ export default function MembershipAuditPage() {
             </select>
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Action</label>
+            <label className="block text-xs text-gray-500 mb-1">操作</label>
             <select
               value={action}
               onChange={(e) => setAction(e.target.value)}
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
             >
               {ACTION_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label || 'All'}</option>
+                <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </select>
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">From</label>
+            <label className="block text-xs text-gray-500 mb-1">開始日</label>
             <input
               type="date"
               value={from}
@@ -192,7 +243,7 @@ export default function MembershipAuditPage() {
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">To</label>
+            <label className="block text-xs text-gray-500 mb-1">終了日</label>
             <input
               type="date"
               value={to}
@@ -241,14 +292,14 @@ export default function MembershipAuditPage() {
                 <thead>
                   <tr className="border-b border-gray-200 text-left text-gray-500 bg-gray-50">
                     <th className="px-4 py-3 font-medium">日時</th>
-                    <th className="px-4 py-3 font-medium">Scope</th>
-                    <th className="px-4 py-3 font-medium">Action</th>
-                    <th className="px-4 py-3 font-medium">Actor</th>
+                    <th className="px-4 py-3 font-medium">対象</th>
+                    <th className="px-4 py-3 font-medium">操作</th>
+                    <th className="px-4 py-3 font-medium">操作した人</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {rows.map((row) => {
-                    const isOperator = row.action.startsWith('operator_force');
+                    const isOperator = row.action.startsWith(OPERATOR_FORCE_ACTION_PREFIX);
                     const operatorId = isOperator
                       ? (row.metadata.operator_id as string | undefined)
                       : null;
@@ -262,22 +313,18 @@ export default function MembershipAuditPage() {
                           {new Date(row.created_at).toLocaleString('ja-JP')}
                         </td>
                         <td className="px-4 py-3">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                            row.scope === 'organization'
-                              ? 'bg-blue-100 text-blue-700'
-                              : 'bg-green-100 text-green-700'
-                          }`}>
-                            {row.scope === 'organization' ? '組織' : '家族'}
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${scopeBadgeClass(row.scope)}`}>
+                            {membershipAuditScopeLabel(row.scope)}
                           </span>
                         </td>
-                        <td className="px-4 py-3 text-gray-900 font-mono text-xs">{row.action}</td>
+                        <td className="px-4 py-3 text-gray-900 text-xs">{membershipAuditActionLabel(row.action)}</td>
                         <td className="px-4 py-3 text-gray-600 text-xs">
                           {isOperator ? (
                             <span className="text-orange-600 font-medium">
-                              [SYS] op:{operatorId ? operatorId.slice(0, 8) : '?'}
+                              {OPERATOR_ACTOR_LABEL} ({operatorId ? operatorId.slice(0, ACTOR_ID_PREFIX_LENGTH) : '?'})
                             </span>
                           ) : row.actor_id ? (
-                            <span className="font-mono">{row.actor_id.slice(0, 8)}...</span>
+                            <span className="font-mono">{row.actor_id.slice(0, ACTOR_ID_PREFIX_LENGTH)}...</span>
                           ) : (
                             <span className="text-gray-400">-</span>
                           )}

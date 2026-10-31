@@ -20,8 +20,11 @@ import { orgMemberListKeyOf, orgMemberListResponse } from './helpers/org-member-
 const USER_ID = '33333333-3333-4333-8333-333333333333';
 const MEMBER_A_ID = '55555555-5555-4555-8555-555555555555';
 
-/** 除名・脱退の通信が失敗したときに出す理由 (画面の文と同じもの) */
+/** 脱退の通信が失敗したときに出す理由 (画面の文と同じもの) */
 const NETWORK_FAILURE_REASON = '通信エラーが発生しました。通信状況を確認して、もう一度お試しください';
+/** 除名の通信が失敗し、一覧を読み直せたときに出す文 (#2080 U4。除名できなかったとは言わない) */
+const REMOVE_NO_RESPONSE_RELOADED =
+  '除名の応答を受け取れませんでした（通信エラー）。一覧を読み込み直したので、今の状態を確かめてから、必要ならもう一度操作してください';
 
 const supabaseState = vi.hoisted(() => ({
   /** メンバーの画面の自分のプロフィールの Supabase の問い合わせの結果 (テストごとに差し替える) */
@@ -428,7 +431,7 @@ describe('#2059 Q2 組織のメンバー: 除名・脱退の通信が失敗し�
     ];
   }
 
-  it('除名の通信が失敗 (fetch が reject) したら「除名失敗」と通信エラーの文を出し、ボタンを戻す', async () => {
+  it('除名の通信が失敗 (fetch が reject) したら、応答を受け取れなかった文を出し、ボタンを戻す (#2080 U4: 「除名失敗」とは言わない)', async () => {
     mockFetch(() => Promise.reject(new TypeError('Failed to fetch')));
     supabaseState.profile = { data: { org_role: 'owner', organization_id: 'org-1' }, error: null };
     supabaseState.members = { data: membersOf('owner'), error: null };
@@ -438,7 +441,7 @@ describe('#2059 Q2 組織のメンバー: 除名・脱退の通信が失敗し�
 
     expect(callsOf('POST', `/api/org/members/${MEMBER_A_ID}/remove`)).toHaveLength(1);
     expect(alertSpy).toHaveBeenCalledTimes(1);
-    expect(alertSpy).toHaveBeenCalledWith(`除名失敗: ${NETWORK_FAILURE_REASON}`);
+    expect(alertSpy).toHaveBeenCalledWith(REMOVE_NO_RESPONSE_RELOADED);
     // 除名できたかどうかは分からないので一覧を読み直す (#2064 R5)。サーバーの一覧に Aさんが残っているので、Aさんの「除名」はもう一度押せる
     expect(supabaseState.membersQueryCount).toBe(2);
     expect(findButton('除名')!.disabled).toBe(false);
@@ -471,14 +474,16 @@ describe('#2059 Q2 組織のメンバー: 除名・脱退の通信が失敗し�
     const message = String(alertSpy.mock.calls[0][0]);
     expect(message.startsWith('除名失敗: ')).toBe(true);
     expect(message).not.toContain(NETWORK_FAILURE_REASON);
+    expect(message).not.toContain('応答を受け取れませんでした');
   });
 });
 
-describe('#2059 Q3 と同じ形 組織のメンバー: 脱退の応答を待つ間は「再試行」を止める', () => {
-  it('一覧を読み込めなかった画面で脱退を押し、応答を待つ間に「再試行」を押しても一覧を読み直さない', async () => {
-    const leave = deferred<Response>();
+describe('#2059 Q3 と同じ形 組織のメンバー: 一覧を読み込めなかった画面と、脱退の応答を待つ間', () => {
+  // 以前は「一覧を読み込めなかった画面で脱退を押し、応答を待つ間に「再試行」を押しても一覧を読み直さない」を見ていた。
+  // #2093 W9 で、一覧を読み込めなかった画面には「組織を脱退」を出さなくした (前に読めたときの役割でボタンを出し続けていたため) ので、
+  // その組み合わせは起きない。代わりに、読み込めなかった画面に脱退のボタンが無いことと、脱退の応答を待つ間の表示を見る
+  it('一覧を読み込めなかった画面には「組織を脱退」を出さず、「再試行」で読めたら出す (#2093 W9)', async () => {
     mockFetch((method, url) => {
-      if (method === 'POST' && url.pathname === '/api/org/leave') return leave.promise;
       throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
     });
     supabaseState.profile = { data: { org_role: 'member', organization_id: 'org-1' }, error: null };
@@ -486,16 +491,30 @@ describe('#2059 Q3 と同じ形 組織のメンバー: 脱退の応答を待つ�
     await renderElement(createElement(MembersPage));
 
     expect(container.querySelector('[data-testid="member-load-error"]')).not.toBeNull();
+    expect(findButton('組織を脱退')).toBeUndefined();
     expect(supabaseState.membersQueryCount).toBe(1);
-    await click(findButton('組織を脱退'), '「組織を脱退」ボタン');
 
-    const retry = findButton('再試行');
-    expect(retry, '「再試行」ボタン').toBeDefined();
-    expect(retry!.disabled).toBe(true);
-    await click(retry, '「再試行」ボタン');
-    expect(supabaseState.membersQueryCount).toBe(1);
-    // 脱退の「処理中...」も出たまま (読み込み中の表示で隠さない)
+    supabaseState.members = { data: [], error: null };
+    await click(findButton('再試行'), '「再試行」ボタン');
+    expect(supabaseState.membersQueryCount).toBe(2);
+    expect(container.querySelector('[data-testid="member-load-error"]')).toBeNull();
+    expect(findButton('組織を脱退')).toBeDefined();
+  });
+
+  it('脱退の応答を待つ間は「処理中...」を出したまま (読み込み中の表示で隠さない) で、応答が来たらホームへ移る', async () => {
+    const leave = deferred<Response>();
+    mockFetch((method, url) => {
+      if (method === 'POST' && url.pathname === '/api/org/leave') return leave.promise;
+      throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
+    });
+    supabaseState.profile = { data: { org_role: 'member', organization_id: 'org-1' }, error: null };
+    supabaseState.members = { data: [], error: null };
+    await renderElement(createElement(MembersPage));
+
+    await click(findButton('組織を脱退'), '「組織を脱退」ボタン');
     expect(findButton('処理中...')).toBeDefined();
+    expect(findButton('処理中...')!.disabled).toBe(true);
+    expect(supabaseState.membersQueryCount).toBe(1);
 
     await act(async () => {
       leave.resolve(jsonResponse(200, { ok: true }));

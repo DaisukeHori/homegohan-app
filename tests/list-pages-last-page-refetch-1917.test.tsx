@@ -19,6 +19,7 @@ import { lastPageOf, lastPageToRefetch } from '@/lib/list-pagination';
 const router = vi.hoisted(() => ({ push: () => undefined, replace: () => undefined, refresh: () => undefined }));
 vi.mock('next/navigation', () => ({
   useRouter: () => router,
+  usePathname: () => '/admin',
 }));
 
 // React に「テスト環境 (act で包む)」であることを伝える
@@ -90,13 +91,15 @@ const CASES: PageCase[] = [
       id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`,
       scope: 'family',
       scope_id: '00000000-0000-4000-8000-0000000000ee',
-      action: `action_number${n}`,
-      actor_id: null,
+      action: 'invite_accepted',
+      // 行の目印は操作した人の ID の先頭 8 文字 (画面は「<先頭 8 文字>...」と出す)。操作 (action) は日本語の表示名で出すので
+      // 目印にできない (#2086 V5。表に無い値は「不明な操作」になる)
+      actor_id: `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`,
       target_user_id: null,
       metadata: {},
       created_at: '2026-10-08T04:30:00.000Z',
     }),
-    marker: (n) => `action_number${n}`,
+    marker: (n) => `${String(n).padStart(8, '0')}...`,
     nextLabel: '次へ',
   },
 ];

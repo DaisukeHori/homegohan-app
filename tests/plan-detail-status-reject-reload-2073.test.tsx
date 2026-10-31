@@ -20,6 +20,8 @@ const PLAN_ID = '20732073-2073-4073-8073-207320732073';
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: PLAN_ID }),
+  // プラン詳細は URL の tab を初めのタブにする (#2107 Y3)
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock('next/link', () => ({
@@ -61,7 +63,7 @@ const RELOADED_GUIDE = '今の状態を読み込み直したので、状態を�
 /** 読み直しにも失敗したときに続く文 */
 const RELOAD_FAILED_GUIDE = '今の状態を読み込めませんでした。「再試行」で読み込み直してから、もう一度操作してください';
 /** 書きかけを残したときに添える文 (page の EDITS_KEPT_SUFFIX) */
-const EDITS_KEPT_SUFFIX = '（入力中の表示名・説明・表示順はそのまま残しています）';
+const EDITS_KEPT_SUFFIX = '（入力中の表示名・説明・表示順・Stripe の Product ID はそのまま残しています）';
 /** 409 のあとの文の頭 (自分の操作のときに出してはいけない) */
 const STALE_NOTICE_HEAD = '別の運営が先にこのプランを変えていました';
 

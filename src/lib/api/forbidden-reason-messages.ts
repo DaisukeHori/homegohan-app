@@ -22,3 +22,15 @@ export const FORBIDDEN_REASON_MESSAGES: ReadonlySet<string> = new Set([
   API_MFA_REQUIRED_MESSAGE,
   API_MFA_ENROLLMENT_REQUIRED_MESSAGE,
 ]);
+
+/**
+ * 403 の理由の文 → その理由の code (サーバーの 403 の既定の表 (src/lib/api/error-responses.ts の DEFAULT_FORBIDDEN_MESSAGES) と同じ組)。
+ * 本文の code だけを読む画面 (手動のプラン付与。src/lib/billing/manual-grant-client.ts) が、運営の route の 403
+ * (code は OP_PERMISSION_DENIED のまま、文だけが理由の文) の理由を code に直して固定の文を引くために使う (#2086 V4)。
+ * 表に無い文 (ロールが足りない・英字の内部の文など) は理由として扱わない
+ */
+export const FORBIDDEN_REASON_CODE_BY_MESSAGE: ReadonlyMap<string, string> = new Map([
+  [API_ACCOUNT_FROZEN_MESSAGE, 'AUTH_ACCOUNT_FROZEN'],
+  [API_MFA_REQUIRED_MESSAGE, 'AUTH_2FA_REQUIRED'],
+  [API_MFA_ENROLLMENT_REQUIRED_MESSAGE, 'AUTH_2FA_ENROLLMENT_REQUIRED'],
+]);

@@ -7,15 +7,33 @@
  * #1128: AI コンテンツ (ai_content) にはバックエンドのテーブルが無く、API は 501 を返す。
  * #1911: 未完成の機能は画面に出さない。絞り込みの選択肢は審査できる種類 (食事画像・レシピ) だけにし、
  * URL で ai_content (やほかの知らない種類) を指定されたときは、種類を絞らない一覧 (全タイプ) として扱う。
+ * #2086 V7: 一覧の読み込みの失敗 (API の失敗・通信の失敗・data が配列でない壊れた応答) は 0 件と分ける。
+ * 「審査待ちのアイテムはありません」・件数 0 を出さず、「審査の一覧を読み込めませんでした」と「再読み込み」を出す
+ * (以前は失敗を console.error で捨てて 0 件のまま描き、運営が審査待ちの通報を 0 件と誤解しうる状態だった)。
+ * #2093 W8: URL の page が 1 以上の整数でなければ 1 ページ目を読む (以前は ?page=abc で API に page=NaN を送り、
+ * 400 の読み込みの失敗が再読み込みしても直らなかった)。読めたのに行が 0 件で、件数が今のページより前で尽きているなら
+ * (最後のページの最後の 1 件を審査し終えたあと・URL のページ番号)、「審査待ちのアイテムはありません」と見せずに最後のページへ移す
+ * (ユーザーの一覧 src/app/admin/users/page.tsx と同じ形。src/lib/list-pagination.ts)。
+ * #2101 X7: URL の status が API の一覧 (pending / approved / rejected / escalated) に無ければ、既定の pending として読む
+ * (以前は ?status=foo をそのまま API に送り、400 の読み込みの失敗が再読み込みしても直らなかった。W8 の page と同じ扱い)。
  */
 
 export const dynamic = 'force-dynamic';
 
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
-import { MODERATION_TYPES, type ModerationType } from '@/lib/admin/moderation-schemas';
+import { MODERATION_TYPES, parseModerationQueueStatusParam, type ModerationType } from '@/lib/admin/moderation-schemas';
 import { isModerationBacked } from '@/lib/admin/moderation-backend';
+import { moderationStatusLabel, moderationTypeLabel } from '@/lib/admin/moderation-labels';
+import {
+  MODERATION_LIST_LOAD_FAILED_MESSAGE,
+  readModerationQueueBody,
+  type ModerationQueueLoad,
+} from '@/lib/admin/moderation-load-failure';
+import ModerationLoadFailure from '@/components/operator/moderation/ModerationLoadFailure';
+import { lastPageToRefetch, parsePageParam } from '@/lib/list-pagination';
 
 interface PageProps {
   searchParams: Promise<{ status?: string; type?: string; page?: string }>;
@@ -33,28 +51,22 @@ interface ModerationItem {
   hidden_at: string | null;
 }
 
-interface ModerationApiResponse {
-  data: ModerationItem[];
-  meta: {
-    total: number;
-    page: number;
-    per_page: number;
-  };
-}
-
 export default async function AdminModerationPage(props: PageProps) {
   const searchParams = await props.searchParams;
   // 未認証 → /login?next=・2FA 未完了 → MFA の画面・ロール不足 / 凍結 → /login (#1176。docs/design/cross/12-operator-mfa.md §13.4.2)
   await requireRoleForPage(['admin', 'super_admin', 'content_moderator'], { next: '/admin/moderation' });
 
-  const status = searchParams.status ?? 'pending';
+  // API の一覧 (MODERATION_QUEUE_STATUSES) に無い status (?status=foo など) は既定の pending (#2101 X7。そのまま送ると API が 400 にし、
+  // 再読み込みしても直らない読み込みの失敗になる)
+  const status = parseModerationQueueStatusParam(searchParams.status);
   // 審査できる種類 (食事画像・レシピ) だけを絞り込みに使う。それ以外は絞らない (全タイプ)
   const requestedType = searchParams.type ?? '';
   const type =
     MODERATION_TYPES.includes(requestedType as ModerationType) && isModerationBacked(requestedType as ModerationType)
       ? requestedType
       : '';
-  const page = Math.max(1, parseInt(searchParams.page ?? '1', 10));
+  // 1 以上の整数でない page (?page=abc・2abc・1.5 など) は 1 ページ目 (#2093 W8。NaN を API に送らない)
+  const page = parsePageParam(searchParams.page);
   const perPage = 30;
 
   // GET /api/admin/moderation/queue 経由でデータ取得
@@ -64,15 +76,14 @@ export default async function AdminModerationPage(props: PageProps) {
   params.set('page', String(page));
   params.set('per_page', String(perPage));
 
-  let items: ModerationItem[] = [];
-  let total = 0;
+  // 読み込みの失敗 (!res.ok・例外・壊れた応答) は ok: false。0 件 (ok: true・items が空) と分けて描く (#2086 V7)
+  let load: ModerationQueueLoad<ModerationItem> = { ok: false };
 
   try {
     const res = await adminFetch(`/api/admin/moderation/queue?${params.toString()}`);
     if (res.ok) {
-      const json = (await res.json()) as ModerationApiResponse;
-      items = json.data ?? [];
-      total = json.meta?.total ?? 0;
+      load = readModerationQueueBody<ModerationItem>(await res.json());
+      if (!load.ok) console.error('[admin/moderation page] unexpected response body');
     } else {
       console.error('[admin/moderation page] API error:', res.status);
     }
@@ -80,15 +91,32 @@ export default async function AdminModerationPage(props: PageProps) {
     console.error('[admin/moderation page] fetch failed:', err);
   }
 
+  const items = load.ok ? load.items : [];
+  const total = load.ok ? load.total : 0;
+
+  // 件数より後ろのページ (最後のページの最後の 1 件を審査し終えたあと・URL のページ番号) は、空のページを見せずに最後のページへ移す (#2093 W8)。
+  // 一覧を読めたときだけ判定する (読み込みの失敗を、何も知らせずにページを移す動きに変えない)。
+  // type は空 (全タイプ) でも付ける (下の「前へ」「次へ」と同じ形)。redirect は例外で抜けるので、上の try の外で呼ぶ
+  const refetchPage = load.ok ? lastPageToRefetch({ rows: items.length, page, total, perPage }) : null;
+  if (refetchPage !== null) {
+    const lastPageParams = new URLSearchParams();
+    lastPageParams.set('status', status);
+    lastPageParams.set('type', type);
+    lastPageParams.set('page', String(refetchPage));
+    redirect(`/admin/moderation?${lastPageParams.toString()}`);
+  }
   const totalPages = Math.ceil(total / perPage);
 
   return (
     <div>
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-2xl font-bold text-gray-900">モデレーション</h1>
-        <span className="text-sm text-gray-500">
-          {status === 'pending' ? '未審査' : status} 件数: {total.toLocaleString()}
-        </span>
+        {/* 読み込めなかったときは件数を出さない (「件数: 0」と見せない。#2086 V7) */}
+        {load.ok && (
+          <span className="text-sm text-gray-500">
+            {moderationStatusLabel(status)} 件数: {total.toLocaleString()}
+          </span>
+        )}
       </div>
 
       {/* フィルタ */}
@@ -120,94 +148,100 @@ export default async function AdminModerationPage(props: PageProps) {
         </button>
       </form>
 
+      {/* 読み込みの失敗: 0 件の文・表を出さず、失敗の文と「再読み込み」を出す (#2086 V7) */}
+      {!load.ok && <ModerationLoadFailure message={MODERATION_LIST_LOAD_FAILED_MESSAGE} />}
+
       {/* キューテーブル */}
-      <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b border-gray-200">
-            <tr>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">タイプ</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">コンテンツ</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">通報数</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">ステータス</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">投稿日時</th>
-              <th className="px-4 py-3 text-left font-medium text-gray-600">操作</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {items.length === 0 ? (
+      {load.ok && (
+        <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 border-b border-gray-200">
               <tr>
-                <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
-                  {status === 'pending' ? '審査待ちのアイテムはありません' : 'アイテムが見つかりません'}
-                </td>
+                <th className="px-4 py-3 text-left font-medium text-gray-600">タイプ</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-600">コンテンツ</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-600">通報数</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-600">ステータス</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-600">投稿日時</th>
+                <th className="px-4 py-3 text-left font-medium text-gray-600">操作</th>
               </tr>
-            ) : (
-              items.map((item) => (
-                <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                  <td className="px-4 py-3">
-                    <span className="inline-block bg-purple-50 text-purple-700 text-xs px-2 py-0.5 rounded font-mono">
-                      {item.type}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      {item.content_url && (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={item.content_url}
-                          alt="コンテンツ"
-                          className="w-10 h-10 object-cover rounded"
-                        />
-                      )}
-                      <span className="font-mono text-xs text-gray-400">{item.id.slice(0, 8)}...</span>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3">
-                    {item.reporter_count > 0 ? (
-                      <span className="inline-flex items-center gap-1 bg-red-50 text-red-700 text-xs px-2 py-0.5 rounded font-medium">
-                        {item.reporter_count} 件
-                      </span>
-                    ) : (
-                      <span className="text-gray-400 text-xs">0</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`inline-block text-xs px-2 py-0.5 rounded font-medium ${
-                        item.status === 'pending'
-                          ? 'bg-yellow-50 text-yellow-700'
-                          : item.status === 'approved'
-                            ? 'bg-green-50 text-green-700'
-                            : item.status === 'rejected'
-                              ? 'bg-red-50 text-red-700'
-                              : 'bg-orange-50 text-orange-700'
-                      }`}
-                    >
-                      {item.status}
-                    </span>
-                    {/* #1538: コンテンツが運営の判定で隠れている通報 (status に関わらず) */}
-                    {item.hidden_at && (
-                      <span className="ml-1 inline-block bg-gray-100 text-gray-700 text-xs px-2 py-0.5 rounded font-medium">
-                        非表示中
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-gray-500 text-xs">
-                    {new Date(item.created_at).toLocaleString('ja-JP')}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Link
-                      href={`/admin/moderation/${item.type}/${item.id}`}
-                      className="text-orange-500 hover:text-orange-700 text-xs font-medium"
-                    >
-                      審査
-                    </Link>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {items.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
+                    {status === 'pending' ? '審査待ちのアイテムはありません' : 'アイテムが見つかりません'}
                   </td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+              ) : (
+                items.map((item) => (
+                  <tr key={item.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-3">
+                      <span className="inline-block bg-purple-50 text-purple-700 text-xs px-2 py-0.5 rounded">
+                        {moderationTypeLabel(item.type)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        {item.content_url && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={item.content_url}
+                            alt="コンテンツ"
+                            className="w-10 h-10 object-cover rounded"
+                          />
+                        )}
+                        <span className="font-mono text-xs text-gray-400">{item.id.slice(0, 8)}...</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      {item.reporter_count > 0 ? (
+                        <span className="inline-flex items-center gap-1 bg-red-50 text-red-700 text-xs px-2 py-0.5 rounded font-medium">
+                          {item.reporter_count} 件
+                        </span>
+                      ) : (
+                        <span className="text-gray-400 text-xs">0</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className={`inline-block text-xs px-2 py-0.5 rounded font-medium ${
+                          item.status === 'pending'
+                            ? 'bg-yellow-50 text-yellow-700'
+                            : item.status === 'approved'
+                              ? 'bg-green-50 text-green-700'
+                              : item.status === 'rejected'
+                                ? 'bg-red-50 text-red-700'
+                                : 'bg-orange-50 text-orange-700'
+                        }`}
+                      >
+                        {/* 状態・種類は内部の英字の値を出さず、日本語の表示名にする (#2080 U6) */}
+                        {moderationStatusLabel(item.status)}
+                      </span>
+                      {/* #1538: コンテンツが運営の判定で隠れている通報 (status に関わらず) */}
+                      {item.hidden_at && (
+                        <span className="ml-1 inline-block bg-gray-100 text-gray-700 text-xs px-2 py-0.5 rounded font-medium">
+                          非表示中
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">
+                      {new Date(item.created_at).toLocaleString('ja-JP')}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Link
+                        href={`/admin/moderation/${item.type}/${item.id}`}
+                        className="text-orange-500 hover:text-orange-700 text-xs font-medium"
+                      >
+                        審査
+                      </Link>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* ページネーション */}
       {totalPages > 1 && (

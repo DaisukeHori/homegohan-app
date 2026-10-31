@@ -2,12 +2,32 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { lastPageToRefetch } from "@/lib/list-pagination";
-import { forbiddenMessageOfResponse } from "@/lib/admin/api-error-message";
+import { UNAUTHENTICATED_SCREEN_MESSAGE, forbiddenMessageOfResponse } from "@/lib/admin/api-error-message";
+import { SUPER_ADMIN_ONLY_NOTE } from "@/lib/admin/operator-role-labels";
+import {
+  AdminScreenError,
+  adminLoadFailedFallback,
+  adminLoadFailedMessage,
+  displayableAdminError,
+  fetchAdminJson,
+} from "@/lib/admin/admin-screen-messages";
+import {
+  ADMIN_AUDIT_SEVERITIES,
+  ADMIN_AUDIT_SEVERITY_LABELS,
+  adminAuditSeverityLabel,
+} from "@/lib/admin/audit-severity-labels";
 
+/** 401 (Unauthorized。ログインが切れた) の HTTP ステータス */
+const HTTP_UNAUTHORIZED = 401;
 /** 403 (Forbidden) の HTTP ステータス */
 const HTTP_FORBIDDEN = 403;
-/** CSV の書き出しの失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917) */
+/**
+ * CSV の書き出しの失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917)。
+ * 401 はこの文ではなく「ログインし直してください」(#2112 Z4)
+ */
 const CSV_EXPORT_FAILURE_MESSAGE = "CSV エクスポートに失敗しました";
+/** 読み込みの失敗の文の対象 (「監査ログを読み込めませんでした (HTTP 502)」。#2086 V6) */
+const AUDIT_LOGS_SUBJECT = "監査ログ";
 
 interface AuditLogEntry {
   id: string;
@@ -57,22 +77,22 @@ export default function AuditLogsPage() {
       if (fromDate) params.set("from", fromDate);
       if (toDate) params.set("to", toDate);
 
-      const res = await fetch(`/api/super-admin/audit-logs?${params}`);
-      if (!res.ok) {
-        const body = await res.json();
-        throw new Error(body.error?.message ?? `HTTP ${res.status}`);
-      }
-      const { data, meta } = await res.json();
+      // 失敗は日本語の文の例外にする (本文の無い 502 の「HTTP 502」・通信の reject の英字の文・JSON でない本文の SyntaxError を出さない。#2086 V6)
+      const body = await fetchAdminJson(`/api/super-admin/audit-logs?${params}`, AUDIT_LOGS_SUBJECT);
+      const { data, meta } = body as { data?: unknown; meta?: { total?: number } | null };
+      // 200 なのに data が配列でない応答は、0 件と見せずに読み込めなかった文にする (#2093 W7)
+      if (!Array.isArray(data)) throw new AdminScreenError(adminLoadFailedMessage(AUDIT_LOGS_SUBJECT, null));
+      const rows = data as AuditLogEntry[];
       // 件数より後ろのページは、空のページを見せずに最後のページへ取り直す (#1917)
-      const refetchPage = lastPageToRefetch({ rows: (data ?? []).length, page, total: meta?.total ?? 0, perPage: PER_PAGE });
+      const refetchPage = lastPageToRefetch({ rows: rows.length, page, total: meta?.total ?? 0, perPage: PER_PAGE });
       if (refetchPage !== null) {
         setPage(refetchPage);
         return;
       }
-      setLogs(data ?? []);
+      setLogs(rows);
       setTotal(meta?.total ?? 0);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "読み込みに失敗しました");
+      setError(displayableAdminError(err, adminLoadFailedFallback(AUDIT_LOGS_SUBJECT)));
     } finally {
       setIsLoading(false);
     }
@@ -90,7 +110,20 @@ export default function AuditLogsPage() {
     if (fromDate) params.set("from", fromDate);
     if (toDate) params.set("to", toDate);
 
-    const res = await fetch(`/api/super-admin/audit-logs?${params}`);
+    let res: Response;
+    try {
+      res = await fetch(`/api/super-admin/audit-logs?${params}`);
+    } catch {
+      // 通信そのものの失敗 (以前は捕まえず、押しても何も出なかった。#2086 V6)
+      alert(`${CSV_EXPORT_FAILURE_MESSAGE}（通信エラー）`);
+      return;
+    }
+    if (res.status === HTTP_UNAUTHORIZED) {
+      // 401 は「CSV エクスポートに失敗しました」ではなく、同じ画面の一覧の読み込みの 401 (fetchAdminJson) と同じ
+      // 「ログインし直してください」(押し直しても変わらない。#2112 Z4)
+      alert(UNAUTHENTICATED_SCREEN_MESSAGE);
+      return;
+    }
     if (res.status === HTTP_FORBIDDEN) {
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 は「CSV エクスポートに失敗しました」(#1917)
       alert(await forbiddenMessageOfResponse(res, CSV_EXPORT_FAILURE_MESSAGE));
@@ -117,7 +150,8 @@ export default function AuditLogsPage() {
         <div>
           <h1 className="text-2xl font-bold text-white">監査ログ閲覧</h1>
           <p className="text-slate-400 mt-1">
-            全操作履歴 — super_admin のみ閲覧可 (7年保管)
+            {/* ロールは表示名で出す (#2128 V1-2) */}
+            全操作履歴 — {SUPER_ADMIN_ONLY_NOTE}閲覧可 (7年保管)
           </p>
         </div>
         <button
@@ -151,9 +185,12 @@ export default function AuditLogsPage() {
             className="bg-slate-700 text-white rounded-lg px-3 py-2 border border-slate-600 focus:border-purple-500 outline-none text-sm"
           >
             <option value="">全重要度</option>
-            <option value="info">info</option>
-            <option value="warn">warn</option>
-            <option value="critical">critical</option>
+            {/* 重要度の選択肢と一覧の札は表示名で出す (以前は英字の内部の値 info / warn / critical のまま。#2112 Z3) */}
+            {ADMIN_AUDIT_SEVERITIES.map((value) => (
+              <option key={value} value={value}>
+                {ADMIN_AUDIT_SEVERITY_LABELS[value]}
+              </option>
+            ))}
           </select>
           <input
             type="date"
@@ -230,7 +267,7 @@ export default function AuditLogsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${SEVERITY_BADGE[log.severity]}`}>
-                        {log.severity}
+                        {adminAuditSeverityLabel(log.severity)}
                       </span>
                     </td>
                     <td className="px-4 py-3">

@@ -4,15 +4,44 @@
  * サポートチケット一覧
  * operator/03-ui-spec.md §15 準拠
  * 権限: support, admin, super_admin
+ *
+ * #2107 Y11: 絞り込み (状態のタブ・優先度)・ページを変えて読み込みを始めるときに行を空にする。そのあとの読み込みが失敗
+ * (500・403・通信の失敗・壊れた応答) しても、前の条件の行と件数を失敗の文と一緒に出さない (新しい条件の結果と見誤らせない)。
+ * 読み込みを重ねたときは、遅れて届いた古い読み込みの結果で新しい条件の画面を上書きしない (読み込みの連番で捨てる)。
+ * 読み込みの最中・失敗のあいだは件数を出さない (前の条件の件数を新しい条件の件数と見せない)。ページ送りのボタンは残す (前のページへ戻れる)
+ *
+ * #2112 Z3: 状態・優先度・カテゴリの表示名は src/lib/admin/support-schemas.ts の表 (TICKET_*_LABELS) から引く (詳細の画面と同じ語)。
+ * 以前はカテゴリの列が英字の内部の値 (billing など) のままだった。表に無い値はそのまま出す
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { loginPathWithNext } from '@/lib/auth/signed-in-user';
 import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
+import {
+  AdminScreenError,
+  adminLoadFailedMessage,
+  displayableAdminError,
+  listRowsOfBody,
+  listTotalOfBody,
+} from '@/lib/admin/admin-screen-messages';
 import { lastPageToRefetch } from '@/lib/list-pagination';
+import {
+  TICKET_PRIORITIES,
+  TICKET_PRIORITY_LABELS,
+  TICKET_STATUS_LABELS,
+  ticketCategoryLabel,
+  ticketPriorityLabel,
+  ticketStatusLabel,
+  type TicketPriority,
+  type TicketStatus,
+} from '@/lib/admin/support-schemas';
 
-type TicketStatus = 'open' | 'in_progress' | 'pending' | 'resolved' | 'closed';
-type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
+/** 読み込みの失敗の文の対象 (「チケットの一覧を読み込めませんでした（通信エラー）」。#2086 V6) */
+const TICKETS_SUBJECT = 'チケットの一覧';
+/** 一覧の読み込みが失敗の応答・読めない本文で終わったときの文 */
+const TICKETS_LOAD_FAILURE_MESSAGE = 'チケット一覧の取得に失敗しました';
+
 
 interface Ticket {
   id: string;
@@ -26,27 +55,12 @@ interface Ticket {
   updated_at: string;
 }
 
-const STATUS_LABELS: Record<TicketStatus, string> = {
-  open: '未対応',
-  in_progress: '対応中',
-  pending: '保留',
-  resolved: '解決済',
-  closed: 'クローズ',
-};
-
 const STATUS_COLORS: Record<TicketStatus, string> = {
   open: 'bg-blue-100 text-blue-800',
   in_progress: 'bg-yellow-100 text-yellow-800',
   pending: 'bg-gray-100 text-gray-700',
   resolved: 'bg-green-100 text-green-800',
   closed: 'bg-gray-200 text-gray-600',
-};
-
-const PRIORITY_LABELS: Record<TicketPriority, string> = {
-  low: '低',
-  medium: '中',
-  high: '高',
-  urgent: '緊急',
 };
 
 const PRIORITY_COLORS: Record<TicketPriority, string> = {
@@ -58,13 +72,18 @@ const PRIORITY_COLORS: Record<TicketPriority, string> = {
 
 const STATUS_TABS: Array<{ key: TicketStatus | 'all'; label: string }> = [
   { key: 'all', label: 'すべて' },
-  { key: 'open', label: '未対応' },
-  { key: 'in_progress', label: '対応中' },
-  { key: 'resolved', label: '解決済' },
+  { key: 'open', label: TICKET_STATUS_LABELS.open },
+  { key: 'in_progress', label: TICKET_STATUS_LABELS.in_progress },
+  { key: 'resolved', label: TICKET_STATUS_LABELS.resolved },
 ];
+
+/** 優先度の絞り込みの選択肢の並び (高いものから) */
+const PRIORITY_FILTER_ORDER: readonly TicketPriority[] = [...TICKET_PRIORITIES].reverse();
 
 export default function SupportTicketsPage() {
   const router = useRouter();
+  // ログインが切れた (401) ときに、ログインし直したあとこの画面へ戻れるよう next に付けるパス (#2101 X5)
+  const pathname = usePathname();
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -72,51 +91,78 @@ export default function SupportTicketsPage() {
   const [priorityFilter, setPriorityFilter] = useState<TicketPriority | ''>('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // 読み込みを重ねたとき、古い読み込みの結果で新しい条件の画面を上書きしないための連番 (#2107 Y11)
+  const loadSeqRef = useRef(0);
 
   const perPage = 50;
 
   const fetchTickets = useCallback(async () => {
+    const seq = ++loadSeqRef.current;
+    const isLatest = () => seq === loadSeqRef.current;
+    // 件数より後ろのページから最後のページへ取り直すときは、読み込み中のまま次の読み込みへ渡す (空の一覧を一瞬も見せない)
+    let refetching = false;
     setIsLoading(true);
     setError(null);
+    // 前の条件の行を、新しい条件の読み込みの結果 (とくに失敗) と一緒に出さない (#2107 Y11)
+    setTickets([]);
     try {
       const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
       if (activeTab !== 'all') params.set('status', activeTab);
       if (priorityFilter) params.set('priority', priorityFilter);
 
-      const res = await fetch(`/api/admin/support/tickets?${params}`);
+      let res: Response;
+      try {
+        res = await fetch(`/api/admin/support/tickets?${params}`);
+      } catch {
+        // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
+        throw new AdminScreenError(adminLoadFailedMessage(TICKETS_SUBJECT, null));
+      }
+      if (!isLatest()) return;
       if (res.status === 401) {
-        router.push('/login');
+        router.push(loginPathWithNext(pathname));
         return;
       }
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
       if (res.status === 403) {
-        setError(await forbiddenMessageOfResponse(res));
+        const forbiddenMessage = await forbiddenMessageOfResponse(res);
+        if (isLatest()) setError(forbiddenMessage);
         return;
       }
       if (!res.ok) {
-        throw new Error('チケット一覧の取得に失敗しました');
+        throw new AdminScreenError(TICKETS_LOAD_FAILURE_MESSAGE);
       }
-      const json = await res.json();
+      const json: unknown = await res.json().catch(() => null);
+      if (!isLatest()) return;
+      // 200 なのに本文が読めない・data が配列でない壊れた応答は、0 件と見せずに読み込めなかったものとして扱う (#2101 X8)
+      const rows = listRowsOfBody<Ticket>(json);
+      if (rows === null) throw new AdminScreenError(TICKETS_LOAD_FAILURE_MESSAGE);
+      const total = listTotalOfBody(json);
       // 件数より後ろのページ (最後のページの唯一の行が消えたあとの読み直しなど) は、空のページを見せずに最後のページへ取り直す (#1917)
-      const refetchPage = lastPageToRefetch({ rows: (json.data ?? []).length, page, total: json.meta?.total ?? 0, perPage });
+      const refetchPage = lastPageToRefetch({ rows: rows.length, page, total, perPage });
       if (refetchPage !== null) {
+        refetching = true;
         setPage(refetchPage);
         return;
       }
-      setTickets(json.data ?? []);
-      setTotal(json.meta?.total ?? 0);
+      setTickets(rows);
+      setTotal(total);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '不明なエラー');
+      // 画面に出すのは日本語の文だけ (JSON でない本文の SyntaxError などの英字の文は出さない。#2086 V6)
+      if (isLatest()) setError(displayableAdminError(e, TICKETS_LOAD_FAILURE_MESSAGE));
     } finally {
-      setIsLoading(false);
+      if (isLatest() && !refetching) setIsLoading(false);
     }
-  }, [page, activeTab, priorityFilter, router]);
+  }, [page, activeTab, priorityFilter, router, pathname]);
 
   useEffect(() => {
     fetchTickets();
   }, [fetchTickets]);
 
   const totalPages = Math.ceil(total / perPage);
+  // 読み込みに失敗して出せる行が無い。「全 0 件」「チケットはありません」と 0 件に見せない (#2101 X8)
+  const loadFailedWithoutRows = error !== null && tickets.length === 0;
+  // 件数 (total) が今の条件の読み込みの結果か。読み込みの最中・失敗のあいだの total は前の条件の件数なので出さない (#2107 Y11)
+  const showsCurrentTotal = !isLoading && error === null;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -125,7 +171,7 @@ export default function SupportTicketsPage() {
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">サポートチケット</h1>
-            <p className="text-sm text-gray-500 mt-1">全 {total} 件</p>
+            {showsCurrentTotal && <p className="text-sm text-gray-500 mt-1">全 {total} 件</p>}
           </div>
           <Link
             href="/admin/support/new"
@@ -159,10 +205,11 @@ export default function SupportTicketsPage() {
               className="text-sm border border-gray-300 rounded px-2 py-1"
             >
               <option value="">すべて</option>
-              <option value="urgent">緊急</option>
-              <option value="high">高</option>
-              <option value="medium">中</option>
-              <option value="low">低</option>
+              {PRIORITY_FILTER_ORDER.map((priority) => (
+                <option key={priority} value={priority}>
+                  {TICKET_PRIORITY_LABELS[priority]}
+                </option>
+              ))}
             </select>
           </div>
         </div>
@@ -178,7 +225,7 @@ export default function SupportTicketsPage() {
         <div className="bg-white rounded-lg shadow overflow-hidden">
           {isLoading ? (
             <div className="text-center py-12 text-gray-500">読み込み中...</div>
-          ) : tickets.length === 0 ? (
+          ) : loadFailedWithoutRows ? null : tickets.length === 0 ? (
             <div className="text-center py-12 text-gray-500">チケットはありません</div>
           ) : (
             <table className="min-w-full divide-y divide-gray-200">
@@ -202,15 +249,15 @@ export default function SupportTicketsPage() {
                     <td className="px-4 py-3 text-sm font-medium text-gray-900 max-w-xs truncate">
                       {ticket.subject}
                     </td>
-                    <td className="px-4 py-3 text-sm text-gray-600">{ticket.category}</td>
+                    <td className="px-4 py-3 text-sm text-gray-600">{ticketCategoryLabel(ticket.category)}</td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs ${PRIORITY_COLORS[ticket.priority]}`}>
-                        {PRIORITY_LABELS[ticket.priority]}
+                        {ticketPriorityLabel(ticket.priority)}
                       </span>
                     </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs ${STATUS_COLORS[ticket.status]}`}>
-                        {STATUS_LABELS[ticket.status]}
+                        {ticketStatusLabel(ticket.status)}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-500">
@@ -234,8 +281,9 @@ export default function SupportTicketsPage() {
         {/* ページネーション */}
         {totalPages > 1 && (
           <div className="flex items-center justify-between mt-4">
+            {/* 範囲と件数は今の条件の読み込みが済んだときだけ (読み込みの最中・失敗のあいだは前の条件の件数なので出さない。#2107 Y11) */}
             <p className="text-sm text-gray-500">
-              {(page - 1) * perPage + 1}〜{Math.min(page * perPage, total)} / {total} 件
+              {showsCurrentTotal && <>{(page - 1) * perPage + 1}〜{Math.min(page * perPage, total)} / {total} 件</>}
             </p>
             <div className="flex gap-2">
               <button

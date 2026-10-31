@@ -1256,6 +1256,7 @@ import { HIDDEN_CONTENT_RESTORE_WINDOW_DAYS, HIDDEN_CONTENT_RETENTION_DAYS, isWi
 
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
+import { UNAUTHENTICATED_SCREEN_MESSAGE } from '@/lib/admin/api-error-message';
 
 export type ModerationRestoreFormProps = {
   /** モデレーション対象のタイプ (food / recipe) */
@@ -1335,7 +1336,8 @@ export default function ModerationRestoreForm({
         return;
       }
       if (res.status === 401) {
-        setError('ログインの有効期限が切れました。ログインし直してください');
+        // 運営の画面で揃えた 401 の文 (#2112 Z4)
+        setError(UNAUTHENTICATED_SCREEN_MESSAGE);
         return;
       }
       const message = json?.error?.message;

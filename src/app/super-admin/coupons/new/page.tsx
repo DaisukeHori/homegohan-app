@@ -10,7 +10,24 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { todayLocal } from '@/lib/date-utils';
+import {
+  AdminScreenError,
+  adminActionHttpFailedMessage,
+  adminActionNoResponseMessage,
+  adminCreatedButUnreadableMessage,
+  adminScreenErrorOfResponse,
+  createdRowIdOfResponse,
+  displayableAdminError,
+} from '@/lib/admin/admin-screen-messages';
 import { PLAN_CATALOG, formatJpy, planDisplayName, type PaidPlanKey } from '@homegohan/shared';
+import {
+  COUPON_APPLICABLE_TO,
+  COUPON_APPLICABLE_TO_LABELS,
+  type CouponApplicableTo,
+} from '@/lib/super-admin/coupons-schemas';
+
+/** 作成の失敗の文の操作の名前 (「クーポンの作成に失敗しました (HTTP 502)」。#2093 W7) */
+const COUPON_CREATE_ACTION = 'クーポンの作成';
 
 const COUPON_PREVIEW_PLAN_KEY: PaidPlanKey = 'pro'; // 粗利のプレビューの基準 = 個人 Pro の月額 (billing/03 §8.9)
 
@@ -28,7 +45,7 @@ export default function CouponNewPage() {
   const [displayName, setDisplayName] = useState('');
   const [discountType, setDiscountType] = useState<'fixed' | 'percentage'>('percentage');
   const [discountValue, setDiscountValue] = useState('');
-  const [applicableTo, setApplicableTo] = useState<'all' | 'personal' | 'family' | 'org'>('all');
+  const [applicableTo, setApplicableTo] = useState<CouponApplicableTo>('all');
   // 有効開始日の初期値は JST の今日 (#1483。API は JST の暦日を受け取り、その日の JST 0:00 から有効にする)
   const [validFrom, setValidFrom] = useState(todayLocal());
   const [validUntil, setValidUntil] = useState('');
@@ -56,33 +73,43 @@ export default function CouponNewPage() {
     setError('');
 
     try {
-      const res = await fetch('/api/super-admin/coupons', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          code: code.toUpperCase(),
-          display_name: displayName || undefined,
-          discount_type: discountType,
-          discount_value: Number(discountValue),
-          applicable_to: applicableTo,
-          // JST の暦日 (YYYY-MM-DD) のまま送る。API が開始日の JST 0:00・期限の日の JST 23:59:59 の時刻にして書く (#1483)
-          valid_from: validFrom,
-          valid_until: validUntil,
-          max_uses: maxUses ? Number(maxUses) : null,
-          per_user_limit: Number(perUserLimit),
-          duration_months: durationMonths ? Number(durationMonths) : null,
-          gross_margin_preview_jpy: grossMarginPreview,
-        }),
-      });
-
-      const data = await res.json() as { data?: { id: string }; error?: { message: string } };
+      // 失敗は日本語の文の例外にする。ok を先に確かめ、JSON でない 502 を「ネットワークエラー」と見せない
+      // (本文に日本語の文が無ければ「<作成>に失敗しました (HTTP 502)」、通信そのものの失敗は「<作成>の応答を受け取れませんでした」。#2093 W7)
+      let res: Response;
+      try {
+        res = await fetch('/api/super-admin/coupons', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code: code.toUpperCase(),
+            display_name: displayName || undefined,
+            discount_type: discountType,
+            discount_value: Number(discountValue),
+            applicable_to: applicableTo,
+            // JST の暦日 (YYYY-MM-DD) のまま送る。API が開始日の JST 0:00・期限の日の JST 23:59:59 の時刻にして書く (#1483)
+            valid_from: validFrom,
+            valid_until: validUntil,
+            max_uses: maxUses ? Number(maxUses) : null,
+            per_user_limit: Number(perUserLimit),
+            duration_months: durationMonths ? Number(durationMonths) : null,
+            gross_margin_preview_jpy: grossMarginPreview,
+          }),
+        });
+      } catch {
+        throw new AdminScreenError(adminActionNoResponseMessage(COUPON_CREATE_ACTION));
+      }
       if (!res.ok) {
-        setError(data.error?.message ?? '作成に失敗しました');
+        throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(COUPON_CREATE_ACTION, status));
+      }
+      // 成功の応答の本文が読めない: 作成は済んでいるので失敗とは言わず、一覧で確かめるよう促す (作った行の画面へは移れない)
+      const createdId = await createdRowIdOfResponse(res);
+      if (createdId === null) {
+        setError(adminCreatedButUnreadableMessage(COUPON_CREATE_ACTION));
         return;
       }
-      router.push(`/super-admin/coupons/${data.data!.id}`);
-    } catch {
-      setError('ネットワークエラーが発生しました');
+      router.push(`/super-admin/coupons/${createdId}`);
+    } catch (err) {
+      setError(displayableAdminError(err, `${COUPON_CREATE_ACTION}に失敗しました`));
     } finally {
       setIsLoading(false);
     }
@@ -187,13 +214,18 @@ export default function CouponNewPage() {
           <label className="block text-sm font-medium text-slate-700 mb-1">適用対象</label>
           <select
             value={applicableTo}
-            onChange={(e) => setApplicableTo(e.target.value as typeof applicableTo)}
+            onChange={(e) => {
+              const next = COUPON_APPLICABLE_TO.find((value) => value === e.target.value);
+              if (next !== undefined) setApplicableTo(next);
+            }}
             className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
           >
-            <option value="all">全て</option>
-            <option value="personal">個人</option>
-            <option value="family">家族</option>
-            <option value="org">組織</option>
+            {/* 選択肢は値の一覧と表示名の表から作る (一覧・詳細と同じ語。#2112 Z3) */}
+            {COUPON_APPLICABLE_TO.map((value) => (
+              <option key={value} value={value}>
+                {COUPON_APPLICABLE_TO_LABELS[value]}
+              </option>
+            ))}
           </select>
         </div>
 

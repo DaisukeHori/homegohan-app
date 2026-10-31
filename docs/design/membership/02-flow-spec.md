@@ -441,3 +441,6 @@ server → caller の family_members 行を UPDATE
 | tests/e2e/membership/09-meal-paste.spec.ts | ペースト実行, paste_group 表示, 編集独立性 |
 | tests/e2e/membership/10-share-settings.spec.ts | share_meals OFF で家族から見えなくなる, ON で復活 |
 | tests/e2e/membership/11-operator-emergency.spec.ts | 強制 owner 譲渡, 強制 representative 譲渡, 強制解散 |
+| tests/e2e/membership/12-child-promotion-consent.spec.ts | 子供メンバー昇格の本人同意 (#1232): 参加リクエストの送信, 未ログイン・オンボーディング未完了での承認ページ, キーボードでの承認, 宛先と違うメール, 拒否の確認, 代表者の取り消し, 存在しない token, 別のメールでの再送, 期限切れ |
+| tests/e2e/membership/14-parental-consent.spec.ts | 保護者の同意 (#1173): 同意つきの子供の追加と詳細の「保護者の同意（記録済み）」, 外すと「取り消し済み」 |
+| tests/e2e/membership/15-self-dissolve.spec.ts | 代表者 / オーナーの解散と、そのあとの退会 |

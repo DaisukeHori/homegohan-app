@@ -621,6 +621,21 @@ describe('ステータスの更新 (PUT)', () => {
     expect(listCalls()).toHaveLength(1);
   });
 
+  it('更新が 401 (ログインが切れた) なら、本文の文ではなく「ログインし直してください」を添える (#2112 Z4)', async () => {
+    mockApi({
+      list: () => jsonResponse(200, listBody([summary(1)])),
+      detail: () => jsonResponse(200, { inquiry: detail(1) }),
+      put: () => jsonResponse(401, errorBody('AUTH_UNAUTHENTICATED', '認証が必要です')),
+    });
+    await renderPage();
+    await click(findRow('件名1'), '一覧の行');
+
+    await click(findButton('対応中'), '「対応中」ボタン');
+
+    expect(putCalls('inq-1')).toHaveLength(1);
+    expect(alerts()).toEqual(['更新に失敗しました（ログインし直してください）']);
+  });
+
   it('通信エラーでもエラーを出す', async () => {
     fetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost');
@@ -1076,10 +1091,11 @@ describe('更新が 409 CONFLICT_STALE_DATA で断られたとき (#1917)', () =
 
   // 409 のあとの読み直しが 401 / 403 / 404 (ログインが切れた・権限が外れた・二段階認証の確認が要る・問い合わせが消えた) のときは、
   // 「再試行」で読み直しても読めないので、更新の欄で「再試行」での読み込み直しを促さない (営業リードの画面と同じ分け方)
-  const UNAVAILABLE_RELOADS: Array<[number, string, string]> = [
-    [404, 'NOT_FOUND', '問い合わせが見つかりません'],
-    [403, 'FORBIDDEN', '二段階認証の確認が必要です'],
-    [401, 'UNAUTHORIZED', '認証が必要です'],
+  // [status, 本文の code, 本文の文, 内容の欄に出る理由の文]。401 は本文の文ではなく「ログインし直してください」(#2112 Z4)
+  const UNAVAILABLE_RELOADS: Array<[number, string, string, string]> = [
+    [404, 'NOT_FOUND', '問い合わせが見つかりません', '問い合わせが見つかりません'],
+    [403, 'FORBIDDEN', '二段階認証の確認が必要です', '二段階認証の確認が必要です'],
+    [401, 'UNAUTHORIZED', '認証が必要です', 'ログインし直してください'],
   ];
 
   /** 開いたときは読めるが、409 のあとの読み直し (2 回目の詳細) は status で断られる API */
@@ -1103,7 +1119,7 @@ describe('更新が 409 CONFLICT_STALE_DATA で断られたとき (#1917)', () =
 
   it.each(UNAVAILABLE_RELOADS)(
     '詳細の読み直しが %i なら、更新の欄で「再試行」での読み込み直しを促さず、理由は内容の欄に出す',
-    async (status, code, message) => {
+    async (status, code, message, shownReason) => {
       staleThenUnavailableApi(status, code, message);
       await renderPage();
       await click(findRow('件名1'), '一覧の行');
@@ -1119,7 +1135,7 @@ describe('更新が 409 CONFLICT_STALE_DATA で断られたとき (#1917)', () =
       expect(staleAlert).not.toContain('読み込み直したので');
       expect(staleAlert).not.toContain('書きかけ');
       // 理由 (応答の文) は内容の欄に出る
-      expect(alerts().some((a) => a.includes('問い合わせの内容を取得できませんでした') && a.includes(message))).toBe(true);
+      expect(alerts().some((a) => a.includes('問い合わせの内容を取得できませんでした') && a.includes(shownReason))).toBe(true);
     },
   );
 

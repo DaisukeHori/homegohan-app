@@ -32,6 +32,7 @@ vi.mock('next/link', async () => {
 vi.mock('next/navigation', () => ({
   useRouter: () => nav.router,
   useParams: () => ({ id: nav.id }),
+  usePathname: () => '/admin/data-requests',
 }));
 
 const { default: AdminDataRequestsPage } = await import('@/app/admin/data-requests/page');

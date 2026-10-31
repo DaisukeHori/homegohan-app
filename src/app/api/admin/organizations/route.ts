@@ -13,11 +13,11 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { isRaisedExceptionWithCode } from '@/lib/errors/db-raised-code';
-import { internalError } from '@/lib/api/errors';
 import { z } from 'zod';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { ORG_PLAN_DEFAULT, ORG_PLAN_VALUES } from '@/lib/org-plans';
+import { escapeLikePattern } from '@/lib/admin/users-search';
 
 export const dynamic = 'force-dynamic';
 
@@ -68,7 +68,10 @@ export async function GET(request: Request) {
   }
 
   const { q, plan, page, per_page } = parseResult.data;
-  const supabase = await createClient();
+  // requireRole を通った運営だけが来る。organizations の SELECT のポリシーは所属している人の行 (organizations_select_member) だけで、
+  // 運営の client では自分の組織しか読めない (一覧が欠け、作成の応答を受け取れなかったあとの確かめも作った組織を読めなかった。#2112 Z2)。
+  // 利用者の一覧 (src/app/api/admin/users/route.ts。#1028) と同じく、一覧と件数は service_role で読む
+  const supabase = getSupabaseAdmin();
 
   try {
     // 一覧と、範囲外のページのときの件数の取り直し (countOrganizations) は、同じ絞り込み (selectOrganizations) を使う。
@@ -153,86 +156,67 @@ export async function POST(request: Request) {
   const { name, plan, owner_id } = parseResult.data;
   const supabase = await createClient();
 
-  // owner_id は必ず INSERT に含める (active な行では NOT NULL (CHECK organizations_active_has_owner)。#1103 項目 10 → #1917)。
+  // owner_id は必ず渡す (active な行では NOT NULL (CHECK organizations_active_has_owner)。#1103 項目 10 → #1917)。
   // 明示的に指定がない場合は呼び出し元 admin を owner とする
   const effectiveOwnerId = owner_id ?? actor.id;
 
-  // owner が既に他組織に所属しているかチェック (user_profiles_org_consistency 制約対応)
+  // 組織の行・オーナーの所属 (organization_id・org_role = 'owner'・加入日 joined_org_at = 今日・is_active_in_org = true)・席の行を、
+  // DB 関数 admin_create_organization の 1 つのトランザクションで書く (#2107 Y4。最新の定義は
+  // supabase/migrations/20261031100000_create_organization_owner_joined_at.sql (#2120 W1))。関数はオーナーの user_profiles の行をロックしてから
+  // 所属を確かめるので、同じオーナーの同時の作成・応答が切れたあとの押し直しは 1 つだけ通る。途中で止まれば組織の行も残らない
+  // (以前は所属の確認・組織の INSERT・席の行・所属の更新を別々の要求で行い、確認と更新の間に 2 つ目が通ると組織が 2 つでき、
+  // 所属の更新に失敗しても組織が残った)。route は表に直接書かない
   const supabaseAdmin = getSupabaseAdmin();
+  const { data: created, error: createError } = await supabaseAdmin.rpc('admin_create_organization', {
+    p_name: name,
+    p_plan: plan,
+    p_owner_id: effectiveOwnerId,
+  });
 
-  // 読めなかった (DB の失敗) ときは 500。所属なしとして作成へ進まない (#1917 の続き。以前は失敗を捨て、所属の確認を素通りしていた)。
-  // プロフィールの行が無いときは今までどおり所属なしとして進む
-  const { data: ownerProfile, error: ownerProfileError } = await supabaseAdmin
-    .from('user_profiles')
-    .select('organization_id')
-    .eq('id', effectiveOwnerId)
-    .maybeSingle();
-  if (ownerProfileError) {
-    return internalError('POST /api/admin/organizations', ownerProfileError, { userId: actor.id, table: 'user_profiles' }, { shape: 'nested' });
-  }
-
-  if (ownerProfile?.organization_id) {
-    return NextResponse.json(
-      { error: { code: 'OWNER_ALREADY_IN_ORG', message: '指定したオーナー (owner_id) は既に別の組織に所属しています' } },
-      { status: 409 },
-    );
-  }
-
-  const { data: org, error: insertError } = await supabaseAdmin
-    .from('organizations')
-    .insert({ name, plan, owner_id: effectiveOwnerId })
-    .select('id, name, plan, owner_id, created_at, updated_at')
-    .single();
-
-  if (insertError || !org) {
-    // 退会の途中の人はオーナーにしない (#1917 の続き。DB のトリガー trg_organizations_owner_not_deleting (関数 organizations_owner_not_deleting()) が INSERT を止める。
-    // supabase/migrations/20261023130000_account_deletion_owner_guard.sql)。作らずに 409 で返す。
-    // トリガーが P0001 + このコードの完全一致で止めた形だけを拾う。コードの判定は共通の関数で行い、route では (ログのほかに) `.message` を読まない (#1917)
-    if (isRaisedExceptionWithCode(insertError, OWNER_ACCOUNT_DELETING)) {
+  if (createError) {
+    // DB 関数が P0001 + コードの完全一致で止めた形だけを拾う。コードの判定は共通の関数で行い、route では (ログのほかに) `.message` を読まない (#1917)
+    // オーナーがすでに組織に所属している (応答が切れたあとの押し直しで、直前に自分が作った組織のこともある。#2107 Y5)
+    if (isRaisedExceptionWithCode(createError, OWNER_ALREADY_IN_ORG)) {
       return NextResponse.json(
-        { error: { code: OWNER_ACCOUNT_DELETING, message: '指定したオーナー (owner_id) は退会の手続き中です' } },
+        { error: { code: OWNER_ALREADY_IN_ORG, message: OWNER_ALREADY_IN_ORG_MESSAGE } },
         { status: 409 },
       );
     }
-    console.error('[api/admin/organizations] POST insert error:', insertError?.message);
+    // 退会の途中の人はオーナーにしない (#1917 の続き。DB のトリガー trg_organizations_owner_not_deleting (関数 organizations_owner_not_deleting()) が
+    // 関数の中の organizations の INSERT を止める。supabase/migrations/20261023130000_account_deletion_owner_guard.sql)。作らずに 409 で返す
+    if (isRaisedExceptionWithCode(createError, OWNER_ACCOUNT_DELETING)) {
+      return NextResponse.json(
+        { error: { code: OWNER_ACCOUNT_DELETING, message: OWNER_ACCOUNT_DELETING_MESSAGE } },
+        { status: 409 },
+      );
+    }
+    // オーナーにする人が auth.users に居ない (運営がオーナーの ID を打ち間違えたなど。#2112 Z2)。関数の a の organizations の INSERT が
+    // 外部キー organizations_owner_id_fkey (auth.users を参照) の違反 (23503) で止まり、何も書かれていない。関数の中のほかの外部キーは
+    // ここでは違反しない (b のオーナーの user_profiles は a が通ったあと = オーナーが auth.users に居る・e の席の行は作った組織を指す)。
+    // 押し直しても同じなので、一般の 500 にせず、ID が誤っていることが分かる文で返す
+    if (createError.code === PG_FOREIGN_KEY_VIOLATION) {
+      return NextResponse.json(
+        { error: { code: OWNER_NOT_FOUND, message: OWNER_NOT_FOUND_MESSAGE } },
+        { status: 422 },
+      );
+    }
+    console.error('[api/admin/organizations] POST create error:', createError.message);
     return NextResponse.json(
       { error: { code: 'INTERNAL_ERROR', message: '組織の作成に失敗しました' } },
       { status: 500 },
     );
   }
 
-  // Round 3 C-3: 新規 org 作成時に org_license_pools 行を INSERT
-  // service_role クライアントで RLS をバイパスして確実に挿入
-  try {
-    const { error: poolErr } = await supabaseAdmin
-      .from('org_license_pools')
-      .insert({
-        organization_id: org.id,
-        total_licenses: null, // unlimited by default
-        used_licenses: 0,
-      });
-    if (poolErr) {
-      console.error('[admin/organizations] org_license_pools INSERT failed', poolErr);
-      // 致命ではないが警告 (ライセンス管理は後続で補完可能)
-    }
-  } catch (adminErr) {
-    console.error('[admin/organizations] supabaseAdmin init failed', adminErr);
-  }
-
-  // owner の user_profiles を更新 (org_role='owner', organization_id 設定)
-  const { error: profileUpdateError } = await supabaseAdmin
-    .from('user_profiles')
-    .update({ organization_id: org.id, org_role: 'owner' })
-    .eq('id', effectiveOwnerId);
-
-  if (profileUpdateError) {
-    console.error('[api/admin/organizations] POST profile update error:', profileUpdateError.message);
-    // org 作成は成功しているが user_profiles が更新できない場合はエラー
+  // 関数は作った組織を返す。形が違えば (起きないはず)、作れたとは言わずに一覧で確かめさせる (作成そのものは commit 済みのことがある)
+  const parsedOrg = CreatedOrganizationSchema.safeParse(created);
+  if (!parsedOrg.success) {
+    console.error('[api/admin/organizations] POST create returned an unexpected shape');
     return NextResponse.json(
-      { error: { code: 'INTERNAL_ERROR', message: 'オーナーのプロフィール更新に失敗しました' } },
+      { error: { code: 'INTERNAL_ERROR', message: ORG_CREATED_UNREADABLE_MESSAGE } },
       { status: 500 },
     );
   }
+  const org = parsedOrg.data;
 
   // 監査ログ
   await recordAdminAudit({
@@ -251,13 +235,19 @@ export async function POST(request: Request) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// GET の道具 (行番号を参照する設計書があるので、GET と POST の本体の行はずらさず、ここ (ファイルの末尾) に置く)
+// GET の道具 (ファイルの末尾に置く)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** PostgREST が「件数より後ろのページ」(Range Not Satisfiable) で返す HTTP ステータス */
 const HTTP_RANGE_NOT_SATISFIABLE = 416;
 /** 同じときに PostgREST が返す error.code */
 const POSTGREST_RANGE_NOT_SATISFIABLE_CODE = 'PGRST103';
+
+/**
+ * 一覧の行の列。owner_id は、組織の作成の応答を受け取れなかった画面が、読み直した組織が自分の送った作成か (送ったオーナーか) を
+ * 比べるのに使う (運営だけの API。#2112 Z2。src/app/admin/organizations/OrganizationsManager.tsx の isSameOrganization)
+ */
+const ORG_LIST_COLUMNS = 'id, name, plan, owner_id, created_at, updated_at';
 
 /** 一覧の絞り込み (GET のクエリの q・plan) */
 interface OrgListFilters {
@@ -266,18 +256,20 @@ interface OrgListFilters {
 }
 
 type OrgSearchInput = z.infer<typeof OrgSearchSchema>;
-type SessionClient = Awaited<ReturnType<typeof createClient>>;
+/** 一覧を読む client (service_role。GET の本体の説明) */
+type ListClient = ReturnType<typeof getSupabaseAdmin>;
 
 /**
  * organizations を一覧の列で読み、絞り込み (組織名の部分一致・プラン) を付ける。件数は exact で数える。
  * head: true のときは行を返さず件数だけを数える (範囲外のページのときの件数の取り直し)
  */
-function selectOrganizations(supabase: SessionClient, filters: OrgListFilters, options: { head?: boolean } = {}) {
+function selectOrganizations(supabase: ListClient, filters: OrgListFilters, options: { head?: boolean } = {}) {
   let query = supabase
     .from('organizations')
-    .select('id, name, plan, created_at, updated_at', { count: 'exact', head: options.head === true });
+    .select(ORG_LIST_COLUMNS, { count: 'exact', head: options.head === true });
   if (filters.q) {
-    query = query.ilike('name', `%${filters.q}%`);
+    // 組織名の % と _ (と \) は文字どおりに一致させる (「100%」で全部の組織に当てない。利用者の一覧の検索と同じ。#2112 Z2)
+    query = query.ilike('name', `%${escapeLikePattern(filters.q)}%`);
   }
   if (filters.plan) {
     query = query.eq('plan', filters.plan);
@@ -291,7 +283,7 @@ function isBeyondLastPage(error: { code?: string | null }, status: number): bool
 }
 
 /** 同じ絞り込みの件数だけを数え直す。数えられなければ null (呼び出し側は 500 にする) */
-async function countOrganizations(supabase: SessionClient, filters: OrgListFilters): Promise<number | null> {
+async function countOrganizations(supabase: ListClient, filters: OrgListFilters): Promise<number | null> {
   try {
     const { count, error } = await selectOrganizations(supabase, filters, { head: true });
     if (error || count === null) {
@@ -322,3 +314,41 @@ function listFailedResponse() {
  * RAISE するコード (supabase/migrations/20261023130000_account_deletion_owner_guard.sql)。応答の code にもそのまま使う
  */
 const OWNER_ACCOUNT_DELETING = 'OWNER_ACCOUNT_DELETING';
+
+/** 退会の手続き中のオーナーを断るときの文 (英字の項目名 owner_id を運営に見せない。#2107 Y5 の同じ型) */
+const OWNER_ACCOUNT_DELETING_MESSAGE = '指定したオーナーは退会の手続き中です';
+
+/**
+ * 作る組織のオーナーがすでに組織に所属しているときに、DB 関数 admin_create_organization が RAISE するコード
+ * (supabase/migrations/20261030150000_create_organization_atomic.sql)。応答の code にもそのまま使う
+ */
+const OWNER_ALREADY_IN_ORG = 'OWNER_ALREADY_IN_ORG';
+
+/**
+ * オーナーがすでに組織に所属しているときの文 (#2107 Y5)。応答が切れたあとに押し直すと、直前に自分が作った組織で断られるので、
+ * 「別の組織」とは言わず、一覧で確かめさせる。英字の項目名 (owner_id) を運営に見せない (画面はこの文をそのまま出す)
+ */
+const OWNER_ALREADY_IN_ORG_MESSAGE =
+  '指定したオーナーはすでに組織に所属しています (直前に作成した組織かもしれません。一覧で確かめてください)';
+
+/** PostgreSQL の外部キーの違反の SQLSTATE (オーナーにする人が auth.users に居ない。organizations_owner_id_fkey) */
+const PG_FOREIGN_KEY_VIOLATION = '23503';
+
+/** オーナーにする人が auth.users に居ないときの応答の code (#2112 Z2) */
+const OWNER_NOT_FOUND = 'OWNER_NOT_FOUND';
+
+/** オーナーにする人が auth.users に居ないときの文 (英字の項目名 owner_id を運営に見せない。画面はこの文をそのまま出す) */
+const OWNER_NOT_FOUND_MESSAGE = '指定したオーナーのユーザーが見つかりません';
+
+/** DB 関数が作った組織を返したが、形が違って読めなかったときの文 (作成は済んでいることがあるので、一覧で確かめさせる) */
+const ORG_CREATED_UNREADABLE_MESSAGE = '組織の作成の結果を読み取れませんでした。一覧で確かめてください';
+
+/** DB 関数 admin_create_organization が返す、作った組織 (応答の organization。以前の route の応答と同じ列) */
+const CreatedOrganizationSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  plan: z.string().nullable(),
+  owner_id: z.string().uuid(),
+  created_at: z.string().nullable(),
+  updated_at: z.string().nullable(),
+});

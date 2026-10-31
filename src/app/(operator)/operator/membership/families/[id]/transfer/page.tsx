@@ -10,6 +10,19 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import ForceActionConfirmModal from '@/components/operator/membership/ForceActionConfirmModal';
+import {
+  FORCE_TRANSFER_NOT_DONE_GUIDE,
+  FORCE_TRANSFER_RELOAD_FAILED_GUIDE,
+  FORCE_TRANSFER_RELOAD_UNAVAILABLE_GUIDE,
+  OperatorLoadUnavailableError,
+  OperatorScreenError,
+  displayableOperatorError,
+  fetchOperatorRows,
+  isForceTransferDone,
+  operatorForceActionNoResponseMessage,
+  operatorForceActionReloadFailure,
+  postOperatorForceAction,
+} from '@/lib/membership/operator-screen-messages';
 import { normalizeProfileName } from '@/lib/profile-name';
 import { familyRoleLabel } from '@/lib/membership/role-labels';
 
@@ -32,6 +45,18 @@ function formatLastLogin(v: string | null): string {
   }
 }
 
+/** 戻る先の一覧 */
+const LIST_PATH = '/operator/membership/families/inactive';
+/** 読み込みの失敗の文の対象 */
+const CANDIDATES_SUBJECT = '譲渡の候補';
+/** 候補の読み込みの失敗で、例外の文が出せないときの固定の文 */
+const CANDIDATES_LOAD_FAILED_FALLBACK = `${CANDIDATES_SUBJECT}を読み込めませんでした`;
+/** 譲渡の応答を受け取れなかったあとの候補の読み直しが失敗したときに続ける文 (「再試行」で確かめる / 401・403 で読み込み直しても変わらない。#2101 X4) */
+const TRANSFER_RELOAD_GUIDES = {
+  reloadFailedGuide: FORCE_TRANSFER_RELOAD_FAILED_GUIDE,
+  unavailableGuide: FORCE_TRANSFER_RELOAD_UNAVAILABLE_GUIDE,
+} as const;
+
 export default function FamilyTransferPage() {
   // パスの値は useParams で読む。props の params は Next 15 から Promise で、Next 14 では use(params) が例外になった (#1275)。
   // useParams はどちらでも同じに使えるので、こちらにそろえている (#1444)。
@@ -41,28 +66,35 @@ export default function FamilyTransferPage() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // エラーに「再試行」を出すか。読み込みが 401 (ログインが切れた)・403 (権限が外れた) で断られたときは、読み込み直しても
+  // 変わらないので false (押しても必ず同じ理由で断られる「再試行」を出さない。#2101 X4)
+  const [errorRetryable, setErrorRetryable] = useState(true);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [reason, setReason] = useState('');
   const [showConfirm, setShowConfirm] = useState(false);
+  // 譲渡の応答を受け取れず、候補の読み直しにも失敗して、済んだか分からない譲渡 (#2086 V1)。
+  // あるあいだは候補と「強制譲渡を実行」を出さず (押し直すと同じ人への譲渡がもう一度通り、監査と通知メールが二重になる)、
+  // 「再試行」で候補を読み直せたら済んだかを決める。status は応答を受け取れなかった理由 (null は通信の失敗、数は本文の無い 502 / 503 / 504)
+  const [unknownTransfer, setUnknownTransfer] = useState<{ toUserId: string; status: number | null } | null>(null);
+  // 読み直したら譲渡はまだ済んでいなかった、という知らせ (「再試行」の読み直しのあと。もう一度実行できる)
+  const [notice, setNotice] = useState<string | null>(null);
+
+  const candidatesUrl = `/api/operator/membership/family/${familyId}/candidates`;
 
   const fetchCandidates = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/operator/membership/family/${familyId}/candidates`);
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error?.message ?? `HTTP ${res.status}`);
-      }
-      const json = await res.json();
-      setCandidates(json.data ?? []);
+      setCandidates(await fetchOperatorRows<Candidate>(candidatesUrl, CANDIDATES_SUBJECT));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'データ取得に失敗しました');
+      // 通信の失敗・本文に文の無い失敗も日本語の文にする (ブラウザの英字の文・「HTTP 502」だけを出さない。#2080 U5)
+      setError(displayableOperatorError(err, CANDIDATES_LOAD_FAILED_FALLBACK));
+      setErrorRetryable(!(err instanceof OperatorLoadUnavailableError));
     } finally {
       setLoading(false);
     }
-  }, [familyId]);
+  }, [candidatesUrl]);
 
   useEffect(() => { fetchCandidates(); }, [fetchCandidates]);
 
@@ -70,16 +102,71 @@ export default function FamilyTransferPage() {
 
   async function handleTransferConfirm() {
     if (!selectedId) return;
-    const res = await fetch(`/api/operator/membership/family/${familyId}/transfer`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ to_user_id: selectedId, reason }),
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(body.error?.message ?? `HTTP ${res.status}`);
+    setNotice(null);
+    // 失敗の応答は、日本語の文の例外を投げる (確認の枠が出す)
+    const result = await postOperatorForceAction(
+      `/api/operator/membership/family/${familyId}/transfer`,
+      { to_user_id: selectedId, reason },
+      'transfer',
+    );
+    if (result.kind === 'no-response') {
+      // 応答を受け取れなかった (通信の失敗・本文の無い 502 / 503 / 504)。サーバーが譲渡を済ませてから切れたこともあるので、
+      // 候補を読み直して確かめる (#2080 U5・#2086 V1)
+      let reloaded: Candidate[];
+      try {
+        reloaded = await fetchOperatorRows<Candidate>(candidatesUrl, CANDIDATES_SUBJECT);
+      } catch (reloadError) {
+        // 済んだか分からない。確認の枠を閉じ、「再試行」で読み直せるまで譲渡を押させない (#2086 V1)。
+        // 読み直しが 401 / 403 なら、理由の文を出し「再試行」は出さない (譲渡は止めたまま。#2101 X4)
+        setShowConfirm(false);
+        setUnknownTransfer({ toUserId: selectedId, status: result.status });
+        const failure = operatorForceActionReloadFailure('transfer', result.status, reloadError, TRANSFER_RELOAD_GUIDES);
+        setError(failure.message);
+        setErrorRetryable(failure.retryable);
+        return;
+      }
+      if (!isForceTransferDone(reloaded, selectedId)) {
+        setCandidates(reloaded);
+        throw new OperatorScreenError(
+          operatorForceActionNoResponseMessage('transfer', result.status, FORCE_TRANSFER_NOT_DONE_GUIDE),
+        );
+      }
     }
-    router.push('/operator/membership/families/inactive');
+    // 成功・読み直して済んでいた・譲渡先がすでに今の代表者 / オーナーだった (already-done。押し直しを route が止めた) なら一覧へ戻す
+    router.push(LIST_PATH);
+  }
+
+  /**
+   * エラーの「再試行」。済んだか分からない譲渡があれば、候補を読み直して済んだかを決める (#2086 V1):
+   * 選んだメンバーが候補から外れていれば済んでいたので一覧へ戻し、まだ候補にいれば済んでいない旨を出して候補を戻す (もう一度実行できる)。
+   * 読み直しにも失敗したら、済んだか分からない文のまま止め続ける。済んだか分からない譲渡が無ければ、候補を読み込み直すだけ
+   */
+  async function handleRetry() {
+    if (!unknownTransfer) {
+      await fetchCandidates();
+      return;
+    }
+    setLoading(true);
+    try {
+      const reloaded = await fetchOperatorRows<Candidate>(candidatesUrl, CANDIDATES_SUBJECT);
+      if (isForceTransferDone(reloaded, unknownTransfer.toUserId)) {
+        router.push(LIST_PATH);
+        return;
+      }
+      setCandidates(reloaded);
+      setUnknownTransfer(null);
+      setError(null);
+      setNotice(operatorForceActionNoResponseMessage('transfer', unknownTransfer.status, FORCE_TRANSFER_NOT_DONE_GUIDE));
+    } catch (reloadError) {
+      // 済んだか分からない文 (error) のまま止め続ける。読み直しが 401 / 403 なら、理由の文にして「再試行」を外す (#2101 X4)
+      if (reloadError instanceof OperatorLoadUnavailableError) {
+        const failure = operatorForceActionReloadFailure('transfer', unknownTransfer.status, reloadError, TRANSFER_RELOAD_GUIDES);
+        setError(failure.message);
+        setErrorRetryable(failure.retryable);
+      }
+    } finally {
+      setLoading(false);
+    }
   }
 
   const canSubmit = selectedId !== null && reason.trim().length > 0;
@@ -88,7 +175,7 @@ export default function FamilyTransferPage() {
     <div>
       <div className="mb-6">
         <Link
-          href="/operator/membership/families/inactive"
+          href={LIST_PATH}
           className="text-sm text-blue-600 hover:underline"
         >
           &#8592; 一覧に戻る
@@ -104,10 +191,26 @@ export default function FamilyTransferPage() {
       )}
 
       {error && (
-        <div className="mb-4 p-4 bg-red-50 text-red-700 rounded-lg text-sm">{error}</div>
+        <div className="mb-4 p-4 bg-red-50 text-red-700 rounded-lg text-sm space-y-2">
+          <p>{error}</p>
+          {errorRetryable && (
+            <button
+              type="button"
+              onClick={handleRetry}
+              disabled={loading}
+              className="px-3 py-1 text-sm font-medium text-red-700 bg-white border border-red-300 rounded-lg hover:bg-red-50 disabled:opacity-50"
+            >
+              再試行
+            </button>
+          )}
+        </div>
       )}
 
-      {!loading && !error && (
+      {notice && !error && (
+        <div className="mb-4 p-4 bg-amber-50 text-amber-800 rounded-lg text-sm">{notice}</div>
+      )}
+
+      {!loading && !error && !unknownTransfer && (
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-6">
           {/* 候補メンバ一覧 */}
           <div>
@@ -165,7 +268,7 @@ export default function FamilyTransferPage() {
           {/* ボタン */}
           <div className="flex justify-end gap-3">
             <Link
-              href="/operator/membership/families/inactive"
+              href={LIST_PATH}
               className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50"
             >
               キャンセル
@@ -181,7 +284,7 @@ export default function FamilyTransferPage() {
         </div>
       )}
 
-      {showConfirm && selected && (
+      {showConfirm && selected && !unknownTransfer && (
         <ForceActionConfirmModal
           scope="family"
           scopeName={`家族グループ (${familyId})`}

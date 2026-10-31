@@ -130,6 +130,16 @@ describe('(a) 取得の失敗を画面に出す', () => {
     expect(container.textContent).not.toContain('適用履歴がありません');
   });
 
+  it('API が 401 (ログインが切れた) を返したら、本文の文ではなく「ログインし直してください」を出す (#2112 Z4)', async () => {
+    redemptionResponses[REDEMPTIONS_URL] = jsonResponse(401, { error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } });
+
+    await openRedemptionsTab();
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('ログインし直してください');
+    expect(container.textContent).not.toContain('認証が必要です');
+    expect(container.textContent).not.toContain('適用履歴がありません');
+  });
+
   it('本文が JSON でない失敗 (500 の HTML など) でも、決まった文で失敗を出す', async () => {
     redemptionResponses[REDEMPTIONS_URL] = { ok: false, status: 500, json: () => Promise.reject(new SyntaxError('not json')) };
 

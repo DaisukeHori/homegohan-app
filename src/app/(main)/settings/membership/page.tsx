@@ -8,6 +8,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import { createClient } from '@/lib/supabase/client';
+import { loginPathWithNext, readSignedInUser } from '@/lib/auth/signed-in-user';
 import { membershipErrorMessageOfBody } from '@/lib/errors/membership-errors';
 import { ChevronLeft, Users, Building2, AlertTriangle } from 'lucide-react';
 import type { MembershipScope } from '@/lib/emails/membership/scope-label';
@@ -30,6 +31,9 @@ import {
  * 失敗の理由 (英語の内部の文) は画面に出さない
  */
 const MEMBERSHIP_LOAD_ERROR = '所属の情報を読み込めませんでした。しばらくしてから、もう一度お試しください。';
+
+/** この画面のパス (ログインのあとに戻る先) */
+const MEMBERSHIP_SETTINGS_PATH = '/settings/membership';
 
 /** 共有の設定の更新に失敗したときの文 (応答が届いたうえでの失敗) */
 const SHARE_UPDATE_FAILED_MESSAGE = '共有設定の更新に失敗しました';
@@ -139,14 +143,23 @@ export default function MembershipSettingsPage() {
   const loadData = useCallback(
     async (mode: 'initial' | 'refresh') => {
       if (mode === 'initial') setLoading(true);
+      // ログインの画面へ移るときは、移るまで読み込み中の表示のままにする (所属していない画面を一瞬出さない)
+      let redirecting = false;
       try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        if (!user) {
-          router.push('/login');
+        // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
+        // 確かめられなかったときは読み込みの失敗と「再試行」を出す (#2093 W4。以前は通信が切れているだけでもログインの画面へ移していた)。
+        // ログインのあとにこの画面へ戻れるよう next を付ける
+        const signedIn = await readSignedInUser(supabase);
+        if (signedIn.kind === 'load-failed') {
+          setLoadError(MEMBERSHIP_LOAD_ERROR);
           return;
         }
+        if (signedIn.kind === 'signed-out') {
+          redirecting = true;
+          router.push(loginPathWithNext(MEMBERSHIP_SETTINGS_PATH));
+          return;
+        }
+        const { user } = signedIn;
 
         // user_profiles から family_id / organization_id を取得
         const { data: profile, error: profileError } = await supabase
@@ -234,7 +247,7 @@ export default function MembershipSettingsPage() {
         console.error('[settings/membership] load error:', err);
         setLoadError(MEMBERSHIP_LOAD_ERROR);
       } finally {
-        if (mode === 'initial') setLoading(false);
+        if (mode === 'initial' && !redirecting) setLoading(false);
       }
     },
     // supabase (createClient) と router は画面を開いたときのものを使う (置き換える前の useEffect の [] と同じ)
@@ -466,7 +479,7 @@ export default function MembershipSettingsPage() {
               surface="settings"
               onDissolved={() => handleDissolved('organization')}
               onCancel={() => setDissolveTarget(null)}
-              onUnauthorized={() => router.push('/login')}
+              onUnauthorized={() => router.push(loginPathWithNext(MEMBERSHIP_SETTINGS_PATH))}
             />
           )}
 
@@ -546,7 +559,7 @@ export default function MembershipSettingsPage() {
               surface="settings"
               onDissolved={() => handleDissolved('family')}
               onCancel={() => setDissolveTarget(null)}
-              onUnauthorized={() => router.push('/login')}
+              onUnauthorized={() => router.push(loginPathWithNext(MEMBERSHIP_SETTINGS_PATH))}
             />
           )}
 

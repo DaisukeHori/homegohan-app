@@ -18,6 +18,8 @@ import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE } from '@/lib/super-admin/plan-subscribe
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: 'plan-1' }),
+  // プラン詳細は URL の tab を初めのタブにする (#2107 Y3)
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: vi.fn() }),
 }));
 

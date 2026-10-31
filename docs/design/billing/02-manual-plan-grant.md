@@ -665,15 +665,15 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 | 写像 `billing_apply_stripe_subscription` の 6. (F5) | 読 | 同じ利用者の別の live 行 | 変えない。M 行が live なら `BILL_LIVE_ROW_CONFLICT` (S9・S10) |
 | 家族のトリガー `billing_family_plan_follow_representative` (F6) | 読 (live な家族プランの行) | `plan_type='family'` の live 行 | 変えない。M 行も拾う (S7・S8) |
 | `family_groups.member_limit` の人数の上限の判定: `create_family_invite` (最新の定義 `20261022130000_family_invite_plan_gate.sql:38`。`:68` で読み `:71` で `MEMBER_LIMIT_EXCEEDED`)・`accept_family_invite` (`20261017030000_parental_consent_and_birth_date.sql:833`。`:873` で読み `:911`)・`add_family_child` (同 `:354`。`:403` で読み `:410`) ← `src/app/api/family/invites/route.ts:157`・`invites/[id]/accept/route.ts:59`・`members/child/route.ts:94` | 読 (`family_groups` の行の `member_limit`・`status`) | 招待の作成・承諾・子供の追加のときのメンバー数 < `member_limit` | 変えない。付与・取り消し・期限切れの関数が `member_limit` を写像と同じ式で書き換えるので、`family_pro` の付与の後は 8、取り消し・期限切れの後は 4 で判定する。すでに上限を超えたグループでは新しい招待の作成・承諾・子供の追加だけが止まり、既存のメンバーは外さない (§16 の 6) |
-| `src/app/(main)/family/dashboard/page.tsx:56` (`.select('id, name, member_limit, status')`。`:132` で `n/<member_limit> 人`)・`src/app/(main)/family/members/page.tsx:102` (`.select('id, name, member_limit')`。`:315` で同じ表示) | 読 (本人のセッション。`family_groups.member_limit`) | 自分の家族グループの 1 行 | 変えない。付与・取り消し・期限切れの後は関数が書いた `member_limit` がそのまま出る (上限を超えたグループは `6/4 人` のように出る。§16 の 6) |
-| `family_groups` の `status` / `representative_id` を書く入口: 強制解散 `src/app/api/operator/membership/family/[id]/dissolve/route.ts:67` → `operator_force_dissolve_family` (最新の定義 `20261026100000_operator_force_dissolve_family_missing.sql`。無い家族は `FAMILY_NOT_FOUND`・解散済みは `FAMILY_ALREADY_DISSOLVED` で止め、それ以外は `family_dissolve_apply`。`status='dissolved'`・メンバーを `left`・`user_profiles.family_id` を NULL・`representative_id` を NULL。`plan_key` / `member_limit` は書かない)・利用者の解散 `src/app/api/family/dissolve/route.ts` → `dissolve_family_by_representative` (→ `family_dissolve_apply`。`status='dissolved'`・メンバーを `left`・`user_profiles.family_id` を NULL・`representative_id` を NULL。`plan_key` / `member_limit` は書かない。family/11)・強制の代表者の交代 `operator/membership/family/[id]/transfer/route.ts:83` → `operator_force_representative_transfer` (最新の定義 `20261023140000_operator_transfer_return_old_owner.sql:105`)・利用者どうしの交代 `family/representative-transfer/[id]/accept/route.ts:55` → `accept_family_representative_transfer` (`20261017030000:947`)。交代の提案 `representative-transfer/propose/route.ts` は `family_groups` を書かない | 書 (`status` / `representative_id`) | — | 変えない。代表者の交代は上の家族のトリガーの行 (S8)。強制解散は §7.3 の「M `active` (家族プラン・代表者) × 強制解散」の行 (代表者の M 行も `plan_key_cached` も変わらず、解散したグループの `plan_key` / `member_limit` はそのまま残る。付与・取り消し・期限切れの家族の同期は `status='active'` のグループだけを書くので、解散したグループには触れない) |
+| `src/app/(main)/family/dashboard/page.tsx` (`.select('id, name, member_limit, status')`。人数の表示 `{members.length}/{familyGroup?.member_limit ?? '-'} 人` で `n/<member_limit> 人`)・`src/app/(main)/family/members/page.tsx` (`.select('id, name, member_limit')`。同じ表示) | 読 (本人のセッション。`family_groups.member_limit`) | 自分の家族グループの 1 行 | 変えない。付与・取り消し・期限切れの後は関数が書いた `member_limit` がそのまま出る (上限を超えたグループは `6/4 人` のように出る。§16 の 6) |
+| `family_groups` の `status` / `representative_id` を書く入口: 強制解散 `src/app/api/operator/membership/family/[id]/dissolve/route.ts:67` → `operator_force_dissolve_family` (最新の定義 `20261026100000_operator_force_dissolve_family_missing.sql`。無い家族は `FAMILY_NOT_FOUND`・解散済みは `FAMILY_ALREADY_DISSOLVED` で止め、それ以外は `family_dissolve_apply`。`status='dissolved'`・メンバーを `left`・`user_profiles.family_id` を NULL・`representative_id` を NULL。`plan_key` / `member_limit` は書かない)・利用者の解散 `src/app/api/family/dissolve/route.ts` → `dissolve_family_by_representative` (→ `family_dissolve_apply`。`status='dissolved'`・メンバーを `left`・`user_profiles.family_id` を NULL・`representative_id` を NULL。`plan_key` / `member_limit` は書かない。family/11)・強制の代表者の交代 `operator/membership/family/[id]/transfer/route.ts:83` → `operator_force_representative_transfer` (最新の定義 `20261030120000_operator_force_transfer_reject_same.sql` (今は :102))・利用者どうしの交代 `family/representative-transfer/[id]/accept/route.ts:55` → `accept_family_representative_transfer` (`20261017030000:947`)。交代の提案 `representative-transfer/propose/route.ts` は `family_groups` を書かない | 書 (`status` / `representative_id`) | — | 変えない。代表者の交代は上の家族のトリガーの行 (S8)。強制解散は §7.3 の「M `active` (家族プラン・代表者) × 強制解散」の行 (代表者の M 行も `plan_key_cached` も変わらず、解散したグループの `plan_key` / `member_limit` はそのまま残る。付与・取り消し・期限切れの家族の同期は `status='active'` のグループだけを書くので、解散したグループには触れない) |
 | `src/lib/billing/repository.ts` `findLiveSubscription` / `service.ts` `startCheckout`・`scheduleCancellation`・`revokeCancellation`・`getBillingSummary` (F9・F10) | 読 | live 5 値・`stripe_subscription_id` | 変えない。M 行は購入 409・解約の予約 409・要約 `source: 'manual'` |
 | `src/lib/billing/core.ts:724-741` `summarizeSubscription` (`getBillingSummary` の要約。`GET /api/billing/subscription` → `/account/billing`・`/frozen/billing`) | 読 | `findLiveSubscription` の 1 行 (live 5 値) の `status`・`stripe_subscription_id`・`cancel_at_period_end` (`source` = `stripe_subscription_id` の有無・`can_purchase = !live`・`can_cancel` / `can_resume = live && stripeBacked && …`) | 変えない (核。§14.2 で触らない)。live な M 行は `source: 'manual'`・`can_purchase: false`・`can_cancel: false`・`can_resume: false` で、利用者の画面に解約・再開のボタンは出ない (S16 の `/frozen/billing` も同じ要約)。取り消し (S3)・期限切れの後は live 行が無いので `status: null`・`source: null`・`can_purchase: true` |
 | `src/lib/billing/account-deletion.ts` (退会の段階 `billing`) ← `listStripeBackedSubscriptions` | 読 | `stripe_subscription_id IS NOT NULL` | 変えない。M 行は列挙されず Stripe を呼ばない (S17) |
 | `src/app/api/admin/users/[id]/route.ts:103-110` (運営のユーザー詳細の `active_subscription`) | 読 | session client・live 5 値の最新 1 行の `plan_key, status, current_period_end` | 変えない。M 行は `next_billing_at = current_period_end` (= 期限か NULL) として出る。画面 `/admin/users/[id]` の「現在のサブスクリプション」の節はそのまま。本冊の節 (§10) が由来と期限を別に出す |
 | `src/app/api/admin/finance/exports/route.ts:140-150` (`subscriptions` の CSV) | 読 | 9 列・status で絞らない | 変えない。M 行も出る (`stripe_*` は列に無い) |
 | `src/app/api/admin/finance/invoices/[id]/route.ts:50-64` (運営の請求書の詳細。請求先の利用者を引く) | 読 | `stripe_subscription_id = <イベントの subscription>` の 1 行 | 変えない。M 行は `stripe_subscription_id IS NULL` なので一致せず、請求書の詳細の対象にならない (M 行には Stripe の請求書が無い) |
-| `src/app/api/admin/finance/reconciliation/route.ts:81-83`・`dashboard/route.ts:64-81` | 読 | live 4 値 / 集計 | 変えない (実データ化は配線の残りの冊) |
+| `src/app/api/admin/finance/reconciliation/route.ts` の DB 側サマリー (`personal_subscriptions` の `.in('status', …)`)・`dashboard/route.ts:64-81` | 読 | live 4 値 / 集計 | 変えない (実データ化は配線の残りの冊) |
 | `src/lib/super-admin/plan-subscribers.ts` (F22) | 読 | live 5 値 | 変えない (S19) |
 | `src/app/api/super-admin/plans/[id]/price-impact/route.ts` (価格変更の影響の試算) | — (`personal_subscriptions` を集計しない。route の冒頭の注記 `:8`。価格の変更は新規契約だけに効く) | — | 変えない。M 行は試算に入らない (既存の契約の行を数えない route なので、M 行が増えても結果は変わらない) |
 | `apply_coupon` (F21) ← `src/lib/plan/coupon.ts:149` `applyCoupon` (service_role の client で RPC) ← `src/app/api/super-admin/coupons/[id]/apply/route.ts:71` (`POST /api/super-admin/coupons/{id}/apply`。S18 の呼び口) | 読・書 | 行を `FOR NO KEY UPDATE`・`active_coupon_redemption_id` | 変えない (3 つとも触らない)。本冊の UPDATE は `status` / `cancelled_at` / `cancel_at` だけ (S18) |
@@ -759,7 +759,7 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 | `src/lib/billing/manual-grant.ts` | 定数・Zod・型・純関数・エラー (I/O なし) | `zod`・`@/lib/billing/core` (純)・`@/lib/calendar-date-schema` (純)。テスト 1 が見張る |
 | `src/lib/billing/manual-grant-repository.ts` | service_role の RPC と SELECT | `@/lib/supabase/server` (`getSupabaseAdmin`)・`manual-grant.ts`・`core.ts` |
 | `src/lib/billing/manual-grant-service.ts` | ユースケース (facade。route はこれだけを呼ぶ) | `manual-grant.ts`・`manual-grant-repository.ts` (型と例外)・`@/lib/jst-day-ranges` |
-| `src/lib/billing/manual-grant-client.ts` | 画面 (client component) の通信の facade | `zod`・`manual-grant.ts`。サーバー専用のもの (`next/headers`・`@/lib/supabase/server`・`@/lib/auth/helpers`) を import しない |
+| `src/lib/billing/manual-grant-client.ts` | 画面 (client component) の通信の facade | `zod`・`manual-grant.ts`・`@/lib/admin/api-error-message` (`extractApiErrorMessage`)・`@/lib/api/forbidden-reason-messages` (`FORBIDDEN_REASON_CODE_BY_MESSAGE`。#2086 V4)。サーバー専用のもの (`next/headers`・`@/lib/supabase/server`・`@/lib/auth/helpers`) を import しない |
 | `src/app/api/super-admin/users/[id]/manual-plan/route.ts` | HTTP handler 3 本 | 既存の共通 (`requireRole`・`recordAdminAudit`・`rejectNullCharacterBody`・`internalError`・`validation-errors`・`http-params`) + service + repository の生成 |
 | `src/components/admin/ManualPlanGrantSection.tsx` | 画面の節 (`'use client'`) | `react`・`manual-grant-client.ts`・`manual-grant.ts` |
 
@@ -924,12 +924,12 @@ export const GrantablePlanViewSchema = z.object({
 });
 export type GrantablePlanView = z.infer<typeof GrantablePlanViewSchema>;
 
-/** 利用者の live な契約の行 (S でも M でも)。無ければ null */
+/** 利用者の live な契約の行 (S でも M でも I でも)。無ければ null */
 export const ManualPlanCurrentViewSchema = z.object({
   subscription_id: z.uuid(),
   plan_key: z.string(),
   status: z.enum(SUBSCRIPTION_STATUSES),
-  source: z.enum(['stripe', 'manual']),
+  source: z.enum(['stripe', 'manual', 'store']), // store = App Store・Google Play の契約 (billing/03 で足した)
   starts_at: z.string(),
   /** M 行の有効期限 (current_period_end。NULL = 期限なし)。S 行では次回の更新日 */
   expires_at: z.string().nullable(),
@@ -1006,12 +1006,23 @@ export function isGrantablePlan(plan: { plan_key: string; plan_type: string; sta
  * どの入力の誤り (有効期限・理由の長さ・JSON) にも当てはまる文にする
  */
 export const MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE = `入力を確かめてください (有効期限は今日より後の日付、理由は ${MANUAL_GRANT_REASON_MAX_LENGTH} 文字まで)`;
-/** 画面の文 (画面はエラーの本文の文面を読まず、code から引く。OP_INVALID_INPUT だけは画面用の文に差し替える) */
+/**
+ * 画面の文 (画面はエラーの本文の文面を読まず、code から引く。OP_INVALID_INPUT だけは画面用の文に差し替える)。
+ * 403 の理由 (二段階認証の確認・登録が要る・凍結) の code は、運営の route が 403 OP_PERMISSION_DENIED の文に理由の文を入れたとき、
+ * manual-grant-client が理由の文を code に直して返す (FORBIDDEN_REASON_CODE_BY_MESSAGE。#2086 V4)。
+ * 文はほかの運営の画面の 403 の理由の文 (src/lib/api/forbidden-reason-messages.ts。forbiddenMessageForScreen が出す文) と同じ。
+ * 401 / 403 の既定の文も運営の画面 (src/lib/admin/api-error-message.ts の UNAUTHENTICATED_SCREEN_MESSAGE・FORBIDDEN_SCREEN_MESSAGE) と同じ。
+ * このファイルは zod・core・calendar-date-schema のほかを import しない (tests/billing-manual-grant.test.ts) ので文を書き写し、
+ * 同じ文であることは tests/admin-reread-unauthenticated-2086.test.tsx が見る
+ */
 export const MANUAL_GRANT_CLIENT_MESSAGES: Readonly<Record<string, string>> = {
   ...MANUAL_GRANT_ERROR_MESSAGES,
   OP_INVALID_INPUT: MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE,
   AUTH_UNAUTHENTICATED: 'ログインし直してください',
   OP_PERMISSION_DENIED: '権限がありません',
+  AUTH_ACCOUNT_FROZEN: 'アカウントが凍結されています',
+  AUTH_2FA_REQUIRED: '二段階認証の確認が必要です',
+  AUTH_2FA_ENROLLMENT_REQUIRED: '二段階認証の登録が必要です',
   INTERNAL_ERROR: '処理中にエラーが発生しました。しばらくしてからお試しください',
 };
 /** code が無い・知らない code のときの文 */
@@ -1063,7 +1074,7 @@ function toManualGrantRpcError(error: { code?: string; message?: string; details
 }
 
 const PLAN_COLUMNS = 'plan_key, display_name, plan_type, status, max_members';
-const SUBSCRIPTION_COLUMNS = 'id, plan_key, status, stripe_subscription_id, starts_at, current_period_end';
+const SUBSCRIPTION_COLUMNS = 'id, plan_key, status, stripe_subscription_id, iap_store, starts_at, current_period_end';
 const HISTORY_COLUMNS = 'id, action_type, actor_id, created_at, details';
 
 export interface ManualGrantRepository {
@@ -1124,7 +1135,7 @@ export function createManualGrantRepository(admin: Admin = getSupabaseAdmin()): 
         subscription_id: data.id,
         plan_key: data.plan_key,
         status: data.status,
-        source: data.stripe_subscription_id === null ? 'manual' : 'stripe',
+        source: data.stripe_subscription_id === null ? (data.iap_store === null ? 'manual' : 'store') : 'stripe', // store = ストアの契約 (billing/03 §8.6)
         starts_at: data.starts_at,
         expires_at: data.current_period_end,
       };
@@ -1268,6 +1279,8 @@ export async function revokeManualPlan(deps: ManualGrantDeps, input: RevokeManua
 // ⚠️ client component が import するので、このファイルと import 先 (manual-grant.ts → core.ts / calendar-date-schema.ts) はサーバー専用のもの
 // (next/headers・@/lib/supabase/server・@/lib/auth/helpers) を import しない。
 import { z } from 'zod';
+import { extractApiErrorMessage } from '@/lib/admin/api-error-message';
+import { FORBIDDEN_REASON_CODE_BY_MESSAGE } from '@/lib/api/forbidden-reason-messages';
 import {
   ManualPlanGrantResponseSchema,
   ManualPlanRevokeResponseSchema,
@@ -1302,11 +1315,24 @@ export type ManualGrantClientResult<T> = ManualGrantClientSuccess<T> | ManualGra
 
 /**
  * 運営 API の失敗の本文 (nested。手動付与の route の rejectNullCharacterBody の 400 も { shape: 'nested' } で nested) と、flat の本文 ({ error, code }) の両方から code だけを読む。
- * 本文の文面 (error.message) は読まない (src/lib/auth/mfa/client.ts:87-96 と同じ。tests/lib-raw-error-message-scan.test.ts が
- * src/lib の結果に「エラーらしい名前の .message」を入れることを違反に数える。F27)
+ * 本文の文面 (error.message) は結果に入れない (src/lib/auth/mfa/client.ts:87-96 と同じ。tests/lib-raw-error-message-scan.test.ts が
+ * src/lib の結果に「エラーらしい名前の .message」を入れることを違反に数える。F27)。
+ * ただし 403 の文が理由の文 (二段階認証の確認・登録が要る・凍結。src/lib/api/forbidden-reason-messages.ts の表) のときだけ、
+ * その理由の code (AUTH_2FA_REQUIRED など) を返す。運営の route は二段階認証が理由でも code を OP_PERMISSION_DENIED のまま
+ * 文だけを理由の文にする (#2014) ので、code だけを見ると二段階認証が要るのに「権限がありません」と出てしまう (#2086 V4。
+ * ほかの運営の画面の forbiddenMessageForScreen と同じ規則で、表にある固定の文だけを理由として扱う。表に無い文は捨てる)
  */
 const NestedErrorBodySchema = z.object({ error: z.object({ code: z.string().min(1) }) });
 const FlatErrorBodySchema = z.object({ code: z.string().min(1) });
+
+/** 403 (Forbidden) の HTTP ステータス */
+const HTTP_FORBIDDEN = 403;
+
+/** 403 の本文の文が理由の文なら、その理由の code。理由の文でなければ null (#2086 V4) */
+function forbiddenReasonCodeOf(body: unknown): string | null {
+  const text = extractApiErrorMessage(body);
+  return text === null ? null : (FORBIDDEN_REASON_CODE_BY_MESSAGE.get(text) ?? null);
+}
 
 function failureCodeOf(body: unknown): string {
   const nested = NestedErrorBodySchema.safeParse(body);
@@ -1316,7 +1342,8 @@ function failureCodeOf(body: unknown): string {
 }
 
 function failureOf(status: number, body: unknown): ManualGrantClientFailure {
-  return { ok: false, status, code: failureCodeOf(body) };
+  const reasonCode = status === HTTP_FORBIDDEN ? forbiddenReasonCodeOf(body) : null;
+  return { ok: false, status, code: reasonCode ?? failureCodeOf(body) };
 }
 
 const NO_RESPONSE_FAILURE: ManualGrantClientFailure = {
@@ -1575,7 +1602,7 @@ export async function DELETE(request: Request, props: Params): Promise<NextRespo
 - 自分自身の判定は 2 か所に置く: route (`POST` / `DELETE` の `selfModifyFailure`。§9.0 の 4。本文を読む前) と service (`grantManualPlan` / `revokeManualPlan` の先頭。二重の守り)。route の判定を消して service だけに任せると、自分の id に不正な本文を送ったときに 403 でなく 400 になる (テスト 16 が赤になる)。`GET` には置かない (読むだけ)。
 
 ### 8.6 `src/components/admin/ManualPlanGrantSection.tsx` (画面の節)
-
+下の全文は段 C (PR #1854) の時点の記録 (先頭のコメントは PR #2091 (#2086 V4) で 403 の理由の文の規則に、`MANUAL_PLAN_SOURCE_LABELS` は §8.1 の `source` に合わせて PR #1928 の `store` まで追随) で、そのあとに足した分 (PR #1928 のストアの契約の文、#2080 U7〜U9 (PR #2082) の応答を受け取れなかったあとの読み直し・「再試行」・`MANUAL_PLAN_OPERATION_LABELS`・`RELOAD_UNAVAILABLE_STATUSES`、#2112 Z3 のプランの表示名 (`adminPlanKeyLabel`)) は無い。今の全文は実ファイル `src/components/admin/ManualPlanGrantSection.tsx`、画面の挙動は §10 が正。
 ```tsx
 // tsc:skip place=src/components/admin/ManualPlanGrantSection.tsx
 'use client';
@@ -1587,7 +1614,9 @@ export async function DELETE(request: Request, props: Params): Promise<NextRespo
  *   - 契約なし → 付与のフォーム (プラン・有効期限 (任意)・理由) → 確認ダイアログ → POST
  *   - 手動付与の契約あり → 取り消しのフォーム (理由) → 確認ダイアログ → DELETE
  *   - Stripe の契約あり → 「Stripe の契約があるため、手動付与はできません」(解約は利用者の操作か Stripe で)
- * 成功は GET で読み直して表示を更新し、失敗は manualGrantErrorMessage(code) を出す (応答の本文の文面は読まない。400 OP_INVALID_INPUT は画面用の文)。
+ * 成功は GET で読み直して表示を更新し、失敗は manualGrantErrorMessage(code) を出す (応答の本文の文面は出さない。400 OP_INVALID_INPUT は画面用の文)。
+ * 403 の文が理由の文 (二段階認証の確認が要る など) なら、manual-grant-client がその理由の code にして返すので、読み直し・読み込み・
+ * 付与・取り消しのどれでも理由の文を出す (ほかの運営の画面の forbiddenMessageForScreen と同じ規則。#2086 V4)。
  * 通信は src/lib/billing/manual-grant-client.ts だけで行う (URL をここで組み立てない)。
  */
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
@@ -1610,7 +1639,7 @@ export const MANUAL_GRANT_HISTORY_LABELS: Readonly<Record<ManualGrantHistoryEntr
   'system.billing.manual_grant_expired': '期限切れ',
 };
 /** 由来の表示 */
-export const MANUAL_PLAN_SOURCE_LABELS: Readonly<Record<'stripe' | 'manual', string>> = { stripe: 'Stripe', manual: '手動付与' };
+export const MANUAL_PLAN_SOURCE_LABELS: Readonly<Record<'stripe' | 'manual' | 'store', string>> = { stripe: 'Stripe', manual: '手動付与', store: 'ストア (アプリ内課金)' };
 /** 日時の表示 (JST)。期限は「その日の終わり」なので、翌日の 0 時を 1 日戻した日付で出さず、日時のまま出す */
 export const MANUAL_PLAN_DISPLAY_LOCALE = 'ja-JP';
 export const MANUAL_PLAN_DISPLAY_TIME_ZONE = 'Asia/Tokyo';
@@ -1931,11 +1960,12 @@ const canGrantManualPlan = isSuperAdmin && actor.id !== profile.id;
 |---|---|
 | 実行者が super_admin でない (admin / support) | 節を描かない (API も 403) |
 | 実行者が super_admin で、対象が自分 | 節を描かない (API は 403 `OP_SELF_MODIFY`) |
-| `current === null` (契約なし) | 付与のフォーム: プランの選択 (`plans`。`display_name (plan_key)`)・有効期限 (`type="date"`。任意)・理由 (必須・500 文字まで)・[付与する] (プランと理由がそろうまで押せない) → 確認ダイアログ `GRANT_CONFIRM_MESSAGE` → `POST`。成功で「<plan_key> を付与しました (有効期限: …)」と読み直し |
-| `current.source === 'manual'` | 現在の契約 (プラン・由来「手動付与」・有効期限) と取り消しのフォーム: 理由 (必須)・[取り消す] → 確認ダイアログ `REVOKE_CONFIRM_MESSAGE` → `DELETE`。成功で「<plan_key> の付与を取り消しました」と読み直し |
+| `current === null` (契約なし) | 付与のフォーム: プランの選択 (`plans`。`display_name (plan_key)`)・有効期限 (`type="date"`。任意)・理由 (必須・500 文字まで)・[付与する] (プランと理由がそろうまで押せない) → 確認ダイアログ `GRANT_CONFIRM_MESSAGE` → `POST`。成功で「<プランの表示名> を付与しました (有効期限: …)」と読み直し (プランの表示名は `src/lib/admin/plan-key-labels.ts` の `adminPlanKeyLabel`。表に無い plan_key はそのまま。#2112 Z3) |
+| `current.source === 'manual'` | 現在の契約 (プラン (表示名)・由来「手動付与」・有効期限) と取り消しのフォーム: 理由 (必須)・[取り消す] → 確認ダイアログ `REVOKE_CONFIRM_MESSAGE` → `DELETE`。成功で「<プランの表示名> の付与を取り消しました」と読み直し |
 | `current.source === 'stripe'` | 現在の契約 (プラン・由来「Stripe」・次回更新) と「Stripe の契約があるため、手動付与はできません (解約は利用者の操作か Stripe で行います)」。フォームは描かない |
-| `history` が 1 件以上 | 履歴 (付与 / 取り消し / 期限切れ・プラン・期限・理由・日時) |
-| 失敗 | 本文の `code` から `manualGrantErrorMessage` の文 (応答の本文の `message` は読まない。`OP_INVALID_INPUT` は `MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE`「入力を確かめてください (有効期限は今日より後の日付、理由は 500 文字まで)」)。401 も文を出すだけ (運営の画面の移動は layout の `requireRoleForPage` が受け持つ) |
+| `current.source === 'store'` | 現在の契約 (プラン・由来「ストア (アプリ内課金)」・次回更新) と「ストアの契約があります。手動付与はできません (解約は利用者が App Store・Google Play の定期購読の管理で行います)」。フォームは描かない |
+| `history` が 1 件以上 | 履歴 (付与 / 取り消し / 期限切れ・プラン (表示名。plan_key が無い行は「-」)・期限・理由・日時) |
+| 失敗 | 本文の `code` から `manualGrantErrorMessage` の文 (応答の本文の `message` は画面に出さない。ただし 403 の `message` が理由の文 (`src/lib/api/forbidden-reason-messages.ts` の `FORBIDDEN_REASON_CODE_BY_MESSAGE` の表。二段階認証の確認・登録が要る・凍結) のときだけ、client がその理由の code (`AUTH_2FA_REQUIRED` / `AUTH_2FA_ENROLLMENT_REQUIRED` / `AUTH_ACCOUNT_FROZEN`) にして返し、画面はその code の文 (理由の文と同じ) を出す。運営の route は二段階認証が理由でも code を `OP_PERMISSION_DENIED` のまま文だけを理由の文にするため。ほかの運営の画面の `forbiddenMessageForScreen` と同じ規則 (#2086 V4)。`OP_INVALID_INPUT` は `MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE`「入力を確かめてください (有効期限は今日より後の日付、理由は 500 文字まで)」)。401 も文を出すだけ (運営の画面の移動は layout の `requireRoleForPage` が受け持つ)。付与・取り消しの応答を受け取れなかった (`status === MANUAL_GRANT_CLIENT_NO_STATUS`。通信の reject・2xx なのに本文が形に合わない) ときは、済んだか分からないので GET で読み直し、「<付与\|取り消し>の応答を受け取れませんでした（通信エラー）」に続けて読み直した旨を出す (`statusChangeNoResponseMessage`。読み直した契約で操作が済んでいれば入力欄を空にする)。読み直しが 401 / 403 / 404 なら「<付与\|取り消し>の応答を受け取れませんでした（通信エラー）。」に続けてその code の文 (「再試行」なし)、それ以外の失敗なら「再試行」を出し、読み直せるまで付与・取り消しを止める (#2080) |
 
 - 有効期限の表示は JST の日時 (`toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })`)。「2026-12-31 まで」の付与は `2027/1/1 0:00:00` と出る (期限の意味 = その時刻の前まで使える)。日付だけに丸めると「2027/1/1」が「1 月 1 日も使える」に読めるので丸めない。
 - 既存の「現在のサブスクリプション」の節 (`active_subscription`。`next_billing_at`) はそのまま残す。
@@ -2172,7 +2202,7 @@ sequenceDiagram
 | route | `GET` / `POST` / `DELETE /api/super-admin/users/{id}/manual-plan` (route の export: `GET`・`POST`・`DELETE`・`dynamic = 'force-dynamic'`。§8.5) |
 | TS モジュール | `src/lib/billing/{manual-grant,manual-grant-repository,manual-grant-service,manual-grant-client}.ts`・`src/components/admin/ManualPlanGrantSection.tsx` |
 | TS の export (`manual-grant.ts`) | `MANUAL_GRANT_REASON_MAX_LENGTH`・`PLAN_KEY_MAX_LENGTH`・`MANUAL_GRANT_HISTORY_LIMIT`・`GRANTABLE_PLAN_TYPES`・`GRANTABLE_PLAN_STATUSES`・`MANUAL_GRANT_EXPIRES_ON_MESSAGE`・`MANUAL_PLAN_API_BASE_PATH`・`MANUAL_PLAN_API_SUFFIX`・`manualPlanPath`・`MANUAL_GRANT_AUDIT_ACTIONS`・`ManualGrantAuditAction`・`MANUAL_GRANT_AUDIT_ACTION_VALUES`・`MANUAL_GRANT_AUDIT_SEVERITY`・`MANUAL_GRANT_AUDIT_TARGET_TYPE`・`MANUAL_GRANT_ERROR_HTTP_STATUS`・`ManualGrantErrorCode`・`MANUAL_GRANT_ERROR_MESSAGES`・`ManualGrantError`・`MANUAL_GRANT_RPC_TO_API_CODE`・`ManualGrantRpcCode`・`isManualGrantRpcCode`・`manualPlanGrantBodySchema`・`ManualPlanGrantBody`・`ManualPlanRevokeBodySchema`・`ManualPlanRevokeBody`・`GrantablePlanViewSchema`・`GrantablePlanView`・`ManualPlanCurrentViewSchema`・`ManualPlanCurrentView`・`ManualGrantHistoryEntrySchema`・`ManualGrantHistoryEntry`・`ManualGrantAuditDetailsSchema`・`ManualPlanViewSchema`・`ManualPlanView`・`ManualPlanGrantResultSchema`・`ManualPlanGrantResult`・`ManualPlanRevokeResultSchema`・`ManualPlanRevokeResult`・`ManualPlanViewResponseSchema`・`ManualPlanGrantResponseSchema`・`ManualPlanRevokeResponseSchema`・`isGrantablePlan`・`MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE`・`MANUAL_GRANT_CLIENT_MESSAGES`・`MANUAL_GRANT_CLIENT_FALLBACK_MESSAGE`・`manualGrantErrorMessage` (数は §8.1 が正) |
-| TS の export (ほか) | `ManualGrantRpcError`・`ManualGrantRepository`・`createManualGrantRepository` (repository) / `ManualGrantDeps`・`expiresAtOf`・`getManualPlanView`・`GrantManualPlanInput`・`grantManualPlan`・`RevokeManualPlanInput`・`revokeManualPlan` (service) / `MANUAL_GRANT_CLIENT_NO_STATUS`・`MANUAL_GRANT_CLIENT_UNKNOWN_CODE`・`MANUAL_GRANT_JSON_HEADERS`・`ManualGrantClientSuccess`・`ManualGrantClientFailure`・`ManualGrantClientResult`・`requestManualPlanApi`・`fetchManualPlanView`・`grantManualPlanRequest`・`revokeManualPlanRequest` (client) / `GRANT_CONFIRM_MESSAGE`・`REVOKE_CONFIRM_MESSAGE`・`MANUAL_GRANT_HISTORY_LABELS`・`MANUAL_PLAN_SOURCE_LABELS`・`MANUAL_PLAN_DISPLAY_LOCALE`・`MANUAL_PLAN_DISPLAY_TIME_ZONE`・`ManualPlanGrantSection` (component) |
+| TS の export (ほか) | `ManualGrantRpcError`・`ManualGrantRepository`・`createManualGrantRepository` (repository) / `ManualGrantDeps`・`expiresAtOf`・`getManualPlanView`・`GrantManualPlanInput`・`grantManualPlan`・`RevokeManualPlanInput`・`revokeManualPlan` (service) / `MANUAL_GRANT_CLIENT_NO_STATUS`・`MANUAL_GRANT_CLIENT_UNKNOWN_CODE`・`MANUAL_GRANT_JSON_HEADERS`・`ManualGrantClientSuccess`・`ManualGrantClientFailure`・`ManualGrantClientResult`・`requestManualPlanApi`・`fetchManualPlanView`・`grantManualPlanRequest`・`revokeManualPlanRequest` (client) / `GRANT_CONFIRM_MESSAGE`・`REVOKE_CONFIRM_MESSAGE`・`MANUAL_GRANT_HISTORY_LABELS`・`MANUAL_PLAN_SOURCE_LABELS`・`MANUAL_PLAN_DISPLAY_LOCALE`・`MANUAL_PLAN_DISPLAY_TIME_ZONE`・`MANUAL_PLAN_OPERATION_LABELS`・`ManualPlanGrantSection` (component) |
 | 画面 | `/admin/users/{id}` の節「手動のプラン付与」(`data-testid="manual-plan-grant"`) |
 | page の定数 | `canGrantManualPlan` (`src/app/admin/users/[id]/page.tsx`) |
 | 消すもの (段 D) | `CreateFamilyGroupBodySchema.plan_key`・`POST /api/family/groups` の `p_plan_key`・作成の画面のプランの選択欄 |
@@ -2210,7 +2240,7 @@ grep の語 = 本冊が足す・変える名前。段 = §14.1。
 | `tests/organizations-owner-id-not-null-migration-contract.test.ts` (`src` 全体の `.from('organizations').insert/upsert` が `owner_id` を渡す) | 新しいファイル (走査の対象に入る) | 変更なし (`organizations` を書かない) | — |
 | `tests/role-check-source-scan.test.ts` (`roles` の手書きの判定・`isOrgAdmin` の直接呼び出しが無い) | `src/app/api` の新しい route | 変更なし (`actor.roles` を読まない。§8.5) | — |
 | `tests/api-raw-error-message-scan.test.ts` (応答の本文に `err.message` / `error.details` を入れない) | 新しい route の本文 | 変更なし (`ManualGrantError` も code から `MANUAL_GRANT_ERROR_MESSAGES` を引く。`internalError` で 500。`invalidInputResponse` は Zod の issues で (b) の 4xx の例外) | — |
-| `tests/lib-raw-error-message-scan.test.ts` (`src/lib` のヘルパーが、オブジェクトのプロパティの値に「エラーらしい名前の `.message` / `.details` / `.hint`」を入れない。文面が固定の文かどうかは見ない。F27) | `src/lib/billing/manual-grant-*.ts` | 変更なし (`ALLOWED` に足さない)。client は失敗の本文から `code` だけを読み (`failureCodeOf`。`src/lib/auth/mfa/client.ts:87-96` と同じ)、結果 `ManualGrantClientFailure` に `message` を持たない (テスト 58)。repository の `error.message` / `error.details` は `new ManualGrantRpcError(…)` の引数の中だけ (例外の中は数えない) | — |
+| `tests/lib-raw-error-message-scan.test.ts` (`src/lib` のヘルパーが、オブジェクトのプロパティの値に「エラーらしい名前の `.message` / `.details` / `.hint`」を入れない。文面が固定の文かどうかは見ない。F27) | `src/lib/billing/manual-grant-*.ts` | 変更なし (`ALLOWED` に足さない)。client は失敗の本文から `code` だけを読み (`failureCodeOf`。`src/lib/auth/mfa/client.ts:87-96` と同じ。ただし 403 の文が理由の文なら理由の `code` に直す。§8.4・#2086 V4)、結果 `ManualGrantClientFailure` に `message` を持たない (テスト 58)。repository の `error.message` / `error.details` は `new ManualGrantRpcError(…)` の引数の中だけ (例外の中は数えない) | — |
 | `tests/supabase-service-role-client-scan.test.ts` (service_role の client は `getSupabaseAdmin` だけ) | `manual-grant-repository.ts` | 変更なし (`getSupabaseAdmin` だけ。`@supabase/supabase-js` を import しない) | — |
 | `tests/next15-async-request-api-scan.test.ts` (`createClient()`・`params` に `await`) | 新しい route | 変更なし (`await props.params`・`await createClient()`) | — |
 | `tests/schema-checked-supabase.test.ts` / `tests/schema-checked-db.test.ts` (`.from()` / `.rpc()` の名前が型にある) | `.rpc('billing_grant_manual_subscription')`・`.rpc('billing_revoke_manual_subscription')` | 型の再生成 (段 A) で緑。段 B は段 A のマージ後 | A → B |

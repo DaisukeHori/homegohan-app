@@ -3,6 +3,17 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { ROLLOUT_STRATEGY_TYPE_LABELS } from "@/lib/super-admin/flags-schemas";
+import {
+  AdminScreenError,
+  adminActionHttpFailedMessage,
+  adminActionNoResponseMessage,
+  adminScreenErrorOfResponse,
+  displayableAdminError,
+} from "@/lib/admin/admin-screen-messages";
+
+/** 失敗の文の操作の名前 (#2086 V6) */
+const FLAG_CREATE_ACTION = "機能フラグの作成";
 
 export default function NewFlagPage() {
   const router = useRouter();
@@ -42,20 +53,24 @@ export default function NewFlagPage() {
           : undefined,
       };
 
-      const res = await fetch("/api/super-admin/flags", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
+      // 失敗は日本語の文の例外にする (本文の無い 502 の「HTTP 502」・通信の reject の英字の文・JSON でない本文の SyntaxError を出さない。#2086 V6)
+      let res: Response;
+      try {
+        res = await fetch("/api/super-admin/flags", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } catch {
+        throw new AdminScreenError(adminActionNoResponseMessage(FLAG_CREATE_ACTION));
+      }
       if (!res.ok) {
-        const body = await res.json();
-        throw new Error(body.error?.message ?? `HTTP ${res.status}`);
+        throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(FLAG_CREATE_ACTION, status));
       }
 
       router.push("/super-admin/flags");
     } catch (err) {
-      alert(err instanceof Error ? err.message : "作成に失敗しました");
+      alert(displayableAdminError(err, `${FLAG_CREATE_ACTION}に失敗しました`));
     } finally {
       setIsSubmitting(false);
     }
@@ -120,10 +135,11 @@ export default function NewFlagPage() {
               onChange={(e) => setForm({ ...form, rollout_type: e.target.value })}
               className="w-full bg-slate-700 text-white rounded-lg px-4 py-3 border border-slate-600 focus:border-purple-500 outline-none"
             >
-              <option value="all">全ユーザー</option>
-              <option value="percentage">段階公開 (%)</option>
-              <option value="plan">プラン別</option>
-              <option value="role">ロール別</option>
+              {/* 表示名は一覧と同じ表 (ROLLOUT_STRATEGY_TYPE_LABELS) から引く (#2112 Z3) */}
+              <option value="all">{ROLLOUT_STRATEGY_TYPE_LABELS.all}</option>
+              <option value="percentage">{`${ROLLOUT_STRATEGY_TYPE_LABELS.percentage} (%)`}</option>
+              <option value="plan">{ROLLOUT_STRATEGY_TYPE_LABELS.plan}</option>
+              <option value="role">{ROLLOUT_STRATEGY_TYPE_LABELS.role}</option>
             </select>
           </div>
 

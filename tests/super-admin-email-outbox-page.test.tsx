@@ -172,6 +172,14 @@ describe('メール送信の画面: 初回表示', () => {
     expect(text()).not.toContain('条件に合うメールはありません');
   });
 
+  it('ログインが切れた (401) ときは、運営の画面で揃えた「ログインし直してください」だけを出す (#2112 Z4)', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } }, 401));
+    await click(button('再読み込み'));
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe('ログインし直してください');
+    expect(text()).not.toContain('認証が必要です');
+  });
+
   it('403 の本文の文が二段階認証の文なら、「権限がありません」で上書きせずその文を出す (#1917 の続き・整合 1025b)', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: { code: 'FORBIDDEN', message: '二段階認証の確認が必要です' } }, 403));
     await click(button('再読み込み'));
