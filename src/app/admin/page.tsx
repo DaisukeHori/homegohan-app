@@ -19,6 +19,7 @@ import Link from 'next/link';
 import { requireRoleForPage } from '@/lib/auth/page-guard';
 import type { RoleName } from '@/lib/auth/types';
 import { DSR_ADMIN_PATH, DSR_OPERATOR_ROLES } from '@/lib/data-subject-requests/core';
+import { SUPER_ADMIN_ONLY_NOTE, SUPER_ADMIN_SCREEN_LABEL } from '@/lib/admin/operator-role-labels';
 
 interface ConsoleSection {
   href: string;
@@ -85,8 +86,9 @@ const SECTIONS: ReadonlyArray<ConsoleSection> = [
   },
   {
     href: '/super-admin',
-    label: 'super_admin コンソール',
-    description: 'プラン・機能パッケージ・クーポン・アプリログなど (super_admin 専用)',
+    // サイドバーのリンクと同じ呼び名 (ロールの表示名「運営最上位」。#2128 V1-2)
+    label: SUPER_ADMIN_SCREEN_LABEL,
+    description: `プラン・機能パッケージ・クーポン・アプリログなど (${SUPER_ADMIN_ONLY_NOTE})`,
     roles: ['super_admin'],
   },
 ];

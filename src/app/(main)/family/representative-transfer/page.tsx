@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { loginPathWithNext, readSignedInUser } from '@/lib/auth/signed-in-user';
 import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
 import { MEMBERSHIP_STATE_UNCONFIRMED_NOTE } from '@/lib/membership/leave-state';
 import {
@@ -24,6 +25,9 @@ const CANDIDATES_LOAD_ERROR = '代表者の譲渡の候補を読み込めませ�
 
 /** 代表者でない人が開いたときの文 */
 const REPRESENTATIVE_ONLY_MESSAGE = 'この操作は代表者のみが行えます';
+
+/** この画面のパス (ログインのあとに戻る先) */
+const REPRESENTATIVE_TRANSFER_PATH = '/family/representative-transfer';
 
 interface FamilyMember {
   id: string;
@@ -56,12 +60,20 @@ export default function FamilyRepresentativeTransferPage() {
     // 別の画面へ移るときは、移るまで読み込み中の表示のままにする (これまでどおり)
     let redirecting = false;
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        redirecting = true;
-        router.push('/login');
+      // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
+      // 確かめられなかったときは読み込みの失敗と「再試行」を出す (#2093 W4。以前は通信が切れているだけでもログインの画面へ移していた)。
+      // ログインのあとにこの画面へ戻れるよう next を付ける
+      const signedIn = await readSignedInUser(supabase);
+      if (signedIn.kind === 'load-failed') {
+        setLoadError(CANDIDATES_LOAD_ERROR);
         return;
       }
+      if (signedIn.kind === 'signed-out') {
+        redirecting = true;
+        router.push(loginPathWithNext(REPRESENTATIVE_TRANSFER_PATH));
+        return;
+      }
+      const { user } = signedIn;
       setCurrentUserId(user.id);
 
       const { data: profile, error: profileError } = await supabase

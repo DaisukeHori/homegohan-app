@@ -20,3 +20,21 @@ export function lastPageToRefetch(params: { rows: number; page: number; total: n
   const lastPage = lastPageOf(params.total, params.perPage);
   return params.page > lastPage ? lastPage : null;
 }
+
+/** 一覧の最初のページの番号 (URL の page が無い・読めないときに読むページ) */
+export const FIRST_PAGE = 1;
+
+/** URL の page として受ける形 (先頭が 0 でない 10 進の整数。符号・小数・指数・空白を含まない) */
+const PAGE_PARAM_PATTERN = /^[1-9][0-9]*$/;
+
+/**
+ * URL の page (searchParams.page) を、一覧の API に渡すページの番号に読む (#2093 W8)。
+ * 1 以上の整数 (Number.MAX_SAFE_INTEGER まで) でなければ最初のページ (1) にする。
+ * 以前の `Math.max(1, parseInt(page, 10))` は、?page=abc の NaN をそのまま通して API に page=NaN を送り (400)、
+ * 何度読み直しても直らない読み込みの失敗にしていた。?page=2abc も parseInt が 2 と読んでいた
+ */
+export function parsePageParam(raw: string | undefined): number {
+  if (raw === undefined || !PAGE_PARAM_PATTERN.test(raw)) return FIRST_PAGE;
+  const page = Number(raw);
+  return Number.isSafeInteger(page) ? page : FIRST_PAGE;
+}

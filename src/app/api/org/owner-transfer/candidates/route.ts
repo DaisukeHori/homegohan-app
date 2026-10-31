@@ -19,6 +19,7 @@ import {
   OrgMemberNameSchema,
   type OwnerTransferCandidatesResponse,
 } from '@/schemas/membership/organization-member-name';
+import { orderOrgMemberList } from '@/lib/membership/org-member-list-order';
 
 /** 譲渡を提案できる役割 (POST /api/org/owner-transfer/propose と同じ。候補はこの役割の人を除く) */
 const OWNER_ROLE = 'owner';
@@ -32,13 +33,15 @@ export async function GET(_request: Request) {
     }
 
     // service_role の client は、上の確認を通ったあとの読みにだけ使う
-    const { data: rows, error } = await getSupabaseAdmin()
-      .from('user_profiles')
-      .select(ORG_MEMBER_NAME_COLUMNS)
-      .eq('organization_id', profile.organization_id)
-      .neq('id', user.id)
-      .neq('org_role', OWNER_ROLE)
-      .order('joined_org_at', { ascending: true });
+    // 並びはメンバーの一覧と同じ (参加した日の古い順・同じ日は役割の順・その中は id の順。#2128 V3)
+    const { data: rows, error } = await orderOrgMemberList(
+      getSupabaseAdmin()
+        .from('user_profiles')
+        .select(ORG_MEMBER_NAME_COLUMNS)
+        .eq('organization_id', profile.organization_id)
+        .neq('id', user.id)
+        .neq('org_role', OWNER_ROLE),
+    );
 
     if (error) throw new Error(error.message);
 

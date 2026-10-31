@@ -5,7 +5,8 @@
  * (取り込みの再レビューの指摘)。数を直すたびに、同じ文書の別の節の数が置き去りにならないようにする。
  *   1. §9.1 の太字の合計「**N 呼び出し** (Web W・apps/mobile M = `apps/mobile/src` S と画面 `apps/mobile/app` A)」がちょうど 1 回あり、
  *      W + M = N・S + A = M
- *   2. 閉包の表 (`| 群 | 呼び出し (origin/main の file:line) | 行数 | …`) の「行数」の和 = N、W-* の行の和 = W、M-* の行の和 = M
+ *   2. 閉包の表 (`| 群 | 呼び出し (origin/main の …) | 行数 | …`) の「行数」の和 = N、W-* の行の和 = W、M-* の行の和 = M
+ *      (見出しは文書の中にちょうど 1 つ・3 番目の列の名前は「行数」)
  *   3. 文書の「全 K 呼び出し」はどれも K = N (§9.13 の「変えないもの」を含む。1 回以上ある)
  * 実コードとの突き合わせ (git grep の数) は、数えた時点の sha を本文に書く記録なので、ここでは見ない。
  */
@@ -15,9 +16,14 @@ import { describe, expect, it } from 'vitest';
 
 const ROOT = path.resolve(__dirname, '..');
 const DOC_PATH = 'docs/design/mobile/05-auth-session.md';
-const TABLE_HEADER = '| 群 | 呼び出し (origin/main の file:line) | 行数 |';
+/**
+ * 閉包の表の見出しの頭。「呼び出し」の列の括弧の中 (参照の書き方。「file:line」→「file:line または名前」#2107) は
+ * 記録の直しで変わるので見ない。その代わり、この頭で始まる見出しがちょうど 1 つで、3 番目の列が「行数」であることを確かめる。
+ */
+const TABLE_HEADER_PREFIX = '| 群 | 呼び出し (origin/main の ';
 /** 閉包の表の「行数」の列の位置 (群・呼び出し・行数・扱い の 3 番目) */
 const COUNT_COLUMN_INDEX = 2;
+const COUNT_COLUMN_NAME = '行数';
 
 const TOTAL_PATTERN =
   /\*\*(\d+) 呼び出し\*\* \(Web (\d+)・apps\/mobile (\d+) = `apps\/mobile\/src` (\d+) と画面 `apps\/mobile\/app` (\d+)\)/g;
@@ -32,15 +38,21 @@ function stated(text: string): { total: number; web: number; mobile: number; mob
   return { total, web, mobile, mobileSrc, mobileApp };
 }
 
+/** 表の 1 行をセルに分ける (先頭の | を外して「 | 」で切る) */
+const splitCells = (line: string): string[] => line.replace(/^\|/, '').split(' | ').map((cell) => cell.trim());
+
 /** 閉包の表の行 (群の名前と行数) */
 function tableRows(text: string): Array<{ group: string; count: number }> {
   const lines = text.split('\n');
-  const headerIndex = lines.findIndex((line) => line.startsWith(TABLE_HEADER));
-  expect(headerIndex, '閉包の表の見出しがある').toBeGreaterThanOrEqual(0);
+  const headerIndexes = lines.flatMap((line, index) => (line.startsWith(TABLE_HEADER_PREFIX) ? [index] : []));
+  expect(headerIndexes, '閉包の表の見出しがちょうど 1 つ').toHaveLength(1);
+  const headerIndex = headerIndexes[0];
+  const headerCells = splitCells(lines[headerIndex]);
+  expect(headerCells[COUNT_COLUMN_INDEX], '3 番目の列が「行数」').toBe(COUNT_COLUMN_NAME);
   const rows: Array<{ group: string; count: number }> = [];
   // 見出しの次は区切りの行 (|---|)。その次から、| で始まる行が続く間が表の本体
   for (let index = headerIndex + 2; index < lines.length && lines[index].startsWith('|'); index += 1) {
-    const cells = lines[index].replace(/^\|/, '').split(' | ').map((cell) => cell.trim());
+    const cells = splitCells(lines[index]);
     const count = Number(cells[COUNT_COLUMN_INDEX]);
     expect(Number.isInteger(count), `行数が整数: ${cells[0]}`).toBe(true);
     rows.push({ group: cells[0].split(' ')[0], count });
@@ -74,5 +86,33 @@ describe('mobile/05 の auth の呼び出しの閉包の数', () => {
     const counts = [...text.matchAll(ALL_COUNT_PATTERN)].map((match) => Number(match[1]));
     expect(counts.length, '「全 K 呼び出し」が 1 回以上ある (§9.13 の変えないもの)').toBeGreaterThan(0);
     expect(counts).toEqual(counts.map(() => total));
+  });
+});
+
+describe('閉包の表の見つけ方 (見出しの「呼び出し」の列の括弧の中が変わっても同じ行を読む。#2107)', () => {
+  const body = ['|---|---|---|---|', '| W-1 Web | `a.ts:1` | 3 | 変わらない |', '| M-1 mobile | 名前 | 2 | 変わらない |'];
+  const withHeader = (header: string): string => ['前の段落', '', header, ...body, '', '後の段落'].join('\n');
+  const expected = [
+    { group: 'W-1', count: 3 },
+    { group: 'M-1', count: 2 },
+  ];
+
+  it('「file:line」でも「file:line または名前」でも同じ行を読む', () => {
+    expect(tableRows(withHeader('| 群 | 呼び出し (origin/main の file:line) | 行数 | 扱い |'))).toEqual(expected);
+    expect(tableRows(withHeader('| 群 | 呼び出し (origin/main の file:line または名前) | 行数 | 扱い |'))).toEqual(expected);
+  });
+
+  it('見出しが 2 つあれば落ちる (どちらの表を数えたか分からない)', () => {
+    const header = '| 群 | 呼び出し (origin/main の file:line) | 行数 | 扱い |';
+    const text = [withHeader(header), '', header, ...body].join('\n');
+    expect(() => tableRows(text)).toThrow(/ちょうど 1 つ/);
+  });
+
+  it('見出しが無ければ落ちる', () => {
+    expect(() => tableRows(withHeader('| 群 | ファイル | 行数 | 扱い |'))).toThrow(/ちょうど 1 つ/);
+  });
+
+  it('3 番目の列が「行数」でなければ落ちる (列の位置で数を読んでいるため)', () => {
+    expect(() => tableRows(withHeader('| 群 | 呼び出し (origin/main の file:line) | 扱い | 行数 |'))).toThrow(/行数/);
   });
 });

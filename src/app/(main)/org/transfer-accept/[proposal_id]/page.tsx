@@ -11,6 +11,7 @@ import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { normalizeProfileName } from "@/lib/profile-name";
 import { transferProposalStatusMessage } from "@/lib/membership/transfer-proposal-status";
+import { readSignedInUser } from "@/lib/auth/signed-in-user";
 
 /** 提案が無い (または RLS で見えない) ときの文 */
 const PROPOSAL_NOT_FOUND_MESSAGE = '提案が見つかりません';
@@ -79,11 +80,19 @@ export default function TransferAcceptPage() {
   // 読み込み中の表示 (loading) は呼び出し側が決める (承諾 / 拒否のあとの読み直しは、提案の表示を残したまま読み直す)
   const fetchProposal = useCallback(async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
+      // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
+      // 確かめられなかったときは読み込みの失敗と「再試行」を出す (#2086 V3。以前は通信が切れているだけでもログインの画面へ移し、
+      // 承諾・拒否の通信が切れたあとの読み直しでもここを通るので、今の状態を見せられなかった)
+      const signedIn = await readSignedInUser(supabase);
+      if (signedIn.kind === 'load-failed') {
+        setLoadError(PROPOSAL_LOAD_ERROR);
+        return;
+      }
+      if (signedIn.kind === 'signed-out') {
         router.push(`/login?next=/org/transfer-accept/${proposalId}`);
         return;
       }
+      const { user } = signedIn;
       setCurrentUserId(user.id);
 
       // ownership_transfer_proposals に reason 列は無い (存在しない列を select すると PostgREST が失敗し、

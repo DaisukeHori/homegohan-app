@@ -19,11 +19,33 @@ import { z } from 'zod';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { normalizeUuid } from '@/lib/http-params';
-import { OperatorForceOwnerTransferResultSchema } from '@/lib/membership/operator-force-transfer-result';
+import {
+  OPERATOR_FORCE_TRANSFER_ALREADY_DONE_STATUS,
+  OPERATOR_FORCE_TRANSFER_ALREADY_OWNER_CODE,
+  OPERATOR_FORCE_TRANSFER_ALREADY_OWNER_MESSAGE,
+  OperatorForceOwnerTransferResultSchema,
+} from '@/lib/membership/operator-force-transfer-result';
 
 export const dynamic = 'force-dynamic';
 
 const ROUTE_NAME = 'POST /api/operator/membership/org/[id]/transfer';
+
+/**
+ * 譲渡先がすでに今のオーナーのときの 409 (#2086 V1)。監査 (admin_audit_logs) も通知メールも出さない。
+ * 1 回目の譲渡が済んだあと、route が監査・通知を待つ間にプロキシが時間切れ (504 など) を返し、運営が「実行する」を押し直すと、
+ * RPC は今のオーナー (= 1 回目の譲渡先) を旧オーナーとして同じ人へ譲渡し直し、全員に 2 通目の通知 (「旧オーナー」欄が新オーナー本人) を送ってしまう
+ */
+function alreadyOwnerResponse() {
+  return NextResponse.json(
+    {
+      error: {
+        code: OPERATOR_FORCE_TRANSFER_ALREADY_OWNER_CODE,
+        message: OPERATOR_FORCE_TRANSFER_ALREADY_OWNER_MESSAGE,
+      },
+    },
+    { status: OPERATOR_FORCE_TRANSFER_ALREADY_DONE_STATUS },
+  );
+}
 
 const BodySchema = z.object({
   to_user_id: z.string().uuid(),
@@ -75,6 +97,15 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       preOrgError = err;
     }
 
+    // 譲渡先がすでに今のオーナーなら、RPC を呼ばずに 409 で止める (#2086 V1。押し直しで譲渡・監査・通知を二重にしない)。
+    // owner_id は DB の uuid の文字列 (小文字) で、to_user_id も上で小文字にそろえてある。
+    // 控えを読めなかったときは止めずに RPC へ進む。RPC は組織の行のロックの下で読んだ旧オーナーが譲渡先と同じなら、何も書かずに
+    // ALREADY_OWNER で断る (#2093 W5。下の RPC のエラーの分岐)。控えの読み込みは通知のための best-effort で、譲渡そのものは止めない
+    // (#1917 のテスト: 控えを読めなくても譲渡と通知は RPC の戻り値で行う)
+    if (preOrg && preOrg.owner_id === to_user_id) {
+      return alreadyOwnerResponse();
+    }
+
     const supabase = await createClient();
 
     // RPC 実行
@@ -87,6 +118,17 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     if (rpcError) {
       // RPC の生のエラー文は本文に出さない (#1172)。分かるものは固定の文、それ以外は汎用の 500 にして構造化ログに残す。
       // エラーのコードの判定は共通の関数で行い、route では `.message` を読まない (#1917)
+      if (dbErrorMentionsCode(rpcError, OPERATOR_FORCE_TRANSFER_ALREADY_OWNER_CODE)) {
+        // RPC が組織の行のロックの下で読んだ旧オーナーが譲渡先と同じだったので、何も書かずに断った
+        // (supabase/migrations/20261030120000_operator_force_transfer_reject_same.sql。#2093 W5)。RPC の前の控えを読めなかったときと、
+        // 控えを読んだあと RPC の直前に別の運営が同じ人へ譲渡したときにここへ来る。オーナーは変わっておらず membership_audit にも行が無いので、
+        // 運営の監査 (admin_audit_logs) にも通知メールにも出さずに、RPC の前の判定と同じ 409 で止める
+        logger.withUser(operatorId).warn('譲渡先はすでにオーナーだったため、RPC が書く前に断りました。運営の監査と通知メールを出さずに 409 を返します', {
+          organization_id: orgId,
+          to_user_id,
+        });
+        return alreadyOwnerResponse();
+      }
       if (dbErrorMentionsCode(rpcError, 'TARGET_NOT_IN_ORG')) {
         return NextResponse.json(
           { error: { code: 'TARGET_NOT_IN_ORG', message: '譲渡先のユーザーはこの組織に所属していません' } },
@@ -125,6 +167,19 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         : null;
     // 応答の data は従来どおり、更新した後の組織の行
     const org = rpcResult.success ? rpcResult.data.organization : rpcData;
+
+    // RPC が組織の行のロックの下で読んだ旧オーナーが譲渡先と同じ = 譲渡先はすでにオーナーだった (#2086 V1)。
+    // 今の定義の RPC (20261030120000。#2093 W5) はこの場合 ALREADY_OWNER で断る (上の RPC のエラーの分岐) ので、ここへ来るのは
+    // その migration を当てる前の DB だけ。その RPC は断らずに書くので、RPC の前の控えを読めなかったときと、控えを読んだあと RPC の前に
+    // 別の運営が同じ人へ譲渡したときにここへ来る。オーナーは変わっていないので、運営の監査 (admin_audit_logs) にも通知メールにも出さずに
+    // 409 で止める (その RPC は membership_audit に旧オーナー = 新オーナーの行を 1 行書いている。それはログで追えるようにする)
+    if (beforeTransfer?.ownerId === to_user_id) {
+      log.warn(
+        '譲渡先はすでにオーナーだったため、運営の監査と通知メールを出さずに 409 を返しました (migration 20261030120000 の前の RPC は membership_audit に旧オーナー = 新オーナーの行を書いています)',
+        { organization_id: orgId, to_user_id },
+      );
+      return alreadyOwnerResponse();
+    }
 
     // 監査ログ (#1571)。RPC が書く membership_audit とは別に、運営の操作として admin_audit_logs にも 1 行残す
     // (操作した人の IP・User-Agent はこちらにだけ残る)。記録に失敗しても操作は完了のまま (失敗は db-logger に残る)

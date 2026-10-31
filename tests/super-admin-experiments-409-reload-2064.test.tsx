@@ -17,6 +17,13 @@ import { act, createElement, Suspense } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('next/navigation', () => {
+  // 一覧 (/super-admin/experiments) は URL の page を useSearchParams で読み、件数より後ろのページを router.replace で移す (#2107 Y9)。
+  // router は描画のたびに同じものを返す (一覧の読み込みの useCallback が router に依存するので、毎回別の値だと読み込みが止まらない)
+  const router = { push: () => undefined, replace: () => undefined, refresh: () => undefined };
+  return { useRouter: () => router, useSearchParams: () => new URLSearchParams() };
+});
+
 vi.mock('next/link', () => ({
   default: (props: { href: string; children?: React.ReactNode; className?: string }) =>
     createElement('a', { href: props.href, className: props.className }, props.children),
@@ -417,8 +424,15 @@ describe('A/B テストの一覧: 409 のあと一覧を読み直し、日本語
     };
   }
 
-  /** 一覧の GET を、1 回目は lists[0]、2 回目以降は順に返す (最後の要素を返し続ける)。null は 500 で断る */
-  function mockListApi(lists: Array<Array<Record<string, unknown>> | null>, onPatch: (id: string) => Response | Promise<Response>) {
+  /**
+   * 一覧の GET を、1 回目は lists[0]、2 回目以降は順に返す (最後の要素を返し続ける)。null は 500 で断る。
+   * onDetail は詳細の GET (読み直した一覧にその実験が無いとき、画面が詳細の API で今の状態を読む。#2107 Y9)
+   */
+  function mockListApi(
+    lists: Array<Array<Record<string, unknown>> | null>,
+    onPatch: (id: string) => Response | Promise<Response>,
+    onDetail?: (id: string) => Response | Promise<Response>,
+  ) {
     let getCount = 0;
     mockFetch((method, url) => {
       if (method === 'GET' && url.pathname === LIST_PATH) {
@@ -429,6 +443,9 @@ describe('A/B テストの一覧: 409 のあと一覧を読み直し、日本語
       }
       if (method === 'PATCH' && url.pathname.startsWith(`${LIST_PATH}/`)) {
         return onPatch(url.pathname.slice(LIST_PATH.length + 1));
+      }
+      if (method === 'GET' && onDetail && url.pathname.startsWith(`${LIST_PATH}/`)) {
+        return onDetail(url.pathname.slice(LIST_PATH.length + 1));
       }
       throw new Error(`想定していない fetch: ${method} ${url.pathname}`);
     });
@@ -468,12 +485,16 @@ describe('A/B テストの一覧: 409 のあと一覧を読み直し、日本語
     expect(noticeText()).toContain('今の状態: 中止');
   });
 
-  it('409 のあと読み直した一覧にその実験が無ければ、見つからない旨を出す', async () => {
-    mockListApi([[listExperiment()], []], () => jsonResponse(409, STALE_BODY));
+  it('409 のあと読み直した一覧にその実験が無く、詳細の API も 404 なら、見つからない旨を出す', async () => {
+    mockListApi([[listExperiment()], []], () => jsonResponse(409, STALE_BODY), () =>
+      jsonResponse(404, { error: { code: 'NOT_FOUND', message: '実験が見つかりません' } }),
+    );
     await renderElement(createElement(ExperimentsPage));
 
     await click(findButton('開始'), '「開始」ボタン');
 
+    // 一覧はページで送るので、一覧に無いだけでは「見つかりません」と言わず、詳細の API で無いと確かめてから出す (#2107 Y9)
+    expect(callsOf('GET', pathOf('exp-1'))).toHaveLength(1);
     expect(noticeText()).toContain('この実験は見つかりませんでした');
     expectNoRawStatusWord(noticeText());
   });

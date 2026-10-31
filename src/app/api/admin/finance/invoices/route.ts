@@ -10,6 +10,7 @@ import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
 import { InvoiceQuerySchema } from '@/lib/admin/finance-schemas';
+import { financeInvalidQueryResponse } from '@/lib/admin/finance-query-errors';
 import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 
 export const dynamic = 'force-dynamic';
@@ -23,13 +24,19 @@ export async function GET(request: NextRequest) {
     const supabase = await createClient();
 
     const { searchParams } = new URL(request.url);
-    const query = InvoiceQuerySchema.parse({
+    // クエリの誤り (page / per_page が 1 以上の整数でない・status が一覧に無いなど) は、DB に触れずに 400 (#2101 X6。
+    // 以前は .parse の例外が外側の catch に落ちて 500 になっていた)
+    const queryResult = InvoiceQuerySchema.safeParse({
       page: searchParams.get('page') ?? undefined,
       per_page: searchParams.get('per_page') ?? undefined,
       status: searchParams.get('status') ?? undefined,
       from: searchParams.get('from') ?? undefined,
       to: searchParams.get('to') ?? undefined,
     });
+    if (!queryResult.success) {
+      return financeInvalidQueryResponse(queryResult.error.issues);
+    }
+    const query = queryResult.data;
 
     // stripe_webhook_events テーブルから invoice 関連イベントを取得。
     // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectInvoiceEvents) から作る

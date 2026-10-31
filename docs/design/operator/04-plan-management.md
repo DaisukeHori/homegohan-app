@@ -47,7 +47,7 @@ export function validatePlanCreate(data: PlanCreateInput): ValidationResult {
 | status | 変更可能フィールド |
 |--------|----------------|
 | `draft` | 全フィールド自由 |
-| `public` | display_name / description / banner_url / feature_packages のみ。価格は price-change API 経由 |
+| `public` | display_name / description / banner_url / feature_packages のみ。価格は price-change API 経由。`stripe_product_id` は Stripe Price ID (月額・年額) がどちらもまだ無いあいだだけ (販売開始の手順。`isStripeProductIdEditable`。価格の変更が進行中のあいだは 409 `OP_PLAN_PRICE_CHANGE_IN_PROGRESS`。#2112 Z1-1) |
 | `private` | 同上 |
 | `deprecated` | migration_message のみ (ends_at は変更不可) |
 
@@ -110,7 +110,7 @@ export async function syncPlanPrices(request: SyncRequest, deps: SyncDeps) {
   //    無効化の失敗はベストエフォート (新しい Price の作成が必須の契約)
   return { month, year };
 }
-// その前に price-change route は begin_plan_price_change でプランごとの予約を取り (予約中なら 409。#1917 の続き)、その後 apply_plan_price_change が plan_price_history → subscription_plans (変えた interval の列だけ) を 1 つのトランザクションで書き →
+// その前に price-change route は begin_plan_price_change でプランごとの予約を取り (予約中なら 409。#1917 の続き。送られた価格がすべて今と同じなら Stripe を呼ばずに 409 OP_PRICE_UNCHANGED (ただし Stripe の同期が要り、送った間隔の Stripe Price ID がまだ無いときは続ける。billing/03 §12 の順 3。#2101 X1))、その後 apply_plan_price_change が plan_price_history → subscription_plans (変えた interval の列だけ) を 1 つのトランザクションで書き →
 // admin_audit_logs の順に書く。Stripe 同期が必須の環境 (STRIPE_SECRET_KEY あり) で同期に失敗したら、DB は一切更新しない (fail-closed)。
 ```
 

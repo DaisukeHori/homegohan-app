@@ -491,7 +491,8 @@ describe('UserFreezeForm: 失敗のとき', () => {
     await renderForm();
     await fillFreeze();
     await clickButton(FREEZE_BUTTON);
-    expect(document.querySelector('[role="alert"]')?.textContent).toBe('ログインの有効期限が切れました。ログインし直してください');
+    // 401 は運営の画面で揃えた「ログインし直してください」(#2112 Z4)
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe('ログインし直してください');
   });
 
   it('通信の失敗: 状態を確かめるよう知らせる', async () => {

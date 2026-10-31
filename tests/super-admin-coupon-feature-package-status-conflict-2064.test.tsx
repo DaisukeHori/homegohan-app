@@ -290,7 +290,7 @@ describe('機能パッケージ詳細: 廃止の 409 のあと、読み直して
   it('読み直しが失敗したら、その旨を出す (状態の表示は元のまま)', async () => {
     mockApi(FEATURE_PACKAGE, {
       patch: STALE_409,
-      reread: () => jsonResponse(404, errorBody('OP_PACKAGE_NOT_FOUND', '機能パッケージが見つかりません')),
+      reread: () => jsonResponse(500, errorBody('OP_INTERNAL_ERROR', '内部エラー')),
     });
     await render(<FeaturePackageDetailPage />);
 
@@ -300,5 +300,21 @@ describe('機能パッケージ詳細: 廃止の 409 のあと、読み直して
       '廃止できませんでした（別の操作で機能パッケージの状態が先に変わっていました。今の状態を読み込めませんでした。「再試行」で読み込み直してから、もう一度操作してください）',
     );
     expect(findButton('廃止する')).toBeDefined();
+  });
+
+  it('読み直しが 404 (機能パッケージが消えた) なら、見つからない旨を出し、「再試行」は出さない (読み込み直しても変わらないため。#2080)', async () => {
+    mockApi(FEATURE_PACKAGE, {
+      patch: STALE_409,
+      reread: () => jsonResponse(404, errorBody('OP_PACKAGE_NOT_FOUND', '機能パッケージが見つかりません')),
+    });
+    await render(<FeaturePackageDetailPage />);
+
+    await clickButton('廃止する');
+
+    expect(statusError()).toBe(
+      '廃止できませんでした（別の操作で機能パッケージの状態が先に変わっていました。機能パッケージが見つかりません。一覧に戻って確かめてください）',
+    );
+    expect(findButton('再試行')).toBeUndefined();
+    expect(findButton('廃止する')?.disabled).toBe(false);
   });
 });

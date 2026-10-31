@@ -22,6 +22,9 @@
 import { useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { UNAUTHENTICATED_SCREEN_MESSAGE } from '@/lib/admin/api-error-message';
+import { moderationStatusLabel } from '@/lib/admin/moderation-labels';
+import { SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
 
 export type ModerationReviewFormProps = {
   /** モデレーション対象のタイプ (food / recipe) */
@@ -39,7 +42,7 @@ const ACTION_OPTIONS = [
   { value: 'delete_only', label: 'コンテンツ削除のみ' },
   { value: 'delete_and_warn', label: '削除 + 警告' },
   { value: 'delete_and_temp_ban', label: '削除 + 一時 BAN' },
-  { value: 'delete_and_perm_ban', label: '削除 + 永久 BAN (super_admin のみ)', superAdminOnly: true },
+  { value: 'delete_and_perm_ban', label: `削除 + 永久 BAN (${SUPER_ADMIN_ONLY_NOTE})`, superAdminOnly: true },
   { value: 'escalate', label: 'エスカレーション' },
 ] as const;
 
@@ -62,12 +65,6 @@ type ApiSuccessBody = {
   data?: { status?: unknown; ban_applied?: unknown };
 };
 
-const STATUS_LABEL: Record<string, string> = {
-  approved: '承認',
-  rejected: '却下 (削除)',
-  escalated: 'エスカレーション',
-};
-
 export default function ModerationReviewForm({ type, id, status, isSuperAdmin }: ModerationReviewFormProps) {
   const router = useRouter();
   const [action, setAction] = useState('');
@@ -82,7 +79,7 @@ export default function ModerationReviewForm({ type, id, status, isSuperAdmin }:
     return (
       <div className="space-y-4">
         <p role="status" className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">
-          審査を確定しました。ステータス: {STATUS_LABEL[done.status] ?? done.status}
+          審査を確定しました。ステータス: {moderationStatusLabel(done.status)}
           {done.banApplied === true ? ' / 投稿者を BAN しました' : ''}
         </p>
         <Link
@@ -99,7 +96,8 @@ export default function ModerationReviewForm({ type, id, status, isSuperAdmin }:
     return (
       <div className="text-center py-8 text-gray-400">
         <p className="text-sm">このアイテムは既に審査済みです</p>
-        <p className="text-xs mt-1">ステータス: {status}</p>
+        {/* 状態は内部の英字の値 (approved など) を出さず、日本語の表示名にする (#2080 U6) */}
+        <p className="text-xs mt-1">ステータス: {moderationStatusLabel(status)}</p>
       </div>
     );
   }
@@ -152,7 +150,8 @@ export default function ModerationReviewForm({ type, id, status, isSuperAdmin }:
       }
 
       if (res.status === 401) {
-        setError('ログインの有効期限が切れました。ログインし直してください');
+        // 運営の画面で揃えた 401 の文 (#2112 Z4)
+        setError(UNAUTHENTICATED_SCREEN_MESSAGE);
         return;
       }
       const message = json?.error?.message;

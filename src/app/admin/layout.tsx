@@ -15,6 +15,7 @@ import Link from 'next/link';
 import { MfaGraceBanner } from '@/components/admin/MfaGraceBanner';
 import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { DSR_ADMIN_PATH } from '@/lib/data-subject-requests/core';
+import { OPERATOR_ROLE_LABELS, SUPER_ADMIN_SCREEN_LABEL, operatorRoleLabel } from '@/lib/admin/operator-role-labels';
 
 /** 認証・2FA の画面から戻る先 (区画のトップ。docs/design/cross/12-operator-mfa.md §13.4.2) */
 const ADMIN_AREA_NEXT = '/admin';
@@ -147,17 +148,17 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             </Link>
           )}
 
-          {/* super_admin 専用リンク */}
+          {/* super_admin 専用リンク。見出しとリンクの語はロールの表示名 (運営最上位) にそろえる (#2128 V1-2) */}
           {isSuperAdmin && (
             <div className="pt-4 border-t border-gray-100">
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider px-3 mb-2">
-                super_admin
+                {OPERATOR_ROLE_LABELS.super_admin}
               </p>
               <Link
                 href="/super-admin"
                 className="flex items-center gap-3 px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors text-sm font-medium"
               >
-                <span>super_admin コンソール</span>
+                <span>{SUPER_ADMIN_SCREEN_LABEL}</span>
               </Link>
             </div>
           )}
@@ -166,13 +167,15 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         <div className="p-4 border-t border-gray-200">
           <div className="text-xs text-gray-500">
             <span className="font-medium">{actor.email ?? actor.id.slice(0, 8)}</span>
+            {/* ログイン中の運営のロール。利用者の一覧・詳細 (admin/users) と同じく表示名で出し、title に内部の値 (#2128 V1-1) */}
             <div className="mt-0.5 flex flex-wrap gap-1">
               {actor.roles.map((role) => (
                 <span
                   key={role}
-                  className="inline-block bg-gray-100 text-gray-600 rounded px-1.5 py-0.5 text-[10px] font-mono"
+                  title={role}
+                  className="inline-block bg-gray-100 text-gray-600 rounded px-1.5 py-0.5 text-[10px]"
                 >
-                  {role}
+                  {operatorRoleLabel(role)}
                 </span>
               ))}
             </div>

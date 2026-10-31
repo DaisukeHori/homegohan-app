@@ -3,6 +3,10 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { MonitoringNotConnectedNotice } from "@/components/operator/infra/MonitoringNotConnectedNotice";
+import { adminLoadFailedFallback, displayableAdminError, fetchAdminRows } from "@/lib/admin/admin-screen-messages";
+
+/** 読み込みの失敗の文の対象 (「メトリクスを読み込めませんでした (HTTP 502)」。#2086 V6) */
+const METRICS_SUBJECT = "メトリクス";
 
 interface InfraMetric {
   id: string;
@@ -31,15 +35,11 @@ export default function InfraMetricsPage() {
       if (source) params.set("source", source);
       if (metricName) params.set("metric_name", metricName);
 
-      const res = await fetch(`/api/super-admin/infra/metrics?${params}`);
-      if (!res.ok) {
-        const body = await res.json();
-        throw new Error(body.error?.message ?? `HTTP ${res.status}`);
-      }
-      const { data } = await res.json();
-      setMetrics(data ?? []);
+      // 失敗は日本語の文の例外にする (本文の無い 502 の「HTTP 502」・通信の reject の英字の文・JSON でない本文の SyntaxError を出さない。#2086 V6)
+      // 200 なのに本文が読めない・data が配列でない応答は、0 件と見せずに読み込めなかった文にする (#2093 W7)
+      setMetrics(await fetchAdminRows<InfraMetric>(`/api/super-admin/infra/metrics?${params}`, METRICS_SUBJECT));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "読み込みに失敗しました");
+      setError(displayableAdminError(err, adminLoadFailedFallback(METRICS_SUBJECT)));
     } finally {
       setIsLoading(false);
     }

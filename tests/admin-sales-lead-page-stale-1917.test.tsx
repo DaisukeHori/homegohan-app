@@ -251,7 +251,8 @@ describe('リード詳細: ステージの変更が 409 CONFLICT_STALE_DATA で�
     await changeStage('商談中');
 
     expect(state.gets).toBe(2);
-    expect(routerPush).toHaveBeenCalledWith('/login');
+    // ログインのあとに元のリードへ戻れるよう next を付ける (#2101 X2)
+    expect(routerPush).toHaveBeenCalledWith(`/login?next=${encodeURIComponent(`/admin/sales/${LEAD_ID}`)}`);
     expect(text()).not.toContain('読み込み直せなかった');
     expect(text()).not.toContain('読み込み直したので');
   });
@@ -265,6 +266,18 @@ describe('リード詳細: ステージの変更が 409 CONFLICT_STALE_DATA で�
     expect(state.gets).toBe(1);
     expect(text()).toContain('ステージ変更失敗');
     expect(text()).not.toContain('別の担当者が先に');
+  });
+
+  it('ステージの変更そのものが 401 (ログインが切れた) なら、「ステージ変更失敗」ではなく「ログインし直してください」を出す (#2112 Z4)', async () => {
+    const state = mockApi(() => jsonResponse(401, GET_FAILURE_BODIES[401]));
+    await renderPage();
+
+    await changeStage('商談中');
+
+    expect(state.gets).toBe(1);
+    expect(text()).toContain('ログインし直してください');
+    expect(text()).not.toContain('ステージ変更失敗');
+    expect(text()).not.toContain('認証が必要です');
   });
 
   it('変更に成功したら、リードを読み直し、文は出さない', async () => {

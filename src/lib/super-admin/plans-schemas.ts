@@ -27,6 +27,21 @@ export const OFFICIAL_PLAN_KEYS = [
 ] as const;
 
 export const PLAN_TYPES = ['personal', 'family', 'org'] as const;
+
+/**
+ * プランの種別の画面の名前 (#2112 Z1 の同じ型: プラン詳細の基本情報が英字の値 (personal など) をそのまま出していた)。
+ * プランの一覧 (src/app/super-admin/plans/page.tsx の TYPE_LABELS) と同じ語。値を足すと、ここに名前を足さないと型の誤りになる
+ */
+export const PLAN_TYPE_LABELS: Readonly<Record<(typeof PLAN_TYPES)[number], string>> = {
+  personal: '個人',
+  family: '家族',
+  org: '組織',
+};
+
+/** 種別の値の画面の名前。表に無い値は、そのまま出す (知らない値を隠さない) */
+export function planTypeLabel(value: string): string {
+  return (PLAN_TYPE_LABELS as Readonly<Record<string, string>>)[value] ?? value;
+}
 export const PLAN_STATUSES = ['draft', 'public', 'private', 'deprecated'] as const;
 
 /**
@@ -39,6 +54,27 @@ export const PLAN_STATUSES = ['draft', 'public', 'private', 'deprecated'] as con
  * DB の plan_price_history.applies_to の CHECK は旧値 (on_renewal / immediately) を許したままにしている (過去の行を読めるように)。
  */
 export const PRICE_APPLIES_TO = ['new_only'] as const;
+
+/**
+ * 価格の変更の履歴 (plan_price_history.applies_to) が持ちうる値。DB の CHECK (plan_price_history_applies_to_check) と同じ 3 つ。
+ * 新しい価格の変更が書くのは new_only だけ (PRICE_APPLIES_TO) だが、#1102 の前の行には on_renewal / immediately が残っている
+ */
+export const PRICE_HISTORY_APPLIES_TO = ['new_only', 'on_renewal', 'immediately'] as const;
+
+/**
+ * 適用範囲の値ごとの画面の名前 (#2112 Z1-2)。価格の変更の画面と、プラン詳細の価格変更履歴のタブがここから引く
+ * (以前は履歴のタブが英字の値 (new_only など) をそのまま出していた)。値を足すと、ここに名前を足さないと型の誤りになる
+ */
+export const PRICE_APPLIES_TO_LABELS: Readonly<Record<(typeof PRICE_HISTORY_APPLIES_TO)[number], string>> = {
+  new_only: '新規契約のみ',
+  on_renewal: '更新時から',
+  immediately: '即時',
+};
+
+/** 適用範囲の値の画面の名前。表に無い値は、そのまま出す (知らない値を隠さない) */
+export function priceAppliesToLabel(value: string): string {
+  return (PRICE_APPLIES_TO_LABELS as Readonly<Record<string, string>>)[value] ?? value;
+}
 
 /** applies_to に new_only 以外が来たときのメッセージ (route が最初の issue の message をそのまま UI / 呼び出し元へ返す) */
 export const PRICE_APPLIES_TO_MESSAGE =
@@ -89,6 +125,9 @@ export const ORG_PLAN_KEY_PREFIX_MESSAGE = `組織のプランのキー (plan_ke
 // ─────────────────────────────────────────────────────────────────────────────
 // スキーマ定義
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** stripe_product_id に空・空白だけの文字列が来たときの文 (#2112 Z1-1。外すときは null を送る) */
+export const STRIPE_PRODUCT_ID_EMPTY_MESSAGE = 'Stripe の商品の ID (stripe_product_id) を空にはできません。外すときは null を送ってください';
 
 /** プラン新規作成リクエスト */
 export const PlanCreateSchema = z.object({
@@ -143,7 +182,18 @@ export const PlanUpdateSchema = z.object({
   trial_days: z.number().int().min(0).optional(),
   min_contract_months: z.number().int().min(1).optional(),
   auto_renew_default: z.boolean().optional(),
-  stripe_product_id: z.string().max(255).nullable().optional(),
+  /**
+   * Stripe の商品 (Product) の ID。外すときは null。空・空白だけの文字列は断る (入っていると「Stripe の同期が要る」と見なされ、
+   * 価格の変更が Stripe で失敗するため)。公開中・非公開のプランでは、Stripe の Price をまだ作っていないあいだだけ変えられる
+   * (isStripeProductIdEditable。#2112 Z1-1)
+   */
+  stripe_product_id: z
+    .string()
+    .trim()
+    .min(1, { message: STRIPE_PRODUCT_ID_EMPTY_MESSAGE })
+    .max(255)
+    .nullable()
+    .optional(),
   status: z.enum(PLAN_STATUSES).optional(),
   ends_at: z.string().datetime().nullable().optional(),
   /**
@@ -204,6 +254,48 @@ function planUpdateFieldLabel(key: string): string {
  */
 export function planStatusTransitionMessage(from: string, to: string): string {
   return `プランの状態を ${planStatusLabel(from)} から ${planStatusLabel(to)} へ変えることはできません`;
+}
+
+/**
+ * 422 OP_PLAN_STATUS_LOCKED の文: 公開中・非公開のプランで、Stripe の Price を作ったあとに Stripe の商品の ID を変えようとした (#2112 Z1-1)。
+ * Price は商品に紐づくので、作ったあとに商品を変えると、月額と年額の Price が別の商品に分かれる。
+ * 断るのは PATCH の全体 (一緒に送った表示名・説明・表示順も書かない) なので、そう言う。画面が開いたあとに別の運営が Price を作ると
+ * 画面の欄はまだ入力できるので、Product ID を元に戻せば残りを保存できる。項目は画面の欄の名前で言い、英字の列名は出さない (#2120 W2-1 と同じ型)
+ */
+export const STRIPE_PRODUCT_ID_LOCKED_MESSAGE =
+  'Stripe の Price を作ったあとの公開中・非公開のプランでは、Price は商品に紐づくため Stripe の Product ID を変更できません。保存しませんでした (表示名・説明なども含めて書いていません)。Product ID を元の値に戻してから、もう一度保存してください';
+
+/**
+ * 409 OP_PLAN_PRICE_CHANGE_IN_PROGRESS の文: 公開中・非公開のプランで、価格の変更 (Stripe の Price の作成) が進行中のあいだに
+ * Stripe の商品の ID を変えようとした (#2112 Z1-1)。進行中の価格の変更は読んだときの商品で Price を作るので、その間は変えない
+ * (DB のトリガー guard_plan_stripe_product_id_price_change が止める)。トリガーは UPDATE の文の全体を止めるので、一緒に送った
+ * 表示名・説明・表示順も書いていない。画面は読み直さずに入力欄の値を残すので、読み込み直しは勧めない (読み込み直すと書きかけが消える)。
+ * 価格の変更が済むと Price ができて Product ID は変えられなくなることが多い (そのときの保存は 422 STRIPE_PRODUCT_ID_LOCKED_MESSAGE)。
+ * 英字の列名は出さない (#2120 W2-1。以前は「Stripe の商品の ID (stripe_product_id) は変更していません。…画面を読み込み直して確かめてください」で、
+ * ほかの項目は保存できたように読めた)
+ */
+export const STRIPE_PRODUCT_ID_PRICE_CHANGE_IN_PROGRESS_MESSAGE =
+  'このプランの価格の変更 (Stripe の Price の作成) が進行中のため、保存しませんでした (表示名・説明なども含めて書いていません)。入力した値は残っているので、価格の変更が済んでからもう一度保存してください';
+
+/** 公開中・非公開のプランで、Stripe の商品の ID を変えてよいかの判定に使うプランの値 */
+export interface PlanStripeProductState {
+  status: string;
+  stripe_price_id: string | null;
+  stripe_yearly_price_id: string | null;
+}
+
+/**
+ * Stripe の商品の ID (stripe_product_id) を PATCH で変えてよいか (#2112 Z1-1)。
+ *   - 下書き: 変えてよい (全部の項目を変えられる)
+ *   - 公開中・非公開: 月額・年額のどちらの Stripe の Price もまだ無いあいだだけ (販売開始の手順で、公開中のプランに商品の ID を入れるため。
+ *     docs/design/billing/01-billing-core.md §17.3 の 1.)。Price を作ったあとは変えない (Price は商品に紐づく)
+ *   - 廃止: 変えない (廃止済みのプランは状態の変更のほかを断る)
+ * route (PATCH /api/super-admin/plans/{id}) とプラン詳細の画面 (入力欄を止めるか) が同じこの判定を使う
+ */
+export function isStripeProductIdEditable(plan: PlanStripeProductState): boolean {
+  if (plan.status === 'draft') return true;
+  if (plan.status !== 'public' && plan.status !== 'private') return false;
+  return !plan.stripe_price_id && !plan.stripe_yearly_price_id;
 }
 
 /**

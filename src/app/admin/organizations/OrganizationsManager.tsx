@@ -7,6 +7,9 @@
  * 権限 (admin / super_admin) の確認は、同じフォルダの page.tsx (サーバー) で行う。
  * API (GET / POST /api/admin/organizations・PATCH /api/admin/organizations/{id}) も、同じロールだけを通す。
  *
+ * プランの出し方 (#2112 Z3): 行のプランの札と変更の通知は表示名 (src/lib/admin/org-plan-labels.ts の adminOrgPlanLabel。
+ * 表に無い値はそのまま・null は「-」)、プランの選択肢 (行の変更・作成・検索) は ORG_PLAN_LABELS の表示名で出す。送る値は内部の値のまま。
+ *
  * プランの変更: 組織のプランの段階は運営だけが変える (#1912)。組織の管理者の設定画面は表示だけで、変えるのはこの画面の
  * 一覧の行のプランの欄 (PATCH /api/admin/organizations/{id})。
  * 変更が 409 CONFLICT_STALE_DATA (別の運営が先にプランを変えた) か 404 NOT_FOUND (組織がもう無い) で断られたときは、
@@ -21,15 +24,37 @@
  * 読み直した一覧が 0 行で、今のページが件数から出る最後のページより後ろ (最後のページの唯一の行が消えたあとに同じページで読み直したときなど) のときは、
  * 空のページを「組織はまだありません」と見せずに、件数から最後のページへ取り直す (GET は範囲外のページで空の一覧と本当の件数を返す)。
  *
- * API が返すのは id・組織名・プラン・作成/更新日時だけ。設計書 §7 にある Seat 数・期限・売上/月・担当営業は、
- * まだ出せない。
+ * API が返すのは id・組織名・プラン・オーナーの id・作成/更新日時だけ (オーナーの id は表に出さず、下の作成の確かめにだけ使う)。
+ * 設計書 §7 にある Seat 数・期限・売上/月・担当営業は、まだ出せない。
+ *
+ * 組織の作成の応答を受け取れなかったとき (fetch の reject・本文に API の文の無い 502 / 503 / 504) は、失敗とは言わずに
+ * 同じ名前の組織を読み直して、送った組織ができていたかを確かめる (#2107 Y4。#2101 X2 の src/lib/admin/admin-create-no-response.ts と同じ考え方)。
+ * 比べる元は、送る直前に同じ条件で読んだ同じ名前の組織 (送る前に無かった行で決め、ブラウザの時計は使わない)。
+ * 送った組織とみなすのは、組織名・プラン・オーナー (指定しなければ操作している自分。route と同じ) がどれも同じ行だけ
+ * (別の運営が同じ名前・同じプランで別のオーナーの組織を作っていても、自分の作成が済んだとは言わない。#2112 Z2)。
+ * できていれば済んだとして入力を空にし、確かめられなければ (まだ無い・読み直しの失敗・比べる元が無い) 送信を止める
+ * (押し直すと、同じオーナーの 2 つ目の作成として 409 OWNER_ALREADY_IN_ORG になる。オーナーを指定しないときは作った運営がオーナーになるので同じ)。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { extractApiErrorCode, extractApiErrorMessage } from '@/lib/admin/api-error-message';
+import { UNAUTHENTICATED_SCREEN_MESSAGE, extractApiErrorCode, extractApiErrorMessage } from '@/lib/admin/api-error-message';
+import {
+  ADMIN_ACTION_NO_RESPONSE_STATUSES,
+  adminActionNoResponseSummary,
+  adminLoadFailedMessage,
+  screenApiErrorMessage,
+} from '@/lib/admin/admin-screen-messages';
+import {
+  adminCreateFoundGuide,
+  adminCreateNoResponseMessage,
+  adminCreateNotFoundGuide,
+  adminCreateStoppedMessage,
+  confirmCreatedRow,
+} from '@/lib/admin/admin-create-no-response';
 import { formatJstDateTime } from '@/lib/admin/format-datetime';
 import { isUuid } from '@/lib/http-params';
-import { ORG_PLAN_VALUES, type OrgPlanValue } from '@/lib/org-plans';
+import { ORG_PLAN_LABELS, ORG_PLAN_VALUES, type OrgPlanValue } from '@/lib/org-plans';
+import { adminOrgPlanLabel } from '@/lib/admin/org-plan-labels';
 
 /** API (OrgSearchSchema / OrgCreateSchema) が受け付けるプラン (organizations.plan に書ける値) */
 const PLANS = ORG_PLAN_VALUES;
@@ -41,6 +66,22 @@ const PER_PAGE = 30;
 const LOAD_ERROR = '組織の一覧を取得できませんでした。しばらくしてから、もう一度お試しください。';
 const CREATE_ERROR = '組織を作成できませんでした。しばらくしてから、もう一度お試しください。';
 const PLAN_CHANGE_ERROR = 'プランを変更できませんでした。しばらくしてから、もう一度お試しください。';
+
+/** 応答を受け取れなかったときの文の操作の名前 (「組織の作成の応答を受け取れませんでした（通信エラー）」。#2107 Y4) */
+const CREATE_ACTION = '組織の作成';
+/** 読み直したときの文の対象の名前 (「読み込み直したところ、組織は保存されていました」。#2107 Y4) */
+const CREATE_SUBJECT = '組織';
+/** 読み直しに失敗したときの文の対象の名前 (「組織の一覧を読み込めませんでした (HTTP 500)」) */
+const CONFIRM_READ_SUBJECT = '組織の一覧';
+/**
+ * 作成の前後に同じ名前の組織を読むときの 1 ページの件数。API の per_page の上限 (route の OrgSearchSchema の max(100)) と同じ。
+ * 同じ名前の組織がこれより多いときは全部を比べられないので、比べる元が無いものとして扱う
+ */
+const CONFIRM_PER_PAGE = 100;
+const HTTP_UNAUTHORIZED = 401;
+const HTTP_FORBIDDEN = 403;
+/** 読み直しが 403 で断られ、本文に理由の文が無いときの理由 */
+const CONFIRM_FORBIDDEN_GUIDE = '権限がありません';
 
 /**
  * プランの変更が「行の表示が古い」ことで断られたときの、エラーの code (PATCH /api/admin/organizations/{id})。
@@ -101,6 +142,11 @@ interface Organization {
   id: string;
   name: string;
   plan: string | null;
+  /**
+   * オーナーの id (GET の一覧が返す。#2112 Z2)。作成の確かめで、読み直した組織が送ったオーナーのものかを比べるのにだけ使う。
+   * プランの変更の応答 (PATCH) は返さないので、置き換えた行には無い
+   */
+  owner_id?: string | null;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -128,6 +174,84 @@ function parseOrganizationBody(body: unknown): Organization | null {
   const candidate = organization as Partial<Organization>;
   if (typeof candidate.id !== 'string' || typeof candidate.name !== 'string') return null;
   return organization as Organization;
+}
+
+/** 送った組織 (前後の空白を除いた組織名・プラン・オーナーの id。route はこの値をそのまま書く) */
+interface SentOrganization {
+  readonly name: string;
+  readonly plan: OrgPlan;
+  /**
+   * 作る組織のオーナーの id (小文字)。オーナーを指定したらその id、指定しなければ操作している自分の id
+   * (route は owner_id が無ければ呼び出した運営をオーナーにする。#2112 Z2)
+   */
+  readonly ownerId: string;
+}
+
+/**
+ * 作成の応答を受け取れなかった (サーバーで済んだか分からない) 組織 (#2107 Y4)。これがあるあいだは送信を止める。
+ *   - knownIds: 送る直前に読んだ、同じ名前の組織の id (読めなかった・全部を読めなかったときは null)
+ *   - retryable: 「確かめ直す」で読み直せば決まりうるか (読み直しの失敗が通信・サーバーの一時的なもの、まだ見つからない)。
+ *     読み直しが 401 / 403 (読み直しても変わらない) と、比べる元が無くて決められない (ambiguous) ときは false
+ */
+interface UnconfirmedCreate {
+  readonly sent: SentOrganization;
+  readonly knownIds: ReadonlySet<string> | null;
+  readonly summary: string;
+  readonly message: string;
+  readonly retryable: boolean;
+}
+
+/** 同じ名前の組織の読み込みの結果 (失敗なら HTTP のステータス (通信の失敗・形の違いは null) と、失敗の応答の本文) */
+type SameNameRead =
+  | { ok: true; organizations: Organization[]; complete: boolean }
+  | { ok: false; status: number | null; body: unknown };
+
+/**
+ * 組織名 name を含む組織を、作成が新しい順に 1 ページ目 (CONFIRM_PER_PAGE 件) まで読む。
+ * complete は、同じ名前を含む組織を全部読めたか (件数が 1 ページに収まったか)
+ */
+async function readSameNameOrganizations(name: string): Promise<SameNameRead> {
+  const params = new URLSearchParams({ q: name, page: '1', per_page: String(CONFIRM_PER_PAGE) });
+  try {
+    const res = await fetch(`/api/admin/organizations?${params.toString()}`);
+    const body: unknown = await res.json().catch(() => null);
+    if (!res.ok) return { ok: false, status: res.status, body };
+    const parsed = parseListBody(body, { q: name, plan: '', page: 1 });
+    if (!parsed) return { ok: false, status: null, body: null };
+    return { ok: true, organizations: parsed.organizations, complete: parsed.total <= parsed.organizations.length };
+  } catch {
+    return { ok: false, status: null, body: null };
+  }
+}
+
+/**
+ * 読み直した組織が、送った組織と同じ内容か (組織名・プラン・オーナー。route は送った値をそのまま書く)。
+ * オーナーも比べるのは、応答が切れたあいだに別の運営が同じ名前・同じプランで別のオーナーの組織を作っても、
+ * 自分の作成が済んだと取り違えないため (#2112 Z2)。オーナーの id は大文字でも送れるので、小文字にして比べる
+ */
+function isSameOrganization(row: Organization, sent: SentOrganization): boolean {
+  return row.name === sent.name && row.plan === sent.plan && row.owner_id?.toLowerCase() === sent.ownerId;
+}
+
+/**
+ * 読み直しに失敗した理由の文 (401 は運営の画面で揃えた「ログインし直してください」(UNAUTHENTICATED_SCREEN_MESSAGE。#2112)、
+ * 403 は本文の理由の文、ほかは「組織の一覧を読み込めませんでした」の形)。
+ * 401 は読み直しても変わらないので「確かめ直す」を出さない
+ */
+function confirmReadFailureGuide(status: number | null, body: unknown): string {
+  if (status === HTTP_UNAUTHORIZED) return UNAUTHENTICATED_SCREEN_MESSAGE;
+  if (status === HTTP_FORBIDDEN) return screenApiErrorMessage(body) ?? CONFIRM_FORBIDDEN_GUIDE;
+  return screenApiErrorMessage(body) ?? adminLoadFailedMessage(CONFIRM_READ_SUBJECT, status);
+}
+
+/**
+ * 一覧の読み込み・プランの変更・組織の作成が失敗の応答で断られたときの文。
+ * 401 (ログインが切れた) は本文の文 (「認証が必要です」) ではなく、運営の画面で揃えた「ログインし直してください」
+ * (UNAUTHENTICATED_SCREEN_MESSAGE。作成の確かめの読み直しの 401 と同じ文。#2112)。ほかは本文の文、無ければ fallback
+ */
+function failureMessageOf(status: number, body: unknown, fallback: string): string {
+  if (status === HTTP_UNAUTHORIZED) return UNAUTHENTICATED_SCREEN_MESSAGE;
+  return extractApiErrorMessage(body) ?? fallback;
 }
 
 function isOrgPlan(value: string | null): value is OrgPlan {
@@ -176,7 +300,7 @@ function OrgPlanCell({
           onStale({ code, orgName: org.name }, listGeneration);
           return;
         }
-        setError(extractApiErrorMessage(body) ?? PLAN_CHANGE_ERROR);
+        setError(failureMessageOf(res.status, body, PLAN_CHANGE_ERROR));
         return;
       }
       const updated = parseOrganizationBody(body);
@@ -195,7 +319,7 @@ function OrgPlanCell({
   return (
     <div>
       <div className="flex items-center gap-2">
-        <span className="inline-block rounded bg-blue-50 px-2 py-0.5 font-mono text-xs text-blue-800">{org.plan ?? '-'}</span>
+        <span className="inline-block rounded bg-blue-50 px-2 py-0.5 text-xs text-blue-800">{adminOrgPlanLabel(org.plan)}</span>
         <label htmlFor={selectId} className="sr-only">
           {`${org.name} のプラン`}
         </label>
@@ -209,7 +333,7 @@ function OrgPlanCell({
           {current === '' && <option value="">選ぶ</option>}
           {PLANS.map((value) => (
             <option key={value} value={value}>
-              {value}
+              {ORG_PLAN_LABELS[value]}
             </option>
           ))}
         </select>
@@ -251,7 +375,12 @@ function parseListBody(body: unknown, query: Query): ListResult | null {
   };
 }
 
-export default function OrganizationsManager() {
+export default function OrganizationsManager({
+  currentUserId,
+}: {
+  /** 操作している運営の id (page.tsx が requireRoleForPage の結果から渡す)。オーナーを指定しない作成では、この人がオーナーになる */
+  currentUserId: string;
+}) {
   // 一覧
   const [query, setQuery] = useState<Query>({ q: '', plan: '', page: 1 });
   const [qDraft, setQDraft] = useState('');
@@ -267,6 +396,12 @@ export default function OrganizationsManager() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // 作成の応答を受け取れなかった (済んだか分からない) 組織 (#2107 Y4)。これがあるあいだは送信と入力を止める。
+  // ref は再描画の前に続けて押されたときの守り
+  const [unconfirmed, setUnconfirmed] = useState<UnconfirmedCreate | null>(null);
+  const unconfirmedRef = useRef<UnconfirmedCreate | null>(null);
+  // 送信 (送る前の読み込み・送信・応答を受け取れなかったあとの読み直し) のあいだは true (再描画の前に続けて押されたときも送らない守り)
+  const submitLockedRef = useRef(false);
 
   // 一覧の行のプランの変更 (#1912)
   const [planNotice, setPlanNotice] = useState<string | null>(null);
@@ -304,7 +439,7 @@ export default function OrganizationsManager() {
       if (loadId !== latestLoad.current) return;
 
       if (!res.ok) {
-        setLoadError(extractApiErrorMessage(body) ?? LOAD_ERROR);
+        setLoadError(failureMessageOf(res.status, body, LOAD_ERROR));
         return;
       }
       const parsed = parseListBody(body, target);
@@ -362,9 +497,63 @@ export default function OrganizationsManager() {
     setQuery((current) => ({ ...current, page: current.page + step }));
   }
 
+  const markUnconfirmed = (pending: UnconfirmedCreate | null) => {
+    unconfirmedRef.current = pending;
+    setUnconfirmed(pending);
+  };
+
+  /**
+   * 作成が済んだ (応答で・読み直しで) とき: 入力を初期状態に戻して知らせ、1 ページ目から取り直す。
+   * 一覧は作成が新しい順なので、1 ページ目から取り直す (今の検索条件は残す)。別の一覧へ移るので、一覧の世代を進める
+   * (作成の応答を待つ間に届いたプランの変更の文も消す。#1917)
+   */
+  const finishCreated = (createdNotice: string) => {
+    setName('');
+    setPlan('standard');
+    setOwnerId('');
+    setCreateError(null);
+    setNotice(createdNotice);
+    moveToAnotherList();
+    setQuery((current) => ({ ...current, page: 1 }));
+  };
+
+  /**
+   * 作成の応答を受け取れなかったあと、同じ名前の組織を読み直して、送った組織ができていたかを確かめる (#2107 Y4)。
+   * できていれば済んだとして入力を空にし、送信の止めを外す。
+   * まだ無い (サーバーが書き込みの途中かもしれない)・読み直しにも失敗した・前からあった組織か決められないときは、送信を止めたままにする
+   * (押し直すと 2 つ目の作成になる。押し直すのは、一覧で確かめてから画面を開き直したときだけ)
+   */
+  const confirmUnconfirmedCreate = async (pending: Omit<UnconfirmedCreate, 'message' | 'retryable'>) => {
+    const reread = await readSameNameOrganizations(pending.sent.name);
+    if (!reread.ok) {
+      markUnconfirmed({
+        ...pending,
+        message: adminCreateStoppedMessage(pending.summary, confirmReadFailureGuide(reread.status, reread.body)),
+        retryable: reread.status !== HTTP_UNAUTHORIZED && reread.status !== HTTP_FORBIDDEN,
+      });
+      return;
+    }
+    const outcome = confirmCreatedRow(reread.organizations, pending.knownIds, (row) => isSameOrganization(row, pending.sent));
+    if (outcome === 'ambiguous') {
+      markUnconfirmed({ ...pending, message: adminCreateStoppedMessage(pending.summary), retryable: false });
+      return;
+    }
+    if (outcome === 'not-found') {
+      // まだ無いことは作られていないことの確かめにならない (サーバーが書き込みの途中なら、押し直すと 2 つ目の作成になる)。止めたまま確かめ直させる
+      markUnconfirmed({
+        ...pending,
+        message: adminCreateStoppedMessage(pending.summary, adminCreateNotFoundGuide(CREATE_SUBJECT)),
+        retryable: true,
+      });
+      return;
+    }
+    markUnconfirmed(null);
+    finishCreated(adminCreateNoResponseMessage(pending.summary, adminCreateFoundGuide(CREATE_SUBJECT)));
+  };
+
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (creating) return;
+    if (creating || submitLockedRef.current || unconfirmedRef.current !== null) return;
 
     setCreateError(null);
     setNotice(null);
@@ -382,39 +571,79 @@ export default function OrganizationsManager() {
       return;
     }
 
+    const sent: SentOrganization = {
+      name: trimmedName,
+      plan,
+      ownerId: (trimmedOwnerId !== '' ? trimmedOwnerId : currentUserId).toLowerCase(),
+    };
+    submitLockedRef.current = true;
     setCreating(true);
     let created = false;
     try {
-      const res = await fetch('/api/admin/organizations', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: trimmedName,
-          plan,
-          ...(trimmedOwnerId !== '' ? { owner_id: trimmedOwnerId } : {}),
-        }),
-      });
-      if (res.ok) {
+      // 応答を受け取れなかったときに読み直しと比べるための、送る前の同じ名前の組織 (読めない・全部を読めないときは null。#2107 Y4)
+      const before = await readSameNameOrganizations(sent.name);
+      const knownIds: ReadonlySet<string> | null =
+        before.ok && before.complete ? new Set(before.organizations.map((org) => org.id)) : null;
+
+      // 通信そのものが失敗 (fetch の reject) したら null
+      let res: Response | null;
+      try {
+        res = await fetch('/api/admin/organizations', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: sent.name,
+            plan: sent.plan,
+            ...(trimmedOwnerId !== '' ? { owner_id: trimmedOwnerId } : {}),
+          }),
+        });
+      } catch {
+        res = null;
+      }
+
+      // 応答を受け取れなかった (サーバーで済んだか分からない) ときの文の頭 (#2107 Y4)
+      let noResponseSummary: string | null = null;
+      if (res === null) {
+        // 通信そのものの失敗。サーバーが作ってから応答が切れたこともあるので、失敗とは言わずに読み直す
+        noResponseSummary = adminActionNoResponseSummary(CREATE_ACTION, null);
+      } else if (res.ok) {
         created = true;
       } else {
         const body: unknown = await res.json().catch(() => null);
-        setCreateError(extractApiErrorMessage(body) ?? CREATE_ERROR);
+        if (extractApiErrorMessage(body) === null && ADMIN_ACTION_NO_RESPONSE_STATUSES.includes(res.status)) {
+          // 本文に API の文の無い 502 / 503 / 504 は、手前のプロキシ・ホスティングの応答 (関数の時間切れなど)。
+          // サーバーで済んだか分からないので、失敗とは言わずに読み直す
+          noResponseSummary = adminActionNoResponseSummary(CREATE_ACTION, res.status);
+        } else {
+          setCreateError(failureMessageOf(res.status, body, CREATE_ERROR));
+        }
+      }
+      if (noResponseSummary !== null) {
+        await confirmUnconfirmedCreate({ sent, knownIds, summary: noResponseSummary });
       }
     } catch {
       setCreateError(CREATE_ERROR);
     } finally {
+      submitLockedRef.current = false;
       setCreating(false);
     }
 
     if (created) {
-      setName('');
-      setPlan('standard');
-      setOwnerId('');
-      setNotice(`組織「${trimmedName}」を作成しました。`);
-      // 一覧は作成が新しい順なので、1 ページ目から取り直す (今の検索条件は残す)。別の一覧へ移るので、一覧の世代を進める
-      // (作成の応答を待つ間に届いたプランの変更の文も消す。#1917)
-      moveToAnotherList();
-      setQuery((current) => ({ ...current, page: 1 }));
+      finishCreated(`組織「${sent.name}」を作成しました。`);
+    }
+  }
+
+  /** 「確かめ直す」: 済んだか分からない作成を、同じ名前の組織を読み直して確かめる (#2107 Y4) */
+  async function handleRetryConfirm() {
+    const pending = unconfirmedRef.current;
+    if (pending === null || !pending.retryable || submitLockedRef.current) return;
+    submitLockedRef.current = true;
+    setCreating(true);
+    try {
+      await confirmUnconfirmedCreate(pending);
+    } finally {
+      submitLockedRef.current = false;
+      setCreating(false);
     }
   }
 
@@ -450,9 +679,12 @@ export default function OrganizationsManager() {
         ? { ...current, organizations: current.organizations.map((org) => (org.id === updated.id ? updated : org)) }
         : current,
     );
-    setPlanNotice(`組織「${updated.name}」のプランを ${updated.plan ?? '-'} に変更しました。`);
+    setPlanNotice(`組織「${updated.name}」のプランを ${adminOrgPlanLabel(updated.plan)} に変更しました。`);
   }, []);
 
+  // 送信中と、作成の応答を受け取れずに送信を止めているあいだは、入力欄と送信を止める (止めているあいだに書き足した入力を、
+  // 確かめ直しで済んでいたと分かったときに消さないため。#2107 Y4)
+  const formLocked = creating || unconfirmed !== null;
   const showList = !loading && !loadError && result !== null;
   const totalPages = result ? lastPageOf(result.total, result.perPage) : 1;
   const currentPage = result?.query.page ?? 1;
@@ -485,7 +717,7 @@ export default function OrganizationsManager() {
               onChange={(e) => setName(e.target.value)}
               required
               maxLength={200}
-              disabled={creating}
+              disabled={formLocked}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100"
             />
           </div>
@@ -498,12 +730,12 @@ export default function OrganizationsManager() {
               id="org-create-plan"
               value={plan}
               onChange={(e) => setPlan(e.target.value as OrgPlan)}
-              disabled={creating}
+              disabled={formLocked}
               className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100"
             >
               {PLANS.map((value) => (
                 <option key={value} value={value}>
-                  {value}
+                  {ORG_PLAN_LABELS[value]}
                 </option>
               ))}
             </select>
@@ -518,7 +750,7 @@ export default function OrganizationsManager() {
               type="text"
               value={ownerId}
               onChange={(e) => setOwnerId(e.target.value)}
-              disabled={creating}
+              disabled={formLocked}
               autoComplete="off"
               spellCheck={false}
               placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
@@ -540,10 +772,28 @@ export default function OrganizationsManager() {
               {notice}
             </p>
           )}
+          {unconfirmed && (
+            <div
+              role="alert"
+              className="flex items-center justify-between gap-4 rounded border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800"
+            >
+              <span>{unconfirmed.message}</span>
+              {unconfirmed.retryable && (
+                <button
+                  type="button"
+                  onClick={() => void handleRetryConfirm()}
+                  disabled={creating}
+                  className="shrink-0 rounded border border-yellow-300 bg-white px-3 py-1 text-sm font-medium text-yellow-800 hover:bg-yellow-50 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  確かめ直す
+                </button>
+              )}
+            </div>
+          )}
 
           <button
             type="submit"
-            disabled={creating}
+            disabled={formLocked}
             className="rounded-lg bg-orange-700 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-orange-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {creating ? '作成中...' : '作成する'}
@@ -584,7 +834,7 @@ export default function OrganizationsManager() {
               <option value="">すべてのプラン</option>
               {PLANS.map((value) => (
                 <option key={value} value={value}>
-                  {value}
+                  {ORG_PLAN_LABELS[value]}
                 </option>
               ))}
             </select>

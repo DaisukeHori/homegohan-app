@@ -8512,6 +8512,10 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      admin_create_organization: {
+        Args: { p_name: string; p_owner_id: string; p_plan: string }
+        Returns: Json
+      }
       admin_find_user_ids_by_email: {
         Args: { p_limit?: number; p_q: string }
         Returns: string[]

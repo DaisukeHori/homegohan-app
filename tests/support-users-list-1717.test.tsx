@@ -97,6 +97,8 @@ vi.mock('framer-motion', () => {
 });
 
 const { GET: listGET } = await import('@/app/api/admin/users/route');
+const { AuthError } = await import('@/lib/auth/errors');
+const { UNAUTHENTICATED_SCREEN_MESSAGE } = await import('@/lib/admin/api-error-message');
 const { UsersListResponseSchema } = await import('@/lib/admin/users-schemas');
 const { default: SupportUsersPage } = await import('@/app/(support)/support/users/page');
 
@@ -283,5 +285,24 @@ describe('/support/users の一覧 (#1717)', () => {
     expect(alerts()).toHaveLength(1);
     expect(alerts()[0]).toContain('ユーザー一覧を取得できませんでした');
     expect(findRow('凍結さん')).toBeUndefined();
+  });
+
+  // #2112 Z4: 一覧の読み込みの 401 は、時間をおいても読めないので「しばらくしてから、もう一度お試しください」にせず、
+  // 同じ画面の詳細の読み込み・メモの追加の 401 (operationFailureMessage) と同じ「ログインし直してください」を出す
+  it('一覧の読み込みが 401 (ログインが切れた) なら、「しばらくしてから」ではなく「ログインし直してください」を出す (本文の「認証が必要です」も出さない)', async () => {
+    // route の 401 の応答そのもの (requireRole が AuthError を投げたとき) を画面に返す
+    mocks.requireRole.mockRejectedValue(new AuthError('AUTH_UNAUTHENTICATED'));
+    const res = await listGET(new Request('http://localhost/api/admin/users?per_page=50'));
+    expect(res.status).toBe(401);
+    const body: unknown = await res.json();
+    expect(body).toEqual({ error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } });
+    mockListApi(() => jsonResponse(401, body));
+    await renderPage();
+
+    expect(alerts()).toEqual([UNAUTHENTICATED_SCREEN_MESSAGE]);
+    expect(UNAUTHENTICATED_SCREEN_MESSAGE).toBe('ログインし直してください');
+    expect(container.textContent).not.toContain('しばらくしてから');
+    expect(container.textContent).not.toContain('認証が必要です');
+    expect(container.textContent).not.toContain('ユーザーが見つかりません');
   });
 });

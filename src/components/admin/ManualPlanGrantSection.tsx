@@ -7,8 +7,23 @@
  *   - 契約なし → 付与のフォーム (プラン・有効期限 (任意)・理由) → 確認ダイアログ → POST
  *   - 手動付与の契約あり → 取り消しのフォーム (理由) → 確認ダイアログ → DELETE
  *   - Stripe の契約あり → 「Stripe の契約があるため、手動付与はできません」(解約は利用者の操作か Stripe で)
- * 成功は GET で読み直して表示を更新し、失敗は manualGrantErrorMessage(code) を出す (応答の本文の文面は読まない。400 OP_INVALID_INPUT は画面用の文)。
+ * 成功は GET で読み直して表示を更新し、失敗は manualGrantErrorMessage(code) を出す (応答の本文の文面は出さない。400 OP_INVALID_INPUT は画面用の文)。
+ * 403 の文が理由の文 (二段階認証の確認が要る など) なら、manual-grant-client がその理由の code にして返すので、読み直し・読み込み・
+ * 付与・取り消しのどれでも理由の文を出す (ほかの運営の画面の forbiddenMessageForScreen と同じ規則。#2086 V4)。
  * 通信は src/lib/billing/manual-grant-client.ts だけで行う (URL をここで組み立てない)。
+ *
+ * 付与・取り消しの応答を受け取れなかった (通信が reject された・2xx なのに本文が形に合わない。manual-grant-client の
+ * MANUAL_GRANT_CLIENT_NO_STATUS) ときは、サーバーが付与・取り消しを済ませてから応答が切れたこともあるので、今の契約を読み直して見せ、
+ * 「<付与|取り消し>の応答を受け取れませんでした（通信エラー）」に続けて読み直した旨を出す (#2080。運営の画面の #2073 と同じ形)。
+ * 読み直さないと、付与のフォームのまま残り、もう一度押すと 409「すでに有効な契約があります」になる。
+ * 読み直した契約で操作が済んでいた (付与なら契約がある・取り消しなら手動付与の契約が無い) ときは入力欄を空にする
+ * (付与の理由が取り消しの理由の欄に残らないように。成功のときと同じ)。
+ * 読み直しが失敗したら「再試行」を出し、読み直せるまで付与・取り消しのボタンを止める (表示の契約が古いかもしれないため)。
+ * 読み直しが 401 / 403 / 404 で断られたら、読み込み直しても変わらないので、その理由の文を出し「再試行」は出さない。
+ *
+ * プラン (今の契約・履歴・付与と取り消しの成功の文) は、英字の内部の値 (plan_key) ではなく、同じ画面の「現在のサブスクリプション」と
+ * 同じ表示名 (src/lib/admin/plan-key-labels.ts の adminPlanKeyLabel。表に無い plan_key はそのまま) で出す (#2112 Z3)。
+ * 付与のフォームの選択肢は「表示名 (plan_key)」の組のまま (付与する plan_key を運営が確かめられるように)。
  */
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import {
@@ -17,7 +32,18 @@ import {
   type ManualGrantHistoryEntry,
   type ManualPlanView,
 } from '@/lib/billing/manual-grant';
-import { fetchManualPlanView, grantManualPlanRequest, revokeManualPlanRequest } from '@/lib/billing/manual-grant-client';
+import {
+  MANUAL_GRANT_CLIENT_NO_STATUS,
+  fetchManualPlanView,
+  grantManualPlanRequest,
+  revokeManualPlanRequest,
+} from '@/lib/billing/manual-grant-client';
+import { adminPlanKeyLabel } from '@/lib/admin/plan-key-labels';
+import {
+  NO_RESPONSE_STATE_RELOADED_GUIDE,
+  NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
+  statusChangeNoResponseMessage,
+} from '@/lib/super-admin/status-change-no-response';
 
 /** 付与の確認ダイアログの文 (§10) */
 export const GRANT_CONFIRM_MESSAGE = 'この利用者に有料プランを手動で付与します。利用者は課金なしでプランを使えるようになります。続けますか?';
@@ -42,6 +68,26 @@ function formatDateTime(iso: string | null): string {
   return iso === null ? '期限なし' : new Date(iso).toLocaleString(MANUAL_PLAN_DISPLAY_LOCALE, { timeZone: MANUAL_PLAN_DISPLAY_TIME_ZONE });
 }
 
+/** 付与・取り消しのどちらの操作か (応答を受け取れなかったあとの読み直しで使う。#2080) */
+type ManualPlanOperation = 'grant' | 'revoke';
+
+/** 応答を受け取れなかったときの文の操作の名前 (#2080) */
+export const MANUAL_PLAN_OPERATION_LABELS: Readonly<Record<ManualPlanOperation, string>> = {
+  grant: '付与',
+  revoke: '取り消し',
+};
+
+/**
+ * 読み直しが、読み込み直しても変わらない理由で断られたかを見分ける HTTP ステータス (#2080)。
+ * 401 (ログインが切れた)・403 (権限が外れた・自分自身になった)・404 (利用者が消えた)
+ */
+const RELOAD_UNAVAILABLE_STATUSES: ReadonlySet<number> = new Set([401, 403, 404]);
+
+/** 読み直した契約で、その操作が済んでいるか (付与なら契約がある・取り消しなら手動付与の契約が無い。#2080) */
+function operationTookEffect(operation: ManualPlanOperation, view: ManualPlanView): boolean {
+  return operation === 'grant' ? view.current !== null : view.current === null || view.current.source !== 'manual';
+}
+
 export function ManualPlanGrantSection({ userId }: { userId: string }) {
   const [view, setView] = useState<ManualPlanView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -51,6 +97,8 @@ export function ManualPlanGrantSection({ userId }: { userId: string }) {
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 応答を受け取れなかったあとの読み直しが失敗し、まだ読み直せていない操作 (#2080)。あるあいだは「再試行」を出し、付与・取り消しを止める
+  const [pendingReread, setPendingReread] = useState<ManualPlanOperation | null>(null);
 
   const load = useCallback(async () => {
     const result = await fetchManualPlanView(userId);
@@ -66,8 +114,46 @@ export function ManualPlanGrantSection({ userId }: { userId: string }) {
     void load();
   }, [load]);
 
-  const canGrant = view !== null && view.current === null && planKey !== '' && reason.trim().length > 0 && !submitting;
-  const canRevoke = view !== null && view.current !== null && view.current.source === 'manual' && reason.trim().length > 0 && !submitting;
+  const isBlocked = submitting || pendingReread !== null;
+  const canGrant = view !== null && view.current === null && planKey !== '' && reason.trim().length > 0 && !isBlocked;
+  const canRevoke = view !== null && view.current !== null && view.current.source === 'manual' && reason.trim().length > 0 && !isBlocked;
+
+  /**
+   * 付与・取り消しの応答を受け取れなかったあとに今の契約を読み直し、結果に合わせて文を出す (#2080)。
+   * 読み直せたら表示を今の契約にし、操作が済んでいれば入力欄を空にする。読み直しが失敗したら「再試行」を待つ操作として記録する。
+   * 401 / 403 / 404 は読み込み直しても変わらないので、その理由の文を出し、「再試行」は待たない
+   */
+  const rereadAfterNoResponse = async (operation: ManualPlanOperation) => {
+    const result = await fetchManualPlanView(userId);
+    const label = MANUAL_PLAN_OPERATION_LABELS[operation];
+    if (result.ok) {
+      setView(result.data);
+      setLoadError(null);
+      if (operationTookEffect(operation, result.data)) {
+        setPlanKey('');
+        setExpiresOn('');
+        setReason('');
+      }
+      setError(statusChangeNoResponseMessage(label, NO_RESPONSE_STATE_RELOADED_GUIDE));
+      setPendingReread(null);
+      return;
+    }
+    if (RELOAD_UNAVAILABLE_STATUSES.has(result.status)) {
+      setError(statusChangeNoResponseMessage(label, manualGrantErrorMessage(result.code)));
+      setPendingReread(null);
+      return;
+    }
+    setError(statusChangeNoResponseMessage(label, NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE));
+    setPendingReread(operation);
+  };
+
+  /** 「再試行」: 応答を受け取れなかったあとの失敗した読み直しをやり直す (#2080) */
+  const handleRetryReread = async () => {
+    if (pendingReread === null || submitting) return;
+    setSubmitting(true);
+    await rereadAfterNoResponse(pendingReread);
+    setSubmitting(false);
+  };
 
   const handleGrant = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -78,11 +164,14 @@ export function ManualPlanGrantSection({ userId }: { userId: string }) {
     setError(null);
     const result = await grantManualPlanRequest(userId, { plan_key: planKey, expires_on: expiresOn === '' ? null : expiresOn, reason });
     if (result.ok) {
-      setMessage(`${result.data.plan_key} を付与しました (有効期限: ${formatDateTime(result.data.expires_at)})`);
+      setMessage(`${adminPlanKeyLabel(result.data.plan_key)} を付与しました (有効期限: ${formatDateTime(result.data.expires_at)})`);
       setPlanKey('');
       setExpiresOn('');
       setReason('');
       await load();
+    } else if (result.status === MANUAL_GRANT_CLIENT_NO_STATUS) {
+      // 応答を受け取れなかった。付与が済んだかは分からないので、今の契約を読み直して見せる (#2080)
+      await rereadAfterNoResponse('grant');
     } else {
       setError(manualGrantErrorMessage(result.code));
     }
@@ -98,9 +187,12 @@ export function ManualPlanGrantSection({ userId }: { userId: string }) {
     setError(null);
     const result = await revokeManualPlanRequest(userId, { reason });
     if (result.ok) {
-      setMessage(`${result.data.plan_key} の付与を取り消しました`);
+      setMessage(`${adminPlanKeyLabel(result.data.plan_key)} の付与を取り消しました`);
       setReason('');
       await load();
+    } else if (result.status === MANUAL_GRANT_CLIENT_NO_STATUS) {
+      // 応答を受け取れなかった。取り消しが済んだかは分からないので、今の契約を読み直して見せる (#2080)
+      await rereadAfterNoResponse('revoke');
     } else {
       setError(manualGrantErrorMessage(result.code));
     }
@@ -119,7 +211,7 @@ export function ManualPlanGrantSection({ userId }: { userId: string }) {
         <dl data-testid="manual-plan-grant-current" className="grid grid-cols-3 gap-4 text-sm mb-4">
           <div>
             <dt className="text-gray-500 mb-1">プラン</dt>
-            <dd className="font-mono">{view.current.plan_key}</dd>
+            <dd>{adminPlanKeyLabel(view.current.plan_key)}</dd>
           </div>
           <div>
             <dt className="text-gray-500 mb-1">由来</dt>
@@ -233,9 +325,22 @@ export function ManualPlanGrantSection({ userId }: { userId: string }) {
         </p>
       )}
       {error !== null && (
-        <p data-testid="manual-plan-grant-error" role="alert" className="mt-4 text-sm text-red-600">
-          {error}
-        </p>
+        <div className="mt-4 flex items-start justify-between gap-4">
+          <p data-testid="manual-plan-grant-error" role="alert" className="text-sm text-red-600">
+            {error}
+          </p>
+          {pendingReread !== null && (
+            <button
+              type="button"
+              data-testid="manual-plan-grant-retry"
+              onClick={() => void handleRetryReread()}
+              disabled={submitting}
+              className="shrink-0 text-sm text-red-600 underline whitespace-nowrap hover:text-red-800 disabled:opacity-50"
+            >
+              再試行
+            </button>
+          )}
+        </div>
       )}
       {view !== null && view.history.length > 0 && (
         <div data-testid="manual-plan-grant-history" className="mt-6 space-y-2 text-sm">
@@ -246,7 +351,7 @@ export function ManualPlanGrantSection({ userId }: { userId: string }) {
                 {MANUAL_GRANT_HISTORY_LABELS[entry.action_type]}
               </span>
               <div className="flex-1 min-w-0">
-                <span className="font-mono text-gray-700">{entry.plan_key ?? '-'}</span>
+                <span className="text-gray-700">{entry.plan_key ? adminPlanKeyLabel(entry.plan_key) : '-'}</span>
                 {entry.expires_at !== null && <span className="ml-2 text-xs text-gray-500">期限: {formatDateTime(entry.expires_at)}</span>}
                 {entry.reason !== null && <p className="text-xs text-gray-600 break-words">{entry.reason}</p>}
               </div>

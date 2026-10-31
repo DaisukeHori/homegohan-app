@@ -32,6 +32,7 @@ import {
   type BackupStatusResponse,
 } from '@/lib/backups/core';
 import { invalidInputBody, invalidJsonBodyBody } from '@/lib/super-admin/validation-errors';
+import { ADMIN_AUDIT_SEVERITY_LABELS } from '@/lib/admin/audit-severity-labels';
 
 const { default: SuperAdminBackupsPage } = await import('@/app/super-admin/backups/page');
 
@@ -208,7 +209,8 @@ describe('/super-admin/backups (バックアップ・DR)', () => {
     await render();
     const backups = byTestId('backups-list')?.textContent ?? '';
     expect(backups).toContain(backupAuditAction('daily', 'failed'));
-    expect(backups).toContain('warn');
+    // 重要度は表示名 (warn → 警告) で出す (#2112 Z3)
+    expect(backups).toContain(ADMIN_AUDIT_SEVERITY_LABELS.warn);
     expect(backups).toContain('upload / upload_failed');
     expect(backups).toContain('"reason": "upload_failed"');
     const drTests = byTestId('dr-tests-list')?.textContent ?? '';

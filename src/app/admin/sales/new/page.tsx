@@ -4,18 +4,45 @@
  * 新規 Lead 起票画面
  * operator/03-ui-spec.md §17 準拠
  * 権限: sales, admin, super_admin
+ * 流入経路の選択肢は src/lib/admin/sales-schemas.ts の値の一覧と表示名から作る (詳細と同じ語。#2112 Z3)
  */
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRef, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { loginPathWithNext } from '@/lib/auth/signed-in-user';
 import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
-import Link from 'next/link';
+import {
+  AdminActionNoResponseError,
+  adminActionErrorOfResponse,
+  adminCreateUnconfirmedMessage,
+  adminCreatedButNotOpenedMessage,
+  createdIdOfBody,
+  displayableAdminError,
+  sendAdminAction,
+} from '@/lib/admin/admin-screen-messages';
 
-type LeadSource = 'website' | 'referral' | 'event' | 'cold_call' | 'other';
+/** 失敗の文の操作の名前 (「リードの作成に失敗しました (HTTP 502)」。#2086 V6) */
+const LEAD_CREATE_ACTION = 'リードの作成';
+/** 作成したものの名前 (「リードは作成されましたが、…」。#2093 W1) */
+const LEAD_SUBJECT = 'リード';
+/** 作成の応答を受け取れなかったときに確かめさせる一覧 (#2093 W1) */
+const LEAD_LIST_HREF = '/admin/sales';
+import Link from 'next/link';
+import { LEAD_SOURCES, LEAD_SOURCE_LABELS, type LeadSource } from '@/lib/admin/sales-schemas';
+
 
 export default function NewLeadPage() {
   const router = useRouter();
+  // ログインが切れた (401) ときに、ログインし直したあとこの画面へ戻れるよう next に付けるパス (#2101 X5)
+  const pathname = usePathname();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 作成の応答を受け取れなかった (済んだか分からない)・作成できたが開けなかったときの文 (#2093 W1)。
+  // sales_leads には一意の制約が無く、押し直すとリードが 2 件できるので、これがあるあいだは送信を止め、一覧で確かめさせる
+  const [unconfirmed, setUnconfirmed] = useState<string | null>(null);
+  // 送信中・作成済み・済んだか分からないあいだは true (再描画の前に続けて押されたときも送らない守り。#2093 W1)
+  const submitLockedRef = useRef(false);
+  // 作成できて、作成したリードへ移るのを待っているあいだ (ボタンを止めたままにする。#2093 W1)
+  const [isOpeningCreated, setIsOpeningCreated] = useState(false);
 
   const [formData, setFormData] = useState({
     company_name: '',
@@ -31,6 +58,7 @@ export default function NewLeadPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitLockedRef.current) return;
     setError(null);
 
     if (!formData.company_name.trim()) {
@@ -38,6 +66,9 @@ export default function NewLeadPage() {
       return;
     }
 
+    submitLockedRef.current = true;
+    // 作成が済んだ・済んだか分からないときは、送信を止めたままにする (押し直しで二重に作らない。#2093 W1)
+    let keepLocked = false;
     setIsSubmitting(true);
     try {
       const payload: Record<string, unknown> = {
@@ -52,25 +83,48 @@ export default function NewLeadPage() {
       if (formData.estimated_acv) payload.estimated_acv = parseInt(formData.estimated_acv, 10);
       if (formData.notes) payload.notes = formData.notes;
 
-      const res = await fetch('/api/admin/sales/leads', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      // 通信そのものの失敗は AdminActionNoResponseError (ブラウザの英字の例外の文を出さない。#2086 V6)
+      const res = await sendAdminAction(
+        '/api/admin/sales/leads',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        },
+        LEAD_CREATE_ACTION,
+      );
 
-      if (res.status === 401) { router.push('/login'); return; }
+      if (res.status === 401) { router.push(loginPathWithNext(pathname)); return; }
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
       if (res.status === 403) { setError(await forbiddenMessageOfResponse(res)); return; }
       if (!res.ok) {
-        const json = await res.json();
-        throw new Error(json.error?.message ?? 'リード作成に失敗しました');
+        // 本文は JSON でないこともある (プロキシの 502 の HTML など) ので読み失敗で例外にしない (#2086 V6)。
+        // 本文に API の文の無い 502 / 503 / 504 は応答を受け取れなかったもの (AdminActionNoResponseError。#2093 W1)
+        throw await adminActionErrorOfResponse(res, LEAD_CREATE_ACTION);
       }
 
-      const json = await res.json();
-      router.push(`/admin/sales/${json.data.id}`);
+      // 作成は済んでいる。画面が移るまで押し直させない (#2093 W1)
+      keepLocked = true;
+      const json: unknown = await res.json().catch(() => null);
+      const createdId = createdIdOfBody(json);
+      if (createdId === null) {
+        // 作成したリードを開けない (本文が読めない)。押し直すと二重になるので、一覧で確かめさせる (#2093 W1)
+        setUnconfirmed(adminCreatedButNotOpenedMessage(LEAD_SUBJECT));
+        return;
+      }
+      setIsOpeningCreated(true);
+      router.push(`/admin/sales/${createdId}`);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '不明なエラー');
+      if (e instanceof AdminActionNoResponseError) {
+        // サーバーで作成が済んでから応答が切れたこともある。読み直しで同じものかを決める鍵が無いので、送信を止めて一覧で確かめさせる (#2093 W1)
+        keepLocked = true;
+        setUnconfirmed(adminCreateUnconfirmedMessage(e.message));
+      } else {
+        // 画面に出すのは日本語の文だけ (JSON でない本文の SyntaxError などの英字の文は出さない。#2086 V6)
+        setError(displayableAdminError(e, `${LEAD_CREATE_ACTION}に失敗しました`));
+      }
     } finally {
+      submitLockedRef.current = keepLocked;
       setIsSubmitting(false);
     }
   };
@@ -90,6 +144,14 @@ export default function NewLeadPage() {
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4 text-sm">
               {error}
+            </div>
+          )}
+          {unconfirmed && (
+            <div role="alert" className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded mb-4 text-sm">
+              <p>{unconfirmed}</p>
+              <Link href={LEAD_LIST_HREF} className="mt-2 inline-block text-blue-600 hover:underline">
+                リード一覧で確かめる
+              </Link>
             </div>
           )}
 
@@ -197,11 +259,11 @@ export default function NewLeadPage() {
                   onChange={(e) => setFormData((f) => ({ ...f, source: e.target.value as LeadSource }))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="website">ウェブサイト</option>
-                  <option value="referral">紹介</option>
-                  <option value="event">イベント</option>
-                  <option value="cold_call">コールドコール</option>
-                  <option value="other">その他</option>
+                  {LEAD_SOURCES.map((source) => (
+                    <option key={source} value={source}>
+                      {LEAD_SOURCE_LABELS[source]}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
@@ -245,10 +307,10 @@ export default function NewLeadPage() {
               </Link>
               <button
                 type="submit"
-                disabled={isSubmitting}
+                disabled={isSubmitting || isOpeningCreated || unconfirmed !== null}
                 className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                {isSubmitting ? '登録中...' : 'リードを登録'}
+                {isSubmitting || isOpeningCreated ? '登録中...' : 'リードを登録'}
               </button>
             </div>
           </form>

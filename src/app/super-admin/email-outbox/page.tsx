@@ -27,7 +27,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { forbiddenMessageForScreen } from '@/lib/admin/api-error-message';
+import { UNAUTHENTICATED_SCREEN_MESSAGE, forbiddenMessageForScreen } from '@/lib/admin/api-error-message';
+import { SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
+import { rereadUnavailableMessage } from '@/lib/super-admin/detail-reread';
 import {
   NO_RESPONSE_LIST_RELOADED_GUIDE,
   NO_RESPONSE_LIST_RELOAD_FAILED_GUIDE,
@@ -143,8 +145,10 @@ interface ApiErrorBody {
  * ただし 403 の本文の文が理由の文 (二段階認証の確認が要る・凍結) なら、その文を出す (forbiddenMessageForScreen。#1917)
  */
 function describeFailure(status: number, body: ApiErrorBody | null): string {
-  if (status === 401) return 'ログインの有効期限が切れています。ログインし直してください';
-  if (status === 403) return forbiddenMessageForScreen(body, 'この画面を見る権限がありません (super_admin のみ)');
+  // 401 は運営の画面で揃えた「ログインし直してください」(#2112 Z4)
+  if (status === 401) return UNAUTHENTICATED_SCREEN_MESSAGE;
+  // ロールは表示名で出す (#2128 V1-2)
+  if (status === 403) return forbiddenMessageForScreen(body, `この画面を見る権限がありません (${SUPER_ADMIN_ONLY_NOTE})`);
   return body?.error?.message ?? `読み込みに失敗しました (HTTP ${status})`;
 }
 
@@ -152,24 +156,37 @@ function describeFailure(status: number, body: ApiErrorBody | null): string {
  * 再送の結果の知らせ。
  *   - success / error: 応答を受け取れたときの結果
  *   - no-response    : 再送の通信が reject されたあとに一覧を読み直した (#2073)。template は押した行の文面の名前。
- *                      reloaded は一覧を読み直せたか (false なら「再試行」を出し、読み直せるまで「再送」を止める)
+ *                      reload は一覧の読み直しの結果 (RereadOutcome)
  */
 type Notice =
   | { kind: 'success' | 'error'; text: string }
-  | { kind: 'no-response'; template: string; reloaded: boolean }
+  | { kind: 'no-response'; template: string; reload: RereadOutcome }
   | null;
 
-function noResponseNoticeText(notice: { template: string; reloaded: boolean }): string {
-  return statusChangeNoResponseMessage(
-    `「${notice.template}」の再送`,
-    notice.reloaded ? NO_RESPONSE_LIST_RELOADED_GUIDE : NO_RESPONSE_LIST_RELOAD_FAILED_GUIDE,
-  );
+/**
+ * 再送の通信が reject されたあとの一覧の読み直しの結果 (#2073・#2101 X4)。
+ *   - loaded     : 読み直せた
+ *   - failed     : 読み直せなかった (500・通信の reject・本文が読めない)。「再試行」を出し、読み直せるまで「再送」を止める
+ *   - unavailable: 401 / 403 で断られた。読み込み直しても変わらないので、理由の文 (message) を出し、「再試行」は出さず、止めない
+ *                  (機能フラグの一覧の読み直しと同じ。#2093 W6)
+ */
+type RereadOutcome = { kind: 'loaded' } | { kind: 'failed' } | { kind: 'unavailable'; message: string };
+
+function noResponseNoticeText(notice: { template: string; reload: RereadOutcome }): string {
+  const guide =
+    notice.reload.kind === 'loaded'
+      ? NO_RESPONSE_LIST_RELOADED_GUIDE
+      : notice.reload.kind === 'failed'
+        ? NO_RESPONSE_LIST_RELOAD_FAILED_GUIDE
+        : notice.reload.message;
+  return statusChangeNoResponseMessage(`「${notice.template}」の再送`, guide);
 }
 
 /**
- * 一覧の読み込みの結果。superseded は、あとから出した読み込みに追い越された (画面はその読み込みが進める)
+ * 一覧の読み込みの結果。superseded は、あとから出した読み込みに追い越された (画面はその読み込みが進める)。
+ * unavailable は読み直し (reread) が 401 / 403 で断られた (読み込み直しても変わらない理由の文つき。#2101 X4)
  */
-type LoadOutcome = { kind: 'loaded' } | { kind: 'failed' } | { kind: 'superseded' };
+type LoadOutcome = RereadOutcome | { kind: 'superseded' };
 
 /**
  * 一覧の読み込みの出し方。reread は、再送の通信が reject されたあとの読み直し (#2073):
@@ -235,7 +252,9 @@ export default function EmailOutboxPage() {
         if (!res.ok || !body?.data || !body.meta) {
           if (!reread) setError(describeFailure(res.status, body));
           changeStatus('idle');
-          return { kind: 'failed' };
+          // 読み直しが 401 / 403 なら、読み込み直しても変わらない理由を返す (一覧の 404 は行の消えたことを意味しないので failed。#2101 X4)
+          const unavailableMessage = reread && !res.ok ? rereadUnavailableMessage(res.status, body, null) : null;
+          return unavailableMessage === null ? { kind: 'failed' } : { kind: 'unavailable', message: unavailableMessage };
         }
         const rows = body.data;
         setItems((prev) => (cursor ? [...prev, ...rows] : rows));
@@ -282,8 +301,10 @@ export default function EmailOutboxPage() {
   const rereadAfterNoResponse = async (template: string) => {
     const outcome = await load(appliedRef.current, null, { reread: true });
     if (outcome.kind === 'superseded') return;
-    if (outcome.kind === 'failed') markListStale(true);
-    setNotice({ kind: 'no-response', template, reloaded: outcome.kind === 'loaded' });
+    // 読み直せなかった (failed) ときだけ、読み直せるまで「再送」を止める。401 / 403 (unavailable) は読み込み直しても
+    // 変わらないので止めない (機能フラグの一覧と同じ。#2093 W6・#2101 X4)。読み直せた (loaded) ときは load が外している
+    markListStale(outcome.kind === 'failed');
+    setNotice({ kind: 'no-response', template, reload: outcome });
   };
 
   /**
@@ -451,8 +472,8 @@ export default function EmailOutboxPage() {
           data-testid="email-outbox-reload-notice"
           className="flex items-start justify-between gap-4 bg-amber-50 border border-amber-300 text-amber-900 px-4 py-3 rounded-lg mb-4 text-sm"
         >
-          <p role={notice.reloaded ? 'status' : 'alert'}>{noResponseNoticeText(notice)}</p>
-          {!notice.reloaded && (
+          <p role={notice.reload.kind === 'loaded' ? 'status' : 'alert'}>{noResponseNoticeText(notice)}</p>
+          {notice.reload.kind === 'failed' && (
             <button
               type="button"
               onClick={() => retryReread(notice.template)}

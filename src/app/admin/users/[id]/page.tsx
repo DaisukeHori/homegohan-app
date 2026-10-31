@@ -3,6 +3,13 @@
  * operator/03-ui-spec.md §6 準拠
  *
  * DB 直叩きを廃止し GET /api/admin/users/{id} 経由に統一。
+ *
+ * #2093 W3: 「無い」(notFound()) にするのは API の 404 だけ。それ以外の失敗 (500 / 503 / 403・通信の失敗・壊れた応答) は
+ * 「ユーザーを読み込めませんでした」と「再読み込み」を出す (以前は 404 以外の失敗も notFound() にして、利用者が消えたように見せていた)。
+ *
+ * #2112 Z3: プラン・契約の状態・監査ログの重要度は、英字の内部の値 (free・past_due・warn など) をやめ、表示名の表
+ * (src/lib/admin/plan-key-labels.ts・subscription-status-labels.ts・audit-severity-labels.ts) を通して出す。表に無い値はそのまま出す。
+ * 監査ログの操作 (action_type) は識別子として code の字体のまま出す。
  */
 
 export const dynamic = 'force-dynamic';
@@ -13,12 +20,19 @@ import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
 import { canViewUserEmail } from '@/lib/admin/user-emails';
 import { normalizeProfileName } from '@/lib/profile-name';
+import { adminPlanKeyLabel } from '@/lib/admin/plan-key-labels';
+import { operatorRoleLabel } from '@/lib/admin/operator-role-labels';
+import { adminSubscriptionStatusLabel } from '@/lib/admin/subscription-status-labels';
+import { adminAuditSeverityLabel } from '@/lib/admin/audit-severity-labels';
 import { isMfaRequiredRoleSet } from '@/lib/auth/mfa/policy';
 import { OperatorMfaResetSection } from '@/components/admin/OperatorMfaResetSection';
 import { ManualPlanGrantSection } from '@/components/admin/ManualPlanGrantSection';
 import { z } from 'zod';
 import { LoginHistoryResponseSchema, type LoginHistoryEntry } from '@/lib/auth/sessions/schemas';
 import { LOGIN_HISTORY_PAGE_SIZE } from '@/lib/auth/sessions/constants';
+import { loadAdminUserDetail } from '@/lib/admin/user-detail-load';
+import { USER_DETAIL_LOAD_FAILED_MESSAGE } from '@/lib/admin/users-load-failure';
+import ModerationLoadFailure from '@/components/operator/moderation/ModerationLoadFailure';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -54,10 +68,6 @@ interface UserDetailProfile {
   ban_history: AuditLog[];
 }
 
-interface UserDetailApiResponse {
-  data: UserDetailProfile;
-}
-
 /**
  * ログイン履歴の節 (#1720 段 D。docs/design/cross/16-auth-history-sessions.md §17)。
  * API (GET /api/admin/users/{id}/login-history §14.9) を呼べるのは admin / super_admin だけ (support には節を出さず、呼びもしない)。
@@ -76,6 +86,9 @@ const ENDED_REASON_LABEL: Record<NonNullable<LoginHistoryEntry['ended_reason']>,
   revoked_by_user: '本人が端末の一覧から解除',
   idle_expired: '使われずに期限切れ',
 };
+
+/** パンくずに出す、ユーザーの ID の先頭の文字数 (名前が無いときと、読み込めなかったとき) */
+const USER_ID_PREFIX_LENGTH = 8;
 
 type LoginHistoryLoad = { ok: true; entries: LoginHistoryEntry[] } | { ok: false };
 
@@ -166,17 +179,26 @@ export default async function AdminUserDetailPage(props: PageProps) {
   // 未認証 → /login?next=・2FA 未完了 → MFA の画面・ロール不足 / 凍結 → /login (#1176。docs/design/cross/12-operator-mfa.md §13.4.2)
   const actor = await requireRoleForPage(['admin', 'super_admin', 'support'], { next: `/admin/users/${encodeURIComponent(id)}` });
 
-  // GET /api/admin/users/{id} 経由でデータ取得
-  const res = await adminFetch(`/api/admin/users/${id}`);
-  if (res.status === 404) {
-    notFound();
+  // GET /api/admin/users/{id} 経由でデータ取得。404 だけを「無い」にする (#2093 W3)
+  const load = await loadAdminUserDetail<UserDetailProfile>(id, 'admin/users detail page');
+  if (load.kind !== 'ok') {
+    if (load.kind === 'notFound') notFound();
+    // 読み込みの失敗: 一覧へ戻る道と、失敗の文と「再読み込み」だけを出す (読めていない値・続きの節は描かない)
+    return (
+      <div className="max-w-4xl">
+        <nav className="mb-4 text-sm text-gray-500">
+          <Link href="/admin/users" className="hover:text-orange-500 transition-colors">
+            ユーザー管理
+          </Link>
+          {' / '}
+          <span className="text-gray-900">{id.slice(0, USER_ID_PREFIX_LENGTH)}</span>
+        </nav>
+        <h1 className="text-2xl font-bold text-gray-900 mb-6">ユーザー詳細</h1>
+        <ModerationLoadFailure message={USER_DETAIL_LOAD_FAILED_MESSAGE} />
+      </div>
+    );
   }
-  if (!res.ok) {
-    notFound();
-  }
-
-  const json = (await res.json()) as UserDetailApiResponse;
-  const profile = json.data;
+  const profile = load.profile;
 
   const activeSubscription = profile.active_subscription;
   // 監査ログ (super_admin のみ: ban_history を使用)
@@ -205,7 +227,7 @@ export default async function AdminUserDetailPage(props: PageProps) {
           ユーザー管理
         </Link>
         {' / '}
-        <span className="text-gray-900">{normalizeProfileName(profile.nickname) ?? profile.id.slice(0, 8)}</span>
+        <span className="text-gray-900">{normalizeProfileName(profile.nickname) ?? profile.id.slice(0, USER_ID_PREFIX_LENGTH)}</span>
       </nav>
 
       <h1 className="text-2xl font-bold text-gray-900 mb-6">
@@ -233,8 +255,8 @@ export default async function AdminUserDetailPage(props: PageProps) {
           <div>
             <dt className="text-gray-500 mb-1">プラン</dt>
             <dd>
-              <span className="inline-block bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded font-mono">
-                {profile.plan_key ?? 'free'}
+              <span className="inline-block bg-blue-50 text-blue-700 text-xs px-2 py-0.5 rounded">
+                {adminPlanKeyLabel(profile.plan_key)}
               </span>
             </dd>
           </div>
@@ -244,9 +266,10 @@ export default async function AdminUserDetailPage(props: PageProps) {
               {(Array.isArray(profile.roles) ? profile.roles : ['user']).map((role: string) => (
                 <span
                   key={role}
-                  className="inline-block bg-gray-100 text-gray-600 text-xs px-1.5 py-0.5 rounded font-mono"
+                  title={role}
+                  className="inline-block bg-gray-100 text-gray-600 text-xs px-1.5 py-0.5 rounded"
                 >
-                  {role}
+                  {operatorRoleLabel(role)}
                 </span>
               ))}
             </dd>
@@ -327,11 +350,11 @@ export default async function AdminUserDetailPage(props: PageProps) {
           <dl className="grid grid-cols-3 gap-4 text-sm">
             <div>
               <dt className="text-gray-500 mb-1">プラン</dt>
-              <dd className="font-mono">{activeSubscription.plan_key}</dd>
+              <dd>{adminPlanKeyLabel(activeSubscription.plan_key)}</dd>
             </div>
             <div>
               <dt className="text-gray-500 mb-1">ステータス</dt>
-              <dd>{activeSubscription.status}</dd>
+              <dd>{adminSubscriptionStatusLabel(activeSubscription.status)}</dd>
             </div>
             <div>
               <dt className="text-gray-500 mb-1">次回更新</dt>
@@ -366,7 +389,7 @@ export default async function AdminUserDetailPage(props: PageProps) {
                         : 'bg-gray-100 text-gray-600'
                   }`}
                 >
-                  {log.severity}
+                  {adminAuditSeverityLabel(log.severity)}
                 </span>
                 <div className="flex-1 min-w-0">
                   <span className="font-mono text-gray-700">{log.action_type}</span>

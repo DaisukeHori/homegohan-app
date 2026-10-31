@@ -8,13 +8,14 @@
  * 選択肢・ラベル・上限・パス・型・400 の文の読み方は src/lib/backups/core.ts から import する (page に書き写さない)。
  */
 
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   BACKUP_TIERS,
   BACKUP_TIER_LABELS,
   DR_TEST_BACKUP_KEY_MAX_LENGTH,
   DR_TEST_ENVIRONMENTS,
   DR_TEST_ENVIRONMENT_LABELS,
+  DR_TEST_FIELDS,
   DR_TEST_KINDS,
   DR_TEST_KIND_LABELS,
   DR_TEST_NOTES_MAX_LENGTH,
@@ -35,8 +36,17 @@ import {
   type DrTestResult,
   type DrTestSmokeResult,
 } from '@/lib/backups/core';
-import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
+import { UNAUTHENTICATED_SCREEN_MESSAGE, forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
+import { AdminActionNoResponseError, adminActionErrorOfResponse } from '@/lib/admin/admin-screen-messages';
+import {
+  adminCreateFoundGuide,
+  adminCreateNoResponseMessage,
+  adminCreateNotFoundGuide,
+  adminCreateStoppedMessage,
+  confirmCreatedRow,
+} from '@/lib/admin/admin-create-no-response';
 import { formatJstDateTime } from '@/lib/admin/format-datetime';
+import { adminAuditSeverityLabel } from '@/lib/admin/audit-severity-labels';
 import { jstToday } from '@/lib/jst-day-ranges';
 
 // ── 定数 ──────────────────────────────────────────────────────────────────
@@ -44,6 +54,7 @@ import { jstToday } from '@/lib/jst-day-ranges';
 const HTTP_OK = 200;
 const HTTP_CREATED = 201;
 const HTTP_BAD_REQUEST = 400;
+const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
 
 /** 大きさの表示の単位 (1 MiB = 1024 × 1024 バイト) */
@@ -64,10 +75,20 @@ const FRESHNESS_TIER = BACKUP_TIERS[0];
 
 const NO_RECORD_TEXT = '記録なし';
 const LOAD_FAILED_TEXT = 'バックアップの状態を読み込めませんでした。時間をおいてもう一度開いてください';
+/**
+ * 401 / 403 の理由の文を「DR 訓練を記録」の欄 (form の上の文・送信を止めた文) に出しているあいだに、読み込みの欄が失敗の状態なら
+ * 出す文 (#2112 Z4。loadAreaMessage)。読み込みの欄に同じ理由をもう一度出さず (理由を出すのは 1 か所だけ)、時間をおけば読めうる文
+ * (LOAD_FAILED_TEXT) も出さない (ログインが切れた・権限が無いのは、時間をおいて開き直しても変わらない)
+ */
+const LOAD_FAILED_REASON_IN_FORM_TEXT = 'バックアップの状態を読み込めませんでした（理由は「DR 訓練を記録」の欄に出しています）';
 const LOAD_FORBIDDEN_TEXT = 'この画面を見る権限がありません';
 const SUBMIT_FORBIDDEN_TEXT = '記録する権限がありません';
 const SUBMIT_FAILED_TEXT = '記録できませんでした。時間をおいてもう一度送ってください';
 const SUBMIT_SUCCEEDED_TEXT = '記録しました';
+/** 応答を受け取れなかったときの文の操作の名前 (「DR 訓練の記録の応答を受け取れませんでした（通信エラー）」。#2101 X2) */
+const DR_TEST_RECORD_ACTION = 'DR 訓練の記録';
+/** 読み直したときの文の対象の名前 (「読み込み直したところ、DR 訓練の記録は保存されていました」。#2101 X2) */
+const DR_TEST_RECORD_SUBJECT = 'DR 訓練の記録';
 
 // ── form ──────────────────────────────────────────────────────────────────
 
@@ -81,6 +102,18 @@ interface DrTestFormState {
   rto_minutes: string;
   smoke: DrTestSmokeResult;
   notes: string;
+}
+
+/**
+ * 入力が、送ったときの入力のままか (いまの入力から作る本文 (toRequestBody) が、送った本文と項目ごとに同じ)。記録の応答を受け取れなかったあとの
+ * 読み直しで済んでいたと分かったとき・記録の応答が届いたとき、送ったときの入力のままなら初めに戻し、送信を止めているあいだに書き換えていれば残す (#2107 Y7)。
+ * 送る本文では R2 のキー・復元した時点・復旧にかかった分の前後の空白を除くので、その前後の空白だけの違いは、押し直すと同じ記録がもう 1 行できる入力であり、
+ * 書き換えと見なさない。メモは入力のまま送って保存するので、前後の空白の違いも書き換えとして残す (保存される値で比べる。問い合わせの返信・お知らせと同じ規則。#2128 V2)
+ */
+function isSameDrTestForm(current: DrTestFormState, sent: DrTestFormState): boolean {
+  const currentBody = toRequestBody(current);
+  const sentBody = toRequestBody(sent);
+  return DR_TEST_FIELDS.every((field) => currentBody[field] === sentBody[field]);
 }
 
 function initialFormState(): DrTestFormState {
@@ -146,6 +179,37 @@ const FIELD_LABELS: Readonly<Record<DrTestField, string>> = {
   notes: 'メモ (成功以外は理由)',
 };
 
+/**
+ * 記録の応答を受け取れなかった (サーバーで済んだか分からない) 訓練の記録 (#2101 X2)。これがあるあいだは送信を止める。
+ *   - knownIds: 送る前に画面が持っていた訓練の記録の行の id (読めていなければ null)
+ *   - retryable: 「確かめ直す」で読み直せば決まりうるか (読み直しの失敗 (401 / 403 を除く)、読み直した記録に送った記録がまだ無い (サーバーが書き込みの途中かもしれない))。
+ *     比べる元が無くて決められない (ambiguous) とき・読み直しが 401 / 403 で断られた (読み込み直しても変わらない。integrity-1030c) ときは false
+ */
+interface UnconfirmedDrTest {
+  readonly body: Readonly<Record<DrTestField, unknown>>;
+  /** 送ったときの入力 (済んでいたと分かったとき、入力がこのままなら初めに戻す。#2107 Y7) */
+  readonly sentForm: Readonly<DrTestFormState>;
+  readonly knownIds: ReadonlySet<string> | null;
+  readonly summary: string;
+  readonly message: string;
+  readonly retryable: boolean;
+}
+
+/**
+ * 読み直した訓練の記録の行が、送った本文と同じ内容か。
+ * route は検証した本文をそのまま details に書く (recordAdminAudit の details)。値は文字・数・null だけなので、項目ごとに === で比べる
+ */
+function isSameDrTest(row: BackupAuditRow, body: Readonly<Record<DrTestField, unknown>>): boolean {
+  return DR_TEST_FIELDS.every((field) => row.details?.[field] === body[field]);
+}
+
+/** 状態の応答の形か (data に訓練の記録の一覧がある)。中の行の形は API (backupAuditRowSchema) が確かめて返す */
+function isBackupStatusResponse(json: unknown): json is BackupStatusResponse {
+  if (typeof json !== 'object' || json === null) return false;
+  const data = (json as { data?: unknown }).data;
+  return typeof data === 'object' && data !== null && Array.isArray((data as { dr_tests?: unknown }).dr_tests);
+}
+
 // ── details の読み取り (中身を見ない record から、表示する値だけを型で確かめて読む) ──
 
 type Details = BackupAuditRow['details'];
@@ -195,29 +259,90 @@ type LoadState =
   | { status: 'loaded'; data: BackupStatusResponse['data'] }
   | { status: 'error'; message: string };
 
+/**
+ * 状態の読み込み (reload) の結果 (#2101 integrity-1030c。src/app/admin/sales/[id]/page.tsx の LeadLoadResult と同じ分け方):
+ *   - loaded      : 読めた (data)
+ *   - unauthorized: 401 (ログインが切れた)。message は「ログインし直してください」
+ *   - forbidden   : 403 (権限が外れた・二段階認証の確認が要る など)。message は本文の理由の文か、この画面の固定の文
+ *   - load-failed : ほかの失敗 (500・本文の無い 502・通信の reject・形の違う本文)。読み込み直せば変わりうる
+ * unauthorized / forbidden は読み込み直しても変わらないので、記録の応答を受け取れなかったあとの読み直しでは「確かめ直す」を出さない
+ */
+type BackupsLoadResult =
+  | { outcome: 'loaded'; data: BackupStatusResponse['data'] }
+  | { outcome: 'unauthorized' | 'forbidden'; message: string }
+  | { outcome: 'load-failed' };
+
+/**
+ * 401 / 403 の理由の文をどこに出すか (#2112 Z4。同じ理由を読み込みの欄と送信を止めた文の 2 か所に出さない):
+ *   - load-area: 読み込みの欄 (backups-load-error) に出す (初めの読み込み・記録したあとの読み込み直し)
+ *   - caller   : 読み込みの状態は変えず、呼び出し側が出す (記録の応答を受け取れなかったあとの読み直し。送信を止めた文に添える)。
+ *                読み込みの欄に前の読み込みの失敗の文が出ていれば、loadAreaMessage が出し分ける
+ */
+type UnavailableReasonPlacement = 'load-area' | 'caller';
+
+/**
+ * 読み込みの欄 (backups-load-error) に出す文 (#2112 Z4)。
+ * 401 / 403 の理由の文を「DR 訓練を記録」の欄に出しているあいだ (reasonInForm) は、読み込みの失敗の文 (前の読み込みの
+ * 「時間をおいてもう一度開いてください」(LOAD_FAILED_TEXT)・401 / 403 の理由の文) の代わりに LOAD_FAILED_REASON_IN_FORM_TEXT を出す
+ * (理由と食い違う案内も、同じ理由の 2 か所目も出さない)。読み込みの状態そのものは書き換えないので、理由を出さなくなれば元の文に戻る
+ */
+function loadAreaMessage(load: Extract<LoadState, { status: 'error' }>, reasonInForm: boolean): string {
+  return reasonInForm ? LOAD_FAILED_REASON_IN_FORM_TEXT : load.message;
+}
+
 export default function SuperAdminBackupsPage() {
   const [load, setLoad] = useState<LoadState>({ status: 'loading' });
   const [form, setForm] = useState<DrTestFormState>(initialFormState);
   const [errors, setErrors] = useState<DrTestFieldErrors>(EMPTY_ERRORS);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  // 記録の応答を受け取れなかったあと、読み直しで記録できていたと確かめたときの文 (#2101 X2)
+  const [confirmedNotice, setConfirmedNotice] = useState<string | null>(null);
+  // 記録の応答を受け取れなかった (済んだか分からない) 訓練の記録 (#2101 X2)。押し直すと監査ログに 2 行入るので、これがあるあいだは送信を止める。
+  // ref は再描画の前に続けて押されたときの守り
+  const [unconfirmed, setUnconfirmed] = useState<UnconfirmedDrTest | null>(null);
+  const unconfirmedRef = useRef<UnconfirmedDrTest | null>(null);
+  // 送信と、そのあとの読み直しを待っているあいだは true (再描画の前に続けて押されたときも送らない守り。#2101 X2)
+  const submitLockedRef = useRef(false);
+  // 401 / 403 の理由の文を「DR 訓練を記録」の欄 (form の上の文・送信を止めた文) に出しているか (#2112 Z4)。
+  // 出しているあいだは、読み込みの欄に理由を重ねて出さない (loadAreaMessage)。送るたびに false に戻す
+  const [reasonInForm, setReasonInForm] = useState(false);
 
-  const reload = useCallback(async () => {
+  /**
+   * 状態を読み、画面に出す。結果を 401 / 403 / ほかの失敗に分けて返す
+   * (記録の応答を受け取れなかったあとの読み直しで、読めた data と比べ、401 / 403 なら「確かめ直す」を出さない。#2101 X2・integrity-1030c)。
+   * 401 / 403 の理由の文は reasonPlacement の場所に出す (#2112 Z4)
+   */
+  const reload = useCallback(async (reasonPlacement: UnavailableReasonPlacement = 'load-area'): Promise<BackupsLoadResult> => {
     try {
       const res = await fetch(SUPER_ADMIN_BACKUPS_API_PATH);
+      if (res.status === HTTP_UNAUTHORIZED) {
+        // 401 は読み込み直しても変わらない。時間をおいて開き直す文ではなく、ログインし直す文を出す (#2101 integrity-1030c)。
+        // caller なら理由は呼び出し側が出し、読み込みの欄には出さない (#2112 Z4)
+        if (reasonPlacement === 'load-area') setLoad({ status: 'error', message: UNAUTHENTICATED_SCREEN_MESSAGE });
+        return { outcome: 'unauthorized', message: UNAUTHENTICATED_SCREEN_MESSAGE };
+      }
       if (res.status === HTTP_FORBIDDEN) {
-        // 403 は本文の理由の文 (二段階認証の確認が要る など) があればそちらを出す (#1917)
-        setLoad({ status: 'error', message: await forbiddenMessageOfResponse(res, LOAD_FORBIDDEN_TEXT) });
-        return;
+        // 403 は本文の理由の文 (二段階認証の確認が要る など) があればそちらを出す (#1917)。caller の扱いは 401 と同じ (#2112 Z4)
+        const message = await forbiddenMessageOfResponse(res, LOAD_FORBIDDEN_TEXT);
+        if (reasonPlacement === 'load-area') setLoad({ status: 'error', message });
+        return { outcome: 'forbidden', message };
       }
       if (res.status !== HTTP_OK) {
         setLoad({ status: 'error', message: LOAD_FAILED_TEXT });
-        return;
+        return { outcome: 'load-failed' };
       }
-      const json: BackupStatusResponse = await res.json();
+      const json: unknown = await res.json();
+      // 訓練の記録の一覧の無い形を読めたとは扱わない (読み直しで「記録されていない」と誤って決めない。#2101 X2)
+      if (!isBackupStatusResponse(json)) {
+        setLoad({ status: 'error', message: LOAD_FAILED_TEXT });
+        return { outcome: 'load-failed' };
+      }
       setLoad({ status: 'loaded', data: json.data });
+      return { outcome: 'loaded', data: json.data };
     } catch {
       setLoad({ status: 'error', message: LOAD_FAILED_TEXT });
+      return { outcome: 'load-failed' };
     }
   }, []);
 
@@ -229,20 +354,87 @@ export default function SuperAdminBackupsPage() {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
+  const markUnconfirmed = (pending: UnconfirmedDrTest | null) => {
+    unconfirmedRef.current = pending;
+    setUnconfirmed(pending);
+  };
+
+  /**
+   * 記録の応答を受け取れなかったあと、状態を読み直して送った記録ができていたかを確かめる (#2101 X2)。
+   * できていれば済んだとして、入力が送ったときのままなら初めに戻し (書き換えていれば残す。#2107 Y7)、送信の止めを外す。
+   * まだ無い (サーバーが書き込みの途中かもしれない)・読み直しにも失敗した・前からあった行か決められないときは、送信を止めたままにする
+   * (押し直すと監査ログに 2 行入りうる。押し直すのは、記録の一覧で確かめてから画面を開き直したときだけ)。
+   * 読み直しが 401 / 403 なら、読み込み直しても必ず同じ理由で断られるので「確かめ直す」を出さず、理由の文
+   * (「ログインし直してください」・403 の理由の文) を添える (#2101 integrity-1030c。「確かめ直す」を出さないのはお知らせ・営業のリードの活動と同じ。理由の文は、ここでは送信を止めた文に添え、お知らせは一覧の欄に出す)。
+   * この読み直しの 401 / 403 では理由を読み込みの欄に出さない (同じ理由を読み込みの欄と送信を止めた文の 2 か所に出さない。#2112 Z4)。
+   * 読み込みの欄は、読めていたカード・一覧はそのまま、前の読み込みの失敗の文が出ていたら LOAD_FAILED_REASON_IN_FORM_TEXT にする (loadAreaMessage)
+   */
+  const confirmUnconfirmedDrTest = async (pending: Omit<UnconfirmedDrTest, 'message' | 'retryable'>) => {
+    const result = await reload('caller');
+    switch (result.outcome) {
+      case 'loaded':
+        break;
+      case 'unauthorized':
+      case 'forbidden':
+        markUnconfirmed({ ...pending, message: adminCreateStoppedMessage(pending.summary, result.message), retryable: false });
+        setReasonInForm(true);
+        return;
+      case 'load-failed':
+        markUnconfirmed({ ...pending, message: adminCreateStoppedMessage(pending.summary), retryable: true });
+        return;
+    }
+    const outcome = confirmCreatedRow(result.data.dr_tests, pending.knownIds, (row) => isSameDrTest(row, pending.body));
+    if (outcome === 'ambiguous') {
+      markUnconfirmed({ ...pending, message: adminCreateStoppedMessage(pending.summary), retryable: false });
+      return;
+    }
+    if (outcome === 'not-found') {
+      // まだ無いことは記録されていないことの確かめにならない (サーバーが書き込みの途中なら、押し直すと 2 行になる)。止めたまま確かめ直させる
+      markUnconfirmed({
+        ...pending,
+        message: adminCreateStoppedMessage(pending.summary, adminCreateNotFoundGuide(DR_TEST_RECORD_SUBJECT)),
+        retryable: true,
+      });
+      return;
+    }
+    markUnconfirmed(null);
+    setErrors(EMPTY_ERRORS);
+    // 済んでいた。入力が送ったときのままなら初めに戻す (送信を止めているあいだに書き換えた入力は消さない。#2107 Y7)
+    setForm((current) => (isSameDrTestForm(current, pending.sentForm) ? initialFormState() : current));
+    setConfirmedNotice(adminCreateNoResponseMessage(pending.summary, adminCreateFoundGuide(DR_TEST_RECORD_SUBJECT)));
+  };
+
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (submitting) return;
+    if (submitting || submitLockedRef.current || unconfirmedRef.current !== null) return;
+    submitLockedRef.current = true;
     setSubmitting(true);
     setSubmitted(false);
+    setConfirmedNotice(null);
+    // 前の送信の結果の文 (form の上の文・項目の文) は消す (残すと、このあとの「済んだか分かりません」と前の理由の文が並ぶ。#2112 Z4)
+    setErrors(EMPTY_ERRORS);
+    setReasonInForm(false);
+    const sentForm = form;
+    const body = toRequestBody(sentForm);
+    // 応答を受け取れなかったときに、読み直した記録と比べるための、送る前の記録の行 (読めていなければ null。#2101 X2)
+    const knownIds: ReadonlySet<string> | null =
+      load.status === 'loaded' ? new Set(load.data.dr_tests.map((row) => row.id)) : null;
     try {
-      const res = await fetch(SUPER_ADMIN_DR_TESTS_API_PATH, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(toRequestBody(form)),
-      });
+      let res: Response;
+      try {
+        res = await fetch(SUPER_ADMIN_DR_TESTS_API_PATH, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      } catch {
+        // 通信そのものの失敗。サーバーが記録してから応答が切れたこともあるので、失敗とは言わずに読み直す (#2101 X2)
+        throw new AdminActionNoResponseError(DR_TEST_RECORD_ACTION, null);
+      }
       if (res.status === HTTP_CREATED) {
         setErrors(EMPTY_ERRORS);
-        setForm(initialFormState());
+        // 入力が送ったときのままなら初めに戻す (記録の応答を待つあいだも入力欄は書き換えられるので、書き換えた入力は消さない。#2107 Y7)
+        setForm((current) => (isSameDrTestForm(current, sentForm) ? initialFormState() : current));
         setSubmitted(true);
         await reload();
         return;
@@ -257,15 +449,46 @@ export default function SuperAdminBackupsPage() {
         setErrors(drTestErrorsFromResponse(json));
         return;
       }
-      if (res.status === HTTP_FORBIDDEN) {
-        // 403 は本文の理由の文 (二段階認証の確認が要る など) があればそちらを出す (#1917)
-        setErrors({ fields: {}, form: [await forbiddenMessageOfResponse(res, SUBMIT_FORBIDDEN_TEXT)] });
+      if (res.status === HTTP_UNAUTHORIZED) {
+        // 401 は時間をおいて送り直しても変わらない。「時間をおいてもう一度送ってください」ではなく、読み込みと同じ
+        // 「ログインし直してください」を form の上に出す。読み込みの欄には理由を重ねて出さない (loadAreaMessage。#2112 Z4)
+        setErrors({ fields: {}, form: [UNAUTHENTICATED_SCREEN_MESSAGE] });
+        setReasonInForm(true);
         return;
       }
+      if (res.status === HTTP_FORBIDDEN) {
+        // 403 は本文の理由の文 (二段階認証の確認が要る など) があればそちらを出す (#1917)。読み込みの欄は 401 と同じ扱い (#2112 Z4)
+        setErrors({ fields: {}, form: [await forbiddenMessageOfResponse(res, SUBMIT_FORBIDDEN_TEXT)] });
+        setReasonInForm(true);
+        return;
+      }
+      // 本文に API の文の無い 502 / 503 / 504 は応答を受け取れなかったもの (手前のプロキシ・ホスティングの応答。#2101 X2)。
+      // ほかの失敗 (500 など) はこれまでどおり固定の文 (本文の文は出さない)
+      const failure = await adminActionErrorOfResponse(res, DR_TEST_RECORD_ACTION);
+      if (failure instanceof AdminActionNoResponseError) throw failure;
       setErrors({ fields: {}, form: [SUBMIT_FAILED_TEXT] });
-    } catch {
-      setErrors({ fields: {}, form: [SUBMIT_FAILED_TEXT] });
+    } catch (e: unknown) {
+      if (e instanceof AdminActionNoResponseError) {
+        await confirmUnconfirmedDrTest({ body, sentForm, knownIds, summary: e.message });
+      } else {
+        setErrors({ fields: {}, form: [SUBMIT_FAILED_TEXT] });
+      }
     } finally {
+      submitLockedRef.current = false;
+      setSubmitting(false);
+    }
+  };
+
+  /** 「確かめ直す」: 済んだか分からない記録を、状態を読み直して確かめる (#2101 X2) */
+  const handleRetryConfirm = async () => {
+    const pending = unconfirmedRef.current;
+    if (pending === null || !pending.retryable || submitLockedRef.current) return;
+    submitLockedRef.current = true;
+    setSubmitting(true);
+    try {
+      await confirmUnconfirmedDrTest(pending);
+    } finally {
+      submitLockedRef.current = false;
       setSubmitting(false);
     }
   };
@@ -306,7 +529,7 @@ export default function SuperAdminBackupsPage() {
       {load.status === 'loading' ? <p className="text-sm text-slate-500">読み込み中…</p> : null}
       {load.status === 'error' ? (
         <div role="alert" data-testid="backups-load-error" className="rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {load.message}
+          {loadAreaMessage(load, reasonInForm)}
         </div>
       ) : null}
 
@@ -402,6 +625,30 @@ export default function SuperAdminBackupsPage() {
             <p role="status" data-testid="dr-test-form-success" className="text-sm text-green-700">
               {SUBMIT_SUCCEEDED_TEXT}
             </p>
+          ) : null}
+          {confirmedNotice !== null ? (
+            <p role="status" data-testid="dr-test-form-confirmed" className="text-sm text-green-700">
+              {confirmedNotice}
+            </p>
+          ) : null}
+          {unconfirmed !== null ? (
+            <div
+              role="alert"
+              data-testid="dr-test-form-unconfirmed"
+              className="flex items-center justify-between gap-4 rounded border border-yellow-200 bg-yellow-50 px-3 py-2 text-sm text-yellow-800"
+            >
+              <span>{unconfirmed.message}</span>
+              {unconfirmed.retryable ? (
+                <button
+                  type="button"
+                  onClick={() => void handleRetryConfirm()}
+                  disabled={submitting}
+                  className="shrink-0 rounded border border-yellow-300 bg-white px-3 py-1 text-sm font-medium text-yellow-800 hover:bg-yellow-50 disabled:opacity-50"
+                >
+                  確かめ直す
+                </button>
+              ) : null}
+            </div>
           ) : null}
 
           <div className="grid gap-4 md:grid-cols-2">
@@ -553,7 +800,7 @@ export default function SuperAdminBackupsPage() {
 
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || unconfirmed !== null}
             className="rounded bg-orange-500 px-4 py-2 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50"
           >
             {submitting ? '記録中…' : '記録する'}
@@ -600,7 +847,7 @@ function AuditRowTable({
             <tr>
               <th className="px-3 py-2">日時</th>
               <th className="px-3 py-2">action_type</th>
-              <th className="px-3 py-2">severity</th>
+              <th className="px-3 py-2">重要度</th>
               {showStageReason ? <th className="px-3 py-2">stage / reason</th> : null}
               <th className="px-3 py-2">details</th>
             </tr>
@@ -610,7 +857,8 @@ function AuditRowTable({
               <tr key={row.id} className="border-t border-slate-100 align-top">
                 <td className="whitespace-nowrap px-3 py-2">{formatJstDateTime(row.created_at)}</td>
                 <td className="px-3 py-2 font-mono text-xs">{row.action_type}</td>
-                <td className="px-3 py-2">{row.severity}</td>
+                {/* 重要度は表示名で出す (以前は英字の内部の値 info / warn / critical のまま。#2112 Z3) */}
+                <td className="px-3 py-2">{adminAuditSeverityLabel(row.severity)}</td>
                 {showStageReason ? <td className="px-3 py-2 font-mono text-xs">{stageReasonText(row.details)}</td> : null}
                 <td className="px-3 py-2">
                   <pre className="max-w-xl overflow-x-auto whitespace-pre-wrap break-all text-xs text-slate-600">

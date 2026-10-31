@@ -11,19 +11,43 @@
  * 状態の変更のあとの読み直し (409 のあと・通信の reject のあと) が失敗したら、文と「再試行」を出し、読み直せるまで
  * 状態の変更のボタンを止める (画面の status が DB と食い違っているかもしれないのに、その status を元にしたボタンを出し続けない。
  * プランの詳細と同じ。#2064・#2073)
+ * 読み直しが 404 (読み直しの間にクーポンが消えた。uses_count 0 のクーポンは削除できる)・403 (権限が外れた・二段階認証の確認が要る)・
+ * 401 (ログインが切れた) で断られたら、読み込み直しても変わらないので、その理由の文を出し「再試行」は出さず、状態の変更のボタンを戻す
+ * (プラン・A/B テストの詳細と同じ。#2080)
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { couponValidityDay, couponValidUntilPatchValue } from '@/lib/super-admin/coupon-validity';
-import { isStatusChangeConflict, operationFailureMessage } from '@/lib/admin/api-error-message';
-import { COUPON_INVALID_TRANSITION_ERROR_CODE } from '@/lib/super-admin/coupons-schemas';
+import { UNAUTHENTICATED_SCREEN_MESSAGE, isStatusChangeConflict, operationFailureMessage } from '@/lib/admin/api-error-message';
+import {
+  COUPON_INVALID_TRANSITION_ERROR_CODE,
+  couponApplicableToLabel,
+  couponSubscriptionTargetLabel,
+} from '@/lib/super-admin/coupons-schemas';
 import {
   NO_RESPONSE_STATE_RELOADED_GUIDE,
   NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
   statusChangeNoResponseMessage,
 } from '@/lib/super-admin/status-change-no-response';
+import { rereadDetailRow } from '@/lib/super-admin/detail-reread';
+import {
+  AdminScreenError,
+  adminActionHttpFailedMessage,
+  adminActionNoResponseMessage,
+  adminLoadFailedFallback,
+  adminLoadFailedMessage,
+  adminScreenErrorOfResponse,
+  displayableAdminError,
+  fetchAdminJson,
+  savedRowOfResponse,
+} from '@/lib/admin/admin-screen-messages';
+
+/** 読み込みの失敗の文の対象 (「クーポンを読み込めませんでした (HTTP 502)」。#2093 W7) */
+const COUPON_SUBJECT = 'クーポン';
+/** 保存の失敗の文の操作の名前 (「保存に失敗しました (HTTP 502)」「保存の応答を受け取れませんでした（通信エラー）」。#2093 W7) */
+const SAVE_ACTION = '保存';
 
 type Coupon = {
   id: string;
@@ -63,6 +87,8 @@ type RedemptionsResponse = {
 
 /** 適用履歴の API (GET /api/super-admin/coupons/{id}/redemptions) のページ番号は 1 から */
 const FIRST_REDEMPTIONS_PAGE = 1;
+/** 401 (Unauthorized。ログインが切れた) の HTTP ステータス */
+const HTTP_UNAUTHORIZED = 401;
 
 /** 保存で送る本文 (PATCH /api/super-admin/coupons/{id} の表示名・有効期限・最大利用回数) */
 type CouponSaveBody = {
@@ -130,14 +156,19 @@ function statusChangeFailureSummary(newStatus: CouponStatusChange): string {
 }
 
 /**
- * 状態の変更が 409 (遷移表に無い変更・同時の変更) で断られ、クーポンを読み直せたときの理由の文 (#2064)。
+ * 状態の変更が 409 (遷移表に無い変更・同時の変更) で断られたときの理由の文の頭 (#2064)。
  * 画面の status が古かった (別の操作で一時停止・再開・期限切れにされていた)。英字の状態の値は出さない
  */
-const STATUS_CONFLICT_RELOADED_REASON = '別の操作でクーポンの状態が先に変わっていました。今の状態を読み込み直しました';
+const STATUS_CONFLICT_REASON_HEAD = '別の操作でクーポンの状態が先に変わっていました';
+
+/** 状態の変更が 409 で断られ、クーポンを読み直せたときの理由の文 (#2064) */
+const STATUS_CONFLICT_RELOADED_REASON = `${STATUS_CONFLICT_REASON_HEAD}。今の状態を読み込み直しました`;
 
 /** 状態の変更が 409 で断られ、読み直しも失敗したときの理由の文 (「再試行」を出す。#2064・#2073) */
-const STATUS_CONFLICT_RELOAD_FAILED_REASON =
-  '別の操作でクーポンの状態が先に変わっていました。今の状態を読み込めませんでした。「再試行」で読み込み直してから、もう一度操作してください';
+const STATUS_CONFLICT_RELOAD_FAILED_REASON = `${STATUS_CONFLICT_REASON_HEAD}。今の状態を読み込めませんでした。「再試行」で読み込み直してから、もう一度操作してください`;
+
+/** 読み直しが 404 (読み直しの間にクーポンが消えた) で断られたときの文。読み込み直しても変わらないので「再試行」は出さない (#2080) */
+const COUPON_NOT_FOUND_ON_RELOAD_MESSAGE = 'クーポンが見つかりません。一覧に戻って確かめてください';
 
 /**
  * 状態の変更のあとに読み直す理由 (#2073)。
@@ -149,16 +180,33 @@ type StatusRereadCause = 'conflict' | 'no-response';
 /** 状態の変更のあとの読み直しが失敗し、「再試行」で読み直すのを待っている操作 (#2073) */
 type PendingStatusReread = { newStatus: CouponStatusChange; cause: StatusRereadCause };
 
-/** 状態の変更のあとに読み直した (reloaded) か、読み直せなかったかの文 (#2064・#2073) */
-function statusRereadMessage(newStatus: CouponStatusChange, cause: StatusRereadCause, reloaded: boolean): string {
+/**
+ * 状態の変更のあとの読み直しの結果 (#2064・#2073・#2080)。
+ *   - reloaded   : 読み直せた
+ *   - failed     : 読み直せなかった (「再試行」を出し、状態の変更のボタンを止める)
+ *   - unavailable: 404 / 403 / 401 で断られた (message は理由の文。読み込み直しても変わらないので「再試行」は出さない)
+ */
+type StatusRereadResult = { kind: 'reloaded' } | { kind: 'failed' } | { kind: 'unavailable'; message: string };
+
+/** 状態の変更のあとに読み直した・読み直せなかった・読み直しが断られたときの文 (#2064・#2073・#2080) */
+function statusRereadMessage(newStatus: CouponStatusChange, cause: StatusRereadCause, result: StatusRereadResult): string {
   if (cause === 'conflict') {
-    return `${statusChangeFailureSummary(newStatus)}（${reloaded ? STATUS_CONFLICT_RELOADED_REASON : STATUS_CONFLICT_RELOAD_FAILED_REASON}）`;
+    const reason =
+      result.kind === 'reloaded'
+        ? STATUS_CONFLICT_RELOADED_REASON
+        : result.kind === 'failed'
+          ? STATUS_CONFLICT_RELOAD_FAILED_REASON
+          : `${STATUS_CONFLICT_REASON_HEAD}。${result.message}`;
+    return `${statusChangeFailureSummary(newStatus)}（${reason}）`;
   }
   // 応答を受け取れなかった: 変更が済んでいた (自分の操作) ときにも合うよう「できませんでした」「別の操作で」とは言わない
-  return statusChangeNoResponseMessage(
-    STATUS_CHANGE_LABELS[newStatus],
-    reloaded ? NO_RESPONSE_STATE_RELOADED_GUIDE : NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
-  );
+  const guide =
+    result.kind === 'reloaded'
+      ? NO_RESPONSE_STATE_RELOADED_GUIDE
+      : result.kind === 'failed'
+        ? NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE
+        : result.message;
+  return statusChangeNoResponseMessage(STATUS_CHANGE_LABELS[newStatus], guide);
 }
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
@@ -207,21 +255,19 @@ export default function CouponDetailPage() {
   const fetchCoupon = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/super-admin/coupons/${couponId}`);
-      const data = await res.json() as { data?: Coupon; error?: { message: string } };
-      if (!res.ok) {
-        setError(data.error?.message ?? '取得に失敗しました');
-        return;
-      }
-      const loaded = data.data!;
+      // 失敗の応答は ok を先に確かめて本文の日本語の文か「クーポンを読み込めませんでした (HTTP 502)」にし、通信そのものの失敗と
+      // 200 の読めない本文だけを「（通信エラー）」にする (JSON でない 502 を「ネットワークエラー」と見せない。#2093 W7)
+      const body = await fetchAdminJson(`/api/super-admin/coupons/${couponId}`, COUPON_SUBJECT);
+      const loaded = (body as { data?: Coupon | null }).data;
+      if (!loaded) throw new AdminScreenError(adminLoadFailedMessage(COUPON_SUBJECT, null));
       const inputs = couponInputsOf(loaded);
       setCoupon(loaded);
       setDisplayName(inputs.displayName);
       // 有効期限 (DB の時刻) を JST の暦日にして編集欄に入れる (#1483)
       setValidUntil(inputs.validUntil);
       setMaxUses(inputs.maxUses);
-    } catch {
-      setError('ネットワークエラー');
+    } catch (err) {
+      setError(displayableAdminError(err, adminLoadFailedFallback(COUPON_SUBJECT)));
     } finally {
       setIsLoading(false);
     }
@@ -245,7 +291,10 @@ export default function CouponDetailPage() {
           setRedemptions([]);
           setRedemptionsTotal(null);
         }
-        setRedemptionsError(data.error?.message ?? '適用履歴の取得に失敗しました');
+        // 401 は本文の文 (「認証が必要です」) ではなく、運営の画面で揃えた「ログインし直してください」(#2112 Z4)
+        setRedemptionsError(
+          res.status === HTTP_UNAUTHORIZED ? UNAUTHENTICATED_SCREEN_MESSAGE : (data.error?.message ?? '適用履歴の取得に失敗しました'),
+        );
         return;
       }
       const rows = data.data;
@@ -289,17 +338,12 @@ export default function CouponDetailPage() {
     setPendingReread(pending);
   };
 
-  /** 409 のあと・通信の reject のあとにクーポンを読み直す (全体を「読み込み中」にしない)。読めなければ null (#2064・#2073) */
-  const rereadCoupon = async (): Promise<Coupon | null> => {
-    try {
-      const res = await fetch(`/api/super-admin/coupons/${couponId}`);
-      if (!res.ok) return null;
-      const data = await res.json() as { data?: Coupon };
-      return data.data ?? null;
-    } catch {
-      return null;
-    }
-  };
+  /**
+   * 409 のあと・通信の reject のあとにクーポンを読み直す (全体を「読み込み中」にしない。#2064・#2073)。
+   * 404 / 403 / 401 は unavailable (理由の文つき。401 は「ログインし直してください」。src/lib/super-admin/detail-reread.ts の
+   * rereadUnavailableMessage。#2080)、それ以外の失敗は failed
+   */
+  const rereadCoupon = () => rereadDetailRow<Coupon>(`/api/super-admin/coupons/${couponId}`, COUPON_NOT_FOUND_ON_RELOAD_MESSAGE);
 
   const handleSave = async () => {
     // 状態の変更の応答を待つあいだは送らない (#2050。writeInFlightRef)
@@ -319,30 +363,35 @@ export default function CouponDetailPage() {
     writeInFlightRef.current = true;
     setIsSaving(true);
     try {
-      const res = await fetch(`/api/super-admin/coupons/${couponId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(changes),
-      });
-      const data = await res.json() as { data?: Coupon; error?: { message: string } };
-      if (!res.ok) {
-        setSaveError(data.error?.message ?? '保存に失敗しました');
-        return;
+      let res: Response;
+      try {
+        res = await fetch(`/api/super-admin/coupons/${couponId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(changes),
+        });
+      } catch {
+        throw new AdminScreenError(adminActionNoResponseMessage(SAVE_ACTION));
       }
+      // ok を先に確かめる (JSON でない 502 を「ネットワークエラー」と見せない。本文に日本語の文が無ければ「保存に失敗しました (HTTP 502)」。#2093 W7)
+      if (!res.ok) throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(SAVE_ACTION, status));
+      // 成功の応答の本文が読めない: 保存は済んでいるかもしれないので、失敗とは言わず応答を受け取れなかった文にする (#2093 W7)
+      const saved = await savedRowOfResponse<Coupon>(res);
+      if (!saved) throw new AdminScreenError(adminActionNoResponseMessage(SAVE_ACTION));
       // 保存の応答の行 (書いたあとの最新の行) を新しい比べる元にし、手を付けていない入力欄もその行の値に揃える (#1917)。
       // 送らなかった欄には、画面を開いたあとに別の運営が変えた値が入っていることがある。比べる元だけを新しくして入力欄を
       // 古い値のままにすると、その欄が変えた欄に見え、次の保存 (何も変えずに押しても) で開いたときの古い値を送って、
       // 別の運営の変更を上書きしてしまう。応答を待つあいだに変えた欄は書きかけとして残す (次の保存で送る)
-      applyLatestCoupon(data.data!, inputsAtSave);
+      applyLatestCoupon(saved, inputsAtSave);
       setSaveSuccess(true);
       // 保存の応答の行は書いたあとの最新の行 (status も今の値) なので、状態の変更のあとの読み直しの失敗は解ける (#2073)
       const pending = pendingRereadRef.current;
       if (pending) {
-        setStatusError(statusRereadMessage(pending.newStatus, pending.cause, true));
+        setStatusError(statusRereadMessage(pending.newStatus, pending.cause, { kind: 'reloaded' }));
         markPendingReread(null);
       }
-    } catch {
-      setSaveError('ネットワークエラー');
+    } catch (err) {
+      setSaveError(displayableAdminError(err, `${SAVE_ACTION}に失敗しました`));
     } finally {
       writeInFlightRef.current = false;
       setIsSaving(false);
@@ -351,13 +400,16 @@ export default function CouponDetailPage() {
 
   /**
    * 状態の変更のあとに読み直し、結果に合わせて文を出す (#2064・#2073)。inputsBefore は押したときの最後に読んだ・保存した行の
-   * 入力欄の値 (書きかけを残すため)。読み直せなかったら「再試行」を待つ操作として記録し、状態の変更のボタンを止める
+   * 入力欄の値 (書きかけを残すため)。読み直せなかったら「再試行」を待つ操作として記録し、状態の変更のボタンを止める。
+   * 404 / 403 / 401 で断られたら、理由の文を出し、「再試行」は待たない (読み込み直しても変わらないので、ボタンを止め続けない。#2080)
    */
   const rereadAfterStatusChange = async (newStatus: CouponStatusChange, cause: StatusRereadCause, inputsBefore: CouponInputs) => {
-    const latest = await rereadCoupon();
-    if (latest) applyLatestCoupon(latest, inputsBefore);
-    setStatusError(statusRereadMessage(newStatus, cause, latest !== null));
-    markPendingReread(latest ? null : { newStatus, cause });
+    const outcome = await rereadCoupon();
+    if (outcome.kind === 'loaded') applyLatestCoupon(outcome.row, inputsBefore);
+    const result: StatusRereadResult =
+      outcome.kind === 'loaded' ? { kind: 'reloaded' } : outcome.kind === 'failed' ? { kind: 'failed' } : outcome;
+    setStatusError(statusRereadMessage(newStatus, cause, result));
+    markPendingReread(outcome.kind === 'failed' ? { newStatus, cause } : null);
   };
 
   /** 「再試行」: 状態の変更のあとの失敗した読み直しをやり直す (#2073) */
@@ -570,7 +622,7 @@ export default function CouponDetailPage() {
           </div>
 
           <div className="text-xs text-slate-400 grid grid-cols-2 gap-2">
-            <div>適用対象: {coupon.applicable_to}</div>
+            <div>適用対象: {couponApplicableToLabel(coupon.applicable_to)}</div>
             <div>1 ユーザー上限: {coupon.per_user_limit} 回</div>
             <div>割引期間: {coupon.duration_months != null ? `${coupon.duration_months} ヶ月` : 'ずっと'}</div>
             <div>作成日: {new Date(coupon.created_at).toLocaleDateString('ja-JP')}</div>
@@ -631,7 +683,7 @@ export default function CouponDetailPage() {
                     {new Date(r.redeemed_at).toLocaleDateString('ja-JP')}
                   </td>
                   <td className="px-4 py-3 text-slate-600 text-xs">
-                    {r.subscription_target} / {r.user_id ? r.user_id.slice(0, 8) : r.organization_id?.slice(0, 8)}...
+                    {couponSubscriptionTargetLabel(r.subscription_target)} / {r.user_id ? r.user_id.slice(0, 8) : r.organization_id?.slice(0, 8)}...
                   </td>
                   <td className="px-4 py-3 text-right font-medium text-slate-800">
                     ¥{r.discount_amount_jpy.toLocaleString()}

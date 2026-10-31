@@ -11,6 +11,10 @@ import {
   readPendingTransferProposal,
   transferProposalStateAfterNetworkFailure,
 } from "@/lib/membership/transfer-proposal-state";
+import { readSignedInUser } from "@/lib/auth/signed-in-user";
+
+/** この画面のパス (ログインのあとに戻る先) */
+const OWNER_TRANSFER_PATH = '/org/settings/owner-transfer';
 
 /** 提案の送信の通信そのものが失敗した (fetch が reject した) ときの文 */
 const NETWORK_FAILURE_MESSAGE = 'ネットワークエラーが発生しました';
@@ -46,11 +50,19 @@ export default function OwnerTransferPage() {
   const fetchCandidates = async () => {
     setLoading(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        router.push('/login');
+      // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
+      // 確かめられなかったときは読み込みの失敗と「再試行」を出す (#2086 V3。以前は通信が切れているだけでもログインの画面へ移していた)。
+      // ログインのあとにこの画面へ戻れるよう next を付ける
+      const signedIn = await readSignedInUser(supabase);
+      if (signedIn.kind === 'load-failed') {
+        setLoadError(CANDIDATES_LOAD_ERROR);
         return;
       }
+      if (signedIn.kind === 'signed-out') {
+        router.push(`/login?next=${OWNER_TRANSFER_PATH}`);
+        return;
+      }
+      const { user } = signedIn;
 
       const { data: profile, error: profileError } = await supabase
         .from('user_profiles')

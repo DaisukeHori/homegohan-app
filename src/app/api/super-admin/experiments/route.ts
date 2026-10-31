@@ -2,17 +2,34 @@
  * GET  /api/super-admin/experiments  — A/B テスト一覧
  * POST /api/super-admin/experiments  — A/B テスト作成
  * operator/02-api-spec.md §15 準拠
+ *
+ * 作成で同じキーの実験がすでにある (一意の制約 experiments_key_key の違反 23505) ときは 409 OP_EXPERIMENT_KEY_DUPLICATE (#2093 W1)。
+ * 機能フラグ・機能パッケージ・クーポン・プランの作成と同じ形。以前は 500 (「処理中にエラーが発生しました」) で、作成の応答が切れたあとに
+ * 押し直すと、作成は済んでいるのに失敗の文が出た
+ *
+ * 一覧の page / per_page は ExperimentsListQuerySchema で読み、1 以上の整数でない・per_page が上限 (100) より大きいときは
+ * DB に触れずに 400 OP_INVALID_QUERY (#2101 X6。以前は ?page=abc の NaN が .range に渡って 500 になっていた)
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { authFailureNested } from '@/lib/api/error-responses';
-import { CreateExperimentSchema } from '@/lib/super-admin/experiments-schemas';
+import {
+  CreateExperimentSchema,
+  EXPERIMENT_KEY_DUPLICATE_ERROR_CODE,
+  EXPERIMENT_KEY_DUPLICATE_MESSAGE,
+  ExperimentsListQuerySchema,
+} from '@/lib/super-admin/experiments-schemas';
 import { internalError } from '@/lib/api/errors';
 import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { readJsonBody, SUPER_ADMIN_INVALID_JSON_BODY_MESSAGE } from '@/lib/super-admin/validation-errors';
+import { invalidQueryResponse, readJsonBody, SUPER_ADMIN_INVALID_JSON_BODY_MESSAGE } from '@/lib/super-admin/validation-errors';
+
+/** Postgres の一意の制約の違反 (unique_violation)。experiments の一意の制約は key (experiments_key_key) と主キーの id で、id は DB が作る */
+const PG_UNIQUE_VIOLATION = '23505';
+/** 同じキーの実験がすでにあるときの HTTP ステータス (409 Conflict) */
+const EXPERIMENT_KEY_DUPLICATE_HTTP_STATUS = 409;
 
 /** 一覧の構造化ログの function_name */
 const LIST_ROUTE_NAME = 'GET /api/super-admin/experiments';
@@ -23,8 +40,16 @@ export async function GET(request: NextRequest) {
     const supabase = await createClient();
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
-    const page = Math.max(1, parseInt(searchParams.get('page') ?? '1'));
-    const perPage = Math.min(100, Math.max(1, parseInt(searchParams.get('per_page') ?? '50')));
+    // page / per_page が 1 以上の整数でない・per_page が上限より大きいときは、DB に触れずに 400 OP_INVALID_QUERY (#2101 X6。
+    // 以前は ?page=abc の NaN が .range に渡って 500 になっていた)
+    const queryResult = ExperimentsListQuerySchema.safeParse({
+      page: searchParams.get('page') ?? undefined,
+      per_page: searchParams.get('per_page') ?? undefined,
+    });
+    if (!queryResult.success) {
+      return invalidQueryResponse(queryResult.error.issues);
+    }
+    const { page, per_page: perPage } = queryResult.data;
 
     // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectExperiments) から作る
     const selectExperiments = (options: { head?: boolean } = {}) => {
@@ -99,6 +124,13 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error) {
+      // 同じキーの実験がすでにある (押し直しを含む) は 409 と日本語の文 (500 にしない。#2093 W1)
+      if (error.code === PG_UNIQUE_VIOLATION) {
+        return NextResponse.json(
+          { error: { code: EXPERIMENT_KEY_DUPLICATE_ERROR_CODE, message: EXPERIMENT_KEY_DUPLICATE_MESSAGE } },
+          { status: EXPERIMENT_KEY_DUPLICATE_HTTP_STATUS },
+        );
+      }
       return internalError('POST /api/super-admin/experiments', error, { userId: user.id }, { shape: 'nested' });
     }
 
