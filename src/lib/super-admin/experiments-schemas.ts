@@ -32,6 +32,14 @@ export function isAllowedExperimentStatusTransition(from: string, to: Experiment
   return isExperimentStatus(from) && EXPERIMENT_STATUS_TRANSITIONS[from].includes(to);
 }
 
+/**
+ * 作成で、同じキー (experiments.key。一意の制約 experiments_key_key) の実験がすでにあるときのエラーの code と文 (HTTP は 409。#2093 W1)。
+ * 機能フラグの作成 (OP_FEATURE_FLAG_IN_USE)・機能パッケージ・クーポン・プランの作成と同じく、一意の違反 (23505) を 500 にしない。
+ * 作成の応答が切れたあとに押し直したときも、作成は済んでいるのに「作成に失敗しました (HTTP 500)」と出さない
+ */
+export const EXPERIMENT_KEY_DUPLICATE_ERROR_CODE = 'OP_EXPERIMENT_KEY_DUPLICATE';
+export const EXPERIMENT_KEY_DUPLICATE_MESSAGE = '同じキーの実験がすでにあります';
+
 /** 遷移表に無い状態の変更を断るときのエラーの code (HTTP は 409) */
 export const EXPERIMENT_INVALID_TRANSITION_ERROR_CODE = 'OP_EXPERIMENT_INVALID_TRANSITION';
 
@@ -44,6 +52,24 @@ const ALLOWED_EXPERIMENT_TRANSITIONS_TEXT = EXPERIMENT_STATUSES.flatMap((from) =
 export function experimentStatusTransitionMessage(from: string, to: ExperimentStatus): string {
   return `実験の状態は ${from} から ${to} へは変えられません (変えられるのは ${ALLOWED_EXPERIMENT_TRANSITIONS_TEXT} だけです)`;
 }
+
+/** 一覧 (GET /api/super-admin/experiments) の 1 ページの件数の上限。#2101 より前の `Math.min(100, …)` と同じ値 */
+export const EXPERIMENTS_LIST_PER_PAGE_MAX = 100;
+/** 一覧の per_page を省略したときの 1 ページの件数。#2101 より前の既定 ('50') と同じ値 */
+export const EXPERIMENTS_LIST_PER_PAGE_DEFAULT = 50;
+
+/**
+ * 一覧 (GET /api/super-admin/experiments) の page / per_page (#2101 X6)。1 以上の整数でなければ (数でない・0・負・小数)・
+ * per_page が上限より大きければ、route が DB に触れずに 400 OP_INVALID_QUERY で断る。
+ * 以前の `Math.max(1, parseInt(page))` は ?page=abc の NaN を通し (Math.max(1, NaN) は NaN)、`.range(NaN, …)` が 500 になり、
+ * 応答の meta.page は null だった。クーポン・機能パッケージ・プランの一覧 (CouponsQuerySchema など) と同じ形
+ */
+export const ExperimentsListQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional().default(1),
+  per_page: z.coerce.number().int().min(1).max(EXPERIMENTS_LIST_PER_PAGE_MAX).optional().default(EXPERIMENTS_LIST_PER_PAGE_DEFAULT),
+});
+
+export type ExperimentsListQuery = z.infer<typeof ExperimentsListQuerySchema>;
 
 export const ExperimentVariantSchema = z.object({
   key: z.string().min(1).max(50),

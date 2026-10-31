@@ -10,7 +10,9 @@ export const dynamic = 'force-dynamic';
 import Link from 'next/link';
 import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
+import { listRowsOfBody } from '@/lib/admin/admin-screen-messages';
 import { couponValidityDay, isCouponExpiredAt } from '@/lib/super-admin/coupon-validity';
+import { couponApplicableToLabel } from '@/lib/super-admin/coupons-schemas';
 
 type Coupon = {
   id: string;
@@ -25,11 +27,6 @@ type Coupon = {
   max_uses: number | null;
   status: string;
 };
-
-interface CouponsApiResponse {
-  data: Coupon[];
-  meta: { total: number; page: number; per_page: number };
-}
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   active: { label: '有効', color: 'bg-green-100 text-green-700' },
@@ -53,8 +50,14 @@ export default async function CouponsPage() {
   try {
     const res = await adminFetch('/api/super-admin/coupons?per_page=100');
     if (res.ok) {
-      const json = (await res.json()) as CouponsApiResponse;
-      coupons = json.data ?? [];
+      // 200 なのに本文が読めない・data が配列でない壊れた応答は、0 件と見せずに取得の失敗として扱う (#2101 X8)
+      const rows = listRowsOfBody<Coupon>(await res.json().catch(() => null));
+      if (rows === null) {
+        fetchError = true;
+        console.error('[super-admin/coupons page] malformed list body');
+      } else {
+        coupons = rows;
+      }
     } else {
       fetchError = true;
       console.error('[super-admin/coupons page] API error:', res.status);
@@ -115,7 +118,7 @@ export default async function CouponsPage() {
                   <td className="px-4 py-3 font-medium text-slate-800">
                     {formatDiscount(coupon)}
                   </td>
-                  <td className="px-4 py-3 text-slate-600">{coupon.applicable_to}</td>
+                  <td className="px-4 py-3 text-slate-600">{couponApplicableToLabel(coupon.applicable_to)}</td>
                   <td className="px-4 py-3">
                     <span className={isExpired ? 'text-red-500' : 'text-slate-600'}>
                       {couponValidityDay(coupon.valid_until)}

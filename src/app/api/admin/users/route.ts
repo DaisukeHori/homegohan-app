@@ -12,18 +12,29 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { buildListViewDetails, recordAdminAudit } from '@/lib/admin/audit';
-import { UsersSearchSchema, type UserListItem, type UsersListResponse } from '@/lib/admin/users-schemas';
+import { UsersSearchSchema, type UserListItem, type UserListSortKey, type UsersListResponse } from '@/lib/admin/users-schemas';
 import { canViewUserEmail, fetchUserEmails, findUserIdsByEmail } from '@/lib/admin/user-emails';
 import { buildUserSearchFilter } from '@/lib/admin/users-search';
 import { isAccountFrozen } from '@/lib/auth/frozen';
 import { jstDayStartTimestamp } from '@/lib/date-utils';
 import { jstOptionalDayRangeTimestamps } from '@/lib/jst-day-ranges';
 import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
+import { FREE_PLAN_KEY } from '@/lib/billing/core';
 
 export const dynamic = 'force-dynamic';
 
 /** ログの発生元 (src/lib/admin/user-emails.ts がメール取得の失敗を記録するときに使う) */
 const LOG_SOURCE = 'GET /api/admin/users';
+
+/**
+ * sort の鍵ごとの並べる user_profiles の列 (#2120 W3-2)。鍵 (USER_LIST_SORT_KEYS) を足すと列の漏れが型の誤りになる。
+ * sort が無ければ登録日の順 (USER_LIST_DEFAULT_SORT)
+ */
+const USER_LIST_SORT_COLUMNS: Readonly<Record<UserListSortKey, 'created_at' | 'last_login_at'>> = {
+  registered_at: 'created_at',
+  last_login: 'last_login_at',
+};
+const USER_LIST_DEFAULT_SORT: UserListSortKey = 'registered_at';
 
 export async function GET(request: Request) {
   let actor;
@@ -74,6 +85,11 @@ export async function GET(request: Request) {
     searchFilter = buildUserSearchFilter(searchTerm, emailMatchedIds);
   }
 
+  // プランの絞り込み (#2112 Z5)。前後の空白を除いて空なら「指定なし」(検索語 q と同じ扱い。監査の検索条件にも残らない)。
+  // 以前は plan を受け取って監査の検索条件に残すだけで一覧を絞らず、全プランの利用者を返していた
+  // (監査には plan で絞ったように残った)。監査には、一覧の絞り込みに使ったこの値を残す
+  const planFilter = params.plan?.trim() || undefined;
+
   // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectUsers) から作る。
   // 絞り込みを 2 か所に書くと、片方だけ直したときに件数と一覧がずれるため。
   // 凍結の判定の時刻も 1 回だけ決める (一覧と件数で同じ時刻を使う)
@@ -108,6 +124,15 @@ export async function GET(request: Request) {
       query = query.contains('roles', [params.role]);
     }
 
+    // プランフィルタ (#2112 Z5): 応答の plan_key と同じ意味で絞る。応答は plan_key_cached が空 (NULL) の利用者を
+    // 'free' として返すので、plan=free は plan_key_cached が NULL か 'free' の行。それ以外は plan_key_cached の一致。
+    // 一覧と件数の数え直しの両方に効く (selectUsers の中にあるため)
+    if (planFilter === FREE_PLAN_KEY) {
+      query = query.or(`plan_key_cached.is.null,plan_key_cached.eq.${FREE_PLAN_KEY}`);
+    } else if (planFilter) {
+      query = query.eq('plan_key_cached', planFilter);
+    }
+
     // ステータスフィルタ
     // #1030 round-2: is_banned (レスポンス側) は isAccountFrozen (unban_at 考慮) で
     // 判定するため、フィルタ条件も同じ意味論に揃える。frozen_at IS NOT NULL だけで
@@ -124,6 +149,12 @@ export async function GET(request: Request) {
       query = query.or(
         `frozen_at.is.null,and(frozen_at.not.is.null,unban_at.not.is.null,unban_at.lte.${nowIso})`,
       );
+    } else if (params.status === 'deleted') {
+      // #2107 Y10: 退会 (src/lib/account-deletion.ts の auth.admin.deleteUser) は auth.users の行を消し、user_profiles の行も
+      // 外部キーの ON DELETE CASCADE (user_profiles_id_fkey) で消える。user_profiles に削除済みのユーザーの行は無いので、
+      // 削除済みの絞り込みは 1 行も当たらない (主キーの id は null にならない)。一覧と件数の数え直しの両方に効く。
+      // 以前はこの分岐が無く、status=deleted で絞らずに生きているユーザーを返していた (削除済みの一覧に生きているユーザーが並んだ)
+      query = query.is('id', null);
     }
 
     // 登録日フィルタ (#1433): 登録日 FROM の JST 0 時以上、登録日 TO の翌日の JST 0 時未満。
@@ -146,10 +177,7 @@ export async function GET(request: Request) {
   };
 
   // ソート
-  const sortColumn =
-    params.sort === 'last_login'
-      ? 'last_login_at'
-      : 'created_at';
+  const sortColumn = USER_LIST_SORT_COLUMNS[params.sort ?? USER_LIST_DEFAULT_SORT];
 
   // ページネーション
   const from = (params.page - 1) * params.per_page;
@@ -190,7 +218,7 @@ export async function GET(request: Request) {
     id: u.id,
     email: emails.get(u.id) ?? null,
     nickname: u.nickname,
-    plan_key: u.plan_key_cached ?? 'free',
+    plan_key: u.plan_key_cached ?? FREE_PLAN_KEY,
     roles: u.roles ?? ['user'],
     // #1030: 一時 BAN は unban_at 経過後に自動解除扱いとする (判定時比較)。
     is_banned: isAccountFrozen({
@@ -220,7 +248,7 @@ export async function GET(request: Request) {
       details: buildListViewDetails(
         {
           q: params.q?.trim(),
-          plan: params.plan,
+          plan: planFilter,
           role: params.role,
           status: params.status,
           registered_from: params.registered_from,

@@ -1551,7 +1551,7 @@ sequenceDiagram
 
 | エラー | HTTP | コード |
 |-------|------|--------|
-| `subscription_plans` の `plan_key` 重複 | 409 | `OP_PLAN_KEY_CONFLICT` |
+| `subscription_plans` の `plan_key` 重複 | 409 | `OP_PLAN_KEY_DUPLICATE` |
 | `coupon_redemptions` の重複適用 | 409 | `OP_COUPON_ALREADY_ACTIVE` |
 | `personal_subscriptions` の active 重複 | 409 | `OP_SUBSCRIPTION_ALREADY_ACTIVE` |
 | 監査ログへの UPDATE/DELETE 試行 | 403 | `OP_AUDIT_LOG_IMMUTABLE` |

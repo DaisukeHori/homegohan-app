@@ -160,7 +160,7 @@ P0-P7 のタスク分解。各 phase で **並列起動可否** を明示。
 **期間目安**: 2-3 日 / **並列**: 各 phase 完了時に部分実行、最終整理を P7 で
 
 ### deliverables
-- `tests/e2e/membership/` 配下 11 spec ファイル (02-flow-spec §16 参照)
+- `tests/e2e/membership/` 配下の spec ファイル (02-flow-spec §16 参照)
 - 各 spec で fresh-user fixture 利用 (新 E2E アーキテクチャ)
 - 新 fixture が必要なら `tests/e2e/fixtures/fresh-user.ts` に追加:
   - `freshOrgWithMembers` (org + N member)

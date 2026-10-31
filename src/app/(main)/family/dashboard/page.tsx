@@ -4,6 +4,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { loginPathWithNext, readSignedInUser } from '@/lib/auth/signed-in-user';
 import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
 import { familyRoleLabel } from '@/lib/membership/role-labels';
 
@@ -12,6 +13,23 @@ import { familyRoleLabel } from '@/lib/membership/role-labels';
  * 見分けるために出す (家族のメンバーの画面の FAMILY_MEMBERS_LOAD_ERROR と同じ扱い)。失敗の理由 (英語の内部の文) は画面に出さない
  */
 const FAMILY_DASHBOARD_LOAD_ERROR = '家族の情報を読み込めませんでした。しばらくしてから、もう一度お試しください。';
+
+/** この画面のパス (ログインのあとに戻る先) */
+const FAMILY_DASHBOARD_PATH = '/family/dashboard';
+
+/** 家族グループの行が無い (または RLS で見えない) ときの文 (これまでどおり) */
+const FAMILY_GROUP_NOT_FOUND_MESSAGE = '家族グループの取得に失敗しました';
+
+/**
+ * .single() で行が 0 件 (または RLS で見えない) ときの PostgREST の失敗のコード。
+ * 行が無いのは「読み込めなかった」ではないので、これだけは読み込みの失敗と分ける (家族のメンバーの画面と同じ)
+ */
+const POSTGREST_NO_ROWS_CODE = 'PGRST116';
+
+/** 問い合わせの失敗が「行が無い」ではない (= 読み込めなかった) か */
+function isLoadFailure(error: { code?: string } | null): boolean {
+  return error !== null && error.code !== POSTGREST_NO_ROWS_CODE;
+}
 
 interface FamilyMember {
   id: string;
@@ -45,12 +63,20 @@ export default function FamilyDashboardPage() {
     // 別の画面へ移るときは、移るまで読み込み中の表示のままにする (これまでどおり)
     let redirecting = false;
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        redirecting = true;
-        router.push('/login');
+      // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
+      // 確かめられなかったときは読み込みの失敗と「再試行」を出す (#2093 W4。以前は通信が切れているだけでもログインの画面へ移していた)。
+      // ログインのあとにこの画面へ戻れるよう next を付ける
+      const signedIn = await readSignedInUser(supabase);
+      if (signedIn.kind === 'load-failed') {
+        setLoadError(FAMILY_DASHBOARD_LOAD_ERROR);
         return;
       }
+      if (signedIn.kind === 'signed-out') {
+        redirecting = true;
+        router.push(loginPathWithNext(FAMILY_DASHBOARD_PATH));
+        return;
+      }
+      const { user } = signedIn;
 
       // user_profiles から family_id を取得
       const { data: profile, error: profileError } = await supabase
@@ -78,13 +104,17 @@ export default function FamilyDashboardPage() {
         .eq('id', profile.family_id)
         .single();
 
-      if (groupError || !group) {
-        setError('家族グループの取得に失敗しました');
+      if (isLoadFailure(groupError)) {
+        // 読み込めなかった (行が無いのとは別。「再試行」を出す。#2080 U3)
+        setLoadError(FAMILY_DASHBOARD_LOAD_ERROR);
+        return;
+      }
+      if (!group) {
+        // 行が無い (PGRST116) か、RLS で見えない (これまでどおり)
+        setError(FAMILY_GROUP_NOT_FOUND_MESSAGE);
         setLoadError(null);
         return;
       }
-
-      setFamilyGroup(group as FamilyGroup);
 
       // family_members を取得
       const { data: membersData, error: membersError } = await supabase
@@ -94,13 +124,17 @@ export default function FamilyDashboardPage() {
         .eq('status', 'active');
 
       if (membersError) {
-        setError('メンバー情報の取得に失敗しました');
-      } else {
-        // 画面に出す名前 (display_name が無ければ本人のプロフィールの今の名前) は API で決める (#1584)
-        const names = await fetchFamilyMemberNames();
-        setMembers(applyFamilyMemberNames((membersData ?? []) as FamilyMember[], names));
-        setError(null);
+        // 読み込めなかった (メンバーがいないのとは別。家族グループの名前だけの画面・空の一覧と見せず、「再試行」を出す。#2080 U3)
+        setLoadError(FAMILY_DASHBOARD_LOAD_ERROR);
+        return;
       }
+
+      // 画面に出す名前 (display_name が無ければ本人のプロフィールの今の名前) は API で決める (#1584)
+      const names = await fetchFamilyMemberNames();
+      // 全部読めてから出す
+      setFamilyGroup(group as FamilyGroup);
+      setMembers(applyFamilyMemberNames((membersData ?? []) as FamilyMember[], names));
+      setError(null);
       setLoadError(null);
     } catch (loadFailure) {
       console.error('[family/dashboard] load error:', loadFailure);

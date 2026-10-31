@@ -9,6 +9,8 @@
  * 「別の操作で機能パッケージの状態が先に変わっていました」と出る。
  * 廃止のあとの読み直し (409 のあと・通信の reject のあと) が失敗したら、文と「再試行」を出し、読み直せるまで「廃止する」を止める
  * (クーポンの詳細・プランの詳細と同じ。#2064・#2073)
+ * 読み直しが 404 (読み直しの間に機能パッケージが消えた)・403 (権限が外れた・二段階認証の確認が要る)・401 (ログインが切れた) で断られたら、
+ * 読み込み直しても変わらないので、その理由の文を出し「再試行」は出さず、「廃止する」を戻す (プラン・A/B テストの詳細と同じ。#2080)
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
@@ -21,6 +23,23 @@ import {
   NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
   statusChangeNoResponseMessage,
 } from '@/lib/super-admin/status-change-no-response';
+import { rereadDetailRow } from '@/lib/super-admin/detail-reread';
+import {
+  AdminScreenError,
+  adminActionHttpFailedMessage,
+  adminActionNoResponseMessage,
+  adminLoadFailedFallback,
+  adminLoadFailedMessage,
+  adminScreenErrorOfResponse,
+  displayableAdminError,
+  fetchAdminJson,
+  savedRowOfResponse,
+} from '@/lib/admin/admin-screen-messages';
+
+/** 読み込みの失敗の文の対象 (「機能パッケージを読み込めませんでした (HTTP 502)」。#2093 W7) */
+const FEATURE_PACKAGE_SUBJECT = '機能パッケージ';
+/** 保存の失敗の文の操作の名前 (「保存に失敗しました (HTTP 502)」「保存の応答を受け取れませんでした（通信エラー）」。#2093 W7) */
+const SAVE_ACTION = '保存';
 
 type FeaturePackage = {
   id: string;
@@ -95,14 +114,19 @@ const NO_FEATURE_PACKAGE_CHANGES_MESSAGE = '変更した項目がないので、
 const DEPRECATE_FAILURE_SUMMARY = '廃止できませんでした';
 
 /**
- * 廃止が 409 (遷移表に無い変更・同時の変更) で断られ、機能パッケージを読み直せたときの理由の文 (#2064)。
+ * 廃止が 409 (遷移表に無い変更・同時の変更) で断られたときの理由の文の頭 (#2064)。
  * 画面の status が古かった (別の操作で廃止されていた)。英字の状態の値は出さない
  */
-const STATUS_CONFLICT_RELOADED_REASON = '別の操作で機能パッケージの状態が先に変わっていました。今の状態を読み込み直しました';
+const STATUS_CONFLICT_REASON_HEAD = '別の操作で機能パッケージの状態が先に変わっていました';
+
+/** 廃止が 409 で断られ、機能パッケージを読み直せたときの理由の文 (#2064) */
+const STATUS_CONFLICT_RELOADED_REASON = `${STATUS_CONFLICT_REASON_HEAD}。今の状態を読み込み直しました`;
 
 /** 廃止が 409 で断られ、読み直しも失敗したときの理由の文 (「再試行」を出す。#2064・#2073) */
-const STATUS_CONFLICT_RELOAD_FAILED_REASON =
-  '別の操作で機能パッケージの状態が先に変わっていました。今の状態を読み込めませんでした。「再試行」で読み込み直してから、もう一度操作してください';
+const STATUS_CONFLICT_RELOAD_FAILED_REASON = `${STATUS_CONFLICT_REASON_HEAD}。今の状態を読み込めませんでした。「再試行」で読み込み直してから、もう一度操作してください`;
+
+/** 読み直しが 404 (読み直しの間に機能パッケージが消えた) で断られたときの文。読み込み直しても変わらないので「再試行」は出さない (#2080) */
+const FEATURE_PACKAGE_NOT_FOUND_ON_RELOAD_MESSAGE = '機能パッケージが見つかりません。一覧に戻って確かめてください';
 
 /** 廃止の通信が reject されたときの文の操作の名前 (#2073) */
 const DEPRECATE_OPERATION_NAME = '廃止';
@@ -114,16 +138,33 @@ const DEPRECATE_OPERATION_NAME = '廃止';
  */
 type DeprecateRereadCause = 'conflict' | 'no-response';
 
-/** 廃止のあとに読み直した (reloaded) か、読み直せなかったかの文 (#2064・#2073) */
-function deprecateRereadMessage(cause: DeprecateRereadCause, reloaded: boolean): string {
+/**
+ * 廃止のあとの読み直しの結果 (#2064・#2073・#2080)。
+ *   - reloaded   : 読み直せた
+ *   - failed     : 読み直せなかった (「再試行」を出し、「廃止する」を止める)
+ *   - unavailable: 404 / 403 / 401 で断られた (message は理由の文。読み込み直しても変わらないので「再試行」は出さない)
+ */
+type DeprecateRereadResult = { kind: 'reloaded' } | { kind: 'failed' } | { kind: 'unavailable'; message: string };
+
+/** 廃止のあとに読み直した・読み直せなかった・読み直しが断られたときの文 (#2064・#2073・#2080) */
+function deprecateRereadMessage(cause: DeprecateRereadCause, result: DeprecateRereadResult): string {
   if (cause === 'conflict') {
-    return `${DEPRECATE_FAILURE_SUMMARY}（${reloaded ? STATUS_CONFLICT_RELOADED_REASON : STATUS_CONFLICT_RELOAD_FAILED_REASON}）`;
+    const reason =
+      result.kind === 'reloaded'
+        ? STATUS_CONFLICT_RELOADED_REASON
+        : result.kind === 'failed'
+          ? STATUS_CONFLICT_RELOAD_FAILED_REASON
+          : `${STATUS_CONFLICT_REASON_HEAD}。${result.message}`;
+    return `${DEPRECATE_FAILURE_SUMMARY}（${reason}）`;
   }
   // 応答を受け取れなかった: 廃止が済んでいた (自分の操作) ときにも合うよう「できませんでした」「別の操作で」とは言わない
-  return statusChangeNoResponseMessage(
-    DEPRECATE_OPERATION_NAME,
-    reloaded ? NO_RESPONSE_STATE_RELOADED_GUIDE : NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
-  );
+  const guide =
+    result.kind === 'reloaded'
+      ? NO_RESPONSE_STATE_RELOADED_GUIDE
+      : result.kind === 'failed'
+        ? NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE
+        : result.message;
+  return statusChangeNoResponseMessage(DEPRECATE_OPERATION_NAME, guide);
 }
 
 export default function FeaturePackageDetailPage() {
@@ -162,21 +203,19 @@ export default function FeaturePackageDetailPage() {
   const fetchPkg = useCallback(async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`/api/super-admin/feature-packages/${pkgId}`);
-      const data = await res.json() as { data?: FeaturePackage; error?: { message: string } };
-      if (!res.ok) {
-        setError(data.error?.message ?? '取得に失敗しました');
-        return;
-      }
-      const loaded = data.data!;
+      // 失敗の応答は ok を先に確かめて本文の日本語の文か「機能パッケージを読み込めませんでした (HTTP 502)」にし、通信そのものの失敗と
+      // 200 の読めない本文だけを「（通信エラー）」にする (JSON でない 502 を「ネットワークエラー」と見せない。#2093 W7)
+      const body = await fetchAdminJson(`/api/super-admin/feature-packages/${pkgId}`, FEATURE_PACKAGE_SUBJECT);
+      const loaded = (body as { data?: FeaturePackage | null }).data;
+      if (!loaded) throw new AdminScreenError(adminLoadFailedMessage(FEATURE_PACKAGE_SUBJECT, null));
       const inputs = featurePackageInputsOf(loaded);
       setPkg(loaded);
       setDisplayName(inputs.displayName);
       setDescription(inputs.description);
       setFeatureFlagsRaw(inputs.featureFlagsRaw);
       setDisplayOrder(inputs.displayOrder);
-    } catch {
-      setError('ネットワークエラー');
+    } catch (err) {
+      setError(displayableAdminError(err, adminLoadFailedFallback(FEATURE_PACKAGE_SUBJECT)));
     } finally {
       setIsLoading(false);
     }
@@ -205,17 +244,13 @@ export default function FeaturePackageDetailPage() {
     setPendingReread(pending);
   };
 
-  /** 409 のあと・通信の reject のあとに機能パッケージを読み直す (全体を「読み込み中」にしない)。読めなければ null (#2064・#2073) */
-  const rereadPackage = async (): Promise<FeaturePackage | null> => {
-    try {
-      const res = await fetch(`/api/super-admin/feature-packages/${pkgId}`);
-      if (!res.ok) return null;
-      const data = await res.json() as { data?: FeaturePackage };
-      return data.data ?? null;
-    } catch {
-      return null;
-    }
-  };
+  /**
+   * 409 のあと・通信の reject のあとに機能パッケージを読み直す (全体を「読み込み中」にしない。#2064・#2073)。
+   * 404 / 403 / 401 は unavailable (理由の文つき。401 は「ログインし直してください」。src/lib/super-admin/detail-reread.ts の
+   * rereadUnavailableMessage。#2080)、それ以外の失敗は failed
+   */
+  const rereadPackage = () =>
+    rereadDetailRow<FeaturePackage>(`/api/super-admin/feature-packages/${pkgId}`, FEATURE_PACKAGE_NOT_FOUND_ON_RELOAD_MESSAGE);
 
   const handleSave = async () => {
     // 廃止の応答を待つあいだは送らない (#2050。writeInFlightRef)
@@ -240,30 +275,35 @@ export default function FeaturePackageDetailPage() {
     setIsSaving(true);
 
     try {
-      const res = await fetch(`/api/super-admin/feature-packages/${pkgId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(changes),
-      });
-      const data = await res.json() as { data?: FeaturePackage; error?: { message: string } };
-      if (!res.ok) {
-        setSaveError(data.error?.message ?? '保存に失敗しました');
-        return;
+      let res: Response;
+      try {
+        res = await fetch(`/api/super-admin/feature-packages/${pkgId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(changes),
+        });
+      } catch {
+        throw new AdminScreenError(adminActionNoResponseMessage(SAVE_ACTION));
       }
+      // ok を先に確かめる (JSON でない 502 を「ネットワークエラー」と見せない。本文に日本語の文が無ければ「保存に失敗しました (HTTP 502)」。#2093 W7)
+      if (!res.ok) throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(SAVE_ACTION, status));
+      // 成功の応答の本文が読めない: 保存は済んでいるかもしれないので、失敗とは言わず応答を受け取れなかった文にする (#2093 W7)
+      const saved = await savedRowOfResponse<FeaturePackage>(res);
+      if (!saved) throw new AdminScreenError(adminActionNoResponseMessage(SAVE_ACTION));
       // 保存の応答の行 (書いたあとの最新の行) を新しい比べる元にし、手を付けていない入力欄もその行の値に揃える (#1917)。
       // 送らなかった欄には、画面を開いたあとに別の運営が変えた値が入っていることがある。比べる元だけを新しくして入力欄を
       // 古い値のままにすると、その欄が変えた欄に見え、次の保存 (何も変えずに押しても) で開いたときの古い値を送って、
       // 別の運営の変更を上書きしてしまう。応答を待つあいだに変えた欄は書きかけとして残す (次の保存で送る)
-      applyLatestPackage(data.data!, inputsAtSave);
+      applyLatestPackage(saved, inputsAtSave);
       setSaveSuccess(true);
       // 保存の応答の行は書いたあとの最新の行 (status も今の値) なので、廃止のあとの読み直しの失敗は解ける (#2073)
       const pending = pendingRereadRef.current;
       if (pending) {
-        setDeprecateError(deprecateRereadMessage(pending, true));
+        setDeprecateError(deprecateRereadMessage(pending, { kind: 'reloaded' }));
         markPendingReread(null);
       }
-    } catch {
-      setSaveError('ネットワークエラー');
+    } catch (err) {
+      setSaveError(displayableAdminError(err, `${SAVE_ACTION}に失敗しました`));
     } finally {
       writeInFlightRef.current = false;
       setIsSaving(false);
@@ -272,13 +312,16 @@ export default function FeaturePackageDetailPage() {
 
   /**
    * 廃止のあとに読み直し、結果に合わせて文を出す (#2064・#2073)。inputsBefore は押したときの最後に読んだ・保存した行の
-   * 入力欄の値 (書きかけを残すため)。読み直せなかったら「再試行」を待つ理由として記録し、「廃止する」を止める
+   * 入力欄の値 (書きかけを残すため)。読み直せなかったら「再試行」を待つ理由として記録し、「廃止する」を止める。
+   * 404 / 403 / 401 で断られたら、理由の文を出し、「再試行」は待たない (読み込み直しても変わらないので、ボタンを止め続けない。#2080)
    */
   const rereadAfterDeprecate = async (cause: DeprecateRereadCause, inputsBefore: FeaturePackageInputs) => {
-    const latest = await rereadPackage();
-    if (latest) applyLatestPackage(latest, inputsBefore);
-    setDeprecateError(deprecateRereadMessage(cause, latest !== null));
-    markPendingReread(latest ? null : cause);
+    const outcome = await rereadPackage();
+    if (outcome.kind === 'loaded') applyLatestPackage(outcome.row, inputsBefore);
+    const result: DeprecateRereadResult =
+      outcome.kind === 'loaded' ? { kind: 'reloaded' } : outcome.kind === 'failed' ? { kind: 'failed' } : outcome;
+    setDeprecateError(deprecateRereadMessage(cause, result));
+    markPendingReread(outcome.kind === 'failed' ? cause : null);
   };
 
   /** 「再試行」: 廃止のあとの失敗した読み直しをやり直す (#2073) */

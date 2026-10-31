@@ -4,19 +4,52 @@
  * 運営側チケット起票画面
  * operator/03-ui-spec.md §15, §16 準拠
  * 権限: support, admin, super_admin
+ * カテゴリ・優先度の選択肢は src/lib/admin/support-schemas.ts の値の一覧と表示名から作る (一覧・詳細と同じ語。#2112 Z3)
  */
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRef, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { loginPathWithNext } from '@/lib/auth/signed-in-user';
 import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
-import Link from 'next/link';
+import {
+  AdminActionNoResponseError,
+  adminActionErrorOfResponse,
+  adminCreateUnconfirmedMessage,
+  adminCreatedButNotOpenedMessage,
+  createdIdOfBody,
+  displayableAdminError,
+  sendAdminAction,
+} from '@/lib/admin/admin-screen-messages';
 
-type TicketPriority = 'low' | 'medium' | 'high' | 'urgent';
-type TicketCategory = 'account' | 'billing' | 'feature' | 'bug' | 'other';
+/** 失敗の文の操作の名前 (「チケットの作成に失敗しました (HTTP 502)」。#2086 V6) */
+const TICKET_CREATE_ACTION = 'チケットの作成';
+/** 作成したものの名前 (「チケットは作成されましたが、…」。#2093 W1) */
+const TICKET_SUBJECT = 'チケット';
+/** 作成の応答を受け取れなかったときに確かめさせる一覧 (#2093 W1) */
+const TICKET_LIST_HREF = '/admin/support';
+import Link from 'next/link';
+import {
+  TICKET_CATEGORIES,
+  TICKET_CATEGORY_LABELS,
+  TICKET_PRIORITIES,
+  TICKET_PRIORITY_LABELS,
+  type TicketCategory,
+  type TicketPriority,
+} from '@/lib/admin/support-schemas';
+
 
 export default function NewTicketPage() {
   const router = useRouter();
+  // ログインが切れた (401) ときに、ログインし直したあとこの画面へ戻れるよう next に付けるパス (#2101 X5)
+  const pathname = usePathname();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // 作成の応答を受け取れなかった (済んだか分からない)・作成できたが開けなかったときの文 (#2093 W1)。
+  // support_tickets には一意の制約が無く、押し直すとチケットと最初のメッセージが 2 件ずつできるので、これがあるあいだは送信を止め、一覧で確かめさせる
+  const [unconfirmed, setUnconfirmed] = useState<string | null>(null);
+  // 送信中・作成済み・済んだか分からないあいだは true (再描画の前に続けて押されたときも送らない守り。#2093 W1)
+  const submitLockedRef = useRef(false);
+  // 作成できて、作成したチケットへ移るのを待っているあいだ (ボタンを止めたままにする。#2093 W1)
+  const [isOpeningCreated, setIsOpeningCreated] = useState(false);
 
   const [formData, setFormData] = useState({
     user_id: '',
@@ -28,6 +61,7 @@ export default function NewTicketPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitLockedRef.current) return;
     setError(null);
 
     if (!formData.user_id.trim()) {
@@ -43,16 +77,24 @@ export default function NewTicketPage() {
       return;
     }
 
+    submitLockedRef.current = true;
+    // 作成が済んだ・済んだか分からないときは、送信を止めたままにする (押し直しで二重に作らない。#2093 W1)
+    let keepLocked = false;
     setIsSubmitting(true);
     try {
-      const res = await fetch('/api/admin/support/tickets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      });
+      // 通信そのものの失敗は AdminActionNoResponseError (ブラウザの英字の例外の文を出さない。#2086 V6)
+      const res = await sendAdminAction(
+        '/api/admin/support/tickets',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(formData),
+        },
+        TICKET_CREATE_ACTION,
+      );
 
       if (res.status === 401) {
-        router.push('/login');
+        router.push(loginPathWithNext(pathname));
         return;
       }
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
@@ -61,15 +103,33 @@ export default function NewTicketPage() {
         return;
       }
       if (!res.ok) {
-        const json = await res.json();
-        throw new Error(json.error?.message ?? 'チケット作成に失敗しました');
+        // 本文は JSON でないこともある (プロキシの 502 の HTML など) ので読み失敗で例外にしない (#2086 V6)。
+        // 本文に API の文の無い 502 / 503 / 504 は応答を受け取れなかったもの (AdminActionNoResponseError。#2093 W1)
+        throw await adminActionErrorOfResponse(res, TICKET_CREATE_ACTION);
       }
 
-      const json = await res.json();
-      router.push(`/admin/support/${json.data.id}`);
+      // 作成は済んでいる。画面が移るまで押し直させない (#2093 W1)
+      keepLocked = true;
+      const json: unknown = await res.json().catch(() => null);
+      const createdId = createdIdOfBody(json);
+      if (createdId === null) {
+        // 作成したチケットを開けない (本文が読めない)。押し直すと二重になるので、一覧で確かめさせる (#2093 W1)
+        setUnconfirmed(adminCreatedButNotOpenedMessage(TICKET_SUBJECT));
+        return;
+      }
+      setIsOpeningCreated(true);
+      router.push(`/admin/support/${createdId}`);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '不明なエラー');
+      if (e instanceof AdminActionNoResponseError) {
+        // サーバーで作成が済んでから応答が切れたこともある。読み直しで同じものかを決める鍵が無いので、送信を止めて一覧で確かめさせる (#2093 W1)
+        keepLocked = true;
+        setUnconfirmed(adminCreateUnconfirmedMessage(e.message));
+      } else {
+        // 画面に出すのは日本語の文だけ (JSON でない本文の SyntaxError などの英字の文は出さない。#2086 V6)
+        setError(displayableAdminError(e, `${TICKET_CREATE_ACTION}に失敗しました`));
+      }
     } finally {
+      submitLockedRef.current = keepLocked;
       setIsSubmitting(false);
     }
   };
@@ -93,6 +153,14 @@ export default function NewTicketPage() {
           {error && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4 text-sm">
               {error}
+            </div>
+          )}
+          {unconfirmed && (
+            <div role="alert" className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded mb-4 text-sm">
+              <p>{unconfirmed}</p>
+              <Link href={TICKET_LIST_HREF} className="mt-2 inline-block text-blue-600 hover:underline">
+                チケット一覧で確かめる
+              </Link>
             </div>
           )}
 
@@ -147,11 +215,11 @@ export default function NewTicketPage() {
                   onChange={(e) => setFormData((f) => ({ ...f, category: e.target.value as TicketCategory }))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="account">アカウント</option>
-                  <option value="billing">課金</option>
-                  <option value="feature">機能リクエスト</option>
-                  <option value="bug">バグ</option>
-                  <option value="other">その他</option>
+                  {TICKET_CATEGORIES.map((category) => (
+                    <option key={category} value={category}>
+                      {TICKET_CATEGORY_LABELS[category]}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
@@ -164,10 +232,11 @@ export default function NewTicketPage() {
                   onChange={(e) => setFormData((f) => ({ ...f, priority: e.target.value as TicketPriority }))}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  <option value="low">低</option>
-                  <option value="medium">中</option>
-                  <option value="high">高</option>
-                  <option value="urgent">緊急</option>
+                  {TICKET_PRIORITIES.map((priority) => (
+                    <option key={priority} value={priority}>
+                      {TICKET_PRIORITY_LABELS[priority]}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -198,10 +267,10 @@ export default function NewTicketPage() {
               </Link>
               <button
                 type="submit"
-                disabled={isSubmitting}
+                disabled={isSubmitting || isOpeningCreated || unconfirmed !== null}
                 className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                {isSubmitting ? '起票中...' : 'チケットを起票'}
+                {isSubmitting || isOpeningCreated ? '起票中...' : 'チケットを起票'}
               </button>
             </div>
           </form>

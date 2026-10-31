@@ -10,6 +10,7 @@ export const dynamic = 'force-dynamic';
 import Link from 'next/link';
 import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
+import { listRowsOfBody } from '@/lib/admin/admin-screen-messages';
 
 interface Plan {
   id: string;
@@ -21,11 +22,6 @@ interface Plan {
   feature_packages: string[] | null;
   status: string;
   display_order: number;
-}
-
-interface PlansApiResponse {
-  data: Plan[];
-  meta: { total: number; page: number; per_page: number };
 }
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
@@ -52,8 +48,14 @@ export default async function PlansPage() {
   try {
     const res = await adminFetch('/api/super-admin/plans?per_page=100');
     if (res.ok) {
-      const json = (await res.json()) as PlansApiResponse;
-      plans = json.data ?? [];
+      // 200 なのに本文が読めない・data が配列でない壊れた応答は、0 件と見せずに取得の失敗として扱う (#2101 X8)
+      const rows = listRowsOfBody<Plan>(await res.json().catch(() => null));
+      if (rows === null) {
+        fetchError = true;
+        console.error('[super-admin/plans page] malformed list body');
+      } else {
+        plans = rows;
+      }
     } else {
       fetchError = true;
       console.error('[super-admin/plans page] API error:', res.status);

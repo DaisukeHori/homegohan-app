@@ -258,7 +258,9 @@ describe('ModerationRestoreForm: 失敗 (F-3)', () => {
     await typeNote('理由');
     await submit();
 
-    expect(allText()).toContain('ログインの有効期限が切れました。ログインし直してください');
+    // 401 は運営の画面で揃えた「ログインし直してください」(#2112 Z4)
+    expect(allText()).toContain('ログインし直してください');
+    expect(allText()).not.toContain('ログインの有効期限');
     expect(refreshMock).not.toHaveBeenCalled();
   });
 

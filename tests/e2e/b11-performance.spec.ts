@@ -669,17 +669,11 @@ test.describe("B11-6: 画像最適化", () => {
 });
 
 // ============================================================
-
-/**
- * ビルド済みページの HTTP ヘッダーで gzip/Brotli 圧縮を確認する。
-=======
 // 7. next.config.mjs — 設定確認 (静的解析相当)
 // ============================================================
 
 /**
- * next.config.mjs に bundle analyzer / compress 設定が存在するか確認する。
- * 実際のファイルは spec 内では読めないため、
- * ビルド済みページの HTTP ヘッダーで確認する。
+ * next.config.mjs の compress 設定は spec 内では読めないため、ビルド済みページの HTTP ヘッダーで gzip/Brotli 圧縮を確認する。
  */
 test("B11-7: HTTP レスポンスの Content-Encoding — gzip/br 圧縮の確認", async ({
   authedPage,

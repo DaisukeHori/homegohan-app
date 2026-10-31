@@ -526,6 +526,17 @@ describe('#2064 F2 組織のメンバー: 脱退の通信が失敗 (reject) し�
     { id: MEMBER_A_ID, nickname: 'Aさん', org_role: 'owner', joined_org_at: '2026-09-01T03:00:00.000Z' },
   ];
 
+  /**
+   * 一覧の API (GET /api/org/members) は読めるようにして、ほかの通信は handler に任せる
+   * (#2093 W9 から、一覧を読み込めなかった画面には「組織を脱退」を出さないので、脱退を押すには一覧が読めている必要がある)
+   */
+  function mockOrgFetch(handler: Handler) {
+    mockFetch((method, url) => {
+      if (method === 'GET' && url.pathname === '/api/org/members') return jsonResponse(200, { members: MEMBERS });
+      return handler(method, url);
+    });
+  }
+
   /** 自分のプロフィール (組織の ID は state.orgId)。再読み込みの応答は reread で差し替える */
   function orgMembersReadable(state: { orgId: string | null; reread?: () => QueryResult | Promise<QueryResult> }) {
     let profileReads = 0;
@@ -543,7 +554,7 @@ describe('#2064 F2 組織のメンバー: 脱退の通信が失敗 (reject) し�
   it('サーバーが脱退を済ませてから応答が切れたとき、読み直して組織を抜けていれば、成功のときと同じくホームへ移る (失敗の文は出さない)', async () => {
     const state = { orgId: ORG_ID as string | null };
     orgMembersReadable(state);
-    mockFetch((method, url) => {
+    mockOrgFetch((method, url) => {
       if (method === 'POST' && url.pathname === LEAVE_PATH) {
         state.orgId = null;
         throw new TypeError('Failed to fetch');
@@ -562,7 +573,7 @@ describe('#2064 F2 組織のメンバー: 脱退の通信が失敗 (reject) し�
 
   it('読み直して組織に残っていれば、これまでどおり「脱退失敗」と通信エラーの文を出し、ホームへ移らない', async () => {
     orgMembersReadable({ orgId: ORG_ID });
-    mockFetch(() => Promise.reject(new TypeError('Failed to fetch')));
+    mockOrgFetch(() => Promise.reject(new TypeError('Failed to fetch')));
     await renderElement(createElement(OrgMembersPage));
 
     await click(findButton('組織を脱退'), '「組織を脱退」ボタン');
@@ -576,7 +587,7 @@ describe('#2064 F2 組織のメンバー: 脱退の通信が失敗 (reject) し�
 
   it('読み直しも失敗したら、「脱退失敗」の文に「状態を確かめられませんでした」を添える', async () => {
     orgMembersReadable({ orgId: ORG_ID, reread: () => ({ data: null, error: LOAD_FAILURE }) });
-    mockFetch(() => Promise.reject(new TypeError('Failed to fetch')));
+    mockOrgFetch(() => Promise.reject(new TypeError('Failed to fetch')));
     await renderElement(createElement(OrgMembersPage));
 
     await click(findButton('組織を脱退'), '「組織を脱退」ボタン');
@@ -591,7 +602,7 @@ describe('#2064 F2 組織のメンバー: 脱退の通信が失敗 (reject) し�
 
   it('読み直しが例外を投げても、「状態を確かめられませんでした」を添えて、未処理の reject にしない', async () => {
     orgMembersReadable({ orgId: ORG_ID, reread: () => Promise.reject(new TypeError('Failed to fetch')) });
-    mockFetch(() => Promise.reject(new TypeError('Failed to fetch')));
+    mockOrgFetch(() => Promise.reject(new TypeError('Failed to fetch')));
     await renderElement(createElement(OrgMembersPage));
 
     await click(findButton('組織を脱退'), '「組織を脱退」ボタン');
@@ -603,7 +614,7 @@ describe('#2064 F2 組織のメンバー: 脱退の通信が失敗 (reject) し�
   it('読み直しの応答を待つあいだは、脱退のボタンを止めたままにする', async () => {
     const reread = deferred<QueryResult>();
     orgMembersReadable({ orgId: ORG_ID, reread: () => reread.promise });
-    mockFetch(() => Promise.reject(new TypeError('Failed to fetch')));
+    mockOrgFetch(() => Promise.reject(new TypeError('Failed to fetch')));
     await renderElement(createElement(OrgMembersPage));
 
     await click(findButton('組織を脱退'), '「組織を脱退」ボタン');
@@ -852,14 +863,17 @@ describe('#2064 F2 家族のメンバーの詳細: 除名の通信が失敗 (rej
   function detailReadable(reread: () => QueryResult | Promise<QueryResult>) {
     supabaseState.responders.user_profiles = () => ({ data: { family_id: FAMILY_ID }, error: null });
     supabaseState.responders.family_members = (ctx: QueryContext) => {
-      if (ctx.kind === 'maybeSingle') return reread();
+      // 自分の役割 (select('role')。#2080 U2 から自分の active な行を maybeSingle で読む) は除名のあとの読み直しではない
+      if (ctx.kind === 'maybeSingle' && ctx.columns !== 'role') return reread();
       if (ctx.filters.user_id === USER_ID) return { data: { role: 'representative' }, error: null };
       return { data: DETAIL, error: null };
     };
   }
 
   const activeRereads = () =>
-    supabaseState.queries.filter((q) => q.table === 'family_members' && q.kind === 'maybeSingle' && q.filters.status === 'active');
+    supabaseState.queries.filter(
+      (q) => q.table === 'family_members' && q.kind === 'maybeSingle' && q.columns !== 'role' && q.filters.status === 'active',
+    );
 
   it('サーバーが除名を済ませてから応答が切れたとき、読み直して行が無ければ、成功のときと同じく一覧へ戻る (失敗の文は出さない)', async () => {
     detailReadable(() => ({ data: null, error: null }));

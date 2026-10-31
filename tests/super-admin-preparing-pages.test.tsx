@@ -239,7 +239,9 @@ describe('/super-admin/infra (インフラ監視)', () => {
     // 応答を登録しない (fetch は 404 のエラー本文を返す)
     await render(<InfraPage />);
 
-    expect(text()).toContain('not found');
+    // 本文の英字だけの文 (not found) は出さず、「<対象>を読み込めませんでした (HTTP <番号>)」にする (#2086 V6)
+    expect(text()).toContain('アラートを読み込めませんでした (HTTP 404)');
+    expect(text()).not.toContain('not found');
     expect(text()).not.toContain(NOT_CONNECTED);
   });
 });

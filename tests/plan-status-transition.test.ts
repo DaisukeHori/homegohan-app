@@ -11,6 +11,7 @@ import {
   PLAN_STATUSES,
   PLAN_UPDATE_FIELD_LABELS,
   PlanUpdateSchema,
+  STRIPE_PRODUCT_ID_LOCKED_MESSAGE,
   isAllowedPlanStatusTransition,
   planStatusLockedFieldsMessage,
   planStatusTransitionMessage,
@@ -183,15 +184,17 @@ describe('PATCH /api/super-admin/plans/[id] (#1041 状態遷移一方向ロッ�
     expect(res.status).toBe(200);
   });
 
-  it('public 中に status 以外の価格系フィールドを変更しようとすると引き続き 422 (price-change API 誘導)', async () => {
+  it('public 中に、Stripe の Price を作ったあとの stripe_product_id を変更しようとすると引き続き 422 (#2112 Z1-1: Price がまだ無いあいだは変えられる)', async () => {
     fakeSupabase = createFakeSupabase({
-      subscription_plans: [{ data: existingPlan({ status: 'public' }), error: null }],
+      subscription_plans: [{ data: existingPlan({ status: 'public', stripe_price_id: 'price_monthly_1', stripe_yearly_price_id: null }), error: null }],
     });
 
     const res = await PATCH(patchRequest({ stripe_product_id: 'prod_x' }), { params: { id: PLAN_ID } });
     expect(res.status).toBe(422);
-    const json = (await res.json()) as { error: { code: string } };
+    const json = (await res.json()) as { error: { code: string; message: string } };
     expect(json.error.code).toBe('OP_PLAN_STATUS_LOCKED');
+    expect(json.error.message).toBe(STRIPE_PRODUCT_ID_LOCKED_MESSAGE);
+    expect(englishIdentifiersOutsideParentheses(json.error.message)).toEqual([]);
   });
 
   it('公開中のプランで変えられない項目を送ると、項目名を「画面の名前 (項目名)」の形で括弧に入れた文を返す (#1917 の続き)', async () => {

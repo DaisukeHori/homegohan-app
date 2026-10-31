@@ -5,12 +5,42 @@
  * operator/03-ui-spec.md §16 準拠
  * 権限: support, admin, super_admin
  * 内部メモ (is_internal=true): 薄黄色背景で視覚的区別
+ *
+ * #2112 Z3: 状態・優先度・カテゴリは src/lib/admin/support-schemas.ts の表 (TICKET_*_LABELS) の表示名で出す (一覧と同じ語)。
+ * 以前は優先度・カテゴリを英字の内部の値 (high・billing など) のまま出し、一覧では「高」と出る値が詳細では high だった。表に無い値はそのまま出す
  */
 import { useState, useEffect, useCallback, useRef, use } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
+import { usePathname, useRouter } from 'next/navigation';
+import { loginPathWithNext } from '@/lib/auth/signed-in-user';
+import { UNAUTHENTICATED_SCREEN_MESSAGE, forbiddenMessageOfResponse } from '@/lib/admin/api-error-message';
+import {
+  AdminActionNoResponseError,
+  AdminScreenError,
+  adminActionErrorOfResponse,
+  adminActionNoResponseMessage,
+  displayableAdminError,
+  sendAdminAction,
+} from '@/lib/admin/admin-screen-messages';
 import { describeReplyEmailOutcome } from '@/lib/admin/support-reply-email-status';
+import {
+  REPLY_DELIVERED_EMAIL_UNKNOWN_GUIDE,
+  REPLY_DELIVERED_GUIDE,
+  REPLY_NOT_DELIVERED_GUIDE,
+  REPLY_RELOAD_FAILED_GUIDE,
+  REPLY_RELOAD_UNAVAILABLE_GUIDE,
+  REPLY_REOPEN_TO_RETRY_GUIDE,
+  isReplyDelivered,
+  isReplyInputAsSent,
+  replyNoResponseMessage,
+} from '@/lib/admin/support-reply-no-response';
+import { rereadDetailRow } from '@/lib/super-admin/detail-reread';
+import {
+  TICKET_STATUSES,
+  ticketCategoryLabel,
+  ticketPriorityLabel,
+  ticketStatusLabel,
+} from '@/lib/admin/support-schemas';
 
 interface Message {
   id: string;
@@ -35,20 +65,20 @@ interface Ticket {
   messages: Message[];
 }
 
+/** 401 (Unauthorized) の HTTP ステータス */
+const HTTP_UNAUTHORIZED = 401;
 /** 403 (Forbidden) の HTTP ステータス */
 const HTTP_FORBIDDEN = 403;
 /** 担当者の割り当ての失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917) */
 const ASSIGN_FAILURE_MESSAGE = '割り当て失敗';
 /** 状態の変更の失敗の文。403 の本文が理由の文 (二段階認証の確認が要る など) ならそちらを出す (#1917) */
 const STATUS_CHANGE_FAILURE_MESSAGE = 'ステータス変更失敗';
-
-const STATUS_LABELS: Record<string, string> = {
-  open: '未対応',
-  in_progress: '対応中',
-  pending: '保留',
-  resolved: '解決済',
-  closed: 'クローズ',
-};
+/** 書き込みの通信そのものが失敗したときの文の操作の名前 (「メッセージの送信の応答を受け取れませんでした（通信エラー）」。#2086 V6) */
+const SEND_MESSAGE_ACTION = 'メッセージの送信';
+const ASSIGN_ACTION = '割り当て';
+/** チケットが無い (404) ときの文。送信の応答を受け取れなかったあとの読み直しの 404 も同じ文にする (読み込み直しても変わらない) */
+const TICKET_NOT_FOUND_MESSAGE = 'チケットが見つかりません';
+const STATUS_CHANGE_ACTION = 'ステータスの変更';
 
 const STATUS_COLORS: Record<string, string> = {
   open: 'bg-blue-100 text-blue-800',
@@ -67,9 +97,41 @@ const PRIORITY_COLORS: Record<string, string> = {
 
 type PageProps = { params: Promise<{ id: string }> };
 
+/**
+ * 応答を受け取れなかった送信 (#2093 W1)。読み直して届いていたかを確かめるまで、次の送信をさせない。
+ * knownIds は送る前に画面が持っていたメッセージの id (これに無い行だけを「届いた」と数える)。summary は「<操作>の応答を受け取れませんでした …」の文
+ */
+interface UnconfirmedSend {
+  readonly body: string;
+  readonly isInternal: boolean;
+  readonly knownIds: ReadonlySet<string>;
+  readonly summary: string;
+}
+
+/**
+ * 送れたか分からない送信を止めているあいだの、止めている理由 (#2093 W1・#2101 X3・#2107 Y1)。
+ * message は止めている理由の文 (「<操作>の応答を受け取れませんでした …。チケットも読み込めなかったため、送られたか分かりません …」・
+ * 読み直しても返信がまだ無かったときの「… 送った内容はまだ見つかりません …」)。
+ * エラー欄 (error) とは別に持つので、担当者の設定・ステータスの変更のあとのチケットの読み込み (fetchTicket の setError(null)) で消えない。
+ * retryable は「再試行」(チケットの読み直し) を出すか。読み直しが 401 (ログインが切れた)・403 (権限が外れた)・404 (チケットが消えた) で
+ * 断られたときは、読み込み直しても変わらないので false (押しても必ず失敗する「再試行」を出さない。送信は止めたまま)
+ */
+interface BlockedSend {
+  readonly pending: UnconfirmedSend;
+  readonly message: string;
+  readonly retryable: boolean;
+}
+
+/** チケットの読み直しで読めたチケットが、メッセージの配列を持つか (形が違えば読めなかったものとして扱う) */
+function hasMessages(ticket: Ticket): boolean {
+  return Array.isArray((ticket as { messages?: unknown }).messages);
+}
+
 export default function TicketDetailPage(props: PageProps) {
   const params = use(props.params);
   const router = useRouter();
+  // ログインが切れた (401) ときに、ログインし直したあとこの画面へ戻れるよう next に付けるパス (#2101 X5)
+  const pathname = usePathname();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const [ticket, setTicket] = useState<Ticket | null>(null);
@@ -86,19 +148,25 @@ export default function TicketDetailPage(props: PageProps) {
   const [isAssigning, setIsAssigning] = useState(false);
 
   const [statusChanging, setStatusChanging] = useState(false);
+  // 送信の応答を受け取れなかったあと、チケットの読み直しにも失敗した・読み直しても返信がまだ無くて、送れたか分からない送信 (#2093 W1・#2107 Y1)。
+  // これがあるあいだは送信のボタンを止め、「再試行」でチケットを読み直して確かめるまで送らせない (押し直すと返信が 2 行入り、顧客にメールが 2 通届く)。
+  // ref は再描画の前に続けて押されたときの守り。止めている理由の文はエラー欄と別に出す (ほかの操作のあとの読み込みで消さない。#2101 X3)
+  const [blockedSend, setBlockedSend] = useState<BlockedSend | null>(null);
+  const blockedSendRef = useRef<BlockedSend | null>(null);
+  const [isConfirmingSend, setIsConfirmingSend] = useState(false);
   // 返信・担当者の設定・ステータスの変更のどれかの書き込みとそのあとの読み直しの応答を待っているか (10/26 の整合ゲート 1026e。#2050)。
   // どの書き込みのあとの読み直しもチケットを丸ごと差し替えるので、2 つを重ねると、先に送った読み直しの応答が後に届いたとき、
   // その古いチケット (例: 変える前のステータス) で表示が上書きされる (#2053 のクーポン・機能パッケージと同じ型)。
   // 待つあいだは 3 つの書き込みのボタンを止め、押されても送らない。ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
   const writeInFlightRef = useRef(false);
-  const isWriting = isSending || isAssigning || statusChanging;
+  const isWriting = isSending || isAssigning || statusChanging || isConfirmingSend;
 
   const fetchTicket = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
       const res = await fetch(`/api/admin/support/tickets/${params.id}`);
-      if (res.status === 401) { router.push('/login'); return; }
+      if (res.status === HTTP_UNAUTHORIZED) { router.push(loginPathWithNext(pathname)); return; }
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外は「権限がありません」(#1917)
       if (res.status === HTTP_FORBIDDEN) { setError(await forbiddenMessageOfResponse(res)); return; }
       if (res.status === 404) { setError('チケットが見つかりません'); return; }
@@ -111,39 +179,126 @@ export default function TicketDetailPage(props: PageProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [params.id, router]);
+  }, [params.id, router, pathname]);
 
   useEffect(() => { fetchTicket(); }, [fetchTicket]);
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [ticket?.messages]);
 
+  const markBlockedSend = (blocked: BlockedSend | null) => {
+    blockedSendRef.current = blocked;
+    setBlockedSend(blocked);
+  };
+
+  /**
+   * 送信の応答を受け取れなかったあと、チケットを読み直して送った返信が届いていたかを確かめる (#2093 W1)。
+   * 届いていれば済んだとして入力欄を空にし、送信の止めを外す。
+   * まだ無ければ、本文を残したまま送信を止め、「再試行」で確かめ直させる (サーバーが書き込みの途中なら、押し直すと顧客にメールが 2 通届く。
+   * 押し直すのはチケットを開き直したときだけ。#2107 Y1)。
+   * 読み直しにも失敗したら、送れたか分からないので送信を止める:
+   *   - 500・通信の失敗・本文が読めない: 「再試行」でこの関数をもう一度呼ぶ
+   *   - 401 / 403 / 404: 読み込み直しても変わらないので、理由の文 (「ログインし直してください」・403 の理由の文・
+   *     「チケットが見つかりません」) を添え、「再試行」は出さない (#2101 X3)
+   */
+  const confirmUnconfirmedSend = async (pending: UnconfirmedSend) => {
+    const outcome = await rereadDetailRow<Ticket>(`/api/admin/support/tickets/${params.id}`, TICKET_NOT_FOUND_MESSAGE);
+    if (outcome.kind !== 'loaded' || !hasMessages(outcome.row)) {
+      setEmailNotice(null);
+      setError(null);
+      markBlockedSend(
+        outcome.kind === 'unavailable'
+          ? { pending, message: replyNoResponseMessage(pending.summary, REPLY_RELOAD_UNAVAILABLE_GUIDE, outcome.message), retryable: false }
+          : { pending, message: replyNoResponseMessage(pending.summary, REPLY_RELOAD_FAILED_GUIDE), retryable: true },
+      );
+      return;
+    }
+    const reloaded = outcome.row;
+    setTicket(reloaded);
+    setAssigneeId(reloaded.assignee_id ?? '');
+    if (isReplyDelivered(reloaded.messages, pending.knownIds, pending)) {
+      markBlockedSend(null);
+      // 済んでいた。入力欄が送った本文のままなら空にする (待つあいだに書き足した文は消さない)
+      setMessageBody((current) => (isReplyInputAsSent(current, pending.body) ? '' : current));
+      setError(null);
+      // 外部返信は保存のあとにメールを送るので、応答が切れたときはメールが届いたかは分からない。内部メモはメールにしない
+      setEmailNotice(
+        pending.isInternal
+          ? replyNoResponseMessage(pending.summary, REPLY_DELIVERED_GUIDE)
+          : replyNoResponseMessage(pending.summary, REPLY_DELIVERED_GUIDE, REPLY_DELIVERED_EMAIL_UNKNOWN_GUIDE),
+      );
+      return;
+    }
+    // まだ無いことは送られていないことの確かめにならない (サーバーが書き込みの途中なら、押し直すと同じ返信が 2 行入り、
+    // 顧客にメールが 2 通届く)。送信を止めたまま「再試行」で確かめ直させる。押し直すのはチケットを開き直したときだけ (#2107 Y1)
+    setEmailNotice(null);
+    setError(null);
+    markBlockedSend({
+      pending,
+      message: replyNoResponseMessage(pending.summary, REPLY_NOT_DELIVERED_GUIDE, REPLY_REOPEN_TO_RETRY_GUIDE),
+      retryable: true,
+    });
+  };
+
   const handleSendMessage = async () => {
-    if (!messageBody.trim() || writeInFlightRef.current) return;
+    if (!messageBody.trim() || writeInFlightRef.current || blockedSendRef.current !== null) return;
     writeInFlightRef.current = true;
     setIsSending(true);
     setEmailNotice(null);
+    // 応答を受け取れなかったときに、読み直したメッセージと比べるための、送る前の状態と送った内容 (#2093 W1)
+    const knownIds: ReadonlySet<string> = new Set((ticket?.messages ?? []).map((message) => message.id));
+    const sent = { body: messageBody, isInternal };
     try {
-      const res = await fetch(`/api/admin/support/tickets/${params.id}/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ body: messageBody, is_internal: isInternal }),
-      });
+      // 通信そのものの失敗は AdminActionNoResponseError (ブラウザの英字の例外の文を出さない。#2086 V6)
+      const res = await sendAdminAction(
+        `/api/admin/support/tickets/${params.id}/messages`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ body: sent.body, is_internal: sent.isInternal }),
+        },
+        SEND_MESSAGE_ACTION,
+      );
       if (!res.ok) {
-        const json = await res.json();
-        throw new Error(json.error?.message ?? '送信失敗');
+        // 本文は JSON でないこともある (プロキシの 502 の HTML など) ので読み失敗で例外にしない (#2086 V6)。
+        // 本文に API の文の無い 502 / 503 / 504 は応答を受け取れなかったもの (AdminActionNoResponseError。#2093 W1)
+        throw await adminActionErrorOfResponse(res, SEND_MESSAGE_ACTION);
       }
       // 外部返信は顧客へメールで知らせる。メッセージ自体は保存済みなので、送れなかったときは案内だけ出す
       // (内部メモは通知しないため、応答に email が無い)
       const created = await res.json().catch(() => null);
       setEmailNotice(describeReplyEmailOutcome(created?.email));
-      setMessageBody('');
+      // 入力欄が送った本文のままなら空にする (送信の応答を待つあいだも入力欄は書き換えられるので、書き足した文は消さない。#2107 Y7 と同じ型)。
+      // 読み直しの経路と同じ比べ方 (前後の空白・改行だけの違いは書き足しと見なさない。#2120 W4)
+      setMessageBody((current) => (isReplyInputAsSent(current, sent.body) ? '' : current));
       await fetchTicket();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : '送信失敗');
+      if (e instanceof AdminActionNoResponseError) {
+        // route は保存のあとにメールの送信を待ってから応答するので、応答が切れても返信は保存されていることがある。
+        // 失敗と見せて押し直させず、チケットを読み直して確かめる (#2093 W1)
+        await confirmUnconfirmedSend({ ...sent, knownIds, summary: e.message });
+      } else {
+        // 画面に出すのは日本語の文だけ (ブラウザの英字の例外の文などは出さない。#2086 V6)
+        setError(displayableAdminError(e, '送信失敗'));
+      }
     } finally {
       writeInFlightRef.current = false;
       setIsSending(false);
+    }
+  };
+
+  /** 「再試行」: 送れたか分からない送信を、チケットを読み直して確かめる (#2093 W1) */
+  const handleRetryConfirmSend = async () => {
+    const blocked = blockedSendRef.current;
+    // 読み込み直しても変わらない理由で止めているときは読み直さない (「再試行」は出していない。#2101 X3)
+    if (blocked === null || !blocked.retryable || writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
+    setIsConfirmingSend(true);
+    try {
+      await confirmUnconfirmedSend(blocked.pending);
+    } finally {
+      writeInFlightRef.current = false;
+      setIsConfirmingSend(false);
     }
   };
 
@@ -152,17 +307,25 @@ export default function TicketDetailPage(props: PageProps) {
     writeInFlightRef.current = true;
     setIsAssigning(true);
     try {
-      const res = await fetch(`/api/admin/support/tickets/${params.id}/assign`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ assignee_id: assigneeId }),
-      });
+      let res: Response;
+      try {
+        res = await fetch(`/api/admin/support/tickets/${params.id}/assign`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ assignee_id: assigneeId }),
+        });
+      } catch {
+        // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
+        throw new AdminScreenError(adminActionNoResponseMessage(ASSIGN_ACTION));
+      }
+      // 401 は「割り当て失敗」ではなく、運営の画面で揃えた「ログインし直してください」(#2112 Z4)
+      if (res.status === HTTP_UNAUTHORIZED) throw new AdminScreenError(UNAUTHENTICATED_SCREEN_MESSAGE);
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 と失敗は「割り当て失敗」(#1917)
-      if (res.status === HTTP_FORBIDDEN) throw new Error(await forbiddenMessageOfResponse(res, ASSIGN_FAILURE_MESSAGE));
-      if (!res.ok) throw new Error(ASSIGN_FAILURE_MESSAGE);
+      if (res.status === HTTP_FORBIDDEN) throw new AdminScreenError(await forbiddenMessageOfResponse(res, ASSIGN_FAILURE_MESSAGE));
+      if (!res.ok) throw new AdminScreenError(ASSIGN_FAILURE_MESSAGE);
       await fetchTicket();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : ASSIGN_FAILURE_MESSAGE);
+      setError(displayableAdminError(e, ASSIGN_FAILURE_MESSAGE));
     } finally {
       writeInFlightRef.current = false;
       setIsAssigning(false);
@@ -174,17 +337,25 @@ export default function TicketDetailPage(props: PageProps) {
     writeInFlightRef.current = true;
     setStatusChanging(true);
     try {
-      const res = await fetch(`/api/admin/support/tickets/${params.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status }),
-      });
+      let res: Response;
+      try {
+        res = await fetch(`/api/admin/support/tickets/${params.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status }),
+        });
+      } catch {
+        // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
+        throw new AdminScreenError(adminActionNoResponseMessage(STATUS_CHANGE_ACTION));
+      }
+      // 401 は「ステータス変更失敗」ではなく、運営の画面で揃えた「ログインし直してください」(#2112 Z4)
+      if (res.status === HTTP_UNAUTHORIZED) throw new AdminScreenError(UNAUTHENTICATED_SCREEN_MESSAGE);
       // 403 は本文の理由の文 (二段階認証の確認が要る など) を捨てずに出す。それ以外の 403 と失敗は「ステータス変更失敗」(#1917)
-      if (res.status === HTTP_FORBIDDEN) throw new Error(await forbiddenMessageOfResponse(res, STATUS_CHANGE_FAILURE_MESSAGE));
-      if (!res.ok) throw new Error(STATUS_CHANGE_FAILURE_MESSAGE);
+      if (res.status === HTTP_FORBIDDEN) throw new AdminScreenError(await forbiddenMessageOfResponse(res, STATUS_CHANGE_FAILURE_MESSAGE));
+      if (!res.ok) throw new AdminScreenError(STATUS_CHANGE_FAILURE_MESSAGE);
       await fetchTicket();
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : STATUS_CHANGE_FAILURE_MESSAGE);
+      setError(displayableAdminError(e, STATUS_CHANGE_FAILURE_MESSAGE));
     } finally {
       writeInFlightRef.current = false;
       setStatusChanging(false);
@@ -230,6 +401,16 @@ export default function TicketDetailPage(props: PageProps) {
           </div>
         )}
 
+        {blockedSend !== null && (
+          <div
+            role="alert"
+            data-testid="blocked-send-reason"
+            className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4 text-sm"
+          >
+            {blockedSend.message}
+          </div>
+        )}
+
         {emailNotice && (
           <div
             role="status"
@@ -252,13 +433,13 @@ export default function TicketDetailPage(props: PageProps) {
                 </div>
                 <div>
                   <dt className="text-gray-500">カテゴリ</dt>
-                  <dd className="text-gray-900">{ticket.category}</dd>
+                  <dd className="text-gray-900">{ticketCategoryLabel(ticket.category)}</dd>
                 </div>
                 <div>
                   <dt className="text-gray-500">優先度</dt>
                   <dd>
                     <span className={`inline-flex px-2 py-0.5 rounded text-xs ${PRIORITY_COLORS[ticket.priority] ?? 'bg-gray-100 text-gray-600'}`}>
-                      {ticket.priority}
+                      {ticketPriorityLabel(ticket.priority)}
                     </span>
                   </dd>
                 </div>
@@ -266,7 +447,7 @@ export default function TicketDetailPage(props: PageProps) {
                   <dt className="text-gray-500">ステータス</dt>
                   <dd>
                     <span className={`inline-flex px-2 py-0.5 rounded text-xs ${STATUS_COLORS[ticket.status] ?? 'bg-gray-100 text-gray-600'}`}>
-                      {STATUS_LABELS[ticket.status] ?? ticket.status}
+                      {ticketStatusLabel(ticket.status)}
                     </span>
                   </dd>
                 </div>
@@ -281,7 +462,7 @@ export default function TicketDetailPage(props: PageProps) {
             <div className="bg-white rounded-lg shadow p-4">
               <h2 className="text-sm font-semibold text-gray-700 mb-3">ステータス変更</h2>
               <div className="flex flex-col gap-2">
-                {['open', 'in_progress', 'pending', 'resolved', 'closed'].map((s) => (
+                {TICKET_STATUSES.map((s) => (
                   <button
                     key={s}
                     onClick={() => handleStatusChange(s)}
@@ -292,7 +473,7 @@ export default function TicketDetailPage(props: PageProps) {
                         : 'border-gray-200 hover:bg-gray-50 text-gray-600'
                     } disabled:opacity-50 disabled:cursor-not-allowed`}
                   >
-                    {STATUS_LABELS[s] ?? s}
+                    {ticketStatusLabel(s)}
                   </button>
                 ))}
               </div>
@@ -394,10 +575,19 @@ export default function TicketDetailPage(props: PageProps) {
                     : 'border-gray-300 focus:ring-blue-500'
                 }`}
               />
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-2">
+                {blockedSend !== null && blockedSend.retryable && (
+                  <button
+                    onClick={handleRetryConfirmSend}
+                    disabled={isWriting}
+                    className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {isConfirmingSend ? '確認中...' : '再試行'}
+                  </button>
+                )}
                 <button
                   onClick={handleSendMessage}
-                  disabled={isWriting || !messageBody.trim()}
+                  disabled={isWriting || !messageBody.trim() || blockedSend !== null}
                   className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   {isSending ? '送信中...' : isInternal ? 'メモを保存' : '返信を送信'}

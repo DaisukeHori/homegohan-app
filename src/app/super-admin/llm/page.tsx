@@ -7,6 +7,10 @@ import { LLM_USAGE_ANOMALY_NOTICE } from "@/lib/super-admin/llm-usage-anomaly";
 // 以前は画面に別の型を書いていて、anomalies の各要素に応答に無い daily_requests があると宣言していた
 // (応答は requests / cost_usd / is_anomaly)。型を 2 か所に書かないので、応答の形が変われば画面の型も一緒に変わる
 import type { LlmUsageResponseData } from "@/lib/super-admin/llm-usage-summary";
+import { adminLoadFailedFallback, displayableAdminError, fetchAdminJson } from "@/lib/admin/admin-screen-messages";
+
+/** 読み込みの失敗の文の対象 (「LLM の使用量を読み込めませんでした (HTTP 502)」。#2086 V6) */
+const USAGE_SUBJECT = "LLM の使用量";
 
 const PROVIDERS = [
   { key: "gemini", label: "Gemini", color: "bg-blue-500" },
@@ -25,15 +29,13 @@ export default function LLMUsagePage() {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/super-admin/llm/usage?period=${selectedPeriod}`);
-      if (!res.ok) {
-        const body = await res.json();
-        throw new Error(body.error?.message ?? `HTTP ${res.status}`);
-      }
-      const json = await res.json();
-      setData(json.data);
+      // 失敗は日本語の文の例外にする (本文の無い 502 の「HTTP 502」・通信の reject の英字の文・JSON でない本文の SyntaxError を出さない。#2086 V6)
+      const json = (await fetchAdminJson(`/api/super-admin/llm/usage?period=${selectedPeriod}`, USAGE_SUBJECT)) as {
+        data?: LlmUsageResponseData | null;
+      };
+      setData(json.data ?? null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "読み込みに失敗しました");
+      setError(displayableAdminError(err, adminLoadFailedFallback(USAGE_SUBJECT)));
     } finally {
       setIsLoading(false);
     }

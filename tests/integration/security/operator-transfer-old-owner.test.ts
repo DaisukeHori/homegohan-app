@@ -14,6 +14,11 @@
  *   OTO-2 / OTO-5: 先の譲渡をコミット前のまま開いている間に後の譲渡を呼ぶと、後の譲渡は先の commit を待ち、先の譲渡の相手を旧オーナー / 旧代表者として返す
  *   OTO-3 / OTO-6: 同じ並びを route (本物の API) で通すと、監査の from_user_id は先の譲渡の相手 (route が RPC の前に読んだ人ではない)
  *   OTO-7: DROP して作り直した 2 つの関数の権限は本番と同じ (anon・PUBLIC は呼べない。authenticated・service_role は呼べる)
+ *   OTO-8 / OTO-9: #2093 W5 (supabase/migrations/20261030120000_operator_force_transfer_reject_same.sql): 譲渡先がすでに今のオーナー /
+ *     代表者なら、RPC は ALREADY_OWNER / ALREADY_REPRESENTATIVE で断り、membership_audit に旧 = 新の行を書かず、役割も変えない。
+ *     ふつうの譲渡は今までどおり書く
+ *   OTO-10 / OTO-11: 同じ人への譲渡が先に開いている間に route を呼ぶと (route の RPC の前の控えは先の譲渡の前のオーナー / 代表者)、
+ *     route の RPC は先の commit を待ってから断り、route は 409 で admin_audit_logs を書かない。membership_audit は先の譲渡の 1 行だけ
  *
  * 先の譲渡をコミット前のまま開いておくのは、ローカルスタックの postgres-meta (/pg/query、service_role キーが必要) を使う
  * (org-transfer-toctou.test.ts と同じ道具)。
@@ -56,6 +61,7 @@ const GATEWAY_FAST_FAIL_MS = 1500;
 const HTTP_BAD_GATEWAY = 502;
 const HTTP_OK = 200;
 const HTTP_BAD_REQUEST = 400;
+const HTTP_CONFLICT = 409;
 /** 関数の実行権限が無いときの SQLSTATE (insufficient_privilege) */
 const PG_INSUFFICIENT_PRIVILEGE = '42501';
 
@@ -228,6 +234,19 @@ async function orgOwnerId(orgId: string): Promise<string | null> {
   const { data, error } = await srAdmin.from('organizations').select('owner_id').eq('id', orgId).single();
   if (error || !data) throw new Error(`organizations: ${error?.message}`);
   return (data as { owner_id: string | null }).owner_id;
+}
+
+async function orgRoleOf(userId: string): Promise<string | null> {
+  const { data, error } = await srAdmin.from('user_profiles').select('org_role').eq('id', userId).single();
+  if (error || !data) throw new Error(`user_profiles: ${error?.message}`);
+  return (data as { org_role: string | null }).org_role;
+}
+
+/** 家族の active なメンバーの役割 (user_id → role) */
+async function familyRoles(familyId: string): Promise<Record<string, string>> {
+  const { data, error } = await srAdmin.from('family_members').select('user_id, role').eq('family_id', familyId).eq('status', 'active');
+  if (error) throw new Error(`family_members: ${error.message}`);
+  return Object.fromEntries((data ?? []).map((row) => [(row as { user_id: string }).user_id, (row as { role: string }).role]));
 }
 
 async function familyRepresentativeId(familyId: string): Promise<string | null> {
@@ -490,5 +509,105 @@ describe('OTO-7: 作り直した 2 つの関数の権限と戻り値の型', () 
     const byPlain = await transferOrg(plain.jwt, orgId, next.id);
     expect(byPlain).toMatchObject({ ok: false, code: 'P0001', message: 'NOT_OPERATOR' });
     expect(await orgOwnerId(orgId)).toBe(owner.id);
+  }, TEST_TIMEOUT_MS);
+});
+
+// ---------------------------------------------------------------------------------------------
+// #2093 W5: 譲渡先がすでに今のオーナー / 代表者なら、RPC は書く前に断る
+// ---------------------------------------------------------------------------------------------
+
+describe('#2093 W5: 新 = 旧の強制譲渡は、RPC が membership_audit を書く前に断る (20261030120000_operator_force_transfer_reject_same.sql)', () => {
+  it('OTO-8: 組織: 今のオーナーへの譲渡は ALREADY_OWNER (P0001) で断り、オーナー・役割・membership_audit を変えない。ふつうの譲渡は今までどおり書く', async () => {
+    const op = await operator();
+    const [owner, next] = await createUsers('oto8', 2);
+    const orgId = await createOrg(owner, [next], 'oto8');
+
+    const same = await transferOrg(op.jwt, orgId, owner.id);
+
+    expect(same).toMatchObject({ ok: false, code: 'P0001', message: 'ALREADY_OWNER' });
+    expect(await orgOwnerId(orgId)).toBe(owner.id);
+    expect(await orgRoleOf(owner.id)).toBe('owner');
+    expect(await orgRoleOf(next.id)).toBe('admin');
+    expect(await membershipAuditPriors(orgId, 'operator_force_owner_transfer', 'old_owner_id')).toEqual([]);
+
+    const normal = await transferOrg(op.jwt, orgId, next.id);
+
+    expect(normal.ok, JSON.stringify(normal)).toBe(true);
+    expect(normal.data).toMatchObject({ organization: { owner_id: next.id }, old_owner_id: owner.id });
+    expect(await membershipAuditPriors(orgId, 'operator_force_owner_transfer', 'old_owner_id')).toEqual([owner.id]);
+
+    // 譲渡した後に同じ人へもう一度 (押し直し) も断り、2 行目を書かない
+    const again = await transferOrg(op.jwt, orgId, next.id);
+
+    expect(again).toMatchObject({ ok: false, code: 'P0001', message: 'ALREADY_OWNER' });
+    expect(await membershipAuditPriors(orgId, 'operator_force_owner_transfer', 'old_owner_id')).toEqual([owner.id]);
+  }, TEST_TIMEOUT_MS);
+
+  it('OTO-9: 家族: 今の代表者への譲渡は ALREADY_REPRESENTATIVE (P0001) で断り、代表者・役割・membership_audit を変えない。ふつうの譲渡は今までどおり書く', async () => {
+    const op = await operator();
+    const [rep, adult] = await createUsers('oto9', 2);
+    const familyId = await createFamily(rep, [adult], 'oto9');
+
+    const same = await transferFamily(op.jwt, familyId, rep.id);
+
+    expect(same).toMatchObject({ ok: false, code: 'P0001', message: 'ALREADY_REPRESENTATIVE' });
+    expect(await familyRepresentativeId(familyId)).toBe(rep.id);
+    expect(await familyRoles(familyId)).toEqual({ [rep.id]: 'representative', [adult.id]: 'adult' });
+    expect(await membershipAuditPriors(familyId, 'operator_force_representative_transfer', 'old_rep_id')).toEqual([]);
+
+    const normal = await transferFamily(op.jwt, familyId, adult.id);
+
+    expect(normal.ok, JSON.stringify(normal)).toBe(true);
+    expect(normal.data).toMatchObject({ family_group: { representative_id: adult.id }, old_rep_id: rep.id });
+    expect(await membershipAuditPriors(familyId, 'operator_force_representative_transfer', 'old_rep_id')).toEqual([rep.id]);
+
+    const again = await transferFamily(op.jwt, familyId, adult.id);
+
+    expect(again).toMatchObject({ ok: false, code: 'P0001', message: 'ALREADY_REPRESENTATIVE' });
+    expect(await membershipAuditPriors(familyId, 'operator_force_representative_transfer', 'old_rep_id')).toEqual([rep.id]);
+  }, TEST_TIMEOUT_MS);
+
+  it('OTO-10: 組織: 先の譲渡 (A → B) を開いている間に route で B へ譲渡すると、route の RPC は先の commit を待って断り、route は 409 ALREADY_OWNER。admin_audit_logs は無く、membership_audit は先の 1 行だけ', async () => {
+    const op = await operator();
+    const [a, b] = await createUsers('oto10', 2);
+    const orgId = await createOrg(a, [b], 'oto10');
+    const routePath = `/api/operator/membership/org/${orgId}/transfer`;
+    // 開発サーバーの初回のコンパイルを先の譲渡を開く前に済ませる (入力の誤りで 400。何も書かない)
+    expect((await apiCall('POST', routePath, op.jwt, {})).status).toBe(HTTP_BAD_REQUEST);
+
+    const holder = holdCall(op.user, orgTransferSql(orgId, b.id));
+    // route の RPC が組織の行のロックの待ちに入った = route の RPC の前の控えは先の commit より前 (owner_id = A を読み、1 つ目の判定を通った)
+    const [held, res] = await holders.runBehindHolder(holder, {
+      fn: 'operator_force_owner_transfer',
+      call: () => apiCall<{ error?: { code?: string } }>('POST', routePath, op.jwt, { to_user_id: b.id, reason: 'oto10' }),
+    });
+
+    expect(held.ok, JSON.stringify(held)).toBe(true);
+    expect(res.status, JSON.stringify(res.body)).toBe(HTTP_CONFLICT);
+    expect(res.body.error?.code).toBe('ALREADY_OWNER');
+    expect(await orgOwnerId(orgId)).toBe(b.id);
+    expect(await adminAuditDetails(orgId, ORG_ACTION)).toEqual([]);
+    expect(await membershipAuditPriors(orgId, 'operator_force_owner_transfer', 'old_owner_id')).toEqual([a.id]);
+  }, TEST_TIMEOUT_MS);
+
+  it('OTO-11: 家族: 先の譲渡 (A → B) を開いている間に route で B へ譲渡すると、route の RPC は先の commit を待って断り、route は 409 ALREADY_REPRESENTATIVE。admin_audit_logs は無く、membership_audit は先の 1 行だけ', async () => {
+    const op = await operator();
+    const [a, b] = await createUsers('oto11', 2);
+    const familyId = await createFamily(a, [b], 'oto11');
+    const routePath = `/api/operator/membership/family/${familyId}/transfer`;
+    expect((await apiCall('POST', routePath, op.jwt, {})).status).toBe(HTTP_BAD_REQUEST);
+
+    const holder = holdCall(op.user, familyTransferSql(familyId, b.id));
+    const [held, res] = await holders.runBehindHolder(holder, {
+      fn: 'operator_force_representative_transfer',
+      call: () => apiCall<{ error?: { code?: string } }>('POST', routePath, op.jwt, { to_user_id: b.id, reason: 'oto11' }),
+    });
+
+    expect(held.ok, JSON.stringify(held)).toBe(true);
+    expect(res.status, JSON.stringify(res.body)).toBe(HTTP_CONFLICT);
+    expect(res.body.error?.code).toBe('ALREADY_REPRESENTATIVE');
+    expect(await familyRepresentativeId(familyId)).toBe(b.id);
+    expect(await adminAuditDetails(familyId, FAMILY_ACTION)).toEqual([]);
+    expect(await membershipAuditPriors(familyId, 'operator_force_representative_transfer', 'old_rep_id')).toEqual([a.id]);
   }, TEST_TIMEOUT_MS);
 });

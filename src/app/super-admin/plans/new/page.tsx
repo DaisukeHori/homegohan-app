@@ -11,6 +11,18 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { PLAN_CATALOG, type PaidPlanKey } from '@homegohan/shared';
+import {
+  AdminScreenError,
+  adminActionHttpFailedMessage,
+  adminActionNoResponseMessage,
+  adminCreatedButUnreadableMessage,
+  adminScreenErrorOfResponse,
+  createdRowIdOfResponse,
+  displayableAdminError,
+} from '@/lib/admin/admin-screen-messages';
+
+/** 作成の失敗の文の操作の名前 (「プランの作成に失敗しました (HTTP 502)」。#2093 W7) */
+const PLAN_CREATE_ACTION = 'プランの作成';
 
 /** 有料 3 プランのひな形の表示名と月額は公開の価格の写しから読む (billing/03 §8.9 の PLAN_CATALOG。旧案の値を持たない) */
 function paidPlanTemplate(planKey: PaidPlanKey): { display_name: string; monthly_price_jpy: number } {
@@ -64,29 +76,39 @@ export default function PlanNewPage() {
     setError('');
 
     try {
-      const res = await fetch('/api/super-admin/plans', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          plan_key: selectedKey,
-          display_name: displayName,
-          plan_type: planType,
-          description: description || undefined,
-          monthly_price_jpy: monthlyPrice !== '' ? Number(monthlyPrice) : null,
-          yearly_price_jpy: yearlyPrice !== '' ? Number(yearlyPrice) : null,
-          max_members: maxMembers !== '' ? Number(maxMembers) : null,
-          trial_days: Number(trialDays),
-        }),
-      });
-
-      const data = await res.json() as { data?: { id: string }; error?: { message: string } };
+      // 失敗は日本語の文の例外にする。ok を先に確かめ、JSON でない 502 を「ネットワークエラー」と見せない
+      // (本文に日本語の文が無ければ「<作成>に失敗しました (HTTP 502)」、通信そのものの失敗は「<作成>の応答を受け取れませんでした」。#2093 W7)
+      let res: Response;
+      try {
+        res = await fetch('/api/super-admin/plans', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            plan_key: selectedKey,
+            display_name: displayName,
+            plan_type: planType,
+            description: description || undefined,
+            monthly_price_jpy: monthlyPrice !== '' ? Number(monthlyPrice) : null,
+            yearly_price_jpy: yearlyPrice !== '' ? Number(yearlyPrice) : null,
+            max_members: maxMembers !== '' ? Number(maxMembers) : null,
+            trial_days: Number(trialDays),
+          }),
+        });
+      } catch {
+        throw new AdminScreenError(adminActionNoResponseMessage(PLAN_CREATE_ACTION));
+      }
       if (!res.ok) {
-        setError(data.error?.message ?? '作成に失敗しました');
+        throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(PLAN_CREATE_ACTION, status));
+      }
+      // 成功の応答の本文が読めない: 作成は済んでいるので失敗とは言わず、一覧で確かめるよう促す (作った行の画面へは移れない)
+      const createdId = await createdRowIdOfResponse(res);
+      if (createdId === null) {
+        setError(adminCreatedButUnreadableMessage(PLAN_CREATE_ACTION));
         return;
       }
-      router.push(`/super-admin/plans/${data.data!.id}`);
-    } catch {
-      setError('ネットワークエラーが発生しました');
+      router.push(`/super-admin/plans/${createdId}`);
+    } catch (err) {
+      setError(displayableAdminError(err, `${PLAN_CREATE_ACTION}に失敗しました`));
     } finally {
       setIsLoading(false);
     }

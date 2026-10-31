@@ -135,12 +135,13 @@ describe('/admin/moderation (一覧) の「非表示中」のバッジ', () => {
 
     const rows = Array.from(page.querySelectorAll('tbody tr'));
     expect(rows).toHaveLength(3);
+    // 状態は日本語の表示名で出す (#2080 U6。内部の英字の値は出さない)
     const statusCell = (row: Element) => row.querySelectorAll('td')[3];
-    expect(statusCell(rows[0]).textContent).toContain('rejected');
+    expect(statusCell(rows[0]).textContent).toContain('却下済み');
     expect(statusCell(rows[0]).textContent).toContain(BADGE);
-    expect(statusCell(rows[1]).textContent).toContain('pending');
+    expect(statusCell(rows[1]).textContent).toContain('未審査');
     expect(statusCell(rows[1]).textContent).toContain(BADGE);
-    expect(statusCell(rows[2]).textContent).toContain('approved');
+    expect(statusCell(rows[2]).textContent).toContain('承認済み');
     expect(statusCell(rows[2]).textContent).not.toContain(BADGE);
 
     // 絞り込み (status の select) は変えない

@@ -14,7 +14,9 @@ import OrganizationsManager from './OrganizationsManager';
 
 export default async function AdminOrganizationsPage() {
   // 未認証 → /login?next=・2FA 未完了 → MFA の画面・ロール不足 / 凍結 → /login (#1176。docs/design/cross/12-operator-mfa.md §13.4.2)
-  await requireRoleForPage(['admin', 'super_admin'], { next: '/admin/organizations' });
+  const actor = await requireRoleForPage(['admin', 'super_admin'], { next: '/admin/organizations' });
 
-  return <OrganizationsManager />;
+  // オーナーを指定しない組織の作成では、操作している運営がオーナーになる (route と同じ)。応答を受け取れなかったあとの確かめで、
+  // 読み直した組織が自分の送った作成かを比べるのに使う (#2112 Z2)
+  return <OrganizationsManager currentUserId={actor.id} />;
 }

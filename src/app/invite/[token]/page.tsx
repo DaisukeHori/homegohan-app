@@ -4,16 +4,42 @@
 // (設計書 03-ui-spec.md §2 — 5 パターン分岐)
 // org/family 共通版: scope ('family'|'organization') による分岐
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { readSignedInUser } from '@/lib/auth/signed-in-user';
 import { FamilyInviteAcceptModal } from '@/components/membership/FamilyInviteAcceptModal';
 import { InviteLayout } from '@/components/membership/InviteLayout';
+import {
+  readInviteAcceptStateAfterFailure,
+  withInviteAcceptStateNote,
+} from '@/lib/membership/invite-accept-state';
+
+/** 組織の招待の承諾の通信そのものが失敗した (fetch が reject した・応答の本文を読めなかった) ときの文 */
+const ORG_NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
+
+/** 組織の招待が承諾済み・拒否済み・取り消し済み (409 INVITE_ALREADY_USED) のときの文 */
+const ORG_INVITE_ALREADY_USED_MESSAGE = 'この招待は既に使用済みです。';
+
+/**
+ * 自分 (ログインしているか) か招待の情報を読み込めなかったときの文 (#2093 W4)。招待が無い (「招待情報が見つかりません」) と
+ * 見分けるために出す (以前は通信の失敗も「招待情報が見つかりません」と出していたので、オフラインで開いた招待のリンクが無効に見えた)。
+ * 失敗の理由 (英語の内部の文) は画面に出さない
+ */
+const INVITE_LOAD_ERROR = '招待の情報を読み込めませんでした。しばらくしてから、もう一度お試しください。';
+
+/** 招待が無い (get_invite_details が null を返した) ときの文 */
+const INVITE_NOT_FOUND_MESSAGE = '招待情報が見つかりません';
+
+/** 組織の招待の承諾が済んだときの遷移先 */
+const ORG_DASHBOARD_PATH = '/org/dashboard';
 
 interface InviteDetails {
   status: 'pending' | 'accepted' | 'rejected' | 'expired' | 'revoked';
   // get_invite_details RPC (最新の定義は supabase/migrations/20261016200000_rpc_profile_name_placeholder.sql:62) の実返却キーに合わせる
   scope: 'family' | 'organization';
+  /** 招待の家族 / 組織の id。承諾の通信が切れたあと、ここに入ったかを確かめる (#2080 U1) */
+  scope_id: string;
   email: string;
   scope_name: string;
   invited_by_name: string;
@@ -33,36 +59,75 @@ export default function InvitePage() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // 読み込めなかったときの文。あるあいだは画面の代わりにこの文と「再試行」を出す (#2093 W4)
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // org accept/reject state
   const [orgLoading, setOrgLoading] = useState(false);
   const [orgError, setOrgError] = useState<string | null>(null);
 
-  useEffect(() => {
-    const init = async () => {
-      // 認証状態確認
-      const { data: { user } } = await supabase.auth.getUser();
-      setIsLoggedIn(!!user);
+  // 自分と招待の情報を読む。画面を開いたときと「再試行」で呼ぶ。例外は投げない
+  const loadPage = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    setError(null);
+    try {
+      // 認証状態確認。getUser は通信の失敗を投げずに { user: null, error } で返すので、readSignedInUser で見分ける。
+      // 確かめられなかったときは、ログインしていないとしてログインの案内を出さず、読み込みの失敗と「再試行」を出す (#2093 W4)
+      const signedIn = await readSignedInUser(supabase);
+      if (signedIn.kind === 'load-failed') {
+        setLoadError(INVITE_LOAD_ERROR);
+        return;
+      }
+      const user = signedIn.kind === 'signed-in' ? signedIn.user : null;
+      setIsLoggedIn(user !== null);
       setCurrentEmail(user?.email ?? null);
 
-      // invite 詳細取得 (get_invite_details RPC は認証不要 SECURITY DEFINER)
+      // invite 詳細取得 (get_invite_details RPC は認証不要 SECURITY DEFINER。招待が無ければ null を返し、例外は上げない)
       const { data, error: rpcError } = await supabase.rpc('get_invite_details', { p_token: token });
 
-      if (rpcError || !data) {
-        setError('招待情報が見つかりません');
-        setLoading(false);
+      if (rpcError) {
+        // 読み込めなかった (招待が無いのとは別。「招待情報が見つかりません」と見せない)
+        setLoadError(INVITE_LOAD_ERROR);
+        return;
+      }
+      if (!data) {
+        setError(INVITE_NOT_FOUND_MESSAGE);
         return;
       }
 
       setInvite(data as InviteDetails);
+    } catch (loadFailure) {
+      // 問い合わせが例外を投げた (以前は catch が無く、未処理の reject になり、確認中の表示のまま止まっていた)
+      console.error('[invite] load error:', loadFailure);
+      setLoadError(INVITE_LOAD_ERROR);
+    } finally {
       setLoading(false);
-    };
-
-    init();
+    }
   }, [token, supabase]);
+
+  useEffect(() => {
+    void loadPage();
+  }, [loadPage]);
+
+  /**
+   * 組織の招待を承諾できていたかを自分のプロフィールで確かめる (#2080 U1。家族の招待の承諾 FamilyInviteAcceptModal と同じ型)。
+   * 招待の組織に入っていれば成功のときと同じ遷移にする。入っていなければ message (確かめられなかったときは
+   * 「状態を確かめられませんでした」を添える) を出す。読み直しの応答を待つあいだも「承諾する」を止めたままにする
+   */
+  const confirmOrgAcceptedOrShow = async (inviteOrgId: string, message: string) => {
+    const state = await readInviteAcceptStateAfterFailure(supabase, 'org', inviteOrgId);
+    if (state === 'joined') {
+      router.push(ORG_DASHBOARD_PATH);
+      return;
+    }
+    setOrgError(withInviteAcceptStateNote(message, state));
+  };
 
   // org invite accept
   const handleOrgAccept = async () => {
+    if (!invite) return;
+    const inviteOrgId = invite.scope_id;
     setOrgError(null);
     setOrgLoading(true);
     try {
@@ -78,7 +143,9 @@ export default function InvitePage() {
             setOrgError('既に組織に所属しています。');
             break;
           case 'INVITE_ALREADY_USED':
-            setOrgError('この招待は既に使用済みです。');
+            // 前に押した承諾をサーバーが済ませてから応答が切れたときも、押し直すとこれになる (承諾の RPC は招待の
+            // status = 'accepted' を先に見る)。招待の組織に入っていれば、承諾できているので成功のときと同じ遷移にする
+            await confirmOrgAcceptedOrShow(inviteOrgId, ORG_INVITE_ALREADY_USED_MESSAGE);
             break;
           case 'INVITE_REVOKED':
             setOrgError('この招待は取り消されています。');
@@ -91,9 +158,12 @@ export default function InvitePage() {
         }
         return;
       }
-      router.push('/org/dashboard');
-    } catch {
-      setOrgError('通信エラーが発生しました');
+      router.push(ORG_DASHBOARD_PATH);
+    } catch (err) {
+      console.error('[invite] org accept error:', err);
+      // サーバーが承諾を済ませてから応答が切れた (または応答の本文を読めなかった) こともあるので、
+      // 自分のプロフィールを読み直して確かめる (#2080 U1)
+      await confirmOrgAcceptedOrShow(inviteOrgId, ORG_NETWORK_FAILURE_MESSAGE);
     } finally {
       setOrgLoading(false);
     }
@@ -118,6 +188,37 @@ export default function InvitePage() {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-gray-400 text-sm">招待情報を確認しています…</div>
       </div>
+    );
+  }
+
+  // 読み込めなかった (招待が無いのとは別。「再試行」を出す)
+  if (loadError) {
+    return (
+      <InviteLayout scope="organization">
+        <div
+          role="alert"
+          data-testid="invite-load-error"
+          className="max-w-sm w-full rounded-2xl bg-red-50 border border-red-200 p-6 text-center space-y-4"
+        >
+          <p className="text-red-700 text-sm font-medium">{loadError}</p>
+          <div className="flex justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => void loadPage()}
+              className="px-4 py-2 rounded-full bg-white border border-red-300 text-red-700 font-medium text-sm hover:bg-red-100 transition-colors"
+            >
+              再試行
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push('/')}
+              className="px-4 py-2 rounded-full bg-gray-200 text-gray-600 font-medium text-sm hover:bg-gray-300 transition-colors"
+            >
+              ホームへ戻る
+            </button>
+          </div>
+        </div>
+      </InviteLayout>
     );
   }
 
@@ -233,6 +334,7 @@ export default function InvitePage() {
       <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-6">
         <FamilyInviteAcceptModal
           token={token}
+          familyId={invite.scope_id}
           familyName={invite.scope_name}
           inviterName={invite.invited_by_name}
           expiresAt={invite.expires_at}

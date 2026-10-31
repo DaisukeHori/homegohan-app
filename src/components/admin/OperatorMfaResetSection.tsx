@@ -6,10 +6,14 @@
  * 実行者が super_admin で、対象が MFA_REQUIRED_ROLES のどれかを持つときだけ、ページ (src/app/admin/users/[id]/page.tsx) が描く。
  * 理由・本人確認の方法・「本人確認を行った」のチェックの 3 つがそろうまで [解除する] を押せない。
  * 押すと確認ダイアログ → POST /api/super-admin/admins/{id}/mfa/reset (src/lib/auth/mfa/client.ts の resetOperatorMfa だけで呼ぶ)。
- * 成功は消した数・失敗は mfaErrorMessage(code) を出す (401 も文を出すだけ。運営の画面の移動は layout の requireRoleForPage が受け持つ)。
+ * 成功は消した数・失敗は mfaErrorMessage(code) を出す。ただし 401 は code に関わらず、ほかの運営の form
+ * (同じページの手動のプラン付与・凍結のページ /admin/users/{id}/freeze の凍結の form) と同じ
+ * 「ログインし直してください」(UNAUTHENTICATED_SCREEN_MESSAGE。#2112 Z4。mfaErrorMessage の 401 の code の文は、利用者の二段階認証の画面の言い回し)。
+ * 401 も文を出すだけ (運営の画面の移動は layout の requireRoleForPage が受け持つ)。
  * 500 は、監査の後のセッションの終了・factor・コードの削除の失敗のことがあり、もう一度押してよい (残りを消す §14.7)。
  */
 import { useState, type FormEvent } from 'react';
+import { UNAUTHENTICATED_SCREEN_MESSAGE } from '@/lib/admin/api-error-message';
 import { mfaErrorMessage, resetOperatorMfa } from '@/lib/auth/mfa/client';
 import { MFA_RESET_IDENTITY_CHECKS, MFA_RESET_REASON_MAX_LENGTH } from '@/lib/auth/mfa/schemas';
 
@@ -22,6 +26,9 @@ export const MFA_RESET_IDENTITY_CHECK_LABELS: Readonly<Record<IdentityCheck, str
   id_document_shown: '身分証を見せてもらい確認 (画像は預からない)',
   other: 'その他',
 };
+
+/** 401 (Unauthorized。ログインが切れた) の HTTP ステータス */
+const HTTP_UNAUTHORIZED = 401;
 
 /** [解除する] の後の確認ダイアログの文 (§15.3) */
 const RESET_CONFIRM_MESSAGE =
@@ -53,7 +60,8 @@ export function OperatorMfaResetSection({ userId }: { userId: string }) {
       const { factors_deleted: factorsDeleted, backup_codes_deleted: backupCodesDeleted } = result.data.data;
       setMessage(`認証アプリ ${factorsDeleted} 件・バックアップコード ${backupCodesDeleted} 件を消しました`);
     } else {
-      setError(mfaErrorMessage(result.code));
+      // 401 は code (reset の route は UNAUTHORIZED) から引いた利用者の画面の言い回しではなく、運営の画面で揃えた文 (#2112 Z4)
+      setError(result.status === HTTP_UNAUTHORIZED ? UNAUTHENTICATED_SCREEN_MESSAGE : mfaErrorMessage(result.code));
     }
     setSubmitting(false);
   };

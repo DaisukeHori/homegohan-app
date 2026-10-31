@@ -15,6 +15,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: 'plan-1' }),
+  // プラン詳細は URL の tab を初めのタブにする (#2107 Y3)
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock('next/link', () => ({

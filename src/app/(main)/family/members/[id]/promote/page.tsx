@@ -8,6 +8,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { PARENTAL_CONSENT_COPY } from '@homegohan/shared';
 import { createClient } from '@/lib/supabase/client';
+import { readSignedInUser } from '@/lib/auth/signed-in-user';
 import { MEMBERSHIP_STATE_UNCONFIRMED_NOTE } from '@/lib/membership/leave-state';
 
 /** 送信・取り消しの通信そのものが失敗した (fetch が reject した) ときの文 */
@@ -95,12 +96,19 @@ export default function PromoteMemberPage() {
     // 別の画面へ移るときは、移るまで読み込み中の表示のままにする (これまでどおり)
     let redirecting = false;
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
-        redirecting = true;
-        router.push('/login');
+      // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
+      // 確かめられなかったときは読み込みの失敗と「再試行」を出す (#2086 V3 と同じ型。メンバーの詳細の画面と同じ)
+      const signedIn = await readSignedInUser(supabase);
+      if (signedIn.kind === 'load-failed') {
+        setLoadError(PROMOTE_LOAD_ERROR);
         return;
       }
+      if (signedIn.kind === 'signed-out') {
+        redirecting = true;
+        router.push(`/login?next=${encodeURIComponent(`/family/members/${memberId}/promote`)}`);
+        return;
+      }
+      const { user } = signedIn;
 
       const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
@@ -124,6 +132,8 @@ export default function PromoteMemberPage() {
         .select('id, display_name, role, user_id')
         .eq('id', memberId)
         .eq('family_id', profile.family_id)
+        // 今のメンバーの行だけを開く (#2086 V10 と同じ型。除名した子供の行に昇格の依頼のフォームを出さない。無ければ「メンバーが見つかりません」)
+        .eq('status', 'active')
         .single();
 
       if (isLoadFailure(memberError)) {

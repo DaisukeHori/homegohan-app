@@ -4,6 +4,9 @@ import { z } from 'zod';
 
 export const AuditScopeSchema = z.enum(['organization', 'family']);
 
+// membership_audit.action の全値。DB の CHECK membership_audit_action_check の配列と同じ値を同じ並びで持つ
+// (最後の定義は supabase/migrations/20261017030000_parental_consent_and_birth_date.sql の 7.。
+// 突き合わせは tests/membership-audit-schema-check-2093.test.ts。CHECK を変えたらここも変える)
 export const AuditActionSchema = z.enum([
   'group_created',
   'group_dissolved',
@@ -20,12 +23,19 @@ export const AuditActionSchema = z.enum([
   'role_changed',
   'owner_transfer_proposed',
   'owner_transferred',
+  'owner_transfer_declined',
   'representative_transfer_proposed',
   'representative_transferred',
+  'representative_transfer_declined',
   'operator_force_owner_transfer',
   'operator_force_representative_transfer',
   'operator_force_dissolve',
   'paste_executed',
+  'child_promotion_requested',
+  'child_promotion_rejected',
+  'child_promotion_revoked',
+  'parental_consent_recorded',
+  'parental_consent_revoked',
 ]);
 
 export const MembershipAuditSchema = z.object({

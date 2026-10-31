@@ -6,6 +6,16 @@ import Link from "next/link";
 // 以前は by_model の 1 行の型を画面に手で書き写していた (その時点では一致)。型を 2 か所に書かないので、
 // 応答の形が変われば画面の型も一緒に変わり、合わなくなった読み方は型検査で止まる
 import type { LlmUsageResponseData } from "@/lib/super-admin/llm-usage-summary";
+import {
+  AdminScreenError,
+  adminLoadFailedFallback,
+  adminLoadFailedMessage,
+  adminScreenErrorOfResponse,
+  displayableAdminError,
+} from "@/lib/admin/admin-screen-messages";
+
+/** 読み込みの失敗の文の対象 (「LLM の使用量を読み込めませんでした (HTTP 502)」。#2086 V6) */
+const USAGE_SUBJECT = "LLM の使用量";
 
 const PROVIDER_LABELS: Record<string, { label: string; models: string[] }> = {
   gemini: {
@@ -43,15 +53,19 @@ export default function ProviderDetailPage(props: { params: Promise<{ provider: 
       setIsLoading(true);
       setError(null);
       try {
-        const res = await fetch(`/api/super-admin/llm/usage?period=${period}&provider=${params.provider}`);
-        if (!res.ok) {
-          const body = await res.json();
-          throw new Error(body.error?.message ?? `HTTP ${res.status}`);
+        // 失敗は日本語の文の例外にする (本文の無い 502 の「HTTP 502」・通信の reject の英字の文・JSON でない本文の SyntaxError を出さない。#2086 V6)
+        let res: Response;
+        try {
+          res = await fetch(`/api/super-admin/llm/usage?period=${period}&provider=${params.provider}`);
+        } catch {
+          throw new AdminScreenError(adminLoadFailedMessage(USAGE_SUBJECT, null));
         }
+        if (!res.ok) throw await adminScreenErrorOfResponse(res, (status) => adminLoadFailedMessage(USAGE_SUBJECT, status));
+        // 200 の本文が JSON でないときの SyntaxError は catch で固定の文にする
         const { data }: { data: LlmUsageResponseData } = await res.json();
         setModelStats(data.by_model);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "読み込みに失敗しました");
+        setError(displayableAdminError(err, adminLoadFailedFallback(USAGE_SUBJECT)));
       } finally {
         setIsLoading(false);
       }

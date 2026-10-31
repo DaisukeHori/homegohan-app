@@ -9,11 +9,68 @@ import { OptionalCalendarDateSchema } from '@/lib/calendar-date-schema';
 
 // ─── ユーザー一覧検索 ───────────────────────────────────────────────────────────
 
+/** ユーザーの一覧で絞り込める状態 (GET /api/admin/users の status。これ以外は API が 400) */
+export const USER_LIST_STATUSES = ['active', 'banned', 'deleted'] as const;
+export type UserListStatus = (typeof USER_LIST_STATUSES)[number];
+
+/** 運営のユーザーの一覧 (/admin/users) の既定の状態 (URL に status が無いとき・読めないとき) */
+export const USER_LIST_DEFAULT_STATUS: UserListStatus = 'active';
+
+/** 運営のユーザーの一覧の「全ステータス」(URL の status が空。API には status を付けずに送る) */
+export const USER_LIST_ALL_STATUSES = '';
+
+/** 絞り込みの select の「全ステータス」(USER_LIST_ALL_STATUSES) の表示名 */
+export const USER_LIST_ALL_STATUSES_LABEL = '全ステータス';
+
+/**
+ * 運営のユーザーの一覧 (/admin/users) の絞り込みの select の、状態ごとの表示名 (#2107 Y10)。
+ * select の選択肢は「全ステータス」と USER_LIST_STATUSES から作る。Record なので、USER_LIST_STATUSES に値を足すと
+ * 表示名の漏れが型の誤りになる (選択肢が URL の status の読み方 parseUserListStatusParam とずれない)。
+ * 以前は選択肢を画面に手で書き (全ステータス・アクティブ・BAN 済み)、?status=deleted に合う選択肢が無いため
+ * select が一番上の「全ステータス」を示し、そのまま「検索」を押すと status が空 (全ステータス) で送られていた。
+ */
+export const USER_LIST_STATUS_LABELS: Record<UserListStatus, string> = {
+  active: 'アクティブ',
+  banned: 'BAN 済み',
+  deleted: '削除済み',
+};
+
+/**
+ * 削除済みの絞り込みの一覧が 0 件のときの文 (#2107 Y10)。
+ * 退会 (src/lib/account-deletion.ts の auth.admin.deleteUser) は auth.users の行を消し、user_profiles の行も外部キーの
+ * ON DELETE CASCADE (user_profiles_id_fkey) で消えるので、GET /api/admin/users の status=deleted は常に 0 件になる。
+ * 「ユーザーが見つかりません」だけでは、退会したユーザーがいないと読めるため、一覧に出ない理由を出す
+ */
+export const USER_LIST_DELETED_EMPTY_MESSAGE = '退会したユーザーは記録が消えるため、削除済みの一覧には出ません';
+
+/**
+ * 画面 (/admin/users) の URL の status (searchParams.status) を、ユーザーの一覧の API に送る状態に読む (#2101 X7)。
+ * 無ければ既定の active、空 (「全ステータス」) は空のまま (API には付けない)。USER_LIST_STATUSES に無い値
+ * (?status=foo など、URL を手で書き換えたとき) は既定の active にする。
+ * 以前は URL の値をそのまま API に送り、400 の読み込みの失敗が「再読み込み」でも直らなかった
+ * (URL の page の src/lib/list-pagination.ts の parsePageParam と同じ扱い。#2093 W8)
+ */
+export function parseUserListStatusParam(raw: string | undefined): UserListStatus | typeof USER_LIST_ALL_STATUSES {
+  if (raw === USER_LIST_ALL_STATUSES) return USER_LIST_ALL_STATUSES;
+  return USER_LIST_STATUSES.find((status) => status === raw) ?? USER_LIST_DEFAULT_STATUS;
+}
+
+/**
+ * 利用者の一覧 (GET /api/admin/users) の sort で受ける並びの鍵 (#2120 W3-2)。registered_at は登録日 (user_profiles.created_at)、
+ * last_login は最終ログイン (user_profiles.last_login_at)。これ以外は API が 400 (VALIDATION_ERROR)。
+ * 以前は meal_count も受けていたが、user_profiles に食事の記録数の列は無く、route は登録日の順で返しながら監査の
+ * filters.sort には meal_count と残していた (記録と実際の並びが食い違う)。画面はどれも sort を送らない
+ */
+export const USER_LIST_SORT_KEYS = ['registered_at', 'last_login'] as const;
+export type UserListSortKey = (typeof USER_LIST_SORT_KEYS)[number];
+
 export const UsersSearchSchema = z.object({
   q: z.string().optional(),
+  // #2112 Z5: route が plan_key_cached で一覧と件数の数え直しを絞る (free は plan_key_cached が NULL の利用者を含む。
+  // 前後の空白を除いて空なら指定なし)。以前は受け取って監査の検索条件に残すだけで、一覧を絞っていなかった
   plan: z.string().optional(),
   role: z.string().optional(),
-  status: z.enum(['active', 'banned', 'deleted']).optional(),
+  status: z.enum(USER_LIST_STATUSES).optional(),
   // #1433: 登録日・最終ログイン日は operator/02-api-spec.md §4 で date (YYYY-MM-DD)。JST の暦日として扱う。
   // 実在しない日付 (2026-02-30 など) と、受け付ける範囲 (CALENDAR_DATE_MIN〜CALENDAR_DATE_MAX。9999-12-31 などの端は
   // 翌日の JST 0 時を求められないので外す) の外の日付は、DB に触れる前に 400。空文字は「指定なし」。
@@ -22,7 +79,7 @@ export const UsersSearchSchema = z.object({
   registered_from: OptionalCalendarDateSchema,
   registered_to: OptionalCalendarDateSchema,
   last_login_before: OptionalCalendarDateSchema,
-  sort: z.enum(['registered_at', 'last_login', 'meal_count']).optional(),
+  sort: z.enum(USER_LIST_SORT_KEYS).optional(),
   order: z.enum(['asc', 'desc']).optional().default('desc'),
   page: z.coerce.number().int().min(1).optional().default(1),
   per_page: z.coerce.number().int().min(1).max(200).optional().default(50),

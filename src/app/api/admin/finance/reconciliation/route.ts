@@ -11,6 +11,8 @@ import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED, authFailureNested } from '@/lib/api/error-responses';
 import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
+import { ReconciliationQuerySchema } from '@/lib/admin/finance-schemas';
+import { financeInvalidQueryResponse } from '@/lib/admin/finance-query-errors';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,10 +30,18 @@ export async function GET(request: NextRequest) {
 
     // admin_audit_logs から reconciliation discrepancy を取得
     const { searchParams } = new URL(request.url);
-    const from = searchParams.get('from');
-    const to = searchParams.get('to');
-    const page = parseInt(searchParams.get('page') ?? '1', 10);
-    const perPage = parseInt(searchParams.get('per_page') ?? '50', 10);
+    // page / per_page が 1 以上の整数でない・per_page が上限より大きいときは、DB に触れずに 400 (#2101 X6。
+    // 以前は parseInt だけで読み、?page=abc の NaN を .range に渡して 500・?page=0 で負の offset にしていた)
+    const queryResult = ReconciliationQuerySchema.safeParse({
+      from: searchParams.get('from') ?? undefined,
+      to: searchParams.get('to') ?? undefined,
+      page: searchParams.get('page') ?? undefined,
+      per_page: searchParams.get('per_page') ?? undefined,
+    });
+    if (!queryResult.success) {
+      return financeInvalidQueryResponse(queryResult.error.issues);
+    }
+    const { from, to, page, per_page: perPage } = queryResult.data;
 
     // 一覧と、範囲外のページのときの件数の数え直し (src/lib/api/list-range.ts) は、同じ絞り込み (selectDiscrepancyLogs) から作る
     const selectDiscrepancyLogs = (options: { head?: boolean } = {}) => {

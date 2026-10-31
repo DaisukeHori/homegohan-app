@@ -6,6 +6,10 @@
  */
 
 import { useState } from 'react';
+import {
+  displayableOperatorError,
+  operatorForceActionFailedFallback,
+} from '@/lib/membership/operator-screen-messages';
 
 export type ForceActionConfirmModalProps = {
   scope: 'organization' | 'family';
@@ -38,7 +42,8 @@ export default function ForceActionConfirmModal({
     try {
       await onConfirm();
     } catch (err) {
-      setError(err instanceof Error ? err.message : '操作に失敗しました');
+      // 画面が投げた日本語の文 (OperatorScreenError) だけを出す。それ以外 (ブラウザの英字の例外の文など) は固定の文にする (#2080 U5)
+      setError(displayableOperatorError(err, operatorForceActionFailedFallback(action)));
     } finally {
       setLoading(false);
     }

@@ -7,18 +7,28 @@
  * 読んでから書くまでに別の操作が状態を変えた CONFLICT_STALE_DATA。どちらも別のタブ・別の運営が先に状態を変えたとき)、
  * 画面が自分で実験を読み直し、読み直した旨と今の状態を画面の表示名 (下書き・実行中・完了・中止) で画面の上に出す (#2064)。
  * route の文は DB の値の英字の状態名を埋めるので出さない。読み直しは画面を外さずに行い、失敗したら文と「再試行」を出す。
- * 読み直しが 404 / 403 で断られたら、読み込み直しても変わらないので、その理由の文を出し「再試行」は出さない
- * (プランの詳細の reloadAfterStale と同じ形)。確認の文・状態のバッジも英字の状態名を出さない。
+ * 読み直しが 404 / 403 / 401 で断られたら、読み込み直しても変わらないので、その理由の文を出し「再試行」は出さない
+ * (プランの詳細の reloadAfterStale と同じ形。401 は「ログインし直してください」。#2086 V4)。
+ * 読み込み・状態の変更の失敗の文は日本語だけにする (本文の無い 502 の「HTTP 502」だけの文・通信の reject の英字の文を出さない。#2086 V6)。確認の文・状態のバッジも英字の状態名を出さない。
  * 状態の変更は、応答とそのあとの読み直しを待つあいだ、ほかの状態の変更を送らない (#2050。ref でも守る)。
  * 状態の変更の通信そのものが失敗した (fetch が reject した) ときは、サーバーが変更を済ませてから応答が切れたこともあるので、
  * 実験を読み直して今の状態とボタンを見せ、「状態の変更の応答を受け取れませんでした」の文を出す (alert にしない。#2073)。
  * 読み直さないと、古い状態のボタンをもう一度押して 409 になり、自分の操作なのに「別の操作で実験の状態が先に変わっていました」と出る。
  * そのあとの読み直しが失敗したら「再試行」を出し、読み直せるまで状態のボタンを止める (画面の状態が古いかもしれないため)。
+ * 状態の変更が 200 で返ったのに本文を読み切れない (JSON でない・data が無い) ときも、変更は済んでいるのに画面の状態が古いままになるので、
+ * 通信の reject と同じく読み直して今の状態を見せる (クーポン・機能パッケージの詳細と同じ。#2080)。
+ * 409 のあとの読み直しが失敗したときも、読み直せるまで状態のボタンを止める (クーポン・機能パッケージ・プランの詳細と同じ。#2080)。
  */
 
 import { useState, useEffect, useCallback, useRef, use } from "react";
 import Link from "next/link";
-import { forbiddenMessageForScreen } from "@/lib/admin/api-error-message";
+import {
+  adminActionHttpFailedMessage,
+  adminLoadFailedMessage,
+  screenApiErrorMessage,
+  screenFailureMessage,
+} from "@/lib/admin/admin-screen-messages";
+import { rereadUnavailableMessage } from "@/lib/super-admin/detail-reread";
 import {
   EXPERIMENT_NOT_FOUND_ON_RELOAD_MESSAGE,
   EXPERIMENT_NO_RESPONSE_RELOAD_FAILED_MESSAGE,
@@ -69,13 +79,14 @@ const STATUS_BADGE: Record<string, string> = {
   cancelled: "bg-red-800 text-red-200",
 };
 
-/** 読み込み・読み直しが 404 / 403 で断られたかを見分ける HTTP ステータス */
-const HTTP_NOT_FOUND = 404;
-const HTTP_FORBIDDEN = 403;
+/** 読み込みの失敗の文の対象 (「実験を読み込めませんでした (HTTP 502)」。#2086 V6) */
+const EXPERIMENT_SUBJECT = "実験";
+/** 状態の変更の失敗の文の操作の名前 (「状態の変更に失敗しました (HTTP 502)」。#2086 V6) */
+const STATUS_CHANGE_ACTION = "状態の変更";
 
 /**
  * 実験の読み込みの結果。superseded は、読み込みの最中に新しい読み込みが始まったので結果を捨てた。
- * unavailable は、表示したあとの読み直しが 404 / 403 で断られた (読み込み直しても変わらない理由)
+ * unavailable は、表示したあとの読み直しが 404 / 403 / 401 で断られた (読み込み直しても変わらない理由。401 は #2086 V4)
  */
 type ExperimentLoadOutcome =
   | { kind: "loaded"; experiment: Experiment }
@@ -86,10 +97,10 @@ type ExperimentLoadOutcome =
 /**
  * 画面の上に出す、409 のあと・通信の reject のあとの読み直しについての文 (#2064・#2073)。
  *   - stale                    : 409 のあとに読み直した (今の状態を添える)
- *   - stale-reload-failed      : 409 のあとの読み直しに失敗した (「再試行」を出す)
+ *   - stale-reload-failed      : 409 のあとの読み直しに失敗した (「再試行」を出し、状態のボタンを止める。#2080)
  *   - no-response              : 状態の変更の通信が reject されたあとに読み直した (今の状態を添える)
  *   - no-response-reload-failed: 通信が reject されたあとの読み直しに失敗した (「再試行」を出し、状態のボタンを止める)
- *   - unavailable              : 読み直しが 404 / 403 で断られた (「再試行」は出さない)
+ *   - unavailable              : 読み直しが 404 / 403 / 401 で断られた (「再試行」は出さない)
  */
 type ReloadNotice =
   | { kind: "stale"; status: string }
@@ -111,13 +122,6 @@ function reloadNoticeText(notice: ReloadNotice): string {
     case "unavailable":
       return notice.message;
   }
-}
-
-/** API の失敗の本文から文を取り出す (取り出せなければ null) */
-function apiErrorMessageOf(body: unknown): string | null {
-  if (typeof body !== "object" || body === null) return null;
-  const message = (body as { error?: { message?: unknown } }).error?.message;
-  return typeof message === "string" ? message : null;
 }
 
 export default function ExperimentDetailPage(props: { params: Promise<{ id: string }> }) {
@@ -157,14 +161,22 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
       if (seq !== loadSeqRef.current) return { kind: "superseded" };
       const loaded = (expBody as { data?: Experiment } | null)?.data;
       if (!expRes.ok || !loaded) {
-        if (!isReload) setError(apiErrorMessageOf(expBody) ?? `HTTP ${expRes.status}`);
-        if (isReload && expRes.status === HTTP_NOT_FOUND) {
-          return { kind: "unavailable", message: EXPERIMENT_NOT_FOUND_ON_RELOAD_MESSAGE };
+        if (!isReload) {
+          // 本文に日本語の文が無ければ「実験を読み込めませんでした (HTTP 502)」。200 なのに本文が読めないときは通信エラーの文 (#2086 V6)。
+          // 401 / 403 は読み直しと同じ理由の文 (「ログインし直してください」・403 の理由の文) にする (#2101 X4。初めの読み込みの 404 は従来どおり)
+          const initialUnavailableMessage = expRes.ok ? null : rereadUnavailableMessage(expRes.status, expBody, null);
+          setError(
+            initialUnavailableMessage ??
+              screenApiErrorMessage(expBody) ??
+              adminLoadFailedMessage(EXPERIMENT_SUBJECT, expRes.ok ? null : expRes.status),
+          );
+          return { kind: "failed" };
         }
-        if (isReload && expRes.status === HTTP_FORBIDDEN) {
-          return { kind: "unavailable", message: forbiddenMessageForScreen(expBody) };
-        }
-        return { kind: "failed" };
+        // 表示したあとの読み直しが 404 / 403 / 401 なら、読み込み直しても変わらない理由を返す (401 も「再試行」を出さない。#2086 V4)
+        const unavailableMessage = expRes.ok
+          ? null
+          : rereadUnavailableMessage(expRes.status, expBody, EXPERIMENT_NOT_FOUND_ON_RELOAD_MESSAGE);
+        return unavailableMessage === null ? { kind: "failed" } : { kind: "unavailable", message: unavailableMessage };
       }
       hasLoadedRef.current = true;
       setExperiment(loaded);
@@ -176,9 +188,10 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
         if (seq === loadSeqRef.current && loadedResults) setResults(loadedResults);
       }
       return { kind: "loaded", experiment: loaded };
-    } catch (err) {
+    } catch {
       if (seq !== loadSeqRef.current) return { kind: "superseded" };
-      if (!isReload) setError(err instanceof Error ? err.message : "読み込みに失敗しました");
+      // 通信そのものの失敗 (ブラウザの英字の例外の文は出さない。#2086 V6)
+      if (!isReload) setError(adminLoadFailedMessage(EXPERIMENT_SUBJECT, null));
       return { kind: "failed" };
     } finally {
       if (seq === loadSeqRef.current && !isReload) setIsLoading(false);
@@ -189,12 +202,15 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
     void loadExperiment();
   }, [loadExperiment]);
 
-  /** 通信の reject のあとの読み直しが失敗し、まだ読み直せていないか (#2073)。そのあいだは状態のボタンを止める */
-  const noResponseStaleRef = useRef(false);
-  const [isNoResponseStale, setIsNoResponseStale] = useState(false);
-  const markNoResponseStale = useCallback((stale: boolean) => {
-    noResponseStaleRef.current = stale;
-    setIsNoResponseStale(stale);
+  /**
+   * 409 のあと・通信の reject のあとの読み直しが失敗し、まだ読み直せていないか (#2073・#2080)。そのあいだは状態のボタンを止める
+   * (画面の状態が DB と食い違っているかもしれないのに、その状態を元にしたボタンを押させない)。ref は描画を待たずに handler で読むための写し
+   */
+  const reloadFailedRef = useRef(false);
+  const [isReloadFailed, setIsReloadFailed] = useState(false);
+  const markReloadFailed = useCallback((failed: boolean) => {
+    reloadFailedRef.current = failed;
+    setIsReloadFailed(failed);
   }, []);
 
   /**
@@ -206,8 +222,9 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
   const reloadAfterUncertain = useCallback(async (cause: "stale" | "no-response") => {
     const outcome = await loadExperiment();
     if (outcome.kind === "superseded") return;
-    // 通信の reject のあとの読み直しが失敗したときだけ、読み直せるまで状態のボタンを止める (#2073)
-    markNoResponseStale(cause === "no-response" && outcome.kind === "failed");
+    // 読み直しが失敗したら、どちらの理由でも、読み直せるまで状態のボタンを止める (#2073・#2080)。
+    // 404 / 403 / 401 (unavailable) は読み込み直しても変わらないので止めない (プランの詳細と同じ)
+    markReloadFailed(outcome.kind === "failed");
     if (outcome.kind === "loaded") {
       setReloadNotice({ kind: cause, status: outcome.experiment.status });
     } else if (outcome.kind === "failed") {
@@ -215,7 +232,7 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
     } else {
       setReloadNotice({ kind: "unavailable", message: outcome.message });
     }
-  }, [loadExperiment, markNoResponseStale]);
+  }, [loadExperiment, markReloadFailed]);
 
   /** 409 (遷移表に無い変更・別の操作が先に状態を変えた) のあとの読み直し */
   const reloadAfterStale = useCallback(() => reloadAfterUncertain("stale"), [reloadAfterUncertain]);
@@ -235,8 +252,8 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
 
   const handleStatusChange = async (status: ExperimentStatusChangeTarget) => {
     // 応答 (とそのあとの読み直し) を待つあいだは送らない (#2050。ref は再描画の前の続けての押下の守り。#2064)。
-    // 通信の reject のあとの読み直しが失敗して、まだ読み直せていないあいだも送らない (#2073)
-    if (writeInFlightRef.current || noResponseStaleRef.current) return;
+    // 409 のあと・通信の reject のあとの読み直しが失敗して、まだ読み直せていないあいだも送らない (#2073・#2080)
+    if (writeInFlightRef.current || reloadFailedRef.current) return;
     if (!confirm(EXPERIMENT_STATUS_CHANGE_CONFIRM_MESSAGES[status])) return;
     writeInFlightRef.current = true;
     setIsChangingStatus(true);
@@ -261,11 +278,17 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
           await reloadAfterStale();
           return;
         }
-        alert(apiErrorMessageOf(body) ?? `HTTP ${res.status}`);
+        alert(screenFailureMessage(res.status, body) ?? adminActionHttpFailedMessage(STATUS_CHANGE_ACTION, res.status));
         return;
       }
       const updated = (body as { data?: Experiment } | null)?.data;
-      if (updated) setExperiment(updated);
+      if (!updated) {
+        // 200 なので変更は済んでいるが、本文 (書いたあとの行) を読み切れなかった (JSON でない・data が無い)。
+        // 画面の状態は古いままなので、通信の reject と同じく読み直して今の状態を見せる (#2080)
+        await reloadAfterUncertain("no-response");
+        return;
+      }
+      setExperiment(updated);
     } finally {
       writeInFlightRef.current = false;
       setIsChangingStatus(false);
@@ -273,8 +296,8 @@ export default function ExperimentDetailPage(props: { params: Promise<{ id: stri
   };
 
   const isBusy = isChangingStatus || isReloading;
-  // 状態のボタンを止めるか (応答・読み直しを待つあいだと、通信の reject のあとの読み直しが失敗しているあいだ。#2073)
-  const statusButtonsDisabled = isBusy || isNoResponseStale;
+  // 状態のボタンを止めるか (応答・読み直しを待つあいだと、409 のあと・通信の reject のあとの読み直しが失敗しているあいだ。#2073・#2080)
+  const statusButtonsDisabled = isBusy || isReloadFailed;
 
   if (isLoading) {
     return (

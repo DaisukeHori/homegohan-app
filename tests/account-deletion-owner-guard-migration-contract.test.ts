@@ -214,9 +214,13 @@ describe(`${MIGRATION}: アプリの側`, () => {
     expect(route).toContain(`const OWNER_ACCOUNT_DELETING = '${RAISE_CODE}';`);
     // P0001 + コードの完全一致の判定は共通の関数 (src/lib/errors/db-raised-code.ts) で行う (#1917。route では `.message` を読まない)
     expect(route).toContain("import { isRaisedExceptionWithCode } from '@/lib/errors/db-raised-code';");
+    // #2107 Y4 から、作成は DB 関数 admin_create_organization (organizations の INSERT を含む 1 つのトランザクション) を呼ぶ。
+    // トリガーの止めはその呼び出しの失敗 (createError) として届く。文は英字の項目名を含まない定数 (#2107 Y5 の同じ型)
     expect(route).toMatch(
-      /if \(isRaisedExceptionWithCode\(insertError, OWNER_ACCOUNT_DELETING\)\) \{ return NextResponse\.json\( \{ error: \{ code: OWNER_ACCOUNT_DELETING, message: '[^']+' \} \}, \{ status: 409 \}, \); \}/,
+      /if \(isRaisedExceptionWithCode\(createError, OWNER_ACCOUNT_DELETING\)\) \{ return NextResponse\.json\( \{ error: \{ code: OWNER_ACCOUNT_DELETING, message: OWNER_ACCOUNT_DELETING_MESSAGE \} \}, \{ status: 409 \}, \); \}/,
     );
+    expect(route).toContain("const OWNER_ACCOUNT_DELETING_MESSAGE = '指定したオーナーは退会の手続き中です';");
+    expect(route).toMatch(/const \{ data: created, error: createError \} = await supabaseAdmin\.rpc\('admin_create_organization',/);
     // その関数は、トリガーと同じ P0001 + このコードの完全一致だけを拾う
     expect(isRaisedExceptionWithCode({ code: 'P0001', message: RAISE_CODE }, RAISE_CODE)).toBe(true);
     expect(isRaisedExceptionWithCode({ code: '23505', message: RAISE_CODE }, RAISE_CODE)).toBe(false);

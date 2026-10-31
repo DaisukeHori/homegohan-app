@@ -16,10 +16,26 @@
 //     書きかけを残して、表の上に文と「再試行」を出す。409 のあとの読み直しに失敗したら、行の文も「読み込み直せなかった」にする。
 //     その行の文は、どの経路の読み直し (「再試行」・ほかの行の保存のあとの読み直し) でも、読み直せたら「読み込み直した」文に変える。
 //     409 の文の出ている行は「入力した値と理由は残しています」と伝えているので、その行の入力欄はどの読み直しでも上書きしない (#1917)
+//   - 表を出したあとの読み直しが 401 / 403 で断られたら、読み込み直しても変わらないので、表の上に理由の文 (401 は「ログインし直してください」・
+//     403 は二段階認証の確認が要る などの理由の文か「権限がありません」) を出し、「再試行」は出さない。409 の文の出ている行も
+//     「再試行」を促さない文にする (#2093 W6)
+//   - 一覧の 200 の本文が読めない・data が配列でないときは、読み込めなかったものとして扱う (空の表を出さない。#2093 W7)
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { isStaleDataConflict } from "@/lib/admin/api-error-message";
+import {
+  AdminScreenError,
+  adminActionHttpFailedMessage,
+  adminActionNoResponseMessage,
+  adminLoadFailedFallback,
+  adminLoadFailedMessage,
+  displayableAdminError,
+  readFailureBody,
+  screenApiErrorMessage,
+  screenFailureMessage,
+} from "@/lib/admin/admin-screen-messages";
+import { rereadUnavailableMessage } from "@/lib/super-admin/detail-reread";
 import {
   AI_DAILY_LIMIT_READ_ONLY_NOTES,
   aiDailyLimitRowReadOnlyReason,
@@ -61,24 +77,36 @@ const STALE_LIMIT_RELOADING_MESSAGE =
 const STALE_LIMIT_RELOAD_FAILED_MESSAGE =
   "別の運営が先にこのプランの上限を変えていました。一覧を読み込み直せなかったので、表の上の「再試行」で読み込み直し、いまの上限を確かめてから、もう一度保存してください（入力した値と理由は残しています）";
 
+/**
+ * 保存が 409 CONFLICT_STALE_DATA で断られ、一覧の読み直しが 401 / 403 で断られたときに行に出す文 (#2093 W6)。
+ * 読み込み直しても変わらないので「再試行」は促さず、表の上の理由の文 (ログインし直す・二段階認証の確認 など) に従うよう促す
+ */
+const STALE_LIMIT_RELOAD_UNAVAILABLE_MESSAGE =
+  "別の運営が先にこのプランの上限を変えていました。一覧を読み込み直せなかったので、表の上の文に従ってから、いまの上限を確かめて、もう一度保存してください（入力した値と理由は残しています）";
+
 /** 表を出したあとの読み直しに失敗したときに、表の上に出す文 (#1917) */
 const RELOAD_FAILED_MESSAGE = "最新の上限を読み込めませんでした。表の値は古いかもしれません";
+
+/** 一覧を読む API */
+const QUOTAS_API_PATH = "/api/super-admin/llm/quotas";
 
 /**
  * 保存が 409 CONFLICT_STALE_DATA で断られた行の文の段階 (#1917)。
  *   - reloading    : 一覧を読み直している
  *   - reloaded     : 409 のあとに一覧を読み直せた
  *   - reload-failed: 一覧の読み直しに失敗した (表の上に「再試行」が出ている)
+ *   - reload-unavailable: 一覧の読み直しが 401 / 403 で断られた (表の上に理由の文が出ている。「再試行」は出ない。#2093 W6)
  * 段階は一覧の読み込み (load) が結果に合わせて進める。どの経路の読み込みでも、読めたら reloaded にし、
- * 失敗したら reloading を reload-failed にする (「再試行」だけでなく、ほかの行の保存のあとの読み直しで読めたときも、
- * 「読み込み直せなかった」の文を残さない)
+ * 失敗したら reloaded でない段階を reload-failed (401 / 403 なら reload-unavailable) にする (「再試行」だけでなく、ほかの行の
+ * 保存のあとの読み直しで読めたときも、「読み込み直せなかった」の文を残さない。表の上の「再試行」の有無と行の文を食い違わせない)
  */
-type StaleStage = "reloading" | "reloaded" | "reload-failed";
+type StaleStage = "reloading" | "reloaded" | "reload-failed" | "reload-unavailable";
 
 const STALE_LIMIT_MESSAGES: Record<StaleStage, string> = {
   reloading: STALE_LIMIT_RELOADING_MESSAGE,
   reloaded: STALE_LIMIT_MESSAGE,
   "reload-failed": STALE_LIMIT_RELOAD_FAILED_MESSAGE,
+  "reload-unavailable": STALE_LIMIT_RELOAD_UNAVAILABLE_MESSAGE,
 };
 
 /** 行に出す文。staleStage は、保存が 409 CONFLICT_STALE_DATA で断られた行の文の段階 (それ以外の文には無い) */
@@ -109,6 +137,50 @@ function advanceStaleMessages(
 /** 一覧の読み込みの結果。superseded は、読み込みの最中に新しい読み込みが始まったので結果を捨てた */
 type LoadOutcome = "loaded" | "failed" | "superseded";
 
+/**
+ * 表を出したあとの読み直しの失敗を、表の上に出す文 (#1917・#2093 W6)。retryable は「再試行」を出すか
+ * (401 / 403 は読み込み直しても変わらないので出さない)
+ */
+interface ReloadError {
+  text: string;
+  retryable: boolean;
+}
+
+/** 表を出したあとの読み直しが 401 / 403 で断られた (読み込み直しても変わらない理由の文を持つ。#2093 W6) */
+class QuotasRereadUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "QuotasRereadUnavailableError";
+  }
+}
+
+function isQuotaListResponse(body: unknown): body is QuotaListResponse {
+  return typeof body === "object" && body !== null && Array.isArray((body as { data?: unknown }).data);
+}
+
+/**
+ * 一覧を GET で読む。失敗は画面に出せる日本語の文の例外にする (本文の無い 502 の「HTTP 502」・通信の reject の英字の文・
+ * JSON でない本文の SyntaxError を出さない。#2086 V6)。200 の本文が読めない・data が配列でないときも読み込めなかった文にする (#2093 W7)。
+ * 401 / 403 なら、理由の文の QuotasRereadUnavailableError を投げる (表を出したあとの読み直し #2093 W6・初めの読み込み #2101 X4)
+ */
+async function fetchQuotaList(): Promise<QuotaListResponse> {
+  let res: Response;
+  try {
+    res = await fetch(QUOTAS_API_PATH);
+  } catch {
+    throw new AdminScreenError(adminLoadFailedMessage(QUOTAS_SUBJECT, null));
+  }
+  if (!res.ok) {
+    const body = await readFailureBody(res);
+    const unavailableMessage = rereadUnavailableMessage(res.status, body, null);
+    if (unavailableMessage !== null) throw new QuotasRereadUnavailableError(unavailableMessage);
+    throw new AdminScreenError(screenApiErrorMessage(body) ?? adminLoadFailedMessage(QUOTAS_SUBJECT, res.status));
+  }
+  const body: unknown = await res.json().catch(() => null);
+  if (!isQuotaListResponse(body)) throw new AdminScreenError(adminLoadFailedMessage(QUOTAS_SUBJECT, null));
+  return body;
+}
+
 /** 一覧の行から作る入力欄の初めの値 (保存されている上限。無制限・自分の行が無いときは空欄) */
 function initialDraftOf(row: QuotaRow): Draft {
   return { limit: row.configured && row.daily_limit !== null ? String(row.daily_limit) : "", reason: "" };
@@ -121,16 +193,10 @@ function isDraftEdited(draft: Draft | undefined, loaded: Draft | undefined): boo
   return draft.limit !== loaded.limit || draft.reason !== loaded.reason;
 }
 
-/** 失敗の応答の本文から、画面に出す文 (API の error.message。無ければ HTTP ステータス) */
-function errorMessageOfBody(body: unknown, status: number): string {
-  const message =
-    typeof body === "object" && body !== null ? (body as { error?: { message?: unknown } }).error?.message : undefined;
-  return typeof message === "string" ? message : `HTTP ${status}`;
-}
-
-async function errorMessageOf(res: Response): Promise<string> {
-  return errorMessageOfBody(await res.json().catch(() => null), res.status);
-}
+/** 読み込みの失敗の文の対象 (「AI の利用上限を読み込めませんでした (HTTP 502)」。#2086 V6) */
+const QUOTAS_SUBJECT = "AI の利用上限";
+/** 保存の失敗の文の操作の名前 (「保存に失敗しました (HTTP 502)」。#2086 V6) */
+const SAVE_ACTION = "保存";
 
 export default function LLMQuotasPage() {
   const [rows, setRows] = useState<QuotaRow[]>([]);
@@ -139,9 +205,11 @@ export default function LLMQuotasPage() {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // 初めの読み込みの失敗に「再試行」を出すか (401 / 403 は読み込み直しても変わらないので出さない。#2101 X4)
+  const [errorRetryable, setErrorRetryable] = useState(true);
   // 一度表を出したあとの読み直しの最中か・失敗したか (表は外さない。#1917)
   const [isReloading, setIsReloading] = useState(false);
-  const [reloadError, setReloadError] = useState<string | null>(null);
+  const [reloadError, setReloadError] = useState<ReloadError | null>(null);
   // 一度一覧を読めたか (読めたあとの読み直しは表を外さない。#1917)
   const hasLoadedRef = useRef(false);
   // 最後に失敗した読み直しの条件 (「再試行」は同じ条件で読み直す。#1917)
@@ -183,9 +251,7 @@ export default function LLMQuotasPage() {
       setError(null);
     }
     try {
-      const res = await fetch("/api/super-admin/llm/quotas");
-      if (!res.ok) throw new Error(await errorMessageOf(res));
-      const json = (await res.json()) as QuotaListResponse;
+      const json = await fetchQuotaList();
       if (seq !== loadSeq.current) return "superseded";
       hasLoadedRef.current = true;
       // 409 の文の出ている行 (入力欄を残すと伝えている行)
@@ -219,18 +285,23 @@ export default function LLMQuotasPage() {
       return "loaded";
     } catch (err) {
       if (seq !== loadSeq.current) return "superseded";
-      const message = err instanceof Error ? err.message : "読み込みに失敗しました";
+      // 401 / 403 の読み直しは、読み込み直しても変わらないので「再試行」を出さない (#2093 W6)
+      const unavailable = err instanceof QuotasRereadUnavailableError;
+      const message = unavailable ? err.message : displayableAdminError(err, adminLoadFailedFallback(QUOTAS_SUBJECT));
       if (isReload) {
-        // 表と書きかけは残し、表の上に文と「再試行」を出す (#1917)
+        // 表と書きかけは残し、表の上に文と (読み込み直せば変わりうるときは)「再試行」を出す (#1917)
         failedReloadOptions.current = options;
-        setReloadError(`${RELOAD_FAILED_MESSAGE}（${message}）`);
+        setReloadError({ text: `${RELOAD_FAILED_MESSAGE}（${message}）`, retryable: !unavailable });
       } else {
         setError(message);
+        setErrorRetryable(!unavailable);
       }
-      // 409 のあとの読み直しの最中だった行の文を「読み込み直せなかった」文にする。すでに読み直せた行 (reloaded) は、
-      // 409 のあとに一度読み直せているのでそのまま (#1917)
+      // 409 のあとの読み直しの最中だった行・まだ読み直せていない行の文を「読み込み直せなかった」文にする。すでに読み直せた行 (reloaded) は、
+      // 409 のあとに一度読み直せているのでそのまま (#1917)。401 / 403 なら「再試行」を促さない文にし、それ以外の失敗なら
+      // 「再試行」を促す文にする (表の上の「再試行」の有無と行の文を食い違わせない。#2093 W6)
+      const failedStage: StaleStage = unavailable ? "reload-unavailable" : "reload-failed";
       updateRowMessages((prev) =>
-        advanceStaleMessages(prev, (stage) => (stage === "reloading" ? "reload-failed" : stage)),
+        advanceStaleMessages(prev, (stage) => (stage === "reloaded" ? stage : failedStage)),
       );
       return "failed";
     } finally {
@@ -270,11 +341,17 @@ export default function LLMQuotasPage() {
     }
     setSavingPlan(planKey);
     try {
-      const res = await fetch("/api/super-admin/llm/quotas", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan_key: planKey, daily_limit: dailyLimit, reason: draft.reason.trim() }),
-      });
+      let res: Response;
+      try {
+        res = await fetch("/api/super-admin/llm/quotas", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ plan_key: planKey, daily_limit: dailyLimit, reason: draft.reason.trim() }),
+        });
+      } catch {
+        // 通信そのものの失敗 (ブラウザの英字の例外の文を出さない。#2086 V6)
+        throw new AdminScreenError(adminActionNoResponseMessage(SAVE_ACTION));
+      }
       if (!res.ok) {
         const body: unknown = await res.json().catch(() => null);
         if (isStaleDataConflict(res.status, body)) {
@@ -286,14 +363,14 @@ export default function LLMQuotasPage() {
           await load({ keepDrafts: true });
           return;
         }
-        throw new Error(errorMessageOfBody(body, res.status));
+        throw new AdminScreenError(screenFailureMessage(res.status, body) ?? adminActionHttpFailedMessage(SAVE_ACTION, res.status));
       }
       updateRowMessages((prev) => ({ ...prev, [planKey]: { ok: true, text: `保存しました（${limitLabel(dailyLimit)}）` } }));
       await load();
     } catch (err) {
       updateRowMessages((prev) => ({
         ...prev,
-        [planKey]: { ok: false, text: err instanceof Error ? err.message : "保存に失敗しました" },
+        [planKey]: { ok: false, text: displayableAdminError(err, `${SAVE_ACTION}に失敗しました`) },
       }));
     } finally {
       setSavingPlan(null);
@@ -323,13 +400,15 @@ export default function LLMQuotasPage() {
       ) : error ? (
         <div role="alert" className="bg-red-900/50 border border-red-500 rounded-xl p-4 text-red-300 flex items-center justify-between gap-4">
           <span>{error}</span>
-          <button
-            type="button"
-            onClick={() => void load()}
-            className="shrink-0 px-3 py-1 rounded-lg text-sm font-medium border border-red-400 text-red-200 hover:bg-red-900"
-          >
-            再試行
-          </button>
+          {errorRetryable && (
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="shrink-0 px-3 py-1 rounded-lg text-sm font-medium border border-red-400 text-red-200 hover:bg-red-900"
+            >
+              再試行
+            </button>
+          )}
         </div>
       ) : (
         <div className="bg-slate-800 rounded-xl p-6 border border-slate-700">
@@ -339,15 +418,17 @@ export default function LLMQuotasPage() {
               data-testid="quota-reload-error"
               className="mb-4 bg-red-900/50 border border-red-500 rounded-lg px-4 py-3 text-red-300 text-sm flex items-center justify-between gap-4"
             >
-              <span>{reloadError}</span>
-              <button
-                type="button"
-                onClick={() => void retryReload()}
-                disabled={isReloading}
-                className="shrink-0 px-3 py-1 rounded-lg text-sm font-medium border border-red-400 text-red-200 hover:bg-red-900 disabled:opacity-50"
-              >
-                {isReloading ? "読み込み中…" : "再試行"}
-              </button>
+              <span>{reloadError.text}</span>
+              {reloadError.retryable && (
+                <button
+                  type="button"
+                  onClick={() => void retryReload()}
+                  disabled={isReloading}
+                  className="shrink-0 px-3 py-1 rounded-lg text-sm font-medium border border-red-400 text-red-200 hover:bg-red-900 disabled:opacity-50"
+                >
+                  {isReloading ? "読み込み中…" : "再試行"}
+                </button>
+              )}
             </div>
           )}
           <table className="w-full">

@@ -29,13 +29,30 @@
  * プランを読み直して今の状態を見せ、「状態の変更の応答を受け取れませんでした」の文を画面の上に出す (alert にしない。#2073)。
  * 読み直さないと、画面は古い status のボタンのまま残り、もう一度押すと expected_status が古いので 409 になって、自分の操作なのに
  * 「別の運営が先にこのプランを変えていました」と出る。読み直しが失敗したら「再試行」を出し、読み直せるまで状態のボタンを止める (#2064)。
+ * 初めのタブは URL の tab (`?tab=history` など。src/lib/super-admin/plan-detail-tab.ts) で決める。価格の変更の画面は、済んだあとと
+ * 「済んだか分からない」の案内で `?tab=history` へ送る。以前は URL の tab を読まず、履歴へ送っても基本情報のタブが開いた (#2107 Y3)。
+ * useSearchParams は Suspense の境界の中で呼ぶ (src/app/(support)/support/users/page.tsx と同じ)。
+ * #2112 Z1-1: 基本情報のタブに Stripe の Product ID (stripe_product_id) の入力欄を置き、表示名・説明・表示順と同じく、変えたときだけ
+ * 保存で送る (空欄は null)。以前は価格設定のタブに表示だけがあり、販売開始の手順 (Product ID を入れてから、価格の変更で Stripe の Price を作る) が
+ * 画面からできなかった。公開中・非公開のプランでは、Stripe の Price をまだ作っていないあいだだけ入力できる (isStripeProductIdEditable。route と同じ判定)。
+ * 読み直しで書きかけを残すのも、読み直したプランで入力できるときだけ。価格の変更 (Stripe の Price の作成) が進行中で保存が
+ * 409 OP_PLAN_PRICE_CHANGE_IN_PROGRESS になったときは、別の運営の変更 (CONFLICT_STALE_DATA) ではないので読み直さず、ほかの失敗と同じく
+ * route の文を出して入力欄の値を残す (その文は、表示名・説明なども含めて保存していないことを言い、読み込み直しは勧めない。#2120 W2-1)。
+ * 廃止したプランの Product ID の欄は止め、「入れてから…」ではなく変えられないことを説明に出す (#2120 W2-2)。
+ * #2112 Z1-2: 価格変更履歴のタブは、適用範囲を日本語の名前 (PRICE_APPLIES_TO_LABELS) で出し、旧年額・新年額の列と、月額の Stripe の Price ID が
+ * 変わった行の印 (new_stripe_price_id があるとき) を出す。以前は適用範囲が英字の値 (new_only) のままで、年額だけの変更・Price の登録が見えなかった。
+ * 同じ型で、基本情報の種別も日本語の名前 (PLAN_TYPE_LABELS。一覧と同じ語) で出す (以前は personal などの英字の値)。
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams } from 'next/navigation';
+import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
+import { useParams, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { forbiddenMessageForScreen, isStaleDataConflict } from '@/lib/admin/api-error-message';
+import { isStaleDataConflict } from '@/lib/admin/api-error-message';
+import { screenFailureMessage, withHttpStatus } from '@/lib/admin/admin-screen-messages';
+import { rereadUnavailableMessage } from '@/lib/super-admin/detail-reread';
+import { PLAN_DETAIL_TABS, PLAN_DETAIL_TAB_QUERY_KEY, planDetailTabOf, type PlanDetailTab } from '@/lib/super-admin/plan-detail-tab';
 import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE, countsOrganizationsFor } from '@/lib/super-admin/plan-subscribers';
+import { isStripeProductIdEditable, planTypeLabel, priceAppliesToLabel } from '@/lib/super-admin/plans-schemas';
 import {
   NO_RESPONSE_STATE_RELOADED_GUIDE,
   NO_RESPONSE_STATE_RELOAD_FAILED_GUIDE,
@@ -67,22 +84,44 @@ type PriceHistoryEntry = {
   id: string;
   old_monthly_price_jpy: number | null;
   new_monthly_price_jpy: number | null;
+  /** 年額の変更の前後 (変えなかった行は今の値が両方に入る。#2112 Z1-2) */
+  old_yearly_price_jpy: number | null;
+  new_yearly_price_jpy: number | null;
+  /** 月額の新しい Stripe Price ID (月額の Price を作った行だけ。年額の Price ID は履歴に残らない。#2112 Z1-2) */
+  new_stripe_price_id: string | null;
   reason: string | null;
   applies_to: string;
   changed_by: string;
   created_at: string;
 };
 
-/** 入力欄 (表示名・説明・表示順) の値 */
+/** 入力欄 (表示名・説明・表示順・Stripe の Product ID) の値 */
 type PlanEdits = {
   displayName: string;
   description: string;
   displayOrder: number;
+  /** Stripe の Product ID (未設定は空欄。#2112 Z1-1) */
+  stripeProductId: string;
 };
+
+/** 入力欄の空の値 (読み込む前) */
+const EMPTY_PLAN_EDITS: PlanEdits = { displayName: '', description: '', displayOrder: 0, stripeProductId: '' };
 
 /** プランの行から作る入力欄の初めの値 */
 function editsOf(plan: Plan): PlanEdits {
-  return { displayName: plan.display_name, description: plan.description ?? '', displayOrder: plan.display_order };
+  return {
+    displayName: plan.display_name,
+    description: plan.description ?? '',
+    displayOrder: plan.display_order,
+    stripeProductId: plan.stripe_product_id ?? '',
+  };
+}
+
+/**
+ * Stripe の Product ID の欄を変えているか。前後の空白は比べない (送るときに外すので、空白だけの違いは変更にしない。#2112 Z1-1)
+ */
+function isStripeProductIdChanged(current: PlanEdits, loaded: PlanEdits): boolean {
+  return current.stripeProductId.trim() !== loaded.stripeProductId;
 }
 
 /** 入力欄が書きかけか (最後に読んだ・保存した初めの値から、どれかの欄を変えている) */
@@ -100,11 +139,12 @@ type PlanStatusChangeBody = {
   ends_at?: string;
 };
 
-/** 保存で送る本文 (PATCH /api/super-admin/plans/{id} の表示名・説明・表示順) */
+/** 保存で送る本文 (PATCH /api/super-admin/plans/{id} の表示名・説明・表示順・Stripe の Product ID) */
 type PlanSaveBody = {
   display_name?: string;
   description?: string | null;
   display_order?: number;
+  stripe_product_id?: string | null;
 };
 
 /**
@@ -117,6 +157,8 @@ function changedPlanFields(current: PlanEdits, loaded: PlanEdits): PlanSaveBody 
   if (current.displayName !== loaded.displayName) body.display_name = current.displayName;
   if (current.description !== loaded.description) body.description = current.description || null;
   if (current.displayOrder !== loaded.displayOrder) body.display_order = current.displayOrder;
+  // Stripe の Product ID は前後の空白を外して送り、空欄は null (外す。#2112 Z1-1)
+  if (isStripeProductIdChanged(current, loaded)) body.stripe_product_id = current.stripeProductId.trim() || null;
   return body;
 }
 
@@ -131,6 +173,8 @@ function editsAfterSave(loaded: PlanEdits, sent: PlanEdits, body: PlanSaveBody):
     displayName: body.display_name !== undefined ? sent.displayName : loaded.displayName,
     description: body.description !== undefined ? sent.description : loaded.description,
     displayOrder: body.display_order !== undefined ? sent.displayOrder : loaded.displayOrder,
+    // 送った値 (空白を外した値。null は空欄) が DB の値なので、それを初めの値にする (#2112 Z1-1)
+    stripeProductId: body.stripe_product_id !== undefined ? (body.stripe_product_id ?? '') : loaded.stripeProductId,
   };
 }
 
@@ -145,7 +189,7 @@ function editsAfterSave(loaded: PlanEdits, sent: PlanEdits, body: PlanSaveBody):
  * unavailable の message は画面に出す理由の文。404 は PLAN_NOT_FOUND_ON_RELOAD_MESSAGE。
  * 403 は応答の本文の文が理由の文 (二段階認証の確認が要る など。#2014 の operatorForbiddenMessageOf) ならその文、
  * それ以外 (ロールが足りない・本文が読めない) は「権限がありません」(forbiddenMessageForScreen。読み込み直しても変わらないので
- * どちらも「再試行」は出さない。#1917)
+ * どちらも「再試行」は出さない。#1917)。401 (ログインが切れた) は「ログインし直してください」(「再試行」は出さない。#2086 V4)
  */
 type ReloadNotice =
   | { kind: 'stale'; editsKept: boolean }
@@ -164,8 +208,16 @@ function isRetryableNotice(notice: ReloadNotice): boolean {
  * 表示したあとの読み直しが、読み込み直しても変わらない理由で断られた (「再試行」を出さない。#1917)。
  *   - not-found: 404 (読み直しの間にプランが消えた)
  *   - forbidden: 403 (読み直しの間に運営の権限が外れた・二段階認証の確認が要るようになった)
+ *   - unauthenticated: 401 (読み直しの間にログインが切れた。#2086 V4)
  */
-type PlanUnavailableReason = 'not-found' | 'forbidden';
+type PlanUnavailableReason = 'not-found' | 'forbidden' | 'unauthenticated';
+
+/** 読み直しの HTTP ステータスから、読み込み直しても変わらない理由の種類を決める (#2086 V4。文は rereadUnavailableMessage) */
+const PLAN_UNAVAILABLE_REASON_BY_STATUS: Readonly<Record<number, PlanUnavailableReason>> = {
+  401: 'unauthenticated',
+  403: 'forbidden',
+  404: 'not-found',
+};
 
 /**
  * 409 CONFLICT_STALE_DATA のあとに読み直したときの文。
@@ -203,7 +255,40 @@ const PLAN_NOT_FOUND_ON_RELOAD_MESSAGE = 'プランが見つかりません。�
 const NO_PLAN_CHANGES_MESSAGE = '変更した項目がないので、保存していません';
 
 /** 入力欄の書きかけを残したときに添える文 */
-const EDITS_KEPT_SUFFIX = '（入力中の表示名・説明・表示順はそのまま残しています）';
+const EDITS_KEPT_SUFFIX = '（入力中の表示名・説明・表示順・Stripe の Product ID はそのまま残しています）';
+
+/** Stripe の Product ID の入力欄の説明 (#2112 Z1-1) */
+const STRIPE_PRODUCT_ID_HELP =
+  'Stripe の商品 (Product) の ID です。入れてから価格の変更で「Stripe の Price を作る」を押すと、Stripe の Price を作って登録します (販売開始の手順)。空欄にすると外します。';
+
+/** 公開中・非公開のプランで、Stripe の Price を作ったあとなので Product ID を変えられないときの説明 (#2112 Z1-1) */
+const STRIPE_PRODUCT_ID_LOCKED_HELP = 'Stripe の Price を作ったあとなので、Stripe の Product ID は変えられません (Price は商品に紐づくため)。';
+
+/**
+ * 廃止したプランの Product ID の欄の説明 (#2120 W2-2)。廃止したプランは欄が止まり (route も廃止中は状態の変更のほかを断る)、
+ * 「入れてから…」(STRIPE_PRODUCT_ID_HELP) の操作はできないので、それを案内しない
+ */
+const STRIPE_PRODUCT_ID_DEPRECATED_HELP = '廃止したプランは変えられないので、Stripe の Product ID も変えられません。';
+
+/**
+ * Stripe の Product ID の欄の説明。表示名などを編集できない状態 (isEditableStatus が false = 廃止) なら廃止の説明、
+ * 編集できるが Price を作ったあとなら止めた理由、入力できるなら入れ方 (#2112 Z1-1・#2120 W2-2)
+ */
+function stripeProductIdHelp(isEditable: boolean, stripeProductIdEditable: boolean): string {
+  if (!isEditable) return STRIPE_PRODUCT_ID_DEPRECATED_HELP;
+  return stripeProductIdEditable ? STRIPE_PRODUCT_ID_HELP : STRIPE_PRODUCT_ID_LOCKED_HELP;
+}
+
+/** 価格変更履歴の、月額の Stripe の Price ID が変わった行の印 (new_stripe_price_id があるとき。#2112 Z1-2) */
+const MONTHLY_STRIPE_PRICE_CHANGED_MARK = '月額の Price ID が変わった';
+
+/** 価格変更履歴の列の数 (変更日・旧月額・新月額・旧年額・新年額・適用範囲・Stripe の Price・理由。空の行の colSpan に使う) */
+const PRICE_HISTORY_COLUMN_COUNT = 8;
+
+/** 金額の表示 (無いときは —) */
+function yenOrDash(value: number | null): string {
+  return value != null ? `¥${value.toLocaleString()}` : '—';
+}
 
 function reloadNoticeText(notice: ReloadNotice): string {
   switch (notice.kind) {
@@ -224,17 +309,13 @@ function reloadNoticeText(notice: ReloadNotice): string {
 
 /**
  * 読み直しの結果。superseded は、読み直しの最中に新しい読み直しが始まったので結果を捨てた。
- * unavailable は、表示したあとの読み直しが 404 / 403 で断られた (読み込み直しても変わらない理由。#1917)
+ * unavailable は、表示したあとの読み直しが 404 / 403 / 401 で断られた (読み込み直しても変わらない理由。#1917・#2086 V4)
  */
 type PlanReloadOutcome =
   | { kind: 'loaded'; editsKept: boolean }
   | { kind: 'failed' }
   | { kind: 'unavailable'; reason: PlanUnavailableReason; message: string }
   | { kind: 'superseded' };
-
-/** 表示したあとの読み直しの HTTP ステータスのうち、読み込み直しても変わらない理由 (#1917) */
-const HTTP_FORBIDDEN = 403;
-const HTTP_NOT_FOUND = 404;
 
 /**
  * 表示名・説明・表示順を編集できる状態か (下書き・公開中・非公開)。廃止したプランは編集できない
@@ -251,9 +332,23 @@ const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   deprecated: { label: '廃止', color: 'bg-red-100 text-red-700' },
 };
 
+/** 読み込み中の表示 (Suspense の境界の待ちと、プランの読み込みの待ちで同じもの) */
+function PlanDetailLoading() {
+  return <div className="flex items-center justify-center h-48 text-slate-400">読み込み中...</div>;
+}
+
 export default function PlanDetailPage() {
+  return (
+    <Suspense fallback={<PlanDetailLoading />}>
+      <PlanDetailContent />
+    </Suspense>
+  );
+}
+
+function PlanDetailContent() {
   const params = useParams();
   const planId = params.id as string;
+  const searchParams = useSearchParams();
 
   const [plan, setPlan] = useState<Plan | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -268,7 +363,9 @@ export default function PlanDetailPage() {
   const [displayName, setDisplayName] = useState('');
   const [description, setDescription] = useState('');
   const [displayOrder, setDisplayOrder] = useState(0);
-  const [activeTab, setActiveTab] = useState<'basic' | 'price' | 'history'>('basic');
+  const [stripeProductId, setStripeProductId] = useState('');
+  // 初めのタブは URL の tab (無い・知らない値なら基本情報。#2107 Y3)
+  const [activeTab, setActiveTab] = useState<PlanDetailTab>(() => planDetailTabOf(searchParams.get(PLAN_DETAIL_TAB_QUERY_KEY)));
 
   // 画面の上に出す、読み直しについての文 (#1917)
   const [reloadNotice, setReloadNotice] = useState<ReloadNotice | null>(null);
@@ -291,10 +388,10 @@ export default function PlanDetailPage() {
   // 一度プランを表示したか (表示したあとの読み直しは、画面を外さずに行う。#1917)
   const hasLoadedRef = useRef(false);
   // 入力欄のいまの値 (描画を待たずに読むための写し。入力欄は setEdits でだけ変える)
-  const editsRef = useRef<PlanEdits>({ displayName: '', description: '', displayOrder: 0 });
+  const editsRef = useRef<PlanEdits>(EMPTY_PLAN_EDITS);
   // 入力欄の初めの値。最後に読んだプランから作り、保存に成功したら送った欄を送った値にする
   // (読み直しのとき書きかけの欄を見分け、保存のとき変えた欄だけを送る。#1917)
-  const loadedEditsRef = useRef<PlanEdits>({ displayName: '', description: '', displayOrder: 0 });
+  const loadedEditsRef = useRef<PlanEdits>(EMPTY_PLAN_EDITS);
   // 読み直しを重ねたとき、古い読み直しの結果で上書きしないための連番
   const fetchSeq = useRef(0);
 
@@ -304,6 +401,7 @@ export default function PlanDetailPage() {
     setDisplayName(next.displayName);
     setDescription(next.description);
     setDisplayOrder(next.displayOrder);
+    setStripeProductId(next.stripeProductId);
     // 入力欄が変わったら、「変更した項目がないので、保存していません」は古いので消す
     setSaveInfo('');
   }, []);
@@ -345,16 +443,17 @@ export default function PlanDetailPage() {
       // 403 の本文が JSON として読めなくても「権限がありません」を出せるよう、読めない本文は null にする (#1917)
       const body: unknown = await res.json().catch(() => null);
       if (seq !== fetchSeq.current) return { kind: 'superseded' };
-      const data = (body ?? {}) as { data?: Plan; error?: { message: string } };
+      const data = (body ?? {}) as { data?: Plan };
       if (!res.ok || !data.data) {
-        if (!isReload) setError(data.error?.message ?? 'プランの取得に失敗しました');
-        // 表示したあとの読み直しが 404 / 403 なら、その理由を返す (「読み込み直せませんでした。再試行で…」で覆わない。#1917)。
+        // 本文の文は日本語のときだけ出す (英字だけの文は出さない。#2086 V6)。
+        // 401 は本文の文 (「認証が必要です」) ではなく、読み直しの 401 と同じ「ログインし直してください」(A/B テストの詳細の初めの読み込みと同じ。#2112)
+        if (!isReload) setError(screenFailureMessage(res.status, body) ?? 'プランの取得に失敗しました');
+        // 表示したあとの読み直しが 404 / 403 / 401 なら、その理由を返す (「読み込み直せませんでした。再試行で…」で覆わない。#1917・#2086 V4)。
         // 403 は本文の文 (二段階認証の確認が要る など) を捨てずに出す (#2014 の route の文を、読み直しのときにも打ち消さない)
-        if (isReload && res.status === HTTP_NOT_FOUND) {
-          return { kind: 'unavailable', reason: 'not-found', message: PLAN_NOT_FOUND_ON_RELOAD_MESSAGE };
-        }
-        if (isReload && res.status === HTTP_FORBIDDEN) {
-          return { kind: 'unavailable', reason: 'forbidden', message: forbiddenMessageForScreen(body) };
+        const unavailableReason = res.ok ? undefined : PLAN_UNAVAILABLE_REASON_BY_STATUS[res.status];
+        const unavailableMessage = res.ok ? null : rereadUnavailableMessage(res.status, body, PLAN_NOT_FOUND_ON_RELOAD_MESSAGE);
+        if (isReload && unavailableReason !== undefined && unavailableMessage !== null) {
+          return { kind: 'unavailable', reason: unavailableReason, message: unavailableMessage };
         }
         if (isReload) markPlanStale(true);
         return { kind: 'failed' };
@@ -364,15 +463,20 @@ export default function PlanDetailPage() {
       const previous = loadedEditsRef.current;
       const current = editsRef.current;
       const keep = options.keepEdits === true && isReload && isEditableStatus(loaded.status);
+      // Stripe の Product ID の書きかけは、読み直したプランでも入力できるときだけ残す (Price を作ったあとは入力欄を止めるので、
+      // 残すと送る道の無い値を見せ続ける。#2112 Z1-1)
+      const keepStripeProductId = keep && isStripeProductIdEditable(loaded) && isStripeProductIdChanged(current, previous);
       const next: PlanEdits = {
         displayName: keep && current.displayName !== previous.displayName ? current.displayName : fresh.displayName,
         description: keep && current.description !== previous.description ? current.description : fresh.description,
         displayOrder: keep && current.displayOrder !== previous.displayOrder ? current.displayOrder : fresh.displayOrder,
+        stripeProductId: keepStripeProductId ? current.stripeProductId : fresh.stripeProductId,
       };
       const editsKept =
         next.displayName !== fresh.displayName ||
         next.description !== fresh.description ||
-        next.displayOrder !== fresh.displayOrder;
+        next.displayOrder !== fresh.displayOrder ||
+        next.stripeProductId !== fresh.stripeProductId;
       loadedEditsRef.current = fresh;
       hasLoadedRef.current = true;
       markPlanStale(false);
@@ -474,9 +578,8 @@ export default function PlanDetailPage() {
       await reloadAfterStale();
       return;
     }
-    const message =
-      typeof data === 'object' && data !== null ? (data as { error?: { message?: unknown } }).error?.message : undefined;
-    alert(typeof message === 'string' ? message : `${failureSummary} (HTTP ${res.status})`);
+    // 本文の文は日本語のときだけ出す (英字だけの文は出さない。#2086 V6)。401 は「ログインし直してください」(#2112)
+    alert(screenFailureMessage(res.status, data) ?? withHttpStatus(failureSummary, res.status));
   };
 
   /**
@@ -548,9 +651,9 @@ export default function PlanDetailPage() {
           await reloadAfterStale();
           return;
         }
-        const message =
-          typeof data === 'object' && data !== null ? (data as { error?: { message?: unknown } }).error?.message : undefined;
-        setSaveError(typeof message === 'string' ? message : '保存に失敗しました');
+        // 本文の文は日本語のときだけ出す (英字だけの文は出さない。#2086 V6)。
+        // 401 は「ログインし直してください」(Stripe の Product ID の保存 (販売開始の手順) もこの道を通る。#2112)
+        setSaveError(screenFailureMessage(res.status, data) ?? '保存に失敗しました');
         return;
       }
       // 送った欄は保存済みなので、送った値を新しい初めの値にする。続く読み直しが失敗しても、次の保存でこの欄を
@@ -619,7 +722,7 @@ export default function PlanDetailPage() {
   };
 
   if (isLoading) {
-    return <div className="flex items-center justify-center h-48 text-slate-400">読み込み中...</div>;
+    return <PlanDetailLoading />;
   }
 
   if (error || !plan) {
@@ -632,6 +735,8 @@ export default function PlanDetailPage() {
 
   const statusInfo = STATUS_LABELS[plan.status] ?? { label: plan.status, color: 'bg-slate-100 text-slate-600' };
   const isEditable = isEditableStatus(plan.status);
+  // Stripe の Product ID を入力できるか (下書き、または公開中・非公開で Stripe の Price がまだ無い。route と同じ判定。#2112 Z1-1)
+  const stripeProductIdEditable = isEditable && isStripeProductIdEditable(plan);
   // 状態のボタンを止めるか (isStatusChangeBlocked と同じ条件を state で。#2059・#2064)
   const statusButtonsDisabled = isWriting || isReloading || isPlanStale;
   // #1912: 組織のプランの行 (org_*) は組織の段階とは無関係で、組織の件数を数えない。廃止・価格変更の前に注記を出す
@@ -738,10 +843,12 @@ export default function PlanDetailPage() {
       )}
 
       {/* タブ */}
-      <div className="flex gap-1 mb-6 border-b border-slate-200">
-        {(['basic', 'price', 'history'] as const).map((tab) => (
+      <div role="tablist" className="flex gap-1 mb-6 border-b border-slate-200">
+        {PLAN_DETAIL_TABS.map((tab) => (
           <button
             key={tab}
+            role="tab"
+            aria-selected={activeTab === tab}
             onClick={() => setActiveTab(tab)}
             className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
               activeTab === tab
@@ -764,7 +871,10 @@ export default function PlanDetailPage() {
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-500 mb-1">種別</label>
-              <span className="text-sm text-slate-700">{plan.plan_type}</span>
+              {/* 種別は日本語の名前 (一覧と同じ語。知らない値はそのまま。#2112 Z1 の同じ型) */}
+              <span data-testid="plan-type-label" className="text-sm text-slate-700">
+                {planTypeLabel(plan.plan_type)}
+              </span>
             </div>
           </div>
 
@@ -799,6 +909,27 @@ export default function PlanDetailPage() {
               disabled={!isEditable}
               className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-slate-50"
             />
+          </div>
+
+          <div>
+            <label htmlFor="plan-stripe-product-id" className="block text-sm font-medium text-slate-700 mb-1">
+              Stripe の Product ID
+            </label>
+            <input
+              id="plan-stripe-product-id"
+              data-testid="plan-stripe-product-id"
+              type="text"
+              value={stripeProductId}
+              onChange={(e) => setEdits({ stripeProductId: e.target.value })}
+              disabled={!stripeProductIdEditable}
+              placeholder="prod_..."
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-slate-50"
+            />
+            <p data-testid="plan-stripe-product-id-help" className="text-xs text-slate-500 mt-1">
+              {stripeProductIdHelp(isEditable, stripeProductIdEditable)}
+            </p>
           </div>
 
           <div className="flex items-center gap-4 pt-2">
@@ -901,14 +1032,18 @@ export default function PlanDetailPage() {
 
       {/* 価格変更履歴タブ */}
       {activeTab === 'history' && (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-          <table className="w-full text-sm">
+        // 列が 8 つあるので、狭い画面では表だけを横に送る (#2112 Z1-2)
+        <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
+          <table className="w-full text-sm whitespace-nowrap">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 <th className="text-left px-4 py-3 font-medium text-slate-600">変更日</th>
                 <th className="text-right px-4 py-3 font-medium text-slate-600">旧月額</th>
                 <th className="text-right px-4 py-3 font-medium text-slate-600">新月額</th>
+                <th className="text-right px-4 py-3 font-medium text-slate-600">旧年額</th>
+                <th className="text-right px-4 py-3 font-medium text-slate-600">新年額</th>
                 <th className="text-left px-4 py-3 font-medium text-slate-600">適用範囲</th>
+                <th className="text-left px-4 py-3 font-medium text-slate-600">Stripe の Price</th>
                 <th className="text-left px-4 py-3 font-medium text-slate-600">理由</th>
               </tr>
             </thead>
@@ -918,19 +1053,27 @@ export default function PlanDetailPage() {
                   <td className="px-4 py-3 text-slate-600">
                     {new Date(h.created_at).toLocaleDateString('ja-JP')}
                   </td>
-                  <td className="px-4 py-3 text-right text-slate-500">
-                    {h.old_monthly_price_jpy != null ? `¥${h.old_monthly_price_jpy.toLocaleString()}` : '—'}
+                  <td className="px-4 py-3 text-right text-slate-500">{yenOrDash(h.old_monthly_price_jpy)}</td>
+                  <td className="px-4 py-3 text-right font-medium text-slate-800">{yenOrDash(h.new_monthly_price_jpy)}</td>
+                  <td className="px-4 py-3 text-right text-slate-500">{yenOrDash(h.old_yearly_price_jpy)}</td>
+                  <td className="px-4 py-3 text-right font-medium text-slate-800">{yenOrDash(h.new_yearly_price_jpy)}</td>
+                  {/* 適用範囲は日本語の名前 (知らない値はそのまま。#2112 Z1-2) */}
+                  <td className="px-4 py-3 text-slate-600 text-xs">{priceAppliesToLabel(h.applies_to)}</td>
+                  <td className="px-4 py-3 text-slate-600 text-xs">
+                    {h.new_stripe_price_id ? (
+                      <span data-testid="price-history-stripe-price-changed" className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700">
+                        {MONTHLY_STRIPE_PRICE_CHANGED_MARK}
+                      </span>
+                    ) : (
+                      '—'
+                    )}
                   </td>
-                  <td className="px-4 py-3 text-right font-medium text-slate-800">
-                    {h.new_monthly_price_jpy != null ? `¥${h.new_monthly_price_jpy.toLocaleString()}` : '—'}
-                  </td>
-                  <td className="px-4 py-3 text-slate-600 text-xs">{h.applies_to}</td>
                   <td className="px-4 py-3 text-slate-500 text-xs truncate max-w-xs">{h.reason ?? '—'}</td>
                 </tr>
               ))}
               {(plan.price_history ?? []).length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-slate-400">
+                  <td colSpan={PRICE_HISTORY_COLUMN_COUNT} className="px-4 py-6 text-center text-slate-400">
                     価格変更履歴がありません
                   </td>
                 </tr>

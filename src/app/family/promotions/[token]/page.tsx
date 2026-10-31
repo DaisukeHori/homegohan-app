@@ -8,7 +8,7 @@
 // 共有設定チェックボックスは FamilyInviteAcceptModal と同じ 3 種 + デフォルト値。
 // (main) ルートグループの外に置く: 未ログイン・オンボーディング未完了でも到達できる必要がある
 // (lib/supabase/middleware.ts の publicPaths と lib/onboarding-routing.ts で除外済み)。
-import { useState, useEffect, useId } from 'react';
+import { useState, useEffect, useId, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { PARENTAL_CONSENT_COPY } from '@homegohan/shared';
 import FocusTrap from 'focus-trap-react';
@@ -16,6 +16,26 @@ import { createClient } from '@/lib/supabase/client';
 import { clearUserScopedLocalStorage, broadcastSignOut } from '@/lib/user-storage';
 import { notifyNativeSignOut } from '@/lib/native-auth-bridge';
 import { useDialogA11y } from '@/components/common/useDialogA11y';
+import { readSignedInUser } from '@/lib/auth/signed-in-user';
+import { MEMBERSHIP_STATE_UNCONFIRMED_NOTE } from '@/lib/membership/leave-state';
+
+/** 失敗の応答の本文 ({ error: { code, message } }) のコード。読めない・形が違うときは null */
+function errorCodeOfBody(body: unknown): string | null {
+  const error = errorObjectOfBody(body);
+  return error !== null && typeof error.code === 'string' ? error.code : null;
+}
+
+/** 失敗の応答の本文の message。読めない・形が違うときは undefined */
+function errorMessageOfBody(body: unknown): string | undefined {
+  const error = errorObjectOfBody(body);
+  return error !== null && typeof error.message === 'string' ? error.message : undefined;
+}
+
+function errorObjectOfBody(body: unknown): { code?: unknown; message?: unknown } | null {
+  if (typeof body !== 'object' || body === null || !('error' in body)) return null;
+  const { error } = body;
+  return typeof error === 'object' && error !== null ? error : null;
+}
 
 interface PromotionDetails {
   family_name: string | null;
@@ -33,6 +53,30 @@ const STATUS_MESSAGES: Record<string, string> = {
   revoked: '取り消し済み',
   expired: '期限切れ',
 };
+
+/** 承諾・拒否の通信そのものが失敗した (fetch が reject した・失敗の応答の本文を読めなかった) ときの文 */
+const NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
+
+/** 参加リクエストが承認済み・拒否済み (409 PROMOTION_REQUEST_ALREADY_USED) のときの文 */
+const PROMOTION_ALREADY_USED_MESSAGE = 'この参加リクエストは既に処理済みです。';
+
+/**
+ * 承諾・拒否の応答を受け取れず、読み直すとまだ承認待ち (pending) だったときの文 (#2086 V2)。
+ * サーバーで承諾も拒否もされていないので、もう一度押してよい
+ */
+const PROMOTION_NOT_PROCESSED_MESSAGE =
+  '応答を受け取れませんでした。参加リクエストはまだ処理されていません。もう一度お試しください。';
+
+/**
+ * 参加リクエスト (get_promotion_details) を読み込めなかったときの文 (#2086 V3 と同じ型)。
+ * リクエストが無い (「参加リクエストが見つかりません」) と見分けるために出す。失敗の理由 (英語の内部の文) は画面に出さない
+ */
+const PROMOTION_LOAD_ERROR = '参加リクエストを読み込めませんでした。しばらくしてから、もう一度お試しください。';
+
+/** get_promotion_details の読み込みの結果 (例外は投げない。読み込めなかったときは ok: false) */
+type PromotionDetailsRead =
+  | { ok: true; details: PromotionDetails | null }
+  | { ok: false };
 
 /**
  * #1057 (UX1-08): 拒否確認モーダル。誤タップでの即時拒否確定を防ぐ。
@@ -102,6 +146,8 @@ export default function FamilyPromotionConsentPage() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [currentEmail, setCurrentEmail] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 参加リクエスト (または自分) を読み込めなかったときの文。あるあいだは画面の代わりにこの文と「再試行」を出す (#2086)
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<'accept' | 'reject' | null>(null);
   const [result, setResult] = useState<'accepted' | 'rejected' | null>(null);
@@ -111,33 +157,97 @@ export default function FamilyPromotionConsentPage() {
   // #1057 (UX1-08): 誤タップでの即時拒否確定を防ぐ確認ステップ
   const [showRejectConfirm, setShowRejectConfirm] = useState(false);
 
-  useEffect(() => {
-    const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      setIsLoggedIn(!!user);
-      setCurrentEmail(user?.email ?? null);
-
-      // get_promotion_details は SECURITY DEFINER + anon EXECUTE (get_invite_details と同趣旨)
+  // 参加リクエストを読む。画面を開いたとき・「再試行」・承諾 / 拒否の通信が失敗したあとに呼ぶ。例外は投げない。
+  // get_promotion_details は SECURITY DEFINER + anon EXECUTE (get_invite_details と同趣旨)。リクエストが無ければ data は null
+  const readPromotionDetails = useCallback(async (): Promise<PromotionDetailsRead> => {
+    try {
       const { data, error: rpcError } = await supabase.rpc('get_promotion_details', {
         p_token: token,
       });
-      if (rpcError || !data) {
-        setError('参加リクエストが見つかりません');
-        setLoading(false);
-        return;
-      }
-      setDetails(data as PromotionDetails);
-      setLoading(false);
-    };
-    init();
+      if (rpcError) return { ok: false };
+      return { ok: true, details: (data as PromotionDetails | null) ?? null };
+    } catch (readFailure) {
+      console.error('[family/promotions] failed to read promotion details:', readFailure);
+      return { ok: false };
+    }
   }, [supabase, token]);
+
+  const loadPage = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    setError(null);
+    // getUser は通信の失敗を投げずに { user: null, error } で返す。確かめられなかったときは、ログインしていないとして
+    // ログインの案内を出さず、読み込みの失敗と「再試行」を出す (#2086 V3 と同じ型)
+    const signedIn = await readSignedInUser(supabase);
+    if (signedIn.kind === 'load-failed') {
+      setLoadError(PROMOTION_LOAD_ERROR);
+      setLoading(false);
+      return;
+    }
+    const user = signedIn.kind === 'signed-in' ? signedIn.user : null;
+    setIsLoggedIn(user !== null);
+    setCurrentEmail(user?.email ?? null);
+
+    const read = await readPromotionDetails();
+    if (!read.ok) {
+      // 読み込めなかった (リクエストが無いのとは別。「参加リクエストが見つかりません」と見せない)
+      setLoadError(PROMOTION_LOAD_ERROR);
+      setLoading(false);
+      return;
+    }
+    if (!read.details) {
+      setError('参加リクエストが見つかりません');
+      setLoading(false);
+      return;
+    }
+    setDetails(read.details);
+    setLoading(false);
+  }, [supabase, readPromotionDetails]);
+
+  useEffect(() => {
+    void loadPage();
+  }, [loadPage]);
+
+  /**
+   * 承諾・拒否の通信が失敗したあと (または PROMOTION_REQUEST_ALREADY_USED で断られたあと) に、参加リクエストを読み直して
+   * 今の状態を見せる (#2086 V2。招待の承諾 (FamilyInviteAcceptModal の confirmAcceptedOrShow。#2080 U1) と同じ型)。
+   * サーバーが承諾 / 拒否を済ませてから応答が切れたこともあり、確かめずに文を出すと、承諾できたのか拒否されたのか分からず、
+   * もう一度押すと「既に処理済みです」と出ていた。
+   *   - 承認済み: 承諾の成功のときと同じ画面 (家族ダッシュボードへの導線)
+   *   - 拒否済み: 拒否の成功のときと同じ画面
+   *   - 取り消し済み・期限切れ: 読み直した状態を出す (「このリクエストは無効です」)
+   *   - 承認待ちのまま: pendingMessage を出す (もう一度押せる)
+   *   - 読み直せなかった: unconfirmedMessage に「状態を確かめられませんでした」を添える
+   * 読み直しの応答を待つあいだもボタンを止めたままにする (呼ぶ側の finally まで actionLoading を戻さない)
+   */
+  const showStateAfterFailure = async (pendingMessage: string, unconfirmedMessage: string) => {
+    const read = await readPromotionDetails();
+    if (!read.ok || !read.details) {
+      setActionError(`${unconfirmedMessage} (${MEMBERSHIP_STATE_UNCONFIRMED_NOTE})`);
+      return;
+    }
+    const fresh = read.details;
+    setDetails(fresh);
+    if (fresh.status === 'accepted') {
+      setResult('accepted');
+      return;
+    }
+    if (fresh.status === 'rejected') {
+      setResult('rejected');
+      return;
+    }
+    if (fresh.status === 'pending') {
+      setActionError(pendingMessage);
+    }
+    // 取り消し済み・期限切れは、読み直した details で「このリクエストは無効です」を出す (文は要らない)
+  };
 
   const mapActionError = (code: string | undefined, fallback: string | undefined): string => {
     switch (code) {
       case 'PROMOTION_REQUEST_EXPIRED':
         return 'この参加リクエストの期限が切れています。ご家族に再送を依頼してください。';
       case 'PROMOTION_REQUEST_ALREADY_USED':
-        return 'この参加リクエストは既に処理済みです。';
+        return PROMOTION_ALREADY_USED_MESSAGE;
       case 'PROMOTION_EMAIL_MISMATCH':
         return 'この参加リクエストは現在ログイン中のアカウント宛てではありません。';
       case 'ALREADY_IN_FAMILY':
@@ -170,17 +280,40 @@ export default function FamilyPromotionConsentPage() {
           share_menu: shareMenu,
         }),
       });
-      const json = await res.json();
-      if (!res.ok) {
-        setActionError(mapActionError(json.error?.code, json.error?.message));
+      if (res.ok) {
+        // 応答が成功なら承諾できている (本文は使わない。本文を読めなくても成功として扱う)
+        setResult('accepted');
         return;
       }
-      setResult('accepted');
+      await showStateAfterFailedResponse(res);
     } catch {
-      setActionError('通信エラーが発生しました');
+      // サーバーが承諾を済ませてから応答が切れたこともあるので、参加リクエストを読み直して確かめる (#2086 V2)
+      await showStateAfterFailure(PROMOTION_NOT_PROCESSED_MESSAGE, NETWORK_FAILURE_MESSAGE);
     } finally {
       setActionLoading(null);
     }
+  };
+
+  /**
+   * 承諾・拒否の失敗の応答を出す。本文は ok を確かめたあとに .catch(() => null) で読む (#2086 V2。以前は ok の確認より先に
+   * res.json() を読み、本文が JSON でない失敗の応答 (プロキシの 502 など) で例外になり、通信エラーの文だけを出していた)。
+   *   - 本文に失敗のコードが無い (読めない・形が違う): サーバーが処理したか分からないので、読み直して確かめる
+   *   - PROMOTION_REQUEST_ALREADY_USED: 前に押した承諾 / 拒否をサーバーが済ませてから応答が切れたときも、押し直すとこれになる。
+   *     読み直して、承認済みなら承諾の成功、拒否済みなら拒否の成功と同じ画面にする
+   *   - それ以外のコード: これまでどおりコードごとの文
+   */
+  const showStateAfterFailedResponse = async (res: Response) => {
+    const json: unknown = await res.json().catch(() => null);
+    const code = errorCodeOfBody(json);
+    if (code === null) {
+      await showStateAfterFailure(PROMOTION_NOT_PROCESSED_MESSAGE, NETWORK_FAILURE_MESSAGE);
+      return;
+    }
+    if (code === 'PROMOTION_REQUEST_ALREADY_USED') {
+      await showStateAfterFailure(PROMOTION_ALREADY_USED_MESSAGE, PROMOTION_ALREADY_USED_MESSAGE);
+      return;
+    }
+    setActionError(mapActionError(code, errorMessageOfBody(json)));
   };
 
   const handleReject = async () => {
@@ -189,14 +322,14 @@ export default function FamilyPromotionConsentPage() {
     setActionLoading('reject');
     try {
       const res = await fetch(`/api/family/promotions/${token}/reject`, { method: 'POST' });
-      const json = await res.json();
-      if (!res.ok) {
-        setActionError(mapActionError(json.error?.code, json.error?.message));
+      if (res.ok) {
+        setResult('rejected');
         return;
       }
-      setResult('rejected');
+      await showStateAfterFailedResponse(res);
     } catch {
-      setActionError('通信エラーが発生しました');
+      // サーバーが拒否を済ませてから応答が切れたこともあるので、参加リクエストを読み直して確かめる (#2086 V2。承諾と同じ)
+      await showStateAfterFailure(PROMOTION_NOT_PROCESSED_MESSAGE, NETWORK_FAILURE_MESSAGE);
     } finally {
       setActionLoading(null);
     }
@@ -259,6 +392,37 @@ export default function FamilyPromotionConsentPage() {
         >
           ホームへ戻る
         </button>
+      </div>
+    );
+  }
+
+  // 読み込めなかった (リクエストが無いのとは別。「再試行」を出す)
+  if (loadError) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center gap-4 p-6">
+        <div
+          role="alert"
+          data-testid="promotion-load-error"
+          className="w-full max-w-sm rounded-2xl bg-red-50 border border-red-200 p-6 text-center"
+        >
+          <p className="text-red-700 text-sm font-medium">{loadError}</p>
+          <div className="mt-4 flex justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => void loadPage()}
+              className="px-4 py-2 rounded-full bg-white border border-red-300 text-red-700 font-medium text-sm hover:bg-red-100 transition-colors"
+            >
+              再試行
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push('/')}
+              className="px-4 py-2 rounded-full bg-gray-200 text-gray-600 font-medium text-sm hover:bg-gray-300 transition-colors"
+            >
+              ホームへ戻る
+            </button>
+          </div>
+        </div>
       </div>
     );
   }

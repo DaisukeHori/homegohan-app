@@ -8,6 +8,7 @@ import { StrictMode, act, createElement, type ComponentType, type ReactNode } fr
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MfaClientResult } from '@/lib/auth/mfa/client';
+import { UNAUTHENTICATED_SCREEN_MESSAGE } from '@/lib/admin/api-error-message';
 import type { MfaEnrollResponse, MfaResetResponse, MfaStatusResponse, MfaVerifyResponse } from '@/lib/auth/mfa/schemas';
 
 const mocks = vi.hoisted(() => ({
@@ -673,10 +674,9 @@ describe('二段階認証の解除 (段 C)', () => {
     expect(byTestId('operator-mfa-reset-result')?.textContent).toBe('認証アプリ 1 件・バックアップコード 7 件を消しました');
     expect(byTestId('operator-mfa-reset-error')).toBeNull();
 
-    // 失敗は mfaErrorMessage(code) (403 OP_SELF_MODIFY・401 UNAUTHORIZED・500 の既定の文)。401 でも画面を移らない
+    // 失敗は mfaErrorMessage(code) (403 OP_SELF_MODIFY・500 の既定の文)。401 は運営の画面で揃えた文 (下の it。#2112 Z4)
     for (const [status, code] of [
       [403, 'OP_SELF_MODIFY'],
-      [401, 'UNAUTHORIZED'],
       [500, 'INTERNAL_ERROR'],
     ] as const) {
       mocks.resetOperatorMfa.mockResolvedValueOnce(fail(status, code));
@@ -687,7 +687,36 @@ describe('二段階認証の解除 (段 C)', () => {
     expect(mfaErrorMessage('INTERNAL_ERROR')).toBe('処理中にエラーが発生しました。しばらくしてからお試しください。');
     expect(locationMock.assign).not.toHaveBeenCalled();
     expect(mocks.router.push).not.toHaveBeenCalled();
-    expect(mocks.resetOperatorMfa).toHaveBeenCalledTimes(4);
+    expect(mocks.resetOperatorMfa).toHaveBeenCalledTimes(3);
+  });
+
+  it('OperatorMfaResetSection: 解除が 401 なら、code に関わらずほかの運営の form (同じページの手動のプラン付与・凍結のページ /admin/users/{id}/freeze の凍結の form) と同じ「ログインし直してください」を出し、利用者の画面の言い回し (mfaErrorMessage の 401 の文) は出さない。画面は移らない (#2112 Z4)', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    await act(async () => {
+      root.render(createElement(OperatorMfaResetSection, { userId: TARGET_USER_ID }));
+    });
+    const submit = () => byTestId<HTMLButtonElement>('operator-mfa-reset-submit');
+    await setFieldValue(byTestId<HTMLTextAreaElement>('operator-mfa-reset-reason'), REASON);
+    await setFieldValue(byTestId<HTMLSelectElement>('operator-mfa-reset-identity-check'), 'video_call');
+    await click(byTestId('operator-mfa-reset-identity-confirmed'));
+    expect(submit()?.disabled).toBe(false);
+
+    // reset の route の 401 は UNAUTHORIZED (authFailureNested)。本文が読めない 401 (UNKNOWN)・AUTH_UNAUTHENTICATED でも同じ文
+    const codes = ['UNAUTHORIZED', 'AUTH_UNAUTHENTICATED', MFA_CLIENT_UNKNOWN_CODE];
+    for (const code of codes) {
+      mocks.resetOperatorMfa.mockResolvedValueOnce(fail(401, code));
+      await submitForm(submit());
+      const shown = byTestId('operator-mfa-reset-error')?.textContent ?? '';
+      expect(shown, code).toBe(UNAUTHENTICATED_SCREEN_MESSAGE);
+      expect(shown, code).not.toBe(mfaErrorMessage(code));
+      expect(byTestId('operator-mfa-reset-result'), code).toBeNull();
+    }
+    expect(UNAUTHENTICATED_SCREEN_MESSAGE).toBe('ログインし直してください');
+    // 利用者の二段階認証の画面の文の表は変えない (§15 の表。運営の画面だけ揃える)
+    expect(mfaErrorMessage('UNAUTHORIZED')).toBe('ログインが切れました。もう一度ログインしてください。');
+    expect(mocks.resetOperatorMfa).toHaveBeenCalledTimes(codes.length);
+    expect(locationMock.assign).not.toHaveBeenCalled();
+    expect(mocks.router.push).not.toHaveBeenCalled();
   });
 });
 

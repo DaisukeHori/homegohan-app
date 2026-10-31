@@ -285,6 +285,20 @@ describe('/super-admin/llm/quotas (AI の利用上限)', () => {
     expect(row('pro').textContent).toContain('指定したプランはありません');
   });
 
+  it('保存が 401 (ログインが切れた) なら、本文の文ではなく「ログインし直してください」を行に出す (#2112 Z4)', async () => {
+    fetchMock.mockImplementation(async (_input: unknown, init?: RequestInit) => {
+      if (init?.method === 'PATCH') {
+        return { ok: false, status: 401, json: async () => ({ error: { code: 'AUTH_UNAUTHENTICATED', message: '認証が必要です' } }) };
+      }
+      return { ok: true, status: 200, json: async () => LIST };
+    });
+    await render();
+    await save('pro', '20', '理由');
+
+    expect(row('pro').textContent).toContain('ログインし直してください');
+    expect(row('pro').textContent).not.toContain('認証が必要です');
+  });
+
   describe('保存が 409 CONFLICT_STALE_DATA で断られたとき (#1917)', () => {
     const SERVER_STALE_MESSAGE = '別の運営が先にこのプランの上限を変えました。画面を読み込み直して、もう一度確認してください';
     type ListRow = (typeof LIST.data)[number];
