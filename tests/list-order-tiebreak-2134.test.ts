@@ -6,7 +6,8 @@
  * 入れ替わりうる (ページ送りでは境目で同じ行が 2 回出る・どのページにも出ない、1 行だけ読む所ではどの行を取るかが決まらない)。
  * いまは src/lib/api/list-order.ts の LIST_ORDERS に一覧ごとの鍵を書き、route は orderListBy で並べる。
  * ここでは次を確かめる:
- *   1. LIST_ORDERS の各一覧の鍵 (いままでの鍵のあとに id の昇順)。NULL の位置は、いままでの order と同じ
+ *   1. LIST_ORDERS の各一覧の鍵 (いままでの鍵のあとに id の昇順)。NULL の位置は、いままでの order と同じ。
+ *      新しい側から読む一覧 (REVERSED_OF) だけは、元の一覧をそっくり逆にした鍵 (最後は id の降順)
  *   2. orderListBy は鍵をこの順に order へ渡し、最後の order の戻り値を返す
  *   3. 一覧を使う route は orderListBy(…, LIST_ORDERS.<一覧>) で並べ、その一覧の表を読む。
  *      LIST_ORDERS.<一覧> を使う route は、どれも EXPECTED のその一覧の uses に書いてある
@@ -32,6 +33,20 @@ const DESC_NULLS_LAST = { ascending: false, nullsFirst: false };
 const asc = (column: string): ListOrderKey => ({ column, options: ASC_NULLS_LAST });
 /** 降順 (NULL は最初) の鍵 */
 const desc = (column: string): ListOrderKey => ({ column, options: DESC_NULLS_FIRST });
+
+/**
+ * 新しい側から件数の上限まで読み、古い順へ並べ直して使う一覧と、その元の一覧 (#2144)。
+ * 鍵は元の一覧をそっくり逆にしたもの (向きと NULL の位置の両方が逆。最後の一意の鍵も降順) で、逆順に戻すと元の一覧の末尾と同じ順になる
+ */
+const REVERSED_OF: Partial<Record<keyof typeof LIST_ORDERS, keyof typeof LIST_ORDERS>> = {
+  aiConsultationMessagesNewestFirst: 'aiConsultationMessages',
+};
+
+/** 鍵をそっくり逆にしたもの (テストの側で独立に求める) */
+const reverseKey = (key: ListOrderKey): ListOrderKey => ({
+  column: key.column,
+  options: { ascending: !key.options.ascending, nullsFirst: !key.options.nullsFirst },
+});
 
 /** route のどこでその一覧を使うか (handler が null なら、ファイルの全体。helper の関数の中で使う所) */
 interface ListOrderUse {
@@ -186,6 +201,11 @@ const EXPECTED: Record<keyof typeof LIST_ORDERS, { table: string; keys: ListOrde
       { file: 'src/app/api/ai/consultation/sessions/[sessionId]/close/route.ts', handler: 'POST' },
       { file: 'src/app/api/ai/consultation/sessions/[sessionId]/summarize/route.ts', handler: 'POST' },
     ],
+  },
+  aiConsultationMessagesNewestFirst: {
+    table: 'ai_consultation_messages',
+    keys: [desc('created_at'), { column: 'id', options: DESC_NULLS_FIRST }],
+    uses: [{ file: 'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts', handler: 'POST' }],
   },
   aiConsultationImportantMessages: {
     table: 'ai_consultation_messages',
@@ -584,13 +604,23 @@ describe('#2134 U2 / #2139 T1 一覧の並びの同じ値の順', () => {
     }
   });
 
-  it('どの一覧も、最後の鍵は一意の鍵 (id、id の無い表は NON_ID_TIEBREAK_COLUMNS の列) の昇順で、その列はそこにしか出ない', () => {
+  it('どの一覧も、最後の鍵は一意の鍵 (id、id の無い表は NON_ID_TIEBREAK_COLUMNS の列) の昇順 (REVERSED_OF の一覧は降順) で、その列はそこにしか出ない', () => {
     expect(ID_TIEBREAK_KEY).toEqual({ column: 'id', options: ASC_NULLS_LAST });
     const nonIdColumns: Record<string, string> = NON_ID_TIEBREAK_COLUMNS;
     for (const [name, order] of Object.entries(LIST_ORDERS)) {
       const tiebreakColumn = nonIdColumns[order.table] ?? ID_TIEBREAK_KEY.column;
-      expect(order.keys.at(-1), name).toEqual({ column: tiebreakColumn, options: ASC_NULLS_LAST });
+      const tiebreakOptions = name in REVERSED_OF ? DESC_NULLS_FIRST : ASC_NULLS_LAST;
+      expect(order.keys.at(-1), name).toEqual({ column: tiebreakColumn, options: tiebreakOptions });
       expect(order.keys.filter((key) => key.column === tiebreakColumn), name).toHaveLength(1);
+    }
+  });
+
+  it('REVERSED_OF の一覧は、元の一覧と同じ表を、元の一覧の鍵をそっくり逆にした鍵で読む (#2144)', () => {
+    const entries = Object.entries(REVERSED_OF) as Array<[keyof typeof LIST_ORDERS, keyof typeof LIST_ORDERS]>;
+    expect(entries.length).toBeGreaterThan(0);
+    for (const [name, source] of entries) {
+      expect(LIST_ORDERS[name].table, name).toBe(LIST_ORDERS[source].table);
+      expect(LIST_ORDERS[name].keys, name).toEqual(LIST_ORDERS[source].keys.map(reverseKey));
     }
   });
 

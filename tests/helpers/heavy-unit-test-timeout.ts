@@ -60,6 +60,9 @@
  *   tests/local-ci-slot-consumers.test.ts でもない残りの 1 件の所要の最大は 0.68 秒)。
  *   このファイル自身は、構文木を作る前に sendEmail / emailFailureReasons の名前を含まないソースを外して速くした (結果は同じ)。
  *
+ * #2144 で足したもの: tests/ai-consultation-latest-messages-2144.test.ts は、同じ型 (テストの中で、AI 相談の会話の続きの route を
+ *   丸ごと読み込む。tests/consultation-pantry-expiry-jst.test.ts と同じ形)。
+ *
  * 時間切れが効くのは遅いときだけで、速く終わるテストの所要は変わらない (止まったテストを見切るまでが長くなるだけ)。
  * 期待値・待つ条件は変えないので、検査は緩まない。全体の既定 (vitest.config.ts) は変えず、一覧のファイルだけに効かせる
  * (各ファイルの先頭で applyHeavyUnitTestTimeout() を呼んで vi.setConfig する。時間切れはテスト・フックを登録したときの
@@ -104,6 +107,7 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/ai-consent-mobile-entry-points.test.ts",
   "tests/ai-consent-settings-page.test.tsx",
   "tests/ai-consent-stored-failure.test.ts",
+  "tests/ai-consultation-latest-messages-2144.test.ts",
   "tests/ai-rate-limit-contracts.test.ts",
   "tests/ai-usage-direct-jwt-edge.test.ts",
   "tests/api-list-beyond-last-page-routes.test.ts",
