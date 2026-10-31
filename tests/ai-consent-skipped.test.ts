@@ -138,7 +138,7 @@ const SKIPPED_NOT_SHOWN: Record<string, string> = {
   'src/app/(main)/meals/new/page.tsx':
     '健康診断の写真の読み取り (同意の確認を通ったあと) の結果を保存して、すぐ一覧へ移る。AI のレビューを表示しない',
   // (全画面の AI 相談 apps/mobile/app/ai/[sessionId].tsx の行は、画面ごと消したので除いた。#1598)
-  'apps/mobile/src/hooks/useHomeData.ts': 'アプリのホームは、この集計 (nutritionAnalysis) をどの画面にも出していない',
+  // (アプリのホームのデータの hook の行は、アプリから使われていなかったので hook ごと消した。アプリのホームは Web の画面の WebView。#2157)
 };
 
 /**
