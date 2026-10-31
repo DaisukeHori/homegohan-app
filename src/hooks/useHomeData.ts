@@ -574,22 +574,21 @@ export const useHomeData = () => {
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
       
-      const { data } = await orderListBy(
-        supabase
-          .from('planned_meals')
-          .select(`
+      const bestMealQuery = supabase
+        .from('planned_meals')
+        .select(`
           *,
           user_daily_meals!inner(
             day_date,
             user_id
           )
         `)
-          .eq('user_daily_meals.user_id', userId)
-          .gte('user_daily_meals.day_date', formatLocalDate(sevenDaysAgo))
-          .eq('is_completed', true)
-          .not('image_url', 'is', null),
-        LIST_ORDERS.homeBestVegMeal,
-      ).limit(1);
+        .eq('user_daily_meals.user_id', userId)
+        .gte('user_daily_meals.day_date', formatLocalDate(sevenDaysAgo))
+        .eq('is_completed', true)
+        .not('image_url', 'is', null);
+      // 型引数を明示する (推論させると select の結合の型の展開が深くなりすぎて tsc が止まる: TS2589)
+      const { data } = await orderListBy<typeof bestMealQuery>(bestMealQuery, LIST_ORDERS.homeBestVegMeal).limit(1);
 
       if (data && data.length > 0) {
         setBestMealThisWeek(toPlannedMeal(data[0]));
