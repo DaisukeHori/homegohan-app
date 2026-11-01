@@ -301,6 +301,9 @@ describe.each([
     if (fromQuickPrompt) {
       handlers['GET /api/ai/consultation/sessions?status=all'] = async () => json(200, { sessions: [] });
       handlers['POST /api/ai/consultation/sessions'] = async () => json(200, { session: { id: SESSION_ID } });
+    } else {
+      // 開き直したときのメッセージには提案を付けない (画面のボタンが、この送信の提案のものだけになるように)
+      getMessagesWith({ proposedActions: null });
     }
     handlers[`POST /api/ai/consultation/sessions/${SESSION_ID}/messages?stream=true`] = async () => sse(finalData);
     await openChat();
