@@ -50,6 +50,16 @@ const HOOK_MODULE_SPECIFIER = /\b(?:from|require|mock|import)\s*\(?\s*["'`][^"'`
 
 const SELF = path.relative(ROOT, __filename).split(path.sep).join('/');
 
+/**
+ * 無くなった hook のパスを、名指しを捕まえる対象として持つ見張り (この見張りのほか)。
+ * 1598 の見張りの書き方の検査と、設計書の注記できない名指しの数の一覧
+ */
+const WATCHERS_OF_REMOVED_HOOK = new Set([
+  SELF,
+  'tests/design-doc-removed-mobile-screens.test.ts',
+  'tests/helpers/design-doc-pending-notes-1598.ts',
+]);
+
 function walk(relDir: string, out: string[]): void {
   const absDir = path.join(ROOT, relDir);
   if (!fs.existsSync(absDir)) return;
@@ -89,6 +99,8 @@ describe('#2157 R4: アプリのホームは WebView で、使われていない
     expect(mobileFiles).toContain(HOME_TAB);
     expect(mentionFiles).toContain('src/hooks/useHomeData.ts');
     expect(mentionFiles).toContain(SELF);
+    // 見張りの許可は、いまあって無くなった hook のパスを持つファイルだけ (消えた・パスを持たなくなったファイルを許したまま残さない)
+    expect([...WATCHERS_OF_REMOVED_HOOK].filter((rel) => !mentionFiles.includes(rel) || !read(rel).includes(REMOVED_HOOK))).toEqual([]);
     expect(mentionFiles).toContain('CLAUDE.md');
     expect(mentionFiles).toContain('lib/converter.ts');
     expect(mentionFiles.filter((rel) => rel.startsWith('docs/design/'))).toEqual([]);
@@ -110,7 +122,7 @@ describe('#2157 R4: アプリのホームは WebView で、使われていない
   });
 
   it('コード・テスト・注は、無くなった apps/mobile/src/hooks/useHomeData.ts を指さない', () => {
-    expect(mentionFiles.filter((rel) => rel !== SELF && read(rel).includes(REMOVED_HOOK))).toEqual([]);
+    expect(mentionFiles.filter((rel) => !WATCHERS_OF_REMOVED_HOOK.has(rel) && read(rel).includes(REMOVED_HOOK))).toEqual([]);
   });
 
   it('import を見る正規表現は、どの書き方でも hook の指定を拾う (検査の空振りを防ぐ)', () => {
