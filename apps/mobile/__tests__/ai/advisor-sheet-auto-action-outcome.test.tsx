@@ -140,10 +140,10 @@ async function openAndSend(response: unknown) {
   await waitFor(() => expect(screen.getByText(AI_REPLY)).toBeTruthy());
 }
 
-/** 画面に出ている文を上から順に (ネイティブの Text の部品 (host) の、直下の文字列の子をつないだもの。空は除く) */
+/** 画面に出ている文を上から順に (Text の部品の、直下の文字列の子をつないだもの。空は除く) */
 function renderedTexts(): string[] {
-  return screen.UNSAFE_root
-    .findAll((node) => node.type === 'Text')
+  return screen
+    .getAllByText(/[\s\S]+/)
     .map((node) =>
       [node.props.children]
         .flat()
