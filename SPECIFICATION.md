@@ -728,7 +728,7 @@ AI分析結果一覧
 
 | エンドポイント | メソッド | 説明 |
 |---------------|---------|------|
-| `/api/profile` | GET/PUT | プロフィール取得・更新 |
+| `/api/profile` | GET/POST/PUT | プロフィール取得・作成 / 部分保存・更新 |
 | `/api/badges` | GET | バッジ一覧 |
 | `/api/pantry` | GET/POST | パントリー管理 |
 | `/api/recipes` | GET/POST | レシピ管理 |

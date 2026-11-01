@@ -637,7 +637,7 @@ IDごとに簡潔にまとめます。
 * `/api/auth/*`（Supabase Auth利用なので、直接利用が多い）
 * `/api/profile`
 
-  * GET / PUT
+  * GET / POST / PUT
 * `/api/meals`
 
   * GET（一覧） / POST（新規）
