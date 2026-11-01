@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { calculateNutritionTargets } from '@homegohan/core'
+import { PROFILE_NAME_PLACEHOLDER } from '@homegohan/shared'
 import { buildNutritionCalculatorInput } from '@/lib/build-nutrition-input'
 import { getHandsonTourStatusInternal } from '@/lib/handson-tour/getStatus'
 import { internalError } from '@/lib/api/errors'
@@ -46,7 +47,7 @@ export async function POST() {
         .from('user_profiles')
         .upsert({
           id: user.id,
-          nickname: 'Guest',
+          nickname: PROFILE_NAME_PLACEHOLDER,
           gender: 'unspecified',
           age_group: 'unspecified',
           onboarding_started_at: now,

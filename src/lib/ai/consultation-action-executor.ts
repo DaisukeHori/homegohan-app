@@ -86,9 +86,7 @@ import {
 import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 import { MEAL_TYPE_MESSAGE, PLANNED_MEAL_NUTRIENT_LIMITS } from '@/lib/planned-meal-validation';
 import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
-
-// セキュリティ上禁止されたフィールド
-const FORBIDDEN_PROFILE_FIELDS = ['email', 'avatar_url', 'is_banned', 'role', 'auth_provider'];
+import { sanitizeAiProfilePreferenceUpdates } from '@/lib/ai/profile-preference-updates';
 
 /** generate_week_menu で作る日数 (startDate から 1 週間) */
 const WEEK_MENU_DAYS = 7;
@@ -1718,34 +1716,13 @@ export async function runConsultationAction(
     case 'update_profile_preferences': {
       const { updates } = action.action_params;
 
-      // 禁止フィールドを除外
-      const safeUpdates: Record<string, any> = {};
-      const allowedFields = [
-        'nickname', 'age', 'gender', 'height', 'weight', 'target_weight',
-        'body_fat_percentage', 'target_body_fat', 'muscle_mass',
-        'health_conditions', 'medications', 'fitness_goals',
-        'sleep_quality', 'stress_level', 'bowel_movement', 'skin_condition',
-        'cold_sensitivity', 'swelling_prone',
-        'occupation', 'industry', 'work_style', 'desk_hours_per_day',
-        'overtime_frequency', 'business_trip_frequency', 'entertainment_frequency',
-        'weekly_exercise_minutes', 'exercise_types',
-        'diet_style', 'religious_restrictions', 'diet_flags',
-        'cuisine_preferences', 'taste_preferences', 'favorite_ingredients', 'favorite_dishes',
-        'cooking_experience', 'specialty_cuisines', 'disliked_cooking',
-        'weekday_cooking_minutes', 'weekend_cooking_minutes',
-        'meal_prep_ok', 'kitchen_appliances',
-        'wake_time', 'sleep_time', 'meal_times',
-        'snacking_habit', 'alcohol_frequency', 'smoking', 'caffeine_intake', 'daily_water_ml',
-        'family_size', 'has_children', 'children_ages', 'has_elderly',
-        'weekly_food_budget', 'shopping_frequency', 'preferred_stores',
-        'online_grocery', 'organic_preference',
-        'hobbies', 'weekend_activity', 'outdoor_activities',
-      ];
-
-      for (const key of Object.keys(updates)) {
-        if (allowedFields.includes(key) && !FORBIDDEN_PROFILE_FIELDS.includes(key)) {
-          safeUpdates[key] = updates[key];
-        }
+      // 許す欄だけを、PUT /api/profile と同じ列の型で検査して取り出す (#2183 Z2)。
+      // 以前は値を検査せずに書いていたので、'24:00' のような時刻が入ると、画面が GET の値をそのまま PUT に戻したとき 400 になり、
+      // プロフィールの全部の欄が保存できなくなっていた。型に合わない欄が 1 つでもあれば、どの欄も書かない
+      const { data: safeUpdates, errors } = sanitizeAiProfilePreferenceUpdates(updates);
+      if (errors.length > 0) {
+        result = validationFailureResult(user, action, errors);
+        break;
       }
 
       if (Object.keys(safeUpdates).length === 0) {
