@@ -269,7 +269,7 @@ function SupportUsersContent() {
                         <p className="font-medium text-gray-800">{normalizeProfileName(user.nickname) ?? "(名前なし)"}</p>
                         {user.is_banned && (
                           <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
-                            BAN
+                            利用停止
                           </span>
                         )}
                       </div>

@@ -284,6 +284,12 @@ const EXPECTED: Record<keyof typeof LIST_ORDERS, { table: string; keys: ListOrde
     keys: [desc('created_at'), ID_TIEBREAK_KEY],
     uses: [{ file: 'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts', handler: null }],
   },
+  // ---- #2166 X4: AI 相談の add_recipe_to_collection が名前で引くコレクション (同じ名前が 2 件以上でも古い方の 1 行) ----
+  aiConsultationCollectionByName: {
+    table: 'recipe_collections',
+    keys: [asc('created_at'), ID_TIEBREAK_KEY],
+    uses: [{ file: 'src/lib/ai/consultation-action-executor.ts', handler: null }],
+  },
   aiConsultationContextShoppingItems: {
     table: 'shopping_list_items',
     keys: [asc('category'), ID_TIEBREAK_KEY],

@@ -286,7 +286,7 @@ export default function AuditLogsPage() {
                           {JSON.stringify(log.details, null, 2)}
                         </pre>
                         {log.ip_address && (
-                          <div className="mt-2 text-slate-500 text-xs">IP: {log.ip_address}</div>
+                          <div className="mt-2 text-slate-500 text-xs">IP アドレス: {log.ip_address}</div>
                         )}
                       </td>
                     </tr>
