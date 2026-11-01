@@ -286,7 +286,7 @@ const EXPECTED: Record<keyof typeof LIST_ORDERS, { table: string; keys: ListOrde
     keys: [desc('created_at'), ID_TIEBREAK_KEY],
     uses: [{ file: 'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts', handler: null }],
   },
-  // ---- #2166 X4: AI 相談の add_recipe_to_collection が名前で引くコレクション (同じ名前が 2 件以上でも古い方の 1 行) ----
+  // ---- #2166 X4: AI 相談の add_recipe_to_collection が名前で引くコレクション ((user_id, name) の一意の索引 (#2178 Y3-b) の後は、同じ名前は 1 件。古い順の先頭を読むのは、索引の前に作られた行への防御) ----
   aiConsultationCollectionByName: {
     table: 'recipe_collections',
     keys: [asc('created_at'), ID_TIEBREAK_KEY],

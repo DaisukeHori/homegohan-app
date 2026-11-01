@@ -165,7 +165,7 @@ Status: 設計ゲート通過 (wf_ca3ce394-4b2)。段 A (部品と API・#1878)�
 | S-14 | S-01 で、通報の更新 (`moderation_flags` の UPDATE) が DB のエラーになった | 500 `INTERNAL_ERROR`「通報の状態を更新できませんでした。コンテンツはまだ非表示のままです。もう一度同じ操作を実行してください」。行は触っていない。監査ログ (warn) に `status_saved: false` / `status_error` / `restored: false`。画面は欄を閉じず、もう一度押せる |
 | S-15 | S-01 で、通報は `approved` にできたが、行の UPDATE が DB のエラーになった | 500 `OP_CONTENT_RESTORE_FAILED`「コンテンツを表示に戻せませんでした。通報の状態は承認済みにしました。もう一度同じ操作を実行してください」。監査ログ (warn) に `status_saved: true` / `approved_flag_ids` / `restored: false` / `restore_error`。行は隠れたままなので、画面を開き直しても解除の欄が出る。やり直すと通報は 0 行更新で素通りし、行が戻って 200 |
 | S-16 | 2 人の運営がほぼ同時に M1 を戻す | 先の人は 200。後の人は 409 `OP_CONTENT_NOT_HIDDEN` (先の人が書いたあとに読めば判定で、先に読んでいれば M1 の UPDATE が 0 行 → 読み直して `not_hidden`)。監査ログは、先の人の 1 行 (info) と、後の人が通報を `approved` にしていた (通報の UPDATE が先の人より先に commit した) ときだけ後の人の 1 行 (warn・`approved_flag_ids` = [F1]・`restored: false`)。後の人が何も書いていなければ後の人の行は無い。どの順でも、通報の `resolved_by` の人の監査ログに F1 が残る |
-| S-17 | `delete_and_temp_ban` で隠され、持ち主が BAN 中の行を戻す | 200。行は戻るが BAN はそのまま (`frozen_at` に触らない)。画面の結果に「BAN の解除は利用者の画面から」の 1 文を添える |
+| S-17 | `delete_and_temp_ban` で隠され、持ち主が BAN 中の行を戻す | 200。行は戻るが BAN はそのまま (`frozen_at` に触らない)。画面の結果に「凍結の解除は利用者の画面から」の 1 文を添える |
 | S-18 | M1 が隠れている状態で、3 件目の通報 F5 が `pending` のまま残っている。運営が F5 の画面を開く | 審査の欄 (pending なので出る) と、非表示の解除の欄の両方が出る。解除すると M1 が戻り、F5 は `pending` のまま (触らない)。あとで F5 を `delete_only` で判定すると、M1 は新しい `hidden_at` で隠れ、保管期間はそこから数え直し |
 | S-19 | `type = ai_content` で呼ぶ | 501 `OP_NOT_SUPPORTED` (本文の検証より前)。未認証・ロール不足はそれより前に 401 / 403 |
 | S-20 | S-01 のあと、本人が M1 を家族に貼り付ける | 通る (`paste_meal_to_family` の `MEAL_HIDDEN` は `hidden_at IS NOT NULL` のときだけ) |
@@ -1364,7 +1364,7 @@ export default function ModerationRestoreForm({
         <p role="status" className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">
           表示に戻しました ({done.restoredCount} 行)。投稿者本人以外にも再び見えます。
         </p>
-        <p className="text-xs text-gray-500">投稿者を BAN している場合、BAN はこの操作では解除されません (利用者の画面から解除します)。</p>
+        <p className="text-xs text-gray-500">投稿者を凍結している場合、凍結はこの操作では解除されません (利用者の画面から解除します)。</p>
       </div>
     );
   } else if (hiddenAt === null) {

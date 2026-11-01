@@ -171,7 +171,7 @@ await supabase.from('admin_audit_logs').insert({
 ---
 
 ### POST /api/admin/users/{id}/freeze
-ユーザーの凍結 (BAN。`src/app/api/admin/users/[id]/freeze/route.ts` の POST。画面は `/admin/users/[id]/freeze` の `src/components/admin/UserFreezeForm.tsx`)
+ユーザーの凍結 (`src/app/api/admin/users/[id]/freeze/route.ts` の POST。画面は `/admin/users/[id]/freeze` の `src/components/admin/UserFreezeForm.tsx`)
 
 **リクエスト**:
 ```json
@@ -181,7 +181,7 @@ await supabase.from('admin_audit_logs').insert({
   "reason_detail": "大量スパム投稿を確認",
   "duration_days": 7,
   "notify_user": true,
-  "notification_message": "規約違反により7日間の利用停止となりました。"
+  "notification_message": "規約違反により、アカウントを 7 日間凍結しました。"
 }
 ```
 
@@ -189,7 +189,7 @@ await supabase.from('admin_audit_logs').insert({
 - `ban_type`: `temporary` | `permanent`
 - `reason_category`: `spam` | `abuse` | `policy_violation` | `other`
 - `duration_days`: `temporary` の場合必須、1〜365
-- super_admin のみ `permanent` BAN 可能。`notify_user` (省略時 true) なら、凍結の UPDATE が 1 行だったあとに凍結した本人の登録メールアドレス (auth.users) へ通知メール (`template` `account_frozen`。件名「【ほめゴハン】アカウントが凍結されました」) を送信待ち (`email_outbox`) に積む。`notification_message` (前後の空白を除いて `FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH` = 1000 文字まで) は本文の「▼ 運営からのメッセージ」の段に入る (空なら段は無い)。送るのは `src/lib/admin/send-freeze-notification-email.ts` で best-effort (積めなくても 200)。結果は応答の `data.notification` と監査の details に残る。403 / 404 / 409 / 500 では送らない (cross/24)
+- super_admin のみ無期限凍結 (`permanent`) が可能。`notify_user` (省略時 true) なら、凍結の UPDATE が 1 行だったあとに凍結した本人の登録メールアドレス (auth.users) へ通知メール (`template` `account_frozen`。件名「【ほめゴハン】アカウントが凍結されました」) を送信待ち (`email_outbox`) に積む。`notification_message` (前後の空白を除いて `FREEZE_NOTIFICATION_MESSAGE_MAX_LENGTH` = 1000 文字まで) は本文の「▼ 運営からのメッセージ」の段に入る (空なら段は無い)。送るのは `src/lib/admin/send-freeze-notification-email.ts` で best-effort (積めなくても 200)。結果は応答の `data.notification` と監査の details に残る。403 / 404 / 409 / 500 では送らない (cross/24)
 
 **レスポンス**: `200 { "data": { "ban_id": "uuid", "unban_at": "2026-05-13T00:00:00Z", "notification": { "status": "sent" } } }`。`notification.status` は `sent` (送信待ちに受け付けた。送るのは worker) / `skipped` (`RESEND_API_KEY` が無く未送信) / `failed` (宛先を取得できない・送信待ちに登録できない・宛先停止リスト・文面の不備) / `not_requested` (`notify_user` が false)。`sent`・`not_requested` 以外は `notification.reason` (`not_configured` / `no_recipient` / `send_failed`) も返す (cross/24 §7.3)
 
@@ -198,7 +198,7 @@ await supabase.from('admin_audit_logs').insert({
 ---
 
 ### DELETE /api/admin/users/{id}/freeze
-凍結の解除 (BAN の解除。同じ route の DELETE)
+凍結の解除 (同じ route の DELETE)
 
 **リクエスト**: `{ "reason": "誤検知と判断" }` (`reason` は必須)。応答は `200 { "data": { "success": true } }`、監査は `admin.user.unban` (severity='warn')。対象が無い (UUID でない id を含む) ときは 404 `NOT_FOUND`
 
@@ -1821,7 +1821,7 @@ Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#113
 | コード | HTTP | 意味 |
 |--------|------|------|
 | `OP_PERMISSION_DENIED` | 403 | ロール不足 |
-| `OP_TARGET_PROTECTED` | 403 | 保護ユーザーへの操作不可 (super_admin BAN 等) |
+| `OP_TARGET_PROTECTED` | 403 | 保護ユーザーへの操作不可 (super_admin の凍結等) |
 | `OP_AUDIT_LOG_IMMUTABLE` | 403 | 監査ログ書き換え不可 |
 | `OP_FEATURE_FLAG_IN_USE` | 409 | 削除しようとしたフラグが利用中・作成でキーが既にある (`POST /api/super-admin/flags`。§7) |
 | `PLAN_NOT_FOUND` | 404 | AI の利用上限の保存 (`PATCH /api/super-admin/llm/quotas`) で、`plan_key` のプランが `subscription_plans` に無く、組織のプランの値 (`ORG_PLAN_VALUES`) でもない (§8) |
