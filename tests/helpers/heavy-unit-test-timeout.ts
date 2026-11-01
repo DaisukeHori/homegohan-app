@@ -69,10 +69,6 @@
  * #2157 で足したもの: tests/ai-consultation-context-recipe-collections-order-2157.test.ts は、同じ型 (テストの中で、AI 相談の
  *   会話の続きの route を丸ごと読み込む。tests/ai-consultation-context-meals-order-2150.test.ts と同じ形)。
  *
- * #2189 で足したもの: tests/ai-proposal-lifecycle-2189.test.ts は、AI 相談の会話の続きの route と提案の実行の route を丸ごと読み込む
- *   (読み込みはファイルの一番外側だが、1 件のテストで route の POST を通して会話の続きを組み立てる。
- *   tests/consultation-action-raw-error-text.test.ts と同じ形)。
- *
  * 時間切れが効くのは遅いときだけで、速く終わるテストの所要は変わらない (止まったテストを見切るまでが長くなるだけ)。
  * 期待値・待つ条件は変えないので、検査は緩まない。全体の既定 (vitest.config.ts) は変えず、一覧のファイルだけに効かせる
  * (各ファイルの先頭で applyHeavyUnitTestTimeout() を呼んで vi.setConfig する。時間切れはテスト・フックを登録したときの
@@ -121,7 +117,6 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/ai-consultation-context-meals-order-2150.test.ts",
   "tests/ai-consultation-context-recipe-collections-order-2157.test.ts",
   "tests/ai-consultation-latest-messages-2144.test.ts",
-  "tests/ai-proposal-lifecycle-2189.test.ts",
   "tests/ai-rate-limit-contracts.test.ts",
   "tests/ai-usage-direct-jwt-edge.test.ts",
   "tests/api-list-beyond-last-page-routes.test.ts",

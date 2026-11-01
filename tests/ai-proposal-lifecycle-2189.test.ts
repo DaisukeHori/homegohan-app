@@ -18,11 +18,10 @@
  *
  * 差し替えるのは外との境目 (Supabase のクライアント・AI の呼び出し・ログ) と、実行の本体 runConsultationAction だけ
  * (実行の本体の振る舞いは tests/consultation-action-raw-error-text.test.ts などが確かめる)。
+ * route はファイルの一番外側で 1 回だけ読み込む (収集のときに読むので、1 件のテストの時間切れに入らない。
+ * tests/heavy-unit-test-timeout.test.ts の「同じ型」に当たらない書き方)。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
-
-applyHeavyUnitTestTimeout();
 
 const USER = '11111111-1111-4111-8111-111111111111';
 const SESSION_ID = '22222222-2222-4222-8222-222222222222';
