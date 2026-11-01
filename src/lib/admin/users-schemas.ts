@@ -31,7 +31,7 @@ export const USER_LIST_ALL_STATUSES_LABEL = '全ステータス';
  */
 export const USER_LIST_STATUS_LABELS: Record<UserListStatus, string> = {
   active: 'アクティブ',
-  banned: 'BAN 済み',
+  banned: '凍結中',
   deleted: '削除済み',
 };
 

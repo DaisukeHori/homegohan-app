@@ -119,7 +119,7 @@ async function assertAccessDenied(
  *   - h1 にユーザー名 (またはデフォルト表示) が表示される
  *   - 「基本情報」セクションが表示される
  *   - 「ユーザー ID」「プラン」「ロール」「ステータス」の dl/dt が存在する
- *   - 「凍結 (BAN)」または「凍結解除」ボタンが存在する
+ *   - 「凍結」または「凍結解除」ボタンが存在する
  *
  * API fetch 証跡:
  *   /api/admin/users/* への GET リクエストが発行されることを記録する。
@@ -165,7 +165,7 @@ test("D-1: admin が /admin/users/[id] を開いてユーザー詳細を表示�
   await expect(page.locator("dt:has-text('ロール')")).toBeVisible({ timeout: 10_000 });
   await expect(page.locator("dt:has-text('ステータス')")).toBeVisible({ timeout: 10_000 });
 
-  // 凍結ボタンが存在する (「凍結 (BAN)」または「凍結解除」)
+  // 凍結ボタンが存在する (「凍結」または「凍結解除」)
   const freezeButton = page.locator("a:has-text('凍結'), a:has-text('凍結解除')").first();
   await expect(freezeButton).toBeVisible({ timeout: 10_000 });
 
@@ -233,12 +233,12 @@ test("D-3: admin が /admin/users/[id]/freeze を開いて凍結フォーム要�
   expect(page.url()).not.toContain("/login");
   expect(page.url()).toContain(`/admin/users/${userId}/freeze`);
 
-  // h1 が「ユーザー凍結 (BAN)」または「凍結解除」
+  // h1 が「ユーザー凍結」または「凍結解除」
   const h1 = page.locator("h1");
   await expect(h1).toBeVisible({ timeout: 20_000 });
   const h1Text = await h1.textContent();
   expect(
-    h1Text?.includes("凍結") || h1Text?.includes("BAN"),
+    h1Text?.includes("凍結"),
     `h1 テキストが凍結関連ではありません: "${h1Text}"`,
   ).toBe(true);
 

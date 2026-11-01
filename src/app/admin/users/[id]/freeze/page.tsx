@@ -90,7 +90,7 @@ export default async function AdminUserFreezePage(props: PageProps) {
       </nav>
 
       <h1 className="text-2xl font-bold text-gray-900 mb-2">
-        {isBanned ? '凍結解除' : 'ユーザー凍結 (BAN)'}
+        {isBanned ? '凍結解除' : 'ユーザー凍結'}
       </h1>
       <p className="text-sm text-gray-500 mb-6">
         対象: <span className="font-medium text-gray-800">{normalizeProfileName(profile.nickname) ?? '(名前なし)'}</span>

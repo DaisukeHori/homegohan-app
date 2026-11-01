@@ -333,7 +333,7 @@ export default async function AdminUserDetailPage(props: PageProps) {
                 href={`/admin/users/${id}/freeze`}
                 className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-red-500 text-white text-sm font-medium hover:bg-red-600 transition-colors"
               >
-                凍結 (BAN)
+                凍結
               </Link>
             )}
           </div>
