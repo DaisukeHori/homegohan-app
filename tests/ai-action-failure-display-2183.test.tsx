@@ -175,6 +175,13 @@ async function openChat() {
   });
 }
 
+/** 文が出るまで待つ (自動実行の結果の文は少し遅れて足される。待つ間の更新も act の中で受ける) */
+async function waitForText(expected: string) {
+  await act(async () => {
+    await vi.waitFor(() => expect(text()).toContain(expected));
+  });
+}
+
 async function click(button: HTMLButtonElement) {
   await act(async () => {
     button.click();
@@ -288,7 +295,7 @@ describe('AIChatBubble: 会話の続きの POST (SSE) の自動実行の結果 (
     await openChat();
     await sendFromInput();
 
-    await vi.waitFor(() => expect(text()).toContain('買い物リストの作成に失敗しました'));
+    await waitForText('買い物リストの作成に失敗しました');
     expect(text()).not.toContain('✅');
     expect(mealPlanUpdated).not.toHaveBeenCalled();
   });
@@ -299,7 +306,7 @@ describe('AIChatBubble: 会話の続きの POST (SSE) の自動実行の結果 (
     await openChat();
     await sendFromInput();
 
-    await vi.waitFor(() => expect(text()).toContain(FALLBACK_TEXT));
+    await waitForText(FALLBACK_TEXT);
     expect(text()).not.toContain('✅');
   });
 
@@ -309,7 +316,7 @@ describe('AIChatBubble: 会話の続きの POST (SSE) の自動実行の結果 (
     await openChat();
     await sendFromInput();
 
-    await vi.waitFor(() => expect(text()).toContain(EXECUTED_TEXT));
+    await waitForText(EXECUTED_TEXT);
     expect(mealPlanUpdated).toHaveBeenCalledTimes(1);
   });
 
@@ -318,7 +325,7 @@ describe('AIChatBubble: 会話の続きの POST (SSE) の自動実行の結果 (
     await openChat();
     await sendFromInput();
 
-    await vi.waitFor(() => expect(text()).toContain('買い物リストに足します'));
+    await waitForText('買い物リストに足します');
     // 結果の文を出すまでの遅らせより長く待っても出ない
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, LONGER_THAN_AUTO_OUTCOME_DELAY_MS));
@@ -337,7 +344,7 @@ describe('AIChatBubble: 会話の続きの POST (SSE) の自動実行の結果 (
     expect(quick).toBeDefined();
     await click(quick!);
 
-    await vi.waitFor(() => expect(text()).toContain('権限がありません'));
+    await waitForText('権限がありません');
     expect(text()).not.toContain('✅');
   });
 
@@ -349,6 +356,6 @@ describe('AIChatBubble: 会話の続きの POST (SSE) の自動実行の結果 (
     await openChat();
     await click(buttonByText(QUICK_PROMPT)!);
 
-    await vi.waitFor(() => expect(text()).toContain(EXECUTED_TEXT));
+    await waitForText(EXECUTED_TEXT);
   });
 });
