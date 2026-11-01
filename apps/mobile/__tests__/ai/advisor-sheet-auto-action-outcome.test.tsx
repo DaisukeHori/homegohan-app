@@ -140,11 +140,17 @@ async function openAndSend(response: unknown) {
   await waitFor(() => expect(screen.getByText(AI_REPLY)).toBeTruthy());
 }
 
-/** 画面に出ている文を上から順に (ネイティブの Text の部品 (host) で、子が文字列のものだけ) */
+/** 画面に出ている文を上から順に (ネイティブの Text の部品 (host) の、直下の文字列の子をつないだもの。空は除く) */
 function renderedTexts(): string[] {
   return screen.UNSAFE_root
-    .findAll((node) => node.type === 'Text' && typeof node.props.children === 'string')
-    .map((node) => String(node.props.children));
+    .findAll((node) => node.type === 'Text')
+    .map((node) =>
+      [node.props.children]
+        .flat()
+        .filter((child): child is string => typeof child === 'string')
+        .join(''),
+    )
+    .filter((text) => text !== '');
 }
 
 describe('AIAdvisorSheet — 自動実行の結果 (#2189 W2)', () => {
