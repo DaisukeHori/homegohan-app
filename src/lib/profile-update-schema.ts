@@ -16,6 +16,7 @@
  *   - 失敗の本文は、同じ route の JSON として読めない本文の 400 と同じ形と文 ({ error: API_INVALID_JSON_MESSAGE })
  */
 import { z } from 'zod';
+import { CalendarDateSchema } from '@/lib/calendar-date-schema';
 
 /** PostgreSQL の integer (int4) の範囲。範囲の外の数は DB が拒む (22003 numeric_value_out_of_range) */
 export const PG_INTEGER_MIN = -2147483648;
@@ -23,7 +24,9 @@ export const PG_INTEGER_MAX = 2147483647;
 
 /**
  * 写す先の列の型の種類
- *   text / date / time: JSON の文字列 (date・time の書式は検査しない。DB が受ける書式が広いため)
+ *   text: JSON の文字列
+ *   date: 実在する日付の YYYY-MM-DD (CalendarDateSchema。存在しない日付・書式の違う文字列は DB が拒み 500 になるため、入口で 400 にする)
+ *   time: 時刻の HH:MM か HH:MM:SS (USER_PROFILE_TIME_OF_DAY_PATTERN。00〜23 時。範囲の外の時刻は DB が拒み 500 になるため)
  *   integer: integer の範囲の整数 / numeric: 有限の数
  *   boolean: true / false
  *   textArray / integerArray: 要素が文字列 / 整数の配列 (要素の null は DB の配列が受けるので通す)
@@ -183,6 +186,12 @@ export const USER_PROFILE_UPDATE_FIELDS: Readonly<Record<string, UserProfileUpda
   performanceProfile: nullableColumn('jsonb'),
 };
 
+/**
+ * time の列が受ける本文の書式: HH:MM か HH:MM:SS (時は 00〜23)。GET の行の 'HH:MM:SS' を PUT でそのまま戻しても拒まない。
+ * '25:00' のような範囲の外の時刻は DB が 22008 で拒み internalError の 500 になっていた (#2178 Y1-b)
+ */
+export const USER_PROFILE_TIME_OF_DAY_PATTERN = /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/;
+
 const pgInteger = z.number().int().min(PG_INTEGER_MIN).max(PG_INTEGER_MAX);
 
 function columnValueSchema(kind: UserProfileColumnKind): z.ZodType {
@@ -218,5 +227,61 @@ function fieldSchema(spec: UserProfileUpdateFieldSpec): z.ZodType {
 export const UserProfileUpdateBodySchema = z.object(
   Object.fromEntries(
     Object.entries(USER_PROFILE_UPDATE_FIELDS).map(([field, spec]) => [field, fieldSchema(spec)]),
+  ),
+);
+
+/** POST /api/profile の欄の、写す先の列と列の型 */
+export type UserProfilePostFieldSpec = {
+  /** 写す先の user_profiles の列 (snake_case) */
+  readonly column: string;
+  readonly spec: UserProfileUpdateFieldSpec;
+};
+
+/**
+ * POST /api/profile が受ける欄 (camelCase) → 写す先の列と列の型 (#2178 Y1-a)。
+ *   - 欄の範囲は以前の POST の写し方 (本文の欄を 1 つずつ列に写していたもの) と同じ。広げない
+ *   - 列の型は PUT と同じ欄なら USER_PROFILE_UPDATE_FIELDS をそのまま使う (goal は PUT の goalText と同じ goal_text の列)。
+ *     PUT に無い欄 (栄養目標・運動の欄) は写す先の列の型 (supabase/baseline/prod_schema.sql の user_profiles) に合わせる。
+ *     列と型の対応は tests/profile-post-input-2178.test.ts が DDL と突き合わせる
+ *   - age は age_group (年代) の計算にも使う (route が入れる)
+ */
+export const USER_PROFILE_POST_FIELDS: Readonly<Record<string, UserProfilePostFieldSpec>> = {
+  nickname: { column: 'nickname', spec: USER_PROFILE_UPDATE_FIELDS.nickname },
+  gender: { column: 'gender', spec: USER_PROFILE_UPDATE_FIELDS.gender },
+  lifestyle: { column: 'lifestyle', spec: USER_PROFILE_UPDATE_FIELDS.lifestyle },
+  goal: { column: 'goal_text', spec: USER_PROFILE_UPDATE_FIELDS.goalText },
+  age: { column: 'age', spec: USER_PROFILE_UPDATE_FIELDS.age },
+  occupation: { column: 'occupation', spec: USER_PROFILE_UPDATE_FIELDS.occupation },
+  height: { column: 'height', spec: USER_PROFILE_UPDATE_FIELDS.height },
+  weight: { column: 'weight', spec: USER_PROFILE_UPDATE_FIELDS.weight },
+
+  // 栄養目標・運動関連 (PUT に無い欄)
+  nutritionGoal: { column: 'nutrition_goal', spec: nullableColumn('text') },
+  weightChangeRate: { column: 'weight_change_rate', spec: nullableColumn('text') },
+  exerciseTypes: { column: 'exercise_types', spec: nullableColumn('textArray') },
+  exerciseFrequency: { column: 'exercise_frequency', spec: nullableColumn('integer') },
+  exerciseIntensity: { column: 'exercise_intensity', spec: nullableColumn('text') },
+  exerciseDurationPerSession: { column: 'exercise_duration_per_session', spec: nullableColumn('integer') },
+
+  workStyle: { column: 'work_style', spec: USER_PROFILE_UPDATE_FIELDS.workStyle },
+  healthConditions: { column: 'health_conditions', spec: USER_PROFILE_UPDATE_FIELDS.healthConditions },
+  medications: { column: 'medications', spec: USER_PROFILE_UPDATE_FIELDS.medications },
+  pregnancyStatus: { column: 'pregnancy_status', spec: USER_PROFILE_UPDATE_FIELDS.pregnancyStatus },
+  fitnessGoals: { column: 'fitness_goals', spec: USER_PROFILE_UPDATE_FIELDS.fitnessGoals },
+  dietFlags: { column: 'diet_flags', spec: USER_PROFILE_UPDATE_FIELDS.dietFlags },
+  cookingExperience: { column: 'cooking_experience', spec: USER_PROFILE_UPDATE_FIELDS.cookingExperience },
+  weekdayCookingMinutes: { column: 'weekday_cooking_minutes', spec: USER_PROFILE_UPDATE_FIELDS.weekdayCookingMinutes },
+  cuisinePreferences: { column: 'cuisine_preferences', spec: USER_PROFILE_UPDATE_FIELDS.cuisinePreferences },
+  familySize: { column: 'family_size', spec: USER_PROFILE_UPDATE_FIELDS.familySize },
+  servingsConfig: { column: 'servings_config', spec: USER_PROFILE_UPDATE_FIELDS.servingsConfig },
+  radarChartNutrients: { column: 'radar_chart_nutrients', spec: USER_PROFILE_UPDATE_FIELDS.radarChartNutrients },
+};
+
+/**
+ * POST /api/profile の本文のスキーマ。一覧に無い欄は PUT と同じく検査せずに通す (route は一覧の欄だけを列に写す)
+ */
+export const UserProfilePostBodySchema = z.object(
+  Object.fromEntries(
+    Object.entries(USER_PROFILE_POST_FIELDS).map(([field, { spec }]) => [field, fieldSchema(spec)]),
   ),
 );
