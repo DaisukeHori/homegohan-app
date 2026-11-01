@@ -182,6 +182,46 @@ describe('PUT /api/profile: 列の型に合わない値は 400 (#2166 X7)', () =
   });
 });
 
+describe('PUT /api/profile: 日付・時刻の書式に合わない値は 400 (#2178 Y1-b)', () => {
+  const dateFields = FIELD_ENTRIES.filter(([, spec]) => spec.kind === 'date').map(([field]) => field);
+  const timeFields = FIELD_ENTRIES.filter(([, spec]) => spec.kind === 'time').map(([field]) => field);
+
+  it('date の列の欄と time の列の欄がある (この下の検査が空回りしない)', () => {
+    expect(dateFields).toContain('targetDate');
+    expect(timeFields).toEqual(expect.arrayContaining(['wakeTime', 'sleepTime']));
+  });
+
+  /** 存在しない日付・日付でない文字列 (以前は DB の 22007 / 22008 で 500 になった) */
+  const INVALID_DATES = ['2026-02-30', '2026-13-01', 'abc', '2026/11/01', ''];
+  it.each(dateFields.flatMap((field) => INVALID_DATES.map((value) => [field, value] as const)))(
+    'date の列の欄 %s に %j を送ると 400。DB に触れない',
+    async (field, value) => {
+      const res = await put({ [field]: value });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: API_INVALID_JSON_MESSAGE });
+      expect(h.fromCalls).toEqual([]);
+    },
+  );
+
+  /** 範囲の外の時刻・時刻でない文字列 (以前は DB の 22008 で 500 になった) */
+  const INVALID_TIMES = ['25:00', '24:00', '07:60', '07:30:60', '7:30', 'abc', ''];
+  it.each(timeFields.flatMap((field) => INVALID_TIMES.map((value) => [field, value] as const)))(
+    'time の列の欄 %s に %j を送ると 400。DB に触れない',
+    async (field, value) => {
+      const res = await put({ [field]: value });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: API_INVALID_JSON_MESSAGE });
+      expect(h.fromCalls).toEqual([]);
+    },
+  );
+
+  it('実在する日付と HH:MM・HH:MM:SS の時刻 (GET の行の形) は今までどおり書く', async () => {
+    const res = await put({ targetDate: '2028-02-29', wakeTime: '06:45:00', sleepTime: '23:59' });
+    expect(res.status).toBe(200);
+    expect(h.profileUpdates[0]).toMatchObject({ target_date: '2028-02-29', wake_time: '06:45:00', sleep_time: '23:59' });
+  });
+});
+
 describe('PUT /api/profile: 型の合う本文は今までどおり書く', () => {
   it('showRecipeAuthorName: false はそのまま show_recipe_author_name に書く', async () => {
     const res = await put({ showRecipeAuthorName: false });
