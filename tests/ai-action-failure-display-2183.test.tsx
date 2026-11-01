@@ -175,11 +175,21 @@ async function openChat() {
   });
 }
 
-/** 文が出るまで待つ (自動実行の結果の文は少し遅れて足される。待つ間の更新も act の中で受ける) */
+/** 文が出るのを待つときの 1 回の待ち (ミリ秒) と回数の上限 (合わせて 2 秒。結果の文の遅らせ 300 ミリ秒より十分長い) */
+const WAIT_POLL_MS = 50;
+const WAIT_MAX_POLLS = 40;
+
+/**
+ * 文が出るまで待つ (自動実行の結果の文は少し遅れて足される)。
+ * 待つ間に起きる更新を act の中で受けて、act を抜けるたびに画面へ反映させてから確かめる
+ */
 async function waitForText(expected: string) {
-  await act(async () => {
-    await vi.waitFor(() => expect(text()).toContain(expected));
-  });
+  for (let i = 0; i < WAIT_MAX_POLLS && !text().includes(expected); i += 1) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS));
+    });
+  }
+  expect(text()).toContain(expected);
 }
 
 async function click(button: HTMLButtonElement) {
