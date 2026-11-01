@@ -242,18 +242,67 @@ describe('/support/users の一覧 (#1717)', () => {
     expect(frozenRow, '凍結中のユーザーの行').toBeDefined();
     expect(frozenRow!.textContent).toContain('最終ログイン: 2026/10/5');
     expect(frozenRow!.textContent).toContain('登録日: 2026/1/2');
-    expect(frozenRow!.textContent).toContain('利用停止');
-    // 凍結の印は日本語で出す (英字の BAN は出さない。#2166 X3)
+    expect(frozenRow!.textContent).toContain('凍結中');
+    // 凍結の印は日本語で出す (英字の BAN は出さない。#2166 X3)。個人情報の請求の種類の語「利用停止」も使わない (#2178 Y2)
     expect(frozenRow!.textContent).not.toContain('BAN');
+    expect(frozenRow!.textContent).not.toContain('利用停止');
 
     const activeRow = findRow('通常さん');
     expect(activeRow, '凍結されていないユーザーの行').toBeDefined();
     expect(activeRow!.textContent).toContain('最終ログイン: -');
     expect(activeRow!.textContent).toContain('登録日: 2026/3/4');
-    expect(activeRow!.textContent).not.toContain('利用停止');
+    expect(activeRow!.textContent).not.toContain('凍結中');
 
     expect(container.textContent).not.toContain('ユーザーが見つかりません');
     expect(alerts()).toEqual([]);
+  });
+
+  it('凍結中の利用者の詳細パネルは「このユーザーは凍結中です」と理由を出す (英字の BAN・請求の種類の語「利用停止」は出さない。#2178 Y2)', async () => {
+    const body = await routeListBody();
+    const detail = {
+      user: {
+        id: FROZEN_ID,
+        nickname: '凍結さん',
+        ageGroup: '30s',
+        gender: 'female',
+        roles: ['user'],
+        organizationId: null,
+        isBanned: true,
+        bannedAt: '2026-10-06T03:00:00.000Z',
+        bannedReason: 'spam',
+        lastLoginAt: FROZEN_LAST_LOGIN,
+        loginCount: 1,
+        profileCompleteness: 0,
+        createdAt: FROZEN_REGISTERED,
+      },
+      stats: { mealCount: 0, aiSessionCount: 0 },
+      inquiries: [],
+      notes: [],
+    };
+    fetchMock.mockImplementation(async (input: string, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost');
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (url.pathname === '/api/admin/users' && method === 'GET') return jsonResponse(200, body);
+      if (url.pathname === `/api/support/users/${FROZEN_ID}` && method === 'GET') return jsonResponse(200, detail);
+      throw new Error(`想定していない fetch: ${method} ${input}`);
+    });
+    await renderPage();
+
+    const frozenRow = findRow('凍結さん');
+    expect(frozenRow, '凍結中のユーザーの行').toBeDefined();
+    await act(async () => {
+      frozenRow!.click();
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const notice = Array.from(container.querySelectorAll('p')).find((p) => p.textContent === 'このユーザーは凍結中です');
+    expect(notice, '詳細パネルの凍結の文').toBeDefined();
+    const panel = notice!.parentElement!;
+    expect(panel.textContent).toContain('spam');
+    expect(panel.textContent).not.toContain('BAN');
+    expect(panel.textContent).not.toContain('利用停止');
   });
 
   it('一覧は per_page で 50 件を頼む (API が読まない limit は送らない)', async () => {

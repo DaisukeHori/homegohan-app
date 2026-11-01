@@ -119,7 +119,7 @@ describe('/admin/users の件数より後ろのページ (#1917)', () => {
     expect(queryOf(url!)).toEqual({ q: '', status: 'active', page: '1' });
   });
 
-  it('検索語と BAN 済みの絞り込みを落とさずに最後のページへ移す', async () => {
+  it('検索語と凍結中の絞り込みを落とさずに最後のページへ移す', async () => {
     adminFetch.mockResolvedValue(listResponse([], 120, 9));
     const url = await redirectedTo({ q: '山田', status: 'banned', page: '9' });
     expect(queryOf(url!)).toEqual({ q: '山田', status: 'banned', page: '3' });

@@ -105,7 +105,7 @@ export type AiDailyLimitReadOnlyReason = (typeof AI_DAILY_LIMIT_READ_ONLY_REASON
 
 /** 保存できない行に、運営の画面で出す案内 (理由ごと) */
 export const AI_DAILY_LIMIT_READ_ONLY_NOTES: Readonly<Record<AiDailyLimitReadOnlyReason, string>> = {
-  unknown_key: 'このキーはプランの表にも組織のプランにも無いため、保存できません',
+  unknown_key: 'このプランの鍵はプランの表にも組織のプランにも無いため、保存できません',
   org_subscription_plan: `組織の上限は組織のプランの値 (${ORG_PLAN_VALUES_LABEL}) の行で決まります。この行の値は使われないため、保存できません`,
 };
 
