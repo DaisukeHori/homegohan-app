@@ -78,6 +78,11 @@ import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { createLogger } from '@/lib/db-logger';
 import { errorCodeOf, toLoggableError } from '@/lib/api/errors';
 import { RECIPE_COLLECTIONS_USER_NAME_CONFLICT_TARGET } from '@/lib/recipes/collections';
+import {
+  isRecipeCollectionAppendOutcome,
+  RECIPE_COLLECTION_APPEND_OUTCOME,
+  RECIPE_COLLECTIONS_APPEND_RECIPE_RPC,
+} from '@/lib/recipes/collection-append';
 import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 import { MEAL_TYPE_MESSAGE, PLANNED_MEAL_NUTRIENT_LIMITS } from '@/lib/planned-meal-validation';
 import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
@@ -302,6 +307,15 @@ export const AI_SENDING_ACTION_TYPES: ReadonlySet<string> = new Set([
 
 /** add_recipe_to_collection で AI がコレクションの名前を渡さなかったときの足し先の名前 */
 const DEFAULT_RECIPE_COLLECTION_NAME = 'お気に入り';
+
+/**
+ * add_recipe_to_collection で、レシピを足す DB の関数 (append_recipe_to_collection) が失敗した・想定外の値を返したときの
+ * result.error の文 (#2183 Z3。ほかの失敗の分岐と同じく固定の文。DB の生のエラー文は構造化ログにだけ残す)
+ */
+export const AI_COLLECTION_APPEND_FAILED_MESSAGE = 'コレクションへの追加に失敗しました';
+
+/** add_recipe_to_collection で、足す時点で本人のコレクションが見つからなかった (消えた) ときの result.error の文 (#2183 Z3) */
+export const AI_COLLECTION_NOT_FOUND_MESSAGE = 'コレクションが見つかりませんでした';
 
 /** 構造化ログ (app_logs) の function_name。アクションの DB 操作の失敗はここに残す */
 const ACTION_EXECUTOR_LOG_NAME = 'lib/ai/consultation-action-executor';
@@ -1412,45 +1426,49 @@ export async function runConsultationAction(
       }
 
       if (collection) {
-        // #1047 F2-22: 以前はここで
-        // `.update({ recipe_ids: supabase.rpc('array_append_unique', {...}) })`
-        // を実行していたが、update() の値にクエリビルダー（Promiseライクな
-        // オブジェクト）をそのまま渡しており、recipe_ids 列に意図しない値が
-        // 書き込まれる（少なくとも配列追加としては機能しない）実質的な死にコードだった。
-        // 読み直し + 重複排除 append のみで recipe_ids を更新する。
-        // #2178 Y3-a: 読み直しのエラー・行が返らないときは update しない。以前は読み直しの失敗を空の recipe_ids と同じに扱い、
-        // [recipeId] だけで上書きして、それまで入っていたレシピをコレクションから消していた。
-        // (読んでから書く形なので、同時に 2 回足すと片方が消えうる。1 文の条件つき UPDATE の RPC にまとめるのは別件)
-        const { data: currentCollection, error: rereadError } = await supabase
-          .from('recipe_collections')
-          .select('recipe_ids')
-          .eq('id', collection.id)
-          .single();
+        // #2183 Z3: 足すのは DB の関数 append_recipe_to_collection の 1 文の条件つき UPDATE
+        // (supabase/migrations の *_recipe_collections_append_recipe_rpc.sql。まだ入っていないときだけ末尾に足す)。
+        // 以前は recipe_ids を読み直してから [...読んだ値, recipeId] で書いていたため、同じコレクションへほぼ同時に
+        // 2 つのレシピを足すと、後から書いた方が先の追加を上書きしてレシピが 1 つ消えた (#2178 Y3-a の読み直しの失敗の分岐もこの形の一部)。
+        // 関数は SECURITY INVOKER で、利用者のセッションと RLS (本人の行だけ) のもとで動く。
+        const { data: appendOutcome, error: appendError } = await supabase.rpc(RECIPE_COLLECTIONS_APPEND_RECIPE_RPC, {
+          p_collection_id: collection.id,
+          p_recipe_id: recipeId,
+        });
 
-        if (rereadError || !currentCollection) {
-          logActionDbFailure(
-            user,
-            action,
-            'recipe_collections.reread',
-            rereadError ?? new Error('recipe_collections の読み直しで行が返らなかった'),
-          );
-          success = false;
-          result = { collectionId: collection.id, added: false };
+        if (appendError) {
+          logActionDbFailure(user, action, 'recipe_collections.append_recipe_rpc', appendError);
+          result = { error: AI_COLLECTION_APPEND_FAILED_MESSAGE };
           break;
         }
 
-        // recipe_ids の列は NULL を許す (既定は空の配列)。NULL は空として扱う
-        const currentIds: string[] = currentCollection.recipe_ids ?? [];
-        if (!currentIds.includes(recipeId)) {
-          const { error: appendError } = await supabase
-            .from('recipe_collections')
-            .update({ recipe_ids: [...currentIds, recipeId] })
-            .eq('id', collection.id);
-          success = !appendError;
-        } else {
-          success = true;
+        if (appendOutcome === RECIPE_COLLECTION_APPEND_OUTCOME.notFound) {
+          // 名前で引いた (または作った) 後に行が消えた。本人の行に無い id には足さない
+          logActionDbFailure(
+            user,
+            action,
+            'recipe_collections.append_recipe_rpc',
+            new Error('append_recipe_to_collection が本人のコレクションを見つけられなかった (not_found)'),
+          );
+          result = { error: AI_COLLECTION_NOT_FOUND_MESSAGE };
+          break;
         }
-        result = { collectionId: collection.id, added: success };
+
+        if (!isRecipeCollectionAppendOutcome(appendOutcome)) {
+          // 関数は STRICT なので、引数に NULL (recipeId が無いなど) があると NULL を返す。想定外の値も足せたとは扱わない
+          logActionDbFailure(
+            user,
+            action,
+            'recipe_collections.append_recipe_rpc',
+            new Error(`append_recipe_to_collection が想定外の値を返した: ${JSON.stringify(appendOutcome ?? null)}`),
+          );
+          result = { error: AI_COLLECTION_APPEND_FAILED_MESSAGE };
+          break;
+        }
+
+        // added (足した) と already_present (既に入っていた) は、どちらもレシピがコレクションに入っている状態
+        success = true;
+        result = { collectionId: collection.id, added: true };
       }
       break;
     }
