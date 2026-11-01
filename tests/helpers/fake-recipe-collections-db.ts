@@ -16,6 +16,7 @@ import {
   RECIPE_COLLECTIONS_USER_NAME_CONFLICT_TARGET,
   RECIPE_COLLECTIONS_USER_NAME_UNIQUE_INDEX,
 } from '@/lib/recipes/collections';
+import { UNIQUE_VIOLATION_SQLSTATE } from './recipe-collections-user-name-unique';
 
 export interface CollectionRow {
   id: string;
@@ -33,8 +34,6 @@ export interface PgError {
 /** 失敗させる操作の種類 */
 export type FakeCollectionsOp = 'lookup' | 'reread' | 'insert' | 'upsert' | 'update';
 
-/** PostgreSQL の一意の違反の SQLSTATE */
-export const UNIQUE_VIOLATION_SQLSTATE = '23505';
 /** PostgREST の .single() / .maybeSingle() が行の数の違いで返すエラーのコード */
 const PGRST_SINGLE_ROW_CODE = 'PGRST116';
 /** 作り物が作った行の created_at (テストの seed より新しい日時) */
