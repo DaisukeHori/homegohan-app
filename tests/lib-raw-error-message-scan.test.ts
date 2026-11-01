@@ -268,7 +268,7 @@ describe('src/lib のヘルパーの結果に DB の生のエラー文を入れ�
     ['console', `console.error('failed', { message: error.message });`],
     ['例外の文面', `throw new Error(\`読み出しに失敗しました: \${error.message}\`);`],
     ['独自の例外クラスの文面', `throw new EmailSendError({ message: err.message });`],
-    ['固定の文', `return { success: false, error: 'BAN の適用に失敗しました', kind: 'internal', cause: profileError };`],
+    ['固定の文', `return { success: false, error: '凍結に失敗しました', kind: 'internal', cause: profileError };`],
     ['エラーのオブジェクトごと cause に入れる', `return { ok: false, internalCause: rpcError };`],
     ['エラーでない値の message', `return { message: data.message };`],
     ['LLM の応答の choices[0].message', `return { content: response.choices[0]?.message?.content };`],

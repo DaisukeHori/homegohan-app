@@ -86,6 +86,7 @@ import {
 } from '@/lib/admin/moderation-backend';
 import { notSupportedResponse } from '@/lib/admin/not-supported';
 import { applyUserBan, BAN_INTERNAL_ERROR_MESSAGE, PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE } from '@/lib/admin/user-ban';
+import { TEMPORARY_FREEZE_LABEL } from '@/lib/admin/freeze-labels';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { isUuid } from '@/lib/http-params';
@@ -275,7 +276,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
   // delete_and_temp_ban は ban_duration_days 必須
   if (action === 'delete_and_temp_ban' && !ban_duration_days) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: '削除と一時 BAN (delete_and_temp_ban) の場合は BAN の日数 (ban_duration_days) が必須です' } },
+      { error: { code: 'VALIDATION_ERROR', message: `削除と${TEMPORARY_FREEZE_LABEL} (delete_and_temp_ban) の場合は凍結の日数 (ban_duration_days) が必須です` } },
       { status: 400 },
     );
   }
@@ -418,7 +419,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
           statusSaved: false,
           statusError: null,
           banApplied: null,
-          banError: banRequested ? 'コンテンツを隠せなかったため BAN を実行していません' : null,
+          banError: banRequested ? 'コンテンツを隠せなかったため凍結を実行していません' : null,
           unbanAt: null,
         },
         true,
@@ -430,7 +431,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
           error: {
             code: 'OP_CONTENT_HIDE_FAILED',
             message: banRequested
-              ? 'コンテンツを非表示にできませんでした。モデレーション判定はまだ保存しておらず、BAN も実行していません (審査待ちのままです)。もう一度同じ操作を実行してください。'
+              ? 'コンテンツを非表示にできませんでした。モデレーション判定はまだ保存しておらず、凍結も実行していません (審査待ちのままです)。もう一度同じ操作を実行してください。'
               : 'コンテンツを非表示にできませんでした。モデレーション判定はまだ保存していません (審査待ちのままです)。もう一度同じ操作を実行してください。',
           },
           data: { status: item.status, content_hidden: false, ban_applied: null },
@@ -460,7 +461,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
           statusSaved: false,
           statusError: describeError(err),
           banApplied: null,
-          banError: banRequested ? '判定を保存できなかったため BAN を実行していません' : null,
+          banError: banRequested ? '判定を保存できなかったため凍結を実行していません' : null,
           unbanAt: null,
         },
         true,
@@ -470,7 +471,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
           error: {
             code: 'INTERNAL_ERROR',
             message: banRequested
-              ? 'モデレーション判定を保存できませんでした。コンテンツは非表示にしましたが、BAN はまだ実行していません (審査待ちのままです)。もう一度同じ操作を実行してください。'
+              ? 'モデレーション判定を保存できませんでした。コンテンツは非表示にしましたが、凍結はまだ実行していません (審査待ちのままです)。もう一度同じ操作を実行してください。'
               : 'モデレーション判定を保存できませんでした。コンテンツは非表示にしました (審査待ちのままです)。もう一度同じ操作を実行してください。',
           },
           data: { status: item.status, content_hidden: true, ban_applied: null },
@@ -526,7 +527,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
         banErrorMessage = describeError(cause);
         createLogger('POST /api/admin/moderation/[type]/[id]', generateRequestId())
           .withUser(actor.id)
-          .error('BAN を適用できませんでした', cause, {
+          .error('凍結を適用できませんでした', cause, {
             moderation_type: type,
             flag_id: id,
             content_user_id: contentUserId,
@@ -546,7 +547,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
       statusError: null,
       banApplied: banTargetUnresolved ? null : banApplied,
       banError: banTargetUnresolved
-        ? 'BAN 対象ユーザーを特定できませんでした (コンテンツ所有者不明)'
+        ? '凍結の対象のユーザーを特定できませんでした (コンテンツ所有者不明)'
         : banErrorMessage,
       unbanAt: banUnbanAt,
     },
@@ -562,7 +563,7 @@ async function handleResolve(request: Request, params: { type: string; id: strin
         error: {
           code: 'OP_BAN_TARGET_UNRESOLVED',
           message:
-            'BAN 対象ユーザーを特定できませんでした (コンテンツ所有者が不明のため)。モデレーション判定自体は保存されています。',
+            '凍結の対象のユーザーを特定できませんでした (コンテンツ所有者が不明のため)。モデレーション判定自体は保存されています。',
         },
         data: { status: newStatus, ban_applied: null },
       },

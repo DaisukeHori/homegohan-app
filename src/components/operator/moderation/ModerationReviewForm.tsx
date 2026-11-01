@@ -23,6 +23,13 @@ import { useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { UNAUTHENTICATED_SCREEN_MESSAGE } from '@/lib/admin/api-error-message';
+import {
+  CONTENT_OWNER_FROZEN_MESSAGE,
+  FREEZE_DURATION_DAYS_LABEL,
+  PERMANENT_FREEZE_LABEL,
+  TEMPORARY_FREEZE_LABEL,
+  freezeDurationDaysRangeMessage,
+} from '@/lib/admin/freeze-labels';
 import { moderationStatusLabel } from '@/lib/admin/moderation-labels';
 import { SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
 
@@ -41,8 +48,8 @@ const ACTION_OPTIONS = [
   { value: 'approve', label: '承認 (問題なし)' },
   { value: 'delete_only', label: 'コンテンツ削除のみ' },
   { value: 'delete_and_warn', label: '削除 + 警告' },
-  { value: 'delete_and_temp_ban', label: '削除 + 一時 BAN' },
-  { value: 'delete_and_perm_ban', label: `削除 + 永久 BAN (${SUPER_ADMIN_ONLY_NOTE})`, superAdminOnly: true },
+  { value: 'delete_and_temp_ban', label: `削除 + ${TEMPORARY_FREEZE_LABEL}` },
+  { value: 'delete_and_perm_ban', label: `削除 + ${PERMANENT_FREEZE_LABEL} (${SUPER_ADMIN_ONLY_NOTE})`, superAdminOnly: true },
   { value: 'escalate', label: 'エスカレーション' },
 ] as const;
 
@@ -80,7 +87,7 @@ export default function ModerationReviewForm({ type, id, status, isSuperAdmin }:
       <div className="space-y-4">
         <p role="status" className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">
           審査を確定しました。ステータス: {moderationStatusLabel(done.status)}
-          {done.banApplied === true ? ' / 投稿者を BAN しました' : ''}
+          {done.banApplied === true ? ` / ${CONTENT_OWNER_FROZEN_MESSAGE}` : ''}
         </p>
         <Link
           href="/admin/moderation"
@@ -116,7 +123,7 @@ export default function ModerationReviewForm({ type, id, status, isSuperAdmin }:
     if (action === 'delete_and_temp_ban') {
       const days = Number(banDays);
       if (banDays.trim() === '' || !Number.isInteger(days) || days < BAN_DAYS_MIN || days > BAN_DAYS_MAX) {
-        setError(`BAN 期間は ${BAN_DAYS_MIN}〜${BAN_DAYS_MAX} の整数 (日数) で入力してください`);
+        setError(freezeDurationDaysRangeMessage(BAN_DAYS_MIN, BAN_DAYS_MAX));
         return;
       }
       body.ban_duration_days = days;
@@ -202,7 +209,7 @@ export default function ModerationReviewForm({ type, id, status, isSuperAdmin }:
       {action === 'delete_and_temp_ban' && (
         <div>
           <label htmlFor="ban_duration_days" className="block text-sm font-medium text-gray-700 mb-1">
-            BAN 期間 (日数)
+            {FREEZE_DURATION_DAYS_LABEL}
           </label>
           <input
             id="ban_duration_days"

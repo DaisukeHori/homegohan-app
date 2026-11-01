@@ -24,6 +24,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReactElement } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { stripAllTags } from './helpers/strip-tags';
+import { findErrorTexts } from './helpers/api-error-text-scan';
 
 vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
@@ -75,6 +76,14 @@ describe('API・ライブラリの文 (src/lib/admin/user-ban.ts。凍結の rou
 
   it('無期限凍結を断る文', () => {
     expect(userBan.PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE).toBe('無期限凍結は運営最上位のみ実行できます');
+  });
+
+  it('route の 400 の文 (定数・テンプレートの式をたどって値にしたもの): 一時凍結の日数が無いとき', () => {
+    const texts = (file: string) => findErrorTexts(file, { substitutions: { exempt: new Map() } }).map((found) => found.text);
+    expect(texts('src/app/api/admin/users/[id]/freeze/route.ts')).toContain('一時凍結の場合は日数 (duration_days) が必須です');
+    expect(texts('src/app/api/admin/moderation/[type]/[id]/route.ts')).toContain(
+      '削除と一時凍結 (delete_and_temp_ban) の場合は凍結の日数 (ban_duration_days) が必須です',
+    );
   });
 });
 

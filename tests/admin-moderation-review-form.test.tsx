@@ -146,12 +146,12 @@ describe('ModerationReviewForm: 送る内容', () => {
     expect(body).toEqual({ action: 'approve' });
   });
 
-  it('削除 + 一時 BAN: ban_duration_days を数値で、解決メモは前後の空白を除いて送る', async () => {
+  it('削除 + 一時凍結: ban_duration_days を数値で、解決メモは前後の空白を除いて送る', async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { data: { success: true, status: 'rejected', ban_applied: true } }));
     await renderForm();
 
     await selectAction('delete_and_temp_ban');
-    await typeInto(fieldByLabel('BAN 期間') as HTMLInputElement, '14');
+    await typeInto(fieldByLabel('凍結の期間') as HTMLInputElement, '14');
     await typeInto(fieldByLabel('解決メモ') as HTMLTextAreaElement, '  規約違反の画像  ');
     await submit();
 
@@ -162,7 +162,7 @@ describe('ModerationReviewForm: 送る内容', () => {
     });
   });
 
-  it('一時 BAN 以外では BAN 期間の入力欄を出さず、ban_duration_days も送らない', async () => {
+  it('一時凍結以外では凍結の期間の入力欄を出さず、ban_duration_days も送らない', async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { data: { success: true, status: 'rejected', ban_applied: null } }));
     await renderForm();
 
@@ -208,15 +208,15 @@ describe('ModerationReviewForm: 入力の誤り (送らずに画面で知らせ�
     expect(document.querySelector('[role="alert"]')?.textContent).toContain('アクションを選択してください');
   });
 
-  it.each(['0', '366', '1.5', ''])('BAN 期間が %j のときは送らずにエラーを出す', async (days) => {
+  it.each(['0', '366', '1.5', ''])('凍結の期間が %j のときは送らずにエラーを出す', async (days) => {
     await renderForm();
 
     await selectAction('delete_and_temp_ban');
-    await typeInto(fieldByLabel('BAN 期間') as HTMLInputElement, days);
+    await typeInto(fieldByLabel('凍結の期間') as HTMLInputElement, days);
     await submit();
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain('BAN 期間は 1〜365');
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain('凍結の期間は 1〜365');
   });
 
   it('解決メモが 5000 文字を超えるときは送らずにエラーを出す', async () => {
@@ -232,7 +232,7 @@ describe('ModerationReviewForm: 入力の誤り (送らずに画面で知らせ�
 });
 
 describe('ModerationReviewForm: 結果の表示', () => {
-  it('成功したら、結果 (ステータス・BAN) を表示し、左側の状態表示を更新する。フォームは閉じて一覧への導線を出す', async () => {
+  it('成功したら、結果 (ステータス・投稿者の凍結) を表示し、左側の状態表示を更新する。フォームは閉じて一覧への導線を出す', async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { data: { success: true, status: 'rejected', ban_applied: true } }));
     await renderForm({ isSuperAdmin: true });
 
@@ -240,7 +240,7 @@ describe('ModerationReviewForm: 結果の表示', () => {
     await submit();
 
     expect(document.querySelector('[role="status"]')?.textContent).toContain('審査を確定しました');
-    expect(allText()).toContain('投稿者を BAN しました');
+    expect(allText()).toContain('投稿者を凍結しました');
     expect(refreshMock).toHaveBeenCalledTimes(1);
     expect(buttonByText(SUBMIT_BUTTON)).toBeUndefined();
     expect(document.querySelector('a[href="/admin/moderation"]')).not.toBeNull();
@@ -273,10 +273,10 @@ describe('ModerationReviewForm: 結果の表示', () => {
   });
 
   it.each([
-    { status: 403, body: { error: { code: 'OP_PERMISSION_DENIED', message: '永久 BAN は運営最上位のみ実行できます' } }, text: '永久 BAN は運営最上位のみ' },
+    { status: 403, body: { error: { code: 'OP_PERMISSION_DENIED', message: '無期限凍結は運営最上位のみ実行できます' } }, text: '無期限凍結は運営最上位のみ' },
     { status: 400, body: { error: { code: 'VALIDATION_ERROR', message: 'バリデーションエラー' } }, text: 'バリデーションエラー' },
     { status: 404, body: { error: { code: 'NOT_FOUND', message: 'モデレーションアイテムが見つかりません' } }, text: 'モデレーションアイテムが見つかりません' },
-    { status: 422, body: { error: { code: 'OP_BAN_TARGET_UNRESOLVED', message: 'BAN 対象ユーザーを特定できませんでした' } }, text: 'BAN 対象ユーザーを特定できませんでした' },
+    { status: 422, body: { error: { code: 'OP_BAN_TARGET_UNRESOLVED', message: '凍結の対象のユーザーを特定できませんでした' } }, text: '凍結の対象のユーザーを特定できませんでした' },
   ])('HTTP $status は API の文面を出す', async ({ status, body, text }) => {
     fetchMock.mockResolvedValue(jsonResponse(status, body));
     await renderForm();
@@ -372,7 +372,7 @@ describe('ModerationReviewForm: 表示', () => {
     expect(document.querySelector('form')).toBeNull();
   });
 
-  it('永久 BAN の選択肢は super_admin だけ', async () => {
+  it('無期限凍結の選択肢は super_admin だけ', async () => {
     await renderForm({ isSuperAdmin: false });
     expect(optionValues()).toEqual(['', 'approve', 'delete_only', 'delete_and_warn', 'delete_and_temp_ban', 'escalate']);
 
@@ -384,11 +384,11 @@ describe('ModerationReviewForm: 表示', () => {
     expect(optionValues()).toContain('delete_and_perm_ban');
   });
 
-  it('永久 BAN の選択肢の文は「削除 + 永久 BAN (運営最上位のみ)」で、英字の super_admin を出さない (#2128 V1-2)', async () => {
+  it('無期限凍結の選択肢の文は「削除 + 無期限凍結 (運営最上位のみ)」で、英字の super_admin を出さない (#2128 V1-2)', async () => {
     await renderForm({ isSuperAdmin: true });
     const select = fieldByLabel('アクション') as HTMLSelectElement;
     const permBan = Array.from(select.options).find((o) => o.value === 'delete_and_perm_ban');
-    expect(permBan?.textContent).toBe('削除 + 永久 BAN (運営最上位のみ)');
+    expect(permBan?.textContent).toBe('削除 + 無期限凍結 (運営最上位のみ)');
     expect(Array.from(select.options).map((o) => o.textContent ?? '').join(' ')).not.toMatch(/super_admin|Super Admin/);
   });
 

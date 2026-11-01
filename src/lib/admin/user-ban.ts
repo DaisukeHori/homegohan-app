@@ -24,6 +24,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { PERMANENT_FREEZE_LABEL } from '@/lib/admin/freeze-labels';
 import { OPERATOR_ROLE_LABELS, SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
 
 export type BanType = 'temporary' | 'permanent';
@@ -48,7 +49,7 @@ export interface ApplyUserBanParams {
 export type ApplyUserBanFailureKind = 'internal' | 'not_found' | 'super_admin';
 
 /** DB の読み書きに失敗したときの error (固定の文)。DB の生のエラー文は応答の本文に出さない (#1172) */
-export const BAN_INTERNAL_ERROR_MESSAGE = 'BAN の適用に失敗しました';
+export const BAN_INTERNAL_ERROR_MESSAGE = '凍結に失敗しました';
 
 /**
  * 凍結の UPDATE の条件に使う、super_admin だけを持つ roles の配列のリテラル (PostgREST の cs の値)。
@@ -70,14 +71,15 @@ function hasSuperAdminRole(roles: unknown): boolean {
 
 /**
  * 運営の画面 (凍結・審査のフォーム) が API の本文の文をそのまま出すので、ロールの呼び名は運営の画面の表示名
- * (src/lib/admin/operator-role-labels.ts) の語にそろえる (#2134 U1-1)
+ * (src/lib/admin/operator-role-labels.ts) の語にそろえる (#2134 U1-1)。操作の呼び名は「凍結」の系 (src/lib/admin/freeze-labels.ts。#2183 Z4)
  */
-export const SUPER_ADMIN_BAN_REJECTED_MESSAGE = `${OPERATOR_ROLE_LABELS.super_admin}のユーザーは BAN できません`;
 /** 対象が super_admin のとき凍結を断る文 (POST /api/admin/users/{id}/freeze の 403 OP_TARGET_PROTECTED) */
 export const SUPER_ADMIN_FREEZE_REJECTED_MESSAGE = `${OPERATOR_ROLE_LABELS.super_admin}のユーザーは凍結できません`;
-/** super_admin でない運営が永久 BAN を求めたときの文 (凍結の route と審査の route の 403 OP_PERMISSION_DENIED) */
-export const PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE = `永久 BAN は${SUPER_ADMIN_ONLY_NOTE}実行できます`;
-const BAN_TARGET_NOT_FOUND_MESSAGE = 'BAN 対象ユーザーが見つかりません';
+/** 審査の凍結 (applyUserBan) で対象が super_admin のときの文。凍結の route と同じ文 */
+export const SUPER_ADMIN_BAN_REJECTED_MESSAGE = SUPER_ADMIN_FREEZE_REJECTED_MESSAGE;
+/** super_admin でない運営が無期限凍結 (permanent) を求めたときの文 (凍結の route と審査の route の 403 OP_PERMISSION_DENIED) */
+export const PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE = `${PERMANENT_FREEZE_LABEL}は${SUPER_ADMIN_ONLY_NOTE}実行できます`;
+const BAN_TARGET_NOT_FOUND_MESSAGE = '凍結の対象のユーザーが見つかりません';
 
 export interface ApplyUserBanResult {
   success: boolean;

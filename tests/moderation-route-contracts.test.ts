@@ -393,7 +393,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
     expect(json.data.ban_applied).toBe(false);
     // #1172: DB の生のエラー文は本文に出さない (固定の文だけ)
     expect(raw).not.toContain(BAN_DB_ERROR_SENTINEL);
-    expect(json.error.message).toBe('BAN の適用に失敗しました (モデレーション判定自体は保存されています)');
+    expect(json.error.message).toBe('凍結に失敗しました (モデレーション判定自体は保存されています)');
     // 元のエラーは監査ログ (ban_error) と構造化ログにだけ残る
     expect(auditInsertPayload(fakeSupabase).details.ban_error).toBe(BAN_DB_ERROR_SENTINEL);
     expect(mockLoggerError).toHaveBeenCalledTimes(1);
@@ -416,7 +416,7 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
     expect(raw).not.toContain(BAN_DB_ERROR_SENTINEL);
     expect(JSON.parse(raw).error).toEqual({
       code: 'OP_BAN_FAILED',
-      message: 'BAN の適用に失敗しました (モデレーション判定自体は保存されています)',
+      message: '凍結に失敗しました (モデレーション判定自体は保存されています)',
     });
     expect(auditInsertPayload(fakeSupabase).details.ban_error).toBe(BAN_DB_ERROR_SENTINEL);
     expect(mockLoggerError).toHaveBeenCalledTimes(1);
@@ -435,8 +435,8 @@ describe('POST /api/admin/moderation/[type]/[id] (審査確定)', () => {
 
     expect(res.status).toBe(500);
     const json = (await res.json()) as { error: { code: string; message: string } };
-    expect(json.error).toEqual({ code: 'OP_BAN_FAILED', message: '運営最上位のユーザーは BAN できません' });
-    expect(auditInsertPayload(fakeSupabase).details.ban_error).toBe('運営最上位のユーザーは BAN できません');
+    expect(json.error).toEqual({ code: 'OP_BAN_FAILED', message: '運営最上位のユーザーは凍結できません' });
+    expect(auditInsertPayload(fakeSupabase).details.ban_error).toBe('運営最上位のユーザーは凍結できません');
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 
@@ -936,7 +936,7 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
     expect(res.status).toBe(500);
     const json = (await res.json()) as { error: { code: string; message: string }; data: Record<string, unknown> };
     expect(json.error.code).toBe('OP_CONTENT_HIDE_FAILED');
-    expect(json.error.message).toContain('BAN も実行していません');
+    expect(json.error.message).toContain('凍結も実行していません');
     expect(json.data).toEqual({ status: 'pending', content_hidden: false, ban_applied: null });
     // 隠れていないコンテンツが残ったまま持ち主だけ止めない。判定も保存しない
     expect(firstCallIndex(fakeSupabase, 'user_profiles')).toBe(-1);
@@ -945,12 +945,12 @@ describe('POST /api/admin/moderation/[type]/[id] — delete_* はコンテンツ
 
     const audit = auditInsertPayload(fakeSupabase);
     expect(audit.details).toMatchObject({ hidden: false, status_saved: false, ban_applied: null, unban_at: null });
-    expect(audit.details.ban_error).toEqual(expect.stringContaining('BAN を実行していません'));
+    expect(audit.details.ban_error).toEqual(expect.stringContaining('凍結を実行していません'));
   });
 
   it.each([
     { action: 'delete_only', extra: {}, banText: null },
-    { action: 'delete_and_temp_ban', extra: { ban_duration_days: 7 }, banText: 'BAN はまだ実行していません' },
+    { action: 'delete_and_temp_ban', extra: { ban_duration_days: 7 }, banText: '凍結はまだ実行していません' },
   ] as const)(
     '$action: 隠したあとで判定の保存に失敗したら、BAN せず 500。通報は pending のまま (やり直せる)。隠した行の ID を監査ログ (warn) に残す',
     async ({ action, extra, banText }) => {

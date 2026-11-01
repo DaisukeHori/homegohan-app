@@ -41,6 +41,7 @@ import { isUuid } from '@/lib/http-params';
 import { createLogger } from '@/lib/db-logger';
 import { sendFreezeNotificationEmail } from '@/lib/admin/send-freeze-notification-email';
 import { FREEZE_NOTIFICATION_NOT_REQUESTED, type FreezeNotificationOutcome } from '@/lib/admin/freeze-notification-status';
+import { TEMPORARY_FREEZE_LABEL } from '@/lib/admin/freeze-labels';
 
 export const dynamic = 'force-dynamic';
 
@@ -126,7 +127,7 @@ export async function POST(request: Request, props: Params) {
   // temporary BAN は duration_days 必須
   if (freezeData.ban_type === 'temporary' && !freezeData.duration_days) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: '一時 BAN の場合は日数 (duration_days) が必須です' } },
+      { error: { code: 'VALIDATION_ERROR', message: `${TEMPORARY_FREEZE_LABEL}の場合は日数 (duration_days) が必須です` } },
       { status: 400 },
     );
   }

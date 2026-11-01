@@ -35,7 +35,7 @@ const CARD_TITLE = '非表示の解除';
 const NOTE_MAX = 5000;
 const HIDDEN_AT = '2026-10-15T01:02:03.000Z';
 const HIDDEN_AT_JST = '2026/10/15 10:02:03';
-const BAN_SENTENCE = '投稿者を BAN している場合、BAN はこの操作では解除されません';
+const BAN_SENTENCE = '投稿者を凍結している場合、凍結はこの操作では解除されません';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -134,7 +134,7 @@ afterEach(async () => {
 });
 
 describe('ModerationRestoreForm: 送る内容と成功 (F-1)', () => {
-  it('F-1: 理由 (前後の空白を除く) を JSON で POST し、成功したら「表示に戻しました (n 行)」と BAN の 1 文を出して refresh する。refresh の後の形で描き直しても残る', async () => {
+  it('F-1: 理由 (前後の空白を除く) を JSON で POST し、成功したら「表示に戻しました (n 行)」と凍結の 1 文を出して refresh する。refresh の後の形で描き直しても残る', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse(200, { data: { success: true, content_hidden: false, restored_ids: ['m1', 'm2', 'm3'], approved_flag_ids: ['f1'] } }),
     );
