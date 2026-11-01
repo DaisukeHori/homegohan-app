@@ -197,9 +197,11 @@ const pgInteger = z.number().int().min(PG_INTEGER_MIN).max(PG_INTEGER_MAX);
 function columnValueSchema(kind: UserProfileColumnKind): z.ZodType {
   switch (kind) {
     case 'text':
-    case 'date':
-    case 'time':
       return z.string();
+    case 'date':
+      return CalendarDateSchema;
+    case 'time':
+      return z.string().regex(USER_PROFILE_TIME_OF_DAY_PATTERN);
     case 'integer':
       return pgInteger;
     case 'numeric':
