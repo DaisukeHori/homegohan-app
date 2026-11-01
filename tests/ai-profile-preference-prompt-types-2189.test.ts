@@ -8,7 +8,8 @@
  *
  * ここで確かめること:
  *   - 型の一覧は列の型 (aiProfilePreferenceSpecOf の kind) から作る: 書いてよい欄が全部、ちょうど 1 回、その型の行に出る
- *   - 手で書いた期待値: daily_water_ml・weekday_cooking_minutes は整数の行、wake_time は時刻の行、cuisine_preferences は文字列の配列の行
+ *   - 手で書いた期待値: daily_water_ml・weekday_cooking_minutes は整数の行、wake_time は時刻の行、favorite_ingredients は文字列の配列の行、
+ *     cuisine_preferences は JSON の値の行 (jsonb の列。値はオブジェクト)
  *   - 型の行の文どおりの値は検査を通り、文字列の数値は通らない (指示と検査が食い違わない)
  *   - route のシステムプロンプトの update_profile_preferences の説明の中に、この一覧を差し込んでいる
  */
@@ -70,7 +71,10 @@ describe('aiProfilePreferenceTypesForPrompt (#2189 W3)', () => {
     expect(labelOfColumn('daily_water_ml')).toMatch(/^整数/);
     expect(labelOfColumn('weekday_cooking_minutes')).toMatch(/^整数/);
     expect(labelOfColumn('wake_time')).toMatch(/^時刻の文字列 "HH:MM"/);
-    expect(labelOfColumn('cuisine_preferences')).toMatch(/^文字列の配列/);
+    expect(labelOfColumn('favorite_ingredients')).toMatch(/^文字列の配列/);
+    expect(labelOfColumn('meal_prep_ok')).toMatch(/^真偽値/);
+    // cuisine_preferences は jsonb の列 (src/lib/profile-update-schema.ts。値はオブジェクト)。型は検査しない
+    expect(labelOfColumn('cuisine_preferences')).toMatch(/^JSON の値/);
     expect(labelOfColumn('nickname')).toBe('文字列');
   });
 
@@ -86,11 +90,13 @@ describe('aiProfilePreferenceTypesForPrompt (#2189 W3)', () => {
         daily_water_ml: 2000,
         weekday_cooking_minutes: 30,
         wake_time: '06:30',
-        cuisine_preferences: ['和食', '中華'],
+        favorite_ingredients: ['鶏肉', 'トマト'],
+        meal_prep_ok: true,
       }).errors,
     ).toEqual([]);
     expect(sanitizeAiProfilePreferenceUpdates({ daily_water_ml: '2000' }).errors).toHaveLength(1);
     expect(sanitizeAiProfilePreferenceUpdates({ wake_time: '24:00' }).errors).toHaveLength(1);
+    expect(sanitizeAiProfilePreferenceUpdates({ meal_prep_ok: 'true' }).errors).toHaveLength(1);
   });
 });
 

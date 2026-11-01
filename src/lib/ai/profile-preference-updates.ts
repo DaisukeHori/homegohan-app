@@ -177,9 +177,10 @@ const PROFILE_VALUE_PROMPT_FORMS: Readonly<Record<UserProfileColumnKind, string>
   integer: '整数 (数値のまま。"2000" のような文字列は不可)',
   numeric: '数値 (数値のまま。文字列は不可)',
   boolean: '真偽値 true / false (文字列の "true" は不可)',
-  textArray: '文字列の配列 (例: ["和食", "中華"])',
+  textArray: '文字列の配列 (例: ["鶏肉", "トマト"])',
   integerArray: '整数の配列 (例: [3, 5])',
-  jsonb: 'JSON の値',
+  // jsonb の列は型を検査しない (どの JSON の値も通る)。画面が読む形を崩さないよう、今の値と同じ形で送ってもらう
+  jsonb: 'JSON の値 (オブジェクトなど。今の値と同じ形で送る)',
 };
 
 /**
