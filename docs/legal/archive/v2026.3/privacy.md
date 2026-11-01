@@ -2,9 +2,9 @@
 
 - 版: v2026.3
 - 施行日: 2026-10-22
-- 控えの元: `src/lib/legal/privacy-text.ts` の `privacyText` (mobile/08 (#1139) の段 D で委託先に Apple を足す直前の版)。事業者の情報は、ページ (`src/app/privacy/page.tsx`) が `src/lib/business-info.ts` から渡していた値で、AI の送信先の一覧は `src/lib/ai/consent-config.ts` の `AI_CONSENT_PROVIDERS` / `AI_CONSENT_PROVIDER_INFO` から渡していた値で写した。
+- 控えの元: `src/lib/legal/privacy-text.ts` の `privacyText` (mobile/08 の段 D で委託先に Apple を足し、cross/21 の段 C で作者名の表示の文を足す直前の版)。事業者の情報は、ページ (`src/app/privacy/page.tsx`) が `src/lib/business-info.ts` から渡していた値で、AI の送信先の一覧は `src/lib/ai/consent-config.ts` の `AI_CONSENT_PROVIDERS` / `AI_CONSENT_PROVIDER_INFO` から渡していた値で写した。
 
-この版は mobile/08 (#1139。設計書 `docs/design/mobile/08-sign-in-with-apple.md`) の版 v2026.4 に置き換わった。改定前の版はここに保管し、お問い合わせによりご提供する (プライバシーポリシー第18条 3 項)。
+この版は mobile/08 (#1139。設計書 `docs/design/mobile/08-sign-in-with-apple.md`) と cross/21 (公開レシピの作者の表示名。`docs/design/cross/21-recipe-author-display-name.md`) の版 v2026.4 に置き換わった。改定前の版はここに保管し、お問い合わせによりご提供する (プライバシーポリシー第18条 3 項)。
 
 ---
 
