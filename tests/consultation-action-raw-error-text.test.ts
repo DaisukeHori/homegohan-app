@@ -297,10 +297,13 @@ describe('POST /api/ai/consultation/actions/[actionId]/execute (#1172)', () => {
       success: false,
       result: { error: '冷蔵庫の食材の追加に失敗しました' },
       actionType: 'add_pantry_item',
+      // 失敗しても add_pantry_item はやり直せる (insert 1 文で、失敗したら何も書いていない。#2189 W1-a)
+      retryable: true,
     });
 
-    const logUpdate = h.writes.find((w) => w.table === 'ai_action_logs' && w.op === 'update');
-    expect(logUpdate?.payload).toMatchObject({ status: 'failed', result: { error: '冷蔵庫の食材の追加に失敗しました' } });
+    // 最初の update は実行中の印 (approved)。結果を書くのは最後の update (#2189 W1-a: やり直せる失敗は pending に戻す)
+    const logUpdate = h.writes.filter((w) => w.table === 'ai_action_logs' && w.op === 'update').at(-1);
+    expect(logUpdate?.payload).toMatchObject({ status: 'pending', result: { error: '冷蔵庫の食材の追加に失敗しました' } });
     expectNoRawDbText(JSON.stringify(logUpdate?.payload));
     expectLoggedDbFailure('add_pantry_item', 'pantry_items.insert');
   });
@@ -343,7 +346,7 @@ describe('POST /api/ai/consultation/sessions/[sessionId]/messages の自動実�
     expectNoRawDbText(raw);
     const json = JSON.parse(raw) as { actionExecuted: boolean; actionResult: unknown };
     expect(json.actionExecuted).toBe(false);
-    expect(json.actionResult).toEqual({ success: false, result: { error: '冷蔵庫の食材の追加に失敗しました' } });
+    expect(json.actionResult).toEqual({ success: false, result: { error: '冷蔵庫の食材の追加に失敗しました' }, actionType: 'add_pantry_item' });
     const logUpdate = h.writes.find((w) => w.table === 'ai_action_logs' && w.op === 'update');
     expectNoRawDbText(JSON.stringify(logUpdate?.payload));
     expectLoggedDbFailure('add_pantry_item', 'pantry_items.insert');
@@ -381,7 +384,7 @@ describe('POST /api/ai/consultation/sessions/[sessionId]/messages の自動実�
       .filter((chunk) => chunk.startsWith('data: '))
       .map((chunk) => JSON.parse(chunk.slice('data: '.length)) as Record<string, unknown>);
     const finalData = events.find((event) => 'actionResult' in event);
-    expect(finalData?.actionResult).toEqual({ success: false, result: { error: '冷蔵庫の食材の追加に失敗しました' } });
+    expect(finalData?.actionResult).toEqual({ success: false, result: { error: '冷蔵庫の食材の追加に失敗しました' }, actionType: 'add_pantry_item' });
     expectLoggedDbFailure('add_pantry_item', 'pantry_items.insert');
   });
 });

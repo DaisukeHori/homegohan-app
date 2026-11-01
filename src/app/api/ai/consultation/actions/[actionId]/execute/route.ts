@@ -2,13 +2,14 @@ import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
-import { AI_SENDING_ACTION_TYPES, runConsultationAction } from '@/lib/ai/consultation-action-executor';
+import { AI_SENDING_ACTION_TYPES, runConsultationAction, type ConsultationActionExecutionResult } from '@/lib/ai/consultation-action-executor';
 import { aiDailyLimitResponse } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { isUuid } from '@/lib/http-params';
 import { API_UNAUTHENTICATED_MESSAGE, API_FORBIDDEN_MESSAGE } from '@/lib/api/error-responses';
 import { AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE, AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE, AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE } from '@/lib/ai/ai-api-messages';
+import { AI_ACTION_LOG_STATUS, aiActionLogStatusAfterFailure, aiActionLogStatusAfterRun } from '@/lib/ai/consultation-action-lifecycle';
 
 // 指定日付の user_daily_meals を取得または作成するヘルパー関数
 // NOTE: 現状このファイル内では未使用（resolveExistingTargetSlots が同等の処理を担う）。
@@ -88,7 +89,7 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
           ai_consultation_sessions!inner(user_id)
         `)
         .eq('message_id', params.actionId)
-        .eq('status', 'pending')
+        .eq('status', AI_ACTION_LOG_STATUS.pending)
         .maybeSingle();
       
       if (msgError) {
@@ -108,7 +109,7 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
       return NextResponse.json({ error: API_FORBIDDEN_MESSAGE }, { status: 403 });
     }
 
-    if (action.status !== 'pending') {
+    if (action.status !== AI_ACTION_LOG_STATUS.pending) {
       return NextResponse.json({ error: AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE }, { status: 400 });
     }
 
@@ -119,36 +120,76 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
       if (aiConsentDenied) return aiConsentDenied;
     }
 
-    // #1047 F2-21: アクション実行の中核ロジックは src/lib/ai/consultation-action-executor.ts
-    // に抽出済み（messages/route.ts からも self-fetch ではなく直接呼び出す）。
-    const executionResult = await runConsultationAction(supabase, user, action);
+    // 実行中の印を付ける (#2189 W1-a)。pending から approved への条件つきの 1 文で、書けた 1 本だけが実行する
+    // (2 つの画面から同時に押す・自動実行の最中に押すと、同じ提案を二重に実行していた。失敗した提案を pending のまま残して
+    // やり直せるようにしたので、二重の実行を DB の 1 文で防ぐ)
+    const { data: claimed, error: claimError } = await supabase
+      .from('ai_action_logs')
+      .update({ status: AI_ACTION_LOG_STATUS.running })
+      .eq('id', action.id)
+      .eq('status', AI_ACTION_LOG_STATUS.pending)
+      .select('id')
+      .maybeSingle();
 
-    if (executionResult.unknownActionType) {
-      return NextResponse.json({ error: AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE }, { status: 400 });
+    if (claimError) {
+      return internalError('POST /api/ai/consultation/actions/[actionId]/execute', claimError, { userId: user.id, table: 'ai_action_logs' });
+    }
+    if (!claimed) {
+      return NextResponse.json({ error: AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE }, { status: 400 });
     }
 
-    // 今日の AI の利用回数の上限 (#1149) に達して、献立の生成をしなかった。アクションは pending のまま残す
-    // (明日もう一度実行できる。同意が無くて止めたときと同じ扱い)
+    // #1047 F2-21: アクション実行の中核ロジックは src/lib/ai/consultation-action-executor.ts
+    // に抽出済み（messages/route.ts からも self-fetch ではなく直接呼び出す）。
+    let executionResult: ConsultationActionExecutionResult;
+    try {
+      executionResult = await runConsultationAction(supabase, user, action);
+    } catch (runError) {
+      // 実行中の印のまま残さない。やり直せる種類は pending に戻し、やり直させない種類は failed にする
+      const status = aiActionLogStatusAfterFailure(action.action_type);
+      await supabase
+        .from('ai_action_logs')
+        .update({ status, executed_at: status === AI_ACTION_LOG_STATUS.pending ? null : new Date().toISOString() })
+        .eq('id', action.id);
+      throw runError;
+    }
+
+    // 行の状態は src/lib/ai/consultation-action-lifecycle.ts の決まり (成功は executed・今日の上限は pending・
+    // 失敗はやり直せる種類なら pending、やり直させない種類と対応していない種類は failed)
+    const status = aiActionLogStatusAfterRun(action.action_type, executionResult);
+
+    // 今日の AI の利用回数の上限 (#1149) に達して、献立の生成をしなかった。アクションは pending に戻す
+    // (明日もう一度実行できる。同意が無くて止めたときと同じ扱い。結果は書き換えない)
     if (executionResult.aiDailyLimit) {
+      await supabase.from('ai_action_logs').update({ status }).eq('id', action.id);
       return aiDailyLimitResponse(executionResult.aiDailyLimit);
     }
 
-    const { success, result } = executionResult;
+    const unknownActionType = executionResult.unknownActionType === true;
+    const success = unknownActionType ? false : executionResult.success;
+    const result = unknownActionType ? { error: AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE } : executionResult.result;
 
-    // アクションステータスを更新
-    await supabase
+    // アクションステータスを更新 (実行した日時は、実行が終わった executed / failed のときだけ。pending (やり直せる) は空のまま)
+    const { error: finalizeError } = await supabase
       .from('ai_action_logs')
       .update({
-        status: success ? 'executed' : 'failed',
+        status,
         result,
-        executed_at: new Date().toISOString(),
+        executed_at: status === AI_ACTION_LOG_STATUS.pending ? null : new Date().toISOString(),
       })
       .eq('id', action.id);
+
+    if (unknownActionType) {
+      return NextResponse.json({ error: AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE }, { status: 400 });
+    }
 
     return NextResponse.json({
       success,
       result,
       actionType: action.action_type,
+      // 失敗したとき、提案のカードの「実行する」でもう一度実行できるか (行が pending に戻った)。
+      // false なら画面は「実行する」を出さずに「もう一度頼んでください」の案内を出す (#2189 W1-a)
+      // 書き換えに失敗したら行は実行中の印のまま (もう一度押しても実行しない) なので、やり直せるとは返さない
+      ...(success ? {} : { retryable: !finalizeError && status === AI_ACTION_LOG_STATUS.pending }),
     });
 
   } catch (error: any) {
@@ -178,7 +219,7 @@ export async function DELETE(request: Request, props: { params: Promise<{ action
         ai_consultation_sessions!inner(user_id)
       `)
       .eq('id', params.actionId)
-      .eq('status', 'pending')
+      .eq('status', AI_ACTION_LOG_STATUS.pending)
       .maybeSingle();
 
     // 読めなかったときは 404 にしない (行が無いときだけ、メッセージ ID として探し直す。#1917)
@@ -195,7 +236,7 @@ export async function DELETE(request: Request, props: { params: Promise<{ action
           ai_consultation_sessions!inner(user_id)
         `)
         .eq('message_id', params.actionId)
-        .eq('status', 'pending')
+        .eq('status', AI_ACTION_LOG_STATUS.pending)
         .maybeSingle();
 
       if (msgError) {
@@ -219,7 +260,7 @@ export async function DELETE(request: Request, props: { params: Promise<{ action
 
     const { error } = await supabase
       .from('ai_action_logs')
-      .update({ status: 'rejected' })
+      .update({ status: AI_ACTION_LOG_STATUS.rejected })
       .eq('id', action.id);
 
     if (error) throw error;

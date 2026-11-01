@@ -163,3 +163,43 @@ export function sanitizeAiProfilePreferenceUpdates(input: unknown): { data: Reco
   }
   return { data, errors };
 }
+
+/**
+ * AI への指示 (AI 相談のシステムプロンプト) に書く、列の型ごとの値の書き方 (#2189 W3)。
+ * 型に合わない値 (例: daily_water_ml に "2000" の文字列) を送ると、どの欄も書かずに失敗の文になる (#2183 Z2)。
+ * 以前の指示には欄の名前しか無く、型を伝えていなかった
+ */
+const PROFILE_VALUE_PROMPT_FORMS: Readonly<Record<UserProfileColumnKind, string>> = {
+  // 並びはプロンプトに書く順 (Record なので、型を足すとここに書くまで tsc が通らない)
+  text: '文字列',
+  date: '日付の文字列 "YYYY-MM-DD"',
+  time: '時刻の文字列 "HH:MM" (時は 00 〜 23)',
+  integer: '整数 (数値のまま。"2000" のような文字列は不可)',
+  numeric: '数値 (数値のまま。文字列は不可)',
+  boolean: '真偽値 true / false (文字列の "true" は不可)',
+  textArray: '文字列の配列 (例: ["和食", "中華"])',
+  integerArray: '整数の配列 (例: [3, 5])',
+  jsonb: 'JSON の値',
+};
+
+/**
+ * AI が書き換えてよい欄を、列の型 (aiProfilePreferenceSpecOf の kind。手で写さない) ごとにまとめた指示の文。
+ * 1 行 = 1 つの型。null を受けない欄は最後の行に並べる
+ */
+export function aiProfilePreferenceTypesForPrompt(): string {
+  const columnsByKind = new Map<UserProfileColumnKind, string[]>();
+  const notNullColumns: string[] = [];
+  for (const column of AI_PROFILE_PREFERENCE_FIELD_NAMES.keys()) {
+    const spec = aiProfilePreferenceSpecOf(column);
+    if (!spec) continue;
+    columnsByKind.set(spec.kind, [...(columnsByKind.get(spec.kind) ?? []), column]);
+    if (!spec.nullable) notNullColumns.push(column);
+  }
+  const kinds = Object.keys(PROFILE_VALUE_PROMPT_FORMS) as UserProfileColumnKind[];
+  const lines = kinds.flatMap((kind) => {
+    const columns = columnsByKind.get(kind);
+    return columns && columns.length > 0 ? [`  - ${PROFILE_VALUE_PROMPT_FORMS[kind]}: ${columns.join(', ')}`] : [];
+  });
+  if (notNullColumns.length > 0) lines.push(`  - null を送れない欄: ${notNullColumns.join(', ')}`);
+  return lines.join('\n');
+}

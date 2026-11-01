@@ -6,7 +6,7 @@ import {
   MessageCircle, X, Send, Sparkles, ChevronDown,
   Check, XCircle, Loader2, Calendar, ShoppingCart,
   Target, UtensilsCrossed, BookOpen, Star, Archive, MoreVertical,
-  Plus, Trash2, CheckCircle, Refrigerator, Heart, FolderPlus,
+  Trash2, CheckCircle, Refrigerator, Heart, FolderPlus,
   Activity, User, Edit, CalendarDays
 } from "lucide-react";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
@@ -24,9 +24,12 @@ import { readAiChatUnavailableMessage } from "@/lib/ai/ai-chat-unavailable";
 // 提案の実行の結果 (成功・失敗) をチャットに出す一文。失敗 (success が偽) を『実行しました』と出さない (#2183 Z1)
 import {
   AI_CONSULTATION_ACTION_FAILED_FALLBACK_MESSAGE,
+  consultationActionFailureMessageOf,
   consultationActionOutcomeOf,
   type ConsultationActionOutcome,
 } from "@/lib/ai/consultation-action-outcome";
+// 提案のカードに「実行する」を出せないとき (やり直せない失敗・実行中・記録が無い) の案内 (#2189 W1-a)
+import { AI_PROPOSED_ACTION_NOT_EXECUTABLE_GUIDE } from "@/lib/ai/consultation-action-lifecycle";
 
 const colors = {
   primary: '#E07A5F',
@@ -50,6 +53,11 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   proposedActions?: ProposedAction | null;
+  /**
+   * 提案のカードに「実行する」を出すか (#2189 W1-a)。false なら「実行する」を出さず、「もう一度頼んでください」の案内を出す
+   * (サーバーの提案の行が pending でない・行が無い)。サーバーが返さないとき (欠けている) は出す
+   */
+  proposedActionExecutable?: boolean;
   createdAt: string;
   isImportant?: boolean;
   isStreaming?: boolean; // ストリーミング表示中かどうか
@@ -73,7 +81,7 @@ const ACTION_LABELS: Record<string, { label: string; icon: any; color: string }>
   // 献立関連
   generate_day_menu: { label: '1日の献立を作成', icon: Calendar, color: colors.primary },
   generate_week_menu: { label: '1週間の献立を作成', icon: Calendar, color: colors.primary },
-  create_meal: { label: '食事を登録', icon: Plus, color: colors.success },
+  generate_single_meal: { label: '1食を作成', icon: Calendar, color: colors.primary },
   update_meal: { label: '献立を変更', icon: Edit, color: colors.warning },
   delete_meal: { label: '献立を削除', icon: Trash2, color: '#EF4444' },
   complete_meal: { label: '食事を完了', icon: CheckCircle, color: colors.success },
@@ -133,6 +141,31 @@ interface AutoActionFinalData {
   actionResult?: { success?: unknown; result?: unknown; actionType?: unknown } | null;
   aiMessage?: { proposedActions?: { type?: unknown } | null } | null;
 }
+
+/**
+ * 会話の続きの POST (SSE) の最後の finalData から、AI のメッセージの提案の欄を作る (送信欄から送ったときも、おすすめの質問から
+ * 送ったときも同じ)。自動実行が成功したら提案のカードは出さない (#2189 W1-a。以前は残り、押すと 404 で失敗の alert が出た)。
+ * 残すときは、サーバーが返した「実行する」を出すか (proposedActionExecutable) を写す
+ */
+function proposedActionFieldsOfFinalData(finalData: {
+  aiMessage: { id: string; proposedActions?: Omit<ProposedAction, 'actionId'> | null; proposedActionExecutable?: unknown };
+  actionResult?: { success?: unknown } | null;
+}): Pick<Message, 'proposedActions' | 'proposedActionExecutable'> {
+  const proposed = finalData.aiMessage.proposedActions;
+  if (!proposed || finalData.actionResult?.success === true) return { proposedActions: null };
+  return {
+    proposedActions: { ...proposed, actionId: finalData.aiMessage.id },
+    ...(typeof finalData.aiMessage.proposedActionExecutable === 'boolean'
+      ? { proposedActionExecutable: finalData.aiMessage.proposedActionExecutable }
+      : {}),
+  };
+}
+
+/**
+ * 実行の API がこの状態コードを返したら、その提案はもうここからは実行できない (#2189 W1-a)。
+ * 400 = すでに処理された (実行中・実行済み・断った)・対応していない種類 / 404 = 実行を待っている提案の行が無い
+ */
+const ACTION_NOT_EXECUTABLE_RESPONSE_STATUSES: ReadonlySet<number> = new Set([400, 404]);
 
 /** 自動実行の結果のメッセージを、AI の応答を確定させてから足すまでの間 (ミリ秒)。応答の表示の直後に重ねず、少し遅らせて出す */
 const AUTO_ACTION_OUTCOME_MESSAGE_DELAY_MS = 300;
@@ -661,10 +694,7 @@ export default function AIChatBubble() {
               ...m,
               id: finalData.aiMessage.id,
               content: displayContent,
-              proposedActions: finalData.aiMessage.proposedActions ? {
-                ...finalData.aiMessage.proposedActions,
-                actionId: finalData.aiMessage.id,
-              } : null,
+              ...proposedActionFieldsOfFinalData(finalData),
               isStreaming: false,
             };
           }
@@ -731,8 +761,12 @@ export default function AIChatBubble() {
         });
         setMessages(prev => [...prev, actionOutcomeChatMessage(outcome)]);
 
-        // 失敗: 提案は消さずに残し、データの更新の通知もしない
-        if (outcome.kind !== 'executed') return;
+        // 失敗: 提案は消さずに残し、データの更新の通知もしない。やり直せない失敗 (retryable が false。途中まで書いた可能性がある
+        // 献立の生成など) なら「実行する」を出さず、「もう一度頼んでください」の案内にする (#2189 W1-a)
+        if (outcome.kind !== 'executed') {
+          if (data.retryable === false) markProposedActionNotExecutable(messageId);
+          return;
+        }
 
         // アクションを削除（実行済みとして）
         setMessages(prev => prev.map(m => 
@@ -747,7 +781,14 @@ export default function AIChatBubble() {
         // 今日の AI の利用回数の上限に達した (429 AI_DAILY_LIMIT。#1149): aiFetch が全画面共通の AiDailyLimitHost に固定の文を
         // 出させたので、ここでは重ねて出さない (提案は残っているので、明日また実行できる)
         if (await aiDailyLimitMessageOfResponse(res)) return;
-        alert('アクションの実行に失敗しました');
+        // それ以外の失敗も alert ではなくチャットに出す (#2189 W1-a)。文はサーバーの固定の文 (error) か固定の文。
+        // すでに処理された・見つからない (400 / 404) 提案は、ここからはもう実行できないので「実行する」を出さない
+        const body: unknown = await res.json().catch(() => null);
+        setMessages(prev => [
+          ...prev,
+          actionOutcomeChatMessage({ kind: 'failed', content: consultationActionFailureMessageOf(body) }),
+        ]);
+        if (ACTION_NOT_EXECUTABLE_RESPONSE_STATUSES.has(res.status)) markProposedActionNotExecutable(messageId);
       }
     } catch (e) {
       console.error('Failed to execute action:', e);
@@ -759,6 +800,20 @@ export default function AIChatBubble() {
     } finally {
       setExecutingActionId(null);
     }
+  };
+
+  // 提案のカードの「実行する」を出さず、「もう一度頼んでください」の案内にする (#2189 W1-a)
+  const markProposedActionNotExecutable = (messageId: string) => {
+    setMessages(prev => prev.map(m =>
+      m.id === messageId ? { ...m, proposedActionExecutable: false } : m
+    ));
+  };
+
+  // 実行できない提案のカードを閉じる (画面の上だけ。サーバーの行は pending でないので、断る API は呼ばない)
+  const dismissProposedAction = (messageId: string) => {
+    setMessages(prev => prev.map(m =>
+      m.id === messageId ? { ...m, proposedActions: null } : m
+    ));
   };
 
   // アクション拒否
@@ -1247,7 +1302,7 @@ export default function AIChatBubble() {
                               if (finalData) {
                                 setMessages(prev => prev.map(m => {
                                   if (m.id === tempUserMsgId) return { ...m, id: finalData.userMessage.id, isImportant: finalData.userMessage.isImportant || false };
-                                  if (m.id === tempAiMsgId) return { ...m, id: finalData.aiMessage.id, content: accumulatedContent || finalData.aiMessage.content, proposedActions: finalData.aiMessage.proposedActions ? { ...finalData.aiMessage.proposedActions, actionId: finalData.aiMessage.id } : null, isStreaming: false };
+                                  if (m.id === tempAiMsgId) return { ...m, id: finalData.aiMessage.id, content: accumulatedContent || finalData.aiMessage.content, ...proposedActionFieldsOfFinalData(finalData), isStreaming: false };
                                   return m;
                                 }));
                                 // アクション自動実行結果を表示 (送信欄から送ったときと同じ。失敗も黙らずに出す。#2183 Z1)
@@ -1378,30 +1433,47 @@ export default function AIChatBubble() {
                               <ProposedActionHeading type={msg.proposedActions.type} />
                             </div>
                             
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => executeAction(msg.proposedActions!.type, msg.id)}
-                                disabled={executingActionId === msg.id}
-                                className="flex-1 py-2 rounded-lg flex items-center justify-center gap-1"
-                                style={{ background: colors.success, opacity: executingActionId === msg.id ? 0.7 : 1 }}
-                              >
-                                {executingActionId === msg.id ? (
-                                  <Loader2 size={14} color="#fff" className="animate-spin" />
-                                ) : (
-                                  <Check size={14} color="#fff" />
-                                )}
-                                <span style={{ fontSize: 12, color: '#fff', fontWeight: 500 }}>
-                                  実行する
-                                </span>
-                              </button>
-                              <button
-                                onClick={() => rejectAction(msg.id)}
-                                className="px-3 py-2 rounded-lg"
-                                style={{ background: colors.border }}
-                              >
-                                <XCircle size={14} color={colors.textMuted} />
-                              </button>
-                            </div>
+                            {msg.proposedActionExecutable === false ? (
+                              // やり直せない失敗・実行中・記録が無い提案: 「実行する」を出さずに案内を出す (#2189 W1-a)
+                              <div className="flex items-start gap-2" data-testid="ai-proposed-action-not-executable">
+                                <p style={{ flex: 1, fontSize: 12, margin: 0, color: colors.textLight, lineHeight: 1.5 }}>
+                                  {AI_PROPOSED_ACTION_NOT_EXECUTABLE_GUIDE}
+                                </p>
+                                <button
+                                  onClick={() => dismissProposedAction(msg.id)}
+                                  aria-label="提案を閉じる"
+                                  className="px-3 py-2 rounded-lg"
+                                  style={{ background: colors.border }}
+                                >
+                                  <XCircle size={14} color={colors.textMuted} />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex gap-2">
+                                <button
+                                  onClick={() => executeAction(msg.proposedActions!.type, msg.id)}
+                                  disabled={executingActionId === msg.id}
+                                  className="flex-1 py-2 rounded-lg flex items-center justify-center gap-1"
+                                  style={{ background: colors.success, opacity: executingActionId === msg.id ? 0.7 : 1 }}
+                                >
+                                  {executingActionId === msg.id ? (
+                                    <Loader2 size={14} color="#fff" className="animate-spin" />
+                                  ) : (
+                                    <Check size={14} color="#fff" />
+                                  )}
+                                  <span style={{ fontSize: 12, color: '#fff', fontWeight: 500 }}>
+                                    実行する
+                                  </span>
+                                </button>
+                                <button
+                                  onClick={() => rejectAction(msg.id)}
+                                  className="px-3 py-2 rounded-lg"
+                                  style={{ background: colors.border }}
+                                >
+                                  <XCircle size={14} color={colors.textMuted} />
+                                </button>
+                              </div>
+                            )}
                           </div>
                         </motion.div>
                       )}

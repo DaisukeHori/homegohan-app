@@ -4,7 +4,7 @@ import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
-import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE, internalError } from '@/lib/api/errors';
+import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE, internalError, toLoggableError } from '@/lib/api/errors';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
@@ -12,6 +12,14 @@ import { addDaysToDate, todayLocal } from '@/lib/date-utils';
 import { classifyPantryExpiry } from '@homegohan/shared';
 import { mondayWeekRange } from '@/lib/jst-day-ranges';
 import { AI_ALLOWED_MEAL_TYPES, runConsultationAction } from '@/lib/ai/consultation-action-executor';
+import {
+  AI_ACTION_LOG_STATUS,
+  AI_CONSULTATION_ACTION_LOG_INSERT_FAILED_MESSAGE,
+  aiActionLogStatusAfterFailure,
+  aiActionLogStatusAfterRun,
+  proposedActionViewOf,
+} from '@/lib/ai/consultation-action-lifecycle';
+import { aiProfilePreferenceTypesForPrompt } from '@/lib/ai/profile-preference-updates';
 import { isMealType, MEAL_LABELS, MEAL_ORDER } from '@homegohan/shared';
 import { CANONICAL_GOAL_TYPES, describeGoalRangesForPrompt } from '@/lib/health-goal-types';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
@@ -68,26 +76,68 @@ const AI_CONSULTATION_HISTORY_LIMIT = 50;
 // serverless 環境で NEXT_PUBLIC_APP_URL 未設定時に localhost へ fetch してしまい
 // 到達不能で静かに失敗する。ai_action_logs への記録・ステータス確定を含めて
 // execute route と同じ実行ロジックを直接関数呼び出しする。
+//
+// 行の状態は execute route と同じ決まり (src/lib/ai/consultation-action-lifecycle.ts。#2189 W1-a):
+//   - 行は実行中の印 (approved) で作る。実行している間に別の画面が GET で読んでも「実行する」を出さず、
+//     実行の API も pending の行しか実行しないので、同じ提案を二重に実行しない
+//   - 成功は executed。今日の上限 (#1149) で止めたら pending (手の実行と同じく、明日もう一度実行できる)。
+//     失敗はやり直せる種類なら pending (残したカードの「実行する」でやり直せる)、やり直させない種類は failed
+//   - 行を作れなかったときも黙らず、失敗の結果を返す (以前は null で、画面に何も出なかった)
+/** 自動実行の結果 (応答の actionResult と、提案のカードに「実行する」を出すか) */
+interface AutoActionOutcome {
+  /**
+   * 応答の actionResult。actionType (提案の種類) も入れる: 成功したら aiMessage.proposedActions を返さないので、
+   * 画面は結果の文 (『✅ …を実行しました！』) の種類の名前をここから引く
+   */
+  actionResult: { success: boolean; result: any; actionType: string };
+  /** 行が pending で残った (カードの「実行する」で実行できる) */
+  proposedActionExecutable: boolean;
+}
+
+/**
+ * 応答の aiMessage の提案の欄 (SSE と JSON で同じ)。自動実行が成功したら提案は返さない (null)。
+ * 残すときは、カードに「実行する」を出すか (proposedActionExecutable) も返す
+ */
+function proposedActionFieldsOf(
+  proposedActions: unknown,
+  autoAction: AutoActionOutcome | null,
+): { proposedActions: unknown; proposedActionExecutable?: boolean } {
+  if (!proposedActions || !autoAction || autoAction.actionResult.success) return { proposedActions: null };
+  return { proposedActions, proposedActionExecutable: autoAction.proposedActionExecutable };
+}
+
 async function executeAndFinalizeAction(
   supabase: any,
   user: { id: string },
   sessionId: string,
   savedAiMessageId: string,
   proposedActions: { type: string; params?: Record<string, any> },
-): Promise<{ success: boolean; result: any } | null> {
-  const { data: actionLog } = await supabase
+): Promise<AutoActionOutcome> {
+  const { data: actionLog, error: insertError } = await supabase
     .from('ai_action_logs')
     .insert({
       session_id: sessionId,
       message_id: savedAiMessageId,
       action_type: proposedActions.type,
       action_params: proposedActions.params || {},
-      status: 'pending',
+      status: AI_ACTION_LOG_STATUS.running,
     })
     .select('id')
     .single();
 
-  if (!actionLog) return null;
+  if (!actionLog) {
+    // 記録できなかった (DB の失敗・種類の制約に合わない) ので実行しない。生のエラー文は応答に出さず、ログにだけ残す (#1172)
+    createLogger('POST /api/ai/consultation/sessions/[sessionId]/messages', generateRequestId())
+      .withUser(user.id)
+      .error('AI 相談の提案を記録できなかったため、自動実行しませんでした', toLoggableError(insertError), {
+        session_id: sessionId,
+        action_type: proposedActions.type,
+      });
+    return {
+      actionResult: { success: false, result: { error: AI_CONSULTATION_ACTION_LOG_INSERT_FAILED_MESSAGE }, actionType: proposedActions.type },
+      proposedActionExecutable: false,
+    };
+  }
 
   try {
     const executionResult = await runConsultationAction(supabase, user, {
@@ -97,26 +147,39 @@ async function executeAndFinalizeAction(
       ai_consultation_sessions: { user_id: user.id },
     });
 
-    // #1047 F2-21 受入基準: 失敗が pending のまま滞留しないよう、
-    // unknown action type も含めて必ず ai_action_logs のステータスを確定させる。
+    // #1047 F2-21 受入基準: 実行中のまま滞留しないよう、unknown action type も含めて必ず ai_action_logs のステータスを確定させる。
     const success = executionResult.unknownActionType ? false : executionResult.success;
     const result = executionResult.unknownActionType
       ? { error: AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE }
       : executionResult.result;
+    const status = aiActionLogStatusAfterRun(proposedActions.type, executionResult);
 
-    await supabase
+    const { error: finalizeError } = await supabase
       .from('ai_action_logs')
-      .update({ status: success ? 'executed' : 'failed', result, executed_at: new Date().toISOString() })
+      .update({
+        status,
+        result,
+        // 実行した日時は、実行が終わった (executed / failed) ときだけ。pending (やり直せる) は空のまま
+        executed_at: status === AI_ACTION_LOG_STATUS.pending ? null : new Date().toISOString(),
+      })
       .eq('id', actionLog.id);
 
-    return { success, result };
+    return {
+      actionResult: { success, result, actionType: proposedActions.type },
+      // 書き換えに失敗したら行は実行中の印のまま (実行の API は実行しない) なので、「実行する」を出さない
+      proposedActionExecutable: !finalizeError && status === AI_ACTION_LOG_STATUS.pending,
+    };
   } catch (execError) {
     console.error('Action direct-execution error:', execError);
-    await supabase
+    const status = aiActionLogStatusAfterFailure(proposedActions.type);
+    const { error: finalizeError } = await supabase
       .from('ai_action_logs')
-      .update({ status: 'failed', executed_at: new Date().toISOString() })
+      .update({ status, executed_at: status === AI_ACTION_LOG_STATUS.pending ? null : new Date().toISOString() })
       .eq('id', actionLog.id);
-    return { success: false, result: null };
+    return {
+      actionResult: { success: false, result: null, actionType: proposedActions.type },
+      proposedActionExecutable: !finalizeError && status === AI_ACTION_LOG_STATUS.pending,
+    };
   }
 }
 
@@ -154,17 +217,39 @@ export async function GET(request: Request, props: { params: Promise<{ sessionId
 
   if (error) return internalError('GET /api/ai/consultation/sessions/[sessionId]/messages', error, { userId: user.id });
 
+  // 提案のカードの出し方は、提案の行 (ai_action_logs) の状態で決める (#2189 W1-a)。保存した提案 (proposed_actions) を
+  // そのまま返すと、相談を開き直したときに実行済み・断った提案のカードがまた出て、押すと 404 になっていた
+  const { data: actionLogs, error: actionLogsError } = await supabase
+    .from('ai_action_logs')
+    .select('message_id, status')
+    .eq('session_id', params.sessionId);
+
+  if (actionLogsError) {
+    return internalError('GET /api/ai/consultation/sessions/[sessionId]/messages', actionLogsError, { userId: user.id, table: 'ai_action_logs' });
+  }
+
+  const actionLogStatusesByMessage = new Map<string, string[]>();
+  for (const log of (actionLogs || []) as Array<{ message_id: string | null; status: string | null }>) {
+    if (!log.message_id || !log.status) continue;
+    actionLogStatusesByMessage.set(log.message_id, [...(actionLogStatusesByMessage.get(log.message_id) ?? []), log.status]);
+  }
+
   const messages = (data || [])
     .filter((m: any) => !m.metadata?.isSystemPrompt)
-    .map((m: any) => ({
-      id: m.id,
-      role: m.role,
-      content: m.content,
-      proposedActions: m.proposed_actions,
-      isImportant: m.is_important || false,
-      importanceReason: m.importance_reason,
-      createdAt: m.created_at,
-    }));
+    .map((m: any) => {
+      const view = m.proposed_actions ? proposedActionViewOf(actionLogStatusesByMessage.get(m.id) ?? []) : 'hidden';
+      return {
+        id: m.id,
+        role: m.role,
+        content: m.content,
+        proposedActions: view === 'hidden' ? null : m.proposed_actions,
+        // 提案のカードに「実行する」を出すか (行が pending のときだけ。出さないときは「もう一度頼んでください」の案内)
+        ...(view === 'hidden' ? {} : { proposedActionExecutable: view === 'executable' }),
+        isImportant: m.is_important || false,
+        importanceReason: m.importance_reason,
+        createdAt: m.created_at,
+      };
+    });
 
   return NextResponse.json({ messages });
 }
@@ -815,6 +900,8 @@ update_meal は入力された値をそのまま保存するため、栄養値�
 ■ プロフィール関連（食事の好み・生活習慣のみ）:
 - update_profile_preferences: 食事の好みや生活習慣を更新 (params: { updates: { diet_style?, cuisine_preferences?, taste_preferences?, favorite_ingredients?, favorite_dishes?, cooking_experience?, weekday_cooking_minutes?, weekend_cooking_minutes?, snacking_habit?, alcohol_frequency?, daily_water_ml?, etc } })
   ※ email, avatar_url等のセキュリティ関連フィールドは更新不可
+  ※ updates の値は欄ごとに次の型で送ってください。1 つでも型が合わない欄があると、どの欄も保存されません:
+${aiProfilePreferenceTypesForPrompt()}
 
 【⚠️⚠️⚠️ 最重要：アクション実行のルール ⚠️⚠️⚠️】
 
@@ -1266,9 +1353,9 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
               .single();
 
             // アクション自動実行（#1047 F2-21: self-fetch をやめ直接関数呼び出し）
-            let actionResult: { success: boolean; result: any } | null = null;
+            let autoAction: AutoActionOutcome | null = null;
             if (proposedActions && savedAiMessage) {
-              actionResult = await executeAndFinalizeAction(
+              autoAction = await executeAndFinalizeAction(
                 supabase,
                 user,
                 params.sessionId,
@@ -1276,6 +1363,7 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
                 proposedActions,
               );
             }
+            const actionResult = autoAction?.actionResult ?? null;
 
             // セッション更新
             await supabase.from('ai_consultation_sessions').update({ updated_at: new Date().toISOString() }).eq('id', params.sessionId);
@@ -1291,7 +1379,8 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
               aiMessage: {
                 id: savedAiMessage?.id,
                 content: aiContent.replace(/```action[\s\S]*?```/g, '').trim(),
-                proposedActions: proposedActions,
+                // 自動実行が成功したら提案は返さない (JSON の経路と同じ。#2189 W1-a。以前は残り、押すと 404 で失敗の alert が出た)
+                ...proposedActionFieldsOf(proposedActions, autoAction),
                 createdAt: savedAiMessage?.created_at,
               },
               actionExecuted: actionResult?.success || false,
@@ -1501,19 +1590,18 @@ JSONで回答してください：
 
     // アクションがある場合はai_action_logsに記録し、自動実行
     // #1047 F2-21: self-fetch をやめ直接関数呼び出し
-    let actionResult: { success: boolean; result: any } | null = null;
+    let autoAction: AutoActionOutcome | null = null;
     if (proposedActions) {
-      actionResult = await executeAndFinalizeAction(
+      autoAction = await executeAndFinalizeAction(
         supabase,
         user,
         params.sessionId,
         savedAiMessage.id,
         proposedActions,
       );
-      if (actionResult) {
-        console.log('Action auto-executed:', actionResult);
-      }
+      console.log('Action auto-executed:', autoAction.actionResult);
     }
+    const actionResult = autoAction?.actionResult ?? null;
 
     // セッションのupdated_atを更新
     await supabase
@@ -1535,7 +1623,8 @@ JSONで回答してください：
         id: savedAiMessage.id,
         role: 'assistant',
         content: savedAiMessage.content,
-        proposedActions: actionResult?.success ? null : proposedActions, // 自動実行成功時はnull
+        // 自動実行が成功したら提案は返さない。残すときは「実行する」を出すかも返す (#2189 W1-a。SSE の経路と同じ)
+        ...proposedActionFieldsOf(proposedActions, autoAction),
         createdAt: savedAiMessage.created_at,
       },
       actionExecuted: actionResult?.success || false,

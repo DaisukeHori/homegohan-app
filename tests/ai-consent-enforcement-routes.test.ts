@@ -1051,7 +1051,7 @@ describe.each(ROUTE_CASES.filter((c) => c.refundOnInsertFailure))('生成のリ�
 });
 
 describe('consultation execute (#1149): 献立の生成のアクションが上限で止まったら', () => {
-  it('429 AI_DAILY_LIMIT を返し、アクションを pending のまま残す (ai_action_logs を書き換えない)', async () => {
+  it('429 AI_DAILY_LIMIT を返し、アクションを pending に戻す (実行中の印を付けてから戻す。結果は書き換えない。#2189 W1-a)', async () => {
     h.state.consentMode = 'granted';
     h.state.single.ai_action_logs = {
       id: ACTION_1_ID,
@@ -1071,7 +1071,11 @@ describe('consultation execute (#1149): 献立の生成のアクションが上�
 
     expect(res.status).toBe(429);
     expect(await bodyOf(res)).toMatchObject({ code: 'AI_DAILY_LIMIT', limit: 10 });
-    expect(h.state.writes.filter((w) => w.table === 'ai_action_logs')).toEqual([]);
+    // 書くのは実行中の印 (approved) と、pending への戻しだけ (executed / failed にしない・result を書かない)
+    expect(h.state.writes.filter((w) => w.table === 'ai_action_logs').map((w) => w.payload)).toEqual([
+      { status: 'approved' },
+      { status: 'pending' },
+    ]);
   });
 });
 
