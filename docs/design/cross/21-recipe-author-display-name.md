@@ -160,7 +160,7 @@ v1.0〜v1.1 は origin/main `c9ee3e59` で取った。`c9ee3e59..cae0e288` の�
 | F-8 | fix 枝の `viewer-lookups.ts` の冒頭コメントは「名前が引けるのは RLS で見ている人が読める行だけ (いまは本人の行だけ)。引けなかった作者は既定の呼称」と書いている。他人の名前がいつも「匿名」になるのはこのため | 同ファイルの冒頭コメント |
 | F-9 | RLS の効くクライアント `createClient()` は anon キー + Cookie / Authorization ヘッダ。service_role は `getSupabaseAdmin()` だけ (`tests/supabase-service-role-client-scan.test.ts` が見張る) | `lib/supabase/server.ts` (`getSupabaseAdmin`・`createClient`) |
 | F-10 | 他人の `user_profiles` を読むときは認可のあとに `getSupabaseAdmin()` (対象を絞る条件つき) というのが root CLAUDE.md の規則。未ログインの一覧・詳細には認可が無い | `CLAUDE.md:83` |
-| F-11 | `PUT /api/profile` は `fromUserProfile(body)` (camelCase → snake_case) の結果を RLS のクライアントで `user_profiles` に `update` する。`FIELD_MAP` (行 27) は栄養の再計算の判定にだけ使う。`toUserProfile` は `GET` の行を camelCase にする | `src/app/api/profile/route.ts:27, 165-166`・`lib/converter.ts:21, 144, 158, 278` |
+| F-11 | `PUT /api/profile` は本文を先に `src/lib/profile-update-schema.ts` の `UserProfileUpdateBodySchema` で検査し、型の誤りは 400 (#2173)。通った本文を `fromUserProfile(body)` (camelCase → snake_case) にし、その結果を RLS のクライアントで `user_profiles` に `update` する。`FIELD_MAP` は栄養の再計算の判定にだけ使う。`toUserProfile` は `GET` の行を camelCase にする | `src/app/api/profile/route.ts` の `FIELD_MAP` と、`PUT` の `fromUserProfile(body)`・`update`・`lib/converter.ts:21, 144, 158, 278` |
 | F-12 | `UserProfile` (ドメイン型) は `types/domain.ts:171` (`nickname` は行 173・`aiLearningEnabled` は行 298)。DB の行の手書きの型 `DbUserProfile` は `types/database.ts:4` (`ai_learning_enabled: boolean / null` は行 132)。`toUserProfile` は `ai_learning_enabled ?? true` のように既定を補う | `types/domain.ts`・`types/database.ts`・`lib/converter.ts:144` |
 | F-13 | `authorName` を読む画面は Web (`src/app`・`src/components`) にもモバイル (`apps/mobile`) にも無い (`authorName` / `author_name` / 「作者」の参照は API route と `author-name.ts` だけ)。`/api/recipes/{id}` を呼ぶのは `src/app/(main)/favorites/_components/FavoriteRecipeModal.tsx` (いいねの解除) と `src/app/(main)/menus/weekly/page.tsx` (レシピの表示) で、どちらも `authorName` を描かない | origin/main の `git grep` (2026-10-24) |
 | F-14 | プロフィールの編集画面はニックネームの欄 (`Label` + `Input`。`editForm.nickname`・`updateField('nickname', …)`) を基本情報タブの先頭に持ち、保存は `fetch('/api/profile', …)` (PUT)。`editForm` は `Partial<UserProfile>`、`updateField(field: keyof UserProfile, value)` | `src/app/(main)/profile/page.tsx:121, 242, 296, 725-733` |
@@ -694,7 +694,7 @@ export function recipeAuthorName(nickname: unknown): string {
   if (profile.showRecipeAuthorName !== undefined) result.show_recipe_author_name = profile.showRecipeAuthorName;
 ```
 
-- `PUT /api/profile` は `fromUserProfile(body)` をそのまま `update` するので、route の変更は無い (F-11)。`POST /api/profile` (作成) も変えない (列の既定値 true)。
+- `PUT /api/profile` は `fromUserProfile(body)` をそのまま `update` する。段 B (#2159) では route を変えなかった。#2173 から、`PUT` は本文を `UserProfileUpdateBodySchema` で検査し、`showRecipeAuthorName` に boolean でない値が来たら 400 (F-11)。`POST /api/profile` (作成) も変えない (列の既定値 true)。
 - `packages/shared/src/database.types.ts` と `src/types/database.types.ts` は生成し直す (関数 `recipe_author_display_names` が `Functions` に、列が `user_profiles` の `Row` / `Insert` / `Update` に入る。`tests/database-types-migrations-contract.test.ts` の作り直し方のとおり)。
 
 ### 7.7 プロフィールの編集画面 (`src/app/(main)/profile/page.tsx`。断片)
@@ -1599,7 +1599,7 @@ rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
 | TS | `RECIPE_AUTHOR_NAME_SETTING_LABEL`・`RECIPE_AUTHOR_NAME_SETTING_NOTE` | 新設 |
 | TS | `UserProfile.showRecipeAuthorName: boolean`・`DbUserProfile.show_recipe_author_name: boolean / null` | 新設 |
 | API | `GET /api/recipes`・`GET /api/recipes/[id]`・`GET / POST /api/recipes/[id]/comments` の返り値の形 (`authorName: string`) | 変更なし。値が変わる |
-| API | `PUT /api/profile` の body に `showRecipeAuthorName?: boolean` | 既存の変換で通る (route の変更なし) |
+| API | `PUT /api/profile` の body に `showRecipeAuthorName?: boolean` | 既存の変換で通る。型は `UserProfileUpdateBodySchema` が検査する (boolean でなければ 400。#2173) |
 
 ---
 
@@ -1818,7 +1818,7 @@ sequenceDiagram
 | ファイル | `recipe-author-display-names.test.ts` | `tests/integration/security/` |
 | ファイル | `recipe-author-name-setting-1917.test.tsx` | `tests/` |
 | 許可一覧の行 | `'recipe_author_display_names(uuid[])'` | `tests/integration/security/anon-definer-execute.test.ts` |
-| 既存ファイルの変更 (新設ではない) | `src/app/api/recipes/route.ts`・`[id]/route.ts`・`[id]/comments/route.ts` (§7.5)・`lib/converter.ts` (§7.6)・`src/app/(main)/profile/page.tsx` (§7.7)・`src/types/database.types.ts`・`packages/shared/src/database.types.ts` (生成し直し)・`tests/recipe-viewer-lookups-1917.test.ts`・`tests/recipes-route.test.ts`・`tests/recipe-author-name-1649.test.ts`・`tests/recipe-detail-hidden-404.test.ts`・`tests/api-security-cluster.test.ts`・`tests/route-invalid-input-1917.test.ts` (§7.11)・`tests/integration/security/anon-definer-execute.test.ts` (§7.8。許可一覧の行と describe / it の「2 本」→「3 本」。段 A)・段 C: `src/lib/legal/privacy-text.ts`・`tests/legal-claims-1901.ts` (§7.12)・選択肢 (b) のときだけ `packages/shared/src/legal-versions.ts` (`LEGAL_DOCUMENTS` の両文書を v2026.5 に) と `docs/legal/archive/v2026.4/` (控えの新設。cross/20 §9.1 の手順) (§7.12・§21 Q-1) | — |
+| 既存ファイルの変更 (新設ではない) | `src/app/api/recipes/route.ts`・`[id]/route.ts`・`[id]/comments/route.ts` (§7.5)・`lib/converter.ts` (§7.6)・`src/app/(main)/profile/page.tsx` (§7.7)・`src/types/database.types.ts`・`packages/shared/src/database.types.ts` (生成し直し)・`tests/recipe-viewer-lookups-1917.test.ts`・`tests/recipes-route.test.ts`・`tests/recipe-author-name-1649.test.ts`・`tests/recipe-detail-hidden-404.test.ts`・`tests/api-security-cluster.test.ts`・`tests/route-invalid-input-1917.test.ts` (§7.11)・`tests/integration/security/anon-definer-execute.test.ts` (§7.8。許可一覧の行と describe / it の「2 本」→「3 本」。段 A)・段 C: `src/lib/legal/privacy-text.ts`・`tests/legal-claims-1901.ts` (§7.12)。`packages/shared/src/legal-versions.ts` と `docs/legal/archive/` は変えない (§21 Q-1 は (a)。cross/21 のために版は上げず、文は v2026.4 に足した。§7.12) | — |
 | 設計書 | `docs/design/cross/21-recipe-author-display-name.md` (本書) | `docs/design/cross/` |
 
 新しい環境変数・route・テーブル・RLS ポリシー・エラーコードは無い (R-18)。
@@ -1877,7 +1877,7 @@ sequenceDiagram
 | `tests/no-pending-wording-1911.test.ts`・`tests/public-claims-guard.test.ts` | `準備中`・`予定です`・`FORBIDDEN` | `src` の文言に未完成・予定の語があると赤 | §7.4 の文言に入れない | B |
 | `tests/legal-text-1901.test.ts:1058-1073`・`tests/legal-claims-1901.ts:25` | `LEGAL_CLAIM_COUNT`・`fragment`・`chars`・`evidence` | 文を足して主張の表を足さないと赤。字数が違うと赤。evidence のパスが実在しない・evidence の `F-n` が cross/20 に無いと赤 | §7.12 の 7 行と +7 (evidence は本書と `viewer-lookups.ts` のパスだけ・`F-n` を書かない) | C |
 | `tests/legal-text-1901.test.ts` (見出し) | `PRIVACY_SECTION_HEADINGS`・`家族グループと組織での見え方` | 見出しの逐語を直書きした検査があれば赤 | 直書きがあれば新しい見出しに | C |
-| `packages/shared/src/legal-versions.test.ts` | `LEGAL_DOCUMENTS`・`effectiveDate` | 版の形と施行日の形 | 選択肢 (b) で版を上げるときも形は同じ (版を上げるのは `packages/shared/src/legal-versions.ts`。§14 の段 C) | C |
+| `packages/shared/src/legal-versions.test.ts` | `LEGAL_DOCUMENTS`・`effectiveDate` | 版の形と施行日の形 | §21 Q-1 は (a)。cross/21 のために版は上げず、文は v2026.4 に足した (`packages/shared/src/legal-versions.ts` は変えない) | C |
 | C-10 (本書が足す番兵。`tests/recipe-author-display-names-migration-contract.test.ts`) | `LEGAL_DOCUMENTS`・`docs/legal/archive/`・`ニックネームが作者名として表示され` | 段 A のあと、版を上げる PR (将来) と控えを足す PR に効く: いまの版・控えの版が作者名の表示の文を持たないのに関数の一覧に無いと赤、持つのに一覧にあると赤 | 文を持つ版を足すだけなら変更なし (緑)。文を消す・言い換える版を作るときは、関数の一覧を CREATE OR REPLACE で直す migration か、C-10 の `AUTHOR_NAME_PRIVACY_FRAGMENT` の追随を同じ PR で行う | A (以後の版の PR) |
 | `tests/integration/security/legal-documents-acceptance.test.ts`・`tests/legal-consent-gate.test.ts` ほか (`privacy_version_accepted` を読む既存のテスト) | `privacy_version_accepted` | 本書は列を読むだけで、書く関数・ゲート・特権列ガードを変えない | 変更なし | — |
 | `tests/account-export-tables.test.ts` (個人データの書き出しの棚卸し) | `user_profiles`・`omit`・`SENSITIVE_NAME`・`add column` | 本書の migration の `ADD COLUMN` を `tests/helpers/schema-snapshot.ts` が読み、`user_profiles` の出力する列に `show_recipe_author_name` が入る。列名は `SENSITIVE_NAME` に当たらず、`auth.users` を指さないので、秘密の列・他人を指す列の検査は緑のまま。表の分類 (新しい表) は無い | 変更なし。`src/lib/account-export-tables.ts` の `user_profiles` の `omit` にも足さない (本人の設定は本人のデータとして書き出す。§6.5) | A |
@@ -1918,14 +1918,14 @@ sequenceDiagram
 | `increment_recipe_view_count` の呼び出し・詳細の 404 の判定・コメント POST の検査 | 保持 |
 | `DELETE /api/recipes/[id]`・`recipe_comments_recipe_id_fkey` の `ON DELETE CASCADE` | 保持 (変えない)。本人がレシピを消すと、本人とそのレシピにだけコメントした人の K-公開 が偽になりうる (§9.3・S-17・I-16) |
 | `recipes.is_public` の切り替え (本人)・`recipes.hidden_at` (運営が隠す / 戻す) | 保持 (変えない)。切り替えると、作者と、そのレシピへのコメントの書き手の K-公開 が変わりうる (コメントの行は残る。§9.3・S-12・S-13・I-10) |
-| `PUT /api/profile`・`fromUserProfile` / `toUserProfile` | 列を 1 つ通す (§7.6)。route は変えない |
+| `PUT /api/profile`・`fromUserProfile` / `toUserProfile` | 列を 1 つ通す (§7.6)。段 B (#2159) では route を変えなかった。#2173 から、`PUT` は本文を `UserProfileUpdateBodySchema` で検査する (boolean でなければ 400) |
 | `POST /api/recipes` (本人がレシピを作る。`isPublic` で公開にできる) | 保持 (変えない)。公開で作ると作者の K-公開 が真になる (§9.3。返り値に `authorName` は無い) |
 | 個人データの書き出し (`src/lib/account-export-tables.ts` の `user_profiles`) | 保持 (変えない)。新しい列 `show_recipe_author_name` は既定どおり書き出しに入る (`omit` に足さない。§6.5) |
 | プロフィールの編集画面 | チェック 1 つを足す (§7.7) |
 | `prepare_account_deletion`・外部キーの `ON DELETE` | 保持 (退会の扱いは既存のまま) |
 | `age_years_jst`・`normalize_profile_name` | 本文から呼ぶ。作り直さない |
 | `accept_legal_documents`・`POST /api/legal/accept`・同意ゲート・`user_profiles.privacy_version_accepted` | 保持 (変えない)。関数が `privacy_version_accepted` を読む (K-同意)。同意すると次の読み込みから名前が出る (§9.3) |
-| `LEGAL_DOCUMENTS` (`packages/shared/src/legal-versions.ts`)・`docs/legal/archive/` | 段 A では変えない (段 C の選択肢 (b) のときだけ版を上げる)。C-10 が関数の一覧と突き合わせる |
+| `LEGAL_DOCUMENTS` (`packages/shared/src/legal-versions.ts`)・`docs/legal/archive/` | 変えない (§21 Q-1 は (a)。cross/21 のために版は上げず、文は v2026.4 に足した)。C-10 が関数の一覧と突き合わせる |
 | 献立の料理のお気に入り (cross/22) | 献立の料理のお気に入りは `recipe_likes` を使わず `dish_favorites` (cross/22)。`viewer-lookups.ts` の `likedRecipeIds` は公開レシピの「いいね」だけ |
 
 ---

@@ -3,6 +3,7 @@
 | 版 | 日付 | 内容 |
 |---|---|---|
 | v1.0 | 2026-11-01 | 新設 (Issue #2166 の X1 の設計ゲート・A 型 4 相。`recipe_comments` の SELECT のポリシー `Anyone can view comments` (ログインした誰でも全行) を、「そのコメントのレシピを読める人」と「そのコメントを書いた本人」だけに絞る migration と戻し口、契約テスト・結合テストを書き切る) |
+| v1.1 | 2026-11-01 | マージ後の追随: migration の名指しを 20261101100000 に確定した (#2177)・行番号の参照を名前の参照にした・§9.1 (b) の E-3 の P-7a を直した。前提の本番への適用の文を来歴にし、§16 に #2174 のテスト 2 本を足した |
 
 要件の正本は Issue #2166 の本文 (X1 の節) とコメント。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
 ファイル名は cross/25 (cross/ の既存は 01〜09・12・13a・13b・14〜24。10・11 は欠番、13 は 13a・13b に引き継がれている (cross/CLAUDE.md の注記のとおり))。
@@ -10,7 +11,7 @@
 前提 (本書が従う条件):
 
 - 範囲は `recipe_comments` の SELECT のポリシーだけ。INSERT / UPDATE / DELETE のポリシー・表の権限 (GRANT)・レシピの API のコード・画面・作者名の関数は変えない。範囲外の候補は §21 に残す (新しい要求を発明しない)。
-- 権限を絞る migration なので、本番への適用 (= マージ) はオーナーの名指しの承認の後。本書は承認の要否と、適用の前提 (観測・告知の要否) を §19 に書く。設計と実装は、承認があればすぐ当てられる状態まで進める (Issue #2166 の本文の X1 の扱いのとおり)。
+- 権限を絞る migration。本書は承認の要否と、適用の前提 (観測・告知の要否) を §19 に書く。migration 20261101100000 は PR #2176 (c7e5c019) で main に入り、Deploy Supabase Migrations (run 41270869190) で本番に当たった。
 - Issue #2166 の本文は (a) を推奨する。本書は (a) の式に「コメントを書いた本人の行」の句を足した (a') を採る (理由は §5)。
 - 本番の DB には書き込まない。本書は本番を Supabase MCP の SELECT で読んだ (2026-11-01。§3.5)。事実はすべて origin/main `0577f909f` (2026-11-01) のコードと migration、本番の読み取りから取った。
 - 新しい表・列・関数・環境変数・RPC・画面は作らない。
@@ -149,11 +150,11 @@
 
 | # | 経路 | client | 読む / 書く | 何を | レシピの見え方の判定 |
 |---|---|---|---|---|---|
-| E-1 | `GET /api/recipes/[id]/comments` (`src/app/api/recipes/[id]/comments/route.ts:37`) | 利用者のセッション (RLS) | 読む | `recipe_comments` を `eq('recipe_id', id)` で。未認証は 401。`id` が UUID でなければ 404 | しない (レシピを読まずにコメントだけ読む。cross/21 F-19b) |
+| E-1 | `GET /api/recipes/[id]/comments` (`comments/route.ts` の `GET` の `from('recipe_comments')`) | 利用者のセッション (RLS) | 読む | `recipe_comments` を `eq('recipe_id', id)` で。未認証は 401。`id` が UUID でなければ 404 | しない (レシピを読まずにコメントだけ読む。cross/21 F-19b) |
 | E-2 | `POST /api/recipes/[id]/comments` (同ファイル :114-121) | 利用者のセッション (RLS) | 書く | `insert({ recipe_id, user_id: 本人, content, rating }).select('id, content, rating, created_at').single()`。外部キー違反 (レシピが無い) は 404 | しない (INSERT のポリシーは `user_id = auth.uid()` だけ) |
-| E-3 | `GET /api/recipes/[id]` (`src/app/api/recipes/[id]/route.ts:37-47`) | 利用者のセッション (RLS。未ログインは anon) | 読む | `recipes` の `select('*, recipe_comments(id, content, rating, created_at, user_id)')` の埋め込み。レシピが見えなければ `maybeSingle` が null → 404 | `recipes` の RLS (見えるレシピの埋め込みだけ) |
+| E-3 | `GET /api/recipes/[id]` (`src/app/api/recipes/[id]/route.ts` の `GET` が `orderEmbeddedListBy(` に渡す `select('*, recipe_comments(id, content, rating, created_at, user_id)')`。埋め込んだコメントは `LIST_ORDERS.recipeComments` の鍵で並べる (#2174)) | 利用者のセッション (RLS。未ログインは anon) | 読む | `recipes` の `select('*, recipe_comments(id, content, rating, created_at, user_id)')` の埋め込み。レシピが見えなければ `maybeSingle` が null → 404 | `recipes` の RLS (見えるレシピの埋め込みだけ) |
 | E-4 | アカウントの書き出し `GET /api/account/export` (`src/lib/account-export-tables.ts:187`・`src/lib/account-export.ts`) | 利用者のセッション (RLS) | 読む | `{ table: 'recipe_comments', scope: self('user_id') }` = 自分の `user_id` の行だけ。:182 のコメントは「RLS 上「誰でも閲覧可」。必ず user_id で絞る」 | しない (本人の行) |
-| E-5 | `src/lib/api/list-order.ts:232` (`LIST_ORDERS.recipeComments`) | — | — | 並び (`created_at` 降順 + `id`) の定義だけ。E-1 が使う | — |
+| E-5 | `src/lib/api/list-order.ts` の `LIST_ORDERS.recipeComments` | — | — | 並び (`created_at` 降順 + `id`) の定義だけ。E-1 (`orderListBy`) と E-3 (`orderEmbeddedListBy`) が使う | — |
 | E-6 | 作者名の関数 `recipe_author_display_names` (b) (F-7) | DEFINER (RLS を通らない) | 読む | `recipe_comments` と `recipes` を JOIN し、公開で隠されていないレシピへのコメントの書き手かを見る。E-1・E-2・E-3 と `GET /api/recipes` が RLS のクライアントで `rpc` として呼ぶ (`src/lib/recipes/viewer-lookups.ts`) | 関数の中で `is_public = true AND hidden_at IS NULL` を直接見る |
 
 RLS を通らない書き手: 結合テスト・e2e の準備と後片付け (service_role)・外部キーの CASCADE (レシピの削除 `DELETE /api/recipes/[id]`・退会 `auth.admin.deleteUser`)・運営の隠した内容の完全削除 (`supabase/functions/_shared/hidden-content-purge.ts`。`recipes` を service_role で消し、コメントは CASCADE)。`prepare_account_deletion` (20261010000100) は `recipe_comments` に触れない (CASCADE に任せる)。
@@ -1245,10 +1246,10 @@ describe('他人から見た非公開のレシピのコメント (cross/25。#21
 | 〃 | A / C | 200・全部 / 自分の行 | 同左 | 変更なし |
 | 〃 | anon | 401 | 401 | 変更なし |
 | E-2 `POST /api/recipes/[id]/comments` の RETURNING | 書き手 | 200 | 200 (本人の行) | 変更なし |
-| E-3 `GET /api/recipes/[id]` の埋め込み | V | 200・全部 | 404 (レシピが見えない) | 変更なし |
+| E-3 `GET /api/recipes/[id]` の埋め込み | V | P-1・P-5 は 200・全部。P-7a は 404 (route の `GET` が `!data.is_public && data.user_id !== user?.id` で 404 にする。前から同じ) | 404 (レシピが見えない) | 変更なし |
 | 〃 | A | 200・全部 | 200・全部 | 変更なし |
 | E-4 書き出し | 本人 | 自分の行 | 自分の行 | 変更なし (注の 1 行だけ §7.6) |
-| E-5 並びの定義 (`LIST_ORDERS.recipeComments`) | — (読まない。E-1 の並びを決めるだけ) | 影響なし | 影響なし | 変更なし |
+| E-5 並びの定義 (`LIST_ORDERS.recipeComments`) | — (読まない。E-1・E-3 の並びを決めるだけ) | 影響なし | 影響なし | 変更なし |
 | E-6 作者名の関数 (b) | DEFINER | 公開の書き手の名前 | 返さない (関数の K-公開) | 変更なし |
 | 運営の画面・API | — | 読まない | 読まない | — |
 | 退会・削除・完全削除 | CASCADE / SR | 消える | 消える | 変更なし |
@@ -1286,9 +1287,9 @@ describe('他人から見た非公開のレシピのコメント (cross/25。#21
 | P-2 非公開 | 作者が公開にする | P-1 | 作者 | × → ○ | ○ | ○ |
 | P-1 公開 | 運営が隠す (`hideModeratedContent`。service_role) | P-3 | 運営 (本人は `hidden_*` を書けない。トリガー) | ○ → × | ○ | ○ |
 | P-3 隠した | 運営が戻す (`POST /api/admin/moderation/{type}/{id}/restore`) | P-1 | 運営 | × → ○ | ○ | ○ |
-| P-3 隠した | 作者が非公開に戻す (`PUT /api/recipes/[id]` `isPublic: false`。route は `hidden_at` を見ずに `is_public` を書く (`src/app/api/recipes/[id]/route.ts:158`)) | P-4 | 作者 (RLS `Users can manage own recipes`。トリガー `trg_recipes_guard_hidden_columns` は `hidden_*` の列の更新だけに当たり、`is_public` は止めない) | × のまま | ○ | ○ |
+| P-3 隠した | 作者が非公開に戻す (`PUT /api/recipes/[id]` `isPublic: false`。route は `hidden_at` を見ずに `is_public` を書く (`src/app/api/recipes/[id]/route.ts` の `PUT` の `updateData.is_public = body.isPublic`)) | P-4 | 作者 (RLS `Users can manage own recipes`。トリガー `trg_recipes_guard_hidden_columns` は `hidden_*` の列の更新だけに当たり、`is_public` は止めない) | × のまま | ○ | ○ |
 | P-2 非公開 | 運営が隠す | P-4 | 運営 | × | ○ | ○ |
-| P-4 非公開・隠した | 作者が公開にする (`PUT /api/recipes/[id]` `isPublic: true`。route:158 は `hidden_at` を見ない) | P-3 | 作者 (P-3 → P-4 と同じ) | × のまま (隠されているので) | ○ | ○ |
+| P-4 非公開・隠した | 作者が公開にする (`PUT /api/recipes/[id]` `isPublic: true`。route の `PUT` は `hidden_at` を見ない) | P-3 | 作者 (P-3 → P-4 と同じ) | × のまま (隠されているので) | ○ | ○ |
 | P-4 非公開・隠した | 運営が戻す | P-2 | 運営 | × のまま (非公開なので) | ○ | ○ |
 | P-5 作者なし・公開 | 運営が隠す | P-6 | 運営 | ○ → × | ○ | — |
 | P-6 作者なし・隠した | 運営が戻す | P-5 | 運営 | × → ○ | ○ | — |
@@ -1475,13 +1476,15 @@ sequenceDiagram
 | `tests/integration/security/auth-users-fk-on-delete.test.ts:208` | `recipe_comments.user_id` | 反応しない (外部キーの動作。RLS を通らない) | – | – |
 | `tests/account-export-tables.test.ts:467` | `recipe_comments` | 反応しない (設計後も他人の行 (公開レシピのコメント) は返るので「絞りが要る表」のまま) | – | – |
 | `tests/account-export.test.ts`・`tests/api-security-cluster.test.ts`・`tests/recipe-viewer-lookups-1917.test.ts`・`tests/route-invalid-input-1917.test.ts`・`tests/recipe-author-name-1649.test.ts`・`tests/recipe-detail-hidden-404.test.ts`・`tests/list-order-tiebreak-2134.test.ts`・`tests/postgrest-embed-relationship-scan.test.ts` | `recipe_comments` | 反応しない (DB を偽物にする・並びと埋め込みの形を見る) | – | – |
+| `tests/recipe-detail-comments-order-2166.test.ts` (#2174) | `recipe_comments`・`LIST_ORDERS.recipeComments` | 反応しない (偽の fetch で URL を見る) | – | – |
+| `tests/integration/rls/list-order-tiebreak.test.ts` の埋め込みの並びの確かめ (`EMBEDDED_LIST_PROBES`。#2174) | `recipeComments`・`recipes` | 反応しない (srAdmin で読む) | – | – |
 | `tests/legal-text-1901.test.ts`・`tests/legal-claims-1901.ts:368` | `recipe_comments`・`privacy-9#13` | 反応しない (文を変えない。根拠に本書を足すのは任意 §17) | – | – |
 | `tests/e2e/api/recipes-comments-rankings.spec.ts` | `/comments` | 反応しない (存在しない id で 200 / 404 を許す) | – | – |
 | `tests/integration-ci-coverage.test.ts` | `tests/integration/` | 反応しない (新しい `tests/integration/rls/recipe-comments-select-scope.test.ts` は `tests/integration/rls` の指定に当たる) | – | – |
 | `tests/integration-setup-transient-retry.test.ts` | `retryIdempotentSetup` | 反応しない (§7.5 は `user_profiles` の upsert を `retryIdempotentSetup` で行う。ほかの準備は新しい行の INSERT) | – | – |
 | `tests/supabase-service-role-client-scan.test.ts`・`tests/env-source-scan.test.ts` | `createClient(`・`process.env` (src・lib) | 反応しない (製品コードは注の 1 行しか変えない) | – | – |
 | `tests/docs-table-column-count.test.ts` | `docs/` の表 | 本書の表の列の数が揃っていなければ赤 | 本書の表を揃えて書いた (レビューで確かめる) | – |
-| `tests/design-doc-version-header-matches-history.test.ts` | `\| v1.0 \|`・`改定履歴` | 本書は冒頭の版の表と §22 改定履歴の両方を持つ。両方の最後の版が同じ (v1.0) | 改定のたびに両方に行を足す | – |
+| `tests/design-doc-version-header-matches-history.test.ts` | `\| v1.0 \|`・`改定履歴` | 本書は冒頭の版の表と §22 改定履歴の両方を持つ。両方の最後の版が同じ (v1.1) | 改定のたびに両方に行を足す | – |
 | `tests/helpers/design-doc-migration-number.ts` | 本書の migration の名指し (`20261101100000`) | 当てはめは本書の C-9 が行う (置き場と番号が混ざると赤) | 番号は `20261101100000` で確定し、本書の名指しは全部この番号にした (§15 の順番 4) | – |
 | `tests/design-doc-followup-owned-edits.test.ts` | `OWNED_EDITS` | 反応しない (本書の §17 は cross/21 の行を「A」→「B」の形で持つが、この見張りは載せた行だけを見る。載せない) | – | – |
 | `scripts/baseline/*`・`supabase/baseline/**` | `catalog_policies`・`prod_schema.sql` | 反応しない (本番の過去の写し。取り直すまで変えない。`verify` はベースラインだけを当てた DB と比べる) | – | – |
@@ -1544,3 +1547,4 @@ sequenceDiagram
 | 版 | 日付 | 内容 |
 |---|---|---|
 | v1.0 | 2026-11-01 | 新設 (Issue #2166 の X1 の設計ゲート・A 型 4 相) |
+| v1.1 | 2026-11-01 | マージ後の追随: migration の名指しを 20261101100000 に確定した (#2177)・行番号の参照を名前の参照にした・§9.1 (b) の E-3 の P-7a を直した。前提の本番への適用の文を来歴にし、§16 に #2174 のテスト 2 本を足した |
