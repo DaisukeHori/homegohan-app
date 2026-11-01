@@ -3,7 +3,7 @@
  *
  * 以前:
  *  - Z3-1: 運営の利用者の一覧 (/admin/users) のステータスの列が「active」「BAN」と英字の直書きだった
- *    (同じ画面の絞り込みの select は「アクティブ」「BAN 済み」)。
+ *    (同じ画面の絞り込みの select は「アクティブ」「凍結中」。#2178 Y2 で「BAN 済み」から「凍結」の系に揃えた)。
  *  - Z3-2 (同じ型): 問い合わせの詳細の優先度・カテゴリ (一覧では日本語)・一覧のカテゴリ、サポートの利用者の画面の問い合わせの状態、
  *    リードの流入経路、利用者の詳細の契約の状態・監査ログの重要度、監査ログの画面とバックアップの画面の重要度、フラグの公開の範囲の種類、
  *    クーポンの適用対象、利用者の一覧・詳細・NPS のプラン (plan_key。空は free) が英字の内部の値のままだった。
@@ -212,14 +212,14 @@ describe('#2112 Z3-1 運営の利用者の一覧 (/admin/users) のステータ�
     return renderServer(AdminUsersPage({ searchParams: Promise.resolve({ status: '' }) }));
   }
 
-  it('BAN 中の行は「BAN 済み」、それ以外は「アクティブ」(英字の active / BAN を出さない)', async () => {
+  it('凍結中の行は「凍結中」、それ以外は「アクティブ」(英字の active / BAN を出さない。#2178 Y2)', async () => {
     const page = await renderUsers([userRow(1, { is_banned: true }), userRow(2, {})]);
     const body = page.querySelector('tbody');
     if (!body) throw new Error('一覧の表がありません');
     const texts = leafTexts(body);
     expect(texts).toContain(USER_LIST_STATUS_LABELS.banned);
     expect(texts).toContain(USER_LIST_STATUS_LABELS.active);
-    expect(texts).toContain('BAN 済み');
+    expect(texts).toContain('凍結中');
     expect(texts).toContain('アクティブ');
     expect(texts).not.toContain('active');
     expect(texts).not.toContain('BAN');

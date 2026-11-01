@@ -269,7 +269,7 @@ function SupportUsersContent() {
                         <p className="font-medium text-gray-800">{normalizeProfileName(user.nickname) ?? "(名前なし)"}</p>
                         {user.is_banned && (
                           <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
-                            利用停止
+                            凍結中
                           </span>
                         )}
                       </div>
@@ -329,7 +329,7 @@ function SupportUsersContent() {
 
                   {userDetail.user.isBanned && (
                     <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-                      <p className="text-sm font-medium text-red-700">このユーザーはBANされています</p>
+                      <p className="text-sm font-medium text-red-700">このユーザーは凍結中です</p>
                       {userDetail.user.bannedReason && (
                         <p className="text-sm text-red-600 mt-1">{userDetail.user.bannedReason}</p>
                       )}

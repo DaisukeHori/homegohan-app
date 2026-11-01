@@ -31,7 +31,7 @@
  *   - 見張りは th・dt・label だけを走査し、span / div の欄名を見ていなかった
  *
  * 直したあと:
- *   - IP → IP アドレス・min / max → 最小 / 最大・MAU → 月間の利用者 (MAU)・BAN → 利用停止
+ *   - IP → IP アドレス・min / max → 最小 / 最大・MAU → 月間の利用者 (MAU)・BAN → 凍結中 (#2178 Y2 で「凍結」の系に揃えた。個人情報の請求の種類の「利用停止」とは重ねない)
  *   - Stripe の項目名 (プランの詳細の「Product ID:」「Price ID (月額):」「Price ID (年額):」・請求書の詳細の「Stripe Event ID」) は
  *     「Stripe Customer」と同じく Stripe の画面と同じ名前で探すので英字のまま残し、許可の表で明示して外す
  *   - 見張りを span / div の欄名 (末尾がコロンの短い文。「IP アドレス: {値}」の形) にも広げる。
@@ -40,7 +40,7 @@
  * 見張りの限界: 列名・欄名を変数や関数の呼び出し ({label} など) で渡す欄は、ソースの文として見えないので数えない
  * (値の表示名は tests/admin-english-labels-2112.test.tsx が描画して見る)。
  * span / div は、末尾がコロンの文だけを欄名として見る (コロンの無い見出しの div・印の span は文の役割をソースから決められない)。
- * 売上の画面の「月間の利用者 (MAU)」とサポートの一覧の印「利用停止」は、下の「直した欄の名前」で名指しして確かめる
+ * 売上の画面の「月間の利用者 (MAU)」とサポートの一覧の印「凍結中」は、下の「直した欄の名前」で名指しして確かめる
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -532,10 +532,11 @@ describe('直した欄の名前 (#2166 X3)', () => {
     expect(texts).not.toContain('MAU');
   });
 
-  it('サポートの利用者の一覧の凍結の印は「利用停止」(BAN は出さない)', () => {
+  it('サポートの利用者の一覧の凍結の印は「凍結中」(BAN も請求の種類の語「利用停止」も出さない。#2178 Y2)', () => {
     const texts = spanDivTextsOf('src/app/(support)/support/users/page.tsx', 'span');
-    expect(texts).toContain('利用停止');
+    expect(texts).toContain('凍結中');
     expect(texts).not.toContain('BAN');
+    expect(texts).not.toContain('利用停止');
   });
 
   it('プランの詳細・請求書の詳細の Stripe の項目名は Stripe の画面と同じ名前のまま残す', () => {
