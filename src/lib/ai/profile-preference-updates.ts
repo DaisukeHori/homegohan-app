@@ -23,6 +23,7 @@ import {
   type UserProfileColumnKind,
   type UserProfileUpdateFieldSpec,
 } from '@/lib/profile-update-schema';
+import { CALENDAR_DATE_REQUIREMENT_JA } from '@/lib/api/user-api-error-messages';
 
 /** AI に書き換えを許さない欄 (許す欄の一覧に入れない。入れても落とす) */
 export const AI_PROFILE_FORBIDDEN_FIELDS: readonly string[] = ['email', 'avatar_url', 'is_banned', 'role', 'auth_provider'];
@@ -118,7 +119,7 @@ export function aiProfilePreferenceSpecOf(column: string): UserProfileUpdateFiel
 /** 列の型ごとの、失敗の文に出す受け付ける値の形 */
 const PROFILE_VALUE_FORMS: Readonly<Record<UserProfileColumnKind, string>> = {
   text: '文字列',
-  date: '実在する日付 (YYYY-MM-DD)',
+  date: CALENDAR_DATE_REQUIREMENT_JA,
   time: '時刻 (HH:MM か HH:MM:SS。時は 00 〜 23)',
   integer: `整数 (${PG_INTEGER_MIN} 〜 ${PG_INTEGER_MAX})`,
   numeric: '数値',
