@@ -1830,7 +1830,7 @@ Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#113
 | `OP_PACKAGE_IN_USE` | 409 | 削除しようとしたパッケージが利用中 |
 | `AI_DAILY_LIMIT` | 429 | 今日の AI の利用回数の上限に達した (利用者の AI の呼び出し。本文は `{ error, code, limit, retryAfter }`、`Retry-After` は次の JST 0 時までの秒数。operator/06-ai-llm.md §5) |
 | `OP_RE_AUTH_REQUIRED` | 401 | 再認証必須 |
-| `OP_EXPERIMENT_KEY_DUPLICATE` / `OP_COUPON_CODE_DUPLICATE` / `OP_PACKAGE_KEY_DUPLICATE` / `OP_PLAN_KEY_DUPLICATE` | 409 | 作成でキーが既にある (一意の制約の違反 23505)。`OP_EXPERIMENT_KEY_DUPLICATE` は A/B テストの `key` (`POST /api/super-admin/experiments`。§15)・`OP_COUPON_CODE_DUPLICATE` はクーポンの `code` (`POST /api/super-admin/coupons`。§19)・`OP_PACKAGE_KEY_DUPLICATE` は機能パッケージの `package_key` (`POST /api/super-admin/feature-packages`。§18)・`OP_PLAN_KEY_DUPLICATE` はプランの `plan_key` (`POST /api/super-admin/plans`。§17) |
+| `OP_EXPERIMENT_KEY_DUPLICATE` / `OP_COUPON_CODE_DUPLICATE` / `OP_PACKAGE_KEY_DUPLICATE` / `OP_PLAN_KEY_DUPLICATE` | 409 | 作成でキーが既にある (一意の制約の違反 23505)。`OP_EXPERIMENT_KEY_DUPLICATE` は A/B テストの `key` (`POST /api/super-admin/experiments`。§15)・`OP_COUPON_CODE_DUPLICATE` はクーポンの `code` (`POST /api/super-admin/coupons`。§19)・`OP_PACKAGE_KEY_DUPLICATE` は機能パッケージの `package_key` (`POST /api/super-admin/feature-packages`。§18)・`OP_PLAN_KEY_DUPLICATE` はプランの `plan_key` (`POST /api/super-admin/plans`。§17)。文は欄名と同じ呼び名 (プランの鍵・パッケージの鍵) で返す |
 | `OP_PLAN_DEPRECATED` | 422 | deprecated プランへの新規加入不可 |
 | `OP_COUPON_ALREADY_ACTIVE` | 409 | 1 契約に対し有効クーポンが既に存在 |
 | `OP_SUBSCRIPTION_ALREADY_ACTIVE` | 409 | active/trialing が既に存在 |

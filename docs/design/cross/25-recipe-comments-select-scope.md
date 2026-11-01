@@ -164,7 +164,7 @@ RLS を通らない書き手: 結合テスト・e2e の準備と後片付け (se
 |---|---|---|
 | F-9 | 第9条の 1〜2 文目: 「ユーザーが公開の状態にしたレシピには、ニックネームが作者名として表示され、ログインしていない方を含め、誰でも閲覧できる状態になります（利用規約第13条）。公開の状態のレシピへのコメントには、ログインしているユーザーに対して、ニックネームが作者名として表示されます。」 | `src/lib/legal/privacy-text.ts:371`・cross/20 §7 |
 | F-10 | 第8条 3 項の 2 文目: 「公開の状態のレシピとそのレシピへのコメントの作者名の表示は、その表示を定めた本ポリシーの版へのユーザーの同意と、ユーザー自身がレシピを公開の状態にし、またはコメントを書いたことに基づいて行います（第9条）。」 | `src/lib/legal/privacy-text.ts` (privacy-8)・cross/21 §7.12 |
-| F-11 | 主張の表 (`tests/legal-claims-1901.ts:368`) の `privacy-9#13` (「公開の状態のレシピへのコメン…」) の根拠は cross/21 §3.2・§6.3 と `viewer-lookups.ts`。cross/21 §7.12 (:1558) は「`recipe_comments` の SELECT は authenticated だけ (F-16)」と書く | `tests/legal-claims-1901.ts:368`・cross/21:1558 |
+| F-11 | 主張の表 (`tests/legal-claims-1901.ts:368`) の `privacy-9#13` (「公開の状態のレシピへのコメン…」) の根拠は cross/21 §3.2・§6.3 と `viewer-lookups.ts`。cross/21 §7.12 の表の「第9条 2 文目」の行は「`recipe_comments` の SELECT は authenticated だけ (F-16)」と書く | `tests/legal-claims-1901.ts:368`・cross/21 §7.12 の表の「第9条 2 文目」の行 |
 
 ### 3.4 既存のテストと番兵 (本書の変更に反応するもの。直し方は §16)
 
@@ -1496,7 +1496,7 @@ sequenceDiagram
 | `docs/design/cross/CLAUDE.md` | ファイル一覧の表の最後の行 (`24-freeze-notify-mail.md` の行) の次 | 1 行を足す: 1 列目 `25-recipe-comments-select-scope.md`・2 列目「公開レシピのコメントの読み取りの範囲を絞る (`recipe_comments` の SELECT を「そのコメントのレシピを読める人」と「書いた本人」だけに。migration と戻し口・契約テスト・結合テスト)」・3 列目 `#2166 X1`。欠番の注記「10・11 は欠番 (13a は分冊前の 13 の番号を引き継いでいる)。」は変えない | マージと同日 |
 | `docs/design/cross/21-recipe-author-display-name.md` | F-16 (:173) | 「`recipe_comments` の SELECT は `Anyone can view comments` (TO authenticated・USING true) で anon は読めない」→「`recipe_comments` の SELECT は `recipe_comments_select_own_or_visible_recipe` (TO authenticated・USING 本人の行 OR そのレシピを読める人。cross/25) で anon は読めない (本書の時点は `Anyone can view comments` (USING true) だった)」 | マージと同日 |
 | `docs/design/cross/21-recipe-author-display-name.md` | F-19b (:178) | 「fix 枝のコメント `GET` もレシピの見え方を見ずに、`recipe_comments` を RLS (authenticated に USING true) で読む」→「コメント `GET` はレシピの見え方を見ずに `recipe_comments` を RLS で読む (本書の時点は authenticated に USING true。cross/25 の後は、読めるレシピのコメントと本人の行だけが返る)」 | マージと同日 |
-| `docs/design/cross/21-recipe-author-display-name.md` | §7.12 の表 (:1558) | 「`recipe_comments` の SELECT は authenticated だけ (F-16)」→「`recipe_comments` の SELECT は authenticated だけで、読めるレシピのコメントと本人の行に限る (F-16・cross/25)」 | マージと同日 |
+| `docs/design/cross/21-recipe-author-display-name.md` | §7.12 の表の「第9条 2 文目」の行 | 「`recipe_comments` の SELECT は authenticated だけ (F-16)」→「`recipe_comments` の SELECT は authenticated だけで、読めるレシピのコメントと本人の行に限る (F-16・cross/25)」 | マージと同日 |
 | `docs/design/cross/21-recipe-author-display-name.md` | §4.3 のトレースの表の S-2 の行 (「未ログイン → `viewerId` null でも RPC は呼ぶ」で始まる行。§0 のシナリオの表の S-2 ではない方) | 変更なし (「コメントは `recipe_comments` の RLS (authenticated だけ) で 0 件」は設計後も正しい) | — |
 | `docs/design/cross/20-terms-privacy-text.md`・`src/lib/legal/privacy-text.ts` | — | 変更なし (第9条・第8条の文は設計後の挙動と一致する。§6.8) | — |
 | `tests/legal-claims-1901.ts:368` (`privacy-9#13` の evidence) と、その写し `docs/design/cross/20-terms-privacy-text.md` §10.3 (:2443) | — | 任意: evidence の末尾に「・docs/design/cross/25-recipe-comments-select-scope.md (§6.8)」を足す (T-35 は evidence のパスの実在を見るので、本書が main に入った後に。tests の行と cross/20 §10.3 の写しを同時に)。足さなくても食い違いではない | 任意 |

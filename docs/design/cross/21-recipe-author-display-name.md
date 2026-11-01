@@ -404,7 +404,7 @@ route: recipeAuthorName(lookups.authorNames.get(user_id))  → 返らなかっ�
 -- 背景:
 --   user_profiles の SELECT の RLS は "Users can view own profile" (本人の行だけ)。レシピの API (src/lib/recipes/viewer-lookups.ts) は
 --   RLS の効くクライアントで作者の user_profiles.nickname を引くので、他人の作者名はいつも既定の呼称 '匿名' になっていた。
---   Next.js の API では service_role を使わない (本書の決め。書いた時点の docs/design/cross/02-rls-patterns.md §3.3 の文に合わせた)。RLS のポリシーを足すと行の全列が読めてしまう。
+--   Next.js の API では service_role を使わない (docs/design/cross/02-rls-patterns.md §3.3)。RLS のポリシーを足すと行の全列が読めてしまう。
 --
 -- 変更:
 --   1. 列 user_profiles.show_recipe_author_name boolean NOT NULL DEFAULT true: 本人が「公開したレシピとコメントに作者名を出す」を選ぶ。
@@ -1461,9 +1461,9 @@ describe('I-18: 作者名の表示を書いた版への同意 (K-同意)', () =>
 
 import する helper は origin/main に実在する export だけ: `retryIdempotentSetup` (`tests/integration/helpers/setup-transient-retry.ts`。準備のフックの select / upsert はこれを通す決まり。`tests/integration-setup-transient-retry.test.ts` が見張る)・`supabaseAdmin` (`tests/integration/helpers/supabase.ts`。service_role の Proxy。`.from(...)`・`.auth.admin.deleteUser(...)` をそのまま呼べる)・`createTestUserWithRoles` / `cleanupTestUser` / `TestUser` (`tests/integration/helpers/users.ts`。`TestUser` は `userId`・`jwt` を持つ。`cleanupTestUser` は消えた人に呼んでも投げない)・`apiCall` (`tests/integration/helpers/api.ts`)。`client` / `anon` / `asUser` / `pgQuery` は上のとおり本テストの中に置く (`anon-definer-execute.test.ts` の冒頭と同じ作り)。
 
-### 7.11 既存の単体テストの直し (fix 枝の 5 ファイル。断片)
+### 7.11 既存の単体テストの直し (fix 枝の 6 ファイル。断片)
 
-5 ファイルとも fix 枝 (`a8d75cec`) の形を土台にする。共通の決まり: 名前は `rpc(RECIPE_AUTHOR_DISPLAY_NAMES_RPC, { p_user_ids })` で引かれるので、モックの `rpc` は **関数名で分岐** する (詳細の `increment_recipe_view_count` も同じ `rpc` を通る)。`from('user_profiles')` の分岐は呼ばれなくなるので消す。定数は `import { RECIPE_AUTHOR_DISPLAY_NAMES_RPC } from '@/lib/recipes/viewer-lookups'` で取る。
+(1)〜(5) の 5 ファイルは fix 枝 (`a8d75cec`) の形を土台にする ((6) は段 B (#2159) が直した)。共通の決まり: 名前は `rpc(RECIPE_AUTHOR_DISPLAY_NAMES_RPC, { p_user_ids })` で引かれるので、モックの `rpc` は **関数名で分岐** する (詳細の `increment_recipe_view_count` も同じ `rpc` を通る)。`from('user_profiles')` の分岐は呼ばれなくなるので消す。定数は `import { RECIPE_AUTHOR_DISPLAY_NAMES_RPC } from '@/lib/recipes/viewer-lookups'` で取る。
 
 (1) `tests/recipe-viewer-lookups-1917.test.ts`: `fakeClient` の `rpc` を次に替え、`beforeEach` の `h.rows.user_profiles` を `h.rows[RECIPE_AUTHOR_DISPLAY_NAMES_RPC]` に替える。`h.errors[<関数名>]`・`h.nullData` は `from` と同じに効く (fix 枝の `it.each` の本文 `h.errors[table] = DB_FAILURE` がそのまま関数の失敗を作れる)。
 
@@ -1531,6 +1531,8 @@ rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
 - 「認証済みユーザーはコメント一覧を取得できる (user_id は含まれない)」: `profileChain` と `from` の `'user_profiles'` の分岐を消し、it の先頭で `mockRpc.mockImplementation(async (fn: string) => (fn === RECIPE_AUTHOR_DISPLAY_NAMES_RPC ? { data: [{ author_id: 'uid-alice', display_name: 'Alice' }], error: null } : { data: null, error: null }))` を置く。期待 (`authorName` が `'Alice'`・`uid-alice` を返さない) は変えない。
 - `describe('#169 /api/recipes/[id] GET view_count')`: `beforeEach(() => vi.resetAllMocks())` のあとに `mockRpc.mockResolvedValue({ data: null, error: null })` を足す (reset で `mockRpc` が `undefined` を返すと、名前の rpc の `names.error` で落ちる)。「未認証リクエストでは view_count を更新しない」の `expect(mockRpc).not.toHaveBeenCalled()` を、`expect(mockRpc).not.toHaveBeenCalledWith('increment_recipe_view_count', expect.anything())` と `expect(mockRpc).toHaveBeenCalledWith(RECIPE_AUTHOR_DISPLAY_NAMES_RPC, { p_user_ids: ['uid-owner'] })` (未ログインでも名前は引く) に替える。it 名は変えない。`emptyLookup` の説明の「作者の名前 (user_profiles) と」を消す。
 
+(6) `tests/route-invalid-input-1917.test.ts`: 名前・いいねの引き当てを空の一覧にする `LIST_TABLES` の `'user_profiles'` を `` `rpc:${RECIPE_AUTHOR_DISPLAY_NAMES_RPC}` `` に替える (一覧でない既定の行を返すと、引き当ての `.map` が TypeError を投げ、route の catch の 500 になる)。`POST /api/recipes/[id]/comments` の 404 / 500 を見る 3 本に、名前を関数で引いてからコメントの insert まで届いたこと (`h.rpcCalls` が関数の名前だけ・`h.fromCalls` が `recipe_comments` だけ) を見る `expectReachedInsert()` を足す。it 名は変えない。
+
 ### 7.12 段 C: プライバシーポリシーの文 (`src/lib/legal/privacy-text.ts`。オーナーの選択 §21 Q-1 のあと)
 
 足す文は 7 つ: 第8条 3 項の末尾に 1 文、第9条の `ol` の末尾に 3 項 (6 文)。第9条の見出しも改める。第8条の 1 項・4 項の文は変えない (§6.4)。
@@ -1576,7 +1578,7 @@ rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
 - `LEGAL_CLAIM_COUNT` を +7 (PR #1997 の 426 → 433。main の値は 433)。
 - fragment の重なり: privacy-8#13 の `公開の状態のレシピとそのレシ` は、privacy-8 のほかの文に現れない (T-35 は同じ節の中で 1 対 1 を見る)。privacy-9#13 の `公開の状態のレシピへのコメン` とは節が違う。
 - evidence に `F-n` / `P-n` の語を書かない (T-35 は evidence の中の `F-n` / `P-n` を cross/20 の `| F-n |` の行と突き合わせるので、本書の F の番号を書くと赤になる)。本書の節は `§n` で書く。
-- 版: 選択肢 (a) なら PR #1997 の v2026.4 のまま (版は上げない。文を足すだけ。関数の一覧は `v2025.1`〜`v2026.3` の 4 つ)。(b) なら `LEGAL_DOCUMENTS` の両文書を v2026.5 にし、`docs/legal/archive/v2026.4/` に控えを作る (cross/20 §9.1 の手順。関数の一覧に `v2026.4` を足して 5 つ)。(c) (版を上げない) は選べない (§6.4)。どちらでも、版の文字列と関数の一覧の食い違いは C-10 が赤にする。
+- 版: §21 Q-1 は (a)。PR #1997 の v2026.4 に入れた (版は上げず文を足した。関数の一覧は `v2025.1`〜`v2026.3` の 4 つ)。(c) (版を上げない) は選べない (§6.4)。版の文字列と関数の一覧の食い違いは C-10 が赤にする。
 - 利用規約は変えない (第13条 2 項がすでに公開の範囲を書いている)。
 - 見出しの変更は `tests/legal-text-1901.test.ts` の見出しの検査 (`PRIVACY_SECTION_HEADINGS` を読む所) と `src/lib/legal/index.ts` の再エクスポートに影響しない (配列の要素の値だけが変わる)。見出しの逐語を直書きしたテストがあれば直す (§16)。
 
@@ -1727,7 +1729,7 @@ rpc: async (fn: string, args?: { p_user_ids?: string[] }) =>
 | 関数の読み込みが失敗 (接続・PGRST202 (関数が無い)・権限) | 一覧・詳細・コメント GET: 500 (`internalError`、本文は汎用の文)。コメント POST: 保存せずに 500 | `internalError` の構造化ログ (`table: 'recipe_author_display_names'`) | fix 枝の決まり (名前が無いように見せない)。R-13 |
 | `p_user_ids` が NULL / 空 / NULL を含む / 知らない id | 0 行 (エラーにしない) | なし | §7.1 の `COALESCE` と `WHERE t.u IS NOT NULL` |
 | 未ログインで関数を呼ぶ | 公開の作者の名前だけ (エラーにしない) | なし | anon に EXECUTE |
-| `PUT /api/profile` に `showRecipeAuthorName` が boolean でない値 | 既存の `fromUserProfile` はそのまま渡し、DB の型の失敗を `internalError` の 500 にする (既存の挙動。本書では検査を足さない) | 既存 | 既存の route の形 (ほかの boolean の列と同じ) |
+| `PUT /api/profile` に `showRecipeAuthorName` が boolean でない値 (`null` を含む) | 400 `{ error: API_INVALID_JSON_MESSAGE }`。DB に書かない (ほかの欄も写す先の列の型に合わなければ同じ) | なし | `src/app/api/profile/route.ts` の `PUT` が本文を `src/lib/profile-update-schema.ts` の `UserProfileUpdateBodySchema` で検査する |
 | コードを先に出し、関数が無い (段の順序の違反) | 全部の一覧・詳細が 500 | — | R-16。§15 の順序で防ぐ |
 
 新しいエラーコード (cross/04 の一覧) は足さない。
@@ -1784,7 +1786,7 @@ sequenceDiagram
 | 定数 | 値 | 置き場 | 根拠 | 環境変数で上書き |
 |---|---|---|---|---|
 | `c_adult_age_years` | 18 | §7.1 の関数 | `ADULT_AGE_YEARS` (法令の年齢。cross/14) と同じ。C-4 が突き合わせる | しない (法令の値) |
-| `c_privacy_versions_without_author_name` | `ARRAY['v2025.1', 'v2026.1', 'v2026.2', 'v2026.3']` (選択肢 (a)。(b) なら `'v2026.4'` も) | §7.1 の関数 | 作者名の表示を書く前のプライバシーポリシーの版 (F-32・§6.4)。C-10 が旧版の控えといまの文面と突き合わせる | しない (過去の版の事実。環境で変えると第8条との両立が崩れる) |
+| `c_privacy_versions_without_author_name` | `ARRAY['v2025.1', 'v2026.1', 'v2026.2', 'v2026.3']` (§21 Q-1 は (a)) | §7.1 の関数 | 作者名の表示を書く前のプライバシーポリシーの版 (F-32・§6.4)。C-10 が旧版の控えといまの文面と突き合わせる | しない (過去の版の事実。環境で変えると第8条との両立が崩れる) |
 | `AUTHOR_NAME_PRIVACY_FRAGMENT`・`LEGAL_ARCHIVE_DIR`・`ARCHIVED_PRIVACY_FILE`・`PRIVACY_TEXT_SOURCE`・`LEGAL_VERSION_FORMAT` | §7.9 のとおり | `tests/recipe-author-display-names-migration-contract.test.ts` (C-10) | 作者名の表示の文の一部・控えの置き場とファイル名・いまの文面のファイル・版の形 (`accept_legal_documents` と同じ) | しない |
 | `CONSENTED_PRIVACY_VERSION`・`OLD_PRIVACY_VERSION` | `'test-cross21-consent'`・`'v2026.3'` | `tests/integration/security/recipe-author-display-names.test.ts` | 同意済みとして入れるテスト専用の版・一覧にある版 (I-18。makePerson の既定) | しない |
 | `RECIPE_AUTHOR_DISPLAY_NAMES_RPC` | `'recipe_author_display_names'` | `viewer-lookups.ts` | 関数の名前。C-8 が突き合わせる | しない |
@@ -1816,7 +1818,7 @@ sequenceDiagram
 | ファイル | `recipe-author-display-names.test.ts` | `tests/integration/security/` |
 | ファイル | `recipe-author-name-setting-1917.test.tsx` | `tests/` |
 | 許可一覧の行 | `'recipe_author_display_names(uuid[])'` | `tests/integration/security/anon-definer-execute.test.ts` |
-| 既存ファイルの変更 (新設ではない) | `src/app/api/recipes/route.ts`・`[id]/route.ts`・`[id]/comments/route.ts` (§7.5)・`lib/converter.ts` (§7.6)・`src/app/(main)/profile/page.tsx` (§7.7)・`src/types/database.types.ts`・`packages/shared/src/database.types.ts` (生成し直し)・`tests/recipe-viewer-lookups-1917.test.ts`・`tests/recipes-route.test.ts`・`tests/recipe-author-name-1649.test.ts`・`tests/recipe-detail-hidden-404.test.ts`・`tests/api-security-cluster.test.ts` (§7.11)・`tests/integration/security/anon-definer-execute.test.ts` (§7.8。許可一覧の行と describe / it の「2 本」→「3 本」。段 A)・段 C: `src/lib/legal/privacy-text.ts`・`tests/legal-claims-1901.ts` (§7.12)・選択肢 (b) のときだけ `packages/shared/src/legal-versions.ts` (`LEGAL_DOCUMENTS` の両文書を v2026.5 に) と `docs/legal/archive/v2026.4/` (控えの新設。cross/20 §9.1 の手順) (§7.12・§21 Q-1) | — |
+| 既存ファイルの変更 (新設ではない) | `src/app/api/recipes/route.ts`・`[id]/route.ts`・`[id]/comments/route.ts` (§7.5)・`lib/converter.ts` (§7.6)・`src/app/(main)/profile/page.tsx` (§7.7)・`src/types/database.types.ts`・`packages/shared/src/database.types.ts` (生成し直し)・`tests/recipe-viewer-lookups-1917.test.ts`・`tests/recipes-route.test.ts`・`tests/recipe-author-name-1649.test.ts`・`tests/recipe-detail-hidden-404.test.ts`・`tests/api-security-cluster.test.ts`・`tests/route-invalid-input-1917.test.ts` (§7.11)・`tests/integration/security/anon-definer-execute.test.ts` (§7.8。許可一覧の行と describe / it の「2 本」→「3 本」。段 A)・段 C: `src/lib/legal/privacy-text.ts`・`tests/legal-claims-1901.ts` (§7.12)・選択肢 (b) のときだけ `packages/shared/src/legal-versions.ts` (`LEGAL_DOCUMENTS` の両文書を v2026.5 に) と `docs/legal/archive/v2026.4/` (控えの新設。cross/20 §9.1 の手順) (§7.12・§21 Q-1) | — |
 | 設計書 | `docs/design/cross/21-recipe-author-display-name.md` (本書) | `docs/design/cross/` |
 
 新しい環境変数・route・テーブル・RLS ポリシー・エラーコードは無い (R-18)。
@@ -1829,7 +1831,7 @@ sequenceDiagram
 |---|---|---|---|
 | C (文面) | §7.12 の 7 文 (第8条 3 項に 1 文・第9条に 6 文)・第9条の見出し・主張の表 7 行・版 (選択肢に従う) | §21 Q-1 の回答 (a)。fix/api-read-errors が main に入っていること (主張の表の evidence が `src/lib/recipes/viewer-lookups.ts` を指し、T-35 がパスの実在を確かめる。PR #2009 (`2a7a96e2`) で main に入り、満たされた) | 下の ① |
 | A (DB) | §7.1 migration・§7.2 戻し口・§7.9 契約テストの C-1〜C-7・C-9・C-10 (C-8 は段 B)・§7.10 結合テストの I-1〜I-6・I-11・I-13・I-14・I-18・`database.types.ts` 2 本の生成し直し・§7.8 許可一覧 | fix/api-read-errors が main に入っていること (結合テストの API 経由の部分は段 B へ)。`tests/database-types-migrations-contract.test.ts` が関数と列を見るので、型の生成し直しは同じ PR。関数の一覧 `c_privacy_versions_without_author_name` はオーナーの選択 (§21 Q-1) に合わせる (C-10 は文面が効く前も後も緑。§7.9) | 下の ②・③。実装ゲートは先に通してよいが、本番への適用とマージは ① のあとまで待つ |
-| B (API・設定) | §7.3 `viewer-lookups.ts`・§7.4 `author-name.ts`・§7.5 route の 1 語 × 5・§7.6 型と変換・§7.7 画面・§7.9 の C-8 (契約テストのファイルに it を 1 つ足す)・§7.11 単体テストの直し (5 ファイル)・§7.10 の I-7〜I-10・I-12・I-15〜I-17・P-1〜P-3 | 段 A が本番に適用済み・main に入っていること (関数が無いと全部の一覧・詳細が 500。R-16) | 下の ④。マージ = 公開 |
+| B (API・設定) | §7.3 `viewer-lookups.ts`・§7.4 `author-name.ts`・§7.5 route の 1 語 × 5・§7.6 型と変換・§7.7 画面・§7.9 の C-8 (契約テストのファイルに it を 1 つ足す)・§7.11 単体テストの直し (6 ファイル)・§7.10 の I-7〜I-10・I-12・I-15〜I-17・P-1〜P-3 | 段 A が本番に適用済み・main に入っていること (関数が無いと全部の一覧・詳細が 500。R-16) | 下の ④。マージ = 公開 |
 
 本番の順序 (選択肢 (a)(b) のどちらでも同じ。(c) は選べない。§6.4。段 A の関数は anon / authenticated に EXECUTE を付けるので、適用した時点から `/rest/v1/rpc` で公開の作者の表示名を直接引ける (§9.2。返るのは作者名の表示を書いた版に同意した人だけ)。文面と挙動の順序をそろえるため、段 A の本番の適用を、文面が効いたあとの同じ門に置く):
 
@@ -1843,7 +1845,7 @@ sequenceDiagram
 - ① より前に ②〜④ を行わない (文面が足りない間に他人の名前が出る経路を作らない。§6.4)。
 - A と B は同じ worktree で積んでもよいが、PR は分ける (A の本番の適用を B のマージの前に確かめるため)。
 - 戻すとき: B のコードを戻してから A の戻し口を流す (§7.2 の注意)。文面 (段 C) は戻さない (見える範囲が文面より狭くなる側のずれ。§9.2)。
-- 段 B の変更は 17 ファイル (製品コード 9: `viewer-lookups.ts`・`author-name.ts`・route 3 本・`types/domain.ts`・`types/database.ts`・`lib/converter.ts`・`src/app/(main)/profile/page.tsx` / tests 8: §7.11 の 5 ファイル・`recipe-author-display-names-migration-contract.test.ts` (C-8)・`recipe-author-display-names.test.ts` (I-7〜I-10・I-12・I-15〜I-17。I-18 は段 A)・`recipe-author-name-setting-1917.test.tsx` (新)) で、1,500 行以内。15 ファイルを超えるので、実装ゲートの 1 レビュアー枠は分割パネル (src の担当・tests の担当・横断整合の担当) にする。
+- 段 B (#2159) の変更は 19 ファイル (製品コード 9: `viewer-lookups.ts`・`author-name.ts`・route 3 本・`types/domain.ts`・`types/database.ts`・`lib/converter.ts`・`src/app/(main)/profile/page.tsx` / テスト 9: §7.11 (1)〜(5) の 5 ファイル・`tests/route-invalid-input-1917.test.ts` (§7.11 (6))・`recipe-author-display-names-migration-contract.test.ts` (C-8)・`tests/integration/security/recipe-author-display-names.test.ts` (I-7〜I-10・I-12・I-15〜I-17。I-18 は段 A)・`recipe-author-name-setting-1917.test.tsx` (新) / 本書) で、1,500 行以内。15 ファイルを超えるので、実装ゲートの 1 レビュアー枠は分割パネル (src の担当・tests の担当・横断整合の担当) にする。
 
 ---
 
