@@ -9,7 +9,7 @@
 
 /** 対象の表 */
 export const RECIPE_COMMENTS_TABLE = 'recipe_comments';
-/** migration のファイル名の、番号の後ろの名前 (`<番号>_recipe_comments_select_scope.sql`) */
+/** migration のファイル名の、番号の後ろの名前 (`20261101100000_recipe_comments_select_scope.sql` の番号の後ろ) */
 export const RECIPE_COMMENTS_SELECT_SCOPE_MIGRATION_NAME = 'recipe_comments_select_scope';
 /** 本書の直前の SELECT のポリシー (本番のベースライン。USING (true)) */
 export const RECIPE_COMMENTS_LEGACY_SELECT_POLICY = 'Anyone can view comments';

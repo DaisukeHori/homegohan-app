@@ -428,7 +428,7 @@ CREATE POLICY "Anyone can view comments" ON public.recipe_comments FOR SELECT TO
 
 /** 対象の表 */
 export const RECIPE_COMMENTS_TABLE = 'recipe_comments';
-/** migration のファイル名の、番号の後ろの名前 (`<番号>_recipe_comments_select_scope.sql`) */
+/** migration のファイル名の、番号の後ろの名前 (`20261101100000_recipe_comments_select_scope.sql` の番号の後ろ) */
 export const RECIPE_COMMENTS_SELECT_SCOPE_MIGRATION_NAME = 'recipe_comments_select_scope';
 /** 本書の直前の SELECT のポリシー (本番のベースライン。USING (true)) */
 export const RECIPE_COMMENTS_LEGACY_SELECT_POLICY = 'Anyone can view comments';
@@ -1409,7 +1409,7 @@ sequenceDiagram
 
 | 名前 | 値 | 置き場 | 根拠 |
 |---|---|---|---|
-| migration の名前 | `recipe_comments_select_scope` (ファイル名 `<番号>_recipe_comments_select_scope.sql`) | §7.1・`RECIPE_COMMENTS_SELECT_SCOPE_MIGRATION_NAME` | 内容 (SELECT の範囲) を表す |
+| migration の名前 | `recipe_comments_select_scope` (ファイル名 `20261101100000_recipe_comments_select_scope.sql`) | §7.1・`RECIPE_COMMENTS_SELECT_SCOPE_MIGRATION_NAME` | 内容 (SELECT の範囲) を表す |
 | 新しいポリシー | `recipe_comments_select_own_or_visible_recipe` | §7.1・`RECIPE_COMMENTS_SELECT_POLICY` | `<表>_<種類>_<誰>` の形 (20261024140000 以後) |
 | 旧ポリシー | `Anyone can view comments` | §7.2・`RECIPE_COMMENTS_LEGACY_SELECT_POLICY` | ベースライン :9602 |
 | USING の式 | `((user_id = auth.uid()) OR (EXISTS (SELECT 1 FROM public.recipes r WHERE r.id = recipe_comments.recipe_id)))` | §7.1・`RECIPE_COMMENTS_SELECT_USING` | §6.1 |
