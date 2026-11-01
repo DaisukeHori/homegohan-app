@@ -8556,6 +8556,10 @@ export type Database = {
           total_count: number
         }[]
       }
+      append_flag_to_feature_package: {
+        Args: { p_flag_key: string; p_package_key: string }
+        Returns: string
+      }
       append_recipe_to_collection: {
         Args: { p_collection_id: string; p_recipe_id: string }
         Returns: string
