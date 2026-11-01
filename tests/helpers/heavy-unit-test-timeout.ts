@@ -94,7 +94,7 @@ export const UNIT_HEAVY_HOOK_TIMEOUT_ENV = "UNIT_HEAVY_HOOK_TIMEOUT_MS";
  * 時間切れを延ばすファイル (リポジトリの根からの相対パス)。#1488 の 16 本は 274 本の結果のどこかで時間切れだけで落ちた
  * (#1498 で速くした 2 本は外した)。#1605 で足した 15 本は、時間切れで落ちた 1 本と、同じ型 (テストの中で子プロセスを起こす・route を丸ごと読み込む) の 14 本。
  * #2093 で足した 3 本は、時間切れで落ちた 1 本と、同じ型 (テストの中でリポジトリを構文木で走査する) の 2 本。
- * #2144 で足した 1 本は、同じ型 (テストの中で route を丸ごと読み込む)
+ * #2144 で足した 1 本は、同じ型 (テストの中で route を丸ごと読み込む)。#2166 で足した 1 本も同じ型 (route を丸ごと読み込む)
  */
 export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "src/__tests__/api/ai/consultation/ai-chat-gate.test.ts",
@@ -139,6 +139,7 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/og-image-1845.test.tsx",
   "tests/planned-meals-score-integrity-writers-scan.test.ts",
   "tests/postgrest-embed-relationship-scan.test.ts",
+  "tests/profile-put-input-types-2166.test.ts",
   "tests/recipes-route.test.ts",
   "tests/route-error-boundaries.test.tsx",
   "tests/route-input2-1917.test.ts",
