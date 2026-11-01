@@ -8556,6 +8556,10 @@ export type Database = {
           total_count: number
         }[]
       }
+      append_recipe_to_collection: {
+        Args: { p_collection_id: string; p_recipe_id: string }
+        Returns: string
+      }
       apply_coupon: {
         Args: {
           p_approved_by: string

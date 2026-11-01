@@ -1,11 +1,19 @@
 /**
  * AI 相談のアクション add_recipe_to_collection (src/lib/ai/consultation-action-executor.ts) の単体テスト用の、
- * recipe_collections だけを持つ Supabase の作り物 (#2166 X4・#2178 Y3)。
+ * recipe_collections だけを持つ Supabase の作り物 (#2166 X4・#2178 Y3・#2183 Z3)。
  *
- * eq / order / limit / single / maybeSingle / insert / upsert / update を、実物の PostgREST と同じ意味で扱う:
+ * eq / order / limit / single / maybeSingle / insert / upsert / update と rpc('append_recipe_to_collection') を、
+ * 実物の PostgREST・DB の関数と同じ意味で扱う:
  *   - .single() は 1 行ちょうどでなければエラー (PGRST116)、.maybeSingle() は 2 行以上でエラー・0 行は null
  *   - 一意の索引 (user_id, name) を持つ (#2178 Y3-b)。同じ利用者・同じ名前の行の insert は一意の違反 (23505)
  *   - upsert は onConflict が索引の列 (user_id,name) のときだけ受け付け、同じ名前の行があればその行を返す (行は増えない)
+ *   - rpc の append_recipe_to_collection (#2183 Z3。supabase/migrations の *_recipe_collections_append_recipe_rpc.sql) は
+ *     1 文の条件つき UPDATE と同じく、その時点の recipe_ids に対して「まだ入っていなければ末尾に足す」を不可分に行い、
+ *     added / already_present / not_found を返す。STRICT なので引数に NULL (undefined を含む) があれば null を返す。
+ *     authUserId を渡すと、RLS と同じく本人 (user_id = authUserId) の行だけを書く・見る
+ *
+ * recipe_ids を書く前 (update と rpc の直前) に hooks.beforeRecipeIdsWrite を呼ぶ。読んでから書く形 (Z3 の前の executor) では、
+ * 読んだ後・書く前に別の実行が足したレシピを上書きで消す (同時に 2 本足したときの片方の消失) を、作り物で決まった順に再現する。
  *
  * 読み取りは 2 種類に分けて記録・失敗させる: 名前で引く読み取り (user_id と name で絞る = 'lookup') と、
  * 足す前の recipe_ids の読み直し (id で絞る = 'reread')。
@@ -16,6 +24,11 @@ import {
   RECIPE_COLLECTIONS_USER_NAME_CONFLICT_TARGET,
   RECIPE_COLLECTIONS_USER_NAME_UNIQUE_INDEX,
 } from '@/lib/recipes/collections';
+import {
+  RECIPE_COLLECTION_APPEND_OUTCOME,
+  RECIPE_COLLECTIONS_APPEND_RECIPE_RPC,
+  RECIPE_COLLECTIONS_APPEND_RECIPE_RPC_ARGS,
+} from '@/lib/recipes/collection-append';
 import { UNIQUE_VIOLATION_SQLSTATE } from './recipe-collections-user-name-unique';
 
 export interface CollectionRow {
@@ -32,7 +45,7 @@ export interface PgError {
 }
 
 /** 失敗させる操作の種類 */
-export type FakeCollectionsOp = 'lookup' | 'reread' | 'insert' | 'upsert' | 'update';
+export type FakeCollectionsOp = 'lookup' | 'reread' | 'insert' | 'upsert' | 'update' | 'rpc';
 
 /** PostgREST の .single() / .maybeSingle() が行の数の違いで返すエラーのコード */
 const PGRST_SINGLE_ROW_CODE = 'PGRST116';
@@ -44,6 +57,16 @@ export interface FakeCollectionsHooks {
   afterNameLookup?: (rows: CollectionRow[]) => void;
   /** recipe_ids の読み直しの直前に呼ぶ (読み直しの前に行が消えた、を再現する) */
   beforeReread?: (rows: CollectionRow[]) => void;
+  /** recipe_ids を書く直前 (update と rpc の append_recipe_to_collection の前) に呼ぶ (別の実行が先に足した、を再現する) */
+  beforeRecipeIdsWrite?: (rows: CollectionRow[]) => void;
+  /** RLS の auth.uid() にあたる利用者。渡すと rpc は本人の行だけを書く・見る (渡さなければ全部の行が本人の行) */
+  authUserId?: string;
+}
+
+/** rpc の append_recipe_to_collection の呼び出しの記録 */
+export interface AppendRpcCall {
+  fn: string;
+  args: Record<string, unknown>;
 }
 
 type QueryOp = 'select' | 'insert' | 'upsert' | 'update';
@@ -56,6 +79,8 @@ export function createFakeCollectionsDb(seed: CollectionRow[], hooks: FakeCollec
   const upserts: Array<{ values: Record<string, unknown>; options: Record<string, unknown> | undefined }> = [];
   /** update の記録 (絞った列と値・書いた値) */
   const updates: Array<{ filters: Array<[string, unknown]>; values: Record<string, unknown> }> = [];
+  /** rpc の呼び出しの記録 */
+  const rpcCalls: AppendRpcCall[] = [];
   /** recipe_ids の読み直しの回数 */
   let rereadCount = 0;
   const failures: Partial<Record<FakeCollectionsOp, PgError>> = {};
@@ -135,6 +160,7 @@ export function createFakeCollectionsDb(seed: CollectionRow[], hooks: FakeCollec
         const failure = failures.update;
         if (failure) return { data: null, error: failure };
         updates.push({ filters: [...filters], values: payload });
+        if ('recipe_ids' in payload) hooks.beforeRecipeIdsWrite?.(rows);
         const targets = matched();
         for (const row of targets) Object.assign(row, payload);
         return { data: targets, error: null };
@@ -213,8 +239,33 @@ export function createFakeCollectionsDb(seed: CollectionRow[], hooks: FakeCollec
     return builder;
   };
 
+  /**
+   * DB の関数 append_recipe_to_collection と同じ意味 (1 文の条件つき UPDATE。不可分):
+   * 本人の行で、まだ入っていなければ末尾に足して 'added'。入っていれば 'already_present'。本人の行が無ければ 'not_found'
+   */
+  const rpc = async (fn: string, args: Record<string, unknown>) => {
+    rpcCalls.push({ fn, args: { ...args } });
+    expect(fn).toBe(RECIPE_COLLECTIONS_APPEND_RECIPE_RPC);
+    expect(Object.keys(args).sort()).toEqual([...RECIPE_COLLECTIONS_APPEND_RECIPE_RPC_ARGS].sort());
+    const failure = failures.rpc;
+    if (failure) return { data: null, error: failure };
+    const [collectionArg, recipeArg] = RECIPE_COLLECTIONS_APPEND_RECIPE_RPC_ARGS.map((name) => args[name]);
+    // STRICT: 引数に NULL があれば関数の本文を流さずに NULL を返す (JSON にしたとき undefined の鍵は落ちて NULL になる)
+    if (collectionArg == null || recipeArg == null) return { data: null, error: null };
+    hooks.beforeRecipeIdsWrite?.(rows);
+    const own = rows.find(
+      (row) => row.id === collectionArg && (hooks.authUserId === undefined || row.user_id === hooks.authUserId),
+    );
+    if (!own) return { data: RECIPE_COLLECTION_APPEND_OUTCOME.notFound, error: null };
+    const current = own.recipe_ids ?? [];
+    if (current.includes(String(recipeArg))) return { data: RECIPE_COLLECTION_APPEND_OUTCOME.alreadyPresent, error: null };
+    own.recipe_ids = [...current, String(recipeArg)];
+    return { data: RECIPE_COLLECTION_APPEND_OUTCOME.added, error: null };
+  };
+
   return {
     rows,
+    rpcCalls,
     nameLookups,
     inserts,
     upserts,
@@ -229,6 +280,6 @@ export function createFakeCollectionsDb(seed: CollectionRow[], hooks: FakeCollec
     rereadWithoutRow() {
       rereadReturnsNull = true;
     },
-    supabase: { from: (table: string) => makeQuery(table) },
+    supabase: { from: (table: string) => makeQuery(table), rpc },
   };
 }
