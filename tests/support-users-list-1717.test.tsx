@@ -242,13 +242,15 @@ describe('/support/users の一覧 (#1717)', () => {
     expect(frozenRow, '凍結中のユーザーの行').toBeDefined();
     expect(frozenRow!.textContent).toContain('最終ログイン: 2026/10/5');
     expect(frozenRow!.textContent).toContain('登録日: 2026/1/2');
-    expect(frozenRow!.textContent).toContain('BAN');
+    expect(frozenRow!.textContent).toContain('利用停止');
+    // 凍結の印は日本語で出す (英字の BAN は出さない。#2166 X3)
+    expect(frozenRow!.textContent).not.toContain('BAN');
 
     const activeRow = findRow('通常さん');
     expect(activeRow, '凍結されていないユーザーの行').toBeDefined();
     expect(activeRow!.textContent).toContain('最終ログイン: -');
     expect(activeRow!.textContent).toContain('登録日: 2026/3/4');
-    expect(activeRow!.textContent).not.toContain('BAN');
+    expect(activeRow!.textContent).not.toContain('利用停止');
 
     expect(container.textContent).not.toContain('ユーザーが見つかりません');
     expect(alerts()).toEqual([]);

@@ -22,8 +22,25 @@
  *   - 英字だけの判定が DB の列名の形 (下線・数字・コロンを含む) を拾うこと (判定の自己検査)
  *   - 直した欄が日本語の名前で出ていて、Stripe の項目名は残っていること
  *
+ * #2166 X3: span / div で書いた欄名も見張る
+ *
+ * 以前の問題:
+ *   - 監査ログの詳細の「IP: 」(src/app/super-admin/audit-logs/page.tsx)、指標のグラフの下の「min:」「max:」
+ *     (src/app/super-admin/infra/metrics/page.tsx)、売上の画面の「MAU」(src/app/admin/finance/page.tsx)、
+ *     サポートの利用者の一覧の印「BAN」(src/app/(support)/support/users/page.tsx) が英字のまま出ていた
+ *   - 見張りは th・dt・label だけを走査し、span / div の欄名を見ていなかった
+ *
+ * 直したあと:
+ *   - IP → IP アドレス・min / max → 最小 / 最大・MAU → 月間の利用者 (MAU)・BAN → 利用停止
+ *   - Stripe の項目名 (プランの詳細の「Product ID:」「Price ID (月額):」「Price ID (年額):」・請求書の詳細の「Stripe Event ID」) は
+ *     「Stripe Customer」と同じく Stripe の画面と同じ名前で探すので英字のまま残し、許可の表で明示して外す
+ *   - 見張りを span / div の欄名 (末尾がコロンの短い文。「IP アドレス: {値}」の形) にも広げる。
+ *     欄名はコロンを除いた文で判定する
+ *
  * 見張りの限界: 列名・欄名を変数や関数の呼び出し ({label} など) で渡す欄は、ソースの文として見えないので数えない
- * (値の表示名は tests/admin-english-labels-2112.test.tsx が描画して見る)
+ * (値の表示名は tests/admin-english-labels-2112.test.tsx が描画して見る)。
+ * span / div は、末尾がコロンの文だけを欄名として見る (コロンの無い見出しの div・印の span は文の役割をソースから決められない)。
+ * 売上の画面の「月間の利用者 (MAU)」とサポートの一覧の印「利用停止」は、下の「直した欄の名前」で名指しして確かめる
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -61,8 +78,49 @@ const ALLOWED_ENGLISH_LABELS: ReadonlySet<string> = new Set(['ID']);
  */
 const EXTERNAL_SERVICE_NAME_PREFIXES: readonly string[] = ['Stripe '];
 
+/**
+ * Stripe の画面と同じ名前で探す Stripe の項目名 (#2166 X3)。この名前そのもの、またはこの名前に空白と補いが続く欄名
+ * (プランの詳細の「Product ID:」「Price ID (月額):」「Price ID (年額):」) は英字のまま出してよい。
+ * どれも今の画面のどこかで使っていることを下で確かめる
+ */
+const STRIPE_FIELD_NAMES: readonly string[] = ['Product ID', 'Price ID'];
+
+/** 欄名が Stripe の項目名 name そのもの、または name に空白と補いが続く名前か */
+function isNamedAsStripeField(text: string, name: string): boolean {
+  return text === name || text.startsWith(`${name} `);
+}
+
+function isStripeFieldName(text: string): boolean {
+  return STRIPE_FIELD_NAMES.some((name) => isNamedAsStripeField(text, name));
+}
+
 function isAllowedEnglishLabel(text: string): boolean {
-  return ALLOWED_ENGLISH_LABELS.has(text) || EXTERNAL_SERVICE_NAME_PREFIXES.some((prefix) => text.startsWith(prefix));
+  return (
+    ALLOWED_ENGLISH_LABELS.has(text) ||
+    EXTERNAL_SERVICE_NAME_PREFIXES.some((prefix) => text.startsWith(prefix)) ||
+    isStripeFieldName(text)
+  );
+}
+
+/** 欄名をコロンつきで書くことがある要素 (「IP アドレス: {値}」など。#2166 X3) */
+const COLON_LABEL_TAGS: ReadonlySet<string> = new Set(['span', 'div']);
+
+/** 欄名の末尾のコロン (半角・全角) */
+const TRAILING_LABEL_COLON = /[:：]$/;
+
+/**
+ * span / div の末尾がコロンの文を欄名とみなす長さの上限 (コロンを除いた文字数)。
+ * 今の運営の画面の欄名は長いものでも十数文字 (「Price ID (月額)」「既存契約への影響」) なので、その倍の余裕をとる。
+ * これより長い末尾がコロンの文は、欄名ではなく説明の文とみなす
+ */
+const COLON_LABEL_MAX_LENGTH = 24;
+
+/** 末尾がコロンの短い文なら、コロンを除いた欄名を返す。欄名の形でなければ null */
+function colonLabelNameOf(text: string): string | null {
+  if (!TRAILING_LABEL_COLON.test(text)) return null;
+  const name = text.replace(TRAILING_LABEL_COLON, '').trim();
+  if (name === '' || name.length > COLON_LABEL_MAX_LENGTH) return null;
+  return name;
 }
 
 /**
@@ -152,9 +210,31 @@ function elementTextsInSource(file: string, source: string, tags: ReadonlySet<st
   return found;
 }
 
+/** 読んだソース (列名・欄名の走査と span / div の走査で同じファイルを 2 度読まない) */
+const SOURCE_CACHE = new Map<string, string>();
+
+function sourceOf(file: string): string {
+  const cached = SOURCE_CACHE.get(file);
+  if (cached !== undefined) return cached;
+  const source = fs.readFileSync(path.join(REPO_ROOT, file), 'utf8');
+  SOURCE_CACHE.set(file, source);
+  return source;
+}
+
 /** ファイルの中の、指定した要素の文 */
 function elementTextsIn(file: string, tags: ReadonlySet<string>): LabelText[] {
-  return elementTextsInSource(file, fs.readFileSync(path.join(REPO_ROOT, file), 'utf8'), tags);
+  return elementTextsInSource(file, sourceOf(file), tags);
+}
+
+/**
+ * span / div の文のうち、欄名の形 (末尾がコロンの短い文) のもの。文はコロンを除いた欄名に置き換える (#2166 X3)。
+ * 入れ子の要素 (strong など) の末尾がコロンの文も同じく欄名として数える
+ */
+function colonLabelsOf(texts: readonly LabelText[]): LabelText[] {
+  return texts.flatMap((label) => {
+    const name = colonLabelNameOf(label.text);
+    return name === null ? [] : [{ ...label, text: name }];
+  });
 }
 
 function isEnglishOnlyLabel(label: LabelText): boolean {
@@ -168,6 +248,19 @@ function describeLabel(label: LabelText): string {
 
 const OPERATOR_SCREEN_FILES = OPERATOR_SCREEN_DIRS.flatMap(listTsxFiles);
 const OPERATOR_LABEL_TEXTS = OPERATOR_SCREEN_FILES.flatMap((file) => elementTextsIn(file, LABEL_TAGS));
+const OPERATOR_COLON_LABELS = colonLabelsOf(OPERATOR_SCREEN_FILES.flatMap((file) => elementTextsIn(file, COLON_LABEL_TAGS)));
+
+/** ファイルの中の、指定した要素 (span / div) の欄名そのもの (じかの子の文) */
+function spanDivTextsOf(file: string, tag: string): string[] {
+  return elementTextsIn(file, COLON_LABEL_TAGS)
+    .filter((label) => label.tag === tag && label.part === 'own')
+    .map((label) => label.text);
+}
+
+/** ファイルの中の、span / div の欄名の形の文 (コロンを除いた欄名) */
+function colonLabelNamesOf(file: string): string[] {
+  return OPERATOR_COLON_LABELS.filter((label) => label.file === file).map((label) => label.text);
+}
 
 /** ファイルの中の、列名・欄名の要素 (tag) の欄名そのもの (じかの子の文) */
 function labelTextsOf(file: string, tag: string): string[] {
@@ -209,6 +302,78 @@ describe('英字だけの判定 (#2157 R2)', () => {
     expect(isAllowedEnglishLabel('action_type')).toBe(false);
     expect(isAllowedEnglishLabel('plan_key')).toBe(false);
     expect(isAllowedEnglishLabel('Stripe')).toBe(false);
+  });
+
+  it('許可の表: Stripe の項目名はその名前そのものと、空白と補いが続く名前だけを外す (#2166 X3)', () => {
+    for (const name of STRIPE_FIELD_NAMES) {
+      expect(isEnglishOnlyText(name)).toBe(true);
+      expect(isAllowedEnglishLabel(name)).toBe(true);
+    }
+    expect(isAllowedEnglishLabel('Price ID (monthly)')).toBe(true);
+    // 名前の途中で切れているもの・前に別の語がつくものは外さない
+    expect(isAllowedEnglishLabel('Product IDs')).toBe(false);
+    expect(isAllowedEnglishLabel('Old Price ID')).toBe(false);
+    expect(isAllowedEnglishLabel('IP')).toBe(false);
+    expect(isAllowedEnglishLabel('MAU')).toBe(false);
+    expect(isAllowedEnglishLabel('BAN')).toBe(false);
+  });
+});
+
+describe('span / div の欄名の取り出し (#2166 X3)', () => {
+  const FIXTURE_FILE = 'fixture.tsx';
+  const colonLabelsIn = (source: string) => colonLabelsOf(elementTextsInSource(FIXTURE_FILE, source, COLON_LABEL_TAGS));
+
+  it('末尾がコロンの短い文を、コロンを除いた欄名として拾う (値の式は文に入れない)', () => {
+    // 以前の監査ログの詳細と指標のグラフの下の形
+    const source = `const A = ({ ip, min, max }: { ip: string; min: number; max: number }) => (
+      <div>
+        <div className="text-xs">IP: {ip}</div>
+        <div className="flex">
+          <span>min: {min}</span>
+          <span>max：{max}</span>
+        </div>
+      </div>
+    );`;
+    const labels = colonLabelsIn(source);
+    expect(labels.map((label) => `${label.tag}:${label.text}`)).toEqual(['div:IP', 'span:min', 'span:max']);
+    expect(labels.filter(isEnglishOnlyLabel).map((label) => label.text)).toEqual(['IP', 'min', 'max']);
+  });
+
+  it('日本語の欄名・Stripe の項目名は英字だけの欄名にしない', () => {
+    const source = `const B = ({ ip, id, price }: { ip: string; id: string; price: string }) => (
+      <div>
+        <div>IP アドレス: {ip}</div>
+        <span>Product ID:</span> {id}
+        <span>Price ID (月額):</span> {price}
+      </div>
+    );`;
+    const labels = colonLabelsIn(source);
+    expect(labels.map((label) => label.text)).toEqual(['IP アドレス', 'Product ID', 'Price ID (月額)']);
+    expect(labels.filter(isEnglishOnlyLabel)).toEqual([]);
+  });
+
+  it('入れ子の要素の末尾がコロンの文も欄名として拾う', () => {
+    const source = `const C = ({ v }: { v: string }) => <div><strong>Status:</strong> {v}</div>;`;
+    const labels = colonLabelsIn(source);
+    expect(labels.map(({ part, nestedTag, text }) => ({ part, nestedTag, text }))).toEqual([
+      { part: 'nested', nestedTag: 'strong', text: 'Status' },
+    ]);
+    expect(labels.filter(isEnglishOnlyLabel).map((label) => label.text)).toEqual(['Status']);
+  });
+
+  it('末尾がコロンでない文・上限より長い文・コロンだけの文は欄名にしない', () => {
+    const longSentence = 'A'.repeat(COLON_LABEL_MAX_LENGTH + 1);
+    const atLimit = 'B'.repeat(COLON_LABEL_MAX_LENGTH);
+    const source = `const D = ({ a, b }: { a: string; b: string }) => (
+      <div>
+        <div>MAU</div>
+        <span>{a}:{b}</span>
+        <span>${longSentence}:</span>
+        <span>${atLimit}:</span>
+        <span>{a} :</span>
+      </div>
+    );`;
+    expect(colonLabelsIn(source).map((label) => label.text)).toEqual([atLimit]);
   });
 });
 
@@ -295,6 +460,25 @@ describe('運営の画面の表の列名・欄名 (th・dt・label) に英字だ
   });
 });
 
+describe('運営の画面の span / div の欄名 (末尾がコロンの短い文) に英字だけの文が無い (#2166 X3)', () => {
+  it('走査の対象を取れている (span・div のどちらの欄名も拾えている)', () => {
+    for (const tag of COLON_LABEL_TAGS) {
+      expect(OPERATOR_COLON_LABELS.some((label) => label.tag === tag), tag).toBe(true);
+    }
+  });
+
+  it('英字だけの欄名は許可の表のものだけ', () => {
+    const englishOnly = OPERATOR_COLON_LABELS.filter(isEnglishOnlyLabel).map(describeLabel);
+    expect(englishOnly).toEqual([]);
+  });
+
+  it('許可の表の Stripe の項目名は今の画面のどこかで使っている (使われなくなった許可を残さない)', () => {
+    for (const name of STRIPE_FIELD_NAMES) {
+      expect(OPERATOR_COLON_LABELS.some((label) => isNamedAsStripeField(label.text, name)), name).toBe(true);
+    }
+  });
+});
+
 describe('直した欄の名前 (#2157 R2)', () => {
   it('バックアップの画面の監査の表の列は 操作・段階 / 理由・詳細', () => {
     const headers = labelTextsOf('src/app/super-admin/backups/page.tsx', 'th');
@@ -326,5 +510,38 @@ describe('直した欄の名前 (#2157 R2)', () => {
   it('請求書の詳細の Stripe の項目名は Stripe の画面と同じ名前のまま残す', () => {
     const texts = elementTextsIn('src/app/admin/finance/invoices/[id]/page.tsx', new Set(['span'])).map((label) => label.text);
     expect(texts).toEqual(expect.arrayContaining(['Stripe Customer', 'Stripe Subscription']));
+  });
+});
+
+describe('直した欄の名前 (#2166 X3)', () => {
+  it('監査ログの詳細の欄は「IP アドレス」(IP は出さない)', () => {
+    const labels = colonLabelNamesOf('src/app/super-admin/audit-logs/page.tsx');
+    expect(labels).toContain('IP アドレス');
+    expect(labels).not.toContain('IP');
+  });
+
+  it('指標のグラフの下の欄は「最小」「最大」(min・max は出さない)', () => {
+    const labels = colonLabelNamesOf('src/app/super-admin/infra/metrics/page.tsx');
+    expect(labels).toEqual(expect.arrayContaining(['最小', '最大']));
+    for (const old of ['min', 'max']) expect(labels).not.toContain(old);
+  });
+
+  it('売上の画面の利用者数のカードの欄名は「月間の利用者 (MAU)」(英字だけの MAU は出さない)', () => {
+    const texts = spanDivTextsOf('src/app/admin/finance/page.tsx', 'div');
+    expect(texts).toContain('月間の利用者 (MAU)');
+    expect(texts).not.toContain('MAU');
+  });
+
+  it('サポートの利用者の一覧の凍結の印は「利用停止」(BAN は出さない)', () => {
+    const texts = spanDivTextsOf('src/app/(support)/support/users/page.tsx', 'span');
+    expect(texts).toContain('利用停止');
+    expect(texts).not.toContain('BAN');
+  });
+
+  it('プランの詳細・請求書の詳細の Stripe の項目名は Stripe の画面と同じ名前のまま残す', () => {
+    expect(colonLabelNamesOf('src/app/super-admin/plans/[id]/page.tsx')).toEqual(
+      expect.arrayContaining(['Product ID', 'Price ID (月額)', 'Price ID (年額)']),
+    );
+    expect(spanDivTextsOf('src/app/admin/finance/invoices/[id]/page.tsx', 'div')).toContain('Stripe Event ID');
   });
 });
