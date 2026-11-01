@@ -168,13 +168,15 @@ describe('(#1149) AI 相談のアクションの実行が上限で止められ�
   const start = source.indexOf('const executeAction = async');
   const body = source.slice(start, source.indexOf('const rejectAction = async', start));
 
-  it('失敗の alert より前に、上限の応答 (aiDailyLimitMessageOfResponse) なら何も出さずに戻る', () => {
+  it('失敗の文 (チャット) より前に、上限の応答 (aiDailyLimitMessageOfResponse) なら何も出さずに戻る (alert は出さない。#2189 W1-a)', () => {
     expect(start).toBeGreaterThan(-1);
-    const alertAt = body.indexOf("alert('アクションの実行に失敗しました')");
+    // #2189 W1-a: 上限以外の失敗の応答は alert でなく、サーバーの文 (または固定の文) をチャットに出す
+    const failureAt = body.indexOf('consultationActionFailureMessageOf(body)');
     const limitAt = body.search(/if \(await aiDailyLimitMessageOfResponse\(res\)\) return;/);
-    expect(alertAt).toBeGreaterThan(-1);
+    expect(failureAt).toBeGreaterThan(-1);
     expect(limitAt).toBeGreaterThan(-1);
-    expect(limitAt).toBeLessThan(alertAt);
+    expect(limitAt).toBeLessThan(failureAt);
+    expect(body).not.toMatch(/\balert\(/);
     // 実行の呼び出しは aiFetch (上限の 429 なら AiDailyLimitHost が固定の文を出す)
     expect(body).toMatch(/await aiFetch\(`\/api\/ai\/consultation\/actions\/\$\{messageId\}\/execute`/);
   });

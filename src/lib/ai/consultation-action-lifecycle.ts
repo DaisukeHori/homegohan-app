@@ -17,10 +17,10 @@
  *     実行する (2 つの画面から同時に押しても二重に実行しない)。実行が終わったら上の決まりの状態に書き換える
  *   - GET は、行の状態から提案のカードを出すかと「実行する」を出すかを決める (proposedActionViewOf)
  *
- * このファイルはブラウザでも読み込む (サーバーの依存を import しない。型だけ)。
+ * このファイルはブラウザでも読み込む (サーバーの依存を import しない。型も import しない: 実行の本体
+ * (src/lib/ai/consultation-action-executor.ts) は AI へ送るコードに届くので、画面の部品からたどれる形にしない。
+ * tests/ai-consent-enforcement.test.ts の棚卸しが import をたどって確かめる)。
  */
-import type { ConsultationActionExecutionResult } from '@/lib/ai/consultation-action-executor';
-
 /** ai_action_logs.status の値 (DB の ai_action_logs_status_check と同じ 5 つ) */
 export const AI_ACTION_LOG_STATUS = {
   /** 実行を待っている (自動実行が失敗した・上限や同意で止めた)。「実行する」で実行できる */
@@ -62,8 +62,16 @@ export const AI_ACTION_TYPES_NOT_RETRYABLE_AFTER_FAILURE: ReadonlyMap<string, st
   ['generate_single_meal', '献立の生成は、呼び出しが失敗しても Edge Function が献立を書いていることがあり、やり直すと同じ枠に二重に書きうる'],
 ]);
 
-/** 実行の結果のうち、行の状態を決めるのに使う部分 */
-export type ConsultationActionRunForStatus = Pick<ConsultationActionExecutionResult, 'success' | 'unknownActionType' | 'aiDailyLimit'>;
+/**
+ * 実行の結果のうち、行の状態を決めるのに使う部分 (src/lib/ai/consultation-action-executor.ts の
+ * ConsultationActionExecutionResult の success・unknownActionType・aiDailyLimit と同じ意味)
+ */
+export interface ConsultationActionRunForStatus {
+  success: boolean;
+  unknownActionType?: boolean;
+  /** 今日の AI の利用回数の上限 (#1149) で実行しなかったとき (中身は見ない。あるかどうかだけ) */
+  aiDailyLimit?: unknown;
+}
 
 /** 実行が終わったあとの行の状態 (実行中の印 approved から書き換える先) */
 export type AiActionLogStatusAfterRun =
