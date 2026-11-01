@@ -106,7 +106,7 @@
 **検索バー**: 全文検索 (email/name/id)
 
 **フィルタパネル**:
-- ステータス (active / banned / deleted。選択肢は「全ステータス」と `USER_LIST_STATUSES` から作り、表示名は `USER_LIST_STATUS_LABELS` (アクティブ / BAN 済み / 削除済み)。削除済みの一覧は常に 0 件なので、0 件の文で退会したユーザーは記録が消えて出ないことを示す。#2107 Y10)
+- ステータス (active / banned / deleted。選択肢は「全ステータス」と `USER_LIST_STATUSES` から作り、表示名は `USER_LIST_STATUS_LABELS` (アクティブ / 凍結中 / 削除済み)。削除済みの一覧は常に 0 件なので、0 件の文で退会したユーザーは記録が消えて出ないことを示す。#2107 Y10)
 
 プラン・ロール・登録日・最終ログインの絞り込みは API (`GET /api/admin/users` の `plan`・`role`・`registered_from` / `registered_to`・`last_login_before`。operator/02 §4) だけにあり、画面には出していない
 
@@ -118,7 +118,7 @@
 | メール | email (無ければ `-`)。メールを見られるロール (`canViewUserEmail`) のときだけの列 |
 | プラン | バッジ (プランの表示名。`src/lib/admin/plan-key-labels.ts` の `adminPlanKeyLabel`: plan_key が空なら「無料プラン」、表に無い plan_key はそのまま。#2112 Z3) |
 | ロール | バッジ一覧 (ロールの表示名。`src/lib/admin/operator-role-labels.ts` の `operatorRoleLabel`: 表に無い値はそのまま。札の title に内部の値。利用者の詳細 (§6) のロールも同じ。#2120 W3-1) |
-| ステータス | アクティブ / BAN 済み (赤)。表示名は `USER_LIST_STATUS_LABELS` (#2112 Z3) |
+| ステータス | アクティブ / 凍結中 (赤)。表示名は `USER_LIST_STATUS_LABELS` (#2112 Z3) |
 | 登録日 | 日付 (`registered_at`。無ければ `-`) |
 | 操作 | 詳細へのリンク (`/admin/users/{id}`) |
 
@@ -133,7 +133,7 @@
 ```
 [基本情報セクション]
   名前 / email / 登録日 / 最終ログイン / プラン / ロール
-  [BAN ボタン] [ロール変更ボタン]
+  [凍結ボタン (凍結中は凍結解除)] [ロール変更ボタン]
 
 [タブ]
   食事記録 | AI 利用 | 健康データ | チケット | 監査ログ | 管理ノート
@@ -141,7 +141,7 @@
 
 **impersonate ボタン**: 提供しない (#1124)。以前は super_admin にだけ、押せない状態で表示していた。サポート (support) は、本人として操作せず、読み取り専用のユーザー画面 (この画面と `/support/users`) で対応する。
 
-**凍結 (BAN) の画面** (モーダルでなく専用のページ `/admin/users/[id]/freeze`。`src/components/admin/UserFreezeForm.tsx`。凍結中なら解除のフォーム (理由を入力して `DELETE`)):
+**凍結の画面** (見出しは「ユーザー凍結」、凍結中は「凍結解除」。モーダルでなく専用のページ `/admin/users/[id]/freeze`。`src/components/admin/UserFreezeForm.tsx`。凍結中なら解除のフォーム (理由を入力して `DELETE`)):
 - 理由カテゴリ (ドロップダウン)
 - 詳細テキストエリア
 - BAN 種別 (一時 / 永久。永久は super_admin だけが選べる)
