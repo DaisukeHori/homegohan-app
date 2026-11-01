@@ -27,7 +27,7 @@ export const LLM_USAGE_FROM_AFTER_TO_MESSAGE = '開始日は終了日と同じ�
 
 /** 1 日の上限に保存できる最大の回数。運営の入力の打ち間違い (桁の誤り) を止めるための上限 (DB の INTEGER の範囲より十分小さい) */
 export const AI_DAILY_LIMIT_MAX = 10_000;
-/** プランのキーの最大の長さ (subscription_plans.plan_key の実際の値より十分長い) */
+/** プランの鍵の最大の長さ (subscription_plans.plan_key の実際の値より十分長い) */
 const PLAN_KEY_MAX_LENGTH = 100;
 /** 変更の理由の最大の長さ (監査ログに残す) */
 const QUOTA_REASON_MAX_LENGTH = 500;
