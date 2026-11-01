@@ -1,3 +1,4 @@
+import { consultationAutoActionOutcomeOf, type ConsultationActionOutcome } from "@homegohan/shared";
 import { LinearGradient } from "expo-linear-gradient";
 import {
   Archive,
@@ -39,6 +40,7 @@ import {
   timeoutReloadOutcomeOf,
   type TimedOutSend,
 } from "../../lib/ai-chat-timeout";
+import { notifyAiConsultationDataChanged } from "../../lib/ai-consultation-data-changed";
 import { supabase } from "../../lib/supabase";
 import { colors, radius, shadows, spacing } from "../../theme";
 import { AIDayMenuModal } from "./AIDayMenuModal";
@@ -76,6 +78,19 @@ const WELCOME_MESSAGE: Message = {
     "こんにちは！🍳 ほめゴハンのAIアドバイザーです。\n\n食事や栄養のことで気になることがあれば、何でも聞いてくださいね。献立の提案や、買い物リストの作成もお手伝いできますよ！",
   createdAt: new Date().toISOString(),
 };
+
+/**
+ * 自動実行の結果 (成功・失敗) を、チャットに足す AI 側のメッセージにする (#2189 W2。Web の AIChatBubble.tsx の actionOutcomeChatMessage と同じ文)。
+ * id は結果を出す AI の返答の id から作る (同じ返答の結果は 1 つ。サーバーには保存しないので、相談を開き直すと出ない — Web と同じ)
+ */
+function autoActionOutcomeMessageOf(outcome: ConsultationActionOutcome, aiMessageId: string): Message {
+  return {
+    id: `action-${outcome.kind === "executed" ? "result" : "failed"}-${aiMessageId}`,
+    role: "assistant",
+    content: outcome.content,
+    createdAt: new Date().toISOString(),
+  };
+}
 
 const QUICK_QUESTIONS = [
   "献立を提案してほしい",
@@ -473,73 +488,87 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         throw errorOfFailedResponse(res.status, errText);
       }
 
-      if (!res.body) {
-        // SSE非対応環境: メッセージ一覧を再取得
-        await loadMessages(sessionId);
-        return;
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
       let accumulated = "";
       let finalHandled = false;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      // SSE の 1 行を読む。本文の断片は表示中の返答に足し、最後の finalData (aiMessage) で会話を確定させる
+      const handleSseLine = (line: string) => {
+        if (!line.startsWith("data: ")) return;
+        const raw = line.slice(6);
+        if (raw === "[DONE]") return;
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          const raw = line.slice(6);
-          if (raw === "[DONE]") continue;
-
-          let parsed: any;
-          try {
-            parsed = JSON.parse(raw);
-          } catch {
-            continue;
-          }
-
-          const chunk = parsed?.choices?.[0]?.delta?.content;
-          if (chunk) {
-            accumulated += chunk;
-            setStreamingContent(accumulated);
-            continue;
-          }
-
-          if (parsed?.aiMessage) {
-            finalHandled = true;
-            setStreamingContent(null);
-            const aiMsg: Message = {
-              id: parsed.aiMessage.id ?? `ai-${Date.now()}`,
-              role: "assistant",
-              content: parsed.aiMessage.content ?? accumulated,
-              createdAt:
-                parsed.aiMessage.createdAt ?? new Date().toISOString(),
-            };
-            setMessages((prev) => {
-              const withoutOptimistic = prev.filter(
-                (m) => !m.id.startsWith("local-")
-              );
-              const userMsg: Message = parsed.userMessage
-                ? {
-                    id: parsed.userMessage.id,
-                    role: "user",
-                    content: parsed.userMessage.content ?? trimmed,
-                    createdAt:
-                      parsed.userMessage.createdAt ??
-                      new Date().toISOString(),
-                  }
-                : optimistic;
-              return [...withoutOptimistic, userMsg, aiMsg];
-            });
-          }
+        let parsed: any;
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          return;
         }
+
+        const chunk = parsed?.choices?.[0]?.delta?.content;
+        if (chunk) {
+          accumulated += chunk;
+          setStreamingContent(accumulated);
+          return;
+        }
+
+        if (parsed?.aiMessage) {
+          finalHandled = true;
+          setStreamingContent(null);
+          const aiMsg: Message = {
+            id: parsed.aiMessage.id ?? `ai-${Date.now()}`,
+            role: "assistant",
+            content: parsed.aiMessage.content ?? accumulated,
+            createdAt:
+              parsed.aiMessage.createdAt ?? new Date().toISOString(),
+          };
+          // サーバーが提案を自動で実行した結果 (finalData の actionResult) を、AI の返答のすぐ後に AI 側のメッセージで出す。
+          // 失敗 (success が真でない) は成功の一文を出さず、失敗の文を出す。黙って失敗させない (#2189 W2。Web は #2183 Z1)
+          const autoAction = consultationAutoActionOutcomeOf(parsed);
+          const outcomeMessages: Message[] = autoAction ? [autoActionOutcomeMessageOf(autoAction.outcome, aiMsg.id)] : [];
+          setMessages((prev) => {
+            const withoutOptimistic = prev.filter(
+              (m) => !m.id.startsWith("local-")
+            );
+            const userMsg: Message = parsed.userMessage
+              ? {
+                  id: parsed.userMessage.id,
+                  role: "user",
+                  content: parsed.userMessage.content ?? trimmed,
+                  createdAt:
+                    parsed.userMessage.createdAt ??
+                    new Date().toISOString(),
+                }
+              : optimistic;
+            return [...withoutOptimistic, userMsg, aiMsg, ...outcomeMessages];
+          });
+          // 実行できたら、データ (献立・食事・買い物リストなど) を出すタブの WebView を読み込み直す (Web の mealPlanUpdated に当たる)
+          if (autoAction?.outcome.kind === "executed") notifyAiConsultationDataChanged();
+        }
+      };
+
+      if (res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) handleSseLine(line);
+        }
+        buffer += decoder.decode();
+        handleSseLine(buffer);
+      } else {
+        // 本文を流し読みできない環境: 最後まで受け取った本文を同じように行ごとに読む。
+        // 以前はメッセージ一覧を取り直すだけで、自動実行の結果 (finalData の actionResult) を捨てていた (#2189 W2)。
+        // 本文を読めない・何も読み取れなければ、下でメッセージ一覧を取り直す (以前と同じ)
+        const text = await res.text().catch(() => "");
+        for (const line of text.split("\n")) handleSseLine(line);
       }
 
       if (!finalHandled) {

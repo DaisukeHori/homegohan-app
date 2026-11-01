@@ -38,6 +38,7 @@ export * from './push-token-claim';
 export * from './push-notification-kinds';
 export * from './billing-plans';
 export * from './planned-meals-integrity';
+export * from './consultation-action-outcome';
 export type {
   Json,
   Database,

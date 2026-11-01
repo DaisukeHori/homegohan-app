@@ -492,6 +492,19 @@ true;
 `;
 }
 
+/**
+ * 今開いているページを読み込み直すスクリプト (AI 相談の提案の実行でデータが変わったとき。#2189 W2)。
+ * 自オリジンのページでだけ動く (外部ページ・読み込みに失敗した about:blank では何もしない)。
+ * 認証ブリッジのページ (BRIDGE_PAGE_PATH) の上では読み込み直さない: URL の code は一度しか使えない (#1036) ので、
+ * 同じ URL を読み直すとログインできない (ブリッジは next のパスへ移すので、ふつうはここに留まらない)。
+ * スクリプトは URL・トークン・code を持たない
+ */
+export function buildReloadCurrentPageScript(): string {
+  return buildOwnOriginOnlyScript(`
+  if (window.location.pathname === ${JSON.stringify(BRIDGE_PAGE_PATH)}) return;
+  window.location.reload();`);
+}
+
 // ── セッション取得と code 発行 ────────────────────────────────────────────────
 
 export interface BridgeSession {

@@ -40,12 +40,12 @@ beforeEach(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('ホームのタブ — Web の /home の WebView', () => {
-  it('WebViewScreen に path "/home" と testID "webview-home" を渡す', () => {
+  it('WebViewScreen に path "/home" と testID "webview-home" を渡し、AI 相談の提案の実行で読み込み直す (#2189 W2)', () => {
     const { getByTestId } = render(<HomeScreen />);
 
     expect(getByTestId('webview-home')).toBeTruthy();
     expect(mockWebViewScreenProps).toHaveLength(1);
-    expect(mockWebViewScreenProps[0]).toEqual({ path: '/home', testID: 'webview-home' });
+    expect(mockWebViewScreenProps[0]).toEqual({ path: '/home', testID: 'webview-home', reloadOnAiConsultationDataChange: true });
   });
 });
 

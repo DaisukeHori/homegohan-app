@@ -43,7 +43,15 @@ function ProfileSettingsHeader() {
 }
 
 export default function ProfileTab() {
-  return <WebViewScreen path="/profile" testID="webview-profile" header={<ProfileSettingsHeader />} />;
+  // AI 相談のシートが提案を実行してデータ (健康目標・好みなど) を変えたら読み込み直す (#2189 W2)
+  return (
+    <WebViewScreen
+      path="/profile"
+      testID="webview-profile"
+      header={<ProfileSettingsHeader />}
+      reloadOnAiConsultationDataChange
+    />
+  );
 }
 
 const styles = StyleSheet.create({

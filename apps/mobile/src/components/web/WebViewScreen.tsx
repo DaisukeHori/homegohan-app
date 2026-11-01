@@ -13,6 +13,7 @@ import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { useWebAuthMessages } from '../../lib/webViewAuthMessages';
 import { notifyLegalConsentAccepted, parseLegalConsentMessage } from '../../lib/legal-consent';
+import { subscribeAiConsultationDataChanged } from '../../lib/ai-consultation-data-changed';
 import {
   buildClearUserScopedWebStorageScript,
   readPendingWebViewUserScopedStorageClear,
@@ -24,6 +25,7 @@ import {
   buildNavigateScript,
   buildOriginGuardScript,
   buildOwnOriginOnlyScript,
+  buildReloadCurrentPageScript,
   buildWebUrl,
   decideNavigation,
   decideOpenWindow,
@@ -46,6 +48,10 @@ interface Props {
   // ウェルカム画面へ (router.replace('/'))。規約の同意画面 (app/legal-consent.tsx) だけが渡し、ウェルカムへ移らずに
   // Web の「同意しない」「登録をやめる」の後の案内を残す (#1442)
   afterSignOut?: () => void;
+  // true なら、AI 相談のシートが提案を実行してデータを変えたとき (notifyAiConsultationDataChanged) に、今のページを読み込み直す (#2189 W2)。
+  // AI 相談の提案が変えるデータ (献立・食事・買い物リスト・冷蔵庫・健康の記録・好みなど) を出すタブだけが渡す
+  // (ホーム・献立・比較・マイページ)。入力の途中の画面 (スキャンのタブ・規約の同意など) は渡さない (読み込み直すと入力が消える)
+  reloadOnAiConsultationDataChange?: boolean;
 }
 
 // 各タブの「受け持つ」パスの prefix と Expo Router のタブのルートの対応は、@homegohan/shared の NATIVE_APP_TABS だけが決める
@@ -144,7 +150,14 @@ type WebViewScreenBodyProps = Props & {
   onRetry: () => void;
 };
 
-const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({ path, testID, header, afterSignOut, onRetry }) => {
+const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({
+  path,
+  testID,
+  header,
+  afterSignOut,
+  reloadOnAiConsultationDataChange,
+  onRetry,
+}) => {
   const webViewRef = useRef<WebView>(null);
   const [uri, setUri] = useState<string | null>(null);
   // WebView を開くときに注入する前の利用者の localStorage の掃除 (#1037)。自オリジンのガード付き。掃除が要らなければ空
@@ -202,6 +215,16 @@ const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({ path, testID, hea
     });
     return unsubscribe;
   }, [navigation, path]);
+
+  // AI 相談のシートが提案を実行してデータを変えたら、今のページを読み込み直す (#2189 W2。src/lib/ai-consultation-data-changed.ts)。
+  // 読み込み直しは今の URL のまま (タブの中で移ったページ・クエリを保つ)。自オリジンのページでだけ動き、認証ブリッジのページでは動かない
+  // (buildReloadCurrentPageScript)。WebView がまだ無い (uri を作っている途中) ときは何もしない (これから最新を読み込む)
+  useEffect(() => {
+    if (!reloadOnAiConsultationDataChange) return undefined;
+    return subscribeAiConsultationDataChanged(() => {
+      webViewRef.current?.injectJavaScript(buildReloadCurrentPageScript());
+    });
+  }, [reloadOnAiConsultationDataChange]);
 
   useEffect(() => {
     // effectivePath が変わる/アンマウントした後に、遅れて返ってきた結果で URL を上書きしない
