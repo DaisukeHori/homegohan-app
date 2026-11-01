@@ -116,7 +116,8 @@ describe('#2183 Z3 append_recipe_to_collection の migration と戻し口', () =
   it('C-2: 関数の外の文は lock_timeout・COMMENT ON FUNCTION・REVOKE・GRANT だけ (表・ポリシー・行に触れない)', () => {
     expect(functionMatch, 'CREATE OR REPLACE FUNCTION の文が見つからない').not.toBeNull();
     const outside = migrationBody.replace(FUNCTION_STATEMENT, FUNCTION_PLACEHOLDER);
-    const statements = sqlStatementsOf(blankSqlStrings(outside));
+    // COMMENT の説明文だけを空にして比べる (説明文の語は文の検査の対象にしない。説明文に ; は無い)
+    const statements = sqlStatementsOf(outside).map((s) => (/^COMMENT\b/i.test(s) ? blankSqlStrings(s) : s));
     expect(statements).toEqual([
       MIGRATION_LOCK_TIMEOUT_STATEMENT,
       FUNCTION_PLACEHOLDER,
@@ -155,7 +156,7 @@ describe('#2183 Z3 append_recipe_to_collection の migration と戻し口', () =
   });
 
   it('C-5: EXECUTE は authenticated だけ (PUBLIC・anon・service_role から外す)', () => {
-    const statements = sqlStatementsOf(blankSqlStrings(migrationBody.replace(FUNCTION_STATEMENT, FUNCTION_PLACEHOLDER)));
+    const statements = sqlStatementsOf(migrationBody.replace(FUNCTION_STATEMENT, FUNCTION_PLACEHOLDER));
     expect(statements.filter((s) => /^REVOKE\b/i.test(s))).toEqual([APPEND_RECIPE_RPC_REVOKE_STATEMENT]);
     expect(statements.filter((s) => /^GRANT\b/i.test(s))).toEqual([APPEND_RECIPE_RPC_GRANT_STATEMENT]);
   });
