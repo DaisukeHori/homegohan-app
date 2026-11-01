@@ -191,8 +191,12 @@ async function recipeIdsOf(collectionId: string): Promise<string[] | null> {
   return (data as { recipe_ids: string[] | null }).recipe_ids;
 }
 
-function appendAs(jwt: string, collectionId: string, recipeId: string) {
-  return asUser(jwt).rpc(RECIPE_COLLECTIONS_APPEND_RECIPE_RPC, { p_collection_id: collectionId, p_recipe_id: recipeId });
+/**
+ * 本人の JWT で関数を呼ぶ。PostgREST のビルダーは then だけを持つ (catch が無い) ので、async で本物の Promise にして返す
+ * (lock-holder の runBehindHolder が呼び出しの結果に catch を付ける)
+ */
+async function appendAs(jwt: string, collectionId: string, recipeId: string) {
+  return await asUser(jwt).rpc(RECIPE_COLLECTIONS_APPEND_RECIPE_RPC, { p_collection_id: collectionId, p_recipe_id: recipeId });
 }
 
 function addToCollectionAction(userId: string, recipeId: string, collectionName: string): ConsultationActionRow {
