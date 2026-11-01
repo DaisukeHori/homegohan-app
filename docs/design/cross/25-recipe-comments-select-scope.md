@@ -101,7 +101,7 @@
 ### 0.6 読み方
 
 - 実装は §7 の正典コードを写す。§8 の契約 (ポリシーの名前・式・ロール) と §13 の定数の名前を変えない。
-- 実装の枝では本書を編集しない。番号の書き入れと改定履歴は、マージの後にオーケストレーターが docs の PR で当てる。本書に直すべき点は design-doc.patch に出し、deviations で報告する (§15)。
+- 実装の枝では本書を編集しない。番号の書き入れ (`20261101100000`) は、マージの後にオーケストレーターが docs の PR で当てた。本書に直すべき点は design-doc.patch に出し、deviations で報告する (§15)。
 - 表 3 点 (§9) とエラー表 (§10) は、レビューが最初に自分で作り直して突き合わせる対象。
 - 本書の TS のブロックは、`// tsc:skip` を 1 行目に持つものを除き、そのまま型検査を通る形で書いてある (import を省かない)。`// tsc:skip` のブロックは、テストの補助 (`tests/helpers/`・`tests/integration/helpers/`) を相対パスで import するテストファイルと、既存ファイルの差分の断片。
 - 本書の file:line は origin/main `0577f909f` (2026-11-01) の時点。
@@ -344,7 +344,7 @@ recipes の SELECT: Users can view public recipes  (hidden_at IS NULL OR 作者)
 
 ## 7. 正典コード
 
-### 7.1 `supabase/migrations/20261101100000_recipe_comments_select_scope.sql` (新。全文。番号はマージの直前に origin/main の `supabase/migrations` の最大より大きい値で確定し、1 行目・2 行目・戻し口の 1 行目を同じ番号にする)
+### 7.1 `supabase/migrations/20261101100000_recipe_comments_select_scope.sql` (新。全文。番号はマージの直前に origin/main の `supabase/migrations` の最大より大きい値として確定した。1 行目・2 行目・戻し口の 1 行目は同じ番号)
 
 ```sql
 -- migration: 20261101100000_recipe_comments_select_scope.sql
@@ -1446,10 +1446,10 @@ sequenceDiagram
 
 順番:
 
-1. 実装の枝で上の 8 ファイルを書く。番号は枝を切った時点の origin/main の最大より大きい値で仮に付け、マージの直前にもう一度 origin/main の最大と比べて付け直す (付け直すときは migration の 1 行目・2 行目と戻し口の 1 行目をそろえる。C-1 が見る)。本書の名指しは置き場 (`20261101100000`・`20261101100000`) のままにする。C-9 は「すべて置き場」でも緑になる (`findMigrationNumberProblems` は番号の名指しが 1 つも無ければ空の配列を返す)。本書に直すべき点 (§7.3 の `RECIPE_COMMENTS_SELECT_QUAL` の実測との差など) が見つかったら、設計書を直さず design-doc.patch に出し、deviations で報告する。
+1. 実装の枝で上の 8 ファイルを書く。番号は枝を切った時点の origin/main の最大より大きい値で仮に付け、マージの直前にもう一度 origin/main の最大と比べて付け直す (付け直すときは migration の 1 行目・2 行目と戻し口の 1 行目をそろえる。C-1 が見る)。本書の名指しは、実装の枝の間は置き場のままにし (C-9 は番号の名指しが 1 つも無ければ緑)、マージの後に `20261101100000` を全部同時に当てた (順番 4)。本書に直すべき点 (§7.3 の `RECIPE_COMMENTS_SELECT_QUAL` の実測との差など) が見つかったら、設計書を直さず design-doc.patch に出し、deviations で報告する。
 2. 全件 (単体・契約) と結合 (`tests/integration/rls`・`tests/integration/security`) が緑。
 3. 2 枚同時 PASS → オーナーの承認 → マージ。CI (`deploy-supabase-migrations.yml`) が本番へ当てる。`db:types` の生成し直しは要らない (表・関数を足さない。`tests/database-types-migrations-contract.test.ts` は反応しない)。
-4. 整合ゲート: 本番の `pg_policies` を SELECT で読む (§19)。マージの後に、オーケストレーターが docs の PR で次を当てる。本書の migration の名指しへの番号の書き入れ (全部を同時に。C-9 が混ざりを見る)・改定履歴の行 (冒頭の版の表と §22 の両方)・design-doc.patch があればその中身・cross/21 と cross/CLAUDE.md の追随 (§17)。
+4. 整合ゲート: 本番の `pg_policies` を SELECT で読む (§19)。マージの後に、オーケストレーターが docs の PR で次を当てた。本書の migration の名指しへの番号の書き入れ (全部を同時に。C-9 が混ざりを見る)・design-doc.patch の中身・cross/21 と cross/CLAUDE.md の追随 (§17)。
 
 ---
 
@@ -1481,7 +1481,7 @@ sequenceDiagram
 | `tests/integration-setup-transient-retry.test.ts` | `retryIdempotentSetup` | 反応しない (§7.5 は `user_profiles` の upsert を `retryIdempotentSetup` で行う。ほかの準備は新しい行の INSERT) | – | – |
 | `tests/supabase-service-role-client-scan.test.ts`・`tests/env-source-scan.test.ts` | `createClient(`・`process.env` (src・lib) | 反応しない (製品コードは注の 1 行しか変えない) | – | – |
 | `tests/docs-table-column-count.test.ts` | `docs/` の表 | 本書の表の列の数が揃っていなければ赤 | 本書の表を揃えて書いた (レビューで確かめる) | – |
-| `tests/design-doc-version-header-matches-history.test.ts` | `\| v1.0 \|`・`改定履歴` | 本書は冒頭の版の表と §22 改定履歴の両方を持つ。両方の最後の版が同じ (v1.0) | 改定のたびに両方に行を足す (マージ後の番号の書き入れでは、オーケストレーターの docs の PR が足す) | – |
+| `tests/design-doc-version-header-matches-history.test.ts` | `\| v1.0 \|`・`改定履歴` | 本書は冒頭の版の表と §22 改定履歴の両方を持つ。両方の最後の版が同じ (v1.0) | 改定のたびに両方に行を足す | – |
 | `tests/helpers/design-doc-migration-number.ts` | 本書の migration の名指し (`20261101100000`) | 当てはめは本書の C-9 が行う (置き場と番号が混ざると赤) | 番号は `20261101100000` で確定し、本書の名指しは全部この番号にした (§15 の順番 4) | – |
 | `tests/design-doc-followup-owned-edits.test.ts` | `OWNED_EDITS` | 反応しない (本書の §17 は cross/21 の行を「A」→「B」の形で持つが、この見張りは載せた行だけを見る。載せない) | – | – |
 | `scripts/baseline/*`・`supabase/baseline/**` | `catalog_policies`・`prod_schema.sql` | 反応しない (本番の過去の写し。取り直すまで変えない。`verify` はベースラインだけを当てた DB と比べる) | – | – |
