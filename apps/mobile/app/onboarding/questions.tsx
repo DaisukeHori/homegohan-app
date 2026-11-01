@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { PROFILE_NAME_PLACEHOLDER } from "@homegohan/shared";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
@@ -637,7 +638,7 @@ function toDbProfileUpdates(body: any, userId: string) {
   if (body.kitchenAppliances) updates.kitchen_appliances = body.kitchenAppliances;
   if (body.performanceProfile) updates.performance_profile = body.performanceProfile;
 
-  if (!updates.nickname) updates.nickname = "Guest";
+  if (!updates.nickname) updates.nickname = PROFILE_NAME_PLACEHOLDER;
   if (!updates.age_group && !updates.age) updates.age_group = "unspecified";
   if (!updates.gender) updates.gender = "unspecified";
 
@@ -905,7 +906,7 @@ export default function OnboardingQuestions() {
         };
       }
 
-      if (!updates.nickname) updates.nickname = "Guest";
+      if (!updates.nickname) updates.nickname = PROFILE_NAME_PLACEHOLDER;
       if (!updates.age_group && !updates.age) updates.age_group = "unspecified";
       if (!updates.gender) updates.gender = "unspecified";
 

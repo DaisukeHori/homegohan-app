@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { PROFILE_NAME_PLACEHOLDER } from '@homegohan/shared'
 import { generateRequestId } from '@/lib/db-logger'
 import { NextResponse } from 'next/server'
 import { OnboardingAnswersSchema } from '@/schemas/onboarding'
@@ -212,7 +213,7 @@ export async function POST(request: Request) {
     }
 
     // デフォルト値の補完
-    if (!updates.nickname) updates.nickname = 'Guest'
+    if (!updates.nickname) updates.nickname = PROFILE_NAME_PLACEHOLDER
     if (!updates.age_group && !updates.age) updates.age_group = 'unspecified'
     if (!updates.gender) updates.gender = 'unspecified'
 
