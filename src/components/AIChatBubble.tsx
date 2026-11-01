@@ -21,6 +21,12 @@ import { todayLocal, parseLocalDate, formatLocalDate } from "@/lib/date-utils";
 import { parseMarkdown } from "@/lib/markdown-lite";
 // AI 相談の緊急停止中 (503 + AI_CHAT_DISABLED) にサーバーが返すやさしい文面を、そのまま画面に出す (#1148)
 import { readAiChatUnavailableMessage } from "@/lib/ai/ai-chat-unavailable";
+// 提案の実行の結果 (成功・失敗) をチャットに出す一文。失敗 (success が偽) を『実行しました』と出さない (#2183 Z1)
+import {
+  AI_CONSULTATION_ACTION_FAILED_FALLBACK_MESSAGE,
+  consultationActionOutcomeOf,
+  type ConsultationActionOutcome,
+} from "@/lib/ai/consultation-action-outcome";
 
 const colors = {
   primary: '#E07A5F',
@@ -103,6 +109,33 @@ const ACTION_LABELS: Record<string, { label: string; icon: any; color: string }>
   // プロフィール関連
   update_profile_preferences: { label: '好み・習慣を更新', icon: User, color: colors.secondary },
 };
+
+/** アクションの種類の名前 (ACTION_LABELS に無い種類は『アクション』) */
+function actionLabelOf(type: unknown): string {
+  return (typeof type === 'string' && ACTION_LABELS[type]?.label) || 'アクション';
+}
+
+/** 提案の実行の結果 (成功・失敗) を、チャットに足す AI 側のメッセージにする (#2183 Z1) */
+function actionOutcomeChatMessage(outcome: ConsultationActionOutcome): Message {
+  return {
+    id: `action-${outcome.kind === 'executed' ? 'result' : 'failed'}-${Date.now()}`,
+    role: 'assistant',
+    content: outcome.content,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * 会話の続きの POST (SSE) の最後の finalData のうち、自動実行の結果を出すのに使う部分。
+ * actionResult は messages route の executeAndFinalizeAction の戻り値 ({ success, result }。種類は入っていない)
+ */
+interface AutoActionFinalData {
+  actionResult?: { success?: unknown; result?: unknown; actionType?: unknown } | null;
+  aiMessage?: { proposedActions?: { type?: unknown } | null } | null;
+}
+
+/** 自動実行の結果のメッセージを、AI の応答を確定させてから足すまでの間 (ミリ秒)。応答の表示の直後に重ねず、少し遅らせて出す */
+const AUTO_ACTION_OUTCOME_MESSAGE_DELAY_MS = 300;
 
 /** 献立の作成が、同意が無くて止められたときにチャットに出す一文 (T15 / #1154。同意画面は AiConsentRequiredHost が出す) */
 const V4_CONSENT_REQUIRED_CHAT_NOTE =
@@ -447,6 +480,27 @@ export default function AIChatBubble() {
     }
   };
 
+  // 会話の続きの POST がアクションを自動で実行した結果 (SSE の finalData の actionResult) をチャットに出す。
+  // 失敗 (success が偽) は『実行しました』と出さず、失敗の文を出す。黙って失敗させない (#2183 Z1)。提案 (proposedActions) は消さない
+  const showAutoActionOutcome = (finalData: AutoActionFinalData) => {
+    const actionResult = finalData.actionResult;
+    if (!actionResult) return;
+    // actionResult に種類は入っていないので、提案の種類から名前を引く
+    const actionType = actionResult.actionType ?? finalData.aiMessage?.proposedActions?.type;
+    const outcome = consultationActionOutcomeOf({
+      success: actionResult.success,
+      result: actionResult.result,
+      label: actionLabelOf(actionType),
+    });
+    setTimeout(() => {
+      setMessages(prev => [...prev, actionOutcomeChatMessage(outcome)]);
+      if (outcome.kind !== 'executed') return;
+      window.dispatchEvent(new CustomEvent('mealPlanUpdated', {
+        detail: { actionType, result: actionResult.result }
+      }));
+    }, AUTO_ACTION_OUTCOME_MESSAGE_DELAY_MS);
+  };
+
   // メッセージ送信（リアルストリーミング対応）
   const sendMessage = async () => {
     if (!inputText.trim() || !currentSessionId || isSending) return;
@@ -617,21 +671,8 @@ export default function AIChatBubble() {
           return m;
         }));
 
-        // アクション自動実行結果を表示
-        if (finalData.actionExecuted && finalData.actionResult) {
-          setTimeout(() => {
-            setMessages(prev => [...prev, {
-              id: `action-result-${Date.now()}`,
-              role: 'assistant',
-              content: `✅ ${ACTION_LABELS[finalData.actionResult.actionType]?.label || 'アクション'}を実行しました！`,
-              createdAt: new Date().toISOString(),
-            }]);
-
-            window.dispatchEvent(new CustomEvent('mealPlanUpdated', {
-              detail: { actionType: finalData.actionResult.actionType, result: finalData.actionResult.result }
-            }));
-          }, 300);
-        }
+        // アクション自動実行結果を表示 (失敗も黙らずに出す。#2183 Z1)
+        showAutoActionOutcome(finalData);
       } else {
         // finalDataがない場合（フォールバック）
         // #126: accumulatedContent が空の場合もエラー表示する
@@ -680,17 +721,18 @@ export default function AIChatBubble() {
 
       if (res.ok) {
         const data = await res.json();
-        
-        // 成功メッセージを追加
-        setMessages(prev => [
-          ...prev,
-          {
-            id: `action-result-${Date.now()}`,
-            role: 'assistant',
-            content: `✅ ${ACTION_LABELS[data.actionType]?.label || 'アクション'}を実行しました！`,
-            createdAt: new Date().toISOString(),
-          },
-        ]);
+
+        // 実行の API は、アクションが失敗したときも 200 で { success: false, result } を返す。success が true のときだけ
+        // 『実行しました』と出し、それ以外は失敗の文 (result.error か固定の文) を出す (#2183 Z1)
+        const outcome = consultationActionOutcomeOf({
+          success: data.success,
+          result: data.result,
+          label: actionLabelOf(data.actionType),
+        });
+        setMessages(prev => [...prev, actionOutcomeChatMessage(outcome)]);
+
+        // 失敗: 提案は消さずに残し、データの更新の通知もしない
+        if (outcome.kind !== 'executed') return;
 
         // アクションを削除（実行済みとして）
         setMessages(prev => prev.map(m => 
@@ -709,6 +751,11 @@ export default function AIChatBubble() {
       }
     } catch (e) {
       console.error('Failed to execute action:', e);
+      // 通信の失敗・応答が読めなかった: 黙らずに固定の失敗の文を出す (#2183 Z1)。提案は残っている
+      setMessages(prev => [
+        ...prev,
+        actionOutcomeChatMessage({ kind: 'failed', content: AI_CONSULTATION_ACTION_FAILED_FALLBACK_MESSAGE }),
+      ]);
     } finally {
       setExecutingActionId(null);
     }
@@ -1203,6 +1250,8 @@ export default function AIChatBubble() {
                                   if (m.id === tempAiMsgId) return { ...m, id: finalData.aiMessage.id, content: accumulatedContent || finalData.aiMessage.content, proposedActions: finalData.aiMessage.proposedActions ? { ...finalData.aiMessage.proposedActions, actionId: finalData.aiMessage.id } : null, isStreaming: false };
                                   return m;
                                 }));
+                                // アクション自動実行結果を表示 (送信欄から送ったときと同じ。失敗も黙らずに出す。#2183 Z1)
+                                showAutoActionOutcome(finalData);
                               } else {
                                 setMessages(prev => prev.map(m => m.id === tempAiMsgId ? { ...m, content: accumulatedContent, isStreaming: false } : m));
                               }
