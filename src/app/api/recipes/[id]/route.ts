@@ -5,6 +5,7 @@ import { recipeAuthorName } from '@/lib/recipes/author-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { API_FORBIDDEN_MESSAGE, API_INVALID_JSON_MESSAGE, API_NOT_FOUND_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { isUuid } from '@/lib/http-params';
+import { LIST_ORDERS, orderEmbeddedListBy } from '@/lib/api/list-order';
 import { loadRecipeViewerLookups } from '@/lib/recipes/viewer-lookups';
 import { RECIPE_NAME_REQUIRED_MESSAGE, isRecipeName } from '@/lib/recipes/recipe-body';
 
@@ -29,19 +30,24 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
   }
 
   // 作者の表示名と自分のいいね (recipe_likes) は埋め込まない (user_profiles・recipe_likes のどちらの埋め込みも PostgREST が解決できず、
-  // この API はいつも 500 になっていた。#1917。src/lib/recipes/viewer-lookups.ts)。コメントは recipes への外部キーが 1 本なので埋め込める
-  const { data, error } = await supabase
-    .from('recipes')
-    .select(`
-      *,
-      recipe_comments(
-        id,
-        content,
-        rating,
-        created_at,
-        user_id
-      )
-    `)
+  // この API はいつも 500 になっていた。#1917。src/lib/recipes/viewer-lookups.ts)。コメントは recipes への外部キーが 1 本なので埋め込める。
+  // 埋め込んだコメントは、コメントの一覧 (GET /api/recipes/[id]/comments) と同じ鍵 (書いた日時の新しい順 → id の順) で並べる
+  // (並びが無いと、コメントの順が問い合わせのたびに変わりうる。#2166 X6)
+  const { data, error } = await orderEmbeddedListBy(
+    supabase
+      .from('recipes')
+      .select(`
+        *,
+        recipe_comments(
+          id,
+          content,
+          rating,
+          created_at,
+          user_id
+        )
+      `),
+    LIST_ORDERS.recipeComments,
+  )
     .eq('id', params.id)
     // #1445: 行が見えない (存在しない・本人以外から見た非公開や運営が隠したレシピは RLS で 0 行になる) ときは 404。
     // .single() だと 0 行が PGRST116 のエラーになり、500 を返していた

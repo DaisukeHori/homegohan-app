@@ -37,6 +37,8 @@ function recipesQuery() {
   };
   const builder = {
     select: () => builder,
+    // 埋め込んだコメントの並び (#2166 X6)
+    order: () => builder,
     eq: () => builder,
     // 本物と同じく、0 行は .single() ではエラー、.maybeSingle() では data: null
     single: async () => {

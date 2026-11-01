@@ -11,7 +11,9 @@
  *      新しい側から読む一覧 (REVERSED_OF) だけは、元の一覧をそっくり逆にした鍵 (最後は id の降順)
  *   2. orderListBy は鍵をこの順に order へ渡し、最後の order の戻り値を返す
  *   3. 一覧を使うファイルは orderListBy(…, LIST_ORDERS.<一覧>) で並べ、その一覧の表を読む。
- *      LIST_ORDERS.<一覧> を使うファイルは、どれも EXPECTED のその一覧の uses に書いてある
+ *      LIST_ORDERS.<一覧> を使うファイルは、どれも EXPECTED のその一覧の uses に書いてある。
+ *      親の表の select に一覧の表を埋め込んで読む所 (uses の embeddedIn。#2166 X6) は、orderEmbeddedListBy(…, LIST_ORDERS.<一覧>) で
+ *      埋め込んだ行を並べ、親の表を読んで select に一覧の表を埋め込む。orderEmbeddedListBy は鍵ごとに一覧の表を referencedTable にして渡す
  *   4. SCANNED_ROUTE_DIRS の全部のファイルは .order( を直接書かない。並びの鍵がもう一意の所 (主キー・一意の制約の列で終わる、
  *      id で終える) だけは ALLOWED_DIRECT_ORDERS に理由つきで書き、そこに書いた列の順のとおりにだけ .order( を書く
  * 実物の PostgREST が鍵の列を受け付けることは tests/integration/rls/list-order-tiebreak.test.ts が確かめる。
@@ -19,7 +21,14 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { ID_TIEBREAK_KEY, LIST_ORDERS, NON_ID_TIEBREAK_COLUMNS, orderListBy, type ListOrderKey } from '@/lib/api/list-order';
+import {
+  ID_TIEBREAK_KEY,
+  LIST_ORDERS,
+  NON_ID_TIEBREAK_COLUMNS,
+  orderEmbeddedListBy,
+  orderListBy,
+  type ListOrderKey,
+} from '@/lib/api/list-order';
 import { AI_CONSENT_TABLE } from '../supabase/functions/_shared/ai-consent';
 
 const ROOT = process.cwd();
@@ -68,7 +77,15 @@ interface ListOrderUse {
    * expression を .from( に渡し、ファイルに definition の文があり、その値が value であることを見る
    */
   tableVia?: { expression: string; definition: string; value: string };
+  /**
+   * 一覧の表を親の表の select に埋め込んで読む所の、親の表 (.from( に渡す表。#2166 X6)。
+   * そこでは orderEmbeddedListBy(…, LIST_ORDERS.<一覧>) で埋め込んだ行を並べ、select に `<一覧の表>(` を書く
+   */
+  embeddedIn?: string;
 }
+
+/** RegExp に入れる文字列の特殊文字を全部逃がす */
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** src/lib/auth/sessions/store.ts は表の名前を TABLE に置いて読む */
 const SESSIONS_STORE_TABLE_VIA = {
@@ -380,7 +397,11 @@ const EXPECTED: Record<keyof typeof LIST_ORDERS, { table: string; keys: ListOrde
   recipeComments: {
     table: 'recipe_comments',
     keys: [desc('created_at'), ID_TIEBREAK_KEY],
-    uses: [{ file: 'src/app/api/recipes/[id]/comments/route.ts', handler: 'GET' }],
+    uses: [
+      { file: 'src/app/api/recipes/[id]/comments/route.ts', handler: 'GET' },
+      // レシピの詳細はコメントをレシピに埋め込んで返す (#2166 X6)
+      { file: 'src/app/api/recipes/[id]/route.ts', handler: 'GET', embeddedIn: 'recipes' },
+    ],
   },
   recipes: {
     table: 'recipes',
@@ -671,7 +692,8 @@ const ALLOWED_DIRECT_ORDERS: Record<string, { columns: string[]; reason: string 
   },
   'src/lib/api/list-order.ts': {
     columns: ['<key.column>'],
-    reason: 'orderListBy そのもの (LIST_ORDERS の鍵を順に重ねる。どの一覧も一意の鍵で終わることはこのテストが見る)',
+    reason:
+      'orderListBy と orderEmbeddedListBy の共通の中身 (LIST_ORDERS の鍵を順に重ねる。どの一覧も一意の鍵で終わることはこのテストが見る)',
   },
   'src/lib/data-subject-requests/service.ts': {
     columns: ['created_at', 'id', 'due_at', 'created_at', 'id'],
@@ -812,15 +834,51 @@ describe('#2134 U2 / #2139 T1 / #2144 S3 一覧の並びの同じ値の順', () 
       ['created_at', ASC_NULLS_LAST],
       ['id', ASC_NULLS_LAST],
     ]);
+    // 親の行を並べるので、埋め込んだ表を指す referencedTable は渡さない
+    expect(calls.filter(([, options]) => 'referencedTable' in options)).toEqual([]);
     expect(ordered.depth).toBe(LIST_ORDERS.orgDepartments.keys.length);
+  });
+
+  it('orderEmbeddedListBy は一覧の鍵をこの順に、一覧の表を referencedTable にして order へ渡し、最後の order の戻り値を返す (#2166 X6)', () => {
+    const calls: Array<[string, { ascending: boolean; nullsFirst: boolean; referencedTable?: string }]> = [];
+    interface RecordingQuery {
+      depth: number;
+      order(column: string, options: { ascending: boolean; nullsFirst: boolean; referencedTable?: string }): RecordingQuery;
+    }
+    const makeQuery = (depth: number): RecordingQuery => ({
+      depth,
+      order(column, options) {
+        calls.push([column, options]);
+        return makeQuery(depth + 1);
+      },
+    });
+
+    const ordered = orderEmbeddedListBy(makeQuery(0), LIST_ORDERS.recipeComments);
+
+    expect(calls).toStrictEqual([
+      ['created_at', { ...DESC_NULLS_FIRST, referencedTable: 'recipe_comments' }],
+      ['id', { ...ASC_NULLS_LAST, referencedTable: 'recipe_comments' }],
+    ]);
+    expect(ordered.depth).toBe(LIST_ORDERS.recipeComments.keys.length);
+    // 鍵の options そのものは書き換えない (LIST_ORDERS はほかの一覧の並びにも使う)
+    expect(LIST_ORDERS.recipeComments.keys).toEqual(EXPECTED.recipeComments.keys);
   });
 
   it.each(EXPECTED_USES)('%s: %s (%s) は LIST_ORDERS のこの一覧を orderListBy で使い、その表を読む', (name, file, handler, table) => {
     const body = handlerBodyOf(file, handler === 'ファイルの全体' ? null : handler);
+    const usesByName: Record<string, { uses: ListOrderUse[] }> = EXPECTED;
+    const use = usesByName[name].uses.find((candidate) => candidate.file === file);
+    const tableVia = use?.tableVia;
+    const embeddedIn = use?.embeddedIn;
+    if (embeddedIn !== undefined) {
+      // 親の表を読み、select に一覧の表を埋め込み、埋め込んだ行をこの一覧の鍵で並べる (#2166 X6)
+      expect(body).toMatch(new RegExp(`orderEmbeddedListBy\\([\\s\\S]*?LIST_ORDERS\\.${escapeRegExp(name)}\\b`));
+      expect([`.from('${embeddedIn}')`, `.from("${embeddedIn}")`].some((call) => body.includes(call)), `${file}: .from(<${embeddedIn}>)`).toBe(true);
+      expect(body, `${file}: select に ${table}( を埋め込む`).toMatch(new RegExp(`\\b${escapeRegExp(table)}\\s*\\(`));
+      return;
+    }
     expect(body).toContain('orderListBy(');
     expect(body).toMatch(new RegExp(`LIST_ORDERS\\.${name}\\b`));
-    const usesByName: Record<string, { uses: ListOrderUse[] }> = EXPECTED;
-    const tableVia = usesByName[name].uses.find((use) => use.file === file)?.tableVia;
     if (tableVia === undefined) {
       // 引用符は ' と " のどちらでもよい (リポジトリ直下の lib は " で書く)
       expect([`.from('${table}')`, `.from("${table}")`].some((call) => body.includes(call)), `${file}: .from(<${table}>)`).toBe(true);
@@ -839,6 +897,17 @@ describe('#2134 U2 / #2139 T1 / #2144 S3 一覧の並びの同じ値の順', () 
         if (!uses.some((use) => use.file === file)) unexpected.push(`${file}: LIST_ORDERS.${name}`);
       }
     }
+    expect(unexpected).toEqual([]);
+  });
+
+  it('orderEmbeddedListBy を使う走査の範囲のファイルは、どれも EXPECTED の uses に embeddedIn つきで書いてある (#2166 X6)', () => {
+    const embeddedFiles = Object.values(EXPECTED).flatMap((expected) =>
+      expected.uses.filter((use) => use.embeddedIn !== undefined).map((use) => use.file),
+    );
+    expect(embeddedFiles.length).toBeGreaterThan(0);
+    const unexpected = SCANNED_ROUTE_DIRS.flatMap(sourceFiles)
+      .filter((file) => file !== 'src/lib/api/list-order.ts' && sourceOf(file).includes('orderEmbeddedListBy('))
+      .filter((file) => !embeddedFiles.includes(file));
     expect(unexpected).toEqual([]);
   });
 

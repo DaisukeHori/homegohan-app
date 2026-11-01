@@ -5,6 +5,8 @@
  * 一意の鍵の昇順。新しい側から読む一覧は、元の一覧の鍵をそっくり逆にしたもの) で order を重ねた問い合わせをローカルの PostgREST に送り、
  * エラーにならないこと (= どの鍵の列も表にある) を見る。
  * 同じ値の行が id の順になることは PostgreSQL の ORDER BY の約束で、鍵の並びは tests/list-order-tiebreak-2134.test.ts が見る。
+ * 親の表に埋め込んで読む一覧 (#2166 X6) は、親の表の select に一覧の表を埋め込み、埋め込んだ行を orderEmbeddedListBy で並べても
+ * エラーにならないこと (= 埋め込んだ表の名前で並べられて、どの鍵の列もその表にある) を見る。
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh)。Next の開発サーバーは要らない (PostgREST を直接呼ぶ)。
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
@@ -15,7 +17,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, expect, it } from 'vitest';
 import ws from 'ws';
-import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
+import { LIST_ORDERS, orderEmbeddedListBy, orderListBy } from '@/lib/api/list-order';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -36,11 +38,26 @@ const srAdmin = client(serviceKey);
 /** 列の有無を見るだけなので、読む行は 1 行で足りる */
 const PROBE_ROW_LIMIT = 1;
 
+/**
+ * 親の表の select に埋め込んで読む一覧と、その親の表 (route と同じ組。tests/list-order-tiebreak-2134.test.ts の uses の embeddedIn)
+ * - recipeComments: GET /api/recipes/[id] がレシピ (recipes) に埋め込んで返すコメント (#2166 X6)
+ */
+const EMBEDDED_LIST_PROBES = [{ name: 'recipeComments', parentTable: 'recipes' }] as const;
+
 describe('#2134 U2 / #2139 T1 一覧の並びの鍵を PostgREST が受け付ける', () => {
   it.each(Object.entries(LIST_ORDERS))('%s: 表の全部の鍵の列を読んで並べてもエラーにならない', async (name, order) => {
     // id の無い表 (user_badges) もあるので、読むのは並びの鍵の列だけにする (select でも列の有無を確かめる)
     const columns = [...new Set(order.keys.map((key) => key.column))].join(',');
     const { error } = await orderListBy(srAdmin.from(order.table).select(columns), order).limit(PROBE_ROW_LIMIT);
     expect(error, `${name} (${order.table})`).toBeNull();
+  });
+
+  it.each(EMBEDDED_LIST_PROBES)('$name: $parentTable に埋め込んだ一覧の行を鍵で並べてもエラーにならない (#2166 X6)', async ({ name, parentTable }) => {
+    const order = LIST_ORDERS[name];
+    const columns = [...new Set(order.keys.map((key) => key.column))].join(',');
+    const { error } = await orderEmbeddedListBy(srAdmin.from(parentTable).select(`id,${order.table}(${columns})`), order).limit(
+      PROBE_ROW_LIMIT,
+    );
+    expect(error, `${name} (${parentTable} の ${order.table})`).toBeNull();
   });
 });
