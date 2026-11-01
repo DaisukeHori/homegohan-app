@@ -4,7 +4,7 @@
  * パッケージの feature_flags に両方のキーが残ること。
  *
  * 確かめること (I-n はこのファイルの it の番号):
- *   - I-1: カタログ: SECURITY INVOKER・STRICT・RETURNS text・search_path は空。EXECUTE は service_role だけ
+ *   - I-1: カタログ: SECURITY DEFINER・STRICT・RETURNS text・search_path は空。EXECUTE は service_role だけ
  *          (PUBLIC・anon・authenticated には無い)
  *   - I-2: service_role が足すと added で末尾に入り、updated_at が新しくなる。同じキーをもう一度足すと already_present で
  *          二重に入らず、行は変わらない。無いパッケージの鍵は not_found
@@ -210,7 +210,7 @@ afterAll(async () => {
 }, LONG);
 
 describe('#2189 W4 append_flag_to_feature_package (1 文の条件つき UPDATE)', () => {
-  it('I-1: カタログ: SECURITY INVOKER・STRICT・RETURNS text・search_path は空。EXECUTE は service_role だけ', async () => {
+  it('I-1: カタログ: SECURITY DEFINER・STRICT・RETURNS text・search_path は空。EXECUTE は service_role だけ', async () => {
     const rows = await pgQuery<{
       sig: string;
       secdef: boolean;
@@ -240,7 +240,7 @@ describe('#2189 W4 append_flag_to_feature_package (1 文の条件つき UPDATE)'
     expect(rows).toEqual([
       {
         sig: APPEND_FLAG_RPC_SIGNATURE,
-        secdef: false,
+        secdef: true,
         strict: true,
         rettype: 'text',
         config: ['search_path=""'],

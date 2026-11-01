@@ -8,8 +8,9 @@
  *   C-1 migration はちょうど 1 本。1 行目の見出しと 2 行目の「戻し方」がファイル名と一致し、戻し口が実在して、その 1 行目が対の
  *       migration を指す。番号は直前に main にあった最大より大きい
  *   C-2 関数の外の文は lock_timeout・COMMENT ON FUNCTION・REVOKE・GRANT だけ (追加だけ。表・ポリシー・行に触れない)
- *   C-3 関数の見出し: 名前と引数はアプリの定数と同じ。RETURNS text・LANGUAGE sql・STRICT・SECURITY INVOKER (DEFINER でない)・
- *       search_path を空に固定
+ *   C-3 関数の見出し: 名前と引数はアプリの定数と同じ。RETURNS text・LANGUAGE sql・STRICT・SECURITY DEFINER (運営の書き込みを
+ *       service_role でだけ行う表に書く DB の関数はそろえて DEFINER。tests/operator-session-writes-select-only-migration-contract.test.ts)・
+ *       search_path を空に固定 (DEFINER の関数が呼び出し側の search_path で別の表・関数を拾わないように)
  *   C-4 関数の本文は 1 文。feature_packages への UPDATE はちょうど 1 つで、array_append と「まだ入っていないとき」の条件を
  *       同じ文に持つ。返す値はアプリの結果の定数と同じ 3 つ
  *   C-5 EXECUTE は service_role だけ (PUBLIC・anon・authenticated から外す)
@@ -126,12 +127,12 @@ describe('#2189 W4 append_flag_to_feature_package の migration と戻し口', (
     }
   });
 
-  it('C-3: 関数の見出しはアプリの定数の名前と引数で、RETURNS text・LANGUAGE sql・STRICT・SECURITY INVOKER・search_path は空', () => {
+  it('C-3: 関数の見出しはアプリの定数の名前と引数で、RETURNS text・LANGUAGE sql・STRICT・SECURITY DEFINER・search_path は空', () => {
     expect(functionHeader.startsWith(`public.${FEATURE_PACKAGES_APPEND_FLAG_RPC}(${APPEND_FLAG_RPC_PARAMS}) `)).toBe(true);
-    for (const clause of [/\bRETURNS text\b/i, /\bLANGUAGE sql\b/i, /\bSTRICT\b/i, /\bSECURITY INVOKER\b/i, /\bSET search_path = ''(?=\s|$)/i]) {
+    for (const clause of [/\bRETURNS text\b/i, /\bLANGUAGE sql\b/i, /\bSTRICT\b/i, /\bSECURITY DEFINER\b/i, /\bSET search_path = ''(?=\s|$)/i]) {
       expect(functionHeader, String(clause)).toMatch(clause);
     }
-    expect(functionHeader).not.toMatch(/\bSECURITY DEFINER\b/i);
+    expect(functionHeader).not.toMatch(/\bSECURITY INVOKER\b/i);
     expect(functionHeader).not.toMatch(/\bRETURNS\s+(?:SETOF|TABLE)\b/i);
   });
 

@@ -19,13 +19,16 @@
 --         'already_present' このパッケージに既に入っていた (何も書かない)
 --         'not_found'       この鍵 (package_key) のパッケージが無い (何も書かない)
 --       UPDATE と同じ 1 文の中で、UPDATE が書かなかったときにパッケージがあるかを見て分ける (データを変える CTE + SELECT)。
---     - SECURITY INVOKER: 呼び出した役割の権限で動く。呼ぶのは service_role だけ (運営最上位の確認 requireRole(['super_admin']) を
---       アプリが済ませたあと)。DEFINER にしなくても service_role は表を書けるので、INVOKER で足りる。
+--     - SECURITY DEFINER (所有者 postgres の権限で書く): feature_packages は運営の書き込みを service_role でだけ行う表の 1 つで、
+--       この表に書く DB の関数は SECURITY DEFINER にそろえている (tests/operator-session-writes-select-only-migration-contract.test.ts の
+--       DB_FUNCTION_WRITERS。表の権限・ポリシーの変更の影響を受けない)。呼べるのは service_role だけなので (下の EXECUTE)、
+--       DEFINER にしても呼べる人は増えない。呼ぶのはアプリが運営最上位の確認 requireRole(['super_admin']) を済ませたあと。
+--       tests/integration/security/anon-definer-execute.test.ts の決定表に行を足した (anon・authenticated は不可、service_role は可)。
 --     - STRICT: 引数に NULL があれば何もせず NULL を返す (アプリは失敗として扱う)。
 --     - search_path は空にし、表と型は schema つき (型は pg_catalog の character varying) で書く。
 --     - EXECUTE は service_role だけ。PUBLIC・anon・authenticated から外す
 --       (呼び出し元はサーバーの service_role のクライアントだけ。ログインした利用者に、どのパッケージにもキーを足せる口を開けない)。
---       tests/integration/security/anon-invoker-execute.test.ts の A1 (anon が EXECUTE できる SECURITY INVOKER の関数は許可一覧だけ) を満たす。
+--       anon-definer-execute.test.ts の A (anon が EXECUTE できる SECURITY DEFINER の関数は許可一覧だけ) を満たす。
 --
 -- 既存データへの影響: なし (関数を作るだけ)。
 -- 冪等: CREATE OR REPLACE FUNCTION と REVOKE / GRANT のため、2 回続けて適用してもエラーにならない。
@@ -41,7 +44,7 @@ RETURNS text
 LANGUAGE sql
 VOLATILE
 STRICT
-SECURITY INVOKER
+SECURITY DEFINER
 SET search_path = ''
 AS $$
   WITH appended AS (
@@ -63,7 +66,7 @@ AS $$
 $$;
 
 COMMENT ON FUNCTION public.append_flag_to_feature_package(text, text) IS
-  '#2189 W4: 機能パッケージのフラグキーの一覧に、まだ入っていなければキーを 1 つ足す (1 文の条件つき UPDATE)。added / already_present / not_found を返す。EXECUTE は service_role だけ。';
+  '#2189 W4: 機能パッケージのフラグキーの一覧に、まだ入っていなければキーを 1 つ足す (1 文の条件つき UPDATE)。added / already_present / not_found を返す。SECURITY DEFINER・EXECUTE は service_role だけ。';
 
 REVOKE ALL ON FUNCTION public.append_flag_to_feature_package(text, text) FROM PUBLIC, anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.append_flag_to_feature_package(text, text) TO service_role;
