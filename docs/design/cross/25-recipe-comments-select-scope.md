@@ -32,7 +32,7 @@
 | 2 | コメントを書いた本人の行を、レシピの見え方に関わらず残すか | 残す (`user_id = auth.uid()`)。本人の書き出し・削除・訂正と、`INSERT ... RETURNING` の整合のため (§6.2) |
 | 3 | ポリシーの名前と作り方 (`ALTER POLICY` で式だけ替えるか、消して作り直すか) | 消して `recipe_comments_select_own_or_visible_recipe` を作る (名前が意味を持つ。番兵の語になる) (§6.3) |
 | 4 | 対象ロール (`TO authenticated` のままか、anon にも開くか) | `TO authenticated` のまま。未ログインは今までどおり 0 行 (§6.4) |
-| 5 | 戻し口 | `supabase/rollbacks/<同じ番号>_recipe_comments_select_scope.down.sql`。ベースラインの定義に逐語で戻す (§6.5・§7.2) |
+| 5 | 戻し口 | `supabase/rollbacks/20261101100000_recipe_comments_select_scope.down.sql`。ベースラインの定義に逐語で戻す (§6.5・§7.2) |
 | 6 | テスト (契約・結合・API) | 契約 (静的) 1 本 (新)・結合 (実 DB・PostgREST 直) 1 本 (新)・API の結合 2 件 (既存の `recipes-api-logged-in.test.ts` に追記) (§6.6・§12) |
 | 7 | 消費経路の閉包 (設計後に読めなくなる正当な読み手が無いか) | 無い。RLS の上の読み手は 4 経路で、どれも「見えるレシピのコメント」か「本人の行」しか要らない。SECURITY DEFINER の関数と service_role は RLS を通らない (§6.7・§9.1 (b)) |
 | 8 | プライバシーポリシー第9条との一致 | 作者のいるレシピでは一致する (他人に見えるのは、公開で隠されていないレシピへのコメントだけ。本人の行と作者のレシピのコメントは第9条の射程の外側で、第三者提供ではない)。例外が 1 つある。作者のいない非公開で隠されていないレシピ (P-7a) は、`recipes` の RLS がレシピそのものを全員に返す。なので、そのコメントも他人に見える。これは `recipes` 側の規則で、本書の範囲の外 (§21 Q-5)。本番の行は 0 で、この状態を作るアプリの経路は無い (§6.8) |
@@ -56,7 +56,7 @@
 | R-11 | 結合テストで、非公開・隠したレシピのコメントが他人に 0 行・本人と作者には見える・公開のレシピのコメントは今どおり、を確かめる。直す前の形 (migration 無し) で赤くなる | Issue #2166 X1 の直し方 | §7.5・§12 |
 | R-12 | 契約テストで、migration と戻し口の文面・ポリシーの最終の状態・`recipes` の SELECT のポリシー (本書の判定の土台) の定義・RLS の上の読み手の閉包を機械で見張る | cross/21・cross/23 の契約テストの形 | §7.4・§12 |
 | R-13 | `src/lib/account-export-tables.ts` のコメント「recipe_likes / recipe_comments は RLS 上「誰でも閲覧可」」を事実に直す (絞り込み `self('user_id')` は変えない) | 記述が事実と食い違う | §7.6 |
-| R-14 | migration のファイル名の番号は、マージの直前に origin/main の `supabase/migrations` の最大 (本書の時点 `20261101090000`) より大きい番号で確定する。設計書は置き場 `<番号はマージ時に確定>` / `<同じ番号>` で書く | `tests/helpers/design-doc-migration-number.ts` | §7.1・§7.2・§15 |
+| R-14 | migration のファイル名の番号は `20261101100000` (マージの直前に origin/main の `supabase/migrations` の最大 `20261101090000` より大きい番号で確定した) | `tests/helpers/design-doc-migration-number.ts` | §7.1・§7.2・§15 |
 | R-15 | 本番への適用はオーナーの名指しの承認の後 | 前提 | §19 |
 | R-16 | マジックナンバーを書かない。テストで値を RegExp に入れるときは特殊文字を逃がす | 共通の規律 | §7.3〜§7.5・§13 |
 
@@ -101,7 +101,7 @@
 ### 0.6 読み方
 
 - 実装は §7 の正典コードを写す。§8 の契約 (ポリシーの名前・式・ロール) と §13 の定数の名前を変えない。
-- 実装の枝では本書を編集しない。番号の書き入れと改定履歴は、マージの後にオーケストレーターが docs の PR で当てる。本書に直すべき点は design-doc.patch に出し、deviations で報告する (§15)。
+- 実装の枝では本書を編集しない。番号の書き入れ (`20261101100000`) は、マージの後にオーケストレーターが docs の PR で当てた。本書に直すべき点は design-doc.patch に出し、deviations で報告する (§15)。
 - 表 3 点 (§9) とエラー表 (§10) は、レビューが最初に自分で作り直して突き合わせる対象。
 - 本書の TS のブロックは、`// tsc:skip` を 1 行目に持つものを除き、そのまま型検査を通る形で書いてある (import を省かない)。`// tsc:skip` のブロックは、テストの補助 (`tests/helpers/`・`tests/integration/helpers/`) を相対パスで import するテストファイルと、既存ファイルの差分の断片。
 - 本書の file:line は origin/main `0577f909f` (2026-11-01) の時点。
@@ -292,7 +292,7 @@ recipes の SELECT: Users can view public recipes  (hidden_at IS NULL OR 作者)
 
 ### 6.5 戻し口 (決めること 5)
 
-`supabase/rollbacks/<同じ番号>_recipe_comments_select_scope.down.sql`。新しいポリシーを消し、`Anyone can view comments` をベースライン (`20251126124224:9602`) と同じ定義 (`FOR SELECT TO authenticated USING (true)`) で作り直す。GRANT は書かない (本書の migration も触れていない。20261022190000 より後の戻し口の規律)。
+`supabase/rollbacks/20261101100000_recipe_comments_select_scope.down.sql`。新しいポリシーを消し、`Anyone can view comments` をベースライン (`20251126124224:9602`) と同じ定義 (`FOR SELECT TO authenticated USING (true)`) で作り直す。GRANT は書かない (本書の migration も触れていない。20261022190000 より後の戻し口の規律)。
 
 ### 6.6 テスト (決めること 6)
 
@@ -303,7 +303,7 @@ recipes の SELECT: Users can view public recipes  (hidden_at IS NULL OR 作者)
 | API の結合 (開発サーバー) | 既存に追記 | `tests/integration/security/recipes-api-logged-in.test.ts` に A-1・A-2 (§7.7) |
 | 補助 (正典の値。何も import しない) | 新 | `tests/helpers/recipe-comments-select-scope.ts` (§7.3) |
 
-結合テストは、migration を流す前の DB では I-2・I-3・I-4・I-6・I-9 と A-1 が赤になる (他人に見える・ポリシーの名前が違う)。
+結合テストは、migration を流す前の DB では I-2・I-3・I-4・I-6・I-8・I-9 (1 つ目の it)・I-11 と A-1 が赤になる (他人に見える・ポリシーの名前が違う)。I-10 は I-6 が途中で落ちて `publicVisible` が非公開のまま残ると、連鎖で赤になる。
 
 ### 6.7 消費経路の閉包 (決めること 7)
 
@@ -344,11 +344,11 @@ recipes の SELECT: Users can view public recipes  (hidden_at IS NULL OR 作者)
 
 ## 7. 正典コード
 
-### 7.1 `supabase/migrations/<番号はマージ時に確定>_recipe_comments_select_scope.sql` (新。全文。番号はマージの直前に origin/main の `supabase/migrations` の最大より大きい値で確定し、1 行目・2 行目・戻し口の 1 行目を同じ番号にする)
+### 7.1 `supabase/migrations/20261101100000_recipe_comments_select_scope.sql` (新。全文。番号はマージの直前に origin/main の `supabase/migrations` の最大より大きい値として確定した。1 行目・2 行目・戻し口の 1 行目は同じ番号)
 
 ```sql
--- migration: <番号はマージ時に確定>_recipe_comments_select_scope.sql
--- 戻し方: supabase/rollbacks/<同じ番号>_recipe_comments_select_scope.down.sql
+-- migration: 20261101100000_recipe_comments_select_scope.sql
+-- 戻し方: supabase/rollbacks/20261101100000_recipe_comments_select_scope.down.sql
 -- #2166 X1 (docs/design/cross/25-recipe-comments-select-scope.md): 公開レシピのコメントの読み取りの範囲を、
 -- 「そのコメントのレシピを読める人」と「そのコメントを書いた本人」に絞る。
 --
@@ -394,10 +394,10 @@ CREATE POLICY recipe_comments_select_own_or_visible_recipe ON public.recipe_comm
 
 `CREATE POLICY` の文は 1 行で書く (契約テスト C-4 と、ほかの契約テストの解析器 (行頭の `CREATE POLICY <名前> ON public.<表> ` を 1 行で読む) の前提)。
 
-### 7.2 `supabase/rollbacks/<同じ番号>_recipe_comments_select_scope.down.sql` (新。全文)
+### 7.2 `supabase/rollbacks/20261101100000_recipe_comments_select_scope.down.sql` (新。全文)
 
 ```sql
--- rollback: <同じ番号>_recipe_comments_select_scope.sql
+-- rollback: 20261101100000_recipe_comments_select_scope.sql
 -- #2166 X1 (docs/design/cross/25-recipe-comments-select-scope.md) で絞った recipe_comments の SELECT のポリシーを、この migration の
 -- 直前の形 (本番のベースライン 20251126124224_create_meal_planner_tables.sql の "Anyone can view comments" FOR SELECT TO authenticated
 -- USING (true)) に戻す。
@@ -428,7 +428,7 @@ CREATE POLICY "Anyone can view comments" ON public.recipe_comments FOR SELECT TO
 
 /** 対象の表 */
 export const RECIPE_COMMENTS_TABLE = 'recipe_comments';
-/** migration のファイル名の、番号の後ろの名前 (`<番号>_recipe_comments_select_scope.sql`) */
+/** migration のファイル名の、番号の後ろの名前 (`20261101100000_recipe_comments_select_scope.sql` の番号の後ろ) */
 export const RECIPE_COMMENTS_SELECT_SCOPE_MIGRATION_NAME = 'recipe_comments_select_scope';
 /** 本書の直前の SELECT のポリシー (本番のベースライン。USING (true)) */
 export const RECIPE_COMMENTS_LEGACY_SELECT_POLICY = 'Anyone can view comments';
@@ -757,7 +757,7 @@ describe('C-9: 設計書 cross/25 の migration の番号', () => {
  * cross/25 (#2166 X1): recipe_comments の SELECT のポリシーを「そのコメントのレシピを読める人」と「書いた本人」に絞る migration
  * (*_recipe_comments_select_scope.sql) の実 DB での振る舞い。設計: docs/design/cross/25-recipe-comments-select-scope.md §7.5
  *
- * 修正前 (migration を流す前) は I-2・I-3・I-4・I-6・I-9 が赤になる (他人に全行が見える・ポリシーの名前が違う)。
+ * 修正前 (migration を流す前) は I-2・I-3・I-4・I-6・I-8・I-9・I-11 が赤になる (他人に全行が見える・ポリシーの名前が違う)。I-6 が途中で落ちると I-10 も連鎖で赤になる。
  *
  * 登場する人 (設計書 §0.3): A = レシピの作者、C = コメントを書いた人、V = ほかのログインした利用者、anon = 未ログイン、SR = service_role。
  * レシピ (system* の 3 つは作者なし。ほかは A のもの): publicVisible・privateRecipe・publicHidden・privateHidden・systemVisible・systemPrivate・systemHidden。
@@ -1270,7 +1270,7 @@ describe('他人から見た非公開のレシピのコメント (cross/25。#21
 | INSERT / UPDATE / DELETE のポリシー・GRANT | 本人の行 | 変更なし |
 | 作者名の関数 | DEFINER で全行 | 同じ |
 | `pg_policies` の `recipe_comments` の行 | 4 本 (旧 SELECT) | 4 本 (新 SELECT) |
-| 戻し口 | 無い | `<同じ番号>_recipe_comments_select_scope.down.sql` |
+| 戻し口 | 無い | `20261101100000_recipe_comments_select_scope.down.sql` |
 | `src/lib/account-export-tables.ts:182` の注 | 「recipe_likes / recipe_comments は RLS 上「誰でも閲覧可」」 | §7.6 の文 |
 | cross/21 F-16・F-19b・§7.12 | 「`Anyone can view comments` (USING true)」 | §17 の文に差し替え (別の docs PR) |
 | cross/CLAUDE.md のファイル一覧 | 24 まで | `25-recipe-comments-select-scope.md` の行 (§17) |
@@ -1379,7 +1379,7 @@ sequenceDiagram
 | `tests/integration/security/recipes-api-logged-in.test.ts` (既存に追記) | `A-1: GET /api/recipes/[id]/comments: 他人には非公開のレシピのコメントが 0 件 (200。以前は作者のコメントが返った)` / `A-2: GET /api/recipes/[id]: 他人には非公開のレシピが 404 (今までどおり)` |
 | `tests/integration/security/account-export-scope.test.ts` (既存。it 名だけ) | `A の JWT で、B の公開レシピへの B のコメント (読めるレシピのコメント) と B のいいね (誰でも閲覧可) が読める` |
 
-直す前の形で赤になるもの (R-11): I-2・I-3・I-4・I-6・I-9・A-1 と、契約テスト C-1〜C-5・C-8・C-9 (migration が無い・注が古い)。
+直す前の形で赤になるもの (R-11): I-2・I-3・I-4・I-6・I-8・I-9・I-11・A-1 (I-10 は I-6 の連鎖で赤) と、契約テスト C-1〜C-5・C-8・C-9 (migration が無い・注が古い)。
 
 ### 12.1 シナリオ ⇄ テスト
 
@@ -1409,7 +1409,7 @@ sequenceDiagram
 
 | 名前 | 値 | 置き場 | 根拠 |
 |---|---|---|---|
-| migration の名前 | `recipe_comments_select_scope` (ファイル名 `<番号>_recipe_comments_select_scope.sql`) | §7.1・`RECIPE_COMMENTS_SELECT_SCOPE_MIGRATION_NAME` | 内容 (SELECT の範囲) を表す |
+| migration の名前 | `recipe_comments_select_scope` (ファイル名 `20261101100000_recipe_comments_select_scope.sql`) | §7.1・`RECIPE_COMMENTS_SELECT_SCOPE_MIGRATION_NAME` | 内容 (SELECT の範囲) を表す |
 | 新しいポリシー | `recipe_comments_select_own_or_visible_recipe` | §7.1・`RECIPE_COMMENTS_SELECT_POLICY` | `<表>_<種類>_<誰>` の形 (20261024140000 以後) |
 | 旧ポリシー | `Anyone can view comments` | §7.2・`RECIPE_COMMENTS_LEGACY_SELECT_POLICY` | ベースライン :9602 |
 | USING の式 | `((user_id = auth.uid()) OR (EXISTS (SELECT 1 FROM public.recipes r WHERE r.id = recipe_comments.recipe_id)))` | §7.1・`RECIPE_COMMENTS_SELECT_USING` | §6.1 |
@@ -1426,8 +1426,8 @@ sequenceDiagram
 
 | 種類 | 名前 | 節 |
 |---|---|---|
-| migration | `supabase/migrations/<番号はマージ時に確定>_recipe_comments_select_scope.sql` | §7.1 |
-| 戻し口 | `supabase/rollbacks/<同じ番号>_recipe_comments_select_scope.down.sql` | §7.2 |
+| migration | `supabase/migrations/20261101100000_recipe_comments_select_scope.sql` | §7.1 |
+| 戻し口 | `supabase/rollbacks/20261101100000_recipe_comments_select_scope.down.sql` | §7.2 |
 | RLS ポリシー | `recipe_comments_select_own_or_visible_recipe` (`public.recipe_comments`・SELECT・authenticated) | §7.1 |
 | テストの補助 | `tests/helpers/recipe-comments-select-scope.ts` | §7.3 |
 | 契約テスト | `tests/recipe-comments-select-scope-migration-contract.test.ts` | §7.4 |
@@ -1442,14 +1442,14 @@ sequenceDiagram
 
 | 段 | 触るファイル (母集合。これ以外は触らない) |
 |---|---|
-| 1 (唯一) | `supabase/migrations/<番号>_recipe_comments_select_scope.sql` (新)・`supabase/rollbacks/<同じ番号>_recipe_comments_select_scope.down.sql` (新)・`tests/helpers/recipe-comments-select-scope.ts` (新)・`tests/recipe-comments-select-scope-migration-contract.test.ts` (新)・`tests/integration/rls/recipe-comments-select-scope.test.ts` (新)・`tests/integration/security/recipes-api-logged-in.test.ts` (追記)・`tests/integration/security/account-export-scope.test.ts` (it 名 1 行)・`src/lib/account-export-tables.ts` (注 1 行)。設計書 (本書) は実装の枝で編集しない (下の順番 4) |
+| 1 (唯一) | `supabase/migrations/20261101100000_recipe_comments_select_scope.sql` (新)・`supabase/rollbacks/20261101100000_recipe_comments_select_scope.down.sql` (新)・`tests/helpers/recipe-comments-select-scope.ts` (新)・`tests/recipe-comments-select-scope-migration-contract.test.ts` (新)・`tests/integration/rls/recipe-comments-select-scope.test.ts` (新)・`tests/integration/security/recipes-api-logged-in.test.ts` (追記)・`tests/integration/security/account-export-scope.test.ts` (it 名 1 行)・`src/lib/account-export-tables.ts` (注 1 行)。設計書 (本書) は実装の枝で編集しない (下の順番 4) |
 
 順番:
 
-1. 実装の枝で上の 8 ファイルを書く。番号は枝を切った時点の origin/main の最大より大きい値で仮に付け、マージの直前にもう一度 origin/main の最大と比べて付け直す (付け直すときは migration の 1 行目・2 行目と戻し口の 1 行目をそろえる。C-1 が見る)。本書の名指しは置き場 (`<番号はマージ時に確定>`・`<同じ番号>`) のままにする。C-9 は「すべて置き場」でも緑になる (`findMigrationNumberProblems` は番号の名指しが 1 つも無ければ空の配列を返す)。本書に直すべき点 (§7.3 の `RECIPE_COMMENTS_SELECT_QUAL` の実測との差など) が見つかったら、設計書を直さず design-doc.patch に出し、deviations で報告する。
+1. 実装の枝で上の 8 ファイルを書く。番号は枝を切った時点の origin/main の最大より大きい値で仮に付け、マージの直前にもう一度 origin/main の最大と比べて付け直す (付け直すときは migration の 1 行目・2 行目と戻し口の 1 行目をそろえる。C-1 が見る)。本書の名指しは、実装の枝の間は置き場のままにし (C-9 は番号の名指しが 1 つも無ければ緑)、マージの後に `20261101100000` を全部同時に当てた (順番 4)。本書に直すべき点 (§7.3 の `RECIPE_COMMENTS_SELECT_QUAL` の実測との差など) が見つかったら、設計書を直さず design-doc.patch に出し、deviations で報告する。
 2. 全件 (単体・契約) と結合 (`tests/integration/rls`・`tests/integration/security`) が緑。
 3. 2 枚同時 PASS → オーナーの承認 → マージ。CI (`deploy-supabase-migrations.yml`) が本番へ当てる。`db:types` の生成し直しは要らない (表・関数を足さない。`tests/database-types-migrations-contract.test.ts` は反応しない)。
-4. 整合ゲート: 本番の `pg_policies` を SELECT で読む (§19)。マージの後に、オーケストレーターが docs の PR で次を当てる。本書の migration の名指しへの番号の書き入れ (全部を同時に。C-9 が混ざりを見る)・改定履歴の行 (冒頭の版の表と §22 の両方)・design-doc.patch があればその中身・cross/21 と cross/CLAUDE.md の追随 (§17)。
+4. 整合ゲート: 本番の `pg_policies` を SELECT で読む (§19)。マージの後に、オーケストレーターが docs の PR で次を当てた。本書の migration の名指しへの番号の書き入れ (全部を同時に。C-9 が混ざりを見る)・design-doc.patch の中身・cross/21 と cross/CLAUDE.md の追随 (§17)。
 
 ---
 
@@ -1481,8 +1481,8 @@ sequenceDiagram
 | `tests/integration-setup-transient-retry.test.ts` | `retryIdempotentSetup` | 反応しない (§7.5 は `user_profiles` の upsert を `retryIdempotentSetup` で行う。ほかの準備は新しい行の INSERT) | – | – |
 | `tests/supabase-service-role-client-scan.test.ts`・`tests/env-source-scan.test.ts` | `createClient(`・`process.env` (src・lib) | 反応しない (製品コードは注の 1 行しか変えない) | – | – |
 | `tests/docs-table-column-count.test.ts` | `docs/` の表 | 本書の表の列の数が揃っていなければ赤 | 本書の表を揃えて書いた (レビューで確かめる) | – |
-| `tests/design-doc-version-header-matches-history.test.ts` | `\| v1.0 \|`・`改定履歴` | 本書は冒頭の版の表と §22 改定履歴の両方を持つ。両方の最後の版が同じ (v1.0) | 改定のたびに両方に行を足す (マージ後の番号の書き入れでは、オーケストレーターの docs の PR が足す) | – |
-| `tests/helpers/design-doc-migration-number.ts` | `<番号はマージ時に確定>`・`<同じ番号>` | 当てはめは本書の C-9 が行う (置き場と番号が混ざると赤。すべて置き場なら緑) | 実装の枝では本書を触らない (置き場のまま緑)。マージの後に、オーケストレーターが docs の PR で名指しを全部同時に番号へ書き換える (§15 の順番 4) | – |
+| `tests/design-doc-version-header-matches-history.test.ts` | `\| v1.0 \|`・`改定履歴` | 本書は冒頭の版の表と §22 改定履歴の両方を持つ。両方の最後の版が同じ (v1.0) | 改定のたびに両方に行を足す | – |
+| `tests/helpers/design-doc-migration-number.ts` | 本書の migration の名指し (`20261101100000`) | 当てはめは本書の C-9 が行う (置き場と番号が混ざると赤) | 番号は `20261101100000` で確定し、本書の名指しは全部この番号にした (§15 の順番 4) | – |
 | `tests/design-doc-followup-owned-edits.test.ts` | `OWNED_EDITS` | 反応しない (本書の §17 は cross/21 の行を「A」→「B」の形で持つが、この見張りは載せた行だけを見る。載せない) | – | – |
 | `scripts/baseline/*`・`supabase/baseline/**` | `catalog_policies`・`prod_schema.sql` | 反応しない (本番の過去の写し。取り直すまで変えない。`verify` はベースラインだけを当てた DB と比べる) | – | – |
 | `apps/mobile/__tests__/**` | `recipe_comments`・`/comments` | 当たらない (モバイルはコメントの API を呼ばない) | – | – |
@@ -1516,7 +1516,7 @@ sequenceDiagram
 
 ## 19. 受入条件と本番の確認 (本番の DB を伴う 3〜5 はオーナーの承認の後。本書のコードは本番の DB に直接書き込まない)
 
-1. マージ前 (270k の全件): §12 のテストがすべて緑。`tsc`・lint が緑。§16 の番兵がすべて緑。結合テスト (ローカル Supabase) で I-1〜I-11・A-1・A-2 が緑。migration を流す前のローカル DB で I-2・I-3・I-4・I-6・I-9・A-1 が赤になること (直す前の形で赤くなる) を 1 回確かめる (`bash scripts/supabase-local.sh reset` の前後)。
+1. マージ前 (270k の全件): §12 のテストがすべて緑。`tsc`・lint が緑。§16 の番兵がすべて緑。結合テスト (ローカル Supabase) で I-1〜I-11・A-1・A-2 が緑。migration を流す前のローカル DB で I-2・I-3・I-4・I-6・I-8・I-9・I-11・A-1 が赤になること (直す前の形で赤くなる) を 1 回確かめる (`bash scripts/supabase-local.sh reset` の前後)。
 2. 承認の材料: 本番の `recipe_comments` の行数と、「他人の非公開・隠したレシピへのコメント」の件数 (Supabase MCP の SELECT。2026-11-01 はどちらも 0)。あわせて、作者のいない非公開で隠されていないレシピ (P-7a。設計後も他人に見える) の件数 (2026-11-01 は `recipes` が 0 行なので 0)。行があれば、設計後に誰から見えなくなるかを件数で添える。
 3. 承認 → マージ → CI の `deploy-supabase-migrations.yml` が本番へ当てる (マージが適用を兼ねる。アプリは RLS の結果を使うだけなので、Vercel の反映との順番は問わない)。
 4. 適用後 (整合ゲート): 本番の `pg_policies` を SELECT で読み、`recipe_comments` が 4 本 (`recipe_comments_select_own_or_visible_recipe` SELECT `{authenticated}`・`Users can create comments`・`Users can delete own comments`・`Users can update own comments`) で、`Anyone can view comments` が無いこと。`recipes` の 2 本が変わっていないこと。`list_migrations` に本書の番号があること。

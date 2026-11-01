@@ -2,7 +2,7 @@
  * cross/25 (#2166 X1): recipe_comments の SELECT のポリシーを「そのコメントのレシピを読める人」と「書いた本人」に絞る migration
  * (*_recipe_comments_select_scope.sql) の実 DB での振る舞い。設計: docs/design/cross/25-recipe-comments-select-scope.md §7.5
  *
- * 修正前 (migration を流す前) は I-2・I-3・I-4・I-6・I-9 が赤になる (他人に全行が見える・ポリシーの名前が違う)。
+ * 修正前 (migration を流す前) は I-2・I-3・I-4・I-6・I-8・I-9・I-11 が赤になる (他人に全行が見える・ポリシーの名前が違う)。I-6 が途中で落ちると I-10 も連鎖で赤になる。
  *
  * 登場する人 (設計書 §0.3): A = レシピの作者、C = コメントを書いた人、V = ほかのログインした利用者、anon = 未ログイン、SR = service_role。
  * レシピ (system* の 3 つは作者なし。ほかは A のもの): publicVisible・privateRecipe・publicHidden・privateHidden・systemVisible・systemPrivate・systemHidden。

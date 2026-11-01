@@ -29,6 +29,7 @@
 | `22-dish-favorites.md` | 献立の料理のお気に入り (料理の写しを本人だけの表 `dish_favorites` に・名前の鍵で 1 件・お気に入りの画面の詳細) | #2011 |
 | `23-planned-meals-score-integrity.md` | `planned_meals` の `veg_score` / `is_completed` / `completed_at` をサーバの計算値だけにする (列の権限・完了の RPC・写真の解析の service_role) | #2025 |
 | `24-freeze-notify-mail.md` | 運営の凍結の通知メール (凍結した本人へ `account_frozen` を送信待ちに積む・画面のチェックと任意のメッセージ・監査と応答に結果) | #2026 |
+| `25-recipe-comments-select-scope.md` | 公開レシピのコメントの読み取りの範囲を絞る (`recipe_comments` の SELECT を「そのコメントのレシピを読める人」と「書いた本人」だけに。migration と戻し口・契約テスト・結合テスト) | #2166 X1 |
 
 10・11 は欠番 (13a は分冊前の 13 の番号を引き継いでいる)。
 
