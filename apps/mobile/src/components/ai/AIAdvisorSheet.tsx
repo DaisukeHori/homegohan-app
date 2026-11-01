@@ -92,6 +92,17 @@ function autoActionOutcomeMessageOf(outcome: ConsultationActionOutcome, aiMessag
   };
 }
 
+/**
+ * 会話の続きの POST (SSE) の 1 行の data の形 (本文の断片か、最後の finalData)。サーバーは
+ * src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts。自動実行の結果 (actionResult) は
+ * consultationAutoActionOutcomeOf が unknown のまま読む
+ */
+type SseEvent = {
+  choices?: { delta?: { content?: unknown } }[];
+  userMessage?: { id: string; content?: string; createdAt?: string } | null;
+  aiMessage?: { id?: string; content?: string; createdAt?: string } | null;
+};
+
 const QUICK_QUESTIONS = [
   "献立を提案してほしい",
   "冷蔵庫の食材で作れるものは?",
@@ -497,7 +508,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         const raw = line.slice(6);
         if (raw === "[DONE]") return;
 
-        let parsed: any;
+        let parsed: SseEvent | null;
         try {
           parsed = JSON.parse(raw);
         } catch {
@@ -505,7 +516,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         }
 
         const chunk = parsed?.choices?.[0]?.delta?.content;
-        if (chunk) {
+        if (typeof chunk === "string" && chunk) {
           accumulated += chunk;
           setStreamingContent(accumulated);
           return;
@@ -525,17 +536,18 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
           // 失敗 (success が真でない) は成功の一文を出さず、失敗の文を出す。黙って失敗させない (#2189 W2。Web は #2183 Z1)
           const autoAction = consultationAutoActionOutcomeOf(parsed);
           const outcomeMessages: Message[] = autoAction ? [autoActionOutcomeMessageOf(autoAction.outcome, aiMsg.id)] : [];
+          const savedUserMessage = parsed.userMessage;
           setMessages((prev) => {
             const withoutOptimistic = prev.filter(
               (m) => !m.id.startsWith("local-")
             );
-            const userMsg: Message = parsed.userMessage
+            const userMsg: Message = savedUserMessage
               ? {
-                  id: parsed.userMessage.id,
+                  id: savedUserMessage.id,
                   role: "user",
-                  content: parsed.userMessage.content ?? trimmed,
+                  content: savedUserMessage.content ?? trimmed,
                   createdAt:
-                    parsed.userMessage.createdAt ??
+                    savedUserMessage.createdAt ??
                     new Date().toISOString(),
                 }
               : optimistic;
