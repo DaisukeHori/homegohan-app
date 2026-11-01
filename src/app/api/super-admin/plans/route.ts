@@ -14,6 +14,7 @@ import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import {
   PlanCreateSchema,
   PlansQuerySchema,
+  PLAN_KEY_DUPLICATE_MESSAGE,
 } from '@/lib/super-admin/plans-schemas';
 import { internalError } from '@/lib/api/errors';
 import { listCountOptions, resolveBeyondLastPage } from '@/lib/api/list-range';
@@ -135,7 +136,7 @@ export async function POST(request: NextRequest) {
     if (error) {
       if (error.code === '23505') {
         return NextResponse.json(
-          { error: { code: 'OP_PLAN_KEY_DUPLICATE', message: 'プランのキー (plan_key) は既に存在します' } },
+          { error: { code: 'OP_PLAN_KEY_DUPLICATE', message: PLAN_KEY_DUPLICATE_MESSAGE } },
           { status: 409 }
         );
       }

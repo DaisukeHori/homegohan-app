@@ -77,6 +77,7 @@ import { weeklyMenuRequestWeeklyOriginDataForDates } from '@/lib/ai/weekly-menu-
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { createLogger } from '@/lib/db-logger';
 import { errorCodeOf, toLoggableError } from '@/lib/api/errors';
+import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 import { MEAL_TYPE_MESSAGE, PLANNED_MEAL_NUTRIENT_LIMITS } from '@/lib/planned-meal-validation';
 import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
 
@@ -297,6 +298,9 @@ export const AI_SENDING_ACTION_TYPES: ReadonlySet<string> = new Set([
   'generate_week_menu',
   'generate_single_meal',
 ]);
+
+/** add_recipe_to_collection で AI がコレクションの名前を渡さなかったときの足し先の名前 */
+const DEFAULT_RECIPE_COLLECTION_NAME = 'お気に入り';
 
 /** 構造化ログ (app_logs) の function_name。アクションの DB 操作の失敗はここに残す */
 const ACTION_EXECUTOR_LOG_NAME = 'lib/ai/consultation-action-executor';
@@ -1359,23 +1363,45 @@ export async function runConsultationAction(
     case 'add_recipe_to_collection': {
       const { recipeId, collectionName } = action.action_params;
 
-      // コレクションを取得または作成
-      let { data: collection } = await supabase
-        .from('recipe_collections')
-        .select('id')
-        .eq('user_id', user.id)
-        .eq('name', collectionName || 'お気に入り')
-        .single();
+      const targetCollectionName = collectionName || DEFAULT_RECIPE_COLLECTION_NAME;
 
+      // コレクションを取得または作成 (#2166 X4)。
+      // recipe_collections に (user_id, name) の一意の制約は無く、同じ名前のコレクションが 2 件以上ありうる。
+      // 以前の .single() は 2 件以上で失敗 (data が null) し、そのたびに同じ名前のコレクションをもう 1 件作っていた。
+      // いまは作った日時の古い順 (同じ日時は id の順) の先頭 1 行を maybeSingle で読み、
+      // 0 行のときだけ作る。読み取りのエラーは 0 行と分け、作らずに失敗を返す。
+      const { data: existingCollection, error: lookupError } = await orderListBy(
+        supabase
+          .from('recipe_collections')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('name', targetCollectionName),
+        LIST_ORDERS.aiConsultationCollectionByName,
+      )
+        .limit(1)
+        .maybeSingle();
+
+      if (lookupError) {
+        logActionDbFailure(user, action, 'recipe_collections.select', lookupError);
+        result = { error: 'コレクションの取得に失敗しました' };
+        break;
+      }
+
+      let collection: { id: string } | null = existingCollection;
       if (!collection) {
-        const { data: newCollection } = await supabase
+        const { data: newCollection, error: createError } = await supabase
           .from('recipe_collections')
           .insert({
             user_id: user.id,
-            name: collectionName || 'お気に入り',
+            name: targetCollectionName,
           })
           .select('id')
           .single();
+        if (createError) {
+          logActionDbFailure(user, action, 'recipe_collections.insert', createError);
+          result = { error: 'コレクションの作成に失敗しました' };
+          break;
+        }
         collection = newCollection;
       }
 

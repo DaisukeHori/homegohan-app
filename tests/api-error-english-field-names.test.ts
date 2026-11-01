@@ -19,7 +19,7 @@
  *   3. 自前の本文の関数の一覧 (ROUTE_ERROR_TEXT_CALLS) の関数が実在し、その位置の引数が文 (message) である
  *   4. src/lib・src/schemas・packages の Zod の検証の文 (validationMessageOf などが日本語の文をそのまま本文の message にする) にも、
  *      括弧の外の英字の項目名が無い (findValidationMessageTexts。応答の形の検査で画面に出ない文は ZOD_TEXT_EXEMPT_FILES に理由つき)
- *   5. src/lib の関数・表が作って本文に流す文 (BAN を断る文・食事の入力の検証・プランのキーの文・二段階認証の画面の表) を値で確かめる
+ *   5. src/lib の関数・表が作って本文に流す文 (BAN を断る文・食事の入力の検証・プランの鍵の文・二段階認証の画面の表) を値で確かめる
  *   6. 2 と 4 の走査は、テンプレートの式の部分 (`${…}`) を値として読む (定数・配列の定数の join・数はたどって値にし、
  *      読み取れない式は英字の項目名の形の印 UNRESOLVED_SUBSTITUTION にする)。キー・状態・種類の値のような英字が入りうる式を括弧の外に
  *      差し込むと違反になる (以前の `公開中プランでは ${keys.join(', ')} は変更できません`・`${from} から ${to} への遷移`)。
@@ -62,8 +62,10 @@ import {
 import {
   ORG_PLAN_KEY_PREFIX_MESSAGE,
   PERSONAL_FAMILY_PLAN_KEY_MESSAGE,
+  PLAN_KEY_DUPLICATE_MESSAGE,
   PRICE_APPLIES_TO_MESSAGE,
 } from '@/lib/super-admin/plans-schemas';
+import { PACKAGE_KEY_DUPLICATE_MESSAGE } from '@/lib/super-admin/feature-packages-schemas';
 import { MFA_ERROR_MESSAGES } from '@/lib/auth/mfa/client';
 import { MODERATION_TYPE_INVALID_MESSAGE } from '@/lib/admin/moderation-schemas';
 import { PLAN_READ_ONLY_MESSAGE } from '@/lib/super-admin/ai-daily-limits';
@@ -334,10 +336,21 @@ describe('src/lib の関数・表が作って本文に流す文 (値で確かめ
     expect(englishIdentifiersOutsideParentheses(result.error)).toEqual([]);
   });
 
-  it('プランのキー・価格の適用先の文 (テンプレートに差し込む値も括弧の中)', () => {
-    for (const message of [PERSONAL_FAMILY_PLAN_KEY_MESSAGE, ORG_PLAN_KEY_PREFIX_MESSAGE, PRICE_APPLIES_TO_MESSAGE]) {
+  it('プランの鍵・パッケージの鍵・価格の適用先の文 (テンプレートに差し込む値も括弧の中)', () => {
+    for (const message of [
+      PERSONAL_FAMILY_PLAN_KEY_MESSAGE,
+      ORG_PLAN_KEY_PREFIX_MESSAGE,
+      PLAN_KEY_DUPLICATE_MESSAGE,
+      PACKAGE_KEY_DUPLICATE_MESSAGE,
+      PRICE_APPLIES_TO_MESSAGE,
+    ]) {
       expect(englishIdentifiersOutsideParentheses(message), message).toEqual([]);
     }
+    // 呼び名は運営の画面の欄名 (「プランの鍵」「パッケージの鍵」) と同じ (#2166 X2。欄名との突き合わせは tests/operator-key-wording-2166.test.ts)
+    expect(PERSONAL_FAMILY_PLAN_KEY_MESSAGE.startsWith('個人・家族のプランの鍵 (plan_key) には、')).toBe(true);
+    expect(ORG_PLAN_KEY_PREFIX_MESSAGE.startsWith('組織のプランの鍵 (plan_key) は、')).toBe(true);
+    expect(PLAN_KEY_DUPLICATE_MESSAGE).toBe('同じプランの鍵 (plan_key) がすでにあります');
+    expect(PACKAGE_KEY_DUPLICATE_MESSAGE).toBe('同じパッケージの鍵 (package_key) がすでにあります');
   });
 
   it('二段階認証の画面の表 (MFA_ERROR_MESSAGES) の全部の文', () => {

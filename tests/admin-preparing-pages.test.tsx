@@ -170,7 +170,7 @@ describe('/admin/finance (売上ダッシュボード)', () => {
   it('MAU は実データのまま出す', async () => {
     await render(<FinanceDashboardPage />);
 
-    const mauLabel = Array.from(container.querySelectorAll('div')).find((el) => el.textContent === 'MAU');
+    const mauLabel = Array.from(container.querySelectorAll('div')).find((el) => el.textContent === '月間の利用者 (MAU)');
     expect(mauLabel?.nextElementSibling?.textContent).toBe('4,321');
   });
 
