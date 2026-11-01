@@ -41,6 +41,7 @@ const COMMENT_RATING = 4;
 const FIRST_COMPILE_TIMEOUT_MS = 180_000;
 
 let owner: TestUser;
+let other: TestUser;
 let recipeId: string;
 
 type RecipeListBody = { recipes: Array<{ id: string; name: string; authorName: string; isLiked: boolean }> };
@@ -58,6 +59,7 @@ type PostedCommentBody = { success: boolean; comment: { content: string; authorN
 
 beforeAll(async () => {
   owner = await createTestUserWithRoles({ email: `sec-recipes-api-${TS}@homegohan.test`, roles: ['user'] });
+  other = await createTestUserWithRoles({ email: `sec-recipes-api-other-${TS}@homegohan.test`, roles: ['user'] });
   const { error: profileError } = await supabaseAdmin.from('user_profiles').update({ nickname: NICKNAME }).eq('id', owner.userId);
   if (profileError) throw new Error(`user_profiles.nickname: ${profileError.message}`);
 
@@ -90,6 +92,7 @@ afterAll(async () => {
     await supabaseAdmin.from('recipes').delete().eq('id', recipeId);
   }
   if (owner) await cleanupTestUser(owner.userId);
+  if (other) await cleanupTestUser(other.userId);
 }, FIRST_COMPILE_TIMEOUT_MS);
 
 describe('ログイン中のレシピの API は、埋め込みを使わずに作者の名前といいねを返す (#1917)', () => {
@@ -123,5 +126,20 @@ describe('ログイン中のレシピの API は、埋め込みを使わずに�
 
     expect(res.status, `応答本文: ${JSON.stringify(res.body)}`).toBe(200);
     expect(res.body).toMatchObject({ success: true, comment: { content, authorName: NICKNAME } });
+  });
+});
+
+describe('他人から見た非公開のレシピのコメント (cross/25。#2166 X1)', () => {
+  it('A-1: GET /api/recipes/[id]/comments: 他人には非公開のレシピのコメントが 0 件 (200。以前は作者のコメントが返った)', async () => {
+    const res = await apiCall<CommentsBody>('GET', `/api/recipes/${recipeId}/comments`, other.jwt);
+
+    expect(res.status, `応答本文: ${JSON.stringify(res.body)}`).toBe(200);
+    expect(res.body.comments).toEqual([]);
+  });
+
+  it('A-2: GET /api/recipes/[id]: 他人には非公開のレシピが 404 (今までどおり)', async () => {
+    const res = await apiCall('GET', `/api/recipes/${recipeId}`, other.jwt);
+
+    expect(res.status).toBe(404);
   });
 });

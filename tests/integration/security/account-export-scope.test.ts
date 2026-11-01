@@ -459,7 +459,7 @@ describe('前提: RLS だけでは他人の行が読めてしまう表がある'
     expect((collections.data ?? []).map((r) => r.name)).toContain(`COLLECTION-B-${RUN}`);
   });
 
-  it('A の JWT で、B のコメント・いいね (誰でも閲覧可) が読める', async () => {
+  it('A の JWT で、B の公開レシピへの B のコメント (読めるレシピのコメント) と B のいいね (誰でも閲覧可) が読める', async () => {
     const comments = await asUser(A.jwt).from('recipe_comments').select('content');
     expect((comments.data ?? []).map((r) => r.content)).toContain(`COMMENT-B-${RUN}`);
   });
