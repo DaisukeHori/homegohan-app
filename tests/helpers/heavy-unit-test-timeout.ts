@@ -139,6 +139,7 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/og-image-1845.test.tsx",
   "tests/planned-meals-score-integrity-writers-scan.test.ts",
   "tests/postgrest-embed-relationship-scan.test.ts",
+  "tests/profile-post-input-2178.test.ts",
   "tests/profile-put-input-types-2166.test.ts",
   "tests/recipes-route.test.ts",
   "tests/route-error-boundaries.test.tsx",
