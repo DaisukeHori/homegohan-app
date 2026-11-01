@@ -7,7 +7,7 @@ import { calculateNutritionTargets } from '@homegohan/core'
 import { buildNutritionCalculatorInput } from '@/lib/build-nutrition-input'
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character'
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
-import { UserProfileUpdateBodySchema } from '@/lib/profile-update-schema'
+import { USER_PROFILE_POST_FIELDS, UserProfilePostBodySchema, UserProfileUpdateBodySchema } from '@/lib/profile-update-schema'
 
 /**
  * プロフィールAPI
@@ -26,6 +26,19 @@ const NUTRITION_TRIGGER_FIELDS = [
 
 // 年代 (age_group) の刻み。年齢を 10 年ごとに切り捨てて '30s' のような値にする
 const AGE_GROUP_DECADE_YEARS = 10;
+
+/**
+ * POST で行がまだ無いときの insert に入れる仮置きの値。nickname・age_group・gender は NOT NULL で列の既定が無いため。
+ * 行が既にあるときは入れない (本文に無い欄を上書きしない。#2178 Y1-a)
+ */
+const USER_PROFILE_INSERT_PLACEHOLDERS = {
+  nickname: 'Guest',
+  age_group: 'unspecified',
+  gender: 'unspecified',
+} as const;
+
+/** 一意の制約の違反 (同じ id の行を同時に insert したとき。後から来た方は update に回す) */
+const PG_UNIQUE_VIOLATION = '23505';
 
 // snake_case → camelCase のマッピング
 const FIELD_MAP: Record<string, string> = {
@@ -84,54 +97,30 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 })
     }
     
-    // マッピング
+    // 本文の欄の値が写す先の列の型に合わない (配列の列に文字列・integer の列に文字列や小数など) ときは 400。
+    // 検査しないと DB の書き込みで拒まれて internalError の 500 になる (#2178 Y1-a。欄と型は src/lib/profile-update-schema.ts の USER_PROFILE_POST_FIELDS)
+    const parsed = UserProfilePostBodySchema.safeParse(body)
+    if (!parsed.success) {
+      return NextResponse.json({ error: API_INVALID_JSON_MESSAGE }, { status: 400 })
+    }
+
+    // 本文にある欄だけを列に写す (値が空 (null・空文字・0・false) の欄は今までどおり書かない)
     const updates: Record<string, unknown> = {
-      id: user.id,
       updated_at: new Date().toISOString(),
     };
+    for (const [field, { column }] of Object.entries(USER_PROFILE_POST_FIELDS)) {
+      const value = parsed.data[field];
+      if (value) updates[column] = value;
+    }
+    // 年齢から年代を入れる (age は上の検査で integer の範囲の整数)
+    if (typeof updates.age === 'number') {
+      updates.age_group = `${Math.floor(updates.age / AGE_GROUP_DECADE_YEARS) * AGE_GROUP_DECADE_YEARS}s`;
+    }
 
-    if (body.nickname) updates.nickname = body.nickname;
-    if (body.gender) updates.gender = body.gender;
-    if (body.lifestyle) updates.lifestyle = body.lifestyle;
-    if (body.goal) updates.goal_text = body.goal;
-    
-    // 追加項目
-    if (body.age) updates.age = parseInt(body.age);
-    if (body.age) updates.age_group = `${Math.floor(parseInt(body.age) / AGE_GROUP_DECADE_YEARS) * AGE_GROUP_DECADE_YEARS}s`;
-    if (body.occupation) updates.occupation = body.occupation;
-    if (body.height) updates.height = parseFloat(body.height);
-    if (body.weight) updates.weight = parseFloat(body.weight);
-
-    // 栄養目標・運動関連
-    if (body.nutritionGoal) updates.nutrition_goal = body.nutritionGoal;
-    if (body.weightChangeRate) updates.weight_change_rate = body.weightChangeRate;
-    if (body.exerciseTypes) updates.exercise_types = body.exerciseTypes;
-    if (body.exerciseFrequency) updates.exercise_frequency = parseInt(body.exerciseFrequency);
-    if (body.exerciseIntensity) updates.exercise_intensity = body.exerciseIntensity;
-    if (body.exerciseDurationPerSession) updates.exercise_duration_per_session = parseInt(body.exerciseDurationPerSession);
-    if (body.workStyle) updates.work_style = body.workStyle;
-    if (body.healthConditions) updates.health_conditions = body.healthConditions;
-    if (body.medications) updates.medications = body.medications;
-    if (body.pregnancyStatus) updates.pregnancy_status = body.pregnancyStatus;
-    if (body.fitnessGoals) updates.fitness_goals = body.fitnessGoals;
-    if (body.dietFlags) updates.diet_flags = body.dietFlags;
-    if (body.cookingExperience) updates.cooking_experience = body.cookingExperience;
-    if (body.weekdayCookingMinutes) updates.weekday_cooking_minutes = parseInt(body.weekdayCookingMinutes);
-    if (body.cuisinePreferences) updates.cuisine_preferences = body.cuisinePreferences;
-    if (body.familySize) updates.family_size = parseInt(body.familySize);
-    if (body.servingsConfig) updates.servings_config = body.servingsConfig;
-    if (body.radarChartNutrients) updates.radar_chart_nutrients = body.radarChartNutrients;
-
-    // デフォルト値の補完（必須カラムエラー回避）
-    if (!updates.nickname) updates.nickname = 'Guest'; 
-    if (!updates.age_group && !updates.age) updates.age_group = 'unspecified';
-    if (!updates.gender) updates.gender = 'unspecified';
-
-    const { data, error } = await supabase
-      .from('user_profiles')
-      .upsert(updates)
-      .select()
-      .single()
+    // 行があれば本文の欄だけを update する。仮置きの値 (USER_PROFILE_INSERT_PLACEHOLDERS) は行が無いときの insert にだけ入れる。
+    // 以前は仮置きの値を補ってから upsert していたため、週間献立の画面が { servingsConfig } だけを送ると、既存の行の
+    // nickname が 'Guest' に、gender・age_group が 'unspecified' に上書きされていた (#2178 Y1-a)
+    const { data, error } = await writeProfileFromPost(supabase, user.id, updates)
 
     if (error) {
       return internalError('POST /api/profile', error, { userId: user.id, requestId, table: 'user_profiles' })
@@ -217,6 +206,37 @@ export async function PUT(request: Request) {
   } catch (error: unknown) {
     return internalError('PUT /api/profile', error, { requestId })
   }
+}
+
+type ProfileWriteResult = { data: unknown; error: { code?: string } | null };
+
+/**
+ * POST の書き込み。行があれば本文の欄だけを update し、無ければ仮置きの値を補って insert する。
+ * 行の有無を読んでから insert するまでの間に別のリクエストが行を作った (一意の制約の違反) ときは update に回す
+ */
+async function writeProfileFromPost(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  updates: Record<string, unknown>,
+): Promise<ProfileWriteResult> {
+  const updateExisting = async (): Promise<ProfileWriteResult> =>
+    await supabase.from('user_profiles').update(updates).eq('id', userId).select().single();
+
+  const { data: existing, error: readError } = await supabase
+    .from('user_profiles')
+    .select('id')
+    .eq('id', userId)
+    .maybeSingle();
+  if (readError) return { data: null, error: readError };
+  if (existing) return updateExisting();
+
+  const inserted: ProfileWriteResult = await supabase
+    .from('user_profiles')
+    .insert({ ...USER_PROFILE_INSERT_PLACEHOLDERS, ...updates, id: userId })
+    .select()
+    .single();
+  if (inserted.error?.code === PG_UNIQUE_VIOLATION) return updateExisting();
+  return inserted;
 }
 
 /**
