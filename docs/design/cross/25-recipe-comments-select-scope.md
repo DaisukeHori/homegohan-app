@@ -4,6 +4,7 @@
 |---|---|---|
 | v1.0 | 2026-11-01 | 新設 (Issue #2166 の X1 の設計ゲート・A 型 4 相。`recipe_comments` の SELECT のポリシー `Anyone can view comments` (ログインした誰でも全行) を、「そのコメントのレシピを読める人」と「そのコメントを書いた本人」だけに絞る migration と戻し口、契約テスト・結合テストを書き切る) |
 | v1.1 | 2026-11-01 | マージ後の追随: migration の名指しを 20261101100000 に確定した (#2177)・行番号の参照を名前の参照にした・§9.1 (b) の E-3 の P-7a を直した。前提の本番への適用の文を来歴にし、§16 に #2174 のテスト 2 本を足した |
+| v1.2 | 2026-11-01 | 整合ゲートの候補の追随 (#2183 docs-1101g): 適用を将来の手順として書いた文 (決めること 9・R-15・§6.9・§15・§19) を、PR #2176 (c7e5c019) と run 41270869190 の来歴にした・残った行番号の参照 (§3.2 の E-2・E-4・§3.4 の F-12〜F-14・§9 のエラー表) を名前の参照にした・E-4 のコメントの引用と F-12 の it 名を今の文にした |
 
 要件の正本は Issue #2166 の本文 (X1 の節) とコメント。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
 ファイル名は cross/25 (cross/ の既存は 01〜09・12・13a・13b・14〜24。10・11 は欠番、13 は 13a・13b に引き継がれている (cross/CLAUDE.md の注記のとおり))。
@@ -37,7 +38,7 @@
 | 6 | テスト (契約・結合・API) | 契約 (静的) 1 本 (新)・結合 (実 DB・PostgREST 直) 1 本 (新)・API の結合 2 件 (既存の `recipes-api-logged-in.test.ts` に追記) (§6.6・§12) |
 | 7 | 消費経路の閉包 (設計後に読めなくなる正当な読み手が無いか) | 無い。RLS の上の読み手は 4 経路で、どれも「見えるレシピのコメント」か「本人の行」しか要らない。SECURITY DEFINER の関数と service_role は RLS を通らない (§6.7・§9.1 (b)) |
 | 8 | プライバシーポリシー第9条との一致 | 作者のいるレシピでは一致する (他人に見えるのは、公開で隠されていないレシピへのコメントだけ。本人の行と作者のレシピのコメントは第9条の射程の外側で、第三者提供ではない)。例外が 1 つある。作者のいない非公開で隠されていないレシピ (P-7a) は、`recipes` の RLS がレシピそのものを全員に返す。なので、そのコメントも他人に見える。これは `recipes` 側の規則で、本書の範囲の外 (§21 Q-5)。本番の行は 0 で、この状態を作るアプリの経路は無い (§6.8) |
-| 9 | 承認の要否と適用の前提 | 要る (権限を絞る migration)。前提 = 本番の `recipe_comments` が 0 行 (2026-11-01) なので告知は要らない。適用の直前にもう一度 SELECT で確かめる (§6.9・§19) |
+| 9 | 承認の要否と適用の前提 | 要る (権限を絞る migration)。前提 = 本番の `recipe_comments` が 0 行 (2026-11-01) なので告知は要らない。20261101100000 は PR #2176 (c7e5c019) で main に入り、Deploy Supabase Migrations (run 41270869190) で本番に当たった (§6.9・§19) |
 | 10 | 他の文書の追随 | cross/CLAUDE.md の表に 1 行・cross/21 の F-16・F-19b・§7.12 の文 (§17) |
 
 ### 0.2 要件行列
@@ -58,7 +59,7 @@
 | R-12 | 契約テストで、migration と戻し口の文面・ポリシーの最終の状態・`recipes` の SELECT のポリシー (本書の判定の土台) の定義・RLS の上の読み手の閉包を機械で見張る | cross/21・cross/23 の契約テストの形 | §7.4・§12 |
 | R-13 | `src/lib/account-export-tables.ts` のコメント「recipe_likes / recipe_comments は RLS 上「誰でも閲覧可」」を事実に直す (絞り込み `self('user_id')` は変えない) | 記述が事実と食い違う | §7.6 |
 | R-14 | migration のファイル名の番号は `20261101100000` (マージの直前に origin/main の `supabase/migrations` の最大 `20261101090000` より大きい番号で確定した) | `tests/helpers/design-doc-migration-number.ts` | §7.1・§7.2・§15 |
-| R-15 | 本番への適用はオーナーの名指しの承認の後 | 前提 | §19 |
+| R-15 | 権限を絞る migration で、名指しの承認が要る。20261101100000 は PR #2176 (c7e5c019) で main に入り、Deploy Supabase Migrations (run 41270869190) で本番に当たった | 前提 | §19 |
 | R-16 | マジックナンバーを書かない。テストで値を RegExp に入れるときは特殊文字を逃がす | 共通の規律 | §7.3〜§7.5・§13 |
 
 ### 0.3 ユーザーシナリオ (17 本。トレースは §4.3・テストとの対応は §12.1)
@@ -151,9 +152,9 @@
 | # | 経路 | client | 読む / 書く | 何を | レシピの見え方の判定 |
 |---|---|---|---|---|---|
 | E-1 | `GET /api/recipes/[id]/comments` (`comments/route.ts` の `GET` の `from('recipe_comments')`) | 利用者のセッション (RLS) | 読む | `recipe_comments` を `eq('recipe_id', id)` で。未認証は 401。`id` が UUID でなければ 404 | しない (レシピを読まずにコメントだけ読む。cross/21 F-19b) |
-| E-2 | `POST /api/recipes/[id]/comments` (同ファイル :114-121) | 利用者のセッション (RLS) | 書く | `insert({ recipe_id, user_id: 本人, content, rating }).select('id, content, rating, created_at').single()`。外部キー違反 (レシピが無い) は 404 | しない (INSERT のポリシーは `user_id = auth.uid()` だけ) |
+| E-2 | `POST /api/recipes/[id]/comments` (同ファイルの `POST` の `insert(…).select('id, content, rating, created_at').single()`) | 利用者のセッション (RLS) | 書く | `insert({ recipe_id, user_id: 本人, content, rating }).select('id, content, rating, created_at').single()`。外部キー違反 (レシピが無い) は 404 | しない (INSERT のポリシーは `user_id = auth.uid()` だけ) |
 | E-3 | `GET /api/recipes/[id]` (`src/app/api/recipes/[id]/route.ts` の `GET` が `orderEmbeddedListBy(` に渡す `select('*, recipe_comments(id, content, rating, created_at, user_id)')`。埋め込んだコメントは `LIST_ORDERS.recipeComments` の鍵で並べる (#2174)) | 利用者のセッション (RLS。未ログインは anon) | 読む | `recipes` の `select('*, recipe_comments(id, content, rating, created_at, user_id)')` の埋め込み。レシピが見えなければ `maybeSingle` が null → 404 | `recipes` の RLS (見えるレシピの埋め込みだけ) |
-| E-4 | アカウントの書き出し `GET /api/account/export` (`src/lib/account-export-tables.ts:187`・`src/lib/account-export.ts`) | 利用者のセッション (RLS) | 読む | `{ table: 'recipe_comments', scope: self('user_id') }` = 自分の `user_id` の行だけ。:182 のコメントは「RLS 上「誰でも閲覧可」。必ず user_id で絞る」 | しない (本人の行) |
+| E-4 | アカウントの書き出し `GET /api/account/export` (`src/lib/account-export-tables.ts` の `ACCOUNT_EXPORT_TABLES` の `recipe_comments` の行・`src/lib/account-export.ts`) | 利用者のセッション (RLS) | 読む | `{ table: 'recipe_comments', scope: self('user_id') }` = 自分の `user_id` の行だけ。`recipe_likes` の行の上のコメントは「recipe_comments は「読めるレシピのコメントと自分のコメント」(cross/25)。どちらも必ず user_id で絞る」 | しない (本人の行) |
 | E-5 | `src/lib/api/list-order.ts` の `LIST_ORDERS.recipeComments` | — | — | 並び (`created_at` 降順 + `id`) の定義だけ。E-1 (`orderListBy`) と E-3 (`orderEmbeddedListBy`) が使う | — |
 | E-6 | 作者名の関数 `recipe_author_display_names` (b) (F-7) | DEFINER (RLS を通らない) | 読む | `recipe_comments` と `recipes` を JOIN し、公開で隠されていないレシピへのコメントの書き手かを見る。E-1・E-2・E-3 と `GET /api/recipes` が RLS のクライアントで `rpc` として呼ぶ (`src/lib/recipes/viewer-lookups.ts`) | 関数の中で `is_public = true AND hidden_at IS NULL` を直接見る |
 
@@ -171,9 +172,9 @@ RLS を通らない書き手: 結合テスト・e2e の準備と後片付け (se
 
 | # | 事実 | 根拠 |
 |---|---|---|
-| F-12 | `tests/integration/security/account-export-scope.test.ts:462` の it「A の JWT で、B のコメント・いいね (誰でも閲覧可) が読める」は、B が自分の公開レシピに書いたコメントを A が読む (設計後も読める。it 名の語だけ古くなる) | 同ファイル :152 (`targetRecipe` は B なら自分の公開レシピ) |
-| F-13 | `tests/integration/security/recipes-api-logged-in.test.ts` は、作者本人の非公開レシピへの本人のコメントを本人が読む (設計後も読める) | 同ファイル :60-77・:104-120 |
-| F-14 | `tests/integration/security/recipe-author-display-names.test.ts` の I-10 は、レシピを非公開・隠した後にコメントの行が残ることを `supabaseAdmin` で読む (設計後も通る)。コメントの読み取りはどれも service_role か関数経由 | 同ファイル :333-361 |
+| F-12 | `tests/integration/security/account-export-scope.test.ts` の it「A の JWT で、B の公開レシピへの B のコメント (読めるレシピのコメント) と B のいいね (誰でも閲覧可) が読める」は、B が自分の公開レシピに書いたコメントを A が読む (設計後も読める) | 同ファイルの `targetRecipe` の定義 (B なら自分の公開レシピ) |
+| F-13 | `tests/integration/security/recipes-api-logged-in.test.ts` は、作者本人の非公開レシピへの本人のコメントを本人が読む (設計後も読める) | 同ファイルの it「GET /api/recipes/[id]/comments: 200…」・「POST /api/recipes/[id]/comments: 200…」と describe「他人から見た非公開のレシピのコメント」 |
+| F-14 | `tests/integration/security/recipe-author-display-names.test.ts` の I-10 は、レシピを非公開・隠した後にコメントの行が残ることを `supabaseAdmin` で読む (設計後も通る)。コメントの読み取りはどれも service_role か関数経由 | 同ファイルの it「I-10: 非公開に戻す・隠すと…」 |
 | F-15 | `tests/account-export-tables.test.ts:467` は `recipe_comments` を「RLS が他人の行を返しうる表」に数え、絞り込みがあることを見る (設計後も他人の行 (公開レシピのコメント) は返るので、そのまま) | 同ファイル |
 | F-16 | 単体テスト (`tests/api-security-cluster.test.ts`・`tests/recipe-viewer-lookups-1917.test.ts`・`tests/route-invalid-input-1917.test.ts`・`tests/recipe-author-name-1649.test.ts`・`tests/recipe-detail-hidden-404.test.ts`・`tests/list-order-tiebreak-2134.test.ts`・`tests/postgrest-embed-relationship-scan.test.ts`) は DB を偽物にするので RLS に反応しない | 各ファイルの `recipe_comments` の参照 |
 | F-17 | migration の番兵: `tests/migration-file-version-integrity.test.ts` (見出し・戻し口の対)・`tests/database-types-migrations-contract.test.ts` (CREATE TABLE / FUNCTION だけ)・`tests/operator-write-policy-ledger.test.ts` (運営ロールで判定する書き込みのポリシーだけ)・`tests/db-privilege-hardening-migration-contract.test.ts` (後の migration / 戻し口が利用者へ TRUNCATE / ALL を付け直さない)・`tests/anon-invoker-execute-migration-contract.test.ts` (CREATE FUNCTION だけ)・3 本の `NEXT_BRANCH_VERSION = '20261101090000'` (自分の番号がそれより小さいことを見るだけ) | 各ファイル |
@@ -334,7 +335,7 @@ recipes の SELECT: Users can view public recipes  (hidden_at IS NULL OR 作者)
 
 ### 6.9 承認と適用の前提 (決めること 9)
 
-- 承認: 要る (権限を絞る migration)。マージが本番への適用 (CI の `deploy-supabase-migrations.yml`) を兼ねるので、マージはオーナーの承認の後。
+- 承認: 要る (権限を絞る migration)。マージが本番への適用 (CI の `deploy-supabase-migrations.yml`) を兼ねる (PR #2176・run 41270869190)。
 - 前提: (1) 本番の `recipe_comments` が 0 行 (2026-11-01) なので、見え方が変わる利用者はいない。適用 (マージ) の直前にもう一度 SELECT で行数を読み、0 でなければ「他人の非公開・隠したレシピへのコメント」の件数を数えて承認の材料に添える。告知は要らない (行が無い。あっても、第9条の文どおりの範囲に戻すだけで、利用者の同意の範囲を広げない)。(2) ローカルの全件 (契約・結合・API) が緑。(3) 適用後に本番の `pg_policies` を SELECT で読み、§19 の形になっていることを確かめる。
 
 ### 6.10 他の文書の追随 (決めること 10)
@@ -1332,9 +1333,9 @@ describe('他人から見た非公開のレシピのコメント (cross/25。#21
 | V が C の行を UPDATE / DELETE (`.eq('id', …)`) | 0 行 (エラー無し) | 同じ | UPDATE / DELETE のポリシー。見えないレシピなら SELECT の段で 0 行 |
 | C が見えないレシピへ `insert().select()` | 201 相当 (行が返る) | 同じ | 本人の行の句 (無ければ 42501 `new row violates row-level security policy for table "recipe_comments"`) |
 | C が他人の `user_id` で INSERT | 42501 | 同じ | INSERT の WITH CHECK |
-| `POST /api/recipes/[id]/comments` でレシピが無い | 404 (外部キー違反 23503 を route が 404 に) | 同じ | route :126 |
+| `POST /api/recipes/[id]/comments` でレシピが無い | 404 (外部キー違反 23503 を route が 404 に) | 同じ | `comments/route.ts` の `POST` の `POSTGRES_FOREIGN_KEY_VIOLATION` の分岐 |
 | `GET /api/recipes/[id]/comments` 未認証 / UUID でない id / DB の失敗 | 401 / 404 / 500 | 同じ | route |
-| `GET /api/recipes/[id]` でレシピが見えない | 404 (`maybeSingle` が null) | 同じ | route :52 |
+| `GET /api/recipes/[id]` でレシピが見えない | 404 (`maybeSingle` が null) | 同じ | `src/app/api/recipes/[id]/route.ts` の `GET` の `if (!data)` |
 | migration のロックが 10 秒取れない | — | 55P03 `lock_not_available` で失敗 → 流し直す | `SET LOCAL lock_timeout = '10s'` |
 | `DROP POLICY IF EXISTS` で無いポリシー | — | NOTICE だけ (エラー無し) | 冪等 |
 
@@ -1439,7 +1440,7 @@ sequenceDiagram
 
 ---
 
-## 15. 段分け (1 段・1 PR。レビューは 2 枚同時 + 横断整合。マージ = 本番への適用はオーナーの承認の後)
+## 15. 段分け (1 段・1 PR。レビューは 2 枚同時 + 横断整合。マージ = 本番への適用 (PR #2176))
 
 | 段 | 触るファイル (母集合。これ以外は触らない) |
 |---|---|
@@ -1449,7 +1450,7 @@ sequenceDiagram
 
 1. 実装の枝で上の 8 ファイルを書く。番号は枝を切った時点の origin/main の最大より大きい値で仮に付け、マージの直前にもう一度 origin/main の最大と比べて付け直す (付け直すときは migration の 1 行目・2 行目と戻し口の 1 行目をそろえる。C-1 が見る)。本書の名指しは、実装の枝の間は置き場のままにし (C-9 は番号の名指しが 1 つも無ければ緑)、マージの後に `20261101100000` を全部同時に当てた (順番 4)。本書に直すべき点 (§7.3 の `RECIPE_COMMENTS_SELECT_QUAL` の実測との差など) が見つかったら、設計書を直さず design-doc.patch に出し、deviations で報告する。
 2. 全件 (単体・契約) と結合 (`tests/integration/rls`・`tests/integration/security`) が緑。
-3. 2 枚同時 PASS → オーナーの承認 → マージ。CI (`deploy-supabase-migrations.yml`) が本番へ当てる。`db:types` の生成し直しは要らない (表・関数を足さない。`tests/database-types-migrations-contract.test.ts` は反応しない)。
+3. 2 枚同時 PASS → マージ (PR #2176)。CI (`deploy-supabase-migrations.yml`) が本番へ当てた (run 41270869190)。`db:types` の生成し直しは要らない (表・関数を足さない。`tests/database-types-migrations-contract.test.ts` は反応しない)。
 4. 整合ゲート: 本番の `pg_policies` を SELECT で読む (§19)。マージの後に、オーケストレーターが docs の PR で次を当てた。本書の migration の名指しへの番号の書き入れ (全部を同時に。C-9 が混ざりを見る)・design-doc.patch の中身・cross/21 と cross/CLAUDE.md の追随 (§17)。
 
 ---
@@ -1517,11 +1518,11 @@ sequenceDiagram
 | 新規 | migration・戻し口・テストの補助・契約テスト・結合テスト (§14) |
 | 消す | RLS ポリシー `Anyone can view comments` |
 
-## 19. 受入条件と本番の確認 (本番の DB を伴う 3〜5 はオーナーの承認の後。本書のコードは本番の DB に直接書き込まない)
+## 19. 受入条件と本番の確認 (3 の本番への適用は PR #2176・run 41270869190 で済んだ。本書のコードは本番の DB に直接書き込まない)
 
 1. マージ前 (270k の全件): §12 のテストがすべて緑。`tsc`・lint が緑。§16 の番兵がすべて緑。結合テスト (ローカル Supabase) で I-1〜I-11・A-1・A-2 が緑。migration を流す前のローカル DB で I-2・I-3・I-4・I-6・I-8・I-9・I-11・A-1 が赤になること (直す前の形で赤くなる) を 1 回確かめる (`bash scripts/supabase-local.sh reset` の前後)。
-2. 承認の材料: 本番の `recipe_comments` の行数と、「他人の非公開・隠したレシピへのコメント」の件数 (Supabase MCP の SELECT。2026-11-01 はどちらも 0)。あわせて、作者のいない非公開で隠されていないレシピ (P-7a。設計後も他人に見える) の件数 (2026-11-01 は `recipes` が 0 行なので 0)。行があれば、設計後に誰から見えなくなるかを件数で添える。
-3. 承認 → マージ → CI の `deploy-supabase-migrations.yml` が本番へ当てる (マージが適用を兼ねる。アプリは RLS の結果を使うだけなので、Vercel の反映との順番は問わない)。
+2. 適用の前の材料: 本番の `recipe_comments` の行数と、「他人の非公開・隠したレシピへのコメント」の件数 (Supabase MCP の SELECT。2026-11-01 はどちらも 0)。あわせて、作者のいない非公開で隠されていないレシピ (P-7a。設計後も他人に見える) の件数 (2026-11-01 は `recipes` が 0 行なので 0)。行があれば、設計後に誰から見えなくなるかを件数で添える。
+3. マージ (PR #2176) → CI の `deploy-supabase-migrations.yml` が本番へ当てた (run 41270869190。マージが適用を兼ねる。アプリは RLS の結果を使うだけなので、Vercel の反映との順番は問わない)。
 4. 適用後 (整合ゲート): 本番の `pg_policies` を SELECT で読み、`recipe_comments` が 4 本 (`recipe_comments_select_own_or_visible_recipe` SELECT `{authenticated}`・`Users can create comments`・`Users can delete own comments`・`Users can update own comments`) で、`Anyone can view comments` が無いこと。`recipes` の 2 本が変わっていないこと。`list_migrations` に本書の番号があること。
 5. 戻すとき: §7.2 の内容を新しい migration として PR 経由で当てる (本番への直接 SQL は禁止)。アプリは先に戻さなくてよい。
 6. 告知: 要らない (§6.9)。
@@ -1548,3 +1549,4 @@ sequenceDiagram
 |---|---|---|
 | v1.0 | 2026-11-01 | 新設 (Issue #2166 の X1 の設計ゲート・A 型 4 相) |
 | v1.1 | 2026-11-01 | マージ後の追随: migration の名指しを 20261101100000 に確定した (#2177)・行番号の参照を名前の参照にした・§9.1 (b) の E-3 の P-7a を直した。前提の本番への適用の文を来歴にし、§16 に #2174 のテスト 2 本を足した |
+| v1.2 | 2026-11-01 | 整合ゲートの候補の追随 (#2183 docs-1101g): 適用を将来の手順として書いた文 (決めること 9・R-15・§6.9・§15・§19) を、PR #2176 (c7e5c019) と run 41270869190 の来歴にした・残った行番号の参照 (§3.2 の E-2・E-4・§3.4 の F-12〜F-14・§9 のエラー表) を名前の参照にした・E-4 のコメントの引用と F-12 の it 名を今の文にした |

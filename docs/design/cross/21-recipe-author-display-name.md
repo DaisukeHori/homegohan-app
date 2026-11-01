@@ -160,7 +160,7 @@ v1.0〜v1.1 は origin/main `c9ee3e59` で取った。`c9ee3e59..cae0e288` の�
 | F-8 | fix 枝の `viewer-lookups.ts` の冒頭コメントは「名前が引けるのは RLS で見ている人が読める行だけ (いまは本人の行だけ)。引けなかった作者は既定の呼称」と書いている。他人の名前がいつも「匿名」になるのはこのため | 同ファイルの冒頭コメント |
 | F-9 | RLS の効くクライアント `createClient()` は anon キー + Cookie / Authorization ヘッダ。service_role は `getSupabaseAdmin()` だけ (`tests/supabase-service-role-client-scan.test.ts` が見張る) | `lib/supabase/server.ts` (`getSupabaseAdmin`・`createClient`) |
 | F-10 | 他人の `user_profiles` を読むときは認可のあとに `getSupabaseAdmin()` (対象を絞る条件つき) というのが root CLAUDE.md の規則。未ログインの一覧・詳細には認可が無い | `CLAUDE.md:83` |
-| F-11 | `PUT /api/profile` は本文を先に `src/lib/profile-update-schema.ts` の `UserProfileUpdateBodySchema` で検査し、型の誤りは 400 (#2173)。通った本文を `fromUserProfile(body)` (camelCase → snake_case) にし、その結果を RLS のクライアントで `user_profiles` に `update` する。`FIELD_MAP` は栄養の再計算の判定にだけ使う。`toUserProfile` は `GET` の行を camelCase にする | `src/app/api/profile/route.ts` の `FIELD_MAP` と、`PUT` の `fromUserProfile(body)`・`update`・`lib/converter.ts:21, 144, 158, 278` |
+| F-11 | `PUT /api/profile` は本文を先に `src/lib/profile-update-schema.ts` の `UserProfileUpdateBodySchema` で検査し、型の誤りは 400 (#2173)。通った本文を `fromUserProfile(body)` (camelCase → snake_case) にし、その結果を RLS のクライアントで `user_profiles` に `update` する。`FIELD_MAP` は栄養の再計算の判定にだけ使う。`toUserProfile` は `GET` の行を camelCase にする | `src/app/api/profile/route.ts` の `FIELD_MAP` と、`PUT` の `fromUserProfile(body)`・`update`・`lib/converter.ts` の `toUserProfile`・`fromUserProfile` の `showRecipeAuthorName` の行 |
 | F-12 | `UserProfile` (ドメイン型) は `types/domain.ts:171` (`nickname` は行 173・`aiLearningEnabled` は行 298)。DB の行の手書きの型 `DbUserProfile` は `types/database.ts:4` (`ai_learning_enabled: boolean / null` は行 132)。`toUserProfile` は `ai_learning_enabled ?? true` のように既定を補う | `types/domain.ts`・`types/database.ts`・`lib/converter.ts:144` |
 | F-13 | `authorName` を読む画面は Web (`src/app`・`src/components`) にもモバイル (`apps/mobile`) にも無い (`authorName` / `author_name` / 「作者」の参照は API route と `author-name.ts` だけ)。`/api/recipes/{id}` を呼ぶのは `src/app/(main)/favorites/_components/FavoriteRecipeModal.tsx` (いいねの解除) と `src/app/(main)/menus/weekly/page.tsx` (レシピの表示) で、どちらも `authorName` を描かない | origin/main の `git grep` (2026-10-24) |
 | F-14 | プロフィールの編集画面はニックネームの欄 (`Label` + `Input`。`editForm.nickname`・`updateField('nickname', …)`) を基本情報タブの先頭に持ち、保存は `fetch('/api/profile', …)` (PUT)。`editForm` は `Partial<UserProfile>`、`updateField(field: keyof UserProfile, value)` | `src/app/(main)/profile/page.tsx:121, 242, 296, 725-733` |
@@ -687,14 +687,14 @@ export function recipeAuthorName(nickname: unknown): string {
 // types/database.ts: interface DbUserProfile の ai_learning_enabled (行 132) の次に 1 行
   show_recipe_author_name: boolean | null;
 
-// lib/converter.ts: toUserProfile の aiLearningEnabled (行 144) の次に 1 行 (列がまだ無い行は既定の true)
+// lib/converter.ts: toUserProfile の aiLearningEnabled の次に 1 行 (列がまだ無い行は既定の true)
   showRecipeAuthorName: db.show_recipe_author_name ?? true,
 
-// lib/converter.ts: fromUserProfile の aiLearningEnabled (行 278) の次に 1 行
+// lib/converter.ts: fromUserProfile の aiLearningEnabled の次に 1 行
   if (profile.showRecipeAuthorName !== undefined) result.show_recipe_author_name = profile.showRecipeAuthorName;
 ```
 
-- `PUT /api/profile` は `fromUserProfile(body)` をそのまま `update` する。段 B (#2159) では route を変えなかった。#2173 から、`PUT` は本文を `UserProfileUpdateBodySchema` で検査し、`showRecipeAuthorName` に boolean でない値が来たら 400 (F-11)。`POST /api/profile` (作成) も変えない (列の既定値 true)。
+- `PUT /api/profile` は `fromUserProfile(body)` をそのまま `update` する。段 B (#2159) では route を変えなかった。#2173 から、`PUT` は本文を `UserProfileUpdateBodySchema` で検査し、`showRecipeAuthorName` に boolean でない値が来たら 400 (F-11)。`POST /api/profile` は段 B では変えなかった。#2180 から、POST は本文を `UserProfilePostBodySchema` で検査し (型の誤りは 400)、行の有無を読んで update か insert かを分ける。仮置き (`USER_PROFILE_INSERT_PLACEHOLDERS`) は insert のときだけ入れる。`showRecipeAuthorName` は `USER_PROFILE_POST_FIELDS` に無いので、POST では書かない (新しい行は列の既定の true)。
 - `packages/shared/src/database.types.ts` と `src/types/database.types.ts` は生成し直す (関数 `recipe_author_display_names` が `Functions` に、列が `user_profiles` の `Row` / `Insert` / `Update` に入る。`tests/database-types-migrations-contract.test.ts` の作り直し方のとおり)。
 
 ### 7.7 プロフィールの編集画面 (`src/app/(main)/profile/page.tsx`。断片)
@@ -1835,7 +1835,7 @@ sequenceDiagram
 
 本番の順序 (選択肢 (a)(b) のどちらでも同じ。(c) は選べない。§6.4。段 A の関数は anon / authenticated に EXECUTE を付けるので、適用した時点から `/rest/v1/rpc` で公開の作者の表示名を直接引ける (§9.2。返るのは作者名の表示を書いた版に同意した人だけ)。文面と挙動の順序をそろえるため、段 A の本番の適用を、文面が効いたあとの同じ門に置く):
 
-1. 段 C の文面が効く。(a): PR #1997 に本書の 7 文と主張の表 7 行を足し、PR #1997 の手順 (予告のあと施行日にマージ・デプロイ) で出す。(b): v2026.5 の PR を、予告のあと施行日にマージ・デプロイする。
+1. 段 C の文面が効く (§21 Q-1 は (a))。PR #1997 に本書の 7 文と主張の表 7 行を足し、PR #1997 の手順 (予告のあと施行日にマージ・デプロイ) で出す。
 2. 段 A の migration を本番へ適用する (追加だけの migration。適用の確認は §19 の 1〜6)。
 3. 段 A の PR をマージする (番号は直前に確定。§7.1)。
 4. 段 B の PR をマージする (= 公開。確認は §19 の 7〜9)。

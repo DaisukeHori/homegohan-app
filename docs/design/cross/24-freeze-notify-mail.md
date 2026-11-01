@@ -60,7 +60,7 @@
 
 | # | シナリオ | 期待 |
 |---|---|---|
-| S-1 | admin が利用者 U を一時 BAN 7 日で凍結する。チェック on・メッセージ無し | 200 `{ ban_id, unban_at, notification: { status: 'sent' } }`。`email_outbox` に queued 1 行 (`template` `account_frozen`・`user_id` U・`to_email` U の登録アドレス・`idempotency_key` `account-frozen:<ban_id>`)。本文に「一時的な凍結」「解除の予定: <unban_at 日本時間>」。「運営からのメッセージ」の段は無い。監査 `admin.user.ban` の `details.notification.status` = `sent`・`outbox_id` = 行の id。画面は「7 日間の一時 BAN で凍結しました。通知メールを送信待ちに登録しました」 |
+| S-1 | admin が利用者 U を一時 BAN 7 日で凍結する。チェック on・メッセージ無し | 200 `{ ban_id, unban_at, notification: { status: 'sent' } }`。`email_outbox` に queued 1 行 (`template` `account_frozen`・`user_id` U・`to_email` U の登録アドレス・`idempotency_key` `account-frozen:<ban_id>`)。本文に「一時的な凍結」「解除の予定: <unban_at 日本時間>」。「運営からのメッセージ」の段は無い。監査 `admin.user.ban` の `details.notification.status` = `sent`・`outbox_id` = 行の id。画面は「7 日間凍結しました。通知メールを送信待ちに登録しました」 |
 | S-2 | S-1 でメッセージ「投稿内容について確認が取れるまで利用を停止しています。」を書く | 本文に「▼ 運営からのメッセージ」の段とその文。監査 `details.notification_message` にその文 |
 | S-3 | super_admin が永久 BAN で凍結する。チェック on | 本文は「無期限の凍結」「解除の予定はありません」。`unban_at` null |
 | S-4 | チェックを外して凍結する | 200 `notification: { status: 'not_requested' }`。`sendEmail` も `getUserById` も呼ばれない。`email_outbox` に行は無い。監査 `details.notify_user` false・`details.notification_message` null・`details.notification.status` `not_requested`。画面は「…凍結しました。通知メールは送っていません」 |
@@ -202,7 +202,7 @@ worker GET /api/cron/email-outbox (毎分。operator/10。本書は変えない)
 
 | # | 走らせた結果 | 通る場所 |
 |---|---|---|
-| S-1 | 画面: 検証を通り `{ ban_type: 'temporary', reason_category, reason_detail, duration_days: 7, notify_user: true }` を POST → route: UPDATE 1 行 → `banId` → sender: `getUserById(U)` が `user.email` → `renderAccountFrozenEmail({ to_email, frozen_at, unban_at: frozen_at + 7 日, operator_message: null })` → 本文に「凍結の種類: 一時的な凍結」「解除の予定: <日本時間>」、段「▼ 運営からのメッセージ」は無い → `sendEmail(封筒, { userId: U, idempotencyKey: 'account-frozen:<banId>' })` → `email_outbox` に queued (`template` `account_frozen`・`user_id` U・`redact_after_send` false) → `{ ok: true, id }` → `{ outcome: { status: 'sent' }, outbox_id: id }` → 監査 details に `notification_message: null`・`notification: { status: 'sent', reason: null, outbox_id: id }` → 200 `data.notification = { status: 'sent' }` → 画面「7 日間の一時 BAN で凍結しました。通知メールを送信待ちに登録しました (届くまで数分かかることがあります)」 | §7.2・§7.4・§7.5・§7.6 |
+| S-1 | 画面: 検証を通り `{ ban_type: 'temporary', reason_category, reason_detail, duration_days: 7, notify_user: true }` を POST → route: UPDATE 1 行 → `banId` → sender: `getUserById(U)` が `user.email` → `renderAccountFrozenEmail({ to_email, frozen_at, unban_at: frozen_at + 7 日, operator_message: null })` → 本文に「凍結の種類: 一時的な凍結」「解除の予定: <日本時間>」、段「▼ 運営からのメッセージ」は無い → `sendEmail(封筒, { userId: U, idempotencyKey: 'account-frozen:<banId>' })` → `email_outbox` に queued (`template` `account_frozen`・`user_id` U・`redact_after_send` false) → `{ ok: true, id }` → `{ outcome: { status: 'sent' }, outbox_id: id }` → 監査 details に `notification_message: null`・`notification: { status: 'sent', reason: null, outbox_id: id }` → 200 `data.notification = { status: 'sent' }` → 画面「7 日間凍結しました。通知メールを送信待ちに登録しました (届くまで数分かかることがあります)」 | §7.2・§7.4・§7.5・§7.6 |
 | S-2 | 画面が `notification_message: '投稿内容について…'` (trim 済み) を足す → Zod の `.trim().max(1000)` を通る → sender の `operator_message` に入る → 本文に「▼ 運営からのメッセージ」の段 → 監査 `notification_message` にその文 | §7.1・§7.2・§7.5 |
 | S-3 | `ban_type: 'permanent'` (super_admin) → `unbanAt` null → `renderAccountFrozenEmail` の `unban_at: null` → 「凍結の種類: 無期限の凍結」「解除の予定はありません」 | §7.2 |
 | S-4 | 画面が `notify_user: false` を送る (メッセージの欄は出ていない) → route: `freezeData.notify_user` が false → sender を呼ばない → `notification = FREEZE_NOTIFICATION_NOT_REQUESTED` → 監査 `notify_user: false`・`notification_message: null`・`notification: { status: 'not_requested', reason: null, outbox_id: null }` → 200 → 画面「…凍結しました。通知メールは送っていません」 | §7.5・§7.6 |
@@ -269,7 +269,7 @@ worker GET /api/cron/email-outbox (毎分。operator/10。本書は変えない)
 
 - チェック `notify_user`「利用者に凍結をメールで知らせる (アカウントの登録メールアドレス宛)」。既定 on (API の `default(true)` と同じ。今までの画面は本文に入れていなかったので API は true で動いていたが送らなかった。本書で「on = 送る」になる)。
 - チェックが on のときだけ、任意のメッセージの欄 `notification_message` (textarea・1000 文字まで・前後の空白を除いた文字数を「{文字数} / 1000 文字」で出す) を出す。説明の文: 「メールには、凍結の日時・種類・解除の予定・凍結中にできること・お問い合わせ先が入ります。理由カテゴリと詳細理由は入りません。」。欄の placeholder: 「ここに書いた文は「運営からのメッセージ」としてそのままメールの本文に入ります」 (§7.6)。
-- 成功の文: 今までの「永久 BAN で凍結しました」/「N 日間の一時 BAN で凍結しました」のあとに `describeFreezeNotificationOutcome(data.notification)` の文を 1 文添える (§7.3)。
+- 成功の文: 「無期限で凍結しました」/「N 日間凍結しました」(`src/lib/admin/freeze-labels.ts`) のあとに `describeFreezeNotificationOutcome(data.notification)` の文を 1 文添える (§7.3)。
 - 解除のフォームは変えない。
 
 ### 6.5 監査の details (決めること 5)
@@ -870,7 +870,7 @@ import { describeFreezeNotificationOutcome, freezeNotificationOutcomeOf } from '
     if (sent.ok) {
       const data = (sent.json as { data?: { notification?: unknown } } | null)?.data;
       const notice = describeFreezeNotificationOutcome(freezeNotificationOutcomeOf(data?.notification));
-      setDone(`${temporaryDays === null ? '永久 BAN で凍結しました' : `${temporaryDays} 日間の一時 BAN で凍結しました`}。${notice}`);
+      setDone(`${temporaryDays === null ? PERMANENT_FREEZE_DONE_MESSAGE : temporaryFreezeDoneMessage(temporaryDays)}。${notice}`);
       router.refresh();
     }
 ```
@@ -1008,7 +1008,7 @@ import { describeFreezeNotificationOutcome, freezeNotificationOutcomeOf } from '
 | 凍結の日時 | UPDATE の `frozen_at: new Date().toISOString()` (`unbanDate` とは別の `new Date()`) | `frozenAt` 1 つを UPDATE と本文と `unbanDate` の起点に使う |
 | 画面の項目 | カテゴリ・詳細・種別・期間 | + チェック「利用者に凍結をメールで知らせる」(既定 on) + on のときの任意のメッセージ (1000 文字まで) |
 | 画面が送る本文 | `notify_user` も `notification_message` も送らない (API は既定 true) | `notify_user` を常に送る。`notification_message` は on で空でないときだけ |
-| 画面の成功の文 | 「永久 BAN で凍結しました」/「N 日間の一時 BAN で凍結しました」 | 同じ文 + 「。」 + 通知の結果の 1 文 |
+| 画面の成功の文 | 「永久 BAN で凍結しました」/「N 日間の一時 BAN で凍結しました」 | 「無期限で凍結しました」/「N 日間凍結しました」(`src/lib/admin/freeze-labels.ts`) + 「。」 + 通知の結果の 1 文 |
 | 文面 `src/lib/emails/account/` | `account-deleted.ts`・`login-new-device.ts` | + `account-frozen.ts` (`account_frozen`) |
 | 送信の入口 (`sendEmail` を呼ぶ `src/lib/admin/`) | `send-ticket-reply-email.ts` | + `send-freeze-notification-email.ts` |
 | operator/02 §4 の記述 | 「`notify_user` は監査の details に残すだけ、`notification_message` は受け取るが使わない。利用者へ凍結を知らせる処理は無い」 | §17 の文に差し替え |
@@ -1073,9 +1073,9 @@ import { describeFreezeNotificationOutcome, freezeNotificationOutcomeOf } from '
 | 本文に NULL 文字 | 400 | `INVALID_CHARACTER` | `rejectNullCharacterBody` の固定の文 | 無し | 無し |
 | JSON が読めない | 400 | `INVALID_JSON` | 「リクエストボディが不正です」 | 無し | 無し |
 | Zod の失敗 (`notification_message` が 1001 文字以上・`notify_user` が boolean でない・ほか) | 400 | `VALIDATION_ERROR` | 「バリデーションエラー」+ `details` (flatten。画面は読まない) | 無し | 無し |
-| temporary で `duration_days` 無し | 400 | `VALIDATION_ERROR` | 「一時 BAN の場合は日数 (duration_days) が必須です」 | 無し | 無し |
+| temporary で `duration_days` 無し | 400 | `VALIDATION_ERROR` | 「一時凍結の場合は日数 (duration_days) が必須です」 | 無し | 無し |
 | 未認証 | 401 | `AUTH_UNAUTHENTICATED` | 「認証が必要です」 | 無し | 無し |
-| ロール不足・二段階認証の未完了・permanent を admin が | 403 | `OP_PERMISSION_DENIED` | `operatorForbiddenMessageOf` / 「永久 BAN は運営最上位のみ実行できます」(`PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE`。src/lib/admin/user-ban.ts) | 無し | 無し |
+| ロール不足・二段階認証の未完了・permanent を admin が | 403 | `OP_PERMISSION_DENIED` | `operatorForbiddenMessageOf` / 「無期限凍結は運営最上位のみ実行できます」(`PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE`。src/lib/admin/user-ban.ts) | 無し | 無し |
 | 対象が super_admin | 403 | `OP_TARGET_PROTECTED` | 「運営最上位のユーザーは凍結できません」(`SUPER_ADMIN_FREEZE_REJECTED_MESSAGE`。src/lib/admin/user-ban.ts) | 無し | 無し |
 | 対象が無い (UUID でない id を含む) | 404 | `NOT_FOUND` | 「ユーザーが見つかりません」 | 無し | 無し |
 | 読んでから書くまでに対象が変わった | 409 | `CONFLICT_STALE_DATA` | `STALE_FREEZE_TARGET_RESPONSE` の文 | 無し | 無し |
@@ -1276,7 +1276,7 @@ sequenceDiagram
 ## 19. 受入条件と本番の確認 (本番の DB と送信を伴う 2〜5 は、オーナーが行うか、オーナーの承認を得て行う。本書のコードは本番の DB に直接書き込まない)
 
 1. マージ前 (270k の全件): §12 のテストがすべて緑。`tsc`・lint が緑。§16 の番兵がすべて緑。
-2. 本番 (Vercel) の反映後、試験用の利用者 (捨てアカウント) を admin が一時 BAN 1 日・チェック on・メッセージありで凍結する → 画面に「1 日間の一時 BAN で凍結しました。通知メールを送信待ちに登録しました…」→ `email_outbox` に `template` `account_frozen`・`user_id` = 試験用の利用者の queued の行が 1 行 (Supabase MCP の SELECT) → 1〜2 分で `sent` になり、試験用の受信箱に件名「【ほめゴハン】アカウントが凍結されました」のメールが届き、本文に凍結の日時・「一時的な凍結」・解除の予定・「▼ 運営からのメッセージ」の段・2 つのリンク・問い合わせ先がある → リンクの `/frozen` を開き、ログインすると凍結の画面に移る。
+2. 本番 (Vercel) の反映後、試験用の利用者 (捨てアカウント) を admin が一時 BAN 1 日・チェック on・メッセージありで凍結する → 画面に「1 日間凍結しました。通知メールを送信待ちに登録しました…」→ `email_outbox` に `template` `account_frozen`・`user_id` = 試験用の利用者の queued の行が 1 行 (Supabase MCP の SELECT) → 1〜2 分で `sent` になり、試験用の受信箱に件名「【ほめゴハン】アカウントが凍結されました」のメールが届き、本文に凍結の日時・「一時的な凍結」・解除の予定・「▼ 運営からのメッセージ」の段・2 つのリンク・問い合わせ先がある → リンクの `/frozen` を開き、ログインすると凍結の画面に移る。
 3. 監査 (`/super-admin/audit-logs` または SELECT): `admin.user.ban` の details に `notification_message`・`notification { status: 'sent', reason: null, outbox_id }` があり、`outbox_id` が 2 の行の id。
 4. 解除してから、チェック off で凍結する → 「…通知メールは送っていません」。`email_outbox` に新しい行は無い。監査の `notification.status` が `not_requested`。
 5. 用済みの試験用の利用者は解除し、退会 (または削除) する。`email_outbox` の行が伏せられる (`to_email` が `redacted@redacted.invalid`)。
