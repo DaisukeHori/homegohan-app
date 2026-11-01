@@ -90,7 +90,7 @@ describe('API・ライブラリの文 (src/lib/admin/user-ban.ts。凍結の rou
 describe('描いた画面の文字に英字の BAN が無い', () => {
   it('凍結のフォーム (運営最上位): 欄名・選択肢は凍結の系', () => {
     const text = mount(<UserFreezeForm userId="00000000-0000-4000-8000-000000000001" isBanned={false} isSuperAdmin />);
-    expect(document.querySelector('legend')?.textContent?.replace('*', '').trim()).toBe('凍結の種類');
+    expect(document.querySelector('legend')?.textContent?.replaceAll('*', '').trim()).toBe('凍結の種類');
     expect(document.querySelector('input[value="temporary"]')?.closest('label')?.textContent?.trim()).toBe('一時凍結');
     expect(document.querySelector('input[value="permanent"]')?.closest('label')?.textContent?.trim()).toBe(
       '無期限凍結 (運営最上位のみ)',
