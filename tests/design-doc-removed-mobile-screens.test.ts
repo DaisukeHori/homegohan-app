@@ -244,6 +244,17 @@ describe('#1659 設計書は、#1598 で消したモバイルのネイティブ�
     expect(removedFilesMentionedIn('`apps/mobile/src/lib/storage.tsx`・`web/tests/mobile-super-admin-api-contract.test.ts`')).toEqual([]);
   });
 
+  it('#2164 で消したモバイルのホームの hook とそのテストを名指しとして拾い、Web の同じ名前の hook とテストは拾わない', () => {
+    expect(removedFilesMentionedIn('`apps/mobile/src/hooks/useHomeData.ts` の `toggleMealCompletion`')).toEqual([
+      'apps/mobile/src/hooks/useHomeData.ts',
+    ]);
+    expect(
+      removedFilesMentionedIn('`apps/mobile/__tests__/hooks/useHomeData-completion.test.ts`・`apps/mobile/__tests__/hooks/useHomeData-list-order.test.ts`'),
+    ).toEqual(['apps/mobile/__tests__/hooks/useHomeData-completion.test.ts', 'apps/mobile/__tests__/hooks/useHomeData-list-order.test.ts']);
+    // Web のホームの hook とそのテスト (残っている) は、apps/mobile の中を指さないので拾わない
+    expect(removedFilesMentionedIn('`apps/mobile/app/(tabs)/home.tsx` は `src/hooks/useHomeData.ts` を通る (`src/__tests__/hooks/useHomeData-completion.test.ts`)')).toEqual([]);
+  });
+
   it('コードの文字列の書き方: 消した区画・画面を指す文字列を拾い、残した区画・glob の付いた残した区画・Web のパスは拾わない', () => {
     const literals = mobileAppCodeLiteralsIn(
       "const MOBILE_GATED_AREAS = ['apps/mobile/app/(super-admin)', 'apps/mobile/app/(support)']; // 2026-10-16 に削除した",

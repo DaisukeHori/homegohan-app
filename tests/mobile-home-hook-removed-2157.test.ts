@@ -8,8 +8,10 @@
 // ここでは次を固定する:
 //   1. アプリのホームのタブは WebViewScreen で Web の /home を開く (ネイティブで描かない)
 //   2. apps/mobile に useHomeData の hook のファイルが無く、アプリのコードとテストがそれを import / mock しない
-//   3. コード・テスト・注 (設計書 docs/design と、適用済みで書き換えない supabase/migrations を除く) が、
+//   3. コード・テスト・注 (リポジトリの根の .md と根の lib を含む。設計書 docs/design と、適用済みで書き換えない supabase/migrations を除く) が、
 //      無くなった apps/mobile/src/hooks/useHomeData.ts を指さない
+//      (設計書は tests/design-doc-removed-mobile-screens.test.ts が見る。hook とそのテストは tests/helpers/mobile-removed-1598.ts の
+//      REMOVED_MOBILE_SOURCE_FILES に載せたので、名指しする行は同じ行で消したことを書く)
 // アプリにホームのデータが要るようになったら、ネイティブの画面と一緒に作り直し、この一覧を直すこと。
 
 import fs from 'node:fs';
@@ -28,11 +30,17 @@ const HOME_TAB = 'apps/mobile/app/(tabs)/home.tsx';
 const MOBILE_DIRS = ['apps/mobile/app', 'apps/mobile/src', 'apps/mobile/__tests__', 'apps/mobile/__mocks__'] as const;
 
 /**
- * 無くなった hook のパスを書いてはいけない場所。
- * docs/design は設計書 (別に直す)、supabase/migrations は適用済みで書き換えないので、ここでは見ない
+ * 無くなった hook のパスを書いてはいけない場所 (リポジトリの根の .md は ROOT_MARKDOWN_EXTENSION で別に足す)。
+ * supabase/migrations は適用済みで書き換えないので見ない
  */
-const NO_MENTION_DIRS = ['src', 'tests', 'packages', 'scripts', 'supabase/functions', 'apps/mobile', 'docs'] as const;
+const NO_MENTION_DIRS = ['src', 'tests', 'packages', 'scripts', 'supabase/functions', 'apps/mobile', 'docs', 'lib'] as const;
+/**
+ * NO_MENTION_DIRS の中で見ない場所。docs/design (設計書) は、1598 の見張り (tests/design-doc-removed-mobile-screens.test.ts) が
+ * 消したファイルの名指しを見る (名指しする行は同じ行で消したことを書く。注記できない行は tests/helpers/design-doc-pending-notes-1598.ts の数)
+ */
 const NO_MENTION_SKIP_PATHS = new Set(['docs/design']);
+/** リポジトリの根の文書 (CLAUDE.md・README.md など) の拡張子。根を丸ごと歩くと node_modules などに入るので、根の直下のこの拡張子のファイルだけを見る */
+const ROOT_MARKDOWN_EXTENSION = '.md';
 
 const SKIP_DIRS = new Set(['node_modules', '.next', 'dist', 'build', '.expo', 'coverage']);
 const TEXT_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json', '.md', '.sql', '.sh', '.yaml', '.yml']);
@@ -61,18 +69,29 @@ function listFiles(dirs: readonly string[]): string[] {
   return [...new Set(out)].sort();
 }
 
+/** リポジトリの根の直下の .md (サブディレクトリには入らない) */
+function rootMarkdownFiles(): string[] {
+  return fs
+    .readdirSync(ROOT, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && path.extname(entry.name) === ROOT_MARKDOWN_EXTENSION)
+    .map((entry) => entry.name);
+}
+
 function read(rel: string): string {
   return fs.readFileSync(path.join(ROOT, rel), 'utf8');
 }
 
 describe('#2157 R4: アプリのホームは WebView で、使われていないネイティブの hook を置かない', () => {
   const mobileFiles = listFiles(MOBILE_DIRS);
-  const mentionFiles = listFiles(NO_MENTION_DIRS);
+  const mentionFiles = [...new Set([...listFiles(NO_MENTION_DIRS), ...rootMarkdownFiles()])].sort();
 
-  it('走査が空振りしていない (アプリのホームのタブと、Web のホームの hook を見つけている)', () => {
+  it('走査が空振りしていない (アプリのホームのタブ・Web のホームの hook・根の文書・根の lib を見つけ、設計書は見ない)', () => {
     expect(mobileFiles).toContain(HOME_TAB);
     expect(mentionFiles).toContain('src/hooks/useHomeData.ts');
     expect(mentionFiles).toContain(SELF);
+    expect(mentionFiles).toContain('CLAUDE.md');
+    expect(mentionFiles).toContain('lib/converter.ts');
+    expect(mentionFiles.filter((rel) => rel.startsWith('docs/design/'))).toEqual([]);
   });
 
   it('アプリのホームのタブは WebViewScreen で Web の /home を開く', () => {

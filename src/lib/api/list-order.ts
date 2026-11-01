@@ -172,8 +172,8 @@ export const LIST_ORDERS = {
   /** AI 相談の文脈: AI のインサイト (作った日時の新しい順・件数の上限つき) */
   aiConsultationContextInsights: withIdTiebreak('health_insights', [descending('created_at')]),
   /**
-   * AI 相談の文脈: レシピのコレクション (作った日時の新しい順・件数の上限つき)。AI はプロンプトに載ったコレクションしか指せないので、
-   * 件数を超えた利用者でも、どのコレクションを渡すかを決める (同じ日時は id の順)
+   * AI 相談の文脈: レシピのコレクション (作った日時の新しい順・件数の上限つき)。件数を超えた利用者でも、
+   * どのコレクションをプロンプトに載せるかを決める (同じ日時は id の順)
    */
   aiConsultationRecipeCollections: withIdTiebreak('recipe_collections', [descending('created_at')]),
   /**

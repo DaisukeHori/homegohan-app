@@ -45,7 +45,8 @@ const UPCOMING_MEALS_LIMIT = 30;
 const RECENT_MEALS_LIMIT = 50;
 /**
  * システムプロンプトに入れる「レシピのコレクション」の件数の上限 (いままでの値)。作った日時の新しい側からこの件数を読む
- * (LIST_ORDERS.aiConsultationRecipeCollections)。AI はプロンプトに載った collectionId しか指せない
+ * (LIST_ORDERS.aiConsultationRecipeCollections)。プロンプトに載せるコレクション (名前・件数・collectionId) をこの件数で決める。
+ * AI の add_recipe_to_collection は名前 (collectionName) で指し、無い名前なら新しく作る
  */
 const RECIPE_COLLECTIONS_LIMIT = 10;
 

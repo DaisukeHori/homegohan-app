@@ -73,7 +73,10 @@ export const REMOVED_MOBILE_SCREENS = [
   '(super-admin)/super-admin/settings.tsx',
 ] as const;
 
-/** #1598 の続きで、消した画面と一緒に消した部品・フック・関数・テストのファイル (apps/mobile からの相対) */
+/**
+ * #1598 の続きで、消した画面と一緒に消した部品・フック・関数・テストのファイル (apps/mobile からの相対)。
+ * #2157 R4 (#2164) で消した、アプリから使われていなかったホームの hook とそのテストも載せる
+ */
 export const REMOVED_MOBILE_SOURCE_FILES = [
   '__tests__/ai/action-execute.test.tsx',
   '__tests__/ai/chat-daily-limit.test.tsx',
@@ -90,6 +93,8 @@ export const REMOVED_MOBILE_SOURCE_FILES = [
   '__tests__/health/checkup-form.test.tsx',
   '__tests__/health/insights-consent.test.tsx',
   '__tests__/health/streaks-labels.test.tsx',
+  '__tests__/hooks/useHomeData-completion.test.ts',
+  '__tests__/hooks/useHomeData-list-order.test.ts',
   '__tests__/hooks/useNutritionFeedbackWatch.test.tsx',
   '__tests__/lib/meal-type-visuals.test.ts',
   '__tests__/lib/nutrition-feedback-watch.test.ts',
@@ -165,6 +170,7 @@ export const REMOVED_MOBILE_SOURCE_FILES = [
   'src/components/ui/ListItem.tsx',
   'src/components/ui/StatCard.tsx',
   'src/components/ui/StatusBadge.tsx',
+  'src/hooks/useHomeData.ts',
   'src/hooks/useNutritionFeedbackWatch.ts',
   'src/hooks/useSignedPhotoUrl.ts',
   'src/lib/base64.ts',

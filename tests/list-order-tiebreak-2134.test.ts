@@ -31,7 +31,8 @@ const ROOT = process.cwd();
  * 問い合わせは直下の lib に書いてある)。
  * ブラウザで動くコード (hook・画面) も、PostgREST に送る並びは同じなので走査に入れる。テスト (src/__tests__) の偽物は入れない。
  * Edge Function (supabase/functions) は Deno で動き LIST_ORDERS を import できないので走査に入れない
- * (generate-menu-v4 / v5 の並びは tests/edge-generate-menu-context-order-2150.test.ts が見る)
+ * (generate-menu-v4 / v5 の並びは tests/edge-generate-menu-context-order-2150.test.ts が、料理画像のジョブ (process-meal-image-jobs) と
+ * カタログの取り込みのカテゴリ (_shared/catalog/import-runner.ts) の並びは tests/edge-job-category-order-2157.test.ts が見る)
  */
 const SCANNED_ROUTE_DIRS = ['src/app', 'src/lib', 'src/hooks', 'src/modules', 'src/components', 'src/contexts', 'lib'];
 
