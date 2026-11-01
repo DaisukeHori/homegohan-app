@@ -77,6 +77,7 @@ import { weeklyMenuRequestWeeklyOriginDataForDates } from '@/lib/ai/weekly-menu-
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { createLogger } from '@/lib/db-logger';
 import { errorCodeOf, toLoggableError } from '@/lib/api/errors';
+import { RECIPE_COLLECTIONS_USER_NAME_CONFLICT_TARGET } from '@/lib/recipes/collections';
 import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 import { MEAL_TYPE_MESSAGE, PLANNED_MEAL_NUTRIENT_LIMITS } from '@/lib/planned-meal-validation';
 import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
@@ -1365,11 +1366,13 @@ export async function runConsultationAction(
 
       const targetCollectionName = collectionName || DEFAULT_RECIPE_COLLECTION_NAME;
 
-      // コレクションを取得または作成 (#2166 X4)。
-      // recipe_collections に (user_id, name) の一意の制約は無く、同じ名前のコレクションが 2 件以上ありうる。
-      // 以前の .single() は 2 件以上で失敗 (data が null) し、そのたびに同じ名前のコレクションをもう 1 件作っていた。
+      // コレクションを取得または作成 (#2166 X4・#2178 Y3-b)。
+      // recipe_collections には一意の索引 (user_id, name) がある (#2178 Y3-b。それより前は無く、同じ名前のコレクションが 2 件以上ありえた)。
+      // X4 の前の .single() は 2 件以上で失敗 (data が null) し、そのたびに同じ名前のコレクションをもう 1 件作っていた。
       // いまは作った日時の古い順 (同じ日時は id の順) の先頭 1 行を maybeSingle で読み、
       // 0 行のときだけ作る。読み取りのエラーは 0 行と分け、作らずに失敗を返す。
+      // 作るときは onConflict = 索引の列の upsert にし、読んでから作るまでに別の実行が同じ名前の行を作っていれば、
+      // 一意の違反で失敗せずにその行を使う (行は増えない。更新するのは同じ値の user_id と name だけで、recipe_ids には触れない)。
       const { data: existingCollection, error: lookupError } = await orderListBy(
         supabase
           .from('recipe_collections')
@@ -1391,14 +1394,17 @@ export async function runConsultationAction(
       if (!collection) {
         const { data: newCollection, error: createError } = await supabase
           .from('recipe_collections')
-          .insert({
-            user_id: user.id,
-            name: targetCollectionName,
-          })
+          .upsert(
+            {
+              user_id: user.id,
+              name: targetCollectionName,
+            },
+            { onConflict: RECIPE_COLLECTIONS_USER_NAME_CONFLICT_TARGET },
+          )
           .select('id')
           .single();
         if (createError) {
-          logActionDbFailure(user, action, 'recipe_collections.insert', createError);
+          logActionDbFailure(user, action, 'recipe_collections.upsert', createError);
           result = { error: 'コレクションの作成に失敗しました' };
           break;
         }
@@ -1412,13 +1418,29 @@ export async function runConsultationAction(
         // オブジェクト）をそのまま渡しており、recipe_ids 列に意図しない値が
         // 書き込まれる（少なくとも配列追加としては機能しない）実質的な死にコードだった。
         // 読み直し + 重複排除 append のみで recipe_ids を更新する。
-        const { data: currentCollection } = await supabase
+        // #2178 Y3-a: 読み直しのエラー・行が返らないときは update しない。以前は読み直しの失敗を空の recipe_ids と同じに扱い、
+        // [recipeId] だけで上書きして、それまで入っていたレシピをコレクションから消していた。
+        // (読んでから書く形なので、同時に 2 回足すと片方が消えうる。1 文の条件つき UPDATE の RPC にまとめるのは別件)
+        const { data: currentCollection, error: rereadError } = await supabase
           .from('recipe_collections')
           .select('recipe_ids')
           .eq('id', collection.id)
           .single();
 
-        const currentIds = currentCollection?.recipe_ids || [];
+        if (rereadError || !currentCollection) {
+          logActionDbFailure(
+            user,
+            action,
+            'recipe_collections.reread',
+            rereadError ?? new Error('recipe_collections の読み直しで行が返らなかった'),
+          );
+          success = false;
+          result = { collectionId: collection.id, added: false };
+          break;
+        }
+
+        // recipe_ids の列は NULL を許す (既定は空の配列)。NULL は空として扱う
+        const currentIds: string[] = currentCollection.recipe_ids ?? [];
         if (!currentIds.includes(recipeId)) {
           const { error: appendError } = await supabase
             .from('recipe_collections')

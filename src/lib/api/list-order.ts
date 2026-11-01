@@ -182,8 +182,9 @@ export const LIST_ORDERS = {
   aiConsultationRecipeCollections: withIdTiebreak('recipe_collections', [descending('created_at')]),
   /**
    * AI 相談のアクション add_recipe_to_collection (src/lib/ai/consultation-action-executor.ts): 名前で引いたコレクションのうち、
-   * レシピを足す 1 行 (作った日時の古い順の先頭・同じ日時は id の順)。recipe_collections に (user_id, name) の一意の制約は無く、
-   * 同じ名前のコレクションが 2 件以上ありうるので、いつも同じ古い方へ足す (#2166 X4)
+   * レシピを足す 1 行 (作った日時の古い順の先頭・同じ日時は id の順)。X4 の時点の recipe_collections には (user_id, name) の
+   * 一意の制約が無く、同じ名前のコレクションが 2 件以上ありえたので、いつも同じ古い方へ足す (#2166 X4)。#2178 Y3-b で一意の索引
+   * (src/lib/recipes/collections.ts の RECIPE_COLLECTIONS_USER_NAME_UNIQUE_INDEX) を足し、いまは同じ名前の行は 1 件だけ
    */
   aiConsultationCollectionByName: withIdTiebreak('recipe_collections', [ascending('created_at')]),
   /** AI 相談の文脈: 使っている買い物リストの品 (分類の順) */
