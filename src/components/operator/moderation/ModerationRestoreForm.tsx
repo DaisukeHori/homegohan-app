@@ -126,7 +126,7 @@ export default function ModerationRestoreForm({
         <p role="status" className="rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">
           表示に戻しました ({done.restoredCount} 行)。投稿者本人以外にも再び見えます。
         </p>
-        <p className="text-xs text-gray-500">投稿者を BAN している場合、BAN はこの操作では解除されません (利用者の画面から解除します)。</p>
+        <p className="text-xs text-gray-500">投稿者を凍結している場合、凍結はこの操作では解除されません (利用者の画面から解除します)。</p>
       </div>
     );
   } else if (hiddenAt === null) {

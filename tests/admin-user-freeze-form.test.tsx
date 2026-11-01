@@ -224,7 +224,7 @@ describe('UserFreezeForm: ブラウザのフォームの送信をしない', () 
 });
 
 describe('UserFreezeForm: 送る内容', () => {
-  it('凍結: JSON で POST する。一時 BAN は duration_days を数値で送り、本文は API の FreezeBodySchema に通る', async () => {
+  it('凍結: JSON で POST する。一時凍結は duration_days を数値で送り、本文は API の FreezeBodySchema に通る', async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { data: { ban_id: 'b', unban_at: null } }));
     await renderForm();
 
@@ -255,7 +255,7 @@ describe('UserFreezeForm: 送る内容', () => {
     expect(lastCall().body.duration_days).toBe(7);
   });
 
-  it('永久 BAN (super_admin): duration_days を送らず、期間の入力欄も出さない', async () => {
+  it('無期限凍結 (super_admin): duration_days を送らず、期間の入力欄も出さない', async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { data: { ban_id: 'b', unban_at: null } }));
     await renderForm({ isSuperAdmin: true });
 
@@ -265,10 +265,10 @@ describe('UserFreezeForm: 送る内容', () => {
     await clickButton(FREEZE_BUTTON);
 
     expect(lastCall().body).toEqual({ ban_type: 'permanent', reason_category: 'abuse', reason_detail: '不正な決済', notify_user: true });
-    expect(allText()).toContain('永久 BAN で凍結しました');
+    expect(allText()).toContain('無期限で凍結しました');
   });
 
-  it('super_admin でなければ永久 BAN の選択肢を出さない', async () => {
+  it('super_admin でなければ無期限凍結の選択肢を出さない', async () => {
     await renderForm({ isSuperAdmin: false });
     expect(document.querySelector('input[type="radio"][value="permanent"]')).toBeNull();
     expect(document.querySelector('input[type="radio"][value="temporary"]')).not.toBeNull();
@@ -305,7 +305,7 @@ describe('UserFreezeForm: 本物の route につないで凍結・解除でき�
     expect(targetNow()?.frozen_at).toEqual(expect.any(String));
     expect(targetNow()?.unban_at).toEqual(expect.any(String));
     expect(auditActions()).toEqual(['admin.user.ban']);
-    expect(allText()).toContain('7 日間の一時 BAN で凍結しました');
+    expect(allText()).toContain('7 日間凍結しました');
     expect(refreshMock).toHaveBeenCalledTimes(1);
   });
 
@@ -360,16 +360,16 @@ describe('UserFreezeForm: 入力の誤りは送らずに知らせる', () => {
     expect(allText()).toContain('詳細理由を入力してください');
   });
 
-  it.each(['0', String(FREEZE_DURATION_DAYS_MAX + 1), '1.5', ''])('BAN 期間が範囲の外・整数でない (%j)', async (value) => {
+  it.each(['0', String(FREEZE_DURATION_DAYS_MAX + 1), '1.5', ''])('凍結の期間が範囲の外・整数でない (%j)', async (value) => {
     await renderForm();
     await fillFreeze();
     await typeInto(fieldById<HTMLInputElement>('duration_days'), value);
     await clickButton(FREEZE_BUTTON);
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(allText()).toContain(`BAN 期間は 1〜${FREEZE_DURATION_DAYS_MAX} の整数`);
+    expect(allText()).toContain(`凍結の期間は 1〜${FREEZE_DURATION_DAYS_MAX} の整数`);
   });
 
-  it('BAN 期間の上限ちょうどは送る', async () => {
+  it('凍結の期間の上限ちょうどは送る', async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { data: { ban_id: 'b', unban_at: null } }));
     await renderForm();
     await fillFreeze();
@@ -657,17 +657,17 @@ describe('UserFreezeForm: 凍結の通知メール (#2026。cross/24 §6.4・§7
     await renderForm();
     await fillFreeze();
     await clickButton(FREEZE_BUTTON);
-    expect(document.querySelector('[role="status"]')?.textContent).toBe(`7 日間の一時 BAN で凍結しました。${notice}`);
+    expect(document.querySelector('[role="status"]')?.textContent).toBe(`7 日間凍結しました。${notice}`);
     expect(notice).toBe(describeFreezeNotificationOutcome(freezeNotificationOutcomeOf(notification)));
   });
 
-  it('F-5 永久 BAN の成功の文にも通知の結果を添える', async () => {
+  it('F-5 無期限凍結の成功の文にも通知の結果を添える', async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { data: { ban_id: 'b', unban_at: null, notification: { status: 'sent' } } }));
     await renderForm({ isSuperAdmin: true });
     await fillFreeze();
     await clickRadio('permanent');
     await clickButton(FREEZE_BUTTON);
-    expect(document.querySelector('[role="status"]')?.textContent).toBe(`永久 BAN で凍結しました。${FREEZE_NOTIFICATION_SENT_MESSAGE}`);
+    expect(document.querySelector('[role="status"]')?.textContent).toBe(`無期限で凍結しました。${FREEZE_NOTIFICATION_SENT_MESSAGE}`);
   });
 
   it('F-6 本物の route (sender は差し替え) で、チェック on なら sender が { userId, banId, frozenAt, unbanAt, operatorMessage } で呼ばれ、off なら呼ばれない', async () => {
@@ -694,7 +694,7 @@ describe('UserFreezeForm: 凍結の通知メール (#2026。cross/24 §6.4・§7
     expect(params.operatorMessage).toBe('運営からのお知らせ');
     expect(details.notification_message).toBe('運営からのお知らせ');
     expect(details.notification).toEqual({ status: 'sent', reason: null, outbox_id: 'ob-1' });
-    expect(document.querySelector('[role="status"]')?.textContent).toBe(`7 日間の一時 BAN で凍結しました。${FREEZE_NOTIFICATION_SENT_MESSAGE}`);
+    expect(document.querySelector('[role="status"]')?.textContent).toBe(`7 日間凍結しました。${FREEZE_NOTIFICATION_SENT_MESSAGE}`);
 
     // チェック off: 凍結は済むが sender は呼ばれない
     serviceDb = createSchemaDb({ tables: { user_profiles: [profileRow(TARGET_ID, { roles: ['user'] })] } });
@@ -715,6 +715,6 @@ describe('UserFreezeForm: 凍結の通知メール (#2026。cross/24 §6.4・§7
     expect(offDetails.notify_user).toBe(false);
     expect(offDetails.notification_message).toBeNull();
     expect(offDetails.notification).toEqual({ status: 'not_requested', reason: null, outbox_id: null });
-    expect(document.querySelector('[role="status"]')?.textContent).toBe(`7 日間の一時 BAN で凍結しました。${FREEZE_NOTIFICATION_NOT_REQUESTED_MESSAGE}`);
+    expect(document.querySelector('[role="status"]')?.textContent).toBe(`7 日間凍結しました。${FREEZE_NOTIFICATION_NOT_REQUESTED_MESSAGE}`);
   });
 });

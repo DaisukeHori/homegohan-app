@@ -61,8 +61,8 @@ describe('U1-1: API・ライブラリの文のロールの呼び名は「運営�
     expect(SUPER_ADMIN_SCREEN_LABEL).toBe('運営最上位の画面');
   });
 
-  it('永久 BAN を断る文 (凍結の route と審査の route の 403 OP_PERMISSION_DENIED)', () => {
-    expect(PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE).toBe('永久 BAN は運営最上位のみ実行できます');
+  it('無期限凍結を断る文 (凍結の route と審査の route の 403 OP_PERMISSION_DENIED)', () => {
+    expect(PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE).toBe('無期限凍結は運営最上位のみ実行できます');
     expect(PERMANENT_BAN_SUPER_ADMIN_ONLY_MESSAGE).toContain(SUPER_ADMIN_ONLY_NOTE);
   });
 
@@ -70,8 +70,8 @@ describe('U1-1: API・ライブラリの文のロールの呼び名は「運営�
     expect(SUPER_ADMIN_FREEZE_REJECTED_MESSAGE).toBe('運営最上位のユーザーは凍結できません');
   });
 
-  it('super_admin の BAN を断る文 (applyUserBan が返し、審査の route が本文の message にする)', () => {
-    expect(SUPER_ADMIN_BAN_REJECTED_MESSAGE).toBe('運営最上位のユーザーは BAN できません');
+  it('super_admin の凍結を断る文 (審査の applyUserBan が返し、審査の route が本文の message にする)', () => {
+    expect(SUPER_ADMIN_BAN_REJECTED_MESSAGE).toBe('運営最上位のユーザーは凍結できません');
   });
 
   it('二段階認証の画面の FORBIDDEN の文', () => {

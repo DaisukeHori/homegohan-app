@@ -35,6 +35,15 @@ import {
   UnfreezeBodySchema,
   type FreezeBody,
 } from '@/lib/admin/users-schemas';
+import {
+  FREEZE_DURATION_DAYS_LABEL,
+  FREEZE_TYPE_LABEL,
+  PERMANENT_FREEZE_DONE_MESSAGE,
+  PERMANENT_FREEZE_LABEL,
+  TEMPORARY_FREEZE_LABEL,
+  freezeDurationDaysRangeMessage,
+  temporaryFreezeDoneMessage,
+} from '@/lib/admin/freeze-labels';
 import { describeFreezeNotificationOutcome, freezeNotificationOutcomeOf } from '@/lib/admin/freeze-notification-status';
 import { SUPER_ADMIN_ONLY_NOTE } from '@/lib/admin/operator-role-labels';
 
@@ -152,7 +161,7 @@ export default function UserFreezeForm({ userId, isBanned, isSuperAdmin }: UserF
         days < FREEZE_DURATION_DAYS_MIN ||
         days > FREEZE_DURATION_DAYS_MAX
       ) {
-        setError(`BAN 期間は ${FREEZE_DURATION_DAYS_MIN}〜${FREEZE_DURATION_DAYS_MAX} の整数 (日数) で入力してください`);
+        setError(freezeDurationDaysRangeMessage(FREEZE_DURATION_DAYS_MIN, FREEZE_DURATION_DAYS_MAX));
         return;
       }
       body.duration_days = days;
@@ -176,7 +185,7 @@ export default function UserFreezeForm({ userId, isBanned, isSuperAdmin }: UserF
     if (sent.ok) {
       const data = (sent.json as { data?: { notification?: unknown } } | null)?.data;
       const notice = describeFreezeNotificationOutcome(freezeNotificationOutcomeOf(data?.notification));
-      setDone(`${temporaryDays === null ? '永久 BAN で凍結しました' : `${temporaryDays} 日間の一時 BAN で凍結しました`}。${notice}`);
+      setDone(`${temporaryDays === null ? PERMANENT_FREEZE_DONE_MESSAGE : temporaryFreezeDoneMessage(temporaryDays)}。${notice}`);
       router.refresh();
     }
   }
@@ -315,7 +324,7 @@ export default function UserFreezeForm({ userId, isBanned, isSuperAdmin }: UserF
 
       <fieldset className="mb-4">
         <legend className="block text-sm font-medium text-gray-700 mb-1">
-          BAN 種別 <span className="text-red-500">*</span>
+          {FREEZE_TYPE_LABEL} <span className="text-red-500">*</span>
         </legend>
         <div className="flex gap-4">
           <label className="flex items-center gap-2 text-sm cursor-pointer">
@@ -327,7 +336,7 @@ export default function UserFreezeForm({ userId, isBanned, isSuperAdmin }: UserF
               onChange={() => setBanType('temporary')}
               disabled={submitting}
             />
-            一時 BAN
+            {TEMPORARY_FREEZE_LABEL}
           </label>
           {isSuperAdmin && (
             <label className="flex items-center gap-2 text-sm cursor-pointer">
@@ -340,7 +349,7 @@ export default function UserFreezeForm({ userId, isBanned, isSuperAdmin }: UserF
                 disabled={submitting}
               />
               {/* ロールは表示名で出す (#2128 V1-2) */}
-              永久 BAN ({SUPER_ADMIN_ONLY_NOTE})
+              {PERMANENT_FREEZE_LABEL} ({SUPER_ADMIN_ONLY_NOTE})
             </label>
           )}
         </div>
@@ -349,7 +358,7 @@ export default function UserFreezeForm({ userId, isBanned, isSuperAdmin }: UserF
       {banType === 'temporary' && (
         <div className="mb-6">
           <label htmlFor="duration_days" className="block text-sm font-medium text-gray-700 mb-1">
-            BAN 期間 (日数)
+            {FREEZE_DURATION_DAYS_LABEL}
           </label>
           <input
             id="duration_days"

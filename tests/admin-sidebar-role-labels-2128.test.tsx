@@ -158,20 +158,20 @@ describe('/admin の入口のカード (V1-2 と同じ型)', () => {
   });
 });
 
-describe('凍結のフォームの永久 BAN の注記 (V1-2 と同じ型)', () => {
-  it('super_admin に出す永久 BAN の選択肢は「永久 BAN (運営最上位のみ)」', () => {
+describe('凍結のフォームの無期限凍結の注記 (V1-2 と同じ型)', () => {
+  it('super_admin に出す無期限凍結の選択肢は「無期限凍結 (運営最上位のみ)」', () => {
     mount(<UserFreezeForm userId="00000000-0000-4000-8000-000000000001" isBanned={false} isSuperAdmin />);
     const label = document.querySelector('input[value="permanent"]')?.closest('label');
-    expect(label?.textContent?.trim()).toBe('永久 BAN (運営最上位のみ)');
+    expect(label?.textContent?.trim()).toBe('無期限凍結 (運営最上位のみ)');
     expect(visibleText('body')).not.toMatch(/super_admin|Super Admin/);
   });
 });
 
-describe('審査のフォームの永久 BAN の選択肢 (V1-2 と同じ型)', () => {
-  it('super_admin に出す選択肢は「削除 + 永久 BAN (運営最上位のみ)」で、英字の super_admin は出さない', () => {
+describe('審査のフォームの無期限凍結の選択肢 (V1-2 と同じ型)', () => {
+  it('super_admin に出す選択肢は「削除 + 無期限凍結 (運営最上位のみ)」で、英字の super_admin は出さない', () => {
     mount(<ModerationReviewForm type="food" id="flag-1" status="pending" isSuperAdmin />);
     const option = document.querySelector('select option[value="delete_and_perm_ban"]');
-    expect(option?.textContent).toBe('削除 + 永久 BAN (運営最上位のみ)');
+    expect(option?.textContent).toBe('削除 + 無期限凍結 (運営最上位のみ)');
     expect(visibleText('select')).not.toMatch(/super_admin|Super Admin/);
   });
 });

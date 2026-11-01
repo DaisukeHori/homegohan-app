@@ -161,7 +161,7 @@ describe('applyUserBan (#1041 round-2 D)', () => {
 
     expect(result.success).toBe(false);
     expect(result.kind).toBe('not_found');
-    expect(result.error).toBe('BAN 対象ユーザーが見つかりません');
+    expect(result.error).toBe('凍結の対象のユーザーが見つかりません');
     expect(supabase.updateCalls).toHaveLength(0);
   });
 

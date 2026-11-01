@@ -317,10 +317,10 @@ describe('Zod の検証の文に、括弧の外の英字の項目名が無い (s
 });
 
 describe('src/lib の関数・表が作って本文に流す文 (値で確かめる)', () => {
-  it('BAN を断る文 (applyUserBan が返し、モデレーションの route が本文の message にする)', () => {
+  it('凍結を断る文 (applyUserBan が返し、モデレーションの route が本文の message にする)', () => {
     expect(englishIdentifiersOutsideParentheses(SUPER_ADMIN_BAN_REJECTED_MESSAGE)).toEqual([]);
     // ロールは運営の画面の表示名 (運営最上位) で書く (#2134 U1-1。審査のフォームがこの文をそのまま出す)
-    expect(SUPER_ADMIN_BAN_REJECTED_MESSAGE).toBe('運営最上位のユーザーは BAN できません');
+    expect(SUPER_ADMIN_BAN_REJECTED_MESSAGE).toBe('運営最上位のユーザーは凍結できません');
   });
 
   it('食事の入力の検証の文 (meals・meal-plans の 400 の error。Web の alert・モバイルの Alert がそのまま出す)', () => {
