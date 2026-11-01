@@ -217,7 +217,11 @@ function columnValueSchema(kind: UserProfileColumnKind): z.ZodType {
   }
 }
 
-function fieldSchema(spec: UserProfileUpdateFieldSpec): z.ZodType {
+/**
+ * 1 つの欄の値のスキーマ (列の型と null の可否。欄が無い = undefined も通す)。
+ * PUT / POST の本文と、AI 相談のプロフィールの更新 (src/lib/ai/profile-preference-updates.ts。#2183 Z2) が同じ検査を使う
+ */
+export function userProfileFieldSchema(spec: UserProfileUpdateFieldSpec): z.ZodType {
   const value = columnValueSchema(spec.kind);
   return (spec.nullable ? value.nullable() : value).optional();
 }
@@ -228,7 +232,7 @@ function fieldSchema(spec: UserProfileUpdateFieldSpec): z.ZodType {
  */
 export const UserProfileUpdateBodySchema = z.object(
   Object.fromEntries(
-    Object.entries(USER_PROFILE_UPDATE_FIELDS).map(([field, spec]) => [field, fieldSchema(spec)]),
+    Object.entries(USER_PROFILE_UPDATE_FIELDS).map(([field, spec]) => [field, userProfileFieldSchema(spec)]),
   ),
 );
 
@@ -284,6 +288,6 @@ export const USER_PROFILE_POST_FIELDS: Readonly<Record<string, UserProfilePostFi
  */
 export const UserProfilePostBodySchema = z.object(
   Object.fromEntries(
-    Object.entries(USER_PROFILE_POST_FIELDS).map(([field, { spec }]) => [field, fieldSchema(spec)]),
+    Object.entries(USER_PROFILE_POST_FIELDS).map(([field, { spec }]) => [field, userProfileFieldSchema(spec)]),
   ),
 );

@@ -7,6 +7,7 @@ import { calculateNutritionTargets } from '@homegohan/core'
 import { buildNutritionCalculatorInput } from '@/lib/build-nutrition-input'
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character'
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
+import { PROFILE_NAME_PLACEHOLDER } from '@homegohan/shared'
 import { USER_PROFILE_POST_FIELDS, UserProfilePostBodySchema, UserProfileUpdateBodySchema } from '@/lib/profile-update-schema'
 
 /**
@@ -32,7 +33,7 @@ const AGE_GROUP_DECADE_YEARS = 10;
  * 行が既にあるときは入れない (本文に無い欄を上書きしない。#2178 Y1-a)
  */
 const USER_PROFILE_INSERT_PLACEHOLDERS = {
-  nickname: 'Guest',
+  nickname: PROFILE_NAME_PLACEHOLDER,
   age_group: 'unspecified',
   gender: 'unspecified',
 } as const;
