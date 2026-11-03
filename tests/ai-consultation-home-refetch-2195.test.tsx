@@ -859,8 +859,11 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
       expect(activityText(), '保存済みの気分・活動量を出していない (検査の前提が崩れた)').toBe(SAVED_FEELING);
     }
 
-    /** 気分・活動量を押す (upsert の応答は upsert が解けるまで止める)。押す処理の Promise を返す */
-    async function pressFeelingHoldingUpsert(upsert: { promise: Promise<void> }): Promise<Promise<void>> {
+    /**
+     * 気分・活動量を押す (upsert の応答は upsert が解けるまで止める)。押す処理の Promise を { saving } で返す
+     * (Promise をそのまま async 関数から返すと、その Promise が解けるまで待ってしまう)
+     */
+    async function pressFeelingHoldingUpsert(upsert: { promise: Promise<void> }): Promise<{ saving: Promise<void> }> {
       supabaseMock.writeHold = upsert.promise;
       let saving: Promise<void> = Promise.resolve();
       await act(async () => {
@@ -868,11 +871,11 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
       });
       supabaseMock.writeHold = null;
       expect(activityText(), '楽観的な更新をしていない (検査が空振りしている)').toBe(PRESSED_FEELING);
-      return saving;
+      return { saving };
     }
 
     /** サーバーが押した値を保存し終え、upsert の応答が届く */
-    async function finishUpsert(upsert: { release: () => void }, saving: Promise<void>) {
+    async function finishUpsert(upsert: { release: () => void }, { saving }: { saving: Promise<void> }) {
       supabaseMock.tableResults = { ...supabaseMock.tableResults, daily_activity_logs: activityLogTable(PRESSED_FEELING) };
       await act(async () => {
         upsert.release();
@@ -884,7 +887,7 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
     it('保存の応答を待つあいだに来た成功では取り直さず (押した値を保存の前の値に戻さない)、終わったら 1 回取り直す', async () => {
       await renderWithSavedFeeling();
       const upsert = holdOf();
-      const saving = await pressFeelingHoldingUpsert(upsert);
+      const pressed = await pressFeelingHoldingUpsert(upsert);
 
       // 保存の前の値 (rest) のまま読む取り直しが走ると、押した値が戻る
       await notifyAiConsultationSucceeded();
@@ -892,7 +895,7 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
       expect(refetchCalls, '保存の途中に取り直した').toBe(0);
       expect(activityText()).toBe(PRESSED_FEELING);
 
-      await finishUpsert(upsert, saving);
+      await finishUpsert(upsert, pressed);
       expect(refetchCalls, '止めた成功のぶん 1 回取り直していない').toBe(1);
       expect(activityText()).toBe(PRESSED_FEELING);
     });
@@ -909,7 +912,7 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
 
       // 応答を待つあいだに押す (upsert の応答は止める)
       const upsert = holdOf();
-      const saving = await pressFeelingHoldingUpsert(upsert);
+      const pressed = await pressFeelingHoldingUpsert(upsert);
 
       // 取り直しの応答が届く (気分・活動量は保存の前の値 rest のまま読む)
       await act(async () => {
@@ -920,7 +923,7 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
       expect(refetchCalls, '保存の途中に取り直した').toBe(1);
 
       // サーバーが押した値を保存し終えた: 置かなかった応答のぶん 1 回取り直す
-      await finishUpsert(upsert, saving);
+      await finishUpsert(upsert, pressed);
       expect(refetchCalls, '置かなかった応答のぶん取り直していない').toBe(2);
       expect(activityText()).toBe(PRESSED_FEELING);
     });
