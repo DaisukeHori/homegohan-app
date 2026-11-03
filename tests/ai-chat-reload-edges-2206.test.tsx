@@ -211,9 +211,9 @@ function occurrences(needle: string): number {
   return text().split(needle).length - 1;
 }
 
-/** 文が出るまでの 1 回の待ち (ミリ秒) と回数の上限 (合わせて 5 秒) */
+/** 文が出るまでの 1 回の待ち (ミリ秒) と回数の上限 (合わせて 2 秒。テストの時間切れ 5 秒の内で、読み直しの待ち TEST_RECHECK_DELAY_MS より十分長い) */
 const WAIT_POLL_MS = 20;
-const WAIT_MAX_POLLS = 250;
+const WAIT_MAX_POLLS = 100;
 
 async function waitFor(condition: () => boolean) {
   for (let i = 0; i < WAIT_MAX_POLLS && !condition(); i += 1) {
