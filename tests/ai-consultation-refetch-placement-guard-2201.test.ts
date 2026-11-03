@@ -23,12 +23,26 @@
  *   問題 (直す前・R4): 献立表の冷蔵庫 (fetchPantry) と人数の設定 (fetchUserSettings) の取り直しは、応答を置く前に deferIfHeld だけを
  *   見て順序を見ていなかった。続けて来た 2 回の通知の取り直しや、開いたときの読み込みと取り直しの応答が逆の順に届くと、古い応答が
  *   新しい一覧・人数を上書きした (献立表は流れごとにページの世代番号の数を書き分けていて、この 2 つで書き忘れた)。
+ *   5. 受け手 (書き込みの印を渡さない受け手も) と DELEGATED_RECEIVERS の hook のファイルで、取り直しの経路の関数 (取り直しの入口から
+ *      名前で呼ぶ関数をたどった全部と、その中の関数) のうち、await (または .then / .catch に渡した関数) のあとに応答を置く setter
+ *      (set で始まる名前の関数・store の getState().setX) を呼ぶ関数は、順序の見方 (isLatest・取得の流れの place・後片付けの印 cancelled・
+ *      中断の signal.aborted) を関数の中に 1 つは持つ。取り直しの入口は、useAiConsultationDataRefetch の第 1 引数・
+ *      useAiConsultationRefetchKey の refetchKey を依存に持つ useEffect の関数・DELEGATED_RECEIVERS の hook が返す取り直しの関数。
+ *      取り直しそのものが await の前に立てた印 (同じ setter) を finally で下ろすところは応答ではないので数えない (家族・譲渡の承諾の画面)
+ *   問題 (直す前・R5): ホームの栄養の分析 (useHomeData の fetchNutritionAnalysis) は、取り直しの経路 (readHomeData) から呼ばれるのに
+ *   順序を 1 つも見ずに点数・課題・アドバイスと今日のアドバイスの帯を置いていた。続けて来た 2 回の通知の取り直しの応答が逆の順に届くと、
+ *   古い分析とアドバイスが新しい表示を上書きし、古い応答が新しい読み取りの途中で読み込み中の印を下ろした (R4 の献立表と同じ型の残り)。
  *
  * 検査の限界: 取り直しの経路の「置く場所の全部」で deferIfHeld・順序を見ているかまでは数えない (4 は deferIfHeld を直に呼ぶところの
- * 前に順序の見方があるかを、関数の中の書いた位置で見るだけで、その見方がその置く場所を守る分岐かは見ない。ページごとの描画のテスト
+ * 前に順序の見方があるかを、関数の中の書いた位置で見るだけで、その見方がその置く場所を守る分岐かは見ない。5 は順序の見方を関数の中に
+ * 1 つでも持つ関数を、置く場所ごとには数えない。ページごとの描画のテスト
  * tests/ai-consultation-refetch-reads-2195.test.tsx・tests/ai-consultation-weekly-refetch-2195.test.tsx・
  * tests/ai-consultation-home-refetch-2195.test.tsx が、書き込み・モーダルの途中に届いた応答・古い応答を置かないことを確かめる)。
  * 1〜3 は書き込みの印を渡さない受け手 (読むだけのページ) を数えない。
+ * 5 は、取り直しの関数が state を変えて走らせる useEffect (献立表の aiConsultationRefetchRound で走る月のカレンダー・生成中の依頼の確認) と、
+ * 取り直しの経路でない取得 (日を選んだとき・週を移ったとき) が取り直しと同じ値を置くかは見ない (取り直しと同じ値を置く別の取得は、
+ * 取り直しと同じ取得の流れで始める。/health の選んだ日のパネル・献立表の表示中の週の献立。描画のテストが確かめる)。
+ * 名前の同じ関数がファイルの中に何個かあれば、全部をたどる (多めに数える)。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -51,6 +65,20 @@ const DEFER_IF_HELD = 'deferIfHeld';
 const ORDER_CHECK_CALL = 'isLatest';
 /** useEffect の後片付けで前の回の応答を捨てる印 (useAiConsultationRefetchKey の受け手) */
 const CLEANUP_FLAG = 'cancelled';
+/** 取得の流れの札の、順序と番兵を見て応答を置く関数 */
+const STREAM_PLACE = 'place';
+/** 中断した読み取りの応答を捨てる印 (AbortController の signal.aborted。/comparison) */
+const ABORT_FLAG = 'aborted';
+/** 規則 5 の順序の見方 (関数の中にどれか 1 つでもあれば、その関数は応答を置く前に順序を見ている) */
+const ORDER_TOKENS: ReadonlySet<string> = new Set([ORDER_CHECK_CALL, STREAM_PLACE, CLEANUP_FLAG, ABORT_FLAG]);
+/** useAiConsultationRefetchKey の戻り値の、取り直すときに増える数 */
+const REFETCH_KEY_RESULT = 'refetchKey';
+/** 応答を画面に置く setter の名前 (React の state の setter・store の setter) */
+const SETTER_NAME = /^set[A-Z]/;
+/** store の今の状態を取る関数 (usePantryStore.getState().setFridgeItems の getState) */
+const STORE_STATE_ACCESS = 'getState';
+/** 応答を受け取る関数を渡す Promise のメソッド (渡した関数の中は await のあと) */
+const PROMISE_CALLBACK_METHODS: ReadonlySet<string> = new Set(['then', 'catch']);
 const SOURCE_FILE = /\.(ts|tsx)$/;
 
 /**
@@ -75,6 +103,12 @@ const DELEGATED_RECEIVERS: ReadonlyArray<{ file: string; marker: string; refetch
  */
 const MIN_COUNTED_MARKER_RECEIVERS = 6;
 
+/**
+ * 規則 5 が見た取り直しの経路の取得 (await のあとに何かをする関数) の数の下限 (検査が何もたどらずに緑になるのを防ぐ。
+ * 2026-11-04 の実数。取り直しの経路を減らしてこれを割ったら、実数を数え直して下げる)
+ */
+const MIN_REFETCH_PATH_FETCHERS = 46;
+
 interface ReceiverSource {
   file: string;
   source: string;
@@ -85,6 +119,8 @@ interface PlacementGuardReport {
   violations: string[];
   countedMarkerReceivers: string[];
   selfHeldReceivers: string[];
+  /** 規則 5 が見た取り直しの経路の取得 ('<ファイル>:<行>') */
+  refetchPathFetchers: string[];
 }
 
 function parse(file: string, source: string): ts.SourceFile {
@@ -297,6 +333,189 @@ function returnedPropertyFunction(sf: ts.SourceFile, name: string): FunctionNode
   return found;
 }
 
+/** 関数のノード (矢印関数・関数式・関数の宣言) か */
+function isFunctionNode(node: ts.Node): node is FunctionNode {
+  return ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node);
+}
+
+/** 名前で呼べる関数 (関数の宣言・関数を入れた const・useCallback(fn) を入れた const)。同じ名前が何個かあれば全部 */
+function namedFunctions(sf: ts.SourceFile): Map<string, FunctionNode[]> {
+  const named = new Map<string, FunctionNode[]>();
+  const add = (name: string, fn: FunctionNode) => named.set(name, [...(named.get(name) ?? []), fn]);
+  walk(sf, (node) => {
+    if (ts.isFunctionDeclaration(node) && node.name !== undefined) add(node.name.text, node);
+    else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      const fn = asFunction(node.initializer);
+      if (fn !== null) add(node.name.text, fn);
+    }
+  });
+  return named;
+}
+
+/** useAiConsultationRefetchKey の戻り値の refetchKey を受け取った名前 */
+function refetchKeyNames(sf: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  for (const call of callsTo(sf, [REFETCH_KEY_HOOK])) {
+    const declaration = call.parent;
+    if (!ts.isVariableDeclaration(declaration) || !ts.isObjectBindingPattern(declaration.name)) continue;
+    for (const element of declaration.name.elements) {
+      const property = element.propertyName ?? element.name;
+      if (ts.isIdentifier(property) && property.text === REFETCH_KEY_RESULT && ts.isIdentifier(element.name)) names.add(element.name.text);
+    }
+  }
+  return names;
+}
+
+/**
+ * 取り直しの経路の入口の関数 (規則 5): useAiConsultationDataRefetch の第 1 引数・useAiConsultationRefetchKey の refetchKey を
+ * 依存に持つ useEffect の関数・delegatedRefetch (DELEGATED_RECEIVERS の hook が返す取り直しの関数の名前) の関数
+ */
+function refetchEntryFunctions(sf: ts.SourceFile, delegatedRefetch: string | null): FunctionNode[] {
+  const entries: FunctionNode[] = [];
+  for (const call of callsTo(sf, [DATA_REFETCH_HOOK])) {
+    const fn = resolveFunction(sf, call.arguments[0]);
+    if (fn !== null) entries.push(fn);
+  }
+  const keyNames = refetchKeyNames(sf);
+  for (const call of callsTo(sf, ['useEffect'])) {
+    const deps = call.arguments[1];
+    if (deps === undefined || !ts.isArrayLiteralExpression(deps)) continue;
+    if (!deps.elements.some((dep) => ts.isIdentifier(dep) && keyNames.has(dep.text))) continue;
+    const fn = asFunction(call.arguments[0]);
+    if (fn !== null) entries.push(fn);
+  }
+  if (delegatedRefetch !== null) {
+    const fn = returnedPropertyFunction(sf, delegatedRefetch);
+    if (fn !== null) entries.push(fn);
+  }
+  return entries;
+}
+
+/** 入口から、名前で呼ぶ関数をたどった全部の関数 (たどった関数の中の関数も含む) */
+function refetchPathFunctions(sf: ts.SourceFile, entries: readonly FunctionNode[]): Set<FunctionNode> {
+  const named = namedFunctions(sf);
+  const reached = new Set<FunctionNode>();
+  const queue: FunctionNode[] = [];
+  const reach = (fn: FunctionNode) => {
+    if (reached.has(fn)) return;
+    reached.add(fn);
+    queue.push(fn);
+  };
+  entries.forEach(reach);
+  while (queue.length > 0) {
+    const fn = queue.pop();
+    if (fn?.body === undefined) continue;
+    walk(fn.body, (node) => {
+      if (isFunctionNode(node)) reach(node);
+      if (ts.isCallExpression(node)) {
+        const name = calleeName(node);
+        if (name !== null) (named.get(name) ?? []).forEach(reach);
+      }
+    });
+  }
+  return reached;
+}
+
+/** 関数の本体を、中の関数に入らずに歩く */
+function walkOwnBody(fn: FunctionNode, visit: (node: ts.Node) => void) {
+  const go = (node: ts.Node) => {
+    if (node !== fn && isFunctionNode(node)) return;
+    visit(node);
+    node.forEachChild(go);
+  };
+  if (fn.body !== undefined) go(fn.body);
+}
+
+/** Promise の then / catch に渡した関数か (中は応答が届いたあと) */
+function isPromiseCallback(fn: FunctionNode): boolean {
+  const call = fn.parent;
+  return (
+    call !== undefined &&
+    ts.isCallExpression(call) &&
+    ts.isPropertyAccessExpression(call.expression) &&
+    PROMISE_CALLBACK_METHODS.has(call.expression.name.text) &&
+    call.arguments.some((argument) => argument === fn)
+  );
+}
+
+/** 応答を置く setter の呼び出しなら、その名前 (setX(...)・X.getState().setY(...)) */
+function setterCallName(call: ts.CallExpression): string | null {
+  const callee = call.expression;
+  if (ts.isIdentifier(callee)) return SETTER_NAME.test(callee.text) ? callee.text : null;
+  if (
+    ts.isPropertyAccessExpression(callee) &&
+    SETTER_NAME.test(callee.name.text) &&
+    ts.isCallExpression(callee.expression) &&
+    ts.isPropertyAccessExpression(callee.expression.expression) &&
+    callee.expression.expression.name.text === STORE_STATE_ACCESS
+  ) {
+    return callee.name.text;
+  }
+  return null;
+}
+
+/** node が fn の中の try の finally の中か */
+function inFinallyOf(node: ts.Node, fn: FunctionNode): boolean {
+  for (let current: ts.Node = node; current !== fn && current.parent !== undefined; current = current.parent) {
+    if (ts.isTryStatement(current.parent) && current.parent.finallyBlock === current) return true;
+  }
+  return false;
+}
+
+/** 関数の名前 (const の名前・関数の宣言の名前。無ければ「無名の関数」) */
+function functionLabel(fn: FunctionNode): string {
+  if (ts.isFunctionDeclaration(fn) && fn.name !== undefined) return fn.name.text;
+  for (let current: ts.Node | undefined = fn.parent; current !== undefined; current = current.parent) {
+    if (ts.isVariableDeclaration(current) && ts.isIdentifier(current.name)) return current.name.text;
+    if (ts.isPropertyAssignment(current) && ts.isIdentifier(current.name)) return current.name.text;
+    if (isFunctionNode(current) || ts.isSourceFile(current)) break;
+  }
+  return '無名の関数';
+}
+
+/**
+ * 規則 5: 取り直しの経路の関数のうち、応答が届いたあと (最初の await のあと・then / catch に渡した関数の中) に setter を呼ぶのに、
+ * 順序の見方 (ORDER_TOKENS) を関数の中に 1 つも持たない関数。fetchers に、見た取得 (応答が届いたあとに何かをする関数) を足す
+ */
+function placementsWithoutOrder(file: string, sf: ts.SourceFile, delegatedRefetch: string | null, fetchers: string[]): string[] {
+  const violations: string[] = [];
+  for (const fn of refetchPathFunctions(sf, refetchEntryFunctions(sf, delegatedRefetch))) {
+    let settledFrom = isPromiseCallback(fn) ? fn.getStart(sf) : -1;
+    walkOwnBody(fn, (node) => {
+      if (settledFrom < 0 && ts.isAwaitExpression(node)) settledFrom = node.getStart(sf);
+    });
+    if (settledFrom < 0) continue;
+    const line = sf.getLineAndCharacterOfPosition(fn.getStart(sf)).line + 1;
+    fetchers.push(`${file}:${line}`);
+    let ordered = false;
+    if (fn.body !== undefined) {
+      walk(fn.body, (node) => {
+        if (ts.isIdentifier(node) && ORDER_TOKENS.has(node.text)) ordered = true;
+      });
+    }
+    if (ordered) continue;
+    // 取り直しそのものが応答を待つ前に立てた印 (同じ setter) を finally で下ろすところは、応答を置くところではない
+    const raisedBeforeSettled = new Set<string>();
+    const placedSetters: string[] = [];
+    walkOwnBody(fn, (node) => {
+      if (!ts.isCallExpression(node)) return;
+      const name = setterCallName(node);
+      if (name === null) return;
+      const start = node.getStart(sf);
+      if (start < settledFrom) raisedBeforeSettled.add(name);
+      else if (!(raisedBeforeSettled.has(name) && inFinallyOf(node, fn))) {
+        placedSetters.push(`${name} (${sf.getLineAndCharacterOfPosition(start).line + 1} 行)`);
+      }
+    });
+    if (placedSetters.length > 0) {
+      violations.push(
+        `${file}:${line}: 取り直しの経路の取得 ${functionLabel(fn)} が、応答が届いたあとに ${placedSetters.join('・')} で応答を置くのに、順序 (${[...ORDER_TOKENS].join('・')}) を 1 つも見ていない (最後に始めた取得の応答だけを置く。useAiConsultationFetchStream の place か isLatest で見る)`,
+      );
+    }
+  }
+  return violations;
+}
+
 /** 受け手のソースを数える (sources は検査する全部のファイル。DELEGATED_RECEIVERS の definedIn もこの中から引く) */
 function checkPlacementGuards(
   sources: readonly ReceiverSource[],
@@ -306,6 +525,7 @@ function checkPlacementGuards(
   const violations: string[] = [];
   const countedMarkerReceivers: string[] = [];
   const selfHeldReceivers: string[] = [];
+  const refetchPathFetchers: string[] = [];
   const byFile = new Map(sources.map((s) => [s.file, s.source]));
 
   for (const { file, source } of sources) {
@@ -316,6 +536,8 @@ function checkPlacementGuards(
         `${file}:${line}: 取り直しの応答を置く前に ${DEFER_IF_HELD} だけを見て、順序 (${ORDER_CHECK_CALL}・後片付けの ${CLEANUP_FLAG}) を見ていない (取得を何本も持つページは useAiConsultationFetchStream の place を使う)`,
       );
     }
+    const delegatedRefetch = delegated.find((d) => d.definedIn === file)?.refetch ?? null;
+    violations.push(...placementsWithoutOrder(file, sf, delegatedRefetch, refetchPathFetchers));
     for (const call of callsTo(sf, [DATA_REFETCH_HOOK, REFETCH_KEY_HOOK])) {
       const hook = calleeName(call);
       const options = hook === DATA_REFETCH_HOOK ? call.arguments[1] : call.arguments[0];
@@ -388,7 +610,7 @@ function checkPlacementGuards(
       violations.push(`SELF_HELD_RECEIVERS の ${entry.file} (${entry.marker}) が、真偽の ref の印を渡す受け手として見つからない (一覧を直す)`);
     }
   }
-  return { violations, countedMarkerReceivers, selfHeldReceivers };
+  return { violations, countedMarkerReceivers, selfHeldReceivers, refetchPathFetchers };
 }
 
 function listSourceFiles(dir: string): string[] {
@@ -417,6 +639,9 @@ describe('書き込みの印を渡す受け手は、取り直しの応答を置�
       MIN_COUNTED_MARKER_RECEIVERS,
     );
     expect(new Set(report.selfHeldReceivers).size).toBe(SELF_HELD_RECEIVERS.length);
+    expect(report.refetchPathFetchers.length, '取り直しの経路の取得をたどれていない (規則 5 が空振りしている)').toBeGreaterThanOrEqual(
+      MIN_REFETCH_PATH_FETCHERS,
+    );
   });
 
   describe('見分けの空振りを防ぐ (直す前の /pantry・/menus/weekly・/health/goals の形を赤にする)', () => {
@@ -489,7 +714,8 @@ describe('書き込みの印を渡す受け手は、取り直しの応答を置�
         }, []);
         ${DATA_REFETCH_HOOK}((ticket) => { void fetchPantry(ticket); }, { writeInFlightRef: pendingWrites });
       }`);
-      expect(violations).toEqual([expect.stringMatching(/:8: .*順序/)]);
+      // 規則 4 (deferIfHeld の前に順序を見ない) と規則 5 (取り直しの経路の取得が順序を 1 つも見ない) の両方が赤にする
+      expect(violations).toEqual([expect.stringMatching(/:8: .*順序/), expect.stringMatching(/:4: 取り直しの経路の取得 fetchPantry /)]);
     });
 
     it('順序の見方が deferIfHeld より後にあっても赤 (応答を置く前に順序を見ていない)', () => {
@@ -521,7 +747,10 @@ describe('書き込みの印を渡す受け手は、取り直しの応答を置�
           return () => { cancelled = true; };
         }, [refetchKey]);
       }`;
-      expect(check(source.replaceAll('ORDER_GUARD', 'if (ticket?.deferIfHeld()) return;'))).toEqual([expect.stringContaining('順序')]);
+      expect(check(source.replaceAll('ORDER_GUARD', 'if (ticket?.deferIfHeld()) return;'))).toEqual([
+        expect.stringMatching(/:9: 取り直しの応答を置く前に/),
+        expect.stringMatching(/:7: 取り直しの経路の取得 load /),
+      ]);
       expect(check(source.replaceAll('ORDER_GUARD', 'if (cancelled) return; if (ticket?.deferIfHeld()) return;'))).toEqual([]);
     });
 
@@ -553,6 +782,72 @@ describe('書き込みの印を渡す受け手は、取り直しの応答を置�
           ${DATA_REFETCH_HOOK}((ticket) => fetchItems(ticket, refetchReadMode()), { writeInFlightRef: pendingWrites });
         }`),
       ).toEqual([]);
+    });
+  });
+
+  describe('規則 5: 取り直しの経路の取得は、応答を置くのに順序を見る (R5 の直す前のホームの栄養の分析の形を赤にする)', () => {
+    const PAGE_FILE = 'src/app/(main)/x/page.tsx';
+    const HOOK_FILE = 'src/hooks/useX.ts';
+    const header = `import { ${DATA_REFETCH_HOOK}, ${FETCH_STREAM_HOOK} } from '@/hooks/useAiConsultationDataRefetch';`;
+    const checkPage = (source: string) => checkPlacementGuards([{ file: PAGE_FILE, source: `${header}\n${source}` }], [], []).violations;
+
+    it('取り直しの関数を作る hook の、取り直しの経路から呼ぶ取得が順序を 1 つも見ない (直す前の useHomeData の fetchNutritionAnalysis) は赤', () => {
+      const source = `export const useX = () => {
+        const homeStream = ${FETCH_STREAM_HOOK}();
+        const adviceStream = ${FETCH_STREAM_HOOK}();
+        const fetchAdvice = async () => {
+          ADVICE_BEGIN
+          const res = await fetch('/api/advice');
+          ADVICE_ORDER
+          if (res.ok) setAdvice(await res.json());
+        };
+        const fetchHome = async (ticket) => {
+          const order = homeStream.begin(ticket);
+          const res = await fetch('/api/home');
+          order.place(() => setHome(res));
+          fetchAdvice();
+        };
+        return { refetch: (ticket) => fetchHome(ticket) };
+      };`;
+      const delegatedHook = [{ file: PAGE_FILE, marker: 'writes', refetch: 'refetch', definedIn: HOOK_FILE }];
+      const run = (adviceBegin: string, adviceOrder: string) =>
+        checkPlacementGuards(
+          [{ file: HOOK_FILE, source: source.replaceAll('ADVICE_BEGIN', adviceBegin).replaceAll('ADVICE_ORDER', adviceOrder) }],
+          [],
+          delegatedHook,
+        ).violations;
+      expect(run('', '')).toEqual([expect.stringMatching(/useX\.ts:4: 取り直しの経路の取得 fetchAdvice が、.*setAdvice \(8 行\)/)]);
+      // 直した形: 自分の取得の流れで始め、応答を待ったあとに最後に始めた読み取りかを見る
+      expect(run('const order = adviceStream.begin();', 'if (!order.isLatest()) return;')).toEqual([]);
+    });
+
+    it('then に渡した関数の中で応答を置くのに順序を見ない取り直しは赤', () => {
+      expect(
+        checkPage(`function Page() {
+          const load = useCallback((ticket) => {
+            fetch('/x').then((res) => res.json()).then((data) => setItems(data));
+          }, []);
+          ${DATA_REFETCH_HOOK}(load);
+        }`),
+      ).toEqual([expect.stringMatching(/:4: 取り直しの経路の取得 無名の関数 が、.*setItems \(4 行\)/)]);
+    });
+
+    it('取り直しそのものが応答を待つ前に立てた印を finally で下ろすところは数えない (家族・譲渡の承諾の画面)。それ以外の setter は赤', () => {
+      const source = `function Page() {
+        const refetchAfterAiConsultation = async (ticket) => {
+          setAiRefetching(true);
+          try {
+            await load(ticket);
+          } finally {
+            FINALLY
+          }
+        };
+        ${DATA_REFETCH_HOOK}(refetchAfterAiConsultation);
+      }`;
+      expect(checkPage(source.replaceAll('FINALLY', 'setAiRefetching(false);'))).toEqual([]);
+      expect(checkPage(source.replaceAll('FINALLY', 'setAiRefetching(false); setItems([]);'))).toEqual([
+        expect.stringMatching(/:3: 取り直しの経路の取得 refetchAfterAiConsultation が、応答が届いたあとに setItems \(8 行\) で/),
+      ]);
     });
   });
 });

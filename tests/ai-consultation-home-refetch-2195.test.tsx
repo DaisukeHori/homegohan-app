@@ -156,11 +156,11 @@ const NUTRITION_ANALYSIS_URL = '/api/ai/nutrition-analysis?period=today&includeA
 /** 栄養の分析の点数 (分析があるとき) */
 const ANALYSIS_SCORE = 72;
 
-/** 分析があるときの GET /api/ai/nutrition-analysis の応答 (アドバイスは advice。null ならアドバイスなし) */
-function analysisResponse(advice: string | null) {
+/** 分析があるときの GET /api/ai/nutrition-analysis の応答 (アドバイスは advice。null ならアドバイスなし。点数は score) */
+function analysisResponse(advice: string | null, score: number = ANALYSIS_SCORE) {
   return {
     success: true,
-    analysis: { score: ANALYSIS_SCORE, issues: ['タンパク質が不足しています'], comparison: {} },
+    analysis: { score, issues: ['タンパク質が不足しています'], comparison: {} },
     advice,
     suggestion: null,
   };
@@ -375,6 +375,113 @@ describe('useHomeData の取り直しは、今日のアドバイスの帯と栄�
     await refetchHome();
     expect(adviceBannerText()).toBe(ADVICE_BEFORE);
     expect(analysisScoreText()).toBe(String(ANALYSIS_SCORE));
+  });
+});
+
+describe('useHomeData: 続けて来た 2 回の成功の取り直しの栄養の分析の応答が逆の順に届いても、古い分析で上書きしない (#2201 U1)', () => {
+  const ADVICE_BEFORE = '夕食のタンパク質が不足しています';
+  /** 1 回目の取り直し (受付の通知) の分析 (先に始めた読み取りの古い答え) */
+  const FIRST_SCORE = 40;
+  const FIRST_ADVICE = '主食を少し減らしましょう';
+  /** 2 回目の取り直し (完了の通知) の分析 (あとに始めた読み取りの新しい答え) */
+  const SECOND_SCORE = 85;
+  const SECOND_ADVICE = '野菜を一品足しましょう';
+
+  /** 止めた栄養の分析の応答 (始めた順。release で届ける) */
+  let heldAnalyses: { release: () => void }[];
+  /** true の間に始めた栄養の分析の読み取りは、応答を止める */
+  let holdAnalyses: boolean;
+
+  function HomeNutritionProbe() {
+    const { nutritionAnalysis, suggestion, refetch, aiConsultationWrites } = useHomeData();
+    // ホームのページと同じく、通知のたびに hook が渡す札を refetch に渡す
+    useAiConsultationDataRefetch((ticket) => refetch(ticket), { writeInFlightRef: aiConsultationWrites });
+    return (
+      <div>
+        <p data-testid="advice-banner">{suggestion ?? ''}</p>
+        <p data-testid="analysis-score">{nutritionAnalysis.score}</p>
+        <p data-testid="analysis-loading">{String(nutritionAnalysis.loading)}</p>
+      </div>
+    );
+  }
+  const analysisLoadingText = () => container.querySelector('[data-testid="analysis-loading"]')?.textContent;
+
+  beforeEach(() => {
+    heldAnalyses = [];
+    holdAnalyses = false;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) => {
+        if (String(input) === NUTRITION_ANALYSIS_URL && nutritionAnalysisBody !== undefined) {
+          // 答えは読み取りを始めたときのもの (止めたあとに答えを変えても、止めた読み取りは前の答えを返す)
+          const body = nutritionAnalysisBody;
+          if (holdAnalyses) await new Promise<void>((resolve) => heldAnalyses.push({ release: resolve }));
+          return { ok: true, status: OK_STATUS, json: async () => body };
+        }
+        return { ok: false, status: NOT_FOUND_STATUS, json: async () => ({}) };
+      }),
+    );
+  });
+
+  async function notifyAiConsultationSucceeded() {
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent(AI_CONSULTATION_DATA_CHANGED_EVENT, { detail: { actionType: 'update_meal', result: {} } }));
+    });
+    await settle();
+  }
+
+  async function release(held: { release: () => void } | undefined) {
+    if (held === undefined) throw new Error('止めた栄養の分析の応答が無い');
+    await act(async () => {
+      held.release();
+    });
+    await settle();
+  }
+
+  /** 開いてから 2 回の成功を届け、どちらの取り直しの栄養の分析の応答も止める */
+  async function startTwoRefetches() {
+    nutritionAnalysisBody = analysisResponse(ADVICE_BEFORE);
+    await act(async () => {
+      root.render(<HomeNutritionProbe />);
+    });
+    await settle();
+    expect(analysisScoreText()).toBe(String(ANALYSIS_SCORE));
+    expect(adviceBannerText()).toBe(ADVICE_BEFORE);
+
+    holdAnalyses = true;
+    nutritionAnalysisBody = analysisResponse(FIRST_ADVICE, FIRST_SCORE);
+    await notifyAiConsultationSucceeded();
+    nutritionAnalysisBody = analysisResponse(SECOND_ADVICE, SECOND_SCORE);
+    await notifyAiConsultationSucceeded();
+    expect(heldAnalyses, '2 回の取り直しの栄養の分析を止められていない (検査が空振りしている)').toHaveLength(2);
+    expect(analysisLoadingText()).toBe('true');
+    return { first: heldAnalyses[0], second: heldAnalyses[1] };
+  }
+
+  it('あとの取り直しの分析が先に届き、先の取り直しの分析が後から届いても、あとの点数と今日のアドバイスの帯を残す', async () => {
+    const { first, second } = await startTwoRefetches();
+    await release(second);
+    expect(analysisScoreText()).toBe(String(SECOND_SCORE));
+    expect(adviceBannerText()).toBe(SECOND_ADVICE);
+    expect(analysisLoadingText()).toBe('false');
+
+    await release(first);
+    expect(analysisScoreText(), '先の取り直しの古い分析が、あとの分析を上書きした').toBe(String(SECOND_SCORE));
+    expect(adviceBannerText(), '先の取り直しの古いアドバイスが、今日のアドバイスの帯を戻した').toBe(SECOND_ADVICE);
+    expect(analysisLoadingText()).toBe('false');
+  });
+
+  it('先の取り直しの分析が先に届いても置かず、読み込み中の印も下ろさない (あとの取り直しの分析が届いたら置いて下ろす)', async () => {
+    const { first, second } = await startTwoRefetches();
+    await release(first);
+    expect(analysisScoreText(), '先の取り直しの古い分析を置いた').toBe(String(ANALYSIS_SCORE));
+    expect(adviceBannerText()).toBe(ADVICE_BEFORE);
+    expect(analysisLoadingText(), '先の取り直しの応答が、あとの取り直しの途中で読み込み中の印を下ろした').toBe('true');
+
+    await release(second);
+    expect(analysisScoreText()).toBe(String(SECOND_SCORE));
+    expect(adviceBannerText()).toBe(SECOND_ADVICE);
+    expect(analysisLoadingText()).toBe('false');
   });
 });
 

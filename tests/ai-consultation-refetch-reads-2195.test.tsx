@@ -1768,6 +1768,67 @@ describe('/health: 日を選び直したら、前に選んだ日の記録をパ�
     expect(container.textContent).toContain(String(SECOND_DAY_WEIGHT));
     expect(container.textContent).not.toContain(String(FIRST_DAY_WEIGHT));
   });
+
+  it('日を選んだときの読み取りの応答を待つあいだに来た成功の取り直しの応答が先に届いたら、それを出し、日を選んだときの古い応答で戻さない', async () => {
+    const BEFORE_AI_WEIGHT = 61.5;
+    const AFTER_AI_WEIGHT = 60.5;
+    const c = caseOf('/health');
+    setServer(c.full);
+    await mount({ ...c, openPanels: undefined });
+    const [day] = [...container.querySelectorAll<HTMLButtonElement>('button[aria-pressed="false"]')];
+    if (!day) throw new Error('今日でない日のボタンが無い');
+
+    // 日を選んだときの読み取りは、AI 相談の前のその日の記録を読み、応答が遅れる
+    const selectRead = deferred();
+    server.holdAll = selectRead.promise;
+    server.fetchBodies['/api/health/records/*'] = { record: HEALTH_RECORD('2026-01-01', BEFORE_AI_WEIGHT), previous: null };
+    await act(async () => {
+      day.click();
+    });
+    server.holdAll = null;
+
+    // その間に AI 相談がその日の体重を書いた: 取り直しの読み直しの応答が先に届き、パネルに出る
+    server.fetchBodies['/api/health/records/*'] = { record: HEALTH_RECORD('2026-01-01', AFTER_AI_WEIGHT), previous: null };
+    await notifyAiConsultationSucceeded();
+    expect(container.textContent, '取り直しで読んだその日の記録を、日を選んだときの読み取りの途中で出していない').toContain(String(AFTER_AI_WEIGHT));
+
+    selectRead.resolve();
+    await settle();
+    expect(container.textContent, '日を選んだときの古い応答が、取り直しで読んだその日の記録を戻した').toContain(String(AFTER_AI_WEIGHT));
+    expect(container.textContent).not.toContain(String(BEFORE_AI_WEIGHT));
+  });
+});
+
+describe('/profile/nutrition-targets: 前の回の栄養目標の読み取りが後から失敗で届いても、あとの回が出した失敗の表示を消さない (#2201 U1)', () => {
+  it('開いたときの読み込みの栄養目標の応答 (500) が、その読み込み中に来た成功の回の失敗のあとに届く', async () => {
+    const c = caseOf('/profile/nutrition-targets');
+    const targetsRequest = 'GET /api/nutrition/targets';
+    // 比べる先: 開いたときにログインを確かめられなかった画面
+    setServer(c.full);
+    server.failure = 'network';
+    await renderOnly(c);
+    server.failure = null;
+    const failedOpen = screenSignature(container);
+    await freshRoot();
+
+    // 開いたときの読み込みは、栄養目標の読み取りの応答 (500) を待つ
+    const targetsRead = deferred();
+    server.fetchHolds.set(targetsRequest, targetsRead.promise);
+    server.failedRequests.add(targetsRequest);
+    await renderOnly(c);
+    expect(server.requests, '開いたときの読み込みが栄養目標を読んでいない (検査が空振りしている)').toContain(targetsRequest);
+    server.fetchHolds.delete(targetsRequest);
+
+    // その間に来た成功の回 (開いたときの読み込みの役を引き継ぐ) は、ログインを確かめられずに失敗の表示を出す
+    server.failure = 'network';
+    await notifyAiConsultationSucceeded();
+    server.failure = null;
+    expect(screenSignature(container), 'あとの回の失敗の表示が出ていない (検査が空振りしている)').toBe(failedOpen);
+
+    targetsRead.resolve();
+    await settle();
+    expect(screenSignature(container), '前の回の栄養目標の失敗の応答が、あとの回の失敗の表示を消した').toBe(failedOpen);
+  });
 });
 
 describe('/health: 取り直しの fetch が reject しても、読み込み中のまま止まらず今の表示を残す (#2201 U1)', () => {
