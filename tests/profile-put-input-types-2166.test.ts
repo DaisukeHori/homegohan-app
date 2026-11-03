@@ -19,6 +19,7 @@ import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { API_INVALID_JSON_MESSAGE } from '@/lib/api/error-responses';
 import { fromUserProfile } from '@/lib/converter';
+import { profileCompletenessOfRow } from '@/lib/profile-completeness';
 import {
   PG_INTEGER_MAX,
   PG_INTEGER_MIN,
@@ -33,7 +34,12 @@ import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
 applyHeavyUnitTestTimeout();
 
 const USER_ID = '40000000-0000-4000-8000-000000000001';
-const UPDATED_ROW = { id: USER_ID, nickname: 'テスト', show_recipe_author_name: true };
+const UPDATED_ROW_FIELDS = { id: USER_ID, nickname: 'テスト', show_recipe_author_name: true };
+/**
+ * update が返す書いた後の行。完成度は行から数えた値と同じにしておく (PUT は書いた後の行から完成度を数え、違うときだけ
+ * profile_completeness を書き直す。#2201 U4。この検査は欄の型を見るので、完成度の書き直しが起きない行にする)
+ */
+const UPDATED_ROW = { ...UPDATED_ROW_FIELDS, profile_completeness: profileCompletenessOfRow(UPDATED_ROW_FIELDS) };
 
 const h = vi.hoisted(() => ({
   /** from(table) の呼び出しの記録 (DB に触れたか) */
@@ -269,9 +275,10 @@ describe('PUT /api/profile: 型の合う本文は今までどおり書く', () =
     expect(res.status).toBe(200);
     const written = h.profileUpdates[0];
     expect(written).toMatchObject({ last_profile_update: expect.any(String) });
-    // 完成度は本文の値を書かず、書いた後の行から数えた値を後から書く (#2201 U4)
+    // 完成度は本文の値を書かず、書いた後の行から数える (#2201 U4。この行は数えた値と同じなので書き直しも起きない)
     expect(written).not.toHaveProperty('profile_completeness');
-    expect(h.profileUpdates.slice(1)).toEqual([{ profile_completeness: expect.any(Number) }]);
+    expect(h.profileUpdates).toHaveLength(1);
+    expect((await res.json()).profile_completeness).toBe(UPDATED_ROW.profile_completeness);
   });
 
   it('age を送り ageGroup を送らないときは今までどおり年代を入れる', async () => {

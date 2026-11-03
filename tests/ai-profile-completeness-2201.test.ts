@@ -29,6 +29,8 @@ vi.mock('@/lib/rate-limit', () => ({ checkRateLimit: vi.fn() }));
 const logger = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }));
 vi.mock('@/lib/db-logger', () => ({ createLogger: () => ({ ...logger, withUser: () => logger }), generateRequestId: () => 'request-1' }));
 vi.mock('@/lib/health-streaks', () => ({ updateHealthStreak: vi.fn() }));
+// オンボーディングの完了のあとの案内の状態 (user_profiles の handson_tour_skipped_at を書くことがある) は、この検査では見ない
+vi.mock('@/lib/handson-tour/getStatus', () => ({ getHandsonTourStatusInternal: vi.fn(async () => ({ should_show: false })) }));
 /** route の利用者のクライアント (テストごとに置く。createRecordingSupabase の client に auth を足したもの) */
 const routeDb = vi.hoisted(() => ({ client: null as null | Record<string, unknown> }));
 vi.mock('@/lib/supabase/server', () => ({
