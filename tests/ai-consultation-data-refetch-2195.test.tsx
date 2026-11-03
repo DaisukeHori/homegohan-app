@@ -710,6 +710,34 @@ describe('取り直しの応答を置く時点の番兵・書き込みの印 (�
     expect(tickets).toHaveLength(2);
   });
 
+  it('1 つの取り直しの応答を何か所かに分けて置くページが置く場所ごとに見ても、置かずに取り直すのは 1 回 (#2201 U2)', async () => {
+    const tickets: AiConsultationFetchTicket[] = [];
+    let writes: AiConsultationPendingWrites | null = null;
+    function PendingWritesTicketReceiver() {
+      const pendingWrites = useAiConsultationPendingWrites();
+      writes = pendingWrites;
+      useAiConsultationDataRefetch((ticket) => tickets.push(ticket), { writeInFlightRef: pendingWrites });
+      return <p>応答を何か所かに分けて置くページ</p>;
+    }
+    await act(async () => {
+      root.render(<PendingWritesTicketReceiver />);
+    });
+    await notifyAiConsultationSucceeded();
+    expect(tickets).toHaveLength(1);
+
+    // 応答を待つあいだに書き込みを始めて終えた (番兵も書き込みの途中の印も立っていない)
+    await act(async () => {
+      writes!.begin()();
+    });
+    // 献立・買い物リスト・カレンダーの印のように、置く場所ごとに見る
+    await act(async () => {
+      expect(tickets[0].deferIfHeld(), '書き込みの前に読んだかもしれない応答を置く').toBe(true);
+      expect(tickets[0].deferIfHeld(), '一度置かなかった札の応答を、ほかの場所では置く').toBe(true);
+      expect(tickets[0].deferIfHeld()).toBe(true);
+    });
+    expect(tickets, '置く場所ごとに取り直しを足した').toHaveLength(2);
+  });
+
   it('書き込みの印が真偽の ref のときは、応答を置く時点で書き込みの途中かだけを見る', async () => {
     const tickets: AiConsultationFetchTicket[] = [];
     const writeInFlightRef = { current: false };

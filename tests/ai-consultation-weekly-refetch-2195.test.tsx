@@ -373,6 +373,8 @@ function jsonResponse(body: unknown, status = 200) {
 const NOT_FOUND_STATUS = 404;
 /** 食事の更新の道の頭 (PATCH /api/meal-plans/meals/<id>) */
 const MEAL_PATCH_PATH_PREFIX = '/api/meal-plans/meals/';
+/** 買い物リストの品目の更新の道の頭 (PATCH /api/shopping-list/<id>。チェックの切り替えなど) */
+const SHOPPING_ITEM_PATCH_PATH_PREFIX = '/api/shopping-list/';
 /** 読み取りの失敗 (server.namesFail) のときの status */
 const SERVER_ERROR_STATUS = 500;
 /** ページの API の相対 URL を解く起点 (fetch のモックの中だけで使う) */
@@ -380,13 +382,22 @@ const PAGE_ORIGIN = 'http://localhost';
 
 function installFakeServer() {
   fetchCalls = [];
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: { method?: string }) => {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: { method?: string; body?: unknown }) => {
     const raw = typeof input === 'string' ? input : input.toString();
     fetchCalls.push(raw);
     recorder.record(fetchReadKey(raw, init));
     const url = new URL(raw, PAGE_ORIGIN);
     // 祝日の一覧 (外の API) は、この検査では祝日なし
     if (url.origin !== PAGE_ORIGIN) return jsonResponse({});
+    // 買い物リストの品目の更新 (チェックの切り替え)。サーバーの表に書く (#2201 U2)
+    if ((init?.method ?? 'GET').toUpperCase() === 'PATCH' && url.pathname.startsWith(SHOPPING_ITEM_PATCH_PATH_PREFIX)) {
+      const id = url.pathname.slice(SHOPPING_ITEM_PATCH_PATH_PREFIX.length);
+      const patch = JSON.parse(String(init?.body ?? '{}')) as { isChecked?: boolean };
+      server.shoppingItems = server.shoppingItems.map((item) =>
+        item.id === id && patch.isChecked !== undefined ? { ...item, isChecked: patch.isChecked } : item,
+      );
+      return jsonResponse({ success: true });
+    }
     // 食事の更新 (完了の切り替えなど)。止めていれば、止めが解けてから成功を返す
     if ((init?.method ?? 'GET').toUpperCase() === 'PATCH' && url.pathname.startsWith(MEAL_PATCH_PATH_PREFIX)) {
       const hold = server.mealPatchHold;
@@ -862,6 +873,54 @@ describe('献立表 (/menus/weekly) の取り直しの順序と失敗 (#2201 U1)
     await settle();
     // 止めた成功のぶん 1 回 (表示中の週 + 月のカレンダーの 2 つの範囲)
     expect(callsTo('/api/meal-plans') - mealPlansCallsBefore, '書き込みが終わっても、止めた成功を 1 回取り直さない').toBe(3);
+  });
+
+  it('取り直しの応答を待つあいだに買い物リストの品目をチェックして終えていても、チェックの前に読んだ応答でチェックを外さず、読み直す (#2201 U2)', async () => {
+    const ITEM = { id: 'item-1', itemName: 'にんじん', isChecked: false };
+    server.days.set(displayedWeekDates()[0], [{ id: 'meal-1', dishName: '鮭の塩焼き' }]);
+    server.shoppingItems = [ITEM];
+    await renderWeeklyPage();
+    const shoppingItemChecked = () => useShoppingStore.getState().shoppingList.find((item) => item.id === ITEM.id)?.isChecked;
+    expect(shoppingItemChecked(), '買い物リストの品目が出ていない (検査が空振りしている)').toBe(false);
+
+    // 取り直しの献立と買い物リストの読み取り (GET /api/meal-plans) の応答を止める (応答は読み取りを始めたときの答え = チェックの前)
+    let release: () => void = () => undefined;
+    server.mealPlansHold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const mealPlansCallsBefore = callsTo('/api/meal-plans');
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    server.mealPlansHold = null;
+    expect(callsTo('/api/meal-plans') - mealPlansCallsBefore, '取り直しが献立と買い物リストを読んでいない (検査が空振りしている)').toBeGreaterThan(0);
+
+    // 応答を待つあいだに買い物リストを開いて品目をチェックし (書き込みが終わる)、閉じる
+    await act(async () => {
+      shoppingListButton().click();
+    });
+    const check = container.querySelector<HTMLButtonElement>(`button[aria-label="${ITEM.itemName}を購入済みにする"]`);
+    if (!check) throw new Error('買い物リストの品目のチェックのボタンが無い');
+    await act(async () => {
+      check.click();
+    });
+    await settle();
+    expect(server.shoppingItems[0].isChecked, 'チェックを送っていない (検査が空振りしている)').toBe(true);
+    expect(shoppingItemChecked()).toBe(true);
+    const close = container.querySelector<HTMLButtonElement>('[role="dialog"] button[aria-label="閉じる"]');
+    if (!close) throw new Error('買い物リストの閉じるボタンが無い');
+    await act(async () => {
+      close.click();
+    });
+    await settle();
+    expect(container.querySelector('[role="dialog"]'), '買い物リストが閉じない').toBeNull();
+
+    const mealPlansCallsBeforeRelease = callsTo('/api/meal-plans');
+    await act(async () => {
+      release();
+    });
+    await settle();
+    expect(shoppingItemChecked(), 'チェックの前に読んだ取り直しの応答が、チェックを外した').toBe(true);
+    // 置かなかった応答のぶん 1 回読み直す (表示中の週 + 月のカレンダーの 2 つの範囲)
+    expect(callsTo('/api/meal-plans') - mealPlansCallsBeforeRelease, '置かなかった応答のぶん読み直していない').toBe(3);
   });
 
   it('取り直しで名前の API を読めなかったら、家族の切り替えの名前を残す', async () => {

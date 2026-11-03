@@ -1638,6 +1638,104 @@ describe('取り直しの応答を待つあいだに打った値・始めた書�
     // 置かなかった応答のぶん 1 回読み直す
     expect(server.requests.filter((r) => r === MEAL_READ), '置かなかった応答のぶん読み直していない').toHaveLength(1);
   });
+
+  it('/pantry: 応答を待つあいだに食材を削除して終えていても、削除の前に読んだ応答で削除した食材を一覧に戻さず、読み直す', async () => {
+    const PANTRY_READ = 'GET /api/pantry';
+    const c = caseOf('/pantry');
+    setServer(c.full);
+    await mount(c);
+    const pantryBody = c.full.fetchBodies['/api/pantry'] as { items: { id: string; name: string }[] };
+    const [deletedItem, ...keptItems] = pantryBody.items;
+    expect(container.textContent, '削除する食材が出ていない (検査が空振りしている)').toContain(deletedItem.name);
+
+    // 取り直しの読み取りを止める (応答は止めた時点の答え = 削除の前の一覧)
+    const refetchRead = deferred();
+    server.holdAll = refetchRead.promise;
+    server.requests = [];
+    await act(async () => {
+      dispatchAiConsultationSucceeded();
+    });
+    await settle();
+    server.holdAll = null;
+    expect(server.requests, '取り直しが食材の一覧を読んでいない (検査が空振りしている)').toContain(PANTRY_READ);
+
+    // 応答を待つあいだに食材を削除し、削除が終わる (サーバーからも消える)
+    server.fetchBodies['/api/pantry'] = { ...pantryBody, items: keptItems };
+    await act(async () => {
+      buttonByLabel('削除').click();
+    });
+    await settle();
+    expect(server.requests, '削除を送っていない (検査が空振りしている)').toContain(`DELETE /api/pantry/${deletedItem.id}`);
+    expect(container.textContent).not.toContain(deletedItem.name);
+
+    server.requests = [];
+    refetchRead.resolve();
+    await settle();
+    expect(container.textContent, '削除の前に読んだ取り直しの応答が、削除した食材を一覧に戻した').not.toContain(deletedItem.name);
+    // 置かなかった応答のぶん 1 回読み直す
+    expect(server.requests.filter((r) => r === PANTRY_READ), '置かなかった応答のぶん読み直していない').toHaveLength(1);
+  });
+
+  it('/profile/nutrition-targets: 再設定を開いたときに読めなかった画面も、取り直しで読めたら失敗の文を消して入力欄に戻す', async () => {
+    /** 再設定 (NutritionTargetPlanner) だけが読む道 (根拠のページはプロフィールを Supabase から読む) */
+    const PLANNER_ONLY_READ = 'GET /api/profile';
+    /** 再設定の読み込みの失敗の文 (src/components/nutrition/nutrition-target-planner.tsx) */
+    const PLANNER_LOAD_ERROR = '栄養目標データを取得できませんでした。';
+    const c = caseOf('/profile/nutrition-targets');
+    setServer(c.full);
+    server.failedRequests.add(PLANNER_ONLY_READ);
+    await mount(c);
+    const targetWeightInput = () => container.querySelector<HTMLInputElement>('input[placeholder="例: 72"]');
+    expect(container.textContent, '再設定の読み込みの失敗の文が出ていない (検査が空振りしている)').toContain(PLANNER_LOAD_ERROR);
+    expect(targetWeightInput()).toBeNull();
+
+    // AI 相談で栄養目標が変わり、取り直しは読める
+    server.failedRequests.delete(PLANNER_ONLY_READ);
+    server.requests = [];
+    await notifyAiConsultationSucceeded();
+    expect(server.requests, '再設定が取り直していない (検査が空振りしている)').toContain(PLANNER_ONLY_READ);
+    expect(container.textContent, '取り直しで読めたのに失敗の文のまま').not.toContain(PLANNER_LOAD_ERROR);
+    expect(targetWeightInput()?.value, '取り直しで読めたのに再設定の入力欄に戻らない').toBe(String(PROFILE_ROW.target_weight));
+  });
+});
+
+describe('/profile: 開いたときの読み込みの最中に開いた編集のモーダル (#2201 U1)', () => {
+  it('読み込みが終わるまで入力欄を出さず、届いたプロフィールの値を入力欄に置く。閉じて開き直しても保存した値', async () => {
+    const c = caseOf('/profile');
+    setServer(c.full);
+    // 開いたときのプロフィールの読み取りを止める (ヘッダーと一覧の「編集」の入口は、読み込み中も押せる)
+    const openingRead = deferred();
+    server.tableHolds.set('user_profiles', openingRead.promise);
+    await mount(c);
+    const nicknameInput = () => container.querySelector<HTMLInputElement>('input[placeholder="例: たろう"]');
+    const saveButton = () =>
+      [...container.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find((b) => b.textContent?.includes('変更を保存'));
+    const openBasic = () => [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('基本情報'));
+    if (!openBasic()) throw new Error('読み込み中に「基本情報」のボタンが無い');
+    await act(async () => {
+      openBasic()!.click();
+    });
+    expect(container.querySelector('[role="dialog"]'), '編集のモーダルが開かない').not.toBeNull();
+    // 保存した値の無い空の入力欄に打たせない・空のまま保存させない (触っていない欄の無い送信で、プロフィールの完成度を書き違える)
+    expect(nicknameInput(), '読み込み中に、保存した値の無い入力欄を出した').toBeNull();
+    expect(saveButton()?.disabled, '読み込み中に保存のボタンが押せる').toBe(true);
+
+    openingRead.resolve();
+    server.tableHolds.delete('user_profiles');
+    await settle();
+    expect(nicknameInput()?.value, '届いたプロフィールの値を編集の入力欄に置いていない').toBe(PROFILE_ROW.nickname);
+    expect(saveButton()?.disabled).toBe(false);
+
+    // 閉じて開き直しても、保存した値を出す (空の入力欄のまま残さない)
+    await act(async () => {
+      container.querySelector<HTMLDivElement>('.backdrop-blur-sm')!.click();
+    });
+    expect(nicknameInput(), '編集のモーダルが閉じない').toBeNull();
+    await act(async () => {
+      openBasic()!.click();
+    });
+    expect(nicknameInput()?.value, '開き直した編集の入力欄に保存した値が無い').toBe(PROFILE_ROW.nickname);
+  });
 });
 
 describe('/health: 日を選び直したら、前に選んだ日の記録をパネルに置かない (#2201 U1)', () => {
