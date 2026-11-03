@@ -16,6 +16,12 @@
  *     同じ考え。ただし AI 相談の吹き出しの中 (AI_CONSULTATION_CHAT_ROOT_ATTRIBUTE を付けた要素の中) は数えない:
  *     Web では吹き出しが開いたまま (送信の入力欄があるまま) 実行が成功するので、数えると一度も取り直せない
  *     (モバイルでは Web の吹き出しは何も描かないので、この除外は要らない)
+ *   - 止めた通知は捨てずに印を付け、番兵が外れたとき (モーダルを閉じた・入力の部品が消えた) に 1 回だけ取り直す (#2201 U2。
+ *     以前は捨てて、閉じたあとも古い表示のままだった)。見張りは受け手の共通の hook が DOM の変化
+ *     (AI_CONSULTATION_DEFERRED_REFETCH_OBSERVED_ATTRIBUTES) で行う
+ *   - 取り直しでは読み込み中の表示を出さないので、応答を待つあいだも入力欄・モーダルを開くボタンが出ている。受け手は取り直しの応答を
+ *     置く前にもう一度番兵を見て (取り直しの札の deferIfHeld)、その間に開いたモーダル・打ち始めた入力があれば置かずに、止めた通知と
+ *     同じく外れたときに 1 回取り直す (#2201 U1)
  *   - モーダルは role="dialog" (または aria-modal="true") で見分ける。受け手のページのモーダルはこれを持たせる:
  *     中に入力の部品が無い状態 (マイページの編集の競技タブ・削除の確認など) でも、開いている間は取り直さないため
  *   - 入力欄がいつも出ている部品 (/profile/nutrition-targets の栄養目標の再設定) は、入力欄の値が取得した値のまま
@@ -94,6 +100,23 @@ export function isAiConsultationRefetchBlocked(root: ParentNode): boolean {
   }
   return false;
 }
+
+/**
+ * 番兵で止めた通知を、番兵が外れたときに取り直すために見張る属性 (#2201 U2)。
+ * 受け手の共通の hook (src/hooks/useAiConsultationDataRefetch.ts) は、止めた通知がある間だけ DOM の変化 (要素の出入りと、
+ * この属性の変化) を見て、番兵 (isAiConsultationRefetchBlocked) が外れたら 1 回だけ取り直す。
+ * 並びは、番兵の見分けに使う属性 (モーダルの role・aria-modal・open、編集できる要素の contenteditable、input の type、
+ * 吹き出しと何も変えていない入力欄の部品の印) と同じ。どれかが変わると番兵の答えが変わりうる
+ */
+export const AI_CONSULTATION_DEFERRED_REFETCH_OBSERVED_ATTRIBUTES = [
+  'role',
+  'aria-modal',
+  'open',
+  'contenteditable',
+  'type',
+  AI_CONSULTATION_CHAT_ROOT_ATTRIBUTE,
+  AI_CONSULTATION_UNEDITED_INPUTS_ATTRIBUTE,
+] as const;
 
 /** AI 相談の吹き出しを包む要素に広げる属性 (src/app/(main)/MainLayout.tsx)。値は空 (付いていることだけが印) */
 export const AI_CONSULTATION_CHAT_ROOT_PROPS: Readonly<Record<typeof AI_CONSULTATION_CHAT_ROOT_ATTRIBUTE, ''>> = {

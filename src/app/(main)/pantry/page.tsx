@@ -5,7 +5,13 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
-import { useAiConsultationDataRefetch } from "@/hooks/useAiConsultationDataRefetch";
+import {
+  useAiConsultationDataRefetch,
+  useAiConsultationLoading,
+  useAiConsultationPendingWrites,
+  type AiConsultationFetchTicket,
+  type AiConsultationReadMode,
+} from "@/hooks/useAiConsultationDataRefetch";
 import { ArrowLeft, Camera, Plus, Trash2, RefreshCw, Package, AlertCircle, X, Pencil } from "lucide-react";
 import { PantryItemForm, emptyPantryItemFormValues, type PantryItemFormValues } from "@/components/pantry/PantryItemForm";
 import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
@@ -55,7 +61,9 @@ export default function PantryPage() {
   // 「同意しない」なら解析しない (未同意のまま送っても、サーバーが 403 AI_CONSENT_REQUIRED で止める)
   const { ensureAiConsent, consentModal } = useAiConsent();
   const [items, setItems] = useState<PantryItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  // 開いたときの読み込み中の表示。開いたときと取り直しは同じ読み方 (失敗では今の表示を残す) で、最後の札の取得が下ろす (#2201 U1)。
+  // 読み込み中の表示を出している間に始まった取り直しは、その読み込みの役を引き継ぐ (refetchReadMode が 'mount')
+  const { loading, refetchReadMode, settleLoading } = useAiConsultationLoading();
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [saving, setSaving] = useState(false);
@@ -72,25 +80,43 @@ export default function PantryPage() {
   // 対象件数を明示した確認ダイアログを挟む。
   const [showReplaceConfirm, setShowReplaceConfirm] = useState(false);
 
-  const fetchItems = useCallback(async () => {
+  // 食材の書き込み (削除・手入力の追加と更新・写真の食材の保存) の応答を待っている間 (#2201 U2)。この間に来た AI 相談の成功では
+  // 取り直さず、全部終わったら 1 回取り直す (書き込みの前の一覧を読んだ取り直しの応答が、削除した食材を一覧に戻したり、足した食材を
+  // 消したりしないため)。取り直しの応答を待つあいだに始めた書き込みは、終わっていてもその応答を置かせない (fetchItems)
+  const pendingWrites = useAiConsultationPendingWrites();
+
+  /**
+   * 食材の一覧を読む。開いたとき・保存のあと・AI 相談の成功の取り直し (#2195 V1) で呼ぶ。読み込み中の表示は開いたときだけ。
+   * 失敗 (通信の失敗・非 2xx) では今の表示を残す。応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ (#2201 U1)。
+   * mode が 'refetch' (AI 相談の成功の取り直し) なら、応答を待つあいだに始めた削除・開いたフォームがあれば置かない
+   * (削除の前に読んだ一覧で、削除した食材を一覧に戻さない。ticket.deferIfHeld。終わった・閉じたあとに 1 回取り直す。#2201 U2)
+   */
+  const fetchItems = useCallback(async (ticket: AiConsultationFetchTicket, mode: AiConsultationReadMode = "mount") => {
     try {
       const res = await fetch("/api/pantry");
       if (res.ok) {
         const data = await res.json();
+        if (!ticket.isLatest()) return;
+        if (mode === "refetch" && ticket.deferIfHeld()) return;
         setItems(data.items || []);
       }
     } catch (err) {
       console.error("Failed to fetch pantry items:", err);
     } finally {
-      setLoading(false);
+      settleLoading(ticket);
     }
-  }, []);
+  }, [settleLoading]);
+
+  // AI 相談の提案の実行で冷蔵庫の食材が変わったら取り直す (#2195 V1)。手入力のフォーム・確認のモーダルが出ている間・
+  // 削除の応答を待つ間は取り直さず、閉じた・終わったあとに 1 回取り直す (#2201 U2)
+  const { beginFetch } = useAiConsultationDataRefetch(
+    (ticket) => fetchItems(ticket, refetchReadMode()),
+    { writeInFlightRef: pendingWrites },
+  );
 
   useEffect(() => {
-    void fetchItems();
-  }, [fetchItems]);
-  // AI 相談の提案の実行で冷蔵庫の食材が変わったら取り直す (#2195 V1)。手入力のフォーム・確認のモーダルが出ている間は取り直さない
-  useAiConsultationDataRefetch(fetchItems);
+    void fetchItems(beginFetch());
+  }, [fetchItems, beginFetch]);
 
   const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -155,6 +181,8 @@ export default function PantryPage() {
     if (!analysisResult) return;
     setSaving(true);
     setError(null);
+    // 写真の食材の保存も書き込み (#2201 U2。保存の前に読んだ取り直しの応答で、足した食材を一覧から消さない)
+    const endWrite = pendingWrites.begin();
 
     try {
       const ingredients = analysisResult.detailedIngredients.map((item) => ({
@@ -178,11 +206,12 @@ export default function PantryPage() {
 
       setAnalysisResult(null);
       setPreviewUrl(null);
-      await fetchItems();
+      await fetchItems(beginFetch());
     } catch (err: any) {
       setError(err.message || "保存中にエラーが発生しました");
     } finally {
       setSaving(false);
+      endWrite();
     }
   };
 
@@ -197,6 +226,7 @@ export default function PantryPage() {
   };
 
   const handleDelete = async (id: string) => {
+    const endWrite = pendingWrites.begin();
     try {
       const res = await fetch(`/api/pantry/${id}`, { method: "DELETE" });
       if (res.ok) {
@@ -204,6 +234,8 @@ export default function PantryPage() {
       }
     } catch (err) {
       console.error("Delete failed:", err);
+    } finally {
+      endWrite();
     }
   };
 
@@ -235,6 +267,8 @@ export default function PantryPage() {
   const handleManualSubmit = async () => {
     if (!formValues.name) return;
     setSavingManual(true);
+    // 手入力の追加・更新も書き込み (#2201 U2。保存の前に読んだ取り直しの応答で、足した・変えた食材を一覧から戻さない)
+    const endWrite = pendingWrites.begin();
     try {
       if (editingItemId) {
         const res = await fetch(`/api/pantry/${editingItemId}`, {
@@ -269,6 +303,7 @@ export default function PantryPage() {
       setError(err.message || "保存に失敗しました");
     } finally {
       setSavingManual(false);
+      endWrite();
     }
   };
 

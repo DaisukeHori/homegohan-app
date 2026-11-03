@@ -63,7 +63,26 @@ export type WeekViewAction =
   | { type: 'DAY_NUTRITION_TOGGLE' }
   | { type: 'DAY_NUTRITION_SET'; payload: boolean }
   | { type: 'TODAY_TOGGLE' }
-  | { type: 'PLAN_SET'; payload: WeekPlan | null };
+  | { type: 'PLAN_SET'; payload: WeekPlan | null }
+  /**
+   * 今の献立 (この動作を受け取った時点の currentPlan) の 1 つの食事 (dayId の日の mealId) にだけ updates を当てる (#2201 U2)。
+   * 楽観的な更新とその巻き戻しに使う: 描画の時点の献立の写しから週全体を作り直して PLAN_SET で置くと、その描画のあとに置いた献立
+   * (AI 相談の成功の取り直しの応答など) を写しの古い献立で戻してしまう。献立が無い・その食事が無いときは何もしない
+   */
+  | { type: 'PLAN_MEAL_UPDATE'; payload: { dayId: string; mealId: string; updates: Partial<PlannedMeal> } };
+
+/**
+ * 食事 (meal) の、updates が変える項目の今の値 (楽観的な更新の巻き戻しに PLAN_MEAL_UPDATE で当てる。#2201 U2)。
+ * 巻き戻しはこの食事の変えた項目だけを戻す (週全体を前の写しで置き直すと、書き込みの間に置いた別の値まで戻す)
+ */
+export function plannedMealFieldsOf(meal: PlannedMeal, updates: Partial<PlannedMeal>): Partial<PlannedMeal> {
+  const fields: Partial<PlannedMeal> = {};
+  const copy = <K extends keyof PlannedMeal>(key: K) => {
+    fields[key] = meal[key];
+  };
+  for (const key of Object.keys(updates) as (keyof PlannedMeal)[]) copy(key);
+  return fields;
+}
 
 // -------------------------------------------------------
 // Initial State
@@ -204,6 +223,22 @@ export function weekViewReducer(
 
     case 'PLAN_SET':
       return { ...state, currentPlan: action.payload };
+
+    case 'PLAN_MEAL_UPDATE': {
+      const { dayId, mealId, updates } = action.payload;
+      const plan = state.currentPlan;
+      const day = plan?.days.find((d) => d.id === dayId);
+      if (!plan || !day?.meals?.some((meal) => meal.id === mealId)) return state;
+      return {
+        ...state,
+        currentPlan: {
+          ...plan,
+          days: plan.days.map((d) =>
+            d.id === dayId ? { ...d, meals: d.meals?.map((meal) => (meal.id === mealId ? { ...meal, ...updates } : meal)) } : d,
+          ),
+        },
+      };
+    }
 
     default:
       return state;

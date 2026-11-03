@@ -9,6 +9,13 @@ import type { Tables } from "@homegohan/shared";
 import type { Announcement, PlannedMeal, PantryItem, Badge } from "@/types/domain";
 import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import { aiSkippedReasonOf, type AiSkippedReason } from "@/lib/ai/consent-config";
+import {
+  useAiConsultationFetchStream,
+  useAiConsultationLoading,
+  useAiConsultationPendingWrites,
+  type AiConsultationFetchTicket,
+  type AiConsultationStreamTicket,
+} from "@/hooks/useAiConsultationDataRefetch";
 
 // 今日の献立データ
 interface TodayMealPlan {
@@ -62,16 +69,33 @@ interface NutritionAnalysisState {
   loading: boolean;
 }
 
+/** 栄養の分析の点数の部分 (点数・課題・栄養素の比べ。AI を付けない読み取りも置く) */
+type NutritionAnalysisScoreParts = Pick<NutritionAnalysisState, 'score' | 'issues' | 'comparison'>;
+/** 栄養の分析の AI の部分 (アドバイス・献立の変更の提案・AI を省いた知らせ。AI つきの読み取りだけが置く。#2201 U4) */
+type NutritionAnalysisAiParts = Pick<NutritionAnalysisState, 'advice' | 'suggestion' | 'aiSkipped'>;
+
+/** 点数の部分が無い (今日の完了した食事が無くて分析できない) */
+const NO_NUTRITION_ANALYSIS_SCORE_PARTS: NutritionAnalysisScoreParts = { score: 0, issues: [], comparison: {} };
+/** AI の部分が無い (今日の完了した食事が無くて分析できない) */
+const NO_NUTRITION_ANALYSIS_AI_PARTS: NutritionAnalysisAiParts = { advice: null, suggestion: null, aiSkipped: null };
+
 /** 栄養の分析が無い (まだ取っていない・今日の完了した食事が無くて分析できない) */
 const NO_NUTRITION_ANALYSIS: NutritionAnalysisState = {
-  score: 0,
-  issues: [],
-  advice: null,
-  suggestion: null,
-  comparison: {},
-  aiSkipped: null,
+  ...NO_NUTRITION_ANALYSIS_SCORE_PARTS,
+  ...NO_NUTRITION_ANALYSIS_AI_PARTS,
   loading: false,
 };
+
+/**
+ * 栄養の分析の読み取りの流れ (nutritionAnalysisStream) の鍵 (#2201 U1 + U4)。どちらの鍵も、最後に始めた読み取りの応答だけを置く。
+ *   - NUTRITION_ANALYSIS_SCORE_KEY: 点数の部分と読み込み中の印。どの読み取り (AI つき・AI を付けない) も始める
+ *   - NUTRITION_ANALYSIS_AI_KEY: AI の部分と今日のアドバイスの帯。AI つきの読み取り (開いたとき・献立の変更の実行のあと・
+ *     開いたときの読み込みの役を引き継いだ取り直し) だけが始める。AI を付けない読み取り (取り直し) を AI つきの読み取りの応答待ちに
+ *     始めても、その AI の部分を古くしない (鍵を 1 つにすると、AI つきの読み取りの応答が置かれず、アドバイス・提案・帯が
+ *     読み込み直すまで出ない)
+ */
+const NUTRITION_ANALYSIS_SCORE_KEY = 'score';
+const NUTRITION_ANALYSIS_AI_KEY = 'ai';
 
 /** ホームのデータの取得 (fetchHomeData) の決まり */
 interface HomeFetchOptions {
@@ -80,12 +104,17 @@ interface HomeFetchOptions {
    * 取り直し (refetch。AI 相談の成功のあと) で true: 成功のたびに LLM を 1 回呼び、上限に数えない枠の安全弁
    * ('nutrition_advice_auto'。ai_unmetered_daily_caps) を 1 回使っていたのをやめる。今日のアドバイスの帯 (suggestion) と、
    * 分析のアドバイス・提案・AI を省いた知らせ (aiSkipped) は前の値を残す (安全弁に達した aiSkipped で帯が消える道も無くなる)。
+   * AI つきの読み取りの応答待ちに始めても、その応答の AI の部分は置かれる (栄養の分析の読み取りの流れの鍵を分ける。
+   * NUTRITION_ANALYSIS_AI_KEY)。
    * ただし今日の完了した食事が無くなって分析できない (analysis: null) ときは、読み込み直したときと同じく分析と帯を消す (#2195 V1)。
-   * false (初めの読み込み・ログインの状態の変化・献立の変更の実行 executeNutritionSuggestion のあと) は、アドバイスと提案も読み、
-   * 帯に何も出ていないときだけアドバイスを置く
+   * false (初めの読み込み・ログインの状態の変化・献立の変更の実行 executeNutritionSuggestion のあと・開いたときの読み込みの役を
+   * 引き継いだ取り直し (refetchReadMode が 'mount'。#2201 U1)) は、アドバイスと提案も読み、帯に何も出ていないときだけアドバイスを置く
    */
   analysisWithoutAi: boolean;
 }
+
+/** 開いたとき・ログインの状態の変化などの読み込み (読み込み中の表示を出す) か、AI 相談の成功の取り直し (出さない・失敗では今の表示を残す) か */
+type HomeFetchMode = 'mount' | 'refetch';
 
 /** 栄養の分析の API (GET /api/ai/nutrition-analysis) の今日の分析。AI のアドバイスと献立の変更の提案を付ける (開いたとき) */
 export const HOME_NUTRITION_ANALYSIS_WITH_AI_URL = '/api/ai/nutrition-analysis?period=today&includeAdvice=true&includeSuggestion=true';
@@ -105,9 +134,26 @@ const EMPTY_DAILY_SUMMARY: DailySummary = {
 export const useHomeData = () => {
   const [user, setUser] = useState<any>(null);
   const [todayPlan, setTodayPlan] = useState<TodayMealPlan | null>(null);
-  const [loading, setLoading] = useState(true);
+  // 開いたとき・ログインの状態の変化などの読み込み中の表示。その読み込み中に始まった AI 相談の成功の取り直しは、その読み込みの役
+  // (読み取りの失敗の扱い・読み込み中の表示を下ろす) を引き継ぐ (#2201 U1。useAiConsultationLoading)
+  const { loading, setLoading, refetchReadMode } = useAiConsultationLoading();
   // #191/#322: meal toggle debounce — pending mealId set + 250ms debounce timer
   const pendingToggleRef = useRef<Set<string>>(new Set());
+  // 楽観的な更新から書き込みの応答まで (#2201 U2。食事の完了の切り替えの RPC・今日の気分・活動量の upsert)。ページが AI 相談の
+  // 取り直しの hook に渡す: この間に来た AI 相談の成功では取り直さず、全部終わったら 1 回取り直す (書き込みの前の今日の献立・
+  // 気分・活動量を読んだ取り直しの応答が楽観的な表示を戻さないため)
+  const aiConsultationWrites = useAiConsultationPendingWrites();
+  // ホームのデータの取得の流れ (#2201 U1)。今日の献立・利用者・記録の集計 (連続自炊・週と月の統計・期限切れ間近・買い物リストの残り・
+  // バッジ・今週のベストごはん・健康の記録)・お知らせの応答を置くのは最後に始めた取得だけ
+  // (開いたときの読み込みと取り直し、続けて来た取り直しの応答が逆の順に届いても、古い応答で上書きしない)
+  const homeFetchStream = useAiConsultationFetchStream();
+  // パフォーマンスの分析の読み取りの流れ (ホームのデータの取得とチェックインの保存のあと。#2201 U1)
+  const performanceAnalysisStream = useAiConsultationFetchStream();
+  // 栄養の分析の読み取りの流れ (ホームのデータの取得のあと。#2201 U1)。応答を置くのは最後に始めた読み取りだけ
+  // (続けて来た取り直し・開いたときの読み込みと取り直しの栄養の分析の応答が逆の順に届いても、古い点数・課題・アドバイスと
+  // 今日のアドバイスの帯で上書きしない。読み込み中の印もあとの読み取りが下ろす)。点数の部分と AI の部分は鍵を分けて順序を持つ
+  // (NUTRITION_ANALYSIS_SCORE_KEY・NUTRITION_ANALYSIS_AI_KEY。AI を付けない取り直しが、AI つきの読み取りの AI の部分を古くしない)
+  const nutritionAnalysisStream = useAiConsultationFetchStream();
   const toggleDebounceTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const [dailySummary, setDailySummary] = useState<DailySummary>(EMPTY_DAILY_SUMMARY);
   const [announcement, setAnnouncement] = useState<Announcement | null>(null);
@@ -233,9 +279,39 @@ export const useHomeData = () => {
     return null;
   };
 
-  const fetchHomeData = async (options: HomeFetchOptions = { analysisWithoutAi: false }) => {
-    setLoading(true);
-    
+  /**
+   * mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込み中の表示を出さずに読み直し、読み取りの失敗
+   * (ログインの確かめ・プロフィール・今日の献立の読み取りのエラー) では今の表示を残す。
+   * 応答を置くのは最後に始めた取得 (homeFetchStream) だけ (開いたときの読み込みと取り直しが重なっても古い応答で上書きしない)。
+   * refetchTicket は AI 相談の成功の取り直しの札 (useAiConsultationDataRefetch が渡す。#2201 U1 + U2)。取り直しでは応答を待つあいだも
+   * 今日の献立 (完了の切り替えのボタン)・今日の気分・活動量のボタンが出ているので、その間に切り替え・気分・活動量の保存を始めていたら
+   * (終えていても)・体調のチェックインの欄を開いていたら、気分・活動量と今日の献立を置かない (札の deferIfHeld。書き込みが終わった・
+   * 欄を閉じたあとに 1 回取り直す)
+   */
+  const fetchHomeData = async (
+    options: HomeFetchOptions = { analysisWithoutAi: false },
+    mode: HomeFetchMode = 'mount',
+    refetchTicket?: AiConsultationFetchTicket,
+  ) => {
+    // 取り直しの札は取り直しの扱いの回にだけ渡す (開いたときの読み込みの役を引き継いだ回は、応答を置く時点の番兵を見ずに置く)
+    const order = homeFetchStream.begin(mode === 'refetch' ? refetchTicket : null);
+    if (mode === 'mount') setLoading(true);
+    try {
+      await readHomeData(options, mode, order);
+    } finally {
+      // 最後に始めた取得が終わったら (途中で投げても) 読み込み中の表示を下ろす。開いたときの読み込み中に始まった取り直しが投げると、
+      // 開いたときの読み込みは最後でないので下ろさず、読み込み中の表示のまま止まるため
+      if (order.isLatest()) setLoading(false);
+    }
+  };
+
+  /**
+   * fetchHomeData の読み取りの中身 (読み込み中の表示は fetchHomeData が決める)。
+   * 応答を置く前に、order (取得の流れの札) で最後に始めた取得かを見る (気分・活動量と今日の献立は order.place で、応答を置く時点の
+   * 番兵も見る)
+   */
+  const readHomeData = async (options: HomeFetchOptions, mode: HomeFetchMode, order: AiConsultationStreamTicket) => {
+    const { isLatest } = order;
     // 1. ユーザー情報取得
     const authUser = await resolveAuthUser();
     
@@ -252,7 +328,8 @@ export const useHomeData = () => {
       
       // email local part をニックネームとして表示しない (#60)
       // resolveDisplayName に email を渡さず、nickname / user_metadata のみでフォールバック
-      setUser({
+      // 取り直しでプロフィールを読めなかったときは、今の名前を残す (#2201 U1)
+      if (isLatest() && !(mode === 'refetch' && profileError)) setUser({
         ...authUser,
         nickname: resolveDisplayName({
           nickname: profile?.nickname || null,
@@ -271,8 +348,11 @@ export const useHomeData = () => {
         .eq('date', todayStr)
         .maybeSingle();
 
+      // あとから別の取得を始めていたら、そちらの応答を置く (#2201 U1)。取り直しの応答を待つあいだに気分・活動量を押した
+      // (upsert を終えていても): 押す前に読んだ値で楽観的な表示を戻さない。書き込みが全部終わったあとに 1 回取り直す (#2201 U2。
+      // order.place が順序と札の deferIfHeld を見る)
       if (activity) {
-        setActivityLevel(activity.feeling);
+        order.place(() => setActivityLevel(activity.feeling));
       }
 
       // 3. 今日の献立を取得（日付ベースモデル: user_daily_meals → planned_meals）
@@ -287,9 +367,13 @@ export const useHomeData = () => {
         .eq('user_id', authUser.id)
         .maybeSingle();
 
-      if (dailyMealData && dailyMealData.planned_meals) {
-        const mealsData = dailyMealData.planned_meals;
-        const meals: PlannedMeal[] = mealsData.map((m: any) => toPlannedMeal(m));
+      // あとから別の取得を始めていたら、今日の献立はそちらの応答を置く (#2201 U1)。
+      // 取り直しの応答を待つあいだに完了の切り替え (楽観的な更新) を始めた (終えていても)・チェックインの欄を開いた:
+      // 切り替えの前に読んだ今日の献立で楽観的な表示を戻さない。切り替えが全部終わった・欄を閉じたあとに 1 回取り直す (#2201 U1 + U2)
+      const todayPlanPlaced = order.place(() => {
+        if (dailyMealData && dailyMealData.planned_meals) {
+          const mealsData = dailyMealData.planned_meals;
+          const meals: PlannedMeal[] = mealsData.map((m: any) => toPlannedMeal(m));
 
           setTodayPlan({
             dayId: dailyMealData.id,
@@ -313,26 +397,37 @@ export const useHomeData = () => {
           setTodayPlan(null);
           setDailySummary(EMPTY_DAILY_SUMMARY);
         }
+      });
+      if (todayPlanPlaced === 'superseded') console.warn('[home] superseded fetch: skip placing today plan');
+      if (todayPlanPlaced === 'deferred') console.warn('[home] held while refetching: skip placing today plan');
 
       // ========== 拡張データを並列取得（高速化） ==========
+      // どれも応答を置く前に最後に始めた取得かを見る (isLatest。#2201 U1)。取り直し (mode が 'refetch') の読み取りの失敗では
+      // 今の表示を残す (空・0 で上書きしない。#2201 U1)
       await Promise.all([
-        fetchCookingStreak(authUser.id),
-        fetchWeeklyStats(authUser.id),
-        fetchMonthlyStats(authUser.id),
-        fetchExpiringItems(authUser.id),
-        fetchShoppingRemaining(authUser.id),
-        fetchBadgeInfo(authUser.id),
-        fetchBestMealThisWeek(authUser.id),
-        fetchHealthSummary(authUser.id),
+        fetchCookingStreak(authUser.id, isLatest),
+        fetchWeeklyStats(authUser.id, isLatest),
+        fetchMonthlyStats(authUser.id, isLatest),
+        fetchExpiringItems(authUser.id, isLatest),
+        fetchShoppingRemaining(authUser.id, isLatest, mode),
+        fetchBadgeInfo(authUser.id, isLatest, mode),
+        fetchBestMealThisWeek(authUser.id, isLatest, mode),
+        fetchHealthSummary(authUser.id, isLatest, mode),
       ]);
 
-      // 栄養分析は重いので非同期で後から取得（UIはloadingなしで先に表示）
-      fetchNutritionAnalysis(options);
+      // 栄養の分析とパフォーマンスの分析は、最後に始めた取得のときだけ読み始める (#2201 U1)。あとから始めた取得 (取り直し・献立の変更の
+      // 実行のあとの AI つきの読み込みなど) があれば、その取得が読む。古い取得がここで読み始めると、あとの取得の読み取りより後に始めた
+      // 読み取りになり、あとの取得の読み取りの応答 (献立の変更のあとのアドバイス・提案など) を置かせない
+      if (isLatest()) {
+        // 栄養分析は重いので非同期で後から取得（UIはloadingなしで先に表示）
+        void fetchNutritionAnalysis(options);
 
-      // Performance OS v3: パフォーマンス分析も非同期で取得
-      fetchPerformanceAnalysis(authUser.id);
+        // Performance OS v3: パフォーマンス分析も非同期で取得
+        void fetchPerformanceAnalysis(authUser.id, mode);
+      }
 
-    } else {
+    } else if (mode === 'mount' && isLatest()) {
+      // 取り直しでログインを確かめられなかったときは、今の表示を残す (#2201 U1。ログアウトはログインの状態の変化の取得が反映する)
       setUser(null);
     }
 
@@ -341,19 +436,18 @@ export const useHomeData = () => {
       const annRes = await fetch('/api/announcements?mode=public');
       if (annRes.ok) {
         const annData = await annRes.json();
-        if (annData.announcements && annData.announcements.length > 0) {
+        if (annData.announcements && annData.announcements.length > 0 && isLatest()) {
           setAnnouncement(toAnnouncement(annData.announcements[0]));
         }
       }
     } catch (e) {
       console.error("Announcement fetch error", e);
     }
-
-    setLoading(false);
   };
 
   // 連続自炊ストリーク（完了した自炊のみカウント）
-  const fetchCookingStreak = async (userId: string) => {
+  // isLatest は呼んだ取得 (fetchHomeData) が最後に始めた取得か。下の記録の集計の取得も同じ (#2201 U1。古い応答を置かない)
+  const fetchCookingStreak = async (userId: string, isLatest: () => boolean) => {
     try {
       // 過去30日分のデータを取得（日付ベースモデル）
       const thirtyDaysAgo = new Date();
@@ -372,7 +466,7 @@ export const useHomeData = () => {
 
       type DayWithStreakMeals = { day_date: string; planned_meals: Pick<Tables<"planned_meals">, "mode" | "is_completed">[] };
       // 記録の無い期間も 0 を置く (取り直しで前の連続の日数を残さない。読み込み直したときと同じ。#2195 V1)
-      if (daysData) {
+      if (daysData && isLatest()) {
         let streak = 0;
         const sortedDays = (daysData as DayWithStreakMeals[]).sort((a, b) =>
           new Date(b.day_date).getTime() - new Date(a.day_date).getTime()
@@ -400,7 +494,7 @@ export const useHomeData = () => {
   };
 
   // 週間統計（日付ベースモデル）
-  const fetchWeeklyStats = async (userId: string) => {
+  const fetchWeeklyStats = async (userId: string, isLatest: () => boolean) => {
     try {
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
@@ -416,7 +510,7 @@ export const useHomeData = () => {
         .lte('day_date', todayStr)
         .order('day_date');
 
-      if (daysData) {
+      if (daysData && isLatest()) {
         const days: WeeklyStats['days'] = [];
         let totalCook = 0;
         let totalMeals = 0;
@@ -462,7 +556,7 @@ export const useHomeData = () => {
   };
 
   // 月間統計（日付ベースモデル、完了した自炊のみカウント）
-  const fetchMonthlyStats = async (userId: string) => {
+  const fetchMonthlyStats = async (userId: string, isLatest: () => boolean) => {
     try {
       const firstOfMonth = new Date();
       firstOfMonth.setDate(1);
@@ -477,7 +571,7 @@ export const useHomeData = () => {
         .gte('day_date', formatLocalDate(firstOfMonth))
         .lte('day_date', todayStr);
 
-      if (daysData) {
+      if (daysData && isLatest()) {
         let cookCount = 0;
         let totalMeals = 0;
 
@@ -506,7 +600,7 @@ export const useHomeData = () => {
   };
 
   // 冷蔵庫の期限切れ間近 (今日から PANTRY_EXPIRING_SOON_DAYS 日後の期限まで。全画面共通の範囲 #1602)
-  const fetchExpiringItems = async (userId: string) => {
+  const fetchExpiringItems = async (userId: string, isLatest: () => boolean) => {
     try {
       const { data } = await orderListBy(
         supabase
@@ -518,7 +612,7 @@ export const useHomeData = () => {
         LIST_ORDERS.pantryItemsByExpiration,
       );
 
-      if (data) {
+      if (data && isLatest()) {
         setExpiringItems(data.map((item: any) => ({
           id: item.id,
           userId: item.user_id,
@@ -537,7 +631,9 @@ export const useHomeData = () => {
   };
 
   // 買い物リスト残数（日付ベースモデル）
-  const fetchShoppingRemaining = async (userId: string) => {
+  // mode が 'refetch' (AI 相談の成功の取り直し) なら、残りの数を読めなかったときは今の数を残す (#2201 U1)。下のバッジ・今週のベスト料理・
+  // 健康記録サマリーも同じ (開いたときの読み取りの失敗はこれまでどおり)
+  const fetchShoppingRemaining = async (userId: string, isLatest: () => boolean, mode: HomeFetchMode) => {
     try {
       // アクティブな買い物リストを取得
       const { data: shoppingList, error: shoppingListError } = await supabase
@@ -548,14 +644,14 @@ export const useHomeData = () => {
         .maybeSingle();
 
       if (shoppingList) {
-        const { count } = await supabase
+        const { count, error: countError } = await supabase
           .from('shopping_list_items')
           .select('*', { count: 'exact', head: true })
           .eq('shopping_list_id', shoppingList.id)
           .eq('is_checked', false);
 
-        setShoppingRemaining(count || 0);
-      } else if (!shoppingListError) {
+        if (isLatest() && !(mode === 'refetch' && countError)) setShoppingRemaining(count || 0);
+      } else if (!shoppingListError && isLatest()) {
         // 使っている買い物リストが無い: 前の残りの数を残さない (取り直しのとき。読み込み直したときと同じ。#2195 V1)。
         // 読み取りの失敗では今の表示を残す
         setShoppingRemaining(0);
@@ -566,17 +662,18 @@ export const useHomeData = () => {
   };
 
   // バッジ情報
-  const fetchBadgeInfo = async (userId: string) => {
+  const fetchBadgeInfo = async (userId: string, isLatest: () => boolean, mode: HomeFetchMode) => {
     try {
       // バッジ総数
-      const { count } = await supabase
+      const { count, error: countError } = await supabase
         .from('user_badges')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', userId);
 
-      setBadgeCount(count || 0);
+      // 取り直しで読めなかったときは、今の数を残す (「0個獲得」に落とさない。#2201 U1)
+      if (isLatest() && !(mode === 'refetch' && countError)) setBadgeCount(count || 0);
 
-      // 最新バッジ
+      // 最新バッジ (読めなかったときは data が null で、何も置かない)
       const { data: latestData } = await orderListBy(
         supabase
           .from('user_badges')
@@ -594,7 +691,7 @@ export const useHomeData = () => {
       if (latestData && (latestData as unknown as LatestBadgeRow).badges) {
         const badgesRaw = (latestData as unknown as LatestBadgeRow).badges!;
         const badge = Array.isArray(badgesRaw) ? badgesRaw[0] : badgesRaw;
-        if (!badge) return;
+        if (!badge || !isLatest()) return;
         setLatestBadge({
           name: badge.name,
           code: badge.code,
@@ -607,7 +704,7 @@ export const useHomeData = () => {
   };
 
   // 今週のベスト料理（日付ベースモデル）
-  const fetchBestMealThisWeek = async (userId: string) => {
+  const fetchBestMealThisWeek = async (userId: string, isLatest: () => boolean, mode: HomeFetchMode) => {
     try {
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
@@ -628,21 +725,21 @@ export const useHomeData = () => {
         // 行は toPlannedMeal (引数は any) に渡すだけなので、結果の型を行の形に置き換える。select の結合の型のまま
         // orderListBy に渡すと、型の展開が深くなりすぎて tsc が止まる (TS2589)
         .returns<Record<string, unknown>[]>();
-      const { data } = await orderListBy<typeof bestMealQuery>(bestMealQuery, LIST_ORDERS.homeBestVegMeal).limit(1);
+      const { data, error } = await orderListBy<typeof bestMealQuery>(bestMealQuery, LIST_ORDERS.homeBestVegMeal).limit(1);
 
       // 当てはまる食事が無くなった (AI 相談で消した・完了を外した) ときは消す。取り直し (refetch。AI 相談の成功のあと) で
-      // 前の食事を残さない (#2195 V1)
-      setBestMealThisWeek(data && data.length > 0 ? toPlannedMeal(data[0]) : null);
+      // 前の食事を残さない (#2195 V1)。ただし取り直しで読めなかったときは、今の食事を残す (#2201 U1)
+      if (isLatest() && !(mode === 'refetch' && error)) setBestMealThisWeek(data && data.length > 0 ? toPlannedMeal(data[0]) : null);
     } catch (e) {
       console.error('Best meal fetch error:', e);
     }
   };
 
   // 健康記録サマリー
-  const fetchHealthSummary = async (userId: string) => {
+  const fetchHealthSummary = async (userId: string, isLatest: () => boolean, mode: HomeFetchMode) => {
     try {
       // 今日の記録
-      const { data: todayRecord } = await supabase
+      const { data: todayRecord, error: todayRecordError } = await supabase
         .from('health_records')
         .select('*')
         .eq('user_id', userId)
@@ -650,7 +747,7 @@ export const useHomeData = () => {
         .maybeSingle();
 
       // 連続記録
-      const { data: streak } = await supabase
+      const { data: streak, error: streakError } = await supabase
         .from('health_streaks')
         .select('current_streak')
         .eq('user_id', userId)
@@ -658,7 +755,7 @@ export const useHomeData = () => {
         .maybeSingle();
 
       // 最新の体重と昨日の体重
-      const { data: recentWeights } = await supabase
+      const { data: recentWeights, error: recentWeightsError } = await supabase
         .from('health_records')
         .select('weight, record_date')
         .eq('user_id', userId)
@@ -676,7 +773,7 @@ export const useHomeData = () => {
       }
 
       // 目標体重
-      const { data: weightGoal } = await supabase
+      const { data: weightGoal, error: weightGoalError } = await supabase
         .from('health_goals')
         .select('target_value')
         .eq('user_id', userId)
@@ -685,13 +782,17 @@ export const useHomeData = () => {
         .maybeSingle();
 
       // アラートがあるか確認
-      const { count: alertCount } = await supabase
+      const { count: alertCount, error: alertCountError } = await supabase
         .from('health_insights')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', userId)
         .eq('is_alert', true)
         .eq('is_dismissed', false);
 
+      if (!isLatest()) return;
+      // 取り直しでどれかを読めなかったときは、今のまとめを残す (#2201 U1。一部だけを空・0 にして、「今日の記録をつけよう」の帯や
+      // 体重の「-」を出さない)
+      if (mode === 'refetch' && (todayRecordError || streakError || recentWeightsError || weightGoalError || alertCountError)) return;
       setHealthSummary({
         todayRecord,
         healthStreak: streak?.current_streak || 0,
@@ -706,73 +807,102 @@ export const useHomeData = () => {
   };
 
   // 栄養分析（開いたときは AI のアドバイス付き。取り直しは AI を呼ばずに点数・課題だけ。#2201 U4）
+  // 応答を置くのは最後に始めた読み取りだけ (nutritionAnalysisStream。#2201 U1)。鍵を分けて順序を持つ:
+  //   - 点数の部分 (点数・課題・栄養素の比べ) と読み込み中の印は、最後に始めた読み取り (AI つきか問わない) の応答だけを置く
+  //   - AI の部分 (アドバイス・提案・aiSkipped) と今日のアドバイスの帯は、最後に始めた AI つきの読み取りの応答だけを置く
+  //     (AI を付けない取り直しを AI つきの読み取りの応答待ちに始めても、AI つきの読み取りの AI の部分は置く)
+  // 応答を待つたびに、どちらの鍵でもあとから別の読み取りを始めていれば、この応答を何も置かない
   const fetchNutritionAnalysis = async ({ analysisWithoutAi }: HomeFetchOptions) => {
+    const scoreOrder = nutritionAnalysisStream.begin(null, NUTRITION_ANALYSIS_SCORE_KEY);
+    const aiOrder = analysisWithoutAi ? null : nutritionAnalysisStream.begin(null, NUTRITION_ANALYSIS_AI_KEY);
+    /** この応答に、まだ置ける部分があるか */
+    const mayPlace = () => scoreOrder.isLatest() || aiOrder?.isLatest() === true;
+    /**
+     * 今の分析を残して、読み込み中の印だけを下ろす (読み取りの失敗・分析の結果を使えないとき)。
+     * 下ろすのは最後に始めた読み取りだけ (古い読み取りの失敗で、あとの読み取りの途中に下ろさない)
+     */
+    const settleKeepingAnalysis = () => scoreOrder.place(() => setNutritionAnalysis(prev => ({ ...prev, loading: false })));
     try {
       setNutritionAnalysis(prev => ({ ...prev, loading: true }));
       
       const response = await fetch(analysisWithoutAi ? HOME_NUTRITION_ANALYSIS_WITHOUT_AI_URL : HOME_NUTRITION_ANALYSIS_WITH_AI_URL);
       
-      if (response.ok) {
-        const data = await response.json();
-        
-        if (data.success && data.analysis) {
-          if (analysisWithoutAi) {
-            // 取り直し: 点数・課題・栄養素の比べだけを新しくし、アドバイス・提案・aiSkipped と今日のアドバイスの帯は前の値を残す
-            // (AI を呼んでいないので、応答の advice / suggestion は空。#2201 U4)
-            setNutritionAnalysis(prev => ({
-              ...prev,
-              score: data.analysis.score || 0,
-              issues: data.analysis.issues || [],
-              comparison: data.analysis.comparison || {},
-              loading: false,
-            }));
-          } else {
-            setNutritionAnalysis({
-              score: data.analysis.score || 0,
-              issues: data.analysis.issues || [],
-              advice: data.advice || null,
-              suggestion: data.suggestion || null,
-              comparison: data.analysis.comparison || {},
-              aiSkipped: aiSkippedReasonOf(data),
-              loading: false,
-            });
-            // AIアドバイスをsuggestに設定 (帯に何も出ていないときだけ)
-            if (data.advice && !suggestion) {
-              setSuggestion(data.advice);
-            }
+      if (!mayPlace()) return;
+      if (!response.ok) {
+        settleKeepingAnalysis();
+        return;
+      }
+      const data = await response.json();
+
+      if (!mayPlace()) return;
+      if (data.success && data.analysis) {
+        scoreOrder.place(() =>
+          setNutritionAnalysis(prev => ({
+            ...prev,
+            score: data.analysis.score || 0,
+            issues: data.analysis.issues || [],
+            comparison: data.analysis.comparison || {},
+            loading: false,
+          })),
+        );
+        // AI の部分は AI つきの読み取りだけが置く。取り直し (AI を付けない) は、アドバイス・提案・aiSkipped と今日のアドバイスの帯の
+        // 前の値を残す (AI を呼んでいないので、応答の advice / suggestion は空。#2201 U4)
+        aiOrder?.place(() => {
+          setNutritionAnalysis(prev => ({
+            ...prev,
+            advice: data.advice || null,
+            suggestion: data.suggestion || null,
+            aiSkipped: aiSkippedReasonOf(data),
+          }));
+          // AIアドバイスをsuggestに設定 (帯に何も出ていないときだけ)
+          if (data.advice && !suggestion) {
+            setSuggestion(data.advice);
           }
-        } else if (data.success) {
-          // 今日の完了した食事が無くて分析できない (analysis: null)。前の分析 (点数・課題・アドバイス) を残さない
-          // (AI 相談で今日の食事を消した・完了を外したあとの取り直し。読み込み直したときと同じ。#2195 V1)
-          setNutritionAnalysis(NO_NUTRITION_ANALYSIS);
+        });
+      } else if (data.success) {
+        // 今日の完了した食事が無くて分析できない (analysis: null)。前の分析 (点数・課題・アドバイス) を残さない
+        // (AI 相談で今日の食事を消した・完了を外したあとの取り直し。読み込み直したときと同じ。#2195 V1)
+        const scorePlaced = scoreOrder.place(() => {
+          setNutritionAnalysis(prev => ({ ...prev, ...NO_NUTRITION_ANALYSIS_SCORE_PARTS, loading: false }));
           if (analysisWithoutAi) {
             // 取り直しでは帯も消す (分析する食事が無いので、読み込み直しても帯は出ない)
             setSuggestion(null);
           }
-        } else {
-          setNutritionAnalysis(prev => ({ ...prev, loading: false }));
-        }
+        });
+        // AI の部分も消す。最後に始めた読み取りが「分析できない」と答えたときは、それより前に始めた AI つきの読み取りの応答
+        // (まだ分析できたときのアドバイス・提案) を、あとから置かない (AI の部分の鍵で、いま始めた読み取りとして消す)
+        const aiPartsOrder = scorePlaced === 'placed' ? nutritionAnalysisStream.begin(null, NUTRITION_ANALYSIS_AI_KEY) : aiOrder;
+        aiPartsOrder?.place(() => setNutritionAnalysis(prev => ({ ...prev, ...NO_NUTRITION_ANALYSIS_AI_PARTS })));
       } else {
-        setNutritionAnalysis(prev => ({ ...prev, loading: false }));
+        settleKeepingAnalysis();
       }
     } catch (e) {
       console.error('Nutrition analysis fetch error:', e);
-      setNutritionAnalysis(prev => ({ ...prev, loading: false }));
+      // 失敗では今の分析を残す
+      settleKeepingAnalysis();
     }
   };
 
   // Performance OS v3: パフォーマンス分析を取得
-  const fetchPerformanceAnalysis = async (userId: string) => {
+  // ホームのデータの取得 (fetchHomeData) とチェックインの保存のあとに読む。応答を置くのは最後に始めた読み取りだけ
+  // (performanceAnalysisStream。#2201 U1。古い応答で、あとの読み取りの分析を上書きしない。読み込み中の印もあとの読み取りが下ろす)。
+  // mode が 'refetch' (AI 相談の成功の取り直し) なら、今日のチェックインを読めなかったときは今のチェックインを残す (#2201 U1。
+  // チェックイン済みの表示を未記入に戻さない)。開いたとき・チェックインの保存のあとはこれまでどおり
+  const fetchPerformanceAnalysis = async (userId: string, mode: HomeFetchMode = 'mount') => {
+    const order = performanceAnalysisStream.begin();
     try {
       setPerformanceAnalysis(prev => ({ ...prev, loading: true }));
 
       // 今日のチェックインを取得
-      const { data: todayCheckin } = await supabase
+      const { data: todayCheckin, error: todayCheckinError } = await supabase
         .from('user_performance_checkins')
         .select('*')
         .eq('user_id', userId)
         .eq('checkin_date', todayStr)
         .maybeSingle();
+
+      /** 置くチェックイン (取り直しで読めなかったときは今のチェックイン) */
+      const checkinToPlace = (current: unknown) => (mode === 'refetch' && todayCheckinError ? current : todayCheckin);
 
       // 7日分析を取得
       const response = await fetch(`/api/performance/analyze?date=${todayStr}`);
@@ -780,24 +910,28 @@ export const useHomeData = () => {
       if (response.ok) {
         const data = await response.json();
 
-        setPerformanceAnalysis({
-          eligible: data.eligible || false,
-          eligibilityReason: data.eligibilityReason || null,
-          nextAction: data.analysis?.nextAction || null,
-          recommendations: data.analysis?.recommendations || [],
-          todayCheckin,
-          loading: false,
-        });
+        order.place(() =>
+          setPerformanceAnalysis(prev => ({
+            eligible: data.eligible || false,
+            eligibilityReason: data.eligibilityReason || null,
+            nextAction: data.analysis?.nextAction || null,
+            recommendations: data.analysis?.recommendations || [],
+            todayCheckin: checkinToPlace(prev.todayCheckin),
+            loading: false,
+          })),
+        );
       } else {
-        setPerformanceAnalysis(prev => ({
-          ...prev,
-          todayCheckin,
-          loading: false
-        }));
+        order.place(() =>
+          setPerformanceAnalysis(prev => ({
+            ...prev,
+            todayCheckin: checkinToPlace(prev.todayCheckin),
+            loading: false
+          })),
+        );
       }
     } catch (e) {
       console.error('Performance analysis fetch error:', e);
-      setPerformanceAnalysis(prev => ({ ...prev, loading: false }));
+      order.place(() => setPerformanceAnalysis(prev => ({ ...prev, loading: false })));
     }
   };
 
@@ -965,59 +1099,63 @@ export const useHomeData = () => {
     // debounce 待機後、再度 pending チェック（待機中に別のリクエストが始まった可能性）
     if (pendingToggleRef.current.has(mealId)) return;
     pendingToggleRef.current.add(mealId);
+    const endWrite = aiConsultationWrites.begin();
+    try {
+      const newStatus = !currentStatus;
 
-    const newStatus = !currentStatus;
-
-    // 楽観的UI更新
-    setTodayPlan(prev => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        meals: prev.meals.map(m =>
-          m.id === mealId
-            ? { ...m, isCompleted: newStatus, completedAt: newStatus ? new Date().toISOString() : null }
-            : m
-        ),
-      };
-    });
-
-    // サマリー更新（completedCount を即時反映 → 進捗 % が即更新）
-    setDailySummary(prev => ({
-      ...prev,
-      completedCount: newStatus
-        ? Math.min(prev.completedCount + 1, prev.totalCount)
-        : Math.max(prev.completedCount - 1, 0),
-    }));
-
-    // DB更新 (完了は RPC。completed_at は DB が決める。#2025)
-    const { error } = await supabase.rpc(PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs(mealId, newStatus));
-
-    if (error) {
-      console.error('Toggle completion error:', error);
-      // ロールバック: 楽観的更新を元に戻す
+      // 楽観的UI更新
       setTodayPlan(prev => {
         if (!prev) return prev;
         return {
           ...prev,
           meals: prev.meals.map(m =>
             m.id === mealId
-              ? { ...m, isCompleted: currentStatus, completedAt: currentStatus ? m.completedAt : null }
+              ? { ...m, isCompleted: newStatus, completedAt: newStatus ? new Date().toISOString() : null }
               : m
           ),
         };
       });
+
+      // サマリー更新（completedCount を即時反映 → 進捗 % が即更新）
       setDailySummary(prev => ({
         ...prev,
         completedCount: newStatus
-          ? Math.max(prev.completedCount - 1, 0)
-          : Math.min(prev.completedCount + 1, prev.totalCount),
+          ? Math.min(prev.completedCount + 1, prev.totalCount)
+          : Math.max(prev.completedCount - 1, 0),
       }));
-      // 念のためリフェッチでサーバー真値に同期
-      void fetchHomeData();
-    }
 
-    // #191: PATCH 完了後に pending を解除
-    pendingToggleRef.current.delete(mealId);
+      // DB更新 (完了は RPC。completed_at は DB が決める。#2025)
+      const { error } = await supabase.rpc(PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs(mealId, newStatus));
+
+      if (error) {
+        console.error('Toggle completion error:', error);
+        // ロールバック: 楽観的更新を元に戻す
+        setTodayPlan(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            meals: prev.meals.map(m =>
+              m.id === mealId
+                ? { ...m, isCompleted: currentStatus, completedAt: currentStatus ? m.completedAt : null }
+                : m
+            ),
+          };
+        });
+        setDailySummary(prev => ({
+          ...prev,
+          completedCount: newStatus
+            ? Math.max(prev.completedCount - 1, 0)
+            : Math.min(prev.completedCount + 1, prev.totalCount),
+        }));
+        // 念のためリフェッチでサーバー真値に同期
+        void fetchHomeData();
+      }
+    } finally {
+      // #191: PATCH 完了後に pending を解除
+      pendingToggleRef.current.delete(mealId);
+      // 書き込みの間に止めた AI 相談の成功を 1 回取り直す (#2201 U2。全部の切り替えが終わったとき。RPC が投げても印を下ろす)
+      endWrite();
+    }
   };
 
   // #322: debounce timer cleanup on unmount (メモリリーク防止)
@@ -1045,15 +1183,24 @@ export const useHomeData = () => {
 
   const updateActivityLevel = async (level: string) => {
     if (!user) return;
-    setActivityLevel(level);
+    // 今日の気分・活動量の書き込み (楽観的な更新から upsert の応答まで。#2201 U2)。食事の完了の切り替えと同じ印に数える:
+    // この間に来た AI 相談の成功では取り直さず、終わったら 1 回取り直す。取り直しの応答を待つあいだに押したときも、その応答
+    // (押す前に読んだ気分・活動量) を置かない (readHomeData は気分・活動量を order.place で置く)
+    const endWrite = aiConsultationWrites.begin();
+    try {
+      setActivityLevel(level);
 
-    await supabase
-      .from('daily_activity_logs')
-      .upsert({
-        user_id: user.id,
-        date: todayStr,
-        feeling: level,
-      }, { onConflict: 'user_id, date' });
+      await supabase
+        .from('daily_activity_logs')
+        .upsert({
+          user_id: user.id,
+          date: todayStr,
+          feeling: level,
+        }, { onConflict: 'user_id, date' });
+    } finally {
+      // upsert が投げても印を下ろす
+      endWrite();
+    }
 
     // AIサジェスト生成
     if (level === 'rest') {
@@ -1096,7 +1243,18 @@ export const useHomeData = () => {
     executeNutritionSuggestion,
     submitPerformanceCheckin,
     // 取り直し (AI 相談の成功のあと)。読み込み直したときと同じ表示にする (#2195 V1)。ただし栄養の分析は AI を呼ばずに
-    // 点数・課題だけ読み直し、今日のアドバイスの帯は残す (成功のたびの LLM の費用と安全弁の消費をやめる。#2201 U4)
-    refetch: () => fetchHomeData({ analysisWithoutAi: true }),
+    // 点数・課題だけ読み直し、今日のアドバイスの帯は残す (成功のたびの LLM の費用と安全弁の消費をやめる。#2201 U4)。
+    // 読み込み中の表示を出さず、読み取りの失敗では今の表示を残す (#2201 U1)。開いたときの読み込み中に始まった取り直しは、
+    // その読み込みの役を引き継ぐ (refetchReadMode が 'mount')。引き継いだ回は栄養の分析も開いたときと同じく AI つきで読む
+    // (開いたときの取得は最後に始めた取得でなくなるので、まだ栄養の分析を読み始めていなければ読み始めない。AI を付けずに読むと
+    // AI つきの読み取りがどこにも無く、アドバイスと帯が出ないまま残る)
+    // 札 (useAiConsultationDataRefetch が渡す) があれば、応答を待つあいだに始めた完了の切り替え・気分・活動量の保存を、
+    // 今日の献立・気分・活動量で上書きしない
+    refetch: (ticket?: AiConsultationFetchTicket) => {
+      const mode = refetchReadMode();
+      return fetchHomeData({ analysisWithoutAi: mode === 'refetch' }, mode, ticket);
+    },
+    // 食事の完了の切り替え・今日の気分・活動量の保存の間の印 (#2201 U2。ページが useAiConsultationDataRefetch の writeInFlightRef に渡す)
+    aiConsultationWrites,
   };
 };

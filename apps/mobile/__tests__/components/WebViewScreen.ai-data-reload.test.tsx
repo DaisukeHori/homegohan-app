@@ -99,6 +99,7 @@ import {
   resetAiConsultationDataChangedListenersForTests,
 } from '../../src/lib/ai-consultation-data-changed';
 import {
+  AI_CONSULTATION_DEFERRED_RELOAD_OBSERVED_ATTRIBUTES,
   AI_CONSULTATION_RELOADABLE_PATHS,
   AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR,
   AI_CONSULTATION_RELOAD_PAGE_BLOCKING_SELECTORS,
@@ -472,5 +473,111 @@ describe('マイページの読み込み直しの時機 (aiConsultationReloadTim
     expect(focus.unsubscribe).toHaveBeenCalledTimes(1);
     notifyAiConsultationDataChanged();
     expect(injectJavaScript).not.toHaveBeenCalled();
+  });
+});
+
+describe('入力の部品・モーダルで止めた読み込み直しは、止めている要素が無くなったときに 1 回だけ読み込み直す (#2201 U2)', () => {
+  /** モーダル (止めている要素の 1 つ) */
+  const MODAL_SHOWN: readonly string[] = ['[role="dialog"]'];
+
+  interface FakeObserver {
+    callback: () => void;
+    options: unknown;
+    disconnected: boolean;
+  }
+
+  /**
+   * runOnPage と同じページに、MutationObserver (知らせはテストが mutate で起こす) を足したもの。
+   * ページにある要素 (elements) と pathname はあとから変えられる
+   */
+  function runOnWatchablePage(script: string, pathname: string, present: readonly string[]) {
+    const location = { origin: WEB_BASE_URL, pathname, reload: jest.fn(), assign: jest.fn(), replace: jest.fn() };
+    const elements = [...present];
+    const querySelector = jest.fn((selector: string) =>
+      selector.split(',').map((part) => part.trim()).some((part) => elements.includes(part)) ? {} : null,
+    );
+    const observers: FakeObserver[] = [];
+    class FakeMutationObserver {
+      private entry: FakeObserver;
+      constructor(callback: () => void) {
+        this.entry = { callback, options: null, disconnected: false };
+        observers.push(this.entry);
+      }
+      observe(_target: unknown, options: unknown) {
+        this.entry.options = options;
+      }
+      disconnect() {
+        this.entry.disconnected = true;
+      }
+    }
+    const pageWindow: Record<string, unknown> = {
+      location,
+      document: { querySelector, documentElement: {} },
+      MutationObserver: FakeMutationObserver,
+    };
+    const run = () => vm.runInNewContext(script, { window: pageWindow });
+    run();
+    const mutate = () => {
+      for (const observer of observers.filter((o) => !o.disconnected)) observer.callback();
+    };
+    return { location, elements, observers, run, mutate };
+  }
+
+  it('モーダルを閉じたら 1 回だけ読み込み直し、見張りをやめる', async () => {
+    const script = await scriptInjectedOnDataChange(<WebViewScreen path="/profile" reloadOnAiConsultationDataChange />);
+    const page = runOnWatchablePage(script, '/profile', MODAL_SHOWN);
+    expect(page.location.reload).not.toHaveBeenCalled();
+    expect(page.observers).toHaveLength(1);
+
+    // モーダルが出ている間の DOM の変化では読み込み直さない
+    page.mutate();
+    expect(page.location.reload).not.toHaveBeenCalled();
+
+    page.elements.length = 0;
+    page.mutate();
+    expect(page.location.reload).toHaveBeenCalledTimes(1);
+    expect(page.observers[0].disconnected).toBe(true);
+    page.mutate();
+    expect(page.location.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('止めている間に何回知らせが来ても、見張りは 1 つで、読み込み直しは 1 回', async () => {
+    const script = await scriptInjectedOnDataChange(<WebViewScreen path="/home" reloadOnAiConsultationDataChange />);
+    const page = runOnWatchablePage(script, '/home', INPUT_UI_SHOWN);
+    page.run();
+    page.run();
+    expect(page.observers).toHaveLength(1);
+
+    page.elements.length = 0;
+    page.mutate();
+    expect(page.location.reload).toHaveBeenCalledTimes(1);
+
+    // 外れたあとの知らせは、これまでどおりすぐ読み込み直す
+    page.run();
+    expect(page.location.reload).toHaveBeenCalledTimes(2);
+  });
+
+  it('見張りの間に別のページへ移ったら、読み込み直さずに見張りをやめる', async () => {
+    const script = await scriptInjectedOnDataChange(<WebViewScreen path="/profile" reloadOnAiConsultationDataChange />);
+    const page = runOnWatchablePage(script, '/profile', MODAL_SHOWN);
+    page.location.pathname = '/profile/nutrition-targets';
+    page.elements.length = 0;
+    page.mutate();
+    expect(page.location.reload).not.toHaveBeenCalled();
+    expect(page.observers[0].disconnected).toBe(true);
+  });
+
+  it('止めている要素の当たり外れを変えうる属性 (モーダルの role・ページごとに足す要素の class など) の変化も見張る', async () => {
+    const script = await scriptInjectedOnDataChange(<WebViewScreen path="/profile" reloadOnAiConsultationDataChange />);
+    const page = runOnWatchablePage(script, '/profile', MODAL_SHOWN);
+    expect(page.observers[0].options).toEqual({
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: [...AI_CONSULTATION_DEFERRED_RELOAD_OBSERVED_ATTRIBUTES],
+    });
+    expect(AI_CONSULTATION_DEFERRED_RELOAD_OBSERVED_ATTRIBUTES).toEqual(
+      expect.arrayContaining(['role', 'aria-modal', 'open', 'contenteditable', 'type', 'class']),
+    );
   });
 });

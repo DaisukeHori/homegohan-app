@@ -10,7 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
 import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
-import { useAiConsultationRefetchKey } from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationRefetchKey, useAiConsultationRefetchRun } from "@/hooks/useAiConsultationDataRefetch";
 import { useAccountActionsPlacement } from "@/hooks/useAccountActionsPlacement";
 import { toUserProfile } from "@/lib/converter";
 import { assignAtPath } from "@/lib/assign-at-path";
@@ -143,15 +143,34 @@ function ProfilePageContent() {
   // AI 相談の提案の実行で好み・栄養目標などが変わったら、下の取得をもう一度走らせる (#2195 V1)。
   // 編集のモーダル (role="dialog") が出ている間は増えない (編集の途中の editForm を取得した値で上書きしないため)。
   // 競技タブのように入力の部品が 1 つも無いタブを開いていても止まるよう、モーダルそのものに role="dialog" を付けている
-  const aiConsultationRefetchKey = useAiConsultationRefetchKey();
+  // 閉じたら止めた通知のぶん 1 回増える (#2201 U2)
+  const { refetchKey: aiConsultationRefetchKey, refetchTicket: aiConsultationRefetchTicket } = useAiConsultationRefetchKey();
+  // その回が AI 相談の成功の取り直しで走ったか (#2201 U1)。開いたときの読み込み中に来た成功の回は、その読み込みの役を引き継ぐ
+  // (取り直しの扱いにしない。ログインを確かめられなかったときは開いたときと同じ扱い)
+  const takeAiConsultationRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey, isLoading);
+  // 取得した値は、いつも編集の入力欄 (editForm) にも置く (#2201 U1)。打ちかけの値は次の 2 つで守る:
+  //   - 取り直しの回: 応答を待つあいだに編集のモーダル (role="dialog") を開いたら、応答ごと置かずに閉じたあと 1 回取り直す
+  //     (下の refetchTicket.deferIfHeld。閉じたあとの editForm を AI 相談の変更の前の値のまま残さない)
+  //   - 開いたときの読み込み: 読み込み中もヘッダーの「編集」は押せるが、モーダルは読み込みが終わるまで入力欄と保存のボタンを出さない
+  //     (読み込み中の表示)。届いた応答を editForm に置いてから入力欄を出す (読み込み中に開いたモーダルを、保存した値の無い空の入力欄の
+  //     まま残さない・空の editForm を保存して、触っていない欄の無い送信にしない)
 
   useEffect(() => {
+    // 前の回の応答が後から届いても置かない (取り直しが続いたとき。#2201 U1)
+    let cancelled = false;
+    // 取り直しでは読み込み中の表示を出さず、失敗 (ログインの確かめ・プロフィールの読み取りのエラー・通信の失敗) では今の表示を残す
+    const isRefetch = takeAiConsultationRefetchRun();
+    const refetchTicket = isRefetch ? aiConsultationRefetchTicket() : null;
     const getData = async () => {
       const supabase = createClient();
-      setIsLoading(true);
+      if (!isRefetch) setIsLoading(true);
 
       const { data: { user }, error: authError } = await supabase.auth.getUser();
       console.log('[Profile] Auth user:', user?.id, 'error:', authError?.message);
+      if (cancelled) return;
+      // 取り直し (読み込み中の表示を出していないときの回) でログインを確かめられなかった: 今の表示を残す。
+      // 開いたときの読み込み中に来た成功の回は取り直しの扱いにならない (useAiConsultationRefetchRun) ので、ここには来ない
+      if (isRefetch && authError && !user) return;
       setUser(user);
 
       if (user) {
@@ -170,6 +189,9 @@ function ProfilePageContent() {
         if (error) {
           console.error('[Profile] Error fetching profile:', error);
         }
+        if (cancelled) return;
+        // 取り直しの応答を待つあいだに編集のモーダルを開いた: 置かずに、閉じたあと 1 回取り直す (#2201 U1 + U2)
+        if (refetchTicket?.deferIfHeld()) return;
 
         if (!error) {
           // 答えをそのまま置く: 取り直し (AI 相談の成功のあと) でも、読み込み直したときと同じ値にする (#2195 V1)
@@ -201,7 +223,7 @@ function ProfilePageContent() {
           if (badgeRes.ok) {
             const badgeData = await badgeRes.json();
             const earned = badgeData.badges.filter((b: any) => b.earned).length;
-            setBadgeCount(earned);
+            if (!cancelled) setBadgeCount(earned);
           }
         } catch (e) {
           console.error("Badge fetch error", e);
@@ -212,6 +234,7 @@ function ProfilePageContent() {
           const ntRes = await fetch('/api/nutrition/targets');
           if (ntRes.ok) {
             const ntData = await ntRes.json();
+            if (cancelled) return;
             if (ntData.targets) {
               const t = ntData.targets;
               setDbNutritionTarget({
@@ -231,10 +254,13 @@ function ProfilePageContent() {
         }
       }
 
-      setIsLoading(false);
+      if (!cancelled) setIsLoading(false);
     };
     void getData();
-  }, [aiConsultationRefetchKey]);
+    return () => {
+      cancelled = true;
+    };
+  }, [aiConsultationRefetchKey, takeAiConsultationRefetchRun, aiConsultationRefetchTicket]);
 
   // ?focus=incomplete パラメータを処理
   useEffect(() => {
@@ -739,6 +765,13 @@ function ProfilePageContent() {
 
               {/* コンテンツ */}
               <div className="flex-1 overflow-y-auto p-6">
+                {/* 開いたときの読み込みが終わるまでは入力欄を出さない (保存した値を editForm に置いてから出す。#2201 U1) */}
+                {isLoading ? (
+                  <p className="py-8 text-center text-sm text-gray-500" role="status">
+                    プロフィールを読み込み中...
+                  </p>
+                ) : (
+                <>
                 {/* 基本情報タブ */}
                 {activeTab === 'basic' && (
                   <div className="space-y-4">
@@ -1289,6 +1322,8 @@ function ProfilePageContent() {
                     </div>
                   </div>
                 )}
+                </>
+                )}
               </div>
 
               {/* フッター */}
@@ -1308,7 +1343,7 @@ function ProfilePageContent() {
                       )}
                       <Button
                         onClick={handleSave}
-                        disabled={isSaving}
+                        disabled={isSaving || isLoading}
                         className="flex-1 py-6 rounded-full bg-orange-500 hover:bg-orange-600 text-white font-bold"
                       >
                         {isSaving ? (
@@ -1336,7 +1371,7 @@ function ProfilePageContent() {
                 ) : (
                   <Button
                     onClick={handleSave}
-                    disabled={isSaving}
+                    disabled={isSaving || isLoading}
                     className="w-full py-6 rounded-full bg-gray-900 hover:bg-black text-white font-bold"
                   >
                     {isSaving ? '保存中...' : '変更を保存'}

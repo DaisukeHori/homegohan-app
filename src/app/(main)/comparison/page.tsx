@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import type { ComparisonResponse, MetricRankingSummary, ComparisonHighlight } from "@/types/comparison";
-import { useAiConsultationRefetchKey } from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationRefetchKey, useAiConsultationRefetchRun } from "@/hooks/useAiConsultationDataRefetch";
 
 // メトリクスアイコンマッピング
 const METRIC_ICONS: Record<string, string> = {
@@ -36,9 +36,16 @@ export default function ComparisonPage() {
   const [periodType, setPeriodType] = useState<'weekly' | 'monthly'>('weekly');
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
   // AI 相談の提案の実行で記録が変わったら、下の取得をもう一度走らせる (#2195 V1)
-  const aiConsultationRefetchKey = useAiConsultationRefetchKey();
+  // 番兵 (モーダル・入力の部品) で止めた通知は、外れたときに 1 回取り直す (#2201 U2)
+  const { refetchKey: aiConsultationRefetchKey } = useAiConsultationRefetchKey();
+  // その回が AI 相談の成功の取り直しで走ったか (#2201 U1)。開いたとき・期間の切り替えの読み込み中に来た成功の回は、その読み込みの役を
+  // 引き継ぐ (取り直しの扱いにしない。失敗で前の期間の順位を残さない)
+  const takeAiConsultationRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey, loading);
 
   useEffect(() => {
+    // 取り直しでは読み込み中の表示を出さず、失敗 (通信の失敗・非 2xx) では今の表示を残す (#2201 U1)。
+    // 期間の切り替えで走った回は、これまでどおり失敗でデータを空にする (別期間の内容を残さない)
+    const isRefetch = takeAiConsultationRefetchRun();
     // 期間を切り替えたとき (またはページを離れたとき) に前のリクエストを中断する (#1228)。
     // 中断しないと、先に発行した週間の応答が後から届いて月間の表示を上書きしたり、
     // 古い応答の finally でスピナーが消えたりする。
@@ -46,7 +53,7 @@ export default function ComparisonPage() {
     const { signal } = controller;
 
     const fetchData = async () => {
-      setLoading(true);
+      if (!isRefetch) setLoading(true);
       try {
         const res = await fetch(`/api/comparison/rankings?periodType=${periodType}`, { signal });
         if (!res.ok) throw new Error('Failed');
@@ -58,6 +65,7 @@ export default function ComparisonPage() {
         // abort() による AbortError は期間切替・離脱に伴う正常動作なので、エラー扱いにせず何もしない
         if (signal.aborted) return;
         console.error(e);
+        if (isRefetch) return;
         // 失敗時に直前の期間のデータを残すと、別期間の内容が現在のタブの下に表示されてしまうため、
         // データを空にして「取得に失敗しました」の表示に切り替える
         setData(null);
@@ -69,7 +77,7 @@ export default function ComparisonPage() {
     fetchData();
 
     return () => controller.abort();
-  }, [periodType, aiConsultationRefetchKey]);
+  }, [periodType, aiConsultationRefetchKey, takeAiConsultationRefetchRun]);
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">

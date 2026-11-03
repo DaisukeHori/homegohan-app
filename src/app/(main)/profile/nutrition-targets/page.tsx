@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { motion } from "framer-motion";
 import { Icons } from "@/components/icons";
 import { NutritionTargetPlanner } from "@/components/nutrition/nutrition-target-planner";
-import { useAiConsultationRefetchKey } from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationRefetchKey, useAiConsultationRefetchRun } from "@/hooks/useAiConsultationDataRefetch";
 import type { CalculationBasis, NutrientReference } from "@homegohan/core";
 
 interface NutritionTargetsData {
@@ -123,13 +123,23 @@ export default function NutritionTargetsExplainPage() {
   const [showRawJson, setShowRawJson] = useState(false);
   // AI 相談の提案の実行で栄養目標・プロフィールが変わったら、下の取得をもう一度走らせる (#2195 V1)。
   // 栄養目標の再設定 (NutritionTargetPlanner) の入力欄を変えている間は増えない (再設定の側も自分で取り直す)
-  const aiConsultationRefetchKey = useAiConsultationRefetchKey();
+  // 番兵で止めた通知は、外れたときに 1 回取り直す (#2201 U2)
+  const { refetchKey: aiConsultationRefetchKey } = useAiConsultationRefetchKey();
+  // その回が AI 相談の成功の取り直しで走ったか (#2201 U1)。開いたときの読み込み中に来た成功の回は、その読み込みの役を引き継ぐ
+  // (取り直しの扱いにしない。失敗を隠して何も無い画面を出さない)
+  const takeAiConsultationRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey, loading);
 
   useEffect(() => {
+    // 前の回の応答が後から届いても置かない (取り直しが続いたとき。#2201 U1)
+    let cancelled = false;
+    // 取り直しの失敗 (ログインの確かめ・読み取りのエラー・通信の失敗) では、失敗の画面に切り替えずに今の表示を残す (#2201 U1)
+    const isRefetch = takeAiConsultationRefetchRun();
     const fetchData = async () => {
       const supabase = createClient();
       try {
-        const { data: { user } } = await supabase.auth.getUser();
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
+        if (cancelled) return;
+        if (isRefetch && userError && !user) return;
         if (!user) {
           setError("ログインが必要です");
           setLoading(false);
@@ -138,6 +148,7 @@ export default function NutritionTargetsExplainPage() {
 
         // プロフィールを取得。取り直し (AI 相談の成功のあと) でも答えをそのまま置く (読み込み直したときと同じ。#2195 V1)
         const profileRes = await supabase.from('user_profiles').select('*').eq('id', user.id).single();
+        if (cancelled) return;
 
         if (!profileRes.error) {
           setProfile((profileRes.data as ProfileData | null) ?? null);
@@ -146,8 +157,11 @@ export default function NutritionTargetsExplainPage() {
         // 栄養目標は /api/nutrition/targets 経由で取得（auto_calculate 時はその場で再計算される）
         // これによりマイページ (/profile) と同一の値が表示される（Bug #17 修正）
         const targetsRes = await fetch('/api/nutrition/targets');
+        // 前の回の応答は、栄養目標を読めなかったときも何も置かない (下の失敗の表示を消すのも、最後に走った回だけ。#2201 U1)
+        if (cancelled) return;
         if (targetsRes.ok) {
           const targetsJson = await targetsRes.json();
+          if (cancelled) return;
           if (!targetsJson.targets) {
             // 栄養目標が無い: 前の値を残さない (取り直しのとき。#2195 V1)
             setTargets(null);
@@ -189,14 +203,17 @@ export default function NutritionTargetsExplainPage() {
         setError(null);
       } catch (e) {
         console.error('Error fetching data:', e);
-        setError("データの取得に失敗しました");
+        if (!cancelled && !isRefetch) setError("データの取得に失敗しました");
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     void fetchData();
-  }, [aiConsultationRefetchKey]);
+    return () => {
+      cancelled = true;
+    };
+  }, [aiConsultationRefetchKey, takeAiConsultationRefetchRun]);
 
   if (loading) {
     return (

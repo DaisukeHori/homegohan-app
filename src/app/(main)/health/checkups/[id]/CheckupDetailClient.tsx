@@ -13,7 +13,7 @@ import {
   type BiologicalSex, type MetricStatus,
 } from '@/lib/health-blood-test-reference';
 import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
-import { useAiConsultationDataRefetch } from '@/hooks/useAiConsultationDataRefetch';
+import { useAiConsultationDataRefetch, type AiConsultationFetchTicket } from '@/hooks/useAiConsultationDataRefetch';
 
 const colors = {
   bg: '#FAF9F7',
@@ -103,26 +103,27 @@ export default function CheckupDetailClient({ id }: Props) {
 
   // 基準値を選ぶ性別 (プロフィールの gender) を読む。応答が届けばその値 (無ければ未設定) に置き換え、読めなかったとき
   // (応答が ok でない・通信の失敗) は今の値のまま
-  const fetchSex = useCallback(async () => {
+  const fetchSex = useCallback(async (ticket: AiConsultationFetchTicket) => {
     try {
       const res = await fetch('/api/profile', { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
-        setSex(data?.gender ?? null);
+        // 応答を置くのは最後に始めた取得だけ (開いたときの読み込みと取り直しが重なっても古い応答で上書きしない。#2201 U1)
+        if (ticket.isLatest()) setSex(data?.gender ?? null);
       }
     } catch (error) {
       console.error('Failed to fetch profile for reference ranges:', error);
     }
   }, []);
 
-  useEffect(() => {
-    void fetchSex();
-  }, [fetchSex]);
-
   // AI 相談の提案の実行が成功したら (#2195 V1)、性別を読み直して基準値と判定を出し直す (AI 相談の update_profile_preferences は
   // gender を書く)。健康診断の結果 (health_checkups) は AI 相談が書かない表なので読み直さない。削除の確認が出ている間も
   // 読み直してよい (確認の中身は性別に依らない)
-  useAiConsultationDataRefetch(fetchSex);
+  const { beginFetch } = useAiConsultationDataRefetch(fetchSex);
+
+  useEffect(() => {
+    void fetchSex(beginFetch());
+  }, [fetchSex, beginFetch]);
 
   const handleDelete = async () => {
     setDeleting(true);

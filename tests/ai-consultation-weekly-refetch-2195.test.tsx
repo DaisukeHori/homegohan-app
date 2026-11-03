@@ -91,6 +91,8 @@ const supabaseMock = vi.hoisted(() => ({
    * DB の関数 ('rpc:<名前>') を記録する (受け手の読み取りの検査)
    */
   reads: null as null | { record: (key: string | null) => void; recordSelect: (table: string, select: unknown) => void },
+  /** true なら user_profiles の読み取りが error を返す (#2201 U1。通信・サーバーの失敗。行が無いのとは別) */
+  profileFails: false,
 }));
 vi.mock('@/lib/supabase/client', () => {
   const EMPTY_RESULT = { data: null, error: null, count: 0 };
@@ -105,6 +107,7 @@ vi.mock('@/lib/supabase/client', () => {
       return { data: single ? (rows[0] ?? null) : rows, error: null, count: rows.length };
     }
     if (table !== 'user_profiles') return EMPTY_RESULT;
+    if (supabaseMock.profileFails) return { data: null, error: { code: '08006', message: 'connection failure' }, count: null };
     const row = supabaseMock.profile;
     if (single) return { data: row, error: null, count: row ? 1 : 0 };
     return { data: row ? [row] : [], error: null, count: row ? 1 : 0 };
@@ -228,6 +231,16 @@ function displayedWeekDates(): string[] {
   return Array.from({ length: DAYS_IN_WEEK }, (_, i) => dateFromWeekStart(i));
 }
 
+/** GET /api/meal-plans の範囲の鍵 (server.mealPlansHoldOnce の鍵) */
+function mealPlansRangeKey(startDate: string, endDate: string): string {
+  return `${startDate}..${endDate}`;
+}
+
+/** 表示中の週の献立の読み込み (週の初日から 7 日。ページの fetchPlan・refreshMealPlan の範囲) の鍵 */
+function displayedWeekRangeKey(): string {
+  return mealPlansRangeKey(dateFromWeekStart(0), dateFromWeekStart(DAYS_IN_WEEK - 1));
+}
+
 /** 表示中の月 (= 週の始まりの月) の、表示中の週の外の日 (次の週か前の週の月曜) */
 function otherWeekDateInDisplayedMonth(): string {
   return displayedWeekStart().getDate() <= LAST_DAY_WITH_NEXT_WEEK_IN_SAME_MONTH
@@ -235,8 +248,10 @@ function otherWeekDateInDisplayedMonth(): string {
     : dateFromWeekStart(-DAYS_IN_WEEK);
 }
 
-type FakeMeal = { id: string; dishName: string };
+type FakeMeal = { id: string; dishName: string; isCompleted?: boolean };
 type FakeShoppingItem = { id: string; itemName: string; isChecked: boolean };
+/** 冷蔵庫の食材 (GET /api/pantry の items の 1 行。ページは中身を見ずに store に置く) */
+type FakePantryItem = { id: string; name: string };
 
 /** サーバーの表 (テストごとに作り直す) */
 type FakeServer = {
@@ -253,6 +268,27 @@ type FakeServer = {
    * プロフィールの名前 user_profiles.nickname。null = 決まらない)
    */
   familyMemberNames: { id: string; name: string | null }[];
+  /** 置いている間に始めた GET /api/meal-plans の応答を、この Promise が解けるまで止める (#2201 U1) */
+  mealPlansHold: Promise<void> | null;
+  /** true の間に始めた GET /api/meal-plans は 500 を返す (#2201 U1。読み直しの失敗) */
+  mealPlansFail: boolean;
+  /**
+   * 範囲 (mealPlansRangeKey) → Promise。その範囲の GET /api/meal-plans の次の 1 回の応答 (答えは読み取りを始めたときのもの) を、
+   * この Promise が解けるまで止める (止めたら消す。#2201 U1。同じ週の何回かの読み込みのうち、1 回だけを遅らせる)
+   */
+  mealPlansHoldOnce: Map<string, Promise<void>>;
+  /** true なら GET /api/family/members/names が 500 を返す (#2201 U1) */
+  namesFail: boolean;
+  /** 置いている間に始めた食事の更新 (PATCH /api/meal-plans/meals/<id>) の応答を、この Promise が解けるまで止める (#2201 U2) */
+  mealPatchHold: Promise<void> | null;
+  /** true の間の食事の更新 (PATCH /api/meal-plans/meals/<id>) は 500 を返し、サーバーの表を変えない (#2201 U2。書き込みの失敗) */
+  mealPatchFails: boolean;
+  /** 冷蔵庫の食材 (GET /api/pantry の答え) */
+  pantryItems: FakePantryItem[];
+  /** 置いている間に始めた GET /api/pantry の応答 (答えは読み取りを始めたときのもの) を、この Promise が解けるまで止める (#2201 U1) */
+  pantryHold: Promise<void> | null;
+  /** 置いている間に始めた GET /api/profile の応答 (答えは読み取りを始めたときのもの) を、この Promise が解けるまで止める (#2201 U1) */
+  profileHold: Promise<void> | null;
 };
 let server: FakeServer;
 let fetchCalls: string[];
@@ -309,7 +345,7 @@ function plannedMealJson(date: string, meal: FakeMeal) {
     mealType: 'dinner',
     dishName: meal.dishName,
     mode: 'cook',
-    isCompleted: false,
+    isCompleted: meal.isCompleted ?? false,
     recipeUrl: null,
     imageUrl: null,
     description: null,
@@ -360,21 +396,61 @@ function jsonResponse(body: unknown, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
 }
 const NOT_FOUND_STATUS = 404;
+/** 食事の更新の道の頭 (PATCH /api/meal-plans/meals/<id>) */
+const MEAL_PATCH_PATH_PREFIX = '/api/meal-plans/meals/';
+/** 買い物リストの品目の更新の道の頭 (PATCH /api/shopping-list/<id>。チェックの切り替えなど) */
+const SHOPPING_ITEM_PATCH_PATH_PREFIX = '/api/shopping-list/';
+/** 読み取りの失敗 (server.namesFail) のときの status */
+const SERVER_ERROR_STATUS = 500;
 /** ページの API の相対 URL を解く起点 (fetch のモックの中だけで使う) */
 const PAGE_ORIGIN = 'http://localhost';
 
 function installFakeServer() {
   fetchCalls = [];
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: { method?: string }) => {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: { method?: string; body?: unknown }) => {
     const raw = typeof input === 'string' ? input : input.toString();
     fetchCalls.push(raw);
     recorder.record(fetchReadKey(raw, init));
     const url = new URL(raw, PAGE_ORIGIN);
     // 祝日の一覧 (外の API) は、この検査では祝日なし
     if (url.origin !== PAGE_ORIGIN) return jsonResponse({});
+    // 買い物リストの品目の更新 (チェックの切り替え)。サーバーの表に書く (#2201 U2)
+    if ((init?.method ?? 'GET').toUpperCase() === 'PATCH' && url.pathname.startsWith(SHOPPING_ITEM_PATCH_PATH_PREFIX)) {
+      const id = url.pathname.slice(SHOPPING_ITEM_PATCH_PATH_PREFIX.length);
+      const patch = JSON.parse(String(init?.body ?? '{}')) as { isChecked?: boolean };
+      server.shoppingItems = server.shoppingItems.map((item) =>
+        item.id === id && patch.isChecked !== undefined ? { ...item, isChecked: patch.isChecked } : item,
+      );
+      return jsonResponse({ success: true });
+    }
+    // 食事の更新 (完了の切り替えなど)。止めていれば、止めが解けてから成功を返す。完了はサーバーの表に書く (#2201 U2)
+    if ((init?.method ?? 'GET').toUpperCase() === 'PATCH' && url.pathname.startsWith(MEAL_PATCH_PATH_PREFIX)) {
+      const hold = server.mealPatchHold;
+      if (hold) await hold;
+      if (server.mealPatchFails) return jsonResponse({ error: 'down' }, SERVER_ERROR_STATUS);
+      const mealId = url.pathname.slice(MEAL_PATCH_PATH_PREFIX.length);
+      const patch = JSON.parse(String(init?.body ?? '{}')) as { isCompleted?: boolean };
+      if (patch.isCompleted !== undefined) {
+        for (const [date, meals] of server.days) {
+          server.days.set(date, meals.map((meal) => (meal.id === mealId ? { ...meal, isCompleted: patch.isCompleted } : meal)));
+        }
+      }
+      return jsonResponse({ success: true });
+    }
     switch (url.pathname) {
-      case '/api/meal-plans':
-        return jsonResponse(mealPlansJson(url.searchParams.get('startDate') ?? '', url.searchParams.get('endDate') ?? ''));
+      case '/api/meal-plans': {
+        // 答えは読み取りを始めたときのもの。止めていれば、止めが解けてから返す
+        const body = mealPlansJson(url.searchParams.get('startDate') ?? '', url.searchParams.get('endDate') ?? '');
+        const hold = server.mealPlansHold;
+        const fails = server.mealPlansFail;
+        const rangeKey = mealPlansRangeKey(url.searchParams.get('startDate') ?? '', url.searchParams.get('endDate') ?? '');
+        const holdOnce = server.mealPlansHoldOnce.get(rangeKey);
+        server.mealPlansHoldOnce.delete(rangeKey);
+        if (hold) await hold;
+        if (holdOnce) await holdOnce;
+        if (fails) return jsonResponse({ error: 'down' }, SERVER_ERROR_STATUS);
+        return jsonResponse(body);
+      }
       case '/api/ai/menu/weekly/pending': {
         const pending = server.pendingRequest;
         if (pending && pending.startDate === url.searchParams.get('date')) {
@@ -395,11 +471,22 @@ function installFakeServer() {
         return jsonResponse({ cleaned: 0 });
       case '/api/ai/menu/meal/pending':
         return jsonResponse({ hasPending: false, requests: [] });
-      case '/api/pantry':
-        return jsonResponse({ items: [] });
-      case '/api/profile':
-        return jsonResponse({ family_size: server.familySize, servings_config: null, radar_chart_nutrients: null });
+      case '/api/pantry': {
+        // 答えは読み取りを始めたときのもの。止めていれば、止めが解けてから返す
+        const body = { items: server.pantryItems.map((item) => ({ ...item })) };
+        const hold = server.pantryHold;
+        if (hold) await hold;
+        return jsonResponse(body);
+      }
+      case '/api/profile': {
+        // 答えは読み取りを始めたときのもの。止めていれば、止めが解けてから返す
+        const body = { family_size: server.familySize, servings_config: null, radar_chart_nutrients: null };
+        const hold = server.profileHold;
+        if (hold) await hold;
+        return jsonResponse(body);
+      }
       case '/api/family/members/names':
+        if (server.namesFail) return jsonResponse({ error: 'down' }, SERVER_ERROR_STATUS);
         return jsonResponse({ data: { members: server.familyMemberNames } });
       case '/api/family/menu':
         return jsonResponse({
@@ -420,7 +507,25 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
-  server = { days: new Map(), shoppingItems: [], familySize: 2, pendingRequest: null, familyMemberNames: [] };
+  server = {
+    days: new Map(),
+    shoppingItems: [],
+    familySize: 2,
+    pendingRequest: null,
+    familyMemberNames: [],
+    mealPlansHold: null,
+    mealPlansFail: false,
+    mealPlansHoldOnce: new Map(),
+    namesFail: false,
+    mealPatchHold: null,
+    mealPatchFails: false,
+    pantryItems: [],
+    pantryHold: null,
+    profileHold: null,
+  };
+  supabaseMock.profileFails = false;
+  // ?date= で開く検査が置いたクエリを、次の検査に残さない
+  navigation.searchParams = new URLSearchParams();
   supabaseMock.channelNames.length = 0;
   // 既定は帯を出さないプロフィール (帯の検査は incompleteProfile に置き換える)・家族なし (家族の検査は joinFamily)
   supabaseMock.profile = completeProfile();
@@ -474,6 +579,64 @@ async function notifyAiConsultationSucceeded(actionType: string, result: Record<
 }
 
 const callsTo = (pathname: string) => fetchCalls.filter((raw) => new URL(raw, PAGE_ORIGIN).pathname === pathname).length;
+
+/** 冷蔵庫の食材 (AI 相談の前と後。#2201 U1 の応答の順序の検査) と、家族の人数 (人数の設定の無い人の既定の人数) */
+const PANTRY_ITEM_BEFORE: FakePantryItem = { id: 'pantry-before', name: '前のにんじん' };
+const PANTRY_ITEM_AFTER: FakePantryItem = { id: 'pantry-after', name: '新しいたまねぎ' };
+const FAMILY_SIZE_BEFORE = 2;
+const FAMILY_SIZE_AFTER = 4;
+
+/** 献立表の store に置いた冷蔵庫の食材の名前 */
+const fridgeItemNames = () => usePantryStore.getState().fridgeItems.map((item) => item.name);
+
+/** 応答を止める Promise (server の …Hold に置く) と、それを解く関数 */
+function heldResponse(): { hold: Promise<void>; release: () => void } {
+  let release: () => void = () => undefined;
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { hold, release };
+}
+
+/** 週の読み込み中の表示 (画面全体のスピナー。週を送るボタンも出ない) を出しているか */
+function weeklyPageIsLoading(): boolean {
+  return container.querySelector('button[aria-label="翌週"]') === null && container.querySelector('.animate-spin') !== null;
+}
+
+/** 食事の完了の切り替えの待ち (ページの toggleMealCompletion の setTimeout の ms) */
+const TOGGLE_DEBOUNCE_MS = 250;
+
+/**
+ * この関数の中で始まった完了の切り替えの待ち (setTimeout の TOGGLE_DEBOUNCE_MS) を止め、待ちを終わらせる関数を返す
+ * (時間に頼らずに、待ちのあいだに取り直しの応答を置く。#2201 U2)。ほかの setTimeout はそのまま。
+ * 切り替えは押した時点で (同じ呼び出しの中で) 待ちを始めるので、押す操作を start に渡す
+ */
+async function holdToggleDebounce(start: () => void): Promise<() => Promise<void>> {
+  const realSetTimeout = globalThis.setTimeout;
+  let heldCallback: (() => void) | null = null;
+  const spy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: () => void, ms?: number) => {
+    if (heldCallback === null && ms === TOGGLE_DEBOUNCE_MS) {
+      heldCallback = callback;
+      return realSetTimeout(() => undefined, 0);
+    }
+    return realSetTimeout(callback, ms);
+  }) as typeof globalThis.setTimeout);
+  try {
+    await act(async () => {
+      start();
+    });
+  } finally {
+    spy.mockRestore();
+  }
+  const held = heldCallback;
+  if (held === null) throw new Error('完了の切り替えの待ちが始まっていない (検査が空振りしている)');
+  return async () => {
+    await act(async () => {
+      held();
+    });
+    await settle();
+  };
+}
 
 /** ヘッダーの買い物リストのボタン (バッジの数字はこの中に出る) */
 function shoppingListButton(): HTMLButtonElement {
@@ -681,6 +844,557 @@ describe('献立表 (/menus/weekly) が AI 相談の成功で取り直すもの 
     await notifyAiConsultationSucceeded('update_profile_preferences', { updated: true, fields: ['nickname'] });
 
     expect(familySwitcherNames()).toEqual([SELF_NAME_AFTER, OTHER_MEMBER_NAME]);
+  });
+});
+
+describe('献立表 (/menus/weekly) の取り直しの順序と失敗 (#2201 U1)', () => {
+  it('取り直しの応答を待つあいだに週を移ったら、前の週の献立を新しい週の見出しの下に出さない', async () => {
+    const THIS_WEEK_DISH = '今週の肉じゃが';
+    const NEXT_WEEK_DISH = '翌週のカレーライス';
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) {
+      server.days.set(dateFromWeekStart(i), [{ id: `meal-this-${i}`, dishName: THIS_WEEK_DISH }]);
+      server.days.set(dateFromWeekStart(DAYS_IN_WEEK + i), [{ id: `meal-next-${i}`, dishName: NEXT_WEEK_DISH }]);
+    }
+    await renderWeeklyPage();
+    expect(container.textContent).toContain(THIS_WEEK_DISH);
+
+    // AI 相談の成功の取り直し (表示中の週の献立) の応答が遅れる
+    let release: () => void = () => undefined;
+    server.mealPlansHold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    server.mealPlansHold = null;
+
+    // 応答を待つあいだに翌週へ移る
+    const nextWeek = container.querySelector<HTMLButtonElement>('button[aria-label="翌週"]');
+    expect(nextWeek, '「翌週」のボタンが無い').not.toBeNull();
+    await act(async () => {
+      nextWeek!.click();
+    });
+    await settle();
+    expect(container.textContent).toContain(NEXT_WEEK_DISH);
+
+    // 前の週の取り直しの応答が後から届いても、翌週の献立のまま
+    await act(async () => {
+      release();
+    });
+    await settle();
+    expect(container.textContent).toContain(NEXT_WEEK_DISH);
+    expect(container.textContent).not.toContain(THIS_WEEK_DISH);
+  });
+
+  it('翌週から戻った週の読み込みを待つあいだに、前にその週を開いたときの古い読み込みの応答が届いても、翌週の献立を読み込み中の表示なしで出さない', async () => {
+    const THIS_WEEK_DISH = '今週のぶり大根';
+    const NEXT_WEEK_DISH = '翌週の麻婆豆腐';
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) {
+      server.days.set(dateFromWeekStart(i), [{ id: `meal-this-${i}`, dishName: THIS_WEEK_DISH }]);
+      server.days.set(dateFromWeekStart(DAYS_IN_WEEK + i), [{ id: `meal-next-${i}`, dishName: NEXT_WEEK_DISH }]);
+    }
+    // ?date= に表示中の週の日を渡して開く: 週の始まりの日を読んだあと、表示中の週の読み込みが 2 回走る (?date= の週に合わせ直すため)。
+    // 1 回目の応答だけを遅らせる (2 回目の応答で週が出る)
+    navigation.searchParams = new URLSearchParams({ date: dateFromWeekStart(0) });
+    const firstLoad = heldResponse();
+    server.mealPlansHoldOnce.set(displayedWeekRangeKey(), firstLoad.hold);
+    await renderWeeklyPage();
+    expect(server.mealPlansHoldOnce.size, '表示中の週の読み込みを止めていない (検査の前提が崩れた)').toBe(0);
+    expect(container.textContent, '表示中の週の 2 回目の読み込みで週を出していない (検査の前提が崩れた)').toContain(THIS_WEEK_DISH);
+
+    // 翌週へ移る
+    const nextWeek = container.querySelector<HTMLButtonElement>('button[aria-label="翌週"]');
+    expect(nextWeek, '「翌週」のボタンが無い').not.toBeNull();
+    await act(async () => {
+      nextWeek!.click();
+    });
+    await settle();
+    expect(container.textContent).toContain(NEXT_WEEK_DISH);
+
+    // 翌週を出している間に AI 相談が成功する: 週のキャッシュを捨てる (前の週に戻ると、その週を読み込む)
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+
+    // 前の週に戻る: その週の読み込みの応答が遅れる (読み込み中の表示)
+    const reload = heldResponse();
+    server.mealPlansHoldOnce.set(displayedWeekRangeKey(), reload.hold);
+    const previousWeek = container.querySelector<HTMLButtonElement>('button[aria-label="前の週"]');
+    expect(previousWeek, '「前の週」のボタンが無い').not.toBeNull();
+    await act(async () => {
+      previousWeek!.click();
+    });
+    await settle();
+    expect(weeklyPageIsLoading(), '戻った週の読み込み中の表示を出していない (検査の前提が崩れた)').toBe(true);
+
+    // 最初に開いたときの 1 回目の読み込みの応答が届く: その週のもっと新しい応答 (2 回目) を前に置いたので置かない。
+    // 献立はそのあとに翌週のものを置いたので、読み込み中の表示も下ろさない (下ろすと、戻った週の見出しの下に翌週の献立が出る)
+    await act(async () => {
+      firstLoad.release();
+    });
+    await settle();
+    expect(
+      weeklyPageIsLoading() || (container.textContent ?? '').includes(THIS_WEEK_DISH),
+      '戻った週の見出しの下に、翌週の献立を読み込み中の表示なしで出した',
+    ).toBe(true);
+
+    await act(async () => {
+      reload.release();
+    });
+    await settle();
+    expect(weeklyPageIsLoading()).toBe(false);
+    expect(container.textContent).toContain(THIS_WEEK_DISH);
+    expect(container.textContent).not.toContain(NEXT_WEEK_DISH);
+  });
+
+  it('開いたときの週の読み込みの応答を待つあいだに取り直しの献立が先に届いたら、読み込み中の表示を下ろし、あとから届いた週の読み込みの応答で古い献立に戻さない', async () => {
+    const BEFORE_DISH = '前の鮭の塩焼き';
+    const AI_DISH = 'AI が変えた親子丼';
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) server.days.set(dateFromWeekStart(i), [{ id: `meal-${i}`, dishName: BEFORE_DISH }]);
+    // 開いたときの表示中の週の読み込みの応答を止める (読み込み中の表示のまま)
+    const firstLoad = heldResponse();
+    server.mealPlansHoldOnce.set(displayedWeekRangeKey(), firstLoad.hold);
+    await renderWeeklyPage();
+    expect(server.mealPlansHoldOnce.size, '表示中の週の読み込みを止めていない (検査の前提が崩れた)').toBe(0);
+    expect(weeklyPageIsLoading(), '週の読み込み中の表示を出していない (検査の前提が崩れた)').toBe(true);
+
+    // その間に AI 相談が成功し、取り直しの献立 (AI の変えた献立) が先に届く。この週の献立を置いたので、読み込み中の表示を下ろす
+    // (週の読み込みの応答はこれより前に始めたので置かず、読み込み中の表示にも触れない。下ろすのは取り直しだけ)
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) server.days.set(dateFromWeekStart(i), [{ id: `meal-${i}`, dishName: AI_DISH }]);
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    expect(weeklyPageIsLoading(), '取り直しの献立を置いたのに、読み込み中の表示のまま').toBe(false);
+    expect(container.textContent).toContain(AI_DISH);
+
+    // 先に始めた週の読み込みの応答 (AI 相談の前の献立) が後から届く
+    await act(async () => {
+      firstLoad.release();
+    });
+    await settle();
+    expect(weeklyPageIsLoading()).toBe(false);
+    expect(container.textContent, '先に始めた週の読み込みの古い応答で、取り直しの献立を戻した').toContain(AI_DISH);
+    expect(container.textContent).not.toContain(BEFORE_DISH);
+  });
+
+  it('開いたときの週の読み込みの応答が取り直しより後に届いても、その古い応答を週のキャッシュに書かない (翌週から戻っても取り直しの献立のまま)', async () => {
+    const BEFORE_DISH = '前の鮭の塩焼き';
+    const AI_DISH = 'AI が変えた親子丼';
+    const NEXT_WEEK_DISH = '翌週のけんちん汁';
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) {
+      server.days.set(dateFromWeekStart(i), [{ id: `meal-${i}`, dishName: BEFORE_DISH }]);
+      server.days.set(dateFromWeekStart(DAYS_IN_WEEK + i), [{ id: `meal-next-${i}`, dishName: NEXT_WEEK_DISH }]);
+    }
+    // 開いたときの表示中の週の読み込みの応答を止める
+    const firstLoad = heldResponse();
+    server.mealPlansHoldOnce.set(displayedWeekRangeKey(), firstLoad.hold);
+    await renderWeeklyPage();
+    expect(server.mealPlansHoldOnce.size, '表示中の週の読み込みを止めていない (検査の前提が崩れた)').toBe(0);
+
+    // その間に AI 相談が成功し、取り直しの献立 (AI の変えた献立) が先に届く (週のキャッシュも取り直しの献立にする)
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) server.days.set(dateFromWeekStart(i), [{ id: `meal-${i}`, dishName: AI_DISH }]);
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    expect(container.textContent).toContain(AI_DISH);
+
+    // 先に始めた週の読み込みの応答 (AI 相談の前の献立) が後から届く: 画面にも週のキャッシュにも置かない
+    await act(async () => {
+      firstLoad.release();
+    });
+    await settle();
+    expect(container.textContent).toContain(AI_DISH);
+
+    // 翌週へ移って戻る (戻った週はキャッシュの有効期限の中)
+    const nextWeek = container.querySelector<HTMLButtonElement>('button[aria-label="翌週"]');
+    expect(nextWeek, '「翌週」のボタンが無い').not.toBeNull();
+    await act(async () => {
+      nextWeek!.click();
+    });
+    await settle();
+    expect(container.textContent, '翌週へ移っていない (検査の前提が崩れた)').toContain(NEXT_WEEK_DISH);
+    const previousWeek = container.querySelector<HTMLButtonElement>('button[aria-label="前の週"]');
+    expect(previousWeek, '「前の週」のボタンが無い').not.toBeNull();
+    await act(async () => {
+      previousWeek!.click();
+    });
+    await settle();
+    expect(container.textContent, '古い週の読み込みの応答を週のキャッシュに書き、戻った週に AI 相談の前の献立を出した').toContain(AI_DISH);
+    expect(container.textContent).not.toContain(BEFORE_DISH);
+  });
+
+  it('取り直しの前に始めた翌週の先読みの応答が取り直しのあとに届いても、週のキャッシュに書かない (翌週へ移ったら AI 相談の後の献立を出す)', async () => {
+    const THIS_WEEK_DISH = '今週の鯖の味噌煮';
+    const NEXT_WEEK_BEFORE_DISH = '翌週の前のハンバーグ';
+    const NEXT_WEEK_AI_DISH = '翌週の AI が変えた豆腐ハンバーグ';
+    /** 翌週の献立の読み込み (翌週の初日から 7 日。先読み・翌週へ移ったときの読み込みの範囲) の鍵 */
+    const nextWeekRangeKey = mealPlansRangeKey(dateFromWeekStart(DAYS_IN_WEEK), dateFromWeekStart(DAYS_IN_WEEK * 2 - 1));
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) {
+      server.days.set(dateFromWeekStart(i), [{ id: `meal-this-${i}`, dishName: THIS_WEEK_DISH }]);
+      server.days.set(dateFromWeekStart(DAYS_IN_WEEK + i), [{ id: `meal-next-${i}`, dishName: NEXT_WEEK_BEFORE_DISH }]);
+    }
+    // 開いたあとの翌週の先読みの応答を止める
+    const prefetch = heldResponse();
+    server.mealPlansHoldOnce.set(nextWeekRangeKey, prefetch.hold);
+    await renderWeeklyPage();
+    expect(server.mealPlansHoldOnce.size, '翌週の先読みを止めていない (検査の前提が崩れた)').toBe(0);
+    expect(container.textContent).toContain(THIS_WEEK_DISH);
+
+    // AI 相談が翌週の献立を変える: 取り直しは週のキャッシュを捨てる
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) {
+      server.days.set(dateFromWeekStart(DAYS_IN_WEEK + i), [{ id: `meal-next-${i}`, dishName: NEXT_WEEK_AI_DISH }]);
+    }
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+
+    // 捨てる前に始めた先読みの応答 (AI 相談の前の翌週の献立) が後から届く
+    await act(async () => {
+      prefetch.release();
+    });
+    await settle();
+
+    const nextWeek = container.querySelector<HTMLButtonElement>('button[aria-label="翌週"]');
+    expect(nextWeek, '「翌週」のボタンが無い').not.toBeNull();
+    await act(async () => {
+      nextWeek!.click();
+    });
+    await settle();
+    expect(container.textContent, '捨てる前に始めた先読みの応答を週のキャッシュに書き、AI 相談の前の翌週の献立を出した').toContain(NEXT_WEEK_AI_DISH);
+    expect(container.textContent).not.toContain(NEXT_WEEK_BEFORE_DISH);
+  });
+
+  it('週を移った直後 (週の読み込みの応答待ち) に来た成功の取り直しが失敗しても、前の週の献立を新しい週の見出しの下に残さない', async () => {
+    const THIS_WEEK_DISH = '今週の筑前煮';
+    const NEXT_WEEK_DISH = '翌週の豚汁';
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) {
+      server.days.set(dateFromWeekStart(i), [{ id: `meal-this-${i}`, dishName: THIS_WEEK_DISH }]);
+      server.days.set(dateFromWeekStart(DAYS_IN_WEEK + i), [{ id: `meal-next-${i}`, dishName: NEXT_WEEK_DISH }]);
+    }
+    await renderWeeklyPage();
+    expect(container.textContent).toContain(THIS_WEEK_DISH);
+    // 取り直しは週のキャッシュを捨てる: 翌週へ移ると、翌週の献立を読みに行く (先読みのキャッシュで済ませない)
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+
+    // 翌週の読み込みの応答が遅れる
+    let release: () => void = () => undefined;
+    server.mealPlansHold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const nextWeek = container.querySelector<HTMLButtonElement>('button[aria-label="翌週"]');
+    expect(nextWeek, '「翌週」のボタンが無い').not.toBeNull();
+    await act(async () => {
+      nextWeek!.click();
+    });
+    await settle();
+    server.mealPlansHold = null;
+
+    // 応答を待つあいだに成功が来て、その取り直し (翌週の献立) が失敗する
+    server.mealPlansFail = true;
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    server.mealPlansFail = false;
+
+    // 先に始めた翌週の読み込みの応答 (読めた) が届いたら、翌週の献立を出す
+    await act(async () => {
+      release();
+    });
+    await settle();
+    expect(container.textContent, '取り直しの失敗で、翌週の読み込みの応答まで捨てた').toContain(NEXT_WEEK_DISH);
+    expect(container.textContent).not.toContain(THIS_WEEK_DISH);
+  });
+
+  it('続けて来た成功の、先の取り直しの応答が後から届いても、あとの取り直しの献立とカレンダーの印を古い答えで上書きしない', async () => {
+    const OLD_DISH = '前の親子丼';
+    const NEW_DISH = '新しい親子丼';
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) server.days.set(dateFromWeekStart(i), [{ id: `meal-${i}`, dishName: OLD_DISH }]);
+    await renderWeeklyPage();
+    expect(container.textContent).toContain(OLD_DISH);
+    expect(await calendarMealDotCount()).toBe(DAYS_IN_WEEK);
+
+    // 1 回目の成功の取り直し (表示中の週・月のカレンダーの範囲) は、前の答えを読んで応答が遅れる
+    let release: () => void = () => undefined;
+    server.mealPlansHold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    server.mealPlansHold = null;
+
+    // 2 回目の成功 (AI 相談が表示中の週の献立を変え、表示中の月の別の週に献立を足した) の取り直しは先に届く
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) server.days.set(dateFromWeekStart(i), [{ id: `meal-${i}`, dishName: NEW_DISH }]);
+    server.days.set(otherWeekDateInDisplayedMonth(), [{ id: 'meal-other-week', dishName: 'カレー' }]);
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    expect(container.textContent).toContain(NEW_DISH);
+    expect(await calendarMealDotCount()).toBe(DAYS_IN_WEEK + 1);
+
+    await act(async () => {
+      release();
+    });
+    await settle();
+    expect(container.textContent).toContain(NEW_DISH);
+    expect(container.textContent).not.toContain(OLD_DISH);
+    expect(await calendarMealDotCount(), '古い応答が、あとから足した日の印を消した').toBe(DAYS_IN_WEEK + 1);
+  });
+
+  it('続けて来た成功の、先の取り直しの冷蔵庫と人数の設定の応答が後から届いても、あとの取り直しの答えを古い答えで上書きしない', async () => {
+    server.pantryItems = [PANTRY_ITEM_BEFORE];
+    server.familySize = FAMILY_SIZE_BEFORE;
+    await renderWeeklyPage();
+    expect(fridgeItemNames()).toEqual([PANTRY_ITEM_BEFORE.name]);
+    expect(useServingsConfigStore.getState().servingsConfig?.default).toBe(FAMILY_SIZE_BEFORE);
+
+    // 1 回目の成功の取り直しは、前の答え (冷蔵庫・家族の人数) を読んで応答が遅れる
+    const first = heldResponse();
+    server.pantryHold = first.hold;
+    server.profileHold = first.hold;
+    await notifyAiConsultationSucceeded('add_pantry_item', { success: true });
+    server.pantryHold = null;
+    server.profileHold = null;
+
+    // 2 回目の成功 (AI 相談が冷蔵庫と家族の人数を変えた) の取り直しは先に届く
+    server.pantryItems = [PANTRY_ITEM_AFTER];
+    server.familySize = FAMILY_SIZE_AFTER;
+    await notifyAiConsultationSucceeded('update_profile_preferences', { updated: true, fields: ['family_size'] });
+    expect(fridgeItemNames()).toEqual([PANTRY_ITEM_AFTER.name]);
+    expect(useServingsConfigStore.getState().servingsConfig?.default).toBe(FAMILY_SIZE_AFTER);
+
+    await act(async () => {
+      first.release();
+    });
+    await settle();
+    expect(fridgeItemNames(), '先の取り直しの古い応答が、冷蔵庫の一覧を戻した').toEqual([PANTRY_ITEM_AFTER.name]);
+    expect(useServingsConfigStore.getState().servingsConfig?.default, '先の取り直しの古い応答が、人数を戻した').toBe(FAMILY_SIZE_AFTER);
+  });
+
+  it('開いたときの冷蔵庫と人数の設定の読み込みの応答が取り直しの応答より後に届いても、取り直しの答えを古い答えで上書きしない', async () => {
+    server.pantryItems = [PANTRY_ITEM_BEFORE];
+    server.familySize = FAMILY_SIZE_BEFORE;
+    // 開いたときの冷蔵庫と人数の設定の読み込みは、前の答えを読んで応答が遅れる
+    const mount = heldResponse();
+    server.pantryHold = mount.hold;
+    server.profileHold = mount.hold;
+    await renderWeeklyPage();
+    server.pantryHold = null;
+    server.profileHold = null;
+    expect(callsTo('/api/pantry'), '開いたときに冷蔵庫を読んでいない (検査が空振りしている)').toBe(1);
+
+    // 応答を待つあいだに成功が来て (AI 相談が冷蔵庫と家族の人数を変えた)、その取り直しが先に届く
+    server.pantryItems = [PANTRY_ITEM_AFTER];
+    server.familySize = FAMILY_SIZE_AFTER;
+    await notifyAiConsultationSucceeded('add_pantry_item', { success: true });
+    expect(fridgeItemNames()).toEqual([PANTRY_ITEM_AFTER.name]);
+    expect(useServingsConfigStore.getState().servingsConfig?.default).toBe(FAMILY_SIZE_AFTER);
+
+    await act(async () => {
+      mount.release();
+    });
+    await settle();
+    expect(fridgeItemNames(), '開いたときの古い応答が、取り直しの冷蔵庫の一覧を戻した').toEqual([PANTRY_ITEM_AFTER.name]);
+    expect(useServingsConfigStore.getState().servingsConfig?.default, '開いたときの古い応答が、取り直しの人数を戻した').toBe(FAMILY_SIZE_AFTER);
+  });
+
+  it('人数の設定の読み込み中の印は、先に始めた読み込みが終わっても、あとに始めた読み込みが終わるまで下ろさない', async () => {
+    await renderWeeklyPage();
+    expect(useServingsConfigStore.getState().isLoadingServingsConfig).toBe(false);
+
+    const first = heldResponse();
+    server.profileHold = first.hold;
+    await notifyAiConsultationSucceeded('update_profile_preferences', { updated: true, fields: ['family_size'] });
+    const second = heldResponse();
+    server.profileHold = second.hold;
+    await notifyAiConsultationSucceeded('update_profile_preferences', { updated: true, fields: ['family_size'] });
+    server.profileHold = null;
+    expect(useServingsConfigStore.getState().isLoadingServingsConfig).toBe(true);
+
+    await act(async () => {
+      first.release();
+    });
+    await settle();
+    expect(useServingsConfigStore.getState().isLoadingServingsConfig, 'あとの読み込みの応答を待っているのに、先の読み込みが印を下ろした').toBe(true);
+
+    await act(async () => {
+      second.release();
+    });
+    await settle();
+    expect(useServingsConfigStore.getState().isLoadingServingsConfig).toBe(false);
+  });
+
+  it('食事の完了の切り替えの応答を待つあいだに来た成功では取り直さず (#2201 U2)、終わったら 1 回取り直す', async () => {
+    /** 完了の切り替えの待ち (ページの toggleMealCompletion の 250ms) より長い待ち */
+    const TOGGLE_DEBOUNCE_WAIT_MS = 300;
+    const today = formatLocalDate(new Date());
+    server.days.set(today, [{ id: 'meal-today', dishName: '鮭の塩焼き' }]);
+    await renderWeeklyPage();
+    const toggle = container.querySelector<HTMLButtonElement>('button.w-7.h-7.rounded-full');
+    expect(toggle, '今日の食事の完了の切り替えが無い').not.toBeNull();
+
+    let release: () => void = () => undefined;
+    server.mealPatchHold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await act(async () => {
+      toggle!.click();
+      await new Promise((resolve) => setTimeout(resolve, TOGGLE_DEBOUNCE_WAIT_MS));
+    });
+    expect(fetchCalls.some((raw) => raw.startsWith(MEAL_PATCH_PATH_PREFIX)), '完了の切り替えを送っていない (検査が空振りしている)').toBe(true);
+
+    const mealPlansCallsBefore = callsTo('/api/meal-plans');
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    expect(callsTo('/api/meal-plans') - mealPlansCallsBefore, '書き込みの応答を待つあいだに取り直した').toBe(0);
+
+    await act(async () => {
+      release();
+    });
+    await settle();
+    // 止めた成功のぶん 1 回 (表示中の週 + 月のカレンダーの 2 つの範囲)
+    expect(callsTo('/api/meal-plans') - mealPlansCallsBefore, '書き込みが終わっても、止めた成功を 1 回取り直さない').toBe(3);
+  });
+
+  it('取り直しの応答を待つあいだに買い物リストの品目をチェックしたら、チェックの前に読んだ応答でチェックを外さない (#2201 U2)', async () => {
+    const ITEM = { id: 'item-1', itemName: 'にんじん', isChecked: false };
+    server.days.set(displayedWeekDates()[0], [{ id: 'meal-1', dishName: '鮭の塩焼き' }]);
+    server.shoppingItems = [ITEM];
+    await renderWeeklyPage();
+    const shoppingItemChecked = () => useShoppingStore.getState().shoppingList.find((item) => item.id === ITEM.id)?.isChecked;
+    expect(shoppingItemChecked(), '買い物リストの品目が出ていない (検査が空振りしている)').toBe(false);
+
+    // 取り直しの献立と買い物リストの読み取り (GET /api/meal-plans) の応答を止める (応答は読み取りを始めたときの答え = チェックの前)
+    let release: () => void = () => undefined;
+    server.mealPlansHold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const mealPlansCallsBefore = callsTo('/api/meal-plans');
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    server.mealPlansHold = null;
+    expect(callsTo('/api/meal-plans') - mealPlansCallsBefore, '取り直しが献立と買い物リストを読んでいない (検査が空振りしている)').toBeGreaterThan(0);
+
+    // 応答を待つあいだに買い物リストを開いて品目をチェックする (書き込みが終わる)
+    await act(async () => {
+      shoppingListButton().click();
+    });
+    const check = container.querySelector<HTMLButtonElement>(`button[aria-label="${ITEM.itemName}を購入済みにする"]`);
+    if (!check) throw new Error('買い物リストの品目のチェックのボタンが無い');
+    await act(async () => {
+      check.click();
+    });
+    await settle();
+    expect(server.shoppingItems[0].isChecked, 'チェックを送っていない (検査が空振りしている)').toBe(true);
+    expect(shoppingItemChecked()).toBe(true);
+
+    await act(async () => {
+      release();
+    });
+    await settle();
+    expect(shoppingItemChecked(), 'チェックの前に読んだ取り直しの応答が、チェックを外した').toBe(true);
+  });
+
+  it('取り直しの応答を待つあいだに食事の完了を切り替えて終えていても、切り替えの前に読んだ応答で完了を戻さず、読み直す (#2201 U2)', async () => {
+    /** 完了の切り替えの待ち (ページの toggleMealCompletion の 250ms) より長い待ち */
+    const TOGGLE_DEBOUNCE_WAIT_MS = 300;
+    const today = formatLocalDate(new Date());
+    server.days.set(today, [{ id: 'meal-today', dishName: '鮭の塩焼き' }]);
+    await renderWeeklyPage();
+    const toggle = () => container.querySelector<HTMLButtonElement>('button.w-7.h-7.rounded-full');
+    expect(toggle(), '今日の食事の完了の切り替えが無い').not.toBeNull();
+    /** 完了の印 (チェックの絵) が出ているか */
+    const shownCompleted = () => toggle()!.querySelector('svg') !== null;
+    expect(shownCompleted()).toBe(false);
+
+    // 取り直しの献立の読み取りの応答を止める (応答は読み取りを始めたときの答え = 未完了)
+    let release: () => void = () => undefined;
+    server.mealPlansHold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    server.mealPlansHold = null;
+
+    // 応答を待つあいだに完了にし、書き込みが終わる (サーバーも完了になる)
+    await act(async () => {
+      toggle()!.click();
+      await new Promise((resolve) => setTimeout(resolve, TOGGLE_DEBOUNCE_WAIT_MS));
+    });
+    await settle();
+    expect(server.days.get(today)?.[0].isCompleted, '完了の切り替えを送っていない (検査が空振りしている)').toBe(true);
+    expect(shownCompleted()).toBe(true);
+
+    const mealPlansCallsBeforeRelease = callsTo('/api/meal-plans');
+    await act(async () => {
+      release();
+    });
+    await settle();
+    expect(shownCompleted(), '切り替えの前に読んだ取り直しの応答が、完了を戻した').toBe(true);
+    // 置かなかった応答のぶん 1 回読み直す (表示中の週 + 月のカレンダーの 2 つの範囲)
+    expect(callsTo('/api/meal-plans') - mealPlansCallsBeforeRelease, '置かなかった応答のぶん読み直していない').toBe(3);
+  });
+
+  it('食事の完了の切り替えの待ち (250ms) のあいだに取り直しが置いた献立を、切り替えの楽観的な更新で古い献立に戻さない (#2201 U2)', async () => {
+    const BEFORE_DISH = '鮭の塩焼き';
+    const AI_DISH = 'AI が変えた親子丼';
+    const today = formatLocalDate(new Date());
+    server.days.set(today, [{ id: 'meal-today', dishName: BEFORE_DISH }]);
+    await renderWeeklyPage();
+    const toggle = () => container.querySelector<HTMLButtonElement>('button.w-7.h-7.rounded-full');
+    expect(toggle(), '今日の食事の完了の切り替えが無い').not.toBeNull();
+    /** 完了の印 (チェックの絵) が出ているか */
+    const shownCompleted = () => toggle()!.querySelector('svg') !== null;
+    expect(shownCompleted()).toBe(false);
+
+    // 完了を押す: 250ms 待ってから楽観的な更新と書き込みをする (待ちを止める)
+    const finishToggleWait = await holdToggleDebounce(() => toggle()!.click());
+
+    // 待ちのあいだに AI 相談が成功し、取り直しが AI の変えた献立を置く
+    server.days.set(today, [{ id: 'meal-today', dishName: AI_DISH }]);
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    expect(container.textContent, '取り直しが AI の変えた献立を置いていない (検査が空振りしている)').toContain(AI_DISH);
+    expect(fetchCalls.some((raw) => raw.startsWith(MEAL_PATCH_PATH_PREFIX)), '切り替えの待ちが終わっている (検査の前提が崩れた)').toBe(false);
+
+    // 待ちが終わる: 楽観的な更新と書き込み (成功)。書き込みの間に来た成功は無いので、このあと取り直さない
+    const mealPlansCallsBefore = callsTo('/api/meal-plans');
+    await finishToggleWait();
+    expect(fetchCalls.some((raw) => raw.startsWith(MEAL_PATCH_PATH_PREFIX)), '完了の切り替えを送っていない (検査が空振りしている)').toBe(true);
+    expect(server.days.get(today)?.[0].isCompleted).toBe(true);
+    expect(callsTo('/api/meal-plans') - mealPlansCallsBefore).toBe(0);
+    expect(shownCompleted()).toBe(true);
+    expect(container.textContent, '切り替えの楽観的な更新が、待ちのあいだに取り直しが置いた献立を古い献立で戻した').toContain(AI_DISH);
+    expect(container.textContent).not.toContain(BEFORE_DISH);
+  });
+
+  it('食事の完了の切り替えの書き込みが失敗したら、その食事の完了だけを戻し、待ちのあいだに取り直しが置いた献立は残す (#2201 U2)', async () => {
+    const BEFORE_DISH = '鮭の塩焼き';
+    const AI_DISH = 'AI が変えた親子丼';
+    const today = formatLocalDate(new Date());
+    server.days.set(today, [{ id: 'meal-today', dishName: BEFORE_DISH }]);
+    await renderWeeklyPage();
+    const toggle = () => container.querySelector<HTMLButtonElement>('button.w-7.h-7.rounded-full');
+    const shownCompleted = () => toggle()!.querySelector('svg') !== null;
+    expect(shownCompleted()).toBe(false);
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const finishToggleWait = await holdToggleDebounce(() => toggle()!.click());
+    server.days.set(today, [{ id: 'meal-today', dishName: AI_DISH }]);
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    expect(container.textContent, '取り直しが AI の変えた献立を置いていない (検査が空振りしている)').toContain(AI_DISH);
+
+    // 書き込みが失敗する
+    server.mealPatchFails = true;
+    await finishToggleWait();
+    expect(alertSpy, '書き込みの失敗を出していない (検査が空振りしている)').toHaveBeenCalled();
+    expect(shownCompleted(), '失敗した完了の切り替えを戻していない').toBe(false);
+    expect(container.textContent, '失敗の巻き戻しが、待ちのあいだに取り直しが置いた献立を古い献立で戻した').toContain(AI_DISH);
+    expect(container.textContent).not.toContain(BEFORE_DISH);
+  });
+
+  it('取り直しで名前の API を読めなかったら、家族の切り替えの名前を残す', async () => {
+    supabaseMock.profile = { ...completeProfile(), family_id: FAMILY_ID };
+    joinFamily(SELF_NAME_BEFORE);
+    await renderWeeklyPage();
+    expect(familySwitcherNames()).toEqual([SELF_NAME_BEFORE, OTHER_MEMBER_NAME]);
+
+    server.namesFail = true;
+    await notifyAiConsultationSucceeded('update_profile_preferences', { updated: true, fields: ['nickname'] });
+    expect(familySwitcherNames()).toEqual([SELF_NAME_BEFORE, OTHER_MEMBER_NAME]);
+  });
+
+  it('取り直しで自分のプロフィールを読めなかったら、家族の切り替えを消さない', async () => {
+    supabaseMock.profile = { ...completeProfile(), family_id: FAMILY_ID };
+    joinFamily(SELF_NAME_BEFORE);
+    await renderWeeklyPage();
+    expect(familySwitcherNames()).toEqual([SELF_NAME_BEFORE, OTHER_MEMBER_NAME]);
+
+    supabaseMock.profileFails = true;
+    await notifyAiConsultationSucceeded('update_profile_preferences', { updated: true, fields: ['nickname'] });
+    expect(familySwitcherNames()).toEqual([SELF_NAME_BEFORE, OTHER_MEMBER_NAME]);
   });
 });
 

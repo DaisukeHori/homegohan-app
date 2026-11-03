@@ -87,14 +87,18 @@ function BadgesPageInner() {
   // AI 相談の提案の実行 (食事の完了・献立の生成など) でバッジの条件が変わったら、下の取得をもう一度走らせる (#2195 V1)。
   // GET /api/badges はその場で条件を判定して新しく取ったバッジを保存するので、取り直すと取ったバッジとお祝いが出る。
   // バッジの詳細のモーダル (role="dialog") が出ている間は増えない
-  const aiConsultationRefetchKey = useAiConsultationRefetchKey();
+  // 閉じたら止めた通知のぶん 1 回増える (#2201 U2)
+  const { refetchKey: aiConsultationRefetchKey } = useAiConsultationRefetchKey();
 
   useEffect(() => {
+    // 前の回の応答が後から届いても置かない (取り直しが続いたとき。#2201 U1)。失敗では今の表示を残す (これまでどおり)
+    let cancelled = false;
     const fetchBadges = async () => {
       try {
         const res = await fetch('/api/badges');
         if (!res.ok) throw new Error('Failed');
         const data = await res.json();
+        if (cancelled) return;
         
         const mappedBadges = data.badges.map((b: any) => ({
           ...b,
@@ -116,10 +120,13 @@ function BadgesPageInner() {
       } catch (e) {
         console.error(e);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
     fetchBadges();
+    return () => {
+      cancelled = true;
+    };
   }, [aiConsultationRefetchKey]);
 
   // #210: Escape キーでバッジ詳細モーダルを閉じる

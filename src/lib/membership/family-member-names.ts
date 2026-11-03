@@ -78,25 +78,66 @@ export function buildFamilyMemberNames(
   }));
 }
 
+/** 名前の API の読み取りの結果。ok: false は読めなかった (通信の失敗・非 2xx・JSON でない・形が違う) */
+export type FamilyMemberNamesResult =
+  | { ok: true; names: Map<string, string> }
+  | { ok: false };
+
+/**
+ * 解決済みの名前を受け取る (ブラウザから呼ぶ)。読めたときは member id → 名前 (名前が決まった人だけ)。
+ * 読めなかったこと (ok: false) を区別する (#2201 U1。取り直しのときは、読めなかったら前の名前を残すため)。例外は投げない
+ */
+export async function fetchFamilyMemberNamesResult(
+  fetchImpl: typeof fetch = fetch,
+): Promise<FamilyMemberNamesResult> {
+  try {
+    const res = await fetchImpl(FAMILY_MEMBER_NAMES_API_PATH, { cache: 'no-store' });
+    if (!res.ok) return { ok: false };
+    const body: unknown = await res.json();
+    const parsed = FamilyMemberNamesResponseSchema.safeParse(body);
+    if (!parsed.success) return { ok: false };
+    const names = new Map<string, string>();
+    for (const member of parsed.data.data.members) {
+      if (member.name !== null) names.set(member.id, member.name);
+    }
+    return { ok: true, names };
+  } catch {
+    // 通信の失敗・JSON でない応答
+    return { ok: false };
+  }
+}
+
 /**
  * 解決済みの名前を受け取る (ブラウザから呼ぶ)。戻り値は member id → 名前 (名前が決まった人だけ)。
  * 名前の補完は表示の改善なので、取得に失敗しても例外を投げず空の Map を返す (画面は display_name のまま出す)。
+ * 取り直しで、読めなかったときに前の名前を残すときは fetchFamilyMemberNamesResult と keepShownFamilyMemberNames を使う
  */
 export async function fetchFamilyMemberNames(
   fetchImpl: typeof fetch = fetch,
 ): Promise<Map<string, string>> {
+  const result = await fetchFamilyMemberNamesResult(fetchImpl);
+  return result.ok ? result.names : new Map<string, string>();
+}
+
+/**
+ * 取り直しで名前の API を読めなかったときに当てる名前 (#2201 U1): 読み直した行のうち display_name の無い人に、
+ * いま画面に出している名前 (shown。前に名前の API が当てた名前を含む) を当てる。
+ * display_name のある人は読み直した display_name のまま (名前の API も display_name を先に使う。buildFamilyMemberNames)。
+ * 以前は読めないと空の Map になり、出ていた名前が「名前未設定」に落ちていた
+ */
+export function keepShownFamilyMemberNames(
+  rows: readonly { id: string; display_name: string | null }[],
+  shown: readonly { id: string; display_name: string | null }[],
+): Map<string, string> {
+  const shownNames = new Map<string, string>();
+  for (const member of shown) {
+    if (member.display_name !== null) shownNames.set(member.id, member.display_name);
+  }
   const names = new Map<string, string>();
-  try {
-    const res = await fetchImpl(FAMILY_MEMBER_NAMES_API_PATH, { cache: 'no-store' });
-    if (!res.ok) return names;
-    const body: unknown = await res.json();
-    const parsed = FamilyMemberNamesResponseSchema.safeParse(body);
-    if (!parsed.success) return names;
-    for (const member of parsed.data.data.members) {
-      if (member.name !== null) names.set(member.id, member.name);
-    }
-  } catch {
-    // 通信の失敗・JSON でない応答。名前の補完をあきらめるだけで、画面の読み込みは止めない
+  for (const row of rows) {
+    if (normalizeName(row.display_name) !== null) continue;
+    const name = shownNames.get(row.id);
+    if (name !== undefined) names.set(row.id, name);
   }
   return names;
 }
