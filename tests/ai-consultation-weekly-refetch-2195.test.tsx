@@ -17,8 +17,8 @@
  * 人数の設定・月のカレンダーの献立のある日・表示中の週の生成中の依頼・プロフィールの帯) を取り直す。
  *
  * 部品を消すモックとログアウトで、受け手の読み取りを隠さない (帯を消すモックとログアウトのせいで、帯の読み取りの抜けが
- * 見えなかった)。ログインした状態で、ページの部品をそのまま描く。消すのは読み取りの無い部品だけで、
- * tests/ai-consultation-refetch-coverage-2195.test.ts がそれを確かめる。
+ * 見えなかった)。ログインした状態で、ページの部品をそのまま描く。消すのは AI が書く表を読まない部品だけ (読み取りのある部品は
+ * 理由を AI_CONSULTATION_RENDER_TEST_MOCKED_READERS に書く) で、tests/ai-consultation-refetch-coverage-2195.test.ts がそれを確かめる。
  *
  * サーバーは表 (server) で真似る。AI 相談の提案の実行は、表を書き換えてから AIChatBubble と同じ形で mealPlanUpdated を投げる。
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
@@ -133,7 +133,7 @@ const { useShoppingStore } = await import('@/app/(main)/menus/weekly/_state/shop
 const { usePantryStore } = await import('@/app/(main)/menus/weekly/_state/pantryStore');
 const { useServingsConfigStore } = await import('@/app/(main)/menus/weekly/_state/servingsConfigStore');
 const { AI_CONSULTATION_DATA_CHANGED_EVENT } = await import('@/lib/ai/consultation-data-refetch');
-const { AI_CONSULTATION_WRITTEN_COLUMNS } = await import('@/lib/ai/consultation-refetch-coverage');
+const { AI_CONSULTATION_WRITTEN_COLUMNS, AI_CONSULTATION_WRITTEN_TABLE_NAMES } = await import('@/lib/ai/consultation-refetch-coverage');
 const {
   ReadRecorder,
   expectEmptyRefetchMatchesFreshMount,
@@ -156,6 +156,8 @@ const INCOMPLETE_PROFILE_COMPLETENESS = 20;
 const COMPLETE_PROFILE_COMPLETENESS = 100;
 /** プロフィールの帯の見出し */
 const PROFILE_BANNER_HEADING = '栄養目標を設定しましょう';
+/** 家族に入っている人の家族 (家族の一覧の読み取りを開いたときの読み取りに出す) */
+const FAMILY_ID = '21950000-0000-4000-8000-0000000000f1';
 
 /** 身長・体重が未入力のプロフィール (完成度が帯を出す値) */
 function incompleteProfile(): FakeProfileRow {
@@ -573,7 +575,7 @@ describe('献立表 (/menus/weekly) が AI 相談の成功で取り直すもの 
 describe('献立表 (/menus/weekly) を描画して、AI 相談の成功の取り直しを確かめる (#2195 V1)', () => {
   /** AI が書く表に中身のある答え (表示中の週と別の週の献立・買い物リスト・家族の人数・プロフィールの未入力の欄) */
   function fillServer() {
-    supabaseMock.profile = incompleteProfile();
+    supabaseMock.profile = { ...incompleteProfile(), family_id: FAMILY_ID };
     const week = displayedWeekDates();
     server.days.set(week[0], [{ id: 'meal-1', dishName: '鮭の塩焼き' }]);
     server.days.set(otherWeekDateInDisplayedMonth(), [{ id: 'meal-other', dishName: 'カレー' }]);
@@ -602,15 +604,16 @@ describe('献立表 (/menus/weekly) を描画して、AI 相談の成功の取�
     // 前後の週の先読み (表の mountReadsNotRefetched の adjacentWeekPrefetch)
     const weekRangeKey = (from: number) =>
       fetchReadKey(`/api/meal-plans?startDate=${dateFromWeekStart(from)}&endDate=${dateFromWeekStart(from + DAYS_IN_WEEK - 1)}`) ?? '';
-    // 週の始まりの日・家族の所属 (表の mountReadsNotRefetched の weekStartDay・familyMembership)。どちらも AI 相談が書かない列
+    // 週の始まりの日・家族の所属と家族の一覧 (表の mountReadsNotRefetched の weekStartDay・familyMembership)。どれも AI 相談が書かない列と表
     const WEEK_START_DAY_COLUMN = 'week_start_day';
     const FAMILY_ID_COLUMN = 'family_id';
     expect(AI_CONSULTATION_WRITTEN_COLUMNS.user_profiles).not.toContain(WEEK_START_DAY_COLUMN);
     expect(AI_CONSULTATION_WRITTEN_COLUMNS.user_profiles).not.toContain(FAMILY_ID_COLUMN);
+    expect(AI_CONSULTATION_WRITTEN_TABLE_NAMES).not.toContain('family_members');
     expectRefetchReadsCoverMount('/menus/weekly', mountReads, refetchReads, {
       adjacentWeekPrefetch: [weekRangeKey(-DAYS_IN_WEEK), weekRangeKey(DAYS_IN_WEEK)],
       weekStartDay: [selectReadKey('user_profiles', WEEK_START_DAY_COLUMN)],
-      familyMembership: [selectReadKey('user_profiles', FAMILY_ID_COLUMN)],
+      familyMembership: [selectReadKey('user_profiles', FAMILY_ID_COLUMN), selectReadKey('family_members', '*')],
     });
   });
 
