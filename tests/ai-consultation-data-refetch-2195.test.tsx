@@ -1579,13 +1579,14 @@ describe('受け手の配線 (#2195 V1)', () => {
 
   it('献立表の pantry・人数の設定の取得は、初めの取得と取り直しで同じ関数', () => {
     const source = readRepoFile('src/app/(main)/menus/weekly/page.tsx');
-    // 取り直しのときだけ札を渡す (#2201 U2。初めの取得は札なし)
+    // 取り直しのときだけ札を渡す (#2201 U2。初めの取得は札なし)。初めの取得と取り直しは同じ取得の流れで始める (#2201 U1。
+    // 初めの取得の応答が取り直しの応答より後に届いても、古い答えで上書きしない)
     expect(source).toMatch(
-      /const fetchPantry = useCallback\(async \(refetchTicket: AiConsultationFetchTicket \| null = null\) => \{\s*try \{\s*const res = await fetch\('\/api\/pantry'\);/,
+      /const fetchPantry = useCallback\(async \(refetchTicket: AiConsultationFetchTicket \| null = null\) => \{\s*const order = pantryFetchStream\.begin\(refetchTicket\);\s*try \{\s*const res = await fetch\('\/api\/pantry'\);/,
     );
     expect(source).toMatch(/useEffect\(\(\) => \{\s*void fetchPantry\(\);\s*\}, \[fetchPantry\]\);/);
     expect(source).toMatch(
-      /const fetchUserSettings = useCallback\(async \(refetchTicket: AiConsultationFetchTicket \| null = null\) => \{[\s\S]*?const res = await fetch\('\/api\/profile'\);/,
+      /const fetchUserSettings = useCallback\(async \(refetchTicket: AiConsultationFetchTicket \| null = null\) => \{\s*const order = settingsFetchStream\.begin\(refetchTicket\);[\s\S]*?const res = await fetch\('\/api\/profile'\);/,
     );
     expect(source).toMatch(/useEffect\(\(\) => \{\s*void fetchUserSettings\(\);\s*\}, \[fetchUserSettings\]\);/);
   });

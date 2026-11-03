@@ -10,9 +10,11 @@ import type { Announcement, PlannedMeal, PantryItem, Badge } from "@/types/domai
 import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import { aiSkippedReasonOf, type AiSkippedReason } from "@/lib/ai/consent-config";
 import {
+  useAiConsultationFetchStream,
   useAiConsultationLoading,
   useAiConsultationPendingWrites,
   type AiConsultationFetchTicket,
+  type AiConsultationStreamTicket,
 } from "@/hooks/useAiConsultationDataRefetch";
 
 // 今日の献立データ
@@ -112,8 +114,12 @@ export const useHomeData = () => {
   // 食事の完了の切り替えの楽観的な更新から RPC の応答まで (#2201 U2)。ページが AI 相談の取り直しの hook に渡す: この間に来た
   // AI 相談の成功では取り直さず、全部終わったら 1 回取り直す (切り替えの前の献立を読んだ取り直しの応答が楽観的な表示を戻さないため)
   const aiConsultationWrites = useAiConsultationPendingWrites();
-  // ホームのデータの取得の世代番号 (#2201 U1)。取得を始めるたびに 1 つ増やし、献立と利用者の応答を置くのは最後に始めた取得だけ
-  const homeFetchSeqRef = useRef(0);
+  // ホームのデータの取得の流れ (#2201 U1)。今日の献立・利用者・記録の集計 (連続自炊・週と月の統計・期限切れ間近・買い物リストの残り・
+  // バッジ・今週のベストごはん・健康の記録)・お知らせの応答を置くのは最後に始めた取得だけ
+  // (開いたときの読み込みと取り直し、続けて来た取り直しの応答が逆の順に届いても、古い応答で上書きしない)
+  const homeFetchStream = useAiConsultationFetchStream();
+  // パフォーマンスの分析の読み取りの流れ (ホームのデータの取得とチェックインの保存のあと。#2201 U1)
+  const performanceAnalysisStream = useAiConsultationFetchStream();
   const toggleDebounceTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const [dailySummary, setDailySummary] = useState<DailySummary>(EMPTY_DAILY_SUMMARY);
   const [announcement, setAnnouncement] = useState<Announcement | null>(null);
@@ -242,7 +248,7 @@ export const useHomeData = () => {
   /**
    * mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込み中の表示を出さずに読み直し、読み取りの失敗
    * (ログインの確かめ・プロフィール・今日の献立の読み取りのエラー) では今の表示を残す。
-   * 献立と利用者の応答を置くのは最後に始めた取得 (homeFetchSeqRef) だけ (開いたときの読み込みと取り直しが重なっても古い応答で上書きしない)。
+   * 応答を置くのは最後に始めた取得 (homeFetchStream) だけ (開いたときの読み込みと取り直しが重なっても古い応答で上書きしない)。
    * refetchTicket は AI 相談の成功の取り直しの札 (useAiConsultationDataRefetch が渡す。#2201 U1 + U2)。取り直しでは応答を待つあいだも
    * 今日の献立 (完了の切り替えのボタン) が出ているので、その間に切り替えを始めていたら (終えていても)・体調のチェックインの欄を
    * 開いていたら、今日の献立を置かない (札の deferIfHeld。切り替えが終わった・欄を閉じたあとに 1 回取り直す)
@@ -252,26 +258,24 @@ export const useHomeData = () => {
     mode: HomeFetchMode = 'mount',
     refetchTicket?: AiConsultationFetchTicket,
   ) => {
-    homeFetchSeqRef.current += 1;
-    const seq = homeFetchSeqRef.current;
-    const isLatest = () => homeFetchSeqRef.current === seq;
+    // 取り直しの札は取り直しの扱いの回にだけ渡す (開いたときの読み込みの役を引き継いだ回は、応答を置く時点の番兵を見ずに置く)
+    const order = homeFetchStream.begin(mode === 'refetch' ? refetchTicket : null);
     if (mode === 'mount') setLoading(true);
     try {
-      await readHomeData(options, mode, isLatest, refetchTicket);
+      await readHomeData(options, mode, order);
     } finally {
       // 最後に始めた取得が終わったら (途中で投げても) 読み込み中の表示を下ろす。開いたときの読み込み中に始まった取り直しが投げると、
       // 開いたときの読み込みは最後でないので下ろさず、読み込み中の表示のまま止まるため
-      if (isLatest()) setLoading(false);
+      if (order.isLatest()) setLoading(false);
     }
   };
 
-  /** fetchHomeData の読み取りの中身 (読み込み中の表示は fetchHomeData が決める) */
-  const readHomeData = async (
-    options: HomeFetchOptions,
-    mode: HomeFetchMode,
-    isLatest: () => boolean,
-    refetchTicket: AiConsultationFetchTicket | undefined,
-  ) => {
+  /**
+   * fetchHomeData の読み取りの中身 (読み込み中の表示は fetchHomeData が決める)。
+   * 応答を置く前に、order (取得の流れの札) で最後に始めた取得かを見る (今日の献立は order.place で、応答を置く時点の番兵も見る)
+   */
+  const readHomeData = async (options: HomeFetchOptions, mode: HomeFetchMode, order: AiConsultationStreamTicket) => {
+    const { isLatest } = order;
     // 1. ユーザー情報取得
     const authUser = await resolveAuthUser();
     
@@ -308,7 +312,7 @@ export const useHomeData = () => {
         .eq('date', todayStr)
         .maybeSingle();
 
-      if (activity) {
+      if (activity && isLatest()) {
         setActivityLevel(activity.feeling);
       }
 
@@ -324,16 +328,13 @@ export const useHomeData = () => {
         .eq('user_id', authUser.id)
         .maybeSingle();
 
-      // あとから別の取得を始めていたら、今日の献立はそちらの応答を置く (#2201 U1)
-      if (!isLatest()) {
-        console.warn('[home] superseded fetch: skip placing today plan');
-      } else if (mode === 'refetch' && refetchTicket?.deferIfHeld()) {
-        // 取り直しの応答を待つあいだに完了の切り替え (楽観的な更新) を始めた (終えていても)・チェックインの欄を開いた:
-        // 切り替えの前に読んだ今日の献立で楽観的な表示を戻さない。切り替えが全部終わった・欄を閉じたあとに 1 回取り直す (#2201 U1 + U2)
-        console.warn('[home] held while refetching: skip placing today plan');
-      } else if (dailyMealData && dailyMealData.planned_meals) {
-        const mealsData = dailyMealData.planned_meals;
-        const meals: PlannedMeal[] = mealsData.map((m: any) => toPlannedMeal(m));
+      // あとから別の取得を始めていたら、今日の献立はそちらの応答を置く (#2201 U1)。
+      // 取り直しの応答を待つあいだに完了の切り替え (楽観的な更新) を始めた (終えていても)・チェックインの欄を開いた:
+      // 切り替えの前に読んだ今日の献立で楽観的な表示を戻さない。切り替えが全部終わった・欄を閉じたあとに 1 回取り直す (#2201 U1 + U2)
+      const todayPlanPlaced = order.place(() => {
+        if (dailyMealData && dailyMealData.planned_meals) {
+          const mealsData = dailyMealData.planned_meals;
+          const meals: PlannedMeal[] = mealsData.map((m: any) => toPlannedMeal(m));
 
           setTodayPlan({
             dayId: dailyMealData.id,
@@ -357,17 +358,21 @@ export const useHomeData = () => {
           setTodayPlan(null);
           setDailySummary(EMPTY_DAILY_SUMMARY);
         }
+      });
+      if (todayPlanPlaced === 'superseded') console.warn('[home] superseded fetch: skip placing today plan');
+      if (todayPlanPlaced === 'deferred') console.warn('[home] held while refetching: skip placing today plan');
 
       // ========== 拡張データを並列取得（高速化） ==========
+      // どれも応答を置く前に最後に始めた取得かを見る (isLatest。#2201 U1)
       await Promise.all([
-        fetchCookingStreak(authUser.id),
-        fetchWeeklyStats(authUser.id),
-        fetchMonthlyStats(authUser.id),
-        fetchExpiringItems(authUser.id),
-        fetchShoppingRemaining(authUser.id),
-        fetchBadgeInfo(authUser.id),
-        fetchBestMealThisWeek(authUser.id),
-        fetchHealthSummary(authUser.id),
+        fetchCookingStreak(authUser.id, isLatest),
+        fetchWeeklyStats(authUser.id, isLatest),
+        fetchMonthlyStats(authUser.id, isLatest),
+        fetchExpiringItems(authUser.id, isLatest),
+        fetchShoppingRemaining(authUser.id, isLatest),
+        fetchBadgeInfo(authUser.id, isLatest),
+        fetchBestMealThisWeek(authUser.id, isLatest),
+        fetchHealthSummary(authUser.id, isLatest),
       ]);
 
       // 栄養分析は重いので非同期で後から取得（UIはloadingなしで先に表示）
@@ -386,7 +391,7 @@ export const useHomeData = () => {
       const annRes = await fetch('/api/announcements?mode=public');
       if (annRes.ok) {
         const annData = await annRes.json();
-        if (annData.announcements && annData.announcements.length > 0) {
+        if (annData.announcements && annData.announcements.length > 0 && isLatest()) {
           setAnnouncement(toAnnouncement(annData.announcements[0]));
         }
       }
@@ -396,7 +401,8 @@ export const useHomeData = () => {
   };
 
   // 連続自炊ストリーク（完了した自炊のみカウント）
-  const fetchCookingStreak = async (userId: string) => {
+  // isLatest は呼んだ取得 (fetchHomeData) が最後に始めた取得か。下の記録の集計の取得も同じ (#2201 U1。古い応答を置かない)
+  const fetchCookingStreak = async (userId: string, isLatest: () => boolean) => {
     try {
       // 過去30日分のデータを取得（日付ベースモデル）
       const thirtyDaysAgo = new Date();
@@ -415,7 +421,7 @@ export const useHomeData = () => {
 
       type DayWithStreakMeals = { day_date: string; planned_meals: Pick<Tables<"planned_meals">, "mode" | "is_completed">[] };
       // 記録の無い期間も 0 を置く (取り直しで前の連続の日数を残さない。読み込み直したときと同じ。#2195 V1)
-      if (daysData) {
+      if (daysData && isLatest()) {
         let streak = 0;
         const sortedDays = (daysData as DayWithStreakMeals[]).sort((a, b) =>
           new Date(b.day_date).getTime() - new Date(a.day_date).getTime()
@@ -443,7 +449,7 @@ export const useHomeData = () => {
   };
 
   // 週間統計（日付ベースモデル）
-  const fetchWeeklyStats = async (userId: string) => {
+  const fetchWeeklyStats = async (userId: string, isLatest: () => boolean) => {
     try {
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
@@ -459,7 +465,7 @@ export const useHomeData = () => {
         .lte('day_date', todayStr)
         .order('day_date');
 
-      if (daysData) {
+      if (daysData && isLatest()) {
         const days: WeeklyStats['days'] = [];
         let totalCook = 0;
         let totalMeals = 0;
@@ -505,7 +511,7 @@ export const useHomeData = () => {
   };
 
   // 月間統計（日付ベースモデル、完了した自炊のみカウント）
-  const fetchMonthlyStats = async (userId: string) => {
+  const fetchMonthlyStats = async (userId: string, isLatest: () => boolean) => {
     try {
       const firstOfMonth = new Date();
       firstOfMonth.setDate(1);
@@ -520,7 +526,7 @@ export const useHomeData = () => {
         .gte('day_date', formatLocalDate(firstOfMonth))
         .lte('day_date', todayStr);
 
-      if (daysData) {
+      if (daysData && isLatest()) {
         let cookCount = 0;
         let totalMeals = 0;
 
@@ -549,7 +555,7 @@ export const useHomeData = () => {
   };
 
   // 冷蔵庫の期限切れ間近 (今日から PANTRY_EXPIRING_SOON_DAYS 日後の期限まで。全画面共通の範囲 #1602)
-  const fetchExpiringItems = async (userId: string) => {
+  const fetchExpiringItems = async (userId: string, isLatest: () => boolean) => {
     try {
       const { data } = await orderListBy(
         supabase
@@ -561,7 +567,7 @@ export const useHomeData = () => {
         LIST_ORDERS.pantryItemsByExpiration,
       );
 
-      if (data) {
+      if (data && isLatest()) {
         setExpiringItems(data.map((item: any) => ({
           id: item.id,
           userId: item.user_id,
@@ -580,7 +586,7 @@ export const useHomeData = () => {
   };
 
   // 買い物リスト残数（日付ベースモデル）
-  const fetchShoppingRemaining = async (userId: string) => {
+  const fetchShoppingRemaining = async (userId: string, isLatest: () => boolean) => {
     try {
       // アクティブな買い物リストを取得
       const { data: shoppingList, error: shoppingListError } = await supabase
@@ -597,8 +603,8 @@ export const useHomeData = () => {
           .eq('shopping_list_id', shoppingList.id)
           .eq('is_checked', false);
 
-        setShoppingRemaining(count || 0);
-      } else if (!shoppingListError) {
+        if (isLatest()) setShoppingRemaining(count || 0);
+      } else if (!shoppingListError && isLatest()) {
         // 使っている買い物リストが無い: 前の残りの数を残さない (取り直しのとき。読み込み直したときと同じ。#2195 V1)。
         // 読み取りの失敗では今の表示を残す
         setShoppingRemaining(0);
@@ -609,7 +615,7 @@ export const useHomeData = () => {
   };
 
   // バッジ情報
-  const fetchBadgeInfo = async (userId: string) => {
+  const fetchBadgeInfo = async (userId: string, isLatest: () => boolean) => {
     try {
       // バッジ総数
       const { count } = await supabase
@@ -617,7 +623,7 @@ export const useHomeData = () => {
         .select('*', { count: 'exact', head: true })
         .eq('user_id', userId);
 
-      setBadgeCount(count || 0);
+      if (isLatest()) setBadgeCount(count || 0);
 
       // 最新バッジ
       const { data: latestData } = await orderListBy(
@@ -637,7 +643,7 @@ export const useHomeData = () => {
       if (latestData && (latestData as unknown as LatestBadgeRow).badges) {
         const badgesRaw = (latestData as unknown as LatestBadgeRow).badges!;
         const badge = Array.isArray(badgesRaw) ? badgesRaw[0] : badgesRaw;
-        if (!badge) return;
+        if (!badge || !isLatest()) return;
         setLatestBadge({
           name: badge.name,
           code: badge.code,
@@ -650,7 +656,7 @@ export const useHomeData = () => {
   };
 
   // 今週のベスト料理（日付ベースモデル）
-  const fetchBestMealThisWeek = async (userId: string) => {
+  const fetchBestMealThisWeek = async (userId: string, isLatest: () => boolean) => {
     try {
       const sevenDaysAgo = new Date();
       sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 6);
@@ -675,14 +681,14 @@ export const useHomeData = () => {
 
       // 当てはまる食事が無くなった (AI 相談で消した・完了を外した) ときは消す。取り直し (refetch。AI 相談の成功のあと) で
       // 前の食事を残さない (#2195 V1)
-      setBestMealThisWeek(data && data.length > 0 ? toPlannedMeal(data[0]) : null);
+      if (isLatest()) setBestMealThisWeek(data && data.length > 0 ? toPlannedMeal(data[0]) : null);
     } catch (e) {
       console.error('Best meal fetch error:', e);
     }
   };
 
   // 健康記録サマリー
-  const fetchHealthSummary = async (userId: string) => {
+  const fetchHealthSummary = async (userId: string, isLatest: () => boolean) => {
     try {
       // 今日の記録
       const { data: todayRecord } = await supabase
@@ -735,6 +741,7 @@ export const useHomeData = () => {
         .eq('is_alert', true)
         .eq('is_dismissed', false);
 
+      if (!isLatest()) return;
       setHealthSummary({
         todayRecord,
         healthStreak: streak?.current_streak || 0,
@@ -796,7 +803,10 @@ export const useHomeData = () => {
   };
 
   // Performance OS v3: パフォーマンス分析を取得
+  // ホームのデータの取得 (fetchHomeData) とチェックインの保存のあとに読む。応答を置くのは最後に始めた読み取りだけ
+  // (performanceAnalysisStream。#2201 U1。古い応答で、あとの読み取りの分析を上書きしない。読み込み中の印もあとの読み取りが下ろす)
   const fetchPerformanceAnalysis = async (userId: string) => {
+    const order = performanceAnalysisStream.begin();
     try {
       setPerformanceAnalysis(prev => ({ ...prev, loading: true }));
 
@@ -814,24 +824,28 @@ export const useHomeData = () => {
       if (response.ok) {
         const data = await response.json();
 
-        setPerformanceAnalysis({
-          eligible: data.eligible || false,
-          eligibilityReason: data.eligibilityReason || null,
-          nextAction: data.analysis?.nextAction || null,
-          recommendations: data.analysis?.recommendations || [],
-          todayCheckin,
-          loading: false,
-        });
+        order.place(() =>
+          setPerformanceAnalysis({
+            eligible: data.eligible || false,
+            eligibilityReason: data.eligibilityReason || null,
+            nextAction: data.analysis?.nextAction || null,
+            recommendations: data.analysis?.recommendations || [],
+            todayCheckin,
+            loading: false,
+          }),
+        );
       } else {
-        setPerformanceAnalysis(prev => ({
-          ...prev,
-          todayCheckin,
-          loading: false
-        }));
+        order.place(() =>
+          setPerformanceAnalysis(prev => ({
+            ...prev,
+            todayCheckin,
+            loading: false
+          })),
+        );
       }
     } catch (e) {
       console.error('Performance analysis fetch error:', e);
-      setPerformanceAnalysis(prev => ({ ...prev, loading: false }));
+      order.place(() => setPerformanceAnalysis(prev => ({ ...prev, loading: false })));
     }
   };
 

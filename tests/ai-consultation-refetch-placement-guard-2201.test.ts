@@ -13,6 +13,7 @@
  *      取り直しそのものが印を立てて書き込みを止めるページ (SELF_HELD_RECEIVERS) の真偽の ref のどちらか
  *   2. 数える印を渡す受け手は、取り直しの関数 (useAiConsultationDataRefetch の第 1 引数) が札 (第 1 引数) を受け取って使い
  *      (useAiConsultationRefetchKey なら戻り値の refetchTicket を受け取り)、取り直しの経路を書いたファイルで deferIfHeld を呼ぶ
+ *      (または取得の流れ useAiConsultationFetchStream の begin に札を渡す。流れの place が deferIfHeld を見る)
  *   3. SELF_HELD_RECEIVERS の取り直しの関数は、その真偽の ref を true にする (取り直しの応答を待つあいだに書き込みが始まらない)
  * 取り直しの関数を別の hook が作る受け手 (ホームの useHomeData) は DELEGATED_RECEIVERS に書き、その hook のファイルで 1・2 を数える。
  *   4. 受け手 (書き込みの印を渡さない受け手も) と DELEGATED_RECEIVERS の hook のファイルで、札の deferIfHeld を直に呼ぶところは、
@@ -40,6 +41,9 @@ const RECEIVER_HOOK_FILE = 'src/hooks/useAiConsultationDataRefetch.ts';
 const DATA_REFETCH_HOOK = 'useAiConsultationDataRefetch';
 const REFETCH_KEY_HOOK = 'useAiConsultationRefetchKey';
 const PENDING_WRITES_HOOK = 'useAiConsultationPendingWrites';
+const FETCH_STREAM_HOOK = 'useAiConsultationFetchStream';
+/** 取得の流れの、取得を始める関数 (札を渡すと、流れの place が応答を置く時点の番兵を見る) */
+const STREAM_BEGIN = 'begin';
 const WRITE_MARKER_OPTION = 'writeInFlightRef';
 const REFETCH_TICKET_RESULT = 'refetchTicket';
 const DEFER_IF_HELD = 'deferIfHeld';
@@ -107,13 +111,35 @@ function callsTo(root: ts.Node, names: readonly string[]): ts.CallExpression[] {
   return calls;
 }
 
-/** X.deferIfHeld() / X?.deferIfHeld() を呼んでいるか */
-function callsDeferIfHeld(root: ts.Node): boolean {
-  let found = false;
-  walk(root, (node) => {
-    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === DEFER_IF_HELD) {
-      found = true;
+/** useAiConsultationFetchStream で作った取得の流れの名前 */
+function fetchStreamNames(sf: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+  walk(sf, (node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer !== undefined &&
+      ts.isCallExpression(node.initializer) &&
+      calleeName(node.initializer) === FETCH_STREAM_HOOK
+    ) {
+      names.add(node.name.text);
     }
+  });
+  return names;
+}
+
+/**
+ * 取り直しの応答を置く時点の番兵を見ているか: X.deferIfHeld() / X?.deferIfHeld() を呼ぶか、取得の流れの begin に札 (引数) を渡す
+ * (流れの place が deferIfHeld を見る)
+ */
+function seesHeldAtPlacement(sf: ts.SourceFile): boolean {
+  const streams = fetchStreamNames(sf);
+  let found = false;
+  walk(sf, (node) => {
+    if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return;
+    const { name, expression } = node.expression;
+    if (name.text === DEFER_IF_HELD) found = true;
+    if (name.text === STREAM_BEGIN && ts.isIdentifier(expression) && streams.has(expression.text) && node.arguments.length > 0) found = true;
   });
   return found;
 }
@@ -315,7 +341,7 @@ function checkPlacementGuards(
         if (refetch === null || !usesFirstParameter(refetch)) {
           violations.push(`${at}: ${delegation.definedIn} の取り直しの関数 (${delegation.refetch}) が札を受け取って使っていない`);
         }
-        if (!callsDeferIfHeld(definedSf)) {
+        if (!seesHeldAtPlacement(definedSf)) {
           violations.push(`${at}: ${delegation.definedIn} が取り直しの応答を置く前に ${DEFER_IF_HELD} を見ていない`);
         }
         countedMarkerReceivers.push(file);
@@ -332,7 +358,7 @@ function checkPlacementGuards(
         } else if (!receivesRefetchTicket(call)) {
           violations.push(`${at}: 戻り値の ${REFETCH_TICKET_RESULT} を受け取っていない`);
         }
-        if (!callsDeferIfHeld(sf)) violations.push(`${at}: 取り直しの応答を置く前に ${DEFER_IF_HELD} を見ていない`);
+        if (!seesHeldAtPlacement(sf)) violations.push(`${at}: 取り直しの応答を置く前に ${DEFER_IF_HELD} を見ていない`);
         continue;
       }
 
@@ -497,6 +523,21 @@ describe('書き込みの印を渡す受け手は、取り直しの応答を置�
       }`;
       expect(check(source.replaceAll('ORDER_GUARD', 'if (ticket?.deferIfHeld()) return;'))).toEqual([expect.stringContaining('順序')]);
       expect(check(source.replaceAll('ORDER_GUARD', 'if (cancelled) return; if (ticket?.deferIfHeld()) return;'))).toEqual([]);
+    });
+
+    it('取得の流れの begin に札を渡さない (取り直しの経路で応答を置く時点の番兵を見ない) は赤、渡して place で置く形は赤にしない', () => {
+      const source = `function Page() {
+        const pendingWrites = ${PENDING_WRITES_HOOK}();
+        const pantryStream = ${FETCH_STREAM_HOOK}();
+        const fetchPantry = useCallback(async (refetchTicket = null) => {
+          const order = pantryStream.begin(BEGIN_ARGS);
+          const res = await fetch('/api/pantry');
+          order.place(() => setFridgeItems(res.items));
+        }, [pantryStream]);
+        ${DATA_REFETCH_HOOK}((ticket) => { void fetchPantry(ticket); }, { writeInFlightRef: pendingWrites });
+      }`;
+      expect(check(source.replaceAll('BEGIN_ARGS', ''))).toEqual([expect.stringContaining(DEFER_IF_HELD)]);
+      expect(check(source.replaceAll('BEGIN_ARGS', 'refetchTicket'))).toEqual([]);
     });
 
     it('直した形は赤にしない', () => {

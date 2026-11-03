@@ -31,6 +31,7 @@ import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import {
   useAiConsultationDataRefetch,
+  useAiConsultationFetchStream,
   useAiConsultationPendingWrites,
   useAiConsultationRefetchRun,
   type AiConsultationFetchTicket,
@@ -526,13 +527,11 @@ export default function WeeklyMenuPage() {
   // 表示中の週の初日 (YYYY-MM-DD)。献立の取得の応答を置く前に、応答を待つあいだに週を移っていないかを見る (#2201 U1)
   const weekStartKeyRef = useRef(formatLocalDate(weekStart));
   weekStartKeyRef.current = formatLocalDate(weekStart);
-  // 表示中の週の献立の取得 (週の読み込み fetchPlan と読み直し refreshMealPlan) の世代番号 (#2201 U1)。取得を始めるたびに 1 つ増やす
-  const planFetchSeqRef = useRef(0);
-  // 献立の応答 (週の読み込みの失敗の空を含む) を置いた取得の世代番号 (#2201 U1)。応答を置くのは、これより新しい取得だけ
-  // (先に届いた新しい応答を、あとから届いた古い応答で上書きしない)。「最後に始めた取得だけ」にしないのは、週を移った直後
-  // (週の読み込みの応答待ち) に始まった読み直しが失敗したとき、週の読み込みの応答まで捨てると、前の週の献立が新しい週の見出しの
-  // 下に残るため
-  const planPlacedSeqRef = useRef(0);
+  // 表示中の週の献立の取得 (週の読み込み fetchPlan と読み直し refreshMealPlan) の流れ (#2201 U1)。応答 (週の読み込みの失敗の空を含む)
+  // を置くのは、もう置いたどの応答よりあとに始めた取得だけ (先に届いた新しい応答を、あとから届いた古い応答で上書きしない)。
+  // 「最後に始めた取得だけ」('latestStarted') にしないのは、週を移った直後 (週の読み込みの応答待ち) に始まった読み直しが失敗したとき、
+  // 週の読み込みの応答まで捨てると、前の週の献立が新しい週の見出しの下に残るため
+  const planFetchStream = useAiConsultationFetchStream('newerThanPlaced');
   const setWeekStart = useCallback((d: Date) => dispatchWeekView({ type: 'WEEK_SET_START', payload: d }), []);
   // UX2-24: 前週/次週ボタン専用。selectedDayIndex をリセットしない WEEK_NAVIGATE_* を dispatch する
   const navigateWeekPrev = useCallback((d: Date) => dispatchWeekView({ type: 'WEEK_NAVIGATE_PREV', payload: d }), []);
@@ -1016,14 +1015,14 @@ export default function WeeklyMenuPage() {
 
   // Calendar meal dates - 月カレンダー用の献立存在日マップ（weekViewReducer 管理）
   const fetchedRangesRef = useRef<Set<string>>(new Set()); // 既にフェッチした範囲を記録
-  // 範囲 (rangeKey) ごとの献立のある日の取得の世代番号 (#2201 U1)。同じ範囲を読み直したとき、古い応答が後から届いて
-  // AI 相談が足した日の印を消さないよう、置くのは最後に始めた取得の応答だけ
-  const mealDatesFetchSeqRef = useRef<Map<string, number>>(new Map());
+  // 献立のある日の取得の流れ (#2201 U1。鍵は範囲 rangeKey)。同じ範囲を読み直したとき、古い応答が後から届いて
+  // AI 相談が足した日の印を消さないよう、置くのは範囲ごとに最後に始めた取得の応答だけ
+  const mealDatesFetchStream = useAiConsultationFetchStream();
   // 献立・買い物リスト・冷蔵庫・人数の設定・レーダーの栄養素の書き込み (楽観的な更新から送信の応答まで・送信のあとの読み直しまで。
   // #2201 U2)。この間に来た AI 相談の成功では取り直さず、全部終わったら 1 回取り直す (書き込みの前の値を読んだ取り直しの応答が
   // 楽観的な表示・書き込みの結果を戻さない・失敗の巻き戻しが AI の後の献立を AI の前の献立で上書きしないため)。
   // 取り直しの応答を待つあいだに始めた書き込みは、終わっていてもその応答を置かせない (取り直しの経路で置く場所ごとの
-  // ticket.deferIfHeld。置かなかったぶん 1 回取り直す)
+  // 取得の流れの place が札の deferIfHeld を見る。置かなかったぶん 1 回取り直す)
   const pendingWrites = useAiConsultationPendingWrites();
   // AI 相談の成功で取り直した回数 (#2195 V1)。月のカレンダーの献立のある日の取得 (下の 2 つの useEffect) と、
   // 生成中の依頼の確認 (checkPendingRequests の useEffect) の依存に入れ、取り直すたびにもう一度走らせる。
@@ -1044,39 +1043,36 @@ export default function WeeklyMenuPage() {
     // 既にフェッチ済みの範囲はスキップ
     if (fetchedRangesRef.current.has(rangeKey)) return;
     fetchedRangesRef.current.add(rangeKey);
-    const seq = (mealDatesFetchSeqRef.current.get(rangeKey) ?? 0) + 1;
-    mealDatesFetchSeqRef.current.set(rangeKey, seq);
+    const order = mealDatesFetchStream.begin(refetchTicket, rangeKey);
 
     try {
       const res = await fetch(`/api/meal-plans?startDate=${formatLocalDate(startDate)}&endDate=${formatLocalDate(endDate)}`);
       if (res.ok) {
         const { dailyMeals } = await res.json();
         // この範囲をあとから読み直していたら、古い応答は置かない (#2201 U1)
-        if (mealDatesFetchSeqRef.current.get(rangeKey) !== seq) return;
+        const placed = order.place(() => {
+          const newDates = new Set<string>();
+          dailyMeals?.forEach((day: any) => {
+            if (day.meals && day.meals.length > 0) {
+              newDates.add(day.dayDate);
+            }
+          });
+          // 読んだ範囲の中だけを答えに置き換える (範囲の外の日 = 他の月・週の印はそのまま)。
+          // 足すだけ (MERGE) だと、範囲の中で献立が無くなった日 (AI 相談で消した食事の日など) の印が残る (#2195 V1)
+          dispatchWeekView({
+            type: 'CALENDAR_MEAL_DATES_REPLACE_RANGE',
+            payload: { startDate: formatLocalDate(startDate), endDate: formatLocalDate(endDate), dates: newDates },
+          });
+        });
         // 置かない取り直しの応答: 範囲を取得済みにしない (止めた取り直しが、外れたときにもう一度読む)
-        if (refetchTicket?.deferIfHeld()) {
-          fetchedRangesRef.current.delete(rangeKey);
-          return;
-        }
-        const newDates = new Set<string>();
-        dailyMeals?.forEach((day: any) => {
-          if (day.meals && day.meals.length > 0) {
-            newDates.add(day.dayDate);
-          }
-        });
-        // 読んだ範囲の中だけを答えに置き換える (範囲の外の日 = 他の月・週の印はそのまま)。
-        // 足すだけ (MERGE) だと、範囲の中で献立が無くなった日 (AI 相談で消した食事の日など) の印が残る (#2195 V1)
-        dispatchWeekView({
-          type: 'CALENDAR_MEAL_DATES_REPLACE_RANGE',
-          payload: { startDate: formatLocalDate(startDate), endDate: formatLocalDate(endDate), dates: newDates },
-        });
+        if (placed === 'deferred') fetchedRangesRef.current.delete(rangeKey);
       }
     } catch (error) {
       console.error('Failed to fetch calendar meal dates:', error);
       // エラー時はキャッシュをクリアして再試行可能に
       fetchedRangesRef.current.delete(rangeKey);
     }
-  }, []);
+  }, [mealDatesFetchStream]);
 
   // dailyMeals から献立存在日を calendarMealDates に追加
   const updateCalendarMealDatesFromDailyMeals = useCallback((dailyMeals: any[]) => {
@@ -1230,50 +1226,49 @@ export default function WeeklyMenuPage() {
   // 自分のプロフィール (family_id) の読み取りの失敗では、家族から外れたとみなさずに今の切り替えを残す (#2201 U1。以前は error を見ずに
   // 一覧を空にしていたので、取り直しの通信の失敗で家族の切り替えが消えていた)。
   // mode が 'refetch' (AI 相談の成功の取り直し) のとき、名前の API を読めなかったら今出している名前を残す (#2201 U1)。
-  // 応答を置くのは最後に始めた読み込み (familyLoadSeqRef) だけ。refetchTicket (AI 相談の成功の取り直しの札) があれば、
+  // 応答を置くのは最後に始めた読み込みだけ (familyLoadStream。段ごとに置く)。refetchTicket (AI 相談の成功の取り直しの札) があれば、
   // 応答を待つあいだに書き込み・モーダルが始まっていたら置かない (#2201 U2。止めた取り直しのぶん 1 回読み直す)
-  const familyLoadSeqRef = useRef(0);
+  const familyLoadStream = useAiConsultationFetchStream();
   const loadFamilyData = useCallback(async (mode: FamilyLoadMode = 'mount', refetchTicket: AiConsultationFetchTicket | null = null) => {
-    familyLoadSeqRef.current += 1;
-    const seq = familyLoadSeqRef.current;
-    const isLatest = () => familyLoadSeqRef.current === seq;
-    /** 応答を置いてよいか (最後に始めた読み込みで、取り直しの札が止めていない) */
-    const mayPlace = () => isLatest() && !refetchTicket?.deferIfHeld();
+    const order = familyLoadStream.begin(refetchTicket);
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user || !mayPlace()) return;
-    setCurrentUserId(user.id);
+    if (!user || order.place(() => setCurrentUserId(user.id)) !== 'placed') return;
 
     const { data: profile, error: profileError } = await supabase
       .from('user_profiles')
       .select('family_id')
       .eq('id', user.id)
       .maybeSingle();
-    if (profileError || !mayPlace()) return;
-    if (!profile?.family_id) {
-      setFamilyId(null);
-      setFamilyMembers([]);
+    if (profileError) return;
+    const familyIdRead = profile?.family_id ?? null;
+    if (familyIdRead === null) {
+      order.place(() => {
+        setFamilyId(null);
+        setFamilyMembers([]);
+      });
       return;
     }
-    setFamilyId(profile.family_id);
+    if (order.place(() => setFamilyId(familyIdRead)) !== 'placed') return;
 
     const { data: members } = await supabase
       .from('family_members')
       .select('id, family_id, user_id, role, display_name, relationship, tags, share_meals, share_health, share_menu, child_profile, avatar_color, status, joined_at, removed_at')
-      .eq('family_id', profile.family_id)
+      .eq('family_id', familyIdRead)
       .eq('status', 'active');
     if (members) {
       const namesResult = await fetchFamilyMemberNamesResult();
-      if (!mayPlace()) return;
       const rows = members as FamilyMember[];
-      setFamilyMembers((shown) =>
-        applyFamilyMemberNames(
-          rows,
-          namesResult.ok ? namesResult.names : mode === 'refetch' ? keepShownFamilyMemberNames(rows, shown) : new Map(),
+      order.place(() =>
+        setFamilyMembers((shown) =>
+          applyFamilyMemberNames(
+            rows,
+            namesResult.ok ? namesResult.names : mode === 'refetch' ? keepShownFamilyMemberNames(rows, shown) : new Map(),
+          ),
         ),
       );
     }
-  }, []);
+  }, [familyLoadStream]);
   useEffect(() => {
     void loadFamilyData();
   }, [loadFamilyData]);
@@ -1309,7 +1304,7 @@ export default function WeeklyMenuPage() {
   // → aiGenerationReducer 管理 (Phase B-2 で移行済み)
 
   // Meal Plan再取得関数（キャッシュも更新）
-  // 応答を置く前に、今も同じ週を出しているか (weekStartKeyRef) と、あとに始めた取得の応答をもう置いていないか (planPlacedSeqRef) を見る
+  // 応答を置く前に、今も同じ週を出しているか (weekStartKeyRef) と、あとに始めた取得の応答をもう置いていないか (planFetchStream) を見る
   // (#2201 U1。以前は閉包の weekStart で読んで確かめずに置いたので、応答を待つあいだに週を移ると前の週の献立が新しい週の見出しの
   // 下に出うった)。読み直しの失敗では何も置かない (先に始めた週の読み込みの応答が後から届けば、そちらを置く)。
   // refetchTicket (AI 相談の成功の取り直しの札) があれば、応答を待つあいだに書き込み (献立の編集・買い物リストのチェックなど)・
@@ -1317,37 +1312,36 @@ export default function WeeklyMenuPage() {
   const refreshMealPlan = useCallback(async (refetchTicket: AiConsultationFetchTicket | null = null) => {
     const targetDate = formatLocalDate(weekStart);
     const endDate = addDaysStr(targetDate, 6);
-    planFetchSeqRef.current += 1;
-    const seq = planFetchSeqRef.current;
+    const order = planFetchStream.begin(refetchTicket);
     try {
       const res = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
       if (res.ok) {
         const { dailyMeals, shoppingList: shoppingListData } = await res.json();
-        if (weekStartKeyRef.current !== targetDate || seq <= planPlacedSeqRef.current) return;
-        if (refetchTicket?.deferIfHeld()) return;
-        planPlacedSeqRef.current = seq;
-        // 買い物リストは週に関係なく、使っている買い物リスト 1 つ (GET /api/meal-plans の shoppingList。無いときは null)。
-        // この応答が正なので、空 (最後の品目が消された・リストが無い) でも、献立の無い週でもそのまま置く (#2195 V1。
-        // 以前は空のときに置かず、AI 相談で最後の品目を消しても、バッジと買い物リストに消した品目が残っていた)。
-        // 週の読み込み (fetchPlan の fetchWeekData) は献立の無い週で [] を作って返すので、そちらは空のときに置かない
-        const newShoppingList: ShoppingListItem[] = shoppingListData?.items || [];
-        setShoppingList(newShoppingList);
-        if (dailyMeals && dailyMeals.length > 0) {
-          const newPlan = { days: dailyMeals };
-          setCurrentPlan(newPlan);
-          updateCalendarMealDatesFromDailyMeals(dailyMeals);
-          // キャッシュも更新
-          weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
-        } else {
-          setCurrentPlan(null);
-          // 空の場合もキャッシュを更新
-          weekDataCache.current.set(targetDate, { plan: null, shoppingList: [], fetchedAt: Date.now() });
-        }
+        if (weekStartKeyRef.current !== targetDate) return;
+        order.place(() => {
+          // 買い物リストは週に関係なく、使っている買い物リスト 1 つ (GET /api/meal-plans の shoppingList。無いときは null)。
+          // この応答が正なので、空 (最後の品目が消された・リストが無い) でも、献立の無い週でもそのまま置く (#2195 V1。
+          // 以前は空のときに置かず、AI 相談で最後の品目を消しても、バッジと買い物リストに消した品目が残っていた)。
+          // 週の読み込み (fetchPlan の fetchWeekData) は献立の無い週で [] を作って返すので、そちらは空のときに置かない
+          const newShoppingList: ShoppingListItem[] = shoppingListData?.items || [];
+          setShoppingList(newShoppingList);
+          if (dailyMeals && dailyMeals.length > 0) {
+            const newPlan = { days: dailyMeals };
+            setCurrentPlan(newPlan);
+            updateCalendarMealDatesFromDailyMeals(dailyMeals);
+            // キャッシュも更新
+            weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
+          } else {
+            setCurrentPlan(null);
+            // 空の場合もキャッシュを更新
+            weekDataCache.current.set(targetDate, { plan: null, shoppingList: [], fetchedAt: Date.now() });
+          }
+        });
       }
     } catch (e) {
       console.error('Failed to refresh meal plan:', e);
     }
-  }, [weekStart, updateCalendarMealDatesFromDailyMeals]);
+  }, [weekStart, updateCalendarMealDatesFromDailyMeals, planFetchStream]);
 
   // V4 Menu Generation Hook
   const v4Generation = useV4MenuGeneration({
@@ -2190,18 +2184,18 @@ export default function WeeklyMenuPage() {
       const targetDateStr = formatLocalDate(weekStart);
       const now = Date.now();
 
-      // この週の取得を始める (#2201 U1。読み直し refreshMealPlan と同じ世代番号。古い応答を置かない)
-      planFetchSeqRef.current += 1;
-      const seq = planFetchSeqRef.current;
+      // この週の取得を始める (#2201 U1。読み直し refreshMealPlan と同じ流れ。古い応答を置かない)
+      const order = planFetchStream.begin();
 
       // キャッシュをチェック
       const cached = weekDataCache.current.get(targetDateStr);
       if (cached && (now - cached.fetchedAt < CACHE_TTL)) {
         // キャッシュヒット - 即座に反映 (いま始めた取得なので、置いたどの応答よりも新しい)
-        planPlacedSeqRef.current = seq;
-        setCurrentPlan(cached.plan);
-        if (cached.shoppingList.length > 0) setShoppingList(cached.shoppingList);
-        if (cached.plan) autoExpandNextMeal(cached.plan, weekDates);
+        order.place(() => {
+          setCurrentPlan(cached.plan);
+          if (cached.shoppingList.length > 0) setShoppingList(cached.shoppingList);
+          if (cached.plan) autoExpandNextMeal(cached.plan, weekDates);
+        });
         // バックグラウンドで前後の週をプリフェッチ
         prefetchAdjacentWeeks(weekStart);
         return;
@@ -2217,12 +2211,11 @@ export default function WeeklyMenuPage() {
         if (weekStartKeyRef.current !== targetDateStr) return;
 
         // あとに始めた読み直し (refreshMealPlan) の応答をもう置いていれば置かない (その読み直しが失敗していれば、この応答を置く)
-        if (seq > planPlacedSeqRef.current) {
-          planPlacedSeqRef.current = seq;
+        order.place(() => {
           setCurrentPlan(data.plan);
           if (data.shoppingList.length > 0) setShoppingList(data.shoppingList);
           if (data.plan) autoExpandNextMeal(data.plan, weekDates);
-        }
+        });
 
         // DBで生成中のリクエストがあるか確認
         const pendingRes = await fetch(`/api/ai/menu/weekly/pending?date=${targetDateStr}`);
@@ -2243,10 +2236,7 @@ export default function WeeklyMenuPage() {
         prefetchAdjacentWeeks(weekStart);
       } catch (e) {
         console.error("Failed to fetch meal plan", e);
-        if (weekStartKeyRef.current === targetDateStr && seq > planPlacedSeqRef.current) {
-          planPlacedSeqRef.current = seq;
-          setCurrentPlan(null);
-        }
+        if (weekStartKeyRef.current === targetDateStr) order.place(() => setCurrentPlan(null));
       } finally {
         // 週を移っていれば、移った先の週の読み込みが読み込み中の表示を下ろす
         if (weekStartKeyRef.current === targetDateStr) setLoading(false);
@@ -2259,40 +2249,46 @@ export default function WeeklyMenuPage() {
   // Fetch servings config and radar chart nutrients from user profile
   // (AI 相談の成功のあと (refetchAfterAiConsultation) にも呼ぶ。AI 相談で家族の人数 (family_size) が変わると、
   // 人数の設定 (servings_config) の無い人の既定の人数が変わるため。#2195 V1)
+  // 応答を置くのは最後に始めた読み込みだけ (settingsFetchStream。開いたときの読み込みと取り直しの応答が逆の順に届いても、続けて来た
+  // 取り直しの応答が逆の順に届いても、古い人数で新しい人数を戻さない。#2201 U1)。
   // refetchTicket (AI 相談の成功の取り直しの札) があれば、応答を待つあいだに人数の設定のモーダル・書き込みが始まっていたら置かない
-  // (モーダルで変えている人数・保存した人数を、その前に読んだ値で戻さない。#2201 U2)
+  // (モーダルで変えている人数・保存した人数を、その前に読んだ値で戻さない。#2201 U2)。
+  // 読み込み中の印は、最後に始めた読み込みが終わったときに下ろす (先に始めた読み込みが、あとの読み込みの途中で下ろさない)
+  const settingsFetchStream = useAiConsultationFetchStream();
   const fetchUserSettings = useCallback(async (refetchTicket: AiConsultationFetchTicket | null = null) => {
+    const order = settingsFetchStream.begin(refetchTicket);
     setIsLoadingServingsConfig(true);
     try {
       const res = await fetch('/api/profile');
       if (res.ok) {
         const profile = await res.json();
-        if (refetchTicket?.deferIfHeld()) return;
-        // Servings config
-        if (profile.servings_config) {
-          setServingsConfig(profile.servings_config);
-        } else if (profile.family_size) {
-          // servings_configがない場合はfamily_sizeからデフォルト作成
-          const defaultConfig: ServingsConfig = {
-            default: profile.family_size,
-            byDayMeal: {}
-          };
-          setServingsConfig(defaultConfig);
-        } else {
-          // どちらも無い (AI 相談で家族の人数を空にした): 前の人数を残さない (取り直しのとき。読み込み直したときと同じ。#2195 V1)
-          setServingsConfig(null);
-        }
-        // Radar chart nutrients
-        if (profile.radar_chart_nutrients && Array.isArray(profile.radar_chart_nutrients)) {
-          setRadarChartNutrients(profile.radar_chart_nutrients);
-        }
+        order.place(() => {
+          // Servings config
+          if (profile.servings_config) {
+            setServingsConfig(profile.servings_config);
+          } else if (profile.family_size) {
+            // servings_configがない場合はfamily_sizeからデフォルト作成
+            const defaultConfig: ServingsConfig = {
+              default: profile.family_size,
+              byDayMeal: {}
+            };
+            setServingsConfig(defaultConfig);
+          } else {
+            // どちらも無い (AI 相談で家族の人数を空にした): 前の人数を残さない (取り直しのとき。読み込み直したときと同じ。#2195 V1)
+            setServingsConfig(null);
+          }
+          // Radar chart nutrients
+          if (profile.radar_chart_nutrients && Array.isArray(profile.radar_chart_nutrients)) {
+            setRadarChartNutrients(profile.radar_chart_nutrients);
+          }
+        });
       }
     } catch (e) {
       console.error('Failed to fetch user settings:', e);
     } finally {
-      setIsLoadingServingsConfig(false);
+      if (order.isLatest()) setIsLoadingServingsConfig(false);
     }
-  }, [setIsLoadingServingsConfig, setServingsConfig, setRadarChartNutrients]);
+  }, [settingsFetchStream, setIsLoadingServingsConfig, setServingsConfig, setRadarChartNutrients]);
   useEffect(() => {
     void fetchUserSettings();
   }, [fetchUserSettings]);
@@ -2666,20 +2662,23 @@ export default function WeeklyMenuPage() {
   }, [cleanupPolling]);
   
   // Fetch Pantry
+  // 応答を置くのは最後に始めた読み込みだけ (pantryFetchStream。開いたときの読み込みと取り直しの応答が逆の順に届いても、続けて来た
+  // 取り直しの応答が逆の順に届いても、古い一覧で新しい一覧を戻さない。#2201 U1)。
   // refetchTicket (AI 相談の成功の取り直しの札) があれば、応答を待つあいだに冷蔵庫の書き込み・モーダルが始まっていたら置かない
   // (削除した食材を戻す・足した食材を消すことをしない。#2201 U2)
+  const pantryFetchStream = useAiConsultationFetchStream();
   const fetchPantry = useCallback(async (refetchTicket: AiConsultationFetchTicket | null = null) => {
+    const order = pantryFetchStream.begin(refetchTicket);
     try {
       const res = await fetch('/api/pantry');
       if (res.ok) {
         const data = await res.json();
-        if (refetchTicket?.deferIfHeld()) return;
-        usePantryStore.getState().setFridgeItems(data.items || []);
+        order.place(() => usePantryStore.getState().setFridgeItems(data.items || []));
       }
     } catch (e) {
       console.error("Failed to fetch pantry:", e);
     }
-  }, []);
+  }, [pantryFetchStream]);
   useEffect(() => {
     void fetchPantry();
   }, [fetchPantry]);
@@ -2703,8 +2702,9 @@ export default function WeeklyMenuPage() {
   // モーダル・入力の部品が出ている間は取り直さない (useAiConsultationDataRefetch)
   // 献立・買い物リストの書き込み (楽観的な更新から応答まで。pendingWrites) の間に来た成功は捨てずに、全部終わったあとに 1 回取り直す
   // (#2201 U2)。モーダル・入力の部品で止めた成功も、閉じたあとに 1 回取り直す。
-  // 取り直しの応答を置く場所 (献立と買い物リスト・冷蔵庫・人数の設定・家族・月のカレンダーの印) は、どれも札 (ticket) を受け取り、
-  // 応答を待つあいだに始めた書き込み・開いたモーダルがあれば置かない (ticket.deferIfHeld。置かなかったぶん 1 回取り直す)
+  // 取り直しの応答を置く場所 (献立と買い物リスト・冷蔵庫・人数の設定・家族・月のカレンダーの印) は、どれも札 (ticket) を自分の取得の流れ
+  // (useAiConsultationFetchStream) の begin に渡し、流れの place で置く: 古い応答 (あとに始めた取得がある) を置かず、応答を待つあいだに
+  // 始めた書き込み・開いたモーダルがあれば置かない (札の deferIfHeld。置かなかったぶん 1 回取り直す)
   const refetchAfterAiConsultation = useCallback((ticket: AiConsultationFetchTicket) => {
     weekDataCache.current.clear();
     fetchedRangesRef.current.clear();
