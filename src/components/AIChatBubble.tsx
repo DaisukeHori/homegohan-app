@@ -279,6 +279,45 @@ const ACTION_NOT_EXECUTABLE_RESPONSE_STATUSES: ReadonlySet<number> = new Set([40
 /** 自動実行の結果のメッセージを、AI の応答を確定させてから足すまでの間 (ミリ秒)。応答の表示の直後に重ねず、少し遅らせて出す */
 const AUTO_ACTION_OUTCOME_MESSAGE_DELAY_MS = 300;
 
+/**
+ * チャットを開いてから、続けて押しても開き直さない (二重に開かない) 間 (ミリ秒。#125)。
+ * 開くアニメーション (motion.div の spring: damping 25・stiffness 300) がおおむね落ち着くまでの長さとして #125 で決めた値
+ */
+const CHAT_OPEN_TOGGLE_LOCK_MS = 400;
+
+/**
+ * 部品を外すときに、まだ動いていない予約 (setTimeout) をすべて取り消す予約の関数を返す (#2201)。
+ * 戻り値を持たないまま予約すると、部品が外れたあとに動いて、外れた部品への setState や、外れたあとの mealPlanUpdated の
+ * 発火 (受け手のページが取り直しを走らせる) を起こす。このファイルで送信の待ちの上限 (try/finally で取り消す) 以外の
+ * 予約は、すべてこれで行う。動いた予約は一覧から外す。
+ * 外れたあとに予約しようとしたとき (外す前に始めた送信・開く処理の続きが、外れたあとに終わったとき) は予約しない
+ */
+function useUnmountClearedTimeouts(): (callback: () => void, delayMs: number) => void {
+  const timersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
+  const unmountedRef = useRef(false);
+
+  useEffect(() => {
+    const timers = timersRef.current;
+    // StrictMode の付け直し (外す → 付ける) でも、付けたら予約できる状態に戻す
+    unmountedRef.current = false;
+    return () => {
+      unmountedRef.current = true;
+      timers.forEach((timer) => clearTimeout(timer));
+      timers.clear();
+    };
+  }, []);
+
+  return useCallback((callback: () => void, delayMs: number) => {
+    if (unmountedRef.current) return;
+    const timers = timersRef.current;
+    const timer = setTimeout(() => {
+      timers.delete(timer);
+      callback();
+    }, delayMs);
+    timers.add(timer);
+  }, []);
+}
+
 /** 献立の作成が、同意が無くて止められたときにチャットに出す一文 (T15 / #1154。同意画面は AiConsentRequiredHost が出す) */
 const V4_CONSENT_REQUIRED_CHAT_NOTE =
   'AI へのデータ提供への同意が必要なため、献立は作成しませんでした。同意したあとに、もう一度お試しください。';
@@ -421,16 +460,8 @@ export default function AIChatBubble() {
   const fabPositionRef = useRef<{ x: number; y: number }>({ x: 16, y: 96 });
   // #125: ref ベースの連続クリック防止（state の stale 値に依存しない）
   const isTogglingRef = useRef(false);
-  // 前の依頼の記録が実行中の印のままだったときの、読み直しの予約 (#2201 U3)。部品を外すときに取り消す
-  const previousRequestRecheckTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
-
-  useEffect(() => {
-    const timers = previousRequestRecheckTimersRef.current;
-    return () => {
-      timers.forEach((timer) => clearTimeout(timer));
-      timers.clear();
-    };
-  }, []);
+  // 開閉のフラグの解除・自動実行の結果の一文・前の依頼の読み直し (#2201 U3) の予約。部品を外すときにすべて取り消す (#2201)
+  const scheduleUnmountClearedTimeout = useUnmountClearedTimeouts();
 
   // クライアントサイドでのみレンダリング
   useEffect(() => {
@@ -582,10 +613,10 @@ export default function AIChatBubble() {
       }
     } finally {
       // #125: アニメーション完了まで少し待ってからフラグを解除
-      setTimeout(() => {
+      scheduleUnmountClearedTimeout(() => {
         isTogglingRef.current = false;
         setIsToggling(false);
-      }, 400);
+      }, CHAT_OPEN_TOGGLE_LOCK_MS);
     }
   };
 
@@ -644,7 +675,7 @@ export default function AIChatBubble() {
       result: actionResult.result,
       label: actionLabelOf(actionType),
     });
-    setTimeout(() => {
+    scheduleUnmountClearedTimeout(() => {
       setMessages(prev => [...prev, actionOutcomeChatMessage(outcome)]);
       if (outcome.kind !== 'executed') return;
       window.dispatchEvent(new CustomEvent('mealPlanUpdated', {
@@ -661,9 +692,7 @@ export default function AIChatBubble() {
    * 別の相談に切り替えていても知らせる (データは変わっている)。一文とカードは今の会話に無ければ触らない
    */
   const recheckPreviousRequestLater = (replyId: string) => {
-    const timers = previousRequestRecheckTimersRef.current;
-    const timer = setTimeout(() => {
-      timers.delete(timer);
+    scheduleUnmountClearedTimeout(() => {
       void (async () => {
         const { state, actionType, result } = await readReplyActionStateOf(replyId);
         if (state !== 'executed') return;
@@ -677,7 +706,6 @@ export default function AIChatBubble() {
         window.dispatchEvent(new CustomEvent('mealPlanUpdated', { detail: { actionType, result } }));
       })();
     }, PREVIOUS_REQUEST_RECHECK_DELAY_MS);
-    timers.add(timer);
   };
 
   /**
