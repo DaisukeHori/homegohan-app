@@ -1485,6 +1485,156 @@ describe('/profile: 取り直しの応答を待つあいだに開いた編集の
     server.tableHolds.delete('user_profiles');
     await settle();
     expect(nicknameInput()!.value, '取り直しの応答が打ちかけの名前を上書きした').toBe(TYPED_NICKNAME);
+
+    // 保存せずに閉じると、置かなかった応答のぶん 1 回取り直す: 次に開いた編集は AI 相談で変わった名前 (AI 相談の前の名前のまま
+    // 残すと、あとで保存したときに AI 相談の変更を前の値で戻す)
+    await act(async () => {
+      container.querySelector<HTMLDivElement>('.backdrop-blur-sm')!.click();
+    });
+    await settle();
+    expect(nicknameInput(), '編集のモーダルが閉じない').toBeNull();
+    const reopenBasic = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('基本情報'));
+    if (!reopenBasic) throw new Error('閉じたあとに「基本情報」のボタンが無い');
+    await act(async () => {
+      reopenBasic.click();
+    });
+    expect(nicknameInput()!.value, '閉じたあとに止めた取り直しをしていない').toBe(SELF_NAME_AFTER_AI);
+  });
+});
+
+/** 入力欄に打つ (React の onChange に届くように、値を入れてから input を投げる) */
+function typeInto(input: HTMLInputElement, value: string) {
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+  setValue.call(input, value);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/**
+ * 取り直しでは読み込み中の表示を出さないので、応答を待つあいだも入力欄・記録の欄を開くボタン・完了の切り替えのボタンが出ている
+ * (#2201 U1。以前は読み込み中の表示で画面ごと隠れていた)。その間に打った値・始めた書き込みを、届いた応答 (それより前に読んだ値) で
+ * 上書きしない。置かなかった応答のぶん、番兵・書き込みが外れたら 1 回取り直す
+ */
+describe('取り直しの応答を待つあいだに打った値・始めた書き込みを、届いた応答で上書きしない (#2201 U1 + U2)', () => {
+  it('/profile/nutrition-targets: 栄養目標の再設定に打った目標体重が残る。取得した値に戻したら、止めた取り直しで AI 相談の値を出す', async () => {
+    const TYPED_TARGET_WEIGHT = '61';
+    const TARGET_WEIGHT_AFTER_AI = 58;
+    const PLANNER_READ = 'GET /api/profile';
+    const c = caseOf('/profile/nutrition-targets');
+    setServer(c.full);
+    await mount(c);
+    const targetWeightInput = () => container.querySelector<HTMLInputElement>('input[placeholder="例: 72"]');
+    expect(targetWeightInput()?.value, '再設定の目標体重の入力欄が出ていない').toBe(String(PROFILE_ROW.target_weight));
+
+    // 再設定の取り直し (GET /api/profile) の応答を止め、その間に AI 相談で目標体重が変わる
+    const plannerRead = deferred();
+    server.fetchHolds.set(PLANNER_READ, plannerRead.promise);
+    server.fetchBodies['/api/profile'] = { ...PROFILE_ROW, target_weight: TARGET_WEIGHT_AFTER_AI };
+    server.requests = [];
+    await act(async () => {
+      dispatchAiConsultationSucceeded();
+    });
+    await settle();
+    expect(server.requests, '再設定が取り直していない (検査が空振りしている)').toContain(PLANNER_READ);
+
+    // 応答を待つあいだに目標体重を打つ
+    await act(async () => {
+      typeInto(targetWeightInput()!, TYPED_TARGET_WEIGHT);
+    });
+    plannerRead.resolve();
+    server.fetchHolds.delete(PLANNER_READ);
+    await settle();
+    expect(targetWeightInput()!.value, '取り直しの応答が打ちかけの目標体重を上書きした').toBe(TYPED_TARGET_WEIGHT);
+
+    // 取得した値に戻す (何も変えていない) と、置かなかった応答のぶん 1 回取り直して AI 相談の値を出す
+    await act(async () => {
+      typeInto(targetWeightInput()!, String(PROFILE_ROW.target_weight));
+    });
+    await settle();
+    expect(targetWeightInput()!.value, '取得した値に戻しても止めた取り直しをしていない').toBe(String(TARGET_WEIGHT_AFTER_AI));
+  });
+
+  it('/health: 記録の欄を開いて打った体重が残る。閉じたら、止めた取り直しで AI 相談が書いた今日の記録を出す', async () => {
+    const TYPED_WEIGHT = '63.4';
+    const WEIGHT_AFTER_AI = 64.2;
+    const TODAY_RECORD_READ = `GET /api/health/records/${TODAY}`;
+    const c = caseOf('/health');
+    // 今日の記録が無い (「今日の記録をつける」が出る) 状態で開く
+    setServer({ fetchBodies: { ...c.full.fetchBodies, [`/api/health/records/${TODAY}`]: { record: null, previous: null } } });
+    await mount({ ...c, openPanels: undefined });
+
+    // 取り直しの今日の記録の応答を止め、その間に AI 相談が今日の体重を書く
+    const recordRead = deferred();
+    server.fetchHolds.set(TODAY_RECORD_READ, recordRead.promise);
+    server.fetchBodies[`/api/health/records/${TODAY}`] = { record: HEALTH_RECORD(TODAY, WEIGHT_AFTER_AI), previous: null };
+    server.requests = [];
+    await act(async () => {
+      dispatchAiConsultationSucceeded();
+    });
+    await settle();
+    expect(server.requests, '取り直しが今日の記録を読んでいない (検査が空振りしている)').toContain(TODAY_RECORD_READ);
+
+    // 応答を待つあいだに記録の欄を開いて体重を打つ
+    const openRecord = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('今日の記録をつける'));
+    if (!openRecord) throw new Error('「今日の記録をつける」のボタンが無い (取り直しの応答を待つあいだに隠れた)');
+    await act(async () => {
+      openRecord.click();
+    });
+    const weightInput = () => container.querySelector<HTMLInputElement>('[role="dialog"] input[type="number"]');
+    expect(weightInput(), '記録の欄が開かない').not.toBeNull();
+    await act(async () => {
+      typeInto(weightInput()!, TYPED_WEIGHT);
+    });
+
+    recordRead.resolve();
+    server.fetchHolds.delete(TODAY_RECORD_READ);
+    await settle();
+    expect(weightInput()!.value, '取り直しの応答が打ちかけの体重を上書きした').toBe(TYPED_WEIGHT);
+
+    // 保存せずに閉じる (覆いを押す) と、置かなかった応答のぶん 1 回取り直して AI 相談が書いた記録を出す
+    await act(async () => {
+      weightInput()!.closest<HTMLElement>('[role="dialog"]')!.parentElement!.click();
+    });
+    await settle();
+    expect(weightInput(), '記録の欄が閉じない').toBeNull();
+    expect(container.textContent, '閉じたあとに止めた取り直しをしていない').toContain(String(WEIGHT_AFTER_AI));
+  });
+
+  it('/meals/[id]: 応答を待つあいだに完了を切り替えて書き込みが終わっていても、書き込みの前に読んだ応答で楽観的な表示を戻さず、読み直す', async () => {
+    vi.stubGlobal('alert', vi.fn());
+    const MEAL_READ = `GET /api/meals/${MEAL_ID}`;
+    const c = caseOf('/meals/[id]');
+    setServer(c.full);
+    await mount(c);
+    expect(container.textContent).toContain('完了済み（タップで取り消し）');
+
+    // 取り直しの読み取りを止める (応答は止めた時点の答え = 完了済み。切り替えの前に読んだ値)
+    const refetchRead = deferred();
+    server.holdAll = refetchRead.promise;
+    server.requests = [];
+    await act(async () => {
+      dispatchAiConsultationSucceeded();
+    });
+    await settle();
+    server.holdAll = null;
+    expect(server.requests, '取り直しが食事を読んでいない (検査が空振りしている)').toContain(MEAL_READ);
+
+    // 応答を待つあいだに完了を外し、書き込みが終わる (サーバーも未完了になる)
+    const mealBody = c.full.fetchBodies[`/api/meals/${MEAL_ID}`] as Record<string, unknown>;
+    server.fetchBodies[`/api/meals/${MEAL_ID}`] = { ...mealBody, is_completed: false, completed_at: null };
+    await act(async () => {
+      buttonByText('完了済み（タップで取り消し）').click();
+    });
+    await settle();
+    expect(server.requests, '完了の切り替えを送っていない (検査が空振りしている)').toContain(`PATCH /api/meals/${MEAL_ID}`);
+    expect(container.textContent).toContain('食べた！');
+
+    server.requests = [];
+    refetchRead.resolve();
+    await settle();
+    expect(container.textContent, '切り替えの前に読んだ取り直しの応答が、楽観的な表示を戻した').toContain('食べた！');
+    expect(container.textContent).not.toContain('完了済み（タップで取り消し）');
+    // 置かなかった応答のぶん 1 回読み直す
+    expect(server.requests.filter((r) => r === MEAL_READ), '置かなかった応答のぶん読み直していない').toHaveLength(1);
   });
 });
 

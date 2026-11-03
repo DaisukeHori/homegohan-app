@@ -575,6 +575,211 @@ describe('useAiConsultationDataRefetch の世代番号・失敗・書き込み�
   });
 });
 
+/**
+ * 取り直しの応答を置く時点の番兵 (札の deferIfHeld。#2201 U1 + U2)。
+ * 取り直しでは読み込み中の表示を出さないので、応答を待つあいだも入力欄・モーダルを開くボタン・書き込みのボタンが出ている。
+ * 番兵と書き込みの印を通知の時点にしか見ないと、その間に開いたモーダル・打ち始めた入力・始めた書き込みを、届いた応答
+ * (それより前に読んだ値) で上書きする
+ */
+describe('取り直しの応答を置く時点の番兵・書き込みの印 (札の deferIfHeld。#2201 U1 + U2)', () => {
+  function TicketReceiver({
+    tickets,
+    writeInFlightRef,
+    onControl,
+  }: {
+    tickets: AiConsultationFetchTicket[];
+    writeInFlightRef?: AiConsultationWriteInFlightRef;
+    onControl?: (control: AiConsultationRefetchControl) => void;
+  }) {
+    const control = useAiConsultationDataRefetch((ticket) => tickets.push(ticket), { writeInFlightRef });
+    onControl?.(control);
+    return <p>取り直しの札を受けるページ</p>;
+  }
+
+  it('番兵も書き込みも無ければ置く (false)。取り直しを足さない', async () => {
+    const tickets: AiConsultationFetchTicket[] = [];
+    await act(async () => {
+      root.render(<TicketReceiver tickets={tickets} />);
+    });
+    await notifyAiConsultationSucceeded();
+    expect(tickets).toHaveLength(1);
+    await act(async () => {
+      expect(tickets[0].deferIfHeld()).toBe(false);
+    });
+    expect(tickets).toHaveLength(1);
+  });
+
+  it('応答を待つあいだにモーダルを開いたら置かず (true)、閉じたら 1 回取り直す', async () => {
+    const tickets: AiConsultationFetchTicket[] = [];
+    await act(async () => {
+      root.render(<TicketReceiver tickets={tickets} />);
+    });
+    await notifyAiConsultationSucceeded();
+    expect(tickets).toHaveLength(1);
+
+    const modal = addToBody('<div role="dialog"><input type="number" value="63.4"></div>');
+    await act(async () => {
+      expect(tickets[0].deferIfHeld(), '応答を待つあいだに開いたモーダルがあるのに置く').toBe(true);
+      // 何度見ても、取り直しは閉じたときの 1 回
+      expect(tickets[0].deferIfHeld()).toBe(true);
+    });
+    expect(tickets, 'モーダルが開いているのに取り直した').toHaveLength(1);
+
+    await act(async () => {
+      modal.remove();
+    });
+    expect(tickets, '閉じても止めた取り直しをしない').toHaveLength(2);
+    await act(async () => {
+      expect(tickets[1].deferIfHeld()).toBe(false);
+    });
+    expect(tickets).toHaveLength(2);
+  });
+
+  it('ページが自分で始めた取得の札 (beginFetch) は、番兵が立っていても置く (false)', async () => {
+    const tickets: AiConsultationFetchTicket[] = [];
+    let control: AiConsultationRefetchControl | null = null;
+    await act(async () => {
+      root.render(<TicketReceiver tickets={tickets} onControl={(c) => (control = c)} />);
+    });
+    const pageTicket = control!.beginFetch();
+    addToBody('<div role="dialog"></div>');
+    await act(async () => {
+      expect(pageTicket.deferIfHeld()).toBe(false);
+    });
+    expect(tickets).toHaveLength(0);
+  });
+
+  it('応答を待つあいだに書き込みを始めたら、書き込みの途中は置かず (true)、全部終わったら 1 回取り直す', async () => {
+    const tickets: AiConsultationFetchTicket[] = [];
+    let writes: AiConsultationPendingWrites | null = null;
+    function PendingWritesTicketReceiver() {
+      const pendingWrites = useAiConsultationPendingWrites();
+      writes = pendingWrites;
+      useAiConsultationDataRefetch((ticket) => tickets.push(ticket), { writeInFlightRef: pendingWrites });
+      return <p>楽観的な更新のあるページ</p>;
+    }
+    await act(async () => {
+      root.render(<PendingWritesTicketReceiver />);
+    });
+    await notifyAiConsultationSucceeded();
+    expect(tickets).toHaveLength(1);
+
+    const endWrite = writes!.begin();
+    await act(async () => {
+      expect(tickets[0].deferIfHeld(), '書き込みの途中に届いた応答を置く').toBe(true);
+    });
+    expect(tickets, '書き込みの途中に取り直した').toHaveLength(1);
+    await act(async () => {
+      endWrite();
+    });
+    expect(tickets, '書き込みが終わっても止めた取り直しをしない').toHaveLength(2);
+  });
+
+  it('応答を待つあいだに書き込みを始めて終えていたら、置かず (true)、すぐに 1 回取り直す (書き込みの前に読んだ値を置かない)', async () => {
+    const tickets: AiConsultationFetchTicket[] = [];
+    let writes: AiConsultationPendingWrites | null = null;
+    function PendingWritesTicketReceiver() {
+      const pendingWrites = useAiConsultationPendingWrites();
+      writes = pendingWrites;
+      useAiConsultationDataRefetch((ticket) => tickets.push(ticket), { writeInFlightRef: pendingWrites });
+      return <p>楽観的な更新のあるページ</p>;
+    }
+    await act(async () => {
+      root.render(<PendingWritesTicketReceiver />);
+    });
+    await notifyAiConsultationSucceeded();
+    expect(tickets).toHaveLength(1);
+    const startedBefore = writes!.startedCount;
+
+    await act(async () => {
+      writes!.begin()();
+    });
+    expect(writes!.startedCount).toBe(startedBefore + 1);
+    expect(writes!.current).toBe(false);
+    // 書き込みの間に来た通知は無いので、書き込みが終わっただけでは取り直さない
+    expect(tickets).toHaveLength(1);
+
+    await act(async () => {
+      expect(tickets[0].deferIfHeld(), '書き込みの前に読んだかもしれない応答を置く').toBe(true);
+    });
+    expect(tickets, '置かなかった応答のぶん取り直さない').toHaveLength(2);
+    // 書き込みのあとに始めた取り直しの応答は置く
+    await act(async () => {
+      expect(tickets[1].deferIfHeld()).toBe(false);
+    });
+    expect(tickets).toHaveLength(2);
+  });
+
+  it('書き込みの印が真偽の ref のときは、応答を置く時点で書き込みの途中かだけを見る', async () => {
+    const tickets: AiConsultationFetchTicket[] = [];
+    const writeInFlightRef = { current: false };
+    let control: AiConsultationRefetchControl | null = null;
+    await act(async () => {
+      root.render(<TicketReceiver tickets={tickets} writeInFlightRef={writeInFlightRef} onControl={(c) => (control = c)} />);
+    });
+    await notifyAiConsultationSucceeded();
+    writeInFlightRef.current = true;
+    await act(async () => {
+      expect(tickets[0].deferIfHeld()).toBe(true);
+    });
+    expect(tickets).toHaveLength(1);
+    writeInFlightRef.current = false;
+    await act(async () => {
+      control!.notifyWriteSettled();
+    });
+    expect(tickets).toHaveLength(2);
+  });
+
+  it('ページを離れたあと (アンマウント) に届いた応答では、取り直しを足さない', async () => {
+    const tickets: AiConsultationFetchTicket[] = [];
+    await act(async () => {
+      root.render(<TicketReceiver tickets={tickets} />);
+    });
+    await notifyAiConsultationSucceeded();
+    const modal = addToBody('<div role="dialog"></div>');
+    await act(async () => {
+      root.render(<p>別のページ</p>);
+    });
+    await act(async () => {
+      expect(tickets[0].deferIfHeld()).toBe(true);
+    });
+    await act(async () => {
+      modal.remove();
+    });
+    expect(tickets).toHaveLength(1);
+  });
+
+  it('useAiConsultationRefetchKey: 最後に数を増やした取り直しの札を返す (増やす前は null)', async () => {
+    let state: { refetchKey: number; refetchTicket: () => AiConsultationFetchTicket | null } | null = null;
+    function KeyTicketView() {
+      const keyState = useAiConsultationRefetchKey();
+      state = keyState;
+      return <p data-testid="refetch-key">{keyState.refetchKey}</p>;
+    }
+    await act(async () => {
+      root.render(<KeyTicketView />);
+    });
+    expect(state!.refetchTicket()).toBeNull();
+
+    await notifyAiConsultationSucceeded();
+    expect(state!.refetchKey).toBe(1);
+    const ticket = state!.refetchTicket();
+    expect(ticket).not.toBeNull();
+
+    // 応答を待つあいだにモーダルを開いた: 置かず、閉じたら 1 つ増える
+    const modal = addToBody('<div role="dialog"></div>');
+    await act(async () => {
+      expect(ticket!.deferIfHeld()).toBe(true);
+    });
+    expect(state!.refetchKey).toBe(1);
+    await act(async () => {
+      modal.remove();
+    });
+    expect(state!.refetchKey).toBe(2);
+    expect(state!.refetchTicket()).not.toBe(ticket);
+  });
+});
+
 describe('useAiConsultationRefetchKey (#2195 V1)', () => {
   function KeyView() {
     const { refetchKey } = useAiConsultationRefetchKey();
@@ -1186,7 +1391,7 @@ describe('受け手の配線 (#2195 V1)', () => {
     {
       page: 'マイページ (/profile): 取得の useEffect の依存に数を足す',
       file: 'src/app/(main)/profile/page.tsx',
-      wiring: /const \{ refetchKey: aiConsultationRefetchKey \} = useAiConsultationRefetchKey\(\);[\s\S]*?useEffect\(\(\) => \{[\s\S]*?const getData = async \(\) => \{[\s\S]*?void getData\(\);[\s\S]*?\}, \[aiConsultationRefetchKey, takeAiConsultationRefetchRun\]\);/,
+      wiring: /const \{ refetchKey: aiConsultationRefetchKey, refetchTicket: aiConsultationRefetchTicket \} = useAiConsultationRefetchKey\(\);[\s\S]*?useEffect\(\(\) => \{[\s\S]*?const getData = async \(\) => \{[\s\S]*?void getData\(\);[\s\S]*?\}, \[aiConsultationRefetchKey, takeAiConsultationRefetchRun, aiConsultationRefetchTicket\]\);/,
     },
   ];
   it.each(WIRING)('$page', ({ file, wiring }) => {

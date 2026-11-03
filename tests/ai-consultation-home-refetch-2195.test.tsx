@@ -549,6 +549,78 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
     expect(refetchCalls, '止めた成功のぶん 1 回取り直していない').toBe(1);
     expect(completedText()).toBe('false');
   });
+
+  it('取り直しの応答を待つあいだに始めた完了の切り替えを、切り替えの前に読んだ今日の献立で戻さず、終わったら 1 回取り直す (#2201 U1 + U2)', async () => {
+    /** 完了の切り替えの待ち (useHomeData の toggleMealCompletion の 250ms) より長い待ち */
+    const TOGGLE_DEBOUNCE_WAIT_MS = 300;
+    let refetchCalls = 0;
+    let toggle: ((mealId: string, currentStatus: boolean) => Promise<void>) | null = null;
+    function HomeToggleProbe() {
+      const { todayPlan, toggleMealCompletion, refetch, aiConsultationWrites } = useHomeData();
+      // ホームのページと同じく、hook が渡す札を refetch に渡す
+      useAiConsultationDataRefetch(
+        (ticket) => {
+          refetchCalls += 1;
+          return refetch(ticket);
+        },
+        { writeInFlightRef: aiConsultationWrites },
+      );
+      toggle = toggleMealCompletion;
+      return <p data-testid="today-completed">{String(todayPlan?.meals[0]?.isCompleted)}</p>;
+    }
+    const completedText = () => container.querySelector('[data-testid="today-completed"]')?.textContent;
+    const holdOf = () => {
+      let release: () => void = () => undefined;
+      const promise = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return { promise, release };
+    };
+    useServer(FULL_TABLES, null);
+    await act(async () => {
+      root.render(<HomeToggleProbe />);
+    });
+    await settle();
+    expect(completedText()).toBe('true');
+
+    // 取り直しの表の読み取りを止める (その間はページに今日の献立が出ていて、完了を切り替えられる)
+    const refetchRead = holdOf();
+    supabaseMock.tableHold = refetchRead.promise;
+    await notifyAiConsultationSucceeded();
+    supabaseMock.tableHold = null;
+    expect(refetchCalls).toBe(1);
+
+    // 応答を待つあいだに完了を外す (RPC の応答は止める)
+    const rpc = holdOf();
+    supabaseMock.rpcHold = rpc.promise;
+    let toggling: Promise<void> | null = null;
+    await act(async () => {
+      toggling = toggle!(TODAY_MEAL.id, true);
+      await new Promise((resolve) => setTimeout(resolve, TOGGLE_DEBOUNCE_WAIT_MS));
+    });
+    expect(completedText(), '楽観的な更新をしていない (検査が空振りしている)').toBe('false');
+
+    // 取り直しの応答が届く (今日の献立はまだ完了済みのまま読む)
+    await act(async () => {
+      refetchRead.release();
+    });
+    await settle();
+    expect(completedText(), '切り替えの前に読んだ取り直しの応答が、楽観的な表示を戻した').toBe('false');
+    expect(refetchCalls, '切り替えの途中に取り直した').toBe(1);
+
+    // サーバーが完了を外し終えた: 置かなかった応答のぶん 1 回取り直す
+    supabaseMock.tableResults = {
+      ...supabaseMock.tableResults,
+      user_daily_meals: { data: [{ id: 'day-today', day_date: TODAY, planned_meals: [{ ...TODAY_MEAL, is_completed: false }] }], error: null },
+    };
+    await act(async () => {
+      rpc.release();
+      await toggling;
+    });
+    await settle();
+    expect(refetchCalls, '置かなかった応答のぶん取り直していない').toBe(2);
+    expect(completedText()).toBe('false');
+  });
 });
 
 describe('useHomeData: 開いたときの読み込みの最中に始まった取り直し (#2201 U1)', () => {
