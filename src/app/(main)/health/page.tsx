@@ -155,7 +155,8 @@ export default function HealthDashboardPage() {
         const res = await fetch(`/api/health/records/${date}`);
         if (!res.ok) return;
         const data = await res.json();
-        if (selectedDateRef.current === date) setSelectedDateRecord(data.record ?? null);
+        // 別の日を選び直していたら・あとから別の取り直しを始めていたら置かない (#2201 U1)
+        if (selectedDateRef.current === date && ticket.isLatest()) setSelectedDateRecord(data.record ?? null);
       } catch {
         // 取り直しの失敗では今の表示を残す
       }

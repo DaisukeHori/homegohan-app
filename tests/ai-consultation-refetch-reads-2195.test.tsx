@@ -20,6 +20,13 @@
  * 待つあいだは書き込みを送らない (読み直しの応答があとから届いて、先に済んだ書き込みの結果を古い値で上書きしないため) ことも確かめる。
  * 除外の alwaysBlockedWhileShown のページ (/family/representative-transfer) は、AI が書く値を出している間に番兵が止めることを確かめる。
  *
+ * #2201 U1 + U2 (受け手の共通の hook src/hooks/useAiConsultationDataRefetch.ts の決まり) も受け手ごとに確かめる:
+ *   - 取り直しの失敗 (500・通信の失敗・Supabase の error) では今の表示を残す (以前は「読み込めませんでした」・「見つかりませんでした」・
+ *     「名前未設定」に置き換え、/health は読み込み中のまま止まった)
+ *   - 取り直しの応答を待つあいだも、画面全体を読み込み中の表示に置き換えない
+ *   - 先に始めた取り直しの応答が後から届いても、あとの取り直しの表示を上書きしない (世代番号)
+ *   - 書き込みの間に来た成功は捨てずに、書き込みが終わったら 1 回取り直す
+ *
  * 「空の応答」は、AI が書く表から読む応答を空にしたもの (AI が書かない表の応答は中身のあるままにする)。
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
@@ -47,6 +54,18 @@ const server = vi.hoisted(() => ({
   tableHolds: new Map<string, Promise<void>>(),
   /** 送った fetch ('<メソッド> <道>')。書き込みを送ったかを見る */
   requests: [] as string[],
+  /**
+   * 読み取りを失敗させる (#2201 U1)。'http' は fetch が 500・Supabase の表と getUser が error を返す、'network' は fetch が reject し、
+   * Supabase の表と getUser が error を返す。null は失敗させない
+   */
+  failure: null as null | 'http' | 'network',
+  /** この fetch ('<メソッド> <道>') だけ 500 を返す (#2201 U1。名前の API だけの失敗など) */
+  failedRequests: new Set<string>(),
+  /**
+   * 置いている間に始めた読み取り (fetch と Supabase の表) の応答を、この Promise が解けるまで止める (#2201 U1)。
+   * 応答の中身は読み取りを始めたときのサーバーの答え (止めたあとに答えを変えても、止めた読み取りは前の答えを返す)
+   */
+  holdAll: null as null | Promise<void>,
 }));
 
 const navigation = vi.hoisted(() => ({
@@ -111,14 +130,25 @@ vi.mock('@/lib/supabase/client', () => {
       get: (_target, prop) => {
         if (prop === 'then') {
           return (resolve: (value: unknown) => void) => {
+            const failure = server.failure;
+            const holdAll = server.holdAll;
+            // 止めた読み取りは、始めたときの答えを返す
+            const startedRows = holdAll ? (server.tables[table] ?? []) : null;
             const answer = () => {
-              const rows = server.tables[table] ?? [];
+              if (failure !== null) {
+                resolve({ data: null, error: TABLE_READ_FAILURE, count: null });
+                return;
+              }
+              const rows = startedRows ?? server.tables[table] ?? [];
               const data = single ? (rows[0] ?? null) : rows;
               resolve({ data, error: null, count: rows.length });
             };
             const hold = server.tableHolds.get(table);
-            if (hold) void hold.then(answer);
-            else answer();
+            const afterHoldAll = holdAll ?? Promise.resolve();
+            void afterHoldAll.then(() => {
+              if (hold) void hold.then(answer);
+              else answer();
+            });
           };
         }
         return (...args: unknown[]) => {
@@ -130,9 +160,14 @@ vi.mock('@/lib/supabase/client', () => {
   const channel = { on: () => channel, subscribe: () => channel, unsubscribe: async () => 'ok' };
   // 本物の createClient (ブラウザではシングルトン) と同じく、毎回同じクライアントを返す (client を依存に持つ useCallback が
   // 描画のたびに作り直されて、開いたときの読み込みが繰り返し走らないように)
+  /** 読み取りの失敗 (server.failure) のときに Supabase の表が返す error (行が無い PGRST116 ではない、通信・サーバーの失敗) */
+  const TABLE_READ_FAILURE = { code: '08006', message: 'connection failure', details: null, hint: null };
+  /** 読み取りの失敗 (server.failure) のときに getUser が返す error (ログインが切れたのではない、通信の失敗) */
+  const AUTH_READ_FAILURE = { name: 'AuthRetryableFetchError', message: 'Failed to fetch', status: 0 };
   const client = {
     auth: {
-      getUser: async () => ({ data: { user: USER }, error: null }),
+      getUser: async () =>
+        server.failure !== null ? { data: { user: null }, error: AUTH_READ_FAILURE } : { data: { user: USER }, error: null },
       getSession: async () => ({ data: { session: { user: USER } }, error: null }),
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => undefined } } }),
     },
@@ -175,6 +210,8 @@ const { isAiConsultationRefetchBlocked } = await import('@/lib/ai/consultation-d
 const SETTLE_TASKS = 30;
 const OK_STATUS = 200;
 const NOT_FOUND_STATUS = 404;
+/** 読み取りの失敗 (server.failure = 'http'・failedRequests) のときの status */
+const SERVER_ERROR_STATUS = 500;
 const PATH_WILDCARD = '*';
 /** fetch の init に method が無いときのメソッド */
 const READ_METHOD = 'GET';
@@ -198,11 +235,22 @@ function installServer() {
       const url = new URL(String(input), READ_KEY_ORIGIN);
       const request = `${(init?.method ?? READ_METHOD).toUpperCase()} ${url.pathname}`;
       server.requests.push(request);
+      const failure = server.failure;
+      const failedRequest = server.failedRequests.has(request);
+      const holdAll = server.holdAll;
+      const bodyOf = () => {
+        const exact = server.fetchBodies[`${url.pathname}${url.search}`] ?? server.fetchBodies[url.pathname];
+        const pattern = Object.keys(server.fetchBodies).find((key) => key.includes(PATH_WILDCARD) && pathMatches(key, url.pathname));
+        return exact ?? (pattern === undefined ? undefined : server.fetchBodies[pattern]);
+      };
+      // 止めた読み取りは、始めたときの答えを返す
+      const startedBody = holdAll ? { value: bodyOf() } : null;
+      if (holdAll) await holdAll;
       const hold = server.fetchHolds.get(request);
       if (hold) await hold;
-      const exact = server.fetchBodies[`${url.pathname}${url.search}`] ?? server.fetchBodies[url.pathname];
-      const pattern = Object.keys(server.fetchBodies).find((key) => key.includes(PATH_WILDCARD) && pathMatches(key, url.pathname));
-      const body = exact ?? (pattern === undefined ? undefined : server.fetchBodies[pattern]);
+      if (failure === 'network') throw new TypeError('Failed to fetch');
+      if (failure === 'http' || failedRequest) return Response.json({ error: 'down' }, { status: SERVER_ERROR_STATUS });
+      const body = startedBody ? startedBody.value : bodyOf();
       if (body === undefined) return Response.json({}, { status: NOT_FOUND_STATUS });
       return Response.json(body, { status: OK_STATUS });
     }),
@@ -217,6 +265,9 @@ beforeEach(() => {
   server.fetchHolds = new Map();
   server.tableHolds = new Map();
   server.requests = [];
+  server.failure = null;
+  server.failedRequests = new Set();
+  server.holdAll = null;
   navigation.params = {};
   installServer();
   vi.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -868,7 +919,7 @@ interface WriteGuardCase {
 /**
  * 書き込みと AI 相談の成功の取り直しを重ねない:
  *   1. 書き込みを始めた直後 (ボタンが止まる再描画の前) に AI 相談が成功しても取り直さない
- *   2. 書き込みが済んだあとは取り直す
+ *   2. 書き込みが済んだら、止めた成功のぶん 1 回取り直す (#2201 U2)。そのあとの成功でも取り直す
  *   3. 取り直しを始めた直後 (再描画の前) に押しても書き込みを送らず、取り直しの応答を待つあいだはボタンを止める
  *   4. 取り直しが済んだあとは書き込みを送れる
  */
@@ -891,6 +942,8 @@ async function checkWriteAndRefetchDoNotOverlap(w: WriteGuardCase) {
   write.resolve();
   server.fetchHolds.delete(w.writeRequest);
   await settle();
+  // 書き込みの間に止めた成功は、書き込みが終わったら (新しい成功を待たずに) 1 回取り直す (#2201 U2)
+  expect([...recorder.take()], '書き込みの間に止めた成功を、書き込みが終わっても取り直さない').toContain(w.refetchRead);
 
   await notifyAiConsultationSucceeded();
   expect([...recorder.take()], '書き込みが済んだあとに取り直さない').toContain(w.refetchRead);
@@ -946,7 +999,35 @@ const proposalToSelfCase = (page: string, scope: 'family' | 'organization', scop
   };
 };
 
+/** 自分が大人 (代表でない) で家族に入っている (脱退のボタンを出す) */
+const FAMILY_SELF_ADULT_CASE: PageCase = {
+  ...caseOf('/family/members'),
+  full: {
+    fetchBodies: { [FAMILY_NAMES_API]: familyNamesBody(SELF_NAME) },
+    tables: {
+      ...FAMILY_TABLES,
+      family_members: [
+        familyMemberRow(SELF_MEMBER_ID, SELF_USER_ID, 'adult', null),
+        familyMemberRow(OTHER_MEMBER_ID, OTHER_USER_ID, 'representative', OTHER_MEMBER_NAME),
+      ],
+    },
+  },
+};
+
 const WRITE_GUARDS: WriteGuardCase[] = [
+  {
+    // #2201 U2: 以前は脱退の守りを外す変異が生き残っていた (検査が無かった)
+    name: '/family/members の脱退',
+    page: FAMILY_SELF_ADULT_CASE,
+    writeButton: () => {
+      const button = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('家族グループから脱退'));
+      if (!button) throw new Error('「家族グループから脱退」のボタンが無い');
+      return button;
+    },
+    writeRequest: 'POST /api/family/leave',
+    refetchRead: `GET ${FAMILY_NAMES_API}`,
+    holdRefetch: holdNamesApi,
+  },
   {
     name: '/family/members の除名',
     page: caseOf('/family/members'),
@@ -1049,5 +1130,291 @@ describe('除外の alwaysBlockedWhileShown のページは、AI が書く値を
     await mount(c);
     expect(container.textContent).toContain(SELF_NAME);
     expect(isAiConsultationRefetchBlocked(document)).toBe(false);
+  });
+});
+
+// ─── #2201 U1 + U2 ───────────────────────────────────────────────
+
+describe('取り直しの失敗では今の表示を残す (#2201 U1)', () => {
+  const FAILURES = ['http', 'network'] as const;
+  for (const c of CASES) {
+    for (const failure of FAILURES) {
+      it(`${c.page}: ${failure === 'http' ? '500・Supabase の error' : '通信の失敗 (fetch の reject)'}`, async () => {
+        setServer(c.full);
+        await mount(c);
+        const shown = screenSignature(container);
+
+        server.failure = failure;
+        await notifyAiConsultationSucceeded();
+        expect(screenSignature(container), `${c.page} の取り直しの失敗で、出ていた表示が変わった`).toBe(shown);
+
+        // 失敗のあとも受け手は止まっていない: 次の成功で読み直せる
+        server.failure = null;
+        setServer(c.empty);
+        await notifyAiConsultationSucceeded();
+        await remount(c);
+        const freshEmpty = screenSignature(container);
+        expect(freshEmpty, `${c.page} の空の応答が中身のある応答と同じ画面 (検査が空振りしている)`).not.toBe(shown);
+      });
+    }
+  }
+});
+
+describe('取り直しの応答を待つあいだも、画面全体を読み込み中の表示に置き換えない (#2201 U1)', () => {
+  for (const c of CASES) {
+    it(`${c.page}`, async () => {
+      setServer(c.full);
+      await mount(c);
+      const shown = screenSignature(container);
+
+      const hold = deferred();
+      server.holdAll = hold.promise;
+      await act(async () => {
+        dispatchAiConsultationSucceeded();
+      });
+      await settle();
+      expect(screenSignature(container), `${c.page} の取り直しの応答を待つあいだに表示が変わった (読み込み中の表示に置き換えた)`).toBe(shown);
+
+      server.holdAll = null;
+      hold.resolve();
+      await settle();
+      expect(screenSignature(container)).toBe(shown);
+    });
+  }
+});
+
+describe('先に始めた取り直しの応答が後から届いても、あとの取り直しの表示を上書きしない (#2201 U1)', () => {
+  for (const c of CASES) {
+    it(`${c.page}`, async () => {
+      setServer(c.full);
+      await mount(c);
+      const shown = screenSignature(container);
+
+      // 1 回目の取り直しは空の答え (AI 相談の前の古い答え) を読み、応答が遅れる
+      setServer(c.empty);
+      const slow = deferred();
+      server.holdAll = slow.promise;
+      await act(async () => {
+        dispatchAiConsultationSucceeded();
+      });
+      // 2 回目の取り直しは中身のある答え (新しい答え) を読み、先に届く
+      server.holdAll = null;
+      setServer(c.full);
+      await act(async () => {
+        dispatchAiConsultationSucceeded();
+      });
+      await settle();
+
+      slow.resolve();
+      await settle();
+      expect(screenSignature(container), `${c.page} の古い取り直しの応答が、新しい取り直しの表示を上書きした`).toBe(shown);
+    });
+  }
+});
+
+describe('名前の API だけを読めなかった取り直しは、出ている名前を残す (#2201 U1)', () => {
+  for (const page of ['/family/members', '/family/dashboard', '/family/members/[id]']) {
+    it(`${page}: 「名前未設定」に落とさない`, async () => {
+      const c = caseOf(page);
+      setServer(c.full);
+      await mount(c);
+      expect(container.textContent).toContain(SELF_NAME);
+
+      server.failedRequests.add(`GET ${FAMILY_NAMES_API}`);
+      await notifyAiConsultationSucceeded();
+      expect(server.requests, '名前の API を読み直していない (検査が空振りしている)').toContain(`GET ${FAMILY_NAMES_API}`);
+      expect(container.textContent).toContain(SELF_NAME);
+      expect(container.textContent).not.toContain(NO_NAME);
+    });
+  }
+
+  it('/family/members: 開いたときに名前の API を読めなければ、これまでどおり display_name のまま (「名前未設定」)', async () => {
+    const c = caseOf('/family/members');
+    setServer(c.full);
+    server.failedRequests.add(`GET ${FAMILY_NAMES_API}`);
+    await mount(c);
+    expect(container.textContent).toContain(NO_NAME);
+  });
+});
+
+interface DeferredWriteCase {
+  name: string;
+  page: PageCase;
+  /** 書き込みを始める (ボタンを押す。確認のモーダルがあれば確かめるところまで) */
+  startWrite: () => Promise<void>;
+  /** 書き込みの fetch ('<メソッド> <道>') */
+  writeRequest: string;
+  /** 取り直しが必ず読むもの (読み取りの鍵) */
+  refetchRead: string;
+}
+
+/** aria-label がちょうど label のボタン */
+function buttonByLabel(label: string): HTMLButtonElement {
+  const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+  if (!button) throw new Error(`aria-label が「${label}」のボタンが無い`);
+  return button;
+}
+
+/**
+ * 楽観的な更新 / 書き込みの応答を待つあいだに来た AI 相談の成功では取り直さず (書き込みの前の値を読んだ応答で表示を戻さない)、
+ * 書き込みが終わったら、新しい成功を待たずに 1 回取り直す (#2201 U2)
+ */
+async function checkRefetchDeferredUntilWriteSettles(w: DeferredWriteCase) {
+  vi.stubGlobal('alert', vi.fn());
+  setServer(w.page.full);
+  await mount(w.page);
+
+  const write = deferred();
+  server.fetchHolds.set(w.writeRequest, write.promise);
+  await w.startWrite();
+  await settle();
+  expect(server.requests, '書き込みを送っていない (検査が空振りしている)').toContain(w.writeRequest);
+  recorder.take();
+
+  await notifyAiConsultationSucceeded();
+  await notifyAiConsultationSucceeded();
+  expect([...recorder.take()], '書き込みの応答を待つあいだに取り直した').not.toContain(w.refetchRead);
+
+  server.requests = [];
+  write.resolve();
+  server.fetchHolds.delete(w.writeRequest);
+  await settle();
+  expect([...recorder.take()], '書き込みが終わっても、止めた成功を取り直さない').toContain(w.refetchRead);
+  // 止めている間に 2 回来ても、取り直しは 1 回
+  const refetchRequest = w.refetchRead.split('?')[0];
+  expect(server.requests.filter((r) => r === refetchRequest), '止めた成功の取り直しが 1 回でない').toHaveLength(1);
+}
+
+const DEFERRED_WRITES: DeferredWriteCase[] = [
+  {
+    name: '/pantry の食材の削除',
+    page: caseOf('/pantry'),
+    startWrite: async () => {
+      await act(async () => {
+        buttonByLabel('削除').click();
+      });
+    },
+    writeRequest: 'DELETE /api/pantry/p-1',
+    refetchRead: 'GET /api/pantry',
+  },
+  {
+    name: '/health/goals の目標の削除',
+    page: caseOf('/health/goals'),
+    startWrite: async () => {
+      await act(async () => {
+        buttonByLabel('目標を削除').click();
+      });
+      await act(async () => {
+        buttonByText('削除する').click();
+      });
+    },
+    writeRequest: `DELETE /api/health/goals/${WEIGHT_GOAL.id}`,
+    refetchRead: 'GET /api/health/goals?status=all',
+  },
+  {
+    name: '/meals/[id] の完了の切り替え (楽観的な更新)',
+    page: caseOf('/meals/[id]'),
+    startWrite: async () => {
+      await act(async () => {
+        buttonByText('完了済み（タップで取り消し）').click();
+      });
+    },
+    writeRequest: `PATCH /api/meals/${MEAL_ID}`,
+    refetchRead: `GET /api/meals/${MEAL_ID}`,
+  },
+];
+
+describe('書き込みの間に来た AI 相談の成功は、書き込みが終わったら 1 回取り直す (#2201 U2)', () => {
+  for (const w of DEFERRED_WRITES) {
+    it(w.name, async () => {
+      await checkRefetchDeferredUntilWriteSettles(w);
+    });
+  }
+
+  it('/meals/[id]: 完了の切り替えの応答を待つあいだに成功が来ても、楽観的な表示を書き込みの前の値に戻さない', async () => {
+    const c = caseOf('/meals/[id]');
+    setServer(c.full);
+    await mount(c);
+    const write = deferred();
+    server.fetchHolds.set(`PATCH /api/meals/${MEAL_ID}`, write.promise);
+    await act(async () => {
+      buttonByText('完了済み（タップで取り消し）').click();
+    });
+    expect(container.textContent).toContain('食べた！');
+
+    // 取り直しが書き込みの前の値 (完了済み) を読んでも、楽観的な表示 (未完了) を戻さない
+    await notifyAiConsultationSucceeded();
+    expect(container.textContent).toContain('食べた！');
+    write.resolve();
+    server.fetchHolds.delete(`PATCH /api/meals/${MEAL_ID}`);
+    await settle();
+  });
+});
+
+describe('/profile: 取り直しの応答を待つあいだに開いた編集の入力を、届いた応答で上書きしない (#2201 U1)', () => {
+  it('取り直しの途中で編集を開いて打った名前が残る', async () => {
+    const TYPED_NICKNAME = 'ほり (打ちかけ)';
+    const c = caseOf('/profile');
+    setServer(c.full);
+    await mount(c);
+
+    // 取り直しのプロフィールの応答を止め、その間に AI 相談の名前が届く
+    const profileRead = deferred();
+    server.tableHolds.set('user_profiles', profileRead.promise);
+    await act(async () => {
+      dispatchAiConsultationSucceeded();
+    });
+    await settle();
+    server.tables.user_profiles = [{ ...PROFILE_ROW, nickname: SELF_NAME_AFTER_AI }];
+
+    // 応答を待つあいだに編集を開いて名前を打つ
+    const editBasic = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('基本情報'));
+    if (!editBasic) throw new Error('「基本情報」のボタンが無い');
+    await act(async () => {
+      editBasic.click();
+    });
+    const nicknameInput = () => container.querySelector<HTMLInputElement>('input[placeholder="例: たろう"]');
+    expect(nicknameInput(), '編集のモーダルが開かない').not.toBeNull();
+    await act(async () => {
+      const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+      setValue.call(nicknameInput()!, TYPED_NICKNAME);
+      nicknameInput()!.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+
+    profileRead.resolve();
+    server.tableHolds.delete('user_profiles');
+    await settle();
+    expect(nicknameInput()!.value, '取り直しの応答が打ちかけの名前を上書きした').toBe(TYPED_NICKNAME);
+  });
+});
+
+describe('/health: 日を選び直したら、前に選んだ日の記録をパネルに置かない (#2201 U1)', () => {
+  it('先に選んだ日の応答が後から届いても、あとで選んだ日の記録を出す', async () => {
+    const FIRST_DAY_WEIGHT = 61.5;
+    const SECOND_DAY_WEIGHT = 62.5;
+    const c = caseOf('/health');
+    setServer(c.full);
+    await mount({ ...c, openPanels: undefined });
+    const [firstDay, secondDay] = [...container.querySelectorAll<HTMLButtonElement>('button[aria-pressed="false"]')];
+    if (!firstDay || !secondDay) throw new Error('今日でない日のボタンが 2 つ無い');
+
+    const firstRead = deferred();
+    server.holdAll = firstRead.promise;
+    server.fetchBodies['/api/health/records/*'] = { record: HEALTH_RECORD('2026-01-01', FIRST_DAY_WEIGHT), previous: null };
+    await act(async () => {
+      firstDay.click();
+    });
+    server.holdAll = null;
+    server.fetchBodies['/api/health/records/*'] = { record: HEALTH_RECORD('2026-01-02', SECOND_DAY_WEIGHT), previous: null };
+    await act(async () => {
+      secondDay.click();
+    });
+    await settle();
+    expect(container.textContent).toContain(String(SECOND_DAY_WEIGHT));
+
+    firstRead.resolve();
+    await settle();
+    expect(container.textContent).toContain(String(SECOND_DAY_WEIGHT));
+    expect(container.textContent).not.toContain(String(FIRST_DAY_WEIGHT));
   });
 });
