@@ -380,3 +380,67 @@ describe('レシピの id の形が崩れていて書き込みが 22P02 にな�
     expect(out).not.toHaveProperty('notRetryable');
   });
 });
+
+// ─────────────────────────────────────────────
+// AI が作った値の誤り: 日付の形 (22007)・存在しない日付 (22008)・存在しない行への参照 (23503) (#2206 G2)
+// ─────────────────────────────────────────────
+/** date の列に日付の形でない文字を渡したときの失敗 (PostgreSQL の invalid_datetime_format) */
+const INVALID_DATETIME_FORMAT = { message: 'invalid input syntax for type date: "abc"', code: '22007' };
+/** date の列に存在しない日付を渡したときの失敗 (PostgreSQL の datetime_field_overflow) */
+const DATETIME_FIELD_OVERFLOW = { message: 'date/time field value out of range: "2026-13-45"', code: '22008' };
+/** 存在しない行を指す id を書いたときの失敗 (PostgreSQL の foreign_key_violation) */
+const FOREIGN_KEY_VIOLATION = {
+  message: 'insert or update on table "recipe_likes" violates foreign key constraint "recipe_likes_recipe_id_fkey"',
+  code: '23503',
+};
+
+describe('AI が作った値の誤り (22007・22008・23503) も、22P02 と同じく notRetryable を付ける (#2206 G2)', () => {
+  const AI_VALUE_ERRORS: Array<[string, { message: string; code: string }]> = [
+    ['22007 (日付の形が崩れている)', INVALID_DATETIME_FORMAT],
+    ['22008 (存在しない日付)', DATETIME_FIELD_OVERFLOW],
+    ['23503 (存在しない行を指している)', FOREIGN_KEY_VIOLATION],
+  ];
+
+  it.each(AI_VALUE_ERRORS)('like_recipe: いいねの insert が %s', async (_name, error) => {
+    const { out } = await runRecorded('like_recipe', { recipeId: '33333333-3333-4333-8333-333333333333' }, (query) =>
+      firstMethodOf(query) === 'insert' ? { error } : { data: null },
+    );
+
+    expect(out).toMatchObject({ success: false, notRetryable: true });
+    expect(aiActionLogStatusAfterRun('like_recipe', out)).toBe('failed');
+  });
+
+  it.each(AI_VALUE_ERRORS)('add_recipe_to_collection: 足す関数 (append_recipe_to_collection) が %s', async (_name, error) => {
+    const { out } = await runRecorded('add_recipe_to_collection', { recipeId: '33333333-3333-4333-8333-333333333333' }, (query) => {
+      if (query.table.startsWith('rpc:')) return { error };
+      return query.table === 'recipe_collections' ? { data: { id: 'collection-1' } } : { data: null };
+    });
+
+    expect(out).toMatchObject({ success: false, notRetryable: true });
+    expect(aiActionLogStatusAfterRun('add_recipe_to_collection', out)).toBe('failed');
+  });
+
+  it.each(AI_VALUE_ERRORS)('update_meal: 献立の読み取りが %s', async (_name, error) => {
+    const out = await run('update_meal', { mealId: 'meal-1', updates: { dish_name: '鮭' } }, { planned_meals: { error } });
+
+    expect(out).toMatchObject({ success: false, notRetryable: true });
+    expect(aiActionLogStatusAfterRun('update_meal', out)).toBe('failed');
+  });
+
+  it.each(AI_VALUE_ERRORS)('update_pantry_item: 食材の読み取りが %s', async (_name, error) => {
+    const out = await run('update_pantry_item', { itemId: 'p1', updates: { name: '卵' } }, { pantry_items: { error } });
+
+    expect(out).toMatchObject({ success: false, notRetryable: true });
+    expect(aiActionLogStatusAfterRun('update_pantry_item', out)).toBe('failed');
+  });
+
+  it('一時的なことがある DB の失敗 (23505 の一意の制約・XX000) には付けない (値の誤りの表に無い)', async () => {
+    for (const error of [{ message: 'duplicate key', code: '23505' }, DB_FAILURE]) {
+      const { out } = await runRecorded('like_recipe', { recipeId: '33333333-3333-4333-8333-333333333333' }, (query) =>
+        firstMethodOf(query) === 'insert' ? { error } : { data: null },
+      );
+      expect(out.success).toBe(false);
+      expect(out).not.toHaveProperty('notRetryable');
+    }
+  });
+});
