@@ -61,6 +61,8 @@ const server = vi.hoisted(() => ({
   failure: null as null | 'http' | 'network',
   /** この fetch ('<メソッド> <道>') だけ 500 を返す (#2201 U1。名前の API だけの失敗など) */
   failedRequests: new Set<string>(),
+  /** true なら fetch だけが reject する (Supabase の getUser・表は読める。#2201 U1) */
+  rejectFetches: false,
   /**
    * 置いている間に始めた読み取り (fetch と Supabase の表) の応答を、この Promise が解けるまで止める (#2201 U1)。
    * 応答の中身は読み取りを始めたときのサーバーの答え (止めたあとに答えを変えても、止めた読み取りは前の答えを返す)
@@ -248,7 +250,7 @@ function installServer() {
       if (holdAll) await holdAll;
       const hold = server.fetchHolds.get(request);
       if (hold) await hold;
-      if (failure === 'network') throw new TypeError('Failed to fetch');
+      if (failure === 'network' || server.rejectFetches) throw new TypeError('Failed to fetch');
       if (failure === 'http' || failedRequest) return Response.json({ error: 'down' }, { status: SERVER_ERROR_STATUS });
       const body = startedBody ? startedBody.value : bodyOf();
       if (body === undefined) return Response.json({}, { status: NOT_FOUND_STATUS });
@@ -267,6 +269,7 @@ beforeEach(() => {
   server.requests = [];
   server.failure = null;
   server.failedRequests = new Set();
+  server.rejectFetches = false;
   server.holdAll = null;
   navigation.params = {};
   installServer();
@@ -1418,5 +1421,33 @@ describe('/health: 日を選び直したら、前に選んだ日の記録をパ�
     await settle();
     expect(container.textContent).toContain(String(SECOND_DAY_WEIGHT));
     expect(container.textContent).not.toContain(String(FIRST_DAY_WEIGHT));
+  });
+});
+
+describe('/health: 取り直しの fetch が reject しても、読み込み中のまま止まらず今の表示を残す (#2201 U1)', () => {
+  it('ログインは確かめられ、記録の読み取りの通信だけが失敗する', async () => {
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      const c = caseOf('/health');
+      setServer(c.full);
+      await mount(c);
+      const shown = screenSignature(container);
+
+      server.rejectFetches = true;
+      await notifyAiConsultationSucceeded();
+      expect(screenSignature(container), '取り直しの通信の失敗で表示が変わった (読み込み中のまま止まった)').toBe(shown);
+      expect(unhandled, '取り直しの失敗が未処理の Promise 拒否になった').not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+  });
+
+  it('開いたときに通信が失敗しても、読み込み中のまま止まらない', async () => {
+    const c = caseOf('/health');
+    setServer(c.full);
+    server.rejectFetches = true;
+    await mount({ ...c, openPanels: undefined });
+    expect(container.querySelector('button[aria-pressed]'), '読み込み中のまま止まった (週間カレンダーが出ない)').not.toBeNull();
   });
 });
