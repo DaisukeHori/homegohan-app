@@ -125,7 +125,7 @@ export default function HealthGraphsPage() {
         const goalsData = await goalsRes.json();
         const weightGoal = goalsData.goals?.find((g: any) => g.goal_type === 'weight');
         // 体重の目標が無くなった (削除・達成) ときは線を消す (取り直しで前の目標の線を残さない。#2195 V1)
-        if (weightGoal) setTargetWeight(weightGoal.target_value);
+        setTargetWeight(weightGoal ? weightGoal.target_value : null);
       }
     } catch (error) {
       console.error('Failed to fetch data:', error);

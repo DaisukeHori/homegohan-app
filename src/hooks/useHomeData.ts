@@ -1065,6 +1065,6 @@ export const useHomeData = () => {
     executeNutritionSuggestion,
     submitPerformanceCheckin,
     // 取り直し (AI 相談の成功のあと)。読み込み直したときと同じ表示にする (今日のアドバイスの帯も置き換える。#2195 V1)
-    refetch: () => fetchHomeData({ replaceAdviceBanner: false }),
+    refetch: () => fetchHomeData({ replaceAdviceBanner: true }),
   };
 };
