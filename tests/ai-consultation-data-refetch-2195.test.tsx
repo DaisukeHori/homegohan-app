@@ -873,9 +873,9 @@ describe('受け手の配線 (#2195 V1)', () => {
       wiring: /useAiConsultationDataRefetch\(fetchItems\);/,
     },
     {
-      page: '健康 (/health): fetchData',
+      page: '健康 (/health): fetchData と、出している選んだ日のパネルの記録',
       file: 'src/app/(main)/health/page.tsx',
-      wiring: /useAiConsultationDataRefetch\(fetchData\);/,
+      wiring: /await Promise\.all\(\[fetchData\(\), reloadSelectedDate\(\)\]\);\s*\}, \[fetchData\]\);[\s\S]*?useAiConsultationDataRefetch\(refetchAfterAiConsultation\);/,
     },
     {
       page: '健康目標 (/health/goals): fetchGoals',
