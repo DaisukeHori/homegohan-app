@@ -10,7 +10,11 @@ import { MEAL_LABELS, isMealType, parseLocalDate } from "@homegohan/shared";
 // 区分ごとの色は Web の区分の見た目の表から引く (#1665)
 import { MEAL_TYPE_RECORD_THEME } from "@/lib/meal-type-visuals";
 import { motion, AnimatePresence } from "framer-motion";
-import { useAiConsultationRefetchKey } from "@/hooks/useAiConsultationDataRefetch";
+import {
+  useAiConsultationPendingWrites,
+  useAiConsultationRefetchKey,
+  useAiConsultationRefetchRun,
+} from "@/hooks/useAiConsultationDataRefetch";
 import { 
   ChefHat, Store, UtensilsCrossed, Zap, FastForward,
   Check, Flame, Clock, Users, ChevronLeft, MoreVertical,
@@ -93,6 +97,16 @@ interface PlannedMealDetail {
   catalogProduct: CatalogProductSummary | null;
 }
 
+/** 食事が無い (GET /api/meals/<id> の 404。AI 相談で消された食事を含む) ときの応答の status */
+const MEAL_NOT_FOUND_STATUS = 404;
+
+/** 食事が無かった (MEAL_NOT_FOUND_STATUS) ことを表す (取り直しでも「見つかりませんでした」にする。ほかの失敗と分ける) */
+class MealNotFoundError extends Error {
+  constructor() {
+    super('食事データの取得に失敗しました');
+  }
+}
+
 export default function MealDetailPage(props: { params: Promise<{ id: string }> }) {
   const params = use(props.params);
   const router = useRouter();
@@ -104,14 +118,22 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
   const [servingsConfig, setServingsConfig] = useState<ServingsConfig | null>(null);
   // AI 相談の提案の実行 (食事の変更・完了・削除など) でこの食事が変わったら、下の取得をもう一度走らせる (#2195 V1)。
   // 削除の確認のモーダル (role="dialog") が出ている間は増えない
-  const aiConsultationRefetchKey = useAiConsultationRefetchKey();
+  // 完了の切り替えの楽観的な更新から送信の応答まで (#2201 U2)。この間に来た AI 相談の成功では取り直さず、終わったら 1 回取り直す
+  // (切り替えの前の値を読んだ取り直しの応答が、楽観的な表示を戻さないため)
+  const pendingWrites = useAiConsultationPendingWrites();
+  const { refetchKey: aiConsultationRefetchKey, notifyWriteSettled } = useAiConsultationRefetchKey({ writeInFlightRef: pendingWrites });
+  // 食事の取得の回が AI 相談の成功の取り直しで走ったか (#2201 U1)
+  const takeMealRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey);
 
   useEffect(() => {
+    // 前の回の応答が後から届いても置かない (#2201 U1)。失敗では今の値のまま (これまでどおり)
+    let cancelled = false;
     const fetchServings = async () => {
       try {
         const res = await fetch('/api/profile', { cache: 'no-store' });
         if (res.ok) {
           const data = await res.json();
+          if (cancelled) return;
           // 人数の設定が無いときも置く (取り直しで前の人数を残さない。読み込み直したときと同じ。#2195 V1)
           setServingsConfig((data?.servings_config as ServingsConfig | null | undefined) ?? null);
         }
@@ -120,16 +142,29 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
       }
     };
     void fetchServings();
+    return () => {
+      cancelled = true;
+    };
     // AI 相談の提案の実行のあとも読み直す (プロフィールの取り直し。下の食事の取得と同じ数で走らせる。#2195 V1)
   }, [aiConsultationRefetchKey]);
 
   useEffect(() => {
+    // 前の回 (開いたとき・前の取り直し・前の食事) の応答が後から届いても置かない (#2201 U1)
+    let cancelled = false;
+    // 取り直しでは読み込み中の表示 (画面全体のスピナー) を出さず、失敗 (通信の失敗・404 以外の非 2xx) では今の表示を残す (#2201 U1)。
+    // 404 は食事が無い (AI 相談で消された) ので、読み込み直したときと同じく「見つかりませんでした」にする
+    const isRefetch = takeMealRefetchRun();
     const fetchData = async () => {
-      setLoading(true);
+      if (!isRefetch) setLoading(true);
 
       try {
         const response = await fetch(`/api/meals/${params.id}`, { cache: 'no-store' });
         if (!response.ok) {
+          if (response.status === MEAL_NOT_FOUND_STATUS) throw new MealNotFoundError();
+          if (isRefetch) {
+            if (!cancelled) console.warn('[meals] refetch failed:', response.status);
+            return;
+          }
           throw new Error('食事データの取得に失敗しました');
         }
 
@@ -174,21 +209,29 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
           }
         }
 
+        if (cancelled) return;
         setMeal(mappedMeal);
       } catch (error) {
         console.error("Error fetching meal:", error);
+        if (cancelled) return;
+        // 取り直しの通信の失敗は今の表示を残す (404 は MealNotFoundError で来て、ここで「見つかりませんでした」にする)
+        if (isRefetch && !(error instanceof MealNotFoundError)) return;
         setMeal(null);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
     void fetchData();
-  }, [params.id, aiConsultationRefetchKey]);
+    return () => {
+      cancelled = true;
+    };
+  }, [params.id, aiConsultationRefetchKey, takeMealRefetchRun]);
 
   const toggleCompletion = async () => {
     if (!meal) return;
     const newStatus = !meal.isCompleted;
+    const endWrite = pendingWrites.begin();
     setMeal({ ...meal, isCompleted: newStatus, completedAt: newStatus ? new Date().toISOString() : null });
     try {
       const response = await fetch(`/api/meals/${meal.id}`, {
@@ -206,6 +249,9 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
     } catch (error) {
       setMeal({ ...meal, isCompleted: !newStatus, completedAt: meal.completedAt });
       alert("更新に失敗しました");
+    } finally {
+      endWrite();
+      notifyWriteSettled();
     }
   };
 

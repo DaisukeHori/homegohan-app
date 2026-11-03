@@ -5,9 +5,13 @@ import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { loginPathWithNext, readSignedInUser } from '@/lib/auth/signed-in-user';
-import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership/family-member-names';
+import {
+  applyFamilyMemberNames,
+  fetchFamilyMemberNamesResult,
+  keepShownFamilyMemberNames,
+} from '@/lib/membership/family-member-names';
 import { familyRoleLabel } from '@/lib/membership/role-labels';
-import { useAiConsultationDataRefetch } from '@/hooks/useAiConsultationDataRefetch';
+import { useAiConsultationDataRefetch, type AiConsultationFetchTicket } from '@/hooks/useAiConsultationDataRefetch';
 
 /**
  * 自分のプロフィールを読み込めなかった・問い合わせが例外を投げたときの文 (#2073 S3)。家族に入っていない (家族の作成の画面へ移す) と
@@ -46,6 +50,9 @@ interface FamilyGroup {
   status: string;
 }
 
+/** 開いたとき・「再試行」の読み込み (失敗は「読み込めませんでした」) か、AI 相談の成功の取り直し (失敗では今の表示を残す) か */
+type FamilyReadMode = 'mount' | 'refetch';
+
 export default function FamilyDashboardPage() {
   const router = useRouter();
   const supabase = createClient();
@@ -60,17 +67,22 @@ export default function FamilyDashboardPage() {
 
   // 家族グループとメンバーを読む。画面を開いたとき・「再試行」・AI 相談の成功 (#2195 V1) のあとに呼ぶ。
   // 読み込み中の表示 (loading) は呼び出し側が決める (AI 相談の成功のあとは、画面を残したまま読み直す)。
-  // 戻り値は、別の画面へ移ったか (移るときは、移るまで読み込み中の表示のままにする。これまでどおり)
-  const readDashboard = useCallback(async (): Promise<{ redirecting: boolean }> => {
+  // 戻り値は、別の画面へ移ったか (移るときは、移るまで読み込み中の表示のままにする。これまでどおり)。
+  // mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込めなかったとき (エラー・通信の失敗) は「読み込めませんでした」に
+  // 置き換えずに今の表示を残し、名前の API を読めなかったときは今出している名前を残す。
+  // 応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ (開いたときの読み込みと取り直しが 2 本並んでも、古い応答で上書きしない)
+  const readDashboard = useCallback(async (ticket: AiConsultationFetchTicket, mode: FamilyReadMode): Promise<{ redirecting: boolean }> => {
+    /** 読み込めなかった: 開いたとき・「再試行」は「読み込めませんでした」を出し、取り直しは今の表示を残す */
+    const loadFailed = (): { redirecting: boolean } => {
+      if (mode === 'mount' && ticket.isLatest()) setLoadError(FAMILY_DASHBOARD_LOAD_ERROR);
+      return { redirecting: false };
+    };
     try {
       // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
       // 確かめられなかったときは読み込みの失敗と「再試行」を出す (#2093 W4。以前は通信が切れているだけでもログインの画面へ移していた)。
       // ログインのあとにこの画面へ戻れるよう next を付ける
       const signedIn = await readSignedInUser(supabase);
-      if (signedIn.kind === 'load-failed') {
-        setLoadError(FAMILY_DASHBOARD_LOAD_ERROR);
-        return { redirecting: false };
-      }
+      if (signedIn.kind === 'load-failed') return loadFailed();
       if (signedIn.kind === 'signed-out') {
         router.push(loginPathWithNext(FAMILY_DASHBOARD_PATH));
         return { redirecting: true };
@@ -86,8 +98,7 @@ export default function FamilyDashboardPage() {
 
       if (profileError) {
         // 自分のプロフィールを読めなかった (家族に入っていないのとは別。家族の作成の画面へ送らない)
-        setLoadError(FAMILY_DASHBOARD_LOAD_ERROR);
-        return { redirecting: false };
+        return loadFailed();
       }
       if (!profile?.family_id) {
         // 家族グループ未参加 → setup へ
@@ -104,9 +115,9 @@ export default function FamilyDashboardPage() {
 
       if (isLoadFailure(groupError)) {
         // 読み込めなかった (行が無いのとは別。「再試行」を出す。#2080 U3)
-        setLoadError(FAMILY_DASHBOARD_LOAD_ERROR);
-        return { redirecting: false };
+        return loadFailed();
       }
+      if (!ticket.isLatest()) return { redirecting: false };
       if (!group) {
         // 行が無い (PGRST116) か、RLS で見えない (これまでどおり)
         setError(FAMILY_GROUP_NOT_FOUND_MESSAGE);
@@ -123,40 +134,51 @@ export default function FamilyDashboardPage() {
 
       if (membersError) {
         // 読み込めなかった (メンバーがいないのとは別。家族グループの名前だけの画面・空の一覧と見せず、「再試行」を出す。#2080 U3)
-        setLoadError(FAMILY_DASHBOARD_LOAD_ERROR);
-        return { redirecting: false };
+        return loadFailed();
       }
 
       // 画面に出す名前 (display_name が無ければ本人のプロフィールの今の名前) は API で決める (#1584)
-      const names = await fetchFamilyMemberNames();
+      const namesResult = await fetchFamilyMemberNamesResult();
+      if (!ticket.isLatest()) return { redirecting: false };
+      const rows = (membersData ?? []) as FamilyMember[];
       // 全部読めてから出す
       setFamilyGroup(group as FamilyGroup);
-      setMembers(applyFamilyMemberNames((membersData ?? []) as FamilyMember[], names));
+      setMembers((shown) =>
+        applyFamilyMemberNames(
+          rows,
+          // 取り直しで名前の API を読めなかった: 今出している名前を残す (#2201 U1。「名前未設定」に落とさない)
+          namesResult.ok ? namesResult.names : mode === 'refetch' ? keepShownFamilyMemberNames(rows, shown) : new Map(),
+        ),
+      );
       setError(null);
       setLoadError(null);
       return { redirecting: false };
     } catch (loadFailure) {
       console.error('[family/dashboard] load error:', loadFailure);
-      setLoadError(FAMILY_DASHBOARD_LOAD_ERROR);
-      return { redirecting: false };
+      return loadFailed();
     }
   }, [supabase, router]);
 
+  // AI 相談の提案の実行が成功したら (#2195 V1)、読み込み中の表示を出さずに読み直す。メンバーの名前は、display_name の無いメンバー
+  // (自分を含む) に名前の API がプロフィールの今の名前 (user_profiles.nickname) を当てたもので、AI 相談の update_profile_preferences は
+  // 自分の nickname を書く。家族を抜けていた・ログアウトしていたときは、開いたときと同じ扱い (readDashboard が決める。
+  // この画面に書き込みの操作は無い)。読み直しの失敗では「読み込めませんでした」に置き換えずに今の表示を残す (#2201 U1)
+  const { beginFetch } = useAiConsultationDataRefetch(async (ticket) => {
+    const { redirecting } = await readDashboard(ticket, 'refetch');
+    // 開いたときの読み込みの途中に取り直しが始まった (開いたときの応答は置かない) ときは、取り直しの側が読み込み中の表示を下ろす
+    if (!redirecting && ticket.isLatest()) setLoading(false);
+  });
+
   const loadDashboard = useCallback(async () => {
     setLoading(true);
-    const { redirecting } = await readDashboard();
-    if (!redirecting) setLoading(false);
-  }, [readDashboard]);
+    const ticket = beginFetch();
+    const { redirecting } = await readDashboard(ticket, 'mount');
+    if (!redirecting && ticket.isLatest()) setLoading(false);
+  }, [readDashboard, beginFetch]);
 
   useEffect(() => {
     void loadDashboard();
   }, [loadDashboard]);
-
-  // AI 相談の提案の実行が成功したら (#2195 V1)、読み込み中の表示を出さずに読み直す。メンバーの名前は、display_name の無いメンバー
-  // (自分を含む) に名前の API がプロフィールの今の名前 (user_profiles.nickname) を当てたもので、AI 相談の update_profile_preferences は
-  // 自分の nickname を書く。読み直しの失敗・家族を抜けていた・ログアウトしていたときは、開いたときと同じ扱い (readDashboard が決める。
-  // この画面に書き込みの操作は無い)
-  useAiConsultationDataRefetch(readDashboard);
 
   const roleIcon = (role: string) => {
     if (role === 'representative') return '👑';
