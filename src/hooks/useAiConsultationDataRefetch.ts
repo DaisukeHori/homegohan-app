@@ -475,7 +475,10 @@ export interface AiConsultationPendingWrites extends AiConsultationWriteInFlight
 
 /**
  * 書き込みが重なりうるページ (一覧の行ごとの削除・チェックなど) の書き込みの印 (#2201 U2)。
- * useAiConsultationDataRefetch の writeInFlightRef に渡す。current は始めて終わっていない書き込みが 1 つでもある間 true
+ * useAiConsultationDataRefetch の writeInFlightRef に渡す。取り直しが置く値を書き込みの前に置く (楽観的な更新) 書き込みは、全部
+ * begin から終わり (finally) までで囲む (囲まない書き込みの間に来た取り直しは、書き込みの前の値を読んで楽観的な表示を戻す。
+ * tests/ai-consultation-refetch-placement-guard-2201.test.ts の規則 7 がソースで数える)。
+ * current は始めて終わっていない書き込みが 1 つでもある間 true
  * (真偽の ref 1 つだと、先に終わった書き込みが後の書き込みの途中で印を下ろしてしまう)。
  * 最後の書き込みが終わったら、登録した関数 (useAiConsultationDataRefetch が登録する) を呼ぶ: 書き込みの間に止めた通知を 1 回取り直す
  * (ページは notifyWriteSettled を呼ばなくてよい)。

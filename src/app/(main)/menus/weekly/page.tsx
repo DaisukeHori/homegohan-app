@@ -2219,8 +2219,8 @@ export default function WeeklyMenuPage() {
       // キャッシュをチェック
       const cached = weekDataCache.current.get(targetDateStr);
       if (cached && (now - cached.fetchedAt < CACHE_TTL)) {
-        // キャッシュヒット - 即座に反映 (いま始めた取得なので、この週で置いたどの応答よりも新しい。キャッシュは、この週の最後に
-        // 始めた読み取りの応答: あとから読み始めた読み取りがあれば、書き込み口を取ったときにキャッシュを捨てている。createWeekDataCache)
+        // キャッシュヒット - 即座に反映 (いま始めた取得なので、この週で置いたどの応答よりも新しい。キャッシュは、この週で最後に
+        // 書き込み口を取った読み取り・書き込みのもの: あとから書き込み口を取ったら、そのときにキャッシュを捨てている。createWeekDataCache)
         order.place(() => {
           setCurrentPlan(cached.plan);
           if (cached.shoppingList.length > 0) setShoppingList(cached.shoppingList);

@@ -850,8 +850,8 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
       updateActivity = null;
     });
 
-    async function renderWithSavedFeeling() {
-      useServer({ ...FULL_TABLES, daily_activity_logs: activityLogTable(SAVED_FEELING) }, null);
+    /** 気分・活動量を保存済みのサーバー (useServer で置いたもの) で描画する */
+    async function renderActivityProbe() {
       await act(async () => {
         root.render(<HomeActivityProbe />);
       });
@@ -885,7 +885,8 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
     }
 
     it('保存の応答を待つあいだに来た成功では取り直さず (押した値を保存の前の値に戻さない)、終わったら 1 回取り直す', async () => {
-      await renderWithSavedFeeling();
+      useServer({ ...FULL_TABLES, daily_activity_logs: activityLogTable(SAVED_FEELING) }, null);
+      await renderActivityProbe();
       const upsert = holdOf();
       const pressed = await pressFeelingHoldingUpsert(upsert);
 
@@ -901,7 +902,8 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
     });
 
     it('取り直しの応答を待つあいだに押した (保存の前の値を読んだ応答) ときは、その応答の値を置かず、保存が終わったら 1 回取り直す', async () => {
-      await renderWithSavedFeeling();
+      useServer({ ...FULL_TABLES, daily_activity_logs: activityLogTable(SAVED_FEELING) }, null);
+      await renderActivityProbe();
 
       // 取り直しの表の読み取りを止める (その間はページに気分・活動量のボタンが出ていて、押せる)
       const refetchRead = holdOf();
