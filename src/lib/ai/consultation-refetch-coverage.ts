@@ -167,10 +167,11 @@ export const AI_CONSULTATION_EDGE_FUNCTION_ENTRY = (name: string): string => `su
 /**
  * 表を読むときに、AI 相談が書く列だけを数える表 (ここに無い表は、どの列を読んでも数える)。
  * user_profiles: AI 相談が書くのは update_profile_preferences の許す欄 (AI_PROFILE_PREFERENCE_FIELD_NAMES) と、
- * add_health_record の体重 (weight) だけ
+ * add_health_record の体重 (weight) と、その 2 つのあとに書いた後の行から計算し直すプロフィールの完成度 (profile_completeness。
+ * src/lib/profile-completeness.ts の refreshProfileCompleteness。#2201 U4) だけ
  */
 export const AI_CONSULTATION_WRITTEN_COLUMNS: Readonly<Partial<Record<AiConsultationWrittenTable, readonly string[]>>> = {
-  user_profiles: [...new Set([...AI_PROFILE_PREFERENCE_FIELD_NAMES.keys(), 'weight'])].sort(),
+  user_profiles: [...new Set([...AI_PROFILE_PREFERENCE_FIELD_NAMES.keys(), 'weight', 'profile_completeness'])].sort(),
 };
 
 /**
