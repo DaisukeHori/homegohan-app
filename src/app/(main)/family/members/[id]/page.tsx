@@ -201,10 +201,12 @@ export default function FamilyMemberDetailPage() {
       const namesResult = await fetchFamilyMemberNamesResult();
 
       // #1173: 子供なら保護者の同意の記録 (最新の 1 行) を読む。読めなければカードを出さない
-      // (子供でないときの consent は描かない。カードは member.role === 'child' のときだけ出す)
+      // (子供でないときの consent は描かない。カードは member.role === 'child' のときだけ出す)。
+      // ただし取り直しで読めなかったときは、今出しているカードを残す (#2201 U1。失敗を「同意の行が無い」と同じに扱って消さない)
       let consentRecord: ParentalConsentRecord | null = null;
+      let keepShownConsent = false;
       if (memberData.role === 'child') {
-        const { data: consentData } = await orderListBy(
+        const { data: consentData, error: consentError } = await orderListBy(
           supabase
             .from('parental_consents')
             .select('id, signed_name, consent_version, signed_at, revoked_at, revoked_reason')
@@ -214,6 +216,7 @@ export default function FamilyMemberDetailPage() {
           .limit(1)
           .maybeSingle();
         consentRecord = (consentData as ParentalConsentRecord | null) ?? null;
+        keepShownConsent = mode === 'refetch' && Boolean(consentError);
       }
 
       // 現在ユーザーのロールを、自分の active な行から取得する (#2080 U2。脱退・除名した行は消えずに status が left / removed で残り、
@@ -244,7 +247,7 @@ export default function FamilyMemberDetailPage() {
       setShareMeals(memberData.share_meals);
       setShareHealth(memberData.share_health);
       setShareMenu(memberData.share_menu);
-      if (memberData.role === 'child') setConsent(consentRecord);
+      if (memberData.role === 'child' && !keepShownConsent) setConsent(consentRecord);
       setCurrentRole(myMember?.role ?? null);
       setError(null);
       setLoadError(null);

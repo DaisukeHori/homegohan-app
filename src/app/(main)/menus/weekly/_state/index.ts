@@ -9,7 +9,7 @@ export { useServingsConfigStore } from './servingsConfigStore';
 export type { LegacyDishDetail } from './types';
 
 // Refactor B Phase B-2: useReducer 群
-export { weekViewReducer, initialWeekViewState } from './reducers/weekViewReducer';
+export { weekViewReducer, initialWeekViewState, plannedMealFieldsOf } from './reducers/weekViewReducer';
 export type { WeekViewState, WeekViewAction } from './reducers/weekViewReducer';
 
 export { modalReducer, initialModalState } from './reducers/modalReducer';

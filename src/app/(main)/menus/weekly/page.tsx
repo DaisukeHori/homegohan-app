@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo, useReducer } from "react";
 import {
-  weekViewReducer, initialWeekViewState,
+  weekViewReducer, initialWeekViewState, plannedMealFieldsOf,
   modalReducer, initialModalState,
   aiGenerationReducer, initialAiGenerationState, photoAnalyzeStateForSession, useAiConsentGenerationFailure,
   nutritionReducer, initialNutritionState,
@@ -521,6 +521,12 @@ export default function WeeklyMenuPage() {
   // 関数形で呼んでいる箇所は無い (使用箇所ごとに展開済み)
   const setCurrentPlan = useCallback((plan: WeekPlan | null) => {
     dispatchWeekView({ type: 'PLAN_SET', payload: plan });
+  }, []);
+  // 今の献立の 1 つの食事にだけ updates を当てる (楽観的な更新と、その巻き戻し。#2201 U2)。描画の時点の献立の写しから週全体を
+  // 作り直して setCurrentPlan で置くと、その描画のあとに置いた献立 (完了の切り替えの待ちの間に届いた AI 相談の成功の取り直しの応答など)
+  // を写しの古い献立で戻してしまう
+  const updatePlanMeal = useCallback((dayId: string, mealId: string, updates: Partial<PlannedMeal>) => {
+    dispatchWeekView({ type: 'PLAN_MEAL_UPDATE', payload: { dayId, mealId, updates } });
   }, []);
 
   const weekStart = weekView.weekStart;
@@ -3016,14 +3022,11 @@ export default function WeeklyMenuPage() {
   
   const handleUpdateMeal = async (dayId: string, mealId: string | null, updates: Partial<PlannedMeal>) => {
     if (!currentPlan || !mealId) return;
-    // 楽観的UI更新（失敗時にロールバックするため元の状態を保持）
-    const previousPlan = currentPlan;
-    const updatedDays = currentPlan.days?.map(day => {
-      if (day.id !== dayId) return day;
-      return { ...day, meals: day.meals?.map(meal => meal.id === mealId ? { ...meal, ...updates } : meal) };
-    });
+    // 楽観的UI更新（失敗時にロールバックするため、変える項目の元の値を保持）。今の献立のこの食事にだけ当てる (#2201 U2。
+    // 完了の切り替えは 250ms 待ってからここに来るので、その間に置いた取り直しの応答を、この描画の献立の写しで戻さない)
+    const previousMeal = currentPlan.days?.find(day => day.id === dayId)?.meals?.find(meal => meal.id === mealId);
     const endWrite = pendingWrites.begin();
-    setCurrentPlan({ ...currentPlan, days: updatedDays });
+    updatePlanMeal(dayId, mealId, updates);
     try {
       const res = await fetch(`/api/meal-plans/meals/${mealId}`, {
         method: 'PATCH',
@@ -3033,8 +3036,8 @@ export default function WeeklyMenuPage() {
       if (!res.ok) throw new Error('Update failed');
     } catch (e) {
       console.error('Failed to update meal:', e);
-      // 失敗したら元に戻す
-      setCurrentPlan(previousPlan);
+      // 失敗したら、この食事の変えた項目だけを元に戻す (書き込みの間に置いたほかの値は戻さない)
+      if (previousMeal) updatePlanMeal(dayId, mealId, plannedMealFieldsOf(previousMeal, updates));
       alert('更新に失敗しました');
     } finally {
       endWrite();
@@ -4340,18 +4343,13 @@ export default function WeeklyMenuPage() {
     const { editMealName, editMealMode } = useFormDraftStore.getState();
     const editingMealId = editingMeal.id;
 
-    // 楽観的UI更新（失敗時にロールバックするため元の状態を保持）
-    const previousPlan = currentPlan;
-    const updatedDays = currentPlan.days?.map(day => ({
-      ...day,
-      meals: day.meals?.map(m =>
-        m.id === editingMealId
-          ? { ...m, dishName: editMealName, mode: editMealMode }
-          : m
-      )
-    }));
+    // 楽観的UI更新（失敗時にロールバックするため、変える項目の元の値を保持）。今の献立のこの食事にだけ当てる (#2201 U2。
+    // 巻き戻しも、この食事の変えた項目だけ。週全体を前の写しで置き直すと、書き込みの間に置いたほかの値まで戻す)
+    const updates: Partial<PlannedMeal> = { dishName: editMealName, mode: editMealMode };
+    const editingDay = currentPlan.days?.find(day => day.meals?.some(m => m.id === editingMealId));
+    const previousMeal = editingDay?.meals?.find(m => m.id === editingMealId);
     const endWrite = pendingWrites.begin();
-    setCurrentPlan({ ...currentPlan, days: updatedDays });
+    if (editingDay) updatePlanMeal(editingDay.id, editingMealId, updates);
     setActiveModal(null);
     setEditingMeal(null);
 
@@ -4366,8 +4364,8 @@ export default function WeeklyMenuPage() {
       });
       if (!res.ok) throw new Error('Update failed');
     } catch (e) {
-      // 失敗したら元に戻す
-      setCurrentPlan(previousPlan);
+      // 失敗したら、この食事の変えた項目だけを元に戻す
+      if (editingDay && previousMeal) updatePlanMeal(editingDay.id, editingMealId, plannedMealFieldsOf(previousMeal, updates));
       alert('更新に失敗しました');
     } finally {
       endWrite();
