@@ -112,16 +112,16 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
         const res = await fetch('/api/profile', { cache: 'no-store' });
         if (res.ok) {
           const data = await res.json();
-          // 人数の設定が無いときも置く (取り直しで前の人数を残さない。読み込み直したときと同じ。#2195 V1)
-          setServingsConfig((data?.servings_config as ServingsConfig | null | undefined) ?? null);
+          if (data?.servings_config) {
+            setServingsConfig(data.servings_config as ServingsConfig);
+          }
         }
       } catch (e) {
         console.warn('Failed to fetch servings config:', e);
       }
     };
     void fetchServings();
-    // AI 相談の提案の実行のあとも読み直す (プロフィールの取り直し。下の食事の取得と同じ数で走らせる。#2195 V1)
-  }, [aiConsultationRefetchKey]);
+  }, []);
 
   useEffect(() => {
     const fetchData = async () => {

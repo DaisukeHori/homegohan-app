@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
@@ -103,8 +103,9 @@ export default function HealthDashboardPage() {
       const data = await recordRes.json();
       setTodayRecord(data.record);
       setYesterdayRecord(data.previous);
-      // 記録の欄の体重は今日の記録の体重から作る。無ければ空にする (取り直しで前の体重を残さない。読み込み直したときと同じ。#2195 V1)
-      setQuickWeight(data.record?.weight ? data.record.weight.toString() : '');
+      if (data.record?.weight) {
+        setQuickWeight(data.record.weight.toString());
+      }
     }
 
     // 連続記録を取得
@@ -128,42 +129,17 @@ export default function HealthDashboardPage() {
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
-
-  // 選んだ日のパネルを出している日 (取り直しの応答が、別の日を選び直したあとに届いても置かないため)
-  const selectedDateRef = useRef<string | null>(null);
-
-  /**
-   * AI 相談の提案の実行のあとの取り直し (#2195 V1)。開いたときに読むもの (fetchData) と、出している選んだ日のパネルの記録を読み直す。
-   * AI 相談の add_health_record / update_health_record は過去の日の記録も書くので、パネルを開いたままだと
-   * カレンダーの印だけが変わってパネルが古い値のまま残る。取り直しの失敗では今の表示を消さない (fetchData と同じ)
-   */
-  const refetchAfterAiConsultation = useCallback(async () => {
-    const date = selectedDateRef.current;
-    const reloadSelectedDate = async () => {
-      if (date === null) return;
-      try {
-        const res = await fetch(`/api/health/records/${date}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (selectedDateRef.current === date) setSelectedDateRecord(data.record ?? null);
-      } catch {
-        // 取り直しの失敗では今の表示を残す
-      }
-    };
-    await Promise.all([fetchData(), reloadSelectedDate()]);
-  }, [fetchData]);
+  // AI 相談の提案の実行で健康記録・健康目標が変わったら取り直す (#2195 V1)。
   // 記録の欄 (体重などの入力の部品) が開いている間は取り直さない (打ちかけの体重を取得した値で上書きしないため)
-  useAiConsultationDataRefetch(refetchAfterAiConsultation);
+  useAiConsultationDataRefetch(fetchData);
 
   const handleDaySelect = async (date: string) => {
     // 今日のセル、または既に選択中の日をクリック → パネルを閉じる
     if (date === today || date === selectedDate) {
-      selectedDateRef.current = null;
       setSelectedDate(null);
       setSelectedDateRecord(null);
       return;
     }
-    selectedDateRef.current = date;
     setSelectedDate(date);
     setLoadingSelectedDate(true);
     try {

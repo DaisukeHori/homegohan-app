@@ -171,13 +171,6 @@ function ProfilePageContent() {
           console.error('[Profile] Error fetching profile:', error);
         }
 
-        if (!error) {
-          // 答えをそのまま置く: 取り直し (AI 相談の成功のあと) でも、読み込み直したときと同じ値にする (#2195 V1)
-          if (!data) {
-            setProfile(null);
-            setEditForm({});
-          }
-        }
         if (data) {
           console.log('[Profile] Raw data sample:', {
             age: data.age,
@@ -221,9 +214,6 @@ function ProfilePageContent() {
                 carbs: t.carbsG,
                 fiber: t.fiberG,
               });
-            } else {
-              // 栄養目標が無い: 前の値を残さない (取り直しのとき。読み込み直したときと同じ。#2195 V1)
-              setDbNutritionTarget(null);
             }
           }
         } catch (e) {
