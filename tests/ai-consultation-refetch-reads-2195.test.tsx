@@ -1659,14 +1659,15 @@ describe('取り直しの応答を待つあいだに打った値・始めた書�
     server.holdAll = null;
     expect(server.requests, '取り直しが食材の一覧を読んでいない (検査が空振りしている)').toContain(PANTRY_READ);
 
-    // 応答を待つあいだに食材を削除し、削除が終わる (サーバーからも消える)
+    // 応答を待つあいだに食材を削除し、削除が終わる (サーバーからも消える。削除の応答は成功)
     server.fetchBodies['/api/pantry'] = { ...pantryBody, items: keptItems };
+    server.fetchBodies[`/api/pantry/${deletedItem.id}`] = { success: true };
     await act(async () => {
       buttonByLabel('削除').click();
     });
     await settle();
     expect(server.requests, '削除を送っていない (検査が空振りしている)').toContain(`DELETE /api/pantry/${deletedItem.id}`);
-    expect(container.textContent).not.toContain(deletedItem.name);
+    expect(container.textContent, '削除が終わったのに一覧から消えていない (検査が空振りしている)').not.toContain(deletedItem.name);
 
     server.requests = [];
     refetchRead.resolve();
