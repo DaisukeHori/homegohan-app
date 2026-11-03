@@ -1,3 +1,18 @@
+import {
+  PREVIOUS_REQUEST_ACTION_LOG_STATUS,
+  PREVIOUS_REQUEST_EXECUTED_MESSAGE,
+  PREVIOUS_REQUEST_RECHECK_DELAY_MS,
+  PREVIOUS_REQUEST_RUNNING_OR_DONE_MESSAGE,
+  previousRequestActionStateOf,
+  previousRequestNoteIdOf,
+  previousRequestNoteTextOf,
+  replyToSentMessageOf,
+  sentMessageIndexOf,
+  type PreviousRequestActionState,
+  type ReloadedMessage,
+  type SentText,
+} from "@homegohan/shared";
+
 /**
  * AI 相談の送信 (POST /api/ai/consultation/sessions/:id/messages?stream=true) を待つ上限 (ミリ秒) (#1049 F7-18)。
  *
@@ -52,25 +67,8 @@ export type TimedOutSend = {
   delivered: boolean;
 };
 
-/** 取り直しで読んだメッセージのうち、見分けに使う項目 */
-export type ReloadedMessage = { id: string; role: string; content: string };
-
 /** 取り直しの結果 */
 export type TimeoutReloadOutcome = "replied" | "delivered-no-reply" | "not-delivered";
-
-/** 取り直した会話の中から送った文を見分けるのに使う、送信の項目 */
-export type SentText = Pick<TimedOutSend, "text" | "knownMessageIds">;
-
-/**
- * 取り直した会話の中の、送った文の位置 (無ければ -1)。
- * 送った文 = 送る前には無かった id の user のメッセージで、本文が送った文と同じもの
- */
-function sentMessageIndexOf(sent: SentText, loaded: readonly ReloadedMessage[]): number {
-  const known = new Set(sent.knownMessageIds);
-  return loaded.findIndex(
-    (message) => message.role === "user" && !known.has(message.id) && message.content.trim() === sent.text,
-  );
-}
 
 /**
  * 取り直した会話から、時間切れになった送信が届いていたか・返答があるかを決める。
@@ -84,50 +82,37 @@ export function timeoutReloadOutcomeOf(sent: TimedOutSend, loaded: readonly Relo
 }
 
 /*
- * ── 応答を受け取れずに取り直したときの、自動実行の結果 (#2195 V3) ──
+ * ── 応答を受け取れずに取り直したときの、自動実行の結果 (#2195 V3・#2201 U3) ──
  *
- * サーバーは返答に提案があると、その場で実行し、結果を応答の最後 (SSE の finalData の actionResult) でだけ返す (結果の一文は
- * 保存しない)。送信が時間切れになった・応答の本文を読めなかった (接続が切れた など) ときは finalData を受け取れないので、
- * 献立などは書き換わっているのに、結果の一文もタブの WebView の読み込み直しも出なかった。
- * 取り直した会話の GET は、実行できた提案を「出さない」(proposedActions が null) で返すが、提案の無い返答・断った提案も
- * 同じ形なので、GET だけでは「実行できた」を見分けられない。そこで、送った文への AI の返答 (replyToSentMessageOf) の提案の
- * 記録 (ai_action_logs) の状態を読み、実行できた行 (AI_ACTION_LOG_STATUS_EXECUTED) があれば、短い一文
- * (PREVIOUS_REQUEST_EXECUTED_MESSAGE) を足してタブに知らせる。記録を読めないときは何も足さない (実行したと言い切れない)。
+ * 送った文への AI の返答 (replyToSentMessageOf) の提案の記録 (ai_action_logs) の状態を読み、実行できた行があれば短い一文
+ * (PREVIOUS_REQUEST_EXECUTED_MESSAGE) を足してタブに知らせる。実行中の印の行だけなら、頼み直しを勧めない一文
+ * (PREVIOUS_REQUEST_RUNNING_OR_DONE_MESSAGE) を足し、少し待って (PREVIOUS_REQUEST_RECHECK_DELAY_MS) 1 回だけ読み直す。
+ * 決まりと見分け方は Web と共有 (packages/shared/src/consultation-reply-reload.ts)。ここはモバイルの既存の名前で読み直すだけ。
+ * 記録を読めないときは何も足さない (実行したと言い切れない)。
  */
 
 /**
  * 提案の記録 (ai_action_logs.status) の「実行できた」の値。サーバーの src/lib/ai/consultation-action-lifecycle.ts の
  * AI_ACTION_LOG_STATUS.executed と同じ (一致は tests/mobile-ai-reload-executed-2195.test.ts が確かめる)
  */
-export const AI_ACTION_LOG_STATUS_EXECUTED = "executed";
+export const AI_ACTION_LOG_STATUS_EXECUTED = PREVIOUS_REQUEST_ACTION_LOG_STATUS.executed;
 
-/** 応答を受け取れずに取り直した会話で、送った文への返答の提案が実行されていたときに足す一文 */
-export const PREVIOUS_REQUEST_EXECUTED_MESSAGE = "前の依頼は実行されました";
-
-/**
- * 取り直した会話の中の、送った文への AI の返答 (送った文のすぐ後ろの assistant のメッセージ)。
- * 送った文が無い・返答がまだ無い・返答の前に別の user のメッセージがあるときは null
- * (別の依頼への返答を「前の依頼」として扱わない)
- */
-export function replyToSentMessageOf(sent: SentText, loaded: readonly ReloadedMessage[]): ReloadedMessage | null {
-  const sentIndex = sentMessageIndexOf(sent, loaded);
-  if (sentIndex < 0) return null;
-  for (const message of loaded.slice(sentIndex + 1)) {
-    if (message.role === "assistant") return message;
-    if (message.role === "user") return null;
-  }
-  return null;
-}
+export {
+  PREVIOUS_REQUEST_EXECUTED_MESSAGE,
+  PREVIOUS_REQUEST_RECHECK_DELAY_MS,
+  PREVIOUS_REQUEST_RUNNING_OR_DONE_MESSAGE,
+  previousRequestActionStateOf,
+  previousRequestNoteIdOf,
+  previousRequestNoteTextOf,
+  replyToSentMessageOf,
+  type PreviousRequestActionState,
+  type ReloadedMessage,
+  type SentText,
+};
 
 /** 提案の記録の行 (status を持つもの) に、実行できた行があるか。配列でない・status が無い行は数えない */
 export function hasExecutedActionLog(rows: unknown): boolean {
-  return (
-    Array.isArray(rows) &&
-    rows.some(
-      (row: unknown) =>
-        typeof row === "object" && row !== null && "status" in row && row.status === AI_ACTION_LOG_STATUS_EXECUTED,
-    )
-  );
+  return previousRequestActionStateOf(rows) === "executed";
 }
 
 /** 時間切れになったときの入力欄。空なら送った文を戻す。別の文が入っていれば (待っている間に書いた文)、それを残す */
