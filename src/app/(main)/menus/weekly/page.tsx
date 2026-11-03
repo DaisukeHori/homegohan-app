@@ -1247,7 +1247,7 @@ export default function WeeklyMenuPage() {
         // 以前は空のときに置かず、AI 相談で最後の品目を消しても、バッジと買い物リストに消した品目が残っていた)。
         // 週の読み込み (fetchPlan の fetchWeekData) は献立の無い週で [] を作って返すので、そちらは空のときに置かない
         const newShoppingList: ShoppingListItem[] = shoppingListData?.items || [];
-        setShoppingList(newShoppingList);
+        if (newShoppingList.length > 0) setShoppingList(newShoppingList);
         if (dailyMeals && dailyMeals.length > 0) {
           const newPlan = { days: dailyMeals };
           setCurrentPlan(newPlan);
