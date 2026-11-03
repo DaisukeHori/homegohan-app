@@ -120,7 +120,8 @@ export default function FamilyMembersPage() {
         return { redirecting: true };
       }
       const { user } = signedIn;
-      setCurrentUserId(user.id);
+      // 応答を置くのは最後に始めた取得だけ (ログインの確かめの応答も。#2201 U1)
+      if (ticket.isLatest()) setCurrentUserId(user.id);
 
       const { data: profile, error: profileError } = await supabase
         .from('user_profiles')

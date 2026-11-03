@@ -105,7 +105,8 @@ export default function FamilyTransferAcceptPage() {
         return { redirecting: true };
       }
       const { user } = signedIn;
-      setCurrentUserId(user.id);
+      // 応答を置くのは最後に始めた取得だけ (ログインの確かめの応答も。#2201 U1)
+      if (ticket.isLatest()) setCurrentUserId(user.id);
 
       const { data: proposalData, error: proposalError } = await supabase
         .from('ownership_transfer_proposals')

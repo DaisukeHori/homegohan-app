@@ -157,6 +157,8 @@ export default function NutritionTargetsExplainPage() {
         // 栄養目標は /api/nutrition/targets 経由で取得（auto_calculate 時はその場で再計算される）
         // これによりマイページ (/profile) と同一の値が表示される（Bug #17 修正）
         const targetsRes = await fetch('/api/nutrition/targets');
+        // 前の回の応答は、栄養目標を読めなかったときも何も置かない (下の失敗の表示を消すのも、最後に走った回だけ。#2201 U1)
+        if (cancelled) return;
         if (targetsRes.ok) {
           const targetsJson = await targetsRes.json();
           if (cancelled) return;

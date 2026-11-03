@@ -120,6 +120,10 @@ export const useHomeData = () => {
   const homeFetchStream = useAiConsultationFetchStream();
   // パフォーマンスの分析の読み取りの流れ (ホームのデータの取得とチェックインの保存のあと。#2201 U1)
   const performanceAnalysisStream = useAiConsultationFetchStream();
+  // 栄養の分析の読み取りの流れ (ホームのデータの取得のあと。#2201 U1)。応答を置くのは最後に始めた読み取りだけ
+  // (続けて来た取り直し・開いたときの読み込みと取り直しの栄養の分析の応答が逆の順に届いても、古い点数・課題・アドバイスと
+  // 今日のアドバイスの帯で上書きしない。読み込み中の印もあとの読み取りが下ろす)
+  const nutritionAnalysisStream = useAiConsultationFetchStream();
   const toggleDebounceTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const [dailySummary, setDailySummary] = useState<DailySummary>(EMPTY_DAILY_SUMMARY);
   const [announcement, setAnnouncement] = useState<Announcement | null>(null);
@@ -756,15 +760,20 @@ export const useHomeData = () => {
   };
 
   // 栄養分析（AIアドバイス付き）
+  // 応答を置くのは最後に始めた読み取りだけ (nutritionAnalysisStream。#2201 U1): 応答を待つたびに、あとから別の読み取りを
+  // 始めていないかを見て、始めていればこの応答 (点数・課題・アドバイス・今日のアドバイスの帯・読み込み中の印) を何も置かない
   const fetchNutritionAnalysis = async ({ replaceAdviceBanner }: HomeFetchOptions) => {
+    const order = nutritionAnalysisStream.begin();
     try {
       setNutritionAnalysis(prev => ({ ...prev, loading: true }));
       
       const response = await fetch('/api/ai/nutrition-analysis?period=today&includeAdvice=true&includeSuggestion=true');
       
+      if (!order.isLatest()) return;
       if (response.ok) {
         const data = await response.json();
         
+        if (!order.isLatest()) return;
         if (data.success && data.analysis) {
           setNutritionAnalysis({
             score: data.analysis.score || 0,
@@ -798,7 +807,8 @@ export const useHomeData = () => {
       }
     } catch (e) {
       console.error('Nutrition analysis fetch error:', e);
-      setNutritionAnalysis(prev => ({ ...prev, loading: false }));
+      // 失敗では今の分析を残す。読み込み中の印は最後に始めた読み取りが下ろす (古い読み取りの失敗で、あとの読み取りの途中に下ろさない)
+      if (order.isLatest()) setNutritionAnalysis(prev => ({ ...prev, loading: false }));
     }
   };
 

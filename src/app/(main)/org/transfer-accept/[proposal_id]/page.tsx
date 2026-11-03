@@ -115,7 +115,8 @@ export default function TransferAcceptPage() {
         return;
       }
       const { user } = signedIn;
-      setCurrentUserId(user.id);
+      // 応答を置くのは最後に始めた取得だけ (ログインの確かめの応答も。#2201 U1)
+      if (ticket.isLatest()) setCurrentUserId(user.id);
 
       // ownership_transfer_proposals に reason 列は無い (存在しない列を select すると PostgREST が失敗し、
       // 提案が「見つかりません」になっていた)。提案理由は DB に保存されず、提案メールにだけ載る

@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import {
   useAiConsultationDataRefetch,
+  useAiConsultationFetchStream,
   useAiConsultationLoading,
   type AiConsultationFetchTicket,
 } from "@/hooks/useAiConsultationDataRefetch";
@@ -151,6 +152,11 @@ export default function HealthDashboardPage() {
 
   // 選んだ日のパネルを出している日 (取り直しの応答が、別の日を選び直したあとに届いても置かないため)
   const selectedDateRef = useRef<string | null>(null);
+  // 選んだ日のパネルの記録の読み取りの流れ (#2201 U1)。日を選んだときの読み取り (handleDaySelect) と取り直しの読み直し
+  // (refetchAfterAiConsultation の reloadSelectedDate) は同じ流れで始め、置いたどの応答よりあとに始めた読み取りの応答だけを置く
+  // (日を選んだ直後に来た取り直しの応答が先に届いたら、先に始めた日を選んだときの古い応答でパネルを戻さない。
+  // あとの読み取りが失敗した・まだ届いていないときは、先に始めた読み取りの応答を置く)
+  const selectedDateFetchStream = useAiConsultationFetchStream('newerThanPlaced');
 
   /**
    * AI 相談の提案の実行のあとの取り直し (#2195 V1)。開いたときに読むもの (fetchData) と、出している選んだ日のパネルの記録を読み直す。
@@ -161,19 +167,25 @@ export default function HealthDashboardPage() {
     const date = selectedDateRef.current;
     const reloadSelectedDate = async () => {
       if (date === null) return;
+      const order = selectedDateFetchStream.begin();
       try {
         const res = await fetch(`/api/health/records/${date}`);
         if (!res.ok) return;
         const data = await res.json();
-        // 別の日を選び直していたら・あとから別の取り直しを始めていたら置かない (#2201 U1)
-        if (selectedDateRef.current === date && ticket.isLatest()) setSelectedDateRecord(data.record ?? null);
+        // 別の日を選び直していたら置かない。あとに始めた読み取り (日を選んだとき・別の取り直し) の応答をもう置いていても置かない
+        // (#2201 U1)。置いたら、その日を選んだときの読み取りの途中でも読み込み中の印を下ろす (この日の新しい記録が届いた)
+        if (selectedDateRef.current !== date) return;
+        order.place(() => {
+          setSelectedDateRecord(data.record ?? null);
+          setLoadingSelectedDate(false);
+        });
       } catch {
         // 取り直しの失敗では今の表示を残す
       }
     };
     // 開いたときの読み込み中に始まった取り直しは、その読み込みの役を引き継ぐ (refetchReadMode)
     await Promise.all([fetchData(ticket, refetchReadMode()), reloadSelectedDate()]);
-  }, [fetchData, refetchReadMode]);
+  }, [fetchData, refetchReadMode, selectedDateFetchStream]);
   // 記録の欄 (体重などの入力の部品) が開いている間は取り直さない (打ちかけの体重を取得した値で上書きしないため)。
   // 閉じたら止めた通知のぶん 1 回取り直す (#2201 U2)。取り直しの応答を待つあいだに開いたときも同じ (fetchData の skipPlacing)
   const { beginFetch } = useAiConsultationDataRefetch(refetchAfterAiConsultation);
@@ -194,6 +206,7 @@ export default function HealthDashboardPage() {
     selectedDateRef.current = date;
     setSelectedDate(date);
     setLoadingSelectedDate(true);
+    const order = selectedDateFetchStream.begin();
     // 応答を待つあいだに別の日を選び直したら、この日の応答は置かない (#2201 U1。取り直しの側と同じ形)
     let record: HealthRecord | null = null;
     try {
@@ -206,7 +219,9 @@ export default function HealthDashboardPage() {
       record = null;
     }
     if (selectedDateRef.current !== date) return;
-    setSelectedDateRecord(record);
+    // 応答を待つあいだに来た取り直しの読み直しの応答 (この読み取りよりあとに始めた) をもう置いていれば、この古い応答は置かない
+    // (#2201 U1。読み込み中の印は下ろす)
+    order.place(() => setSelectedDateRecord(record));
     setLoadingSelectedDate(false);
   };
 
