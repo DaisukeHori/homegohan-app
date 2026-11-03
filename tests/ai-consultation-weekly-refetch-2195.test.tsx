@@ -81,7 +81,10 @@ vi.mock('@/lib/supabase/client', () => {
 });
 
 const { default: WeeklyMenuPage } = await import('@/app/(main)/menus/weekly/page');
-const { useShoppingStore, usePantryStore, useServingsConfigStore } = await import('@/app/(main)/menus/weekly/_state');
+// 献立表の store (ページは ./_state の index から同じファイルを読む)
+const { useShoppingStore } = await import('@/app/(main)/menus/weekly/_state/shoppingStore');
+const { usePantryStore } = await import('@/app/(main)/menus/weekly/_state/pantryStore');
+const { useServingsConfigStore } = await import('@/app/(main)/menus/weekly/_state/servingsConfigStore');
 const { AI_CONSULTATION_DATA_CHANGED_EVENT } = await import('@/lib/ai/consultation-data-refetch');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
