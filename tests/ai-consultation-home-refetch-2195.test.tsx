@@ -324,9 +324,14 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
   const now = new Date();
   const TODAY = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
   const TODAY_MEAL = { ...BEST_MEAL_ROW, id: 'meal-today', dish_name: '肉じゃが', calories_kcal: 520 };
+  /**
+   * 組織に入っている人の組織 (組織のチャレンジの入り口 OrgChallengeEntry は組織に入っている人にだけ描くので、
+   * その読み取り GET /api/org/my-challenges を開いたときの読み取りに出す。応答の作りで読み取りを隠さない)
+   */
+  const ORGANIZATION_ID = '21950000-0000-4000-8000-0000000000e1';
   /** AI が書く表に中身のある答え */
   const FULL_TABLES: Record<string, { data: unknown; error: null; count?: number }> = {
-    user_profiles: { data: [{ nickname: 'ほり', organization_id: null }], error: null },
+    user_profiles: { data: [{ nickname: 'ほり', organization_id: ORGANIZATION_ID }], error: null },
     user_daily_meals: { data: [{ id: 'day-today', day_date: TODAY, planned_meals: [TODAY_MEAL] }], error: null },
     planned_meals: { data: [BEST_MEAL_ROW], error: null },
     pantry_items: { data: [{ id: 'p-1', user_id: 'user-1', name: 'にんじん', amount: '2本', category: 'vegetable', expiration_date: TODAY }], error: null },
@@ -337,9 +342,11 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
     health_goals: { data: [{ target_value: 60 }], error: null },
   };
   /** AI が書く表の答えを空にしたもの (AI 相談で消した・外したあと) */
-  const EMPTY_TABLES: Record<string, { data: unknown; error: null; count?: number }> = Object.fromEntries(
-    Object.keys(FULL_TABLES).map((table) => [table, { data: [], error: null }]),
-  );
+  const EMPTY_TABLES: Record<string, { data: unknown; error: null; count?: number }> = {
+    ...Object.fromEntries(Object.keys(FULL_TABLES).map((table) => [table, { data: [], error: null }])),
+    // 組織の所属 (organization_id) は AI 相談が書かない列なので変えない。名前 (nickname) は空
+    user_profiles: { data: [{ nickname: null, organization_id: ORGANIZATION_ID }], error: null },
+  };
   let recorder: InstanceType<typeof ReadRecorder>;
 
   function useServer(tables: Record<string, { data: unknown; error: null; count?: number }>, analysis: unknown) {
@@ -389,7 +396,11 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
     const mountReads = recorder.take();
     await notifyAiConsultationSucceeded();
     const refetchReads = recorder.take();
-    expectRefetchReadsCoverMount('/home', mountReads, refetchReads);
+    // 組織のチャレンジの入り口の読み取り (表の mountReadsNotRefetched の orgChallenges。AI 相談が書かない表)。
+    // 組織に入っている人で開いたので、開いたときの読み取りに出ている (除外が今も当たっていることは expectRefetchReadsCoverMount が確かめる)
+    expectRefetchReadsCoverMount('/home', mountReads, refetchReads, {
+      orgChallenges: [fetchReadKey('/api/org/my-challenges') ?? ''],
+    });
   });
 
   it('AI が書く表の答えが空になった取り直しは、空の答えで開いたときと同じ画面 (前の値を残さない)', async () => {

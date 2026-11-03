@@ -12,13 +12,21 @@
  *
  *   - AI 相談でプロフィールの身長・体重などを入れても、ページの上のプロフィールの帯 (ProfileReminderBanner) が古い
  *     「未入力」の一覧のまま残った (帯は開いたときに 1 回だけ読み、ページの取り直しはその読み取りをしない)
+ *   - 家族に入っている人が AI 相談で自分の名前 (user_profiles.nickname) を変えても、家族の切り替え (FamilyViewSwitcher) の
+ *     名前が前のまま残った (名前は GET /api/family/members/names が display_name の無いメンバーにプロフィールの名前を当てたもので、
+ *     家族の一覧と名前は開いたときと切り替えの適用のときにだけ読んでいた)
  *
  * 直したあと: ページを開いたときに読むもののうち AI 相談で変わりうるもの (表示中の週の献立と買い物リスト・冷蔵庫・
- * 人数の設定・月のカレンダーの献立のある日・表示中の週の生成中の依頼・プロフィールの帯) を取り直す。
+ * 人数の設定・月のカレンダーの献立のある日・表示中の週の生成中の依頼・プロフィールの帯・家族の一覧と名前) を取り直す。
  *
  * 部品を消すモックとログアウトで、受け手の読み取りを隠さない (帯を消すモックとログアウトのせいで、帯の読み取りの抜けが
  * 見えなかった)。ログインした状態で、ページの部品をそのまま描く。消すのは AI が書く表を読まない部品だけ (読み取りのある部品は
  * 理由を AI_CONSULTATION_RENDER_TEST_MOCKED_READERS に書く) で、tests/ai-consultation-refetch-coverage-2195.test.ts がそれを確かめる。
+ * 応答の作りでも読み取りを隠さない: 描画の検査 (下の 2 つ目の describe) は家族に入っている人 (自分ともう 1 人) で開き、
+ * 前の答えで決まる読み取り (家族の一覧 → 名前の API・家族の献立) も開いたときの読み取りに出す (家族の一覧を空の答えにしていたせいで、
+ * 名前の API の読み取りの抜けが見えなかった)。
+ * 検査の限界: 生成中の依頼の監視の読み取り (状態の確認・Realtime) は、生成中の依頼の無い状態で比べる。監視は開いたときと同じ関数
+ * (checkPendingRequests) を取り直しでも走らせ、生成中の流れは 1 つ目の describe の最初のテストが確かめる。
  *
  * サーバーは表 (server) で真似る。AI 相談の提案の実行は、表を書き換えてから AIChatBubble と同じ形で mealPlanUpdated を投げる。
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
@@ -67,13 +75,17 @@ type FakeProfileRow = {
 };
 
 /**
- * Supabase のモック。ログインしている (週の始まりは月曜・家族なし)。user_profiles は profile の行を返し、ほかの表は空。
- * Realtime のチャンネルは名前だけ記録し、何も届けない
+ * Supabase のモック。ログインしている (週の始まりは月曜)。user_profiles は profile の行、family_members は familyMembers の行
+ * (家族の active なメンバー) を返し、ほかの表は空。Realtime のチャンネルは名前だけ記録し、何も届けない
  */
 const supabaseMock = vi.hoisted(() => ({
+  /** ログインしている人の id (家族のメンバーの行の user_id にも使う) */
+  userId: '21950000-0000-4000-8000-0000000000b1',
   channelNames: [] as string[],
   /** ログインしている人の user_profiles の行 (テストごとに置き換える) */
   profile: null as null | Record<string, unknown>,
+  /** 家族の active なメンバーの family_members の行 (家族に入っていなければ空) */
+  familyMembers: [] as Record<string, unknown>[],
   /**
    * 記録の口があれば、読んだ表 (select を呼んだとき。鍵は tests/helpers/ai-refetch-read-recorder.ts の selectReadKey) と
    * DB の関数 ('rpc:<名前>') を記録する (受け手の読み取りの検査)
@@ -82,9 +94,16 @@ const supabaseMock = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/supabase/client', () => {
   const EMPTY_RESULT = { data: null, error: null, count: 0 };
-  const USER = { id: '21950000-0000-4000-8000-0000000000b1', user_metadata: {} };
-  /** その表の答え (user_profiles は profile の行。single / maybeSingle なら行、そうでなければ行の配列。ほかの表は空) */
+  const USER = { id: supabaseMock.userId, user_metadata: {} };
+  /**
+   * その表の答え (user_profiles は profile の行。single / maybeSingle なら行、そうでなければ行の配列。
+   * family_members は familyMembers の行の配列。ほかの表は空)
+   */
   const resultOf = (table: string | null, single: boolean) => {
+    if (table === 'family_members') {
+      const rows = supabaseMock.familyMembers;
+      return { data: single ? (rows[0] ?? null) : rows, error: null, count: rows.length };
+    }
     if (table !== 'user_profiles') return EMPTY_RESULT;
     const row = supabaseMock.profile;
     if (single) return { data: row, error: null, count: row ? 1 : 0 };
@@ -133,7 +152,7 @@ const { useShoppingStore } = await import('@/app/(main)/menus/weekly/_state/shop
 const { usePantryStore } = await import('@/app/(main)/menus/weekly/_state/pantryStore');
 const { useServingsConfigStore } = await import('@/app/(main)/menus/weekly/_state/servingsConfigStore');
 const { AI_CONSULTATION_DATA_CHANGED_EVENT } = await import('@/lib/ai/consultation-data-refetch');
-const { AI_CONSULTATION_WRITTEN_COLUMNS, AI_CONSULTATION_WRITTEN_TABLE_NAMES } = await import('@/lib/ai/consultation-refetch-coverage');
+const { AI_CONSULTATION_WRITTEN_COLUMNS } = await import('@/lib/ai/consultation-refetch-coverage');
 const {
   ReadRecorder,
   expectEmptyRefetchMatchesFreshMount,
@@ -158,6 +177,14 @@ const COMPLETE_PROFILE_COMPLETENESS = 100;
 const PROFILE_BANNER_HEADING = '栄養目標を設定しましょう';
 /** 家族に入っている人の家族 (家族の一覧の読み取りを開いたときの読み取りに出す) */
 const FAMILY_ID = '21950000-0000-4000-8000-0000000000f1';
+/** 家族の中の自分 (display_name が無い = 名前の API がプロフィールの名前を当てる) と、献立を共有するもう 1 人 */
+const SELF_MEMBER_ID = '21950000-0000-4000-8000-0000000000c1';
+const OTHER_MEMBER_ID = '21950000-0000-4000-8000-0000000000c2';
+const OTHER_USER_ID = '21950000-0000-4000-8000-0000000000b2';
+/** 自分のプロフィールの名前 (AI 相談の前と後) と、もう 1 人の家族の中の呼び名 (display_name) */
+const SELF_NAME_BEFORE = 'ほり';
+const SELF_NAME_AFTER = '太郎';
+const OTHER_MEMBER_NAME = '花子';
 
 /** 身長・体重が未入力のプロフィール (完成度が帯を出す値) */
 function incompleteProfile(): FakeProfileRow {
@@ -220,11 +247,59 @@ type FakeServer = {
   familySize: number | null;
   /** 生成中の依頼 (weekly_menu_requests の processing の行)。状態を読まれたら生成を終える */
   pendingRequest: { id: string; startDate: string; generate: () => void } | null;
+  /**
+   * GET /api/family/members/names の答え (member id → 画面に出す名前。display_name か、display_name の無いメンバーの
+   * プロフィールの名前 user_profiles.nickname。null = 決まらない)
+   */
+  familyMemberNames: { id: string; name: string | null }[];
 };
 let server: FakeServer;
 let fetchCalls: string[];
 /** 受け手の読み取りの記録 (GET の fetch と Supabase の読み取り) */
 let recorder: InstanceType<typeof ReadRecorder>;
+
+/** family_members の active な行 (ページの loadFamilyData が読む列)。avatar_color が空なら一覧の順の色 */
+function familyMemberRow(id: string, userId: string, role: 'representative' | 'adult', displayName: string | null) {
+  return {
+    id,
+    family_id: FAMILY_ID,
+    user_id: userId,
+    role,
+    display_name: displayName,
+    relationship: null,
+    tags: [],
+    share_meals: true,
+    share_health: false,
+    share_menu: true,
+    child_profile: null,
+    avatar_color: '',
+    status: 'active',
+    joined_at: '2026-10-01T00:00:00.000Z',
+    removed_at: null,
+  };
+}
+
+/**
+ * 家族に入っている (自分と、献立を共有するもう 1 人)。プロフィールの family_id は呼ぶ側が置く。
+ * selfName は名前の API が display_name の無い自分に当てるプロフィールの名前 (null = 決まらない)
+ */
+function joinFamily(selfName: string | null) {
+  supabaseMock.familyMembers = [
+    familyMemberRow(SELF_MEMBER_ID, supabaseMock.userId, 'representative', null),
+    familyMemberRow(OTHER_MEMBER_ID, OTHER_USER_ID, 'adult', OTHER_MEMBER_NAME),
+  ];
+  server.familyMemberNames = [
+    { id: SELF_MEMBER_ID, name: selfName },
+    { id: OTHER_MEMBER_ID, name: OTHER_MEMBER_NAME },
+  ];
+}
+
+/** GET /api/family/menu の答えのメンバー (自分以外で献立を共有するメンバー。この検査では献立なし) */
+function familyMenuMembersJson() {
+  return supabaseMock.familyMembers
+    .filter((member) => member.user_id !== supabaseMock.userId && member.share_menu === true)
+    .map((member) => ({ member_id: String(member.id), user_id: String(member.user_id), days: [] }));
+}
 
 function plannedMealJson(date: string, meal: FakeMeal) {
   return {
@@ -323,6 +398,17 @@ function installFakeServer() {
         return jsonResponse({ items: [] });
       case '/api/profile':
         return jsonResponse({ family_size: server.familySize, servings_config: null, radar_chart_nutrients: null });
+      case '/api/family/members/names':
+        return jsonResponse({ data: { members: server.familyMemberNames } });
+      case '/api/family/menu':
+        return jsonResponse({
+          data: {
+            family_id: FAMILY_ID,
+            start_date: url.searchParams.get('startDate') ?? '',
+            end_date: url.searchParams.get('endDate') ?? '',
+            members: familyMenuMembersJson(),
+          },
+        });
       default:
         return jsonResponse({}, NOT_FOUND_STATUS);
     }
@@ -333,10 +419,11 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
-  server = { days: new Map(), shoppingItems: [], familySize: 2, pendingRequest: null };
+  server = { days: new Map(), shoppingItems: [], familySize: 2, pendingRequest: null, familyMemberNames: [] };
   supabaseMock.channelNames.length = 0;
-  // 既定は帯を出さないプロフィール (帯の検査は incompleteProfile に置き換える)
+  // 既定は帯を出さないプロフィール (帯の検査は incompleteProfile に置き換える)・家族なし (家族の検査は joinFamily)
   supabaseMock.profile = completeProfile();
+  supabaseMock.familyMembers = [];
   recorder = new ReadRecorder();
   supabaseMock.reads = recorder;
   localStorage.clear();
@@ -405,6 +492,13 @@ function profileBannerMissingLabels(): string[] {
   const banner = profileBanner();
   if (!banner) throw new Error('プロフィールの帯が無い');
   return [...banner.querySelectorAll('span.rounded-full')].map((el) => (el.textContent ?? '').trim());
+}
+
+/** 家族の切り替え (FamilyViewSwitcher) のチップに出ているメンバーの名前 (チップの title。一覧の順) */
+function familySwitcherNames(): string[] {
+  const bar = container.querySelector('[aria-label="ビューを切替"]');
+  if (!bar) throw new Error('家族の切り替えが無い');
+  return [...bar.querySelectorAll('span[title]')].map((el) => el.getAttribute('title') ?? '');
 }
 
 /** 月のカレンダーを開き、日付のマスに出ている献立のある日の印の数を返す */
@@ -570,27 +664,52 @@ describe('献立表 (/menus/weekly) が AI 相談の成功で取り直すもの 
 
     expect(profileBanner()).toBeNull();
   });
+
+  it('家族に入っている人が AI 相談で自分の名前を変えたら、家族の切り替えの名前も取り直す (#2195 V1 R2)', async () => {
+    supabaseMock.profile = { ...completeProfile(), family_id: FAMILY_ID };
+    joinFamily(SELF_NAME_BEFORE);
+    await renderWeeklyPage();
+    expect(familySwitcherNames()).toEqual([SELF_NAME_BEFORE, OTHER_MEMBER_NAME]);
+
+    // AI 相談の update_profile_preferences (nickname)。自分の family_members の行に display_name は無いので、
+    // 名前の API は自分にプロフィールの今の名前を当てる
+    server.familyMemberNames = [
+      { id: SELF_MEMBER_ID, name: SELF_NAME_AFTER },
+      { id: OTHER_MEMBER_ID, name: OTHER_MEMBER_NAME },
+    ];
+    await notifyAiConsultationSucceeded('update_profile_preferences', { updated: true, fields: ['nickname'] });
+
+    expect(familySwitcherNames()).toEqual([SELF_NAME_AFTER, OTHER_MEMBER_NAME]);
+  });
 });
 
 describe('献立表 (/menus/weekly) を描画して、AI 相談の成功の取り直しを確かめる (#2195 V1)', () => {
-  /** AI が書く表に中身のある答え (表示中の週と別の週の献立・買い物リスト・家族の人数・プロフィールの未入力の欄) */
+  /**
+   * AI が書く表に中身のある答え (表示中の週と別の週の献立・買い物リスト・家族の人数・プロフィールの未入力の欄・自分の名前)。
+   * 家族に入っている (自分ともう 1 人): 家族の一覧の答えで決まる読み取り (名前の API・家族の献立) を開いたときの読み取りに出す
+   */
   function fillServer() {
     supabaseMock.profile = { ...incompleteProfile(), family_id: FAMILY_ID };
+    joinFamily(SELF_NAME_BEFORE);
     const week = displayedWeekDates();
     server.days.set(week[0], [{ id: 'meal-1', dishName: '鮭の塩焼き' }]);
     server.days.set(otherWeekDateInDisplayedMonth(), [{ id: 'meal-other', dishName: 'カレー' }]);
     server.shoppingItems = [{ id: 'item-1', itemName: 'にんじん', isChecked: false }];
     server.familySize = 3;
   }
-  /** AI 相談で消した・空にしたあと (プロフィールは未入力の欄が無くなり、帯を出さない) */
+  /**
+   * AI 相談で消した・空にしたあと (プロフィールは未入力の欄が無くなり、帯を出さない。自分の名前は決まらない)。
+   * 家族の所属と一覧は AI 相談が書かないので変えない
+   */
   function emptyServer() {
-    supabaseMock.profile = completeProfile();
+    supabaseMock.profile = { ...completeProfile(), family_id: FAMILY_ID };
+    joinFamily(null);
     server.days = new Map();
     server.shoppingItems = [];
     server.familySize = null;
   }
 
-  it('開いたとき・月のカレンダーのパネル・プロフィールの帯が読むもの全部を、取り直しも読む', async () => {
+  it('開いたとき・月のカレンダーのパネル・プロフィールの帯・家族の切り替えが読むもの全部を、取り直しも読む', async () => {
     fillServer();
     recorder.take();
     await renderWeeklyPage();
@@ -604,16 +723,25 @@ describe('献立表 (/menus/weekly) を描画して、AI 相談の成功の取�
     // 前後の週の先読み (表の mountReadsNotRefetched の adjacentWeekPrefetch)
     const weekRangeKey = (from: number) =>
       fetchReadKey(`/api/meal-plans?startDate=${dateFromWeekStart(from)}&endDate=${dateFromWeekStart(from + DAYS_IN_WEEK - 1)}`) ?? '';
-    // 週の始まりの日・家族の所属と家族の一覧 (表の mountReadsNotRefetched の weekStartDay・familyMembership)。どれも AI 相談が書かない列と表
+    // 週の始まりの日 (表の mountReadsNotRefetched の weekStartDay)。AI 相談が書かない列
     const WEEK_START_DAY_COLUMN = 'week_start_day';
-    const FAMILY_ID_COLUMN = 'family_id';
     expect(AI_CONSULTATION_WRITTEN_COLUMNS.user_profiles).not.toContain(WEEK_START_DAY_COLUMN);
-    expect(AI_CONSULTATION_WRITTEN_COLUMNS.user_profiles).not.toContain(FAMILY_ID_COLUMN);
-    expect(AI_CONSULTATION_WRITTEN_TABLE_NAMES).not.toContain('family_members');
+    // 家族の献立 (表の mountReadsNotRefetched の familyMenu。自分以外のメンバーの献立)
+    const familyMenuKey =
+      fetchReadKey(`/api/family/menu?startDate=${dateFromWeekStart(0)}&endDate=${dateFromWeekStart(DAYS_IN_WEEK - 1)}`) ?? '';
+    // 家族の一覧の答えで決まる読み取りが、開いたときの読み取りに出ている (応答の作りで隠れていない)。
+    // 家族の所属・一覧・名前の API は取り直しも読む (名前の API はプロフィールの名前 = AI 相談が書く nickname を当てる)
+    const familyReads = [
+      selectReadKey('user_profiles', 'family_id'),
+      selectReadKey('family_members', '*'),
+      fetchReadKey('/api/family/members/names') ?? '',
+    ];
+    expect([...mountReads]).toEqual(expect.arrayContaining([...familyReads, familyMenuKey]));
+    expect([...refetchReads]).toEqual(expect.arrayContaining(familyReads));
     expectRefetchReadsCoverMount('/menus/weekly', mountReads, refetchReads, {
       adjacentWeekPrefetch: [weekRangeKey(-DAYS_IN_WEEK), weekRangeKey(DAYS_IN_WEEK)],
       weekStartDay: [selectReadKey('user_profiles', WEEK_START_DAY_COLUMN)],
-      familyMembership: [selectReadKey('user_profiles', FAMILY_ID_COLUMN), selectReadKey('family_members', '*')],
+      familyMenu: [familyMenuKey],
     });
   });
 

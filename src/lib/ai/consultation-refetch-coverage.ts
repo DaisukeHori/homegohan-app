@@ -200,6 +200,10 @@ export const AI_CONSULTATION_REFETCH_PAGES: Readonly<Record<string, AiConsultati
   '/health/streaks': { kind: 'receiver', aiTables: ['health_records', 'health_streaks'] },
   '/home': {
     kind: 'receiver',
+    mountReadsNotRefetched: {
+      orgChallenges:
+        '組織のチャレンジの入り口 (OrgChallengeEntry。組織に入っている人にだけ描く) が描いたときに 1 回読む GET /api/org/my-challenges。読むのは組織のチャレンジ (organization_challenges)・自分の参加の行 (organization_challenge_participants)・参加者の数 (DB の関数 get_org_challenge_aggregates)・所属 (user_profiles の organization_id・department_id・org_role) で、どれも AI 相談が書かない表と列 (参加の進み具合 current_value は毎日の集計 update_org_challenge_progress が書く)',
+    },
     aiTables: [
       'health_goals',
       'health_records',
@@ -221,8 +225,8 @@ export const AI_CONSULTATION_REFETCH_PAGES: Readonly<Record<string, AiConsultati
         '前後の週の献立の先読み (週の切り替えを速くする控え weekDataCache。画面には出さない)。取り直しは控えを捨てるので、その週へ移ったときに読み直す',
       weekStartDay:
         '週の始まりの日 (user_profiles.week_start_day)。AI 相談が書かない列 (AI_CONSULTATION_WRITTEN_COLUMNS に無い) で、設定の画面で変える',
-      familyMembership:
-        '家族の所属 (user_profiles.family_id) と家族の一覧。AI 相談が書かない列と表で、家族の画面で変える (家族の切り替えを適用したときに読み直す)',
+      familyMenu:
+        '家族の献立 (useFamilyMenu の GET /api/family/menu。家族に入っていて、切り替えで自分以外のメンバーを出すときだけ読む)。返すのは DB の関数 family_menu_visible_members が選ぶ自分以外のメンバー (tm.user_id <> auth.uid()。tests/integration/rls/family-menu-visibility.test.ts が実 DB で確かめる) の献立だけで、AI 相談が書く献立 (planned_meals・user_daily_meals) はログインしている人の行だけ (本人の行だけの RLS と、実行の case の本人の確かめ) なので AI 相談で変わらない。家族の切り替えを適用したときに読み直す',
     },
     aiTables: [
       'pantry_items',

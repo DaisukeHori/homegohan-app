@@ -845,17 +845,17 @@ describe('ページが AI 相談の成功で取り直す (#2195 V1)', () => {
  * 描画の重いページ (献立表は 6,000 行を超え、ホーム・健康は Supabase の取得が多い) は、ページが既存の取得の関数を
  * 受け手に渡していることをソースで確かめる (受け手の動きそのものは上の useAiConsultationDataRefetch のテストで確かめる)。
  * マイページは、上で描画して編集のモーダルが取り直しを止めることも確かめている。
- * 献立表が取り直して出すもの (生成中の依頼の監視・買い物リスト・月のカレンダー・人数の設定) は、
+ * 献立表が取り直して出すもの (生成中の依頼の監視・買い物リスト・月のカレンダー・人数の設定・家族の切り替えの名前) は、
  * tests/ai-consultation-weekly-refetch-2195.test.tsx が献立表を描画して確かめる
  */
 describe('受け手の配線 (#2195 V1)', () => {
   const HOOK_IMPORT = /from "@\/hooks\/useAiConsultationDataRefetch";/;
   const WIRING: ReadonlyArray<{ page: string; file: string; wiring: RegExp }> = [
     {
-      page: '献立表 (/menus/weekly): 表示中の週・冷蔵庫・人数の設定を取り直し、週のキャッシュと取得済みの範囲を捨ててから回数を増やす',
+      page: '献立表 (/menus/weekly): 表示中の週・冷蔵庫・人数の設定・家族の一覧と名前を取り直し、週のキャッシュと取得済みの範囲を捨ててから回数を増やす',
       file: 'src/app/(main)/menus/weekly/page.tsx',
       wiring:
-        /const refetchAfterAiConsultation = useCallback\(\(\) => \{\s*weekDataCache\.current\.clear\(\);\s*fetchedRangesRef\.current\.clear\(\);\s*void refreshMealPlan\(\);\s*void fetchPantry\(\);\s*void fetchUserSettings\(\);\s*setAiConsultationRefetchRound\(\(round\) => round \+ 1\);\s*\}, \[refreshMealPlan, fetchPantry, fetchUserSettings\]\);\s*useAiConsultationDataRefetch\(refetchAfterAiConsultation\);/,
+        /const refetchAfterAiConsultation = useCallback\(\(\) => \{\s*weekDataCache\.current\.clear\(\);\s*fetchedRangesRef\.current\.clear\(\);\s*void refreshMealPlan\(\);\s*void fetchPantry\(\);\s*void fetchUserSettings\(\);\s*void loadFamilyData\(\);\s*setAiConsultationRefetchRound\(\(round\) => round \+ 1\);\s*\}, \[refreshMealPlan, fetchPantry, fetchUserSettings, loadFamilyData\]\);\s*useAiConsultationDataRefetch\(refetchAfterAiConsultation\);/,
     },
     {
       page: 'ホーム (/home): useHomeData の refetch',

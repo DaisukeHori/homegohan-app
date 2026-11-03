@@ -1172,6 +1172,9 @@ export default function WeeklyMenuPage() {
   // 家族情報ロード (家族に所属している場合のみ switcher 表示)。
   // 開いたときと、切り替えの適用のときに読む (#1584 の 1・設計書 family/10 §16.1)。名前は GET /api/family/members/names の値を当てる
   // (名前の API の失敗は空の Map = display_name のまま)。family_id が無くなっていたら一覧を空にする (家族から外れたことを反映する)
+  // AI 相談の成功のあと (refetchAfterAiConsultation) にも読む: 名前の API は、display_name の無いメンバー (自分を含む) に
+  // プロフィールの名前 (user_profiles.nickname) を返し、AI 相談 (update_profile_preferences) は自分の nickname を書く (#2195 V1)。
+  // メンバーの一覧の data が null なのは読み取りの失敗のときだけ (0 人なら [])。失敗では今の一覧を残す
   const loadFamilyData = useCallback(async () => {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
@@ -2579,7 +2582,7 @@ export default function WeeklyMenuPage() {
     void fetchPantry();
   }, [fetchPantry]);
 
-  // AI 相談の提案の実行で献立・買い物リスト・冷蔵庫・家族の人数が変わったら、ページを開いたときに読むもののうち
+  // AI 相談の提案の実行で献立・買い物リスト・冷蔵庫・家族の人数・自分の名前が変わったら、ページを開いたときに読むもののうち
   // AI 相談で変わりうるものを取り直す (#2195 V1)。
   //   - 表示中の週の献立と買い物リスト (refreshMealPlan)・冷蔵庫 (fetchPantry)・人数の設定 (fetchUserSettings)
   //   - 月のカレンダーの献立のある日: 取得済みの範囲を捨ててから回数を増やし、表示中の週の前後と表示中の月を読み直す
@@ -2589,6 +2592,10 @@ export default function WeeklyMenuPage() {
   //     まだ献立は無い。表示中の週の生成中の依頼を見つけて監視し、終わったら監視の側が献立を取り直す
   //     (生成中の依頼の確認 GET /api/ai/menu/weekly/pending が返すのは、開始日が表示中の週の初日の依頼だけ。ほかの日から
   //     始めた生成は、ページを開いたとき・読み込み直したときと同じく監視しない。#1609)
+  //   - 家族の一覧と名前 (loadFamilyData): 家族の切り替えに出す名前は、display_name の無いメンバー (自分を含む) なら
+  //     プロフィールの名前で、AI 相談は自分の名前 (user_profiles.nickname) を書く
+  //     (家族の献立 (useFamilyMenu。自分以外のメンバーの献立) は取り直さない。理由は
+  //     src/lib/ai/consultation-refetch-coverage.ts の '/menus/weekly' の mountReadsNotRefetched の familyMenu)
   // 別の週の献立も変わりうる (1 週間の献立の作成など) ので、週のキャッシュは捨てて、次にその週を開いたときに取り直させる。
   // モーダル・入力の部品が出ている間は取り直さない (useAiConsultationDataRefetch)
   const refetchAfterAiConsultation = useCallback(() => {
@@ -2597,8 +2604,9 @@ export default function WeeklyMenuPage() {
     void refreshMealPlan();
     void fetchPantry();
     void fetchUserSettings();
+    void loadFamilyData();
     setAiConsultationRefetchRound((round) => round + 1);
-  }, [refreshMealPlan, fetchPantry, fetchUserSettings]);
+  }, [refreshMealPlan, fetchPantry, fetchUserSettings, loadFamilyData]);
   useAiConsultationDataRefetch(refetchAfterAiConsultation);
 
   // Initialize selected day to today

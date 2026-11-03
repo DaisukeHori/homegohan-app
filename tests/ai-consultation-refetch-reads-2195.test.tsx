@@ -225,6 +225,11 @@ interface PageCase {
   empty: ServerState;
   /** ユーザーの操作で開くパネル (開いたまま取り直しが走るもの) */
   openPanels?: () => Promise<void>;
+  /**
+   * 前の答えの中身で決まる読み取り (中身のある応答で開いたときに必ず出るもの)。応答の作りで読み取りが隠れて、
+   * 取り直しとの比べが空振りしていないことを確かめる (#2195 V1 R2: 家族の一覧を空の答えにしていて、名前の API の読み取りの抜けが見えなかった)
+   */
+  gatedMountReads?: readonly string[];
 }
 
 async function mount(c: PageCase) {
@@ -252,6 +257,9 @@ async function checkRefetchCoversMount(c: PageCase) {
   recorder.take();
   await mount(c);
   const mountReads = recorder.take();
+  expect([...mountReads], `${c.page} の前の答えで決まる読み取りが、開いたときの読み取りに無い`).toEqual(
+    expect.arrayContaining([...(c.gatedMountReads ?? [])]),
+  );
   await notifyAiConsultationSucceeded();
   const refetchReads = recorder.take();
   expectRefetchReadsCoverMount(c.page, mountReads, refetchReads);
@@ -300,6 +308,8 @@ async function openHealthDayPanel() {
 }
 
 const MEAL_ID = 'meal-2195-reads';
+/** 食事に紐づく市販品 (食事の詳細は catalog_product_id があるときだけ GET /api/catalog/products/<id> を読む) */
+const CATALOG_PRODUCT_ID = 'catalog-2195-reads';
 const BADGE_ROW = (earned: boolean) => ({
   id: 'badge-2195',
   code: 'first_bite',
@@ -444,10 +454,13 @@ const CASES: PageCase[] = [
           is_completed: true,
           completed_at: '2026-11-03T12:00:00Z',
           user_daily_meals: { day_date: '2026-11-03' },
+          catalog_product_id: CATALOG_PRODUCT_ID,
         },
         '/api/profile': { servings_config: null },
       },
     },
+    // 市販品の詳細は、食事の答えに catalog_product_id があるときだけ読む (食事の取得と同じ useEffect の中。取り直しも読む)
+    gatedMountReads: [`GET /api/catalog/products/${CATALOG_PRODUCT_ID}`],
     // AI 相談で食事が消された (delete_meal): 詳細は 404
     empty: { fetchBodies: { '/api/profile': { servings_config: null } } },
   },
