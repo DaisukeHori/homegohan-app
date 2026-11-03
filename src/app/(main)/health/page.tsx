@@ -153,9 +153,14 @@ export default function HealthDashboardPage() {
   // 選んだ日のパネルを出している日 (取り直しの応答が、別の日を選び直したあとに届いても置かないため)
   const selectedDateRef = useRef<string | null>(null);
   // 選んだ日のパネルの記録の読み取りの流れ (#2201 U1)。日を選んだときの読み取り (handleDaySelect) と取り直しの読み直し
-  // (refetchAfterAiConsultation の reloadSelectedDate) は同じ流れで始め、置いたどの応答よりあとに始めた読み取りの応答だけを置く
-  // (日を選んだ直後に来た取り直しの応答が先に届いたら、先に始めた日を選んだときの古い応答でパネルを戻さない。
-  // あとの読み取りが失敗した・まだ届いていないときは、先に始めた読み取りの応答を置く)
+  // (refetchAfterAiConsultation の reloadSelectedDate) は同じ流れで、日を鍵にして始め、その日の中で置いたどの応答よりあとに始めた
+  // 読み取りの応答だけを置く (日を選んだ直後に来た取り直しの応答が先に届いたら、先に始めた日を選んだときの古い応答でパネルを戻さない。
+  // あとの読み取りが失敗した・まだ届いていないときは、先に始めた読み取りの応答を置く)。
+  // 日を鍵にするのは、別の日の応答の順序で、この日の応答を捨てないため (A→B→A と選び直して、B の応答を置いたあとに A の最初の応答が
+  // 届いても、A の記録として置く)。
+  // パネルの読み込み中の印は、選んだ日の記録を置いたとき (place の apply の中) にだけ下ろす: 置かなかった ('superseded') のは、
+  // その日のもっと新しい記録をもう置いたからで、置いた側が印を下ろしている。日を選び直す前の回に置いた記録なら、パネルはそのあとに
+  // 別の日の記録を出したかもしれないので、下ろすと見出しの日と違う日の記録を出す
   const selectedDateFetchStream = useAiConsultationFetchStream('newerThanPlaced');
 
   /**
@@ -167,7 +172,7 @@ export default function HealthDashboardPage() {
     const date = selectedDateRef.current;
     const reloadSelectedDate = async () => {
       if (date === null) return;
-      const order = selectedDateFetchStream.begin();
+      const order = selectedDateFetchStream.begin(null, date);
       try {
         const res = await fetch(`/api/health/records/${date}`);
         if (!res.ok) return;
@@ -205,8 +210,10 @@ export default function HealthDashboardPage() {
     }
     selectedDateRef.current = date;
     setSelectedDate(date);
+    // 前に選んだ日の記録をパネルに残さない (読み込み中も、見出しの日と違う日の記録で「詳細を編集」を出さない。#2201 U1)
+    setSelectedDateRecord(null);
     setLoadingSelectedDate(true);
-    const order = selectedDateFetchStream.begin();
+    const order = selectedDateFetchStream.begin(null, date);
     // 応答を待つあいだに別の日を選び直したら、この日の応答は置かない (#2201 U1。取り直しの側と同じ形)
     let record: HealthRecord | null = null;
     try {
@@ -219,10 +226,12 @@ export default function HealthDashboardPage() {
       record = null;
     }
     if (selectedDateRef.current !== date) return;
-    // 応答を待つあいだに来た取り直しの読み直しの応答 (この読み取りよりあとに始めた) をもう置いていれば、この古い応答は置かない
-    // (#2201 U1。読み込み中の印は下ろす)
-    order.place(() => setSelectedDateRecord(record));
-    setLoadingSelectedDate(false);
+    // この日のもっと新しい記録 (この読み取りよりあとに始めた取り直しの読み直しなど) をもう置いていれば、この古い応答は置かない。
+    // 読み込み中の印は置いたときだけ下ろす (置かなかったときは、新しい記録を置いた側が下ろした。#2201 U1)
+    order.place(() => {
+      setSelectedDateRecord(record);
+      setLoadingSelectedDate(false);
+    });
   };
 
   const handleQuickSave = async () => {

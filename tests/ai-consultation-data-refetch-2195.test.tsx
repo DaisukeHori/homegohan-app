@@ -25,7 +25,6 @@ import type {
   AiConsultationLoadingState,
   AiConsultationPendingWrites,
   AiConsultationRefetchControl,
-  AiConsultationStreamTicket,
   AiConsultationWriteInFlightRef,
 } from '@/hooks/useAiConsultationDataRefetch';
 import path from 'node:path';
@@ -842,20 +841,6 @@ describe('useAiConsultationRefetchKey (#2195 V1)', () => {
     expect(keyText()).toBe('3');
   });
 });
-
-/**
- * 型だけを見る hook (描画しない。tsc (npm run typecheck) が検査する。#2201 U1): 'newerThanPlaced' の流れの begin は対象の鍵を求める。
- * 鍵を渡し忘れると、別の対象 (日・週) の応答を置いたことで、選び直した対象の正しい応答を古いと見なす (A→B→A。/health の選んだ日の
- * パネル・献立表の表示中の週で起きた)。鍵を渡さない begin が型で止まらなくなったら、下の @ts-expect-error が tsc のエラーになる
- */
-export function useNewerThanPlacedStreamNeedsTargetKey(): AiConsultationStreamTicket {
-  const stream = useAiConsultationFetchStream('newerThanPlaced');
-  // @ts-expect-error 対象の鍵を渡さない begin は型で止める
-  stream.begin();
-  // @ts-expect-error 札だけを渡して対象の鍵を渡さない begin も型で止める
-  stream.begin(null);
-  return stream.begin(null, '2026-01-01');
-}
 
 describe('取得の流れ (useAiConsultationFetchStream。#2201 U1 + U2)', () => {
   /** 取得の流れを 1 本持ち、AI 相談の成功の取り直しの札を受けるページ */

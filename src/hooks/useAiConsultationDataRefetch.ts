@@ -258,15 +258,21 @@ export function useAiConsultationDataRefetch(
 /**
  * 取得の流れの順序の決まり (#2201 U1。useAiConsultationFetchStream)。
  *   - 'latestStarted': 最後に始めた取得の応答だけを置く (古い応答は、あとの取得がまだ何も置いていなくても置かない)
- *   - 'newerThanPlaced': もう置いたどの応答よりあとに始めた取得の応答を置く (あとの取得が失敗した・まだ届いていないときは、
- *     先に始めた取得の応答も置く。献立表の表示中の週の献立: 週を移った直後の週の読み込みの応答を、そのあとに始めて失敗した
- *     読み直しのために捨てない)
+ *   - 'newerThanPlaced': 同じ対象 (鍵) の中で、もう置いたどの応答よりあとに始めた取得の応答を置く (あとの取得が失敗した・
+ *     まだ届いていないときは、先に始めた取得の応答も置く。献立表の表示中の週の献立: 週を移った直後の週の読み込みの応答を、
+ *     そのあとに始めて失敗した読み直しのために捨てない)。
+ *     1 つの表示 (選んだ日のパネル・表示中の週の献立) に対象 (日・週) を替えて置く流れなので、begin には対象の鍵を必ず渡す
+ *     (AiConsultationTargetedFetchStream。鍵を 1 つにすると、別の対象の応答を置いただけで、選び直した対象の正しい応答を
+ *     'superseded' にする: A→B→A で、A の最初の応答を B の応答より古いと見なして捨てる)
  */
 export type AiConsultationFetchStreamOrder = "latestStarted" | "newerThanPlaced";
 
 /**
  * 流れの札の place の結果。'superseded' は順序の決まりで置かなかった (あとに始めた取得がある・もう新しい応答を置いた)、
- * 'deferred' は取り直しの札が止めた (番兵・書き込みの印。止めた通知の印は札が付けたので、外れたときに 1 回取り直す)
+ * 'deferred' は取り直しの札が止めた (番兵・書き込みの印。止めた通知の印は札が付けたので、外れたときに 1 回取り直す)。
+ * 'superseded' は「表示がいまこの対象の値を出している」ではない ('newerThanPlaced' で、もっと新しい応答を置いたあとに別の対象の
+ * 応答を置いたかもしれない): 対象の読み込み中の印は、置いた ('placed') ときにだけ下ろす (置かなかった取得は印に触れない。
+ * 置いた取得が下ろす)
  */
 export type AiConsultationPlaceResult = "placed" | "superseded" | "deferred";
 
@@ -292,6 +298,15 @@ export interface AiConsultationFetchStream {
   readonly begin: (refetchTicket?: AiConsultationFetchTicket | null, key?: string) => AiConsultationStreamTicket;
 }
 
+/**
+ * 対象ごとに順序を持つ取得の流れ ('newerThanPlaced' の useAiConsultationFetchStream の戻り値。#2201 U1)。
+ * begin の key は対象 (選んだ日・表示中の週の初日など) で、省けない (省くと、別の対象の応答で、この対象の応答の順序が決まる)。
+ * 取り直しの札を渡さない取得 (開いたとき・日を選んだとき・週の移動) は refetchTicket に null を渡す
+ */
+export interface AiConsultationTargetedFetchStream {
+  readonly begin: (refetchTicket: AiConsultationFetchTicket | null, key: string) => AiConsultationStreamTicket;
+}
+
 /** 鍵を省いた流れの鍵 */
 const SINGLE_STREAM_KEY = "";
 
@@ -302,8 +317,13 @@ const SINGLE_STREAM_KEY = "";
  * 流れは世代番号を持ち、begin で始めた取得の応答を place で置く: 順序の決まり (order) で古い応答を置かず、取り直しの札があれば
  * 応答を置く時点の番兵・書き込みの印も見る (止めたら、外れたときに 1 回取り直す)。開いたときの読み込みと取り直しは同じ流れで始める
  * (開いたときの読み込みの応答が取り直しの応答より後に届いても、古い答えで上書きしない)。
- * ページに世代番号の数 (useRef の数) を書かず、これを使う
+ * ページに世代番号の数 (useRef の数) を書かず、これを使う。
+ * 'newerThanPlaced' の流れは begin に対象の鍵を求める (型で止める。AiConsultationTargetedFetchStream)。
+ * 順序の決まりを変数で渡す呼び方 (流れの検査) は、鍵を省ける型 (AiConsultationFetchStream) を返す
  */
+export function useAiConsultationFetchStream(order?: "latestStarted"): AiConsultationFetchStream;
+export function useAiConsultationFetchStream(order: "newerThanPlaced"): AiConsultationTargetedFetchStream;
+export function useAiConsultationFetchStream(order: AiConsultationFetchStreamOrder): AiConsultationFetchStream;
 export function useAiConsultationFetchStream(order: AiConsultationFetchStreamOrder = "latestStarted"): AiConsultationFetchStream {
   /** 鍵ごとの、最後に始めた取得の世代 */
   const startedRef = useRef(new Map<string, number>());

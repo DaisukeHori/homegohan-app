@@ -527,10 +527,16 @@ export default function WeeklyMenuPage() {
   // 表示中の週の初日 (YYYY-MM-DD)。献立の取得の応答を置く前に、応答を待つあいだに週を移っていないかを見る (#2201 U1)
   const weekStartKeyRef = useRef(formatLocalDate(weekStart));
   weekStartKeyRef.current = formatLocalDate(weekStart);
-  // 表示中の週の献立の取得 (週の読み込み fetchPlan と読み直し refreshMealPlan) の流れ (#2201 U1)。応答 (週の読み込みの失敗の空を含む)
-  // を置くのは、もう置いたどの応答よりあとに始めた取得だけ (先に届いた新しい応答を、あとから届いた古い応答で上書きしない)。
+  // 表示中の週の献立の取得 (週の読み込み fetchPlan と読み直し refreshMealPlan) の流れ (#2201 U1)。週の初日を鍵にして始め、応答
+  // (週の読み込みの失敗の空を含む) を置くのは、その週の中で、もう置いたどの応答よりあとに始めた取得だけ (先に届いた新しい応答を、
+  // あとから届いた古い応答で上書きしない)。
   // 「最後に始めた取得だけ」('latestStarted') にしないのは、週を移った直後 (週の読み込みの応答待ち) に始まった読み直しが失敗したとき、
-  // 週の読み込みの応答まで捨てると、前の週の献立が新しい週の見出しの下に残るため
+  // 週の読み込みの応答まで捨てると、前の週の献立が新しい週の見出しの下に残るため。
+  // 週を鍵にするのは、別の週の応答の順序で、この週の応答を捨てないため (週を移って戻ったあとに届いた、戻った週の読み込みの応答を、
+  // そのあいだに置いた別の週の応答より古いと見なさない)。
+  // 週の読み込み中の表示 (loading) は、表示中の週の献立を置いた取得が下ろす (週の読み込みは自分の終わりで、読み直しは置いたときに)。
+  // 置かなかった ('superseded') 取得は下ろさない: その週のもっと新しい応答を置いた取得が下ろしている。前にその週を開いたときに置いた
+  // 応答なら、そのあとに別の週の献立を置いたかもしれないので、下ろすと別の週の献立を、この週の見出しの下に出す
   const planFetchStream = useAiConsultationFetchStream('newerThanPlaced');
   const setWeekStart = useCallback((d: Date) => dispatchWeekView({ type: 'WEEK_SET_START', payload: d }), []);
   // UX2-24: 前週/次週ボタン専用。selectedDayIndex をリセットしない WEEK_NAVIGATE_* を dispatch する
@@ -1304,7 +1310,7 @@ export default function WeeklyMenuPage() {
   // → aiGenerationReducer 管理 (Phase B-2 で移行済み)
 
   // Meal Plan再取得関数（キャッシュも更新）
-  // 応答を置く前に、今も同じ週を出しているか (weekStartKeyRef) と、あとに始めた取得の応答をもう置いていないか (planFetchStream) を見る
+  // 応答を置く前に、今も同じ週を出しているか (weekStartKeyRef) と、その週のあとに始めた取得の応答をもう置いていないか (planFetchStream) を見る
   // (#2201 U1。以前は閉包の weekStart で読んで確かめずに置いたので、応答を待つあいだに週を移ると前の週の献立が新しい週の見出しの
   // 下に出うった)。読み直しの失敗では何も置かない (先に始めた週の読み込みの応答が後から届けば、そちらを置く)。
   // refetchTicket (AI 相談の成功の取り直しの札) があれば、応答を待つあいだに書き込み (献立の編集・買い物リストのチェックなど)・
@@ -1312,7 +1318,7 @@ export default function WeeklyMenuPage() {
   const refreshMealPlan = useCallback(async (refetchTicket: AiConsultationFetchTicket | null = null) => {
     const targetDate = formatLocalDate(weekStart);
     const endDate = addDaysStr(targetDate, 6);
-    const order = planFetchStream.begin(refetchTicket);
+    const order = planFetchStream.begin(refetchTicket, targetDate);
     try {
       const res = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
       if (res.ok) {
@@ -1336,12 +1342,15 @@ export default function WeeklyMenuPage() {
             // 空の場合もキャッシュを更新
             weekDataCache.current.set(targetDate, { plan: null, shoppingList: [], fetchedAt: Date.now() });
           }
+          // 表示中の週の献立を置いた: その週の読み込み (fetchPlan) の応答待ちでも、読み込み中の表示を下ろす。その読み込みの応答は
+          // これより前に始めたので置かず、読み込み中の表示にも触れない (#2201 U1)
+          setLoading(false);
         });
       }
     } catch (e) {
       console.error('Failed to refresh meal plan:', e);
     }
-  }, [weekStart, updateCalendarMealDatesFromDailyMeals, planFetchStream]);
+  }, [weekStart, updateCalendarMealDatesFromDailyMeals, planFetchStream, setLoading]);
 
   // V4 Menu Generation Hook
   const v4Generation = useV4MenuGeneration({
@@ -2184,13 +2193,13 @@ export default function WeeklyMenuPage() {
       const targetDateStr = formatLocalDate(weekStart);
       const now = Date.now();
 
-      // この週の取得を始める (#2201 U1。読み直し refreshMealPlan と同じ流れ。古い応答を置かない)
-      const order = planFetchStream.begin();
+      // この週の取得を始める (#2201 U1。読み直し refreshMealPlan と同じ流れ・同じ週の鍵。古い応答を置かない)
+      const order = planFetchStream.begin(null, targetDateStr);
 
       // キャッシュをチェック
       const cached = weekDataCache.current.get(targetDateStr);
       if (cached && (now - cached.fetchedAt < CACHE_TTL)) {
-        // キャッシュヒット - 即座に反映 (いま始めた取得なので、置いたどの応答よりも新しい)
+        // キャッシュヒット - 即座に反映 (いま始めた取得なので、この週で置いたどの応答よりも新しい)
         order.place(() => {
           setCurrentPlan(cached.plan);
           if (cached.shoppingList.length > 0) setShoppingList(cached.shoppingList);
@@ -2203,6 +2212,9 @@ export default function WeeklyMenuPage() {
 
       // キャッシュミス - APIから取得
       setLoading(true);
+      // この読み込みが、この週の献立 (失敗の空を含む) を置いたか。読み込み中の表示は、置いたときだけ終わりに下ろす (#2201 U1。
+      // 置かなかったときは、この週のもっと新しい応答を置いた取得が下ろす。planFetchStream のコメント)
+      let placedThisWeek = false;
       try {
         const data = await fetchWeekData(weekStart);
         // キャッシュに保存
@@ -2210,12 +2222,13 @@ export default function WeeklyMenuPage() {
         // 応答を待つあいだに週を移った: この週の献立を置かない (#2201 U1)
         if (weekStartKeyRef.current !== targetDateStr) return;
 
-        // あとに始めた読み直し (refreshMealPlan) の応答をもう置いていれば置かない (その読み直しが失敗していれば、この応答を置く)
-        order.place(() => {
+        // この週のあとに始めた取得 (読み直し refreshMealPlan など) の応答をもう置いていれば置かない (その読み直しが失敗していれば、
+        // この応答を置く)
+        placedThisWeek = order.place(() => {
           setCurrentPlan(data.plan);
           if (data.shoppingList.length > 0) setShoppingList(data.shoppingList);
           if (data.plan) autoExpandNextMeal(data.plan, weekDates);
-        });
+        }) === 'placed';
 
         // DBで生成中のリクエストがあるか確認
         const pendingRes = await fetch(`/api/ai/menu/weekly/pending?date=${targetDateStr}`);
@@ -2236,10 +2249,10 @@ export default function WeeklyMenuPage() {
         prefetchAdjacentWeeks(weekStart);
       } catch (e) {
         console.error("Failed to fetch meal plan", e);
-        if (weekStartKeyRef.current === targetDateStr) order.place(() => setCurrentPlan(null));
+        if (weekStartKeyRef.current === targetDateStr && order.place(() => setCurrentPlan(null)) === 'placed') placedThisWeek = true;
       } finally {
-        // 週を移っていれば、移った先の週の読み込みが読み込み中の表示を下ろす
-        if (weekStartKeyRef.current === targetDateStr) setLoading(false);
+        // 週を移っていれば、移った先の週の読み込みが読み込み中の表示を下ろす。この週の献立を置かなかった読み込みも下ろさない
+        if (weekStartKeyRef.current === targetDateStr && placedThisWeek) setLoading(false);
       }
     };
     fetchPlan();
