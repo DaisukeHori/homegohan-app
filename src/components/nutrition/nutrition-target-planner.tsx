@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,7 @@ import type { CalculationBasis } from "@homegohan/core";
 import {
   useAiConsultationDataRefetch,
   useAiConsultationLoading,
+  useAiConsultationPendingWrites,
   type AiConsultationFetchTicket,
 } from "@/hooks/useAiConsultationDataRefetch";
 import { AI_CONSULTATION_UNEDITED_INPUTS_PROPS } from "@/lib/ai/consultation-data-refetch";
@@ -127,15 +128,18 @@ export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMod
   const [fetchedForm, setFetchedForm] = useState<PlannerForm | null>(null);
 
   // 保存 (目標体重・栄養目標の書き込み) の応答を待っている間 (#2201 U2)。この間に来た AI 相談の成功では取り直さず、
-  // 保存が終わったら 1 回取り直す (保存の前の値を読んだ取り直しの応答が、保存した値の表示を戻さないため)
-  const writeInFlightRef = useRef(false);
+  // 保存が終わったら 1 回取り直す (保存の前の値を読んだ取り直しの応答が、保存した値の表示を戻さないため)。
+  // 始めた回数も数えるので、取り直しの応答を待つあいだに始めて終えた保存も見分ける (札の deferIfHeld)
+  const pendingWrites = useAiConsultationPendingWrites();
 
   /**
    * プロフィールと栄養目標を読む。mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込み中の表示を出さずに読み直し、
    * 失敗 (通信の失敗・非 2xx) では失敗の文に切り替えずに今の表示を残す。応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ。
    * 取り直しでは応答を待つあいだも入力欄が出ているので、その間に入力欄を変えていたら (下の section の印が外れて番兵が立つ)・
    * 保存を始めていたら、応答を置かない (打ちかけの値を取得した値で上書きしない。ticket.deferIfHeld。元に戻した・保存が終わったあとに
-   * 1 回取り直す)
+   * 1 回取り直す)。
+   * 取り直しで読めたら、前の失敗の文 (開いたとき・保存の失敗) を消して入力欄に戻す (開いたときの読み込みと同じ。失敗の文のままだと、
+   * AI 相談で目標が変わっても読み込み直すまで失敗の画面のまま)
    */
   const fetchPlannerData = async (ticket: AiConsultationFetchTicket, mode: PlannerFetchMode = "mount") => {
     if (mode === "mount") {
@@ -158,6 +162,7 @@ export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMod
       if (mode === "refetch" && ticket.deferIfHeld()) return;
 
       const nextForm = plannerFormOf(profileJson, targetJson.targets);
+      setError(null);
       setProfile(profileJson);
       setTargets(targetJson.targets as PlannerTargets);
       setFetchedForm(nextForm);
@@ -176,9 +181,9 @@ export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMod
   // AI 相談の提案の実行で栄養目標・目標体重が変わったら取り直す (#2195 V1)。
   // 入力欄を変えている間・保存の応答を待つ間は取り直さず (下の section の印を外すので、入力欄が取り直しを止める)、
   // 元に戻した・保存が終わったあとに 1 回取り直す (#2201 U2)。取り直しの応答を待つあいだに変え始めたときも同じ (fetchPlannerData)
-  const { beginFetch, notifyWriteSettled } = useAiConsultationDataRefetch(
+  const { beginFetch } = useAiConsultationDataRefetch(
     (ticket) => fetchPlannerData(ticket, refetchReadMode()),
-    { writeInFlightRef },
+    { writeInFlightRef: pendingWrites },
   );
 
   useEffect(() => {
@@ -244,7 +249,7 @@ export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMod
     setSaving(true);
     setSavedMessage(null);
     setError(null);
-    writeInFlightRef.current = true;
+    const endWrite = pendingWrites.begin();
 
     try {
       const profileNeedsUpdate =
@@ -330,8 +335,7 @@ export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMod
       setError(err instanceof Error ? err.message : "保存に失敗しました。");
     } finally {
       setSaving(false);
-      writeInFlightRef.current = false;
-      notifyWriteSettled();
+      endWrite();
     }
   };
 

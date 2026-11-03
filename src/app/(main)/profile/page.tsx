@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, Suspense } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -148,12 +148,12 @@ function ProfilePageContent() {
   // その回が AI 相談の成功の取り直しで走ったか (#2201 U1)。開いたときの読み込み中に来た成功の回は、その読み込みの役を引き継ぐ
   // (取り直しの扱いにしない。ログインを確かめられなかったときは開いたときと同じ扱い)
   const takeAiConsultationRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey, isLoading);
-  // 編集のモーダルが開いているか (応答が届いた時点で見る。#2201 U1)。番兵は通知が来た時点にしか見ないので、応答を待つあいだに
-  // 「編集」を押して打ち始めた値を、届いた応答の editForm で上書きしないため。
-  // 取り直しの回は、モーダルが開いていれば応答ごと置かずに閉じたあと 1 回取り直す (下の refetchTicket.deferIfHeld。閉じたあとの
-  // editForm を AI 相談の変更の前の値のまま残さない)。開いたときの読み込み (読み込み中も「編集」が押せる) はこれで editForm だけを守る
-  const isEditingRef = useRef(isEditing);
-  isEditingRef.current = isEditing;
+  // 取得した値は、いつも編集の入力欄 (editForm) にも置く (#2201 U1)。打ちかけの値は次の 2 つで守る:
+  //   - 取り直しの回: 応答を待つあいだに編集のモーダル (role="dialog") を開いたら、応答ごと置かずに閉じたあと 1 回取り直す
+  //     (下の refetchTicket.deferIfHeld。閉じたあとの editForm を AI 相談の変更の前の値のまま残さない)
+  //   - 開いたときの読み込み: 読み込み中もヘッダーの「編集」は押せるが、モーダルは読み込みが終わるまで入力欄と保存のボタンを出さない
+  //     (読み込み中の表示)。届いた応答を editForm に置いてから入力欄を出す (読み込み中に開いたモーダルを、保存した値の無い空の入力欄の
+  //     まま残さない・空の editForm を保存して、触っていない欄の無い送信にしない)
 
   useEffect(() => {
     // 前の回の応答が後から届いても置かない (取り直しが続いたとき。#2201 U1)
@@ -197,7 +197,7 @@ function ProfilePageContent() {
           // 答えをそのまま置く: 取り直し (AI 相談の成功のあと) でも、読み込み直したときと同じ値にする (#2195 V1)
           if (!data) {
             setProfile(null);
-            if (!isEditingRef.current) setEditForm({});
+            setEditForm({});
           }
         }
         if (data) {
@@ -215,8 +215,7 @@ function ProfilePageContent() {
             nickname: domainProfile.nickname
           });
           setProfile(domainProfile);
-          // 編集のモーダルが開いていれば、打ちかけの editForm を残す (#2201 U1)
-          if (!isEditingRef.current) setEditForm(domainProfile);
+          setEditForm(domainProfile);
         }
 
         try {
@@ -766,6 +765,13 @@ function ProfilePageContent() {
 
               {/* コンテンツ */}
               <div className="flex-1 overflow-y-auto p-6">
+                {/* 開いたときの読み込みが終わるまでは入力欄を出さない (保存した値を editForm に置いてから出す。#2201 U1) */}
+                {isLoading ? (
+                  <p className="py-8 text-center text-sm text-gray-500" role="status">
+                    プロフィールを読み込み中...
+                  </p>
+                ) : (
+                <>
                 {/* 基本情報タブ */}
                 {activeTab === 'basic' && (
                   <div className="space-y-4">
@@ -1316,6 +1322,8 @@ function ProfilePageContent() {
                     </div>
                   </div>
                 )}
+                </>
+                )}
               </div>
 
               {/* フッター */}
@@ -1335,7 +1343,7 @@ function ProfilePageContent() {
                       )}
                       <Button
                         onClick={handleSave}
-                        disabled={isSaving}
+                        disabled={isSaving || isLoading}
                         className="flex-1 py-6 rounded-full bg-orange-500 hover:bg-orange-600 text-white font-bold"
                       >
                         {isSaving ? (
@@ -1363,7 +1371,7 @@ function ProfilePageContent() {
                 ) : (
                   <Button
                     onClick={handleSave}
-                    disabled={isSaving}
+                    disabled={isSaving || isLoading}
                     className="w-full py-6 rounded-full bg-gray-900 hover:bg-black text-white font-bold"
                   >
                     {isSaving ? '保存中...' : '変更を保存'}

@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { todayLocal } from "@/lib/date-utils";
 import {
   useAiConsultationDataRefetch,
   useAiConsultationLoading,
+  useAiConsultationPendingWrites,
   type AiConsultationFetchTicket,
 } from "@/hooks/useAiConsultationDataRefetch";
 import { useRouter } from "next/navigation";
@@ -87,12 +88,14 @@ export default function HealthGoalsPage() {
   const [editError, setEditError] = useState<string | null>(null);
 
   // 削除の送信の応答を待っている間 (#2201 U2)。この間に来た AI 相談の成功では取り直さず、終わったら 1 回取り直す
-  // (削除の前の一覧を読んだ取り直しの応答が、削除した目標を一覧に戻さないため)
-  const writeInFlightRef = useRef(false);
+  // (削除の前の一覧を読んだ取り直しの応答が、削除した目標を一覧に戻さないため)。始めた回数も数えるので、取り直しの応答を待つあいだに
+  // 始めて終えた削除も見分ける (札の deferIfHeld)
+  const pendingWrites = useAiConsultationPendingWrites();
 
   /**
    * 目標の一覧を読む。mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込み中の表示を出さずに読み直し、
-   * 失敗 (通信の失敗・非 2xx) では今の表示を残す。応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ
+   * 失敗 (通信の失敗・非 2xx) では今の表示を残す。応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ。
+   * 取り直しの応答を待つあいだに開いたモーダル・始めた削除があれば置かない (ticket.deferIfHeld。閉じた・終わったあとに 1 回取り直す)
    */
   const fetchGoals = async (ticket: AiConsultationFetchTicket, mode: GoalsFetchMode = 'mount') => {
     if (mode === 'mount') setLoading(true);
@@ -100,7 +103,9 @@ export default function HealthGoalsPage() {
       const res = await fetch('/api/health/goals?status=all');
       if (res.ok) {
         const data = await res.json();
-        if (ticket.isLatest()) setGoals(data.goals || []);
+        if (!ticket.isLatest()) return;
+        if (mode === 'refetch' && ticket.deferIfHeld()) return;
+        setGoals(data.goals || []);
       }
     } catch (error) {
       console.error('Failed to fetch goals:', error);
@@ -110,9 +115,9 @@ export default function HealthGoalsPage() {
   };
   // AI 相談の提案の実行で健康目標が変わったら取り直す (#2195 V1)。作成・編集のモーダルが出ている間・削除の応答を待つ間は
   // 取り直さず、閉じた・終わったあとに 1 回取り直す (#2201 U2)
-  const { beginFetch, notifyWriteSettled } = useAiConsultationDataRefetch(
+  const { beginFetch } = useAiConsultationDataRefetch(
     (ticket) => fetchGoals(ticket, refetchReadMode()),
-    { writeInFlightRef },
+    { writeInFlightRef: pendingWrites },
   );
   /** 開いたとき・作成・編集・削除のあとの読み込み (これまでどおり読み込み中の表示を出す) */
   const reloadGoals = () => fetchGoals(beginFetch());
@@ -222,7 +227,7 @@ export default function HealthGoalsPage() {
     if (!deleteConfirm) return;
     const id = deleteConfirm;
     setDeleteConfirm(null);
-    writeInFlightRef.current = true;
+    const endWrite = pendingWrites.begin();
     try {
       const res = await fetch(`/api/health/goals/${id}`, {
         method: 'DELETE',
@@ -233,8 +238,7 @@ export default function HealthGoalsPage() {
     } catch (error) {
       console.error('Failed to delete goal:', error);
     } finally {
-      writeInFlightRef.current = false;
-      notifyWriteSettled();
+      endWrite();
     }
   };
 

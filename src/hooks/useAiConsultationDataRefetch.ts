@@ -26,7 +26,11 @@ export interface AiConsultationFetchTicket {
    * (楽観的な更新) を、届いた応答 (それより前に読んだ値) で上書きしないため。
    * ページが自分で始めた取得 (beginFetch の札) では常に false (その応答は置く)。取り直しが開いたときの読み込みの役を引き継いだ回
    * (useAiConsultationLoading の refetchReadMode() が 'mount'・useAiConsultationRefetchRun が false の回) では呼ばない
-   * (残すべき今の表示がまだ無いので、応答を置く)
+   * (残すべき今の表示がまだ無いので、応答を置く)。
+   * 1 回 true を返した札は、そのあとも true を返し、止めた通知の印を付け直さない (1 つの取り直しの応答を何か所かに分けて置くページ
+   * (献立表など) が置く場所ごとに呼んでも、取り直しを足すのは 1 回)。
+   * 書き込みの印 (writeInFlightRef) を渡すページは、取り直しの経路で応答を置く場所の全部でこれを見る
+   * (見ないと上の決まりが効かない。tests/ai-consultation-refetch-placement-guard-2201.test.ts がソースで数える)
    */
   readonly deferIfHeld: () => boolean;
 }
@@ -53,7 +57,10 @@ export interface AiConsultationRefetchOptions {
    * ページの書き込み (楽観的な更新と、その送信の応答まで) の間 true の印 (#2201 U2)。
    * true の間に来た通知 (と献立の生成の完了) では取り直さず、止めた印を付ける。書き込みが終わったら
    * (印を false に戻したあと) notifyWriteSettled を呼ぶと、止めた通知のぶん 1 回だけ取り直す
-   * (subscribeSettled を持つ印は、書き込みが全部終わったときに hook が自分で取り直す)
+   * (subscribeSettled を持つ印は、書き込みが全部終わったときに hook が自分で取り直す)。
+   * 印は useAiConsultationPendingWrites で作る (始めた回数を数えるので、取り直しの応答を待つあいだに始めて終えた書き込みも
+   * 札の deferIfHeld が見分ける)。真偽の ref を渡すのは、取り直しそのものが印を立てて書き込みを止めるページ (家族・譲渡の承諾の画面。
+   * 取り直しの応答を待つあいだに書き込みが始まらない) だけ (tests/ai-consultation-refetch-placement-guard-2201.test.ts が数える)
    */
   writeInFlightRef?: AiConsultationWriteInFlightRef;
 }
@@ -147,11 +154,15 @@ export function useAiConsultationDataRefetch(
     const runRefetch = () => {
       const isLatest = nextGeneration();
       const writesStartedAtBegin = writesStarted();
+      /** この札が一度 true を返したか (置く場所ごとに呼ばれても、止めた通知の印を付けるのは 1 回) */
+      let deferredByThisTicket = false;
       const ticket: AiConsultationFetchTicket = {
         isLatest,
         deferIfHeld: () => {
+          if (deferredByThisTicket) return true;
           const writeStartedSinceBegin = writesStartedAtBegin !== undefined && writesStarted() !== writesStartedAtBegin;
           if (!isHeld() && !writeStartedSinceBegin) return false;
+          deferredByThisTicket = true;
           if (active) deferRefetch();
           return true;
         },

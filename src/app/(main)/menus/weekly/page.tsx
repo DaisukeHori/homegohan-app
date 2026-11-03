@@ -29,7 +29,12 @@ import type { DailyMeal, PlannedMeal, ShoppingListItem, MealMode, MealDishes, Di
 import type { CatalogProductSummary } from "@/types/catalog";
 import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
-import { useAiConsultationDataRefetch, useAiConsultationPendingWrites } from "@/hooks/useAiConsultationDataRefetch";
+import {
+  useAiConsultationDataRefetch,
+  useAiConsultationPendingWrites,
+  useAiConsultationRefetchRun,
+  type AiConsultationFetchTicket,
+} from "@/hooks/useAiConsultationDataRefetch";
 import { BASE_MEAL_TYPES, EXTRA_MEAL_TYPES } from "@/lib/slot-builder";
 import { useNutritionFeedbackWatch } from "@/hooks/useNutritionFeedbackWatch";
 import { notifyMenuGenerated } from "@/lib/local-notification";
@@ -1014,17 +1019,26 @@ export default function WeeklyMenuPage() {
   // 範囲 (rangeKey) ごとの献立のある日の取得の世代番号 (#2201 U1)。同じ範囲を読み直したとき、古い応答が後から届いて
   // AI 相談が足した日の印を消さないよう、置くのは最後に始めた取得の応答だけ
   const mealDatesFetchSeqRef = useRef<Map<string, number>>(new Map());
-  // 献立・買い物リストの楽観的な更新から送信の応答まで (#2201 U2)。この間に来た AI 相談の成功では取り直さず、全部終わったら
-  // 1 回取り直す (書き込みの前の値を読んだ取り直しの応答が楽観的な表示を戻さない・失敗の巻き戻しが AI の後の献立を AI の前の献立で
-  // 上書きしないため)
+  // 献立・買い物リスト・冷蔵庫・人数の設定・レーダーの栄養素の書き込み (楽観的な更新から送信の応答まで・送信のあとの読み直しまで。
+  // #2201 U2)。この間に来た AI 相談の成功では取り直さず、全部終わったら 1 回取り直す (書き込みの前の値を読んだ取り直しの応答が
+  // 楽観的な表示・書き込みの結果を戻さない・失敗の巻き戻しが AI の後の献立を AI の前の献立で上書きしないため)。
+  // 取り直しの応答を待つあいだに始めた書き込みは、終わっていてもその応答を置かせない (取り直しの経路で置く場所ごとの
+  // ticket.deferIfHeld。置かなかったぶん 1 回取り直す)
   const pendingWrites = useAiConsultationPendingWrites();
   // AI 相談の成功で取り直した回数 (#2195 V1)。月のカレンダーの献立のある日の取得 (下の 2 つの useEffect) と、
   // 生成中の依頼の確認 (checkPendingRequests の useEffect) の依存に入れ、取り直すたびにもう一度走らせる。
   // 増やすのは refetchAfterAiConsultation だけで、取得済みの範囲 (fetchedRangesRef) を捨ててから増やす
   const [aiConsultationRefetchRound, setAiConsultationRefetchRound] = useState(0);
+  // 最後の AI 相談の成功の取り直しの札 (refetchAfterAiConsultation が回数を増やす前に置く。#2201 U2)。月のカレンダーの献立のある日の
+  // 取得 (下の 2 つの useEffect) は、回数が増えて走った回だけこの札で応答を置くかを見る (週・月の移動で走った回は見ない)
+  const aiConsultationRefetchTicketRef = useRef<AiConsultationFetchTicket | null>(null);
+  const takeWeekRangeRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchRound);
+  const takeMonthRangeRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchRound);
 
   // Fetch meal dates for a range and accumulate (helper function)
-  const fetchAndCacheMealDates = useCallback(async (startDate: Date, endDate: Date) => {
+  // refetchTicket は AI 相談の成功の取り直しで走った回の札 (それ以外は null)。その応答を待つあいだに書き込み・モーダルがあれば、
+  // 応答を置かない (書き込みの前に読んだ印で、書き込みのあとの印を戻さない。#2201 U2)
+  const fetchAndCacheMealDates = useCallback(async (startDate: Date, endDate: Date, refetchTicket: AiConsultationFetchTicket | null = null) => {
     const rangeKey = `${formatLocalDate(startDate)}_${formatLocalDate(endDate)}`;
 
     // 既にフェッチ済みの範囲はスキップ
@@ -1039,6 +1053,11 @@ export default function WeeklyMenuPage() {
         const { dailyMeals } = await res.json();
         // この範囲をあとから読み直していたら、古い応答は置かない (#2201 U1)
         if (mealDatesFetchSeqRef.current.get(rangeKey) !== seq) return;
+        // 置かない取り直しの応答: 範囲を取得済みにしない (止めた取り直しが、外れたときにもう一度読む)
+        if (refetchTicket?.deferIfHeld()) {
+          fetchedRangesRef.current.delete(rangeKey);
+          return;
+        }
         const newDates = new Set<string>();
         dailyMeals?.forEach((day: any) => {
           if (day.meals && day.meals.length > 0) {
@@ -1092,6 +1111,8 @@ export default function WeeklyMenuPage() {
 
   // 週が変わるタイミングで前後2週間をプリフェッチ
   useEffect(() => {
+    // AI 相談の成功の取り直しで走った回は、その札で応答を置くかを見る (#2201 U2)
+    const refetchTicket = takeWeekRangeRefetchRun() ? aiConsultationRefetchTicketRef.current : null;
     const prefetchAdjacentWeeks = async () => {
       const currentWeekStart = new Date(weekStart);
 
@@ -1101,14 +1122,16 @@ export default function WeeklyMenuPage() {
       const endDate = new Date(currentWeekStart);
       endDate.setDate(endDate.getDate() + 28); // 4週間後（現在週含む）
 
-      await fetchAndCacheMealDates(startDate, endDate);
+      await fetchAndCacheMealDates(startDate, endDate, refetchTicket);
     };
 
     prefetchAdjacentWeeks();
-  }, [weekStart, fetchAndCacheMealDates, aiConsultationRefetchRound]);
+  }, [weekStart, fetchAndCacheMealDates, aiConsultationRefetchRound, takeWeekRangeRefetchRun]);
 
   // displayMonth が変わったときも追加でフェッチ（月移動時）
   useEffect(() => {
+    // AI 相談の成功の取り直しで走った回は、その札で応答を置くかを見る (#2201 U2)
+    const refetchTicket = takeMonthRangeRefetchRun() ? aiConsultationRefetchTicketRef.current : null;
     const fetchMonthMealDates = async () => {
       const year = displayMonth.getFullYear();
       const month = displayMonth.getMonth();
@@ -1120,11 +1143,11 @@ export default function WeeklyMenuPage() {
       const endDate = new Date(lastDay);
       endDate.setDate(endDate.getDate() + 7);
 
-      await fetchAndCacheMealDates(startDate, endDate);
+      await fetchAndCacheMealDates(startDate, endDate, refetchTicket);
     };
 
     fetchMonthMealDates();
-  }, [displayMonth, fetchAndCacheMealDates, aiConsultationRefetchRound]);
+  }, [displayMonth, fetchAndCacheMealDates, aiConsultationRefetchRound, takeMonthRangeRefetchRun]);
 
   // Expanded Meal State - weekViewReducer 管理（同じタイプの複数食事に対応）
 
@@ -1207,15 +1230,18 @@ export default function WeeklyMenuPage() {
   // 自分のプロフィール (family_id) の読み取りの失敗では、家族から外れたとみなさずに今の切り替えを残す (#2201 U1。以前は error を見ずに
   // 一覧を空にしていたので、取り直しの通信の失敗で家族の切り替えが消えていた)。
   // mode が 'refetch' (AI 相談の成功の取り直し) のとき、名前の API を読めなかったら今出している名前を残す (#2201 U1)。
-  // 応答を置くのは最後に始めた読み込み (familyLoadSeqRef) だけ
+  // 応答を置くのは最後に始めた読み込み (familyLoadSeqRef) だけ。refetchTicket (AI 相談の成功の取り直しの札) があれば、
+  // 応答を待つあいだに書き込み・モーダルが始まっていたら置かない (#2201 U2。止めた取り直しのぶん 1 回読み直す)
   const familyLoadSeqRef = useRef(0);
-  const loadFamilyData = useCallback(async (mode: FamilyLoadMode = 'mount') => {
+  const loadFamilyData = useCallback(async (mode: FamilyLoadMode = 'mount', refetchTicket: AiConsultationFetchTicket | null = null) => {
     familyLoadSeqRef.current += 1;
     const seq = familyLoadSeqRef.current;
     const isLatest = () => familyLoadSeqRef.current === seq;
+    /** 応答を置いてよいか (最後に始めた読み込みで、取り直しの札が止めていない) */
+    const mayPlace = () => isLatest() && !refetchTicket?.deferIfHeld();
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user || !isLatest()) return;
+    if (!user || !mayPlace()) return;
     setCurrentUserId(user.id);
 
     const { data: profile, error: profileError } = await supabase
@@ -1223,7 +1249,7 @@ export default function WeeklyMenuPage() {
       .select('family_id')
       .eq('id', user.id)
       .maybeSingle();
-    if (profileError || !isLatest()) return;
+    if (profileError || !mayPlace()) return;
     if (!profile?.family_id) {
       setFamilyId(null);
       setFamilyMembers([]);
@@ -1238,7 +1264,7 @@ export default function WeeklyMenuPage() {
       .eq('status', 'active');
     if (members) {
       const namesResult = await fetchFamilyMemberNamesResult();
-      if (!isLatest()) return;
+      if (!mayPlace()) return;
       const rows = members as FamilyMember[];
       setFamilyMembers((shown) =>
         applyFamilyMemberNames(
@@ -1285,8 +1311,10 @@ export default function WeeklyMenuPage() {
   // Meal Plan再取得関数（キャッシュも更新）
   // 応答を置く前に、今も同じ週を出しているか (weekStartKeyRef) と、あとに始めた取得の応答をもう置いていないか (planPlacedSeqRef) を見る
   // (#2201 U1。以前は閉包の weekStart で読んで確かめずに置いたので、応答を待つあいだに週を移ると前の週の献立が新しい週の見出しの
-  // 下に出うった)。読み直しの失敗では何も置かない (先に始めた週の読み込みの応答が後から届けば、そちらを置く)
-  const refreshMealPlan = useCallback(async () => {
+  // 下に出うった)。読み直しの失敗では何も置かない (先に始めた週の読み込みの応答が後から届けば、そちらを置く)。
+  // refetchTicket (AI 相談の成功の取り直しの札) があれば、応答を待つあいだに書き込み (献立の編集・買い物リストのチェックなど)・
+  // モーダルが始まっていたら置かない (書き込みの前に読んだ献立・買い物リストで、楽観的な表示・書き込みの結果を戻さない。#2201 U2)
+  const refreshMealPlan = useCallback(async (refetchTicket: AiConsultationFetchTicket | null = null) => {
     const targetDate = formatLocalDate(weekStart);
     const endDate = addDaysStr(targetDate, 6);
     planFetchSeqRef.current += 1;
@@ -1296,6 +1324,7 @@ export default function WeeklyMenuPage() {
       if (res.ok) {
         const { dailyMeals, shoppingList: shoppingListData } = await res.json();
         if (weekStartKeyRef.current !== targetDate || seq <= planPlacedSeqRef.current) return;
+        if (refetchTicket?.deferIfHeld()) return;
         planPlacedSeqRef.current = seq;
         // 買い物リストは週に関係なく、使っている買い物リスト 1 つ (GET /api/meal-plans の shoppingList。無いときは null)。
         // この応答が正なので、空 (最後の品目が消された・リストが無い) でも、献立の無い週でもそのまま置く (#2195 V1。
@@ -2230,12 +2259,15 @@ export default function WeeklyMenuPage() {
   // Fetch servings config and radar chart nutrients from user profile
   // (AI 相談の成功のあと (refetchAfterAiConsultation) にも呼ぶ。AI 相談で家族の人数 (family_size) が変わると、
   // 人数の設定 (servings_config) の無い人の既定の人数が変わるため。#2195 V1)
-  const fetchUserSettings = useCallback(async () => {
+  // refetchTicket (AI 相談の成功の取り直しの札) があれば、応答を待つあいだに人数の設定のモーダル・書き込みが始まっていたら置かない
+  // (モーダルで変えている人数・保存した人数を、その前に読んだ値で戻さない。#2201 U2)
+  const fetchUserSettings = useCallback(async (refetchTicket: AiConsultationFetchTicket | null = null) => {
     setIsLoadingServingsConfig(true);
     try {
       const res = await fetch('/api/profile');
       if (res.ok) {
         const profile = await res.json();
+        if (refetchTicket?.deferIfHeld()) return;
         // Servings config
         if (profile.servings_config) {
           setServingsConfig(profile.servings_config);
@@ -2634,11 +2666,14 @@ export default function WeeklyMenuPage() {
   }, [cleanupPolling]);
   
   // Fetch Pantry
-  const fetchPantry = useCallback(async () => {
+  // refetchTicket (AI 相談の成功の取り直しの札) があれば、応答を待つあいだに冷蔵庫の書き込み・モーダルが始まっていたら置かない
+  // (削除した食材を戻す・足した食材を消すことをしない。#2201 U2)
+  const fetchPantry = useCallback(async (refetchTicket: AiConsultationFetchTicket | null = null) => {
     try {
       const res = await fetch('/api/pantry');
       if (res.ok) {
         const data = await res.json();
+        if (refetchTicket?.deferIfHeld()) return;
         usePantryStore.getState().setFridgeItems(data.items || []);
       }
     } catch (e) {
@@ -2667,14 +2702,17 @@ export default function WeeklyMenuPage() {
   // 別の週の献立も変わりうる (1 週間の献立の作成など) ので、週のキャッシュは捨てて、次にその週を開いたときに取り直させる。
   // モーダル・入力の部品が出ている間は取り直さない (useAiConsultationDataRefetch)
   // 献立・買い物リストの書き込み (楽観的な更新から応答まで。pendingWrites) の間に来た成功は捨てずに、全部終わったあとに 1 回取り直す
-  // (#2201 U2)。モーダル・入力の部品で止めた成功も、閉じたあとに 1 回取り直す
-  const refetchAfterAiConsultation = useCallback(() => {
+  // (#2201 U2)。モーダル・入力の部品で止めた成功も、閉じたあとに 1 回取り直す。
+  // 取り直しの応答を置く場所 (献立と買い物リスト・冷蔵庫・人数の設定・家族・月のカレンダーの印) は、どれも札 (ticket) を受け取り、
+  // 応答を待つあいだに始めた書き込み・開いたモーダルがあれば置かない (ticket.deferIfHeld。置かなかったぶん 1 回取り直す)
+  const refetchAfterAiConsultation = useCallback((ticket: AiConsultationFetchTicket) => {
     weekDataCache.current.clear();
     fetchedRangesRef.current.clear();
-    void refreshMealPlan();
-    void fetchPantry();
-    void fetchUserSettings();
-    void loadFamilyData('refetch');
+    aiConsultationRefetchTicketRef.current = ticket;
+    void refreshMealPlan(ticket);
+    void fetchPantry(ticket);
+    void fetchUserSettings(ticket);
+    void loadFamilyData('refetch', ticket);
     setAiConsultationRefetchRound((round) => round + 1);
   }, [refreshMealPlan, fetchPantry, fetchUserSettings, loadFamilyData]);
   useAiConsultationDataRefetch(refetchAfterAiConsultation, { writeInFlightRef: pendingWrites });
@@ -3030,6 +3068,8 @@ export default function WeeklyMenuPage() {
     const { newFridgeName, newFridgeAmount, newFridgeExpiry, editingFridgeItemId } = useFormDraftStore.getState();
     if (!newFridgeName) return;
     setIsSavingFridgeItem(true);
+    // 冷蔵庫の書き込み (#2201 U2。書き込みの前に読んだ取り直しの応答で、足した・変えた食材を戻さない)
+    const endWrite = pendingWrites.begin();
     try {
       if (editingFridgeItemId) {
         const res = await fetch(`/api/pantry/${editingFridgeItemId}`, {
@@ -3073,14 +3113,21 @@ export default function WeeklyMenuPage() {
       alert(useFormDraftStore.getState().editingFridgeItemId ? '更新に失敗しました' : '追加に失敗しました');
     } finally {
       setIsSavingFridgeItem(false);
+      endWrite();
     }
   };
 
   const deletePantryItem = async (id: string) => {
+    // 冷蔵庫の書き込み (#2201 U2。削除の前に読んだ取り直しの応答で、削除した食材を戻さない)
+    const endWrite = pendingWrites.begin();
     try {
       await fetch(`/api/pantry/${id}`, { method: 'DELETE' });
       usePantryStore.getState().removeFridgeItem(id);
-    } catch (e) { alert("削除に失敗しました"); }
+    } catch (e) {
+      alert("削除に失敗しました");
+    } finally {
+      endWrite();
+    }
   };
 
   // UX2-18: 一覧の食材タップで編集フォームを開く（/pantry ページとの機能非対称解消の一環）
@@ -3095,6 +3142,8 @@ export default function WeeklyMenuPage() {
   // UX2-18: /pantry ページと同じ「写真で追加」を FridgeModal からも実行できるようにする
   const handleFridgePhotoSelected = async (file: File) => {
     setIsAnalyzingFridgePhoto(true);
+    // 冷蔵庫の書き込み (#2201 U2。保存の前に読んだ取り直しの応答で、写真から足した食材を消さない)
+    const endWrite = pendingWrites.begin();
     try {
       // 「同意しない」なら写真を AI に送らない
       if ((await ensureAiConsent()) === "declined") return;
@@ -3144,6 +3193,7 @@ export default function WeeklyMenuPage() {
       alert(e?.message || '写真からの追加に失敗しました');
     } finally {
       setIsAnalyzingFridgePhoto(false);
+      endWrite();
     }
   };
 
@@ -3151,6 +3201,8 @@ export default function WeeklyMenuPage() {
   const addShoppingItem = async () => {
     const { newShoppingName, newShoppingAmount, newShoppingCategory } = useFormDraftStore.getState();
     if (!newShoppingName || !currentPlan) return;
+    // 買い物リストの書き込み (#2201 U2。追加の前に読んだ取り直しの応答で、足した品目を消さない)
+    const endWrite = pendingWrites.begin();
     try {
       const res = await fetch('/api/shopping-list', {
         method: 'POST',
@@ -3170,7 +3222,11 @@ export default function WeeklyMenuPage() {
         setNewShoppingCategory("食材");
         setActiveModal('shopping');
       }
-    } catch (e) { alert("追加に失敗しました"); }
+    } catch (e) {
+      alert("追加に失敗しました");
+    } finally {
+      endWrite();
+    }
   };
 
   // チェックボックスのトグル（楽観的更新）
@@ -3722,10 +3778,12 @@ export default function WeeklyMenuPage() {
   // 名前と分量への分け方 (1 行の文字列と構造の形の両方。ingredientInputsOf) は _state/recipeShoppingList.ts
   const addRecipeToShoppingList = async () => {
     if (!selectedRecipeData || !currentPlan) return;
+    // 買い物リストの書き込み (#2201 U2。追加の前に読んだ取り直しの応答で、足した品目を消さない)。終わったら (失敗でも) 印を下ろす
+    const endWrite = pendingWrites.begin();
     const result = await addRecipeIngredientsToShoppingList({
       recipeData: selectedRecipeData,
       shoppingListId: activeShoppingList?.id,
-    });
+    }).finally(endWrite);
     if (result.kind === 'no-ingredients') {
       setSuccessMessage({ title: RECIPE_SHOPPING_NO_INGREDIENTS_TITLE, message: RECIPE_SHOPPING_NO_INGREDIENTS_MESSAGE });
       return;
@@ -3912,6 +3970,8 @@ export default function WeeklyMenuPage() {
       ai_creative: 'AI献立',
     };
     const catalogProduct = mode === 'buy' || mode === 'out' ? selectedCatalogProduct : null;
+    // 献立の書き込み (#2201 U2。追加の前に読んだ取り直しの応答で、足した食事を消さない)
+    const endWrite = pendingWrites.begin();
     
     try {
       const res = await fetch('/api/meal-plans/meals', {
@@ -3968,6 +4028,8 @@ export default function WeeklyMenuPage() {
       }
     } catch (e) {
       alert('追加に失敗しました');
+    } finally {
+      endWrite();
     }
   };
 
@@ -4328,6 +4390,8 @@ export default function WeeklyMenuPage() {
     if (!deletingMeal) return;
     
     setIsDeleting(true);
+    // 献立の書き込み (#2201 U2。削除の前に読んだ取り直しの応答で、消した食事・月のカレンダーの印を戻さない)
+    const endWrite = pendingWrites.begin();
     try {
       const res = await fetch(`/api/meal-plans/meals/${deletingMeal.id}`, {
         method: 'DELETE',
@@ -4361,6 +4425,7 @@ export default function WeeklyMenuPage() {
       alert('削除に失敗しました');
     } finally {
       setIsDeleting(false);
+      endWrite();
     }
   };
 
@@ -4417,6 +4482,8 @@ export default function WeeklyMenuPage() {
 
     const totalCal = validDishes.reduce((sum, d) => sum + (d.calories_kcal ?? d.cal ?? 0), 0);
     const dishName = validDishes.map(d => d.name).join('、');
+    // 献立の書き込み (#2201 U2。変更の前に読んだ取り直しの応答で、変えた食事を戻さない)
+    const endWrite = pendingWrites.begin();
 
     try {
       const patchRes = await fetch(`/api/meal-plans/meals/${manualEditMeal.id}`, {
@@ -4460,6 +4527,8 @@ export default function WeeklyMenuPage() {
       setCatalogResults([]);
     } catch (e) {
       alert('更新に失敗しました');
+    } finally {
+      endWrite();
     }
   };
 
@@ -4711,6 +4780,8 @@ export default function WeeklyMenuPage() {
     }
 
     setIsGeneratingMealImage(true);
+    // 献立の書き込み (#2201 U2。画像の保存の前に読んだ取り直しの応答で、保存した画像を戻さない)
+    const endWrite = pendingWrites.begin();
 
     try {
       // 説明文と参考画像を Google の画像生成に送る前に、未同意なら同意画面を出す (「同意しない」なら生成しない)
@@ -4806,6 +4877,7 @@ export default function WeeklyMenuPage() {
       });
     } finally {
       setIsGeneratingMealImage(false);
+      endWrite();
     }
   };
 
@@ -5042,6 +5114,8 @@ export default function WeeklyMenuPage() {
   // 食事の順序変更
   const reorderMeal = async (mealId: string, direction: 'up' | 'down') => {
     if (!currentDay) return;
+    // 献立の書き込み (#2201 U2。並べ替えの前に読んだ取り直しの応答で、並べ替えた順を戻さない)
+    const endWrite = pendingWrites.begin();
     
     try {
       const res = await fetch('/api/meal-plans/meals/reorder', {
@@ -5077,6 +5151,8 @@ export default function WeeklyMenuPage() {
       }
     } catch (error) {
       console.error('Reorder error:', error);
+    } finally {
+      endWrite();
     }
   };
   
@@ -6564,6 +6640,8 @@ export default function WeeklyMenuPage() {
                 onToggleTodayExpanded={setIsTodayExpanded}
                 onGenerate={async (cfg) => {
                   if (cfg) {
+                    // 人数の設定の書き込み (#2201 U2。保存の前に読んだ取り直しの応答で、保存した人数を戻さない)
+                    const endWrite = pendingWrites.begin();
                     try {
                       await fetch('/api/profile', {
                         method: 'POST',
@@ -6572,6 +6650,8 @@ export default function WeeklyMenuPage() {
                       });
                     } catch (e) {
                       console.error('Failed to save servings config:', e);
+                    } finally {
+                      endWrite();
                     }
                   }
                   setActiveModal('shopping');
@@ -6601,6 +6681,8 @@ export default function WeeklyMenuPage() {
                 onSave={async () => {
                   const currentServingsConfig = useServingsConfigStore.getState().servingsConfig;
                   if (!currentServingsConfig) return;
+                  // 人数の設定の書き込み (#2201 U2。保存の前に読んだ取り直しの応答で、保存した人数を戻さない)
+                  const endWrite = pendingWrites.begin();
                   try {
                     const res = await fetch('/api/profile', {
                       method: 'POST',
@@ -6613,6 +6695,8 @@ export default function WeeklyMenuPage() {
                     }
                   } catch (e) {
                     console.error('Failed to save servings config:', e);
+                  } finally {
+                    endWrite();
                   }
                 }}
               />
@@ -6889,6 +6973,8 @@ export default function WeeklyMenuPage() {
             return;
           }
           dispatchNutrition({ type: 'RADAR_SAVING_START' });
+          // レーダーの栄養素の書き込み (#2201 U2。保存の前に読んだ取り直しの応答で、保存した栄養素を戻さない)
+          const endWrite = pendingWrites.begin();
           try {
             const res = await fetch('/api/profile', {
               method: 'POST',
@@ -6903,6 +6989,8 @@ export default function WeeklyMenuPage() {
           } catch (e) {
             console.error('Failed to save radar chart nutrients:', e);
             dispatchNutrition({ type: 'RADAR_SAVING_CANCEL' });
+          } finally {
+            endWrite();
           }
         }}
       />

@@ -1385,10 +1385,10 @@ describe('受け手の配線 (#2195 V1)', () => {
   const HOOK_IMPORT = /from "@\/hooks\/useAiConsultationDataRefetch";/;
   const WIRING: ReadonlyArray<{ page: string; file: string; wiring: RegExp }> = [
     {
-      page: '献立表 (/menus/weekly): 表示中の週・冷蔵庫・人数の設定・家族の一覧と名前を取り直し、週のキャッシュと取得済みの範囲を捨ててから回数を増やす',
+      page: '献立表 (/menus/weekly): 表示中の週・冷蔵庫・人数の設定・家族の一覧と名前を取り直し、週のキャッシュと取得済みの範囲を捨ててから回数を増やす (どれにも取り直しの札を渡す。#2201 U2)',
       file: 'src/app/(main)/menus/weekly/page.tsx',
       wiring:
-        /const refetchAfterAiConsultation = useCallback\(\(\) => \{\s*weekDataCache\.current\.clear\(\);\s*fetchedRangesRef\.current\.clear\(\);\s*void refreshMealPlan\(\);\s*void fetchPantry\(\);\s*void fetchUserSettings\(\);\s*void loadFamilyData\('refetch'\);\s*setAiConsultationRefetchRound\(\(round\) => round \+ 1\);\s*\}, \[refreshMealPlan, fetchPantry, fetchUserSettings, loadFamilyData\]\);\s*useAiConsultationDataRefetch\(refetchAfterAiConsultation, \{ writeInFlightRef: pendingWrites \}\);/,
+        /const refetchAfterAiConsultation = useCallback\(\(ticket: AiConsultationFetchTicket\) => \{\s*weekDataCache\.current\.clear\(\);\s*fetchedRangesRef\.current\.clear\(\);\s*aiConsultationRefetchTicketRef\.current = ticket;\s*void refreshMealPlan\(ticket\);\s*void fetchPantry\(ticket\);\s*void fetchUserSettings\(ticket\);\s*void loadFamilyData\('refetch', ticket\);\s*setAiConsultationRefetchRound\(\(round\) => round \+ 1\);\s*\}, \[refreshMealPlan, fetchPantry, fetchUserSettings, loadFamilyData\]\);\s*useAiConsultationDataRefetch\(refetchAfterAiConsultation, \{ writeInFlightRef: pendingWrites \}\);/,
     },
     {
       page: 'ホーム (/home): useHomeData の refetch',
@@ -1403,7 +1403,8 @@ describe('受け手の配線 (#2195 V1)', () => {
     {
       page: '冷蔵庫 (/pantry): fetchItems',
       file: 'src/app/(main)/pantry/page.tsx',
-      wiring: /useAiConsultationDataRefetch\(fetchItems, \{ writeInFlightRef: pendingWrites \}\);/,
+      // 取り直しの読み方は refetchReadMode (開いたときの読み込み中に始まった取り直しは 'mount'。#2201 U1 + U2)
+      wiring: /useAiConsultationDataRefetch\(\s*\(ticket\) => fetchItems\(ticket, refetchReadMode\(\)\),\s*\{ writeInFlightRef: pendingWrites \},\s*\);/,
     },
     {
       page: '健康 (/health): fetchData と、出している選んだ日のパネルの記録',
@@ -1414,7 +1415,7 @@ describe('受け手の配線 (#2195 V1)', () => {
     {
       page: '健康目標 (/health/goals): fetchGoals',
       file: 'src/app/(main)/health/goals/page.tsx',
-      wiring: /useAiConsultationDataRefetch\(\s*\(ticket\) => fetchGoals\(ticket, refetchReadMode\(\)\),\s*\{ writeInFlightRef \},\s*\);/,
+      wiring: /useAiConsultationDataRefetch\(\s*\(ticket\) => fetchGoals\(ticket, refetchReadMode\(\)\),\s*\{ writeInFlightRef: pendingWrites \},\s*\);/,
     },
     {
       page: 'マイページ (/profile): 取得の useEffect の依存に数を足す',
@@ -1430,9 +1431,14 @@ describe('受け手の配線 (#2195 V1)', () => {
 
   it('献立表の pantry・人数の設定の取得は、初めの取得と取り直しで同じ関数', () => {
     const source = readRepoFile('src/app/(main)/menus/weekly/page.tsx');
-    expect(source).toMatch(/const fetchPantry = useCallback\(async \(\) => \{\s*try \{\s*const res = await fetch\('\/api\/pantry'\);/);
+    // 取り直しのときだけ札を渡す (#2201 U2。初めの取得は札なし)
+    expect(source).toMatch(
+      /const fetchPantry = useCallback\(async \(refetchTicket: AiConsultationFetchTicket \| null = null\) => \{\s*try \{\s*const res = await fetch\('\/api\/pantry'\);/,
+    );
     expect(source).toMatch(/useEffect\(\(\) => \{\s*void fetchPantry\(\);\s*\}, \[fetchPantry\]\);/);
-    expect(source).toMatch(/const fetchUserSettings = useCallback\(async \(\) => \{[\s\S]*?const res = await fetch\('\/api\/profile'\);/);
+    expect(source).toMatch(
+      /const fetchUserSettings = useCallback\(async \(refetchTicket: AiConsultationFetchTicket \| null = null\) => \{[\s\S]*?const res = await fetch\('\/api\/profile'\);/,
+    );
     expect(source).toMatch(/useEffect\(\(\) => \{\s*void fetchUserSettings\(\);\s*\}, \[fetchUserSettings\]\);/);
   });
 });

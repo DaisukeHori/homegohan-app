@@ -11,7 +11,9 @@ const pageSource = fs.readFileSync(PAGE_TSX_PATH, 'utf-8');
 
 /** loadFamilyData の useCallback の本体 (次の useEffect まで) */
 function loadFamilyDataBlock(): string {
-  const match = pageSource.match(/const loadFamilyData = useCallback\(async \(mode: FamilyLoadMode = 'mount'\) => \{[\s\S]*?\n {2}\}, \[\]\);/);
+  const match = pageSource.match(
+    /const loadFamilyData = useCallback\(async \(mode: FamilyLoadMode = 'mount', refetchTicket: AiConsultationFetchTicket \| null = null\) => \{[\s\S]*?\n {2}\}, \[\]\);/,
+  );
   expect(match, 'loadFamilyData の useCallback が見つかりません').not.toBeNull();
   return match![0];
 }
@@ -49,8 +51,10 @@ describe('page.tsx: 週間献立の家族の表示の配線 (#1584 の 1)', () =
 
   it('loadFamilyData は useCallback で、family_id が無いとき setFamilyId(null) と setFamilyMembers([]) を呼ぶ (プロフィールの読み取りの失敗では呼ばない)', () => {
     const block = loadFamilyDataBlock();
-    // 読み取りの失敗 (profileError) では一覧を空にしない (#2201 U1。家族の切り替えを消さない)
-    expect(block).toMatch(/if \(profileError \|\| !isLatest\(\)\) return;\s*if \(!profile\?\.family_id\) \{\s*setFamilyId\(null\);\s*setFamilyMembers\(\[\]\);\s*return;\s*\}/);
+    // 読み取りの失敗 (profileError) では一覧を空にしない (#2201 U1。家族の切り替えを消さない)。
+    // 置くのは最後に始めた読み込みで、取り直しの札が止めていないときだけ (mayPlace。#2201 U2)
+    expect(block).toMatch(/if \(profileError \|\| !mayPlace\(\)\) return;\s*if \(!profile\?\.family_id\) \{\s*setFamilyId\(null\);\s*setFamilyMembers\(\[\]\);\s*return;\s*\}/);
+    expect(block).toMatch(/const mayPlace = \(\) => isLatest\(\) && !refetchTicket\?\.deferIfHeld\(\);/);
     // 開いたときに呼ぶ effect
     expect(pageSource).toMatch(/useEffect\(\(\) => \{\s*void loadFamilyData\(\);\s*\}, \[loadFamilyData\]\);/);
     // effect の中の関数 (const loadFamilyData = async () =>) に戻っていない
