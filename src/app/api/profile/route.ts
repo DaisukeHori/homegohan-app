@@ -9,6 +9,7 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character'
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
 import { PROFILE_NAME_PLACEHOLDER } from '@homegohan/shared'
 import { USER_PROFILE_POST_FIELDS, UserProfilePostBodySchema, UserProfileUpdateBodySchema } from '@/lib/profile-update-schema'
+import { calculateProfileCompleteness } from '@/lib/profile-completeness'
 
 /**
  * プロフィールAPI
@@ -179,7 +180,7 @@ export async function PUT(request: Request) {
       updates.age_group = `${Math.floor(age / AGE_GROUP_DECADE_YEARS) * AGE_GROUP_DECADE_YEARS}s`;
     }
     
-    // プロファイル完成度を計算
+    // プロファイル完成度を計算 (計算は src/lib/profile-completeness.ts。AI 相談の書き込みも同じ計算を使う。#2201 U4)
     updates.profile_completeness = calculateProfileCompleteness(body);
     updates.last_profile_update = new Date().toISOString();
 
@@ -300,68 +301,4 @@ async function recalculateNutritionTargetsIfNeeded(
     // エラーはログのみ（プロフィール更新自体は成功させる）
     logger.error('Nutrition targets recalculation error', error);
   }
-}
-
-// プロファイル完成度を計算
-function calculateProfileCompleteness(profile: any): number {
-  const fields = [
-    // 基本情報 (20%)
-    { key: 'nickname', weight: 4 },
-    { key: 'age', weight: 4 },
-    { key: 'gender', weight: 4 },
-    { key: 'height', weight: 4 },
-    { key: 'weight', weight: 4 },
-    
-    // 目標 (15%)
-    { key: 'goalText', weight: 5 },
-    { key: 'fitnessGoals', weight: 5, isArray: true },
-    { key: 'targetWeight', weight: 5 },
-    
-    // 仕事・生活 (15%)
-    { key: 'occupation', weight: 5 },
-    { key: 'workStyle', weight: 5 },
-    { key: 'weeklyExerciseMinutes', weight: 5 },
-    
-    // 健康 (15%)
-    { key: 'healthConditions', weight: 5, isArray: true },
-    { key: 'sleepQuality', weight: 5 },
-    { key: 'stressLevel', weight: 5 },
-    
-    // 食事制限 (15%)
-    { key: 'dietFlags', weight: 5, isObject: true },
-    { key: 'dietStyle', weight: 5 },
-    { key: 'dislikedCookingMethods', weight: 5, isArray: true },
-    
-    // 調理環境 (10%)
-    { key: 'cookingExperience', weight: 5 },
-    { key: 'weekdayCookingMinutes', weight: 5 },
-    
-    // 嗜好 (10%)
-    { key: 'cuisinePreferences', weight: 5, isObject: true },
-    { key: 'favoriteIngredients', weight: 5, isArray: true },
-  ];
-  
-  let totalWeight = 0;
-  let earnedWeight = 0;
-  
-  for (const field of fields) {
-    totalWeight += field.weight;
-    const value = profile[field.key];
-    
-    if (field.isArray) {
-      if (Array.isArray(value) && value.length > 0) {
-        earnedWeight += field.weight;
-      }
-    } else if (field.isObject) {
-      if (value && typeof value === 'object' && Object.keys(value).length > 0) {
-        earnedWeight += field.weight;
-      }
-    } else {
-      if (value !== null && value !== undefined && value !== '' && value !== 'unspecified') {
-        earnedWeight += field.weight;
-      }
-    }
-  }
-  
-  return Math.round((earnedWeight / totalWeight) * 100);
 }

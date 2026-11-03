@@ -43,18 +43,13 @@ import { todayLocal } from '@/lib/date-utils';
 import { invokeGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/generate-menu-v4-retry';
 import { isFeatureEnabled } from '@/lib/feature-flags';
 import {
-  countMealImageJobsToProcess,
   isCatalogProductMeal,
   markDishImagesSkipped,
   mealImageSkipReasonOf,
   type MealImageJobSeed,
 } from '@/lib/meal-image';
-import {
-  buildDishImagePayload,
-  cancelPendingMealImageJobs,
-  enqueueMealImageJobs,
-  triggerMealImageJobProcessing,
-} from '@/lib/meal-image-jobs';
+import { buildDishImagePayload, cancelPendingMealImageJobs } from '@/lib/meal-image-jobs';
+import { enqueueMealImageJobsAfterSave } from '@/lib/meal-image-enqueue-after-save';
 import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit } from '@/lib/rate-limit';
 import {
@@ -77,6 +72,7 @@ import { weeklyMenuRequestWeeklyOriginDataForDates } from '@/lib/ai/weekly-menu-
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { createLogger } from '@/lib/db-logger';
 import { errorCodeOf, toLoggableError } from '@/lib/api/errors';
+import { refreshProfileCompleteness } from '@/lib/profile-completeness';
 import { RECIPE_COLLECTIONS_USER_NAME_CONFLICT_TARGET } from '@/lib/recipes/collections';
 import {
   isRecipeCollectionAppendOutcome,
@@ -345,6 +341,19 @@ function logActionDbFailure(
     });
 }
 
+/**
+ * AI 相談が user_profiles の欄を書いたあと、書いた後の行からプロフィールの完成度 (profile_completeness) を計算し直す (#2201 U4)。
+ * 計算し直しに失敗しても、欄の書き込みは成功として扱う (完成度は次の書き込みか PUT /api/profile で直る)。失敗はログに残す
+ */
+async function syncProfileCompleteness(
+  supabase: Parameters<typeof refreshProfileCompleteness>[0],
+  user: { id: string },
+  action: Pick<ConsultationActionRow, 'id' | 'action_type'>,
+): Promise<void> {
+  const outcome = await refreshProfileCompleteness(supabase, user.id);
+  if (outcome.status === 'error') logActionDbFailure(user, action, 'user_profiles.profile_completeness', outcome.error);
+}
+
 /** 日本語の文字 (ひらがな・カタカナ・漢字・全角の記号) を含む文か (tests/helpers/api-error-text-scan.ts の JAPANESE と同じ範囲) */
 const JAPANESE_TEXT_PATTERN = /[\u3040-\u30ff\u3400-\u9fff\uff00-\uffef]/;
 
@@ -419,6 +428,25 @@ const POSTGREST_NO_ROWS_CODE = 'PGRST116';
 /** .single() の結果が「行が無い」(読み取りの失敗ではない) か */
 function isNoRowsError(error: unknown): boolean {
   return errorCodeOf(error) === POSTGREST_NO_ROWS_CODE;
+}
+
+/**
+ * PostgreSQL の invalid_text_representation (SQLSTATE 22P02)。uuid の列を AI が作り出した形の崩れた id (UUID の形でない文字列・
+ * 数・undefined の文字) で引いた・書いたときに返る。同じ id では何度実行しても同じ失敗になる (#2201 U4)
+ */
+const POSTGRES_INVALID_TEXT_REPRESENTATION_CODE = '22P02';
+
+/** 読み書きの失敗が、値の形が崩れていて (id が UUID の形でないなど) やり直しても同じになるものか */
+function isMalformedValueError(error: unknown): boolean {
+  return errorCodeOf(error) === POSTGRES_INVALID_TEXT_REPRESENTATION_CODE;
+}
+
+/**
+ * 対象の行の読み取りの失敗が、やり直しても直らないものか: 行が無い (PGRST116) か、id の形が崩れている (22P02)。
+ * どちらでもない DB の読み取りの失敗は一時的なことがあるので、やり直せる (notRetryable を付けない)
+ */
+function isNotRetryableReadError(error: unknown): boolean {
+  return isNoRowsError(error) || isMalformedValueError(error);
 }
 
 /** 上限 (#1149) に達して生成しなかったときの結果 (ai_action_logs.result と、会話の中の自動実行の結果に残る。人向けの文) */
@@ -872,6 +900,8 @@ export async function runConsultationAction(
       if (mealFetchError) {
         logActionDbFailure(user, action, 'planned_meals.select', mealFetchError);
         result = { error: '食事の取得に失敗しました' };
+        // id の形が崩れている (22P02) と、何度実行しても同じ失敗になる (#2201 U4)。ほかの読み取りの失敗はやり直せる
+        if (isMalformedValueError(mealFetchError)) notRetryable = true;
         break;
       }
 
@@ -1007,36 +1037,18 @@ export async function runConsultationAction(
 
       if (imageAllowed && jobs.length > 0) {
         // 献立の更新は済んでいる。画像のジョブの積み込みで例外が出ても、更新は成功として返す (#2195 V2)。
-        // 以前は例外がそのまま外へ出て、行が pending に戻り、やり直すと料理画像の 1 回 (meal_image_auto) をもう 1 回数えていた。
-        // 例外のときは数えた 1 回を戻す (ジョブを積めていないので、AI へは何も送っていない)
-        try {
-          // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。service role で積む。
-          // 1 行も積めなかったとき (重複・書き込みの失敗) は、enqueueMealImageJobs が数えた 1 回を戻す (#1487)
-          const queueDb = getAiQueueWriter();
-          const enqueued = await enqueueMealImageJobs({
-            supabase: queueDb,
-            plannedMealId: mealId,
-            userId: user.id,
-            triggerSource,
-            jobSeeds: jobs,
-            requestId: action.id,
-            usage: imageUsage,
-          });
-          // 積めた行と、同じ料理の待ちのジョブがあるときだけ処理を起こす (書き込みの失敗だけなら空振りの呼び出しを出さない。#1532)
-          const jobsToProcess = countMealImageJobsToProcess(enqueued);
-          if (jobsToProcess > 0) {
-            await triggerMealImageJobProcessing({ plannedMealId: mealId, limit: jobsToProcess });
-          }
-        } catch (enqueueError) {
-          createLogger(ACTION_EXECUTOR_LOG_NAME)
-            .withUser(user.id)
-            .error('AI 相談の献立の更新のあと、料理画像のジョブを積めませんでした (献立の更新は済んでいます)', toLoggableError(enqueueError), {
-              action_id: action.id,
-              action_type: action.action_type,
-              planned_meal_id: mealId,
-            });
-          if (imageUsage?.allowed) await refundAiUsage(user.id, 'meal_image_auto', imageUsage);
-        }
+        // 積み込みの例外は数えた 1 回を戻して料理を見送りの状態 ('failed' + 'enqueue_failed') に書き直し、
+        // 処理の起動の例外は記録だけにする (ジョブは積めているので数え戻さない。#2201 U4。src/lib/meal-image-enqueue-after-save.ts)
+        await enqueueMealImageJobsAfterSave({
+          userDb: supabase,
+          plannedMealId: mealId,
+          userId: user.id,
+          triggerSource,
+          jobSeeds: jobs,
+          requestId: action.id,
+          usage: imageUsage,
+          logContext: { action_id: action.id, action_type: action.action_type },
+        });
       }
 
       console.log('Meal updated successfully:', updatedMeal);
@@ -1065,8 +1077,9 @@ export async function runConsultationAction(
 
       if (!meal) {
         result = { error: '権限がありません' };
-        // 読めて 0 行 (他人の献立・消えた献立) だけ、やり直しても直らない。読み取りの失敗はやり直せる
-        if (!mealFetchError) notRetryable = true;
+        // 読めて 0 行 (他人の献立・消えた献立) と、id の形が崩れている (22P02。#2201 U4) は、やり直しても直らない。
+        // ほかの読み取りの失敗はやり直せる
+        if (!mealFetchError || isMalformedValueError(mealFetchError)) notRetryable = true;
         break;
       }
 
@@ -1177,12 +1190,12 @@ export async function runConsultationAction(
         if (!shoppingList || shoppingList.user_id !== user.id) {
           result = { error: '権限がありません' };
           // 他人のリスト・リストが無い (0 行) は、やり直しても直らない。読み取りの失敗はやり直せる
-          if (shoppingList || isNoRowsError(listFetchError)) notRetryable = true;
+          if (shoppingList || isNotRetryableReadError(listFetchError)) notRetryable = true;
           break;
         }
       } else {
         result = { error: 'アイテムが見つかりません' };
-        if (isNoRowsError(itemFetchError)) notRetryable = true;
+        if (isNotRetryableReadError(itemFetchError)) notRetryable = true;
         break;
       }
 
@@ -1227,12 +1240,12 @@ export async function runConsultationAction(
         if (!shoppingList || shoppingList.user_id !== user.id) {
           result = { error: '権限がありません' };
           // 他人のリスト・リストが無い (0 行) は、やり直しても直らない。読み取りの失敗はやり直せる
-          if (shoppingList || isNoRowsError(listFetchError)) notRetryable = true;
+          if (shoppingList || isNotRetryableReadError(listFetchError)) notRetryable = true;
           break;
         }
       } else {
         result = { error: 'アイテムが見つかりません' };
-        if (isNoRowsError(itemFetchError)) notRetryable = true;
+        if (isNotRetryableReadError(itemFetchError)) notRetryable = true;
         break;
       }
 
@@ -1264,12 +1277,12 @@ export async function runConsultationAction(
         if (!shoppingList || shoppingList.user_id !== user.id) {
           result = { error: '権限がありません' };
           // 他人のリスト・リストが無い (0 行) は、やり直しても直らない。読み取りの失敗はやり直せる
-          if (shoppingList || isNoRowsError(listFetchError)) notRetryable = true;
+          if (shoppingList || isNotRetryableReadError(listFetchError)) notRetryable = true;
           break;
         }
       } else {
         result = { error: 'アイテムが見つかりません' };
-        if (isNoRowsError(itemFetchError)) notRetryable = true;
+        if (isNotRetryableReadError(itemFetchError)) notRetryable = true;
         break;
       }
 
@@ -1320,7 +1333,7 @@ export async function runConsultationAction(
       if (!item) {
         result = { error: 'アイテムが見つかりません' };
         // 0 行 (消えた・他人の行) だけ、やり直しても直らない。読み取りの失敗はやり直せる
-        if (isNoRowsError(itemFetchError)) notRetryable = true;
+        if (isNotRetryableReadError(itemFetchError)) notRetryable = true;
         break;
       }
 
@@ -1366,7 +1379,7 @@ export async function runConsultationAction(
       if (!item) {
         result = { error: 'アイテムが見つかりません' };
         // 0 行 (消えた・他人の行) だけ、やり直しても直らない。読み取りの失敗はやり直せる
-        if (isNoRowsError(itemFetchError)) notRetryable = true;
+        if (isNotRetryableReadError(itemFetchError)) notRetryable = true;
         break;
       }
 
@@ -1430,6 +1443,8 @@ export async function runConsultationAction(
           .insert({ recipe_id: recipeId, user_id: user.id });
         success = !insertError;
         result = { liked: success };
+        // レシピの id の形が崩れている (22P02) と、何度実行しても同じ失敗になる (#2201 U4)
+        if (isMalformedValueError(insertError)) notRetryable = true;
       }
       break;
     }
@@ -1498,6 +1513,8 @@ export async function runConsultationAction(
         if (appendError) {
           logActionDbFailure(user, action, 'recipe_collections.append_recipe_rpc', appendError);
           result = { error: AI_COLLECTION_APPEND_FAILED_MESSAGE };
+          // レシピの id の形が崩れている (22P02) と、何度実行しても同じ失敗になる (#2201 U4)
+          if (isMalformedValueError(appendError)) notRetryable = true;
           break;
         }
 
@@ -1615,7 +1632,7 @@ export async function runConsultationAction(
       if (!goal || goal.user_id !== user.id) {
         result = { error: '権限がありません' };
         // 他人の目標・目標が無い (0 行) は、やり直しても直らない。読み取りの失敗はやり直せる
-        if (goal || isNoRowsError(goalFetchError)) notRetryable = true;
+        if (goal || isNotRetryableReadError(goalFetchError)) notRetryable = true;
         break;
       }
 
@@ -1665,7 +1682,7 @@ export async function runConsultationAction(
       if (!goal || goal.user_id !== user.id) {
         result = { error: '権限がありません' };
         // 他人の目標・目標が無い (0 行) は、やり直しても直らない。読み取りの失敗はやり直せる
-        if (goal || isNoRowsError(goalFetchError)) notRetryable = true;
+        if (goal || isNotRetryableReadError(goalFetchError)) notRetryable = true;
         break;
       }
 
@@ -1743,10 +1760,12 @@ export async function runConsultationAction(
         if (typeof safeRecord.weight === 'number') {
           const today = todayLocal();
           if (recordDate === today) {
-            await supabase
+            const { error: profileWeightError } = await supabase
               .from('user_profiles')
               .update({ weight: safeRecord.weight })
               .eq('id', user.id);
+            // 体重はプロフィールの完成度に数える欄なので、書いた後の行から計算し直す (#2201 U4)
+            if (!profileWeightError) await syncProfileCompleteness(supabase, user, action);
           }
         }
         result = { date: recordDate, saved: success };
@@ -1815,6 +1834,9 @@ export async function runConsultationAction(
         .eq('id', user.id);
       success = !updateError;
       result = { updated: success, fields: Object.keys(safeUpdates) };
+      // 書いた後の行からプロフィールの完成度 (profile_completeness) を計算し直す (#2201 U4。PUT /api/profile と同じ計算)。
+      // 書かないと、身長・体重などを入れても「プロフィール完成度 X%」と帯が古いまま残る
+      if (success) await syncProfileCompleteness(supabase, user, action);
       break;
     }
 

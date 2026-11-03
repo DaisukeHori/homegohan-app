@@ -13,9 +13,18 @@
  *   - (1) の失敗の結果に notRetryable: true を付ける (aiActionLogStatusAfterRun が failed にする)。
  *     DB の読み書きの失敗 (一時的なことがある) と成功には付けない。.single() の「行が無い」は PGRST116 のときだけ印す
  *   - (2) 積み込みの例外は数え戻し、献立の更新は成功として返す
+ *
+ * #2201 U4 の続き:
+ *   - (1) AI が作り出した形の崩れた id (UUID の形でない) で読み書きが 22P02 (invalid_text_representation) になる失敗も、
+ *     何度実行しても同じなので notRetryable: true を付ける (以前は付かずに pending に残り、「実行する」が毎回同じ失敗になった)
+ *   - (2) 積み込みの例外のときは、ジョブの無い料理を保存済みの献立の上で見送りの状態 ('failed' + 'enqueue_failed') に書き直す
+ *     (以前は 'pending' のまま「料理画像を生成中」に残った)。処理の起動 (trigger) の例外は記録だけで、数え戻さない
+ *     (以前は数え戻していた。積んだジョブは定期の処理が拾うので、安全弁を 1 回ぶん少なく数えた)
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AI_USAGE_ALLOWED } from './helpers/ai-usage-mock';
+import { MEAL_IMAGE_ENQUEUE_THREW_LOG_MESSAGE } from '@/lib/meal-image-enqueue-after-save';
+import { MEAL_IMAGE_ENQUEUE_FAILED_ERROR } from '@/lib/meal-image';
 
 const m = vi.hoisted(() => ({
   consumeAiUsage: vi.fn(),
@@ -67,6 +76,8 @@ const OTHER_USER = 'user-2';
 const NO_ROWS = { message: 'JSON object requested, multiple (or no) rows returned', code: 'PGRST116' };
 /** DB の読み取りの失敗 (一時的なことがある) */
 const DB_FAILURE = { message: 'db error', code: 'XX000' };
+/** uuid の列を UUID の形でない値で引いた・書いたときの失敗 (PostgreSQL の invalid_text_representation。#2201 U4) */
+const MALFORMED_ID = { message: 'invalid input syntax for type uuid: "meal-abc"', code: '22P02' };
 
 /** 表ごとの「読み取り (select)」の結果。書き込み (update / insert / upsert / delete) は成功 */
 type ReadOutcomes = Record<string, QueryOutcome>;
@@ -74,16 +85,22 @@ type ReadOutcomes = Record<string, QueryOutcome>;
 const WRITE_METHODS = new Set(['update', 'upsert', 'insert', 'delete']);
 
 async function run(actionType: string, params: Record<string, unknown>, reads: ReadOutcomes = {}) {
-  const db = createRecordingSupabase((query: RecordedQuery) => {
+  return (await runRecorded(actionType, params, (query: RecordedQuery) => {
     if (WRITE_METHODS.has(firstMethodOf(query) ?? '')) return { data: { id: 'new-1' } };
     return reads[query.table] ?? { data: null };
-  });
-  return runConsultationAction(db.client, USER, {
+  })).out;
+}
+
+/** 応答を決める関数を渡して実行し、結果と記録した問い合わせを返す */
+async function runRecorded(actionType: string, params: Record<string, unknown>, respond: (query: RecordedQuery) => QueryOutcome) {
+  const db = createRecordingSupabase(respond);
+  const out = await runConsultationAction(db.client, USER, {
     id: 'action-1',
     action_type: actionType,
     action_params: params,
     ai_consultation_sessions: { user_id: USER.id },
   });
+  return { out, queries: db.queries };
 }
 
 const OWN_MEAL = { data: { id: 'meal-1', dish_name: '鮭', dishes: [], image_url: null, user_daily_meals: { user_id: USER.id } } };
@@ -149,6 +166,16 @@ const NOT_RETRYABLE_CASES: Array<[string, string, Record<string, unknown>, ReadO
   ['update_health_record: 更新できる項目が無い', 'update_health_record', { date: '2026-11-01', updates: {} }, {}],
   ['update_profile_preferences: 値が検査に落ちた', 'update_profile_preferences', { updates: { cooking_experience: 12 } }, {}],
   ['update_profile_preferences: 更新できる項目が無い', 'update_profile_preferences', { updates: {} }, {}],
+  // id の形が崩れている (22P02。#2201 U4)
+  ['update_meal: id の形が崩れている (22P02)', 'update_meal', { mealId: 'meal-abc', updates: { dish_name: '鮭' } }, { planned_meals: { error: MALFORMED_ID } }],
+  ['delete_meal: id の形が崩れている (22P02)', 'delete_meal', { mealId: 'meal-abc' }, { planned_meals: { error: MALFORMED_ID } }],
+  ['update_shopping_item: id の形が崩れている (22P02)', 'update_shopping_item', { itemId: 'i1', updates: { item_name: '卵' } }, { shopping_list_items: { error: MALFORMED_ID } }],
+  ['delete_shopping_item: id の形が崩れている (22P02)', 'delete_shopping_item', { itemId: 'i1' }, { shopping_list_items: { error: MALFORMED_ID } }],
+  ['check_shopping_item: id の形が崩れている (22P02)', 'check_shopping_item', { itemId: 'i1' }, { shopping_list_items: { error: MALFORMED_ID } }],
+  ['update_pantry_item: id の形が崩れている (22P02)', 'update_pantry_item', { itemId: 'p1', updates: { name: '卵' } }, { pantry_items: { error: MALFORMED_ID } }],
+  ['delete_pantry_item: id の形が崩れている (22P02)', 'delete_pantry_item', { itemId: 'p1' }, { pantry_items: { error: MALFORMED_ID } }],
+  ['update_health_goal: id の形が崩れている (22P02)', 'update_health_goal', { goalId: 'g1', updates: { note: 'x' } }, { health_goals: { error: MALFORMED_ID } }],
+  ['delete_health_goal: id の形が崩れている (22P02)', 'delete_health_goal', { goalId: 'g1' }, { health_goals: { error: MALFORMED_ID } }],
 ];
 
 describe('やり直しても直らない失敗には notRetryable: true が付き、行は failed になる (#2195 V2)', () => {
@@ -230,13 +257,38 @@ describe('DB の読み取りの失敗には notRetryable を付けない (行は
 // ─────────────────────────────────────────────
 // update_meal の料理画像のジョブの積み込みの例外
 // ─────────────────────────────────────────────
-describe('update_meal: 料理画像のジョブの積み込みで例外 (#2195 V2)', () => {
+describe('update_meal: 料理画像のジョブの積み込み・処理の起動の例外 (#2195 V2・#2201 U4)', () => {
   const UPDATE_WITH_DISHES = { mealId: 'meal-1', updates: { dishes: [{ name: '筑前煮' }] } };
+  /** 保存済みの献立の料理 (buildDishImagePayload の作り物が積むジョブ (dishIndex 0・subjectHash 'h') の料理。画像を待つ状態) */
+  const PENDING_DISH = { name: '筑前煮', role: 'main', image_source: 'generated_ai', image_status: 'pending', image_subject_hash: 'h', image_url: null };
+  const SAVED_AT = '2026-11-03T00:00:00.000Z';
+  const OWN_MEAL_WITH_PENDING_DISH = {
+    data: { ...OWN_MEAL.data, dishes: [PENDING_DISH], updated_at: SAVED_AT, catalog_product_id: null, source_type: null },
+  };
 
-  it('積み込みの例外: 数えた 1 回を戻し、献立の更新は成功として返す (例外を外へ出さない)', async () => {
+  /** 献立の読み取りは画像を待つ料理のある献立、更新は成功 (料理の印の書き込み (select('id')) は 1 行書けた) */
+  function respondWithPendingDish(query: RecordedQuery): QueryOutcome {
+    if (firstMethodOf(query) === 'update') {
+      const single = query.calls.some((call) => call.method === 'single');
+      return { data: single ? { id: 'meal-1', dish_name: '筑前煮', dishes: [PENDING_DISH] } : [{ id: 'meal-1' }] };
+    }
+    if (WRITE_METHODS.has(firstMethodOf(query) ?? '')) return { data: { id: 'new-1' } };
+    return query.table === 'planned_meals' ? OWN_MEAL_WITH_PENDING_DISH : { data: null };
+  }
+
+  /** planned_meals の更新のうち、料理 (dishes) を見送りの状態 ('failed' + 'enqueue_failed') にした書き込み */
+  function enqueueFailedMarks(queries: RecordedQuery[]) {
+    return queries.filter((query) => {
+      if (query.table !== 'planned_meals' || firstMethodOf(query) !== 'update') return false;
+      const values = query.calls[0].args[0] as { dishes?: Array<{ image_status?: string; image_error?: string }> };
+      return values.dishes?.[0]?.image_status === 'failed' && values.dishes[0].image_error === MEAL_IMAGE_ENQUEUE_FAILED_ERROR;
+    });
+  }
+
+  it('積み込みの例外: 数えた 1 回を戻し、料理を見送りの状態に書き直し、献立の更新は成功として返す (例外を外へ出さない)', async () => {
     m.enqueueMealImageJobs.mockRejectedValueOnce(new Error('enqueue failed'));
 
-    const out = await run('update_meal', UPDATE_WITH_DISHES, { planned_meals: OWN_MEAL });
+    const { out, queries } = await runRecorded('update_meal', UPDATE_WITH_DISHES, respondWithPendingDish);
 
     expect(out.success).toBe(true);
     expect(out.result).toMatchObject({ mealId: 'meal-1', updated: true });
@@ -245,19 +297,26 @@ describe('update_meal: 料理画像のジョブの積み込みで例外 (#2195 V
     expect(m.refundAiUsage).toHaveBeenCalledWith(USER.id, 'meal_image_auto', AI_USAGE_ALLOWED);
     expect(m.triggerMealImageJobProcessing).not.toHaveBeenCalled();
     expect(m.logError).toHaveBeenCalledWith(
-      'AI 相談の献立の更新のあと、料理画像のジョブを積めませんでした (献立の更新は済んでいます)',
+      MEAL_IMAGE_ENQUEUE_THREW_LOG_MESSAGE,
       expect.any(Error),
       expect.objectContaining({ action_id: 'action-1', planned_meal_id: 'meal-1' }),
     );
+    // 'pending' のまま (処理するジョブが無いのに「料理画像を生成中」) に残さない。読んだときの updated_at の行にだけ書く
+    const marks = enqueueFailedMarks(queries);
+    expect(marks).toHaveLength(1);
+    expect(marks[0].calls).toEqual(expect.arrayContaining([{ method: 'eq', args: ['updated_at', SAVED_AT] }]));
   });
 
-  it('処理を起こす呼び出しの例外も同じ (数え戻し・成功として返す)', async () => {
+  it('処理を起こす呼び出しの例外: 数え戻さず (ジョブは積めている)、料理も書き直さない。献立の更新は成功', async () => {
     m.triggerMealImageJobProcessing.mockRejectedValueOnce(new Error('trigger failed'));
 
-    const out = await run('update_meal', UPDATE_WITH_DISHES, { planned_meals: OWN_MEAL });
+    const { out, queries } = await runRecorded('update_meal', UPDATE_WITH_DISHES, respondWithPendingDish);
 
     expect(out.success).toBe(true);
-    expect(m.refundAiUsage).toHaveBeenCalledWith(USER.id, 'meal_image_auto', AI_USAGE_ALLOWED);
+    expect(m.enqueueMealImageJobs).toHaveBeenCalledTimes(1);
+    expect(m.triggerMealImageJobProcessing).toHaveBeenCalledTimes(1);
+    expect(m.refundAiUsage).not.toHaveBeenCalled();
+    expect(enqueueFailedMarks(queries)).toEqual([]);
   });
 
   it('積み込みが成功したら数え戻さない', async () => {
@@ -277,5 +336,47 @@ describe('update_meal: 料理画像のジョブの積み込みで例外 (#2195 V
     expect(out.success).toBe(true);
     expect(m.enqueueMealImageJobs).not.toHaveBeenCalled();
     expect(m.refundAiUsage).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────
+// レシピの id の形が崩れている書き込み (#2201 U4)
+// ─────────────────────────────────────────────
+describe('レシピの id の形が崩れていて書き込みが 22P02 になったら notRetryable を付ける (#2201 U4)', () => {
+  it('like_recipe: いいねの insert が 22P02', async () => {
+    const { out } = await runRecorded('like_recipe', { recipeId: 'recipe-abc' }, (query) =>
+      firstMethodOf(query) === 'insert' ? { error: MALFORMED_ID } : { data: null },
+    );
+
+    expect(out).toMatchObject({ success: false, notRetryable: true });
+    expect(aiActionLogStatusAfterRun('like_recipe', out)).toBe('failed');
+  });
+
+  it('like_recipe: insert のほかの失敗 (一時的なことがある) には付けない', async () => {
+    const { out } = await runRecorded('like_recipe', { recipeId: 'recipe-abc' }, (query) =>
+      firstMethodOf(query) === 'insert' ? { error: DB_FAILURE } : { data: null },
+    );
+
+    expect(out.success).toBe(false);
+    expect(out).not.toHaveProperty('notRetryable');
+  });
+
+  it('add_recipe_to_collection: 足す関数 (append_recipe_to_collection) が 22P02', async () => {
+    const { out } = await runRecorded('add_recipe_to_collection', { recipeId: 'recipe-abc' }, (query) => {
+      if (query.table.startsWith('rpc:')) return { error: MALFORMED_ID };
+      return query.table === 'recipe_collections' ? { data: { id: 'collection-1' } } : { data: null };
+    });
+
+    expect(out).toMatchObject({ success: false, notRetryable: true });
+  });
+
+  it('add_recipe_to_collection: 足す関数のほかの失敗には付けない', async () => {
+    const { out } = await runRecorded('add_recipe_to_collection', { recipeId: 'recipe-abc' }, (query) => {
+      if (query.table.startsWith('rpc:')) return { error: DB_FAILURE };
+      return query.table === 'recipe_collections' ? { data: { id: 'collection-1' } } : { data: null };
+    });
+
+    expect(out.success).toBe(false);
+    expect(out).not.toHaveProperty('notRetryable');
   });
 });
