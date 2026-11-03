@@ -13,10 +13,6 @@
  * (差し替えるのは Supabase のクライアント・AI の呼び出し・ログなど外との境目だけ)。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
-
-// 1 件のテストの中で route を丸ごと読み込むので、負荷の高い機械で vitest の既定の時間切れを超えて落ちうる (tests/helpers/heavy-unit-test-timeout.ts)
-applyHeavyUnitTestTimeout();
 
 const USER = '11111111-1111-4111-8111-111111111111';
 const SESSION_ID = '22222222-2222-4222-8222-222222222222';
@@ -139,6 +135,10 @@ vi.mock('@/lib/meal-image-jobs', () => ({
 vi.mock('@/lib/v4-target-slots', () => ({ resolveExistingTargetSlots: vi.fn() }));
 vi.mock('@/lib/health-streaks', () => ({ updateHealthStreak: vi.fn() }));
 
+// route はファイルの一番外側で 1 回だけ読む (テストの中で読むと、負荷の高い機械で既定の時間切れを超えうる。tests/heavy-unit-test-timeout.test.ts)。
+// AI の呼び出し (fetch) は各テストで差し替える (route は呼ぶときに global の fetch を使う)
+const { POST } = await import('@/app/api/ai/consultation/sessions/[sessionId]/messages/route');
+
 beforeEach(() => {
   h.single = { ai_consultation_sessions: { id: SESSION_ID, user_id: USER, status: 'active' } };
   h.written = {
@@ -223,7 +223,6 @@ describe('messages の route (SSE): クライアントへの送出の失敗を A
     const beforeDelta = gate();
     const beforeEnd = gate();
     stubKnowledgeGpt(beforeDelta.wait, beforeEnd.wait);
-    const { POST } = await import('@/app/api/ai/consultation/sessions/[sessionId]/messages/route');
 
     const res = await POST(messagesRequest(), { params: { sessionId: SESSION_ID } });
     expect(res.status).toBe(200);
@@ -243,7 +242,6 @@ describe('messages の route (SSE): クライアントへの送出の失敗を A
     const beforeDelta = gate();
     const beforeEnd = gate();
     stubKnowledgeGpt(beforeDelta.wait, beforeEnd.wait);
-    const { POST } = await import('@/app/api/ai/consultation/sessions/[sessionId]/messages/route');
 
     const res = await POST(messagesRequest(), { params: { sessionId: SESSION_ID } });
     const reader = res.body?.getReader();
@@ -266,7 +264,6 @@ describe('messages の route (SSE): クライアントへの送出の失敗を A
     const opened = gate();
     opened.open();
     stubKnowledgeGpt(opened.wait, opened.wait);
-    const { POST } = await import('@/app/api/ai/consultation/sessions/[sessionId]/messages/route');
 
     const res = await POST(messagesRequest(), { params: { sessionId: SESSION_ID } });
     const raw = await res.text();
@@ -282,7 +279,6 @@ describe('messages の route (SSE): クライアントへの送出の失敗を A
 
   it('AI の呼び出しの失敗 (返答を保存する前): 今までどおり失敗の行を足し、画面に失敗を送る', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('upstream failed', { status: 502 })));
-    const { POST } = await import('@/app/api/ai/consultation/sessions/[sessionId]/messages/route');
 
     const res = await POST(messagesRequest(), { params: { sessionId: SESSION_ID } });
     const raw = await res.text();
@@ -301,7 +297,6 @@ describe('messages の route (SSE): クライアントへの送出の失敗を A
         return new Response('upstream failed', { status: 502 });
       }),
     );
-    const { POST } = await import('@/app/api/ai/consultation/sessions/[sessionId]/messages/route');
 
     const res = await POST(messagesRequest(), { params: { sessionId: SESSION_ID } });
     await res.body?.cancel();
