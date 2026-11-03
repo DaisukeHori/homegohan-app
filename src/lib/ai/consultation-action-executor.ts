@@ -482,7 +482,7 @@ export async function runConsultationAction(
       // #1149 AI の利用回数の上限の判定と記録 (#1177。生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・
       // 生成のリクエストの行を作る前)。AI 相談の会話そのもの (consultation) は呼び出し元の route が数える。
       // 生成は別の AI の呼び出しなので、ここで別に数える。同意の判定は呼び出し元の route がアクションの実行の前に済ませる。
-      // 上限に達していれば、数えずに生成しない (aiDailyLimit を返す。execute の route は 429、会話の中の自動実行は失敗の結果として残る)。
+      // 上限に達していれば、数えずに生成しない (aiDailyLimit を返す。execute の route は 429、会話の中の自動実行は結果に上限の文が入り、提案の行は pending に戻る (src/lib/ai/consultation-action-lifecycle.ts の aiActionLogStatusAfterRun))。
       // 判定に失敗したときは止めない
       // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。service role で書く (数える前に作る)
       const queueDb = getAiQueueWriter();
@@ -604,7 +604,7 @@ export async function runConsultationAction(
       // #1149 AI の利用回数の上限の判定と記録 (#1177。生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・
       // 生成のリクエストの行を作る前)。AI 相談の会話そのもの (consultation) は呼び出し元の route が数える。
       // 生成は別の AI の呼び出しなので、ここで別に数える。同意の判定は呼び出し元の route がアクションの実行の前に済ませる。
-      // 上限に達していれば、数えずに生成しない (aiDailyLimit を返す。execute の route は 429、会話の中の自動実行は失敗の結果として残る)。
+      // 上限に達していれば、数えずに生成しない (aiDailyLimit を返す。execute の route は 429、会話の中の自動実行は結果に上限の文が入り、提案の行は pending に戻る (src/lib/ai/consultation-action-lifecycle.ts の aiActionLogStatusAfterRun))。
       // 判定に失敗したときは止めない
       // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。service role で書く (数える前に作る)
       const queueDb = getAiQueueWriter();
@@ -743,7 +743,7 @@ export async function runConsultationAction(
       // #1149 AI の利用回数の上限の判定と記録 (#1177。生成 1 回につき 1 回。究極モードも 1 回。AI へ送る直前 = 引数の検証のあと・
       // 生成のリクエストの行を作る前)。AI 相談の会話そのもの (consultation) は呼び出し元の route が数える。
       // 生成は別の AI の呼び出しなので、ここで別に数える。同意の判定は呼び出し元の route がアクションの実行の前に済ませる。
-      // 上限に達していれば、数えずに生成しない (aiDailyLimit を返す。execute の route は 429、会話の中の自動実行は失敗の結果として残る)。
+      // 上限に達していれば、数えずに生成しない (aiDailyLimit を返す。execute の route は 429、会話の中の自動実行は結果に上限の文が入り、提案の行は pending に戻る (src/lib/ai/consultation-action-lifecycle.ts の aiActionLogStatusAfterRun))。
       // 判定に失敗したときは止めない
       // AI のキュー (weekly_menu_requests) は利用者 (authenticated) から書けない (#1465)。service role で書く (数える前に作る)
       const queueDb = getAiQueueWriter();

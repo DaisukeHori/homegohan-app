@@ -122,9 +122,9 @@ export interface ConsultationAutoActionOutcome {
 
 /**
  * 会話の続きの POST (SSE) の最後の finalData から、自動実行の結果の一文を作る。
- * finalData.actionResult は messages route の executeAndFinalizeAction の戻り値 (`{ success, result }`。種類は入っていない) なので、
- * 種類は提案 (finalData.aiMessage.proposedActions.type) から引く。actionResult が無い (提案が無く実行していない) ときは null
- * (Web の AIChatBubble.tsx の showAutoActionOutcome と同じ扱い)
+ * finalData.actionResult は messages route の executeAndFinalizeAction の戻り値 (`{ success, result, actionType }`)。
+ * 種類は actionResult.actionType を先に読み、文字列でなければ提案 (finalData.aiMessage.proposedActions.type) から引く。
+ * actionResult が無い (提案が無く実行していない) ときは null。サーバーが返す形では Web の AIChatBubble.tsx の showAutoActionOutcome と同じ結果になる
  */
 export function consultationAutoActionOutcomeOf(finalData: unknown): ConsultationAutoActionOutcome | null {
   if (typeof finalData !== 'object' || finalData === null || !('actionResult' in finalData)) return null;
