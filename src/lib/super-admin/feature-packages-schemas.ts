@@ -84,14 +84,42 @@ export const FeaturePackageCreateSchema = z.object({
 
 export type FeaturePackageCreateInput = z.infer<typeof FeaturePackageCreateSchema>;
 
+/**
+ * 機能フラグの一覧 (feature_flags) を変える更新で、画面が読んだ時点の更新日時 (expected_updated_at) が無いときの文 (#2195 V4)。
+ * feature_flags は配列全体を書き換えるので、読んだあとに別の操作 (機能フラグの作成 POST /api/super-admin/flags が basic に足すキーなど) が
+ * 入っていると、そのキーを古い一覧で消してしまう。読んだ updated_at のままのときだけ書く条件にするため、送らない更新は断る
+ */
+export const FEATURE_PACKAGE_EXPECTED_UPDATED_AT_REQUIRED_MESSAGE =
+  '機能フラグを変えるときは、画面が読んだ時点の更新日時 (expected_updated_at) を送ってください';
+
+/** 画面が読んだ時点の更新日時 (expected_updated_at) が日時の形でないときの文 (#2195 V4) */
+export const FEATURE_PACKAGE_EXPECTED_UPDATED_AT_FORMAT_MESSAGE =
+  '画面が読んだ時点の更新日時 (expected_updated_at) は、時差つきの日時で送ってください';
+
 /** 機能パッケージ更新リクエスト */
-export const FeaturePackageUpdateSchema = z.object({
-  display_name: z.string().min(1).max(200).optional(),
-  description: z.string().max(2000).nullable().optional(),
-  feature_flags: z.array(z.string().max(100)).min(1).optional(),
-  display_order: z.number().int().min(0).optional(),
-  status: z.enum(FEATURE_PACKAGE_STATUSES).optional(),
-});
+export const FeaturePackageUpdateSchema = z
+  .object({
+    display_name: z.string().min(1).max(200).optional(),
+    description: z.string().max(2000).nullable().optional(),
+    feature_flags: z.array(z.string().max(100)).min(1).optional(),
+    display_order: z.number().int().min(0).optional(),
+    status: z.enum(FEATURE_PACKAGE_STATUSES).optional(),
+    /**
+     * 書く値でなく書く条件 (#2195 V4)。画面が最後に読んだ・保存した行の updated_at (GET・PATCH の応答の値をそのまま)。
+     * 送られたら、route は DB の updated_at がこの値のままのときだけ書く (読み直して行があれば 409 CONFLICT_STALE_DATA)。
+     * feature_flags を送るときは必須 (下の superRefine)
+     */
+    expected_updated_at: z.iso.datetime({ offset: true, message: FEATURE_PACKAGE_EXPECTED_UPDATED_AT_FORMAT_MESSAGE }).optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (input.feature_flags !== undefined && input.expected_updated_at === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['expected_updated_at'],
+        message: FEATURE_PACKAGE_EXPECTED_UPDATED_AT_REQUIRED_MESSAGE,
+      });
+    }
+  });
 
 export type FeaturePackageUpdateInput = z.infer<typeof FeaturePackageUpdateSchema>;
 

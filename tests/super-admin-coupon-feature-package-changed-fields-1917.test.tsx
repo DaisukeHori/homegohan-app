@@ -341,7 +341,8 @@ describe('機能パッケージ詳細: 保存は変えた欄だけを送る (#19
     await clickSave();
 
     await vi.waitFor(() => expect(patchBodies()).toHaveLength(1));
-    expect(patchBodies()[0]).toEqual({ feature_flags: ['flag_b', 'flag_a'] });
+    // 機能フラグを送るときは、最後に読んだ行の updated_at を書く条件として添える (#2195 V4)
+    expect(patchBodies()[0]).toEqual({ feature_flags: ['flag_b', 'flag_a'], expected_updated_at: FEATURE_PACKAGE.updated_at });
   });
 
   it('表示順だけを変えたら表示順だけを送る。説明を空にしたら description: null を送る', async () => {

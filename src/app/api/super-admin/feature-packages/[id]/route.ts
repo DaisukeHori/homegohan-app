@@ -16,6 +16,12 @@
  * 読んでから書くまでに別の操作が状態を変えていたら 0 行 → 読み直して、無ければ 404、あれば 409 CONFLICT_STALE_DATA
  * (書かず、監査ログも残さない)。status を送らない更新は読まず・検査せず、今までどおり条件なしで書く
  * (A/B テストの PATCH (#2059) と同じ形)
+ *
+ * 機能フラグの一覧の変更 (#2195 V4): feature_flags は配列全体を書き換えるので、本文に画面が読んだ時点の updated_at
+ * (expected_updated_at。feature_flags を送るときは必須。無ければ 400 OP_INVALID_INPUT) を送らせ、DB の updated_at がその値のままのとき
+ * だけ書く条件つきにする (.eq('updated_at', 読んだ値))。読んでから書くまでに別の操作 (機能フラグの作成 POST /api/super-admin/flags が
+ * append_flag_to_feature_package で basic に足すキー (updated_at も now() にする)・別の運営の保存) が入っていたら 0 行 → 読み直して、
+ * 無ければ 404、あれば 409 CONFLICT_STALE_DATA (書かず、監査ログも残さない)。古い一覧で、あとから足されたキーを消さないため
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -47,6 +53,14 @@ const PACKAGE_INVALID_TRANSITION_HTTP_STATUS = 409;
 /** 読んでから書くまでに別の操作が機能パッケージの状態を変えていた (条件つきの更新が 0 行) */
 const PACKAGE_STALE_STATUS_RESPONSE = {
   error: { code: STALE_DATA_ERROR_CODE, message: '別の操作で機能パッケージの状態が先に変わりました。読み込み直してください' },
+} as const;
+
+/**
+ * 画面が読んだあとに別の操作が機能パッケージを変えていた (読んだ updated_at の条件つきの更新が 0 行。#2195 V4)。
+ * 状態の変更だけとは限らない (機能フラグの作成が足したキー・別の運営の保存) ので、状態の文とは分ける
+ */
+const PACKAGE_STALE_UPDATED_AT_RESPONSE = {
+  error: { code: STALE_DATA_ERROR_CODE, message: '別の操作で機能パッケージが先に変わりました。読み込み直してください' },
 } as const;
 
 export async function GET(_request: NextRequest, props: RouteContext) {
@@ -156,17 +170,22 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
     if (currentStatus !== null) {
       updateQuery = updateQuery.eq('status', currentStatus);
     }
+    // 画面が読んだ updated_at のままのときだけ書く (機能フラグの一覧を古い一覧で丸ごと上書きし、あとから足されたキーを消さないように。#2195 V4)
+    const expectedUpdatedAt = input.expected_updated_at;
+    if (expectedUpdatedAt !== undefined) {
+      updateQuery = updateQuery.eq('updated_at', expectedUpdatedAt);
+    }
     const { data: updated, error } = await updateQuery.select().maybeSingle();
 
     if (error) {
       return internalError('PATCH /api/super-admin/feature-packages/[id]', error, { userId: user.id }, { shape: 'nested' });
     }
     if (!updated) {
-      // 更新した行が無い (行が無い・読んでから書くまでに消された) ときは 404
-      if (currentStatus === null) {
+      // 条件をつけない更新で 0 行 (行が無い・読んでから書くまでに消された) ときは 404
+      if (currentStatus === null && expectedUpdatedAt === undefined) {
         return NextResponse.json(PACKAGE_NOT_FOUND_RESPONSE, { status: 404 });
       }
-      // 状態の条件で 0 行: 読み直して、行が消えていれば 404、あれば別の操作が先に状態を変えたので 409 (書かず、監査も残さない)
+      // 状態・updated_at の条件で 0 行: 読み直して、行が消えていれば 404、あれば別の操作が先に変えたので 409 (書かず、監査も残さない)
       const { data: reread, error: rereadError } = await supabase
         .from('feature_packages')
         .select('id')
@@ -178,7 +197,9 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
       if (!reread) {
         return NextResponse.json(PACKAGE_NOT_FOUND_RESPONSE, { status: 404 });
       }
-      return NextResponse.json(PACKAGE_STALE_STATUS_RESPONSE, { status: STALE_DATA_HTTP_STATUS });
+      // updated_at を条件にしたときは、状態に限らず機能パッケージが変わっていた (状態の文にしない)
+      const staleResponse = expectedUpdatedAt !== undefined ? PACKAGE_STALE_UPDATED_AT_RESPONSE : PACKAGE_STALE_STATUS_RESPONSE;
+      return NextResponse.json(staleResponse, { status: STALE_DATA_HTTP_STATUS });
     }
 
     // 監査ログ記録
