@@ -30,14 +30,18 @@ import { getApi, getApiBaseUrl } from "../../lib/api";
 import { getJapaneseApiErrorMessage } from "../../lib/api-error";
 import {
   AI_CHAT_STREAM_TIMEOUT_MS,
+  PREVIOUS_REQUEST_EXECUTED_MESSAGE,
   TIMEOUT_DELIVERED_NO_REPLY_MESSAGE,
   TIMEOUT_NOTICE_MESSAGE,
   TIMEOUT_NOT_DELIVERED_MESSAGE,
   TIMEOUT_RELOAD_FAILED_MESSAGE,
   TIMEOUT_RELOAD_LABEL,
   clearInputIfDelivered,
+  hasExecutedActionLog,
+  replyToSentMessageOf,
   restoreInputAfterTimeout,
   timeoutReloadOutcomeOf,
+  type SentText,
   type TimedOutSend,
 } from "../../lib/ai-chat-timeout";
 import { notifyAiConsultationDataChanged } from "../../lib/ai-consultation-data-changed";
@@ -90,6 +94,46 @@ function autoActionOutcomeMessageOf(outcome: ConsultationActionOutcome, aiMessag
     content: outcome.content,
     createdAt: new Date().toISOString(),
   };
+}
+
+/**
+ * 応答を受け取れずに取り直した会話で、送った文への返答 (replyId) の提案が実行されていたときに足す一文 (#2195 V3)。
+ * id は自動実行の成功の一文 (autoActionOutcomeMessageOf) と同じ形にする (同じ返答の結果は 1 つ)。サーバーには保存しない
+ */
+function previousRequestExecutedMessageOf(replyId: string): Message {
+  return {
+    id: `action-result-${replyId}`,
+    role: "assistant",
+    content: PREVIOUS_REQUEST_EXECUTED_MESSAGE,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * 返答 (messageId) に付いた提案の記録 (ai_action_logs) に、実行できた行があるか (#2195 V3。扱いは src/lib/ai-chat-timeout.ts)。
+ * 読むのは自分の相談の行だけ (行の安全は RLS の「自分の相談の行」の決まりが守る)。読めなければ false (実行したと言い切れない)
+ */
+async function replyActionExecuted(messageId: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabase.from("ai_action_logs").select("status").eq("message_id", messageId);
+    if (error) return false;
+    return hasExecutedActionLog(data);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 応答 (finalData) を受け取れずに取り直した会話 (loaded) で、送った文 (sent) への AI の返答の提案が自動で実行されていたら、
+ * データを出すタブの WebView に知らせ (notifyAiConsultationDataChanged)、足す一文を返す。実行されていなければ・
+ * 分からなければ空 (#2195 V3。時間切れの取り直しと、応答の本文を読めなかったときの取り直しの両方で使う)
+ */
+async function executedNoteAfterReload(sent: SentText, loaded: readonly Message[]): Promise<Message[]> {
+  const reply = replyToSentMessageOf(sent, loaded);
+  if (!reply) return [];
+  if (!(await replyActionExecuted(reply.id))) return [];
+  notifyAiConsultationDataChanged();
+  return [previousRequestExecutedMessageOf(reply.id)];
 }
 
 /**
@@ -275,7 +319,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
    * 送信が時間切れになったあと、相談のメッセージを取り直す (#1049 F7-18。扱いは src/lib/ai-chat-timeout.ts)。
    * 取れなければ、今の表示と案内をそのまま残す (今の会話を消さない)。
    * 送った文が届いていたら、入力欄に戻した文を消す (二重に送らないため)。返答がまだ無ければ案内を残す。
-   * 届いていなければ、案内を消して、入力欄の文をもう一度送るように知らせる
+   * 届いていなければ、案内を消して、入力欄の文をもう一度送るように知らせる。
+   * 返答の提案がサーバーで自動で実行されていたら、短い一文を足してタブに知らせる (#2195 V3。executedNoteAfterReload)
    */
   async function reloadAfterTimeout() {
     const sent = timedOutSend;
@@ -287,8 +332,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         Alert.alert("エラー", TIMEOUT_RELOAD_FAILED_MESSAGE);
         return;
       }
-      setMessages(loaded.length > 0 ? loaded : [WELCOME_MESSAGE]);
       const outcome = timeoutReloadOutcomeOf(sent, loaded);
+      const executedNote = outcome === "replied" ? await executedNoteAfterReload(sent, loaded) : [];
+      setMessages(loaded.length > 0 ? [...loaded, ...executedNote] : [WELCOME_MESSAGE]);
       if (outcome === "not-delivered") {
         setTimedOutSend(null);
         Alert.alert("送信できませんでした", TIMEOUT_NOT_DELIVERED_MESSAGE);
@@ -458,6 +504,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
     // 時間切れのあとの取り直しに使うので、try の外で持つ
     let sessionId = currentSessionId;
+    // 最後の finalData (aiMessage) で会話を確定させたか。確定した後の例外 (流し読みの続きの失敗など) では、
+    // 送信の失敗の Alert を出さない (成功の一文と失敗の Alert が両方出ていた。#2195 V3)。catch で見るので try の外で持つ
+    let finalHandled = false;
     try {
       if (!sessionId) {
         const api = getApi();
@@ -500,7 +549,6 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       }
 
       let accumulated = "";
-      let finalHandled = false;
 
       // SSE の 1 行を読む。本文の断片は表示中の返答に足し、最後の finalData (aiMessage) で会話を確定させる
       const handleSseLine = (line: string) => {
@@ -600,11 +648,22 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
             return [...withoutOptimistic, optimistic, aiMsg];
           });
         } else {
-          await loadMessages(sessionId);
+          // 応答の本文を読めなかった (接続が切れた など): 会話を取り直す。返答の提案がサーバーで自動で実行されていたら、
+          // finalData の結果の一文の代わりに短い一文を足し、タブに知らせる (#2195 V3。executedNoteAfterReload)
+          const loaded = await fetchMessages(sessionId);
+          if (loaded && loaded.length > 0) {
+            const executedNote = await executedNoteAfterReload({ text: trimmed, knownMessageIds }, loaded);
+            setMessages([...loaded, ...executedNote]);
+          } else {
+            setMessages([WELCOME_MESSAGE]);
+          }
         }
       }
     } catch (e: any) {
       setStreamingContent(null);
+      // 会話を確定させた後の例外 (流し読みの続きの reader.read() の失敗など): 返答と結果はもう出ているので、
+      // 送信の失敗として扱わない (Alert を出さない・メッセージを消さない。#2195 V3)
+      if (finalHandled) return;
       // 同意が必要で止められた (T15 / #1154): 送らなかったので、メッセージを消して入力を戻す。
       // このシート (モーダル) を閉じてから同意画面への案内を出す (closeSheetAndPromptAiConsent)
       if (isAiConsentRequiredError(e)) {

@@ -10,7 +10,10 @@ import fs from 'fs';
 import path from 'path';
 
 import {
+  AI_ACTION_LOG_STATUS_EXECUTED,
   clearInputIfDelivered,
+  hasExecutedActionLog,
+  replyToSentMessageOf,
   restoreInputAfterTimeout,
   timeoutReloadOutcomeOf,
   type TimedOutSend,
@@ -81,6 +84,57 @@ describe('restoreInputAfterTimeout (#1049 F7-18)', () => {
 
   it('待っている間に別の文を書いていれば、それを消さない', () => {
     expect(restoreInputAfterTimeout('次の質問', SENT.text)).toBe('次の質問');
+  });
+});
+
+describe('replyToSentMessageOf (#2195 V3)', () => {
+  const REPLY = { id: 'm4', role: 'assistant', content: '低温調理がおすすめです' };
+
+  it('送った文のすぐ後ろの assistant のメッセージを返す', () => {
+    expect(replyToSentMessageOf(SENT, [...OLD, { id: 'm3', role: 'user', content: SENT.text }, REPLY])).toEqual(REPLY);
+  });
+
+  it('送った文の後ろに assistant が 2 つあれば、最初のもの (送った文への返答) を返す', () => {
+    const later = { id: 'm5', role: 'assistant', content: '続きです' };
+    expect(replyToSentMessageOf(SENT, [...OLD, { id: 'm3', role: 'user', content: SENT.text }, REPLY, later])).toEqual(REPLY);
+  });
+
+  it('送った文が無い (届いていない・送る前からあった id だけ) なら null', () => {
+    expect(replyToSentMessageOf(SENT, OLD)).toBeNull();
+    expect(replyToSentMessageOf(SENT, [{ id: 'm1', role: 'user', content: SENT.text }, REPLY])).toBeNull();
+  });
+
+  it('返答がまだ無いなら null', () => {
+    expect(replyToSentMessageOf(SENT, [...OLD, { id: 'm3', role: 'user', content: SENT.text }])).toBeNull();
+  });
+
+  it('返答の前に別の user のメッセージがあれば null (別の依頼への返答を「前の依頼」にしない)', () => {
+    expect(
+      replyToSentMessageOf(SENT, [
+        ...OLD,
+        { id: 'm3', role: 'user', content: SENT.text },
+        { id: 'm5', role: 'user', content: '別の相談' },
+        REPLY,
+      ]),
+    ).toBeNull();
+  });
+});
+
+describe('hasExecutedActionLog (#2195 V3)', () => {
+  it('実行できた行 (executed) があれば true', () => {
+    expect(AI_ACTION_LOG_STATUS_EXECUTED).toBe('executed');
+    expect(hasExecutedActionLog([{ status: 'executed' }])).toBe(true);
+    expect(hasExecutedActionLog([{ status: 'pending' }, { status: 'executed' }])).toBe(true);
+  });
+
+  it.each([
+    ['行が無い', []],
+    ['実行を待っている・実行中・失敗・断った', [{ status: 'pending' }, { status: 'approved' }, { status: 'failed' }, { status: 'rejected' }]],
+    ['配列でない', { status: 'executed' }],
+    ['null', null],
+    ['status の無い行・オブジェクトでない行', [{}, 'executed', null]],
+  ])('%s なら false', (_label, rows) => {
+    expect(hasExecutedActionLog(rows)).toBe(false);
   });
 });
 
