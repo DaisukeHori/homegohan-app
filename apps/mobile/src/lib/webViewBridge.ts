@@ -559,6 +559,19 @@ export function aiConsultationReloadBlockingSelectorOf(pathname: string): string
 }
 
 /**
+ * 読み込み直しを止めたページで、止めている要素が無くなるのを見張っている間に window に立てる印の名前 (#2201 U2)。
+ * 同じページで見張りを重ねない (止めている間に何回知らせが来ても、外れたときの読み込み直しは 1 回)
+ */
+export const AI_CONSULTATION_DEFERRED_RELOAD_WATCH_KEY = '__homegohanAiConsultationDeferredReload';
+
+/**
+ * 読み込み直しを止めたページで見張る属性 (#2201 U2)。どれかが変わると、止めている要素 (aiConsultationReloadBlockingSelectorOf) の
+ * 当たり外れが変わりうる: モーダルの role・aria-modal・open、編集できる要素の contenteditable、input の type、
+ * ページごとに足す要素 (.fixed.inset-0 などの class)
+ */
+export const AI_CONSULTATION_DEFERRED_RELOAD_OBSERVED_ATTRIBUTES = ['role', 'aria-modal', 'open', 'contenteditable', 'type', 'class'] as const;
+
+/**
  * 今開いているページを読み込み直すスクリプト (AI 相談の提案の実行でデータが変わったとき。#2189 W2)。
  * 自オリジンのページでだけ動く (外部ページ・読み込みに失敗した about:blank では何もしない)。
  * 認証ブリッジのページ (BRIDGE_PAGE_PATH) の上では読み込み直さない: URL の code は一度しか使えない (#1036) ので、
@@ -566,6 +579,9 @@ export function aiConsultationReloadBlockingSelectorOf(pathname: string): string
  * 入力の途中かもしれないページでも読み込み直さない (読み込み直すと保存していない入力が消える): 今のページが
  * AI_CONSULTATION_RELOADABLE_PATHS に無いとき、入力の部品・開いているモーダル (aiConsultationReloadBlockingSelectorOf。
  * 基本の要素 AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR と、ページごとに足す要素) があるとき、ページの中身を確かめられないときは何もしない。
+ * 入力の部品・開いているモーダルで止めたときは捨てずに、ページの DOM の変化を見張り、止めている要素が無くなったら (モーダルを閉じた・
+ * 編集を終えた) 1 回だけ読み込み直す (#2201 U2。以前は捨てて、閉じたあとも古い表示のまま、マイページの onFocus もそれきり試さなかった)。
+ * 見張りの間に別のページへ移ったら (同じ文書のままのページの移動) 読み込み直さずに見張りをやめる (移った先は自分で読む)。
  * スクリプトは URL・トークン・code を持たない
  */
 export function buildReloadCurrentPageScript(): string {
@@ -573,6 +589,7 @@ export function buildReloadCurrentPageScript(): string {
   for (const reloadablePath of AI_CONSULTATION_RELOADABLE_PATHS) {
     blockingSelectorsByPath[reloadablePath] = aiConsultationReloadBlockingSelectorOf(reloadablePath);
   }
+  const watchKey = JSON.stringify(AI_CONSULTATION_DEFERRED_RELOAD_WATCH_KEY);
   return buildOwnOriginOnlyScript(`
   var pathname = window.location.pathname;
   if (pathname === ${JSON.stringify(BRIDGE_PAGE_PATH)}) return;
@@ -580,8 +597,32 @@ export function buildReloadCurrentPageScript(): string {
   if (!Object.prototype.hasOwnProperty.call(blockingSelectors, pathname)) return;
   var doc = window.document;
   if (!doc || typeof doc.querySelector !== 'function') return;
-  if (doc.querySelector(blockingSelectors[pathname])) return;
-  window.location.reload();`);
+  var blockingSelector = blockingSelectors[pathname];
+  if (!doc.querySelector(blockingSelector)) {
+    window.location.reload();
+    return;
+  }
+  if (window[${watchKey}]) return;
+  var Observer = window.MutationObserver;
+  if (typeof Observer !== 'function' || !doc.documentElement) return;
+  var observer = new Observer(function () {
+    if (window.location.pathname !== pathname) {
+      observer.disconnect();
+      window[${watchKey}] = false;
+      return;
+    }
+    if (doc.querySelector(blockingSelector)) return;
+    observer.disconnect();
+    window[${watchKey}] = false;
+    window.location.reload();
+  });
+  window[${watchKey}] = true;
+  observer.observe(doc.documentElement, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ${JSON.stringify(AI_CONSULTATION_DEFERRED_RELOAD_OBSERVED_ATTRIBUTES)}
+  });`);
 }
 
 // ── セッション取得と code 発行 ────────────────────────────────────────────────
