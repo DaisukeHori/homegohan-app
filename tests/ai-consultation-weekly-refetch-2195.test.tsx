@@ -33,9 +33,8 @@ vi.mock('next/navigation', () => ({
 vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
 }));
-vi.mock('next/image', () => ({
-  default: ({ alt }: { alt: string }) => <img alt={alt} />,
-}));
+// 画像 (料理の写真) はこの検査に関係しないので描かない
+vi.mock('next/image', () => ({ default: () => null }));
 // 生成のモーダル・栄養のレーダーチャート (dynamic import) はこの検査に関係しないので描かない
 vi.mock('next/dynamic', () => ({ default: () => () => null }));
 vi.mock('react-markdown', () => ({ default: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
@@ -326,6 +325,7 @@ describe('献立表 (/menus/weekly) が AI 相談の成功で取り直すもの 
     const REQUEST_ID = 'req-ai-week-1';
     await renderWeeklyPage();
     expect(container.textContent).not.toContain(GENERATED_DISH);
+    const pendingChecksBefore = fetchCalls.filter((raw) => raw === `/api/ai/menu/weekly/pending?date=${week[0]}`).length;
 
     // AI 相談の generate_week_menu: 依頼の行 (processing) を作った時点で成功を知らせる。献立はまだ無い
     server.pendingRequest = {
@@ -337,8 +337,8 @@ describe('献立表 (/menus/weekly) が AI 相談の成功で取り直すもの 
     };
     await notifyAiConsultationSucceeded('generate_week_menu', { startDate: week[0], requestId: REQUEST_ID, status: 'processing' });
 
-    // 表示中の週の生成中の依頼を確かめ、見つけた依頼を監視する (Realtime の購読と状態の確認)
-    expect(fetchCalls).toContain(`/api/ai/menu/weekly/pending?date=${week[0]}`);
+    // 表示中の週の生成中の依頼をもう一度確かめ (週を開いたときの確認とは別に)、見つけた依頼を監視する (Realtime の購読と状態の確認)
+    expect(fetchCalls.filter((raw) => raw === `/api/ai/menu/weekly/pending?date=${week[0]}`).length).toBeGreaterThan(pendingChecksBefore);
     expect(supabaseMock.channelNames).toContain(`menu-request-${REQUEST_ID}`);
     expect(fetchCalls).toContain(`/api/ai/menu/weekly/status?requestId=${REQUEST_ID}`);
     // 生成が終わったら、監視の側が献立を取り直して出す (読み込み直さなくてよい)
