@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { todayLocal } from "@/lib/date-utils";
+import { useAiConsultationDataRefetch } from "@/hooks/useAiConsultationDataRefetch";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -93,6 +94,8 @@ export default function HealthGoalsPage() {
     }
     setLoading(false);
   };
+  // AI 相談の提案の実行で健康目標が変わったら取り直す (#2195 V1)。作成・編集のモーダルが出ている間は取り直さない
+  useAiConsultationDataRefetch(fetchGoals);
 
   const openCreateModal = () => {
     setCreateError(null);
@@ -437,6 +440,8 @@ export default function HealthGoalsPage() {
             onClick={() => setDeleteConfirm(null)}
           >
             <motion.div
+              role="dialog"
+              aria-modal="true"
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
@@ -484,6 +489,8 @@ export default function HealthGoalsPage() {
             onClick={closeEditGoal}
           >
             <motion.div
+              role="dialog"
+              aria-modal="true"
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
@@ -566,6 +573,8 @@ export default function HealthGoalsPage() {
             onClick={closeCreateModal}
           >
             <motion.div
+              role="dialog"
+              aria-modal="true"
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}

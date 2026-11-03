@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
+import { useAiConsultationDataRefetch } from "@/hooks/useAiConsultationDataRefetch";
 import { ArrowLeft, Camera, Plus, Trash2, RefreshCw, Package, AlertCircle, X, Pencil } from "lucide-react";
 import { PantryItemForm, emptyPantryItemFormValues, type PantryItemFormValues } from "@/components/pantry/PantryItemForm";
 import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
@@ -88,6 +89,8 @@ export default function PantryPage() {
   useEffect(() => {
     void fetchItems();
   }, [fetchItems]);
+  // AI 相談の提案の実行で冷蔵庫の食材が変わったら取り直す (#2195 V1)。手入力のフォーム・確認のモーダルが出ている間は取り直さない
+  useAiConsultationDataRefetch(fetchItems);
 
   const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -543,6 +546,8 @@ export default function PantryPage() {
             onClick={closeManualForm}
           >
             <motion.div
+              role="dialog"
+              aria-modal="true"
               initial={{ y: "100%" }}
               animate={{ y: 0 }}
               exit={{ y: "100%" }}

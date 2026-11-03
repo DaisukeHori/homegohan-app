@@ -2,12 +2,13 @@
 
 // src/app/(main)/family/transfer-accept/[proposal_id]/page.tsx
 // (設計書 03-ui-spec.md §10.2, 02-flow-spec.md §10)
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { normalizeProfileName } from '@/lib/profile-name';
 import { transferProposalStatusMessage } from '@/lib/membership/transfer-proposal-status';
 import { readSignedInUser } from '@/lib/auth/signed-in-user';
+import { useAiConsultationDataRefetch } from '@/hooks/useAiConsultationDataRefetch';
 
 /** 提案が無い (または RLS で見えない) ときの文 */
 const PROPOSAL_NOT_FOUND_MESSAGE = '譲渡提案が見つかりません';
@@ -65,9 +66,15 @@ export default function FamilyTransferAcceptPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<'accept' | 'decline' | null>(null);
   const [result, setResult] = useState<'accepted' | 'declined' | null>(null);
+  // AI 相談の成功の読み直し (#2195 V1) の応答を待っているか。待つあいだは承諾・拒否のボタンを止める
+  const [aiRefetching, setAiRefetching] = useState(false);
+  // 承諾・拒否の書き込みか、AI 相談の成功の読み直しの応答を待っているか (#2195 V1)。待つあいだは、ほかの書き込みと読み直しを始めない:
+  // 読み直しの応答があとから届いて、承諾・拒否の通信エラーのあとの読み直し (今の状態) を書き込む前の提案で上書きしないため。
+  // ref は再描画の前に続けて起きたとき (ボタンがまだ止まっていない) の守り
+  const busyRef = useRef(false);
 
-  // 提案・提案者・家族名を読む。画面を開いたとき・「再試行」・承諾 / 拒否の通信エラーのあとに呼ぶ。
-  // 読み込み中の表示 (loading) は呼び出し側が決める (承諾 / 拒否のあとの読み直しは、提案の表示を残したまま読み直す)。
+  // 提案・提案者・家族名を読む。画面を開いたとき・「再試行」・承諾 / 拒否の通信エラーのあと・AI 相談の成功 (#2195 V1) のあとに呼ぶ。
+  // 読み込み中の表示 (loading) は呼び出し側が決める (承諾 / 拒否と AI 相談の成功のあとの読み直しは、提案の表示を残したまま読み直す)。
   // 戻り値は、ログインの画面へ移ったか (移るときは、移るまで読み込み中の表示のままにする。これまでどおり)
   const fetchProposal = useCallback(async (): Promise<{ redirecting: boolean }> => {
     try {
@@ -107,7 +114,9 @@ export default function FamilyTransferAcceptPage() {
 
       // 提案者情報
       // user_profiles に email 列は無い (メールアドレスは auth.users にしか無く、他人のものは画面にも出さない)。
-      // 他人の行は RLS で読めないことが多く、読めなければ (PGRST116)「代表者」と表示する。読み込めなかったときは読み込みの失敗
+      // 他人の行は RLS で読めない (user_profiles の SELECT は本人の行だけ) ので、読めなければ (PGRST116)「代表者」と表示する。
+      // 名前が出るのは、申し出た本人が自分の申し出の画面を開いたとき (自分の名前。AI 相談の update_profile_preferences が書く)。
+      // 読み込めなかったときは読み込みの失敗
       const { data: fromProfile, error: fromProfileError } = await supabase
         .from('user_profiles')
         .select('nickname')
@@ -158,6 +167,23 @@ export default function FamilyTransferAcceptPage() {
     void loadPage();
   }, [loadPage]);
 
+  // AI 相談の提案の実行が成功したら (#2195 V1)、読み込み中の表示を出さずに提案を読み直す。提案者の名前は、申し出た本人が開いたときは
+  // 自分のプロフィールの名前 (user_profiles.nickname) で、AI 相談の update_profile_preferences が書く。
+  // 読み直しの失敗・ログアウトしていたときは、開いたときと同じ扱い (fetchProposal が決める)。
+  // 承諾・拒否の応答を待つあいだは読み直さず、読み直しの応答を待つあいだは承諾・拒否を止める (busyRef)
+  const refetchAfterAiConsultation = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setAiRefetching(true);
+    try {
+      await fetchProposal();
+    } finally {
+      busyRef.current = false;
+      setAiRefetching(false);
+    }
+  };
+  useAiConsultationDataRefetch(refetchAfterAiConsultation);
+
   // 読み込みをやり直す (読み込めなかったときの「再試行」)。
   // 「再試行」は読み込めなかったとき (承諾・拒否のボタンを出していないとき) だけ出すので、承諾・拒否とは重ならない
   const retryLoad = () => {
@@ -166,6 +192,8 @@ export default function FamilyTransferAcceptPage() {
   };
 
   const handleAccept = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setActionLoading('accept');
     setError(null);
     try {
@@ -185,12 +213,15 @@ export default function FamilyTransferAcceptPage() {
       // 読み直しの応答を待つあいだもボタンを止めたままにする (actionLoading を戻さない)。読み直しが失敗したら「読み込めませんでした」を出す
       await fetchProposal();
     } finally {
+      busyRef.current = false;
       setActionLoading(null);
     }
   };
 
   const handleDecline = async () => {
+    if (busyRef.current) return;
     if (!window.confirm('譲渡提案を拒否しますか？')) return;
+    busyRef.current = true;
     setActionLoading('decline');
     setError(null);
     try {
@@ -208,6 +239,7 @@ export default function FamilyTransferAcceptPage() {
       // サーバーが拒否を済ませてから応答が切れたこともあるので、提案を読み直す (承諾の通信エラーと同じ)
       await fetchProposal();
     } finally {
+      busyRef.current = false;
       setActionLoading(null);
     }
   };
@@ -367,14 +399,14 @@ export default function FamilyTransferAcceptPage() {
           <div className="space-y-3">
             <button
               onClick={handleAccept}
-              disabled={!!actionLoading}
+              disabled={!!actionLoading || aiRefetching}
               className="w-full rounded-full bg-green-500 py-4 text-white font-bold text-base hover:bg-green-600 transition-colors disabled:opacity-50"
             >
               {actionLoading === 'accept' ? '承諾中…' : '承諾する (代表者になる)'}
             </button>
             <button
               onClick={handleDecline}
-              disabled={!!actionLoading}
+              disabled={!!actionLoading || aiRefetching}
               className="w-full rounded-full bg-gray-100 py-4 text-gray-700 font-bold text-base hover:bg-gray-200 transition-colors disabled:opacity-50"
             >
               {actionLoading === 'decline' ? '拒否中…' : '拒否する'}

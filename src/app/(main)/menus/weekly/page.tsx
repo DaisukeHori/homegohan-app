@@ -29,6 +29,7 @@ import type { DailyMeal, PlannedMeal, ShoppingListItem, MealMode, MealDishes, Di
 import type { CatalogProductSummary } from "@/types/catalog";
 import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
+import { useAiConsultationDataRefetch } from "@/hooks/useAiConsultationDataRefetch";
 import { BASE_MEAL_TYPES, EXTRA_MEAL_TYPES } from "@/lib/slot-builder";
 import { useNutritionFeedbackWatch } from "@/hooks/useNutritionFeedbackWatch";
 import { notifyMenuGenerated } from "@/lib/local-notification";
@@ -993,6 +994,10 @@ export default function WeeklyMenuPage() {
 
   // Calendar meal dates - 月カレンダー用の献立存在日マップ（weekViewReducer 管理）
   const fetchedRangesRef = useRef<Set<string>>(new Set()); // 既にフェッチした範囲を記録
+  // AI 相談の成功で取り直した回数 (#2195 V1)。月のカレンダーの献立のある日の取得 (下の 2 つの useEffect) と、
+  // 生成中の依頼の確認 (checkPendingRequests の useEffect) の依存に入れ、取り直すたびにもう一度走らせる。
+  // 増やすのは refetchAfterAiConsultation だけで、取得済みの範囲 (fetchedRangesRef) を捨ててから増やす
+  const [aiConsultationRefetchRound, setAiConsultationRefetchRound] = useState(0);
 
   // Fetch meal dates for a range and accumulate (helper function)
   const fetchAndCacheMealDates = useCallback(async (startDate: Date, endDate: Date) => {
@@ -1012,8 +1017,12 @@ export default function WeeklyMenuPage() {
             newDates.add(day.dayDate);
           }
         });
-        // 既存のデータに追加（置き換えではなく累積）
-        dispatchWeekView({ type: 'CALENDAR_MEAL_DATES_MERGE', payload: newDates });
+        // 読んだ範囲の中だけを答えに置き換える (範囲の外の日 = 他の月・週の印はそのまま)。
+        // 足すだけ (MERGE) だと、範囲の中で献立が無くなった日 (AI 相談で消した食事の日など) の印が残る (#2195 V1)
+        dispatchWeekView({
+          type: 'CALENDAR_MEAL_DATES_REPLACE_RANGE',
+          payload: { startDate: formatLocalDate(startDate), endDate: formatLocalDate(endDate), dates: newDates },
+        });
       }
     } catch (error) {
       console.error('Failed to fetch calendar meal dates:', error);
@@ -1068,7 +1077,7 @@ export default function WeeklyMenuPage() {
     };
 
     prefetchAdjacentWeeks();
-  }, [weekStart, fetchAndCacheMealDates]);
+  }, [weekStart, fetchAndCacheMealDates, aiConsultationRefetchRound]);
 
   // displayMonth が変わったときも追加でフェッチ（月移動時）
   useEffect(() => {
@@ -1087,7 +1096,7 @@ export default function WeeklyMenuPage() {
     };
 
     fetchMonthMealDates();
-  }, [displayMonth, fetchAndCacheMealDates]);
+  }, [displayMonth, fetchAndCacheMealDates, aiConsultationRefetchRound]);
 
   // Expanded Meal State - weekViewReducer 管理（同じタイプの複数食事に対応）
 
@@ -1163,6 +1172,10 @@ export default function WeeklyMenuPage() {
   // 家族情報ロード (家族に所属している場合のみ switcher 表示)。
   // 開いたときと、切り替えの適用のときに読む (#1584 の 1・設計書 family/10 §16.1)。名前は GET /api/family/members/names の値を当てる
   // (名前の API の失敗は空の Map = display_name のまま)。family_id が無くなっていたら一覧を空にする (家族から外れたことを反映する)
+  // AI 相談の成功のあと (refetchAfterAiConsultation) にも読む: 名前の API は、display_name の無いメンバー (自分を含む) に
+  // プロフィールの名前 (user_profiles.nickname) を返し、AI 相談 (update_profile_preferences) は自分の nickname を書く (#2195 V1)。
+  // メンバーの一覧の data が null なのは読み取りの失敗のときだけ (0 人なら [])。一覧の読み取りの失敗では今の一覧を残す
+  // (名前の API の失敗は上のとおり display_name のまま。開いたときと同じ)
   const loadFamilyData = useCallback(async () => {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
@@ -1233,11 +1246,15 @@ export default function WeeklyMenuPage() {
       const res = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
       if (res.ok) {
         const { dailyMeals, shoppingList: shoppingListData } = await res.json();
+        // 買い物リストは週に関係なく、使っている買い物リスト 1 つ (GET /api/meal-plans の shoppingList。無いときは null)。
+        // この応答が正なので、空 (最後の品目が消された・リストが無い) でも、献立の無い週でもそのまま置く (#2195 V1。
+        // 以前は空のときに置かず、AI 相談で最後の品目を消しても、バッジと買い物リストに消した品目が残っていた)。
+        // 週の読み込み (fetchPlan の fetchWeekData) は献立の無い週で [] を作って返すので、そちらは空のときに置かない
+        const newShoppingList: ShoppingListItem[] = shoppingListData?.items || [];
+        setShoppingList(newShoppingList);
         if (dailyMeals && dailyMeals.length > 0) {
           const newPlan = { days: dailyMeals };
-          const newShoppingList = shoppingListData?.items || [];
           setCurrentPlan(newPlan);
-          if (newShoppingList.length > 0) setShoppingList(newShoppingList);
           updateCalendarMealDatesFromDailyMeals(dailyMeals);
           // キャッシュも更新
           weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
@@ -1785,7 +1802,7 @@ export default function WeeklyMenuPage() {
     
     checkPendingRequests();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [weekStart, weekDates, isGenerating, generatingMeal]);  // subscribeToRequestStatus / subscribeToRegenerateStatus はファイル後方で定義されるため前方参照エラーになる。両関数は useCallback で安定参照のため再実行は発生しない
+  }, [weekStart, weekDates, isGenerating, generatingMeal, aiConsultationRefetchRound]);  // subscribeToRequestStatus / subscribeToRegenerateStatus はファイル後方で定義されるため前方参照エラーになる。両関数は useCallback で安定参照のため再実行は発生しない。aiConsultationRefetchRound: AI 相談の成功のあと (AI 相談が始めた献立の生成を見つけて監視する。#2195 V1)
   
   
   // 復元用フラグ（購読開始時に使用）→ uiFlagReducer 管理
@@ -2145,37 +2162,42 @@ export default function WeeklyMenuPage() {
   }, [weekStart, weekStartDayLoaded]);  // autoExpandNextMeal / weekDates / subscribeToRequestStatus を除外: 追加すると不要な再フェッチが発生するため
   
   // Fetch servings config and radar chart nutrients from user profile
-  useEffect(() => {
-    const fetchUserSettings = async () => {
-      setIsLoadingServingsConfig(true);
-      try {
-        const res = await fetch('/api/profile');
-        if (res.ok) {
-          const profile = await res.json();
-          // Servings config
-          if (profile.servings_config) {
-            setServingsConfig(profile.servings_config);
-          } else if (profile.family_size) {
-            // servings_configがない場合はfamily_sizeからデフォルト作成
-            const defaultConfig: ServingsConfig = {
-              default: profile.family_size,
-              byDayMeal: {}
-            };
-            setServingsConfig(defaultConfig);
-          }
-          // Radar chart nutrients
-          if (profile.radar_chart_nutrients && Array.isArray(profile.radar_chart_nutrients)) {
-            setRadarChartNutrients(profile.radar_chart_nutrients);
-          }
+  // (AI 相談の成功のあと (refetchAfterAiConsultation) にも呼ぶ。AI 相談で家族の人数 (family_size) が変わると、
+  // 人数の設定 (servings_config) の無い人の既定の人数が変わるため。#2195 V1)
+  const fetchUserSettings = useCallback(async () => {
+    setIsLoadingServingsConfig(true);
+    try {
+      const res = await fetch('/api/profile');
+      if (res.ok) {
+        const profile = await res.json();
+        // Servings config
+        if (profile.servings_config) {
+          setServingsConfig(profile.servings_config);
+        } else if (profile.family_size) {
+          // servings_configがない場合はfamily_sizeからデフォルト作成
+          const defaultConfig: ServingsConfig = {
+            default: profile.family_size,
+            byDayMeal: {}
+          };
+          setServingsConfig(defaultConfig);
+        } else {
+          // どちらも無い (AI 相談で家族の人数を空にした): 前の人数を残さない (取り直しのとき。読み込み直したときと同じ。#2195 V1)
+          setServingsConfig(null);
         }
-      } catch (e) {
-        console.error('Failed to fetch user settings:', e);
-      } finally {
-        setIsLoadingServingsConfig(false);
+        // Radar chart nutrients
+        if (profile.radar_chart_nutrients && Array.isArray(profile.radar_chart_nutrients)) {
+          setRadarChartNutrients(profile.radar_chart_nutrients);
+        }
       }
-    };
-    fetchUserSettings();
-  }, []);
+    } catch (e) {
+      console.error('Failed to fetch user settings:', e);
+    } finally {
+      setIsLoadingServingsConfig(false);
+    }
+  }, [setIsLoadingServingsConfig, setServingsConfig, setRadarChartNutrients]);
+  useEffect(() => {
+    void fetchUserSettings();
+  }, [fetchUserSettings]);
   
   // フォールバックポーリング用の参照
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -2546,20 +2568,47 @@ export default function WeeklyMenuPage() {
   }, [cleanupPolling]);
   
   // Fetch Pantry
-  useEffect(() => {
-    const fetchPantry = async () => {
-      try {
-        const res = await fetch('/api/pantry');
-        if (res.ok) {
-          const data = await res.json();
-          usePantryStore.getState().setFridgeItems(data.items || []);
-        }
-      } catch (e) {
-        console.error("Failed to fetch pantry:", e);
+  const fetchPantry = useCallback(async () => {
+    try {
+      const res = await fetch('/api/pantry');
+      if (res.ok) {
+        const data = await res.json();
+        usePantryStore.getState().setFridgeItems(data.items || []);
       }
-    };
-    fetchPantry();
+    } catch (e) {
+      console.error("Failed to fetch pantry:", e);
+    }
   }, []);
+  useEffect(() => {
+    void fetchPantry();
+  }, [fetchPantry]);
+
+  // AI 相談の提案の実行で献立・買い物リスト・冷蔵庫・家族の人数・自分の名前が変わったら、ページを開いたときに読むもののうち
+  // AI 相談で変わりうるものを取り直す (#2195 V1)。
+  //   - 表示中の週の献立と買い物リスト (refreshMealPlan)・冷蔵庫 (fetchPantry)・人数の設定 (fetchUserSettings)
+  //   - 月のカレンダーの献立のある日: 取得済みの範囲を捨ててから回数を増やし、表示中の週の前後と表示中の月を読み直す
+  //     (読んだ範囲は答えで置き換える。ほかの範囲は次にその週・月を開いたときに読み直す)
+  //   - 生成中の依頼: 回数を増やして、生成中の依頼の確認 (checkPendingRequests) をもう一度走らせる。AI 相談が始めた
+  //     献立の生成 (generate_week_menu など) は依頼を受けた時点 (status: processing) で成功を知らせるので、ここで取り直しても
+  //     まだ献立は無い。表示中の週の生成中の依頼を見つけて監視し、終わったら監視の側が献立を取り直す
+  //     (生成中の依頼の確認 GET /api/ai/menu/weekly/pending が返すのは、開始日が表示中の週の初日の依頼だけ。ほかの日から
+  //     始めた生成は、ページを開いたとき・読み込み直したときと同じく監視しない。#1609)
+  //   - 家族の一覧と名前 (loadFamilyData): 家族の切り替えに出す名前は、display_name の無いメンバー (自分を含む) なら
+  //     プロフィールの名前で、AI 相談は自分の名前 (user_profiles.nickname) を書く
+  //     (家族の献立 (useFamilyMenu。自分以外のメンバーの献立) は取り直さない。理由は
+  //     src/lib/ai/consultation-refetch-coverage.ts の '/menus/weekly' の mountReadsNotRefetched の familyMenu)
+  // 別の週の献立も変わりうる (1 週間の献立の作成など) ので、週のキャッシュは捨てて、次にその週を開いたときに取り直させる。
+  // モーダル・入力の部品が出ている間は取り直さない (useAiConsultationDataRefetch)
+  const refetchAfterAiConsultation = useCallback(() => {
+    weekDataCache.current.clear();
+    fetchedRangesRef.current.clear();
+    void refreshMealPlan();
+    void fetchPantry();
+    void fetchUserSettings();
+    void loadFamilyData();
+    setAiConsultationRefetchRound((round) => round + 1);
+  }, [refreshMealPlan, fetchPantry, fetchUserSettings, loadFamilyData]);
+  useAiConsultationDataRefetch(refetchAfterAiConsultation);
 
   // Initialize selected day to today
   useEffect(() => {
@@ -6666,6 +6715,8 @@ export default function WeeklyMenuPage() {
               style={{ background: 'rgba(0,0,0,0.5)' }}
             />
             <motion.div
+              role="dialog"
+              aria-modal="true"
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}

@@ -10,6 +10,7 @@ import { applyFamilyMemberNames, fetchFamilyMemberNames } from '@/lib/membership
 import { familyRoleLabel } from '@/lib/membership/role-labels';
 import { membershipErrorMessageOfBody } from '@/lib/errors/membership-errors';
 import { readOwnMembershipAfterNetworkFailure, withMembershipStateNote } from '@/lib/membership/leave-state';
+import { useAiConsultationDataRefetch } from '@/hooks/useAiConsultationDataRefetch';
 
 /**
  * 家族のメンバーを読み込めなかったときの文。家族に入っていない (家族の作成の画面へ移す) ・空の一覧と見分けるために出す
@@ -25,6 +26,12 @@ const FAMILY_MEMBERS_PATH = '/family/members';
 
 /** 除名・脱退の通信そのものが失敗した (fetch が reject した) ときの文 */
 const NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
+
+/**
+ * AI 相談の成功の読み直し (#2195 V1) の応答を待っているときの actionLoading の値。待つあいだは除名・脱退・「再試行」も止める
+ * (読み直しの応答が除名のあとに届いて、除名したメンバーを古い一覧で戻さないため。除名の通信エラーのあとの読み直しと同じ扱い)
+ */
+const AI_CONSULTATION_REFETCH_ACTION = 'ai-consultation-refetch';
 
 /**
  * .single() で行が 0 件 (または RLS で見えない) ときの PostgREST の失敗のコード。
@@ -67,15 +74,15 @@ export default function FamilyMembersPage() {
   // 家族の作成の画面へ移し、一覧を読めないと空の一覧と見せ、問い合わせが例外を投げると読み込み中の表示のまま止まっていた)
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  // 除名か脱退のどちらかの書き込み (除名の通信エラーのあとの読み直しまで) の応答を待っているか (#2064)。
+  // 除名か脱退のどちらかの書き込み (除名の通信エラーのあとの読み直しまで) か、AI 相談の成功の読み直し (#2195 V1) の応答を待っているか (#2064)。
   // 除名の通信エラーのあとは一覧を丸ごと読み直すので、別のメンバーの除名を重ねると、先に送った読み直しの応答が後に届いたとき、
   // その古い一覧で表示が上書きされる (組織のメンバーの画面の #2050 と同じ型)。待つあいだはすべての除名と脱退のボタンを止め、押されても送らない。
   // ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
   const writeInFlightRef = useRef(false);
   const isWriting = actionLoading !== null;
 
-  // 家族グループとメンバーの一覧を読む。画面を開いたとき・「再試行」・除名の通信エラーのあとに呼ぶ。
-  // 読み込み中の表示 (loading) は呼び出し側が決める (除名のあとの読み直しは、一覧の表示を残したまま読み直す)。
+  // 家族グループとメンバーの一覧を読む。画面を開いたとき・「再試行」・除名の通信エラーのあと・AI 相談の成功 (#2195 V1) のあとに呼ぶ。
+  // 読み込み中の表示 (loading) は呼び出し側が決める (除名と AI 相談の成功のあとの読み直しは、一覧の表示を残したまま読み直す)。
   // 戻り値は、別の画面へ移ったか (移るときは、移るまで読み込み中の表示のままにする。これまでどおり)
   const loadMembers = useCallback(async (): Promise<{ redirecting: boolean }> => {
     try {
@@ -174,6 +181,24 @@ export default function FamilyMembersPage() {
     if (writeInFlightRef.current) return;
     void loadPage();
   };
+
+  // AI 相談の提案の実行が成功したら (#2195 V1)、読み込み中の表示を出さずに家族グループとメンバーの一覧を読み直す。
+  // 一覧に出す名前は、display_name の無いメンバー (自分を含む) に名前の API がプロフィールの今の名前 (user_profiles.nickname) を
+  // 当てたもので、AI 相談の update_profile_preferences は自分の nickname を書く。
+  // 読み直しの失敗・家族を抜けていた・ログアウトしていたときの扱いは、除名の通信エラーのあとの読み直しと同じ (loadMembers が決める)。
+  // 書き込みの応答を待つあいだは読み直さず、読み直しの応答を待つあいだは書き込みを止める (上の writeInFlightRef の理由と同じ)
+  const refetchAfterAiConsultation = async () => {
+    if (writeInFlightRef.current) return;
+    writeInFlightRef.current = true;
+    setActionLoading(AI_CONSULTATION_REFETCH_ACTION);
+    try {
+      await loadMembers();
+    } finally {
+      writeInFlightRef.current = false;
+      setActionLoading(null);
+    }
+  };
+  useAiConsultationDataRefetch(refetchAfterAiConsultation);
 
   const isOwnerOrAdmin = currentRole === 'representative' || currentRole === 'adult';
 

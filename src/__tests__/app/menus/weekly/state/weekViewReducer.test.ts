@@ -55,4 +55,26 @@ describe('weekViewReducer', () => {
     expect(next.selectedDayIndex).toBe(5);
     expect(next.expandedMealId).toBe('meal-xyz');
   });
+
+  // #2195 V1: 月のカレンダーの献立のある日は、読み直した範囲の答えをその範囲の正にする。
+  // 足すだけ (MERGE) だと、範囲の中で献立が無くなった日 (AI 相談で消した食事の日など) の印が残った
+  it('CALENDAR_MEAL_DATES_REPLACE_RANGE は範囲の中 (両端を含む) だけを答えに置き換え、範囲の外の日は残す（#2195 V1）', () => {
+    const state: WeekViewState = {
+      ...initialWeekViewState,
+      calendarMealDates: new Set(['2026-10-31', '2026-11-01', '2026-11-03', '2026-11-09', '2026-11-10']),
+    };
+    const next = weekViewReducer(state, {
+      type: 'CALENDAR_MEAL_DATES_REPLACE_RANGE',
+      payload: { startDate: '2026-11-01', endDate: '2026-11-09', dates: new Set(['2026-11-05']) },
+    });
+    expect([...next.calendarMealDates].sort()).toEqual(['2026-10-31', '2026-11-05', '2026-11-10']);
+    // 元の集合は変えない (新しい Set を返す)
+    expect(state.calendarMealDates.has('2026-11-03')).toBe(true);
+  });
+
+  it('CALENDAR_MEAL_DATES_MERGE は足すだけ (範囲の中の古い日も残す。読み直しには REPLACE_RANGE を使う)', () => {
+    const state: WeekViewState = { ...initialWeekViewState, calendarMealDates: new Set(['2026-11-03']) };
+    const next = weekViewReducer(state, { type: 'CALENDAR_MEAL_DATES_MERGE', payload: new Set(['2026-11-05']) });
+    expect([...next.calendarMealDates].sort()).toEqual(['2026-11-03', '2026-11-05']);
+  });
 });

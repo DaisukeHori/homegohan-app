@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
 import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
+import { useAiConsultationRefetchKey } from "@/hooks/useAiConsultationDataRefetch";
 import { useAccountActionsPlacement } from "@/hooks/useAccountActionsPlacement";
 import { toUserProfile } from "@/lib/converter";
 import { assignAtPath } from "@/lib/assign-at-path";
@@ -139,6 +140,11 @@ function ProfilePageContent() {
   // 編集の入力欄 (editForm) は保存されている値をそのまま出す
   const headerName = normalizeProfileName(profile?.nickname);
 
+  // AI 相談の提案の実行で好み・栄養目標などが変わったら、下の取得をもう一度走らせる (#2195 V1)。
+  // 編集のモーダル (role="dialog") が出ている間は増えない (編集の途中の editForm を取得した値で上書きしないため)。
+  // 競技タブのように入力の部品が 1 つも無いタブを開いていても止まるよう、モーダルそのものに role="dialog" を付けている
+  const aiConsultationRefetchKey = useAiConsultationRefetchKey();
+
   useEffect(() => {
     const getData = async () => {
       const supabase = createClient();
@@ -165,6 +171,13 @@ function ProfilePageContent() {
           console.error('[Profile] Error fetching profile:', error);
         }
 
+        if (!error) {
+          // 答えをそのまま置く: 取り直し (AI 相談の成功のあと) でも、読み込み直したときと同じ値にする (#2195 V1)
+          if (!data) {
+            setProfile(null);
+            setEditForm({});
+          }
+        }
         if (data) {
           console.log('[Profile] Raw data sample:', {
             age: data.age,
@@ -208,6 +221,9 @@ function ProfilePageContent() {
                 carbs: t.carbsG,
                 fiber: t.fiberG,
               });
+            } else {
+              // 栄養目標が無い: 前の値を残さない (取り直しのとき。読み込み直したときと同じ。#2195 V1)
+              setDbNutritionTarget(null);
             }
           }
         } catch (e) {
@@ -218,7 +234,7 @@ function ProfilePageContent() {
       setIsLoading(false);
     };
     void getData();
-  }, []);
+  }, [aiConsultationRefetchKey]);
 
   // ?focus=incomplete パラメータを処理
   useEffect(() => {
@@ -653,7 +669,10 @@ function ProfilePageContent() {
               className="absolute inset-0 bg-black/60 backdrop-blur-sm pointer-events-auto"
               onClick={isGuidedMode ? handleGuidedClose : () => setIsEditing(false)}
             />
+            {/* role="dialog": 開いている間は AI 相談の成功で取り直さない (#2195 V1。どのタブを開いていても編集の途中の値を守る) */}
             <motion.div
+              role="dialog"
+              aria-modal="true"
               initial={{ y: "100%" }}
               animate={{ y: 0 }}
               exit={{ y: "100%" }}

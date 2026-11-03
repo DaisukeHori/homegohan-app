@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { Badge } from "@/types/domain";
 import { formatBadgePeriodAwards, type BadgePeriodAwards } from "@homegohan/shared";
+import { useAiConsultationRefetchKey } from "@/hooks/useAiConsultationDataRefetch";
 
 // 拡張型定義
 interface BadgeWithStatus extends Badge {
@@ -17,6 +18,9 @@ interface BadgeWithStatus extends Badge {
 }
 
 // アイコンマッピング（コードベース）
+/** 新しく取ったバッジのお祝いを出しておく時間 (ミリ秒。5 秒で消す) */
+const NEW_BADGE_CELEBRATION_MS = 5000;
+
 const ICON_MAP: Record<string, string> = {
   'first_bite': '🥄',
   'streak_3': '🔥',
@@ -80,6 +84,10 @@ function BadgesPageInner() {
   // 直近獲得したバッジ本体を保持し、お祝い表示・カードハイライトの両方に使う
   const [newlyEarnedBadges, setNewlyEarnedBadges] = useState<BadgeWithStatus[]>([]);
   const [selectedBadge, setSelectedBadge] = useState<BadgeWithStatus | null>(null);
+  // AI 相談の提案の実行 (食事の完了・献立の生成など) でバッジの条件が変わったら、下の取得をもう一度走らせる (#2195 V1)。
+  // GET /api/badges はその場で条件を判定して新しく取ったバッジを保存するので、取り直すと取ったバッジとお祝いが出る。
+  // バッジの詳細のモーダル (role="dialog") が出ている間は増えない
+  const aiConsultationRefetchKey = useAiConsultationRefetchKey();
 
   useEffect(() => {
     const fetchBadges = async () => {
@@ -99,10 +107,11 @@ function BadgesPageInner() {
         // #1055 (wave-3b): どのバッジを新規獲得したか (code) を使ってお祝い表示・
         // カードハイライトの対象を特定する
         const newCodes: string[] = data.newEarnedBadgeCodes ?? [];
-        if (newCodes.length > 0) {
-          const newlyEarned = mappedBadges.filter((b: BadgeWithStatus) => newCodes.includes(b.code));
-          setNewlyEarnedBadges(newlyEarned);
-          setTimeout(() => setNewlyEarnedBadges([]), 5000); // 5秒後に非表示
+        const newlyEarned = mappedBadges.filter((b: BadgeWithStatus) => newCodes.includes(b.code));
+        // 新しく取ったバッジが無いときも置く (取り直しで前のお祝いを残さない。読み込み直したときと同じ。#2195 V1)
+        setNewlyEarnedBadges(newlyEarned);
+        if (newlyEarned.length > 0) {
+          setTimeout(() => setNewlyEarnedBadges([]), NEW_BADGE_CELEBRATION_MS);
         }
       } catch (e) {
         console.error(e);
@@ -111,7 +120,7 @@ function BadgesPageInner() {
       }
     };
     fetchBadges();
-  }, []);
+  }, [aiConsultationRefetchKey]);
 
   // #210: Escape キーでバッジ詳細モーダルを閉じる
   useEffect(() => {
@@ -150,6 +159,9 @@ function BadgesPageInner() {
       <AnimatePresence>
         {newlyEarnedBadges.length > 0 && (
           <motion.div
+            // 操作を受けない知らせ (モーダルではない)。role="status" で読み上げ、AI 相談の成功での取り直しも止めない (#2195 V1)
+            role="status"
+            aria-live="polite"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 pointer-events-none z-[60] flex items-center justify-center"
           >

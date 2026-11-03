@@ -6,6 +6,7 @@ import { useEffect, useState, Suspense } from "react";
 import { motion } from "framer-motion";
 import { Icons } from "@/components/icons";
 import AIChatBubble from "@/components/AIChatBubble";
+import { AI_CONSULTATION_CHAT_ROOT_PROPS } from "@/lib/ai/consultation-data-refetch";
 import { createClient } from "@/lib/supabase/client";
 import { clearUserScopedLocalStorage } from "@/lib/user-storage";
 import { NATIVE_REBRIDGE_WAIT_MS, isInNativeWebView, notifyNativeSessionExpired } from "@/lib/native-auth-bridge";
@@ -303,8 +304,12 @@ export default function MainLayout({
       <main className="flex-1 lg:ml-64 relative min-h-screen">
         {legalConsentPending && <LegalConsentBanner />}
         {children}
-        {/* AIチャットバブル - モーダルのオーバーレイでカバーされるようにmain内に配置 */}
-        <AIChatBubble />
+        {/* AIチャットバブル - モーダルのオーバーレイでカバーされるようにmain内に配置。
+            包む要素の印 (AI_CONSULTATION_CHAT_ROOT_ATTRIBUTE) の中の入力欄・モーダルは、AI 相談の成功でページのデータを
+            取り直すのを止める理由にしない (src/lib/ai/consultation-data-refetch.ts。#2195 V1)。display: contents なので配置は変えない */}
+        <div {...AI_CONSULTATION_CHAT_ROOT_PROPS} className="contents">
+          <AIChatBubble />
+        </div>
         {/* 外国の AI 事業者への提供の同意: AI の API に「同意が必要です」で止められたときに同意画面を出す (T15 / #1154) */}
         <AiConsentRequiredHost />
         {/* AI の 1 日の利用回数の上限: AI の API に「今日の上限に達しました」で止められたときに固定の文を出す (#1149) */}

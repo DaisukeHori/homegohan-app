@@ -45,6 +45,9 @@
  * #1779 で足したもの: tests/local-ci-gateway-502.test.ts と tests/supabase-local-kong-keepalive.test.ts は、同じ型 (テストの中で、
  *   local-ci の Kong の 502 の数え方と、supabase-local.sh の Kong の入れ直しを bash で動かす)。
  *
+ * #2195 で足したもの: tests/ai-consultation-refetch-coverage-2195.test.ts は、同じ型 (TypeScript の構文木によるリポジトリの走査。
+ *   src/app/(main) のページ・API の route・Edge Function を構文木にしてたどる)。
+ *
  * #1845 で足したもの: tests/og-image-1845.test.tsx は、同じ型 (テストの中で、OGP の画像とアイコンの route を丸ごと読み込み、
  *   next/og (wasm) で PNG を描く)。
  *
@@ -116,6 +119,7 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/ai-consent-stored-failure.test.ts",
   "tests/ai-consultation-context-meals-order-2150.test.ts",
   "tests/ai-consultation-context-recipe-collections-order-2157.test.ts",
+  "tests/ai-consultation-refetch-coverage-2195.test.ts",
   "tests/ai-consultation-latest-messages-2144.test.ts",
   "tests/ai-rate-limit-contracts.test.ts",
   "tests/ai-usage-direct-jwt-edge.test.ts",
