@@ -27,6 +27,7 @@ it('report', { timeout: 120_000 }, () => {
     execOut[caseLabelOf(c) ?? '?'] = {
       tables: f.tables.map((t) => `${t.kind}:${t.table}@${t.at}[${t.columns?.join(',') ?? '*'}|${t.writeArg?.getText() ?? ''}]`),
       invoke: f.invokesEdgeFunction,
+      edgeUrls: [...f.edgeFunctionUrls],
       rpcs: [...f.rpcs.keys()],
     };
   }
@@ -59,6 +60,7 @@ it('report', { timeout: 120_000 }, () => {
     pagesOut[p] = {
       direct: [...new Set(f.tables.map((t) => `${t.kind}:${t.table}@${t.at}[${t.columns?.join(',') ?? '*'}]`))].sort(),
       rpcs: [...f.rpcs.entries()].map(([k, v]) => `${k}@${v}`),
+      edgeUrls: [...f.edgeFunctionUrls],
       urls: matched,
       routeReads: getReads,
       visitedCount: f.visited.size,

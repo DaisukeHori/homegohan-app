@@ -44,6 +44,8 @@ export interface ScanFindings {
   apiUrls: Set<string>;
   /** `.functions.invoke(...)` を呼んでいるか */
   invokesEdgeFunction: boolean;
+  /** 文字列に書いた Edge Function の URL ('/functions/v1/<名前>') の名前 */
+  edgeFunctionUrls: Set<string>;
   /** `.rpc('<名前>')` で呼んだ DB の関数 (名前 → 最初の場所)。名前が文字列の定数でも、定数の値に解く。解けないものは '?<式>' */
   rpcs: Map<string, string>;
   /** たどった宣言 (ファイル#名前) */
@@ -71,6 +73,10 @@ const PACKAGE_ENTRIES: Readonly<Record<string, string>> = {
 const MODULE_INIT = '<module-init>';
 /** 定数の値を解くときにたどる参照の数の上限 (import・別名の連なり。循環で止まらないための安全弁) */
 const MAX_CONSTANT_HOPS = 8;
+/** 名前を文字列の定数に解けない rpc の呼び出しの印 (後ろに 'ファイル:式') */
+export const UNRESOLVED_RPC_PREFIX = '?';
+/** Edge Function を URL で呼ぶときの道 */
+const EDGE_FUNCTION_URL_PATTERN = /\/functions\/v1\/([a-z0-9-]+)/;
 /** 名前空間の import (import * as x) を表す名前 */
 const NAMESPACE = '*';
 
@@ -134,7 +140,7 @@ export class SourceScanner {
   }
 
   newFindings(): ScanFindings {
-    return { tables: [], apiUrls: new Set(), invokesEdgeFunction: false, rpcs: new Map(), visited: new Set() };
+    return { tables: [], apiUrls: new Set(), invokesEdgeFunction: false, edgeFunctionUrls: new Set(), rpcs: new Map(), visited: new Set() };
   }
 
   /** ファイルの名前付きの宣言 (export の名前。'default' も) からたどる */
@@ -236,12 +242,14 @@ export class SourceScanner {
         const access = tableAccessOf(n);
         if (access) {
           const { line } = mod.sf.getLineAndCharacterOfPosition(n.getStart(mod.sf));
-          out.tables.push({ ...access, at: `${mod.rel}:${line + 1}` });
+          const at = `${mod.rel}:${line + 1}`;
+          out.tables.push({ ...access, at });
+          for (const embed of access.embeds) out.tables.push({ table: embed.table, kind: 'read', columns: embed.columns, writeArg: null, at });
         }
         if (isEdgeFunctionInvoke(n)) out.invokesEdgeFunction = true;
         const rpcArg = rpcNameArgOf(n);
         if (rpcArg) {
-          const name = this.stringValueOf(mod, rpcArg) ?? `?${rpcArg.getText(mod.sf)}`;
+          const name = this.stringValueOf(mod, rpcArg) ?? `${UNRESOLVED_RPC_PREFIX}${mod.rel}:${rpcArg.getText(mod.sf)}`;
           if (!out.rpcs.has(name)) {
             const { line } = mod.sf.getLineAndCharacterOfPosition(n.getStart(mod.sf));
             out.rpcs.set(name, `${mod.rel}:${line + 1}`);
@@ -249,7 +257,13 @@ export class SourceScanner {
         }
       } else if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
         if (n.text.startsWith(API_URL_PREFIX)) out.apiUrls.add(normalizeUrl(n.text));
-      } else if (ts.isTemplateExpression(n)) {
+        const edge = EDGE_FUNCTION_URL_PATTERN.exec(n.text);
+        if (edge) out.edgeFunctionUrls.add(edge[1]);
+      } else if (ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n)) {
+        const edge = EDGE_FUNCTION_URL_PATTERN.exec(n.text);
+        if (edge) out.edgeFunctionUrls.add(edge[1]);
+      }
+      if (ts.isTemplateExpression(n)) {
         if (n.head.text.startsWith(API_URL_PREFIX)) {
           const text = n.head.text + n.templateSpans.map((s) => TEMPLATE_WILDCARD + s.literal.text).join('');
           out.apiUrls.add(normalizeUrl(text));
@@ -282,7 +296,7 @@ function isReference(id: ts.Identifier): boolean {
   return true;
 }
 
-function tableAccessOf(call: ts.CallExpression): Omit<TableAccess, 'at'> | null {
+function tableAccessOf(call: ts.CallExpression): (Omit<TableAccess, 'at'> & { embeds: SelectEmbed[] }) | null {
   const callee = call.expression;
   if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== 'from') return null;
   const receiver = callee.expression;
@@ -314,15 +328,17 @@ function tableAccessOf(call: ts.CallExpression): Omit<TableAccess, 'at'> | null 
       kind: 'write',
       columns: literal ? literalKeys(literal) : methods[writeAt] === 'delete' ? [] : null,
       writeArg: literal || !payload ? null : payload,
+      embeds: [],
     };
   }
   const selectAt = methods.indexOf(READ_METHOD);
   if (selectAt !== -1) {
     const sel = calls[selectAt].arguments[0];
-    const columns = sel === undefined ? null : ts.isStringLiteral(sel) || ts.isNoSubstitutionTemplateLiteral(sel) ? selectColumns(sel.text) : null;
-    return { table: arg.text, kind: 'read', columns, writeArg: null };
+    const text = sel !== undefined && (ts.isStringLiteral(sel) || ts.isNoSubstitutionTemplateLiteral(sel)) ? sel.text : null;
+    const columns = sel === undefined ? null : text === null ? null : selectColumns(text);
+    return { table: arg.text, kind: 'read', columns, writeArg: null, embeds: text === null ? [] : selectEmbeds(text) };
   }
-  return { table: arg.text, kind: 'unknown', columns: null, writeArg: null };
+  return { table: arg.text, kind: 'unknown', columns: null, writeArg: null, embeds: [] };
 }
 
 /** 配列のリテラルなら最初の要素 (insert / upsert の行の並び) */
@@ -349,33 +365,60 @@ function literalKeys(obj: ts.ObjectLiteralExpression): string[] | null {
   return keys;
 }
 
+export interface SelectEmbed {
+  table: string;
+  columns: readonly string[] | null;
+}
+
+/** select の文字列をトップレベルの区切り (,) で分ける (かっこの中の , では分けない) */
+function splitTopLevel(text: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let token = '';
+  for (const ch of text) {
+    if (ch === '(') depth += 1;
+    if (ch === ')') depth -= 1;
+    if (ch === ',' && depth === 0) {
+      out.push(token.trim());
+      token = '';
+      continue;
+    }
+    token += ch;
+  }
+  out.push(token.trim());
+  return out.filter((t) => t !== '');
+}
+
+/**
+ * select の文字列の埋め込み (`別名:関係!ヒント(列)`) が読む表 (入れ子も)。関係の名前を表の名前とみなす
+ * (外部キーの名前で埋め込む書き方は、その名前を表として数える — この検査の限界)
+ */
+export function selectEmbeds(text: string): SelectEmbed[] {
+  const out: SelectEmbed[] = [];
+  for (const token of splitTopLevel(text)) {
+    const open = token.indexOf('(');
+    if (open === -1 || !token.endsWith(')')) continue;
+    const head = token.slice(0, open).trim();
+    const inner = token.slice(open + 1, -1);
+    const alias = /^[A-Za-z0-9_]+:(?!:)(.*)$/.exec(head);
+    const table = (alias ? alias[1] : head).split('!')[0].trim();
+    out.push({ table, columns: selectColumns(inner) }, ...selectEmbeds(inner));
+  }
+  return out;
+}
+
 /**
  * select の文字列の列 (トップレベルだけ。埋め込み `rel(cols)` の中は別の表なので数えない)。
  * `別名:列`・`列::型`・`列->>キー` は列の名前だけにする。'*' があれば null (どの列もありうる)
  */
 export function selectColumns(text: string): string[] | null {
   const out: string[] = [];
-  let depth = 0;
-  let token = '';
-  const flush = () => {
-    const t = token.trim();
-    token = '';
-    if (t === '') return;
-    if (t.includes('(')) return;
+  for (const t of splitTopLevel(text)) {
+    if (t.includes('(')) continue;
     const alias = /^[A-Za-z0-9_]+:(?!:)(.*)$/.exec(t);
     const body = alias ? alias[1] : t;
     out.push(body.split('::')[0].split('->')[0].trim());
-  };
-  for (const ch of text) {
-    if (ch === '(') depth += 1;
-    if (ch === ')') depth -= 1;
-    if (ch === ',' && depth === 0) {
-      flush();
-      continue;
-    }
-    token += ch;
   }
-  flush();
   return out.includes('*') ? null : out;
 }
 
