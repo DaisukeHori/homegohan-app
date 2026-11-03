@@ -858,11 +858,11 @@ export async function enqueueSavedMealImageJobs(params: {
     return;
   }
 
-  // 処理を起こすのは、待ちのジョブがあるとき (積めた行か、同じ料理のジョブがすでに待ち・処理中の行があるとき)。
-  // limit は積めた行と待ちのジョブの数 (書き込みに失敗した行は数えない。#1532)
-  const jobsToProcess = countMealImageJobsToProcess(enqueueResult);
-  if (jobsToProcess === 0) return;
   try {
+    // 処理を起こすのは、待ちのジョブがあるとき (積めた行か、同じ料理のジョブがすでに待ち・処理中の行があるとき)。
+    // limit は積めた行と待ちのジョブの数 (書き込みに失敗した行は数えない。#1532)
+    const jobsToProcess = countMealImageJobsToProcess(enqueueResult);
+    if (jobsToProcess === 0) return;
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const serviceRoleKey = Deno.env.get("SERVICE_ROLE_JWT") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
     await triggerMealImageJobProcessing({
