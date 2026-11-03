@@ -403,7 +403,7 @@ const remove = async (id) => {
 
 | 規則 | 内容 |
 |---|---|
-| P1 置くのは `place` の中だけ | 読み取りの経路の関数 (= `useAiConsultationReceiver(` の第 1 引数・`<receiver>.read(` の第 2 引数と、そこから名前でたどれる関数の全部) の中で、`await` のあと (または `.then` / `.catch` / `.finally` に渡した関数の中) に出てくる「置く呼び出し」(`set[A-Z]…(` (`setTimeout`・`setInterval` を除く)・`<x>.set[A-Z]…(`・`router.replace(`・`router.push(`・`dispatch[A-Z]…(`) は、`<read>.place(` の第 2 引数の関数の中にある。`await` の前 (同期) の呼び出しは数えない。たどりは `READ_PATH_BOUNDARIES` (§9.2 の B-1〜B-3。生成の監視の入口) の関数の中へ入らない (一覧の関数がファイルに無い・たどりで届かないなら赤) |
+| P1 置くのは `place` の中だけ | 読み取りの経路の関数 (= `useAiConsultationReceiver(` の第 1 引数・`<receiver>.read(` の第 2 引数と、そこから名前でたどれる関数の全部) の中で、`await` のあと (または `.then` / `.catch` / `.finally` に渡した関数の中) に出てくる「置く呼び出し」(識別子の `set[A-Z]…(` (`setTimeout`・`setInterval` を除く)・store の setter `<store>.getState().set[A-Z]…(`・`router.replace(`・`router.push(`・`dispatch[A-Z]…(`。ほかのメソッドの `.set…(` (Date の `setDate` / `setHours`・`localStorage.setItem`・`supabase.auth.setSession`) は数えない) は、`<read>.place(` の第 2 引数の関数の中にある。`await` の前 (同期) の呼び出しは数えない。たどりは `READ_PATH_BOUNDARIES` (§9.2 の B-1〜B-3。生成の監視の入口) の関数の中へ入らない (一覧の関数がファイルに無い・たどりで届かないなら赤) |
 | P2 書き込みは窓の中だけ | 受け手の中の書き込み (`fetch` / `aiFetch` の `method` が `'GET'` でないリテラル・Supabase の `.insert` / `.update` / `.upsert` / `.delete`・`.rpc(`) は、その関数か囲む関数に `const <end> = <receiver>.beginWrite();` があり、同じ関数で `<end>` を閉じる: `finally` 節の中の `<end>()`、または `.finally(<end>)` / `.finally(() => { <end>(); })`。数えないもの: 行き先 (第 1 引数の文字列・テンプレートの先頭の文字列) が `READ_ONLY_SENDS` (§9.2 の R-A〜R-D) に当たる送信と、`WRITE_WINDOW_EXEMPTIONS` (§9.2 の E-1) の関数と行き先の組。一覧の行が当てはまる送信を持たないなら赤 (古い一覧)。全列挙は §9.1 |
 | P3 Supabase の読み取りは `error` を受け取る | 今の規則 6 をそのまま (読み取りの経路の関数で `data` / `count` を分割代入で受け取るなら `error` も) |
 | P4 捨てる入れ物に後から書かない | 今の規則 8 をそのまま (`X.current.clear()` で捨てる入れ物に `await` のあとで `set` / `add` しない) |
@@ -1235,8 +1235,13 @@ const RECEIVER_HOOK = 'useAiConsultationReceiver';
 const READ_METHOD = 'read';
 const BEGIN_WRITE_METHOD = 'beginWrite';
 const PLACE_METHOD = 'place';
-/** 置く呼び出し: set で始まる名前 (タイマーを除く)・router の移動・reducer の dispatch */
+/**
+ * 置く呼び出し: set で始まる識別子の呼び出し (タイマーを除く)・store の setter (<store>.getState().setX(…))・router の移動・reducer の dispatch。
+ * ほかのメソッドの .setX(…) (Date の setDate / setHours・localStorage.setItem・supabase.auth.setSession) は数えない (今の番兵の規則 5 と同じ見分け)
+ */
 const PLACING_CALLEE = /^(set[A-Z]|dispatch[A-Z]|dispatch$)/;
+/** store の今の状態を取る関数 (usePantryStore.getState().setFridgeItems の getState。この呼び出しの結果の .setX だけを置く呼び出しに数える) */
+const STORE_STATE_ACCESS = 'getState';
 const NON_PLACING_SET_FUNCTIONS: ReadonlySet<string> = new Set(['setTimeout', 'setInterval']);
 const ROUTER_MOVES: ReadonlySet<string> = new Set(['replace', 'push']);
 const PROMISE_CALLBACK_METHODS: ReadonlySet<string> = new Set(['then', 'catch', 'finally']);
@@ -1317,6 +1322,7 @@ describe('受け手は place の中だけで置き、書き込みは窓の中だ
     it('await のあとに place の外で setter を呼ぶ (直す前の /home の setUser) は赤', () => {});
     it('router.replace を place の外で呼ぶ (直す前の家族の画面) は赤', () => {});
     it('then に渡した関数の中で place の外に置くのは赤', () => {});
+    it('await のあとの Date の setDate・localStorage.setItem・supabase.auth.setSession は赤にしない。store の getState().setX は赤', () => {});
     it('await の前の同期の setter (setError(null) など) は赤にしない', () => {});
     it('書き込みの関数 (読み取りの経路でない) の楽観的な setter は赤にしない', () => {});
     it('GET でない fetch を窓の外で await する (直す前の /profile の handleSave) は赤', () => {});
@@ -1370,7 +1376,7 @@ Zod のスキーマ・DB の列・API の route・エラーコード: 本書は�
 | # | 受け手 | 段 | 鍵 | 置く場所 (`apply` の中身) | `loadingKeys` を立てる読み取り | 書き込みの窓 (`beginWrite`) | `read.mode` の使い方 | 特記 |
 |---|---|---|---|---|---|---|---|---|
 | 1 | /badges | B | `badges` | `setBadges`・`setEarnedCount`・`setNewlyEarnedBadges` (お祝いの `setTimeout` もこの中) | 開いたとき `[badges]` | 無し | 失敗は今までどおり表示を変えない (`console.error` のみ) | `useEffect` の取得を関数に出す |
-| 2 | /comparison | B | `rankingsKey(期間)` (= `rankings:<weekly or monthly>`) | `setData(result)` / 失敗は `mode 'mount'` で `setData(null)`。どちらも `apply` の中で `periodTypeRef.current === 期間` を見る (違えば何も置かない) | 開いたとき・期間の切り替え `[rankingsKey(期間)]`。スピナーは `isLoading(rankingsKey(periodType))` | 無し | 失敗: `'mount'` は空にして失敗の表示、`'refetch'` は残す | 読み取りの関数は `readRankings(read, period, signal?)`。取り直しは `useAiConsultationReceiver((read) => readRankings(read, periodTypeRef.current), …)` (中断の印なし)。期間の effect (`[periodType, receiver, readRankings]`) は `AbortController` を作り `receiver.read({ loadingKeys: [rankingsKey(periodType)] }, (read) => readRankings(read, periodType, controller.signal))`、後片付けで `abort()`。各 `await` のあと (失敗の表示を置く前を含む) の `signal?.aborted` の早い抜けも残す (G-24 の中断の it のため。古い期間の応答を置かない守りの本体は鍵と `apply` の中の ref)。取り直しは期間の切り替えで中断しない (鍵と ref で古い期間を置かない。S-20)。同じ描画で鍵と期間が変わる問題は消える (取り直しは別の読み取り) |
+| 2 | /comparison | B | `rankingsKey(期間)` (= `rankings:<weekly or monthly>`) | `setData(result)` / 失敗は `mode 'mount'` で `setData(null)`。どちらも `apply` の中で `periodTypeRef.current === 期間` を見る (違えば何も置かない) | 開いたとき・期間の切り替え `[rankingsKey(期間)]`。スピナーは `isLoading(rankingsKey(periodType))` | 無し | 失敗: `'mount'` は空にして失敗の表示、`'refetch'` は残す | 読み取りの関数は `readRankings(read, period, signal?)` (`useCallback`・依存なし。ref と setter だけを使う)。`periodTypeRef` は描画のたびに `periodType` を写す。`useState` の初期値は `INITIAL_PERIOD_TYPE`。取り直しは `useAiConsultationReceiver((read) => readRankings(read, periodTypeRef.current), …)` (中断の印なし)。期間の effect (`[periodType, receiver, readRankings]`) は `AbortController` を作り `receiver.read({ loadingKeys: [rankingsKey(periodType)] }, (read) => readRankings(read, periodType, controller.signal))`、後片付けで `abort()`。各 `await` のあと (失敗の表示を置く前を含む) の `signal?.aborted` の早い抜けも残す (G-24 の中断の it のため。古い期間の応答を置かない守りの本体は鍵と `apply` の中の ref)。取り直しは期間の切り替えで中断しない (鍵と ref で古い期間を置かない。S-20)。同じ描画で鍵と期間が変わる問題は消える (取り直しは別の読み取り) |
 | 3 | /family/dashboard | C | `dashboard` | 群と一覧と名前・`setError`・`setLoadError`・`router.replace('/family/setup')`・ログインへの `push` | 開いたとき・「再試行」 `[dashboard]` | 無し (書き込みの無い画面) | `loadFailed` は `'mount'` だけ置く。名前の API の失敗は `'refetch'` なら今の名前 | §7.6 |
 | 4 | /family/members | C | `members` | 3 と同じ + `setCurrentUserId`・`setCurrentRole` | 同上 | 除名・脱退 (`POST`)。今の `writeInFlightRef` は二重押しの守りとして残すが、名前を `busyRef` に替える (members/[id]・transfer-accept と同じ名前。P5 が受け手の `writeInFlightRef` の識別子を数えるため)。hook には渡さない | 同上 | 取り直し中のボタンの無効化 (`AI_CONSULTATION_REFETCH_ACTION`) を消す |
 | 5 | /family/members/[id] | C | `member` | メンバー・自分の役割・同意の記録・`setFamilyId`・移動 | 同上 | 役割の変更・共有の設定・除名などの全部の `POST` / `PATCH` / `DELETE` | 同上 | `busyRef` は残す。`aiRefetching` を消す |
@@ -1761,7 +1767,7 @@ sequenceDiagram
 | 鍵の定数と鍵の関数 (`KEY_*`・`planKey(週)` = `plan:<週>`・`mealDatesKey(月)` = `mealDates:<月>`・`selectedDateKey(日)` = `selectedDate:<日>`・`mealKey(id)` = `meal:<id>`・`rankingsKey(期間)` = `rankings:<期間>`・`graphsKey(期間)` = `graphs:<期間>`) | 各受け手の先頭 (`selectedDateKey` は /health、`mealKey` は /meals/[id]、`rankingsKey` は /comparison、`graphsKey` は /health/graphs) | §9 | 置き場所の名前。定数の名前は `KEY_` + §9 の鍵の文字列を大文字のスネークにしたもの (`badges` → `KEY_BADGES`・`todayPlan` → `KEY_TODAY_PLAN`)。対象を含む鍵は関数で作り、文字列を手で組まない。受け手の外から参照しない |
 | `KEY_WEEK_LOADING` | `src/app/(main)/menus/weekly/page.tsx` | `'weekLoading'` | 献立表の全画面のスピナーの、読み込み中だけの鍵 (置かれない。§6.4) |
 | `INITIAL_PERIOD_TYPE`・`INITIAL_PERIOD` | `src/app/(main)/comparison/page.tsx`・`src/app/(main)/health/graphs/page.tsx` | `'weekly'`・`'month'` | 今の `useState` の初期値の名前付け。`useState` と `initialLoadingKeys` の両方に使う (2 か所で同じ値を書かない) |
-| `READ_PATH_BOUNDARIES`・`READ_ONLY_SENDS`・`WRITE_WINDOW_EXEMPTIONS`・`LEGACY_IDENTIFIERS`・`RECEIVER_EXPECTATIONS`・`WINDOW_CLOSING_PROMISE_METHOD`・`SEND_FUNCTIONS`・`SUPABASE_RPC_METHOD` | 番兵 | §7.7・§9.2・§9.3 | 境・例外・旧 API・受け手ごとの数の表と、見分ける名前 |
+| `READ_PATH_BOUNDARIES`・`READ_ONLY_SENDS`・`WRITE_WINDOW_EXEMPTIONS`・`LEGACY_IDENTIFIERS`・`RECEIVER_EXPECTATIONS`・`WINDOW_CLOSING_PROMISE_METHOD`・`SEND_FUNCTIONS`・`SUPABASE_RPC_METHOD`・`STORE_STATE_ACCESS` | 番兵 | §7.7・§9.2・§9.3 | 境・例外・旧 API・受け手ごとの数の表と、見分ける名前 |
 
 既存の `CACHE_TTL` (週の控え 5 分)・`AI_CONSULTATION_GENERATION_WATCH_*`・`NEW_BADGE_CELEBRATION_MS` はそのまま。環境変数で上書きする値は無い (運用で変える閾値を増やさない)。
 
