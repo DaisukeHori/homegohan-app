@@ -70,6 +70,7 @@ const RECEIVER_HOOKS = ['useAiConsultationDataRefetch', 'useAiConsultationRefetc
 const RENDER_CHECKS = ['expectRefetchReadsCoverMount', 'expectEmptyRefetchMatchesFreshMount'] as const;
 /** 描画のテストを探す場所 */
 const TEST_ROOT = 'tests';
+const SELF = 'tests/ai-consultation-refetch-coverage-2195.test.ts';
 /** どの列を読むか数えられない読み取りの印 */
 const ALL_COLUMNS = '*';
 /**
@@ -239,7 +240,17 @@ describe('1. 実行の case が書く表 (#2195 V1)', () => {
   });
 });
 
-/** 書き込みの値の識別子を、`const { data: <名前> } = <関数>(...)` (か `const <名前> = <関数>(...)`) で作っていれば、その関数の名前 */
+/** 識別子を含むいちばん内側の case の節か関数 (同じ名前の変数を別の case で作り直すため、その中だけを探す) */
+function enclosingScope(node: ts.Node): ts.Node {
+  let cur: ts.Node | undefined = node.parent;
+  while (cur && !ts.isCaseClause(cur) && !ts.isFunctionLike(cur) && !ts.isSourceFile(cur)) cur = cur.parent;
+  return cur ?? node.getSourceFile();
+}
+
+/**
+ * 書き込みの値の識別子を、同じ case の節 (か関数) の中で `const { data: <名前> } = <関数>(...)` (か `const <名前> = <関数>(...)`) で
+ * 作っていれば、その関数の名前
+ */
 function sanitizerOf(access: TableAccess): string | null {
   const arg = access.writeArg;
   if (!arg || !ts.isIdentifier(arg)) return null;
@@ -255,7 +266,7 @@ function sanitizerOf(access: TableAccess): string | null {
     }
     ts.forEachChild(n, visit);
   };
-  visit(arg.getSourceFile());
+  visit(enclosingScope(arg));
   return found;
 }
 
@@ -323,10 +334,12 @@ function pageReads(rel: string): PageReads {
 const PAGES = listFiles(ROOT, PAGES_ROOT, (rel) => rel.endsWith(`/${PAGE_FILE}`));
 const READS = new Map(PAGES.map((rel) => [pageKeyOf(rel), pageReads(rel)]));
 
-function testSources(): string {
-  return listFiles(ROOT, TEST_ROOT, (rel) => /\.test\.tsx?$/.test(rel))
-    .map((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8'))
-    .join('\n');
+/** 描画のテストのファイル (このファイル自身は数えない) */
+function testFiles(): { rel: string; source: string }[] {
+  return listFiles(ROOT, TEST_ROOT, (rel) => /\.test\.tsx?$/.test(rel) && rel !== SELF).map((rel) => ({
+    rel,
+    source: fs.readFileSync(path.join(ROOT, rel), 'utf8'),
+  }));
 }
 
 describe('2. AI が書く表を読むページは、受け手か除外の表にある (#2195 V1)', () => {
@@ -392,15 +405,13 @@ describe('2. AI が書く表を読むページは、受け手か除外の表に�
   });
 
   it('受け手ごとに、開いたとき・パネルの読み取りの取り直しと、空の応答の取り直しを描画で確かめるテストがある', () => {
-    const sources = testSources();
-    const missing: string[] = [];
-    for (const [key, entry] of Object.entries(AI_CONSULTATION_REFETCH_PAGES)) {
-      if (entry.kind !== 'receiver') continue;
-      for (const check of RENDER_CHECKS) {
-        const call = new RegExp(`${check}\\(\\s*'${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`);
-        if (!call.test(sources)) missing.push(`${key}: ${check}`);
-      }
-    }
+    // 2 つの判定を呼び、受け手のキーを文字列のリテラルで持つ (判定に渡すページの表の page: '<キー>' か、判定の引数) テストのファイル
+    const checking = testFiles().filter((file) => RENDER_CHECKS.every((check) => new RegExp(`\\b${check}\\(`).test(file.source)));
+    const missing = Object.entries(AI_CONSULTATION_REFETCH_PAGES)
+      .filter(([, entry]) => entry.kind === 'receiver')
+      .filter(([key]) => !checking.some((file) => file.source.includes(`'${key}'`)))
+      .map(([key]) => key);
+    expect(checking.length).toBeGreaterThan(0);
     expect(missing).toEqual([]);
   });
 });

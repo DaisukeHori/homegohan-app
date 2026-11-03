@@ -116,7 +116,8 @@ export const AI_CONSULTATION_RPC_WRITTEN_TABLES: Readonly<
     tables: ['recipe_collections'],
     definedIn: ['supabase/migrations/20261101120000_recipe_collections_append_recipe_rpc.sql'],
   },
-  // 献立の生成 (Edge Function) が読むだけの関数 (書く表は無い)
+  // 献立の生成・料理の画像の生成 (Edge Function) が読むだけの関数 (書く表は無い)
+  ai_plan_feature_daily_cap: { tables: [], definedIn: [] },
   search_ingredients_by_text_similarity: { tables: [], definedIn: [] },
   search_ingredients_full_by_embedding: { tables: [], definedIn: [] },
   search_menu_examples: { tables: [], definedIn: [] },
@@ -235,16 +236,30 @@ export const AI_CONSULTATION_REFETCH_PAGES: Readonly<Record<string, AiConsultati
   '/health/blood-tests': {
     kind: 'excluded',
     aiTables: ['user_profiles'],
-    aiColumns: { user_profiles: ['gender'] },
+    aiColumns: { user_profiles: ['*'] },
     reason:
-      'AI が書く表から読むのは、検査値の基準の範囲を選ぶための性別 (user_profiles.gender) だけ。画面の中身の検査の結果は AI 相談が書かない表 (health_blood_tests など)',
+      'AI が書く表から読むのは GET /api/profile (全部の列) で、画面が使うのは検査値の基準の範囲を選ぶための性別 (gender) だけ。画面の中身の検査の結果は AI 相談が書かない表',
   },
   '/health/checkups/[id]': {
     kind: 'excluded',
     aiTables: ['user_profiles'],
-    aiColumns: { user_profiles: ['gender'] },
+    aiColumns: { user_profiles: ['*'] },
     reason:
-      'AI が書く表から読むのは、検査値の基準の範囲を選ぶための性別 (user_profiles.gender) だけ。画面の中身の健康診断の結果は AI 相談が書かない表 (health_checkups など)',
+      'AI が書く表から読むのは GET /api/profile (全部の列。CheckupDetailClient) で、画面が使うのは検査値の基準の範囲を選ぶための性別 (gender) だけ。画面の中身の健康診断の結果は AI 相談が書かない表',
+  },
+  '/family/transfer-accept/[proposal_id]': {
+    kind: 'excluded',
+    aiTables: ['user_profiles'],
+    aiColumns: { user_profiles: ['nickname'] },
+    reason:
+      'AI が書く表から読むのは、代表を譲ると申し出た人 (自分ではない人) の名前 (user_profiles.nickname) だけ。AI 相談が書くのは自分の行だけで、画面は申し出を受けるか断るかの流れ',
+  },
+  '/org/transfer-accept/[proposal_id]': {
+    kind: 'excluded',
+    aiTables: ['user_profiles'],
+    aiColumns: { user_profiles: ['nickname'] },
+    reason:
+      'AI が書く表から読むのは、組織の持ち主を譲ると申し出た人 (自分ではない人) の名前 (user_profiles.nickname) だけ。AI 相談が書くのは自分の行だけで、画面は申し出を受けるか断るかの流れ',
   },
   '/family/dashboard': {
     kind: 'excluded',
