@@ -65,14 +65,13 @@ vi.mock('framer-motion', async () => {
     {
       get: (_target, tag: string) => {
         if (!cache.has(tag)) {
-          cache.set(
-            tag,
-            React.forwardRef<unknown, Record<string, unknown>>((props, ref) => {
-              const rest: Record<string, unknown> = {};
-              for (const [key, value] of Object.entries(props)) if (!MOTION_PROPS.has(key)) rest[key] = value;
-              return React.createElement(tag, { ...rest, ref });
-            }),
-          );
+          const MotionElement = React.forwardRef<unknown, Record<string, unknown>>((props, ref) => {
+            const rest: Record<string, unknown> = {};
+            for (const [key, value] of Object.entries(props)) if (!MOTION_PROPS.has(key)) rest[key] = value;
+            return React.createElement(tag, { ...rest, ref });
+          });
+          MotionElement.displayName = `motion.${tag}`;
+          cache.set(tag, MotionElement);
         }
         return cache.get(tag);
       },
