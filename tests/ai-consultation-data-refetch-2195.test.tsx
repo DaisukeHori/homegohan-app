@@ -1591,9 +1591,10 @@ describe('受け手の配線 (#2195 V1)', () => {
       wiring: /useAiConsultationDataRefetch\(\s*\(ticket\) => fetchGoals\(ticket, refetchReadMode\(\)\),\s*\{ writeInFlightRef: pendingWrites \},\s*\);/,
     },
     {
+      // 依存の profileReloadKey は、開いたときの読み込みに失敗したあとの「再読み込み」の数 (#2206 G5)
       page: 'マイページ (/profile): 取得の useEffect の依存に数を足す',
       file: 'src/app/(main)/profile/page.tsx',
-      wiring: /const \{ refetchKey: aiConsultationRefetchKey, refetchTicket: aiConsultationRefetchTicket \} = useAiConsultationRefetchKey\(\);[\s\S]*?useEffect\(\(\) => \{[\s\S]*?const getData = async \(\) => \{[\s\S]*?void getData\(\);[\s\S]*?\}, \[aiConsultationRefetchKey, takeAiConsultationRefetchRun, aiConsultationRefetchTicket\]\);/,
+      wiring: /const \{ refetchKey: aiConsultationRefetchKey, refetchTicket: aiConsultationRefetchTicket \} = useAiConsultationRefetchKey\(\);[\s\S]*?useEffect\(\(\) => \{[\s\S]*?const getData = async \(\) => \{[\s\S]*?void getData\(\);[\s\S]*?\}, \[aiConsultationRefetchKey, profileReloadKey, takeAiConsultationRefetchRun, aiConsultationRefetchTicket\]\);/,
     },
   ];
   it.each(WIRING)('$page', ({ file, wiring }) => {
