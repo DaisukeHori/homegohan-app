@@ -45,12 +45,17 @@ import type { DbUserProfile } from '@/types/database';
 import { createRecordingSupabase, firstMethodOf, type QueryOutcome, type RecordedQuery } from './helpers/recording-supabase';
 import { POST as postHealthRecord } from '@/app/api/health/records/route';
 import { POST as postHealthGoal } from '@/app/api/health/goals/route';
+import { POST as postQuickHealthRecord } from '@/app/api/health/records/quick/route';
 
 const USER = { id: 'user-1' };
 /** 身長の重み (src/lib/profile-completeness.ts の PROFILE_COMPLETENESS_FIELDS の height。重みの合計は 100) */
 const HEIGHT_WEIGHT_PERCENT = 4;
 const HEIGHT_CM = 170;
 const WEIGHT_KG = 62.5;
+/** 体脂肪率 (%)。プロフィールの完成度に数えない欄 (PROFILE_COMPLETENESS_FIELDS に無い) */
+const BODY_FAT_PERCENT = 22;
+/** 目標の体重 (kg) */
+const TARGET_WEIGHT_KG = 58;
 /** 計算し直す前の行に入っていた完成度 (古い値) */
 const STALE_COMPLETENESS = 10;
 /** DB の読み取りの失敗 */
@@ -198,14 +203,27 @@ describe('AI 相談で身長・体重を入れると、プロフィールの完�
 
 describe('利用者が体重・目標の体重を記録したときも、プロフィールの完成度を計算し直す (#2201 U4 の同じ型)', () => {
   /** route の問い合わせの答え: user_profiles の読み取りは書いた後の行、ほかの読み取り・書き込みは 1 行 */
-  function useRouteDb(rowAfter: Partial<DbUserProfile>) {
+  function useRouteDb(rowAfter: Partial<DbUserProfile>, options: { profileWriteFails?: boolean } = {}) {
     const db = createRecordingSupabase((query: RecordedQuery) => {
-      if (query.table === 'user_profiles') return firstMethodOf(query) === 'select' ? { data: rowAfter } : { data: null };
+      if (query.table === 'user_profiles') {
+        if (firstMethodOf(query) === 'select') return { data: rowAfter };
+        return options.profileWriteFails ? { error: DB_FAILURE } : { data: null };
+      }
       return { data: { id: 'row-1' } };
     });
     routeDb.client = db.client;
     return db.queries;
   }
+
+  /**
+   * プロフィールへの写し (user_profiles の最初の update) のあとに user_profiles の読み取りがあったか
+   * (完成度の計算し直しは、書いた後の行を select('*') で読むところから始まる。goals は写しの前にも開始の値を読むので、写しの後だけを見る)
+   */
+  const readsProfileAfterWrite = (queries: RecordedQuery[]) => {
+    const firstWrite = queries.findIndex((query) => query.table === 'user_profiles' && firstMethodOf(query) === 'update');
+    expect(firstWrite).toBeGreaterThanOrEqual(0);
+    return queries.slice(firstWrite + 1).some((query) => query.table === 'user_profiles' && firstMethodOf(query) === 'select');
+  };
 
   const jsonRequest = (url: string, body: Record<string, unknown>) =>
     new Request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -221,7 +239,6 @@ describe('利用者が体重・目標の体重を記録したときも、プロ�
   });
 
   it('POST /api/health/goals: 目標の体重をプロフィールに写したあと、完成度を書く', async () => {
-    const TARGET_WEIGHT_KG = 58;
     const rowAfter: Partial<DbUserProfile> = { ...ROW_BEFORE, weight: WEIGHT_KG, target_weight: TARGET_WEIGHT_KG };
     const queries = useRouteDb(rowAfter);
 
@@ -234,5 +251,61 @@ describe('利用者が体重・目標の体重を記録したときも、プロ�
       { target_weight: TARGET_WEIGHT_KG, target_date: null },
       { profile_completeness: profileCompletenessOfRow(rowAfter) },
     ]);
+  });
+  it('POST /api/health/records/quick: 今日の体重をプロフィールに写したあと、完成度を書く', async () => {
+    const rowAfter: Partial<DbUserProfile> = { ...ROW_BEFORE, weight: WEIGHT_KG };
+    const queries = useRouteDb(rowAfter);
+
+    const res = await postQuickHealthRecord(
+      jsonRequest('http://localhost/api/health/records/quick', { record_date: todayLocal(), weight: WEIGHT_KG }) as never,
+    );
+
+    expect(res.status).toBe(200);
+    expect(profileUpdates(queries)).toEqual([{ weight: WEIGHT_KG }, { profile_completeness: profileCompletenessOfRow(rowAfter) }]);
+  });
+
+  it('POST /api/health/records/quick: 体重を含まない記録 (体脂肪率だけ) では、完成度を計算し直さない (体脂肪率は完成度に数えない欄)', async () => {
+    const rowAfter: Partial<DbUserProfile> = { ...ROW_BEFORE, body_fat_percentage: BODY_FAT_PERCENT };
+    const queries = useRouteDb(rowAfter);
+
+    const res = await postQuickHealthRecord(
+      jsonRequest('http://localhost/api/health/records/quick', { record_date: todayLocal(), body_fat_percentage: BODY_FAT_PERCENT }) as never,
+    );
+
+    expect(res.status).toBe(200);
+    expect(profileUpdates(queries)).toEqual([{ body_fat_percentage: BODY_FAT_PERCENT }]);
+    expect(readsProfileAfterWrite(queries)).toBe(false);
+  });
+
+  // プロフィールへの写しに失敗したら計算し直さない (記録・目標そのものは成功のまま返す)。3 つの route に同じ guard がある
+  it.each([
+    {
+      route: 'POST /api/health/records',
+      call: () => postHealthRecord(jsonRequest('http://localhost/api/health/records', { record_date: todayLocal(), weight: WEIGHT_KG }) as never),
+      firstWrite: { weight: WEIGHT_KG },
+    },
+    {
+      route: 'POST /api/health/records/quick',
+      call: () =>
+        postQuickHealthRecord(jsonRequest('http://localhost/api/health/records/quick', { record_date: todayLocal(), weight: WEIGHT_KG }) as never),
+      firstWrite: { weight: WEIGHT_KG },
+    },
+    {
+      route: 'POST /api/health/goals',
+      call: () =>
+        postHealthGoal(
+          jsonRequest('http://localhost/api/health/goals', { goal_type: 'weight', target_value: TARGET_WEIGHT_KG, target_unit: 'kg', target_date: null }) as never,
+        ),
+      firstWrite: { target_weight: TARGET_WEIGHT_KG, target_date: null },
+    },
+  ])('$route: プロフィールへの写しに失敗したら、完成度を計算し直さない (応答は成功のまま)', async ({ call, firstWrite }) => {
+    const rowAfter: Partial<DbUserProfile> = { ...ROW_BEFORE, weight: WEIGHT_KG, target_weight: TARGET_WEIGHT_KG };
+    const queries = useRouteDb(rowAfter, { profileWriteFails: true });
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(profileUpdates(queries)).toEqual([firstWrite]);
+    expect(readsProfileAfterWrite(queries)).toBe(false);
   });
 });
