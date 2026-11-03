@@ -745,6 +745,38 @@ describe('献立表 (/menus/weekly) の取り直しの順序と失敗 (#2201 U1)
     expect(container.textContent).not.toContain(THIS_WEEK_DISH);
   });
 
+  it('続けて来た成功の、先の取り直しの応答が後から届いても、あとの取り直しの献立とカレンダーの印を古い答えで上書きしない', async () => {
+    const OLD_DISH = '前の親子丼';
+    const NEW_DISH = '新しい親子丼';
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) server.days.set(dateFromWeekStart(i), [{ id: `meal-${i}`, dishName: OLD_DISH }]);
+    await renderWeeklyPage();
+    expect(container.textContent).toContain(OLD_DISH);
+    expect(await calendarMealDotCount()).toBe(DAYS_IN_WEEK);
+
+    // 1 回目の成功の取り直し (表示中の週・月のカレンダーの範囲) は、前の答えを読んで応答が遅れる
+    let release: () => void = () => undefined;
+    server.mealPlansHold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    server.mealPlansHold = null;
+
+    // 2 回目の成功 (AI 相談が表示中の週の献立を変え、表示中の月の別の週に献立を足した) の取り直しは先に届く
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) server.days.set(dateFromWeekStart(i), [{ id: `meal-${i}`, dishName: NEW_DISH }]);
+    server.days.set(otherWeekDateInDisplayedMonth(), [{ id: 'meal-other-week', dishName: 'カレー' }]);
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    expect(container.textContent).toContain(NEW_DISH);
+    expect(await calendarMealDotCount()).toBe(DAYS_IN_WEEK + 1);
+
+    await act(async () => {
+      release();
+    });
+    await settle();
+    expect(container.textContent).toContain(NEW_DISH);
+    expect(container.textContent).not.toContain(OLD_DISH);
+    expect(await calendarMealDotCount(), '古い応答が、あとから足した日の印を消した').toBe(DAYS_IN_WEEK + 1);
+  });
+
   it('取り直しで名前の API を読めなかったら、家族の切り替えの名前を残す', async () => {
     supabaseMock.profile = { ...completeProfile(), family_id: FAMILY_ID };
     joinFamily(SELF_NAME_BEFORE);
