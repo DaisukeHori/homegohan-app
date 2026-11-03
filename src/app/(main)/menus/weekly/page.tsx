@@ -2589,10 +2589,11 @@ export default function WeeklyMenuPage() {
   //   - 月のカレンダーの献立のある日: 取得済みの範囲を捨ててから回数を増やし、表示中の週の前後と表示中の月を読み直す
   //     (読んだ範囲は答えで置き換える。ほかの範囲は次にその週・月を開いたときに読み直す)
   //   - 生成中の依頼: 回数を増やして、生成中の依頼の確認 (checkPendingRequests) をもう一度走らせる。AI 相談が始めた
-  //     献立の生成 (generate_week_menu など) は依頼を受けた時点 (status: processing) で成功を知らせるので、ここで取り直しても
-  //     まだ献立は無い。表示中の週の生成中の依頼を見つけて監視し、終わったら監視の側が献立を取り直す
-  //     (生成中の依頼の確認 GET /api/ai/menu/weekly/pending が返すのは、開始日が表示中の週の初日の依頼だけ。ほかの日から
-  //     始めた生成は、ページを開いたとき・読み込み直したときと同じく監視しない。#1609)
+  //     献立の生成 (generate_day_menu・generate_week_menu・generate_single_meal) は依頼を受けた時点 (status: processing) で
+  //     成功を知らせるので、ここで取り直してもまだ献立は無い。生成が終わったときの取り直しは、開始日に関係なく、
+  //     useAiConsultationDataRefetch がその依頼 (通知の result.requestId) を終わるまで見張り、終わったらこの関数をもう一度呼ぶ
+  //     (src/lib/ai/consultation-generation-watch.ts)。生成中の表示 (進捗の帯) を出すのは今までどおり checkPendingRequests が
+  //     見つけた依頼だけ (GET /api/ai/menu/weekly/pending が返すのは、開始日が表示中の週の初日の依頼。#1609)
   //   - 家族の一覧と名前 (loadFamilyData): 家族の切り替えに出す名前は、display_name の無いメンバー (自分を含む) なら
   //     プロフィールの名前で、AI 相談は自分の名前 (user_profiles.nickname) を書く
   //     (家族の献立 (useFamilyMenu。自分以外のメンバーの献立) は取り直さない。理由は

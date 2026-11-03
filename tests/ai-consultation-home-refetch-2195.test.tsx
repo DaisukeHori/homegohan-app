@@ -115,6 +115,7 @@ vi.mock('framer-motion', async () => {
 const { useHomeData } = await import('@/hooks/useHomeData');
 const { default: HomePage } = await import('@/app/(main)/home/page');
 const { AI_CONSULTATION_DATA_CHANGED_EVENT } = await import('@/lib/ai/consultation-data-refetch');
+const { AI_CONSULTATION_GENERATION_STATUS_PATH, AI_CONSULTATION_GENERATION_WATCH_INTERVAL_MS } = await import('@/lib/ai/consultation-generation-watch');
 const {
   ReadRecorder,
   expectEmptyRefetchMatchesFreshMount,
@@ -419,5 +420,56 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
     await renderHomePage();
     const freshEmpty = screenSignature(container);
     expectEmptyRefetchMatchesFreshMount('/home', { full, refetchedToEmpty, freshEmpty });
+  });
+  it('AI 相談の今日の generate_day_menu は、受付ではまだ無い献立を、生成が終わったら出す (#2195 V1 の整合ゲートの是正)', async () => {
+    const REQUEST_ID = '21950000-0000-4000-8000-0000000000d3';
+    /** ページの API の相対 URL を解く起点 (fetch のモックの中だけで使う) */
+    const PAGE_ORIGIN = 'http://localhost';
+    // 今日の献立が無い状態で開く
+    useServer(EMPTY_TABLES, NO_MEALS_RESPONSE);
+    let statusChecks = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) => {
+        if (String(input) === NUTRITION_ANALYSIS_URL && nutritionAnalysisBody !== undefined) {
+          return { ok: true, status: OK_STATUS, json: async () => nutritionAnalysisBody };
+        }
+        const url = new URL(String(input), PAGE_ORIGIN);
+        if (url.pathname === AI_CONSULTATION_GENERATION_STATUS_PATH && url.searchParams.get('requestId') === REQUEST_ID) {
+          // 生成が終わった (今日の献立を書いてから completed にする)
+          statusChecks += 1;
+          useServer(FULL_TABLES, analysisResponse('野菜を一品足しましょう'));
+          return { ok: true, status: OK_STATUS, json: async () => ({ status: 'completed' }) };
+        }
+        return { ok: false, status: NOT_FOUND_STATUS, json: async () => ({}) };
+      }),
+    );
+    await renderHomePage();
+    expect(container.textContent).not.toContain(TODAY_MEAL.dish_name);
+
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      await act(async () => {
+        window.dispatchEvent(
+          new CustomEvent(AI_CONSULTATION_DATA_CHANGED_EVENT, {
+            detail: { actionType: 'generate_day_menu', result: { date: TODAY, requestId: REQUEST_ID, status: 'processing' } },
+          }),
+        );
+      });
+      await settle();
+      // 受付の取り直しでは、献立はまだ無い
+      expect(statusChecks).toBe(0);
+      expect(container.textContent).not.toContain(TODAY_MEAL.dish_name);
+
+      await act(async () => {
+        vi.advanceTimersByTime(AI_CONSULTATION_GENERATION_WATCH_INTERVAL_MS);
+      });
+      await settle();
+    } finally {
+      vi.useRealTimers();
+    }
+    await settle();
+    expect(statusChecks).toBe(1);
+    expect(container.textContent).toContain(TODAY_MEAL.dish_name);
   });
 });
