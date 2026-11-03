@@ -56,7 +56,13 @@ const EXPECTED: Readonly<Record<string, readonly WriteHandling[]>> = {
   'src/app/super-admin/experiments/new/page.tsx': [{ kind: 'exempt', method: 'POST', what: 'A/B テストの作成', reason: CREATE_REASON }],
   'src/app/super-admin/experiments/page.tsx': [{ kind: 'reread', method: 'PATCH', what: 'A/B テストの開始・完了 (一覧)' }],
   'src/app/super-admin/feature-packages/[id]/page.tsx': [
-    { kind: 'exempt', method: 'PATCH', what: '機能パッケージの保存', reason: VALUE_EDIT_REASON },
+    {
+      kind: 'exempt',
+      method: 'PATCH',
+      what: '機能パッケージの保存',
+      reason:
+        '値の編集 (状態の変更ではない)。送るのは変えた欄の値だけ。機能フラグを送るときは読んだ updated_at を条件にするので、押し直すと自分の 1 回目の保存で 409 になるが、読み直した行に送った値がもう入っていれば保存できた扱いにし、「別の操作で」とは言わない (#2195 V4。振る舞いは feature-package-flags-save-conflict-2195.test.tsx が確かめる)。#2073 の範囲の外',
+    },
     { kind: 'reread', method: 'PATCH', what: '機能パッケージの廃止' },
   ],
   'src/app/super-admin/feature-packages/new/page.tsx': [
