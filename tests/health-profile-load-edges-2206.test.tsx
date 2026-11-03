@@ -135,6 +135,10 @@ let root: Root;
 const json = (body: unknown, status = OK_STATUS) => () => Response.json(body, { status });
 const broken = () => () => new Response(BROKEN_JSON, { status: OK_STATUS, headers: { 'content-type': 'application/json' } });
 const failed = () => json({ error: 'down' }, SERVER_ERROR_STATUS);
+/** 通信の失敗 (fetch そのものが投げる。応答が無い) */
+const rejected = () => (): Response => {
+  throw new TypeError('Failed to fetch');
+};
 
 function installServer() {
   vi.stubGlobal(
@@ -271,6 +275,45 @@ describe('/health/graphs: 1 つの本文が壊れていても、読めた本文�
     await notifyAiConsultationSucceeded();
     expect(server.requests, '取り直していない (検査が空振りしている)').toContain(RECORDS);
     expect(container.textContent, '取り直しの記録の本文が壊れて、今の線を消した').toContain(shownWeight(MONTH_WEIGHT));
+    expect(container.textContent).not.toContain(NO_DATA);
+  });
+
+  // 同じ型: 本文が壊れているときだけでなく、fetch そのものが投げた (通信の失敗) ときも、読めたほかの応答を置く。
+  // 以前は Promise.all がまとめて投げて catch に入り、読めた記録も置かなかった
+  it('期間を切り替えたときに目標の取得が通信の失敗で投げても、前の期間の線を残さず新しい期間の線を出す', async () => {
+    await mount(<HealthGraphsPage />);
+    expect(container.textContent, '前の期間の線が出ていない (検査が空振りしている)').toContain(shownWeight(MONTH_WEIGHT));
+
+    server.fetchHandlers.set(RECORDS, json({ records: [{ record_date: TODAY, weight: WEEK_WEIGHT }] }));
+    server.fetchHandlers.set(GOALS, rejected());
+    server.requests = [];
+    await click(buttonContaining(WEEK_LABEL), WEEK_LABEL);
+    expect(server.requests, '目標を読みに行っていない (検査が空振りしている)').toContain(GOALS);
+    expect(container.textContent, '目標の通信の失敗で、新しい期間の線を置かなかった').toContain(shownWeight(WEEK_WEIGHT));
+    expect(container.textContent, '前の期間の線が新しい見出しの下に残った').not.toContain(shownWeight(MONTH_WEIGHT));
+  });
+
+  it('期間を切り替えたときに記録の取得が通信の失敗で投げると、前の期間の線を残さない (読めなかった記録は無いものとして出す)', async () => {
+    await mount(<HealthGraphsPage />);
+    expect(container.textContent).toContain(shownWeight(MONTH_WEIGHT));
+
+    server.fetchHandlers.set(RECORDS, rejected());
+    server.requests = [];
+    await click(buttonContaining(WEEK_LABEL), WEEK_LABEL);
+    expect(server.requests, '記録を読みに行っていない (検査が空振りしている)').toContain(RECORDS);
+    expect(container.textContent, '記録の通信の失敗で、前の期間の線が新しい見出しの下に残った').not.toContain(shownWeight(MONTH_WEIGHT));
+    expect(container.textContent).toContain(NO_DATA);
+  });
+
+  it('取り直しで記録の取得が通信の失敗で投げると、今の線を残す', async () => {
+    await mount(<HealthGraphsPage />);
+    expect(container.textContent).toContain(shownWeight(MONTH_WEIGHT));
+
+    server.fetchHandlers.set(RECORDS, rejected());
+    server.requests = [];
+    await notifyAiConsultationSucceeded();
+    expect(server.requests, '取り直していない (検査が空振りしている)').toContain(RECORDS);
+    expect(container.textContent, '取り直しの記録の通信の失敗で、今の線を消した').toContain(shownWeight(MONTH_WEIGHT));
     expect(container.textContent).not.toContain(NO_DATA);
   });
 });
