@@ -1174,3 +1174,373 @@ describe('受け手は place の中だけで置き、書き込みは窓の中だ
 ### 7.8 モバイルのテストの待ち方 (`apps/mobile/__tests__/ai/advisor-sheet-reload-running.test.tsx`)
 
 `waitPastRecheck` の実時間の待ち (`setTimeout(resolve, LONGER_THAN_RECHECK_MS)`) と `waitFor` (既定の 50ms 間隔) で読み直しの 30ms を拾う形を、`jest.useFakeTimers()` + `act(() => { jest.advanceTimersByTime(…) })` で時間を進める形にする (読み直しの遅れの定数を import して、その値 + 1 を進める)。`waitFor` は残してよいが、時間に依存する assert の前には必ず時間を進める。Web 側の同型は X1 (`tests/ai-chat-timeout-reload-2201.test.tsx`) が扱う。
+
+---
+
+## 8. facade 契約 (`src/hooks/useAiConsultationReceiver.ts`。名前・引数・戻り値を変えない)
+
+| 名前 | 形 | 決まり |
+|---|---|---|
+| `useAiConsultationReceiver(refetch)` | `(refetch: AiConsultationReadFn) => AiConsultationReceiver` | 受け手ごとに 1 回呼ぶ。`refetch` は描画のたびに作り直してよい (最新を呼ぶ)。購読は 1 回。`'mealPlanUpdated'` の通知と、受付 (`result.status 'processing'`) の生成の完了で `refetch` を `mode: 'refetch'` の読み取りとして呼ぶ。`refetch` の reject・同期の例外は握る (`console.warn`) |
+| `receiver.read(options, fn)` | `(options: { loadingKeys?: readonly string[] }, fn: AiConsultationReadFn) => Promise<void>` | ページの読み取り (`mode: 'mount'`)。`loadingKeys` の鍵を立てる。`fn` が終わる (投げても) までが読み取りで、終わったら自分が最後に立てた鍵を下ろす。`fn` の reject はそのまま返す (ページが catch する) |
+| `receiver.beginWrite()` | `() => () => void` | 書き込みの窓を開ける。返す関数を `finally` で呼ぶ (2 回目は何もしない)。開いている間、取り直しは止まり、`html[data-ai-consultation-writes]` が付く。全部閉じたら止めた通知を 1 回取り直す |
+| `receiver.isLoading(key)` | `(key: string) => boolean` | その鍵の読み込み中の表示を出すか。鍵の集合が変わるたびに再描画する |
+| `read.mode` | `'mount' or 'refetch'` | ページの読み取りは `'mount'`、取り直しは `'refetch'`。ページは失敗の表示 (`'mount'` だけ置く)・AI を呼ぶか (/home)・名前を残すか (家族) に使う |
+| `read.place(key, apply)` | `(key: string, apply: () => void) => AiConsultationPlaceResult` | 順序 (鍵ごとに置いた世代より新しい or 同じ読み取り) → (`'refetch'` だけ) 番兵・書き込み中・始めたあとの書き込み → `apply()` → 置いた世代を進める・その鍵の読み込み中を下ろす。hook が外れていれば `'superseded'`。`apply` が投げたら置いた世代は進まず、例外はそのまま |
+| `AI_CONSULTATION_WRITES_ATTRIBUTE` | `'data-ai-consultation-writes'` | 書き込みが 1 つでも進んでいる間、`document.documentElement` に付く (値は全受け手の合計)。モバイルの `webViewBridge.ts` が同じ文字列を持つ |
+| `aiConsultationDocumentWriteCountForTests()` | `() => number` | テスト用 |
+
+ページ側の契約 (番兵 P1〜P5 が数える):
+
+1. `const receiver = useAiConsultationReceiver(fn);` と書く (分割代入しない)。
+2. 応答を state・store・router に反映するのは `read.place(key, apply)` の `apply` の中だけ。読み取りの経路の関数で `await` のあとに `place` の外で置かない。
+3. 鍵は受け手が決める。対象を替えて出す表示は対象を鍵に含め、「いまもその対象か」は `apply` の中で ref を見て決める。
+4. 書き込み (GET でない送信) は全部 `beginWrite` の窓の中。窓の中では楽観的な更新を置いてよい。
+5. 読み込み中の表示は `isLoading(key)`。ページの `loading` の state を持たない。
+6. 旧 API の識別子を使わない。
+
+Zod のスキーマ・DB の列・API の route・エラーコード: 本書は増やさない (該当なし)。
+
+---
+
+## 9. 受け手ごとの配線表 (段 B〜E の実装の正本。行 = 受け手。鍵は受け手のファイルの先頭の定数)
+
+| # | 受け手 | 段 | 鍵 | 置く場所 (`apply` の中身) | `loadingKeys` を立てる読み取り | 書き込みの窓 (`beginWrite`) | `read.mode` の使い方 | 特記 |
+|---|---|---|---|---|---|---|---|---|
+| 1 | /badges | B | `badges` | `setBadges`・`setEarnedCount`・`setNewlyEarnedBadges` (お祝いの `setTimeout` もこの中) | 開いたとき `[badges]` | 無し | 失敗は今までどおり表示を変えない (`console.error` のみ) | `useEffect` の取得を関数に出す |
+| 2 | /comparison | B | `rankings` | `setData(result)`。失敗は `mode 'mount'` で `setData(null)` | 開いたとき・期間の切り替え `[rankings]` | 無し | 失敗: `'mount'` は空にして失敗の表示、`'refetch'` は残す | `AbortController` の中断は残してよい (`signal.aborted` で早く抜ける)。同じ描画で鍵と期間が変わる問題は消える (取り直しは別の読み取り) |
+| 3 | /family/dashboard | C | `dashboard` | 群と一覧と名前・`setError`・`setLoadError`・`router.replace('/family/setup')`・ログインへの `push` | 開いたとき・「再試行」 `[dashboard]` | 無し (書き込みの無い画面) | `loadFailed` は `'mount'` だけ置く。名前の API の失敗は `'refetch'` なら今の名前 | §7.6 |
+| 4 | /family/members | C | `members` | 3 と同じ + `setCurrentUserId`・`setCurrentRole` | 同上 | 除名・脱退 (`POST`)。`writeInFlightRef` は二重押しの守りとして残し hook に渡さない | 同上 | 取り直し中のボタンの無効化 (`AI_CONSULTATION_REFETCH_ACTION`) を消す |
+| 5 | /family/members/[id] | C | `member` | メンバー・自分の役割・同意の記録・`setFamilyId`・移動 | 同上 | 役割の変更・共有の設定・除名などの全部の `POST` / `PATCH` / `DELETE` | 同上 | `busyRef` は残す。`aiRefetching` を消す |
+| 6 | /family/transfer-accept/[proposal_id] | C | `proposal` | 提案・`setNotFound`・`setLoadError`・移動 | 同上。通信エラーのあとの読み直しは `[]` | 承諾・拒否 (`POST`) | 同上 | 同上 |
+| 7 | /org/transfer-accept/[proposal_id] | C | `proposal` | 6 と同じ | 同上 | 承諾・拒否 | 同上 | 同上 |
+| 8 | /health/blood-tests | B | `sex` | `setSex` | 無し (ページの loading は検査の結果の読み込みで、取り直しの鍵ではない) | 無し (この部品の範囲に書き込みは無い) | — | `fetchSex(read)` |
+| 9 | /health/checkups/[id] (CheckupDetailClient) | B | `sex` | `setSex` | 無し | 削除 (`DELETE`) は窓で囲む (受け手のファイルにある書き込みなので P2 の対象) | — | 削除の確認が出ていても読み直してよいのは今までどおり (番兵は `role="dialog"` で止めるので、確認がモーダルなら止まる。挙動の変化は描画のテストで確かめる) |
+| 10 | /health/goals | B | `goals` | `setGoals` | 開いたとき・作成・編集・削除のあと `[goals]` (今までどおりスピナー) | 作成・編集・削除 (`POST` / `PATCH` / `DELETE`) | 失敗は表示を変えない | 引き継いだ回の番兵の漏れは構造で消える |
+| 11 | /health/graphs | B | `graphs` | `setRecords` (読めたときだけ)・`setTargetWeight` | 開いたとき・期間の切り替え `[graphs]` | 無し | `keepShownRecords = read.mode === 'refetch' && (…非 ok)`。Realtime の購読からの読み直しは `receiver.read({}, (read) => fetchData(read, { keepOnFailure: true }))` (今の `refetchReadMode()` の `'refetch'` と同じ扱い) | G5 のマージ後 |
+| 12 | /health | C | `today`・`streak`・`goals`・`selectedDate:<日>` | 今日と昨日の記録と `setQuickWeight` / 連続記録と週の記録 / 目標 / 選んだ日の記録 (`apply` の中で `selectedDateRef.current === date` を見る) | 開いたとき・記録の保存のあと `[today, streak, goals]` (スピナーは 3 つのどれかが立っている間)。日を選んだとき `[selectedDate:<日>]` (パネルの印 `setLoadingSelectedDate` を `isLoading` に) | 記録の保存 (`POST /api/health/records/quick`) | 失敗は表示を変えない | 取り直しは 3 つの鍵と、出している日のパネル (`selectedDateRef`) を同じ `read` で読む |
+| 13 | /health/streaks | B | `streak` | `setStreak`・`setNextBadge`・`setDaysToNextBadge`・`setWeeklyRecords`・`setError` | 開いたとき `[streak]` | 無し | 失敗は `'mount'` だけ `setError` | — |
+| 14 | /home (`useHomeData.ts`) | D | §7.5 の 15 個 | §7.5 | 開いたとき・auth の変化・巻き戻し・献立の変更の実行のあと `[todayPlan, nutritionScore, performance]`。チェックインの保存のあとの `fetchPerformanceAnalysis` は `[performance]` | 完了の切り替え・活動量 (今までどおり) + チェックインの保存・献立の変更の実行の `POST` | `analysisWithoutAi = mode === 'refetch'`。`'refetch'` の失敗は集計の今の値を残す | `home/page.tsx` は hook を呼ばない。G3 のマージ後に切る |
+| 15 | /meals/[id] | B | `meal:<id>`・`servings` | `setMeal` (`apply` の中で `params.id === id` を見る。404 は `setMeal(null)`)・`setServingsConfig` | 開いたとき・id の切り替え `[meal:<id>]` | 完了の切り替え (今までどおり) + 削除 (`DELETE`。300ms 待って `router.push` するまで窓の中。§14 の `MEAL_DELETE_NAVIGATE_DELAY_MS`) | 失敗: `'mount'` は `setMeal(null)` (今までどおり)、`'refetch'` は 404 だけ `setMeal(null)` | 2 つの `useEffect` を 1 つの読み取りの関数にまとめ、`[params.id]` で `receiver.read` |
+| 16 | /menus/weekly | E | `plan:<週>`・`mealDates:<月>`・`shoppingList`・`pantry`・`settings`・`family` | §7.4 | 週の読み込み `[plan:<週>]`。人数の設定 `[settings]` | 全部の書き込み (約 20 か所。今までどおり) + 生成の `POST` + 写真の解析の `POST` | 週の読み込みの失敗は `'mount'` で `setCurrentPlan(null)` | §6.7・§7.4。`ProfileReminderBanner` は自分の受け手 |
+| 17 | /pantry | B | `items` | `setItems` | 開いたとき `[items]`。保存のあとは `[]` | 削除・手入力の追加と更新・写真の保存・全て置き換え | 失敗は表示を変えない | §7.3 |
+| 18 | /profile | B | `profile`・`badgeCount`・`nutritionTarget` | `setUser`・`setProfile`・`setEditForm` / `setBadgeCount` / `setDbNutritionTarget` | 開いたとき `[profile]` (`isLoading(profile)` が `isLoading` の state の代わり。編集のモーダルの「読み込みが終わるまで入力欄を出さない」もこれで) | `handleSave` (`PUT`。応答の `setProfile` / `setEditForm` も窓の中) | `'refetch'` で auth を確かめられなければ何も置かない | G5 のマージ後 |
+| 19 | /profile/nutrition-targets | B | `profile`・`targets` | `setProfile` / `setTargets`・`setError` | 開いたとき `[profile, targets]` | 無し (再設定の部品 21 が持つ) | 失敗は `'mount'` だけ `setError` | G5 のマージ後 |
+| 20 | ProfileReminderBanner | B | `banner` | `hide()` / `setCompleteness`・`setMissingFields`・`setIsVisible(true)` | 無し (帯は読み込み中の表示を持たない) | 無し | `'refetch'` で auth・プロフィールを読めなければ何も置かない | `isDismissedRecently()` の分岐は `await` の前なので `place` の外でよい (同期) |
+| 21 | nutrition-target-planner | B | `planner` | `setProfile`・`setTargets`・`setFetchedForm`・`setAutoCalculate`・`setManualCalories`・`setTargetWeight`・`setError(null)` | 開いたとき・保存のあと `[planner]` (今までどおりスピナー) | 保存 (今までどおり) | 失敗は `'mount'` だけ `setError` | 入力欄の `AI_CONSULTATION_UNEDITED_INPUTS_ATTRIBUTE` は今までどおり |
+
+受け手の集合 (`AI_CONSULTATION_REFETCH_PAGES` の receiver 20 ページ) は変えない。`home/page.tsx` が hook を呼ばなくなっても、`/home` の受け手は `useHomeData.ts` を通して `useAiConsultationReceiver` を使う (閉じた表のテストは「ページから名前でたどれる hook」で数えるので、たどり方を §17 で直す)。
+
+---
+
+## 10. 表 3 点
+
+### 10.1 ①全パターン表 (読み取りの種類 × `place` の時点の状態 → 結果)
+
+読み取りの種類: **PM** = ページ (`loadingKeys` あり) / **PA** = ページ (書き込みのあと・対象の切り替え) / **RE** = 取り直し (通知) / **RS** = 取り直し (生成の完了) / **RF** = 取り直し (止めた通知の流し)。RE・RS・RF は同じ `mode: 'refetch'` なので同じ列。
+
+| `place` の時点の状態 | PM / PA (`'mount'`) | RE / RS / RF (`'refetch'`) |
+|---|---|---|
+| その鍵に何も置いていない | `'placed'` (読み込み中を下ろす) | 番兵・書き込みが無ければ `'placed'` |
+| 同じ読み取りがその鍵にもう置いた (段ごと) | `'placed'` | 同上 |
+| より新しい読み取りがその鍵に置いた | `'superseded'` (何もしない) | `'superseded'` (印を付けない) |
+| より古い読み取りがその鍵に置いた | `'placed'` (置き換える) | 番兵・書き込みが無ければ `'placed'` |
+| 番兵 (入力の部品・モーダル) がある | `'placed'` (見ない) | `'deferred'` + 印 (1 回) + DOM を見張る |
+| 書き込み中 (`count > 0`) | `'placed'` | `'deferred'` + 印 + 書き込みの終わりを待つ |
+| 始めたあとに書き込みが始まって終わった (`started` が変わった) | `'placed'` | `'deferred'` + 印 + 外れているのですぐ 1 回取り直す |
+| この取り直しがもう `'deferred'` を返した | — | `'deferred'` (印は付け直さない) |
+| hook が外れた (アンマウント) | `'superseded'` | `'superseded'` |
+| `apply` が投げる | 例外・置いた世代は進まない | 同左 |
+
+### 10.2 ②状態比較表 (現行 vs 設計後)
+
+| 観点 | 現行 (origin/main `e6b14faa`) | 設計後 |
+|---|---|---|
+| 公開の面 | hook 6 つ (`DataRefetch`・`RefetchKey`・`RefetchRun`・`Loading`・`PendingWrites`・`FetchStream`)・札 2 種・印 1 種 | hook 1 つ。`{ read, beginWrite, isLoading }` と `{ mode, place }` |
+| 順序の決まり | `latestStarted` (既定) と `newerThanPlaced` (週・選んだ日) の 2 つ。ページが `isLatest` / `cancelled` / `aborted` / `place` を書き分ける | `newerThanPlaced` だけ。`place` の中 |
+| 開いたときの応答待ちに取り直しが失敗 | `latestStarted` の受け手は開いたときの応答が捨てられて空 (D-2) | 開いたときの応答を置く |
+| 読み込み中の表示 | ページの `loading` (`useAiConsultationLoading` か自前)・取り直しが役を引き継ぐ (`refetchReadMode`・`fullScreenLoading`) | 鍵ごとに hook。立てるのはページの読み取りだけ。置いたら下ろす |
+| 番兵を見る場所 | 取り直しの経路で `deferIfHeld` を呼んだ所 (引き継いだ回は呼ばない・ページごとに漏れ) | `place` の中 (取り直しの全部の置く場所) |
+| 書き込みの印 | `useAiConsultationPendingWrites` (数える) と真偽の ref の 2 種。`notifyWriteSettled` | `beginWrite` の窓だけ。終わりで自動 |
+| DOM の書き込みの印 | 無い (モバイルは見られない。D-10) | `html[data-ai-consultation-writes]` |
+| 置き換えの経路 | 献立表 9 か所が流れの外。/profile の保存・/meals の削除が印の外 (D-3) | 全部 `place` と窓 (番兵 P1・P2) |
+| 完了の切り替えの値 | 押した描画の写し (D-4) | 待ちが明けた時点の `currentPlanRef` |
+| 週のキャッシュ | ヒットで loading を下ろさない・非 ok を空で控える (D-5) | 置けば下ろす・非 ok は `null` |
+| カレンダーの印 | 範囲の鍵 (重なる) (D-6) | 月の鍵 |
+| 買い物リスト | 週の確認の中 | 自分の鍵・週の確認の外 |
+| 家族の移動 | 順序を見ない (D-7) | `place` の中 |
+| /home の AI つきの読み取り | 開いたとき + 引き継いだ取り直し (`isLatest()` の門で開いたときを止める) | 開いたとき (とページの読み取り) だけ。取り直しは AI 無し。門は無い |
+| 機械の番兵 | 8 規則 (関数ごと・印を渡す受け手だけ) | P1〜P6 (置く場所ごと・全受け手) |
+| 受け手の数 | 21 (ページ 19 + 部品 2) + `useHomeData` (委任) | 21 (ページ 18 + 部品 2 + `useHomeData.ts`) |
+
+### 10.3 ③状態遷移表 (hook の状態 × 出来事)
+
+hook の状態: `deferred` (止めた通知の有無)・`observing` (DOM の見張り)・`writes` (進んでいる書き込みの数)・`loading` (立っている鍵)・`placed` (鍵 → 世代)・`watching` (生成の見張りの集合)。
+
+| 状態 | 出来事 | 遷移先 | ガード | 副作用 |
+|---|---|---|---|---|
+| any | `'mealPlanUpdated'` | — | 番兵無し・`writes = 0` | 取り直しを始める (世代 +1・`refetch` を呼ぶ)。`detail.result` が受付なら `watching` に足す |
+| any | `'mealPlanUpdated'` | `deferred = true`・`observing = true` | 番兵あり or `writes > 0` | DOM の見張りを始める (もう見張っていれば何もしない) |
+| `watching` にあり | 生成の完了 (`watchAiConsultationGeneration` の `onSettled`) | — / `deferred = true` | 通知と同じ | 見張りを集合から外し、通知と同じ |
+| any | `receiver.read(options, fn)` | `loading += options.loadingKeys` (鍵 → 新しい世代) | — | 世代 +1・`fn` を呼ぶ |
+| any | `fn` が終わる | `loading -= その読み取りが最後に立てた鍵` | 鍵の立て主がその世代 | — |
+| any | `place(key)` が `'placed'` | `placed[key] = 世代`・`loading -= key` | 順序 OK (+ 取り直しなら番兵・書き込みが無い) | `apply()` |
+| any | 取り直しの `place` が止められた | `deferred = true`・(番兵あり) `observing = true` | 順序 OK・番兵 or 書き込み | 印は読み取りごとに 1 回。外れていれば即 `flushDeferred` |
+| `deferred = true`・`observing = true` | DOM の変化 (`attributeFilter`) | `deferred = false`・`observing = false` | 番兵無し・`writes = 0` | 取り直しを 1 回始める |
+| `deferred = true` | `writes` が 0 になる | 同上 | 番兵無し | 同上 |
+| any | `beginWrite()` | `writes += 1`・`started += 1`・`html` の属性 | — | — |
+| any | 窓の終わり | `writes -= 1`・(0 なら) 属性を消す | 2 回目は無視 | 0 になったら `flushDeferred` |
+| any | アンマウント | `deferred = false`・`observing = false`・`watching = {}`・`mounted = false` | — | 購読を外す。以後の `place` は `'superseded'`・`deferRefetch` は無い関数 |
+
+---
+
+## 11. エラー表 (hook にエラーコードは無い。結果と失敗の扱い)
+
+| 事象 | 誰が | 扱い |
+|---|---|---|
+| `refetch` が reject する・同期で投げる | hook | `console.warn('[ai-consultation-refetch] refetch failed:', error)`。何も置かない。読み込み中・止めた通知に触れない |
+| ページの読み取りの `fn` が投げる | hook → ページ | `read()` の Promise がそのまま reject。立てた鍵は `finally` で下ろす (失敗の表示はページが `'mount'` で置く) |
+| `apply` が投げる | hook → ページ | 置いた世代を進めず、例外をそのまま。ページは `apply` の中で投げないように書く |
+| 取り直しの読み取りで `res.ok` でない・Supabase の `error` | ページ | 何も置かない (今の表示を残す) |
+| ページの読み取り (`'mount'`) で失敗 | ページ | 失敗の表示 (`setError` / `setLoadError` / `setCurrentPlan(null)` / `setData(null)`) を `place` で置く。置けば読み込み中は下りる。置かずに終われば `fn` の終わりで下りる |
+| 番兵・書き込みで止めた通知がアンマウントまで外れない | hook | 捨てる (アンマウントで `deferred = false`) |
+| 生成の見張りが上限 (`AI_CONSULTATION_GENERATION_WATCH_MAX_MS`) を過ぎる | lib | 取り直さない (今までどおり) |
+| `beginWrite` の終わりを呼び忘れる | — | 番兵 P2 が赤にする (`finally` の `endWrite()` が無い) |
+| 受け手が `place` の外で置く | — | 番兵 P1 が赤にする |
+
+---
+
+## 12. シーケンス
+
+### 12.1 開いた直後の成功で、取り直しが失敗する (S-2)
+
+```mermaid
+sequenceDiagram
+  participant P as ページ (fetchItems)
+  participant H as useAiConsultationReceiver
+  participant S as サーバー
+  P->>H: read({ loadingKeys: ['items'] }, fetchItems)
+  H->>H: 世代 1・loading['items'] = 1
+  P->>S: GET /api/pantry (M)
+  Note over H: 'mealPlanUpdated'
+  H->>H: 世代 2 (mode 'refetch')・refetch(read2)
+  P->>S: GET /api/pantry (R)
+  S-->>P: R: 500
+  Note over P: 'refetch' なので何も置かない
+  S-->>P: M: 200
+  P->>H: read1.place('items', apply)
+  H->>H: 1 >= placed(0) → apply → placed['items'] = 1・loading を下ろす
+  H-->>P: 'placed'
+```
+
+### 12.2 応答待ちに始めた書き込みと止めた通知 (S-6)
+
+```mermaid
+sequenceDiagram
+  participant P as ページ
+  participant H as useAiConsultationReceiver
+  participant S as サーバー
+  Note over H: 'mealPlanUpdated' → 世代 n (started = s)
+  P->>S: GET /api/pantry (R)
+  P->>H: beginWrite() (writes 1・started s+1・html に印)
+  P->>S: DELETE /api/pantry/:id
+  S-->>P: 200
+  P->>H: endWrite() (writes 0・印を消す)
+  S-->>P: R: 200
+  P->>H: readN.place('items', apply)
+  H->>H: 順序 OK → started が変わった → deferred・印 → 外れているので flushDeferred
+  H-->>P: 'deferred'
+  H->>H: 世代 n+1・refetch(read)
+  P->>S: GET /api/pantry (R')
+  S-->>P: 200
+  P->>H: place → 'placed'
+```
+
+### 12.3 モバイルの読み込み直しと書き込みの印 (S-10)
+
+```mermaid
+sequenceDiagram
+  participant W as Web (献立表)
+  participant D as document.documentElement
+  participant M as モバイル (WebViewScreen)
+  W->>D: beginWrite → data-ai-consultation-writes="1"
+  W->>W: モーダルを閉じる・POST を送る
+  M->>M: AI 相談のシートの成功 → injectJavaScript(buildReloadCurrentPageScript)
+  M->>D: querySelector(止める要素) → html[data-ai-consultation-writes] に当たる
+  M->>M: MutationObserver (attributeFilter に data-ai-consultation-writes)
+  W->>D: endWrite → 属性を消す
+  M->>D: 当たらない → window.location.reload()
+```
+
+---
+
+## 13. テスト一覧 (it 名)
+
+### 13.1 新しいテスト
+
+`tests/ai-consultation-receiver-2206.test.tsx` (hook の単体。`renderHook` + `document` の番兵):
+
+| # | it |
+|---|---|
+| T-1 | AI 相談の成功を受けたら refetch を 1 回呼ぶ (mode は 'refetch') |
+| T-2 | 続けて 2 回の成功の、先の取り直しの応答が後から届いても置かない (同じ鍵で新しい世代が置いたあとは 'superseded') |
+| T-3 | 先の取り直しの応答が先に届けば置き、後の取り直しで置き換える |
+| T-4 | 開いたときの読み取りの応答待ちに始まった取り直しが失敗しても、開いたときの応答を置き、読み込み中の表示を下ろす |
+| T-5 | 開いたときの応答待ちに取り直しの応答が先に届いたら置いて読み込み中を下ろし、あとから届いた開いたときの応答は置かない |
+| T-6 | 同じ読み取りが同じ鍵に段ごとに置くのは通し、途中で新しい読み取りが置いたら次の段は置かない |
+| T-7 | 鍵ごとに別々の順序を持つ (別の鍵の応答で古くならない。A→B→A で A の最初の応答を A の鍵で置く) |
+| T-8 | 取り直しの応答を置く時点にモーダルがあれば 'deferred' で置かず、閉じたら 1 回取り直す。印を付けるのは読み取りごとに 1 回 |
+| T-9 | 取り直しの応答を置く時点に書き込み中なら 'deferred'、全部終わったら 1 回取り直す |
+| T-10 | 取り直しを始めたあとに書き込みを始めて終えていたら 'deferred' で、すぐに 1 回取り直す |
+| T-11 | ページの読み取り (mode 'mount') は番兵・書き込み中でも置く |
+| T-12 | 古い応答では止めた通知の印を付けない ('superseded' が先) |
+| T-13 | 通知の時点で番兵・書き込み中なら取り直さず、外れたら 1 回だけ取り直す (何回来ても 1 回) |
+| T-14 | アンマウント後は取り直さず、届いた応答の place は 'superseded'、印も付けない |
+| T-15 | refetch が reject しても・同期で投げても握る |
+| T-16 | loadingKeys: 立てた鍵は、置かれたとき・立てた読み取りが終わったときに下ろす。別の読み取りが同じ鍵を立て直したら、古い読み取りの終わりでは下ろさない |
+| T-17 | 取り直しは読み込み中の鍵を立てない |
+| T-18 | apply が投げたら置いた世代は進まず、同じ読み取りがもう一度置ける |
+| T-19 | beginWrite の終わりは 2 回呼んでも 1 回しか効かない |
+| T-20 | 書き込みが 1 つでも進んでいる間 html に data-ai-consultation-writes (合計) が付き、全部終わったら消える (受け手が 2 つでも合計) |
+| T-21 | 生成の受付の通知は、完了を見張って終わったらもう一度取り直す (番兵は完了のときにも効く)。アンマウントで見張りをやめる |
+| T-22 | 受け手が聞くイベントの名前は mealPlanUpdated (既存の節を新しい hook に向ける) |
+| T-23 | モバイルの止める要素は、Web の番兵の並び + input の type="file" + html[data-ai-consultation-writes]。属性の名前はモバイルの定数と同じ |
+
+`tests/ai-consultation-receiver-placement-guard-2206.test.ts`: §7.7 の it。
+
+`apps/mobile/__tests__/components/WebViewScreen.ai-data-reload.test.tsx` に足す:
+
+| # | it |
+|---|---|
+| MT-1 | html に data-ai-consultation-writes がある間は読み込み直さず、外れたら 1 回読み込み直す (#2206 G1) |
+| MT-2 | 止める要素の一覧に html[data-ai-consultation-writes] があり、見張る属性に data-ai-consultation-writes がある |
+
+### 13.2 シナリオ ⇄ テスト
+
+| シナリオ | 単体 | 描画 (既存を直す。§17) |
+|---|---|---|
+| S-1 | T-5 | reads-2195「開いたときの読み込みの最中に AI 相談の成功が届いても、読み込み中の表示のまま止まらない」 |
+| S-2 | T-4 | reads-2195「開いたときの読み込みの最中に届いた成功の取り直しが失敗したら…」→ 書き換え (§17 の行) |
+| S-3 | T-2・T-3 | home-refetch 422 の節 (519 は書き換え) |
+| S-4 | T-16 | weekly-refetch「週を移った直後 (週の読み込みの応答待ち) に来た成功の取り直しが失敗しても…」 |
+| S-5 | T-9・T-13 | weekly-refetch「食事の完了の切り替えの応答を待つあいだに来た成功では取り直さず…」 |
+| S-6 | T-10 | reads-2195「/pantry: 応答を待つあいだに食材を削除して終えていても…」 |
+| S-7 | T-8 | reads-2195「/profile: 取り直しの応答を待つあいだに開いた編集の入力を、届いた応答で上書きしない」 |
+| S-8 | T-15 | reads-2195「取り直しの失敗では今の表示を残す」 |
+| S-9 | T-21 | weekly-refetch 1488 の節・home-refetch 637 |
+| S-10 | T-20・MT-1 | — (モバイルの描画) |
+| S-11 | T-14 | data-refetch「ページを離れたら…」(新しい hook に向ける) |
+| S-12 | — | weekly-refetch「食事の完了の切り替えの待ち (250ms) のあいだに取り直しが置いた献立を…」+ 新しい it「待ちの間に取り直しが同じ食事の完了を変えたら、新しい値から反転を決める」 |
+| S-13 | — | reads-2195 に新しい it「家族の画面: 古い応答 (family_id 無し) が後から届いても /family/setup へ移らない」 |
+| S-14 | — | reads-2195 に新しい it「/meals/[id]: 削除から献立表へ移るまでに来た成功で『見つかりませんでした』を出さない」 |
+| S-15 | T-7 | weekly-refetch 753 (月の鍵に書き換え) + 新しい it「重なる月の古い応答が後から届いても AI の足した印を消さない」 |
+| S-16 | T-7 | reads-2195 1742 の節 (そのまま) |
+| S-17 | T-9 | reads-2195 に新しい it「/profile: 保存の応答待ちに来た取り直しの応答を置かず、保存が終わったら 1 回取り直す」 |
+| S-18 | T-16 | weekly-refetch に新しい it「控えに当たった週は読み込み中の表示を出さない」「先読みの 5xx は控えに書かない」 |
+
+---
+
+## 14. 定数一覧 (新設・名前と根拠)
+
+| 名前 | 置き場 | 値 | 根拠 |
+|---|---|---|---|
+| `AI_CONSULTATION_WRITES_ATTRIBUTE` | `src/hooks/useAiConsultationReceiver.ts` と `apps/mobile/src/lib/webViewBridge.ts` (同じ文字列) | `'data-ai-consultation-writes'` | 他の `data-ai-consultation-*` の印 (`chat-root`・`unedited-inputs`) と同じ並び。モバイルが src を import できないので 2 か所に書き、テストで一致を見る |
+| `MEAL_TOGGLE_DEBOUNCE_MS` | `src/app/(main)/menus/weekly/page.tsx`・`src/hooks/useHomeData.ts` | `250` | 今の `setTimeout(…, 250)` (#322) の名前付け。触る行なので定数にする。運用で変える値ではない |
+| `MEAL_DELETE_NAVIGATE_DELAY_MS` | `src/app/(main)/meals/[id]/page.tsx` | `300` | 今の `setTimeout(() => router.push(…), 300)` の名前付け (閉じるアニメーションの待ち) |
+| 鍵の定数 (`KEY_*`・`planKey`・`mealDatesKey`・`selectedDateKey`・`mealKey`) | 各受け手の先頭 | §9 | 置き場所の名前。受け手の外から参照しない |
+| `WRITE_WINDOW_EXEMPTIONS`・`LEGACY_IDENTIFIERS`・`MIN_*` | 番兵 | §7.7 | 例外と下限 |
+
+既存の `CACHE_TTL` (週の控え 5 分)・`AI_CONSULTATION_GENERATION_WATCH_*`・`NEW_BADGE_CELEBRATION_MS` はそのまま。環境変数で上書きする値は無い (運用で変える閾値を増やさない)。
+
+---
+
+## 15. 新設一覧
+
+| 種類 | 名前 | 置き場 | 段 |
+|---|---|---|---|
+| ファイル | `src/hooks/useAiConsultationReceiver.ts` | §7.1 | A |
+| ファイル | `tests/ai-consultation-receiver-2206.test.tsx` | §13.1 | A |
+| ファイル | `tests/ai-consultation-receiver-placement-guard-2206.test.ts` | §7.7 | A |
+| 関数 | `useAiConsultationReceiver`・`aiConsultationDocumentWriteCountForTests` | hook | A |
+| 型 | `AiConsultationRead`・`AiConsultationReadOptions`・`AiConsultationReadFn`・`AiConsultationReceiver` (`AiConsultationReadMode`・`AiConsultationPlaceResult` は旧ファイルと同名。段 F で旧を消す) | hook | A |
+| 定数 | `AI_CONSULTATION_WRITES_ATTRIBUTE` (Web・モバイル) | §14 | A |
+| DOM の属性 | `data-ai-consultation-writes` (`html`) | §6.5 | A |
+| 関数 (献立表) | `applyWeekResponse`・`readDisplayedWeek`・`reloadWeekAfterCompletion`・`checkPendingRequestsFor` (`useCallback` に出す)・`monthKeysBetween`・`monthRangeOf`・`mealDatesOf`・`weekWindowOf`・`monthWindowOf` | §7.4 | E |
+| ref (献立表) | `currentPlanRef`・`fetchedMonthsRef`・`weekDatesRef`・`displayMonthRef`・`weekStartRef` | §7.4 | E |
+| 定数 | `MEAL_TOGGLE_DEBOUNCE_MS`・`MEAL_DELETE_NAVIGATE_DELAY_MS` | §14 | E・B |
+| 廃止 (段 F) | `src/hooks/useAiConsultationDataRefetch.ts`・`tests/ai-consultation-refetch-placement-guard-2201.test.ts`・`AI_CONSULTATION_REFETCH_ACTION` (family/members)・`aiRefetching` (members/[id]・transfer-accept ×2)・`aiConsultationRefetchRound`・`aiConsultationRefetchTicketRef`・`takeWeekRangeRefetchRun`・`takeMonthRangeRefetchRun`・`fetchedRangesRef`・流れ 5 本 (献立表)・流れ 3 本と `aiConsultationWrites` の export (`useHomeData`) | — | C〜F |
+
+テーブル・列・route・RLS・Storage・migration・エラーコード: 新設なし。
+
+---
+
+## 16. 段分け (6 段・6 WF・親 Issue 1 + 子 Issue 6。各段は 2 枚同時 PASS → マージ)
+
+| 段 | 内容 | 触るファイル (母集合) | 前提 |
+|---|---|---|---|
+| A 核 | 新しい hook (§7.1)・単体テスト (§13.1)・新しい番兵 (§7.7。受け手は「新しい hook を使うファイル」なので最初は 0 件。P5 は移行済みの受け手だけ・P6 の下限は 0)・モバイルの定数 2 つ (§7.2) とテスト (MT-1・MT-2・既存の 301・570 の it の並び)・Web の並びの一致のテスト (T-23 を `tests/ai-consultation-data-refetch-2195.test.tsx` の「モバイルの読み込み直しの番兵と同じ並び」の節に)・モバイルのテストの待ち方 (§7.8)・`tests/helpers/heavy-unit-test-timeout.ts` に新しい番兵を足す・coverage のテストの「受け手の hook」を新旧の両方にする (§17) | `src/hooks/useAiConsultationReceiver.ts` (新)・`tests/ai-consultation-receiver-2206.test.tsx` (新)・`tests/ai-consultation-receiver-placement-guard-2206.test.ts` (新)・`apps/mobile/src/lib/webViewBridge.ts`・`apps/mobile/__tests__/components/WebViewScreen.ai-data-reload.test.tsx`・`apps/mobile/__tests__/ai/advisor-sheet-reload-running.test.tsx`・`tests/ai-consultation-data-refetch-2195.test.tsx` (並びの it だけ)・`tests/ai-consultation-refetch-coverage-2195.test.ts`・`tests/helpers/heavy-unit-test-timeout.ts`・`tests/test-speed-ratchet.test.ts` (一覧の本数) | 本書のマージ |
+| B 単純な受け手 (13) | /badges・/comparison・/health/blood-tests・CheckupDetailClient・/health/goals・/health/graphs・/health/streaks・/meals/[id]・/pantry・/profile・/profile/nutrition-targets・ProfileReminderBanner・nutrition-target-planner (§9 の B の行・§7.3 の型) | その 13 ファイル + `tests/ai-consultation-refetch-reads-2195.test.tsx`・`tests/ai-consultation-data-refetch-2195.test.tsx` (配線の正規表現・ページの描画の節)・旧番兵の `MIN_*` と `OPTIMISTIC_WRITE_EXEMPTIONS`・新番兵の `MIN_*` | A のマージ。G5 (graphs・nutrition-targets・profile) のマージ後に枝を切る |
+| C 家族・譲渡 + /health (6) | family/dashboard・family/members・family/members/[id]・family/transfer-accept・org/transfer-accept・/health (§7.6・§9 の C の行) | その 6 ファイル + reads-2195・data-refetch-2195 (配線)・旧番兵の `SELF_HELD_RECEIVERS` を `[]`・`MIN_*` | A のマージ (B と並行可) |
+| D /home | `useHomeData.ts`・`home/page.tsx` (§7.5) | その 2 ファイル + `tests/ai-consultation-home-refetch-2195.test.tsx`・data-refetch-2195 (配線)・`src/lib/ai/consultation-refetch-coverage.ts` の `/home` の `nutritionAnalysisWithAi` の文 (引き継ぎの例外を書かない)・旧番兵の `DELEGATED_RECEIVERS` を `[]`・`OPTIMISTIC_WRITE_EXEMPTIONS` を `[]`・`MIN_*` | A のマージ。G3 のマージ後に枝を切る |
+| E 献立表 | `menus/weekly/page.tsx` (§7.4) | そのファイル + `tests/ai-consultation-weekly-refetch-2195.test.tsx`・data-refetch-2195 (配線・「献立表の pantry・人数の設定の取得は…」の it)・`src/__tests__/app/menus/weekly/family-menu-wiring.test.ts`・`src/lib/ai/consultation-refetch-coverage.ts` の `/menus/weekly` の `adjacentWeekPrefetch` の文 (控えは失敗を書かない) | A のマージ (B〜D と並行可。ProfileReminderBanner は B) |
+| F 仕上げ | 旧 hook と旧番兵の削除・P5 を全受け手と `src/hooks`・`src/lib/ai` に・`tests/ai-consultation-data-refetch-2195.test.tsx` の hook の単体の節 (290〜1096 行の 4 節と「開いたときの読み込み中に始まった取り直しは…」の節) を消す・`tests/ai-consultation-generation-watch-2195.test.tsx`・`tests/ai-chat-timeout-reload-2201.test.tsx` を新しい hook に向ける・lib 3 ファイルのコメントの hook 名・`docs/design/cross/CLAUDE.md` の行 (§18) | 上のファイル群 | B〜E の全部のマージ |
+
+- 各段は同じ worktree で段を積まず、段ごとに別の枝・別の WF・別の PR (並列分割)。A が骨組みの役。
+- 各段の受入: 型検査・lint・全件 (`--reporter=json` の実数)・新しい番兵が緑・描画のテストの変更が §17 の行に閉じている。
+- 整合ゲートは F のマージ後に 1 回 (段ごとの整合は段 F で畳む)。受入条件 (§19)。
+
+---
+
+## 17. 既存の番兵 (契約テスト・走査テスト・描画テスト) の追随表
+
+grep の語 (本書が足す・変える・消す名前): `useAiConsultationReceiver`・`useAiConsultationDataRefetch`・`useAiConsultationRefetchKey`・`useAiConsultationRefetchRun`・`useAiConsultationLoading`・`useAiConsultationPendingWrites`・`useAiConsultationFetchStream`・`AiConsultationFetchTicket`・`deferIfHeld`・`isLatest`・`beginFetch`・`refetchKey`・`refetchReadMode`・`settleLoading`・`writeInFlightRef`・`notifyWriteSettled`・`latestStarted`・`newerThanPlaced`・`AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR`・`AI_CONSULTATION_DEFERRED_RELOAD_OBSERVED_ATTRIBUTES`・`data-ai-consultation-writes`・`aiConsultationRefetchRound`・`familyLoadStream`・`AI_CONSULTATION_REFETCH_ACTION`。`tests/`・`scripts/`・`apps/mobile/__tests__/`・`src/__tests__/` を `git grep` した結果 (origin/main `e6b14faa`):
+
+| # | ファイル | 反応する語 | 直し方 | 段 |
+|---|---|---|---|---|
+| G-1 | `tests/ai-consultation-refetch-placement-guard-2201.test.ts` | 旧 hook 名・`deferIfHeld`・`isLatest`・`SELF_HELD_RECEIVERS`・`DELEGATED_RECEIVERS`・`OPTIMISTIC_WRITE_EXEMPTIONS`・`MIN_*` | 受け手が減るたびに `MIN_*` を実数に下げる (ヘッダの決まりどおり。0 でよい)。段 C で `SELF_HELD_RECEIVERS = []`、段 D で `DELEGATED_RECEIVERS = []`・`OPTIMISTIC_WRITE_EXEMPTIONS = []`。段 F で削除 | B〜F |
+| G-2 | `tests/ai-consultation-data-refetch-2195.test.tsx` 「モバイルの読み込み直しの番兵と同じ並び」 | `AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR` | 「Web の並びは、モバイルの並びから input の type="file" と `html[data-ai-consultation-writes]` を外しただけ」に書き換え、属性の名前が Web の定数と同じことを足す (T-23) | A |
+| G-3 | 同「useAiConsultationDataRefetch」「世代番号・失敗・書き込みの印」「取り直しの応答を置く時点の番兵」「useAiConsultationRefetchKey」「取得の流れ」「開いたときの読み込み中に始まった取り直しは…」の 6 節 | 旧 hook 名 | 新しい単体テスト (T-1〜T-21) が受け持つ。段 F で削除 | F |
+| G-4 | 同「ページが AI 相談の成功で取り直す」「MainLayout が…」「受け手のページのモーダルは role="dialog" を持つ」 | ページの描画 | 挙動は同じ。モックの hook 名だけ替える (移行した受け手から順に) | B〜E |
+| G-5 | 同「受け手の配線」 | 配線の正規表現 (`refetchAfterAiConsultation`・`useAiConsultationDataRefetch(refetch, { writeInFlightRef: … })`・`useAiConsultationRefetchKey()`・`fetchItems(ticket, refetchReadMode())` など 7 行 + 「献立表の pantry・人数の設定の取得は、初めの取得と取り直しで同じ関数」) | 行ごとに新しい形 (`const receiver = useAiConsultationReceiver(…)`・`receiver.read({ loadingKeys: […] }, …)`) に書き換える。献立表の it は `fetchPantry(read)` / `fetchUserSettings(read)` と `receiver.read` の形に | B・C・D・E |
+| G-6 | `tests/ai-consultation-refetch-coverage-2195.test.ts` 「受け手のページは、取り直しの hook を使う」「除外のページは、取り直しの hook を使わない」「受け手の hook は生成の見張りを使い…」「生成の見張りを使うのは受け手の hook だけ」 | 旧 hook 名・`RECEIVER_HOOK_FILE` | 段 A で hook の名前の集合を新旧の両方にし、hook のファイルを 2 つにする。/home はページから `useHomeData` をたどって hook に届くことを「名前でたどれる hook」として数える (今のたどりで届く。届かなければ段 D で直す)。段 F で旧を外す | A・D・F |
+| G-7 | `tests/ai-consultation-generation-watch-2195.test.tsx` | `useAiConsultationDataRefetch` を使う it 群 | 新しい hook に向ける (T-21 と重なる it は単体へ移してよい) | F |
+| G-8 | `tests/ai-consultation-refetch-reads-2195.test.tsx` | ページの描画 | 変える it: (a)「開いたときの読み込みの最中に届いた成功の取り直しが失敗したら、開いたときに失敗したのと同じ画面を出す」→「…失敗しても、開いたときの読み込みの応答を置く (空のまま残らない)」(S-2)。(b)「書き込みのある受け手は、書き込みと AI 相談の成功の取り直しを重ねない」の家族・譲渡の行 (取り直し中にボタンを止める前提があれば、書き込みの窓の間に通知が来ても取り直さない・終わったら 1 回、に) 。(c) 足す it: S-13・S-14・S-17。ほかは挙動が同じ | B・C |
+| G-9 | `tests/ai-consultation-home-refetch-2195.test.tsx` | `useHomeData` の描画 | 変える it: 「先の取り直しの分析が先に届いても置かず、読み込み中の印も下ろさない (あとの取り直しの分析が届いたら置いて下ろす)」→「先に届いた分析を置き、あとの分析で置き換える」。「開いたときの読み込みの役を引き継いだ取り直しは、栄養の分析を AI つきで読み、今日のアドバイスの帯を出す」→「開いたときの読み込みの途中に取り直しが来ても、開いたときの読み取りが AI つきの分析を 1 回読み、帯を出す。取り直しは AI を読まない」。「取り直しの応答を待つあいだに献立の変更の実行 (AI つきの読み込み) が追い越しても、古い取り直しは栄養の分析を読み始めず…」→「…古い取り直しの分析 (AI 無し) は点数を置かず、変更のあとのアドバイスを置く」(読み始めるが置かない)。「取り直しの読み取りが投げても、読み込み中の表示のまま止まらない」はそのまま | D |
+| G-10 | `tests/ai-consultation-weekly-refetch-2195.test.tsx` | 献立表の描画 | 変える it: 「人数の設定の読み込み中の印は、先に始めた読み込みが終わっても、あとに始めた読み込みが終わるまで下ろさない」→「人数の設定の読み込み中の印は、人数を置いたら下ろす (先に届いた応答を置き、あとの応答で置き換える)」。「AI 相談で表示中の月の別の週に献立を作ったら、月のカレンダーに印が出る (取得済みの範囲も読み直す)」→ 月の鍵で読み直す形に。足す it: S-12 の新しい形・S-15・S-18。ほかは挙動が同じ | E |
+| G-11 | `tests/ai-chat-timeout-reload-2201.test.tsx` 「Web の取り直し (useAiConsultationDataRefetch) と組み合わせる」 | `useAiConsultationDataRefetch` | 新しい hook に向ける (X1 の枝のマージ後の形で) | F |
+| G-12 | `src/__tests__/app/menus/weekly/family-menu-wiring.test.ts` | `const familyLoadStream = useAiConsultationFetchStream();` | `loadFamilyData` が `read.place(KEY_FAMILY, …)` で置く形の正規表現に | E |
+| G-13 | `apps/mobile/__tests__/components/WebViewScreen.ai-data-reload.test.tsx` 「読み込み直しを止める要素は、入力の部品 (hidden を除く) と開いているモーダル」「止めている要素の当たり外れを変えうる属性 (…) の変化も見張る」 | `AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR`・観察する属性 | 並びに `html[data-ai-consultation-writes]` と属性を足す。MT-1・MT-2 を足す | A |
+| G-14 | `apps/mobile/__tests__/components/ai-reload-blocking-web-markers.test.ts` | Web のモーダルの印 | 変えない (印の種類は増えていない) | — |
+| G-15 | `apps/mobile/__tests__/ai/advisor-sheet-reload-running.test.tsx` | 実時間の待ち | §7.8 | A |
+| G-16 | `tests/helpers/heavy-unit-test-timeout.ts`・`tests/test-speed-ratchet.test.ts` | 一覧の本数 | 新しい番兵 (構文木の走査) を一覧に足し、本数の it を直す | A |
+| G-17 | `src/lib/ai/consultation-refetch-coverage.ts` (コメントと `/home`・`/menus/weekly` の説明の文)・`src/lib/ai/consultation-data-refetch.ts`・`src/lib/ai/consultation-generation-watch.ts` (コメントの hook 名) | `useAiConsultationDataRefetch`・引き継ぎの例外 | 文を現在形に (`/home` の `nutritionAnalysisWithAi`: 「取り直しは AI を付けずに読む。開いたときの読み取りは取り直しに追い越されても AI つきで読む」) | D・E・F |
+
+## 18. 他の文書への追随表 (本書では編集しない。実装の PR か docs の PR で)
+
+| 文書 | 直すこと | 期日 |
+|---|---|---|
+| `docs/design/cross/CLAUDE.md` | 表に 1 行: `26-ai-consultation-refetch-receivers.md` / Web (とモバイル) の AI 相談の取り直しの受け手の契約と一本化 (`useAiConsultationReceiver`・`place` の中だけで置く・書き込みの窓・`html[data-ai-consultation-writes]`) / #2206 G1 | 本書のマージと同じ docs の PR |
+| `docs/design/operator/06-ai-llm.md` §13 (既存実装との関連) | 「AI 相談の成功のあとの取り直しの受け手の契約は cross/26」の 1 行 | 同上 |
+| `docs/design/cross/13b-legal-consent-mobile.md` | モバイルの WebView の読み込み直し (`buildReloadCurrentPageScript`) が Web の書き込みの印を見ることの参照 (cross/26 §6.9) を、WebView の節に 1 行 | 同上 |
+| Issue #2206 の docs-1103c の節「U1+U2 (#2205) の受け手の契約を設計書に書く」と「`/home` の `mountReadsNotRefetched` の説明に引き継いだ取り直しは AI つきで読む例外を書く」 | 前者は本書が正典 (docs-1103c は本書へのリンクにする)。後者は本書 §5.3 の 3 で例外が無くなるので書かない (段 D で文を直す) | docs-1103c のマージ前にオーケストレーターが調整 |
+| `docs/design/cross/06-perf-cache.md` | 取り直しの節は作らない (本書が正典)。参照の 1 行だけ足してよい | 任意 |
+
+## 19. 既存実装との関連・受入条件
+
+- 保持: `src/lib/ai/consultation-data-refetch.ts` (番兵の決まり・属性・セレクタ)・`src/lib/ai/consultation-generation-watch.ts`・`src/lib/ai/consultation-refetch-coverage.ts` の表・`createWeekDataCache`・`AIChatBubble.tsx` の通知・`MainLayout.tsx` の吹き出しの印・モバイルの `buildReloadCurrentPageScript` の本体・`WebViewScreen.tsx`。
+- 削除 (段 F): §15 の廃止の行。
+- 新規: §15。
+- 受入条件 (段 F のマージ後の整合ゲート): (1) 新しい番兵が全受け手 21 ファイルを数え、P1〜P5 の違反 0・P6 の下限が実数 (2) 旧 hook のファイルが無く、`git grep` で `LEGACY_IDENTIFIERS` が `src/` に 0 件 (3) 本番の /pantry・/menus/weekly・/home・/profile で、AI 相談の成功 → 取り直しが 1 回・モーダル中の成功 → 閉じて 1 回、を Network で実測 (4) モバイルの献立表で生成のモーダルを閉じた直後に AI 相談のシートが成功しても POST が送られていることを実機で確認 (5) 描画のテストの変更が §17 の行に閉じている。
+
+## 20. 未解決事項・確認したいこと
+
+| # | 事項 |
+|---|---|
+| Q-1 | 生成・写真・再生成・改善の「待ち」を窓で囲まない (§5.3 の 2)。Issue #2206 の候補の直し方 (囲む) から変えた。囲むと数分の間の AI 相談の成功が全部止まり、モバイルの読み込み直しも止まる。順序で同じ縁が消える |
+| Q-2 | 家族・譲渡の画面の「取り直し中はボタンを止める」をやめる (§5.3 の 4)。描画のテスト (G-8 (b)) の前提が変わる |
+| Q-3 | /home の AI つきの読み取り (§5.3 の 3・§6.6): 開いたときの読み取りが取り直しに追い越されても自分で AI つきを読み、取り直しは AI を読まない。G3 (「AI つきの分析を 2 回読む」の直し) と同じ面を触るので、段 D は G3 のマージ後に本書の形へ寄せる。G3 が `isLatest()` の門を別の形にしていたら、段 D で G3 の形を本書の鍵の形に置き換える |
+| Q-4 | カレンダーの印を月の鍵にする (§6.7)。読む単位が範囲 (5 週・月 ±7 日) から月 (1〜3 か月) に変わり、1 回の応答が大きくなることがある。GET /api/meal-plans は月の範囲を返せる (今の月の読み込みも 1 か月 + 14 日) |
+| Q-5 | 旧 hook と新 hook が段 A〜E の間は並ぶ (DOM の見張り・生成の見張りの購読が同じページで 2 系統になることは無い: 1 つの受け手はどちらか一方だけを使う)。段 F で消す |
+| Q-6 | docs-1103c の枝が「受け手の契約を設計書に書く」「/home の引き継ぎの例外を書く」を別の冊に書くと本書と二重になる (§18)。docs-1103c のマージ前に本書へのリンクにする |
+| Q-7 | `tests/ai-consultation-refetch-coverage-2195.test.ts` の「受け手のページは、取り直しの hook を使う」が /home をページから `useHomeData` 経由でたどれるか (今は `home/page.tsx` が直に呼ぶ)。たどれなければ段 D で「ページが使う hook から名前でたどる」に直す (G-6) |
+| Q-8 | モバイルに献立の生成の完了の見張りを足すこと・見張りの上限を時間で数えることは本書の範囲外 (Issue #2206 の候補のまま) |
