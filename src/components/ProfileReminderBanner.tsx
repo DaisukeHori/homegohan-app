@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, UserCircle, ChevronRight, Target, Heart, Scale } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { useAiConsultationRefetchKey } from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationRefetchKey, useAiConsultationRefetchRun } from "@/hooks/useAiConsultationDataRefetch";
 
 // プロフィール完成度のしきい値（これ未満だとバナー表示・これ以上なら出さない）
 const COMPLETENESS_THRESHOLD = 50;
@@ -76,9 +76,14 @@ export function ProfileReminderBanner() {
   const [missingFields, setMissingFields] = useState<MissingField[]>([]);
   // AI 相談でプロフィール (身長・体重・年齢・目標・健康の状態) が変わったら読み直す (#2195 V1)。
   // 帯を置いたページ (献立表) の取り直しはこの部品の読み取りをしないため、部品が自分で受ける
-  const aiConsultationRefetchKey = useAiConsultationRefetchKey();
+  // 番兵で止めた通知は、外れたときに 1 回取り直す (#2201 U2)
+  const { refetchKey: aiConsultationRefetchKey } = useAiConsultationRefetchKey();
+  // その回が AI 相談の成功の取り直しで走ったか (#2201 U1)
+  const takeAiConsultationRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey);
 
   useEffect(() => {
+    // 取り直しの読み取りの失敗 (ログインの確かめ・プロフィールの読み取りのエラー・通信の失敗) では、帯を消さずに今の表示を残す (#2201 U1)
+    const isRefetch = takeAiConsultationRefetchRun();
     // 前の読み取りの答えが後から届いても置かない (取り直しが続いたとき)
     let cancelled = false;
     // 帯を出さない答え。取り直しでは前の帯 (未入力の一覧) を残さず、読み込み直したときと同じく消す (#2195 V1)
@@ -96,19 +101,21 @@ export function ProfileReminderBanner() {
 
         // ブラウザでは 1 つの client を使い回す (lib/supabase/client.ts)。描画のたびに作り直さないよう、取得の中で取る
         const supabase = createClient();
-        const { data: { user } } = await supabase.auth.getUser();
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
         if (cancelled) return;
+        if (isRefetch && userError && !user) return;
         if (!user) {
           hide();
           return;
         }
 
-        const { data: profile } = await supabase
+        const { data: profile, error: profileError } = await supabase
           .from('user_profiles')
           .select('profile_completeness, height, weight, age, fitness_goals, health_conditions')
           .eq('id', user.id)
           .single();
         if (cancelled) return;
+        if (isRefetch && profileError) return;
 
         if (!profile) {
           hide();
@@ -134,7 +141,7 @@ export function ProfileReminderBanner() {
     return () => {
       cancelled = true;
     };
-  }, [aiConsultationRefetchKey]);
+  }, [aiConsultationRefetchKey, takeAiConsultationRefetchRun]);
 
   const handleDismiss = () => {
     localStorage.setItem('profile_reminder_dismissed', new Date().toISOString());

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useRef, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
 import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
-import { useAiConsultationRefetchKey } from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationRefetchKey, useAiConsultationRefetchRun } from "@/hooks/useAiConsultationDataRefetch";
 import { useAccountActionsPlacement } from "@/hooks/useAccountActionsPlacement";
 import { toUserProfile } from "@/lib/converter";
 import { assignAtPath } from "@/lib/assign-at-path";
@@ -143,15 +143,32 @@ function ProfilePageContent() {
   // AI 相談の提案の実行で好み・栄養目標などが変わったら、下の取得をもう一度走らせる (#2195 V1)。
   // 編集のモーダル (role="dialog") が出ている間は増えない (編集の途中の editForm を取得した値で上書きしないため)。
   // 競技タブのように入力の部品が 1 つも無いタブを開いていても止まるよう、モーダルそのものに role="dialog" を付けている
-  const aiConsultationRefetchKey = useAiConsultationRefetchKey();
+  // 閉じたら止めた通知のぶん 1 回増える (#2201 U2)
+  const { refetchKey: aiConsultationRefetchKey } = useAiConsultationRefetchKey();
+  // その回が AI 相談の成功の取り直しで走ったか (#2201 U1)
+  const takeAiConsultationRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey);
+  // 編集のモーダルが開いているか (取り直しの応答が届いた時点で見る。#2201 U1)。番兵は通知が来た時点にしか見ないので、
+  // 取り直しの応答を待つあいだに「編集」を押して打ち始めた値を、届いた応答の editForm で上書きしないため
+  const isEditingRef = useRef(isEditing);
+  isEditingRef.current = isEditing;
 
   useEffect(() => {
+    // 前の回の応答が後から届いても置かない (取り直しが続いたとき。#2201 U1)
+    let cancelled = false;
+    // 取り直しでは読み込み中の表示を出さず、失敗 (ログインの確かめ・プロフィールの読み取りのエラー・通信の失敗) では今の表示を残す
+    const isRefetch = takeAiConsultationRefetchRun();
     const getData = async () => {
       const supabase = createClient();
-      setIsLoading(true);
+      if (!isRefetch) setIsLoading(true);
 
       const { data: { user }, error: authError } = await supabase.auth.getUser();
       console.log('[Profile] Auth user:', user?.id, 'error:', authError?.message);
+      if (cancelled) return;
+      if (isRefetch && authError && !user) {
+        // 開いたときの読み込みの途中に取り直しが来て、そちらが失敗したときも読み込み中の表示のまま止めない
+        setIsLoading(false);
+        return;
+      }
       setUser(user);
 
       if (user) {
@@ -170,12 +187,13 @@ function ProfilePageContent() {
         if (error) {
           console.error('[Profile] Error fetching profile:', error);
         }
+        if (cancelled) return;
 
         if (!error) {
           // 答えをそのまま置く: 取り直し (AI 相談の成功のあと) でも、読み込み直したときと同じ値にする (#2195 V1)
           if (!data) {
             setProfile(null);
-            setEditForm({});
+            if (!isEditingRef.current) setEditForm({});
           }
         }
         if (data) {
@@ -193,7 +211,8 @@ function ProfilePageContent() {
             nickname: domainProfile.nickname
           });
           setProfile(domainProfile);
-          setEditForm(domainProfile);
+          // 編集のモーダルが開いていれば、打ちかけの editForm を残す (#2201 U1)
+          if (!isEditingRef.current) setEditForm(domainProfile);
         }
 
         try {
@@ -201,7 +220,7 @@ function ProfilePageContent() {
           if (badgeRes.ok) {
             const badgeData = await badgeRes.json();
             const earned = badgeData.badges.filter((b: any) => b.earned).length;
-            setBadgeCount(earned);
+            if (!cancelled) setBadgeCount(earned);
           }
         } catch (e) {
           console.error("Badge fetch error", e);
@@ -212,6 +231,7 @@ function ProfilePageContent() {
           const ntRes = await fetch('/api/nutrition/targets');
           if (ntRes.ok) {
             const ntData = await ntRes.json();
+            if (cancelled) return;
             if (ntData.targets) {
               const t = ntData.targets;
               setDbNutritionTarget({
@@ -231,10 +251,13 @@ function ProfilePageContent() {
         }
       }
 
-      setIsLoading(false);
+      if (!cancelled) setIsLoading(false);
     };
     void getData();
-  }, [aiConsultationRefetchKey]);
+    return () => {
+      cancelled = true;
+    };
+  }, [aiConsultationRefetchKey, takeAiConsultationRefetchRun]);
 
   // ?focus=incomplete パラメータを処理
   useEffect(() => {
