@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import { motion } from "framer-motion";
 import { Icons } from "@/components/icons";
 import { NutritionTargetPlanner } from "@/components/nutrition/nutrition-target-planner";
+import { useAiConsultationRefetchKey } from "@/hooks/useAiConsultationDataRefetch";
 import type { CalculationBasis, NutrientReference } from "@homegohan/core";
 
 interface NutritionTargetsData {
@@ -120,6 +121,9 @@ export default function NutritionTargetsExplainPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showRawJson, setShowRawJson] = useState(false);
+  // AI 相談の提案の実行で栄養目標・プロフィールが変わったら、下の取得をもう一度走らせる (#2195 V1)。
+  // 栄養目標の再設定 (NutritionTargetPlanner) の入力欄を変えている間は増えない (再設定の側も自分で取り直す)
+  const aiConsultationRefetchKey = useAiConsultationRefetchKey();
 
   useEffect(() => {
     const fetchData = async () => {
@@ -132,11 +136,11 @@ export default function NutritionTargetsExplainPage() {
           return;
         }
 
-        // プロフィールを取得
+        // プロフィールを取得。取り直し (AI 相談の成功のあと) でも答えをそのまま置く (読み込み直したときと同じ。#2195 V1)
         const profileRes = await supabase.from('user_profiles').select('*').eq('id', user.id).single();
 
-        if (profileRes.data) {
-          setProfile(profileRes.data as ProfileData);
+        if (!profileRes.error) {
+          setProfile((profileRes.data as ProfileData | null) ?? null);
         }
 
         // 栄養目標は /api/nutrition/targets 経由で取得（auto_calculate 時はその場で再計算される）
@@ -144,7 +148,10 @@ export default function NutritionTargetsExplainPage() {
         const targetsRes = await fetch('/api/nutrition/targets');
         if (targetsRes.ok) {
           const targetsJson = await targetsRes.json();
-          if (targetsJson.targets) {
+          if (!targetsJson.targets) {
+            // 栄養目標が無い: 前の値を残さない (取り直しのとき。#2195 V1)
+            setTargets(null);
+          } else {
             const t = targetsJson.targets;
             // API は camelCase で返すため NutritionTargetsData の snake_case にマッピング
             setTargets({
@@ -178,6 +185,8 @@ export default function NutritionTargetsExplainPage() {
             } as NutritionTargetsData);
           }
         }
+        // 前の取得の失敗の表示を残さない (取り直しで取れたら、失敗の画面から戻す。#2195 V1)
+        setError(null);
       } catch (e) {
         console.error('Error fetching data:', e);
         setError("データの取得に失敗しました");
@@ -187,7 +196,7 @@ export default function NutritionTargetsExplainPage() {
     };
 
     void fetchData();
-  }, []);
+  }, [aiConsultationRefetchKey]);
 
   if (loading) {
     return (

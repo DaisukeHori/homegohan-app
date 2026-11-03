@@ -9,6 +9,8 @@ import {
   MAX_MANUAL_CALORIES, MIN_MANUAL_CALORIES, getBmrWarning, getManualCalorieError,
 } from "@/lib/nutrition-target-validation";
 import type { CalculationBasis } from "@homegohan/core";
+import { useAiConsultationDataRefetch } from "@/hooks/useAiConsultationDataRefetch";
+import { AI_CONSULTATION_UNEDITED_INPUTS_PROPS } from "@/lib/ai/consultation-data-refetch";
 
 type PlannerMode = "default" | "onboarding";
 
@@ -47,6 +49,23 @@ interface PlannerTargets {
   saturatedFatG?: number | null;
   autoCalculate?: boolean;
   calculationBasis?: CalculationBasis | null;
+}
+
+/** 入力欄の値 (目標の決め方・目標カロリー・目標体重)。取得した値から作り、利用者が変える */
+interface PlannerForm {
+  autoCalculate: boolean;
+  manualCalories: string;
+  targetWeight: string;
+}
+
+/** 取得した値から作る入力欄の値 (読み込んだとき・取り直したときに入力欄へ置く値) */
+function plannerFormOf(profile: PlannerProfile | null | undefined, targets: PlannerTargets | null | undefined): PlannerForm {
+  return {
+    autoCalculate: Boolean(targets?.autoCalculate ?? true),
+    manualCalories: String(targets?.dailyCalories ?? ""),
+    targetWeight:
+      profile?.target_weight != null && Number.isFinite(profile.target_weight) ? String(profile.target_weight) : "",
+  };
 }
 
 function formatDate(isoDate: string): string {
@@ -95,6 +114,8 @@ export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMod
   const [manualCalories, setManualCalories] = useState("");
   const [targetWeight, setTargetWeight] = useState("");
   const [revealCount, setRevealCount] = useState(0);
+  // 最後に取得した値から作った入力欄の値。今の入力欄の値と同じ間は「何も変えていない」(AI 相談の成功で取り直してよい。#2195 V1)
+  const [fetchedForm, setFetchedForm] = useState<PlannerForm | null>(null);
 
   const fetchPlannerData = async () => {
     setLoading(true);
@@ -112,15 +133,13 @@ export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMod
       const profileJson = await profileRes.json();
       const targetJson = await targetRes.json();
 
+      const nextForm = plannerFormOf(profileJson, targetJson.targets);
       setProfile(profileJson);
       setTargets(targetJson.targets as PlannerTargets);
-      setAutoCalculate(Boolean(targetJson.targets?.autoCalculate ?? true));
-      setManualCalories(String(targetJson.targets?.dailyCalories ?? ""));
-      setTargetWeight(
-        profileJson?.target_weight != null && Number.isFinite(profileJson.target_weight)
-          ? String(profileJson.target_weight)
-          : "",
-      );
+      setFetchedForm(nextForm);
+      setAutoCalculate(nextForm.autoCalculate);
+      setManualCalories(nextForm.manualCalories);
+      setTargetWeight(nextForm.targetWeight);
     } catch (err) {
       setError(err instanceof Error ? err.message : "読み込みに失敗しました。");
     } finally {
@@ -131,6 +150,9 @@ export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMod
   useEffect(() => {
     void fetchPlannerData();
   }, []);
+  // AI 相談の提案の実行で栄養目標・目標体重が変わったら取り直す (#2195 V1)。
+  // 入力欄を変えている間は取り直さない (下の section の印を外すので、入力欄が取り直しを止める)
+  useAiConsultationDataRefetch(fetchPlannerData);
 
   useEffect(() => {
     if (!targets?.calculationBasis || mode !== "onboarding") return;
@@ -307,8 +329,16 @@ export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMod
       ]
     : [];
 
+  // 入力欄の値が取得した値のまま (何も変えていない) か。そうなら包む要素に印を付け、AI 相談の成功で取り直してよいことにする
+  // (取り直しで失う打ちかけの値が無い。#2195 V1。src/lib/ai/consultation-data-refetch.ts の AI_CONSULTATION_UNEDITED_INPUTS_ATTRIBUTE)
+  const formUnedited =
+    fetchedForm !== null &&
+    autoCalculate === fetchedForm.autoCalculate &&
+    manualCalories === fetchedForm.manualCalories &&
+    targetWeight === fetchedForm.targetWeight;
+
   return (
-    <section className="space-y-4">
+    <section className="space-y-4" {...(formUnedited ? AI_CONSULTATION_UNEDITED_INPUTS_PROPS : {})}>
       <div className="overflow-hidden rounded-[32px] border border-orange-100 bg-[radial-gradient(circle_at_top_left,_rgba(255,138,101,0.18),_transparent_36%),linear-gradient(135deg,_#fff7f2,_#ffffff_62%)] p-6 shadow-sm">
         <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>

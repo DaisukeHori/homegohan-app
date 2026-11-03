@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { Badge } from "@/types/domain";
 import { formatBadgePeriodAwards, type BadgePeriodAwards } from "@homegohan/shared";
+import { useAiConsultationRefetchKey } from "@/hooks/useAiConsultationDataRefetch";
 
 // 拡張型定義
 interface BadgeWithStatus extends Badge {
@@ -80,6 +81,10 @@ function BadgesPageInner() {
   // 直近獲得したバッジ本体を保持し、お祝い表示・カードハイライトの両方に使う
   const [newlyEarnedBadges, setNewlyEarnedBadges] = useState<BadgeWithStatus[]>([]);
   const [selectedBadge, setSelectedBadge] = useState<BadgeWithStatus | null>(null);
+  // AI 相談の提案の実行 (食事の完了・献立の生成など) でバッジの条件が変わったら、下の取得をもう一度走らせる (#2195 V1)。
+  // GET /api/badges はその場で条件を判定して新しく取ったバッジを保存するので、取り直すと取ったバッジとお祝いが出る。
+  // バッジの詳細のモーダル (role="dialog") が出ている間は増えない
+  const aiConsultationRefetchKey = useAiConsultationRefetchKey();
 
   useEffect(() => {
     const fetchBadges = async () => {
@@ -111,7 +116,7 @@ function BadgesPageInner() {
       }
     };
     fetchBadges();
-  }, []);
+  }, [aiConsultationRefetchKey]);
 
   // #210: Escape キーでバッジ詳細モーダルを閉じる
   useEffect(() => {
@@ -150,6 +155,9 @@ function BadgesPageInner() {
       <AnimatePresence>
         {newlyEarnedBadges.length > 0 && (
           <motion.div
+            // 操作を受けない知らせ (モーダルではない)。role="status" で読み上げ、AI 相談の成功での取り直しも止めない (#2195 V1)
+            role="status"
+            aria-live="polite"
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 pointer-events-none z-[60] flex items-center justify-center"
           >

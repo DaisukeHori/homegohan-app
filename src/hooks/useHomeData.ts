@@ -50,6 +50,39 @@ const getDayOfWeek = (dateStr: string): string => {
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** ホームの栄養の分析 (GET /api/ai/nutrition-analysis?period=today の結果) */
+interface NutritionAnalysisState {
+  score: number;
+  issues: string[];
+  advice: string | null;
+  suggestion: any | null;
+  comparison: Record<string, { actual: number; target: number; percentage: number; status: string }>;
+  /** 同意が無くて (または同意の状況を読めなくて) サーバーが AI のアドバイスを省いた理由 (応答の aiSkipped。T15 / #1154) */
+  aiSkipped: AiSkippedReason | null;
+  loading: boolean;
+}
+
+/** 栄養の分析が無い (まだ取っていない・今日の完了した食事が無くて分析できない) */
+const NO_NUTRITION_ANALYSIS: NutritionAnalysisState = {
+  score: 0,
+  issues: [],
+  advice: null,
+  suggestion: null,
+  comparison: {},
+  aiSkipped: null,
+  loading: false,
+};
+
+/** ホームのデータの取得 (fetchHomeData) の決まり */
+interface HomeFetchOptions {
+  /**
+   * 今日のアドバイスの帯 (suggestion) を、取得した栄養の分析のアドバイスで置き換える (無ければ消す)。読み込み直したときと同じ表示にする。
+   * 取り直し (refetch。AI 相談の成功のあと) で true。false のときは、帯に何も出ていないときだけアドバイスを置く
+   * (献立の変更の実行 (executeNutritionSuggestion) が出した「献立を変更しました」などを、後から届く分析で消さないため)
+   */
+  replaceAdviceBanner: boolean;
+}
+
 export const useHomeData = () => {
   const [user, setUser] = useState<any>(null);
   const [todayPlan, setTodayPlan] = useState<TodayMealPlan | null>(null);
@@ -106,24 +139,7 @@ export const useHomeData = () => {
   });
 
   // 栄養分析データ
-  const [nutritionAnalysis, setNutritionAnalysis] = useState<{
-    score: number;
-    issues: string[];
-    advice: string | null;
-    suggestion: any | null;
-    comparison: Record<string, { actual: number; target: number; percentage: number; status: string }>;
-    /** 同意が無くて (または同意の状況を読めなくて) サーバーが AI のアドバイスを省いた理由 (応答の aiSkipped。T15 / #1154) */
-    aiSkipped: AiSkippedReason | null;
-    loading: boolean;
-  }>({
-    score: 0,
-    issues: [],
-    advice: null,
-    suggestion: null,
-    comparison: {},
-    aiSkipped: null,
-    loading: false,
-  });
+  const [nutritionAnalysis, setNutritionAnalysis] = useState<NutritionAnalysisState>(NO_NUTRITION_ANALYSIS);
 
   // Performance OS v3: パフォーマンス分析データ
   const [performanceAnalysis, setPerformanceAnalysis] = useState<{
@@ -205,7 +221,7 @@ export const useHomeData = () => {
     return null;
   };
 
-  const fetchHomeData = async () => {
+  const fetchHomeData = async (options: HomeFetchOptions = { replaceAdviceBanner: false }) => {
     setLoading(true);
     
     // 1. ユーザー情報取得
@@ -294,7 +310,7 @@ export const useHomeData = () => {
       ]);
 
       // 栄養分析は重いので非同期で後から取得（UIはloadingなしで先に表示）
-      fetchNutritionAnalysis();
+      fetchNutritionAnalysis(options);
 
       // Performance OS v3: パフォーマンス分析も非同期で取得
       fetchPerformanceAnalysis(authUser.id);
@@ -668,7 +684,7 @@ export const useHomeData = () => {
   };
 
   // 栄養分析（AIアドバイス付き）
-  const fetchNutritionAnalysis = async () => {
+  const fetchNutritionAnalysis = async ({ replaceAdviceBanner }: HomeFetchOptions) => {
     try {
       setNutritionAnalysis(prev => ({ ...prev, loading: true }));
       
@@ -688,9 +704,19 @@ export const useHomeData = () => {
             loading: false,
           });
           
-          // AIアドバイスをsuggestに設定
-          if (data.advice && !suggestion) {
+          // AIアドバイスをsuggestに設定。取り直し (AI 相談の成功のあと) では、帯を今の分析のアドバイスに置き換える
+          // (無ければ消す)。前の分析のアドバイスを残さない (読み込み直したときと同じ。#2195 V1)
+          if (replaceAdviceBanner) {
+            setSuggestion(data.advice || null);
+          } else if (data.advice && !suggestion) {
             setSuggestion(data.advice);
+          }
+        } else if (data.success) {
+          // 今日の完了した食事が無くて分析できない (analysis: null)。前の分析 (点数・課題・アドバイス) を残さない
+          // (AI 相談で今日の食事を消した・完了を外したあとの取り直し。読み込み直したときと同じ。#2195 V1)
+          setNutritionAnalysis(NO_NUTRITION_ANALYSIS);
+          if (replaceAdviceBanner) {
+            setSuggestion(null);
           }
         } else {
           setNutritionAnalysis(prev => ({ ...prev, loading: false }));
@@ -1038,6 +1064,7 @@ export const useHomeData = () => {
     setSuggestion,
     executeNutritionSuggestion,
     submitPerformanceCheckin,
-    refetch: fetchHomeData,
+    // 取り直し (AI 相談の成功のあと)。読み込み直したときと同じ表示にする (今日のアドバイスの帯も置き換える。#2195 V1)
+    refetch: () => fetchHomeData({ replaceAdviceBanner: true }),
   };
 };

@@ -2176,6 +2176,9 @@ export default function WeeklyMenuPage() {
             byDayMeal: {}
           };
           setServingsConfig(defaultConfig);
+        } else {
+          // どちらも無い (AI 相談で家族の人数を空にした): 前の人数を残さない (取り直しのとき。読み込み直したときと同じ。#2195 V1)
+          setServingsConfig(null);
         }
         // Radar chart nutrients
         if (profile.radar_chart_nutrients && Array.isArray(profile.radar_chart_nutrients)) {
