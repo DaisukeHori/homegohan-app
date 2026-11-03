@@ -77,7 +77,7 @@ vi.mock('framer-motion', () => {
 });
 
 const { default: AIChatBubble } = await import('@/components/AIChatBubble');
-const { AI_CHAT_RELOAD_TIMEOUT_MS, fetchConversationForReload } = await import('@/lib/ai/consultation-reply-reload');
+const { AI_CHAT_RELOAD_TIMEOUT_MS } = await import('@/lib/ai/consultation-reply-reload');
 
 const SESSION_ID = 'session-1';
 const OTHER_SESSION_ID = 'session-2';
@@ -456,31 +456,40 @@ describe('#2206 G2 サーバーが失敗を知らせたら、返答を待つ文�
 });
 
 describe('#2206 G2 取り直しの GET の上限・入力欄の戻し方', () => {
-  it('fetchConversationForReload: GET が返らなければ AI_CHAT_RELOAD_TIMEOUT_MS で打ち切って null を返す', async () => {
-    vi.useFakeTimers();
-    let signal: AbortSignal | undefined;
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        (_url: string, init?: RequestInit) =>
-          new Promise<Response>((_resolve, reject) => {
-            signal = init?.signal ?? undefined;
-            signal?.addEventListener('abort', () => reject(abortError()));
-          }),
-      ),
-    );
-    let settled = false;
-    const pending = fetchConversationForReload(SESSION_ID).then((value) => {
-      settled = true;
-      return value;
+  it('取り直しの GET が返らなければ AI_CHAT_RELOAD_TIMEOUT_MS で打ち切り、開き直してもらう文を出して送信中を終える', async () => {
+    await openChat();
+    let reloadSignal: AbortSignal | null | undefined;
+    handlers[MESSAGES_KEY] = (_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        reloadSignal = init?.signal;
+        init?.signal?.addEventListener('abort', () => reject(abortError()));
+      });
+    // 取り直しの上限のタイマーだけを手で進める (React の描画の予定は setImmediate なので進めなくてよい)
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await sendFromInput(async () => {
+      throw abortError();
     });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(reloadSignal).toBeInstanceOf(AbortSignal);
 
-    await vi.advanceTimersByTimeAsync(AI_CHAT_RELOAD_TIMEOUT_MS - 1);
-    expect(settled).toBe(false);
-    expect(signal?.aborted).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(signal?.aborted).toBe(true);
-    await expect(pending).resolves.toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AI_CHAT_RELOAD_TIMEOUT_MS - 1);
+    });
+    expect(reloadSignal?.aborted).toBe(false);
+    expect(text()).not.toContain(TIMEOUT_RELOAD_FAILED_TEXT);
+    // 送信中の間は入力欄を使えない
+    expect(inputElement().disabled).toBe(true);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(reloadSignal?.aborted).toBe(true);
+    expect(text()).toContain(TIMEOUT_RELOAD_FAILED_TEXT);
+    // 送信中を終え、送った文は入力欄に戻す (送り直せる)
+    expect(inputElement().value).toBe(SENT_TEXT);
+    expect(inputElement().disabled).toBe(false);
   });
 
   it('画面の取り直しの GET は上限つき (signal を渡す)', async () => {

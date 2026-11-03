@@ -111,10 +111,10 @@ import {
   AI_CHAT_DELIVERY_UNCONFIRMED_MESSAGE,
   AI_CHAT_INTERRUPTED_RELOAD_FAILED_MESSAGE,
   AI_CHAT_NOT_DELIVERED_MESSAGE,
+  AI_CHAT_RELOAD_TIMEOUT_MS,
   AI_CHAT_REPLY_FAILED_MESSAGE,
   AI_CHAT_SEND_TIMEOUT_MS,
   AI_CHAT_TIMEOUT_RELOAD_FAILED_MESSAGE,
-  fetchConversationForReload,
   readReplyActionStateOf,
   type ReplyActionState,
 } from "@/lib/ai/consultation-reply-reload";
@@ -208,6 +208,25 @@ function loadedMessagesOf(body: unknown): LoadedMessage[] | null {
       !!m && typeof m === 'object' && typeof (m as LoadedMessage).id === 'string' &&
       typeof (m as LoadedMessage).role === 'string' && typeof (m as LoadedMessage).content === 'string',
   );
+}
+
+/**
+ * 送信の応答を受け取れなかったあとに、会話の GET を AI_CHAT_RELOAD_TIMEOUT_MS を上限に取り直す (#2201 U3・#2206 G2)。
+ * 以前は上限が無く、GET が返らないと送信中のまま入力が止まった。上限を過ぎた・通信が失敗した・2xx でない・形が読めないときは
+ * null (呼び出し側は取り直せなかったとして扱う)
+ */
+async function reloadConversationAfterIncompleteReply(sessionId: string): Promise<LoadedMessage[] | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AI_CHAT_RELOAD_TIMEOUT_MS);
+  try {
+    const res = await fetch(`/api/ai/consultation/sessions/${sessionId}/messages`, { signal: controller.signal });
+    return res.ok ? loadedMessagesOf(await res.json()) : null;
+  } catch (e) {
+    console.error('Failed to reload messages after an incomplete reply:', e);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -805,7 +824,7 @@ export default function AIChatBubble() {
    */
   const recheckDeliveredNoReplyLater = (params: { sessionId: string; sent: SentText; placeholderId: string }) =>
     scheduleRecheck(async () => {
-      const loaded = loadedMessagesOf(await fetchConversationForReload(params.sessionId));
+      const loaded = await reloadConversationAfterIncompleteReply(params.sessionId);
       if (!loaded) return;
       const reply = replyToSentMessageOf(params.sent, loaded);
       if (!reply) return;
@@ -849,7 +868,7 @@ export default function AIChatBubble() {
     const setTempAiContent = (content: string) =>
       setMessages(prev => prev.map(m => (m.id === tempAiMsgId ? { ...m, content, isStreaming: false } : m)));
 
-    const loaded = loadedMessagesOf(await fetchConversationForReload(sessionId));
+    const loaded = await reloadConversationAfterIncompleteReply(sessionId);
     if (!loaded) {
       // 会話を取り直せなかった: 時間切れ・途中で切れたときは、返答がサーバーで続いていることがあるので、頼み直しの前に開き直してもらう
       setTempAiContent(

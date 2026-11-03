@@ -129,22 +129,3 @@ export async function readReplyActionStateOf(messageId: string): Promise<ReplyAc
     return UNREADABLE_REPLY_ACTION_STATE;
   }
 }
-
-/**
- * 会話の GET を、AI_CHAT_RELOAD_TIMEOUT_MS を上限に取る (#2206 G2)。上限を過ぎた・通信が失敗した・2xx でないときは null
- * (呼び出し側は取り直せなかったとして扱う)。本文は JSON で読む
- */
-export async function fetchConversationForReload(sessionId: string): Promise<unknown> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), AI_CHAT_RELOAD_TIMEOUT_MS);
-  try {
-    const res = await fetch(`/api/ai/consultation/sessions/${sessionId}/messages`, { signal: controller.signal });
-    if (!res.ok) return null;
-    return await res.json();
-  } catch (e) {
-    console.error('Failed to reload messages after an incomplete reply:', e);
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
