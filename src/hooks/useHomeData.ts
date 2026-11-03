@@ -83,15 +83,24 @@ const NO_NUTRITION_ANALYSIS: NutritionAnalysisState = {
 /** ホームのデータの取得 (fetchHomeData) の決まり */
 interface HomeFetchOptions {
   /**
-   * 今日のアドバイスの帯 (suggestion) を、取得した栄養の分析のアドバイスで置き換える (無ければ消す)。読み込み直したときと同じ表示にする。
-   * 取り直し (refetch。AI 相談の成功のあと) で true。false (初めの読み込み・ログインの状態の変化・献立の変更の実行
-   * executeNutritionSuggestion のあと) は前と同じく、帯に何も出ていないときだけアドバイスを置く
+   * 栄養の分析を、AI のアドバイス・献立の変更の提案を付けずに読み直す (点数・課題・栄養素の比べだけ。#2201 U4)。
+   * 取り直し (refetch。AI 相談の成功のあと) で true: 成功のたびに LLM を 1 回呼び、上限に数えない枠の安全弁
+   * ('nutrition_advice_auto'。ai_unmetered_daily_caps) を 1 回使っていたのをやめる。今日のアドバイスの帯 (suggestion) と、
+   * 分析のアドバイス・提案・AI を省いた知らせ (aiSkipped) は前の値を残す (安全弁に達した aiSkipped で帯が消える道も無くなる)。
+   * ただし今日の完了した食事が無くなって分析できない (analysis: null) ときは、読み込み直したときと同じく分析と帯を消す (#2195 V1)。
+   * false (初めの読み込み・ログインの状態の変化・献立の変更の実行 executeNutritionSuggestion のあと) は、アドバイスと提案も読み、
+   * 帯に何も出ていないときだけアドバイスを置く
    */
-  replaceAdviceBanner: boolean;
+  analysisWithoutAi: boolean;
 }
 
 /** 開いたとき・ログインの状態の変化などの読み込み (読み込み中の表示を出す) か、AI 相談の成功の取り直し (出さない・失敗では今の表示を残す) か */
 type HomeFetchMode = 'mount' | 'refetch';
+
+/** 栄養の分析の API (GET /api/ai/nutrition-analysis) の今日の分析。AI のアドバイスと献立の変更の提案を付ける (開いたとき) */
+export const HOME_NUTRITION_ANALYSIS_WITH_AI_URL = '/api/ai/nutrition-analysis?period=today&includeAdvice=true&includeSuggestion=true';
+/** 栄養の分析の API の今日の分析。AI を呼ばない (取り直し。点数・課題・栄養素の比べだけ。#2201 U4) */
+export const HOME_NUTRITION_ANALYSIS_WITHOUT_AI_URL = '/api/ai/nutrition-analysis?period=today';
 
 /** 今日の献立の集計の空の値 (開いたときの値。取り直しで今日の献立が無くなったときもこれに戻す。#2195 V1) */
 const EMPTY_DAILY_SUMMARY: DailySummary = {
@@ -258,7 +267,7 @@ export const useHomeData = () => {
    * 開いていたら、今日の献立を置かない (札の deferIfHeld。切り替えが終わった・欄を閉じたあとに 1 回取り直す)
    */
   const fetchHomeData = async (
-    options: HomeFetchOptions = { replaceAdviceBanner: false },
+    options: HomeFetchOptions = { analysisWithoutAi: false },
     mode: HomeFetchMode = 'mount',
     refetchTicket?: AiConsultationFetchTicket,
   ) => {
@@ -759,15 +768,15 @@ export const useHomeData = () => {
     }
   };
 
-  // 栄養分析（AIアドバイス付き）
+  // 栄養分析（開いたときは AI のアドバイス付き。取り直しは AI を呼ばずに点数・課題だけ。#2201 U4）
   // 応答を置くのは最後に始めた読み取りだけ (nutritionAnalysisStream。#2201 U1): 応答を待つたびに、あとから別の読み取りを
   // 始めていないかを見て、始めていればこの応答 (点数・課題・アドバイス・今日のアドバイスの帯・読み込み中の印) を何も置かない
-  const fetchNutritionAnalysis = async ({ replaceAdviceBanner }: HomeFetchOptions) => {
+  const fetchNutritionAnalysis = async ({ analysisWithoutAi }: HomeFetchOptions) => {
     const order = nutritionAnalysisStream.begin();
     try {
       setNutritionAnalysis(prev => ({ ...prev, loading: true }));
       
-      const response = await fetch('/api/ai/nutrition-analysis?period=today&includeAdvice=true&includeSuggestion=true');
+      const response = await fetch(analysisWithoutAi ? HOME_NUTRITION_ANALYSIS_WITHOUT_AI_URL : HOME_NUTRITION_ANALYSIS_WITH_AI_URL);
       
       if (!order.isLatest()) return;
       if (response.ok) {
@@ -775,28 +784,37 @@ export const useHomeData = () => {
         
         if (!order.isLatest()) return;
         if (data.success && data.analysis) {
-          setNutritionAnalysis({
-            score: data.analysis.score || 0,
-            issues: data.analysis.issues || [],
-            advice: data.advice || null,
-            suggestion: data.suggestion || null,
-            comparison: data.analysis.comparison || {},
-            aiSkipped: aiSkippedReasonOf(data),
-            loading: false,
-          });
-          
-          // AIアドバイスをsuggestに設定。取り直し (AI 相談の成功のあと) では、帯を今の分析のアドバイスに置き換える
-          // (無ければ消す)。前の分析のアドバイスを残さない (読み込み直したときと同じ。#2195 V1)
-          if (replaceAdviceBanner) {
-            setSuggestion(data.advice || null);
-          } else if (data.advice && !suggestion) {
-            setSuggestion(data.advice);
+          if (analysisWithoutAi) {
+            // 取り直し: 点数・課題・栄養素の比べだけを新しくし、アドバイス・提案・aiSkipped と今日のアドバイスの帯は前の値を残す
+            // (AI を呼んでいないので、応答の advice / suggestion は空。#2201 U4)
+            setNutritionAnalysis(prev => ({
+              ...prev,
+              score: data.analysis.score || 0,
+              issues: data.analysis.issues || [],
+              comparison: data.analysis.comparison || {},
+              loading: false,
+            }));
+          } else {
+            setNutritionAnalysis({
+              score: data.analysis.score || 0,
+              issues: data.analysis.issues || [],
+              advice: data.advice || null,
+              suggestion: data.suggestion || null,
+              comparison: data.analysis.comparison || {},
+              aiSkipped: aiSkippedReasonOf(data),
+              loading: false,
+            });
+            // AIアドバイスをsuggestに設定 (帯に何も出ていないときだけ)
+            if (data.advice && !suggestion) {
+              setSuggestion(data.advice);
+            }
           }
         } else if (data.success) {
           // 今日の完了した食事が無くて分析できない (analysis: null)。前の分析 (点数・課題・アドバイス) を残さない
           // (AI 相談で今日の食事を消した・完了を外したあとの取り直し。読み込み直したときと同じ。#2195 V1)
           setNutritionAnalysis(NO_NUTRITION_ANALYSIS);
-          if (replaceAdviceBanner) {
+          if (analysisWithoutAi) {
+            // 取り直しでは帯も消す (分析する食事が無いので、読み込み直しても帯は出ない)
             setSuggestion(null);
           }
         } else {
@@ -1157,11 +1175,12 @@ export const useHomeData = () => {
     setSuggestion,
     executeNutritionSuggestion,
     submitPerformanceCheckin,
-    // 取り直し (AI 相談の成功のあと)。読み込み直したときと同じ表示にする (今日のアドバイスの帯も置き換える。#2195 V1)。
+    // 取り直し (AI 相談の成功のあと)。読み込み直したときと同じ表示にする (#2195 V1)。ただし栄養の分析は AI を呼ばずに
+    // 点数・課題だけ読み直し、今日のアドバイスの帯は残す (成功のたびの LLM の費用と安全弁の消費をやめる。#2201 U4)。
     // 読み込み中の表示を出さず、読み取りの失敗では今の表示を残す (#2201 U1)。開いたときの読み込み中に始まった取り直しは、
     // その読み込みの役を引き継ぐ (refetchReadMode)
     // 札 (useAiConsultationDataRefetch が渡す) があれば、応答を待つあいだに始めた完了の切り替えを今日の献立で上書きしない
-    refetch: (ticket?: AiConsultationFetchTicket) => fetchHomeData({ replaceAdviceBanner: true }, refetchReadMode(), ticket),
+    refetch: (ticket?: AiConsultationFetchTicket) => fetchHomeData({ analysisWithoutAi: true }, refetchReadMode(), ticket),
     // 食事の完了の切り替えの間の印 (#2201 U2。ページが useAiConsultationDataRefetch の writeInFlightRef に渡す)
     aiConsultationWrites,
   };

@@ -6,6 +6,7 @@ import { HEALTH_RECORD_DATE_INVALID_MESSAGE, HEALTH_RECORD_DATE_REQUIRED_MESSAGE
 import { RECORD_DATE_PATTERN, sanitizeHealthRecordPayload } from '@/lib/health-payloads';
 import { isCalendarDate, todayLocal } from '@/lib/date-utils';
 import { updateHealthStreak } from '@/lib/health-streaks';
+import { refreshProfileCompleteness } from '@/lib/profile-completeness';
 import { clampIntParam } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
@@ -129,10 +130,12 @@ export async function POST(request: NextRequest) {
     // #266: new Date() UTC ではなく JST の今日を使用
     const today = todayLocal();
     if (recordDate === today) {
-      await supabase
+      const profileWeightWrite = await supabase
         .from('user_profiles')
         .update({ weight: sanitizedRecordData.weight })
         .eq('id', user.id);
+      // 体重はプロフィールの完成度に数える欄なので、書いた後の行から計算し直す (失敗しても記録は成功のまま。#2201 U4)
+      if (!profileWeightWrite?.error) await refreshProfileCompleteness(supabase, user.id);
     }
   }
 

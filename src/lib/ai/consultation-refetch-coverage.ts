@@ -167,10 +167,11 @@ export const AI_CONSULTATION_EDGE_FUNCTION_ENTRY = (name: string): string => `su
 /**
  * 表を読むときに、AI 相談が書く列だけを数える表 (ここに無い表は、どの列を読んでも数える)。
  * user_profiles: AI 相談が書くのは update_profile_preferences の許す欄 (AI_PROFILE_PREFERENCE_FIELD_NAMES) と、
- * add_health_record の体重 (weight) だけ
+ * add_health_record の体重 (weight) と、その 2 つのあとに書いた後の行から計算し直すプロフィールの完成度 (profile_completeness。
+ * src/lib/profile-completeness.ts の refreshProfileCompleteness。#2201 U4) だけ
  */
 export const AI_CONSULTATION_WRITTEN_COLUMNS: Readonly<Partial<Record<AiConsultationWrittenTable, readonly string[]>>> = {
-  user_profiles: [...new Set([...AI_PROFILE_PREFERENCE_FIELD_NAMES.keys(), 'weight'])].sort(),
+  user_profiles: [...new Set([...AI_PROFILE_PREFERENCE_FIELD_NAMES.keys(), 'weight', 'profile_completeness'])].sort(),
 };
 
 /**
@@ -265,6 +266,8 @@ export const AI_CONSULTATION_REFETCH_PAGES: Readonly<Record<string, AiConsultati
   '/home': {
     kind: 'receiver',
     mountReadsNotRefetched: {
+      nutritionAnalysisWithAi:
+        '開いたときの栄養の分析 (GET /api/ai/nutrition-analysis の includeAdvice・includeSuggestion つき。LLM を 1 回呼び、上限に数えない枠の安全弁 nutrition_advice_auto を 1 回使う)。取り直しは同じ API を AI を付けずに読み (点数・課題・栄養素の比べ。AI 相談が書く献立から計算する値)、AI のアドバイスと今日のアドバイスの帯は前の値を残す (成功のたびの LLM の費用と安全弁の消費をやめる。#2201 U4)',
       orgChallenges:
         '組織のチャレンジの入り口 (OrgChallengeEntry。組織に入っている人にだけ描く) が描いたときに 1 回読む GET /api/org/my-challenges。読むのは組織のチャレンジ (organization_challenges)・自分の参加の行 (organization_challenge_participants)・参加者の数 (DB の関数 get_org_challenge_aggregates)・所属 (user_profiles の organization_id・department_id・org_role) で、どれも AI 相談が書かない表と列 (参加の進み具合 current_value は毎日の集計 update_org_challenge_progress が書く)',
     },

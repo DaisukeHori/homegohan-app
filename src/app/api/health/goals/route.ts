@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses';
 import { sanitizeHealthGoalCreate } from '@/lib/health-payloads';
+import { refreshProfileCompleteness } from '@/lib/profile-completeness';
 import { calculateGoalProgressPercentage } from '@/lib/health-goal-progress';
 import { findGoalTypeDef, isWithinGoalRange } from '@/lib/health-goal-types';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
@@ -131,10 +132,12 @@ export async function POST(request: NextRequest) {
 
   // user_profilesの目標も更新
   if (goalType === 'weight') {
-    await supabase
+    const profileTargetWrite = await supabase
       .from('user_profiles')
       .update({ target_weight: targetValue, target_date: targetDate })
       .eq('id', user.id);
+    // 目標の体重はプロフィールの完成度に数える欄なので、書いた後の行から計算し直す (失敗しても目標は成功のまま。#2201 U4)
+    if (!profileTargetWrite?.error) await refreshProfileCompleteness(supabase, user.id);
   } else if (goalType === 'body_fat') {
     await supabase
       .from('user_profiles')

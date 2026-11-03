@@ -9,6 +9,8 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character'
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
 import { PROFILE_NAME_PLACEHOLDER } from '@homegohan/shared'
 import { USER_PROFILE_POST_FIELDS, UserProfilePostBodySchema, UserProfileUpdateBodySchema } from '@/lib/profile-update-schema'
+import { syncProfileCompletenessOfRow } from '@/lib/profile-completeness'
+import type { DbUserProfile } from '@/types/database'
 
 /**
  * プロフィールAPI
@@ -127,13 +129,16 @@ export async function POST(request: Request) {
       return internalError('POST /api/profile', error, { userId: user.id, requestId, table: 'user_profiles' })
     }
 
+    // 書いた後の行から完成度を計算し直し、変わっていれば書く (POST も完成度に数える欄 (身長・体重・目標など) を書く。#2201 U4)
+    const profileRow = await syncProfileCompletenessOfWrite(supabase, user.id, data, logger)
+
     // 栄養目標に影響するフィールドが更新された場合、再計算を試みる
     const shouldRecalculate = checkShouldRecalculateNutrition(body);
     if (shouldRecalculate) {
-      await recalculateNutritionTargetsIfNeeded(supabase, user.id, data, logger);
+      await recalculateNutritionTargetsIfNeeded(supabase, user.id, profileRow, logger);
     }
 
-    return NextResponse.json(data)
+    return NextResponse.json(profileRow)
   } catch (error: unknown) {
     return internalError('POST /api/profile', error, { requestId })
   }
@@ -179,8 +184,11 @@ export async function PUT(request: Request) {
       updates.age_group = `${Math.floor(age / AGE_GROUP_DECADE_YEARS) * AGE_GROUP_DECADE_YEARS}s`;
     }
     
-    // プロファイル完成度を計算
-    updates.profile_completeness = calculateProfileCompleteness(body);
+    // プロフィールの完成度は本文ではなく書いた後の行から数える (下の syncProfileCompletenessOfRow。#2201 U4)。
+    // 本文から数えると、目標の体重だけを送る栄養の目標の画面 (NutritionTargetPlanner) の PUT で、ほかの欄が埋まっていても
+    // 完成度が目標の体重の分 (5) だけになり、ほかの経路が書いた後の行から直した値を上書きしていた。
+    // 本文の profileCompleteness (画面が GET の値を送り返したもの) は書かない (サーバーが計算する欄)
+    delete updates.profile_completeness;
     updates.last_profile_update = new Date().toISOString();
 
     const { data, error } = await supabase
@@ -197,19 +205,39 @@ export async function PUT(request: Request) {
       return internalError('PUT /api/profile', error, { userId: user.id, requestId, table: 'user_profiles' })
     }
 
+    // 書いた後の行から完成度を計算し直し、変わっていれば書く (POST・health の records / quick / goals・AI 相談と同じ。#2201 U4)
+    const profileRow = await syncProfileCompletenessOfWrite(supabase, user.id, data, logger)
+
     // 栄養目標に影響するフィールドが更新された場合、再計算を試みる
     const shouldRecalculate = checkShouldRecalculateNutrition(body);
     if (shouldRecalculate) {
-      await recalculateNutritionTargetsIfNeeded(supabase, user.id, data, logger);
+      await recalculateNutritionTargetsIfNeeded(supabase, user.id, profileRow, logger);
     }
 
-    return NextResponse.json(data)
+    return NextResponse.json(profileRow)
   } catch (error: unknown) {
     return internalError('PUT /api/profile', error, { requestId })
   }
 }
 
-type ProfileWriteResult = { data: unknown; error: { code?: string } | null };
+type ProfileWriteResult = { data: Partial<DbUserProfile> | null; error: { code?: string } | null };
+
+/**
+ * PUT・POST の書き込みが返した行 (書いた後の行) から完成度を計算し直し、変わっていれば profile_completeness を書く (#2201 U4)。
+ * 返すのは応答に返す行 (書けたときは新しい完成度を入れた行)。行が無い・計算し直しに失敗したときは、渡した行のまま返し
+ * (欄の書き込みそのものは成功として扱う)、失敗はログに残す (完成度は次の書き込みで直る)
+ */
+async function syncProfileCompletenessOfWrite(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  row: Partial<DbUserProfile> | null,
+  logger: ReturnType<typeof createLogger>,
+): Promise<Partial<DbUserProfile> | null> {
+  if (!row) return row
+  const { row: syncedRow, outcome } = await syncProfileCompletenessOfRow(supabase, userId, row)
+  if (outcome.status === 'error') logger.error('Profile completeness sync error', outcome.error)
+  return syncedRow
+}
 
 /**
  * POST の書き込み。行があれば本文の欄だけを update し、無ければ仮置きの値を補って insert する。
@@ -300,68 +328,4 @@ async function recalculateNutritionTargetsIfNeeded(
     // エラーはログのみ（プロフィール更新自体は成功させる）
     logger.error('Nutrition targets recalculation error', error);
   }
-}
-
-// プロファイル完成度を計算
-function calculateProfileCompleteness(profile: any): number {
-  const fields = [
-    // 基本情報 (20%)
-    { key: 'nickname', weight: 4 },
-    { key: 'age', weight: 4 },
-    { key: 'gender', weight: 4 },
-    { key: 'height', weight: 4 },
-    { key: 'weight', weight: 4 },
-    
-    // 目標 (15%)
-    { key: 'goalText', weight: 5 },
-    { key: 'fitnessGoals', weight: 5, isArray: true },
-    { key: 'targetWeight', weight: 5 },
-    
-    // 仕事・生活 (15%)
-    { key: 'occupation', weight: 5 },
-    { key: 'workStyle', weight: 5 },
-    { key: 'weeklyExerciseMinutes', weight: 5 },
-    
-    // 健康 (15%)
-    { key: 'healthConditions', weight: 5, isArray: true },
-    { key: 'sleepQuality', weight: 5 },
-    { key: 'stressLevel', weight: 5 },
-    
-    // 食事制限 (15%)
-    { key: 'dietFlags', weight: 5, isObject: true },
-    { key: 'dietStyle', weight: 5 },
-    { key: 'dislikedCookingMethods', weight: 5, isArray: true },
-    
-    // 調理環境 (10%)
-    { key: 'cookingExperience', weight: 5 },
-    { key: 'weekdayCookingMinutes', weight: 5 },
-    
-    // 嗜好 (10%)
-    { key: 'cuisinePreferences', weight: 5, isObject: true },
-    { key: 'favoriteIngredients', weight: 5, isArray: true },
-  ];
-  
-  let totalWeight = 0;
-  let earnedWeight = 0;
-  
-  for (const field of fields) {
-    totalWeight += field.weight;
-    const value = profile[field.key];
-    
-    if (field.isArray) {
-      if (Array.isArray(value) && value.length > 0) {
-        earnedWeight += field.weight;
-      }
-    } else if (field.isObject) {
-      if (value && typeof value === 'object' && Object.keys(value).length > 0) {
-        earnedWeight += field.weight;
-      }
-    } else {
-      if (value !== null && value !== undefined && value !== '' && value !== 'unspecified') {
-        earnedWeight += field.weight;
-      }
-    }
-  }
-  
-  return Math.round((earnedWeight / totalWeight) * 100);
 }
