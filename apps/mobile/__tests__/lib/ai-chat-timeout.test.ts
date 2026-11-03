@@ -11,10 +11,14 @@ import path from 'path';
 
 import {
   AI_ACTION_LOG_STATUS_EXECUTED,
+  INTERRUPTED_NOTICE_MESSAGE,
+  TIMEOUT_DELIVERED_NO_REPLY_MESSAGE,
+  TIMEOUT_NOTICE_MESSAGE,
   clearInputIfDelivered,
   hasExecutedActionLog,
   replyToSentMessageOf,
   restoreInputAfterTimeout,
+  timedOutSendNoticeOf,
   timeoutReloadOutcomeOf,
   type TimedOutSend,
 } from '../../src/lib/ai-chat-timeout';
@@ -160,12 +164,24 @@ describe('相談画面が共通の扱いを使う (#1049 F7-18。写さない)',
       'clearInputIfDelivered',
       'TIMEOUT_NOTICE_MESSAGE',
       'TIMEOUT_RELOAD_LABEL',
-      'TIMEOUT_DELIVERED_NO_REPLY_MESSAGE',
+      // 案内の文 (届いていた・途中で切れた・時間切れ) は timedOutSendNoticeOf で引く (#2206 G2)
+      'timedOutSendNoticeOf',
       'TIMEOUT_NOT_DELIVERED_MESSAGE',
     ]) {
       expect(source).toContain(name);
     }
     // 案内の文を画面ごとに書かない
     expect(source).not.toMatch(/応答に時間がかかっています|応答がタイムアウトしました/);
+  });
+});
+
+describe('timedOutSendNoticeOf (#2206 G2)', () => {
+  it('届いていた → 返答を待つ案内 / 途中で切れた → 途中で切れた案内 / それ以外 → 時間切れの案内', () => {
+    expect(timedOutSendNoticeOf({ ...SENT, delivered: true, interrupted: true })).toBe(TIMEOUT_DELIVERED_NO_REPLY_MESSAGE);
+    expect(timedOutSendNoticeOf({ ...SENT, delivered: false, interrupted: true })).toBe(INTERRUPTED_NOTICE_MESSAGE);
+    expect(timedOutSendNoticeOf({ ...SENT, delivered: false })).toBe(TIMEOUT_NOTICE_MESSAGE);
+    // 途中で切れた案内も、頼み直しの前に取り直してもらう (時間切れの文とは別の文)
+    expect(INTERRUPTED_NOTICE_MESSAGE).not.toBe(TIMEOUT_NOTICE_MESSAGE);
+    expect(INTERRUPTED_NOTICE_MESSAGE).toContain('最新の会話を読み込む');
   });
 });

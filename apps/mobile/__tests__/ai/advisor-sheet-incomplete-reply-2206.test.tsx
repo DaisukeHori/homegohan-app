@@ -142,9 +142,10 @@ function streamsPartialWithoutFinalData() {
 
 describe('AIAdvisorSheet — finalData が無いまま終わった (#2206 G2)', () => {
   it('本文の断片が流れていても断片だけを出さず、会話を取り直して保存された返答と前の依頼の一文を出す', async () => {
-    serverMessages = SAVED_MESSAGES;
     fetchMock.mockResolvedValueOnce(streamsPartialWithoutFinalData());
     await openSheet();
+    // 開いた後にサーバーで送った文と返答が保存された (開いたときの会話には無い)
+    serverMessages = SAVED_MESSAGES;
     await send();
 
     await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeTruthy());

@@ -305,7 +305,6 @@ describe('AIAdvisorSheet — 会話を確定させた後の読み取りの失敗
 
   it('finalData の前に読み取りが失敗したときは、失敗の Alert を出さずに会話を取り直す (#2206 G2。以前は Alert を出して送った文を消した)', async () => {
     actionLogsRead({ data: [{ status: 'executed' }], error: null });
-    serverMessages = SAVED_MESSAGES;
     fetchMock.mockResolvedValueOnce({
       ok: true,
       status: 200,
@@ -319,6 +318,8 @@ describe('AIAdvisorSheet — 会話を確定させた後の読み取りの失敗
       text: async () => '',
     });
     await openSheet();
+    // 開いた後にサーバーで送った文と返答が保存された (開いたときの会話には無い)
+    serverMessages = SAVED_MESSAGES;
     fireEvent.changeText(screen.getByTestId('ai-input'), SENT_TEXT);
     await act(async () => {
       fireEvent.press(screen.getByTestId('ai-send-btn'));
