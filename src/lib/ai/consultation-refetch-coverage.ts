@@ -163,8 +163,9 @@ export interface AiConsultationRefetchReceiver {
   /** このページが読む AI が書く表 (テストがソースから数えたものと一致する) */
   aiTables: readonly AiConsultationWrittenTable[];
   /**
-   * 開いたとき (とパネル) に読むもののうち、取り直しで読まなくてよいもの (読み取りの鍵 → 理由)。
-   * 鍵は tests/helpers/ai-refetch-read-recorder.ts の形 ('GET /api/...' / 'from:<表>' / 'rpc:<名前>')
+   * 開いたとき (とパネル) に読むもののうち、取り直しで読まなくてよいもの (名前 → 理由)。
+   * 名前ごとの今の読み取りの鍵 ('GET /api/...' / 'from:<表>' / 'rpc:<名前>') は、描画のテストが
+   * tests/helpers/ai-refetch-read-recorder.ts の expectRefetchReadsCoverMount に渡す (日付の入った鍵を表に固定で書けないため)
    */
   mountReadsNotRefetched?: Readonly<Record<string, string>>;
 }
@@ -214,6 +215,10 @@ export const AI_CONSULTATION_REFETCH_PAGES: Readonly<Record<string, AiConsultati
   '/meals/[id]': { kind: 'receiver', aiTables: ['planned_meals', 'user_daily_meals', 'user_profiles'] },
   '/menus/weekly': {
     kind: 'receiver',
+    mountReadsNotRefetched: {
+      adjacentWeekPrefetch:
+        '前後の週の献立の先読み (週の切り替えを速くする控え weekDataCache。画面には出さない)。取り直しは控えを捨てるので、その週へ移ったときに読み直す',
+    },
     aiTables: [
       'pantry_items',
       'planned_meals',

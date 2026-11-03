@@ -476,7 +476,12 @@ describe('献立表 (/menus/weekly) を描画して、AI 相談の成功の取�
     const mountReads = recorder.take();
     await notifyAiConsultationSucceeded('update_meal', { mealId: 'meal-1' });
     const refetchReads = recorder.take();
-    expectRefetchReadsCoverMount('/menus/weekly', mountReads, refetchReads);
+    // 前後の週の先読み (表の mountReadsNotRefetched の adjacentWeekPrefetch)
+    const weekRangeKey = (from: number) =>
+      fetchReadKey(`/api/meal-plans?startDate=${dateFromWeekStart(from)}&endDate=${dateFromWeekStart(from + DAYS_IN_WEEK - 1)}`) ?? '';
+    expectRefetchReadsCoverMount('/menus/weekly', mountReads, refetchReads, {
+      adjacentWeekPrefetch: [weekRangeKey(-DAYS_IN_WEEK), weekRangeKey(DAYS_IN_WEEK)],
+    });
   });
 
   it('AI が書く表の答えが空になった取り直しは、空の答えで開いたときと同じ画面 (前の値を残さない)', async () => {

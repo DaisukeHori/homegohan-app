@@ -48,17 +48,28 @@ export class ReadRecorder {
   }
 }
 
-/** 開いたとき (とパネル) に読んだもの全部を、取り直しも読む (表の mountReadsNotRefetched を除く) */
-export function expectRefetchReadsCoverMount(page: string, mountReads: ReadonlySet<string>, refetchReads: ReadonlySet<string>): void {
+/**
+ * 開いたとき (とパネル) に読んだもの全部を、取り直しも読む。
+ * 表の mountReadsNotRefetched に載せた除外 (名前 → 理由) は、テストが名前ごとに今の読み取りの鍵を渡す (excludedKeys。
+ * 日付の入った鍵などを表に固定で書けないため)。表とテストで名前が食い違えば赤
+ */
+export function expectRefetchReadsCoverMount(
+  page: string,
+  mountReads: ReadonlySet<string>,
+  refetchReads: ReadonlySet<string>,
+  excludedKeys: Readonly<Record<string, readonly string[]>> = {},
+): void {
   const entry = AI_CONSULTATION_REFETCH_PAGES[page];
   expect(entry?.kind, `${page} は AI_CONSULTATION_REFETCH_PAGES の受け手`).toBe('receiver');
-  const allowed = entry?.kind === 'receiver' ? (entry.mountReadsNotRefetched ?? {}) : {};
+  const declared = entry?.kind === 'receiver' ? Object.keys(entry.mountReadsNotRefetched ?? {}).sort() : [];
+  expect(Object.keys(excludedKeys).sort(), `${page} の mountReadsNotRefetched の名前とテストが渡す除外の名前`).toEqual(declared);
+  const allowed = new Set(Object.values(excludedKeys).flat());
   expect(mountReads.size, `${page} を開いたときに何も読んでいない (検査が空振りしている)`).toBeGreaterThan(0);
-  const missing = [...mountReads].filter((key) => !refetchReads.has(key) && !(key in allowed)).sort();
+  const missing = [...mountReads].filter((key) => !refetchReads.has(key) && !allowed.has(key)).sort();
   expect(missing, `${page} の取り直しが読まないもの`).toEqual([]);
-  // 載せた除外が今も当たっている (開いたときに読み、取り直しで読まない) こと。古い除外を残さない
-  const stale = Object.keys(allowed).filter((key) => !mountReads.has(key) || refetchReads.has(key)).sort();
-  expect(stale, `${page} の mountReadsNotRefetched の古い行`).toEqual([]);
+  // 除外が今も当たっている (開いたときに読み、取り直しで読まない) こと。古い除外を残さない
+  const stale = [...allowed].filter((key) => !mountReads.has(key) || refetchReads.has(key)).sort();
+  expect(stale, `${page} の除外の古い鍵`).toEqual([]);
 }
 
 /**
