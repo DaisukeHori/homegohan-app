@@ -19,9 +19,15 @@ export interface AiConsultationFetchTicket {
   readonly isLatest: () => boolean;
 }
 
-/** 書き込みの間を知らせる印 (ページの useRef。書き込みを始めたら true、終わったら false にする) */
+/**
+ * 書き込みの間を知らせる印 (ページの useRef。書き込みを始めたら true、終わったら false にする)。
+ * subscribeSettled を持つ印 (useAiConsultationPendingWrites) は、書き込みが全部終わったことを自分で知らせる
+ * (ページが notifyWriteSettled を呼ばなくてよい)
+ */
 export interface AiConsultationWriteInFlightRef {
   readonly current: boolean;
+  /** 書き込みが全部終わったときに呼ぶ関数を登録する。返す関数で登録をやめる */
+  readonly subscribeSettled?: (listener: () => void) => () => void;
 }
 
 export interface AiConsultationRefetchOptions {
@@ -29,6 +35,7 @@ export interface AiConsultationRefetchOptions {
    * ページの書き込み (楽観的な更新と、その送信の応答まで) の間 true の印 (#2201 U2)。
    * true の間に来た通知 (と献立の生成の完了) では取り直さず、止めた印を付ける。書き込みが終わったら
    * (印を false に戻したあと) notifyWriteSettled を呼ぶと、止めた通知のぶん 1 回だけ取り直す
+   * (subscribeSettled を持つ印は、書き込みが全部終わったときに hook が自分で取り直す)
    */
   writeInFlightRef?: AiConsultationWriteInFlightRef;
 }
@@ -92,6 +99,13 @@ export function useAiConsultationDataRefetch(
   const notifyWriteSettled = useCallback(() => {
     flushDeferredRef.current();
   }, []);
+
+  // 書き込みが全部終わったことを自分で知らせる印 (useAiConsultationPendingWrites) なら、終わったときに止めた通知を取り直す
+  const subscribeSettled = options.writeInFlightRef?.subscribeSettled;
+  useEffect(() => {
+    if (subscribeSettled === undefined) return undefined;
+    return subscribeSettled(() => flushDeferredRef.current());
+  }, [subscribeSettled]);
 
   useEffect(() => {
     const isHeld = () =>
@@ -211,15 +225,19 @@ export function useAiConsultationRefetchRun(refetchKey: number): () => boolean {
 export interface AiConsultationPendingWrites extends AiConsultationWriteInFlightRef {
   /** 書き込みを 1 つ始める。返す関数をその書き込みの終わり (finally) で 1 回呼ぶ */
   readonly begin: () => () => void;
+  readonly subscribeSettled: (listener: () => void) => () => void;
 }
 
 /**
  * 書き込みが重なりうるページ (一覧の行ごとの削除・チェックなど) の書き込みの印 (#2201 U2)。
  * useAiConsultationDataRefetch の writeInFlightRef に渡す。current は始めて終わっていない書き込みが 1 つでもある間 true
- * (真偽の ref 1 つだと、先に終わった書き込みが後の書き込みの途中で印を下ろしてしまう)
+ * (真偽の ref 1 つだと、先に終わった書き込みが後の書き込みの途中で印を下ろしてしまう)。
+ * 最後の書き込みが終わったら、登録した関数 (useAiConsultationDataRefetch が登録する) を呼ぶ: 書き込みの間に止めた通知を 1 回取り直す
+ * (ページは notifyWriteSettled を呼ばなくてよい)
  */
 export function useAiConsultationPendingWrites(): AiConsultationPendingWrites {
   const countRef = useRef(0);
+  const listenersRef = useRef(new Set<() => void>());
   return useMemo<AiConsultationPendingWrites>(
     () => ({
       get current() {
@@ -232,6 +250,14 @@ export function useAiConsultationPendingWrites(): AiConsultationPendingWrites {
           if (ended) return;
           ended = true;
           countRef.current -= 1;
+          if (countRef.current > 0) return;
+          for (const listener of [...listenersRef.current]) listener();
+        };
+      },
+      subscribeSettled: (listener) => {
+        listenersRef.current.add(listener);
+        return () => {
+          listenersRef.current.delete(listener);
         };
       },
     }),

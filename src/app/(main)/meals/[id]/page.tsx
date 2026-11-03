@@ -121,7 +121,7 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
   // 完了の切り替えの楽観的な更新から送信の応答まで (#2201 U2)。この間に来た AI 相談の成功では取り直さず、終わったら 1 回取り直す
   // (切り替えの前の値を読んだ取り直しの応答が、楽観的な表示を戻さないため)
   const pendingWrites = useAiConsultationPendingWrites();
-  const { refetchKey: aiConsultationRefetchKey, notifyWriteSettled } = useAiConsultationRefetchKey({ writeInFlightRef: pendingWrites });
+  const { refetchKey: aiConsultationRefetchKey } = useAiConsultationRefetchKey({ writeInFlightRef: pendingWrites });
   // 食事の取得の回が AI 相談の成功の取り直しで走ったか (#2201 U1)
   const takeMealRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey);
 
@@ -251,7 +251,6 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
       alert("更新に失敗しました");
     } finally {
       endWrite();
-      notifyWriteSettled();
     }
   };
 

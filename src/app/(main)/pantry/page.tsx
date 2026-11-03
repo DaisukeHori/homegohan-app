@@ -100,7 +100,7 @@ export default function PantryPage() {
 
   // AI 相談の提案の実行で冷蔵庫の食材が変わったら取り直す (#2195 V1)。手入力のフォーム・確認のモーダルが出ている間・
   // 削除の応答を待つ間は取り直さず、閉じた・終わったあとに 1 回取り直す (#2201 U2)
-  const { beginFetch, notifyWriteSettled } = useAiConsultationDataRefetch(fetchItems, { writeInFlightRef: pendingWrites });
+  const { beginFetch } = useAiConsultationDataRefetch(fetchItems, { writeInFlightRef: pendingWrites });
 
   useEffect(() => {
     void fetchItems(beginFetch());
@@ -221,7 +221,6 @@ export default function PantryPage() {
       console.error("Delete failed:", err);
     } finally {
       endWrite();
-      notifyWriteSettled();
     }
   };
 

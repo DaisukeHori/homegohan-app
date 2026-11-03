@@ -29,7 +29,7 @@ import type { DailyMeal, PlannedMeal, ShoppingListItem, MealMode, MealDishes, Di
 import type { CatalogProductSummary } from "@/types/catalog";
 import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
-import { useAiConsultationDataRefetch } from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationDataRefetch, useAiConsultationPendingWrites } from "@/hooks/useAiConsultationDataRefetch";
 import { BASE_MEAL_TYPES, EXTRA_MEAL_TYPES } from "@/lib/slot-builder";
 import { useNutritionFeedbackWatch } from "@/hooks/useNutritionFeedbackWatch";
 import { notifyMenuGenerated } from "@/lib/local-notification";
@@ -51,7 +51,11 @@ import type { FamilyMember } from "@/schemas/membership";
 import { useFamilyMenu } from "@/hooks/useFamilyMenu";
 import { FamilyMenuMealRows, FamilyMenuDayNotes } from "@/components/membership/FamilyMenuRows";
 import { familyMenuMealsOf, partitionFamilyMenuMembers, visibleOtherMemberIdsOf } from "@/lib/membership/family-menu";
-import { applyFamilyMemberNames, fetchFamilyMemberNames } from "@/lib/membership/family-member-names";
+import {
+  applyFamilyMemberNames,
+  fetchFamilyMemberNamesResult,
+  keepShownFamilyMemberNames,
+} from "@/lib/membership/family-member-names";
 import { FridgeModal } from "./_components/modals/FridgeModal";
 import { AddFridgeModal } from "./_components/modals/AddFridgeModal";
 import { ShoppingModal } from "./_components/modals/ShoppingModal";
@@ -477,6 +481,9 @@ const isDateInWeek = (date: Date, weekStartDate: Date): boolean => {
 // Main Component
 // ============================================
 
+/** 家族の情報の読み込みが、開いたとき・切り替えの適用 ('mount') か、AI 相談の成功の取り直し ('refetch'。名前の API の失敗では今の名前を残す) か */
+type FamilyLoadMode = 'mount' | 'refetch';
+
 export default function WeeklyMenuPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -511,6 +518,12 @@ export default function WeeklyMenuPage() {
   }, []);
 
   const weekStart = weekView.weekStart;
+  // 表示中の週の初日 (YYYY-MM-DD)。献立の取得の応答を置く前に、応答を待つあいだに週を移っていないかを見る (#2201 U1)
+  const weekStartKeyRef = useRef(formatLocalDate(weekStart));
+  weekStartKeyRef.current = formatLocalDate(weekStart);
+  // 表示中の週の献立の取得 (週の読み込み fetchPlan と読み直し refreshMealPlan) の世代番号 (#2201 U1)。
+  // 取得を始めるたびに 1 つ増やし、応答を置くのは最後に始めた取得だけ (古い応答が後から届いて新しい献立を上書きしない)
+  const planFetchSeqRef = useRef(0);
   const setWeekStart = useCallback((d: Date) => dispatchWeekView({ type: 'WEEK_SET_START', payload: d }), []);
   // UX2-24: 前週/次週ボタン専用。selectedDayIndex をリセットしない WEEK_NAVIGATE_* を dispatch する
   const navigateWeekPrev = useCallback((d: Date) => dispatchWeekView({ type: 'WEEK_NAVIGATE_PREV', payload: d }), []);
@@ -994,6 +1007,13 @@ export default function WeeklyMenuPage() {
 
   // Calendar meal dates - 月カレンダー用の献立存在日マップ（weekViewReducer 管理）
   const fetchedRangesRef = useRef<Set<string>>(new Set()); // 既にフェッチした範囲を記録
+  // 範囲 (rangeKey) ごとの献立のある日の取得の世代番号 (#2201 U1)。同じ範囲を読み直したとき、古い応答が後から届いて
+  // AI 相談が足した日の印を消さないよう、置くのは最後に始めた取得の応答だけ
+  const mealDatesFetchSeqRef = useRef<Map<string, number>>(new Map());
+  // 献立・買い物リストの楽観的な更新から送信の応答まで (#2201 U2)。この間に来た AI 相談の成功では取り直さず、全部終わったら
+  // 1 回取り直す (書き込みの前の値を読んだ取り直しの応答が楽観的な表示を戻さない・失敗の巻き戻しが AI の後の献立を AI の前の献立で
+  // 上書きしないため)
+  const pendingWrites = useAiConsultationPendingWrites();
   // AI 相談の成功で取り直した回数 (#2195 V1)。月のカレンダーの献立のある日の取得 (下の 2 つの useEffect) と、
   // 生成中の依頼の確認 (checkPendingRequests の useEffect) の依存に入れ、取り直すたびにもう一度走らせる。
   // 増やすのは refetchAfterAiConsultation だけで、取得済みの範囲 (fetchedRangesRef) を捨ててから増やす
@@ -1006,11 +1026,15 @@ export default function WeeklyMenuPage() {
     // 既にフェッチ済みの範囲はスキップ
     if (fetchedRangesRef.current.has(rangeKey)) return;
     fetchedRangesRef.current.add(rangeKey);
+    const seq = (mealDatesFetchSeqRef.current.get(rangeKey) ?? 0) + 1;
+    mealDatesFetchSeqRef.current.set(rangeKey, seq);
 
     try {
       const res = await fetch(`/api/meal-plans?startDate=${formatLocalDate(startDate)}&endDate=${formatLocalDate(endDate)}`);
       if (res.ok) {
         const { dailyMeals } = await res.json();
+        // この範囲をあとから読み直していたら、古い応答は置かない (#2201 U1)
+        if (mealDatesFetchSeqRef.current.get(rangeKey) !== seq) return;
         const newDates = new Set<string>();
         dailyMeals?.forEach((day: any) => {
           if (day.meals && day.meals.length > 0) {
@@ -1176,17 +1200,26 @@ export default function WeeklyMenuPage() {
   // プロフィールの名前 (user_profiles.nickname) を返し、AI 相談 (update_profile_preferences) は自分の nickname を書く (#2195 V1)。
   // メンバーの一覧の data が null なのは読み取りの失敗のときだけ (0 人なら [])。一覧の読み取りの失敗では今の一覧を残す
   // (名前の API の失敗は上のとおり display_name のまま。開いたときと同じ)
-  const loadFamilyData = useCallback(async () => {
+  // 自分のプロフィール (family_id) の読み取りの失敗では、家族から外れたとみなさずに今の切り替えを残す (#2201 U1。以前は error を見ずに
+  // 一覧を空にしていたので、取り直しの通信の失敗で家族の切り替えが消えていた)。
+  // mode が 'refetch' (AI 相談の成功の取り直し) のとき、名前の API を読めなかったら今出している名前を残す (#2201 U1)。
+  // 応答を置くのは最後に始めた読み込み (familyLoadSeqRef) だけ
+  const familyLoadSeqRef = useRef(0);
+  const loadFamilyData = useCallback(async (mode: FamilyLoadMode = 'mount') => {
+    familyLoadSeqRef.current += 1;
+    const seq = familyLoadSeqRef.current;
+    const isLatest = () => familyLoadSeqRef.current === seq;
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    if (!user || !isLatest()) return;
     setCurrentUserId(user.id);
 
-    const { data: profile } = await supabase
+    const { data: profile, error: profileError } = await supabase
       .from('user_profiles')
       .select('family_id')
       .eq('id', user.id)
       .maybeSingle();
+    if (profileError || !isLatest()) return;
     if (!profile?.family_id) {
       setFamilyId(null);
       setFamilyMembers([]);
@@ -1200,8 +1233,15 @@ export default function WeeklyMenuPage() {
       .eq('family_id', profile.family_id)
       .eq('status', 'active');
     if (members) {
-      const names = await fetchFamilyMemberNames();
-      setFamilyMembers(applyFamilyMemberNames(members as FamilyMember[], names));
+      const namesResult = await fetchFamilyMemberNamesResult();
+      if (!isLatest()) return;
+      const rows = members as FamilyMember[];
+      setFamilyMembers((shown) =>
+        applyFamilyMemberNames(
+          rows,
+          namesResult.ok ? namesResult.names : mode === 'refetch' ? keepShownFamilyMemberNames(rows, shown) : new Map(),
+        ),
+      );
     }
   }, []);
   useEffect(() => {
@@ -1239,13 +1279,19 @@ export default function WeeklyMenuPage() {
   // → aiGenerationReducer 管理 (Phase B-2 で移行済み)
 
   // Meal Plan再取得関数（キャッシュも更新）
+  // 応答を置く前に、今も同じ週を出しているか (weekStartKeyRef) と、あとから別の取得を始めていないか (planFetchSeqRef) を見る
+  // (#2201 U1。以前は閉包の weekStart で読んで確かめずに置いたので、応答を待つあいだに週を移ると前の週の献立が新しい週の見出しの
+  // 下に出うった)。週のキャッシュは週が合っていれば置く (古い世代の応答でも、その週の値として正しい)
   const refreshMealPlan = useCallback(async () => {
     const targetDate = formatLocalDate(weekStart);
     const endDate = addDaysStr(targetDate, 6);
+    planFetchSeqRef.current += 1;
+    const seq = planFetchSeqRef.current;
     try {
       const res = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
       if (res.ok) {
         const { dailyMeals, shoppingList: shoppingListData } = await res.json();
+        if (weekStartKeyRef.current !== targetDate || planFetchSeqRef.current !== seq) return;
         // 買い物リストは週に関係なく、使っている買い物リスト 1 つ (GET /api/meal-plans の shoppingList。無いときは null)。
         // この応答が正なので、空 (最後の品目が消された・リストが無い) でも、献立の無い週でもそのまま置く (#2195 V1。
         // 以前は空のときに置かず、AI 相談で最後の品目を消しても、バッジと買い物リストに消した品目が残っていた)。
@@ -2110,6 +2156,10 @@ export default function WeeklyMenuPage() {
       const targetDateStr = formatLocalDate(weekStart);
       const now = Date.now();
 
+      // この週の取得を始める (#2201 U1。読み直し refreshMealPlan と同じ世代番号。古い応答を置かない)
+      planFetchSeqRef.current += 1;
+      const seq = planFetchSeqRef.current;
+
       // キャッシュをチェック
       const cached = weekDataCache.current.get(targetDateStr);
       if (cached && (now - cached.fetchedAt < CACHE_TTL)) {
@@ -2128,10 +2178,15 @@ export default function WeeklyMenuPage() {
         const data = await fetchWeekData(weekStart);
         // キャッシュに保存
         weekDataCache.current.set(targetDateStr, { ...data, fetchedAt: Date.now() });
+        // 応答を待つあいだに週を移った: この週の献立を置かない (#2201 U1)
+        if (weekStartKeyRef.current !== targetDateStr) return;
 
-        setCurrentPlan(data.plan);
-        if (data.shoppingList.length > 0) setShoppingList(data.shoppingList);
-        if (data.plan) autoExpandNextMeal(data.plan, weekDates);
+        // あとから読み直し (refreshMealPlan) を始めていれば、そちらの応答を置く
+        if (planFetchSeqRef.current === seq) {
+          setCurrentPlan(data.plan);
+          if (data.shoppingList.length > 0) setShoppingList(data.shoppingList);
+          if (data.plan) autoExpandNextMeal(data.plan, weekDates);
+        }
 
         // DBで生成中のリクエストがあるか確認
         const pendingRes = await fetch(`/api/ai/menu/weekly/pending?date=${targetDateStr}`);
@@ -2152,9 +2207,10 @@ export default function WeeklyMenuPage() {
         prefetchAdjacentWeeks(weekStart);
       } catch (e) {
         console.error("Failed to fetch meal plan", e);
-        setCurrentPlan(null);
+        if (weekStartKeyRef.current === targetDateStr && planFetchSeqRef.current === seq) setCurrentPlan(null);
       } finally {
-        setLoading(false);
+        // 週を移っていれば、移った先の週の読み込みが読み込み中の表示を下ろす
+        if (weekStartKeyRef.current === targetDateStr) setLoading(false);
       }
     };
     fetchPlan();
@@ -2600,16 +2656,18 @@ export default function WeeklyMenuPage() {
   //     src/lib/ai/consultation-refetch-coverage.ts の '/menus/weekly' の mountReadsNotRefetched の familyMenu)
   // 別の週の献立も変わりうる (1 週間の献立の作成など) ので、週のキャッシュは捨てて、次にその週を開いたときに取り直させる。
   // モーダル・入力の部品が出ている間は取り直さない (useAiConsultationDataRefetch)
+  // 献立・買い物リストの書き込み (楽観的な更新から応答まで。pendingWrites) の間に来た成功は捨てずに、全部終わったあとに 1 回取り直す
+  // (#2201 U2)。モーダル・入力の部品で止めた成功も、閉じたあとに 1 回取り直す
   const refetchAfterAiConsultation = useCallback(() => {
     weekDataCache.current.clear();
     fetchedRangesRef.current.clear();
     void refreshMealPlan();
     void fetchPantry();
     void fetchUserSettings();
-    void loadFamilyData();
+    void loadFamilyData('refetch');
     setAiConsultationRefetchRound((round) => round + 1);
   }, [refreshMealPlan, fetchPantry, fetchUserSettings, loadFamilyData]);
-  useAiConsultationDataRefetch(refetchAfterAiConsultation);
+  useAiConsultationDataRefetch(refetchAfterAiConsultation, { writeInFlightRef: pendingWrites });
 
   // Initialize selected day to today
   useEffect(() => {
@@ -2903,6 +2961,7 @@ export default function WeeklyMenuPage() {
       if (day.id !== dayId) return day;
       return { ...day, meals: day.meals?.map(meal => meal.id === mealId ? { ...meal, ...updates } : meal) };
     });
+    const endWrite = pendingWrites.begin();
     setCurrentPlan({ ...currentPlan, days: updatedDays });
     try {
       const res = await fetch(`/api/meal-plans/meals/${mealId}`, {
@@ -2916,6 +2975,8 @@ export default function WeeklyMenuPage() {
       // 失敗したら元に戻す
       setCurrentPlan(previousPlan);
       alert('更新に失敗しました');
+    } finally {
+      endWrite();
     }
   };
   
@@ -3104,6 +3165,7 @@ export default function WeeklyMenuPage() {
 
   // チェックボックスのトグル（楽観的更新）
   const toggleShoppingItem = (id: string, currentChecked: boolean) => {
+    const endWrite = pendingWrites.begin();
     // 即座にUIを更新
     setShoppingList(useShoppingStore.getState().shoppingList.map(i => i.id === id ? { ...i, isChecked: !currentChecked } : i));
 
@@ -3119,12 +3181,15 @@ export default function WeeklyMenuPage() {
       // エラー時はロールバック
       setShoppingList(useShoppingStore.getState().shoppingList.map(i => i.id === id ? { ...i, isChecked: currentChecked } : i));
       alert('更新に失敗しました');
+    }).finally(() => {
+      endWrite();
     });
   };
 
   const deleteShoppingItem = async (id: string) => {
     // 楽観的UI更新
     const previousList = useShoppingStore.getState().shoppingList;
+    const endWrite = pendingWrites.begin();
     setShoppingList(previousList.filter(i => i.id !== id));
     try {
       const res = await fetch(`/api/shopping-list/${id}`, { method: 'DELETE' });
@@ -3132,6 +3197,8 @@ export default function WeeklyMenuPage() {
     } catch (e) {
       // 失敗したら元に戻す
       setShoppingList(previousList);
+    } finally {
+      endWrite();
     }
   };
 
@@ -3147,6 +3214,7 @@ export default function WeeklyMenuPage() {
     const itemIds = shoppingList.map(i => i.id);
 
     // 楽観的UI更新
+    const endWrite = pendingWrites.begin();
     setShoppingList([]);
     setShowConfirmDeleteAllShopping(false);
 
@@ -3161,6 +3229,8 @@ export default function WeeklyMenuPage() {
       // 失敗したら元に戻す
       setShoppingList(previousList);
       alert('削除に失敗しました');
+    } finally {
+      endWrite();
     }
   };
 
@@ -3566,6 +3636,7 @@ export default function WeeklyMenuPage() {
     const newQuantity = item.quantityVariants[nextIndex]?.display || item.quantity;
     
     // 即座にUIを更新（楽観的更新）
+    const endWrite = pendingWrites.begin();
     setShoppingList(useShoppingStore.getState().shoppingList.map(i =>
       i.id === itemId
         ? { ...i, selectedVariantIndex: nextIndex, quantity: newQuantity }
@@ -3588,6 +3659,8 @@ export default function WeeklyMenuPage() {
           : i
       ));
       alert('更新に失敗しました');
+    }).finally(() => {
+      endWrite();
     });
   };
 
@@ -4192,6 +4265,7 @@ export default function WeeklyMenuPage() {
           : m
       )
     }));
+    const endWrite = pendingWrites.begin();
     setCurrentPlan({ ...currentPlan, days: updatedDays });
     setActiveModal(null);
     setEditingMeal(null);
@@ -4210,6 +4284,8 @@ export default function WeeklyMenuPage() {
       // 失敗したら元に戻す
       setCurrentPlan(previousPlan);
       alert('更新に失敗しました');
+    } finally {
+      endWrite();
     }
   };
 

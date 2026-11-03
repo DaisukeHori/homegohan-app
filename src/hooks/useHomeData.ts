@@ -9,6 +9,7 @@ import type { Tables } from "@homegohan/shared";
 import type { Announcement, PlannedMeal, PantryItem, Badge } from "@/types/domain";
 import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import { aiSkippedReasonOf, type AiSkippedReason } from "@/lib/ai/consent-config";
+import { useAiConsultationPendingWrites } from "@/hooks/useAiConsultationDataRefetch";
 
 // 今日の献立データ
 interface TodayMealPlan {
@@ -83,6 +84,9 @@ interface HomeFetchOptions {
   replaceAdviceBanner: boolean;
 }
 
+/** 開いたとき・ログインの状態の変化などの読み込み (読み込み中の表示を出す) か、AI 相談の成功の取り直し (出さない・失敗では今の表示を残す) か */
+type HomeFetchMode = 'mount' | 'refetch';
+
 /** 今日の献立の集計の空の値 (開いたときの値。取り直しで今日の献立が無くなったときもこれに戻す。#2195 V1) */
 const EMPTY_DAILY_SUMMARY: DailySummary = {
   totalCalories: 0,
@@ -99,6 +103,11 @@ export const useHomeData = () => {
   const [loading, setLoading] = useState(true);
   // #191/#322: meal toggle debounce — pending mealId set + 250ms debounce timer
   const pendingToggleRef = useRef<Set<string>>(new Set());
+  // 食事の完了の切り替えの楽観的な更新から RPC の応答まで (#2201 U2)。ページが AI 相談の取り直しの hook に渡す: この間に来た
+  // AI 相談の成功では取り直さず、全部終わったら 1 回取り直す (切り替えの前の献立を読んだ取り直しの応答が楽観的な表示を戻さないため)
+  const aiConsultationWrites = useAiConsultationPendingWrites();
+  // ホームのデータの取得の世代番号 (#2201 U1)。取得を始めるたびに 1 つ増やし、献立と利用者の応答を置くのは最後に始めた取得だけ
+  const homeFetchSeqRef = useRef(0);
   const toggleDebounceTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const [dailySummary, setDailySummary] = useState<DailySummary>(EMPTY_DAILY_SUMMARY);
   const [announcement, setAnnouncement] = useState<Announcement | null>(null);
@@ -224,8 +233,16 @@ export const useHomeData = () => {
     return null;
   };
 
-  const fetchHomeData = async (options: HomeFetchOptions = { replaceAdviceBanner: false }) => {
-    setLoading(true);
+  /**
+   * mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込み中の表示を出さずに読み直し、読み取りの失敗
+   * (ログインの確かめ・プロフィール・今日の献立の読み取りのエラー) では今の表示を残す。
+   * 献立と利用者の応答を置くのは最後に始めた取得 (homeFetchSeqRef) だけ (開いたときの読み込みと取り直しが重なっても古い応答で上書きしない)
+   */
+  const fetchHomeData = async (options: HomeFetchOptions = { replaceAdviceBanner: false }, mode: HomeFetchMode = 'mount') => {
+    homeFetchSeqRef.current += 1;
+    const seq = homeFetchSeqRef.current;
+    const isLatest = () => homeFetchSeqRef.current === seq;
+    if (mode === 'mount') setLoading(true);
     
     // 1. ユーザー情報取得
     const authUser = await resolveAuthUser();
@@ -243,7 +260,8 @@ export const useHomeData = () => {
       
       // email local part をニックネームとして表示しない (#60)
       // resolveDisplayName に email を渡さず、nickname / user_metadata のみでフォールバック
-      setUser({
+      // 取り直しでプロフィールを読めなかったときは、今の名前を残す (#2201 U1)
+      if (isLatest() && !(mode === 'refetch' && profileError)) setUser({
         ...authUser,
         nickname: resolveDisplayName({
           nickname: profile?.nickname || null,
@@ -278,7 +296,10 @@ export const useHomeData = () => {
         .eq('user_id', authUser.id)
         .maybeSingle();
 
-      if (dailyMealData && dailyMealData.planned_meals) {
+      // あとから別の取得を始めていたら、今日の献立はそちらの応答を置く (#2201 U1)
+      if (!isLatest()) {
+        console.warn('[home] superseded fetch: skip placing today plan');
+      } else if (dailyMealData && dailyMealData.planned_meals) {
         const mealsData = dailyMealData.planned_meals;
         const meals: PlannedMeal[] = mealsData.map((m: any) => toPlannedMeal(m));
 
@@ -323,7 +344,8 @@ export const useHomeData = () => {
       // Performance OS v3: パフォーマンス分析も非同期で取得
       fetchPerformanceAnalysis(authUser.id);
 
-    } else {
+    } else if (mode === 'mount' && isLatest()) {
+      // 取り直しでログインを確かめられなかったときは、今の表示を残す (#2201 U1。ログアウトはログインの状態の変化の取得が反映する)
       setUser(null);
     }
 
@@ -340,7 +362,7 @@ export const useHomeData = () => {
       console.error("Announcement fetch error", e);
     }
 
-    setLoading(false);
+    if (isLatest()) setLoading(false);
   };
 
   // 連続自炊ストリーク（完了した自炊のみカウント）
@@ -947,6 +969,7 @@ export const useHomeData = () => {
     // debounce 待機後、再度 pending チェック（待機中に別のリクエストが始まった可能性）
     if (pendingToggleRef.current.has(mealId)) return;
     pendingToggleRef.current.add(mealId);
+    const endWrite = aiConsultationWrites.begin();
 
     const newStatus = !currentStatus;
 
@@ -1000,6 +1023,8 @@ export const useHomeData = () => {
 
     // #191: PATCH 完了後に pending を解除
     pendingToggleRef.current.delete(mealId);
+    // 書き込みの間に止めた AI 相談の成功を 1 回取り直す (#2201 U2。全部の切り替えが終わったとき)
+    endWrite();
   };
 
   // #322: debounce timer cleanup on unmount (メモリリーク防止)
@@ -1077,7 +1102,10 @@ export const useHomeData = () => {
     setSuggestion,
     executeNutritionSuggestion,
     submitPerformanceCheckin,
-    // 取り直し (AI 相談の成功のあと)。読み込み直したときと同じ表示にする (今日のアドバイスの帯も置き換える。#2195 V1)
-    refetch: () => fetchHomeData({ replaceAdviceBanner: true }),
+    // 取り直し (AI 相談の成功のあと)。読み込み直したときと同じ表示にする (今日のアドバイスの帯も置き換える。#2195 V1)。
+    // 読み込み中の表示を出さず、読み取りの失敗では今の表示を残す (#2201 U1)
+    refetch: () => fetchHomeData({ replaceAdviceBanner: true }, 'refetch'),
+    // 食事の完了の切り替えの間の印 (#2201 U2。ページが useAiConsultationDataRefetch の writeInFlightRef に渡す)
+    aiConsultationWrites,
   };
 };
