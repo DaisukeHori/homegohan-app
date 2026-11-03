@@ -37,6 +37,8 @@ export interface ScanFindings {
   apiUrls: Set<string>;
   /** `.functions.invoke(...)` を呼んでいるか */
   invokesEdgeFunction: boolean;
+  /** `.rpc('<名前>')` で呼んだ DB の関数 (名前 → 最初の場所)。名前が文字列の定数でも、定数の値に解く。解けないものは '?<式>' */
+  rpcs: Map<string, string>;
   /** たどった宣言 (ファイル#名前) */
   visited: Set<string>;
 }
@@ -60,6 +62,8 @@ const PACKAGE_ENTRIES: Readonly<Record<string, string>> = {
 };
 /** モジュールの最上位の文 (宣言でないもの。Deno.serve(...) など) を表す名前 */
 const MODULE_INIT = '<module-init>';
+/** 定数の値を解くときにたどる参照の数の上限 (import・別名の連なり。循環で止まらないための安全弁) */
+const MAX_CONSTANT_HOPS = 8;
 /** 名前空間の import (import * as x) を表す名前 */
 const NAMESPACE = '*';
 
@@ -123,7 +127,7 @@ export class SourceScanner {
   }
 
   newFindings(): ScanFindings {
-    return { tables: [], apiUrls: new Set(), invokesEdgeFunction: false, visited: new Set() };
+    return { tables: [], apiUrls: new Set(), invokesEdgeFunction: false, rpcs: new Map(), visited: new Set() };
   }
 
   /** ファイルの名前付きの宣言 (export の名前。'default' も) からたどる */
@@ -170,6 +174,35 @@ export class SourceScanner {
     this.walk(mod, node, out);
   }
 
+  /** 式が文字列のリテラルか、文字列のリテラルで初期化した定数 (import した定数も) なら、その値 */
+  stringValueOf(mod: ParsedModule, expr: ts.Expression, depth = 0): string | null {
+    if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) return expr.text;
+    if (!ts.isIdentifier(expr) || depth > MAX_CONSTANT_HOPS) return null;
+    return this.constantOf(mod, expr.text, depth + 1);
+  }
+
+  private constantOf(mod: ParsedModule, name: string, depth: number): string | null {
+    for (const node of mod.decls.get(name) ?? []) {
+      if (ts.isVariableDeclaration(node) && node.initializer) {
+        let init: ts.Expression = node.initializer;
+        while (ts.isAsExpression(init) || ts.isSatisfiesExpression(init) || ts.isParenthesizedExpression(init)) init = init.expression;
+        return this.stringValueOf(mod, init, depth);
+      }
+    }
+    const local = mod.localExports.get(name);
+    if (local !== undefined && local !== name) return this.constantOf(mod, local, depth + 1);
+    const imp = mod.imports.get(name) ?? mod.reexports.get(name);
+    const specs = imp ? [imp.spec] : mod.starReexports;
+    for (const spec of specs) {
+      const target = this.resolveSpec(mod.rel, spec);
+      const tmod = target ? this.module(target) : null;
+      if (!tmod) continue;
+      const v = this.constantOf(tmod, imp ? imp.name : name, depth + 1);
+      if (v !== null) return v;
+    }
+    return null;
+  }
+
   private scanDecl(mod: ParsedModule, name: string, out: ScanFindings): void {
     const key = `${mod.rel}#${name}`;
     if (out.visited.has(key)) return;
@@ -199,6 +232,14 @@ export class SourceScanner {
           out.tables.push({ ...access, at: `${mod.rel}:${line + 1}` });
         }
         if (isEdgeFunctionInvoke(n)) out.invokesEdgeFunction = true;
+        const rpcArg = rpcNameArgOf(n);
+        if (rpcArg) {
+          const name = this.stringValueOf(mod, rpcArg) ?? `?${rpcArg.getText(mod.sf)}`;
+          if (!out.rpcs.has(name)) {
+            const { line } = mod.sf.getLineAndCharacterOfPosition(n.getStart(mod.sf));
+            out.rpcs.set(name, `${mod.rel}:${line + 1}`);
+          }
+        }
       } else if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) {
         if (n.text.startsWith(API_URL_PREFIX)) out.apiUrls.add(normalizeUrl(n.text));
       } else if (ts.isTemplateExpression(n)) {
@@ -261,6 +302,12 @@ function tableAccessOf(call: ts.CallExpression): { table: string; kind: TableAcc
       ? 'read'
       : 'unknown';
   return { table: arg.text, kind };
+}
+
+function rpcNameArgOf(call: ts.CallExpression): ts.Expression | null {
+  const callee = call.expression;
+  if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== 'rpc') return null;
+  return call.arguments[0] ?? null;
 }
 
 function isEdgeFunctionInvoke(call: ts.CallExpression): boolean {

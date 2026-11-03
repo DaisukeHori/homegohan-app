@@ -27,14 +27,14 @@ it('report', { timeout: 120_000 }, () => {
     execOut[caseLabelOf(c) ?? '?'] = {
       tables: f.tables.map((t) => `${t.kind}:${t.table}@${t.at}`),
       invoke: f.invokesEdgeFunction,
-      visited: [...f.visited],
+      rpcs: [...f.rpcs.keys()],
     };
   }
   report.exec = execOut;
   for (const ef of ['generate-menu-v4', 'generate-menu-v5']) {
     const f = scanner.newFindings();
     scanner.scanWholeModule(`supabase/functions/${ef}/index.ts`, f);
-    report[`edge:${ef}`] = [...new Set(f.tables.map((t) => `${t.kind}:${t.table}`))].sort();
+    report[`edge:${ef}`] = [...new Set(f.tables.map((t) => `${t.kind}:${t.table}`)), ...[...f.rpcs.keys()].map((k) => `rpc:${k}`)].sort();
   }
   const apiRoot = 'src/app/api';
   const routes = listFiles(ROOT, apiRoot, (r) => r.endsWith('/route.ts'));
@@ -42,7 +42,7 @@ it('report', { timeout: 120_000 }, () => {
   const routeInfo = (r: string, method: string) => {
     const f = scanner.newFindings();
     scanner.scanExport(r, method, f);
-    return [...new Set(f.tables.filter((t) => t.kind !== 'write').map((t) => `${t.kind}:${t.table}`))].sort();
+    return [...new Set(f.tables.filter((t) => t.kind !== 'write').map((t) => `${t.kind}:${t.table}`)), ...[...f.rpcs.keys()].map((k) => `rpc:${k}`)].sort();
   };
   const pages = listFiles(ROOT, 'src/app/(main)', (r) => r.endsWith('/page.tsx'));
   const pagesOut: Record<string, unknown> = {};
@@ -58,6 +58,7 @@ it('report', { timeout: 120_000 }, () => {
     }
     pagesOut[p] = {
       direct: [...new Set(f.tables.map((t) => `${t.kind}:${t.table}@${t.at}`))].sort(),
+      rpcs: [...f.rpcs.entries()].map(([k, v]) => `${k}@${v}`),
       urls: matched,
       routeReads: getReads,
       visitedCount: f.visited.size,
