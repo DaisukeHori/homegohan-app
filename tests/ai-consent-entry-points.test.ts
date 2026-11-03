@@ -114,6 +114,8 @@ const ENTRY_POINTS: EntryPoint[] = [
     notSending: {
       fetchSessions: '相談の一覧を読むだけ',
       fetchMessages: '相談の履歴を読むだけ',
+      resolveIncompleteReply:
+        '送信の応答を受け取れなかったあとに、相談の履歴を読み直すだけ (GET。#2201 U3。送信そのものは sendMessage・おすすめの質問が確認してから送る)',
       createNewSession: '空の相談の枠を作るだけ (AI には送らない。最初のメッセージは sendMessage が確認してから送る)',
       rejectAction: 'AI の返事に付いた提案を断るだけ (DELETE。何も送らない)',
       toggleImportant: '重要マークを付け外しするだけ',
