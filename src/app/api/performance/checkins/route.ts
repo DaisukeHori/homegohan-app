@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { toPerformanceCheckin, fromPerformanceCheckin, toCheckinAverages } from '@/lib/converter'
 import { sanitizePerformanceCheckinPayload } from '@/lib/performance-payloads'
 import { internalError } from '@/lib/api/errors'
+import { refreshProfileCompleteness } from '@/lib/profile-completeness'
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character'
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
 
@@ -179,13 +180,15 @@ export async function POST(request: NextRequest) {
 
     // 体重が更新された場合、user_profiles.weightも更新
     if (typeof safeCheckinData.weight === 'number') {
-      await supabase
+      const profileWeightWrite = await supabase
         .from('user_profiles')
         .update({
           weight: safeCheckinData.weight,
           updated_at: new Date().toISOString(),
         })
         .eq('id', user.id)
+      // 体重はプロフィールの完成度に数える欄なので、書いた後の行から計算し直す (失敗してもチェックインは成功のまま。#2201 U4)
+      if (!profileWeightWrite?.error) await refreshProfileCompleteness(supabase, user.id)
     }
 
     return NextResponse.json({

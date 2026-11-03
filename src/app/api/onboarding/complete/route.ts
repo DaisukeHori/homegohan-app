@@ -6,6 +6,7 @@ import { buildNutritionCalculatorInput } from '@/lib/build-nutrition-input'
 import { getHandsonTourStatusInternal } from '@/lib/handson-tour/getStatus'
 import { internalError } from '@/lib/api/errors'
 import { API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
+import { refreshProfileCompleteness } from '@/lib/profile-completeness'
 
 /**
  * オンボーディング完了API (OB-API-02)
@@ -134,6 +135,14 @@ export async function POST() {
 
     if (updateError) {
       return internalError('POST /api/onboarding/complete', updateError, { userId: user.id })
+    }
+
+    // オンボーディングの答え (web は /api/onboarding/progress、モバイルは画面から直接 user_profiles に書く) と上の自動変換の欄
+    // (体づくりの目標・目標の文・週の運動の分) はプロフィールの完成度に数える欄なので、書いた後の行から計算し直す
+    // (失敗してもオンボーディングの完了は成功のまま。完成度は次の書き込みで直る。#2201 U4)
+    const completenessRefresh = await refreshProfileCompleteness(supabase, user.id)
+    if (completenessRefresh.status === 'error') {
+      console.error('Profile completeness refresh error:', completenessRefresh.error)
     }
 
     // 栄養目標を計算・保存（共通モジュール使用）

@@ -2,7 +2,8 @@
  * プロフィールの完成度 (user_profiles.profile_completeness。0〜100 の整数) の計算と、書いた後の行からの計算し直し (#2201 U4)。
  *
  * 計算は PUT /api/profile (src/app/api/profile/route.ts) が本文 (画面の編集の値。toUserProfile の形の camelCase) から行っていた
- * calculateProfileCompleteness をそのまま移したもの (欄・重み・判定は変えない)。
+ * calculateProfileCompleteness をそのまま移したもの (欄・重み・判定は変えない)。今は PUT も本文ではなく書いた後の行から数える
+ * (目標の体重だけを送る栄養の目標の画面の PUT で、ほかの欄が埋まっていても完成度が 5 になっていたため)。
  *
  * 問題 (直す前): profile_completeness を書くのは PUT /api/profile だけで、AI 相談の update_profile_preferences (身長・体重・年齢・
  * 体づくりの目標・健康の状態などを書く) と add_health_record (今日の体重を user_profiles.weight にも写す) は計算し直さなかった。
@@ -90,8 +91,37 @@ export type ProfileCompletenessRefreshOutcome =
   | { status: 'not_found' }
   | { status: 'error'; error: unknown };
 
+/** syncProfileCompletenessOfRow の結果 (row は応答に返す行。書けたときは新しい完成度を入れた行、書けなかったときは渡した行のまま) */
+export type ProfileCompletenessRowSync<Row extends Partial<DbUserProfile>> = {
+  row: Row;
+  outcome: Exclude<ProfileCompletenessRefreshOutcome, { status: 'not_found' }>;
+};
+
 /**
- * user_profiles の今の行 (書いた後の行) から完成度を計算し直し、変わっていれば profile_completeness を書く (#2201 U4)。
+ * 書いた後の行 (update / insert の .select().single() が返した行) から完成度を計算し、行の profile_completeness と違えば書く (#2201 U4)。
+ * PUT /api/profile・POST /api/profile のように書き込みが行を返す経路は、読み直さずにこれを使う
+ * (本文から数えると、目標の体重だけの PUT のような部分の本文で、ほかの欄が埋まっていても完成度が本文の欄の分だけになる)。
+ * 例外は投げず、結果を返す (呼び出し側は、欄の書き込みそのものは成功として扱い、失敗はログに残すだけ)
+ */
+export async function syncProfileCompletenessOfRow<Row extends Partial<DbUserProfile>>(
+  supabase: Pick<SupabaseClient, 'from'>,
+  userId: string,
+  row: Row,
+): Promise<ProfileCompletenessRowSync<Row>> {
+  try {
+    const completeness = profileCompletenessOfRow(row);
+    if (row.profile_completeness === completeness) return { row, outcome: { status: 'unchanged', completeness } };
+    const { error: writeError } = await supabase.from('user_profiles').update({ profile_completeness: completeness }).eq('id', userId);
+    if (writeError) return { row, outcome: { status: 'error', error: writeError } };
+    return { row: { ...row, profile_completeness: completeness }, outcome: { status: 'updated', completeness } };
+  } catch (error) {
+    return { row, outcome: { status: 'error', error } };
+  }
+}
+
+/**
+ * user_profiles の今の行 (書いた後の行) を読み、完成度を計算し直して、変わっていれば profile_completeness を書く (#2201 U4)。
+ * 書き込みが行を返さない経路 (欄だけを update する health の records / quick / goals・AI 相談・オンボーディングなど) が使う。
  * 例外は投げず、結果を返す (呼び出し側は、欄の書き込みそのものは成功として扱い、失敗はログに残すだけ)。
  * supabase は利用者のセッションのクライアント (本人の行だけの RLS のもとで読み書きする)
  */
@@ -104,11 +134,8 @@ export async function refreshProfileCompleteness(
     if (readError) return { status: 'error', error: readError };
     if (!row) return { status: 'not_found' };
     const profileRow: Partial<DbUserProfile> = row;
-    const completeness = profileCompletenessOfRow(profileRow);
-    if (profileRow.profile_completeness === completeness) return { status: 'unchanged', completeness };
-    const { error: writeError } = await supabase.from('user_profiles').update({ profile_completeness: completeness }).eq('id', userId);
-    if (writeError) return { status: 'error', error: writeError };
-    return { status: 'updated', completeness };
+    const { outcome } = await syncProfileCompletenessOfRow(supabase, userId, profileRow);
+    return outcome;
   } catch (error) {
     return { status: 'error', error };
   }
