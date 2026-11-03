@@ -11,7 +11,7 @@
 export const FREEZE_TYPE_LABEL = '凍結の種類';
 /** 期間つきの凍結 (ban_type = temporary・審査の delete_and_temp_ban) */
 export const TEMPORARY_FREEZE_LABEL = '一時凍結';
-/** 期間の無い凍結 (ban_type = permanent・審査の delete_and_perm_ban)。利用者へのメールの「無期限の凍結」と同じ語 */
+/** 期間の無い凍結 (ban_type = permanent・審査の delete_and_perm_ban)。利用者へのメールの「無期限の凍結」と同じ意味の語 */
 export const PERMANENT_FREEZE_LABEL = '無期限凍結';
 /** 一時凍結の日数の欄名 (凍結のフォームの duration_days・審査のフォームの ban_duration_days) */
 export const FREEZE_DURATION_DAYS_LABEL = '凍結の期間 (日数)';

@@ -1,6 +1,6 @@
 /**
  * /admin/users/{id}/freeze — 凍結フォーム
- * operator/03-ui-spec.md §6 BAN モーダル相当
+ * operator/03-ui-spec.md §6 の「凍結の画面」(モーダルでなく専用のページ)
  *
  * DB 直叩きを廃止し GET /api/admin/users/{id} 経由に統一。
  *
