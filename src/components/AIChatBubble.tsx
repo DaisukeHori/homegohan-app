@@ -150,7 +150,7 @@ function actionOutcomeChatMessage(outcome: ConsultationActionOutcome): Message {
 
 /**
  * 会話の続きの POST (SSE) の最後の finalData のうち、自動実行の結果を出すのに使う部分。
- * actionResult は messages route の executeAndFinalizeAction の戻り値 ({ success, result }。種類は入っていない)
+ * actionResult は messages route の executeAndFinalizeAction の戻り値 ({ success, result, actionType })
  */
 interface AutoActionFinalData {
   actionResult?: { success?: unknown; result?: unknown; actionType?: unknown } | null;
@@ -554,7 +554,7 @@ export default function AIChatBubble() {
   const showAutoActionOutcome = (finalData: AutoActionFinalData) => {
     const actionResult = finalData.actionResult;
     if (!actionResult) return;
-    // actionResult に種類は入っていないので、提案の種類から名前を引く
+    // 種類は actionResult.actionType を先に読み、無ければ提案の種類から引く
     const actionType = actionResult.actionType ?? finalData.aiMessage?.proposedActions?.type;
     const outcome = consultationActionOutcomeOf({
       success: actionResult.success,
