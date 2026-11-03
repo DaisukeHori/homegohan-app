@@ -13,7 +13,9 @@
  *      各ページの読む AI が書く表は表の aiTables と一致し、受け手は useAiConsultationDataRefetch / useAiConsultationRefetchKey を使う。
  *      受け手は、開いたとき・パネルが読むもの全部を取り直すことを描画のテスト (tests/helpers/ai-refetch-read-recorder.ts の
  *      expectRefetchReadsCoverMount) で確かめ、空の応答の取り直しが空の応答で開いたときと同じこと (expectEmptyRefetchMatchesFreshMount) も確かめる。
- *      その 2 つを呼ぶテストが受け手ごとにあることをここで数える
+ *      その 2 つを呼ぶテストが受け手ごとにあることをここで数える。そのテストが、AI が書く表を読む部品を vi.mock で消していないこと・
+ *      ほかの読み取りのある部品を消すなら AI_CONSULTATION_RENDER_TEST_MOCKED_READERS に理由があること・ログアウトの getUser のモックで
+ *      利用者で絞った読み取りを隠していないことも確かめる (#2195 V1 の R5: 献立表のプロフィールの帯を消すモックとログアウトが、帯の読み取りの抜けを隠した)
  *
  * 読み取りのしかたと限界は tests/helpers/ai-consultation-refetch-scan.ts の先頭。ほかに:
  *   - ページが読む表 = ページからたどれる宣言の Supabase の読み取り + ページからたどれる '/api/' の URL に当たる route の GET が
@@ -43,6 +45,7 @@ import {
   AI_CONSULTATION_EDGE_FUNCTION_ENTRY,
   AI_CONSULTATION_INVOKED_EDGE_FUNCTIONS,
   AI_CONSULTATION_REFETCH_PAGES,
+  AI_CONSULTATION_RENDER_TEST_MOCKED_READERS,
   AI_CONSULTATION_RPC_WRITTEN_TABLES,
   AI_CONSULTATION_UNRESOLVED_RPC_CALL_FILES,
   AI_CONSULTATION_WRITTEN_COLUMNS,
@@ -70,6 +73,14 @@ const RECEIVER_HOOKS = ['useAiConsultationDataRefetch', 'useAiConsultationRefetc
 const RENDER_CHECKS = ['expectRefetchReadsCoverMount', 'expectEmptyRefetchMatchesFreshMount'] as const;
 /** 描画のテストを探す場所 */
 const TEST_ROOT = 'tests';
+/** 描画のテストが読み取りを記録するために置き換える Supabase の client (消すモックではない) */
+const RECORDED_SUPABASE_CLIENT = 'src/lib/supabase/client.ts';
+/** 描画のテストの vi.mock の先 (文字列のリテラル) */
+const VI_MOCK_PATTERN = /\bvi\.mock\(\s*['"]([^'"]+)['"]/g;
+/** ログアウトの getUser のモック (利用者で絞った読み取りが開いたときの読み取りに出なくなる) */
+const LOGGED_OUT_GET_USER_PATTERN = /getUser\s*:\s*async\s*\(\s*\)\s*=>\s*\(\s*\{\s*data\s*:\s*\{\s*user\s*:\s*null\b/;
+/** 読み取りのある部品として見分けられることを確かめる見本 (献立表のプロフィールの帯。#2195 V1 の R5) */
+const KNOWN_AI_READING_COMPONENT = 'src/components/ProfileReminderBanner.tsx';
 const SELF = 'tests/ai-consultation-refetch-coverage-2195.test.ts';
 /** どの列を読むか数えられない読み取りの印 */
 const ALL_COLUMNS = '*';
@@ -342,6 +353,38 @@ function testFiles(): { rel: string; source: string }[] {
   }));
 }
 
+/** 受け手の 2 つの判定 (RENDER_CHECKS) を両方呼ぶテストのファイル */
+function renderCheckFiles(): { rel: string; source: string }[] {
+  return testFiles().filter((file) => RENDER_CHECKS.every((check) => new RegExp(`\\b${check}\\(`).test(file.source)));
+}
+
+/** モジュールの全部からたどった読み取り (表の読み取り・'/api/' の URL・DB の関数・Edge Function)。無ければ空 */
+function moduleReadsOf(rel: string): string[] {
+  const findings = scanner.newFindings();
+  scanner.scanWholeModule(rel, findings);
+  return [
+    ...findings.tables.filter((t) => t.kind !== 'write').map((t) => `from:${t.table} (${t.at})`),
+    ...[...findings.apiUrls].map((url) => url),
+    ...[...findings.rpcs.keys()].map((name) => `rpc:${name}`),
+    ...(findings.invokesEdgeFunction ? ['functions.invoke'] : []),
+  ];
+}
+
+/** 描画のテストの vi.mock の先のうち、リポジトリの中のもの (テストのファイル → 指定 → 解いたパス) */
+function mockedRepoModules(): { file: string; spec: string; target: string }[] {
+  const out: { file: string; spec: string; target: string }[] = [];
+  for (const file of renderCheckFiles()) {
+    VI_MOCK_PATTERN.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = VI_MOCK_PATTERN.exec(file.source)) !== null) {
+      const target = scanner.resolveSpec(file.rel, match[1]);
+      if (target === null || target === RECORDED_SUPABASE_CLIENT) continue;
+      out.push({ file: file.rel, spec: match[1], target });
+    }
+  }
+  return out;
+}
+
 describe('2. AI が書く表を読むページは、受け手か除外の表にある (#2195 V1)', () => {
   it('ページを読めている (下限)', () => {
     expect(PAGES.length).toBeGreaterThanOrEqual(MIN_PAGES);
@@ -406,7 +449,7 @@ describe('2. AI が書く表を読むページは、受け手か除外の表に�
 
   it('受け手ごとに、開いたとき・パネルの読み取りの取り直しと、空の応答の取り直しを描画で確かめるテストがある', () => {
     // 2 つの判定を呼ぶテストのファイルのうち、受け手のキーを判定に渡すページの表の page: '<キー>' か、判定の引数のリテラルで持つもの
-    const checking = testFiles().filter((file) => RENDER_CHECKS.every((check) => new RegExp(`\\b${check}\\(`).test(file.source)));
+    const checking = renderCheckFiles();
     const missing = Object.entries(AI_CONSULTATION_REFETCH_PAGES)
       .filter(([, entry]) => entry.kind === 'receiver')
       .filter(([key]) => {
@@ -417,5 +460,36 @@ describe('2. AI が書く表を読むページは、受け手か除外の表に�
       .map(([key]) => key);
     expect(checking.length).toBeGreaterThan(0);
     expect(missing).toEqual([]);
+  });
+
+  it('受け手の描画のテストは、読み取りのある部品を消すモックとログアウトで、開いたときの読み取りを隠さない', () => {
+    // 見分けの空振りを防ぐ: AI が書く表を読む部品の見本は、読み取りがあり、AI が書く表を読むと数える
+    expect(moduleReadsOf(KNOWN_AI_READING_COMPONENT).length).toBeGreaterThan(0);
+    expect([...pageReads(KNOWN_AI_READING_COMPONENT).tables.keys()]).toContain('user_profiles');
+
+    const checking = renderCheckFiles();
+    expect(checking.length).toBeGreaterThan(0);
+    const problems: string[] = [];
+    for (const file of checking) {
+      if (LOGGED_OUT_GET_USER_PATTERN.test(file.source)) problems.push(`${file.rel}: ログアウトの getUser のモック (利用者で絞った読み取りを隠す)`);
+    }
+    const mocked = mockedRepoModules();
+    for (const { file, spec, target } of mocked) {
+      const reads = moduleReadsOf(target);
+      if (reads.length === 0) continue;
+      const aiTables = [...pageReads(target).tables.keys()];
+      if (aiTables.length > 0) {
+        problems.push(`${file}: vi.mock('${spec}') が AI が書く表を読む部品を消す (${aiTables.join(', ')})。消さずに描く`);
+      } else if (!(target in AI_CONSULTATION_RENDER_TEST_MOCKED_READERS)) {
+        problems.push(`${file}: vi.mock('${spec}') が読み取りのある部品を消す (${reads.join(', ')})。AI_CONSULTATION_RENDER_TEST_MOCKED_READERS に理由が無い`);
+      }
+    }
+    // 古い行を残さない: 表の部品は、今も描画のテストが消していて、今も読み取りがあり、理由が空でない
+    for (const [target, reason] of Object.entries(AI_CONSULTATION_RENDER_TEST_MOCKED_READERS)) {
+      if (!mocked.some((m) => m.target === target)) problems.push(`${target}: 描画のテストが消していないのに AI_CONSULTATION_RENDER_TEST_MOCKED_READERS にある`);
+      else if (moduleReadsOf(target).length === 0) problems.push(`${target}: 読み取りが無いのに AI_CONSULTATION_RENDER_TEST_MOCKED_READERS にある`);
+      if (reason.trim() === '') problems.push(`${target}: 理由が空`);
+    }
+    expect(problems).toEqual([]);
   });
 });

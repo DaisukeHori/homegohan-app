@@ -21,16 +21,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 /**
  * Supabase のモック。ログインした人 1 人。表ごとの問い合わせの答えは tableResults (無い表は空)。
  * 答えの data が配列で、問い合わせが single / maybeSingle なら最初の 1 行 (無ければ null) を返す。
- * reads に記録の口があれば、読んだ表 ('from:<表>') と DB の関数 ('rpc:<名前>') を記録する (受け手の読み取りの検査)
+ * reads に記録の口があれば、読んだ表 (select を呼んだとき。鍵は tests/helpers/ai-refetch-read-recorder.ts の selectReadKey) と
+ * DB の関数 ('rpc:<名前>') を記録する (受け手の読み取りの検査)
  */
 const supabaseMock = vi.hoisted(() => ({
   tableResults: {} as Record<string, { data: unknown; error: null; count?: number }>,
-  reads: null as null | { record: (key: string | null) => void },
+  reads: null as null | { record: (key: string | null) => void; recordSelect: (table: string, select: unknown) => void },
 }));
 vi.mock('@/lib/supabase/client', () => {
   const EMPTY_RESULT = { data: null, error: null, count: 0 };
   /** どのメソッドを呼んでも自分を返し、await するとその表の答えになる問い合わせ */
-  const query = (table: string, single: boolean): unknown =>
+  const query = (table: string, single: boolean, recordsSelect: boolean): unknown =>
     new Proxy(() => undefined, {
       get: (_target, prop) => {
         if (prop === 'then') {
@@ -40,7 +41,10 @@ vi.mock('@/lib/supabase/client', () => {
             single && Array.isArray(rows) ? { ...result, data: rows[0] ?? null } : Array.isArray(rows) && result.count === undefined ? { ...result, count: rows.length } : result;
           return (resolve: (value: unknown) => void) => resolve(answer);
         }
-        return () => query(table, single || prop === 'single' || prop === 'maybeSingle');
+        return (...args: unknown[]) => {
+          if (prop === 'select' && recordsSelect) supabaseMock.reads?.recordSelect(table, args[0]);
+          return query(table, single || prop === 'single' || prop === 'maybeSingle', recordsSelect);
+        };
       },
     });
   const user = { id: 'user-1', user_metadata: {} };
@@ -52,13 +56,10 @@ vi.mock('@/lib/supabase/client', () => {
         refreshSession: async () => ({ data: { session: { user } }, error: null }),
         onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => undefined } } }),
       },
-      from: (table: string) => {
-        supabaseMock.reads?.record(`from:${table}`);
-        return query(table, false);
-      },
+      from: (table: string) => query(table, false, true),
       rpc: (name: string) => {
         supabaseMock.reads?.record(`rpc:${name}`);
-        return query('rpc', false);
+        return query('rpc', false, false);
       },
       channel: () => {
         const channel = { on: () => channel, subscribe: () => channel, unsubscribe: async () => 'ok' };

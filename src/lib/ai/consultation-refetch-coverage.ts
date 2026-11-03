@@ -164,7 +164,8 @@ export interface AiConsultationRefetchReceiver {
   aiTables: readonly AiConsultationWrittenTable[];
   /**
    * 開いたとき (とパネル) に読むもののうち、取り直しで読まなくてよいもの (名前 → 理由)。
-   * 名前ごとの今の読み取りの鍵 ('GET /api/...' / 'from:<表>' / 'rpc:<名前>') は、描画のテストが
+   * 名前ごとの今の読み取りの鍵 ('GET /api/...' / 'from:<表>' (AI_CONSULTATION_WRITTEN_COLUMNS の表は 'from:<表>?select=<列>') /
+   * 'rpc:<名前>') は、描画のテストが
    * tests/helpers/ai-refetch-read-recorder.ts の expectRefetchReadsCoverMount に渡す (日付の入った鍵を表に固定で書けないため)
    */
   mountReadsNotRefetched?: Readonly<Record<string, string>>;
@@ -218,6 +219,10 @@ export const AI_CONSULTATION_REFETCH_PAGES: Readonly<Record<string, AiConsultati
     mountReadsNotRefetched: {
       adjacentWeekPrefetch:
         '前後の週の献立の先読み (週の切り替えを速くする控え weekDataCache。画面には出さない)。取り直しは控えを捨てるので、その週へ移ったときに読み直す',
+      weekStartDay:
+        '週の始まりの日 (user_profiles.week_start_day)。AI 相談が書かない列 (AI_CONSULTATION_WRITTEN_COLUMNS に無い) で、設定の画面で変える',
+      familyMembership:
+        '家族の所属 (user_profiles.family_id) と家族の一覧。AI 相談が書かない列と表で、家族の画面で変える (家族の切り替えを適用したときに読み直す)',
     },
     aiTables: [
       'pantry_items',
@@ -326,4 +331,19 @@ export const AI_CONSULTATION_REFETCH_PAGES: Readonly<Record<string, AiConsultati
     aiColumns: { user_profiles: ['nickname'] },
     reason: MFA_PATH_TABLE_REASON,
   },
+};
+
+/**
+ * 受け手の描画のテスト (expectRefetchReadsCoverMount を呼ぶテスト) が vi.mock で消す、読み取りのある src の部品・hook
+ * (リポジトリの根からのパス → 消してよい理由)。消すと、その読み取りは開いたときの読み取りにも取り直しにも出ないので、
+ * 取り直しの抜けが見えなくなる (#2195 V1 の R5: 献立表のプロフィールの帯を消すモックが、帯の読み取りの抜けを隠した)。
+ * tests/ai-consultation-refetch-coverage-2195.test.ts が、描画のテストの vi.mock の先を構文木でたどり、
+ *   - 読み取りのある部品を消すなら、ここに理由があること
+ *   - ここに載せた部品は AI が書く表を読まないこと (AI が書く表を読む部品は消さずに描く)
+ *   - ここに載せた部品を今も消していて、今も読み取りがあること (古い行を残さない)
+ * を確かめる。描画のテストのログアウト (getUser が user: null を返すモック) は、利用者で絞った読み取りを隠すので使わない (同じテストが確かめる)
+ */
+export const AI_CONSULTATION_RENDER_TEST_MOCKED_READERS: Readonly<Record<string, string>> = {
+  'src/hooks/useAiConsent.tsx':
+    '外国の AI 事業者へのデータ提供の同意の状況 (GET /api/ai/consent) を開いたときに先に読む hook。同意は AI 相談が書かない表で、取り直しの検査は同意の画面を出さずに済むよう同意済みを返すモックにする',
 };

@@ -8,10 +8,15 @@
  *     (取り直しが `if (x.length > 0) set(...)` や `if (x) set(...)` で前の値を残していない)
  *
  * 読み取りの鍵: GET の fetch は 'GET <道>?<並べ替えた問い合わせ>' (同じ起点の '/api/' だけ)、Supabase は 'from:<表>' / 'rpc:<名前>'。
- * tests/ai-consultation-refetch-coverage-2195.test.ts が、受け手ごとに 2 つの判定を呼ぶテストがあることを数える。
+ * Supabase の表の読み取りは select を呼んだときに記録する (ReadRecorder.recordSelect。insert / update / delete だけの書き込みは数えない)。
+ * AI_CONSULTATION_WRITTEN_COLUMNS の表 (user_profiles) は、読む列ごとに 'from:<表>?select=<並べ替えた列>' と分ける:
+ * 同じ表をいくつもの部品が別の列で読むので (献立表の週の始まりの日・家族・プロフィールの帯)、表だけの鍵では
+ * 1 つの読み取りの取り直しがほかの読み取りの抜けを隠す。
+ * tests/ai-consultation-refetch-coverage-2195.test.ts が、受け手ごとに 2 つの判定を呼ぶテストがあることを数え、
+ * そのテストが部品を消すモック・ログアウトで読み取りを隠していないことも確かめる。
  */
 import { expect } from 'vitest';
-import { AI_CONSULTATION_REFETCH_PAGES } from '@/lib/ai/consultation-refetch-coverage';
+import { AI_CONSULTATION_REFETCH_PAGES, AI_CONSULTATION_WRITTEN_COLUMNS } from '@/lib/ai/consultation-refetch-coverage';
 
 /** ページの API の相対 URL を解く起点 */
 export const READ_KEY_ORIGIN = 'http://localhost';
@@ -32,6 +37,38 @@ export function fetchReadKey(input: unknown, init?: { method?: string }): string
 
 export const tableReadKey = (table: string): string => `from:${table}`;
 export const rpcReadKey = (name: string): string => `rpc:${name}`;
+/** select を引数なしで呼んだときの列 (全部) */
+const ALL_COLUMNS = '*';
+
+/** select の文字列を最上位の ',' で分ける (埋め込みの関係 'x(a, b)' の中の ',' では分けない) */
+function topLevelColumns(select: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let current = '';
+  for (const ch of select) {
+    if (ch === '(') depth += 1;
+    if (ch === ')') depth -= 1;
+    if (ch === ',' && depth === 0) {
+      out.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  out.push(current);
+  return out.map((column) => column.replace(/\s+/g, '')).filter((column) => column !== '');
+}
+
+/**
+ * Supabase の表の読み取り (select) の鍵。AI_CONSULTATION_WRITTEN_COLUMNS の表は読む列ごとに分ける
+ * ('from:<表>?select=<並べ替えた列>')。ほかの表は 'from:<表>'
+ */
+export function selectReadKey(table: string, select: unknown): string {
+  if (!Object.prototype.hasOwnProperty.call(AI_CONSULTATION_WRITTEN_COLUMNS, table)) return tableReadKey(table);
+  const columns = typeof select === 'string' ? topLevelColumns(select) : [];
+  const listed = columns.length === 0 ? ALL_COLUMNS : [...new Set(columns)].sort().join(',');
+  return `${tableReadKey(table)}?select=${listed}`;
+}
 
 /** 読み取りの鍵を溜める。take() で今までの分を返して空にする */
 export class ReadRecorder {
@@ -39,6 +76,11 @@ export class ReadRecorder {
 
   record(key: string | null): void {
     if (key !== null) this.keys.add(key);
+  }
+
+  /** Supabase の表の読み取り (`.from(table).select(select)`) を記録する (鍵は selectReadKey) */
+  recordSelect(table: string, select: unknown): void {
+    this.keys.add(selectReadKey(table, select));
   }
 
   take(): Set<string> {

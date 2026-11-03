@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { X, UserCircle, ChevronRight, Target, Heart, Scale } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { useAiConsultationRefetchKey } from "@/hooks/useAiConsultationDataRefetch";
 
 // プロフィール完成度のしきい値（これ以下だとバナー表示）
 const COMPLETENESS_THRESHOLD = 50;
@@ -28,71 +29,109 @@ const FIELD_CONFIG: MissingField[] = [
   { key: 'healthConditions', label: '健康状態', icon: Heart, priority: 3 },
 ];
 
+/** 閉じてから REMIND_AFTER_DAYS 日の間か (その間は帯を出さない) */
+function isDismissedRecently(): boolean {
+  const lastDismissed = localStorage.getItem('profile_reminder_dismissed');
+  if (!lastDismissed) return false;
+  const dismissedDate = new Date(lastDismissed);
+  const now = new Date();
+  const daysDiff = (now.getTime() - dismissedDate.getTime()) / (1000 * 60 * 60 * 24);
+  return daysDiff < REMIND_AFTER_DAYS;
+}
+
+/** 帯に出す未入力の欄 (優先度の順) */
+function missingFieldsOf(profile: {
+  height: number | null;
+  weight: number | null;
+  age: number | null;
+  fitness_goals: string[] | null;
+  health_conditions: string[] | null;
+}): MissingField[] {
+  const missing: MissingField[] = [];
+  if (!profile.height) {
+    missing.push(FIELD_CONFIG.find(f => f.key === 'height')!);
+  }
+  if (!profile.weight) {
+    missing.push(FIELD_CONFIG.find(f => f.key === 'weight')!);
+  }
+  if (!profile.age) {
+    missing.push(FIELD_CONFIG.find(f => f.key === 'age')!);
+  }
+  if (!profile.fitness_goals || profile.fitness_goals.length === 0) {
+    missing.push(FIELD_CONFIG.find(f => f.key === 'fitnessGoals')!);
+  }
+  if (!profile.health_conditions || profile.health_conditions.length === 0) {
+    missing.push(FIELD_CONFIG.find(f => f.key === 'healthConditions')!);
+  }
+  return missing.filter(Boolean).sort((a, b) => a.priority - b.priority);
+}
+
 export function ProfileReminderBanner() {
   const router = useRouter();
   const [isVisible, setIsVisible] = useState(false);
   const [completeness, setCompleteness] = useState<number | null>(null);
   const [missingFields, setMissingFields] = useState<MissingField[]>([]);
-  const supabase = createClient();
+  // AI 相談でプロフィール (身長・体重・年齢・目標・健康の状態) が変わったら読み直す (#2195 V1)。
+  // 帯を置いたページ (献立表) の取り直しはこの部品の読み取りをしないため、部品が自分で受ける
+  const aiConsultationRefetchKey = useAiConsultationRefetchKey();
 
   useEffect(() => {
+    // 前の読み取りの答えが後から届いても置かない (取り直しが続いたとき)
+    let cancelled = false;
+    // 帯を出さない答え。取り直しでは前の帯 (未入力の一覧) を残さず、読み込み直したときと同じく消す (#2195 V1)
+    const hide = () => {
+      setIsVisible(false);
+      setMissingFields([]);
+    };
     const checkProfile = async () => {
       try {
-        // ローカルストレージで非表示設定を確認
-        const lastDismissed = localStorage.getItem('profile_reminder_dismissed');
-        if (lastDismissed) {
-          const dismissedDate = new Date(lastDismissed);
-          const now = new Date();
-          const daysDiff = (now.getTime() - dismissedDate.getTime()) / (1000 * 60 * 60 * 24);
-          if (daysDiff < REMIND_AFTER_DAYS) {
-            return; // まだリマインド期間内なので表示しない
-          }
+        // ローカルストレージで非表示設定を確認 (まだリマインド期間内なので表示しない)
+        if (isDismissedRecently()) {
+          hide();
+          return;
         }
 
+        // ブラウザでは 1 つの client を使い回す (lib/supabase/client.ts)。描画のたびに作り直さないよう、取得の中で取る
+        const supabase = createClient();
         const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
+        if (cancelled) return;
+        if (!user) {
+          hide();
+          return;
+        }
 
         const { data: profile } = await supabase
           .from('user_profiles')
           .select('profile_completeness, height, weight, age, fitness_goals, health_conditions')
           .eq('id', user.id)
           .single();
+        if (cancelled) return;
 
-        if (!profile) return;
+        if (!profile) {
+          hide();
+          return;
+        }
 
         const profileCompleteness = profile.profile_completeness ?? 0;
         setCompleteness(profileCompleteness);
 
-        if (profileCompleteness < COMPLETENESS_THRESHOLD) {
-          // 未入力フィールドを特定
-          const missing: MissingField[] = [];
-
-          if (!profile.height) {
-            missing.push(FIELD_CONFIG.find(f => f.key === 'height')!);
-          }
-          if (!profile.weight) {
-            missing.push(FIELD_CONFIG.find(f => f.key === 'weight')!);
-          }
-          if (!profile.age) {
-            missing.push(FIELD_CONFIG.find(f => f.key === 'age')!);
-          }
-          if (!profile.fitness_goals || profile.fitness_goals.length === 0) {
-            missing.push(FIELD_CONFIG.find(f => f.key === 'fitnessGoals')!);
-          }
-          if (!profile.health_conditions || profile.health_conditions.length === 0) {
-            missing.push(FIELD_CONFIG.find(f => f.key === 'healthConditions')!);
-          }
-
-          setMissingFields(missing.filter(Boolean).sort((a, b) => a.priority - b.priority));
-          setIsVisible(true);
+        if (profileCompleteness >= COMPLETENESS_THRESHOLD) {
+          hide();
+          return;
         }
+        // 未入力フィールドを特定 (取り直しのたびに置き直す)
+        setMissingFields(missingFieldsOf(profile));
+        setIsVisible(true);
       } catch (error) {
         console.error('Profile check error:', error);
       }
     };
 
-    checkProfile();
-  }, [supabase]);
+    void checkProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [aiConsultationRefetchKey]);
 
   const handleDismiss = () => {
     localStorage.setItem('profile_reminder_dismissed', new Date().toISOString());

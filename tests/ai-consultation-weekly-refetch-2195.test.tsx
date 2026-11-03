@@ -10,8 +10,15 @@
  *   - AI 相談で家族の人数を変えても、人数の設定の無い人の既定の人数 (人数の設定のモーダルが出す値) が前のままだった
  *     (家族の人数を空にしたときも、前の人数を残していた)
  *
+ *   - AI 相談でプロフィールの身長・体重などを入れても、ページの上のプロフィールの帯 (ProfileReminderBanner) が古い
+ *     「未入力」の一覧のまま残った (帯は開いたときに 1 回だけ読み、ページの取り直しはその読み取りをしない)
+ *
  * 直したあと: ページを開いたときに読むもののうち AI 相談で変わりうるもの (表示中の週の献立と買い物リスト・冷蔵庫・
- * 人数の設定・月のカレンダーの献立のある日・表示中の週の生成中の依頼) を取り直す。
+ * 人数の設定・月のカレンダーの献立のある日・表示中の週の生成中の依頼・プロフィールの帯) を取り直す。
+ *
+ * 部品を消すモックとログアウトで、受け手の読み取りを隠さない (帯を消すモックとログアウトのせいで、帯の読み取りの抜けが
+ * 見えなかった)。ログインした状態で、ページの部品をそのまま描く。消すのは読み取りの無い部品だけで、
+ * tests/ai-consultation-refetch-coverage-2195.test.ts がそれを確かめる。
  *
  * サーバーは表 (server) で真似る。AI 相談の提案の実行は、表を書き換えてから AIChatBubble と同じ形で mealPlanUpdated を投げる。
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
@@ -36,29 +43,62 @@ vi.mock('next/link', () => ({
 }));
 // 画像 (料理の写真) はこの検査に関係しないので描かない
 vi.mock('next/image', () => ({ default: () => null }));
-// 生成のモーダル・栄養のレーダーチャート (dynamic import) はこの検査に関係しないので描かない
+// 生成のモーダル・栄養のレーダーチャート (dynamic import) はこの検査に関係しないので描かない。
+// レーダーチャートは何も読まない。生成のモーダルは開いたときだけ読み (閉じている間は描かない)、開いている間は
+// 取り直しの番兵が止める (モーダル) ので、開いたときと取り直しの読み取りの比べに入らない
 vi.mock('next/dynamic', () => ({ default: () => () => null }));
 vi.mock('react-markdown', () => ({ default: ({ children }: { children: React.ReactNode }) => <div>{children}</div> }));
 vi.mock('remark-gfm', () => ({ default: () => undefined }));
 vi.mock('@/hooks/useAiConsent', () => ({
   useAiConsent: () => ({ ensureAiConsent: async () => 'consented', consentModal: null }),
 }));
-vi.mock('@/components/ProfileReminderBanner', () => ({ ProfileReminderBanner: () => null }));
 
-/** Supabase のモック。ログインしていない (週の始まりは月曜)。Realtime のチャンネルは名前だけ記録し、何も届けない */
+/** user_profiles の行のうち、このページ (とプロフィールの帯) が読む列 */
+type FakeProfileRow = {
+  profile_completeness: number | null;
+  height: number | null;
+  weight: number | null;
+  age: number | null;
+  fitness_goals: string[] | null;
+  health_conditions: string[] | null;
+  /** 週の始まりの日 (null = 月曜) */
+  week_start_day: string | null;
+  family_id: string | null;
+};
+
+/**
+ * Supabase のモック。ログインしている (週の始まりは月曜・家族なし)。user_profiles は profile の行を返し、ほかの表は空。
+ * Realtime のチャンネルは名前だけ記録し、何も届けない
+ */
 const supabaseMock = vi.hoisted(() => ({
   channelNames: [] as string[],
-  /** 記録の口があれば、読んだ表 ('from:<表>') と DB の関数 ('rpc:<名前>') を記録する (受け手の読み取りの検査) */
-  reads: null as null | { record: (key: string | null) => void },
+  /** ログインしている人の user_profiles の行 (テストごとに置き換える) */
+  profile: null as null | Record<string, unknown>,
+  /**
+   * 記録の口があれば、読んだ表 (select を呼んだとき。鍵は tests/helpers/ai-refetch-read-recorder.ts の selectReadKey) と
+   * DB の関数 ('rpc:<名前>') を記録する (受け手の読み取りの検査)
+   */
+  reads: null as null | { record: (key: string | null) => void; recordSelect: (table: string, select: unknown) => void },
 }));
 vi.mock('@/lib/supabase/client', () => {
   const EMPTY_RESULT = { data: null, error: null, count: 0 };
-  /** どのメソッドを呼んでも自分を返し、await すると空の結果になる問い合わせ */
-  const emptyQuery = (): unknown =>
+  const USER = { id: '21950000-0000-4000-8000-0000000000b1', user_metadata: {} };
+  /** その表の答え (user_profiles は profile の行。single / maybeSingle なら行、そうでなければ行の配列。ほかの表は空) */
+  const resultOf = (table: string | null, single: boolean) => {
+    if (table !== 'user_profiles') return EMPTY_RESULT;
+    const row = supabaseMock.profile;
+    if (single) return { data: row, error: null, count: row ? 1 : 0 };
+    return { data: row ? [row] : [], error: null, count: row ? 1 : 0 };
+  };
+  /** どのメソッドを呼んでも自分を返し、await するとその表の答えになる問い合わせ。select を呼んだら読み取りを記録する */
+  const query = (table: string | null, single: boolean): unknown =>
     new Proxy(() => undefined, {
       get: (_target, prop) => {
-        if (prop === 'then') return (resolve: (value: unknown) => void) => resolve(EMPTY_RESULT);
-        return () => emptyQuery();
+        if (prop === 'then') return (resolve: (value: unknown) => void) => resolve(resultOf(table, single));
+        return (...args: unknown[]) => {
+          if (prop === 'select' && table !== null) supabaseMock.reads?.recordSelect(table, args[0]);
+          return query(table, single || prop === 'single' || prop === 'maybeSingle');
+        };
       },
     });
   const channel = {
@@ -69,17 +109,14 @@ vi.mock('@/lib/supabase/client', () => {
   return {
     createClient: () => ({
       auth: {
-        getUser: async () => ({ data: { user: null }, error: null }),
-        getSession: async () => ({ data: { session: null }, error: null }),
+        getUser: async () => ({ data: { user: USER }, error: null }),
+        getSession: async () => ({ data: { session: { user: USER } }, error: null }),
         onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => undefined } } }),
       },
-      from: (table: string) => {
-        supabaseMock.reads?.record(`from:${table}`);
-        return emptyQuery();
-      },
+      from: (table: string) => query(table, false),
       rpc: (name: string) => {
         supabaseMock.reads?.record(`rpc:${name}`);
-        return emptyQuery();
+        return query(null, false);
       },
       channel: (name: string) => {
         supabaseMock.channelNames.push(name);
@@ -96,12 +133,14 @@ const { useShoppingStore } = await import('@/app/(main)/menus/weekly/_state/shop
 const { usePantryStore } = await import('@/app/(main)/menus/weekly/_state/pantryStore');
 const { useServingsConfigStore } = await import('@/app/(main)/menus/weekly/_state/servingsConfigStore');
 const { AI_CONSULTATION_DATA_CHANGED_EVENT } = await import('@/lib/ai/consultation-data-refetch');
+const { AI_CONSULTATION_WRITTEN_COLUMNS } = await import('@/lib/ai/consultation-refetch-coverage');
 const {
   ReadRecorder,
   expectEmptyRefetchMatchesFreshMount,
   expectRefetchReadsCoverMount,
   fetchReadKey,
   screenSignature,
+  selectReadKey,
 } = await import('./helpers/ai-refetch-read-recorder');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -112,6 +151,30 @@ const SETTLE_TASKS = 20;
 const DAYS_IN_WEEK = 7;
 /** 月の中で、次の週の月曜も同じ月に入る週の始まりの日の上限 (どの月も 28 日はある) */
 const LAST_DAY_WITH_NEXT_WEEK_IN_SAME_MONTH = 21;
+/** プロフィールの帯を出す完成度 (src/components/ProfileReminderBanner.tsx の COMPLETENESS_THRESHOLD = 50 の下と上) */
+const INCOMPLETE_PROFILE_COMPLETENESS = 20;
+const COMPLETE_PROFILE_COMPLETENESS = 100;
+/** プロフィールの帯の見出し */
+const PROFILE_BANNER_HEADING = '栄養目標を設定しましょう';
+
+/** 身長・体重が未入力のプロフィール (完成度が帯を出す値) */
+function incompleteProfile(): FakeProfileRow {
+  return {
+    profile_completeness: INCOMPLETE_PROFILE_COMPLETENESS,
+    height: null,
+    weight: null,
+    age: 35,
+    fitness_goals: ['健康維持'],
+    health_conditions: ['なし'],
+    week_start_day: null,
+    family_id: null,
+  };
+}
+
+/** 全部入れたプロフィール (帯を出さない) */
+function completeProfile(): FakeProfileRow {
+  return { ...incompleteProfile(), profile_completeness: COMPLETE_PROFILE_COMPLETENESS, height: 170, weight: 65 };
+}
 
 /** ページと同じ週の始まり (月曜・その日の 0 時。ページの getWeekStart と同じ作り方) */
 function displayedWeekStart(): Date {
@@ -270,6 +333,8 @@ let root: Root;
 beforeEach(() => {
   server = { days: new Map(), shoppingItems: [], familySize: 2, pendingRequest: null };
   supabaseMock.channelNames.length = 0;
+  // 既定は帯を出さないプロフィール (帯の検査は incompleteProfile に置き換える)
+  supabaseMock.profile = completeProfile();
   recorder = new ReadRecorder();
   supabaseMock.reads = recorder;
   localStorage.clear();
@@ -325,6 +390,19 @@ function shoppingListButton(): HTMLButtonElement {
   const button = container.querySelector<HTMLButtonElement>('button[aria-label="買い物リストを開く"]');
   if (!button) throw new Error('買い物リストのボタンが無い');
   return button;
+}
+
+/** プロフィールの帯 (無ければ null) */
+function profileBanner(): HTMLElement | null {
+  const heading = [...container.querySelectorAll('h3')].find((el) => el.textContent === PROFILE_BANNER_HEADING);
+  return heading?.closest<HTMLElement>('div.rounded-2xl') ?? null;
+}
+
+/** プロフィールの帯に出ている未入力の欄の名前 */
+function profileBannerMissingLabels(): string[] {
+  const banner = profileBanner();
+  if (!banner) throw new Error('プロフィールの帯が無い');
+  return [...banner.querySelectorAll('span.rounded-full')].map((el) => (el.textContent ?? '').trim());
 }
 
 /** 月のカレンダーを開き、日付のマスに出ている献立のある日の印の数を返す */
@@ -449,38 +527,90 @@ describe('献立表 (/menus/weekly) が AI 相談の成功で取り直すもの 
 
     expect(useServingsConfigStore.getState().servingsConfig).toBeNull();
   });
+
+  it('AI 相談でプロフィールの身長・体重を入れたら、プロフィールの帯の未入力の一覧から消える', async () => {
+    supabaseMock.profile = incompleteProfile();
+    await renderWeeklyPage();
+    expect(profileBannerMissingLabels()).toEqual(['身長', '体重']);
+
+    // AI 相談の update_profile_preferences (height・weight)。完成度 (profile_completeness) は AI 相談が書かないので変わらない
+    supabaseMock.profile = { ...incompleteProfile(), height: 170, weight: 65 };
+    await notifyAiConsultationSucceeded('update_profile_preferences', { updated: true, fields: ['height', 'weight'] });
+
+    expect(profileBanner()).not.toBeNull();
+    expect(profileBannerMissingLabels()).toEqual([]);
+  });
+
+  it('AI 相談のあとプロフィールの完成度が帯を出す値を超えていたら、帯を消す (前の帯を残さない)', async () => {
+    supabaseMock.profile = incompleteProfile();
+    await renderWeeklyPage();
+    expect(profileBanner()).not.toBeNull();
+
+    supabaseMock.profile = completeProfile();
+    await notifyAiConsultationSucceeded('update_profile_preferences', { updated: true, fields: ['height', 'weight'] });
+
+    expect(profileBanner()).toBeNull();
+  });
+
+  it('プロフィールの帯を閉じたあとは、AI 相談の取り直しでも帯を出さない', async () => {
+    supabaseMock.profile = incompleteProfile();
+    await renderWeeklyPage();
+    const closeButton = profileBanner()?.querySelector<HTMLButtonElement>('button');
+    if (!closeButton) throw new Error('プロフィールの帯の閉じるボタンが無い');
+    await act(async () => {
+      closeButton.click();
+    });
+    await settle();
+    expect(profileBanner()).toBeNull();
+
+    supabaseMock.profile = { ...incompleteProfile(), height: 170 };
+    await notifyAiConsultationSucceeded('update_profile_preferences', { updated: true, fields: ['height'] });
+
+    expect(profileBanner()).toBeNull();
+  });
 });
 
 describe('献立表 (/menus/weekly) を描画して、AI 相談の成功の取り直しを確かめる (#2195 V1)', () => {
-  /** AI が書く表に中身のある答え (表示中の週と別の週の献立・買い物リスト・家族の人数) */
+  /** AI が書く表に中身のある答え (表示中の週と別の週の献立・買い物リスト・家族の人数・プロフィールの未入力の欄) */
   function fillServer() {
+    supabaseMock.profile = incompleteProfile();
     const week = displayedWeekDates();
     server.days.set(week[0], [{ id: 'meal-1', dishName: '鮭の塩焼き' }]);
     server.days.set(otherWeekDateInDisplayedMonth(), [{ id: 'meal-other', dishName: 'カレー' }]);
     server.shoppingItems = [{ id: 'item-1', itemName: 'にんじん', isChecked: false }];
     server.familySize = 3;
   }
-  /** AI 相談で消した・空にしたあと */
+  /** AI 相談で消した・空にしたあと (プロフィールは未入力の欄が無くなり、帯を出さない) */
   function emptyServer() {
+    supabaseMock.profile = completeProfile();
     server.days = new Map();
     server.shoppingItems = [];
     server.familySize = null;
   }
 
-  it('開いたとき・月のカレンダーのパネルが読むもの全部を、取り直しも読む', async () => {
+  it('開いたとき・月のカレンダーのパネル・プロフィールの帯が読むもの全部を、取り直しも読む', async () => {
     fillServer();
     recorder.take();
     await renderWeeklyPage();
     await calendarMealDotCount();
     await settle();
+    // 帯が出ている (帯の読み取りが開いたときの読み取りに入っている)
+    expect(profileBanner()).not.toBeNull();
     const mountReads = recorder.take();
     await notifyAiConsultationSucceeded('update_meal', { mealId: 'meal-1' });
     const refetchReads = recorder.take();
     // 前後の週の先読み (表の mountReadsNotRefetched の adjacentWeekPrefetch)
     const weekRangeKey = (from: number) =>
       fetchReadKey(`/api/meal-plans?startDate=${dateFromWeekStart(from)}&endDate=${dateFromWeekStart(from + DAYS_IN_WEEK - 1)}`) ?? '';
+    // 週の始まりの日・家族の所属 (表の mountReadsNotRefetched の weekStartDay・familyMembership)。どちらも AI 相談が書かない列
+    const WEEK_START_DAY_COLUMN = 'week_start_day';
+    const FAMILY_ID_COLUMN = 'family_id';
+    expect(AI_CONSULTATION_WRITTEN_COLUMNS.user_profiles).not.toContain(WEEK_START_DAY_COLUMN);
+    expect(AI_CONSULTATION_WRITTEN_COLUMNS.user_profiles).not.toContain(FAMILY_ID_COLUMN);
     expectRefetchReadsCoverMount('/menus/weekly', mountReads, refetchReads, {
       adjacentWeekPrefetch: [weekRangeKey(-DAYS_IN_WEEK), weekRangeKey(DAYS_IN_WEEK)],
+      weekStartDay: [selectReadKey('user_profiles', WEEK_START_DAY_COLUMN)],
+      familyMembership: [selectReadKey('user_profiles', FAMILY_ID_COLUMN)],
     });
   });
 

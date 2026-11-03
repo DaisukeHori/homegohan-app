@@ -31,7 +31,8 @@ import {
 const server = vi.hoisted(() => ({
   fetchBodies: {} as Record<string, unknown>,
   tables: {} as Record<string, Record<string, unknown>[]>,
-  reads: null as null | { record: (key: string | null) => void },
+  /** 読み取りの記録の口。表は select を呼んだとき (鍵は tests/helpers/ai-refetch-read-recorder.ts の selectReadKey) */
+  reads: null as null | { record: (key: string | null) => void; recordSelect: (table: string, select: unknown) => void },
 }));
 
 const navigation = vi.hoisted(() => ({
@@ -85,7 +86,7 @@ vi.mock('framer-motion', async () => {
 vi.mock('@/lib/supabase/client', () => {
   const USER = { id: '21950000-0000-4000-8000-0000000000aa', user_metadata: {} };
   /** どのメソッドを呼んでも自分を返し、await するとその表の行 (single / maybeSingle なら最初の 1 行) になる問い合わせ */
-  const query = (table: string, single: boolean): unknown =>
+  const query = (table: string, single: boolean, recordsSelect: boolean): unknown =>
     new Proxy(() => undefined, {
       get: (_target, prop) => {
         if (prop === 'then') {
@@ -93,7 +94,10 @@ vi.mock('@/lib/supabase/client', () => {
           const data = single ? (rows[0] ?? null) : rows;
           return (resolve: (value: unknown) => void) => resolve({ data, error: null, count: rows.length });
         }
-        return () => query(table, single || prop === 'single' || prop === 'maybeSingle');
+        return (...args: unknown[]) => {
+          if (prop === 'select' && recordsSelect) server.reads?.recordSelect(table, args[0]);
+          return query(table, single || prop === 'single' || prop === 'maybeSingle', recordsSelect);
+        };
       },
     });
   const channel = { on: () => channel, subscribe: () => channel, unsubscribe: async () => 'ok' };
@@ -104,13 +108,10 @@ vi.mock('@/lib/supabase/client', () => {
         getSession: async () => ({ data: { session: { user: USER } }, error: null }),
         onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => undefined } } }),
       },
-      from: (table: string) => {
-        server.reads?.record(`from:${table}`);
-        return query(table, false);
-      },
+      from: (table: string) => query(table, false, true),
       rpc: (name: string) => {
         server.reads?.record(`rpc:${name}`);
-        return query(`rpc:${name}`, false);
+        return query(`rpc:${name}`, false, false);
       },
       channel: () => channel,
       removeChannel: async () => 'ok',
