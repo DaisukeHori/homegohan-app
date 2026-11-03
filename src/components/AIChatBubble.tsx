@@ -942,11 +942,19 @@ export default function AIChatBubble() {
   const knownUserMessageIdsOf = (current: readonly Message[]): string[] =>
     current.filter(m => m.role === 'user' && !m.id.startsWith('temp-')).map(m => m.id);
 
-  // メッセージ送信（リアルストリーミング対応）
-  const sendMessage = async () => {
-    if (!inputText.trim() || !currentSessionId || isSending) return;
+  /**
+   * 文 (text) を相談に送る (リアルストリーミング対応)。送信欄 (入力欄の文) とおすすめの質問 (ボタンの文) の両方がここを通る
+   * (モバイルの AIAdvisorSheet の sendMessage と同じ形)。
+   * 以前はおすすめの質問のボタンに送信の流れの写しがあり、取り直しの縁の直しを 2 か所に書く必要があった。写しのほうは送った文を
+   * 入力欄に戻さず、『入力欄の文をもう一度送ってください』の文が空の入力欄を指した (おすすめの質問は、ようこその一文だけのときに
+   * 出るので、楽観的に出したメッセージで消え、押し直せない)。#2206 G2 で 1 つにまとめた。
+   * 送らなかったとき (「同意しない」・同意が必要で止められた) と、取り直しで届いていない・確かめられない・取り直せないときは、
+   * どちらから送っても、送った文を入力欄に戻す
+   */
+  const sendMessage = async (text: string) => {
+    const userMessage = text.trim();
+    if (!userMessage || !currentSessionId || isSending) return;
 
-    const userMessage = inputText.trim();
     // 応答を受け取れなかったときの取り直しで、送った文を見分けるため、送る前に出ていたメッセージの id を持つ (#2201 U3)
     const knownMessageIds = knownUserMessageIdsOf(messages);
     setInputText('');
@@ -997,6 +1005,21 @@ export default function AIChatBubble() {
     let serverFailed = false;
     // 流れてきた返答の本文 (流れている間の表示に使う。finalData を受け取れなかったときは取り直した返答で置き換える)
     let accumulatedContent = '';
+    // 応答 (finalData) を受け取れなかったあとの取り直し (finalData の欠け・時間切れ・受け付けたあとの例外・通信の切断で 1 つを使う)。
+    // 送った文を入力欄に戻すときは、入力欄に別の文があれば残す
+    const resolveIncomplete = (timedOut: boolean) =>
+      resolveIncompleteReply({
+        sessionId: currentSessionId,
+        sentText: userMessage,
+        knownMessageIds,
+        tempUserMsgId,
+        tempAiMsgId,
+        timedOut,
+        serverFailed,
+        // 応答を受ける前に終わった (時間切れ・通信の切断) ときは、送った文の保存が取り直しより後になりうる (#2206 G2)
+        userSaveMayBeLate: !responseAccepted,
+        restoreInput: () => setInputText(current => (current.trim() ? current : userMessage)),
+      });
 
     try {
       // ストリーミングモードでAPI呼び出し
@@ -1124,17 +1147,7 @@ export default function AIChatBubble() {
       } else {
         // finalData が無い (流れが途中で切れた・サーバーの失敗の行だけが来た): サーバーでは返答の保存と自動実行が済んでいることが
         // あるので、会話を取り直して結果を出す (#2201 U3)。取り直せなければ、開き直してもらう文を出す (#2206 G2)
-        await resolveIncompleteReply({
-          sessionId: currentSessionId,
-          sentText: userMessage,
-          knownMessageIds,
-          tempUserMsgId,
-          tempAiMsgId,
-          timedOut: false,
-          serverFailed,
-          userSaveMayBeLate: false,
-          restoreInput: () => setInputText(current => (current.trim() ? current : userMessage)),
-        });
+        await resolveIncomplete(false);
       }
 
     } catch (e: any) {
@@ -1147,17 +1160,7 @@ export default function AIChatBubble() {
       if (isTimeout || responseAccepted || isNetworkError) {
         // 時間切れ・受け付けたあとの例外・通信の切断: サーバーでは返答の保存と自動実行が済んでいることがあるので、頼み直しを促す前に
         // 会話を取り直して結果を出す (頼み直すと献立を二重に作りうる。#2201 U3)
-        await resolveIncompleteReply({
-          sessionId: currentSessionId,
-          sentText: userMessage,
-          knownMessageIds,
-          tempUserMsgId,
-          tempAiMsgId,
-          timedOut: isTimeout,
-          serverFailed,
-          userSaveMayBeLate: !responseAccepted,
-          restoreInput: () => setInputText(current => (current.trim() ? current : userMessage)),
-        });
+        await resolveIncomplete(isTimeout);
         return;
       }
       setMessages(prev => prev.map(m =>
@@ -1675,124 +1678,8 @@ export default function AIChatBubble() {
                       ].map((prompt) => (
                         <button
                           key={prompt}
-                          onClick={async () => {
-                            if (!currentSessionId || isSending) return;
-                            // 応答を受け取れなかったときの取り直しで、送った文を見分ける (送信欄から送ったときと同じ。#2201 U3)
-                            const knownMessageIds = knownUserMessageIdsOf(messages);
-                            setInputText('');
-                            setIsSending(true);
-                            const tempUserMsgId = `temp-user-${Date.now()}`;
-                            const tempAiMsgId = `temp-ai-${Date.now()}`;
-                            setMessages(prev => [
-                              ...prev,
-                              { id: tempUserMsgId, role: 'user', content: prompt, createdAt: new Date().toISOString() },
-                              { id: tempAiMsgId, role: 'assistant', content: '', createdAt: new Date().toISOString(), isStreaming: true },
-                            ]);
-                            // 送らなかったとき (「同意しない」・同意が必要で止められた) は、楽観的に出したメッセージを消す
-                            const undoOptimisticMessages = () =>
-                              setMessages(prev => prev.filter(m => m.id !== tempUserMsgId && m.id !== tempAiMsgId));
-                            // 未同意なら同意画面を出す (「同意しない」なら送らない)
-                            if ((await ensureAiConsent()) === 'declined') {
-                              undoOptimisticMessages();
-                              setIsSending(false);
-                              return;
-                            }
-                            const clientAbortController = new AbortController();
-                            const clientTimeoutId = setTimeout(() => clientAbortController.abort(), AI_CHAT_SEND_TIMEOUT_MS);
-                            // 受け付けたあとの例外・finalData の欠けでは会話を取り直す (送信欄から送ったときと同じ。#2201 U3)
-                            let responseAccepted = false;
-                            // サーバーが失敗を知らせたか (送信欄から送ったときと同じ。#2206 G2)
-                            let serverFailed = false;
-                            let accumulatedContent = '';
-                            // おすすめの質問には入力欄に戻す文が無い (届いていなければボタンをもう一度押せる)
-                            const resolveIncomplete = (timedOut: boolean) =>
-                              resolveIncompleteReply({
-                                sessionId: currentSessionId,
-                                sentText: prompt,
-                                knownMessageIds,
-                                tempUserMsgId,
-                                tempAiMsgId,
-                                timedOut,
-                                serverFailed,
-                                userSaveMayBeLate: !responseAccepted,
-                                restoreInput: () => {},
-                              });
-                            try {
-                              const res = await aiFetch(`/api/ai/consultation/sessions/${currentSessionId}/messages?stream=true`, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ message: prompt }),
-                                signal: clientAbortController.signal,
-                              });
-                              // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内する
-                              if (await isAiConsentRequiredResponse(res)) {
-                                undoOptimisticMessages();
-                                return;
-                              }
-                              if (!res.ok) {
-                                // #1148: AI 相談の緊急停止中は、サーバーのやさしい文面を出す
-                                const unavailableMessage = await readAiChatUnavailableMessage(res);
-                                if (unavailableMessage) {
-                                  setMessages(prev => prev.map(m => m.id === tempAiMsgId ? { ...m, content: unavailableMessage, isStreaming: false } : m));
-                                  return;
-                                }
-                                throw new Error(`HTTP error: ${res.status}`);
-                              }
-                              responseAccepted = true;
-                              const reader = res.body?.getReader();
-                              if (!reader) throw new Error('No reader available');
-                              const decoder = new TextDecoder();
-                              let finalData: any = null;
-                              while (true) {
-                                const { done, value } = await reader.read();
-                                if (done) break;
-                                const chunk = decoder.decode(value, { stream: true });
-                                for (const line of chunk.split('\n')) {
-                                  if (!line.startsWith('data: ')) continue;
-                                  const data = line.slice(6);
-                                  if (data === '[DONE]') continue;
-                                  try {
-                                    const parsed = JSON.parse(data);
-                                    if (parsed.userMessage && parsed.aiMessage) { finalData = parsed; continue; }
-                                    if (parsed.error && !parsed.userMessage) {
-                                      serverFailed = true;
-                                      setMessages(prev => prev.map(m => m.id === tempAiMsgId ? { ...m, content: AI_CHAT_REPLY_FAILED_MESSAGE, isStreaming: false } : m));
-                                      continue;
-                                    }
-                                    if (parsed.choices?.[0]?.delta?.content) {
-                                      accumulatedContent += parsed.choices[0].delta.content;
-                                      setMessages(prev => prev.map(m => m.id === tempAiMsgId ? { ...m, content: accumulatedContent } : m));
-                                    }
-                                  } catch { /* ignore */ }
-                                }
-                              }
-                              if (finalData) {
-                                setMessages(prev => prev.map(m => {
-                                  if (m.id === tempUserMsgId) return { ...m, id: finalData.userMessage.id, isImportant: finalData.userMessage.isImportant || false };
-                                  if (m.id === tempAiMsgId) return { ...m, id: finalData.aiMessage.id, content: accumulatedContent || finalData.aiMessage.content, ...proposedActionFieldsOfFinalData(finalData), isStreaming: false };
-                                  return m;
-                                }));
-                                // アクション自動実行結果を表示 (送信欄から送ったときと同じ。失敗も黙らずに出す。#2183 Z1)
-                                showAutoActionOutcome(finalData);
-                              } else {
-                                // finalData が無い: 会話を取り直して結果を出す (送信欄から送ったときと同じ。#2201 U3)
-                                await resolveIncomplete(false);
-                              }
-                            } catch (e: any) {
-                              const isTimeout = e?.name === 'AbortError' || e?.name === 'TimeoutError';
-                              // 応答を受ける前に通信が切れた (送信欄から送ったときと同じ。#2206 G2)
-                              const isNetworkError = !responseAccepted && e instanceof TypeError;
-                              if (isTimeout || responseAccepted || isNetworkError) {
-                                // 時間切れ・受け付けたあとの例外・通信の切断: 頼み直しを促す前に会話を取り直す (送信欄から送ったときと同じ。#2201 U3)
-                                await resolveIncomplete(isTimeout);
-                                return;
-                              }
-                              setMessages(prev => prev.map(m => m.id === tempAiMsgId ? { ...m, content: AI_CHAT_REPLY_FAILED_MESSAGE, isStreaming: false } : m));
-                            } finally {
-                              clearTimeout(clientTimeoutId);
-                              setIsSending(false);
-                            }
-                          }}
+                          // 送信欄と同じ送信の流れ (sendMessage) を通す。取り直しの縁の扱いと、送った文を入力欄に戻すのも同じ (#2206 G2)
+                          onClick={() => sendMessage(prompt)}
                           className="w-full text-left px-3 py-2 rounded-xl border hover:bg-gray-50 transition-colors"
                           style={{
                             borderColor: colors.border,
@@ -2014,7 +1901,7 @@ export default function AIChatBubble() {
                       if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
-                        sendMessage();
+                        sendMessage(inputText);
                       }
                     }}
                     placeholder="メッセージを入力..."
@@ -2027,7 +1914,7 @@ export default function AIChatBubble() {
                     disabled={isSending || !currentSessionId}
                   />
                   <button
-                    onClick={sendMessage}
+                    onClick={() => sendMessage(inputText)}
                     disabled={!inputText.trim() || isSending || !currentSessionId}
                     aria-label="メッセージを送信"
                     className="w-10 h-10 rounded-full flex items-center justify-center"
