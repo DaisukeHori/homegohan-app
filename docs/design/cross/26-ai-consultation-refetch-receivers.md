@@ -34,7 +34,7 @@
 | 5 | 読み込み中の表示 | 鍵ごとに hook が持つ。ページが始めた読み取りが `loadingKeys` で立て、その鍵が置かれたとき・立てた読み取りが終わったときに下ろす。取り直しは立てない・引き継がない。今の受け手で読み込み中の初期値が true のものは、`initialLoadingKeys` で最初の描画から立てる。`receiver` の参照は受け手の一生で変わらない (読み込み中の鍵が変わっても。`useEffect` の依存に入れてよい) (§6.4) |
 | 6 | 書き込みの印 | hook が持つ (`beginWrite` → 終わりの関数)。真偽の ref の印と `notifyWriteSettled` は廃止。印が立っている間は `document.documentElement` に `data-ai-consultation-writes` を付け、モバイルの読み込み直しがそれを止める要素として見る (§6.5・§6.9) |
 | 7 | 献立表の直接の `setCurrentPlan` (9 か所)・/profile の保存・/meals の削除 | 置き換えは全部ページの読み取り (`receiver.read`) の `place` を通す。書き込み (GET でない送信) は全部 `beginWrite` の窓の中。生成・写真・再生成の「待ち」は窓で囲まない (順序で足りる。§5.3・§6.6) |
-| 8 | 献立表の完了の切り替えの 250ms・週のキャッシュ・カレンダーの印・買い物リスト | 送る値と巻き戻しの値は待ちが終わった時点の今の献立 (ref) から / キャッシュヒットでも `place` が読み込み中を下ろす・非 ok は控えに書かない / カレンダーの印は月を鍵にして重なりを無くす / 買い物リストは週の確認と分けて自分の鍵で置く (§6.7) |
+| 8 | 献立表の完了の切り替えの 250ms・週のキャッシュ・カレンダーの印・買い物リスト | 送る値と巻き戻しの値は待ちが終わった時点の今の献立 (ref) から / キャッシュヒットでも `place` が読み込み中を下ろす・非 ok は控えに書かない / カレンダーの印は月を鍵にして重なりを無くす / 買い物リストは週の確認と分けて自分の鍵で置き、控えからは置かない / 全画面のスピナーは表示中の週の献立を置いた読み取りも下ろす (§6.4・§6.7) |
 | 9 | 家族の画面の移動 | `router.replace` / `router.push` も `place` の中で呼ぶ (古い応答では移らない) (§6.8) |
 | 10 | 機械の番兵 | 新しい `tests/ai-consultation-receiver-placement-guard-2206.test.ts` の規則 P1〜P6 (置くのは `place` の中だけ / 書き込みは窓の中だけ / Supabase の読み取りは `error` を受け取る / 捨てる入れ物に後から書かない / 旧 API を使わない / 受け手ごとの数の表)。P1 のたどりが入らない関数 (生成の監視の入口 3 つ) と、P2 が書き込みに数えない送信 (受け手の読み取りが置く値を変えない POST の行き先 4 つと、止まった依頼の掃除 1 つ) は理由つきの閉じた一覧 (§9.1・§9.2)。旧の番兵は段 F で消す (§6.10・§7.7) |
 | 11 | 分冊と段 | 1 冊。実装は核 (段 A) → 配線 4 段 (B〜E) → 仕上げ (段 F) の 6 段・6 WF (§0.4・§16) |
@@ -51,7 +51,7 @@
 | R-6 | /home の取り直しでは AI を呼ばない (点数・課題だけ)。開いたときの読み込みは AI つきで読む。AI つきの読み取りを 2 回読まない | #2201 U4・G3 | §6.6・§9 の /home の行・§20 Q-3 |
 | R-7 | 取り直しの経路を通らない置き換え (献立表の生成の完了・1 食の再生成・写真の解析・改善・手入力の保存・並べ替え・追加・削除の後の読み直し、/profile の保存、/meals の削除) が、先に始めた読み取りの古い応答で戻されない | Issue #2206 G1 | §6.6・§7.4・§9 |
 | R-8 | 献立表の完了の切り替え (250ms の待ち) は、待ちが終わった時点の献立から送る値と巻き戻しの値を決める | Issue #2206 G1 | §6.7・§7.4 |
-| R-9 | 献立表の週のキャッシュ: キャッシュヒットでも読み込み中の表示を下ろす。失敗 (非 ok) の応答を空の週として控えに書かない。止めている間に捨てないのは今までどおり | Issue #2206 G1 | §6.7・§7.4 |
+| R-9 | 献立表の週のキャッシュ: キャッシュヒットでも読み込み中の表示を下ろす。失敗 (非 ok) の応答を空の週として控えに書かない。控えの買い物リスト (編集の前の写し) で今の買い物リストを戻さない。止めている間に捨てないのは今までどおり | Issue #2206 G1 | §6.7・§7.4 |
 | R-10 | 献立表のカレンダーの印: 鍵の違う重なる範囲の古い応答が AI の足した印を消さない。買い物リストは週を移った応答からも置く | Issue #2206 G1 | §6.7 |
 | R-11 | 家族・譲渡の画面は、古い応答で `/family/setup`・ログインへ移らない | Issue #2206 G1 | §6.8 |
 | R-12 | 機械の番兵は「置くのは `place` の中だけ」「書き込みは窓の中だけ」などの少数の規則で、受け手の全部の置く場所を数える (今の規則 5 の「関数に 1 つあれば通る」粗さを消す)。旧の API がどの受け手にも残っていないことも数える | Issue #2206 G1 | §6.10・§7.7 |
@@ -60,7 +60,7 @@
 | R-15 | 受け手の表 `src/lib/ai/consultation-refetch-coverage.ts` の receiver / excluded は変えない (受け手の集合は同じ)。説明の文だけ追随する | 範囲 | §17・§18 |
 | R-16 | マジックナンバーを書かない。新しい定数は名前と根拠を持つ (§14) | 共通の規律 | §14 |
 
-### 0.3 ユーザーシナリオ (21 本。トレースは §4.3・テストとの対応は §13.2)
+### 0.3 ユーザーシナリオ (23 本。トレースは §4.3・テストとの対応は §13.2)
 
 登場するもの: M = ページが始めた読み取り (開いたとき・対象の切り替え・書き込みのあと)、R = AI 相談の成功の取り直し (hook が始める)、W = ページの書き込み (`beginWrite` の窓)、番兵 = 入力の部品・モーダル。
 
@@ -79,7 +79,7 @@
 | S-11 | 取り直しの応答待ちにページを離れる (アンマウント) | 応答が届いても何も置かず、止めた通知の印も付けない。生成の見張りもやめる |
 | S-12 | 献立表で完了を押し、250ms の待ちの間に AI 相談 (complete_meal) が同じ食事の完了を変え、R がそれを置く | 待ちが終わった時点の献立 (R が置いた値) から反転を決めて送る。失敗の巻き戻しも R の後の値に戻す |
 | S-13 | 家族を抜けて入り直す数百 ms の間に、/family/dashboard の古い応答 (family_id 無し) が後から届く | `/family/setup` へ移らない (古い応答は置かない = 移らない) |
-| S-14 | /meals/[id] で削除が成功して献立表へ移るまでの 300ms に AI 相談の成功が来る | 削除は窓の中なので取り直さない。移ったあとは受け手が無い (「見つかりませんでした」は出ない) |
+| S-14 | /meals/[id] で削除が成功して献立表へ移るまでの 300ms (移動の完了まで) に AI 相談の成功が来る。または削除の応答待ちに来た成功の取り直しが、削除の窓が閉じたあとに流れる | 削除した食事の鍵には、ページを離れるまで何も置かない (取り直しの 404 で「見つかりませんでした」を出さない。削除の前の食事にも戻さない) |
 | S-15 | 献立表で、月のパネルの範囲 (AI の前に読み始めた) の古い応答が、R の同じ月の応答のあとに届く | 鍵が同じ月なので古い応答は置かない (AI が足した印は消えない) |
 | S-16 | /health で日を A→B→A と選び直し、最初の A の応答が B のあとに届く | A のパネルに A の記録を出す (鍵は日ごと)。B の記録を出さない |
 | S-17 | /profile で保存 (PUT) の応答待ちに、保存の前に始まった R の応答が届く | R の応答を置かない (保存が始まっている)。保存が終わったら 1 回取り直す (保存前の値に戻らない) |
@@ -87,6 +87,8 @@
 | S-19 | /pantry (と、今の読み込み中の初期値が true の受け手) を開く。最初の描画は開いたときの読み取りが始まる前 | 最初の描画から読み込み中の表示を出す (「食材がありません」・入力欄・家族の無い状態を一瞬も出さない)。開いたときの応答を置いたら下ろす。開いた effect は 1 回だけ走り、GET は 1 回 (読み込み中の鍵が立って下りても読み直さない) |
 | S-20 | /comparison で週間の取り直し R (週間) の応答待ちに「月間」へ切り替える。R の応答が月間の応答より先に届く | 週間の順位を月間の見出しの下に出さない。月間の読み込み中の表示は月間の応答を置くまで下ろさない (/health/graphs の期間の切り替えも同じ) |
 | S-21 | 献立表で週 W1 の読み込み (開いたとき) の応答待ちに W2 へ移り、W2 を控えから出す。そのあと W1 の読み込みが 5xx で失敗する | W2 の献立を消さない (W1 の失敗の空は W1 を出しているときだけ置く) |
+| S-22 | 献立表を開いた直後 (表示中の週 W の読み込み M の応答待ち・全画面のスピナー) に AI 相談が成功し、取り直し R の W の献立が M より先に届く | R の献立を置き、M の応答を待たずに全画面のスピナーを下ろす。あとから届いた M の応答 (AI の前の献立) は置かない (今の挙動と同じ) |
+| S-23 | 献立表で買い物リストを編集 (品目のチェック・追加・削除) したあと、先読みで控えにある隣の週へ移る | 買い物リストは編集のあとの一覧のまま (控えの古い一覧で戻さない)。献立は控えから出す |
 
 ### 0.4 分冊判定
 
@@ -174,7 +176,7 @@
 | 13 | `src/app/(main)/health/streaks/page.tsx` | Loading + `beginFetch`・`fetchStreak(ticket, mode)` | `isLatest` | 見ない | 無し | — |
 | 14 | `src/app/(main)/home/page.tsx` → `src/hooks/useHomeData.ts` | ページが `useAiConsultationDataRefetch(refetch, { writeInFlightRef: aiConsultationWrites })`。`useHomeData` が Loading・PendingWrites・流れ 3 本 (`homeFetchStream`・`performanceAnalysisStream`・`nutritionAnalysisStream` (鍵 2 つ)) | `isLatest` (利用者・集計・お知らせ)・`place` (活動量・今日の献立・分析) | `place` 経由 (活動量・今日の献立) | `aiConsultationWrites` (完了の切り替え・活動量) | 利用者・集計・お知らせは `isLatest` だけ。巻き戻しの `fetchHomeData()` は mode `'mount'` で札を見ない。チェックインの保存・献立の変更の実行 (POST) は印の外。引き継いだ回は AI つきで読む |
 | 15 | `src/app/(main)/meals/[id]/page.tsx` | RefetchKey({ writeInFlightRef: pendingWrites }) + RefetchRun(key, loading) + `useEffect` ×2 | `cancelled` | refetch のとき (catalog の await の後) | `pendingWrites` (完了の切り替えだけ) | 404 は `setMeal(null)` (仕様どおり)。削除 (`handleDelete`) は印の外 |
-| 16 | `src/app/(main)/menus/weekly/page.tsx` | 流れ 5 本 (`planFetchStream` (`newerThanPlaced`・週の鍵)・`mealDatesFetchStream` (範囲の鍵)・`familyLoadStream`・`settingsFetchStream`・`pantryFetchStream`) + `pendingWrites` + `aiConsultationRefetchRound` (月のカレンダー・生成中の依頼の確認の effect を走らせ直す) | `place` | `place` 経由 | `pendingWrites` (窓 19 個・中の送信 20 か所。§9.1) | `setCurrentPlan` を直接呼ぶ 9 か所 (生成の完了のポーリング `startPolling`・Realtime `subscribeToRequestStatus`・`handleAddMealWithMode`・`finishRegenerate`・`saveEditMeal` (楽観)・`confirmDeleteMeal`・`saveManualEdit`・写真の解析の結果・`finishImprove`・`reorderMeal`)。生成の POST (`handleGenerateWeekly`) は印の外。完了の 250ms。キャッシュヒットで loading を下ろさない。`fetchWeekData` が非 ok を空で返す。カレンダーの印の鍵が範囲。買い物リストを週の確認の中で置く |
+| 16 | `src/app/(main)/menus/weekly/page.tsx` | 流れ 5 本 (`planFetchStream` (`newerThanPlaced`・週の鍵。週の読み込み `fetchPlan` と、読み直し `refreshMealPlan` が使う。`refreshMealPlan` の呼び出しは取り直し 1 か所と、v4 の生成の完了 `onGenerationComplete`・restoreGeneration の完了 2 か所・v4 のポーリングの完了・生成完了のダイアログを閉じたとき 2 か所の 6 か所。行き先は §6.7・§7.4)・`mealDatesFetchStream` (範囲の鍵)・`familyLoadStream`・`settingsFetchStream`・`pantryFetchStream`) + `pendingWrites` + `aiConsultationRefetchRound` (月のカレンダー・生成中の依頼の確認の effect を走らせ直す) | `place` | `place` 経由 | `pendingWrites` (窓 19 個・中の送信 20 か所。§9.1) | `setCurrentPlan` を直接呼ぶ 9 か所 (生成の完了のポーリング `startPolling`・Realtime `subscribeToRequestStatus`・`handleAddMealWithMode`・`finishRegenerate`・`saveEditMeal` (楽観)・`confirmDeleteMeal`・`saveManualEdit`・写真の解析の結果・`finishImprove`・`reorderMeal`)。生成の POST (`handleGenerateWeekly`) は印の外。完了の 250ms。キャッシュヒットで loading を下ろさない。`fetchWeekData` が非 ok を空で返す。カレンダーの印の鍵が範囲。買い物リストを週の確認の中で置く |
 | 17 | `src/app/(main)/pantry/page.tsx` | Loading + `pendingWrites` + `beginFetch`・`fetchItems(ticket, mode)` | `isLatest` | refetch のとき | `pendingWrites` (削除・手入力・写真の保存) | 引き継いだ回は番兵を見ない |
 | 18 | `src/app/(main)/profile/page.tsx` | RefetchKey + RefetchRun(key, isLoading) + `useEffect` | `cancelled` | refetch のとき (プロフィールの読みの後だけ) | 無し。`handleSave` (PUT) は印の外 | `setUser` は札を見ない。保存中の古い応答で保存前の値に戻る |
 | 19 | `src/app/(main)/profile/nutrition-targets/page.tsx` | RefetchKey + RefetchRun(key, loading) + `useEffect` | `cancelled` | 見ない | 無し | — (再設定の部品 21 が番兵と印を持つ) |
@@ -286,7 +288,7 @@ const remove = async (id) => {
 | S-1 | M (世代 1・`loadingKeys: [items]`) 開始 → 通知 → R (世代 2) 開始 → R の応答: `place(items)`: 2 ≥ placed(0) → 番兵無し → apply → placed = 2・loading(items) 下ろす → M の応答: 1 < 2 → `'superseded'` → M 終了: items の立て主は 1 だが印はもう無い | 期待どおり |
 | S-2 | S-1 で R が 5xx: R は `mode 'refetch'` なので何も置かない (`'superseded'` も `'placed'` も起きない) → M の応答: 1 ≥ 0 → apply → placed = 1・loading 下ろす | 空のまま残らない |
 | S-3 | R1 (2)・R2 (3)。R2 先: placed = 3。R1 後: 2 < 3 → superseded。逆の順: R1 置く (placed = 2) → R2 置く (3) | 期待どおり |
-| S-4 | W1 表示中。W2 へ (控えに無い): M2 (`loadingKeys: ['weekLoading']`) 開始・`isLoading('weekLoading')` で全画面。通知 → R (世代 n): `readDisplayedWeek` は `plan:W2` の鍵で読み、失敗 → 何も置かない・loading に触れない → M2 の応答: `place('plan:W2')` → apply (`weekStartKeyRef` が W2 なら置く) → M2 の `fn` の終わりで `weekLoading` を下ろす (立て主が M2) | W1 の献立は出ない |
+| S-4 | W1 表示中。W2 へ (控えに無い): M2 (`loadingKeys: ['weekLoading']`) 開始・`isLoading('weekLoading')` で全画面。通知 → R (世代 n): `readDisplayedWeek` は `plan:W2` の鍵で読み、失敗 → `'failed'` を返すだけ (取り直しは `placeWeekReadFailure` を呼ばない)・何も置かない・loading に触れない → M2 の応答: `applyWeekResponse` の `place('plan:W2')` → apply (`weekStartKeyRef` が W2 なので置く) → `releaseWeekLoadingIfShown` が `place('weekLoading', 何もしない)` → 下ろす (M2 の `fn` の終わりでも、立て主の印はもう無い) | W1 の献立は出ない |
 | S-5 | `toggleMealCompletion` → `beginWrite` (count 1・started +1) → 通知: `isHeld()` true (count) → 印 → 書き込み終了: count 0 → `flushDeferred` → 番兵無し → R 開始 (1 回) | 1 回取り直す。楽観的な表示は書き込みの前に置かれず残る |
 | S-6 | R (started = s) 開始 → 削除 `beginWrite` (started = s+1) → 終了 → R の応答: `place`: 順序 OK → `started !== s` → `'deferred'`・印 → `deferRefetch`: `isHeld()` false → すぐ `flushDeferred` → R' 開始 → R' の応答を置く | 削除した食材は戻らない |
 | S-7 | R 開始 → モーダル (role=dialog) → R の応答: 番兵 → `'deferred'`・印・`MutationObserver` 開始 → 閉じる → observer → `flushDeferred` → R' | 打ちかけの値は残る。閉じたら 1 回 |
@@ -296,14 +298,16 @@ const remove = async (id) => {
 | S-11 | アンマウント: `active = false`・observer 停止・見張り停止・`mountedRef = false` → 届いた応答の `place` は `'superseded'`、`deferRefetchRef` は無い関数 | 何も起きない |
 | S-12 | 押す → 250ms の待ち → その間に R が `place('plan:W')` で完了済みの献立を置く → 待ち明け: `currentPlanRef.current` から食事を取り `!isCompleted` (= false) を送る。失敗したら `previousMeal` (= R の後の値) に戻す | 古い値の反転にならない |
 | S-13 | M_old (世代 1・家族を抜ける前に始めた) の応答 (family_id 無し) が、入り直したあとの M_new (世代 3) が置いたあとに届く → `place('dashboard', () => router.replace('/family/setup'))`: 1 < 3 → superseded | 移らない |
-| S-14 | `handleDelete`: `beginWrite` → DELETE → 300ms 待つ → `router.push` → finally `endWrite`。通知は印で止まる。移動でアンマウント → 印の解除は `endWrite` (finally) | 「見つかりませんでした」は出ない |
+| S-14 | `handleDelete`: `beginWrite` → DELETE → 成功: `deletedMealIdRef.current = id` (ref。置く呼び出しではない) → 削除の確認を閉じる → `setTimeout(() => router.push('/menus/weekly'), MEAL_DELETE_NAVIGATE_DELAY_MS)` (今と同じく待たない) → finally `endWrite` (窓は DELETE の送信の間だけ)。削除の応答待ちに来た通知は印で止まり、`endWrite` で `flushDeferred` → R' がページのマウント中に GET /api/meals/:id → 404 → `place(mealKey(id), apply)` は順序を通る → apply の先頭の `if (deletedMealIdRef.current === id) return;` で何も置かない (`setMeal(null)` を呼ばない)。300ms の間 (移動の完了まで) に来た通知も同じ (R の応答が 404 でも、削除の前の食事でも置かない)。移動でアンマウント → 以後の `place` は `'superseded'` | 「見つかりませんでした」は出ない・削除した食事に戻らない |
 | S-15 | 月のパネル: M (世代 1・`mealDates:2026-11`) 開始 → 通知 → R (世代 2): `fetchedMonthsRef.clear()` → 同じ月を読み `place('mealDates:2026-11')` → placed = 2 → M の応答: 1 < 2 → superseded | AI の印は消えない |
 | S-16 | A (世代 1・`selectedDate:A`) → B (世代 2・`selectedDate:B`) → A (世代 3・`selectedDate:A`)。世代 1 の応答: `place('selectedDate:A')`: 1 ≥ 0 → apply の中で `selectedDateRef === A` → 置く (A の記録)・loading 下ろす → 世代 3 の応答: 3 ≥ 1 → 置く | A のパネルに A の記録 |
 | S-17 | R 開始 → `handleSave`: `beginWrite` → PUT の応答待ちに R の応答: `isHeld()` (count) → `'deferred'`・印 → PUT 完了・`setProfile` (窓の中) → `endWrite` → `flushDeferred` → R' | 保存前の値に戻らない |
-| S-18 | `fetchPlan`: `read({ loadingKeys: ['weekLoading'] })` → 控えに当たる → 同期で `place('plan:W')` → 置く → `fn` は `await` を持たずに終わる → 次の microtask で `end` が `weekLoading` を下ろす。effect の中の立てると microtask の下ろすの間に描画は挟まらない (`isLoading` は ref を読む) ので全画面のスピナーは出ない。先読み: `fetchWeekData` が非 ok で null → 控えに書かない | 期待どおり |
+| S-18 | `fetchPlan`: `read({ loadingKeys: ['weekLoading'] })` → 控えに当たる → 同期で `place('plan:W')` → 置く (買い物リストは置かない。S-23) → `releaseWeekLoadingIfShown` が同期で `weekLoading` を下ろす → `fn` は `await` を持たずに終わる。effect の中で立てて同じ task の中で下ろすので描画は挟まらない (`isLoading` は ref を読む)。全画面のスピナーは出ない。先読み: `fetchWeekData` が非 ok で null → 控えに書かない | 期待どおり |
 | S-19 | 最初の描画: `useAiConsultationReceiver(fetchItems, { initialLoadingKeys: ['items'] })` → 鍵の表 `{ items → 0 }` → `isLoading('items')` true (スピナー) → effect: `read({ loadingKeys: ['items'] })` (世代 1 が立て直す。鍵は前からあるので版数は増えない) → 応答を置く → 下ろす (版数 +1 → 描画)。`receiver` は同じ参照なので effect (`[receiver, fetchItems]`) は走り直さない → GET は 1 回 | 空の状態は出ない・読み直しは止まる |
 | S-20 | 週間 (M1 の `rankings:weekly` を置いた) → R (世代 2・`periodTypeRef` = weekly で `rankings:weekly` を読む) → 「月間」: `periodTypeRef` = monthly・M2 (世代 3・`loadingKeys: ['rankings:monthly']`・中断の印つき) → R の応答: `place('rankings:weekly')` → 2 ≥ 1 → apply: `periodTypeRef.current !== 'weekly'` で何も置かない → `rankings:weekly` の印を消す (月間の印は別の鍵なので残る) → M2 の応答: `place('rankings:monthly')` → 置く・下ろす | 週間の順位は出ない・スピナーは月間まで |
-| S-21 | M1 (W1・`plan:W1`) 応答待ち → W2 へ: 控えに当たり M2 が `place('plan:W2')` で置く → M1 が 5xx: `placeWeekReadFailure(read, 'W1')` → `place('plan:W1', apply)` → 1 ≥ 0 で通る → apply: `weekStartKeyRef.current !== 'W1'` で何も置かない | W2 の献立は消えない |
+| S-21 | M1 (W1・`plan:W1`) 応答待ち → W2 へ: 控えに当たり M2 が `place('plan:W2')` で置く → M1 の `readDisplayedWeek(read, true)` が 5xx で `'failed'` → `fetchPlan` が `placeWeekReadFailure(read, 'W1')` → `place('plan:W1', apply)` → 1 ≥ 0 で通る → apply: `weekStartKeyRef.current !== 'W1'` で何も置かない → `releaseWeekLoadingIfShown(read, 'W1', 'placed')` は表示中の週が W2 なので何もしない | W2 の献立は消えない |
+| S-22 | 開く: `initialLoadingKeys` で `weekLoading` が立つ → M (世代 1・`loadingKeys: ['weekLoading']`・W) の GET が止まる → 通知 → R (世代 2) の `readDisplayedWeek` が W を読み、先に届く → `applyWeekResponse`: `place('plan:W')` → 2 ≥ 0 → 番兵無し → apply (W を出している) → `releaseWeekLoadingIfShown(read, W, 'placed')` → `place('weekLoading', 何もしない)` → 2 ≥ 0 → 下ろす (立て主の M を問わない) → M の応答: `place('plan:W')` → 1 < 2 → `'superseded'` → `releaseWeekLoadingIfShown` は `'placed'` でないので何もしない → M の `fn` の終わり: `weekLoading` の印はもう無い | スピナーは R が置いた時点で下りる・古い献立に戻らない |
+| S-23 | 表示中の週 W1 の買い物リスト = [x (チェック無し)]。W2 は先読みで控えにある (控えの一覧 = [x (チェック無し)])。x をチェック (`toggleShoppingItem` が store を直に [x (チェック済み)] にする。控えは書き直さない) → W2 へ: `fetchPlan` が控えに当たる → `place('plan:W2')` の apply は `setCurrentPlan(cached.plan)` だけ (買い物リストを置かない) | 買い物リストはチェック済みのまま |
 
 ---
 
@@ -359,10 +363,11 @@ const remove = async (id) => {
 - 最初の描画: `useAiConsultationReceiver(refetch, { initialLoadingKeys })` の鍵は、最初の描画から立っている (立て主は世代 `INITIAL_LOADING_GENERATION` = 0。どの読み取りの終わりでも下りないが、開いたときの読み取りが同じ鍵を `loadingKeys` で立て直すので、その読み取りの終わりで下りる。置かれたときも下りる)。今の受け手で読み込み中の初期値が true のものは全部これを使う (§9 の「最初の描画」の列)。`initialLoadingKeys` の鍵は、開いたときの読み取りの `loadingKeys` に必ず入れる (入れないと下りない)。`options` は最初の描画でだけ読む。
 - 受け手を描画し直すのは、鍵の表 (ref) の中身が変わったとき (版数の state を 1 増やす)。`isLoading` は鍵の表 (ref) をそのまま読む関数で、参照は一生変わらない。`receiver` (`useMemo` の `{ read, beginWrite, isLoading }`) も一生同じ参照で、`useEffect` の依存に入れても読み込み中の鍵の変化で effect は走り直さない (§8・T-24・T-25)。`isLoading` は描画の中で直に呼ぶ (`useMemo` / `useCallback` の中で呼んで `receiver` だけを依存にすると古い値が残る)。
 - 下ろす: その鍵が (どの読み取りでも) 置かれたとき / その鍵を最後に立てた読み取りの `fn` が終わった (投げても) とき。
-- 置く鍵と別の名前の「読み込み中だけの鍵」も使える (置かれないので、立てた読み取りの終わりで下りる)。献立表の全画面のスピナーは `weekLoading` (週を問わない 1 つの鍵) で、`fetchPlan` が立て、最後に始めた `fetchPlan` の読み取りの終わりで下りる (今は「この週を置いた `fetchPlan` だけが finally で下ろす」。設計後は置かれなかったとき (取り直しが先に置いた) も最後の `fetchPlan` の終わりで下りるので止まらない。終わりの時点は今と同じく生成中の行の確認のあと。週が初めの設定 (週の始まりの曜日・`?date=`) の読み込みで変わっても、最初の描画から最初の `fetchPlan` の終わりまで立ったまま)。
+- 置く鍵と別の名前の「読み込み中だけの鍵」も使える。データを置かない鍵なので、立てた読み取りの終わりで下りるほか、ページが `read.place(鍵, () => undefined)` (何もしない `apply`) で置けば、置いた鍵の決まりどおり立て主を問わず下りる (hook の決まりは同じ。新しい API は無い)。
+- 献立表の全画面のスピナーは `weekLoading` (週を問わない 1 つの鍵 `KEY_WEEK_LOADING`)。`fetchPlan` が立て、次のどちらかで下りる: (1) **表示中の週の献立を置いた**とき — どの読み取り (週の読み込み・取り直し・生成の完了と書き込みのあとの読み直し `refreshMealPlan` / `reloadWeekAfterCompletion` / `receiver.read({}, readDisplayedWeek)`) でも、`plan:<週>` に `'placed'` で、いまもその週を出していれば、`releaseWeekLoadingIfShown` が `place(KEY_WEEK_LOADING, () => undefined)` で下ろす (今の `refreshMealPlan` の `place` の中の `setLoading(false)` と同じ。開いたときの週の読み込みの応答待ちに取り直しが先に置いたら、遅い読み込みの応答を待たずに下ろし、置いた献立をスピナーの下に隠さない。S-22)。(2) その鍵を最後に立てた `fetchPlan` の読み取りの終わり (置けなかったとき・失敗のとき。終わりの時点は今と同じく生成中の行の確認のあと)。週を移って立て直したあとに前の週の応答が届いても下りない (前の週は (1) の「いまもその週を出している」に当たらない)。同じ週により新しい読み取りが置いたあとの古い応答も下ろさない (`plan:<週>` が `'superseded'`)。表示中の週の応答で、その週にまだ誰も置いていなければ、`fetchPlan` より前に始めた読み取り (取り直し) の応答でも置いて下ろす (今の `refreshMealPlan` と同じ。置いた献立はその時点の表示中の週のもので、あとから届く `fetchPlan` の応答がより新しければ置き換える)。週が初めの設定 (週の始まりの曜日・`?date=`) の読み込みで変わっても、最初の描画から、表示中の週の献立が置かれるか最初の `fetchPlan` が終わるまで立ったまま (`plan:<週>` を鍵にすると最初の描画の時点で週が決まらないので、週を問わない鍵にする)。今は「この週を置いた `fetchPlan` だけが finally で下ろす」+「`refreshMealPlan` が置いたら下ろす」。
 - 取り直しは立てない。開いたときの読み込みの応答待ちに取り直しが始まっても、開いたときの読み取りは自分の応答を置く (順序が `newerThanPlaced` なので捨てられない) か、失敗なら `mode 'mount'` として失敗の表示を置き、終わりで下ろす。
 - 全画面のスピナーも部分の印 (人数の設定・選んだ日のパネル・栄養の分析・パフォーマンスの分析) も同じ仕組み。ページ側の `loading` の state・`setLoading`・`setIsLoadingServingsConfig`・`setLoadingSelectedDate`・`nutritionAnalysis.loading` / `performanceAnalysis.loading` の置き場は `isLoading(key)` に置き換える (§9)。
-- 控え (キャッシュ) に当たって同期で置く読み取りは、立てて同じ描画の中で下ろす (スピナーは出ない)。
+- 控え (キャッシュ) に当たって同期で置く読み取りは、立てて同じ描画の中で下ろす (スピナーは出ない。献立表は `releaseWeekLoadingIfShown` で置いた時点で下ろす)。
 
 ### 6.5 書き込みの印 (決めること 6)
 
@@ -372,7 +377,7 @@ const remove = async (id) => {
 
 ### 6.6 置き換えの経路と書き込みの窓 (決めること 7)
 
-- 応答を state・store・router に反映するのは `read.place(key, apply)` の `apply` の中だけ (番兵 P1)。取り直しの経路でない置き換え (献立表の生成の完了のポーリングと Realtime・1 食の再生成の完了・写真の解析の結果・改善の完了・手入力の保存・編集・削除・追加・並べ替えのあとの読み直し) は `receiver.read({}, (read) => ...)` のページの読み取りで読み、`place(planKey(week), …)` で置く。献立表は 1 つの補助 `applyWeekResponse(read, weekKey, response)` にまとめる (§7.4)。
+- 応答を state・store・router に反映するのは `read.place(key, apply)` の `apply` の中だけ (番兵 P1)。取り直しの経路でない置き換え (献立表の生成の完了のポーリングと Realtime・1 食の再生成の完了・写真の解析の結果・改善の完了・手入力の保存・編集・削除・追加・並べ替えのあとの読み直しと、`refreshMealPlan` の 6 か所 (v4 の生成の完了・restoreGeneration の完了 2 か所・v4 のポーリングの完了・生成完了のダイアログを閉じたとき 2 か所)) は `receiver.read({}, (read) => ...)` のページの読み取りで読み、`place(planKey(week), …)` で置く。献立表は 1 つの補助 `applyWeekResponse(read, weekKey, response, writeWeekCache, expandNextMeal?)` にまとめる (§7.4)。
 - 書き込み (GET でない fetch・`aiFetch`・Supabase の insert / update / upsert / delete・rpc) は全部 `beginWrite` の窓の中 (番兵 P2)。楽観的な更新も窓の中で置いてよい (P1 は読み取りの経路だけを見る)。受け手の GET でない送信の全部 (63 か所) と、それぞれを窓で囲むか例外にするかは §9.1 の表が正本 (書き込み 57・例外 6)。例外は §9.2 の閉じた一覧だけ。
 - 窓で囲むのは送信の間だけ。生成・写真・再生成・改善の完了の「待ち」は囲まない (§5.3)。
 - 生成の監視 (献立表の `checkPendingRequests`・`resumePendingGeneration`・`subscribeToRequestStatus` と、そこから始まるポーリング・Realtime・`finishRegenerate`・`finishImprove`) は読み取りの経路の外に置く。生成中の印・進み具合・エラーのトースト (`setIsGenerating`・`setGeneratingMeal`・`setRegeneratingMealId`・`setIsRegenerating`・`setSelectedDayIndex`・`setSuccessMessage`・進み具合の setter) は `place` に通さない: 取り直しの番兵で止めると、モーダルを開いている間に生成の進み具合の表示が止まる (今も取り直しの番兵を見ない。`checkPendingRequests` は今は `aiConsultationRefetchRound` の effect で走り、札を持たない)。生成の完了で献立を置き換えるのは `reloadWeekAfterCompletion` の読み取り (`place` を通る)。番兵 P1 はこの 3 つの関数の中へたどらない (§9.2 の `READ_PATH_BOUNDARIES`)。
@@ -383,10 +388,12 @@ const remove = async (id) => {
 | 縁 | 直し方 |
 |---|---|
 | 完了の切り替えの 250ms | `currentPlanRef` (描画のたびに今の `currentPlan` を写す ref) を持ち、待ちが明けたあとに `currentPlanRef.current` から食事を取って `newCompleted = !meal.isCompleted` を決める。`handleUpdateMeal` の `previousMeal` も呼ばれた時点の `currentPlanRef.current` から取る |
-| キャッシュヒットで読み込み中を下ろさない | `fetchPlan` は `receiver.read({ loadingKeys: [KEY_WEEK_LOADING] }, …)` で始め、控えに当たっても `place(planKey(week), …)` で置き、読み取りの終わりで `KEY_WEEK_LOADING` が下りる (§6.4)。受け手は `useAiConsultationReceiver(refetchAfterAiConsultation, { initialLoadingKeys: [KEY_WEEK_LOADING] })` (今の `initialUiFlagState.loading` の true)。ページの `uiFlag.loading` / `setLoading` は週の読み込みの用途では消し、`receiver.isLoading(KEY_WEEK_LOADING)` で描く |
+| キャッシュヒットで読み込み中を下ろさない | `fetchPlan` は `receiver.read({ loadingKeys: [KEY_WEEK_LOADING] }, …)` で始め、控えに当たっても `place(planKey(week), …)` で置き、`releaseWeekLoadingIfShown` (置いた時点) か読み取りの終わりで `KEY_WEEK_LOADING` が下りる (§6.4)。表示中の週の献立を置いたほかの読み取り (取り直し・`refreshMealPlan` ほか) も `applyWeekResponse` の中の `releaseWeekLoadingIfShown` で下ろす (S-22)。受け手は `useAiConsultationReceiver(refetchAfterAiConsultation, { initialLoadingKeys: [KEY_WEEK_LOADING] })` (今の `initialUiFlagState.loading` の true)。ページの `uiFlag.loading` / `setLoading` は週の読み込みの用途では消し、`receiver.isLoading(KEY_WEEK_LOADING)` で描く |
 | 先読みの非 ok を空の週として控えに書く | `fetchWeekData` は `res.ok` でなければ `null` を返す (献立 0 件は `{ plan: null, shoppingList }`)。`null` は控えに書かず、画面にも置かない (失敗 = 今の表示を残す。開いたときの失敗は `mode 'mount'` で `setCurrentPlan(null)` を置く) |
 | カレンダーの印の鍵が範囲 | `fetchAndCacheMealDates(read, start, end)` は範囲を月 (`YYYY-MM`) に割り、月ごとに `fetchedMonthsRef` を見て、月の初日〜末日を読み、`place(mealDatesKey(month), () => dispatchWeekView(REPLACE_RANGE(月の初日, 月の末日)))`。`'deferred'` なら `fetchedMonthsRef` から外す。取り直しは `fetchedMonthsRef.clear()` のあと、週の窓 `weekWindowOf(weekStart)` (表示中の週の初日の `CALENDAR_MEAL_DATES_DAYS_BEFORE_WEEK` 日前〜`CALENDAR_MEAL_DATES_DAYS_AFTER_WEEK` 日後) と月の窓 `monthWindowOf(displayMonth)` (表示月の初日〜末日の前後 `CALENDAR_MEAL_DATES_MONTH_PADDING_DAYS` 日) にかかる月を同じ `read` で読む (定数と関数は §7.4・§14。値は今の 2 つの effect の数をそのまま名前にしたもの)。`aiConsultationRefetchRound`・`aiConsultationRefetchTicketRef`・`takeWeekRangeRefetchRun`・`takeMonthRangeRefetchRun` は消し、月のカレンダーの 2 つの effect は週・月の変化だけで走る |
-| 買い物リスト | GET /api/meal-plans の応答に `shoppingList` があれば、週の確認の外で `place(KEY_SHOPPING_LIST, () => setShoppingList(items))` (空でも置く)。`fetchWeekData` も応答の `shoppingList` をそのまま返す (献立 0 件で `[]` を作らない) |
+| 買い物リスト | GET /api/meal-plans の応答に `shoppingList` があれば、週の確認の外で `place(KEY_SHOPPING_LIST, () => setShoppingList(items))` (空でも置く)。`fetchWeekData` も応答の `shoppingList` をそのまま返す (献立 0 件で `[]` を作らない)。**控え (キャッシュ) に当たった週の読み込みは買い物リストを置かない** (今は控えの一覧が空でなければ置く)。控えの買い物リストは先読み・読み込みの時点の写しで、そのあとの買い物リストの追加・チェック・削除 (`addShoppingItem`・`toggleShoppingItem`・`deleteShoppingItem` ほか。どれも store を直に置き、控えを書き直さない) が入っていないため、置くと今の一覧を古い一覧で戻す (S-23)。控えに書く値 (`WeekCacheData` の `shoppingList`) と `createWeekDataCache` は変えない (型と先読みはそのまま。読むのをやめるだけ) |
+| 直近の食事の自動展開 | 今の `autoExpandNextMeal` は週の読み込み (`fetchPlan`) だけが呼び、`fetchPlan` は週が変わるたびに effect の中で作り直すのでその描画の `hasAutoExpanded` を読む。設計後の `fetchPlan`・`applyWeekResponse` は依存の少ない `useCallback` なので、`autoExpandNextMealRef` (描画のたびに `autoExpandNextMeal` を写す ref) から呼ぶ。呼ぶのは今と同じく週の読み込みだけ (控えに当たった分岐と、`readDisplayedWeek(read, true)` → `applyWeekResponse(…, true)`)。取り直し・生成の完了・書き込みのあとの読み直しは展開しない (今の `refreshMealPlan` と同じ) |
+| 生成の完了・ダイアログを閉じたときの読み直し (`refreshMealPlan` の 6 か所) | `refreshMealPlan` は名前を残し、中身を `receiver.read({}, readDisplayedWeek)` に替える (§7.4)。呼び出し 6 か所 (v4 の `onGenerationComplete`・restoreGeneration の完了 2 か所・v4 のポーリングの完了・生成完了のダイアログの背景の onClick と onDismiss) はそのまま。ページの読み取りなので、先に始めた読み込み・取り直しの古い応答はあとから届いても置かれない (R-7)。失敗は何も置かない (今と同じ) |
 | 生成中の依頼の確認 | 今の effect の中の `checkPendingRequests` を、名前を変えずに `useCallback` の `checkPendingRequests(targetDate: string)` に出し (読み取りではないので `read` を受け取らない。中身の setter・掃除の POST・ポーリングの開始は今の字面のまま。§6.6)、effect (`void checkPendingRequests(formatLocalDate(weekStart))`。依存は今の `[weekStart, weekDates, isGenerating, generatingMeal]` から `aiConsultationRefetchRound` を外したもの) と取り直し (`refetchAfterAiConsultation` の先頭で `void checkPendingRequests(weekStartKeyRef.current)`。取り直しの番兵を見ないのは今と同じ) の両方から呼ぶ (round の state を消す)。effect の先頭の 4 つのガード (`if (realtimeChannelRef.current \|\| regenerateChannelRef.current) return;`・生成中・確認中・復元中) は同じ字面のまま関数の先頭へ移す。中で使う `weekDates` は `weekDatesRef.current`、`isGenerating`・`generatingMeal` は `useCallback` の依存に入れる (取り直しの関数は描画のたびに最新を呼ぶので古くならない)。`fetchPlan` の中の生成中の行の確認 (GET /api/ai/menu/weekly/pending → `resumePendingGeneration(pendingIsUltimateMode);` → `subscribeToRequestStatus(…)`) は今までどおり `fetchPlan` に残す (入り直しの経路は 2 つのまま。§17 G-20) |
 
 ### 6.8 家族・譲渡の画面の移動 (決めること 9)
@@ -859,7 +866,7 @@ export default function PantryPage() {
 
 ```ts
 // tsc:skip place=src/app/(main)/menus/weekly/page.tsx
-import { useAiConsultationReceiver, type AiConsultationRead } from "@/hooks/useAiConsultationReceiver";
+import { useAiConsultationReceiver, type AiConsultationPlaceResult, type AiConsultationRead } from "@/hooks/useAiConsultationReceiver";
 
 /** 置き場所の鍵 (#2206 G1)。対象を替えて出すものは対象を含める */
 const planKey = (weekStartKey: string) => `plan:${weekStartKey}`;
@@ -868,7 +875,11 @@ const KEY_SHOPPING_LIST = "shoppingList";
 const KEY_PANTRY = "pantry";
 const KEY_SETTINGS = "settings";
 const KEY_FAMILY = "family";
-/** 全画面のスピナーの鍵 (読み込み中だけの鍵。置かれない。fetchPlan が立て、最後の fetchPlan の読み取りの終わりで下りる。§6.4) */
+/**
+ * 全画面のスピナーの鍵 (読み込み中だけの鍵。§6.4)。fetchPlan が立て、最後の fetchPlan の読み取りの終わりで下りる。
+ * 表示中の週の献立を置いた読み取り (取り直し・生成の完了の読み直し・書き込みのあとの読み直しを含む) も、
+ * releaseWeekLoadingIfShown で何もしない apply で置いて下ろす (今の refreshMealPlan の place の中の setLoading(false)。S-22)
+ */
 const KEY_WEEK_LOADING = "weekLoading";
 /** 食事の完了の切り替えを送るまでの待ち (ミリ秒)。連打を 1 回にまとめる (#322 の 250ms をそのまま名前に) */
 const MEAL_TOGGLE_DEBOUNCE_MS = 250;
@@ -881,77 +892,117 @@ const fetchWeekData = async (weekStartKey: string): Promise<MealPlansWeekRespons
 };
 
 /**
+ * 直近の食事の自動展開 (今の autoExpandNextMeal。中身は変えない) を、描画のたびに写す ref (#2206 G1 R2)。
+ * fetchPlan・applyWeekResponse は依存の少ない useCallback なので、関数を直に呼ぶと最初の描画の閉包の hasAutoExpanded
+ * (false) を読み、週を移るたびに展開し直す。今の fetchPlan は週が変わるたびに effect の中で作り直すので、その描画の値を読む
+ */
+const autoExpandNextMealRef = useRef(autoExpandNextMeal);
+autoExpandNextMealRef.current = autoExpandNextMeal;
+
+/**
+ * 表示中の週の献立を置いたら、全画面のスピナー (KEY_WEEK_LOADING) も下ろす (#2206 G1 R2。S-22)。
+ * placed はその週の鍵 (planKey(weekStartKey)) の place の結果。置けて、いまもその週を出しているときだけ
+ * KEY_WEEK_LOADING を何もしない apply で置く (置いた鍵の読み込み中の印は立て主を問わず下りる。§6.4)。
+ * 今の refreshMealPlan が place の中で setLoading(false) を呼ぶのと同じ: 開いたときの週の読み込みの応答待ちに取り直しが
+ * 先に置いたら、遅い読み込みの応答を待たずにスピナーを下ろし、置いた献立をスピナーの下に隠さない
+ */
+const releaseWeekLoadingIfShown = useCallback(
+  (read: AiConsultationRead, weekStartKey: string, placed: AiConsultationPlaceResult) => {
+    if (placed !== "placed" || weekStartKeyRef.current !== weekStartKey) return;
+    read.place(KEY_WEEK_LOADING, () => undefined);
+  },
+  [],
+);
+
+/**
  * 週の応答を画面と控えに置く (#2206 G1)。週の読み込み・取り直し・生成の完了・再生成・写真・改善・手入力・編集・削除・追加・
  * 並べ替えのあとの読み直しが全部これを通る (直接の setCurrentPlan を残さない。番兵 P1)。
  * writeWeekCache は読み始める前に取った控えの書き込み口 (createWeekDataCache)。
- * 買い物リストは週に関係なく使っている 1 つなので、週の確認の外で自分の鍵に置く (空でも置く)
+ * 買い物リストは週に関係なく使っている 1 つなので、週の確認の外で自分の鍵に置く (空でも置く)。
+ * expandNextMeal は週の読み込み (fetchPlan) からだけ true (直近の食事の自動展開は今も fetchPlan だけが呼ぶ)
  */
 const applyWeekResponse = useCallback(
-  (read: AiConsultationRead, weekStartKey: string, week: MealPlansWeekResponse, writeWeekCache: WeekDataCacheWriter<WeekCacheData>) => {
+  (
+    read: AiConsultationRead,
+    weekStartKey: string,
+    week: MealPlansWeekResponse,
+    writeWeekCache: WeekDataCacheWriter<WeekCacheData>,
+    expandNextMeal = false,
+  ) => {
     const items: ShoppingListItem[] = week.shoppingList?.items ?? [];
     read.place(KEY_SHOPPING_LIST, () => setShoppingList(items));
     const plan = week.dailyMeals && week.dailyMeals.length > 0 ? { days: week.dailyMeals } : null;
-    return read.place(planKey(weekStartKey), () => {
+    const placed = read.place(planKey(weekStartKey), () => {
       writeWeekCache({ plan, shoppingList: items });
       // いまもこの週を出しているときだけ画面に置く (順序ではない。別の週へ移ったあとに届いた応答を新しい週の見出しの下に出さない)
       if (weekStartKeyRef.current !== weekStartKey) return;
       setCurrentPlan(plan);
       if (plan) {
         updateCalendarMealDatesFromDailyMeals(week.dailyMeals);
-        autoExpandNextMeal(plan, weekDatesRef.current);
+        if (expandNextMeal) autoExpandNextMealRef.current(plan, weekDatesRef.current);
       }
     });
+    releaseWeekLoadingIfShown(read, weekStartKey, placed);
+    return placed;
   },
-  [updateCalendarMealDatesFromDailyMeals],
+  [updateCalendarMealDatesFromDailyMeals, releaseWeekLoadingIfShown],
 );
 
 /**
- * 週の読み取りの失敗 (開いたとき・週の切り替え・書き込みのあとの読み直し) で、その週の献立を空にする (#2206 G1)。
- * 取り直し ('refetch') の失敗は何も置かない (今の表示を残す)。いまもその週を出しているときだけ置く
- * (別の週へ移ったあとに届いた失敗で、新しい週の献立を消さない。S-21。applyWeekResponse と同じ確かめ)
+ * 週の読み込み (fetchPlan) の失敗で、その週の献立を空にする (#2206 G1)。呼ぶのは fetchPlan だけ (取り直し・生成の完了・
+ * 書き込みのあとの読み直しの失敗は、今の refreshMealPlan と同じく何も置かない = 今の表示を残す)。
+ * いまもその週を出しているときだけ置く (別の週へ移ったあとに届いた失敗で、新しい週の献立を消さない。S-21。applyWeekResponse と同じ確かめ)
  */
 const placeWeekReadFailure = useCallback((read: AiConsultationRead, weekStartKey: string) => {
   if (read.mode !== "mount") return;
-  read.place(planKey(weekStartKey), () => {
+  const placed = read.place(planKey(weekStartKey), () => {
     if (weekStartKeyRef.current !== weekStartKey) return;
     setCurrentPlan(null);
   });
-}, []);
+  releaseWeekLoadingIfShown(read, weekStartKey, placed);
+}, [releaseWeekLoadingIfShown]);
 
-/** 表示中の週を読む (週の読み込み・取り直し・書き込みのあとの読み直し)。読み込み中の印は呼ぶ側が loadingKeys で立てる */
-const readDisplayedWeek = useCallback(async (read: AiConsultationRead) => {
+/** 表示中の週を読んだ結果。'failed' = 非 ok か通信の失敗 (何も置いていない。空を置くかは呼ぶ側が決める) */
+type WeekReadOutcome = "read" | "failed";
+
+/**
+ * 表示中の週を読む (週の読み込み・取り直し・生成の完了と書き込みのあとの読み直し (refreshMealPlan))。
+ * 失敗では何も置かない (fetchPlan だけが placeWeekReadFailure で空を置く)。読み込み中の印は呼ぶ側が loadingKeys で立てる
+ */
+const readDisplayedWeek = useCallback(async (read: AiConsultationRead, expandNextMeal = false): Promise<WeekReadOutcome> => {
   const weekStartKey = weekStartKeyRef.current;
   const writeWeekCache = weekDataCache.current.beginWrite(weekStartKey);
   try {
     const week = await fetchWeekData(weekStartKey);
-    if (week === null) {
-      placeWeekReadFailure(read, weekStartKey);
-      return;
-    }
-    applyWeekResponse(read, weekStartKey, week, writeWeekCache);
+    if (week === null) return "failed";
+    applyWeekResponse(read, weekStartKey, week, writeWeekCache, expandNextMeal);
+    return "read";
   } catch (e) {
     console.error("Failed to read meal plan", e);
-    placeWeekReadFailure(read, weekStartKey);
+    return "failed";
   }
-}, [applyWeekResponse, placeWeekReadFailure]);
+}, [applyWeekResponse]);
 
 /**
- * 週の読み込み (weekStart が変わったとき)。控えに当たれば同期で置く。全画面のスピナー (KEY_WEEK_LOADING) はこの読み取りの
- * 終わりで下りる (控えに当たったときは await を持たないので、立てた effect と同じ task の中で下りて描画に出ない。§4.3 S-18)
+ * 週の読み込み (weekStart が変わったとき)。控えに当たれば同期で置く。全画面のスピナー (KEY_WEEK_LOADING) は、表示中の週の
+ * 献立を置いたとき (releaseWeekLoadingIfShown) か、この読み取りの終わりで下りる (控えに当たったときは同期で置いて下ろす。§4.3 S-18)
  */
 const fetchPlan = useCallback(async () => {
   const weekStartKey = weekStartKeyRef.current;
   await receiver.read({ loadingKeys: [KEY_WEEK_LOADING] }, async (read) => {
     const cached = weekDataCache.current.get(weekStartKey);
     if (cached && Date.now() - cached.fetchedAt < CACHE_TTL) {
-      read.place(planKey(weekStartKey), () => {
+      const placed = read.place(planKey(weekStartKey), () => {
         if (weekStartKeyRef.current !== weekStartKey) return;
         setCurrentPlan(cached.plan);
-        setShoppingList(cached.shoppingList);
-        if (cached.plan) autoExpandNextMeal(cached.plan, weekDatesRef.current);
+        // 買い物リストは控えから置かない (#2206 G1 R2。控えの買い物リストは先読み・読み込みの時点の写しで、そのあとの
+        // 追加・チェック・削除は控えに書かないので、置くと今の一覧を古い一覧で戻す。置くのは GET の応答 (applyWeekResponse) と
+        // 書き込みの関数だけ。S-23)
+        if (cached.plan) autoExpandNextMealRef.current(cached.plan, weekDatesRef.current);
       });
+      releaseWeekLoadingIfShown(read, weekStartKey, placed);
     } else {
-      await readDisplayedWeek(read);
+      if ((await readDisplayedWeek(read, true)) === "failed") placeWeekReadFailure(read, weekStartKey);
       // …生成中の行の確認 (GET /api/ai/menu/weekly/pending → resumePendingGeneration(pendingIsUltimateMode); → subscribeToRequestStatus(…)) は
       // 今までどおりここに残す (入り直しの経路 2 つの 1 つ。#1629。checkPendingRequests は呼ばない)。
       // resumePendingGeneration・subscribeToRequestStatus は生成の監視の入口なので place に通さない (§6.6。P1 の境 B-2・B-3)…
@@ -1041,9 +1092,27 @@ const refetchAfterAiConsultation = useCallback(async (read: AiConsultationRead) 
     fetchAndCacheMealDates(read, ...monthWindowOf(displayMonthRef.current)),
   ]);
 }, [readDisplayedWeek, fetchPantry, fetchUserSettings, loadFamilyData, fetchAndCacheMealDates, checkPendingRequests]);
-// 最初の描画から全画面のスピナー (今の initialUiFlagState.loading の true。最初の fetchPlan の終わりまで)
+// 最初の描画から全画面のスピナー (今の initialUiFlagState.loading の true。表示中の週の献立が置かれるか、最初の fetchPlan が終わるまで)
 const receiver = useAiConsultationReceiver(refetchAfterAiConsultation, { initialLoadingKeys: [KEY_WEEK_LOADING] });
 const loading = receiver.isLoading(KEY_WEEK_LOADING); // uiFlag.loading の週の読み込みの用途を置き換える
+
+/**
+ * 表示中の週を読み直す (#2206 G1 R2)。今の refreshMealPlan (planFetchStream.begin(refetchTicket, 週) と place の中の
+ * setLoading(false)) の置き換えで、名前と 6 か所の呼び出しの字面 (`refreshMealPlan();`) は変えない:
+ *   1. v4 の生成の完了 (useV4MenuGeneration の onGenerationComplete)
+ *   2. restoreGeneration の「すでに完了している場合」(status API が completed)
+ *   3. restoreGeneration の進捗の追跡 (v4Generation.subscribeToProgress) の completed
+ *   4. v4 のポーリングの完了 (handleV4Generate の setInterval の completed。v4Watch の確かめのあと)
+ *   5. 生成完了のダイアログの背景の onClick (refreshOnDismiss)
+ *   6. 生成完了のダイアログの onDismiss (GenerationResultDialogContent。onRetry が無く refreshOnDismiss のとき)
+ * 取り直しの経路からは呼ばない (refetchAfterAiConsultation は readDisplayedWeek(read) を直に呼ぶ。今の refreshMealPlan(ticket) の置き換え)。
+ * ページの読み取り ('mount') なので番兵を見ず、始めた時点のどの読み取りより新しい世代で plan:<週> に置く (R-7: 先に始めた読み込み・
+ * 取り直しの古い応答で戻されず、より新しい読み取りの応答は戻さない)。週は読み始めた時点の表示中の週 (weekStartKeyRef) で、mount だけの
+ * effect (restoreGeneration) の古い閉包から呼ばれても今の週を読む。失敗では何も置かない (今の refreshMealPlan と同じ)。
+ * 表示中の週の献立を置けば全画面のスピナーも下ろす (releaseWeekLoadingIfShown。今の place の中の setLoading(false))。
+ * 監視の印 (isActive) は取らない (今の refreshMealPlan も取らない。印を持つ監視の完了は reloadWeekAfterCompletion)
+ */
+const refreshMealPlan = useCallback(() => receiver.read({}, readDisplayedWeek), [receiver, readDisplayedWeek]);
 
 /** 今の献立の写し (完了の切り替えの待ちが明けたときに、押した描画でなく今の献立から値を決める。#2206 G1) */
 const currentPlanRef = useRef(currentPlan);
@@ -1083,9 +1152,9 @@ const handleGenerateWeekly = async () => {
 };
 ```
 
-`fetchPantry`・`fetchUserSettings`・`loadFamilyData` は引数を `read` にし、`<stream>.begin(refetchTicket)` を消して `read.place(KEY_…, …)` で置く (`loadFamilyData` は段ごとに同じ鍵で置き、`'placed'` でなければ次の段へ進まない)。`settingsFetchStream`・`pantryFetchStream`・`familyLoadStream`・`mealDatesFetchStream`・`planFetchStream` は消す。`setIsLoadingServingsConfig` は `receiver.isLoading(KEY_SETTINGS)` で駆動する (`fetchUserSettings` を `receiver.read({ loadingKeys: [KEY_SETTINGS] }, …)` で始める)。`startPolling` / `subscribeToRequestStatus` / `finishRegenerate` / `finishImprove` / 写真の解析の結果の `setCurrentPlan` は `reloadWeekAfterCompletion` (写真は `waitForMealPhotoResult` の `fetchWeek` の最後の応答を `applyWeekResponse` で置く) に替える。`handleAddMealWithMode`・`confirmDeleteMeal`・`saveManualEdit`・`reorderMeal`・`generateMealImage` の読み直しも `receiver.read({}, readDisplayedWeek)` にする (窓は今までどおり)。`saveEditMeal` の楽観的な `setCurrentPlan` は窓の中なのでそのまま (P1 は読み取りの経路だけを見る)。写真の解析の POST (`/api/ai/analyze-meal-photo`) は送信の間だけ窓で囲む。窓で新たに囲む送信と例外 (AI の助言・栄養のフィードバック・冷蔵庫の写真の解析・止まった依頼の掃除) の全部は §9.1 の W-31〜W-63 の行のとおり。
+`fetchPantry`・`fetchUserSettings`・`loadFamilyData` は引数を `read` にし、`<stream>.begin(refetchTicket)` を消して `read.place(KEY_…, …)` で置く (`loadFamilyData` は段ごとに同じ鍵で置き、`'placed'` でなければ次の段へ進まない)。`settingsFetchStream`・`pantryFetchStream`・`familyLoadStream`・`mealDatesFetchStream`・`planFetchStream` は消す。`setIsLoadingServingsConfig` は `receiver.isLoading(KEY_SETTINGS)` で駆動する (`fetchUserSettings` を `receiver.read({ loadingKeys: [KEY_SETTINGS] }, …)` で始める)。`startPolling` / `subscribeToRequestStatus` / `finishRegenerate` / `finishImprove` / 写真の解析の結果の `setCurrentPlan` は `reloadWeekAfterCompletion` (写真は `waitForMealPhotoResult` の `fetchWeek` の最後の応答を `applyWeekResponse` で置く) に替える。`handleAddMealWithMode`・`confirmDeleteMeal`・`saveManualEdit`・`reorderMeal`・`generateMealImage` の読み直しも `receiver.read({}, readDisplayedWeek)` にする (窓は今までどおり。読み直しの失敗では何も置かない = 今の直接の `setCurrentPlan` の経路が非 ok で何も置かないのと同じ)。今の `refreshMealPlan` は消さずに上のブロックの形 (`receiver.read({}, readDisplayedWeek)`) に替え、6 か所の呼び出し (v4 の生成の完了・restoreGeneration の完了 2 か所・v4 のポーリングの完了・生成完了のダイアログを閉じたとき 2 か所) はそのまま残す (§3.2 #16 の「直接の setCurrentPlan」の 9 か所とは別の経路。`planFetchStream` を消してもこの 6 か所は `receiver.read` を通る)。`saveEditMeal` の楽観的な `setCurrentPlan` は窓の中なのでそのまま (P1 は読み取りの経路だけを見る)。写真の解析の POST (`/api/ai/analyze-meal-photo`) は送信の間だけ窓で囲む。窓で新たに囲む送信と例外 (AI の助言・栄養のフィードバック・冷蔵庫の写真の解析・止まった依頼の掃除) の全部は §9.1 の W-31〜W-63 の行のとおり。
 
-宣言の順 (`useCallback` の依存の配列は宣言の時点で読まれるので、依存に書く名前は先に宣言する): 鍵と定数 → `applyWeekResponse`・`placeWeekReadFailure`・`readDisplayedWeek`・`fetchAndCacheMealDates`・`fetchPantry`・`fetchUserSettings`・`loadFamilyData` → `checkPendingRequests` とその effect → `refetchAfterAiConsultation` → `receiver` → `fetchPlan` とその effect・`reloadWeekAfterCompletion`・書き込みの関数。上のブロックは関数ごとの差分で、この順には並べていない。`checkPendingRequests` の中で使う `subscribeToRequestStatus`・`subscribeToRegenerateStatus`・`resumePendingGeneration` は今と同じく後ろで宣言してよい (本体の中で呼ぶだけで、依存の配列に書かない)。
+宣言の順 (`useCallback` の依存の配列は宣言の時点で読まれるので、依存に書く名前は先に宣言する): 鍵と定数 → `autoExpandNextMealRef` (今の `autoExpandNextMeal` の宣言のあと) → `releaseWeekLoadingIfShown`・`applyWeekResponse`・`placeWeekReadFailure`・`readDisplayedWeek`・`fetchAndCacheMealDates`・`fetchPantry`・`fetchUserSettings`・`loadFamilyData` → `checkPendingRequests` とその effect → `refetchAfterAiConsultation` → `receiver` → `refreshMealPlan` (今の位置 (`useV4MenuGeneration` の呼び出しの直前) から `receiver` のあとへ移す。`useV4MenuGeneration` の呼び出しと restoreGeneration の effect は今の位置のまま動かさない (hook と effect の順を変えない)。どちらも `refreshMealPlan` を描画のあとに走る関数 (`onGenerationComplete`・effect の本体) の中で呼ぶだけなので、宣言が後ろでも型検査・実行とも通る。依存の配列には書かない (今の restoreGeneration の effect は依存が空・`onGenerationComplete` は依存を持たない)) → `fetchPlan` とその effect・`reloadWeekAfterCompletion`・書き込みの関数。上のブロックは関数ごとの差分で、この順には並べていない。`checkPendingRequests` の中で使う `subscribeToRequestStatus`・`subscribeToRegenerateStatus`・`resumePendingGeneration` は今と同じく後ろで宣言してよい (本体の中で呼ぶだけで、依存の配列に書かない)。
 
 ### 7.5 `src/hooks/useHomeData.ts` の差分 (/home。段 D。G3 のマージ後の名前で読み替える)
 
@@ -1364,7 +1433,7 @@ describe('受け手は place の中だけで置き、書き込みは窓の中だ
 2. 応答を state・store・router に反映するのは `read.place(key, apply)` の `apply` の中だけ。読み取りの経路の関数で `await` のあとに `place` の外で置かない (生成の監視の入口 §9.2 の B-1〜B-3 は読み取りの経路の外)。
 3. 鍵は受け手が決める。対象を替えて出す表示は対象を鍵に含め、「いまもその対象か」は `apply` の中で ref を見て決める (成功の応答も `'mount'` の失敗の表示も)。
 4. 書き込み (GET でない送信) は全部 `beginWrite` の窓の中 (§9.1。例外は §9.2 の閉じた一覧だけ)。窓の中では楽観的な更新を置いてよい。
-5. 読み込み中の表示は `isLoading(key)`。ページの `loading` の state を持たない。今の読み込み中の初期値が true の受け手は `initialLoadingKeys` で同じ鍵を渡し、開いたときの読み取りの `loadingKeys` にも入れる (§9.3)。
+5. 読み込み中の表示は `isLoading(key)`。ページの `loading` の state を持たない。今の読み込み中の初期値が true の受け手は `initialLoadingKeys` で同じ鍵を渡し、開いたときの読み取りの `loadingKeys` にも入れる (§9.3)。 読み込み中だけの鍵 (データを置かない鍵) を立てた読み取りの終わりより前に下ろしたいときは、`read.place(鍵, () => undefined)` で置く (置いた鍵は立て主を問わず下りる。使うのは献立表の `releaseWeekLoadingIfShown` だけ。§6.4)。
 6. 旧 API の識別子を使わない。
 
 Zod のスキーマ・DB の列・API の route・エラーコード: 本書は増やさない (該当なし)。
@@ -1389,8 +1458,8 @@ Zod のスキーマ・DB の列・API の route・エラーコード: 本書は�
 | 12 | /health | C | `today`・`streak`・`goals`・`selectedDateKey(日)` (= `selectedDate:<日>`) | 今日と昨日の記録と `setQuickWeight` / 連続記録と週の記録 / 目標 / 選んだ日の記録 (`apply` の中で `selectedDateRef.current === date` を見る) | 開いたとき・記録の保存のあと `[today, streak, goals]` (スピナーは 3 つのどれかが立っている間)。日を選んだとき `[selectedDateKey(日)]` (パネルの印 `setLoadingSelectedDate` を `isLoading` に) | 記録の保存 (`POST /api/health/records/quick`) | 失敗は表示を変えない | 取り直しは 3 つの鍵と、出している日のパネル (`selectedDateRef`) を同じ `read` で読む |
 | 13 | /health/streaks | B | `streak` | `setStreak`・`setNextBadge`・`setDaysToNextBadge`・`setWeeklyRecords`・`setError` | 開いたとき `[streak]` | 無し | 失敗は `'mount'` だけ `setError` | — |
 | 14 | /home (`useHomeData.ts`) | D | §7.5 の 15 個 | §7.5 | 開いたとき・auth の変化・巻き戻し・献立の変更の実行のあと `[todayPlan, nutritionScore, performance]`。チェックインの保存のあとの `fetchPerformanceAnalysis` は `[performance]` | 完了の切り替え・活動量 (今までどおり) + チェックインの保存・献立の変更の実行の `POST` | `analysisWithoutAi = mode === 'refetch'`。`'refetch'` の失敗は集計の今の値を残す | `home/page.tsx` は hook を呼ばない。G3 のマージ後に切る |
-| 15 | /meals/[id] | B | `mealKey(id)` (= `meal:<id>`)・`servings` | `setMeal` (`apply` の中で `params.id === id` を見る。404 は `setMeal(null)`)・`setServingsConfig` | 開いたとき・id の切り替え `[mealKey(id)]` | 完了の切り替え (今までどおり) + 削除 (`DELETE`。300ms 待って `router.push` するまで窓の中。§14 の `MEAL_DELETE_NAVIGATE_DELAY_MS`) | 失敗: `'mount'` は `setMeal(null)` (今までどおり)、`'refetch'` は 404 だけ `setMeal(null)` | 2 つの `useEffect` を 1 つの読み取りの関数にまとめ、`[params.id]` で `receiver.read` |
-| 16 | /menus/weekly | E | `plan:<週>`・`mealDates:<月>`・`shoppingList`・`pantry`・`settings`・`family` (置く鍵) と `weekLoading` (読み込み中だけの鍵) | §7.4 | 週の読み込み `[weekLoading]`。人数の設定 `[settings]` | §9.1 の献立表の書き込み 29 か所 (今の窓 (19 個) の中の 20 か所 + 新たに 8 つの関数で囲む 9 か所)。例外は §9.2 の 4 か所 | 週の読み込みの失敗は `'mount'` で `setCurrentPlan(null)` (`apply` の中で週を見る。`placeWeekReadFailure`) | §6.7・§7.4。生成の監視の入口 3 つは読み取りの経路の外 (§6.6・§9.2)。`ProfileReminderBanner` は自分の受け手 |
+| 15 | /meals/[id] | B | `mealKey(id)` (= `meal:<id>`)・`servings` | `setMeal` (`apply` の先頭で `deletedMealIdRef.current === id` なら何も置かない (削除した食事。S-14)、続けて `params.id === id` を見る。404 は `setMeal(null)`)・`setServingsConfig` | 開いたとき・id の切り替え `[mealKey(id)]` | 完了の切り替え (今までどおり) + 削除 (`DELETE` の送信の間だけ窓。移動は今までどおり待たない `setTimeout(() => router.push('/menus/weekly'), MEAL_DELETE_NAVIGATE_DELAY_MS)` で、窓は finally で閉じる) | 失敗: `'mount'` は `setMeal(null)` (今までどおり)、`'refetch'` は 404 だけ `setMeal(null)`。どちらも削除した食事の鍵には置かない | 2 つの `useEffect` を 1 つの読み取りの関数にまとめ、`[params.id]` で `receiver.read`。`handleDelete` は DELETE が ok なら `deletedMealIdRef.current = params.id` (`useRef<string \| null>(null)`。ページを離れるまで戻さない) を、削除の確認を閉じる前に書く。窓を移動の完了まで開けたままにしない (移動が終わらないと `html[data-ai-consultation-writes]` が残り、モバイルの読み込み直しが止まり続けるため。削除のあとの取り直しは止めずに流し、置かない守りは `deletedMealIdRef` が受け持つ) |
+| 16 | /menus/weekly | E | `plan:<週>`・`mealDates:<月>`・`shoppingList`・`pantry`・`settings`・`family` (置く鍵) と `weekLoading` (読み込み中だけの鍵) | §7.4 | 週の読み込み `[weekLoading]`。人数の設定 `[settings]` | §9.1 の献立表の書き込み 29 か所 (今の窓 (19 個) の中の 20 か所 + 新たに 8 つの関数で囲む 9 か所)。例外は §9.2 の 4 か所 | 週の読み込み (`fetchPlan`) の失敗は `'mount'` で `setCurrentPlan(null)` (`apply` の中で週を見る。`placeWeekReadFailure`)。取り直し・`refreshMealPlan`・書き込みのあとの読み直しの失敗は何も置かない (`readDisplayedWeek` は `'failed'` を返すだけ) | §6.7・§7.4。生成の監視の入口 3 つは読み取りの経路の外 (§6.6・§9.2)。`ProfileReminderBanner` は自分の受け手 |
 | 17 | /pantry | B | `items` | `setItems` | 開いたとき `[items]`。保存のあとは `[]` | 削除・手入力の追加と更新・写真の保存・全て置き換え | 失敗は表示を変えない | §7.3 |
 | 18 | /profile | B | `profile`・`badgeCount`・`nutritionTarget` | `setUser`・`setProfile`・`setEditForm` / `setBadgeCount` / `setDbNutritionTarget` | 開いたとき `[profile]` (`isLoading(profile)` が `isLoading` の state の代わり。編集のモーダルの「読み込みが終わるまで入力欄を出さない」もこれで) | `handleSave` (`PUT`。応答の `setProfile` / `setEditForm` も窓の中) | `'refetch'` で auth を確かめられなければ何も置かない | G5 のマージ後 |
 | 19 | /profile/nutrition-targets | B | `profile`・`targets` | `setProfile` / `setTargets`・`setError` | 開いたとき `[profile, targets]` | 無し (再設定の部品 21 が持つ) | 失敗は `'mount'` だけ `setError` | G5 のマージ後 |
@@ -1420,7 +1489,7 @@ Zod のスキーマ・DB の列・API の route・エラーコード: 本書は�
 | W-12 | 同上 | `handleSaveEditGoal` | `PUT /api/health/goals/:id` | 無し | 窓 |
 | W-13 | 同上 | `confirmDelete` | `DELETE /api/health/goals/:id` | 窓 | 窓 |
 | W-14 | /meals/[id] | `toggleCompletion` | `PATCH /api/meals/:id` | 窓 | 窓 |
-| W-15 | 同上 | `handleDelete` | `DELETE /api/meals/:id` | 無し | 窓 (300ms 待って移るまで) |
+| W-15 | 同上 | `handleDelete` | `DELETE /api/meals/:id` | 無し | 窓 (送信の間だけ。削除のあとの取り直しの 404 は `deletedMealIdRef` で置かない。§9 #15) |
 | W-16 | /pantry | `handlePhotoSelect` | `aiFetch POST /api/ai/analyze-fridge` | 無し | 例外 (§9.2 R-B) |
 | W-17 | 同上 | `handleSaveIngredients` | `POST /api/pantry/from-photo` | 窓 | 窓 |
 | W-18 | 同上 | `handleDelete` | `DELETE /api/pantry/:id` | 窓 | 窓 |
@@ -1543,6 +1612,8 @@ Zod のスキーマ・DB の列・API の route・エラーコード: 本書は�
 | より古い読み取りがその鍵に置いた | `'placed'` (置き換える) | 番兵・書き込みが無ければ `'placed'` |
 | その鍵の対象 (週・期間・日・id) がもう今の対象でない (`apply` の中で ref を見る) | `'placed'` (`apply` は何も置かない。置いた世代は進み、その鍵の読み込み中の印は下りる。今の対象の鍵は別なので触れない) | 番兵・書き込みが無ければ同左 |
 | その鍵が `initialLoadingKeys` の鍵で、まだ誰も置いていない | `'placed'` (最初の描画から立っていた読み込み中を下ろす) | 番兵・書き込みが無ければ同左 |
+| 読み込み中だけの鍵 (献立表の `weekLoading`) を何もしない `apply` で置く (`releaseWeekLoadingIfShown`。同じ読み取りが表示中の週の `plan:<週>` に `'placed'` で置いた直後だけ) | `'placed'` (立て主を問わず下ろす。置いた世代は進む) | 同左 (直前の `plan:<週>` が `'placed'` なので番兵・書き込みも同じ判定) |
+| 読み込み中だけの鍵を、それより新しい読み取りがもう置いた | `'superseded'` (下ろさない。今の立て主の終わりか、より新しい置きで下りる) | 同左 |
 | 番兵 (入力の部品・モーダル) がある | `'placed'` (見ない) | `'deferred'` + 印 (1 回) + DOM を見張る |
 | 書き込み中 (`count > 0`) | `'placed'` | `'deferred'` + 印 + 書き込みの終わりを待つ |
 | 始めたあとに書き込みが始まって終わった (`started` が変わった) | `'placed'` | `'deferred'` + 印 + 外れているのですぐ 1 回取り直す |
@@ -1558,14 +1629,18 @@ Zod のスキーマ・DB の列・API の route・エラーコード: 本書は�
 | 順序の決まり | `latestStarted` (既定) と `newerThanPlaced` (週・選んだ日) の 2 つ。ページが `isLatest` / `cancelled` / `aborted` / `place` を書き分ける | `newerThanPlaced` だけ。`place` の中 |
 | 開いたときの応答待ちに取り直しが失敗 | `latestStarted` の受け手は開いたときの応答が捨てられて空 (D-2) | 開いたときの応答を置く |
 | 読み込み中の表示 | ページの `loading` (`useAiConsultationLoading` か自前)・取り直しが役を引き継ぐ (`refetchReadMode`・`fullScreenLoading`) | 鍵ごとに hook。立てるのはページの読み取りだけ。置いたら下ろす |
+| 献立表の全画面のスピナー | 週の読み込み (`fetchPlan`) が `setLoading(true)` (控えに当たれば立てない)。下ろすのは、この週を置いた `fetchPlan` の finally と、表示中の週を置いた `refreshMealPlan` (取り直し・生成の完了・ダイアログを閉じたとき) の `place` の中。控えに当たった分岐は下ろさない (D-5) | `weekLoading` を `fetchPlan` が立てる (最初の描画は `initialLoadingKeys`)。表示中の週の `plan:<週>` を置いたどの読み取りも `releaseWeekLoadingIfShown` で下ろす (控えに当たった分岐を含む)。置けなかった・失敗した `fetchPlan` は自分の終わりで下ろす。開いたときの応答待ちに取り直しが先に置けば下りる (今と同じ。S-22) |
 | 番兵を見る場所 | 取り直しの経路で `deferIfHeld` を呼んだ所 (引き継いだ回は呼ばない・ページごとに漏れ) | `place` の中 (取り直しの全部の置く場所) |
 | 書き込みの印 | `useAiConsultationPendingWrites` (数える) と真偽の ref の 2 種。`notifyWriteSettled` | `beginWrite` の窓だけ。終わりで自動 |
 | DOM の書き込みの印 | 無い (モバイルは見られない。D-10) | `html[data-ai-consultation-writes]` |
 | 置き換えの経路 | 献立表 9 か所が流れの外。/profile の保存・/meals の削除が印の外 (D-3) | 全部 `place` と窓 (番兵 P1・P2) |
 | 完了の切り替えの値 | 押した描画の写し (D-4) | 待ちが明けた時点の `currentPlanRef` |
-| 週のキャッシュ | ヒットで loading を下ろさない・非 ok を空で控える (D-5) | 置けば下ろす・非 ok は `null` |
+| 週のキャッシュ | ヒットで loading を下ろさない・非 ok を空で控える (D-5)・ヒットで控えの買い物リストが空でなければ置く | 置けば下ろす・非 ok は `null`・ヒットでは買い物リストを置かない (控えの一覧は編集の前の写し。S-23) |
 | カレンダーの印 | 範囲の鍵 (重なる) (D-6) | 月の鍵 |
-| 買い物リスト | 週の確認の中 | 自分の鍵・週の確認の外 |
+| 買い物リスト | 週の確認の中。週の読み込み (控えのヒット・ミス) は空でないときだけ置く | 自分の鍵・週の確認の外。GET の応答なら空でも置く。控えからは置かない |
+| 献立表の `refreshMealPlan` (6 か所: v4 の生成の完了・restoreGeneration の完了 2 か所・v4 のポーリングの完了・完了のダイアログを閉じたとき 2 か所) | `planFetchStream.begin(null, 閉包の週)` の流れで置く。失敗は何も置かない。置いたらスピナーを下ろす | 名前と呼び出しは同じ。中身は `receiver.read({}, readDisplayedWeek)` (ページの読み取り・読み始めた時点の表示中の週)。失敗は何も置かない。置いたらスピナーを下ろす |
+| 献立表の書き込みのあとの読み直しの失敗 | 直接の `setCurrentPlan` の経路は非 ok で何も置かない | `receiver.read({}, readDisplayedWeek)` は失敗で何も置かない (空を置くのは週の読み込み `fetchPlan` だけ) |
+| /meals/[id] の削除のあと | 削除の成功から 300ms 後の `router.push` まで、取り直しの 404 で「見つかりませんでした」が出うる (印の外) | DELETE は窓の中。成功したら `deletedMealIdRef` に id を写し、その食事の鍵には何も置かない (S-14) |
 | 家族の移動 | 順序を見ない (D-7) | `place` の中 |
 | /home の AI つきの読み取り | 開いたとき + 引き継いだ取り直し (`isLatest()` の門で開いたときを止める) | 開いたとき (とページの読み取り) だけ。取り直しは AI 無し。門は無い |
 | 機械の番兵 | 8 規則 (関数ごと・印を渡す受け手だけ) | P1〜P6 (置く場所ごと・全受け手)。P1 の境 3 つ・P2 の例外 (行き先 4・関数 1) は閉じた一覧 (§9.2)。下限は受け手ごとの数の表 (§9.3) |
@@ -1591,7 +1666,7 @@ hook の状態: `deferred` (止めた通知の有無)・`observing` (DOM の見�
 | any | ページの読み取りの `fn` が投げる (読み取りの失敗を catch しなかった) | `loading -= その読み取りが最後に立てた鍵` (`finally`) | 鍵の立て主がその世代 | `read()` の Promise がそのまま reject (§11)。`placed` は変えない |
 | any | 取り直しの `refetch` が投げる・reject する | — (取り直しは鍵を立てないので `loading` は変わらない) | — | `console.warn` で握る (§11)。`placed`・`deferred` は変えない |
 | any | `place(key)` の中で `apply` が投げる | 変わらない (`placed[key]` を進めず、`loading` の `key` も下ろさない) | 順序 OK (+ 取り直しなら番兵・書き込みが無い) | 例外はそのまま `place` の呼び出し元へ。同じ読み取りがもう一度 `place(key)` を呼べば通る (T-18)。下ろさなかった `key` は、その鍵を最後に立てた読み取りの `fn` の終わりで下りる |
-| any | `place(key)` が `'placed'` | `placed[key] = 世代`・`loading -= key` (立て主を問わない) | 順序 OK (+ 取り直しなら番兵・書き込みが無い) | `apply()`。`loading` から消えれば `version += 1` |
+| any | `place(key)` が `'placed'` (ページが読み込み中だけの鍵を何もしない `apply` で置いたときを含む。献立表の `releaseWeekLoadingIfShown`) | `placed[key] = 世代`・`loading -= key` (立て主を問わない) | 順序 OK (+ 取り直しなら番兵・書き込みが無い) | `apply()`。`loading` から消えれば `version += 1` |
 | any | 取り直しの `place` が止められた | `deferred = true`・(番兵あり) `observing = true` | 順序 OK・番兵 or 書き込み | 印は読み取りごとに 1 回。外れていれば即 `flushDeferred` |
 | `deferred = true`・`observing = true` | DOM の変化 (`attributeFilter`) | `deferred = false`・`observing = false` | 番兵無し・`writes = 0` | 取り直しを 1 回始める |
 | `deferred = true` | `writes` が 0 になる | 同上 | 番兵無し | 同上 |
@@ -1609,7 +1684,7 @@ hook の状態: `deferred` (止めた通知の有無)・`observing` (DOM の見�
 | ページの読み取りの `fn` が投げる | hook → ページ | `read()` の Promise がそのまま reject。立てた鍵は `finally` で下ろす (失敗の表示はページが `'mount'` で置く) |
 | `apply` が投げる | hook → ページ | 置いた世代を進めず、例外をそのまま。ページは `apply` の中で投げないように書く |
 | 取り直しの読み取りで `res.ok` でない・Supabase の `error` | ページ | 何も置かない (今の表示を残す) |
-| ページの読み取り (`'mount'`) で失敗 | ページ | 失敗の表示 (`setError` / `setLoadError` / `setCurrentPlan(null)` / `setData(null)`) を `place` で置く。置けば読み込み中は下りる。置かずに終われば `fn` の終わりで下りる |
+| ページの読み取り (`'mount'`) で失敗 | ページ | 失敗の表示 (`setError` / `setLoadError` / `setCurrentPlan(null)` / `setData(null)`) を `place` で置く。置けば読み込み中は下りる。置かずに終われば `fn` の終わりで下りる。どの読み取りで失敗の表示を置くかは受け手ごとに今までどおり (§9 の `read.mode` の列。献立表は週の読み込み `fetchPlan` だけが空を置き、`refreshMealPlan`・書き込みのあとの読み直しは何も置かない) |
 | 番兵・書き込みで止めた通知がアンマウントまで外れない | hook | 捨てる (アンマウントで `deferred = false`) |
 | 生成の見張りが上限 (`AI_CONSULTATION_GENERATION_WATCH_MAX_MS`) を過ぎる | lib | 取り直さない (今までどおり) |
 | `beginWrite` の終わりを呼び忘れる | — | 番兵 P2 が赤にする (`finally` の `endWrite()` が無い) |
@@ -1742,7 +1817,7 @@ sequenceDiagram
 | S-11 | T-14 | data-refetch「ページを離れたら…」(新しい hook に向ける) |
 | S-12 | — | weekly-refetch「食事の完了の切り替えの待ち (250ms) のあいだに取り直しが置いた献立を…」+ 新しい it「待ちの間に取り直しが同じ食事の完了を変えたら、新しい値から反転を決める」 |
 | S-13 | — | reads-2195 に新しい it「家族の画面: 古い応答 (family_id 無し) が後から届いても /family/setup へ移らない」 |
-| S-14 | — | reads-2195 に新しい it「/meals/[id]: 削除から献立表へ移るまでに来た成功で『見つかりませんでした』を出さない」 |
+| S-14 | — | reads-2195 に新しい it「/meals/[id]: 削除から献立表へ移るまでに来た成功で『見つかりませんでした』を出さない」と「/meals/[id]: 削除の応答待ちに来た成功の取り直しが削除のあとに流れても『見つかりませんでした』を出さない」(どちらも `router.push` をモックして移動を止めた状態で、取り直しの GET の 404 のあとに画面の文を見る) |
 | S-15 | T-7 | weekly-refetch 753 (月の鍵に書き換え) + 新しい it「重なる月の古い応答が後から届いても AI の足した印を消さない」 |
 | S-16 | T-7 | reads-2195 1742 の節 (そのまま) |
 | S-17 | T-9 | reads-2195 に新しい it「/profile: 保存の応答待ちに来た取り直しの応答を置かず、保存が終わったら 1 回取り直す」 |
@@ -1750,6 +1825,8 @@ sequenceDiagram
 | S-19 | T-24・T-25・T-26 | reads-2195 に新しい it「/pantry: 最初の描画は読み込み中の表示で、『食材がありません』を出さない。開いたときの GET は 1 回」 |
 | S-20 | T-7 | reads-2195 に新しい it「/comparison: 週間の取り直しの応答待ちに月間へ切り替えたら、週間の順位を出さず、月間の応答まで読み込み中」(`page-fetch-race` は変えない) |
 | S-21 | — | weekly-refetch に新しい it「週の読み込みの応答待ちに別の週へ移ったあと、前の週の読み込みが失敗しても今の週の献立を消さない」 |
+| S-22 | T-5・T-16 | weekly-refetch 「開いたときの週の読み込みの応答を待つあいだに取り直しの献立が先に届いたら、読み込み中の表示を下ろし、あとから届いた週の読み込みの応答で古い献立に戻さない」(変えない。`releaseWeekLoadingIfShown` で緑のまま)・「翌週から戻った週の読み込みを待つあいだに、前にその週を開いたときの古い読み込みの応答が届いても、翌週の献立を読み込み中の表示なしで出さない」(変えない。古い応答は `'superseded'` で下ろさない) |
+| S-23 | — | weekly-refetch に新しい it「買い物リストの品目をチェックしたあと控えにある週へ移っても、控えの古い一覧でチェックを戻さない」 |
 
 ---
 
@@ -1759,13 +1836,13 @@ sequenceDiagram
 |---|---|---|---|
 | `AI_CONSULTATION_WRITES_ATTRIBUTE` | `src/hooks/useAiConsultationReceiver.ts` と `apps/mobile/src/lib/webViewBridge.ts` (同じ文字列) | `'data-ai-consultation-writes'` | 他の `data-ai-consultation-*` の印 (`chat-root`・`unedited-inputs`) と同じ並び。モバイルが src を import できないので 2 か所に書き、テストで一致を見る |
 | `MEAL_TOGGLE_DEBOUNCE_MS` | `src/app/(main)/menus/weekly/page.tsx`・`src/hooks/useHomeData.ts` | `250` | 今の `setTimeout(…, 250)` (#322) の名前付け。触る行なので定数にする。運用で変える値ではない |
-| `MEAL_DELETE_NAVIGATE_DELAY_MS` | `src/app/(main)/meals/[id]/page.tsx` | `300` | 今の `setTimeout(() => router.push(…), 300)` の名前付け (閉じるアニメーションの待ち) |
+| `MEAL_DELETE_NAVIGATE_DELAY_MS` | `src/app/(main)/meals/[id]/page.tsx` | `300` | 今の `setTimeout(() => router.push(…), 300)` の名前付け (閉じるアニメーションの待ち)。待ち方 (待たない `setTimeout`) は変えない |
 | `CALENDAR_MEAL_DATES_DAYS_BEFORE_WEEK` | `src/app/(main)/menus/weekly/page.tsx` | `14` | 月のカレンダーの印を週の窓で読む始まり (表示中の週の初日の何日前)。今の「前後 2 週間をプリフェッチ」の effect の `-14` の名前付け (§7.4) |
 | `CALENDAR_MEAL_DATES_DAYS_AFTER_WEEK` | 同上 | `28` | 週の窓の終わり (何日後)。今の `+28` (表示中の週を含めて 4 週) |
 | `CALENDAR_MEAL_DATES_MONTH_PADDING_DAYS` | 同上 | `7` | 月の窓で表示月の前後に足す日数。今の「表示月の前後 1 週間」の `±7` |
 | `INITIAL_LOADING_GENERATION` | `src/hooks/useAiConsultationReceiver.ts` (export しない) | `0` | `initialLoadingKeys` の鍵の立て主の世代。読み取りの世代は 1 から数えるので、どの読み取りの終わりとも一致しない (§6.4) |
 | 鍵の定数と鍵の関数 (`KEY_*`・`planKey(週)` = `plan:<週>`・`mealDatesKey(月)` = `mealDates:<月>`・`selectedDateKey(日)` = `selectedDate:<日>`・`mealKey(id)` = `meal:<id>`・`rankingsKey(期間)` = `rankings:<期間>`・`graphsKey(期間)` = `graphs:<期間>`) | 各受け手の先頭 (`selectedDateKey` は /health、`mealKey` は /meals/[id]、`rankingsKey` は /comparison、`graphsKey` は /health/graphs) | §9 | 置き場所の名前。定数の名前は `KEY_` + §9 の鍵の文字列を大文字のスネークにしたもの (`badges` → `KEY_BADGES`・`todayPlan` → `KEY_TODAY_PLAN`)。対象を含む鍵は関数で作り、文字列を手で組まない。受け手の外から参照しない |
-| `KEY_WEEK_LOADING` | `src/app/(main)/menus/weekly/page.tsx` | `'weekLoading'` | 献立表の全画面のスピナーの、読み込み中だけの鍵 (置かれない。§6.4) |
+| `KEY_WEEK_LOADING` | `src/app/(main)/menus/weekly/page.tsx` | `'weekLoading'` | 献立表の全画面のスピナーの、読み込み中だけの鍵 (データは置かない。立てた `fetchPlan` の終わりか、表示中の週の献立を置いた読み取りの `releaseWeekLoadingIfShown` (何もしない `apply` で置く) で下りる。§6.4) |
 | `INITIAL_PERIOD_TYPE`・`INITIAL_PERIOD` | `src/app/(main)/comparison/page.tsx`・`src/app/(main)/health/graphs/page.tsx` | `'weekly'`・`'month'` | 今の `useState` の初期値の名前付け。`useState` と `initialLoadingKeys` の両方に使う (2 か所で同じ値を書かない) |
 | `READ_PATH_BOUNDARIES`・`READ_ONLY_SENDS`・`WRITE_WINDOW_EXEMPTIONS`・`LEGACY_IDENTIFIERS`・`RECEIVER_EXPECTATIONS`・`WINDOW_CLOSING_PROMISE_METHOD`・`SEND_FUNCTIONS`・`SUPABASE_RPC_METHOD`・`STORE_STATE_ACCESS` | 番兵 | §7.7・§9.2・§9.3 | 境・例外・旧 API・受け手ごとの数の表と、見分ける名前 |
 
@@ -1784,8 +1861,10 @@ sequenceDiagram
 | 型 | `AiConsultationRead`・`AiConsultationReadOptions`・`AiConsultationReadFn`・`AiConsultationReceiver`・`AiConsultationReceiverOptions` (`AiConsultationReadMode`・`AiConsultationPlaceResult` は旧ファイルと同名。段 F で旧を消す) | hook | A |
 | 定数 | `AI_CONSULTATION_WRITES_ATTRIBUTE` (Web・モバイル)・`INITIAL_LOADING_GENERATION` (hook の中) | §14 | A |
 | DOM の属性 | `data-ai-consultation-writes` (`html`) | §6.5 | A |
-| 関数 (献立表) | `applyWeekResponse`・`placeWeekReadFailure`・`readDisplayedWeek`・`reloadWeekAfterCompletion`・`checkPendingRequests` (今の effect の中の同名の関数を、名前を変えずに `useCallback` に出す)・`monthKeysBetween`・`monthRangeOf`・`mealDatesOf`・`shiftDays`・`weekWindowOf`・`monthWindowOf` | §7.4 | E |
-| ref (献立表) | `currentPlanRef`・`fetchedMonthsRef`・`weekDatesRef`・`displayMonthRef`・`weekStartRef` | §7.4 | E |
+| 関数 (献立表) | `releaseWeekLoadingIfShown`・`applyWeekResponse`・`placeWeekReadFailure`・`readDisplayedWeek`・`reloadWeekAfterCompletion`・`checkPendingRequests` (今の effect の中の同名の関数を、名前を変えずに `useCallback` に出す)・`monthKeysBetween`・`monthRangeOf`・`mealDatesOf`・`shiftDays`・`weekWindowOf`・`monthWindowOf` | §7.4 | E |
+| ref (献立表) | `currentPlanRef`・`fetchedMonthsRef`・`weekDatesRef`・`displayMonthRef`・`weekStartRef`・`autoExpandNextMealRef` | §7.4 | E |
+| 型 (献立表) | `WeekReadOutcome` (`'read' \| 'failed'`。`readDisplayedWeek` の戻り値) | §7.4 | E |
+| ref (/meals/[id]) | `deletedMealIdRef` (削除した食事の id。§9 #15) | §9 #15 | B |
 | 定数 | `MEAL_TOGGLE_DEBOUNCE_MS`・`MEAL_DELETE_NAVIGATE_DELAY_MS`・`CALENDAR_MEAL_DATES_DAYS_BEFORE_WEEK`・`CALENDAR_MEAL_DATES_DAYS_AFTER_WEEK`・`CALENDAR_MEAL_DATES_MONTH_PADDING_DAYS`・`KEY_WEEK_LOADING` | §14 | E (`MEAL_TOGGLE_DEBOUNCE_MS` は D と E・`MEAL_DELETE_NAVIGATE_DELAY_MS` は B) |
 | 定数・関数・ref (期間の受け手) | `INITIAL_PERIOD_TYPE`・`rankingsKey`・`periodTypeRef`・`readRankings` (/comparison)・`INITIAL_PERIOD`・`graphsKey`・`periodRef` (/health/graphs) | §9 #2・#11・§14 | B |
 | 番兵の一覧 | `READ_PATH_BOUNDARIES`・`READ_ONLY_SENDS`・`WRITE_WINDOW_EXEMPTIONS`・`RECEIVER_EXPECTATIONS` | §7.7・§9.2・§9.3 | A (`RECEIVER_EXPECTATIONS` の行は B〜E) |
@@ -1829,7 +1908,7 @@ grep の語 (本書が足す・変える・消す名前): `useAiConsultationRece
 | G-7 | `tests/ai-consultation-generation-watch-2195.test.tsx` | `useAiConsultationDataRefetch` を使う it 群 | 新しい hook に向ける (T-21 と重なる it は単体へ移してよい) | F |
 | G-8 | `tests/ai-consultation-refetch-reads-2195.test.tsx` | ページの描画 | 変える it: (a)「開いたときの読み込みの最中に届いた成功の取り直しが失敗したら、開いたときに失敗したのと同じ画面を出す」→「…失敗しても、開いたときの読み込みの応答を置く (空のまま残らない)」(S-2)。(b)「書き込みのある受け手は、書き込みと AI 相談の成功の取り直しを重ねない」の家族・譲渡の行 (取り直し中にボタンを止める前提があれば、書き込みの窓の間に通知が来ても取り直さない・終わったら 1 回、に) 。(c) 足す it: S-13・S-14・S-17・S-19・S-20。ほかは挙動が同じ | B・C |
 | G-9 | `tests/ai-consultation-home-refetch-2195.test.tsx` | `useHomeData` の描画 | 変える it: 「先の取り直しの分析が先に届いても置かず、読み込み中の印も下ろさない (あとの取り直しの分析が届いたら置いて下ろす)」→「先に届いた分析を置き、あとの分析で置き換える」。「開いたときの読み込みの役を引き継いだ取り直しは、栄養の分析を AI つきで読み、今日のアドバイスの帯を出す」→「開いたときの読み込みの途中に取り直しが来ても、開いたときの読み取りが AI つきの分析を 1 回読み、帯を出す。取り直しは AI を読まない」。「取り直しの応答を待つあいだに献立の変更の実行 (AI つきの読み込み) が追い越しても、古い取り直しは栄養の分析を読み始めず…」→「…古い取り直しの分析 (AI 無し) は点数を置かず、変更のあとのアドバイスを置く」(読み始めるが置かない)。「取り直しの読み取りが投げても、読み込み中の表示のまま止まらない」はそのまま | D |
-| G-10 | `tests/ai-consultation-weekly-refetch-2195.test.tsx` | 献立表の描画 | 変える it: 「人数の設定の読み込み中の印は、先に始めた読み込みが終わっても、あとに始めた読み込みが終わるまで下ろさない」→「人数の設定の読み込み中の印は、人数を置いたら下ろす (先に届いた応答を置き、あとの応答で置き換える)」。「AI 相談で表示中の月の別の週に献立を作ったら、月のカレンダーに印が出る (取得済みの範囲も読み直す)」→ 月の鍵で読み直す形に。足す it: S-12 の新しい形・S-15・S-18・S-21。ほかは挙動が同じ | E |
+| G-10 | `tests/ai-consultation-weekly-refetch-2195.test.tsx` | 献立表の描画 | 変える it: 「人数の設定の読み込み中の印は、先に始めた読み込みが終わっても、あとに始めた読み込みが終わるまで下ろさない」→「人数の設定の読み込み中の印は、人数を置いたら下ろす (先に届いた応答を置き、あとの応答で置き換える)」。「AI 相談で表示中の月の別の週に献立を作ったら、月のカレンダーに印が出る (取得済みの範囲も読み直す)」→ 月の鍵で読み直す形に。足す it: S-12 の新しい形・S-15・S-18・S-21・S-23。全画面のスピナーを見る it (`weeklyPageIsLoading`) は変えない: 「開いたときの週の読み込みの応答を待つあいだに取り直しの献立が先に届いたら、読み込み中の表示を下ろし、あとから届いた週の読み込みの応答で古い献立に戻さない」(取り直しが置いた直後に `weeklyPageIsLoading()` が false。§7.4 の `releaseWeekLoadingIfShown` が下ろす。S-22)・「翌週から戻った週の読み込みを待つあいだに、前にその週を開いたときの古い読み込みの応答が届いても、翌週の献立を読み込み中の表示なしで出さない」(古い応答は `plan:<週>` が `'superseded'` で下ろさず、立て主でもない)・「週を移った直後 (週の読み込みの応答待ち) に来た成功の取り直しが失敗しても…」(S-4)。ほかは挙動が同じ。e2e の `tests/e2e/bug-04-cache-refetch-after-generation.spec.ts` (完了のダイアログを閉じたら meal-plans を読む) は `refreshMealPlan` の呼び出しが残るので変えない | E |
 | G-11 | `tests/ai-chat-timeout-reload-2201.test.tsx` 「Web の取り直し (useAiConsultationDataRefetch) と組み合わせる」 | `useAiConsultationDataRefetch` | 新しい hook に向ける (X1 の枝のマージ後の形で) | F |
 | G-12 | `src/__tests__/app/menus/weekly/family-menu-wiring.test.ts` | `const familyLoadStream = useAiConsultationFetchStream();` | `loadFamilyData` が `read.place(KEY_FAMILY, …)` で置く形の正規表現に | E |
 | G-13 | `apps/mobile/__tests__/components/WebViewScreen.ai-data-reload.test.tsx` 「読み込み直しを止める要素は、入力の部品 (hidden を除く) と開いているモーダル」「止めている要素の当たり外れを変えうる属性 (…) の変化も見張る」 | `AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR`・観察する属性 | 並びに `html[data-ai-consultation-writes]` と属性を足す。MT-1・MT-2 を足す | A |
@@ -1901,4 +1980,6 @@ grep の語 (本書が足す・変える・消す名前): `useAiConsultationRece
 | Q-8 | モバイルに献立の生成の完了の見張りを足すこと・見張りの上限を時間で数えることは本書の範囲外 (Issue #2206 の候補のまま) |
 | Q-9 | 生成の監視 (献立表の `checkPendingRequests`・`resumePendingGeneration`・`subscribeToRequestStatus` とその先) は読み取りの経路の外に置き、取り直しの番兵で止めない (§6.6・§9.2 の B-1〜B-3)。今の挙動 (round の effect で走り、札を見ない) と同じ。止めると、生成のモーダル・入力の部品を開いている間に AI 相談が始めた生成の進み具合が出なくなる。生成の進み具合の setter を `place` に通す案は採らない |
 | Q-10 | GET でない送信のうち、受け手の読み取りが置く値を変えないもの (AI の助言・栄養のフィードバック・冷蔵庫の写真の解析・認証の同期) は窓で囲まず、P2 の例外の閉じた一覧にする (§9.2 の R-A〜R-D)。囲むと AI の応答を待つあいだ取り直しとモバイルの読み込み直しが止まる。新しい行き先を足すときは、route が受け手の読み取りの読む表に書かないことを確かめて一覧に足す |
-| Q-11 | 今の受け手の読み込み中の初期値 true は `initialLoadingKeys` で引き継ぐ (§9.3)。献立表は週を問わない読み込み中だけの鍵 `weekLoading` で全画面のスピナーを出す (週の始まりの曜日・`?date=` の読み込みで週が変わっても、最初の `fetchPlan` の終わりまで立ったまま)。/home の栄養の分析・パフォーマンスの分析は今も初期値 false なので入れない |
+| Q-11 | 今の受け手の読み込み中の初期値 true は `initialLoadingKeys` で引き継ぐ (§9.3)。献立表は週を問わない読み込み中だけの鍵 `weekLoading` で全画面のスピナーを出す (週の始まりの曜日・`?date=` の読み込みで週が変わっても、表示中の週の献立が置かれるか最初の `fetchPlan` が終わるまで立ったまま)。表示中の週の献立を置いた読み取り (取り直しを含む) は、`fetchPlan` の終わりを待たずに下ろす (今の `refreshMealPlan` の `setLoading(false)` と同じ。S-22)。/home の栄養の分析・パフォーマンスの分析は今も初期値 false なので入れない |
+| Q-12 | 献立表の控え (キャッシュ) に当たった週の読み込みは、買い物リストを置かなくなる (§6.7・S-23。今は控えの一覧が空でなければ置く)。控えの一覧は先読みの時点の写しで、買い物リストの編集を含まないため。買い物リストは開いたとき・控えに無い週の読み込み・取り直し・生成の完了・書き込みの応答で置かれる。控えに書く値 (`WeekCacheData.shoppingList`) は残す (型と `createWeekDataCache` を変えない) |
+| Q-13 | /meals/[id] の削除は、窓を DELETE の送信の間だけにし、削除のあとの取り直しは止めずに流して `deletedMealIdRef` で置かない (§9 #15・S-14)。窓を移動の完了 (アンマウント) まで開ける案は採らない: `router.push` が終わらないと `html[data-ai-consultation-writes]` が残り続け、モバイルの読み込み直しが止まり続ける (Web の他の受け手は自分の書き込みの数だけを見るので止まらないが、この画面の取り直しも止まり続ける) |
