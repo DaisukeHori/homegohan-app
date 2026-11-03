@@ -14,7 +14,9 @@ import {
   PROPOSED_ACTION_NOT_EXECUTABLE_REASON,
   aiActionLogStatusAfterFailure,
   aiActionLogStatusAfterRun,
+  notExecutableReasonAfterRun,
   proposedActionNotExecutableReasonOfStatus,
+  proposedActionNotExecutableReasonOfStatuses,
   type ProposedActionNotExecutableReason,
 } from '@/lib/ai/consultation-action-lifecycle';
 import { writeBackAiActionLog } from '@/lib/ai/consultation-action-log-writes';
@@ -53,7 +55,8 @@ const EXECUTE_ROUTE_NAME = 'POST /api/ai/consultation/actions/[actionId]/execute
 
 /**
  * 実行できない提案の応答 (400 / 404) に、「実行する」を出さない理由を添える (#2195 V2)。
- * 画面は理由で案内の文を分ける (実行中・実行済みは『実行中か実行済みです』、失敗・記録なしは『もう一度 AI に頼んでください』)
+ * 画面は理由で案内の文を分ける (実行済み・いま実行中は『実行中か実行済みです』、実行中の印のまま (書き戻せなかった) は
+ * 『実行できたかを確かめられませんでした…』(#2201 U3)、失敗・記録なしは『もう一度 AI に頼んでください』)
  */
 function notExecutableResponse(
   error: string,
@@ -78,11 +81,8 @@ async function notExecutableReasonOfMessage(
     .select('status, ai_consultation_sessions!inner(user_id)')
     .eq('message_id', messageId)
     .eq('ai_consultation_sessions.user_id', userId);
-  if (error || !Array.isArray(data) || data.length === 0) return null;
-  const reasons = (data as Array<{ status: unknown }>).map((row) => proposedActionNotExecutableReasonOfStatus(row.status));
-  return reasons.includes(PROPOSED_ACTION_NOT_EXECUTABLE_REASON.runningOrDone)
-    ? PROPOSED_ACTION_NOT_EXECUTABLE_REASON.runningOrDone
-    : PROPOSED_ACTION_NOT_EXECUTABLE_REASON.failed;
+  if (error || !Array.isArray(data)) return null;
+  return proposedActionNotExecutableReasonOfStatuses((data as Array<{ status: unknown }>).map((row) => row.status));
 }
 
 // アクション実行
@@ -212,14 +212,15 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
       });
       // 500 の本文に、もう一度押せるか (行が pending に戻った) を添える (#2195 V2)。献立の生成 (failed にした) と、
       // 書き戻せなかった (実行中の印のまま) ときは false で、画面は「実行する」を出さずに案内にする
-      // (以前は「実行する」が残り、押すと 400 になってから案内に変わった)
+      // (以前は「実行する」が残り、押すと 400 になってから案内に変わった)。案内の理由は、書き戻せなかったときは
+      // 開き直したときの GET と同じ unconfirmed、failed にしたときは failed (#2201 U3)
       const errorResponse = internalError(EXECUTE_ROUTE_NAME, runError, { userId: user.id });
       const retryable = !revertError && status === AI_ACTION_LOG_STATUS.pending;
       return NextResponse.json(
         {
           ...(await errorResponse.json()),
           retryable,
-          ...(retryable ? {} : { notExecutableReason: PROPOSED_ACTION_NOT_EXECUTABLE_REASON.failed }),
+          ...(retryable ? {} : { notExecutableReason: notExecutableReasonAfterRun(!!revertError) }),
         },
         { status: errorResponse.status },
       );
@@ -231,13 +232,14 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
 
     // 今日の AI の利用回数の上限 (#1149) に達して、献立の生成をしなかった。アクションは pending に戻す
     // (明日もう一度実行できる。同意が無くて止めたときと同じ扱い。結果は書き換えない)。
-    // 戻せなかった (実行中の印のまま) ときは、明日押しても実行できないので、本文に retryable: false を添える (#2195 V2)
+    // 戻せなかった (実行中の印のまま) ときは、明日押しても実行できないので、本文に retryable: false を添える (#2195 V2)。
+    // 理由は開き直したときの GET と同じ unconfirmed (#2201 U3。『もう一度 AI に頼んでください』は全画面の『明日また』の文と並んでいた)
     if (executionResult.aiDailyLimit) {
       const { error: revertError } = await writeBackAiActionLog(supabase, EXECUTE_ROUTE_NAME, writeBackCtx, { status });
       const limitResponse = aiDailyLimitResponse(executionResult.aiDailyLimit);
       if (!revertError) return limitResponse;
       return NextResponse.json(
-        { ...(await limitResponse.json()), retryable: false, notExecutableReason: PROPOSED_ACTION_NOT_EXECUTABLE_REASON.failed },
+        { ...(await limitResponse.json()), retryable: false, notExecutableReason: notExecutableReasonAfterRun(true) },
         { status: limitResponse.status, headers: limitResponse.headers },
       );
     }
@@ -255,12 +257,14 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
     });
 
     if (unknownActionType) {
-      return notExecutableResponse(AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE, 400, PROPOSED_ACTION_NOT_EXECUTABLE_REASON.failed);
+      // 書き戻せなかった (実行中の印のまま) ときは、開き直したときの GET と同じ unconfirmed (#2201 U3)
+      return notExecutableResponse(AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE, 400, notExecutableReasonAfterRun(!!finalizeError));
     }
 
     // 失敗したとき、提案のカードの「実行する」でもう一度実行できるか (行が pending に戻った)。
     // false なら画面は「実行する」を出さずに「もう一度頼んでください」の案内を出す (#2189 W1-a)
-    // 書き換えに失敗したら行は実行中の印のまま (もう一度押しても実行しない) なので、やり直せるとは返さない
+    // 書き換えに失敗したら行は実行中の印のまま (もう一度押しても実行しない) なので、やり直せるとは返さない。
+    // そのときの理由は開き直したときの GET と同じ unconfirmed (#2201 U3)
     const retryable = !finalizeError && status === AI_ACTION_LOG_STATUS.pending;
     return NextResponse.json({
       success,
@@ -268,7 +272,7 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
       actionType: action.action_type,
       ...(success
         ? {}
-        : { retryable, ...(retryable ? {} : { notExecutableReason: PROPOSED_ACTION_NOT_EXECUTABLE_REASON.failed }) }),
+        : { retryable, ...(retryable ? {} : { notExecutableReason: notExecutableReasonAfterRun(!!finalizeError) }) }),
     });
 
   } catch (error: any) {

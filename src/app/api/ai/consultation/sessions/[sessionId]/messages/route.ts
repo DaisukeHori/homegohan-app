@@ -15,9 +15,9 @@ import { AI_ALLOWED_MEAL_TYPES, runConsultationAction } from '@/lib/ai/consultat
 import {
   AI_ACTION_LOG_STATUS,
   AI_CONSULTATION_ACTION_LOG_INSERT_FAILED_MESSAGE,
-  PROPOSED_ACTION_NOT_EXECUTABLE_REASON,
   aiActionLogStatusAfterFailure,
   aiActionLogStatusAfterRun,
+  notExecutableReasonAfterRun,
   proposedActionNotExecutableReasonOfView,
   proposedActionViewOf,
   type ProposedActionNotExecutableReason,
@@ -87,7 +87,8 @@ const AI_CONSULTATION_HISTORY_LIMIT = 50;
 //   - 成功は executed。今日の上限 (#1149) で止めたら pending (手の実行と同じく、明日もう一度実行できる)。
 //     失敗はやり直せる種類なら pending (残したカードの「実行する」でやり直せる)、やり直させない種類は failed
 //   - 行を作れなかったときも黙らず、失敗の結果を返す (以前は null で、画面に何も出なかった)
-//   - 実行のあとの書き戻しは、失敗したら 1 回だけ書き直す (src/lib/ai/consultation-action-log-writes.ts。#2195 V2)
+//   - 実行のあとの書き戻しは、失敗したら 1 回だけ書き直す (src/lib/ai/consultation-action-log-writes.ts。#2195 V2)。
+//     それでも書き戻せなかった (実行中の印のまま) ときの「実行する」を出さない理由は、開き直したときの GET と同じ unconfirmed (#2201 U3)
 /** 自動実行の結果 (応答の actionResult と、提案のカードに「実行する」を出すか) */
 interface AutoActionOutcome {
   /**
@@ -99,18 +100,23 @@ interface AutoActionOutcome {
   proposedActionExecutable: boolean;
   /**
    * 「実行する」を出さないときの理由 (#2195 V2。画面は案内の文を分ける)。自動実行は実行が終わってから返すので、
-   * 出さないのは失敗してやり直せない・記録できなかったとき (failed) だけ
+   * 出さないのは失敗してやり直せない・記録できなかったとき (failed) と、実行のあとに行を書き戻せなかったとき
+   * (unconfirmed。開き直したときの GET と同じ理由。#2201 U3) だけ
    */
   proposedActionNotExecutableReason?: ProposedActionNotExecutableReason;
 }
 
-/** 自動実行が失敗したあとの「実行する」の出し方 (出さないなら理由も) */
+/**
+ * 自動実行が失敗したあとの「実行する」の出し方 (出さないなら理由も)。
+ * writeBackFailed は、実行のあとに行を書き戻せなかった (実行中の印のまま残った) か
+ */
 function autoActionExecutability(
   executable: boolean,
+  writeBackFailed: boolean,
 ): Pick<AutoActionOutcome, 'proposedActionExecutable' | 'proposedActionNotExecutableReason'> {
   return executable
     ? { proposedActionExecutable: true }
-    : { proposedActionExecutable: false, proposedActionNotExecutableReason: PROPOSED_ACTION_NOT_EXECUTABLE_REASON.failed };
+    : { proposedActionExecutable: false, proposedActionNotExecutableReason: notExecutableReasonAfterRun(writeBackFailed) };
 }
 
 /**
@@ -166,7 +172,8 @@ async function executeAndFinalizeAction(
       });
     return {
       actionResult: { success: false, result: { error: AI_CONSULTATION_ACTION_LOG_INSERT_FAILED_MESSAGE }, actionType: proposedActions.type },
-      ...autoActionExecutability(false),
+      // 行が無い (記録できなかった): 開き直したときの GET も failed (行が無いカード) と同じ
+      ...autoActionExecutability(false, false),
     };
   }
 
@@ -197,7 +204,7 @@ async function executeAndFinalizeAction(
     return {
       actionResult: { success, result, actionType: proposedActions.type },
       // 書き換えに失敗したら行は実行中の印のまま (実行の API は実行しない) なので、「実行する」を出さない
-      ...autoActionExecutability(!finalizeError && status === AI_ACTION_LOG_STATUS.pending),
+      ...autoActionExecutability(!finalizeError && status === AI_ACTION_LOG_STATUS.pending, !!finalizeError),
     };
   } catch (execError) {
     console.error('Action direct-execution error:', execError);
@@ -208,7 +215,7 @@ async function executeAndFinalizeAction(
     });
     return {
       actionResult: { success: false, result: null, actionType: proposedActions.type },
-      ...autoActionExecutability(!finalizeError && status === AI_ACTION_LOG_STATUS.pending),
+      ...autoActionExecutability(!finalizeError && status === AI_ACTION_LOG_STATUS.pending, !!finalizeError),
     };
   }
 }
@@ -275,7 +282,8 @@ export async function GET(request: Request, props: { params: Promise<{ sessionId
         content: m.content,
         proposedActions: view === 'hidden' ? null : m.proposed_actions,
         // 提案のカードに「実行する」を出すか (行が pending のときだけ)。出さないときは理由も返す (#2195 V2):
-        // 実行中の印のまま (実行中か、書き戻せなかった) は「実行中か実行済み」、失敗・行が無いは「もう一度頼んでください」の案内
+        // 実行中の印のまま (実行中か、書き戻せなかった) は「実行できたかを確かめられない」(#2201 U3)、
+        // 失敗・行が無いは「もう一度頼んでください」の案内
         ...(view === 'hidden' ? {} : { proposedActionExecutable: view === 'executable' }),
         ...(notExecutableReason ? { proposedActionNotExecutableReason: notExecutableReason } : {}),
         isImportant: m.is_important || false,

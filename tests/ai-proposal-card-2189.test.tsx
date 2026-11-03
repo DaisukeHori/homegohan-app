@@ -516,3 +516,69 @@ describe('#2195 V2 会話の続きの POST (SSE) の proposedActionNotExecutable
     expect(text()).not.toContain(RUNNING_OR_DONE_GUIDE_TEXT);
   });
 });
+
+// ═════════════════════════════════════════════
+// #2201 U3 行が実行中の印のまま (実行中か、実行のあとに書き戻せなかった) の理由 unconfirmed。
+// その場 (実行の API・会話の続きの POST) と開き直したとき (GET) で同じ文を出す (以前はその場では『もう一度 AI に頼んでください』、
+// 開き直すと『実行中か実行済みです』で食い違い、429 では全画面の『明日また』と並んでいた)
+// ═════════════════════════════════════════════
+/** 手で書いた期待値 (実行したとも言い切らず、頼み直しも勧めない) */
+const UNCONFIRMED_GUIDE_TEXT = 'この提案を実行できたかを確かめられませんでした。しばらくしてから相談を開き直してください。';
+
+describe('#2201 U3 理由 unconfirmed の案内', () => {
+  it('開き直したとき (GET) の理由 unconfirmed: 「実行する」を出さず、確かめられない旨の案内', async () => {
+    getMessagesWith({
+      proposedActions: { type: 'generate_single_meal', params: {} },
+      proposedActionExecutable: false,
+      proposedActionNotExecutableReason: 'unconfirmed',
+    });
+    await openChat();
+    expect(buttonByText(EXECUTE_BUTTON_TEXT)).toBeUndefined();
+    expect(text()).toContain(UNCONFIRMED_GUIDE_TEXT);
+    expect(text()).not.toContain(GUIDE_TEXT);
+    expect(text()).not.toContain(RUNNING_OR_DONE_GUIDE_TEXT);
+  });
+
+  it.each([
+    [500, { error: 'サーバーでエラーが発生しました', code: 'INTERNAL_ERROR', retryable: false, notExecutableReason: 'unconfirmed' }],
+    [200, { success: false, result: { error: '冷蔵庫の食材の追加に失敗しました' }, actionType: 'add_pantry_item', retryable: false, notExecutableReason: 'unconfirmed' }],
+  ])('「実行する」の結果 %i で理由 unconfirmed: 開き直したときと同じ案内にする', async (status, body) => {
+    handlers[`POST /api/ai/consultation/actions/${MESSAGE_ID}/execute`] = async () => json(status, body);
+    await openChat();
+    await click(buttonByText(EXECUTE_BUTTON_TEXT)!);
+    expect(buttonByText(EXECUTE_BUTTON_TEXT)).toBeUndefined();
+    expect(text()).toContain(UNCONFIRMED_GUIDE_TEXT);
+    expect(text()).not.toContain(GUIDE_TEXT);
+  });
+
+  it('429 (今日の上限) で理由 unconfirmed: 頼み直しの案内を出さない (全画面の『明日また』と並べない)', async () => {
+    getMessagesWith({ proposedActions: { type: 'generate_single_meal', params: {} } });
+    handlers[`POST /api/ai/consultation/actions/${MESSAGE_ID}/execute`] = async () =>
+      json(429, { ...DAILY_LIMIT_BODY, retryable: false, notExecutableReason: 'unconfirmed' });
+    await openChat();
+    await click(buttonByText(EXECUTE_BUTTON_TEXT)!);
+    expect(buttonByText(EXECUTE_BUTTON_TEXT)).toBeUndefined();
+    expect(text()).toContain(UNCONFIRMED_GUIDE_TEXT);
+    expect(text()).not.toContain(GUIDE_TEXT);
+  });
+
+  it('会話の続きの POST (SSE) の理由 unconfirmed: 開き直したときと同じ案内', async () => {
+    getMessagesWith({ proposedActions: null });
+    handlers[`POST /api/ai/consultation/sessions/${SESSION_ID}/messages?stream=true`] = async () =>
+      sse(
+        sseFinalData(
+          {
+            proposedActions: { type: 'add_pantry_item', params: {} },
+            proposedActionExecutable: false,
+            proposedActionNotExecutableReason: 'unconfirmed',
+          },
+          { success: false, result: { error: '冷蔵庫の食材の追加に失敗しました' }, actionType: 'add_pantry_item' },
+        ),
+      );
+    await openChat();
+    await sendFromInput();
+    await waitForText('冷蔵庫の食材の追加に失敗しました');
+    expect(text()).toContain(UNCONFIRMED_GUIDE_TEXT);
+    expect(text()).not.toContain(GUIDE_TEXT);
+  });
+});

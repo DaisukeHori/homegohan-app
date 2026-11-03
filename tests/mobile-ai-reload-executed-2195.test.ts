@@ -1,7 +1,7 @@
 /**
  * #2195 V3: モバイルの AI 相談のシートが、応答 (SSE の finalData) を受け取れずに会話を取り直したとき、
  * 送った文への返答の提案が自動で実行されていたかを、提案の記録 (ai_action_logs) の状態で見分ける
- * (apps/mobile/src/lib/ai-chat-timeout.ts の hasExecutedActionLog・AIAdvisorSheet.tsx の replyActionExecuted)。
+ * (apps/mobile/src/lib/ai-chat-timeout.ts の hasExecutedActionLog・AIAdvisorSheet.tsx の replyActionStateOf。#2201 U3 で決まりを packages/shared へ移した)。
  *
  * ここではサーバーの側の前提を確かめる:
  *   1. モバイルが見る「実行できた」の値は、サーバーが行に書く値 (AI_ACTION_LOG_STATUS.executed) と同じ
