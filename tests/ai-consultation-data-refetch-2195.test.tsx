@@ -7,10 +7,11 @@
  *     開いている献立表などは古い表示のまま (自分で読み込み直すまで) だった
  *
  * 直したあと:
- *   - データを出すページ (献立表・ホーム・比較・冷蔵庫・健康・健康目標・マイページ) は useAiConsultationDataRefetch で
- *     この通知を受け、ページの既存の取得をもう一度呼ぶ (ページ全体の reload はしない)
+ *   - データを出すページ (献立表・ホーム・比較・冷蔵庫・健康・健康目標・マイページ・食事の詳細・連続記録・健康のグラフ) は
+ *     useAiConsultationDataRefetch でこの通知を受け、ページの既存の取得をもう一度呼ぶ (ページ全体の reload はしない)
  *   - 入力の部品・開いているモーダルがページにある間は取り直さない。ただし AI 相談の吹き出しの中 (MainLayout が
  *     data-ai-consultation-chat-root で包む) は数えない (吹き出しは送信の入力欄を持ったまま成功を知らせるため)
+ *   - 受け手のページのモーダルは role="dialog" を持つ (中に入力の部品が無い状態 — マイページの編集の競技タブなど — でも止めるため)
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
@@ -45,14 +46,42 @@ vi.mock('@/components/AIChatBubble', () => ({
     </div>
   ),
 }));
-vi.mock('@/lib/supabase/client', () => ({
-  createClient: () => ({
-    auth: {
-      getUser: async () => ({ data: { user: null } }),
-      onAuthStateChange: () => ({ data: { subscription: { unsubscribe: vi.fn() } } }),
-    },
-  }),
+/** Supabase のモックの状態。既定はログインしていない (user: null)。マイページの検査だけがログインした人と行を入れる */
+const supabaseMock = vi.hoisted(() => ({
+  user: null as { id: string } | null,
+  profileRow: null as Record<string, unknown> | null,
+  /** user_profiles を 1 行読んだ回数 (マイページの取得の回数) */
+  profileReads: 0,
 }));
+vi.mock('@/lib/supabase/client', () => {
+  const readProfile = async (table: string) => {
+    if (table === 'user_profiles') supabaseMock.profileReads += 1;
+    return { data: supabaseMock.profileRow, error: null };
+  };
+  const channel = {
+    on: () => channel,
+    subscribe: () => channel,
+  };
+  return {
+    createClient: () => ({
+      auth: {
+        getUser: async () => ({ data: { user: supabaseMock.user }, error: null }),
+        onAuthStateChange: () => ({ data: { subscription: { unsubscribe: vi.fn() } } }),
+      },
+      from: (table: string) => ({
+        select: () => ({
+          eq: () => ({
+            single: () => readProfile(table),
+            maybeSingle: () => readProfile(table),
+          }),
+        }),
+      }),
+      // 健康のグラフの Realtime の購読 (この検査では何も届かない)
+      channel: () => channel,
+      removeChannel: async () => 'ok',
+    }),
+  };
+});
 
 const {
   AI_CONSULTATION_CHAT_ROOT_ATTRIBUTE,
@@ -65,6 +94,10 @@ const { default: MainLayout } = await import('@/app/(main)/MainLayout');
 const { default: ComparisonPage } = await import('@/app/(main)/comparison/page');
 const { default: PantryPage } = await import('@/app/(main)/pantry/page');
 const { default: HealthGoalsPage } = await import('@/app/(main)/health/goals/page');
+const { default: ProfilePage } = await import('@/app/(main)/profile/page');
+const { default: MealDetailPage } = await import('@/app/(main)/meals/[id]/page');
+const { default: StreaksPage } = await import('@/app/(main)/health/streaks/page');
+const { default: HealthGraphsPage } = await import('@/app/(main)/health/graphs/page');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -81,6 +114,9 @@ let extraElements: HTMLElement[];
 
 beforeEach(() => {
   extraElements = [];
+  supabaseMock.user = null;
+  supabaseMock.profileRow = null;
+  supabaseMock.profileReads = 0;
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -371,6 +407,26 @@ function installFetchMock(responses: Record<string, unknown>) {
   return { fetchMock, callsTo };
 }
 
+/** 打ちかけの値を持ちうる入力の部品 (モーダルを除いた番兵の並び)。「モーダルの中に入力の部品が無い」ことを確かめるのに使う */
+const INPUT_PARTS_SELECTOR = 'input:not([type="hidden"]):not([type="file"]), textarea, select, [contenteditable]:not([contenteditable="false"])';
+
+/** 中の文字 (空白を詰めたもの) が text と一致するボタン */
+function buttonByText(text: string): HTMLButtonElement | undefined {
+  return Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.replace(/\s+/g, '') === text);
+}
+
+/** 中の文字に text を含むボタン (説明の文を添えたメニューの項目など) */
+function buttonContaining(text: string): HTMLButtonElement | undefined {
+  return Array.from(container.querySelectorAll('button')).find((button) => button.textContent?.includes(text));
+}
+
+/** React の制御された入力欄に打ち込む (value の setter を通してから input を投げる) */
+function typeInto(input: HTMLInputElement, value: string) {
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+  setValue?.call(input, value);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
 describe('ページが AI 相談の成功で取り直す (#2195 V1)', () => {
   it('比較 (/comparison): 表示中の期間の順位をもう一度取る。入力欄があれば取らない', async () => {
     const RANKINGS_URL = '/api/comparison/rankings?periodType=weekly';
@@ -439,6 +495,147 @@ describe('ページが AI 相談の成功で取り直す (#2195 V1)', () => {
     await settle();
     expect(callsTo(GOALS_URL)).toBe(2);
   });
+
+  it('マイページ (/profile): 編集のモーダルが開いている間は、入力の部品が 1 つも無い競技タブでも取り直さず、打ちかけの値を残す', async () => {
+    const PROFILE_USER_ID = '21950000-0000-4000-8000-000000000001';
+    const SAVED_NICKNAME = 'ほり';
+    const EDITED_NICKNAME = 'ほり (打ちかけ)';
+    supabaseMock.user = { id: PROFILE_USER_ID };
+    supabaseMock.profileRow = { id: PROFILE_USER_ID, nickname: SAVED_NICKNAME };
+    installFetchMock({});
+    await act(async () => {
+      root.render(<ProfilePage />);
+    });
+    await settle();
+    expect(supabaseMock.profileReads).toBe(1);
+
+    // モーダルが閉じていれば取り直す (受け手が配線されている)
+    await notifyAiConsultationSucceeded();
+    await settle();
+    expect(supabaseMock.profileReads).toBe(2);
+
+    // 編集のモーダルを基本情報タブで開き、ニックネームを打ちかける (保存はしない)
+    await act(async () => {
+      buttonContaining('基本情報')!.click();
+    });
+    const nicknameInput = () => container.querySelector<HTMLInputElement>('input[placeholder="例: たろう"]');
+    expect(nicknameInput()?.value).toBe(SAVED_NICKNAME);
+    await act(async () => {
+      typeInto(nicknameInput()!, EDITED_NICKNAME);
+    });
+    expect(nicknameInput()!.value).toBe(EDITED_NICKNAME);
+
+    // 競技タブ (競技を選んでいない間は入力の部品が 1 つも無い) へ切り替える
+    await act(async () => {
+      buttonByText('🏆競技')!.click();
+    });
+    expect(nicknameInput()).toBeNull();
+    expect(document.querySelectorAll(INPUT_PARTS_SELECTOR)).toHaveLength(0);
+
+    await notifyAiConsultationSucceeded();
+    await settle();
+    expect(supabaseMock.profileReads).toBe(2);
+
+    // 基本タブへ戻っても、打ちかけの値が取得した値で上書きされていない
+    await act(async () => {
+      buttonByText('👤基本')!.click();
+    });
+    expect(nicknameInput()!.value).toBe(EDITED_NICKNAME);
+  });
+
+  it('食事の詳細 (/meals/[id]): 表示中の食事をもう一度取る。削除の確認のモーダルが開いていれば取らない', async () => {
+    const MEAL_ID = 'meal-2195';
+    const MEAL_URL = `/api/meals/${MEAL_ID}`;
+    const { callsTo } = installFetchMock({
+      [MEAL_URL]: {
+        id: MEAL_ID,
+        daily_meal_id: 'day-2195',
+        meal_type: 'dinner',
+        mode: 'cook',
+        dish_name: '取り直しの検査の料理',
+        is_completed: false,
+        completed_at: null,
+        user_daily_meals: { day_date: '2026-11-03' },
+      },
+    });
+    await act(async () => {
+      root.render(<MealDetailPage params={Promise.resolve({ id: MEAL_ID })} />);
+    });
+    await settle();
+    expect(container.textContent).toContain('取り直しの検査の料理');
+    expect(callsTo(MEAL_URL)).toBe(1);
+
+    await notifyAiConsultationSucceeded();
+    await settle();
+    expect(callsTo(MEAL_URL)).toBe(2);
+
+    // 右上のメニュー → 「削除する」で削除の確認のモーダルを開く (中に入力の部品は無い)
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('div.relative > button')!.click();
+    });
+    await act(async () => {
+      buttonByText('削除する')!.click();
+    });
+    expect(container.textContent).toContain('この献立を削除しますか？');
+    expect(document.querySelectorAll(INPUT_PARTS_SELECTOR)).toHaveLength(0);
+
+    await notifyAiConsultationSucceeded();
+    await settle();
+    expect(callsTo(MEAL_URL)).toBe(2);
+  });
+
+  it('連続記録 (/health/streaks): 連続記録をもう一度取る。バッジの詳細のモーダルが開いていれば取らない', async () => {
+    const STREAKS_URL = '/api/health/streaks';
+    const { callsTo } = installFetchMock({
+      [STREAKS_URL]: {
+        streak: { current_streak: 3, longest_streak: 5, achieved_badges: [], total_records: 8, streak_type: 'daily_record' },
+        nextBadge: 7,
+        daysToNextBadge: 4,
+        weeklyRecords: [],
+      },
+    });
+    await act(async () => {
+      root.render(<StreaksPage />);
+    });
+    await settle();
+    expect(callsTo(STREAKS_URL)).toBe(1);
+
+    await notifyAiConsultationSucceeded();
+    await settle();
+    expect(callsTo(STREAKS_URL)).toBe(2);
+
+    await act(async () => {
+      buttonByText('7日未達成')!.click();
+    });
+    expect(container.textContent).toContain('7日連続で記録を続けると獲得できます');
+    expect(document.querySelectorAll(INPUT_PARTS_SELECTOR)).toHaveLength(0);
+
+    await notifyAiConsultationSucceeded();
+    await settle();
+    expect(callsTo(STREAKS_URL)).toBe(2);
+  });
+
+  it('健康のグラフ (/health/graphs): 目標をもう一度取り、体重の目標が無くなったら目標の線の欄を消す', async () => {
+    const GOALS_URL = '/api/health/goals?status=active';
+    const TARGET_WEIGHT_TEXT = '目標体重: 60kg';
+    const responses: Record<string, unknown> = {
+      [GOALS_URL]: { goals: [{ goal_type: 'weight', target_value: 60 }] },
+    };
+    const { callsTo } = installFetchMock(responses);
+    await act(async () => {
+      root.render(<HealthGraphsPage />);
+    });
+    await settle();
+    expect(callsTo(GOALS_URL)).toBe(1);
+    expect(container.textContent).toContain(TARGET_WEIGHT_TEXT);
+
+    // AI 相談で体重の目標が消された
+    responses[GOALS_URL] = { goals: [] };
+    await notifyAiConsultationSucceeded();
+    await settle();
+    expect(callsTo(GOALS_URL)).toBe(2);
+    expect(container.textContent).not.toContain(TARGET_WEIGHT_TEXT);
+  });
 });
 
 /**
@@ -495,5 +692,51 @@ describe('受け手の配線 (#2195 V1)', () => {
     const source = readRepoFile('src/app/(main)/menus/weekly/page.tsx');
     expect(source).toMatch(/const fetchPantry = useCallback\(async \(\) => \{\s*try \{\s*const res = await fetch\('\/api\/pantry'\);/);
     expect(source).toMatch(/useEffect\(\(\) => \{\s*void fetchPantry\(\);\s*\}, \[fetchPantry\]\);/);
+  });
+});
+
+/**
+ * 受け手のページの中に直接書いたモーダル (fixed inset-0 の覆い) は role="dialog" と aria-modal="true" を持つ。
+ * 番兵 (isAiConsultationRefetchBlocked) はモーダルを role・aria-modal で見分けるので、中に入力の部品が無い状態
+ * (マイページの編集の競技タブ・削除の確認・バッジの詳細など) でもモーダルが開いている間は取り直さない。
+ * 別の部品に切り出したモーダル (<…Modal />。献立表の各モーダル・ConfirmDeleteModal) は部品の側が BottomSheet などで役割を持つ
+ */
+describe('受け手のページのモーダルは role="dialog" を持つ (#2195 V1)', () => {
+  /** 受け手のページと、その中に直接書いた覆い (fixed inset-0) の数。数を書くのは、覆いを見落として検査が素通りしないため */
+  const RECEIVER_PAGES: ReadonlyArray<{ file: string; overlays: number }> = [
+    // 中身は別の部品のモーダル (activeModal の覆い) と、生成の結果のダイアログの覆い 2 つ
+    { file: 'src/app/(main)/menus/weekly/page.tsx', overlays: 3 },
+    { file: 'src/app/(main)/home/page.tsx', overlays: 1 },
+    { file: 'src/app/(main)/comparison/page.tsx', overlays: 0 },
+    { file: 'src/app/(main)/pantry/page.tsx', overlays: 1 },
+    { file: 'src/app/(main)/health/page.tsx', overlays: 1 },
+    { file: 'src/app/(main)/health/goals/page.tsx', overlays: 3 },
+    { file: 'src/app/(main)/health/streaks/page.tsx', overlays: 1 },
+    { file: 'src/app/(main)/health/graphs/page.tsx', overlays: 0 },
+    { file: 'src/app/(main)/profile/page.tsx', overlays: 1 },
+    { file: 'src/app/(main)/meals/[id]/page.tsx', overlays: 1 },
+  ];
+  const OVERLAY = 'fixed inset-0';
+  const OPEN_PRESENCE = '<AnimatePresence';
+  const CLOSE_PRESENCE = '</AnimatePresence>';
+  const SEPARATE_MODAL_COMPONENT = /<[A-Z]\w*Modal\b/;
+
+  it.each(RECEIVER_PAGES)('$file', ({ file, overlays }) => {
+    const source = readRepoFile(file);
+    expect(source, '受け手のページではない').toMatch(/useAiConsultation(DataRefetch|RefetchKey)\(/);
+    let checked = 0;
+    for (let at = source.indexOf(OVERLAY); at !== -1; at = source.indexOf(OVERLAY, at + OVERLAY.length)) {
+      const start = source.lastIndexOf(OPEN_PRESENCE, at);
+      const end = source.indexOf(CLOSE_PRESENCE, at);
+      expect(start, `${file} の ${OVERLAY} が AnimatePresence の外にある`).toBeGreaterThanOrEqual(0);
+      expect(end).toBeGreaterThan(at);
+      const block = source.slice(start, end);
+      checked += 1;
+      if (SEPARATE_MODAL_COMPONENT.test(block)) continue;
+      const line = source.slice(0, at).split('\n').length;
+      expect(block, `${file}:${line} のモーダルに role="dialog" が無い`).toContain('role="dialog"');
+      expect(block, `${file}:${line} のモーダルに aria-modal="true" が無い`).toContain('aria-modal="true"');
+    }
+    expect(checked, `${file} の覆いの数が変わった (新しいモーダルなら role="dialog" を付け、この表の数を直す)`).toBe(overlays);
   });
 });

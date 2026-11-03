@@ -6,6 +6,7 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { formatLocalDate } from "@/lib/date-utils";
 import { createClient } from "@/lib/supabase/client";
+import { useAiConsultationDataRefetch } from "@/hooks/useAiConsultationDataRefetch";
 import {
   buildTrendChartA11y,
   estimateSvgTextWidth,
@@ -123,9 +124,8 @@ export default function HealthGraphsPage() {
       if (goalsRes.ok) {
         const goalsData = await goalsRes.json();
         const weightGoal = goalsData.goals?.find((g: any) => g.goal_type === 'weight');
-        if (weightGoal) {
-          setTargetWeight(weightGoal.target_value);
-        }
+        // 体重の目標が無くなった (削除・達成) ときは線を消す (取り直しで前の目標の線を残さない。#2195 V1)
+        setTargetWeight(weightGoal ? weightGoal.target_value : null);
       }
     } catch (error) {
       console.error('Failed to fetch data:', error);
@@ -136,6 +136,9 @@ export default function HealthGraphsPage() {
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+  // AI 相談の提案の実行で健康記録・健康目標が変わったら取り直す (#2195 V1)。
+  // 下の購読は健康記録・健診の行の変化だけを見るので、目標 (体重の目標の線) の変化はこちらで拾う
+  useAiConsultationDataRefetch(fetchData);
 
   // Realtime subscription for health_records
   useEffect(() => {

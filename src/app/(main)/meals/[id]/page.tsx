@@ -10,6 +10,7 @@ import { MEAL_LABELS, isMealType, parseLocalDate } from "@homegohan/shared";
 // 区分ごとの色は Web の区分の見た目の表から引く (#1665)
 import { MEAL_TYPE_RECORD_THEME } from "@/lib/meal-type-visuals";
 import { motion, AnimatePresence } from "framer-motion";
+import { useAiConsultationRefetchKey } from "@/hooks/useAiConsultationDataRefetch";
 import { 
   ChefHat, Store, UtensilsCrossed, Zap, FastForward,
   Check, Flame, Clock, Users, ChevronLeft, MoreVertical,
@@ -101,6 +102,9 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   // UX2-30: 実際の人数設定（取得できるまでは null。取得できない場合は「1人前」を出さない）
   const [servingsConfig, setServingsConfig] = useState<ServingsConfig | null>(null);
+  // AI 相談の提案の実行 (食事の変更・完了・削除など) でこの食事が変わったら、下の取得をもう一度走らせる (#2195 V1)。
+  // 削除の確認のモーダル (role="dialog") が出ている間は増えない
+  const aiConsultationRefetchKey = useAiConsultationRefetchKey();
 
   useEffect(() => {
     const fetchServings = async () => {
@@ -180,7 +184,7 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
     };
 
     void fetchData();
-  }, [params.id]);
+  }, [params.id, aiConsultationRefetchKey]);
 
   const toggleCompletion = async () => {
     if (!meal) return;
@@ -524,6 +528,8 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
             className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm pointer-events-none"
           >
             <motion.div
+              role="dialog"
+              aria-modal="true"
               initial={{ scale: 0.9, y: 20 }}
               animate={{ scale: 1, y: 0 }}
               exit={{ scale: 0.9, y: 20 }}

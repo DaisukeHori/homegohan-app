@@ -141,7 +141,8 @@ function ProfilePageContent() {
   const headerName = normalizeProfileName(profile?.nickname);
 
   // AI 相談の提案の実行で好み・栄養目標などが変わったら、下の取得をもう一度走らせる (#2195 V1)。
-  // 編集のモーダル (入力の部品) が出ている間は増えない (編集の途中の editForm を取得した値で上書きしないため)
+  // 編集のモーダル (role="dialog") が出ている間は増えない (編集の途中の editForm を取得した値で上書きしないため)。
+  // 競技タブのように入力の部品が 1 つも無いタブを開いていても止まるよう、モーダルそのものに role="dialog" を付けている
   const aiConsultationRefetchKey = useAiConsultationRefetchKey();
 
   useEffect(() => {
@@ -658,7 +659,10 @@ function ProfilePageContent() {
               className="absolute inset-0 bg-black/60 backdrop-blur-sm pointer-events-auto"
               onClick={isGuidedMode ? handleGuidedClose : () => setIsEditing(false)}
             />
+            {/* role="dialog": 開いている間は AI 相談の成功で取り直さない (#2195 V1。どのタブを開いていても編集の途中の値を守る) */}
             <motion.div
+              role="dialog"
+              aria-modal="true"
               initial={{ y: "100%" }}
               animate={{ y: 0 }}
               exit={{ y: "100%" }}

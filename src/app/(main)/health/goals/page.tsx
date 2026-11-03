@@ -440,6 +440,8 @@ export default function HealthGoalsPage() {
             onClick={() => setDeleteConfirm(null)}
           >
             <motion.div
+              role="dialog"
+              aria-modal="true"
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
@@ -487,6 +489,8 @@ export default function HealthGoalsPage() {
             onClick={closeEditGoal}
           >
             <motion.div
+              role="dialog"
+              aria-modal="true"
               initial={{ scale: 0.9, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
@@ -569,6 +573,8 @@ export default function HealthGoalsPage() {
             onClick={closeCreateModal}
           >
             <motion.div
+              role="dialog"
+              aria-modal="true"
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}

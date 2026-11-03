@@ -7,6 +7,7 @@ import {
   Flame, Award, ChevronRight, Activity, CheckCircle2, Calendar, X,
 } from "lucide-react";
 import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
+import { useAiConsultationDataRefetch } from "@/hooks/useAiConsultationDataRefetch";
 
 const colors = {
   bg: "#FAF9F7",
@@ -99,6 +100,8 @@ export default function StreaksPage() {
   useEffect(() => {
     void fetchStreak();
   }, [fetchStreak]);
+  // AI 相談の提案の実行で健康記録が足されたら、連続記録を取り直す (#2195 V1)。バッジの詳細のモーダルが出ている間は取り直さない
+  useAiConsultationDataRefetch(fetchStreak);
 
   // 過去7日間のカレンダー生成
   const weekDays = Array.from({ length: 7 }, (_, i) => {
@@ -274,6 +277,8 @@ export default function StreaksPage() {
               const achieved = (streak?.achieved_badges ?? []).includes(`${selectedBadgeDays}_days`);
               return (
                 <motion.div
+                  role="dialog"
+                  aria-modal="true"
                   initial={{ scale: 0.9, opacity: 0 }}
                   animate={{ scale: 1, opacity: 1 }}
                   exit={{ scale: 0.9, opacity: 0 }}
