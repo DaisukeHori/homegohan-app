@@ -52,9 +52,16 @@ interface Props {
   // 読み込み直すのは、今開いているページが読み込み直してよい一覧 (webViewBridge.ts の AI_CONSULTATION_RELOADABLE_PATHS) にあり、
   // 入力の部品・開いているモーダルがページに無いときだけ (読み込み直すと保存していない入力が消える。判定は
   // buildReloadCurrentPageScript がページの上で行う。タブの中で一覧に無いページへ移っていれば何もしない)。
-  // 一覧のページを開くタブ (ホーム・献立・比較) だけが渡す。マイページ (一覧のページが無い)・スキャンのタブ・規約の同意などは渡さない
+  // 一覧のページを開くタブ (ホーム・献立・比較・マイページ) だけが渡す。スキャンのタブ・規約の同意などは渡さない
   reloadOnAiConsultationDataChange?: boolean;
+  // reloadOnAiConsultationDataChange で読み込み直す時機 (#2195 V3)。既定は 'immediate' (知らせを受けたとき)。
+  // 'onFocus' は、知らせを受けたときにこのタブが前に出ていればすぐ、出ていなければ次にタブが前に出たとき (focus) に 1 回だけ
+  // 読み込み直す (マイページ。読み込み直すかの判定は同じくページの上で行う)
+  aiConsultationReloadTiming?: AiConsultationReloadTiming;
 }
+
+/** AI 相談の提案の実行でデータが変わったときに読み込み直す時機 (Props の aiConsultationReloadTiming) */
+export type AiConsultationReloadTiming = 'immediate' | 'onFocus';
 
 // 各タブの「受け持つ」パスの prefix と Expo Router のタブのルートの対応は、@homegohan/shared の NATIVE_APP_TABS だけが決める
 // (Web の NativeAppTabRouter も同じ表を見る)。以前はここと Web で別々の一覧を持っていて、'/meals' と '/meals/new' が
@@ -138,12 +145,12 @@ true;
 `;
 };
 
-// この画面が navigation で使うのは、タブの再タップ (tabPress) の購読と isFocused の 2 つだけ。
+// この画面が navigation で使うのは、タブの再タップ (tabPress)・タブが前に出たこと (focus) の購読と isFocused だけ。
 // useNavigation() の既定の型はルートのナビゲーターの型で、イベントの一覧に tabPress が無い (タブのナビゲーターだけが持つ)。
-// そのため使う 2 つを型で宣言して useNavigation の型引数に渡す (イベント名を any へ外して型検査を止めない)。
+// そのため使うものを型で宣言して useNavigation の型引数に渡す (イベント名を any へ外して型検査を止めない)。
 // タブ以外の画面 (/settings/ai-consent など) では tabPress が発火しないだけで、購読も解除も同じに動く
 type TabPressNavigation = {
-  addListener: (event: 'tabPress', callback: () => void) => () => void;
+  addListener: (event: 'tabPress' | 'focus', callback: () => void) => () => void;
   isFocused: () => boolean;
 };
 
@@ -158,6 +165,7 @@ const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({
   header,
   afterSignOut,
   reloadOnAiConsultationDataChange,
+  aiConsultationReloadTiming = 'immediate',
   onRetry,
 }) => {
   const webViewRef = useRef<WebView>(null);
@@ -222,13 +230,34 @@ const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({
   // 読み込み直しは今の URL のまま (クエリを保つ)。読み込み直すかはページの上で決める (buildReloadCurrentPageScript): 自オリジンの、
   // 読み込み直してよい一覧 (AI_CONSULTATION_RELOADABLE_PATHS) のページで、入力の部品・開いているモーダルが無いときだけ。
   // それ以外 (タブの中で移った入力の画面・編集のモーダルを開いている途中・認証ブリッジのページ) では何もしない。
-  // WebView がまだ無い (uri を作っている途中) ときは何もしない (これから最新を読み込む)
+  // WebView がまだ無い (uri を作っている途中) ときは何もしない (これから最新を読み込む)。
+  // 時機が 'onFocus' (マイページ。#2195 V3) なら、タブが前に出ていなければ印だけ付け、次にタブが前に出たときに 1 回読み込み直す
   useEffect(() => {
     if (!reloadOnAiConsultationDataChange) return undefined;
-    return subscribeAiConsultationDataChanged(() => {
+    const reloadCurrentPage = () => {
       webViewRef.current?.injectJavaScript(buildReloadCurrentPageScript());
+    };
+    if (aiConsultationReloadTiming !== 'onFocus') return subscribeAiConsultationDataChanged(reloadCurrentPage);
+
+    let reloadOnNextFocus = false;
+    const unsubscribeDataChanged = subscribeAiConsultationDataChanged(() => {
+      if (navigation.isFocused()) {
+        reloadOnNextFocus = false;
+        reloadCurrentPage();
+        return;
+      }
+      reloadOnNextFocus = true;
     });
-  }, [reloadOnAiConsultationDataChange]);
+    const unsubscribeFocus = navigation.addListener('focus', () => {
+      if (!reloadOnNextFocus) return;
+      reloadOnNextFocus = false;
+      reloadCurrentPage();
+    });
+    return () => {
+      unsubscribeDataChanged();
+      unsubscribeFocus();
+    };
+  }, [reloadOnAiConsultationDataChange, aiConsultationReloadTiming, navigation]);
 
   useEffect(() => {
     // effectivePath が変わる/アンマウントした後に、遅れて返ってきた結果で URL を上書きしない

@@ -510,12 +510,16 @@ true;
  *     自由記入の <textarea> がいつも出る) の中だけ。入力を持たない確認・結果の知らせ (CancelGenerationConfirmModal・
  *     生成の完了の知らせ) は読み込み直すと閉じるだけ
  *   - '/comparison' (src/app/(main)/comparison/page.tsx): 表示だけ (入力の部品もモーダルも無い)
+ *   - '/profile' (src/app/(main)/profile/page.tsx。#2195 V3): ページの本体に入力の部品は無い。編集は編集のモーダル (isEditing の
+ *     間だけ出る) の中だけで、モーダルの入力 (editForm) は保存するまで React の state にしか無い。モーダルは role="dialog" も
+ *     aria-modal も持たず、開いている欄 (競技など) によっては入力の部品も出ないので、基本の要素 (AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR)
+ *     だけでは守れない。ページごとに足す要素 (AI_CONSULTATION_RELOAD_PAGE_BLOCKING_SELECTORS) でモーダルの層を見て守る。
+ *     マイページのタブは、知らせを受けたときではなく、タブが前に出たときに読み込み直す (WebViewScreen の aiConsultationReloadTiming)
  *
- * 入れないページ (例): '/profile' (編集のモーダルの isEditing / editForm は保存するまで React の state にしか無い)・
- * '/profile/nutrition-targets' (入力の画面)・'/menus/weekly/request' (手順つきの入力の画面。currentStep / formData は
+ * 入れないページ (例): '/profile/nutrition-targets' (入力の画面)・'/menus/weekly/request' (手順つきの入力の画面。currentStep / formData は
  * どこにも保存されず、手順によっては入力の部品が出ないので、下の DOM の確かめでは守れない)・'/meals/...' (スキャン・食事の記録)
  */
-export const AI_CONSULTATION_RELOADABLE_PATHS: readonly string[] = ['/home', '/menus/weekly', '/comparison'];
+export const AI_CONSULTATION_RELOADABLE_PATHS: readonly string[] = ['/home', '/menus/weekly', '/comparison', '/profile'];
 
 /**
  * これに当たる要素がページにある間は、AI_CONSULTATION_RELOADABLE_PATHS のページでも読み込み直さない (#2189 W2)。
@@ -534,23 +538,46 @@ export const AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR = [
 ].join(', ');
 
 /**
+ * ページごとに、AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR に足す「これがある間は読み込み直さない」要素 (#2195 V3)。
+ * 鍵は AI_CONSULTATION_RELOADABLE_PATHS のページ。基本の要素 (入力の部品・role="dialog" など) を持たないモーダルを守る。
+ *   - '/profile': 編集のモーダル (src/app/(main)/profile/page.tsx の isEditing の間だけ出る、画面全体を覆う `fixed inset-0` の層)。
+ *     ページの本体には `fixed inset-0` の要素が無いので、ふだんの表示では当たらない (どちらも tests の静的な検査が確かめる)
+ */
+export const AI_CONSULTATION_RELOAD_PAGE_BLOCKING_SELECTORS: Readonly<Record<string, string>> = {
+  '/profile': '.fixed.inset-0',
+};
+
+/** そのページで読み込み直しを止める要素 (基本の要素と、ページごとに足す要素) */
+export function aiConsultationReloadBlockingSelectorOf(pathname: string): string {
+  const pageSelector = Object.prototype.hasOwnProperty.call(AI_CONSULTATION_RELOAD_PAGE_BLOCKING_SELECTORS, pathname)
+    ? AI_CONSULTATION_RELOAD_PAGE_BLOCKING_SELECTORS[pathname]
+    : null;
+  return pageSelector ? `${AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR}, ${pageSelector}` : AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR;
+}
+
+/**
  * 今開いているページを読み込み直すスクリプト (AI 相談の提案の実行でデータが変わったとき。#2189 W2)。
  * 自オリジンのページでだけ動く (外部ページ・読み込みに失敗した about:blank では何もしない)。
  * 認証ブリッジのページ (BRIDGE_PAGE_PATH) の上では読み込み直さない: URL の code は一度しか使えない (#1036) ので、
  * 同じ URL を読み直すとログインできない (ブリッジは next のパスへ移すので、ふつうはここに留まらない)。
  * 入力の途中かもしれないページでも読み込み直さない (読み込み直すと保存していない入力が消える): 今のページが
- * AI_CONSULTATION_RELOADABLE_PATHS に無いとき、入力の部品・開いているモーダル (AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR) が
- * あるとき、ページの中身を確かめられないときは何もしない。
+ * AI_CONSULTATION_RELOADABLE_PATHS に無いとき、入力の部品・開いているモーダル (aiConsultationReloadBlockingSelectorOf。
+ * 基本の要素 AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR と、ページごとに足す要素) があるとき、ページの中身を確かめられないときは何もしない。
  * スクリプトは URL・トークン・code を持たない
  */
 export function buildReloadCurrentPageScript(): string {
+  const blockingSelectorsByPath: Record<string, string> = {};
+  for (const reloadablePath of AI_CONSULTATION_RELOADABLE_PATHS) {
+    blockingSelectorsByPath[reloadablePath] = aiConsultationReloadBlockingSelectorOf(reloadablePath);
+  }
   return buildOwnOriginOnlyScript(`
-  if (window.location.pathname === ${JSON.stringify(BRIDGE_PAGE_PATH)}) return;
-  var reloadablePaths = ${JSON.stringify(AI_CONSULTATION_RELOADABLE_PATHS)};
-  if (reloadablePaths.indexOf(window.location.pathname) === -1) return;
+  var pathname = window.location.pathname;
+  if (pathname === ${JSON.stringify(BRIDGE_PAGE_PATH)}) return;
+  var blockingSelectors = ${JSON.stringify(blockingSelectorsByPath)};
+  if (!Object.prototype.hasOwnProperty.call(blockingSelectors, pathname)) return;
   var doc = window.document;
   if (!doc || typeof doc.querySelector !== 'function') return;
-  if (doc.querySelector(${JSON.stringify(AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR)})) return;
+  if (doc.querySelector(blockingSelectors[pathname])) return;
   window.location.reload();`);
 }
 
