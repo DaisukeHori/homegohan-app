@@ -323,6 +323,14 @@ const EXPECTED_ACL: Array<{
     serviceRole: true,
     why: 'GET /api/family/menu が利用者のクライアントで呼ぶ。anon は呼べない',
   },
+  // ---- #2189 W4 運営最上位の機能フラグの作成 (POST /api/super-admin/flags) ----
+  {
+    sig: 'append_flag_to_feature_package(text,text)',
+    anon: false,
+    authenticated: false,
+    serviceRole: true,
+    why: '作ったフラグのキーを機能パッケージの feature_flags に足す (1 文の条件つき UPDATE)。運営最上位の確認を済ませた route が service_role で呼ぶ。anon / authenticated は呼べない',
+  },
   // ---- #1707 運営ロールの MFA: 別の super_admin による解除 (段 C。docs/design/cross/12-operator-mfa.md §11.5・§23 N-32) ----
   {
     sig: 'operator_mfa_end_sessions(uuid)',

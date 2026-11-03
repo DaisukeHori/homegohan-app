@@ -16,6 +16,11 @@ import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { readJsonBody, SUPER_ADMIN_INVALID_JSON_BODY_MESSAGE } from '@/lib/super-admin/validation-errors';
 import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
+import {
+  FEATURE_PACKAGES_APPEND_FLAG_RPC,
+  NEW_FLAG_DEFAULT_PACKAGE_KEY,
+  isFeaturePackageFlagAppendOutcome,
+} from '@/lib/super-admin/feature-package-flag-append';
 
 export async function GET() {
   try {
@@ -127,22 +132,20 @@ export async function POST(request: NextRequest) {
     // feature_packages.feature_flags は「パッケージが含むフラグキー一覧」であり、
     // DELETE の in-use チェック (このキーをどのパッケージが使用中か) に用いる。
     // 'basic' パッケージが存在しない環境でもフラグ本体の作成自体は成立させるため、
-    // ここでの失敗は致命的エラーにしない (best-effort)。
-    const { data: basicPkg } = await supabase
-      .from('feature_packages')
-      .select('id, feature_flags')
-      .eq('package_key', 'basic')
-      .single();
-
-    if (basicPkg) {
-      const currentFlags: string[] = basicPkg.feature_flags ?? [];
-      if (!currentFlags.includes(key)) {
-        // 書き込みは service_role だけ (requireRole を通したあと。運営の直接の書き込みを塞いだ。#1917 の続き)
-        await getSupabaseAdmin()
-          .from('feature_packages')
-          .update({ feature_flags: [...currentFlags, key], updated_at: new Date().toISOString() })
-          .eq('id', basicPkg.id);
-      }
+    // ここでの失敗は致命的エラーにしない (best-effort。失敗はログに残す)。
+    // 足すのは DB の関数 1 本 (1 文の条件つき UPDATE。#2189 W4)。以前は feature_flags を読んでから [...読んだ値, key] で書いており、
+    // 運営最上位が 2 人ほぼ同時にフラグを作ると、後から書いた方の一覧だけが残って先のキーが消えた (DELETE の使用中の検査を素通りする)。
+    // 呼ぶのは service_role だけ (関数の EXECUTE は service_role だけ。requireRole を通したあと)
+    const { data: appendOutcome, error: appendError } = await getSupabaseAdmin().rpc(FEATURE_PACKAGES_APPEND_FLAG_RPC, {
+      p_package_key: NEW_FLAG_DEFAULT_PACKAGE_KEY,
+      p_flag_key: key,
+    });
+    if (appendError || !isFeaturePackageFlagAppendOutcome(appendOutcome)) {
+      createLogger('api/super-admin/flags').withUser(user.id).error(
+        '作ったフラグのキーを機能パッケージに足せませんでした',
+        appendError ?? new Error(`想定外の結果: ${JSON.stringify(appendOutcome)}`),
+        { flagKey: key, packageKey: NEW_FLAG_DEFAULT_PACKAGE_KEY },
+      );
     }
 
     // 監査ログ
