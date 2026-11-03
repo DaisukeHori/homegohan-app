@@ -77,7 +77,7 @@ export function calculateProfileCompleteness(profile: Readonly<Record<string, un
 
 /**
  * user_profiles の行 (select('*')) から完成度を計算する。画面の編集の値と同じ形 (toUserProfile) にしてから数える
- * (プロフィールの画面は toUserProfile の値を編集して PUT に送るので、PUT の計算と同じ値になる)。
+ * (プロフィールの画面は toUserProfile の値を編集して全部の欄を PUT に送るので、本文から数えていた以前の PUT と同じ値になる)。
  * 列が欠けた行 (古い行・一部の列) は、欠けた列を toUserProfile の既定値で数える
  */
 export function profileCompletenessOfRow(row: Partial<DbUserProfile>): number {

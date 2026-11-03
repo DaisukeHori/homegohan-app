@@ -10,6 +10,8 @@
  * 直したあと:
  *   - 書いた後の行 (select('*')) から PUT と同じ計算 (src/lib/profile-completeness.ts) で完成度を出し、変わっていれば書く
  *   - 計算は PUT /api/profile が使っていたものと同じ (欄・重み・判定を変えない)
+ *   - PUT・POST /api/profile も本文ではなく書いた後の行から数える (目標の体重だけを送る栄養の目標の画面の PUT で、
+ *     ほかの欄が埋まっていても完成度が 5 になっていた)。オンボーディングの progress / complete・チェックインの体重の写しも同じ
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
