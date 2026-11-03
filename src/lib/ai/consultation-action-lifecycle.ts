@@ -36,7 +36,7 @@ export const AI_ACTION_LOG_STATUS = {
   running: 'approved',
   /** 実行できた */
   executed: 'executed',
-  /** 失敗し、やり直せない (途中まで書いた可能性がある種類・対応していない種類) */
+  /** 失敗し、やり直せない (途中まで書いた可能性がある種類・対応していない種類・やり直しても直らない失敗 (notRetryable)) */
   failed: 'failed',
   /** 利用者が提案を断った */
   rejected: 'rejected',
