@@ -231,6 +231,16 @@ function displayedWeekDates(): string[] {
   return Array.from({ length: DAYS_IN_WEEK }, (_, i) => dateFromWeekStart(i));
 }
 
+/** GET /api/meal-plans の範囲の鍵 (server.mealPlansHoldOnce の鍵) */
+function mealPlansRangeKey(startDate: string, endDate: string): string {
+  return `${startDate}..${endDate}`;
+}
+
+/** 表示中の週の献立の読み込み (週の初日から 7 日。ページの fetchPlan・refreshMealPlan の範囲) の鍵 */
+function displayedWeekRangeKey(): string {
+  return mealPlansRangeKey(dateFromWeekStart(0), dateFromWeekStart(DAYS_IN_WEEK - 1));
+}
+
 /** 表示中の月 (= 週の始まりの月) の、表示中の週の外の日 (次の週か前の週の月曜) */
 function otherWeekDateInDisplayedMonth(): string {
   return displayedWeekStart().getDate() <= LAST_DAY_WITH_NEXT_WEEK_IN_SAME_MONTH
@@ -262,6 +272,11 @@ type FakeServer = {
   mealPlansHold: Promise<void> | null;
   /** true の間に始めた GET /api/meal-plans は 500 を返す (#2201 U1。読み直しの失敗) */
   mealPlansFail: boolean;
+  /**
+   * 範囲 (mealPlansRangeKey) → Promise。その範囲の GET /api/meal-plans の次の 1 回の応答 (答えは読み取りを始めたときのもの) を、
+   * この Promise が解けるまで止める (止めたら消す。#2201 U1。同じ週の何回かの読み込みのうち、1 回だけを遅らせる)
+   */
+  mealPlansHoldOnce: Map<string, Promise<void>>;
   /** true なら GET /api/family/members/names が 500 を返す (#2201 U1) */
   namesFail: boolean;
   /** 置いている間に始めた食事の更新 (PATCH /api/meal-plans/meals/<id>) の応答を、この Promise が解けるまで止める (#2201 U2) */
@@ -425,7 +440,11 @@ function installFakeServer() {
         const body = mealPlansJson(url.searchParams.get('startDate') ?? '', url.searchParams.get('endDate') ?? '');
         const hold = server.mealPlansHold;
         const fails = server.mealPlansFail;
+        const rangeKey = mealPlansRangeKey(url.searchParams.get('startDate') ?? '', url.searchParams.get('endDate') ?? '');
+        const holdOnce = server.mealPlansHoldOnce.get(rangeKey);
+        server.mealPlansHoldOnce.delete(rangeKey);
         if (hold) await hold;
+        if (holdOnce) await holdOnce;
         if (fails) return jsonResponse({ error: 'down' }, SERVER_ERROR_STATUS);
         return jsonResponse(body);
       }
@@ -493,6 +512,7 @@ beforeEach(() => {
     familyMemberNames: [],
     mealPlansHold: null,
     mealPlansFail: false,
+    mealPlansHoldOnce: new Map(),
     namesFail: false,
     mealPatchHold: null,
     pantryItems: [],
@@ -500,6 +520,8 @@ beforeEach(() => {
     profileHold: null,
   };
   supabaseMock.profileFails = false;
+  // ?date= で開く検査が置いたクエリを、次の検査に残さない
+  navigation.searchParams = new URLSearchParams();
   supabaseMock.channelNames.length = 0;
   // 既定は帯を出さないプロフィール (帯の検査は incompleteProfile に置き換える)・家族なし (家族の検査は joinFamily)
   supabaseMock.profile = completeProfile();
@@ -570,6 +592,11 @@ function heldResponse(): { hold: Promise<void>; release: () => void } {
     release = resolve;
   });
   return { hold, release };
+}
+
+/** 週の読み込み中の表示 (画面全体のスピナー。週を送るボタンも出ない) を出しているか */
+function weeklyPageIsLoading(): boolean {
+  return container.querySelector('button[aria-label="翌週"]') === null && container.querySelector('.animate-spin') !== null;
 }
 
 /** ヘッダーの買い物リストのボタン (バッジの数字はこの中に出る) */
@@ -816,6 +843,65 @@ describe('献立表 (/menus/weekly) の取り直しの順序と失敗 (#2201 U1)
     await settle();
     expect(container.textContent).toContain(NEXT_WEEK_DISH);
     expect(container.textContent).not.toContain(THIS_WEEK_DISH);
+  });
+
+  it('翌週から戻った週の読み込みを待つあいだに、前にその週を開いたときの古い読み込みの応答が届いても、翌週の献立を読み込み中の表示なしで出さない', async () => {
+    const THIS_WEEK_DISH = '今週のぶり大根';
+    const NEXT_WEEK_DISH = '翌週の麻婆豆腐';
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) {
+      server.days.set(dateFromWeekStart(i), [{ id: `meal-this-${i}`, dishName: THIS_WEEK_DISH }]);
+      server.days.set(dateFromWeekStart(DAYS_IN_WEEK + i), [{ id: `meal-next-${i}`, dishName: NEXT_WEEK_DISH }]);
+    }
+    // ?date= に表示中の週の日を渡して開く: 週の始まりの日を読んだあと、表示中の週の読み込みが 2 回走る (?date= の週に合わせ直すため)。
+    // 1 回目の応答だけを遅らせる (2 回目の応答で週が出る)
+    navigation.searchParams = new URLSearchParams({ date: dateFromWeekStart(0) });
+    const firstLoad = heldResponse();
+    server.mealPlansHoldOnce.set(displayedWeekRangeKey(), firstLoad.hold);
+    await renderWeeklyPage();
+    expect(server.mealPlansHoldOnce.size, '表示中の週の読み込みを止めていない (検査の前提が崩れた)').toBe(0);
+    expect(container.textContent, '表示中の週の 2 回目の読み込みで週を出していない (検査の前提が崩れた)').toContain(THIS_WEEK_DISH);
+
+    // 翌週へ移る
+    const nextWeek = container.querySelector<HTMLButtonElement>('button[aria-label="翌週"]');
+    expect(nextWeek, '「翌週」のボタンが無い').not.toBeNull();
+    await act(async () => {
+      nextWeek!.click();
+    });
+    await settle();
+    expect(container.textContent).toContain(NEXT_WEEK_DISH);
+
+    // 翌週を出している間に AI 相談が成功する: 週のキャッシュを捨てる (前の週に戻ると、その週を読み込む)
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+
+    // 前の週に戻る: その週の読み込みの応答が遅れる (読み込み中の表示)
+    const reload = heldResponse();
+    server.mealPlansHoldOnce.set(displayedWeekRangeKey(), reload.hold);
+    const previousWeek = container.querySelector<HTMLButtonElement>('button[aria-label="前の週"]');
+    expect(previousWeek, '「前の週」のボタンが無い').not.toBeNull();
+    await act(async () => {
+      previousWeek!.click();
+    });
+    await settle();
+    expect(weeklyPageIsLoading(), '戻った週の読み込み中の表示を出していない (検査の前提が崩れた)').toBe(true);
+
+    // 最初に開いたときの 1 回目の読み込みの応答が届く: その週のもっと新しい応答 (2 回目) を前に置いたので置かない。
+    // 献立はそのあとに翌週のものを置いたので、読み込み中の表示も下ろさない (下ろすと、戻った週の見出しの下に翌週の献立が出る)
+    await act(async () => {
+      firstLoad.release();
+    });
+    await settle();
+    expect(
+      weeklyPageIsLoading() || (container.textContent ?? '').includes(THIS_WEEK_DISH),
+      '戻った週の見出しの下に、翌週の献立を読み込み中の表示なしで出した',
+    ).toBe(true);
+
+    await act(async () => {
+      reload.release();
+    });
+    await settle();
+    expect(weeklyPageIsLoading()).toBe(false);
+    expect(container.textContent).toContain(THIS_WEEK_DISH);
+    expect(container.textContent).not.toContain(NEXT_WEEK_DISH);
   });
 
   it('週を移った直後 (週の読み込みの応答待ち) に来た成功の取り直しが失敗しても、前の週の献立を新しい週の見出しの下に残さない', async () => {

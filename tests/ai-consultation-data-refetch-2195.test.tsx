@@ -25,6 +25,7 @@ import type {
   AiConsultationLoadingState,
   AiConsultationPendingWrites,
   AiConsultationRefetchControl,
+  AiConsultationStreamTicket,
   AiConsultationWriteInFlightRef,
 } from '@/hooks/useAiConsultationDataRefetch';
 import path from 'node:path';
@@ -842,6 +843,20 @@ describe('useAiConsultationRefetchKey (#2195 V1)', () => {
   });
 });
 
+/**
+ * 型だけを見る hook (描画しない。tsc (npm run typecheck) が検査する。#2201 U1): 'newerThanPlaced' の流れの begin は対象の鍵を求める。
+ * 鍵を渡し忘れると、別の対象 (日・週) の応答を置いたことで、選び直した対象の正しい応答を古いと見なす (A→B→A。/health の選んだ日の
+ * パネル・献立表の表示中の週で起きた)。鍵を渡さない begin が型で止まらなくなったら、下の @ts-expect-error が tsc のエラーになる
+ */
+export function useNewerThanPlacedStreamNeedsTargetKey(): AiConsultationStreamTicket {
+  const stream = useAiConsultationFetchStream('newerThanPlaced');
+  // @ts-expect-error 対象の鍵を渡さない begin は型で止める
+  stream.begin();
+  // @ts-expect-error 札だけを渡して対象の鍵を渡さない begin も型で止める
+  stream.begin(null);
+  return stream.begin(null, '2026-01-01');
+}
+
 describe('取得の流れ (useAiConsultationFetchStream。#2201 U1 + U2)', () => {
   /** 取得の流れを 1 本持ち、AI 相談の成功の取り直しの札を受けるページ */
   function renderStreamPage(order: AiConsultationFetchStreamOrder, writeInFlightRef?: AiConsultationWriteInFlightRef) {
@@ -902,6 +917,30 @@ describe('取得の流れ (useAiConsultationFetchStream。#2201 U1 + U2)', () =>
       expect(late.place(() => placed.push('先に始めた')), 'もう置いた新しい応答を古い応答で上書きした').toBe('superseded');
     });
     expect(placed).toEqual(['先', 'あと', 'あとに始めた']);
+  });
+
+  it("'newerThanPlaced' は鍵 (対象) ごとに順序を持つ: 別の対象の応答を置いても、選び直した対象の先に始めた取得の応答を古いと見なさない (A→B→A)", async () => {
+    const { page, element } = renderStreamPage('newerThanPlaced');
+    await act(async () => {
+      root.render(element);
+    });
+    const placed: string[] = [];
+    const firstA = page.stream!.begin(null, '日 A');
+    const otherB = page.stream!.begin(null, '日 B');
+    const secondA = page.stream!.begin(null, '日 A');
+    await act(async () => {
+      expect(otherB.place(() => placed.push('B'))).toBe('placed');
+      expect(firstA.place(() => placed.push('A (先に始めた)')), '別の対象 (B) の応答を置いたことで、A の応答を古いと見なした').toBe('placed');
+      expect(secondA.place(() => placed.push('A (あとに始めた)'))).toBe('placed');
+    });
+    // 同じ対象の中では、もう置いた新しい応答を古い応答で上書きしない
+    const lateA = page.stream!.begin(null, '日 A');
+    const earlyA = page.stream!.begin(null, '日 A');
+    await act(async () => {
+      expect(earlyA.place(() => placed.push('A (さらにあと)'))).toBe('placed');
+      expect(lateA.place(() => placed.push('A (古い)'))).toBe('superseded');
+    });
+    expect(placed).toEqual(['B', 'A (先に始めた)', 'A (あとに始めた)', 'A (さらにあと)']);
   });
 
   it('鍵ごとに別々の順序を持つ (ほかの範囲の取得で古くならない)', async () => {

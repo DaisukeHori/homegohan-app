@@ -1740,6 +1740,11 @@ describe('/profile: 開いたときの読み込みの最中に開いた編集の
 });
 
 describe('/health: 日を選び直したら、前に選んだ日の記録をパネルに置かない (#2201 U1)', () => {
+  /** 選んだ日のパネルの見出しの横のリンクの文言 (記録があれば「詳細を編集」) */
+  const EDIT_RECORD_LINK = '詳細を編集';
+  /** 選んだ日のパネルの見出しの横のリンク (今日の記録の欄の「詳細を編集」は日を持たない /health/record へのリンク) */
+  const selectedDayPanelLinkText = () => container.querySelector('a[href^="/health/record?date="]')?.textContent ?? null;
+
   it('先に選んだ日の応答が後から届いても、あとで選んだ日の記録を出す', async () => {
     const FIRST_DAY_WEIGHT = 61.5;
     const SECOND_DAY_WEIGHT = 62.5;
@@ -1796,6 +1801,143 @@ describe('/health: 日を選び直したら、前に選んだ日の記録をパ�
     await settle();
     expect(container.textContent, '日を選んだときの古い応答が、取り直しで読んだその日の記録を戻した').toContain(String(AFTER_AI_WEIGHT));
     expect(container.textContent).not.toContain(String(BEFORE_AI_WEIGHT));
+  });
+
+  it('日を選び直して前の日に戻った (A→B→A) とき、最初に A を選んだときの応答が後から届いても、A のパネルに B の記録を出さず、A の記録を出す', async () => {
+    // A を最初に選んだときに読んだ A の記録・B の記録・A を選び直したときに読んだ A の記録
+    const FIRST_VISIT_WEIGHT = 61.5;
+    const OTHER_DAY_WEIGHT = 62.5;
+    const SECOND_VISIT_WEIGHT = 60.5;
+    const c = caseOf('/health');
+    setServer(c.full);
+    await mount({ ...c, openPanels: undefined });
+    const [dayA, dayB] = [...container.querySelectorAll<HTMLButtonElement>('button[aria-pressed="false"]')];
+    if (!dayA || !dayB) throw new Error('今日でない日のボタンが 2 つ無い');
+
+    // A を選ぶ: 読み取りの応答が遅れる
+    const firstVisitRead = deferred();
+    server.holdAll = firstVisitRead.promise;
+    server.fetchBodies['/api/health/records/*'] = { record: HEALTH_RECORD('2026-01-01', FIRST_VISIT_WEIGHT), previous: null };
+    await act(async () => {
+      dayA.click();
+    });
+    server.holdAll = null;
+
+    // B を選ぶ: 先に届き、パネルに B の記録が出る
+    server.fetchBodies['/api/health/records/*'] = { record: HEALTH_RECORD('2026-01-02', OTHER_DAY_WEIGHT), previous: null };
+    await act(async () => {
+      dayB.click();
+    });
+    await settle();
+    expect(container.textContent).toContain(String(OTHER_DAY_WEIGHT));
+
+    // A を選び直す: その読み取りの応答も遅れる
+    const secondVisitRead = deferred();
+    server.holdAll = secondVisitRead.promise;
+    server.fetchBodies['/api/health/records/*'] = { record: HEALTH_RECORD('2026-01-01', SECOND_VISIT_WEIGHT), previous: null };
+    await act(async () => {
+      dayA.click();
+    });
+    server.holdAll = null;
+
+    // 最初に A を選んだときの応答が届く: A の記録なので出す (B の応答を置いたことで、A の応答を古いと見なさない)
+    firstVisitRead.resolve();
+    await settle();
+    expect(container.textContent, 'A のパネルに、B の記録を読み込み中の印なしで出した').not.toContain(String(OTHER_DAY_WEIGHT));
+    expect(container.textContent, '最初に A を選んだときに読んだ A の記録を出していない').toContain(String(FIRST_VISIT_WEIGHT));
+
+    secondVisitRead.resolve();
+    await settle();
+    expect(container.textContent).toContain(String(SECOND_VISIT_WEIGHT));
+    expect(container.textContent).not.toContain(String(OTHER_DAY_WEIGHT));
+  });
+
+  it('A を選んだときの読み取りより先に取り直しの A の記録を置いていたら、B を選んでから A に戻ったあとに届いたその古い応答で、A のパネルに B の記録を出さない', async () => {
+    // A を最初に選んだときに読んだ (AI 相談の前の) A の記録・取り直しで読んだ A の記録・B の記録・A を選び直したときに読んだ A の記録
+    const BEFORE_AI_WEIGHT = 61.5;
+    const AFTER_AI_WEIGHT = 60.5;
+    const OTHER_DAY_WEIGHT = 62.5;
+    const RESELECTED_WEIGHT = 59.5;
+    const c = caseOf('/health');
+    setServer(c.full);
+    await mount({ ...c, openPanels: undefined });
+    const [dayA, dayB] = [...container.querySelectorAll<HTMLButtonElement>('button[aria-pressed="false"]')];
+    if (!dayA || !dayB) throw new Error('今日でない日のボタンが 2 つ無い');
+
+    // A を選ぶ: 読み取りの応答が遅れる
+    const firstVisitRead = deferred();
+    server.holdAll = firstVisitRead.promise;
+    server.fetchBodies['/api/health/records/*'] = { record: HEALTH_RECORD('2026-01-01', BEFORE_AI_WEIGHT), previous: null };
+    await act(async () => {
+      dayA.click();
+    });
+    server.holdAll = null;
+
+    // その間に AI 相談がその日の体重を書いた: 取り直しの読み直しの応答が先に届き、パネルに出る
+    server.fetchBodies['/api/health/records/*'] = { record: HEALTH_RECORD('2026-01-01', AFTER_AI_WEIGHT), previous: null };
+    await notifyAiConsultationSucceeded();
+    expect(container.textContent).toContain(String(AFTER_AI_WEIGHT));
+
+    // B を選ぶ
+    server.fetchBodies['/api/health/records/*'] = { record: HEALTH_RECORD('2026-01-02', OTHER_DAY_WEIGHT), previous: null };
+    await act(async () => {
+      dayB.click();
+    });
+    await settle();
+    expect(container.textContent).toContain(String(OTHER_DAY_WEIGHT));
+
+    // A を選び直す: その読み取りの応答が遅れる
+    const reselectRead = deferred();
+    server.holdAll = reselectRead.promise;
+    server.fetchBodies['/api/health/records/*'] = { record: HEALTH_RECORD('2026-01-01', RESELECTED_WEIGHT), previous: null };
+    await act(async () => {
+      dayA.click();
+    });
+    server.holdAll = null;
+
+    // 最初に A を選んだときの応答が届く: A のもっと新しい記録 (取り直し) を前に置いたので置かない。パネルはそのあとに B の記録を
+    // 出したので、読み込み中の印も下ろさない (日を鍵にするだけでは、ここで B の記録が A の見出しの下に出る)
+    firstVisitRead.resolve();
+    await settle();
+    expect(container.textContent, 'A のパネルに、B の記録を読み込み中の印なしで出した').not.toContain(String(OTHER_DAY_WEIGHT));
+    expect(container.textContent).not.toContain(String(BEFORE_AI_WEIGHT));
+
+    reselectRead.resolve();
+    await settle();
+    expect(container.textContent).toContain(String(RESELECTED_WEIGHT));
+    expect(container.textContent).not.toContain(String(OTHER_DAY_WEIGHT));
+  });
+
+  it('日を選んだら、読み込み中のあいだも前に選んだ日の記録を元にした「詳細を編集」を出さない', async () => {
+    const OTHER_DAY_WEIGHT = 62.5;
+    const c = caseOf('/health');
+    setServer({ fetchBodies: { ...c.full.fetchBodies, '/api/health/records/*': { record: HEALTH_RECORD('2026-01-02', OTHER_DAY_WEIGHT), previous: null } } });
+    await mount({ ...c, openPanels: undefined });
+    const [dayA, dayB] = [...container.querySelectorAll<HTMLButtonElement>('button[aria-pressed="false"]')];
+    if (!dayA || !dayB) throw new Error('今日でない日のボタンが 2 つ無い');
+
+    // B を選ぶ: 記録がある
+    await act(async () => {
+      dayB.click();
+    });
+    await settle();
+    expect(container.textContent).toContain(String(OTHER_DAY_WEIGHT));
+    expect(selectedDayPanelLinkText()).toContain(EDIT_RECORD_LINK);
+
+    // A を選ぶ (記録の無い日): 読み取りの応答が遅れる。そのあいだ、B の記録で「詳細を編集」を出さない
+    const read = deferred();
+    server.holdAll = read.promise;
+    server.fetchBodies['/api/health/records/*'] = { record: null, previous: null };
+    await act(async () => {
+      dayA.click();
+    });
+    server.holdAll = null;
+    expect(selectedDayPanelLinkText(), 'A を読み込んでいるあいだ、B の記録を元に「詳細を編集」を出した').not.toContain(EDIT_RECORD_LINK);
+
+    read.resolve();
+    await settle();
+    expect(selectedDayPanelLinkText()).not.toContain(EDIT_RECORD_LINK);
+    expect(container.textContent).not.toContain(String(OTHER_DAY_WEIGHT));
   });
 });
 

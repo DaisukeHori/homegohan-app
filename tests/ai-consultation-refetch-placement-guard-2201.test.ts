@@ -165,8 +165,9 @@ function fetchStreamNames(sf: ts.SourceFile): Set<string> {
 }
 
 /**
- * 取り直しの応答を置く時点の番兵を見ているか: X.deferIfHeld() / X?.deferIfHeld() を呼ぶか、取得の流れの begin に札 (引数) を渡す
- * (流れの place が deferIfHeld を見る)
+ * 取り直しの応答を置く時点の番兵を見ているか: X.deferIfHeld() / X?.deferIfHeld() を呼ぶか、取得の流れの begin に札 (第 1 引数) を渡す
+ * (流れの place が deferIfHeld を見る)。begin(null, 対象の鍵) は札を渡していない (対象ごとに順序を持つ流れの、開いたとき・週の移動・
+ * 日を選んだときの取得。#2201 U1) ので数えない
  */
 function seesHeldAtPlacement(sf: ts.SourceFile): boolean {
   const streams = fetchStreamNames(sf);
@@ -175,7 +176,16 @@ function seesHeldAtPlacement(sf: ts.SourceFile): boolean {
     if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return;
     const { name, expression } = node.expression;
     if (name.text === DEFER_IF_HELD) found = true;
-    if (name.text === STREAM_BEGIN && ts.isIdentifier(expression) && streams.has(expression.text) && node.arguments.length > 0) found = true;
+    const ticketArgument = node.arguments[0];
+    if (
+      name.text === STREAM_BEGIN &&
+      ts.isIdentifier(expression) &&
+      streams.has(expression.text) &&
+      ticketArgument !== undefined &&
+      ticketArgument.kind !== ts.SyntaxKind.NullKeyword
+    ) {
+      found = true;
+    }
   });
   return found;
 }
@@ -766,7 +776,10 @@ describe('書き込みの印を渡す受け手は、取り直しの応答を置�
         ${DATA_REFETCH_HOOK}((ticket) => { void fetchPantry(ticket); }, { writeInFlightRef: pendingWrites });
       }`;
       expect(check(source.replaceAll('BEGIN_ARGS', ''))).toEqual([expect.stringContaining(DEFER_IF_HELD)]);
+      // 対象の鍵だけを渡す begin (札は null) も、札を渡していない
+      expect(check(source.replaceAll('BEGIN_ARGS', "null, '2026-01-01'"))).toEqual([expect.stringContaining(DEFER_IF_HELD)]);
       expect(check(source.replaceAll('BEGIN_ARGS', 'refetchTicket'))).toEqual([]);
+      expect(check(source.replaceAll('BEGIN_ARGS', "refetchTicket, '2026-01-01'"))).toEqual([]);
     });
 
     it('直した形は赤にしない', () => {
