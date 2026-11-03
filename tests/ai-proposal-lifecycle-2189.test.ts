@@ -39,7 +39,11 @@ const h = vi.hoisted(() => ({
   written: {} as Record<string, Record<string, unknown> | null>,
   /** この表のこの操作は DB のエラーを返す */
   failOn: null as { table: string; op: string } | null,
+  /** failOn の失敗を返す残りの回数 (null は何回でも。#2195 V2 の書き直しを確かめる) */
+  failLeft: null as number | null,
   writes: [] as Array<{ table: string; op: string; payload: unknown; filters: Array<[string, unknown]> }>,
+  /** 書き込みでない問い合わせ (select) の表と eq の条件 (発行順) */
+  reads: [] as Array<{ table: string; filters: Array<[string, unknown]> }>,
   run: vi.fn(),
   llmCreate: vi.fn(async () => ({ choices: [{ message: { content: '{"isImportant": false}' } }] })),
   logError: vi.fn(),
@@ -48,7 +52,15 @@ const h = vi.hoisted(() => ({
 function makeQuery(table: string): unknown {
   let op = 'select';
   let write: { table: string; op: string; payload: unknown; filters: Array<[string, unknown]> } | null = null;
-  const failing = () => h.failOn !== null && h.failOn.table === table && h.failOn.op === op;
+  const read = { table, filters: [] as Array<[string, unknown]> };
+  h.reads.push(read);
+  const failing = () => {
+    if (h.failOn === null || h.failOn.table !== table || h.failOn.op !== op) return false;
+    if (h.failLeft === null) return true;
+    if (h.failLeft <= 0) return false;
+    h.failLeft -= 1;
+    return true;
+  };
   const dbError = { message: 'db error', code: 'XX000' };
   const singleResult = () => {
     if (failing()) return { data: null, error: dbError };
@@ -80,7 +92,7 @@ function makeQuery(table: string): unknown {
         }
         if (prop === 'eq') {
           return (column: string, value: unknown) => {
-            write?.filters.push([column, value]);
+            (write ?? read).filters.push([column, value]);
             return builder;
           };
         }
@@ -157,7 +169,9 @@ beforeEach(() => {
   h.single = {};
   h.written = {};
   h.failOn = null;
+  h.failLeft = null;
   h.writes = [];
+  h.reads = [];
   h.run.mockReset();
   h.logError.mockReset();
   h.llmCreate.mockClear();
@@ -194,7 +208,8 @@ describe('aiActionLogStatusAfterRun / proposedActionViewOf (#2189 W1-a)', () => 
     [['rejected'], 'hidden'],
     [['pending'], 'executable'],
     [['failed'], 'notExecutable'],
-    [['approved'], 'notExecutable'],
+    [['approved'], 'runningOrDone'],
+    [['failed', 'approved'], 'runningOrDone'],
     [[], 'notExecutable'],
     [['failed', 'executed'], 'hidden'],
     [['failed', 'pending'], 'executable'],
@@ -275,7 +290,7 @@ describe('POST /api/ai/consultation/actions/[actionId]/execute (#2189 W1-a)', ()
       const { status, body } = await execute();
 
       expect(status).toBe(200);
-      expect(body).toEqual({ ...GENERATE_FAILED, actionType, retryable: false });
+      expect(body).toEqual({ ...GENERATE_FAILED, actionType, retryable: false, notExecutableReason: 'failed' });
       expect(lastActionLogUpdate()?.payload).toMatchObject({ status: 'failed', result: GENERATE_FAILED.result });
     },
   );
@@ -505,9 +520,24 @@ describe('GET /api/ai/consultation/sessions/[sessionId]/messages の提案 (#218
     expect(byId.get('m-executed')).not.toHaveProperty('proposedActionExecutable');
     expect(byId.get('m-rejected')).toMatchObject({ proposedActions: null });
     expect(byId.get('m-pending')).toMatchObject({ proposedActions: PROPOSED, proposedActionExecutable: true });
-    expect(byId.get('m-failed')).toMatchObject({ proposedActions: PROPOSED, proposedActionExecutable: false });
-    expect(byId.get('m-running')).toMatchObject({ proposedActions: PROPOSED, proposedActionExecutable: false });
-    expect(byId.get('m-no-log')).toMatchObject({ proposedActions: PROPOSED, proposedActionExecutable: false });
+    expect(byId.get('m-pending')).not.toHaveProperty('proposedActionNotExecutableReason');
+    // 「実行する」を出さない理由 (#2195 V2): 実行中の印のまま (実行中か、書き戻せなかった) は runningOrDone、失敗・行が無いは failed
+    expect(byId.get('m-failed')).toMatchObject({
+      proposedActions: PROPOSED,
+      proposedActionExecutable: false,
+      proposedActionNotExecutableReason: 'failed',
+    });
+    expect(byId.get('m-running')).toMatchObject({
+      proposedActions: PROPOSED,
+      proposedActionExecutable: false,
+      proposedActionNotExecutableReason: 'runningOrDone',
+    });
+    expect(byId.get('m-no-log')).toMatchObject({
+      proposedActions: PROPOSED,
+      proposedActionExecutable: false,
+      proposedActionNotExecutableReason: 'failed',
+    });
+    expect(byId.get('m-executed')).not.toHaveProperty('proposedActionNotExecutableReason');
     expect(byId.get('m-plain')).toMatchObject({ proposedActions: null });
   });
 
@@ -522,3 +552,402 @@ describe('GET /api/ai/consultation/sessions/[sessionId]/messages の提案 (#218
     expect(body.messages).toBeUndefined();
   });
 });
+
+// ═════════════════════════════════════════════
+// #2195 V2 提案のカードの残りの縁・やり直しても直らない失敗
+//   (a) 実行の中の例外の 500 に retryable を添える (献立の生成・戻せなかったときは false)
+//   (b) 実行のあとの書き戻しは 1 回だけ書き直す (src/lib/ai/consultation-action-log-writes.ts)
+//   (c) 「実行する」を出さない理由 (failed / runningOrDone) を添え、画面は案内の文を分ける
+//   (d) 上限の分岐で pending に戻せなかったら retryable: false
+//   (e) 会話の続きの POST の自動実行の例外・書き戻しの失敗の経路
+//   やり直しても直らない失敗 (実行の結果の notRetryable) は failed
+// ═════════════════════════════════════════════
+/** 手で書いた期待値 (定数の文が変わったらこのテストも直す) */
+const RUNNING_OR_DONE_GUIDE_TEXT = 'この提案は実行中か実行済みです。';
+const NOT_EXECUTABLE_GUIDE_TEXT = 'この提案はここからは実行できません。もう一度 AI に頼んでください。';
+const WRITE_BACK_FAILED_LOG = 'AI 相談の提案の行を実行のあとに書き戻せませんでした (実行中の印のまま残ります)';
+const PANTRY_NOT_RETRYABLE = { success: false, result: { error: '権限がありません' }, notRetryable: true };
+
+const lifecycle = await import('@/lib/ai/consultation-action-lifecycle');
+const { AI_ACTION_LOG_WRITE_BACK_ATTEMPTS } = await import('@/lib/ai/consultation-action-log-writes');
+
+describe('#2195 V2 決まりの関数', () => {
+  it.each([
+    ['add_pantry_item', { success: false, notRetryable: true }, 'failed'],
+    ['update_meal', { success: false, notRetryable: true }, 'failed'],
+    ['add_pantry_item', { success: false, notRetryable: false }, 'pending'],
+    ['add_pantry_item', { success: true, notRetryable: true }, 'executed'],
+    ['generate_single_meal', { success: false, aiDailyLimit: DAILY_LIMIT_DENIED, notRetryable: true }, 'pending'],
+  ] as const)('%s %j → %s', (type, run, expected) => {
+    expect(aiActionLogStatusAfterRun(type, run)).toBe(expected);
+  });
+
+  it.each([
+    ['hidden', null],
+    ['executable', null],
+    ['notExecutable', 'failed'],
+    ['runningOrDone', 'runningOrDone'],
+  ] as const)('カードの出し方 %s → 理由 %s', (view, expected) => {
+    expect(lifecycle.proposedActionNotExecutableReasonOfView(view)).toBe(expected);
+  });
+
+  it.each([
+    ['approved', 'runningOrDone'],
+    ['executed', 'runningOrDone'],
+    ['failed', 'failed'],
+    ['rejected', 'failed'],
+    ['pending', 'failed'],
+    [null, 'failed'],
+  ] as const)('行の状態 %s → 理由 %s', (status, expected) => {
+    expect(lifecycle.proposedActionNotExecutableReasonOfStatus(status)).toBe(expected);
+  });
+
+  it.each([
+    ['failed', true],
+    ['runningOrDone', true],
+    ['running', false],
+    ['', false],
+    [undefined, false],
+    [1, false],
+  ] as const)('理由として読めるか %j → %s', (value, expected) => {
+    expect(lifecycle.isProposedActionNotExecutableReason(value)).toBe(expected);
+  });
+
+  it('案内の文は理由で分ける (実行中・実行済みは頼み直しを勧めない。理由が分からなければ頼み直しの案内)', () => {
+    expect(lifecycle.AI_PROPOSED_ACTION_RUNNING_OR_DONE_GUIDE).toBe(RUNNING_OR_DONE_GUIDE_TEXT);
+    expect(lifecycle.aiProposedActionNotExecutableGuideOf('runningOrDone')).toBe(RUNNING_OR_DONE_GUIDE_TEXT);
+    expect(lifecycle.aiProposedActionNotExecutableGuideOf('failed')).toBe(NOT_EXECUTABLE_GUIDE_TEXT);
+    expect(lifecycle.aiProposedActionNotExecutableGuideOf(undefined)).toBe(NOT_EXECUTABLE_GUIDE_TEXT);
+    expect(RUNNING_OR_DONE_GUIDE_TEXT).not.toContain('頼んで');
+  });
+
+  it('書き戻しを試す回数は 1 回目 + やり直し 1 回', () => {
+    expect(AI_ACTION_LOG_WRITE_BACK_ATTEMPTS).toBe(2);
+  });
+});
+
+/** claim のあとの ai_action_logs の update (書き戻し) */
+const writeBacks = () => actionLogWrites().filter((w) => w.op === 'update').slice(1);
+
+describe('#2195 V2 実行の API (POST /api/ai/consultation/actions/[actionId]/execute)', () => {
+  it('(a) 実行の中の例外・やり直せる種類: 500 に retryable: true (理由は添えない)、行は pending に戻す', async () => {
+    h.single.ai_action_logs = pendingLog('add_pantry_item');
+    h.run.mockRejectedValueOnce(new Error('boom'));
+
+    const { status, body } = await execute();
+
+    expect(status).toBe(500);
+    expect(body).toMatchObject({ code: 'INTERNAL_ERROR', retryable: true });
+    expect(body).not.toHaveProperty('notExecutableReason');
+    expect(writeBacks().map((w) => w.payload)).toEqual([{ status: 'pending', executed_at: null }]);
+  });
+
+  it.each(['generate_day_menu', 'generate_week_menu', 'generate_single_meal'])(
+    '(a) 実行の中の例外・献立の生成 (%s): 500 に retryable: false と理由 failed (以前は「実行する」が残り、押すと 400 になった)',
+    async (actionType) => {
+      h.single.ai_action_logs = pendingLog(actionType);
+      h.run.mockRejectedValueOnce(new Error('boom'));
+
+      const { status, body } = await execute();
+
+      expect(status).toBe(500);
+      expect(body).toMatchObject({ code: 'INTERNAL_ERROR', retryable: false, notExecutableReason: 'failed' });
+      expect(writeBacks().map((w) => (w.payload as Row).status)).toEqual(['failed']);
+    },
+  );
+
+  it('(a)(b) 実行の中の例外のあと、行を戻せなかった (2 回とも失敗): retryable: false と理由 failed', async () => {
+    h.single.ai_action_logs = pendingLog('add_pantry_item');
+    h.run.mockImplementationOnce(async () => {
+      h.failOn = { table: 'ai_action_logs', op: 'update' };
+      throw new Error('boom');
+    });
+
+    const { status, body } = await execute();
+
+    expect(status).toBe(500);
+    expect(body).toMatchObject({ retryable: false, notExecutableReason: 'failed' });
+    expect(writeBacks()).toHaveLength(AI_ACTION_LOG_WRITE_BACK_ATTEMPTS);
+    expect(h.logError).toHaveBeenCalledWith(
+      WRITE_BACK_FAILED_LOG,
+      expect.any(Error),
+      expect.objectContaining({ action_id: ACTION_LOG_ID, action_type: 'add_pantry_item', status: 'pending', attempts: 2 }),
+    );
+  });
+
+  it('(b) 成功のあとの書き戻しが 1 回失敗: もう 1 回書いて executed にする (ログは残さない)', async () => {
+    h.single.ai_action_logs = pendingLog('add_pantry_item');
+    h.run.mockImplementationOnce(async () => {
+      h.failOn = { table: 'ai_action_logs', op: 'update' };
+      h.failLeft = 1;
+      return { success: true, result: { itemId: 'p1', created: true } };
+    });
+
+    const { status, body } = await execute();
+
+    expect(status).toBe(200);
+    expect(body).toEqual({ success: true, result: { itemId: 'p1', created: true }, actionType: 'add_pantry_item' });
+    const backs = writeBacks();
+    expect(backs).toHaveLength(2);
+    expect(backs[0].payload).toEqual(backs[1].payload);
+    expect(backs[1].payload).toMatchObject({ status: 'executed', result: { itemId: 'p1', created: true } });
+    expect(backs[1].filters).toEqual([['id', ACTION_LOG_ID]]);
+    expect(h.logError).not.toHaveBeenCalledWith(WRITE_BACK_FAILED_LOG, expect.anything(), expect.anything());
+  });
+
+  it('(b) 失敗のあとの書き戻しが 1 回失敗: もう 1 回書けたら retryable: true', async () => {
+    h.single.ai_action_logs = pendingLog('add_pantry_item');
+    h.run.mockImplementationOnce(async () => {
+      h.failOn = { table: 'ai_action_logs', op: 'update' };
+      h.failLeft = 1;
+      return ADD_PANTRY_FAILED;
+    });
+
+    const { body } = await execute();
+
+    expect(body).toEqual({ ...ADD_PANTRY_FAILED, actionType: 'add_pantry_item', retryable: true });
+    expect(writeBacks()).toHaveLength(2);
+  });
+
+  it('(b) 書き戻しが 2 回とも失敗: retryable: false と理由 failed、ログに残す', async () => {
+    h.single.ai_action_logs = pendingLog('add_pantry_item');
+    h.run.mockImplementationOnce(async () => {
+      h.failOn = { table: 'ai_action_logs', op: 'update' };
+      return ADD_PANTRY_FAILED;
+    });
+
+    const { body } = await execute();
+
+    expect(body).toMatchObject({ retryable: false, notExecutableReason: 'failed' });
+    expect(writeBacks()).toHaveLength(AI_ACTION_LOG_WRITE_BACK_ATTEMPTS);
+    expect(h.logError).toHaveBeenCalledWith(WRITE_BACK_FAILED_LOG, expect.any(Error), expect.objectContaining({ status: 'pending' }));
+  });
+
+  it('(d) 今日の上限で pending に戻せた: 429 の本文は上限の本文のまま (retryable を添えない)', async () => {
+    h.single.ai_action_logs = pendingLog('generate_single_meal');
+    h.run.mockResolvedValueOnce({ success: false, result: { error: '上限' }, aiDailyLimit: DAILY_LIMIT_DENIED });
+
+    const { status, body } = await execute();
+
+    expect(status).toBe(429);
+    expect(body).toMatchObject({ code: 'AI_DAILY_LIMIT' });
+    expect(body).not.toHaveProperty('retryable');
+  });
+
+  it('(d) 今日の上限で pending に戻せなかった: 429 に retryable: false と理由 failed を添える (Retry-After も残す)', async () => {
+    h.single.ai_action_logs = pendingLog('generate_single_meal');
+    h.run.mockImplementationOnce(async () => {
+      h.failOn = { table: 'ai_action_logs', op: 'update' };
+      return { success: false, result: { error: '上限' }, aiDailyLimit: DAILY_LIMIT_DENIED };
+    });
+
+    const res = await executePOST(
+      new Request(`http://localhost/api/ai/consultation/actions/${ACTION_LOG_ID}/execute`, { method: 'POST' }),
+      { params: Promise.resolve({ actionId: ACTION_LOG_ID }) },
+    );
+    const body = (await res.json()) as Row;
+
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toEqual(expect.stringMatching(/^\d+$/));
+    expect(body).toMatchObject({ code: 'AI_DAILY_LIMIT', retryable: false, notExecutableReason: 'failed' });
+    expect(writeBacks()).toHaveLength(AI_ACTION_LOG_WRITE_BACK_ATTEMPTS);
+  });
+
+  it('やり直しても直らない失敗 (notRetryable): 行は failed、retryable: false と理由 failed', async () => {
+    h.single.ai_action_logs = pendingLog('add_pantry_item');
+    h.run.mockResolvedValueOnce(PANTRY_NOT_RETRYABLE);
+
+    const { status, body } = await execute();
+
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      success: false,
+      result: PANTRY_NOT_RETRYABLE.result,
+      actionType: 'add_pantry_item',
+      retryable: false,
+      notExecutableReason: 'failed',
+    });
+    expect(lastActionLogUpdate()?.payload).toMatchObject({ status: 'failed', result: PANTRY_NOT_RETRYABLE.result });
+  });
+
+  it('(c) 取れなかった (別の画面・自動実行が先に取った): 400 に理由 runningOrDone', async () => {
+    h.single.ai_action_logs = pendingLog('add_pantry_item');
+    h.written.ai_action_logs = null;
+
+    const { status, body } = await execute();
+
+    expect(status).toBe(400);
+    expect(body).toEqual({ error: AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE, notExecutableReason: 'runningOrDone' });
+  });
+
+  it.each([
+    ['approved', 'runningOrDone'],
+    ['executed', 'runningOrDone'],
+    ['failed', 'failed'],
+    ['rejected', 'failed'],
+  ])('(c) 行 ID で読んだ行が pending でない (%s): 400 に理由 %s', async (rowStatus, reason) => {
+    h.single.ai_action_logs = { ...pendingLog('add_pantry_item'), status: rowStatus };
+
+    const { status, body } = await execute();
+
+    expect(status).toBe(400);
+    expect(body).toEqual({ error: AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE, notExecutableReason: reason });
+    expect(h.run).not.toHaveBeenCalled();
+  });
+
+  it('(c) 対応していない種類: 400 に理由 failed', async () => {
+    h.single.ai_action_logs = pendingLog('not_a_real_action');
+    h.run.mockResolvedValueOnce({ success: false, result: null, unknownActionType: true });
+
+    const { status, body } = await execute();
+
+    expect(status).toBe(400);
+    expect(body).toMatchObject({ notExecutableReason: 'failed' });
+  });
+
+  describe('(c) メッセージ ID で pending の行が無い (Web のカードは メッセージ ID で呼ぶ)', () => {
+    it.each([
+      [['approved'], 'runningOrDone'],
+      [['executed'], 'runningOrDone'],
+      [['failed', 'approved'], 'runningOrDone'],
+      [['failed'], 'failed'],
+      [['rejected'], 'failed'],
+    ] as const)('そのメッセージの行 %j: 404 に理由 %s', async (statuses, reason) => {
+      h.single.ai_action_logs = null;
+      h.rows.ai_action_logs = statuses.map((status) => ({ status, ai_consultation_sessions: { user_id: USER } }));
+
+      const { status, body } = await execute();
+
+      expect(status).toBe(404);
+      expect(body).toEqual({ error: '提案された操作が見つかりません', notExecutableReason: reason });
+      // 理由は、そのメッセージの自分の相談の行だけから決める (ほかの人の行の有無は返さない)
+      const reasonLookup = h.reads.filter((r) => r.table === 'ai_action_logs').at(-1);
+      expect(reasonLookup?.filters).toEqual([
+        ['message_id', ACTION_LOG_ID],
+        ['ai_consultation_sessions.user_id', USER],
+      ]);
+    });
+
+    it('そのメッセージの行が無い: 404 に理由を添えない (画面は頼み直しの案内)', async () => {
+      h.single.ai_action_logs = null;
+      h.rows.ai_action_logs = [];
+
+      const { status, body } = await execute();
+
+      expect(status).toBe(404);
+      expect(body).toEqual({ error: '提案された操作が見つかりません' });
+    });
+  });
+});
+
+describe.each([
+  ['SSE', true],
+  ['JSON', false],
+])('#2195 V2 (e) 会話の続きの POST の自動実行の例外・書き戻しの失敗 (%s)', (_label, stream) => {
+  it('実行の中の例外・やり直せる種類: 行は pending に戻り、「実行する」を出す (理由は添えない)', async () => {
+    sessionRows();
+    stubAiReply(`卵を足しますね。${ACTION_JSON('add_pantry_item')}`, stream);
+    h.run.mockRejectedValueOnce(new Error('boom'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const data = await postMessage(stream);
+
+    consoleError.mockRestore();
+    expect(writeBacksOfAuto().map((w) => w.payload)).toEqual([{ status: 'pending', executed_at: null }]);
+    expect(data.actionResult).toEqual({ success: false, result: null, actionType: 'add_pantry_item' });
+    expect(data.aiMessage).toMatchObject({ proposedActionExecutable: true });
+    expect(data.aiMessage as Row).not.toHaveProperty('proposedActionNotExecutableReason');
+  });
+
+  it('実行の中の例外・献立の生成: 行は failed、「実行する」を出さず理由 failed', async () => {
+    sessionRows();
+    stubAiReply(`作りますね。${ACTION_JSON('generate_single_meal')}`, stream);
+    h.run.mockRejectedValueOnce(new Error('boom'));
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const data = await postMessage(stream);
+
+    consoleError.mockRestore();
+    expect(writeBacksOfAuto().map((w) => (w.payload as Row).status)).toEqual(['failed']);
+    expect(data.aiMessage).toMatchObject({ proposedActionExecutable: false, proposedActionNotExecutableReason: 'failed' });
+  });
+
+  it('実行の中の例外のあと、行を戻せなかった: 「実行する」を出さず理由 failed', async () => {
+    sessionRows();
+    stubAiReply(`卵を足しますね。${ACTION_JSON('add_pantry_item')}`, stream);
+    h.run.mockImplementationOnce(async () => {
+      h.failOn = { table: 'ai_action_logs', op: 'update' };
+      throw new Error('boom');
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const data = await postMessage(stream);
+
+    consoleError.mockRestore();
+    expect(writeBacksOfAuto()).toHaveLength(AI_ACTION_LOG_WRITE_BACK_ATTEMPTS);
+    expect(data.aiMessage).toMatchObject({ proposedActionExecutable: false, proposedActionNotExecutableReason: 'failed' });
+  });
+
+  it('失敗のあとの書き戻しが 1 回失敗: もう 1 回書けたら「実行する」を出す', async () => {
+    sessionRows();
+    stubAiReply(`卵を足しますね。${ACTION_JSON('add_pantry_item')}`, stream);
+    h.run.mockImplementationOnce(async () => {
+      h.failOn = { table: 'ai_action_logs', op: 'update' };
+      h.failLeft = 1;
+      return ADD_PANTRY_FAILED;
+    });
+
+    const data = await postMessage(stream);
+
+    expect(writeBacksOfAuto()).toHaveLength(2);
+    expect(data.aiMessage).toMatchObject({ proposedActionExecutable: true });
+  });
+
+  it('失敗のあとの書き戻しが 2 回とも失敗: 「実行する」を出さず理由 failed、ログに残す', async () => {
+    sessionRows();
+    stubAiReply(`卵を足しますね。${ACTION_JSON('add_pantry_item')}`, stream);
+    h.run.mockImplementationOnce(async () => {
+      h.failOn = { table: 'ai_action_logs', op: 'update' };
+      return ADD_PANTRY_FAILED;
+    });
+
+    const data = await postMessage(stream);
+
+    expect(writeBacksOfAuto()).toHaveLength(AI_ACTION_LOG_WRITE_BACK_ATTEMPTS);
+    expect(data.aiMessage).toMatchObject({ proposedActionExecutable: false, proposedActionNotExecutableReason: 'failed' });
+    expect(h.logError).toHaveBeenCalledWith(WRITE_BACK_FAILED_LOG, expect.any(Error), expect.objectContaining({ status: 'pending' }));
+  });
+
+  it('成功のあとの書き戻しが 1 回失敗: もう 1 回書いて executed。提案は返さない', async () => {
+    sessionRows();
+    stubAiReply(`卵を足しますね。${ACTION_JSON('add_pantry_item')}`, stream);
+    h.run.mockImplementationOnce(async () => {
+      h.failOn = { table: 'ai_action_logs', op: 'update' };
+      h.failLeft = 1;
+      return { success: true, result: { itemId: 'p1', created: true } };
+    });
+
+    const data = await postMessage(stream);
+
+    const backs = writeBacksOfAuto();
+    expect(backs).toHaveLength(2);
+    expect(backs[1].payload).toMatchObject({ status: 'executed' });
+    expect((data.aiMessage as Row).proposedActions).toBeNull();
+  });
+
+  it('やり直しても直らない失敗 (notRetryable): 行は failed、「実行する」を出さず理由 failed', async () => {
+    sessionRows();
+    stubAiReply(`卵を足しますね。${ACTION_JSON('add_pantry_item')}`, stream);
+    h.run.mockResolvedValueOnce(PANTRY_NOT_RETRYABLE);
+
+    const data = await postMessage(stream);
+
+    expect(writeBacksOfAuto().map((w) => (w.payload as Row).status)).toEqual(['failed']);
+    expect(data.aiMessage).toMatchObject({ proposedActionExecutable: false, proposedActionNotExecutableReason: 'failed' });
+  });
+});
+
+/** 自動実行の ai_action_logs の update (行は insert で作るので、update はすべて書き戻し) */
+function writeBacksOfAuto() {
+  return actionLogWrites().filter((w) => w.op === 'update');
+}
