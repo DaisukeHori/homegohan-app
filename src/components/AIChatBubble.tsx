@@ -280,8 +280,8 @@ const ACTION_NOT_EXECUTABLE_RESPONSE_STATUSES: ReadonlySet<number> = new Set([40
 const AUTO_ACTION_OUTCOME_MESSAGE_DELAY_MS = 300;
 
 /**
- * チャットを開いてから、続けて押しても開き直さない (二重に開かない) 間 (ミリ秒。#125)。
- * 開くアニメーション (motion.div の spring: damping 25・stiffness 300) がおおむね落ち着くまでの長さとして #125 で決めた値
+ * チャットを開いてから、続けて押しても開き直さない (二重に開かない) 間 (ミリ秒)。
+ * 開くアニメーションが終わるまでの目安として #125 で入れた値 (それまではリテラルの 400 だった)
  */
 const CHAT_OPEN_TOGGLE_LOCK_MS = 400;
 
