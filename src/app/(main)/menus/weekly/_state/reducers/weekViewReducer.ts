@@ -52,6 +52,11 @@ export type WeekViewAction =
   | { type: 'CALENDAR_TOGGLE' }
   | { type: 'CALENDAR_MEAL_DATES_SET'; payload: Set<string> }
   | { type: 'CALENDAR_MEAL_DATES_MERGE'; payload: Set<string> }
+  /**
+   * 月のカレンダーの献立のある日を、読み直した範囲 [startDate, endDate] (どちらも YYYY-MM-DD・両端を含む) の中だけ
+   * dates (その範囲で献立のある日) に置き換える。範囲の外の日はそのまま (#2195 V1)
+   */
+  | { type: 'CALENDAR_MEAL_DATES_REPLACE_RANGE'; payload: { startDate: string; endDate: string; dates: Set<string> } }
   | { type: 'MEAL_EXPAND'; payload: string | null }
   | { type: 'MEAL_AUTO_EXPANDED'; payload: { mealId: string; dayIndex: number } }
   | { type: 'AUTO_EXPAND_SUPPRESS' }
@@ -156,6 +161,18 @@ export function weekViewReducer(
       const merged = new Set(state.calendarMealDates);
       action.payload.forEach((d) => merged.add(d));
       return { ...state, calendarMealDates: merged };
+    }
+
+    // 読み直した範囲の答えをその範囲の正にする (#2195 V1)。足すだけ (MERGE) だと、範囲の中で献立が無くなった日
+    // (AI 相談で消した食事の日など) の印が、ページを読み込み直すまで残る。日付は YYYY-MM-DD なので文字列の大小で範囲を見る
+    case 'CALENDAR_MEAL_DATES_REPLACE_RANGE': {
+      const { startDate, endDate, dates } = action.payload;
+      const replaced = new Set<string>();
+      state.calendarMealDates.forEach((d) => {
+        if (d < startDate || d > endDate) replaced.add(d);
+      });
+      dates.forEach((d) => replaced.add(d));
+      return { ...state, calendarMealDates: replaced };
     }
 
     case 'MEAL_EXPAND':

@@ -592,9 +592,9 @@ export const useHomeData = () => {
         .returns<Record<string, unknown>[]>();
       const { data } = await orderListBy<typeof bestMealQuery>(bestMealQuery, LIST_ORDERS.homeBestVegMeal).limit(1);
 
-      if (data && data.length > 0) {
-        setBestMealThisWeek(toPlannedMeal(data[0]));
-      }
+      // 当てはまる食事が無くなった (AI 相談で消した・完了を外した) ときは消す。取り直し (refetch。AI 相談の成功のあと) で
+      // 前の食事を残さない (#2195 V1)
+      setBestMealThisWeek(data && data.length > 0 ? toPlannedMeal(data[0]) : null);
     } catch (e) {
       console.error('Best meal fetch error:', e);
     }
