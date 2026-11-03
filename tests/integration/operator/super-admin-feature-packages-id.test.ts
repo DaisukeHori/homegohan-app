@@ -142,6 +142,10 @@ describe('PATCH /api/super-admin/feature-packages/[id]', () => {
       return;
     }
     const newName = `Updated Package ${TS}`;
+    // 機能フラグを送るときは、画面と同じく GET で読んだ updated_at を書く条件として添える (#2195 V4)
+    const read = await apiCall('GET', `/api/super-admin/feature-packages/${testPackageId}`, superAdminUser.jwt);
+    expect(read.status).toBe(200);
+    const readUpdatedAt = (read.body as { data: { updated_at: string } }).data.updated_at;
     const res = await apiCall(
       'PATCH',
       `/api/super-admin/feature-packages/${testPackageId}`,
@@ -150,6 +154,7 @@ describe('PATCH /api/super-admin/feature-packages/[id]', () => {
         display_name: newName,
         description: 'Updated by integration test',
         feature_flags: ['test_flag_a', 'test_flag_b', 'test_flag_c'],
+        expected_updated_at: readUpdatedAt,
       }
     );
     expect(res.status).toBe(200);
@@ -157,6 +162,85 @@ describe('PATCH /api/super-admin/feature-packages/[id]', () => {
     expect(body.data.id).toBe(testPackageId);
     expect(body.data.display_name).toBe(newName);
     expect(body.data.feature_flags).toContain('test_flag_c');
+  });
+
+  // #2195 V4: 機能フラグの一覧は配列全体を書き換えるので、画面が読んだ updated_at のままのときだけ書く。
+  // 以前は条件なしで書き、画面を開いたあとに機能フラグの作成 (append_flag_to_feature_package) が足したキーを古い一覧で消していた
+  describe('機能フラグの一覧の楽観ロック (#2195 V4)', () => {
+    const appendedFlag = `test_flag_appended_${TS}`;
+    const readPackage = async () => {
+      const { data, error } = await supabaseAdmin
+        .from('feature_packages')
+        .select('package_key, feature_flags, updated_at')
+        .eq('id', testPackageId)
+        .single();
+      if (error) throw new Error(`Failed to read the feature package: ${error.message}`);
+      return data as { package_key: string; feature_flags: string[]; updated_at: string };
+    };
+
+    it('400 OP_INVALID_INPUT when feature_flags is sent without expected_updated_at (書かない)', async () => {
+      const before = await readPackage();
+      const res = await apiCall(
+        'PATCH',
+        `/api/super-admin/feature-packages/${testPackageId}`,
+        superAdminUser.jwt,
+        { feature_flags: ['test_flag_a'] }
+      );
+      expect(res.status).toBe(400);
+      expect((res.body as { error: { code: string } }).error.code).toBe('OP_INVALID_INPUT');
+      expect((await readPackage()).feature_flags).toEqual(before.feature_flags);
+    });
+
+    it('409 CONFLICT_STALE_DATA when a flag was appended after the read: 足されたキーを消さない。読み直した updated_at なら書ける', async () => {
+      const read = await apiCall('GET', `/api/super-admin/feature-packages/${testPackageId}`, superAdminUser.jwt);
+      expect(read.status).toBe(200);
+      const opened = (read.body as { data: { package_key: string; feature_flags: string[]; updated_at: string } }).data;
+
+      // 画面を開いたあとに、機能フラグの作成と同じ関数でキーを足す (updated_at も now() になる)
+      const { data: outcome, error: rpcError } = await supabaseAdmin.rpc('append_flag_to_feature_package', {
+        p_package_key: opened.package_key,
+        p_flag_key: appendedFlag,
+      });
+      if (rpcError) throw new Error(`Failed to append the flag: ${rpcError.message}`);
+      expect(outcome).toBe('added');
+
+      const stale = await apiCall(
+        'PATCH',
+        `/api/super-admin/feature-packages/${testPackageId}`,
+        superAdminUser.jwt,
+        { feature_flags: opened.feature_flags.filter((flag) => flag !== 'test_flag_c'), expected_updated_at: opened.updated_at }
+      );
+      expect(stale.status).toBe(409);
+      expect((stale.body as { error: { code: string } }).error.code).toBe('CONFLICT_STALE_DATA');
+      const afterStale = await readPackage();
+      expect(afterStale.feature_flags).toContain(appendedFlag);
+      expect(afterStale.feature_flags).toContain('test_flag_c');
+
+      // 読み直した updated_at を添えれば書ける (足されたキーを残した一覧)
+      const reread = await apiCall('GET', `/api/super-admin/feature-packages/${testPackageId}`, superAdminUser.jwt);
+      const latest = (reread.body as { data: { feature_flags: string[]; updated_at: string } }).data;
+      const nextFlags = latest.feature_flags.filter((flag) => flag !== 'test_flag_c');
+      const saved = await apiCall(
+        'PATCH',
+        `/api/super-admin/feature-packages/${testPackageId}`,
+        superAdminUser.jwt,
+        { feature_flags: nextFlags, expected_updated_at: latest.updated_at }
+      );
+      expect(saved.status).toBe(200);
+      const savedRow = (saved.body as { data: { feature_flags: string[]; updated_at: string } }).data;
+      expect(savedRow.feature_flags).toEqual(nextFlags);
+      expect(savedRow.feature_flags).toContain(appendedFlag);
+
+      // 保存の応答の updated_at (書いたあとの値) が、次の保存の条件としてそのまま使える
+      const again = await apiCall(
+        'PATCH',
+        `/api/super-admin/feature-packages/${testPackageId}`,
+        superAdminUser.jwt,
+        { feature_flags: [...nextFlags, 'test_flag_c'], expected_updated_at: savedRow.updated_at }
+      );
+      expect(again.status).toBe(200);
+      expect((await readPackage()).feature_flags).toEqual([...nextFlags, 'test_flag_c']);
+    });
   });
 
   it('403 for admin', async () => {

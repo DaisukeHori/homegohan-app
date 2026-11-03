@@ -11,11 +11,14 @@
  * 決まり:
  *   - 成功したら executed。今日の上限で止めたら pending のまま (明日もう一度実行できる。同意が無くて止めたときと同じ)
  *   - 失敗したら pending のまま残し、残したボタンで本当にやり直せるようにする。ただし、途中まで書いてから失敗しうる種類
- *     (AI_ACTION_TYPES_NOT_RETRYABLE_AFTER_FAILURE) と、対応していない種類は failed にし、画面は「実行する」を出さずに
+ *     (AI_ACTION_TYPES_NOT_RETRYABLE_AFTER_FAILURE) と、対応していない種類と、やり直しても直らない失敗 (実行の結果の
+ *     notRetryable。権限・検査・空の入力。#2195 V2) は failed にし、画面は「実行する」を出さずに
  *     「もう一度頼んでください」の案内を出す (AI_PROPOSED_ACTION_NOT_EXECUTABLE_GUIDE)
  *   - 実行している間は approved (実行中の印)。pending から approved への書き換えを条件つきの 1 文で行い、書けた 1 本だけが
  *     実行する (2 つの画面から同時に押しても二重に実行しない)。実行が終わったら上の決まりの状態に書き換える
- *   - GET は、行の状態から提案のカードを出すかと「実行する」を出すかを決める (proposedActionViewOf)
+ *   - GET は、行の状態から提案のカードを出すかと「実行する」を出すかを決める (proposedActionViewOf)。行が実行中の印のまま
+ *     (実行中か、書き戻せなかった) のカードは「実行中か実行済み」の案内 (AI_PROPOSED_ACTION_RUNNING_OR_DONE_GUIDE) にし、
+ *     頼み直しを勧めない (#2195 V2)
  *
  * このファイルはブラウザでも読み込む (サーバーの依存を import しない。型も import しない: 実行の本体
  * (src/lib/ai/consultation-action-executor.ts) は AI へ送るコードに届くので、画面の部品からたどれる形にしない。
@@ -48,7 +51,9 @@ export type AiActionLogStatus = (typeof AI_ACTION_LOG_STATUS)[keyof typeof AI_AC
  *
  * ほかの種類は、途中で失敗しても二重に書かない (src/lib/ai/consultation-action-executor.ts の各 case):
  *   - 書き込みが最後の 1 文で、失敗したら何も書いていない: add_to_shopping_list (行の一括 insert)・add_pantry_item・set_health_goal
- *     (insert 1 文)・like_recipe (確かめてから insert 1 文)
+ *     (insert 1 文)・like_recipe (確かめてから insert 1 文)。ただし add_to_shopping_list・add_pantry_item・set_health_goal は、
+ *     DB に書けたのに応答が失われて失敗になったとき (通信の切れ) は pending に戻るので、押し直すと同じ行をもう 1 つ insert しうる
+ *     (起きる頻度がごく低いので、やり直させない種類にはしない)
  *   - 同じ値で書き直すだけ (何度実行しても結果が同じ): update_meal・complete_meal・update_shopping_item・check_shopping_item・
  *     update_pantry_item・update_nutrition_target (user_id の upsert)・update_health_goal・add_health_record
  *     (user_id, record_date の upsert)・update_health_record・update_profile_preferences
@@ -71,6 +76,11 @@ export interface ConsultationActionRunForStatus {
   unknownActionType?: boolean;
   /** 今日の AI の利用回数の上限 (#1149) で実行しなかったとき (中身は見ない。あるかどうかだけ) */
   aiDailyLimit?: unknown;
+  /**
+   * やり直しても直らない失敗 (権限が無い・対象が無い・値が検査に落ちた・入力が空)。何度押しても同じ失敗が返るので、
+   * やり直せる種類でも failed にし、画面は「実行する」を出さずに案内を出す (#2195 V2)
+   */
+  notRetryable?: boolean;
 }
 
 /** 実行が終わったあとの行の状態 (実行中の印 approved から書き換える先) */
@@ -91,7 +101,28 @@ export function aiActionLogStatusAfterRun(actionType: string, run: ConsultationA
   if (run.success === true) return AI_ACTION_LOG_STATUS.executed;
   // 今日の上限で止めた (実行していない): 明日もう一度実行できる
   if (run.aiDailyLimit) return AI_ACTION_LOG_STATUS.pending;
+  // やり直しても直らない失敗 (権限・検査・空の入力) は、やり直せる種類でも残さない (#2195 V2)
+  if (run.notRetryable === true) return AI_ACTION_LOG_STATUS.failed;
   return aiActionLogStatusAfterFailure(actionType);
+}
+
+/**
+ * 提案のカードで「実行する」を出さないときの理由 (案内の文を分ける。#2195 V2)。
+ * 応答の proposedActionNotExecutableReason (GET・会話の続きの POST) と notExecutableReason (実行の API) に入る
+ */
+export const PROPOSED_ACTION_NOT_EXECUTABLE_REASON = {
+  /** 失敗してやり直せない・記録が無い (実行していない)。もう一度 AI に頼んでもらう */
+  failed: 'failed',
+  /** 実行中か実行済み (別の画面・自動実行が実行した。行が実行中の印 approved のまま・executed)。頼み直すと二重になりうる */
+  runningOrDone: 'runningOrDone',
+} as const;
+
+export type ProposedActionNotExecutableReason =
+  (typeof PROPOSED_ACTION_NOT_EXECUTABLE_REASON)[keyof typeof PROPOSED_ACTION_NOT_EXECUTABLE_REASON];
+
+/** 値が「実行する」を出さない理由のどれかか (応答の本文を読むときに使う) */
+export function isProposedActionNotExecutableReason(value: unknown): value is ProposedActionNotExecutableReason {
+  return value === PROPOSED_ACTION_NOT_EXECUTABLE_REASON.failed || value === PROPOSED_ACTION_NOT_EXECUTABLE_REASON.runningOrDone;
 }
 
 /** 提案のカードの出し方 */
@@ -100,21 +131,53 @@ export type ProposedActionView =
   | 'hidden'
   /** カードと「実行する」を出す (行が pending) */
   | 'executable'
-  /** カードは出すが「実行する」は出さず、案内を出す (やり直せない失敗・実行中・行が無い) */
-  | 'notExecutable';
+  /** カードは出すが「実行する」は出さず、「もう一度頼んでください」の案内を出す (やり直せない失敗・行が無い) */
+  | 'notExecutable'
+  /** カードは出すが「実行する」は出さず、「実行中か実行済み」の案内を出す (行が実行中の印 approved のまま) */
+  | 'runningOrDone';
 
 /**
  * メッセージの提案に付いた行の状態 (ふつうは 1 行) から、提案のカードの出し方を決める。
- * 行が無い (記録に失敗した) ときは、実行の API が見つけられないので「実行する」を出さない
+ * 行が無い (記録に失敗した) ときは、実行の API が見つけられないので「実行する」を出さない。
+ * 行が実行中の印 (approved) のまま残っているのは、実行している最中か、実行のあとに状態を書き戻せなかった (関数の時間切れ・
+ * 書き込みの失敗) とき。成功していることがあるので「もう一度頼んでください」とは出さない (頼み直すと献立を二重に作りうる)
  */
 export function proposedActionViewOf(statuses: readonly string[]): ProposedActionView {
   if (statuses.some((s) => s === AI_ACTION_LOG_STATUS.executed || s === AI_ACTION_LOG_STATUS.rejected)) return 'hidden';
   if (statuses.includes(AI_ACTION_LOG_STATUS.pending)) return 'executable';
+  if (statuses.includes(AI_ACTION_LOG_STATUS.running)) return 'runningOrDone';
   return 'notExecutable';
 }
 
-/** 提案のカードで「実行する」の代わりに出す案内 (やり直せない失敗・実行中・記録が無い) */
+/** カードの出し方から、「実行する」を出さない理由 (出すとき・カードを出さないときは null) */
+export function proposedActionNotExecutableReasonOfView(view: ProposedActionView): ProposedActionNotExecutableReason | null {
+  if (view === 'runningOrDone') return PROPOSED_ACTION_NOT_EXECUTABLE_REASON.runningOrDone;
+  if (view === 'notExecutable') return PROPOSED_ACTION_NOT_EXECUTABLE_REASON.failed;
+  return null;
+}
+
+/** 提案のカードで「実行する」の代わりに出す案内 (やり直せない失敗・記録が無い) */
 export const AI_PROPOSED_ACTION_NOT_EXECUTABLE_GUIDE = 'この提案はここからは実行できません。もう一度 AI に頼んでください。';
+
+/** 提案のカードで「実行する」の代わりに出す案内 (実行中か実行済み。頼み直すと二重になりうるので、頼み直しを勧めない) */
+export const AI_PROPOSED_ACTION_RUNNING_OR_DONE_GUIDE = 'この提案は実行中か実行済みです。';
+
+/** 「実行する」を出さない理由から、案内の文を引く (理由が分からないときは「もう一度頼んでください」) */
+export function aiProposedActionNotExecutableGuideOf(reason: ProposedActionNotExecutableReason | undefined): string {
+  return reason === PROPOSED_ACTION_NOT_EXECUTABLE_REASON.runningOrDone
+    ? AI_PROPOSED_ACTION_RUNNING_OR_DONE_GUIDE
+    : AI_PROPOSED_ACTION_NOT_EXECUTABLE_GUIDE;
+}
+
+/**
+ * ai_action_logs の状態から、実行の API が「実行する」を出さない理由を決める (400 ALREADY_PROCESSED の本文に入れる)。
+ * 実行中・実行済みは runningOrDone、それ以外 (失敗・断った・pending でない何か) は failed
+ */
+export function proposedActionNotExecutableReasonOfStatus(status: unknown): ProposedActionNotExecutableReason {
+  return status === AI_ACTION_LOG_STATUS.running || status === AI_ACTION_LOG_STATUS.executed
+    ? PROPOSED_ACTION_NOT_EXECUTABLE_REASON.runningOrDone
+    : PROPOSED_ACTION_NOT_EXECUTABLE_REASON.failed;
+}
 
 /**
  * 自動実行の提案を ai_action_logs に記録できなかったときの結果の文 (実行していない)。

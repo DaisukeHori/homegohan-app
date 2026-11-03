@@ -401,6 +401,24 @@ export interface ConsultationActionExecutionResult {
    * execute の route は 429 AI_DAILY_LIMIT を返し、アクションを pending のまま残す (明日もう一度実行できる)
    */
   aiDailyLimit?: AiUsageDenied;
+  /**
+   * やり直しても直らない失敗 (#2195 V2): 権限が無い・対象が無い (他人の行・消えた行)・値が検査に落ちた・入力が空。
+   * 何度実行しても同じ失敗が返るので、やり直せる種類でも行を failed にし、画面は「実行する」を出さずに案内を出す
+   * (src/lib/ai/consultation-action-lifecycle.ts の aiActionLogStatusAfterRun)。DB の読み書きの失敗 (一時的なことがある) には付けない。
+   * 失敗 (success が偽) のときだけ付く
+   */
+  notRetryable?: true;
+}
+
+/**
+ * PostgREST の .single() が 0 行のときに返す失敗のコード。行が無い (対象が無い・他人の行で RLS が隠した) ので、やり直しても同じ。
+ * .single() は DB の読み取りの失敗でも data が null になるので、このコードのときだけ「やり直しても直らない」とする
+ */
+const POSTGREST_NO_ROWS_CODE = 'PGRST116';
+
+/** .single() の結果が「行が無い」(読み取りの失敗ではない) か */
+function isNoRowsError(error: unknown): boolean {
+  return errorCodeOf(error) === POSTGREST_NO_ROWS_CODE;
 }
 
 /** 上限 (#1149) に達して生成しなかったときの結果 (ai_action_logs.result と、会話の中の自動実行の結果に残る。人向けの文) */
@@ -424,6 +442,8 @@ export async function runConsultationAction(
   let result: any = null;
   let success = false;
   let aiDailyLimit: AiUsageDenied | undefined;
+  // やり直しても直らない失敗 (権限・対象が無い・検査・空の入力) を印す (#2195 V2。ConsultationActionExecutionResult.notRetryable)
+  let notRetryable = false;
 
   // V5フラグ判定 (#1148: feature_flags。運営画面で切り替える)
   const useV5 = await isFeatureEnabled('menu_generation_v5_wrapped', user.id);
@@ -837,6 +857,7 @@ export async function runConsultationAction(
 
       if (!mealId) {
         result = { error: AI_CONSULTATION_MEAL_ID_REQUIRED_MESSAGE };
+        notRetryable = true;
         break;
       }
 
@@ -856,6 +877,7 @@ export async function runConsultationAction(
 
       if (!meal) {
         result = { error: '権限がありません' };
+        notRetryable = true;
         break;
       }
 
@@ -863,10 +885,12 @@ export async function runConsultationAction(
       const { data: safeMealUpdates, errors: mealUpdateErrors } = sanitizeMealUpdate(updates);
       if (mealUpdateErrors.length > 0) {
         result = validationFailureResult(user, action, mealUpdateErrors);
+        notRetryable = true;
         break;
       }
       if (Object.keys(safeMealUpdates).length === 0) {
         result = { error: '更新可能な項目がありません' };
+        notRetryable = true;
         break;
       }
 
@@ -982,22 +1006,36 @@ export async function runConsultationAction(
       }
 
       if (imageAllowed && jobs.length > 0) {
-        // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。service role で積む。
-        // 1 行も積めなかったとき (重複・書き込みの失敗) は、enqueueMealImageJobs が数えた 1 回を戻す (#1487)
-        const queueDb = getAiQueueWriter();
-        const enqueued = await enqueueMealImageJobs({
-          supabase: queueDb,
-          plannedMealId: mealId,
-          userId: user.id,
-          triggerSource,
-          jobSeeds: jobs,
-          requestId: action.id,
-          usage: imageUsage,
-        });
-        // 積めた行と、同じ料理の待ちのジョブがあるときだけ処理を起こす (書き込みの失敗だけなら空振りの呼び出しを出さない。#1532)
-        const jobsToProcess = countMealImageJobsToProcess(enqueued);
-        if (jobsToProcess > 0) {
-          await triggerMealImageJobProcessing({ plannedMealId: mealId, limit: jobsToProcess });
+        // 献立の更新は済んでいる。画像のジョブの積み込みで例外が出ても、更新は成功として返す (#2195 V2)。
+        // 以前は例外がそのまま外へ出て、行が pending に戻り、やり直すと料理画像の 1 回 (meal_image_auto) をもう 1 回数えていた。
+        // 例外のときは数えた 1 回を戻す (ジョブを積めていないので、AI へは何も送っていない)
+        try {
+          // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。service role で積む。
+          // 1 行も積めなかったとき (重複・書き込みの失敗) は、enqueueMealImageJobs が数えた 1 回を戻す (#1487)
+          const queueDb = getAiQueueWriter();
+          const enqueued = await enqueueMealImageJobs({
+            supabase: queueDb,
+            plannedMealId: mealId,
+            userId: user.id,
+            triggerSource,
+            jobSeeds: jobs,
+            requestId: action.id,
+            usage: imageUsage,
+          });
+          // 積めた行と、同じ料理の待ちのジョブがあるときだけ処理を起こす (書き込みの失敗だけなら空振りの呼び出しを出さない。#1532)
+          const jobsToProcess = countMealImageJobsToProcess(enqueued);
+          if (jobsToProcess > 0) {
+            await triggerMealImageJobProcessing({ plannedMealId: mealId, limit: jobsToProcess });
+          }
+        } catch (enqueueError) {
+          createLogger(ACTION_EXECUTOR_LOG_NAME)
+            .withUser(user.id)
+            .error('AI 相談の献立の更新のあと、料理画像のジョブを積めませんでした (献立の更新は済んでいます)', toLoggableError(enqueueError), {
+              action_id: action.id,
+              action_type: action.action_type,
+              planned_meal_id: mealId,
+            });
+          if (imageUsage?.allowed) await refundAiUsage(user.id, 'meal_image_auto', imageUsage);
         }
       }
 
@@ -1018,7 +1056,7 @@ export async function runConsultationAction(
     case 'delete_meal': {
       const { mealId } = action.action_params;
       // セキュリティチェック - user_daily_meals JOIN 経由でユーザー確認
-      const { data: meal } = await supabase
+      const { data: meal, error: mealFetchError } = await supabase
         .from('planned_meals')
         .select('id, user_daily_meals!inner(user_id)')
         .eq('id', mealId)
@@ -1027,6 +1065,8 @@ export async function runConsultationAction(
 
       if (!meal) {
         result = { error: '権限がありません' };
+        // 読めて 0 行 (他人の献立・消えた献立) だけ、やり直しても直らない。読み取りの失敗はやり直せる
+        if (!mealFetchError) notRetryable = true;
         break;
       }
 
@@ -1059,6 +1099,7 @@ export async function runConsultationAction(
       if (!completion.ok) {
         if (completion.reason === 'not_found') {
           result = { error: '権限がありません' };
+          notRetryable = true;
           break;
         }
         success = false;
@@ -1109,6 +1150,9 @@ export async function runConsultationAction(
           .from('shopping_list_items')
           .insert(insertData);
         success = !insertError;
+      } else {
+        // 足す品が無い (入力が空): 何度実行しても足せない
+        notRetryable = true;
       }
       result = { itemsAdded: items?.length || 0 };
       break;
@@ -1117,14 +1161,14 @@ export async function runConsultationAction(
     case 'update_shopping_item': {
       const { itemId, updates } = action.action_params;
       // セキュリティチェック - shopping_lists経由でuser_idを確認
-      const { data: item } = await supabase
+      const { data: item, error: itemFetchError } = await supabase
         .from('shopping_list_items')
         .select('shopping_list_id')
         .eq('id', itemId)
         .single();
 
       if (item) {
-        const { data: shoppingList } = await supabase
+        const { data: shoppingList, error: listFetchError } = await supabase
           .from('shopping_lists')
           .select('user_id')
           .eq('id', item.shopping_list_id)
@@ -1132,10 +1176,13 @@ export async function runConsultationAction(
 
         if (!shoppingList || shoppingList.user_id !== user.id) {
           result = { error: '権限がありません' };
+          // 他人のリスト・リストが無い (0 行) は、やり直しても直らない。読み取りの失敗はやり直せる
+          if (shoppingList || isNoRowsError(listFetchError)) notRetryable = true;
           break;
         }
       } else {
         result = { error: 'アイテムが見つかりません' };
+        if (isNoRowsError(itemFetchError)) notRetryable = true;
         break;
       }
 
@@ -1143,10 +1190,12 @@ export async function runConsultationAction(
       const { data: safeShoppingItemUpdates, errors: shoppingItemUpdateErrors } = sanitizeShoppingItemUpdate(updates);
       if (shoppingItemUpdateErrors.length > 0) {
         result = validationFailureResult(user, action, shoppingItemUpdateErrors);
+        notRetryable = true;
         break;
       }
       if (Object.keys(safeShoppingItemUpdates).length === 0) {
         result = { error: '更新可能な項目がありません' };
+        notRetryable = true;
         break;
       }
 
@@ -1162,14 +1211,14 @@ export async function runConsultationAction(
     case 'delete_shopping_item': {
       const { itemId } = action.action_params;
       // セキュリティチェック - shopping_lists経由でuser_idを確認
-      const { data: item } = await supabase
+      const { data: item, error: itemFetchError } = await supabase
         .from('shopping_list_items')
         .select('shopping_list_id')
         .eq('id', itemId)
         .single();
 
       if (item) {
-        const { data: shoppingList } = await supabase
+        const { data: shoppingList, error: listFetchError } = await supabase
           .from('shopping_lists')
           .select('user_id')
           .eq('id', item.shopping_list_id)
@@ -1177,10 +1226,13 @@ export async function runConsultationAction(
 
         if (!shoppingList || shoppingList.user_id !== user.id) {
           result = { error: '権限がありません' };
+          // 他人のリスト・リストが無い (0 行) は、やり直しても直らない。読み取りの失敗はやり直せる
+          if (shoppingList || isNoRowsError(listFetchError)) notRetryable = true;
           break;
         }
       } else {
         result = { error: 'アイテムが見つかりません' };
+        if (isNoRowsError(itemFetchError)) notRetryable = true;
         break;
       }
 
@@ -1196,14 +1248,14 @@ export async function runConsultationAction(
     case 'check_shopping_item': {
       const { itemId, isChecked } = action.action_params;
       // セキュリティチェック - shopping_lists経由でuser_idを確認
-      const { data: item } = await supabase
+      const { data: item, error: itemFetchError } = await supabase
         .from('shopping_list_items')
         .select('shopping_list_id')
         .eq('id', itemId)
         .single();
 
       if (item) {
-        const { data: shoppingList } = await supabase
+        const { data: shoppingList, error: listFetchError } = await supabase
           .from('shopping_lists')
           .select('user_id')
           .eq('id', item.shopping_list_id)
@@ -1211,10 +1263,13 @@ export async function runConsultationAction(
 
         if (!shoppingList || shoppingList.user_id !== user.id) {
           result = { error: '権限がありません' };
+          // 他人のリスト・リストが無い (0 行) は、やり直しても直らない。読み取りの失敗はやり直せる
+          if (shoppingList || isNoRowsError(listFetchError)) notRetryable = true;
           break;
         }
       } else {
         result = { error: 'アイテムが見つかりません' };
+        if (isNoRowsError(itemFetchError)) notRetryable = true;
         break;
       }
 
@@ -1256,7 +1311,7 @@ export async function runConsultationAction(
     case 'update_pantry_item': {
       const { itemId, updates } = action.action_params;
       // セキュリティチェック - user_idで確認
-      const { data: item } = await supabase
+      const { data: item, error: itemFetchError } = await supabase
         .from('pantry_items')
         .select('user_id')
         .eq('id', itemId)
@@ -1264,11 +1319,14 @@ export async function runConsultationAction(
 
       if (!item) {
         result = { error: 'アイテムが見つかりません' };
+        // 0 行 (消えた・他人の行) だけ、やり直しても直らない。読み取りの失敗はやり直せる
+        if (isNoRowsError(itemFetchError)) notRetryable = true;
         break;
       }
 
       if (item.user_id !== user.id) {
         result = { error: '権限がありません' };
+        notRetryable = true;
         break;
       }
 
@@ -1299,7 +1357,7 @@ export async function runConsultationAction(
     case 'delete_pantry_item': {
       const { itemId } = action.action_params;
       // セキュリティチェック - user_idで確認
-      const { data: item } = await supabase
+      const { data: item, error: itemFetchError } = await supabase
         .from('pantry_items')
         .select('user_id')
         .eq('id', itemId)
@@ -1307,11 +1365,14 @@ export async function runConsultationAction(
 
       if (!item) {
         result = { error: 'アイテムが見つかりません' };
+        // 0 行 (消えた・他人の行) だけ、やり直しても直らない。読み取りの失敗はやり直せる
+        if (isNoRowsError(itemFetchError)) notRetryable = true;
         break;
       }
 
       if (item.user_id !== user.id) {
         result = { error: '権限がありません' };
+        notRetryable = true;
         break;
       }
 
@@ -1479,10 +1540,12 @@ export async function runConsultationAction(
       const { data: safeTargets, errors: targetErrors } = sanitizeNutritionTargetUpdate(targets);
       if (targetErrors.length > 0) {
         result = validationFailureResult(user, action, targetErrors);
+        notRetryable = true;
         break;
       }
       if (Object.keys(safeTargets).length === 0) {
         result = { error: '更新可能な栄養目標項目がありません' };
+        notRetryable = true;
         break;
       }
 
@@ -1517,6 +1580,7 @@ export async function runConsultationAction(
       );
       if (!safeGoal) {
         result = validationFailureResult(user, action, goalErrors);
+        notRetryable = true;
         break;
       }
 
@@ -1542,7 +1606,7 @@ export async function runConsultationAction(
     case 'update_health_goal': {
       const { goalId, updates } = action.action_params;
       // セキュリティチェック
-      const { data: goal } = await supabase
+      const { data: goal, error: goalFetchError } = await supabase
         .from('health_goals')
         .select('user_id, goal_type')
         .eq('id', goalId)
@@ -1550,6 +1614,8 @@ export async function runConsultationAction(
 
       if (!goal || goal.user_id !== user.id) {
         result = { error: '権限がありません' };
+        // 他人の目標・目標が無い (0 行) は、やり直しても直らない。読み取りの失敗はやり直せる
+        if (goal || isNoRowsError(goalFetchError)) notRetryable = true;
         break;
       }
 
@@ -1557,10 +1623,12 @@ export async function runConsultationAction(
       const { data: safeUpdates, errors } = sanitizeHealthGoalUpdate(updates, { goalType: goal.goal_type });
       if (errors.length > 0) {
         result = validationFailureResult(user, action, errors);
+        notRetryable = true;
         break;
       }
       if (Object.keys(safeUpdates).length === 0) {
         result = { error: '更新可能な目標項目がありません' };
+        notRetryable = true;
         break;
       }
       // target_value / target_unit は NOT NULL の列。null を送ると DB エラーになるので、先に弾く
@@ -1572,6 +1640,7 @@ export async function runConsultationAction(
             ...(safeUpdates.target_unit === null ? [HEALTH_GOAL_TARGET_UNIT_NULL_MESSAGE] : []),
           ].join(', '),
         };
+        notRetryable = true;
         break;
       }
 
@@ -1587,7 +1656,7 @@ export async function runConsultationAction(
     case 'delete_health_goal': {
       const { goalId } = action.action_params;
       // セキュリティチェック
-      const { data: goal } = await supabase
+      const { data: goal, error: goalFetchError } = await supabase
         .from('health_goals')
         .select('user_id')
         .eq('id', goalId)
@@ -1595,6 +1664,8 @@ export async function runConsultationAction(
 
       if (!goal || goal.user_id !== user.id) {
         result = { error: '権限がありません' };
+        // 他人の目標・目標が無い (0 行) は、やり直しても直らない。読み取りの失敗はやり直せる
+        if (goal || isNoRowsError(goalFetchError)) notRetryable = true;
         break;
       }
 
@@ -1618,6 +1689,7 @@ export async function runConsultationAction(
       // 実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける
       if (!isCalendarDate(recordDate)) {
         result = { error: aiInvalidDateMessage('日付') };
+        notRetryable = true;
         break;
       }
 
@@ -1644,10 +1716,12 @@ export async function runConsultationAction(
 
       if (recordErrors.length > 0) {
         result = validationFailureResult(user, action, recordErrors);
+        notRetryable = true;
         break;
       }
       if (Object.keys(safeRecord).length === 0) {
         result = { error: '保存可能な健康記録項目がありません' };
+        notRetryable = true;
         break;
       }
 
@@ -1687,6 +1761,7 @@ export async function runConsultationAction(
       const date = typeof rawDate === 'string' ? rawDate.trim() : '';
       if (!isCalendarDate(date)) {
         result = { error: aiInvalidDateMessage('日付') };
+        notRetryable = true;
         break;
       }
       const { data: safeUpdates, errors } = sanitizeHealthRecordPayload(updates, {
@@ -1694,10 +1769,12 @@ export async function runConsultationAction(
       });
       if (errors.length > 0) {
         result = validationFailureResult(user, action, errors);
+        notRetryable = true;
         break;
       }
       if (Object.keys(safeUpdates).length === 0) {
         result = { error: '更新可能な健康記録項目がありません' };
+        notRetryable = true;
         break;
       }
 
@@ -1722,11 +1799,13 @@ export async function runConsultationAction(
       const { data: safeUpdates, errors } = sanitizeAiProfilePreferenceUpdates(updates);
       if (errors.length > 0) {
         result = validationFailureResult(user, action, errors);
+        notRetryable = true;
         break;
       }
 
       if (Object.keys(safeUpdates).length === 0) {
         result = { error: '更新可能なフィールドがありません' };
+        notRetryable = true;
         break;
       }
 
@@ -1743,5 +1822,10 @@ export async function runConsultationAction(
       return { success: false, result: null, unknownActionType: true };
   }
 
-  return { success, result, ...(aiDailyLimit ? { aiDailyLimit } : {}) };
+  return {
+    success,
+    result,
+    ...(aiDailyLimit ? { aiDailyLimit } : {}),
+    ...(!success && notRetryable ? { notRetryable: true as const } : {}),
+  };
 }
