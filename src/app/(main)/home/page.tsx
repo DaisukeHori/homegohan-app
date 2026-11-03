@@ -5,6 +5,7 @@ import Link from "next/link";
 import { SignedPhotoImage } from "@/components/photo/SignedPhotoImage";
 import { motion, AnimatePresence } from "framer-motion";
 import { useHomeData } from "@/hooks/useHomeData";
+import { useAiConsultationDataRefetch } from "@/hooks/useAiConsultationDataRefetch";
 import { AiSkippedNotice } from "@/components/consent/AiSkippedNotice";
 import { Icons } from "@/components/icons";
 import { OrgChallengeEntry } from "@/components/org-challenges/OrgChallengeEntry";
@@ -105,7 +106,11 @@ export default function HomePage() {
     setSuggestion,
     executeNutritionSuggestion,
     submitPerformanceCheckin,
+    refetch,
   } = useHomeData();
+  // AI 相談の提案の実行で献立・記録が変わったら、ホームのデータを取り直す (#2195 V1)。
+  // 体調のチェックインの欄が開いている間 (入力の部品がある間) は取り直さない
+  useAiConsultationDataRefetch(refetch);
 
   const [showWeeklyDetail, setShowWeeklyDetail] = useState(false);
 

@@ -29,6 +29,7 @@ import type { DailyMeal, PlannedMeal, ShoppingListItem, MealMode, MealDishes, Di
 import type { CatalogProductSummary } from "@/types/catalog";
 import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
+import { useAiConsultationDataRefetch } from "@/hooks/useAiConsultationDataRefetch";
 import { BASE_MEAL_TYPES, EXTRA_MEAL_TYPES } from "@/lib/slot-builder";
 import { useNutritionFeedbackWatch } from "@/hooks/useNutritionFeedbackWatch";
 import { notifyMenuGenerated } from "@/lib/local-notification";
@@ -2546,20 +2547,31 @@ export default function WeeklyMenuPage() {
   }, [cleanupPolling]);
   
   // Fetch Pantry
-  useEffect(() => {
-    const fetchPantry = async () => {
-      try {
-        const res = await fetch('/api/pantry');
-        if (res.ok) {
-          const data = await res.json();
-          usePantryStore.getState().setFridgeItems(data.items || []);
-        }
-      } catch (e) {
-        console.error("Failed to fetch pantry:", e);
+  const fetchPantry = useCallback(async () => {
+    try {
+      const res = await fetch('/api/pantry');
+      if (res.ok) {
+        const data = await res.json();
+        usePantryStore.getState().setFridgeItems(data.items || []);
       }
-    };
-    fetchPantry();
+    } catch (e) {
+      console.error("Failed to fetch pantry:", e);
+    }
   }, []);
+  useEffect(() => {
+    void fetchPantry();
+  }, [fetchPantry]);
+
+  // AI 相談の提案の実行で献立・買い物リスト・冷蔵庫が変わったら、表示中の週と冷蔵庫を取り直す (#2195 V1)。
+  // 別の週の献立も変わりうる (1 週間の献立の作成など) ので、週のキャッシュと月のカレンダーの取得済みの範囲は捨てて、
+  // 次にその週・月を開いたときに取り直させる。モーダル・入力の部品が出ている間は取り直さない (useAiConsultationDataRefetch)
+  const refetchAfterAiConsultation = useCallback(() => {
+    weekDataCache.current.clear();
+    fetchedRangesRef.current.clear();
+    void refreshMealPlan();
+    void fetchPantry();
+  }, [refreshMealPlan, fetchPantry]);
+  useAiConsultationDataRefetch(refetchAfterAiConsultation);
 
   // Initialize selected day to today
   useEffect(() => {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
+import { useAiConsultationDataRefetch } from "@/hooks/useAiConsultationDataRefetch";
 import {
   Scale, Heart, Moon, Droplets, Activity, TrendingUp, TrendingDown,
   Target, Flame, Calendar, ChevronRight, Plus, Camera, Sparkles,
@@ -128,6 +129,9 @@ export default function HealthDashboardPage() {
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+  // AI 相談の提案の実行で健康記録・健康目標が変わったら取り直す (#2195 V1)。
+  // 記録の欄 (体重などの入力の部品) が開いている間は取り直さない (打ちかけの体重を取得した値で上書きしないため)
+  useAiConsultationDataRefetch(fetchData);
 
   const handleDaySelect = async (date: string) => {
     // 今日のセル、または既に選択中の日をクリック → パネルを閉じる

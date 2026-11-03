@@ -1,0 +1,70 @@
+/**
+ * Web の AI 相談の提案の実行でデータが変わったときに、開いているページのデータを取り直す決まり (#2195 V1)。
+ *
+ * 問題:
+ *   - Web の AI 相談 (src/components/AIChatBubble.tsx) は、献立の作成・変更・買い物リストへの追加などが成功すると
+ *     window に AI_CONSULTATION_DATA_CHANGED_EVENT を投げるが、受け取るページが 1 つも無かった。チャットには
+ *     『✅ …を実行しました！』が出るのに、開いている献立表などは古い表示のまま (自分で読み込み直すまで) だった
+ *   - モバイルは #2189 W2 で、同じ成功のときにタブの WebView を読み込み直す (apps/mobile/src/lib/webViewBridge.ts の
+ *     buildReloadCurrentPageScript)。Web だけが取り残されていた
+ *
+ * 決まり:
+ *   - データを出すページは useAiConsultationDataRefetch (src/hooks/useAiConsultationDataRefetch.ts) でこの通知を受け、
+ *     そのページの既存の取得の関数を呼んで取り直す。ページ全体の reload はしない
+ *   - 入力の部品・開いているモーダルがページにある間は取り直さない (isAiConsultationRefetchBlocked)。取り直しで
+ *     編集の途中の値 (取得した値から作る入力欄など) を上書きしないため。モバイルの AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR と
+ *     同じ考え。ただし AI 相談の吹き出しの中 (AI_CONSULTATION_CHAT_ROOT_ATTRIBUTE を付けた要素の中) は数えない:
+ *     Web では吹き出しが開いたまま (送信の入力欄があるまま) 実行が成功するので、数えると一度も取り直せない
+ *     (モバイルでは Web の吹き出しは何も描かないので、この除外は要らない)
+ *
+ * このファイルはブラウザでだけ使う (サーバーの依存を import しない)。
+ */
+
+/**
+ * AI 相談の提案の実行でデータが変わったときに Web の AI 相談が window に投げるイベントの名前。
+ * 投げる側 (src/components/AIChatBubble.tsx) は文字列をそのまま書いているので、名前が一致していることは
+ * tests/ai-consultation-data-refetch-2195.test.tsx が確かめる
+ */
+export const AI_CONSULTATION_DATA_CHANGED_EVENT = 'mealPlanUpdated';
+
+/**
+ * AI 相談の吹き出しを包む要素に付ける属性 (src/app/(main)/MainLayout.tsx)。この属性を持つ要素の中の入力欄・モーダルは、
+ * 取り直しを止める理由にしない (吹き出しの送信の入力欄・吹き出しの中の 1 日献立変更のモーダル)
+ */
+export const AI_CONSULTATION_CHAT_ROOT_ATTRIBUTE = 'data-ai-consultation-chat-root';
+
+/**
+ * これに当たる要素が (AI 相談の吹き出しの外に) ある間は取り直さない。
+ * 入力の部品 (hidden・file を除く input・textarea・select・編集できる要素) と、開いているモーダル (role="dialog"・
+ * aria-modal・開いた <dialog>)。モバイルの AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR と同じ並びで、違いは
+ * input の type="file" を数えないことだけ: ファイルの選択の部品は打ちかけの値を持たず (選んだらすぐ送る)、/pantry の
+ * 「写真で追加」のように画面に出さないファイルの選択がいつも置いてあるページがあるため (数えると一度も取り直せない)。
+ * 2 つの並びが揃っていることは tests/ai-consultation-data-refetch-2195.test.tsx が確かめる
+ */
+export const AI_CONSULTATION_REFETCH_BLOCKING_SELECTOR = [
+  'input:not([type="hidden"]):not([type="file"])',
+  'textarea',
+  'select',
+  '[contenteditable]:not([contenteditable="false"])',
+  '[role="dialog"]',
+  '[aria-modal="true"]',
+  'dialog[open]',
+].join(', ');
+
+/**
+ * いま取り直すと入力の途中を上書きしうるか (true なら取り直さない)。
+ * AI 相談の吹き出しの中 (AI_CONSULTATION_CHAT_ROOT_ATTRIBUTE の要素の中) の要素は数えない
+ */
+export function isAiConsultationRefetchBlocked(root: ParentNode): boolean {
+  const chatRootSelector = `[${AI_CONSULTATION_CHAT_ROOT_ATTRIBUTE}]`;
+  for (const element of Array.from(root.querySelectorAll(AI_CONSULTATION_REFETCH_BLOCKING_SELECTOR))) {
+    if (element.closest(chatRootSelector)) continue;
+    return true;
+  }
+  return false;
+}
+
+/** AI 相談の吹き出しを包む要素に広げる属性 (src/app/(main)/MainLayout.tsx)。値は空 (付いていることだけが印) */
+export const AI_CONSULTATION_CHAT_ROOT_PROPS: Readonly<Record<typeof AI_CONSULTATION_CHAT_ROOT_ATTRIBUTE, ''>> = {
+  [AI_CONSULTATION_CHAT_ROOT_ATTRIBUTE]: '',
+};

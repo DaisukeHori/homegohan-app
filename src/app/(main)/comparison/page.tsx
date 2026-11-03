@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import type { ComparisonResponse, MetricRankingSummary, ComparisonHighlight } from "@/types/comparison";
+import { useAiConsultationRefetchKey } from "@/hooks/useAiConsultationDataRefetch";
 
 // メトリクスアイコンマッピング
 const METRIC_ICONS: Record<string, string> = {
@@ -34,6 +35,8 @@ export default function ComparisonPage() {
   const [loading, setLoading] = useState(true);
   const [periodType, setPeriodType] = useState<'weekly' | 'monthly'>('weekly');
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
+  // AI 相談の提案の実行で記録が変わったら、下の取得をもう一度走らせる (#2195 V1)
+  const aiConsultationRefetchKey = useAiConsultationRefetchKey();
 
   useEffect(() => {
     // 期間を切り替えたとき (またはページを離れたとき) に前のリクエストを中断する (#1228)。
@@ -66,7 +69,7 @@ export default function ComparisonPage() {
     fetchData();
 
     return () => controller.abort();
-  }, [periodType]);
+  }, [periodType, aiConsultationRefetchKey]);
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">

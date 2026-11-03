@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
 import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
+import { useAiConsultationRefetchKey } from "@/hooks/useAiConsultationDataRefetch";
 import { useAccountActionsPlacement } from "@/hooks/useAccountActionsPlacement";
 import { toUserProfile } from "@/lib/converter";
 import { assignAtPath } from "@/lib/assign-at-path";
@@ -139,6 +140,10 @@ function ProfilePageContent() {
   // 編集の入力欄 (editForm) は保存されている値をそのまま出す
   const headerName = normalizeProfileName(profile?.nickname);
 
+  // AI 相談の提案の実行で好み・栄養目標などが変わったら、下の取得をもう一度走らせる (#2195 V1)。
+  // 編集のモーダル (入力の部品) が出ている間は増えない (編集の途中の editForm を取得した値で上書きしないため)
+  const aiConsultationRefetchKey = useAiConsultationRefetchKey();
+
   useEffect(() => {
     const getData = async () => {
       const supabase = createClient();
@@ -218,7 +223,7 @@ function ProfilePageContent() {
       setIsLoading(false);
     };
     void getData();
-  }, []);
+  }, [aiConsultationRefetchKey]);
 
   // ?focus=incomplete パラメータを処理
   useEffect(() => {
