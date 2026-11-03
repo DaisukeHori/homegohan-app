@@ -7,8 +7,8 @@
  *   - M-1: `AIAdvisorSheet.tsx` の `archiveSession`・`sendMessage` の `getSession()` (表の文は「`AIAdvisorSheet.tsx` の 2 行」)
  *   - M-2: `questions.tsx` の `saveProgress` の `getUser()`・`handleAnswer` の完了の分岐の `getUser()`
  * 名前の参照が古くなる (呼び出しが別の関数へ移る・増える・消える) と、ここが赤くなる。
- * 文書の側の検査は、設計書の直し (オーケストレーターが当てる) と同じ差分で足す。
  * 表の行数の列 (M-1 は 11・M-2 は 13) は tests/design-doc-auth-call-closure-count.test.ts が見る。
+ * 文書の側 (M-1・M-2 の行がこの名前で指し、2 ファイルを行番号で指す所が mobile/05 に無いこと) も見る。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,6 +19,7 @@ const ROOT = path.resolve(__dirname, '..');
 /** コンポーネントの中の関数の宣言の字下げ (2 文字)。宣言の行と、その関数を閉じる `  }` の行がこの字下げで始まる */
 const MEMBER_INDENT = '  ';
 
+const DOC_PATH = 'docs/design/mobile/05-auth-session.md';
 const ADVISOR_SHEET_PATH = 'apps/mobile/src/components/ai/AIAdvisorSheet.tsx';
 const QUESTIONS_PATH = 'apps/mobile/app/onboarding/questions.tsx';
 
@@ -29,6 +30,16 @@ const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\
 
 /** 文字列の中に needle が何回あるか (重ならない数) */
 const countOf = (text: string, needle: string): number => text.split(needle).length - 1;
+
+/** 閉包の表の行 (`| <群の名前> ` で始まる行)。ちょうど 1 行あることを確かめる */
+function closureRow(doc: string, group: string): string {
+  const rows = doc.split('\n').filter((line) => line.startsWith(`| ${group} `));
+  expect(rows, `閉包の表の ${group} の行がちょうど 1 つ`).toHaveLength(1);
+  return rows[0];
+}
+
+/** ファイルの名前のあとに行番号 (`<file>:N` / `` `<file>`:N ``) が続く所 */
+const lineReferenceOf = (fileName: string): RegExp => new RegExp(`${escapeRegExp(fileName)}\`?:\\d`);
 
 /**
  * コンポーネントの中の `async function <name>(` の本体 (宣言の行から、同じ字下げの `}` の行まで)。
@@ -77,4 +88,16 @@ describe('mobile/05 の閉包の表の M-1・M-2 が関数の名前で指す先 
     expect(countOf(source, call), `questions.tsx の ${call} の数`).toBe(namedCallSites.length);
   });
 
+  it('文書: M-1・M-2 の行は 2 ファイルを関数の名前で指し、mobile/05 に 2 ファイルの行番号の参照は無い', () => {
+    const doc = read(DOC_PATH);
+    const m1 = closureRow(doc, 'M-1');
+    expect(m1).toContain(`\`${ADVISOR_SHEET_PATH}\` の \`archiveSession\`・\`sendMessage\` の \`getSession()\``);
+    const m2 = closureRow(doc, 'M-2');
+    expect(m2).toContain(
+      `\`${QUESTIONS_PATH}\` の \`saveProgress\` の \`getUser()\`・\`handleAnswer\` の完了の分岐の \`getUser()\``,
+    );
+    for (const fileName of ['AIAdvisorSheet.tsx', 'questions.tsx']) {
+      expect(doc, `mobile/05 に ${fileName} の行番号の参照が無い`).not.toMatch(lineReferenceOf(fileName));
+    }
+  });
 });
