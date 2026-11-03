@@ -1064,6 +1064,26 @@ describe('useHomeData: 開いたときの AI つきの栄養の分析の応答�
     expect(textOf('analysis-loading')).toBe('false');
   });
 
+  it('取り直し (AI を付けない) で分析できなくなったら、分析のアドバイス・提案と帯も消す (読み込み直したときと同じ。#2195 V1)', async () => {
+    nutritionAnalysisBody = analysisWithSuggestion(ADVICE);
+    await act(async () => {
+      root.render(<HomeAnalysisProbe />);
+    });
+    await settle();
+    expect(textOf('analysis-advice')).toBe(ADVICE);
+    expect(textOf('analysis-suggestion')).toBe(SUGGESTION_ISSUE);
+    expect(textOf('advice-banner')).toBe(ADVICE);
+
+    // AI 相談で今日の食事を消した (delete_meal) あとの取り直し: 分析できない
+    nutritionAnalysisBody = NO_MEALS_RESPONSE;
+    await notifyAiConsultationSucceeded();
+    expect(textOf('analysis-score')).toBe('0');
+    expect(textOf('analysis-advice'), '分析できなくなったのに、前のアドバイスを残した').toBe('');
+    expect(textOf('analysis-suggestion'), '分析できなくなったのに、前の献立の変更の提案を残した').toBe('');
+    expect(textOf('advice-banner')).toBe('');
+    expect(textOf('analysis-loading')).toBe('false');
+  });
+
   it('取り直しで今日の完了した食事が無くなって分析できなくなったら、先に始めた AI つきの分析の古いアドバイスを後から置かない', async () => {
     nutritionAnalysisBody = analysisWithSuggestion(ADVICE);
     holdAiAnalyses = true;
