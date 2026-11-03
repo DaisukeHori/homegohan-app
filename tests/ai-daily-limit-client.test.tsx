@@ -172,7 +172,10 @@ describe('(#1149) AI 相談のアクションの実行が上限で止められ�
     expect(start).toBeGreaterThan(-1);
     // #2189 W1-a: 上限以外の失敗の応答は alert でなく、サーバーの文 (または固定の文) をチャットに出す
     const failureAt = body.indexOf('consultationActionFailureMessageOf(body)');
-    const limitAt = body.search(/if \(await aiDailyLimitMessageOfResponse\(res\)\) return;/);
+    // #2195 V2: 上限の分岐は、行を pending に戻せなかった (retryable: false) ときだけカードを案内にしてから戻る (チャットに文は出さない)
+    const limitAt = body.search(/if \(await aiDailyLimitMessageOfResponse\(res\)\) \{/);
+    const limitBlock = body.slice(limitAt, body.indexOf('return;', limitAt));
+    expect(limitBlock).not.toContain('setMessages');
     expect(failureAt).toBeGreaterThan(-1);
     expect(limitAt).toBeGreaterThan(-1);
     expect(limitAt).toBeLessThan(failureAt);

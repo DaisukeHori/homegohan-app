@@ -701,7 +701,9 @@ describe.each([
     state.missingTable = 'ai_action_logs';
     const res = await call();
     expect(res.status).toBe(404);
-    expect(state.fromTables.filter((t) => t === 'ai_action_logs')).toHaveLength(2);
+    // アクションの ID・メッセージの ID で 1 回ずつ探し、無ければ「実行する」を出さない理由を決めるために
+    // そのメッセージの行の状態をもう 1 回読む (#2195 V2)
+    expect(state.fromTables.filter((t) => t === 'ai_action_logs')).toHaveLength(3);
   });
 });
 
