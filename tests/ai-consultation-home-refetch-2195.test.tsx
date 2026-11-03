@@ -29,6 +29,10 @@ const supabaseMock = vi.hoisted(() => ({
   reads: null as null | { record: (key: string | null) => void; recordSelect: (table: string, select: unknown) => void },
   /** DB の関数 (rpc) の応答を、この Promise が解けるまで止める (#2201 U2。食事の完了の切り替えの書き込みの間) */
   rpcHold: null as null | Promise<void>,
+  /** 置いている間に始めた表の読み取りの応答を、この Promise が解けるまで止める (#2201 U1。開いたときの読み込みの最中) */
+  tableHold: null as null | Promise<void>,
+  /** true の間に始めた表の読み取りは reject する (#2201 U1。読み取りが投げたとき) */
+  tableRejects: false,
 }));
 vi.mock('@/lib/supabase/client', () => {
   const EMPTY_RESULT = { data: null, error: null, count: 0 };
@@ -41,7 +45,13 @@ vi.mock('@/lib/supabase/client', () => {
           const rows = result.data;
           const answer =
             single && Array.isArray(rows) ? { ...result, data: rows[0] ?? null } : Array.isArray(rows) && result.count === undefined ? { ...result, count: rows.length } : result;
-          return (resolve: (value: unknown) => void) => resolve(answer);
+          const hold = supabaseMock.tableHold;
+          const rejects = supabaseMock.tableRejects;
+          return (resolve: (value: unknown) => void, reject: (reason: unknown) => void) => {
+            const settleAnswer = () => (rejects ? reject(new Error(`${table} read failed`)) : resolve(answer));
+            if (hold === null) settleAnswer();
+            else void hold.then(settleAnswer);
+          };
         }
         return (...args: unknown[]) => {
           if (prop === 'select' && recordsSelect) supabaseMock.reads?.recordSelect(table, args[0]);
@@ -188,6 +198,8 @@ function HomeDataProbe() {
 beforeEach(() => {
   supabaseMock.tableResults = {};
   supabaseMock.rpcHold = null;
+  supabaseMock.tableHold = null;
+  supabaseMock.tableRejects = false;
   latestRefetch = null;
   nutritionAnalysisBody = undefined;
   // 栄養の分析は nutritionAnalysisBody を返す。お知らせ・パフォーマンスの分析 (fetch) は、この検査では何も返さない
@@ -536,5 +548,52 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
     await settle();
     expect(refetchCalls, '止めた成功のぶん 1 回取り直していない').toBe(1);
     expect(completedText()).toBe('false');
+  });
+});
+
+describe('useHomeData: 開いたときの読み込みの最中に始まった取り直し (#2201 U1)', () => {
+  it('取り直しの読み取りが投げても、読み込み中の表示のまま止まらない (開いたときの読み込みの応答が後から届いても)', async () => {
+    let refetch: (() => Promise<void>) | null = null;
+    function HomeLoadingProbe() {
+      const home = useHomeData();
+      refetch = home.refetch;
+      return <p data-testid="home-loading">{String(home.loading)}</p>;
+    }
+    const loadingText = () => container.querySelector('[data-testid="home-loading"]')?.textContent;
+
+    // 開いたときの読み込みの表の読み取りを止める
+    const mountHold = (() => {
+      let release: () => void = () => undefined;
+      const promise = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return { promise, release };
+    })();
+    supabaseMock.tableHold = mountHold.promise;
+    await act(async () => {
+      root.render(<HomeLoadingProbe />);
+    });
+    await settle();
+    expect(loadingText(), '開いたときの読み込みを止められていない (検査が空振りしている)').toBe('true');
+
+    // その間に AI 相談の成功の取り直しが始まり、表の読み取りが投げる
+    supabaseMock.tableHold = null;
+    supabaseMock.tableRejects = true;
+    let refetchError: unknown = null;
+    await act(async () => {
+      await refetch!().catch((error: unknown) => {
+        refetchError = error;
+      });
+    });
+    supabaseMock.tableRejects = false;
+    expect(refetchError, '取り直しの読み取りが投げていない (検査が空振りしている)').not.toBeNull();
+    expect(loadingText(), '取り直しが投げたあと読み込み中の表示のまま').toBe('false');
+
+    // 先に始めた開いたときの読み込みの応答が後から届いても、読み込み中の表示に戻らない
+    await act(async () => {
+      mountHold.release();
+    });
+    await settle();
+    expect(loadingText()).toBe('false');
   });
 });

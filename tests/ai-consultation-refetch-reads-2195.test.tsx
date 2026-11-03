@@ -1217,6 +1217,101 @@ describe('先に始めた取り直しの応答が後から届いても、あと�
   }
 });
 
+/** パネルを開かずに描いて流しきる (開いたときの読み込みだけの画面) */
+async function renderOnly(c: PageCase) {
+  await act(async () => {
+    root.render(c.render());
+  });
+  await settle();
+}
+
+/** 描いていた画面を外し、新しい root にする (開き直す前) */
+async function freshRoot() {
+  await act(async () => {
+    root.unmount();
+  });
+  root = createRoot(container);
+}
+
+/**
+ * 開いたときの読み込みの応答を止めて描き、その間に AI 相談の成功を届ける (取り直しの応答は止めない)。
+ * failure を渡すと、取り直しの読み取りだけを失敗させる (開いたときの読み込みは止める前に始めているので失敗しない)。
+ * 取り直しを流しきったあと、開いたときの読み込みの応答を解く関数を返す
+ */
+async function openWhileAiConsultationSucceeds(c: PageCase, failure: 'http' | 'network' | null = null) {
+  const mountHold = deferred();
+  server.holdAll = mountHold.promise;
+  await act(async () => {
+    root.render(c.render());
+  });
+  await settle();
+  server.holdAll = null;
+  server.failure = failure;
+  await notifyAiConsultationSucceeded();
+  server.failure = null;
+  return async () => {
+    mountHold.resolve();
+    await settle();
+  };
+}
+
+describe('開いたときの読み込みの最中に AI 相談の成功が届いても、読み込み中の表示のまま止まらない (#2201 U1)', () => {
+  for (const c of CASES) {
+    it(`${c.page}`, async () => {
+      setServer(c.full);
+      await renderOnly(c);
+      const opened = screenSignature(container);
+      await freshRoot();
+
+      const mountHold = deferred();
+      server.holdAll = mountHold.promise;
+      await act(async () => {
+        root.render(c.render());
+      });
+      await settle();
+      expect(screenSignature(container), `${c.page} の開いたときの読み込みを止められていない (検査が空振りしている)`).not.toBe(opened);
+      server.holdAll = null;
+      await notifyAiConsultationSucceeded();
+      // 開いたときの読み込みのうち取り直さないもの (mountReadsNotRefetched) は、まだ応答を待っている
+      if (c.mountReadsNotRefetched === undefined) {
+        expect(screenSignature(container), `${c.page} が取り直しのあとも読み込み中の表示のまま (開いたときの読み込みの応答待ち)`).toBe(opened);
+      }
+
+      // 開いたときの読み込みの応答が後から届いても、同じ画面
+      mountHold.resolve();
+      await settle();
+      expect(screenSignature(container), `${c.page} が開いたときの読み込みの応答のあとも読み込み中の表示のまま`).toBe(opened);
+    });
+  }
+});
+
+describe('開いたときの読み込みの最中に届いた成功の取り直しが失敗したら、開いたときに失敗したのと同じ画面を出す (失敗を隠さない。#2201 U1)', () => {
+  const FAILURES = ['http', 'network'] as const;
+  // 開いたときの読み込みのうち取り直さないものがあるページは、開いたときの失敗と同じ画面にならない (取り直さない読み込みは読める)
+  for (const c of CASES.filter((x) => x.mountReadsNotRefetched === undefined)) {
+    for (const failure of FAILURES) {
+      it(`${c.page}: ${failure === 'http' ? '500・Supabase の error' : '通信の失敗 (fetch の reject)'}`, async () => {
+        setServer(c.full);
+        await renderOnly(c);
+        const opened = screenSignature(container);
+        await freshRoot();
+        server.failure = failure;
+        await renderOnly(c);
+        server.failure = null;
+        const failedOpen = screenSignature(container);
+        expect(failedOpen, `${c.page} の開いたときの失敗の画面が、読めたときと同じ (検査が空振りしている)`).not.toBe(opened);
+        await freshRoot();
+
+        const releaseMount = await openWhileAiConsultationSucceeds(c, failure);
+        expect(screenSignature(container), `${c.page} の取り直しの失敗を隠した (開いたときに失敗したのと違う画面)`).toBe(failedOpen);
+        // 先に始めた開いたときの読み込みの応答 (読めた) が後から届いても置かない (最後に始めた取得の応答だけを置く)
+        await releaseMount();
+        expect(screenSignature(container)).toBe(failedOpen);
+      });
+    }
+  }
+});
+
 describe('名前の API だけを読めなかった取り直しは、出ている名前を残す (#2201 U1)', () => {
   for (const page of ['/family/members', '/family/dashboard', '/family/members/[id]']) {
     it(`${page}: 「名前未設定」に落とさない`, async () => {

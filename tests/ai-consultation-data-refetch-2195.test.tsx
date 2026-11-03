@@ -20,12 +20,13 @@
 import { readFileSync } from 'node:fs';
 import type {
   AiConsultationFetchTicket,
+  AiConsultationLoadingState,
   AiConsultationPendingWrites,
   AiConsultationRefetchControl,
   AiConsultationWriteInFlightRef,
 } from '@/hooks/useAiConsultationDataRefetch';
 import path from 'node:path';
-import { act, useState } from 'react';
+import { act, useEffect, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -100,9 +101,13 @@ const {
   AI_CONSULTATION_UNEDITED_INPUTS_ATTRIBUTE,
   isAiConsultationRefetchBlocked,
 } = await import('@/lib/ai/consultation-data-refetch');
-const { useAiConsultationDataRefetch, useAiConsultationPendingWrites, useAiConsultationRefetchKey } = await import(
-  '@/hooks/useAiConsultationDataRefetch'
-);
+const {
+  useAiConsultationDataRefetch,
+  useAiConsultationLoading,
+  useAiConsultationPendingWrites,
+  useAiConsultationRefetchKey,
+  useAiConsultationRefetchRun,
+} = await import('@/hooks/useAiConsultationDataRefetch');
 const { default: MainLayout } = await import('@/app/(main)/MainLayout');
 const { default: ComparisonPage } = await import('@/app/(main)/comparison/page');
 const { default: PantryPage } = await import('@/app/(main)/pantry/page');
@@ -598,6 +603,90 @@ describe('useAiConsultationRefetchKey (#2195 V1)', () => {
 
     await notifyAiConsultationSucceeded();
     expect(keyText()).toBe('3');
+  });
+});
+
+describe('開いたときの読み込み中に始まった取り直しは、その読み込みの役を引き継ぐ (#2201 U1)', () => {
+  it('useAiConsultationLoading: 読み込み中の表示を出している間の取り直しの読み方は mount、下ろしたあとは refetch。下ろすのは最後の札だけ', async () => {
+    let state: AiConsultationLoadingState | null = null;
+    let control: AiConsultationRefetchControl | null = null;
+    function LoadingProbe() {
+      state = useAiConsultationLoading();
+      control = useAiConsultationDataRefetch(() => undefined);
+      return <p data-testid="loading">{String(state.loading)}</p>;
+    }
+    const loadingText = () => container.querySelector('[data-testid="loading"]')?.textContent;
+    await act(async () => {
+      root.render(<LoadingProbe />);
+    });
+    expect(loadingText()).toBe('true');
+    expect(state!.refetchReadMode(), '開いたときの読み込み中の取り直しが、取り直しの扱い (失敗を隠す) になる').toBe('mount');
+
+    // 開いたときの札のあとに取り直しの札を作った: 開いたときの札では下ろさない (取り直しの応答を待っている)
+    const mountTicket = control!.beginFetch();
+    const refetchTicket = control!.beginFetch();
+    await act(async () => {
+      state!.settleLoading(mountTicket);
+    });
+    expect(loadingText(), '最後でない札で読み込み中の表示を下ろした').toBe('true');
+    // 取り直しの札 (最後の札) が下ろす
+    await act(async () => {
+      state!.settleLoading(refetchTicket);
+    });
+    expect(loadingText(), '最後の札 (取り直し) で読み込み中の表示を下ろさない').toBe('false');
+    expect(state!.refetchReadMode()).toBe('refetch');
+
+    // 描画の前でも、setLoading の直後から読み方が変わる (「再試行」で読み込み中の表示を出した直後に来た成功)
+    await act(async () => {
+      state!.setLoading(true);
+      expect(state!.refetchReadMode()).toBe('mount');
+    });
+  });
+
+  it('useAiConsultationRefetchRun: 読み込み中の表示を出している間に増えた回は取り直しの扱いにしない。下ろしたあとに増えた回は取り直し', async () => {
+    const runs: boolean[] = [];
+    let setLoading: ((loading: boolean) => void) | null = null;
+    function RunProbe() {
+      const { refetchKey } = useAiConsultationRefetchKey();
+      const [loading, setLoadingState] = useState(true);
+      setLoading = setLoadingState;
+      const takeRun = useAiConsultationRefetchRun(refetchKey, loading);
+      useEffect(() => {
+        runs.push(takeRun());
+      }, [refetchKey, takeRun]);
+      return null;
+    }
+    await act(async () => {
+      root.render(<RunProbe />);
+    });
+    expect(runs).toEqual([false]);
+
+    // 開いたときの読み込み中に成功が来た: 開いたときの回の役を引き継ぐ (取り直しの扱いにしない)
+    await notifyAiConsultationSucceeded();
+    expect(runs).toEqual([false, false]);
+
+    await act(async () => {
+      setLoading!(false);
+    });
+    await notifyAiConsultationSucceeded();
+    expect(runs, '読み込み中の表示を下ろしたあとの成功が取り直しの扱いにならない').toEqual([false, false, true]);
+  });
+
+  it('useAiConsultationRefetchRun: 読み込み中の表示を渡さない部品は、数が増えたかだけで決める', async () => {
+    const runs: boolean[] = [];
+    function RunProbe() {
+      const { refetchKey } = useAiConsultationRefetchKey();
+      const takeRun = useAiConsultationRefetchRun(refetchKey);
+      useEffect(() => {
+        runs.push(takeRun());
+      }, [refetchKey, takeRun]);
+      return null;
+    }
+    await act(async () => {
+      root.render(<RunProbe />);
+    });
+    await notifyAiConsultationSucceeded();
+    expect(runs).toEqual([false, true]);
   });
 });
 

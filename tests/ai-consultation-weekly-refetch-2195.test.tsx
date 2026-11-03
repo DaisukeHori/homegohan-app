@@ -258,6 +258,8 @@ type FakeServer = {
   familyMemberNames: { id: string; name: string | null }[];
   /** 置いている間に始めた GET /api/meal-plans の応答を、この Promise が解けるまで止める (#2201 U1) */
   mealPlansHold: Promise<void> | null;
+  /** true の間に始めた GET /api/meal-plans は 500 を返す (#2201 U1。読み直しの失敗) */
+  mealPlansFail: boolean;
   /** true なら GET /api/family/members/names が 500 を返す (#2201 U1) */
   namesFail: boolean;
   /** 置いている間に始めた食事の更新 (PATCH /api/meal-plans/meals/<id>) の応答を、この Promise が解けるまで止める (#2201 U2) */
@@ -396,7 +398,9 @@ function installFakeServer() {
         // 答えは読み取りを始めたときのもの。止めていれば、止めが解けてから返す
         const body = mealPlansJson(url.searchParams.get('startDate') ?? '', url.searchParams.get('endDate') ?? '');
         const hold = server.mealPlansHold;
+        const fails = server.mealPlansFail;
         if (hold) await hold;
+        if (fails) return jsonResponse({ error: 'down' }, SERVER_ERROR_STATUS);
         return jsonResponse(body);
       }
       case '/api/ai/menu/weekly/pending': {
@@ -452,6 +456,7 @@ beforeEach(() => {
     pendingRequest: null,
     familyMemberNames: [],
     mealPlansHold: null,
+    mealPlansFail: false,
     namesFail: false,
     mealPatchHold: null,
   };
@@ -753,6 +758,45 @@ describe('献立表 (/menus/weekly) の取り直しの順序と失敗 (#2201 U1)
     });
     await settle();
     expect(container.textContent).toContain(NEXT_WEEK_DISH);
+    expect(container.textContent).not.toContain(THIS_WEEK_DISH);
+  });
+
+  it('週を移った直後 (週の読み込みの応答待ち) に来た成功の取り直しが失敗しても、前の週の献立を新しい週の見出しの下に残さない', async () => {
+    const THIS_WEEK_DISH = '今週の筑前煮';
+    const NEXT_WEEK_DISH = '翌週の豚汁';
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) {
+      server.days.set(dateFromWeekStart(i), [{ id: `meal-this-${i}`, dishName: THIS_WEEK_DISH }]);
+      server.days.set(dateFromWeekStart(DAYS_IN_WEEK + i), [{ id: `meal-next-${i}`, dishName: NEXT_WEEK_DISH }]);
+    }
+    await renderWeeklyPage();
+    expect(container.textContent).toContain(THIS_WEEK_DISH);
+    // 取り直しは週のキャッシュを捨てる: 翌週へ移ると、翌週の献立を読みに行く (先読みのキャッシュで済ませない)
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+
+    // 翌週の読み込みの応答が遅れる
+    let release: () => void = () => undefined;
+    server.mealPlansHold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const nextWeek = container.querySelector<HTMLButtonElement>('button[aria-label="翌週"]');
+    expect(nextWeek, '「翌週」のボタンが無い').not.toBeNull();
+    await act(async () => {
+      nextWeek!.click();
+    });
+    await settle();
+    server.mealPlansHold = null;
+
+    // 応答を待つあいだに成功が来て、その取り直し (翌週の献立) が失敗する
+    server.mealPlansFail = true;
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    server.mealPlansFail = false;
+
+    // 先に始めた翌週の読み込みの応答 (読めた) が届いたら、翌週の献立を出す
+    await act(async () => {
+      release();
+    });
+    await settle();
+    expect(container.textContent, '取り直しの失敗で、翌週の読み込みの応答まで捨てた').toContain(NEXT_WEEK_DISH);
     expect(container.textContent).not.toContain(THIS_WEEK_DISH);
   });
 
