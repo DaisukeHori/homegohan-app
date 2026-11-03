@@ -277,7 +277,7 @@ async function waitPastRecheck() {
 
 /**
  * 部品の setTimeout の予約 (読み直しの予約など) を偽のタイマーにして、releaseRecheck で進めるまで動かさない。
- * 『実行中か実行済み』の一文は、読み直しで実行できていれば置き換わって消える途中の表示なので、実時間の読み直し
+ * 『結果をまだ確かめられません』の一文 (#2206 G2。以前は『実行中か実行済み』) は、読み直しで実行できていれば置き換わって消える途中の表示なので、実時間の読み直し
  * (TEST_RECHECK_DELAY_MS) と競って見に行くと、CI の混雑で 1 回の描画が止まっただけで、見る前に消えて待ちが切れる
  * (2026-11-03 の main の CI run 41659836380 で 2 件。描画のあとに 50ms 止める実験で、この型の 3 件が毎回赤になった)。
  * 送る前に呼ぶ。文が出るまでの待ち (waitFor) は実時間のまま進む
@@ -684,7 +684,7 @@ describe('#2201 U3 おすすめの質問から送ったときも同じ', () => {
     expect(mealPlanUpdated).toHaveBeenCalledTimes(1);
   });
 
-  it('時間切れで実行中の印のまま: 『実行中か実行済み』を出し、読み直して実行できていれば置き換えてカードを外す', async () => {
+  it('時間切れで実行中の印のまま: 『結果をまだ確かめられません』を出し、読み直して実行できていれば置き換えてカードを外す', async () => {
     logs.results = [{ data: [{ status: 'approved' }], error: null }, { data: [{ status: 'executed' }], error: null }];
     await openEmptyChat();
     holdRecheck();

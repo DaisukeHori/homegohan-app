@@ -353,8 +353,8 @@ const CHAT_OPEN_TOGGLE_LOCK_MS = 400;
 /**
  * 部品を外すときに、まだ動いていない予約 (setTimeout) をすべて取り消す予約の関数を返す (#2201)。
  * 戻り値を持たないまま予約すると、部品が外れたあとに動いて、外れた部品への setState や、外れたあとの mealPlanUpdated の
- * 発火 (受け手のページが取り直しを走らせる) を起こす。このファイルで送信の待ちの上限 (try/finally で取り消す) 以外の
- * 予約は、すべてこれで行う。動いた予約は一覧から外す。
+ * 発火 (受け手のページが取り直しを走らせる) を起こす。このファイルで送信の待ちの上限と、会話の取り直しの GET の上限
+ * (reloadConversationAfterIncompleteReply。#2206 G2。どちらも try/finally で取り消す) 以外の予約は、すべてこれで行う。動いた予約は一覧から外す。
  * 外れたあとに予約しようとしたとき (外す前に始めた送信・開く処理の続きが、外れたあとに終わったとき) は予約しない
  */
 function useUnmountClearedTimeouts(): (callback: () => void, delayMs: number) => void {
