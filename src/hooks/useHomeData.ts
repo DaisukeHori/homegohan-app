@@ -83,6 +83,16 @@ interface HomeFetchOptions {
   replaceAdviceBanner: boolean;
 }
 
+/** 今日の献立の集計の空の値 (開いたときの値。取り直しで今日の献立が無くなったときもこれに戻す。#2195 V1) */
+const EMPTY_DAILY_SUMMARY: DailySummary = {
+  totalCalories: 0,
+  completedCount: 0,
+  totalCount: 0,
+  cookCount: 0,
+  buyCount: 0,
+  outCount: 0,
+};
+
 export const useHomeData = () => {
   const [user, setUser] = useState<any>(null);
   const [todayPlan, setTodayPlan] = useState<TodayMealPlan | null>(null);
@@ -90,14 +100,7 @@ export const useHomeData = () => {
   // #191/#322: meal toggle debounce — pending mealId set + 250ms debounce timer
   const pendingToggleRef = useRef<Set<string>>(new Set());
   const toggleDebounceTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const [dailySummary, setDailySummary] = useState<DailySummary>({
-    totalCalories: 0,
-    completedCount: 0,
-    totalCount: 0,
-    cookCount: 0,
-    buyCount: 0,
-    outCount: 0,
-  });
+  const [dailySummary, setDailySummary] = useState<DailySummary>(EMPTY_DAILY_SUMMARY);
   const [announcement, setAnnouncement] = useState<Announcement | null>(null);
   const [activityLevel, setActivityLevel] = useState<string | null>(null);
   const [suggestion, setSuggestion] = useState<string | null>(null);
@@ -264,7 +267,7 @@ export const useHomeData = () => {
       }
 
       // 3. 今日の献立を取得（日付ベースモデル: user_daily_meals → planned_meals）
-      const { data: dailyMealData } = await supabase
+      const { data: dailyMealData, error: dailyMealError } = await supabase
         .from('user_daily_meals')
         .select(`
           id,
@@ -295,6 +298,11 @@ export const useHomeData = () => {
             outCount: meals.filter(m => m.mode === 'out').length,
           };
           setDailySummary(summary);
+        } else if (!dailyMealError) {
+          // 今日の献立が無い: 前の献立を残さない (取り直しのとき。読み込み直したときと同じ。#2195 V1)。
+          // 読み取りの失敗では今の表示を残す
+          setTodayPlan(null);
+          setDailySummary(EMPTY_DAILY_SUMMARY);
         }
 
       // ========== 拡張データを並列取得（高速化） ==========
@@ -354,7 +362,8 @@ export const useHomeData = () => {
         .order('day_date', { ascending: false });
 
       type DayWithStreakMeals = { day_date: string; planned_meals: Pick<Tables<"planned_meals">, "mode" | "is_completed">[] };
-      if (daysData && daysData.length > 0) {
+      // 記録の無い期間も 0 を置く (取り直しで前の連続の日数を残さない。読み込み直したときと同じ。#2195 V1)
+      if (daysData) {
         let streak = 0;
         const sortedDays = (daysData as DayWithStreakMeals[]).sort((a, b) =>
           new Date(b.day_date).getTime() - new Date(a.day_date).getTime()
@@ -522,7 +531,7 @@ export const useHomeData = () => {
   const fetchShoppingRemaining = async (userId: string) => {
     try {
       // アクティブな買い物リストを取得
-      const { data: shoppingList } = await supabase
+      const { data: shoppingList, error: shoppingListError } = await supabase
         .from('shopping_lists')
         .select('id')
         .eq('user_id', userId)
@@ -537,6 +546,10 @@ export const useHomeData = () => {
           .eq('is_checked', false);
 
         setShoppingRemaining(count || 0);
+      } else if (!shoppingListError) {
+        // 使っている買い物リストが無い: 前の残りの数を残さない (取り直しのとき。読み込み直したときと同じ。#2195 V1)。
+        // 読み取りの失敗では今の表示を残す
+        setShoppingRemaining(0);
       }
     } catch (e) {
       console.error('Shopping remaining fetch error:', e);

@@ -104,9 +104,10 @@ function BadgesPageInner() {
         // #1055 (wave-3b): どのバッジを新規獲得したか (code) を使ってお祝い表示・
         // カードハイライトの対象を特定する
         const newCodes: string[] = data.newEarnedBadgeCodes ?? [];
-        if (newCodes.length > 0) {
-          const newlyEarned = mappedBadges.filter((b: BadgeWithStatus) => newCodes.includes(b.code));
-          setNewlyEarnedBadges(newlyEarned);
+        const newlyEarned = mappedBadges.filter((b: BadgeWithStatus) => newCodes.includes(b.code));
+        // 新しく取ったバッジが無いときも置く (取り直しで前のお祝いを残さない。読み込み直したときと同じ。#2195 V1)
+        setNewlyEarnedBadges(newlyEarned);
+        if (newlyEarned.length > 0) {
           setTimeout(() => setNewlyEarnedBadges([]), 5000); // 5秒後に非表示
         }
       } catch (e) {
