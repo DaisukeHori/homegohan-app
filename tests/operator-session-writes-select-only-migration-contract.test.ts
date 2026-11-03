@@ -730,7 +730,6 @@ const WRITE_SITES: Readonly<Record<string, string>> = {
   'src/app/api/super-admin/flags/[key]/route.ts feature_flags delete': SERVICE_ROLE_RECEIVER,
   'src/app/api/super-admin/flags/[key]/route.ts feature_flags update': SERVICE_ROLE_RECEIVER,
   'src/app/api/super-admin/flags/route.ts feature_flags insert': SERVICE_ROLE_RECEIVER,
-  'src/app/api/super-admin/flags/route.ts feature_packages update': SERVICE_ROLE_RECEIVER,
   'src/app/api/super-admin/plans/[id]/route.ts subscription_plans delete': SERVICE_ROLE_RECEIVER,
   'src/app/api/super-admin/plans/[id]/route.ts subscription_plans update': SERVICE_ROLE_RECEIVER,
   'src/app/api/super-admin/plans/route.ts subscription_plans insert': SERVICE_ROLE_RECEIVER,
@@ -847,6 +846,7 @@ function functionDefinitions(file: string, sql: string): FunctionDefinition[] {
 /** 17 の表に書く DB の関数 (「関数名 表」→ 役目)。最新の定義はどれも SECURITY DEFINER で、所有者の権限で書くので本冊の影響を受けない */
 const DB_FUNCTION_WRITERS: Readonly<Record<string, string>> = {
   'accept_org_invite organization_invites': '招待の承諾',
+  'append_flag_to_feature_package feature_packages': '作ったフラグのキーを機能パッケージに足す (20261101130000。#2189 W4。EXECUTE は service_role だけ)',
   'apply_coupon coupons': 'クーポンの適用 (20261007160700)',
   'apply_plan_price_change subscription_plans': 'プランの価格の変更 (20261024130000)',
   'create_org_invite organization_invites': '招待の作成 (20261022180000 で SECURITY DEFINER にした)',
