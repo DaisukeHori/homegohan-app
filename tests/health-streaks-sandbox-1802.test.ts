@@ -60,6 +60,8 @@ const FILES_TOUCHING_HEALTH_STREAKS: Record<string, string> = {
   'src/app/api/health/streaks/route.ts': '利用者が自分の行を読む・消す (DELETE) だけ。数を進めない',
   'src/hooks/useHomeData.ts': 'ホームで daily_record を読むだけ',
   'src/lib/account-export-tables.ts': 'アカウントの書き出しで自分の行を読むだけ',
+  'src/lib/ai/consultation-refetch-coverage.ts':
+    'AI 相談の実行が書く表の一覧 (テストと設計の正本のための表で、読みも書きもしない。#2195 V1)',
   'supabase/functions/calculate-segment-stats/index.ts': '比較ランキングの集計で meal_record / breakfast を読むだけ (書く処理は無い。#1528)',
 };
 
