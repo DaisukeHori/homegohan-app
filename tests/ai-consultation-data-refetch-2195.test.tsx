@@ -1175,12 +1175,13 @@ describe('受け手の配線 (#2195 V1)', () => {
     {
       page: '健康 (/health): fetchData と、出している選んだ日のパネルの記録',
       file: 'src/app/(main)/health/page.tsx',
-      wiring: /await Promise\.all\(\[fetchData\(ticket, 'refetch'\), reloadSelectedDate\(\)\]\);\s*\}, \[fetchData\]\);[\s\S]*?useAiConsultationDataRefetch\(refetchAfterAiConsultation\);/,
+      // 取り直しの読み方は refetchReadMode (開いたときの読み込み中に始まった取り直しは 'mount'。#2201 U1)
+      wiring: /await Promise\.all\(\[fetchData\(ticket, refetchReadMode\(\)\), reloadSelectedDate\(\)\]\);\s*\}, \[fetchData, refetchReadMode\]\);[\s\S]*?useAiConsultationDataRefetch\(refetchAfterAiConsultation\);/,
     },
     {
       page: '健康目標 (/health/goals): fetchGoals',
       file: 'src/app/(main)/health/goals/page.tsx',
-      wiring: /useAiConsultationDataRefetch\(\s*\(ticket\) => fetchGoals\(ticket, 'refetch'\),\s*\{ writeInFlightRef \},\s*\);/,
+      wiring: /useAiConsultationDataRefetch\(\s*\(ticket\) => fetchGoals\(ticket, refetchReadMode\(\)\),\s*\{ writeInFlightRef \},\s*\);/,
     },
     {
       page: 'マイページ (/profile): 取得の useEffect の依存に数を足す',
