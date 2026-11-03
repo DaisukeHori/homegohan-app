@@ -27,6 +27,8 @@ const EXECUTOR_FUNCTION_HEAD = 'export async function runConsultationAction(';
 const EXECUTOR_CASE = /^\s*case '([a-z_]+)':/gm;
 const ACTION_LABELS_HEAD = 'const ACTION_LABELS';
 const ACTION_LABELS_KEY = /^\s*([a-z_]+):\s*\{\s*label:/gm;
+/** ACTION_LABELS の定義を閉じる行 (行頭の `}` で始まり `;` で終わる。`} satisfies …;` を含む) */
+const ACTION_LABELS_END = /\n\}[^\n]*;/;
 const CHECK_TYPE_LITERAL = /'([a-z_]+)'::text/g;
 /** ADD CONSTRAINT ai_action_logs_action_type_check の文 (終わりの ; まで) */
 const ADD_CHECK_STATEMENT = new RegExp(`ADD\\s+CONSTRAINT\\s+"?${AI_ACTION_LOGS_ACTION_TYPE_CHECK}"?\\s+CHECK\\s*\\(([\\s\\S]*?)\\)\\s*(?:NOT\\s+VALID\\s*)?;`, 'gi');
@@ -44,14 +46,32 @@ export function executorActionTypes(): string[] {
   return matchAll(source.slice(start), EXECUTOR_CASE);
 }
 
-/** 画面の ACTION_LABELS の鍵 (書かれた順) */
-export function actionLabelKeys(): string[] {
+/**
+ * 画面の ACTION_LABELS の定義のソース (見出しから、行頭の `}` で閉じる行の手前まで)。
+ * 閉じる行は `};` か、鍵を型で確かめる `} satisfies …;` (#2195 V3)
+ */
+export function actionLabelsSource(): string {
   const source = fs.readFileSync(AI_CHAT_BUBBLE_FILE, 'utf8');
   const start = source.indexOf(ACTION_LABELS_HEAD);
   if (start < 0) throw new Error(`${ACTION_LABELS_HEAD} が見つからない`);
-  const end = source.indexOf('\n};', start);
+  const end = source.slice(start).search(ACTION_LABELS_END);
   if (end < 0) throw new Error('ACTION_LABELS の終わりが見つからない');
-  return matchAll(source.slice(start, end), ACTION_LABELS_KEY);
+  return source.slice(start, start + end);
+}
+
+/** 画面の ACTION_LABELS の定義を閉じる行 (`};` か `} satisfies …;`) */
+export function actionLabelsClosingLine(): string {
+  const source = fs.readFileSync(AI_CHAT_BUBBLE_FILE, 'utf8');
+  const start = source.indexOf(ACTION_LABELS_HEAD);
+  if (start < 0) throw new Error(`${ACTION_LABELS_HEAD} が見つからない`);
+  const closing = source.slice(start).match(ACTION_LABELS_END);
+  if (!closing) throw new Error('ACTION_LABELS の終わりが見つからない');
+  return closing[0].trim();
+}
+
+/** 画面の ACTION_LABELS の鍵 (書かれた順) */
+export function actionLabelKeys(): string[] {
+  return matchAll(actionLabelsSource(), ACTION_LABELS_KEY);
 }
 
 /**

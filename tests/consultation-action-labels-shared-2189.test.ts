@@ -25,16 +25,29 @@ import {
   consultationAutoActionOutcomeOf,
 } from '@homegohan/shared';
 import * as webOutcome from '@/lib/ai/consultation-action-outcome';
+import {
+  actionLabelKeys,
+  actionLabelsClosingLine,
+  actionLabelsSource,
+  executorActionTypes as executorActionTypesInOrder,
+} from './helpers/consultation-action-types';
 
 const ROOT = path.resolve(__dirname, '..');
 const read = (rel: string) => readFileSync(path.join(ROOT, rel), 'utf8');
 
-/** 実行の側 (runConsultationAction の switch) が受け付ける種類 */
+/**
+ * 実行の側 (runConsultationAction の switch) が受け付ける種類 (並べ替え・重複なし)。
+ * 読み取りは W1 の helper (runConsultationAction の見出しより後ろの case だけ) に任せる (#2195 V3。
+ * 以前はファイル全体の case を拾っていて、executor に別の switch が増えると helper と母集合がずれた)
+ */
 function executorActionTypes(): string[] {
-  const source = read('src/lib/ai/consultation-action-executor.ts');
-  const types = [...source.matchAll(/^\s*case '([a-z_]+)':/gm)].map((match) => match[1]);
-  return [...new Set(types)].sort();
+  return [...new Set(executorActionTypesInOrder())].sort();
 }
+
+/** Web の ACTION_LABELS の 1 行の名前の書き方 (鍵と、名前を引く共有の表の鍵) */
+const WEB_ACTION_LABEL_FROM_SHARED = /^\s*([a-z_]+):\s*\{\s*label:\s*CONSULTATION_ACTION_LABELS\.([a-z_]+)\s*,/gm;
+/** Web の ACTION_LABELS の名前を文字列で直に書いた行 */
+const WEB_ACTION_LABEL_LITERAL = /\blabel:\s*['"`]/;
 
 describe('#2189 W2: 提案の種類の名前の表は実行の側の種類と一致する', () => {
   it('実行の側の case を読み取れている (走査の場所を間違えて、何も見ずに通ることを防ぐ)', () => {
@@ -62,6 +75,35 @@ describe('#2189 W2: 提案の種類の名前の表は実行の側の種類と一
     expect(consultationActionLabelOf(undefined)).toBe(CONSULTATION_ACTION_LABEL_FALLBACK);
     expect(consultationActionLabelOf(null)).toBe(CONSULTATION_ACTION_LABEL_FALLBACK);
     expect(consultationActionLabelOf(1)).toBe(CONSULTATION_ACTION_LABEL_FALLBACK);
+  });
+});
+
+describe('#2195 V3: Web の ACTION_LABELS の名前は共有の表から引く (名前の表を 1 つにする)', () => {
+  it('どの行も名前を CONSULTATION_ACTION_LABELS の同じ鍵から引き、文字列を直に書かない', () => {
+    const source = actionLabelsSource();
+    const entries = [...source.matchAll(WEB_ACTION_LABEL_FROM_SHARED)].map((match) => ({ key: match[1], sharedKey: match[2] }));
+    // 走査が何も見ずに通ることを防ぐ: 鍵の数 (helper の読み取り) と、共有の表から引く行の数が同じ
+    expect(entries.map((entry) => entry.key)).toEqual(actionLabelKeys());
+    for (const entry of entries) expect(entry.sharedKey, entry.key).toBe(entry.key);
+    expect(WEB_ACTION_LABEL_LITERAL.test(source)).toBe(false);
+  });
+
+  it('表の鍵は共有の表の鍵と同じ集合で、型 (ConsultationActionType) でも確かめている', () => {
+    expect([...actionLabelKeys()].sort()).toEqual(Object.keys(CONSULTATION_ACTION_LABELS).sort());
+    expect(actionLabelsClosingLine()).toMatch(/^\}\s+satisfies\s+Record<ConsultationActionType,/);
+    expect(read('src/components/AIChatBubble.tsx')).toMatch(
+      /import \{[^}]*\bCONSULTATION_ACTION_LABELS\b[^}]*\btype ConsultationActionType\b[^}]*\} from "@homegohan\/shared"/,
+    );
+  });
+
+  it('判定の正規表現は、名前を文字列で直に書いた行・別の鍵から引いた行を見分ける (見張りの自己検査)', () => {
+    const literal = "  like_recipe: { label: 'レシピにいいね', icon: Heart, color: '#EC4899' },";
+    expect(WEB_ACTION_LABEL_LITERAL.test(literal)).toBe(true);
+    expect([...literal.matchAll(WEB_ACTION_LABEL_FROM_SHARED)]).toHaveLength(0);
+    const otherKey = '  like_recipe: { label: CONSULTATION_ACTION_LABELS.suggest_recipe, icon: Heart, color: "#EC4899" },';
+    expect([...otherKey.matchAll(WEB_ACTION_LABEL_FROM_SHARED)].map((match) => [match[1], match[2]])).toEqual([
+      ['like_recipe', 'suggest_recipe'],
+    ]);
   });
 });
 

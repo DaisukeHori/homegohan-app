@@ -7,11 +7,12 @@
  *      (今の URL のまま。スクリプトは URL・トークン・code を持たない)
  *   2. スクリプトは自オリジンのページでだけ読み込み直し、外部ページ・about:blank・認証ブリッジのページでは何もしない
  *   3. 渡さない画面 (スキャンのタブ・規約の同意など) は読み込み直さない。画面が外れたら購読も外れる
- *   4. タブの配線: ホーム・献立・比較は渡し、スキャンのタブ・マイページは渡さない
+ *   4. タブの配線: ホーム・献立・比較・マイページは渡し、スキャンのタブは渡さない。マイページはタブが前に出たときに読み込み直す
+ *      (#2195 V3。aiConsultationReloadTiming="onFocus")
  *   5. 入力の途中かもしれないページでは読み込み直さない (読み込み直すと保存していない入力が消える)。読み込み直すかはタブ単位でなく、
  *      今開いているページで決める: 読み込み直してよい一覧 (AI_CONSULTATION_RELOADABLE_PATHS) に無いページ (タブの中で移った
- *      入力の画面 '/menus/weekly/request'・編集のモーダルを持つ '/profile' など) と、入力の部品・開いているモーダルがあるとき
- *      (AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR) は何もしない
+ *      入力の画面 '/menus/weekly/request'・'/profile/nutrition-targets' など) と、入力の部品・開いているモーダルがあるとき
+ *      (aiConsultationReloadBlockingSelectorOf。'/profile' は編集のモーダルの層も) は何もしない
  */
 
 import fs from 'fs';
@@ -27,6 +28,16 @@ const mockNavigation = {
   addListener: jest.fn((_event: string, _cb: () => void) => jest.fn()),
   isFocused: jest.fn(() => false),
 };
+
+/** 画面が navigation.addListener で購読した event の callback (最後に購読したもの) と、その解除の関数 */
+function navigationListenerOf(event: string): { callback: () => void; unsubscribe: jest.Mock } | null {
+  const index = mockNavigation.addListener.mock.calls.map(([name]) => name).lastIndexOf(event);
+  if (index < 0) return null;
+  return {
+    callback: mockNavigation.addListener.mock.calls[index][1],
+    unsubscribe: mockNavigation.addListener.mock.results[index].value,
+  };
+}
 jest.mock('expo-router', () => ({
   useNavigation: () => mockNavigation,
   useRouter: () => ({ push: jest.fn(), back: jest.fn(), replace: jest.fn(), canGoBack: jest.fn(() => false) }),
@@ -90,7 +101,9 @@ import {
 import {
   AI_CONSULTATION_RELOADABLE_PATHS,
   AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR,
+  AI_CONSULTATION_RELOAD_PAGE_BLOCKING_SELECTORS,
   BRIDGE_PAGE_PATH,
+  aiConsultationReloadBlockingSelectorOf,
 } from '../../src/lib/webViewBridge';
 import { NATIVE_APP_TABS, findNativeAppTab } from '@homegohan/shared';
 
@@ -103,17 +116,25 @@ async function renderScreen(element: React.ReactElement) {
   return { ...utils, injectJavaScript };
 }
 
-type PageDocument = 'at-rest' | 'input-ui-shown' | 'absent';
+/**
+ * ページの document。'at-rest' は入力の部品もモーダルも無いページ、'absent' は document が無いページ。
+ * 配列は、ページにある要素に当たるセレクタの部品 (例: 'textarea'・'[role="dialog"]'・'.fixed.inset-0') の一覧
+ */
+type PageDocument = 'at-rest' | 'absent' | readonly string[];
+
+/** 入力の欄が開いている (基本の要素の 1 つ、textarea がある) ページ */
+const INPUT_UI_SHOWN: readonly string[] = ['textarea'];
 
 /**
  * スクリプトを、location が origin・pathname のページ (を模した sandbox) で実行する。
- * document は、'at-rest' なら入力の部品もモーダルも無いページ、'input-ui-shown' なら読み込み直しを止める要素
- * (AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR に当たる要素。編集のモーダル・開いた入力の欄など) があるページ、'absent' なら document が無い
+ * querySelector は、渡されたセレクタを ', ' で部品に分け、ページにある要素の部品 (pageDocument) のどれかを含めば要素を返す
+ * (セレクタの文字列がちょうど同じかではなく、どの要素に当たるかで決める)
  */
 function runOnPage(script: string, origin: string, pathname: string, pageDocument: PageDocument = 'at-rest') {
   const location = { origin, pathname, reload: jest.fn(), assign: jest.fn(), replace: jest.fn() };
+  const present: readonly string[] = Array.isArray(pageDocument) ? pageDocument : [];
   const querySelector = jest.fn((selector: string) =>
-    pageDocument === 'input-ui-shown' && selector === AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR ? {} : null,
+    selector.split(',').map((part) => part.trim()).some((part) => present.includes(part)) ? {} : null,
   );
   const pageWindow = pageDocument === 'absent' ? { location } : { location, document: { querySelector } };
   vm.runInNewContext(script, { window: pageWindow });
@@ -129,6 +150,8 @@ async function scriptInjectedOnDataChange(element: React.ReactElement): Promise<
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // isFocused の戻り値を変えるテストがあるので、既定 (前に出ていない) に戻す
+  mockNavigation.isFocused.mockReturnValue(false);
   delete mockWebViewProps.source;
   delete mockWebViewProps.ref;
   delete mockWebViewProps.testID;
@@ -200,14 +223,14 @@ describe('入力の途中かもしれないページでは読み込み直さな�
 
       const page = runOnPage(script, WEB_BASE_URL, pathname);
 
-      expect(page.querySelector).toHaveBeenCalledWith(AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR);
+      expect(page.querySelector).toHaveBeenCalledWith(aiConsultationReloadBlockingSelectorOf(pathname));
       expect(page.reload).toHaveBeenCalledTimes(1);
     },
   );
 
   it.each([
-    ['マイページ (編集のモーダルの入力は保存するまで React の state にしか無い)', '/profile', '/profile'],
     ['マイページの中の栄養の目標の入力の画面', '/profile', '/profile/nutrition-targets'],
+    ['マイページの下のパス', '/profile', '/profile/extra'],
     ['献立のタブの中で移った献立の依頼の入力の画面 (手順と入力はどこにも保存されない)', '/menus/weekly', '/menus/weekly/request'],
     ['献立のタブの一覧に無いページ', '/menus/weekly', '/menus'],
     ['一覧のページの下のパス', '/home', '/home/extra'],
@@ -229,12 +252,42 @@ describe('入力の途中かもしれないページでは読み込み直さな�
     async (pathname) => {
       const script = await scriptInjectedOnDataChange(<WebViewScreen path="/home" reloadOnAiConsultationDataChange />);
 
-      const page = runOnPage(script, WEB_BASE_URL, pathname, 'input-ui-shown');
+      const page = runOnPage(script, WEB_BASE_URL, pathname, INPUT_UI_SHOWN);
 
-      expect(page.querySelector).toHaveBeenCalledWith(AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR);
+      expect(page.querySelector).toHaveBeenCalledWith(aiConsultationReloadBlockingSelectorOf(pathname));
       expect(page.reload).not.toHaveBeenCalled();
     },
   );
+
+  it.each(
+    AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR.split(',').map((part) => [part.trim()]),
+  )('基本の要素 %s が 1 つでもあれば読み込み直さない', async (part) => {
+    const script = await scriptInjectedOnDataChange(<WebViewScreen path="/home" reloadOnAiConsultationDataChange />);
+
+    expect(runOnPage(script, WEB_BASE_URL, '/home', [part]).reload).not.toHaveBeenCalled();
+  });
+
+  it('マイページ (/profile) は、role="dialog" も入力の部品も無い編集のモーダルの層 (.fixed.inset-0) がある間も読み込み直さない (#2195 V3)', async () => {
+    const script = await scriptInjectedOnDataChange(<WebViewScreen path="/profile" reloadOnAiConsultationDataChange />);
+
+    expect(runOnPage(script, WEB_BASE_URL, '/profile', ['.fixed.inset-0']).reload).not.toHaveBeenCalled();
+    expect(runOnPage(script, WEB_BASE_URL, '/profile').reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('ページごとに足す要素は、そのページだけに効く (ほかのページの読み込み直しの条件は変えない)', async () => {
+    const script = await scriptInjectedOnDataChange(<WebViewScreen path="/menus/weekly" reloadOnAiConsultationDataChange />);
+
+    expect(runOnPage(script, WEB_BASE_URL, '/menus/weekly', ['.fixed.inset-0']).reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('ページごとに足す要素の鍵は、読み込み直してよい一覧のページ', () => {
+    for (const pathname of Object.keys(AI_CONSULTATION_RELOAD_PAGE_BLOCKING_SELECTORS)) {
+      expect(AI_CONSULTATION_RELOADABLE_PATHS).toContain(pathname);
+    }
+    expect(aiConsultationReloadBlockingSelectorOf('/profile')).toBe(`${AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR}, .fixed.inset-0`);
+    expect(aiConsultationReloadBlockingSelectorOf('/home')).toBe(AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR);
+    expect(aiConsultationReloadBlockingSelectorOf('constructor')).toBe(AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR);
+  });
 
   it('ページの中身 (document) を確かめられないときは読み込み直さない', async () => {
     const script = await scriptInjectedOnDataChange(<WebViewScreen path="/home" reloadOnAiConsultationDataChange />);
@@ -264,15 +317,13 @@ describe('入力の途中かもしれないページでは読み込み直さな�
       expect(fs.existsSync(webPage)).toBe(true);
       const tab = findNativeAppTab(pathname);
       expect(tab).not.toBeNull();
-      const tabFile = fs.readFileSync(path.join(__dirname, '../../app/(tabs)', `${tab?.name}.tsx`), 'utf8');
-      expect(tabFile).toMatch(/<WebViewScreen[\s\S]*?\breloadOnAiConsultationDataChange\b[\s\S]*?\/>/);
+      expect(passesReloadOnAiConsultationDataChange(tabSource(`${tab?.name}.tsx`))).toBe(true);
     },
   );
 
   it('reloadOnAiConsultationDataChange を渡すタブは、開いたときのページが一覧にある', () => {
     for (const tab of NATIVE_APP_TABS) {
-      const tabFile = fs.readFileSync(path.join(__dirname, '../../app/(tabs)', `${tab.name}.tsx`), 'utf8');
-      const passes = /<WebViewScreen[^>]*\breloadOnAiConsultationDataChange\b/.test(tabFile);
+      const passes = passesReloadOnAiConsultationDataChange(tabSource(`${tab.name}.tsx`));
       expect({ tab: tab.name, passes }).toEqual({
         tab: tab.name,
         passes: AI_CONSULTATION_RELOADABLE_PATHS.includes(tab.rootPath),
@@ -281,20 +332,145 @@ describe('入力の途中かもしれないページでは読み込み直さな�
   });
 });
 
-describe('タブの配線 (#2189 W2)', () => {
-  const tabSource = (file: string) => fs.readFileSync(path.join(__dirname, '../../app/(tabs)', file), 'utf8');
+/** タブのファイルのソース */
+function tabSource(file: string): string {
+  return fs.readFileSync(path.join(__dirname, '../../app/(tabs)', file), 'utf8');
+}
 
-  it.each(['home.tsx', 'menus.tsx', 'comparison.tsx'])(
+/** ブロックコメントと行コメントを除く (説明のコメントに語が出ても数えない) */
+function stripComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+}
+
+/**
+ * ソースの最初の <WebViewScreen …> の要素の文字列 (props の { } の中の > や /> では止まらない)。無ければ null。
+ * 以前の /<WebViewScreen[^>]*…/ は、header={<ProfileSettingsHeader />} の中の > で止まり、その後ろの props を見なかった (#2195 V3)
+ */
+function webViewScreenElementOf(source: string): string | null {
+  const code = stripComments(source);
+  const start = code.indexOf('<WebViewScreen');
+  if (start < 0) return null;
+  let braceDepth = 0;
+  for (let index = start + 1; index < code.length; index += 1) {
+    const char = code[index];
+    if (char === '{') braceDepth += 1;
+    else if (char === '}') braceDepth -= 1;
+    else if (char === '>' && braceDepth === 0) return code.slice(start, index + 1);
+  }
+  return null;
+}
+
+/** <WebViewScreen> に reloadOnAiConsultationDataChange を (false でなく) 渡しているか */
+function passesReloadOnAiConsultationDataChange(source: string): boolean {
+  const element = webViewScreenElementOf(source);
+  if (element === null) throw new Error('<WebViewScreen> が見つからない');
+  return /\breloadOnAiConsultationDataChange\b(?!\s*=\s*\{\s*false\s*\})/.test(element);
+}
+
+describe('タブの配線 (#2189 W2・#2195 V3)', () => {
+  it.each(['home.tsx', 'menus.tsx', 'comparison.tsx', 'profile.tsx'])(
     '%s (AI 相談の提案が変えるデータを出すタブ) は reloadOnAiConsultationDataChange を渡す',
     (file) => {
-      expect(tabSource(file)).toMatch(/<WebViewScreen[\s\S]*?\breloadOnAiConsultationDataChange\b[\s\S]*?\/>/);
+      expect(passesReloadOnAiConsultationDataChange(tabSource(file))).toBe(true);
     },
   );
 
-  it.each([
-    ['meals.tsx', 'スキャンのタブ (入力の途中の画面)'],
-    ['profile.tsx', 'マイページ (編集のモーダル・入力の画面)'],
-  ])('%s (%s) は渡さない (読み込み直すと入力が消える)', (file) => {
-    expect(tabSource(file)).not.toMatch(/<WebViewScreen[^>]*reloadOnAiConsultationDataChange/);
+  it('meals.tsx (スキャンのタブ。入力の途中の画面) は渡さない (読み込み直すと入力が消える)', () => {
+    expect(passesReloadOnAiConsultationDataChange(tabSource('meals.tsx'))).toBe(false);
+  });
+
+  it('マイページ (profile.tsx) だけが、タブが前に出たときに読み込み直す (aiConsultationReloadTiming="onFocus")', () => {
+    for (const tab of NATIVE_APP_TABS) {
+      const element = webViewScreenElementOf(tabSource(`${tab.name}.tsx`)) ?? '';
+      expect({ tab: tab.name, onFocus: /\baiConsultationReloadTiming="onFocus"/.test(element) }).toEqual({
+        tab: tab.name,
+        onFocus: tab.name === 'profile',
+      });
+    }
+  });
+
+  it('要素の読み取りは、props の中の JSX (header={<… />}) の > で止まらない (見張りの自己検査)', () => {
+    const withHeader = '<WebViewScreen path="/profile" header={<ProfileSettingsHeader />} reloadOnAiConsultationDataChange />';
+    expect(passesReloadOnAiConsultationDataChange(withHeader)).toBe(true);
+    // 以前の書き方は、この形の props を見落としていた
+    expect(/<WebViewScreen[^>]*reloadOnAiConsultationDataChange/.test(withHeader)).toBe(false);
+    expect(passesReloadOnAiConsultationDataChange('<WebViewScreen path="/meals/new" header={<X />} />')).toBe(false);
+    expect(passesReloadOnAiConsultationDataChange('<WebViewScreen path="/home" reloadOnAiConsultationDataChange={false} />')).toBe(false);
+    expect(
+      passesReloadOnAiConsultationDataChange('// reloadOnAiConsultationDataChange を渡さない\n<WebViewScreen path="/meals/new" />'),
+    ).toBe(false);
+    // 要素の後ろのコメントの語は数えない
+    expect(passesReloadOnAiConsultationDataChange('<WebViewScreen path="/meals/new" />\nconst note = 1; // reloadOnAiConsultationDataChange')).toBe(
+      false,
+    );
+  });
+});
+
+describe('マイページの読み込み直しの時機 (aiConsultationReloadTiming="onFocus"。#2195 V3)', () => {
+  it('知らせを受けたときにタブが前に出ていなければ読み込み直さず、次にタブが前に出たときに 1 回だけ読み込み直す', async () => {
+    mockNavigation.isFocused.mockReturnValue(false);
+    const { injectJavaScript } = await renderScreen(
+      <WebViewScreen path="/profile" reloadOnAiConsultationDataChange aiConsultationReloadTiming="onFocus" />,
+    );
+    const focus = navigationListenerOf('focus');
+    if (!focus) throw new Error('focus を購読していない');
+
+    notifyAiConsultationDataChanged();
+    notifyAiConsultationDataChanged();
+    expect(injectJavaScript).not.toHaveBeenCalled();
+
+    focus.callback();
+    expect(injectJavaScript).toHaveBeenCalledTimes(1);
+    const page = runOnPage(injectJavaScript.mock.calls[0][0], WEB_BASE_URL, '/profile');
+    expect(page.querySelector).toHaveBeenCalledWith(aiConsultationReloadBlockingSelectorOf('/profile'));
+    expect(page.reload).toHaveBeenCalledTimes(1);
+
+    // 知らせが無いまま前に出ても読み込み直さない
+    focus.callback();
+    expect(injectJavaScript).toHaveBeenCalledTimes(1);
+  });
+
+  it('知らせを受けたときにタブが前に出ていれば、すぐ読み込み直す (その後に前に出ても二度は読み込み直さない)', async () => {
+    mockNavigation.isFocused.mockReturnValue(true);
+    const { injectJavaScript } = await renderScreen(
+      <WebViewScreen path="/profile" reloadOnAiConsultationDataChange aiConsultationReloadTiming="onFocus" />,
+    );
+
+    notifyAiConsultationDataChanged();
+    expect(injectJavaScript).toHaveBeenCalledTimes(1);
+
+    navigationListenerOf('focus')?.callback();
+    expect(injectJavaScript).toHaveBeenCalledTimes(1);
+  });
+
+  it('時機を渡さない画面 (既定) は focus を購読せず、知らせを受けたときに読み込み直す', async () => {
+    mockNavigation.isFocused.mockReturnValue(false);
+    const { injectJavaScript } = await renderScreen(<WebViewScreen path="/home" reloadOnAiConsultationDataChange />);
+
+    expect(navigationListenerOf('focus')).toBeNull();
+    notifyAiConsultationDataChanged();
+    expect(injectJavaScript).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloadOnAiConsultationDataChange を渡さなければ、時機を渡しても何もしない', async () => {
+    const { injectJavaScript } = await renderScreen(<WebViewScreen path="/profile" aiConsultationReloadTiming="onFocus" />);
+
+    expect(navigationListenerOf('focus')).toBeNull();
+    notifyAiConsultationDataChanged();
+    expect(injectJavaScript).not.toHaveBeenCalled();
+  });
+
+  it('画面が外れたら、知らせと focus の購読を両方外す', async () => {
+    mockNavigation.isFocused.mockReturnValue(false);
+    const { injectJavaScript, unmount } = await renderScreen(
+      <WebViewScreen path="/profile" reloadOnAiConsultationDataChange aiConsultationReloadTiming="onFocus" />,
+    );
+    const focus = navigationListenerOf('focus');
+    if (!focus) throw new Error('focus を購読していない');
+    unmount();
+
+    expect(focus.unsubscribe).toHaveBeenCalledTimes(1);
+    notifyAiConsultationDataChanged();
+    expect(injectJavaScript).not.toHaveBeenCalled();
   });
 });
