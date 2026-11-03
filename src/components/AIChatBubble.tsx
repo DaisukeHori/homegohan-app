@@ -100,6 +100,7 @@ import {
   previousRequestNoteIdOf,
   previousRequestNoteTextOf,
   replyToSentMessageOf,
+  replyToUserMessageIdOf,
   sentMessageIndexOf,
   sentMessageReloadOutcomeOf,
   type PreviousRequestActionState,
@@ -820,13 +821,16 @@ export default function AIChatBubble() {
    * (#2206 G2。実行中の印の読み直しと同じ 1 回)。以前は予約が無く、あとで返答の保存と自動実行が済んでも、画面は
    * 『返答を作っているところかもしれません』のままで、データの更新 (mealPlanUpdated) も知らせなかった。
    * 返答があれば、開き直してもらう文 (placeholderId) を返答に置き換え、前の依頼の一文を足す (placeReloadedReply)。
+   * 返答は、最初の取り直しで分かった送った文の保存行の id (savedUserMessageId) のすぐ後ろの assistant で探す (本文の一致では
+   * 探さない。待つ間に同じ文を送り直すと、本文の一致は後の送信 (いちばん後ろの一致) とその返答を選び、前の送信の仮のメッセージに
+   * 後の返答を入れて同じ返答が 2 つ並び、前の送信の返答が出なかった。#2206 G2)。
    * 返答がまだ無い・取り直せないときは何もしない (文はそのまま)
    */
-  const recheckDeliveredNoReplyLater = (params: { sessionId: string; sent: SentText; placeholderId: string }) =>
+  const recheckDeliveredNoReplyLater = (params: { sessionId: string; savedUserMessageId: string; placeholderId: string }) =>
     scheduleRecheck(async () => {
       const loaded = await reloadConversationAfterIncompleteReply(params.sessionId);
       if (!loaded) return;
-      const reply = replyToSentMessageOf(params.sent, loaded);
+      const reply = replyToUserMessageIdOf(params.savedUserMessageId, loaded);
       if (!reply) return;
       await placeReloadedReply({ reply, placeholderId: params.placeholderId });
     });
@@ -899,7 +903,7 @@ export default function AIChatBubble() {
         }
         return m;
       }));
-      if (!serverFailed) recheckDeliveredNoReplyLater({ sessionId, sent, placeholderId: tempAiMsgId });
+      if (!serverFailed) recheckDeliveredNoReplyLater({ sessionId, savedUserMessageId: savedUser.id, placeholderId: tempAiMsgId });
       return;
     }
 

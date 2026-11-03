@@ -6,7 +6,9 @@
  *     頼み直しを勧めていた (二重に作りうる)
  *   - 記録を読み直して実行を待つ・失敗した行になっても、一文 (『実行中か実行済み』) とカード (『確かめられませんでした』) が残った
  *   - 同じ文を送り直すと、前の送信 (時間切れで確かめられず、画面に保存行の id が無い) を今回の送信と取り違え、前の返答の結果を出した
- *   - 返答がまだ無い (DELIVERED_NO_REPLY) ときに読み直しの予約が無く、あとで実行が済んでも mealPlanUpdated が出なかった
+ *   - 返答がまだ無い (DELIVERED_NO_REPLY) ときに読み直しの予約が無く、あとで実行が済んでも mealPlanUpdated が出なかった。
+ *     読み直しは送った文の保存行の id で返答を探す (本文で探すと、待つ間に同じ文を送り直したとき後の送信の返答を前の送信に入れ、
+ *     同じ返答が 2 つ並んで前の送信の返答が出なかった)
  *   - GET が実行できた (カードを出さない) 返答で、記録の直読みだけが失敗すると、通知が出なかった
  *   - サーバーが失敗を知らせた (SSE の error だけ) のに、取り直すと『返答を作っているところかもしれません』に上書きした
  *   - 取り直しの GET に上限が無く、返らないと送信中のまま止まった
@@ -403,6 +405,43 @@ describe('#2206 G2 返答がまだ無いとき (DELIVERED_NO_REPLY) も 1 回だ
     expect(occurrences(SENT_TEXT)).toBe(1);
     expect(mealPlanUpdated).toHaveBeenCalledTimes(1);
     expect(logs.reads[0].filters).toEqual([['message_id', REPLY_ID]]);
+  });
+
+  it('待つ間に同じ文を送り直しても、前の送信の仮のメッセージには前の送信の返答を入れる (同じ返答を 2 つ並べない)', async () => {
+    const earlierReply = { id: 'ai-earlier', role: 'assistant', content: '前の送信への返答です', proposedActions: null, createdAt: '2026-11-02T00:00:01.000Z' };
+    const laterUser = { id: 'user-later', role: 'user', content: SENT_TEXT, createdAt: '2026-11-02T00:00:05.000Z' };
+    const laterReply = { id: 'ai-later', role: 'assistant', content: '送り直しへの返答です', proposedActions: null, createdAt: '2026-11-02T00:00:06.000Z' };
+    await openChat();
+    // 1 回目の取り直し (2 回目の GET) では前の送信 (SAVED_USER) の返答がまだ無い。その後は、前の送信の返答と、
+    // 同じ文の送り直しとその返答がサーバーに保存されている
+    handlers[MESSAGES_KEY] = async () => {
+      messagesGets += 1;
+      return json(200, {
+        messages: messagesGets <= 2 ? [...OLD_MESSAGES, SAVED_USER] : [...OLD_MESSAGES, SAVED_USER, earlierReply, laterUser, laterReply],
+      });
+    };
+    await sendFromInput(async () => {
+      throw abortError();
+    });
+    await waitFor(() => text().includes(DELIVERED_NO_REPLY_TEXT));
+
+    // 返答を待つ間に同じ文を送り直す (これも時間切れ。取り直しで送り直しの返答が出る)
+    await sendFromInput(async () => {
+      throw abortError();
+    });
+
+    await waitFor(() => text().includes('前の送信への返答です') && text().includes('送り直しへの返答です'));
+    await waitPastRecheck();
+    expect(occurrences('前の送信への返答です')).toBe(1);
+    expect(occurrences('送り直しへの返答です')).toBe(1);
+    expect(occurrences(SENT_TEXT)).toBe(2);
+    expect(text()).not.toContain(DELIVERED_NO_REPLY_TEXT);
+    // 前の送信の返答が先、送り直しの返答が後 (送った順)
+    const texts = aiBubbleTexts();
+    expect(texts.findIndex((t) => t.includes('前の送信への返答です'))).toBeLessThan(texts.findIndex((t) => t.includes('送り直しへの返答です')));
+    // 同じ id (React の key) の吹き出しを 2 つ並べない
+    const errorTexts = vi.mocked(console.error).mock.calls.map((call) => call.map(String).join(' '));
+    expect(errorTexts.filter((t) => t.includes('same key'))).toEqual([]);
   });
 
   it('取り直しても返答がまだ無ければ、文はそのまま (取り直しは 1 回だけ)', async () => {

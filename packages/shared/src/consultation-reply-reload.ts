@@ -130,9 +130,27 @@ export function sentMessageIndexOf(sent: SentText, loaded: readonly ReloadedMess
  * (別の依頼への返答を「前の依頼」として扱わない)
  */
 export function replyToSentMessageOf<T extends ReloadedMessage>(sent: SentText, loaded: readonly T[]): T | null {
-  const sentIndex = sentMessageIndexOf(sent, loaded);
-  if (sentIndex < 0) return null;
-  for (const message of loaded.slice(sentIndex + 1)) {
+  return replyAfterUserMessageAt(sentMessageIndexOf(sent, loaded), loaded);
+}
+
+/**
+ * 取り直した会話の中の、id が userMessageId の user のメッセージへの AI の返答 (すぐ後ろの assistant のメッセージ。
+ * 返答の前に別の user のメッセージがあれば null)。その user のメッセージが無い・返答がまだ無いときも null。
+ * 送った文の保存行の id が分かったあと (一度取り直して、届いているが返答がまだ無いと分かったあとの読み直し) は、本文の一致
+ * (replyToSentMessageOf) で探さずにこの id で探す。本文で探すと、待つ間に同じ文を送り直したとき、後の送信 (いちばん後ろの一致) と
+ * その返答を前の送信の返答と取り違える (#2206 G2)
+ */
+export function replyToUserMessageIdOf<T extends ReloadedMessage>(userMessageId: string, loaded: readonly T[]): T | null {
+  return replyAfterUserMessageAt(
+    loaded.findIndex((message) => message.role === 'user' && message.id === userMessageId),
+    loaded,
+  );
+}
+
+/** loaded の index の user のメッセージのすぐ後ろの assistant のメッセージ (index が負・返答の前に別の user のメッセージ・返答が無い → null) */
+function replyAfterUserMessageAt<T extends ReloadedMessage>(index: number, loaded: readonly T[]): T | null {
+  if (index < 0) return null;
+  for (const message of loaded.slice(index + 1)) {
     if (message.role === 'assistant') return message;
     if (message.role === 'user') return null;
   }

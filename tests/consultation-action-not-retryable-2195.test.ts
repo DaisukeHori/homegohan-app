@@ -20,6 +20,11 @@
  *   - (2) 積み込みの例外のときは、ジョブの無い料理を保存済みの献立の上で見送りの状態 ('failed' + 'enqueue_failed') に書き直す
  *     (以前は 'pending' のまま「料理画像を生成中」に残った)。処理の起動 (trigger) の例外は記録だけで、数え戻さない
  *     (以前は数え戻していた。積んだジョブは定期の処理が拾うので、安全弁を 1 回ぶん少なく数えた)
+ *
+ * #2206 G2:
+ *   - AI が作った値の誤りの表 (POSTGRES_AI_VALUE_ERROR_CODES) に 22007 (日付の形)・22008 (存在しない日付)・23503 (存在しない行への参照) を足す
+ *   - 読み取りだけでなく、AI の値を書く書き込み (冷蔵庫の食材の賞味期限など) の失敗がこの表にあるときも notRetryable を付ける
+ *     (以前は add_pantry_item・update_pantry_item の賞味期限が 'abc'・'2026-13-45' でも行が pending に残り、「実行する」が毎回同じ失敗になった)
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AI_USAGE_ALLOWED } from './helpers/ai-usage-mock';
@@ -442,5 +447,69 @@ describe('AI が作った値の誤り (22007・22008・23503) も、22P02 と同
       expect(out.success).toBe(false);
       expect(out).not.toHaveProperty('notRetryable');
     }
+  });
+});
+
+// ─────────────────────────────────────────────
+// 書き込みが AI が作った値の誤りで失敗した (#2206 G2)
+// ─────────────────────────────────────────────
+describe('書き込みが AI が作った値の誤り (22007・22008・23503・22P02) で失敗したら notRetryable を付ける (#2206 G2)', () => {
+  /** [名前, action_type, パラメータ (検査を通る値), 書き込みの前の読み取り] — 書き込みが成功すれば実行は成功する */
+  const WRITE_CASES: Array<[string, string, Record<string, unknown>, ReadOutcomes]> = [
+    ['add_pantry_item: 食材の insert (賞味期限が date の列)', 'add_pantry_item', { name: '卵', expirationDate: 'abc' }, {}],
+    [
+      'update_pantry_item: 食材の update (賞味期限が date の列)',
+      'update_pantry_item',
+      { itemId: 'p1', updates: { expirationDate: '2026-13-45' } },
+      { pantry_items: { data: { user_id: USER.id } } },
+    ],
+    ['update_meal: 献立の update', 'update_meal', { mealId: 'meal-1', updates: { dish_name: '鮭' } }, { planned_meals: OWN_MEAL }],
+    ['update_shopping_item: 品の update', 'update_shopping_item', { itemId: 'i1', updates: { item_name: '卵' } }, OWN_SHOPPING],
+    ['update_nutrition_target: 栄養目標の upsert', 'update_nutrition_target', { targets: { protein_g: 60 } }, {}],
+    ['set_health_goal: 健康目標の insert', 'set_health_goal', { goalType: 'weight', targetValue: 60 }, {}],
+    ['update_health_goal: 健康目標の update', 'update_health_goal', { goalId: 'g1', updates: { note: 'x' } }, OWN_GOAL],
+    ['add_health_record: 健康記録の upsert', 'add_health_record', { date: '2026-11-01', weight: 60 }, {}],
+    ['update_health_record: 健康記録の update', 'update_health_record', { date: '2026-11-01', updates: { weight: 60 } }, {}],
+    ['update_profile_preferences: プロフィールの update', 'update_profile_preferences', { updates: { height: 170 } }, {}],
+  ];
+  /** 表 (POSTGRES_AI_VALUE_ERROR_CODES) にある失敗 */
+  const AI_VALUE_WRITE_ERRORS: Array<[string, { message: string; code: string }]> = [
+    ['22007 (日付の形が崩れている)', { message: 'invalid input syntax for type date: "abc"', code: '22007' }],
+    ['22008 (存在しない日付)', { message: 'date/time field value out of range: "2026-13-45"', code: '22008' }],
+    ['23503 (存在しない行を指している)', { message: 'violates foreign key constraint', code: '23503' }],
+    ['22P02 (id の形が崩れている)', MALFORMED_ID],
+  ];
+
+  /** 書き込み (update / insert / upsert / delete) は writeOutcome、読み取りは reads の表ごとの結果 */
+  function respondWrite(reads: ReadOutcomes, writeOutcome: QueryOutcome) {
+    return (query: RecordedQuery): QueryOutcome => {
+      if (WRITE_METHODS.has(firstMethodOf(query) ?? '')) return writeOutcome;
+      return reads[query.table] ?? { data: null };
+    };
+  }
+
+  const CROSS = WRITE_CASES.flatMap(([name, actionType, params, reads]) =>
+    AI_VALUE_WRITE_ERRORS.map(([errorName, error]) => [`${name} が ${errorName}`, actionType, params, reads, error] as const),
+  );
+
+  it.each(CROSS)('%s: 行は failed (「実行する」を出し続けない)', async (_name, actionType, params, reads, error) => {
+    const { out } = await runRecorded(actionType, params, respondWrite(reads, { error }));
+
+    expect(out).toMatchObject({ success: false, notRetryable: true });
+    expect(aiActionLogStatusAfterRun(actionType, out)).toBe('failed');
+  });
+
+  it.each(WRITE_CASES)('%s: 一時的なことがある書き込みの失敗 (XX000) には付けない (行は pending)', async (_name, actionType, params, reads) => {
+    const { out } = await runRecorded(actionType, params, respondWrite(reads, { error: DB_FAILURE }));
+
+    expect(out.success).toBe(false);
+    expect(out).not.toHaveProperty('notRetryable');
+    expect(aiActionLogStatusAfterRun(actionType, out)).toBe('pending');
+  });
+
+  it.each(WRITE_CASES)('%s: 書き込みが成功すれば成功 (パラメータは検査を通る値。上の失敗は書き込みで起きている)', async (_name, actionType, params, reads) => {
+    const { out } = await runRecorded(actionType, params, respondWrite(reads, { data: { id: 'new-1' } }));
+
+    expect(out.success).toBe(true);
   });
 });

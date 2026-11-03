@@ -21,6 +21,7 @@ import {
   previousRequestNoteIdOf,
   previousRequestNoteTextOf,
   replyToSentMessageOf,
+  replyToUserMessageIdOf,
   sentMessageIndexOf,
   sentMessageReloadOutcomeOf,
 } from '@homegohan/shared';
@@ -117,6 +118,26 @@ describe('#2201 U3 送った文と返答の見分け', () => {
     // 今回の返答がまだ無い: 前の送信の返答を今回の返答と見なさない
     expect(replyToSentMessageOf(sent, [...old, ...earlierSend, thisSend])).toBeNull();
     expect(sentMessageReloadOutcomeOf(sent, [...old, ...earlierSend, thisSend])).toBe('delivered-no-reply');
+  });
+
+  it('replyToUserMessageIdOf: 保存行の id のすぐ後ろの assistant。同じ文を後から送り直しても、後の送信の返答と取り違えない (#2206 G2)', () => {
+    // 前の送信 (m3) は届いているが返答がまだ無いと分かったあと、待つ間に同じ文 (m5) を送り直し、両方の返答が保存された
+    const earlierUser = { id: 'm3', role: 'user', content: '1食作って' };
+    const earlierReply = { id: 'm4', role: 'assistant', content: '前の返答' };
+    const laterUser = { id: 'm5', role: 'user', content: '1食作って' };
+    const laterReply = { id: 'm6', role: 'assistant', content: '後の返答' };
+    const loaded = [...old, earlierUser, earlierReply, laterUser, laterReply];
+
+    expect(replyToUserMessageIdOf('m3', loaded)).toBe(earlierReply);
+    expect(replyToUserMessageIdOf('m5', loaded)).toBe(laterReply);
+    // 本文の一致 (いちばん後ろ) で探すと後の送信の返答になる (前の送信の読み直しでは使わない)
+    expect(replyToSentMessageOf(sent, loaded)).toBe(laterReply);
+    // 前の送信の返答がまだ無く、後の送信が続く: 後の送信の返答を前の送信の返答と見なさない
+    expect(replyToUserMessageIdOf('m3', [...old, earlierUser, laterUser, laterReply])).toBeNull();
+    // 保存行が無い・返答がまだ無い・id が assistant のもの
+    expect(replyToUserMessageIdOf('m9', loaded)).toBeNull();
+    expect(replyToUserMessageIdOf('m3', [...old, earlierUser])).toBeNull();
+    expect(replyToUserMessageIdOf('m4', loaded)).toBeNull();
   });
 
   it('sentMessageReloadOutcomeOf: 届いていない・届いて返答がまだ無い・返答がある', () => {
