@@ -1148,13 +1148,15 @@ describe('取り直しの失敗では今の表示を残す (#2201 U1)', () => {
         await notifyAiConsultationSucceeded();
         expect(screenSignature(container), `${c.page} の取り直しの失敗で、出ていた表示が変わった`).toBe(shown);
 
-        // 失敗のあとも受け手は止まっていない: 次の成功で読み直せる
+        // 失敗のあとも受け手は止まっていない: 次の成功で読み直せる (空の応答で取り直した画面 = 空の応答で開いた画面)
         server.failure = null;
         setServer(c.empty);
         await notifyAiConsultationSucceeded();
+        const refetchedToEmpty = screenSignature(container);
         await remount(c);
         const freshEmpty = screenSignature(container);
         expect(freshEmpty, `${c.page} の空の応答が中身のある応答と同じ画面 (検査が空振りしている)`).not.toBe(shown);
+        expect(refetchedToEmpty, `${c.page} が取り直しの失敗のあと、次の成功で読み直さない`).toBe(freshEmpty);
       });
     }
   }
