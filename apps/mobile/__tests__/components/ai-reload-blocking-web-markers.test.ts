@@ -213,6 +213,41 @@ function conditionalJsxOf(sourceFile: ts.SourceFile, condition: string): ts.Expr
   return found[0];
 }
 
+/**
+ * 部品が描く、同じリポジトリの部品をたどる深さ。モーダルが共通の枠 (src/components/common/BottomSheet.tsx。role="dialog" を持つ)
+ * や入力の欄の部品を描くときに、その中の印も数えるため。2 段 (モーダル → 枠 → 枠の中の部品) あれば今の部品は足りる
+ */
+const COMPONENT_FOLLOW_DEPTH = 2;
+
+/** ファイルが描く、大文字で始まる部品の名前 (重複なし) */
+function renderedComponentsOf(sourceFile: ts.SourceFile): string[] {
+  const names = jsxElementsIn(sourceFile)
+    .map(tagNameOf)
+    .filter((name) => /^[A-Z][A-Za-z0-9]*$/.test(name));
+  return [...new Set(names)];
+}
+
+/**
+ * 部品のファイル (とそれが描く同じリポジトリの部品。COMPONENT_FOLLOW_DEPTH 段まで) が、読み込み直しを止める印を持つか。
+ * 外のライブラリの部品 (lucide-react など) と、ファイルにできない部品はたどらない
+ */
+function componentHasBlockingMarker(file: string, depth = COMPONENT_FOLLOW_DEPTH, visited: Set<string> = new Set()): boolean {
+  if (visited.has(file)) return false;
+  visited.add(file);
+  const sourceFile = parse(read(file), file);
+  if (hasBlockingMarkerIn(sourceFile)) return true;
+  if (depth <= 0) return false;
+  return renderedComponentsOf(sourceFile).some((name) => {
+    const specifier = importSpecifierOf(name, sourceFile);
+    const resolved = specifier ? resolveModule(specifier, file) : null;
+    if (!resolved) return false;
+    const definition = /^index\.tsx?$/.test(path.basename(resolved))
+      ? resolveSourceFile(path.join(path.dirname(resolved), name))
+      : resolved;
+    return definition ? componentHasBlockingMarker(definition, depth - 1, visited) : false;
+  });
+}
+
 const pageFileOf = (pathname: string) => path.join(MAIN_PAGES, pathname, 'page.tsx');
 
 describe('/menus/weekly のモーダルは、読み込み直しを止める印を持つ (#2195 V3)', () => {
@@ -226,7 +261,7 @@ describe('/menus/weekly のモーダルは、読み込み直しを止める印�
   });
 
   it.each(modalFiles.map((name) => [name]))('_components/modals/%s は role="dialog" か入力の部品を持つ', (name) => {
-    expect(hasBlockingMarker(read(path.join(WEEKLY_MODALS_DIR, name)))).toBe(true);
+    expect(componentHasBlockingMarker(path.join(WEEKLY_MODALS_DIR, name))).toBe(true);
   });
 
   it('ページが描く名前が Modal / Dialog の部品は、認めた部品を除いて印を持つ', () => {
@@ -235,7 +270,7 @@ describe('/menus/weekly のモーダルは、読み込み直しを止める印�
     expect(components).toEqual(expect.arrayContaining(['V4GenerateModal', 'ConfirmDeleteModal', 'CancelGenerationConfirmModal']));
     const missing = components
       .filter((name) => !Object.prototype.hasOwnProperty.call(KNOWN_NON_BLOCKING_DIALOGS, name))
-      .filter((name) => !hasBlockingMarker(read(componentFileOf(name, pageFile))));
+      .filter((name) => !componentHasBlockingMarker(componentFileOf(name, pageFile)));
     expect(missing).toEqual([]);
   });
 
@@ -244,7 +279,7 @@ describe('/menus/weekly のモーダルは、読み込み直しを止める印�
     const components = dialogLikeComponentsOf(pageFile);
     for (const name of Object.keys(KNOWN_NON_BLOCKING_DIALOGS)) {
       expect(components).toContain(name);
-      expect({ name, marked: hasBlockingMarker(read(componentFileOf(name, pageFile))) }).toEqual({ name, marked: false });
+      expect({ name, marked: componentHasBlockingMarker(componentFileOf(name, pageFile)) }).toEqual({ name, marked: false });
     }
   });
 });
@@ -254,7 +289,7 @@ describe('ほかの一覧のページが描く名前が Modal / Dialog の部品
     '%s',
     (pathname) => {
       const pageFile = pageFileOf(pathname);
-      const missing = dialogLikeComponentsOf(pageFile).filter((name) => !hasBlockingMarker(read(componentFileOf(name, pageFile))));
+      const missing = dialogLikeComponentsOf(pageFile).filter((name) => !componentHasBlockingMarker(componentFileOf(name, pageFile)));
       expect(missing).toEqual([]);
     },
   );
@@ -314,6 +349,18 @@ describe('/profile の編集のモーダルは、ページごとに足した要�
       ),
     ).filter((element) => tagNameOf(element) === 'div');
     expect(elements.map((element) => hasAllClasses(element, classes))).toEqual([true, false, false, true]);
+  });
+});
+
+describe('部品をたどる判定 (見張りの自己検査)', () => {
+  it('共通の枠 (BottomSheet) を描くだけのモーダルは、枠の role="dialog" で印を持つ', () => {
+    const bottomSheet = resolveSourceFile(path.join(WEB_SRC, 'components/common/BottomSheet'));
+    expect(bottomSheet).not.toBeNull();
+    expect(hasBlockingMarker(read(bottomSheet ?? ''))).toBe(true);
+    const improve = path.join(WEEKLY_MODALS_DIR, 'ImproveMealModal.tsx');
+    expect(hasBlockingMarker(read(improve))).toBe(false);
+    expect(componentHasBlockingMarker(improve)).toBe(true);
+    expect(componentHasBlockingMarker(improve, 0)).toBe(false);
   });
 });
 
