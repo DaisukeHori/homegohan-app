@@ -300,28 +300,69 @@ describe('useAiConsultationDataRefetch (#2195 V1)', () => {
     expect(refetch).not.toHaveBeenCalled();
   });
 
-  it('ページに入力欄があれば取り直さない・閉じたら次の成功で取り直す', async () => {
+  it('ページに入力欄があれば取り直さない・閉じたら止めた成功のぶん 1 回取り直す (#2201 U2)', async () => {
     const refetch = vi.fn();
     await act(async () => {
       root.render(<Receiver refetch={refetch} />);
     });
     const holder = addToBody('<input type="text" value="打ちかけ">');
 
+    // 止めている間に何回来ても、外れたときの取り直しは 1 回
+    await notifyAiConsultationSucceeded();
     await notifyAiConsultationSucceeded();
     expect(refetch).not.toHaveBeenCalled();
 
-    holder.remove();
-    await notifyAiConsultationSucceeded();
+    await act(async () => {
+      holder.remove();
+    });
     expect(refetch).toHaveBeenCalledTimes(1);
+
+    // 外れたあとの成功は、これまでどおりすぐ取り直す
+    await notifyAiConsultationSucceeded();
+    expect(refetch).toHaveBeenCalledTimes(2);
   });
 
-  it('ページにモーダルが開いていれば取り直さない', async () => {
+  it('ページにモーダルが開いていれば取り直さない・閉じたら 1 回取り直す (#2201 U2)', async () => {
     const refetch = vi.fn();
     await act(async () => {
       root.render(<Receiver refetch={refetch} />);
     });
-    addToBody('<div role="dialog"><p>確認</p></div>');
+    const modal = addToBody('<div role="dialog"><p>確認</p></div>');
     await notifyAiConsultationSucceeded();
+    expect(refetch).not.toHaveBeenCalled();
+
+    // role を外す (属性の変化) でも番兵が外れる
+    await act(async () => {
+      modal.firstElementChild!.removeAttribute('role');
+    });
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('止めた成功が無ければ、モーダルを閉じても取り直さない (#2201 U2)', async () => {
+    const refetch = vi.fn();
+    await act(async () => {
+      root.render(<Receiver refetch={refetch} />);
+    });
+    const modal = addToBody('<div role="dialog"><p>確認</p></div>');
+    await act(async () => {
+      modal.remove();
+    });
+    expect(refetch).not.toHaveBeenCalled();
+  });
+
+  it('止めている間にページを離れたら (アンマウント)、あとで番兵が外れても取り直さない (#2201 U2)', async () => {
+    const refetch = vi.fn();
+    await act(async () => {
+      root.render(<Receiver refetch={refetch} />);
+    });
+    const modal = addToBody('<div role="dialog"><p>確認</p></div>');
+    await notifyAiConsultationSucceeded();
+    await act(async () => {
+      root.render(<p>別のページ</p>);
+    });
+    await act(async () => {
+      modal.remove();
+    });
     expect(refetch).not.toHaveBeenCalled();
   });
 
@@ -366,8 +407,8 @@ describe('useAiConsultationDataRefetch (#2195 V1)', () => {
 
 describe('useAiConsultationRefetchKey (#2195 V1)', () => {
   function KeyView() {
-    const key = useAiConsultationRefetchKey();
-    return <p data-testid="refetch-key">{key}</p>;
+    const { refetchKey } = useAiConsultationRefetchKey();
+    return <p data-testid="refetch-key">{refetchKey}</p>;
   }
   const keyText = () => container.querySelector('[data-testid="refetch-key"]')?.textContent;
 
@@ -384,9 +425,14 @@ describe('useAiConsultationRefetchKey (#2195 V1)', () => {
     await notifyAiConsultationSucceeded();
     expect(keyText()).toBe('1');
 
-    holder.remove();
-    await notifyAiConsultationSucceeded();
+    // 外れたら止めた成功のぶん 1 つ増える (#2201 U2)
+    await act(async () => {
+      holder.remove();
+    });
     expect(keyText()).toBe('2');
+
+    await notifyAiConsultationSucceeded();
+    expect(keyText()).toBe('3');
   });
 });
 
@@ -855,37 +901,37 @@ describe('受け手の配線 (#2195 V1)', () => {
       page: '献立表 (/menus/weekly): 表示中の週・冷蔵庫・人数の設定・家族の一覧と名前を取り直し、週のキャッシュと取得済みの範囲を捨ててから回数を増やす',
       file: 'src/app/(main)/menus/weekly/page.tsx',
       wiring:
-        /const refetchAfterAiConsultation = useCallback\(\(\) => \{\s*weekDataCache\.current\.clear\(\);\s*fetchedRangesRef\.current\.clear\(\);\s*void refreshMealPlan\(\);\s*void fetchPantry\(\);\s*void fetchUserSettings\(\);\s*void loadFamilyData\(\);\s*setAiConsultationRefetchRound\(\(round\) => round \+ 1\);\s*\}, \[refreshMealPlan, fetchPantry, fetchUserSettings, loadFamilyData\]\);\s*useAiConsultationDataRefetch\(refetchAfterAiConsultation\);/,
+        /const refetchAfterAiConsultation = useCallback\(\(\) => \{\s*weekDataCache\.current\.clear\(\);\s*fetchedRangesRef\.current\.clear\(\);\s*void refreshMealPlan\(\);\s*void fetchPantry\(\);\s*void fetchUserSettings\(\);\s*void loadFamilyData\('refetch'\);\s*setAiConsultationRefetchRound\(\(round\) => round \+ 1\);\s*\}, \[refreshMealPlan, fetchPantry, fetchUserSettings, loadFamilyData\]\);\s*useAiConsultationDataRefetch\(refetchAfterAiConsultation, \{ writeInFlightRef: pendingWrites \}\);/,
     },
     {
       page: 'ホーム (/home): useHomeData の refetch',
       file: 'src/app/(main)/home/page.tsx',
-      wiring: /refetch,\s*\} = useHomeData\(\);[\s\S]*?useAiConsultationDataRefetch\(refetch\);/,
+      wiring: /refetch,\s*aiConsultationWrites,\s*\} = useHomeData\(\);[\s\S]*?useAiConsultationDataRefetch\(refetch, \{ writeInFlightRef: aiConsultationWrites \}\);/,
     },
     {
       page: '比較 (/comparison): 取得の useEffect の依存に数を足す',
       file: 'src/app/(main)/comparison/page.tsx',
-      wiring: /const aiConsultationRefetchKey = useAiConsultationRefetchKey\(\);[\s\S]*?\}, \[periodType, aiConsultationRefetchKey\]\);/,
+      wiring: /const \{ refetchKey: aiConsultationRefetchKey \} = useAiConsultationRefetchKey\(\);[\s\S]*?\}, \[periodType, aiConsultationRefetchKey, takeAiConsultationRefetchRun\]\);/,
     },
     {
       page: '冷蔵庫 (/pantry): fetchItems',
       file: 'src/app/(main)/pantry/page.tsx',
-      wiring: /useAiConsultationDataRefetch\(fetchItems\);/,
+      wiring: /useAiConsultationDataRefetch\(fetchItems, \{ writeInFlightRef: pendingWrites \}\);/,
     },
     {
       page: '健康 (/health): fetchData と、出している選んだ日のパネルの記録',
       file: 'src/app/(main)/health/page.tsx',
-      wiring: /await Promise\.all\(\[fetchData\(\), reloadSelectedDate\(\)\]\);\s*\}, \[fetchData\]\);[\s\S]*?useAiConsultationDataRefetch\(refetchAfterAiConsultation\);/,
+      wiring: /await Promise\.all\(\[fetchData\(ticket, 'refetch'\), reloadSelectedDate\(\)\]\);\s*\}, \[fetchData\]\);[\s\S]*?useAiConsultationDataRefetch\(refetchAfterAiConsultation\);/,
     },
     {
       page: '健康目標 (/health/goals): fetchGoals',
       file: 'src/app/(main)/health/goals/page.tsx',
-      wiring: /useAiConsultationDataRefetch\(fetchGoals\);/,
+      wiring: /useAiConsultationDataRefetch\(\s*\(ticket\) => fetchGoals\(ticket, 'refetch'\),\s*\{ writeInFlightRef \},\s*\);/,
     },
     {
       page: 'マイページ (/profile): 取得の useEffect の依存に数を足す',
       file: 'src/app/(main)/profile/page.tsx',
-      wiring: /const aiConsultationRefetchKey = useAiConsultationRefetchKey\(\);\s*useEffect\(\(\) => \{\s*const getData = async \(\) => \{[\s\S]*?void getData\(\);\s*\}, \[aiConsultationRefetchKey\]\);/,
+      wiring: /const \{ refetchKey: aiConsultationRefetchKey \} = useAiConsultationRefetchKey\(\);[\s\S]*?useEffect\(\(\) => \{[\s\S]*?const getData = async \(\) => \{[\s\S]*?void getData\(\);[\s\S]*?\}, \[aiConsultationRefetchKey, takeAiConsultationRefetchRun\]\);/,
     },
   ];
   it.each(WIRING)('$page', ({ file, wiring }) => {

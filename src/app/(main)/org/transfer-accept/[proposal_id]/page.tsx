@@ -87,11 +87,13 @@ export default function TransferAcceptPage() {
   const busyRef = useRef(false);
 
   // 提案・組織名・提案者を読む。画面を開いたとき・「再試行」・承諾 / 拒否の通信エラーのあと・AI 相談の成功 (#2195 V1) のあとに呼ぶ。
-  // 読み込み中の表示 (loading) は呼び出し側が決める (承諾 / 拒否と AI 相談の成功のあとの読み直しは、提案の表示を残したまま読み直す)
+  // 読み込み中の表示 (loading) は呼び出し側が決める (承諾 / 拒否と AI 相談の成功のあとの読み直しは、提案の表示を残したまま読み直す)。
+  // mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込めなかったときは「読み込めませんでした」に置き換えずに今の表示を残す。
+  // 応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ
   const fetchProposal = useCallback(async (ticket: AiConsultationFetchTicket, mode: ProposalReadMode) => {
     /** 読み込めなかった: 開いたとき・「再試行」・承諾 / 拒否の通信エラーのあとは「読み込めませんでした」を出し、取り直しは今の表示を残す */
     const loadFailed = () => {
-      if (mode === 'mount' && ticket.isLatest()) loadFailed();
+      if (mode === 'mount' && ticket.isLatest()) setLoadError(PROPOSAL_LOAD_ERROR);
     };
     try {
       // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
