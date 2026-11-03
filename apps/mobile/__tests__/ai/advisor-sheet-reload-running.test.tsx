@@ -12,6 +12,10 @@
  *   2. 読み直しでもまだ実行中の印のまま・読めない → 一文はそのまま、知らせない (読み直しは 1 回だけ)
  *   3. 応答の本文を読めなかったときの取り直しでも同じ
  *   4. シートを外したら、読み直さない
+ *   5. (#2206 G2) 記録の行がまだ無い・読めないのに返答に提案がある (サーバーは返答を保存してから行を作る) ときも、実行中の印と
+ *      同じく一文を出して 1 回だけ読み直す。提案が無く記録を読めないときは、一文を出さずに 1 回だけ読み直し、実行できていれば
+ *      返答のすぐ後に一文を足して知らせる (Web の AIChatBubble と同じく、shared の previousRequestNotePlanOf で決める。
+ *      以前はこのシートに判定の写しがあり、どちらも何も出さず読み直しもしなかった)
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Alert } from 'react-native';
@@ -179,6 +183,22 @@ async function sendWithUnreadableBody(messages: unknown[]) {
 
 const APPROVED = { data: [{ status: 'approved' }], error: null };
 const EXECUTED = { data: [{ status: 'executed' }], error: null };
+const NO_ROW_YET = { data: [], error: null };
+const READ_ERROR = { data: null, error: { message: 'permission denied' } };
+
+/**
+ * 返答を保存した直後で、提案の記録の行がまだ無いときに会話の GET が返す形 (行が無いので failed。サーバーの
+ * src/lib/ai/consultation-action-lifecycle.ts の proposedActionViewOf([]))。このシートは提案を描かないが、提案があることは読む
+ */
+const SAVED_MESSAGES_WITH_PROPOSAL = [
+  ...SAVED_MESSAGES.slice(0, -1),
+  {
+    ...SAVED_MESSAGES[SAVED_MESSAGES.length - 1],
+    proposedActions: { type: 'generate_single_meal', params: { date: '2026-11-01', mealType: 'dinner' } },
+    proposedActionExecutable: false,
+    proposedActionNotExecutableReason: 'failed',
+  },
+];
 
 async function waitPastRecheck() {
   await act(async () => {
@@ -267,5 +287,98 @@ describe('AIAdvisorSheet — 応答の本文を読めなかったときの取り
     expect(screen.queryByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeNull();
     expect(dataChanged).toHaveBeenCalledTimes(1);
     expect(alertSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('AIAdvisorSheet — 記録の行がまだ無い・読めないのに返答に提案がある (#2206 G2。Web と同じ shared の決まり)', () => {
+  it.each([
+    ['時間切れの後の「最新の会話を読み込む」', sendTimeOutAndReload],
+    ['応答の本文を読めなかったときの自動の取り直し', sendWithUnreadableBody],
+  ])(
+    '%s で行が 0 件なら、結果をまだ確かめられない一文を返答のすぐ後に出し、読み直して実行できていれば置き換えて 1 回知らせる',
+    async (_label, sendAndReload) => {
+      actionLogsReads(NO_ROW_YET, EXECUTED);
+      await openSheet();
+      await sendAndReload(SAVED_MESSAGES_WITH_PROPOSAL);
+
+      await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeTruthy());
+      let texts = renderedTexts();
+      expect(texts.indexOf(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBe(texts.indexOf(SAVED_REPLY) + 1);
+      expect(dataChanged).not.toHaveBeenCalled();
+
+      await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeTruthy());
+      expect(screen.queryByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeNull();
+      texts = renderedTexts();
+      expect(texts.indexOf(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBe(texts.indexOf(SAVED_REPLY) + 1);
+      expect(dataChanged).toHaveBeenCalledTimes(1);
+      expect(mockEq).toHaveBeenCalledTimes(2);
+      expect(alertSpy).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['失敗を返した', READ_ERROR],
+    ['例外を投げた', new Error('Network request failed')],
+  ])('記録の読み取りが %s ときも、返答に提案があれば実行中の印と同じく一文を出して 1 回だけ読み直す', async (_label, firstRead) => {
+    actionLogsReads(firstRead, EXECUTED);
+    await openSheet();
+    await sendTimeOutAndReload(SAVED_MESSAGES_WITH_PROPOSAL);
+
+    await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeTruthy());
+    expect(screen.queryByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeNull();
+    expect(dataChanged).toHaveBeenCalledTimes(1);
+    expect(mockEq).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('AIAdvisorSheet — 提案の無い返答で記録を読めなかった (#2206 G2。Web と同じ shared の決まり)', () => {
+  it.each([
+    ['失敗を返した', READ_ERROR],
+    ['例外を投げた', new Error('Network request failed')],
+  ])('読み取りが %s なら、一文を出さずに 1 回だけ読み直し、実行できていれば返答のすぐ後に一文を足して知らせる', async (_label, firstRead) => {
+    actionLogsReads(firstRead, EXECUTED);
+    await openSheet();
+    await sendTimeOutAndReload(SAVED_MESSAGES);
+
+    await waitFor(() => expect(screen.getByText(SAVED_REPLY)).toBeTruthy());
+    expect(screen.queryByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeNull();
+    expect(screen.queryByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeNull();
+
+    await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeTruthy());
+    const texts = renderedTexts();
+    expect(texts.indexOf(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBe(texts.indexOf(SAVED_REPLY) + 1);
+    expect(texts.filter((text) => text === PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toHaveLength(1);
+    expect(screen.queryByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeNull();
+    expect(dataChanged).toHaveBeenCalledTimes(1);
+    expect(mockEq).toHaveBeenCalledTimes(2);
+    expect(mockEq).toHaveBeenLastCalledWith('message_id', REPLY_ID);
+  });
+
+  it('読み直しでも読めなければ、何も足さず知らせない (読み直しは 1 回だけ)', async () => {
+    actionLogsReads(READ_ERROR);
+    await openSheet();
+    await sendTimeOutAndReload(SAVED_MESSAGES);
+
+    await waitFor(() => expect(mockEq).toHaveBeenCalledTimes(2));
+    await waitPastRecheck();
+    expect(screen.queryByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeNull();
+    expect(screen.queryByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeNull();
+    expect(dataChanged).not.toHaveBeenCalled();
+    expect(mockEq).toHaveBeenCalledTimes(2);
+  });
+
+  it('読めて行が無ければ (提案の無い返答)、何も足さず読み直さない (上の対照)', async () => {
+    actionLogsReads(NO_ROW_YET, EXECUTED);
+    await openSheet();
+    await sendTimeOutAndReload(SAVED_MESSAGES);
+
+    await waitFor(() => expect(screen.getByText(SAVED_REPLY)).toBeTruthy());
+    await waitFor(() => expect(mockEq).toHaveBeenCalledTimes(1));
+    await waitPastRecheck();
+    expect(mockEq).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeNull();
+    expect(screen.queryByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeNull();
+    expect(dataChanged).not.toHaveBeenCalled();
   });
 });

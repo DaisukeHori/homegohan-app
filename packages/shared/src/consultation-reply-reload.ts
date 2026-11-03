@@ -21,7 +21,13 @@
  *     いれば、一文を PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE に置き換える (#2206 G2。以前は『実行中か実行済み』のまま残った)
  *   - 実行を待つ (pending)・失敗した (failed) 行だけなら、実行していない一文 (PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE) を足す
  *     (#2206 G2。読み直しで分かったときと同じ文)
- *   - それ以外 (行が無い・断った・記録を読めない) は何も足さない (実行したと言い切れない)
+ *   - 行がまだ無い・記録を読めないのに返答に提案がある (GET が提案を返した) ときは、実行中の印と同じく扱う (#2206 G2。
+ *     サーバーは返答を保存してから行を作るので、その間に取り直しが当たると行がまだ無い)
+ *   - それ以外 (行が無い・断った・記録を読めない) は何も足さない (実行したと言い切れない)。記録を読めなかったときは、
+ *     少し待って 1 回だけ読み直す (#2206 G2。実行できていれば一文を足して知らせる)
+ *   - この決まりは previousRequestNotePlanOf (取り直したとき) と previousRequestRecheckPlanOf・
+ *     messagesAfterPreviousRequestRecheck (読み直したとき) の 1 か所で決め、Web とモバイルの画面はその結果を描くだけにする
+ *     (#2206 G2。以前は画面ごとに判定を写していて、Web にだけ足した決まりがモバイルに無かった)
  *
  * このファイルは Web のブラウザとモバイルで読み込む (サーバー・DOM・React Native の依存を import しない)。
  */
@@ -184,4 +190,114 @@ export function previousRequestNoteTextOf(state: PreviousRequestNoteState): stri
   if (state === 'executed') return PREVIOUS_REQUEST_EXECUTED_MESSAGE;
   if (state === 'notExecuted') return PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE;
   return PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE;
+}
+
+/**
+ * 取り直した会話の返答に、提案があるか (会話の GET の proposedActions。#2206 G2)。
+ * GET は実行できた提案・提案の無い返答・断った提案を null で返し、それ以外 (実行を待つ・失敗・実行中の印・行がまだ無い) は
+ * 提案を返す。Web とモバイルで同じ決まりにするため、ここで読む
+ */
+export function replyHasProposalOf(reply: { proposedActions?: unknown }): boolean {
+  return Boolean(reply.proposedActions);
+}
+
+/** 返答の提案の記録を読んだ結果 (Web とモバイルの読み取りが返す。#2206 G2) */
+export type PreviousRequestActionRead = {
+  /** 記録の行から決めた状態 (previousRequestActionStateOf。読めなかったときは none) */
+  state: PreviousRequestActionState;
+  /** 記録を読めなかったか (行が無いのと分ける) */
+  readFailed: boolean;
+};
+
+/** 取り直した返答に、前の依頼の一文をどう出すか (previousRequestNotePlanOf の結果) */
+export type PreviousRequestNotePlan = {
+  /** 返答の提案の状態。記録の行が無い・読めないのに返答に提案があるときは running (Web はこの状態で提案のカードを決める) */
+  state: PreviousRequestActionState;
+  /** 返答のすぐ後に足す一文の状態 (足さないときは null) */
+  noteState: PreviousRequestNoteState | null;
+  /** データを出す画面に知らせるか (実行できたとき) */
+  notifyDataChanged: boolean;
+  /** PREVIOUS_REQUEST_RECHECK_DELAY_MS 待ってから記録を 1 回だけ読み直すか (結果は previousRequestRecheckPlanOf で当てる) */
+  recheck: boolean;
+};
+
+/**
+ * 取り直した返答 (送った文への返答) の提案の記録を読んだ結果から、足す一文・知らせるか・読み直すかを決める
+ * (Web の AIChatBubble とモバイルの AIAdvisorSheet が共有する。画面はこの結果を描くだけにする。#2206 G2)。
+ *   - 記録の行が無い・読めないのに返答に提案がある (replyHasProposal): 実行中の印 (running) と同じく扱う。
+ *     サーバー (messages の route) は返答を保存してから提案の記録の行を作るので、その間 (数十 ms) に取り直しが当たると行がまだ無い。
+ *     ここで何も出さないと、あとで自動実行 (献立の生成など) が済んでも一文もデータの取り直しも出ない
+ *   - 実行中の印 (running): 結果をまだ確かめられない一文を足し、1 回だけ読み直す
+ *   - 実行できた (executed): 実行できた一文を足し、データを出す画面に知らせる
+ *   - 実行を待つ・失敗 (notExecuted): 実行していない一文を足す
+ *   - 行が無い・断った (none) で提案も無い: 何も足さない。ただし記録を読めなかった (readFailed) ときは、一文を足さずに
+ *     1 回だけ読み直す (GET は実行できた提案を出さないので、読めないと実行できたかが分からない)
+ */
+export function previousRequestNotePlanOf(input: {
+  actionState: PreviousRequestActionState;
+  readFailed: boolean;
+  replyHasProposal: boolean;
+}): PreviousRequestNotePlan {
+  const state: PreviousRequestActionState =
+    input.actionState === 'none' && input.replyHasProposal ? 'running' : input.actionState;
+  if (state === 'none') return { state, noteState: null, notifyDataChanged: false, recheck: input.readFailed };
+  return { state, noteState: state, notifyDataChanged: state === 'executed', recheck: state === 'running' };
+}
+
+/** 読み直しで実行中の一文を置き換える状態 (実行中の印のままなら置き換えない) */
+export type PreviousRequestSettledNoteState = Exclude<PreviousRequestNoteState, 'running'>;
+
+/** 1 回の読み直しの結果をどう当てるか (previousRequestRecheckPlanOf の結果) */
+export type PreviousRequestRecheckPlan = {
+  /** 実行中の一文を置き換える一文の状態 (何もしないときは null) */
+  noteState: PreviousRequestSettledNoteState | null;
+  /** 実行中の一文が無いとき (記録を読めずに一文を出さなかったとき)、返答のすぐ後に一文を足すか */
+  addNoteIfMissing: boolean;
+  /** データを出す画面に知らせるか */
+  notifyDataChanged: boolean;
+};
+
+/**
+ * 前の依頼の記録を 1 回読み直した状態から、一文をどうするかを決める (Web とモバイルで共有する。#2201 U3・#2206 G2)。
+ *   - 実行できた: 実行中の一文を『前の依頼は実行されました』に置き換える。一文が無ければ (記録を読めずに一文を出さなかった)
+ *     返答のすぐ後に足す。データを出す画面に知らせる
+ *   - 実行を待つ・失敗: 実行中の一文を『前の依頼は実行できませんでした』に置き換える (一文が無ければ足さない)
+ *   - まだ実行中の印のまま・行が無い・読めない: 何もしない (一文はそのまま。頼み直しを勧めない。読み直しは 1 回だけ)
+ */
+export function previousRequestRecheckPlanOf(state: PreviousRequestActionState): PreviousRequestRecheckPlan {
+  if (state === 'executed') return { noteState: 'executed', addNoteIfMissing: true, notifyDataChanged: true };
+  if (state === 'notExecuted') return { noteState: 'notExecuted', addNoteIfMissing: false, notifyDataChanged: false };
+  return { noteState: null, addNoteIfMissing: false, notifyDataChanged: false };
+}
+
+/**
+ * 読み直しの結果 (plan) を、画面のメッセージの一覧に当てる (Web とモバイルで共有する。#2206 G2)。
+ *   - 実行中の一文 (previousRequestNoteIdOf('running', replyId)) があれば、plan.noteState の一文 (noteOf) に置き換える
+ *   - 無ければ、plan.addNoteIfMissing のときだけ返答 (replyId) のすぐ後に足す (同じ一文がすでにあれば足さない)
+ *   - 一文を置き換える・足すときは、返答に updateReply を当てる (Web の提案のカード。モバイルは渡さない)
+ * 何も変えないとき (plan.noteState が null・実行中の一文も足す先の返答も無い) は、渡された一覧をそのまま返す
+ * (別の相談に切り替えていれば、一文も返答も今の会話に無いので触らない)
+ */
+export function messagesAfterPreviousRequestRecheck<T extends { id: string }>(
+  messages: T[],
+  params: {
+    replyId: string;
+    plan: PreviousRequestRecheckPlan;
+    noteOf: (state: PreviousRequestSettledNoteState) => T;
+    updateReply?: (reply: T) => T;
+  },
+): T[] {
+  const { replyId, plan, noteOf, updateReply } = params;
+  if (plan.noteState === null) return messages;
+  const runningNoteId = previousRequestNoteIdOf('running', replyId);
+  const hasRunningNote = messages.some((m) => m.id === runningNoteId);
+  if (!hasRunningNote && !(plan.addNoteIfMissing && messages.some((m) => m.id === replyId))) return messages;
+  const note = noteOf(plan.noteState);
+  const hasNote = hasRunningNote || messages.some((m) => m.id === note.id);
+  return messages.flatMap((m) => {
+    if (m.id === runningNoteId) return [note];
+    if (m.id !== replyId) return [m];
+    const reply = updateReply ? updateReply(m) : m;
+    return hasNote ? [reply] : [reply, note];
+  });
 }

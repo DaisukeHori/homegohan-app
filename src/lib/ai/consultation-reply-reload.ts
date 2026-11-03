@@ -22,7 +22,7 @@
 import {
   PREVIOUS_REQUEST_ACTION_LOG_STATUS,
   previousRequestActionStateOf,
-  type PreviousRequestActionState,
+  type PreviousRequestActionRead,
 } from '@homegohan/shared';
 
 import { createClient } from '@/lib/supabase/client';
@@ -74,9 +74,11 @@ export const AI_CHAT_NOT_DELIVERED_MESSAGE = '相談はサーバーに届いて�
 export const AI_CHAT_DELIVERY_UNCONFIRMED_MESSAGE =
   '相談がサーバーに届いたかを確かめられませんでした。少し待ってから相談を開き直し、送った文が無ければ、入力欄の文をもう一度送ってください。';
 
-/** 返答の提案の記録の状態と、データの更新の通知 (mealPlanUpdated) の detail に添える提案の種類と実行の結果 */
-export interface ReplyActionState {
-  state: PreviousRequestActionState;
+/**
+ * 返答の提案の記録の状態 (state・readFailed は共有の読み取りの結果。一文・通知・読み直しは共有の previousRequestNotePlanOf が
+ * 決める) と、データの更新の通知 (mealPlanUpdated) の detail に添える提案の種類と実行の結果
+ */
+export interface ReplyActionState extends PreviousRequestActionRead {
   /** 提案の種類 (分からなければ null) */
   actionType: string | null;
   /**
@@ -88,8 +90,6 @@ export interface ReplyActionState {
   result: unknown;
   /** 記録の行の状態 (ai_action_logs.status。提案のカードの出し方を GET と同じ決まりで作り直すのに使う。#2206 G2) */
   statuses: string[];
-  /** 記録を読めなかったか (行が無いのと分ける。読めなかったときは画面が 1 回だけ読み直す。#2206 G2) */
-  readFailed: boolean;
 }
 
 /** 読めなかったときの状態 (実行したと言い切れない) */
@@ -109,7 +109,7 @@ const isReplyActionLogRow = (row: unknown): row is ReplyActionLogRow => typeof r
 /**
  * 返答 (messageId) に付いた提案の記録 (ai_action_logs) の状態を読む。
  * 読むのは自分の相談の行だけ (行の安全は RLS の「自分の相談の行」の決まりが守る。モバイルの AIAdvisorSheet と同じ読み方)。
- * 読めなければ none (実行したと言い切れない)
+ * 読めなければ none と readFailed (実行したと言い切れない。画面は共有の previousRequestNotePlanOf に渡し、1 回だけ読み直す)
  */
 export async function readReplyActionStateOf(messageId: string): Promise<ReplyActionState> {
   try {

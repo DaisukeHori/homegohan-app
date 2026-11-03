@@ -7,7 +7,8 @@
  * 取り直した会話の GET は、実行できた提案も提案の無い返答も同じ形 (proposedActions が null) で返すので、送った文への
  * 返答の提案の記録 (ai_action_logs) の状態で見分ける。ここでは次を確かめる。
  *   1. 時間切れの後の「最新の会話を読み込む」で返答が出たとき、返答の提案の記録に実行できた行があれば、返答のすぐ後に
- *      『前の依頼は実行されました』を出し、読み込み直しを 1 回知らせる。無い・読めないときは何も足さない
+ *      『前の依頼は実行されました』を出し、読み込み直しを 1 回知らせる。無い・読めないときはその場では何も足さない
+ *      (読めないときは少し待って 1 回だけ読み直す。#2206 G2。advisor-sheet-reload-running.test.tsx)
  *   2. 返答がまだ無い (届いているが返答の作成中) ときは記録を読まない
  *   3. 応答の本文を読めなかった (接続が切れた など) ときの取り直しでも同じ
  *   4. 流し読みで finalData を処理した後に読み取りが失敗しても、送信の失敗の Alert を出さない
@@ -188,7 +189,7 @@ describe('AIAdvisorSheet — 時間切れの後の取り直しで、自動実行
     ['行が無い (提案が無い返答)', { data: [], error: null }],
     ['読み取りが失敗を返した', { data: null, error: { message: 'permission denied' } }],
     ['読み取りが例外を投げた', new Error('Network request failed')],
-  ])('%s なら何も足さず、読み込み直しも知らせない', async (_label, result) => {
+  ])('%s なら、その場では何も足さず、読み込み直しも知らせない', async (_label, result) => {
     actionLogsRead(result);
     await openSheet();
     await sendTimeOutAndReload(SAVED_MESSAGES);

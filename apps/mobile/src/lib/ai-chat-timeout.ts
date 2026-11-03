@@ -4,11 +4,16 @@ import {
   PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE,
   PREVIOUS_REQUEST_RECHECK_DELAY_MS,
   PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE,
+  messagesAfterPreviousRequestRecheck,
   previousRequestActionStateOf,
   previousRequestNoteIdOf,
+  previousRequestNotePlanOf,
   previousRequestNoteTextOf,
+  previousRequestRecheckPlanOf,
+  replyHasProposalOf,
   replyToSentMessageOf,
   sentMessageReloadOutcomeOf,
+  type PreviousRequestActionRead,
   type PreviousRequestActionState,
   type PreviousRequestNoteState,
   type ReloadedMessage,
@@ -106,8 +111,10 @@ export function timeoutReloadOutcomeOf(sent: TimedOutSend, loaded: readonly Relo
  * (PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE。頼み直しを勧めない) を足し、少し待って (PREVIOUS_REQUEST_RECHECK_DELAY_MS) 1 回だけ読み直す。
  * 実行を待つ・失敗した行なら、実行していない一文 (PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE) を足す (読み直しで分かったときも
  * 一文を置き換える。#2206 G2)。
- * 決まりと見分け方は Web と共有 (packages/shared/src/consultation-reply-reload.ts)。ここはモバイルの既存の名前で読み直すだけ。
- * 記録を読めないときは何も足さない (実行したと言い切れない)。
+ * 記録の行がまだ無い・読めないのに返答に提案があるときは、実行中の印と同じく扱う (サーバーは返答を保存してから行を作る)。
+ * 提案が無く記録を読めないときは何も足さず (実行したと言い切れない)、少し待って 1 回だけ読み直す (#2206 G2)。
+ * 決まりと見分け方は Web と共有 (packages/shared/src/consultation-reply-reload.ts の previousRequestNotePlanOf・
+ * previousRequestRecheckPlanOf・messagesAfterPreviousRequestRecheck)。ここはモバイルの既存の名前で読み直すだけ。
  */
 
 /**
@@ -121,10 +128,15 @@ export {
   PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE,
   PREVIOUS_REQUEST_RECHECK_DELAY_MS,
   PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE,
+  messagesAfterPreviousRequestRecheck,
   previousRequestActionStateOf,
   previousRequestNoteIdOf,
+  previousRequestNotePlanOf,
   previousRequestNoteTextOf,
+  previousRequestRecheckPlanOf,
+  replyHasProposalOf,
   replyToSentMessageOf,
+  type PreviousRequestActionRead,
   type PreviousRequestActionState,
   type PreviousRequestNoteState,
   type ReloadedMessage,

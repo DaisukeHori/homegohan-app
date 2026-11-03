@@ -8,7 +8,14 @@
  *      実行中の一文は『実行済み』と読めない文 (#2206 G2)
  *   5. 送った文は、送る前に無かった id の一致のうちいちばん後ろ (同じ文を送り直したとき、前の送信と取り違えない。#2206 G2)
  *   4. モバイルの既存の名前は共有の決まりを読み直すだけ (文と値が Web と同じ)
+ *   6. 取り直した返答の一文・知らせるか・読み直すか (previousRequestNotePlanOf)、読み直しの結果の当て方
+ *      (previousRequestRecheckPlanOf・messagesAfterPreviousRequestRecheck) は shared の 1 か所で決まる (#2206 G2)。
+ *      記録の行がまだ無いのに返答に提案があれば実行中の印と同じ・記録を読めなければ 1 回だけ読み直す。
+ *      Web とモバイルの画面は判定を写さない (番兵: 画面に 'none' との比較・readFailed の直読みが現れたら赤)
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -17,13 +24,20 @@ import {
   PREVIOUS_REQUEST_RECHECK_DELAY_MS,
   PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE,
   PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE,
+  messagesAfterPreviousRequestRecheck,
   previousRequestActionStateOf,
   previousRequestNoteIdOf,
+  previousRequestNotePlanOf,
   previousRequestNoteTextOf,
+  previousRequestRecheckPlanOf,
+  replyHasProposalOf,
   replyToSentMessageOf,
   replyToUserMessageIdOf,
   sentMessageIndexOf,
   sentMessageReloadOutcomeOf,
+  type PreviousRequestActionState,
+  type PreviousRequestNotePlan,
+  type PreviousRequestRecheckPlan,
 } from '@homegohan/shared';
 import { AI_ACTION_LOG_STATUS } from '@/lib/ai/consultation-action-lifecycle';
 
@@ -193,11 +207,186 @@ describe('#2201 U3 モバイルの既存の名前は共有の決まりと同じ'
     expect(mobileTimeout.AI_ACTION_LOG_STATUS_EXECUTED).toBe(PREVIOUS_REQUEST_ACTION_LOG_STATUS.executed);
     expect(mobileTimeout.replyToSentMessageOf).toBe(replyToSentMessageOf);
     expect(mobileTimeout.previousRequestActionStateOf).toBe(previousRequestActionStateOf);
+    // #2206 G2: 取り直した返答の一文・読み直しの決まりも共有のもの (モバイルに判定の写しを作らない)
+    expect(mobileTimeout.previousRequestNotePlanOf).toBe(previousRequestNotePlanOf);
+    expect(mobileTimeout.previousRequestRecheckPlanOf).toBe(previousRequestRecheckPlanOf);
+    expect(mobileTimeout.messagesAfterPreviousRequestRecheck).toBe(messagesAfterPreviousRequestRecheck);
+    expect(mobileTimeout.replyHasProposalOf).toBe(replyHasProposalOf);
   });
 
   it('hasExecutedActionLog は実行できた行があるときだけ真 (実行中の印だけでは真にしない)', () => {
     expect(mobileTimeout.hasExecutedActionLog([{ status: 'executed' }])).toBe(true);
     expect(mobileTimeout.hasExecutedActionLog([{ status: 'approved' }])).toBe(false);
     expect(mobileTimeout.hasExecutedActionLog(null)).toBe(false);
+  });
+});
+
+describe('#2206 G2 取り直した返答の一文・知らせるか・読み直すか (previousRequestNotePlanOf)', () => {
+  // 状態 4 × 読めなかったか 2 × 返答に提案があるか 2 の全部の組み合わせ (手で書いた期待値)
+  const EXECUTED_PLAN: PreviousRequestNotePlan = { state: 'executed', noteState: 'executed', notifyDataChanged: true, recheck: false };
+  const RUNNING_PLAN: PreviousRequestNotePlan = { state: 'running', noteState: 'running', notifyDataChanged: false, recheck: true };
+  const NOT_EXECUTED_PLAN: PreviousRequestNotePlan = {
+    state: 'notExecuted',
+    noteState: 'notExecuted',
+    notifyDataChanged: false,
+    recheck: false,
+  };
+  const NOTHING_PLAN: PreviousRequestNotePlan = { state: 'none', noteState: null, notifyDataChanged: false, recheck: false };
+  const RECHECK_ONLY_PLAN: PreviousRequestNotePlan = { state: 'none', noteState: null, notifyDataChanged: false, recheck: true };
+
+  it.each<[PreviousRequestActionState, boolean, boolean, PreviousRequestNotePlan]>([
+    ['executed', false, false, EXECUTED_PLAN],
+    ['executed', false, true, EXECUTED_PLAN],
+    ['executed', true, false, EXECUTED_PLAN],
+    ['executed', true, true, EXECUTED_PLAN],
+    ['running', false, false, RUNNING_PLAN],
+    ['running', false, true, RUNNING_PLAN],
+    ['running', true, false, RUNNING_PLAN],
+    ['running', true, true, RUNNING_PLAN],
+    ['notExecuted', false, false, NOT_EXECUTED_PLAN],
+    ['notExecuted', false, true, NOT_EXECUTED_PLAN],
+    ['notExecuted', true, false, NOT_EXECUTED_PLAN],
+    ['notExecuted', true, true, NOT_EXECUTED_PLAN],
+    // 行が無い・断った・読めない
+    ['none', false, false, NOTHING_PLAN],
+    // 返答を保存してから行を作るまでの間に取り直しが当たった: 実行中の印と同じく一文を出して読み直す
+    ['none', false, true, RUNNING_PLAN],
+    // 提案が無く記録を読めない: 一文は出さずに 1 回だけ読み直す (GET は実行できた提案を出さない)
+    ['none', true, false, RECHECK_ONLY_PLAN],
+    ['none', true, true, RUNNING_PLAN],
+  ])('状態 %s・読めなかった %s・提案がある %s', (actionState, readFailed, replyHasProposal, expected) => {
+    expect(previousRequestNotePlanOf({ actionState, readFailed, replyHasProposal })).toEqual(expected);
+  });
+
+  it('返答に提案があるかは会話の GET の proposedActions で読む (null・無い → 無い)', () => {
+    expect(replyHasProposalOf({ proposedActions: { type: 'generate_single_meal', params: {} } })).toBe(true);
+    expect(replyHasProposalOf({ proposedActions: null })).toBe(false);
+    expect(replyHasProposalOf({})).toBe(false);
+  });
+});
+
+describe('#2206 G2 読み直しの結果の当て方 (previousRequestRecheckPlanOf・messagesAfterPreviousRequestRecheck)', () => {
+  it.each<[PreviousRequestActionState, PreviousRequestRecheckPlan]>([
+    ['executed', { noteState: 'executed', addNoteIfMissing: true, notifyDataChanged: true }],
+    ['notExecuted', { noteState: 'notExecuted', addNoteIfMissing: false, notifyDataChanged: false }],
+    ['running', { noteState: null, addNoteIfMissing: false, notifyDataChanged: false }],
+    ['none', { noteState: null, addNoteIfMissing: false, notifyDataChanged: false }],
+  ])('読み直した状態 %s', (state, expected) => {
+    expect(previousRequestRecheckPlanOf(state)).toEqual(expected);
+  });
+
+  type Row = { id: string; content: string; updated?: boolean };
+  const REPLY_ID = 'r1';
+  const user: Row = { id: 'u1', content: '1食作って' };
+  const reply: Row = { id: REPLY_ID, content: '作りますね' };
+  const later: Row = { id: 'u2', content: '別の相談' };
+  const runningNote: Row = { id: previousRequestNoteIdOf('running', REPLY_ID), content: RUNNING_TEXT };
+  const noteOf = (state: 'executed' | 'notExecuted'): Row => ({
+    id: previousRequestNoteIdOf(state, REPLY_ID),
+    content: previousRequestNoteTextOf(state),
+  });
+  const updateReply = (m: Row): Row => ({ ...m, updated: true });
+  const apply = (messages: Row[], state: PreviousRequestActionState) =>
+    messagesAfterPreviousRequestRecheck(messages, { replyId: REPLY_ID, plan: previousRequestRecheckPlanOf(state), noteOf, updateReply });
+
+  it('実行できた: 実行中の一文を置き換え、返答に updateReply を当てる', () => {
+    expect(apply([user, reply, runningNote, later], 'executed')).toEqual([
+      user,
+      { ...reply, updated: true },
+      noteOf('executed'),
+      later,
+    ]);
+  });
+
+  it('実行できた: 実行中の一文が無ければ (記録を読めずに一文を出さなかった) 返答のすぐ後に足す。同じ一文があれば足さない', () => {
+    expect(apply([user, reply, later], 'executed')).toEqual([user, { ...reply, updated: true }, noteOf('executed'), later]);
+    expect(apply([user, reply, noteOf('executed')], 'executed')).toEqual([user, { ...reply, updated: true }, noteOf('executed')]);
+  });
+
+  it('実行を待つ・失敗: 実行中の一文を置き換える。実行中の一文が無ければ一覧をそのまま返す (足さない)', () => {
+    expect(apply([user, reply, runningNote], 'notExecuted')).toEqual([user, { ...reply, updated: true }, noteOf('notExecuted')]);
+    const withoutNote = [user, reply];
+    expect(apply(withoutNote, 'notExecuted')).toBe(withoutNote);
+  });
+
+  it('まだ実行中の印・行が無い・読めない: 一覧をそのまま返す (一文はそのまま)', () => {
+    const messages = [user, reply, runningNote];
+    expect(apply(messages, 'running')).toBe(messages);
+    expect(apply(messages, 'none')).toBe(messages);
+  });
+
+  it('別の相談に切り替えた (一文も返答も今の会話に無い): 一覧をそのまま返す', () => {
+    const otherSession = [{ id: 'x1', content: '別の相談の文' }];
+    expect(apply(otherSession, 'executed')).toBe(otherSession);
+    expect(apply(otherSession, 'notExecuted')).toBe(otherSession);
+  });
+
+  it('updateReply を渡さなければ返答はそのまま (モバイル)', () => {
+    const messages = [user, reply, runningNote];
+    expect(
+      messagesAfterPreviousRequestRecheck(messages, { replyId: REPLY_ID, plan: previousRequestRecheckPlanOf('executed'), noteOf }),
+    ).toEqual([user, reply, noteOf('executed')]);
+  });
+});
+
+describe('#2206 G2 Web とモバイルの画面は、前の依頼の一文・読み直しの判定を写さない (番兵)', () => {
+  // 以前は Web (AIChatBubble) とモバイル (AIAdvisorSheet) にそれぞれ判定の写しがあり、Web にだけ足した決まり
+  // (行がまだ無いのに提案がある返答を実行中の印と同じに扱う・記録を読めないときに 1 回読み直す) がモバイルに無かった。
+  // 判定は shared の previousRequestNotePlanOf・previousRequestRecheckPlanOf・messagesAfterPreviousRequestRecheck の 1 か所で決める
+  const SCREENS = ['src/components/AIChatBubble.tsx', 'apps/mobile/src/components/ai/AIAdvisorSheet.tsx'];
+  const SHARED_DECISIONS = ['previousRequestNotePlanOf', 'previousRequestRecheckPlanOf', 'messagesAfterPreviousRequestRecheck'];
+  const EQUALITY_OPERATORS = new Set([
+    ts.SyntaxKind.EqualsEqualsEqualsToken,
+    ts.SyntaxKind.ExclamationEqualsEqualsToken,
+    ts.SyntaxKind.EqualsEqualsToken,
+    ts.SyntaxKind.ExclamationEqualsToken,
+  ]);
+
+  function sourceOf(file: string): ts.SourceFile {
+    return ts.createSourceFile(file, readFileSync(join(process.cwd(), file), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  }
+
+  function visitAll(node: ts.Node, visit: (node: ts.Node) => void) {
+    visit(node);
+    ts.forEachChild(node, (child) => visitAll(child, visit));
+  }
+
+  const isNoneLiteral = (node: ts.Node) => ts.isStringLiteralLike(node) && node.text === 'none';
+
+  /** node が name の関数の呼び出しの引数の中にあるか */
+  function isInsideCallOf(node: ts.Node, name: string): boolean {
+    for (let cur: ts.Node | undefined = node.parent; cur; cur = cur.parent) {
+      if (ts.isCallExpression(cur) && ts.isIdentifier(cur.expression) && cur.expression.text === name) return true;
+    }
+    return false;
+  }
+
+  it.each(SCREENS)('%s: 前の依頼の状態を \'none\' と比べない (一文を出すかは plan.noteState・読み直すかは plan.recheck で読む)', (file) => {
+    const found: string[] = [];
+    visitAll(sourceOf(file), (node) => {
+      if (ts.isBinaryExpression(node) && EQUALITY_OPERATORS.has(node.operatorToken.kind) && (isNoneLiteral(node.left) || isNoneLiteral(node.right))) {
+        found.push(node.getText());
+      }
+      if (ts.isCaseClause(node) && isNoneLiteral(node.expression)) found.push(node.getText());
+    });
+    expect(found).toEqual([]);
+  });
+
+  it.each(SCREENS)('%s: 記録を読めなかったか (readFailed) は shared の previousRequestNotePlanOf に渡すだけ', (file) => {
+    const outside: string[] = [];
+    visitAll(sourceOf(file), (node) => {
+      if (ts.isPropertyAccessExpression(node) && node.name.text === 'readFailed' && !isInsideCallOf(node, 'previousRequestNotePlanOf')) {
+        outside.push(node.getText());
+      }
+    });
+    expect(outside).toEqual([]);
+  });
+
+  it.each(SCREENS)('%s: 一文と読み直しは shared の決まりを呼んで決める', (file) => {
+    const called = new Set<string>();
+    visitAll(sourceOf(file), (node) => {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) called.add(node.expression.text);
+    });
+    for (const name of SHARED_DECISIONS) expect(called.has(name), name).toBe(true);
   });
 });
