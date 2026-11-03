@@ -1174,7 +1174,8 @@ export default function WeeklyMenuPage() {
   // (名前の API の失敗は空の Map = display_name のまま)。family_id が無くなっていたら一覧を空にする (家族から外れたことを反映する)
   // AI 相談の成功のあと (refetchAfterAiConsultation) にも読む: 名前の API は、display_name の無いメンバー (自分を含む) に
   // プロフィールの名前 (user_profiles.nickname) を返し、AI 相談 (update_profile_preferences) は自分の nickname を書く (#2195 V1)。
-  // メンバーの一覧の data が null なのは読み取りの失敗のときだけ (0 人なら [])。失敗では今の一覧を残す
+  // メンバーの一覧の data が null なのは読み取りの失敗のときだけ (0 人なら [])。一覧の読み取りの失敗では今の一覧を残す
+  // (名前の API の失敗は上のとおり display_name のまま。開いたときと同じ)
   const loadFamilyData = useCallback(async () => {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
