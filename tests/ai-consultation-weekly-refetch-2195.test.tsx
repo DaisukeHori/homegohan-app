@@ -151,7 +151,7 @@ const SETTLE_TASKS = 20;
 const DAYS_IN_WEEK = 7;
 /** 月の中で、次の週の月曜も同じ月に入る週の始まりの日の上限 (どの月も 28 日はある) */
 const LAST_DAY_WITH_NEXT_WEEK_IN_SAME_MONTH = 21;
-/** プロフィールの帯を出す完成度 (src/components/ProfileReminderBanner.tsx の COMPLETENESS_THRESHOLD = 50 の下と上) */
+/** プロフィールの帯を出す完成度 (src/components/ProfileReminderBanner.tsx の COMPLETENESS_THRESHOLD = 50 の未満と以上) */
 const INCOMPLETE_PROFILE_COMPLETENESS = 20;
 const COMPLETE_PROFILE_COMPLETENESS = 100;
 /** プロフィールの帯の見出し */

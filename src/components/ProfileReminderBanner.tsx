@@ -7,11 +7,14 @@ import { X, UserCircle, ChevronRight, Target, Heart, Scale } from "lucide-react"
 import { createClient } from "@/lib/supabase/client";
 import { useAiConsultationRefetchKey } from "@/hooks/useAiConsultationDataRefetch";
 
-// プロフィール完成度のしきい値（これ以下だとバナー表示）
+// プロフィール完成度のしきい値（これ未満だとバナー表示・これ以上なら出さない）
 const COMPLETENESS_THRESHOLD = 50;
 
 // 表示頻度の制御（最後の非表示から何日後に再表示するか）
 const REMIND_AFTER_DAYS = 7;
+
+/** 1 日のミリ秒 (閉じてからの日数を数える) */
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 interface MissingField {
   key: string;
@@ -35,7 +38,7 @@ function isDismissedRecently(): boolean {
   if (!lastDismissed) return false;
   const dismissedDate = new Date(lastDismissed);
   const now = new Date();
-  const daysDiff = (now.getTime() - dismissedDate.getTime()) / (1000 * 60 * 60 * 24);
+  const daysDiff = (now.getTime() - dismissedDate.getTime()) / MS_PER_DAY;
   return daysDiff < REMIND_AFTER_DAYS;
 }
 
