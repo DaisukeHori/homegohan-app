@@ -56,7 +56,14 @@ describe('写真から入力: 解析が終わってから献立を読み直す (
     const waitAt = okBranch.indexOf('await waitForMealPhotoResult(');
     expect(waitAt).toBeGreaterThanOrEqual(0);
     expect(okBranch.indexOf('setCurrentPlan(newPlan)')).toBeGreaterThan(waitAt);
-    expect(okBranch.indexOf('weekDataCache.current.set(targetDate')).toBeGreaterThan(waitAt);
+    // キャッシュには、待ち終えたときの応答 (outcome.week) を、その応答の読み取りを始める前に取った書き込み口で書く
+    // (#2201 U1。待つあいだに AI 相談の取り直しが週のキャッシュを捨てた・その週をあとから読み始めたときは書かない)
+    expect(okBranch.indexOf('weekCacheWriters.get(outcome.week)?.(')).toBeGreaterThan(waitAt);
+    const fetchTargetWeekCode = stripLineComments(blockAfter(analyzeBody, 'const fetchTargetWeek = async ('));
+    const beginWriteAt = fetchTargetWeekCode.indexOf('weekDataCache.current.beginWrite(targetDate)');
+    expect(beginWriteAt).toBeGreaterThanOrEqual(0);
+    expect(fetchTargetWeekCode.indexOf('await fetch(')).toBeGreaterThan(beginWriteAt);
+    expect(fetchTargetWeekCode).toContain('weekCacheWriters.set(week, writeWeekCache);');
     // 200 の分岐の中で、待つ前に献立を読まない
     expect(okBranch.slice(0, waitAt)).not.toMatch(/fetch\(/);
   });
