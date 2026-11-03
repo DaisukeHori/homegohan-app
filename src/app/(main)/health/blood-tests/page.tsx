@@ -109,7 +109,7 @@ export default function BloodTestsPage() {
   }, [fetchSex]);
 
   // AI 相談の提案の実行が成功したら (#2195 V1)、性別を読み直して基準値と判定を出し直す (AI 相談の update_profile_preferences は
-  // gender を書く)。血液検査の結果 (blood_test_results) は AI 相談が書かない表なので読み直さない
+  // gender を書く)。血液検査の結果 (blood_test_results など) は AI 相談が書かない表なので読み直さない
   useAiConsultationDataRefetch(fetchSex);
 
   if (loading) {
