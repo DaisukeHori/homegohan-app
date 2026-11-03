@@ -97,8 +97,12 @@ import { CONSULTATION_ACTION_LABELS, type ConsultationActionType } from "@homego
 // 送信の応答 (finalData) を受け取れなかったあとに会話を取り直して、前の依頼の結果を出す (#2201 U3。モバイルの #2195 V3 と共有の決まり)
 import {
   PREVIOUS_REQUEST_RECHECK_DELAY_MS,
+  messagesAfterPreviousRequestRecheck,
   previousRequestNoteIdOf,
+  previousRequestNotePlanOf,
   previousRequestNoteTextOf,
+  previousRequestRecheckPlanOf,
+  replyHasProposalOf,
   replyToSentMessageOf,
   replyToUserMessageIdOf,
   sentMessageIndexOf,
@@ -117,7 +121,6 @@ import {
   AI_CHAT_SEND_TIMEOUT_MS,
   AI_CHAT_TIMEOUT_RELOAD_FAILED_MESSAGE,
   readReplyActionStateOf,
-  type ReplyActionState,
 } from "@/lib/ai/consultation-reply-reload";
 
 const ACTION_LABELS: Record<string, { label: string; icon: any; color: string }> = {
@@ -250,18 +253,10 @@ const UNCONFIRMED_CARD_FIELDS: Pick<Message, 'proposedActionExecutable' | 'propo
 };
 
 /**
- * 取り直した返答の、前の依頼の一文の状態 (#2206 G2)。
- * 記録の行が無い・記録を読めないのに返答に提案がある (GET が行の無いカードを返した) ときは、実行中の印と同じく扱う:
- * サーバーは返答を保存してから提案の記録の行を作るので、その間 (数十 ms) に取り直しが当たると行がまだ無い。
- * GET のとおりに『もう一度 AI に頼んでください』のカードを出すと、直後に行ができて実行が進んでいても頼み直しを勧めてしまう
- */
-function previousRequestNoteStateOf(reply: LoadedMessage, actionState: ReplyActionState): PreviousRequestActionState {
-  if (actionState.state === 'none' && reply.proposedActions) return 'running';
-  return actionState.state;
-}
-
-/**
- * 取り直した返答を、画面のメッセージの提案の欄にする。
+ * 取り直した返答を、画面のメッセージの提案の欄にする。state は共有の previousRequestNotePlanOf が決めた状態 (記録の行が無い・
+ * 読めないのに返答に提案があるときは running。#2206 G2: サーバーは返答を保存してから提案の記録の行を作るので、その間に取り直しが
+ * 当たると行がまだ無い。GET のとおりに『もう一度 AI に頼んでください』のカードを出すと、直後に行ができて実行が進んでいても
+ * 頼み直しを勧めてしまう)。
  *   - 実行できていた (executed): カードを出さない (開き直したときの GET・finalData の成功のときと同じ。GET を読んだときは
  *     まだ実行中の印で、記録を読むまでに実行できた行になっていることがあり、GET を写すと『前の依頼は実行されました』とカードの文が
  *     食い違う)
@@ -765,6 +760,8 @@ export default function AIChatBubble() {
 
   /**
    * 返答 (replyId) の提案の記録を、PREVIOUS_REQUEST_RECHECK_DELAY_MS 待ってから 1 回だけ読み直す (#2201 U3・#2206 G2)。
+   * 一文をどうするか・知らせるかは共有の previousRequestRecheckPlanOf と messagesAfterPreviousRequestRecheck が決める
+   * (モバイルの AIAdvisorSheet と同じ決まり)。
    *   - 実行できた行になっていれば: 実行中の一文を『前の依頼は実行されました』に置き換え (一文が無ければ返答のすぐ後に足す。
    *     記録を読めずに一文を出さなかったとき)、返答の提案のカードを外し (開き直したときの GET と同じ)、データの更新を知らせる
    *   - 実行を待つ・失敗した行になっていれば: 実行中の一文を『前の依頼は実行できませんでした』に置き換え、カードを今の行に合わせる
@@ -775,35 +772,29 @@ export default function AIChatBubble() {
   const recheckPreviousRequestLater = (replyId: string) =>
     scheduleRecheck(async () => {
       const { state, actionType, result, statuses } = await readReplyActionStateOf(replyId);
-      const runningNoteId = previousRequestNoteIdOf('running', replyId);
-      if (state === 'executed') {
-        const executedNote = previousRequestNoteOf('executed', replyId);
-        setMessages(prev => {
-          const hasNote = prev.some(m => m.id === runningNoteId || m.id === executedNote.id);
-          return prev.flatMap(m => {
-            if (m.id === runningNoteId) return [executedNote];
-            if (m.id === replyId) return hasNote ? [{ ...m, proposedActions: null }] : [{ ...m, proposedActions: null }, executedNote];
-            return [m];
-          });
-        });
+      const plan = previousRequestRecheckPlanOf(state);
+      setMessages(prev =>
+        messagesAfterPreviousRequestRecheck(prev, {
+          replyId,
+          plan,
+          noteOf: noteState => previousRequestNoteOf(noteState, replyId),
+          // 実行できた: カードを外す (開き直したときの GET と同じ)。実行を待つ・失敗: カードを今の行に合わせる
+          updateReply: m => {
+            if (plan.noteState === 'executed') return { ...m, proposedActions: null };
+            return m.proposedActions ? { ...m, ...proposedActionCardFieldsOfStatuses(statuses) } : m;
+          },
+        }),
+      );
+      if (plan.notifyDataChanged) {
         // finalData を受け取れた経路 (showAutoActionOutcome) と同じ detail (献立の生成なら、取り直す側が生成の完了まで見張る)
         window.dispatchEvent(new CustomEvent('mealPlanUpdated', { detail: { actionType, result } }));
-        return;
       }
-      if (state !== 'notExecuted') return;
-      setMessages(prev => {
-        if (!prev.some(m => m.id === runningNoteId)) return prev;
-        return prev.map(m => {
-          if (m.id === runningNoteId) return previousRequestNoteOf('notExecuted', replyId);
-          if (m.id === replyId && m.proposedActions) return { ...m, ...proposedActionCardFieldsOfStatuses(statuses) };
-          return m;
-        });
-      });
     });
 
   /**
    * 取り直した返答 (reply) を、画面の AI の仮のメッセージ (placeholderId) と置き換え、前の依頼の一文を足す (#2201 U3・#2206 G2)。
-   * 返答の提案の記録を読み、実行できていれば『前の依頼は実行されました』を足してカードを外し、データの更新を知らせる。
+   * 返答の提案の記録を読み、一文・知らせるか・読み直すかは共有の previousRequestNotePlanOf が決める (モバイルと同じ決まり):
+   * 実行できていれば『前の依頼は実行されました』を足してカードを外し、データの更新を知らせる。
    * 実行中の印 (行がまだ無い・読めないのに提案があるときも含む) なら『前の依頼の結果をまだ確かめられません…』を足して 1 回だけ
    * 読み直す。実行を待つ・失敗なら『前の依頼は実行できませんでした』を足す。提案が無く記録を読めなかったときは、一文を足さずに
    * 1 回だけ読み直す (GET は実行できた提案のカードを出さないので、読めないと実行できたかが分からない。#2206 G2)。
@@ -816,8 +807,12 @@ export default function AIChatBubble() {
   }) => {
     const { reply, placeholderId, savedUser } = params;
     const actionState = await readReplyActionStateOf(reply.id);
-    const state = previousRequestNoteStateOf(reply, actionState);
-    const notes = state === 'none' ? [] : [previousRequestNoteOf(state, reply.id)];
+    const plan = previousRequestNotePlanOf({
+      actionState: actionState.state,
+      readFailed: actionState.readFailed,
+      replyHasProposal: replyHasProposalOf(reply),
+    });
+    const notes = plan.noteState ? [previousRequestNoteOf(plan.noteState, reply.id)] : [];
     setMessages(prev => prev.flatMap(m => {
       if (savedUser && m.id === savedUser.tempId) {
         return [{ ...m, id: savedUser.saved.id, isImportant: savedUser.saved.isImportant === true }];
@@ -828,7 +823,7 @@ export default function AIChatBubble() {
             ...m,
             id: reply.id,
             content: reply.content,
-            ...proposedActionFieldsOfLoaded(reply, state, actionState.statuses),
+            ...proposedActionFieldsOfLoaded(reply, plan.state, actionState.statuses),
             isImportant: reply.isImportant === true,
             isStreaming: false,
           },
@@ -837,11 +832,11 @@ export default function AIChatBubble() {
       }
       return [m];
     }));
-    if (state === 'executed') {
+    if (plan.notifyDataChanged) {
       // finalData を受け取れた経路 (showAutoActionOutcome) と同じ detail (献立の生成なら、取り直す側が生成の完了まで見張る)
       window.dispatchEvent(new CustomEvent('mealPlanUpdated', { detail: { actionType: actionState.actionType, result: actionState.result } }));
     }
-    if (state === 'running' || (state === 'none' && actionState.readFailed)) recheckPreviousRequestLater(reply.id);
+    if (plan.recheck) recheckPreviousRequestLater(reply.id);
   };
 
   /**

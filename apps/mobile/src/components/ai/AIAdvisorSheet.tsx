@@ -36,14 +36,18 @@ import {
   TIMEOUT_RELOAD_FAILED_MESSAGE,
   TIMEOUT_RELOAD_LABEL,
   clearInputIfDelivered,
+  messagesAfterPreviousRequestRecheck,
   previousRequestActionStateOf,
   previousRequestNoteIdOf,
+  previousRequestNotePlanOf,
   previousRequestNoteTextOf,
+  previousRequestRecheckPlanOf,
+  replyHasProposalOf,
   replyToSentMessageOf,
   restoreInputAfterTimeout,
   timedOutSendNoticeOf,
   timeoutReloadOutcomeOf,
-  type PreviousRequestActionState,
+  type PreviousRequestActionRead,
   type PreviousRequestNoteState,
   type SentText,
   type TimedOutSend,
@@ -66,6 +70,11 @@ type Message = {
   role: "user" | "assistant";
   content: string;
   createdAt: string;
+  /**
+   * 会話の GET が返す、返答の提案 (このシートは描かない)。取り直した返答に提案があるかを、共有の replyHasProposalOf で読む
+   * (#2206 G2。提案の記録の行がまだ無いときも、実行中の印と同じく一文を出して読み直すため)
+   */
+  proposedActions?: unknown;
 };
 
 type Session = {
@@ -115,37 +124,56 @@ function previousRequestNoteOf(state: PreviousRequestNoteState, replyId: string)
   };
 }
 
+/** 記録を読めなかったときの結果 (実行したと言い切れない。共有の previousRequestNotePlanOf が 1 回だけ読み直させる) */
+const UNREADABLE_REPLY_ACTION_STATE: PreviousRequestActionRead = { state: "none", readFailed: true };
+
 /**
  * 返答 (messageId) に付いた提案の記録 (ai_action_logs) の状態 (#2195 V3・#2201 U3。扱いは src/lib/ai-chat-timeout.ts)。
- * 読むのは自分の相談の行だけ (行の安全は RLS の「自分の相談の行」の決まりが守る)。読めなければ none (実行したと言い切れない)
+ * 読むのは自分の相談の行だけ (行の安全は RLS の「自分の相談の行」の決まりが守る)。読めなければ none と readFailed
+ * (実行したと言い切れない。行が無いのと分けて、共有の決まりが 1 回だけ読み直させる。#2206 G2。Web の readReplyActionStateOf と同じ)
  */
-async function replyActionStateOf(messageId: string): Promise<PreviousRequestActionState> {
+async function replyActionStateOf(messageId: string): Promise<PreviousRequestActionRead> {
   try {
     const { data, error } = await supabase.from("ai_action_logs").select("status").eq("message_id", messageId);
-    if (error) return "none";
-    return previousRequestActionStateOf(data);
+    if (error) return UNREADABLE_REPLY_ACTION_STATE;
+    return { state: previousRequestActionStateOf(data), readFailed: false };
   } catch {
-    return "none";
+    return UNREADABLE_REPLY_ACTION_STATE;
   }
 }
 
-/** 取り直した会話に足す前の依頼の一文と、実行中の印のままで読み直す返答の id (読み直さないなら null) */
+/** 取り直した会話に足す前の依頼の一文と、少し待って 1 回だけ読み直す返答の id (読み直さないなら null) */
 type PreviousRequestNote = { notes: Message[]; recheckReplyId: string | null };
 
+const NO_PREVIOUS_REQUEST_NOTE: PreviousRequestNote = { notes: [], recheckReplyId: null };
+
 /**
- * 応答 (finalData) を受け取れずに取り直した会話 (loaded) で、送った文 (sent) への AI の返答の提案の状態から、足す一文を決める。
- * 実行できていれば、データを出すタブの WebView に知らせる (notifyAiConsultationDataChanged)。実行中の印のままなら、
- * 結果をまだ確かめられないと伝える一文 (頼み直しを勧めない) を足し、読み直す返答の id を返す (#2201 U3。呼び出し側が
- * recheckPreviousRequestLater で 1 回読み直す)。実行を待つ・失敗した行なら、実行していない一文を足す (#2206 G2)。
- * 行が無い・分からなければ空 (#2195 V3。時間切れの取り直しと、応答を受け取れなかったときの取り直しの両方で使う)
+ * 応答 (finalData) を受け取れずに取り直した会話 (loaded) で、送った文 (sent) への AI の返答の提案の記録を読み、足す一文・
+ * 知らせるか・読み直すかを共有の previousRequestNotePlanOf で決める (Web の AIChatBubble の placeReloadedReply と同じ決まり。
+ * #2206 G2。以前はこのシートに判定の写しがあり、Web にだけ足した 2 つの決まりが無かった)。
+ *   - 実行できていれば、実行できた一文を足し、データを出すタブの WebView に知らせる (notifyAiConsultationDataChanged)
+ *   - 実行中の印のまま、または記録の行がまだ無い・読めないのに返答に提案がある (サーバーは返答を保存してから行を作る) なら、
+ *     結果をまだ確かめられないと伝える一文 (頼み直しを勧めない) を足し、読み直す返答の id を返す (呼び出し側が
+ *     recheckPreviousRequestLater で 1 回読み直す)
+ *   - 実行を待つ・失敗した行なら、実行していない一文を足す
+ *   - 提案が無く記録を読めなかったときは、一文を足さずに読み直す返答の id を返す (GET は実行できた提案を出さないので、
+ *     読めないと実行できたかが分からない)
+ *   - 返答が無い・行が無いなら空 (時間切れの取り直しと、応答を受け取れなかったときの取り直しの両方で使う)
  */
 async function previousRequestNoteAfterReload(sent: SentText, loaded: readonly Message[]): Promise<PreviousRequestNote> {
   const reply = replyToSentMessageOf(sent, loaded);
-  if (!reply) return { notes: [], recheckReplyId: null };
-  const state = await replyActionStateOf(reply.id);
-  if (state === "none") return { notes: [], recheckReplyId: null };
-  if (state === "executed") notifyAiConsultationDataChanged();
-  return { notes: [previousRequestNoteOf(state, reply.id)], recheckReplyId: state === "running" ? reply.id : null };
+  if (!reply) return NO_PREVIOUS_REQUEST_NOTE;
+  const read = await replyActionStateOf(reply.id);
+  const plan = previousRequestNotePlanOf({
+    actionState: read.state,
+    readFailed: read.readFailed,
+    replyHasProposal: replyHasProposalOf(reply),
+  });
+  if (plan.notifyDataChanged) notifyAiConsultationDataChanged();
+  return {
+    notes: plan.noteState ? [previousRequestNoteOf(plan.noteState, reply.id)] : [],
+    recheckReplyId: plan.recheck ? reply.id : null,
+  };
 }
 
 /** 送信の待ちの上限で本文の読み取りをやめたときの例外 (catch は name が AbortError の例外を時間切れとして扱う。#2206 G2) */
@@ -270,22 +298,30 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   }, []);
 
   /**
-   * 前の依頼の記録が実行中の印のままだった返答 (replyId) を、PREVIOUS_REQUEST_RECHECK_DELAY_MS 待ってから 1 回だけ読み直す (#2201 U3)。
-   * 実行できた行になっていれば、実行中の一文を『前の依頼は実行されました』に置き換え、データを出すタブの WebView に知らせる。
+   * 前の依頼の記録が実行中の印のまま (行がまだ無いのに提案があるときも含む)・読めなかった返答 (replyId) を、
+   * PREVIOUS_REQUEST_RECHECK_DELAY_MS 待ってから 1 回だけ読み直す (#2201 U3・#2206 G2)。一文をどうするか・知らせるかは
+   * 共有の previousRequestRecheckPlanOf と messagesAfterPreviousRequestRecheck が決める (Web の AIChatBubble と同じ決まり)。
+   * 実行できた行になっていれば、実行中の一文を『前の依頼は実行されました』に置き換え (一文が無ければ返答のすぐ後に足す。
+   * 記録を読めずに一文を出さなかったとき)、データを出すタブの WebView に知らせる。
    * 実行を待つ・失敗した行になっていれば、実行中の一文を『前の依頼は実行できませんでした』に置き換える (#2206 G2。以前は
    * 実行中の一文のまま残った)。まだ実行中の印のまま・行が無い・読めないときは何もしない (一文はそのまま。頼み直しを勧めない)。
-   * 別の相談に切り替えていても知らせる (データは変わっている)。一文は今の会話に無ければ置き換えない
+   * 別の相談に切り替えていても知らせる (データは変わっている)。一文は今の会話に無ければ触らない
    */
   function recheckPreviousRequestLater(replyId: string) {
     const timers = previousRequestRecheckTimersRef.current;
     const timer = setTimeout(() => {
       timers.delete(timer);
       void (async () => {
-        const state = await replyActionStateOf(replyId);
-        if (state !== "executed" && state !== "notExecuted") return;
-        if (state === "executed") notifyAiConsultationDataChanged();
-        const runningNoteId = previousRequestNoteIdOf("running", replyId);
-        setMessages((prev) => prev.map((m) => (m.id === runningNoteId ? previousRequestNoteOf(state, replyId) : m)));
+        const read = await replyActionStateOf(replyId);
+        const plan = previousRequestRecheckPlanOf(read.state);
+        if (plan.notifyDataChanged) notifyAiConsultationDataChanged();
+        setMessages((prev) =>
+          messagesAfterPreviousRequestRecheck(prev, {
+            replyId,
+            plan,
+            noteOf: (noteState) => previousRequestNoteOf(noteState, replyId),
+          }),
+        );
       })();
     }, PREVIOUS_REQUEST_RECHECK_DELAY_MS);
     timers.add(timer);
@@ -371,8 +407,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
    * 取れなければ、今の表示と案内をそのまま残す (今の会話を消さない)。
    * 送った文が届いていたら、入力欄に戻した文を消す (二重に送らないため)。返答がまだ無ければ案内を残す。
    * 届いていなければ、案内を消して、入力欄の文をもう一度送るように知らせる。
-   * 返答の提案がサーバーで自動で実行されていたら、短い一文を足してタブに知らせる (#2195 V3)。実行中の印のままなら、
-   * 頼み直しを勧めない一文を足し、少し待って 1 回だけ読み直す (#2201 U3。previousRequestNoteAfterReload)
+   * 返答の提案がサーバーで自動で実行されていたら、短い一文を足してタブに知らせる (#2195 V3)。実行中の印のまま (行がまだ無いのに
+   * 提案があるときも含む) なら、頼み直しを勧めない一文を足し、少し待って 1 回だけ読み直す (#2201 U3・#2206 G2。
+   * previousRequestNoteAfterReload。記録を読めなかったときも 1 回だけ読み直す)
    */
   async function reloadAfterTimeout() {
     const sent = timedOutSend;
@@ -398,7 +435,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   async function showReloadedConversation(sent: TimedOutSend, loaded: Message[]) {
     const outcome = timeoutReloadOutcomeOf(sent, loaded);
     const previousRequest =
-      outcome === "replied" ? await previousRequestNoteAfterReload(sent, loaded) : { notes: [], recheckReplyId: null };
+      outcome === "replied" ? await previousRequestNoteAfterReload(sent, loaded) : NO_PREVIOUS_REQUEST_NOTE;
     setMessages(loaded.length > 0 ? [...loaded, ...previousRequest.notes] : [WELCOME_MESSAGE]);
     if (previousRequest.recheckReplyId) recheckPreviousRequestLater(previousRequest.recheckReplyId);
     if (outcome === "not-delivered") {
