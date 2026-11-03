@@ -1557,8 +1557,9 @@ describe('受け手の配線 (#2195 V1)', () => {
     {
       page: '健康 (/health): fetchData と、出している選んだ日のパネルの記録',
       file: 'src/app/(main)/health/page.tsx',
-      // 取り直しの読み方は refetchReadMode (開いたときの読み込み中に始まった取り直しは 'mount'。#2201 U1)
-      wiring: /await Promise\.all\(\[fetchData\(ticket, refetchReadMode\(\)\), reloadSelectedDate\(\)\]\);\s*\}, \[fetchData, refetchReadMode\]\);[\s\S]*?useAiConsultationDataRefetch\(refetchAfterAiConsultation\);/,
+      // 取り直しの読み方は refetchReadMode (開いたときの読み込み中に始まった取り直しは 'mount'。#2201 U1)。
+      // 選んだ日のパネルの読み直しは、日を選んだときの読み取りと同じ取得の流れ (selectedDateFetchStream) で置く (#2201 U1)
+      wiring: /await Promise\.all\(\[fetchData\(ticket, refetchReadMode\(\)\), reloadSelectedDate\(\)\]\);\s*\}, \[fetchData, refetchReadMode, selectedDateFetchStream\]\);[\s\S]*?useAiConsultationDataRefetch\(refetchAfterAiConsultation\);/,
     },
     {
       page: '健康目標 (/health/goals): fetchGoals',
