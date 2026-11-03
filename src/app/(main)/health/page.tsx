@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
-import { useAiConsultationDataRefetch } from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationDataRefetch, type AiConsultationFetchTicket } from "@/hooks/useAiConsultationDataRefetch";
 import {
   Scale, Heart, Moon, Droplets, Activity, TrendingUp, TrendingDown,
   Target, Flame, Calendar, ChevronRight, Plus, Camera, Sparkles,
@@ -66,6 +66,9 @@ interface HealthGoal {
   status: string;
 }
 
+/** 開いたときの読み込み (読み込み中の表示を出す) か、AI 相談の成功の取り直し (出さない・失敗では今の表示を残す) か */
+type HealthFetchMode = 'mount' | 'refetch';
+
 export default function HealthDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [todayRecord, setTodayRecord] = useState<HealthRecord | null>(null);
@@ -87,47 +90,54 @@ export default function HealthDashboardPage() {
 
   const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })();
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    
-    if (!user) {
-      setLoading(false);
-      return;
-    }
+  /**
+   * 開いたときに読むもの (今日の記録・連続記録・目標) を読む。
+   * mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込み中の表示 (画面全体のスピナー) を出さずに読み直し、
+   * 失敗 (通信の失敗・非 2xx) では今の表示を残す。どちらの経路でも、応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ。
+   * 通信の失敗で読み込み中の表示のまま止まらないよう、最後に始めた取得が終わったら必ず loading を下ろす (以前は try / finally が無かった)
+   */
+  const fetchData = useCallback(async (ticket: AiConsultationFetchTicket, mode: HealthFetchMode) => {
+    if (mode === 'mount') setLoading(true);
+    try {
+      const supabase = createClient();
+      const { data: { user } } = await supabase.auth.getUser();
 
-    // 今日の記録を取得
-    const recordRes = await fetch(`/api/health/records/${today}`);
-    if (recordRes.ok) {
-      const data = await recordRes.json();
-      setTodayRecord(data.record);
-      setYesterdayRecord(data.previous);
-      // 記録の欄の体重は今日の記録の体重から作る。無ければ空にする (取り直しで前の体重を残さない。読み込み直したときと同じ。#2195 V1)
-      setQuickWeight(data.record?.weight ? data.record.weight.toString() : '');
-    }
+      if (!user) return;
 
-    // 連続記録を取得
-    const streakRes = await fetch('/api/health/streaks');
-    if (streakRes.ok) {
-      const data = await streakRes.json();
-      setStreak(data.streak);
-      setWeeklyRecords(data.weeklyRecords || []);
-    }
+      // 今日の記録を取得
+      const recordRes = await fetch(`/api/health/records/${today}`);
+      if (recordRes.ok) {
+        const data = await recordRes.json();
+        if (!ticket.isLatest()) return;
+        setTodayRecord(data.record);
+        setYesterdayRecord(data.previous);
+        // 記録の欄の体重は今日の記録の体重から作る。無ければ空にする (取り直しで前の体重を残さない。読み込み直したときと同じ。#2195 V1)
+        setQuickWeight(data.record?.weight ? data.record.weight.toString() : '');
+      }
 
-    // 目標を取得
-    const goalsRes = await fetch('/api/health/goals?status=active');
-    if (goalsRes.ok) {
-      const data = await goalsRes.json();
-      setGoals(data.goals || []);
-    }
+      // 連続記録を取得
+      const streakRes = await fetch('/api/health/streaks');
+      if (streakRes.ok) {
+        const data = await streakRes.json();
+        if (!ticket.isLatest()) return;
+        setStreak(data.streak);
+        setWeeklyRecords(data.weeklyRecords || []);
+      }
 
-    setLoading(false);
+      // 目標を取得
+      const goalsRes = await fetch('/api/health/goals?status=active');
+      if (goalsRes.ok) {
+        const data = await goalsRes.json();
+        if (!ticket.isLatest()) return;
+        setGoals(data.goals || []);
+      }
+    } catch (error) {
+      // 通信の失敗: 読めたものはそのまま (取り直しなら今の表示を残す)
+      console.warn('[health] fetch failed:', error);
+    } finally {
+      if (ticket.isLatest()) setLoading(false);
+    }
   }, [today]);
-
-  useEffect(() => {
-    void fetchData();
-  }, [fetchData]);
 
   // 選んだ日のパネルを出している日 (取り直しの応答が、別の日を選び直したあとに届いても置かないため)
   const selectedDateRef = useRef<string | null>(null);
@@ -137,7 +147,7 @@ export default function HealthDashboardPage() {
    * AI 相談の add_health_record / update_health_record は過去の日の記録も書くので、パネルを開いたままだと
    * カレンダーの印だけが変わってパネルが古い値のまま残る。取り直しの失敗では今の表示を消さない (fetchData と同じ)
    */
-  const refetchAfterAiConsultation = useCallback(async () => {
+  const refetchAfterAiConsultation = useCallback(async (ticket: AiConsultationFetchTicket) => {
     const date = selectedDateRef.current;
     const reloadSelectedDate = async () => {
       if (date === null) return;
@@ -150,10 +160,15 @@ export default function HealthDashboardPage() {
         // 取り直しの失敗では今の表示を残す
       }
     };
-    await Promise.all([fetchData(), reloadSelectedDate()]);
+    await Promise.all([fetchData(ticket, 'refetch'), reloadSelectedDate()]);
   }, [fetchData]);
-  // 記録の欄 (体重などの入力の部品) が開いている間は取り直さない (打ちかけの体重を取得した値で上書きしないため)
-  useAiConsultationDataRefetch(refetchAfterAiConsultation);
+  // 記録の欄 (体重などの入力の部品) が開いている間は取り直さない (打ちかけの体重を取得した値で上書きしないため)。
+  // 閉じたら止めた通知のぶん 1 回取り直す (#2201 U2)
+  const { beginFetch } = useAiConsultationDataRefetch(refetchAfterAiConsultation);
+
+  useEffect(() => {
+    void fetchData(beginFetch(), 'mount');
+  }, [fetchData, beginFetch]);
 
   const handleDaySelect = async (date: string) => {
     // 今日のセル、または既に選択中の日をクリック → パネルを閉じる
@@ -161,22 +176,25 @@ export default function HealthDashboardPage() {
       selectedDateRef.current = null;
       setSelectedDate(null);
       setSelectedDateRecord(null);
+      setLoadingSelectedDate(false);
       return;
     }
     selectedDateRef.current = date;
     setSelectedDate(date);
     setLoadingSelectedDate(true);
+    // 応答を待つあいだに別の日を選び直したら、この日の応答は置かない (#2201 U1。取り直しの側と同じ形)
+    let record: HealthRecord | null = null;
     try {
       const res = await fetch(`/api/health/records/${date}`);
       if (res.ok) {
         const data = await res.json();
-        setSelectedDateRecord(data.record ?? null);
-      } else {
-        setSelectedDateRecord(null);
+        record = data.record ?? null;
       }
     } catch {
-      setSelectedDateRecord(null);
+      record = null;
     }
+    if (selectedDateRef.current !== date) return;
+    setSelectedDateRecord(record);
     setLoadingSelectedDate(false);
   };
 
@@ -204,7 +222,7 @@ export default function HealthDashboardPage() {
         setTodayRecord(data.record);
         setMessage(data.message);
         setShowQuickRecord(false);
-        void fetchData(); // 再取得
+        void fetchData(beginFetch(), 'mount'); // 再取得
 
         // メッセージを3秒後に消す
         setTimeout(() => setMessage(null), 5000);

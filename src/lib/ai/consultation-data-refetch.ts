@@ -95,6 +95,23 @@ export function isAiConsultationRefetchBlocked(root: ParentNode): boolean {
   return false;
 }
 
+/**
+ * 番兵で止めた通知を、番兵が外れたときに取り直すために見張る属性 (#2201 U2)。
+ * 受け手の共通の hook (src/hooks/useAiConsultationDataRefetch.ts) は、止めた通知がある間だけ DOM の変化 (要素の出入りと、
+ * この属性の変化) を見て、番兵 (isAiConsultationRefetchBlocked) が外れたら 1 回だけ取り直す。
+ * 並びは、番兵の見分けに使う属性 (モーダルの role・aria-modal・open、編集できる要素の contenteditable、input の type、
+ * 吹き出しと何も変えていない入力欄の部品の印) と同じ。どれかが変わると番兵の答えが変わりうる
+ */
+export const AI_CONSULTATION_DEFERRED_REFETCH_OBSERVED_ATTRIBUTES = [
+  'role',
+  'aria-modal',
+  'open',
+  'contenteditable',
+  'type',
+  AI_CONSULTATION_CHAT_ROOT_ATTRIBUTE,
+  AI_CONSULTATION_UNEDITED_INPUTS_ATTRIBUTE,
+] as const;
+
 /** AI 相談の吹き出しを包む要素に広げる属性 (src/app/(main)/MainLayout.tsx)。値は空 (付いていることだけが印) */
 export const AI_CONSULTATION_CHAT_ROOT_PROPS: Readonly<Record<typeof AI_CONSULTATION_CHAT_ROOT_ATTRIBUTE, ''>> = {
   [AI_CONSULTATION_CHAT_ROOT_ATTRIBUTE]: '',

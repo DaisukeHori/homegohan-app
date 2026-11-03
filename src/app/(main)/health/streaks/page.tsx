@@ -7,7 +7,7 @@ import {
   Flame, Award, ChevronRight, Activity, CheckCircle2, Calendar, X,
 } from "lucide-react";
 import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
-import { useAiConsultationDataRefetch } from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationDataRefetch, type AiConsultationFetchTicket } from "@/hooks/useAiConsultationDataRefetch";
 
 const colors = {
   bg: "#FAF9F7",
@@ -69,6 +69,9 @@ function BadgeCard({ days, achieved, onSelect }: { days: number; achieved: boole
   );
 }
 
+/** 開いたときの読み込み (読み込み中の表示を出す) か、AI 相談の成功の取り直し (出さない・失敗では今の表示を残す) か */
+type StreaksFetchMode = 'mount' | 'refetch';
+
 export default function StreaksPage() {
   const [streak, setStreak] = useState<StreakData | null>(null);
   const [nextBadge, setNextBadge] = useState<number | null>(null);
@@ -79,29 +82,38 @@ export default function StreaksPage() {
   // #1055 UX3-25: タップでバッジ詳細 (アイコン+名前+条件) を確認できるようにする
   const [selectedBadgeDays, setSelectedBadgeDays] = useState<number | null>(null);
 
-  const fetchStreak = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  /**
+   * 連続記録を読む。mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込み中の表示を出さずに読み直し、
+   * 失敗 (通信の失敗・非 2xx) ではエラーの表示に切り替えずに今の表示を残す。応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ
+   */
+  const fetchStreak = useCallback(async (ticket: AiConsultationFetchTicket, mode: StreaksFetchMode) => {
+    if (mode === 'mount') {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const res = await fetch("/api/health/streaks");
       if (!res.ok) throw new Error("データの取得に失敗しました");
       const data = await res.json();
+      if (!ticket.isLatest()) return;
       setStreak(data.streak);
       setNextBadge(data.nextBadge ?? null);
       setDaysToNextBadge(data.daysToNextBadge ?? null);
       setWeeklyRecords(data.weeklyRecords || []);
+      setError(null);
     } catch (e: any) {
-      setError(e.message ?? "エラーが発生しました");
+      if (mode === 'mount' && ticket.isLatest()) setError(e.message ?? "エラーが発生しました");
     } finally {
-      setLoading(false);
+      if (ticket.isLatest()) setLoading(false);
     }
   }, []);
 
+  // AI 相談の提案の実行で健康記録が足されたら、連続記録を取り直す (#2195 V1)。バッジの詳細のモーダルが出ている間は取り直さず、
+  // 閉じたら 1 回取り直す (#2201 U2)
+  const { beginFetch } = useAiConsultationDataRefetch((ticket) => fetchStreak(ticket, 'refetch'));
   useEffect(() => {
-    void fetchStreak();
-  }, [fetchStreak]);
-  // AI 相談の提案の実行で健康記録が足されたら、連続記録を取り直す (#2195 V1)。バッジの詳細のモーダルが出ている間は取り直さない
-  useAiConsultationDataRefetch(fetchStreak);
+    void fetchStreak(beginFetch(), 'mount');
+  }, [fetchStreak, beginFetch]);
 
   // 過去7日間のカレンダー生成
   const weekDays = Array.from({ length: 7 }, (_, i) => {

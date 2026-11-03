@@ -6,7 +6,7 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { formatLocalDate } from "@/lib/date-utils";
 import { createClient } from "@/lib/supabase/client";
-import { useAiConsultationDataRefetch } from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationDataRefetch, type AiConsultationFetchTicket } from "@/hooks/useAiConsultationDataRefetch";
 import {
   buildTrendChartA11y,
   estimateSvgTextWidth,
@@ -57,6 +57,12 @@ interface HealthRecord {
   fromCheckup?: boolean;
 }
 
+/**
+ * 開いたとき・期間の切り替えの読み込み (読み込み中の表示を出す) か、AI 相談の成功・Realtime の取り直し
+ * (出さない・失敗では今の表示を残す) か
+ */
+type GraphsFetchMode = 'mount' | 'refetch';
+
 export default function HealthGraphsPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(true);
@@ -68,8 +74,13 @@ export default function HealthGraphsPage() {
   // <svg aria-describedby> が参照する <desc> の id
   const chartDescId = useId();
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  /**
+   * 期間の健康記録・健診・目標を読む。mode が 'refetch' (AI 相談の成功・Realtime の取り直し。#2201 U1) なら、読み込み中の表示を
+   * 出さずに読み直し、失敗 (通信の失敗・記録か健診の非 2xx) では今の表示を残す。応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ
+   * (期間を切り替えたあとに前の期間の応答が届いても置かない)
+   */
+  const fetchData = useCallback(async (ticket: AiConsultationFetchTicket, mode: GraphsFetchMode) => {
+    if (mode === 'mount') setLoading(true);
     
     // 期間に応じた日数を計算
     const days = period === 'week' ? 7 : period === 'month' ? 30 : period === '3months' ? 90 : 365;
@@ -82,6 +93,9 @@ export default function HealthGraphsPage() {
         fetch(`/api/health/checkups?limit=365`),
         fetch('/api/health/goals?status=active'),
       ]);
+
+      // 取り直しで記録か健診を読めなかった: 片方だけで線を作り直すと点が欠けるので、今の表示を残す
+      if (mode === 'refetch' && (!recordsRes.ok || !checkupsRes.ok)) return;
 
       const mergedRecords: HealthRecord[] = [];
 
@@ -119,26 +133,29 @@ export default function HealthGraphsPage() {
 
       // 日付降順でソート（gridsを日付昇順で表示するため reversed later in getGraphData）
       mergedRecords.sort((a, b) => b.record_date.localeCompare(a.record_date));
+      const goalsData = goalsRes.ok ? await goalsRes.json() : null;
+      if (!ticket.isLatest()) return;
       setRecords(mergedRecords);
 
-      if (goalsRes.ok) {
-        const goalsData = await goalsRes.json();
+      if (goalsData !== null) {
         const weightGoal = goalsData.goals?.find((g: any) => g.goal_type === 'weight');
         // 体重の目標が無くなった (削除・達成) ときは線を消す (取り直しで前の目標の線を残さない。#2195 V1)
         setTargetWeight(weightGoal ? weightGoal.target_value : null);
       }
     } catch (error) {
       console.error('Failed to fetch data:', error);
+    } finally {
+      if (ticket.isLatest()) setLoading(false);
     }
-    setLoading(false);
   }, [period]);
 
-  useEffect(() => {
-    void fetchData();
-  }, [fetchData]);
   // AI 相談の提案の実行で健康記録・健康目標が変わったら取り直す (#2195 V1)。
   // 下の購読は健康記録・健診の行の変化だけを見るので、目標 (体重の目標の線) の変化はこちらで拾う
-  useAiConsultationDataRefetch(fetchData);
+  const { beginFetch } = useAiConsultationDataRefetch((ticket) => fetchData(ticket, 'refetch'));
+
+  useEffect(() => {
+    void fetchData(beginFetch(), 'mount');
+  }, [fetchData, beginFetch]);
 
   // Realtime subscription for health_records
   useEffect(() => {
@@ -149,12 +166,12 @@ export default function HealthGraphsPage() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'health_records' },
-        () => { void fetchData(); }
+        () => { void fetchData(beginFetch(), 'refetch'); }
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'health_checkups' },
-        () => { void fetchData(); }
+        () => { void fetchData(beginFetch(), 'refetch'); }
       )
       .subscribe();
 
@@ -163,7 +180,7 @@ export default function HealthGraphsPage() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [fetchData]);
+  }, [fetchData, beginFetch]);
 
   // グラフデータを生成
   // #1055 UX3-13/14: 血圧は収縮期のみ描画されていたため、拡張期 (value2) も持たせて2系列描画する

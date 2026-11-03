@@ -12,7 +12,7 @@ import {
   type BiologicalSex,
 } from "@/lib/health-blood-test-reference";
 import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
-import { useAiConsultationDataRefetch } from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationDataRefetch, type AiConsultationFetchTicket } from "@/hooks/useAiConsultationDataRefetch";
 
 const colors = {
   bg: "#FAF9F7",
@@ -92,25 +92,26 @@ export default function BloodTestsPage() {
 
   // 基準値を選ぶ性別 (プロフィールの gender) を読む。応答が届けばその値 (無ければ未設定) に置き換え、読めなかったとき
   // (応答が ok でない・通信の失敗) は今の値のまま
-  const fetchSex = useCallback(async () => {
+  const fetchSex = useCallback(async (ticket: AiConsultationFetchTicket) => {
     try {
       const res = await fetch("/api/profile", { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
-        setSex(data?.gender ?? null);
+        // 応答を置くのは最後に始めた取得だけ (開いたときの読み込みと取り直しが重なっても古い応答で上書きしない。#2201 U1)
+        if (ticket.isLatest()) setSex(data?.gender ?? null);
       }
     } catch (e) {
       console.error("Failed to fetch profile for reference ranges:", e);
     }
   }, []);
 
-  useEffect(() => {
-    void fetchSex();
-  }, [fetchSex]);
-
   // AI 相談の提案の実行が成功したら (#2195 V1)、性別を読み直して基準値と判定を出し直す (AI 相談の update_profile_preferences は
   // gender を書く)。血液検査の結果 (blood_test_results など) は AI 相談が書かない表なので読み直さない
-  useAiConsultationDataRefetch(fetchSex);
+  const { beginFetch } = useAiConsultationDataRefetch(fetchSex);
+
+  useEffect(() => {
+    void fetchSex(beginFetch());
+  }, [fetchSex, beginFetch]);
 
   if (loading) {
     return (
