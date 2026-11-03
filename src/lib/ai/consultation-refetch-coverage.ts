@@ -267,7 +267,7 @@ export const AI_CONSULTATION_REFETCH_PAGES: Readonly<Record<string, AiConsultati
     kind: 'receiver',
     mountReadsNotRefetched: {
       nutritionAnalysisWithAi:
-        '開いたときの栄養の分析 (GET /api/ai/nutrition-analysis の includeAdvice・includeSuggestion つき。LLM を 1 回呼び、上限に数えない枠の安全弁 nutrition_advice_auto を 1 回使う)。取り直しは同じ API を AI を付けずに読み (点数・課題・栄養素の比べ。AI 相談が書く献立から計算する値)、AI のアドバイスと今日のアドバイスの帯は前の値を残す (成功のたびの LLM の費用と安全弁の消費をやめる。#2201 U4)。ただし、開いたときの読み込み中に始まった取り直し (refetchReadMode の値が mount) はその読み込みの役を引き継ぎ、開いたときと同じく AI つきで読む (src/hooks/useHomeData.ts の refetch。#2201 U1)',
+        '開いたときの栄養の分析 (GET /api/ai/nutrition-analysis の includeAdvice・includeSuggestion つき。LLM を 1 回呼び、上限に数えない枠の安全弁 nutrition_advice_auto を 1 回使う)。取り直しは同じ API を AI を付けずに読み (点数・課題・栄養素の比べ。AI 相談が書く献立から計算する値)、AI のアドバイスと今日のアドバイスの帯は前の値を残す (成功のたびの LLM の費用と安全弁の消費をやめる。#2201 U4)。ただし、開いたときの読み込み中に始まった取り直し (refetchReadMode の値が mount) はその読み込みの役を引き継ぐ。引き継ぐ読み込みがまだ AI つきの読み取りを始めていなければ AI つきで読み、始めていれば AI を付けずに読む (AI を 2 回呼ばない。src/hooks/useHomeData.ts の refetch と aiAnalysisReadInLoadRef。#2201 U1・#2206 G3)',
       orgChallenges:
         '組織のチャレンジの入り口 (OrgChallengeEntry。組織に入っている人にだけ描く) が描いたときに 1 回読む GET /api/org/my-challenges。読むのは組織のチャレンジ (organization_challenges)・自分の参加の行 (organization_challenge_participants)・参加者の数 (DB の関数 get_org_challenge_aggregates)・所属 (user_profiles の organization_id・department_id・org_role) で、どれも AI 相談が書かない表と列 (参加の進み具合 current_value は毎日の集計 update_org_challenge_progress が書く)',
     },
