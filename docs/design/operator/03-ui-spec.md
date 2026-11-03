@@ -590,7 +590,7 @@ Step 2 (価格変更の確認):
 **カード**: パッケージごとに 1 枚。パッケージの鍵 (`package_key`) / 表示名 / 状態 (有効 / 廃止) / 説明 / 機能フラグの一覧 と「編集」のリンク (`src/app/super-admin/feature-packages/page.tsx`)
 
 **編集の画面** (`/super-admin/feature-packages/[id]`。モーダルではない):
-- パッケージの鍵 (変更不可) / 表示名 / 説明 / 機能フラグ / 表示順
+- パッケージの鍵 (変更不可) / 表示名 / 説明 / 機能フラグ / 表示順 (保存・廃止の 409 のあとの読み直し・書きかけを残すこと・いま保存されている機能フラグの表示は operator/02 の `PATCH /api/super-admin/feature-packages/{id}` の節)
 
 ---
 

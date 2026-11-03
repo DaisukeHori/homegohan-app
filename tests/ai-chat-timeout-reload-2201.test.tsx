@@ -25,6 +25,12 @@
 import { act, createElement, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { pollUntil, sleepRealTime } from './helpers/act-wait';
+import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
+
+// 文が出るまでの待ち (tests/helpers/act-wait.ts) は最大 10 秒まで伸びうるので、1 件のテストの時間切れを延ばす
+// (根拠と環境変数での上書きは tests/helpers/heavy-unit-test-timeout.ts)。テストとフックを定義する前に置く
+applyHeavyUnitTestTimeout();
 
 /** 読み直しまでの待ち (テストでは短くする。本物は PREVIOUS_REQUEST_RECHECK_DELAY_MS) */
 const TEST_RECHECK_DELAY_MS = 30;
@@ -210,6 +216,8 @@ beforeEach(() => {
 
 afterEach(() => {
   act(() => root.unmount());
+  // holdRecheck で偽にした setTimeout を戻す (外したあとに戻すので、外すときの取り消しも偽のタイマーに効く)
+  vi.useRealTimers();
   container.remove();
   window.removeEventListener('mealPlanUpdated', mealPlanUpdated);
   HTMLElement.prototype.setPointerCapture = originalSetPointerCapture;
@@ -254,23 +262,34 @@ async function openChat(element: ReactElement = createElement(AIChatBubble)) {
   await waitFor(() => text().includes('野菜を足しましょう'));
 }
 
-/** 文が出るまでの 1 回の待ち (ミリ秒) と回数の上限 (合わせて 2 秒。読み直しの待ち TEST_RECHECK_DELAY_MS より十分長い) */
-const WAIT_POLL_MS = 20;
-const WAIT_MAX_POLLS = 100;
-
+/** 条件が真になるまで待つ (実時間。1 回の待ちと上限は tests/helpers/act-wait.ts。偽のタイマーの間も進む) */
 async function waitFor(condition: () => boolean) {
-  for (let i = 0; i < WAIT_MAX_POLLS && !condition(); i += 1) {
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS));
-    });
-  }
+  await pollUntil(condition);
   expect(condition()).toBe(true);
 }
 
 /** 読み直しの待ちが過ぎるまで待つ (読み直しで何も起きないことを確かめるとき) */
 async function waitPastRecheck() {
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, TEST_RECHECK_DELAY_MS * 4));
+    await sleepRealTime(TEST_RECHECK_DELAY_MS * 4);
+  });
+}
+
+/**
+ * 部品の setTimeout の予約 (読み直しの予約など) を偽のタイマーにして、releaseRecheck で進めるまで動かさない。
+ * 『実行中か実行済み』の一文は、読み直しで実行できていれば置き換わって消える途中の表示なので、実時間の読み直し
+ * (TEST_RECHECK_DELAY_MS) と競って見に行くと、CI の混雑で 1 回の描画が止まっただけで、見る前に消えて待ちが切れる
+ * (2026-11-03 の main の CI run 41659836380 で 2 件。描画のあとに 50ms 止める実験で、この型の 3 件が毎回赤になった)。
+ * 送る前に呼ぶ。文が出るまでの待ち (waitFor) は実時間のまま進む
+ */
+function holdRecheck() {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldClearNativeTimers: true });
+}
+
+/** holdRecheck で止めた読み直しの予約を動かす (読み直しの待ち TEST_RECHECK_DELAY_MS だけ偽の時刻を進める) */
+async function releaseRecheck() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(TEST_RECHECK_DELAY_MS);
   });
 }
 
@@ -368,6 +387,7 @@ describe('#2201 U3 送信が時間切れになったあと、会話を取り直�
       { data: [{ status: 'executed', action_type: 'generate_single_meal' }], error: null },
     ];
     await openChat();
+    holdRecheck();
     await sendFromInput(timesOutAfterSaving(savedMessagesWithRunningCard(SENT_TEXT)));
 
     await waitFor(() => text().includes(RUNNING_NOTE));
@@ -375,6 +395,7 @@ describe('#2201 U3 送信が時間切れになったあと、会話を取り直�
     expect(text()).toContain(UNCONFIRMED_GUIDE);
     expect(notExecutableCardShown()).toBe(true);
     expect(mealPlanUpdated).not.toHaveBeenCalled();
+    await releaseRecheck();
     await waitFor(() => text().includes(EXECUTED_NOTE));
     expect(text()).not.toContain(RUNNING_NOTE);
     // 実行できたと分かったら、カードを外す (開き直したときの GET と同じ。一文とカードが食い違わない)
@@ -666,10 +687,12 @@ describe('#2201 U3 おすすめの質問から送ったときも同じ', () => {
   it('時間切れで実行中の印のまま: 『実行中か実行済み』を出し、読み直して実行できていれば置き換えてカードを外す', async () => {
     logs.results = [{ data: [{ status: 'approved' }], error: null }, { data: [{ status: 'executed' }], error: null }];
     await openEmptyChat();
+    holdRecheck();
     await pressQuickPrompt(timesOutAfterSaving(savedQuickWithRunningCard()));
 
     await waitFor(() => text().includes(RUNNING_NOTE));
     expect(text()).toContain(UNCONFIRMED_GUIDE);
+    await releaseRecheck();
     await waitFor(() => text().includes(EXECUTED_NOTE));
     expect(text()).not.toContain(RUNNING_NOTE);
     expect(text()).not.toContain(UNCONFIRMED_GUIDE);
@@ -719,11 +742,14 @@ describe('#2201 U3 読み直しの予約は部品を外すときに取り消す'
   it('読み直しの前に外したら、読み直さない', async () => {
     logs.results = [{ data: [{ status: 'approved' }], error: null }, { data: [{ status: 'executed' }], error: null }];
     await openChat();
+    holdRecheck();
     await sendFromInput(timesOutAfterSaving(savedMessagesWithRunningCard(SENT_TEXT)));
     await waitFor(() => text().includes(RUNNING_NOTE));
 
     act(() => root.unmount());
     root = createRoot(container);
+    // 外さなければ読み直す時刻を過ぎても (偽の時刻を進めても)、読み直さない
+    await releaseRecheck();
     await waitPastRecheck();
     expect(logs.reads).toHaveLength(1);
     expect(mealPlanUpdated).not.toHaveBeenCalled();

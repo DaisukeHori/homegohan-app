@@ -4,6 +4,7 @@
 |---|---|---|
 | v1.0 | 2026-10-25 | 新設 (Issue #2025 の設計ゲート・A 型 4 相。`planned_meals` の `veg_score`・`is_completed`・`completed_at` を利用者 (authenticated) の INSERT / UPDATE の権限から外し、完了の操作は SECURITY DEFINER の RPC `planned_meals_set_completed` 1 本に、野菜スコアは写真の解析の Edge Function が service_role で書く 1 か所に寄せる) |
 | v1.1 | 2026-10-26 | 段 A〜C の着地の記録: 段 A #2033 (`20261025130000_planned_meals_set_completed_rpc.sql`)・段 B #2034・段 C #2048 (`20261026120000_planned_meals_score_columns_server_only.sql`)。migration の番号はこの 2 つで確定し、本文の名指しは確定した番号。写真の解析の CAS (#2041・#2050) のシナリオ S-27・テストの行・定数・新設の行を足した |
+| v1.2 | 2026-11-03 | 整合ゲートの候補の追随 (#2199 docs-1103b。製品の挙動は変えない): §3.1 の読み手の `sessions/[sessionId]/messages/route.ts` の行番号の参照を `buildSystemPrompt` の参照にした |
 
 要件の正本は Issue #2025 の本文とコメント (2026-10-25 時点でコメントは無い)。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
 ファイル名は cross/23 (cross/ の既存は 01〜09・12・13a・13b・14〜22・24。10・11 は欠番、13 は 13a・13b に分かれている)。
@@ -2837,3 +2838,4 @@ route・テーブル・列・Storage のパス・環境変数の新設は無い�
 |---|---|---|
 | v1.0 | 2026-10-25 | 新設 (A 型 4 相。発注者の選択「サーバの計算値だけ使う」に基づき、列の権限 + 完了の RPC + 写真の解析の service_role の構造 A で確定。migration 2 本・段 A → B → C) |
 | v1.1 | 2026-10-26 | 段 A〜C の着地の記録: 段 A #2033 (`20261025130000_planned_meals_set_completed_rpc.sql`)・段 B #2034・段 C #2048 (`20261026120000_planned_meals_score_columns_server_only.sql`)。migration の番号はこの 2 つで確定し、本文の名指しは確定した番号。写真の解析の CAS (#2041・#2050) のシナリオ S-27・テストの行・定数・新設の行を足した |
+| v1.2 | 2026-11-03 | 整合ゲートの候補の追随 (#2199 docs-1103b。製品の挙動は変えない): §3.1 の読み手の `sessions/[sessionId]/messages/route.ts` の行番号の参照を `buildSystemPrompt` の参照にした |

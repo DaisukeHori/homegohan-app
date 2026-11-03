@@ -88,6 +88,18 @@ const ROW_BEFORE: Partial<DbUserProfile> = {
   profile_completeness: STALE_COMPLETENESS,
 };
 
+/**
+ * 完成度の書き込み (user_profiles の update({ profile_completeness }) ... .select('*').maybeSingle()) なら、書けた行
+ * (書いた後の行に書いた値を重ねた行) を返す。完成度は読んだときの完成度のままの行にだけ書き、書けた行が返らない (0 行) と
+ * 読み直して数え直すので (#2206 G4)、本物と同じく書けた 1 行を返す
+ */
+function completenessWriteOutcome(query: RecordedQuery, rowAfter: Partial<DbUserProfile> | null): QueryOutcome | null {
+  if (query.table !== 'user_profiles' || firstMethodOf(query) !== 'update') return null;
+  const values = query.calls[0].args[0] as Record<string, unknown>;
+  if (!('profile_completeness' in values) || !query.calls.some((call) => call.method === 'select')) return null;
+  return { data: rowAfter ? { ...rowAfter, ...values } : null };
+}
+
 /** 書いた後の行を返し、書き込みは成功させる。user_profiles の update に渡した値を記録する */
 function respondWith(rowAfter: Partial<DbUserProfile> | null, overrides: (query: RecordedQuery) => QueryOutcome | null = () => null) {
   return (query: RecordedQuery): QueryOutcome => {
@@ -95,7 +107,7 @@ function respondWith(rowAfter: Partial<DbUserProfile> | null, overrides: (query:
     if (overridden) return overridden;
     const first = firstMethodOf(query);
     if (first === 'select' && query.table === 'user_profiles') return { data: rowAfter };
-    return { data: null };
+    return completenessWriteOutcome(query, rowAfter) ?? { data: null };
   };
 }
 
@@ -223,7 +235,8 @@ describe('利用者が体重・目標の体重を記録したときも、プロ�
     const db = createRecordingSupabase((query: RecordedQuery) => {
       if (query.table === 'user_profiles') {
         if (firstMethodOf(query) === 'select') return { data: rowAfter };
-        return options.profileWriteFails ? { error: DB_FAILURE } : { data: null };
+        if (options.profileWriteFails) return { error: DB_FAILURE };
+        return completenessWriteOutcome(query, rowAfter) ?? { data: null };
       }
       return { data: { id: 'row-1' } };
     });
@@ -506,8 +519,8 @@ describe('PUT /api/profile も、本文ではなく書いた後の行から完�
     expect(unchanged).toEqual({ row: ROW_FILLED, outcome: { status: 'unchanged', completeness: ROW_FILLED.profile_completeness } });
     expect(same.queries).toHaveLength(0);
 
-    const stale = createRecordingSupabase(() => ({ data: null }));
     const staleRow: Partial<DbUserProfile> = { ...ROW_FILLED, profile_completeness: STALE_COMPLETENESS };
+    const stale = createRecordingSupabase((query) => completenessWriteOutcome(query, staleRow) ?? { data: null });
     const updated = await syncProfileCompletenessOfRow(stale.client, USER.id, staleRow);
     expect(updated).toEqual({
       row: { ...staleRow, profile_completeness: ROW_FILLED.profile_completeness },

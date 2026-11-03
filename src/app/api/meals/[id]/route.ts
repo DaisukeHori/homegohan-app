@@ -10,7 +10,7 @@ import {
   buildDishImagePayload,
   cancelPendingMealImageJobs,
 } from '../../../../lib/meal-image-jobs';
-import { enqueueMealImageJobsAfterSave } from '@/lib/meal-image-enqueue-after-save';
+import { enqueueMealImageJobsAfterSave, withMealAfterEnqueueThrew } from '@/lib/meal-image-enqueue-after-save';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { aiDailyLimitSkippedField, consumeAiUsage, refundAiUsage, type AiUsageResult } from '@/lib/plan/entitlements';
 import { checkUserAiConsent } from '@/lib/ai/consent-guard';
@@ -288,10 +288,13 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       return internalError('PATCH /api/meals/[id]', error, { userId: user.id, requestId: requestId ?? undefined });
     }
 
+    // 応答に返す献立の行 (積み込みの例外のときは、印を書いた後の料理を重ねる。#2206 G4)
+    let savedMeal = data;
     if (imageAllowed && jobs.length > 0) {
       // 献立の保存は済んでいる。積み込みの例外は数えた 1 回を戻して料理を見送りの状態 ('failed' + 'enqueue_failed') に書き直し、
-      // 処理の起動の例外は記録だけにする (どちらも例外を外へ出さない。#2201 U4。src/lib/meal-image-enqueue-after-save.ts)
-      await enqueueMealImageJobsAfterSave({
+      // 処理の起動の例外は記録だけにする (どちらも例外を外へ出さない。#2201 U4。src/lib/meal-image-enqueue-after-save.ts)。
+      // 積み込みの例外のときは、印を書いた後の料理を応答の行に重ねる (書き直す前の 'pending' の行を返さない。#2206 G4)
+      const enqueueOutcome = await enqueueMealImageJobsAfterSave({
         userDb: supabase,
         plannedMealId: data.id,
         userId: user.id,
@@ -301,6 +304,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
         requestId: uuidOrNull(requestId),
         usage: imageUsage,
       });
+      savedMeal = withMealAfterEnqueueThrew(savedMeal, enqueueOutcome);
     }
 
     // 完了の指定があれば RPC で切り替え、応答の行に RPC の値 (is_completed / completed_at / updated_at) を重ねる (#2025)。
@@ -322,7 +326,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     return NextResponse.json(
       // #1149 今日の AI の利用回数の上限に達して、料理画像だけを見送ったときは aiSkipped (AI_DAILY_LIMIT) を足す
       {
-        ...data,
+        ...savedMeal,
         ...completionRow,
         ...(imageGenerationThrottled ? { imageGenerationThrottled: true } : {}),
         ...aiDailyLimitSkippedField(imageUsage),

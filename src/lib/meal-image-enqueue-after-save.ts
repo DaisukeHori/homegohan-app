@@ -14,6 +14,9 @@
  *     ('failed' + 'enqueue_failed'。行ごとの書き込みに失敗した料理と同じ印。markEnqueueFailedDishesInMeal) に書き直す。
  *     献立の保存は成功のまま (例外を外へ出さない)
  *   - 処理の起動の例外: ログに残すだけ。数え戻さない (積んだジョブは pg_cron の process-pending-meal-image-jobs が拾う)
+ *   - 積み込みの例外のときは、印を書いた後の献立の料理 (dishes) と updated_at を読み直して結果 (mealAfterMark) に入れる。
+ *     呼び出し側は応答の行にそれを重ねる (withMealAfterEnqueueThrew)。重ねないと、DB では料理が見送りの状態なのに、応答は
+ *     書き直す前の行 ('pending') のままで、画面は次の読み込みまで「生成中」を出していた (#2206 G4)
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
@@ -55,9 +58,32 @@ export interface EnqueueMealImageJobsAfterSaveParams {
   logContext?: Readonly<Record<string, unknown>>;
 }
 
+/** 積み込みの例外のあと、印を書いた後の献立から読み直す列 (応答の行に重ねる。#2206 G4) */
+export const MEAL_AFTER_ENQUEUE_THREW_COLUMNS = 'dishes, updated_at';
+
+/** 積み込みの例外のあと、印を書いた後の献立の料理と updated_at (読み直せなかったときは null) */
+export interface MealAfterEnqueueThrew {
+  dishes: unknown;
+  updated_at: unknown;
+}
+
 export type EnqueueMealImageJobsAfterSaveOutcome =
   | { status: 'enqueued'; enqueued: EnqueueMealImageJobsResult; triggered: boolean }
-  | { status: 'enqueue_threw' };
+  | { status: 'enqueue_threw'; mealAfterMark: MealAfterEnqueueThrew | null };
+
+/**
+ * 応答に返す献立の行に、積み込みの例外のあとの料理 (見送りの状態の印を書いた後の dishes) を重ねる (#2206 G4)。
+ * updated_at は、行がその列を持つとき (select() の全列や updated_at を選んだ行) だけ重ねる。
+ * 積めたとき・読み直せなかったとき (outcome が null を含む) は行のまま返す
+ */
+export function withMealAfterEnqueueThrew<Meal extends Record<string, unknown>>(
+  meal: Meal,
+  outcome: EnqueueMealImageJobsAfterSaveOutcome | null,
+): Meal {
+  if (outcome?.status !== 'enqueue_threw' || !outcome.mealAfterMark) return meal;
+  const { dishes, updated_at: updatedAt } = outcome.mealAfterMark;
+  return 'updated_at' in meal ? { ...meal, dishes, updated_at: updatedAt } : { ...meal, dishes };
+}
 
 export async function enqueueMealImageJobsAfterSave(
   params: EnqueueMealImageJobsAfterSaveParams,
@@ -95,7 +121,7 @@ export async function enqueueMealImageJobsAfterSave(
         .withUser(params.userId)
         .warn('Failed to mark dishes whose meal image jobs were not enqueued', { ...context, error: marked.message });
     }
-    return { status: 'enqueue_threw' };
+    return { status: 'enqueue_threw', mealAfterMark: await readMealAfterMark(params, context) };
   }
 
   // 積めた行と、同じ料理の待ちのジョブがあるときだけ処理を起こす (書き込みの失敗だけなら空振りの呼び出しを出さない。#1532)
@@ -111,4 +137,34 @@ export async function enqueueMealImageJobsAfterSave(
     return { status: 'enqueued', enqueued, triggered: false };
   }
   return { status: 'enqueued', enqueued, triggered: true };
+}
+
+/**
+ * 積み込みの例外のあと、印を書いた後の献立の料理と updated_at を読み直す (応答の行に重ねるため。#2206 G4)。
+ * 印の書き込みが失敗した・献立が消えたときも、読めた今の行を返す (応答は DB の今の値に合わせる)。
+ * 読めなかったときは null (応答は保存した行のまま。ログに残す)
+ */
+async function readMealAfterMark(
+  params: EnqueueMealImageJobsAfterSaveParams,
+  context: Readonly<Record<string, unknown>>,
+): Promise<MealAfterEnqueueThrew | null> {
+  try {
+    const { data, error } = await params.userDb
+      .from('planned_meals')
+      .select(MEAL_AFTER_ENQUEUE_THREW_COLUMNS)
+      .eq('id', params.plannedMealId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
+    const row: Record<string, unknown> = data;
+    return { dishes: row.dishes, updated_at: row.updated_at };
+  } catch (readError) {
+    createLogger(ENQUEUE_AFTER_SAVE_LOG_NAME)
+      .withUser(params.userId)
+      .warn('Failed to reload the meal after marking dishes whose meal image jobs were not enqueued', {
+        ...context,
+        error: toLoggableError(readError).message,
+      });
+    return null;
+  }
 }
