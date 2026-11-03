@@ -1,14 +1,16 @@
 import {
   PREVIOUS_REQUEST_ACTION_LOG_STATUS,
   PREVIOUS_REQUEST_EXECUTED_MESSAGE,
+  PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE,
   PREVIOUS_REQUEST_RECHECK_DELAY_MS,
-  PREVIOUS_REQUEST_RUNNING_OR_DONE_MESSAGE,
+  PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE,
   previousRequestActionStateOf,
   previousRequestNoteIdOf,
   previousRequestNoteTextOf,
   replyToSentMessageOf,
-  sentMessageIndexOf,
+  sentMessageReloadOutcomeOf,
   type PreviousRequestActionState,
+  type PreviousRequestNoteState,
   type ReloadedMessage,
   type SentText,
 } from "@homegohan/shared";
@@ -19,7 +21,9 @@ import {
  * サーバーは AI への問い合わせを 25 秒で打ち切る (AbortSignal.timeout(25000)。
  * src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts) ので、それに通信の余裕 1 秒を足した値。
  * React Native の fetch は応答を最後まで受け取ってから返す (ストリームを少しずつ読めない) ので、
- * この時間は「返答が全部届くまで」の上限になる。超えて打ち切っても、サーバーでは返答の保存が続いていることがあるため、
+ * この時間は「返答が全部届くまで」の上限になる。本文を少しずつ読める環境でも、本文の読み取りまで含めた上限にする
+ * (#2206 G2。以前は応答の見出しを受けた時点で待ちを外していたので、本文の読み取りには上限が無かった)。
+ * 超えて打ち切っても、サーバーでは返答の保存が続いていることがあるため、
  * 画面は打ち切ったあとに会話を取り直せるようにする (AIAdvisorSheet の「最新の会話を読み込む」)。
  */
 export const AI_CHAT_STREAM_TIMEOUT_MS = 26_000;
@@ -45,6 +49,12 @@ export const AI_CHAT_STREAM_TIMEOUT_MS = 26_000;
 /** 時間切れになったときの案内。もう一度送るように促すのは、取り直しても届いていなかったときだけ (先に送り直すと二重に届く) */
 export const TIMEOUT_NOTICE_MESSAGE =
   "応答に時間がかかっています。返答はサーバーで続いていることがあります。少し待ってから「最新の会話を読み込む」を押してください。返答が無ければ、もう一度送ってください。";
+/**
+ * 時間切れでないのに応答を最後まで受け取れず (流れが途中で切れた・受け付けたあとの例外)、会話も取り直せなかったときの案内 (#2206 G2)。
+ * 時間切れのときと同じく、頼み直しの前に取り直してもらう (サーバーでは返答の保存と自動実行が済んでいることがある)
+ */
+export const INTERRUPTED_NOTICE_MESSAGE =
+  "応答を最後まで受け取れませんでした。返答はサーバーで続いていることがあります。少し待ってから「最新の会話を読み込む」を押してください。返答が無ければ、もう一度送ってください。";
 /** 取り直しのボタンの文 */
 export const TIMEOUT_RELOAD_LABEL = "最新の会話を読み込む";
 /** 取り直しで会話を読めなかったとき */
@@ -65,28 +75,37 @@ export type TimedOutSend = {
   knownMessageIds: readonly string[];
   /** 取り直しで、送った文が届いていたと分かったか (返答はまだ無い)。案内の文を切り替える */
   delivered: boolean;
+  /** 時間切れでなく、応答が途中で切れた (finalData が無い・受け付けたあとの例外。#2206 G2)。案内の文を切り替える */
+  interrupted?: boolean;
 };
+
+/** 「最新の会話を読み込む」の上に出す案内 (届いていた → 返答がまだ無い / 途中で切れた / 時間切れ) */
+export function timedOutSendNoticeOf(sent: TimedOutSend): string {
+  if (sent.delivered) return TIMEOUT_DELIVERED_NO_REPLY_MESSAGE;
+  return sent.interrupted ? INTERRUPTED_NOTICE_MESSAGE : TIMEOUT_NOTICE_MESSAGE;
+}
 
 /** 取り直しの結果 */
 export type TimeoutReloadOutcome = "replied" | "delivered-no-reply" | "not-delivered";
 
 /**
- * 取り直した会話から、時間切れになった送信が届いていたか・返答があるかを決める。
- * 届いていた = 送った文 (sentMessageIndexOf) がある。
- * 返答がある = その後ろに assistant のメッセージがある (サーバーは作成順に返す)。
+ * 取り直した会話から、時間切れになった送信が届いていたか・返答があるかを決める (#2206 G2 から Web と共有の決まり
+ * sentMessageReloadOutcomeOf を読み直すだけ)。
+ * 届いていた = 送った文 (sentMessageIndexOf。いちばん後ろの一致) がある。
+ * 返答がある = 送った文のすぐ後ろ (別の user のメッセージを挟まない) に assistant のメッセージがある (replyToSentMessageOf)。
  */
 export function timeoutReloadOutcomeOf(sent: TimedOutSend, loaded: readonly ReloadedMessage[]): TimeoutReloadOutcome {
-  const sentIndex = sentMessageIndexOf(sent, loaded);
-  if (sentIndex < 0) return "not-delivered";
-  return loaded.slice(sentIndex + 1).some((message) => message.role === "assistant") ? "replied" : "delivered-no-reply";
+  return sentMessageReloadOutcomeOf(sent, loaded);
 }
 
 /*
  * ── 応答を受け取れずに取り直したときの、自動実行の結果 (#2195 V3・#2201 U3) ──
  *
  * 送った文への AI の返答 (replyToSentMessageOf) の提案の記録 (ai_action_logs) の状態を読み、実行できた行があれば短い一文
- * (PREVIOUS_REQUEST_EXECUTED_MESSAGE) を足してタブに知らせる。実行中の印の行だけなら、頼み直しを勧めない一文
- * (PREVIOUS_REQUEST_RUNNING_OR_DONE_MESSAGE) を足し、少し待って (PREVIOUS_REQUEST_RECHECK_DELAY_MS) 1 回だけ読み直す。
+ * (PREVIOUS_REQUEST_EXECUTED_MESSAGE) を足してタブに知らせる。実行中の印の行だけなら、結果をまだ確かめられないと伝える一文
+ * (PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE。頼み直しを勧めない) を足し、少し待って (PREVIOUS_REQUEST_RECHECK_DELAY_MS) 1 回だけ読み直す。
+ * 実行を待つ・失敗した行なら、実行していない一文 (PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE) を足す (読み直しで分かったときも
+ * 一文を置き換える。#2206 G2)。
  * 決まりと見分け方は Web と共有 (packages/shared/src/consultation-reply-reload.ts)。ここはモバイルの既存の名前で読み直すだけ。
  * 記録を読めないときは何も足さない (実行したと言い切れない)。
  */
@@ -99,13 +118,15 @@ export const AI_ACTION_LOG_STATUS_EXECUTED = PREVIOUS_REQUEST_ACTION_LOG_STATUS.
 
 export {
   PREVIOUS_REQUEST_EXECUTED_MESSAGE,
+  PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE,
   PREVIOUS_REQUEST_RECHECK_DELAY_MS,
-  PREVIOUS_REQUEST_RUNNING_OR_DONE_MESSAGE,
+  PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE,
   previousRequestActionStateOf,
   previousRequestNoteIdOf,
   previousRequestNoteTextOf,
   replyToSentMessageOf,
   type PreviousRequestActionState,
+  type PreviousRequestNoteState,
   type ReloadedMessage,
   type SentText,
 };

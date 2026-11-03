@@ -11,14 +11,15 @@
  * 直したあと:
  *   - 会話の GET を取り直し、送った文が届いていれば保存された送った文と返答に置き換える。返答の提案の記録 (ai_action_logs) が
  *     実行できていれば『前の依頼は実行されました』を足して通知を 1 回投げる
- *   - 記録が実行中の印 (approved) のままなら『前の依頼は実行中か実行済みです』を足し、少し待って 1 回だけ読み直す。
+ *   - 記録が実行中の印 (approved) のままなら『前の依頼の結果をまだ確かめられません…』(#2206 G2。以前は『前の依頼は実行中か
+ *     実行済みです』) を足し、少し待って 1 回だけ読み直す。
  *     実行できていれば一文を置き換えて通知を投げる。まだ実行中の印なら一文はそのまま (通知しない)
  *   - 実行できたと分かった返答 (最初の読み取り・読み直しのどちらでも) は、GET が返した提案のカード (実行中の印の
  *     『確かめられませんでした』) を外す (開き直したときの GET と同じ。一文とカードが食い違わない)
  *   - 届いていない: 頼み直してもらう文を出し、送った文を入力欄に戻す / 返答がまだ無い: 開き直してもらう文
  *   - 取り直せない時間切れ: 頼み直しの前に開き直してもらう文 (「再度お試しください」だけを出さない)
- *   - 時間切れでは、流れてきた本文があっても、返答がまだ無い・取り直せないときに本文だけを出さない (切れたことが分からない)。
- *     本文を残すのは時間切れでないとき (流れが途中で切れた) だけ (#126)
+ *   - 流れてきた本文があっても、返答がまだ無い・取り直せないときに本文だけを出さない (切れたことが分からない)。
+ *     #2206 G2 で、時間切れでないとき (流れが途中で切れた) も残さないようにした (以前は #126 の決めで残していた)
  *   - 受け付けられなかった送信 (2xx でない応答) は、これまでどおり失敗の文だけ (取り直さない)
  */
 import { act, createElement, type ReactElement } from 'react';
@@ -96,7 +97,15 @@ const MESSAGES_KEY = `GET /api/ai/consultation/sessions/${SESSION_ID}/messages`;
 const SEND_KEY = `POST /api/ai/consultation/sessions/${SESSION_ID}/messages?stream=true`;
 /** 手で書いた期待値 (定数の文が変わったらこのテストも直す) */
 const EXECUTED_NOTE = '前の依頼は実行されました';
-const RUNNING_NOTE = '前の依頼は実行中か実行済みです';
+const RUNNING_NOTE = '前の依頼の結果をまだ確かめられません。しばらくしてから相談を開き直してください。';
+/** 実行を待つ・失敗した行の一文 (#2206 G2) */
+const NOT_EXECUTED_NOTE = '前の依頼は実行できませんでした';
+/** 応答を受ける前に時間切れになり、送った文が無かったとき (#2206 G2。『届いていません』と言い切らない) */
+const DELIVERY_UNCONFIRMED_TEXT =
+  '相談がサーバーに届いたかを確かめられませんでした。少し待ってから相談を開き直し、送った文が無ければ、入力欄の文をもう一度送ってください。';
+/** 時間切れでないのに途中で切れ、会話も取り直せなかったとき (#2206 G2) */
+const INTERRUPTED_RELOAD_FAILED_TEXT =
+  '応答を最後まで受け取れませんでした。返答はサーバーで続いていることがあります。少し待ってから相談を開き直し、返答が無ければもう一度送ってください。';
 const NOT_DELIVERED_TEXT = '相談はサーバーに届いていませんでした。もう一度送ってください。';
 const DELIVERED_NO_REPLY_TEXT = '相談はサーバーに届いています。返答を作っているところかもしれません。少し待ってから相談を開き直してください。';
 const TIMEOUT_RELOAD_FAILED_TEXT =
@@ -353,7 +362,7 @@ describe('#2201 U3 送信が時間切れになったあと、会話を取り直�
     expect(occurrences(SAVED_REPLY)).toBe(1);
   });
 
-  it('記録が実行中の印のままなら『実行中か実行済み』を出し、読み直して実行できていれば一文を置き換えてカードを外し、通知を投げる', async () => {
+  it('記録が実行中の印のままなら『結果をまだ確かめられません』を出し、読み直して実行できていれば一文を置き換えてカードを外し、通知を投げる', async () => {
     logs.results = [
       { data: [{ status: 'approved', action_type: 'generate_single_meal' }], error: null },
       { data: [{ status: 'executed', action_type: 'generate_single_meal' }], error: null },
@@ -411,7 +420,7 @@ describe('#2201 U3 送信が時間切れになったあと、会話を取り直�
     expect(logs.reads).toHaveLength(1);
   });
 
-  it('記録を読めないときは、GET のとおりのカード (確かめられませんでした) を出し、一文は出さない', async () => {
+  it('記録を読めないときは、カード (確かめられませんでした) と『結果をまだ確かめられません』を出す (#2206 G2。提案があるので実行中の印と同じ)', async () => {
     logs.results = [{ data: null, error: { message: 'permission denied' } }];
     await openChat();
     await sendFromInput(timesOutAfterSaving(savedMessagesWithRunningCard(SENT_TEXT)));
@@ -420,34 +429,52 @@ describe('#2201 U3 送信が時間切れになったあと、会話を取り直�
     await waitFor(() => notExecutableCardShown());
     expect(text()).toContain(UNCONFIRMED_GUIDE);
     expect(text()).not.toContain(EXECUTED_NOTE);
-    expect(text()).not.toContain(RUNNING_NOTE);
+    expectNoteRightAfterReply(RUNNING_NOTE);
   });
 
   it.each([
-    ['行が無い (提案が無い返答)', { data: [], error: null }],
-    ['実行を待っている・失敗した行だけ', { data: [{ status: 'pending' }, { status: 'failed' }], error: null }],
-    ['読み取りが失敗を返した', { data: null, error: { message: 'permission denied' } }],
-    ['読み取りが例外を投げた', new Error('Failed to fetch')],
-  ])('%s なら、保存された返答だけを出し、一文も通知も出さない', async (_label, result) => {
+    // 行が無い (提案が無い返答) は読み直さない。読めないときは、提案が無くても (GET は実行できた提案のカードを出さない)
+    // 実行できたかが分からないので、一文を出さずに 1 回だけ読み直す (#2206 G2)
+    ['行が無い (提案が無い返答)', { data: [], error: null }, 1],
+    ['読み取りが失敗を返した', { data: null, error: { message: 'permission denied' } }, 2],
+    ['読み取りが例外を投げた', new Error('Failed to fetch'), 2],
+  ] as const)('%s なら、保存された返答だけを出し、一文も通知も出さない', async (_label, result, reads) => {
     logs.results = [result];
     await openChat();
     await sendFromInput(timesOutAfterSaving(savedMessages(SENT_TEXT)));
 
     await waitFor(() => text().includes(SAVED_REPLY));
     expectReadLogsOfReply();
+    await waitFor(() => logs.reads.length === reads);
     await waitPastRecheck();
     expect(text()).not.toContain(EXECUTED_NOTE);
     expect(text()).not.toContain(RUNNING_NOTE);
+    expect(text()).not.toContain(NOT_EXECUTED_NOTE);
     expect(text()).not.toContain(OLD_TIMEOUT_TEXT);
+    expect(mealPlanUpdated).not.toHaveBeenCalled();
+    expect(logs.reads).toHaveLength(reads);
+  });
+
+  it('実行を待っている・失敗した行だけなら、返答のすぐ後に『実行できませんでした』を出し、通知しない (#2206 G2)', async () => {
+    logs.results = [{ data: [{ status: 'pending' }, { status: 'failed' }], error: null }];
+    await openChat();
+    await sendFromInput(timesOutAfterSaving(savedMessages(SENT_TEXT)));
+
+    await waitFor(() => text().includes(NOT_EXECUTED_NOTE));
+    expectNoteRightAfterReply(NOT_EXECUTED_NOTE);
+    await waitPastRecheck();
+    expect(text()).not.toContain(EXECUTED_NOTE);
     expect(mealPlanUpdated).not.toHaveBeenCalled();
     expect(logs.reads).toHaveLength(1);
   });
 
-  it('送った文が届いていなければ、頼み直してもらう文を出し、送った文を入力欄に戻す (記録は読まない)', async () => {
+  it('応答を受ける前に時間切れになり送った文が無ければ、届いたかを確かめられない文を出し、送った文を入力欄に戻す (記録は読まない。#2206 G2)', async () => {
     await openChat();
     await sendFromInput(timesOutAfterSaving(OLD_MESSAGES));
 
-    await waitFor(() => text().includes(NOT_DELIVERED_TEXT));
+    await waitFor(() => text().includes(DELIVERY_UNCONFIRMED_TEXT));
+    // 送った文の保存が時間切れより後になりうるので『届いていません』とは言い切らない
+    expect(text()).not.toContain(NOT_DELIVERED_TEXT);
     expect(inputElement().value).toBe(SENT_TEXT);
     expect(logs.reads).toHaveLength(0);
     expect(mealPlanUpdated).not.toHaveBeenCalled();
@@ -518,7 +545,7 @@ describe('#2201 U3 送信が時間切れになったあと、会話を取り直�
     await openChat();
     await sendFromInput(timesOutAfterSaving([...earlierSame, ...OLD_MESSAGES]));
 
-    await waitFor(() => text().includes(NOT_DELIVERED_TEXT));
+    await waitFor(() => text().includes(DELIVERY_UNCONFIRMED_TEXT));
     expect(logs.reads).toHaveLength(0);
     expect(text()).not.toContain(EXECUTED_NOTE);
   });
@@ -536,26 +563,30 @@ describe('#2201 U3 finalData が欠けた・受け付けたあとの例外のあ
     expect(messagesGets).toBe(2);
   });
 
-  it('finalData が無く、返答もまだ保存されていない: 流れてきた本文を残す', async () => {
+  it('finalData が無く、返答もまだ保存されていない: 流れてきた本文ではなく、開き直してもらう文を出す (#2206 G2)', async () => {
     const partial = '鶏むね肉の照り焼きで';
     await openChat();
     await sendFromInput(streamsWithoutFinalData(savedMessages(SENT_TEXT).slice(0, OLD_MESSAGES.length + 1), partial));
 
     await waitFor(() => messagesGets === 2);
-    await waitFor(() => text().includes(partial));
+    await waitFor(() => text().includes(DELIVERED_NO_REPLY_TEXT));
+    expect(text()).not.toContain(partial);
     expect(text()).not.toContain(REPLY_FAILED_TEXT);
     expect(logs.reads).toHaveLength(0);
   });
 
-  it('finalData が無く、会話も取り直せない: 流れてきた本文を残す (時間切れでないので #126 のまま)', async () => {
+  it('finalData が無く、会話も取り直せない: 流れてきた本文ではなく、頼み直しの前に開き直してもらう文を出す (#2206 G2。#126 の決めを変えた)', async () => {
     const partial = '鶏むね肉の照り焼きで';
     await openChat();
     handlers[MESSAGES_KEY] = async () => json(500, { error: 'サーバーでエラーが発生しました' });
     await sendFromInput(streamsWithoutFinalData(savedMessages(SENT_TEXT), partial));
 
-    await waitFor(() => text().includes(partial));
+    await waitFor(() => text().includes(INTERRUPTED_RELOAD_FAILED_TEXT));
+    expect(text()).not.toContain(partial);
     expect(text()).not.toContain(REPLY_FAILED_TEXT);
     expect(text()).not.toContain(TIMEOUT_RELOAD_FAILED_TEXT);
+    // 送った文を入力欄に戻す (返答が無ければもう一度送れる。#2206 G2)
+    expect(inputElement().value).toBe(SENT_TEXT);
   });
 
   it('応答を受けたあとに読み取りが例外を投げた: 取り直して、実行できた一文を出す', async () => {

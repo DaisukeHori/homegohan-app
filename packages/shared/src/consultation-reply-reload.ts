@@ -13,11 +13,15 @@
  *   - 取り直した会話から、送った文 (送る前には無かった id の user のメッセージで、本文が送った文と同じもの) のすぐ後ろの
  *     AI の返答 (replyToSentMessageOf) を探し、その返答の提案の記録の状態を読む (previousRequestActionStateOf)
  *   - 実行できた行 (executed) があれば、短い一文 (PREVIOUS_REQUEST_EXECUTED_MESSAGE) を足し、データを出す画面に知らせる
- *   - 実行中の印 (approved) の行だけなら、まだ実行している最中か、実行のあとに状態を書き戻せなかったかのどちらか。
- *     実行したとも、していないとも言い切れないので、頼み直しを勧めない一文 (PREVIOUS_REQUEST_RUNNING_OR_DONE_MESSAGE) を足し、
- *     PREVIOUS_REQUEST_RECHECK_DELAY_MS だけ待ってから 1 回だけ記録を読み直す。実行できた行になっていれば、一文を
- *     PREVIOUS_REQUEST_EXECUTED_MESSAGE に置き換えて、データを出す画面に知らせる (#2201 U3。以前は何も出さなかった)
- *   - それ以外 (行が無い・実行を待つ・失敗・断った・記録を読めない) は何も足さない (実行したと言い切れない)
+ *   - 実行中の印 (approved) の行だけなら、まだ実行している最中か、実行のあとに状態を書き戻せなかったかのどちらか
+ *     (失敗・今日の上限で実行しなかった場合もある)。実行したとも、していないとも言い切れないので、結果をまだ確かめられないと
+ *     伝える一文 (PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE。提案のカードの『確かめられませんでした』と同じ考え。頼み直しは勧めない)
+ *     を足し、PREVIOUS_REQUEST_RECHECK_DELAY_MS だけ待ってから 1 回だけ記録を読み直す。実行できた行になっていれば一文を
+ *     PREVIOUS_REQUEST_EXECUTED_MESSAGE に置き換えて、データを出す画面に知らせる (#2201 U3)。実行を待つ・失敗した行になって
+ *     いれば、一文を PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE に置き換える (#2206 G2。以前は『実行中か実行済み』のまま残った)
+ *   - 実行を待つ (pending)・失敗した (failed) 行だけなら、実行していない一文 (PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE) を足す
+ *     (#2206 G2。読み直しで分かったときと同じ文)
+ *   - それ以外 (行が無い・断った・記録を読めない) は何も足さない (実行したと言い切れない)
  *
  * このファイルは Web のブラウザとモバイルで読み込む (サーバー・DOM・React Native の依存を import しない)。
  */
@@ -31,16 +35,29 @@ export const PREVIOUS_REQUEST_ACTION_LOG_STATUS = {
   executed: 'executed',
   /** 実行中の印 (実行している最中か、実行のあとに状態を書き戻せなかった) */
   running: 'approved',
+  /** 実行を待つ (自動実行がやり直せる失敗をした・今日の上限や同意で止めた。実行していない) */
+  pending: 'pending',
+  /** 失敗し、やり直せない (実行していない) */
+  failed: 'failed',
 } as const;
 
 /** 応答を受け取れずに取り直した会話で、送った文への返答の提案が実行されていたときに足す一文 */
 export const PREVIOUS_REQUEST_EXECUTED_MESSAGE = '前の依頼は実行されました';
 
 /**
- * 応答を受け取れずに取り直した会話で、送った文への返答の提案の記録が実行中の印のままのときに足す一文。
- * 実行したとも、していないとも言い切れないので、頼み直しを勧めない (頼み直すと献立を二重に作りうる)
+ * 応答を受け取れずに取り直した会話で、送った文への返答の提案の記録が実行中の印のままのときに足す一文 (#2206 G2)。
+ * 実行中の印には、実行している最中・書き戻せなかった成功のほか、失敗・今日の上限で実行しなかった場合もあるので、
+ * 実行したとも、していないとも言い切らない (提案のカードの『実行できたかを確かめられませんでした…開き直してください』と同じ考え)。
+ * 頼み直しは勧めない (頼み直すと献立を二重に作りうる)。以前の『前の依頼は実行中か実行済みです』は、書き戻せなかった失敗でも
+ * 『実行済み』と読めた
  */
-export const PREVIOUS_REQUEST_RUNNING_OR_DONE_MESSAGE = '前の依頼は実行中か実行済みです';
+export const PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE = '前の依頼の結果をまだ確かめられません。しばらくしてから相談を開き直してください。';
+
+/**
+ * 応答を受け取れずに取り直した会話で、送った文への返答の提案の記録が実行を待つ (pending)・失敗した (failed) 行だけのときに
+ * 足す一文 (#2206 G2)。実行していないことは確か。頼み直しは勧めない (実行を待つ提案はカードの「実行する」から実行できる)
+ */
+export const PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE = '前の依頼は実行できませんでした';
 
 /**
  * 記録が実行中の印のままだったときに、記録を 1 回だけ読み直すまでの待ち (ミリ秒)。
@@ -52,11 +69,18 @@ export const PREVIOUS_REQUEST_RECHECK_DELAY_MS = 10_000;
 
 /**
  * 送った文への返答の提案の記録の状態。
- * executed = 実行できた行がある / running = 実行中の印の行だけがある (実行できた行は無い) / none = それ以外・読めない
+ * executed = 実行できた行がある / running = 実行中の印の行がある (実行できた行は無い) /
+ * notExecuted = 実行を待つ・失敗した行だけがある (#2206 G2) / none = それ以外 (行が無い・断った)・読めない
  */
-export type PreviousRequestActionState = 'executed' | 'running' | 'none';
+export type PreviousRequestActionState = 'executed' | 'running' | 'notExecuted' | 'none';
 
-/** 提案の記録の行 (status を持つもの) から、前の依頼の状態を決める。配列でない・status が無い行は数えない */
+/** 一文を足す状態 (none のときは足さない) */
+export type PreviousRequestNoteState = Exclude<PreviousRequestActionState, 'none'>;
+
+/**
+ * 提案の記録の行 (status を持つもの) から、前の依頼の状態を決める。配列でない・status が無い行は数えない。
+ * 実行できた > 実行中の印 > 実行を待つ・失敗 の順 (どれかが実行できていれば、頼み直すと二重になる)
+ */
 export function previousRequestActionStateOf(rows: unknown): PreviousRequestActionState {
   if (!Array.isArray(rows)) return 'none';
   const statuses = rows.map((row: unknown) =>
@@ -64,6 +88,12 @@ export function previousRequestActionStateOf(rows: unknown): PreviousRequestActi
   );
   if (statuses.includes(PREVIOUS_REQUEST_ACTION_LOG_STATUS.executed)) return 'executed';
   if (statuses.includes(PREVIOUS_REQUEST_ACTION_LOG_STATUS.running)) return 'running';
+  if (
+    statuses.includes(PREVIOUS_REQUEST_ACTION_LOG_STATUS.pending) ||
+    statuses.includes(PREVIOUS_REQUEST_ACTION_LOG_STATUS.failed)
+  ) {
+    return 'notExecuted';
+  }
   return 'none';
 }
 
@@ -80,13 +110,18 @@ export type SentText = {
 
 /**
  * 取り直した会話の中の、送った文の位置 (無ければ -1)。
- * 送った文 = 送る前には無かった id の user のメッセージで、本文が送った文と同じもの
+ * 送った文 = 送る前には無かった id の user のメッセージで、本文が送った文と同じもののうち、いちばん後ろのもの。
+ * 前の送信が時間切れで確かめられず (画面には保存された id が無い)、同じ文を送り直したときは、前の送信の保存行も
+ * 「送る前には無かった id」に入る。先頭から探すと前の送信を今回の送信と取り違え、前の返答の結果を出していた (#2206 G2)。
+ * サーバーは作成順に返すので、今回の送信はいちばん後ろにある
  */
 export function sentMessageIndexOf(sent: SentText, loaded: readonly ReloadedMessage[]): number {
   const known = new Set(sent.knownMessageIds);
-  return loaded.findIndex(
-    (message) => message.role === 'user' && !known.has(message.id) && message.content.trim() === sent.text,
-  );
+  for (let index = loaded.length - 1; index >= 0; index -= 1) {
+    const message = loaded[index];
+    if (message.role === 'user' && !known.has(message.id) && message.content.trim() === sent.text) return index;
+  }
+  return -1;
 }
 
 /**
@@ -104,12 +139,31 @@ export function replyToSentMessageOf<T extends ReloadedMessage>(sent: SentText, 
   return null;
 }
 
-/** 前の依頼の結果の一文の id (同じ返答の結果は 1 つ。実行中の一文は、実行できたと分かったらこの id の一文に置き換える) */
-export function previousRequestNoteIdOf(state: Exclude<PreviousRequestActionState, 'none'>, replyId: string): string {
-  return state === 'executed' ? `action-result-${replyId}` : `action-running-${replyId}`;
+/**
+ * 取り直した会話から、送った文が届いていたか・返答があるかを決める (Web とモバイルの取り直しで共有する。#2206 G2)。
+ * replied = 送った文への返答 (replyToSentMessageOf) がある / delivered-no-reply = 送った文はあるが返答がまだ無い /
+ * not-delivered = 送った文が無い
+ */
+export type SentMessageReloadOutcome = 'replied' | 'delivered-no-reply' | 'not-delivered';
+
+export function sentMessageReloadOutcomeOf(sent: SentText, loaded: readonly ReloadedMessage[]): SentMessageReloadOutcome {
+  if (sentMessageIndexOf(sent, loaded) < 0) return 'not-delivered';
+  return replyToSentMessageOf(sent, loaded) ? 'replied' : 'delivered-no-reply';
+}
+
+/**
+ * 前の依頼の結果の一文の id (同じ返答の結果は 1 つ。実行中の一文は、読み直して分かったらこの id の一文に置き換える)。
+ * 実行できた・実行していないの id は、自動実行の結果の一文 (action-result-・action-failed-) と同じ形
+ */
+export function previousRequestNoteIdOf(state: PreviousRequestNoteState, replyId: string): string {
+  if (state === 'executed') return `action-result-${replyId}`;
+  if (state === 'notExecuted') return `action-failed-${replyId}`;
+  return `action-running-${replyId}`;
 }
 
 /** 前の依頼の状態から、足す一文 (none のときは足さないので、ここには渡さない) */
-export function previousRequestNoteTextOf(state: Exclude<PreviousRequestActionState, 'none'>): string {
-  return state === 'executed' ? PREVIOUS_REQUEST_EXECUTED_MESSAGE : PREVIOUS_REQUEST_RUNNING_OR_DONE_MESSAGE;
+export function previousRequestNoteTextOf(state: PreviousRequestNoteState): string {
+  if (state === 'executed') return PREVIOUS_REQUEST_EXECUTED_MESSAGE;
+  if (state === 'notExecuted') return PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE;
+  return PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE;
 }
