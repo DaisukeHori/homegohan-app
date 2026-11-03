@@ -25,7 +25,7 @@ it('report', { timeout: 120_000 }, () => {
     const f = scanner.newFindings();
     for (const st of c.statements) scanner.scanNode(exec, st, f);
     execOut[caseLabelOf(c) ?? '?'] = {
-      tables: f.tables.map((t) => `${t.kind}:${t.table}@${t.at}`),
+      tables: f.tables.map((t) => `${t.kind}:${t.table}@${t.at}[${t.columns?.join(',') ?? '*'}|${t.writeArg?.getText() ?? ''}]`),
       invoke: f.invokesEdgeFunction,
       rpcs: [...f.rpcs.keys()],
     };
@@ -42,7 +42,7 @@ it('report', { timeout: 120_000 }, () => {
   const routeInfo = (r: string, method: string) => {
     const f = scanner.newFindings();
     scanner.scanExport(r, method, f);
-    return [...new Set(f.tables.filter((t) => t.kind !== 'write').map((t) => `${t.kind}:${t.table}`)), ...[...f.rpcs.keys()].map((k) => `rpc:${k}`)].sort();
+    return [...new Set(f.tables.filter((t) => t.kind !== 'write').map((t) => `${t.kind}:${t.table}${t.table === 'user_profiles' ? `[${t.columns?.join(',') ?? '*'}]@${t.at}` : ''}`)), ...[...f.rpcs.keys()].map((k) => `rpc:${k}`)].sort();
   };
   const pages = listFiles(ROOT, 'src/app/(main)', (r) => r.endsWith('/page.tsx'));
   const pagesOut: Record<string, unknown> = {};
@@ -57,7 +57,7 @@ it('report', { timeout: 120_000 }, () => {
       getReads[rs] = { GET: routeInfo(rs, 'GET'), POST: routeInfo(rs, 'POST'), PUT: routeInfo(rs, 'PUT'), PATCH: routeInfo(rs, 'PATCH') };
     }
     pagesOut[p] = {
-      direct: [...new Set(f.tables.map((t) => `${t.kind}:${t.table}@${t.at}`))].sort(),
+      direct: [...new Set(f.tables.map((t) => `${t.kind}:${t.table}@${t.at}[${t.columns?.join(',') ?? '*'}]`))].sort(),
       rpcs: [...f.rpcs.entries()].map(([k, v]) => `${k}@${v}`),
       urls: matched,
       routeReads: getReads,

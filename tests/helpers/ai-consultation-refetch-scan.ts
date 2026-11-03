@@ -27,6 +27,13 @@ export type TableAccessKind = 'read' | 'write' | 'unknown';
 export interface TableAccess {
   table: string;
   kind: TableAccessKind;
+  /**
+   * 読み書きする列。読み取りは select の文字列の列 (埋め込みの関係の中は数えない)、書き込みは insert / update / upsert に
+   * 渡したオブジェクトのリテラルのキー。'*'・リテラルでないもの・書き込みでない連なりは null (どの列もありうる)
+   */
+  columns: readonly string[] | null;
+  /** 書き込みの値がリテラルでないとき、その式 (識別子なら名前)。検査が値の出どころを確かめるのに使う */
+  writeArg: ts.Expression | null;
   /** リポジトリの根からの相対パスと行 (表示用) */
   at: string;
 }
@@ -275,7 +282,7 @@ function isReference(id: ts.Identifier): boolean {
   return true;
 }
 
-function tableAccessOf(call: ts.CallExpression): { table: string; kind: TableAccessKind } | null {
+function tableAccessOf(call: ts.CallExpression): Omit<TableAccess, 'at'> | null {
   const callee = call.expression;
   if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== 'from') return null;
   const receiver = callee.expression;
@@ -284,6 +291,7 @@ function tableAccessOf(call: ts.CallExpression): { table: string; kind: TableAcc
   const [arg] = call.arguments;
   if (!arg || !(ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg))) return null;
   const methods: string[] = [];
+  const calls: ts.CallExpression[] = [];
   let cur: ts.Node = call;
   while (
     cur.parent &&
@@ -294,14 +302,81 @@ function tableAccessOf(call: ts.CallExpression): { table: string; kind: TableAcc
     cur.parent.parent.expression === cur.parent
   ) {
     methods.push(cur.parent.name.text);
+    calls.push(cur.parent.parent);
     cur = cur.parent.parent;
   }
-  const kind: TableAccessKind = methods.some((m) => WRITE_METHODS.has(m))
-    ? 'write'
-    : methods.includes(READ_METHOD)
-      ? 'read'
-      : 'unknown';
-  return { table: arg.text, kind };
+  const writeAt = methods.findIndex((m) => WRITE_METHODS.has(m));
+  if (writeAt !== -1) {
+    const payload = calls[writeAt].arguments[0];
+    const literal = payload ? objectLiteralOf(payload) : null;
+    return {
+      table: arg.text,
+      kind: 'write',
+      columns: literal ? literalKeys(literal) : methods[writeAt] === 'delete' ? [] : null,
+      writeArg: literal || !payload ? null : payload,
+    };
+  }
+  const selectAt = methods.indexOf(READ_METHOD);
+  if (selectAt !== -1) {
+    const sel = calls[selectAt].arguments[0];
+    const columns = sel === undefined ? null : ts.isStringLiteral(sel) || ts.isNoSubstitutionTemplateLiteral(sel) ? selectColumns(sel.text) : null;
+    return { table: arg.text, kind: 'read', columns, writeArg: null };
+  }
+  return { table: arg.text, kind: 'unknown', columns: null, writeArg: null };
+}
+
+/** 配列のリテラルなら最初の要素 (insert / upsert の行の並び) */
+function objectLiteralOf(expr: ts.Expression): ts.ObjectLiteralExpression | null {
+  let e = expr;
+  while (ts.isAsExpression(e) || ts.isParenthesizedExpression(e) || ts.isSatisfiesExpression(e)) e = e.expression;
+  if (ts.isObjectLiteralExpression(e)) return e;
+  if (ts.isArrayLiteralExpression(e) && e.elements.length > 0 && e.elements.every((el) => objectLiteralOf(el) !== null)) {
+    return objectLiteralOf(e.elements[0]);
+  }
+  return null;
+}
+
+/** オブジェクトのリテラルのキー (広げた式 (...x) があればどの列もありうるので null) */
+function literalKeys(obj: ts.ObjectLiteralExpression): string[] | null {
+  const keys: string[] = [];
+  for (const p of obj.properties) {
+    if (ts.isSpreadAssignment(p)) return null;
+    const name = p.name;
+    if (!name) return null;
+    if (ts.isIdentifier(name) || ts.isStringLiteral(name)) keys.push(name.text);
+    else return null;
+  }
+  return keys;
+}
+
+/**
+ * select の文字列の列 (トップレベルだけ。埋め込み `rel(cols)` の中は別の表なので数えない)。
+ * `別名:列`・`列::型`・`列->>キー` は列の名前だけにする。'*' があれば null (どの列もありうる)
+ */
+export function selectColumns(text: string): string[] | null {
+  const out: string[] = [];
+  let depth = 0;
+  let token = '';
+  const flush = () => {
+    const t = token.trim();
+    token = '';
+    if (t === '') return;
+    if (t.includes('(')) return;
+    const alias = /^[A-Za-z0-9_]+:(?!:)(.*)$/.exec(t);
+    const body = alias ? alias[1] : t;
+    out.push(body.split('::')[0].split('->')[0].trim());
+  };
+  for (const ch of text) {
+    if (ch === '(') depth += 1;
+    if (ch === ')') depth -= 1;
+    if (ch === ',' && depth === 0) {
+      flush();
+      continue;
+    }
+    token += ch;
+  }
+  flush();
+  return out.includes('*') ? null : out;
 }
 
 function rpcNameArgOf(call: ts.CallExpression): ts.Expression | null {
