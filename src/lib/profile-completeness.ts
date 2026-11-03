@@ -9,6 +9,10 @@
  * 体づくりの目標・健康の状態などを書く) と add_health_record (今日の体重を user_profiles.weight にも写す) は計算し直さなかった。
  * AI で身長・体重を入れると、帯 (ProfileReminderBanner) の未入力の一覧は消えるが「プロフィール完成度 X%」と帯は古いまま残った
  * (読み込み直しても同じ)。書いた後の行から計算し直す refreshProfileCompleteness を、書いたあとに呼ぶ。
+ *
+ * 完成度は、読んだときの完成度のままの行にだけ書く (syncProfileCompletenessOfRow。#2206 G4)。条件なしで書くと、読んでから
+ * 書くまでに別の書き手が計算し直した新しい値を、古い行から数えた値で上書きしえた。
+ * モバイルのオンボーディングの途中保存 (画面から直接 user_profiles に書く) は、保存のあとに POST /api/profile/completeness を呼ぶ。
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { toUserProfile } from '@/lib/converter';
@@ -172,7 +176,8 @@ export async function syncProfileCompletenessOfRow<Row extends Partial<DbUserPro
 
 /**
  * user_profiles の今の行 (書いた後の行) を読み、完成度を計算し直して、変わっていれば profile_completeness を書く (#2201 U4)。
- * 書き込みが行を返さない経路 (欄だけを update する health の records / quick / goals・AI 相談・オンボーディングなど) が使う。
+ * 書き込みが行を返さない経路 (欄だけを update する health の records / quick / goals・AI 相談・オンボーディング・
+ * モバイルの途中保存のあとの POST /api/profile/completeness など) が使う。書き方は syncProfileCompletenessOfRow と同じ (条件つき)。
  * 例外は投げず、結果を返す (呼び出し側は、欄の書き込みそのものは成功として扱い、失敗はログに残すだけ)。
  * supabase は利用者のセッションのクライアント (本人の行だけの RLS のもとで読み書きする)
  */
