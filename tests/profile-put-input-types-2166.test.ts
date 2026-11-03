@@ -264,12 +264,14 @@ describe('PUT /api/profile: 型の合う本文は今までどおり書く', () =
     expect(written).not.toHaveProperty('unknownField');
   });
 
-  it('サーバーが上書きする欄 (profileCompleteness・lastProfileUpdate) は型が違っても今までどおり上書きして書く', async () => {
+  it('サーバーが書く欄 (profileCompleteness・lastProfileUpdate) は型が違っても検査せず、本文の値を書かない', async () => {
     const res = await put({ profileCompleteness: 'abc', lastProfileUpdate: 12345 });
     expect(res.status).toBe(200);
     const written = h.profileUpdates[0];
-    expect(written).toMatchObject({ profile_completeness: expect.any(Number), last_profile_update: expect.any(String) });
-    expect(written).not.toMatchObject({ profile_completeness: 'abc' });
+    expect(written).toMatchObject({ last_profile_update: expect.any(String) });
+    // 完成度は本文の値を書かず、書いた後の行から数えた値を後から書く (#2201 U4)
+    expect(written).not.toHaveProperty('profile_completeness');
+    expect(h.profileUpdates.slice(1)).toEqual([{ profile_completeness: expect.any(Number) }]);
   });
 
   it('age を送り ageGroup を送らないときは今までどおり年代を入れる', async () => {
