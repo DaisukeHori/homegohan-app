@@ -38,8 +38,9 @@ export default function ComparisonPage() {
   // AI 相談の提案の実行で記録が変わったら、下の取得をもう一度走らせる (#2195 V1)
   // 番兵 (モーダル・入力の部品) で止めた通知は、外れたときに 1 回取り直す (#2201 U2)
   const { refetchKey: aiConsultationRefetchKey } = useAiConsultationRefetchKey();
-  // その回が AI 相談の成功の取り直しで走ったか (#2201 U1)
-  const takeAiConsultationRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey);
+  // その回が AI 相談の成功の取り直しで走ったか (#2201 U1)。開いたとき・期間の切り替えの読み込み中に来た成功の回は、その読み込みの役を
+  // 引き継ぐ (取り直しの扱いにしない。失敗で前の期間の順位を残さない)
+  const takeAiConsultationRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey, loading);
 
   useEffect(() => {
     // 取り直しでは読み込み中の表示を出さず、失敗 (通信の失敗・非 2xx) では今の表示を残す (#2201 U1)。

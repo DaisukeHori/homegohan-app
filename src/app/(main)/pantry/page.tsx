@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
 import {
   useAiConsultationDataRefetch,
+  useAiConsultationLoading,
   useAiConsultationPendingWrites,
   type AiConsultationFetchTicket,
 } from "@/hooks/useAiConsultationDataRefetch";
@@ -59,7 +60,8 @@ export default function PantryPage() {
   // 「同意しない」なら解析しない (未同意のまま送っても、サーバーが 403 AI_CONSENT_REQUIRED で止める)
   const { ensureAiConsent, consentModal } = useAiConsent();
   const [items, setItems] = useState<PantryItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  // 開いたときの読み込み中の表示。開いたときと取り直しは同じ読み方 (失敗では今の表示を残す) で、最後の札の取得が下ろす (#2201 U1)
+  const { loading, settleLoading } = useAiConsultationLoading();
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [saving, setSaving] = useState(false);
@@ -94,9 +96,9 @@ export default function PantryPage() {
     } catch (err) {
       console.error("Failed to fetch pantry items:", err);
     } finally {
-      if (ticket.isLatest()) setLoading(false);
+      settleLoading(ticket);
     }
-  }, []);
+  }, [settleLoading]);
 
   // AI 相談の提案の実行で冷蔵庫の食材が変わったら取り直す (#2195 V1)。手入力のフォーム・確認のモーダルが出ている間・
   // 削除の応答を待つ間は取り直さず、閉じた・終わったあとに 1 回取り直す (#2201 U2)

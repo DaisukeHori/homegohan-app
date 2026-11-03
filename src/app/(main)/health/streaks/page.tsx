@@ -7,7 +7,11 @@ import {
   Flame, Award, ChevronRight, Activity, CheckCircle2, Calendar, X,
 } from "lucide-react";
 import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
-import { useAiConsultationDataRefetch, type AiConsultationFetchTicket } from "@/hooks/useAiConsultationDataRefetch";
+import {
+  useAiConsultationDataRefetch,
+  useAiConsultationLoading,
+  type AiConsultationFetchTicket,
+} from "@/hooks/useAiConsultationDataRefetch";
 
 const colors = {
   bg: "#FAF9F7",
@@ -77,7 +81,9 @@ export default function StreaksPage() {
   const [nextBadge, setNextBadge] = useState<number | null>(null);
   const [daysToNextBadge, setDaysToNextBadge] = useState<number | null>(null);
   const [weeklyRecords, setWeeklyRecords] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
+  // 開いたときの読み込み中の表示。その読み込み中に始まった AI 相談の成功の取り直しは、その読み込みの役
+  // (失敗の表示・読み込み中の表示を下ろす) を引き継ぐ (#2201 U1。useAiConsultationLoading)
+  const { loading, setLoading, refetchReadMode, settleLoading } = useAiConsultationLoading();
   const [error, setError] = useState<string | null>(null);
   // #1055 UX3-25: タップでバッジ詳細 (アイコン+名前+条件) を確認できるようにする
   const [selectedBadgeDays, setSelectedBadgeDays] = useState<number | null>(null);
@@ -104,13 +110,13 @@ export default function StreaksPage() {
     } catch (e: any) {
       if (mode === 'mount' && ticket.isLatest()) setError(e.message ?? "エラーが発生しました");
     } finally {
-      if (ticket.isLatest()) setLoading(false);
+      settleLoading(ticket);
     }
-  }, []);
+  }, [setLoading, settleLoading]);
 
   // AI 相談の提案の実行で健康記録が足されたら、連続記録を取り直す (#2195 V1)。バッジの詳細のモーダルが出ている間は取り直さず、
-  // 閉じたら 1 回取り直す (#2201 U2)
-  const { beginFetch } = useAiConsultationDataRefetch((ticket) => fetchStreak(ticket, 'refetch'));
+  // 閉じたら 1 回取り直す (#2201 U2)。開いたときの読み込み中に始まった取り直しは、失敗をエラーの表示で出す (refetchReadMode)
+  const { beginFetch } = useAiConsultationDataRefetch((ticket) => fetchStreak(ticket, refetchReadMode()));
   useEffect(() => {
     void fetchStreak(beginFetch(), 'mount');
   }, [fetchStreak, beginFetch]);

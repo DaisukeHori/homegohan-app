@@ -8,7 +8,11 @@ import { createClient } from '@/lib/supabase/client';
 import { normalizeProfileName } from '@/lib/profile-name';
 import { transferProposalStatusMessage } from '@/lib/membership/transfer-proposal-status';
 import { readSignedInUser } from '@/lib/auth/signed-in-user';
-import { useAiConsultationDataRefetch, type AiConsultationFetchTicket } from '@/hooks/useAiConsultationDataRefetch';
+import {
+  useAiConsultationDataRefetch,
+  useAiConsultationLoading,
+  type AiConsultationFetchTicket,
+} from '@/hooks/useAiConsultationDataRefetch';
 
 /** 提案が無い (または RLS で見えない) ときの文 */
 const PROPOSAL_NOT_FOUND_MESSAGE = '譲渡提案が見つかりません';
@@ -55,7 +59,9 @@ export default function FamilyTransferAcceptPage() {
   const router = useRouter();
   const supabase = createClient();
 
-  const [loading, setLoading] = useState(true);
+  // 開いたとき・「再試行」の読み込み中の表示。開いたときの読み込み中に始まった AI 相談の成功の読み直しは、その読み込みの役
+  // (失敗の表示・読み込み中の表示を下ろす) を引き継ぐ (#2201 U1。useAiConsultationLoading)
+  const { loading, setLoading, refetchReadMode, settleLoading } = useAiConsultationLoading();
   const [proposal, setProposal] = useState<TransferProposal | null>(null);
   const [fromName, setFromName] = useState<string | null>(null);
   const [familyName, setFamilyName] = useState<string | null>(null);
@@ -163,13 +169,16 @@ export default function FamilyTransferAcceptPage() {
   // ログアウトしていたときは、開いたときと同じ扱い (fetchProposal が決める)。読み直しの失敗では今の表示を残す (#2201 U1)。
   // 承諾・拒否の応答を待つあいだは読み直さず、読み直しの応答を待つあいだは承諾・拒否を止める (busyRef)。
   // 承諾・拒否の応答を待つあいだ・前の読み直しの応答を待つあいだに来た成功は捨てずに、終わったあとに 1 回読み直す
-  // (#2201 U2。useAiConsultationDataRefetch の writeInFlightRef)
+  // (#2201 U2。useAiConsultationDataRefetch の writeInFlightRef)。
+  // 開いたとき・「再試行」の読み込み中に来た成功は、その読み込みの役を引き継ぐ: 失敗は「読み込めませんでした」を出し、
+  // 終わったら読み込み中の表示を下ろす (先に始めた読み込みは応答を置かず、読み込み中の表示も下ろさないため。#2201 U1)
   const refetchAfterAiConsultation = async (ticket: AiConsultationFetchTicket) => {
     if (busyRef.current) return;
     busyRef.current = true;
     setAiRefetching(true);
     try {
-      await fetchProposal(ticket, 'refetch');
+      const { redirecting } = await fetchProposal(ticket, refetchReadMode());
+      if (!redirecting) settleLoading(ticket);
     } finally {
       busyRef.current = false;
       setAiRefetching(false);
@@ -184,8 +193,8 @@ export default function FamilyTransferAcceptPage() {
     setLoading(true);
     const ticket = beginFetch();
     const { redirecting } = await fetchProposal(ticket, 'mount');
-    if (!redirecting && ticket.isLatest()) setLoading(false);
-  }, [fetchProposal, beginFetch]);
+    if (!redirecting) settleLoading(ticket);
+  }, [fetchProposal, beginFetch, setLoading, settleLoading]);
 
   useEffect(() => {
     void loadPage();

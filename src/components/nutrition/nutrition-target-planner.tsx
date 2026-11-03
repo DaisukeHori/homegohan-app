@@ -9,7 +9,11 @@ import {
   MAX_MANUAL_CALORIES, MIN_MANUAL_CALORIES, getBmrWarning, getManualCalorieError,
 } from "@/lib/nutrition-target-validation";
 import type { CalculationBasis } from "@homegohan/core";
-import { useAiConsultationDataRefetch, type AiConsultationFetchTicket } from "@/hooks/useAiConsultationDataRefetch";
+import {
+  useAiConsultationDataRefetch,
+  useAiConsultationLoading,
+  type AiConsultationFetchTicket,
+} from "@/hooks/useAiConsultationDataRefetch";
 import { AI_CONSULTATION_UNEDITED_INPUTS_PROPS } from "@/lib/ai/consultation-data-refetch";
 
 type PlannerMode = "default" | "onboarding";
@@ -107,7 +111,9 @@ function getRatios(targets: PlannerTargets): MacroRatios {
 type PlannerFetchMode = "mount" | "refetch";
 
 export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMode }) {
-  const [loading, setLoading] = useState(true);
+  // 開いたとき・保存のあとの読み込み中の表示。その読み込み中に始まった AI 相談の成功の取り直しは、その読み込みの役
+  // (失敗の表示・読み込み中の表示を下ろす) を引き継ぐ (#2201 U1。useAiConsultationLoading)
+  const { loading, setLoading, refetchReadMode, settleLoading } = useAiConsultationLoading();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
@@ -159,7 +165,7 @@ export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMod
         setError(err instanceof Error ? err.message : "読み込みに失敗しました。");
       }
     } finally {
-      if (ticket.isLatest()) setLoading(false);
+      settleLoading(ticket);
     }
   };
 
@@ -167,7 +173,7 @@ export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMod
   // 入力欄を変えている間・保存の応答を待つ間は取り直さず (下の section の印を外すので、入力欄が取り直しを止める)、
   // 元に戻した・保存が終わったあとに 1 回取り直す (#2201 U2)
   const { beginFetch, notifyWriteSettled } = useAiConsultationDataRefetch(
-    (ticket) => fetchPlannerData(ticket, "refetch"),
+    (ticket) => fetchPlannerData(ticket, refetchReadMode()),
     { writeInFlightRef },
   );
 

@@ -2,7 +2,11 @@
 
 import { useState, useEffect, useRef } from "react";
 import { todayLocal } from "@/lib/date-utils";
-import { useAiConsultationDataRefetch, type AiConsultationFetchTicket } from "@/hooks/useAiConsultationDataRefetch";
+import {
+  useAiConsultationDataRefetch,
+  useAiConsultationLoading,
+  type AiConsultationFetchTicket,
+} from "@/hooks/useAiConsultationDataRefetch";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -62,7 +66,9 @@ type GoalsFetchMode = 'mount' | 'refetch';
 
 export default function HealthGoalsPage() {
   const router = useRouter();
-  const [loading, setLoading] = useState(true);
+  // 開いたとき・書き込みのあとの読み込み中の表示。その読み込み中に始まった AI 相談の成功の取り直しは、その読み込みの役
+  // (失敗の表示・読み込み中の表示を下ろす) を引き継ぐ (#2201 U1。useAiConsultationLoading)
+  const { loading, setLoading, refetchReadMode, settleLoading } = useAiConsultationLoading();
   const [goals, setGoals] = useState<HealthGoal[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newGoal, setNewGoal] = useState({
@@ -99,13 +105,13 @@ export default function HealthGoalsPage() {
     } catch (error) {
       console.error('Failed to fetch goals:', error);
     } finally {
-      if (ticket.isLatest()) setLoading(false);
+      settleLoading(ticket);
     }
   };
   // AI 相談の提案の実行で健康目標が変わったら取り直す (#2195 V1)。作成・編集のモーダルが出ている間・削除の応答を待つ間は
   // 取り直さず、閉じた・終わったあとに 1 回取り直す (#2201 U2)
   const { beginFetch, notifyWriteSettled } = useAiConsultationDataRefetch(
-    (ticket) => fetchGoals(ticket, 'refetch'),
+    (ticket) => fetchGoals(ticket, refetchReadMode()),
     { writeInFlightRef },
   );
   /** 開いたとき・作成・編集・削除のあとの読み込み (これまでどおり読み込み中の表示を出す) */

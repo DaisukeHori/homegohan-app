@@ -6,7 +6,11 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { formatLocalDate } from "@/lib/date-utils";
 import { createClient } from "@/lib/supabase/client";
-import { useAiConsultationDataRefetch, type AiConsultationFetchTicket } from "@/hooks/useAiConsultationDataRefetch";
+import {
+  useAiConsultationDataRefetch,
+  useAiConsultationLoading,
+  type AiConsultationFetchTicket,
+} from "@/hooks/useAiConsultationDataRefetch";
 import {
   buildTrendChartA11y,
   estimateSvgTextWidth,
@@ -65,7 +69,9 @@ type GraphsFetchMode = 'mount' | 'refetch';
 
 export default function HealthGraphsPage() {
   const router = useRouter();
-  const [loading, setLoading] = useState(true);
+  // 開いたとき・期間の切り替えの読み込み中の表示。その読み込み中に始まった AI 相談の成功の取り直しは、その読み込みの役
+  // (失敗の表示・読み込み中の表示を下ろす) を引き継ぐ (#2201 U1。useAiConsultationLoading)
+  const { loading, setLoading, refetchReadMode, settleLoading } = useAiConsultationLoading();
   const [records, setRecords] = useState<HealthRecord[]>([]);
   const [period, setPeriod] = useState<Period>('month');
   const [metric, setMetric] = useState<Metric>('weight');
@@ -145,13 +151,14 @@ export default function HealthGraphsPage() {
     } catch (error) {
       console.error('Failed to fetch data:', error);
     } finally {
-      if (ticket.isLatest()) setLoading(false);
+      settleLoading(ticket);
     }
-  }, [period]);
+  }, [period, setLoading, settleLoading]);
 
   // AI 相談の提案の実行で健康記録・健康目標が変わったら取り直す (#2195 V1)。
   // 下の購読は健康記録・健診の行の変化だけを見るので、目標 (体重の目標の線) の変化はこちらで拾う
-  const { beginFetch } = useAiConsultationDataRefetch((ticket) => fetchData(ticket, 'refetch'));
+  // 開いたとき・期間の切り替えの読み込み中に始まった取り直しは、その読み込みの役を引き継ぐ (refetchReadMode。失敗で前の期間の線を残さない)
+  const { beginFetch } = useAiConsultationDataRefetch((ticket) => fetchData(ticket, refetchReadMode()));
 
   useEffect(() => {
     void fetchData(beginFetch(), 'mount');
@@ -166,12 +173,12 @@ export default function HealthGraphsPage() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'health_records' },
-        () => { void fetchData(beginFetch(), 'refetch'); }
+        () => { void fetchData(beginFetch(), refetchReadMode()); }
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'health_checkups' },
-        () => { void fetchData(beginFetch(), 'refetch'); }
+        () => { void fetchData(beginFetch(), refetchReadMode()); }
       )
       .subscribe();
 

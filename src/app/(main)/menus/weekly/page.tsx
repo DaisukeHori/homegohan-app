@@ -521,9 +521,13 @@ export default function WeeklyMenuPage() {
   // 表示中の週の初日 (YYYY-MM-DD)。献立の取得の応答を置く前に、応答を待つあいだに週を移っていないかを見る (#2201 U1)
   const weekStartKeyRef = useRef(formatLocalDate(weekStart));
   weekStartKeyRef.current = formatLocalDate(weekStart);
-  // 表示中の週の献立の取得 (週の読み込み fetchPlan と読み直し refreshMealPlan) の世代番号 (#2201 U1)。
-  // 取得を始めるたびに 1 つ増やし、応答を置くのは最後に始めた取得だけ (古い応答が後から届いて新しい献立を上書きしない)
+  // 表示中の週の献立の取得 (週の読み込み fetchPlan と読み直し refreshMealPlan) の世代番号 (#2201 U1)。取得を始めるたびに 1 つ増やす
   const planFetchSeqRef = useRef(0);
+  // 献立の応答 (週の読み込みの失敗の空を含む) を置いた取得の世代番号 (#2201 U1)。応答を置くのは、これより新しい取得だけ
+  // (先に届いた新しい応答を、あとから届いた古い応答で上書きしない)。「最後に始めた取得だけ」にしないのは、週を移った直後
+  // (週の読み込みの応答待ち) に始まった読み直しが失敗したとき、週の読み込みの応答まで捨てると、前の週の献立が新しい週の見出しの
+  // 下に残るため
+  const planPlacedSeqRef = useRef(0);
   const setWeekStart = useCallback((d: Date) => dispatchWeekView({ type: 'WEEK_SET_START', payload: d }), []);
   // UX2-24: 前週/次週ボタン専用。selectedDayIndex をリセットしない WEEK_NAVIGATE_* を dispatch する
   const navigateWeekPrev = useCallback((d: Date) => dispatchWeekView({ type: 'WEEK_NAVIGATE_PREV', payload: d }), []);
@@ -1279,9 +1283,9 @@ export default function WeeklyMenuPage() {
   // → aiGenerationReducer 管理 (Phase B-2 で移行済み)
 
   // Meal Plan再取得関数（キャッシュも更新）
-  // 応答を置く前に、今も同じ週を出しているか (weekStartKeyRef) と、あとから別の取得を始めていないか (planFetchSeqRef) を見る
+  // 応答を置く前に、今も同じ週を出しているか (weekStartKeyRef) と、あとに始めた取得の応答をもう置いていないか (planPlacedSeqRef) を見る
   // (#2201 U1。以前は閉包の weekStart で読んで確かめずに置いたので、応答を待つあいだに週を移ると前の週の献立が新しい週の見出しの
-  // 下に出うった)。週のキャッシュは週が合っていれば置く (古い世代の応答でも、その週の値として正しい)
+  // 下に出うった)。読み直しの失敗では何も置かない (先に始めた週の読み込みの応答が後から届けば、そちらを置く)
   const refreshMealPlan = useCallback(async () => {
     const targetDate = formatLocalDate(weekStart);
     const endDate = addDaysStr(targetDate, 6);
@@ -1291,7 +1295,8 @@ export default function WeeklyMenuPage() {
       const res = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
       if (res.ok) {
         const { dailyMeals, shoppingList: shoppingListData } = await res.json();
-        if (weekStartKeyRef.current !== targetDate || planFetchSeqRef.current !== seq) return;
+        if (weekStartKeyRef.current !== targetDate || seq <= planPlacedSeqRef.current) return;
+        planPlacedSeqRef.current = seq;
         // 買い物リストは週に関係なく、使っている買い物リスト 1 つ (GET /api/meal-plans の shoppingList。無いときは null)。
         // この応答が正なので、空 (最後の品目が消された・リストが無い) でも、献立の無い週でもそのまま置く (#2195 V1。
         // 以前は空のときに置かず、AI 相談で最後の品目を消しても、バッジと買い物リストに消した品目が残っていた)。
@@ -2163,7 +2168,8 @@ export default function WeeklyMenuPage() {
       // キャッシュをチェック
       const cached = weekDataCache.current.get(targetDateStr);
       if (cached && (now - cached.fetchedAt < CACHE_TTL)) {
-        // キャッシュヒット - 即座に反映
+        // キャッシュヒット - 即座に反映 (いま始めた取得なので、置いたどの応答よりも新しい)
+        planPlacedSeqRef.current = seq;
         setCurrentPlan(cached.plan);
         if (cached.shoppingList.length > 0) setShoppingList(cached.shoppingList);
         if (cached.plan) autoExpandNextMeal(cached.plan, weekDates);
@@ -2181,8 +2187,9 @@ export default function WeeklyMenuPage() {
         // 応答を待つあいだに週を移った: この週の献立を置かない (#2201 U1)
         if (weekStartKeyRef.current !== targetDateStr) return;
 
-        // あとから読み直し (refreshMealPlan) を始めていれば、そちらの応答を置く
-        if (planFetchSeqRef.current === seq) {
+        // あとに始めた読み直し (refreshMealPlan) の応答をもう置いていれば置かない (その読み直しが失敗していれば、この応答を置く)
+        if (seq > planPlacedSeqRef.current) {
+          planPlacedSeqRef.current = seq;
           setCurrentPlan(data.plan);
           if (data.shoppingList.length > 0) setShoppingList(data.shoppingList);
           if (data.plan) autoExpandNextMeal(data.plan, weekDates);
@@ -2207,7 +2214,10 @@ export default function WeeklyMenuPage() {
         prefetchAdjacentWeeks(weekStart);
       } catch (e) {
         console.error("Failed to fetch meal plan", e);
-        if (weekStartKeyRef.current === targetDateStr && planFetchSeqRef.current === seq) setCurrentPlan(null);
+        if (weekStartKeyRef.current === targetDateStr && seq > planPlacedSeqRef.current) {
+          planPlacedSeqRef.current = seq;
+          setCurrentPlan(null);
+        }
       } finally {
         // 週を移っていれば、移った先の週の読み込みが読み込み中の表示を下ろす
         if (weekStartKeyRef.current === targetDateStr) setLoading(false);

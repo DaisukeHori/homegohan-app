@@ -9,7 +9,7 @@ import type { Tables } from "@homegohan/shared";
 import type { Announcement, PlannedMeal, PantryItem, Badge } from "@/types/domain";
 import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import { aiSkippedReasonOf, type AiSkippedReason } from "@/lib/ai/consent-config";
-import { useAiConsultationPendingWrites } from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationLoading, useAiConsultationPendingWrites } from "@/hooks/useAiConsultationDataRefetch";
 
 // 今日の献立データ
 interface TodayMealPlan {
@@ -100,7 +100,9 @@ const EMPTY_DAILY_SUMMARY: DailySummary = {
 export const useHomeData = () => {
   const [user, setUser] = useState<any>(null);
   const [todayPlan, setTodayPlan] = useState<TodayMealPlan | null>(null);
-  const [loading, setLoading] = useState(true);
+  // 開いたとき・ログインの状態の変化などの読み込み中の表示。その読み込み中に始まった AI 相談の成功の取り直しは、その読み込みの役
+  // (読み取りの失敗の扱い・読み込み中の表示を下ろす) を引き継ぐ (#2201 U1。useAiConsultationLoading)
+  const { loading, setLoading, refetchReadMode } = useAiConsultationLoading();
   // #191/#322: meal toggle debounce — pending mealId set + 250ms debounce timer
   const pendingToggleRef = useRef<Set<string>>(new Set());
   // 食事の完了の切り替えの楽観的な更新から RPC の応答まで (#2201 U2)。ページが AI 相談の取り直しの hook に渡す: この間に来た
@@ -243,7 +245,17 @@ export const useHomeData = () => {
     const seq = homeFetchSeqRef.current;
     const isLatest = () => homeFetchSeqRef.current === seq;
     if (mode === 'mount') setLoading(true);
-    
+    try {
+      await readHomeData(options, mode, isLatest);
+    } finally {
+      // 最後に始めた取得が終わったら (途中で投げても) 読み込み中の表示を下ろす。開いたときの読み込み中に始まった取り直しが投げると、
+      // 開いたときの読み込みは最後でないので下ろさず、読み込み中の表示のまま止まるため
+      if (isLatest()) setLoading(false);
+    }
+  };
+
+  /** fetchHomeData の読み取りの中身 (読み込み中の表示は fetchHomeData が決める) */
+  const readHomeData = async (options: HomeFetchOptions, mode: HomeFetchMode, isLatest: () => boolean) => {
     // 1. ユーザー情報取得
     const authUser = await resolveAuthUser();
     
@@ -361,8 +373,6 @@ export const useHomeData = () => {
     } catch (e) {
       console.error("Announcement fetch error", e);
     }
-
-    if (isLatest()) setLoading(false);
   };
 
   // 連続自炊ストリーク（完了した自炊のみカウント）
@@ -1104,8 +1114,9 @@ export const useHomeData = () => {
     executeNutritionSuggestion,
     submitPerformanceCheckin,
     // 取り直し (AI 相談の成功のあと)。読み込み直したときと同じ表示にする (今日のアドバイスの帯も置き換える。#2195 V1)。
-    // 読み込み中の表示を出さず、読み取りの失敗では今の表示を残す (#2201 U1)
-    refetch: () => fetchHomeData({ replaceAdviceBanner: true }, 'refetch'),
+    // 読み込み中の表示を出さず、読み取りの失敗では今の表示を残す (#2201 U1)。開いたときの読み込み中に始まった取り直しは、
+    // その読み込みの役を引き継ぐ (refetchReadMode)
+    refetch: () => fetchHomeData({ replaceAdviceBanner: true }, refetchReadMode()),
     // 食事の完了の切り替えの間の印 (#2201 U2。ページが useAiConsultationDataRefetch の writeInFlightRef に渡す)
     aiConsultationWrites,
   };

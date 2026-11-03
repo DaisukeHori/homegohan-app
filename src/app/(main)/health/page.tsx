@@ -4,7 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
-import { useAiConsultationDataRefetch, type AiConsultationFetchTicket } from "@/hooks/useAiConsultationDataRefetch";
+import {
+  useAiConsultationDataRefetch,
+  useAiConsultationLoading,
+  type AiConsultationFetchTicket,
+} from "@/hooks/useAiConsultationDataRefetch";
 import {
   Scale, Heart, Moon, Droplets, Activity, TrendingUp, TrendingDown,
   Target, Flame, Calendar, ChevronRight, Plus, Camera, Sparkles,
@@ -70,7 +74,9 @@ interface HealthGoal {
 type HealthFetchMode = 'mount' | 'refetch';
 
 export default function HealthDashboardPage() {
-  const [loading, setLoading] = useState(true);
+  // 開いたときの読み込み中の表示。その読み込み中に始まった AI 相談の成功の取り直しは、その読み込みの役
+  // (失敗の表示・読み込み中の表示を下ろす) を引き継ぐ (#2201 U1。useAiConsultationLoading)
+  const { loading, setLoading, refetchReadMode, settleLoading } = useAiConsultationLoading();
   const [todayRecord, setTodayRecord] = useState<HealthRecord | null>(null);
   const [yesterdayRecord, setYesterdayRecord] = useState<HealthRecord | null>(null);
   const [streak, setStreak] = useState<HealthStreak | null>(null);
@@ -135,9 +141,9 @@ export default function HealthDashboardPage() {
       // 通信の失敗: 読めたものはそのまま (取り直しなら今の表示を残す)
       console.warn('[health] fetch failed:', error);
     } finally {
-      if (ticket.isLatest()) setLoading(false);
+      settleLoading(ticket);
     }
-  }, [today]);
+  }, [today, setLoading, settleLoading]);
 
   // 選んだ日のパネルを出している日 (取り直しの応答が、別の日を選び直したあとに届いても置かないため)
   const selectedDateRef = useRef<string | null>(null);
@@ -161,8 +167,9 @@ export default function HealthDashboardPage() {
         // 取り直しの失敗では今の表示を残す
       }
     };
-    await Promise.all([fetchData(ticket, 'refetch'), reloadSelectedDate()]);
-  }, [fetchData]);
+    // 開いたときの読み込み中に始まった取り直しは、その読み込みの役を引き継ぐ (refetchReadMode)
+    await Promise.all([fetchData(ticket, refetchReadMode()), reloadSelectedDate()]);
+  }, [fetchData, refetchReadMode]);
   // 記録の欄 (体重などの入力の部品) が開いている間は取り直さない (打ちかけの体重を取得した値で上書きしないため)。
   // 閉じたら止めた通知のぶん 1 回取り直す (#2201 U2)
   const { beginFetch } = useAiConsultationDataRefetch(refetchAfterAiConsultation);

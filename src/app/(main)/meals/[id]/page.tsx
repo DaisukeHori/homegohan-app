@@ -122,8 +122,9 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
   // (切り替えの前の値を読んだ取り直しの応答が、楽観的な表示を戻さないため)
   const pendingWrites = useAiConsultationPendingWrites();
   const { refetchKey: aiConsultationRefetchKey } = useAiConsultationRefetchKey({ writeInFlightRef: pendingWrites });
-  // 食事の取得の回が AI 相談の成功の取り直しで走ったか (#2201 U1)
-  const takeMealRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey);
+  // 食事の取得の回が AI 相談の成功の取り直しで走ったか (#2201 U1)。開いたとき・食事の切り替えの読み込み中に来た成功の回は、
+  // その読み込みの役を引き継ぐ (取り直しの扱いにしない。失敗で前の食事を残さない)
+  const takeMealRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey, loading);
 
   useEffect(() => {
     // 前の回の応答が後から届いても置かない (#2201 U1)。失敗では今の値のまま (これまでどおり)

@@ -70,7 +70,9 @@ export interface AiConsultationRefetchControl {
  *     応答を置く前に札の isLatest() を見る (古い応答が後から届いても新しい表示を上書きしない)
  *   - 失敗: refetch が reject しても (同期で投げても) 拾って握る (未処理の Promise 拒否にしない)。
  *     ページは取り直しの失敗 (通信の失敗・5xx など) では今の表示を残す (取り直しの経路でだけ。開いたときの失敗はこれまでどおり)
- *   - 読み込み中の表示: 取り直しでは loading を立てない (画面全体をスピナーに置き換えない)。開いたときだけ出す
+ *   - 読み込み中の表示: 取り直しでは loading を立てない (画面全体をスピナーに置き換えない)。開いたときだけ出す。
+ *     開いたときの読み込み中に始まった取り直しは、その読み込みの役 (失敗の表示・読み込み中の表示を下ろす) を引き継ぐ
+ *     (useAiConsultationLoading / useAiConsultationRefetchRun の fullScreenLoading)
  *   - 止めた通知: 番兵 (入力の部品・モーダル) か書き込みの印 (writeInFlightRef) で止めた通知は捨てずに印を付け、
  *     番兵が外れたとき (DOM の変化で見る: モーダルを閉じた・入力の部品が消えた) / 書き込みが終わったとき (notifyWriteSettled) に
  *     1 回だけ取り直す。止めている間に何回通知が来ても、取り直しは 1 回
@@ -210,15 +212,76 @@ export function useAiConsultationRefetchKey(options: AiConsultationRefetchOption
 /**
  * useAiConsultationRefetchKey の数を依存に持つ useEffect の、その回が取り直し (数が前の回から増えた) で走ったかを返す関数を作る (#2201 U1)。
  * 1 つの useEffect ごとに 1 つ作り、その useEffect の始めに 1 回だけ呼ぶ (ほかの依存 (期間・id の切り替え) だけで走った回は false =
- * 開いたときと同じ扱い)
+ * 開いたときと同じ扱い)。
+ * fullScreenLoading にはページの全画面の読み込み中の表示 (loading) を渡す。読み込み中の表示を出している間 (開いたとき・期間 / id の
+ * 切り替えの回の応答待ち) に数が増えた回は false (= その回の役を引き継ぐ): 前の回は後片付けで応答を捨てられ、読み込み中の表示を
+ * 下ろさないので、増えた回が取り直しの扱い (失敗では今の表示を残す) をすると、失敗を隠して何も無い画面や前の期間 / id の内容を出す。
+ * 読み込み中の表示を持たない部品は渡さない (常に数が増えたかだけで決める)。
+ * この hook は取得の useEffect より前に呼ぶ (読み込み中の表示を覚える useEffect が、取得の useEffect より先に走るように)
  */
-export function useAiConsultationRefetchRun(refetchKey: number): () => boolean {
+export function useAiConsultationRefetchRun(refetchKey: number, fullScreenLoading = false): () => boolean {
   const handledKeyRef = useRef(refetchKey);
+  const fullScreenLoadingRef = useRef(fullScreenLoading);
+  useEffect(() => {
+    fullScreenLoadingRef.current = fullScreenLoading;
+  });
   return useCallback(() => {
-    const isRefetch = handledKeyRef.current !== refetchKey;
+    const keyChanged = handledKeyRef.current !== refetchKey;
     handledKeyRef.current = refetchKey;
-    return isRefetch;
+    return keyChanged && !fullScreenLoadingRef.current;
   }, [refetchKey]);
+}
+
+/**
+ * 読み方 (#2201 U1)。'mount' は全画面の読み込み中の表示を出す読み込み (開いたとき・「再試行」・期間の切り替えなど。失敗は失敗の表示を出す)、
+ * 'refetch' は AI 相談の成功の取り直し (読み込み中の表示を出さない・失敗では今の表示を残す)
+ */
+export type AiConsultationReadMode = "mount" | "refetch";
+
+/** useAiConsultationLoading の戻り値 */
+export interface AiConsultationLoadingState {
+  /** 全画面の読み込み中の表示を出しているか */
+  readonly loading: boolean;
+  readonly setLoading: (loading: boolean) => void;
+  /**
+   * 取り直しの読み方。取り直しの始めに 1 回呼ぶ。読み込み中の表示を出している間は 'mount' (残すべき今の表示がまだ無いので、
+   * 失敗は開いたときと同じく失敗の表示を出す)、出していなければ 'refetch'
+   */
+  readonly refetchReadMode: () => AiConsultationReadMode;
+  /**
+   * 取得が終わったら呼ぶ (開いたときの読み込みと取り直しの両方。別の画面へ移るときは呼ばない)。
+   * 札が最後の札なら読み込み中の表示を下ろす
+   */
+  readonly settleLoading: (ticket: AiConsultationFetchTicket) => void;
+}
+
+/**
+ * 全画面の読み込み中の表示 (loading) を持ち、取得の札 (beginFetch) を使うページの、読み込み中の表示と AI 相談の成功の取り直しの
+ * 受け渡し (#2201 U1)。
+ * 読み込み中の表示を出している間に取り直しが始まると、出していた読み込み (開いたとき・「再試行」など) の札は最後の札でなくなり、
+ * その読み込みは応答を置かず、読み込み中の表示も下ろさない。そのときは取り直しがその読み込みの役を引き継ぐ:
+ * 取り直しの読み方は 'mount' にし (refetchReadMode)、取り直しの側も終わったら settleLoading を呼ぶ (最後の札なら読み込み中の表示を下ろす)。
+ * 下ろす判断はここに 1 つにまとめる (ページごとに「最後の札なら下ろす」を書き分けると、取り直しの側の下ろし忘れで読み込み中の表示のまま止まる)
+ */
+export function useAiConsultationLoading(): AiConsultationLoadingState {
+  const [loading, setLoadingState] = useState(true);
+  // 取り直しの始め (描画の前でもありうる) に今の値を見るための写し。setLoading の中で同時に変える
+  const loadingRef = useRef(true);
+  const setLoading = useCallback((next: boolean) => {
+    loadingRef.current = next;
+    setLoadingState(next);
+  }, []);
+  const refetchReadMode = useCallback((): AiConsultationReadMode => (loadingRef.current ? "mount" : "refetch"), []);
+  const settleLoading = useCallback(
+    (ticket: AiConsultationFetchTicket) => {
+      if (ticket.isLatest()) setLoading(false);
+    },
+    [setLoading],
+  );
+  return useMemo(
+    () => ({ loading, setLoading, refetchReadMode, settleLoading }),
+    [loading, setLoading, refetchReadMode, settleLoading],
+  );
 }
 
 /** 同時に重なりうる書き込みを数える印 (useAiConsultationPendingWrites の戻り値) */

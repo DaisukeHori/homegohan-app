@@ -145,8 +145,9 @@ function ProfilePageContent() {
   // 競技タブのように入力の部品が 1 つも無いタブを開いていても止まるよう、モーダルそのものに role="dialog" を付けている
   // 閉じたら止めた通知のぶん 1 回増える (#2201 U2)
   const { refetchKey: aiConsultationRefetchKey } = useAiConsultationRefetchKey();
-  // その回が AI 相談の成功の取り直しで走ったか (#2201 U1)
-  const takeAiConsultationRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey);
+  // その回が AI 相談の成功の取り直しで走ったか (#2201 U1)。開いたときの読み込み中に来た成功の回は、その読み込みの役を引き継ぐ
+  // (取り直しの扱いにしない。ログインを確かめられなかったときは開いたときと同じ扱い)
+  const takeAiConsultationRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey, isLoading);
   // 編集のモーダルが開いているか (取り直しの応答が届いた時点で見る。#2201 U1)。番兵は通知が来た時点にしか見ないので、
   // 取り直しの応答を待つあいだに「編集」を押して打ち始めた値を、届いた応答の editForm で上書きしないため
   const isEditingRef = useRef(isEditing);
@@ -164,11 +165,9 @@ function ProfilePageContent() {
       const { data: { user }, error: authError } = await supabase.auth.getUser();
       console.log('[Profile] Auth user:', user?.id, 'error:', authError?.message);
       if (cancelled) return;
-      if (isRefetch && authError && !user) {
-        // 開いたときの読み込みの途中に取り直しが来て、そちらが失敗したときも読み込み中の表示のまま止めない
-        setIsLoading(false);
-        return;
-      }
+      // 取り直し (読み込み中の表示を出していないときの回) でログインを確かめられなかった: 今の表示を残す。
+      // 開いたときの読み込み中に来た成功の回は取り直しの扱いにならない (useAiConsultationRefetchRun) ので、ここには来ない
+      if (isRefetch && authError && !user) return;
       setUser(user);
 
       if (user) {

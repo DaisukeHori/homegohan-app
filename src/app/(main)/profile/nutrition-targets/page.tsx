@@ -125,8 +125,9 @@ export default function NutritionTargetsExplainPage() {
   // 栄養目標の再設定 (NutritionTargetPlanner) の入力欄を変えている間は増えない (再設定の側も自分で取り直す)
   // 番兵で止めた通知は、外れたときに 1 回取り直す (#2201 U2)
   const { refetchKey: aiConsultationRefetchKey } = useAiConsultationRefetchKey();
-  // その回が AI 相談の成功の取り直しで走ったか (#2201 U1)
-  const takeAiConsultationRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey);
+  // その回が AI 相談の成功の取り直しで走ったか (#2201 U1)。開いたときの読み込み中に来た成功の回は、その読み込みの役を引き継ぐ
+  // (取り直しの扱いにしない。失敗を隠して何も無い画面を出さない)
+  const takeAiConsultationRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey, loading);
 
   useEffect(() => {
     // 前の回の応答が後から届いても置かない (取り直しが続いたとき。#2201 U1)

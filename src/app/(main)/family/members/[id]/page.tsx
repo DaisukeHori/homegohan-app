@@ -28,7 +28,11 @@ import {
   withShareSettingsUnconfirmedNote,
   type FamilyShareSettings,
 } from '@/lib/membership/share-settings-state';
-import { useAiConsultationDataRefetch, type AiConsultationFetchTicket } from '@/hooks/useAiConsultationDataRefetch';
+import {
+  useAiConsultationDataRefetch,
+  useAiConsultationLoading,
+  type AiConsultationFetchTicket,
+} from '@/hooks/useAiConsultationDataRefetch';
 
 /** 除名・共有設定の通信そのものが失敗した (fetch が reject した) ときの文 */
 const NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
@@ -105,7 +109,9 @@ export default function FamilyMemberDetailPage() {
   const router = useRouter();
   const supabase = createClient();
 
-  const [loading, setLoading] = useState(true);
+  // 開いたとき・「再試行」の読み込み中の表示。開いたときの読み込み中に始まった AI 相談の成功の読み直しは、その読み込みの役
+  // (失敗の表示・読み込み中の表示を下ろす) を引き継ぐ (#2201 U1。useAiConsultationLoading)
+  const { loading, setLoading, refetchReadMode, settleLoading } = useAiConsultationLoading();
   const [member, setMember] = useState<FamilyMember | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentRole, setCurrentRole] = useState<string | null>(null);
@@ -254,13 +260,16 @@ export default function FamilyMemberDetailPage() {
   // update_profile_preferences が書く自分の nickname が出る。家族を抜けていた・ログアウトしていたときは、開いたときと同じ扱い
   // (readMember が決める)。読み直しの失敗では今の表示を残す (#2201 U1)。
   // 書き込みの応答を待つあいだは読み直さず、読み直しの応答を待つあいだは書き込みを止める (busyRef)。書き込みの応答を待つあいだ・
-  // 前の読み直しの応答を待つあいだに来た成功は捨てずに、終わったあとに 1 回読み直す (#2201 U2。useAiConsultationDataRefetch の writeInFlightRef)
+  // 前の読み直しの応答を待つあいだに来た成功は捨てずに、終わったあとに 1 回読み直す (#2201 U2。useAiConsultationDataRefetch の writeInFlightRef)。
+  // 開いたとき・「再試行」の読み込み中に来た成功は、その読み込みの役を引き継ぐ: 失敗は「読み込めませんでした」を出し、
+  // 終わったら読み込み中の表示を下ろす (先に始めた読み込みは応答を置かず、読み込み中の表示も下ろさないため。#2201 U1)
   const refetchAfterAiConsultation = async (ticket: AiConsultationFetchTicket) => {
     if (busyRef.current) return;
     busyRef.current = true;
     setAiRefetching(true);
     try {
-      await readMember(ticket, 'refetch');
+      const { redirecting } = await readMember(ticket, refetchReadMode());
+      if (!redirecting) settleLoading(ticket);
     } finally {
       busyRef.current = false;
       setAiRefetching(false);
@@ -275,8 +284,8 @@ export default function FamilyMemberDetailPage() {
     setLoading(true);
     const ticket = beginFetch();
     const { redirecting } = await readMember(ticket, 'mount');
-    if (!redirecting && ticket.isLatest()) setLoading(false);
-  }, [readMember, beginFetch]);
+    if (!redirecting) settleLoading(ticket);
+  }, [readMember, beginFetch, setLoading, settleLoading]);
 
   useEffect(() => {
     void loadPage();

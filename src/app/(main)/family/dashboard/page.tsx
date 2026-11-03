@@ -11,7 +11,11 @@ import {
   keepShownFamilyMemberNames,
 } from '@/lib/membership/family-member-names';
 import { familyRoleLabel } from '@/lib/membership/role-labels';
-import { useAiConsultationDataRefetch, type AiConsultationFetchTicket } from '@/hooks/useAiConsultationDataRefetch';
+import {
+  useAiConsultationDataRefetch,
+  useAiConsultationLoading,
+  type AiConsultationFetchTicket,
+} from '@/hooks/useAiConsultationDataRefetch';
 
 /**
  * 自分のプロフィールを読み込めなかった・問い合わせが例外を投げたときの文 (#2073 S3)。家族に入っていない (家族の作成の画面へ移す) と
@@ -57,7 +61,9 @@ export default function FamilyDashboardPage() {
   const router = useRouter();
   const supabase = createClient();
 
-  const [loading, setLoading] = useState(true);
+  // 開いたとき・「再試行」の読み込み中の表示。開いたときの読み込み中に始まった AI 相談の成功の読み直しは、その読み込みの役
+  // (失敗の表示・読み込み中の表示を下ろす) を引き継ぐ (#2201 U1。useAiConsultationLoading)
+  const { loading, setLoading, refetchReadMode, settleLoading } = useAiConsultationLoading();
   const [familyGroup, setFamilyGroup] = useState<FamilyGroup | null>(null);
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -163,18 +169,19 @@ export default function FamilyDashboardPage() {
   // (自分を含む) に名前の API がプロフィールの今の名前 (user_profiles.nickname) を当てたもので、AI 相談の update_profile_preferences は
   // 自分の nickname を書く。家族を抜けていた・ログアウトしていたときは、開いたときと同じ扱い (readDashboard が決める。
   // この画面に書き込みの操作は無い)。読み直しの失敗では「読み込めませんでした」に置き換えずに今の表示を残す (#2201 U1)
+  // 開いたとき・「再試行」の読み込みの途中に始まった読み直しは、その読み込みの役を引き継ぐ (先に始めた読み込みは応答を置かず、
+  // 読み込み中の表示も下ろさない): 失敗は「読み込めませんでした」を出し、終わったら読み込み中の表示を下ろす
   const { beginFetch } = useAiConsultationDataRefetch(async (ticket) => {
-    const { redirecting } = await readDashboard(ticket, 'refetch');
-    // 開いたときの読み込みの途中に取り直しが始まった (開いたときの応答は置かない) ときは、取り直しの側が読み込み中の表示を下ろす
-    if (!redirecting && ticket.isLatest()) setLoading(false);
+    const { redirecting } = await readDashboard(ticket, refetchReadMode());
+    if (!redirecting) settleLoading(ticket);
   });
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     const ticket = beginFetch();
     const { redirecting } = await readDashboard(ticket, 'mount');
-    if (!redirecting && ticket.isLatest()) setLoading(false);
-  }, [readDashboard, beginFetch]);
+    if (!redirecting) settleLoading(ticket);
+  }, [readDashboard, beginFetch, setLoading, settleLoading]);
 
   useEffect(() => {
     void loadDashboard();
