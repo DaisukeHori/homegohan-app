@@ -18,6 +18,12 @@
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
 import { readFileSync } from 'node:fs';
+import type {
+  AiConsultationFetchTicket,
+  AiConsultationPendingWrites,
+  AiConsultationRefetchControl,
+  AiConsultationWriteInFlightRef,
+} from '@/hooks/useAiConsultationDataRefetch';
 import path from 'node:path';
 import { act, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -94,7 +100,9 @@ const {
   AI_CONSULTATION_UNEDITED_INPUTS_ATTRIBUTE,
   isAiConsultationRefetchBlocked,
 } = await import('@/lib/ai/consultation-data-refetch');
-const { useAiConsultationDataRefetch, useAiConsultationRefetchKey } = await import('@/hooks/useAiConsultationDataRefetch');
+const { useAiConsultationDataRefetch, useAiConsultationPendingWrites, useAiConsultationRefetchKey } = await import(
+  '@/hooks/useAiConsultationDataRefetch'
+);
 const { default: MainLayout } = await import('@/app/(main)/MainLayout');
 const { default: ComparisonPage } = await import('@/app/(main)/comparison/page');
 const { default: PantryPage } = await import('@/app/(main)/pantry/page');
@@ -402,6 +410,163 @@ describe('useAiConsultationDataRefetch (#2195 V1)', () => {
     });
     await notifyAiConsultationSucceeded();
     expect(refetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('useAiConsultationDataRefetch の世代番号・失敗・書き込みの印 (#2201 U1 + U2)', () => {
+  function WriteReceiver({
+    refetch,
+    writeInFlightRef,
+    onControl,
+  }: {
+    refetch: (ticket: AiConsultationFetchTicket) => unknown;
+    writeInFlightRef?: AiConsultationWriteInFlightRef;
+    onControl?: (control: AiConsultationRefetchControl) => void;
+  }) {
+    const control = useAiConsultationDataRefetch(refetch, { writeInFlightRef });
+    onControl?.(control);
+    return <p>書き込みのあるページ</p>;
+  }
+
+  it('取り直しのたびに新しい札を渡し、あとから始めた取得 (beginFetch) があれば前の札は最新でなくなる', async () => {
+    const tickets: AiConsultationFetchTicket[] = [];
+    let control: AiConsultationRefetchControl | null = null;
+    await act(async () => {
+      root.render(<WriteReceiver refetch={(ticket) => tickets.push(ticket)} onControl={(c) => (control = c)} />);
+    });
+    await notifyAiConsultationSucceeded();
+    expect(tickets).toHaveLength(1);
+    expect(tickets[0].isLatest()).toBe(true);
+
+    await notifyAiConsultationSucceeded();
+    expect(tickets).toHaveLength(2);
+    expect(tickets[0].isLatest(), '先の取り直しの札が最新のまま').toBe(false);
+    expect(tickets[1].isLatest()).toBe(true);
+
+    // ページの取得 (開いたとき・週の移動など) も同じ世代を進める
+    const pageTicket = control!.beginFetch();
+    expect(tickets[1].isLatest(), 'ページの取得のあとも取り直しの札が最新のまま').toBe(false);
+    expect(pageTicket.isLatest()).toBe(true);
+  });
+
+  it('取り直しが reject しても・同期で投げても拾う (未処理の Promise 拒否にしない)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const unhandled = vi.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      await act(async () => {
+        root.render(<WriteReceiver refetch={() => Promise.reject(new Error('通信の失敗'))} />);
+      });
+      await notifyAiConsultationSucceeded();
+      await act(async () => {
+        root.render(
+          <WriteReceiver
+            refetch={() => {
+              throw new Error('同期の失敗');
+            }}
+          />,
+        );
+      });
+      await notifyAiConsultationSucceeded();
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(unhandled).not.toHaveBeenCalled();
+      expect(warn.mock.calls.map(([message]) => message)).toEqual([
+        '[ai-consultation-refetch] refetch failed:',
+        '[ai-consultation-refetch] refetch failed:',
+      ]);
+    } finally {
+      process.off('unhandledRejection', unhandled);
+    }
+  });
+
+  it('書き込みの印が立っている間は取り直さず、notifyWriteSettled で止めた成功のぶん 1 回だけ取り直す', async () => {
+    const refetch = vi.fn();
+    const writeInFlightRef = { current: false };
+    let control: AiConsultationRefetchControl | null = null;
+    await act(async () => {
+      root.render(<WriteReceiver refetch={refetch} writeInFlightRef={writeInFlightRef} onControl={(c) => (control = c)} />);
+    });
+
+    // 止めた成功が無ければ、書き込みが終わっても取り直さない
+    await act(async () => {
+      control!.notifyWriteSettled();
+    });
+    expect(refetch).not.toHaveBeenCalled();
+
+    writeInFlightRef.current = true;
+    await notifyAiConsultationSucceeded();
+    await notifyAiConsultationSucceeded();
+    expect(refetch).not.toHaveBeenCalled();
+
+    // 印を下ろさずに知らせても取り直さない
+    await act(async () => {
+      control!.notifyWriteSettled();
+    });
+    expect(refetch).not.toHaveBeenCalled();
+
+    writeInFlightRef.current = false;
+    await act(async () => {
+      control!.notifyWriteSettled();
+    });
+    expect(refetch).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      control!.notifyWriteSettled();
+    });
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('書き込みが終わったときにモーダルが出ていれば、閉じたときに取り直す', async () => {
+    const refetch = vi.fn();
+    const writeInFlightRef = { current: true };
+    let control: AiConsultationRefetchControl | null = null;
+    await act(async () => {
+      root.render(<WriteReceiver refetch={refetch} writeInFlightRef={writeInFlightRef} onControl={(c) => (control = c)} />);
+    });
+    await notifyAiConsultationSucceeded();
+    const modal = addToBody('<div role="dialog"></div>');
+    writeInFlightRef.current = false;
+    await act(async () => {
+      control!.notifyWriteSettled();
+    });
+    expect(refetch).not.toHaveBeenCalled();
+    await act(async () => {
+      modal.remove();
+    });
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('重なった書き込み (useAiConsultationPendingWrites) は、全部終わったときに自分で知らせ、1 回だけ取り直す', async () => {
+    const refetch = vi.fn();
+    let writes: AiConsultationPendingWrites | null = null;
+    function PendingWritesReceiver() {
+      const pendingWrites = useAiConsultationPendingWrites();
+      writes = pendingWrites;
+      useAiConsultationDataRefetch(refetch, { writeInFlightRef: pendingWrites });
+      return <p>一覧の行ごとの書き込み</p>;
+    }
+    await act(async () => {
+      root.render(<PendingWritesReceiver />);
+    });
+    const endFirst = writes!.begin();
+    const endSecond = writes!.begin();
+    expect(writes!.current).toBe(true);
+    await notifyAiConsultationSucceeded();
+
+    // 先の書き込みが終わっても、あとの書き込みの途中なら取り直さない
+    await act(async () => {
+      endFirst();
+      endFirst();
+    });
+    expect(writes!.current).toBe(true);
+    expect(refetch).not.toHaveBeenCalled();
+
+    await act(async () => {
+      endSecond();
+    });
+    expect(writes!.current).toBe(false);
+    expect(refetch).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -91,6 +91,8 @@ const supabaseMock = vi.hoisted(() => ({
    * DB の関数 ('rpc:<名前>') を記録する (受け手の読み取りの検査)
    */
   reads: null as null | { record: (key: string | null) => void; recordSelect: (table: string, select: unknown) => void },
+  /** true なら user_profiles の読み取りが error を返す (#2201 U1。通信・サーバーの失敗。行が無いのとは別) */
+  profileFails: false,
 }));
 vi.mock('@/lib/supabase/client', () => {
   const EMPTY_RESULT = { data: null, error: null, count: 0 };
@@ -105,6 +107,7 @@ vi.mock('@/lib/supabase/client', () => {
       return { data: single ? (rows[0] ?? null) : rows, error: null, count: rows.length };
     }
     if (table !== 'user_profiles') return EMPTY_RESULT;
+    if (supabaseMock.profileFails) return { data: null, error: { code: '08006', message: 'connection failure' }, count: null };
     const row = supabaseMock.profile;
     if (single) return { data: row, error: null, count: row ? 1 : 0 };
     return { data: row ? [row] : [], error: null, count: row ? 1 : 0 };
@@ -253,6 +256,10 @@ type FakeServer = {
    * プロフィールの名前 user_profiles.nickname。null = 決まらない)
    */
   familyMemberNames: { id: string; name: string | null }[];
+  /** 置いている間に始めた GET /api/meal-plans の応答を、この Promise が解けるまで止める (#2201 U1) */
+  mealPlansHold: Promise<void> | null;
+  /** true なら GET /api/family/members/names が 500 を返す (#2201 U1) */
+  namesFail: boolean;
 };
 let server: FakeServer;
 let fetchCalls: string[];
@@ -360,6 +367,8 @@ function jsonResponse(body: unknown, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
 }
 const NOT_FOUND_STATUS = 404;
+/** 読み取りの失敗 (server.namesFail) のときの status */
+const SERVER_ERROR_STATUS = 500;
 /** ページの API の相対 URL を解く起点 (fetch のモックの中だけで使う) */
 const PAGE_ORIGIN = 'http://localhost';
 
@@ -373,8 +382,13 @@ function installFakeServer() {
     // 祝日の一覧 (外の API) は、この検査では祝日なし
     if (url.origin !== PAGE_ORIGIN) return jsonResponse({});
     switch (url.pathname) {
-      case '/api/meal-plans':
-        return jsonResponse(mealPlansJson(url.searchParams.get('startDate') ?? '', url.searchParams.get('endDate') ?? ''));
+      case '/api/meal-plans': {
+        // 答えは読み取りを始めたときのもの。止めていれば、止めが解けてから返す
+        const body = mealPlansJson(url.searchParams.get('startDate') ?? '', url.searchParams.get('endDate') ?? '');
+        const hold = server.mealPlansHold;
+        if (hold) await hold;
+        return jsonResponse(body);
+      }
       case '/api/ai/menu/weekly/pending': {
         const pending = server.pendingRequest;
         if (pending && pending.startDate === url.searchParams.get('date')) {
@@ -400,6 +414,7 @@ function installFakeServer() {
       case '/api/profile':
         return jsonResponse({ family_size: server.familySize, servings_config: null, radar_chart_nutrients: null });
       case '/api/family/members/names':
+        if (server.namesFail) return jsonResponse({ error: 'down' }, SERVER_ERROR_STATUS);
         return jsonResponse({ data: { members: server.familyMemberNames } });
       case '/api/family/menu':
         return jsonResponse({
@@ -420,7 +435,16 @@ let container: HTMLDivElement;
 let root: Root;
 
 beforeEach(() => {
-  server = { days: new Map(), shoppingItems: [], familySize: 2, pendingRequest: null, familyMemberNames: [] };
+  server = {
+    days: new Map(),
+    shoppingItems: [],
+    familySize: 2,
+    pendingRequest: null,
+    familyMemberNames: [],
+    mealPlansHold: null,
+    namesFail: false,
+  };
+  supabaseMock.profileFails = false;
   supabaseMock.channelNames.length = 0;
   // 既定は帯を出さないプロフィール (帯の検査は incompleteProfile に置き換える)・家族なし (家族の検査は joinFamily)
   supabaseMock.profile = completeProfile();
@@ -681,6 +705,66 @@ describe('献立表 (/menus/weekly) が AI 相談の成功で取り直すもの 
     await notifyAiConsultationSucceeded('update_profile_preferences', { updated: true, fields: ['nickname'] });
 
     expect(familySwitcherNames()).toEqual([SELF_NAME_AFTER, OTHER_MEMBER_NAME]);
+  });
+});
+
+describe('献立表 (/menus/weekly) の取り直しの順序と失敗 (#2201 U1)', () => {
+  it('取り直しの応答を待つあいだに週を移ったら、前の週の献立を新しい週の見出しの下に出さない', async () => {
+    const THIS_WEEK_DISH = '今週の肉じゃが';
+    const NEXT_WEEK_DISH = '翌週のカレーライス';
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) {
+      server.days.set(dateFromWeekStart(i), [{ id: `meal-this-${i}`, dishName: THIS_WEEK_DISH }]);
+      server.days.set(dateFromWeekStart(DAYS_IN_WEEK + i), [{ id: `meal-next-${i}`, dishName: NEXT_WEEK_DISH }]);
+    }
+    await renderWeeklyPage();
+    expect(container.textContent).toContain(THIS_WEEK_DISH);
+
+    // AI 相談の成功の取り直し (表示中の週の献立) の応答が遅れる
+    let release: () => void = () => undefined;
+    server.mealPlansHold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    server.mealPlansHold = null;
+
+    // 応答を待つあいだに翌週へ移る
+    const nextWeek = container.querySelector<HTMLButtonElement>('button[aria-label="翌週"]');
+    expect(nextWeek, '「翌週」のボタンが無い').not.toBeNull();
+    await act(async () => {
+      nextWeek!.click();
+    });
+    await settle();
+    expect(container.textContent).toContain(NEXT_WEEK_DISH);
+
+    // 前の週の取り直しの応答が後から届いても、翌週の献立のまま
+    await act(async () => {
+      release();
+    });
+    await settle();
+    expect(container.textContent).toContain(NEXT_WEEK_DISH);
+    expect(container.textContent).not.toContain(THIS_WEEK_DISH);
+  });
+
+  it('取り直しで名前の API を読めなかったら、家族の切り替えの名前を残す', async () => {
+    supabaseMock.profile = { ...completeProfile(), family_id: FAMILY_ID };
+    joinFamily(SELF_NAME_BEFORE);
+    await renderWeeklyPage();
+    expect(familySwitcherNames()).toEqual([SELF_NAME_BEFORE, OTHER_MEMBER_NAME]);
+
+    server.namesFail = true;
+    await notifyAiConsultationSucceeded('update_profile_preferences', { updated: true, fields: ['nickname'] });
+    expect(familySwitcherNames()).toEqual([SELF_NAME_BEFORE, OTHER_MEMBER_NAME]);
+  });
+
+  it('取り直しで自分のプロフィールを読めなかったら、家族の切り替えを消さない', async () => {
+    supabaseMock.profile = { ...completeProfile(), family_id: FAMILY_ID };
+    joinFamily(SELF_NAME_BEFORE);
+    await renderWeeklyPage();
+    expect(familySwitcherNames()).toEqual([SELF_NAME_BEFORE, OTHER_MEMBER_NAME]);
+
+    supabaseMock.profileFails = true;
+    await notifyAiConsultationSucceeded('update_profile_preferences', { updated: true, fields: ['nickname'] });
+    expect(familySwitcherNames()).toEqual([SELF_NAME_BEFORE, OTHER_MEMBER_NAME]);
   });
 });
 

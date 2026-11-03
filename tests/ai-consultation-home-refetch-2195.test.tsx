@@ -27,6 +27,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const supabaseMock = vi.hoisted(() => ({
   tableResults: {} as Record<string, { data: unknown; error: null; count?: number }>,
   reads: null as null | { record: (key: string | null) => void; recordSelect: (table: string, select: unknown) => void },
+  /** DB の関数 (rpc) の応答を、この Promise が解けるまで止める (#2201 U2。食事の完了の切り替えの書き込みの間) */
+  rpcHold: null as null | Promise<void>,
 }));
 vi.mock('@/lib/supabase/client', () => {
   const EMPTY_RESULT = { data: null, error: null, count: 0 };
@@ -59,7 +61,9 @@ vi.mock('@/lib/supabase/client', () => {
       from: (table: string) => query(table, false, true),
       rpc: (name: string) => {
         supabaseMock.reads?.record(`rpc:${name}`);
-        return query('rpc', false, false);
+        const hold = supabaseMock.rpcHold;
+        if (hold === null) return query('rpc', false, false);
+        return { then: (resolve: (value: unknown) => void) => void hold.then(() => resolve({ data: null, error: null })) };
       },
       channel: () => {
         const channel = { on: () => channel, subscribe: () => channel, unsubscribe: async () => 'ok' };
@@ -113,6 +117,7 @@ vi.mock('framer-motion', async () => {
 });
 
 const { useHomeData } = await import('@/hooks/useHomeData');
+const { useAiConsultationDataRefetch } = await import('@/hooks/useAiConsultationDataRefetch');
 const { default: HomePage } = await import('@/app/(main)/home/page');
 const { AI_CONSULTATION_DATA_CHANGED_EVENT } = await import('@/lib/ai/consultation-data-refetch');
 const { AI_CONSULTATION_GENERATION_STATUS_PATH, AI_CONSULTATION_GENERATION_WATCH_INTERVAL_MS } = await import('@/lib/ai/consultation-generation-watch');
@@ -182,6 +187,7 @@ function HomeDataProbe() {
 
 beforeEach(() => {
   supabaseMock.tableResults = {};
+  supabaseMock.rpcHold = null;
   latestRefetch = null;
   nutritionAnalysisBody = undefined;
   // 栄養の分析は nutritionAnalysisBody を返す。お知らせ・パフォーマンスの分析 (fetch) は、この検査では何も返さない
@@ -471,5 +477,64 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
     await settle();
     expect(statusChecks).toBe(1);
     expect(container.textContent).toContain(TODAY_MEAL.dish_name);
+  });
+  it('食事の完了の切り替えの応答を待つあいだに来た成功では取り直さず (楽観的な表示を戻さない)、終わったら 1 回取り直す (#2201 U2)', async () => {
+    /** 完了の切り替えの待ち (useHomeData の toggleMealCompletion の 250ms) より長い待ち */
+    const TOGGLE_DEBOUNCE_WAIT_MS = 300;
+    let refetchCalls = 0;
+    let toggle: ((mealId: string, currentStatus: boolean) => Promise<void>) | null = null;
+    function HomeToggleProbe() {
+      const { todayPlan, toggleMealCompletion, refetch, aiConsultationWrites } = useHomeData();
+      useAiConsultationDataRefetch(
+        () => {
+          refetchCalls += 1;
+          return refetch();
+        },
+        { writeInFlightRef: aiConsultationWrites },
+      );
+      toggle = toggleMealCompletion;
+      return <p data-testid="today-completed">{String(todayPlan?.meals[0]?.isCompleted)}</p>;
+    }
+    const completedText = () => container.querySelector('[data-testid="today-completed"]')?.textContent;
+    useServer(FULL_TABLES, null);
+    await act(async () => {
+      root.render(<HomeToggleProbe />);
+    });
+    await settle();
+    expect(completedText()).toBe('true');
+
+    const rpc = (() => {
+      let release: () => void = () => undefined;
+      const promise = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return { promise, release };
+    })();
+    supabaseMock.rpcHold = rpc.promise;
+    let toggling: Promise<void> | null = null;
+    await act(async () => {
+      toggling = toggle!(TODAY_MEAL.id, true);
+      await new Promise((resolve) => setTimeout(resolve, TOGGLE_DEBOUNCE_WAIT_MS));
+    });
+    expect(completedText(), '楽観的な更新をしていない (検査が空振りしている)').toBe('false');
+
+    // 書き込みの前の献立 (完了済み) のまま読む取り直しが走ると、楽観的な表示が戻る
+    await notifyAiConsultationSucceeded();
+    await notifyAiConsultationSucceeded();
+    expect(refetchCalls).toBe(0);
+    expect(completedText()).toBe('false');
+
+    // サーバーが完了を外し終えた
+    supabaseMock.tableResults = {
+      ...supabaseMock.tableResults,
+      user_daily_meals: { data: [{ id: 'day-today', day_date: TODAY, planned_meals: [{ ...TODAY_MEAL, is_completed: false }] }], error: null },
+    };
+    await act(async () => {
+      rpc.release();
+      await toggling;
+    });
+    await settle();
+    expect(refetchCalls, '止めた成功のぶん 1 回取り直していない').toBe(1);
+    expect(completedText()).toBe('false');
   });
 });

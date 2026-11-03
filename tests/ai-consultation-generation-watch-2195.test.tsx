@@ -191,7 +191,7 @@ describe('AI 相談が始めた献立の生成は、受付と完了の両方で�
     expect(aiConsultationAcceptedGenerationRequestIdOf({ result: { requestId: REQUEST_ID, status: 'processing' } })).toBe(REQUEST_ID);
   });
 
-  it('生成が終わったときに入力の部品やモーダルが出ていたら、取り直さない (受付と同じ番兵)', async () => {
+  it('生成が終わったときに入力の部品やモーダルが出ていたら取り直さず (受付と同じ番兵)、閉じたら 1 回取り直す (#2201 U2)', async () => {
     await renderReceivers();
     await notify('generate_day_menu', ACCEPTED_RESULTS.generate_day_menu);
     expect(refetchCount).toBe(1);
@@ -204,6 +204,12 @@ describe('AI 相談が始めた献立の生成は、受付と完了の両方で�
       await advancePolls();
       expect(statusCalls).toEqual([REQUEST_ID]);
       expect(refetchCount).toBe(1);
+
+      // 生成の完了を捨てずに、モーダルを閉じたら取り直す (以前は捨てて、閉じても古い献立のままだった)
+      await act(async () => {
+        dialog.remove();
+      });
+      expect(refetchCount).toBe(2);
     } finally {
       dialog.remove();
     }
