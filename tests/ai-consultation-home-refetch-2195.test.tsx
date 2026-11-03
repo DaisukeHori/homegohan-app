@@ -43,6 +43,8 @@ const supabaseMock = vi.hoisted(() => ({
   tableHoldFor: null as null | { table: string; hold: Promise<void> },
   /** true の間に始めた表の読み取りは reject する (#2201 U1。読み取りが投げたとき) */
   tableRejects: false,
+  /** ページが auth.onAuthStateChange に渡した関数 (ログインの状態の変化を起こす。#2201 U1) */
+  authStateListener: null as null | (() => void),
 }));
 vi.mock('@/lib/supabase/client', () => {
   const EMPTY_RESULT = { data: null, error: null, count: 0 };
@@ -76,7 +78,10 @@ vi.mock('@/lib/supabase/client', () => {
         getSession: async () => ({ data: { session: { user } }, error: null }),
         getUser: async () => ({ data: { user }, error: null }),
         refreshSession: async () => ({ data: { session: { user } }, error: null }),
-        onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => undefined } } }),
+        onAuthStateChange: (listener: () => void) => {
+          supabaseMock.authStateListener = listener;
+          return { data: { subscription: { unsubscribe: () => undefined } } };
+        },
       },
       from: (table: string) => query(table, false, true),
       rpc: (name: string) => {
@@ -227,6 +232,7 @@ beforeEach(() => {
   supabaseMock.tableHold = null;
   supabaseMock.tableHoldFor = null;
   supabaseMock.tableRejects = false;
+  supabaseMock.authStateListener = null;
   latestRefetch = null;
   nutritionAnalysisBody = undefined;
   // 栄養の分析は nutritionAnalysisBody を返す。お知らせ・パフォーマンスの分析 (fetch) は、この検査では何も返さない
@@ -1181,6 +1187,34 @@ describe('useHomeData: 取り直しの読み取りの失敗では、記録の集
     });
     await settle();
     expect(summaryShown(), '取り直しの読み取りの失敗で、前の表示を空・0 で上書きした').toEqual(before);
+  });
+
+  it('開いたときと同じ扱いの読み込み (ログインの状態の変化) の失敗は、これまでどおり読めなかった値を空・0 にする (取り直しの扱いだけが今の表示を残す)', async () => {
+    supabaseMock.tableResults = { ...TABLES };
+    await act(async () => {
+      root.render(<HomeSummaryProbe />);
+    });
+    await settle();
+    expect(summaryShown()).toMatchObject({ 'best-meal': BEST_MEAL_ROW.dish_name, 'badge-count': '3', 'today-checkin': 'true' });
+
+    supabaseMock.tableResults = Object.fromEntries(
+      Object.keys(TABLES).map((table) => [table, table === 'shopping_lists' ? TABLES.shopping_lists : READ_FAILURE]),
+    );
+    expect(supabaseMock.authStateListener, 'ログインの状態の変化を受け取る関数が無い (検査の前提が崩れた)').not.toBeNull();
+    await act(async () => {
+      supabaseMock.authStateListener!();
+    });
+    await settle();
+    expect(summaryShown()).toMatchObject({
+      'best-meal': '',
+      'badge-count': '0',
+      'today-record': 'false',
+      'health-streak': '0',
+      'latest-weight': 'null',
+      'has-alert': 'false',
+      'shopping-remaining': '0',
+      'today-checkin': 'false',
+    });
   });
 
   it('開いたときの読み取りの失敗は、これまでどおり空・0 を出す (取り直しだけが前の表示を残す)', async () => {

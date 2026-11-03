@@ -4343,13 +4343,18 @@ export default function WeeklyMenuPage() {
     const { editMealName, editMealMode } = useFormDraftStore.getState();
     const editingMealId = editingMeal.id;
 
-    // 楽観的UI更新（失敗時にロールバックするため、変える項目の元の値を保持）。今の献立のこの食事にだけ当てる (#2201 U2。
-    // 巻き戻しも、この食事の変えた項目だけ。週全体を前の写しで置き直すと、書き込みの間に置いたほかの値まで戻す)
-    const updates: Partial<PlannedMeal> = { dishName: editMealName, mode: editMealMode };
-    const editingDay = currentPlan.days?.find(day => day.meals?.some(m => m.id === editingMealId));
-    const previousMeal = editingDay?.meals?.find(m => m.id === editingMealId);
+    // 楽観的UI更新（失敗時にロールバックするため元の状態を保持）
+    const previousPlan = currentPlan;
+    const updatedDays = currentPlan.days?.map(day => ({
+      ...day,
+      meals: day.meals?.map(m =>
+        m.id === editingMealId
+          ? { ...m, dishName: editMealName, mode: editMealMode }
+          : m
+      )
+    }));
     const endWrite = pendingWrites.begin();
-    if (editingDay) updatePlanMeal(editingDay.id, editingMealId, updates);
+    setCurrentPlan({ ...currentPlan, days: updatedDays });
     setActiveModal(null);
     setEditingMeal(null);
 
@@ -4364,8 +4369,8 @@ export default function WeeklyMenuPage() {
       });
       if (!res.ok) throw new Error('Update failed');
     } catch (e) {
-      // 失敗したら、この食事の変えた項目だけを元に戻す
-      if (editingDay && previousMeal) updatePlanMeal(editingDay.id, editingMealId, plannedMealFieldsOf(previousMeal, updates));
+      // 失敗したら元に戻す
+      setCurrentPlan(previousPlan);
       alert('更新に失敗しました');
     } finally {
       endWrite();
