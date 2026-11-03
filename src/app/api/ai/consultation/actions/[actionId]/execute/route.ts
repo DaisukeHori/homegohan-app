@@ -9,7 +9,15 @@ import { internalError } from '@/lib/api/errors';
 import { isUuid } from '@/lib/http-params';
 import { API_UNAUTHENTICATED_MESSAGE, API_FORBIDDEN_MESSAGE } from '@/lib/api/error-responses';
 import { AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE, AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE, AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE } from '@/lib/ai/ai-api-messages';
-import { AI_ACTION_LOG_STATUS, aiActionLogStatusAfterFailure, aiActionLogStatusAfterRun } from '@/lib/ai/consultation-action-lifecycle';
+import {
+  AI_ACTION_LOG_STATUS,
+  PROPOSED_ACTION_NOT_EXECUTABLE_REASON,
+  aiActionLogStatusAfterFailure,
+  aiActionLogStatusAfterRun,
+  proposedActionNotExecutableReasonOfStatus,
+  type ProposedActionNotExecutableReason,
+} from '@/lib/ai/consultation-action-lifecycle';
+import { writeBackAiActionLog } from '@/lib/ai/consultation-action-log-writes';
 
 // 指定日付の user_daily_meals を取得または作成するヘルパー関数
 // NOTE: 現状このファイル内では未使用（resolveExistingTargetSlots が同等の処理を担う）。
@@ -39,6 +47,42 @@ async function getOrCreateDailyMeal(supabase: any, userId: string, dayDate: stri
 
   if (createError) return null;
   return newDailyMeal;
+}
+
+const EXECUTE_ROUTE_NAME = 'POST /api/ai/consultation/actions/[actionId]/execute';
+
+/**
+ * 実行できない提案の応答 (400 / 404) に、「実行する」を出さない理由を添える (#2195 V2)。
+ * 画面は理由で案内の文を分ける (実行中・実行済みは『実行中か実行済みです』、失敗・記録なしは『もう一度 AI に頼んでください』)
+ */
+function notExecutableResponse(
+  error: string,
+  status: 400 | 404,
+  reason: ProposedActionNotExecutableReason | null,
+): NextResponse {
+  return NextResponse.json({ error, ...(reason ? { notExecutableReason: reason } : {}) }, { status });
+}
+
+/**
+ * メッセージ ID で実行を待っている (pending の) 行が見つからなかったとき、そのメッセージの行の状態から「実行する」を出さない理由を決める。
+ * Web の提案のカードはメッセージ ID で実行の API を呼ぶので、別の画面・自動実行が実行中か実行済みの提案を押すとここに来る。
+ * 自分の相談の行だけを見る (ほかの人の行の有無は返さない)。読めなかった・行が無いときは null (理由を添えない)
+ */
+async function notExecutableReasonOfMessage(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  messageId: string,
+  userId: string,
+): Promise<ProposedActionNotExecutableReason | null> {
+  const { data, error } = await supabase
+    .from('ai_action_logs')
+    .select('status, ai_consultation_sessions!inner(user_id)')
+    .eq('message_id', messageId)
+    .eq('ai_consultation_sessions.user_id', userId);
+  if (error || !Array.isArray(data) || data.length === 0) return null;
+  const reasons = (data as Array<{ status: unknown }>).map((row) => proposedActionNotExecutableReasonOfStatus(row.status));
+  return reasons.includes(PROPOSED_ACTION_NOT_EXECUTABLE_REASON.runningOrDone)
+    ? PROPOSED_ACTION_NOT_EXECUTABLE_REASON.runningOrDone
+    : PROPOSED_ACTION_NOT_EXECUTABLE_REASON.failed;
 }
 
 // アクション実行
@@ -77,7 +121,7 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
 
     // 読めなかったときは 404 にしない (行が無いときだけ、メッセージ ID として探し直す。#1917)
     if (actionError) {
-      return internalError('POST /api/ai/consultation/actions/[actionId]/execute', actionError, { userId: user.id, table: 'ai_action_logs' });
+      return internalError(EXECUTE_ROUTE_NAME, actionError, { userId: user.id, table: 'ai_action_logs' });
     }
 
     // 見つからない場合はメッセージIDとして検索
@@ -93,10 +137,15 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
         .maybeSingle();
       
       if (msgError) {
-        return internalError('POST /api/ai/consultation/actions/[actionId]/execute', msgError, { userId: user.id, table: 'ai_action_logs' });
+        return internalError(EXECUTE_ROUTE_NAME, msgError, { userId: user.id, table: 'ai_action_logs' });
       }
       if (!actionByMessage) {
-        return NextResponse.json({ error: AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE }, { status: 404 });
+        // 実行を待っている行が無い。実行中・実行済みなら、画面は頼み直しを勧めない案内にする (#2195 V2)
+        return notExecutableResponse(
+          AI_CONSULTATION_ACTION_NOT_FOUND_MESSAGE,
+          404,
+          await notExecutableReasonOfMessage(supabase, params.actionId, user.id),
+        );
       }
       action = actionByMessage;
     }
@@ -110,7 +159,11 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
     }
 
     if (action.status !== AI_ACTION_LOG_STATUS.pending) {
-      return NextResponse.json({ error: AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE }, { status: 400 });
+      return notExecutableResponse(
+        AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE,
+        400,
+        proposedActionNotExecutableReasonOfStatus(action.status),
+      );
     }
 
     // 献立の生成のアクションは、利用者のデータを外国の AI 事業者へ送る。同意が無ければ送らずに止める
@@ -132,11 +185,18 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
       .maybeSingle();
 
     if (claimError) {
-      return internalError('POST /api/ai/consultation/actions/[actionId]/execute', claimError, { userId: user.id, table: 'ai_action_logs' });
+      return internalError(EXECUTE_ROUTE_NAME, claimError, { userId: user.id, table: 'ai_action_logs' });
     }
     if (!claimed) {
-      return NextResponse.json({ error: AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE }, { status: 400 });
+      // 読んだあとに別の画面・自動実行が先に取った (実行中か実行済み)
+      return notExecutableResponse(
+        AI_CONSULTATION_ACTION_ALREADY_PROCESSED_MESSAGE,
+        400,
+        PROPOSED_ACTION_NOT_EXECUTABLE_REASON.runningOrDone,
+      );
     }
+
+    const writeBackCtx = { userId: user.id, actionLogId: action.id, actionType: action.action_type };
 
     // #1047 F2-21: アクション実行の中核ロジックは src/lib/ai/consultation-action-executor.ts
     // に抽出済み（messages/route.ts からも self-fetch ではなく直接呼び出す）。
@@ -146,54 +206,73 @@ export async function POST(request: Request, props: { params: Promise<{ actionId
     } catch (runError) {
       // 実行中の印のまま残さない。やり直せる種類は pending に戻し、やり直させない種類は failed にする
       const status = aiActionLogStatusAfterFailure(action.action_type);
-      await supabase
-        .from('ai_action_logs')
-        .update({ status, executed_at: status === AI_ACTION_LOG_STATUS.pending ? null : new Date().toISOString() })
-        .eq('id', action.id);
-      throw runError;
+      const { error: revertError } = await writeBackAiActionLog(supabase, EXECUTE_ROUTE_NAME, writeBackCtx, {
+        status,
+        executed_at: status === AI_ACTION_LOG_STATUS.pending ? null : new Date().toISOString(),
+      });
+      // 500 の本文に、もう一度押せるか (行が pending に戻った) を添える (#2195 V2)。献立の生成 (failed にした) と、
+      // 書き戻せなかった (実行中の印のまま) ときは false で、画面は「実行する」を出さずに案内にする
+      // (以前は「実行する」が残り、押すと 400 になってから案内に変わった)
+      const errorResponse = internalError(EXECUTE_ROUTE_NAME, runError, { userId: user.id });
+      const retryable = !revertError && status === AI_ACTION_LOG_STATUS.pending;
+      return NextResponse.json(
+        {
+          ...(await errorResponse.json()),
+          retryable,
+          ...(retryable ? {} : { notExecutableReason: PROPOSED_ACTION_NOT_EXECUTABLE_REASON.failed }),
+        },
+        { status: errorResponse.status },
+      );
     }
 
     // 行の状態は src/lib/ai/consultation-action-lifecycle.ts の決まり (成功は executed・今日の上限は pending・
-    // 失敗はやり直せる種類なら pending、やり直させない種類と対応していない種類は failed)
+    // 失敗はやり直せる種類なら pending、やり直させない種類・対応していない種類・やり直しても直らない失敗は failed)
     const status = aiActionLogStatusAfterRun(action.action_type, executionResult);
 
     // 今日の AI の利用回数の上限 (#1149) に達して、献立の生成をしなかった。アクションは pending に戻す
-    // (明日もう一度実行できる。同意が無くて止めたときと同じ扱い。結果は書き換えない)
+    // (明日もう一度実行できる。同意が無くて止めたときと同じ扱い。結果は書き換えない)。
+    // 戻せなかった (実行中の印のまま) ときは、明日押しても実行できないので、本文に retryable: false を添える (#2195 V2)
     if (executionResult.aiDailyLimit) {
-      await supabase.from('ai_action_logs').update({ status }).eq('id', action.id);
-      return aiDailyLimitResponse(executionResult.aiDailyLimit);
+      const { error: revertError } = await writeBackAiActionLog(supabase, EXECUTE_ROUTE_NAME, writeBackCtx, { status });
+      const limitResponse = aiDailyLimitResponse(executionResult.aiDailyLimit);
+      if (!revertError) return limitResponse;
+      return NextResponse.json(
+        { ...(await limitResponse.json()), retryable: false, notExecutableReason: PROPOSED_ACTION_NOT_EXECUTABLE_REASON.failed },
+        { status: limitResponse.status, headers: limitResponse.headers },
+      );
     }
 
     const unknownActionType = executionResult.unknownActionType === true;
     const success = unknownActionType ? false : executionResult.success;
     const result = unknownActionType ? { error: AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE } : executionResult.result;
 
-    // アクションステータスを更新 (実行した日時は、実行が終わった executed / failed のときだけ。pending (やり直せる) は空のまま)
-    const { error: finalizeError } = await supabase
-      .from('ai_action_logs')
-      .update({
-        status,
-        result,
-        executed_at: status === AI_ACTION_LOG_STATUS.pending ? null : new Date().toISOString(),
-      })
-      .eq('id', action.id);
+    // アクションステータスを更新 (実行した日時は、実行が終わった executed / failed のときだけ。pending (やり直せる) は空のまま)。
+    // 書き戻せなかったら 1 回だけ書き直す (#2195 V2。成功したのに実行中の印のまま残ると、開き直すたびにカードが出ていた)
+    const { error: finalizeError } = await writeBackAiActionLog(supabase, EXECUTE_ROUTE_NAME, writeBackCtx, {
+      status,
+      result,
+      executed_at: status === AI_ACTION_LOG_STATUS.pending ? null : new Date().toISOString(),
+    });
 
     if (unknownActionType) {
-      return NextResponse.json({ error: AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE }, { status: 400 });
+      return notExecutableResponse(AI_CONSULTATION_ACTION_UNKNOWN_TYPE_MESSAGE, 400, PROPOSED_ACTION_NOT_EXECUTABLE_REASON.failed);
     }
 
+    // 失敗したとき、提案のカードの「実行する」でもう一度実行できるか (行が pending に戻った)。
+    // false なら画面は「実行する」を出さずに「もう一度頼んでください」の案内を出す (#2189 W1-a)
+    // 書き換えに失敗したら行は実行中の印のまま (もう一度押しても実行しない) なので、やり直せるとは返さない
+    const retryable = !finalizeError && status === AI_ACTION_LOG_STATUS.pending;
     return NextResponse.json({
       success,
       result,
       actionType: action.action_type,
-      // 失敗したとき、提案のカードの「実行する」でもう一度実行できるか (行が pending に戻った)。
-      // false なら画面は「実行する」を出さずに「もう一度頼んでください」の案内を出す (#2189 W1-a)
-      // 書き換えに失敗したら行は実行中の印のまま (もう一度押しても実行しない) なので、やり直せるとは返さない
-      ...(success ? {} : { retryable: !finalizeError && status === AI_ACTION_LOG_STATUS.pending }),
+      ...(success
+        ? {}
+        : { retryable, ...(retryable ? {} : { notExecutableReason: PROPOSED_ACTION_NOT_EXECUTABLE_REASON.failed }) }),
     });
 
   } catch (error: any) {
-    return internalError('POST /api/ai/consultation/actions/[actionId]/execute', error, { userId: user.id });
+    return internalError(EXECUTE_ROUTE_NAME, error, { userId: user.id });
   }
 }
 

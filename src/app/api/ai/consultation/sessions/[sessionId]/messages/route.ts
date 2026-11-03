@@ -15,10 +15,14 @@ import { AI_ALLOWED_MEAL_TYPES, runConsultationAction } from '@/lib/ai/consultat
 import {
   AI_ACTION_LOG_STATUS,
   AI_CONSULTATION_ACTION_LOG_INSERT_FAILED_MESSAGE,
+  PROPOSED_ACTION_NOT_EXECUTABLE_REASON,
   aiActionLogStatusAfterFailure,
   aiActionLogStatusAfterRun,
+  proposedActionNotExecutableReasonOfView,
   proposedActionViewOf,
+  type ProposedActionNotExecutableReason,
 } from '@/lib/ai/consultation-action-lifecycle';
+import { writeBackAiActionLog } from '@/lib/ai/consultation-action-log-writes';
 import { aiProfilePreferenceTypesForPrompt } from '@/lib/ai/profile-preference-updates';
 import { isMealType, MEAL_LABELS, MEAL_ORDER } from '@homegohan/shared';
 import { CANONICAL_GOAL_TYPES, describeGoalRangesForPrompt } from '@/lib/health-goal-types';
@@ -83,6 +87,7 @@ const AI_CONSULTATION_HISTORY_LIMIT = 50;
 //   - 成功は executed。今日の上限 (#1149) で止めたら pending (手の実行と同じく、明日もう一度実行できる)。
 //     失敗はやり直せる種類なら pending (残したカードの「実行する」でやり直せる)、やり直させない種類は failed
 //   - 行を作れなかったときも黙らず、失敗の結果を返す (以前は null で、画面に何も出なかった)
+//   - 実行のあとの書き戻しは、失敗したら 1 回だけ書き直す (src/lib/ai/consultation-action-log-writes.ts。#2195 V2)
 /** 自動実行の結果 (応答の actionResult と、提案のカードに「実行する」を出すか) */
 interface AutoActionOutcome {
   /**
@@ -92,6 +97,20 @@ interface AutoActionOutcome {
   actionResult: { success: boolean; result: any; actionType: string };
   /** 行が pending で残った (カードの「実行する」で実行できる) */
   proposedActionExecutable: boolean;
+  /**
+   * 「実行する」を出さないときの理由 (#2195 V2。画面は案内の文を分ける)。自動実行は実行が終わってから返すので、
+   * 出さないのは失敗してやり直せない・記録できなかったとき (failed) だけ
+   */
+  proposedActionNotExecutableReason?: ProposedActionNotExecutableReason;
+}
+
+/** 自動実行が失敗したあとの「実行する」の出し方 (出さないなら理由も) */
+function autoActionExecutability(
+  executable: boolean,
+): Pick<AutoActionOutcome, 'proposedActionExecutable' | 'proposedActionNotExecutableReason'> {
+  return executable
+    ? { proposedActionExecutable: true }
+    : { proposedActionExecutable: false, proposedActionNotExecutableReason: PROPOSED_ACTION_NOT_EXECUTABLE_REASON.failed };
 }
 
 /**
@@ -101,10 +120,22 @@ interface AutoActionOutcome {
 function proposedActionFieldsOf(
   proposedActions: unknown,
   autoAction: AutoActionOutcome | null,
-): { proposedActions: unknown; proposedActionExecutable?: boolean } {
+): {
+  proposedActions: unknown;
+  proposedActionExecutable?: boolean;
+  proposedActionNotExecutableReason?: ProposedActionNotExecutableReason;
+} {
   if (!proposedActions || !autoAction || autoAction.actionResult.success) return { proposedActions: null };
-  return { proposedActions, proposedActionExecutable: autoAction.proposedActionExecutable };
+  return {
+    proposedActions,
+    proposedActionExecutable: autoAction.proposedActionExecutable,
+    ...(autoAction.proposedActionNotExecutableReason
+      ? { proposedActionNotExecutableReason: autoAction.proposedActionNotExecutableReason }
+      : {}),
+  };
 }
+
+const MESSAGES_POST_ROUTE_NAME = 'POST /api/ai/consultation/sessions/[sessionId]/messages';
 
 async function executeAndFinalizeAction(
   supabase: any,
@@ -127,7 +158,7 @@ async function executeAndFinalizeAction(
 
   if (!actionLog) {
     // 記録できなかった (DB の失敗・種類の制約に合わない) ので実行しない。生のエラー文は応答に出さず、ログにだけ残す (#1172)
-    createLogger('POST /api/ai/consultation/sessions/[sessionId]/messages', generateRequestId())
+    createLogger(MESSAGES_POST_ROUTE_NAME, generateRequestId())
       .withUser(user.id)
       .error('AI 相談の提案を記録できなかったため、自動実行しませんでした', toLoggableError(insertError), {
         session_id: sessionId,
@@ -135,9 +166,11 @@ async function executeAndFinalizeAction(
       });
     return {
       actionResult: { success: false, result: { error: AI_CONSULTATION_ACTION_LOG_INSERT_FAILED_MESSAGE }, actionType: proposedActions.type },
-      proposedActionExecutable: false,
+      ...autoActionExecutability(false),
     };
   }
+
+  const writeBackCtx = { userId: user.id, actionLogId: actionLog.id, actionType: proposedActions.type };
 
   try {
     const executionResult = await runConsultationAction(supabase, user, {
@@ -154,31 +187,28 @@ async function executeAndFinalizeAction(
       : executionResult.result;
     const status = aiActionLogStatusAfterRun(proposedActions.type, executionResult);
 
-    const { error: finalizeError } = await supabase
-      .from('ai_action_logs')
-      .update({
-        status,
-        result,
-        // 実行した日時は、実行が終わった (executed / failed) ときだけ。pending (やり直せる) は空のまま
-        executed_at: status === AI_ACTION_LOG_STATUS.pending ? null : new Date().toISOString(),
-      })
-      .eq('id', actionLog.id);
+    const { error: finalizeError } = await writeBackAiActionLog(supabase, MESSAGES_POST_ROUTE_NAME, writeBackCtx, {
+      status,
+      result,
+      // 実行した日時は、実行が終わった (executed / failed) ときだけ。pending (やり直せる) は空のまま
+      executed_at: status === AI_ACTION_LOG_STATUS.pending ? null : new Date().toISOString(),
+    });
 
     return {
       actionResult: { success, result, actionType: proposedActions.type },
       // 書き換えに失敗したら行は実行中の印のまま (実行の API は実行しない) なので、「実行する」を出さない
-      proposedActionExecutable: !finalizeError && status === AI_ACTION_LOG_STATUS.pending,
+      ...autoActionExecutability(!finalizeError && status === AI_ACTION_LOG_STATUS.pending),
     };
   } catch (execError) {
     console.error('Action direct-execution error:', execError);
     const status = aiActionLogStatusAfterFailure(proposedActions.type);
-    const { error: finalizeError } = await supabase
-      .from('ai_action_logs')
-      .update({ status, executed_at: status === AI_ACTION_LOG_STATUS.pending ? null : new Date().toISOString() })
-      .eq('id', actionLog.id);
+    const { error: finalizeError } = await writeBackAiActionLog(supabase, MESSAGES_POST_ROUTE_NAME, writeBackCtx, {
+      status,
+      executed_at: status === AI_ACTION_LOG_STATUS.pending ? null : new Date().toISOString(),
+    });
     return {
       actionResult: { success: false, result: null, actionType: proposedActions.type },
-      proposedActionExecutable: !finalizeError && status === AI_ACTION_LOG_STATUS.pending,
+      ...autoActionExecutability(!finalizeError && status === AI_ACTION_LOG_STATUS.pending),
     };
   }
 }
@@ -238,13 +268,16 @@ export async function GET(request: Request, props: { params: Promise<{ sessionId
     .filter((m: any) => !m.metadata?.isSystemPrompt)
     .map((m: any) => {
       const view = m.proposed_actions ? proposedActionViewOf(actionLogStatusesByMessage.get(m.id) ?? []) : 'hidden';
+      const notExecutableReason = proposedActionNotExecutableReasonOfView(view);
       return {
         id: m.id,
         role: m.role,
         content: m.content,
         proposedActions: view === 'hidden' ? null : m.proposed_actions,
-        // 提案のカードに「実行する」を出すか (行が pending のときだけ。出さないときは「もう一度頼んでください」の案内)
+        // 提案のカードに「実行する」を出すか (行が pending のときだけ)。出さないときは理由も返す (#2195 V2):
+        // 実行中の印のまま (実行中か、書き戻せなかった) は「実行中か実行済み」、失敗・行が無いは「もう一度頼んでください」の案内
         ...(view === 'hidden' ? {} : { proposedActionExecutable: view === 'executable' }),
+        ...(notExecutableReason ? { proposedActionNotExecutableReason: notExecutableReason } : {}),
         isImportant: m.is_important || false,
         importanceReason: m.importance_reason,
         createdAt: m.created_at,
