@@ -5,7 +5,9 @@
  * Web の AI 相談 (src/components/AIChatBubble.tsx) は、実行できたときに mealPlanUpdated を投げる。モバイルのタブは
  * Web の画面を WebView で開いている (app/(tabs)/home.tsx など) ので、シートで実行しても、閉じたあとのタブには古い中身が残っていた。
  * シート (AIAdvisorSheet) は実行できたときに notifyAiConsultationDataChanged を呼び、購読している WebView の画面
- * (WebViewScreen の reloadOnAiConsultationDataChange) が今のページを読み込み直す。
+ * (WebViewScreen の reloadOnAiConsultationDataChange) が今のページを読み込み直す。ただし入力の途中かもしれないページでは
+ * 読み込み直さない (今のページが webViewBridge.ts の AI_CONSULTATION_RELOADABLE_PATHS に無いとき・入力の部品や開いている
+ * モーダルがあるとき。読み込み直すと保存していない入力が消えるため)。
  */
 
 type AiConsultationDataChangedListener = () => void;

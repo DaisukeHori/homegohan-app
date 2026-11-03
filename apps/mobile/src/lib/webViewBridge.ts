@@ -493,15 +493,64 @@ true;
 }
 
 /**
+ * AI 相談の提案の実行でデータが変わったときに、読み込み直してよい Web のページ (pathname の完全一致。#2189 W2)。
+ *
+ * 読み込み直すと、そのページの React の state (保存していない入力・開いているモーダル) は消える。
+ * タブの WebView はタブの中で別のページへ移れる (献立のタブなら '/menus' の配下すべて) ので、タブ単位ではなく、
+ * いま開いているページ (window.location.pathname) がこの一覧にあるときだけ読み込み直す。
+ * 入れてよいのは「表示が主で、入力の部品はモーダルか開閉する欄の中にだけあり、それが出ている間は必ず
+ * AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR に当たる要素がある」ページだけ。入れるか迷うページは入れない
+ * (古い表示はタブを開き直せば直るが、消えた入力は取り返せない)。
+ *
+ * 各行の根拠 (Web 側のコード):
+ *   - '/home' (src/app/(main)/home/page.tsx): 入力の部品は体調のチェックインの欄 (showCheckin で開閉する) にだけあり、
+ *     欄が開いている間は睡眠時間の <input type="range"> が必ず出る。週の詳細 (showWeeklyDetail) は表示だけ
+ *   - '/menus/weekly' (src/app/(main)/menus/weekly/page.tsx): ページの本体に入力の部品は無い。編集・追加は
+ *     _components/modals の各モーダル (どれも role="dialog" / aria-modal を持つ) と V4GenerateModal (開いている間は
+ *     自由記入の <textarea> がいつも出る) の中だけ。入力を持たない確認・結果の知らせ (CancelGenerationConfirmModal・
+ *     生成の完了の知らせ) は読み込み直すと閉じるだけ
+ *   - '/comparison' (src/app/(main)/comparison/page.tsx): 表示だけ (入力の部品もモーダルも無い)
+ *
+ * 入れないページ (例): '/profile' (編集のモーダルの isEditing / editForm は保存するまで React の state にしか無い)・
+ * '/profile/nutrition-targets' (入力の画面)・'/menus/weekly/request' (手順つきの入力の画面。currentStep / formData は
+ * どこにも保存されず、手順によっては入力の部品が出ないので、下の DOM の確かめでは守れない)・'/meals/...' (スキャン・食事の記録)
+ */
+export const AI_CONSULTATION_RELOADABLE_PATHS: readonly string[] = ['/home', '/menus/weekly', '/comparison'];
+
+/**
+ * これに当たる要素がページにある間は、AI_CONSULTATION_RELOADABLE_PATHS のページでも読み込み直さない (#2189 W2)。
+ * 入力の部品 (hidden を除く input・textarea・select・編集できる要素) と、開いているモーダル (role="dialog"・aria-modal・
+ * 開いた <dialog>)。Web をネイティブアプリの中で開いているときは、Web の AI 相談の吹き出し (src/components/AIChatBubble.tsx) は
+ * 何も描かない (isNativeApp なら null を返す) ので、ふだんの表示でこれに当たる要素は無い
+ */
+export const AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR = [
+  'input:not([type="hidden"])',
+  'textarea',
+  'select',
+  '[contenteditable]:not([contenteditable="false"])',
+  '[role="dialog"]',
+  '[aria-modal="true"]',
+  'dialog[open]',
+].join(', ');
+
+/**
  * 今開いているページを読み込み直すスクリプト (AI 相談の提案の実行でデータが変わったとき。#2189 W2)。
  * 自オリジンのページでだけ動く (外部ページ・読み込みに失敗した about:blank では何もしない)。
  * 認証ブリッジのページ (BRIDGE_PAGE_PATH) の上では読み込み直さない: URL の code は一度しか使えない (#1036) ので、
  * 同じ URL を読み直すとログインできない (ブリッジは next のパスへ移すので、ふつうはここに留まらない)。
+ * 入力の途中かもしれないページでも読み込み直さない (読み込み直すと保存していない入力が消える): 今のページが
+ * AI_CONSULTATION_RELOADABLE_PATHS に無いとき、入力の部品・開いているモーダル (AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR) が
+ * あるとき、ページの中身を確かめられないときは何もしない。
  * スクリプトは URL・トークン・code を持たない
  */
 export function buildReloadCurrentPageScript(): string {
   return buildOwnOriginOnlyScript(`
   if (window.location.pathname === ${JSON.stringify(BRIDGE_PAGE_PATH)}) return;
+  var reloadablePaths = ${JSON.stringify(AI_CONSULTATION_RELOADABLE_PATHS)};
+  if (reloadablePaths.indexOf(window.location.pathname) === -1) return;
+  var doc = window.document;
+  if (!doc || typeof doc.querySelector !== 'function') return;
+  if (doc.querySelector(${JSON.stringify(AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR)})) return;
   window.location.reload();`);
 }
 

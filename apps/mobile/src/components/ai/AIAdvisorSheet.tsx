@@ -553,7 +553,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
               : optimistic;
             return [...withoutOptimistic, userMsg, aiMsg, ...outcomeMessages];
           });
-          // 実行できたら、データ (献立・食事・買い物リストなど) を出すタブの WebView を読み込み直す (Web の mealPlanUpdated に当たる)
+          // 実行できたら、データ (献立・食事・買い物リストなど) を出すタブの WebView に知らせる (Web の mealPlanUpdated に当たる)。
+          // 読み込み直すかは各 WebView がページの上で決める (入力の途中のページでは読み込み直さない。webViewBridge.ts の buildReloadCurrentPageScript)
           if (autoAction?.outcome.kind === "executed") notifyAiConsultationDataChanged();
         }
       };

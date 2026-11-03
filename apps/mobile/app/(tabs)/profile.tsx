@@ -43,15 +43,10 @@ function ProfileSettingsHeader() {
 }
 
 export default function ProfileTab() {
-  // AI 相談のシートが提案を実行してデータ (健康目標・好みなど) を変えたら読み込み直す (#2189 W2)
-  return (
-    <WebViewScreen
-      path="/profile"
-      testID="webview-profile"
-      header={<ProfileSettingsHeader />}
-      reloadOnAiConsultationDataChange
-    />
-  );
+  // AI 相談の提案の実行では読み込み直さない (reloadOnAiConsultationDataChange を渡さない。#2189 W2)。
+  // マイページのタブのページ ('/profile' は編集のモーダル、'/profile/nutrition-targets' は入力の画面) は入力の途中になりうるので、
+  // 読み込み直してよい一覧 (webViewBridge.ts の AI_CONSULTATION_RELOADABLE_PATHS) に入れていない。古い表示はタブを開き直せば直る
+  return <WebViewScreen path="/profile" testID="webview-profile" header={<ProfileSettingsHeader />} />;
 }
 
 const styles = StyleSheet.create({

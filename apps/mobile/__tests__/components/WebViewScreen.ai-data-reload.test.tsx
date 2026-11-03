@@ -7,7 +7,11 @@
  *      (今の URL のまま。スクリプトは URL・トークン・code を持たない)
  *   2. スクリプトは自オリジンのページでだけ読み込み直し、外部ページ・about:blank・認証ブリッジのページでは何もしない
  *   3. 渡さない画面 (スキャンのタブ・規約の同意など) は読み込み直さない。画面が外れたら購読も外れる
- *   4. タブの配線: ホーム・献立・比較・マイページは渡し、スキャンのタブは渡さない
+ *   4. タブの配線: ホーム・献立・比較は渡し、スキャンのタブ・マイページは渡さない
+ *   5. 入力の途中かもしれないページでは読み込み直さない (読み込み直すと保存していない入力が消える)。読み込み直すかはタブ単位でなく、
+ *      今開いているページで決める: 読み込み直してよい一覧 (AI_CONSULTATION_RELOADABLE_PATHS) に無いページ (タブの中で移った
+ *      入力の画面 '/menus/weekly/request'・編集のモーダルを持つ '/profile' など) と、入力の部品・開いているモーダルがあるとき
+ *      (AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR) は何もしない
  */
 
 import fs from 'fs';
@@ -83,7 +87,12 @@ import {
   notifyAiConsultationDataChanged,
   resetAiConsultationDataChangedListenersForTests,
 } from '../../src/lib/ai-consultation-data-changed';
-import { BRIDGE_PAGE_PATH } from '../../src/lib/webViewBridge';
+import {
+  AI_CONSULTATION_RELOADABLE_PATHS,
+  AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR,
+  BRIDGE_PAGE_PATH,
+} from '../../src/lib/webViewBridge';
+import { NATIVE_APP_TABS, findNativeAppTab } from '@homegohan/shared';
 
 async function renderScreen(element: React.ReactElement) {
   const utils = render(element);
@@ -94,11 +103,28 @@ async function renderScreen(element: React.ReactElement) {
   return { ...utils, injectJavaScript };
 }
 
-/** スクリプトを、location が origin・pathname のページ (を模した sandbox) で実行する */
-function runOnPage(script: string, origin: string, pathname: string) {
+type PageDocument = 'at-rest' | 'input-ui-shown' | 'absent';
+
+/**
+ * スクリプトを、location が origin・pathname のページ (を模した sandbox) で実行する。
+ * document は、'at-rest' なら入力の部品もモーダルも無いページ、'input-ui-shown' なら読み込み直しを止める要素
+ * (AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR に当たる要素。編集のモーダル・開いた入力の欄など) があるページ、'absent' なら document が無い
+ */
+function runOnPage(script: string, origin: string, pathname: string, pageDocument: PageDocument = 'at-rest') {
   const location = { origin, pathname, reload: jest.fn(), assign: jest.fn(), replace: jest.fn() };
-  vm.runInNewContext(script, { window: { location } });
-  return location;
+  const querySelector = jest.fn((selector: string) =>
+    pageDocument === 'input-ui-shown' && selector === AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR ? {} : null,
+  );
+  const pageWindow = pageDocument === 'absent' ? { location } : { location, document: { querySelector } };
+  vm.runInNewContext(script, { window: pageWindow });
+  return { ...location, querySelector };
+}
+
+async function scriptInjectedOnDataChange(element: React.ReactElement): Promise<string> {
+  const { injectJavaScript } = await renderScreen(element);
+  notifyAiConsultationDataChanged();
+  expect(injectJavaScript).toHaveBeenCalledTimes(1);
+  return injectJavaScript.mock.calls[0][0];
 }
 
 beforeEach(() => {
@@ -120,12 +146,12 @@ describe('WebViewScreen — AI 相談の提案の実行で読み込み直す (#2
     notifyAiConsultationDataChanged();
     expect(injectJavaScript).toHaveBeenCalledTimes(1);
     const script: string = injectJavaScript.mock.calls[0][0];
-    // 今の URL のまま読み込み直す (URL・トークン・code を持たない)
+    // 今の URL のまま読み込み直す (URL・トークン・code を持たない。持つパスは読み込み直してよいページの一覧だけ)
     const page = runOnPage(script, WEB_BASE_URL, '/menus/weekly');
     expect(page.reload).toHaveBeenCalledTimes(1);
     expect(page.assign).not.toHaveBeenCalled();
     expect(page.replace).not.toHaveBeenCalled();
-    for (const forbidden of ['/menus/weekly', 'code=', 'access_token', 'refresh_token']) {
+    for (const forbidden of [`${WEB_BASE_URL}/`, 'mode=app', 'code=', 'access_token', 'refresh_token']) {
       expect(script).not.toContain(forbidden);
     }
 
@@ -164,17 +190,111 @@ describe('WebViewScreen — AI 相談の提案の実行で読み込み直す (#2
   });
 });
 
+describe('入力の途中かもしれないページでは読み込み直さない (#2189 W2 R1)', () => {
+  it.each(AI_CONSULTATION_RELOADABLE_PATHS.map((pathname) => [pathname]))(
+    '読み込み直してよい一覧のページ %s は、入力の部品もモーダルも無ければ読み込み直す',
+    async (pathname) => {
+      const tab = findNativeAppTab(pathname);
+      if (!tab) throw new Error(`${pathname} はどのタブのページでもない`);
+      const script = await scriptInjectedOnDataChange(<WebViewScreen path={tab.rootPath} reloadOnAiConsultationDataChange />);
+
+      const page = runOnPage(script, WEB_BASE_URL, pathname);
+
+      expect(page.querySelector).toHaveBeenCalledWith(AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR);
+      expect(page.reload).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([
+    ['マイページ (編集のモーダルの入力は保存するまで React の state にしか無い)', '/profile', '/profile'],
+    ['マイページの中の栄養の目標の入力の画面', '/profile', '/profile/nutrition-targets'],
+    ['献立のタブの中で移った献立の依頼の入力の画面 (手順と入力はどこにも保存されない)', '/menus/weekly', '/menus/weekly/request'],
+    ['献立のタブの一覧に無いページ', '/menus/weekly', '/menus'],
+    ['一覧のページの下のパス', '/home', '/home/extra'],
+    ['一覧のページに末尾の / が付いたパス', '/comparison', '/comparison/'],
+    ['スキャンのタブのページ', '/home', '/meals/new'],
+    ['タブの外のページ', '/home', '/settings'],
+  ])('%s (%s のタブで %s を開いているとき) では読み込み直さない', async (_label, tabRootPath, pathname) => {
+    const script = await scriptInjectedOnDataChange(<WebViewScreen path={tabRootPath} reloadOnAiConsultationDataChange />);
+
+    const page = runOnPage(script, WEB_BASE_URL, pathname);
+
+    expect(page.reload).not.toHaveBeenCalled();
+    expect(page.assign).not.toHaveBeenCalled();
+    expect(page.replace).not.toHaveBeenCalled();
+  });
+
+  it.each(AI_CONSULTATION_RELOADABLE_PATHS.map((pathname) => [pathname]))(
+    '一覧のページ %s でも、入力の部品・開いているモーダルがある間 (編集の途中) は読み込み直さない',
+    async (pathname) => {
+      const script = await scriptInjectedOnDataChange(<WebViewScreen path="/home" reloadOnAiConsultationDataChange />);
+
+      const page = runOnPage(script, WEB_BASE_URL, pathname, 'input-ui-shown');
+
+      expect(page.querySelector).toHaveBeenCalledWith(AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR);
+      expect(page.reload).not.toHaveBeenCalled();
+    },
+  );
+
+  it('ページの中身 (document) を確かめられないときは読み込み直さない', async () => {
+    const script = await scriptInjectedOnDataChange(<WebViewScreen path="/home" reloadOnAiConsultationDataChange />);
+
+    const page = runOnPage(script, WEB_BASE_URL, '/home', 'absent');
+
+    expect(page.reload).not.toHaveBeenCalled();
+  });
+
+  it('読み込み直しを止める要素は、入力の部品 (hidden を除く) と開いているモーダル', () => {
+    const parts = AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR.split(',').map((part) => part.trim());
+    expect(parts).toEqual([
+      'input:not([type="hidden"])',
+      'textarea',
+      'select',
+      '[contenteditable]:not([contenteditable="false"])',
+      '[role="dialog"]',
+      '[aria-modal="true"]',
+      'dialog[open]',
+    ]);
+  });
+
+  it.each(AI_CONSULTATION_RELOADABLE_PATHS.map((pathname) => [pathname]))(
+    '一覧のページ %s は Web に実在し、reloadOnAiConsultationDataChange を渡すタブのページ',
+    (pathname) => {
+      const webPage = path.join(__dirname, '../../../../src/app/(main)', pathname, 'page.tsx');
+      expect(fs.existsSync(webPage)).toBe(true);
+      const tab = findNativeAppTab(pathname);
+      expect(tab).not.toBeNull();
+      const tabFile = fs.readFileSync(path.join(__dirname, '../../app/(tabs)', `${tab?.name}.tsx`), 'utf8');
+      expect(tabFile).toMatch(/<WebViewScreen[\s\S]*?\breloadOnAiConsultationDataChange\b[\s\S]*?\/>/);
+    },
+  );
+
+  it('reloadOnAiConsultationDataChange を渡すタブは、開いたときのページが一覧にある', () => {
+    for (const tab of NATIVE_APP_TABS) {
+      const tabFile = fs.readFileSync(path.join(__dirname, '../../app/(tabs)', `${tab.name}.tsx`), 'utf8');
+      const passes = /<WebViewScreen[^>]*\breloadOnAiConsultationDataChange\b/.test(tabFile);
+      expect({ tab: tab.name, passes }).toEqual({
+        tab: tab.name,
+        passes: AI_CONSULTATION_RELOADABLE_PATHS.includes(tab.rootPath),
+      });
+    }
+  });
+});
+
 describe('タブの配線 (#2189 W2)', () => {
   const tabSource = (file: string) => fs.readFileSync(path.join(__dirname, '../../app/(tabs)', file), 'utf8');
 
-  it.each(['home.tsx', 'menus.tsx', 'comparison.tsx', 'profile.tsx'])(
+  it.each(['home.tsx', 'menus.tsx', 'comparison.tsx'])(
     '%s (AI 相談の提案が変えるデータを出すタブ) は reloadOnAiConsultationDataChange を渡す',
     (file) => {
       expect(tabSource(file)).toMatch(/<WebViewScreen[\s\S]*?\breloadOnAiConsultationDataChange\b[\s\S]*?\/>/);
     },
   );
 
-  it('スキャンのタブ (入力の途中の画面) は渡さない (読み込み直すと入力が消える)', () => {
-    expect(tabSource('meals.tsx')).not.toMatch(/<WebViewScreen[^>]*reloadOnAiConsultationDataChange/);
+  it.each([
+    ['meals.tsx', 'スキャンのタブ (入力の途中の画面)'],
+    ['profile.tsx', 'マイページ (編集のモーダル・入力の画面)'],
+  ])('%s (%s) は渡さない (読み込み直すと入力が消える)', (file) => {
+    expect(tabSource(file)).not.toMatch(/<WebViewScreen[^>]*reloadOnAiConsultationDataChange/);
   });
 });

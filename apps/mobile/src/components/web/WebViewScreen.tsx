@@ -49,8 +49,10 @@ interface Props {
   // Web の「同意しない」「登録をやめる」の後の案内を残す (#1442)
   afterSignOut?: () => void;
   // true なら、AI 相談のシートが提案を実行してデータを変えたとき (notifyAiConsultationDataChanged) に、今のページを読み込み直す (#2189 W2)。
-  // AI 相談の提案が変えるデータ (献立・食事・買い物リスト・冷蔵庫・健康の記録・好みなど) を出すタブだけが渡す
-  // (ホーム・献立・比較・マイページ)。入力の途中の画面 (スキャンのタブ・規約の同意など) は渡さない (読み込み直すと入力が消える)
+  // 読み込み直すのは、今開いているページが読み込み直してよい一覧 (webViewBridge.ts の AI_CONSULTATION_RELOADABLE_PATHS) にあり、
+  // 入力の部品・開いているモーダルがページに無いときだけ (読み込み直すと保存していない入力が消える。判定は
+  // buildReloadCurrentPageScript がページの上で行う。タブの中で一覧に無いページへ移っていれば何もしない)。
+  // 一覧のページを開くタブ (ホーム・献立・比較) だけが渡す。マイページ (一覧のページが無い)・スキャンのタブ・規約の同意などは渡さない
   reloadOnAiConsultationDataChange?: boolean;
 }
 
@@ -217,8 +219,10 @@ const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({
   }, [navigation, path]);
 
   // AI 相談のシートが提案を実行してデータを変えたら、今のページを読み込み直す (#2189 W2。src/lib/ai-consultation-data-changed.ts)。
-  // 読み込み直しは今の URL のまま (タブの中で移ったページ・クエリを保つ)。自オリジンのページでだけ動き、認証ブリッジのページでは動かない
-  // (buildReloadCurrentPageScript)。WebView がまだ無い (uri を作っている途中) ときは何もしない (これから最新を読み込む)
+  // 読み込み直しは今の URL のまま (クエリを保つ)。読み込み直すかはページの上で決める (buildReloadCurrentPageScript): 自オリジンの、
+  // 読み込み直してよい一覧 (AI_CONSULTATION_RELOADABLE_PATHS) のページで、入力の部品・開いているモーダルが無いときだけ。
+  // それ以外 (タブの中で移った入力の画面・編集のモーダルを開いている途中・認証ブリッジのページ) では何もしない。
+  // WebView がまだ無い (uri を作っている途中) ときは何もしない (これから最新を読み込む)
   useEffect(() => {
     if (!reloadOnAiConsultationDataChange) return undefined;
     return subscribeAiConsultationDataChanged(() => {
