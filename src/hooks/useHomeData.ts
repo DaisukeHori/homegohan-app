@@ -88,8 +88,8 @@ interface HomeFetchOptions {
    * ('nutrition_advice_auto'。ai_unmetered_daily_caps) を 1 回使っていたのをやめる。今日のアドバイスの帯 (suggestion) と、
    * 分析のアドバイス・提案・AI を省いた知らせ (aiSkipped) は前の値を残す (安全弁に達した aiSkipped で帯が消える道も無くなる)。
    * ただし今日の完了した食事が無くなって分析できない (analysis: null) ときは、読み込み直したときと同じく分析と帯を消す (#2195 V1)。
-   * false (初めの読み込み・ログインの状態の変化・献立の変更の実行 executeNutritionSuggestion のあと) は、アドバイスと提案も読み、
-   * 帯に何も出ていないときだけアドバイスを置く
+   * false (初めの読み込み・ログインの状態の変化・献立の変更の実行 executeNutritionSuggestion のあと・開いたときの読み込みの役を
+   * 引き継いだ取り直し (refetchReadMode が 'mount'。#2201 U1)) は、アドバイスと提案も読み、帯に何も出ていないときだけアドバイスを置く
    */
   analysisWithoutAi: boolean;
 }
@@ -1178,9 +1178,13 @@ export const useHomeData = () => {
     // 取り直し (AI 相談の成功のあと)。読み込み直したときと同じ表示にする (#2195 V1)。ただし栄養の分析は AI を呼ばずに
     // 点数・課題だけ読み直し、今日のアドバイスの帯は残す (成功のたびの LLM の費用と安全弁の消費をやめる。#2201 U4)。
     // 読み込み中の表示を出さず、読み取りの失敗では今の表示を残す (#2201 U1)。開いたときの読み込み中に始まった取り直しは、
-    // その読み込みの役を引き継ぐ (refetchReadMode)
+    // その読み込みの役を引き継ぐ (refetchReadMode が 'mount')。引き継いだ回は栄養の分析も開いたときと同じく AI つきで読む
+    // (開いたときの AI つきの読み取りは最後に始めた読み取りでなくなり置かれないので、AI を付けずに読むとアドバイスと帯が出ないまま残る)
     // 札 (useAiConsultationDataRefetch が渡す) があれば、応答を待つあいだに始めた完了の切り替えを今日の献立で上書きしない
-    refetch: (ticket?: AiConsultationFetchTicket) => fetchHomeData({ analysisWithoutAi: true }, refetchReadMode(), ticket),
+    refetch: (ticket?: AiConsultationFetchTicket) => {
+      const mode = refetchReadMode();
+      return fetchHomeData({ analysisWithoutAi: mode === 'refetch' }, mode, ticket);
+    },
     // 食事の完了の切り替えの間の印 (#2201 U2。ページが useAiConsultationDataRefetch の writeInFlightRef に渡す)
     aiConsultationWrites,
   };
