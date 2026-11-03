@@ -406,9 +406,11 @@ describe('useHomeData の取り直しは、栄養の分析を AI を呼ばずに
 
 describe('useHomeData: 続けて来た 2 回の成功の取り直しの栄養の分析の応答が逆の順に届いても、古い分析で上書きしない (#2201 U1)', () => {
   const ADVICE_BEFORE = '夕食のタンパク質が不足しています';
-  /** 1 回目の取り直し (受付の通知) の分析 (先に始めた読み取りの古い答え) */
-  const FIRST_SCORE = 40;
-  const FIRST_ADVICE = '主食を少し減らしましょう';
+  /**
+   * 1 回目の取り直し (受付の通知) の分析 (先に始めた読み取りの古い答え): 今日の完了した食事が無くて分析できない。
+   * 取り直しは AI を付けずに読み、帯は分析できなくなったときだけ消す (#2201 U4) ので、古い答えを置くと点数と帯の両方が消える
+   */
+  const FIRST_RESPONSE = NO_MEALS_RESPONSE;
   /** 2 回目の取り直し (完了の通知) の分析 (あとに始めた読み取りの新しい答え) */
   const SECOND_SCORE = 85;
   const SECOND_ADVICE = '野菜を一品足しましょう';
@@ -438,9 +440,10 @@ describe('useHomeData: 続けて来た 2 回の成功の取り直しの栄養の
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: unknown) => {
-        if (String(input) === NUTRITION_ANALYSIS_URL && nutritionAnalysisBody !== undefined) {
-          // 答えは読み取りを始めたときのもの (止めたあとに答えを変えても、止めた読み取りは前の答えを返す)
-          const body = nutritionAnalysisBody;
+        // 答えは読み取りを始めたときのもの (止めたあとに答えを変えても、止めた読み取りは前の答えを返す)。
+        // 開いたときは AI つきの URL、取り直しは AI を付けない URL (#2201 U4) で読む
+        const body = nutritionAnalysisAnswer(input);
+        if (body !== null) {
           if (holdAnalyses) await new Promise<void>((resolve) => heldAnalyses.push({ release: resolve }));
           return { ok: true, status: OK_STATUS, json: async () => body };
         }
@@ -475,7 +478,7 @@ describe('useHomeData: 続けて来た 2 回の成功の取り直しの栄養の
     expect(adviceBannerText()).toBe(ADVICE_BEFORE);
 
     holdAnalyses = true;
-    nutritionAnalysisBody = analysisResponse(FIRST_ADVICE, FIRST_SCORE);
+    nutritionAnalysisBody = FIRST_RESPONSE;
     await notifyAiConsultationSucceeded();
     nutritionAnalysisBody = analysisResponse(SECOND_ADVICE, SECOND_SCORE);
     await notifyAiConsultationSucceeded();
@@ -488,12 +491,13 @@ describe('useHomeData: 続けて来た 2 回の成功の取り直しの栄養の
     const { first, second } = await startTwoRefetches();
     await release(second);
     expect(analysisScoreText()).toBe(String(SECOND_SCORE));
-    expect(adviceBannerText()).toBe(SECOND_ADVICE);
+    // 取り直しは AI を付けずに読むので、帯は前のアドバイスを残す (#2201 U4)
+    expect(adviceBannerText()).toBe(ADVICE_BEFORE);
     expect(analysisLoadingText()).toBe('false');
 
     await release(first);
     expect(analysisScoreText(), '先の取り直しの古い分析が、あとの分析を上書きした').toBe(String(SECOND_SCORE));
-    expect(adviceBannerText(), '先の取り直しの古いアドバイスが、今日のアドバイスの帯を戻した').toBe(SECOND_ADVICE);
+    expect(adviceBannerText(), '先の取り直しの古い分析 (分析できない) が、今日のアドバイスの帯を消した').toBe(ADVICE_BEFORE);
     expect(analysisLoadingText()).toBe('false');
   });
 
@@ -501,12 +505,12 @@ describe('useHomeData: 続けて来た 2 回の成功の取り直しの栄養の
     const { first, second } = await startTwoRefetches();
     await release(first);
     expect(analysisScoreText(), '先の取り直しの古い分析を置いた').toBe(String(ANALYSIS_SCORE));
-    expect(adviceBannerText()).toBe(ADVICE_BEFORE);
+    expect(adviceBannerText(), '先の取り直しの古い分析 (分析できない) が、今日のアドバイスの帯を消した').toBe(ADVICE_BEFORE);
     expect(analysisLoadingText(), '先の取り直しの応答が、あとの取り直しの途中で読み込み中の印を下ろした').toBe('true');
 
     await release(second);
     expect(analysisScoreText()).toBe(String(SECOND_SCORE));
-    expect(adviceBannerText()).toBe(SECOND_ADVICE);
+    expect(adviceBannerText()).toBe(ADVICE_BEFORE);
     expect(analysisLoadingText()).toBe('false');
   });
 });
@@ -841,6 +845,61 @@ describe('useHomeData: 開いたときの読み込みの最中に始まった取
       mountHold.release();
     });
     await settle();
+    expect(loadingText()).toBe('false');
+  });
+
+  it('開いたときの読み込みの役を引き継いだ取り直しは、栄養の分析を AI つきで読み、今日のアドバイスの帯を出す (#2201 U1 + U4)', async () => {
+    const ADVICE = '夕食のタンパク質が不足しています';
+    nutritionAnalysisBody = analysisResponse(ADVICE);
+    let refetch: (() => Promise<void>) | null = null;
+    function HomeMountProbe() {
+      const home = useHomeData();
+      refetch = home.refetch;
+      return (
+        <div>
+          <p data-testid="home-loading">{String(home.loading)}</p>
+          <p data-testid="advice-banner">{home.suggestion ?? ''}</p>
+        </div>
+      );
+    }
+    const loadingText = () => container.querySelector('[data-testid="home-loading"]')?.textContent;
+    const fetchCallsTo = (url: string) => vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === url).length;
+
+    // 開いたときの読み込みの fetch (AI つきの栄養の分析・お知らせ) の応答を止める (読み込み中の表示のまま、栄養の分析は始めている)
+    const heldMountFetches: (() => void)[] = [];
+    let holdFetches = true;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) => {
+        const answer = nutritionAnalysisAnswer(input);
+        if (holdFetches) await new Promise<void>((resolve) => heldMountFetches.push(resolve));
+        if (answer !== null) return { ok: true, status: OK_STATUS, json: async () => answer };
+        return { ok: false, status: NOT_FOUND_STATUS, json: async () => ({}) };
+      }),
+    );
+    await act(async () => {
+      root.render(<HomeMountProbe />);
+    });
+    await settle();
+    expect(loadingText(), '開いたときの読み込みを止められていない (検査が空振りしている)').toBe('true');
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '開いたときの栄養の分析を始めていない (検査が空振りしている)').toBe(1);
+
+    // その間に AI 相談の成功の取り直しが始まる: 開いたときの読み込みの役 (栄養の分析も) を引き継ぐ
+    holdFetches = false;
+    await act(async () => {
+      await refetch!();
+    });
+    await settle();
+    expect(loadingText()).toBe('false');
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_WITHOUT_AI_URL), '引き継いだ取り直しが AI を付けない栄養の分析を読んだ').toBe(0);
+    expect(adviceBannerText(), '開いたときの栄養の分析を引き継いだ取り直しが、今日のアドバイスの帯を出さなかった').toBe(ADVICE);
+
+    // 先に始めた開いたときの読み込みの応答が後から届いても、帯はそのまま
+    await act(async () => {
+      for (const release of heldMountFetches) release();
+    });
+    await settle();
+    expect(adviceBannerText()).toBe(ADVICE);
     expect(loadingText()).toBe('false');
   });
 });
