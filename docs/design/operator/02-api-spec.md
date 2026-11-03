@@ -627,7 +627,7 @@ await supabase.from('admin_audit_logs').insert({
 ---
 
 ### POST /api/super-admin/flags
-フラグ新規作成 (キーが重複すると 409 `OP_FEATURE_FLAG_IN_USE`)。作ったキーは `basic` の機能パッケージのフラグキーの一覧 (`feature_packages.feature_flags`。フラグの削除の「使用中か」の検査がこの一覧を見る) にも、DB の関数 `append_flag_to_feature_package(p_package_key, p_flag_key)` 1 本で足す (1 文の条件つき UPDATE。まだ入っていないときだけ `array_append` し、`updated_at` も進める。`added` / `already_present` / `not_found` を返す。EXECUTE は service_role だけ)。一覧を読んでから書かないので、運営最上位が 2 人ほぼ同時にフラグを作っても両方のキーが一覧に残る。`basic` が無い・関数が失敗したときも、フラグの作成そのものは 201 のまま (失敗はログに残す)
+フラグ新規作成 (キーが重複すると 409 `OP_FEATURE_FLAG_IN_USE`)。作ったキーは `basic` の機能パッケージのフラグキーの一覧 (`feature_packages.feature_flags`。フラグの削除の「使用中か」の検査がこの一覧を見る) にも、DB の関数 `append_flag_to_feature_package(p_package_key, p_flag_key)` 1 本で足す (1 文の条件つき UPDATE。まだ入っていないときだけ `array_append` し、`updated_at` も進める。`added` / `already_present` / `not_found` を返す。EXECUTE は service_role だけ)。一覧を読んでから書かないので、運営最上位が 2 人ほぼ同時にフラグを作っても両方のキーが一覧に残る。`basic` が無いとき (`not_found`) は何もしない。関数のエラーと想定外の結果はログに残す。どの場合もフラグの作成そのものは 201 のまま
 
 ### DELETE /api/super-admin/flags/{key}
 フラグ削除 (利用中の場合は `OP_FEATURE_FLAG_IN_USE` で 409)
