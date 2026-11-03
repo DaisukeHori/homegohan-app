@@ -18,6 +18,9 @@ interface BadgeWithStatus extends Badge {
 }
 
 // アイコンマッピング（コードベース）
+/** 新しく取ったバッジのお祝いを出しておく時間 (ミリ秒。5 秒で消す) */
+const NEW_BADGE_CELEBRATION_MS = 5000;
+
 const ICON_MAP: Record<string, string> = {
   'first_bite': '🥄',
   'streak_3': '🔥',
@@ -108,7 +111,7 @@ function BadgesPageInner() {
         // 新しく取ったバッジが無いときも置く (取り直しで前のお祝いを残さない。読み込み直したときと同じ。#2195 V1)
         setNewlyEarnedBadges(newlyEarned);
         if (newlyEarned.length > 0) {
-          setTimeout(() => setNewlyEarnedBadges([]), 5000); // 5秒後に非表示
+          setTimeout(() => setNewlyEarnedBadges([]), NEW_BADGE_CELEBRATION_MS);
         }
       } catch (e) {
         console.error(e);
