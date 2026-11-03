@@ -34,7 +34,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { formatLocalDate } from '@homegohan/shared';
+import { formatDateJa, formatLocalDate } from '@homegohan/shared';
 
 /** 描画のたびに同じものを返す (ページの useEffect の依存に入っても、描画のたびに走り直さないように) */
 const navigation = vi.hoisted(() => ({
@@ -153,6 +153,7 @@ const { usePantryStore } = await import('@/app/(main)/menus/weekly/_state/pantry
 const { useServingsConfigStore } = await import('@/app/(main)/menus/weekly/_state/servingsConfigStore');
 const { AI_CONSULTATION_DATA_CHANGED_EVENT } = await import('@/lib/ai/consultation-data-refetch');
 const { AI_CONSULTATION_WRITTEN_COLUMNS } = await import('@/lib/ai/consultation-refetch-coverage');
+const { AI_CONSULTATION_GENERATION_WATCH_INTERVAL_MS } = await import('@/lib/ai/consultation-generation-watch');
 const {
   ReadRecorder,
   expectEmptyRefetchMatchesFreshMount,
@@ -767,5 +768,81 @@ describe('献立表 (/menus/weekly) を描画して、AI 相談の成功の取�
     await calendarMealDotCount();
     const freshEmpty = screenSignature(container);
     expectEmptyRefetchMatchesFreshMount('/menus/weekly', { full, refetchedToEmpty, freshEmpty });
+  });
+});
+
+describe('献立表 (/menus/weekly) は、AI 相談が始めた献立の生成が終わったときにも取り直す (#2195 V1 の整合ゲートの是正)', () => {
+  /** 表示中の週の初日でない日 (水曜。週の初日から始めた生成だけを見つけるページの生成中の依頼の確認では見つからない日) */
+  const NOT_WEEK_START_OFFSET = 2;
+  /** 1 食の生成の日 (木曜。週の初日でない日) */
+  const SINGLE_MEAL_OFFSET = 3;
+
+  /** 日付のタブを押してその日を出す */
+  async function selectDay(date: string) {
+    const tab = container.querySelector<HTMLButtonElement>(`button[aria-label^="${formatDateJa(date)} "]`);
+    if (!tab) throw new Error(`日付のタブが無い: ${date}`);
+    await act(async () => {
+      tab.click();
+    });
+    await settle();
+  }
+
+  /** 生成の状態を確かめる間隔だけ時計を進める (setInterval だけ偽の時計) */
+  async function advanceGenerationWatch() {
+    await act(async () => {
+      vi.advanceTimersByTime(AI_CONSULTATION_GENERATION_WATCH_INTERVAL_MS);
+    });
+    await settle();
+  }
+
+  /**
+   * AI 相談の生成の受付を知らせ (献立はまだ無い)、生成の状態の確認で終わらせて、作った献立が出るかを返す。
+   * 生成中の依頼の確認 (GET /api/ai/menu/weekly/pending) は、開始日が表示中の週の初日の依頼しか返さない (この日では見つからない)
+   */
+  async function generateAndComplete(params: { actionType: string; date: string; dish: string; result: Record<string, unknown>; requestId: string }) {
+    server.pendingRequest = {
+      id: params.requestId,
+      startDate: params.date,
+      generate: () => server.days.set(params.date, [{ id: `meal-${params.date}`, dishName: params.dish }]),
+    };
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      await notifyAiConsultationSucceeded(params.actionType, params.result);
+      // 受付の取り直しでは、献立はまだ無い
+      expect(container.textContent).not.toContain(params.dish);
+      expect(fetchCalls).not.toContain(`/api/ai/menu/weekly/status?requestId=${params.requestId}`);
+      // 生成の状態を確かめると、生成が終わっている (献立を書いてから completed)
+      await advanceGenerationWatch();
+      expect(fetchCalls).toContain(`/api/ai/menu/weekly/status?requestId=${params.requestId}`);
+    } finally {
+      vi.useRealTimers();
+    }
+    await settle();
+  }
+
+  it('表示中の週の初日でない日の generate_day_menu は、生成が終わったら作った献立を出す', async () => {
+    const date = dateFromWeekStart(NOT_WEEK_START_OFFSET);
+    const dish = 'AI が作った水曜の鯖の味噌煮';
+    const requestId = '21950000-0000-4000-8000-0000000000d1';
+    await renderWeeklyPage();
+    await selectDay(date);
+    await generateAndComplete({ actionType: 'generate_day_menu', date, dish, requestId, result: { date, requestId, status: 'processing' } });
+    expect(container.textContent).toContain(dish);
+  });
+
+  it('generate_single_meal (表示中の週の初日でない日の 1 食) は、生成が終わったら作った献立を出す', async () => {
+    const date = dateFromWeekStart(SINGLE_MEAL_OFFSET);
+    const dish = 'AI が作った木曜の親子丼';
+    const requestId = '21950000-0000-4000-8000-0000000000d2';
+    await renderWeeklyPage();
+    await selectDay(date);
+    await generateAndComplete({
+      actionType: 'generate_single_meal',
+      date,
+      dish,
+      requestId,
+      result: { requestId, status: 'processing', message: '木曜の夕食を作っています' },
+    });
+    expect(container.textContent).toContain(dish);
   });
 });

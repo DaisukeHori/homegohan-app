@@ -21,11 +21,21 @@
  *      ほかの読み取りのある部品を消すなら AI_CONSULTATION_RENDER_TEST_MOCKED_READERS に理由があること・ログアウトの getUser のモックで
  *      利用者で絞った読み取りを隠していないことも確かめる (#2195 V1 の R5: 献立表のプロフィールの帯を消すモックとログアウトが、帯の読み取りの抜けを隠した)
  *
+ *   3. 受付の時点ではまだ書き終えず、裏の処理 (Edge Function) が後から書く AI の操作 (献立の生成 3 種類など) =
+ *      AI_CONSULTATION_DEFERRED_WRITE_ACTIONS のキー (実行の case のうち Edge Function を呼ぶもの)。watched の操作は、
+ *      実行の結果が生成の受付 ({ requestId, status: 'processing' }) で、受け手の共通の hook がその依頼を終わるまで見張り、
+ *      終わったらもう一度取り直す (src/lib/ai/consultation-generation-watch.ts)。受け手は全部その hook を使う (2 で数える) ので、
+ *      どの受け手も受付と完了の両方で取り直す。見張りは hook の中の 1 か所だけで、ページは見張りを書かない
+ *      (#2195 V1 の整合ゲート: 完了で取り直すのが /menus/weekly の表示中の週の初日から始めた生成だけだった)
+ *
  * 読み取りのしかたと限界は tests/helpers/ai-consultation-refetch-scan.ts の先頭。ほかに:
  *   - ページが読む表 = ページからたどれる宣言の Supabase の読み取り + ページからたどれる '/api/' の URL に当たる route の GET が
  *     たどれる読み取り。POST などで読んで応答に出すもの (押したときに作る分析など) は数えない
  *   - レイアウト (src/app/(main)/MainLayout.tsx) とその部品は数えない (ページではない)
  *   - DB の関数の中の読み書きは、AI_CONSULTATION_RPC_WRITTEN_TABLES の宣言と、その migration に表の名前が出てくることだけを確かめる
+ *   - 生成の見張り (GENERATION_WATCH_FILE) の読み取り (生成の状態の確認 GET /api/ai/menu/weekly/status → weekly_menu_requests) は、
+ *     ページの読み取りに数えない: 受け手の hook を通って全部の受け手に入るが、読むのは AI 相談が始めた生成の依頼の状態だけで、
+ *     ページが出すデータではない (取り直すかを決めるためだけに読む)。見張りの読み取りは 3 で確かめる
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -46,6 +56,7 @@ import {
 import {
   AI_CONSULTATION_ACTION_WRITTEN_TABLES,
   AI_CONSULTATION_COLUMN_SANITIZERS,
+  AI_CONSULTATION_DEFERRED_WRITE_ACTIONS,
   AI_CONSULTATION_EDGE_FUNCTION_ENTRY,
   AI_CONSULTATION_INVOKED_EDGE_FUNCTIONS,
   AI_CONSULTATION_REFETCH_PAGES,
@@ -57,6 +68,10 @@ import {
   type AiConsultationWrittenTable,
 } from '@/lib/ai/consultation-refetch-coverage';
 import { AI_PROFILE_FORBIDDEN_FIELDS, AI_PROFILE_PREFERENCE_FIELD_NAMES, sanitizeAiProfilePreferenceUpdates } from '@/lib/ai/profile-preference-updates';
+import {
+  AI_CONSULTATION_GENERATION_ACCEPTED_STATUS,
+  AI_CONSULTATION_GENERATION_STATUS_PATH,
+} from '@/lib/ai/consultation-generation-watch';
 
 // リポジトリのページ・route・Edge Function を構文木にしてたどる (TypeScript の構文木によるリポジトリの走査) ので、負荷の高い機械で
 // vitest の既定の時間切れを超えうる (根拠と上書きは tests/helpers/heavy-unit-test-timeout.ts)。テストを定義する前に置く
@@ -73,6 +88,17 @@ const ROUTE_FILE = 'route.ts';
 const READ_HANDLER = 'GET';
 const RECEIVER_HOOK_FILE = 'src/hooks/useAiConsultationDataRefetch.ts';
 const RECEIVER_HOOKS = ['useAiConsultationDataRefetch', 'useAiConsultationRefetchKey'] as const;
+/** 生成の見張り (受け手の hook だけが使う) と、hook が呼ぶその関数 */
+const GENERATION_WATCH_FILE = 'src/lib/ai/consultation-generation-watch.ts';
+const GENERATION_WATCH_FUNCTIONS = ['aiConsultationAcceptedGenerationRequestIdOf', 'watchAiConsultationGeneration'] as const;
+/** 生成の依頼の行の表 (生成の状態の確認が読む表) */
+const GENERATION_REQUEST_TABLE = 'weekly_menu_requests';
+/** 実行の結果を入れる変数 (runConsultationAction の result) */
+const EXECUTOR_RESULT_VARIABLE = 'result';
+/** src の中で生成の見張りを import してよいファイル (受け手の hook と、見張りそのもの) */
+const GENERATION_WATCH_IMPORTERS = [RECEIVER_HOOK_FILE, GENERATION_WATCH_FILE] as const;
+/** 生成の見張りの import を探す場所 */
+const SRC_ROOT = 'src';
 /** 描画のテストの呼び出し (受け手ごとにあること)。tests/helpers/ai-refetch-read-recorder.ts の関数の名前 */
 const RENDER_CHECKS = ['expectRefetchReadsCoverMount', 'expectEmptyRefetchMatchesFreshMount'] as const;
 /** 描画のテストを探す場所 */
@@ -342,8 +368,19 @@ function addRead(reads: PageReads, access: TableAccess, via: string) {
   }
 }
 
+/**
+ * 生成の見張りの宣言を、たどったことにしておく (ページの読み取りに見張りの読み取りを数えない。理由は先頭の説明)。
+ * 受け手の hook を使うかの判定 (visited の hook の宣言) には触れない
+ */
+function skipGenerationWatch(findings: ScanFindings): void {
+  const mod = scanner.module(GENERATION_WATCH_FILE);
+  if (!mod) throw new Error(`${GENERATION_WATCH_FILE} が無い`);
+  for (const name of mod.decls.keys()) findings.visited.add(`${GENERATION_WATCH_FILE}#export:${name}`);
+}
+
 function pageReads(rel: string): PageReads {
   const findings = scanner.newFindings();
+  skipGenerationWatch(findings);
   scanner.scanWholeModule(rel, findings);
   const reads: PageReads = { rel, tables: new Map(), columns: new Map(), visited: findings.visited };
   for (const access of findings.tables.filter((t) => t.kind !== 'write')) addRead(reads, access, access.at);
@@ -533,5 +570,128 @@ describe('2. AI が書く表を読むページは、受け手か除外の表に�
       if (reason.trim() === '') problems.push(`${target}: 理由が空`);
     }
     expect(problems).toEqual([]);
+  });
+});
+
+// ─── 3. 非同期で書く AI の操作の受け手は、完了でも取り直す ─────────────────────────────
+
+/** 実行の case の節 (ラベル → 節。中身の無い case は次の case と同じ節) */
+function executorCaseStatements(): Map<string, readonly ts.Statement[]> {
+  const mod = scanner.module(EXECUTOR);
+  if (!mod) throw new Error(`${EXECUTOR} が無い`);
+  const out = new Map<string, readonly ts.Statement[]>();
+  let pending: string[] = [];
+  for (const clause of switchCasesOf(mod.sf, EXECUTOR_FUNCTION, EXECUTOR_SWITCH)) {
+    const label = caseLabelOf(clause);
+    if (label === null) continue;
+    pending.push(label);
+    if (clause.statements.length === 0) continue;
+    for (const l of pending) out.set(l, clause.statements);
+    pending = [];
+  }
+  return out;
+}
+
+/**
+ * case の中で result に入れるオブジェクトのリテラルのうち、requestId を持ち、status の値に生成の受付の status
+ * ('processing') の文字列のリテラルを含むもの (生成の受付の形) の数
+ */
+function acceptedGenerationResultCount(statements: readonly ts.Statement[]): number {
+  let count = 0;
+  const visit = (n: ts.Node): void => {
+    if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(n.left) &&
+      n.left.text === EXECUTOR_RESULT_VARIABLE &&
+      ts.isObjectLiteralExpression(n.right)
+    ) {
+      const props = new Map<string, ts.Expression | null>();
+      for (const p of n.right.properties) {
+        if (ts.isPropertyAssignment(p) && (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name))) props.set(p.name.text, p.initializer);
+        else if (ts.isShorthandPropertyAssignment(p)) props.set(p.name.text, null);
+      }
+      const status = props.get('status');
+      let hasAcceptedStatus = false;
+      const findLiteral = (e: ts.Node): void => {
+        if ((ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) && e.text === AI_CONSULTATION_GENERATION_ACCEPTED_STATUS) hasAcceptedStatus = true;
+        ts.forEachChild(e, findLiteral);
+      };
+      if (status) findLiteral(status);
+      if (props.has('requestId') && hasAcceptedStatus) count += 1;
+    }
+    ts.forEachChild(n, visit);
+  };
+  for (const st of statements) visit(st);
+  return count;
+}
+
+describe('3. 非同期で書く AI の操作 (献立の生成 3 種類など) の受け手は、完了でも取り直す (#2195 V1 の整合ゲートの是正)', () => {
+  it('後から書く操作の表は、Edge Function を呼ぶ実行の case と一致する', () => {
+    const deferred = sorted(
+      [...CASES.entries()]
+        .filter(([, findings]) => findings.invokesEdgeFunction || findings.edgeFunctionUrls.size > 0)
+        .map(([label]) => label),
+    );
+    expect(deferred.length).toBeGreaterThan(0);
+    expect(sorted(Object.keys(AI_CONSULTATION_DEFERRED_WRITE_ACTIONS))).toEqual(deferred);
+  });
+
+  it('見張る (watched) 操作は、実行の結果が生成の受付 ({ requestId, status: \'processing\' }) で、生成の依頼の行を書く', () => {
+    const statements = executorCaseStatements();
+    const problems: string[] = [];
+    for (const [action, entry] of Object.entries(AI_CONSULTATION_DEFERRED_WRITE_ACTIONS)) {
+      const clause = statements.get(action);
+      if (clause === undefined) {
+        problems.push(`${action}: 実行の case が無い`);
+        continue;
+      }
+      const accepted = acceptedGenerationResultCount(clause);
+      const writes = (AI_CONSULTATION_ACTION_WRITTEN_TABLES as Record<string, readonly string[]>)[action] ?? [];
+      if (entry?.kind === 'watched') {
+        if (accepted === 0) problems.push(`${action}: watched なのに、結果に生成の受付の形 (requestId と status: 'processing') が無い`);
+        if (!writes.includes(GENERATION_REQUEST_TABLE)) problems.push(`${action}: watched なのに ${GENERATION_REQUEST_TABLE} を書かない`);
+      } else if (entry?.kind === 'notWatched') {
+        if (accepted > 0) problems.push(`${action}: 結果が生成の受付の形なのに notWatched (hook が見張るので watched にする)`);
+        if (entry.reason.trim() === '') problems.push(`${action}: 見張らない理由が空`);
+      }
+    }
+    // 生成の受付の形の結果を返す case は、全部 watched (表の外に受付の形を返す case を残さない)
+    for (const [action, clause] of statements) {
+      if (acceptedGenerationResultCount(clause) === 0) continue;
+      if (AI_CONSULTATION_DEFERRED_WRITE_ACTIONS[action as keyof typeof AI_CONSULTATION_DEFERRED_WRITE_ACTIONS]?.kind !== 'watched') {
+        problems.push(`${action}: 結果が生成の受付の形なのに AI_CONSULTATION_DEFERRED_WRITE_ACTIONS の watched に無い`);
+      }
+    }
+    expect(problems).toEqual([]);
+  });
+
+  it('受け手の hook は生成の見張りを使い、見張りは生成の依頼の行を読む状態の確認 (GET) を読む', () => {
+    // 受け手の 2 つの hook のどちらからたどっても、見張りの関数に届く (useAiConsultationRefetchKey は useAiConsultationDataRefetch を通る)
+    for (const hook of RECEIVER_HOOKS) {
+      const findings = scanner.newFindings();
+      scanner.scanExport(RECEIVER_HOOK_FILE, hook, findings);
+      for (const fn of GENERATION_WATCH_FUNCTIONS) expect([...findings.visited], `${hook} → ${fn}`).toContain(`${GENERATION_WATCH_FILE}#export:${fn}`);
+    }
+    const watch = scanner.newFindings();
+    scanner.scanWholeModule(GENERATION_WATCH_FILE, watch);
+    expect([...watch.apiUrls]).toContain(AI_CONSULTATION_GENERATION_STATUS_PATH);
+    const statusRoutes = routesForUrl(AI_CONSULTATION_GENERATION_STATUS_PATH, ROUTES);
+    expect(statusRoutes.length).toBe(1);
+    expect(routeReads(statusRoutes[0]).map((t) => t.table)).toContain(GENERATION_REQUEST_TABLE);
+  });
+
+  it('生成の見張りを使うのは受け手の hook だけ (ページや部品が自分で見張りを書かない)', () => {
+    // 見張りのファイルの名前を本文に含むファイルだけを構文木にする (src の全部を構文木にしない)
+    const watchModuleName = path.posix.basename(GENERATION_WATCH_FILE, '.ts');
+    const importers = listFiles(ROOT, SRC_ROOT, (rel) => /\.(ts|tsx)$/.test(rel))
+      .filter((rel) => !(GENERATION_WATCH_IMPORTERS as readonly string[]).includes(rel))
+      .filter((rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8').includes(watchModuleName))
+      .filter((rel) => {
+        const mod = scanner.module(rel);
+        if (!mod) return false;
+        return [...mod.imports.values()].some((imp) => scanner.resolveSpec(rel, imp.spec) === GENERATION_WATCH_FILE);
+      });
+    expect(importers).toEqual([]);
   });
 });

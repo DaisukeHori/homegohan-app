@@ -92,6 +92,29 @@ export const AI_CONSULTATION_ACTION_WRITTEN_TABLES = {
 export type AiConsultationActionType = keyof typeof AI_CONSULTATION_ACTION_WRITTEN_TABLES;
 
 /**
+ * 受付の時点ではまだ書き終えず、裏の処理 (Edge Function) が後から書く AI の操作 (#2195 V1 の整合ゲートの是正)。
+ * キー = 実行の case のうち、Edge Function を呼ぶ (`.functions.invoke(...)` か '/functions/v1/<名前>' の URL) もの全部
+ * (tests/ai-consultation-refetch-coverage-2195.test.ts がソースの構文木から数えて突き合わせる)。
+ *   - watched: 実行の結果が生成の受付 ({ requestId, status: 'processing' }) で、受け手の共通の hook
+ *     (src/hooks/useAiConsultationDataRefetch.ts) がその依頼を終わるまで見張り、終わったらもう一度取り直す
+ *     (src/lib/ai/consultation-generation-watch.ts)。受け手のページは全部この hook を使う (同じテストが数える) ので、
+ *     どの受け手も受付と完了の両方で取り直す
+ *   - notWatched: 見張らない理由を事実で書く
+ */
+export const AI_CONSULTATION_DEFERRED_WRITE_ACTIONS: Readonly<
+  Partial<Record<AiConsultationActionType, { kind: 'watched' } | { kind: 'notWatched'; reason: string }>>
+> = {
+  generate_day_menu: { kind: 'watched' },
+  generate_week_menu: { kind: 'watched' },
+  generate_single_meal: { kind: 'watched' },
+  update_meal: {
+    kind: 'notWatched',
+    reason:
+      '画面に出す献立の中身 (料理の名前・栄養など。planned_meals) は受付の時点で書き終えていて、受付の取り直しで出る。後から書くのは料理の画像だけ (料理画像のジョブ meal_image_jobs → Edge Function process-meal-image-jobs)。手で献立を変えたとき (PUT /api/meal-plans/meals/[id] など) も画面は画像の完了を見張らず、読み込み直したときに出る (同じ挙動)。実行の結果に生成の依頼 (weekly_menu_requests) の id は無く、生成の状態の確認 (GET /api/ai/menu/weekly/status) では見張れない',
+  },
+};
+
+/**
  * 実行がたどる DB の関数 (rpc) が書く表。definedIn はその関数 (と、その関数が呼ぶ関数) を作る migration で、
  * テストは書く表がそのファイルに `public.<表>` として出てくることを確かめる (関数の本体の解析はしない — 検査の限界)
  */
