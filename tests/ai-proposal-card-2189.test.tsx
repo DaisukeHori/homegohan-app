@@ -15,6 +15,12 @@
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { pollUntil } from './helpers/act-wait';
+import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
+
+// 文が出るまでの待ち (tests/helpers/act-wait.ts) は最大 10 秒まで伸びうるので、1 件のテストの時間切れを延ばす
+// (根拠と環境変数での上書きは tests/helpers/heavy-unit-test-timeout.ts)。テストとフックを定義する前に置く
+applyHeavyUnitTestTimeout();
 
 // 同意画面は出さない (同意済みとして進める)
 vi.mock('@/hooks/useAiConsent', () => ({
@@ -155,20 +161,13 @@ async function openChat() {
   });
 }
 
-/** 文が出るのを待つときの 1 回の待ち (ミリ秒) と回数の上限 (合わせて 2 秒。結果の文の遅らせ 300 ミリ秒より十分長い) */
-const WAIT_POLL_MS = 50;
-const WAIT_MAX_POLLS = 40;
-
 /**
  * 文が出るまで待つ (自動実行の結果の文は少し遅れて足される)。
  * 待つ間に起きる更新を act の中で受けて、act を抜けるたびに画面へ反映させてから確かめる
+ * (1 回の待ちと上限は tests/helpers/act-wait.ts。結果の文の遅らせ 300 ミリ秒より十分長い)
  */
 async function waitForText(expected: string) {
-  for (let i = 0; i < WAIT_MAX_POLLS && !text().includes(expected); i += 1) {
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, WAIT_POLL_MS));
-    });
-  }
+  await pollUntil(() => text().includes(expected));
   expect(text()).toContain(expected);
 }
 
