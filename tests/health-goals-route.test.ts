@@ -140,6 +140,9 @@ describe('POST /api/health/goals (#1229)', () => {
     });
     expect(state.updates).toEqual([
       { table: 'user_profiles', payload: { target_weight: 60, target_date: '2026-12-31' } },
+      // 目標の体重はプロフィールの完成度に数える欄なので、書いた後の行から計算し直して書く (#2201 U4。
+      // このモックは書き込みを行に当てないので、値は読んだ行から計算したもの)
+      { table: 'user_profiles', payload: { profile_completeness: expect.any(Number) } },
     ]);
   });
 

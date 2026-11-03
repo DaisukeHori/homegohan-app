@@ -29,12 +29,22 @@ vi.mock('@/lib/rate-limit', () => ({ checkRateLimit: vi.fn() }));
 const logger = vi.hoisted(() => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }));
 vi.mock('@/lib/db-logger', () => ({ createLogger: () => ({ ...logger, withUser: () => logger }) }));
 vi.mock('@/lib/health-streaks', () => ({ updateHealthStreak: vi.fn() }));
+/** route の利用者のクライアント (テストごとに置く。createRecordingSupabase の client に auth を足したもの) */
+const routeDb = vi.hoisted(() => ({ client: null as null | Record<string, unknown> }));
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: async () => ({ ...routeDb.client, auth: { getUser: async () => ({ data: { user: { id: 'user-1' } }, error: null }) } }),
+  getSupabaseAdmin: () => {
+    throw new Error('service role のクライアントは、この検査では使わない');
+  },
+}));
 
 import { runConsultationAction } from '@/lib/ai/consultation-action-executor';
 import { calculateProfileCompleteness, profileCompletenessOfRow } from '@/lib/profile-completeness';
 import { todayLocal } from '@/lib/date-utils';
 import type { DbUserProfile } from '@/types/database';
 import { createRecordingSupabase, firstMethodOf, type QueryOutcome, type RecordedQuery } from './helpers/recording-supabase';
+import { POST as postHealthRecord } from '@/app/api/health/records/route';
+import { POST as postHealthGoal } from '@/app/api/health/goals/route';
 
 const USER = { id: 'user-1' };
 /** 身長の重み (src/lib/profile-completeness.ts の PROFILE_COMPLETENESS_FIELDS の height。重みの合計は 100) */
@@ -183,5 +193,46 @@ describe('AI 相談で身長・体重を入れると、プロフィールの完�
 
     expect(out.success).toBe(true);
     expect(profileUpdates(queries)).toEqual([{ weight: WEIGHT_KG }, { profile_completeness: profileCompletenessOfRow(rowAfter) }]);
+  });
+});
+
+describe('利用者が体重・目標の体重を記録したときも、プロフィールの完成度を計算し直す (#2201 U4 の同じ型)', () => {
+  /** route の問い合わせの答え: user_profiles の読み取りは書いた後の行、ほかの読み取り・書き込みは 1 行 */
+  function useRouteDb(rowAfter: Partial<DbUserProfile>) {
+    const db = createRecordingSupabase((query: RecordedQuery) => {
+      if (query.table === 'user_profiles') return firstMethodOf(query) === 'select' ? { data: rowAfter } : { data: null };
+      return { data: { id: 'row-1' } };
+    });
+    routeDb.client = db.client;
+    return db.queries;
+  }
+
+  const jsonRequest = (url: string, body: Record<string, unknown>) =>
+    new Request(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+  it('POST /api/health/records: 今日の体重をプロフィールに写したあと、完成度を書く', async () => {
+    const rowAfter: Partial<DbUserProfile> = { ...ROW_BEFORE, weight: WEIGHT_KG };
+    const queries = useRouteDb(rowAfter);
+
+    const res = await postHealthRecord(jsonRequest('http://localhost/api/health/records', { record_date: todayLocal(), weight: WEIGHT_KG }) as never);
+
+    expect(res.status).toBe(200);
+    expect(profileUpdates(queries)).toEqual([{ weight: WEIGHT_KG }, { profile_completeness: profileCompletenessOfRow(rowAfter) }]);
+  });
+
+  it('POST /api/health/goals: 目標の体重をプロフィールに写したあと、完成度を書く', async () => {
+    const TARGET_WEIGHT_KG = 58;
+    const rowAfter: Partial<DbUserProfile> = { ...ROW_BEFORE, weight: WEIGHT_KG, target_weight: TARGET_WEIGHT_KG };
+    const queries = useRouteDb(rowAfter);
+
+    const res = await postHealthGoal(
+      jsonRequest('http://localhost/api/health/goals', { goal_type: 'weight', target_value: TARGET_WEIGHT_KG, target_unit: 'kg', target_date: null }) as never,
+    );
+
+    expect(res.status).toBe(200);
+    expect(profileUpdates(queries)).toEqual([
+      { target_weight: TARGET_WEIGHT_KG, target_date: null },
+      { profile_completeness: profileCompletenessOfRow(rowAfter) },
+    ]);
   });
 });
