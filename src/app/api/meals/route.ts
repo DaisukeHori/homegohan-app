@@ -3,7 +3,7 @@ import { jstToday } from '@/lib/jst-day-ranges';
 import { NextResponse } from 'next/server';
 import { buildCatalogSelectionUpdate } from '../../../lib/catalog-products';
 import { buildDishImagePayload } from '../../../lib/meal-image-jobs';
-import { enqueueMealImageJobsAfterSave } from '@/lib/meal-image-enqueue-after-save';
+import { enqueueMealImageJobsAfterSave, withMealAfterEnqueueThrew } from '@/lib/meal-image-enqueue-after-save';
 import { markDishImagesSkipped, mealImageSkipReasonOf } from '../../../lib/meal-image';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { aiDailyLimitSkippedField, consumeAiUsage, refundAiUsage, type AiUsageResult } from '@/lib/plan/entitlements';
@@ -265,8 +265,9 @@ export async function POST(request: Request) {
 
     if (imageAllowed && imageJobs.length > 0) {
       // 献立の保存は済んでいる。積み込みの例外は数えた 1 回を戻して料理を見送りの状態 ('failed' + 'enqueue_failed') に書き直し、
-      // 処理の起動の例外は記録だけにする (どちらも例外を外へ出さない。#2201 U4。src/lib/meal-image-enqueue-after-save.ts)
-      await enqueueMealImageJobsAfterSave({
+      // 処理の起動の例外は記録だけにする (どちらも例外を外へ出さない。#2201 U4。src/lib/meal-image-enqueue-after-save.ts)。
+      // 積み込みの例外のときは、印を書いた後の料理を応答の行に重ねる (書き直す前の 'pending' の行を返さない。#2206 G4)
+      const enqueueOutcome = await enqueueMealImageJobsAfterSave({
         userDb: supabase,
         plannedMealId: meal.id,
         userId: user.id,
@@ -276,6 +277,7 @@ export async function POST(request: Request) {
         requestId: uuidOrNull(requestId),
         usage: imageUsage,
       });
+      meal = withMealAfterEnqueueThrew(meal, enqueueOutcome);
     }
 
     return NextResponse.json({

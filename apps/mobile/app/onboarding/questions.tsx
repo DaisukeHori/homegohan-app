@@ -645,6 +645,8 @@ function toDbProfileUpdates(body: any, userId: string) {
   return updates;
 }
 
+/** 途中保存のあとに、プロフィールの完成度を書いた後の行から計算し直す API (src/app/api/profile/completeness/route.ts。#2206 G4) */
+const PROFILE_COMPLETENESS_REFRESH_PATH = "/api/profile/completeness";
 /** 完了の保存に失敗したときの文 (API の本文の文が取り出せないとき・DB の保存の失敗) */
 const ONBOARDING_SAVE_FAILED_MESSAGE = "保存に失敗しました。";
 /** 完了の保存のときにログインが切れていたときの文 */
@@ -910,7 +912,16 @@ export default function OnboardingQuestions() {
       if (!updates.age_group && !updates.age) updates.age_group = "unspecified";
       if (!updates.gender) updates.gender = "unspecified";
 
-      await supabase.from("user_profiles").upsert(updates);
+      const { error: upsertError } = await supabase.from("user_profiles").upsert(updates);
+      if (upsertError) {
+        console.error("Failed to save progress:", upsertError);
+        return;
+      }
+
+      // 答え (名前・年齢・身長・体重・目標など) はプロフィールの完成度に数える欄なので、書いた後の行からサーバーで計算し直す。
+      // Web の途中保存 (POST /api/onboarding/progress) と同じ。呼ばないと、途中でやめた利用者の完成度が古いまま (0 のまま) 残る (#2206 G4)。
+      // 失敗しても答えの保存は済んでいる (完成度は次の保存・完了 (/api/onboarding/complete) で直る) ので、ログに残すだけ
+      await getApi().post(PROFILE_COMPLETENESS_REFRESH_PATH);
     } catch (error) {
       console.error("Failed to save progress:", error);
     }
