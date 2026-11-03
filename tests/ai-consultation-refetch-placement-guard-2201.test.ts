@@ -15,11 +15,19 @@
  *      (useAiConsultationRefetchKey なら戻り値の refetchTicket を受け取り)、取り直しの経路を書いたファイルで deferIfHeld を呼ぶ
  *   3. SELF_HELD_RECEIVERS の取り直しの関数は、その真偽の ref を true にする (取り直しの応答を待つあいだに書き込みが始まらない)
  * 取り直しの関数を別の hook が作る受け手 (ホームの useHomeData) は DELEGATED_RECEIVERS に書き、その hook のファイルで 1・2 を数える。
+ *   4. 受け手 (書き込みの印を渡さない受け手も) と DELEGATED_RECEIVERS の hook のファイルで、札の deferIfHeld を直に呼ぶところは、
+ *      同じ関数の中のそれより前で順序 (最後に始めた取得か) を見る: isLatest の呼び出しか、useEffect の後片付けの印 (cancelled)。
+ *      別々の取得を何本も持つページは、受け手の hook の useAiConsultationFetchStream の place で順序と番兵をまとめて見る
+ *      (ページに deferIfHeld も世代番号も書かない)
+ *   問題 (直す前・R4): 献立表の冷蔵庫 (fetchPantry) と人数の設定 (fetchUserSettings) の取り直しは、応答を置く前に deferIfHeld だけを
+ *   見て順序を見ていなかった。続けて来た 2 回の通知の取り直しや、開いたときの読み込みと取り直しの応答が逆の順に届くと、古い応答が
+ *   新しい一覧・人数を上書きした (献立表は流れごとにページの世代番号の数を書き分けていて、この 2 つで書き忘れた)。
  *
- * 検査の限界: 取り直しの経路の「置く場所の全部」で deferIfHeld を呼んでいるかまでは数えない (ページごとの描画のテスト
+ * 検査の限界: 取り直しの経路の「置く場所の全部」で deferIfHeld・順序を見ているかまでは数えない (4 は deferIfHeld を直に呼ぶところの
+ * 前に順序の見方があるかを、関数の中の書いた位置で見るだけで、その見方がその置く場所を守る分岐かは見ない。ページごとの描画のテスト
  * tests/ai-consultation-refetch-reads-2195.test.tsx・tests/ai-consultation-weekly-refetch-2195.test.tsx・
- * tests/ai-consultation-home-refetch-2195.test.tsx が、書き込み・モーダルの途中に届いた応答を置かないことを確かめる)。
- * 書き込みの印を渡さない受け手 (読むだけのページ) は数えない。
+ * tests/ai-consultation-home-refetch-2195.test.tsx が、書き込み・モーダルの途中に届いた応答・古い応答を置かないことを確かめる)。
+ * 1〜3 は書き込みの印を渡さない受け手 (読むだけのページ) を数えない。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -35,6 +43,10 @@ const PENDING_WRITES_HOOK = 'useAiConsultationPendingWrites';
 const WRITE_MARKER_OPTION = 'writeInFlightRef';
 const REFETCH_TICKET_RESULT = 'refetchTicket';
 const DEFER_IF_HELD = 'deferIfHeld';
+/** 札の順序の見方 (最後に始めた取得か。札・流れの札の isLatest、ページが受け取った isLatest の関数) */
+const ORDER_CHECK_CALL = 'isLatest';
+/** useEffect の後片付けで前の回の応答を捨てる印 (useAiConsultationRefetchKey の受け手) */
+const CLEANUP_FLAG = 'cancelled';
 const SOURCE_FILE = /\.(ts|tsx)$/;
 
 /**
@@ -104,6 +116,43 @@ function callsDeferIfHeld(root: ts.Node): boolean {
     }
   });
   return found;
+}
+
+/** node を囲む一番内側の関数 (無ければ null) */
+function enclosingFunction(node: ts.Node): ts.FunctionLikeDeclaration | null {
+  for (let current = node.parent; current !== undefined; current = current.parent) {
+    if (ts.isFunctionLike(current) && 'body' in current) return current as ts.FunctionLikeDeclaration;
+  }
+  return null;
+}
+
+/** 順序の見方か (isLatest の呼び出し・後片付けの印 cancelled を読むところ) */
+function isOrderCheck(node: ts.Node): boolean {
+  if (ts.isCallExpression(node)) {
+    const callee = node.expression;
+    if (ts.isIdentifier(callee)) return callee.text === ORDER_CHECK_CALL;
+    if (ts.isPropertyAccessExpression(callee)) return callee.name.text === ORDER_CHECK_CALL;
+    return false;
+  }
+  return ts.isIdentifier(node) && node.text === CLEANUP_FLAG && !(ts.isVariableDeclaration(node.parent) && node.parent.name === node);
+}
+
+/** 札の deferIfHeld を直に呼ぶところのうち、同じ関数の中のそれより前で順序を見ていないところ (行番号) */
+function deferIfHeldWithoutOrderCheck(sf: ts.SourceFile): number[] {
+  const lines: number[] = [];
+  walk(sf, (node) => {
+    if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression) || node.expression.name.text !== DEFER_IF_HELD) return;
+    const fn = enclosingFunction(node);
+    const callStart = node.getStart(sf);
+    let ordered = false;
+    if (fn?.body !== undefined) {
+      walk(fn.body, (inner) => {
+        if (!ordered && inner.getStart(sf) < callStart && isOrderCheck(inner)) ordered = true;
+      });
+    }
+    if (!ordered) lines.push(sf.getLineAndCharacterOfPosition(callStart).line + 1);
+  });
+  return lines;
 }
 
 /** options のオブジェクトの writeInFlightRef に渡した識別子の名前 (渡していなければ null) */
@@ -236,6 +285,11 @@ function checkPlacementGuards(
   for (const { file, source } of sources) {
     if (file === RECEIVER_HOOK_FILE) continue;
     const sf = parse(file, source);
+    for (const line of deferIfHeldWithoutOrderCheck(sf)) {
+      violations.push(
+        `${file}:${line}: 取り直しの応答を置く前に ${DEFER_IF_HELD} だけを見て、順序 (${ORDER_CHECK_CALL}・後片付けの ${CLEANUP_FLAG}) を見ていない (取得を何本も持つページは useAiConsultationFetchStream の place を使う)`,
+      );
+    }
     for (const call of callsTo(sf, [DATA_REFETCH_HOOK, REFETCH_KEY_HOOK])) {
       const hook = calleeName(call);
       const options = hook === DATA_REFETCH_HOOK ? call.arguments[1] : call.arguments[0];
@@ -368,7 +422,7 @@ describe('書き込みの印を渡す受け手は、取り直しの応答を置�
         check(`function Page() {
           const writeInFlightRef = useRef(false);
           const { beginFetch } = ${DATA_REFETCH_HOOK}((ticket) => fetchGoals(ticket), { writeInFlightRef });
-          const x = (ticket) => ticket.deferIfHeld();
+          const x = (ticket) => ticket.isLatest() && ticket.deferIfHeld();
         }`),
       ).toEqual([expect.stringContaining('真偽の ref')]);
     });
@@ -394,6 +448,55 @@ describe('書き込みの印を渡す受け手は、取り直しの応答を置�
           const { refetchKey } = ${REFETCH_KEY_HOOK}({ writeInFlightRef: pendingWrites });
         }`),
       ).toEqual([expect.stringContaining(REFETCH_TICKET_RESULT), expect.stringContaining(DEFER_IF_HELD)]);
+    });
+
+    it('deferIfHeld だけを見て順序を見ない (R4 の直す前の献立表の fetchPantry・fetchUserSettings)', () => {
+      const violations = check(`function Page() {
+        const pendingWrites = ${PENDING_WRITES_HOOK}();
+        const fetchPantry = useCallback(async (refetchTicket = null) => {
+          const res = await fetch('/api/pantry');
+          if (res.ok) {
+            const data = await res.json();
+            if (refetchTicket?.deferIfHeld()) return;
+            setFridgeItems(data.items);
+          }
+        }, []);
+        ${DATA_REFETCH_HOOK}((ticket) => { void fetchPantry(ticket); }, { writeInFlightRef: pendingWrites });
+      }`);
+      expect(violations).toEqual([expect.stringMatching(/:8: .*順序/)]);
+    });
+
+    it('順序の見方が deferIfHeld より後にあっても赤 (応答を置く前に順序を見ていない)', () => {
+      expect(
+        check(`function Page() {
+          const load = async (ticket) => {
+            const res = await fetch('/x');
+            if (ticket.deferIfHeld()) return;
+            if (!ticket.isLatest()) return;
+            setItems(await res.json());
+          };
+          ${DATA_REFETCH_HOOK}(load);
+        }`),
+      ).toEqual([expect.stringContaining('順序')]);
+    });
+
+    it('書き込みの印を渡さない受け手 (useAiConsultationRefetchKey) でも、後片付けの印 (cancelled) を見る前に deferIfHeld を見たら赤', () => {
+      const source = `function Page() {
+        const { refetchKey, refetchTicket } = ${REFETCH_KEY_HOOK}();
+        useEffect(() => {
+          let cancelled = false;
+          const ticket = refetchTicket();
+          const load = async () => {
+            const res = await fetch('/x');
+            ORDER_GUARD
+            setItems(await res.json());
+          };
+          void load();
+          return () => { cancelled = true; };
+        }, [refetchKey]);
+      }`;
+      expect(check(source.replaceAll('ORDER_GUARD', 'if (ticket?.deferIfHeld()) return;'))).toEqual([expect.stringContaining('順序')]);
+      expect(check(source.replaceAll('ORDER_GUARD', 'if (cancelled) return; if (ticket?.deferIfHeld()) return;'))).toEqual([]);
     });
 
     it('直した形は赤にしない', () => {

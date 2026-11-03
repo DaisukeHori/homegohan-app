@@ -30,7 +30,10 @@ export interface AiConsultationFetchTicket {
    * 1 回 true を返した札は、そのあとも true を返し、止めた通知の印を付け直さない (1 つの取り直しの応答を何か所かに分けて置くページ
    * (献立表など) が置く場所ごとに呼んでも、取り直しを足すのは 1 回)。
    * 書き込みの印 (writeInFlightRef) を渡すページは、取り直しの経路で応答を置く場所の全部でこれを見る
-   * (見ないと上の決まりが効かない。tests/ai-consultation-refetch-placement-guard-2201.test.ts がソースで数える)
+   * (見ないと上の決まりが効かない。tests/ai-consultation-refetch-placement-guard-2201.test.ts がソースで数える)。
+   * これを見るときは、その前に順序 (最後に始めた取得か。isLatest()・useEffect の後片付けの cancelled) も見る
+   * (古い応答で止めた通知の印を付けない・古い応答を置かない)。取得の流れを何本も持つページ (献立表など) は
+   * useAiConsultationFetchStream の place で 2 つをまとめて見る (置く場所ごとに 2 つを書き分けない。同じ検査がソースで数える)
    */
   readonly deferIfHeld: () => boolean;
 }
@@ -93,7 +96,8 @@ export interface AiConsultationRefetchControl {
  *
  * 取り直しの決まり (#2201 U1 + U2):
  *   - 世代番号: 取り直しのたびに (beginFetch と同じ世代を進めて) 札を作って refetch に渡す。ページは開いたときの読み込みなどでも
- *     beginFetch を呼び、応答を置く前に札の isLatest() を見る (古い応答が後から届いても新しい表示を上書きしない)
+ *     beginFetch を呼び、応答を置く前に札の isLatest() を見る (古い応答が後から届いても新しい表示を上書きしない)。
+ *     別々の取得を何本も持つページは、取得ごとに useAiConsultationFetchStream を作り、札を begin に渡して place で置く
  *   - 失敗: refetch が reject しても (同期で投げても) 拾って握る (未処理の Promise 拒否にしない)。
  *     ページは取り直しの失敗 (通信の失敗・5xx など) では今の表示を残す (取り直しの経路でだけ。開いたときの失敗はこれまでどおり)
  *   - 読み込み中の表示: 取り直しでは loading を立てない (画面全体をスピナーに置き換えない)。開いたときだけ出す。
@@ -249,6 +253,84 @@ export function useAiConsultationDataRefetch(
   }, [nextGeneration]);
 
   return useMemo(() => ({ beginFetch, notifyWriteSettled }), [beginFetch, notifyWriteSettled]);
+}
+
+/**
+ * 取得の流れの順序の決まり (#2201 U1。useAiConsultationFetchStream)。
+ *   - 'latestStarted': 最後に始めた取得の応答だけを置く (古い応答は、あとの取得がまだ何も置いていなくても置かない)
+ *   - 'newerThanPlaced': もう置いたどの応答よりあとに始めた取得の応答を置く (あとの取得が失敗した・まだ届いていないときは、
+ *     先に始めた取得の応答も置く。献立表の表示中の週の献立: 週を移った直後の週の読み込みの応答を、そのあとに始めて失敗した
+ *     読み直しのために捨てない)
+ */
+export type AiConsultationFetchStreamOrder = "latestStarted" | "newerThanPlaced";
+
+/**
+ * 流れの札の place の結果。'superseded' は順序の決まりで置かなかった (あとに始めた取得がある・もう新しい応答を置いた)、
+ * 'deferred' は取り直しの札が止めた (番兵・書き込みの印。止めた通知の印は札が付けたので、外れたときに 1 回取り直す)
+ */
+export type AiConsultationPlaceResult = "placed" | "superseded" | "deferred";
+
+/** 流れの中の 1 回の取得の札 (useAiConsultationFetchStream の begin が返す) */
+export interface AiConsultationStreamTicket {
+  /** この取得のあとに、同じ流れ (同じ鍵) で別の取得が始まっていないか (読み込み中の印を下ろすかの判断などに使う) */
+  readonly isLatest: () => boolean;
+  /**
+   * 応答を置く: 順序の決まりを見て、通れば取り直しの札 (begin に渡したとき) の deferIfHeld を見て、どちらも通れば apply を呼ぶ。
+   * 応答を置く場所は全部これを通す (順序と、応答を置く時点の番兵の 2 つを、置く場所ごとに書き分けない)。
+   * 1 つの取得の応答を何か所かに分けて置くとき (段ごとに置く読み込み) は、置くたびに呼ぶ
+   */
+  readonly place: (apply: () => void) => AiConsultationPlaceResult;
+}
+
+/** 取得の流れ (useAiConsultationFetchStream の戻り値) */
+export interface AiConsultationFetchStream {
+  /**
+   * 取得を 1 つ始める (世代を 1 つ進める)。refetchTicket は AI 相談の成功の取り直しの札 (useAiConsultationDataRefetch が取り直しの
+   * 関数に渡す札。取り直しの経路でだけ渡す。開いたとき・週の移動・書き込みのあとの読み直しでは渡さない)。
+   * key は 1 つの流れの中で別々に順序を持つ範囲 (月のカレンダーの範囲など。省けば 1 つ)
+   */
+  readonly begin: (refetchTicket?: AiConsultationFetchTicket | null, key?: string) => AiConsultationStreamTicket;
+}
+
+/** 鍵を省いた流れの鍵 */
+const SINGLE_STREAM_KEY = "";
+
+/**
+ * 取得の流れ (#2201 U1 + U2)。1 つのページが別々の取得 (献立・冷蔵庫・人数の設定・家族など) を持ち、AI 相談の成功の取り直しが
+ * そのどれも読み直すとき、流れごとに 1 つ作る (useAiConsultationDataRefetch の beginFetch の世代はページに 1 つなので、
+ * 別々の取得の開いたときの読み込みが互いの札を古くしてしまう)。
+ * 流れは世代番号を持ち、begin で始めた取得の応答を place で置く: 順序の決まり (order) で古い応答を置かず、取り直しの札があれば
+ * 応答を置く時点の番兵・書き込みの印も見る (止めたら、外れたときに 1 回取り直す)。開いたときの読み込みと取り直しは同じ流れで始める
+ * (開いたときの読み込みの応答が取り直しの応答より後に届いても、古い答えで上書きしない)。
+ * ページに世代番号の数 (useRef の数) を書かず、これを使う
+ */
+export function useAiConsultationFetchStream(order: AiConsultationFetchStreamOrder = "latestStarted"): AiConsultationFetchStream {
+  /** 鍵ごとの、最後に始めた取得の世代 */
+  const startedRef = useRef(new Map<string, number>());
+  /** 鍵ごとの、応答を置いた取得のうち最も新しい世代 */
+  const placedRef = useRef(new Map<string, number>());
+  return useMemo<AiConsultationFetchStream>(
+    () => ({
+      begin: (refetchTicket = null, key = SINGLE_STREAM_KEY) => {
+        const generation = (startedRef.current.get(key) ?? 0) + 1;
+        startedRef.current.set(key, generation);
+        const isLatest = () => startedRef.current.get(key) === generation;
+        const inOrder = () => (order === "latestStarted" ? isLatest() : generation > (placedRef.current.get(key) ?? 0));
+        return {
+          isLatest,
+          place: (apply) => {
+            // 順序を先に見る: 古い応答では止めた通知の印を付けない (あとの取得の応答が置かれる / 置かれた)
+            if (!inOrder()) return "superseded";
+            if (refetchTicket?.deferIfHeld()) return "deferred";
+            if (generation > (placedRef.current.get(key) ?? 0)) placedRef.current.set(key, generation);
+            apply();
+            return "placed";
+          },
+        };
+      },
+    }),
+    [order],
+  );
 }
 
 /** useAiConsultationRefetchKey の戻り値 */

@@ -31,6 +31,11 @@ const supabaseMock = vi.hoisted(() => ({
   rpcHold: null as null | Promise<void>,
   /** 置いている間に始めた表の読み取りの応答を、この Promise が解けるまで止める (#2201 U1。開いたときの読み込みの最中) */
   tableHold: null as null | Promise<void>,
+  /**
+   * 置いている間に始めた、この表 (table) の読み取りの応答だけを、この Promise (hold) が解けるまで止める
+   * (#2201 U1。答えは読み取りを始めたときのもの。続けて来た取り直しの応答の順序)
+   */
+  tableHoldFor: null as null | { table: string; hold: Promise<void> },
   /** true の間に始めた表の読み取りは reject する (#2201 U1。読み取りが投げたとき) */
   tableRejects: false,
 }));
@@ -45,7 +50,7 @@ vi.mock('@/lib/supabase/client', () => {
           const rows = result.data;
           const answer =
             single && Array.isArray(rows) ? { ...result, data: rows[0] ?? null } : Array.isArray(rows) && result.count === undefined ? { ...result, count: rows.length } : result;
-          const hold = supabaseMock.tableHold;
+          const hold = supabaseMock.tableHold ?? (supabaseMock.tableHoldFor?.table === table ? supabaseMock.tableHoldFor.hold : null);
           const rejects = supabaseMock.tableRejects;
           return (resolve: (value: unknown) => void, reject: (reason: unknown) => void) => {
             const settleAnswer = () => (rejects ? reject(new Error(`${table} read failed`)) : resolve(answer));
@@ -199,6 +204,7 @@ beforeEach(() => {
   supabaseMock.tableResults = {};
   supabaseMock.rpcHold = null;
   supabaseMock.tableHold = null;
+  supabaseMock.tableHoldFor = null;
   supabaseMock.tableRejects = false;
   latestRefetch = null;
   nutritionAnalysisBody = undefined;
@@ -285,6 +291,40 @@ describe('useHomeData の取り直しは、サーバーで無くなったもの�
     });
     await settle();
     expect(bestMealText()).toBe(NEXT_DISH);
+  });
+
+  it('続けて来た取り直しの、先の取り直しのベストごはんの応答が後から届いても、あとの取り直しの答えを古い答えで上書きしない (#2201 U1)', async () => {
+    supabaseMock.tableResults.planned_meals = { data: [BEST_MEAL_ROW], error: null };
+    await renderHome();
+    expect(bestMealText()).toBe(BEST_MEAL_ROW.dish_name);
+
+    // 1 回目の取り直しの今週のベストごはんの読み取り (planned_meals) は、前の答えを読んで応答が遅れる
+    let releaseFirst: () => void = () => undefined;
+    supabaseMock.tableHoldFor = {
+      table: 'planned_meals',
+      hold: new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+      }),
+    };
+    let firstRefetch: Promise<void> | undefined;
+    await act(async () => {
+      firstRefetch = latestRefetch?.();
+    });
+    await settle();
+    supabaseMock.tableHoldFor = null;
+
+    // 2 回目の取り直し (AI 相談で当てはまる食事が別の食事に変わった) は先に届く
+    const NEXT_DISH = '豚汁';
+    supabaseMock.tableResults.planned_meals = { data: [{ ...BEST_MEAL_ROW, id: 'meal-next', dish_name: NEXT_DISH }], error: null };
+    await refetchHome();
+    expect(bestMealText()).toBe(NEXT_DISH);
+
+    await act(async () => {
+      releaseFirst();
+      await firstRefetch;
+    });
+    await settle();
+    expect(bestMealText(), '先の取り直しの古い応答が、ベストごはんを戻した').toBe(NEXT_DISH);
   });
 });
 

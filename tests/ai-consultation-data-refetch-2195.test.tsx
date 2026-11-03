@@ -19,6 +19,8 @@
  */
 import { readFileSync } from 'node:fs';
 import type {
+  AiConsultationFetchStream,
+  AiConsultationFetchStreamOrder,
   AiConsultationFetchTicket,
   AiConsultationLoadingState,
   AiConsultationPendingWrites,
@@ -103,6 +105,7 @@ const {
 } = await import('@/lib/ai/consultation-data-refetch');
 const {
   useAiConsultationDataRefetch,
+  useAiConsultationFetchStream,
   useAiConsultationLoading,
   useAiConsultationPendingWrites,
   useAiConsultationRefetchKey,
@@ -836,6 +839,151 @@ describe('useAiConsultationRefetchKey (#2195 V1)', () => {
 
     await notifyAiConsultationSucceeded();
     expect(keyText()).toBe('3');
+  });
+});
+
+describe('取得の流れ (useAiConsultationFetchStream。#2201 U1 + U2)', () => {
+  /** 取得の流れを 1 本持ち、AI 相談の成功の取り直しの札を受けるページ */
+  function renderStreamPage(order: AiConsultationFetchStreamOrder, writeInFlightRef?: AiConsultationWriteInFlightRef) {
+    const page: { stream: AiConsultationFetchStream | null; tickets: AiConsultationFetchTicket[] } = { stream: null, tickets: [] };
+    function StreamPage() {
+      page.stream = useAiConsultationFetchStream(order);
+      useAiConsultationDataRefetch((ticket) => page.tickets.push(ticket), { writeInFlightRef });
+      return <p>取得の流れを持つページ</p>;
+    }
+    return { page, element: <StreamPage /> };
+  }
+
+  it("'latestStarted': 最後に始めた取得の応答だけを置く (開いたときの読み込みの応答が取り直しの応答より後に届いても置かない)", async () => {
+    const { page, element } = renderStreamPage('latestStarted');
+    await act(async () => {
+      root.render(element);
+    });
+    const placed: string[] = [];
+    const mount = page.stream!.begin();
+    await notifyAiConsultationSucceeded();
+    const refetch = page.stream!.begin(page.tickets[0]);
+    expect(mount.isLatest()).toBe(false);
+    expect(refetch.isLatest()).toBe(true);
+
+    await act(async () => {
+      expect(refetch.place(() => placed.push('取り直し'))).toBe('placed');
+      expect(mount.place(() => placed.push('開いたとき')), '古い応答を置いた').toBe('superseded');
+    });
+    expect(placed).toEqual(['取り直し']);
+
+    // あとの取得がまだ何も置いていなくても、先に始めた取得の応答は置かない
+    const older = page.stream!.begin();
+    const newer = page.stream!.begin();
+    await act(async () => {
+      expect(older.place(() => placed.push('先'))).toBe('superseded');
+      expect(newer.place(() => placed.push('あと'))).toBe('placed');
+    });
+    expect(placed).toEqual(['取り直し', 'あと']);
+  });
+
+  it("'newerThanPlaced': 置いた応答より新しい取得の応答を置く (あとの取得がまだ置いていなければ、先に始めた取得の応答も置く)", async () => {
+    const { page, element } = renderStreamPage('newerThanPlaced');
+    await act(async () => {
+      root.render(element);
+    });
+    const placed: string[] = [];
+    const older = page.stream!.begin();
+    const newer = page.stream!.begin();
+    await act(async () => {
+      // あとの取得が失敗した・まだ届いていない: 先に始めた取得の応答を置く
+      expect(older.place(() => placed.push('先'))).toBe('placed');
+      expect(newer.place(() => placed.push('あと'))).toBe('placed');
+    });
+    const late = page.stream!.begin();
+    const early = page.stream!.begin();
+    await act(async () => {
+      expect(early.place(() => placed.push('あとに始めた'))).toBe('placed');
+      expect(late.place(() => placed.push('先に始めた')), 'もう置いた新しい応答を古い応答で上書きした').toBe('superseded');
+    });
+    expect(placed).toEqual(['先', 'あと', 'あとに始めた']);
+  });
+
+  it('鍵ごとに別々の順序を持つ (ほかの範囲の取得で古くならない)', async () => {
+    const { page, element } = renderStreamPage('latestStarted');
+    await act(async () => {
+      root.render(element);
+    });
+    const placed: string[] = [];
+    const weekRange = page.stream!.begin(null, '週の範囲');
+    const monthRange = page.stream!.begin(null, '月の範囲');
+    const weekRangeAgain = page.stream!.begin(null, '週の範囲');
+    await act(async () => {
+      expect(monthRange.place(() => placed.push('月'))).toBe('placed');
+      expect(weekRange.place(() => placed.push('週 (古い)'))).toBe('superseded');
+      expect(weekRangeAgain.place(() => placed.push('週'))).toBe('placed');
+    });
+    expect(placed).toEqual(['月', '週']);
+  });
+
+  it('取り直しの札を渡した取得は、応答を置く時点にモーダルが開いていれば置かず (deferred)、閉じたら 1 回取り直す。古い応答では止めた通知の印を付けない', async () => {
+    const { page, element } = renderStreamPage('latestStarted');
+    await act(async () => {
+      root.render(element);
+    });
+    const placed: string[] = [];
+    await notifyAiConsultationSucceeded();
+    await notifyAiConsultationSucceeded();
+    expect(page.tickets).toHaveLength(2);
+    const olderRefetch = page.stream!.begin(page.tickets[0]);
+    const newerRefetch = page.stream!.begin(page.tickets[1]);
+    // 開いたときの読み込み (札なし) は番兵を見ない
+    const modal = addToBody('<div role="dialog"></div>');
+    await act(async () => {
+      expect(olderRefetch.place(() => placed.push('先の取り直し')), '古い応答で番兵を見た').toBe('superseded');
+      expect(newerRefetch.place(() => placed.push('あとの取り直し'))).toBe('deferred');
+      // 1 つの取得の応答を何か所かに分けて置く: 一度止めた取得は、ほかの場所でも置かない
+      expect(newerRefetch.place(() => placed.push('あとの取り直しの別の場所'))).toBe('deferred');
+    });
+    expect(placed).toEqual([]);
+    expect(page.tickets, 'モーダルが開いているのに取り直した').toHaveLength(2);
+    await act(async () => {
+      modal.remove();
+    });
+    // 止めた取り直しのぶん 1 回だけ (古い応答は印を付けていない)
+    expect(page.tickets, '閉じても止めた取り直しをしない・古い応答のぶんも取り直した').toHaveLength(3);
+    const flushed = page.stream!.begin(page.tickets[2]);
+    await act(async () => {
+      expect(flushed.place(() => placed.push('閉じたあとの取り直し'))).toBe('placed');
+    });
+    expect(placed).toEqual(['閉じたあとの取り直し']);
+  });
+
+  it('札を渡さない取得 (開いたとき・書き込みのあとの読み直し) は、番兵が立っていても置く', async () => {
+    const { page, element } = renderStreamPage('latestStarted');
+    await act(async () => {
+      root.render(element);
+    });
+    const placed: string[] = [];
+    addToBody('<div role="dialog"></div>');
+    const mount = page.stream!.begin();
+    await act(async () => {
+      expect(mount.place(() => placed.push('開いたとき'))).toBe('placed');
+    });
+    expect(placed).toEqual(['開いたとき']);
+    expect(page.tickets).toHaveLength(0);
+  });
+
+  it('段ごとに置く取得は、途中であとの取得が始まったら次の段を置かない', async () => {
+    const { page, element } = renderStreamPage('latestStarted');
+    await act(async () => {
+      root.render(element);
+    });
+    const placed: string[] = [];
+    const first = page.stream!.begin();
+    await act(async () => {
+      expect(first.place(() => placed.push('1 段目'))).toBe('placed');
+    });
+    page.stream!.begin();
+    await act(async () => {
+      expect(first.place(() => placed.push('2 段目'))).toBe('superseded');
+    });
+    expect(placed).toEqual(['1 段目']);
   });
 });
 

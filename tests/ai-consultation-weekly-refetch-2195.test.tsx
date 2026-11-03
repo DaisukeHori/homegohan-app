@@ -240,6 +240,8 @@ function otherWeekDateInDisplayedMonth(): string {
 
 type FakeMeal = { id: string; dishName: string; isCompleted?: boolean };
 type FakeShoppingItem = { id: string; itemName: string; isChecked: boolean };
+/** 冷蔵庫の食材 (GET /api/pantry の items の 1 行。ページは中身を見ずに store に置く) */
+type FakePantryItem = { id: string; name: string };
 
 /** サーバーの表 (テストごとに作り直す) */
 type FakeServer = {
@@ -264,6 +266,12 @@ type FakeServer = {
   namesFail: boolean;
   /** 置いている間に始めた食事の更新 (PATCH /api/meal-plans/meals/<id>) の応答を、この Promise が解けるまで止める (#2201 U2) */
   mealPatchHold: Promise<void> | null;
+  /** 冷蔵庫の食材 (GET /api/pantry の答え) */
+  pantryItems: FakePantryItem[];
+  /** 置いている間に始めた GET /api/pantry の応答 (答えは読み取りを始めたときのもの) を、この Promise が解けるまで止める (#2201 U1) */
+  pantryHold: Promise<void> | null;
+  /** 置いている間に始めた GET /api/profile の応答 (答えは読み取りを始めたときのもの) を、この Promise が解けるまで止める (#2201 U1) */
+  profileHold: Promise<void> | null;
 };
 let server: FakeServer;
 let fetchCalls: string[];
@@ -441,10 +449,20 @@ function installFakeServer() {
         return jsonResponse({ cleaned: 0 });
       case '/api/ai/menu/meal/pending':
         return jsonResponse({ hasPending: false, requests: [] });
-      case '/api/pantry':
-        return jsonResponse({ items: [] });
-      case '/api/profile':
-        return jsonResponse({ family_size: server.familySize, servings_config: null, radar_chart_nutrients: null });
+      case '/api/pantry': {
+        // 答えは読み取りを始めたときのもの。止めていれば、止めが解けてから返す
+        const body = { items: server.pantryItems.map((item) => ({ ...item })) };
+        const hold = server.pantryHold;
+        if (hold) await hold;
+        return jsonResponse(body);
+      }
+      case '/api/profile': {
+        // 答えは読み取りを始めたときのもの。止めていれば、止めが解けてから返す
+        const body = { family_size: server.familySize, servings_config: null, radar_chart_nutrients: null };
+        const hold = server.profileHold;
+        if (hold) await hold;
+        return jsonResponse(body);
+      }
       case '/api/family/members/names':
         if (server.namesFail) return jsonResponse({ error: 'down' }, SERVER_ERROR_STATUS);
         return jsonResponse({ data: { members: server.familyMemberNames } });
@@ -477,6 +495,9 @@ beforeEach(() => {
     mealPlansFail: false,
     namesFail: false,
     mealPatchHold: null,
+    pantryItems: [],
+    pantryHold: null,
+    profileHold: null,
   };
   supabaseMock.profileFails = false;
   supabaseMock.channelNames.length = 0;
@@ -532,6 +553,24 @@ async function notifyAiConsultationSucceeded(actionType: string, result: Record<
 }
 
 const callsTo = (pathname: string) => fetchCalls.filter((raw) => new URL(raw, PAGE_ORIGIN).pathname === pathname).length;
+
+/** 冷蔵庫の食材 (AI 相談の前と後。#2201 U1 の応答の順序の検査) と、家族の人数 (人数の設定の無い人の既定の人数) */
+const PANTRY_ITEM_BEFORE: FakePantryItem = { id: 'pantry-before', name: '前のにんじん' };
+const PANTRY_ITEM_AFTER: FakePantryItem = { id: 'pantry-after', name: '新しいたまねぎ' };
+const FAMILY_SIZE_BEFORE = 2;
+const FAMILY_SIZE_AFTER = 4;
+
+/** 献立表の store に置いた冷蔵庫の食材の名前 */
+const fridgeItemNames = () => usePantryStore.getState().fridgeItems.map((item) => item.name);
+
+/** 応答を止める Promise (server の …Hold に置く) と、それを解く関数 */
+function heldResponse(): { hold: Promise<void>; release: () => void } {
+  let release: () => void = () => undefined;
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { hold, release };
+}
 
 /** ヘッダーの買い物リストのボタン (バッジの数字はこの中に出る) */
 function shoppingListButton(): HTMLButtonElement {
@@ -848,6 +887,89 @@ describe('献立表 (/menus/weekly) の取り直しの順序と失敗 (#2201 U1)
     expect(container.textContent).toContain(NEW_DISH);
     expect(container.textContent).not.toContain(OLD_DISH);
     expect(await calendarMealDotCount(), '古い応答が、あとから足した日の印を消した').toBe(DAYS_IN_WEEK + 1);
+  });
+
+  it('続けて来た成功の、先の取り直しの冷蔵庫と人数の設定の応答が後から届いても、あとの取り直しの答えを古い答えで上書きしない', async () => {
+    server.pantryItems = [PANTRY_ITEM_BEFORE];
+    server.familySize = FAMILY_SIZE_BEFORE;
+    await renderWeeklyPage();
+    expect(fridgeItemNames()).toEqual([PANTRY_ITEM_BEFORE.name]);
+    expect(useServingsConfigStore.getState().servingsConfig?.default).toBe(FAMILY_SIZE_BEFORE);
+
+    // 1 回目の成功の取り直しは、前の答え (冷蔵庫・家族の人数) を読んで応答が遅れる
+    const first = heldResponse();
+    server.pantryHold = first.hold;
+    server.profileHold = first.hold;
+    await notifyAiConsultationSucceeded('add_pantry_item', { success: true });
+    server.pantryHold = null;
+    server.profileHold = null;
+
+    // 2 回目の成功 (AI 相談が冷蔵庫と家族の人数を変えた) の取り直しは先に届く
+    server.pantryItems = [PANTRY_ITEM_AFTER];
+    server.familySize = FAMILY_SIZE_AFTER;
+    await notifyAiConsultationSucceeded('update_profile_preferences', { updated: true, fields: ['family_size'] });
+    expect(fridgeItemNames()).toEqual([PANTRY_ITEM_AFTER.name]);
+    expect(useServingsConfigStore.getState().servingsConfig?.default).toBe(FAMILY_SIZE_AFTER);
+
+    await act(async () => {
+      first.release();
+    });
+    await settle();
+    expect(fridgeItemNames(), '先の取り直しの古い応答が、冷蔵庫の一覧を戻した').toEqual([PANTRY_ITEM_AFTER.name]);
+    expect(useServingsConfigStore.getState().servingsConfig?.default, '先の取り直しの古い応答が、人数を戻した').toBe(FAMILY_SIZE_AFTER);
+  });
+
+  it('開いたときの冷蔵庫と人数の設定の読み込みの応答が取り直しの応答より後に届いても、取り直しの答えを古い答えで上書きしない', async () => {
+    server.pantryItems = [PANTRY_ITEM_BEFORE];
+    server.familySize = FAMILY_SIZE_BEFORE;
+    // 開いたときの冷蔵庫と人数の設定の読み込みは、前の答えを読んで応答が遅れる
+    const mount = heldResponse();
+    server.pantryHold = mount.hold;
+    server.profileHold = mount.hold;
+    await renderWeeklyPage();
+    server.pantryHold = null;
+    server.profileHold = null;
+    expect(callsTo('/api/pantry'), '開いたときに冷蔵庫を読んでいない (検査が空振りしている)').toBe(1);
+
+    // 応答を待つあいだに成功が来て (AI 相談が冷蔵庫と家族の人数を変えた)、その取り直しが先に届く
+    server.pantryItems = [PANTRY_ITEM_AFTER];
+    server.familySize = FAMILY_SIZE_AFTER;
+    await notifyAiConsultationSucceeded('add_pantry_item', { success: true });
+    expect(fridgeItemNames()).toEqual([PANTRY_ITEM_AFTER.name]);
+    expect(useServingsConfigStore.getState().servingsConfig?.default).toBe(FAMILY_SIZE_AFTER);
+
+    await act(async () => {
+      mount.release();
+    });
+    await settle();
+    expect(fridgeItemNames(), '開いたときの古い応答が、取り直しの冷蔵庫の一覧を戻した').toEqual([PANTRY_ITEM_AFTER.name]);
+    expect(useServingsConfigStore.getState().servingsConfig?.default, '開いたときの古い応答が、取り直しの人数を戻した').toBe(FAMILY_SIZE_AFTER);
+  });
+
+  it('人数の設定の読み込み中の印は、先に始めた読み込みが終わっても、あとに始めた読み込みが終わるまで下ろさない', async () => {
+    await renderWeeklyPage();
+    expect(useServingsConfigStore.getState().isLoadingServingsConfig).toBe(false);
+
+    const first = heldResponse();
+    server.profileHold = first.hold;
+    await notifyAiConsultationSucceeded('update_profile_preferences', { updated: true, fields: ['family_size'] });
+    const second = heldResponse();
+    server.profileHold = second.hold;
+    await notifyAiConsultationSucceeded('update_profile_preferences', { updated: true, fields: ['family_size'] });
+    server.profileHold = null;
+    expect(useServingsConfigStore.getState().isLoadingServingsConfig).toBe(true);
+
+    await act(async () => {
+      first.release();
+    });
+    await settle();
+    expect(useServingsConfigStore.getState().isLoadingServingsConfig, 'あとの読み込みの応答を待っているのに、先の読み込みが印を下ろした').toBe(true);
+
+    await act(async () => {
+      second.release();
+    });
+    await settle();
+    expect(useServingsConfigStore.getState().isLoadingServingsConfig).toBe(false);
   });
 
   it('食事の完了の切り替えの応答を待つあいだに来た成功では取り直さず (#2201 U2)、終わったら 1 回取り直す', async () => {
