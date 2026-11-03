@@ -9,7 +9,11 @@ import type { Tables } from "@homegohan/shared";
 import type { Announcement, PlannedMeal, PantryItem, Badge } from "@/types/domain";
 import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import { aiSkippedReasonOf, type AiSkippedReason } from "@/lib/ai/consent-config";
-import { useAiConsultationLoading, useAiConsultationPendingWrites } from "@/hooks/useAiConsultationDataRefetch";
+import {
+  useAiConsultationLoading,
+  useAiConsultationPendingWrites,
+  type AiConsultationFetchTicket,
+} from "@/hooks/useAiConsultationDataRefetch";
 
 // 今日の献立データ
 interface TodayMealPlan {
@@ -238,15 +242,22 @@ export const useHomeData = () => {
   /**
    * mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込み中の表示を出さずに読み直し、読み取りの失敗
    * (ログインの確かめ・プロフィール・今日の献立の読み取りのエラー) では今の表示を残す。
-   * 献立と利用者の応答を置くのは最後に始めた取得 (homeFetchSeqRef) だけ (開いたときの読み込みと取り直しが重なっても古い応答で上書きしない)
+   * 献立と利用者の応答を置くのは最後に始めた取得 (homeFetchSeqRef) だけ (開いたときの読み込みと取り直しが重なっても古い応答で上書きしない)。
+   * refetchTicket は AI 相談の成功の取り直しの札 (useAiConsultationDataRefetch が渡す。#2201 U1 + U2)。取り直しでは応答を待つあいだも
+   * 今日の献立 (完了の切り替えのボタン) が出ているので、その間に切り替えを始めていたら (終えていても)・体調のチェックインの欄を
+   * 開いていたら、今日の献立を置かない (札の deferIfHeld。切り替えが終わった・欄を閉じたあとに 1 回取り直す)
    */
-  const fetchHomeData = async (options: HomeFetchOptions = { replaceAdviceBanner: false }, mode: HomeFetchMode = 'mount') => {
+  const fetchHomeData = async (
+    options: HomeFetchOptions = { replaceAdviceBanner: false },
+    mode: HomeFetchMode = 'mount',
+    refetchTicket?: AiConsultationFetchTicket,
+  ) => {
     homeFetchSeqRef.current += 1;
     const seq = homeFetchSeqRef.current;
     const isLatest = () => homeFetchSeqRef.current === seq;
     if (mode === 'mount') setLoading(true);
     try {
-      await readHomeData(options, mode, isLatest);
+      await readHomeData(options, mode, isLatest, refetchTicket);
     } finally {
       // 最後に始めた取得が終わったら (途中で投げても) 読み込み中の表示を下ろす。開いたときの読み込み中に始まった取り直しが投げると、
       // 開いたときの読み込みは最後でないので下ろさず、読み込み中の表示のまま止まるため
@@ -255,7 +266,12 @@ export const useHomeData = () => {
   };
 
   /** fetchHomeData の読み取りの中身 (読み込み中の表示は fetchHomeData が決める) */
-  const readHomeData = async (options: HomeFetchOptions, mode: HomeFetchMode, isLatest: () => boolean) => {
+  const readHomeData = async (
+    options: HomeFetchOptions,
+    mode: HomeFetchMode,
+    isLatest: () => boolean,
+    refetchTicket: AiConsultationFetchTicket | undefined,
+  ) => {
     // 1. ユーザー情報取得
     const authUser = await resolveAuthUser();
     
@@ -311,6 +327,10 @@ export const useHomeData = () => {
       // あとから別の取得を始めていたら、今日の献立はそちらの応答を置く (#2201 U1)
       if (!isLatest()) {
         console.warn('[home] superseded fetch: skip placing today plan');
+      } else if (mode === 'refetch' && refetchTicket?.deferIfHeld()) {
+        // 取り直しの応答を待つあいだに完了の切り替え (楽観的な更新) を始めた (終えていても)・チェックインの欄を開いた:
+        // 切り替えの前に読んだ今日の献立で楽観的な表示を戻さない。切り替えが全部終わった・欄を閉じたあとに 1 回取り直す (#2201 U1 + U2)
+        console.warn('[home] held while refetching: skip placing today plan');
       } else if (dailyMealData && dailyMealData.planned_meals) {
         const mealsData = dailyMealData.planned_meals;
         const meals: PlannedMeal[] = mealsData.map((m: any) => toPlannedMeal(m));
@@ -1116,7 +1136,8 @@ export const useHomeData = () => {
     // 取り直し (AI 相談の成功のあと)。読み込み直したときと同じ表示にする (今日のアドバイスの帯も置き換える。#2195 V1)。
     // 読み込み中の表示を出さず、読み取りの失敗では今の表示を残す (#2201 U1)。開いたときの読み込み中に始まった取り直しは、
     // その読み込みの役を引き継ぐ (refetchReadMode)
-    refetch: () => fetchHomeData({ replaceAdviceBanner: true }, refetchReadMode()),
+    // 札 (useAiConsultationDataRefetch が渡す) があれば、応答を待つあいだに始めた完了の切り替えを今日の献立で上書きしない
+    refetch: (ticket?: AiConsultationFetchTicket) => fetchHomeData({ replaceAdviceBanner: true }, refetchReadMode(), ticket),
     // 食事の完了の切り替えの間の印 (#2201 U2。ページが useAiConsultationDataRefetch の writeInFlightRef に渡す)
     aiConsultationWrites,
   };

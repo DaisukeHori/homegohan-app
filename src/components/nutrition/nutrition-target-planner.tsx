@@ -132,7 +132,10 @@ export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMod
 
   /**
    * プロフィールと栄養目標を読む。mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込み中の表示を出さずに読み直し、
-   * 失敗 (通信の失敗・非 2xx) では失敗の文に切り替えずに今の表示を残す。応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ
+   * 失敗 (通信の失敗・非 2xx) では失敗の文に切り替えずに今の表示を残す。応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ。
+   * 取り直しでは応答を待つあいだも入力欄が出ているので、その間に入力欄を変えていたら (下の section の印が外れて番兵が立つ)・
+   * 保存を始めていたら、応答を置かない (打ちかけの値を取得した値で上書きしない。ticket.deferIfHeld。元に戻した・保存が終わったあとに
+   * 1 回取り直す)
    */
   const fetchPlannerData = async (ticket: AiConsultationFetchTicket, mode: PlannerFetchMode = "mount") => {
     if (mode === "mount") {
@@ -152,6 +155,7 @@ export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMod
       const profileJson = await profileRes.json();
       const targetJson = await targetRes.json();
       if (!ticket.isLatest()) return;
+      if (mode === "refetch" && ticket.deferIfHeld()) return;
 
       const nextForm = plannerFormOf(profileJson, targetJson.targets);
       setProfile(profileJson);
@@ -171,7 +175,7 @@ export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMod
 
   // AI 相談の提案の実行で栄養目標・目標体重が変わったら取り直す (#2195 V1)。
   // 入力欄を変えている間・保存の応答を待つ間は取り直さず (下の section の印を外すので、入力欄が取り直しを止める)、
-  // 元に戻した・保存が終わったあとに 1 回取り直す (#2201 U2)
+  // 元に戻した・保存が終わったあとに 1 回取り直す (#2201 U2)。取り直しの応答を待つあいだに変え始めたときも同じ (fetchPlannerData)
   const { beginFetch, notifyWriteSettled } = useAiConsultationDataRefetch(
     (ticket) => fetchPlannerData(ticket, refetchReadMode()),
     { writeInFlightRef },

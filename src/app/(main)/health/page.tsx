@@ -100,10 +100,14 @@ export default function HealthDashboardPage() {
    * 開いたときに読むもの (今日の記録・連続記録・目標) を読む。
    * mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込み中の表示 (画面全体のスピナー) を出さずに読み直し、
    * 失敗 (通信の失敗・非 2xx) では今の表示を残す。どちらの経路でも、応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ。
-   * 通信の失敗で読み込み中の表示のまま止まらないよう、最後に始めた取得が終わったら必ず loading を下ろす (以前は try / finally が無かった)
+   * 通信の失敗で読み込み中の表示のまま止まらないよう、最後に始めた取得が終わったら必ず loading を下ろす (以前は try / finally が無かった)。
+   * 取り直しでは応答を待つあいだも「今日の記録をつける」が押せるので、その間に記録の欄 (role="dialog") を開いていたら応答を置かない
+   * (打ちかけの体重を取得した体重で上書きしない。ticket.deferIfHeld。閉じたあとに 1 回取り直す)
    */
   const fetchData = useCallback(async (ticket: AiConsultationFetchTicket, mode: HealthFetchMode) => {
     if (mode === 'mount') setLoading(true);
+    /** この応答を置かないか (あとから別の取得を始めた・取り直しの応答を待つあいだに記録の欄を開いた) */
+    const skipPlacing = () => !ticket.isLatest() || (mode === 'refetch' && ticket.deferIfHeld());
     try {
       const supabase = createClient();
       const { data: { user } } = await supabase.auth.getUser();
@@ -114,7 +118,7 @@ export default function HealthDashboardPage() {
       const recordRes = await fetch(`/api/health/records/${today}`);
       if (recordRes.ok) {
         const data = await recordRes.json();
-        if (!ticket.isLatest()) return;
+        if (skipPlacing()) return;
         setTodayRecord(data.record);
         setYesterdayRecord(data.previous);
         // 記録の欄の体重は今日の記録の体重から作る。無ければ空にする (取り直しで前の体重を残さない。読み込み直したときと同じ。#2195 V1)
@@ -125,7 +129,7 @@ export default function HealthDashboardPage() {
       const streakRes = await fetch('/api/health/streaks');
       if (streakRes.ok) {
         const data = await streakRes.json();
-        if (!ticket.isLatest()) return;
+        if (skipPlacing()) return;
         setStreak(data.streak);
         setWeeklyRecords(data.weeklyRecords || []);
       }
@@ -134,7 +138,7 @@ export default function HealthDashboardPage() {
       const goalsRes = await fetch('/api/health/goals?status=active');
       if (goalsRes.ok) {
         const data = await goalsRes.json();
-        if (!ticket.isLatest()) return;
+        if (skipPlacing()) return;
         setGoals(data.goals || []);
       }
     } catch (error) {
@@ -171,7 +175,7 @@ export default function HealthDashboardPage() {
     await Promise.all([fetchData(ticket, refetchReadMode()), reloadSelectedDate()]);
   }, [fetchData, refetchReadMode]);
   // 記録の欄 (体重などの入力の部品) が開いている間は取り直さない (打ちかけの体重を取得した値で上書きしないため)。
-  // 閉じたら止めた通知のぶん 1 回取り直す (#2201 U2)
+  // 閉じたら止めた通知のぶん 1 回取り直す (#2201 U2)。取り直しの応答を待つあいだに開いたときも同じ (fetchData の skipPlacing)
   const { beginFetch } = useAiConsultationDataRefetch(refetchAfterAiConsultation);
 
   useEffect(() => {

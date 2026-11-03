@@ -144,12 +144,14 @@ function ProfilePageContent() {
   // 編集のモーダル (role="dialog") が出ている間は増えない (編集の途中の editForm を取得した値で上書きしないため)。
   // 競技タブのように入力の部品が 1 つも無いタブを開いていても止まるよう、モーダルそのものに role="dialog" を付けている
   // 閉じたら止めた通知のぶん 1 回増える (#2201 U2)
-  const { refetchKey: aiConsultationRefetchKey } = useAiConsultationRefetchKey();
+  const { refetchKey: aiConsultationRefetchKey, refetchTicket: aiConsultationRefetchTicket } = useAiConsultationRefetchKey();
   // その回が AI 相談の成功の取り直しで走ったか (#2201 U1)。開いたときの読み込み中に来た成功の回は、その読み込みの役を引き継ぐ
   // (取り直しの扱いにしない。ログインを確かめられなかったときは開いたときと同じ扱い)
   const takeAiConsultationRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey, isLoading);
-  // 編集のモーダルが開いているか (取り直しの応答が届いた時点で見る。#2201 U1)。番兵は通知が来た時点にしか見ないので、
-  // 取り直しの応答を待つあいだに「編集」を押して打ち始めた値を、届いた応答の editForm で上書きしないため
+  // 編集のモーダルが開いているか (応答が届いた時点で見る。#2201 U1)。番兵は通知が来た時点にしか見ないので、応答を待つあいだに
+  // 「編集」を押して打ち始めた値を、届いた応答の editForm で上書きしないため。
+  // 取り直しの回は、モーダルが開いていれば応答ごと置かずに閉じたあと 1 回取り直す (下の refetchTicket.deferIfHeld。閉じたあとの
+  // editForm を AI 相談の変更の前の値のまま残さない)。開いたときの読み込み (読み込み中も「編集」が押せる) はこれで editForm だけを守る
   const isEditingRef = useRef(isEditing);
   isEditingRef.current = isEditing;
 
@@ -158,6 +160,7 @@ function ProfilePageContent() {
     let cancelled = false;
     // 取り直しでは読み込み中の表示を出さず、失敗 (ログインの確かめ・プロフィールの読み取りのエラー・通信の失敗) では今の表示を残す
     const isRefetch = takeAiConsultationRefetchRun();
+    const refetchTicket = isRefetch ? aiConsultationRefetchTicket() : null;
     const getData = async () => {
       const supabase = createClient();
       if (!isRefetch) setIsLoading(true);
@@ -187,6 +190,8 @@ function ProfilePageContent() {
           console.error('[Profile] Error fetching profile:', error);
         }
         if (cancelled) return;
+        // 取り直しの応答を待つあいだに編集のモーダルを開いた: 置かずに、閉じたあと 1 回取り直す (#2201 U1 + U2)
+        if (refetchTicket?.deferIfHeld()) return;
 
         if (!error) {
           // 答えをそのまま置く: 取り直し (AI 相談の成功のあと) でも、読み込み直したときと同じ値にする (#2195 V1)
@@ -256,7 +261,7 @@ function ProfilePageContent() {
     return () => {
       cancelled = true;
     };
-  }, [aiConsultationRefetchKey, takeAiConsultationRefetchRun]);
+  }, [aiConsultationRefetchKey, takeAiConsultationRefetchRun, aiConsultationRefetchTicket]);
 
   // ?focus=incomplete パラメータを処理
   useEffect(() => {

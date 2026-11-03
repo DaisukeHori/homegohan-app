@@ -121,7 +121,9 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
   // 完了の切り替えの楽観的な更新から送信の応答まで (#2201 U2)。この間に来た AI 相談の成功では取り直さず、終わったら 1 回取り直す
   // (切り替えの前の値を読んだ取り直しの応答が、楽観的な表示を戻さないため)
   const pendingWrites = useAiConsultationPendingWrites();
-  const { refetchKey: aiConsultationRefetchKey } = useAiConsultationRefetchKey({ writeInFlightRef: pendingWrites });
+  const { refetchKey: aiConsultationRefetchKey, refetchTicket: aiConsultationRefetchTicket } = useAiConsultationRefetchKey({
+    writeInFlightRef: pendingWrites,
+  });
   // 食事の取得の回が AI 相談の成功の取り直しで走ったか (#2201 U1)。開いたとき・食事の切り替えの読み込み中に来た成功の回は、
   // その読み込みの役を引き継ぐ (取り直しの扱いにしない。失敗で前の食事を残さない)
   const takeMealRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey, loading);
@@ -155,6 +157,9 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
     // 取り直しでは読み込み中の表示 (画面全体のスピナー) を出さず、失敗 (通信の失敗・404 以外の非 2xx) では今の表示を残す (#2201 U1)。
     // 404 は食事が無い (AI 相談で消された) ので、読み込み直したときと同じく「見つかりませんでした」にする
     const isRefetch = takeMealRefetchRun();
+    // 取り直しの応答を待つあいだも完了の切り替え・削除のボタンが出ている (#2201 U1 + U2)。その間に切り替えを始めた (終えていても)・
+    // 削除の確認のモーダルを開いたら、この回の応答 (切り替えの前に読んだ値) を置かず、外れたら 1 回取り直す (札の deferIfHeld)
+    const refetchTicket = isRefetch ? aiConsultationRefetchTicket() : null;
     const fetchData = async () => {
       if (!isRefetch) setLoading(true);
 
@@ -211,6 +216,7 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
         }
 
         if (cancelled) return;
+        if (refetchTicket?.deferIfHeld()) return;
         setMeal(mappedMeal);
       } catch (error) {
         console.error("Error fetching meal:", error);
@@ -227,7 +233,7 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
     return () => {
       cancelled = true;
     };
-  }, [params.id, aiConsultationRefetchKey, takeMealRefetchRun]);
+  }, [params.id, aiConsultationRefetchKey, takeMealRefetchRun, aiConsultationRefetchTicket]);
 
   const toggleCompletion = async () => {
     if (!meal) return;

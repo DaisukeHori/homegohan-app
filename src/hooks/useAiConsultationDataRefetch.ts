@@ -17,6 +17,18 @@ import {
  */
 export interface AiConsultationFetchTicket {
   readonly isLatest: () => boolean;
+  /**
+   * 取り直しの応答を置く前に呼ぶ (#2201 U1 + U2)。番兵 (入力の部品・モーダル。isAiConsultationRefetchBlocked) か書き込みの印が
+   * いま立っている、またはこの取り直しを始めたあとに書き込み (書き込みの印の startedCount) が始まっていれば true を返し、
+   * 止めた通知の印を付ける (番兵・書き込みの印が外れたら 1 回取り直す。もう外れていれば、すぐに 1 回取り直す)。
+   * true ならページは応答を置かない (取り直しで置く値のうち、利用者が変えうる値だけでなく全部)。
+   * 番兵と書き込みの印は通知の時点にしか見ないので、取り直しの応答を待つあいだに開いたモーダル・打ち始めた入力・始めた書き込み
+   * (楽観的な更新) を、届いた応答 (それより前に読んだ値) で上書きしないため。
+   * ページが自分で始めた取得 (beginFetch の札) では常に false (その応答は置く)。取り直しが開いたときの読み込みの役を引き継いだ回
+   * (useAiConsultationLoading の refetchReadMode() が 'mount'・useAiConsultationRefetchRun が false の回) では呼ばない
+   * (残すべき今の表示がまだ無いので、応答を置く)
+   */
+  readonly deferIfHeld: () => boolean;
 }
 
 /**
@@ -28,6 +40,12 @@ export interface AiConsultationWriteInFlightRef {
   readonly current: boolean;
   /** 書き込みが全部終わったときに呼ぶ関数を登録する。返す関数で登録をやめる */
   readonly subscribeSettled?: (listener: () => void) => () => void;
+  /**
+   * 書き込みを始めた回数 (useAiConsultationPendingWrites)。取り直しを始めたあとに増えていれば、その取り直しの応答は書き込みの前の値を
+   * 読んだかもしれないので置かない (札の deferIfHeld。書き込みがもう終わっていても)。持たない印 (真偽の ref) は、
+   * 応答を置く時点で書き込みの間 (current) かだけを見る
+   */
+  readonly startedCount?: number;
 }
 
 export interface AiConsultationRefetchOptions {
@@ -43,7 +61,8 @@ export interface AiConsultationRefetchOptions {
 export interface AiConsultationRefetchControl {
   /**
    * 取得を始める: 世代を 1 つ進め、その取得の札を返す (#2201 U1)。ページの取得 (開いたとき・週の移動など) でも呼ぶ。
-   * 取り直し (refetch) には hook がこれで作った札を渡す。札の isLatest() が false の応答は置かない
+   * 取り直し (refetch) には hook が同じ世代を進めて作った札を渡す。札の isLatest() が false の応答は置かない。
+   * この札の deferIfHeld() は常に false (ページが自分で始めた取得の応答は置く)
    */
   beginFetch: () => AiConsultationFetchTicket;
   /**
@@ -66,8 +85,8 @@ export interface AiConsultationRefetchControl {
  * 完了のときにも同じ番兵・書き込みの印・世代番号・失敗の扱いを効かせる。ページを離れたら (アンマウント) 見張りをやめる
  *
  * 取り直しの決まり (#2201 U1 + U2):
- *   - 世代番号: 取り直しのたびに beginFetch で札を作って refetch に渡す。ページは開いたときの読み込みなどでも beginFetch を呼び、
- *     応答を置く前に札の isLatest() を見る (古い応答が後から届いても新しい表示を上書きしない)
+ *   - 世代番号: 取り直しのたびに (beginFetch と同じ世代を進めて) 札を作って refetch に渡す。ページは開いたときの読み込みなどでも
+ *     beginFetch を呼び、応答を置く前に札の isLatest() を見る (古い応答が後から届いても新しい表示を上書きしない)
  *   - 失敗: refetch が reject しても (同期で投げても) 拾って握る (未処理の Promise 拒否にしない)。
  *     ページは取り直しの失敗 (通信の失敗・5xx など) では今の表示を残す (取り直しの経路でだけ。開いたときの失敗はこれまでどおり)
  *   - 読み込み中の表示: 取り直しでは loading を立てない (画面全体をスピナーに置き換えない)。開いたときだけ出す。
@@ -76,6 +95,9 @@ export interface AiConsultationRefetchControl {
  *   - 止めた通知: 番兵 (入力の部品・モーダル) か書き込みの印 (writeInFlightRef) で止めた通知は捨てずに印を付け、
  *     番兵が外れたとき (DOM の変化で見る: モーダルを閉じた・入力の部品が消えた) / 書き込みが終わったとき (notifyWriteSettled) に
  *     1 回だけ取り直す。止めている間に何回通知が来ても、取り直しは 1 回
+ *   - 応答を置く時点の番兵: 取り直しでは読み込み中の表示を出さないので、応答を待つあいだも入力欄・ボタンが出ている。
+ *     ページは取り直しの応答を置く前に札の deferIfHeld() を見て、その間に開いたモーダル・打ち始めた入力・始めた書き込みがあれば
+ *     置かない (止めた通知と同じく、外れたときに 1 回取り直す)
  */
 export function useAiConsultationDataRefetch(
   refetch: (ticket: AiConsultationFetchTicket) => unknown,
@@ -90,11 +112,17 @@ export function useAiConsultationDataRefetch(
 
   /** 最後に始めた取得の世代 */
   const generationRef = useRef(0);
-  const beginFetch = useCallback((): AiConsultationFetchTicket => {
+  /** 世代を 1 つ進め、その世代が最後の世代かを返す関数を返す */
+  const nextGeneration = useCallback((): (() => boolean) => {
     generationRef.current += 1;
     const generation = generationRef.current;
-    return { isLatest: () => generationRef.current === generation };
+    return () => generationRef.current === generation;
   }, []);
+  // ページが自分で始めた取得の札。その応答は置く (応答を置く時点の番兵は見ない)
+  const beginFetch = useCallback(
+    (): AiConsultationFetchTicket => ({ isLatest: nextGeneration(), deferIfHeld: () => false }),
+    [nextGeneration],
+  );
 
   /** 止めた通知の取り直しを、いま試みる関数 (購読の間だけ入る。書き込みが終わったときに呼ぶ) */
   const flushDeferredRef = useRef<() => void>(() => undefined);
@@ -110,11 +138,24 @@ export function useAiConsultationDataRefetch(
   }, [subscribeSettled]);
 
   useEffect(() => {
+    /** 購読の間か (ページを離れたあとに届いた取り直しの応答では、取り直しを足さない) */
+    let active = true;
     const isHeld = () =>
       isAiConsultationRefetchBlocked(document) || writeInFlightRefRef.current?.current === true;
+    const writesStarted = () => writeInFlightRefRef.current?.startedCount;
 
     const runRefetch = () => {
-      const ticket = beginFetch();
+      const isLatest = nextGeneration();
+      const writesStartedAtBegin = writesStarted();
+      const ticket: AiConsultationFetchTicket = {
+        isLatest,
+        deferIfHeld: () => {
+          const writeStartedSinceBegin = writesStartedAtBegin !== undefined && writesStarted() !== writesStartedAtBegin;
+          if (!isHeld() && !writeStartedSinceBegin) return false;
+          if (active) deferRefetch();
+          return true;
+        },
+      };
       try {
         void Promise.resolve(refetchRef.current(ticket)).catch((error: unknown) => {
           // 取り直しの失敗はページが今の表示を残す。ここでは未処理の Promise 拒否にしないだけ
@@ -149,6 +190,18 @@ export function useAiConsultationDataRefetch(
       });
     };
     flushDeferredRef.current = flushDeferred;
+    /**
+     * 取り直しの応答を置かなかった (札の deferIfHeld): 止めた通知の印を付け、番兵・書き込みの印が外れたら 1 回取り直す。
+     * もう外れていれば (書き込みを始めて終えたあとに応答が届いた)、すぐに 1 回取り直す
+     */
+    const deferRefetch = () => {
+      deferred = true;
+      if (isHeld()) {
+        startObserving();
+        return;
+      }
+      flushDeferred();
+    };
 
     const refetchUnlessHeld = () => {
       if (isHeld()) {
@@ -174,6 +227,7 @@ export function useAiConsultationDataRefetch(
     };
     window.addEventListener(AI_CONSULTATION_DATA_CHANGED_EVENT, onDataChanged);
     return () => {
+      active = false;
       window.removeEventListener(AI_CONSULTATION_DATA_CHANGED_EVENT, onDataChanged);
       for (const stop of stopWatching) stop();
       stopWatching.clear();
@@ -181,7 +235,7 @@ export function useAiConsultationDataRefetch(
       stopObserving();
       flushDeferredRef.current = () => undefined;
     };
-  }, [beginFetch]);
+  }, [nextGeneration]);
 
   return useMemo(() => ({ beginFetch, notifyWriteSettled }), [beginFetch, notifyWriteSettled]);
 }
@@ -192,6 +246,12 @@ export interface AiConsultationRefetchKeyState {
   refetchKey: number;
   /** 書き込みが終わったら呼ぶ (useAiConsultationDataRefetch の notifyWriteSettled と同じ) */
   notifyWriteSettled: () => void;
+  /**
+   * 最後に数を増やした取り直しの札 (まだ増やしていなければ null。#2201 U1 + U2)。取り直しで走った回 (useAiConsultationRefetchRun が
+   * true の回) の始めに取り、応答を置く前に deferIfHeld() を見る (応答を待つあいだに開いたモーダル・始めた書き込みを上書きしない)。
+   * 前の回の応答を捨てるのは useEffect の後片付けなので、isLatest() は見なくてよい
+   */
+  refetchTicket: () => AiConsultationFetchTicket | null;
 }
 
 /**
@@ -204,9 +264,17 @@ export interface AiConsultationRefetchKeyState {
  */
 export function useAiConsultationRefetchKey(options: AiConsultationRefetchOptions = {}): AiConsultationRefetchKeyState {
   const [refetchKey, setRefetchKey] = useState(0);
-  const bump = useCallback(() => setRefetchKey((key) => key + 1), []);
+  const refetchTicketRef = useRef<AiConsultationFetchTicket | null>(null);
+  const bump = useCallback((ticket: AiConsultationFetchTicket) => {
+    refetchTicketRef.current = ticket;
+    setRefetchKey((key) => key + 1);
+  }, []);
+  const refetchTicket = useCallback(() => refetchTicketRef.current, []);
   const { notifyWriteSettled } = useAiConsultationDataRefetch(bump, options);
-  return useMemo(() => ({ refetchKey, notifyWriteSettled }), [refetchKey, notifyWriteSettled]);
+  return useMemo(
+    () => ({ refetchKey, notifyWriteSettled, refetchTicket }),
+    [refetchKey, notifyWriteSettled, refetchTicket],
+  );
 }
 
 /**
@@ -289,6 +357,7 @@ export interface AiConsultationPendingWrites extends AiConsultationWriteInFlight
   /** 書き込みを 1 つ始める。返す関数をその書き込みの終わり (finally) で 1 回呼ぶ */
   readonly begin: () => () => void;
   readonly subscribeSettled: (listener: () => void) => () => void;
+  readonly startedCount: number;
 }
 
 /**
@@ -296,18 +365,25 @@ export interface AiConsultationPendingWrites extends AiConsultationWriteInFlight
  * useAiConsultationDataRefetch の writeInFlightRef に渡す。current は始めて終わっていない書き込みが 1 つでもある間 true
  * (真偽の ref 1 つだと、先に終わった書き込みが後の書き込みの途中で印を下ろしてしまう)。
  * 最後の書き込みが終わったら、登録した関数 (useAiConsultationDataRefetch が登録する) を呼ぶ: 書き込みの間に止めた通知を 1 回取り直す
- * (ページは notifyWriteSettled を呼ばなくてよい)
+ * (ページは notifyWriteSettled を呼ばなくてよい)。
+ * 始めた回数 (startedCount) も数える: 取り直しの応答を待つあいだに始めた書き込みは、応答が届く前に終わっていても、
+ * その応答 (書き込みの前に読んだ値) を置かせない (札の deferIfHeld)
  */
 export function useAiConsultationPendingWrites(): AiConsultationPendingWrites {
   const countRef = useRef(0);
+  const startedRef = useRef(0);
   const listenersRef = useRef(new Set<() => void>());
   return useMemo<AiConsultationPendingWrites>(
     () => ({
       get current() {
         return countRef.current > 0;
       },
+      get startedCount() {
+        return startedRef.current;
+      },
       begin: () => {
         countRef.current += 1;
+        startedRef.current += 1;
         let ended = false;
         return () => {
           if (ended) return;
