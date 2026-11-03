@@ -111,7 +111,16 @@ function getRatios(targets: PlannerTargets): MacroRatios {
 /** 開いたとき・保存のあとの読み込み (読み込み中の表示を出す) か、AI 相談の成功の取り直し (出さない・失敗では今の表示を残す) か */
 type PlannerFetchMode = "mount" | "refetch";
 
-export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMode }) {
+interface NutritionTargetPlannerProps {
+  mode?: PlannerMode;
+  /**
+   * 保存 (目標体重・栄養目標の書き込み) が済んだら呼ぶ。この部品を置いたページが、自分で出している目標値・入力値を読み直すのに使う
+   * (#2206 G5。この部品は保存のあと自分の取得だけを読み直すので、渡さないとページの表示が保存の前の値のまま残る)
+   */
+  onSaved?: () => void;
+}
+
+export function NutritionTargetPlanner({ mode = "default", onSaved }: NutritionTargetPlannerProps) {
   // 開いたとき・保存のあとの読み込み中の表示。その読み込み中に始まった AI 相談の成功の取り直しは、その読み込みの役
   // (失敗の表示・読み込み中の表示を下ろす) を引き継ぐ (#2201 U1。useAiConsultationLoading)
   const { loading, setLoading, refetchReadMode, settleLoading } = useAiConsultationLoading();
@@ -331,6 +340,7 @@ export function NutritionTargetPlanner({ mode = "default" }: { mode?: PlannerMod
 
       await fetchPlannerData(beginFetch());
       setSavedMessage(autoCalculate ? "自動計算の目標に戻しました。" : "手動の栄養目標を保存しました。");
+      onSaved?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "保存に失敗しました。");
     } finally {

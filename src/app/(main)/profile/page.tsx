@@ -122,6 +122,11 @@ function ProfilePageContent() {
   const [isSaving, setIsSaving] = useState(false);
   const [editForm, setEditForm] = useState<Partial<UserProfile>>({});
   const [isLoading, setIsLoading] = useState(true);
+  // 開いたときの読み込み (ログインの確かめ・プロフィールの読み取り) に失敗したか (#2206 G5)。失敗のあいだは編集の保存を押せなくし、
+  // 再読み込みを出す (以前は読み込み中の表示だけが下り、保存した値の無い空の editForm のまま「変更を保存」を押せた)
+  const [profileLoadFailed, setProfileLoadFailed] = useState(false);
+  // 「再読み込み」を押すたびに増える。下の取得をもう一度、開いたときと同じ読み方 (読み込み中の表示を出す) で走らせる
+  const [profileReloadKey, setProfileReloadKey] = useState(0);
   // nutrition_targets テーブルからの読み込み（#17: マイページ kcal を根拠ページと一致させる）
   const [dbNutritionTarget, setDbNutritionTarget] = useState<{
     dailyCalories: number;
@@ -164,103 +169,118 @@ function ProfilePageContent() {
     const getData = async () => {
       const supabase = createClient();
       if (!isRefetch) setIsLoading(true);
-
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
-      console.log('[Profile] Auth user:', user?.id, 'error:', authError?.message);
-      if (cancelled) return;
-      // 取り直し (読み込み中の表示を出していないときの回) でログインを確かめられなかった: 今の表示を残す。
-      // 開いたときの読み込み中に来た成功の回は取り直しの扱いにならない (useAiConsultationRefetchRun) ので、ここには来ない
-      if (isRefetch && authError && !user) return;
-      setUser(user);
-
-      if (user) {
-        const { data, error } = await supabase
-          .from('user_profiles')
-          .select('*')
-          .eq('id', user.id)
-          .single();
-
-        console.log('[Profile] Fetch result:', {
-          hasData: !!data,
-          error: error?.message,
-          dataKeys: data ? Object.keys(data).length : 0
-        });
-
-        if (error) {
-          console.error('[Profile] Error fetching profile:', error);
-        }
+      // 読み込み中の表示は、どこで投げても必ず下ろす (#2206 G5。以前は auth.getUser() が投げると読み込み中のまま止まり、
+      // 編集の保存のボタンが押せないままになった)
+      try {
+        const { data: { user }, error: authError } = await supabase.auth.getUser();
+        console.log('[Profile] Auth user:', user?.id, 'error:', authError?.message);
         if (cancelled) return;
-        // 取り直しの応答を待つあいだに編集のモーダルを開いた: 置かずに、閉じたあと 1 回取り直す (#2201 U1 + U2)
-        if (refetchTicket?.deferIfHeld()) return;
+        // 取り直し (読み込み中の表示を出していないときの回) でログインを確かめられなかった: 今の表示を残す。
+        // 開いたときの読み込み中に来た成功の回は取り直しの扱いにならない (useAiConsultationRefetchRun) ので、ここには来ない
+        if (isRefetch && authError && !user) return;
+        setUser(user);
+        // 開いたときの読み込みでログインを確かめられなかった: プロフィールを読んでいないので、失敗として保存を止める (#2206 G5)
+        if (!isRefetch && authError && !user) setProfileLoadFailed(true);
 
-        if (!error) {
-          // 答えをそのまま置く: 取り直し (AI 相談の成功のあと) でも、読み込み直したときと同じ値にする (#2195 V1)
-          if (!data) {
-            setProfile(null);
-            setEditForm({});
-          }
-        }
-        if (data) {
-          console.log('[Profile] Raw data sample:', {
-            age: data.age,
-            height: data.height,
-            weight: data.weight,
-            nickname: data.nickname
+        if (user) {
+          const { data, error } = await supabase
+            .from('user_profiles')
+            .select('*')
+            .eq('id', user.id)
+            .single();
+
+          console.log('[Profile] Fetch result:', {
+            hasData: !!data,
+            error: error?.message,
+            dataKeys: data ? Object.keys(data).length : 0
           });
-          const domainProfile = toUserProfile(data);
-          console.log('[Profile] Converted profile:', {
-            age: domainProfile.age,
-            height: domainProfile.height,
-            weight: domainProfile.weight,
-            nickname: domainProfile.nickname
-          });
-          setProfile(domainProfile);
-          setEditForm(domainProfile);
-        }
 
-        try {
-          const badgeRes = await fetch('/api/badges');
-          if (badgeRes.ok) {
-            const badgeData = await badgeRes.json();
-            const earned = badgeData.badges.filter((b: any) => b.earned).length;
-            if (!cancelled) setBadgeCount(earned);
+          if (error) {
+            console.error('[Profile] Error fetching profile:', error);
           }
-        } catch (e) {
-          console.error("Badge fetch error", e);
-        }
+          if (cancelled) return;
+          // 取り直しの応答を待つあいだに編集のモーダルを開いた: 置かずに、閉じたあと 1 回取り直す (#2201 U1 + U2)
+          if (refetchTicket?.deferIfHeld()) return;
 
-        // #17: nutrition_targets テーブルから読み込んでマイページ kcal を根拠ページと一致させる
-        try {
-          const ntRes = await fetch('/api/nutrition/targets');
-          if (ntRes.ok) {
-            const ntData = await ntRes.json();
-            if (cancelled) return;
-            if (ntData.targets) {
-              const t = ntData.targets;
-              setDbNutritionTarget({
-                dailyCalories: t.dailyCalories,
-                protein: t.proteinG,
-                fat: t.fatG,
-                carbs: t.carbsG,
-                fiber: t.fiberG,
-              });
-            } else {
-              // 栄養目標が無い: 前の値を残さない (取り直しのとき。読み込み直したときと同じ。#2195 V1)
-              setDbNutritionTarget(null);
+          if (error) {
+            // 開いたときの読み込みで読めなかった: 保存を止めて再読み込みを出す。取り直しの失敗は今の表示 (と失敗の印) を残す (#2206 G5)
+            if (!isRefetch) setProfileLoadFailed(true);
+          } else {
+            // 読めた (開いたときも取り直しも): 前の失敗の印を下ろす (#2206 G5)
+            setProfileLoadFailed(false);
+            // 答えをそのまま置く: 取り直し (AI 相談の成功のあと) でも、読み込み直したときと同じ値にする (#2195 V1)
+            if (!data) {
+              setProfile(null);
+              setEditForm({});
             }
           }
-        } catch (e) {
-          console.error("Nutrition targets fetch error", e);
-        }
-      }
+          if (data) {
+            console.log('[Profile] Raw data sample:', {
+              age: data.age,
+              height: data.height,
+              weight: data.weight,
+              nickname: data.nickname
+            });
+            const domainProfile = toUserProfile(data);
+            console.log('[Profile] Converted profile:', {
+              age: domainProfile.age,
+              height: domainProfile.height,
+              weight: domainProfile.weight,
+              nickname: domainProfile.nickname
+            });
+            setProfile(domainProfile);
+            setEditForm(domainProfile);
+          }
 
-      if (!cancelled) setIsLoading(false);
+          try {
+            const badgeRes = await fetch('/api/badges');
+            if (badgeRes.ok) {
+              const badgeData = await badgeRes.json();
+              const earned = badgeData.badges.filter((b: any) => b.earned).length;
+              if (!cancelled) setBadgeCount(earned);
+            }
+          } catch (e) {
+            console.error("Badge fetch error", e);
+          }
+
+          // #17: nutrition_targets テーブルから読み込んでマイページ kcal を根拠ページと一致させる
+          try {
+            const ntRes = await fetch('/api/nutrition/targets');
+            if (ntRes.ok) {
+              const ntData = await ntRes.json();
+              if (cancelled) return;
+              if (ntData.targets) {
+                const t = ntData.targets;
+                setDbNutritionTarget({
+                  dailyCalories: t.dailyCalories,
+                  protein: t.proteinG,
+                  fat: t.fatG,
+                  carbs: t.carbsG,
+                  fiber: t.fiberG,
+                });
+              } else {
+                // 栄養目標が無い: 前の値を残さない (取り直しのとき。読み込み直したときと同じ。#2195 V1)
+                setDbNutritionTarget(null);
+              }
+            }
+          } catch (e) {
+            console.error("Nutrition targets fetch error", e);
+          }
+        }
+      } catch (e) {
+        // ログインの確かめ・プロフィールの読み取りが投げた。開いたときの読み込みなら保存を止めて再読み込みを出し、
+        // 取り直しなら今の表示を残す (#2206 G5)
+        console.error('[Profile] Failed to load profile:', e);
+        if (!cancelled && !isRefetch) setProfileLoadFailed(true);
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
     };
     void getData();
     return () => {
       cancelled = true;
     };
-  }, [aiConsultationRefetchKey, takeAiConsultationRefetchRun, aiConsultationRefetchTicket]);
+  }, [aiConsultationRefetchKey, profileReloadKey, takeAiConsultationRefetchRun, aiConsultationRefetchTicket]);
 
   // ?focus=incomplete パラメータを処理
   useEffect(() => {
@@ -280,6 +300,8 @@ function ProfilePageContent() {
   }, [searchParams, profile, router]);
 
   const handleSave = async () => {
+    // 開いたときの読み込みに失敗したまま (保存した値の無い editForm) は送らない。ボタンも止めている (#2206 G5)
+    if (profileLoadFailed) return;
     setIsSaving(true);
     try {
       const res = await fetch('/api/profile', {
@@ -364,6 +386,22 @@ function ProfilePageContent() {
 
     updateField('performanceProfile', newProfile);
   };
+
+  // 開いたときの読み込みに失敗したときの知らせと再読み込みのボタン (#2206 G5)。ページと編集のモーダルの両方に出す
+  // (再読み込みは開いたときと同じ読み方で読み直す。読めたら知らせを消して、保存した値を入力欄に置く)
+  const profileLoadFailedNotice = (
+    <div role="alert" className="rounded-2xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">
+      <p>プロフィールを読み込めませんでした。読み込み直してから編集してください。</p>
+      <Button
+        type="button"
+        variant="outline"
+        className="mt-3 rounded-full"
+        onClick={() => setProfileReloadKey((key) => key + 1)}
+      >
+        再読み込み
+      </Button>
+    </div>
+  );
 
   // #17: ローカル再計算は廃止。nutrition_targets テーブルからの読み込みを使用（根拠ページと一致させる）
   const nutritionTarget = dbNutritionTarget;
@@ -495,6 +533,9 @@ function ProfilePageContent() {
             </div>
           )}
         </motion.div>
+
+        {/* 開いたときの読み込みの失敗 (#2206 G5) */}
+        {!isLoading && profileLoadFailed && <div className="mb-6">{profileLoadFailedNotice}</div>}
 
         {/* 栄養目標カード */}
         {nutritionTarget && (
@@ -770,6 +811,9 @@ function ProfilePageContent() {
                   <p className="py-8 text-center text-sm text-gray-500" role="status">
                     プロフィールを読み込み中...
                   </p>
+                ) : profileLoadFailed ? (
+                  // 読み込みに失敗した: 保存した値の無い空の入力欄を出さない (保存のボタンも止める。#2206 G5)
+                  profileLoadFailedNotice
                 ) : (
                 <>
                 {/* 基本情報タブ */}
@@ -1343,7 +1387,7 @@ function ProfilePageContent() {
                       )}
                       <Button
                         onClick={handleSave}
-                        disabled={isSaving || isLoading}
+                        disabled={isSaving || isLoading || profileLoadFailed}
                         className="flex-1 py-6 rounded-full bg-orange-500 hover:bg-orange-600 text-white font-bold"
                       >
                         {isSaving ? (
@@ -1371,7 +1415,7 @@ function ProfilePageContent() {
                 ) : (
                   <Button
                     onClick={handleSave}
-                    disabled={isSaving || isLoading}
+                    disabled={isSaving || isLoading || profileLoadFailed}
                     className="w-full py-6 rounded-full bg-gray-900 hover:bg-black text-white font-bold"
                   >
                     {isSaving ? '保存中...' : '変更を保存'}
