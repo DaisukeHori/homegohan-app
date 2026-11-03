@@ -672,6 +672,8 @@ describe.each<VanishCase>([
 describe.each([
   {
     name: 'POST /api/ai/consultation/actions/[actionId]/execute',
+    // 無ければ「実行する」を出さない理由を決めるために、そのメッセージの行の状態をもう 1 回読む (#2195 V2)
+    readsWhenMissing: 3,
     call: async () =>
       (await import('@/app/api/ai/consultation/actions/[actionId]/execute/route')).POST(
         new Request(`${BASE}/api/ai/consultation/actions/${ROW_ID}/execute`, { method: 'POST' }),
@@ -680,13 +682,14 @@ describe.each([
   },
   {
     name: 'DELETE /api/ai/consultation/actions/[actionId]/execute',
+    readsWhenMissing: 2,
     call: async () =>
       (await import('@/app/api/ai/consultation/actions/[actionId]/execute/route')).DELETE(
         new Request(`${BASE}/api/ai/consultation/actions/${ROW_ID}/execute`, { method: 'DELETE' }),
         ctx({ actionId: ROW_ID }),
       ),
   },
-])('$name', ({ call }) => {
+])('$name', ({ call, readsWhenMissing }) => {
   it('アクションの ID では無く、メッセージの ID で探し直す読み込みが DB の失敗なら 500 (404 にしない)。DB の生の文面は本文に出さない', async () => {
     state.missingTable = 'ai_action_logs';
     state.failAfter = { table: 'ai_action_logs', reads: 1 };
@@ -701,7 +704,8 @@ describe.each([
     state.missingTable = 'ai_action_logs';
     const res = await call();
     expect(res.status).toBe(404);
-    expect(state.fromTables.filter((t) => t === 'ai_action_logs')).toHaveLength(2);
+    // アクションの ID・メッセージの ID で 1 回ずつ探す (実行の API は、さらに理由のために 1 回読む)
+    expect(state.fromTables.filter((t) => t === 'ai_action_logs')).toHaveLength(readsWhenMissing);
   });
 });
 
