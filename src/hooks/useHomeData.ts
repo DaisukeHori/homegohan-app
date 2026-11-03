@@ -970,61 +970,62 @@ export const useHomeData = () => {
     if (pendingToggleRef.current.has(mealId)) return;
     pendingToggleRef.current.add(mealId);
     const endWrite = aiConsultationWrites.begin();
+    try {
+      const newStatus = !currentStatus;
 
-    const newStatus = !currentStatus;
-
-    // 楽観的UI更新
-    setTodayPlan(prev => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        meals: prev.meals.map(m =>
-          m.id === mealId
-            ? { ...m, isCompleted: newStatus, completedAt: newStatus ? new Date().toISOString() : null }
-            : m
-        ),
-      };
-    });
-
-    // サマリー更新（completedCount を即時反映 → 進捗 % が即更新）
-    setDailySummary(prev => ({
-      ...prev,
-      completedCount: newStatus
-        ? Math.min(prev.completedCount + 1, prev.totalCount)
-        : Math.max(prev.completedCount - 1, 0),
-    }));
-
-    // DB更新 (完了は RPC。completed_at は DB が決める。#2025)
-    const { error } = await supabase.rpc(PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs(mealId, newStatus));
-
-    if (error) {
-      console.error('Toggle completion error:', error);
-      // ロールバック: 楽観的更新を元に戻す
+      // 楽観的UI更新
       setTodayPlan(prev => {
         if (!prev) return prev;
         return {
           ...prev,
           meals: prev.meals.map(m =>
             m.id === mealId
-              ? { ...m, isCompleted: currentStatus, completedAt: currentStatus ? m.completedAt : null }
+              ? { ...m, isCompleted: newStatus, completedAt: newStatus ? new Date().toISOString() : null }
               : m
           ),
         };
       });
+
+      // サマリー更新（completedCount を即時反映 → 進捗 % が即更新）
       setDailySummary(prev => ({
         ...prev,
         completedCount: newStatus
-          ? Math.max(prev.completedCount - 1, 0)
-          : Math.min(prev.completedCount + 1, prev.totalCount),
+          ? Math.min(prev.completedCount + 1, prev.totalCount)
+          : Math.max(prev.completedCount - 1, 0),
       }));
-      // 念のためリフェッチでサーバー真値に同期
-      void fetchHomeData();
-    }
 
-    // #191: PATCH 完了後に pending を解除
-    pendingToggleRef.current.delete(mealId);
-    // 書き込みの間に止めた AI 相談の成功を 1 回取り直す (#2201 U2。全部の切り替えが終わったとき)
-    endWrite();
+      // DB更新 (完了は RPC。completed_at は DB が決める。#2025)
+      const { error } = await supabase.rpc(PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs(mealId, newStatus));
+
+      if (error) {
+        console.error('Toggle completion error:', error);
+        // ロールバック: 楽観的更新を元に戻す
+        setTodayPlan(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            meals: prev.meals.map(m =>
+              m.id === mealId
+                ? { ...m, isCompleted: currentStatus, completedAt: currentStatus ? m.completedAt : null }
+                : m
+            ),
+          };
+        });
+        setDailySummary(prev => ({
+          ...prev,
+          completedCount: newStatus
+            ? Math.max(prev.completedCount - 1, 0)
+            : Math.min(prev.completedCount + 1, prev.totalCount),
+        }));
+        // 念のためリフェッチでサーバー真値に同期
+        void fetchHomeData();
+      }
+    } finally {
+      // #191: PATCH 完了後に pending を解除
+      pendingToggleRef.current.delete(mealId);
+      // 書き込みの間に止めた AI 相談の成功を 1 回取り直す (#2201 U2。全部の切り替えが終わったとき。RPC が投げても印を下ろす)
+      endWrite();
+    }
   };
 
   // #322: debounce timer cleanup on unmount (メモリリーク防止)
