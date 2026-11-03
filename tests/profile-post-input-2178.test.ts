@@ -155,8 +155,16 @@ const INVALID_SAMPLES: Record<Exclude<UserProfileColumnKind, 'jsonb'>, readonly 
 
 const FIELD_ENTRIES = Object.entries(USER_PROFILE_POST_FIELDS);
 
+/**
+ * 完成度だけの書き込みか (POST は書いた後の行から完成度を数え、行の値と違えば profile_completeness だけを update する。#2201 U4)。
+ * この検査は本文の欄の書き込みを見るので、writesOf からは外す
+ */
+function isCompletenessWrite(write: ProfileWrite): boolean {
+  return write.op === 'update' && Object.keys(write.values).length === 1 && 'profile_completeness' in write.values;
+}
+
 function writesOf(op: ProfileWrite['op']): ProfileWrite[] {
-  return h.profileWrites.filter((write) => write.op === op);
+  return h.profileWrites.filter((write) => write.op === op && !isCompletenessWrite(write));
 }
 
 beforeEach(() => {

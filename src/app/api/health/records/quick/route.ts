@@ -6,6 +6,7 @@ import { HEALTH_QUICK_METRIC_REQUIRED_MESSAGE, HEALTH_QUICK_SOURCE_INVALID_MESSA
 import { RECORD_DATE_PATTERN, sanitizeHealthRecordPayload, stripUndefined } from '@/lib/health-payloads';
 import { addDaysToDate, isCalendarDate, todayLocal } from '@/lib/date-utils';
 import { updateHealthStreak } from '@/lib/health-streaks';
+import { refreshProfileCompleteness } from '@/lib/profile-completeness';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 const DATE_PATTERN = RECORD_DATE_PATTERN;
@@ -138,10 +139,12 @@ export async function POST(request: NextRequest) {
     }
 
     if (Object.keys(profileUpdate).length > 0) {
-      await supabase
+      const profileUpdateWrite = await supabase
         .from('user_profiles')
         .update(profileUpdate)
         .eq('id', user.id);
+      // 体重はプロフィールの完成度に数える欄なので、書いた後の行から計算し直す (失敗しても記録は成功のまま。#2201 U4)
+      if (!profileUpdateWrite?.error && profileUpdate.weight !== undefined) await refreshProfileCompleteness(supabase, user.id);
     }
   }
 

@@ -11,6 +11,10 @@
  *   - 今日の完了した食事が無くなって分析できない (GET /api/ai/nutrition-analysis が analysis: null を返す) と、前の分析
  *     (点数・課題・アドバイス) をそのまま残していた (読み込み直すと点数は出ない)
  *
+ * #2201 U4: 取り直しは栄養の分析を AI を付けずに読み (GET /api/ai/nutrition-analysis?period=today。点数・課題だけ)、
+ * 今日のアドバイスの帯は前のアドバイスを残す (以前は成功のたびに LLM を 1 回呼び、上限に数えない枠の安全弁
+ * 'nutrition_advice_auto' を 1 回使い、安全弁に達すると帯を消していた)。分析できなくなったとき (analysis: null) は帯も消す。
+ *
  * ホームのページの配線 (useAiConsultationDataRefetch(refetch)) は tests/ai-consultation-data-refetch-2195.test.tsx が確かめる。
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
@@ -112,7 +116,7 @@ vi.mock('framer-motion', async () => {
   };
 });
 
-const { useHomeData } = await import('@/hooks/useHomeData');
+const { useHomeData, HOME_NUTRITION_ANALYSIS_WITH_AI_URL, HOME_NUTRITION_ANALYSIS_WITHOUT_AI_URL } = await import('@/hooks/useHomeData');
 const { default: HomePage } = await import('@/app/(main)/home/page');
 const { AI_CONSULTATION_DATA_CHANGED_EVENT } = await import('@/lib/ai/consultation-data-refetch');
 const { AI_CONSULTATION_GENERATION_STATUS_PATH, AI_CONSULTATION_GENERATION_WATCH_INTERVAL_MS } = await import('@/lib/ai/consultation-generation-watch');
@@ -131,8 +135,10 @@ const SETTLE_TASKS = 20;
 const NOT_FOUND_STATUS = 404;
 const OK_STATUS = 200;
 
-/** ホームが読む今日の栄養の分析 (useHomeData の fetchNutritionAnalysis と同じ URL) */
-const NUTRITION_ANALYSIS_URL = '/api/ai/nutrition-analysis?period=today&includeAdvice=true&includeSuggestion=true';
+/** ホームが開いたときに読む今日の栄養の分析 (AI のアドバイスと提案つき。useHomeData の fetchNutritionAnalysis) */
+const NUTRITION_ANALYSIS_URL = HOME_NUTRITION_ANALYSIS_WITH_AI_URL;
+/** 取り直しが読む今日の栄養の分析 (AI を付けない。#2201 U4) */
+const NUTRITION_ANALYSIS_WITHOUT_AI_URL = HOME_NUTRITION_ANALYSIS_WITHOUT_AI_URL;
 /** 栄養の分析の点数 (分析があるとき) */
 const ANALYSIS_SCORE = 72;
 
@@ -151,6 +157,20 @@ const NO_MEALS_RESPONSE = { success: true, analysis: null, message: '献立デ�
 
 /** GET /api/ai/nutrition-analysis の今の答え (無ければ 404。ほかの fetch も 404) */
 let nutritionAnalysisBody: unknown;
+
+/**
+ * 栄養の分析の API の作り物: AI つきの URL には nutritionAnalysisBody をそのまま、AI を付けない URL には AI の部分
+ * (advice・suggestion) を空にしたものを返す (src/app/api/ai/nutrition-analysis/route.ts は includeAdvice / includeSuggestion が
+ * 無ければ AI を呼ばず、advice・suggestion は null)。どちらでもない・答えが無いときは null (呼び出し側が 404 にする)
+ */
+function nutritionAnalysisAnswer(input: unknown): unknown {
+  if (nutritionAnalysisBody === undefined) return null;
+  const url = String(input);
+  if (url === NUTRITION_ANALYSIS_URL) return nutritionAnalysisBody;
+  if (url !== NUTRITION_ANALYSIS_WITHOUT_AI_URL) return null;
+  const body = nutritionAnalysisBody as { analysis?: unknown };
+  return body.analysis ? { ...body, advice: null, suggestion: null } : body;
+}
 
 /** 今週の完了した・写真のある食事 (planned_meals の行) */
 const BEST_MEAL_ROW = {
@@ -188,9 +208,8 @@ beforeEach(() => {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: unknown) => {
-      if (String(input) === NUTRITION_ANALYSIS_URL && nutritionAnalysisBody !== undefined) {
-        return { ok: true, status: OK_STATUS, json: async () => nutritionAnalysisBody };
-      }
+      const answer = nutritionAnalysisAnswer(input);
+      if (answer !== null) return { ok: true, status: OK_STATUS, json: async () => answer };
       return { ok: false, status: NOT_FOUND_STATUS, json: async () => ({}) };
     }),
   );
@@ -270,34 +289,41 @@ describe('useHomeData の取り直しは、サーバーで無くなったもの�
   });
 });
 
-describe('useHomeData の取り直しは、今日のアドバイスの帯と栄養の分析を読み込み直したときと同じにする (#2195 V1)', () => {
+describe('useHomeData の取り直しは、栄養の分析を AI を呼ばずに読み直し、今日のアドバイスの帯を残す (#2201 U4)', () => {
   const ADVICE_BEFORE = '夕食のタンパク質が不足しています';
   const ADVICE_AFTER = '野菜を一品足しましょう';
+  /** 取り直しのあとの点数 (分析の点数が変わったことを見る) */
+  const SCORE_AFTER = 85;
 
-  it('分析のアドバイスが変わったら、取り直しで帯を新しいアドバイスにする', async () => {
+  /** fetch に渡った URL のうち、引数と同じものの数 */
+  const fetchCallsTo = (url: string) => vi.mocked(fetch).mock.calls.filter(([input]) => String(input) === url).length;
+
+  it('取り直しは AI を付けない URL で読み、AI つきの URL (LLM を呼び安全弁を使う) を読まない', async () => {
+    nutritionAnalysisBody = analysisResponse(ADVICE_BEFORE);
+    await renderHome();
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_URL)).toBe(1);
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_WITHOUT_AI_URL)).toBe(0);
+
+    await refetchHome();
+    await refetchHome();
+    // AI つきは開いたときの 1 回だけ。取り直しは 2 回とも AI を付けない
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_URL)).toBe(1);
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_WITHOUT_AI_URL)).toBe(2);
+  });
+
+  it('取り直しで点数は新しくなり、今日のアドバイスの帯は前のアドバイスを残す', async () => {
     nutritionAnalysisBody = analysisResponse(ADVICE_BEFORE);
     await renderHome();
     expect(adviceBannerText()).toBe(ADVICE_BEFORE);
 
-    // AI 相談で夕食を足した (update_meal・generate_single_meal) あと、ホームが取り直す
-    nutritionAnalysisBody = analysisResponse(ADVICE_AFTER);
+    // AI 相談で夕食を足した (update_meal・generate_single_meal) あと、ホームが取り直す。AI を付ければ別のアドバイスになる状態
+    nutritionAnalysisBody = { ...analysisResponse(ADVICE_AFTER), analysis: { score: SCORE_AFTER, issues: [], comparison: {} } };
     await refetchHome();
-    expect(adviceBannerText()).toBe(ADVICE_AFTER);
-  });
-
-  it('分析のアドバイスが無くなったら、取り直しで帯を消す', async () => {
-    nutritionAnalysisBody = analysisResponse(ADVICE_BEFORE);
-    await renderHome();
+    expect(analysisScoreText()).toBe(String(SCORE_AFTER));
     expect(adviceBannerText()).toBe(ADVICE_BEFORE);
-
-    nutritionAnalysisBody = analysisResponse(null);
-    await refetchHome();
-    expect(adviceBannerText()).toBe('');
-    // 分析そのものは新しい答え
-    expect(analysisScoreText()).toBe(String(ANALYSIS_SCORE));
   });
 
-  it('今日の完了した食事が無くなって分析できなくなったら、取り直しで点数と帯を消す', async () => {
+  it('今日の完了した食事が無くなって分析できなくなったら、取り直しで点数と帯を消す (読み込み直したときと同じ。#2195 V1)', async () => {
     nutritionAnalysisBody = analysisResponse(ADVICE_BEFORE);
     await renderHome();
     expect(analysisScoreText()).toBe(String(ANALYSIS_SCORE));
@@ -362,9 +388,8 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
       'fetch',
       vi.fn(async (input: unknown, init?: { method?: string }) => {
         recorder.record(fetchReadKey(input, init));
-        if (String(input) === NUTRITION_ANALYSIS_URL && nutritionAnalysisBody !== undefined) {
-          return { ok: true, status: OK_STATUS, json: async () => nutritionAnalysisBody };
-        }
+        const answer = nutritionAnalysisAnswer(input);
+        if (answer !== null) return { ok: true, status: OK_STATUS, json: async () => answer };
         return { ok: false, status: NOT_FOUND_STATUS, json: async () => ({}) };
       }),
     );
@@ -400,8 +425,12 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
     // 組織のチャレンジの入り口の読み取り (表の mountReadsNotRefetched の orgChallenges。AI 相談が書かない表)。
     // 組織に入っている人で開いたので、開いたときの読み取りに出ている (除外が今も当たっていることは expectRefetchReadsCoverMount が確かめる)
     expectRefetchReadsCoverMount('/home', mountReads, refetchReads, {
+      // 開いたときの AI つきの栄養の分析 (表の mountReadsNotRefetched の nutritionAnalysisWithAi)。取り直しは AI を付けずに読む (#2201 U4)
+      nutritionAnalysisWithAi: [fetchReadKey(NUTRITION_ANALYSIS_URL) ?? ''],
       orgChallenges: [fetchReadKey('/api/org/my-challenges') ?? ''],
     });
+    // 取り直しも栄養の分析 (点数・課題) は読む。AI を付けない URL で
+    expect(refetchReads.has(fetchReadKey(NUTRITION_ANALYSIS_WITHOUT_AI_URL) ?? '')).toBe(true);
   });
 
   it('AI が書く表の答えが空になった取り直しは、空の答えで開いたときと同じ画面 (前の値を残さない)', async () => {
@@ -431,9 +460,8 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: unknown) => {
-        if (String(input) === NUTRITION_ANALYSIS_URL && nutritionAnalysisBody !== undefined) {
-          return { ok: true, status: OK_STATUS, json: async () => nutritionAnalysisBody };
-        }
+        const answer = nutritionAnalysisAnswer(input);
+        if (answer !== null) return { ok: true, status: OK_STATUS, json: async () => answer };
         const url = new URL(String(input), PAGE_ORIGIN);
         if (url.pathname === AI_CONSULTATION_GENERATION_STATUS_PATH && url.searchParams.get('requestId') === REQUEST_ID) {
           // 生成が終わった (今日の献立を書いてから completed にする)

@@ -53,8 +53,8 @@ const nullableColumn = (kind: UserProfileColumnKind): UserProfileUpdateFieldSpec
 const notNullColumn = (kind: UserProfileColumnKind): UserProfileUpdateFieldSpec => ({ kind, nullable: false });
 
 /**
- * サーバーが PUT のたびに上書きする欄 (route が profile_completeness・last_profile_update を計算して入れる)。
- * fromUserProfile は読むが、本文の値は DB に届かないので検査しない
+ * サーバーが書く欄 (route は本文の profile_completeness を書かずに、書いた後の行から数えた完成度を書く (#2201 U4)。
+ * last_profile_update は PUT のたびに今の時刻で上書きする)。fromUserProfile は読むが、本文の値は DB に届かないので検査しない
  */
 export const USER_PROFILE_SERVER_MANAGED_FIELDS = ['profileCompleteness', 'lastProfileUpdate'] as const;
 

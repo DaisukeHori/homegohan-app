@@ -5,13 +5,12 @@ import {
   buildCatalogSelectionUpdate,
   clearCatalogSelectionMetadata,
 } from '../../../../lib/catalog-products';
-import { isCatalogProductMeal, countMealImageJobsToProcess, markDishImagesSkipped, mealImageSkipReasonOf, type MealImageJobSeed } from '../../../../lib/meal-image';
+import { isCatalogProductMeal, markDishImagesSkipped, mealImageSkipReasonOf, type MealImageJobSeed } from '../../../../lib/meal-image';
 import {
   buildDishImagePayload,
   cancelPendingMealImageJobs,
-  enqueueMealImageJobs,
-  triggerMealImageJobProcessing,
 } from '../../../../lib/meal-image-jobs';
+import { enqueueMealImageJobsAfterSave } from '@/lib/meal-image-enqueue-after-save';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { aiDailyLimitSkippedField, consumeAiUsage, refundAiUsage, type AiUsageResult } from '@/lib/plan/entitlements';
 import { checkUserAiConsent } from '@/lib/ai/consent-guard';
@@ -290,11 +289,10 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
     }
 
     if (imageAllowed && jobs.length > 0) {
-      // meal_image_jobs は利用者 (authenticated) から書けない (#1465)。service role で積む。
-      // 1 行も積めなかったとき (重複・書き込みの失敗) は、enqueueMealImageJobs が数えた 1 回を戻す (#1487)
-      const queueDb = getAiQueueWriter();
-      const enqueued = await enqueueMealImageJobs({
-        supabase: queueDb,
+      // 献立の保存は済んでいる。積み込みの例外は数えた 1 回を戻して料理を見送りの状態 ('failed' + 'enqueue_failed') に書き直し、
+      // 処理の起動の例外は記録だけにする (どちらも例外を外へ出さない。#2201 U4。src/lib/meal-image-enqueue-after-save.ts)
+      await enqueueMealImageJobsAfterSave({
+        userDb: supabase,
         plannedMealId: data.id,
         userId: user.id,
         triggerSource,
@@ -303,11 +301,6 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
         requestId: uuidOrNull(requestId),
         usage: imageUsage,
       });
-      // 積めた行と、同じ料理の待ちのジョブがあるときだけ処理を起こす (書き込みの失敗だけなら空振りの呼び出しを出さない。#1532)
-      const jobsToProcess = countMealImageJobsToProcess(enqueued);
-      if (jobsToProcess > 0) {
-        await triggerMealImageJobProcessing({ plannedMealId: data.id, limit: jobsToProcess });
-      }
     }
 
     // 完了の指定があれば RPC で切り替え、応答の行に RPC の値 (is_completed / completed_at / updated_at) を重ねる (#2025)。

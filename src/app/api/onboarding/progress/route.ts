@@ -1,9 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
 import { PROFILE_NAME_PLACEHOLDER } from '@homegohan/shared'
-import { generateRequestId } from '@/lib/db-logger'
+import { createLogger, generateRequestId } from '@/lib/db-logger'
 import { NextResponse } from 'next/server'
 import { OnboardingAnswersSchema } from '@/schemas/onboarding'
 import { internalError } from '@/lib/api/errors'
+import { refreshProfileCompleteness } from '@/lib/profile-completeness'
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character'
 import { API_INVALID_JSON_MESSAGE, API_UNAUTHENTICATED_MESSAGE } from '@/lib/api/error-responses'
 import { ONBOARDING_INVALID_ANSWERS_MESSAGE, ONBOARDING_INVALID_REQUEST_BODY_MESSAGE } from '@/lib/onboarding-api-errors'
@@ -225,6 +226,13 @@ export async function POST(request: Request) {
 
     if (error) {
       return internalError('POST /api/onboarding/progress', error, { userId: user.id, requestId })
+    }
+
+    // 答え (名前・年齢・身長・体重・目標など) はプロフィールの完成度に数える欄なので、書いた後の行から計算し直す
+    // (失敗しても答えの保存は成功のまま。完成度は次の書き込みで直る。#2201 U4)
+    const completenessRefresh = await refreshProfileCompleteness(supabase, user.id)
+    if (completenessRefresh.status === 'error') {
+      createLogger('POST /api/onboarding/progress', requestId).error('Profile completeness refresh error', completenessRefresh.error)
     }
 
     return NextResponse.json({
