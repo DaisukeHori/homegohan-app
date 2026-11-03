@@ -260,6 +260,8 @@ type FakeServer = {
   mealPlansHold: Promise<void> | null;
   /** true なら GET /api/family/members/names が 500 を返す (#2201 U1) */
   namesFail: boolean;
+  /** 置いている間に始めた食事の更新 (PATCH /api/meal-plans/meals/<id>) の応答を、この Promise が解けるまで止める (#2201 U2) */
+  mealPatchHold: Promise<void> | null;
 };
 let server: FakeServer;
 let fetchCalls: string[];
@@ -367,6 +369,8 @@ function jsonResponse(body: unknown, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
 }
 const NOT_FOUND_STATUS = 404;
+/** 食事の更新の道の頭 (PATCH /api/meal-plans/meals/<id>) */
+const MEAL_PATCH_PATH_PREFIX = '/api/meal-plans/meals/';
 /** 読み取りの失敗 (server.namesFail) のときの status */
 const SERVER_ERROR_STATUS = 500;
 /** ページの API の相対 URL を解く起点 (fetch のモックの中だけで使う) */
@@ -381,6 +385,12 @@ function installFakeServer() {
     const url = new URL(raw, PAGE_ORIGIN);
     // 祝日の一覧 (外の API) は、この検査では祝日なし
     if (url.origin !== PAGE_ORIGIN) return jsonResponse({});
+    // 食事の更新 (完了の切り替えなど)。止めていれば、止めが解けてから成功を返す
+    if ((init?.method ?? 'GET').toUpperCase() === 'PATCH' && url.pathname.startsWith(MEAL_PATCH_PATH_PREFIX)) {
+      const hold = server.mealPatchHold;
+      if (hold) await hold;
+      return jsonResponse({ success: true });
+    }
     switch (url.pathname) {
       case '/api/meal-plans': {
         // 答えは読み取りを始めたときのもの。止めていれば、止めが解けてから返す
@@ -443,6 +453,7 @@ beforeEach(() => {
     familyMemberNames: [],
     mealPlansHold: null,
     namesFail: false,
+    mealPatchHold: null,
   };
   supabaseMock.profileFails = false;
   supabaseMock.channelNames.length = 0;
@@ -775,6 +786,38 @@ describe('献立表 (/menus/weekly) の取り直しの順序と失敗 (#2201 U1)
     expect(container.textContent).toContain(NEW_DISH);
     expect(container.textContent).not.toContain(OLD_DISH);
     expect(await calendarMealDotCount(), '古い応答が、あとから足した日の印を消した').toBe(DAYS_IN_WEEK + 1);
+  });
+
+  it('食事の完了の切り替えの応答を待つあいだに来た成功では取り直さず (#2201 U2)、終わったら 1 回取り直す', async () => {
+    /** 完了の切り替えの待ち (ページの toggleMealCompletion の 250ms) より長い待ち */
+    const TOGGLE_DEBOUNCE_WAIT_MS = 300;
+    const today = formatLocalDate(new Date());
+    server.days.set(today, [{ id: 'meal-today', dishName: '鮭の塩焼き' }]);
+    await renderWeeklyPage();
+    const toggle = container.querySelector<HTMLButtonElement>('button.w-7.h-7.rounded-full');
+    expect(toggle, '今日の食事の完了の切り替えが無い').not.toBeNull();
+
+    let release: () => void = () => undefined;
+    server.mealPatchHold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await act(async () => {
+      toggle!.click();
+      await new Promise((resolve) => setTimeout(resolve, TOGGLE_DEBOUNCE_WAIT_MS));
+    });
+    expect(fetchCalls.some((raw) => raw.startsWith(MEAL_PATCH_PATH_PREFIX)), '完了の切り替えを送っていない (検査が空振りしている)').toBe(true);
+
+    const mealPlansCallsBefore = callsTo('/api/meal-plans');
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    expect(callsTo('/api/meal-plans') - mealPlansCallsBefore, '書き込みの応答を待つあいだに取り直した').toBe(0);
+
+    await act(async () => {
+      release();
+    });
+    await settle();
+    // 止めた成功のぶん 1 回 (表示中の週 + 月のカレンダーの 2 つの範囲)
+    expect(callsTo('/api/meal-plans') - mealPlansCallsBefore, '書き込みが終わっても、止めた成功を 1 回取り直さない').toBe(3);
   });
 
   it('取り直しで名前の API を読めなかったら、家族の切り替えの名前を残す', async () => {
