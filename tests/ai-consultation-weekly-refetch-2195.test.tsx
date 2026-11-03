@@ -238,7 +238,7 @@ function otherWeekDateInDisplayedMonth(): string {
     : dateFromWeekStart(-DAYS_IN_WEEK);
 }
 
-type FakeMeal = { id: string; dishName: string };
+type FakeMeal = { id: string; dishName: string; isCompleted?: boolean };
 type FakeShoppingItem = { id: string; itemName: string; isChecked: boolean };
 
 /** サーバーの表 (テストごとに作り直す) */
@@ -320,7 +320,7 @@ function plannedMealJson(date: string, meal: FakeMeal) {
     mealType: 'dinner',
     dishName: meal.dishName,
     mode: 'cook',
-    isCompleted: false,
+    isCompleted: meal.isCompleted ?? false,
     recipeUrl: null,
     imageUrl: null,
     description: null,
@@ -398,10 +398,17 @@ function installFakeServer() {
       );
       return jsonResponse({ success: true });
     }
-    // 食事の更新 (完了の切り替えなど)。止めていれば、止めが解けてから成功を返す
+    // 食事の更新 (完了の切り替えなど)。止めていれば、止めが解けてから成功を返す。完了はサーバーの表に書く (#2201 U2)
     if ((init?.method ?? 'GET').toUpperCase() === 'PATCH' && url.pathname.startsWith(MEAL_PATCH_PATH_PREFIX)) {
       const hold = server.mealPatchHold;
       if (hold) await hold;
+      const mealId = url.pathname.slice(MEAL_PATCH_PATH_PREFIX.length);
+      const patch = JSON.parse(String(init?.body ?? '{}')) as { isCompleted?: boolean };
+      if (patch.isCompleted !== undefined) {
+        for (const [date, meals] of server.days) {
+          server.days.set(date, meals.map((meal) => (meal.id === mealId ? { ...meal, isCompleted: patch.isCompleted } : meal)));
+        }
+      }
       return jsonResponse({ success: true });
     }
     switch (url.pathname) {
@@ -875,7 +882,7 @@ describe('献立表 (/menus/weekly) の取り直しの順序と失敗 (#2201 U1)
     expect(callsTo('/api/meal-plans') - mealPlansCallsBefore, '書き込みが終わっても、止めた成功を 1 回取り直さない').toBe(3);
   });
 
-  it('取り直しの応答を待つあいだに買い物リストの品目をチェックして終えていても、チェックの前に読んだ応答でチェックを外さず、読み直す (#2201 U2)', async () => {
+  it('取り直しの応答を待つあいだに買い物リストの品目をチェックしたら、チェックの前に読んだ応答でチェックを外さない (#2201 U2)', async () => {
     const ITEM = { id: 'item-1', itemName: 'にんじん', isChecked: false };
     server.days.set(displayedWeekDates()[0], [{ id: 'meal-1', dishName: '鮭の塩焼き' }]);
     server.shoppingItems = [ITEM];
@@ -893,7 +900,7 @@ describe('献立表 (/menus/weekly) の取り直しの順序と失敗 (#2201 U1)
     server.mealPlansHold = null;
     expect(callsTo('/api/meal-plans') - mealPlansCallsBefore, '取り直しが献立と買い物リストを読んでいない (検査が空振りしている)').toBeGreaterThan(0);
 
-    // 応答を待つあいだに買い物リストを開いて品目をチェックし (書き込みが終わる)、閉じる
+    // 応答を待つあいだに買い物リストを開いて品目をチェックする (書き込みが終わる)
     await act(async () => {
       shoppingListButton().click();
     });
@@ -905,20 +912,49 @@ describe('献立表 (/menus/weekly) の取り直しの順序と失敗 (#2201 U1)
     await settle();
     expect(server.shoppingItems[0].isChecked, 'チェックを送っていない (検査が空振りしている)').toBe(true);
     expect(shoppingItemChecked()).toBe(true);
-    const close = container.querySelector<HTMLButtonElement>('[role="dialog"] button[aria-label="閉じる"]');
-    if (!close) throw new Error('買い物リストの閉じるボタンが無い');
+
     await act(async () => {
-      close.click();
+      release();
     });
     await settle();
-    expect(container.querySelector('[role="dialog"]'), '買い物リストが閉じない').toBeNull();
+    expect(shoppingItemChecked(), 'チェックの前に読んだ取り直しの応答が、チェックを外した').toBe(true);
+  });
+
+  it('取り直しの応答を待つあいだに食事の完了を切り替えて終えていても、切り替えの前に読んだ応答で完了を戻さず、読み直す (#2201 U2)', async () => {
+    /** 完了の切り替えの待ち (ページの toggleMealCompletion の 250ms) より長い待ち */
+    const TOGGLE_DEBOUNCE_WAIT_MS = 300;
+    const today = formatLocalDate(new Date());
+    server.days.set(today, [{ id: 'meal-today', dishName: '鮭の塩焼き' }]);
+    await renderWeeklyPage();
+    const toggle = () => container.querySelector<HTMLButtonElement>('button.w-7.h-7.rounded-full');
+    expect(toggle(), '今日の食事の完了の切り替えが無い').not.toBeNull();
+    /** 完了の印 (チェックの絵) が出ているか */
+    const shownCompleted = () => toggle()!.querySelector('svg') !== null;
+    expect(shownCompleted()).toBe(false);
+
+    // 取り直しの献立の読み取りの応答を止める (応答は読み取りを始めたときの答え = 未完了)
+    let release: () => void = () => undefined;
+    server.mealPlansHold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    server.mealPlansHold = null;
+
+    // 応答を待つあいだに完了にし、書き込みが終わる (サーバーも完了になる)
+    await act(async () => {
+      toggle()!.click();
+      await new Promise((resolve) => setTimeout(resolve, TOGGLE_DEBOUNCE_WAIT_MS));
+    });
+    await settle();
+    expect(server.days.get(today)?.[0].isCompleted, '完了の切り替えを送っていない (検査が空振りしている)').toBe(true);
+    expect(shownCompleted()).toBe(true);
 
     const mealPlansCallsBeforeRelease = callsTo('/api/meal-plans');
     await act(async () => {
       release();
     });
     await settle();
-    expect(shoppingItemChecked(), 'チェックの前に読んだ取り直しの応答が、チェックを外した').toBe(true);
+    expect(shownCompleted(), '切り替えの前に読んだ取り直しの応答が、完了を戻した').toBe(true);
     // 置かなかった応答のぶん 1 回読み直す (表示中の週 + 月のカレンダーの 2 つの範囲)
     expect(callsTo('/api/meal-plans') - mealPlansCallsBeforeRelease, '置かなかった応答のぶん読み直していない').toBe(3);
   });
