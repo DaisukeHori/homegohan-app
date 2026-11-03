@@ -1196,7 +1196,7 @@ export async function POST(request: Request, props: Params) {
 - `ModerationItem` に `hidden_at: string | null` を足す。
 - 「コンテンツ情報」の `dl` に 1 項目足す (「投稿日時」の次): `dt` = 「表示」、`dd` = 隠れていれば `非表示中 (隠した日時: <JST>)`、隠れていなければ `表示中`。JST は `new Date(hidden_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })`。
 - 右の列 (「審査アクション」のカード) の下に `ModerationRestoreForm` を**条件なしで**描く。「非表示の解除」のカードの枠と見出しはコンポーネントが持ち、隠れていない (`hiddenAt` が null) うえに結果の表示も失敗の文も無いときは何も描かない (§9.2)。`restorable` はサーバー側で `resolvedItem.hidden_at !== null && isWithinHiddenContentRestoreWindow(resolvedItem.hidden_at, new Date())` (§6) で決めて渡す。審査の欄 (pending のときだけ入力欄が出る) とは独立に出す (S-18)。
-- 条件 (`resolvedItem.hidden_at && …`) で描き分けない理由: 戻せたあとの `router.refresh()` でサーバーの page が描き直され、`hidden_at` が null になる。親が条件で描き分けると、そこでコンポーネントがアンマウントされ、「表示に戻しました (n 行)」と BAN の 1 文 (S-01・S-17・R-16)、409 の文面 (S-07) が画面から消える。いつも同じ位置・同じ `key` で描けば、`router.refresh()` はクライアントのコンポーネントの状態を保ったままサーバーのコンポーネントを読み直す (Next.js の App Router の `router.refresh()` の仕様) ので、結果の表示が残る。既存の `ModerationReviewForm` が条件なしで描かれ、判定のあとの結果が残るのと同じ形。
+- 条件 (`resolvedItem.hidden_at && …`) で描き分けない理由: 戻せたあとの `router.refresh()` でサーバーの page が描き直され、`hidden_at` が null になる。親が条件で描き分けると、そこでコンポーネントがアンマウントされ、「表示に戻しました (n 行)」と凍結の 1 文 (S-01・S-17・R-16)、409 の文面 (S-07) が画面から消える。いつも同じ位置・同じ `key` で描けば、`router.refresh()` はクライアントのコンポーネントの状態を保ったままサーバーのコンポーネントを読み直す (Next.js の App Router の `router.refresh()` の仕様) ので、結果の表示が残る。既存の `ModerationReviewForm` が条件なしで描かれ、判定のあとの結果が残るのと同じ形。
 - 410 で通報そのものが消えた (コンテンツの削除で CASCADE) ときは、`router.refresh()` で page の `GET /api/admin/moderation/{type}/{id}` が 404 になり、page 全体が既存の `notFound()` の画面に変わる (コンポーネントの文面は残らないが、「見つかりません」が削除を伝える)。
 
 ```tsx
@@ -1679,7 +1679,7 @@ export default function ModerationRestoreForm({
 - `it('#1538 GET /queue: 各項目に hidden_at がある')`
 
 `tests/admin-moderation-restore-form.test.tsx` (新設・段 B。`tests/admin-moderation-review-form.test.tsx` と同じ描画の方法):
-- `it('F-1: 理由を入れて「表示に戻す」を押すと、JSON で POST /api/admin/moderation/{type}/{id}/restore に { restore_note } (前後の空白を除く) を送る。成功したら「表示に戻しました (n 行)」と BAN の 1 文を出し、router.refresh() を呼ぶ。そのあと親が refresh の後の形 (hiddenAt = null・restorable = false・同じ key) で描き直しても、見出し「非表示の解除」・「表示に戻しました (n 行)」・BAN の 1 文が残る (S-01・S-17・R-16)')`
+- `it('F-1: 理由を入れて「表示に戻す」を押すと、JSON で POST /api/admin/moderation/{type}/{id}/restore に { restore_note } (前後の空白を除く) を送る。成功したら「表示に戻しました (n 行)」と凍結の 1 文を出し、router.refresh() を呼ぶ。そのあと親が refresh の後の形 (hiddenAt = null・restorable = false・同じ key) で描き直しても、見出し「非表示の解除」・「表示に戻しました (n 行)」・凍結の 1 文が残る (S-01・S-17・R-16)')`
 - `it('F-2: 理由が空・空白だけ・5000 字超は送らずに画面で知らせる')`
 - `it('F-3: 409 / 410 は API の文面を出して router.refresh()。409 OP_CONTENT_NOT_HIDDEN のあと親が hiddenAt = null で描き直しても、文面 (role=alert) が残る (S-07)。500 は文面を出して欄を残し refresh しない。401 はログインし直す案内。本文が JSON でない失敗は HTTP ステータスを添えた案内。通信の失敗は案内')`
 - `it('F-7: hiddenAt が null で、結果の表示も失敗の文も無いときは何も描かない (見出し「非表示の解除」も無い: 親は条件なしで描くので、隠れていない通報の画面にカードが出ない)')`

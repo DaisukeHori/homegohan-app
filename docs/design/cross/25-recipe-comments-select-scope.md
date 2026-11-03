@@ -5,6 +5,7 @@
 | v1.0 | 2026-11-01 | 新設 (Issue #2166 の X1 の設計ゲート・A 型 4 相。`recipe_comments` の SELECT のポリシー `Anyone can view comments` (ログインした誰でも全行) を、「そのコメントのレシピを読める人」と「そのコメントを書いた本人」だけに絞る migration と戻し口、契約テスト・結合テストを書き切る) |
 | v1.1 | 2026-11-01 | マージ後の追随: migration の名指しを 20261101100000 に確定した (#2177)・行番号の参照を名前の参照にした・§9.1 (b) の E-3 の P-7a を直した。前提の本番への適用の文を来歴にし、§16 に #2174 のテスト 2 本を足した |
 | v1.2 | 2026-11-01 | 整合ゲートの候補の追随 (#2183 docs-1101g): 適用を将来の手順として書いた文 (決めること 9・R-15・§6.9・§15・§19) を、PR #2176 (c7e5c019) と run 41270869190 の来歴にした・残った行番号の参照 (§3.2 の E-2・E-4・§3.4 の F-12〜F-14・§9 のエラー表) を名前の参照にした・E-4 のコメントの引用と F-12 の it 名を今の文にした |
+| v1.3 | 2026-11-03 | 整合ゲートの候補の追随 (#2189 docs-1101h): §6.9 の前提 (1)(3) を来歴の文にした (適用の直前の行数の読み直しは記録が無いこと・適用後の `pg_policies` の確認は Issue #2166 のコメントにあること)・§7.8 と §16 の it 名の置き換えを現在形にし、`:462` を it 名で指した・F-13 の根拠を beforeAll と it「GET /api/recipes/[id]: 200…」にした |
 
 要件の正本は Issue #2166 の本文 (X1 の節) とコメント。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
 ファイル名は cross/25 (cross/ の既存は 01〜09・12・13a・13b・14〜24。10・11 は欠番、13 は 13a・13b に引き継がれている (cross/CLAUDE.md の注記のとおり))。
@@ -173,7 +174,7 @@ RLS を通らない書き手: 結合テスト・e2e の準備と後片付け (se
 | # | 事実 | 根拠 |
 |---|---|---|
 | F-12 | `tests/integration/security/account-export-scope.test.ts` の it「A の JWT で、B の公開レシピへの B のコメント (読めるレシピのコメント) と B のいいね (誰でも閲覧可) が読める」は、B が自分の公開レシピに書いたコメントを A が読む (設計後も読める) | 同ファイルの `targetRecipe` の定義 (B なら自分の公開レシピ) |
-| F-13 | `tests/integration/security/recipes-api-logged-in.test.ts` は、作者本人の非公開レシピへの本人のコメントを本人が読む (設計後も読める) | 同ファイルの it「GET /api/recipes/[id]/comments: 200…」・「POST /api/recipes/[id]/comments: 200…」と describe「他人から見た非公開のレシピのコメント」 |
+| F-13 | `tests/integration/security/recipes-api-logged-in.test.ts` は、作者本人の非公開レシピへの本人のコメントを本人が読む (設計後も読める) | 同ファイルの it「GET /api/recipes/[id]/comments: 200…」・「POST /api/recipes/[id]/comments: 200…」、同ファイルの beforeAll (owner が `is_public: false` のレシピと本人のコメントを入れる) と it「GET /api/recipes/[id]: 200。作者の名前・いいね・コメントの作者の名前…」 |
 | F-14 | `tests/integration/security/recipe-author-display-names.test.ts` の I-10 は、レシピを非公開・隠した後にコメントの行が残ることを `supabaseAdmin` で読む (設計後も通る)。コメントの読み取りはどれも service_role か関数経由 | 同ファイルの it「I-10: 非公開に戻す・隠すと…」 |
 | F-15 | `tests/account-export-tables.test.ts:467` は `recipe_comments` を「RLS が他人の行を返しうる表」に数え、絞り込みがあることを見る (設計後も他人の行 (公開レシピのコメント) は返るので、そのまま) | 同ファイル |
 | F-16 | 単体テスト (`tests/api-security-cluster.test.ts`・`tests/recipe-viewer-lookups-1917.test.ts`・`tests/route-invalid-input-1917.test.ts`・`tests/recipe-author-name-1649.test.ts`・`tests/recipe-detail-hidden-404.test.ts`・`tests/list-order-tiebreak-2134.test.ts`・`tests/postgrest-embed-relationship-scan.test.ts`) は DB を偽物にするので RLS に反応しない | 各ファイルの `recipe_comments` の参照 |
@@ -336,7 +337,7 @@ recipes の SELECT: Users can view public recipes  (hidden_at IS NULL OR 作者)
 ### 6.9 承認と適用の前提 (決めること 9)
 
 - 承認: 要る (権限を絞る migration)。マージが本番への適用 (CI の `deploy-supabase-migrations.yml`) を兼ねる (PR #2176・run 41270869190)。
-- 前提: (1) 本番の `recipe_comments` が 0 行 (2026-11-01) なので、見え方が変わる利用者はいない。適用 (マージ) の直前にもう一度 SELECT で行数を読み、0 でなければ「他人の非公開・隠したレシピへのコメント」の件数を数えて承認の材料に添える。告知は要らない (行が無い。あっても、第9条の文どおりの範囲に戻すだけで、利用者の同意の範囲を広げない)。(2) ローカルの全件 (契約・結合・API) が緑。(3) 適用後に本番の `pg_policies` を SELECT で読み、§19 の形になっていることを確かめる。
+- 前提: (1) 本番の `recipe_comments` が 0 行 (2026-11-01) なので、見え方が変わる利用者はいない。適用 (マージ) の直前に行数を読み直す手順を置いていたが、読み直した記録は Issue #2166 のコメントにも整合ゲートの結果にも無い (残っている行数の記録は 2026-11-01 の 0 行だけ)。告知は要らない (行が無い。あっても、第9条の文どおりの範囲に戻すだけで、利用者の同意の範囲を広げない)。(2) ローカルの全件 (契約・結合・API) が緑。(3) 適用後に本番の `pg_policies` を読み取りで確かめた (Issue #2166 の 2026-11-01 のコメント): `recipe_comments` の SELECT は `recipe_comments_select_own_or_visible_recipe` (authenticated・本人の行 OR そのレシピを読める人) の 1 本で、`Anyone can view comments` は消えた。
 
 ### 6.10 他の文書の追随 (決めること 10)
 
@@ -1188,14 +1189,14 @@ describe('他人から見た非公開のレシピのコメント (cross/25。#21
 });
 ```
 
-### 7.8 `tests/integration/security/account-export-scope.test.ts` の差分 (it 名の語だけ。検査は変えない)
+### 7.8 `tests/integration/security/account-export-scope.test.ts` の it 名 (語だけ置き換えた。検査は変えていない)
 
 ```ts
 // tsc:skip — 既存ファイルの差分の断片 (it 名の 1 行)
   it('A の JWT で、B の公開レシピへの B のコメント (読めるレシピのコメント) と B のいいね (誰でも閲覧可) が読める', async () => {
 ```
 
-(:462 の it 名を置き換える。B のコメントは B の公開レシピへのもの (:152) なので設計後も読める。検査の本文は変えない。)
+(it「A の JWT で、B の公開レシピへの B のコメント (読めるレシピのコメント) と B のいいね (誰でも閲覧可) が読める」の名前は、この文に置き換えてある。B のコメントは B の公開レシピへのもの (同ファイルの `targetRecipe` の定義) なので設計後も読める。検査の本文は変えていない。)
 
 ---
 
@@ -1470,7 +1471,7 @@ sequenceDiagram
 | `tests/integration/security/anon-definer-execute.test.ts` | `prosecdef`・許可一覧 | 反応しない (関数を足さない。D は `meals` / `organizations` を読む) | – | – |
 | `tests/integration/security/operator-mfa-db-gate.test.ts` | `operator_mfa_satisfied`・`DB_GATED_POLICY_MIN_COUNT` | 反応しない (MFA の判定を持つポリシーの数は変わらない) | – | – |
 | `tests/integration/rls/hidden-content-visibility.test.ts` D2 | `Users can view public recipes` | 反応しない (`recipes` のポリシーを変えない)。本書の I-9 が同じ定義を見る | – | – |
-| `tests/integration/security/account-export-scope.test.ts:462` | `recipe_comments`・`誰でも閲覧可` | 反応しない (B のコメントは B の公開レシピへのもの。it 名の語だけ古い) | it 名を §7.8 に | 1 |
+| `tests/integration/security/account-export-scope.test.ts` の it「A の JWT で、B の公開レシピへの B のコメント…」 | `recipe_comments`・`誰でも閲覧可` | 反応しない (B のコメントは B の公開レシピへのもの) | it 名は §7.8 の文に置き換えた (今の it「A の JWT で、B の公開レシピへの B のコメント (読めるレシピのコメント) と B のいいね (誰でも閲覧可) が読める」) | 1 |
 | `tests/integration/security/account-export-scope.test.ts:526` (`recipe_comments: 1`) | `recipe_comments` | 反応しない (A のコメントは B の公開レシピへのもの。本人の行は見え方に関わらず出る) | – | – |
 | `tests/integration/security/recipes-api-logged-in.test.ts` | `recipe_comments`・`/comments` | 反応しない (作者本人が自分の非公開レシピの自分のコメントを読む)。A-1・A-2 を足す | §7.7 | 1 |
 | `tests/integration/security/recipe-author-display-names.test.ts` I-4・I-8・I-10・I-16・I-17 | `recipe_comments` | 反応しない (コメントの読み取りは `supabaseAdmin` か関数か API の詳細 (公開レシピ) 経由。I-10 の残存の確認は service_role) | – | – |
@@ -1550,3 +1551,4 @@ sequenceDiagram
 | v1.0 | 2026-11-01 | 新設 (Issue #2166 の X1 の設計ゲート・A 型 4 相) |
 | v1.1 | 2026-11-01 | マージ後の追随: migration の名指しを 20261101100000 に確定した (#2177)・行番号の参照を名前の参照にした・§9.1 (b) の E-3 の P-7a を直した。前提の本番への適用の文を来歴にし、§16 に #2174 のテスト 2 本を足した |
 | v1.2 | 2026-11-01 | 整合ゲートの候補の追随 (#2183 docs-1101g): 適用を将来の手順として書いた文 (決めること 9・R-15・§6.9・§15・§19) を、PR #2176 (c7e5c019) と run 41270869190 の来歴にした・残った行番号の参照 (§3.2 の E-2・E-4・§3.4 の F-12〜F-14・§9 のエラー表) を名前の参照にした・E-4 のコメントの引用と F-12 の it 名を今の文にした |
+| v1.3 | 2026-11-03 | 整合ゲートの候補の追随 (#2189 docs-1101h): §6.9 の前提 (1)(3) を来歴の文にした (適用の直前の行数の読み直しは記録が無いこと・適用後の `pg_policies` の確認は Issue #2166 のコメントにあること)・§7.8 と §16 の it 名の置き換えを現在形にし、`:462` を it 名で指した・F-13 の根拠を beforeAll と it「GET /api/recipes/[id]: 200…」にした |
