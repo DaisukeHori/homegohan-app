@@ -11,12 +11,17 @@
  * (クーポンの詳細・プランの詳細と同じ。#2064・#2073)
  * 読み直しが 404 (読み直しの間に機能パッケージが消えた)・403 (権限が外れた・二段階認証の確認が要る)・401 (ログインが切れた) で断られたら、
  * 読み込み直しても変わらないので、その理由の文を出し「再試行」は出さず、「廃止する」を戻す (プラン・A/B テストの詳細と同じ。#2080)
+ *
+ * 機能フラグの一覧を変える保存は、最後に読んだ・保存した行の updated_at (expected_updated_at) を一緒に送る (#2195 V4)。
+ * route はその値のままのときだけ書き、読んだあとに別の操作 (機能フラグの作成が basic に足したキー・別の運営の保存) が入っていたら
+ * 409 CONFLICT_STALE_DATA で断る (古い一覧で、あとから足されたキーを消さない)。画面は 409 を受けたら行を読み直し、
+ * 書きかけの入力欄は残して手を付けていない欄だけ今の値に揃え、いま保存されている機能フラグを入力欄の下に出して見比べてもらう
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { isStatusChangeConflict, operationFailureMessage } from '@/lib/admin/api-error-message';
+import { isStaleDataConflict, isStatusChangeConflict, operationFailureMessage } from '@/lib/admin/api-error-message';
 import { FEATURE_PACKAGE_INVALID_TRANSITION_ERROR_CODE } from '@/lib/super-admin/feature-packages-schemas';
 import {
   NO_RESPONSE_STATE_RELOADED_GUIDE,
@@ -30,10 +35,11 @@ import {
   adminActionNoResponseMessage,
   adminLoadFailedFallback,
   adminLoadFailedMessage,
-  adminScreenErrorOfResponse,
   displayableAdminError,
   fetchAdminJson,
+  readFailureBody,
   savedRowOfResponse,
+  screenFailureMessage,
 } from '@/lib/admin/admin-screen-messages';
 
 /** 読み込みの失敗の文の対象 (「機能パッケージを読み込めませんでした (HTTP 502)」。#2093 W7) */
@@ -79,13 +85,22 @@ function inputAfterSave<T extends string | number>(current: T, atSave: T, saved:
   return current === atSave ? saved : current;
 }
 
-/** 保存で送る本文 (PATCH /api/super-admin/feature-packages/{id} の表示名・説明・機能フラグ・表示順) */
+/**
+ * 保存で送る本文 (PATCH /api/super-admin/feature-packages/{id} の表示名・説明・機能フラグ・表示順)。
+ * expected_updated_at は書く値でなく書く条件 (#2195 V4。機能フラグを送るときだけ、最後に読んだ・保存した行の updated_at)
+ */
 type FeaturePackageSaveBody = {
   display_name?: string;
   description?: string | null;
   feature_flags?: string[];
   display_order?: number;
+  expected_updated_at?: string;
 };
+
+/** 2 つの機能フラグの並びが同じか (並びで比べる) */
+function sameFeatureFlags(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((flag, i) => flag === b[i]);
+}
 
 /**
  * 保存で送る本文。最後に読んだ・保存した機能パッケージ (pkg) から変えた欄だけを入れる (#1917)。
@@ -100,11 +115,31 @@ function changedFeaturePackageFields(
   const body: FeaturePackageSaveBody = {};
   if (inputs.displayName !== pkg.display_name) body.display_name = inputs.displayName;
   if (inputs.description !== (pkg.description ?? '')) body.description = inputs.description || null;
-  const flagsChanged =
-    inputs.flags.length !== pkg.feature_flags.length || inputs.flags.some((flag, i) => flag !== pkg.feature_flags[i]);
-  if (flagsChanged) body.feature_flags = inputs.flags;
+  if (!sameFeatureFlags(inputs.flags, pkg.feature_flags)) body.feature_flags = inputs.flags;
   if (inputs.displayOrder !== pkg.display_order) body.display_order = inputs.displayOrder;
   return body;
+}
+
+/**
+ * 保存の本文に、機能フラグを送るときだけ最後に読んだ・保存した行の updated_at (expected_updated_at) を添える (#2195 V4)。
+ * 機能フラグは配列全体を書き換えるので、route はこの値のままのときだけ書く。ほかの欄だけの保存には添えない
+ * (送った欄だけを書くので、読んだあとに別の操作が機能フラグを足していても、その欄を古い値で上書きしない。添えると無関係な変更で 409 になる)
+ */
+function withExpectedUpdatedAt(changes: FeaturePackageSaveBody, pkg: FeaturePackage): FeaturePackageSaveBody {
+  return changes.feature_flags === undefined ? changes : { ...changes, expected_updated_at: pkg.updated_at };
+}
+
+/**
+ * 読み直した行 (row) に、保存で送った欄 (changes) の値がもう全部入っているか (#2195 V4)。
+ * 保存の応答を受け取れずに押し直した (1 回目がもう書いていた)・二度押しのときは、自分の操作で updated_at が変わって 409 になる。
+ * このときは「別の操作で」と言わず、保存できた扱いにする
+ */
+function savedChangesAlreadyIn(changes: FeaturePackageSaveBody, row: FeaturePackage): boolean {
+  if (changes.display_name !== undefined && changes.display_name !== row.display_name) return false;
+  if (changes.description !== undefined && changes.description !== row.description) return false;
+  if (changes.feature_flags !== undefined && !sameFeatureFlags(changes.feature_flags, row.feature_flags)) return false;
+  if (changes.display_order !== undefined && changes.display_order !== row.display_order) return false;
+  return true;
 }
 
 /** 保存を押したが、どの入力欄も最後に読んだ・保存した値から変えていなかったときの文 (送らない。#1917) */
@@ -112,6 +147,35 @@ const NO_FEATURE_PACKAGE_CHANGES_MESSAGE = '変更した項目がないので、
 
 /** 廃止が失敗したときの文の頭 (後ろに理由を添える) */
 const DEPRECATE_FAILURE_SUMMARY = '廃止できませんでした';
+
+/** 保存が 409 CONFLICT_STALE_DATA (読んだあとに別の操作が機能パッケージを変えていた) で断られたときの文の頭 (#2195 V4) */
+const SAVE_CONFLICT_SUMMARY = '保存できませんでした';
+
+/** 保存が 409 で断られたときの理由の文の頭 (#2195 V4) */
+const SAVE_CONFLICT_REASON_HEAD = '別の操作で機能パッケージが先に変わっていました';
+
+/** 保存が 409 で断られ、機能パッケージを読み直せたときの文 (#2195 V4。書きかけの入力欄は残す) */
+const SAVE_CONFLICT_RELOADED_MESSAGE = `${SAVE_CONFLICT_SUMMARY}（${SAVE_CONFLICT_REASON_HEAD}。今の値を読み込み直しました。入力中の欄は残しているので、見比べてから、もう一度保存してください）`;
+
+/**
+ * 保存が 409 で断られ、読み直しも失敗したときの文 (#2195 V4)。画面の updated_at は古いままなので、もう一度保存すると
+ * また 409 になって読み直す (読み直せるまで古い一覧で書くことはない)
+ */
+const SAVE_CONFLICT_RELOAD_FAILED_MESSAGE = `${SAVE_CONFLICT_SUMMARY}（${SAVE_CONFLICT_REASON_HEAD}。今の値を読み込めませんでした。もう一度保存すると、今の値を読み込み直します）`;
+
+/** 保存が 409 で断られ、読み直しが 404 / 403 / 401 で断られたときの文 (#2195 V4。message は理由の文) */
+function saveConflictUnavailableMessage(message: string): string {
+  return `${SAVE_CONFLICT_SUMMARY}（${SAVE_CONFLICT_REASON_HEAD}。${message}）`;
+}
+
+/** 保存の 409 のあとに出す、いま保存されている機能フラグの見出し (#2195 V4) */
+const SAVED_FEATURE_FLAGS_LABEL = 'いま保存されている機能フラグ';
+
+/** 保存の 409 のあとに出す、いま保存されているのに入力中の一覧に無い機能フラグの見出し (#2195 V4) */
+const SAVED_FEATURE_FLAGS_MISSING_LABEL = '入力中の一覧に無いもの';
+
+/** 機能フラグを並べるときの区切り */
+const FEATURE_FLAGS_SEPARATOR = ', ';
 
 /**
  * 廃止が 409 (遷移表に無い変更・同時の変更) で断られたときの理由の文の頭 (#2064)。
@@ -199,6 +263,9 @@ export default function FeaturePackageDetailPage() {
   // 「再試行」の読み直しを待っているか
   const [isRereading, setIsRereading] = useState(false);
   const isWriting = isSaving || isDeprecating || isRereading;
+  // 保存が 409 で断られて読み直したあと、次の保存に成功するまで true (#2195 V4)。あいだは、機能フラグの入力欄が
+  // いま保存されている一覧 (pkg.feature_flags) と違えば、入力欄の下にその一覧と、入力中の一覧に無いものを出す (同じなら出さない)
+  const [showSavedFlags, setShowSavedFlags] = useState(false);
 
   const fetchPkg = useCallback(async () => {
     setIsLoading(true);
@@ -271,6 +338,8 @@ export default function FeaturePackageDetailPage() {
       setSaveInfo(NO_FEATURE_PACKAGE_CHANGES_MESSAGE);
       return;
     }
+    // 押したときの最後に読んだ・保存した行から作る入力欄の値 (409 のあとの読み直しで、これと違う欄を書きかけとして残す。#2195 V4)
+    const loadedInputs = featurePackageInputsOf(pkg);
     writeInFlightRef.current = true;
     setIsSaving(true);
 
@@ -280,13 +349,23 @@ export default function FeaturePackageDetailPage() {
         res = await fetch(`/api/super-admin/feature-packages/${pkgId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(changes),
+          body: JSON.stringify(withExpectedUpdatedAt(changes, pkg)),
         });
       } catch {
         throw new AdminScreenError(adminActionNoResponseMessage(SAVE_ACTION));
       }
       // ok を先に確かめる (JSON でない 502 を「ネットワークエラー」と見せない。本文に日本語の文が無ければ「保存に失敗しました (HTTP 502)」。#2093 W7)
-      if (!res.ok) throw await adminScreenErrorOfResponse(res, (status) => adminActionHttpFailedMessage(SAVE_ACTION, status));
+      if (!res.ok) {
+        const failureBody = await readFailureBody(res);
+        // 読んだあとに別の操作が機能パッケージを変えていた (#2195 V4): 行を読み直し、書きかけは残して今の値を見せる
+        if (isStaleDataConflict(res.status, failureBody)) {
+          await rereadAfterSaveConflict(changes, loadedInputs, inputsAtSave);
+          return;
+        }
+        throw new AdminScreenError(
+          screenFailureMessage(res.status, failureBody) ?? adminActionHttpFailedMessage(SAVE_ACTION, res.status),
+        );
+      }
       // 成功の応答の本文が読めない: 保存は済んでいるかもしれないので、失敗とは言わず応答を受け取れなかった文にする (#2093 W7)
       const saved = await savedRowOfResponse<FeaturePackage>(res);
       if (!saved) throw new AdminScreenError(adminActionNoResponseMessage(SAVE_ACTION));
@@ -296,6 +375,7 @@ export default function FeaturePackageDetailPage() {
       // 別の運営の変更を上書きしてしまう。応答を待つあいだに変えた欄は書きかけとして残す (次の保存で送る)
       applyLatestPackage(saved, inputsAtSave);
       setSaveSuccess(true);
+      setShowSavedFlags(false);
       // 保存の応答の行は書いたあとの最新の行 (status も今の値) なので、廃止のあとの読み直しの失敗は解ける (#2073)
       const pending = pendingRereadRef.current;
       if (pending) {
@@ -308,6 +388,43 @@ export default function FeaturePackageDetailPage() {
       writeInFlightRef.current = false;
       setIsSaving(false);
     }
+  };
+
+  /**
+   * 保存が 409 CONFLICT_STALE_DATA で断られたあとに読み直し、結果に合わせて文を出す (#2195 V4)。
+   * changes は送った欄、loadedInputs は押したときの最後に読んだ・保存した行の入力欄の値 (これと違う欄は書きかけとして残す。
+   * 押したときに送った欄も残る)、inputsAtSave は押したときの入力欄の値。
+   * 読み直した行に送った値がもう全部入っていれば (自分の 1 回目の保存がもう書いていた)、保存の成功と同じにする。
+   * そうでなければ、次の保存に成功するまで、機能フラグの入力欄がいま保存されている一覧と違えば入力欄の下にその一覧を出す。
+   * 読み直せなかったら画面の行 (updated_at) は古いままなので、もう一度保存するとまた 409 で読み直す (古い一覧では書かない)
+   */
+  const rereadAfterSaveConflict = async (
+    changes: FeaturePackageSaveBody,
+    loadedInputs: FeaturePackageInputs,
+    inputsAtSave: FeaturePackageInputs,
+  ) => {
+    const outcome = await rereadPackage();
+    if (outcome.kind === 'loaded') {
+      const alreadySaved = savedChangesAlreadyIn(changes, outcome.row);
+      if (alreadySaved) {
+        // 保存の成功と同じ: 送った欄も含めて、押したときから変えていない欄を読み直した行の値に揃える
+        applyLatestPackage(outcome.row, inputsAtSave);
+        setSaveSuccess(true);
+        setShowSavedFlags(false);
+      } else {
+        applyLatestPackage(outcome.row, loadedInputs);
+        setShowSavedFlags(true);
+        setSaveError(SAVE_CONFLICT_RELOADED_MESSAGE);
+      }
+      // 読み直した行は最新の行 (status も今の値) なので、廃止のあとの読み直しの失敗は解ける (#2073。保存の成功と同じ)
+      const pending = pendingRereadRef.current;
+      if (pending) {
+        setDeprecateError(deprecateRereadMessage(pending, { kind: 'reloaded' }));
+        markPendingReread(null);
+      }
+      return;
+    }
+    setSaveError(outcome.kind === 'failed' ? SAVE_CONFLICT_RELOAD_FAILED_MESSAGE : saveConflictUnavailableMessage(outcome.message));
   };
 
   /**
@@ -396,6 +513,9 @@ export default function FeaturePackageDetailPage() {
   }
 
   const flags = parseFeatureFlags(featureFlagsRaw);
+  // 保存の 409 のあと、機能フラグの入力欄がいま保存されている一覧と違うときだけ、その一覧を見せる (#2195 V4)
+  const savedFlagsToCompare = showSavedFlags && !sameFeatureFlags(flags, pkg.feature_flags) ? pkg.feature_flags : null;
+  const savedFlagsMissingFromInput = savedFlagsToCompare ? savedFlagsToCompare.filter((flag) => !flags.includes(flag)) : [];
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -484,6 +604,21 @@ export default function FeaturePackageDetailPage() {
               </span>
             ))}
           </div>
+          {savedFlagsToCompare && (
+            <div
+              data-testid="saved-feature-flags"
+              className="mt-2 bg-amber-50 border border-amber-200 text-amber-800 px-3 py-2 rounded-lg text-xs space-y-1"
+            >
+              <p>
+                {SAVED_FEATURE_FLAGS_LABEL}: <span className="font-mono">{savedFlagsToCompare.join(FEATURE_FLAGS_SEPARATOR)}</span>
+              </p>
+              {savedFlagsMissingFromInput.length > 0 && (
+                <p data-testid="saved-feature-flags-missing">
+                  {SAVED_FEATURE_FLAGS_MISSING_LABEL}: <span className="font-mono">{savedFlagsMissingFromInput.join(FEATURE_FLAGS_SEPARATOR)}</span>
+                </p>
+              )}
+            </div>
+          )}
         </div>
 
         <div>
