@@ -13,8 +13,12 @@
  *     実行できていれば『前の依頼は実行されました』を足して通知を 1 回投げる
  *   - 記録が実行中の印 (approved) のままなら『前の依頼は実行中か実行済みです』を足し、少し待って 1 回だけ読み直す。
  *     実行できていれば一文を置き換えて通知を投げる。まだ実行中の印なら一文はそのまま (通知しない)
+ *   - 実行できたと分かった返答 (最初の読み取り・読み直しのどちらでも) は、GET が返した提案のカード (実行中の印の
+ *     『確かめられませんでした』) を外す (開き直したときの GET と同じ。一文とカードが食い違わない)
  *   - 届いていない: 頼み直してもらう文を出し、送った文を入力欄に戻す / 返答がまだ無い: 開き直してもらう文
  *   - 取り直せない時間切れ: 頼み直しの前に開き直してもらう文 (「再度お試しください」だけを出さない)
+ *   - 時間切れでは、流れてきた本文があっても、返答がまだ無い・取り直せないときに本文だけを出さない (切れたことが分からない)。
+ *     本文を残すのは時間切れでないとき (流れが途中で切れた) だけ (#126)
  *   - 受け付けられなかった送信 (2xx でない応答) は、これまでどおり失敗の文だけ (取り直さない)
  */
 import { act, createElement } from 'react';
@@ -93,6 +97,9 @@ const DELIVERED_NO_REPLY_TEXT = '相談はサーバーに届いています。�
 const TIMEOUT_RELOAD_FAILED_TEXT =
   '応答に時間がかかっています。返答はサーバーで続いていることがあります。少し待ってから相談を開き直し、返答が無ければもう一度送ってください。';
 const REPLY_FAILED_TEXT = '応答に失敗しました。再試行してください。';
+/** 提案の記録が実行中の印のままの返答のカードの案内 (GET の unconfirmed) */
+const UNCONFIRMED_GUIDE = 'この提案を実行できたかを確かめられませんでした。しばらくしてから相談を開き直してください。';
+const NOT_EXECUTABLE_CARD = '[data-testid="ai-proposed-action-not-executable"]';
 /** 直す前の時間切れの文 (もう出さない) */
 const OLD_TIMEOUT_TEXT = '応答に時間がかかりすぎました。しばらく待ってから再度お試しください。';
 
@@ -110,6 +117,23 @@ function savedMessages(sent: string) {
     { id: 'user-saved-1', role: 'user', content: sent, createdAt: '2026-11-02T00:00:00.000Z' },
     { id: REPLY_ID, role: 'assistant', content: SAVED_REPLY, proposedActions: null, createdAt: '2026-11-02T00:00:01.000Z' },
   ];
+}
+/**
+ * 返答の提案の記録が実行中の印 (approved) のときに GET が返す形 (messages/route.ts: カードは出し、「実行する」は出さず、
+ * 理由は unconfirmed。lifecycle の proposedActionViewOf(['approved']) が unconfirmed)
+ */
+const RUNNING_CARD_FIELDS = {
+  proposedActions: { type: 'generate_single_meal', params: { date: '2026-11-02', mealType: 'dinner' } },
+  proposedActionExecutable: false,
+  proposedActionNotExecutableReason: 'unconfirmed',
+};
+function savedMessagesWithRunningCard(sent: string) {
+  return savedMessages(sent).map((m) => (m.id === REPLY_ID ? { ...m, ...RUNNING_CARD_FIELDS } : m));
+}
+
+/** 提案のカードの「実行する」を出さない案内が出ているか */
+function notExecutableCardShown(): boolean {
+  return container.querySelector(NOT_EXECUTABLE_CARD) !== null;
 }
 
 type FetchHandler = (url: string, init?: RequestInit) => Promise<Response>;
@@ -277,6 +301,29 @@ function streamsWithoutFinalData(messages: unknown[], partial: string): FetchHan
   };
 }
 
+/**
+ * 本文の断片を流したあと、次の読み取りで時間切れ (AbortError) になる応答。サーバーは messages まで保存していた
+ * (本物では、送信の待ちの上限 AI_CHAT_SEND_TIMEOUT_MS が流れの途中で切れる)
+ */
+function streamsThenTimesOut(messages: unknown[], partial: string): FetchHandler {
+  return async () => {
+    serverMessages = messages;
+    const chunk = new TextEncoder().encode(`data: ${JSON.stringify({ choices: [{ delta: { content: partial } }] })}\n\n`);
+    let streamed = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (!streamed) {
+          streamed = true;
+          controller.enqueue(chunk);
+          return;
+        }
+        controller.error(abortError());
+      },
+    });
+    return new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+  };
+}
+
 function expectReadLogsOfReply() {
   expect(logs.reads.length).toBeGreaterThan(0);
   expect(logs.reads[0]).toMatchObject({ table: 'ai_action_logs', filters: [['message_id', REPLY_ID]] });
@@ -301,18 +348,24 @@ describe('#2201 U3 送信が時間切れになったあと、会話を取り直�
     expect(occurrences(SAVED_REPLY)).toBe(1);
   });
 
-  it('記録が実行中の印のままなら『実行中か実行済み』を出し、読み直して実行できていれば一文を置き換えて通知を投げる', async () => {
+  it('記録が実行中の印のままなら『実行中か実行済み』を出し、読み直して実行できていれば一文を置き換えてカードを外し、通知を投げる', async () => {
     logs.results = [
       { data: [{ status: 'approved', action_type: 'generate_single_meal' }], error: null },
       { data: [{ status: 'executed', action_type: 'generate_single_meal' }], error: null },
     ];
     await openChat();
-    await sendFromInput(timesOutAfterSaving(savedMessages(SENT_TEXT)));
+    await sendFromInput(timesOutAfterSaving(savedMessagesWithRunningCard(SENT_TEXT)));
 
     await waitFor(() => text().includes(RUNNING_NOTE));
+    // 実行中の印の間は、GET のとおりのカード (確かめられませんでした) を出す
+    expect(text()).toContain(UNCONFIRMED_GUIDE);
+    expect(notExecutableCardShown()).toBe(true);
     expect(mealPlanUpdated).not.toHaveBeenCalled();
     await waitFor(() => text().includes(EXECUTED_NOTE));
     expect(text()).not.toContain(RUNNING_NOTE);
+    // 実行できたと分かったら、カードを外す (開き直したときの GET と同じ。一文とカードが食い違わない)
+    expect(text()).not.toContain(UNCONFIRMED_GUIDE);
+    expect(notExecutableCardShown()).toBe(false);
     expect(logs.reads).toHaveLength(2);
     expect(logs.reads[1].filters).toEqual([['message_id', REPLY_ID]]);
     expect(mealPlanUpdated).toHaveBeenCalledTimes(1);
@@ -326,15 +379,43 @@ describe('#2201 U3 送信が時間切れになったあと、会話を取り直�
   ])('読み直しで %s なら、一文はそのまま・通知もしない (読み直しは 1 回だけ)', async (_label, recheck) => {
     logs.results = [{ data: [{ status: 'approved' }], error: null }, recheck];
     await openChat();
-    await sendFromInput(timesOutAfterSaving(savedMessages(SENT_TEXT)));
+    await sendFromInput(timesOutAfterSaving(savedMessagesWithRunningCard(SENT_TEXT)));
 
     await waitFor(() => text().includes(RUNNING_NOTE));
     await waitFor(() => logs.reads.length === 2);
     await waitPastRecheck();
     expect(text()).toContain(RUNNING_NOTE);
     expect(text()).not.toContain(EXECUTED_NOTE);
+    // 実行できたと分からないので、カード (確かめられませんでした) もそのまま
+    expect(text()).toContain(UNCONFIRMED_GUIDE);
     expect(mealPlanUpdated).not.toHaveBeenCalled();
     expect(logs.reads).toHaveLength(2);
+  });
+
+  it('GET を読んだときは実行中の印 (カードあり) でも、記録を読んだら実行できていれば、カードを出さずに一文を出す', async () => {
+    logs.results = [{ data: [{ status: 'executed', action_type: 'generate_single_meal' }], error: null }];
+    await openChat();
+    await sendFromInput(timesOutAfterSaving(savedMessagesWithRunningCard(SENT_TEXT)));
+
+    await waitFor(() => text().includes(EXECUTED_NOTE));
+    expectNoteRightAfterReply(EXECUTED_NOTE);
+    expect(text()).not.toContain(UNCONFIRMED_GUIDE);
+    expect(notExecutableCardShown()).toBe(false);
+    expect(mealPlanUpdated).toHaveBeenCalledTimes(1);
+    await waitPastRecheck();
+    expect(logs.reads).toHaveLength(1);
+  });
+
+  it('記録を読めないときは、GET のとおりのカード (確かめられませんでした) を出し、一文は出さない', async () => {
+    logs.results = [{ data: null, error: { message: 'permission denied' } }];
+    await openChat();
+    await sendFromInput(timesOutAfterSaving(savedMessagesWithRunningCard(SENT_TEXT)));
+
+    await waitFor(() => text().includes(SAVED_REPLY));
+    await waitFor(() => notExecutableCardShown());
+    expect(text()).toContain(UNCONFIRMED_GUIDE);
+    expect(text()).not.toContain(EXECUTED_NOTE);
+    expect(text()).not.toContain(RUNNING_NOTE);
   });
 
   it.each([
@@ -389,6 +470,39 @@ describe('#2201 U3 送信が時間切れになったあと、会話を取り直�
     expect(logs.reads).toHaveLength(0);
   });
 
+  it('本文の断片が流れてから時間切れになり、返答がまだ保存されていなければ、断片ではなく開き直してもらう文を出す', async () => {
+    const partial = '鶏むね肉の照り焼きで';
+    await openChat();
+    await sendFromInput(streamsThenTimesOut(savedMessages(SENT_TEXT).slice(0, OLD_MESSAGES.length + 1), partial));
+
+    await waitFor(() => text().includes(DELIVERED_NO_REPLY_TEXT));
+    expect(text()).not.toContain(partial);
+    expect(inputElement().value).toBe('');
+    expect(logs.reads).toHaveLength(0);
+  });
+
+  it('本文の断片が流れてから時間切れになり、会話も取り直せなければ、断片ではなく頼み直しの前に開き直してもらう文を出す', async () => {
+    const partial = '鶏むね肉の照り焼きで';
+    await openChat();
+    handlers[MESSAGES_KEY] = async () => json(500, { error: 'サーバーでエラーが発生しました' });
+    await sendFromInput(streamsThenTimesOut(savedMessages(SENT_TEXT), partial));
+
+    await waitFor(() => text().includes(TIMEOUT_RELOAD_FAILED_TEXT));
+    expect(text()).not.toContain(partial);
+    expect(text()).not.toContain(OLD_TIMEOUT_TEXT);
+  });
+
+  it('本文の断片が流れてから時間切れになっても、返答が保存されていれば保存された返答と一文を出す', async () => {
+    logs.results = [{ data: [{ status: 'executed' }], error: null }];
+    await openChat();
+    await sendFromInput(streamsThenTimesOut(savedMessages(SENT_TEXT), '鶏むね肉の'));
+
+    await waitFor(() => text().includes(EXECUTED_NOTE));
+    expectNoteRightAfterReply(EXECUTED_NOTE);
+    expect(occurrences(SAVED_REPLY)).toBe(1);
+    expect(mealPlanUpdated).toHaveBeenCalledTimes(1);
+  });
+
   it('前に同じ文を送っていても、今回送った文 (送る前に無かった id) への返答だけを見る', async () => {
     const earlierSame = [
       { id: 'earlier-user', role: 'user', content: SENT_TEXT, createdAt: '2026-10-31T00:00:00.000Z' },
@@ -426,6 +540,17 @@ describe('#2201 U3 finalData が欠けた・受け付けたあとの例外のあ
     await waitFor(() => text().includes(partial));
     expect(text()).not.toContain(REPLY_FAILED_TEXT);
     expect(logs.reads).toHaveLength(0);
+  });
+
+  it('finalData が無く、会話も取り直せない: 流れてきた本文を残す (時間切れでないので #126 のまま)', async () => {
+    const partial = '鶏むね肉の照り焼きで';
+    await openChat();
+    handlers[MESSAGES_KEY] = async () => json(500, { error: 'サーバーでエラーが発生しました' });
+    await sendFromInput(streamsWithoutFinalData(savedMessages(SENT_TEXT), partial));
+
+    await waitFor(() => text().includes(partial));
+    expect(text()).not.toContain(REPLY_FAILED_TEXT);
+    expect(text()).not.toContain(TIMEOUT_RELOAD_FAILED_TEXT);
   });
 
   it('応答を受けたあとに読み取りが例外を投げた: 取り直して、実行できた一文を出す', async () => {
@@ -487,6 +612,9 @@ describe('#2201 U3 おすすめの質問から送ったときも同じ', () => {
       { id: REPLY_ID, role: 'assistant', content: SAVED_REPLY, proposedActions: null, createdAt: '2026-11-02T00:00:01.000Z' },
     ];
   }
+  function savedQuickWithRunningCard() {
+    return savedQuick().map((m) => (m.id === REPLY_ID ? { ...m, ...RUNNING_CARD_FIELDS } : m));
+  }
 
   it('時間切れ: 取り直した返答と、実行できた一文を出し、通知を投げる', async () => {
     logs.results = [{ data: [{ status: 'executed' }], error: null }];
@@ -499,15 +627,47 @@ describe('#2201 U3 おすすめの質問から送ったときも同じ', () => {
     expect(mealPlanUpdated).toHaveBeenCalledTimes(1);
   });
 
-  it('時間切れで実行中の印のまま: 『実行中か実行済み』を出し、読み直して実行できていれば置き換える', async () => {
+  it('時間切れで実行中の印のまま: 『実行中か実行済み』を出し、読み直して実行できていれば置き換えてカードを外す', async () => {
     logs.results = [{ data: [{ status: 'approved' }], error: null }, { data: [{ status: 'executed' }], error: null }];
     await openEmptyChat();
-    await pressQuickPrompt(timesOutAfterSaving(savedQuick()));
+    await pressQuickPrompt(timesOutAfterSaving(savedQuickWithRunningCard()));
 
     await waitFor(() => text().includes(RUNNING_NOTE));
+    expect(text()).toContain(UNCONFIRMED_GUIDE);
     await waitFor(() => text().includes(EXECUTED_NOTE));
     expect(text()).not.toContain(RUNNING_NOTE);
+    expect(text()).not.toContain(UNCONFIRMED_GUIDE);
+    expect(notExecutableCardShown()).toBe(false);
     expect(mealPlanUpdated).toHaveBeenCalledTimes(1);
+  });
+
+  it('時間切れで、GET は実行中の印のカードでも記録が実行できていれば、カードを出さずに一文を出す', async () => {
+    logs.results = [{ data: [{ status: 'executed' }], error: null }];
+    await openEmptyChat();
+    await pressQuickPrompt(timesOutAfterSaving(savedQuickWithRunningCard()));
+
+    await waitFor(() => text().includes(EXECUTED_NOTE));
+    expect(text()).not.toContain(UNCONFIRMED_GUIDE);
+    expect(notExecutableCardShown()).toBe(false);
+  });
+
+  it('本文の断片が流れてから時間切れになり、返答がまだ保存されていなければ、断片ではなく開き直してもらう文を出す', async () => {
+    const partial = '鶏むね肉の照り焼きで';
+    await openEmptyChat();
+    await pressQuickPrompt(streamsThenTimesOut(savedQuick().slice(0, 1), partial));
+
+    await waitFor(() => text().includes(DELIVERED_NO_REPLY_TEXT));
+    expect(text()).not.toContain(partial);
+  });
+
+  it('本文の断片が流れてから時間切れになり、会話も取り直せなければ、断片ではなく頼み直しの前に開き直してもらう文を出す', async () => {
+    const partial = '鶏むね肉の照り焼きで';
+    await openEmptyChat();
+    handlers[MESSAGES_KEY] = async () => json(500, { error: 'サーバーでエラーが発生しました' });
+    await pressQuickPrompt(streamsThenTimesOut(savedQuick(), partial));
+
+    await waitFor(() => text().includes(TIMEOUT_RELOAD_FAILED_TEXT));
+    expect(text()).not.toContain(partial);
   });
 
   it('finalData が無いまま終わった: 取り直した返答を出す (以前は流れてきた本文のまま・空の吹き出し)', async () => {
@@ -523,7 +683,7 @@ describe('#2201 U3 読み直しの予約は部品を外すときに取り消す'
   it('読み直しの前に外したら、読み直さない', async () => {
     logs.results = [{ data: [{ status: 'approved' }], error: null }, { data: [{ status: 'executed' }], error: null }];
     await openChat();
-    await sendFromInput(timesOutAfterSaving(savedMessages(SENT_TEXT)));
+    await sendFromInput(timesOutAfterSaving(savedMessagesWithRunningCard(SENT_TEXT)));
     await waitFor(() => text().includes(RUNNING_NOTE));
 
     act(() => root.unmount());
