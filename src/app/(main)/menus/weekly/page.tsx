@@ -2584,6 +2584,8 @@ export default function WeeklyMenuPage() {
   //   - 生成中の依頼: 回数を増やして、生成中の依頼の確認 (checkPendingRequests) をもう一度走らせる。AI 相談が始めた
   //     献立の生成 (generate_week_menu など) は依頼を受けた時点 (status: processing) で成功を知らせるので、ここで取り直しても
   //     まだ献立は無い。表示中の週の生成中の依頼を見つけて監視し、終わったら監視の側が献立を取り直す
+  //     (生成中の依頼の確認 GET /api/ai/menu/weekly/pending が返すのは、開始日が表示中の週の初日の依頼だけ。ほかの日から
+  //     始めた生成は、ページを開いたとき・読み込み直したときと同じく監視しない。#1609)
   // 別の週の献立も変わりうる (1 週間の献立の作成など) ので、週のキャッシュは捨てて、次にその週を開いたときに取り直させる。
   // モーダル・入力の部品が出ている間は取り直さない (useAiConsultationDataRefetch)
   const refetchAfterAiConsultation = useCallback(() => {
