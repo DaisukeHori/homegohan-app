@@ -11,8 +11,10 @@ import { describe, it, expect } from 'vitest';
 import {
   weekViewReducer,
   initialWeekViewState,
+  plannedMealFieldsOf,
   type WeekViewState,
 } from '@/app/(main)/menus/weekly/_state/reducers/weekViewReducer';
+import { toPlannedMeal } from '@/lib/converter';
 
 describe('weekViewReducer', () => {
   it('DAY_NUTRITION_SET(false) は開いている状態を閉じる（#1032 F1b-04）', () => {
@@ -76,5 +78,47 @@ describe('weekViewReducer', () => {
     const state: WeekViewState = { ...initialWeekViewState, calendarMealDates: new Set(['2026-11-03']) };
     const next = weekViewReducer(state, { type: 'CALENDAR_MEAL_DATES_MERGE', payload: new Set(['2026-11-05']) });
     expect([...next.calendarMealDates].sort()).toEqual(['2026-11-03', '2026-11-05']);
+  });
+
+  // #2201 U2: 楽観的な更新とその巻き戻しは、今の献立の 1 つの食事にだけ当てる。描画の時点の献立の写しから週全体を作り直して
+  // PLAN_SET で置くと、その描画のあとに置いた献立 (AI 相談の成功の取り直しの応答) を写しの古い献立で戻した
+  describe('PLAN_MEAL_UPDATE (#2201 U2)', () => {
+    const meal = (id: string, dishName: string, isCompleted = false) =>
+      toPlannedMeal({ id, daily_meal_id: 'day-1', meal_type: 'dinner', dish_name: dishName, is_completed: isCompleted });
+    /** 取り直しが置いた今の献立 (AI 相談で 2 つ目の食事を変えた) */
+    const latest: WeekViewState = {
+      ...initialWeekViewState,
+      currentPlan: {
+        days: [
+          { id: 'day-1', dayDate: '2026-11-02', meals: [meal('meal-1', '鮭の塩焼き'), meal('meal-2', 'AI が変えた肉じゃが')] },
+          { id: 'day-2', dayDate: '2026-11-03', meals: [meal('meal-3', '親子丼')] },
+        ],
+      },
+    };
+
+    it('今の献立のその食事にだけ当て、ほかの食事・ほかの日 (取り直しが置いた値) はそのまま', () => {
+      const next = weekViewReducer(latest, { type: 'PLAN_MEAL_UPDATE', payload: { dayId: 'day-1', mealId: 'meal-1', updates: { isCompleted: true } } });
+      const [day1, day2] = next.currentPlan?.days ?? [];
+      expect(day1.meals?.map((m) => [m.id, m.dishName, m.isCompleted])).toEqual([
+        ['meal-1', '鮭の塩焼き', true],
+        ['meal-2', 'AI が変えた肉じゃが', false],
+      ]);
+      expect(day2).toBe(latest.currentPlan?.days[1]);
+      // 元の献立は変えない
+      expect(latest.currentPlan?.days[0].meals?.[0].isCompleted).toBe(false);
+    });
+
+    it('献立が無い・その日にその食事が無いときは何もしない', () => {
+      expect(weekViewReducer(initialWeekViewState, { type: 'PLAN_MEAL_UPDATE', payload: { dayId: 'day-1', mealId: 'meal-1', updates: { isCompleted: true } } })).toBe(
+        initialWeekViewState,
+      );
+      expect(weekViewReducer(latest, { type: 'PLAN_MEAL_UPDATE', payload: { dayId: 'day-2', mealId: 'meal-1', updates: { isCompleted: true } } })).toBe(latest);
+    });
+
+    it('plannedMealFieldsOf は updates が変える項目の今の値だけを返す (巻き戻しで、ほかの項目を戻さない)', () => {
+      const before = meal('meal-1', '鮭の塩焼き', false);
+      expect(plannedMealFieldsOf(before, { isCompleted: true })).toEqual({ isCompleted: false });
+      expect(plannedMealFieldsOf(before, { dishName: '焼き鮭', mode: 'buy' })).toEqual({ dishName: '鮭の塩焼き', mode: before.mode });
+    });
   });
 });

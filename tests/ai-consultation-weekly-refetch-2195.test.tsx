@@ -281,6 +281,8 @@ type FakeServer = {
   namesFail: boolean;
   /** 置いている間に始めた食事の更新 (PATCH /api/meal-plans/meals/<id>) の応答を、この Promise が解けるまで止める (#2201 U2) */
   mealPatchHold: Promise<void> | null;
+  /** true の間の食事の更新 (PATCH /api/meal-plans/meals/<id>) は 500 を返し、サーバーの表を変えない (#2201 U2。書き込みの失敗) */
+  mealPatchFails: boolean;
   /** 冷蔵庫の食材 (GET /api/pantry の答え) */
   pantryItems: FakePantryItem[];
   /** 置いている間に始めた GET /api/pantry の応答 (答えは読み取りを始めたときのもの) を、この Promise が解けるまで止める (#2201 U1) */
@@ -425,6 +427,7 @@ function installFakeServer() {
     if ((init?.method ?? 'GET').toUpperCase() === 'PATCH' && url.pathname.startsWith(MEAL_PATCH_PATH_PREFIX)) {
       const hold = server.mealPatchHold;
       if (hold) await hold;
+      if (server.mealPatchFails) return jsonResponse({ error: 'down' }, SERVER_ERROR_STATUS);
       const mealId = url.pathname.slice(MEAL_PATCH_PATH_PREFIX.length);
       const patch = JSON.parse(String(init?.body ?? '{}')) as { isCompleted?: boolean };
       if (patch.isCompleted !== undefined) {
@@ -515,6 +518,7 @@ beforeEach(() => {
     mealPlansHoldOnce: new Map(),
     namesFail: false,
     mealPatchHold: null,
+    mealPatchFails: false,
     pantryItems: [],
     pantryHold: null,
     profileHold: null,
@@ -597,6 +601,41 @@ function heldResponse(): { hold: Promise<void>; release: () => void } {
 /** 週の読み込み中の表示 (画面全体のスピナー。週を送るボタンも出ない) を出しているか */
 function weeklyPageIsLoading(): boolean {
   return container.querySelector('button[aria-label="翌週"]') === null && container.querySelector('.animate-spin') !== null;
+}
+
+/** 食事の完了の切り替えの待ち (ページの toggleMealCompletion の setTimeout の ms) */
+const TOGGLE_DEBOUNCE_MS = 250;
+
+/**
+ * この関数の中で始まった完了の切り替えの待ち (setTimeout の TOGGLE_DEBOUNCE_MS) を止め、待ちを終わらせる関数を返す
+ * (時間に頼らずに、待ちのあいだに取り直しの応答を置く。#2201 U2)。ほかの setTimeout はそのまま。
+ * 切り替えは押した時点で (同じ呼び出しの中で) 待ちを始めるので、押す操作を start に渡す
+ */
+async function holdToggleDebounce(start: () => void): Promise<() => Promise<void>> {
+  const realSetTimeout = globalThis.setTimeout;
+  let heldCallback: (() => void) | null = null;
+  const spy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: () => void, ms?: number) => {
+    if (heldCallback === null && ms === TOGGLE_DEBOUNCE_MS) {
+      heldCallback = callback;
+      return realSetTimeout(() => undefined, 0);
+    }
+    return realSetTimeout(callback, ms);
+  }) as typeof globalThis.setTimeout);
+  try {
+    await act(async () => {
+      start();
+    });
+  } finally {
+    spy.mockRestore();
+  }
+  const held = heldCallback;
+  if (held === null) throw new Error('完了の切り替えの待ちが始まっていない (検査が空振りしている)');
+  return async () => {
+    await act(async () => {
+      held();
+    });
+    await settle();
+  };
 }
 
 /** ヘッダーの買い物リストのボタン (バッジの数字はこの中に出る) */
@@ -904,6 +943,34 @@ describe('献立表 (/menus/weekly) の取り直しの順序と失敗 (#2201 U1)
     expect(container.textContent).not.toContain(NEXT_WEEK_DISH);
   });
 
+  it('開いたときの週の読み込みの応答を待つあいだに取り直しの献立が先に届いたら、読み込み中の表示を下ろし、あとから届いた週の読み込みの応答で古い献立に戻さない', async () => {
+    const BEFORE_DISH = '前の鮭の塩焼き';
+    const AI_DISH = 'AI が変えた親子丼';
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) server.days.set(dateFromWeekStart(i), [{ id: `meal-${i}`, dishName: BEFORE_DISH }]);
+    // 開いたときの表示中の週の読み込みの応答を止める (読み込み中の表示のまま)
+    const firstLoad = heldResponse();
+    server.mealPlansHoldOnce.set(displayedWeekRangeKey(), firstLoad.hold);
+    await renderWeeklyPage();
+    expect(server.mealPlansHoldOnce.size, '表示中の週の読み込みを止めていない (検査の前提が崩れた)').toBe(0);
+    expect(weeklyPageIsLoading(), '週の読み込み中の表示を出していない (検査の前提が崩れた)').toBe(true);
+
+    // その間に AI 相談が成功し、取り直しの献立 (AI の変えた献立) が先に届く。この週の献立を置いたので、読み込み中の表示を下ろす
+    // (週の読み込みの応答はこれより前に始めたので置かず、読み込み中の表示にも触れない。下ろすのは取り直しだけ)
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) server.days.set(dateFromWeekStart(i), [{ id: `meal-${i}`, dishName: AI_DISH }]);
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    expect(weeklyPageIsLoading(), '取り直しの献立を置いたのに、読み込み中の表示のまま').toBe(false);
+    expect(container.textContent).toContain(AI_DISH);
+
+    // 先に始めた週の読み込みの応答 (AI 相談の前の献立) が後から届く
+    await act(async () => {
+      firstLoad.release();
+    });
+    await settle();
+    expect(weeklyPageIsLoading()).toBe(false);
+    expect(container.textContent, '先に始めた週の読み込みの古い応答で、取り直しの献立を戻した').toContain(AI_DISH);
+    expect(container.textContent).not.toContain(BEFORE_DISH);
+  });
+
   it('週を移った直後 (週の読み込みの応答待ち) に来た成功の取り直しが失敗しても、前の週の献立を新しい週の見出しの下に残さない', async () => {
     const THIS_WEEK_DISH = '今週の筑前煮';
     const NEXT_WEEK_DISH = '翌週の豚汁';
@@ -1165,6 +1232,64 @@ describe('献立表 (/menus/weekly) の取り直しの順序と失敗 (#2201 U1)
     expect(shownCompleted(), '切り替えの前に読んだ取り直しの応答が、完了を戻した').toBe(true);
     // 置かなかった応答のぶん 1 回読み直す (表示中の週 + 月のカレンダーの 2 つの範囲)
     expect(callsTo('/api/meal-plans') - mealPlansCallsBeforeRelease, '置かなかった応答のぶん読み直していない').toBe(3);
+  });
+
+  it('食事の完了の切り替えの待ち (250ms) のあいだに取り直しが置いた献立を、切り替えの楽観的な更新で古い献立に戻さない (#2201 U2)', async () => {
+    const BEFORE_DISH = '鮭の塩焼き';
+    const AI_DISH = 'AI が変えた親子丼';
+    const today = formatLocalDate(new Date());
+    server.days.set(today, [{ id: 'meal-today', dishName: BEFORE_DISH }]);
+    await renderWeeklyPage();
+    const toggle = () => container.querySelector<HTMLButtonElement>('button.w-7.h-7.rounded-full');
+    expect(toggle(), '今日の食事の完了の切り替えが無い').not.toBeNull();
+    /** 完了の印 (チェックの絵) が出ているか */
+    const shownCompleted = () => toggle()!.querySelector('svg') !== null;
+    expect(shownCompleted()).toBe(false);
+
+    // 完了を押す: 250ms 待ってから楽観的な更新と書き込みをする (待ちを止める)
+    const finishToggleWait = await holdToggleDebounce(() => toggle()!.click());
+
+    // 待ちのあいだに AI 相談が成功し、取り直しが AI の変えた献立を置く
+    server.days.set(today, [{ id: 'meal-today', dishName: AI_DISH }]);
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    expect(container.textContent, '取り直しが AI の変えた献立を置いていない (検査が空振りしている)').toContain(AI_DISH);
+    expect(fetchCalls.some((raw) => raw.startsWith(MEAL_PATCH_PATH_PREFIX)), '切り替えの待ちが終わっている (検査の前提が崩れた)').toBe(false);
+
+    // 待ちが終わる: 楽観的な更新と書き込み (成功)。書き込みの間に来た成功は無いので、このあと取り直さない
+    const mealPlansCallsBefore = callsTo('/api/meal-plans');
+    await finishToggleWait();
+    expect(fetchCalls.some((raw) => raw.startsWith(MEAL_PATCH_PATH_PREFIX)), '完了の切り替えを送っていない (検査が空振りしている)').toBe(true);
+    expect(server.days.get(today)?.[0].isCompleted).toBe(true);
+    expect(callsTo('/api/meal-plans') - mealPlansCallsBefore).toBe(0);
+    expect(shownCompleted()).toBe(true);
+    expect(container.textContent, '切り替えの楽観的な更新が、待ちのあいだに取り直しが置いた献立を古い献立で戻した').toContain(AI_DISH);
+    expect(container.textContent).not.toContain(BEFORE_DISH);
+  });
+
+  it('食事の完了の切り替えの書き込みが失敗したら、その食事の完了だけを戻し、待ちのあいだに取り直しが置いた献立は残す (#2201 U2)', async () => {
+    const BEFORE_DISH = '鮭の塩焼き';
+    const AI_DISH = 'AI が変えた親子丼';
+    const today = formatLocalDate(new Date());
+    server.days.set(today, [{ id: 'meal-today', dishName: BEFORE_DISH }]);
+    await renderWeeklyPage();
+    const toggle = () => container.querySelector<HTMLButtonElement>('button.w-7.h-7.rounded-full');
+    const shownCompleted = () => toggle()!.querySelector('svg') !== null;
+    expect(shownCompleted()).toBe(false);
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    const finishToggleWait = await holdToggleDebounce(() => toggle()!.click());
+    server.days.set(today, [{ id: 'meal-today', dishName: AI_DISH }]);
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    expect(container.textContent, '取り直しが AI の変えた献立を置いていない (検査が空振りしている)').toContain(AI_DISH);
+
+    // 書き込みが失敗する
+    server.mealPatchFails = true;
+    await finishToggleWait();
+    expect(alertSpy, '書き込みの失敗を出していない (検査が空振りしている)').toHaveBeenCalled();
+    expect(shownCompleted(), '失敗した完了の切り替えを戻していない').toBe(false);
+    expect(container.textContent, '失敗の巻き戻しが、待ちのあいだに取り直しが置いた献立を古い献立で戻した').toContain(AI_DISH);
+    expect(container.textContent).not.toContain(BEFORE_DISH);
   });
 
   it('取り直しで名前の API を読めなかったら、家族の切り替えの名前を残す', async () => {

@@ -32,6 +32,15 @@
  *   問題 (直す前・R5): ホームの栄養の分析 (useHomeData の fetchNutritionAnalysis) は、取り直しの経路 (readHomeData) から呼ばれるのに
  *   順序を 1 つも見ずに点数・課題・アドバイスと今日のアドバイスの帯を置いていた。続けて来た 2 回の通知の取り直しの応答が逆の順に届くと、
  *   古い分析とアドバイスが新しい表示を上書きし、古い応答が新しい読み取りの途中で読み込み中の印を下ろした (R4 の献立表と同じ型の残り)。
+ *   6. 受け手と DELEGATED_RECEIVERS の hook のファイルで、取り直しの経路の関数 (5 と同じたどり方) が Supabase の読み取り
+ *      (await した式の中の X.from(...) / X.rpc(...)。問い合わせを入れた const も見る) の結果を分割代入で受け取るところは、
+ *      data / count を受け取るなら error も受け取る (読み取りの失敗を見分ける。supabase-js は通信の失敗でも投げずに
+ *      { data: null, error } を返すので、error を見ないと失敗を「無い」と同じに扱い、取り直しで今の表示を空・0 で上書きする)。
+ *      ただし受け取った data / count を読むところが全部、その名前を条件で見る if の中 (条件の中、または応答を置く setter・place を
+ *      持つ then の中) なら数えない (読めなかったとき (null) は何も置かない)
+ *   問題 (直す前・R7): ホームの今週のベストごはん・バッジの数・健康記録のまとめ・買い物リストの残り・今日のチェックインの読み取りは
+ *   error を受け取らず、取り直しの読み取りの失敗で「0個獲得」・「今日の記録をつけよう」の帯・体重の「-」を出した。
+ *   メンバーの詳細 (/family/members/[id]) の保護者の同意の記録も同じで、取り直しの失敗で同意カードを消した (U1 の同じ型の残り)。
  *
  * 検査の限界: 取り直しの経路の「置く場所の全部」で deferIfHeld・順序を見ているかまでは数えない (4 は deferIfHeld を直に呼ぶところの
  * 前に順序の見方があるかを、関数の中の書いた位置で見るだけで、その見方がその置く場所を守る分岐かは見ない。5 は順序の見方を関数の中に
@@ -43,6 +52,8 @@
  * 取り直しの経路でない取得 (日を選んだとき・週を移ったとき) が取り直しと同じ値を置くかは見ない (取り直しと同じ値を置く別の取得は、
  * 取り直しと同じ取得の流れで始める。/health の選んだ日のパネル・献立表の表示中の週の献立。描画のテストが確かめる)。
  * 名前の同じ関数がファイルの中に何個かあれば、全部をたどる (多めに数える)。
+ * 6 は error を受け取るかだけを数え、受け取った error で取り直しの失敗を分けているか (今の表示を残すか) は見ない (描画のテストが確かめる)。
+ * 条件の読み方 (否定など) も見ない。fetch の応答 (res.ok) と、投げる読み取り (try / catch) は見ない (規則の外。描画のテストが確かめる)。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -109,6 +120,20 @@ const MIN_COUNTED_MARKER_RECEIVERS = 6;
  */
 const MIN_REFETCH_PATH_FETCHERS = 46;
 
+/**
+ * 規則 6 が見た取り直しの経路の Supabase の読み取り (data / count を分割代入で受け取るところ) の数の下限 (検査が空振りして緑になるのを
+ * 防ぐ。2026-11-04 の実数。取り直しの経路を減らしてこれを割ったら、実数を数え直して下げる)
+ */
+const MIN_REFETCH_PATH_SUPABASE_READS = 38;
+/** Supabase の問い合わせを始めるメソッド (supabase.from(...)・supabase.rpc(...)) */
+const SUPABASE_QUERY_METHODS: ReadonlySet<string> = new Set(['from', 'rpc']);
+/** X.from(...) のうち Supabase の問い合わせでないもの (Array.from) の X */
+const NON_SUPABASE_FROM_RECEIVERS: ReadonlySet<string> = new Set(['Array']);
+/** Supabase の読み取りの結果のうち、読めた値の項目 (分割代入で受け取る名前) */
+const SUPABASE_RESULT_VALUE_FIELDS: ReadonlySet<string> = new Set(['data', 'count']);
+/** Supabase の読み取りの結果の、失敗の項目 */
+const SUPABASE_RESULT_ERROR_FIELD = 'error';
+
 interface ReceiverSource {
   file: string;
   source: string;
@@ -121,6 +146,8 @@ interface PlacementGuardReport {
   selfHeldReceivers: string[];
   /** 規則 5 が見た取り直しの経路の取得 ('<ファイル>:<行>') */
   refetchPathFetchers: string[];
+  /** 規則 6 が見た取り直しの経路の Supabase の読み取り ('<ファイル>:<行>') */
+  refetchPathSupabaseReads: string[];
 }
 
 function parse(file: string, source: string): ts.SourceFile {
@@ -526,6 +553,125 @@ function placementsWithoutOrder(file: string, sf: ts.SourceFile, delegatedRefetc
   return violations;
 }
 
+/** 式の中に Supabase の問い合わせ (X.from(...)・X.rpc(...)) があるか。式の中の名前が問い合わせを入れた const なら、その初期値も見る */
+function containsSupabaseQuery(sf: ts.SourceFile, expression: ts.Node, seen: Set<string> = new Set()): boolean {
+  let found = false;
+  walk(expression, (node) => {
+    if (found) return;
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const { name, expression: receiver } = node.expression;
+      if (SUPABASE_QUERY_METHODS.has(name.text) && !(ts.isIdentifier(receiver) && NON_SUPABASE_FROM_RECEIVERS.has(receiver.text))) found = true;
+    } else if (ts.isIdentifier(node) && !seen.has(node.text)) {
+      seen.add(node.text);
+      const declaration = declarationOf(sf, node.text);
+      if (declaration && !declaration.destructured && declaration.init !== undefined && containsSupabaseQuery(sf, declaration.init, seen)) {
+        found = true;
+      }
+    }
+  });
+  return found;
+}
+
+/** 分割代入の形の中のオブジェクトの形 ({ data, error } と、配列の形 [{ data }, …] の中のもの) */
+function objectBindingPatternsOf(name: ts.BindingName): ts.ObjectBindingPattern[] {
+  if (ts.isObjectBindingPattern(name)) return [name];
+  if (ts.isArrayBindingPattern(name)) {
+    return name.elements.flatMap((element) => (ts.isBindingElement(element) ? objectBindingPatternsOf(element.name) : []));
+  }
+  return [];
+}
+
+/** 分割代入の要素の、元のオブジェクトの項目の名前 */
+function bindingPropertyName(element: ts.BindingElement): string | null {
+  const property = element.propertyName ?? element.name;
+  return ts.isIdentifier(property) ? property.text : null;
+}
+
+/** node の中に、応答を置くところ (setter の呼び出し・取得の流れの place) があるか */
+function containsPlacement(node: ts.Node): boolean {
+  let found = false;
+  walk(node, (inner) => {
+    if (found || !ts.isCallExpression(inner)) return;
+    if (setterCallName(inner) !== null) found = true;
+    else if (ts.isPropertyAccessExpression(inner.expression) && inner.expression.name.text === STREAM_PLACE) found = true;
+  });
+  return found;
+}
+
+/** node の中で name (の識別子) を読むか */
+function mentions(node: ts.Node, name: string): boolean {
+  let found = false;
+  walk(node, (inner) => {
+    if (ts.isIdentifier(inner) && inner.text === name) found = true;
+  });
+  return found;
+}
+
+/**
+ * name を読むところ (ref) が、name を条件で見る if で守られているか: if の条件の中か、条件が name を読み、応答を置くところを持つ
+ * then の中 (読めなかったとき (null) は、その応答を置かない)。fn の外へは上がらない
+ */
+function guardedByNameCondition(ref: ts.Node, fn: FunctionNode, name: string): boolean {
+  for (let child: ts.Node = ref, current = ref.parent; current !== undefined && child !== fn; child = current, current = current.parent) {
+    if (!ts.isIfStatement(current)) continue;
+    if (child === current.expression) return true;
+    if (child === current.thenStatement && mentions(current.expression, name) && containsPlacement(current.thenStatement)) return true;
+  }
+  return false;
+}
+
+/** fn の中で name を読むところが全部 (分割代入そのものを除く)、name を条件で見る if で守られているか */
+function readsOnlyUnderNameCondition(fn: FunctionNode, name: string, binding: ts.Node): boolean {
+  let guarded = true;
+  if (fn.body === undefined) return true;
+  walk(fn.body, (node) => {
+    if (!guarded || !ts.isIdentifier(node) || node.text !== name || node === binding) return;
+    // obj.name・{ name: … } の name は、その変数を読むところではない
+    if (ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) return;
+    if ((ts.isPropertyAssignment(node.parent) || ts.isBindingElement(node.parent)) && node.parent.propertyName === node) return;
+    if (ts.isPropertyAssignment(node.parent) && node.parent.name === node) return;
+    if (!guardedByNameCondition(node, fn, name)) guarded = false;
+  });
+  return guarded;
+}
+
+/**
+ * 規則 6: 取り直しの経路の関数が Supabase の読み取りの結果を分割代入で受け取り、data / count を受け取るのに error を受け取らず、
+ * 受け取った値を条件で守らずに読むところ。reads に、見た読み取り ('<ファイル>:<行>') を足す
+ */
+function supabaseReadsWithoutError(file: string, sf: ts.SourceFile, delegatedRefetch: string | null, reads: string[]): string[] {
+  const violations: string[] = [];
+  for (const fn of refetchPathFunctions(sf, refetchEntryFunctions(sf, delegatedRefetch))) {
+    walkOwnBody(fn, (node) => {
+      if (!ts.isVariableDeclaration(node) || node.initializer === undefined) return;
+      let initializer: ts.Expression = node.initializer;
+      while (ts.isParenthesizedExpression(initializer)) initializer = initializer.expression;
+      if (!ts.isAwaitExpression(initializer) || !containsSupabaseQuery(sf, initializer.expression)) return;
+      for (const pattern of objectBindingPatternsOf(node.name)) {
+        const values = pattern.elements.filter((element) => {
+          const property = bindingPropertyName(element);
+          return property !== null && SUPABASE_RESULT_VALUE_FIELDS.has(property) && ts.isIdentifier(element.name);
+        });
+        if (values.length === 0) continue;
+        const line = sf.getLineAndCharacterOfPosition(pattern.getStart(sf)).line + 1;
+        reads.push(`${file}:${line}`);
+        if (pattern.elements.some((element) => bindingPropertyName(element) === SUPABASE_RESULT_ERROR_FIELD)) continue;
+        const unguarded = values
+          .map((element) => element.name)
+          .filter((name): name is ts.Identifier => ts.isIdentifier(name))
+          .filter((name) => !readsOnlyUnderNameCondition(fn, name.text, name))
+          .map((name) => name.text);
+        if (unguarded.length > 0) {
+          violations.push(
+            `${file}:${line}: 取り直しの経路の取得 ${functionLabel(fn)} が Supabase の読み取りの ${unguarded.join('・')} を受け取るのに ${SUPABASE_RESULT_ERROR_FIELD} を受け取らない (読み取りの失敗を「無い」と同じに扱い、取り直しで今の表示を空・0 で上書きする。${SUPABASE_RESULT_ERROR_FIELD} を受け取り、取り直しの失敗では置かない)`,
+          );
+        }
+      }
+    });
+  }
+  return violations;
+}
+
 /** 受け手のソースを数える (sources は検査する全部のファイル。DELEGATED_RECEIVERS の definedIn もこの中から引く) */
 function checkPlacementGuards(
   sources: readonly ReceiverSource[],
@@ -536,6 +682,7 @@ function checkPlacementGuards(
   const countedMarkerReceivers: string[] = [];
   const selfHeldReceivers: string[] = [];
   const refetchPathFetchers: string[] = [];
+  const refetchPathSupabaseReads: string[] = [];
   const byFile = new Map(sources.map((s) => [s.file, s.source]));
 
   for (const { file, source } of sources) {
@@ -548,6 +695,7 @@ function checkPlacementGuards(
     }
     const delegatedRefetch = delegated.find((d) => d.definedIn === file)?.refetch ?? null;
     violations.push(...placementsWithoutOrder(file, sf, delegatedRefetch, refetchPathFetchers));
+    violations.push(...supabaseReadsWithoutError(file, sf, delegatedRefetch, refetchPathSupabaseReads));
     for (const call of callsTo(sf, [DATA_REFETCH_HOOK, REFETCH_KEY_HOOK])) {
       const hook = calleeName(call);
       const options = hook === DATA_REFETCH_HOOK ? call.arguments[1] : call.arguments[0];
@@ -620,7 +768,7 @@ function checkPlacementGuards(
       violations.push(`SELF_HELD_RECEIVERS の ${entry.file} (${entry.marker}) が、真偽の ref の印を渡す受け手として見つからない (一覧を直す)`);
     }
   }
-  return { violations, countedMarkerReceivers, selfHeldReceivers, refetchPathFetchers };
+  return { violations, countedMarkerReceivers, selfHeldReceivers, refetchPathFetchers, refetchPathSupabaseReads };
 }
 
 function listSourceFiles(dir: string): string[] {
@@ -652,6 +800,10 @@ describe('書き込みの印を渡す受け手は、取り直しの応答を置�
     expect(report.refetchPathFetchers.length, '取り直しの経路の取得をたどれていない (規則 5 が空振りしている)').toBeGreaterThanOrEqual(
       MIN_REFETCH_PATH_FETCHERS,
     );
+    expect(
+      report.refetchPathSupabaseReads.length,
+      `取り直しの経路の Supabase の読み取りを数えられていない (規則 6 が空振りしている。見たのは ${report.refetchPathSupabaseReads.length} 個)`,
+    ).toBeGreaterThanOrEqual(MIN_REFETCH_PATH_SUPABASE_READS);
   });
 
   describe('見分けの空振りを防ぐ (直す前の /pantry・/menus/weekly・/health/goals の形を赤にする)', () => {
@@ -861,6 +1013,88 @@ describe('書き込みの印を渡す受け手は、取り直しの応答を置�
       expect(checkPage(source.replaceAll('FINALLY', 'setAiRefetching(false); setItems([]);'))).toEqual([
         expect.stringMatching(/:3: 取り直しの経路の取得 refetchAfterAiConsultation が、応答が届いたあとに setItems \(8 行\) で/),
       ]);
+    });
+  });
+
+  describe('規則 6: 取り直しの経路の Supabase の読み取りは error を受け取る (R7 の直す前のホームの記録の集計の形を赤にする)', () => {
+    const PAGE_FILE = 'src/app/(main)/x/page.tsx';
+    const HOOK_FILE = 'src/hooks/useX.ts';
+    const delegatedHook = [{ file: PAGE_FILE, marker: 'writes', refetch: 'refetch', definedIn: HOOK_FILE }];
+    /** 取り直しの経路 (refetch → fetchHome → fetchPart) の fetchPart の本体を body にした hook を数える */
+    const run = (body: string) =>
+      checkPlacementGuards(
+        [
+          {
+            file: HOOK_FILE,
+            source: `export const useX = () => {
+              const fetchPart = async (userId, isLatest, mode) => {
+                ${body}
+              };
+              const fetchHome = async (ticket, mode) => {
+                const order = homeStream.begin(ticket);
+                await fetchPart('user-1', order.isLatest, mode);
+              };
+              return { refetch: (ticket) => fetchHome(ticket, 'refetch') };
+            };`,
+          },
+        ],
+        [],
+        delegatedHook,
+      );
+
+    it('count を受け取って error を受け取らない (直す前のバッジの数・買い物リストの残り) は赤', () => {
+      const report = run(`const { count } = await supabase.from('user_badges').select('*', { count: 'exact', head: true });
+                if (isLatest()) setBadgeCount(count || 0);`);
+      expect(report.violations).toEqual([expect.stringMatching(/useX\.ts:3: 取り直しの経路の取得 fetchPart が Supabase の読み取りの count を受け取るのに error を受け取らない/)]);
+      expect(report.refetchPathSupabaseReads).toEqual([`${HOOK_FILE}:3`]);
+    });
+
+    it('問い合わせを入れた const を await する (直す前の今週のベストごはん) も数えて赤', () => {
+      expect(
+        run(`const query = supabase.from('planned_meals').select('*');
+                const { data } = await orderListBy(query, ORDER).limit(1);
+                if (isLatest()) setBestMeal(data && data.length > 0 ? data[0] : null);`).violations,
+      ).toEqual([expect.stringMatching(/:4: .*Supabase の読み取りの data を受け取るのに error を受け取らない/)]);
+    });
+
+    it('受け取った値を条件で見ても、応答を置かない then で別の変数に移して置く (直す前の健康記録の体重) は赤', () => {
+      expect(
+        run(`const { data: weights } = await supabase.from('health_records').select('weight');
+                let latest = null;
+                if (weights && weights.length > 0) {
+                  latest = weights[0].weight;
+                }
+                if (isLatest()) setLatestWeight(latest);`).violations,
+      ).toEqual([expect.stringMatching(/:3: .*Supabase の読み取りの weights を受け取るのに error を受け取らない/)]);
+    });
+
+    it('配列の形で受け取る読み取りも 1 つずつ数える', () => {
+      expect(
+        run(`const [{ data: a }, { data: b, error: bError }] = await Promise.all([
+                  supabase.from('a').select('*'),
+                  supabase.from('b').select('*'),
+                ]);
+                if (isLatest() && !(mode === 'refetch' && bError)) { setA(a); setB(b); }`).violations,
+      ).toEqual([expect.stringMatching(/:3: .*Supabase の読み取りの a を受け取るのに error を受け取らない/)]);
+    });
+
+    it('直した形 (error を受け取る)・値を条件で見て置く形・Supabase でない読み取りは赤にしない', () => {
+      expect(
+        run(`const { count, error: countError } = await supabase.from('user_badges').select('*', { count: 'exact', head: true });
+                if (isLatest() && !(mode === 'refetch' && countError)) setBadgeCount(count || 0);`).violations,
+      ).toEqual([]);
+      expect(
+        run(`const { data: days } = await supabase.from('user_daily_meals').select('*');
+                if (days && isLatest()) {
+                  setStreak(days.length);
+                }`).violations,
+      ).toEqual([]);
+      expect(
+        run(`const res = await fetch('/api/x');
+                const { data } = await res.json();
+                const [{ data: first }] = await Promise.all(Array.from(ids, (id) => load(id)));
+                if (isLatest()) { setItems(data ?? []); setFirst(first); }`).violations,
+      ).toEqual([]);
     });
   });
 });

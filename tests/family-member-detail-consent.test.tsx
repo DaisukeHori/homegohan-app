@@ -30,6 +30,8 @@ const state = vi.hoisted(() => ({
   member: null as Record<string, unknown> | null,
   consent: null as Record<string, unknown> | null,
   consentFilters: [] as Array<[string, unknown]>,
+  /** true なら同意の記録 (parental_consents) の読み取りが失敗する (通信・サーバーの失敗。行が無いのとは別。#2201 U1) */
+  consentFails: false,
 }));
 
 // 本物の useRouter は同じ参照を返す (毎回作ると useEffect の依存が変わって読み込みが 2 回走る)
@@ -71,6 +73,9 @@ function query(table: string) {
     maybeSingle: async () => {
       // 自分の役割は自分の active な行から .maybeSingle() で読む (#2080 U2)
       if (table === 'family_members' && columns === 'role') return { data: { role: 'representative' }, error: null };
+      if (table === 'parental_consents' && state.consentFails) {
+        return { data: null, error: { code: '08006', message: 'connection failure' } };
+      }
       return { data: state.consent, error: null };
     },
   };
@@ -87,6 +92,7 @@ vi.mock('@/lib/supabase/client', () => ({
 }));
 
 const { default: FamilyMemberDetailPage } = await import('@/app/(main)/family/members/[id]/page');
+const { AI_CONSULTATION_DATA_CHANGED_EVENT } = await import('@/lib/ai/consultation-data-refetch');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -127,6 +133,7 @@ beforeEach(() => {
   state.member = null;
   state.consent = null;
   state.consentFilters = [];
+  state.consentFails = false;
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -207,5 +214,35 @@ describe('メンバーの詳細画面の保護者の同意カード (#1173)', ()
 
     expect(container.querySelector('[data-testid="parental-consent-card"]')).toBeNull();
     expect(container.textContent).not.toContain(PARENTAL_CONSENT_COPY.notRequiredNote);
+  });
+
+  it('AI 相談の成功の取り直しで同意の記録を読めなかったら、出ていた同意カードを残す (#2201 U1)', async () => {
+    /** 取り直しの読み取りの連鎖を流しきるまでに回すタスクの数 */
+    const SETTLE_TASKS = 20;
+    state.member = childRow('2018-04-01');
+    state.consent = {
+      id: 'consent-1',
+      signed_name: '山田 花子',
+      consent_version: 'v2026.1',
+      signed_at: '2026-10-15T01:00:00.000Z',
+      revoked_at: null,
+      revoked_reason: null,
+    };
+    await renderPage();
+    const card = () => container.querySelector('[data-testid="parental-consent-card"]');
+    expect(card(), '同意カードが出ていない (検査の前提が崩れた)').not.toBeNull();
+
+    // AI 相談の成功の直後に通信が切れ、取り直しの同意の記録の読み取りが失敗する
+    state.consentFails = true;
+    const consentReadsBefore = state.consentFilters.length;
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent(AI_CONSULTATION_DATA_CHANGED_EVENT, { detail: { actionType: 'update_profile_preferences', result: {} } }));
+    });
+    await act(async () => {
+      for (let i = 0; i < SETTLE_TASKS; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(state.consentFilters.length, '取り直しが同意の記録を読み直していない (検査が空振りしている)').toBeGreaterThan(consentReadsBefore);
+    expect(card(), '取り直しの読み取りの失敗で、出ていた同意カードを消した').not.toBeNull();
+    expect(card()!.textContent).toContain('山田 花子');
   });
 });
