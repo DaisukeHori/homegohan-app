@@ -18,6 +18,7 @@ import {
 } from '../helpers/users';
 import { supabaseAdmin } from '../helpers/supabase';
 import { apiCall, apiCallNoAuth } from '../helpers/api';
+import { NEW_FLAG_DEFAULT_PACKAGE_KEY } from '@/lib/super-admin/feature-package-flag-append';
 
 const TS = Date.now();
 
@@ -26,6 +27,20 @@ let adminUser: TestUser;
 
 /** Flag key created via POST and used in PATCH/DELETE tests */
 const testFlagKey = `integration_test_flag_${TS}`;
+/** #2189 W4: 運営最上位 2 人がほぼ同時に作るフラグのキー (どちらも basic のパッケージに残ること) */
+const concurrentFlagKeys = [`integration_w4_flag_a_${TS}`, `integration_w4_flag_b_${TS}`] as const;
+/** このファイルが作るフラグのキー (後片付けで basic のパッケージと feature_flags から消す) */
+const createdFlagKeys: readonly string[] = [testFlagKey, ...concurrentFlagKeys];
+
+/** basic のパッケージのフラグキーの一覧を読む */
+async function basicPackageFlags(): Promise<{ id: string; flags: string[] } | null> {
+  const { data } = await supabaseAdmin
+    .from('feature_packages')
+    .select('id, feature_flags')
+    .eq('package_key', NEW_FLAG_DEFAULT_PACKAGE_KEY)
+    .single();
+  return data ? { id: data.id as string, flags: (data.feature_flags as string[]) ?? [] } : null;
+}
 
 beforeAll(async () => {
   [superAdminUser, adminUser] = await Promise.all([
@@ -35,26 +50,19 @@ beforeAll(async () => {
 }, 60000);
 
 afterAll(async () => {
-  // Remove the flag from 'basic' feature package if it was added
-  const { data: basicPkg } = await supabaseAdmin
-    .from('feature_packages')
-    .select('id, feature_flags')
-    .eq('package_key', 'basic')
-    .single();
-
-  if (basicPkg) {
-    const flags = (basicPkg.feature_flags as string[]) ?? [];
-    if (flags.includes(testFlagKey)) {
-      await supabaseAdmin
-        .from('feature_packages')
-        .update({ feature_flags: flags.filter((f) => f !== testFlagKey) })
-        .eq('id', basicPkg.id);
-    }
+  // Remove the flags from 'basic' feature package if they were added
+  // (結合テストはファイルを 1 本ずつ流す (vitest.integration.config.ts の maxWorkers: 1) ので、ここで読んでから書いても他のファイルと重ならない)
+  const basicPkg = await basicPackageFlags();
+  if (basicPkg && basicPkg.flags.some((f) => createdFlagKeys.includes(f))) {
+    await supabaseAdmin
+      .from('feature_packages')
+      .update({ feature_flags: basicPkg.flags.filter((f) => !createdFlagKeys.includes(f)) })
+      .eq('id', basicPkg.id);
   }
 
   // #1029: feature_flags テーブルの実データも掃除する (DELETE テストは 409 で
   // ブロックされるため testFlagKey の行が残ったままになる)
-  await supabaseAdmin.from('feature_flags').delete().eq('key', testFlagKey);
+  await supabaseAdmin.from('feature_flags').delete().in('key', [...createdFlagKeys]);
 
   await Promise.all([
     cleanupAuditLogs(superAdminUser.userId),
@@ -119,6 +127,24 @@ describe('POST /api/super-admin/flags', () => {
     expect(res.status).toBe(409);
     const body = res.body as { error: { code: string } };
     expect(body.error.code).toBe('OP_FEATURE_FLAG_IN_USE');
+  });
+
+  // #2189 W4: 以前は basic の feature_flags を読んでから [...読んだ値, key] で書いており、2 本が重なると後から書いた方の一覧だけが残った。
+  // いまは DB の関数 1 本 (1 文の条件つき UPDATE) で足すので、同時に作っても両方のキーが残る
+  // (重なりを決まった順で再現する確認は tests/integration/rls/feature-packages-append-flag-rpc.test.ts の I-4)
+  it('201 for two flags created at the same time — both keys stay in the basic package (#2189 W4)', async () => {
+    const responses = await Promise.all(
+      concurrentFlagKeys.map((key) =>
+        apiCall('POST', '/api/super-admin/flags', superAdminUser.jwt, { key, description: 'W4 concurrent flag', enabled: false }),
+      ),
+    );
+    for (const res of responses) expect(res.status).toBe(201);
+    const basicPkg = await basicPackageFlags();
+    expect(basicPkg, 'basic のパッケージが無い').not.toBeNull();
+    for (const key of concurrentFlagKeys) {
+      expect(basicPkg!.flags.filter((f) => f === key), key).toHaveLength(1);
+    }
+    expect(basicPkg!.flags).toContain(testFlagKey);
   });
 
   it('400 for invalid key (uppercase / special chars)', async () => {

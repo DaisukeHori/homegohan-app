@@ -8,6 +8,8 @@
  * - 数えられなかったとき (読み出しの失敗) は、一覧そのものは返し、active_user_count は null、原因は構造化ログに残す
  * - 読むのは判定に要る列 (id / roles / organization_id / plan_key_cached / created_at) だけ
  * - 作成・更新・削除のあと、このインスタンスのフラグのキャッシュを新しくする (invalidateFeatureFlag)
+ * - #2189 W4: 作ったフラグのキーは、DB の関数 append_flag_to_feature_package (1 文の条件つき UPDATE) で basic のパッケージに足す。
+ *     feature_packages を読んでから書かない。足せなかったとき (関数の失敗・想定外の結果) もフラグの作成は 201 で、原因をログに残す
  *
  * requireRole は本物 (src/lib/auth/helpers.ts) を使い、ログイン中のユーザーと user_profiles の取得だけを差し替える。
  */
@@ -26,6 +28,14 @@ const state = vi.hoisted(() => ({
   adminSelects: [] as string[],
   /** feature_flags に対して行った書き込みと、書いた client (本人の権限 / サービスロール。書き込みはサービスロールだけ。#1917 の続き) */
   writes: [] as Array<{ table: string; op: string; payload: unknown; client: 'session' | 'admin' }>,
+  /** サービスロールの client で呼んだ DB の関数 (#2189 W4) */
+  rpcCalls: [] as Array<{ fn: string; args: unknown }>,
+  /** DB の関数の応答 (#2189 W4。既定は added) */
+  rpcResult: { data: 'added', error: null } as { data: unknown; error: { message: string; code?: string } | null },
+  /** 本人の権限 / サービスロールの client が from() で触れた表 */
+  tablesTouched: [] as Array<{ table: string; client: 'session' | 'admin' }>,
+  /** feature_flags の insert の応答の失敗 (既定は成功) */
+  insertError: null as { message: string; code?: string } | null,
 }));
 const getSupabaseAdmin = vi.hoisted(() => vi.fn());
 const logUserError = vi.hoisted(() => vi.fn());
@@ -33,6 +43,7 @@ const invalidateFeatureFlag = vi.hoisted(() => vi.fn());
 
 /** client: feature_flags / feature_packages はどちらの client からも同じ代わりの表を使い、書き込みに client を記録する */
 function sessionFrom(table: string, client: 'session' | 'admin' = 'session') {
+  state.tablesTouched.push({ table, client });
   if (table === 'user_profiles') {
     const builder: any = {
       select: () => builder,
@@ -52,6 +63,9 @@ function sessionFrom(table: string, client: 'session' | 'admin' = 'session') {
           return (resolve: (v: unknown) => unknown) => resolve({ data: state.flagRows, error: null });
         }
         if (prop === 'single') {
+          if (state.insertError && state.writes.some((w) => w.table === table && w.op === 'insert')) {
+            return async () => ({ data: null, error: state.insertError });
+          }
           return async () => ({ data: { key: 'updated_flag', enabled: true }, error: null });
         }
         if (prop === 'insert' || prop === 'update' || prop === 'delete') {
@@ -86,6 +100,10 @@ function sessionFrom(table: string, client: 'session' | 'admin' = 'session') {
 /** サービスロールの client: user_profiles の件数と、ページ送りの取得だけを再現する */
 function adminClient() {
   return {
+    rpc: async (fn: string, args: unknown) => {
+      state.rpcCalls.push({ fn, args });
+      return state.rpcResult;
+    },
     from: (table: string) => {
       // 機能フラグ・機能パッケージの書き込みはサービスロールの client で行う (運営の直接の書き込みを塞いだ。#1917 の続き)
       if (table === 'feature_flags' || table === 'feature_packages') return sessionFrom(table, 'admin');
@@ -144,6 +162,11 @@ vi.mock('@/lib/feature-flags', () => ({
 import { GET, POST } from '../src/app/api/super-admin/flags/route';
 import { DELETE, PATCH } from '../src/app/api/super-admin/flags/[key]/route';
 import { aal2AuthMock } from './helpers/mfa-claims';
+import {
+  FEATURE_PACKAGE_FLAG_APPEND_OUTCOME,
+  FEATURE_PACKAGES_APPEND_FLAG_RPC,
+  NEW_FLAG_DEFAULT_PACKAGE_KEY,
+} from '../src/lib/super-admin/feature-package-flag-append';
 
 function flag(key: string, overrides: Row = {}): Row {
   return {
@@ -192,6 +215,10 @@ beforeEach(() => {
   state.adminClientError = null;
   state.adminSelects = [];
   state.writes = [];
+  state.rpcCalls = [];
+  state.rpcResult = { data: 'added', error: null };
+  state.tablesTouched = [];
+  state.insertError = null;
   getSupabaseAdmin.mockImplementation(() => {
     if (state.adminClientError) throw state.adminClientError;
     return adminClient();
@@ -451,6 +478,9 @@ describe('作成・更新・削除のあと、このインスタンスのフラ�
     expect(res.status).toBe(201);
     expect(invalidateFeatureFlag).toHaveBeenCalledWith('new_flag');
     expect(state.writes.map((w) => `${w.client} ${w.table} ${w.op}`)).toEqual(['admin feature_flags insert']);
+    expect(state.rpcCalls).toEqual([
+      { fn: FEATURE_PACKAGES_APPEND_FLAG_RPC, args: { p_package_key: NEW_FLAG_DEFAULT_PACKAGE_KEY, p_flag_key: 'new_flag' } },
+    ]);
   });
 
   it('super_admin 以外は 403 で、キャッシュには触れない', async () => {
@@ -459,5 +489,72 @@ describe('作成・更新・削除のあと、このインスタンスのフラ�
     expect(res.status).toBe(403);
     expect(invalidateFeatureFlag).not.toHaveBeenCalled();
     expect(state.writes).toEqual([]);
+  });
+});
+
+describe('POST /api/super-admin/flags — 作ったキーは basic のパッケージへ DB の関数 1 本で足す (#2189 W4)', () => {
+  function postRequest(body: unknown) {
+    return new Request('http://localhost/api/super-admin/flags', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }) as unknown as import('next/server').NextRequest;
+  }
+
+  it('サービスロールの client で関数を 1 回だけ呼び、feature_packages は読みも書きもしない', async () => {
+    const res = await POST(postRequest({ key: 'w4_flag', enabled: true }));
+    expect(res.status).toBe(201);
+    expect(state.rpcCalls).toEqual([
+      { fn: FEATURE_PACKAGES_APPEND_FLAG_RPC, args: { p_package_key: NEW_FLAG_DEFAULT_PACKAGE_KEY, p_flag_key: 'w4_flag' } },
+    ]);
+    // 以前は本人の権限で feature_packages を読み、サービスロールで [...読んだ値, key] を書いていた
+    expect(state.tablesTouched.filter((t) => t.table === 'feature_packages')).toEqual([]);
+    expect(state.writes.filter((w) => w.table === 'feature_packages')).toEqual([]);
+    expect(logUserError).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['already_present', FEATURE_PACKAGE_FLAG_APPEND_OUTCOME.alreadyPresent],
+    ['not_found (basic のパッケージが無い環境)', FEATURE_PACKAGE_FLAG_APPEND_OUTCOME.notFound],
+  ])('関数が %s を返しても 201 で、ログに失敗を残さない', async (_label, outcome) => {
+    state.rpcResult = { data: outcome, error: null };
+    const res = await POST(postRequest({ key: 'w4_flag', enabled: false }));
+    expect(res.status).toBe(201);
+    expect(state.rpcCalls).toHaveLength(1);
+    expect(logUserError).not.toHaveBeenCalled();
+  });
+
+  it('関数が失敗しても、フラグの作成そのものは 201 のまま。原因 (DB の失敗) とキーをログに残す', async () => {
+    state.rpcResult = { data: null, error: { message: 'permission denied for function append_flag_to_feature_package', code: '42501' } };
+    const res = await POST(postRequest({ key: 'w4_flag', enabled: false }));
+    expect(res.status).toBe(201);
+    expect(invalidateFeatureFlag).toHaveBeenCalledWith('w4_flag');
+    expect(logUserError).toHaveBeenCalledTimes(1);
+    const [message, cause, metadata] = logUserError.mock.calls[0];
+    expect(message).toContain('機能パッケージに足せません');
+    expect(cause).toEqual(state.rpcResult.error);
+    expect(metadata).toEqual({ flagKey: 'w4_flag', packageKey: NEW_FLAG_DEFAULT_PACKAGE_KEY });
+  });
+
+  it('関数が想定外の値 (NULL など) を返したときも 201 のまま、ログに残す', async () => {
+    state.rpcResult = { data: null, error: null };
+    const res = await POST(postRequest({ key: 'w4_flag', enabled: false }));
+    expect(res.status).toBe(201);
+    expect(logUserError).toHaveBeenCalledTimes(1);
+    expect((logUserError.mock.calls[0][1] as Error).message).toContain('想定外の結果');
+  });
+
+  it('同じキーが既にあって作成が 409 のときは、関数を呼ばない', async () => {
+    state.insertError = { message: 'duplicate key value violates unique constraint', code: '23505' };
+    const res = await POST(postRequest({ key: 'w4_flag', enabled: false }));
+    expect(res.status).toBe(409);
+    expect(state.rpcCalls).toEqual([]);
+  });
+
+  it('super_admin 以外は 403 で、関数を呼ばない', async () => {
+    state.roles = ['admin'];
+    const res = await POST(postRequest({ key: 'w4_flag', enabled: false }));
+    expect(res.status).toBe(403);
+    expect(state.rpcCalls).toEqual([]);
   });
 });
