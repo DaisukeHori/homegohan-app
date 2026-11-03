@@ -187,7 +187,7 @@ export default function HealthGraphsPage() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [fetchData, beginFetch]);
+  }, [fetchData, beginFetch, refetchReadMode]);
 
   // グラフデータを生成
   // #1055 UX3-13/14: 血圧は収縮期のみ描画されていたため、拡張期 (value2) も持たせて2系列描画する
