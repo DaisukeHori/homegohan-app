@@ -98,9 +98,39 @@ export type ProfileCompletenessRowSync<Row extends Partial<DbUserProfile>> = {
 };
 
 /**
+ * 完成度を条件つきで書く回数の上限。読んでから書くまでに別の書き手が完成度を書くと 0 行になり、読み直して数え直す。
+ * 同時の書き込みが続いても終わるようにする (献立の料理の楽観的な排他の MEAL_DISH_WRITE_MAX_ATTEMPTS と同じ回数)。
+ * 上限まで書けなかったときは諦める (そのあいだに書いた別の書き手が、書いた後の行から計算し直す)
+ */
+export const PROFILE_COMPLETENESS_WRITE_MAX_ATTEMPTS = 5;
+
+/** 完成度を書くあいだに、別の書き手が書き続けて PROFILE_COMPLETENESS_WRITE_MAX_ATTEMPTS 回で書けなかった */
+export class ProfileCompletenessWriteExhaustedError extends Error {
+  constructor() {
+    super(`profile completeness kept changing while writing (${PROFILE_COMPLETENESS_WRITE_MAX_ATTEMPTS} attempts)`);
+    this.name = 'ProfileCompletenessWriteExhaustedError';
+  }
+}
+
+/** 完成度を書くあいだに、user_profiles の行が無くなった (退会など) */
+export class ProfileCompletenessRowMissingError extends Error {
+  constructor() {
+    super('user profile row disappeared while writing profile completeness');
+    this.name = 'ProfileCompletenessRowMissingError';
+  }
+}
+
+/**
  * 書いた後の行 (update / insert の .select().single() が返した行) から完成度を計算し、行の profile_completeness と違えば書く (#2201 U4)。
  * PUT /api/profile・POST /api/profile のように書き込みが行を返す経路は、読み直さずにこれを使う
  * (本文から数えると、目標の体重だけの PUT のような部分の本文で、ほかの欄が埋まっていても完成度が本文の欄の分だけになる)。
+ *
+ * 書くときは、読んだときの完成度のままの行にだけ書く (楽観的な排他。#2206 G4)。条件なしで書くと、読んでから書くまでに
+ * 別の書き手 (PUT /api/profile など) が欄を書いて計算し直した新しい完成度を、古い行から数えた値で上書きしえた。
+ *   - 書けたら、書いた後の行 (書いた時点の全部の欄) から数え直し、同じなら終わる。違えば (読んでから書くまでに欄が
+ *     書き換わっていた) その行の完成度を条件にもう一度書く
+ *   - 0 行なら (別の書き手が先に完成度を書いた) 今の行を読み直して数え直す
+ *   - PROFILE_COMPLETENESS_WRITE_MAX_ATTEMPTS 回で書けなければ諦める (error)
  * 例外は投げず、結果を返す (呼び出し側は、欄の書き込みそのものは成功として扱い、失敗はログに残すだけ)
  */
 export async function syncProfileCompletenessOfRow<Row extends Partial<DbUserProfile>>(
@@ -109,11 +139,32 @@ export async function syncProfileCompletenessOfRow<Row extends Partial<DbUserPro
   row: Row,
 ): Promise<ProfileCompletenessRowSync<Row>> {
   try {
-    const completeness = profileCompletenessOfRow(row);
-    if (row.profile_completeness === completeness) return { row, outcome: { status: 'unchanged', completeness } };
-    const { error: writeError } = await supabase.from('user_profiles').update({ profile_completeness: completeness }).eq('id', userId);
-    if (writeError) return { row, outcome: { status: 'error', error: writeError } };
-    return { row: { ...row, profile_completeness: completeness }, outcome: { status: 'updated', completeness } };
+    let current: Partial<DbUserProfile> = row;
+    let wrote = false;
+    for (let attempt = 1; attempt <= PROFILE_COMPLETENESS_WRITE_MAX_ATTEMPTS; attempt += 1) {
+      const completeness = profileCompletenessOfRow(current);
+      const stored = current.profile_completeness ?? null;
+      if (stored === completeness) {
+        const outcome = wrote ? { status: 'updated' as const, completeness } : { status: 'unchanged' as const, completeness };
+        const syncedRow = row.profile_completeness === completeness ? row : { ...row, profile_completeness: completeness };
+        return { row: syncedRow, outcome };
+      }
+      const update = supabase.from('user_profiles').update({ profile_completeness: completeness }).eq('id', userId);
+      const conditioned = stored === null ? update.is('profile_completeness', null) : update.eq('profile_completeness', stored);
+      const { data: written, error: writeError } = await conditioned.select('*').maybeSingle();
+      if (writeError) return { row, outcome: { status: 'error', error: writeError } };
+      if (written) {
+        wrote = true;
+        current = written;
+        continue;
+      }
+      // 0 行: 読んでから書くまでに別の書き手が完成度を書いた。今の行を読み直して数え直す
+      const { data: reread, error: readError } = await supabase.from('user_profiles').select('*').eq('id', userId).maybeSingle();
+      if (readError) return { row, outcome: { status: 'error', error: readError } };
+      if (!reread) return { row, outcome: { status: 'error', error: new ProfileCompletenessRowMissingError() } };
+      current = reread;
+    }
+    return { row, outcome: { status: 'error', error: new ProfileCompletenessWriteExhaustedError() } };
   } catch (error) {
     return { row, outcome: { status: 'error', error } };
   }

@@ -23,9 +23,13 @@ import {
 } from "../generate-menu-v4/step-utils.ts";
 import {
   countMealImageJobsToProcess,
+  ENQUEUE_FAILED_MEAL_COLUMNS,
   isCatalogProductMeal,
+  markEnqueueFailedDishesInMeal,
   reconcileDishImages,
   DEFAULT_MEAL_IMAGE_MODEL,
+  type EnqueueMealImageJobsResult,
+  type MealImageJobSeed,
 } from "./meal-image.ts";
 import {
   enqueueMealImageJobs,
@@ -754,31 +758,7 @@ export async function saveMealToDb(
   };
   // Image jobs must run inline (not via scheduleBackgroundTask) because
   // V5's outer waitUntil may resolve before nested background tasks execute.
-  try {
-    // 行ごとに積む (#1505)。書き込みに失敗した料理は enqueueMealImageJobs が 'failed' + 'enqueue_failed' にする。
-    // 処理を起こすのは、待ちのジョブがあるとき (積めた行か、同じ料理のジョブがすでに待ち・処理中の行があるとき)
-    const enqueueResult = await enqueueMealImageJobs({
-      supabase,
-      plannedMealId,
-      userId,
-      jobs: reconcileResult.jobs,
-      requestId: requestId ?? null,
-    });
-    // limit は積めた行と待ちのジョブの数 (書き込みに失敗した行は数えない。#1532)
-    const jobsToProcess = countMealImageJobsToProcess(enqueueResult);
-    if (jobsToProcess > 0) {
-      const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
-      const serviceRoleKey = Deno.env.get("SERVICE_ROLE_JWT") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-      await triggerMealImageJobProcessing({
-        supabaseUrl,
-        serviceRoleKey,
-        plannedMealId,
-        limit: jobsToProcess,
-      });
-    }
-  } catch (imageError: any) {
-    console.error(`[save-meal] meal-image-jobs enqueue failed for ${plannedMealId}:`, imageError?.message);
-  }
+  await enqueueSavedMealImageJobs({ supabase, plannedMealId, userId, jobs: reconcileResult.jobs, requestId: requestId ?? null });
 
   scheduleBackgroundTask(`meal-nutrition-debug:${targetSlot.date}:${targetSlot.mealType}`, async () => {
     const nutritionDebugInsertStartedAt = Date.now();
@@ -830,4 +810,73 @@ export async function saveMealToDb(
     plannedMealId,
     qualityIssues: qualityIssues.length > 0 ? qualityIssues : undefined,
   };
+}
+
+/**
+ * 献立を保存したあとに、料理画像のジョブを積んで処理を起こす。例外は外へ出さない (献立の保存は成功のまま)。
+ * 積み込みと処理の起動を分ける (#2206 G4。Next.js の src/lib/meal-image-enqueue-after-save.ts の決まりと同じ):
+ *   - 積み込み (enqueueMealImageJobs) の例外: ジョブの無い料理を、保存済みの献立の上で見送りの状態
+ *     ('failed' + 'enqueue_failed'。行ごとの書き込みに失敗した料理と同じ印。markEnqueueFailedDishesInMeal) に書き直す。
+ *     献立の生成は料理画像の回数を数えていないので、数え戻しは無い
+ *   - 処理の起動 (triggerMealImageJobProcessing) の例外: ログに残すだけ (積んだジョブは pg_cron の process-pending-meal-image-jobs が拾う)
+ * 以前は 2 つを 1 つの try に入れ、積み込みが投げるとジョブの無い料理が 'pending' (「料理画像を生成中です」) のまま残った
+ */
+export async function enqueueSavedMealImageJobs(params: {
+  /** service role のクライアント (献立を保存したのと同じ。meal_image_jobs は利用者から書けない。#1465) */
+  supabase: any;
+  plannedMealId: string;
+  userId: string;
+  jobs: MealImageJobSeed[];
+  requestId: string | null;
+}): Promise<void> {
+  let enqueueResult: EnqueueMealImageJobsResult;
+  try {
+    // 行ごとに積む (#1505)。書き込みに失敗した料理は enqueueMealImageJobs が 'failed' + 'enqueue_failed' にする。
+    enqueueResult = await enqueueMealImageJobs({
+      supabase: params.supabase,
+      plannedMealId: params.plannedMealId,
+      userId: params.userId,
+      jobs: params.jobs,
+      requestId: params.requestId,
+    });
+  } catch (enqueueError: unknown) {
+    console.error(`[save-meal] meal-image-jobs enqueue failed for ${params.plannedMealId}:`, errorMessageOf(enqueueError));
+    // 'pending' のまま残すと、処理するジョブが無いので「料理画像を生成中です」のまま残る。見送りの状態にする
+    const marked = await markEnqueueFailedDishesInMeal({
+      failures: params.jobs.map((job) => ({ dishIndex: job.dishIndex, subjectHash: job.subjectHash })),
+      mealId: params.plannedMealId,
+      db: params.supabase,
+      loadMeal: () =>
+        params.supabase.from("planned_meals").select(ENQUEUE_FAILED_MEAL_COLUMNS).eq("id", params.plannedMealId).maybeSingle(),
+    });
+    if (marked.status === "error") {
+      console.warn("[save-meal] Failed to mark dishes whose meal image jobs were not enqueued", {
+        plannedMealId: params.plannedMealId,
+        error: marked.message,
+      });
+    }
+    return;
+  }
+
+  // 処理を起こすのは、待ちのジョブがあるとき (積めた行か、同じ料理のジョブがすでに待ち・処理中の行があるとき)。
+  // limit は積めた行と待ちのジョブの数 (書き込みに失敗した行は数えない。#1532)
+  const jobsToProcess = countMealImageJobsToProcess(enqueueResult);
+  if (jobsToProcess === 0) return;
+  try {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const serviceRoleKey = Deno.env.get("SERVICE_ROLE_JWT") ?? Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    await triggerMealImageJobProcessing({
+      supabaseUrl,
+      serviceRoleKey,
+      plannedMealId: params.plannedMealId,
+      limit: jobsToProcess,
+    });
+  } catch (triggerError: unknown) {
+    // ジョブは積めているので料理は書き直さない (定期の処理が拾う)
+    console.warn(`[save-meal] meal-image-jobs trigger failed for ${params.plannedMealId}:`, errorMessageOf(triggerError));
+  }
+}
+
+function errorMessageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
