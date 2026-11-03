@@ -665,7 +665,7 @@ export default function AIChatBubble() {
     const timer = setTimeout(() => {
       timers.delete(timer);
       void (async () => {
-        const { state, actionType } = await readReplyActionStateOf(replyId);
+        const { state, actionType, result } = await readReplyActionStateOf(replyId);
         if (state !== 'executed') return;
         const runningNoteId = previousRequestNoteIdOf('running', replyId);
         setMessages(prev => prev.map(m => {
@@ -673,7 +673,8 @@ export default function AIChatBubble() {
           if (m.id === replyId) return { ...m, proposedActions: null };
           return m;
         }));
-        window.dispatchEvent(new CustomEvent('mealPlanUpdated', { detail: { actionType, result: null } }));
+        // finalData を受け取れた経路 (showAutoActionOutcome) と同じ detail (献立の生成なら、取り直す側が生成の完了まで見張る)
+        window.dispatchEvent(new CustomEvent('mealPlanUpdated', { detail: { actionType, result } }));
       })();
     }, PREVIOUS_REQUEST_RECHECK_DELAY_MS);
     timers.add(timer);
@@ -744,7 +745,7 @@ export default function AIChatBubble() {
       return;
     }
 
-    const { state, actionType } = await readReplyActionStateOf(reply.id);
+    const { state, actionType, result } = await readReplyActionStateOf(reply.id);
     const notes = state === 'none' ? [] : [previousRequestNoteOf(state, reply.id)];
     setMessages(prev => prev.flatMap(m => {
       if (m.id === tempUserMsgId) return [{ ...m, id: savedUser.id, isImportant: savedUser.isImportant === true }];
@@ -764,7 +765,8 @@ export default function AIChatBubble() {
       return [m];
     }));
     if (state === 'executed') {
-      window.dispatchEvent(new CustomEvent('mealPlanUpdated', { detail: { actionType, result: null } }));
+      // finalData を受け取れた経路 (showAutoActionOutcome) と同じ detail (献立の生成なら、取り直す側が生成の完了まで見張る)
+      window.dispatchEvent(new CustomEvent('mealPlanUpdated', { detail: { actionType, result } }));
     }
     if (state === 'running') recheckPreviousRequestLater(reply.id);
   };

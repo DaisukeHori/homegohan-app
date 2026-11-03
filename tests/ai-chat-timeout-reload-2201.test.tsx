@@ -21,7 +21,7 @@
  *     本文を残すのは時間切れでないとき (流れが途中で切れた) だけ (#126)
  *   - 受け付けられなかった送信 (2xx でない応答) は、これまでどおり失敗の文だけ (取り直さない)
  */
-import { act, createElement } from 'react';
+import { act, createElement, type ReactElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -85,6 +85,11 @@ vi.mock('framer-motion', () => {
 });
 
 const { default: AIChatBubble } = await import('@/components/AIChatBubble');
+const { useAiConsultationDataRefetch } = await import('@/hooks/useAiConsultationDataRefetch');
+const { AI_CONSULTATION_CHAT_ROOT_PROPS } = await import('@/lib/ai/consultation-data-refetch');
+const { AI_CONSULTATION_GENERATION_WATCH_INTERVAL_MS, aiConsultationGenerationStatusUrl } = await import(
+  '@/lib/ai/consultation-generation-watch'
+);
 
 const SESSION_ID = 'session-1';
 const MESSAGES_KEY = `GET /api/ai/consultation/sessions/${SESSION_ID}/messages`;
@@ -227,9 +232,9 @@ function expectNoteRightAfterReply(note: string) {
   expect(texts[replyIndex + 1]).toBe(note);
 }
 
-async function openChat() {
+async function openChat(element: ReactElement = createElement(AIChatBubble)) {
   await act(async () => {
-    root.render(createElement(AIChatBubble));
+    root.render(element);
   });
   const fab = container.querySelector('[data-testid="ai-chat-floating-button"]');
   expect(fab).not.toBeNull();
@@ -691,5 +696,105 @@ describe('#2201 U3 読み直しの予約は部品を外すときに取り消す'
     await waitPastRecheck();
     expect(logs.reads).toHaveLength(1);
     expect(mealPlanUpdated).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 献立の生成 3 種類の記録の行 (サーバーの messages の route が ai_action_logs.result に保存した、生成の受付の結果)。
+ * Web の取り直し (useAiConsultationDataRefetch) は、通知の detail.result がこの形のときだけ生成の完了まで見張る (#2202)
+ */
+const GENERATION_REQUEST_ID = 'req-1';
+const ACCEPTED_GENERATION_RESULT = { requestId: GENERATION_REQUEST_ID, status: 'processing' };
+const EXECUTED_GENERATION_ROW = { status: 'executed', action_type: 'generate_single_meal', result: ACCEPTED_GENERATION_RESULT };
+const RUNNING_GENERATION_ROW = { status: 'approved', action_type: 'generate_single_meal', result: null };
+const GENERATION_STATUS_KEY = `GET ${aiConsultationGenerationStatusUrl(GENERATION_REQUEST_ID)}`;
+
+/** 時間切れの経路の 2 つ: 最初の読み取りで実行できていた / 実行中の印のあと読み直しで実行できていた */
+const GENERATION_PATHS = [
+  ['最初の読み取り', [{ data: [EXECUTED_GENERATION_ROW], error: null }], () => savedMessages(SENT_TEXT)],
+  [
+    '読み直し',
+    [
+      { data: [RUNNING_GENERATION_ROW], error: null },
+      { data: [EXECUTED_GENERATION_ROW], error: null },
+    ],
+    () => savedMessagesWithRunningCard(SENT_TEXT),
+  ],
+] as const;
+
+describe('#2201 U3 時間切れの経路の通知にも、記録の行の実行の結果を載せる (献立の生成の完了まで見張れるように)', () => {
+  it.each(GENERATION_PATHS)('%s: 通知の detail.result が記録の行の result (生成の受付) になる', async (_label, results, saved) => {
+    logs.results = [...results];
+    await openChat();
+    await sendFromInput(timesOutAfterSaving(saved()));
+
+    await waitFor(() => text().includes(EXECUTED_NOTE));
+    for (const read of logs.reads) expect(read.columns.split(',').map((c) => c.trim())).toContain('result');
+    expect(mealPlanUpdated).toHaveBeenCalledTimes(1);
+    const detail = (mealPlanUpdated.mock.calls[0][0] as CustomEvent).detail;
+    expect(detail).toEqual({ actionType: 'generate_single_meal', result: ACCEPTED_GENERATION_RESULT });
+    expect(detail.result.requestId).toBe(GENERATION_REQUEST_ID);
+  });
+
+  it('記録の行に result が無い (生成でない提案) ときは result: null を載せる', async () => {
+    logs.results = [{ data: [{ status: 'executed', action_type: 'update_meal' }], error: null }];
+    await openChat();
+    await sendFromInput(timesOutAfterSaving(savedMessages(SENT_TEXT)));
+
+    await waitFor(() => text().includes(EXECUTED_NOTE));
+    expect((mealPlanUpdated.mock.calls[0][0] as CustomEvent).detail).toEqual({ actionType: 'update_meal', result: null });
+  });
+
+  describe('Web の取り直し (useAiConsultationDataRefetch) と組み合わせる', () => {
+    let refetch: ReturnType<typeof vi.fn>;
+    let statusChecks: number;
+
+    /** ページの取り直しの hook を使う部品 (献立表のページの代わり) */
+    function RefetchingPage() {
+      useAiConsultationDataRefetch(refetch);
+      return null;
+    }
+
+    beforeEach(() => {
+      // 生成の見張りの間隔 (setInterval) だけを手で進める (文が出るまでの待ちは本物の setTimeout のまま)
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      refetch = vi.fn();
+      statusChecks = 0;
+      handlers[GENERATION_STATUS_KEY] = async () => {
+        statusChecks += 1;
+        return json(200, { status: 'completed' });
+      };
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it.each(GENERATION_PATHS)(
+      '%s: 実行できたと分かったらすぐ 1 回取り直し、生成の状態の確認の URL を見て、終わったらもう一度取り直す',
+      async (_label, results, saved) => {
+        logs.results = [...results];
+        // AI 相談の吹き出しは、本物と同じく吹き出しを包む印の中に置く (吹き出しの入力欄は取り直しを止めない)
+        await openChat(
+          createElement(
+            'div',
+            null,
+            createElement('div', AI_CONSULTATION_CHAT_ROOT_PROPS, createElement(AIChatBubble)),
+            createElement(RefetchingPage),
+          ),
+        );
+        await sendFromInput(timesOutAfterSaving(saved()));
+
+        await waitFor(() => text().includes(EXECUTED_NOTE));
+        expect(mealPlanUpdated).toHaveBeenCalledTimes(1);
+        expect(refetch).toHaveBeenCalledTimes(1);
+        expect(statusChecks).toBe(0);
+
+        await act(async () => {
+          vi.advanceTimersByTime(AI_CONSULTATION_GENERATION_WATCH_INTERVAL_MS);
+        });
+        await waitFor(() => statusChecks === 1 && refetch.mock.calls.length === 2);
+      },
+    );
   });
 });

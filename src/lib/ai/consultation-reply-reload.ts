@@ -17,7 +17,11 @@
  *
  * このファイルはブラウザでだけ使う (サーバーの依存を import しない)。
  */
-import { previousRequestActionStateOf, type PreviousRequestActionState } from '@homegohan/shared';
+import {
+  PREVIOUS_REQUEST_ACTION_LOG_STATUS,
+  previousRequestActionStateOf,
+  type PreviousRequestActionState,
+} from '@homegohan/shared';
 
 import { createClient } from '@/lib/supabase/client';
 
@@ -42,11 +46,27 @@ export const AI_CHAT_DELIVERED_NO_REPLY_MESSAGE =
 /** 取り直したら、送った文が届いていなかったとき (入力欄に戻した文をもう一度送ってもらう) */
 export const AI_CHAT_NOT_DELIVERED_MESSAGE = '相談はサーバーに届いていませんでした。もう一度送ってください。';
 
-/** 返答の提案の記録の状態と、提案の種類 (データの更新の通知に添える。分からなければ null) */
+/** 返答の提案の記録の状態と、データの更新の通知 (mealPlanUpdated) の detail に添える提案の種類と実行の結果 */
 export interface ReplyActionState {
   state: PreviousRequestActionState;
+  /** 提案の種類 (分からなければ null) */
   actionType: string | null;
+  /**
+   * 実行できた行 (executed) の実行の結果 (ai_action_logs.result。サーバーの messages の route が保存した、
+   * finalData の actionResult.result と同じもの)。実行できた行が無い・読めないときは null。
+   * 献立の生成 3 種類では { requestId, status: 'processing' } で、Web の取り直し (src/hooks/useAiConsultationDataRefetch.ts) は
+   * これを見て生成が終わるまで見張り、終わったらもう一度取り直す (finalData を受け取れた経路と同じ detail にする)
+   */
+  result: unknown;
 }
+
+/** 読めなかったとき・実行したと言い切れないときの状態 */
+const UNKNOWN_REPLY_ACTION_STATE: ReplyActionState = { state: 'none', actionType: null, result: null };
+
+/** 記録の行のうち、ここで読む項目 */
+type ReplyActionLogRow = { status?: unknown; action_type?: unknown; result?: unknown };
+
+const isReplyActionLogRow = (row: unknown): row is ReplyActionLogRow => typeof row === 'object' && row !== null;
 
 /**
  * 返答 (messageId) に付いた提案の記録 (ai_action_logs) の状態を読む。
@@ -57,15 +77,16 @@ export async function readReplyActionStateOf(messageId: string): Promise<ReplyAc
   try {
     const { data, error } = await createClient()
       .from('ai_action_logs')
-      .select('status, action_type')
+      .select('status, action_type, result')
       .eq('message_id', messageId);
-    if (error) return { state: 'none', actionType: null };
+    if (error) return UNKNOWN_REPLY_ACTION_STATE;
     const state = previousRequestActionStateOf(data);
-    const actionType = Array.isArray(data)
-      ? (data as Array<{ action_type?: unknown }>).map((row) => row.action_type).find((t): t is string => typeof t === 'string') ?? null
-      : null;
-    return { state, actionType };
+    const rows = Array.isArray(data) ? (data as unknown[]).filter(isReplyActionLogRow) : [];
+    const actionType = rows.map((row) => row.action_type).find((t): t is string => typeof t === 'string') ?? null;
+    const executedRow = rows.find((row) => row.status === PREVIOUS_REQUEST_ACTION_LOG_STATUS.executed);
+    const result = state === 'executed' && executedRow !== undefined ? executedRow.result ?? null : null;
+    return { state, actionType, result };
   } catch {
-    return { state: 'none', actionType: null };
+    return UNKNOWN_REPLY_ACTION_STATE;
   }
 }
