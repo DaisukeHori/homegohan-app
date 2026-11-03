@@ -54,12 +54,11 @@ jest.mock('../../src/lib/supabase', () => ({
 
 /** 調理器具の質問 (QUESTIONS の 31 個目。スキップでき、次の質問 (コンロ) がある) の番号 */
 const KITCHEN_APPLIANCES_STEP = 30;
+/** 再開する進み (描画のたびに別のオブジェクトを返すと、画面の effect が繰り返し走るので、同じものを返す) */
+const mockProfile = { onboardingProgress: { currentStep: KITCHEN_APPLIANCES_STEP, answers: { nickname: 'ほり' } } };
+const mockRefresh = jest.fn();
 jest.mock('../../src/providers/ProfileProvider', () => ({
-  useProfile: () => ({
-    profile: { onboardingProgress: { currentStep: 30, answers: { nickname: 'ほり' } } },
-    isLoading: false,
-    refresh: jest.fn(),
-  }),
+  useProfile: () => ({ profile: mockProfile, isLoading: false, refresh: mockRefresh }),
 }));
 
 jest.mock('../../src/components/ui', () => {
@@ -99,7 +98,6 @@ afterEach(() => {
 async function skipKitchenAppliances() {
   render(<OnboardingQuestions />);
   await waitFor(() => expect(screen.getByText(/お持ちの調理器具は/)).toBeTruthy());
-  expect(KITCHEN_APPLIANCES_STEP).toBe(30);
   await act(async () => {
     fireEvent.press(screen.getByTestId('onboarding-skip-question-button'));
   });
