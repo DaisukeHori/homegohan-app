@@ -405,11 +405,15 @@ describe('2. AI が書く表を読むページは、受け手か除外の表に�
   });
 
   it('受け手ごとに、開いたとき・パネルの読み取りの取り直しと、空の応答の取り直しを描画で確かめるテストがある', () => {
-    // 2 つの判定を呼び、受け手のキーを文字列のリテラルで持つ (判定に渡すページの表の page: '<キー>' か、判定の引数) テストのファイル
+    // 2 つの判定を呼ぶテストのファイルのうち、受け手のキーを判定に渡すページの表の page: '<キー>' か、判定の引数のリテラルで持つもの
     const checking = testFiles().filter((file) => RENDER_CHECKS.every((check) => new RegExp(`\\b${check}\\(`).test(file.source)));
     const missing = Object.entries(AI_CONSULTATION_REFETCH_PAGES)
       .filter(([, entry]) => entry.kind === 'receiver')
-      .filter(([key]) => !checking.some((file) => file.source.includes(`'${key}'`)))
+      .filter(([key]) => {
+        const k = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const named = new RegExp(`(page:\\s*'${k}'|(${RENDER_CHECKS.join('|')})\\(\\s*'${k}')`);
+        return !checking.some((file) => named.test(file.source));
+      })
       .map(([key]) => key);
     expect(checking.length).toBeGreaterThan(0);
     expect(missing).toEqual([]);

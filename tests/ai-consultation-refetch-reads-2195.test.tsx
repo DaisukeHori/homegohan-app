@@ -47,6 +47,8 @@ vi.mock('next/link', () => ({
   default: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
 }));
 vi.mock('next/image', () => ({ default: () => null }));
+// アイコンの部品はこの検査に関係しないので描かない (tests/ai-consultation-data-refetch-2195.test.tsx と同じ)
+vi.mock('@/components/icons', () => ({ Icons: new Proxy({}, { get: () => () => null }) }));
 vi.mock('@/hooks/useAiConsent', () => ({
   useAiConsent: () => ({ ensureAiConsent: async () => 'consented', consentModal: null }),
 }));

@@ -18,20 +18,29 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-/** Supabase のモック。ログインした人 1 人。表ごとの問い合わせの答えは tableResults (無い表は空) */
+/**
+ * Supabase のモック。ログインした人 1 人。表ごとの問い合わせの答えは tableResults (無い表は空)。
+ * 答えの data が配列で、問い合わせが single / maybeSingle なら最初の 1 行 (無ければ null) を返す。
+ * reads に記録の口があれば、読んだ表 ('from:<表>') と DB の関数 ('rpc:<名前>') を記録する (受け手の読み取りの検査)
+ */
 const supabaseMock = vi.hoisted(() => ({
   tableResults: {} as Record<string, { data: unknown; error: null; count?: number }>,
+  reads: null as null | { record: (key: string | null) => void },
 }));
 vi.mock('@/lib/supabase/client', () => {
   const EMPTY_RESULT = { data: null, error: null, count: 0 };
   /** どのメソッドを呼んでも自分を返し、await するとその表の答えになる問い合わせ */
-  const query = (table: string): unknown =>
+  const query = (table: string, single: boolean): unknown =>
     new Proxy(() => undefined, {
       get: (_target, prop) => {
         if (prop === 'then') {
-          return (resolve: (value: unknown) => void) => resolve(supabaseMock.tableResults[table] ?? EMPTY_RESULT);
+          const result = supabaseMock.tableResults[table] ?? EMPTY_RESULT;
+          const rows = result.data;
+          const answer =
+            single && Array.isArray(rows) ? { ...result, data: rows[0] ?? null } : Array.isArray(rows) && result.count === undefined ? { ...result, count: rows.length } : result;
+          return (resolve: (value: unknown) => void) => resolve(answer);
         }
-        return () => query(table);
+        return () => query(table, single || prop === 'single' || prop === 'maybeSingle');
       },
     });
   const user = { id: 'user-1', user_metadata: {} };
@@ -43,13 +52,76 @@ vi.mock('@/lib/supabase/client', () => {
         refreshSession: async () => ({ data: { session: { user } }, error: null }),
         onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => undefined } } }),
       },
-      from: (table: string) => query(table),
-      rpc: () => query('rpc'),
+      from: (table: string) => {
+        supabaseMock.reads?.record(`from:${table}`);
+        return query(table, false);
+      },
+      rpc: (name: string) => {
+        supabaseMock.reads?.record(`rpc:${name}`);
+        return query('rpc', false);
+      },
+      channel: () => {
+        const channel = { on: () => channel, subscribe: () => channel, unsubscribe: async () => 'ok' };
+        return channel;
+      },
+      removeChannel: async () => 'ok',
     }),
   };
 });
 
+// ホームのページ (HomePage) を描くための部品のモック (受け手の読み取りの検査だけが描く)
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/home',
+  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ push: () => undefined, back: () => undefined, replace: () => undefined, refresh: () => undefined, prefetch: () => undefined }),
+}));
+vi.mock('next/link', () => ({
+  default: ({ href, children }: { href: string; children: React.ReactNode }) => <a href={href}>{children}</a>,
+}));
+vi.mock('next/image', () => ({ default: () => null }));
+vi.mock('@/components/icons', () => ({ Icons: new Proxy({}, { get: () => () => null }) }));
+// アニメーションは描かずに中身だけを出す (消えるアニメーションの途中の要素が残って、画面の比べに混ざらないように)
+vi.mock('framer-motion', async () => {
+  const React = await import('react');
+  const MOTION_PROPS = new Set([
+    'initial', 'animate', 'exit', 'transition', 'variants', 'whileHover', 'whileTap', 'whileInView', 'whileFocus',
+    'layout', 'layoutId', 'drag', 'dragConstraints', 'onAnimationComplete', 'viewport', 'custom',
+  ]);
+  const cache = new Map<string, unknown>();
+  const motion = new Proxy(
+    {},
+    {
+      get: (_target, tag: string) => {
+        if (!cache.has(tag)) {
+          cache.set(
+            tag,
+            React.forwardRef<unknown, Record<string, unknown>>((props, ref) => {
+              const rest: Record<string, unknown> = {};
+              for (const [key, value] of Object.entries(props)) if (!MOTION_PROPS.has(key)) rest[key] = value;
+              return React.createElement(tag, { ...rest, ref });
+            }),
+          );
+        }
+        return cache.get(tag);
+      },
+    },
+  );
+  return {
+    motion,
+    AnimatePresence: ({ children }: { children: React.ReactNode }) => React.createElement(React.Fragment, null, children),
+  };
+});
+
 const { useHomeData } = await import('@/hooks/useHomeData');
+const { default: HomePage } = await import('@/app/(main)/home/page');
+const { AI_CONSULTATION_DATA_CHANGED_EVENT } = await import('@/lib/ai/consultation-data-refetch');
+const {
+  ReadRecorder,
+  expectEmptyRefetchMatchesFreshMount,
+  expectRefetchReadsCoverMount,
+  fetchReadKey,
+  screenSignature,
+} = await import('./helpers/ai-refetch-read-recorder');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -244,5 +316,97 @@ describe('useHomeData の取り直しは、今日のアドバイスの帯と栄�
     await refetchHome();
     expect(adviceBannerText()).toBe(ADVICE_BEFORE);
     expect(analysisScoreText()).toBe(String(ANALYSIS_SCORE));
+  });
+});
+
+describe('ホーム (/home) を描画して、AI 相談の成功の取り直しを確かめる (#2195 V1)', () => {
+  const pad2 = (n: number) => String(n).padStart(2, '0');
+  const now = new Date();
+  const TODAY = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  const TODAY_MEAL = { ...BEST_MEAL_ROW, id: 'meal-today', dish_name: '肉じゃが', calories_kcal: 520 };
+  /** AI が書く表に中身のある答え */
+  const FULL_TABLES: Record<string, { data: unknown; error: null; count?: number }> = {
+    user_profiles: { data: [{ nickname: 'ほり', organization_id: null }], error: null },
+    user_daily_meals: { data: [{ id: 'day-today', day_date: TODAY, planned_meals: [TODAY_MEAL] }], error: null },
+    planned_meals: { data: [BEST_MEAL_ROW], error: null },
+    pantry_items: { data: [{ id: 'p-1', user_id: 'user-1', name: 'にんじん', amount: '2本', category: 'vegetable', expiration_date: TODAY }], error: null },
+    shopping_lists: { data: [{ id: 'sl-1' }], error: null },
+    shopping_list_items: { data: [{ id: 'i-1' }, { id: 'i-2' }], error: null },
+    health_records: { data: [{ record_date: TODAY, weight: 65 }], error: null },
+    health_streaks: { data: [{ current_streak: 3 }], error: null },
+    health_goals: { data: [{ target_value: 60 }], error: null },
+  };
+  /** AI が書く表の答えを空にしたもの (AI 相談で消した・外したあと) */
+  const EMPTY_TABLES: Record<string, { data: unknown; error: null; count?: number }> = Object.fromEntries(
+    Object.keys(FULL_TABLES).map((table) => [table, { data: [], error: null }]),
+  );
+  let recorder: InstanceType<typeof ReadRecorder>;
+
+  function useServer(tables: Record<string, { data: unknown; error: null; count?: number }>, analysis: unknown) {
+    supabaseMock.tableResults = { ...tables };
+    nutritionAnalysisBody = analysis;
+  }
+
+  beforeEach(() => {
+    recorder = new ReadRecorder();
+    supabaseMock.reads = recorder;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown, init?: { method?: string }) => {
+        recorder.record(fetchReadKey(input, init));
+        if (String(input) === NUTRITION_ANALYSIS_URL && nutritionAnalysisBody !== undefined) {
+          return { ok: true, status: OK_STATUS, json: async () => nutritionAnalysisBody };
+        }
+        return { ok: false, status: NOT_FOUND_STATUS, json: async () => ({}) };
+      }),
+    );
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    supabaseMock.reads = null;
+    vi.restoreAllMocks();
+  });
+
+  async function renderHomePage() {
+    await act(async () => {
+      root.render(<HomePage />);
+    });
+    await settle();
+  }
+
+  async function notifyAiConsultationSucceeded() {
+    await act(async () => {
+      window.dispatchEvent(new CustomEvent(AI_CONSULTATION_DATA_CHANGED_EVENT, { detail: { actionType: 'delete_meal', result: {} } }));
+    });
+    await settle();
+  }
+
+  it('開いたときに読むもの全部を、取り直しも読む', async () => {
+    useServer(FULL_TABLES, analysisResponse('野菜を一品足しましょう'));
+    recorder.take();
+    await renderHomePage();
+    const mountReads = recorder.take();
+    await notifyAiConsultationSucceeded();
+    const refetchReads = recorder.take();
+    expectRefetchReadsCoverMount('/home', mountReads, refetchReads);
+  });
+
+  it('AI が書く表の答えが空になった取り直しは、空の答えで開いたときと同じ画面 (前の値を残さない)', async () => {
+    useServer(FULL_TABLES, analysisResponse('野菜を一品足しましょう'));
+    await renderHomePage();
+    const full = screenSignature(container);
+
+    useServer(EMPTY_TABLES, NO_MEALS_RESPONSE);
+    await notifyAiConsultationSucceeded();
+    const refetchedToEmpty = screenSignature(container);
+
+    await act(async () => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    await renderHomePage();
+    const freshEmpty = screenSignature(container);
+    expectEmptyRefetchMatchesFreshMount('/home', { full, refetchedToEmpty, freshEmpty });
   });
 });

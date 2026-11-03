@@ -46,7 +46,11 @@ vi.mock('@/hooks/useAiConsent', () => ({
 vi.mock('@/components/ProfileReminderBanner', () => ({ ProfileReminderBanner: () => null }));
 
 /** Supabase のモック。ログインしていない (週の始まりは月曜)。Realtime のチャンネルは名前だけ記録し、何も届けない */
-const supabaseMock = vi.hoisted(() => ({ channelNames: [] as string[] }));
+const supabaseMock = vi.hoisted(() => ({
+  channelNames: [] as string[],
+  /** 記録の口があれば、読んだ表 ('from:<表>') と DB の関数 ('rpc:<名前>') を記録する (受け手の読み取りの検査) */
+  reads: null as null | { record: (key: string | null) => void },
+}));
 vi.mock('@/lib/supabase/client', () => {
   const EMPTY_RESULT = { data: null, error: null, count: 0 };
   /** どのメソッドを呼んでも自分を返し、await すると空の結果になる問い合わせ */
@@ -69,8 +73,14 @@ vi.mock('@/lib/supabase/client', () => {
         getSession: async () => ({ data: { session: null }, error: null }),
         onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => undefined } } }),
       },
-      from: () => emptyQuery(),
-      rpc: () => emptyQuery(),
+      from: (table: string) => {
+        supabaseMock.reads?.record(`from:${table}`);
+        return emptyQuery();
+      },
+      rpc: (name: string) => {
+        supabaseMock.reads?.record(`rpc:${name}`);
+        return emptyQuery();
+      },
       channel: (name: string) => {
         supabaseMock.channelNames.push(name);
         return channel;
@@ -86,6 +96,13 @@ const { useShoppingStore } = await import('@/app/(main)/menus/weekly/_state/shop
 const { usePantryStore } = await import('@/app/(main)/menus/weekly/_state/pantryStore');
 const { useServingsConfigStore } = await import('@/app/(main)/menus/weekly/_state/servingsConfigStore');
 const { AI_CONSULTATION_DATA_CHANGED_EVENT } = await import('@/lib/ai/consultation-data-refetch');
+const {
+  ReadRecorder,
+  expectEmptyRefetchMatchesFreshMount,
+  expectRefetchReadsCoverMount,
+  fetchReadKey,
+  screenSignature,
+} = await import('./helpers/ai-refetch-read-recorder');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -141,6 +158,8 @@ type FakeServer = {
 };
 let server: FakeServer;
 let fetchCalls: string[];
+/** 受け手の読み取りの記録 (GET の fetch と Supabase の読み取り) */
+let recorder: InstanceType<typeof ReadRecorder>;
 
 function plannedMealJson(date: string, meal: FakeMeal) {
   return {
@@ -205,9 +224,10 @@ const PAGE_ORIGIN = 'http://localhost';
 
 function installFakeServer() {
   fetchCalls = [];
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: { method?: string }) => {
     const raw = typeof input === 'string' ? input : input.toString();
     fetchCalls.push(raw);
+    recorder.record(fetchReadKey(raw, init));
     const url = new URL(raw, PAGE_ORIGIN);
     // 祝日の一覧 (外の API) は、この検査では祝日なし
     if (url.origin !== PAGE_ORIGIN) return jsonResponse({});
@@ -250,6 +270,8 @@ let root: Root;
 beforeEach(() => {
   server = { days: new Map(), shoppingItems: [], familySize: 2, pendingRequest: null };
   supabaseMock.channelNames.length = 0;
+  recorder = new ReadRecorder();
+  supabaseMock.reads = recorder;
   localStorage.clear();
   // 献立表の store はモジュールに 1 つなので、前の検査の値を消す
   useShoppingStore.getState().setShoppingList([]);
@@ -268,6 +290,7 @@ afterEach(async () => {
     root.unmount();
   });
   container.remove();
+  supabaseMock.reads = null;
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -425,5 +448,58 @@ describe('献立表 (/menus/weekly) が AI 相談の成功で取り直すもの 
     await notifyAiConsultationSucceeded('update_profile_preferences', { updated: true, fields: ['family_size'] });
 
     expect(useServingsConfigStore.getState().servingsConfig).toBeNull();
+  });
+});
+
+describe('献立表 (/menus/weekly) を描画して、AI 相談の成功の取り直しを確かめる (#2195 V1)', () => {
+  /** AI が書く表に中身のある答え (表示中の週と別の週の献立・買い物リスト・家族の人数) */
+  function fillServer() {
+    const week = displayedWeekDates();
+    server.days.set(week[0], [{ id: 'meal-1', dishName: '鮭の塩焼き' }]);
+    server.days.set(otherWeekDateInDisplayedMonth(), [{ id: 'meal-other', dishName: 'カレー' }]);
+    server.shoppingItems = [{ id: 'item-1', itemName: 'にんじん', isChecked: false }];
+    server.familySize = 3;
+  }
+  /** AI 相談で消した・空にしたあと */
+  function emptyServer() {
+    server.days = new Map();
+    server.shoppingItems = [];
+    server.familySize = null;
+  }
+
+  it('開いたとき・月のカレンダーのパネルが読むもの全部を、取り直しも読む', async () => {
+    fillServer();
+    recorder.take();
+    await renderWeeklyPage();
+    await calendarMealDotCount();
+    await settle();
+    const mountReads = recorder.take();
+    await notifyAiConsultationSucceeded('update_meal', { mealId: 'meal-1' });
+    const refetchReads = recorder.take();
+    expectRefetchReadsCoverMount('/menus/weekly', mountReads, refetchReads);
+  });
+
+  it('AI が書く表の答えが空になった取り直しは、空の答えで開いたときと同じ画面 (前の値を残さない)', async () => {
+    fillServer();
+    await renderWeeklyPage();
+    await calendarMealDotCount();
+    const full = screenSignature(container);
+
+    emptyServer();
+    await notifyAiConsultationSucceeded('delete_meal', { mealId: 'meal-1', deleted: true });
+    const refetchedToEmpty = screenSignature(container);
+
+    await act(async () => {
+      root.unmount();
+    });
+    // 献立表の store はモジュールに 1 つなので、読み込み直したとき (新しいページ) と同じく空に戻してから開く
+    useShoppingStore.getState().setShoppingList([]);
+    usePantryStore.getState().setFridgeItems([]);
+    useServingsConfigStore.getState().setServingsConfig(null);
+    root = createRoot(container);
+    await renderWeeklyPage();
+    await calendarMealDotCount();
+    const freshEmpty = screenSignature(container);
+    expectEmptyRefetchMatchesFreshMount('/menus/weekly', { full, refetchedToEmpty, freshEmpty });
   });
 });
