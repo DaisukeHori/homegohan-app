@@ -506,9 +506,12 @@ true;
  *   - '/home' (src/app/(main)/home/page.tsx): 入力の部品は体調のチェックインの欄 (showCheckin で開閉する) にだけあり、
  *     欄が開いている間は睡眠時間の <input type="range"> が必ず出る。週の詳細 (showWeeklyDetail) は表示だけ
  *   - '/menus/weekly' (src/app/(main)/menus/weekly/page.tsx): ページの本体に入力の部品は無い。編集・追加は
- *     _components/modals の各モーダル (どれも role="dialog" / aria-modal を持つ) と V4GenerateModal (開いている間は
- *     自由記入の <textarea> がいつも出る) の中だけ。入力を持たない確認・結果の知らせ (CancelGenerationConfirmModal・
- *     生成の完了の知らせ) は読み込み直すと閉じるだけ
+ *     _components/modals の各モーダル (どれも role="dialog" / aria-modal を持つ。共通の枠 BottomSheet のものを含む) と
+ *     V4GenerateModal (開いている間は自由記入の <textarea> がいつも出る) の中だけ。入力を持たない生成の完了の知らせ
+ *     (GenerationResultDialogContent) は読み込み直すと閉じるだけ (生成の取り消しの確認 CancelGenerationConfirmModal は
+ *     ConfirmDeleteModal → BottomSheet の role="dialog" を持つので、出ている間は読み込み直さない)
+ *   どの一覧のページも、この前提 (モーダル・開閉する欄が印を持つ) を apps/mobile/__tests__/components/ai-reload-blocking-web-markers.test.ts
+ *   が Web のソースで確かめる (印を持たないモーダルが足されたら赤になる)
  *   - '/comparison' (src/app/(main)/comparison/page.tsx): 表示だけ (入力の部品もモーダルも無い)
  *   - '/profile' (src/app/(main)/profile/page.tsx。#2195 V3): ページの本体に入力の部品は無い。編集は編集のモーダル (isEditing の
  *     間だけ出る) の中だけで、モーダルの入力 (editForm) は保存するまで React の state にしか無い。モーダルは role="dialog" も

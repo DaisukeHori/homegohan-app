@@ -10,7 +10,7 @@
  * (条件を満たさない部品が足されたら赤にする)。
  *   1. /menus/weekly のモーダル (_components/modals/*.tsx の全部と、ページが描く名前が Modal / Dialog の部品) は、
  *      role="dialog" / aria-modal / <dialog> か入力の部品を持つ。持たないと分かっていて読み込み直しで閉じることを認めた部品
- *      (KNOWN_NON_BLOCKING_DIALOGS) だけを除く
+ *      (KNOWN_NON_BLOCKING_DIALOGS) だけを除く。モーダルが描く同じリポジトリの部品 (共通の枠 BottomSheet など) の印も数える
  *   2. /home の体調のチェックインの欄 (showCheckin の間だけ出る) は、hidden でない入力の部品を持つ
  *   3. /profile の編集のモーダル (isEditing の間だけ出る) は、ページごとに足した要素 (.fixed.inset-0) に当たる層で始まり、
  *      ページの本体 (モーダルの外) には同じ層が無い (あると、マイページはいつまでも読み込み直されない)
@@ -39,7 +39,6 @@ const SOURCE_EXTENSIONS = ['.tsx', '.ts'];
  * ここに足すのは、閉じても入力を失わないと確かめた部品だけ
  */
 const KNOWN_NON_BLOCKING_DIALOGS: Readonly<Record<string, string>> = {
-  CancelGenerationConfirmModal: '生成の取り消しの確認 (ボタンだけ。閉じても生成は続き、もう一度取り消せる)',
   GenerationResultDialogContent: '生成の完了の知らせ (ボタンだけ。閉じても献立は保存済み)',
 };
 
@@ -268,6 +267,8 @@ describe('/menus/weekly のモーダルは、読み込み直しを止める印�
     const pageFile = pageFileOf('/menus/weekly');
     const components = dialogLikeComponentsOf(pageFile);
     expect(components).toEqual(expect.arrayContaining(['V4GenerateModal', 'ConfirmDeleteModal', 'CancelGenerationConfirmModal']));
+    // 生成の取り消しの確認は、ConfirmDeleteModal → BottomSheet の role="dialog" を持つ (認めた部品の一覧に入れない)
+    expect(componentHasBlockingMarker(componentFileOf('CancelGenerationConfirmModal', pageFile))).toBe(true);
     const missing = components
       .filter((name) => !Object.prototype.hasOwnProperty.call(KNOWN_NON_BLOCKING_DIALOGS, name))
       .filter((name) => !componentHasBlockingMarker(componentFileOf(name, pageFile)));
