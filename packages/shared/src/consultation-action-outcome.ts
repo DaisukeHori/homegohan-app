@@ -59,9 +59,10 @@ export function consultationActionOutcomeOf(input: {
  * 提案の種類ごとの名前 (成功の一文『✅ {名前}を実行しました！』に使う)。
  * 鍵は実行の側 (src/lib/ai/consultation-action-executor.ts の runConsultationAction の case) の種類と一致させる
  * (一致は tests/consultation-action-labels-shared-2189.test.ts が確かめる)。モバイルの AI 相談のシートが使う。
- * Web の AIChatBubble.tsx は自分の表 (アイコンと色つき) を持つ
+ * Web の AIChatBubble.tsx の ACTION_LABELS (アイコンと色つきの表) も、名前はこの表から引く (#2195 V3。名前の表を 1 つにする)。
+ * 鍵の型 (ConsultationActionType) を Web の表が使うので、鍵の足し忘れ・余分は型の検査で分かる
  */
-export const CONSULTATION_ACTION_LABELS: Readonly<Record<string, string>> = {
+export const CONSULTATION_ACTION_LABELS = {
   // 献立
   generate_day_menu: '1日の献立を作成',
   generate_week_menu: '1週間の献立を作成',
@@ -93,7 +94,13 @@ export const CONSULTATION_ACTION_LABELS: Readonly<Record<string, string>> = {
   update_health_record: '健康記録を更新',
   // プロフィール
   update_profile_preferences: '好み・習慣を更新',
-};
+} as const;
+
+/** 提案の種類 (CONSULTATION_ACTION_LABELS の鍵) */
+export type ConsultationActionType = keyof typeof CONSULTATION_ACTION_LABELS;
+
+/** 種類の文字列 (分からない値を含む) から名前を引くための、鍵を文字列に広げた見方 (同じ表) */
+const CONSULTATION_ACTION_LABELS_BY_STRING: Readonly<Record<string, string>> = CONSULTATION_ACTION_LABELS;
 
 /** CONSULTATION_ACTION_LABELS に無い種類 (または種類が分からない) ときの名前 */
 export const CONSULTATION_ACTION_LABEL_FALLBACK = 'アクション';
@@ -101,8 +108,8 @@ export const CONSULTATION_ACTION_LABEL_FALLBACK = 'アクション';
 /** 提案の種類の名前。表に無い種類・文字列でない値は CONSULTATION_ACTION_LABEL_FALLBACK */
 export function consultationActionLabelOf(type: unknown): string {
   if (typeof type !== 'string') return CONSULTATION_ACTION_LABEL_FALLBACK;
-  return Object.prototype.hasOwnProperty.call(CONSULTATION_ACTION_LABELS, type)
-    ? CONSULTATION_ACTION_LABELS[type]
+  return Object.prototype.hasOwnProperty.call(CONSULTATION_ACTION_LABELS_BY_STRING, type)
+    ? CONSULTATION_ACTION_LABELS_BY_STRING[type]
     : CONSULTATION_ACTION_LABEL_FALLBACK;
 }
 

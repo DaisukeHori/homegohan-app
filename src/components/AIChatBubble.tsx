@@ -77,46 +77,50 @@ interface Session {
   summary?: string;
 }
 
+// 提案の種類の名前は共有の表 (@homegohan/shared の CONSULTATION_ACTION_LABELS) から引く。モバイルの AI 相談のシートの結果の一文と
+// 同じ名前になる (#2195 V3)。satisfies で、この表の鍵が共有の表の鍵 (= 実行の側の種類) とちょうど同じことを型で確かめる
+import { CONSULTATION_ACTION_LABELS, type ConsultationActionType } from "@homegohan/shared";
+
 const ACTION_LABELS: Record<string, { label: string; icon: any; color: string }> = {
   // 献立関連
-  generate_day_menu: { label: '1日の献立を作成', icon: Calendar, color: colors.primary },
-  generate_week_menu: { label: '1週間の献立を作成', icon: Calendar, color: colors.primary },
-  generate_single_meal: { label: '1食を作成', icon: Calendar, color: colors.primary },
-  update_meal: { label: '献立を変更', icon: Edit, color: colors.warning },
-  delete_meal: { label: '献立を削除', icon: Trash2, color: '#EF4444' },
-  complete_meal: { label: '食事を完了', icon: CheckCircle, color: colors.success },
+  generate_day_menu: { label: CONSULTATION_ACTION_LABELS.generate_day_menu, icon: Calendar, color: colors.primary },
+  generate_week_menu: { label: CONSULTATION_ACTION_LABELS.generate_week_menu, icon: Calendar, color: colors.primary },
+  generate_single_meal: { label: CONSULTATION_ACTION_LABELS.generate_single_meal, icon: Calendar, color: colors.primary },
+  update_meal: { label: CONSULTATION_ACTION_LABELS.update_meal, icon: Edit, color: colors.warning },
+  delete_meal: { label: CONSULTATION_ACTION_LABELS.delete_meal, icon: Trash2, color: '#EF4444' },
+  complete_meal: { label: CONSULTATION_ACTION_LABELS.complete_meal, icon: CheckCircle, color: colors.success },
   
   // 買い物リスト関連
-  add_to_shopping_list: { label: '買い物リストに追加', icon: ShoppingCart, color: colors.success },
-  update_shopping_item: { label: '買い物リストを更新', icon: Edit, color: colors.warning },
-  delete_shopping_item: { label: '買い物リストから削除', icon: Trash2, color: '#EF4444' },
-  check_shopping_item: { label: '買い物をチェック', icon: CheckCircle, color: colors.success },
+  add_to_shopping_list: { label: CONSULTATION_ACTION_LABELS.add_to_shopping_list, icon: ShoppingCart, color: colors.success },
+  update_shopping_item: { label: CONSULTATION_ACTION_LABELS.update_shopping_item, icon: Edit, color: colors.warning },
+  delete_shopping_item: { label: CONSULTATION_ACTION_LABELS.delete_shopping_item, icon: Trash2, color: '#EF4444' },
+  check_shopping_item: { label: CONSULTATION_ACTION_LABELS.check_shopping_item, icon: CheckCircle, color: colors.success },
   
   // 冷蔵庫/パントリー関連
-  add_pantry_item: { label: '冷蔵庫に追加', icon: Refrigerator, color: colors.secondary },
-  update_pantry_item: { label: '冷蔵庫を更新', icon: Edit, color: colors.warning },
-  delete_pantry_item: { label: '冷蔵庫から削除', icon: Trash2, color: '#EF4444' },
+  add_pantry_item: { label: CONSULTATION_ACTION_LABELS.add_pantry_item, icon: Refrigerator, color: colors.secondary },
+  update_pantry_item: { label: CONSULTATION_ACTION_LABELS.update_pantry_item, icon: Edit, color: colors.warning },
+  delete_pantry_item: { label: CONSULTATION_ACTION_LABELS.delete_pantry_item, icon: Trash2, color: '#EF4444' },
   
   // レシピ関連
-  suggest_recipe: { label: 'レシピを提案', icon: BookOpen, color: colors.secondary },
-  like_recipe: { label: 'レシピにいいね', icon: Heart, color: '#EC4899' },
-  add_recipe_to_collection: { label: 'コレクションに追加', icon: FolderPlus, color: colors.purple },
+  suggest_recipe: { label: CONSULTATION_ACTION_LABELS.suggest_recipe, icon: BookOpen, color: colors.secondary },
+  like_recipe: { label: CONSULTATION_ACTION_LABELS.like_recipe, icon: Heart, color: '#EC4899' },
+  add_recipe_to_collection: { label: CONSULTATION_ACTION_LABELS.add_recipe_to_collection, icon: FolderPlus, color: colors.purple },
   
   // 栄養目標関連
-  update_nutrition_target: { label: '栄養目標を更新', icon: Target, color: colors.purple },
+  update_nutrition_target: { label: CONSULTATION_ACTION_LABELS.update_nutrition_target, icon: Target, color: colors.purple },
   
   // 健康目標関連
-  set_health_goal: { label: '健康目標を設定', icon: Target, color: colors.success },
-  update_health_goal: { label: '健康目標を更新', icon: Edit, color: colors.warning },
-  delete_health_goal: { label: '健康目標を削除', icon: Trash2, color: '#EF4444' },
+  set_health_goal: { label: CONSULTATION_ACTION_LABELS.set_health_goal, icon: Target, color: colors.success },
+  update_health_goal: { label: CONSULTATION_ACTION_LABELS.update_health_goal, icon: Edit, color: colors.warning },
+  delete_health_goal: { label: CONSULTATION_ACTION_LABELS.delete_health_goal, icon: Trash2, color: '#EF4444' },
   
   // 健康記録関連
-  add_health_record: { label: '健康記録を追加', icon: Activity, color: colors.success },
-  update_health_record: { label: '健康記録を更新', icon: Edit, color: colors.warning },
+  add_health_record: { label: CONSULTATION_ACTION_LABELS.add_health_record, icon: Activity, color: colors.success },
+  update_health_record: { label: CONSULTATION_ACTION_LABELS.update_health_record, icon: Edit, color: colors.warning },
   
   // プロフィール関連
-  update_profile_preferences: { label: '好み・習慣を更新', icon: User, color: colors.secondary },
-};
+  update_profile_preferences: { label: CONSULTATION_ACTION_LABELS.update_profile_preferences, icon: User, color: colors.secondary },
+} satisfies Record<ConsultationActionType, { label: string; icon: unknown; color: string }>;
 
 /** アクションの種類の名前 (ACTION_LABELS に無い種類は『アクション』) */
 function actionLabelOf(type: unknown): string {
