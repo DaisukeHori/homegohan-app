@@ -14,8 +14,8 @@
  *   - /admin のサイドバー: super_admin には見出し「運営最上位」とリンク「運営最上位の画面」(/super-admin) を出し、英字の super_admin は出さない
  *   - /super-admin のサイドバー: 見出しは「運営最上位の画面」で、英字の Super Admin / super_admin は出さない
  *   - /admin の入口のカード: /super-admin のカードの名前はサイドバーのリンクと同じ「運営最上位の画面」
- *   - 凍結のフォーム: 永久 BAN の選択肢の注記は「運営最上位のみ」
- *   - 審査のフォーム (/admin/moderation の個別の画面): 永久 BAN の選択肢の文は「削除 + 永久 BAN (運営最上位のみ)」
+ *   - 凍結のフォーム: 無期限凍結の選択肢の注記は「運営最上位のみ」
+ *   - 審査のフォーム (/admin/moderation の個別の画面): 無期限凍結の選択肢の文は「削除 + 無期限凍結 (運営最上位のみ)」
  *   - 同じ型: 運営の画面 (src/app/admin・src/app/super-admin・src/components/admin・src/components/operator) のソースに、画面に出る文字として
  *     英字の super_admin / Super Admin が残っていない (ロールの判定に使う 'super_admin' そのものの文字列は除く)
  *   - 同じ型 (#2134 U1): 走査の範囲を、メンバーシップの運営の画面 (src/app/(operator))・二段階認証の画面の文 (src/lib/auth/mfa)・

@@ -215,7 +215,7 @@ describe('consultationActionOutcomeOf / consultationActionFailureMessageOf (#218
 
   it('success が false で result.error が無い・空・文字列でない・result が null: 固定の文', () => {
     expect(AI_CONSULTATION_ACTION_FAILED_FALLBACK_MESSAGE).toBe(FALLBACK_TEXT);
-    for (const result of [{ collectionId: 'c1', added: false }, { error: '' }, { error: '  ' }, { error: 1 }, null, undefined, 'x']) {
+    for (const result of [{ itemId: 'i1', updated: false }, { error: '' }, { error: '  ' }, { error: 1 }, null, undefined, 'x']) {
       expect(consultationActionFailureMessageOf(result)).toBe(FALLBACK_TEXT);
       expect(consultationActionOutcomeOf({ success: false, result, label: ACTION_LABEL })).toEqual({
         kind: 'failed',
@@ -247,9 +247,9 @@ describe('AIChatBubble: 提案の「実行する」(executeAction) の結果 (#2
     expect(mealPlanUpdated).not.toHaveBeenCalled();
   });
 
-  it('応答が 200 で { success: false } で result.error が無い (例: 読み直しの失敗): 固定の文', async () => {
+  it('応答が 200 で { success: false } で result.error が無い (例: { updated: false }): 固定の文', async () => {
     handlers[`POST /api/ai/consultation/actions/${MESSAGE_ID}/execute`] = async () =>
-      json(200, { success: false, result: { collectionId: 'c1', added: false }, actionType: 'add_recipe_to_collection' });
+      json(200, { success: false, result: { itemId: 'i1', updated: false }, actionType: 'update_shopping_item' });
     await openChat();
     await click(buttonByText(EXECUTE_BUTTON_TEXT)!);
 
