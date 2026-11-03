@@ -208,8 +208,9 @@ describe('aiActionLogStatusAfterRun / proposedActionViewOf (#2189 W1-a)', () => 
     [['rejected'], 'hidden'],
     [['pending'], 'executable'],
     [['failed'], 'notExecutable'],
-    [['approved'], 'runningOrDone'],
-    [['failed', 'approved'], 'runningOrDone'],
+    // 実行中の印のまま (実行中か、書き戻せなかった) は「実行できたかを確かめられない」(#2201 U3)
+    [['approved'], 'unconfirmed'],
+    [['failed', 'approved'], 'unconfirmed'],
     [[], 'notExecutable'],
     [['failed', 'executed'], 'hidden'],
     [['failed', 'pending'], 'executable'],
@@ -521,7 +522,8 @@ describe('GET /api/ai/consultation/sessions/[sessionId]/messages の提案 (#218
     expect(byId.get('m-rejected')).toMatchObject({ proposedActions: null });
     expect(byId.get('m-pending')).toMatchObject({ proposedActions: PROPOSED, proposedActionExecutable: true });
     expect(byId.get('m-pending')).not.toHaveProperty('proposedActionNotExecutableReason');
-    // 「実行する」を出さない理由 (#2195 V2): 実行中の印のまま (実行中か、書き戻せなかった) は runningOrDone、失敗・行が無いは failed
+    // 「実行する」を出さない理由 (#2195 V2): 実行中の印のまま (実行中か、書き戻せなかった) は unconfirmed (#2201 U3)、
+    // 失敗・行が無いは failed
     expect(byId.get('m-failed')).toMatchObject({
       proposedActions: PROPOSED,
       proposedActionExecutable: false,
@@ -530,7 +532,7 @@ describe('GET /api/ai/consultation/sessions/[sessionId]/messages の提案 (#218
     expect(byId.get('m-running')).toMatchObject({
       proposedActions: PROPOSED,
       proposedActionExecutable: false,
-      proposedActionNotExecutableReason: 'runningOrDone',
+      proposedActionNotExecutableReason: 'unconfirmed',
     });
     expect(byId.get('m-no-log')).toMatchObject({
       proposedActions: PROPOSED,
@@ -557,13 +559,14 @@ describe('GET /api/ai/consultation/sessions/[sessionId]/messages の提案 (#218
 // #2195 V2 提案のカードの残りの縁・やり直しても直らない失敗
 //   (a) 実行の中の例外の 500 に retryable を添える (献立の生成・戻せなかったときは false)
 //   (b) 実行のあとの書き戻しは 1 回だけ書き直す (src/lib/ai/consultation-action-log-writes.ts)
-//   (c) 「実行する」を出さない理由 (failed / runningOrDone) を添え、画面は案内の文を分ける
+//   (c) 「実行する」を出さない理由 (failed / runningOrDone / unconfirmed (#2201 U3)) を添え、画面は案内の文を分ける
 //   (d) 上限の分岐で pending に戻せなかったら retryable: false
 //   (e) 会話の続きの POST の自動実行の例外・書き戻しの失敗の経路
 //   やり直しても直らない失敗 (実行の結果の notRetryable) は failed
 // ═════════════════════════════════════════════
 /** 手で書いた期待値 (定数の文が変わったらこのテストも直す) */
 const RUNNING_OR_DONE_GUIDE_TEXT = 'この提案は実行中か実行済みです。';
+const UNCONFIRMED_GUIDE_TEXT = 'この提案を実行できたかを確かめられませんでした。しばらくしてから相談を開き直してください。';
 const NOT_EXECUTABLE_GUIDE_TEXT = 'この提案はここからは実行できません。もう一度 AI に頼んでください。';
 const WRITE_BACK_FAILED_LOG = 'AI 相談の提案の行を実行のあとに書き戻せませんでした (実行中の印のまま残ります)';
 const PANTRY_NOT_RETRYABLE = { success: false, result: { error: '権限がありません' }, notRetryable: true };
@@ -586,13 +589,13 @@ describe('#2195 V2 決まりの関数', () => {
     ['hidden', null],
     ['executable', null],
     ['notExecutable', 'failed'],
-    ['runningOrDone', 'runningOrDone'],
+    ['unconfirmed', 'unconfirmed'],
   ] as const)('カードの出し方 %s → 理由 %s', (view, expected) => {
     expect(lifecycle.proposedActionNotExecutableReasonOfView(view)).toBe(expected);
   });
 
   it.each([
-    ['approved', 'runningOrDone'],
+    ['approved', 'unconfirmed'],
     ['executed', 'runningOrDone'],
     ['failed', 'failed'],
     ['rejected', 'failed'],
@@ -605,6 +608,7 @@ describe('#2195 V2 決まりの関数', () => {
   it.each([
     ['failed', true],
     ['runningOrDone', true],
+    ['unconfirmed', true],
     ['running', false],
     ['', false],
     [undefined, false],
@@ -619,6 +623,30 @@ describe('#2195 V2 決まりの関数', () => {
     expect(lifecycle.aiProposedActionNotExecutableGuideOf('failed')).toBe(NOT_EXECUTABLE_GUIDE_TEXT);
     expect(lifecycle.aiProposedActionNotExecutableGuideOf(undefined)).toBe(NOT_EXECUTABLE_GUIDE_TEXT);
     expect(RUNNING_OR_DONE_GUIDE_TEXT).not.toContain('頼んで');
+  });
+
+  it('#2201 U3 行が実行中の印のまま (書き戻せなかった) の案内は、実行したとも言い切らず、頼み直しも勧めない', () => {
+    expect(lifecycle.AI_PROPOSED_ACTION_UNCONFIRMED_GUIDE).toBe(UNCONFIRMED_GUIDE_TEXT);
+    expect(lifecycle.aiProposedActionNotExecutableGuideOf('unconfirmed')).toBe(UNCONFIRMED_GUIDE_TEXT);
+    expect(UNCONFIRMED_GUIDE_TEXT).not.toContain('頼んで');
+    expect(UNCONFIRMED_GUIDE_TEXT).not.toContain('実行済み');
+    expect(UNCONFIRMED_GUIDE_TEXT).not.toContain('実行しました');
+  });
+
+  it.each([
+    [true, 'unconfirmed'],
+    [false, 'failed'],
+  ] as const)('#2201 U3 実行のあとの理由: 書き戻せなかった %s → %s', (writeBackFailed, expected) => {
+    expect(lifecycle.notExecutableReasonAfterRun(writeBackFailed)).toBe(expected);
+  });
+
+  it.each([
+    [[], null],
+    [['executed', 'approved'], 'runningOrDone'],
+    [['approved', 'failed'], 'unconfirmed'],
+    [['failed', 'rejected'], 'failed'],
+  ] as const)('#2201 U3 1 つのメッセージの行たち %j → 理由 %s', (statuses, expected) => {
+    expect(lifecycle.proposedActionNotExecutableReasonOfStatuses(statuses)).toBe(expected);
   });
 
   it('書き戻しを試す回数は 1 回目 + やり直し 1 回', () => {
@@ -656,7 +684,7 @@ describe('#2195 V2 実行の API (POST /api/ai/consultation/actions/[actionId]/e
     },
   );
 
-  it('(a)(b) 実行の中の例外のあと、行を戻せなかった (2 回とも失敗): retryable: false と理由 failed', async () => {
+  it('(a)(b) 実行の中の例外のあと、行を戻せなかった (2 回とも失敗): retryable: false と理由 unconfirmed (開き直したときと同じ。#2201 U3)', async () => {
     h.single.ai_action_logs = pendingLog('add_pantry_item');
     h.run.mockImplementationOnce(async () => {
       h.failOn = { table: 'ai_action_logs', op: 'update' };
@@ -666,7 +694,7 @@ describe('#2195 V2 実行の API (POST /api/ai/consultation/actions/[actionId]/e
     const { status, body } = await execute();
 
     expect(status).toBe(500);
-    expect(body).toMatchObject({ retryable: false, notExecutableReason: 'failed' });
+    expect(body).toMatchObject({ retryable: false, notExecutableReason: 'unconfirmed' });
     expect(writeBacks()).toHaveLength(AI_ACTION_LOG_WRITE_BACK_ATTEMPTS);
     expect(h.logError).toHaveBeenCalledWith(
       WRITE_BACK_FAILED_LOG,
@@ -709,7 +737,7 @@ describe('#2195 V2 実行の API (POST /api/ai/consultation/actions/[actionId]/e
     expect(writeBacks()).toHaveLength(2);
   });
 
-  it('(b) 書き戻しが 2 回とも失敗: retryable: false と理由 failed、ログに残す', async () => {
+  it('(b) 書き戻しが 2 回とも失敗: retryable: false と理由 unconfirmed (開き直したときと同じ。#2201 U3)、ログに残す', async () => {
     h.single.ai_action_logs = pendingLog('add_pantry_item');
     h.run.mockImplementationOnce(async () => {
       h.failOn = { table: 'ai_action_logs', op: 'update' };
@@ -718,7 +746,7 @@ describe('#2195 V2 実行の API (POST /api/ai/consultation/actions/[actionId]/e
 
     const { body } = await execute();
 
-    expect(body).toMatchObject({ retryable: false, notExecutableReason: 'failed' });
+    expect(body).toMatchObject({ retryable: false, notExecutableReason: 'unconfirmed' });
     expect(writeBacks()).toHaveLength(AI_ACTION_LOG_WRITE_BACK_ATTEMPTS);
     expect(h.logError).toHaveBeenCalledWith(WRITE_BACK_FAILED_LOG, expect.any(Error), expect.objectContaining({ status: 'pending' }));
   });
@@ -734,7 +762,7 @@ describe('#2195 V2 実行の API (POST /api/ai/consultation/actions/[actionId]/e
     expect(body).not.toHaveProperty('retryable');
   });
 
-  it('(d) 今日の上限で pending に戻せなかった: 429 に retryable: false と理由 failed を添える (Retry-After も残す)', async () => {
+  it('(d) 今日の上限で pending に戻せなかった: 429 に retryable: false と理由 unconfirmed を添える (Retry-After も残す。#2201 U3)', async () => {
     h.single.ai_action_logs = pendingLog('generate_single_meal');
     h.run.mockImplementationOnce(async () => {
       h.failOn = { table: 'ai_action_logs', op: 'update' };
@@ -749,7 +777,7 @@ describe('#2195 V2 実行の API (POST /api/ai/consultation/actions/[actionId]/e
 
     expect(res.status).toBe(429);
     expect(res.headers.get('Retry-After')).toEqual(expect.stringMatching(/^\d+$/));
-    expect(body).toMatchObject({ code: 'AI_DAILY_LIMIT', retryable: false, notExecutableReason: 'failed' });
+    expect(body).toMatchObject({ code: 'AI_DAILY_LIMIT', retryable: false, notExecutableReason: 'unconfirmed' });
     expect(writeBacks()).toHaveLength(AI_ACTION_LOG_WRITE_BACK_ATTEMPTS);
   });
 
@@ -781,7 +809,7 @@ describe('#2195 V2 実行の API (POST /api/ai/consultation/actions/[actionId]/e
   });
 
   it.each([
-    ['approved', 'runningOrDone'],
+    ['approved', 'unconfirmed'],
     ['executed', 'runningOrDone'],
     ['failed', 'failed'],
     ['rejected', 'failed'],
@@ -805,11 +833,26 @@ describe('#2195 V2 実行の API (POST /api/ai/consultation/actions/[actionId]/e
     expect(body).toMatchObject({ notExecutableReason: 'failed' });
   });
 
+  it('(c) 対応していない種類で、行を書き戻せなかった: 400 に理由 unconfirmed (開き直したときと同じ。#2201 U3)', async () => {
+    h.single.ai_action_logs = pendingLog('not_a_real_action');
+    h.run.mockImplementationOnce(async () => {
+      h.failOn = { table: 'ai_action_logs', op: 'update' };
+      return { success: false, result: null, unknownActionType: true };
+    });
+
+    const { status, body } = await execute();
+
+    expect(status).toBe(400);
+    expect(body).toMatchObject({ notExecutableReason: 'unconfirmed' });
+    expect(writeBacks()).toHaveLength(AI_ACTION_LOG_WRITE_BACK_ATTEMPTS);
+  });
+
   describe('(c) メッセージ ID で pending の行が無い (Web のカードは メッセージ ID で呼ぶ)', () => {
     it.each([
-      [['approved'], 'runningOrDone'],
+      [['approved'], 'unconfirmed'],
       [['executed'], 'runningOrDone'],
-      [['failed', 'approved'], 'runningOrDone'],
+      [['failed', 'approved'], 'unconfirmed'],
+      [['approved', 'executed'], 'runningOrDone'],
       [['failed'], 'failed'],
       [['rejected'], 'failed'],
     ] as const)('そのメッセージの行 %j: 404 に理由 %s', async (statuses, reason) => {
@@ -872,7 +915,7 @@ describe.each([
     expect(data.aiMessage).toMatchObject({ proposedActionExecutable: false, proposedActionNotExecutableReason: 'failed' });
   });
 
-  it('実行の中の例外のあと、行を戻せなかった: 「実行する」を出さず理由 failed', async () => {
+  it('実行の中の例外のあと、行を戻せなかった: 「実行する」を出さず理由 unconfirmed (開き直したときと同じ。#2201 U3)', async () => {
     sessionRows();
     stubAiReply(`卵を足しますね。${ACTION_JSON('add_pantry_item')}`, stream);
     h.run.mockImplementationOnce(async () => {
@@ -885,7 +928,7 @@ describe.each([
 
     consoleError.mockRestore();
     expect(writeBacksOfAuto()).toHaveLength(AI_ACTION_LOG_WRITE_BACK_ATTEMPTS);
-    expect(data.aiMessage).toMatchObject({ proposedActionExecutable: false, proposedActionNotExecutableReason: 'failed' });
+    expect(data.aiMessage).toMatchObject({ proposedActionExecutable: false, proposedActionNotExecutableReason: 'unconfirmed' });
   });
 
   it('失敗のあとの書き戻しが 1 回失敗: もう 1 回書けたら「実行する」を出す', async () => {
@@ -903,7 +946,7 @@ describe.each([
     expect(data.aiMessage).toMatchObject({ proposedActionExecutable: true });
   });
 
-  it('失敗のあとの書き戻しが 2 回とも失敗: 「実行する」を出さず理由 failed、ログに残す', async () => {
+  it('失敗のあとの書き戻しが 2 回とも失敗: 「実行する」を出さず理由 unconfirmed (開き直したときと同じ。#2201 U3)、ログに残す', async () => {
     sessionRows();
     stubAiReply(`卵を足しますね。${ACTION_JSON('add_pantry_item')}`, stream);
     h.run.mockImplementationOnce(async () => {
@@ -914,7 +957,7 @@ describe.each([
     const data = await postMessage(stream);
 
     expect(writeBacksOfAuto()).toHaveLength(AI_ACTION_LOG_WRITE_BACK_ATTEMPTS);
-    expect(data.aiMessage).toMatchObject({ proposedActionExecutable: false, proposedActionNotExecutableReason: 'failed' });
+    expect(data.aiMessage).toMatchObject({ proposedActionExecutable: false, proposedActionNotExecutableReason: 'unconfirmed' });
     expect(h.logError).toHaveBeenCalledWith(WRITE_BACK_FAILED_LOG, expect.any(Error), expect.objectContaining({ status: 'pending' }));
   });
 
