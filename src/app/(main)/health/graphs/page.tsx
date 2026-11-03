@@ -76,7 +76,7 @@ export default function HealthGraphsPage() {
 
   /**
    * 期間の健康記録・健診・目標を読む。mode が 'refetch' (AI 相談の成功・Realtime の取り直し。#2201 U1) なら、読み込み中の表示を
-   * 出さずに読み直し、失敗 (通信の失敗・記録か健診の非 2xx) では今の表示を残す。応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ
+   * 出さずに読み直し、失敗 (通信の失敗・記録か健診の非 2xx) では今の表示 (線) を残す。応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ
    * (期間を切り替えたあとに前の期間の応答が届いても置かない)
    */
   const fetchData = useCallback(async (ticket: AiConsultationFetchTicket, mode: GraphsFetchMode) => {
@@ -94,8 +94,8 @@ export default function HealthGraphsPage() {
         fetch('/api/health/goals?status=active'),
       ]);
 
-      // 取り直しで記録か健診を読めなかった: 片方だけで線を作り直すと点が欠けるので、今の表示を残す
-      if (mode === 'refetch' && (!recordsRes.ok || !checkupsRes.ok)) return;
+      // 取り直しで記録か健診を読めなかった: 片方だけで線を作り直すと点が欠けるので、今の線を残す (目標は読めていれば置く)
+      const keepShownRecords = mode === 'refetch' && (!recordsRes.ok || !checkupsRes.ok);
 
       const mergedRecords: HealthRecord[] = [];
 
@@ -135,7 +135,7 @@ export default function HealthGraphsPage() {
       mergedRecords.sort((a, b) => b.record_date.localeCompare(a.record_date));
       const goalsData = goalsRes.ok ? await goalsRes.json() : null;
       if (!ticket.isLatest()) return;
-      setRecords(mergedRecords);
+      if (!keepShownRecords) setRecords(mergedRecords);
 
       if (goalsData !== null) {
         const weightGoal = goalsData.goals?.find((g: any) => g.goal_type === 'weight');

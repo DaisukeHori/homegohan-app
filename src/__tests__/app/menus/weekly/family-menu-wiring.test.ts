@@ -11,7 +11,7 @@ const pageSource = fs.readFileSync(PAGE_TSX_PATH, 'utf-8');
 
 /** loadFamilyData の useCallback の本体 (次の useEffect まで) */
 function loadFamilyDataBlock(): string {
-  const match = pageSource.match(/const loadFamilyData = useCallback\(async \(\) => \{[\s\S]*?\n {2}\}, \[\]\);/);
+  const match = pageSource.match(/const loadFamilyData = useCallback\(async \(mode: FamilyLoadMode = 'mount'\) => \{[\s\S]*?\n {2}\}, \[\]\);/);
   expect(match, 'loadFamilyData の useCallback が見つかりません').not.toBeNull();
   return match![0];
 }
@@ -33,20 +33,24 @@ function mealTypeMapBlock(name: 'BASE_MEAL_TYPES' | 'EXTRA_MEAL_TYPES'): string 
 }
 
 describe('page.tsx: 週間献立の家族の表示の配線 (#1584 の 1)', () => {
-  it('loadFamilyData が fetchFamilyMemberNames と applyFamilyMemberNames を呼び、setFamilyMembers に渡すのは applyFamilyMemberNames の結果', () => {
+  it('loadFamilyData が fetchFamilyMemberNamesResult と applyFamilyMemberNames を呼び、setFamilyMembers に渡すのは applyFamilyMemberNames の結果', () => {
     const block = loadFamilyDataBlock();
-    expect(block).toMatch(/await fetchFamilyMemberNames\(\)/);
-    expect(block).toMatch(/setFamilyMembers\(applyFamilyMemberNames\(/);
+    expect(block).toMatch(/await fetchFamilyMemberNamesResult\(\)/);
+    // 名前の API を読めたら その名前、取り直しで読めなかったら今出している名前 (keepShownFamilyMemberNames) を当てる (#2201 U1)
+    expect(block).toMatch(
+      /setFamilyMembers\(\(shown\) =>\s*applyFamilyMemberNames\(\s*rows,\s*namesResult\.ok \? namesResult\.names : mode === 'refetch' \? keepShownFamilyMemberNames\(rows, shown\) : new Map\(\),\s*\),\s*\);/,
+    );
     // 名前を当てない一覧を渡す書き方 (setFamilyMembers(members as FamilyMember[])) に戻っていない
     expect(block).not.toMatch(/setFamilyMembers\(members as FamilyMember\[\]\)/);
     expect(pageSource).toMatch(
-      /import \{ applyFamilyMemberNames, fetchFamilyMemberNames \} from "@\/lib\/membership\/family-member-names";/,
+      /import \{\s*applyFamilyMemberNames,\s*fetchFamilyMemberNamesResult,\s*keepShownFamilyMemberNames,\s*\} from "@\/lib\/membership\/family-member-names";/,
     );
   });
 
-  it('loadFamilyData は useCallback で、family_id が無いとき setFamilyId(null) と setFamilyMembers([]) を呼ぶ', () => {
+  it('loadFamilyData は useCallback で、family_id が無いとき setFamilyId(null) と setFamilyMembers([]) を呼ぶ (プロフィールの読み取りの失敗では呼ばない)', () => {
     const block = loadFamilyDataBlock();
-    expect(block).toMatch(/if \(!profile\?\.family_id\) \{\s*setFamilyId\(null\);\s*setFamilyMembers\(\[\]\);\s*return;\s*\}/);
+    // 読み取りの失敗 (profileError) では一覧を空にしない (#2201 U1。家族の切り替えを消さない)
+    expect(block).toMatch(/if \(profileError \|\| !isLatest\(\)\) return;\s*if \(!profile\?\.family_id\) \{\s*setFamilyId\(null\);\s*setFamilyMembers\(\[\]\);\s*return;\s*\}/);
     // 開いたときに呼ぶ effect
     expect(pageSource).toMatch(/useEffect\(\(\) => \{\s*void loadFamilyData\(\);\s*\}, \[loadFamilyData\]\);/);
     // effect の中の関数 (const loadFamilyData = async () =>) に戻っていない
