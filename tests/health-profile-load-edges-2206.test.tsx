@@ -4,7 +4,8 @@
  * 問題 (直す前):
  *   1. /health/graphs: 目標 (GET /api/health/goals) の応答が 200 で本文が壊れていると、目標の JSON の解析が投げて記録の線を置かなかった
  *      (開いたときは「データがありません」・期間の切り替えでは前の期間の線が新しい見出しの下に残った)。
- *      同じ型: 記録の本文が壊れていると、期間を切り替えても前の期間の線が残った
+ *      同じ型: 記録の本文が壊れていると、期間を切り替えても前の期間の線が残った。目標・記録の fetch そのものが通信の失敗で
+ *      投げたときも、Promise.all がまとめて投げて読めたほかの応答を置かず、前の期間の線が残った
  *   2. /profile/nutrition-targets: 栄養目標の再設定 (NutritionTargetPlanner) の保存のあと、ページの見出しの目標値が保存の前の数字のまま
  *      残った。取り直しはプロフィールを置いてから栄養目標を読むので、栄養目標を読めないとプロフィールだけが新しくなり、最後の
  *      setError(null) が開いたときの失敗の文も消した
@@ -218,7 +219,7 @@ const TODAY = localDate(new Date());
 
 // ─── /health/graphs ─────────────────────────────────────────────
 
-describe('/health/graphs: 1 つの本文が壊れていても、読めた本文を置く (#2206 G5)', () => {
+describe('/health/graphs: 1 つの応答を読めなくても (本文の壊れ・通信の失敗)、読めた本文を置く (#2206 G5)', () => {
   const RECORDS = 'GET /api/health/records';
   const CHECKUPS = 'GET /api/health/checkups';
   const GOALS = 'GET /api/health/goals';
