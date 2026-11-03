@@ -15,9 +15,14 @@
  *   - 取り直しの最中に相談を切り替えると、別の相談の入力欄に送った文が戻りえた
  *   - 時間切れのあと取り直しにも失敗すると、送った文を入力欄に戻さなかった
  *   - 応答を受ける前に通信が切れた (TypeError) ときは、取り直さずに『再試行してください』を出した
+ *   - おすすめの質問のボタンには送信の流れの写しがあり、取り直しで届いていない・確かめられない・取り直せないときに、送った文を
+ *     入力欄に戻さなかった (『入力欄の文をもう一度送ってください』が空の入力欄を指し、ボタンも消えていて押し直せなかった)
  */
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pollUntil, sleepRealTime } from './helpers/act-wait';
 import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
@@ -53,8 +58,10 @@ vi.mock('@homegohan/shared', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@homegohan/shared')>()),
   PREVIOUS_REQUEST_RECHECK_DELAY_MS: TEST_RECHECK_DELAY_MS,
 }));
+/** 同意の確認の答え (「同意しない」の縁を確かめるテストだけ差し替える。beforeEach で戻す) */
+const consent = vi.hoisted(() => ({ answer: 'consented' as 'consented' | 'declined' }));
 vi.mock('@/hooks/useAiConsent', () => ({
-  useAiConsent: () => ({ ensureAiConsent: async () => 'consented' as const, consentModal: null }),
+  useAiConsent: () => ({ ensureAiConsent: async () => consent.answer, consentModal: null }),
 }));
 vi.mock('@/hooks/useV4MenuGeneration', () => ({
   useV4MenuGeneration: () => ({ isGenerating: false, generate: vi.fn(), subscribeToProgress: vi.fn() }),
@@ -101,6 +108,8 @@ const DELIVERED_NO_REPLY_TEXT = '相談はサーバーに届いています。�
 const TIMEOUT_RELOAD_FAILED_TEXT =
   '応答に時間がかかっています。返答はサーバーで続いていることがあります。少し待ってから相談を開き直し、返答が無ければもう一度送ってください。';
 const REPLY_FAILED_TEXT = '応答に失敗しました。再試行してください。';
+const DELIVERY_UNCONFIRMED_TEXT =
+  '相談がサーバーに届いたかを確かめられませんでした。少し待ってから相談を開き直し、送った文が無ければ、入力欄の文をもう一度送ってください。';
 const UNCONFIRMED_GUIDE = 'この提案を実行できたかを確かめられませんでした。しばらくしてから相談を開き直してください。';
 const RETRY_GUIDE = 'この提案はここからは実行できません。もう一度 AI に頼んでください。';
 const NOT_EXECUTABLE_CARD = '[data-testid="ai-proposed-action-not-executable"]';
@@ -157,6 +166,7 @@ beforeEach(() => {
   window.addEventListener('mealPlanUpdated', mealPlanUpdated);
   logs.results = [{ data: [], error: null }];
   logs.reads = [];
+  consent.answer = 'consented';
   serverMessages = OLD_MESSAGES;
   messagesGets = 0;
   handlers = {
@@ -670,4 +680,135 @@ describe('#2206 G2 応答を受ける前に通信が切れた (TypeError)', () =
     expect(text()).not.toContain(REPLY_FAILED_TEXT);
     expect(mealPlanUpdated).toHaveBeenCalledTimes(1);
   });
+});
+
+describe('#2206 G2 おすすめの質問から送ったときも、送信欄と同じ送信の流れを通り、送った文を入力欄に戻す', () => {
+  /** 時間がかかる依頼のおすすめの質問 (献立の作成。時間切れになりやすい) */
+  const QUICK_PROMPT = '来週の献立を作りたい';
+  const SAVED_QUICK_USER = { id: 'user-saved-q', role: 'user', content: QUICK_PROMPT, createdAt: '2026-11-02T00:00:00.000Z' };
+
+  /** 相談がまだ無い (新しく作る) ときだけ、ようこその一文とおすすめの質問が出る */
+  async function openEmptyChat() {
+    handlers['GET /api/ai/consultation/sessions?status=all'] = async () => json(200, { sessions: [] });
+    handlers['POST /api/ai/consultation/sessions'] = async () => json(200, { session: { id: SESSION_ID } });
+    await act(async () => {
+      root.render(createElement(AIChatBubble));
+    });
+    const fab = container.querySelector('[data-testid="ai-chat-floating-button"]');
+    expect(fab).not.toBeNull();
+    await act(async () => {
+      fab!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 0, clientY: 0 }));
+      fab!.dispatchEvent(new MouseEvent('pointerup', { bubbles: true, clientX: 0, clientY: 0 }));
+    });
+    await waitFor(() => quickPromptButton() !== undefined);
+  }
+
+  function quickPromptButton(): HTMLButtonElement | undefined {
+    return Array.from(container.querySelectorAll('button')).find((b) => (b.textContent ?? '').trim() === QUICK_PROMPT);
+  }
+
+  async function pressQuickPrompt(onSend: FetchHandler) {
+    handlers[SEND_KEY] = onSend;
+    const button = quickPromptButton();
+    expect(button).toBeDefined();
+    await act(async () => {
+      button!.click();
+    });
+  }
+
+  it.each<[string, () => Error]>([
+    ['時間切れ', abortError],
+    ['通信の切断 (TypeError)', () => new TypeError('Failed to fetch')],
+  ])(
+    '応答を受ける前に終わり (%s)、取り直した会話に送った文が無ければ『確かめられませんでした』を出し、送った文を入力欄に戻す',
+    async (_label, failure) => {
+      await openEmptyChat();
+      serverMessages = [];
+      await pressQuickPrompt(async () => {
+        throw failure();
+      });
+
+      await waitFor(() => text().includes(DELIVERY_UNCONFIRMED_TEXT));
+      expect(messagesGets).toBe(1);
+      // 文が指す『入力欄の文』がある (おすすめの質問のボタンは、楽観的に出したメッセージで消えていて押し直せない)
+      expect(inputElement().value).toBe(QUICK_PROMPT);
+      expect(quickPromptButton()).toBeUndefined();
+      expect(inputElement().disabled).toBe(false);
+    },
+  );
+
+  it('時間切れのあと会話も取り直せなければ、開き直してもらう文を出し、送った文を入力欄に戻す', async () => {
+    await openEmptyChat();
+    handlers[MESSAGES_KEY] = async () => json(500, { error: 'サーバーでエラーが発生しました' });
+    await pressQuickPrompt(async () => {
+      throw abortError();
+    });
+
+    await waitFor(() => text().includes(TIMEOUT_RELOAD_FAILED_TEXT));
+    expect(inputElement().value).toBe(QUICK_PROMPT);
+    expect(quickPromptButton()).toBeUndefined();
+  });
+
+  it('届いていて返答があれば、入力欄には戻さない (上の対照。戻すと同じ依頼を二重に送りうる)', async () => {
+    logs.results = [{ data: [{ status: 'executed', action_type: 'generate_single_meal' }], error: null }];
+    await openEmptyChat();
+    await pressQuickPrompt(async () => {
+      serverMessages = [SAVED_QUICK_USER, savedReply()];
+      throw abortError();
+    });
+
+    await waitFor(() => text().includes(EXECUTED_NOTE));
+    expectNoteRightAfter(SAVED_REPLY, EXECUTED_NOTE);
+    expect(inputElement().value).toBe('');
+    expect(mealPlanUpdated).toHaveBeenCalledTimes(1);
+  });
+
+  it('「同意しない」なら送らず、楽観的に出したメッセージを消し、送ろうとした文を入力欄に戻す (送信欄と同じ)', async () => {
+    consent.answer = 'declined';
+    await openEmptyChat();
+    let sends = 0;
+    await pressQuickPrompt(async () => {
+      sends += 1;
+      throw abortError();
+    });
+
+    await waitFor(() => inputElement().value === QUICK_PROMPT);
+    expect(sends).toBe(0);
+    // ようこその一文だけに戻るので、おすすめの質問のボタンも出る
+    expect(quickPromptButton()).toBeDefined();
+    expect(inputElement().disabled).toBe(false);
+  });
+});
+
+describe('#2206 G2 送信の流れ (会話の続きの POST) は画面の中で 1 か所だけ', () => {
+  // 以前はおすすめの質問のボタンに送信の流れの写しがあり、取り直しの縁の直し (serverFailed・通信の切断・保存の遅れ・入力欄の戻し方)
+  // を 2 か所に書く必要があって、写しのほうが食い違った。写しを作り直したら、ここで止める
+  it('POST /api/ai/consultation/sessions/{id}/messages?stream=true を呼ぶのは sendMessage の 1 か所だけ', () => {
+    const file = 'src/components/AIChatBubble.tsx';
+    const source = ts.createSourceFile(file, readFileSync(join(process.cwd(), file), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const owners: string[] = [];
+    const visit = (node: ts.Node) => {
+      if (
+        ts.isCallExpression(node) &&
+        node.arguments.length > 0 &&
+        (ts.isTemplateExpression(node.arguments[0]) || ts.isStringLiteralLike(node.arguments[0])) &&
+        node.arguments[0].getText().includes('/messages?stream=true')
+      ) {
+        owners.push(ownerFunctionNameOf(node));
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+    expect(owners).toEqual(['sendMessage']);
+  });
+
+  /** node を含む、名前のある (const f = (...) => ... の形の) いちばん内側の関数の名前 */
+  function ownerFunctionNameOf(node: ts.Node): string {
+    for (let cur: ts.Node | undefined = node.parent; cur; cur = cur.parent) {
+      if ((ts.isArrowFunction(cur) || ts.isFunctionExpression(cur)) && ts.isVariableDeclaration(cur.parent) && ts.isIdentifier(cur.parent.name)) {
+        return cur.parent.name.text;
+      }
+    }
+    return '(無名)';
+  }
 });
