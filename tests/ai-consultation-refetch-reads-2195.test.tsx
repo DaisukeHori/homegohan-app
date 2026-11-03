@@ -515,6 +515,27 @@ describe('/health の選んだ日のパネルは、AI 相談で書いた過去�
     expect(container.textContent).not.toContain(String(PANEL_BEFORE));
   });
 
+  it('今日の記録が無くなった取り直しのあと、記録の欄の体重は前の体重を残さない (読み込み直したときと同じ空)', async () => {
+    const TODAY_WEIGHT = 65;
+    setServer({
+      fetchBodies: {
+        [`/api/health/records/${TODAY}`]: { record: HEALTH_RECORD(TODAY, TODAY_WEIGHT), previous: null },
+        '/api/health/streaks': { streak: STREAK, weeklyRecords: [TODAY] },
+        '/api/health/goals': { goals: [] },
+      },
+    });
+    await mount(CASES.find((c) => c.page === '/health')!);
+    server.fetchBodies[`/api/health/records/${TODAY}`] = { record: null, previous: null };
+    await notifyAiConsultationSucceeded();
+
+    const openQuickRecord = [...container.querySelectorAll('button')].find((b) => b.textContent?.includes('今日の記録をつける'));
+    expect(openQuickRecord).toBeDefined();
+    await act(async () => {
+      openQuickRecord!.click();
+    });
+    expect(container.querySelector<HTMLInputElement>('input[type="number"]')?.value).toBe('');
+  });
+
   it('パネルを閉じた後は、その日の記録を取り直さない', async () => {
     setServer(CASES.find((c) => c.page === '/health')!.full);
     await mount({ ...CASES.find((c) => c.page === '/health')!, openPanels: openHealthDayPanel });
