@@ -1152,7 +1152,7 @@ describe('I-11: 戻し口', () => {
 
 ### 7.6 `src/lib/account-export-tables.ts` の差分 (コメント 1 行だけ。行の定義は変えない)
 
-今の行 :182 「`// recipe_likes / recipe_comments は RLS 上「誰でも閲覧可」。必ず user_id で絞る`」を、次の 1 行に置き換える (:183 以下の `{ table: 'recipe_likes', … }`・`{ table: 'recipe_comments', scope: self('user_id') }` は変えない)。契約テスト C-8 が「誰でも閲覧可」の語がファイルに無いことと `self('user_id')` を見るので、「誰でも閲覧可」の語を残さない (`recipe_likes` の注は「誰でも読める」と書く。この語はファイルの中でこの行にしか無い)。
+`{ table: 'recipe_likes', … }` の行の直前のコメント (旧「誰でも閲覧可」) は、次の 1 行に置き換えた (`{ table: 'recipe_likes', … }`・`{ table: 'recipe_comments', scope: self('user_id') }` の行は変えていない)。契約テスト C-8 が「誰でも閲覧可」の語がファイルに無いことと `self('user_id')` を見るので、「誰でも閲覧可」の語を残さない (`recipe_likes` の注は「誰でも読める」と書く)。
 
 ```ts
 // tsc:skip — 既存ファイルの差分の断片 (コメントの 1 行)
@@ -1524,7 +1524,7 @@ sequenceDiagram
 1. マージ前 (270k の全件): §12 のテストがすべて緑。`tsc`・lint が緑。§16 の番兵がすべて緑。結合テスト (ローカル Supabase) で I-1〜I-11・A-1・A-2 が緑。migration を流す前のローカル DB で I-2・I-3・I-4・I-6・I-8・I-9・I-11・A-1 が赤になること (直す前の形で赤くなる) を 1 回確かめる (`bash scripts/supabase-local.sh reset` の前後)。
 2. 適用の前の材料: 本番の `recipe_comments` の行数と、「他人の非公開・隠したレシピへのコメント」の件数 (Supabase MCP の SELECT。2026-11-01 はどちらも 0)。あわせて、作者のいない非公開で隠されていないレシピ (P-7a。設計後も他人に見える) の件数 (2026-11-01 は `recipes` が 0 行なので 0)。行があれば、設計後に誰から見えなくなるかを件数で添える。
 3. マージ (PR #2176) → CI の `deploy-supabase-migrations.yml` が本番へ当てた (run 41270869190。マージが適用を兼ねる。アプリは RLS の結果を使うだけなので、Vercel の反映との順番は問わない)。
-4. 適用後 (整合ゲート): 本番の `pg_policies` を SELECT で読み、`recipe_comments` が 4 本 (`recipe_comments_select_own_or_visible_recipe` SELECT `{authenticated}`・`Users can create comments`・`Users can delete own comments`・`Users can update own comments`) で、`Anyone can view comments` が無いこと。`recipes` の 2 本が変わっていないこと。`list_migrations` に本書の番号があること。
+4. 適用後 (2026-11-01・Issue #2166 のコメント): migration の最大は 20261101100000。`recipe_comments` の SELECT は `recipe_comments_select_own_or_visible_recipe` (authenticated) の 1 本で、`Anyone can view comments` は無い。
 5. 戻すとき: §7.2 の内容を新しい migration として PR 経由で当てる (本番への直接 SQL は禁止)。アプリは先に戻さなくてよい。
 6. 告知: 要らない (§6.9)。
 
