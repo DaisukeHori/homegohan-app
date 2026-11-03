@@ -6,6 +6,8 @@
  *     (表の mountReadsNotRefetched に理由つきで載せたものを除く)
  *   - expectEmptyRefetchMatchesFreshMount: 中身のある応答で開いたあと、空の応答で取り直した画面が、空の応答で開いた画面と同じ
  *     (取り直しが `if (x.length > 0) set(...)` や `if (x) set(...)` で前の値を残していない)
+ *   - expectRefetchAlwaysBlockedWhileShown: 除外の alwaysBlockedWhileShown のページが、AI が書く値を出している間、
+ *     取り直しの番兵 (isAiConsultationRefetchBlocked) が止める (除外の理由を描画で確かめる)
  *
  * 読み取りの鍵: GET の fetch は 'GET <道>?<並べ替えた問い合わせ>' (同じ起点の '/api/' だけ)、Supabase は 'from:<表>' / 'rpc:<名前>'。
  * Supabase の表の読み取りは select を呼んだときに記録する (ReadRecorder.recordSelect。insert / update / delete だけの書き込みは数えない)。
@@ -16,6 +18,7 @@
  * そのテストが部品を消すモック・ログアウトで読み取りを隠していないことも確かめる。
  */
 import { expect } from 'vitest';
+import { isAiConsultationRefetchBlocked } from '@/lib/ai/consultation-data-refetch';
 import { AI_CONSULTATION_REFETCH_PAGES, AI_CONSULTATION_WRITTEN_COLUMNS } from '@/lib/ai/consultation-refetch-coverage';
 
 /** ページの API の相対 URL を解く起点 */
@@ -152,4 +155,15 @@ export function expectEmptyRefetchMatchesFreshMount(page: string, screens: Empty
   // 中身のある応答で何かが出ていないと、前の値を残すかを確かめられない
   expect(screens.full, `${page} の中身のある応答が、空の応答と同じ画面になっている (検査が空振りしている)`).not.toBe(screens.freshEmpty);
   expect(screens.refetchedToEmpty, `${page} の空の応答の取り直しが、読み込み直しと違う`).toBe(screens.freshEmpty);
+}
+
+/**
+ * 除外の alwaysBlockedWhileShown のページ: AI が書く値 (shownText。画面に出ている文字) を出している間、取り直しの番兵が止める。
+ * 値が画面に出ていなければ検査が空振りしているので赤 (root は番兵が調べる範囲。ページの描画の document)
+ */
+export function expectRefetchAlwaysBlockedWhileShown(page: string, root: ParentNode, screen: Element, shownText: string): void {
+  const entry = AI_CONSULTATION_REFETCH_PAGES[page];
+  expect(entry?.kind === 'excluded' && entry.alwaysBlockedWhileShown === true, `${page} は AI_CONSULTATION_REFETCH_PAGES の alwaysBlockedWhileShown の除外`).toBe(true);
+  expect(screen.textContent ?? '', `${page} が AI が書く値を出していない (検査が空振りしている)`).toContain(shownText);
+  expect(isAiConsultationRefetchBlocked(root), `${page} が AI が書く値を出している間に、取り直しの番兵が止めない`).toBe(true);
 }

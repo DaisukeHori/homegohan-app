@@ -13,7 +13,11 @@
  *      各ページの読む AI が書く表は表の aiTables と一致し、受け手は useAiConsultationDataRefetch / useAiConsultationRefetchKey を使う。
  *      受け手は、開いたとき・パネルが読むもの全部を取り直すことを描画のテスト (tests/helpers/ai-refetch-read-recorder.ts の
  *      expectRefetchReadsCoverMount) で確かめ、空の応答の取り直しが空の応答で開いたときと同じこと (expectEmptyRefetchMatchesFreshMount) も確かめる。
- *      その 2 つを呼ぶテストが受け手ごとにあることをここで数える。そのテストが、AI が書く表を読む部品を vi.mock で消していないこと・
+ *      その 2 つを呼ぶテストが受け手ごとにあることをここで数える。除外の alwaysBlockedWhileShown のページは、AI が書く値を出している間
+ *      取り直しの番兵が止めることを描画で確かめるテスト (expectRefetchAlwaysBlockedWhileShown) があることも数える。
+ *      家族のメンバーの名前の API (自分の名前 = AI 相談が書く user_profiles.nickname を当てる) を読むページは、受け手か
+ *      alwaysBlockedWhileShown の除外だけにする (#2195 V1 R3: 同じ名前を出す献立表は取り直し、家族の画面は除外で古い名前が残った)。
+ *      そのテストが、AI が書く表を読む部品を vi.mock で消していないこと・
  *      ほかの読み取りのある部品を消すなら AI_CONSULTATION_RENDER_TEST_MOCKED_READERS に理由があること・ログアウトの getUser のモックで
  *      利用者で絞った読み取りを隠していないことも確かめる (#2195 V1 の R5: 献立表のプロフィールの帯を消すモックとログアウトが、帯の読み取りの抜けを隠した)
  *
@@ -73,8 +77,17 @@ const RECEIVER_HOOKS = ['useAiConsultationDataRefetch', 'useAiConsultationRefetc
 const RENDER_CHECKS = ['expectRefetchReadsCoverMount', 'expectEmptyRefetchMatchesFreshMount'] as const;
 /** 描画のテストを探す場所 */
 const TEST_ROOT = 'tests';
-/** 描画のテストが読み取りを記録するために置き換える Supabase の client (消すモックではない) */
-const RECORDED_SUPABASE_CLIENT = 'src/lib/supabase/client.ts';
+/**
+ * 描画のテストが読み取りを記録するために置き換える Supabase の client (消すモックではない)。'@/lib/supabase/client' を
+ * スキャナの別名の解き方 (src → 根の順) で解いた先 (src には無い。テストが実在を確かめる)
+ */
+const RECORDED_SUPABASE_CLIENT = 'lib/supabase/client.ts';
+/** 除外の alwaysBlockedWhileShown を描画で確かめる判定 (tests/helpers/ai-refetch-read-recorder.ts の関数の名前) */
+const ALWAYS_BLOCKED_CHECK = 'expectRefetchAlwaysBlockedWhileShown';
+/** 家族のメンバーの名前の API の route (display_name の無いメンバー (自分を含む) に user_profiles.nickname を当てる) */
+const FAMILY_MEMBER_NAMES_ROUTE = 'src/app/api/family/members/names/route.ts';
+/** 名前の API を読むページの見本 (見分けの空振りを防ぐ) */
+const KNOWN_FAMILY_MEMBER_NAMES_PAGE = '/family/members';
 /** 描画のテストの vi.mock の先 (文字列のリテラル) */
 const VI_MOCK_PATTERN = /\bvi\.mock\(\s*['"]([^'"]+)['"]/g;
 /** ログアウトの getUser のモック (利用者で絞った読み取りが開いたときの読み取りに出なくなる) */
@@ -425,6 +438,32 @@ describe('2. AI が書く表を読むページは、受け手か除外の表に�
     expect(problems).toEqual([]);
   });
 
+  it('家族のメンバーの名前の API を読むページは、受け手か、名前を出す間いつも番兵が止める除外 (alwaysBlockedWhileShown)', () => {
+    // 名前の API は display_name の無いメンバー (自分を含む) に自分の名前 (AI 相談が書く user_profiles.nickname) を当てる。
+    // 同じ名前を出すページを同じ扱いにする (除外で「AI 相談が変えうるのは自分の名前の 1 行」と認めたまま取り直さない、をなくす)
+    const readers = [...READS.entries()]
+      .filter(([, reads]) => [...(reads.tables.get('user_profiles') ?? [])].some((via) => via.includes(`→ ${FAMILY_MEMBER_NAMES_ROUTE} (`)))
+      .map(([key]) => key);
+    expect(readers).toContain(KNOWN_FAMILY_MEMBER_NAMES_PAGE);
+    const notSame = readers.filter((key) => {
+      const entry = AI_CONSULTATION_REFETCH_PAGES[key];
+      return !(entry?.kind === 'receiver' || (entry?.kind === 'excluded' && entry.alwaysBlockedWhileShown === true));
+    });
+    expect(notSame).toEqual([]);
+  });
+
+  it('除外の alwaysBlockedWhileShown のページごとに、AI が書く値を出している間に番兵が止めることを描画で確かめるテストがある', () => {
+    const files = testFiles().filter((file) => new RegExp(`\\b${ALWAYS_BLOCKED_CHECK}\\(`).test(file.source));
+    const missing = Object.entries(AI_CONSULTATION_REFETCH_PAGES)
+      .filter(([, entry]) => entry.kind === 'excluded' && entry.alwaysBlockedWhileShown === true)
+      .filter(([key]) => {
+        const k = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return !files.some((file) => new RegExp(`${ALWAYS_BLOCKED_CHECK}\\(\\s*'${k}'`).test(file.source));
+      })
+      .map(([key]) => key);
+    expect(missing).toEqual([]);
+  });
+
   it('受け手のページは、取り直しの hook を使う', () => {
     const notWired = Object.entries(AI_CONSULTATION_REFETCH_PAGES)
       .filter(([, entry]) => entry.kind === 'receiver')
@@ -466,6 +505,9 @@ describe('2. AI が書く表を読むページは、受け手か除外の表に�
     // 見分けの空振りを防ぐ: AI が書く表を読む部品の見本は、読み取りがあり、AI が書く表を読むと数える
     expect(moduleReadsOf(KNOWN_AI_READING_COMPONENT).length).toBeGreaterThan(0);
     expect([...pageReads(KNOWN_AI_READING_COMPONENT).tables.keys()]).toContain('user_profiles');
+
+    // 描画のテストが置き換える Supabase の client は実在する (古いパスで、消すモックの検査から外す分岐が空振りしない)
+    expect(fs.existsSync(path.join(ROOT, RECORDED_SUPABASE_CLIENT))).toBe(true);
 
     const checking = renderCheckFiles();
     expect(checking.length).toBeGreaterThan(0);

@@ -6,12 +6,13 @@
 // ルートグループの名前は URL に出ないので、URL は変わらない。提案の本人かどうかは、この画面 (to_user_id と自分の比較) と、
 // API・DB (ownership_transfer_proposals の RLS・承諾と拒否の関数の to_user_id = auth.uid() の確かめ) が受け持つ
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { normalizeProfileName } from "@/lib/profile-name";
 import { transferProposalStatusMessage } from "@/lib/membership/transfer-proposal-status";
 import { readSignedInUser } from "@/lib/auth/signed-in-user";
+import { useAiConsultationDataRefetch } from "@/hooks/useAiConsultationDataRefetch";
 
 /** 提案が無い (または RLS で見えない) ときの文 */
 const PROPOSAL_NOT_FOUND_MESSAGE = '提案が見つかりません';
@@ -75,9 +76,15 @@ export default function TransferAcceptPage() {
   // 提案を読み込めなかったときの文。あるあいだは提案の代わりにこの文と「再試行」を出す
   // (#2064 R4 と同じ型。以前は error を見ず、読み込めなかったのを「提案が見つかりません」と見せていた)
   const [loadError, setLoadError] = useState<string | null>(null);
+  // AI 相談の成功の読み直し (#2195 V1) の応答を待っているか。待つあいだは承諾・拒否のボタンを止める
+  const [aiRefetching, setAiRefetching] = useState(false);
+  // 承諾・拒否の書き込みか、AI 相談の成功の読み直しの応答を待っているか (#2195 V1)。待つあいだは、ほかの書き込みと読み直しを始めない:
+  // 読み直しの応答があとから届いて、承諾・拒否の通信エラーのあとの読み直し (今の状態) を書き込む前の提案で上書きしないため。
+  // ref は再描画の前に続けて起きたとき (ボタンがまだ止まっていない) の守り
+  const busyRef = useRef(false);
 
-  // 提案・組織名・提案者を読む。画面を開いたとき・「再試行」・承諾 / 拒否の通信エラーのあとに呼ぶ。
-  // 読み込み中の表示 (loading) は呼び出し側が決める (承諾 / 拒否のあとの読み直しは、提案の表示を残したまま読み直す)
+  // 提案・組織名・提案者を読む。画面を開いたとき・「再試行」・承諾 / 拒否の通信エラーのあと・AI 相談の成功 (#2195 V1) のあとに呼ぶ。
+  // 読み込み中の表示 (loading) は呼び出し側が決める (承諾 / 拒否と AI 相談の成功のあとの読み直しは、提案の表示を残したまま読み直す)
   const fetchProposal = useCallback(async () => {
     try {
       // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
@@ -126,7 +133,8 @@ export default function TransferAcceptPage() {
         return;
       }
 
-      // 提案者のプロフィール取得 (他人の user_profiles は RLS で読めないことが多い。そのときは「(不明)」と出す。
+      // 提案者のプロフィール取得 (他人の user_profiles は RLS で読めない (SELECT は本人の行だけ)。そのときは「(不明)」と出す。
+      // 名前が出るのは、申し出た本人が自分の申し出の画面を開いたとき (自分の名前。AI 相談の update_profile_preferences が書く)。
       // 読み込めなかったときは読み込みの失敗)
       const { data: fromUserData, error: fromUserError } = await supabase
         .from('user_profiles')
@@ -164,6 +172,23 @@ export default function TransferAcceptPage() {
     void loadPage();
   }, [loadPage]);
 
+  // AI 相談の提案の実行が成功したら (#2195 V1)、読み込み中の表示を出さずに提案を読み直す。提案者の名前は、申し出た本人が開いたときは
+  // 自分のプロフィールの名前 (user_profiles.nickname) で、AI 相談の update_profile_preferences が書く。
+  // 読み直しの失敗・ログアウトしていたときは、開いたときと同じ扱い (fetchProposal が決める)。
+  // 承諾・拒否の応答を待つあいだは読み直さず、読み直しの応答を待つあいだは承諾・拒否を止める (busyRef)
+  const refetchAfterAiConsultation = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setAiRefetching(true);
+    try {
+      await fetchProposal();
+    } finally {
+      busyRef.current = false;
+      setAiRefetching(false);
+    }
+  };
+  useAiConsultationDataRefetch(refetchAfterAiConsultation);
+
   // 読み込みをやり直す (読み込めなかったときの「再試行」)。
   // 「再試行」は読み込めなかったとき (承諾・拒否のボタンを出していないとき) だけ出すので、承諾・拒否とは重ならない
   const retryLoad = () => {
@@ -172,7 +197,9 @@ export default function TransferAcceptPage() {
   };
 
   const handleAccept = async () => {
+    if (busyRef.current) return;
     if (!confirm('オーナー権限を引き受けますか？')) return;
+    busyRef.current = true;
     setAccepting(true);
     setError(null);
     try {
@@ -193,12 +220,15 @@ export default function TransferAcceptPage() {
       // 読み直しの応答を待つあいだもボタンを止めたままにする (accepting を戻さない)。読み直しが失敗したら「読み込めませんでした」を出す
       await fetchProposal();
     } finally {
+      busyRef.current = false;
       setAccepting(false);
     }
   };
 
   const handleDecline = async () => {
+    if (busyRef.current) return;
     if (!confirm('この譲渡提案を拒否しますか？')) return;
+    busyRef.current = true;
     setDeclining(true);
     setError(null);
     try {
@@ -217,6 +247,7 @@ export default function TransferAcceptPage() {
       // サーバーが拒否を済ませてから応答が切れたこともあるので、提案を読み直す (承諾の通信エラーと同じ。#2064 R5 と同じ型)
       await fetchProposal();
     } finally {
+      busyRef.current = false;
       setDeclining(false);
     }
   };
@@ -346,14 +377,14 @@ export default function TransferAcceptPage() {
           <div className="p-6 pt-0 flex gap-3">
             <button
               onClick={handleDecline}
-              disabled={declining || accepting}
+              disabled={declining || accepting || aiRefetching}
               className="flex-1 px-4 py-3 rounded-xl border border-gray-200 text-gray-600 font-medium hover:bg-gray-50 transition-colors disabled:opacity-50"
             >
               {declining ? '処理中...' : '拒否'}
             </button>
             <button
               onClick={handleAccept}
-              disabled={accepting || declining}
+              disabled={accepting || declining || aiRefetching}
               className="flex-1 px-4 py-3 rounded-xl bg-amber-500 text-white font-bold hover:bg-amber-600 transition-colors disabled:opacity-50 shadow-sm shadow-amber-200"
             >
               {accepting ? '処理中...' : '承諾'}

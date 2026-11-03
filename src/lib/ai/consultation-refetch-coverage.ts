@@ -171,12 +171,24 @@ export interface AiConsultationRefetchReceiver {
   mountReadsNotRefetched?: Readonly<Record<string, string>>;
 }
 
+/**
+ * 除外 (取り直さない) のページ。理由 (reason) は、AI 相談の成功で画面に出す値が変わらない (読むが出さない・自分以外の行だけを出す・
+ * 静的な数えの見かけの当たり) か、変わりうる値を出している間いつも取り直しの番兵が止める (入力の流れ) ことを、事実で書く。
+ * 「AI 相談が変えうるのは自分の名前の 1 行で…」のように、変わりうる値を画面に出すことを認めたまま取り直さないのは除外の理由にならない
+ * (受け手にする。#2195 V1 R3: 家族の画面が自分の名前を出すのに除外で、AI 相談で名前を変えても古いまま残った)
+ */
 export interface AiConsultationRefetchExcluded {
   kind: 'excluded';
   aiTables: readonly AiConsultationWrittenTable[];
   /** AI_CONSULTATION_WRITTEN_COLUMNS の表について、このページが読む AI が書く列 (テストが数えたものと一致する) */
   aiColumns?: Readonly<Partial<Record<AiConsultationWrittenTable, readonly string[]>>>;
   reason: string;
+  /**
+   * AI が書く値を画面に出している間、入力の部品かモーダルがいつも出ていて取り直しの番兵 (isAiConsultationRefetchBlocked) がいつも止める。
+   * true のページは、AI が書く値を出した状態で番兵が止めることを描画のテスト (tests/helpers/ai-refetch-read-recorder.ts の
+   * expectRefetchAlwaysBlockedWhileShown) で確かめる (tests/ai-consultation-refetch-coverage-2195.test.ts がテストがあることを数える)
+   */
+  alwaysBlockedWhileShown?: true;
 }
 
 export type AiConsultationRefetchPageEntry = AiConsultationRefetchReceiver | AiConsultationRefetchExcluded;
@@ -194,7 +206,34 @@ export const AI_CONSULTATION_REFETCH_PAGES: Readonly<Record<string, AiConsultati
   '/badges': { kind: 'receiver', aiTables: ['planned_meals', 'user_daily_meals', 'weekly_menu_requests'] },
   // 比較の順位は集計の表 (user_segment_rankings など) から読み、AI が書く表を読まない。表示中の期間をもう一度取るだけの受け手
   '/comparison': { kind: 'receiver', aiTables: [] },
+  // 家族の画面に出すメンバーの名前は、display_name の無いメンバー (自分を含む) に名前の API (/api/family/members/names) が
+  // プロフィールの今の名前 (user_profiles.nickname) を当てたもの。AI 相談の update_profile_preferences は自分の nickname を書く
+  '/family/dashboard': { kind: 'receiver', aiTables: ['user_profiles'] },
+  '/family/members': { kind: 'receiver', aiTables: ['user_profiles'] },
+  // 自分の詳細を開いているとき、名前の API が当てた自分の nickname を出す
+  '/family/members/[id]': { kind: 'receiver', aiTables: ['user_profiles'] },
+  // 提案者の名前 (user_profiles.nickname) は、user_profiles の SELECT が本人の行だけの RLS なので、申し出た本人が自分の申し出の画面を
+  // 開いたときだけ出る (自分の名前。ほかの人が開くと読めず「代表者」「(不明)」)
+  '/family/transfer-accept/[proposal_id]': { kind: 'receiver', aiTables: ['user_profiles'] },
+  '/org/transfer-accept/[proposal_id]': { kind: 'receiver', aiTables: ['user_profiles'] },
   '/health': { kind: 'receiver', aiTables: ['health_goals', 'health_records', 'health_streaks'] },
+  // 検査値の基準の範囲と判定は、プロフィールの性別 (GET /api/profile の gender) で選ぶ。AI 相談の update_profile_preferences は gender を書く
+  '/health/blood-tests': {
+    kind: 'receiver',
+    mountReadsNotRefetched: {
+      bloodTestResults:
+        '血液検査の結果 (GET /api/health/blood-tests。blood_test_results と blood_test_longitudinal_reviews) は AI 相談が書かない表。取り直すのは基準値を選ぶ性別だけ',
+    },
+    aiTables: ['user_profiles'],
+  },
+  '/health/checkups/[id]': {
+    kind: 'receiver',
+    mountReadsNotRefetched: {
+      checkup:
+        '健康診断の結果 (GET /api/health/checkups/<id>。health_checkups) は AI 相談が書かない表。取り直すのは基準値を選ぶ性別だけ',
+    },
+    aiTables: ['user_profiles'],
+  },
   '/health/goals': { kind: 'receiver', aiTables: ['health_goals'] },
   '/health/graphs': { kind: 'receiver', aiTables: ['health_goals', 'health_records'] },
   '/health/streaks': { kind: 'receiver', aiTables: ['health_records', 'health_streaks'] },
@@ -247,68 +286,20 @@ export const AI_CONSULTATION_REFETCH_PAGES: Readonly<Record<string, AiConsultati
 
   '/health/record': { kind: 'excluded', aiTables: ['health_records'], reason: FORM_FLOW_REASON },
   '/meals/new': { kind: 'excluded', aiTables: ['health_records', 'pantry_items'], reason: FORM_FLOW_REASON },
-  '/health/blood-tests': {
-    kind: 'excluded',
-    aiTables: ['user_profiles'],
-    aiColumns: { user_profiles: ['*'] },
-    reason:
-      'AI が書く表から読むのは GET /api/profile (全部の列) で、画面が使うのは検査値の基準の範囲を選ぶための性別 (gender) だけ。画面の中身の検査の結果は AI 相談が書かない表',
-  },
-  '/health/checkups/[id]': {
-    kind: 'excluded',
-    aiTables: ['user_profiles'],
-    aiColumns: { user_profiles: ['*'] },
-    reason:
-      'AI が書く表から読むのは GET /api/profile (全部の列。CheckupDetailClient) で、画面が使うのは検査値の基準の範囲を選ぶための性別 (gender) だけ。画面の中身の健康診断の結果は AI 相談が書かない表',
-  },
-  '/family/transfer-accept/[proposal_id]': {
-    kind: 'excluded',
-    aiTables: ['user_profiles'],
-    aiColumns: { user_profiles: ['nickname'] },
-    reason:
-      'AI が書く表から読むのは、代表を譲ると申し出た人 (自分ではない人) の名前 (user_profiles.nickname) だけ。AI 相談が書くのは自分の行だけで、画面は申し出を受けるか断るかの流れ',
-  },
-  '/org/transfer-accept/[proposal_id]': {
-    kind: 'excluded',
-    aiTables: ['user_profiles'],
-    aiColumns: { user_profiles: ['nickname'] },
-    reason:
-      'AI が書く表から読むのは、組織の持ち主を譲ると申し出た人 (自分ではない人) の名前 (user_profiles.nickname) だけ。AI 相談が書くのは自分の行だけで、画面は申し出を受けるか断るかの流れ',
-  },
-  '/family/dashboard': {
-    kind: 'excluded',
-    aiTables: ['user_profiles'],
-    aiColumns: { user_profiles: ['nickname'] },
-    reason:
-      'AI が書く表から読むのは、家族の一覧に出すメンバーの名前 (user_profiles.nickname。/api/family/members/names) だけ。AI 相談が変えうるのは自分の名前の 1 行で、家族の画面の中身 (構成・共有の設定) は AI 相談が書かない表',
-  },
-  '/family/members': {
-    kind: 'excluded',
-    aiTables: ['user_profiles'],
-    aiColumns: { user_profiles: ['nickname'] },
-    reason:
-      'AI が書く表から読むのは、家族の一覧に出すメンバーの名前 (user_profiles.nickname。/api/family/members/names) だけ。AI 相談が変えうるのは自分の名前の 1 行で、家族の画面の中身 (構成・共有の設定) は AI 相談が書かない表',
-  },
-  '/family/members/[id]': {
-    kind: 'excluded',
-    aiTables: ['user_profiles'],
-    aiColumns: { user_profiles: ['nickname'] },
-    reason:
-      'AI が書く表から読むのは、家族のメンバーの名前 (user_profiles.nickname。/api/family/members/names) だけ。画面の中身 (共有の設定の切り替え) は AI 相談が書かない表で、切り替えの部品がいつも出ているので取り直しの番兵がいつも止める',
-  },
   '/family/representative-transfer': {
     kind: 'excluded',
     aiTables: ['user_profiles'],
     aiColumns: { user_profiles: ['nickname'] },
+    alwaysBlockedWhileShown: true,
     reason:
-      'AI が書く表から読むのは、代表を譲る相手の候補の名前 (user_profiles.nickname。/api/family/members/names) だけ。画面は譲る相手を選ぶ入力の流れ',
+      "AI が書く表から読むのは、代表を譲る相手の候補の名前 (名前の API /api/family/members/names が display_name の無い候補に当てる user_profiles.nickname) だけ。候補は自分以外の大人 (.neq('user_id', 自分)) で、AI 相談が nickname を書くのは自分の行だけなので、出す名前は AI 相談で変わらない。加えて、候補の名前を出している間は候補の選択 (input radio) と理由 (textarea) がいつも出ていて、取り直しの番兵がいつも止める",
   },
   '/settings/membership': {
     kind: 'excluded',
     aiTables: ['user_profiles'],
     aiColumns: { user_profiles: ['nickname'] },
     reason:
-      'AI が書く表から読むのは自分の名前 (user_profiles.nickname) だけで、所属 (家族・組織) の画面の中身は AI 相談が書かない表 (family_id などの列と所属の表)',
+      'AI が書く列は、自分のプロフィールを読む select に入れた名前 (user_profiles.nickname) だけで、読んだ名前を画面のどこにも使わない (読んだ行から使うのは family_id・organization_id・org_role だけ)。所属 (家族・組織) と共有の設定は AI 相談が書かない表と列',
   },
   '/settings': {
     kind: 'excluded',

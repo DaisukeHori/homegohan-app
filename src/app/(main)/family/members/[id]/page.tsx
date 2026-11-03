@@ -2,7 +2,7 @@
 
 // src/app/(main)/family/members/[id]/page.tsx
 // (設計書 03-ui-spec.md §3.2, 02-flow-spec.md §13)
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
@@ -24,6 +24,7 @@ import {
   withShareSettingsUnconfirmedNote,
   type FamilyShareSettings,
 } from '@/lib/membership/share-settings-state';
+import { useAiConsultationDataRefetch } from '@/hooks/useAiConsultationDataRefetch';
 
 /** 除名・共有設定の通信そのものが失敗した (fetch が reject した) ときの文 */
 const NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
@@ -112,12 +113,17 @@ export default function FamilyMemberDetailPage() {
   // 読み込めなかったときの文。あるあいだは画面の代わりにこの文と「再試行」を出す (#2073 S3。以前は自分のプロフィールを読めないと
   // 家族に入っていないとして家族の作成の画面へ移し、問い合わせが例外を投げると読み込み中の表示のまま止まっていた)
   const [loadError, setLoadError] = useState<string | null>(null);
+  // AI 相談の成功の読み直し (#2195 V1) の応答を待っているか。待つあいだは共有の設定の切り替えと除名のボタンを止める
+  const [aiRefetching, setAiRefetching] = useState(false);
+  // 共有の設定・除名の書き込みか、AI 相談の成功の読み直しの応答を待っているか (#2195 V1)。待つあいだは、ほかの書き込みと
+  // 読み直しを始めない: 読み直しの応答があとから届いて、先に済んだ書き込みの結果 (共有の設定) を書き込む前の値で上書きしないため。
+  // ref は再描画の前に続けて起きたとき (ボタンがまだ止まっていない) の守り (家族のメンバーの画面の writeInFlightRef と同じ)
+  const busyRef = useRef(false);
 
-  // メンバーと自分の役割を読む。画面を開いたときと「再試行」で呼ぶ
-  const loadPage = useCallback(async () => {
-    setLoading(true);
-    // 別の画面へ移るときは、移るまで読み込み中の表示のままにする (これまでどおり)
-    let redirecting = false;
+  // メンバーと自分の役割を読む。画面を開いたとき・「再試行」・AI 相談の成功 (#2195 V1) のあとに呼ぶ。
+  // 読み込み中の表示 (loading) は呼び出し側が決める (AI 相談の成功のあとは、画面を残したまま読み直す)。
+  // 戻り値は、別の画面へ移ったか (移るときは、移るまで読み込み中の表示のままにする。これまでどおり)
+  const readMember = useCallback(async (): Promise<{ redirecting: boolean }> => {
     try {
       // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
       // 確かめられなかったときは読み込みの失敗と「再試行」を出す (#2086 V3。以前は通信が切れているだけでもログインの画面へ移していた)。
@@ -125,12 +131,11 @@ export default function FamilyMemberDetailPage() {
       const signedIn = await readSignedInUser(supabase);
       if (signedIn.kind === 'load-failed') {
         setLoadError(MEMBER_DETAIL_LOAD_ERROR);
-        return;
+        return { redirecting: false };
       }
       if (signedIn.kind === 'signed-out') {
-        redirecting = true;
         router.push(`/login?next=${encodeURIComponent(`/family/members/${memberId}`)}`);
-        return;
+        return { redirecting: true };
       }
       const { user } = signedIn;
       setCurrentUserId(user.id);
@@ -144,12 +149,11 @@ export default function FamilyMemberDetailPage() {
       if (profileError) {
         // 自分のプロフィールを読めなかった (家族に入っていないのとは別。家族の作成の画面へ送らない)
         setLoadError(MEMBER_DETAIL_LOAD_ERROR);
-        return;
+        return { redirecting: false };
       }
       if (!profile?.family_id) {
-        redirecting = true;
         router.replace('/family/setup');
-        return;
+        return { redirecting: true };
       }
       setFamilyId(profile.family_id);
 
@@ -166,13 +170,13 @@ export default function FamilyMemberDetailPage() {
       if (isLoadFailure(memberError)) {
         // 読み込めなかった (行が無いのとは別。「再試行」を出す。#2080 U3)
         setLoadError(MEMBER_DETAIL_LOAD_ERROR);
-        return;
+        return { redirecting: false };
       }
       if (!memberData) {
         // 行が無い (PGRST116)・RLS で見えない・今のメンバーでない (脱退・除名した行。#2086 V10)
         setError(MEMBER_NOT_FOUND_MESSAGE);
         setLoadError(null);
-        return;
+        return { redirecting: false };
       }
 
       // 画面に出す名前 (display_name が無ければ本人のプロフィールの今の名前) は API で決める (#1584)
@@ -184,6 +188,7 @@ export default function FamilyMemberDetailPage() {
       setShareMenu(memberData.share_menu);
 
       // #1173: 子供なら保護者の同意の記録 (最新の 1 行) を読む。読めなければカードを出さない
+      // (子供でないときの consent は描かない。カードは member.role === 'child' のときだけ出す)
       if (memberData.role === 'child') {
         const { data: consentData } = await orderListBy(
           supabase
@@ -210,24 +215,47 @@ export default function FamilyMemberDetailPage() {
         .maybeSingle();
       if (myMemberError) {
         setLoadError(MEMBER_DETAIL_LOAD_ERROR);
-        return;
+        return { redirecting: false };
       }
 
       setCurrentRole(myMember?.role ?? null);
       setError(null);
       setLoadError(null);
+      return { redirecting: false };
     } catch (loadFailure) {
       // 問い合わせが例外を投げた (以前は try / catch が無く、読み込み中の表示のまま止まり、未処理の reject になっていた)
       console.error('[family/members/[id]] load error:', loadFailure);
       setLoadError(MEMBER_DETAIL_LOAD_ERROR);
-    } finally {
-      if (!redirecting) setLoading(false);
+      return { redirecting: false };
     }
   }, [supabase, router, memberId]);
+
+  const loadPage = useCallback(async () => {
+    setLoading(true);
+    const { redirecting } = await readMember();
+    if (!redirecting) setLoading(false);
+  }, [readMember]);
 
   useEffect(() => {
     void loadPage();
   }, [loadPage]);
+
+  // AI 相談の提案の実行が成功したら (#2195 V1)、読み込み中の表示を出さずに読み直す。画面に出す名前は、display_name が無ければ
+  // 名前の API が当てたプロフィールの今の名前 (user_profiles.nickname) で、自分の詳細を開いているとき AI 相談の
+  // update_profile_preferences が書く自分の nickname が出る。読み直しの失敗・家族を抜けていた・ログアウトしていたときは、
+  // 開いたときと同じ扱い (readMember が決める)。書き込みの応答を待つあいだは読み直さず、読み直しの応答を待つあいだは書き込みを止める (busyRef)
+  const refetchAfterAiConsultation = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setAiRefetching(true);
+    try {
+      await readMember();
+    } finally {
+      busyRef.current = false;
+      setAiRefetching(false);
+    }
+  };
+  useAiConsultationDataRefetch(refetchAfterAiConsultation);
 
   const isSelf = member?.user_id === currentUserId;
   const isOwnerOrAdmin = currentRole === 'representative' || currentRole === 'adult';
@@ -240,9 +268,11 @@ export default function FamilyMemberDetailPage() {
   };
 
   const handleShareUpdate = async (field: keyof FamilyShareSettings, value: boolean) => {
+    if (busyRef.current) return;
     const previous: FamilyShareSettings = { share_meals: shareMeals, share_health: shareHealth, share_menu: shareMenu };
     showShareSettings({ ...previous, [field]: value });
 
+    busyRef.current = true;
     setSavingShare(true);
     try {
       const res = await fetch('/api/family/members/me/share', {
@@ -270,14 +300,17 @@ export default function FamilyMemberDetailPage() {
         if (reread.settings[field] !== value) alert(NETWORK_FAILURE_MESSAGE);
       }
     } finally {
+      busyRef.current = false;
       setSavingShare(false);
     }
   };
 
   const handleRemove = async () => {
     if (!familyId || !member) return;
+    if (busyRef.current) return;
     if (!window.confirm(`${member.display_name ?? 'このメンバー'} を家族グループから外しますか？`)) return;
 
+    busyRef.current = true;
     setActionLoading(true);
     try {
       const res = await fetch(`/api/family/members/${member.id}/remove`, {
@@ -305,6 +338,7 @@ export default function FamilyMemberDetailPage() {
       // 外れていない: これまでどおり通信エラーの文。確かめられなかったときは「状態を確かめられませんでした」を添える
       alert(withMembershipStateNote(NETWORK_FAILURE_MESSAGE, state));
     } finally {
+      busyRef.current = false;
       setActionLoading(false);
     }
   };
@@ -504,7 +538,7 @@ export default function FamilyMemberDetailPage() {
                   role="switch"
                   aria-checked={shareMeals}
                   onClick={() => handleShareUpdate('share_meals', !shareMeals)}
-                  disabled={savingShare}
+                  disabled={savingShare || aiRefetching}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${
                     shareMeals ? 'bg-green-500' : 'bg-gray-200'
                   }`}
@@ -526,7 +560,7 @@ export default function FamilyMemberDetailPage() {
                   role="switch"
                   aria-checked={shareHealth}
                   onClick={() => handleShareUpdate('share_health', !shareHealth)}
-                  disabled={savingShare}
+                  disabled={savingShare || aiRefetching}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${
                     shareHealth ? 'bg-green-500' : 'bg-gray-200'
                   }`}
@@ -548,7 +582,7 @@ export default function FamilyMemberDetailPage() {
                   role="switch"
                   aria-checked={shareMenu}
                   onClick={() => handleShareUpdate('share_menu', !shareMenu)}
-                  disabled={savingShare}
+                  disabled={savingShare || aiRefetching}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${
                     shareMenu ? 'bg-green-500' : 'bg-gray-200'
                   }`}
@@ -587,7 +621,7 @@ export default function FamilyMemberDetailPage() {
             {member.role !== 'representative' && (
               <button
                 onClick={handleRemove}
-                disabled={actionLoading}
+                disabled={actionLoading || aiRefetching}
                 className="w-full rounded-2xl bg-white border border-red-100 shadow-sm p-4 flex items-center gap-3 hover:bg-red-50 transition-colors text-left disabled:opacity-50"
               >
                 <span className="text-2xl">🚫</span>
