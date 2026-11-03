@@ -200,13 +200,17 @@ function jsonResponse(body: unknown, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
 }
 const NOT_FOUND_STATUS = 404;
+/** ページの API の相対 URL を解く起点 (fetch のモックの中だけで使う) */
+const PAGE_ORIGIN = 'http://localhost';
 
 function installFakeServer() {
   fetchCalls = [];
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
     const raw = typeof input === 'string' ? input : input.toString();
     fetchCalls.push(raw);
-    const url = new URL(raw, 'http://localhost');
+    const url = new URL(raw, PAGE_ORIGIN);
+    // 祝日の一覧 (外の API) は、この検査では祝日なし
+    if (url.origin !== PAGE_ORIGIN) return jsonResponse({});
     switch (url.pathname) {
       case '/api/meal-plans':
         return jsonResponse(mealPlansJson(url.searchParams.get('startDate') ?? '', url.searchParams.get('endDate') ?? ''));
@@ -252,6 +256,8 @@ beforeEach(() => {
   usePantryStore.getState().setFridgeItems([]);
   useServingsConfigStore.getState().setServingsConfig(null);
   installFakeServer();
+  // framer-motion がアニメーションの寸法を測るときに呼ぶ (jsdom には無い)
+  vi.spyOn(window, 'scrollTo').mockImplementation(() => undefined);
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -263,6 +269,7 @@ afterEach(async () => {
   });
   container.remove();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 async function settle() {
@@ -288,7 +295,7 @@ async function notifyAiConsultationSucceeded(actionType: string, result: Record<
   await settle();
 }
 
-const callsTo = (pathname: string) => fetchCalls.filter((raw) => new URL(raw, 'http://localhost').pathname === pathname).length;
+const callsTo = (pathname: string) => fetchCalls.filter((raw) => new URL(raw, PAGE_ORIGIN).pathname === pathname).length;
 
 /** ヘッダーの買い物リストのボタン (バッジの数字はこの中に出る) */
 function shoppingListButton(): HTMLButtonElement {
