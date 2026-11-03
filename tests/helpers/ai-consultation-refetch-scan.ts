@@ -562,6 +562,22 @@ export function urlMatchesRoute(url: string, routeSegs: readonly string[]): bool
   return urlSegs.length === routeSegs.length;
 }
 
+/** route の動的な区切り ([id]・[...slug]・[[...slug]]) の数 */
+function dynamicSegmentCount(routeSegs: readonly string[]): number {
+  return routeSegs.filter((r) => /^\[.+\]$/.test(r)).length;
+}
+
+/**
+ * URL の型に当たる route のうち、Next.js が選ぶもの (静的な区切りの多いもの) を返す。
+ * 動的な区切りの数が同じで並ぶもの (式の値で決まるもの) は全部返す
+ */
+export function routesForUrl(url: string, routes: readonly { rel: string; segs: readonly string[] }[]): string[] {
+  const matched = routes.filter((r) => urlMatchesRoute(url, r.segs));
+  if (matched.length === 0) return [];
+  const fewest = Math.min(...matched.map((r) => dynamicSegmentCount(r.segs)));
+  return matched.filter((r) => dynamicSegmentCount(r.segs) === fewest).map((r) => r.rel);
+}
+
 /** 文字列の値を持つ最上位の識別子 (switch の case のラベル) を case の節から取る */
 export function caseLabelOf(clause: ts.CaseClause): string | null {
   const e = clause.expression;
