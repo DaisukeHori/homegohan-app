@@ -28,8 +28,14 @@ import {
   consultationActionOutcomeOf,
   type ConsultationActionOutcome,
 } from "@/lib/ai/consultation-action-outcome";
-// 提案のカードに「実行する」を出せないとき (やり直せない失敗・実行中・記録が無い) の案内 (#2189 W1-a)
-import { AI_PROPOSED_ACTION_NOT_EXECUTABLE_GUIDE } from "@/lib/ai/consultation-action-lifecycle";
+// 提案のカードに「実行する」を出せないとき (やり直せない失敗・実行中・記録が無い) の案内 (#2189 W1-a)。
+// 案内の文は理由で分ける: 実行中・実行済みは頼み直しを勧めない (#2195 V2)
+import {
+  PROPOSED_ACTION_NOT_EXECUTABLE_REASON,
+  aiProposedActionNotExecutableGuideOf,
+  isProposedActionNotExecutableReason,
+  type ProposedActionNotExecutableReason,
+} from "@/lib/ai/consultation-action-lifecycle";
 
 const colors = {
   primary: '#E07A5F',
@@ -58,6 +64,11 @@ interface Message {
    * (サーバーの提案の行が pending でない・行が無い)。サーバーが返さないとき (欠けている) は出す
    */
   proposedActionExecutable?: boolean;
+  /**
+   * 「実行する」を出さないときの理由 (#2195 V2)。runningOrDone (実行中か実行済み) なら『実行中か実行済みです』、
+   * それ以外 (欠けている・failed) は『もう一度 AI に頼んでください』の案内を出す
+   */
+  proposedActionNotExecutableReason?: ProposedActionNotExecutableReason;
   createdAt: string;
   isImportant?: boolean;
   isStreaming?: boolean; // ストリーミング表示中かどうか
@@ -152,17 +163,38 @@ interface AutoActionFinalData {
  * 残すときは、サーバーが返した「実行する」を出すか (proposedActionExecutable) を写す
  */
 function proposedActionFieldsOfFinalData(finalData: {
-  aiMessage: { id: string; proposedActions?: Omit<ProposedAction, 'actionId'> | null; proposedActionExecutable?: unknown };
+  aiMessage: {
+    id: string;
+    proposedActions?: Omit<ProposedAction, 'actionId'> | null;
+    proposedActionExecutable?: unknown;
+    proposedActionNotExecutableReason?: unknown;
+  };
   actionResult?: { success?: unknown } | null;
-}): Pick<Message, 'proposedActions' | 'proposedActionExecutable'> {
+}): Pick<Message, 'proposedActions' | 'proposedActionExecutable' | 'proposedActionNotExecutableReason'> {
   const proposed = finalData.aiMessage.proposedActions;
   if (!proposed || finalData.actionResult?.success === true) return { proposedActions: null };
+  const reason = finalData.aiMessage.proposedActionNotExecutableReason;
   return {
     proposedActions: { ...proposed, actionId: finalData.aiMessage.id },
     ...(typeof finalData.aiMessage.proposedActionExecutable === 'boolean'
       ? { proposedActionExecutable: finalData.aiMessage.proposedActionExecutable }
       : {}),
+    ...(isProposedActionNotExecutableReason(reason) ? { proposedActionNotExecutableReason: reason } : {}),
   };
+}
+
+/**
+ * 実行の API の応答の本文から、「実行する」を出さない理由を読む (#2195 V2)。
+ * 本文に理由が無い・読めないときは failed (『もう一度 AI に頼んでください』)
+ */
+function notExecutableReasonOfBody(body: unknown): ProposedActionNotExecutableReason {
+  const reason = body && typeof body === 'object' ? (body as { notExecutableReason?: unknown }).notExecutableReason : undefined;
+  return isProposedActionNotExecutableReason(reason) ? reason : PROPOSED_ACTION_NOT_EXECUTABLE_REASON.failed;
+}
+
+/** 実行の API の応答の本文が「もう一度押しても実行できない」(retryable: false) を示しているか (#2195 V2。500・429 にも付く) */
+function isNotRetryableBody(body: unknown): boolean {
+  return !!body && typeof body === 'object' && (body as { retryable?: unknown }).retryable === false;
 }
 
 /**
@@ -768,7 +800,7 @@ export default function AIChatBubble() {
         // 失敗: 提案は消さずに残し、データの更新の通知もしない。やり直せない失敗 (retryable が false。途中まで書いた可能性がある
         // 献立の生成など) なら「実行する」を出さず、「もう一度頼んでください」の案内にする (#2189 W1-a)
         if (outcome.kind !== 'executed') {
-          if (data.retryable === false) markProposedActionNotExecutable(messageId);
+          if (isNotRetryableBody(data)) markProposedActionNotExecutable(messageId, notExecutableReasonOfBody(data));
           return;
         }
 
@@ -783,16 +815,25 @@ export default function AIChatBubble() {
         }));
       } else {
         // 今日の AI の利用回数の上限に達した (429 AI_DAILY_LIMIT。#1149): aiFetch が全画面共通の AiDailyLimitHost に固定の文を
-        // 出させたので、ここでは重ねて出さない (提案は残っているので、明日また実行できる)
-        if (await aiDailyLimitMessageOfResponse(res)) return;
+        // 出させたので、ここでは重ねて出さない (提案は残っているので、明日また実行できる)。
+        // ただし行を pending に戻せなかった (retryable: false) ときは、明日押しても実行できないので案内にする (#2195 V2)
+        if (await aiDailyLimitMessageOfResponse(res)) {
+          const limitBody: unknown = await res.json().catch(() => null);
+          if (isNotRetryableBody(limitBody)) markProposedActionNotExecutable(messageId, notExecutableReasonOfBody(limitBody));
+          return;
+        }
         // それ以外の失敗も alert ではなくチャットに出す (#2189 W1-a)。文はサーバーの固定の文 (error) か固定の文。
-        // すでに処理された・見つからない (400 / 404) 提案は、ここからはもう実行できないので「実行する」を出さない
+        // すでに処理された・見つからない (400 / 404) 提案と、実行の中の例外のあともう押せない (500 で retryable: false。
+        // 献立の生成・行を戻せなかった。#2195 V2) 提案は、ここからはもう実行できないので「実行する」を出さない。
+        // 案内の文はサーバーが添えた理由 (notExecutableReason) で分ける (実行中・実行済みは頼み直しを勧めない)
         const body: unknown = await res.json().catch(() => null);
         setMessages(prev => [
           ...prev,
           actionOutcomeChatMessage({ kind: 'failed', content: consultationActionFailureMessageOf(body) }),
         ]);
-        if (ACTION_NOT_EXECUTABLE_RESPONSE_STATUSES.has(res.status)) markProposedActionNotExecutable(messageId);
+        if (ACTION_NOT_EXECUTABLE_RESPONSE_STATUSES.has(res.status) || isNotRetryableBody(body)) {
+          markProposedActionNotExecutable(messageId, notExecutableReasonOfBody(body));
+        }
       }
     } catch (e) {
       console.error('Failed to execute action:', e);
@@ -806,10 +847,10 @@ export default function AIChatBubble() {
     }
   };
 
-  // 提案のカードの「実行する」を出さず、「もう一度頼んでください」の案内にする (#2189 W1-a)
-  const markProposedActionNotExecutable = (messageId: string) => {
+  // 提案のカードの「実行する」を出さず、案内にする (#2189 W1-a)。案内の文は理由で分ける (#2195 V2)
+  const markProposedActionNotExecutable = (messageId: string, reason: ProposedActionNotExecutableReason) => {
     setMessages(prev => prev.map(m =>
-      m.id === messageId ? { ...m, proposedActionExecutable: false } : m
+      m.id === messageId ? { ...m, proposedActionExecutable: false, proposedActionNotExecutableReason: reason } : m
     ));
   };
 
@@ -1438,10 +1479,11 @@ export default function AIChatBubble() {
                             </div>
                             
                             {msg.proposedActionExecutable === false ? (
-                              // やり直せない失敗・実行中・記録が無い提案: 「実行する」を出さずに案内を出す (#2189 W1-a)
+                              // やり直せない失敗・実行中・記録が無い提案: 「実行する」を出さずに案内を出す (#2189 W1-a)。
+                              // 文は理由で分ける: 実行中・実行済みは『実行中か実行済みです』(頼み直しを勧めない。#2195 V2)
                               <div className="flex items-start gap-2" data-testid="ai-proposed-action-not-executable">
                                 <p style={{ flex: 1, fontSize: 12, margin: 0, color: colors.textLight, lineHeight: 1.5 }}>
-                                  {AI_PROPOSED_ACTION_NOT_EXECUTABLE_GUIDE}
+                                  {aiProposedActionNotExecutableGuideOf(msg.proposedActionNotExecutableReason)}
                                 </p>
                                 <button
                                   onClick={() => dismissProposedAction(msg.id)}

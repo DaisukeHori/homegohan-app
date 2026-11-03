@@ -361,3 +361,158 @@ describe.each([
     expect(buttonByText(EXECUTE_BUTTON_TEXT)).toBeDefined();
   });
 });
+
+// ═════════════════════════════════════════════
+// #2195 V2 「実行する」を出さない理由で案内の文を分ける・例外 (500) と上限 (429) の retryable: false
+// ═════════════════════════════════════════════
+/** 手で書いた期待値 (実行中・実行済みの案内。頼み直しを勧めない) */
+const RUNNING_OR_DONE_GUIDE_TEXT = 'この提案は実行中か実行済みです。';
+/** 今日の上限の本文 (aiDailyLimitPayload の形) */
+const DAILY_LIMIT_BODY = { error: '今日の AI の利用回数の上限に達しました', code: 'AI_DAILY_LIMIT', limit: 10, retryAfter: 3600 };
+
+describe('#2195 V2 相談を開き直したとき (GET の proposedActionNotExecutableReason)', () => {
+  it('runningOrDone: 『実行中か実行済み』の案内 (頼み直しの案内は出さない)', async () => {
+    getMessagesWith({
+      proposedActions: { type: 'generate_single_meal', params: {} },
+      proposedActionExecutable: false,
+      proposedActionNotExecutableReason: 'runningOrDone',
+    });
+    await openChat();
+    expect(buttonByText(EXECUTE_BUTTON_TEXT)).toBeUndefined();
+    expect(text()).toContain(RUNNING_OR_DONE_GUIDE_TEXT);
+    expect(text()).not.toContain(GUIDE_TEXT);
+  });
+
+  it('failed: 『もう一度 AI に頼んでください』の案内', async () => {
+    getMessagesWith({
+      proposedActions: { type: 'generate_single_meal', params: {} },
+      proposedActionExecutable: false,
+      proposedActionNotExecutableReason: 'failed',
+    });
+    await openChat();
+    expect(text()).toContain(GUIDE_TEXT);
+    expect(text()).not.toContain(RUNNING_OR_DONE_GUIDE_TEXT);
+  });
+});
+
+describe('#2195 V2 「実行する」の結果の理由', () => {
+  it.each([
+    [400, 'この操作はすでに処理されています'],
+    [404, '提案された操作が見つかりません'],
+  ])('%i で理由 runningOrDone: 『実行中か実行済み』の案内にする', async (status, message) => {
+    handlers[`POST /api/ai/consultation/actions/${MESSAGE_ID}/execute`] = async () =>
+      json(status, { error: message, notExecutableReason: 'runningOrDone' });
+    await openChat();
+    await click(buttonByText(EXECUTE_BUTTON_TEXT)!);
+    expect(text()).toContain(message);
+    expect(buttonByText(EXECUTE_BUTTON_TEXT)).toBeUndefined();
+    expect(text()).toContain(RUNNING_OR_DONE_GUIDE_TEXT);
+    expect(text()).not.toContain(GUIDE_TEXT);
+  });
+
+  it('404 で理由が読めない値: 『もう一度 AI に頼んでください』の案内', async () => {
+    handlers[`POST /api/ai/consultation/actions/${MESSAGE_ID}/execute`] = async () =>
+      json(404, { error: '提案された操作が見つかりません', notExecutableReason: 'running' });
+    await openChat();
+    await click(buttonByText(EXECUTE_BUTTON_TEXT)!);
+    expect(text()).toContain(GUIDE_TEXT);
+  });
+
+  it('500 で retryable: false (献立の生成の例外): 「実行する」を出さず案内にする (以前は残り、押すと 400 になった)', async () => {
+    getMessagesWith({ proposedActions: { type: 'generate_single_meal', params: {} } });
+    handlers[`POST /api/ai/consultation/actions/${MESSAGE_ID}/execute`] = async () =>
+      json(500, { error: 'サーバーでエラーが発生しました', code: 'INTERNAL_ERROR', retryable: false, notExecutableReason: 'failed' });
+    await openChat();
+    await click(buttonByText(EXECUTE_BUTTON_TEXT)!);
+    expect(globalThis.alert).not.toHaveBeenCalled();
+    expect(text()).toContain('サーバーでエラーが発生しました');
+    expect(buttonByText(EXECUTE_BUTTON_TEXT)).toBeUndefined();
+    expect(text()).toContain(GUIDE_TEXT);
+  });
+
+  it('500 で retryable: true: 「実行する」を残す (もう一度押せる)', async () => {
+    handlers[`POST /api/ai/consultation/actions/${MESSAGE_ID}/execute`] = async () =>
+      json(500, { error: 'サーバーでエラーが発生しました', code: 'INTERNAL_ERROR', retryable: true });
+    await openChat();
+    await click(buttonByText(EXECUTE_BUTTON_TEXT)!);
+    expect(buttonByText(EXECUTE_BUTTON_TEXT)).toBeDefined();
+    expect(guideShown()).toBe(false);
+  });
+
+  it('429 (今日の上限) で retryable: false (行を戻せなかった): チャットに重ねて文は出さず、カードは案内にする', async () => {
+    getMessagesWith({ proposedActions: { type: 'generate_single_meal', params: {} } });
+    handlers[`POST /api/ai/consultation/actions/${MESSAGE_ID}/execute`] = async () =>
+      json(429, { ...DAILY_LIMIT_BODY, retryable: false, notExecutableReason: 'failed' });
+    await openChat();
+    await click(buttonByText(EXECUTE_BUTTON_TEXT)!);
+    expect(text()).not.toContain(DAILY_LIMIT_BODY.error);
+    expect(buttonByText(EXECUTE_BUTTON_TEXT)).toBeUndefined();
+    expect(text()).toContain(GUIDE_TEXT);
+  });
+
+  it('429 (今日の上限) で retryable が無い (戻せた): 「実行する」を残す (明日また実行できる)', async () => {
+    getMessagesWith({ proposedActions: { type: 'generate_single_meal', params: {} } });
+    handlers[`POST /api/ai/consultation/actions/${MESSAGE_ID}/execute`] = async () => json(429, DAILY_LIMIT_BODY);
+    await openChat();
+    await click(buttonByText(EXECUTE_BUTTON_TEXT)!);
+    expect(buttonByText(EXECUTE_BUTTON_TEXT)).toBeDefined();
+    expect(guideShown()).toBe(false);
+  });
+});
+
+describe('#2195 V2 会話の続きの POST (SSE) の proposedActionNotExecutableReason', () => {
+  async function send(finalData: unknown) {
+    getMessagesWith({ proposedActions: null });
+    handlers[`POST /api/ai/consultation/sessions/${SESSION_ID}/messages?stream=true`] = async () => sse(finalData);
+    await openChat();
+    await sendFromInput();
+  }
+
+  it('理由 failed: 『もう一度 AI に頼んでください』の案内', async () => {
+    await send(
+      sseFinalData(
+        {
+          proposedActions: { type: 'add_pantry_item', params: {} },
+          proposedActionExecutable: false,
+          proposedActionNotExecutableReason: 'failed',
+        },
+        { success: false, result: { error: '権限がありません' }, actionType: 'add_pantry_item' },
+      ),
+    );
+    await waitForText('権限がありません');
+    expect(buttonByText(EXECUTE_BUTTON_TEXT)).toBeUndefined();
+    expect(text()).toContain(GUIDE_TEXT);
+  });
+
+  it('理由 runningOrDone: 『実行中か実行済み』の案内', async () => {
+    await send(
+      sseFinalData(
+        {
+          proposedActions: { type: 'add_pantry_item', params: {} },
+          proposedActionExecutable: false,
+          proposedActionNotExecutableReason: 'runningOrDone',
+        },
+        { success: false, result: { error: '冷蔵庫の食材の追加に失敗しました' }, actionType: 'add_pantry_item' },
+      ),
+    );
+    await waitForText('冷蔵庫の食材の追加に失敗しました');
+    expect(text()).toContain(RUNNING_OR_DONE_GUIDE_TEXT);
+    expect(text()).not.toContain(GUIDE_TEXT);
+  });
+
+  it('理由が読めない値は写さない (『もう一度 AI に頼んでください』の案内)', async () => {
+    await send(
+      sseFinalData(
+        {
+          proposedActions: { type: 'add_pantry_item', params: {} },
+          proposedActionExecutable: false,
+          proposedActionNotExecutableReason: 'unknown',
+        },
+        { success: false, result: { error: '冷蔵庫の食材の追加に失敗しました' }, actionType: 'add_pantry_item' },
+      ),
+    );
+    await waitForText('冷蔵庫の食材の追加に失敗しました');
+    expect(text()).toContain(GUIDE_TEXT);
+    expect(text()).not.toContain(RUNNING_OR_DONE_GUIDE_TEXT);
+  });
+});
