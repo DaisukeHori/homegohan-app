@@ -14,7 +14,7 @@
  * 部品の setTimeout は偽のタイマーにして、外したあとに偽の時刻を進めても動かないことを確かめる (実時間に依らない)。
  * 文が出るまでの待ちは実時間 (tests/helpers/act-wait.ts)
  */
-import { act, createElement } from 'react';
+import { act, createElement, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pollUntil } from './helpers/act-wait';
@@ -156,10 +156,13 @@ async function waitForText(expected: string) {
   expect(text()).toContain(expected);
 }
 
-/** 画面を描いて、FAB をタップしてチャットを開く (会話を読み込むまで待つ) */
-async function openChat() {
+/**
+ * 画面を描いて、FAB をタップしてチャットを開く (会話を読み込むまで待つ)。
+ * strict が真なら StrictMode の中に描く (開発のときの Next と同じく、付けた直後に外して付け直す)
+ */
+async function openChat({ strict = false }: { strict?: boolean } = {}) {
   await act(async () => {
-    root.render(createElement(AIChatBubble));
+    root.render(strict ? createElement(StrictMode, null, createElement(AIChatBubble)) : createElement(AIChatBubble));
   });
   const fab = container.querySelector('[data-testid="ai-chat-floating-button"]');
   expect(fab).not.toBeNull();
@@ -201,6 +204,16 @@ describe('#2201 AI 相談の吹き出しの予約は、部品を外すときに�
     await waitForText(REPLY_TEXT);
     expect(text()).not.toContain(EXECUTED_TEXT);
     expect(mealPlanUpdated).not.toHaveBeenCalled();
+
+    await advancePastAllComponentTimers();
+    expect(text()).toContain(EXECUTED_TEXT);
+    expect(mealPlanUpdated).toHaveBeenCalledTimes(1);
+  });
+
+  it('StrictMode (付けた直後に外して付け直す) でも、付け直したあとは予約が動き、一文を出して mealPlanUpdated を 1 回投げる', async () => {
+    await openChat({ strict: true });
+    await sendFromInput(async () => sseExecuted());
+    await waitForText(REPLY_TEXT);
 
     await advancePastAllComponentTimers();
     expect(text()).toContain(EXECUTED_TEXT);
