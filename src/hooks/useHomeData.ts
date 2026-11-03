@@ -77,8 +77,8 @@ const NO_NUTRITION_ANALYSIS: NutritionAnalysisState = {
 interface HomeFetchOptions {
   /**
    * 今日のアドバイスの帯 (suggestion) を、取得した栄養の分析のアドバイスで置き換える (無ければ消す)。読み込み直したときと同じ表示にする。
-   * 取り直し (refetch。AI 相談の成功のあと) で true。false のときは、帯に何も出ていないときだけアドバイスを置く
-   * (献立の変更の実行 (executeNutritionSuggestion) が出した「献立を変更しました」などを、後から届く分析で消さないため)
+   * 取り直し (refetch。AI 相談の成功のあと) で true。false (初めの読み込み・ログインの状態の変化・献立の変更の実行
+   * executeNutritionSuggestion のあと) は前と同じく、帯に何も出ていないときだけアドバイスを置く
    */
   replaceAdviceBanner: boolean;
 }

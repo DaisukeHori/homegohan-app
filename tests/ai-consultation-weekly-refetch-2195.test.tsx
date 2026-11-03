@@ -8,6 +8,7 @@
  *   - AI 相談で買い物リストの最後の品目を消すと、取り直しの応答の空のリストを置かず、ヘッダーのバッジに消した品目が数えられたままだった
  *   - AI 相談で食事を消すと、月のカレンダーの献立のある日の印が残った (カレンダーの取得は足すだけで、取り直しもしない)
  *   - AI 相談で家族の人数を変えても、人数の設定の無い人の既定の人数 (人数の設定のモーダルが出す値) が前のままだった
+ *     (家族の人数を空にしたときも、前の人数を残していた)
  *
  * 直したあと: ページを開いたときに読むもののうち AI 相談で変わりうるもの (表示中の週の献立と買い物リスト・冷蔵庫・
  * 人数の設定・月のカレンダーの献立のある日・表示中の週の生成中の依頼) を取り直す。
@@ -133,8 +134,8 @@ type FakeServer = {
   days: Map<string, FakeMeal[]>;
   /** 使っている買い物リストの品目 */
   shoppingItems: FakeShoppingItem[];
-  /** 家族の人数 (人数の設定 servings_config は無い) */
-  familySize: number;
+  /** 家族の人数 (人数の設定 servings_config は無い)。null = 空 (AI 相談の update_profile_preferences は null も書ける) */
+  familySize: number | null;
   /** 生成中の依頼 (weekly_menu_requests の processing の行)。状態を読まれたら生成を終える */
   pendingRequest: { id: string; startDate: string; generate: () => void } | null;
 };
@@ -413,5 +414,16 @@ describe('献立表 (/menus/weekly) が AI 相談の成功で取り直すもの 
     await notifyAiConsultationSucceeded('update_profile_preferences', { updated: true, fields: ['family_size'] });
 
     expect(useServingsConfigStore.getState().servingsConfig?.default).toBe(4);
+  });
+
+  it('AI 相談で家族の人数を空にしたら (人数の設定も無い)、前の既定の人数を残さない', async () => {
+    server.familySize = 2;
+    await renderWeeklyPage();
+    expect(useServingsConfigStore.getState().servingsConfig?.default).toBe(2);
+
+    server.familySize = null;
+    await notifyAiConsultationSucceeded('update_profile_preferences', { updated: true, fields: ['family_size'] });
+
+    expect(useServingsConfigStore.getState().servingsConfig).toBeNull();
   });
 });
