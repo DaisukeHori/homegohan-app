@@ -971,6 +971,89 @@ describe('献立表 (/menus/weekly) の取り直しの順序と失敗 (#2201 U1)
     expect(container.textContent).not.toContain(BEFORE_DISH);
   });
 
+  it('開いたときの週の読み込みの応答が取り直しより後に届いても、その古い応答を週のキャッシュに書かない (翌週から戻っても取り直しの献立のまま)', async () => {
+    const BEFORE_DISH = '前の鮭の塩焼き';
+    const AI_DISH = 'AI が変えた親子丼';
+    const NEXT_WEEK_DISH = '翌週のけんちん汁';
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) {
+      server.days.set(dateFromWeekStart(i), [{ id: `meal-${i}`, dishName: BEFORE_DISH }]);
+      server.days.set(dateFromWeekStart(DAYS_IN_WEEK + i), [{ id: `meal-next-${i}`, dishName: NEXT_WEEK_DISH }]);
+    }
+    // 開いたときの表示中の週の読み込みの応答を止める
+    const firstLoad = heldResponse();
+    server.mealPlansHoldOnce.set(displayedWeekRangeKey(), firstLoad.hold);
+    await renderWeeklyPage();
+    expect(server.mealPlansHoldOnce.size, '表示中の週の読み込みを止めていない (検査の前提が崩れた)').toBe(0);
+
+    // その間に AI 相談が成功し、取り直しの献立 (AI の変えた献立) が先に届く (週のキャッシュも取り直しの献立にする)
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) server.days.set(dateFromWeekStart(i), [{ id: `meal-${i}`, dishName: AI_DISH }]);
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+    expect(container.textContent).toContain(AI_DISH);
+
+    // 先に始めた週の読み込みの応答 (AI 相談の前の献立) が後から届く: 画面にも週のキャッシュにも置かない
+    await act(async () => {
+      firstLoad.release();
+    });
+    await settle();
+    expect(container.textContent).toContain(AI_DISH);
+
+    // 翌週へ移って戻る (戻った週はキャッシュの有効期限の中)
+    const nextWeek = container.querySelector<HTMLButtonElement>('button[aria-label="翌週"]');
+    expect(nextWeek, '「翌週」のボタンが無い').not.toBeNull();
+    await act(async () => {
+      nextWeek!.click();
+    });
+    await settle();
+    expect(container.textContent, '翌週へ移っていない (検査の前提が崩れた)').toContain(NEXT_WEEK_DISH);
+    const previousWeek = container.querySelector<HTMLButtonElement>('button[aria-label="前の週"]');
+    expect(previousWeek, '「前の週」のボタンが無い').not.toBeNull();
+    await act(async () => {
+      previousWeek!.click();
+    });
+    await settle();
+    expect(container.textContent, '古い週の読み込みの応答を週のキャッシュに書き、戻った週に AI 相談の前の献立を出した').toContain(AI_DISH);
+    expect(container.textContent).not.toContain(BEFORE_DISH);
+  });
+
+  it('取り直しの前に始めた翌週の先読みの応答が取り直しのあとに届いても、週のキャッシュに書かない (翌週へ移ったら AI 相談の後の献立を出す)', async () => {
+    const THIS_WEEK_DISH = '今週の鯖の味噌煮';
+    const NEXT_WEEK_BEFORE_DISH = '翌週の前のハンバーグ';
+    const NEXT_WEEK_AI_DISH = '翌週の AI が変えた豆腐ハンバーグ';
+    /** 翌週の献立の読み込み (翌週の初日から 7 日。先読み・翌週へ移ったときの読み込みの範囲) の鍵 */
+    const nextWeekRangeKey = mealPlansRangeKey(dateFromWeekStart(DAYS_IN_WEEK), dateFromWeekStart(DAYS_IN_WEEK * 2 - 1));
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) {
+      server.days.set(dateFromWeekStart(i), [{ id: `meal-this-${i}`, dishName: THIS_WEEK_DISH }]);
+      server.days.set(dateFromWeekStart(DAYS_IN_WEEK + i), [{ id: `meal-next-${i}`, dishName: NEXT_WEEK_BEFORE_DISH }]);
+    }
+    // 開いたあとの翌週の先読みの応答を止める
+    const prefetch = heldResponse();
+    server.mealPlansHoldOnce.set(nextWeekRangeKey, prefetch.hold);
+    await renderWeeklyPage();
+    expect(server.mealPlansHoldOnce.size, '翌週の先読みを止めていない (検査の前提が崩れた)').toBe(0);
+    expect(container.textContent).toContain(THIS_WEEK_DISH);
+
+    // AI 相談が翌週の献立を変える: 取り直しは週のキャッシュを捨てる
+    for (let i = 0; i < DAYS_IN_WEEK; i += 1) {
+      server.days.set(dateFromWeekStart(DAYS_IN_WEEK + i), [{ id: `meal-next-${i}`, dishName: NEXT_WEEK_AI_DISH }]);
+    }
+    await notifyAiConsultationSucceeded('update_meal', { updated: true });
+
+    // 捨てる前に始めた先読みの応答 (AI 相談の前の翌週の献立) が後から届く
+    await act(async () => {
+      prefetch.release();
+    });
+    await settle();
+
+    const nextWeek = container.querySelector<HTMLButtonElement>('button[aria-label="翌週"]');
+    expect(nextWeek, '「翌週」のボタンが無い').not.toBeNull();
+    await act(async () => {
+      nextWeek!.click();
+    });
+    await settle();
+    expect(container.textContent, '捨てる前に始めた先読みの応答を週のキャッシュに書き、AI 相談の前の翌週の献立を出した').toContain(NEXT_WEEK_AI_DISH);
+    expect(container.textContent).not.toContain(NEXT_WEEK_BEFORE_DISH);
+  });
+
   it('週を移った直後 (週の読み込みの応答待ち) に来た成功の取り直しが失敗しても、前の週の献立を新しい週の見出しの下に残さない', async () => {
     const THIS_WEEK_DISH = '今週の筑前煮';
     const NEXT_WEEK_DISH = '翌週の豚汁';

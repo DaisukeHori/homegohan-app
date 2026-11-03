@@ -139,8 +139,9 @@ export const useHomeData = () => {
   const { loading, setLoading, refetchReadMode } = useAiConsultationLoading();
   // #191/#322: meal toggle debounce — pending mealId set + 250ms debounce timer
   const pendingToggleRef = useRef<Set<string>>(new Set());
-  // 食事の完了の切り替えの楽観的な更新から RPC の応答まで (#2201 U2)。ページが AI 相談の取り直しの hook に渡す: この間に来た
-  // AI 相談の成功では取り直さず、全部終わったら 1 回取り直す (切り替えの前の献立を読んだ取り直しの応答が楽観的な表示を戻さないため)
+  // 楽観的な更新から書き込みの応答まで (#2201 U2。食事の完了の切り替えの RPC・今日の気分・活動量の upsert)。ページが AI 相談の
+  // 取り直しの hook に渡す: この間に来た AI 相談の成功では取り直さず、全部終わったら 1 回取り直す (書き込みの前の今日の献立・
+  // 気分・活動量を読んだ取り直しの応答が楽観的な表示を戻さないため)
   const aiConsultationWrites = useAiConsultationPendingWrites();
   // ホームのデータの取得の流れ (#2201 U1)。今日の献立・利用者・記録の集計 (連続自炊・週と月の統計・期限切れ間近・買い物リストの残り・
   // バッジ・今週のベストごはん・健康の記録)・お知らせの応答を置くのは最後に始めた取得だけ
@@ -283,8 +284,9 @@ export const useHomeData = () => {
    * (ログインの確かめ・プロフィール・今日の献立の読み取りのエラー) では今の表示を残す。
    * 応答を置くのは最後に始めた取得 (homeFetchStream) だけ (開いたときの読み込みと取り直しが重なっても古い応答で上書きしない)。
    * refetchTicket は AI 相談の成功の取り直しの札 (useAiConsultationDataRefetch が渡す。#2201 U1 + U2)。取り直しでは応答を待つあいだも
-   * 今日の献立 (完了の切り替えのボタン) が出ているので、その間に切り替えを始めていたら (終えていても)・体調のチェックインの欄を
-   * 開いていたら、今日の献立を置かない (札の deferIfHeld。切り替えが終わった・欄を閉じたあとに 1 回取り直す)
+   * 今日の献立 (完了の切り替えのボタン)・今日の気分・活動量のボタンが出ているので、その間に切り替え・気分・活動量の保存を始めていたら
+   * (終えていても)・体調のチェックインの欄を開いていたら、気分・活動量と今日の献立を置かない (札の deferIfHeld。書き込みが終わった・
+   * 欄を閉じたあとに 1 回取り直す)
    */
   const fetchHomeData = async (
     options: HomeFetchOptions = { analysisWithoutAi: false },
@@ -305,7 +307,8 @@ export const useHomeData = () => {
 
   /**
    * fetchHomeData の読み取りの中身 (読み込み中の表示は fetchHomeData が決める)。
-   * 応答を置く前に、order (取得の流れの札) で最後に始めた取得かを見る (今日の献立は order.place で、応答を置く時点の番兵も見る)
+   * 応答を置く前に、order (取得の流れの札) で最後に始めた取得かを見る (気分・活動量と今日の献立は order.place で、応答を置く時点の
+   * 番兵も見る)
    */
   const readHomeData = async (options: HomeFetchOptions, mode: HomeFetchMode, order: AiConsultationStreamTicket) => {
     const { isLatest } = order;
@@ -345,8 +348,11 @@ export const useHomeData = () => {
         .eq('date', todayStr)
         .maybeSingle();
 
-      if (activity && isLatest()) {
-        setActivityLevel(activity.feeling);
+      // あとから別の取得を始めていたら、そちらの応答を置く (#2201 U1)。取り直しの応答を待つあいだに気分・活動量を押した
+      // (upsert を終えていても): 押す前に読んだ値で楽観的な表示を戻さない。書き込みが全部終わったあとに 1 回取り直す (#2201 U2。
+      // order.place が順序と札の deferIfHeld を見る)
+      if (activity) {
+        order.place(() => setActivityLevel(activity.feeling));
       }
 
       // 3. 今日の献立を取得（日付ベースモデル: user_daily_meals → planned_meals）
@@ -1177,15 +1183,24 @@ export const useHomeData = () => {
 
   const updateActivityLevel = async (level: string) => {
     if (!user) return;
-    setActivityLevel(level);
+    // 今日の気分・活動量の書き込み (楽観的な更新から upsert の応答まで。#2201 U2)。食事の完了の切り替えと同じ印に数える:
+    // この間に来た AI 相談の成功では取り直さず、終わったら 1 回取り直す。取り直しの応答を待つあいだに押したときも、その応答
+    // (押す前に読んだ気分・活動量) を置かない (readHomeData は気分・活動量を order.place で置く)
+    const endWrite = aiConsultationWrites.begin();
+    try {
+      setActivityLevel(level);
 
-    await supabase
-      .from('daily_activity_logs')
-      .upsert({
-        user_id: user.id,
-        date: todayStr,
-        feeling: level,
-      }, { onConflict: 'user_id, date' });
+      await supabase
+        .from('daily_activity_logs')
+        .upsert({
+          user_id: user.id,
+          date: todayStr,
+          feeling: level,
+        }, { onConflict: 'user_id, date' });
+    } finally {
+      // upsert が投げても印を下ろす
+      endWrite();
+    }
 
     // AIサジェスト生成
     if (level === 'rest') {
@@ -1233,12 +1248,13 @@ export const useHomeData = () => {
     // その読み込みの役を引き継ぐ (refetchReadMode が 'mount')。引き継いだ回は栄養の分析も開いたときと同じく AI つきで読む
     // (開いたときの取得は最後に始めた取得でなくなるので、まだ栄養の分析を読み始めていなければ読み始めない。AI を付けずに読むと
     // AI つきの読み取りがどこにも無く、アドバイスと帯が出ないまま残る)
-    // 札 (useAiConsultationDataRefetch が渡す) があれば、応答を待つあいだに始めた完了の切り替えを今日の献立で上書きしない
+    // 札 (useAiConsultationDataRefetch が渡す) があれば、応答を待つあいだに始めた完了の切り替え・気分・活動量の保存を、
+    // 今日の献立・気分・活動量で上書きしない
     refetch: (ticket?: AiConsultationFetchTicket) => {
       const mode = refetchReadMode();
       return fetchHomeData({ analysisWithoutAi: mode === 'refetch' }, mode, ticket);
     },
-    // 食事の完了の切り替えの間の印 (#2201 U2。ページが useAiConsultationDataRefetch の writeInFlightRef に渡す)
+    // 食事の完了の切り替え・今日の気分・活動量の保存の間の印 (#2201 U2。ページが useAiConsultationDataRefetch の writeInFlightRef に渡す)
     aiConsultationWrites,
   };
 };

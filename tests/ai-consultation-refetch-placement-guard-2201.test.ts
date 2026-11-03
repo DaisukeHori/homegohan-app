@@ -41,6 +41,20 @@
  *   問題 (直す前・R7): ホームの今週のベストごはん・バッジの数・健康記録のまとめ・買い物リストの残り・今日のチェックインの読み取りは
  *   error を受け取らず、取り直しの読み取りの失敗で「0個獲得」・「今日の記録をつけよう」の帯・体重の「-」を出した。
  *   メンバーの詳細 (/family/members/[id]) の保護者の同意の記録も同じで、取り直しの失敗で同意カードを消した (U1 の同じ型の残り)。
+ *   7. 数える印を渡す受け手と DELEGATED_RECEIVERS の hook のファイルで、取り直しが応答を置く setter (取り直しの経路の関数が呼ぶ setter) を
+ *      呼んでから書き込み (Supabase の X.from(...).upsert / insert / update / delete・X.rpc(...)、method が GET でない fetch など) を
+ *      await する関数 (楽観的な更新) は、その関数か、それを囲む関数の中で書き込みの印の begin を呼ぶ (書き込みの間に来た通知で取り直さず、
+ *      応答を待つあいだに始めた書き込みを札の deferIfHeld が見分ける)。書き込みの前に呼ぶ setter が楽観的な更新でない関数は
+ *      OPTIMISTIC_WRITE_EXEMPTIONS に理由を書く
+ *   問題 (直す前・パネル審査 P2): ホームの今日の気分・活動量 (useHomeData の updateActivityLevel) は、楽観的に setActivityLevel してから
+ *   daily_activity_logs を upsert するのに印を立てず、取り直しの経路 (readHomeData) も気分・活動量を順序 (isLatest) だけで置いていた。
+ *   upsert の応答を待つあいだに来た成功の取り直しが、押す前の値を読んで押した値を戻した (食事の完了の切り替えだけを守っていた)。
+ *   8. 受け手と DELEGATED_RECEIVERS の hook のファイルで、取り直しの経路の関数が X.current.clear() で捨てる入れ物 (キャッシュ) に、
+ *      応答が届いたあと (await のあと・then / catch に渡した関数の中) で X.current.set / X.current.add で書く関数は無い
+ *      (捨てる前に読み始めた応答が、捨てたあとに古い値を書き戻す。読み始める前に取った書き込み口で書く。献立表の createWeekDataCache)
+ *   問題 (直す前・パネル審査 P2): 献立表 (/menus/weekly) の週のキャッシュ (weekDataCache) は、取り直しが clear() したあとに、それより
+ *   前に始めた週の読み込み (画面には置かない 'superseded' の応答でも)・前後の週の先読みの応答が set で書き戻し、その週へ戻ったときに
+ *   キャッシュから AI 相談の前の献立を出した。
  *
  * 検査の限界: 取り直しの経路の「置く場所の全部」で deferIfHeld・順序を見ているかまでは数えない (4 は deferIfHeld を直に呼ぶところの
  * 前に順序の見方があるかを、関数の中の書いた位置で見るだけで、その見方がその置く場所を守る分岐かは見ない。5 は順序の見方を関数の中に
@@ -54,6 +68,10 @@
  * 名前の同じ関数がファイルの中に何個かあれば、全部をたどる (多めに数える)。
  * 6 は error を受け取るかだけを数え、受け取った error で取り直しの失敗を分けているか (今の表示を残すか) は見ない (描画のテストが確かめる)。
  * 条件の読み方 (否定など) も見ない。fetch の応答 (res.ok) と、投げる読み取り (try / catch) は見ない (規則の外。描画のテストが確かめる)。
+ * 7 は書き込みを await する関数だけを見る (then でつないだ書き込み・書き込みを別の名前の関数に任せる楽観的な更新は見ない)。setter の名前で
+ * 楽観的な更新を見分ける (set で始まらない更新 (献立表の updatePlanMeal・dispatch) は見ない)。begin は関数の中か囲む関数の中にあるかだけを見て、
+ * 書き込みを囲むか (finally で終えるか) は見ない (描画のテストが確かめる)。書き込みの印を渡さない受け手と、真偽の ref の印の受け手は数えない。
+ * 8 は X.current.clear() で捨てる ref の入れ物だけを見る (捨て方・書き方を別の名前の関数に包んだ入れ物は見ない)。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -133,6 +151,48 @@ const NON_SUPABASE_FROM_RECEIVERS: ReadonlySet<string> = new Set(['Array']);
 const SUPABASE_RESULT_VALUE_FIELDS: ReadonlySet<string> = new Set(['data', 'count']);
 /** Supabase の読み取りの結果の、失敗の項目 */
 const SUPABASE_RESULT_ERROR_FIELD = 'error';
+/** Supabase の表への書き込みのメソッド (X.from(...).upsert(...) など。規則 7) */
+const SUPABASE_WRITE_METHODS: ReadonlySet<string> = new Set(['upsert', 'insert', 'update', 'delete']);
+/** Supabase の DB の関数の呼び出し (X.rpc(...)。規則 7 は書き込みとして数える) */
+const SUPABASE_RPC_METHOD = 'rpc';
+/** fetch などの options の、HTTP の method の項目と、読み取りの method (規則 7 は、それ以外の method を書き込みとして数える) */
+const HTTP_METHOD_OPTION = 'method';
+const HTTP_READ_METHOD = 'GET';
+/** 書き込みの印 (useAiConsultationPendingWrites) の、書き込みを 1 つ始める関数 */
+const PENDING_WRITES_BEGIN = 'begin';
+/** set で始まるが、応答を置く setter でない関数 (タイマー。規則 7) */
+const NON_SETTER_SET_FUNCTIONS: ReadonlySet<string> = new Set(['setTimeout', 'setInterval']);
+/** 取り直しが捨てる入れ物を捨てるメソッドと、入れ物に書くメソッド (X.current.clear()・X.current.set / add。規則 8) */
+const CONTAINER_DISCARD_METHOD = 'clear';
+const CONTAINER_DISCARD_METHODS: ReadonlySet<string> = new Set([CONTAINER_DISCARD_METHOD]);
+const CONTAINER_WRITE_METHODS: ReadonlySet<string> = new Set(['set', 'add']);
+/** ref の今の値 (X.current) */
+const REF_CURRENT = 'current';
+
+/**
+ * 規則 7 の例外: 取り直しが応答を置く setter を書き込みの前に呼ぶが、それが書き込みが変える値の楽観的な更新でない関数 (理由を書く)
+ */
+const OPTIMISTIC_WRITE_EXEMPTIONS: ReadonlyArray<{ file: string; fn: string; reason: string }> = [
+  {
+    file: 'src/hooks/useHomeData.ts',
+    fn: 'executeNutritionSuggestion',
+    reason:
+      '書き込み (献立の変更の POST) の前に置くのは今日のアドバイスの帯の進み具合の文 (「献立を変更中...」) で、書き込みが変える値ではない。' +
+      '書き込みのあとに自分で読み直す (fetchHomeData。書き込みのあとに始めた取得なので、それより前に始めた取り直しの応答より後に置く)',
+  },
+];
+
+/**
+ * 規則 7 が見た楽観的な更新 (取り直しが応答を置く setter を呼んでから書き込みを await する関数) の数の下限 (検査が空振りして緑になるのを防ぐ。
+ * 2026-11-04 の実数。楽観的な更新を減らしてこれを割ったら、実数を数え直して下げる)
+ */
+const MIN_OPTIMISTIC_WRITE_FUNCTIONS = 8;
+
+/**
+ * 規則 8 が見た、取り直しが捨てる入れ物の数の下限 (検査が空振りして緑になるのを防ぐ。2026-11-04 の実数: 献立表の月のカレンダーの
+ * 取得済みの範囲 fetchedRangesRef。入れ物を減らしてこれを割ったら、実数を数え直して下げる)
+ */
+const MIN_REFETCH_DISCARDED_CONTAINERS = 1;
 
 interface ReceiverSource {
   file: string;
@@ -148,6 +208,10 @@ interface PlacementGuardReport {
   refetchPathFetchers: string[];
   /** 規則 6 が見た取り直しの経路の Supabase の読み取り ('<ファイル>:<行>') */
   refetchPathSupabaseReads: string[];
+  /** 規則 7 が見た楽観的な更新 ('<ファイル>:<行>'。例外も含む) */
+  optimisticWriteFunctions: string[];
+  /** 規則 8 が見た、取り直しが捨てる入れ物 ('<ファイル>:<名前>') */
+  refetchDiscardedContainers: string[];
 }
 
 function parse(file: string, source: string): ts.SourceFile {
@@ -517,10 +581,7 @@ function functionLabel(fn: FunctionNode): string {
 function placementsWithoutOrder(file: string, sf: ts.SourceFile, delegatedRefetch: string | null, fetchers: string[]): string[] {
   const violations: string[] = [];
   for (const fn of refetchPathFunctions(sf, refetchEntryFunctions(sf, delegatedRefetch))) {
-    let settledFrom = isPromiseCallback(fn) ? fn.getStart(sf) : -1;
-    walkOwnBody(fn, (node) => {
-      if (settledFrom < 0 && ts.isAwaitExpression(node)) settledFrom = node.getStart(sf);
-    });
+    const settledFrom = settledFromOf(sf, fn);
     if (settledFrom < 0) continue;
     const line = sf.getLineAndCharacterOfPosition(fn.getStart(sf)).line + 1;
     fetchers.push(`${file}:${line}`);
@@ -672,17 +733,180 @@ function supabaseReadsWithoutError(file: string, sf: ts.SourceFile, delegatedRef
   return violations;
 }
 
+/** 取り直しの経路の関数が呼ぶ setter の名前 (取り直しが応答を置く値。規則 7) */
+function refetchPlacedSetters(sf: ts.SourceFile, delegatedRefetch: string | null): Set<string> {
+  const names = new Set<string>();
+  for (const fn of refetchPathFunctions(sf, refetchEntryFunctions(sf, delegatedRefetch))) {
+    walkOwnBody(fn, (node) => {
+      if (!ts.isCallExpression(node)) return;
+      const name = setterCallName(node);
+      if (name !== null && !NON_SETTER_SET_FUNCTIONS.has(name)) names.add(name);
+    });
+  }
+  return names;
+}
+
+/** 式の中に書き込み (Supabase の X.from(...).upsert(...) など・X.rpc(...)・options の method が GET でない呼び出し) があるか (規則 7) */
+function containsWrite(sf: ts.SourceFile, expression: ts.Node): boolean {
+  let found = false;
+  walk(expression, (node) => {
+    if (found || !ts.isCallExpression(node)) return;
+    if (ts.isPropertyAccessExpression(node.expression)) {
+      const { name, expression: receiver } = node.expression;
+      if (name.text === SUPABASE_RPC_METHOD) found = true;
+      if (SUPABASE_WRITE_METHODS.has(name.text) && containsSupabaseQuery(sf, receiver)) found = true;
+    }
+    for (const argument of node.arguments) {
+      if (!ts.isObjectLiteralExpression(argument)) continue;
+      for (const property of argument.properties) {
+        if (
+          ts.isPropertyAssignment(property) &&
+          ts.isIdentifier(property.name) &&
+          property.name.text === HTTP_METHOD_OPTION &&
+          ts.isStringLiteralLike(property.initializer) &&
+          property.initializer.text.toUpperCase() !== HTTP_READ_METHOD
+        ) {
+          found = true;
+        }
+      }
+    }
+  });
+  return found;
+}
+
+/** fn か、それを囲む関数の中 (中の別の関数の中は除く) で <marker>.begin() を呼ぶか */
+function beginsWriteMarker(fn: FunctionNode, marker: string): boolean {
+  for (let current: ts.Node | undefined = fn; current !== undefined; current = current.parent) {
+    if (!isFunctionNode(current)) continue;
+    let found = false;
+    walkOwnBody(current, (node) => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === PENDING_WRITES_BEGIN &&
+        ts.isIdentifier(node.expression.expression) &&
+        node.expression.expression.text === marker
+      ) {
+        found = true;
+      }
+    });
+    if (found) return true;
+  }
+  return false;
+}
+
+/**
+ * 規則 7: 取り直しが応答を置く setter を呼んでから書き込みを await する関数 (楽観的な更新) のうち、その関数か囲む関数の中で
+ * 書き込みの印 (marker) の begin を呼ばない関数。functions に、見た楽観的な更新 ('<ファイル>:<行>') を足す。
+ * usedExemptions に、当てはまった例外 ('<ファイル>:<関数の名前>') を足す
+ */
+function optimisticWritesWithoutMarker(
+  file: string,
+  sf: ts.SourceFile,
+  delegatedRefetch: string | null,
+  marker: string,
+  exemptions: typeof OPTIMISTIC_WRITE_EXEMPTIONS,
+  functions: string[],
+  usedExemptions: Set<string>,
+): string[] {
+  const placedSetters = refetchPlacedSetters(sf, delegatedRefetch);
+  const violations: string[] = [];
+  walk(sf, (node) => {
+    if (!isFunctionNode(node)) return;
+    let firstWrite = -1;
+    const setterCalls: { name: string; start: number }[] = [];
+    walkOwnBody(node, (inner) => {
+      if (ts.isCallExpression(inner)) {
+        const name = setterCallName(inner);
+        if (name !== null && placedSetters.has(name)) setterCalls.push({ name, start: inner.getStart(sf) });
+      }
+      if (firstWrite < 0 && ts.isAwaitExpression(inner) && containsWrite(sf, inner.expression)) firstWrite = inner.getStart(sf);
+    });
+    if (firstWrite < 0) return;
+    const optimistic = setterCalls.filter((call) => call.start < firstWrite);
+    if (optimistic.length === 0) return;
+    const label = functionLabel(node);
+    const line = sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
+    functions.push(`${file}:${line}`);
+    if (exemptions.some((exemption) => exemption.file === file && exemption.fn === label)) {
+      usedExemptions.add(`${file}:${label}`);
+      return;
+    }
+    if (beginsWriteMarker(node, marker)) return;
+    const setters = optimistic.map((call) => `${call.name} (${sf.getLineAndCharacterOfPosition(call.start).line + 1} 行)`).join('・');
+    violations.push(
+      `${file}:${line}: ${label} が ${setters} で楽観的に置いてから書き込みを await するのに、書き込みの印 (${marker}) の ${PENDING_WRITES_BEGIN} を呼ばない (書き込みの間に来た AI 相談の成功の取り直しが、書き込みの前の値を読んで楽観的な表示を戻す)`,
+    );
+  });
+  return violations;
+}
+
+/** 関数の中で、応答が届いたあと (then / catch に渡した関数なら全部・それ以外は最初の await から) の位置 (無ければ -1) */
+function settledFromOf(sf: ts.SourceFile, fn: FunctionNode): number {
+  let settledFrom = isPromiseCallback(fn) ? fn.getStart(sf) : -1;
+  walkOwnBody(fn, (node) => {
+    if (settledFrom < 0 && ts.isAwaitExpression(node)) settledFrom = node.getStart(sf);
+  });
+  return settledFrom;
+}
+
+/** call が X.current.<method>(...) なら X の名前 (そうでなければ null) */
+function refContainerCall(call: ts.CallExpression, methods: ReadonlySet<string>): string | null {
+  const callee = call.expression;
+  if (!ts.isPropertyAccessExpression(callee) || !methods.has(callee.name.text)) return null;
+  const current = callee.expression;
+  if (!ts.isPropertyAccessExpression(current) || current.name.text !== REF_CURRENT || !ts.isIdentifier(current.expression)) return null;
+  return current.expression.text;
+}
+
+/**
+ * 規則 8: 取り直しの経路の関数が X.current.clear() で捨てる入れ物に、応答が届いたあとで X.current.set / add で書くところ。
+ * containers に、見た入れ物 ('<ファイル>:<名前>') を足す
+ */
+function writesAfterRefetchDiscard(file: string, sf: ts.SourceFile, delegatedRefetch: string | null, containers: string[]): string[] {
+  const discarded = new Set<string>();
+  for (const fn of refetchPathFunctions(sf, refetchEntryFunctions(sf, delegatedRefetch))) {
+    walkOwnBody(fn, (node) => {
+      if (!ts.isCallExpression(node)) return;
+      const name = refContainerCall(node, CONTAINER_DISCARD_METHODS);
+      if (name !== null) discarded.add(name);
+    });
+  }
+  containers.push(...[...discarded].map((name) => `${file}:${name}`));
+  if (discarded.size === 0) return [];
+  const violations: string[] = [];
+  walk(sf, (node) => {
+    if (!isFunctionNode(node)) return;
+    const settledFrom = settledFromOf(sf, node);
+    if (settledFrom < 0) return;
+    walkOwnBody(node, (inner) => {
+      if (!ts.isCallExpression(inner) || inner.getStart(sf) < settledFrom) return;
+      const name = refContainerCall(inner, CONTAINER_WRITE_METHODS);
+      if (name === null || !discarded.has(name)) return;
+      const line = sf.getLineAndCharacterOfPosition(inner.getStart(sf)).line + 1;
+      violations.push(
+        `${file}:${line}: 取り直しが ${name}.${REF_CURRENT}.${CONTAINER_DISCARD_METHOD}() で捨てる入れ物に、${functionLabel(node)} が応答の届いたあとで書く (捨てる前に読み始めた応答が古い値を書き戻す。読み始める前に取った書き込み口で書く)`,
+      );
+    });
+  });
+  return violations;
+}
+
 /** 受け手のソースを数える (sources は検査する全部のファイル。DELEGATED_RECEIVERS の definedIn もこの中から引く) */
 function checkPlacementGuards(
   sources: readonly ReceiverSource[],
   selfHeld: typeof SELF_HELD_RECEIVERS,
   delegated: typeof DELEGATED_RECEIVERS,
+  optimisticWriteExemptions: typeof OPTIMISTIC_WRITE_EXEMPTIONS = OPTIMISTIC_WRITE_EXEMPTIONS,
 ): PlacementGuardReport {
   const violations: string[] = [];
   const countedMarkerReceivers: string[] = [];
   const selfHeldReceivers: string[] = [];
   const refetchPathFetchers: string[] = [];
   const refetchPathSupabaseReads: string[] = [];
+  const optimisticWriteFunctions: string[] = [];
+  const refetchDiscardedContainers: string[] = [];
+  const usedOptimisticWriteExemptions = new Set<string>();
   const byFile = new Map(sources.map((s) => [s.file, s.source]));
 
   for (const { file, source } of sources) {
@@ -696,6 +920,7 @@ function checkPlacementGuards(
     const delegatedRefetch = delegated.find((d) => d.definedIn === file)?.refetch ?? null;
     violations.push(...placementsWithoutOrder(file, sf, delegatedRefetch, refetchPathFetchers));
     violations.push(...supabaseReadsWithoutError(file, sf, delegatedRefetch, refetchPathSupabaseReads));
+    violations.push(...writesAfterRefetchDiscard(file, sf, delegatedRefetch, refetchDiscardedContainers));
     for (const call of callsTo(sf, [DATA_REFETCH_HOOK, REFETCH_KEY_HOOK])) {
       const hook = calleeName(call);
       const options = hook === DATA_REFETCH_HOOK ? call.arguments[1] : call.arguments[0];
@@ -724,6 +949,17 @@ function checkPlacementGuards(
         if (!seesHeldAtPlacement(definedSf)) {
           violations.push(`${at}: ${delegation.definedIn} が取り直しの応答を置く前に ${DEFER_IF_HELD} を見ていない`);
         }
+        violations.push(
+          ...optimisticWritesWithoutMarker(
+            delegation.definedIn,
+            definedSf,
+            delegation.refetch,
+            marker,
+            optimisticWriteExemptions,
+            optimisticWriteFunctions,
+            usedOptimisticWriteExemptions,
+          ),
+        );
         countedMarkerReceivers.push(file);
         continue;
       }
@@ -739,6 +975,17 @@ function checkPlacementGuards(
           violations.push(`${at}: 戻り値の ${REFETCH_TICKET_RESULT} を受け取っていない`);
         }
         if (!seesHeldAtPlacement(sf)) violations.push(`${at}: 取り直しの応答を置く前に ${DEFER_IF_HELD} を見ていない`);
+        violations.push(
+          ...optimisticWritesWithoutMarker(
+            file,
+            sf,
+            delegatedRefetch,
+            marker,
+            optimisticWriteExemptions,
+            optimisticWriteFunctions,
+            usedOptimisticWriteExemptions,
+          ),
+        );
         continue;
       }
 
@@ -768,7 +1015,22 @@ function checkPlacementGuards(
       violations.push(`SELF_HELD_RECEIVERS の ${entry.file} (${entry.marker}) が、真偽の ref の印を渡す受け手として見つからない (一覧を直す)`);
     }
   }
-  return { violations, countedMarkerReceivers, selfHeldReceivers, refetchPathFetchers, refetchPathSupabaseReads };
+  for (const exemption of optimisticWriteExemptions) {
+    if (byFile.has(exemption.file) && !usedOptimisticWriteExemptions.has(`${exemption.file}:${exemption.fn}`)) {
+      violations.push(
+        `OPTIMISTIC_WRITE_EXEMPTIONS の ${exemption.file} の ${exemption.fn} が、書き込みの前に取り直しが置く setter を呼ぶ関数として見つからない (一覧を直す)`,
+      );
+    }
+  }
+  return {
+    violations,
+    countedMarkerReceivers,
+    selfHeldReceivers,
+    refetchPathFetchers,
+    refetchPathSupabaseReads,
+    optimisticWriteFunctions,
+    refetchDiscardedContainers,
+  };
 }
 
 function listSourceFiles(dir: string): string[] {
@@ -804,6 +1066,14 @@ describe('書き込みの印を渡す受け手は、取り直しの応答を置�
       report.refetchPathSupabaseReads.length,
       `取り直しの経路の Supabase の読み取りを数えられていない (規則 6 が空振りしている。見たのは ${report.refetchPathSupabaseReads.length} 個)`,
     ).toBeGreaterThanOrEqual(MIN_REFETCH_PATH_SUPABASE_READS);
+    expect(
+      report.optimisticWriteFunctions.length,
+      `楽観的な更新を数えられていない (規則 7 が空振りしている。見たのは ${report.optimisticWriteFunctions.join('・')})`,
+    ).toBeGreaterThanOrEqual(MIN_OPTIMISTIC_WRITE_FUNCTIONS);
+    expect(
+      report.refetchDiscardedContainers.length,
+      `取り直しが捨てる入れ物を見つけられていない (規則 8 が空振りしている。見たのは ${report.refetchDiscardedContainers.join('・')})`,
+    ).toBeGreaterThanOrEqual(MIN_REFETCH_DISCARDED_CONTAINERS);
   });
 
   describe('見分けの空振りを防ぐ (直す前の /pantry・/menus/weekly・/health/goals の形を赤にする)', () => {
@@ -1094,6 +1364,162 @@ describe('書き込みの印を渡す受け手は、取り直しの応答を置�
                 const { data } = await res.json();
                 const [{ data: first }] = await Promise.all(Array.from(ids, (id) => load(id)));
                 if (isLatest()) { setItems(data ?? []); setFirst(first); }`).violations,
+      ).toEqual([]);
+    });
+  });
+
+  describe('規則 7: 取り直しが置く値を楽観的に置いてから書き込む関数は、書き込みの印を始める (P2 の直す前のホームの気分・活動量の形を赤にする)', () => {
+    const PAGE_FILE = 'src/app/(main)/x/page.tsx';
+    const HOOK_FILE = 'src/hooks/useX.ts';
+    const delegatedHook = [{ file: PAGE_FILE, marker: 'writes', refetch: 'refetch', definedIn: HOOK_FILE }];
+    /** 取り直しの経路 (refetch → readHome) が setActivity・setPlan で応答を置く hook の、書き込みの関数の本体を body にして数える */
+    const runHook = (body: string, exemptions: typeof OPTIMISTIC_WRITE_EXEMPTIONS = []) =>
+      checkPlacementGuards(
+        [
+          {
+            file: PAGE_FILE,
+            source: `import { ${DATA_REFETCH_HOOK} } from '@/hooks/useAiConsultationDataRefetch';
+              function Page() {
+                const { refetch, writes } = useX();
+                ${DATA_REFETCH_HOOK}(refetch, { writeInFlightRef: writes });
+              }`,
+          },
+          {
+            file: HOOK_FILE,
+            source: `export const useX = () => {
+              const writes = ${PENDING_WRITES_HOOK}();
+              const homeStream = ${FETCH_STREAM_HOOK}();
+              const readHome = async (ticket) => {
+                const order = homeStream.begin(ticket);
+                const { data: activity, error } = await supabase.from('daily_activity_logs').select('*').maybeSingle();
+                if (activity) order.place(() => setActivity(activity.feeling));
+                const res = await fetch('/api/plan');
+                order.place(() => setPlan(res));
+              };
+              const updateActivity = async (level) => {
+                ${body}
+              };
+              return { refetch: (ticket) => readHome(ticket), writes, updateActivity };
+            };`,
+          },
+        ],
+        [],
+        delegatedHook,
+        exemptions,
+      );
+
+    it('楽観的に置いてから upsert を await するのに印を始めない (直す前の useHomeData の updateActivityLevel) は赤', () => {
+      const report = runHook(`setActivity(level);
+                await supabase.from('daily_activity_logs').upsert({ feeling: level });`);
+      expect(report.violations).toEqual([
+        expect.stringMatching(/useX\.ts:11: updateActivity が setActivity \(12 行\) で楽観的に置いてから書き込みを await するのに、書き込みの印 \(writes\) の begin を呼ばない/),
+      ]);
+      expect(report.optimisticWriteFunctions).toEqual([`${HOOK_FILE}:11`]);
+    });
+
+    it('rpc・method が GET でない fetch の書き込みも数える。GET の fetch・読み取りは書き込みとして数えない', () => {
+      expect(runHook(`setPlan(level); await supabase.rpc('set_completed', { level });`).violations).toEqual([
+        expect.stringContaining('updateActivity が setPlan'),
+      ]);
+      expect(runHook(`setPlan(level); await fetch('/api/plan', { method: 'PATCH', body: level });`).violations).toEqual([
+        expect.stringContaining('updateActivity が setPlan'),
+      ]);
+      expect(runHook(`setPlan(level); await fetch('/api/plan', { method: 'GET' });`).optimisticWriteFunctions).toEqual([]);
+      expect(runHook(`setPlan(level); await supabase.from('plans').select('*');`).optimisticWriteFunctions).toEqual([]);
+      // 取り直しが置かない setter (読み込み中の印など) は楽観的な更新として数えない
+      expect(runHook(`setSaving(true); await supabase.from('daily_activity_logs').upsert({ feeling: level });`).optimisticWriteFunctions).toEqual([]);
+      // 書き込みのあとに置くだけなら楽観的な更新ではない
+      expect(runHook(`await supabase.from('daily_activity_logs').upsert({ feeling: level }); setActivity(level);`).optimisticWriteFunctions).toEqual([]);
+    });
+
+    it('印を始める形 (直したあとの updateActivityLevel) は赤にしない', () => {
+      expect(
+        runHook(`const endWrite = writes.begin();
+                try {
+                  setActivity(level);
+                  await supabase.from('daily_activity_logs').upsert({ feeling: level });
+                } finally {
+                  endWrite();
+                }`).violations,
+      ).toEqual([]);
+    });
+
+    it('例外に書いた関数は数えず、例外に書いたのに当てはまらない関数があれば赤 (一覧を直す)', () => {
+      const exemption = { file: HOOK_FILE, fn: 'updateActivity', reason: '検査の例' };
+      const optimistic = `setActivity(level); await supabase.from('daily_activity_logs').upsert({ feeling: level });`;
+      expect(runHook(optimistic, [exemption]).violations).toEqual([]);
+      expect(runHook(`await supabase.from('daily_activity_logs').upsert({ feeling: level });`, [exemption]).violations).toEqual([
+        expect.stringContaining('OPTIMISTIC_WRITE_EXEMPTIONS の src/hooks/useX.ts の updateActivity'),
+      ]);
+    });
+
+    it('数える印を直に渡すページも数える', () => {
+      const source = `import { ${DATA_REFETCH_HOOK}, ${PENDING_WRITES_HOOK} } from '@/hooks/useAiConsultationDataRefetch';
+        function Page() {
+          const pendingWrites = ${PENDING_WRITES_HOOK}();
+          const fetchItems = useCallback(async (ticket) => {
+            const res = await fetch('/x');
+            if (!ticket.isLatest() || ticket.deferIfHeld()) return;
+            setItems(await res.json());
+          }, []);
+          ${DATA_REFETCH_HOOK}(fetchItems, { writeInFlightRef: pendingWrites });
+          const removeItem = async (id) => {
+            BEGIN
+            setItems((items) => items.filter((item) => item.id !== id));
+            await fetch('/x/' + id, { method: 'DELETE' });
+          };
+        }`;
+      const run = (begin: string) => checkPlacementGuards([{ file: PAGE_FILE, source: source.replaceAll('BEGIN', begin) }], [], []).violations;
+      expect(run('')).toEqual([expect.stringMatching(/page\.tsx:10: removeItem が setItems \(12 行\)/)]);
+      expect(run('const endWrite = pendingWrites.begin();')).toEqual([]);
+    });
+  });
+
+  describe('規則 8: 取り直しが捨てる入れ物に、応答が届いたあとで書かない (P2 の直す前の献立表の週のキャッシュの形を赤にする)', () => {
+    const PAGE_FILE = 'src/app/(main)/x/page.tsx';
+    const header = `import { ${DATA_REFETCH_HOOK} } from '@/hooks/useAiConsultationDataRefetch';`;
+    const checkPage = (source: string) => checkPlacementGuards([{ file: PAGE_FILE, source: `${header}\n${source}` }], [], []);
+
+    it('取り直しが clear() したあとに、週の読み込み (await のあと)・先読み (then の中) が set で書き戻す (直す前の weekDataCache) は赤', () => {
+      const report = checkPage(`function Page() {
+        const weekDataCache = useRef(new Map());
+        const fetchPlan = async (key) => {
+          const data = await fetchWeekData(key);
+          weekDataCache.current.set(key, data);
+        };
+        const prefetch = (key) => {
+          fetchWeekData(key).then((data) => {
+            weekDataCache.current.set(key, data);
+          });
+        };
+        const refetchAfterAiConsultation = useCallback((ticket) => {
+          weekDataCache.current.clear();
+          void refreshMealPlan(ticket);
+        }, []);
+        ${DATA_REFETCH_HOOK}(refetchAfterAiConsultation);
+      }`);
+      expect(report.violations).toEqual([
+        expect.stringMatching(/page\.tsx:6: 取り直しが weekDataCache\.current\.clear\(\) で捨てる入れ物に、fetchPlan が応答の届いたあとで書く/),
+        expect.stringMatching(/page\.tsx:10: 取り直しが weekDataCache\.current\.clear\(\) で捨てる入れ物に、無名の関数 が応答の届いたあとで書く/),
+      ]);
+      expect(report.refetchDiscardedContainers).toEqual([`${PAGE_FILE}:weekDataCache`]);
+    });
+
+    it('読み始める前に書く (取得済みの範囲の印)・取り直しが捨てない入れ物に書くのは赤にしない', () => {
+      expect(
+        checkPage(`function Page() {
+          const fetchedRangesRef = useRef(new Set());
+          const otherCache = useRef(new Map());
+          const fetchRange = async (key) => {
+            fetchedRangesRef.current.add(key);
+            const data = await fetchDates(key);
+            otherCache.current.set(key, data);
+          };
+          const refetchAfterAiConsultation = useCallback((ticket) => {
+            fetchedRangesRef.current.clear();
+          }, []);
+          ${DATA_REFETCH_HOOK}(refetchAfterAiConsultation);
+        }`).violations,
       ).toEqual([]);
     });
   });

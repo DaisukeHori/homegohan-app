@@ -110,7 +110,7 @@ export default function HomePage() {
     aiConsultationWrites,
   } = useHomeData();
   // AI 相談の提案の実行で献立・記録が変わったら、ホームのデータを取り直す (#2195 V1)。
-  // 体調のチェックインの欄が開いている間 (入力の部品がある間)・食事の完了の切り替えの応答を待つ間は取り直さず、
+  // 体調のチェックインの欄が開いている間 (入力の部品がある間)・食事の完了の切り替えと今日の気分・活動量の保存の応答を待つ間は取り直さず、
   // 閉じた・終わったあとに 1 回取り直す (#2201 U2)
   useAiConsultationDataRefetch(refetch, { writeInFlightRef: aiConsultationWrites });
 

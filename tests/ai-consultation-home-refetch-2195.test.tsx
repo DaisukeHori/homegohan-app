@@ -34,6 +34,8 @@ const supabaseMock = vi.hoisted(() => ({
   reads: null as null | { record: (key: string | null) => void; recordSelect: (table: string, select: unknown) => void },
   /** DB の関数 (rpc) の応答を、この Promise が解けるまで止める (#2201 U2。食事の完了の切り替えの書き込みの間) */
   rpcHold: null as null | Promise<void>,
+  /** 表への書き込み (upsert / insert / update / delete) の応答を、この Promise が解けるまで止める (#2201 U2。今日の気分・活動量の保存の間) */
+  writeHold: null as null | Promise<void>,
   /** 置いている間に始めた表の読み取りの応答を、この Promise が解けるまで止める (#2201 U1。開いたときの読み込みの最中) */
   tableHold: null as null | Promise<void>,
   /**
@@ -48,8 +50,10 @@ const supabaseMock = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/supabase/client', () => {
   const EMPTY_RESULT = { data: null, error: null, count: 0 };
-  /** どのメソッドを呼んでも自分を返し、await するとその表の答えになる問い合わせ */
-  const query = (table: string, single: boolean, recordsSelect: boolean): unknown =>
+  /** 表への書き込みのメソッド (呼んだ問い合わせは supabaseMock.writeHold で止める) */
+  const WRITE_METHODS: ReadonlySet<PropertyKey> = new Set(['upsert', 'insert', 'update', 'delete']);
+  /** どのメソッドを呼んでも自分を返し、await するとその表の答えになる問い合わせ (writes は書き込みのメソッドを呼んだか) */
+  const query = (table: string, single: boolean, recordsSelect: boolean, writes = false): unknown =>
     new Proxy(() => undefined, {
       get: (_target, prop) => {
         if (prop === 'then') {
@@ -57,7 +61,10 @@ vi.mock('@/lib/supabase/client', () => {
           const rows = result.data;
           const answer =
             single && Array.isArray(rows) ? { ...result, data: rows[0] ?? null } : Array.isArray(rows) && result.count === undefined ? { ...result, count: rows.length } : result;
-          const hold = supabaseMock.tableHold ?? (supabaseMock.tableHoldFor?.table === table ? supabaseMock.tableHoldFor.hold : null);
+          const hold =
+            (writes ? supabaseMock.writeHold : null) ??
+            supabaseMock.tableHold ??
+            (supabaseMock.tableHoldFor?.table === table ? supabaseMock.tableHoldFor.hold : null);
           const rejects = supabaseMock.tableRejects;
           return (resolve: (value: unknown) => void, reject: (reason: unknown) => void) => {
             const settleAnswer = () => (rejects ? reject(new Error(`${table} read failed`)) : resolve(answer));
@@ -67,7 +74,7 @@ vi.mock('@/lib/supabase/client', () => {
         }
         return (...args: unknown[]) => {
           if (prop === 'select' && recordsSelect) supabaseMock.reads?.recordSelect(table, args[0]);
-          return query(table, single || prop === 'single' || prop === 'maybeSingle', recordsSelect);
+          return query(table, single || prop === 'single' || prop === 'maybeSingle', recordsSelect, writes || WRITE_METHODS.has(prop));
         };
       },
     });
@@ -229,6 +236,7 @@ function HomeDataProbe() {
 beforeEach(() => {
   supabaseMock.tableResults = {};
   supabaseMock.rpcHold = null;
+  supabaseMock.writeHold = null;
   supabaseMock.tableHold = null;
   supabaseMock.tableHoldFor = null;
   supabaseMock.tableRejects = false;
@@ -806,6 +814,116 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
     await settle();
     expect(refetchCalls, '置かなかった応答のぶん取り直していない').toBe(2);
     expect(completedText()).toBe('false');
+  });
+
+  describe('今日の気分・活動量の保存 (updateActivityLevel。楽観的な更新 → daily_activity_logs の upsert) と取り直し (#2201 U2)', () => {
+    /** 今日の気分・活動量の、保存済みの値と押す値 (daily_activity_logs の feeling) */
+    const SAVED_FEELING = 'rest';
+    const PRESSED_FEELING = 'active';
+    const activityLogTable = (feeling: string) => ({ data: [{ user_id: 'user-1', date: TODAY, feeling }], error: null });
+    let refetchCalls: number;
+    let updateActivity: ((level: string) => Promise<void>) | null;
+    function HomeActivityProbe() {
+      const { activityLevel, updateActivityLevel, refetch, aiConsultationWrites } = useHomeData();
+      // ホームのページと同じく、hook が渡す札を refetch に渡し、書き込みの印を渡す
+      useAiConsultationDataRefetch(
+        (ticket) => {
+          refetchCalls += 1;
+          return refetch(ticket);
+        },
+        { writeInFlightRef: aiConsultationWrites },
+      );
+      updateActivity = updateActivityLevel;
+      return <p data-testid="activity-level">{activityLevel ?? ''}</p>;
+    }
+    const activityText = () => container.querySelector('[data-testid="activity-level"]')?.textContent;
+    const holdOf = () => {
+      let release: () => void = () => undefined;
+      const promise = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return { promise, release };
+    };
+
+    beforeEach(() => {
+      refetchCalls = 0;
+      updateActivity = null;
+    });
+
+    async function renderWithSavedFeeling() {
+      useServer({ ...FULL_TABLES, daily_activity_logs: activityLogTable(SAVED_FEELING) }, null);
+      await act(async () => {
+        root.render(<HomeActivityProbe />);
+      });
+      await settle();
+      expect(activityText(), '保存済みの気分・活動量を出していない (検査の前提が崩れた)').toBe(SAVED_FEELING);
+    }
+
+    /** 気分・活動量を押す (upsert の応答は upsert が解けるまで止める)。押す処理の Promise を返す */
+    async function pressFeelingHoldingUpsert(upsert: { promise: Promise<void> }): Promise<Promise<void>> {
+      supabaseMock.writeHold = upsert.promise;
+      let saving: Promise<void> = Promise.resolve();
+      await act(async () => {
+        saving = updateActivity!(PRESSED_FEELING);
+      });
+      supabaseMock.writeHold = null;
+      expect(activityText(), '楽観的な更新をしていない (検査が空振りしている)').toBe(PRESSED_FEELING);
+      return saving;
+    }
+
+    /** サーバーが押した値を保存し終え、upsert の応答が届く */
+    async function finishUpsert(upsert: { release: () => void }, saving: Promise<void>) {
+      supabaseMock.tableResults = { ...supabaseMock.tableResults, daily_activity_logs: activityLogTable(PRESSED_FEELING) };
+      await act(async () => {
+        upsert.release();
+        await saving;
+      });
+      await settle();
+    }
+
+    it('保存の応答を待つあいだに来た成功では取り直さず (押した値を保存の前の値に戻さない)、終わったら 1 回取り直す', async () => {
+      await renderWithSavedFeeling();
+      const upsert = holdOf();
+      const saving = await pressFeelingHoldingUpsert(upsert);
+
+      // 保存の前の値 (rest) のまま読む取り直しが走ると、押した値が戻る
+      await notifyAiConsultationSucceeded();
+      await notifyAiConsultationSucceeded();
+      expect(refetchCalls, '保存の途中に取り直した').toBe(0);
+      expect(activityText()).toBe(PRESSED_FEELING);
+
+      await finishUpsert(upsert, saving);
+      expect(refetchCalls, '止めた成功のぶん 1 回取り直していない').toBe(1);
+      expect(activityText()).toBe(PRESSED_FEELING);
+    });
+
+    it('取り直しの応答を待つあいだに押した (保存の前の値を読んだ応答) ときは、その応答の値を置かず、保存が終わったら 1 回取り直す', async () => {
+      await renderWithSavedFeeling();
+
+      // 取り直しの表の読み取りを止める (その間はページに気分・活動量のボタンが出ていて、押せる)
+      const refetchRead = holdOf();
+      supabaseMock.tableHold = refetchRead.promise;
+      await notifyAiConsultationSucceeded();
+      supabaseMock.tableHold = null;
+      expect(refetchCalls).toBe(1);
+
+      // 応答を待つあいだに押す (upsert の応答は止める)
+      const upsert = holdOf();
+      const saving = await pressFeelingHoldingUpsert(upsert);
+
+      // 取り直しの応答が届く (気分・活動量は保存の前の値 rest のまま読む)
+      await act(async () => {
+        refetchRead.release();
+      });
+      await settle();
+      expect(activityText(), '押す前に読んだ取り直しの応答が、押した値を戻した').toBe(PRESSED_FEELING);
+      expect(refetchCalls, '保存の途中に取り直した').toBe(1);
+
+      // サーバーが押した値を保存し終えた: 置かなかった応答のぶん 1 回取り直す
+      await finishUpsert(upsert, saving);
+      expect(refetchCalls, '置かなかった応答のぶん取り直していない').toBe(2);
+      expect(activityText()).toBe(PRESSED_FEELING);
+    });
   });
 });
 

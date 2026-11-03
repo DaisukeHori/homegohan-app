@@ -33,3 +33,7 @@ export type { UiFlagState, UiFlagAction } from './reducers/uiFlagReducer';
 
 // #1769: 祝日の一覧を取る URL (オリジンは CSP の connect-src と同じ定数)
 export { japaneseHolidaysUrl } from './japaneseHolidays';
+
+// #2201 U1: 週のキャッシュ (書き込みは読み取りの前に取った書き込み口だけ。AI 相談の取り直しで捨てたあと・あとの読み取りのあとは書かない)
+export { createWeekDataCache } from './weekDataCache';
+export type { WeekDataCache, WeekDataCacheEntry, WeekDataCacheWriter } from './weekDataCache';

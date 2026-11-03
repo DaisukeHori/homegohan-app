@@ -15,6 +15,8 @@ import {
   convertV4ProgressToUIFormat,
   resumePendingGenerationAction,
   japaneseHolidaysUrl,
+  createWeekDataCache,
+  type WeekDataCacheWriter,
   type GenerationProgress,
   type LegacyDishDetail,
 } from './_state';
@@ -175,6 +177,12 @@ interface MealPlanDay {
 
 interface WeekPlan {
   days: MealPlanDay[];
+}
+
+/** 週のキャッシュ (weekDataCache) に置く 1 週分 (書いた時刻はキャッシュが付ける) */
+interface WeekCacheData {
+  plan: WeekPlan | null;
+  shoppingList: ShoppingListItem[];
 }
 
 /** GET /api/meal-plans (週の範囲) の本文の、写真の解析の結果を待つときに読む部分 (#2047) */
@@ -1320,11 +1328,13 @@ export default function WeeklyMenuPage() {
   // (#2201 U1。以前は閉包の weekStart で読んで確かめずに置いたので、応答を待つあいだに週を移ると前の週の献立が新しい週の見出しの
   // 下に出うった)。読み直しの失敗では何も置かない (先に始めた週の読み込みの応答が後から届けば、そちらを置く)。
   // refetchTicket (AI 相談の成功の取り直しの札) があれば、応答を待つあいだに書き込み (献立の編集・買い物リストのチェックなど)・
-  // モーダルが始まっていたら置かない (書き込みの前に読んだ献立・買い物リストで、楽観的な表示・書き込みの結果を戻さない。#2201 U2)
+  // モーダルが始まっていたら置かない (書き込みの前に読んだ献立・買い物リストで、楽観的な表示・書き込みの結果を戻さない。#2201 U2)。
+  // キャッシュには、読み始める前に取った書き込み口で、応答を置いたときだけ書く (#2201 U1。createWeekDataCache)
   const refreshMealPlan = useCallback(async (refetchTicket: AiConsultationFetchTicket | null = null) => {
     const targetDate = formatLocalDate(weekStart);
     const endDate = addDaysStr(targetDate, 6);
     const order = planFetchStream.begin(refetchTicket, targetDate);
+    const writeWeekCache = weekDataCache.current.beginWrite(targetDate);
     try {
       const res = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
       if (res.ok) {
@@ -1342,11 +1352,11 @@ export default function WeeklyMenuPage() {
             setCurrentPlan(newPlan);
             updateCalendarMealDatesFromDailyMeals(dailyMeals);
             // キャッシュも更新
-            weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
+            writeWeekCache({ plan: newPlan, shoppingList: newShoppingList });
           } else {
             setCurrentPlan(null);
             // 空の場合もキャッシュを更新
-            weekDataCache.current.set(targetDate, { plan: null, shoppingList: [], fetchedAt: Date.now() });
+            writeWeekCache({ plan: null, shoppingList: [] });
           }
           // 表示中の週の献立を置いた: その週の読み込み (fetchPlan) の応答待ちでも、読み込み中の表示を下ろす。その読み込みの応答は
           // これより前に始めたので置かず、読み込み中の表示にも触れない (#2201 U1)
@@ -2154,7 +2164,7 @@ export default function WeeklyMenuPage() {
     const CACHE_TTL = 5 * 60 * 1000; // 5分間キャッシュ有効
 
     // 週データを取得する共通関数
-    const fetchWeekData = async (weekStartDate: Date): Promise<{ plan: WeekPlan | null; shoppingList: ShoppingListItem[] }> => {
+    const fetchWeekData = async (weekStartDate: Date): Promise<WeekCacheData> => {
       const targetDate = formatLocalDate(weekStartDate);
       const endDate = addDaysStr(targetDate, 6);
       const res = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
@@ -2168,6 +2178,8 @@ export default function WeeklyMenuPage() {
     };
 
     // 前後の週をバックグラウンドでプリフェッチ
+    // キャッシュには、読み始める前に取った書き込み口で書く (#2201 U1。読み始めたあとに AI 相談の取り直しがキャッシュを捨てた・
+    // その週をあとから読み直したときは書かない: 捨てる前に読んだ献立をキャッシュに戻すと、その週へ移ったときに AI 相談の前の献立を出す)
     const prefetchAdjacentWeeks = async (currentWeekStart: Date) => {
       const prevWeekStart = new Date(currentWeekStart);
       prevWeekStart.setDate(currentWeekStart.getDate() - 7);
@@ -2181,16 +2193,18 @@ export default function WeeklyMenuPage() {
       // 前の週をプリフェッチ
       const prevCache = weekDataCache.current.get(prevKey);
       if (!prevCache || (now - prevCache.fetchedAt > CACHE_TTL)) {
+        const writePrevWeekCache = weekDataCache.current.beginWrite(prevKey);
         fetchWeekData(prevWeekStart).then(data => {
-          weekDataCache.current.set(prevKey, { ...data, fetchedAt: Date.now() });
+          writePrevWeekCache(data);
         }).catch(() => {});
       }
 
       // 次の週をプリフェッチ
       const nextCache = weekDataCache.current.get(nextKey);
       if (!nextCache || (now - nextCache.fetchedAt > CACHE_TTL)) {
+        const writeNextWeekCache = weekDataCache.current.beginWrite(nextKey);
         fetchWeekData(nextWeekStart).then(data => {
-          weekDataCache.current.set(nextKey, { ...data, fetchedAt: Date.now() });
+          writeNextWeekCache(data);
         }).catch(() => {});
       }
     };
@@ -2205,7 +2219,8 @@ export default function WeeklyMenuPage() {
       // キャッシュをチェック
       const cached = weekDataCache.current.get(targetDateStr);
       if (cached && (now - cached.fetchedAt < CACHE_TTL)) {
-        // キャッシュヒット - 即座に反映 (いま始めた取得なので、この週で置いたどの応答よりも新しい)
+        // キャッシュヒット - 即座に反映 (いま始めた取得なので、この週で置いたどの応答よりも新しい。キャッシュは、この週の最後に
+        // 始めた読み取りの応答: あとから読み始めた読み取りがあれば、書き込み口を取ったときにキャッシュを捨てている。createWeekDataCache)
         order.place(() => {
           setCurrentPlan(cached.plan);
           if (cached.shoppingList.length > 0) setShoppingList(cached.shoppingList);
@@ -2221,10 +2236,14 @@ export default function WeeklyMenuPage() {
       // この読み込みが、この週の献立 (失敗の空を含む) を置いたか。読み込み中の表示は、置いたときだけ終わりに下ろす (#2201 U1。
       // 置かなかったときは、この週のもっと新しい応答を置いた取得が下ろす。planFetchStream のコメント)
       let placedThisWeek = false;
+      // キャッシュの書き込み口は読み始める前に取る (#2201 U1。応答を待つあいだに AI 相談の取り直しがキャッシュを捨てた・この週を
+      // あとから読み直したときは、この応答をキャッシュに書かない。書くと、画面には置かなかった AI 相談の前の献立を、この週へ戻ったときに
+      // キャッシュから出す)
+      const writeWeekCache = weekDataCache.current.beginWrite(targetDateStr);
       try {
         const data = await fetchWeekData(weekStart);
         // キャッシュに保存
-        weekDataCache.current.set(targetDateStr, { ...data, fetchedAt: Date.now() });
+        writeWeekCache(data);
         // 応答を待つあいだに週を移った: この週の献立を置かない (#2201 U1)
         if (weekStartKeyRef.current !== targetDateStr) return;
 
@@ -2349,7 +2368,9 @@ export default function WeeklyMenuPage() {
   const generationCancelledRef = useRef(false);
 
   // 週データキャッシュ（前後の週をプリフェッチして高速化）
-  const weekDataCache = useRef<Map<string, { plan: WeekPlan | null; shoppingList: ShoppingListItem[]; fetchedAt: number }>>(new Map());
+  // 書くのは、その週を読み始める前に取った書き込み口 (beginWrite) だけ。AI 相談の成功の取り直しが捨てた (discard) あと・その週を
+  // あとから読み始めたあとは、先に読み始めた応答を書かない (#2201 U1。古い応答をキャッシュに戻し、その週へ戻ったときに出さない)
+  const weekDataCache = useRef(createWeekDataCache<WeekCacheData>());
   
   // ポーリングをクリーンアップする関数
   const cleanupPolling = useCallback(() => {
@@ -2479,6 +2500,8 @@ export default function WeeklyMenuPage() {
         if (data.status === 'completed') {
           console.log('✅ Polling: Generation completed');
           const endDate = addDaysStr(targetDate, 6);
+          // キャッシュの書き込み口は読み始める前に取る (#2201 U1。weekDataCache)
+          const writeWeekCache = weekDataCache.current.beginWrite(targetDate);
           const planRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
           // 献立を読む間に監視が終わっていたら (Realtime が同じ完了を先に処理した・次の監視が始まった)、何も置かない (#1657)
           if (!watch.active) return;
@@ -2492,7 +2515,7 @@ export default function WeeklyMenuPage() {
               if (newShoppingList.length > 0) setShoppingList(newShoppingList);
               updateCalendarMealDatesFromDailyMeals(dailyMeals);
               // キャッシュも更新
-              weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
+              writeWeekCache({ plan: newPlan, shoppingList: newShoppingList });
             }
           }
           setIsGenerating(false);
@@ -2594,6 +2617,8 @@ export default function WeeklyMenuPage() {
               console.log('✅ Generation completed, fetching meal plan...');
               try {
                 const endDate = addDaysStr(targetDate, 6);
+                // キャッシュの書き込み口は読み始める前に取る (#2201 U1。weekDataCache)
+                const writeWeekCache = weekDataCache.current.beginWrite(targetDate);
                 const planRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
                 // 献立を読む間に、ポーリングが同じ完了を先に処理した (印を下ろした)・次の監視が始まったときは、何も置かない (#1657)
                 if (!watch.active) return;
@@ -2607,7 +2632,7 @@ export default function WeeklyMenuPage() {
                     if (newShoppingList.length > 0) setShoppingList(newShoppingList);
                     updateCalendarMealDatesFromDailyMeals(dailyMeals);
                     // キャッシュも更新（リアルタイム反映）
-                    weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
+                    writeWeekCache({ plan: newPlan, shoppingList: newShoppingList });
                   }
                 }
               } catch (fetchErr) {
@@ -2717,7 +2742,8 @@ export default function WeeklyMenuPage() {
   //     プロフィールの名前で、AI 相談は自分の名前 (user_profiles.nickname) を書く
   //     (家族の献立 (useFamilyMenu。自分以外のメンバーの献立) は取り直さない。理由は
   //     src/lib/ai/consultation-refetch-coverage.ts の '/menus/weekly' の mountReadsNotRefetched の familyMenu)
-  // 別の週の献立も変わりうる (1 週間の献立の作成など) ので、週のキャッシュは捨てて、次にその週を開いたときに取り直させる。
+  // 別の週の献立も変わりうる (1 週間の献立の作成など) ので、週のキャッシュは捨てて、次にその週を開いたときに取り直させる
+  // (捨てる前に読み始めた週の読み込み・前後の週の先読みの応答は、あとから届いてもキャッシュに書かない。weekDataCache の discard)。
   // モーダル・入力の部品が出ている間は取り直さない (useAiConsultationDataRefetch)
   // 献立・買い物リストの書き込み (楽観的な更新から応答まで。pendingWrites) の間に来た成功は捨てずに、全部終わったあとに 1 回取り直す
   // (#2201 U2)。モーダル・入力の部品で止めた成功も、閉じたあとに 1 回取り直す。
@@ -2725,7 +2751,7 @@ export default function WeeklyMenuPage() {
   // (useAiConsultationFetchStream) の begin に渡し、流れの place で置く: 古い応答 (あとに始めた取得がある) を置かず、応答を待つあいだに
   // 始めた書き込み・開いたモーダルがあれば置かない (札の deferIfHeld。置かなかったぶん 1 回取り直す)
   const refetchAfterAiConsultation = useCallback((ticket: AiConsultationFetchTicket) => {
-    weekDataCache.current.clear();
+    weekDataCache.current.discard();
     fetchedRangesRef.current.clear();
     aiConsultationRefetchTicketRef.current = ticket;
     void refreshMealPlan(ticket);
@@ -4011,6 +4037,8 @@ export default function WeeklyMenuPage() {
         // Refresh data
         const targetDate = formatLocalDate(weekStart);
         const endDate = addDaysStr(targetDate, 6);
+        // キャッシュの書き込み口は読み始める前に取る (#2201 U1。weekDataCache)
+        const writeWeekCache = weekDataCache.current.beginWrite(targetDate);
         const refreshRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
         let createdMeal: PlannedMeal | undefined;
         if (refreshRes.ok) {
@@ -4021,7 +4049,7 @@ export default function WeeklyMenuPage() {
             setCurrentPlan(newPlan);
             updateCalendarMealDatesFromDailyMeals(dailyMeals);
             // キャッシュも更新
-            weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
+            writeWeekCache({ plan: newPlan, shoppingList: newShoppingList });
             if (newMealId) {
               createdMeal = newPlan.days
                 .flatMap((d: { meals?: PlannedMeal[] }) => d.meals || [])
@@ -4202,6 +4230,8 @@ export default function WeeklyMenuPage() {
         console.log('✅ Regeneration completed, fetching meal plan...');
         try {
           const weekEndDate = addDaysStr(weekStartDate, 6);
+          // キャッシュの書き込み口は読み始める前に取る (#2201 U1。weekDataCache)
+          const writeWeekCache = weekDataCache.current.beginWrite(weekStartDate);
           const planRes = await fetch(`/api/meal-plans?startDate=${weekStartDate}&endDate=${weekEndDate}`);
           // 献立を読む間に次の再生成の監視が始まっていたら、この監視の結果 (前の週の献立・再生成中の表示の片づけ) は置かない (#1657)
           if (!regenerateWatch.active) return;
@@ -4215,7 +4245,7 @@ export default function WeeklyMenuPage() {
               if (newShoppingList.length > 0) setShoppingList(newShoppingList);
               updateCalendarMealDatesFromDailyMeals(dailyMeals);
               // キャッシュも更新
-              weekDataCache.current.set(weekStartDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
+              writeWeekCache({ plan: newPlan, shoppingList: newShoppingList });
             }
           }
         } catch (e) {
@@ -4421,6 +4451,8 @@ export default function WeeklyMenuPage() {
         // データを再取得
         const targetDate = formatLocalDate(weekStart);
         const endDate = addDaysStr(targetDate, 6);
+        // キャッシュの書き込み口は読み始める前に取る (#2201 U1。weekDataCache)
+        const writeWeekCache = weekDataCache.current.beginWrite(targetDate);
         const refreshRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
         if (refreshRes.ok) {
           const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
@@ -4431,7 +4463,7 @@ export default function WeeklyMenuPage() {
             syncCalendarMealDatesFromDailyMeals(dailyMeals);
           }
           // キャッシュも更新
-          weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
+          writeWeekCache({ plan: newPlan, shoppingList: newShoppingList });
         }
       } else {
         alert('削除に失敗しました');
@@ -4524,6 +4556,8 @@ export default function WeeklyMenuPage() {
 
       const targetDate = formatLocalDate(weekStart);
       const endDate = addDaysStr(targetDate, 6);
+      // キャッシュの書き込み口は読み始める前に取る (#2201 U1。weekDataCache)
+      const writeWeekCache = weekDataCache.current.beginWrite(targetDate);
       const refreshRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
       if (refreshRes.ok) {
         const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
@@ -4533,7 +4567,7 @@ export default function WeeklyMenuPage() {
         if (dailyMeals && dailyMeals.length > 0) {
           syncCalendarMealDatesFromDailyMeals(dailyMeals);
         }
-        weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
+        writeWeekCache({ plan: newPlan, shoppingList: newShoppingList });
       }
 
       setActiveModal(null);
@@ -4595,11 +4629,18 @@ export default function WeeklyMenuPage() {
     const mealId = photoEditMeal.id;
     const targetDate = formatLocalDate(weekStart);
     const endDate = addDaysStr(targetDate, 6);
+    /**
+     * 読んだ週の献立 → その読み取りのキャッシュの書き込み口 (読み始める前に取る。#2201 U1。weekDataCache)。結果を待つ読み直しの
+     * 応答のうち、待ち終えたときの応答 (outcome.week) を、その応答の読み取りの書き込み口でキャッシュに書く
+     */
+    const weekCacheWriters = new WeakMap<MealPlansWeekResponse, WeekDataCacheWriter<WeekCacheData>>();
     /** 解析を頼んだ週の献立を読む。読めなければ null */
     const fetchTargetWeek = async (): Promise<MealPlansWeekResponse | null> => {
+      const writeWeekCache = weekDataCache.current.beginWrite(targetDate);
       const weekRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
       if (!weekRes.ok) return null;
       const week: MealPlansWeekResponse = await weekRes.json();
+      weekCacheWriters.set(week, writeWeekCache);
       return week;
     };
 
@@ -4672,7 +4713,7 @@ export default function WeeklyMenuPage() {
             const newPlan = { days: dailyMeals };
             const newShoppingList = shoppingListData?.items || [];
             // キャッシュは解析を頼んだ週に置く。画面に出すのは、いまもその週を出しているときだけ
-            weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
+            weekCacheWriters.get(outcome.week)?.({ plan: newPlan, shoppingList: newShoppingList });
             if (formatLocalDate(displayedWeekStartRef.current) === targetDate) {
               setCurrentPlan(newPlan);
               if (newShoppingList.length > 0) setShoppingList(newShoppingList);
@@ -4862,11 +4903,10 @@ export default function WeeklyMenuPage() {
       const targetDate = formatLocalDate(weekStart);
 
       setCurrentPlan(updatedPlan);
-      weekDataCache.current.set(targetDate, {
-        plan: updatedPlan,
-        shoppingList,
-        fetchedAt: Date.now(),
-      });
+      // 置くのは読み取りの応答ではなく、今の献立に保存した画像を当てたもの: 書き込み口はここで取って書く (#2201 U1。weekDataCache)。
+      // この書き込みの間 (pendingWrites) は AI 相談の取り直しがキャッシュを捨てない。始める前に始まった取り直しは、応答を置かずに
+      // 書き込みのあとに取り直す (キャッシュも捨て直す)
+      weekDataCache.current.beginWrite(targetDate)({ plan: updatedPlan, shoppingList });
       setManualEditMeal(
         manualEditMeal && manualEditMeal.id === imageGenerateMeal.id
           ? { ...manualEditMeal, imageUrl: generatePayload.imageUrl }
@@ -5027,6 +5067,8 @@ export default function WeeklyMenuPage() {
           const endStr = weekDates[weekDates.length - 1]?.dateStr;
           if (startStr && endStr) {
             try {
+              // キャッシュの書き込み口は読み始める前に取る (#2201 U1。weekDataCache)
+              const writeWeekCache = weekDataCache.current.beginWrite(startStr);
               const refreshRes = await fetch(`/api/meal-plans/weekly?startDate=${startStr}&endDate=${endStr}`);
               // 献立を読む間に次の改善の開始・中止で印が下りていたら、この改善の週の献立は置かない (#1657)
               if (!improveWatch.active) return;
@@ -5039,7 +5081,7 @@ export default function WeeklyMenuPage() {
                   setCurrentPlan(newPlan);
                   if (newShoppingList.length > 0) setShoppingList(newShoppingList);
                   updateCalendarMealDatesFromDailyMeals(dailyMeals);
-                  weekDataCache.current.set(startStr, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
+                  writeWeekCache({ plan: newPlan, shoppingList: newShoppingList });
                 }
               }
             } catch (e) {
@@ -5150,6 +5192,8 @@ export default function WeeklyMenuPage() {
         // 献立を再取得
         const targetDate = formatLocalDate(weekStart);
         const endDate = addDaysStr(targetDate, 6);
+        // キャッシュの書き込み口は読み始める前に取る (#2201 U1。weekDataCache)
+        const writeWeekCache = weekDataCache.current.beginWrite(targetDate);
         const refreshRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
         if (refreshRes.ok) {
           const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
@@ -5158,7 +5202,7 @@ export default function WeeklyMenuPage() {
             const newShoppingList = shoppingListData?.items || [];
             setCurrentPlan(newPlan);
             // キャッシュも更新
-            weekDataCache.current.set(targetDate, { plan: newPlan, shoppingList: newShoppingList, fetchedAt: Date.now() });
+            writeWeekCache({ plan: newPlan, shoppingList: newShoppingList });
           }
         }
       } else if (data.message) {
