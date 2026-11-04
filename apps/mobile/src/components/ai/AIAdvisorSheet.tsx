@@ -326,7 +326,11 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   const reloadingRef = useRef(false);
   // アーカイブの /close の応答待ちの最中か (#2227 H1 の整合ゲートの指摘)。アーカイブは応答のあと新しい相談を始める (createNewSession)
   // が、その入口は取り直しの最中なら黙って戻るので、応答待ちの間に「最新の会話を読み込む」を始めさせない。isClosingSession と同じ値を
-  // ref でも持つのは、ボタンを止める描画を待たずに今の値を見るため (アーカイブと同じ描画のうちの取り直しの押下も止める)
+  // ref でも持つのは、ボタンを止める描画を待たずに今の値を見るため (アーカイブと同じ描画のうちの取り直しの押下も止める)。
+  // 応答待ちの間は、送信 (入力欄・送信ボタン・クイック質問)・新しい相談・相談の切り替えも止める (#2235 I7。止めないと、送った文は
+  // 閉じる側の相談へ送られてアーカイブのあとの新しい相談で画面から消え、手で始めた新しい相談はアーカイブの作成と合わせて 2 つ
+  // 作られ、選んだ相談はアーカイブのあとの新しい相談で上書きされた)。逆に送信中はアーカイブを止める (sendingRef。送信の返答が
+  // 閉じた相談にだけ保存され、新しい相談の画面には出ない)
   const closingSessionRef = useRef(false);
   // 届いたかを確かめられなかった送信と、送信に当てた送った文の保存行の id (#2227 H1。Web の AIChatBubble と同じ入れ物と決まり。
   // 共有の resolveUnconfirmedSends)。応答を受け取れずに終わった送信は、その場で積む (registerUnconfirmedSend)。後の取り直しで
@@ -699,6 +703,16 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     await showReloadedConversation(sent, loaded, isFresh, among);
   }
 
+  /**
+   * 「新しい相談を始める」の押下 (#2235 I7)。アーカイブの応答待ちの間は始めない (ボタンも止めている。ref で見るのは、アーカイブと
+   * 同じ描画のうちの押下も止めるため)。アーカイブは応答のあと自分で新しい相談を作る (createNewSession) ので、ここで作ると 2 つになる
+   */
+  async function pressNewSession() {
+    if (closingSessionRef.current) return;
+    await createNewSession();
+  }
+
+  /** 新しい相談を作って出す (「新しい相談を始める」の押下 pressNewSession と、アーカイブの応答のあとから呼ぶ) */
   async function createNewSession() {
     // 取り直しの最中は始めない (#2227 H1。ボタンも止めている。同じ描画のうちの 2 度目の押下を止める)
     if (reloadingRef.current) return;
@@ -724,8 +738,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   }
 
   async function selectSession(sessionId: string) {
-    // 取り直しの最中は切り替えない (#2227 H1。相談の行も止めている)
-    if (reloadingRef.current) return;
+    // 取り直しの最中・アーカイブの応答待ちの最中は切り替えない (#2227 H1・#2235 I7。相談の行も止めている。アーカイブの応答のあとの
+    // 新しい相談が、選んだ相談を上書きする)
+    if (reloadingRef.current || closingSessionRef.current) return;
     showSessionId(sessionId);
     // 案内を外すだけ (#2227 H1。確かめていない送信は入れ物に積んである。開き直した相談の読み込みで、届いていたら入力欄の文を消す)
     setTimedOutSend(null);
@@ -746,8 +761,17 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   }
 
   async function archiveSession() {
-    // 取り直しの最中はしない (#2227 H1。アーカイブのあとに新しい相談を始めるので、新しい相談と同じく止める)
-    if (!currentSessionId || isClosingSession || closingSessionRef.current || reloadingRef.current) return;
+    // 取り直しの最中はしない (#2227 H1。アーカイブのあとに新しい相談を始めるので、新しい相談と同じく止める)。送信中もしない
+    // (#2235 I7。送信の返答は閉じた相談にだけ保存され、アーカイブのあとの新しい相談の画面には出ない。ボタンも止めている)
+    if (
+      !currentSessionId ||
+      isClosingSession ||
+      closingSessionRef.current ||
+      reloadingRef.current ||
+      sendingRef.current
+    ) {
+      return;
+    }
 
     // クライアント側で既に closed か確認
     const currentSession = sessions.find((s) => s.id === currentSessionId);
@@ -841,9 +865,10 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
   async function sendMessage(text: string) {
     const trimmed = text.trim();
-    // 送信中・「最新の会話を読み込む」の取り直しの最中は送らない (#2227 H1。送信ボタン・入力欄・クイック質問も止めている。
-    // ref で見るのは、同じ描画のうちの 2 度目の押下も止めるため)
-    if (!trimmed || sendingRef.current || reloadingRef.current) return;
+    // 送信中・「最新の会話を読み込む」の取り直しの最中・アーカイブの応答待ちの最中は送らない (#2227 H1・#2235 I7。送信ボタン・
+    // 入力欄・クイック質問も止めている。ref で見るのは、同じ描画のうちの 2 度目の押下も止めるため。アーカイブの最中に送ると、
+    // 閉じる側の相談へ送られ、アーカイブのあとの新しい相談で送った文と返答が画面から消える)
+    if (!trimmed || sendingRef.current || reloadingRef.current || closingSessionRef.current) return;
     sendingRef.current = true;
     // 送信も画面の操作 (#2227 H1)。取り直しの最中は送れないので、ふだんはこれで古くなる取り直しは無い (重ねて守る)
     startViewOperation();
@@ -1136,8 +1161,10 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   // typing indicator を表示するか: 送信中かつストリームがまだ来ていない
   const showTypingIndicator = sending && streamingContent === null;
   // 送信・入力・クイック質問を止めるか (#2227 H1。「最新の会話を読み込む」の取り直しの最中も送信中と同じく止める。取り直しと
-  // 送信を重ねない)
-  const inputLocked = sending || reloadingAfterTimeout;
+  // 送信を重ねない。アーカイブの応答待ちの最中も止める (#2235 I7))
+  const inputLocked = sending || reloadingAfterTimeout || isClosingSession;
+  // 新しい相談・相談の切り替えを止めるか: 取り直しの最中・アーカイブの応答待ちの最中 (#2227 H1・#2235 I7。送信中は止めない)
+  const sessionSwitchLocked = reloadingAfterTimeout || isClosingSession;
   // 「最新の会話を読み込む」を押せないとき: 取り直しの最中・アーカイブの応答待ちの最中 (#2227 H1 の整合ゲートの指摘)
   const reloadDisabled = reloadingAfterTimeout || isClosingSession;
 
@@ -1182,6 +1209,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
                     disabled={
                       isClosingSession ||
                       reloadingAfterTimeout ||
+                      sending ||
                       !currentSessionId ||
                       sessions.find((s) => s.id === currentSessionId)
                         ?.status === "closed"
@@ -1221,11 +1249,12 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
                   style={styles.body}
                   contentContainerStyle={styles.bodyContent}
                 >
-                  {/* 新しい相談・相談の切り替えは、「最新の会話を読み込む」の取り直しの最中は止める (#2227 H1。送信中は止めない) */}
+                  {/* 新しい相談・相談の切り替えは、「最新の会話を読み込む」の取り直しの最中・アーカイブの応答待ちの最中は止める
+                      (#2227 H1・#2235 I7。送信中は止めない) */}
                   <Pressable
                     testID="ai-new-session"
-                    onPress={createNewSession}
-                    disabled={reloadingAfterTimeout}
+                    onPress={pressNewSession}
+                    disabled={sessionSwitchLocked}
                     style={styles.newSessionBtn}
                   >
                     <MessageCircle size={16} color={colors.accent} />
@@ -1238,7 +1267,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
                       key={s.id}
                       testID={`ai-session-${s.id}`}
                       onPress={() => selectSession(s.id)}
-                      disabled={reloadingAfterTimeout}
+                      disabled={sessionSwitchLocked}
                       style={[
                         styles.sessionRow,
                         currentSessionId === s.id && styles.sessionRowActive,
