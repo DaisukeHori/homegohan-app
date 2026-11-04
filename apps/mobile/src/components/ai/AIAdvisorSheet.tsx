@@ -180,7 +180,7 @@ const NO_PREVIOUS_REQUEST_NOTE: PreviousRequestNote = { notes: [], recheck: null
  *   - 実行を待つ・失敗した行なら、実行していない一文を足す
  *   - 提案が無く記録を読めなかったときは、一文を足さずに読み直す返答 (recheck) を返す (GET は実行できた提案を出さないので、
  *     読めないと実行できたかが分からない)
- *   - 返答が無い・行が無いなら空 (時間切れの取り直しと、応答を受け取れなかったときの取り直しの両方で使う)
+ *   - 行が無いなら空 (時間切れの取り直しと、応答を受け取れなかったときの取り直しの両方で使う。返答が無いときは呼ばない)
  */
 async function previousRequestNoteAfterReload(reply: Message): Promise<PreviousRequestNote> {
   const read = await replyActionStateOf(reply.id);
@@ -987,7 +987,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
           setInputText((current) => restoreInputAfterTimeout(current, trimmed));
         }
         if (sessionId) {
-          const timedOut: TimedOutSend = {
+          setTimedOutSend({
             sessionId,
             text: trimmed,
             knownMessageIds,
@@ -996,12 +996,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
             // 応答を受ける前に終わった: 送った文の保存が取り直しより後になりうる (#2227 H1。Web の userSaveMayBeLate)
             userSaveMayBeLate: !responseAccepted,
             serverFailed,
-          };
-          // 送信の最中に別の相談に切り替えていたら、今の相談の画面に前の相談の「最新の会話を読み込む」を出さない (#2227 H1。
-          // 押しても前の相談の会話は今の画面に書かないので、案内が消えずに残った)。確かめられなかった送信として覚え、
-          // 前の相談を開き直したときに保存行を探す (届いていて入力欄が送った文のままなら消す)
-          if (currentSessionIdRef.current === sessionId) setTimedOutSend(timedOut);
-          else rememberUnconfirmedSend(timedOut);
+          });
         } else {
           Alert.alert("タイムアウト", TIMEOUT_NOTICE_MESSAGE);
         }

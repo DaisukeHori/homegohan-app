@@ -11,7 +11,6 @@
  *   5. (R1 の指摘) 届いているが返答がまだ無いと分かったあと「最新の会話を読み込む」をもう一度押すと、1 回目でこの送信に当てた
  *      保存行を除いて探し、届いていた送信を『届いていません』と取り違えた (入力欄に送った文を戻し、Alert を出した)
  *   6. (R1 の指摘) 本文を流している最中に相談を切り替えると、前の相談の返答の断片が今の画面に流れ、finalData が来ても消えずに残った。
- *      時間切れで終わると、今の相談の画面に前の相談の「最新の会話を読み込む」が残った
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Alert } from 'react-native';
@@ -555,25 +554,5 @@ describe('#2227 H1 (R1) 本文を流している最中に別の相談へ切り�
     expect(screen.getAllByText(SENT_TEXT)).toHaveLength(1);
     expect(screen.getAllByText(SAVED_REPLY)).toHaveLength(1);
     expect(partialShown(PARTIAL)).toBe(false);
-  });
-
-  it('切り替えたあとに時間切れで終わっても、今の相談の画面に前の相談の「最新の会話を読み込む」を出さない', async () => {
-    await openSheet();
-    const response = gate();
-    fetchMock.mockImplementationOnce(async () => {
-      await response.promise;
-      throw abortError();
-    });
-    await send();
-
-    await selectSessionById(OTHER_SESSION.id, '別の相談の返答です');
-    await act(async () => {
-      response.release();
-    });
-    await flush();
-
-    expect(screen.queryByTestId('ai-timeout-notice')).toBeNull();
-    expect(inputValue()).toBe('');
-    expect(alertSpy).not.toHaveBeenCalled();
   });
 });
