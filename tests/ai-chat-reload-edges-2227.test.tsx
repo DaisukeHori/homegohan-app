@@ -621,6 +621,26 @@ describe('#2235 I1 開き直しの読み込みが忘れるのは、読み込み�
     },
   );
 
+  it('別の相談を開き直したときは、その相談の送信ではないので、写しに無くても忘れない (戻ってから保存行が見つかったら入力欄の文を消す)', async () => {
+    await openChat();
+    handlers[MESSAGES_KEY] = async () => json(500, { error: 'サーバーでエラーが発生しました' });
+    await sendFromInput(async () => {
+      throw abortError();
+    });
+    await waitFor(() => text().includes(TIMEOUT_RELOAD_FAILED_TEXT));
+    expect(inputElement().value).toBe(SENT_TEXT);
+
+    // 別の相談を開き直す (その会話に送った文は無い)
+    await switchToSession(OTHER_SESSION_TITLE);
+    await waitFor(() => !text().includes('野菜を足しましょう'));
+
+    // 元の相談へ戻ると、送った文の保存行が見つかる
+    handlers[MESSAGES_KEY] = async () => json(200, { messages: savedMessages() });
+    await switchToSession(MAIN_SESSION_TITLE);
+    await waitFor(() => text().includes(SAVED_REPLY));
+    await waitFor(() => inputElement().value === '');
+  });
+
   it('開き直しの GET を始める前に積んであった送信は、写しに無ければ今までどおり忘れる (同じ文の次の送信の保存行を前の送信に当てない。上の対照)', async () => {
     const thisUser = { id: 'user-this', role: 'user', content: SENT_TEXT, createdAt: '2026-11-02T00:01:00.000Z' };
     const thisReply = { id: 'ai-this', role: 'assistant', content: '今回の返答です', proposedActions: null, createdAt: '2026-11-02T00:01:01.000Z' };
