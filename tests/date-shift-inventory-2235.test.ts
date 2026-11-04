@@ -355,8 +355,8 @@ type NowReadVerdict =
   /** 週の格子 (端末の今日の週の始まり)。1 つめの表の 'week-grid' と同じ根 (格子と一緒に直す。I3 の範囲の外) */
   | 'week-grid'
   /**
-   * 端末の暦の今日・年を、同じ端末の暦の日付とだけ組む (JST の日付と組まない)。または画面の飾り (著作権表示の年)。
-   * 食い違いは起きない
+   * 端末の暦の今日・年を、JST の今日 (todayLocal / formatLocalDate(new Date())) とは組まない。比べる相手は利用者が選ぶ日付か
+   * 週の格子の日付 (端末の 0 時の週の始まりから作る。JST より東の端末とのずれは 'week-grid' の根)。または画面の飾り (著作権表示の年)
    */
   | 'device-calendar';
 
@@ -385,7 +385,8 @@ const NOW_DEVICE_CALENDAR_SITES: Readonly<Record<string, Readonly<Record<string,
       verdict: 'device-calendar',
       note:
         'getDeviceTodayStr (このモーダルの今日 = 選べる日付の下限と「1日だけ」の初期値)。以前から端末の暦で決めていて、' +
-        '#1433 で初期値もそれにそろえた (同じ関数の注記)。I3 では変えない',
+        '#1433 で初期値もそれにそろえた (同じ関数の注記)。比べる相手は利用者が選ぶ日付と週の格子の日付 (weekStartDate / weekEndDate) で、' +
+        'JST の今日とは組まない。I3 では変えない',
     },
   },
   'lib/slot-builder.ts': {
