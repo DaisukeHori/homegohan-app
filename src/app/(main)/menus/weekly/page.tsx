@@ -2675,7 +2675,7 @@ export default function WeeklyMenuPage() {
   useEffect(() => {
     void checkPendingRequests(formatLocalDate(weekStart));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [weekStart, weekDates, isGenerating, generatingMeal]);  // 前の依存から aiConsultationRefetchRound を外したもの。checkPendingRequests は isGenerating・generatingMeal で作り直す
+  }, [weekStart, weekDates, isGenerating, generatingMeal]);  // checkPendingRequests は isGenerating・generatingMeal の変化で走る (AI 相談の取り直しの札は持たない)
 
   // AI 相談の提案の実行で献立・買い物リスト・冷蔵庫・家族の人数・自分の名前が変わったら、ページを開いたときに読むもののうち
   // AI 相談で変わりうるものを取り直す (#2195 V1)。データは全部同じ read (取り直しの読み取り) で読む (#2206 G1)。
