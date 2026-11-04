@@ -4,6 +4,8 @@
  *   2. settleWithin は上限までに終わらなければ fallback で終える (記録の直読みの上限)
  *   3. 入力欄の戻し方・消し方は Web とモバイルで同じ決まり (Web は届いていたと分かっても消さなかった)
  *   4. resolveUnconfirmedSends: 確かめられなかった前の送信の保存行を、今回の送信と取り違えない
+ *   5. resolveUnconfirmedSendRows (R3): 同じ決まりで当て、送信ごとに当てた保存行の id も返す (モバイルの画面が、取り直しの最中に
+ *      別の取り直しが先に当てた送信の行で送った文と返答を探すのに使う)
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,6 +13,7 @@ import {
   CONSULTATION_REPLY_FAILED_MESSAGE,
   CONSULTATION_REPLY_RELOAD_TIMEOUT_MS,
   clearInputIfDelivered,
+  resolveUnconfirmedSendRows,
   resolveUnconfirmedSends,
   restoreInputAfterUndelivered,
   sentMessageIndexOf,
@@ -49,6 +52,7 @@ describe('#2227 H1 取り直しの上限と失敗の文は Web とモバイル�
     expect(mobileTimeout.restoreInputAfterTimeout('', '送った文')).toBe(restoreInputAfterUndelivered('', '送った文'));
     expect(mobileTimeout.clearInputIfDelivered('送った文', '送った文')).toBe(clearInputIfDelivered('送った文', '送った文'));
     expect(mobileTimeout.resolveUnconfirmedSends).toBe(resolveUnconfirmedSends);
+    expect(mobileTimeout.resolveUnconfirmedSendRows).toBe(resolveUnconfirmedSendRows);
     expect(mobileTimeout.settleWithin).toBe(settleWithin);
   });
 });
@@ -150,5 +154,70 @@ describe('#2227 H1 resolveUnconfirmedSends', () => {
     const result = resolve(loaded, { unconfirmed: [first, second], accepted: false });
     expect(result.claimedIds).toEqual(['u1', 'u2']);
     expect(result.resolved).toEqual([first, second]);
+  });
+});
+
+describe('#2227 H1 (R3) resolveUnconfirmedSendRows', () => {
+  const SESSION = 's1';
+  const TEXT = '今夜の夕食を1食作って';
+  type NumberedSend = UnconfirmedSend & { seq: number };
+  const old: ReloadedMessage[] = [
+    { id: 'u0', role: 'user', content: '夕飯の相談です' },
+    { id: 'a0', role: 'assistant', content: '野菜を足しましょう' },
+  ];
+  const first: NumberedSend = { seq: 1, sessionId: SESSION, text: TEXT, knownMessageIds: ['u0'] };
+  const second: NumberedSend = { seq: 2, sessionId: SESSION, text: TEXT, knownMessageIds: ['u0'] };
+  const other: NumberedSend = { seq: 3, sessionId: 's2', text: TEXT, knownMessageIds: [] };
+  const row1: ReloadedMessage = { id: 'u1', role: 'user', content: TEXT };
+  const row2: ReloadedMessage = { id: 'u2', role: 'user', content: TEXT };
+
+  function rowsOf(params: { loaded: ReloadedMessage[]; unconfirmed: NumberedSend[]; claimed?: string[]; accepted?: boolean }) {
+    return resolveUnconfirmedSendRows({
+      sessionId: SESSION,
+      loaded: params.loaded,
+      unconfirmed: params.unconfirmed,
+      previousClaimedIds: params.claimed ?? [],
+      current: params.accepted === undefined ? null : { text: TEXT, knownMessageIds: ['u0'] },
+      currentAccepted: params.accepted ?? false,
+    });
+  }
+
+  it('見つかった送信ごとに当てた保存行の id を、古い送信から順に返す (渡した送信の項目はそのまま)', () => {
+    const result = rowsOf({ loaded: [...old, row1, row2], unconfirmed: [first, second, other] });
+    expect(result.resolved).toEqual([
+      { send: first, savedMessageId: 'u1' },
+      { send: second, savedMessageId: 'u2' },
+    ]);
+    expect(result.resolved[0].send.seq).toBe(1);
+    expect(result.remaining).toEqual([other]);
+    expect(result.claimedIds).toEqual(['u1', 'u2']);
+  });
+
+  it('前から当てた行・今回の受け付けられた送信の行は当てない (resolveUnconfirmedSends と同じ決まり)', () => {
+    expect(rowsOf({ loaded: [...old, row1, row2], unconfirmed: [first], claimed: ['u1'] }).resolved).toEqual([
+      { send: first, savedMessageId: 'u2' },
+    ]);
+    expect(rowsOf({ loaded: [...old, row1], unconfirmed: [first], accepted: true })).toEqual({
+      resolved: [],
+      remaining: [first],
+      claimedIds: [],
+    });
+  });
+
+  it('resolveUnconfirmedSends は同じ結果から送信だけを返す', () => {
+    const params = {
+      sessionId: SESSION,
+      loaded: [...old, row1, row2],
+      unconfirmed: [first, second, other],
+      previousClaimedIds: [],
+      current: null,
+      currentAccepted: false,
+    };
+    const rows = resolveUnconfirmedSendRows(params);
+    expect(resolveUnconfirmedSends(params)).toEqual({
+      resolved: rows.resolved.map((row) => row.send),
+      remaining: rows.remaining,
+      claimedIds: rows.claimedIds,
+    });
   });
 });

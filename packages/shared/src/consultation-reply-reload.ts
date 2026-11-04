@@ -265,14 +265,41 @@ export function resolveUnconfirmedSends(params: {
   current: SentText | null;
   currentAccepted: boolean;
 }): UnconfirmedSendsResolution {
+  const rows = resolveUnconfirmedSendRows(params);
+  return { resolved: rows.resolved.map((row) => row.send), remaining: rows.remaining, claimedIds: rows.claimedIds };
+}
+
+/** resolveUnconfirmedSendRows の結果 (resolveUnconfirmedSends の結果に、見つかった送信ごとの保存行の id を足したもの) */
+export type UnconfirmedSendRowsResolution<S extends UnconfirmedSend> = {
+  /** 保存行が見つかった (届いていた) 送信と、その送信に当てた保存行の id (渡した順) */
+  resolved: { send: S; savedMessageId: string }[];
+  /** まだ保存行が見つからない送信 (渡したものをそのまま返す) */
+  remaining: S[];
+  /** resolveUnconfirmedSends の claimedIds と同じ */
+  claimedIds: string[];
+};
+
+/**
+ * resolveUnconfirmedSends と同じ決まりで当て、見つかった送信ごとに当てた保存行の id も返す (#2227 H1)。
+ * 送信ごとに当てた行を覚える画面が使う (モバイルの AIAdvisorSheet。ある送信の取り直しの最中に、別の取り直しがその送信の保存行を
+ * 先に当てたとき、後から返った取り直しはその行で送った文と返答を探す)。送信に画面の項目 (識別の番号など) を足して渡してよい
+ */
+export function resolveUnconfirmedSendRows<S extends UnconfirmedSend>(params: {
+  sessionId: string;
+  loaded: readonly ReloadedMessage[];
+  unconfirmed: readonly S[];
+  previousClaimedIds: readonly string[];
+  current: SentText | null;
+  currentAccepted: boolean;
+}): UnconfirmedSendRowsResolution<S> {
   const { sessionId, loaded, unconfirmed, previousClaimedIds, current, currentAccepted } = params;
   const claimed = new Set(previousClaimedIds);
   const reservedId =
     current && currentAccepted
       ? (loaded[sentMessageIndexOf({ text: current.text, knownMessageIds: [...current.knownMessageIds, ...claimed] }, loaded)]?.id ?? null)
       : null;
-  const resolved: UnconfirmedSend[] = [];
-  const remaining: UnconfirmedSend[] = [];
+  const resolved: { send: S; savedMessageId: string }[] = [];
+  const remaining: S[] = [];
   for (const send of unconfirmed) {
     if (send.sessionId !== sessionId) {
       remaining.push(send);
@@ -289,7 +316,7 @@ export function resolveUnconfirmedSends(params: {
     );
     if (saved) {
       claimed.add(saved.id);
-      resolved.push(send);
+      resolved.push({ send, savedMessageId: saved.id });
     } else {
       remaining.push(send);
     }

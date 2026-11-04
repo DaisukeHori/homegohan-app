@@ -14,6 +14,10 @@
  *   7. (R2 の指摘) まだ確かめていない時間切れの送信の案内を、相談の切り替え・新しい相談で外すとき、確かめられなかった送信として
  *      覚えなかった。相談を開き直した取り直しがこの送信を知らず、送った文が保存済みでも入力欄に戻した文が消えなかった
  *      (そのまま送ると同じ相談に二重に届く。Web は入力欄に戻すときに必ず覚える)
+ *   8. (R3 の指摘) 覚えるのを案内を外す側に任せていたので、外し方・書き換え方によって覚え忘れた。シートを開き直したときは、
+ *      出す相談の id を変える前に会話を取ったので、届いていた送信の入力欄の文を消さなかった。新しい相談の作成を待つ間に終わった
+ *      送信は、作成のあとで古い案内を見て覚えなかった。「最新の会話を読み込む」の最中に次を送って通信の切断で終わると、前の送信の
+ *      取り直しの結果が次の送信の案内を消す・書き換えて、次の送信を覚えなかった。いまは入力欄に送った文を戻すその場で覚える
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Alert } from 'react-native';
@@ -53,12 +57,14 @@ import React from 'react';
 import { AIAdvisorSheet } from '../../src/components/ai/AIAdvisorSheet';
 import {
   AI_CHAT_RELOAD_TIMEOUT_MS,
+  INTERRUPTED_NOTICE_MESSAGE,
   PREVIOUS_REQUEST_EXECUTED_MESSAGE,
   REPLY_FAILED_MESSAGE,
   TIMEOUT_DELIVERED_NO_REPLY_MESSAGE,
   TIMEOUT_DELIVERY_UNCONFIRMED_MESSAGE,
   TIMEOUT_DELIVERY_UNCONFIRMED_TITLE,
   TIMEOUT_NOT_DELIVERED_MESSAGE,
+  TIMEOUT_RELOAD_LABEL,
 } from '../../src/lib/ai-chat-timeout';
 import {
   resetAiConsultationDataChangedListenersForTests,
@@ -768,4 +774,224 @@ describe('#2227 H1 (R2) 確かめていない時間切れの送信の案内を�
     expect(inputValue()).toBe('');
     expect(screen.getAllByText(SENT_TEXT)).toHaveLength(1);
   });
+});
+
+describe('#2227 H1 (R3) 確かめていない送信を、案内の書き換え・開き直しの順に左右されずに覚える', () => {
+  const NEW_SESSION = { id: 'session-new', title: 'AI相談', messageCount: 0, status: 'active' };
+  /** 取り直しの最中に送る、時間切れの送信とは別の文 */
+  const NEXT_TEXT = '明日の朝ごはんも1食作って';
+  const NEXT_SAVED_USER = { id: 'm5', role: 'user', content: NEXT_TEXT, createdAt: '2026-11-01T00:01:00.000Z' };
+  const NEXT_REPLY = '卵焼きと味噌汁で作りますね';
+  const NEXT_SAVED_MESSAGES = [
+    NEXT_SAVED_USER,
+    { id: 'm6', role: 'assistant', content: NEXT_REPLY, proposedActions: null, createdAt: '2026-11-01T00:01:01.000Z' },
+  ];
+
+  /** 取り直し (上限つきの GET) と開き直し (上限なしの GET) で返す会話を分ける */
+  function serveMessages(params: { reload: () => Promise<unknown[]> | unknown[]; open: () => unknown[] }) {
+    mockGet.mockImplementation(async (requestPath: string, init?: unknown) => {
+      if (requestPath.startsWith('/api/ai/consultation/sessions?status=all')) return { sessions: [SESSION, OTHER_SESSION] };
+      if (requestPath === OTHER_MESSAGES_PATH) return { messages: OTHER_MESSAGES };
+      if (requestPath === MESSAGES_PATH && init) return { messages: await params.reload() };
+      if (requestPath === MESSAGES_PATH) return { messages: params.open() };
+      throw new Error(`unexpected GET ${requestPath}`);
+    });
+  }
+
+  async function selectSessionById(id: string, shownText: string) {
+    fireEvent.press(screen.getByTestId('ai-toggle-sessions'));
+    await act(async () => {
+      fireEvent.press(screen.getByTestId(`ai-session-${id}`));
+    });
+    await waitFor(() => expect(screen.getByText(shownText)).toBeTruthy());
+  }
+
+  async function timeOutSend() {
+    fetchMock.mockRejectedValueOnce(abortError());
+    await send();
+    await waitFor(() => expect(screen.getByTestId('ai-timeout-notice')).toBeTruthy());
+    expect(inputValue()).toBe(SENT_TEXT);
+  }
+
+  /** 本文の失敗の行 (error だけ) を受けたあと、時間切れで読み取りが止まる応答 (サーバーが失敗を知らせた時間切れの送信) */
+  function streamsErrorThenTimesOut() {
+    let index = 0;
+    return {
+      ok: true,
+      status: 200,
+      body: {
+        getReader: () => ({
+          read: async () => {
+            index += 1;
+            if (index === 1) return { done: false, value: encoder.encode(`data: ${JSON.stringify(SERVER_ERROR_ONLY_LINE)}\n\n`) };
+            throw abortError();
+          },
+          cancel: async () => undefined,
+        }),
+      },
+      text: async () => '',
+    };
+  }
+
+  /** シートを閉じて開き直す (シートは外されないので、会話・入力欄・覚えた送信は残る) */
+  async function closeAndReopen(rerender: (element: React.ReactElement) => void, shownText: string) {
+    await act(async () => {
+      rerender(<AIAdvisorSheet visible={false} onClose={jest.fn()} />);
+    });
+    await act(async () => {
+      rerender(<AIAdvisorSheet visible onClose={jest.fn()} />);
+    });
+    await waitFor(() => expect(screen.getByText(shownText)).toBeTruthy());
+  }
+
+  it('時間切れのあと別の相談へ移ってシートを閉じ、開き直して時間切れの相談が出たら、送った文が保存されていれば入力欄の文を消す', async () => {
+    const { rerender } = render(<AIAdvisorSheet visible onClose={jest.fn()} />);
+    await waitFor(() => expect(screen.getByText('野菜を足しましょう')).toBeTruthy());
+    await timeOutSend();
+    await selectSessionById(OTHER_SESSION.id, '別の相談の返答です');
+    expect(inputValue()).toBe(SENT_TEXT);
+    // サーバーは送った文と返答を保存済み (開き直すと、出す相談は active の時間切れの相談)
+    serverMessages = SAVED_MESSAGES;
+
+    await closeAndReopen(rerender, SAVED_REPLY);
+
+    expect(inputValue()).toBe('');
+  });
+
+  it('時間切れの案内が出たままシートを閉じて開き直し、「最新の会話を読み込む」の取り直しより先に開き直しの取り直しが保存行を当てても、後から返った取り直しを『届いていません』にしない', async () => {
+    const { rerender } = render(<AIAdvisorSheet visible onClose={jest.fn()} />);
+    await waitFor(() => expect(screen.getByText('野菜を足しましょう')).toBeTruthy());
+    await timeOutSend();
+    const reload = gate();
+    serveMessages({
+      reload: async () => {
+        await reload.promise;
+        return SAVED_MESSAGES;
+      },
+      open: () => SAVED_MESSAGES,
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('ai-timeout-reload'));
+    });
+    await waitFor(() => expect(mockGet).toHaveBeenCalledWith(MESSAGES_PATH, { timeoutMs: AI_CHAT_RELOAD_TIMEOUT_MS }));
+
+    await closeAndReopen(rerender, SAVED_REPLY);
+    // 開き直しの取り直しで届いていたと分かったので、入力欄の文を消す
+    expect(inputValue()).toBe('');
+    await act(async () => {
+      reload.release();
+    });
+    await waitFor(() => expect(screen.queryByTestId('ai-timeout-notice')).toBeNull());
+
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(inputValue()).toBe('');
+    expect(screen.getAllByText(SENT_TEXT)).toHaveLength(1);
+  });
+
+  it('送信中に新しい相談を押し、作成を待つ間に送信が時間切れになっても、前の相談を選び直して送った文が保存されていれば入力欄の文を消す', async () => {
+    await openSheet();
+    const sendDone = gate();
+    fetchMock.mockImplementationOnce(async () => {
+      await sendDone.promise;
+      throw abortError();
+    });
+    const created = gate();
+    mockPost.mockImplementationOnce(async () => {
+      await created.promise;
+      return { success: true, session: { id: NEW_SESSION.id } };
+    });
+    await send();
+    fireEvent.press(screen.getByTestId('ai-toggle-sessions'));
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('ai-new-session'));
+    });
+    await waitFor(() => expect(mockPost).toHaveBeenCalledWith('/api/ai/consultation/sessions', { title: 'AI相談' }));
+    // 作成を待つ間に送信が時間切れになる (送った文は入力欄に戻る)
+    await act(async () => {
+      sendDone.release();
+    });
+    await waitFor(() => expect(inputValue()).toBe(SENT_TEXT));
+    await act(async () => {
+      created.release();
+    });
+    await waitFor(() => expect(screen.queryByTestId('ai-new-session')).toBeNull());
+    expect(screen.queryByTestId('ai-timeout-notice')).toBeNull();
+    serverMessages = SAVED_MESSAGES;
+
+    await selectSessionById(SESSION.id, SAVED_REPLY);
+
+    expect(inputValue()).toBe('');
+  });
+
+  it.each([
+    {
+      name: '届いていなかった (not-delivered)',
+      timeOut: 'abort',
+      reloaded: OLD_MESSAGES,
+      alert: [TIMEOUT_DELIVERY_UNCONFIRMED_TITLE, TIMEOUT_DELIVERY_UNCONFIRMED_MESSAGE],
+    },
+    { name: '届いているが返答がまだ無い (delivered-no-reply)', timeOut: 'abort', reloaded: [...OLD_MESSAGES, SAVED_USER], alert: null },
+    {
+      name: 'サーバーが失敗を知らせていて返答が無い (serverFailed)',
+      timeOut: 'server-failed',
+      reloaded: [...OLD_MESSAGES, SAVED_USER],
+      alert: ['エラー', REPLY_FAILED_MESSAGE],
+    },
+  ])(
+    '「最新の会話を読み込む」の取り直しの最中に次を送り、その送信が通信の切断で終わったあと、取り直しが $name で返っても、次の送信の案内と記録を残す',
+    async ({ timeOut, reloaded, alert }) => {
+      await openSheet();
+      if (timeOut === 'abort') {
+        await timeOutSend();
+      } else {
+        fetchMock.mockResolvedValueOnce(streamsErrorThenTimesOut());
+        await send();
+        await waitFor(() => expect(screen.getByTestId('ai-timeout-notice')).toBeTruthy());
+        expect(inputValue()).toBe(SENT_TEXT);
+      }
+      const reload = gate();
+      let opened: unknown[] = OLD_MESSAGES;
+      serveMessages({
+        reload: async () => {
+          await reload.promise;
+          return reloaded;
+        },
+        open: () => opened,
+      });
+      await act(async () => {
+        fireEvent.press(screen.getByTestId('ai-timeout-reload'));
+      });
+      await waitFor(() => expect(mockGet).toHaveBeenCalledWith(MESSAGES_PATH, { timeoutMs: AI_CHAT_RELOAD_TIMEOUT_MS }));
+
+      // 取り直しの最中に、別の文を送る (応答を受ける前に通信が切れる)
+      fireEvent.changeText(screen.getByTestId('ai-input'), NEXT_TEXT);
+      fetchMock.mockRejectedValueOnce(new TypeError('Network request failed'));
+      await act(async () => {
+        fireEvent.press(screen.getByTestId('ai-send-btn'));
+      });
+      await waitFor(() => expect(screen.getByText(INTERRUPTED_NOTICE_MESSAGE)).toBeTruthy());
+      expect(inputValue()).toBe(NEXT_TEXT);
+
+      await act(async () => {
+        reload.release();
+      });
+      // 取り直しが終わると、案内のボタンに文が戻る (取り直しの最中は回る印)
+      await waitFor(() => expect(screen.getByText(TIMEOUT_RELOAD_LABEL)).toBeTruthy());
+      await act(async () => {
+        await Promise.resolve();
+      });
+      if (alert) expect(alertSpy).toHaveBeenCalledWith(...alert);
+      else expect(alertSpy).not.toHaveBeenCalled();
+      // 次の送信の案内は書き換えない (前の送信の結果の文に置き換えない・外さない)
+      expect(screen.getByText(INTERRUPTED_NOTICE_MESSAGE)).toBeTruthy();
+      expect(screen.queryByText(TIMEOUT_DELIVERED_NO_REPLY_MESSAGE)).toBeNull();
+      expect(inputValue()).toBe(NEXT_TEXT);
+
+      // 次の送信はサーバーに届いていた: 相談を選び直すと、入力欄の文を消す (覚えていないと残り、そのまま送ると二重に届く)
+      opened = [...(reloaded === OLD_MESSAGES ? OLD_MESSAGES : [...OLD_MESSAGES, SAVED_USER]), ...NEXT_SAVED_MESSAGES];
+      await selectSessionById(SESSION.id, NEXT_REPLY);
+
+      expect(inputValue()).toBe('');
+    },
+  );
 });
