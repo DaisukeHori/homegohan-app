@@ -28,7 +28,7 @@
 | # | 決めること | 答え (§6) |
 |---|---|---|
 | 1 | ページに渡す公開の面 | `useAiConsultationReceiver(refetch)` が返す `{ read, beginWrite, isLoading }` と、`read` / `refetch` の関数が受け取る `{ mode, place(key, apply) }` だけ。`isLatest`・`deferIfHeld`・`beginFetch`・`refetchKey`・`cancelled` の印・世代の数をページに書かない (§6.1・§8) |
-| 2 | 順序の決まり | 全部の鍵で「鍵ごとに置いた世代より新しければ置く」(今の `newerThanPlaced`) に統一。`latestStarted` は廃止。失敗した読み取りは何も置かないので鍵を譲る仕組みは要らない (§6.2) |
+| 2 | 順序の決まり | 全部の鍵で「鍵ごとに置いた世代より新しければ置く」(今の `newerThanPlaced`) に統一。`latestStarted` は廃止。失敗した読み取りは何も置かないので鍵を譲る仕組みは要らない。そのために、1 つの鍵に置くのはその鍵の中身を全部読めた応答だけ (取り直しが一部だけ読めたとき、読めなかった部分を今の表示から写して同じ鍵に置かない)・取り直しが失敗でも置くもの (/home の同意の知らせ) は成功の応答と別の鍵・1 つの読み取りは 1 つの鍵に 1 回だけ置く (段ごとに途中の値を置かない) (§6.2) |
 | 3 | 番兵と書き込みの印を見る場所 | `place` の中だけ。取り直しの読み取り (hook が始めたもの) だけが見る。ページが始めた読み取りは見ない (§6.3) |
 | 4 | `placedRef` を進める時点 | `apply` が投げずに戻ってから (§6.2) |
 | 5 | 読み込み中の表示 | 鍵ごとに hook が持つ。ページが始めた読み取りが `loadingKeys` で立て、その鍵が置かれたとき・立てた読み取りが終わったときに下ろす。取り直しは立てない・引き継がない。今の受け手で読み込み中の初期値が true のものは、`initialLoadingKeys` で最初の描画から立てる。`receiver` の参照は受け手の一生で変わらない (読み込み中の鍵が変わっても。`useEffect` の依存に入れてよい) (§6.4) |
@@ -43,8 +43,8 @@
 
 | # | 要件 | 根拠 | 本書の置き場 |
 |---|---|---|---|
-| R-1 | 取り直しの失敗 (通信の失敗・5xx・Supabase の error) では今の表示を残す。ページの読み取り (開いたとき・対象の切り替え・書き込みのあとの読み直し) の失敗は受け手ごとにこれまでどおり (§9 の `read.mode` の列): 多くは失敗の表示を出す。/health/graphs の Realtime の読み直しと /profile/nutrition-targets の再設定の保存のあとの読み直しは、取り直しと同じく今の表示を残す (`keepOnFailure`。#2206 G5)。/home の取り直しは、栄養の分析の読み取りが失敗しても同意が無くて AI を省いた知らせ (`aiSkipped` の `consent_required`) だけは消す (#2206 G3。成功は同意済み) | #2201 U1・#2206 G3・G5 | §6.2・§8 (`read.mode`)・§9・§10.1・§10.2 |
-| R-2 | 取り直しでは全画面の読み込み中の表示を出さない。開いたときの読み込みの応答待ちに取り直しが始まり、取り直しが先に置いても・失敗しても、読み込み中のまま止まらず、開いたときの応答が捨てられて空のまま残らない | #2201 U1・Issue #2206 の「開いたときの読み込みの応答待ちに始まった取り直しが失敗すると空のまま残る」 | §4.3 S-1・S-2・§6.4 |
+| R-1 | 取り直しの失敗 (通信の失敗・5xx・Supabase の error) では今の表示を残す。ページの読み取り (開いたとき・対象の切り替え・書き込みのあとの読み直し) の失敗は受け手ごとにこれまでどおり (§9 の `read.mode` の列): 多くは失敗の表示を出す。/health/graphs の Realtime の読み直しと /profile/nutrition-targets の再設定の保存のあとの読み直しは、取り直しと同じく今の表示を残す (`keepOnFailure`。#2206 G5)。/home の取り直しは、栄養の分析の読み取りが失敗しても同意が無くて AI を省いた知らせ (`aiSkipped` の `consent_required`) だけは消す (#2206 G3。成功は同意済み。点数の鍵と別の鍵 `KEY_NUTRITION_CONSENT_NOTICE` に置く) | #2201 U1・#2206 G3・G5 | §6.2・§8 (`read.mode`)・§9・§10.1・§10.2 |
+| R-2 | 取り直しでは全画面の読み込み中の表示を出さない。開いたときの読み込みの応答待ちに取り直しが始まり、取り直しが先に置いても・失敗しても・一部だけ読めても、読み込み中のまま止まらず、開いたときの応答が捨てられて空のまま残らない (/home の点数のカード・パフォーマンスの分析、/health/graphs の線、家族の画面と献立表の家族の切り替えを含む) | #2201 U1・Issue #2206 の「開いたときの読み込みの応答待ちに始まった取り直しが失敗すると空のまま残る」 | §4.3 S-1・S-2・S-28〜S-30・§6.2・§6.4 |
 | R-3 | 置くのは、同じ鍵 (対象) で置いたどの応答よりあとに始めた読み取りの応答だけ。鍵は受け手が置き場所ごとに決め、対象を替えて出す表示 (週・選んだ日・食事の id・月・/comparison と /health/graphs の期間) は対象を鍵に含める | #2201 U1 | §6.2・§9 |
 | R-4 | 取り直しの応答を置く直前に番兵 (入力の部品・モーダル。`isAiConsultationRefetchBlocked`)・書き込み中・取り直しを始めたあとに書き込みが始まったか、を見る。1 つでも当たれば置かず、止めた通知の印を 1 回だけ付ける。ページが自分で始めた読み取りは見ない | #2201 U1+U2 | §6.3・§7.1 |
 | R-5 | 止めた通知は、番兵が外れたとき (DOM の変化)・書き込みが全部終わったときに 1 回だけ取り直す。止めている間に何回来ても 1 回 | #2201 U2 (推奨案 (b)) | §7.1・§10.3 |
@@ -60,7 +60,7 @@
 | R-15 | 受け手の表 `src/lib/ai/consultation-refetch-coverage.ts` の receiver / excluded は変えない (受け手の集合は同じ)。説明の文だけ追随する | 範囲 | §17・§18 |
 | R-16 | マジックナンバーを書かない。新しい定数は名前と根拠を持つ (§14) | 共通の規律 | §14 |
 
-### 0.3 ユーザーシナリオ (27 本。トレースは §4.3・テストとの対応は §13.2)
+### 0.3 ユーザーシナリオ (30 本。トレースは §4.3・テストとの対応は §13.2)
 
 登場するもの: M = ページが始めた読み取り (開いたとき・対象の切り替え・書き込みのあと)、R = AI 相談の成功の取り直し (hook が始める)、W = ページの書き込み (`beginWrite` の窓)、番兵 = 入力の部品・モーダル。
 
@@ -93,6 +93,9 @@
 | S-25 | 献立表で「自炊」の食事を足す | 追加のあとに読み直した週から作った食事を取り、手入力の編集 (命名) を開く (UX2-32。今と同じ) |
 | S-26 | 献立表で、ある日の最後の 1 食を削除する (その週のほかの日には献立がある) | その日の月のカレンダーの印を消す (今の `syncCalendarMealDatesFromDailyMeals` と同じ。足すだけにしない) |
 | S-27 | 献立表で写真の解析を頼み、結果を待つ (10〜20 秒) あいだに AI 相談が成功して取り直しが週の献立を置く。そのあと結果が書かれて待ちが明ける | 待ちが明けてから読み取りを始めて結果の献立を置く (取り直しの古い献立に戻らず、結果が出る)。結果の献立が 0 件の週なら何も置かない (今と同じ) |
+| S-28 | /home を開いた直後 (開いたときの AI つきの栄養の分析と、パフォーマンスの分析の応答待ち) に AI 相談が成功し、取り直しの栄養の分析が 5xx・パフォーマンスの分析 (`/api/performance/analyze`) が 5xx になる (取り直しの今日のチェックインは読める) | 開いたときの分析の応答が届いたら、点数・課題・アドバイスとパフォーマンスの分析を置く (点数のカードが出る。空のまま残らない)。分析の読み込み中の印は開いたときの分析の読み取りが下ろす。同意の知らせ (`consent_required`) を消す片づけは点数の鍵に触れない。今日のチェックインは取り直しが読んだ値 |
+| S-29 | /health/graphs を開いた直後 (記録・健診・目標の応答待ち) に AI 相談が成功し、取り直しは記録が 5xx で目標だけ読める | 開いたときの応答が届いたら記録の線を置く (空のまま残らない)。目標の線は取り直しが置いた値 (開いたときの目標の応答は古いので置かない)。読み込み中の表示は開いたときの読み取りが下ろす |
+| S-30 | 家族の画面 (/family/members ほか) と献立表を開いた直後に AI 相談が成功し、取り直しが途中で読めない (名前の API が 5xx・/family/members/[id] の子供の同意の記録が読めない・献立表の家族の読み込みのプロフィールか家族の一覧が読めない) | 取り直しは何も置かない (途中の段の値も置かない)。開いたときの応答が届いたら一覧・名前・家族の切り替えを置き、読み込み中の表示を下ろす (空のまま残らない)。開いたときの応答が家族に入っていない (family_id が空) なら、移るまで読み込み中の表示のまま (S-24) |
 
 ### 0.4 分冊判定
 
@@ -214,7 +217,7 @@
 | # | 欠陥 | 発生源 | 本書の消し方 |
 |---|---|---|---|
 | D-1 | 受け手が `isLatest`・`cancelled`・`deferIfHeld`・`place` を自分で組み合わせ、書き分けが漏れる (利用者・集計・お知らせが `isLatest` だけ / 選んだ日・streaks・comparison・badges・404・/profile の成功の経路・引き継いだ回が番兵を見ない / `placedRef` が `apply` の前に進む) | 順序と番兵の判断がページ側にある | ページには `place(key, apply)` だけ。判断は全部 hook の `place` の中 (§6.1〜§6.3) |
-| D-2 | 開いたときの読み込みの応答待ちに始まった取り直しが失敗・deferred になると、開いたときの応答が `superseded` で捨てられ空のまま残る (`latestStarted`) | 「最後に始めた取得だけ置く」順序 | 順序を `newerThanPlaced` に統一。失敗・deferred は何も置かないので、先に始めた応答が置ける (§6.2) |
+| D-2 | 開いたときの読み込みの応答待ちに始まった取り直しが失敗・deferred になると、開いたときの応答が `superseded` で捨てられ空のまま残る (`latestStarted`) | 「最後に始めた取得だけ置く」順序。加えて、取り直しの一部の失敗・失敗でも置く片づけ (/home の `settleKeepingAnalysis`・パフォーマンスの分析の非 ok の分岐・/health/graphs の目標・家族の画面の `keepShownFamilyMemberNames`・同意の記録・献立表と家族の画面の段ごとの setter) が、ページの読み取りの成功の応答と同じ置き場所に置く | 順序を `newerThanPlaced` に統一。失敗・deferred は何も置かないので、先に始めた応答が置ける。鍵に置くのはその鍵の中身を全部読めた応答だけ・失敗でも置くものは別の鍵・1 つの読み取りは 1 つの鍵に 1 回 (§6.2) |
 | D-3 | 献立表の手入力の保存・生成の完了・再生成・写真・改善・並べ替え・追加・削除のあとの `setCurrentPlan` が流れを通らない。/profile の保存・/meals の削除が印の外 | 「取り直しの経路」だけを守る設計 | 置き換えは全部ページの読み取りの `place`。書き込みは全部窓の中 (番兵 P1・P2 が数える) (§6.6) |
 | D-4 | 完了の切り替えの 250ms の待ちの間に取り直しが同じ食事の完了を変えると、古い値からの反転と巻き戻し | 押した描画の写しから値を決める | 待ちが終わった時点の `currentPlanRef` から決める (§6.7) |
 | D-5 | キャッシュヒットで loading を下ろさない・先読みの非 ok を空の週として 5 分持つ | loading の下ろし方がページの分岐に散る・失敗と空の区別が無い | 読み込み中は hook の鍵 (置いたら下ろす)。`fetchWeekData` は非 ok で null (§6.4・§6.7) |
@@ -251,13 +254,13 @@
 
 決まり (hook の中だけで判断する):
 
-1. **順序**: `place(key, apply)` は、この読み取りの世代が「鍵 key に置いた世代」より小さければ `'superseded'`。同じ世代 (同じ読み取りが段ごとに置く) と大きい世代は通す。
+1. **順序**: `place(key, apply)` は、この読み取りの世代が「鍵 key に置いた世代」より小さければ `'superseded'`。同じ世代 (同じ読み取りがもう一度置く) と大きい世代は通す (hook はこれを通すが、受け手は 1 つの読み取りで 1 つの鍵に 1 回だけ置く。§6.2・§8 の 8)。
 2. **番兵**: 取り直しの読み取り (`mode: 'refetch'`) だけ、順序を通ったあとに、番兵 (`isAiConsultationRefetchBlocked(document)`) か書き込み中 (`count > 0`) か「始めたあとに書き込みが始まった (`started` が変わった)」なら `'deferred'` を返し、止めた通知の印を 1 回だけ付ける (以後その読み取りの `place` は全部 `'deferred'`)。ページが始めた読み取り (`mode: 'mount'`) は見ない。
 3. **置く**: `apply()` を呼び、投げなければ置いた世代を進め、その鍵の読み込み中の印を下ろす。
 4. **読み込み中**: ページが始めた読み取りが `loadingKeys` で立てる。下ろすのは「その鍵が置かれた」か「立てた読み取り (その鍵を最後に立てたもの) が終わった」とき。取り直しは立てず、引き継がない (開いたときの読み取りは自分の応答を自分で置くので、引き継ぐ必要が無い)。最初の描画から立てておく鍵は `initialLoadingKeys` で渡す (立て主はどの読み取りでもない世代 0。開いたときの読み取りが同じ鍵を立て直し、その終わりか置いたときに下りる)。`isLoading` は鍵の表 (ref) を読み、鍵の表が変わったら版数の state で受け手を描画し直す。`receiver` の参照は一生変わらない。
 5. **書き込みの印**: `beginWrite()` で `count` と `started` を 1 つ増やし、`document.documentElement` に `data-ai-consultation-writes="<全受け手の合計>"` を付ける。終わりで `count` を減らし、0 になったら印を消し、止めた通知があれば 1 回取り直す。
 6. **止めた通知**: 通知 (と生成の完了) が来たとき番兵か書き込み中なら印を付けて DOM を見張る。`'deferred'` のときも同じ。外れたら 1 回だけ取り直す。アンマウントで全部やめる。
-7. **失敗**: 取り直しの関数が投げても握る (`console.warn`)。ページは読み取りの失敗では `mode === 'mount'` のときだけ失敗の表示を `place` で置き、`'refetch'` なら何も置かない。
+7. **失敗**: 取り直しの関数が投げても握る (`console.warn`)。ページは読み取りの失敗では `mode === 'mount'` のときだけ失敗の表示を `place` で置き、`'refetch'` なら何も置かない。取り直しが一部だけ読めたときも、読めなかった部分を含む鍵には置かない (読めた部分が別の鍵なら、その鍵には置く)。取り直しが失敗でも置くもの (/home の同意の知らせ) は、成功の応答を置く鍵と別の鍵に置く (§6.2)。
 
 ### 4.2 動き (受け手の書き方の型)
 
@@ -292,7 +295,7 @@ const remove = async (id) => {
 |---|---|---|
 | S-1 | M (世代 1・`loadingKeys: [items]`) 開始 → 通知 → R (世代 2) 開始 → R の応答: `place(items)`: 2 ≥ placed(0) → 番兵無し → apply → placed = 2・loading(items) 下ろす → M の応答: 1 < 2 → `'superseded'` → M 終了: items の立て主は 1 だが印はもう無い | 期待どおり |
 | S-2 | S-1 で R が 5xx: R は `mode 'refetch'` なので何も置かない (`'superseded'` も `'placed'` も起きない) → M の応答: 1 ≥ 0 → apply → placed = 1・loading 下ろす | 空のまま残らない |
-| S-3 | R1 (2)・R2 (3)。R2 先: placed = 3。R1 後: 2 < 3 → superseded。逆の順: R1 置く (placed = 2) → R2 置く (3) | 期待どおり |
+| S-3 | R1 (2)・R2 (3)。R2 先: placed = 3。R1 後: 2 < 3 → superseded。逆の順: R1 置く (placed = 2) → R2 置く (3)。/home の栄養の分析で R1 の応答が「分析できない」(`analysis: null`) のとき: R2 先なら R1 の `place(KEY_NUTRITION_SCORE)` は superseded で、AI の部分も帯も消さない (取り直しは点数を `'placed'` にできたときだけ AI の鍵に置く。§7.5)。R1 先なら R1 が点数を空にし、帯の AI のアドバイスと AI の部分を消し (`KEY_NUTRITION_AI` を 2 で置く)、R2 が点数を置く (R2 は AI を読まないので、アドバイス・帯は戻らない。§10.2) | 期待どおり |
 | S-4 | W1 表示中。W2 へ (控えに無い): M2 (`loadingKeys: ['weekLoading']`) 開始・`isLoading('weekLoading')` で全画面。通知 → R (世代 n): `readDisplayedWeek` は `plan:W2` の鍵で読み、失敗 → `null` を返すだけ (取り直しは `placeWeekReadFailure` を呼ばない)・何も置かない・loading に触れない → M2 の応答: `applyWeekResponse` の `place('plan:W2')` → apply (`weekStartKeyRef` が W2 なので置く) → `releaseWeekLoadingIfShown` が `place('weekLoading', 何もしない)` → 下ろす (M2 の `fn` の終わりでも、立て主の印はもう無い) | W1 の献立は出ない |
 | S-5 | `toggleMealCompletion` → `beginWrite` (count 1・started +1) → 通知: `isHeld()` true (count) → 印 → 書き込み終了: count 0 → `flushDeferred` → 番兵無し → R 開始 (1 回) | 1 回取り直す。楽観的な表示は書き込みの前に置かれず残る |
 | S-6 | R (started = s) 開始 → 削除 `beginWrite` (started = s+1) → 終了 → R の応答: `place`: 順序 OK → `started !== s` → `'deferred'`・印 → `deferRefetch`: `isHeld()` false → すぐ `flushDeferred` → R' 開始 → R' の応答を置く | 削除した食材は戻らない |
@@ -317,6 +320,9 @@ const remove = async (id) => {
 | S-25 | `handleAddMealWithMode('cook')`: `beginWrite` → POST (新しい食事の id = m) → `receiver.read({}, async (read) => { addedWeek = await readDisplayedWeek(read, WEEK_PLACEMENT_AFTER_ADD); })` → 週を置く (買い物リストは置かない・印は足す) → `plannedMealOf(addedWeek, m)` が作った食事 → `openManualEdit(作った食事)` → finally `endWrite` | 命名の編集が開く |
 | S-26 | `confirmDeleteMeal`: `beginWrite` → DELETE → `receiver.read({}, (read) => readDisplayedWeek(read, WEEK_PLACEMENT_AFTER_REMOVE))` → 応答の日 d の行は `meals: []` → `applyWeekResponse` の `place('plan:W')` の apply の中で `syncCalendarMealDatesFromDailyMeals`: 献立のある日を `MERGE`、`meals` が空の行の日 d を `REPLACE_RANGE(d, d, 空)` で消す | d の印が消える |
 | S-27 | 写真: `beginWrite` → POST (`analyze-meal-photo`) → finally `endWrite` (窓は送信の間だけ) → `await waitForMealPhotoResult(…)` (待ちは読み取りの外。その間に R (世代 r) が `plan:W` に結果の前の献立を置く) → 結果が書かれた応答 (待ちの最後の `fetchTargetWeek`) で待ちが明ける → `await receiver.read({}, (read) => applyWeekResponse(read, W, week, writeWeekCache, WEEK_PLACEMENT_COMPLETION))` (世代 p > r) → `place('plan:W')`: p ≥ r → 置く (ページの読み取りなので番兵を見ない)。結果の週が 0 件なら `emptyPlan: 'keep'` で何も置かない | 結果の献立が出る |
+| S-28 | 開く: M (世代 1・`[homeLoading]`) が主のデータを読む → `startAnalyses` が A (世代 2・`[nutritionScore]`・AI つき) と P (世代 3・`[performance]`) を始める → 通知 → R (世代 4) が主のデータを読み、同じ R で分析を始める → R の栄養の分析が 5xx: `KEY_NUTRITION_SCORE`・`KEY_NUTRITION_AI` には置かない → `finally` で `place(KEY_NUTRITION_CONSENT_NOTICE)` (4 ≥ 0 → `consent_required` だけを消す。点数の鍵の置いた世代と `nutritionScore` の印に触れない) → R のパフォーマンス: 今日のチェックインは読めた・`/api/performance/analyze` が 5xx → `place(KEY_TODAY_CHECKIN)` だけ (`KEY_PERFORMANCE` に置かない) → A の応答: `place(KEY_NUTRITION_SCORE)`: 2 ≥ 0 → 置く・`nutritionScore` の印を下ろす → `place(KEY_NUTRITION_AI)`: 2 ≥ 0 → 置く → P の応答: `place(KEY_PERFORMANCE)`: 3 ≥ 0 → 置く・`performance` の印を下ろす → `place(KEY_TODAY_CHECKIN)`: 3 < 4 → `'superseded'` (取り直しのチェックインのほうが新しい) | 点数のカード・アドバイス・パフォーマンスの分析が出る |
+| S-29 | M (世代 1・`[graphs:month]`) → 通知 → R (世代 2): 記録が 5xx・健診と目標は読めた → 取り直しで記録か健診を読めないので `graphsKey('month')` には置かない → `place(KEY_TARGET_WEIGHT)` で目標の線を置く → M の応答: `place(graphsKey('month'))`: 1 ≥ 0 → 線を置く・印を下ろす → `place(KEY_TARGET_WEIGHT)`: 1 < 2 → `'superseded'` | 線が出る・目標は取り直しの値 |
+| S-30 | /family/members: M (世代 1・`[members]`) → 通知 → R (世代 2): ログイン・プロフィール・群・一覧は読めた → 名前の API が 5xx → `read.mode === 'refetch'` なので何も置かずに終える (途中の段の `setCurrentUserId` も置かない) → M の応答 (名前つき): `place(KEY_MEMBERS)`: 1 ≥ 0 → 1 つの `apply` で `setCurrentUserId`・群・一覧と名前・役割を置く → 印を下ろす。M の応答が family_id 無しなら `place(KEY_MEMBERS, 移る apply)`: `apply` の中の `isLoadingRef.current(KEY_MEMBERS)` は true (途中の段で下ろしていない) → `setRedirecting(true)` → 移るまで読み込み中。献立表: M (世代 1・開いたときの `receiver.read({}, loadFamilyData)`) → R (世代 2): 家族の一覧の読み取りが error → 何も置かない → M の応答: `place(KEY_FAMILY)`: 1 ≥ 0 → `setCurrentUserId`・`setFamilyId`・`setFamilyMembers` を 1 つの `apply` で置く | 空のまま残らない・移るときは読み込み中のまま |
 
 ---
 
@@ -340,7 +346,7 @@ const remove = async (id) => {
 
 ### 5.3 確定と、Issue の候補の「直し方」からの差分 (以後の蒸し返しは「裁定への差し戻し事由」として別扱い)
 
-1. 順序は `newerThanPlaced` に統一する (候補の「失敗した読み取りは鍵を譲る。あるいは newerThanPlaced にする」のうち後者)。失敗・deferred の読み取りは何も置かず、鍵を譲る仕組みは要らない。
+1. 順序は `newerThanPlaced` に統一する (候補の「失敗した読み取りは鍵を譲る。あるいは newerThanPlaced にする」のうち後者)。失敗・deferred の読み取りは何も置かず、鍵を譲る仕組みは要らない。これが成り立つのは、取り直しが「読めなかった」ときに、ページの読み取りが成功の応答を置く鍵へ何も置かないときだけなので、鍵の切り方の決まり (その鍵の中身を全部読めた応答だけを置く・失敗でも置くものは別の鍵・1 つの読み取りは 1 つの鍵に 1 回) を §6.2 に足す (#2206 G1 R4)。
 2. 生成・写真・再生成・改善の「待ち」は窓で囲まない。囲むのは送信 (GET でない fetch・Supabase の書き込み・rpc) の間だけ (§5.1 D)。GET でない送信でも、受け手の読み取りが置く値を変えないもの (AI の助言・栄養のフィードバック・冷蔵庫の写真の解析・認証の同期の POST) は窓で囲まない (囲むと AI の応答を待つ数秒〜数十秒のあいだ取り直しとモバイルの読み込み直しが止まる)。この行き先は閉じた一覧 (§9.2) に理由つきで書く。生成の監視 (進み具合・完了の印) は読み取りの経路の外で、取り直しの番兵で止めない (§6.6)。
 3. /home の「開いたときの読み込みの役を引き継いだ取り直しは AI つきで読む」は無くなる。開いたときの読み取りは (取り直しに追い越されても) 自分で AI つきの分析を読み、取り直しは AI を付けない。AI つきの読み取りを 2 回読まない (§6.6)。
 4. 家族・譲渡の画面が取り直しの間に書き込みのボタンを止める (`AI_CONSULTATION_REFETCH_ACTION`・`aiRefetching`) のをやめる。順序と窓で守れる。`busyRef` は二重押しの守りとして残す。
@@ -361,6 +367,9 @@ const remove = async (id) => {
 - 置いた世代は鍵ごとに覚える。`place(key, apply)` は「この読み取りの世代 < 鍵に置いた世代」なら `'superseded'`。同じ読み取りが同じ鍵に段ごとに置くのは通す。
 - `apply` が戻ってから置いた世代を進める。`apply` が投げたら進めない (例外はそのまま投げる)。
 - 対象を替えて出す表示 (献立表の週・/health の選んだ日・/meals の id・月のカレンダー・/comparison の期間・/health/graphs の期間) は対象を鍵に含める (`planKey(week)`・`rankingsKey(period)`・`graphsKey(period)` など)。「いまもその対象を出しているか」(別の週・期間へ移ったあとに届いた応答を画面に出さない) は順序ではないので、`apply` の中でページの ref (`weekStartKeyRef`・`selectedDateRef`・`params.id`・`periodTypeRef`・`periodRef`) を見て置かない。成功の応答も失敗の表示 (`'mount'` の空・エラー) も同じ (`apply` の中で ref を見ずに置く経路を残さない)。置かなくても置いた世代は進む (その対象を次に出すときは新しい読み取りが置く)。
+- **鍵に置くのは、その鍵の中身を全部読めた応答だけ** (#2206 G1 R4)。取り直し (と `keepOnFailure` のページの読み取り) が一部だけ読めたとき、読めなかった部分を今の表示から写して (`prev` を残す関数形の setter・`keepShown…`) 同じ鍵に置かない。今の表示を残すのは「その鍵に置かない」で表す。読めた部分だけを置きたいときは、その部分を別の鍵にする (/home の今日のチェックイン `KEY_TODAY_CHECKIN`・/health/graphs の目標の線 `KEY_TARGET_WEIGHT`)。理由: 取り直しが鍵に置くとその鍵の置いた世代が進むので、先に始めたページの読み取り (開いたとき) の成功の応答が `'superseded'` で捨てられ、その鍵の読み込み中の印も下りて、読み込み直すまで空のまま残る (D-2 が戻る)。
+- **取り直しが失敗でも置くものは、成功の応答を置く鍵と別の鍵に置く**。今は /home の同意の知らせの片づけ (`KEY_NUTRITION_CONSENT_NOTICE`。G3) の 1 つだけ。この鍵は読み込み中の鍵にしない (`loadingKeys`・`initialLoadingKeys` に入れない)。
+- **1 つの読み取りは 1 つの鍵に 1 回だけ置く**。全部を読んでから 1 つの `apply` で置き、途中の段の値 (家族の画面の `setCurrentUserId`・`setFamilyId`・献立表の `loadFamilyData` の段) を先に置かない。分かれる終わり方 (成功・見つからない・`'mount'` の失敗の表示・別の画面へ移る) は、それぞれがその読み取りの最後の 1 回の `place`。理由: 途中の段で置くと、その時点で置いた世代が進み (あとから届く先に始めた読み取りの応答が `'superseded'` になる)、読み込み中の印も途中で下りる (中身の無い画面が出る・移るときの `redirecting` が立たない)。hook は同じ読み取りがもう一度置くのを通す (T-6) が、受け手はこれを使わない (§8 の 8)。
 
 ### 6.3 番兵と書き込みの印を見る場所 (決めること 3)
 
@@ -413,7 +422,7 @@ const remove = async (id) => {
 移るときの読み込み中の表示は今と同じにする。今は、移る読み取りは `{ redirecting: true }` を返し、呼び出し側が `settleLoading` を呼ばないので、読み込み中の表示を出していたなら移るまで出したまま (/family/dashboard・/family/members・/family/members/[id]・/family/transfer-accept。描画のテスト `tests/family-screens-reload-2073.test.tsx` の「家族に入っていない…移るまで読み込み中の表示のままにする」が確かめる)、出していなかった取り直しなら今の画面のまま移る。設計後の `place` は置いた鍵の読み込み中の印を下ろすので、そのままでは移る瞬間に空の画面を描く。そこで 4 画面は次のとおりにする (§7.6):
 
 - ページに `redirecting` の state (初めは false) を持ち、描画の読み込み中は `receiver.isLoading(鍵) || redirecting`。
-- 移る `place` の `apply` の中で、`isLoadingRef.current(鍵)` (描画のたびに `receiver.isLoading` を写す ref。読み取りの関数は `receiver` より先に宣言するので ref で引く) が true なら `setRedirecting(true)` を呼んでから移る。`apply` の中の `isLoading` はその鍵を下ろす前の値を返す (hook は `apply` が戻ってから印を下ろす。§8)。
+- 移る `place` の `apply` の中で、`isLoadingRef.current(鍵)` (描画のたびに `receiver.isLoading` を写す ref。読み取りの関数は `receiver` より先に宣言するので ref で引く) が true なら `setRedirecting(true)` を呼んでから移る。`apply` の中の `isLoading` はその鍵を下ろす前の値を返す (hook は `apply` が戻ってから印を下ろす。§8)。読み取りの途中の段で同じ鍵に置かない (自分の id・family_id も最後の `apply` で置く。§6.2) ので、移る時点で開いたときの印はまだ立っている。
 - `{ redirecting }` の戻り値と `settleLoading` は消す (読み取りの関数は `Promise<void>`)。
 
 /org/transfer-accept は今もログインへ移っても読み込み中の表示を下ろす (`loadPage` の `finally` の `settleLoading`) ので、`redirecting` を持たず、移る `place` で鍵を下ろすだけ (今と同じ)。
@@ -1314,7 +1323,99 @@ const handleGenerateWeekly = async () => {
 };
 ```
 
-`fetchPantry`・`fetchUserSettings`・`loadFamilyData` は引数を `read` にし、`<stream>.begin(refetchTicket)` を消して `read.place(KEY_…, …)` で置く (`loadFamilyData` は段ごとに同じ鍵で置き、`'placed'` でなければ次の段へ進まない)。`settingsFetchStream`・`pantryFetchStream`・`familyLoadStream`・`mealDatesFetchStream`・`planFetchStream` は消す。`setIsLoadingServingsConfig` は `receiver.isLoading(KEY_SETTINGS)` で駆動する (`fetchUserSettings` を `receiver.read({ loadingKeys: [KEY_SETTINGS] }, …)` で始める)。今の `refreshMealPlan` は消さずに上のブロックの形に替え、6 か所の呼び出し (v4 の生成の完了・restoreGeneration の完了 2 か所・v4 のポーリングの完了・生成完了のダイアログを閉じたとき 2 か所) はそのまま残す (`planFetchStream` を消してもこの 6 か所は `receiver.read` を通る)。写真の解析の POST (`/api/ai/analyze-meal-photo`) は送信の間だけ窓で囲む。窓で新たに囲む送信と例外 (AI の助言・栄養のフィードバック・冷蔵庫の写真の解析・止まった依頼の掃除) の全部は §9.1 の W-31〜W-63 の行のとおり。
+`fetchPantry`・`fetchUserSettings`・`loadFamilyData` は引数を `read` にし、`<stream>.begin(refetchTicket)` を消して `read.place(KEY_…, …)` で置く (`loadFamilyData` は全部を読んでから 1 つの `apply` で置く。下のブロック。§6.2)。`settingsFetchStream`・`pantryFetchStream`・`familyLoadStream`・`mealDatesFetchStream`・`planFetchStream` は消す。`setIsLoadingServingsConfig` は `receiver.isLoading(KEY_SETTINGS)` で駆動する (`fetchUserSettings` を `receiver.read({ loadingKeys: [KEY_SETTINGS] }, …)` で始める)。今の `refreshMealPlan` は消さずに上のブロックの形に替え、6 か所の呼び出し (v4 の生成の完了・restoreGeneration の完了 2 か所・v4 のポーリングの完了・生成完了のダイアログを閉じたとき 2 か所) はそのまま残す (`planFetchStream` を消してもこの 6 か所は `receiver.read` を通る)。写真の解析の POST (`/api/ai/analyze-meal-photo`) は送信の間だけ窓で囲む。窓で新たに囲む送信と例外 (AI の助言・栄養のフィードバック・冷蔵庫の写真の解析・止まった依頼の掃除) の全部は §9.1 の W-31〜W-63 の行のとおり。
+
+`loadFamilyData` と、開いたときの 3 つの effect・家族の切り替えの呼び出し・♥ の書き込み (#2206 G1 R4):
+
+```ts
+// tsc:skip place=src/app/(main)/menus/weekly/page.tsx
+/**
+ * 家族の所属・一覧・名前を読む (#2206 G1 R4)。全部を読んでから 1 つの apply で置く (途中の段で setCurrentUserId・setFamilyId を
+ * 置かない。§6.2)。取り直し ('refetch') は、プロフィール・家族の一覧・名前の API のどれか 1 つでも読めなければ何も置かない
+ * (家族の切り替えと名前を残す。今の keepShownFamilyMemberNames の置き方はやめる)。ページの読み取り ('mount') の失敗は今と同じ:
+ * プロフィールを読めなければ何も置かない・家族の一覧を読めなければ自分の id と family_id だけを置く・名前の API を読めなければ display_name のまま
+ */
+const loadFamilyData = useCallback(async (read: AiConsultationRead) => {
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return;
+
+  const { data: profile, error: profileError } = await supabase
+    .from('user_profiles')
+    .select('family_id')
+    .eq('id', user.id)
+    .maybeSingle();
+  if (profileError) return;
+  const familyIdRead = profile?.family_id ?? null;
+  if (familyIdRead === null) {
+    read.place(KEY_FAMILY, () => {
+      setCurrentUserId(user.id);
+      setFamilyId(null);
+      setFamilyMembers([]);
+    });
+    return;
+  }
+
+  const { data: members, error: membersError } = await supabase
+    .from('family_members')
+    .select(/* …今と同じ列… */)
+    .eq('family_id', familyIdRead)
+    .eq('status', 'active');
+  if (membersError || !members) {
+    // 家族の一覧を読めなかった: 取り直しは何も置かない。ページの読み取りは今と同じく自分の id と family_id だけを置く (一覧は置かない)
+    if (read.mode === 'mount') {
+      read.place(KEY_FAMILY, () => {
+        setCurrentUserId(user.id);
+        setFamilyId(familyIdRead);
+      });
+    }
+    return;
+  }
+  const namesResult = await fetchFamilyMemberNamesResult();
+  // 取り直しで名前の API を読めなかった: 何も置かない (出ている名前を「名前未設定」に落とさない。#2201 U1 をこの形で守る)
+  if (!namesResult.ok && read.mode === 'refetch') return;
+  const rows = members as FamilyMember[];
+  read.place(KEY_FAMILY, () => {
+    setCurrentUserId(user.id);
+    setFamilyId(familyIdRead);
+    setFamilyMembers(applyFamilyMemberNames(rows, namesResult.ok ? namesResult.names : new Map()));
+  });
+}, []);
+
+// 開いたときの 3 つの effect は receiver の宣言のあと (refetchAfterAiConsultation → receiver の直後) へ移す
+// (依存の配列の receiver は宣言の時点で読まれる。今の位置 (各関数の宣言の直後) のままだと宣言の前に読む)
+useEffect(() => {
+  void receiver.read({ loadingKeys: [KEY_SETTINGS] }, fetchUserSettings);
+}, [receiver, fetchUserSettings]);
+useEffect(() => {
+  void receiver.read({}, fetchPantry);
+}, [receiver, fetchPantry]);
+useEffect(() => {
+  void receiver.read({}, loadFamilyData);
+}, [receiver, loadFamilyData]);
+
+// 家族の切り替え (<FamilyViewSwitcher onChange>) の読み直しもページの読み取り:
+//   onChange={(next) => { setView(next); familyMenu.reload(); void receiver.read({}, loadFamilyData); }}
+
+/** ♥ (W-47・W-48): 窓は押した時点の楽観的な表示のあと、try の直前に開け、finally の最後に閉じる (dish-favorite-wiring の目印を保つ。G-31) */
+const handleToggleFavorite = async () => {
+  if (!selectedRecipe || isFavoriteLoading) return;
+  const session = favoriteSessionRef.current;
+  const isCurrentSession = () => favoriteSessionRef.current === session;
+  const prev = isFavorite;
+  setIsFavorite(!prev);
+  setIsFavoriteLoading(true);
+  const endWrite = receiver.beginWrite();
+  try {
+    // …今と同じ (DELETE・POST・res.json の各 await のあとに isCurrentSession()。await は 4 つのまま)…
+  } catch {
+    if (isCurrentSession()) setIsFavorite(prev);
+  } finally {
+    if (isCurrentSession()) setIsFavoriteLoading(false);
+    endWrite();
+  }
+};
+```
 
 読み直した週を置く経路の置き方の表 (正本。`applyWeekResponse` の `placement`。「今」は基点 `eb1ad85da` のその関数の字面。「設計後」の太字が今からの変更で、§6.7・§10.2 に挙げた 5 点だけ):
 
@@ -1332,7 +1433,7 @@ const handleGenerateWeekly = async () => {
 
 表の「確かめない (押した描画の週を読む)」の経路は、設計後は読み始めた時点の表示中の週 (`weekStartKeyRef`) を読み、画面に置くのはいまもその週を出しているときだけ (`applyWeekResponse`)。書き込みの窓の中で押した週から移ることは画面の作りの上で無い (モーダルが開いている) ので、今と同じ週を読む。読み直しの失敗では何も置かない (今の経路も非 ok で何も置かない)。
 
-宣言の順 (`useCallback` の依存の配列は宣言の時点で読まれるので、依存に書く名前は先に宣言する): 鍵と定数 (`WEEK_PLACEMENT_*` を含む) → `autoExpandNextMealRef` (今の `autoExpandNextMeal` の宣言のあと) → `updateCalendarMealDatesFromDailyMeals`・`syncCalendarMealDatesFromDailyMeals` (今の位置。後者は中身を上のブロックの形に替える) → `releaseWeekLoadingIfShown`・`applyWeekResponse`・`placeWeekReadFailure`・`readDisplayedWeek`・`fetchAndCacheMealDates`・`fetchPantry`・`fetchUserSettings`・`loadFamilyData` → `checkPendingRequests` とその effect → `refetchAfterAiConsultation` → `receiver` → `refreshMealPlan` (今の位置 (`useV4MenuGeneration` の呼び出しの直前) から `receiver` のあとへ移す。`useV4MenuGeneration` の呼び出しと restoreGeneration の effect は今の位置のまま動かさない (hook と effect の順を変えない)。どちらも `refreshMealPlan` を描画のあとに走る関数 (`onGenerationComplete`・effect の本体) の中で呼ぶだけなので、宣言が後ろでも型検査・実行とも通る。依存の配列には書かない (今の restoreGeneration の effect は依存が空・`onGenerationComplete` は依存を持たない)) → `fetchPlan` とその effect・`reloadWeekAfterCompletion`・書き込みの関数。上のブロックは関数ごとの差分で、この順には並べていない。`checkPendingRequests` の中で使う `subscribeToRequestStatus`・`subscribeToRegenerateStatus`・`resumePendingGeneration` は今と同じく後ろで宣言してよい (本体の中で呼ぶだけで、依存の配列に書かない)。
+宣言の順 (`useCallback` の依存の配列は宣言の時点で読まれるので、依存に書く名前は先に宣言する): 鍵と定数 (`WEEK_PLACEMENT_*` を含む) → `autoExpandNextMealRef` (今の `autoExpandNextMeal` の宣言のあと) → `updateCalendarMealDatesFromDailyMeals`・`syncCalendarMealDatesFromDailyMeals` (今の位置。後者は中身を上のブロックの形に替える) → `releaseWeekLoadingIfShown`・`applyWeekResponse`・`placeWeekReadFailure`・`readDisplayedWeek`・`fetchAndCacheMealDates`・`fetchPantry`・`fetchUserSettings`・`loadFamilyData` → `checkPendingRequests` とその effect → `refetchAfterAiConsultation` → `receiver` → 開いたときの 3 つの effect (`fetchUserSettings`・`fetchPantry`・`loadFamilyData`。今は各関数の宣言の直後にあり、依存の配列に `receiver` を書くので `receiver` のあとへ移す。上のブロック) → `refreshMealPlan` (今の位置 (`useV4MenuGeneration` の呼び出しの直前) から `receiver` のあとへ移す。`useV4MenuGeneration` の呼び出しと restoreGeneration の effect は今の位置のまま動かさない (hook と effect の順を変えない)。どちらも `refreshMealPlan` を描画のあとに走る関数 (`onGenerationComplete`・effect の本体) の中で呼ぶだけなので、宣言が後ろでも型検査・実行とも通る。依存の配列には書かない (今の restoreGeneration の effect は依存が空・`onGenerationComplete` は依存を持たない)) → `fetchPlan` とその effect・`reloadWeekAfterCompletion`・書き込みの関数。上のブロックは関数ごとの差分で、この順には並べていない。`checkPendingRequests` の中で使う `subscribeToRequestStatus`・`subscribeToRegenerateStatus`・`resumePendingGeneration` は今と同じく後ろで宣言してよい (本体の中で呼ぶだけで、依存の配列に書かない)。
 
 ### 7.5 `src/hooks/useHomeData.ts` の差分 (/home。段 D。基点 `eb1ad85da` = G3 のマージ後の形)
 
@@ -1353,9 +1454,19 @@ const KEY_BADGE_INFO = "badgeInfo";
 const KEY_BEST_MEAL = "bestMeal";
 const KEY_HEALTH_SUMMARY = "healthSummary";
 const KEY_ANNOUNCEMENT = "announcement";
-const KEY_NUTRITION_SCORE = "nutritionScore"; // 点数・課題・栄養素の比べ・取り直しの同意の知らせの片づけ
+const KEY_NUTRITION_SCORE = "nutritionScore"; // 点数・課題・栄養素の比べ (栄養の分析の読み込み中の鍵)
 const KEY_NUTRITION_AI = "nutritionAi"; // アドバイス・提案・aiSkipped・今日のアドバイスの帯 (出所 'ai_advice')
-const KEY_PERFORMANCE = "performance";
+/**
+ * 取り直しの同意の知らせの片づけ (aiSkipped の consent_required を消すだけ。G3)。取り直しの読み取りが失敗しても置くので、
+ * 点数の鍵と分ける (点数の鍵に置くと、先に始めた開いたときの分析の応答が 'superseded' で捨てられる。§6.2・S-28。#2206 G1 R4)。読み込み中の鍵にしない
+ */
+const KEY_NUTRITION_CONSENT_NOTICE = "nutritionConsentNotice";
+const KEY_PERFORMANCE = "performance"; // パフォーマンスの分析 (eligible・理由・次の行動・おすすめ。パフォーマンスの分析の読み込み中の鍵)
+/**
+ * 今日のチェックイン。7 日の分析 (/api/performance/analyze) が非 ok でも読めたチェックインは置く (今の挙動) ので、分析の鍵と分ける
+ * (§6.2・S-28。#2206 G1 R4)。読み込み中の鍵にしない
+ */
+const KEY_TODAY_CHECKIN = "todayCheckin";
 /**
  * 全画面の読み込み中の表示の鍵 (読み込み中だけの鍵。§6.4。#2206 G1 R3)。今の loading は主のデータの読み取り (集計・お知らせまで) が
  * 終わったときに下りるので、今日の献立を置いた時点では下ろさない。ページの読み取りが立て、その読み取りの終わりで下りる。
@@ -1419,27 +1530,15 @@ const fetchAnnouncement = async (read: AiConsultationRead) => {
 };
 
 const fetchNutritionAnalysis = async (read: AiConsultationRead, { analysisWithoutAi }: HomeFetchOptions) => {
-  /** 読み取りのあとの aiSkipped (G3 の aiSkippedAfterRead。中身は今と同じ): 取り直し (AI を付けない) は同意済みなので consent_required を消す */
-  const aiSkippedAfterRead = (prev: AiSkippedReason | null): AiSkippedReason | null =>
-    analysisWithoutAi && prev === "consent_required" ? null : prev;
-  /**
-   * 読み取りの失敗・使えない結果: 今の分析を残す (今の settleKeepingAnalysis)。取り直しでは同意が無くて AI を省いた知らせだけ消す
-   * (#2206 G3。成功は同意済みで、読み取りの失敗とは関係が無い。R-1 の例外)。読み込み中の印は hook が下ろす
-   */
-  const keepAnalysis = () => {
-    if (!analysisWithoutAi) return;
-    read.place(KEY_NUTRITION_SCORE, () => setNutritionAnalysis((prev) => ({ ...prev, aiSkipped: aiSkippedAfterRead(prev.aiSkipped) })));
-  };
   try {
     const response = await fetch(analysisWithoutAi ? HOME_NUTRITION_ANALYSIS_WITHOUT_AI_URL : HOME_NUTRITION_ANALYSIS_WITH_AI_URL);
-    if (!response.ok) {
-      keepAnalysis();
-      return;
-    }
+    // 読み取りの失敗・使えない結果 (下の data.success でないときも): 何も置かない (今の分析を残す。今の settleKeepingAnalysis の「分析を残す」。
+    // 読み込み中の印は、立てたページの読み取りの終わりで hook が下ろす)。点数の鍵に置かないので、先に始めた読み取りの応答は置ける (S-28)
+    if (!response.ok) return;
     const data = await response.json();
     if (data.success && data.analysis) {
       read.place(KEY_NUTRITION_SCORE, () =>
-        setNutritionAnalysis((prev) => ({ ...prev, score: …, issues: …, comparison: …, aiSkipped: aiSkippedAfterRead(prev.aiSkipped) })),
+        setNutritionAnalysis((prev) => ({ ...prev, score: …, issues: …, comparison: … })),
       );
       if (!analysisWithoutAi) {
         read.place(KEY_NUTRITION_AI, () => {
@@ -1452,23 +1551,66 @@ const fetchNutritionAnalysis = async (read: AiConsultationRead, { analysisWithou
         });
       }
     } else if (data.success) {
-      read.place(KEY_NUTRITION_SCORE, () => {
+      const scorePlaced = read.place(KEY_NUTRITION_SCORE, () => {
         setNutritionAnalysis((prev) => ({ ...prev, ...NO_NUTRITION_ANALYSIS_SCORE_PARTS }));
         // 取り直しでは帯の AI のアドバイスだけ消す (活動量・献立の変更の文は残す。G3 と同じ)
         if (analysisWithoutAi) setSuggestionBand((prev) => (prev?.source === "ai_advice" ? null : prev));
       });
-      read.place(KEY_NUTRITION_AI, () => setNutritionAnalysis((prev) => ({ ...prev, ...NO_NUTRITION_ANALYSIS_AI_PARTS })));
-    } else {
-      keepAnalysis();
+      // AI の部分を消すのは、点数を置けた ('placed') ときか、AI つきの読み取りのとき (自分の AI の鍵の順序で) だけ。今の
+      // aiPartsOrder (scorePlaced === 'placed' ? AI の鍵を新しく始める : aiOrder) と同じ条件 (#2206 G1 R4)。取り直しの点数が新しい読み取りに
+      // 追い越されて置けなかったのに AI の部分だけを消すと、新しい点数の横でアドバイスだけが消える (Issue #2206 の D-2 の縁)
+      if (scorePlaced === "placed" || !analysisWithoutAi) {
+        read.place(KEY_NUTRITION_AI, () => setNutritionAnalysis((prev) => ({ ...prev, ...NO_NUTRITION_ANALYSIS_AI_PARTS })));
+      }
     }
   } catch (e) {
     console.error("Nutrition analysis fetch error:", e);
-    keepAnalysis();
+  } finally {
+    // 取り直し (AI を付けない) は AI 相談の成功のあとで同意済み: 読み取りの結果によらず、同意が無くて AI を省いた知らせだけを消す
+    // (G3 の aiSkippedAfterRead と同じ。上限 daily_limit・同意の状況を読めない check_failed は残す。R-1 の例外)。
+    // 点数の鍵と読み込み中の印に触れない専用の鍵に置く (§6.2。取り直しの失敗が、先に始めた開いたときの分析の応答を 'superseded' にしない)
+    if (analysisWithoutAi) {
+      read.place(KEY_NUTRITION_CONSENT_NOTICE, () =>
+        setNutritionAnalysis((prev) => (prev.aiSkipped === "consent_required" ? { ...prev, aiSkipped: null } : prev)),
+      );
+    }
   }
 };
 
-// fetchPerformanceAnalysis(userId, read): 今の performanceAnalysisStream の begin を消し、read.place(KEY_PERFORMANCE, …) で置く。
-// 今日のチェックインを読めなかった取り直し (read.mode === 'refetch' && todayCheckinError) は今のチェックインを残す (今と同じ)
+/**
+ * パフォーマンスの分析 (#2206 G1 R4)。今日のチェックイン (KEY_TODAY_CHECKIN) と 7 日の分析 (KEY_PERFORMANCE) を別の鍵に置く。
+ * 今と同じく、分析の応答 (ok・非 ok) が届いたあとにチェックインを置き、分析の読み取りが投げたときはどちらも置かない。
+ * 分析が非 ok のときは分析の鍵に置かない (今の非 ok の分岐の「分析は残してチェックインだけ置く」を、分析の鍵を進めずに保つ。S-28)
+ */
+const fetchPerformanceAnalysis = async (userId: string, read: AiConsultationRead) => {
+  try {
+    const { data: todayCheckin, error: todayCheckinError } = await supabase
+      .from("user_performance_checkins")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("checkin_date", todayStr)
+      .maybeSingle();
+    const response = await fetch(`/api/performance/analyze?date=${todayStr}`);
+    if (response.ok) {
+      const data = await response.json();
+      read.place(KEY_PERFORMANCE, () =>
+        setPerformanceAnalysis((prev) => ({
+          ...prev,
+          eligible: data.eligible || false,
+          eligibilityReason: data.eligibilityReason || null,
+          nextAction: data.analysis?.nextAction || null,
+          recommendations: data.analysis?.recommendations || [],
+        })),
+      );
+    }
+    // 取り直しで今日のチェックインを読めなかったときは、今のチェックインを残す (今の checkinToPlace。チェックイン済みを未記入に戻さない)
+    if (!(read.mode === "refetch" && todayCheckinError)) {
+      read.place(KEY_TODAY_CHECKIN, () => setPerformanceAnalysis((prev) => ({ ...prev, todayCheckin })));
+    }
+  } catch (e) {
+    console.error("Performance analysis fetch error:", e);
+  }
+};
 
 /** 取り直し: 同じ取り直しの読み取りで分析を読み始める。栄養の分析は AI を付けない (#2201 U4)。読み込み中の印は立てない */
 const refetchHome = (read: AiConsultationRead) =>
@@ -1499,7 +1641,7 @@ const fetchHomeData = () =>
 // submitPerformanceCheckin の保存のあとの分析の読み直しは receiver.read({ loadingKeys: [KEY_PERFORMANCE] }, (read) => fetchPerformanceAnalysis(userId, read))
 ```
 
-`home/page.tsx` は `useAiConsultationDataRefetch` の呼び出しと、`useHomeData()` の戻り値から `refetch`・`aiConsultationWrites` を受け取るのを消す (`dismissAnnouncement`・`dismissSuggestion` は G3 のまま)。G3 の `aiAnalysisReadInLoadRef` (開いたときの読み込みの役を引き継いだ取り直しが AI つきで読むかの判断) は消す: 引き継ぐ回が無くなり、取り直しはいつも AI を付けず、ページの読み取りはいつも AI つきで分析を読む (AI つきを 2 回読まないのは、取り直しが AI を読まないことで守る)。`fetchNutritionAnalysis` の「分析できない」の AI の部分の消し方は、`read.place(KEY_NUTRITION_AI, …)` で同じ読み取りの世代として置く (今の「いま始めた読み取りとして消す」の `begin` は要らない。取り直し (世代が新しい) が消せば、それより前の AI つきの応答は `'superseded'`)。今の `fetchHomeData(options, mode, refetchTicket)` の引数 (`HomeFetchOptions` の `analysisWithoutAi`・`HomeFetchMode`・札) は消す (`HomeFetchOptions` は `fetchNutritionAnalysis` の引数に残す)。
+`home/page.tsx` は `useAiConsultationDataRefetch` の呼び出しと、`useHomeData()` の戻り値から `refetch`・`aiConsultationWrites` を受け取るのを消す (`dismissAnnouncement`・`dismissSuggestion` は G3 のまま)。G3 の `aiAnalysisReadInLoadRef` (開いたときの読み込みの役を引き継いだ取り直しが AI つきで読むかの判断) は消す: 引き継ぐ回が無くなり、取り直しはいつも AI を付けず、ページの読み取りはいつも AI つきで分析を読む (AI つきを 2 回読まないのは、取り直しが AI を読まないことで守る)。`fetchNutritionAnalysis` の「分析できない」の AI の部分の消し方は、点数を `'placed'` にできたとき (か AI つきの読み取りのとき) だけ `read.place(KEY_NUTRITION_AI, …)` で同じ読み取りの世代として置く (今の「いま始めた読み取りとして消す」の `begin` は要らない。取り直し (世代が新しい) が消せば、それより前の AI つきの応答は `'superseded'`。取り直しの点数が追い越されて置けなかったときは AI の部分も帯も消さない = 今と同じ)。読み取りの失敗と `data.success` でない応答では何も置かない (今の `settleKeepingAnalysis` の `KEY_NUTRITION_SCORE` への置きはやめ、同意の知らせの片づけは `KEY_NUTRITION_CONSENT_NOTICE` に分ける。§6.2・S-28)。パフォーマンスの分析は今日のチェックインを `KEY_TODAY_CHECKIN` に分け、分析が非 ok のときは `KEY_PERFORMANCE` に置かない。返す `performanceAnalysis` の形 (`todayCheckin` を含む) は変えない (置く鍵が 2 つになるだけ)。今の `fetchHomeData(options, mode, refetchTicket)` の引数 (`HomeFetchOptions` の `analysisWithoutAi`・`HomeFetchMode`・札) は消す (`HomeFetchOptions` は `fetchNutritionAnalysis` の引数に残す)。
 
 ### 7.6 家族・譲渡の画面の差分 (段 C。`family/dashboard` の例。members・members/[id]・family/transfer-accept も同じ形。org/transfer-accept は末尾)
 
@@ -1546,9 +1688,13 @@ const readDashboard = useCallback(async (read: AiConsultationRead): Promise<void
       return;
     }
     // …group・members・names を今までどおり読み (error を受け取る)…
+    // 取り直しで名前の API を読めなかった: 何も置かない (出ている群・一覧・名前を残す。「名前未設定」に落とさない #2201 U1 をこの形で守る。
+    // 今の keepShownFamilyMemberNames で読めた一覧に今の名前を当てて置く形はやめる: 同じ鍵に置くと、先に始めた開いたときの名前つきの
+    // 応答が 'superseded' で捨てられる。§6.2・S-30。#2206 G1 R4)
+    if (!namesResult.ok && read.mode === "refetch") return;
     read.place(KEY_DASHBOARD, () => {
       setFamilyGroup(group as FamilyGroup);
-      setMembers((shown) => applyFamilyMemberNames(rows, namesResult.ok ? namesResult.names : read.mode === "refetch" ? keepShownFamilyMemberNames(rows, shown) : new Map()));
+      setMembers(applyFamilyMemberNames(rows, namesResult.ok ? namesResult.names : new Map()));
       setError(null);
       setLoadError(null);
     });
@@ -1565,9 +1711,87 @@ const loading = receiver.isLoading(KEY_DASHBOARD) || redirecting;
 const loadDashboard = useCallback(() => receiver.read({ loadingKeys: [KEY_DASHBOARD] }, readDashboard), [receiver, readDashboard]);
 ```
 
-`family/members`: `loadMembers` を同じ形 (`redirecting`・`isLoadingRef`・移る 2 か所の `place`) にし、`refetchAfterAiConsultation` の `writeInFlightRef` / `setActionLoading(AI_CONSULTATION_REFETCH_ACTION)` を消し、除名・脱退の書き込みを `beginWrite` で囲む (今の `writeInFlightRef` は二重押しの守りとして残すが、名前を `busyRef` に替える。P5 が受け手の `writeInFlightRef` を数えるため。hook には渡さない)。脱退の成功・通信の失敗のあとの `router.replace('/family/setup')` は書き込みの関数の中 (読み取りの経路でない) なので今の字面のまま。`members/[id]`: `readMember` を同じ形 (`redirecting`・`isLoadingRef`・移る 2 か所) にする。`busyRef` は残し、役割の変更・共有の設定・除名などの書き込みを `beginWrite` で囲む。`family/transfer-accept`: `fetchProposal` を同じ形 (`redirecting`・`isLoadingRef`・ログインへの移動 1 か所) にし、承諾・拒否の書き込みを `beginWrite` で囲む。通信エラーのあとの読み直し `fetchProposal(beginFetch(), 'mount')` は `receiver.read({}, fetchProposal)` (失敗の表示は `read.mode === 'mount'` で出る)。`aiRefetching` の state と「読み直し中」のボタンの無効化は消す (3 画面とも)。
+家族・譲渡の 5 画面の読み取りの関数は、どれも全部を読んでから最後に 1 回だけ置く (§6.2): 今の途中の段の `if (ticket.isLatest()) setCurrentUserId(user.id);` (family/members・family/members/[id]・family/transfer-accept・org/transfer-accept) と `if (ticket.isLatest()) setFamilyId(profile.family_id);` (family/members/[id]) は消し、その値は成功の `apply` と「見つからない」(群が無い・メンバーが無い・提案が無い) の `apply` の中で置く (読み込みの失敗の表示・移る `apply` には入れない。自分の id・family_id を使う描画は成功の画面だけなので、見え方は今と同じ)。取り直しで名前の API (と family/members/[id] の子供の同意の記録) を読めなかったら何も置かない (dashboard と同じ)。`family/members/[id]` の形:
 
-`org/transfer-accept`: `fetchProposal` のログインへの移動を `read.place(KEY_PROPOSAL, () => router.push(…))` にするだけで、`redirecting`・`isLoadingRef` は持たない (今も `loadPage` の `finally` の `settleLoading` で、移っても読み込み中の表示を下ろす。設計後も移る `place` が鍵を下ろす = 今と同じ)。ほかは `family/transfer-accept` と同じ (`busyRef` は残す・承諾・拒否を `beginWrite` で囲む・`aiRefetching` を消す)。
+```ts
+// tsc:skip place=src/app/(main)/family/members/[id]/page.tsx
+const KEY_MEMBER = "member";
+
+const readMember = useCallback(async (read: AiConsultationRead): Promise<void> => {
+  const loadFailed = () => {
+    if (read.mode === "mount") read.place(KEY_MEMBER, () => setLoadError(MEMBER_DETAIL_LOAD_ERROR));
+  };
+  try {
+    const signedIn = await readSignedInUser(supabase);
+    if (signedIn.kind === "load-failed") return loadFailed();
+    if (signedIn.kind === "signed-out") {
+      read.place(KEY_MEMBER, () => {
+        if (isLoadingRef.current(KEY_MEMBER)) setRedirecting(true);
+        router.push(`/login?next=${encodeURIComponent(`/family/members/${memberId}`)}`);
+      });
+      return;
+    }
+    const { user } = signedIn;
+    // 自分の id・family_id はここでは置かない (最後の apply でまとめて置く。途中で置くと、その時点で KEY_MEMBER の読み込み中の印が下りて
+    // 移るときに redirecting が立たず、置いた世代も進む。§6.2・S-30)
+    const { data: profile, error: profileError } = await supabase.from("user_profiles").select("family_id").eq("id", user.id).single();
+    if (profileError) return loadFailed();
+    if (!profile?.family_id) {
+      read.place(KEY_MEMBER, () => {
+        if (isLoadingRef.current(KEY_MEMBER)) setRedirecting(true);
+        router.replace("/family/setup");
+      });
+      return;
+    }
+    const familyIdRead: string = profile.family_id;
+    const { data: memberData, error: memberError } = await supabase.from("family_members")/* …今と同じ select・eq・.single() … */;
+    if (isLoadFailure(memberError)) return loadFailed();
+    if (!memberData) {
+      read.place(KEY_MEMBER, () => {
+        setCurrentUserId(user.id);
+        setFamilyId(familyIdRead);
+        setError(MEMBER_NOT_FOUND_MESSAGE);
+        setLoadError(null);
+      });
+      return;
+    }
+    const namesResult = await fetchFamilyMemberNamesResult();
+    let consentRecord: ParentalConsentRecord | null = null;
+    /** 子供の同意の記録を読めなかったか (今の keepShownConsent の判定から mode を外したもの) */
+    let consentReadFailed = false;
+    if (memberData.role === "child") {
+      const { data: consentData, error: consentError } = await orderListBy(/* …今と同じ… */).limit(1).maybeSingle();
+      consentRecord = (consentData as ParentalConsentRecord | null) ?? null;
+      consentReadFailed = Boolean(consentError);
+    }
+    const { data: myMember, error: myMemberError } = await supabase.from("family_members")/* …今と同じ (自分の active な行の role) … */;
+    if (myMemberError) return loadFailed();
+    // 取り直しで名前の API か同意の記録を読めなかった: 何も置かない (出ている名前・同意カードを残す。#2201 U1。§6.2)
+    if (read.mode === "refetch" && (!namesResult.ok || consentReadFailed)) return;
+    const rows = [memberData as FamilyMember];
+    read.place(KEY_MEMBER, () => {
+      setCurrentUserId(user.id);
+      setFamilyId(familyIdRead);
+      setMember(applyFamilyMemberNames(rows, namesResult.ok ? namesResult.names : new Map())[0]);
+      setShareMeals(memberData.share_meals);
+      setShareHealth(memberData.share_health);
+      setShareMenu(memberData.share_menu);
+      // ページの読み取りで同意の記録を読めなかったときは今と同じく null (カードを出さない)
+      if (memberData.role === "child") setConsent(consentRecord);
+      setCurrentRole(myMember?.role ?? null);
+      setError(null);
+      setLoadError(null);
+    });
+  } catch (loadFailure) {
+    console.error("[family/members/[id]] load error:", loadFailure);
+    loadFailed();
+  }
+}, [supabase, router, memberId]);
+```
+
+`family/members`: `loadMembers` を同じ形 (`redirecting`・`isLoadingRef`・移る 2 か所の `place`・最後の 1 回の `place` に `setCurrentUserId`・群・一覧と名前・`setCurrentRole`) にし、`refetchAfterAiConsultation` の `writeInFlightRef` / `setActionLoading(AI_CONSULTATION_REFETCH_ACTION)` を消し、除名・脱退の書き込みを `beginWrite` で囲む (今の `writeInFlightRef` は二重押しの守りとして残すが、名前を `busyRef` に替える。P5 が受け手の `writeInFlightRef` を数えるため。hook には渡さない)。脱退の成功・通信の失敗のあとの `router.replace('/family/setup')` は書き込みの関数の中 (読み取りの経路でない) なので今の字面のまま。`members/[id]`: `readMember` を上のブロックの形 (`redirecting`・`isLoadingRef`・移る 2 か所・最後の 1 回の `place`) にする。`busyRef` は残し、役割の変更・共有の設定・除名などの書き込みを `beginWrite` で囲む。`family/transfer-accept`: `fetchProposal` を同じ形 (`redirecting`・`isLoadingRef`・ログインへの移動 1 か所・`setCurrentUserId` は提案を置く最後の `apply` と「提案が無い」の `apply` の中) にし、承諾・拒否の書き込みを `beginWrite` で囲む。通信エラーのあとの読み直し `fetchProposal(beginFetch(), 'mount')` は `receiver.read({}, fetchProposal)` (失敗の表示は `read.mode === 'mount'` で出る)。`aiRefetching` の state と「読み直し中」のボタンの無効化は消す (3 画面とも)。
+
+`org/transfer-accept`: `fetchProposal` のログインへの移動を `read.place(KEY_PROPOSAL, () => router.push(…))` にし、途中の段の `setCurrentUserId` を最後の `apply` (と「提案が無い」の `apply`) へ移すだけで、`redirecting`・`isLoadingRef` は持たない (今も `loadPage` の `finally` の `settleLoading` で、移っても読み込み中の表示を下ろす。設計後も移る `place` が鍵を下ろす = 今と同じ)。ほかは `family/transfer-accept` と同じ (`busyRef` は残す・承諾・拒否を `beginWrite` で囲む・`aiRefetching` を消す)。
 
 ### 7.7 機械の番兵 `tests/ai-consultation-receiver-placement-guard-2206.test.ts` (新。骨格と規則の定義。構文木の補助は今の番兵の `walk`・`callsTo`・関数のたどりをそのまま移す)
 
@@ -1708,7 +1932,7 @@ describe('受け手は place の中だけで置き、書き込みは窓の中だ
 | `receiver.beginWrite()` | `() => () => void` | 書き込みの窓を開ける。返す関数を `finally` で呼ぶ (2 回目は何もしない)。開いている間、取り直しは止まり、`html[data-ai-consultation-writes]` が付く。全部閉じたら止めた通知を 1 回取り直す |
 | `receiver.isLoading(key)` | `(key: string) => boolean` | その鍵の読み込み中の表示を出すか。鍵の表 (ref) をそのまま読む (参照は一生同じ)。鍵の表の中身が変わるたびに受け手を描画し直す (版数の state)。描画の中で直に呼ぶ (`useMemo` / `useCallback` の中で呼んで `receiver` だけを依存にしない)。`place(key, apply)` の `apply` の中で呼ぶと、その鍵を下ろす前の値を返す (hook は `apply` が戻ってから印を下ろす。家族の画面の移動が使う。§6.8・T-27) |
 | `read.mode` | `'mount' or 'refetch'` | ページの読み取りは `'mount'`、取り直しは `'refetch'`。ページは失敗の表示 (`'mount'` だけ置く)・AI を呼ぶか (/home)・名前を残すか (家族) に使う |
-| `read.place(key, apply)` | `(key: string, apply: () => void) => AiConsultationPlaceResult` | 順序 (鍵ごとに置いた世代より新しい or 同じ読み取り) → (`'refetch'` だけ) 番兵・書き込み中・始めたあとの書き込み → `apply()` → 置いた世代を進める・その鍵の読み込み中を下ろす。hook が外れていれば `'superseded'`。`apply` が投げたら置いた世代は進まず、例外はそのまま |
+| `read.place(key, apply)` | `(key: string, apply: () => void) => AiConsultationPlaceResult` | 順序 (鍵ごとに置いた世代より新しい or 同じ読み取り。受け手は 1 つの読み取りで 1 つの鍵に 1 回だけ置く: ページ側の契約 8) → (`'refetch'` だけ) 番兵・書き込み中・始めたあとの書き込み → `apply()` → 置いた世代を進める・その鍵の読み込み中を下ろす。hook が外れていれば `'superseded'`。`apply` が投げたら置いた世代は進まず、例外はそのまま |
 | `AI_CONSULTATION_WRITES_ATTRIBUTE` | `'data-ai-consultation-writes'` | 書き込みが 1 つでも進んでいる間、`document.documentElement` に付く (値は全受け手の合計)。モバイルの `webViewBridge.ts` が同じ文字列を持つ |
 | `aiConsultationDocumentWriteCountForTests()` | `() => number` | テスト用 |
 
@@ -1720,6 +1944,8 @@ describe('受け手は place の中だけで置き、書き込みは窓の中だ
 4. 書き込み (GET でない送信) は全部 `beginWrite` の窓の中 (§9.1。例外は §9.2 の閉じた一覧だけ)。窓の中では楽観的な更新を置いてよい。
 5. 読み込み中の表示は `isLoading(key)`。ページの `loading` の state を持たない。今の読み込み中の初期値が true の受け手は `initialLoadingKeys` で同じ鍵を渡し、開いたときの読み取りの `loadingKeys` にも入れる (§9.3)。 読み込み中だけの鍵 (データを置かない鍵) を立てた読み取りの終わりより前に下ろしたいときは、`read.place(鍵, () => undefined)` で置く (置いた鍵は立て主を問わず下りる。使うのは献立表の `releaseWeekLoadingIfShown` と /home の取り直しの終わり (`KEY_HOME_LOADING`) だけ。§6.4)。
 6. 旧 API の識別子を使わない。
+7. 鍵に置くのは、その鍵の中身を全部読めた応答だけ。取り直し (と `keepOnFailure` のページの読み取り) が一部だけ読めたとき、読めなかった部分を今の表示から写して (`prev` を残す関数形の setter・`keepShown…`) 同じ鍵に置かない (置かないことで今の表示を残す)。読めた部分だけを置くなら、その部分を別の鍵にする。取り直しが失敗でも置くもの (/home の同意の知らせ) は成功の応答と別の鍵にし、読み込み中の鍵にしない (§6.2)。
+8. 1 つの読み取りは 1 つの鍵に 1 回だけ置く (全部を読んでから 1 つの `apply`。途中の段の値を先に置かない。成功・見つからない・`'mount'` の失敗の表示・移る、の分かれ道はそれぞれがその読み取りの最後の `place`)。hook は同じ読み取りの 2 回目の `place` も通す (T-6) が、受け手はこれに頼らない (§6.2)。7・8 は番兵 P1〜P6 では数えない (字面で見分けられない) ので、描画のテスト (S-28〜S-30 の it。§13.2) が確かめる。
 
 Zod のスキーマ・DB の列・API の route・エラーコード: 本書は増やさない (該当なし)。
 
@@ -1731,20 +1957,20 @@ Zod のスキーマ・DB の列・API の route・エラーコード: 本書は�
 |---|---|---|---|---|---|---|---|---|
 | 1 | /badges | B | `badges` | `setBadges`・`setEarnedCount`・`setNewlyEarnedBadges` (お祝いの `setTimeout` もこの中) | 開いたとき `[badges]` | 無し | 失敗は今までどおり表示を変えない (`console.error` のみ) | `useEffect` の取得を関数に出す |
 | 2 | /comparison | B | `rankingsKey(期間)` (= `rankings:<weekly or monthly>`) | `setData(result)` / 失敗は `mode 'mount'` で `setData(null)`。どちらも `apply` の中で `periodTypeRef.current === 期間` を見る (違えば何も置かない) | 開いたとき・期間の切り替え `[rankingsKey(期間)]`。スピナーは `isLoading(rankingsKey(periodType))` | 無し | 失敗: `'mount'` は空にして失敗の表示、`'refetch'` は残す | 読み取りの関数は `readRankings(read, period, signal?)` (`useCallback`・依存なし。ref と setter だけを使う)。`periodTypeRef` は描画のたびに `periodType` を写す。`useState` の初期値は `INITIAL_PERIOD_TYPE`。取り直しは `useAiConsultationReceiver((read) => readRankings(read, periodTypeRef.current), …)` (中断の印なし)。期間の effect (`[periodType, receiver, readRankings]`) は `AbortController` を作り `receiver.read({ loadingKeys: [rankingsKey(periodType)] }, (read) => readRankings(read, periodType, controller.signal))`、後片付けで `abort()`。各 `await` のあと (失敗の表示を置く前を含む) の `signal?.aborted` の早い抜けも残す (G-24 の中断の it のため。古い期間の応答を置かない守りの本体は鍵と `apply` の中の ref)。取り直しは期間の切り替えで中断しない (鍵と ref で古い期間を置かない。S-20)。同じ描画で鍵と期間が変わる問題は消える (取り直しは別の読み取り) |
-| 3 | /family/dashboard | C | `dashboard` | 群と一覧と名前・`setError`・`setLoadError`・移動 (`router.replace('/family/setup')`・ログインへの `push`。移る `apply` の中で `isLoadingRef.current(KEY_DASHBOARD)` が true なら先に `setRedirecting(true)`) | 開いたとき・「再試行」 `[dashboard]`。描画の読み込み中は `isLoading(KEY_DASHBOARD) \|\| redirecting` (移っている間も読み込み中。今と同じ) | 無し (書き込みの無い画面) | `loadFailed` は `'mount'` だけ置く。名前の API の失敗は `'refetch'` なら今の名前 | §7.6。`{ redirecting }` の戻り値と `settleLoading` は消す |
-| 4 | /family/members | C | `members` | 3 と同じ (移る 2 か所も同じ形・`redirecting`) + `setCurrentUserId`・`setCurrentRole` | 同上 | 除名・脱退 (`POST`)。今の `writeInFlightRef` は二重押しの守りとして残すが、名前を `busyRef` に替える (members/[id]・transfer-accept と同じ名前。P5 が受け手の `writeInFlightRef` の識別子を数えるため)。hook には渡さない | 同上 | 取り直し中のボタンの無効化 (`AI_CONSULTATION_REFETCH_ACTION`) を消す |
-| 5 | /family/members/[id] | C | `member` | メンバー・自分の役割・同意の記録・`setFamilyId`・移動 (3 と同じ形・`redirecting`) | 同上 | 役割の変更・共有の設定・除名などの全部の `POST` / `PATCH` / `DELETE` | 同上 | `busyRef` は残す。`aiRefetching` を消す |
-| 6 | /family/transfer-accept/[proposal_id] | C | `proposal` | 提案・`setNotFound`・`setLoadError`・ログインへの移動 (3 と同じ形・`redirecting`) | 同上。通信エラーのあとの読み直しは `[]` | 承諾・拒否 (`POST`) | 同上 | 同上 |
+| 3 | /family/dashboard | C | `dashboard` | 群と一覧と名前・`setError`・`setLoadError`・移動 (`router.replace('/family/setup')`・ログインへの `push`。移る `apply` の中で `isLoadingRef.current(KEY_DASHBOARD)` が true なら先に `setRedirecting(true)`) | 開いたとき・「再試行」 `[dashboard]`。描画の読み込み中は `isLoading(KEY_DASHBOARD) \|\| redirecting` (移っている間も読み込み中。今と同じ) | 無し (書き込みの無い画面) | `loadFailed` は `'mount'` だけ置く。`'refetch'` で名前の API を読めなければ何も置かない (今の群・一覧・名前を残す。§6.2・S-30) | §7.6。`{ redirecting }` の戻り値と `settleLoading` は消す |
+| 4 | /family/members | C | `members` | 3 と同じ (移る 2 か所も同じ形・`redirecting`) + `setCurrentUserId`・`setCurrentRole` (最後の 1 回の `apply` の中。`setCurrentUserId` は群が無いときの `apply` にも入れる。途中の段で置かない。§7.6) | 同上 | 除名・脱退 (`POST`)。今の `writeInFlightRef` は二重押しの守りとして残すが、名前を `busyRef` に替える (members/[id]・transfer-accept と同じ名前。P5 が受け手の `writeInFlightRef` の識別子を数えるため)。hook には渡さない | 同上 | 取り直し中のボタンの無効化 (`AI_CONSULTATION_REFETCH_ACTION`) を消す |
+| 5 | /family/members/[id] | C | `member` | メンバー・自分の役割・同意の記録・`setCurrentUserId`・`setFamilyId` (成功とメンバーが無いときの `apply` の中。途中の段で置かない)・移動 (3 と同じ形・`redirecting`) | 同上 | 役割の変更・共有の設定・除名などの全部の `POST` / `PATCH` / `DELETE` | 同上 + `'refetch'` で名前の API か子供の同意の記録を読めなければ何も置かない (今の名前と同意カードを残す) | §7.6 のブロック。`busyRef` は残す。`aiRefetching` を消す |
+| 6 | /family/transfer-accept/[proposal_id] | C | `proposal` | 提案・`setNotFound`・`setLoadError`・`setCurrentUserId` (提案を置く `apply` と提案が無いときの `apply` の中。途中の段で置かない)・ログインへの移動 (3 と同じ形・`redirecting`) | 同上。通信エラーのあとの読み直しは `[]` | 承諾・拒否 (`POST`) | 同上 | 同上 |
 | 7 | /org/transfer-accept/[proposal_id] | C | `proposal` | 6 と同じ。ただし移動の `apply` はログインへの `push` だけ (`redirecting` を持たない。移っても読み込み中の表示を下ろす = 今の `loadPage` の `finally` の `settleLoading` と同じ) | 同上 | 承諾・拒否 | 同上 | 同上 |
 | 8 | /health/blood-tests | B | `sex` | `setSex` | 無し (ページの loading は検査の結果の読み込みで、取り直しの鍵ではない) | 無し (この部品の範囲に書き込みは無い) | — | `fetchSex(read)` |
 | 9 | /health/checkups/[id] (CheckupDetailClient) | B | `sex` | `setSex` | 無し | 削除 (`DELETE`) は窓で囲む (受け手のファイルにある書き込みなので P2 の対象) | — | 削除の確認が出ていても読み直してよいのは今までどおり (番兵は `role="dialog"` で止めるので、確認がモーダルなら止まる。挙動の変化は描画のテストで確かめる) |
 | 10 | /health/goals | B | `goals` | `setGoals` | 開いたとき・作成・編集・削除のあと `[goals]` (今までどおりスピナー) | 作成・編集・削除 (`POST` / `PATCH` / `DELETE`) | 失敗は表示を変えない | 引き継いだ回の番兵の漏れは構造で消える |
-| 11 | /health/graphs | B | `graphsKey(期間)` (= `graphs:<week・month・3months・year の Period の値>`) | `setRecords` (読めたときだけ)・`setTargetWeight`。`apply` の中で `periodRef.current === 期間` を見る (違えば何も置かない) | 開いたとき・期間の切り替え `[graphsKey(期間)]`。スピナーは `isLoading(graphsKey(period))` | 無し | `keepShownRecords = read.mode === 'refetch' && (…非 ok)`。Realtime の購読からの読み直しは `receiver.read({}, (read) => fetchData(read, { keepOnFailure: true }))` (今の `refetchReadMode()` の `'refetch'` と同じ扱い) | `fetchData` は読み始めに `const requestedPeriod = period` を取り、置く鍵と `apply` の中の比べにそれを使う (`useCallback` の依存の `period` は今までどおり。取り直しは描画のたびに最新の `fetchData` を呼ぶので今の期間を読む)。`periodRef` は描画のたびに `period` を写す。3 つの読み取りは今の `fetchOrNull`・`readOkJson` (G5) のまま投げずに読み、目標は記録と別に読めたときだけ置く (G5 の「1 つの本文が壊れても読めた本文を置く」はそのまま) |
+| 11 | /health/graphs | B | `graphsKey(期間)` (= `graphs:<week・month・3months・year の Period の値>`)・`targetWeight` (`KEY_TARGET_WEIGHT`。期間に依らない目標の線) | `graphsKey(期間)`: `setRecords` (`keepShownRecords` でないときだけ。`apply` の中で `periodRef.current === 期間` を見る (違えば何も置かない))。`KEY_TARGET_WEIGHT`: `setTargetWeight` (目標を読めたときだけ。期間を見ない)。記録と目標の鍵を分けるのは、取り直しが記録を読めず目標だけ読めたときに記録の鍵を進めないため (§6.2・S-29) | 開いたとき・期間の切り替え `[graphsKey(期間)]`。スピナーは `isLoading(graphsKey(period))` | 無し | `keepShownRecords = (read.mode === 'refetch' \|\| keepOnFailure) && (recordsBody === null \|\| checkupsBody === null)` (取り直しと Realtime の読み直しで記録か健診を読めなければ、記録の鍵に置かない)。Realtime の購読からの読み直しは `receiver.read({}, (read) => fetchData(read, { keepOnFailure: true }))` (今の `refetchReadMode()` の `'refetch'` と同じ扱い) | `fetchData` は読み始めに `const requestedPeriod = period` を取り、置く鍵と `apply` の中の比べにそれを使う (`useCallback` の依存の `period` は今までどおり。取り直しは描画のたびに最新の `fetchData` を呼ぶので今の期間を読む)。`periodRef` は描画のたびに `period` を写す。3 つの読み取りは今の `fetchOrNull`・`readOkJson` (G5) のまま投げずに読み、目標は記録と別に読めたときだけ置く (G5 の「1 つの本文が壊れても読めた本文を置く」はそのまま) |
 | 12 | /health | C | `today`・`streak`・`goals`・`selectedDateKey(日)` (= `selectedDate:<日>`) | 今日と昨日の記録と `setQuickWeight` / 連続記録と週の記録 / 目標 / 選んだ日の記録 (`apply` の中で `selectedDateRef.current === date` を見る) | 開いたとき・記録の保存のあと `[today, streak, goals]` (スピナーは 3 つのどれかが立っている間)。日を選んだとき `[selectedDateKey(日)]` (パネルの印 `setLoadingSelectedDate` を `isLoading` に) | 記録の保存 (`POST /api/health/records/quick`) | 失敗は表示を変えない | 取り直しは 3 つの鍵と、出している日のパネル (`selectedDateRef`) を同じ `read` で読む |
 | 13 | /health/streaks | B | `streak` | `setStreak`・`setNextBadge`・`setDaysToNextBadge`・`setWeeklyRecords`・`setError` | 開いたとき `[streak]` | 無し | 失敗は `'mount'` だけ `setError` | — |
-| 14 | /home (`useHomeData.ts`) | D | §7.5 の 16 個 (置く鍵 15 と、読み込み中だけの鍵 `homeLoading`) | §7.5 | 主のデータ (開いたとき・ログインの状態の変化・巻き戻し・献立の変更の実行のあと) `[homeLoading]` (全画面。今と同じく主のデータの読み取りの終わりで下りる。取り直しは主のデータを読み終えたら `place(KEY_HOME_LOADING, () => undefined)` で下ろす)。分析は主のデータのあとに分析ごとのページの読み取りで `[nutritionScore]`・`[performance]`。チェックインの保存のあとの分析は `[performance]` | 完了の切り替え・活動量 (今までどおり) + チェックインの保存・献立の変更の実行の `POST` | 取り直し (`refetchHome`) は栄養の分析を AI を付けずに読む。`'refetch'` の失敗は集計の今の値を残す。例外: 取り直しは栄養の分析の読み取りが失敗しても `aiSkipped` の `consent_required` を消す (G3。R-1) | `home/page.tsx` は hook を呼ばない。G3 の `suggestionBand`・`dismissedAnnouncementIdsRef`・`HOME_REFETCH_AUTH_EVENTS`・`aiSkippedAfterRead` はそのまま `apply` の中で使い、`aiAnalysisReadInLoadRef` は消す (§7.5) |
+| 14 | /home (`useHomeData.ts`) | D | §7.5 の 18 個 (置く鍵 17 と、読み込み中だけの鍵 `homeLoading`) | §7.5 | 主のデータ (開いたとき・ログインの状態の変化・巻き戻し・献立の変更の実行のあと) `[homeLoading]` (全画面。今と同じく主のデータの読み取りの終わりで下りる。取り直しは主のデータを読み終えたら `place(KEY_HOME_LOADING, () => undefined)` で下ろす)。分析は主のデータのあとに分析ごとのページの読み取りで `[nutritionScore]`・`[performance]`。チェックインの保存のあとの分析は `[performance]` | 完了の切り替え・活動量 (今までどおり) + チェックインの保存・献立の変更の実行の `POST` | 取り直し (`refetchHome`) は栄養の分析を AI を付けずに読む。`'refetch'` の失敗は集計の今の値を残す。例外: 取り直しは栄養の分析の読み取りが失敗しても `aiSkipped` の `consent_required` を消す (G3。R-1。点数の鍵と別の `KEY_NUTRITION_CONSENT_NOTICE` に置く)。パフォーマンスの分析が非 ok なら `KEY_PERFORMANCE` に置かず、読めた今日のチェックインだけを `KEY_TODAY_CHECKIN` に置く (§7.5・S-28) | `home/page.tsx` は hook を呼ばない。G3 の `suggestionBand`・`dismissedAnnouncementIdsRef`・`HOME_REFETCH_AUTH_EVENTS` はそのまま `apply` の中で使い、`aiSkippedAfterRead` の決まり (取り直しは `consent_required` だけを消す) は `KEY_NUTRITION_CONSENT_NOTICE` の `apply` に移し、`aiAnalysisReadInLoadRef` は消す (§7.5) |
 | 15 | /meals/[id] | B | `mealKey(id)` (= `meal:<id>`)・`servings` | `setMeal` (`apply` の先頭で `deletedMealIdRef.current === id` なら何も置かない (削除した食事。S-14)、続けて `params.id === id` を見る。404 は `setMeal(null)`)・`setServingsConfig` | 開いたとき・id の切り替え `[mealKey(id)]` | 完了の切り替え (今までどおり) + 削除 (`DELETE` の送信の間だけ窓。移動は今までどおり待たない `setTimeout(() => router.push('/menus/weekly'), MEAL_DELETE_NAVIGATE_DELAY_MS)` で、窓は finally で閉じる) | 失敗: `'mount'` は `setMeal(null)` (今までどおり)、`'refetch'` は 404 だけ `setMeal(null)`。どちらも削除した食事の鍵には置かない | 2 つの `useEffect` を 1 つの読み取りの関数にまとめ、`[params.id]` で `receiver.read`。`handleDelete` は DELETE が ok なら `deletedMealIdRef.current = params.id` (`useRef<string \| null>(null)`。ページを離れるまで戻さない) を、削除の確認を閉じる前に書く。窓を移動の完了まで開けたままにしない (移動が終わらないと `html[data-ai-consultation-writes]` が残り、モバイルの読み込み直しが止まり続けるため。削除のあとの取り直しは止めずに流し、置かない守りは `deletedMealIdRef` が受け持つ) |
-| 16 | /menus/weekly | E | `plan:<週>`・`mealDates:<月>`・`shoppingList`・`pantry`・`settings`・`family` (置く鍵) と `weekLoading` (読み込み中だけの鍵) | §7.4 | 週の読み込み `[weekLoading]`。人数の設定 `[settings]` | §9.1 の献立表の書き込み 29 か所 (今の窓 (19 個) の中の 20 か所 + 新たに 8 つの関数で囲む 9 か所)。例外は §9.2 の 4 か所 | 週の読み込み (`fetchPlan`) の失敗は `'mount'` で `setCurrentPlan(null)` (`apply` の中で週を見る。`placeWeekReadFailure`)。取り直し・`refreshMealPlan`・書き込みのあとの読み直しの失敗は何も置かない (`readDisplayedWeek` は `null` を返すだけ) | §6.7・§7.4 (置き方の表と `WEEK_PLACEMENT_*`)。生成の監視の入口 3 つは読み取りの経路の外 (§6.6・§9.2)。`ProfileReminderBanner` は自分の受け手 |
+| 16 | /menus/weekly | E | `plan:<週>`・`mealDates:<月>`・`shoppingList`・`pantry`・`settings`・`family` (置く鍵) と `weekLoading` (読み込み中だけの鍵) | §7.4 | 週の読み込み `[weekLoading]`。人数の設定 `[settings]` | §9.1 の献立表の書き込み 29 か所 (今の窓 (19 個) の中の 20 か所 + 新たに 8 つの関数で囲む 9 か所)。例外は §9.2 の 4 か所 | 週の読み込み (`fetchPlan`) の失敗は `'mount'` で `setCurrentPlan(null)` (`apply` の中で週を見る。`placeWeekReadFailure`)。取り直し・`refreshMealPlan`・書き込みのあとの読み直しの失敗は何も置かない (`readDisplayedWeek` は `null` を返すだけ)。家族 (`loadFamilyData`) は全部を読んでから `KEY_FAMILY` に 1 回だけ置き、`'refetch'` でプロフィール・家族の一覧・名前の API のどれかを読めなければ何も置かない (`'mount'` の失敗は今と同じ。§7.4・S-30) | §6.7・§7.4 (置き方の表と `WEEK_PLACEMENT_*`)。生成の監視の入口 3 つは読み取りの経路の外 (§6.6・§9.2)。開いたときの 3 つの effect (`fetchUserSettings`・`fetchPantry`・`loadFamilyData`) と家族の切り替えの読み直しは `receiver.read` で呼び、effect は `receiver` の宣言のあとに置く (§7.4)。`ProfileReminderBanner` は自分の受け手 |
 | 17 | /pantry | B | `items` | `setItems` | 開いたとき `[items]`。保存のあとは `[]` | 削除・手入力の追加と更新・写真の保存・全て置き換え | 失敗は表示を変えない | §7.3 |
 | 18 | /profile | B | `profile`・`badgeCount`・`nutritionTarget` | `setUser`・`setProfileLoadFailed`・`setProfile`・`setEditForm` / `setBadgeCount` / `setDbNutritionTarget` | 開いたとき・「再読み込み」 `[profile]` (`isLoading(profile)` が `isLoading` の state の代わり。編集のモーダルの「読み込みが終わるまで入力欄を出さない」もこれで)。「再読み込み」のボタンは `receiver.read({ loadingKeys: [KEY_PROFILE] }, readProfile)` を呼ぶ (G5 の `profileReloadKey` の state は消す) | `handleSave` (`PUT`。応答の `setProfile` / `setEditForm` も窓の中。先頭の `if (profileLoadFailed) return;` は窓を開ける前のまま) | `'mount'` の失敗 (ログインを確かめられない・プロフィールの読み取りの error・投げた) は `setProfileLoadFailed(true)` を置く (ログインを確かめられないときは `setUser(user)` も)。`'refetch'` の失敗は何も置かない (今の表示と失敗の印を残す)。読めたら (どちらの mode でも) `setProfileLoadFailed(false)` を同じ `apply` で置く | G5 の挙動 (`tests/health-profile-load-edges-2206.test.tsx` の /profile の節) を変えない。置く順: 称号の数 (`badgeCount`)・栄養目標 (`nutritionTarget`) を読んで置いてから、最後に `profile` の鍵を置く (今の読み込み中の表示は 3 つを読み終えるまで立っているので、`isLoading(KEY_PROFILE)` が下りる時点を今と同じにする。プロフィールを先に読むのは今と同じで、置く時点だけを後ろにする) |
 | 19 | /profile/nutrition-targets | B | `targetsPage` (1 つ。プロフィールと栄養目標と失敗の表示を同じ鍵で置く) | `setProfile` (読めたとき)・`setTargets` (読めたとき)・`setError(null)` を 1 つの `apply` で / 失敗の表示 `setError(…)` | 開いたとき `[targetsPage]` (今の `loading` は最初の読み込みだけ。再設定の保存のあと・取り直しはスピナーを出さない = 今と同じ) | 無し (再設定の部品 21 が持つ) | 読み取りの関数 `readTargetsPage(read, { keepOnFailure })`。`keepShown = read.mode === 'refetch' \|\| keepOnFailure` (今の `isRefetch`)。`keepShown` なら: ログインを確かめられない・片方でも読めない・投げた ときは何も置かない (両方読めたときだけ 3 つを置く)。`keepShown` でなければ: 読めた方を置いて `setError(null)` (片方は '-' のまま。今と同じ)、投げたら `setError('データの取得に失敗しました')`。ログインしていない (`!user` で error 無し) は mode によらず `setError('ログインが必要です')` (今と同じ) | 再設定の保存のあとの読み直し: `<NutritionTargetPlanner onSaved={handlePlannerSaved} />` の `handlePlannerSaved` が `receiver.read({}, (read) => readTargetsPage(read, { keepOnFailure: true }))` を呼ぶ (G5 の `plannerSavedKey`・`handledPlannerSavedKeyRef` の state と ref は消す)。取り直しは `useAiConsultationReceiver((read) => readTargetsPage(read, { keepOnFailure: false }), …)` (mode が `'refetch'` なので残す) |
@@ -1853,7 +2079,7 @@ Zod のスキーマ・DB の列・API の route・エラーコード: 本書は�
 
 ### 9.3 受け手ごとの最初の描画と数の表 (P6 の `RECEIVER_EXPECTATIONS` の正本)
 
-各段は自分の段の受け手の行を `RECEIVER_EXPECTATIONS` に足す (段 A は空)。P6 は表のファイルごとに「読み取りの経路の根 ≥ 1」「`place` の呼び出し ≥ 鍵の欄の数」「書き込み (P2 が数えたもの) = 書き込みの欄の数」を確かめ、表に無い受け手のファイル (`useAiConsultationReceiver(` を呼ぶもの) があれば赤。数は基点 origin/main `eb1ad85da` の数 (`9bff430c` で数えたものと同じ。/profile/nutrition-targets の鍵は G5 の「両方読めたときだけ置く」に合わせて 1 つ)。各段は、自分の段の受け手の行を枝を切った時点の origin/main で数え直し (§9.1 の列挙の規則)、送信が増減していたら実数に合わせて deviations に書く。
+各段は自分の段の受け手の行を `RECEIVER_EXPECTATIONS` に足す (段 A は空)。P6 は表のファイルごとに「読み取りの経路の根 ≥ 1」「`place` の呼び出し ≥ 鍵の欄の数」「書き込み (P2 が数えたもの) = 書き込みの欄の数」を確かめ、表に無い受け手のファイル (`useAiConsultationReceiver(` を呼ぶもの) があれば赤。数は基点 origin/main `eb1ad85da` の数 (`9bff430c` で数えたものと同じ。/profile/nutrition-targets の鍵は G5 の「両方読めたときだけ置く」に合わせて 1 つ。/health/graphs の鍵は記録と目標の 2 つ・`useHomeData.ts` の鍵は同意の知らせと今日のチェックインを分けて 18。§6.2)。各段は、自分の段の受け手の行を枝を切った時点の origin/main で数え直し (§9.1 の列挙の規則)、送信が増減していたら実数に合わせて deviations に書く。
 
 | ファイル | 段 | `initialLoadingKeys` (今の読み込み中の初期値が true のもの) | 鍵の欄の数 (`place` の下限) | 書き込み |
 |---|---|---|---|---|
@@ -1862,7 +2088,7 @@ Zod のスキーマ・DB の列・API の route・エラーコード: 本書は�
 | `health/blood-tests/page.tsx` | B | 無し (ページの `loading` は検査の結果の読み込みで、受け手の鍵ではない) | 1 | 0 |
 | `health/checkups/[id]/CheckupDetailClient.tsx` | B | 無し (同上) | 1 | 1 |
 | `health/goals/page.tsx` | B | `[KEY_GOALS]` | 1 | 3 |
-| `health/graphs/page.tsx` | B | `[graphsKey(INITIAL_PERIOD)]` (`INITIAL_PERIOD = 'month'`) | 1 | 0 |
+| `health/graphs/page.tsx` | B | `[graphsKey(INITIAL_PERIOD)]` (`INITIAL_PERIOD = 'month'`) | 2 | 0 |
 | `health/streaks/page.tsx` | B | `[KEY_STREAK]` | 1 | 0 |
 | `meals/[id]/page.tsx` | B | `[mealKey(params.id)]` | 2 | 2 |
 | `pantry/page.tsx` | B | `[KEY_ITEMS]` | 1 | 4 |
@@ -1876,7 +2102,7 @@ Zod のスキーマ・DB の列・API の route・エラーコード: 本書は�
 | `family/transfer-accept/[proposal_id]/page.tsx` | C | `[KEY_PROPOSAL]` | 1 | 2 |
 | `org/transfer-accept/[proposal_id]/page.tsx` | C | `[KEY_PROPOSAL]` | 1 | 2 |
 | `health/page.tsx` | C | `[KEY_TODAY, KEY_STREAK, KEY_GOALS]` | 4 | 1 |
-| `hooks/useHomeData.ts` | D | `[KEY_HOME_LOADING]` (栄養の分析・パフォーマンスの分析の読み込み中は今も初期値 false なので入れない) | 16 | 5 |
+| `hooks/useHomeData.ts` | D | `[KEY_HOME_LOADING]` (栄養の分析・パフォーマンスの分析の読み込み中は今も初期値 false なので入れない) | 18 | 5 |
 | `menus/weekly/page.tsx` | E | `[KEY_WEEK_LOADING]` | 6 | 29 |
 
 書き込みの合計 = 57 (§9.1)。ファイルのパスは `src/app/(main)/` (部品は `src/`) からの相対。
@@ -1892,7 +2118,7 @@ Zod のスキーマ・DB の列・API の route・エラーコード: 本書は�
 | `place` の時点の状態 | PM / PA (`'mount'`) | RE / RS / RF (`'refetch'`) |
 |---|---|---|
 | その鍵に何も置いていない | `'placed'` (読み込み中を下ろす) | 番兵・書き込みが無ければ `'placed'` |
-| 同じ読み取りがその鍵にもう置いた (段ごと) | `'placed'` | 同上 |
+| 同じ読み取りがその鍵にもう置いた (hook は通す。受け手は 1 つの読み取りで 1 つの鍵に 1 回だけ置くので、受け手の読み取りはこの行に来ない。§6.2・§8 の 8) | `'placed'` | 同上 |
 | より新しい読み取りがその鍵に置いた | `'superseded'` (何もしない) | `'superseded'` (印を付けない) |
 | より古い読み取りがその鍵に置いた | `'placed'` (置き換える) | 番兵・書き込みが無ければ `'placed'` |
 | その鍵の対象 (週・期間・日・id) がもう今の対象でない (`apply` の中で ref を見る) | `'placed'` (`apply` は何も置かない。置いた世代は進み、その鍵の読み込み中の印は下りる。今の対象の鍵は別なので触れない) | 番兵・書き込みが無ければ同左 |
@@ -1912,9 +2138,10 @@ Zod のスキーマ・DB の列・API の route・エラーコード: 本書は�
 | 読み取りの結果 | PM / PA (`'mount'`) | RE / RS / RF (`'refetch'`) |
 |---|---|---|
 | 成功 (`res.ok`・Supabase の `error` が無い) | 応答を `place` で置く (判定は上の表) | 同左 |
-| 失敗の応答 (`res.ok` が false・Supabase の `error`) | 受け手ごとに今までどおり失敗の表示 (`setError` / `setLoadError` / `setCurrentPlan(null)` / `setData(null)`) を `place` で置く (§9 の `read.mode` の列。判定は上の表)。献立表は週の読み込み `fetchPlan` だけが空を置き、`refreshMealPlan`・書き込みのあとの読み直しは何も置かない。/health/graphs の Realtime の読み直しと /profile/nutrition-targets の再設定の保存のあとの読み直し (`keepOnFailure`) は何も置かない (G5)。置かずに終われば立てた鍵は `fn` の終わりで下りる (R-1) | `place` を呼ばない: 何も置かない (今の表示を残す)。鍵を立てていないので読み込み中に触れない。`placed`・`deferred` を変えず、止めた通知の印も付けない (R-1・S-8)。例外は /home の栄養の分析の 1 つだけ: 取り直しの読み取りが失敗しても `KEY_NUTRITION_SCORE` に「`aiSkipped` の `consent_required` を消す」だけを置く (G3。§7.5 の `keepAnalysis`。番兵・順序は上の表のとおり) |
+| 失敗の応答 (`res.ok` が false・Supabase の `error`) | 受け手ごとに今までどおり失敗の表示 (`setError` / `setLoadError` / `setCurrentPlan(null)` / `setData(null)`) を `place` で置く (§9 の `read.mode` の列。判定は上の表)。献立表は週の読み込み `fetchPlan` だけが空を置き、`refreshMealPlan`・書き込みのあとの読み直しは何も置かない。/health/graphs の Realtime の読み直しと /profile/nutrition-targets の再設定の保存のあとの読み直し (`keepOnFailure`) は何も置かない (G5)。置かずに終われば立てた鍵は `fn` の終わりで下りる (R-1) | `place` を呼ばない: 何も置かない (今の表示を残す)。鍵を立てていないので読み込み中に触れない。`placed`・`deferred` を変えず、止めた通知の印も付けない (R-1・S-8)。例外は /home の栄養の分析の 1 つだけ: 取り直しの読み取りが失敗しても、点数の鍵と別の `KEY_NUTRITION_CONSENT_NOTICE` に「`aiSkipped` の `consent_required` を消す」だけを置く (G3。§7.5 の `fetchNutritionAnalysis` の `finally`。番兵・順序は上の表のとおり。ページの読み取りが成功の応答を置く鍵の置いた世代と、読み込み中の印に触れない。§6.2) |
 | reject・同期で投げる (通信の失敗・`res.json()` の失敗) | ページが catch すれば 1 つ上の行と同じ。catch しなければ `fn` が投げ、その読み取りが最後に立てた鍵を `finally` で下ろし、`read()` の Promise がそのまま reject。`placed` は変わらない | hook が `console.warn('[ai-consultation-refetch] refetch failed:', error)` で握る。何も置かない。読み込み中・止めた通知に触れない (S-8) |
-| ページの読み取りの応答待ちに、取り直しが失敗した (上の 2 行のどちらか) | 取り直しは `placed` を進めないので、あとから届いたページの読み取りの応答は上の表の「その鍵に何も置いていない」(か「より古い読み取りが置いた」) の行で `'placed'`。読み込み中もそれで下りる (空のまま残らない。失敗の表示も出ない。R-2・S-2) | (取り直しの側は上の 2 行) |
+| 一部だけ読めた (1 つの鍵に置く中身のうち、読めない部分がある) | 受け手ごとに今までどおり (/health/graphs は読めた記録・健診で線を作る・家族の画面と献立表の家族は名前の API を読めなければ display_name のまま・/home のパフォーマンスの分析が非 ok なら分析の鍵に置かずチェックインだけ置く)。`keepOnFailure` のページの読み取り (/health/graphs の Realtime) は右の列と同じ | その鍵には置かない (読めなかった部分を今の表示から写して同じ鍵に置かない。§6.2)。読めた部分が別の鍵 (`KEY_TODAY_CHECKIN`・`KEY_TARGET_WEIGHT`) なら、その鍵には置く。全部を 1 つの鍵に置く読み取り (家族の画面・members/[id] の同意の記録・献立表の家族) は何も置かない (S-28〜S-30) |
+| ページの読み取りの応答待ちに、取り直しが失敗した・一部だけ読めた (上の 3 行のどれか) | 取り直しは、ページの読み取りが成功の応答を置く鍵の `placed` を進めない (失敗でも置くのは別の鍵 `KEY_NUTRITION_CONSENT_NOTICE` だけ・一部だけ読めた鍵には置かない・途中の段で置かない。§6.2) ので、あとから届いたページの読み取りの応答は上の表の「その鍵に何も置いていない」(か「より古い読み取りが置いた」) の行で `'placed'`。読み込み中もそれで下りる (空のまま残らない。失敗の表示も出ない。R-2・S-2・S-28〜S-30)。取り直しが別の鍵 (`KEY_TODAY_CHECKIN`・`KEY_TARGET_WEIGHT`・`KEY_NUTRITION_CONSENT_NOTICE`) に置いた値は、その鍵ではページの読み取りの応答より新しいので残る | (取り直しの側は上の 3 行) |
 | 取り直しが先に置いたあとに、ページの読み取りが失敗した | 失敗の表示の `place` は上の表の「より新しい読み取りがその鍵に置いた」の行で `'superseded'` (取り直しの置いた表示を消さない)。読み込み中は取り直しの `'placed'` で下りている | — |
 | 失敗した読み取りの対象 (週・期間・日・id) が、もう今の対象でない | 失敗の表示の `place` は通るが、`apply` が ref で今の対象を見て何も置かない (今の対象の表示を消さない)。献立表の `releaseWeekLoadingIfShown` は表示中の週でないので何もしない (S-21) | 何も置かない (上の 2 行と同じ) |
 
@@ -1942,6 +2169,9 @@ Zod のスキーマ・DB の列・API の route・エラーコード: 本書は�
 | 家族の移動 | 順序を見ない (D-7)。移る読み取りは `{ redirecting: true }` を返し、読み込み中の表示を出していたなら移るまで出したまま (/org/transfer-accept は下ろす) | `place` の中。移る `apply` の中で読み込み中の表示を出していたら `redirecting` を立て、移るまで読み込み中の表示のまま (今と同じ。S-24)。/org/transfer-accept は今と同じく下ろす |
 | /home の AI つきの読み取り | 開いたとき + 引き継いだ取り直し (`isLatest()` の門で開いたときを止める。引き継ぐ読み込みがまだ AI つきの分析を読み始めていなければ AI つき: G3 の `aiAnalysisReadInLoadRef`) | 開いたとき (とページの読み取り) だけ。取り直しはいつも AI 無し。門と `aiAnalysisReadInLoadRef` は無い。分析は主のデータのあとに分析ごとのページの読み取りで始め、`fetchHomeData` の Promise は分析を待たない (今と同じ時機) |
 | /home の全画面の読み込み中 | 最後に始めた主のデータの読み取りの終わり (引き継いだ取り直しが投げても下ろす) | 読み込み中だけの鍵 `homeLoading`: ページの読み取りの終わり、または取り直しが主のデータを読み終えたとき。**投げた取り直しは下ろさない** (開いたときの読み込みの応答で下りる。Q-17) |
+| /home の続けて来た 2 回の取り直しで、先の取り直しの「分析できない」(`analysis: null`) が先に届く | 先の応答は置かない (`latestStarted`)。点数・アドバイス・帯はそのままで、あとの応答で点数だけが替わる | **先の応答を置いて点数を空にし、帯の AI のアドバイスと AI の部分を消す。あとの取り直しは点数だけを置き、アドバイス・帯は戻らない** (取り直しは AI を読まない。次のページの読み取り (開いたとき・ログインの状態の変化・献立の変更の実行のあと) で戻る。2 回の取り直しを順に流したときと同じ結果)。逆の順 (あとの応答が先) は今と同じく何も消さない (S-3・G-9・Q-19) |
+| 取り直しの失敗・一部だけ読めたときの置き方 (/home の栄養の分析の失敗・パフォーマンスの分析の非 ok・/health/graphs の記録の失敗・家族の名前の API・子供の同意の記録) | 成功の応答と同じ置き場所に、今の表示を写して置く (`settleKeepingAnalysis`・`checkinToPlace`・`keepShownRecords` のときの目標・`keepShownFamilyMemberNames`・`keepShownConsent`)。`latestStarted` の受け手では先に始めた応答も捨てる (D-2) | 失敗でも置くもの (同意の知らせ) と読めた部分 (今日のチェックイン・目標の線) は別の鍵 (`KEY_NUTRITION_CONSENT_NOTICE`・`KEY_TODAY_CHECKIN`・`KEY_TARGET_WEIGHT`)。**家族の画面 (dashboard・members・members/[id]) と献立表の家族は、取り直しで名前の API (members/[id] は子供の同意の記録も) を読めなければ、群・一覧・役割を含めて何も置かない** (今は読めた一覧に今の名前を当てて置く。一覧の変化は次の取り直しか開き直しで出る)。どれも、先に始めたページの読み取りの応答は置く (§6.2・S-28〜S-30・Q-18) |
+| 家族・譲渡の画面と献立表の家族の読み取りの途中の段 | `setCurrentUserId`・`setFamilyId` を途中の段で置く (`isLatest` / `place` が `'placed'` なら次へ) | 全部を読んでから最後に 1 回だけ置く (成功と「見つからない」の `apply` の中)。ページの読み取りが途中で失敗したとき、自分の id・family_id は置かない (使う描画は成功の画面だけなので見え方は同じ。献立表は家族の一覧を読めなければ今と同じく id と family_id だけを置く) |
 | /profile・/profile/nutrition-targets の G5 の挙動 | /profile: 開いたときの読み込みの失敗で `profileLoadFailed`・「再読み込み」(`profileReloadKey`)。/profile/nutrition-targets: 再設定の保存のあとに読み直し (`plannerSavedKey`)、取り直しと保存のあとの読み直しは両方読めたときだけ置く | 同じ挙動。/profile の「再読み込み」は `receiver.read({ loadingKeys: [KEY_PROFILE] }, readProfile)`、/profile/nutrition-targets の保存のあとの読み直しは `receiver.read({}, (read) => readTargetsPage(read, { keepOnFailure: true }))` (state の数を消す。§9 #18・#19) |
 | 機械の番兵 | 8 規則 (関数ごと・印を渡す受け手だけ) | P1〜P6 (置く場所ごと・全受け手)。P1 の境 3 つ・P2 の例外 (行き先 4・関数 1) は閉じた一覧 (§9.2)。下限は受け手ごとの数の表 (§9.3) |
 | 最初の描画の読み込み中 | 受け手ごとの `useState(true)` / `useAiConsultationLoading` (初期値 true) | `initialLoadingKeys` で同じ鍵を最初の描画から立てる (§9.3。同じ見え方) |
@@ -1983,7 +2213,8 @@ hook の状態: `deferred` (止めた通知の有無)・`observing` (DOM の見�
 | `refetch` が reject する・同期で投げる | hook | `console.warn('[ai-consultation-refetch] refetch failed:', error)`。何も置かない。読み込み中・止めた通知に触れない |
 | ページの読み取りの `fn` が投げる | hook → ページ | `read()` の Promise がそのまま reject。立てた鍵は `finally` で下ろす (失敗の表示はページが `'mount'` で置く) |
 | `apply` が投げる | hook → ページ | 置いた世代を進めず、例外をそのまま。ページは `apply` の中で投げないように書く |
-| 取り直しの読み取りで `res.ok` でない・Supabase の `error` | ページ | 何も置かない (今の表示を残す)。例外は /home の栄養の分析だけ (同意の知らせ `consent_required` を消す。G3。§10.1) |
+| 取り直しの読み取りで `res.ok` でない・Supabase の `error` | ページ | 何も置かない (今の表示を残す)。例外は /home の栄養の分析だけ (同意の知らせ `consent_required` を、点数の鍵と別の `KEY_NUTRITION_CONSENT_NOTICE` で消す。G3。§10.1) |
+| 取り直しが一部だけ読めた | ページ | 読めなかった部分を含む鍵には置かない (今の表示を写して同じ鍵に置かない)。読めた部分が別の鍵ならその鍵に置く (§6.2・§10.1)。取り直しの失敗・一部の失敗で、先に始めたページの読み取りの成功の応答を `'superseded'` にしない (S-28〜S-30) |
 | ページの読み取りのうち `keepOnFailure` のもの (/health/graphs の Realtime・/profile/nutrition-targets の再設定の保存のあと) の失敗 | ページ | 取り直しと同じく何も置かない (G5) |
 | ページの読み取り (`'mount'`) で失敗 | ページ | 失敗の表示 (`setError` / `setLoadError` / `setCurrentPlan(null)` / `setData(null)`) を `place` で置く。置けば読み込み中は下りる。置かずに終われば `fn` の終わりで下りる。どの読み取りで失敗の表示を置くかは受け手ごとに今までどおり (§9 の `read.mode` の列。献立表は週の読み込み `fetchPlan` だけが空を置き、`refreshMealPlan`・書き込みのあとの読み直しは何も置かない) |
 | 番兵・書き込みで止めた通知がアンマウントまで外れない | hook | 捨てる (アンマウントで `deferred = false`) |
@@ -2070,7 +2301,7 @@ sequenceDiagram
 | T-3 | 先の取り直しの応答が先に届けば置き、後の取り直しで置き換える |
 | T-4 | 開いたときの読み取りの応答待ちに始まった取り直しが失敗しても、開いたときの応答を置き、読み込み中の表示を下ろす |
 | T-5 | 開いたときの応答待ちに取り直しの応答が先に届いたら置いて読み込み中を下ろし、あとから届いた開いたときの応答は置かない |
-| T-6 | 同じ読み取りが同じ鍵に段ごとに置くのは通し、途中で新しい読み取りが置いたら次の段は置かない |
+| T-6 | 同じ読み取りが同じ鍵にもう一度置くのは通し、その間に新しい読み取りが置いたら 2 回目は置かない (hook の決まり。受け手はこれに頼らず 1 つの読み取りで 1 つの鍵に 1 回だけ置く。§8 の 8) |
 | T-7 | 鍵ごとに別々の順序を持つ (別の鍵の応答で古くならない。A→B→A で A の最初の応答を A の鍵で置く) |
 | T-8 | 取り直しの応答を置く時点にモーダルがあれば 'deferred' で置かず、閉じたら 1 回取り直す。印を付けるのは読み取りごとに 1 回 |
 | T-9 | 取り直しの応答を置く時点に書き込み中なら 'deferred'、全部終わったら 1 回取り直す |
@@ -2092,6 +2323,7 @@ sequenceDiagram
 | T-25 | useEffect の依存に receiver と読み取りの関数を入れた開いたときの読み取りは 1 回だけ走る (読み込み中の鍵が立って下りても読み直さない) |
 | T-26 | initialLoadingKeys の鍵は最初の描画から isLoading が true で、開いたときの読み取りが置いたとき・終わったときに下りる。取り直しが先に置いても下りる |
 | T-27 | place の apply の中で呼んだ isLoading(key) は、その鍵を下ろす前の値 (読み込み中なら true) を返し、apply が戻ったあとは false |
+| T-28 | 開いたときの読み取りの応答待ちに、取り直しが別の鍵 (失敗でも置く片づけの鍵) にだけ置いても、開いたときの応答は自分の鍵に 'placed' で置け、その鍵の読み込み中の印を下ろす (片づけの鍵の place は、ほかの鍵の置いた世代と読み込み中の印に触れない。§6.2) |
 
 `tests/ai-consultation-receiver-placement-guard-2206.test.ts`: §7.7 の it。
 
@@ -2133,6 +2365,9 @@ sequenceDiagram
 | S-25 | — | weekly-refetch に新しい it「自炊の食事を足したら、読み直した週の作った食事で手入力の編集を開く (UX2-32)」 |
 | S-26 | — | weekly-refetch に新しい it「ある日の最後の 1 食を削除したら、その日の月のカレンダーの印を消す (ほかの日の印は残す)」 |
 | S-27 | T-11 | `photo-result-refetch-wiring` (G-18) に足す it「待ち `await waitForMealPhotoResult(` が明けてから `receiver.read(` を始め、その中で `applyWeekResponse(` を呼ぶ (待ちを読み取りに含めない)」 |
+| S-28 | T-28 | home-refetch に新しい it「開いたときの栄養の分析の応答待ちに来た取り直しの栄養の分析が失敗しても、開いたときの点数とアドバイスを置き、分析の読み込み中の印を下ろす (同意の知らせは消す)」「開いたときのパフォーマンスの分析の応答待ちに来た取り直しの分析が 5xx でも、開いたときの分析を置く (今日のチェックインは取り直しが読んだ値)」(G-9 の (5)) |
+| S-29 | T-7 | reads-2195 に新しい it「/health/graphs: 開いたときの応答待ちに来た取り直しが記録を読めず目標だけ読めても、開いたときの記録の線を置く (目標の線は取り直しの値)」(G-8 の (c)) |
+| S-30 | T-28 | reads-2195 に新しい it「家族の画面 (/family/members・/family/dashboard・/family/members/[id]): 開いたときの応答待ちに来た取り直しが名前の API を読めなくても、開いたときの応答 (名前つき) を置いて読み込み中の表示を下ろす」(G-8 の (c))・weekly-refetch に新しい it「開いたときの家族の読み込みの応答待ちに来た取り直しが家族の一覧を読めなくても、開いたときの家族の切り替えを置く」(G-10)・`tests/family-screens-reload-2073.test.tsx` の「移るまで読み込み中の表示のままにする」2 本 (変えない。途中の段で印を下ろさないので緑) |
 
 ---
 
@@ -2150,6 +2385,8 @@ sequenceDiagram
 | 鍵の定数と鍵の関数 (`KEY_*`・`planKey(週)` = `plan:<週>`・`mealDatesKey(月)` = `mealDates:<月>`・`selectedDateKey(日)` = `selectedDate:<日>`・`mealKey(id)` = `meal:<id>`・`rankingsKey(期間)` = `rankings:<期間>`・`graphsKey(期間)` = `graphs:<期間>`) | 各受け手の先頭 (`selectedDateKey` は /health、`mealKey` は /meals/[id]、`rankingsKey` は /comparison、`graphsKey` は /health/graphs) | §9 | 置き場所の名前。定数の名前は `KEY_` + §9 の鍵の文字列を大文字のスネークにしたもの (`badges` → `KEY_BADGES`・`todayPlan` → `KEY_TODAY_PLAN`)。対象を含む鍵は関数で作り、文字列を手で組まない。受け手の外から参照しない |
 | `KEY_WEEK_LOADING` | `src/app/(main)/menus/weekly/page.tsx` | `'weekLoading'` | 献立表の全画面のスピナーの、読み込み中だけの鍵 (データは置かない。立てた `fetchPlan` の終わりか、表示中の週の献立を置いた読み取りの `releaseWeekLoadingIfShown` (何もしない `apply` で置く) で下りる。§6.4) |
 | `KEY_HOME_LOADING` | `src/hooks/useHomeData.ts` | `'homeLoading'` | /home の全画面の読み込み中の表示の、読み込み中だけの鍵 (データは置かない。ページの読み取りが立ててその終わりで下りるか、取り直しが主のデータを読み終えて何もしない `apply` で置いて下ろす。§6.4・§7.5) |
+| `KEY_NUTRITION_CONSENT_NOTICE`・`KEY_TODAY_CHECKIN` | `src/hooks/useHomeData.ts` | `'nutritionConsentNotice'`・`'todayCheckin'` | 取り直しの失敗でも置く同意の知らせの片づけと、分析が非 ok でも置く今日のチェックインの鍵。成功の応答を置く鍵 (`KEY_NUTRITION_SCORE`・`KEY_PERFORMANCE`) と分ける (§6.2・§7.5)。読み込み中の鍵にしない |
+| `KEY_TARGET_WEIGHT` | `src/app/(main)/health/graphs/page.tsx` | `'targetWeight'` | 目標の線の鍵 (期間に依らない)。記録の鍵 `graphsKey(期間)` と分ける (取り直しが記録を読めず目標だけ読めたときに記録の鍵を進めない。§6.2・§9 #11) |
 | `WEEK_PLACEMENT_*` (6 つ) | `src/app/(main)/menus/weekly/page.tsx` | §7.4 の `WeekPlacement` の値 | 読み直した週の置き方の、呼び出し元ごとの今の違いの名前付け (数値は持たない。§7.4 の置き方の表が正本)。運用で変える値ではない |
 | `INITIAL_PERIOD_TYPE`・`INITIAL_PERIOD` | `src/app/(main)/comparison/page.tsx`・`src/app/(main)/health/graphs/page.tsx` | `'weekly'`・`'month'` | 今の `useState` の初期値の名前付け。`useState` と `initialLoadingKeys` の両方に使う (2 か所で同じ値を書かない) |
 | `READ_PATH_BOUNDARIES`・`READ_ONLY_SENDS`・`WRITE_WINDOW_EXEMPTIONS`・`LEGACY_IDENTIFIERS`・`RECEIVER_EXPECTATIONS`・`WINDOW_CLOSING_PROMISE_METHOD`・`SEND_FUNCTIONS`・`SUPABASE_RPC_METHOD`・`STORE_STATE_ACCESS` | 番兵 | §7.7・§9.2・§9.3 | 境・例外・旧 API・受け手ごとの数の表と、見分ける名前 |
@@ -2173,14 +2410,14 @@ sequenceDiagram
 | ref (献立表) | `currentPlanRef`・`fetchedMonthsRef`・`weekDatesRef`・`displayMonthRef`・`weekStartRef`・`autoExpandNextMealRef` | §7.4 | E |
 | 型・定数 (献立表) | `WeekPlacement` (`emptyPlan`・`shoppingList`・`calendar`・`expandNextMeal`)・`WEEK_PLACEMENT_WEEK_READ`・`WEEK_PLACEMENT_REREAD`・`WEEK_PLACEMENT_COMPLETION`・`WEEK_PLACEMENT_AFTER_ADD`・`WEEK_PLACEMENT_AFTER_REMOVE`・`WEEK_PLACEMENT_AFTER_REORDER` (§7.4 の置き方の表) | §7.4 | E |
 | state・ref (家族・譲渡の 4 画面) | `redirecting` (`useState(false)`)・`isLoadingRef` (`useRef<(key: string) => boolean>`。描画のたびに `receiver.isLoading` を写す) (/family/dashboard・/family/members・/family/members/[id]・/family/transfer-accept。/org/transfer-accept は持たない) | §6.8・§7.6 | C |
-| 型・関数・鍵 (/home) | `StartHomeAnalyses`・`refetchHome`・`fetchAnnouncement` (今の readHomeData の中のお知らせの読み取りを切り出す)・`KEY_HOME_LOADING` (と §7.5 の置く鍵 15) | §7.5 | D |
+| 型・関数・鍵 (/home) | `StartHomeAnalyses`・`refetchHome`・`fetchAnnouncement` (今の readHomeData の中のお知らせの読み取りを切り出す)・`KEY_HOME_LOADING`・`KEY_NUTRITION_CONSENT_NOTICE`・`KEY_TODAY_CHECKIN` (と §7.5 の置く鍵 17) | §7.5 | D |
 | 関数・鍵 (/profile・/profile/nutrition-targets) | `readProfile` (今の effect の中の `getData` を切り出す)・`readTargetsPage` (今の effect の中の `fetchData` を切り出し、`{ keepOnFailure }` を受け取る)・`KEY_TARGETS_PAGE` (= `'targetsPage'`) | §9 #18・#19 | B |
 | ref (/meals/[id]) | `deletedMealIdRef` (削除した食事の id。§9 #15) | §9 #15 | B |
 | 定数 | `MEAL_TOGGLE_DEBOUNCE_MS`・`MEAL_DELETE_NAVIGATE_DELAY_MS`・`CALENDAR_MEAL_DATES_DAYS_BEFORE_WEEK`・`CALENDAR_MEAL_DATES_DAYS_AFTER_WEEK`・`CALENDAR_MEAL_DATES_MONTH_PADDING_DAYS`・`KEY_WEEK_LOADING` | §14 | E (`MEAL_TOGGLE_DEBOUNCE_MS` は D と E・`MEAL_DELETE_NAVIGATE_DELAY_MS` は B) |
-| 定数・関数・ref (期間の受け手) | `INITIAL_PERIOD_TYPE`・`rankingsKey`・`periodTypeRef`・`readRankings` (/comparison)・`INITIAL_PERIOD`・`graphsKey`・`periodRef` (/health/graphs) | §9 #2・#11・§14 | B |
+| 定数・関数・ref (期間の受け手) | `INITIAL_PERIOD_TYPE`・`rankingsKey`・`periodTypeRef`・`readRankings` (/comparison)・`INITIAL_PERIOD`・`graphsKey`・`KEY_TARGET_WEIGHT`・`periodRef` (/health/graphs) | §9 #2・#11・§14 | B |
 | 番兵の一覧 | `READ_PATH_BOUNDARIES`・`READ_ONLY_SENDS`・`WRITE_WINDOW_EXEMPTIONS`・`RECEIVER_EXPECTATIONS` | §7.7・§9.2・§9.3 | A (`RECEIVER_EXPECTATIONS` の行は B〜E) |
 | 共有のテストの段ごとの置き場 | `RECEIVER_MIGRATED_PAGES` (`tests/ai-consultation-refetch-reads-2195.test.tsx`)・`WIRING` の段ごとの配列と行ごとの `hookImport` (`tests/ai-consultation-data-refetch-2195.test.tsx`) | §16・§17 G-5・G-8 | A (中身は B〜E。段 F で `RECEIVER_MIGRATED_PAGES` と今の期待の側を消す) |
-| 廃止 (段 F) | `src/hooks/useAiConsultationDataRefetch.ts`・`tests/ai-consultation-refetch-placement-guard-2201.test.ts`・`AI_CONSULTATION_REFETCH_ACTION` (family/members)・`aiRefetching` (members/[id]・transfer-accept ×2)・`aiConsultationRefetchRound`・`aiConsultationRefetchTicketRef`・`takeWeekRangeRefetchRun`・`takeMonthRangeRefetchRun`・`fetchedRangesRef`・流れ 5 本 (献立表)・流れ 3 本と `refetch`・`aiConsultationWrites` の export と `aiAnalysisReadInLoadRef` (`useHomeData`。G3 が足した ref)・`profileReloadKey` (/profile。G5)・`plannerSavedKey`・`handledPlannerSavedKeyRef` (/profile/nutrition-targets。G5)・家族・譲渡の読み取りの関数の戻り値 `{ redirecting }` | — | B〜F (ページの state・ref・戻り値は移す段で消す) |
+| 廃止 (段 F) | `src/hooks/useAiConsultationDataRefetch.ts`・`tests/ai-consultation-refetch-placement-guard-2201.test.ts`・`AI_CONSULTATION_REFETCH_ACTION` (family/members)・`aiRefetching` (members/[id]・transfer-accept ×2)・`aiConsultationRefetchRound`・`aiConsultationRefetchTicketRef`・`takeWeekRangeRefetchRun`・`takeMonthRangeRefetchRun`・`fetchedRangesRef`・流れ 5 本 (献立表)・流れ 3 本と `refetch`・`aiConsultationWrites` の export と `aiAnalysisReadInLoadRef` (`useHomeData`。G3 が足した ref)・`profileReloadKey` (/profile。G5)・`plannerSavedKey`・`handledPlannerSavedKeyRef` (/profile/nutrition-targets。G5)・家族・譲渡の読み取りの関数の戻り値 `{ redirecting }`・受け手が使わなくなる `keepShownFamilyMemberNames` (`src/lib/membership/family-member-names.ts`。段 C・E で使う所が無くなる。段 F で関数と、`fetchFamilyMemberNames` の説明の「取り直しで…keepShownFamilyMemberNames を使う」の 1 行を消す) | — | B〜F (ページの state・ref・戻り値は移す段で消す) |
 
 テーブル・列・route・RLS・Storage・migration・エラーコード: 新設なし。
 
@@ -2194,8 +2431,8 @@ sequenceDiagram
 | B 単純な受け手 (13) | /badges・/comparison・/health/blood-tests・CheckupDetailClient・/health/goals・/health/graphs・/health/streaks・/meals/[id]・/pantry・/profile・/profile/nutrition-targets・ProfileReminderBanner・nutrition-target-planner (§9 の B の行・§7.3 の型) | その 13 ファイル + `tests/ai-consultation-refetch-reads-2195.test.tsx`・`tests/ai-consultation-data-refetch-2195.test.tsx` (配線の正規表現・ページの描画の節)・新番兵の `RECEIVER_EXPECTATIONS` の段 B の見出しの下に 13 行 (§9.3)・data-refetch-2195 の `WIRING` の段 B の配列の行・reads-2195 の `RECEIVER_MIGRATED_PAGES` の段 B の見出しの下に段 B のページ (旧番兵には触れない: B の受け手は `SELF_HELD_RECEIVERS`・`DELEGATED_RECEIVERS`・`OPTIMISTIC_WRITE_EXEMPTIONS` のどれにも無い)。緑のまま通すもの (変えない): `src/__tests__/app/comparison/page-fetch-race.test.ts` (G-24)・`tests/ai-consent-entry-points.test.ts` の /pantry の行 (G-22)・`tests/health-profile-load-edges-2206.test.tsx` (G-30)・§17.2 の B の受け手の描画のテスト | A のマージ |
 | C 家族・譲渡 + /health (6) | family/dashboard・family/members・family/members/[id]・family/transfer-accept・org/transfer-accept・/health (§7.6・§9 の C の行) | その 6 ファイル + reads-2195・data-refetch-2195 (配線)・旧番兵の `SELF_HELD_RECEIVERS` の 4 行を消して `[]` にする (その配列の行だけ。`MIN_*` は段 A で 0)・新番兵の `RECEIVER_EXPECTATIONS` の段 C の見出しの下に 6 行 (§9.3)・data-refetch-2195 の `WIRING` の段 C の配列の行・reads-2195 の `RECEIVER_MIGRATED_PAGES` の段 C の見出しの下に段 C のページ。緑のまま通すもの (変えない): `tests/family-member-detail-consent.test.tsx` (G-25)・§17.2 の C の受け手の描画のテスト (家族・譲渡の 9 本。とくに `tests/family-screens-reload-2073.test.tsx` の「移るまで読み込み中の表示のままにする」の 2 本。§6.8 の `redirecting` で緑) | A のマージ (B と並行可) |
 | D /home | `useHomeData.ts`・`home/page.tsx` (§7.5) | その 2 ファイル + `tests/ai-consultation-home-refetch-2195.test.tsx`・data-refetch-2195 (配線)・`src/lib/ai/consultation-refetch-coverage.ts` の `/home` の `nutritionAnalysisWithAi` の文 (docs-1103c (#2208) が足し G3 (#2211) が書き換えた引き継ぎの例外の文「ただし、開いたときの読み込み中に始まった取り直し (refetchReadMode の値が mount) はその読み込みの役を引き継ぐ。引き継ぐ読み込みがまだ AI つきの読み取りを始めていなければ AI つきで読み、始めていれば AI を付けずに読む (…aiAnalysisReadInLoadRef…)」を消す。G-17)・旧番兵の `DELEGATED_RECEIVERS` の 1 行と `OPTIMISTIC_WRITE_EXEMPTIONS` の 1 つの要素を消して `[]` にする (その配列の行だけ)・新番兵の `RECEIVER_EXPECTATIONS` の段 D の見出しの下に 1 行 (§9.3)・data-refetch-2195 の `WIRING` の段 D の配列の行。緑のまま通すもの (変えない): `src/__tests__/hooks/useHomeData-completion.test.ts` (G-26)・`tests/helpers/ai-refetch-read-recorder.ts` を使う home-refetch の判定 (G-27)・`tests/health-streaks-sandbox-1802.test.ts` (G-28) | A のマージ |
-| E 献立表 | `menus/weekly/page.tsx` (§7.4) | そのファイル + `tests/ai-consultation-weekly-refetch-2195.test.tsx`・data-refetch-2195 (配線・「献立表の pantry・人数の設定の取得は…」の it)・`src/__tests__/app/menus/weekly/family-menu-wiring.test.ts`・`src/__tests__/app/menus/weekly/photo-result-refetch-wiring.test.ts` (G-18)・`src/lib/ai/consultation-refetch-coverage.ts` の `/menus/weekly` の `adjacentWeekPrefetch` の文 (控えは失敗を書かない)・新番兵の `RECEIVER_EXPECTATIONS` の段 E の見出しの下に 1 行 (§9.3)・data-refetch-2195 の `WIRING` の段 E の配列の行 (旧番兵には触れない)。緑のまま通すもの (変えない): `src/__tests__/app/menus/weekly/` の `poll-progress-while-generating`・`pending-restore-no-overwrite`・`request-watch-guard`・`poll-tick-watch-guard`・`v4-progress-ultimate-mode`・`static-guard` (G-19〜G-21・G-23)・`tests/ai-consent-entry-points.test.ts` の週間献立の行 (G-22)・§17.2 の献立表のソースを読むほかのテスト | A のマージ (B〜D と並行可。ProfileReminderBanner は B) |
-| F 仕上げ | 旧 hook と旧番兵の削除・P5 を全受け手と `src/hooks`・`src/lib/ai` に・一覧の古さの検査 (`READ_PATH_BOUNDARIES`・`READ_ONLY_SENDS`・`WRITE_WINDOW_EXEMPTIONS` の全行が当てはまる) を全行に・`tests/ai-consultation-data-refetch-2195.test.tsx` の hook の単体の節 (290〜1096 行の 4 節と「開いたときの読み込み中に始まった取り直しは…」の節) を消す・`tests/ai-consultation-generation-watch-2195.test.tsx`・`tests/ai-chat-timeout-reload-2201.test.tsx` を新しい hook に向ける・lib 4 ファイルのコメントの hook 名 (G-17)・reads-2195 の `RECEIVER_MIGRATED_PAGES` と今の期待の側の分岐を消す (G-8)・data-refetch-2195 の `WIRING` の旧の `HOOK_IMPORT` を消す (G-5)・`docs/design/cross/CLAUDE.md` の行 (§18) | 上のファイル群 | B〜E の全部のマージ |
+| E 献立表 | `menus/weekly/page.tsx` (§7.4) | そのファイル + `tests/ai-consultation-weekly-refetch-2195.test.tsx`・data-refetch-2195 (配線・「献立表の pantry・人数の設定の取得は…」の it)・`src/__tests__/app/menus/weekly/family-menu-wiring.test.ts` (G-12)・`src/__tests__/app/menus/weekly/dish-favorite-wiring.test.ts` (G-31。W-4 の正規表現と W-3 の窓の目印だけ)・`src/__tests__/app/menus/weekly/photo-result-refetch-wiring.test.ts` (G-18)・`src/lib/ai/consultation-refetch-coverage.ts` の `/menus/weekly` の `adjacentWeekPrefetch` の文 (控えは失敗を書かない)・新番兵の `RECEIVER_EXPECTATIONS` の段 E の見出しの下に 1 行 (§9.3)・data-refetch-2195 の `WIRING` の段 E の配列の行 (旧番兵には触れない)。緑のまま通すもの (変えない): `src/__tests__/app/menus/weekly/` の `poll-progress-while-generating`・`pending-restore-no-overwrite`・`request-watch-guard`・`poll-tick-watch-guard`・`v4-progress-ultimate-mode`・`static-guard` (G-19〜G-21・G-23)・`tests/ai-consent-entry-points.test.ts` の週間献立の行 (G-22)・§17.2 の献立表のソースを読むほかのテスト | A のマージ (B〜D と並行可。ProfileReminderBanner は B) |
+| F 仕上げ | 旧 hook と旧番兵の削除・P5 を全受け手と `src/hooks`・`src/lib/ai` に・一覧の古さの検査 (`READ_PATH_BOUNDARIES`・`READ_ONLY_SENDS`・`WRITE_WINDOW_EXEMPTIONS` の全行が当てはまる) を全行に・`tests/ai-consultation-data-refetch-2195.test.tsx` の hook の単体の節 (290〜1096 行の 4 節と「開いたときの読み込み中に始まった取り直しは…」の節) を消す・`tests/ai-consultation-generation-watch-2195.test.tsx`・`tests/ai-chat-timeout-reload-2201.test.tsx` を新しい hook に向ける・lib 4 ファイルのコメントの hook 名 (G-17)・reads-2195 の `RECEIVER_MIGRATED_PAGES` と今の期待の側の分岐を消す (G-8)・data-refetch-2195 の `WIRING` の旧の `HOOK_IMPORT` を消す (G-5)・`src/lib/membership/family-member-names.ts` の `keepShownFamilyMemberNames` とその説明の 1 行を消す (段 C・E で受け手が使わなくなる。§15。テストのモックが返す `keepShownFamilyMemberNames` のキーは残っても緑)・`docs/design/cross/CLAUDE.md` の行 (§18) | 上のファイル群 | B〜E の全部のマージ |
 
 - 各段は同じ worktree で段を積まず、段ごとに別の枝・別の WF・別の PR (並列分割)。A が骨組みの役 (共有のテストの段ごとの置き場を作る)。段 B〜E が触る共有のファイルの行は互いに重ならない: 新番兵の `RECEIVER_EXPECTATIONS`・data-refetch-2195 の `WIRING`・reads-2195 の `RECEIVER_MIGRATED_PAGES` は段ごとの見出し・配列の下だけ、旧番兵は C が `SELF_HELD_RECEIVERS` の行・D が `DELEGATED_RECEIVERS` と `OPTIMISTIC_WRITE_EXEMPTIONS` の行だけ (行が離れている)、`src/lib/ai/consultation-refetch-coverage.ts` は D が `/home`・E が `/menus/weekly` の文だけ。
 - マージはオーケストレーターが 1 本ずつ直列に行う。先にマージした段と取り込みで衝突したら、解消したあとの衝突のハンクを敵対レビューし直す (コンフリクトの解消は未レビューのコード)。
@@ -2206,7 +2443,7 @@ sequenceDiagram
 
 ## 17. 既存の番兵 (契約テスト・走査テスト・描画テスト) の追随表
 
-grep の語 (本書が足す・変える・消す名前): `useAiConsultationReceiver`・`useAiConsultationDataRefetch`・`useAiConsultationRefetchKey`・`useAiConsultationRefetchRun`・`useAiConsultationLoading`・`useAiConsultationPendingWrites`・`useAiConsultationFetchStream`・`AiConsultationFetchTicket`・`deferIfHeld`・`isLatest`・`beginFetch`・`refetchKey`・`refetchReadMode`・`settleLoading`・`writeInFlightRef`・`notifyWriteSettled`・`latestStarted`・`newerThanPlaced`・`AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR`・`AI_CONSULTATION_DEFERRED_RELOAD_OBSERVED_ATTRIBUTES`・`data-ai-consultation-writes`・`aiConsultationRefetchRound`・`familyLoadStream`・`AI_CONSULTATION_REFETCH_ACTION`・`setCurrentPlan`・`checkPendingRequests`・`resumePendingGeneration`・`startPolling`・`isLoadingServingsConfig`・`AI_CONSULTATION_DATA_CHANGED_EVENT`・`AI_CONSULTATION_REFETCH_PAGES`。`tests/`・`scripts/`・`apps/mobile/__tests__/`・`src/__tests__/` を `git grep` した結果 (基点 origin/main `eb1ad85da` (2026-11-04)。G-1〜G-17 は `e6b14faa`、G-18〜G-29 は `9bff430c` で引き、`eb1ad85da` で引き直して 28 本 (`d3c7739b2` の 27 本 + G5 の `tests/health-profile-load-edges-2206.test.tsx` = G-30)。28 本のうち `e6b14faa..eb1ad85da` で中身が変わったのは、G-11 の `tests/ai-chat-timeout-reload-2201.test.tsx` (X1)・G-5 の `tests/ai-consultation-data-refetch-2195.test.tsx` (G5 が /profile の配線の正規表現に `profileReloadKey` を足した)・G-9 の `tests/ai-consultation-home-refetch-2195.test.tsx` (G3 が「/home のお知らせ・同意の知らせ・今日のアドバイスの帯・AI つきの栄養の分析の余分な読み取り」の describe と、引き継いだ取り直しの AI の it 2 本を足した) の 3 本で、どの行もマージ後の形で書いてある。受け手のパスで引く母集合は §17.2):
+grep の語 (本書が足す・変える・消す名前): `useAiConsultationReceiver`・`useAiConsultationDataRefetch`・`useAiConsultationRefetchKey`・`useAiConsultationRefetchRun`・`useAiConsultationLoading`・`useAiConsultationPendingWrites`・`useAiConsultationFetchStream`・`AiConsultationFetchTicket`・`deferIfHeld`・`isLatest`・`beginFetch`・`refetchKey`・`refetchReadMode`・`settleLoading`・`writeInFlightRef`・`notifyWriteSettled`・`latestStarted`・`newerThanPlaced`・`AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR`・`AI_CONSULTATION_DEFERRED_RELOAD_OBSERVED_ATTRIBUTES`・`data-ai-consultation-writes`・`aiConsultationRefetchRound`・`familyLoadStream`・`AI_CONSULTATION_REFETCH_ACTION`・`setCurrentPlan`・`checkPendingRequests`・`resumePendingGeneration`・`startPolling`・`isLoadingServingsConfig`・`AI_CONSULTATION_DATA_CHANGED_EVENT`・`AI_CONSULTATION_REFETCH_PAGES`。`tests/`・`scripts/`・`apps/mobile/__tests__/`・`src/__tests__/` を `git grep` した結果 (基点 origin/main `eb1ad85da` (2026-11-04)。G-1〜G-17 は `e6b14faa`、G-18〜G-29 は `9bff430c` で引き、`eb1ad85da` で引き直して 28 本 (`d3c7739b2` の 27 本 + G5 の `tests/health-profile-load-edges-2206.test.tsx` = G-30)。28 本のうち `e6b14faa..eb1ad85da` で中身が変わったのは、G-11 の `tests/ai-chat-timeout-reload-2201.test.tsx` (X1)・G-5 の `tests/ai-consultation-data-refetch-2195.test.tsx` (G5 が /profile の配線の正規表現に `profileReloadKey` を足した)・G-9 の `tests/ai-consultation-home-refetch-2195.test.tsx` (G3 が「/home のお知らせ・同意の知らせ・今日のアドバイスの帯・AI つきの栄養の分析の余分な読み取り」の describe と、引き継いだ取り直しの AI の it 2 本を足した) の 3 本で、どの行もマージ後の形で書いてある。G-31 (`dish-favorite-wiring`) は grep の語に当たらず、窓を新たに足す関数の名前 (§17.2 の規則 3) で引いた 1 本 (#2206 G1 R4)。受け手のパスで引く母集合は §17.2):
 
 ### 17.1 追随表
 
@@ -2216,14 +2453,14 @@ grep の語 (本書が足す・変える・消す名前): `useAiConsultationRece
 | G-2 | `tests/ai-consultation-data-refetch-2195.test.tsx` 「モバイルの読み込み直しの番兵と同じ並び」 | `AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR` | 「Web の並びは、モバイルの並びから input の type="file" と `html[data-ai-consultation-writes]` を外しただけ」に書き換え、属性の名前が Web の定数と同じことを足す (T-23) | A |
 | G-3 | 同「useAiConsultationDataRefetch」「世代番号・失敗・書き込みの印」「取り直しの応答を置く時点の番兵」「useAiConsultationRefetchKey」「取得の流れ」「開いたときの読み込み中に始まった取り直しは…」の 6 節 | 旧 hook 名 | 新しい単体テスト (T-1〜T-21) が受け持つ。段 F で削除 | F |
 | G-4 | 同「ページが AI 相談の成功で取り直す」「MainLayout が…」「受け手のページのモーダルは role="dialog" を持つ」 | ページの描画 | 挙動は同じ。モックの hook 名だけ替える (移行した受け手から順に) | B〜E |
-| G-5 | 同「受け手の配線」 | 配線の正規表現 (`refetchAfterAiConsultation`・`useAiConsultationDataRefetch(refetch, { writeInFlightRef: … })`・`useAiConsultationRefetchKey()`・`fetchItems(ticket, refetchReadMode())` など 7 行 + 「献立表の pantry・人数の設定の取得は、初めの取得と取り直しで同じ関数」) | 段 A で `WIRING` を段ごとの配列 (`// 段 B`〜`// 段 E` の見出しの下) に分け、行ごとに `hookImport` (今は全行が旧の `HOOK_IMPORT` の正規表現) を持たせ、`it.each` は行の `hookImport` を見る。段 B〜E は自分の段の配列の行だけを新しい形 (`hookImport` = `from "@/hooks/useAiConsultationReceiver";`・`const receiver = useAiConsultationReceiver(…)`・`receiver.read({ loadingKeys: […] }, …)`) に書き換える (/home の行は段 D で `file` を `src/hooks/useHomeData.ts` に替える。/profile の行は G5 の `profileReloadKey` を消した形に)。献立表の it は `fetchPantry(read)` / `fetchUserSettings(read)` と `receiver.read` の形に (段 E) | A・B・C・D・E |
+| G-5 | 同「受け手の配線」 | 配線の正規表現 (`refetchAfterAiConsultation`・`useAiConsultationDataRefetch(refetch, { writeInFlightRef: … })`・`useAiConsultationRefetchKey()`・`fetchItems(ticket, refetchReadMode())` など 7 行 + 「献立表の pantry・人数の設定の取得は、初めの取得と取り直しで同じ関数」) | 段 A で `WIRING` を段ごとの配列 (`// 段 B`〜`// 段 E` の見出しの下) に分け、行ごとに `hookImport` (今は全行が旧の `HOOK_IMPORT` の正規表現) を持たせ、`it.each` は行の `hookImport` を見る。段 B〜E は自分の段の配列の行だけを新しい形 (`hookImport` = `from "@/hooks/useAiConsultationReceiver";`・`const receiver = useAiConsultationReceiver(…)`・`receiver.read({ loadingKeys: […] }, …)`) に書き換える (/home の行は段 D で `file` を `src/hooks/useHomeData.ts` に替える。/profile の行は G5 の `profileReloadKey` を消した形に)。献立表の it は `fetchPantry(read)` / `fetchUserSettings(read)` と `receiver.read` の形に (段 E。§7.4 の開いたときの effect: 関数の正規表現 → `/const fetchPantry = useCallback\(async \(read: AiConsultationRead\) => \{\s*try \{\s*const res = await fetch\('\/api\/pantry'\);/`・`/const fetchUserSettings = useCallback\(async \(read: AiConsultationRead\) => \{[\s\S]*?const res = await fetch\('\/api\/profile'\);/`、effect の正規表現 → `/useEffect\(\(\) => \{\s*void receiver\.read\(\{\}, fetchPantry\);\s*\}, \[receiver, fetchPantry\]\);/`・`/useEffect\(\(\) => \{\s*void receiver\.read\(\{ loadingKeys: \[KEY_SETTINGS\] \}, fetchUserSettings\);\s*\}, \[receiver, fetchUserSettings\]\);/`) | A・B・C・D・E |
 | G-6 | `tests/ai-consultation-refetch-coverage-2195.test.ts` 「受け手のページは、取り直しの hook を使う」「除外のページは、取り直しの hook を使わない」「受け手の hook は生成の見張りを使い…」「生成の見張りを使うのは受け手の hook だけ」 | 旧 hook 名・`RECEIVER_HOOK_FILE` | 段 A で hook の名前の集合を新旧の両方にし、hook のファイルを 2 つにする。/home はページから `useHomeData` をたどって hook に届くことを「名前でたどれる hook」として数える (今のたどりで届く。届かなければ段 D で直す)。段 F で旧を外す | A・D・F |
 | G-7 | `tests/ai-consultation-generation-watch-2195.test.tsx` | `useAiConsultationDataRefetch` を使う it 群 | 新しい hook に向ける (T-21 と重なる it は単体へ移してよい) | F |
-| G-8 | `tests/ai-consultation-refetch-reads-2195.test.tsx` | ページの描画 | 段 A で `RECEIVER_MIGRATED_PAGES` を置き、(a)・(b)・(d) を「集合にあるページは新しい期待・無いページは今の期待」の形に分ける (段 B・C は集合に自分のページを足すだけで期待が切り替わる。段 F で今の期待の側を消す)。変える it: (a) describe「開いたときの読み込みの最中に届いた成功の取り直しが失敗したら、開いたときに失敗したのと同じ画面を出す」(`CASES` の全ページ) →「…失敗しても、開いたときの読み込みの応答を置く (空のまま残らない)」(S-2)。(b)「書き込みのある受け手は、書き込みと AI 相談の成功の取り直しを重ねない」の家族・譲渡の行 (`WRITE_GUARDS`。取り直し中にボタンを止める前提があれば、書き込みの窓の間に通知が来ても取り直さない・終わったら 1 回、に)。(d) describe「/profile/nutrition-targets: 前の回の栄養目標の読み取りが後から失敗で届いても、あとの回が出した失敗の表示を消さない」の it「開いたときの読み込みの栄養目標の応答 (500) が、その読み込み中に来た成功の回の失敗のあとに届く」→「開いたときの読み込みの最中に来た取り直しが失敗しても、開いたときの読み込みの応答 (栄養目標は 500) を置く (読めたプロフィールを出し、栄養目標は '-'。失敗の画面にしない)」(取り直しは開いたときの読み込みの役を引き継がないので「あとの回が出した失敗の表示」が無くなる。S-2 と同じ)。(c) 足す it: S-13・S-14・S-17・S-19・S-20・S-24 (取り直しの移動)。ほかは挙動が同じ | A・B・C・F |
-| G-9 | `tests/ai-consultation-home-refetch-2195.test.tsx` | `useHomeData` の描画 | 全体: probe が自分で呼ぶ `useAiConsultationDataRefetch(…refetch…, { writeInFlightRef: aiConsultationWrites })` (6 か所: 栄養の分析の probe・完了の切り替えの probe 2 つ・気分と活動量の probe・`HomeAnalysisProbe`・`HomeG3Probe`) を消し (`useHomeData` が中で `useAiConsultationReceiver` を呼び、`refetch`・`aiConsultationWrites` を返さない)、`refetch!()` / `home!.refetch()` を直に呼ぶところ (5 か所) は通知 (`notifyAiConsultationSucceeded()`。`AI_CONSULTATION_DATA_CHANGED_EVENT` を発火) に替える (途中で止める取り直しは、通知のあとに止めた応答を放す形に)。変える it: (1) describe「useHomeData: 続けて来た 2 回の成功の取り直しの栄養の分析の応答が逆の順に届いても、古い分析で上書きしない」の補助 `startTwoRefetches` の `expect(analysisLoadingText()).toBe('true')` → `'false'` (取り直しは読み込み中の印を立てない。§6.4)。it「先の取り直しの分析が先に届いても置かず、読み込み中の印も下ろさない (あとの取り直しの分析が届いたら置いて下ろす)」→「先に届いた分析を置き、あとの分析で置き換える (読み込み中の印は立たない)」。(2) it「開いたときの読み込みがまだ AI つきの栄養の分析を読み始めていなければ、その役を引き継いだ取り直しが AI つきで 1 回だけ読み、今日のアドバイスの帯を出す」(G3) →「…読み始めていなくても、取り直しは AI を付けずに読み (取り直しのあとの AI つきの数は 0・AI 無しは 1)、追い越された開いたときの読み込みがあとで AI つきで 1 回だけ読んで帯を出す」。(4) it「取り直しの読み取りが投げても、読み込み中の表示のまま止まらない (開いたときの読み込みの応答が後から届いても)」→「…投げても、開いたときの読み込みの応答が届いたら読み込み中の表示を下ろす (止まらない)」(投げた取り直しは開いたときの読み込みの役を引き継がないので、投げた時点では読み込み中のまま。止めた開いたときの読み込みを放したら `'false'`。S-2 と同じ)。(3) it「取り直しの応答を待つあいだに献立の変更の実行 (AI つきの読み込み) が追い越しても、古い取り直しは栄養の分析を読み始めず…」→「…古い取り直しの分析 (AI 無し) は、変更のあとの分析より先に届けば置かれ、あとの分析で置き換わる。変更のあとのアドバイスを置く」(読み始める・AI は読まない)。変えない (新しい形でも assert が成り立つ。題の「引き継ぐ」の語は今の形の語に直してよい): it「開いたときの読み込みがもう AI つきの栄養の分析を読み始めていれば、その役を引き継いだ取り直しは AI を付けずに読み…」(G3)・it「ログインの状態の変化の読み込みが AI つきの読み取りを始めたあとに来た取り直し (その読み込みの役を引き継ぐ) は、AI を付けずに読む」(G3)・G3 の describe のほかの it (閉じたお知らせ・同意の知らせ (読み取りが失敗しても消す) ・帯の出所・帯の ×・`INITIAL_SESSION` / `TOKEN_REFRESHED` で読み直さない) | D |
-| G-10 | `tests/ai-consultation-weekly-refetch-2195.test.tsx` | 献立表の描画 | 変える it: 「人数の設定の読み込み中の印は、先に始めた読み込みが終わっても、あとに始めた読み込みが終わるまで下ろさない」→「人数の設定の読み込み中の印は、人数を置いたら下ろす (先に届いた応答を置き、あとの応答で置き換える)」。「AI 相談で表示中の月の別の週に献立を作ったら、月のカレンダーに印が出る (取得済みの範囲も読み直す)」→ 月の鍵で読み直す形に。足す it: S-12 の新しい形・S-15・S-18・S-21・S-23・S-25 (自炊の追加で手入力の編集を開く)・S-26 (最後の 1 食の削除でその日の印を消す)。全画面のスピナーを見る it (`weeklyPageIsLoading`) は変えない: 「開いたときの週の読み込みの応答を待つあいだに取り直しの献立が先に届いたら、読み込み中の表示を下ろし、あとから届いた週の読み込みの応答で古い献立に戻さない」(取り直しが置いた直後に `weeklyPageIsLoading()` が false。§7.4 の `releaseWeekLoadingIfShown` が下ろす。S-22)・「翌週から戻った週の読み込みを待つあいだに、前にその週を開いたときの古い読み込みの応答が届いても、翌週の献立を読み込み中の表示なしで出さない」(古い応答は `plan:<週>` が `'superseded'` で下ろさず、立て主でもない)・「週を移った直後 (週の読み込みの応答待ち) に来た成功の取り直しが失敗しても…」(S-4)。ほかは挙動が同じ。e2e の `tests/e2e/bug-04-cache-refetch-after-generation.spec.ts` (完了のダイアログを閉じたら meal-plans を読む) は `refreshMealPlan` の呼び出しが残るので変えない | E |
+| G-8 | `tests/ai-consultation-refetch-reads-2195.test.tsx` | ページの描画 | 段 A で `RECEIVER_MIGRATED_PAGES` を置き、(a)・(b)・(d) を「集合にあるページは新しい期待・無いページは今の期待」の形に分ける (段 B・C は集合に自分のページを足すだけで期待が切り替わる。段 F で今の期待の側を消す)。変える it: (a) describe「開いたときの読み込みの最中に届いた成功の取り直しが失敗したら、開いたときに失敗したのと同じ画面を出す」(`CASES` の全ページ) →「…失敗しても、開いたときの読み込みの応答を置く (空のまま残らない)」(S-2)。(b)「書き込みのある受け手は、書き込みと AI 相談の成功の取り直しを重ねない」の家族・譲渡の行 (`WRITE_GUARDS`。取り直し中にボタンを止める前提があれば、書き込みの窓の間に通知が来ても取り直さない・終わったら 1 回、に)。(d) describe「/profile/nutrition-targets: 前の回の栄養目標の読み取りが後から失敗で届いても、あとの回が出した失敗の表示を消さない」の it「開いたときの読み込みの栄養目標の応答 (500) が、その読み込み中に来た成功の回の失敗のあとに届く」→「開いたときの読み込みの最中に来た取り直しが失敗しても、開いたときの読み込みの応答 (栄養目標は 500) を置く (読めたプロフィールを出し、栄養目標は '-'。失敗の画面にしない)」(取り直しは開いたときの読み込みの役を引き継がないので「あとの回が出した失敗の表示」が無くなる。S-2 と同じ)。(c) 足す it: S-13・S-14・S-17・S-19・S-20・S-24 (取り直しの移動)・S-29 (/health/graphs)・S-30 (家族の画面の 3 つ。開いたときの応答待ちに来た取り直しが名前の API を読めない)。describe「名前の API だけを読めなかった取り直しは、出ている名前を残す」は変えない (取り直しは何も置かないので名前は残る)。ほかは挙動が同じ | A・B・C・F |
+| G-9 | `tests/ai-consultation-home-refetch-2195.test.tsx` | `useHomeData` の描画 | 全体: probe が自分で呼ぶ `useAiConsultationDataRefetch(…refetch…, { writeInFlightRef: aiConsultationWrites })` (6 か所: 栄養の分析の probe・完了の切り替えの probe 2 つ・気分と活動量の probe・`HomeAnalysisProbe`・`HomeG3Probe`) を消し (`useHomeData` が中で `useAiConsultationReceiver` を呼び、`refetch`・`aiConsultationWrites` を返さない)、`refetch!()` / `home!.refetch()` を直に呼ぶところ (5 か所) は通知 (`notifyAiConsultationSucceeded()`。`AI_CONSULTATION_DATA_CHANGED_EVENT` を発火) に替える (途中で止める取り直しは、通知のあとに止めた応答を放す形に)。変える it: (1) describe「useHomeData: 続けて来た 2 回の成功の取り直しの栄養の分析の応答が逆の順に届いても、古い分析で上書きしない」の補助 `startTwoRefetches` の `expect(analysisLoadingText()).toBe('true')` → `'false'` (取り直しは読み込み中の印を立てない。§6.4)。it「先の取り直しの分析が先に届いても置かず、読み込み中の印も下ろさない (あとの取り直しの分析が届いたら置いて下ろす)」→「先の取り直しの『分析できない』が先に届いたら置き (点数を空にして、今日のアドバイスの帯の AI のアドバイスを消す)、あとの取り直しの分析で点数を置き換える (帯は戻らない。読み込み中の印は立たない)」。assert: `release(first)` のあと `analysisScoreText()` が `'0'`・`adviceBannerText()` が `''`・`analysisLoadingText()` が `'false'`、`release(second)` のあと `analysisScoreText()` が `String(SECOND_SCORE)`・`adviceBannerText()` が `''`・`analysisLoadingText()` が `'false'` (§10.2 の太字の行・S-3。取り直しは AI を読まないので帯は戻らない)。同じ describe の it「あとの取り直しの分析が先に届き、先の取り直しの分析が後から届いても、あとの点数と今日のアドバイスの帯を残す」は、`startTwoRefetches` の読み込み中の印のほかは assert を変えない (先の取り直しの点数は `'superseded'` で、点数を置けなかった取り直しは AI の部分と帯を消さない。§7.5)。(2) it「開いたときの読み込みがまだ AI つきの栄養の分析を読み始めていなければ、その役を引き継いだ取り直しが AI つきで 1 回だけ読み、今日のアドバイスの帯を出す」(G3) →「…読み始めていなくても、取り直しは AI を付けずに読み (取り直しのあとの AI つきの数は 0・AI 無しは 1)、追い越された開いたときの読み込みがあとで AI つきで 1 回だけ読んで帯を出す」。(4) it「取り直しの読み取りが投げても、読み込み中の表示のまま止まらない (開いたときの読み込みの応答が後から届いても)」→「…投げても、開いたときの読み込みの応答が届いたら読み込み中の表示を下ろす (止まらない)」(投げた取り直しは開いたときの読み込みの役を引き継がないので、投げた時点では読み込み中のまま。止めた開いたときの読み込みを放したら `'false'`。S-2 と同じ)。(3) it「取り直しの応答を待つあいだに献立の変更の実行 (AI つきの読み込み) が追い越しても、古い取り直しは栄養の分析を読み始めず…」→「…古い取り直しの分析 (AI 無し) は、変更のあとの分析より先に届けば置かれ、あとの分析で置き換わる。変更のあとのアドバイスを置く」(読み始める・AI は読まない)。(5) 足す it (S-28): 「開いたときの栄養の分析の応答待ちに来た取り直しの栄養の分析が失敗しても、開いたときの点数とアドバイスを置き、分析の読み込み中の印を下ろす (同意の知らせは消す)」(開いたときの AI つきの読み取りの応答を止め、通知のあとに取り直しの AI 無しの読み取りを 500 にし、止めた応答を放す → 点数が `String(ANALYSIS_SCORE)`・帯がアドバイス・`analysisLoadingText()` が `'false'`)・「開いたときのパフォーマンスの分析の応答待ちに来た取り直しの分析が 5xx でも、開いたときの分析を置く (今日のチェックインは取り直しが読んだ値)」。変えない (新しい形でも assert が成り立つ。題の「引き継ぐ」の語は今の形の語に直してよい): it「開いたときの読み込みがもう AI つきの栄養の分析を読み始めていれば、その役を引き継いだ取り直しは AI を付けずに読み…」(G3)・it「ログインの状態の変化の読み込みが AI つきの読み取りを始めたあとに来た取り直し (その読み込みの役を引き継ぐ) は、AI を付けずに読む」(G3)・G3 の describe のほかの it (閉じたお知らせ・同意の知らせ (読み取りが失敗しても消す) ・帯の出所・帯の ×・`INITIAL_SESSION` / `TOKEN_REFRESHED` で読み直さない) | D |
+| G-10 | `tests/ai-consultation-weekly-refetch-2195.test.tsx` | 献立表の描画 | 変える it: 「人数の設定の読み込み中の印は、先に始めた読み込みが終わっても、あとに始めた読み込みが終わるまで下ろさない」→「人数の設定の読み込み中の印は、人数を置いたら下ろす (先に届いた応答を置き、あとの応答で置き換える)」。「AI 相談で表示中の月の別の週に献立を作ったら、月のカレンダーに印が出る (取得済みの範囲も読み直す)」→ 月の鍵で読み直す形に。足す it: S-12 の新しい形・S-15・S-18・S-21・S-23・S-25 (自炊の追加で手入力の編集を開く)・S-26 (最後の 1 食の削除でその日の印を消す)・S-30 (開いたときの家族の読み込みの応答待ちに来た取り直しが家族の一覧を読めなくても、開いたときの家族の切り替えを置く)。it「取り直しで名前の API を読めなかったら、家族の切り替えの名前を残す」「取り直しで自分のプロフィールを読めなかったら、家族の切り替えを消さない」は変えない (取り直しは何も置かない)。全画面のスピナーを見る it (`weeklyPageIsLoading`) は変えない: 「開いたときの週の読み込みの応答を待つあいだに取り直しの献立が先に届いたら、読み込み中の表示を下ろし、あとから届いた週の読み込みの応答で古い献立に戻さない」(取り直しが置いた直後に `weeklyPageIsLoading()` が false。§7.4 の `releaseWeekLoadingIfShown` が下ろす。S-22)・「翌週から戻った週の読み込みを待つあいだに、前にその週を開いたときの古い読み込みの応答が届いても、翌週の献立を読み込み中の表示なしで出さない」(古い応答は `plan:<週>` が `'superseded'` で下ろさず、立て主でもない)・「週を移った直後 (週の読み込みの応答待ち) に来た成功の取り直しが失敗しても…」(S-4)。ほかは挙動が同じ。e2e の `tests/e2e/bug-04-cache-refetch-after-generation.spec.ts` (完了のダイアログを閉じたら meal-plans を読む) は `refreshMealPlan` の呼び出しが残るので変えない | E |
 | G-11 | `tests/ai-chat-timeout-reload-2201.test.tsx` 「Web の取り直し (useAiConsultationDataRefetch) と組み合わせる」 | `useAiConsultationDataRefetch` | 新しい hook に向ける (X1 の枝のマージ後の形で) | F |
-| G-12 | `src/__tests__/app/menus/weekly/family-menu-wiring.test.ts` | `const familyLoadStream = useAiConsultationFetchStream();` | `loadFamilyData` が `read.place(KEY_FAMILY, …)` で置く形の正規表現に | E |
+| G-12 | `src/__tests__/app/menus/weekly/family-menu-wiring.test.ts` | `loadFamilyData` の宣言の行・`const familyLoadStream = useAiConsultationFetchStream();`・`order.place(…)`・`keepShownFamilyMemberNames` の import・開いたときの effect `void loadFamilyData();`・家族の切り替えの `void loadFamilyData();` | §7.4 の `loadFamilyData` のブロックに合わせて書き換える: (i) 補助 `loadFamilyDataBlock` の正規表現 → `/const loadFamilyData = useCallback\(async \(read: AiConsultationRead\) => \{[\s\S]*?\n {2}\}, \[\]\);/` (ii) 1 本目の it の `order.place(…keepShownFamilyMemberNames…)` の正規表現 → `/if \(!namesResult\.ok && read\.mode === 'refetch'\) return;\s*const rows = members as FamilyMember\[\];\s*read\.place\(KEY_FAMILY, \(\) => \{\s*setCurrentUserId\(user\.id\);\s*setFamilyId\(familyIdRead\);\s*setFamilyMembers\(applyFamilyMemberNames\(rows, namesResult\.ok \? namesResult\.names : new Map\(\)\)\);\s*\}\);/`、import の正規表現 → `/import \{\s*applyFamilyMemberNames,\s*fetchFamilyMemberNamesResult,\s*\} from "@\/lib\/membership\/family-member-names";/`、足す: `expect(block).not.toMatch(/keepShownFamilyMemberNames/)` (iii) 2 本目の it の `familyIdRead === null` の正規表現 → `/if \(profileError\) return;\s*const familyIdRead = profile\?\.family_id \?\? null;\s*if \(familyIdRead === null\) \{\s*read\.place\(KEY_FAMILY, \(\) => \{\s*setCurrentUserId\(user\.id\);\s*setFamilyId\(null\);\s*setFamilyMembers\(\[\]\);\s*\}\);\s*return;\s*\}/`、`const order = familyLoadStream.begin(refetchTicket);`・`const familyLoadStream = useAiConsultationFetchStream();` の 2 つの toMatch → `expect(pageSource).not.toMatch(/familyLoadStream/)`、足す (途中の段で置かない。§6.2): block の `setCurrentUserId(` の数 = `read.place(KEY_FAMILY, () => {` の直後に `setCurrentUserId(user.id);` が来る数 = 3、開いたときの effect の正規表現 → `/useEffect\(\(\) => \{\s*void receiver\.read\(\{\}, loadFamilyData\);\s*\}, \[receiver, loadFamilyData\]\);/` (iv) 3 本目の it (家族の切り替えの `onChange`) の `/void loadFamilyData\(\);/` → `/void receiver\.read\(\{\}, loadFamilyData\);/`。ほかの it は変えない | E |
 | G-13 | `apps/mobile/__tests__/components/WebViewScreen.ai-data-reload.test.tsx` 「読み込み直しを止める要素は、入力の部品 (hidden を除く) と開いているモーダル」「止めている要素の当たり外れを変えうる属性 (…) の変化も見張る」 | `AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR`・観察する属性 | 並びに `html[data-ai-consultation-writes]` と属性を足す。MT-1・MT-2 を足す | A |
 | G-14 | `apps/mobile/__tests__/components/ai-reload-blocking-web-markers.test.ts` | Web のモーダルの印 | 変えない (印の種類は増えていない) | — |
 | G-15 | `apps/mobile/__tests__/ai/advisor-sheet-reload-running.test.tsx` | 実時間の待ち | §7.8 | A |
@@ -2242,6 +2479,7 @@ grep の語 (本書が足す・変える・消す名前): `useAiConsultationRece
 | G-28 | `tests/health-streaks-sandbox-1802.test.ts` (`FILES_TOUCHING_HEALTH_STREAKS`。`useHomeData.ts`・`consultation-refetch-coverage.ts` を名前で持つ「ちょうどこの一覧」) | `'health_streaks'` の文字列を持つファイルの一覧 | 変えない。`useHomeData.ts` の `health_streaks` の読み取りは読むだけのまま。新しい hook のファイルと新しい番兵 (テストは走査の外) の本番のコードに `'health_streaks'` の文字列を書かない (書くと一覧がちょうどで無くなり赤) | — |
 | G-29 | `tests/org-retry-and-catch-2059.test.tsx`・`tests/plan-detail-write-overlap-2059.test.tsx` (コメントで `writeInFlightRef` を名指し) | `writeInFlightRef` | 変えない。受け手でない画面 (組織・プランの詳細) の自前の印の名前で、本書の印ではない。P5 は受け手と `src/hooks`・`src/lib/ai` だけを見るので当たらない | — |
 | G-30 | `tests/health-profile-load-edges-2206.test.tsx` (G5。/health/graphs・/profile/nutrition-targets・/profile を描画し、`AI_CONSULTATION_DATA_CHANGED_EVENT` で取り直させる) | `AI_CONSULTATION_DATA_CHANGED_EVENT`・3 つの受け手の描画 | 変えない。hook の名前を持たず、描画と通知だけで確かめる。設計後も緑: /health/graphs は `fetchOrNull`・`readOkJson` を残す (§9 #11)、/profile/nutrition-targets の「再設定の保存のあとの読み直しが失敗しても…今の表示を残す」「取り直しで栄養目標を読めなかったら、プロフィールだけを新しくしない」「開いたときに読めなかった失敗の文は…両方を読めたら消す」は `readTargetsPage` の `keepShown` (§9 #19)、/profile の「再読み込み」「ログインの確かめが投げても…」「取り直しの失敗では保存を止めず…」「取り直しで読めたら知らせを消して保存できる」は `readProfile` の `setProfileLoadFailed` の置き方 (§9 #18) が受け持つ | — (B の受入で緑) |
+| G-31 | `src/__tests__/app/menus/weekly/dish-favorite-wiring.test.ts` (ソースを読む) | `handleToggleFavorite` の catch・finally の正規表現 (W-4)・try より前の目印 (W-3) | §9.1 の W-47・W-48 で ♥ の DELETE・POST を窓で囲む (§7.4 の `handleToggleFavorite` のブロック: `const endWrite = receiver.beginWrite();` を `setIsFavoriteLoading(true);` のあと・`try {` の直前に置き、`finally` の最後に `endWrite();`)。W-4 の正規表現 → `/^\} catch \{\s*if \(isCurrentSession\(\)\) setIsFavorite\(prev\);\s*\} finally \{\s*if \(isCurrentSession\(\)\) setIsFavoriteLoading\(false\);\s*endWrite\(\);\s*\}\s*\};/` (catch・finally の状態を変える行は今と同じ 2 つ。`endWrite()` は `STATE_WRITE_PATTERN` に当たらない)。W-3 に足す: `expect(beforeTry).toContain('const endWrite = receiver.beginWrite();')`。W-3 のほかの検査 (try の本体の `await` が 4 つ・各 `await` の次の行の `isCurrentSession()`) は、窓を try の外 (前と finally) に置くので変えない。W-1・W-2・W-5 は変えない | E |
 
 ### 17.2 受け手のソースを読む・受け手を描画するテストの母集合 (列挙の規則と結果)
 
@@ -2249,18 +2487,20 @@ grep の語 (本書が足す・変える・消す名前): `useAiConsultationRece
 
 1. 受け手 22 ファイル (§3.2) のパスの断片 (`badges/page`・`comparison/page`・`family/dashboard/page`・`family/members/page`・`members/[id]/page`・`family/transfer-accept/[proposal_id]/page`・`org/transfer-accept/[proposal_id]/page`・`blood-tests/page`・`CheckupDetailClient`・`health/goals/page`・`health/graphs/page`・`health/page`・`health/streaks/page`・`home/page`・`useHomeData`・`meals/[id]/page`・`menus/weekly/page`・`pantry/page`・`profile/page`・`nutrition-targets/page`・`ProfileReminderBanner`・`nutrition-target-planner`) で `git grep -lE '<断片>' origin/main -- tests src/__tests__ apps/mobile/__tests__ scripts` を引く。パスを `path.join(<dir>, 'page.tsx')` で組むテストは断片に当たらないので、`readFileSync` を持つテストのうち `'page.tsx'`・`(main)`・部品の名前を含むものも足す。
 2. (a) ソースを読む (`readFileSync`・構文木) もの、(b) 受け手を import して描画するもの、に分ける。
-3. 本書が変える名前 (§17 の冒頭の grep の語と、§7.3〜§7.6 で消す・移す・中身を変える関数の名前: `fetchPlan`・`refreshMealPlan`・`fetchWeekData`・`startPolling`・`subscribeToRequestStatus`・`finishRegenerate`・`finishImprove`・`fetchAndCacheMealDates`・`fetchUserSettings`・`fetchPantry`・`loadFamilyData`・`toggleMealCompletion`・`handleGenerateWeekly`・`readHomeData`・`fetchHomeData`・`fetchNutritionAnalysis`・`handleSave`・`handleDelete`・`router.replace`・`router.push`・`setLoading(`・`uiFlag.loading`・`weekDataCache`) を含むかを見る。含んで目印が変わるものは §17.1 に直す行を、含んでも変わらないものは §17.1 に「変えない」行を置く。含まないものは下の「変えない」に置く。
+3. 本書が変える名前 (§17 の冒頭の grep の語と、§7.3〜§7.6 で消す・移す・中身を変える関数の名前: `fetchPlan`・`refreshMealPlan`・`fetchWeekData`・`startPolling`・`subscribeToRequestStatus`・`finishRegenerate`・`finishImprove`・`fetchAndCacheMealDates`・`fetchUserSettings`・`fetchPantry`・`loadFamilyData`・`toggleMealCompletion`・`handleGenerateWeekly`・`readHomeData`・`fetchHomeData`・`fetchNutritionAnalysis`・`handleSave`・`handleDelete`・`router.replace`・`router.push`・`setLoading(`・`uiFlag.loading`・`weekDataCache`) と、§9.1 で窓を新たに足す関数 (「今」が「無し」か「真偽の ref」で「設計後」が「窓」の行の関数: `handleRemove`・`handleLeave`・`handleShareUpdate`・`handleAccept`・`handleDecline`・CheckupDetailClient と /meals/[id] の `handleDelete`・`handleQuickSave`・`handleCreateGoal`・`handleSaveEditGoal`・/profile の `handleSave`・`submitPerformanceCheckin`・`executeNutritionSuggestion`・`handleCancelGeneration`・`regenerateShoppingList`・`handleToggleFavorite`・`handleGenerateWeekly`・`handleGenerateSingleMeal`・`handleRegenerateMeal`・`analyzePhotoWithAI`・`handleImprove`。#2206 G1 R4) の名前を含むかを見る。含んで目印が変わるものは §17.1 に直す行を、含んでも変わらないものは §17.1 に「変えない」行を置く。含まないものは下の「変えない」に置く。
 
 結果 (基点 origin/main `eb1ad85da`、2026-11-04。`9bff430c` で引き、`9bff430c..eb1ad85da` で変わったテストを規則 1 に当て直した。`9bff430c..d3c7739b2` で当たるのは下の最後の行の 1 本で、その 1 本は `9bff430c` でも当たる。`d3c7739b2..eb1ad85da` で変わったテストは 3 本で、`tests/ai-consultation-data-refetch-2195.test.tsx`・`tests/ai-consultation-home-refetch-2195.test.tsx` は前からの行のまま、G5 が足した `tests/health-profile-load-edges-2206.test.tsx` は (b) の受け手を描画する行に入る):
 
 | 分け | テスト | 扱い |
 |---|---|---|
-| (a) 本書の語を含む | `tests/ai-consultation-refetch-placement-guard-2201.test.ts` (G-1)・`tests/ai-consultation-data-refetch-2195.test.tsx` (G-2〜G-5)・`tests/ai-consultation-refetch-coverage-2195.test.ts` (G-6)・`src/__tests__/app/menus/weekly/family-menu-wiring.test.ts` (G-12)・`photo-result-refetch-wiring` (G-18)・`poll-progress-while-generating` (G-19)・`pending-restore-no-overwrite`・`request-watch-guard` (G-20)・`poll-tick-watch-guard`・`v4-progress-ultimate-mode` (G-21)・`tests/ai-consent-entry-points.test.ts` (G-22)・`static-guard` (G-23)・`tests/health-streaks-sandbox-1802.test.ts` (G-28) | §17.1 の行 |
+| (a) 本書の語を含む | `src/__tests__/app/menus/weekly/dish-favorite-wiring.test.ts` (G-31。窓を足す `handleToggleFavorite` の catch・finally を正規表現で丸ごと見る)・`tests/ai-consultation-refetch-placement-guard-2201.test.ts` (G-1)・`tests/ai-consultation-data-refetch-2195.test.tsx` (G-2〜G-5)・`tests/ai-consultation-refetch-coverage-2195.test.ts` (G-6)・`src/__tests__/app/menus/weekly/family-menu-wiring.test.ts` (G-12)・`photo-result-refetch-wiring` (G-18)・`poll-progress-while-generating` (G-19)・`pending-restore-no-overwrite`・`request-watch-guard` (G-20)・`poll-tick-watch-guard`・`v4-progress-ultimate-mode` (G-21)・`tests/ai-consent-entry-points.test.ts` (G-22)・`static-guard` (G-23)・`tests/health-streaks-sandbox-1802.test.ts` (G-28) | §17.1 の行 |
 | (a) 本書の語を含むが目印に当たらない | `src/__tests__/app/menus/weekly/recipe-shopping-list.test.ts` (レシピの材料の追加の書き込みの `setShoppingList([...…])`。読み取りの経路でなく、切り出しの終わりの目印 `const handleGenerateWeekly` は残る)・`modal-contracts.test.ts` (store を直に置く)・`cancel-generation-modal-reachability.test.ts`・`regenerate-improve-polling-guard.test.ts`・`ux2-02-remaining-alerts-wiring.test.ts` (コメントの名前だけ)・`src/__tests__/app/pantry/replace-confirm-wiring.test.ts` (「全て置き換え」の確認の配線。`handleSaveIngredients` の名前は変えない)・`tests/request-error-display-screens.test.ts`・`tests/ai-consent-stored-failure-readers.test.ts` (`finishRegenerate`・`finishImprove` の名前をコメントで挙げる。名前は変えない)・`tests/get-user-login-redirect-scan-2086.test.ts` (`getUser` の `error` を見ない `/login` への移動を数える。受け手は `readSignedInUser` のまま) | 変えない |
-| (a) 本書の語を含まない | `src/__tests__/app/menus/weekly/` の `add-days-str-tz-safety`・`date-query-tz-safety`・`dish-favorite-wiring`・`pending-restore-progress`・`progress-if-empty-stale-setter`・`progress-todo-card-cancel`・`recipe-modal-plan-skipped`・`ux2-01-02-error-handling-wiring`・`ux2-11-cancel-generation-wiring`・`state/` の 10 本 (`weekDataCache.test.ts` は `createWeekDataCache` を直に確かめる。本書は控えの部品を変えない)・`tests/` の `ai-consent-mobile-entry-points`・`ai-consent-mobile-modal-nesting`・`ai-consent-skipped`・`badges-description-matches-award-contract`・`design-doc-removed-mobile-screens`・`family-groups-no-direct-delete-migration-contract`・`jst-today-source-scan`・`list-order-tiebreak-2134`・`meal-image-plan-gate-source`・`meal-types-no-handwritten-1446`・`mobile-home-hook-removed-2157`・`org-transfer-accept-route-group-2068`・`org-ui-no-english-copy`・`org-write-reject-reread-scan-2080` (組織の画面の書き込みの `fetch` を数える。窓で囲んでも `fetch` は同じ関数の中に残す)・`profile-name-display-wiring-1649`・`profile-post-input-2178`・`public-claims-guard`・`signed-photo-display-scan`・`segment-stats-schedule-sync`・`assign-at-path`・`dish-favorites-core`・`membership-errors`・`use-revoke-blob-urls`・`org-dashboard-subtitle-copy`・`health-photo-entry`・`nutrition-feedback-watch` (断片がほかのファイルの名前にも当たった誤検出を含む) | 変えない。ただし本番のコード全体を走査する番兵 (`jst-today-source-scan`・`list-order-tiebreak-2134`・`signed-photo-display-scan` など) は、新しい hook と移行した受け手の新しい行にも当たるので、各段の全件で緑を確かめる |
+| (a) 本書の語を含まない | `src/__tests__/app/menus/weekly/` の `add-days-str-tz-safety`・`date-query-tz-safety`・`pending-restore-progress`・`progress-if-empty-stale-setter`・`progress-todo-card-cancel`・`recipe-modal-plan-skipped`・`ux2-01-02-error-handling-wiring`・`ux2-11-cancel-generation-wiring`・`state/` の 10 本 (`weekDataCache.test.ts` は `createWeekDataCache` を直に確かめる。本書は控えの部品を変えない)・`tests/` の `ai-consent-mobile-entry-points`・`ai-consent-mobile-modal-nesting`・`ai-consent-skipped`・`badges-description-matches-award-contract`・`design-doc-removed-mobile-screens`・`family-groups-no-direct-delete-migration-contract`・`jst-today-source-scan`・`list-order-tiebreak-2134`・`meal-image-plan-gate-source`・`meal-types-no-handwritten-1446`・`mobile-home-hook-removed-2157`・`org-transfer-accept-route-group-2068`・`org-ui-no-english-copy`・`org-write-reject-reread-scan-2080` (組織の画面の書き込みの `fetch` を数える。窓で囲んでも `fetch` は同じ関数の中に残す)・`profile-name-display-wiring-1649`・`profile-post-input-2178`・`public-claims-guard`・`signed-photo-display-scan`・`segment-stats-schedule-sync`・`assign-at-path`・`dish-favorites-core`・`membership-errors`・`use-revoke-blob-urls`・`org-dashboard-subtitle-copy`・`health-photo-entry`・`nutrition-feedback-watch` (断片がほかのファイルの名前にも当たった誤検出を含む) | 変えない。ただし本番のコード全体を走査する番兵 (`jst-today-source-scan`・`list-order-tiebreak-2134`・`signed-photo-display-scan` など) は、新しい hook と移行した受け手の新しい行にも当たるので、各段の全件で緑を確かめる |
 | (b) 受け手を描画する | `tests/ai-consultation-refetch-reads-2195.test.tsx` (G-8)・`tests/ai-consultation-home-refetch-2195.test.tsx` (G-9)・`tests/ai-consultation-weekly-refetch-2195.test.tsx` (G-10)・`tests/health-profile-load-edges-2206.test.tsx` (G-30)・`src/__tests__/app/comparison/page-fetch-race.test.ts` (G-24)・`tests/family-member-detail-consent.test.tsx` (G-25)・`src/__tests__/hooks/useHomeData-completion.test.ts` (G-26) | §17.1 の行 |
 | (b) 受け手を描画する (取り直しを見ない) | B: `tests/badges-page-period.test.tsx`・`src/__tests__/app/meals/detail-meal-type-visual.test.tsx`・`src/__tests__/app/pantry/expiry-jst.test.tsx`・`src/__tests__/app/native-account-actions.test.ts` (/profile)・`tests/recipe-author-name-setting-1917.test.tsx` (/profile) (`tests/nutrition-target-planner.test.ts` は名前が似るが `src/lib/nutrition-target-planner` の単体で、部品を描画しない)。C: `src/__tests__/app/family/transfer-accept-page.test.ts`・`src/__tests__/app/org/transfer-accept-page.test.ts`・`tests/family-screens-2080.test.tsx`・`tests/family-screens-reload-2073.test.tsx`・`tests/family-transfer-accept-and-leave-reload-2064.test.tsx`・`tests/membership-getuser-remaining-2093.test.tsx`・`tests/membership-screens-get-user-offline-2086.test.tsx`・`tests/org-transfer-accept-and-write-reload-2064.test.tsx`・`tests/org-transfer-accept-member-2068.test.tsx` | 変えない。開いたとき・再試行・書き込みのあとの読み直しは `'mount'` の読み取りで、置き方・失敗の表示・移動は今までどおり (`aiRefetching`・`AI_CONSULTATION_REFETCH_ACTION` を見る assert はどれにも無い)。移るまで読み込み中の表示のまま (`tests/family-screens-reload-2073.test.tsx` の 2 本) は §6.8 の `redirecting` が受け持つ。各段の受入で緑のまま |
 | 規則 1 に当たるが (a)・(b) のどちらでもない (コメントで部品の名前を挙げるだけ) | `tests/ai-profile-completeness-2201.test.ts` (冒頭のコメントで `ProfileReminderBanner` を挙げる。受け手のソースを読まず、描画もしない。AI 相談の実行と完成度の計算の単体) | 変えない |
+
+窓を新たに足す関数の名前 (規則 3) で引き直した結果 (基点 `eb1ad85da`。#2206 G1 R4): 目印に当たるのは `dish-favorite-wiring` (G-31) の 1 本だけ。ほかに名前で当たるテスト (`src/__tests__/app/menus/weekly/` の `ux2-11-cancel-generation-wiring` (`handleCancelGeneration` の本体に `setShowConfirmCancelGeneration(false)` があるか)・`cancel-generation-modal-reachability` (コメント)・`ux2-02-remaining-alerts-wiring` (本体の部分一致)・`regenerate-improve-polling-guard` (本体の部分一致)・`poll-tick-watch-guard` (改善の tick・終わりの塊と中止の印。`handleImprove` の先頭の送信の窓は tick の塊の外)・`poll-progress-while-generating` (it の題)・`recipe-shopping-list` (切り出しの終わりの目印)・`state/formDraftStore` (コメント)、`tests/` の `ai-consent-entry-points`・`ai-consultation-home-refetch-2195` (G-9)・`ai-consultation-refetch-placement-guard-2201` (G-1)、e2e の `bug-20-checkin-mapping`・`bug-91-shopping-no-menu`、名前が同じ別物の `jst-leftovers-1463-routes` (route の `POST`)) は、関数の中身の部分一致・名前・コメントだけを見るので、窓を足しても赤にならない。family・health・profile・meals の書き込みの関数の名前で当たるテストは無い。
 
 未検査: (b) の「取り直しを見ない」描画のテストは、assert の中身を 1 本ずつは読んでいない (取り直しに関わる語 `aiRefetching`・`読み直し中`・`AI_CONSULTATION`・`mealPlanUpdated`・`writeInFlight` を含まないことだけを確かめた)。赤になったら、その段の deviations に書く。
 
@@ -2303,3 +2543,5 @@ grep の語 (本書が足す・変える・消す名前): `useAiConsultationRece
 | Q-15 | 献立表の読み直した週の置き方 (§7.4 の置き方の表): 呼び出し元ごとの違いを `WEEK_PLACEMENT_*` でそのまま引き継ぎ、変えるのは 5 点だけ (生成の完了は表示中の週だけ画面に置く・印は週を移った応答でも置く・週の読み込みの買い物リストは空でも置く・改善の完了は無い route をやめる・買い物リストは週の確かめの外)。写真の結果は待ちが明けてから読み取りを始めるので、待ちの最後の読み取り (`fetchTargetWeek`) の応答待ちに始まって先に置いた取り直しの献立は、それより前に読んだ写真の結果の献立で置き換わりうる (待ちの最後の 1 回の応答時間だけの縁。今の直接の `setCurrentPlan` と同じで、次の取り直しか読み直しで戻る) |
 | Q-16 | /home の分析 (§7.5): 今は `void fetchNutritionAnalysis` で主のデータの読み取りが分析を待たない (`executeNutritionSuggestion` の「🎉 献立を変更しました！」は主のデータを置いた時点で出る)。設計後も同じ時機にするため、ページの読み取りでは分析ごとに別のページの読み取り (分析の鍵の `loadingKeys`) を始め、取り直しでは同じ取り直しの読み取りで始める (`StartHomeAnalyses`)。主のデータの読み取りで分析を待つ形にはしない |
 | Q-17 | /home の全画面の読み込み中 (`homeLoading`。§6.4・§7.5): 今は「最後に始めた主のデータの読み取り」が終わったら下りる (開いたときの読み込み中に始まった取り直しは役を引き継ぎ、終われば下ろす・投げても下ろす)。設計後は、ページの読み取りが立ててその終わりで下ろし、取り直しは主のデータを読み終えたときだけ下ろす。違いは 2 つ: (1) 投げた取り直しは下ろさない (開いたときの読み込みの応答で下りる。G-9 の (4)) (2) ページの読み取り (ログインの状態の変化など) より前に始めた取り直しが、そのページの読み取りより先に読み終えると下ろす (今は最後に始めた読み取りでないので下ろさない。画面には取り直しが置いた主のデータが出ている。ログインの状態の変化は G3 で 3 つの event に絞ったので重なりはまれ) |
+| Q-18 | 鍵の切り方の決まり (§6.2。#2206 G1 R4): 取り直しの失敗・一部の失敗で、ページの読み取りが成功の応答を置く鍵に置かない。今の置き方のうち、成功の応答と同じ置き場所に今の表示を写して置く 6 つ (/home の `settleKeepingAnalysis`・パフォーマンスの分析の非 ok の分岐・/health/graphs の `keepShownRecords` のときの目標・家族の 3 画面と献立表の `keepShownFamilyMemberNames`・members/[id] の `keepShownConsent`・家族・譲渡の画面と献立表の途中の段の setter) を、別の鍵 (`KEY_NUTRITION_CONSENT_NOTICE`・`KEY_TODAY_CHECKIN`・`KEY_TARGET_WEIGHT`) か「置かない」か「最後に 1 回」に替える。見える変化は 1 つ: 家族の画面と献立表の家族は、取り直しで名前の API (members/[id] は子供の同意の記録も) を読めなければ、群・一覧・役割も置かない (§10.2 の太字)。この決まりは番兵 P1〜P6 の字面では見分けられないので、描画のテスト (S-28〜S-30) が確かめる |
+| Q-19 | /home の続けて来た 2 回の取り直しの逆の順 (§10.2 の太字・S-3・G-9): 先の取り直しの「分析できない」が先に届くと、点数を空にして帯の AI のアドバイスと AI の部分を消し、あとの取り直しの点数で置き換えてもアドバイスと帯は戻らない (今は `latestStarted` で先の応答を置かない)。順序を `newerThanPlaced` に統一した帰結で、2 回の取り直しを順に流したときと同じ結果。今と同じにするには /home の点数の鍵だけ「最後に始めた読み取りだけを置く」に戻す必要があり、取り直しの失敗で開いたときの点数を捨てる縁 (D-2) が戻るので採らない |
