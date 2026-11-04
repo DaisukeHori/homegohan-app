@@ -771,6 +771,17 @@ const caseOf = (page: string): PageCase => {
  */
 const RECEIVER_MIGRATED_PAGES: ReadonlySet<string> = new Set<string>([
   // 段 B
+  '/comparison',
+  '/pantry',
+  '/health/goals',
+  '/health/graphs',
+  '/health/streaks',
+  '/badges',
+  '/meals/[id]',
+  '/profile',
+  '/profile/nutrition-targets',
+  '/health/blood-tests',
+  '/health/checkups/[id]',
 
   // 段 C
 ]);

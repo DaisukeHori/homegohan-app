@@ -1591,33 +1591,33 @@ describe('受け手の配線 (#2195 V1)', () => {
     readonly wiring: RegExp;
   }
 
-  // 段 B
+  // 段 B (新しい受け手の hook へ移した。hookImport は行ごとに新しい hook の import を書く。#2206 G1 §17 G-5)
   const WIRING_STAGE_B: readonly WiringRow[] = [
     {
-      page: '比較 (/comparison): 取得の useEffect の依存に数を足す',
+      // 取り直しは表示中の期間 (periodTypeRef) を読む。開いたとき・期間の切り替えの読み取りだけが中断の印 (signal) を渡す
+      page: '比較 (/comparison): 開いたとき・期間の切り替えは表示中の期間の鍵で読み込み中にし、取り直しは表示中の期間を読む',
       file: 'src/app/(main)/comparison/page.tsx',
-      hookImport: HOOK_IMPORT,
-      wiring: /const \{ refetchKey: aiConsultationRefetchKey \} = useAiConsultationRefetchKey\(\);[\s\S]*?\}, \[periodType, aiConsultationRefetchKey, takeAiConsultationRefetchRun\]\);/,
+      hookImport: /from "@\/hooks\/useAiConsultationReceiver";/,
+      wiring: /const receiver = useAiConsultationReceiver\(\(read\) => readRankings\(read, periodTypeRef\.current\), \{\s*initialLoadingKeys: \[rankingsKey\(INITIAL_PERIOD_TYPE\)\],\s*\}\);[\s\S]*?void receiver\.read\(\{ loadingKeys: \[rankingsKey\(periodType\)\] \}, \(read\) => readRankings\(read, periodType, controller\.signal\)\);\s*return \(\) => controller\.abort\(\);\s*\}, \[periodType, receiver, readRankings\]\);/,
     },
     {
       page: '冷蔵庫 (/pantry): fetchItems',
       file: 'src/app/(main)/pantry/page.tsx',
-      hookImport: HOOK_IMPORT,
-      // 取り直しの読み方は refetchReadMode (開いたときの読み込み中に始まった取り直しは 'mount'。#2201 U1 + U2)
-      wiring: /useAiConsultationDataRefetch\(\s*\(ticket\) => fetchItems\(ticket, refetchReadMode\(\)\),\s*\{ writeInFlightRef: pendingWrites \},\s*\);/,
+      hookImport: /from "@\/hooks\/useAiConsultationReceiver";/,
+      wiring: /const receiver = useAiConsultationReceiver\(fetchItems, \{ initialLoadingKeys: \[KEY_ITEMS\] \}\);[\s\S]*?useEffect\(\(\) => \{\s*void receiver\.read\(\{ loadingKeys: \[KEY_ITEMS\] \}, fetchItems\);\s*\}, \[receiver, fetchItems\]\);/,
     },
     {
       page: '健康目標 (/health/goals): fetchGoals',
       file: 'src/app/(main)/health/goals/page.tsx',
-      hookImport: HOOK_IMPORT,
-      wiring: /useAiConsultationDataRefetch\(\s*\(ticket\) => fetchGoals\(ticket, refetchReadMode\(\)\),\s*\{ writeInFlightRef: pendingWrites \},\s*\);/,
+      hookImport: /from "@\/hooks\/useAiConsultationReceiver";/,
+      wiring: /const receiver = useAiConsultationReceiver\(fetchGoals, \{ initialLoadingKeys: \[KEY_GOALS\] \}\);[\s\S]*?useEffect\(\(\) => \{\s*void receiver\.read\(\{ loadingKeys: \[KEY_GOALS\] \}, fetchGoals\);\s*\}, \[receiver, fetchGoals\]\);/,
     },
     {
-      // 依存の profileReloadKey は、開いたときの読み込みに失敗したあとの「再読み込み」の数 (#2206 G5)
-      page: 'マイページ (/profile): 取得の useEffect の依存に数を足す',
+      // 「再読み込み」は開いたときと同じ読み取り (#2206 G5 の profileReloadKey の数は消した)
+      page: 'マイページ (/profile): readProfile (開いたとき・「再読み込み」・取り直し)',
       file: 'src/app/(main)/profile/page.tsx',
-      hookImport: HOOK_IMPORT,
-      wiring: /const \{ refetchKey: aiConsultationRefetchKey, refetchTicket: aiConsultationRefetchTicket \} = useAiConsultationRefetchKey\(\);[\s\S]*?useEffect\(\(\) => \{[\s\S]*?const getData = async \(\) => \{[\s\S]*?void getData\(\);[\s\S]*?\}, \[aiConsultationRefetchKey, profileReloadKey, takeAiConsultationRefetchRun, aiConsultationRefetchTicket\]\);/,
+      hookImport: /from "@\/hooks\/useAiConsultationReceiver";/,
+      wiring: /const receiver = useAiConsultationReceiver\(readProfile, \{ initialLoadingKeys: \[KEY_PROFILE\] \}\);[\s\S]*?useEffect\(\(\) => \{\s*void receiver\.read\(\{ loadingKeys: \[KEY_PROFILE\] \}, readProfile\);\s*\}, \[receiver, readProfile\]\);[\s\S]*?onClick=\{\(\) => void receiver\.read\(\{ loadingKeys: \[KEY_PROFILE\] \}, readProfile\)\}/,
     },
   ];
 
@@ -1710,7 +1710,8 @@ describe('受け手のページのモーダルは role="dialog" を持つ (#2195
 
   it.each(RECEIVER_PAGES)('$file', ({ file, overlays }) => {
     const source = readRepoFile(file);
-    expect(source, '受け手のページではない').toMatch(/useAiConsultation(DataRefetch|RefetchKey)\(/);
+    // 新しい受け手の hook (useAiConsultationReceiver。#2206 G1) へ移した受け手も、移す前の受け手も数える
+    expect(source, '受け手のページではない').toMatch(/useAiConsultation(DataRefetch|RefetchKey|Receiver)\(/);
     let checked = 0;
     for (let at = source.indexOf(OVERLAY); at !== -1; at = source.indexOf(OVERLAY, at + OVERLAY.length)) {
       const start = source.lastIndexOf(OPEN_PRESENCE, at);
