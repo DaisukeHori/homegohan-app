@@ -51,6 +51,7 @@ jest.mock('expo-linear-gradient', () => ({
 import React from 'react';
 import { AIAdvisorSheet } from '../../src/components/ai/AIAdvisorSheet';
 import {
+  AI_CHAT_RELOAD_TIMEOUT_MS,
   AI_CHAT_STREAM_TIMEOUT_MS,
   TIMEOUT_DELIVERED_NO_REPLY_MESSAGE,
   TIMEOUT_NOTICE_MESSAGE,
@@ -185,7 +186,8 @@ describe('AIAdvisorSheet — 送信が時間切れになったあとの取り直
     });
 
     await waitFor(() => expect(screen.getByText(SAVED_REPLY)).toBeTruthy());
-    expect(mockGet).toHaveBeenCalledWith(MESSAGES_PATH);
+    // 取り直しの GET は Web と同じ上限で打ち切る (#2227 H1。/api/ai/ の下の既定の 120 秒を待たない)
+    expect(mockGet).toHaveBeenCalledWith(MESSAGES_PATH, { timeoutMs: AI_CHAT_RELOAD_TIMEOUT_MS });
     expect(screen.getByText(SENT_TEXT)).toBeTruthy();
     expect(screen.queryByTestId('ai-timeout-notice')).toBeNull();
     expect(alertSpy).not.toHaveBeenCalled();
