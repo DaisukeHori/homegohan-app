@@ -357,6 +357,8 @@ describe('/health/graphs: 開いたときに記録か健診を読めなければ
   const WEIGHT_GOAL = { id: 'goal-h3', goal_type: 'weight', target_value: 60 };
   /** 目標との比較のカードの文 (最新の値が無いときに出すと、目標の値そのものを「あと」として出す) */
   const TARGET_COMPARISON = '目標まであと';
+  /** 目標との比較のカードの見出し (目標の値)。目標は読めているので、カードを出せばこの文が出る */
+  const TARGET_LABEL = `目標体重: ${WEIGHT_GOAL.target_value}kg`;
 
   const shownWeight = (weight: number) => weight.toFixed(1);
   const recordsOf = (weight: number) => json({ records: [{ record_date: TODAY, weight }] });
@@ -389,6 +391,8 @@ describe('/health/graphs: 開いたときに記録か健診を読めなければ
         expect(container.querySelector('[role="alert"]')?.textContent, '知らせが role="alert" で読み上げられない').toContain(LOAD_FAILED);
         expect(buttonContaining(RELOAD_LABEL), '再読み込みのボタンが無い').toBeDefined();
         expect(container.textContent, '最新の値が無いのに目標との比較を出した').not.toContain(TARGET_COMPARISON);
+        expect(server.requests, '目標を読みに行っていない (カードが出ないことを確かめられていない)').toContain(GOALS);
+        expect(container.textContent, '読めなかったのに目標との比較のカードを出した').not.toContain(TARGET_LABEL);
       });
     }
   }
@@ -404,6 +408,7 @@ describe('/health/graphs: 開いたときに記録か健診を読めなければ
     expect(server.requests, '再読み込みのボタンで記録を読み直していない').toContain(RECORDS);
     expect(container.textContent, '読み直せたのに、読み込めなかった知らせが残った').not.toContain(LOAD_FAILED);
     expect(container.textContent).toContain(shownWeight(RELOADED_WEIGHT));
+    expect(container.textContent, '読み直せたのに、目標との比較のカードを出さない').toContain(TARGET_LABEL);
   });
 
   it('再読み込みでもまた読めなければ、知らせを出したまま (空のグラフにしない)', async () => {
@@ -414,6 +419,7 @@ describe('/health/graphs: 開いたときに記録か健診を読めなければ
     expect(server.requests, '再読み込みのボタンで記録を読み直していない (検査が空振りしている)').toContain(RECORDS);
     expect(container.textContent).toContain(LOAD_FAILED);
     expect(container.textContent).not.toContain(NO_DATA);
+    expect(container.textContent, '再読み込みでも読めなかったのに目標との比較のカードを出した').not.toContain(TARGET_LABEL);
   });
 
   it('知らせを出しているときに取り直しが記録を読めたら、知らせを消して線を出す', async () => {
@@ -436,6 +442,7 @@ describe('/health/graphs: 開いたときに記録か健診を読めなければ
     await notifyAiConsultationSucceeded();
     expect(server.requests, '取り直していない (検査が空振りしている)').toContain(RECORDS);
     expect(container.textContent).toContain(LOAD_FAILED);
+    expect(container.textContent, '取り直しでも読めなかったのに目標との比較のカードを出した').not.toContain(TARGET_LABEL);
   });
 
   it('記録が本当に無い (読めて 0 件) ときは、これまでどおり「データがありません」を出す (読み込めなかった知らせは出さない)', async () => {
@@ -447,7 +454,7 @@ describe('/health/graphs: 開いたときに記録か健診を読めなければ
   });
 });
 
-describe('/health/graphs: 目標との比較のカードは、読み込み中・読めなかったとき・最新の値が無いときに「目標まであと」を出さない (#2235 I4)', () => {
+describe('/health/graphs: 目標との比較のカードは、読み込み中・読めなかったときは出さず、最新の値が無いときは「目標まであと」を出さない (#2235 I4)', () => {
   const RECORDS = 'GET /api/health/records';
   const CHECKUPS = 'GET /api/health/checkups';
   const GOALS = 'GET /api/health/goals';
@@ -460,7 +467,7 @@ describe('/health/graphs: 目標との比較のカードは、読み込み中・
   const RELOAD_LABEL = '再読み込み';
   const WEEK_LABEL = '1週間';
   const WEIGHT_GOAL = { id: 'goal-i4', goal_type: 'weight', target_value: TARGET_WEIGHT };
-  /** 目標との比較のカードの見出し (目標の値) */
+  /** 目標との比較のカードの見出し (目標の値)。カードそのものが出ているかはこの文で見る (「目標まであと」は最新の値が無いと出ないので、カードの有無を見張れない) */
   const TARGET_LABEL = `目標体重: ${TARGET_WEIGHT}kg`;
   /** 目標との比較のカードの「あと」の文 (最新の値が無いときに出すと、目標の値そのものを「あと」として出す) */
   const TARGET_COMPARISON = '目標まであと';
@@ -489,6 +496,7 @@ describe('/health/graphs: 目標との比較のカードは、読み込み中・
     server.fetchHandlers.set(RECORDS, failed());
     await mount(<HealthGraphsPage />);
     expect(container.textContent, '読めなかった知らせが出ていない (検査が空振りしている)').toContain(LOAD_FAILED);
+    expect(container.textContent, '読めなかったのに目標との比較のカードを出した').not.toContain(TARGET_LABEL);
 
     const reload = held(recordsOf(RELOADED_WEIGHT));
     server.fetchHandlers.set(RECORDS, reload.handler);
@@ -498,6 +506,7 @@ describe('/health/graphs: 目標との比較のカードは、読み込み中・
     expect(spinner(), '読み込み中の印が出ていない (読み込み中を確かめられていない)').not.toBeNull();
     expect(container.textContent, '再読み込みの読み込み中に、最新の値が無いまま目標の値を「目標まであと」として出した').not.toContain(TARGET_COMPARISON);
     expect(container.textContent).not.toContain(REMAINING_FROM_ZERO);
+    expect(container.textContent, '再読み込みの読み込み中に目標との比較のカードを出した').not.toContain(TARGET_LABEL);
 
     reload.release();
     await settle();
@@ -508,17 +517,21 @@ describe('/health/graphs: 目標との比較のカードは、読み込み中・
   it('再読み込みの読み込み中に、もう一度読めなくても「目標まであと」を出さない (知らせに戻る)', async () => {
     server.fetchHandlers.set(RECORDS, failed());
     await mount(<HealthGraphsPage />);
+    expect(container.textContent, '読めなかった知らせが出ていない (検査が空振りしている)').toContain(LOAD_FAILED);
+    expect(container.textContent, '読めなかったのに目標との比較のカードを出した').not.toContain(TARGET_LABEL);
 
     const reload = held(failed());
     server.fetchHandlers.set(RECORDS, reload.handler);
     await click(buttonContaining(RELOAD_LABEL), RELOAD_LABEL);
     expect(spinner(), '読み込み中の印が出ていない (検査が空振りしている)').not.toBeNull();
     expect(container.textContent).not.toContain(TARGET_COMPARISON);
+    expect(container.textContent, '再読み込みの読み込み中に目標との比較のカードを出した').not.toContain(TARGET_LABEL);
 
     reload.release();
     await settle();
     expect(container.textContent).toContain(LOAD_FAILED);
     expect(container.textContent).not.toContain(TARGET_COMPARISON);
+    expect(container.textContent, 'もう一度読めなかったのに目標との比較のカードを出した').not.toContain(TARGET_LABEL);
   });
 
   it('期間を切り替えた読み込み中は、前の期間の最新の値で「目標まであと」を出さない', async () => {
@@ -530,6 +543,7 @@ describe('/health/graphs: 目標との比較のカードは、読み込み中・
     await click(buttonContaining(WEEK_LABEL), WEEK_LABEL);
     expect(spinner(), '読み込み中の印が出ていない (検査が空振りしている)').not.toBeNull();
     expect(container.textContent, '期間を切り替えた読み込み中に、前の期間の値で「目標まであと」を出した').not.toContain(TARGET_COMPARISON);
+    expect(container.textContent, '期間を切り替えた読み込み中に目標との比較のカードを出した').not.toContain(TARGET_LABEL);
 
     week.release();
     await settle();
