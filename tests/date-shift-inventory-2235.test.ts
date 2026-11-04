@@ -31,8 +31,9 @@
  * new Date('2026-11-05') は UTC の 0 時 (JST の 9 時) の瞬間になる。それを端末のローカル時刻 (getFullYear / getMonth / getDate / getDay、
  * timeZone を付けない toLocaleDateString) で読むと、端末が UTC より西 (America/Los_Angeles など) では前の日 (2026-11-04) になる。
  * I3 で直したホームの週間統計の曜日 (useHomeData の getDayOfWeek) はこれで、/meals/new の保存先の日付・体重の 7 日間の推移の日、
- * 健康の画面 (血液検査・健診の一覧と詳細・分析・目標の期限)・食事の詳細の日付も同じ形だった (今は parseLocalDate (年月日を端末の
- * 0 時の Date にする) か formatDateJa で読む。tests/calendar-date-display-jst-2235.test.tsx が描いて確かめる)。
+ * 健康の画面 (血液検査・健診の一覧と詳細・分析・目標の期限)・食事の詳細の日付も同じ形だった (今は、ホームの曜日は calendarDaysEndingAt
+ * (暦の計算)、ほかは parseLocalDate (年月日を端末の 0 時の Date にする) か formatDateJa で読む。ホームは
+ * tests/week-days-jst-2235.test.tsx、ほかは tests/calendar-date-display-jst-2235.test.tsx が描いて確かめる)。
  * 製品コードで、暦日らしい名前 (最後の名前が …date / …Date / …Str) の値を new Date() に 1 つだけ渡す箇所を、下の DATE_PARSE_SITES に
  * 「ファイル → 渡す値 → 判定」で載せる (表が正本)。
  *
@@ -67,10 +68,10 @@ type DateShiftVerdict =
    */
   | 'week-grid'
   /**
-   * 起きる。並行の枝 fix/g-1104e-i1 が触っているファイルなので I3 では直さず、i1 の着地の後に回す
-   * (直し方: todayLocal() からの暦の計算 addDaysToDate(todayLocal(), n) にする)
+   * 起きる。並行の枝が触っているファイルなので I3 では直さず、その枝の着地の後に回す (どの枝か・直し方は行の note)。
+   * 直し方の基本は todayLocal() からの暦の計算 addDaysToDate(todayLocal(), n)
    */
-  | 'deferred-after-i1';
+  | 'deferred-parallel-branch';
 
 interface DateShiftSite {
   /** この形の数の上限 (I3 の時点の数) */
@@ -84,10 +85,11 @@ interface DateShiftSite {
 const DATE_SHIFT_SITES: Readonly<Record<string, DateShiftSite>> = {
   'src/components/AIChatBubble.tsx': {
     maxCount: 2,
-    verdict: 'deferred-after-i1',
+    verdict: 'deferred-parallel-branch',
     note:
       '1 日分の献立の既定の日 (明日 = parseLocalDate(todayLocal()) + 1 日) と日付の欄の上限 (+14 日) を formatLocalDate で読む。' +
-      'Australia/Sydney で JST の今日 2026-11-05 のとき、明日 = 2026-11-05 (今日と同じ)・上限 = 2026-11-18 (+13 日)',
+      'Australia/Sydney で JST の今日 2026-11-05 のとき、明日 = 2026-11-05 (今日と同じ)・上限 = 2026-11-18 (+13 日)。' +
+      'I3 の時点でこのファイルを触る並行の枝は fix/g-1104e-i8 (i1 は着地済み。i8 はこの 2 か所を addDaysToDate の暦の計算にする変更を含む)',
   },
   'src/app/(main)/meals/new/page.tsx': {
     maxCount: 3,
@@ -203,10 +205,10 @@ type DateParseVerdict =
   /** 渡す値が暦日でなく瞬間 (toISOString の文字列)。同じ端末の暦で作った瞬間を同じ端末の暦で読むので、食い違いは起きない */
   | 'instant'
   /**
-   * 起きる。並行の枝 fix/g-1104e-i1・i8 が触っているファイルなので I3 では直さず、着地の後に回す
-   * (直し方: I3 のほかの箇所と同じく parseLocalDate / formatDateJa で年月日を読む)
+   * 起きる。並行の枝が触っているファイルなので I3 では直さず、その枝の着地の後に回す (どの枝かは行の note)。
+   * 直し方は I3 のほかの箇所と同じく、parseLocalDate / formatDateJa で年月日を読む
    */
-  | 'deferred-after-i1';
+  | 'deferred-parallel-branch';
 
 interface DateParseSite {
   /** この形の数の上限 (I3 の時点の数) */
@@ -221,10 +223,11 @@ const DATE_PARSE_SITES: Readonly<Record<string, Readonly<Record<string, DatePars
   'src/components/AIChatBubble.tsx': {
     selectedDate: {
       maxCount: 1,
-      verdict: 'deferred-after-i1',
+      verdict: 'deferred-parallel-branch',
       note:
         '1 日分の献立を作るときのチャットの文 (「○月○日の献立を作成中...」) を getMonth / getDate で作る。' +
-        'America/Los_Angeles で 2026-11-05 を選ぶと「11月4日」になる',
+        'America/Los_Angeles で 2026-11-05 を選ぶと「11月4日」になる。' +
+        'I3 の時点でこのファイルを触る並行の枝は fix/g-1104e-i8 (i1 は着地済み)。i8 の着地の後に直す',
     },
   },
   'src/app/(main)/meals/new/page.tsx': {
@@ -301,7 +304,10 @@ const DATE_PARSE_SITES: Readonly<Record<string, Readonly<Record<string, DatePars
   },
 };
 
-/** I3 で直した (ファイル, new Date() に渡していた値)。この形が 1 つも無いこと (D-6)。どれも parseLocalDate / formatDateJa で読む */
+/**
+ * I3 で直した (ファイル, new Date() に渡していた値)。この形が 1 つも無いこと (D-6)。
+ * useHomeData の曜日は calendarDaysEndingAt の dayOfWeek、ほかは parseLocalDate / formatDateJa で読む
+ */
 const FIXED_PARSE_IN_I3: readonly (readonly [file: string, arg: string])[] = [
   ['src/hooks/useHomeData.ts', 'dateStr'],
   ['src/app/(main)/meals/new/page.tsx', 'selectedDate'],

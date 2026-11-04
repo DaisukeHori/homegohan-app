@@ -1744,7 +1744,8 @@ export default function MealCaptureModal() {
               <p style={{ fontSize: 12, color: colors.textMuted, marginBottom: 8 }}>保存先</p>
               {/* 保存する日 (selectedDate = YYYY-MM-DD の暦日) の月・日・曜日は、その文字列の年月日から読む (#2235 I3)。
                   new Date(selectedDate) は UTC の 0 時なので、端末のローカル時刻の getMonth / getDate で読むと UTC より西では前の日になる。
-                  曜日も、表示中の週の格子 (weekDates) からでなく selectedDate から読む (格子に無い週を表示中でも曜日が抜けない) */}
+                  曜日も、表示中の週の格子 (weekDates) からでなく selectedDate から読む (格子に無い週を表示中でも曜日が抜けず、
+                  端末が JST より東で格子の dateStr と曜日が 1 日ずれていても、保存する日の曜日を出す) */}
               <p style={{ fontSize: 16, fontWeight: 600, color: colors.text, margin: 0 }}>
                 {formatDateJa(selectedDate)}（{WEEKDAY_LABELS_JA[parseLocalDate(selectedDate).getDay()]}）の{MEAL_LABELS[selectedMealType]}
               </p>
