@@ -22,7 +22,11 @@
  *   - 読み直しに失敗したときは、印を書けた・印の書き込みが失敗したなら、応答の行の料理に見送りの印を重ねる
  *     (failuresToOverlay。#2227 H4)。updated_at は分からないので重ねない
  *   - 積み込みの例外を受けるのは、行を 1 つも積む前に失敗したときだけ (enqueueMealImageJobs は積み始めたあとは投げない。
- *     runMealImageEnqueueAftercare。#2227 H4)。なので、ここでは全部のジョブの料理を印の対象にし、1 回を戻してよい
+ *     runMealImageEnqueueAftercare。#2227 H4)。なので、ここでは全部のジョブの料理を印の対象にし、1 回を戻してよい。
+ *     enqueueMealImageJobs は自分の数え戻し (積む種が無い・1 行も積めなかった) が投げても外へ出さないので、ここで受ける
+ *     例外のときは、まだ戻していない (#2235 I5)
+ *   - ここでの数え戻しが投げても、印付けと読み直しは続ける。数え戻しはやり直さず、app_logs に残す (#2235 I5。
+ *     数え戻しは一部だけ戻して投げることがあり、やり直すと二重に戻しうる)
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
@@ -46,6 +50,9 @@ const ENQUEUE_AFTER_SAVE_LOG_NAME = 'lib/meal-image-enqueue-after-save';
 
 /** 積み込みの例外のログの文 */
 export const MEAL_IMAGE_ENQUEUE_THREW_LOG_MESSAGE = '献立の保存のあと、料理画像のジョブを積めませんでした (献立の保存は済んでいます)';
+/** 積み込みの例外のあとの数え戻しが投げたときのログの文 (#2235 I5) */
+export const MEAL_IMAGE_REFUND_AFTER_ENQUEUE_THREW_LOG_MESSAGE =
+  '料理画像のジョブを積めなかったあと、数えた料理画像の 1 回を戻せませんでした (やり直していません)';
 /** 処理の起動の例外のログの文 */
 export const MEAL_IMAGE_TRIGGER_THREW_LOG_MESSAGE =
   '料理画像のジョブの処理を起こせませんでした (ジョブは積めています。定期の処理が拾います)';
@@ -162,8 +169,15 @@ export async function enqueueMealImageJobsAfterSave(
     createLogger(ENQUEUE_AFTER_SAVE_LOG_NAME)
       .withUser(params.userId)
       .error(MEAL_IMAGE_ENQUEUE_THREW_LOG_MESSAGE, toLoggableError(enqueueError), context);
-    // ジョブを積めていないので、AI へは何も送っていない。数えた 1 回を戻す
-    if (params.usage?.allowed) await refundAiUsage(params.userId, 'meal_image_auto', params.usage);
+    // ジョブを積めていないので、AI へは何も送っていない。数えた 1 回を戻す。
+    // 投げても印付けは続ける (やり直さない。二重に戻さないため。#2235 I5)
+    try {
+      if (params.usage?.allowed) await refundAiUsage(params.userId, 'meal_image_auto', params.usage);
+    } catch (refundError) {
+      createLogger(ENQUEUE_AFTER_SAVE_LOG_NAME)
+        .withUser(params.userId)
+        .error(MEAL_IMAGE_REFUND_AFTER_ENQUEUE_THREW_LOG_MESSAGE, toLoggableError(refundError), context);
+    }
     // 'pending' のまま残すと、処理するジョブが無いので「料理画像を生成中です」のまま残る。見送りの状態にする
     const failures: EnqueueFailedDish[] = params.jobSeeds.map((seed) => ({ dishIndex: seed.dishIndex, subjectHash: seed.subjectHash }));
     const marked = await markEnqueueFailedDishesInMeal({
