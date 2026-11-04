@@ -177,10 +177,10 @@ const NO_PREVIOUS_REQUEST_NOTE: PreviousRequestNote = { notes: [], recheck: null
  * #2206 G2。以前はこのシートに判定の写しがあり、Web にだけ足した 2 つの決まりが無かった)。
  *   - 実行できていれば、実行できた一文を足し、データを出すタブの WebView に知らせる (notifyAiConsultationDataChanged)
  *   - 実行中の印のまま、または記録の行がまだ無い・読めないのに返答に提案がある (サーバーは返答を保存してから行を作る) なら、
- *     結果をまだ確かめられないと伝える一文 (頼み直しを勧めない) を足し、読み直す返答の id を返す (呼び出し側が
+ *     結果をまだ確かめられないと伝える一文 (頼み直しを勧めない) を足し、読み直す返答 (recheck) を返す (呼び出し側が
  *     recheckPreviousRequestLater で 1 回読み直す)
  *   - 実行を待つ・失敗した行なら、実行していない一文を足す
- *   - 提案が無く記録を読めなかったときは、一文を足さずに読み直す返答の id を返す (GET は実行できた提案を出さないので、
+ *   - 提案が無く記録を読めなかったときは、一文を足さずに読み直す返答 (recheck) を返す (GET は実行できた提案を出さないので、
  *     読めないと実行できたかが分からない)
  *   - 返答が無い・行が無いなら空 (時間切れの取り直しと、応答を受け取れなかったときの取り直しの両方で使う)
  */
@@ -579,10 +579,11 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     const loaded = await fetchMessages(sent.sessionId, { reload: true });
     if (loaded === null) {
       // サーバーが失敗を知らせていた (serverFailed) ときは返答は来ないので、取り直しの導線ではなく失敗の文を出す (#2227 H1。Web と同じ)。
-      // 届いたかは分からないので、確かめられなかった送信として覚える
-      if (sent.serverFailed) rememberUnconfirmedSend(sent);
-      // 取り直しの最中に別の相談に切り替えていたら、入力欄と案内は変えない (#2227 H1)
-      if (currentSessionIdRef.current !== sent.sessionId) return;
+      // 取り直しの最中に別の相談に切り替えていたら、入力欄と案内は変えない (#2227 H1)。どちらも「最新の会話を読み込む」で
+      // 確かめられないので、確かめられなかった送信として覚える (届いたかは分からない)
+      const sameSession = currentSessionIdRef.current === sent.sessionId;
+      if (sent.serverFailed || !sameSession) rememberUnconfirmedSend(sent);
+      if (!sameSession) return;
       setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
       setInputText((current) => restoreInputAfterTimeout(current, sent.text));
       if (sent.serverFailed) {
