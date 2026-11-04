@@ -12,7 +12,7 @@ import {
   ALL_METRIC_DEFS, evaluateStatus, formatRangeText, getRangeForSex, getStatusLabel,
   type BiologicalSex, type MetricStatus,
 } from '@/lib/health-blood-test-reference';
-import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
+import { STATUS_COLOR_TOKENS, parseLocalDate } from '@homegohan/shared';
 import { useAiConsultationReceiver, type AiConsultationRead } from '@/hooks/useAiConsultationReceiver';
 
 /** 基準値を選ぶ性別の置き場所の鍵 (#2206 G1) */
@@ -156,7 +156,9 @@ export default function CheckupDetailClient({ id }: Props) {
   };
 
   const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
+    // 受診日 (checkup_date) は YYYY-MM-DD の暦日。その文字列の年月日を端末のローカル時刻の 0 時の Date にしてから読む (#2235 I3。
+    // new Date(dateStr) は UTC の 0 時なので、端末のローカル時刻の getFullYear / getMonth / getDate で読むと UTC より西では前の日になる)
+    const date = parseLocalDate(dateStr);
     return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
   };
 

@@ -8,7 +8,7 @@ export interface ShoppingRangeSelection {
   type: ShoppingRangeType;
   /** today 選択時の食事タイプ */
   todayMeals: ('breakfast' | 'lunch' | 'dinner')[];
-  /** days 選択時の日数 */
+  /** days 選択時の日数 (範囲を選ぶ欄は shoppingRangeDates.ts の SHOPPING_RANGE_DAYS_MIN 〜 MAX に丸めて入れ、範囲の計算も丸めてから使う) */
   daysCount: number;
   /** custom 選択時の開始日 */
   customStartDate?: string;

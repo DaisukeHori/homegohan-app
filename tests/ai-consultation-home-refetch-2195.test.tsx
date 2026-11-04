@@ -23,6 +23,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { formatLocalDate } from '@homegohan/shared';
 
 /**
  * Supabase のモック。ログインした人 1 人。表ごとの問い合わせの答えは tableResults (無い表は空。error のある答えは読み取りの失敗)。
@@ -237,6 +238,21 @@ const BEST_MEAL_ROW = {
   is_completed: true,
   mode: 'cook',
 };
+
+/**
+ * ホームを描く検査の時計の始まり (#2235 I3。tests/ai-consultation-refetch-reads-2195.test.tsx の #2227 H6 と同じ考え方)。
+ * ホーム (useHomeData) の今日は JST の暦日 (formatLocalDate)。今日 (TODAY) を JST で作り、実時間に依らず JST の日付をまたがない時刻
+ * (UTC 3 時 = JST 12 時 = 2026-11-04) から時計を始める (実時間の実行環境の暦日で作ると、UTC で 15:00〜24:00 に流したとき・
+ * UTC と JST 以外のタイムゾーンで流したときに 1 日ずれる)。読み取りの順序・時間切れのため、時計は実時間で進める (shouldAdvanceTime)
+ */
+const TEST_CLOCK_START = '2026-11-04T03:00:00.000Z';
+/** ホームの今日 (JST の暦日) */
+const TEST_TODAY = formatLocalDate(new Date(TEST_CLOCK_START));
+
+/** 時計 (Date だけ) を at (既定は TEST_CLOCK_START) から実時間で進める */
+function startTestClock(at: number | string = TEST_CLOCK_START) {
+  vi.useFakeTimers({ toFake: ['Date'], shouldAdvanceTime: true, now: new Date(at) });
+}
 
 let container: HTMLDivElement;
 let root: Root;
@@ -546,9 +562,7 @@ describe('useHomeData: 続けて来た 2 回の成功の取り直しの栄養の
 });
 
 describe('ホーム (/home) を描画して、AI 相談の成功の取り直しを確かめる (#2195 V1)', () => {
-  const pad2 = (n: number) => String(n).padStart(2, '0');
-  const now = new Date();
-  const TODAY = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  const TODAY = TEST_TODAY;
   const TODAY_MEAL = { ...BEST_MEAL_ROW, id: 'meal-today', dish_name: '肉じゃが', calories_kcal: 520 };
   /**
    * 組織に入っている人の組織 (組織のチャレンジの入り口 OrgChallengeEntry は組織に入っている人にだけ描くので、
@@ -581,6 +595,7 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
   }
 
   beforeEach(() => {
+    startTestClock();
     recorder = new ReadRecorder();
     supabaseMock.reads = recorder;
     vi.stubGlobal(
@@ -598,6 +613,7 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
   afterEach(() => {
     supabaseMock.reads = null;
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   async function renderHomePage() {
@@ -674,7 +690,8 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
     await renderHomePage();
     expect(container.textContent).not.toContain(TODAY_MEAL.dish_name);
 
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    // 見張りの間隔を進める間は、Date も偽のまま止める (実時間の Date に戻すと、ホームの今日が TODAY と別の日になりうる)
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'], now: Date.now() });
     try {
       await act(async () => {
         window.dispatchEvent(
@@ -693,7 +710,7 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
       });
       await settle();
     } finally {
-      vi.useRealTimers();
+      startTestClock(Date.now());
     }
     await settle();
     expect(statusChecks).toBe(1);
@@ -1370,9 +1387,7 @@ describe('useHomeData: 開いたときの AI つきの栄養の分析の応答�
 });
 
 describe('useHomeData: 取り直しの読み取りの失敗では、記録の集計の今の表示を残す (#2201 U1)', () => {
-  const pad2 = (n: number) => String(n).padStart(2, '0');
-  const now = new Date();
-  const TODAY = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  const TODAY = TEST_TODAY;
   /** 読み取りの失敗 (supabase-js が通信・サーバーの失敗で返す形) */
   const READ_FAILURE = { data: null, error: { code: '08006', message: 'connection failure' }, count: null };
   const BADGE_ROW = { obtained_at: `${TODAY}T00:00:00.000Z`, badges: { name: '初めての自炊', code: 'first-cook' } };
@@ -1425,11 +1440,13 @@ describe('useHomeData: 取り直しの読み取りの失敗では、記録の集
     Object.fromEntries([...container.querySelectorAll('[data-testid]')].map((el) => [el.getAttribute('data-testid'), el.textContent]));
 
   beforeEach(() => {
+    startTestClock();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it('取り直しで今週のベストごはん・バッジの数・健康記録・買い物リストの残り・チェックイン・記録の集計の読み取りが失敗しても、前の表示を残す', async () => {

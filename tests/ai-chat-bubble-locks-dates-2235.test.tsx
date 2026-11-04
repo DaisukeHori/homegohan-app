@@ -11,6 +11,10 @@
  * 直す前 (日付):
  *   6. 1 日分の献立の既定の日 (明日) と日付の欄の上限 (+14 日) を、端末の 0 時の Date を setDate でずらしてから JST の日付にして
  *      いた。端末が JST より東 (Pacific/Kiritimati など) だと、端末の 0 時が JST の前の日なので、明日が今日になり、上限が 13 日後になった
+ *   7. (#2235 I3) 1 日分の献立を作るときのチャットの文 (「○月○日の献立を作成中...」) と生成の依頼の note の月日を、選んだ暦日を
+ *      new Date('YYYY-MM-DD') (UTC の 0 時の瞬間) にして端末のローカル時刻 (getMonth / getDate) で読んでいた。端末が UTC より西
+ *      (America/Los_Angeles・Pacific/Pago_Pago) だと前の日になった (2026-11-06 を選んで「11月5日の献立を作成中...」)。
+ *      同じ形の全域の表と見張りは tests/date-shift-inventory-2235.test.ts (DATE_PARSE_SITES・D-4〜D-6)
  */
 
 import { act, createElement } from 'react';
@@ -38,8 +42,10 @@ const consent = vi.hoisted(() => ({ answer: 'consented' as 'consented' | 'declin
 vi.mock('@/hooks/useAiConsent', () => ({
   useAiConsent: () => ({ ensureAiConsent: async () => consent.answer, consentModal: null }),
 }));
+/** 献立の生成の依頼 (1 日分の献立の note を確かめる。beforeEach で呼ばれた記録を消す) */
+const v4 = vi.hoisted(() => ({ generate: vi.fn() }));
 vi.mock('@/hooks/useV4MenuGeneration', () => ({
-  useV4MenuGeneration: () => ({ isGenerating: false, generate: vi.fn(), subscribeToProgress: vi.fn() }),
+  useV4MenuGeneration: () => ({ isGenerating: false, generate: v4.generate, subscribeToProgress: vi.fn() }),
 }));
 vi.mock('@/hooks/useNativeAppMode', () => ({ useNativeAppMode: () => false }));
 vi.mock('@/lib/local-notification', () => ({ notifyMenuGenerated: vi.fn() }));
@@ -147,6 +153,7 @@ beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {});
   delete window.__weeklyCurrentDate;
   consent.answer = 'consented';
+  v4.generate.mockReset();
   requests = [];
   sessionList = [
     { id: SESSION_ID, title: MAIN_SESSION_TITLE, messageCount: 2 },
@@ -611,5 +618,48 @@ describe('#2235 I8 1 日分の献立の日付 (明日・上限 +14 日) は、�
   it('翌日を暦の計算で扱えない日でも、描画中に投げない (既定の日は今日・上限は付けない)', async () => {
     const field = await openDayMenuAt('UTC', JST_LAST_REPRESENTABLE_DAY);
     expect(field).toEqual({ value: '9999-12-31', min: '9999-12-31', max: null });
+  });
+});
+
+/** JST の 2026-11-30 10:00 (UTC の 01:00。既定の日 (明日) が月をまたぐ) */
+const JST_NOV_30_MORNING = new Date('2026-11-30T01:00:00.000Z');
+
+/** 「1日献立変更」の「作成する」を押し、チャットに作成中の文が出るまで待って、生成の依頼の note を返す */
+async function createDayMenu(): Promise<string | undefined> {
+  const create = buttonWithText('作成する');
+  expect(create).toBeDefined();
+  await act(async () => {
+    create!.click();
+  });
+  await waitFor(() => text().includes('の献立を作成中...'));
+  await waitFor(() => v4.generate.mock.calls.length === 1);
+  const [request] = v4.generate.mock.calls[0] as [{ note?: string }];
+  return request.note;
+}
+
+describe('#2235 I3 1 日分の献立を作るときのチャットの文と依頼の note は、選んだ暦日の月日のまま (端末のタイムゾーンによらない)', () => {
+  it.each(TEST_TIME_ZONES)('%s の端末: JST の明日 (2026-11-06) を作ると「11月6日」', async (tz) => {
+    const field = await openDayMenuAt(tz, JST_NOV_5_MORNING);
+    expect(field.value).toBe('2026-11-06');
+    const note = await createDayMenu();
+    expect(text()).toContain('🍳 11月6日の献立を作成中...');
+    expect(text()).not.toContain('11月5日の献立を作成中');
+    expect(note).toBe('11月6日の献立を作成');
+  });
+
+  it('月をまたぐ明日 (2026-12-01) は「12月1日」(America/Los_Angeles の端末。直す前は前の日の「11月30日」)', async () => {
+    const field = await openDayMenuAt('America/Los_Angeles', JST_NOV_30_MORNING);
+    expect(field.value).toBe('2026-12-01');
+    const note = await createDayMenu();
+    expect(text()).toContain('🍳 12月1日の献立を作成中...');
+    expect(note).toBe('12月1日の献立を作成');
+  });
+
+  it('年をまたぐ明日 (2027-01-01) は「1月1日」(Pacific/Pago_Pago の端末。直す前は前の日の「12月31日」)', async () => {
+    const field = await openDayMenuAt('Pacific/Pago_Pago', JST_DEC_31_NIGHT);
+    expect(field.value).toBe('2027-01-01');
+    const note = await createDayMenu();
+    expect(text()).toContain('🍳 1月1日の献立を作成中...');
+    expect(note).toBe('1月1日の献立を作成');
   });
 });

@@ -9,7 +9,7 @@ import { logToServer } from "@/lib/db-logger";
 import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
 import { useAiConsent } from "@/hooks/useAiConsent";
 import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
-import { MEAL_LABELS, formatLocalDate, type MealType } from "@homegohan/shared";
+import { MEAL_LABELS, WEEKDAY_LABELS_JA, formatDateJa, formatLocalDate, parseLocalDate, type MealType } from "@homegohan/shared";
 // 区分ごとのアイコン・色・下地の色は Web の区分の見た目の表から引く (#1665)
 import { MEAL_TYPE_RECORD_THEME } from "@/lib/meal-type-visuals";
 // 食事の区分のボタンの並び: 基本の 3 食 (BASE_MEAL_TYPES) と、正本 MEAL_ORDER から作ったおやつ・夜食 (EXTRA_MEAL_TYPES) (#1631)
@@ -1742,8 +1742,12 @@ export default function MealCaptureModal() {
             {/* 選択内容サマリー */}
             <div className="p-4 rounded-xl mb-4" style={{ background: colors.card }}>
               <p style={{ fontSize: 12, color: colors.textMuted, marginBottom: 8 }}>保存先</p>
+              {/* 保存する日 (selectedDate = YYYY-MM-DD の暦日) の月・日・曜日は、その文字列の年月日から読む (#2235 I3)。
+                  new Date(selectedDate) は UTC の 0 時なので、端末のローカル時刻の getMonth / getDate で読むと UTC より西では前の日になる。
+                  曜日も、表示中の週の格子 (weekDates) からでなく selectedDate から読む (格子に無い週を表示中でも曜日が抜けず、
+                  端末が JST より東で格子の dateStr と曜日が 1 日ずれていても、保存する日の曜日を出す) */}
               <p style={{ fontSize: 16, fontWeight: 600, color: colors.text, margin: 0 }}>
-                {new Date(selectedDate).getMonth() + 1}月{new Date(selectedDate).getDate()}日（{weekDates.find(d => d.dateStr === selectedDate)?.dayOfWeek}）の{MEAL_LABELS[selectedMealType]}
+                {formatDateJa(selectedDate)}（{WEEKDAY_LABELS_JA[parseLocalDate(selectedDate).getDay()]}）の{MEAL_LABELS[selectedMealType]}
               </p>
             </div>
             
@@ -2256,7 +2260,9 @@ export default function MealCaptureModal() {
                 <ResponsiveContainer width="100%" height={120}>
                   <LineChart
                     data={weightHistory.map((h) => ({
-                      date: new Date(h.record_date).getDate() + '日',
+                      // record_date は YYYY-MM-DD の暦日。その文字列の日を読む (#2235 I3。new Date(record_date) は UTC の 0 時で、
+                      // 端末のローカル時刻の getDate で読むと UTC より西では前の日になる)
+                      date: parseLocalDate(h.record_date).getDate() + '日',
                       weight: h.weight,
                     }))}
                   >

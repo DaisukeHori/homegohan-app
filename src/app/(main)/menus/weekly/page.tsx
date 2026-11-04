@@ -11,6 +11,7 @@ import {
   useServingsConfigStore,
   usePantryStore,
   useShoppingStore,
+  shoppingRangeRequest,
   useFormDraftStore,
   convertV4ProgressToUIFormat,
   resumePendingGenerationAction,
@@ -3692,71 +3693,12 @@ export default function WeeklyMenuPage() {
   }, [cleanupShoppingListSubscription]);
 
   // 買い物範囲から日付範囲を計算
-  const calculateDateRange = useCallback(() => {
-    const today = new Date();
-    const todayStr = formatLocalDate(today);
-    
-    switch (shoppingRange.type) {
-      case 'today':
-        return {
-          startDate: todayStr,
-          endDate: todayStr,
-          mealTypes: shoppingRange.todayMeals,
-        };
-      case 'tomorrow': {
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-        return {
-          startDate: formatLocalDate(tomorrow),
-          endDate: formatLocalDate(tomorrow),
-          mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
-        };
-      }
-      case 'dayAfterTomorrow': {
-        const dayAfter = new Date(today);
-        dayAfter.setDate(dayAfter.getDate() + 2);
-        return {
-          startDate: formatLocalDate(dayAfter),
-          endDate: formatLocalDate(dayAfter),
-          mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
-        };
-      }
-      case 'week': {
-        const weekEnd = new Date(today);
-        weekEnd.setDate(weekEnd.getDate() + 6);
-        return {
-          startDate: todayStr,
-          endDate: formatLocalDate(weekEnd),
-          mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
-        };
-      }
-      case 'days': {
-        const endDay = new Date(today);
-        endDay.setDate(endDay.getDate() + shoppingRange.daysCount - 1);
-        return {
-          startDate: todayStr,
-          endDate: formatLocalDate(endDay),
-          mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
-        };
-      }
-      // UX2-09: 「表示中の週」= カレンダーで現在開いている週（今日起点の1週間分とは独立）
-      case 'currentWeek': {
-        const currentWeekEnd = new Date(weekStart);
-        currentWeekEnd.setDate(currentWeekEnd.getDate() + 6);
-        return {
-          startDate: formatLocalDate(weekStart),
-          endDate: formatLocalDate(currentWeekEnd),
-          mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
-        };
-      }
-      default:
-        return {
-          startDate: todayStr,
-          endDate: todayStr,
-          mealTypes: ['breakfast', 'lunch', 'dinner'] as const,
-        };
-    }
-  }, [shoppingRange, weekStart]);
+  // 範囲を選ぶ欄 (ShoppingRangeModal) が出す日付と同じ関数で求める (#2235 I3。今日から数える範囲は、時計を 1 回だけ読んだ
+  // JST の今日から暦の計算だけでずらす。端末のローカル時刻で日をずらすと、夏時間の切り替えの日に JST の日付が 1 日ずれうる)
+  const calculateDateRange = useCallback(
+    () => shoppingRangeRequest(shoppingRange, { now: new Date(), currentWeekStart: weekStart }),
+    [shoppingRange, weekStart],
+  );
 
   // Regenerate shopping list from menu (非同期版)
   const regenerateShoppingList = async () => {
@@ -6687,8 +6629,9 @@ export default function WeeklyMenuPage() {
                 weekDates={weekDates}
                 weeklySummaryTab={weeklySummaryTab}
                 radarChartNutrients={radarChartNutrients}
-                todayNutrition={getDayTotalNutrition(currentPlan?.days?.find(d => d.dayDate === formatLocalDate(new Date())))}
-                todayMealCount={currentPlan?.days?.find(d => d.dayDate === formatLocalDate(new Date()))?.meals?.length || 0}
+                todayStr={todayStr}
+                todayNutrition={getDayTotalNutrition(currentPlan?.days?.find(d => d.dayDate === todayStr))}
+                todayMealCount={currentPlan?.days?.find(d => d.dayDate === todayStr)?.meals?.length || 0}
                 weekNutrition={getWeekTotalNutrition()}
                 isLoadingFeedback={isLoadingFeedback}
                 isLoadingHint={isLoadingHint}
@@ -6700,7 +6643,8 @@ export default function WeeklyMenuPage() {
                 onChangeTab={setWeeklySummaryTab}
                 onOpenNutritionDetail={() => {
                   setActiveModal(null);
-                  const todayIdx = weekDates.findIndex(d => d.dateStr === formatLocalDate(new Date()));
+                  // 見出しに出した今日 (todayStr) の詳細を開く (#2235 I3。時計を読み直すと、開いたまま 0 時をまたいだときに見出しと別の日になる)
+                  const todayIdx = weekDates.findIndex(d => d.dateStr === todayStr);
                   if (todayIdx >= 0) {
                     setSelectedDayIndex(todayIdx);
                   }

@@ -8,7 +8,7 @@ import {
   FileText, Plus, ChevronRight, TrendingUp, TrendingDown, Minus,
   Activity, AlertTriangle, CheckCircle2, Clock, Heart, Droplet
 } from 'lucide-react';
-import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
+import { STATUS_COLOR_TOKENS, parseLocalDate } from '@homegohan/shared';
 
 // カラーパレット
 const colors = {
@@ -91,7 +91,9 @@ export default function HealthCheckupsPage() {
   };
 
   const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
+    // 受診日・振り返りの日 (checkup_date・review_date) は YYYY-MM-DD の暦日。その文字列の年月日を端末のローカル時刻の 0 時の Date にしてから読む (#2235 I3。
+    // new Date(dateStr) は UTC の 0 時なので、端末のローカル時刻の getFullYear / getMonth / getDate で読むと UTC より西では前の日になる)
+    const date = parseLocalDate(dateStr);
     return `${date.getFullYear()}/${(date.getMonth() + 1).toString().padStart(2, '0')}/${date.getDate().toString().padStart(2, '0')}`;
   };
 

@@ -171,6 +171,43 @@ export function addDaysToDate(day: string, offsetDays: number): string {
   return result;
 }
 
+/** 曜日の 1 文字 (日曜 0 〜 土曜 6。Date#getDay / getUTCDay の番号の並び) */
+export const WEEKDAY_LABELS_JA = ['日', '月', '火', '水', '木', '金', '土'] as const;
+
+/** 暦日の 1 日分 (calendarDaysEndingAt が返す) */
+export interface CalendarDayCell {
+  /** 暦日 (YYYY-MM-DD) */
+  date: string;
+  /** 曜日 (日曜 0 〜 土曜 6。WEEKDAY_LABELS_JA の添字) */
+  dayOfWeek: number;
+  /** 月の中の日 (1〜31) */
+  dayOfMonth: number;
+}
+
+/**
+ * lastDay (YYYY-MM-DD) で終わる count 日の暦日を、古い順に返す (#2235 I3)。最後の要素が lastDay。
+ * 例: ("2026-11-05", 3) → 11/3 (火)・11/4 (水)・11/5 (木)
+ *
+ * 「今日までの 7 日」は、時計を 1 回だけ読んだ JST の今日 (todayLocal / formatLocalDate) を lastDay に渡す。
+ * 端末の暦日 (new Date() の getFullYear / getMonth / getDate) で並べると、端末のタイムゾーンが日本でないときに
+ * 今日が JST の今日 (サーバーの記録の日付・ほかの画面の今日) とずれ、日ごとに new Date() を読むと 0 時をまたぐ瞬間に日が飛ぶか重なる。
+ * 暦の計算だけで求めるので (日付は addDaysToDate、曜日と日は UTC の暦で読む)、実行環境のタイムゾーンや夏時間に左右されない
+ * (`new Date('2026-11-05').getDay()` は UTC の 0 時を実行環境のローカル時刻で読むので、UTC より西では前の日の曜日になる)。
+ *
+ * lastDay が形の違う日付・存在しない日付・暦の計算で扱える範囲の外のとき、count が 1 以上の整数でないときは RangeError。
+ */
+export function calendarDaysEndingAt(lastDay: string, count: number): CalendarDayCell[] {
+  if (!Number.isInteger(count) || count < 1) {
+    throw new RangeError(`count must be a positive integer: ${count}`);
+  }
+  return Array.from({ length: count }, (_, index) => {
+    // 最後の要素 (index = count - 1) が lastDay。そこから前へ 1 日ずつ
+    const date = addDaysToDate(lastDay, index - (count - 1));
+    const [year, month, dayOfMonth] = date.split('-').map(Number);
+    return { date, dayOfWeek: new Date(Date.UTC(year, month - 1, dayOfMonth)).getUTCDay(), dayOfMonth };
+  });
+}
+
 /**
  * 文字列が YYYY-MM-DD の形で、実在する日付で、CALENDAR_DATE_MIN (0101-01-02) 〜 CALENDAR_DATE_MAX (9998-12-30) の中にあるか (#1433)。
  * 2026-02-30 などの存在しない日付は false。外から受け取った日付 (クエリ・本文・AI の出力) を addDaysToDate や

@@ -10,7 +10,7 @@ import {
   Trophy, Calendar, CheckCircle2, X, Trash2, Edit2
 } from 'lucide-react';
 import { GOAL_TYPE_DEFS } from '@/lib/health-goal-types';
-import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
+import { STATUS_COLOR_TOKENS, parseLocalDate } from '@homegohan/shared';
 
 const colors = {
   bg: '#FAF9F7',
@@ -361,7 +361,9 @@ export default function HealthGoalsPage() {
                         <div className="flex items-center gap-1 mt-2">
                           <Calendar size={14} style={{ color: colors.textMuted }} />
                           <span className="text-xs" style={{ color: colors.textMuted }}>
-                            期限: {new Date(goal.target_date).toLocaleDateString('ja-JP')}
+                            {/* 期限 (target_date) は YYYY-MM-DD の暦日。その年月日の端末のローカル時刻の 0 時から表示する (#2235 I3。
+                                new Date(target_date) は UTC の 0 時で、UTC より西では前の日になる) */}
+                            期限: {parseLocalDate(goal.target_date).toLocaleDateString('ja-JP')}
                           </span>
                         </div>
                       )}

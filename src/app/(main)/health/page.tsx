@@ -11,7 +11,7 @@ import {
   Award, Clock, Smile, Frown, Meh, AlertTriangle, CheckCircle2, Settings
 } from 'lucide-react';
 import { getGoalTypeLabel } from "@/lib/health-goal-types";
-import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
+import { STATUS_COLOR_TOKENS, WEEKDAY_LABELS_JA, calendarDaysEndingAt, todayLocal } from "@homegohan/shared";
 
 // カラーパレット
 const colors = {
@@ -75,6 +75,10 @@ const KEY_STREAK = 'streak';
 const KEY_GOALS = 'goals';
 /** 開いたとき・記録の保存のあとの読み込みが立てる鍵 (どれかが立っている間は画面全体の読み込み中の表示) */
 const HEALTH_PAGE_LOADING_KEYS: readonly string[] = [KEY_TODAY, KEY_STREAK, KEY_GOALS];
+/**
+ * 週間カレンダーの日数 (今日を含む過去 7 日)。/api/health/streaks の weeklyRecords (記録のある日) も、JST の今日を含む 7 日を返す
+ */
+const WEEK_CALENDAR_DAYS = 7;
 /** 選んだ日のパネルの記録の鍵 (日ごとに順序を持つ。A→B→A と選び直しても、A の応答は A の鍵で置く) */
 const selectedDateKey = (date: string) => `selectedDate:${date}`;
 
@@ -95,7 +99,9 @@ export default function HealthDashboardPage() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedDateRecord, setSelectedDateRecord] = useState<HealthRecord | null>(null);
 
-  const today = (() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })();
+  // 今日 (JST の暦日。#2235 I3)。今日の記録の読み取り・記録の欄の保存・週間カレンダーは、この 1 回の時計の読み取りから作る。
+  // 端末の暦日で作ると、端末のタイムゾーンが日本でないときに、サーバー (記録の日付・連続記録の週) やほかの画面の今日とずれる
+  const today = todayLocal();
 
   /**
    * 開いたときに読むもの (今日の記録・連続記録・目標) を読む。
@@ -288,23 +294,13 @@ export default function HealthDashboardPage() {
       ? { icon: colors.error, text: colors.dangerText }
       : { icon: colors.textMuted, text: colors.textMuted };
 
-  // 週間カレンダーを生成
-  const getWeekDays = () => {
-    const days = [];
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      days.push({
-        date: `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`,
-        day: ['日', '月', '火', '水', '木', '金', '土'][date.getDay()],
-        dayNum: date.getDate(),
-        isToday: i === 0,
-      });
-    }
-    return days;
-  };
-
-  const weekDays = getWeekDays();
+  // 週間カレンダー (今日を含む過去 7 日。#2235 I3)。日ごとに時計を読まず、上の today から暦の計算だけで並べる
+  const weekDays = calendarDaysEndingAt(today, WEEK_CALENDAR_DAYS).map((cell) => ({
+    date: cell.date,
+    day: WEEKDAY_LABELS_JA[cell.dayOfWeek],
+    dayNum: cell.dayOfMonth,
+    isToday: cell.date === today,
+  }));
 
   if (loading) {
     return (
