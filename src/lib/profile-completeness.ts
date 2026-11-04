@@ -95,7 +95,10 @@ export type ProfileCompletenessRefreshOutcome =
   | { status: 'not_found' }
   | { status: 'error'; error: unknown };
 
-/** syncProfileCompletenessOfRow の結果 (row は応答に返す行。書けたときは新しい完成度を入れた行、書けなかったときは渡した行のまま) */
+/**
+ * syncProfileCompletenessOfRow の結果 (row は応答に返す行。書けたときは新しい完成度を入れた行、一度も書けなかったときは渡した行のまま。
+ * 一度書けた後に失敗したときは、最後に分かった DB の完成度を入れた行。#2227 H4)
+ */
 export type ProfileCompletenessRowSync<Row extends Partial<DbUserProfile>> = {
   row: Row;
   outcome: Exclude<ProfileCompletenessRefreshOutcome, { status: 'not_found' }>;
@@ -134,7 +137,10 @@ export class ProfileCompletenessRowMissingError extends Error {
  *   - 書けたら、書いた後の行 (書いた時点の全部の欄) から数え直し、同じなら終わる。違えば (読んでから書くまでに欄が
  *     書き換わっていた) その行の完成度を条件にもう一度書く
  *   - 0 行なら (別の書き手が先に完成度を書いた) 今の行を読み直して数え直す
- *   - PROFILE_COMPLETENESS_WRITE_MAX_ATTEMPTS 回で書けなければ諦める (error)
+ *   - PROFILE_COMPLETENESS_WRITE_MAX_ATTEMPTS 回で書けなければ諦める (error)。上限は書き込みの回数で、最後の書き込みの
+ *     あとの数え直しは回数に数えない (最後の試みで書けて数え直しも同じなら updated。#2227 H4)
+ * 一度書けた後に失敗した (書き込み・読み直しの失敗・行の消失・上限) ときも、応答の行の完成度は、渡した行の古い値ではなく
+ * 最後に分かった DB の完成度 (書いた値。そのあと読み直したならその行の値) にする (#2227 H4)
  * 例外は投げず、結果を返す (呼び出し側は、欄の書き込みそのものは成功として扱い、失敗はログに残すだけ)
  */
 export async function syncProfileCompletenessOfRow<Row extends Partial<DbUserProfile>>(
@@ -142,21 +148,33 @@ export async function syncProfileCompletenessOfRow<Row extends Partial<DbUserPro
   userId: string,
   row: Row,
 ): Promise<ProfileCompletenessRowSync<Row>> {
+  let current: Partial<DbUserProfile> = row;
+  let wrote = false;
+  /** 応答に返す行 (完成度を最後に分かった DB の値にする)。一度も書いていなければ渡した行のまま */
+  const rowWithStored = (stored: number | null): Row =>
+    row.profile_completeness === stored ? row : { ...row, profile_completeness: stored };
+  /** 失敗したときの結果 (一度書けた後なら、行の完成度は最後に分かった DB の値) */
+  const failed = (error: unknown): ProfileCompletenessRowSync<Row> => ({
+    row: wrote ? rowWithStored(current.profile_completeness ?? null) : row,
+    outcome: { status: 'error', error },
+  });
+  /** 今の行 (current) の完成度が計算と同じなら、終わりの結果。違えば null (書く必要がある) */
+  const settledOf = (): ProfileCompletenessRowSync<Row> | null => {
+    const completeness = profileCompletenessOfRow(current);
+    if ((current.profile_completeness ?? null) !== completeness) return null;
+    const outcome = wrote ? { status: 'updated' as const, completeness } : { status: 'unchanged' as const, completeness };
+    return { row: rowWithStored(completeness), outcome };
+  };
   try {
-    let current: Partial<DbUserProfile> = row;
-    let wrote = false;
     for (let attempt = 1; attempt <= PROFILE_COMPLETENESS_WRITE_MAX_ATTEMPTS; attempt += 1) {
+      const settled = settledOf();
+      if (settled) return settled;
       const completeness = profileCompletenessOfRow(current);
       const stored = current.profile_completeness ?? null;
-      if (stored === completeness) {
-        const outcome = wrote ? { status: 'updated' as const, completeness } : { status: 'unchanged' as const, completeness };
-        const syncedRow = row.profile_completeness === completeness ? row : { ...row, profile_completeness: completeness };
-        return { row: syncedRow, outcome };
-      }
       const update = supabase.from('user_profiles').update({ profile_completeness: completeness }).eq('id', userId);
       const conditioned = stored === null ? update.is('profile_completeness', null) : update.eq('profile_completeness', stored);
       const { data: written, error: writeError } = await conditioned.select('*').maybeSingle();
-      if (writeError) return { row, outcome: { status: 'error', error: writeError } };
+      if (writeError) return failed(writeError);
       if (written) {
         wrote = true;
         current = written;
@@ -164,13 +182,14 @@ export async function syncProfileCompletenessOfRow<Row extends Partial<DbUserPro
       }
       // 0 行: 読んでから書くまでに別の書き手が完成度を書いた。今の行を読み直して数え直す
       const { data: reread, error: readError } = await supabase.from('user_profiles').select('*').eq('id', userId).maybeSingle();
-      if (readError) return { row, outcome: { status: 'error', error: readError } };
-      if (!reread) return { row, outcome: { status: 'error', error: new ProfileCompletenessRowMissingError() } };
+      if (readError) return failed(readError);
+      if (!reread) return failed(new ProfileCompletenessRowMissingError());
       current = reread;
     }
-    return { row, outcome: { status: 'error', error: new ProfileCompletenessWriteExhaustedError() } };
+    // 最後の試みのあとの数え直し (回数に数えない)。最後の試みで書けて同じなら updated、読み直した行が正しければ unchanged / updated
+    return settledOf() ?? failed(new ProfileCompletenessWriteExhaustedError());
   } catch (error) {
-    return { row, outcome: { status: 'error', error } };
+    return failed(error);
   }
 }
 

@@ -13,6 +13,7 @@ export {
   insertMealImageJobRecords,
   markDishImagesEnqueueFailed,
   markEnqueueFailedDishesInMeal,
+  runMealImageEnqueueAftercare,
   summarizeMealImageJobOutcomes,
   buildDishImagePrompt,
   buildDishImageSubjectHash,

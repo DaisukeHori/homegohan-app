@@ -11,6 +11,7 @@ import {
   insertMealImageJobRecords,
   markEnqueueFailedDishesInMeal,
   reconcileDishImages,
+  runMealImageEnqueueAftercare,
   summarizeMealImageJobOutcomes,
   type EnqueueMealImageJobsResult,
   type MealImageDish,
@@ -171,6 +172,7 @@ const ENQUEUE_LOG_NAME = 'lib/meal-image-jobs';
 
 /**
  * 料理画像のジョブを積む (service role)。行ごとに insert し、積めた・重複・失敗を数えて返す。例外は投げない。
+ * 行を積み始めたあとの後始末 (ログ・印・数え戻し) は runMealImageEnqueueAftercare で囲み、投げても結果を返す (#2227 H4)。
  *
  * 1 回の upsert (onConflict: 'idempotency_key', ignoreDuplicates) にしない理由 (#1487):
  * 冪等キーの一意な索引は部分索引 (WHERE status IN ('pending','processing')) なので、PostgREST の on_conflict が作る
@@ -214,39 +216,47 @@ export async function enqueueMealImageJobs(params: EnqueueJobsParams): Promise<E
         .maybeSingle(),
   );
 
-  const logger = createLogger(ENQUEUE_LOG_NAME);
+  // ここから先 (行を積み始めたあと) は例外を投げない (#2227 H4)。投げると呼び出し側 (enqueueMealImageJobsAfterSave) が
+  // 積み込み全体の失敗とみなし、積めた料理まで 'enqueue_failed' にして、数え戻しも重ねる
+  const result = summarizeMealImageJobOutcomes(outcomes);
   const failures: Array<{ dishIndex: number; subjectHash: string }> = [];
   for (const outcome of outcomes) {
-    if (outcome.kind !== 'failed') continue;
-    failures.push({ dishIndex: outcome.dishIndex, subjectHash: outcome.subjectHash });
-    logger.warn('Failed to enqueue meal image job', {
-      userId: params.userId,
-      plannedMealId: params.plannedMealId,
-      dishIndex: outcome.dishIndex,
-      ...(outcome.code ? { code: outcome.code } : {}),
-      error: outcome.message,
-    });
+    if (outcome.kind === 'failed') failures.push({ dishIndex: outcome.dishIndex, subjectHash: outcome.subjectHash });
   }
 
   if (failures.length > 0) {
-    // 読んだときの updated_at の行にだけ書く (ワーカーと同時でも、そのあいだに書かれた料理の画像を巻き戻さない。#1532)
-    const marked = await markEnqueueFailedDishesInMeal({
-      failures,
-      mealId: params.plannedMealId,
-      db: params.supabase,
-      loadMeal: () => params.supabase.from('planned_meals').select(ENQUEUE_FAILED_MEAL_COLUMNS).eq('id', params.plannedMealId).maybeSingle(),
+    await runMealImageEnqueueAftercare('logging the failed rows', () => {
+      const logger = createLogger(ENQUEUE_LOG_NAME);
+      for (const outcome of outcomes) {
+        if (outcome.kind !== 'failed') continue;
+        logger.warn('Failed to enqueue meal image job', {
+          userId: params.userId,
+          plannedMealId: params.plannedMealId,
+          dishIndex: outcome.dishIndex,
+          ...(outcome.code ? { code: outcome.code } : {}),
+          error: outcome.message,
+        });
+      }
     });
-    if (marked.status === 'error') {
-      logger.warn('Failed to mark dishes whose meal image jobs were not enqueued', {
-        userId: params.userId,
-        plannedMealId: params.plannedMealId,
-        error: marked.message,
+    await runMealImageEnqueueAftercare('marking the dishes whose jobs were not enqueued', async () => {
+      // 読んだときの updated_at の行にだけ書く (ワーカーと同時でも、そのあいだに書かれた料理の画像を巻き戻さない。#1532)
+      const marked = await markEnqueueFailedDishesInMeal({
+        failures,
+        mealId: params.plannedMealId,
+        db: params.supabase,
+        loadMeal: () => params.supabase.from('planned_meals').select(ENQUEUE_FAILED_MEAL_COLUMNS).eq('id', params.plannedMealId).maybeSingle(),
       });
-    }
+      if (marked.status === 'error') {
+        createLogger(ENQUEUE_LOG_NAME).warn('Failed to mark dishes whose meal image jobs were not enqueued', {
+          userId: params.userId,
+          plannedMealId: params.plannedMealId,
+          error: marked.message,
+        });
+      }
+    });
   }
 
-  const result = summarizeMealImageJobOutcomes(outcomes);
-  if (result.inserted === 0) await refundUnusedMealImageUsage(params);
+  if (result.inserted === 0) await runMealImageEnqueueAftercare('refunding the unused usage', () => refundUnusedMealImageUsage(params));
   return result;
 }
 
