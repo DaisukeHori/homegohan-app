@@ -42,8 +42,16 @@ vi.mock('@/lib/supabase/client', () => ({
     }),
   }),
 }));
+/** 同意の確認を待たせる門 (同意の確認を待つ間に閉じ始める縁を確かめるテストだけ置く。beforeEach で外す) */
+const consent = vi.hoisted(() => ({ gate: null as Promise<void> | null }));
 vi.mock('@/hooks/useAiConsent', () => ({
-  useAiConsent: () => ({ ensureAiConsent: async () => 'consented', consentModal: null }),
+  useAiConsent: () => ({
+    ensureAiConsent: async () => {
+      if (consent.gate) await consent.gate;
+      return 'consented';
+    },
+    consentModal: null,
+  }),
 }));
 /** 献立の生成の依頼 (beforeEach で呼ばれた記録を消す) */
 const v4 = vi.hoisted(() => ({ generate: vi.fn() }));
@@ -140,6 +148,7 @@ beforeEach(() => {
   vi.stubGlobal('alert', vi.fn());
   vi.spyOn(console, 'error').mockImplementation(() => {});
   delete window.__weeklyCurrentDate;
+  consent.gate = null;
   v4.generate.mockReset();
   requests = [];
   handlers = {
@@ -419,16 +428,60 @@ describe('#2245 K1 2 相談を閉じる応答待ちの間は『1日献立変更�
     await waitFor(() => !dayMenuButton().disabled);
   });
 
-  it('入口の側: 閉じると同じ描画のうちに開いたモーダルの「作成する」を押しても作らない (作成中の一文も出さない)', async () => {
+  it('描画の側: 開いたモーダルの「作成する」も、閉じる応答待ちの間は止まる', async () => {
     await openChat();
+    await act(async () => {
+      dayMenuButton().click();
+    });
+    expect(createDayMenuButton().disabled).toBe(false);
+    const close = hold(closeKey(SESSION_ID));
+    await clickClose();
+
+    expect(createDayMenuButton().disabled).toBe(true);
+
+    await act(async () => {
+      close.resolve(json(200, { summary: null }));
+    });
+    await waitFor(() => !createDayMenuButton().disabled);
+  });
+
+  it('入口の側: 閉じると同じ描画のうちにモーダルの「作成する」を押しても作らない (作成中の一文も出さない)', async () => {
+    await openChat();
+    await act(async () => {
+      dayMenuButton().click();
+    });
     const close = hold(closeKey(SESSION_ID));
     await act(async () => {
       closeButton().click();
-      dayMenuButton().click();
+      createDayMenuButton().click();
     });
     await waitFor(() => requestCount(closeKey(SESSION_ID)) === 1);
+    await settle();
+
+    expect(v4.generate).not.toHaveBeenCalled();
+    expect(text()).not.toContain(DAY_MENU_STARTED_TEXT);
+
+    await act(async () => {
+      close.resolve(json(200, { summary: null }));
+    });
+    await waitFor(() => text().includes(WELCOME_TEXT));
+    expect(v4.generate).not.toHaveBeenCalled();
+  });
+
+  it('入口の側: 同意の確認を待つ間に閉じ始めたら、確認のあとも作らない', async () => {
+    await openChat();
+    await act(async () => {
+      dayMenuButton().click();
+    });
+    const consentAnswer = deferred<void>();
+    consent.gate = consentAnswer.promise;
     await act(async () => {
       createDayMenuButton().click();
+    });
+    const close = hold(closeKey(SESSION_ID));
+    await clickClose();
+    await act(async () => {
+      consentAnswer.resolve();
     });
     await settle();
 
@@ -484,6 +537,28 @@ describe('#2245 K1 2 同じ型: 相談を閉じる応答待ちの間は、提案
       executeButton().click();
     });
     await waitFor(() => requestCount(closeKey(SESSION_ID)) === 1);
+    await settle();
+    expect(requestCount(executeKey)).toBe(0);
+
+    await act(async () => {
+      close.resolve(json(200, { summary: null }));
+    });
+    await waitFor(() => text().includes(WELCOME_TEXT));
+    expect(requestCount(executeKey)).toBe(0);
+  });
+
+  it('入口の側: 同意の確認を待つ間に閉じ始めたら、確認のあとも実行の API を呼ばない', async () => {
+    await openChat();
+    const consentAnswer = deferred<void>();
+    consent.gate = consentAnswer.promise;
+    await act(async () => {
+      executeButton().click();
+    });
+    const close = hold(closeKey(SESSION_ID));
+    await clickClose();
+    await act(async () => {
+      consentAnswer.resolve();
+    });
     await settle();
     expect(requestCount(executeKey)).toBe(0);
 

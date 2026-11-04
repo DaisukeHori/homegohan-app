@@ -1662,8 +1662,9 @@ export default function AIChatBubble() {
   const dayMenuRange = showDayMenuModal ? dayMenuDateRangeOf(todayLocal()) : null;
   const dayMenuToday = dayMenuRange === null ? null : dayMenuRange.min;
   const dayMenuMaxDate = dayMenuRange === null ? null : dayMenuRange.max;
-  // 作成するを押せるか: 作成中でなく、日付が実在する暦日で欄の範囲の中のとき (#2245 K1)
-  const dayMenuCreatable = !isGeneratingDayMenu && dayMenuRange !== null && isDayMenuDateSelectable(selectedDate, dayMenuRange);
+  // 作成するを押せるか: 作成中・相談を閉じる応答待ちの最中でなく、日付が実在する暦日で欄の範囲の中のとき (#2245 K1)
+  const dayMenuCreatable =
+    !isGeneratingDayMenu && !isClosingSession && dayMenuRange !== null && isDayMenuDateSelectable(selectedDate, dayMenuRange);
   // 1日献立変更を押せるか: 送信中・作成中・相談を閉じる応答待ちの最中でないとき (#2245 K1。閉じる応答待ちを足した)
   const dayMenuButtonLocked = isSending || isGeneratingDayMenu || isClosingSession;
 
