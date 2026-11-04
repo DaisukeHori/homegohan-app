@@ -428,11 +428,16 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   }, [messages.length, streamingContent, sending, timedOutSend]);
 
   async function initSession() {
+    // アーカイブの /close の応答待ちの間に開き直したら、読み込まない (#2245 K1。アーカイブが応答のあと新しい相談を作って出す
+    // (createNewSession)。ここで読み込むと、アーカイブのあとの新しい相談の画面を、遅れて返った閉じた相談の一覧・会話で上書きしうる。
+    // Web の AIChatBubble の openChat と同じ)
+    if (closingSessionRef.current) return;
     // 開き直しも画面の操作 (#2227 H1。前の画面で始めた取り直しの結果を、開き直した画面に書かない)。前の画面の案内も外す
     // (案内の送信は、開き直した会話の読み込みが確かめる。外さないと、読み込みがこの送信に当てた保存行を、あとで押した
     // 「最新の会話を読み込む」が前の送信の行として除いて探し、届いていた送信を『届いていません』と取り違える。
     // 相談の切り替え・新しい相談と同じ)
     startViewOperation();
+    const startedAt = viewGenRef.current;
     setTimedOutSend(null);
     try {
       const api = getApi();
@@ -441,6 +446,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       );
       const allSessions = res.sessions ?? [];
       setSessions(allSessions);
+      // 一覧を待つ間にアーカイブを始めた・ほかの画面の操作 (アーカイブのあとの新しい相談・相談の切り替え・送信) があった: 出す相談を
+      // 変えない (#2245 K1。変えると、アーカイブのあとの新しい相談や選んだ相談を、一覧を読んだ時点の相談で上書きする)
+      if (closingSessionRef.current || viewGenRef.current !== startedAt) return;
 
       // 出す相談の id を先に変えてから会話を取る (#2227 H1。selectSession・Web の AIChatBubble と同じ順。後に変えると、取り直しで
       // 確かめられなかった送信の保存行が見つかっても、前に出していた相談を今の相談と見て入力欄の文を消さなかった)
@@ -457,10 +465,14 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
           success: boolean;
           session: { id: string };
         }>("/api/ai/consultation/sessions", { title: "AI相談" });
+        // 作成を待つ間も上と同じ (#2245 K1)
+        if (closingSessionRef.current || viewGenRef.current !== startedAt) return;
         showSessionId(createRes.session.id);
         setMessages([WELCOME_MESSAGE]);
       }
     } catch {
+      // 失敗を待つ間に画面の操作があったら、その画面を消さない (#2245 K1。上と同じ)
+      if (closingSessionRef.current || viewGenRef.current !== startedAt) return;
       setMessages([WELCOME_MESSAGE]);
     }
   }
@@ -488,10 +500,15 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     // 後に保存されうるので、写しに無くても忘れない。その送信は自分の取り直しで確かめる)
     const settleable = [...unconfirmedSendsRef.current];
     const loaded = await fetchMessages(sessionId, { reload: false });
-    if (loaded && loaded.length > 0) {
-      setMessages(loaded);
-    } else {
-      setMessages([WELCOME_MESSAGE]);
+    // 会話を画面に置くのは、返ったときにまだその相談を出しているときだけ (#2245 K1。相談を A→B と切り替えた・アーカイブのあとの
+    // 新しい相談に変わったあとに遅れて返った A の会話を、今の相談の画面に置かない。置くと、画面の会話と違う相談へ送られる。
+    // Web の AIChatBubble の fetchMessages と同じ)。確かめられなかった送信の settle は今のまま行う (入力欄に触るのは今の相談のときだけ)
+    if (currentSessionIdRef.current === sessionId) {
+      if (loaded && loaded.length > 0) {
+        setMessages(loaded);
+      } else {
+        setMessages([WELCOME_MESSAGE]);
+      }
     }
     // 確かめられなかった前の送信が届いていたら、入力欄に戻した文を消す (#2227 H1)。開き直した会話は以後の送信の
     // 「送る前に出ていた行」に入るので、見つからなかった送信は忘れる
@@ -711,6 +728,20 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   async function pressNewSession() {
     if (closingSessionRef.current) return;
     await createNewSession();
+  }
+
+  /**
+   * 1日献立の作成を今始めてはいけないか (#2245 K1)。送信中・「最新の会話を読み込む」の取り直しの最中・アーカイブの応答待ちの最中
+   * (ボタンを止めているのと同じ。ref で見るのは、止める描画を待たずに、同じ描画のうちの押下も止めるため)
+   */
+  function isDayMenuStartBlocked(): boolean {
+    return sendingRef.current || reloadingRef.current || closingSessionRef.current;
+  }
+
+  /** 「1日献立変更」の押下 (#2245 K1。止めている間は開かない) */
+  function openDayMenuModal() {
+    if (isDayMenuStartBlocked()) return;
+    setDayMenuModalVisible(true);
   }
 
   /** 新しい相談を作って出す (「新しい相談を始める」の押下 pressNewSession と、アーカイブの応答のあとから呼ぶ) */
@@ -1364,10 +1395,12 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
               {/* クイックアクションバー */}
               <View style={styles.actionBar}>
+                {/* 送信中・取り直しの最中・アーカイブの応答待ちの最中は止める (#2245 K1。以前は disabled が無く、いつでも押せた) */}
                 <Pressable
                   testID="ai-day-menu-btn"
-                  onPress={() => setDayMenuModalVisible(true)}
-                  style={styles.dayMenuBtn}
+                  onPress={openDayMenuModal}
+                  disabled={inputLocked}
+                  style={[styles.dayMenuBtn, inputLocked && styles.dayMenuBtnDisabled]}
                 >
                   <Calendar size={14} color={colors.accent} />
                   <Text style={styles.dayMenuBtnText}>1日献立変更</Text>
@@ -1416,6 +1449,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         visible={visible && dayMenuModalVisible}
         onClose={() => setDayMenuModalVisible(false)}
         onAiConsentRequired={closeSheetAndPromptAiConsent}
+        isStartBlocked={isDayMenuStartBlocked}
       />
     </>
   );
@@ -1676,6 +1710,10 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     borderWidth: 1,
     borderColor: colors.accent,
+  },
+  // 止めている間 (#2245 K1)。枠の色を、止めている送信ボタンと同じ textMuted にする
+  dayMenuBtnDisabled: {
+    borderColor: colors.textMuted,
   },
   dayMenuBtnText: {
     fontSize: 12,

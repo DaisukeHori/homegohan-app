@@ -16,11 +16,13 @@ import { useAiConsent } from "@/hooks/useAiConsent";
 import { AiConsentRequiredError, aiFetch, handleStoredAiConsentFailure, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import { aiDailyLimitMessageOfResponse } from "@/lib/ai/daily-limit-client";
 import { aiSummarySkippedNote } from "@/lib/ai/consent-config";
-import { todayLocal, addDaysToDate, formatDateJa } from "@/lib/date-utils";
+import { todayLocal, addDaysToDate, formatDateJa, isCalendarDate } from "@/lib/date-utils";
 // AI 応答を HTML にして dangerouslySetInnerHTML へ渡すときは、必ずこの関数を通す (#1169)
 import { parseMarkdown } from "@/lib/markdown-lite";
 // AI 相談の緊急停止中 (503 + AI_CHAT_DISABLED) にサーバーが返すやさしい文面を、そのまま画面に出す (#1148)
 import { readAiChatUnavailableMessage } from "@/lib/ai/ai-chat-unavailable";
+// 『相談を終了』が失敗したときにチャットに出す文 (#2245 K1。出し分けはモバイルの AIAdvisorSheet と同じ)
+import { CONSULTATION_CLOSE_FAILED_MESSAGE, consultationCloseFailureOf } from "@/lib/ai/consultation-close-failure";
 // 提案の実行の結果 (成功・失敗) をチャットに出す一文。失敗 (success が偽) を『実行しました』と出さない (#2183 Z1)
 import {
   AI_CONSULTATION_ACTION_FAILED_FALLBACK_MESSAGE,
@@ -407,6 +409,22 @@ function shiftCalendarDayOrNull(day: string, offsetDays: number): string | null 
   }
 }
 
+/** 1 日分の献立の日付の欄で選べる範囲 (下限は JST の今日、上限は DAY_MENU_MAX_OFFSET_DAYS 日後。上限を計算できなければ null = 上限なし) */
+function dayMenuDateRangeOf(today: string): { min: string; max: string | null } {
+  return { min: today, max: shiftCalendarDayOrNull(today, DAY_MENU_MAX_OFFSET_DAYS) };
+}
+
+/**
+ * 1 日分の献立を作ってよい日付か (#2245 K1)。実在する暦日 (isCalendarDate。日付の欄を空にした '' は入らない) で、日付の欄の
+ * 範囲 (min〜max) の中のときだけ。以前は欄を空にして作成を押すと『NaN月NaN日の献立を作成中...』を出し、date '' で依頼していた
+ */
+function isDayMenuDateSelectable(date: string, range: { min: string; max: string | null }): boolean {
+  if (!isCalendarDate(date)) return false;
+  // YYYY-MM-DD の同じ桁数の文字列なので、文字列の大小が日付の前後と同じ
+  if (date < range.min) return false;
+  return range.max === null || date <= range.max;
+}
+
 /** 献立の作成が、同意が無くて止められたときにチャットに出す一文 (T15 / #1154。同意画面は AiConsentRequiredHost が出す) */
 const V4_CONSENT_REQUIRED_CHAT_NOTE =
   'AI へのデータ提供への同意が必要なため、献立は作成しませんでした。同意したあとに、もう一度お試しください。';
@@ -557,6 +575,14 @@ export default function AIChatBubble() {
   useEffect(() => {
     currentSessionIdRef.current = currentSessionId;
   }, [currentSessionId]);
+  /**
+   * 出す相談を変える (#2245 K1)。ref も同じ時に変える (描画を待つと、切り替えの直後に返った会話の読み込み (fetchMessages) が古い値を
+   * 見て、前の相談の会話を今の画面に置く。モバイルの AIAdvisorSheet の showSessionId と同じ)
+   */
+  const showSessionId = (sessionId: string | null) => {
+    currentSessionIdRef.current = sessionId;
+    setCurrentSessionId(sessionId);
+  };
   // 届いたかを確かめられなかった送信 (取り直せなかった・送った文が見つからなかった) と、送信に当てた送った文の保存行の id (#2227 H1)。
   // 後の取り直しで前の送信の保存行が見つかったら、入力欄に戻した文を消し (届いていたのにそのまま送ると二重に届く)、今回の送信の
   // 保存行を探すときはそれを除く (同じ文を続けて送ったときに、前の送信の保存行を今回の送信と取り違えない)。決まりは共有の
@@ -712,7 +738,10 @@ export default function AIChatBubble() {
     }
   }, []);
 
-  // メッセージ取得
+  // メッセージ取得。会話を画面に置くのは、返ったときにまだその相談を出しているときだけ (#2245 K1。相談を A→B と切り替えた・閉じたあとの
+  // 新しい相談に変わったあとに遅れて返った A の会話を、今の相談の画面に置かない。置くと、画面の会話と違う相談へ送られる)。
+  // 確かめられなかった送信の settle は、今の相談でなくても行う (その相談の写しで届いたかが分かる。入力欄に触るのは今の相談のときだけ)。
+  // 決まりはモバイルの AIAdvisorSheet の loadMessages と同じ
   const fetchMessages = useCallback(async (sessionId: string) => {
     setIsLoading(true);
     // この読み込みで忘れてよいのは、読み込みを始める前に積んであった送信だけ (#2235 I1。読み込みの最中に終わった取り直しが積んだ
@@ -722,10 +751,12 @@ export default function AIChatBubble() {
       const res = await fetch(`/api/ai/consultation/sessions/${sessionId}/messages`);
       if (res.ok) {
         const data = await res.json();
-        setMessages((data.messages || []).map((m: any) => ({
-          ...m,
-          isImportant: m.isImportant || false,
-        })));
+        if (currentSessionIdRef.current === sessionId) {
+          setMessages((data.messages || []).map((m: any) => ({
+            ...m,
+            isImportant: m.isImportant || false,
+          })));
+        }
         // 確かめられなかった前の送信が届いていたら、入力欄に戻した文を消す (#2227 H1)
         const loaded = loadedMessagesOf(data);
         if (loaded) settleUnconfirmedSends({ sessionId, loaded, current: null, currentAccepted: false, forgettable });
@@ -757,17 +788,22 @@ export default function AIChatBubble() {
     setIsOpen(true);
     setHasUnread(false);
     try {
+      // 相談を閉じる (/close) の応答待ちの間は、会話を読み込まない (#2245 K1。閉じる側が応答のあと一覧を読み直し、新しい相談を出す。
+      // ここで読み込むと、閉じたあとの新しい相談の画面を、遅れて返った閉じた相談の会話や一覧で上書きしうる)。開くだけはする
+      if (closingSessionRef.current) return;
       const fetchedSessions = await fetchSessions();
 
       if (fetchedSessions === null) {
         return; // 認証されていない場合は何もしない
       }
+      // 一覧を待つ間に閉じるを押した: 読み込みは閉じる側に任せる (#2245 K1。上と同じ)
+      if (closingSessionRef.current) return;
 
       // 既存のアクティブセッションがあればそれを使う、なければ新規作成
       // ※ fetchSessions() の返り値を直接参照（stale state 回避）
       if (fetchedSessions.length > 0 && !currentSessionId) {
         const activeSession = fetchedSessions.find(s => s.messageCount > 0) || fetchedSessions[0];
-        setCurrentSessionId(activeSession.id);
+        showSessionId(activeSession.id);
         await fetchMessages(activeSession.id);
       } else if (!currentSessionId) {
         await createNewSession();
@@ -804,7 +840,7 @@ export default function AIChatBubble() {
       
       if (res.ok) {
         const data = await res.json();
-        setCurrentSessionId(data.session.id);
+        showSessionId(data.session.id);
         setMessages([]);
         setShowSessionList(false);
         
@@ -819,7 +855,7 @@ export default function AIChatBubble() {
         // #1148: AI 相談の緊急停止中は、サーバーのやさしい文面を出す (入力しても送れないので、セッションは作らない)
         const unavailableMessage = await readAiChatUnavailableMessage(res);
         if (unavailableMessage) {
-          setCurrentSessionId(null);
+          showSessionId(null);
           setMessages([{
             id: 'unavailable',
             role: 'assistant',
@@ -1417,7 +1453,7 @@ export default function AIChatBubble() {
   const switchSession = async (sessionId: string) => {
     // 相談を閉じる応答待ちの最中は切り替えない (#2235 I8。相談の行も止めている。閉じたあとの新しい相談が、選んだ相談を上書きする)
     if (closingSessionRef.current) return;
-    setCurrentSessionId(sessionId);
+    showSessionId(sessionId);
     setShowSessionList(false);
     await fetchMessages(sessionId);
   };
@@ -1456,6 +1492,9 @@ export default function AIChatBubble() {
 
     closingSessionRef.current = true;
     setIsClosingSession(true);
+    // 閉じるを受け付けた (ok の応答が返った) か。受け付けたあとの例外 (本文が読めないなど) では『終了できませんでした』を出さない
+    // (相談はサーバーで閉じている)
+    let closeAccepted = false;
     try {
       const res = await fetch(
         `/api/ai/consultation/sessions/${currentSessionId}/close`,
@@ -1463,6 +1502,7 @@ export default function AIChatBubble() {
       );
 
       if (res.ok) {
+        closeAccepted = true;
         const data = await res.json();
         // セッション一覧を更新
         await fetchSessions();
@@ -1495,23 +1535,52 @@ export default function AIChatBubble() {
             ]);
           }
         }
+      } else {
+        // 失敗の応答も黙らずに知らせる (#2245 K1。以前は何も起きなかったように見えた。出し分けはモバイルの AIAdvisorSheet と同じ。
+        // すでに終了していた (400) ときは、一覧を読み直して画面を今の状態に合わせてから出す)
+        const body: unknown = await res.json().catch(() => null);
+        const failure = consultationCloseFailureOf(res.status, body);
+        if (failure.kind === 'already-closed') await fetchSessions();
+        showCloseFailure(failure.message);
       }
     } catch (e) {
       console.error('Failed to close session:', e);
+      // 通信の失敗 (応答が返らなかった): 固定の失敗の文を出す (#2245 K1)
+      if (!closeAccepted) showCloseFailure(CONSULTATION_CLOSE_FAILED_MESSAGE);
     } finally {
       closingSessionRef.current = false;
       setIsClosingSession(false);
     }
   };
 
+  /** 相談を終了できなかったことをチャットに出す (#2245 K1。ほかの失敗と同じく alert ではなくチャットに出す。#2189 W1-a) */
+  const showCloseFailure = (content: string) => {
+    setMessages(prev => [
+      ...prev,
+      {
+        id: `close-failed-${Date.now()}`,
+        role: 'assistant',
+        content,
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+  };
+
   // 1日献立変更を実行（V4直接呼び出し）
   const generateDayMenu = async () => {
-    if (isGeneratingDayMenu) return;
+    // 相談を閉じる (/close) の応答待ちの間は作らない (#2245 K1。チャットに足す『○月○日の献立を作成中...』が、閉じる側の新しい相談の
+    // 画面の置き換え (createNewSession) で消え、作成の結果が見えなくなる。ボタンも止めている。ref で見るのは、閉じると同じ描画のうちの
+    // 押下も止めるため)
+    if (isGeneratingDayMenu || closingSessionRef.current) return;
+    // 日付の欄が空・範囲の外なら作らない (#2245 K1。ボタンも止めている)
+    if (!isDayMenuDateSelectable(selectedDate, dayMenuDateRangeOf(todayLocal()))) return;
 
     setShowDayMenuModal(false);
 
     // 未同意なら同意画面を出す (「同意しない」なら生成しない)
     if ((await ensureAiConsent()) === 'declined') return;
+    // 同意の確認を待つ間に相談を閉じ始めた: 作らない (#2245 K1。上と同じ)
+    if (closingSessionRef.current) return;
 
     // 日付をフォーマット (#2235 I3。選んだ暦日 (YYYY-MM-DD) の年月日を formatDateJa で読む。以前の new Date(selectedDate) は
     // UTC の 0 時の瞬間を端末のローカル時刻 (getMonth / getDate) で読んでいたので、端末が UTC より西だと前の日になった)
@@ -1579,8 +1648,13 @@ export default function AIChatBubble() {
   const inputLocked = isSending || isClosingSession;
   // 1 日分の献立の日付の欄の下限 (JST の今日) と上限 (その 14 日後)。時計は 1 回だけ読む (#2235 I8。以前は下限と上限で別々に読み、
   // 上限は端末の 0 時の Date を setDate でずらしていた)。上限を暦の計算で扱えない日は、上限を付けない
-  const dayMenuToday = showDayMenuModal ? todayLocal() : null;
-  const dayMenuMaxDate = dayMenuToday === null ? null : shiftCalendarDayOrNull(dayMenuToday, DAY_MENU_MAX_OFFSET_DAYS);
+  const dayMenuRange = showDayMenuModal ? dayMenuDateRangeOf(todayLocal()) : null;
+  const dayMenuToday = dayMenuRange === null ? null : dayMenuRange.min;
+  const dayMenuMaxDate = dayMenuRange === null ? null : dayMenuRange.max;
+  // 作成するを押せるか: 作成中でなく、日付が実在する暦日で欄の範囲の中のとき (#2245 K1)
+  const dayMenuCreatable = !isGeneratingDayMenu && dayMenuRange !== null && isDayMenuDateSelectable(selectedDate, dayMenuRange);
+  // 1日献立変更を押せるか: 送信中・作成中・相談を閉じる応答待ちの最中でないとき (#2245 K1。閉じる応答待ちを足した)
+  const dayMenuButtonLocked = isSending || isGeneratingDayMenu || isClosingSession;
 
   return (
     <>
@@ -2021,9 +2095,9 @@ export default function AIChatBubble() {
               >
                 <button
                   onClick={openDayMenuModal}
-                  disabled={isSending || isGeneratingDayMenu}
+                  disabled={dayMenuButtonLocked}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border whitespace-nowrap hover:bg-gray-50 transition-colors"
-                  style={{ borderColor: colors.primary, opacity: (isSending || isGeneratingDayMenu) ? 0.5 : 1 }}
+                  style={{ borderColor: colors.primary, opacity: dayMenuButtonLocked ? 0.5 : 1 }}
                 >
                   <CalendarDays size={14} color={colors.primary} />
                   <span style={{ fontSize: 12, color: colors.primary, fontWeight: 500 }}>
@@ -2154,9 +2228,9 @@ export default function AIChatBubble() {
                 </button>
                 <button
                   onClick={generateDayMenu}
-                  disabled={isGeneratingDayMenu}
+                  disabled={!dayMenuCreatable}
                   className="flex-1 py-3 rounded-xl flex items-center justify-center gap-2"
-                  style={{ background: colors.primary, color: '#fff', fontSize: 14, fontWeight: 500, opacity: isGeneratingDayMenu ? 0.7 : 1 }}
+                  style={{ background: colors.primary, color: '#fff', fontSize: 14, fontWeight: 500, opacity: dayMenuCreatable ? 1 : 0.7 }}
                 >
                   {isGeneratingDayMenu ? (
                     <Loader2 size={16} className="animate-spin" />
