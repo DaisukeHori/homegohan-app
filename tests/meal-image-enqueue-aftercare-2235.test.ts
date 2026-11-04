@@ -296,8 +296,9 @@ describe('2. 種が空のときの数え戻しが投げても、呼び出し側�
       usage: AI_USAGE_ALLOWED,
     });
 
-    expect(outcome).toEqual({ status: 'enqueued', enqueued: ZERO_RESULT, triggered: false });
+    // 直す前は、呼び出し側の catch が積み込みの例外とみなしてもう一度戻していた (2 回)
     expect(h.refundAiUsage).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual({ status: 'enqueued', enqueued: ZERO_RESULT, triggered: false });
     expect(h.triggerMealImageJobProcessing).not.toHaveBeenCalled();
     expect(queueDb.queries).toEqual([]);
     expect(userDb.queries).toEqual([]);
