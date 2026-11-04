@@ -27,13 +27,18 @@ interface Props {
    * (このモーダルだけを閉じて案内を出すと、下に開いたままのシートが、案内から開いた同意画面を隠す。src/lib/ai-consent.ts の規則)
    */
   onAiConsentRequired: () => void;
+  /**
+   * 作成を今始めてはいけないか (#2245 K1)。開いた側 (AIAdvisorSheet) が、送信中・取り直しの最中・アーカイブの応答待ちの最中に真を返す。
+   * 「作成する」の入口で見て、真なら作らない。無ければ止めない
+   */
+  isStartBlocked?: () => boolean;
 }
 
 // ============================================================
 // Component
 // ============================================================
 
-export const AIDayMenuModal: React.FC<Props> = ({ visible, onClose, onAiConsentRequired }) => {
+export const AIDayMenuModal: React.FC<Props> = ({ visible, onClose, onAiConsentRequired, isStartBlocked }) => {
   // 今日の日付をデフォルト (JST の暦日。#1433。toISOString の UTC の暦日だと JST の 0:00〜8:59 に前日になる)
   const today = todayLocal();
   const [selectedDate, setSelectedDate] = useState(today);
@@ -74,6 +79,8 @@ export const AIDayMenuModal: React.FC<Props> = ({ visible, onClose, onAiConsentR
   }
 
   async function handleGenerate() {
+    // 開いた側が止めている間は作らない (#2245 K1。アーカイブの応答待ちの間などに、モーダルの「作成する」から始めさせない)
+    if (isStartBlocked?.()) return;
     if (!validateDate(selectedDate)) return;
 
     const mealTypes = ["breakfast", "lunch", "dinner"] as const;
