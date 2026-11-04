@@ -54,6 +54,22 @@ vi.mock('@/hooks/useAiConsent', () => ({
   useAiConsent: () => ({ ensureAiConsent: async () => 'consented', consentModal: null }),
 }));
 
+/**
+ * 買い物リストを作る依頼の範囲の計算 (shoppingRangeRequest) を、throwOnRequest の間だけ投げる形に置き換える
+ * (作成中の表示を出す前に try の中で範囲を求めていることを確かめる。ほかの間は元の関数のまま)
+ */
+const rangeFault = vi.hoisted(() => ({ throwOnRequest: false }));
+vi.mock('@/app/(main)/menus/weekly/_state/shoppingRangeDates', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/app/(main)/menus/weekly/_state/shoppingRangeDates')>();
+  return {
+    ...actual,
+    shoppingRangeRequest: (...args: Parameters<typeof actual.shoppingRangeRequest>) => {
+      if (rangeFault.throwOnRequest) throw new RangeError('範囲の計算が投げた (検査の置き換え)');
+      return actual.shoppingRangeRequest(...args);
+    },
+  };
+});
+
 /** Supabase のモック。ログインしていて、プロフィールは全部入り (週の始まりは月曜)。ほかの表は空 */
 vi.mock('@/lib/supabase/client', () => {
   const USER = { id: '22450000-0000-4000-8000-0000000000b1', user_metadata: {} };
@@ -198,11 +214,13 @@ let root: Root;
 beforeEach(() => {
   process.env.TZ = 'UTC';
   vi.setSystemTime(new Date(FROZEN_NOW));
+  rangeFault.throwOnRequest = false;
   navigation.searchParams = new URLSearchParams();
   localStorage.clear();
   useShoppingStore.getState().setShoppingList([]);
   useShoppingStore.getState().setActiveShoppingList(null);
   useShoppingStore.getState().setIsRegeneratingShoppingList(false);
+  useShoppingStore.getState().setShoppingListProgress(null);
   useShoppingStore.getState().setShoppingRange({ type: 'week', todayMeals: ['breakfast', 'lunch', 'dinner'], daysCount: 3 });
   useShoppingStore.getState().setShoppingRangeStep('range');
   installFakeServer();
@@ -347,6 +365,20 @@ describe('/menus/weekly の ?date= は isCalendarDate を通ったときだけ�
     await click(requireElement(modal.querySelector<HTMLButtonElement>('[data-testid="generate-shopping-list-button"]'), '作成のボタン'));
     expect(fetchCalls.filter((call) => call.path === REGENERATE_PATH)).toEqual([]);
     expect(useShoppingStore.getState().isRegeneratingShoppingList).toBe(false);
+    expect(container.textContent).toContain(SHOPPING_RANGE_UNAVAILABLE_MESSAGE);
+  });
+});
+
+describe('買い物リストの作成は、作成中の表示を出す前に try の中で範囲を求める (#2245 K4)', () => {
+  it('範囲の計算が投げても、作成中の表示を残さず、依頼を送らずに知らせる (直す前は作成中の表示を出したあと try の外で投げた)', async () => {
+    useShoppingStore.getState().setShoppingRangeStep('servings');
+    await renderWeeklyPage({ date: '2026-12-31' });
+    const modal = await openShoppingRangeModal();
+    rangeFault.throwOnRequest = true;
+    await click(requireElement(modal.querySelector<HTMLButtonElement>('[data-testid="generate-shopping-list-button"]'), '作成のボタン'));
+    expect(fetchCalls.filter((call) => call.path === REGENERATE_PATH)).toEqual([]);
+    expect(useShoppingStore.getState().isRegeneratingShoppingList).toBe(false);
+    expect(useShoppingStore.getState().shoppingListProgress).toBeNull();
     expect(container.textContent).toContain(SHOPPING_RANGE_UNAVAILABLE_MESSAGE);
   });
 });
