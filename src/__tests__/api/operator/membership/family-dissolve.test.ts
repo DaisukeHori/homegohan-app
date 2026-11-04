@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   logError: vi.fn(),
   logWarn: vi.fn(),
   withUser: vi.fn(),
+  auditInsert: vi.fn(),
 }));
 
 vi.mock('@/lib/auth/operator-permissions', () => ({
@@ -30,7 +31,16 @@ vi.mock('@/lib/auth/operator-permissions', () => ({
 vi.mock('@/lib/supabase/server', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/supabase/server')>();
   return {
-    createClient: () => ({ rpc: mocks.rpc }),
+    // 監査ログ (recordAdminAudit) も本人のセッションの client で書く。書けた扱いにする (family-transfer.test.ts と同じ形)。
+    // from が無いと記録が毎回失敗し、その失敗のログ (logAuditFailure は withUser(運営者) の error。#2245 K5) が
+    // ここで数える通知メールの失敗のログに混ざる
+    createClient: () => ({
+      rpc: mocks.rpc,
+      from: (table: string) => {
+        if (table !== 'admin_audit_logs') throw new Error(`unexpected table on the session client: ${table}`);
+        return { insert: mocks.auditInsert };
+      },
+    }),
     getSupabaseAdmin: vi.fn(actual.getSupabaseAdmin),
   };
 });
@@ -137,6 +147,7 @@ let fake: FakeServiceRole;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.auditInsert.mockResolvedValue({ error: null });
   // 本物のキーではないダミー値 (getSupabaseAdmin は環境変数の有無だけを見る)
   vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'http://127.0.0.1:54321');
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'test-service-role-key');
