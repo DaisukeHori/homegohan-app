@@ -1239,33 +1239,42 @@ describe('#1136 claim の前提を表から確かめる (#2235 I6)', () => {
  * ここに置くのは、前の節の行番号をずらさないため (oldTimestamp は呼ばれたときにこれを読む)
  */
 const OLD_TIMESTAMP_YEAR = 2000;
-/** その年の次の年の初め。これより前の next_attempt_at / sent_at を持つ、このファイルの種類 (TEST_KIND) の行は、claim の先頭に来うる前回の実行の残り */
+/** その年の次の年の初め。これより前の next_attempt_at / sent_at を持つ、このファイルの種類 (LEFTOVER_KINDS) の行は、claim の先頭に来うる前回の実行の残り */
 const OLD_TIMESTAMP_END = new Date(Date.UTC(OLD_TIMESTAMP_YEAR + 1, 0, 1)).toISOString();
-/** purgeLeftoverRows が消さないことを確かめるための、TEST_KIND ではない種類 (ほかのテスト・worker の行の代わり) */
+/**
+ * 既定の purgeLeftoverRows (TEST_KIND だけ) が消さないことを確かめるための、TEST_KIND ではない種類 (ほかのテスト・worker の行の代わり)。
+ * このファイルの purge のテストだけが積み、2000 年にする種類なので、その前回の残りは beforeAll (LEFTOVER_KINDS) が消す
+ */
 const OTHER_TEST_KIND = 'rls_1136_push_outbox_other';
+/**
+ * このファイルが enqueue_push_notification に直接渡す種類の全部 (p_kind の定数)。beforeAll は、これらの種類の 2000 年の前回の残りを消す。
+ * トリガーが積む weekly_menu_* は worker の本物の種類で、時刻を 2000 年にしないので入れない
+ */
+const LEFTOVER_KINDS: readonly string[] = [TEST_KIND, OTHER_TEST_KIND];
 
 /**
- * 前回の実行が途中で止まって残った、このファイルの 2000 年の行 (TEST_KIND の、送信待ちの next_attempt_at か receipt の確認待ちの sent_at が
+ * 前回の実行が途中で止まって残った、このファイルの 2000 年の行 (kinds の種類の、送信待ちの next_attempt_at か receipt の確認待ちの sent_at が
  * 2000 年の行) を消す。afterEach は今回 seed した行 (seededIds) だけを、afterAll は今回の利用者の行 (CASCADE) だけを消すので、前回の行は
  * 残り、上限 1 の claim の前提 (expectOwnRowsAtHead) と上限の数 (claimLimitCovering) の完全一致を崩す。
- * TEST_KIND はこのファイルの enqueue だけが使う種類なので、ほかのテストの行・worker の本物の種類の行は消さない。今回の実行の 2000 年の行は
+ * kinds の既定は TEST_KIND だけ (purge のテストが、ほかの種類の行を消さないことを確かめる形)。beforeAll は LEFTOVER_KINDS を渡す。
+ * どの種類もこのファイルの enqueue だけが使う種類なので、ほかのテストの行・worker の本物の種類の行は消さない。今回の実行の 2000 年の行は
  * テストごとに afterEach が消すので、テストの間に呼んでもほかのテストの行には当たらない
  */
-async function purgeLeftoverRows(): Promise<void> {
+async function purgeLeftoverRows(kinds: readonly string[] = [TEST_KIND]): Promise<void> {
   const { error } = await srAdmin
     .from('push_outbox')
     .delete()
-    .eq('kind', TEST_KIND)
+    .in('kind', [...kinds])
     .or(`next_attempt_at.lt."${OLD_TIMESTAMP_END}",sent_at.lt."${OLD_TIMESTAMP_END}"`);
   if (error) throw new Error(`delete leftover push_outbox: ${error.message}`);
 }
 
 beforeAll(async () => {
-  await purgeLeftoverRows();
+  await purgeLeftoverRows(LEFTOVER_KINDS);
 }, 60_000);
 
 describe('#1136 前回の実行の残りを消す (#2245 K6)', () => {
-  it('purgeLeftoverRows は、TEST_KIND の 2000 年の行 (送信待ち・receipt の確認待ち) だけを消し、ほかの種類の行と今の時刻の行は残す', async () => {
+  it('purgeLeftoverRows は、既定では TEST_KIND の 2000 年の行 (送信待ち・receipt の確認待ち) だけを消し、ほかの種類の行と今の時刻の行は残す。beforeAll の形 (LEFTOVER_KINDS) は OTHER_TEST_KIND の 2000 年の行も消す', async () => {
     // 前回の実行が残した形: 2000 年の送信待ち (取られていない・リースの切れた) と、2000 年に送った確認待ち
     // (送った行を先に作る。seedClaimed の上限 1 の claim の前に、ほかの 2000 年の行を置かない)
     const userId = await newUser('purge');
@@ -1303,5 +1312,11 @@ describe('#1136 前回の実行の残りを消す (#2245 K6)', () => {
     expect(await rowById(current.id)).toMatchObject({ kind: TEST_KIND, status: 'queued' });
     // 消したあとは、自分の行より前に取られうるほかの行が無い
     expect(await foreignClaimableRowsAhead('queued', [otherKind.id])).toEqual([]);
+
+    // beforeAll の形は、この purge のテストが残しうる OTHER_TEST_KIND の 2000 年の行も消す (途中で止まった実行の残りが、次の実行の
+    // 自分の行の前に来ない)。今の時刻の TEST_KIND の行は残す
+    await purgeLeftoverRows(LEFTOVER_KINDS);
+    expect(await rowById(otherKind.id)).toBeNull();
+    expect(await rowById(current.id)).toMatchObject({ kind: TEST_KIND, status: 'queued' });
   });
 });
