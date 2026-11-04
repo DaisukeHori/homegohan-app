@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { lastPageToRefetch } from "@/lib/list-pagination";
+import { todayLocal } from "@/lib/date-utils";
 import { UNAUTHENTICATED_SCREEN_MESSAGE, forbiddenMessageOfResponse } from "@/lib/admin/api-error-message";
 import { SUPER_ADMIN_ONLY_NOTE } from "@/lib/admin/operator-role-labels";
 import {
@@ -137,7 +138,8 @@ export default function AuditLogsPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `audit-logs-${new Date().toISOString().slice(0, 10)}.csv`;
+    // ファイル名の日付は JST の今日 (#2245 K3)
+    a.download = `audit-logs-${todayLocal()}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
