@@ -37,23 +37,27 @@ describe('端末のタイムゾーン・UTC で日付の文字列を作る書き
     })),
   );
 
-  /**
-   * 意図して UTC の日付を使っているファイル (パターンの見出し → ファイル)。理由は tests/jst-today-source-scan.test.ts の許可リストと同じ:
-   * データの書き出しのファイル名の日付は、API が付けるファイル名 (UTC の日付) とそろえている
-   */
-  const INTENTIONAL_UTC: Record<string, string[]> = {
-    'UTC の toISOString() の先頭 10 文字を日付にする': ['app/(tabs)/settings.tsx'],
-  };
+  /** UTC の toISOString() の先頭 10 文字を日付にする書き方 */
+  const UTC_ISO_DATE_PATTERN = /toISOString\(\)\.(?:slice\(0,\s*10\)|split\(["']T["']\)\[0\]|substring\(0,\s*10\))/;
 
-  it('走査が空振りしていない (残した画面のソースを読んでいて、意図して UTC を使う設定の画面にパターンが当たる)', () => {
+  /**
+   * 意図して UTC の日付を使っているファイル (パターンの見出し → ファイル)。
+   * (以前は設定の画面 (app/(tabs)/settings.tsx) の書き出しのファイル名を、API に合わせて UTC の日付にして載せていた。
+   *  #2245 K3 で API・Web と一緒に JST の今日 (todayLocal) にしたので外した。いまは無い)
+   */
+  const INTENTIONAL_UTC: Record<string, string[]> = {};
+
+  it('走査が空振りしていない (残した画面のソースを読んでいて、パターンは以前の書き出しのファイル名の書き方に当たる)', () => {
     const settings = sources.find(({ file }) => file === path.join('app', '(tabs)', 'settings.tsx'));
     expect(settings).toBeDefined();
-    expect(settings?.code).toMatch(/toISOString\(\)\.(?:slice\(0,\s*10\)|split\(["']T["']\)\[0\]|substring\(0,\s*10\))/);
+    // 書き出しのファイル名の日付は JST の今日 (#2245 K3)
+    expect(settings?.code).toMatch(/\btodayLocal\(\)/);
+    expect('const today = new Date().toISOString().slice(0, 10);').toMatch(UTC_ISO_DATE_PATTERN);
   });
 
   it.each([
     ['getDate() をゼロ埋めして日付の文字列を作る', /getDate\(\)\)\.padStart\(/],
-    ['UTC の toISOString() の先頭 10 文字を日付にする', /toISOString\(\)\.(?:slice\(0,\s*10\)|split\(["']T["']\)\[0\]|substring\(0,\s*10\))/],
+    ['UTC の toISOString() の先頭 10 文字を日付にする', UTC_ISO_DATE_PATTERN],
     ['画面ごとに日付の整形の関数を書く (shared の formatCalendarDate / formatLocalDate を使う)', /(?:function\s+|const\s+)formatLocalDate\b/],
     ['@homegohan/core の formatLocalDate (端末のタイムゾーン) を使う', /import\s*\{[^}]*\bformatLocalDate\b[^}]*\}\s*from\s*["']@homegohan\/core["']/],
     ['端末の今日 (new Date()) から週の始まりを求める', /getWeekStart\(\s*new Date\(\)/],

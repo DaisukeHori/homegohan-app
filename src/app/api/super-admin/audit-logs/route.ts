@@ -8,7 +8,7 @@
  * 終了日も 'T23:59:59Z' (UTC。JST では翌日の 8:59:59) で閉じず、JST 0 時の時刻にしてから .gte / .lt で絞る。
  */
 import { NextRequest, NextResponse } from 'next/server';
-import { jstOptionalDayRangeTimestamps } from '@/lib/jst-day-ranges';
+import { jstOptionalDayRangeTimestamps, jstToday } from '@/lib/jst-day-ranges';
 import { createClient } from '@/lib/supabase/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { authFailureNested } from '@/lib/api/error-responses';
@@ -88,7 +88,7 @@ export async function GET(request: NextRequest) {
       return new NextResponse(csv, {
         headers: {
           'Content-Type': 'text/csv; charset=utf-8',
-          'Content-Disposition': `attachment; filename="audit-logs-${new Date().toISOString().slice(0, 10)}.csv"`,
+          'Content-Disposition': `attachment; filename="audit-logs-${jstToday()}.csv"`,
         },
       });
     }

@@ -55,6 +55,8 @@ vi.mock('framer-motion', async () => {
 
 import SettingsPage from '@/app/(main)/settings/page';
 import { applyHeavyUnitTestTimeout } from '../../../../tests/helpers/heavy-unit-test-timeout';
+import { JST_EXPORT_FILENAME_BOUNDARIES } from '../../../../tests/helpers/jst-export-filename-boundaries';
+import { TEST_TIME_ZONES, withTimeZoneAsync } from '../../../../tests/helpers/time-zones';
 
 // 負荷の高い機械で vitest の既定の時間切れ (テスト 5 秒・フック 10 秒) を超えて落ちたことがあるので、このファイルだけ延ばす
 // (根拠と環境変数での上書きは tests/helpers/heavy-unit-test-timeout.ts。#1488)。テストとフックを定義する前に置く
@@ -126,6 +128,7 @@ afterEach(() => {
     root.unmount();
   });
   container.remove();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -287,5 +290,31 @@ describe('設定画面: 献立 CSV エクスポートは従来どおり', () => 
     await click(findButton('献立をCSVエクスポート'));
 
     expect(JSON.parse(postMessage.mock.calls[0][0])).toMatchObject({ type: 'download', mimeType: 'text/csv', content: 'a,b\r\n' });
+  });
+});
+
+describe('設定画面: 書き出しのファイル名の日付は JST の今日 (#2245 K3)', () => {
+  it.each(TEST_TIME_ZONES)('献立の CSV (TZ=%s): JST の 0:00〜8:59 は UTC の前日ではなく JST の今日の日付', async (tz) => {
+    respondWith({ '/api/export/meals': () => new Response('date,meal_type\r\n', { status: 200, headers: { 'Content-Type': 'text/csv' } }) });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    for (const { now } of JST_EXPORT_FILENAME_BOUNDARIES) {
+      vi.setSystemTime(new Date(now));
+      await withTimeZoneAsync(tz, () => click(findButton('献立をCSVエクスポート')));
+    }
+    expect(downloads.map((d) => d.download)).toEqual(
+      JST_EXPORT_FILENAME_BOUNDARIES.map(({ jstToday }) => `homegohan-meals-${jstToday}.csv`),
+    );
+  });
+
+  it.each(TEST_TIME_ZONES)('個人データの JSON (TZ=%s): JST の 0:00〜8:59 は UTC の前日ではなく JST の今日の日付', async (tz) => {
+    respondWith({ '/api/account/export': () => new Response(exportJson, { status: 200, headers: { 'Content-Type': 'application/json' } }) });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    for (const { now } of JST_EXPORT_FILENAME_BOUNDARIES) {
+      vi.setSystemTime(new Date(now));
+      await withTimeZoneAsync(tz, () => click(findButton('データをエクスポート')));
+    }
+    expect(downloads.map((d) => d.download)).toEqual(
+      JST_EXPORT_FILENAME_BOUNDARIES.map(({ jstToday }) => `homegohan-export-${jstToday}.json`),
+    );
   });
 });

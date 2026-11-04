@@ -3,6 +3,7 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as Notifications from "expo-notifications";
 import { router } from "expo-router";
 import * as Sharing from "expo-sharing";
+import { todayLocal } from "@homegohan/shared";
 import React, { useEffect, useState } from "react";
 import { Alert, Linking, Modal, Pressable, ScrollView, StyleSheet, Switch, View } from "react-native";
 import { Text } from "../../src/components/ui/Text";
@@ -171,7 +172,8 @@ export default function SettingsTab() {
       // メンテナンス中などの 503 は固定の文の例外にする (#1486)
       if (!res.ok) throw errorOfFailedResponse(res.status, await res.text().catch(() => ""));
       const text = await res.text();
-      const today = new Date().toISOString().slice(0, 10);
+      // ファイル名の日付は JST の今日 (toISOString は UTC の暦日で、JST の 0:00〜8:59 は前日になる。#2245 K3)
+      const today = todayLocal();
       const filename = `homegohan-export-${today}.json`;
       const fileUri = (FileSystem.documentDirectory ?? "") + filename;
       await FileSystem.writeAsStringAsync(fileUri, text, {
@@ -216,7 +218,8 @@ export default function SettingsTab() {
       // メンテナンス中などの 503 は固定の文の例外にする (#1486)
       if (!res.ok) throw errorOfFailedResponse(res.status, await res.text().catch(() => ""));
       const text = await res.text();
-      const today = new Date().toISOString().slice(0, 10);
+      // ファイル名の日付は JST の今日 (#2245 K3)
+      const today = todayLocal();
       const filename = `homegohan-meals-${today}.csv`;
       const fileUri = (FileSystem.documentDirectory ?? "") + filename;
       await FileSystem.writeAsStringAsync(fileUri, text, {
