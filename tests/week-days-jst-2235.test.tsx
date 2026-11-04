@@ -25,12 +25,13 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { addDaysToDate, calendarDaysEndingAt, WEEKDAY_LABELS_JA } from '@homegohan/shared';
+import { addDaysToDate, calendarDaysEndingAt, formatLocalDate, WEEKDAY_LABELS_JA } from '@homegohan/shared';
 import type { ShoppingRangeType } from '@/app/(main)/menus/weekly/_state/shoppingStore';
 import {
   SHOPPING_RANGE_ALL_MEALS,
   SHOPPING_RANGE_DAYS_MAX,
   SHOPPING_RANGE_DAYS_MIN,
+  SHOPPING_RANGE_WEEK_DAYS,
   clampShoppingRangeDays,
   shoppingRangeDates,
   shoppingRangeRequest,
@@ -652,6 +653,24 @@ describe('買い物リストの範囲 (shoppingRangeDates): 範囲を選ぶ欄�
     expect(shoppingRangeDates('currentWeek', { now: yearEndWeekStart, daysCount: THREE_DAYS, currentWeekStart: yearEndWeekStart })).toEqual({
       startDate: '2026-12-28',
       endDate: '2027-01-03',
+    });
+  });
+
+  it('表示中の週 (currentWeek) は、JST より東の端末でも、週の格子の 7 日の dateStr (端末の 0 時を formatLocalDate で読む) とそろう', () => {
+    process.env.TZ = 'Pacific/Kiritimati';
+    // Pacific/Kiritimati (UTC+14) の 2026-11-02 (月) 0:00 = JST 2026-11-01 19:00。週の格子 (getWeekDates) は端末の 0 時の Date を
+    // setDate でずらして formatLocalDate で dateStr にするので、格子の 7 日は 2026-11-01〜2026-11-07 になる (週の格子の型。#2235 I3 の範囲の外)。
+    // 範囲だけを端末の暦の日 (2026-11-02) から数えると、格子の献立の日付と 1 日ずれる
+    const weekStart = new Date(2026, 10, 2);
+    const gridDateStrs = Array.from({ length: SHOPPING_RANGE_WEEK_DAYS }, (_, i) => {
+      const d = new Date(weekStart);
+      d.setDate(d.getDate() + i);
+      return formatLocalDate(d);
+    });
+    expect(gridDateStrs[0]).toBe('2026-11-01');
+    expect(shoppingRangeDates('currentWeek', { now: weekStart, daysCount: THREE_DAYS, currentWeekStart: weekStart })).toEqual({
+      startDate: gridDateStrs[0],
+      endDate: gridDateStrs[SHOPPING_RANGE_WEEK_DAYS - 1],
     });
   });
 

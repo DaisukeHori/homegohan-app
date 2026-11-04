@@ -50,7 +50,12 @@ export interface ShoppingRangeBasis {
   now: Date;
   /** 「○日分」の日数 (clampShoppingRangeDays で丸めてから使う) */
   daysCount: number;
-  /** カレンダーで表示中の週の始まり (「表示中の週」の範囲。今日から数える範囲とは別) */
+  /**
+   * カレンダーで表示中の週の始まり (「表示中の週」の範囲。今日から数える範囲とは別)。
+   * 週の格子 (page.tsx の getWeekDates) と同じく、端末の 0 時の Date を formatLocalDate で読んだ日を週の始まりにする。
+   * JST より東の端末では週の格子ごと 1 日前の日になるが、範囲は格子の 7 日の dateStr (献立の日付) とそろう。
+   * 週の格子の作り方を直すときは、この読み方も一緒に変える (ここだけ変えると、範囲と格子の 7 日が 1 日ずれる)
+   */
   currentWeekStart: Date;
 }
 
