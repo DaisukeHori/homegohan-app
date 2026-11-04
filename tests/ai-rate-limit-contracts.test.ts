@@ -120,9 +120,11 @@ describe('src/lib/rate-limit.ts (#1022)', () => {
 
   it('Upstash env 未設定時は db-logger 経由で warn ログを出す', async () => {
     const warnSpy = vi.fn();
-    vi.doMock('@/lib/db-logger', () => ({
-      createLogger: () => ({ warn: warnSpy, info: vi.fn(), error: vi.fn(), debug: vi.fn() }),
-    }));
+    vi.doMock('@/lib/db-logger', () => {
+      const logger = { warn: warnSpy, info: vi.fn(), error: vi.fn(), debug: vi.fn() };
+      // 利用者つきのログ (withUser) も同じ受け手に流す (後のテストの route が使う。#2245 K5)
+      return { createLogger: () => ({ ...logger, withUser: () => logger }) };
+    });
 
     await import('@/lib/rate-limit');
 
