@@ -155,3 +155,57 @@ describe('設定タブ — 書き出しの行の文言 (#1870)', () => {
     );
   });
 });
+
+/**
+ * #2245 K3: 書き出しのファイル名の日付は JST の今日。
+ * 以前は `new Date().toISOString().slice(0, 10)` (UTC の暦日) で、JST の 0:00〜8:59 に書き出すと前日の日付になっていた。
+ * JST 0:00 ちょうど・8:59:59.999 (UTC ではまだ前日) が以前の書き方で赤になる境界。前日の 23:59:59.999 と 9:00 は進めすぎていないことを見る。
+ */
+const JST_EXPORT_FILENAME_BOUNDARIES = [
+  { now: '2026-10-07T14:59:59.999Z', jstToday: '2026-10-07' }, // JST 10/7 23:59:59.999
+  { now: '2026-10-07T15:00:00.000Z', jstToday: '2026-10-08' }, // JST 10/8 0:00 (UTC はまだ 10/7)
+  { now: '2026-10-07T23:59:59.999Z', jstToday: '2026-10-08' }, // JST 10/8 8:59:59.999 (UTC はまだ 10/7)
+  { now: '2026-10-08T00:00:00.000Z', jstToday: '2026-10-08' }, // JST 10/8 9:00
+] as const;
+
+describe('設定タブ — 書き出しのファイル名の日付は JST の今日 (#2245 K3)', () => {
+  beforeEach(() => {
+    // 時計 (Date) だけを止める。setTimeout などは本物のまま (描画と押したあとの待ちに使う)
+    jest.useFakeTimers({
+      doNotFake: [
+        'hrtime',
+        'nextTick',
+        'performance',
+        'queueMicrotask',
+        'requestAnimationFrame',
+        'cancelAnimationFrame',
+        'requestIdleCallback',
+        'cancelIdleCallback',
+        'setImmediate',
+        'clearImmediate',
+        'setInterval',
+        'clearInterval',
+        'setTimeout',
+        'clearTimeout',
+      ],
+    });
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it.each([
+    ['settings-export-csv-row', 'homegohan-meals-', '.csv'],
+    ['settings-export-json-row', 'homegohan-export-', '.json'],
+  ] as const)('%s: JST の 0:00〜8:59 は UTC の前日ではなく JST の今日の日付で保存する', async (testID, prefix, extension) => {
+    const api = await renderSettings();
+    for (const { now } of JST_EXPORT_FILENAME_BOUNDARIES) {
+      jest.setSystemTime(new Date(now));
+      await pressAndSettle(api, testID);
+    }
+    expect(mockWriteAsStringAsync.mock.calls.map((call) => call[0])).toEqual(
+      JST_EXPORT_FILENAME_BOUNDARIES.map(({ jstToday }) => `/tmp/${prefix}${jstToday}${extension}`),
+    );
+  });
+});
