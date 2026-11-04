@@ -1710,7 +1710,7 @@ describe('受け手のページのモーダルは role="dialog" を持つ (#2195
 
   it.each(RECEIVER_PAGES)('$file', ({ file, overlays }) => {
     const source = readRepoFile(file);
-    expect(source, '受け手のページではない').toMatch(/useAiConsultation(DataRefetch|RefetchKey)\(/);
+    expect(source, '受け手のページではない').toMatch(/useAiConsultation(DataRefetch|RefetchKey|Receiver)\(/);
     let checked = 0;
     for (let at = source.indexOf(OVERLAY); at !== -1; at = source.indexOf(OVERLAY, at + OVERLAY.length)) {
       const start = source.lastIndexOf(OPEN_PRESENCE, at);
