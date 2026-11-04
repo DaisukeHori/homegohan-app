@@ -784,6 +784,12 @@ const RECEIVER_MIGRATED_PAGES: ReadonlySet<string> = new Set<string>([
   '/health/checkups/[id]',
 
   // 段 C
+  '/family/dashboard',
+  '/family/members',
+  '/family/members/[id]',
+  '/family/transfer-accept/[proposal_id]',
+  '/org/transfer-accept/[proposal_id]',
+  '/health',
 ]);
 
 describe('移行済みの受け手の集合 (#2206 G1)', () => {
@@ -1413,6 +1419,111 @@ describe('名前の API だけを読めなかった取り直しは、出てい�
     await mount(c);
     expect(container.textContent).toContain(NO_NAME);
   });
+});
+
+// ─── #2206 G1 段 C: 家族の画面の移動と、開いたときの読み込みの最中の取り直し ───────────────────────────────
+
+/** 家族に入っていない自分 (family_id が空) の表。家族の画面は家族の作成の画面 (/family/setup) へ移す */
+const NOT_IN_FAMILY_TABLES = { ...FAMILY_TABLES, user_profiles: [{ id: SELF_USER_ID, family_id: null }] };
+/** 家族に入っていないときに家族の画面が移る先 */
+const FAMILY_SETUP_PATH = '/family/setup';
+/** 家族に入っていないと家族の作成の画面へ移す家族の画面 (§9 #3〜#5) */
+const FAMILY_SETUP_REDIRECT_PAGES = ['/family/dashboard', '/family/members', '/family/members/[id]'] as const;
+/** 家族の画面が読み込み中に出す文 */
+const FAMILY_LOADING_TEXT = '読み込み中';
+
+describe('家族の画面: 古い応答 (family_id 無し) が後から届いても /family/setup へ移らない (#2206 G1 S-13)', () => {
+  for (const page of FAMILY_SETUP_REDIRECT_PAGES) {
+    it(page, async () => {
+      const c = caseOf(page);
+      const replace = vi.spyOn(navigation.router, 'replace');
+      // 見分けの空振りを防ぐ: 家族に入っていない応答で開けば、家族の作成の画面へ移す
+      setServer({ ...c.full, tables: NOT_IN_FAMILY_TABLES });
+      await renderOnly(c);
+      expect(replace, `${page} が家族に入っていない応答で移らない (検査が空振りしている)`).toHaveBeenCalledWith(FAMILY_SETUP_PATH);
+      await freshRoot();
+      replace.mockClear();
+
+      // 開いたときの読み込みは、家族を抜けていたとき (family_id 無し) の答えを読み、応答が遅れる
+      const staleMount = deferred();
+      server.holdAll = staleMount.promise;
+      await act(async () => {
+        root.render(c.render());
+      });
+      await settle();
+      server.holdAll = null;
+      // 家族に入り直したあとの読み取り (AI 相談の成功の取り直し) が先に置く
+      setServer(c.full);
+      await notifyAiConsultationSucceeded();
+      expect(container.textContent, `${page} があとの読み取りの応答を置いていない`).toContain(SELF_NAME);
+
+      // 古い応答 (family_id 無し) が後から届く: 置かない (移らない・あとの読み取りの表示のまま)
+      staleMount.resolve();
+      await settle();
+      expect(replace, `${page} が古い応答で家族の作成の画面へ移した`).not.toHaveBeenCalledWith(FAMILY_SETUP_PATH);
+      expect(container.textContent).toContain(SELF_NAME);
+    });
+  }
+});
+
+describe('家族の画面: 取り直しが家族に入っていない応答を読んだら、今の画面のまま /family/setup へ移す (読み込み中の表示に替えない。#2206 G1 S-24)', () => {
+  for (const page of FAMILY_SETUP_REDIRECT_PAGES) {
+    it(page, async () => {
+      const c = caseOf(page);
+      const replace = vi.spyOn(navigation.router, 'replace');
+      setServer(c.full);
+      await mount(c);
+      const shown = screenSignature(container);
+      expect(container.textContent).toContain(SELF_NAME);
+      expect(replace).not.toHaveBeenCalledWith(FAMILY_SETUP_PATH);
+
+      // AI 相談のあと、家族を抜けていた (取り直しが family_id 無しを読む)
+      setServer({ ...c.full, tables: NOT_IN_FAMILY_TABLES });
+      await notifyAiConsultationSucceeded();
+      expect(replace, `${page} の取り直しが家族の作成の画面へ移さない`).toHaveBeenCalledWith(FAMILY_SETUP_PATH);
+      // 取り直しは読み込み中の表示を出していないので、移るまで今の画面のまま
+      expect(container.textContent, `${page} の取り直しの移動が読み込み中の表示に替えた`).not.toContain(FAMILY_LOADING_TEXT);
+      expect(screenSignature(container)).toBe(shown);
+    });
+  }
+});
+
+describe('家族の画面: 開いたときの応答待ちに来た取り直しが名前の API を読めなくても、開いたときの応答 (名前つき) を置いて読み込み中の表示を下ろす (#2206 G1 S-30)', () => {
+  for (const page of ['/family/members', '/family/dashboard', '/family/members/[id]'] as const) {
+    it(page, async () => {
+      const c = caseOf(page);
+      setServer(c.full);
+      await renderOnly(c);
+      const opened = screenSignature(container);
+      expect(container.textContent).toContain(SELF_NAME);
+      await freshRoot();
+
+      // 開いたときの読み込みの応答を止める
+      const mountHold = deferred();
+      server.holdAll = mountHold.promise;
+      await act(async () => {
+        root.render(c.render());
+      });
+      await settle();
+      server.holdAll = null;
+
+      // その間に来た取り直しは、名前の API だけを読めない (ログイン・プロフィール・群・一覧は読める)
+      server.failedRequests.add(`GET ${FAMILY_NAMES_API}`);
+      server.requests = [];
+      await notifyAiConsultationSucceeded();
+      expect(server.requests, `${page} の取り直しが名前の API を読んでいない (検査が空振りしている)`).toContain(`GET ${FAMILY_NAMES_API}`);
+      // 取り直しは何も置かない (途中の段の値も置かず、開いたときの読み込みの応答を待つ読み込み中の表示のまま)
+      expect(container.textContent, `${page} の取り直しが、名前を読めないまま画面を置いた`).toContain(FAMILY_LOADING_TEXT);
+      expect(container.textContent).not.toContain(NO_NAME);
+
+      // 開いたときの読み込みの応答 (名前の API も読める) が後から届いたら、それを置いて読み込み中の表示を下ろす
+      server.failedRequests.delete(`GET ${FAMILY_NAMES_API}`);
+      mountHold.resolve();
+      await settle();
+      expect(container.textContent, `${page} が開いたときの応答を置かない (読み込み中のまま残る)`).not.toContain(FAMILY_LOADING_TEXT);
+      expect(screenSignature(container)).toBe(opened);
+    });
+  }
 });
 
 interface DeferredWriteCase {

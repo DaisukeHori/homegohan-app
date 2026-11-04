@@ -146,6 +146,12 @@ const RECEIVER_EXPECTATIONS: Readonly<Record<string, { readonly minPlaceCalls: n
   'src/components/nutrition/nutrition-target-planner.tsx': { minPlaceCalls: 1, writes: 3 },
 
   // 段 C
+  'src/app/(main)/family/dashboard/page.tsx': { minPlaceCalls: 1, writes: 0 },
+  'src/app/(main)/family/members/page.tsx': { minPlaceCalls: 1, writes: 2 },
+  'src/app/(main)/family/members/[id]/page.tsx': { minPlaceCalls: 1, writes: 2 },
+  'src/app/(main)/family/transfer-accept/[proposal_id]/page.tsx': { minPlaceCalls: 1, writes: 2 },
+  'src/app/(main)/org/transfer-accept/[proposal_id]/page.tsx': { minPlaceCalls: 1, writes: 2 },
+  'src/app/(main)/health/page.tsx': { minPlaceCalls: 4, writes: 1 },
 
   // 段 D
 
