@@ -153,6 +153,12 @@ function holdRecheck() {
   jest.useFakeTimers({ doNotFake: [...REAL_TIMER_APIS] });
 }
 
+/**
+ * 読み直しの待ちの途中まで (半分) 偽の時刻を進める長さ。一文を探す waitFor が偽の時刻を少し進めていても (1 回 50ms)、
+ * 待ちの終わりには届かない長さにする
+ */
+const PART_OF_RECHECK_DELAY_MS = PREVIOUS_REQUEST_RECHECK_DELAY_MS / 2;
+
 /** holdRecheck で止めた読み直しの予約を動かす (偽の時刻を読み直しの待ち PREVIOUS_REQUEST_RECHECK_DELAY_MS だけ進める) */
 async function releaseRecheck() {
   await act(async () => {
@@ -254,6 +260,12 @@ describe('AIAdvisorSheet — 時間切れの後の取り直しで、記録が実
     expect(dataChanged).not.toHaveBeenCalled();
     // 読み直しは止めてある (まだ 1 回目の読み取りだけ)
     expect(mockEq).toHaveBeenCalledTimes(1);
+    // 読み直しの待ちの途中では、まだ読み直さない (待ちを縮めたら赤になる)
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(PART_OF_RECHECK_DELAY_MS);
+    });
+    expect(mockEq).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeTruthy();
 
     await releaseRecheck();
     await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeTruthy());
