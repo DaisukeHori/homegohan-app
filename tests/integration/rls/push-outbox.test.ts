@@ -1113,12 +1113,12 @@ function isPhysicallyLast(positions: Map<string, [number, number]>, lastId: stri
 }
 
 /**
- * 送った (sent) 行を OUT_OF_ORDER_RECEIPT_ROWS 個作り、sent_at を 2000 年の古い順にしたうえで、CI で赤になったときの形を作る:
- * sent_at の最も古い行が、自分の行のうち物理的に最も後ろにある (sent_at は変えない)。並びは ctid で確かめる (DB 任せにしない。#2235 I6)。
- * 書き直した版はページの空いた番号のうち小さいものから入る (2026-11-04 に 256 の結合テストの枠で実測: 最も古い行だけを書き直すと
- * 5 回ともほかの行より前の番号を行き来し、ほかの行だけを書き直すと 10 回ともほかの行が後ろの番号を行き来して、どちらも末尾に来なかった)。
- * そこで、ほかの行を先に、最も古い行を最後に書き直す (最も古い行が、ほかの行の取ったあとの番号に入る)。sent_at もこの順で書く。
- * 行の id を sent_at の古い順に返す
+ * 送った (sent) 行を OUT_OF_ORDER_RECEIPT_ROWS 個作り、CI で赤になったときの形を作る: sent_at の最も古い行 (2000 年) が、自分の行のうち
+ * 物理的に最も後ろにある。並びは ctid で確かめる (DB 任せにしない。#2235 I6)。
+ * 行の置き場は DB が決める (2026-11-04 に 256 の結合テストの枠で実測: 3 行が別々のページに入ることがあり、書き直しても行はそのページの中に
+ * とどまる (HOT)。同じページでは空いた番号の小さいものに入る。最も古い行を書き直して末尾へ移すだけでは、10 回の書き直しでも末尾に来なかった)。
+ * そこで、行の今の位置を読み、物理的に最も後ろの行に最も古い sent_at を書く (ほかの行を先に、その行を最後に書く)。書いたあとの位置で
+ * まだ最も後ろでなければ、その位置からやり直す。行の id を sent_at の古い順に返す
  */
 async function seedReceiptsOutOfPhysicalOrder(label: string, workerId: string): Promise<string[]> {
   const userId = await newUser(label);
@@ -1128,23 +1128,27 @@ async function seedReceiptsOutOfPhysicalOrder(label: string, workerId: string): 
     expect((await complete(row.id, workerId, `ticket-${label}-${n}`)).data).toBe(true);
     ids.push(row.id);
   }
-  const sentAts = ids.map(() => oldTimestamp());
-  const [oldestId, ...othersIds] = ids;
-  for (let n = 1; n < ids.length; n++) await updateRows([ids[n]], { sent_at: sentAts[n] });
-  await updateRows([oldestId], { sent_at: sentAts[0] });
   const history: string[] = [];
+  let sentOrder: string[] = [];
   let positions = await physicalPositions(ids);
-  for (let attempt = 1; attempt <= PHYSICAL_MOVE_MAX_ATTEMPTS && !isPhysicallyLast(positions, oldestId); attempt++) {
-    history.push(ids.map((id) => `${id === oldestId ? '最古' : '他'}(${positions.get(id)?.join(',')})`).join(' '));
-    await updateRows(othersIds, { updated_at: new Date().toISOString() });
-    await updateRows([oldestId], { updated_at: new Date().toISOString() });
+  for (let attempt = 1; attempt <= PHYSICAL_MOVE_MAX_ATTEMPTS; attempt++) {
+    // 物理的な順に並べ、最も後ろの行を先頭 (最も古い sent_at) に回す
+    const byPosition = [...ids].sort((a, b) => (isPhysicallyAfter(positions.get(a) ?? [0, 0], positions.get(b) ?? [0, 0]) ? 1 : -1));
+    const last = byPosition[byPosition.length - 1];
+    sentOrder = [last, ...byPosition.slice(0, -1)];
+    const sentAts = sentOrder.map(() => oldTimestamp());
+    for (let n = 1; n < sentOrder.length; n++) await updateRows([sentOrder[n]], { sent_at: sentAts[n] });
+    await updateRows([last], { sent_at: sentAts[0] });
     positions = await physicalPositions(ids);
+    if (isPhysicallyLast(positions, last)) break;
+    history.push(sentOrder.map((id, n) => `${n === 0 ? '最古' : '他'}(${positions.get(id)?.join(',')})`).join(' '));
   }
+  const [oldestId] = sentOrder;
   expect(
     isPhysicallyLast(positions, oldestId),
-    `前提: sent_at の最も古い行が、自分の行のうち物理的に最も後ろにある (${PHYSICAL_MOVE_MAX_ATTEMPTS} 回まで書き直した。ctid の推移: ${history.join(' → ')})`,
+    `前提: sent_at の最も古い行が、自分の行のうち物理的に最も後ろにある (${PHYSICAL_MOVE_MAX_ATTEMPTS} 回まで書き直した。書いたあとの ctid: ${history.join(' → ')})`,
   ).toBe(true);
-  return ids;
+  return sentOrder;
 }
 
 /** 直す前の receipt の claim の上限の余裕 (自分の行の数 + これ。#2235 I6 で外した)。回帰テストで、これでは自分の行まで届かない表を作るのに使う */
