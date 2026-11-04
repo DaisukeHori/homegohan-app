@@ -117,7 +117,7 @@ const { default: HealthDashboardPage } = await import('@/app/(main)/health/page'
 const { default: StreaksPage } = await import('@/app/(main)/health/streaks/page');
 const { useHomeData } = await import('@/hooks/useHomeData');
 const { ShoppingRangeModal } = await import('@/app/(main)/menus/weekly/_components/modals/ShoppingRangeModal');
-const { useShoppingStore } = await import('@/app/(main)/menus/weekly/_state');
+const { useShoppingStore } = await import('@/app/(main)/menus/weekly/_state/shoppingStore');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
