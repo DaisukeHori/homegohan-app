@@ -6,19 +6,11 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { loginPathWithNext, readSignedInUser } from '@/lib/auth/signed-in-user';
-import {
-  applyFamilyMemberNames,
-  fetchFamilyMemberNamesResult,
-  keepShownFamilyMemberNames,
-} from '@/lib/membership/family-member-names';
+import { applyFamilyMemberNames, fetchFamilyMemberNamesResult } from '@/lib/membership/family-member-names';
 import { familyRoleLabel } from '@/lib/membership/role-labels';
 import { membershipErrorMessageOfBody } from '@/lib/errors/membership-errors';
 import { readOwnMembershipAfterNetworkFailure, withMembershipStateNote } from '@/lib/membership/leave-state';
-import {
-  useAiConsultationDataRefetch,
-  useAiConsultationLoading,
-  type AiConsultationFetchTicket,
-} from '@/hooks/useAiConsultationDataRefetch';
+import { useAiConsultationReceiver, type AiConsultationRead } from '@/hooks/useAiConsultationReceiver';
 
 /**
  * 家族のメンバーを読み込めなかったときの文。家族に入っていない (家族の作成の画面へ移す) ・空の一覧と見分けるために出す
@@ -34,12 +26,6 @@ const FAMILY_MEMBERS_PATH = '/family/members';
 
 /** 除名・脱退の通信そのものが失敗した (fetch が reject した) ときの文 */
 const NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
-
-/**
- * AI 相談の成功の読み直し (#2195 V1) の応答を待っているときの actionLoading の値。待つあいだは除名・脱退・「再試行」も止める
- * (読み直しの応答が除名のあとに届いて、除名したメンバーを古い一覧で戻さないため。除名の通信エラーのあとの読み直しと同じ扱い)
- */
-const AI_CONSULTATION_REFETCH_ACTION = 'ai-consultation-refetch';
 
 /**
  * .single() で行が 0 件 (または RLS で見えない) ときの PostgREST の失敗のコード。
@@ -67,19 +53,13 @@ interface FamilyGroup {
   member_limit: number;
 }
 
-/**
- * 開いたとき・「再試行」・除名の通信エラーのあとの読み込み (失敗は「読み込めませんでした」) か、
- * AI 相談の成功の取り直し (失敗では今の表示を残す) か
- */
-type FamilyReadMode = 'mount' | 'refetch';
+/** 読み込みの置き場所の鍵 (群・一覧と名前・自分の id と役割・失敗の表示・別の画面への移動を 1 つの鍵で置く。#2206 G1 §9 #4) */
+const KEY_MEMBERS = 'members';
 
 export default function FamilyMembersPage() {
   const router = useRouter();
   const supabase = createClient();
 
-  // 開いたとき・「再試行」の読み込み中の表示。開いたときの読み込み中に始まった AI 相談の成功の読み直しは、その読み込みの役
-  // (失敗の表示・読み込み中の表示を下ろす) を引き継ぐ (#2201 U1。useAiConsultationLoading)
-  const { loading, setLoading, refetchReadMode, settleLoading } = useAiConsultationLoading();
   const [familyGroup, setFamilyGroup] = useState<FamilyGroup | null>(null);
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -90,24 +70,32 @@ export default function FamilyMembersPage() {
   // 家族の作成の画面へ移し、一覧を読めないと空の一覧と見せ、問い合わせが例外を投げると読み込み中の表示のまま止まっていた)
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  // 除名か脱退のどちらかの書き込み (除名の通信エラーのあとの読み直しまで) か、AI 相談の成功の読み直し (#2195 V1) の応答を待っているか (#2064)。
+  /**
+   * 別の画面へ移っているか (#2206 G1 §6.8)。移る読み取りが読み込み中の表示を出していたときだけ立てる (移るまで読み込み中の表示のまま。
+   * 取り直し (読み込み中の表示を出していない) が移すときは、今の画面のまま移る)
+   */
+  const [redirecting, setRedirecting] = useState(false);
+  /**
+   * receiver.isLoading の写し。loadMembers は receiver より先に宣言する (receiver の引数) ので ref で引く。
+   * place の apply の中で呼ぶと、その鍵を下ろす前の値を返す (hook は apply が戻ってから印を下ろす)
+   */
+  const isLoadingRef = useRef<(key: string) => boolean>(() => false);
+  // 除名か脱退のどちらかの書き込み (除名の通信エラーのあとの読み直しまで) の応答を待っているか (#2064)。二重押しの守り。
   // 除名の通信エラーのあとは一覧を丸ごと読み直すので、別のメンバーの除名を重ねると、先に送った読み直しの応答が後に届いたとき、
   // その古い一覧で表示が上書きされる (組織のメンバーの画面の #2050 と同じ型)。待つあいだはすべての除名と脱退のボタンを止め、押されても送らない。
-  // ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り
-  const writeInFlightRef = useRef(false);
+  // ref は再描画の前に続けて押されたとき (ボタンがまだ止まっていない) の守り。AI 相談の成功の取り直しとの重なりは、書き込みの窓
+  // (receiver.beginWrite) が受け持つ (窓の間は取り直さず、終わったら 1 回取り直す。#2206 G1)
+  const busyRef = useRef(false);
   const isWriting = actionLoading !== null;
 
   // 家族グループとメンバーの一覧を読む。画面を開いたとき・「再試行」・除名の通信エラーのあと・AI 相談の成功 (#2195 V1) のあとに呼ぶ。
-  // 読み込み中の表示 (loading) は呼び出し側が決める (除名と AI 相談の成功のあとの読み直しは、一覧の表示を残したまま読み直す)。
-  // 戻り値は、別の画面へ移ったか (移るときは、移るまで読み込み中の表示のままにする。これまでどおり)。
-  // mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込めなかったとき (エラー・通信の失敗) は「読み込めませんでした」に
-  // 置き換えずに今の表示を残し、名前の API を読めなかったときは今出している名前を残す。
-  // 応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ
-  const loadMembers = useCallback(async (ticket: AiConsultationFetchTicket, mode: FamilyReadMode): Promise<{ redirecting: boolean }> => {
+  // 応答は全部を読んでから最後に 1 回だけ置く (自分の id も最後の apply の中。順序・番兵の判断は read.place の中。#2206 G1)。
+  // read.mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込めなかったとき (エラー・通信の失敗) は何も置かずに今の表示を残し、
+  // 名前の API を読めなかったときも何も置かない (出ている群・一覧・名前を残す。「名前未設定」に落とさない)
+  const loadMembers = useCallback(async (read: AiConsultationRead): Promise<void> => {
     /** 読み込めなかった: 開いたとき・「再試行」・除名の通信エラーのあとは「読み込めませんでした」を出し、取り直しは今の表示を残す */
-    const loadFailed = (): { redirecting: boolean } => {
-      if (mode === 'mount' && ticket.isLatest()) setLoadError(FAMILY_MEMBERS_LOAD_ERROR);
-      return { redirecting: false };
+    const loadFailed = () => {
+      if (read.mode === 'mount') read.place(KEY_MEMBERS, () => setLoadError(FAMILY_MEMBERS_LOAD_ERROR));
     };
     try {
       // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
@@ -116,12 +104,16 @@ export default function FamilyMembersPage() {
       const signedIn = await readSignedInUser(supabase);
       if (signedIn.kind === 'load-failed') return loadFailed();
       if (signedIn.kind === 'signed-out') {
-        router.push(loginPathWithNext(FAMILY_MEMBERS_PATH));
-        return { redirecting: true };
+        // 移動も置く (古い応答では移らない。#2206 G1)
+        read.place(KEY_MEMBERS, () => {
+          if (isLoadingRef.current(KEY_MEMBERS)) setRedirecting(true);
+          router.push(loginPathWithNext(FAMILY_MEMBERS_PATH));
+        });
+        return;
       }
       const { user } = signedIn;
-      // 応答を置くのは最後に始めた取得だけ (ログインの確かめの応答も。#2201 U1)
-      if (ticket.isLatest()) setCurrentUserId(user.id);
+      // 自分の id はここでは置かない (最後の apply でまとめて置く。途中で置くと、その時点で KEY_MEMBERS の読み込み中の印が下りて
+      // 移るときに redirecting が立たず、置いた世代も進む。#2206 G1 §6.2)
 
       const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
@@ -134,8 +126,11 @@ export default function FamilyMembersPage() {
         return loadFailed();
       }
       if (!profile?.family_id) {
-        router.replace('/family/setup');
-        return { redirecting: true };
+        read.place(KEY_MEMBERS, () => {
+          if (isLoadingRef.current(KEY_MEMBERS)) setRedirecting(true);
+          router.replace('/family/setup');
+        });
+        return;
       }
 
       const { data: group, error: groupError } = await supabase
@@ -145,12 +140,14 @@ export default function FamilyMembersPage() {
         .single();
 
       if (isLoadFailure(groupError)) return loadFailed();
-      if (!ticket.isLatest()) return { redirecting: false };
       if (!group) {
         // 行が無い (PGRST116) か、RLS で見えない (これまでどおり)
-        setError(FAMILY_GROUP_NOT_FOUND_MESSAGE);
-        setLoadError(null);
-        return { redirecting: false };
+        read.place(KEY_MEMBERS, () => {
+          setCurrentUserId(user.id);
+          setError(FAMILY_GROUP_NOT_FOUND_MESSAGE);
+          setLoadError(null);
+        });
+        return;
       }
 
       const { data: membersData, error: membersError } = await supabase
@@ -166,27 +163,25 @@ export default function FamilyMembersPage() {
 
       // 画面に出す名前 (display_name が無ければ本人のプロフィールの今の名前) は API で決める (#1584)
       const namesResult = await fetchFamilyMemberNamesResult();
-      if (!ticket.isLatest()) return { redirecting: false };
+      // 取り直しで名前の API を読めなかった: 何も置かない (出ている群・一覧・名前を残す。「名前未設定」に落とさない #2201 U1。
+      // 読めた一覧に今の名前を当てて同じ鍵に置くと、先に始めた開いたときの名前つきの応答が古いとして捨てられる。#2206 G1 §6.2)
+      if (!namesResult.ok && read.mode === 'refetch') return;
       const rows = (membersData ?? []) as FamilyMember[];
+      const myMember = rows.find((m) => m.user_id === user.id);
 
       // 全部読めてから出す
-      setFamilyGroup(group as FamilyGroup);
-      setMembers((shown) =>
-        applyFamilyMemberNames(
-          rows,
-          // 取り直しで名前の API を読めなかった: 今出している名前を残す (#2201 U1。「名前未設定」に落とさない)
-          namesResult.ok ? namesResult.names : mode === 'refetch' ? keepShownFamilyMemberNames(rows, shown) : new Map(),
-        ),
-      );
-      const myMember = rows.find((m) => m.user_id === user.id);
-      setCurrentRole(myMember?.role ?? null);
-      setError(null);
-      setLoadError(null);
-      return { redirecting: false };
+      read.place(KEY_MEMBERS, () => {
+        setCurrentUserId(user.id);
+        setFamilyGroup(group as FamilyGroup);
+        setMembers(applyFamilyMemberNames(rows, namesResult.ok ? namesResult.names : new Map()));
+        setCurrentRole(myMember?.role ?? null);
+        setError(null);
+        setLoadError(null);
+      });
     } catch (loadFailure) {
       // 問い合わせが例外を投げた (以前は try / catch が無く、読み込み中の表示のまま止まり、未処理の reject になっていた)
       console.error('[family/members] load error:', loadFailure);
-      return loadFailed();
+      loadFailed();
     }
   }, [supabase, router]);
 
@@ -195,32 +190,19 @@ export default function FamilyMembersPage() {
   // 当てたもので、AI 相談の update_profile_preferences は自分の nickname を書く。
   // 家族を抜けていた・ログアウトしていたときの扱いは、除名の通信エラーのあとの読み直しと同じ (loadMembers が決める)。
   // 読み直しの失敗では今の表示を残す (#2201 U1)。
-  // 書き込みの応答を待つあいだは読み直さず、読み直しの応答を待つあいだは書き込みを止める (上の writeInFlightRef の理由と同じ)。
-  // 書き込みの応答を待つあいだ・前の読み直しの応答を待つあいだに来た成功は捨てずに、終わったあとに 1 回読み直す
-  // (#2201 U2。useAiConsultationDataRefetch の writeInFlightRef)。
-  // 開いたとき・「再試行」の読み込み中に来た成功は、その読み込みの役を引き継ぐ: 失敗は「読み込めませんでした」を出し、
-  // 終わったら読み込み中の表示を下ろす (先に始めた読み込みは応答を置かず、読み込み中の表示も下ろさないため。#2201 U1)
-  const refetchAfterAiConsultation = async (ticket: AiConsultationFetchTicket) => {
-    if (writeInFlightRef.current) return;
-    writeInFlightRef.current = true;
-    setActionLoading(AI_CONSULTATION_REFETCH_ACTION);
-    try {
-      const { redirecting } = await loadMembers(ticket, refetchReadMode());
-      if (!redirecting) settleLoading(ticket);
-    } finally {
-      writeInFlightRef.current = false;
-      setActionLoading(null);
-      notifyWriteSettled();
-    }
-  };
-  const { beginFetch, notifyWriteSettled } = useAiConsultationDataRefetch(refetchAfterAiConsultation, { writeInFlightRef });
+  // 書き込み (除名・脱退) の窓の間は取り直さず、終わったあとに 1 回取り直す。取り直しを始めたあとに書き込みが始まったら、
+  // その取り直しの応答は置かずにもう 1 回取り直す (#2206 G1。窓は receiver.beginWrite)。
+  // 開いたとき・「再試行」の読み込み中に来た成功は、その読み込みの役を引き継がない (開いたときの読み込みが自分の応答を置き、
+  // 自分の読み込み中の表示を下ろす。#2206 G1)。最初の描画から読み込み中の表示を出す (initialLoadingKeys)
+  const receiver = useAiConsultationReceiver(loadMembers, { initialLoadingKeys: [KEY_MEMBERS] });
+  isLoadingRef.current = receiver.isLoading;
+  // 移っている間も読み込み中の表示 (これまでどおり)
+  const loading = receiver.isLoading(KEY_MEMBERS) || redirecting;
 
-  const loadPage = useCallback(async () => {
-    setLoading(true);
-    const ticket = beginFetch();
-    const { redirecting } = await loadMembers(ticket, 'mount');
-    if (!redirecting) settleLoading(ticket);
-  }, [loadMembers, beginFetch, setLoading, settleLoading]);
+  const loadPage = useCallback(
+    () => receiver.read({ loadingKeys: [KEY_MEMBERS] }, loadMembers),
+    [receiver, loadMembers],
+  );
 
   useEffect(() => {
     void loadPage();
@@ -228,7 +210,7 @@ export default function FamilyMembersPage() {
 
   // 読み込みをやり直す (読み込めなかったときの「再試行」)。書き込みの応答を待つあいだは送らない
   const retryLoad = () => {
-    if (writeInFlightRef.current) return;
+    if (busyRef.current) return;
     void loadPage();
   };
 
@@ -236,11 +218,13 @@ export default function FamilyMembersPage() {
 
   const handleRemove = async (member: FamilyMember) => {
     if (!familyGroup) return;
-    if (writeInFlightRef.current) return;
+    if (busyRef.current) return;
     if (!window.confirm(`${member.display_name ?? 'このメンバー'} を家族グループから外しますか？`)) return;
 
-    writeInFlightRef.current = true;
+    busyRef.current = true;
     setActionLoading(member.id);
+    // 書き込みの窓 (除名の通信エラーのあとの読み直しまで)。窓の間は AI 相談の成功の取り直しを止める (#2206 G1)
+    const endWrite = receiver.beginWrite();
     try {
       const res = await fetch(`/api/family/members/${member.id}/remove`, {
         method: 'POST',
@@ -259,21 +243,23 @@ export default function FamilyMembersPage() {
       // サーバーが除名を済ませてから応答が切れたこともあるので、一覧を読み直す (#2064。組織のメンバーの画面の除名と同じ形。
       // 読み直さないと、除名したメンバーが一覧に残り、もう一度「除名」を押すとエラーの文が出ていた)。
       // 読み直しが失敗したときは loadMembers が「読み込めませんでした」を出す。
-      // 読み直しの応答を待つあいだも書き込みの待ち (writeInFlightRef / actionLoading) を戻さない (上の writeInFlightRef の理由と同じ)
-      await loadMembers(beginFetch(), 'mount');
+      // 読み直しの応答を待つあいだも書き込みの待ち (busyRef / actionLoading) を戻さない (上の busyRef の理由と同じ)
+      await receiver.read({}, loadMembers);
     } finally {
-      writeInFlightRef.current = false;
+      busyRef.current = false;
       setActionLoading(null);
-      notifyWriteSettled();
+      endWrite();
     }
   };
 
   const handleLeave = async () => {
-    if (writeInFlightRef.current) return;
+    if (busyRef.current) return;
     if (!window.confirm('家族グループから脱退しますか？')) return;
 
-    writeInFlightRef.current = true;
+    busyRef.current = true;
     setActionLoading('leave');
+    // 書き込みの窓 (通信エラーのあとの確かめまで)。窓の間は AI 相談の成功の取り直しを止める (#2206 G1)
+    const endWrite = receiver.beginWrite();
     try {
       const res = await fetch('/api/family/leave', { method: 'POST' });
       if (!res.ok) {
@@ -295,9 +281,9 @@ export default function FamilyMembersPage() {
       // 抜けていない: これまでどおり通信エラーの文。確かめられなかったときは「状態を確かめられませんでした」を添える
       alert(withMembershipStateNote(NETWORK_FAILURE_MESSAGE, membership));
     } finally {
-      writeInFlightRef.current = false;
+      busyRef.current = false;
       setActionLoading(null);
-      notifyWriteSettled();
+      endWrite();
     }
   };
 

@@ -1,12 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { motion } from "framer-motion";
 import { Icons } from "@/components/icons";
 import { NutritionTargetPlanner } from "@/components/nutrition/nutrition-target-planner";
-import { useAiConsultationRefetchKey, useAiConsultationRefetchRun } from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationReceiver, type AiConsultationRead } from "@/hooks/useAiConsultationReceiver";
 import type { CalculationBasis, NutrientReference } from "@homegohan/core";
 
 interface NutritionTargetsData {
@@ -115,126 +115,127 @@ const BASIS_TYPE_LABELS: Record<string, string> = {
   UL: '耐容上限量',
 };
 
+/**
+ * このページの置き場所の鍵 (#2206 G1)。プロフィールと栄養目標と失敗の表示を同じ鍵で置く (取り直しは両方読めたときだけ両方を置く。
+ * 片方だけ新しくすると、見出しの目標値と入力値が食い違う)
+ */
+const KEY_TARGETS_PAGE = 'targetsPage';
+
+/** readTargetsPage の設定 */
+interface TargetsPageReadOptions {
+  /**
+   * 失敗 (ログインを確かめられない・片方でも読めない・投げた) では何も置かずに今の表示を残す。再設定の保存のあとの読み直しが使う
+   * (画面はもう出ているので、失敗の画面に切り替えると保存の済んだ再設定ごと隠れる。#2206 G5)。
+   * AI 相談の成功の取り直し (read.mode が 'refetch') は指定しなくても残す
+   */
+  readonly keepOnFailure: boolean;
+}
+
 export default function NutritionTargetsExplainPage() {
   const [targets, setTargets] = useState<NutritionTargetsData | null>(null);
   const [profile, setProfile] = useState<ProfileData | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showRawJson, setShowRawJson] = useState(false);
-  // AI 相談の提案の実行で栄養目標・プロフィールが変わったら、下の取得をもう一度走らせる (#2195 V1)。
-  // 栄養目標の再設定 (NutritionTargetPlanner) の入力欄を変えている間は増えない (再設定の側も自分で取り直す)
-  // 番兵で止めた通知は、外れたときに 1 回取り直す (#2201 U2)
-  const { refetchKey: aiConsultationRefetchKey } = useAiConsultationRefetchKey();
-  // その回が AI 相談の成功の取り直しで走ったか (#2201 U1)。開いたときの読み込み中に来た成功の回は、その読み込みの役を引き継ぐ
-  // (取り直しの扱いにしない。失敗を隠して何も無い画面を出さない)
-  const takeAiConsultationRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey, loading);
-  // 栄養目標の再設定 (NutritionTargetPlanner) の保存が済むたびに増える。このページの見出しの目標値・入力値も読み直す (#2206 G5。
-  // 以前は再設定の側だけが読み直し、このページは保存の前の数字のまま残った)
-  const [plannerSavedKey, setPlannerSavedKey] = useState(0);
-  // 下の取得が最後に受け持った plannerSavedKey (増えた回は再設定の保存のあとの読み直し)
-  const handledPlannerSavedKeyRef = useRef(plannerSavedKey);
-  const handlePlannerSaved = useCallback(() => {
-    setPlannerSavedKey((key) => key + 1);
+
+  /**
+   * プロフィールと栄養目標を読む。開いたとき・再設定の保存のあと・AI 相談の成功の取り直しで呼ぶ (#2206 G1)。
+   * 応答は read.place の中で置く (順序・番兵・読み込み中の印の判断は hook)。プロフィールと栄養目標を両方読み終えてから置く (#2206 G5)。
+   * 取り直し・再設定の保存のあとの読み直し (keepShown) は、ログインを確かめられない・片方でも読めない・投げたときは何も置かない
+   * (両方読めたときだけ置く)。開いたときの読み込みは、読めた方を置いて失敗の表示を消し (片方は '-' のまま)、投げたら失敗の表示を置く。
+   * ログインしていない (error の無い !user) は mode によらず「ログインが必要です」
+   */
+  const readTargetsPage = useCallback(async (read: AiConsultationRead, { keepOnFailure }: TargetsPageReadOptions) => {
+    const keepShown = read.mode === 'refetch' || keepOnFailure;
+    const supabase = createClient();
+    try {
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (keepShown && userError && !user) return;
+      if (!user) {
+        read.place(KEY_TARGETS_PAGE, () => setError("ログインが必要です"));
+        return;
+      }
+
+      // プロフィールと栄養目標を両方読み終えてから置く (#2206 G5。以前はプロフィールを置いてから栄養目標を読み、栄養目標を
+      // 読めなかった取り直しではプロフィールだけが新しくなった)
+      const profileRes = await supabase.from('user_profiles').select('*').eq('id', user.id).single();
+
+      // 栄養目標は /api/nutrition/targets 経由で取得（auto_calculate 時はその場で再計算される）
+      // これによりマイページ (/profile) と同一の値が表示される（Bug #17 修正）
+      const targetsRes = await fetch('/api/nutrition/targets');
+      const targetsJson = targetsRes.ok ? await targetsRes.json() : null;
+
+      const profileRead = !profileRes.error;
+      const targetsRead = targetsJson !== null;
+      // 取り直しで片方でも読めなかった: どちらも置かずに今の表示を残す (片方だけ新しくすると、見出しの目標値と入力値が食い違う)
+      if (keepShown && !(profileRead && targetsRead)) return;
+
+      const t = targetsRead ? targetsJson.targets : null;
+      // API は camelCase で返すため NutritionTargetsData の snake_case にマッピング。栄養目標が無いときは null (前の値を残さない。#2195 V1)
+      const loadedTargets: NutritionTargetsData | null = t
+        ? ({
+          id: t.id,
+          daily_calories: t.dailyCalories,
+          protein_g: t.proteinG,
+          fat_g: t.fatG,
+          carbs_g: t.carbsG,
+          fiber_g: t.fiberG,
+          sodium_g: t.sodiumG,
+          potassium_mg: t.potassiumMg,
+          calcium_mg: t.calciumMg,
+          iron_mg: t.ironMg,
+          zinc_mg: t.zincMg,
+          vitamin_a_ug: t.vitaminAUg,
+          vitamin_b1_mg: t.vitaminB1Mg,
+          vitamin_b2_mg: t.vitaminB2Mg,
+          vitamin_b6_mg: t.vitaminB6Mg,
+          vitamin_b12_ug: t.vitaminB12Ug,
+          vitamin_c_mg: t.vitaminCMg,
+          vitamin_d_ug: t.vitaminDUg,
+          vitamin_e_mg: t.vitaminEMg,
+          vitamin_k_ug: t.vitaminKUg,
+          folic_acid_ug: t.folicAcidUg,
+          iodine_ug: t.iodineUg,
+          phosphorus_mg: t.phosphorusMg,
+          cholesterol_mg: t.cholesterolMg,
+          calculation_basis: t.calculationBasis,
+          last_calculated_at: t.lastCalculatedAt,
+          auto_calculate: t.autoCalculate,
+        } as NutritionTargetsData)
+        : null;
+      read.place(KEY_TARGETS_PAGE, () => {
+        // 答えをそのまま置く: 取り直し (AI 相談の成功のあと) でも、読み込み直したときと同じ値にする (#2195 V1)
+        if (profileRead) setProfile((profileRes.data as ProfileData | null) ?? null);
+        if (targetsRead) setTargets(loadedTargets);
+        // 前の取得の失敗の表示を残さない (取り直しで取れたら、失敗の画面から戻す。#2195 V1)。
+        // 消すのは取り直しで両方を読めたときだけ (#2206 G5)。開いたときの読み込みは、ここまで来れば失敗の表示を出していない
+        // (片方を読めなければ '-' で出す。これまでどおり)
+        setError(null);
+      });
+    } catch (e) {
+      console.error('Error fetching data:', e);
+      if (!keepShown) read.place(KEY_TARGETS_PAGE, () => setError("データの取得に失敗しました"));
+    }
   }, []);
 
+  // AI 相談の提案の実行で栄養目標・プロフィールが変わったら取り直す (#2195 V1)。栄養目標の再設定 (NutritionTargetPlanner) の
+  // 入力欄を変えている間は取り直さない (再設定の側も自分で取り直す)。番兵で止めた通知は、外れたときに 1 回取り直す
+  // (#2201 U2。判断は hook)。取り直しの失敗では今の表示を残す (mode が 'refetch')。最初の描画から読み込み中 (今までの初期値 true。
+  // 読み込み中の表示は開いたときの読み込みだけ)
+  const receiver = useAiConsultationReceiver((read) => readTargetsPage(read, { keepOnFailure: false }), {
+    initialLoadingKeys: [KEY_TARGETS_PAGE],
+  });
+  const loading = receiver.isLoading(KEY_TARGETS_PAGE);
+
+  // receiver の参照は一生同じなので、この effect は開いたときの 1 回だけ走る
   useEffect(() => {
-    // 前の回の応答が後から届いても置かない (取り直しが続いたとき。#2201 U1)
-    let cancelled = false;
-    // 再設定の保存のあとの読み直しか (#2206 G5)。画面はもう出ているので、AI 相談の成功の取り直しと同じく失敗では今の表示を残す
-    // (失敗の画面に切り替えると、保存の済んだ再設定ごと隠れる)
-    const isPlannerSavedRun = handledPlannerSavedKeyRef.current !== plannerSavedKey;
-    handledPlannerSavedKeyRef.current = plannerSavedKey;
-    // 取り直しの失敗 (ログインの確かめ・読み取りのエラー・通信の失敗) では、失敗の画面に切り替えずに今の表示を残す (#2201 U1)
-    const isRefetch = takeAiConsultationRefetchRun() || isPlannerSavedRun;
-    const fetchData = async () => {
-      const supabase = createClient();
-      try {
-        const { data: { user }, error: userError } = await supabase.auth.getUser();
-        if (cancelled) return;
-        if (isRefetch && userError && !user) return;
-        if (!user) {
-          setError("ログインが必要です");
-          setLoading(false);
-          return;
-        }
+    void receiver.read({ loadingKeys: [KEY_TARGETS_PAGE] }, (read) => readTargetsPage(read, { keepOnFailure: false }));
+  }, [receiver, readTargetsPage]);
 
-        // プロフィールと栄養目標を両方読み終えてから置く (#2206 G5。以前はプロフィールを置いてから栄養目標を読み、栄養目標を
-        // 読めなかった取り直しではプロフィールだけが新しくなった)
-        const profileRes = await supabase.from('user_profiles').select('*').eq('id', user.id).single();
-        if (cancelled) return;
-
-        // 栄養目標は /api/nutrition/targets 経由で取得（auto_calculate 時はその場で再計算される）
-        // これによりマイページ (/profile) と同一の値が表示される（Bug #17 修正）
-        const targetsRes = await fetch('/api/nutrition/targets');
-        // 前の回の応答は、栄養目標を読めなかったときも何も置かない (下の失敗の表示を消すのも、最後に走った回だけ。#2201 U1)
-        if (cancelled) return;
-        const targetsJson = targetsRes.ok ? await targetsRes.json() : null;
-        if (cancelled) return;
-
-        const profileRead = !profileRes.error;
-        const targetsRead = targetsJson !== null;
-        // 取り直しで片方でも読めなかった: どちらも置かずに今の表示を残す (片方だけ新しくすると、見出しの目標値と入力値が食い違う)
-        if (isRefetch && !(profileRead && targetsRead)) return;
-
-        if (profileRead) {
-          // 答えをそのまま置く: 取り直し (AI 相談の成功のあと) でも、読み込み直したときと同じ値にする (#2195 V1)
-          setProfile((profileRes.data as ProfileData | null) ?? null);
-        }
-        if (targetsRead) {
-          if (!targetsJson.targets) {
-            // 栄養目標が無い: 前の値を残さない (取り直しのとき。#2195 V1)
-            setTargets(null);
-          } else {
-            const t = targetsJson.targets;
-            // API は camelCase で返すため NutritionTargetsData の snake_case にマッピング
-            setTargets({
-              id: t.id,
-              daily_calories: t.dailyCalories,
-              protein_g: t.proteinG,
-              fat_g: t.fatG,
-              carbs_g: t.carbsG,
-              fiber_g: t.fiberG,
-              sodium_g: t.sodiumG,
-              potassium_mg: t.potassiumMg,
-              calcium_mg: t.calciumMg,
-              iron_mg: t.ironMg,
-              zinc_mg: t.zincMg,
-              vitamin_a_ug: t.vitaminAUg,
-              vitamin_b1_mg: t.vitaminB1Mg,
-              vitamin_b2_mg: t.vitaminB2Mg,
-              vitamin_b6_mg: t.vitaminB6Mg,
-              vitamin_b12_ug: t.vitaminB12Ug,
-              vitamin_c_mg: t.vitaminCMg,
-              vitamin_d_ug: t.vitaminDUg,
-              vitamin_e_mg: t.vitaminEMg,
-              vitamin_k_ug: t.vitaminKUg,
-              folic_acid_ug: t.folicAcidUg,
-              iodine_ug: t.iodineUg,
-              phosphorus_mg: t.phosphorusMg,
-              cholesterol_mg: t.cholesterolMg,
-              calculation_basis: t.calculationBasis,
-              last_calculated_at: t.lastCalculatedAt,
-              auto_calculate: t.autoCalculate,
-            } as NutritionTargetsData);
-          }
-        }
-        // 前の取得の失敗の表示を残さない (取り直しで取れたら、失敗の画面から戻す。#2195 V1)。
-        // 消すのは取り直しで両方を読めたときだけ (#2206 G5。以前は栄養目標を読めなかった取り直しも、開いたときの失敗の文を消して
-        // 中身の無い画面を出した)。開いたときの読み込みは、ここまで来れば失敗の表示を出していない (片方を読めなければ '-' で出す。これまでどおり)
-        setError(null);
-      } catch (e) {
-        console.error('Error fetching data:', e);
-        if (!cancelled && !isRefetch) setError("データの取得に失敗しました");
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    void fetchData();
-    return () => {
-      cancelled = true;
-    };
-  }, [aiConsultationRefetchKey, plannerSavedKey, takeAiConsultationRefetchRun]);
+  // 栄養目標の再設定 (NutritionTargetPlanner) の保存が済んだら、このページの見出しの目標値・入力値も読み直す (#2206 G5。
+  // 以前は再設定の側だけが読み直し、このページは保存の前の数字のまま残った)。失敗では今の表示を残す (読み込み中の表示は出さない)
+  const handlePlannerSaved = useCallback(() => {
+    void receiver.read({}, (read) => readTargetsPage(read, { keepOnFailure: true }));
+  }, [receiver, readTargetsPage]);
 
   if (loading) {
     return (

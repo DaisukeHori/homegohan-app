@@ -1585,7 +1585,7 @@ const readHomeData = async (read: AiConsultationRead, startAnalyses: StartHomeAn
     if (activity && !activityError) read.place(KEY_ACTIVITY, () => setActivityLevel(activity.feeling));
     // …今日の献立: read.place(KEY_TODAY_PLAN, () => { setTodayPlan(…); setDailySummary(…); })。読み取りの失敗では置かない (今と同じ)…
     await Promise.all([
-      fetchCookingStreak(authUser.id, read), // 中は read.place(KEY_COOKING_STREAK, …)。失敗 (error) は mode が 'mount' のときだけ 0 を置く
+      fetchCookingStreak(authUser.id, read), // 中は read.place(KEY_COOKING_STREAK, …)。読み取りの失敗 (data が null) ではどちらの mode でも置かない (今と同じ)
       fetchWeeklyStats(authUser.id, read),
       fetchMonthlyStats(authUser.id, read),
       fetchExpiringItems(authUser.id, read),
