@@ -6,11 +6,7 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { formatLocalDate } from "@/lib/date-utils";
 import { createClient } from "@/lib/supabase/client";
-import {
-  useAiConsultationDataRefetch,
-  useAiConsultationLoading,
-  type AiConsultationFetchTicket,
-} from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationReceiver, type AiConsultationRead } from "@/hooks/useAiConsultationReceiver";
 import {
   buildTrendChartA11y,
   estimateSvgTextWidth,
@@ -61,11 +57,24 @@ interface HealthRecord {
   fromCheckup?: boolean;
 }
 
+/** 開いたときの期間 (useState の初期値と、最初の描画から読み込み中にする鍵の両方に使う。#2206 G1) */
+const INITIAL_PERIOD: Period = 'month';
+/** 期間ごとの記録の線の置き場所の鍵 (#2206 G1。対象を替えて出す表示なので期間を鍵に含める) */
+const graphsKey = (period: Period) => `graphs:${period}`;
 /**
- * 開いたとき・期間の切り替えの読み込み (読み込み中の表示を出す) か、AI 相談の成功・Realtime の取り直し
- * (出さない・失敗では今の表示を残す) か
+ * 目標の線 (体重の目標) の置き場所の鍵 (#2206 G1。期間に依らない)。記録の鍵と分けるのは、取り直しが記録を読めず目標だけ
+ * 読めたときに記録の鍵を進めない (先に始めた開いたときの読み込みの記録の線を捨てない) ため
  */
-type GraphsFetchMode = 'mount' | 'refetch';
+const KEY_TARGET_WEIGHT = 'targetWeight';
+
+/** fetchData の設定 */
+interface GraphsFetchOptions {
+  /**
+   * 記録か健診を読めなかったときに今の線を残す (Realtime の読み直し。取り直し (read.mode が 'refetch') は指定しなくても残す)。
+   * 開いたとき・期間の切り替えの読み込みは読めた本文で線を作る
+   */
+  readonly keepOnFailure?: boolean;
+}
 
 /** GET /api/health/records の本文 (使う欄だけ) */
 interface RecordsBody {
@@ -119,11 +128,11 @@ async function readOkJson<T>(res: Response | null, label: string): Promise<T | n
 
 export default function HealthGraphsPage() {
   const router = useRouter();
-  // 開いたとき・期間の切り替えの読み込み中の表示。その読み込み中に始まった AI 相談の成功の取り直しは、その読み込みの役
-  // (失敗の表示・読み込み中の表示を下ろす) を引き継ぐ (#2201 U1。useAiConsultationLoading)
-  const { loading, setLoading, refetchReadMode, settleLoading } = useAiConsultationLoading();
   const [records, setRecords] = useState<HealthRecord[]>([]);
-  const [period, setPeriod] = useState<Period>('month');
+  const [period, setPeriod] = useState<Period>(INITIAL_PERIOD);
+  /** いま出している期間 (描画のたびに写す)。届いた応答の期間がもう今の期間でなければ記録の線を置かない (#2206 G1) */
+  const periodRef = useRef(period);
+  periodRef.current = period;
   const [metric, setMetric] = useState<Metric>('weight');
   const [targetWeight, setTargetWeight] = useState<number | null>(null);
   const channelRef = useRef<ReturnType<ReturnType<typeof createClient>['channel']> | null>(null);
@@ -131,15 +140,16 @@ export default function HealthGraphsPage() {
   const chartDescId = useId();
 
   /**
-   * 期間の健康記録・健診・目標を読む。mode が 'refetch' (AI 相談の成功・Realtime の取り直し。#2201 U1) なら、読み込み中の表示を
-   * 出さずに読み直し、記録か健診を読めなかった (通信の失敗・非 2xx・本文が壊れている) ときは今の表示 (線) を残す。応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ
-   * (期間を切り替えたあとに前の期間の応答が届いても置かない)
+   * 期間の健康記録・健診・目標を読む。開いたとき・期間の切り替え・Realtime・AI 相談の成功の取り直しで呼ぶ (#2206 G1)。
+   * 取り直し (read.mode が 'refetch') と Realtime の読み直し (keepOnFailure) は、記録か健診を読めなかった (通信の失敗・非 2xx・
+   * 本文が壊れている) ときは記録の鍵に置かない (今の線を残す)。応答は read.place の中で置く (順序・番兵・読み込み中の印の判断は
+   * hook)。記録の線は置く直前にいまもその期間を出しているかを見る (期間を切り替えたあとに前の期間の応答が届いても置かない)
    */
-  const fetchData = useCallback(async (ticket: AiConsultationFetchTicket, mode: GraphsFetchMode) => {
-    if (mode === 'mount') setLoading(true);
-    
+  const fetchData = useCallback(async (read: AiConsultationRead, options: GraphsFetchOptions = {}) => {
+    // 読み始めた期間 (置く鍵と、置く直前の比べに使う)
+    const requestedPeriod = period;
     // 期間に応じた日数を計算
-    const days = period === 'week' ? 7 : period === 'month' ? 30 : period === '3months' ? 90 : 365;
+    const days = requestedPeriod === 'week' ? 7 : requestedPeriod === 'month' ? 30 : requestedPeriod === '3months' ? 90 : 365;
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
     
@@ -158,8 +168,9 @@ export default function HealthGraphsPage() {
         readOkJson<GoalsBody>(goalsRes, 'health goals'),
       ]);
 
-      // 取り直しで記録か健診を読めなかった: 片方だけで線を作り直すと点が欠けるので、今の線を残す (目標は読めていれば置く)
-      const keepShownRecords = mode === 'refetch' && (recordsBody === null || checkupsBody === null);
+      // 取り直しで記録か健診を読めなかった: 片方だけで線を作り直すと点が欠けるので、今の線を残す (記録の鍵に置かない。
+      // 目標は読めていれば別の鍵に置く。#2206 G1)
+      const keepShownRecords = (read.mode === 'refetch' || options.keepOnFailure === true) && (recordsBody === null || checkupsBody === null);
 
       const mergedRecords: HealthRecord[] = [];
 
@@ -195,31 +206,35 @@ export default function HealthGraphsPage() {
 
       // 日付降順でソート（gridsを日付昇順で表示するため reversed later in getGraphData）
       mergedRecords.sort((a, b) => b.record_date.localeCompare(a.record_date));
-      if (!ticket.isLatest()) return;
       // 記録は目標より先に置く (目標を読めなくても、読めた記録の線を出す。#2206 G5)
-      if (!keepShownRecords) setRecords(mergedRecords);
+      if (!keepShownRecords) {
+        read.place(graphsKey(requestedPeriod), () => {
+          if (periodRef.current === requestedPeriod) setRecords(mergedRecords);
+        });
+      }
 
       if (goalsBody !== null) {
         const weightGoal = goalsBody.goals?.find((g) => g.goal_type === 'weight');
         // 体重の目標が無くなった (削除・達成) ときは線を消す (取り直しで前の目標の線を残さない。#2195 V1)
-        setTargetWeight(weightGoal ? weightGoal.target_value : null);
+        read.place(KEY_TARGET_WEIGHT, () => setTargetWeight(weightGoal ? weightGoal.target_value : null));
       }
     } catch (error) {
-      // 上の読み取りは投げない (fetchOrNull・readOkJson) ので、ここは思わぬ例外の受け皿 (読み込み中の表示は下の finally で下ろす)
+      // 上の読み取りは投げない (fetchOrNull・readOkJson) ので、ここは思わぬ例外の受け皿 (読み込み中の表示は読み取りの終わりで下りる)
       console.error('Failed to fetch data:', error);
-    } finally {
-      settleLoading(ticket);
     }
-  }, [period, setLoading, settleLoading]);
+  }, [period]);
 
   // AI 相談の提案の実行で健康記録・健康目標が変わったら取り直す (#2195 V1)。
-  // 下の購読は健康記録・健診の行の変化だけを見るので、目標 (体重の目標の線) の変化はこちらで拾う
-  // 開いたとき・期間の切り替えの読み込み中に始まった取り直しは、その読み込みの役を引き継ぐ (refetchReadMode。失敗で前の期間の線を残さない)
-  const { beginFetch } = useAiConsultationDataRefetch((ticket) => fetchData(ticket, refetchReadMode()));
+  // 下の購読は健康記録・健診の行の変化だけを見るので、目標 (体重の目標の線) の変化はこちらで拾う。
+  // 取り直しは描画のたびに最新の fetchData を呼ぶので、今の期間を読む。最初の描画から読み込み中 (今までの初期値 true)
+  const receiver = useAiConsultationReceiver(fetchData, { initialLoadingKeys: [graphsKey(INITIAL_PERIOD)] });
+  // スピナーは表示中の期間の鍵 (古い期間の読み取りの終わり・置いたことでは、今の期間の鍵は下りない)
+  const loading = receiver.isLoading(graphsKey(period));
 
+  // 開いたとき・期間の切り替えの読み込み (読み込み中の表示を出す)。receiver の参照は一生同じなので、期間が変わったときだけ走る
   useEffect(() => {
-    void fetchData(beginFetch(), 'mount');
-  }, [fetchData, beginFetch]);
+    void receiver.read({ loadingKeys: [graphsKey(period)] }, fetchData);
+  }, [receiver, fetchData, period]);
 
   // Realtime subscription for health_records
   useEffect(() => {
@@ -230,12 +245,12 @@ export default function HealthGraphsPage() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'health_records' },
-        () => { void fetchData(beginFetch(), refetchReadMode()); }
+        () => { void receiver.read({}, (read) => fetchData(read, { keepOnFailure: true })); }
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'health_checkups' },
-        () => { void fetchData(beginFetch(), refetchReadMode()); }
+        () => { void receiver.read({}, (read) => fetchData(read, { keepOnFailure: true })); }
       )
       .subscribe();
 
@@ -244,7 +259,7 @@ export default function HealthGraphsPage() {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [fetchData, beginFetch, refetchReadMode]);
+  }, [fetchData, receiver]);
 
   // グラフデータを生成
   // #1055 UX3-13/14: 血圧は収縮期のみ描画されていたため、拡張期 (value2) も持たせて2系列描画する

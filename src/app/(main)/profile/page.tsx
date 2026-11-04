@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { useCallback, useEffect, useState, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
 import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
-import { useAiConsultationRefetchKey, useAiConsultationRefetchRun } from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationReceiver, type AiConsultationRead } from "@/hooks/useAiConsultationReceiver";
 import { useAccountActionsPlacement } from "@/hooks/useAccountActionsPlacement";
 import { toUserProfile } from "@/lib/converter";
 import { assignAtPath } from "@/lib/assign-at-path";
@@ -21,6 +21,13 @@ import { normalizeProfileName } from "@/lib/profile-name";
 import { RECIPE_AUTHOR_NAME_SETTING_LABEL, RECIPE_AUTHOR_NAME_SETTING_NOTE } from "@/lib/recipes/author-name";
 
 type TabType = 'basic' | 'goals' | 'sports' | 'health' | 'diet' | 'cooking' | 'lifestyle';
+
+/** プロフィール (と自分・読み込みの失敗の印) の置き場所の鍵 (#2206 G1。読み込み中の表示もこの鍵) */
+const KEY_PROFILE = 'profile';
+/** 称号の数の置き場所の鍵 (#2206 G1) */
+const KEY_BADGE_COUNT = 'badgeCount';
+/** 栄養目標 (nutrition_targets) の置き場所の鍵 (#2206 G1) */
+const KEY_NUTRITION_TARGET = 'nutritionTarget';
 
 const TABS: { id: TabType; label: string; icon: string }[] = [
   { id: 'basic', label: '基本', icon: '👤' },
@@ -121,12 +128,9 @@ function ProfilePageContent() {
   const [activeTab, setActiveTab] = useState<TabType>('basic');
   const [isSaving, setIsSaving] = useState(false);
   const [editForm, setEditForm] = useState<Partial<UserProfile>>({});
-  const [isLoading, setIsLoading] = useState(true);
   // 開いたときの読み込み (ログインの確かめ・プロフィールの読み取り) に失敗したか (#2206 G5)。失敗のあいだは編集の保存を押せなくし、
   // 再読み込みを出す (以前は読み込み中の表示だけが下り、保存した値の無い空の editForm のまま「変更を保存」を押せた)
   const [profileLoadFailed, setProfileLoadFailed] = useState(false);
-  // 「再読み込み」を押すたびに増える。下の取得をもう一度、開いたときと同じ読み方 (読み込み中の表示を出す) で走らせる
-  const [profileReloadKey, setProfileReloadKey] = useState(0);
   // nutrition_targets テーブルからの読み込み（#17: マイページ kcal を根拠ページと一致させる）
   const [dbNutritionTarget, setDbNutritionTarget] = useState<{
     dailyCalories: number;
@@ -145,142 +149,147 @@ function ProfilePageContent() {
   // 編集の入力欄 (editForm) は保存されている値をそのまま出す
   const headerName = normalizeProfileName(profile?.nickname);
 
-  // AI 相談の提案の実行で好み・栄養目標などが変わったら、下の取得をもう一度走らせる (#2195 V1)。
-  // 編集のモーダル (role="dialog") が出ている間は増えない (編集の途中の editForm を取得した値で上書きしないため)。
-  // 競技タブのように入力の部品が 1 つも無いタブを開いていても止まるよう、モーダルそのものに role="dialog" を付けている
-  // 閉じたら止めた通知のぶん 1 回増える (#2201 U2)
-  const { refetchKey: aiConsultationRefetchKey, refetchTicket: aiConsultationRefetchTicket } = useAiConsultationRefetchKey();
-  // その回が AI 相談の成功の取り直しで走ったか (#2201 U1)。開いたときの読み込み中に来た成功の回は、その読み込みの役を引き継ぐ
-  // (取り直しの扱いにしない。ログインを確かめられなかったときは開いたときと同じ扱い)
-  const takeAiConsultationRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey, isLoading);
-  // 取得した値は、いつも編集の入力欄 (editForm) にも置く (#2201 U1)。打ちかけの値は次の 2 つで守る:
-  //   - 取り直しの回: 応答を待つあいだに編集のモーダル (role="dialog") を開いたら、応答ごと置かずに閉じたあと 1 回取り直す
-  //     (下の refetchTicket.deferIfHeld。閉じたあとの editForm を AI 相談の変更の前の値のまま残さない)
-  //   - 開いたときの読み込み: 読み込み中もヘッダーの「編集」は押せるが、モーダルは読み込みが終わるまで入力欄と保存のボタンを出さない
-  //     (読み込み中の表示)。届いた応答を editForm に置いてから入力欄を出す (読み込み中に開いたモーダルを、保存した値の無い空の入力欄の
-  //     まま残さない・空の editForm を保存して、触っていない欄の無い送信にしない)
-
-  useEffect(() => {
-    // 前の回の応答が後から届いても置かない (取り直しが続いたとき。#2201 U1)
-    let cancelled = false;
-    // 取り直しでは読み込み中の表示を出さず、失敗 (ログインの確かめ・プロフィールの読み取りのエラー・通信の失敗) では今の表示を残す
-    const isRefetch = takeAiConsultationRefetchRun();
-    const refetchTicket = isRefetch ? aiConsultationRefetchTicket() : null;
-    const getData = async () => {
-      const supabase = createClient();
-      if (!isRefetch) setIsLoading(true);
-      // 読み込み中の表示は、どこで投げても必ず下ろす (#2206 G5。以前は auth.getUser() が投げると読み込み中のまま止まり、
-      // 編集の保存のボタンが押せないままになった)
-      try {
-        const { data: { user }, error: authError } = await supabase.auth.getUser();
-        console.log('[Profile] Auth user:', user?.id, 'error:', authError?.message);
-        if (cancelled) return;
-        // 取り直し (読み込み中の表示を出していないときの回) でログインを確かめられなかった: 今の表示を残す。
-        // 開いたときの読み込み中に来た成功の回は取り直しの扱いにならない (useAiConsultationRefetchRun) ので、ここには来ない
-        if (isRefetch && authError && !user) return;
-        setUser(user);
-        // 開いたときの読み込みでログインを確かめられなかった: プロフィールを読んでいないので、失敗として保存を止める (#2206 G5)
-        if (!isRefetch && authError && !user) setProfileLoadFailed(true);
-
-        if (user) {
-          const { data, error } = await supabase
-            .from('user_profiles')
-            .select('*')
-            .eq('id', user.id)
-            .single();
-
-          console.log('[Profile] Fetch result:', {
-            hasData: !!data,
-            error: error?.message,
-            dataKeys: data ? Object.keys(data).length : 0
+  /**
+   * ログインの確かめ・プロフィール・称号の数・栄養目標を読む。開いたとき・「再読み込み」・AI 相談の成功の取り直しで呼ぶ (#2206 G1)。
+   * 応答は read.place の中で置く (順序・番兵・読み込み中の印の判断は hook)。置く順は、称号の数と栄養目標を読んで置いてから、
+   * 最後にプロフィールの鍵 (読み込み中の表示はプロフィールの鍵。3 つを読み終えるまで立っている。プロフィールを先に読むのは今と同じ)。
+   * 失敗 (ログインを確かめられない・プロフィールの読み取りの error・投げた): 開いたとき ('mount') は失敗の印を置いて保存を止め、
+   * 再読み込みを出す (#2206 G5)。取り直し ('refetch') は何も置かない (今の表示と失敗の印を残す)。読めたらどちらの mode でも失敗の印を下ろす
+   */
+  const readProfile = useCallback(async (read: AiConsultationRead) => {
+    const supabase = createClient();
+    try {
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      console.log('[Profile] Auth user:', user?.id, 'error:', authError?.message);
+      if (authError && !user) {
+        // ログインを確かめられなかった: プロフィールを読んでいないので、開いたときの読み込みなら失敗として保存を止める (#2206 G5)
+        if (read.mode === 'mount') {
+          read.place(KEY_PROFILE, () => {
+            setUser(user);
+            setProfileLoadFailed(true);
           });
+        }
+        return;
+      }
+      if (!user) {
+        read.place(KEY_PROFILE, () => setUser(user));
+        return;
+      }
 
-          if (error) {
-            console.error('[Profile] Error fetching profile:', error);
-          }
-          if (cancelled) return;
-          // 取り直しの応答を待つあいだに編集のモーダルを開いた: 置かずに、閉じたあと 1 回取り直す (#2201 U1 + U2)
-          if (refetchTicket?.deferIfHeld()) return;
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single();
 
-          if (error) {
-            // 開いたときの読み込みで読めなかった: 保存を止めて再読み込みを出す。取り直しの失敗は今の表示 (と失敗の印) を残す (#2206 G5)
-            if (!isRefetch) setProfileLoadFailed(true);
-          } else {
-            // 読めた (開いたときも取り直しも): 前の失敗の印を下ろす (#2206 G5)
-            setProfileLoadFailed(false);
-            // 答えをそのまま置く: 取り直し (AI 相談の成功のあと) でも、読み込み直したときと同じ値にする (#2195 V1)
-            if (!data) {
-              setProfile(null);
-              setEditForm({});
-            }
-          }
-          if (data) {
-            console.log('[Profile] Raw data sample:', {
-              age: data.age,
-              height: data.height,
-              weight: data.weight,
-              nickname: data.nickname
-            });
-            const domainProfile = toUserProfile(data);
-            console.log('[Profile] Converted profile:', {
-              age: domainProfile.age,
-              height: domainProfile.height,
-              weight: domainProfile.weight,
-              nickname: domainProfile.nickname
-            });
-            setProfile(domainProfile);
-            setEditForm(domainProfile);
-          }
+      console.log('[Profile] Fetch result:', {
+        hasData: !!data,
+        error: error?.message,
+        dataKeys: data ? Object.keys(data).length : 0
+      });
 
-          try {
-            const badgeRes = await fetch('/api/badges');
-            if (badgeRes.ok) {
-              const badgeData = await badgeRes.json();
-              const earned = badgeData.badges.filter((b: any) => b.earned).length;
-              if (!cancelled) setBadgeCount(earned);
-            }
-          } catch (e) {
-            console.error("Badge fetch error", e);
-          }
+      if (error) {
+        console.error('[Profile] Error fetching profile:', error);
+      }
 
-          // #17: nutrition_targets テーブルから読み込んでマイページ kcal を根拠ページと一致させる
-          try {
-            const ntRes = await fetch('/api/nutrition/targets');
-            if (ntRes.ok) {
-              const ntData = await ntRes.json();
-              if (cancelled) return;
-              if (ntData.targets) {
-                const t = ntData.targets;
-                setDbNutritionTarget({
-                  dailyCalories: t.dailyCalories,
-                  protein: t.proteinG,
-                  fat: t.fatG,
-                  carbs: t.carbsG,
-                  fiber: t.fiberG,
-                });
-              } else {
-                // 栄養目標が無い: 前の値を残さない (取り直しのとき。読み込み直したときと同じ。#2195 V1)
-                setDbNutritionTarget(null);
-              }
-            }
-          } catch (e) {
-            console.error("Nutrition targets fetch error", e);
-          }
+      try {
+        const badgeRes = await fetch('/api/badges');
+        if (badgeRes.ok) {
+          const badgeData = await badgeRes.json();
+          const earned = badgeData.badges.filter((b: any) => b.earned).length;
+          read.place(KEY_BADGE_COUNT, () => setBadgeCount(earned));
         }
       } catch (e) {
-        // ログインの確かめ・プロフィールの読み取りが投げた。開いたときの読み込みなら保存を止めて再読み込みを出し、
-        // 取り直しなら今の表示を残す (#2206 G5)
-        console.error('[Profile] Failed to load profile:', e);
-        if (!cancelled && !isRefetch) setProfileLoadFailed(true);
-      } finally {
-        if (!cancelled) setIsLoading(false);
+        console.error("Badge fetch error", e);
       }
-    };
-    void getData();
-    return () => {
-      cancelled = true;
-    };
-  }, [aiConsultationRefetchKey, profileReloadKey, takeAiConsultationRefetchRun, aiConsultationRefetchTicket]);
+
+      // #17: nutrition_targets テーブルから読み込んでマイページ kcal を根拠ページと一致させる
+      try {
+        const ntRes = await fetch('/api/nutrition/targets');
+        if (ntRes.ok) {
+          const ntData = await ntRes.json();
+          const t = ntData.targets;
+          read.place(KEY_NUTRITION_TARGET, () => {
+            if (t) {
+              setDbNutritionTarget({
+                dailyCalories: t.dailyCalories,
+                protein: t.proteinG,
+                fat: t.fatG,
+                carbs: t.carbsG,
+                fiber: t.fiberG,
+              });
+            } else {
+              // 栄養目標が無い: 前の値を残さない (取り直しのとき。読み込み直したときと同じ。#2195 V1)
+              setDbNutritionTarget(null);
+            }
+          });
+        }
+      } catch (e) {
+        console.error("Nutrition targets fetch error", e);
+      }
+
+      if (error) {
+        // 開いたときの読み込みで読めなかった: 保存を止めて再読み込みを出す。取り直しの失敗は今の表示 (と失敗の印) を残す (#2206 G5)
+        if (read.mode === 'mount') {
+          read.place(KEY_PROFILE, () => {
+            setUser(user);
+            setProfileLoadFailed(true);
+          });
+        }
+        return;
+      }
+      let domainProfile: UserProfile | null = null;
+      if (data) {
+        console.log('[Profile] Raw data sample:', {
+          age: data.age,
+          height: data.height,
+          weight: data.weight,
+          nickname: data.nickname
+        });
+        domainProfile = toUserProfile(data);
+        console.log('[Profile] Converted profile:', {
+          age: domainProfile.age,
+          height: domainProfile.height,
+          weight: domainProfile.weight,
+          nickname: domainProfile.nickname
+        });
+      }
+      const loadedProfile = domainProfile;
+      read.place(KEY_PROFILE, () => {
+        setUser(user);
+        // 読めた (開いたときも取り直しも): 前の失敗の印を下ろす (#2206 G5)
+        setProfileLoadFailed(false);
+        // 答えをそのまま置く: 取り直し (AI 相談の成功のあと) でも、読み込み直したときと同じ値にする (#2195 V1)。
+        // 取得した値は、いつも編集の入力欄 (editForm) にも置く (#2201 U1)
+        if (loadedProfile) {
+          setProfile(loadedProfile);
+          setEditForm(loadedProfile);
+        } else {
+          setProfile(null);
+          setEditForm({});
+        }
+      });
+    } catch (e) {
+      // ログインの確かめ・プロフィールの読み取りが投げた。開いたときの読み込みなら保存を止めて再読み込みを出し、
+      // 取り直しなら今の表示を残す (#2206 G5)
+      console.error('[Profile] Failed to load profile:', e);
+      if (read.mode === 'mount') read.place(KEY_PROFILE, () => setProfileLoadFailed(true));
+    }
+  }, []);
+
+  // AI 相談の提案の実行で好み・栄養目標などが変わったら取り直す (#2195 V1)。
+  // 編集のモーダル (role="dialog") が出ている間は取り直さない (編集の途中の editForm を取得した値で上書きしないため)。
+  // 競技タブのように入力の部品が 1 つも無いタブを開いていても止まるよう、モーダルそのものに role="dialog" を付けている。
+  // 取り直しの応答を待つあいだに編集のモーダルを開いたら、応答ごと置かずに閉じたあと 1 回取り直す (#2201 U1 + U2。判断は hook)。
+  // 開いたときの読み込み中もヘッダーの「編集」は押せるが、モーダルは読み込みが終わるまで入力欄と保存のボタンを出さない
+  // (isLoading。届いた応答を editForm に置いてから入力欄を出す)。最初の描画から読み込み中 (今までの初期値 true)
+  const receiver = useAiConsultationReceiver(readProfile, { initialLoadingKeys: [KEY_PROFILE] });
+  const isLoading = receiver.isLoading(KEY_PROFILE);
+
+  // receiver の参照は一生同じなので、この effect は開いたときの 1 回だけ走る
+  useEffect(() => {
+    void receiver.read({ loadingKeys: [KEY_PROFILE] }, readProfile);
+  }, [receiver, readProfile]);
 
   // ?focus=incomplete パラメータを処理
   useEffect(() => {
@@ -302,6 +311,9 @@ function ProfilePageContent() {
   const handleSave = async () => {
     // 開いたときの読み込みに失敗したまま (保存した値の無い editForm) は送らない。ボタンも止めている (#2206 G5)
     if (profileLoadFailed) return;
+    // 保存の送信と応答の反映は書き込みの窓の中 (保存の応答待ちに来た取り直しの応答を置かず、保存が終わったら 1 回取り直す。
+    // 保存の前の値を読んだ取り直しの応答で、保存した値を戻さないため。#2206 G1)
+    const endWrite = receiver.beginWrite();
     setIsSaving(true);
     try {
       const res = await fetch('/api/profile', {
@@ -340,6 +352,7 @@ function ProfilePageContent() {
       alert(`更新に失敗しました: ${error.message}`);
     } finally {
       setIsSaving(false);
+      endWrite();
     }
   };
 
@@ -396,7 +409,7 @@ function ProfilePageContent() {
         type="button"
         variant="outline"
         className="mt-3 rounded-full"
-        onClick={() => setProfileReloadKey((key) => key + 1)}
+        onClick={() => void receiver.read({ loadingKeys: [KEY_PROFILE] }, readProfile)}
       >
         再読み込み
       </Button>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { useCallback, useEffect, useRef, useState, use } from "react";
 import Link from "next/link";
 import { SignedPhotoImage } from "@/components/photo/SignedPhotoImage";
 import { useRouter } from "next/navigation";
@@ -10,11 +10,7 @@ import { MEAL_LABELS, isMealType, parseLocalDate } from "@homegohan/shared";
 // 区分ごとの色は Web の区分の見た目の表から引く (#1665)
 import { MEAL_TYPE_RECORD_THEME } from "@/lib/meal-type-visuals";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  useAiConsultationPendingWrites,
-  useAiConsultationRefetchKey,
-  useAiConsultationRefetchRun,
-} from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationReceiver, type AiConsultationRead } from "@/hooks/useAiConsultationReceiver";
 import { 
   ChefHat, Store, UtensilsCrossed, Zap, FastForward,
   Check, Flame, Clock, Users, ChevronLeft, MoreVertical,
@@ -100,6 +96,13 @@ interface PlannedMealDetail {
 /** 食事が無い (GET /api/meals/<id> の 404。AI 相談で消された食事を含む) ときの応答の status */
 const MEAL_NOT_FOUND_STATUS = 404;
 
+/** 削除が済んでから献立表へ移るまでの待ち (ミリ秒。削除の確認のモーダルの閉じるアニメーションを待つ) */
+const MEAL_DELETE_NAVIGATE_DELAY_MS = 300;
+/** 人数の設定の置き場所の鍵 (#2206 G1) */
+const KEY_SERVINGS = 'servings';
+/** 食事の置き場所の鍵 (#2206 G1。対象を替えて出す表示なので食事の id を鍵に含める) */
+const mealKey = (id: string) => `meal:${id}`;
+
 /** 食事が無かった (MEAL_NOT_FOUND_STATUS) ことを表す (取り直しでも「見つかりませんでした」にする。ほかの失敗と分ける) */
 class MealNotFoundError extends Error {
   constructor() {
@@ -111,134 +114,130 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
   const params = use(props.params);
   const router = useRouter();
   const [meal, setMeal] = useState<PlannedMealDetail | null>(null);
-  const [loading, setLoading] = useState(true);
   const [showMenu, setShowMenu] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   // UX2-30: 実際の人数設定（取得できるまでは null。取得できない場合は「1人前」を出さない）
   const [servingsConfig, setServingsConfig] = useState<ServingsConfig | null>(null);
-  // AI 相談の提案の実行 (食事の変更・完了・削除など) でこの食事が変わったら、下の取得をもう一度走らせる (#2195 V1)。
-  // 削除の確認のモーダル (role="dialog") が出ている間は増えない
-  // 完了の切り替えの楽観的な更新から送信の応答まで (#2201 U2)。この間に来た AI 相談の成功では取り直さず、終わったら 1 回取り直す
-  // (切り替えの前の値を読んだ取り直しの応答が、楽観的な表示を戻さないため)
-  const pendingWrites = useAiConsultationPendingWrites();
-  const { refetchKey: aiConsultationRefetchKey, refetchTicket: aiConsultationRefetchTicket } = useAiConsultationRefetchKey({
-    writeInFlightRef: pendingWrites,
-  });
-  // 食事の取得の回が AI 相談の成功の取り直しで走ったか (#2201 U1)。開いたとき・食事の切り替えの読み込み中に来た成功の回は、
-  // その読み込みの役を引き継ぐ (取り直しの扱いにしない。失敗で前の食事を残さない)
-  const takeMealRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey, loading);
+  /** いま出している食事の id (描画のたびに写す)。届いた応答の食事がもう今の食事でなければ置かない (#2206 G1) */
+  const mealIdRef = useRef(params.id);
+  mealIdRef.current = params.id;
+  /**
+   * 削除した食事の id (#2206 G1)。削除の成功から献立表へ移るまでの間に流れた取り直しの 404 で「見つかりませんでした」を出さない
+   * (この食事の鍵には何も置かない)。ページを離れるまで戻さない
+   */
+  const deletedMealIdRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    // 前の回の応答が後から届いても置かない (#2201 U1)。失敗では今の値のまま (これまでどおり)
-    let cancelled = false;
-    const fetchServings = async () => {
-      try {
-        const res = await fetch('/api/profile', { cache: 'no-store' });
-        if (res.ok) {
-          const data = await res.json();
-          if (cancelled) return;
-          // 人数の設定が無いときも置く (取り直しで前の人数を残さない。読み込み直したときと同じ。#2195 V1)
-          setServingsConfig((data?.servings_config as ServingsConfig | null | undefined) ?? null);
-        }
-      } catch (e) {
-        console.warn('Failed to fetch servings config:', e);
+  /** 人数の設定を読む。失敗では今の値のまま (これまでどおり)。設定が無いときも置く (取り直しで前の人数を残さない。#2195 V1) */
+  const readServingsConfig = useCallback(async (read: AiConsultationRead) => {
+    try {
+      const res = await fetch('/api/profile', { cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        read.place(KEY_SERVINGS, () => setServingsConfig((data?.servings_config as ServingsConfig | null | undefined) ?? null));
       }
-    };
-    void fetchServings();
-    return () => {
-      cancelled = true;
-    };
-    // AI 相談の提案の実行のあとも読み直す (プロフィールの取り直し。下の食事の取得と同じ数で走らせる。#2195 V1)
-  }, [aiConsultationRefetchKey]);
+    } catch (e) {
+      console.warn('Failed to fetch servings config:', e);
+    }
+  }, []);
 
-  useEffect(() => {
-    // 前の回 (開いたとき・前の取り直し・前の食事) の応答が後から届いても置かない (#2201 U1)
-    let cancelled = false;
-    // 取り直しでは読み込み中の表示 (画面全体のスピナー) を出さず、失敗 (通信の失敗・404 以外の非 2xx) では今の表示を残す (#2201 U1)。
-    // 404 は食事が無い (AI 相談で消された) ので、読み込み直したときと同じく「見つかりませんでした」にする
-    const isRefetch = takeMealRefetchRun();
-    // 取り直しの応答を待つあいだも完了の切り替え・削除のボタンが出ている (#2201 U1 + U2)。その間に切り替えを始めた (終えていても)・
-    // 削除の確認のモーダルを開いたら、この回の応答 (切り替えの前に読んだ値) を置かず、外れたら 1 回取り直す (札の deferIfHeld)
-    const refetchTicket = isRefetch ? aiConsultationRefetchTicket() : null;
-    const fetchData = async () => {
-      if (!isRefetch) setLoading(true);
-
-      try {
-        const response = await fetch(`/api/meals/${params.id}`, { cache: 'no-store' });
-        if (!response.ok) {
-          if (response.status === MEAL_NOT_FOUND_STATUS) throw new MealNotFoundError();
-          if (isRefetch) {
-            if (!cancelled) console.warn('[meals] refetch failed:', response.status);
-            return;
-          }
-          throw new Error('食事データの取得に失敗しました');
+  /**
+   * 食事を読む。失敗: 取り直し ('refetch') は通信の失敗・404 以外の非 2xx で今の表示を残す (#2201 U1)。404 は食事が無い
+   * (AI 相談で消された) ので、どちらの mode でも読み込み直したときと同じく「見つかりませんでした」にする。
+   * 削除した食事 (deletedMealIdRef)・もう出していない食事の応答は置かない (置く直前に見る)
+   */
+  const readMealDetail = useCallback(async (read: AiConsultationRead, id: string) => {
+    const placeMeal = (next: PlannedMealDetail | null) => {
+      read.place(mealKey(id), () => {
+        if (deletedMealIdRef.current === id) return;
+        if (mealIdRef.current !== id) return;
+        setMeal(next);
+      });
+    };
+    try {
+      const response = await fetch(`/api/meals/${id}`, { cache: 'no-store' });
+      if (!response.ok) {
+        if (response.status === MEAL_NOT_FOUND_STATUS) throw new MealNotFoundError();
+        if (read.mode === 'refetch') {
+          console.warn('[meals] refetch failed:', response.status);
+          return;
         }
+        throw new Error('食事データの取得に失敗しました');
+      }
 
-        const data = await response.json();
+      const data = await response.json();
 
-        const mappedMeal: PlannedMealDetail = {
-          id: data.id,
-          dailyMealId: data.daily_meal_id,
-          mealType: data.meal_type,
-          mode: (data.mode || 'cook') as MealMode,
-          dishName: data.dish_name,
-          description: data.description,
-          recipeUrl: data.recipe_url,
-          imageUrl: data.image_url,
-          ingredients: data.ingredients,
-          caloriesKcal: data.calories_kcal,
-          proteinG: data.protein_g,
-          fatG: data.fat_g,
-          carbsG: data.carbs_g,
-          isCompleted: data.is_completed || false,
-          completedAt: data.completed_at,
-          dishes: data.dishes,
-          isSimple: data.is_simple,
-          cookingTimeMinutes: data.cooking_time_minutes,
-          dayDate: data.user_daily_meals?.day_date ?? '',
-          sourceType: data.source_type ?? null,
-          catalogProductId: data.catalog_product_id ?? null,
-          catalogProduct: extractCatalogProductFromMetadata(data.generation_metadata),
-        };
+      const mappedMeal: PlannedMealDetail = {
+        id: data.id,
+        dailyMealId: data.daily_meal_id,
+        mealType: data.meal_type,
+        mode: (data.mode || 'cook') as MealMode,
+        dishName: data.dish_name,
+        description: data.description,
+        recipeUrl: data.recipe_url,
+        imageUrl: data.image_url,
+        ingredients: data.ingredients,
+        caloriesKcal: data.calories_kcal,
+        proteinG: data.protein_g,
+        fatG: data.fat_g,
+        carbsG: data.carbs_g,
+        isCompleted: data.is_completed || false,
+        completedAt: data.completed_at,
+        dishes: data.dishes,
+        isSimple: data.is_simple,
+        cookingTimeMinutes: data.cooking_time_minutes,
+        dayDate: data.user_daily_meals?.day_date ?? '',
+        sourceType: data.source_type ?? null,
+        catalogProductId: data.catalog_product_id ?? null,
+        catalogProduct: extractCatalogProductFromMetadata(data.generation_metadata),
+      };
 
-        if (mappedMeal.catalogProductId) {
-          try {
-            const catalogResponse = await fetch(`/api/catalog/products/${mappedMeal.catalogProductId}`, { cache: 'no-store' });
-            if (catalogResponse.ok) {
-              const payload = await catalogResponse.json();
-              if (payload?.product) {
-                mappedMeal.catalogProduct = payload.product as CatalogProductSummary;
-              }
+      if (mappedMeal.catalogProductId) {
+        try {
+          const catalogResponse = await fetch(`/api/catalog/products/${mappedMeal.catalogProductId}`, { cache: 'no-store' });
+          if (catalogResponse.ok) {
+            const payload = await catalogResponse.json();
+            if (payload?.product) {
+              mappedMeal.catalogProduct = payload.product as CatalogProductSummary;
             }
-          } catch (catalogError) {
-            console.warn("Failed to fetch catalog product detail:", catalogError);
           }
+        } catch (catalogError) {
+          console.warn("Failed to fetch catalog product detail:", catalogError);
         }
-
-        if (cancelled) return;
-        if (refetchTicket?.deferIfHeld()) return;
-        setMeal(mappedMeal);
-      } catch (error) {
-        console.error("Error fetching meal:", error);
-        if (cancelled) return;
-        // 取り直しの通信の失敗は今の表示を残す (404 は MealNotFoundError で来て、ここで「見つかりませんでした」にする)
-        if (isRefetch && !(error instanceof MealNotFoundError)) return;
-        setMeal(null);
-      } finally {
-        if (!cancelled) setLoading(false);
       }
-    };
 
-    void fetchData();
-    return () => {
-      cancelled = true;
-    };
-  }, [params.id, aiConsultationRefetchKey, takeMealRefetchRun, aiConsultationRefetchTicket]);
+      placeMeal(mappedMeal);
+    } catch (error) {
+      console.error("Error fetching meal:", error);
+      // 取り直しの通信の失敗は今の表示を残す (404 は MealNotFoundError で来て、ここで「見つかりませんでした」にする)
+      if (read.mode === 'refetch' && !(error instanceof MealNotFoundError)) return;
+      placeMeal(null);
+    }
+  }, []);
+
+  /** 食事と人数の設定を読む。開いたとき・食事の切り替え・AI 相談の成功の取り直しで呼ぶ (#2206 G1。応答は read.place の中で置く) */
+  const readMeal = useCallback(async (read: AiConsultationRead, id: string) => {
+    await Promise.all([readServingsConfig(read), readMealDetail(read, id)]);
+  }, [readServingsConfig, readMealDetail]);
+
+  // AI 相談の提案の実行 (食事の変更・完了・削除など) でこの食事が変わったら取り直す (#2195 V1)。削除の確認のモーダル
+  // (role="dialog") が出ている間・完了の切り替えと削除の送信の応答を待つ間は取り直さず、閉じた・終わったあとに 1 回取り直す
+  // (#2201 U2。切り替えの前の値を読んだ取り直しの応答が、楽観的な表示を戻さないため。判断は hook)。
+  // 最初の描画から読み込み中 (今までの初期値 true)
+  const receiver = useAiConsultationReceiver((read) => readMeal(read, mealIdRef.current), {
+    initialLoadingKeys: [mealKey(params.id)],
+  });
+  const loading = receiver.isLoading(mealKey(params.id));
+
+  // 開いたとき・食事の切り替えの読み込み (読み込み中の表示を出す)。receiver の参照は一生同じなので、食事が変わったときだけ走る
+  useEffect(() => {
+    void receiver.read({ loadingKeys: [mealKey(params.id)] }, (read) => readMeal(read, params.id));
+  }, [receiver, readMeal, params.id]);
 
   const toggleCompletion = async () => {
     if (!meal) return;
     const newStatus = !meal.isCompleted;
-    const endWrite = pendingWrites.begin();
+    // 楽観的な更新から送信の応答までは書き込みの窓の中 (#2201 U2・#2206 G1)
+    const endWrite = receiver.beginWrite();
     setMeal({ ...meal, isCompleted: newStatus, completedAt: newStatus ? new Date().toISOString() : null });
     try {
       const response = await fetch(`/api/meals/${meal.id}`, {
@@ -262,6 +261,10 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
   };
 
   const handleDelete = async () => {
+    // 削除の送信の間だけ書き込みの窓 (#2206 G1)。移動 (待たない setTimeout) の完了まで開けたままにしない
+    // (移動が終わらないと html[data-ai-consultation-writes] が残り、モバイルの読み込み直しが止まり続けるため)。
+    // 削除のあとの取り直しは止めずに流し、置かない守りは deletedMealIdRef が受け持つ
+    const endWrite = receiver.beginWrite();
     try {
       const response = await fetch(`/api/meals/${params.id}`, {
         method: 'DELETE',
@@ -271,10 +274,14 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
         throw new Error('削除に失敗しました');
       }
 
+      // 削除の確認を閉じる前に書く (閉じたあとに流れる取り直しの 404 で「見つかりませんでした」を出さない)
+      deletedMealIdRef.current = params.id;
       setShowDeleteModal(false);
-      setTimeout(() => router.push('/menus/weekly'), 300);
+      setTimeout(() => router.push('/menus/weekly'), MEAL_DELETE_NAVIGATE_DELAY_MS);
     } catch (error) {
       alert("削除に失敗しました");
+    } finally {
+      endWrite();
     }
   };
 

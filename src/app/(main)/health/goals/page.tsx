@@ -1,13 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { todayLocal } from "@/lib/date-utils";
-import {
-  useAiConsultationDataRefetch,
-  useAiConsultationLoading,
-  useAiConsultationPendingWrites,
-  type AiConsultationFetchTicket,
-} from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationReceiver, type AiConsultationRead } from "@/hooks/useAiConsultationReceiver";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -62,14 +57,11 @@ const GOAL_TYPES = GOAL_TYPE_DEFS.map((def) => ({
   color: GOAL_TYPE_VISUALS[def.type]?.color ?? colors.accent,
 }));
 
-/** 開いたとき・書き込みのあとの読み込み (読み込み中の表示を出す) か、AI 相談の成功の取り直し (出さない・失敗では今の表示を残す) か */
-type GoalsFetchMode = 'mount' | 'refetch';
+/** 目標の一覧の置き場所の鍵 (#2206 G1) */
+const KEY_GOALS = "goals";
 
 export default function HealthGoalsPage() {
   const router = useRouter();
-  // 開いたとき・書き込みのあとの読み込み中の表示。その読み込み中に始まった AI 相談の成功の取り直しは、その読み込みの役
-  // (失敗の表示・読み込み中の表示を下ろす) を引き継ぐ (#2201 U1。useAiConsultationLoading)
-  const { loading, setLoading, refetchReadMode, settleLoading } = useAiConsultationLoading();
   const [goals, setGoals] = useState<HealthGoal[]>([]);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newGoal, setNewGoal] = useState({
@@ -87,46 +79,33 @@ export default function HealthGoalsPage() {
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
-  // 削除の送信の応答を待っている間 (#2201 U2)。この間に来た AI 相談の成功では取り直さず、終わったら 1 回取り直す
-  // (削除の前の一覧を読んだ取り直しの応答が、削除した目標を一覧に戻さないため)。始めた回数も数えるので、取り直しの応答を待つあいだに
-  // 始めて終えた削除も見分ける (札の deferIfHeld)
-  const pendingWrites = useAiConsultationPendingWrites();
-
   /**
-   * 目標の一覧を読む。mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込み中の表示を出さずに読み直し、
-   * 失敗 (通信の失敗・非 2xx) では今の表示を残す。応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ。
-   * 取り直しの応答を待つあいだに開いたモーダル・始めた削除があれば置かない (ticket.deferIfHeld。閉じた・終わったあとに 1 回取り直す)
+   * 目標の一覧を読む。開いたとき・作成・編集・削除のあと・AI 相談の成功の取り直しで呼ぶ (#2206 G1)。
+   * 応答は read.place の中で置く (順序・番兵・書き込みの印・読み込み中の印の判断は hook。取り直しの応答を待つあいだに開いた
+   * モーダル・始めた書き込みがあれば置かず、閉じた・終わったあとに 1 回取り直す)。失敗 (通信の失敗・非 2xx) では今の表示を残す
    */
-  const fetchGoals = async (ticket: AiConsultationFetchTicket, mode: GoalsFetchMode = 'mount') => {
-    if (mode === 'mount') setLoading(true);
+  const fetchGoals = useCallback(async (read: AiConsultationRead) => {
     try {
       const res = await fetch('/api/health/goals?status=all');
       if (res.ok) {
         const data = await res.json();
-        if (!ticket.isLatest()) return;
-        if (mode === 'refetch' && ticket.deferIfHeld()) return;
-        setGoals(data.goals || []);
+        read.place(KEY_GOALS, () => setGoals(data.goals || []));
       }
     } catch (error) {
       console.error('Failed to fetch goals:', error);
-    } finally {
-      settleLoading(ticket);
     }
-  };
-  // AI 相談の提案の実行で健康目標が変わったら取り直す (#2195 V1)。作成・編集のモーダルが出ている間・削除の応答を待つ間は
-  // 取り直さず、閉じた・終わったあとに 1 回取り直す (#2201 U2)
-  const { beginFetch } = useAiConsultationDataRefetch(
-    (ticket) => fetchGoals(ticket, refetchReadMode()),
-    { writeInFlightRef: pendingWrites },
-  );
-  /** 開いたとき・作成・編集・削除のあとの読み込み (これまでどおり読み込み中の表示を出す) */
-  const reloadGoals = () => fetchGoals(beginFetch());
-
-  useEffect(() => {
-    void reloadGoals();
-    // 開いたときに 1 回だけ読む (これまでどおり)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // AI 相談の提案の実行で健康目標が変わったら取り直す (#2195 V1)。作成・編集のモーダルが出ている間・書き込みの応答を待つ間は
+  // 取り直さず、閉じた・終わったあとに 1 回取り直す (#2201 U2。判断は hook)。最初の描画から読み込み中 (今までの初期値 true)
+  const receiver = useAiConsultationReceiver(fetchGoals, { initialLoadingKeys: [KEY_GOALS] });
+  const loading = receiver.isLoading(KEY_GOALS);
+  /** 開いたとき・作成・編集・削除のあとの読み込み (これまでどおり読み込み中の表示を出す) */
+  const reloadGoals = () => receiver.read({ loadingKeys: [KEY_GOALS] }, fetchGoals);
+
+  // receiver の参照は一生同じなので、この effect は開いたときの 1 回だけ走る (これまでどおり)
+  useEffect(() => {
+    void receiver.read({ loadingKeys: [KEY_GOALS] }, fetchGoals);
+  }, [receiver, fetchGoals]);
 
   const openCreateModal = () => {
     setCreateError(null);
@@ -141,6 +120,8 @@ export default function HealthGoalsPage() {
   const handleCreateGoal = async () => {
     if (!newGoal.target_value) return;
 
+    // 作成の送信は書き込みの窓の中 (応答を待つ間に来た取り直しは置かず、終わったら 1 回取り直す。#2206 G1)
+    const endWrite = receiver.beginWrite();
     setCreating(true);
     setCreateError(null);
     try {
@@ -167,6 +148,8 @@ export default function HealthGoalsPage() {
     } catch (error) {
       console.error('Failed to create goal:', error);
       setCreateError('目標の作成に失敗しました');
+    } finally {
+      endWrite();
     }
     setCreating(false);
   };
@@ -197,6 +180,8 @@ export default function HealthGoalsPage() {
       return;
     }
 
+    // 編集の送信は書き込みの窓の中 (#2206 G1)
+    const endWrite = receiver.beginWrite();
     setSavingEdit(true);
     setEditError(null);
     try {
@@ -219,6 +204,8 @@ export default function HealthGoalsPage() {
     } catch (error) {
       console.error('Failed to update goal:', error);
       setEditError('更新に失敗しました');
+    } finally {
+      endWrite();
     }
     setSavingEdit(false);
   };
@@ -227,7 +214,9 @@ export default function HealthGoalsPage() {
     if (!deleteConfirm) return;
     const id = deleteConfirm;
     setDeleteConfirm(null);
-    const endWrite = pendingWrites.begin();
+    // 削除の送信の応答を待っている間に来た AI 相談の成功では取り直さず、終わったら 1 回取り直す (#2201 U2。削除の前の一覧を
+    // 読んだ取り直しの応答が、削除した目標を一覧に戻さないため)。判断は hook (#2206 G1)
+    const endWrite = receiver.beginWrite();
     try {
       const res = await fetch(`/api/health/goals/${id}`, {
         method: 'DELETE',
