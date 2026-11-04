@@ -396,14 +396,14 @@ const DAY_MENU_MAX_OFFSET_DAYS = 14;
 /**
  * JST の暦日 day (YYYY-MM-DD) を offsetDays 日ずらした暦日 (#2235 I8)。暦の計算 (addDaysToDate) だけで求めるので、端末の
  * タイムゾーンに左右されない (以前は端末の 0 時の Date を setDate でずらしてから JST の日付にしていて、端末が JST より東だと
- * 1 日戻った)。描画中に呼ぶので投げない: ずらした先が暦の計算で扱える範囲の外 (addDaysToDate の RangeError) なら null
+ * 1 日戻った)。描画中に呼ぶので投げない: ずらした先が暦の計算で扱える範囲の外なら null (addDaysToDate が投げるのは、範囲の外と
+ * 形の違う日付の RangeError だけ。day は todayLocal の YYYY-MM-DD なので、ここで投げうるのは範囲の外だけ)
  */
 function shiftCalendarDayOrNull(day: string, offsetDays: number): string | null {
   try {
     return addDaysToDate(day, offsetDays);
-  } catch (e) {
-    if (e instanceof RangeError) return null;
-    throw e;
+  } catch {
+    return null;
   }
 }
 
