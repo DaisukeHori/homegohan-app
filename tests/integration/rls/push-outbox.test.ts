@@ -86,9 +86,9 @@ const later = (ms: number) => new Date(Date.now() + ms).toISOString();
 /** 時刻の比較の許容 (DB とテストの機械の時計のずれと、要求の往復の時間) */
 const CLOCK_TOLERANCE_MS = 30 * SECOND;
 
-/** 古い順に取る claim の先頭に来るよう、自分の行を 2000 年にする。1 行ごとに 1 秒ずらして順を固定する */
+/** 古い順に取る claim の先頭に来るよう、自分の行を 2000 年 (OLD_TIMESTAMP_YEAR。ファイルの末尾) にする。1 行ごとに 1 秒ずらして順を固定する */
 let oldSeq = 0;
-const oldTimestamp = () => new Date(Date.UTC(2000, 0, 1, 0, 0, oldSeq++)).toISOString();
+const oldTimestamp = () => new Date(Date.UTC(OLD_TIMESTAMP_YEAR, 0, 1, 0, 0, oldSeq++)).toISOString();
 
 // ---------------------------------------------------------------
 // 利用者・端末の行
@@ -948,7 +948,7 @@ describe('#1136 createOutboxStore (段 B)', () => {
     const deviceId = row.push_token_id;
     const store = createOutboxStore();
     const workerId = `rls-1136-store-${TS}`;
-
+    await expectOwnRowsAtHead('queued', [row.id]); // 上限 1 の claim の前提: 自分の行より古い、取られうるほかの行が無い (#2245 K6)
     const claimed = await store.claimQueued(workerId, 1, LEASE_SECONDS);
     expect(claimed.map((item) => item.id)).toEqual([row.id]);
     expect(claimed[0]).toMatchObject({ user_id: userId, push_token_id: deviceId, attempts: 0 });
@@ -1202,6 +1202,12 @@ describe('#1136 claim の前提を表から確かめる (#2235 I6)', () => {
     const stale = await seedStaleSentRows('receipt-stale', 'w-receipt-stale', LEGACY_RECEIPT_CLAIM_HEADROOM + 1);
     const ids = await seedReceiptsOutOfPhysicalOrder('receipt-crowded', 'w-receipt-crowded');
 
+    // 前提: 自分の行より前に見うる行は、この検査が作った stale と ids だけ (前回の実行の残りは beforeAll の purgeLeftoverRows が消す)。
+    // 下の完全一致 (見つける行 == stale・上限 == stale.length + ids.length) が赤になったとき、表に残ったほかの行のせいか、部品の誤りかを見分ける (#2245 K6)
+    expect(
+      (await claimRowsAtOrBefore('receipt', ids)).map((r) => r.id).sort(),
+      '前提: 自分の行 (receipt) より前に見うる行は、この検査が作った行だけ (表にほかの行が残っていない)',
+    ).toEqual([...stale, ...ids].sort());
     // 上限 1 の検査の前提の検査は、自分の行より前の古い行を (ほかの行を混ぜずに) 全部見つける
     expect((await foreignClaimableRowsAhead('receipt', ids)).sort()).toEqual([...stale].sort());
     // 上限は、自分の行より前の行を全部数えた数になる (直す前の上限では足りない)
@@ -1221,5 +1227,81 @@ describe('#1136 claim の前提を表から確かめる (#2235 I6)', () => {
     const claimed = await claimReceiptsAllAtOnce('w-receipt-crowded', ids);
     expect(claimed).toHaveLength(ids.length);
     for (const row of claimed) expect(row).toMatchObject({ status: 'sent', worker_id: 'w-receipt-crowded', receipt_checked_at: null });
+  });
+});
+
+// ================================================================
+// 前回の実行の残りを消す (#2245 K6)
+//   この節もファイルの末尾に置く (上の節と同じく、前の節の行番号をずらさないため。共通の beforeAll に行を足さず、ここで beforeAll を足す)
+// ================================================================
+/**
+ * oldTimestamp が自分の行に入れる年。実際の送信待ち・送った行の時刻 (今) より十分に古く、claim の古い順で必ず先頭に来る年にする。
+ * ここに置くのは、前の節の行番号をずらさないため (oldTimestamp は呼ばれたときにこれを読む)
+ */
+const OLD_TIMESTAMP_YEAR = 2000;
+/** その年の次の年の初め。これより前の next_attempt_at / sent_at を持つ、このファイルの種類 (TEST_KIND) の行は、claim の先頭に来うる前回の実行の残り */
+const OLD_TIMESTAMP_END = new Date(Date.UTC(OLD_TIMESTAMP_YEAR + 1, 0, 1)).toISOString();
+/** purgeLeftoverRows が消さないことを確かめるための、TEST_KIND ではない種類 (ほかのテスト・worker の行の代わり) */
+const OTHER_TEST_KIND = 'rls_1136_push_outbox_other';
+
+/**
+ * 前回の実行が途中で止まって残った、このファイルの 2000 年の行 (TEST_KIND の、送信待ちの next_attempt_at か receipt の確認待ちの sent_at が
+ * 2000 年の行) を消す。afterEach は今回 seed した行 (seededIds) だけを、afterAll は今回の利用者の行 (CASCADE) だけを消すので、前回の行は
+ * 残り、上限 1 の claim の前提 (expectOwnRowsAtHead) と上限の数 (claimLimitCovering) の完全一致を崩す。
+ * TEST_KIND はこのファイルの enqueue だけが使う種類なので、ほかのテストの行・worker の本物の種類の行は消さない。今回の実行の 2000 年の行は
+ * テストごとに afterEach が消すので、テストの間に呼んでもほかのテストの行には当たらない
+ */
+async function purgeLeftoverRows(): Promise<void> {
+  const { error } = await srAdmin
+    .from('push_outbox')
+    .delete()
+    .eq('kind', TEST_KIND)
+    .or(`next_attempt_at.lt."${OLD_TIMESTAMP_END}",sent_at.lt."${OLD_TIMESTAMP_END}"`);
+  if (error) throw new Error(`delete leftover push_outbox: ${error.message}`);
+}
+
+beforeAll(async () => {
+  await purgeLeftoverRows();
+}, 60_000);
+
+describe('#1136 前回の実行の残りを消す (#2245 K6)', () => {
+  it('purgeLeftoverRows は、TEST_KIND の 2000 年の行 (送信待ち・receipt の確認待ち) だけを消し、ほかの種類の行と今の時刻の行は残す', async () => {
+    // 前回の実行が残した形: 2000 年の送信待ち (取られていない・リースの切れた) と、2000 年に送った確認待ち
+    // (送った行を先に作る。seedClaimed の上限 1 の claim の前に、ほかの 2000 年の行を置かない)
+    const userId = await newUser('purge');
+    const sent = await seedClaimed(userId, 'purge-sent', 'w-purge');
+    expect((await complete(sent.id, 'w-purge', 'ticket-purge')).data).toBe(true);
+    // sent_at の条件だけで当たるように、送信待ちの時刻は今にする
+    await updateRows([sent.id], { sent_at: oldTimestamp(), next_attempt_at: new Date().toISOString() });
+    const queued = await seedQueued(userId, 'purge-queued');
+    const leaseLapsed = await seedQueued(userId, 'purge-lease-lapsed');
+    await updateRows([leaseLapsed.id], { lease_expires_at: ago(SECOND), worker_id: 'w-purge-dead' });
+
+    // 残す行: ほかの種類の 2000 年の行と、TEST_KIND の今の時刻の行
+    const keepUserId = await newUser('purge-keep');
+    await addDevice(keepUserId, tokenFor('purge-keep'));
+    const other = await srAdmin.rpc('enqueue_push_notification', { p_user_id: keepUserId, p_kind: OTHER_TEST_KIND, p_payload: {} });
+    expect(other.error).toBeNull();
+    expect(other.data).toBe(1);
+    expect(await enqueueCount(keepUserId, 'event:purge-keep')).toBe(1);
+    const keepRows = await rowsOf(keepUserId);
+    const otherKind = keepRows.find((r) => r.kind === OTHER_TEST_KIND);
+    const current = keepRows.find((r) => r.kind === TEST_KIND);
+    if (!otherKind || !current) throw new Error('purge-keep の行が見つかりません');
+    await updateRows([otherKind.id], { next_attempt_at: oldTimestamp() });
+    seededIds.push(otherKind.id);
+
+    // 消す前は、2000 年の行が上限 1 の claim の前提の検査に見つかる (前回の残りが自分の行の前に来る形)
+    expect((await foreignClaimableRowsAhead('queued', [otherKind.id])).sort()).toEqual([queued.id, leaseLapsed.id].sort());
+
+    await purgeLeftoverRows();
+
+    expect(await rowById(queued.id)).toBeNull();
+    expect(await rowById(leaseLapsed.id)).toBeNull();
+    expect(await rowById(sent.id)).toBeNull();
+    expect(await rowById(otherKind.id)).toMatchObject({ kind: OTHER_TEST_KIND, status: 'queued' });
+    expect(await rowById(current.id)).toMatchObject({ kind: TEST_KIND, status: 'queued' });
+    // 消したあとは、自分の行より前に取られうるほかの行が無い
+    expect(await foreignClaimableRowsAhead('queued', [otherKind.id])).toEqual([]);
   });
 });
