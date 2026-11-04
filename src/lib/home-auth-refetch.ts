@@ -25,19 +25,24 @@ export type HomeLastReadAuthUserId = string | null | undefined;
  * supabase-js はタブを前に戻したときにも同じ利用者の SIGNED_IN を出すことがあり、そのたびに読み直すと AI つきの栄養の分析を読み、
  * LLM を呼んで安全弁 nutrition_advice_auto を使う (上限に当たると自動のコメントが止まる)。SIGNED_IN は、前回読んだ利用者と違うとき
  * (別の人のログイン・ログインしていなかった) だけ読み直す。まだ確かめていないとき・セッションに利用者が無いときは読み直す
- * (読み落とすより 1 回多く読む側に寄せる)。SIGNED_OUT・USER_UPDATED はいつも読み直す
+ * (読み落とすより 1 回多く読む側に寄せる)。SIGNED_OUT・USER_UPDATED はいつも読み直す。
+ * ホームの読み取りが自分でセッションを同期している (supabase.auth.setSession を呼んでいる) 間の SIGNED_IN は、その読み取りが
+ * 確かめる利用者の知らせなので読み直さない (#2235 I2。まだ確かめていないときでも。読み直すと AI つきの栄養の分析を 2 回読む)
  *
  * @param event onAuthStateChange の event
  * @param sessionUserId onAuthStateChange の session の利用者の id (session が無ければ null / undefined)
  * @param lastReadUserId 前回のホームの読み取りが確かめた利用者の id
+ * @param ownSessionSyncInProgress ホームの読み取りが自分で setSession を呼んでいる間か (#2235 I2)
  */
 export function shouldRefetchHomeOnAuthChange(
   event: AuthChangeEvent,
   sessionUserId: string | null | undefined,
   lastReadUserId: HomeLastReadAuthUserId,
+  ownSessionSyncInProgress: boolean,
 ): boolean {
   if (!HOME_REFETCH_AUTH_EVENTS.has(event)) return false;
   if (event !== "SIGNED_IN") return true;
+  if (ownSessionSyncInProgress) return false;
   if (lastReadUserId === undefined) return true;
   if (sessionUserId === null || sessionUserId === undefined) return true;
   return sessionUserId !== lastReadUserId;
