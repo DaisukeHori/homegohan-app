@@ -74,7 +74,8 @@ const KEY_TARGET_WEIGHT = 'targetWeight';
 interface GraphsFetchOptions {
   /**
    * 記録か健診を読めなかったときに今の線を残す (Realtime の読み直し。取り直し (read.mode が 'refetch') は指定しなくても残す)。
-   * 開いたとき・期間の切り替えの読み込みは読めた本文で線を作る
+   * 開いたとき・期間の切り替え・再読み込みは、読めた本文で線を作り、記録か健診を読めなければ線を消して失敗の知らせ
+   * (loadFailedPeriod) を置く (#2227 H3)
    */
   readonly keepOnFailure?: boolean;
 }

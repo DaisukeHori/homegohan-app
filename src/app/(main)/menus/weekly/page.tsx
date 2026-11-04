@@ -12,6 +12,7 @@ import {
   usePantryStore,
   useShoppingStore,
   shoppingRangeRequest,
+  SHOPPING_RANGE_UNAVAILABLE_MESSAGE,
   useFormDraftStore,
   convertV4ProgressToUIFormat,
   resumePendingGenerationAction,
@@ -36,7 +37,7 @@ import { useAiConsultationReceiver, type AiConsultationPlaceResult, type AiConsu
 import { BASE_MEAL_TYPES, EXTRA_MEAL_TYPES } from "@/lib/slot-builder";
 import { useNutritionFeedbackWatch } from "@/hooks/useNutritionFeedbackWatch";
 import { notifyMenuGenerated } from "@/lib/local-notification";
-import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, addDays, formatExpiry, formatDateJa, isUltimateModeWeeklyMenuRequest, PANTRY_EXPIRING_SOON_DAYS } from "@homegohan/shared";
+import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, isCalendarDate, addDays, formatExpiry, formatDateJa, isUltimateModeWeeklyMenuRequest, PANTRY_EXPIRING_SOON_DAYS } from "@homegohan/shared";
 // isUltimateModeWeeklyMenuRequest (究極モードの生成かの判定) は、Web とモバイルで同じ基準にするため @homegohan/shared に置く (#1609)
 import { MOCK_MENU_RESPONSE, HANDSON_TOUR_CONSTANTS } from "@homegohan/handson-tour-shared";
 import remarkGfm from "remark-gfm";
@@ -1085,11 +1086,13 @@ export default function WeeklyMenuPage() {
   });
 
   // UX2-16: ?date= があれば対象日を含む週・曜日を初期選択する
+  // ?date= は手で打てるので、isCalendarDate (CALENDAR_DATE_MIN 〜 CALENDAR_DATE_MAX の実在する YYYY-MM-DD) を通ったときだけ使い、
+  // 通らなければ今日の週のまま開く (#2245 K4。以前は確かめずに parseLocalDate していたので、2026-02-30 は 3/2 の週へ繰り上がり、
+  // 9999-12-31 は暦の計算で扱える範囲の端の週になって、買い物の範囲を選ぶ欄が日付の計算の RangeError で落ちた)
   useEffect(() => {
     const { date } = initialQueryParamsRef.current;
-    if (!date || !weekStartDayLoaded) return;
+    if (!date || !weekStartDayLoaded || !isCalendarDate(date)) return;
     const target = parseLocalDate(date);
-    if (Number.isNaN(target.getTime())) return;
     setWeekStart(getWeekStart(target, weekStartDay));
     const dayOfWeekRaw = target.getDay();
     const startOffset = weekStartDay === 'sunday' ? 0 : 1;
@@ -1106,7 +1109,9 @@ export default function WeeklyMenuPage() {
     const mealLabel = mealType && (mealType in MEAL_LABELS) ? MEAL_LABELS[mealType as MealType] : '食事';
     setSuccessMessage({
       title: '保存しました',
-      message: date ? `${formatDateJa(date)}の${mealLabel}に保存しました` : `${mealLabel}を保存しました`,
+      // 日付は週の初期選択と同じく isCalendarDate を通ったときだけ出す (#2245 K4。通らない ?date= を formatDateJa に渡すと、
+      // 2026-02-30 は「3月2日」、形の違う値は「NaN月NaN日」になる)
+      message: date && isCalendarDate(date) ? `${formatDateJa(date)}の${mealLabel}に保存しました` : `${mealLabel}を保存しました`,
     });
     router.replace('/menus/weekly', { scroll: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3716,11 +3721,28 @@ export default function WeeklyMenuPage() {
     }
     // 買い物リストの作成は、献立の料理名・食材を AI に送って整理する。未同意なら同意画面を出し、「同意しない」なら作らない
     if ((await ensureAiConsent()) === "declined") return;
+
+    // 範囲を計算 (#2245 K4: 作成中の表示を出す前に、try の中で求める。以前は作成中の表示を出したあとに try の外で求めていたので、
+    // 日付の計算が投げると作成中の表示が残った。表示中の週が扱える日付の外なら範囲は null で、作らずに知らせる)
+    const dateRange = (() => {
+      try {
+        return calculateDateRange();
+      } catch {
+        return null;
+      }
+    })();
+    if (dateRange === null) {
+      setSuccessMessage({
+        title: '買い物リストを作れません',
+        message: SHOPPING_RANGE_UNAVAILABLE_MESSAGE,
+        type: 'error',
+      });
+      setActiveModal(null);
+      return;
+    }
+
     setIsRegeneratingShoppingList(true);
     setShoppingListProgress({ phase: 'starting', message: '開始中...', percentage: 0 });
-
-    // 範囲を計算
-    const dateRange = calculateDateRange();
 
     // #91: 選択した日付範囲に献立データがあるか確認
     const hasMenuInRange = currentPlan.days.some(d => {
