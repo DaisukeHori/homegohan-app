@@ -366,6 +366,10 @@ export default function HealthGraphsPage() {
   // 読み込み中は前の期間のデータが残っているため、凡例も出さない
   const hasCheckupPoints = graphData.some(d => d.value !== null && d.fromCheckup);
   const showCheckupLegend = hasCheckupPoints && !loading;
+  // 目標との比較のカード (体重のみ)。読み込み中 (前の期間の値か、読めなかった後の空の記録が残っている)・記録を読めなかったときは出さない
+  // (最新の値が無いまま、目標の値そのものを「目標まであと」として出してしまう。#2227 H3・#2235 I4)。
+  // 目標体重は今までの `targetWeight &&` と同じく、null と 0 では出さない (比べ方を型で絞れる形にしただけ)
+  const showTargetComparison = metric === 'weight' && targetWeight != null && targetWeight !== 0 && !loading && !loadFailed;
 
   // SVGグラフを描画
   const renderGraph = () => {
@@ -845,9 +849,8 @@ export default function HealthGraphsPage() {
         </div>
       </div>
 
-      {/* 目標との比較（体重のみ） */}
-      {/* 記録を読めなかったときは出さない (最新の値が無いまま「目標まであと」を目標の値で出してしまう。#2227 H3) */}
-      {metric === 'weight' && targetWeight && !loadFailed && (
+      {/* 目標との比較（体重のみ）。読み込み中・記録を読めなかったときは出さない (showTargetComparison) */}
+      {showTargetComparison && (
         <div className="px-4 mb-4">
           <div 
             className="p-4 rounded-xl"
@@ -860,10 +863,13 @@ export default function HealthGraphsPage() {
                   目標体重: {targetWeight}kg
                 </p>
                 {/* #1051 UX3-08: 「あと」に符号付きの差分をそのまま出すと増量目標で
-                    負の値になり意味が伝わらないため、絶対値+「目標まで」に統一する */}
-                <p className="text-sm" style={{ color: colors.successText }}>
-                  目標まであと {Math.abs((graphData.filter(d => d.value !== null).slice(-1)[0]?.value || 0) - targetWeight).toFixed(1)}kg
-                </p>
+                    負の値になり意味が伝わらないため、絶対値+「目標まで」に統一する。
+                    最新の値が無い (記録が 0 件) ときは差を出さない (0 との差 = 目標の値そのものになる。#2235 I4) */}
+                {latestValue !== null && (
+                  <p className="text-sm" style={{ color: colors.successText }}>
+                    目標まであと {Math.abs(latestValue - targetWeight).toFixed(1)}kg
+                  </p>
+                )}
               </div>
             </div>
           </div>
