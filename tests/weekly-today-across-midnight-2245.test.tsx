@@ -130,7 +130,7 @@ vi.mock('@/lib/supabase/client', () => {
 const { default: WeeklyMenuPage } = await import('@/app/(main)/menus/weekly/page');
 const { ImproveMealModal } = await import('@/app/(main)/menus/weekly/_components/modals/ImproveMealModal');
 const { FridgeModal } = await import('@/app/(main)/menus/weekly/_components/modals/FridgeModal');
-const { usePantryStore } = await import('@/app/(main)/menus/weekly/_state');
+const { usePantryStore } = await import('@/app/(main)/menus/weekly/_state/pantryStore');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
