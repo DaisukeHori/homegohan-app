@@ -143,6 +143,7 @@ PostHog による利用状況の計測は採用しない (オーナー判断 202
 
 DB の日付列は JST の暦日で、Vercel / Edge の実行環境は UTC (#1433・#1463)。サーバーの「今日」・期間・月は `src/lib/jst-day-ranges.ts` (`jstToday` / `jstDayOffset` / `mondayWeekRange` / `sundayWeekRange` / `jstDayRangeTimestamps` など。Edge は `supabase/functions/_shared/jst-date.ts`)、日付のずらしは `addDaysToDate` (`@/lib/date-utils`) で求め、`toISOString().slice(0, 10)`・`parseLocalDate` / `setDate` + `formatLocalDate` のようなローカル時刻・UTC の暦日に頼る書き方をしない。外から受け取った日付は `isCalendarDate` (Zod は `src/lib/calendar-date-schema.ts` の `CalendarDateSchema`) で確かめてから DB や上の関数に渡す (存在しない日付が DB まで届くと 500、範囲の外の日付は `addDaysToDate` が RangeError)。timestamptz の列を日付で絞るときは `jstDayRangeTimestamps` / `jstOptionalDayRangeTimestamps` で JST 0 時の時刻にする。
 `tests/jst-today-source-scan.test.ts` が書き方 (規則 A〜J) を構文木で検査し、直した箇所が JST の関数を呼び続けていることも確かめる (例外は理由つきの許可リストに書く)。
+クライアントの今日は `todayLocal()`、7 日分などの並びは `calendarDaysEndingAt` / `addDaysToDate` の暦の計算で作る (`packages/shared/src/date-utils.ts`)。YYYY-MM-DD の表示は `formatDateJa` (年月日を読むだけなら `parseLocalDate` でよい。ずらすのには使わない)。端末の暦で日付を読み違える 3 つの形 (setDate でずらす・暦日を new Date に渡す・今の時刻を端末の暦で読む) は `tests/date-shift-inventory-2235.test.ts` が棚卸しの表で見張る。
 
 ### 栄養計算入力
 
