@@ -325,6 +325,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   // Web の AIChatBubble と同じ)。同じ文を続けて送ったときに、前の送信の保存行を今回の送信と取り違えない
   const unconfirmedSendsRef = useRef<UnconfirmedSend[]>([]);
   const claimedSavedUserIdsRef = useRef<string[]>([]);
+  // 「最新の会話を読み込む」で取り直している時間切れの送信 (sent) と、その最中に案内を外したか (setAside。相談の切り替え・
+  // 新しい相談・次の送信)。外した送信を確かめられなかった送信として覚えるかは、取り直しの結果で決める (#2227 H1。setAsideTimedOutSend)
+  const reloadingTimedOutSendRef = useRef<{ sent: TimedOutSend; setAside: boolean } | null>(null);
   // 前の依頼の記録が実行中の印のままだったときの、読み直しの予約 (#2201 U3)。シートを外すときに取り消す
   const previousRequestRecheckTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
@@ -456,12 +459,35 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     claimedSavedUserIdsRef.current = [...claimedSavedUserIdsRef.current, id];
   }
 
+  /** 送信に当てた印を外す (確かめられなかった送信として覚え直した送信が、後の取り直しでこの行を自分のものとして当てられるように) */
+  function releaseSavedUserMessageId(id: string) {
+    claimedSavedUserIdsRef.current = claimedSavedUserIdsRef.current.filter((claimed) => claimed !== id);
+  }
+
   /** 届いたかを確かめられなかった送信として覚える (#2227 H1。後の取り直しで保存行を探す) */
   function rememberUnconfirmedSend(sent: TimedOutSend) {
     unconfirmedSendsRef.current = [
       ...unconfirmedSendsRef.current,
       { sessionId: sent.sessionId, text: sent.text, knownMessageIds: sent.knownMessageIds },
     ];
+  }
+
+  /**
+   * 時間切れの案内 (timedOutSend) を外す。案内を消す前に、まだ届いたかを確かめていない送信 (delivered が偽) は、確かめられなかった
+   * 送信として覚える (#2227 H1。相談の切り替え・新しい相談・次の送信の 3 か所はここを通る)。覚えないと、相談を開き直したときの
+   * 取り直し (loadMessages → settleUnconfirmedSends) がこの送信を知らず、送った文が保存済みでも入力欄に戻した文が消えなかった
+   * (そのまま送ると同じ相談に二重に届く。Web は入力欄に戻すときに必ず覚える)。
+   * 「最新の会話を読み込む」で取り直している最中の送信は、ここでは覚えず印 (setAside) だけ付ける。取り直しの結果
+   * (reloadAfterTimeout・showReloadedConversation) で覚えるかを決める (先に覚えると、開き直しの取り直しがこの送信の保存行を
+   * 当ててしまい、取り直しの結果が『届いていません』に変わる)
+   */
+  function setAsideTimedOutSend() {
+    if (timedOutSend && !timedOutSend.delivered) {
+      const reloading = reloadingTimedOutSendRef.current;
+      if (reloading && reloading.sent === timedOutSend) reloading.setAside = true;
+      else rememberUnconfirmedSend(timedOutSend);
+    }
+    setTimedOutSend(null);
   }
 
   /**
@@ -507,14 +533,20 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     const sent = timedOutSend;
     if (!sent || reloadingAfterTimeout) return;
     setReloadingAfterTimeout(true);
+    const reloading = { sent, setAside: false };
+    reloadingTimedOutSendRef.current = reloading;
     try {
       const loaded = await fetchMessages(sent.sessionId, { reload: true });
       if (loaded === null) {
+        // 取り直しの最中に案内を外していたら (setAsideTimedOutSend)、もう「最新の会話を読み込む」で確かめられないので、
+        // 確かめられなかった送信として覚える (#2227 H1)
+        if (reloading.setAside) rememberUnconfirmedSend(sent);
         Alert.alert("エラー", TIMEOUT_RELOAD_FAILED_MESSAGE);
         return;
       }
-      await showReloadedConversation(sent, loaded);
+      await showReloadedConversation(sent, loaded, { setAside: () => reloading.setAside });
     } finally {
+      if (reloadingTimedOutSendRef.current === reloading) reloadingTimedOutSendRef.current = null;
       setReloadingAfterTimeout(false);
     }
   }
@@ -530,9 +562,11 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
    * 保存行の id を TimedOutSend に持たせ (savedUserMessageId)、次の「最新の会話を読み込む」ではその id で送った文と返答を探す
    * (#2227 H1。本文の一致で探すと、この送信に当てた行として除かれ、届いていた送信を『届いていません』と取り違えた。timedOutSendReloadOf)。
    * 取り直しの最中に別の相談に切り替えていたら、会話・入力欄・案内は変えない (#2227 H1。前の相談の会話を今の画面に書かない。
-   * データの更新の知らせ・前の依頼の読み直しは続ける)
+   * データの更新の知らせ・前の依頼の読み直しは続ける)。「最新の会話を読み込む」の取り直しの最中に案内を外して
+   * (options.setAside。setAsideTimedOutSend) 切り替えた送信が届いていたら、確かめられなかった送信として覚え直し、保存行の
+   * 印も外す (#2227 H1。入力欄に戻した文は、前の相談を開き直したときの取り直しで消す)
    */
-  async function showReloadedConversation(sent: TimedOutSend, loaded: Message[]) {
+  async function showReloadedConversation(sent: TimedOutSend, loaded: Message[], options?: { setAside: () => boolean }) {
     // 保存行の id が分かっている送信 (届いているが返答がまだ無かった送信の 2 回目以降の取り直し) は、その行をもうこの送信に
     // 当てている (確かめられなかった前の送信はこの行を当てない) ので、今回の送信の一致を前の送信から守らなくてよい
     const knowsSavedRow = sent.savedUserMessageId !== undefined;
@@ -550,7 +584,13 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       recheckPreviousRequestLater(previousRequest.recheck.replyId, previousRequest.recheck.replyHasProposal);
     }
     if (outcome === "not-delivered") rememberUnconfirmedSend(sent);
-    if (currentSessionIdRef.current !== sent.sessionId) return;
+    if (currentSessionIdRef.current !== sent.sessionId) {
+      if (outcome !== "not-delivered" && savedUser && options?.setAside() === true) {
+        releaseSavedUserMessageId(savedUser.id);
+        rememberUnconfirmedSend(sent);
+      }
+      return;
+    }
     setMessages(loaded.length > 0 ? [...loaded, ...previousRequest.notes] : [WELCOME_MESSAGE]);
     if (outcome === "not-delivered") {
       setTimedOutSend(null);
@@ -611,7 +651,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       }>("/api/ai/consultation/sessions", { title: "AI相談" });
       showSessionId(createRes.session.id);
       setMessages([WELCOME_MESSAGE]);
-      setTimedOutSend(null);
+      setAsideTimedOutSend();
       setShowSessionList(false);
       // セッション一覧を更新
       const res = await api.get<{ sessions: Session[] }>(
@@ -625,7 +665,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
   async function selectSession(sessionId: string) {
     showSessionId(sessionId);
-    setTimedOutSend(null);
+    // 確かめていない時間切れの送信は覚えてから案内を外す (#2227 H1。開き直した相談の取り直しで、届いていたら入力欄の文を消す)
+    setAsideTimedOutSend();
     setShowSessionList(false);
     await loadMessages(sessionId);
   }
@@ -744,9 +785,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     setInputText("");
     setStreamingContent(null);
     // 「最新の会話を読み込む」で確かめる前に次を送ったら、前の送信は確かめられなかった送信として覚える (#2227 H1。同じ文を
-    // 送り直したときに、前の送信の保存行を今回の送信と取り違えない)
-    if (timedOutSend && !timedOutSend.delivered) rememberUnconfirmedSend(timedOutSend);
-    setTimedOutSend(null);
+    // 送り直したときに、前の送信の保存行を今回の送信と取り違えない。setAsideTimedOutSend)
+    setAsideTimedOutSend();
 
     const optimistic: Message = {
       id: `local-${Date.now()}`,
