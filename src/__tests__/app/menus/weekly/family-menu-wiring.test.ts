@@ -12,7 +12,7 @@ const pageSource = fs.readFileSync(PAGE_TSX_PATH, 'utf-8');
 /** loadFamilyData の useCallback の本体 (次の useEffect まで) */
 function loadFamilyDataBlock(): string {
   const match = pageSource.match(
-    /const loadFamilyData = useCallback\(async \(mode: FamilyLoadMode = 'mount', refetchTicket: AiConsultationFetchTicket \| null = null\) => \{[\s\S]*?\n {2}\}, \[familyLoadStream\]\);/,
+    /const loadFamilyData = useCallback\(async \(read: AiConsultationRead\) => \{[\s\S]*?\n {2}\}, \[\]\);/,
   );
   expect(match, 'loadFamilyData の useCallback が見つかりません').not.toBeNull();
   return match![0];
@@ -38,29 +38,34 @@ describe('page.tsx: 週間献立の家族の表示の配線 (#1584 の 1)', () =
   it('loadFamilyData が fetchFamilyMemberNamesResult と applyFamilyMemberNames を呼び、setFamilyMembers に渡すのは applyFamilyMemberNames の結果', () => {
     const block = loadFamilyDataBlock();
     expect(block).toMatch(/await fetchFamilyMemberNamesResult\(\)/);
-    // 名前の API を読めたら その名前、取り直しで読めなかったら今出している名前 (keepShownFamilyMemberNames) を当てる (#2201 U1)。
-    // 置くのは取得の流れの place を通す (最後に始めた読み込みで、取り直しの札が止めていないときだけ。#2201 U1 + U2)
+    // 名前の API を読めたら その名前、開いたとき ('mount') に読めなかったら display_name のまま。取り直しで読めなかったら何も置かない
+    // (出ている名前を残す。#2201 U1 を #2206 G1 の形で守る)。全部を読んでから KEY_FAMILY に 1 回だけ置く (途中の段で置かない。§6.2)
     expect(block).toMatch(
-      /order\.place\(\(\) =>\s*setFamilyMembers\(\(shown\) =>\s*applyFamilyMemberNames\(\s*rows,\s*namesResult\.ok \? namesResult\.names : mode === 'refetch' \? keepShownFamilyMemberNames\(rows, shown\) : new Map\(\),\s*\),\s*\),\s*\);/,
+      /if \(!namesResult\.ok && read\.mode === 'refetch'\) return;\s*const rows = members as FamilyMember\[\];\s*read\.place\(KEY_FAMILY, \(\) => \{\s*setCurrentUserId\(user\.id\);\s*setFamilyId\(familyIdRead\);\s*setFamilyMembers\(applyFamilyMemberNames\(rows, namesResult\.ok \? namesResult\.names : new Map\(\)\)\);\s*\}\);/,
     );
+    // 今出している名前を当て直す書き方 (keepShownFamilyMemberNames) に戻っていない
+    expect(block).not.toMatch(/keepShownFamilyMemberNames/);
     // 名前を当てない一覧を渡す書き方 (setFamilyMembers(members as FamilyMember[])) に戻っていない
     expect(block).not.toMatch(/setFamilyMembers\(members as FamilyMember\[\]\)/);
     expect(pageSource).toMatch(
-      /import \{\s*applyFamilyMemberNames,\s*fetchFamilyMemberNamesResult,\s*keepShownFamilyMemberNames,\s*\} from "@\/lib\/membership\/family-member-names";/,
+      /import \{\s*applyFamilyMemberNames,\s*fetchFamilyMemberNamesResult,\s*\} from "@\/lib\/membership\/family-member-names";/,
     );
   });
 
   it('loadFamilyData は useCallback で、family_id が無いとき setFamilyId(null) と setFamilyMembers([]) を呼ぶ (プロフィールの読み取りの失敗では呼ばない)', () => {
     const block = loadFamilyDataBlock();
     // 読み取りの失敗 (profileError) では一覧を空にしない (#2201 U1。家族の切り替えを消さない)。
-    // 置くのは最後に始めた読み込みで、取り直しの札が止めていないときだけ (取得の流れの place。#2201 U1 + U2)
+    // 置くのは KEY_FAMILY の place (古い応答・取り直しの番兵の判断は place の中。#2206 G1)
     expect(block).toMatch(
-      /if \(profileError\) return;\s*const familyIdRead = profile\?\.family_id \?\? null;\s*if \(familyIdRead === null\) \{\s*order\.place\(\(\) => \{\s*setFamilyId\(null\);\s*setFamilyMembers\(\[\]\);\s*\}\);\s*return;\s*\}/,
+      /if \(profileError\) return;\s*const familyIdRead = profile\?\.family_id \?\? null;\s*if \(familyIdRead === null\) \{\s*read\.place\(KEY_FAMILY, \(\) => \{\s*setCurrentUserId\(user\.id\);\s*setFamilyId\(null\);\s*setFamilyMembers\(\[\]\);\s*\}\);\s*return;\s*\}/,
     );
-    expect(block).toMatch(/const order = familyLoadStream\.begin\(refetchTicket\);/);
-    expect(pageSource).toMatch(/const familyLoadStream = useAiConsultationFetchStream\(\);/);
+    expect(pageSource).not.toMatch(/familyLoadStream/);
+    // 途中の段で置かない (#2206 G1 §6.2): 自分の id は、KEY_FAMILY に置く apply の最初の行でだけ置く (家族が無い・一覧を読めない・読めた の 3 つ)
+    const SET_CURRENT_USER_ID_PLACES = 3;
+    expect(block.match(/setCurrentUserId\(/g) ?? []).toHaveLength(SET_CURRENT_USER_ID_PLACES);
+    expect(block.match(/read\.place\(KEY_FAMILY, \(\) => \{\s*setCurrentUserId\(user\.id\);/g) ?? []).toHaveLength(SET_CURRENT_USER_ID_PLACES);
     // 開いたときに呼ぶ effect
-    expect(pageSource).toMatch(/useEffect\(\(\) => \{\s*void loadFamilyData\(\);\s*\}, \[loadFamilyData\]\);/);
+    expect(pageSource).toMatch(/useEffect\(\(\) => \{\s*void receiver\.read\(\{\}, loadFamilyData\);\s*\}, \[receiver, loadFamilyData\]\);/);
     // effect の中の関数 (const loadFamilyData = async () =>) に戻っていない
     expect(pageSource).not.toMatch(/const loadFamilyData = async \(\) =>/);
   });
@@ -73,7 +78,7 @@ describe('page.tsx: 週間献立の家族の表示の配線 (#1584 の 1)', () =
     const body = onChange![1];
     expect(body).toMatch(/setView\(next\);/);
     expect(body).toMatch(/familyMenu\.reload\(\);/);
-    expect(body).toMatch(/void loadFamilyData\(\);/);
+    expect(body).toMatch(/void receiver\.read\(\{\}, loadFamilyData\);/);
   });
 
   it('BASE_MEAL_TYPES と EXTRA_MEAL_TYPES の map の中に FamilyMenuMealRows がある', () => {

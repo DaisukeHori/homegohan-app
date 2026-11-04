@@ -107,6 +107,8 @@ describe('献立の ♥ の配線 (dish_favorites。#2011)', () => {
     const beforeTry = toggleCode.slice(0, toggleCode.indexOf('try {'));
     expect(beforeTry).toContain('const session = favoriteSessionRef.current;');
     expect(beforeTry).toContain('const isCurrentSession = () => favoriteSessionRef.current === session;');
+    // DELETE・POST は書き込みの窓の中 (#2206 G1。W-47・W-48。窓は try の直前に開け、finally の最後に閉じる)
+    expect(beforeTry).toContain('const endWrite = receiver.beginWrite();');
 
     // DELETE は id で、POST は料理の写しで
     expect(toggleTryCode).toContain("await fetch(`/api/favorites/${encodeURIComponent(favoriteId)}`, { method: 'DELETE' });");
@@ -139,7 +141,7 @@ describe('献立の ♥ の配線 (dish_favorites。#2011)', () => {
 
   it('W-4「handleToggleFavorite の catch と finally は isCurrentSession() のときだけ setIsFavorite(prev)・setIsFavoriteLoading(false) を呼ぶ」', () => {
     expect(toggleCatchFinallyCode).toMatch(
-      /^\} catch \{\s*if \(isCurrentSession\(\)\) setIsFavorite\(prev\);\s*\} finally \{\s*if \(isCurrentSession\(\)\) setIsFavoriteLoading\(false\);\s*\}\s*\};/,
+      /^\} catch \{\s*if \(isCurrentSession\(\)\) setIsFavorite\(prev\);\s*\} finally \{\s*if \(isCurrentSession\(\)\) setIsFavoriteLoading\(false\);\s*endWrite\(\);\s*\}\s*\};/,
     );
     // catch・finally に回を見ない書き込みが無い
     const writes = toggleCatchFinallyCode.split('\n').filter((line) => STATE_WRITE_PATTERN.test(line));

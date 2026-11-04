@@ -27,17 +27,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 // #1031: PantryItem/ShoppingList は store selector 経由の型推論に一本化したため import 不要になった
-import type { DailyMeal, PlannedMeal, ShoppingListItem, MealMode, MealDishes, DishDetail, TargetSlot, MenuGenerationConstraints, ServingsConfig, DayOfWeek, MealServings, WeekStartDay } from "@/types/domain";
+import type { DailyMeal, PlannedMeal, ShoppingList, ShoppingListItem, MealMode, MealDishes, DishDetail, TargetSlot, MenuGenerationConstraints, ServingsConfig, DayOfWeek, MealServings, WeekStartDay } from "@/types/domain";
 import type { CatalogProductSummary } from "@/types/catalog";
 import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
-import {
-  useAiConsultationDataRefetch,
-  useAiConsultationFetchStream,
-  useAiConsultationPendingWrites,
-  useAiConsultationRefetchRun,
-  type AiConsultationFetchTicket,
-} from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationReceiver, type AiConsultationPlaceResult, type AiConsultationRead } from "@/hooks/useAiConsultationReceiver";
 import { BASE_MEAL_TYPES, EXTRA_MEAL_TYPES } from "@/lib/slot-builder";
 import { useNutritionFeedbackWatch } from "@/hooks/useNutritionFeedbackWatch";
 import { notifyMenuGenerated } from "@/lib/local-notification";
@@ -62,7 +56,6 @@ import { familyMenuMealsOf, partitionFamilyMenuMembers, visibleOtherMemberIdsOf 
 import {
   applyFamilyMemberNames,
   fetchFamilyMemberNamesResult,
-  keepShownFamilyMemberNames,
 } from "@/lib/membership/family-member-names";
 import { FridgeModal } from "./_components/modals/FridgeModal";
 import { AddFridgeModal } from "./_components/modals/AddFridgeModal";
@@ -495,8 +488,138 @@ const isDateInWeek = (date: Date, weekStartDate: Date): boolean => {
 // Main Component
 // ============================================
 
-/** 家族の情報の読み込みが、開いたとき・切り替えの適用 ('mount') か、AI 相談の成功の取り直し ('refetch'。名前の API の失敗では今の名前を残す) か */
-type FamilyLoadMode = 'mount' | 'refetch';
+// ============================================
+// AI 相談の成功の取り直しの受け手 (#2206 G1。設計書 docs/design/cross/26-ai-consultation-refetch-receivers.md §7.4・§9 #16)
+// ============================================
+
+/** 置き場所の鍵 (#2206 G1)。対象を替えて出すものは対象を含める */
+const planKey = (weekStartKey: string) => `plan:${weekStartKey}`;
+const mealDatesKey = (monthKey: string) => `mealDates:${monthKey}`; // monthKey = 'YYYY-MM'
+const KEY_SHOPPING_LIST = "shoppingList";
+/**
+ * 今使っている買い物リスト (activeShoppingList。品目の追加・レシピの材料の追加の送り先の id) の鍵 (#2206 G1 R5)。置くのは
+ * 買い物リストの再生成の完了の読み直し (readRegeneratedShoppingList) だけ。品目の鍵 KEY_SHOPPING_LIST と分ける: 同じ鍵にすると、
+ * 完了の読み直しより新しい読み取り (取り直し・週の読み込み) が品目を先に置いたときに、送り先の一覧が置かれなくなる
+ * (週の応答から activeShoppingList を置く経路は今も無い)
+ */
+const KEY_ACTIVE_SHOPPING_LIST = "activeShoppingList";
+const KEY_PANTRY = "pantry";
+const KEY_SETTINGS = "settings";
+const KEY_FAMILY = "family";
+/**
+ * 全画面のスピナーの鍵 (読み込み中だけの鍵。§6.4)。fetchPlan が立て、最後の fetchPlan の読み取りの終わりで下りる。
+ * 表示中の週の献立を置いた読み取り (取り直し・生成の完了の読み直し・書き込みのあとの読み直しを含む) も、
+ * releaseWeekLoadingIfShown で何もしない apply で置いて下ろす (前の refreshMealPlan の place の中の setLoading(false)。S-22)
+ */
+const KEY_WEEK_LOADING = "weekLoading";
+/** 食事の完了の切り替えを送るまでの待ち (ミリ秒)。連打を 1 回にまとめる (#322 の 250ms をそのまま名前に) */
+const MEAL_TOGGLE_DEBOUNCE_MS = 250;
+/** 週の控え (weekDataCache) を使ってよい時間 (ミリ秒。今の 5 分をそのまま名前に。運用で変える値ではない) */
+const CACHE_TTL = 5 * 60 * 1000;
+/** 1 週の献立を読む範囲の最終日 = 週の初日 + 6 日 (GET /api/meal-plans の 7 日の範囲) */
+const MEAL_PLANS_WEEK_LAST_DAY_OFFSET = 6;
+/** 前後の週の先読みの、週の初日どうしの間の日数 (1 週) */
+const ADJACENT_WEEK_OFFSET_DAYS = 7;
+
+/** GET /api/meal-plans の応答。失敗 (非 ok) は null (控えに書かず・画面にも置かない) */
+const fetchWeekData = async (weekStartKey: string): Promise<MealPlansWeekResponse | null> => {
+  const res = await fetch(`/api/meal-plans?startDate=${weekStartKey}&endDate=${addDaysStr(weekStartKey, MEAL_PLANS_WEEK_LAST_DAY_OFFSET)}`);
+  if (!res.ok) return null;
+  return (await res.json()) as MealPlansWeekResponse;
+};
+
+/** 週の応答を控え (weekDataCache) に書く形にする (献立 0 件は plan: null。買い物リストは応答のまま) */
+const weekCacheDataOf = (week: MealPlansWeekResponse): WeekCacheData => {
+  const dailyMeals: MealPlanDay[] = week.dailyMeals ?? [];
+  return { plan: dailyMeals.length > 0 ? { days: dailyMeals } : null, shoppingList: week.shoppingList?.items ?? [] };
+};
+
+/**
+ * 週の応答の置き方の、呼び出し元ごとの違い (#2206 G1 R3)。今の呼び出し元ごとの置き方をそのまま名前にした (§7.4 の置き方の表)。
+ * 1 つの補助 applyWeekResponse に寄せても、呼び出し元ごとの置き方は変えない (変えるのは §6.7 の 5 点だけ)
+ */
+interface WeekPlacement {
+  /** 献立 0 件の応答: 'null' = 空の週として置く / 'keep' = 何も置かない (献立・控え・買い物リスト・カレンダーの印のどれも) */
+  readonly emptyPlan: "null" | "keep";
+  /** 買い物リスト: 'always' = 空でも置く / 'nonEmpty' = 品目があるときだけ置く / 'none' = 置かない */
+  readonly shoppingList: "always" | "nonEmpty" | "none";
+  /**
+   * 月のカレンダーの印: 'none' = 触らない / 'merge' = 献立のある日を足す (updateCalendarMealDatesFromDailyMeals) /
+   * 'sync' = 読んだ行のうち献立のある日を足し、献立の無い行の日を消す (syncCalendarMealDatesFromDailyMeals)
+   */
+  readonly calendar: "none" | "merge" | "sync";
+  /** 直近の食事の自動展開 (autoExpandNextMeal) を呼ぶか */
+  readonly expandNextMeal: boolean;
+}
+/** 週の読み込み (fetchPlan の控えミス)。買い物リストの「空でも置く」だけが今からの変更 (§6.7) */
+const WEEK_PLACEMENT_WEEK_READ: WeekPlacement = { emptyPlan: "null", shoppingList: "always", calendar: "none", expandNextMeal: true };
+/** 取り直し・refreshMealPlan の 6 か所 (今の refreshMealPlan と同じ) */
+const WEEK_PLACEMENT_REREAD: WeekPlacement = { emptyPlan: "null", shoppingList: "always", calendar: "merge", expandNextMeal: false };
+/** 生成の完了 (ポーリング・Realtime・再生成・改善) と写真の解析の結果 (今の直接の setCurrentPlan と同じ) */
+const WEEK_PLACEMENT_COMPLETION: WeekPlacement = { emptyPlan: "keep", shoppingList: "nonEmpty", calendar: "merge", expandNextMeal: false };
+/** 食事の追加のあとの読み直し (handleAddMealWithMode) */
+const WEEK_PLACEMENT_AFTER_ADD: WeekPlacement = { emptyPlan: "keep", shoppingList: "none", calendar: "merge", expandNextMeal: false };
+/** 削除・手入力の保存のあとの読み直し (confirmDeleteMeal・saveManualEdit。献立の無くなった日の印を消す。S-26) */
+const WEEK_PLACEMENT_AFTER_REMOVE: WeekPlacement = { emptyPlan: "null", shoppingList: "none", calendar: "sync", expandNextMeal: false };
+/** 並べ替えのあとの読み直し (reorderMeal) */
+const WEEK_PLACEMENT_AFTER_REORDER: WeekPlacement = { emptyPlan: "keep", shoppingList: "none", calendar: "none", expandNextMeal: false };
+
+/** 週の応答から食事を id で取る (追加した食事を手入力の編集 (命名) で開く。UX2-32) */
+const plannedMealOf = (week: MealPlansWeekResponse | null, mealId: string): PlannedMeal | undefined =>
+  (week?.dailyMeals ?? []).flatMap((day) => day.meals ?? []).find((meal) => meal.id === mealId);
+
+/** 月のカレンダーの印を読む範囲 (#2206 G1。今の 2 つの effect の数をそのまま名前にした。運用で変える値ではない) */
+/** 週の窓: 表示中の週の初日の何日前から (今の「前後 2 週間」の -14) */
+const CALENDAR_MEAL_DATES_DAYS_BEFORE_WEEK = 14;
+/** 週の窓: 表示中の週の初日の何日後まで (今の +28。表示中の週を含めて 4 週) */
+const CALENDAR_MEAL_DATES_DAYS_AFTER_WEEK = 28;
+/** 月の窓: 表示月の初日の前・末日の後に足す日数 (今の ±7) */
+const CALENDAR_MEAL_DATES_MONTH_PADDING_DAYS = 7;
+
+const shiftDays = (base: Date, days: number): Date => {
+  const shifted = new Date(base);
+  shifted.setDate(shifted.getDate() + days);
+  return shifted;
+};
+/** 週の窓 [始まり, 終わり] (今の「週が変わるタイミングで前後 2 週間をプリフェッチ」の effect と同じ範囲) */
+const weekWindowOf = (weekStart: Date): [Date, Date] => [
+  shiftDays(weekStart, -CALENDAR_MEAL_DATES_DAYS_BEFORE_WEEK),
+  shiftDays(weekStart, CALENDAR_MEAL_DATES_DAYS_AFTER_WEEK),
+];
+/** 月の窓 [始まり, 終わり] (今の「displayMonth が変わったときも追加でフェッチ」の effect と同じ範囲) */
+const monthWindowOf = (displayMonth: Date): [Date, Date] => {
+  const firstDay = new Date(displayMonth.getFullYear(), displayMonth.getMonth(), 1);
+  const lastDay = new Date(displayMonth.getFullYear(), displayMonth.getMonth() + 1, 0); // 翌月の 0 日 = 今月の末日
+  return [shiftDays(firstDay, -CALENDAR_MEAL_DATES_MONTH_PADDING_DAYS), shiftDays(lastDay, CALENDAR_MEAL_DATES_MONTH_PADDING_DAYS)];
+};
+/** その日の月の鍵 ('YYYY-MM') */
+const monthKeyOf = (date: Date): string => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+/** 範囲 [startDate, endDate] にかかる月の鍵 ('YYYY-MM') を古い順に */
+const monthKeysBetween = (startDate: Date, endDate: Date): string[] => {
+  const keys: string[] = [];
+  const cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+  const lastMonth = new Date(endDate.getFullYear(), endDate.getMonth(), 1);
+  while (cursor <= lastMonth) {
+    keys.push(monthKeyOf(cursor));
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+  return keys;
+};
+/** 月の鍵 ('YYYY-MM') の初日と末日 (YYYY-MM-DD) */
+const monthRangeOf = (monthKey: string): { first: string; last: string } => {
+  const [year, month] = monthKey.split('-').map(Number);
+  const firstDay = new Date(year, month - 1, 1);
+  const lastDay = new Date(year, month, 0); // 翌月の 0 日 = 今月の末日
+  return { first: formatLocalDate(firstDay), last: formatLocalDate(lastDay) };
+};
+/** 読んだ行のうち、献立のある日 */
+const mealDatesOf = (dailyMeals: MealPlanDay[] | null | undefined): Set<string> => {
+  const dates = new Set<string>();
+  for (const day of dailyMeals ?? []) {
+    if (day.meals && day.meals.length > 0) dates.add(day.dayDate);
+  }
+  return dates;
+};
 
 export default function WeeklyMenuPage() {
   const router = useRouter();
@@ -541,17 +664,9 @@ export default function WeeklyMenuPage() {
   // 表示中の週の初日 (YYYY-MM-DD)。献立の取得の応答を置く前に、応答を待つあいだに週を移っていないかを見る (#2201 U1)
   const weekStartKeyRef = useRef(formatLocalDate(weekStart));
   weekStartKeyRef.current = formatLocalDate(weekStart);
-  // 表示中の週の献立の取得 (週の読み込み fetchPlan と読み直し refreshMealPlan) の流れ (#2201 U1)。週の初日を鍵にして始め、応答
-  // (週の読み込みの失敗の空を含む) を置くのは、その週の中で、もう置いたどの応答よりあとに始めた取得だけ (先に届いた新しい応答を、
-  // あとから届いた古い応答で上書きしない)。
-  // 「最後に始めた取得だけ」('latestStarted') にしないのは、週を移った直後 (週の読み込みの応答待ち) に始まった読み直しが失敗したとき、
-  // 週の読み込みの応答まで捨てると、前の週の献立が新しい週の見出しの下に残るため。
-  // 週を鍵にするのは、別の週の応答の順序で、この週の応答を捨てないため (週を移って戻ったあとに届いた、戻った週の読み込みの応答を、
-  // そのあいだに置いた別の週の応答より古いと見なさない)。
-  // 週の読み込み中の表示 (loading) は、表示中の週の献立を置いた取得が下ろす (週の読み込みは自分の終わりで、読み直しは置いたときに)。
-  // 置かなかった ('superseded') 取得は下ろさない: その週のもっと新しい応答を置いた取得が下ろしている。前にその週を開いたときに置いた
-  // 応答なら、そのあとに別の週の献立を置いたかもしれないので、下ろすと別の週の献立を、この週の見出しの下に出す
-  const planFetchStream = useAiConsultationFetchStream('newerThanPlaced');
+  // 表示中の週の初日 (取り直しの月のカレンダーの週の窓 weekWindowOf を、読み始めた時点の週で決める。#2206 G1)
+  const weekStartRef = useRef(weekStart);
+  weekStartRef.current = weekStart;
   const setWeekStart = useCallback((d: Date) => dispatchWeekView({ type: 'WEEK_SET_START', payload: d }), []);
   // UX2-24: 前週/次週ボタン専用。selectedDayIndex をリセットしない WEEK_NAVIGATE_* を dispatch する
   const navigateWeekPrev = useCallback((d: Date) => dispatchWeekView({ type: 'WEEK_NAVIGATE_PREV', payload: d }), []);
@@ -891,8 +1006,7 @@ export default function WeeklyMenuPage() {
   // -------------------------------------------------------
   // uiFlagReducer から分解
   // -------------------------------------------------------
-  const loading = uiFlag.loading;
-  const setLoading = useCallback((v: boolean) => dispatchUiFlag({ type: 'LOADING_SET', payload: v }), []);
+  // 週の読み込み中の表示 (uiFlag.loading) は、AI 相談の取り直しの受け手 (receiver.isLoading(KEY_WEEK_LOADING)) が持つ (#2206 G1。下の receiver の宣言のあと)
 
   const successMessage = uiFlag.successMessage;
   const setSuccessMessage = useCallback((v: typeof uiFlag.successMessage) => {
@@ -907,6 +1021,12 @@ export default function WeeklyMenuPage() {
   // Phase B-2: weekView 導出値
   // -------------------------------------------------------
   const weekDates = useMemo(() => getWeekDates(weekStart), [weekStart]);
+  // 表示中の週の 7 日 (依存の少ない useCallback の読み取り・生成中の依頼の確認から、今の週の日付を読む。#2206 G1)
+  const weekDatesRef = useRef(weekDates);
+  weekDatesRef.current = weekDates;
+  // 表示中の月 (取り直しの月のカレンダーの月の窓 monthWindowOf を、読み始めた時点の月で決める。#2206 G1)
+  const displayMonthRef = useRef(weekView.displayMonth);
+  displayMonthRef.current = weekView.displayMonth;
 
   // ハンズオンツアー: ?tour=1 クエリで V4GenerateModal を自動オープン
   useEffect(() => {
@@ -1034,65 +1154,32 @@ export default function WeeklyMenuPage() {
   }, [weekStart]);
 
   // Calendar meal dates - 月カレンダー用の献立存在日マップ（weekViewReducer 管理）
-  const fetchedRangesRef = useRef<Set<string>>(new Set()); // 既にフェッチした範囲を記録
-  // 献立のある日の取得の流れ (#2201 U1。鍵は範囲 rangeKey)。同じ範囲を読み直したとき、古い応答が後から届いて
-  // AI 相談が足した日の印を消さないよう、置くのは範囲ごとに最後に始めた取得の応答だけ
-  const mealDatesFetchStream = useAiConsultationFetchStream();
-  // 献立・買い物リスト・冷蔵庫・人数の設定・レーダーの栄養素の書き込み (楽観的な更新から送信の応答まで・送信のあとの読み直しまで。
-  // #2201 U2)。この間に来た AI 相談の成功では取り直さず、全部終わったら 1 回取り直す (書き込みの前の値を読んだ取り直しの応答が
-  // 楽観的な表示・書き込みの結果を戻さない・失敗の巻き戻しが AI の後の献立を AI の前の献立で上書きしないため)。
-  // 取り直しの応答を待つあいだに始めた書き込みは、終わっていてもその応答を置かせない (取り直しの経路で置く場所ごとの
-  // 取得の流れの place が札の deferIfHeld を見る。置かなかったぶん 1 回取り直す)
-  const pendingWrites = useAiConsultationPendingWrites();
-  // AI 相談の成功で取り直した回数 (#2195 V1)。月のカレンダーの献立のある日の取得 (下の 2 つの useEffect) と、
-  // 生成中の依頼の確認 (checkPendingRequests の useEffect) の依存に入れ、取り直すたびにもう一度走らせる。
-  // 増やすのは refetchAfterAiConsultation だけで、取得済みの範囲 (fetchedRangesRef) を捨ててから増やす
-  const [aiConsultationRefetchRound, setAiConsultationRefetchRound] = useState(0);
-  // 最後の AI 相談の成功の取り直しの札 (refetchAfterAiConsultation が回数を増やす前に置く。#2201 U2)。月のカレンダーの献立のある日の
-  // 取得 (下の 2 つの useEffect) は、回数が増えて走った回だけこの札で応答を置くかを見る (週・月の移動で走った回は見ない)
-  const aiConsultationRefetchTicketRef = useRef<AiConsultationFetchTicket | null>(null);
-  const takeWeekRangeRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchRound);
-  const takeMonthRangeRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchRound);
-
-  // Fetch meal dates for a range and accumulate (helper function)
-  // refetchTicket は AI 相談の成功の取り直しで走った回の札 (それ以外は null)。その応答を待つあいだに書き込み・モーダルがあれば、
-  // 応答を置かない (書き込みの前に読んだ印で、書き込みのあとの印を戻さない。#2201 U2)
-  const fetchAndCacheMealDates = useCallback(async (startDate: Date, endDate: Date, refetchTicket: AiConsultationFetchTicket | null = null) => {
-    const rangeKey = `${formatLocalDate(startDate)}_${formatLocalDate(endDate)}`;
-
-    // 既にフェッチ済みの範囲はスキップ
-    if (fetchedRangesRef.current.has(rangeKey)) return;
-    fetchedRangesRef.current.add(rangeKey);
-    const order = mealDatesFetchStream.begin(refetchTicket, rangeKey);
-
-    try {
-      const res = await fetch(`/api/meal-plans?startDate=${formatLocalDate(startDate)}&endDate=${formatLocalDate(endDate)}`);
-      if (res.ok) {
+  // 月のカレンダーの印。範囲を月に割り、月ごとに読む (鍵は月。重なる範囲の古い応答が AI の足した印を消さない。#2206 G1)。
+  // 読んだ月は fetchedMonthsRef に覚え、次に同じ月を出すときは読まない (取り直しは捨ててから読み直す)
+  const fetchedMonthsRef = useRef<Set<string>>(new Set());
+  const fetchAndCacheMealDates = useCallback(async (read: AiConsultationRead, startDate: Date, endDate: Date) => {
+    for (const monthKey of monthKeysBetween(startDate, endDate)) {
+      if (fetchedMonthsRef.current.has(monthKey)) continue;
+      fetchedMonthsRef.current.add(monthKey);
+      const { first, last } = monthRangeOf(monthKey);
+      try {
+        const res = await fetch(`/api/meal-plans?startDate=${first}&endDate=${last}`);
+        if (!res.ok) { fetchedMonthsRef.current.delete(monthKey); continue; }
         const { dailyMeals } = await res.json();
-        // この範囲をあとから読み直していたら、古い応答は置かない (#2201 U1)
-        const placed = order.place(() => {
-          const newDates = new Set<string>();
-          dailyMeals?.forEach((day: any) => {
-            if (day.meals && day.meals.length > 0) {
-              newDates.add(day.dayDate);
-            }
-          });
-          // 読んだ範囲の中だけを答えに置き換える (範囲の外の日 = 他の月・週の印はそのまま)。
-          // 足すだけ (MERGE) だと、範囲の中で献立が無くなった日 (AI 相談で消した食事の日など) の印が残る (#2195 V1)
-          dispatchWeekView({
-            type: 'CALENDAR_MEAL_DATES_REPLACE_RANGE',
-            payload: { startDate: formatLocalDate(startDate), endDate: formatLocalDate(endDate), dates: newDates },
-          });
+        // 読んだ月の中だけを答えに置き換える (月の外の日 = 他の月の印はそのまま)。
+        // 足すだけ (MERGE) だと、月の中で献立が無くなった日 (AI 相談で消した食事の日など) の印が残る (#2195 V1)
+        const placed = read.place(mealDatesKey(monthKey), () => {
+          dispatchWeekView({ type: "CALENDAR_MEAL_DATES_REPLACE_RANGE", payload: { startDate: first, endDate: last, dates: mealDatesOf(dailyMeals) } });
         });
-        // 置かない取り直しの応答: 範囲を取得済みにしない (止めた取り直しが、外れたときにもう一度読む)
-        if (placed === 'deferred') fetchedRangesRef.current.delete(rangeKey);
+        // 置かない取り直しの応答: 月を取得済みにしない (止めた取り直しが、外れたときにもう一度読む)
+        if (placed === "deferred") fetchedMonthsRef.current.delete(monthKey);
+      } catch (error) {
+        console.error("Failed to fetch calendar meal dates:", error);
+        // エラー時は取得済みから外して再試行可能に
+        fetchedMonthsRef.current.delete(monthKey);
       }
-    } catch (error) {
-      console.error('Failed to fetch calendar meal dates:', error);
-      // エラー時はキャッシュをクリアして再試行可能に
-      fetchedRangesRef.current.delete(rangeKey);
     }
-  }, [mealDatesFetchStream]);
+  }, []);
 
   // dailyMeals から献立存在日を calendarMealDates に追加
   const updateCalendarMealDatesFromDailyMeals = useCallback((dailyMeals: any[]) => {
@@ -1110,60 +1197,20 @@ export default function WeeklyMenuPage() {
     }
   }, []);
 
-  // dailyMeals から献立存在日を同期（献立がない日は削除）
-  const syncCalendarMealDatesFromDailyMeals = useCallback((dailyMeals: any[]) => {
-    if (!dailyMeals) return;
+  // dailyMeals から献立存在日を同期（献立がない日は削除）。
+  // 読んだ行のうち献立のある日を足し、献立の無い行の日を消す (前と同じ結果。読んでいない日はそのまま)。描画の閉包の
+  // weekView.calendarMealDates から集合を作って SET すると古い集合で戻すので、reducer に足す・消すを頼む (依存が無いので
+  // applyWeekResponse の参照も変わらない。#2206 G1 R3)
+  const syncCalendarMealDatesFromDailyMeals = useCallback((dailyMeals: MealPlanDay[]) => {
+    const withMeals = new Set<string>();
+    for (const day of dailyMeals) {
+      if (day.meals && day.meals.length > 0) withMeals.add(day.dayDate);
+      else dispatchWeekView({ type: "CALENDAR_MEAL_DATES_REPLACE_RANGE", payload: { startDate: day.dayDate, endDate: day.dayDate, dates: new Set<string>() } });
+    }
+    if (withMeals.size > 0) dispatchWeekView({ type: "CALENDAR_MEAL_DATES_MERGE", payload: withMeals });
+  }, []);
 
-    const updated = new Set(weekView.calendarMealDates);
-    dailyMeals.forEach((day: any) => {
-      if (day.meals && day.meals.length > 0) {
-        updated.add(day.dayDate);
-      } else {
-        updated.delete(day.dayDate);
-      }
-    });
-    dispatchWeekView({ type: 'CALENDAR_MEAL_DATES_SET', payload: updated });
-  }, [weekView.calendarMealDates]);
-
-  // 週が変わるタイミングで前後2週間をプリフェッチ
-  useEffect(() => {
-    // AI 相談の成功の取り直しで走った回は、その札で応答を置くかを見る (#2201 U2)
-    const refetchTicket = takeWeekRangeRefetchRun() ? aiConsultationRefetchTicketRef.current : null;
-    const prefetchAdjacentWeeks = async () => {
-      const currentWeekStart = new Date(weekStart);
-
-      // 前後2週間 = 合計5週間分をフェッチ
-      const startDate = new Date(currentWeekStart);
-      startDate.setDate(startDate.getDate() - 14); // 2週間前
-      const endDate = new Date(currentWeekStart);
-      endDate.setDate(endDate.getDate() + 28); // 4週間後（現在週含む）
-
-      await fetchAndCacheMealDates(startDate, endDate, refetchTicket);
-    };
-
-    prefetchAdjacentWeeks();
-  }, [weekStart, fetchAndCacheMealDates, aiConsultationRefetchRound, takeWeekRangeRefetchRun]);
-
-  // displayMonth が変わったときも追加でフェッチ（月移動時）
-  useEffect(() => {
-    // AI 相談の成功の取り直しで走った回は、その札で応答を置くかを見る (#2201 U2)
-    const refetchTicket = takeMonthRangeRefetchRun() ? aiConsultationRefetchTicketRef.current : null;
-    const fetchMonthMealDates = async () => {
-      const year = displayMonth.getFullYear();
-      const month = displayMonth.getMonth();
-      // 表示月の前後1週間を含む範囲
-      const firstDay = new Date(year, month, 1);
-      const lastDay = new Date(year, month + 1, 0);
-      const startDate = new Date(firstDay);
-      startDate.setDate(startDate.getDate() - 7);
-      const endDate = new Date(lastDay);
-      endDate.setDate(endDate.getDate() + 7);
-
-      await fetchAndCacheMealDates(startDate, endDate, refetchTicket);
-    };
-
-    fetchMonthMealDates();
-  }, [displayMonth, fetchAndCacheMealDates, aiConsultationRefetchRound, takeMonthRangeRefetchRun]);
+  // 月のカレンダーの印を週・月の変化で読む 2 つの effect は、receiver の宣言のあと (依存の配列に receiver を書く。#2206 G1)
 
   // Expanded Meal State - weekViewReducer 管理（同じタイプの複数食事に対応）
 
@@ -1228,6 +1275,105 @@ export default function WeeklyMenuPage() {
     }
   };
 
+  /**
+   * 直近の食事の自動展開 (autoExpandNextMeal。中身は変えない) を、描画のたびに写す ref (#2206 G1 R2)。
+   * fetchPlan・applyWeekResponse は依存の少ない useCallback なので、関数を直に呼ぶと最初の描画の閉包の hasAutoExpanded
+   * (false) を読み、週を移るたびに展開し直す。前の fetchPlan は週が変わるたびに effect の中で作り直したので、その描画の値を読んでいた
+   */
+  const autoExpandNextMealRef = useRef(autoExpandNextMeal);
+  autoExpandNextMealRef.current = autoExpandNextMeal;
+
+  /**
+   * 表示中の週の献立を置いたら、全画面のスピナー (KEY_WEEK_LOADING) も下ろす (#2206 G1 R2。S-22)。
+   * placed はその週の鍵 (planKey(weekStartKey)) の place の結果。置けて、いまもその週を出しているときだけ
+   * KEY_WEEK_LOADING を何もしない apply で置く (置いた鍵の読み込み中の印は立て主を問わず下りる。§6.4)。
+   * 前の refreshMealPlan が place の中で setLoading(false) を呼んだのと同じ: 開いたときの週の読み込みの応答待ちに取り直しが
+   * 先に置いたら、遅い読み込みの応答を待たずにスピナーを下ろし、置いた献立をスピナーの下に隠さない
+   */
+  const releaseWeekLoadingIfShown = useCallback(
+    (read: AiConsultationRead, weekStartKey: string, placed: AiConsultationPlaceResult) => {
+      if (placed !== "placed" || weekStartKeyRef.current !== weekStartKey) return;
+      read.place(KEY_WEEK_LOADING, () => undefined);
+    },
+    [],
+  );
+
+  /**
+   * 週の応答を画面と控えに置く (#2206 G1)。週の読み込み・取り直し・refreshMealPlan・生成の完了・再生成・写真・改善・手入力・削除・追加・
+   * 並べ替えのあとの読み直しが全部これを通る (読み直した週を直接 setCurrentPlan に置く経路を残さない。番兵 P1)。
+   * writeWeekCache は読み始める前に取った控えの書き込み口 (createWeekDataCache)。
+   * placement は呼び出し元ごとの置き方 (WEEK_PLACEMENT_*。設計書 §7.4 の置き方の表)。
+   * 買い物リストは週に関係なく使っている 1 つなので、週の確認の外で自分の鍵に置く。カレンダーの印は月ごとの印なので、週の確認の前に置く
+   * (いまその週を出していなくても、その週の日の印は応答のとおり)
+   */
+  const applyWeekResponse = useCallback(
+    (
+      read: AiConsultationRead,
+      weekStartKey: string,
+      week: MealPlansWeekResponse,
+      writeWeekCache: WeekDataCacheWriter<WeekCacheData>,
+      placement: WeekPlacement,
+    ): void => {
+      const dailyMeals: MealPlanDay[] = week.dailyMeals ?? [];
+      const plan = dailyMeals.length > 0 ? { days: dailyMeals } : null;
+      // 献立 0 件を置かない呼び出し元 (生成の完了・写真・追加・並べ替え): 前と同じく何も置かない
+      if (plan === null && placement.emptyPlan === "keep") return;
+      const items: ShoppingListItem[] = week.shoppingList?.items ?? [];
+      if (placement.shoppingList === "always" || (placement.shoppingList === "nonEmpty" && items.length > 0)) {
+        read.place(KEY_SHOPPING_LIST, () => setShoppingList(items));
+      }
+      const placed = read.place(planKey(weekStartKey), () => {
+        writeWeekCache({ plan, shoppingList: items });
+        if (placement.calendar === "merge") updateCalendarMealDatesFromDailyMeals(dailyMeals);
+        else if (placement.calendar === "sync") syncCalendarMealDatesFromDailyMeals(dailyMeals);
+        // いまもこの週を出しているときだけ画面に置く (順序ではない。別の週へ移ったあとに届いた応答を新しい週の見出しの下に出さない)
+        if (weekStartKeyRef.current !== weekStartKey) return;
+        setCurrentPlan(plan);
+        if (plan && placement.expandNextMeal) autoExpandNextMealRef.current(plan, weekDatesRef.current);
+      });
+      releaseWeekLoadingIfShown(read, weekStartKey, placed);
+    },
+    // setShoppingList・setCurrentPlan は値だけ受ける store / reducer の setter (参照は変わらない)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [updateCalendarMealDatesFromDailyMeals, syncCalendarMealDatesFromDailyMeals, releaseWeekLoadingIfShown],
+  );
+
+  /**
+   * 週の読み込み (fetchPlan) の失敗で、その週の献立を空にする (#2206 G1)。呼ぶのは fetchPlan だけ (取り直し・生成の完了・
+   * 書き込みのあとの読み直しの失敗は、前の refreshMealPlan と同じく何も置かない = 今の表示を残す)。
+   * いまもその週を出しているときだけ置く (別の週へ移ったあとに届いた失敗で、新しい週の献立を消さない。S-21。applyWeekResponse と同じ確かめ)
+   */
+  const placeWeekReadFailure = useCallback((read: AiConsultationRead, weekStartKey: string) => {
+    if (read.mode !== "mount") return;
+    const placed = read.place(planKey(weekStartKey), () => {
+      if (weekStartKeyRef.current !== weekStartKey) return;
+      setCurrentPlan(null);
+    });
+    releaseWeekLoadingIfShown(read, weekStartKey, placed);
+  }, [releaseWeekLoadingIfShown, setCurrentPlan]);
+
+  /**
+   * 表示中の週を読んで置く (週の読み込み・取り直し・refreshMealPlan・追加・削除・手入力の保存・並べ替えのあとの読み直し)。
+   * 読んだ週の応答を返す (追加のあとに作った食事を取る。UX2-32)。失敗 (非 ok・通信の失敗) は null で、何も置かない
+   * (fetchPlan だけが placeWeekReadFailure で空を置く)。読み込み中の印は呼ぶ側が loadingKeys で立てる
+   */
+  const readDisplayedWeek = useCallback(
+    async (read: AiConsultationRead, placement: WeekPlacement): Promise<MealPlansWeekResponse | null> => {
+      const weekStartKey = weekStartKeyRef.current;
+      const writeWeekCache = weekDataCache.current.beginWrite(weekStartKey);
+      try {
+        const week = await fetchWeekData(weekStartKey);
+        if (week === null) return null;
+        applyWeekResponse(read, weekStartKey, week, writeWeekCache, placement);
+        return week;
+      } catch (e) {
+        console.error("Failed to read meal plan", e);
+        return null;
+      }
+    },
+    [applyWeekResponse],
+  );
+
   // -------------------------------------------------------
   // Membership: Family view switcher state
   // -------------------------------------------------------
@@ -1245,15 +1391,14 @@ export default function WeeklyMenuPage() {
   // (名前の API の失敗は上のとおり display_name のまま。開いたときと同じ)
   // 自分のプロフィール (family_id) の読み取りの失敗では、家族から外れたとみなさずに今の切り替えを残す (#2201 U1。以前は error を見ずに
   // 一覧を空にしていたので、取り直しの通信の失敗で家族の切り替えが消えていた)。
-  // mode が 'refetch' (AI 相談の成功の取り直し) のとき、名前の API を読めなかったら今出している名前を残す (#2201 U1)。
-  // 応答を置くのは最後に始めた読み込みだけ (familyLoadStream。段ごとに置く)。refetchTicket (AI 相談の成功の取り直しの札) があれば、
-  // 応答を待つあいだに書き込み・モーダルが始まっていたら置かない (#2201 U2。止めた取り直しのぶん 1 回読み直す)
-  const familyLoadStream = useAiConsultationFetchStream();
-  const loadFamilyData = useCallback(async (mode: FamilyLoadMode = 'mount', refetchTicket: AiConsultationFetchTicket | null = null) => {
-    const order = familyLoadStream.begin(refetchTicket);
+  // 全部を読んでから 1 つの apply で置く (途中の段で setCurrentUserId・setFamilyId を置かない。#2206 G1 R4・設計書 §6.2)。
+  // 取り直し ('refetch') は、プロフィール・家族の一覧・名前の API のどれか 1 つでも読めなければ何も置かない
+  // (家族の切り替えと名前を残す)。ページの読み取り ('mount') の失敗は前と同じ:
+  // プロフィールを読めなければ何も置かない・家族の一覧を読めなければ自分の id と family_id だけを置く・名前の API を読めなければ display_name のまま
+  const loadFamilyData = useCallback(async (read: AiConsultationRead) => {
     const supabase = createClient();
     const { data: { user } } = await supabase.auth.getUser();
-    if (!user || order.place(() => setCurrentUserId(user.id)) !== 'placed') return;
+    if (!user) return;
 
     const { data: profile, error: profileError } = await supabase
       .from('user_profiles')
@@ -1263,35 +1408,40 @@ export default function WeeklyMenuPage() {
     if (profileError) return;
     const familyIdRead = profile?.family_id ?? null;
     if (familyIdRead === null) {
-      order.place(() => {
+      read.place(KEY_FAMILY, () => {
+        setCurrentUserId(user.id);
         setFamilyId(null);
         setFamilyMembers([]);
       });
       return;
     }
-    if (order.place(() => setFamilyId(familyIdRead)) !== 'placed') return;
 
-    const { data: members } = await supabase
+    const { data: members, error: membersError } = await supabase
       .from('family_members')
       .select('id, family_id, user_id, role, display_name, relationship, tags, share_meals, share_health, share_menu, child_profile, avatar_color, status, joined_at, removed_at')
       .eq('family_id', familyIdRead)
       .eq('status', 'active');
-    if (members) {
-      const namesResult = await fetchFamilyMemberNamesResult();
-      const rows = members as FamilyMember[];
-      order.place(() =>
-        setFamilyMembers((shown) =>
-          applyFamilyMemberNames(
-            rows,
-            namesResult.ok ? namesResult.names : mode === 'refetch' ? keepShownFamilyMemberNames(rows, shown) : new Map(),
-          ),
-        ),
-      );
+    if (membersError || !members) {
+      // 家族の一覧を読めなかった: 取り直しは何も置かない。ページの読み取りは前と同じく自分の id と family_id だけを置く (一覧は置かない)
+      if (read.mode === 'mount') {
+        read.place(KEY_FAMILY, () => {
+          setCurrentUserId(user.id);
+          setFamilyId(familyIdRead);
+        });
+      }
+      return;
     }
-  }, [familyLoadStream]);
-  useEffect(() => {
-    void loadFamilyData();
-  }, [loadFamilyData]);
+    const namesResult = await fetchFamilyMemberNamesResult();
+    // 取り直しで名前の API を読めなかった: 何も置かない (出ている名前を「名前未設定」に落とさない。#2201 U1 をこの形で守る)
+    if (!namesResult.ok && read.mode === 'refetch') return;
+    const rows = members as FamilyMember[];
+    read.place(KEY_FAMILY, () => {
+      setCurrentUserId(user.id);
+      setFamilyId(familyIdRead);
+      setFamilyMembers(applyFamilyMemberNames(rows, namesResult.ok ? namesResult.names : new Map()));
+    });
+  }, []);
+  // 開いたときに読む effect は receiver の宣言のあと (依存の配列に receiver を書く。#2206 G1)
 
   // 家族の献立 (#1584 の 1・設計書 family/10 §16.1)。自分以外で描くメンバー (others) が居るときだけ取る。状態は hook の中 (useState を足さない)
   const otherIds = useMemo(
@@ -1323,50 +1473,8 @@ export default function WeeklyMenuPage() {
   // isGenerating / generatingMeal / generationProgress / generationFailedError / generationFailedRequestId
   // → aiGenerationReducer 管理 (Phase B-2 で移行済み)
 
-  // Meal Plan再取得関数（キャッシュも更新）
-  // 応答を置く前に、今も同じ週を出しているか (weekStartKeyRef) と、その週のあとに始めた取得の応答をもう置いていないか (planFetchStream) を見る
-  // (#2201 U1。以前は閉包の weekStart で読んで確かめずに置いたので、応答を待つあいだに週を移ると前の週の献立が新しい週の見出しの
-  // 下に出うった)。読み直しの失敗では何も置かない (先に始めた週の読み込みの応答が後から届けば、そちらを置く)。
-  // refetchTicket (AI 相談の成功の取り直しの札) があれば、応答を待つあいだに書き込み (献立の編集・買い物リストのチェックなど)・
-  // モーダルが始まっていたら置かない (書き込みの前に読んだ献立・買い物リストで、楽観的な表示・書き込みの結果を戻さない。#2201 U2)。
-  // キャッシュには、読み始める前に取った書き込み口で、応答を置いたときだけ書く (#2201 U1。createWeekDataCache)
-  const refreshMealPlan = useCallback(async (refetchTicket: AiConsultationFetchTicket | null = null) => {
-    const targetDate = formatLocalDate(weekStart);
-    const endDate = addDaysStr(targetDate, 6);
-    const order = planFetchStream.begin(refetchTicket, targetDate);
-    const writeWeekCache = weekDataCache.current.beginWrite(targetDate);
-    try {
-      const res = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
-      if (res.ok) {
-        const { dailyMeals, shoppingList: shoppingListData } = await res.json();
-        if (weekStartKeyRef.current !== targetDate) return;
-        order.place(() => {
-          // 買い物リストは週に関係なく、使っている買い物リスト 1 つ (GET /api/meal-plans の shoppingList。無いときは null)。
-          // この応答が正なので、空 (最後の品目が消された・リストが無い) でも、献立の無い週でもそのまま置く (#2195 V1。
-          // 以前は空のときに置かず、AI 相談で最後の品目を消しても、バッジと買い物リストに消した品目が残っていた)。
-          // 週の読み込み (fetchPlan の fetchWeekData) は献立の無い週で [] を作って返すので、そちらは空のときに置かない
-          const newShoppingList: ShoppingListItem[] = shoppingListData?.items || [];
-          setShoppingList(newShoppingList);
-          if (dailyMeals && dailyMeals.length > 0) {
-            const newPlan = { days: dailyMeals };
-            setCurrentPlan(newPlan);
-            updateCalendarMealDatesFromDailyMeals(dailyMeals);
-            // キャッシュも更新
-            writeWeekCache({ plan: newPlan, shoppingList: newShoppingList });
-          } else {
-            setCurrentPlan(null);
-            // 空の場合もキャッシュを更新
-            writeWeekCache({ plan: null, shoppingList: [] });
-          }
-          // 表示中の週の献立を置いた: その週の読み込み (fetchPlan) の応答待ちでも、読み込み中の表示を下ろす。その読み込みの応答は
-          // これより前に始めたので置かず、読み込み中の表示にも触れない (#2201 U1)
-          setLoading(false);
-        });
-      }
-    } catch (e) {
-      console.error('Failed to refresh meal plan:', e);
-    }
-  }, [weekStart, updateCalendarMealDatesFromDailyMeals, planFetchStream, setLoading]);
+  // 表示中の週の読み直し (refreshMealPlan) は receiver の宣言のあと (receiver.read で読む。#2206 G1。下の useV4MenuGeneration と
+  // restoreGeneration の effect は、描画のあとに走る関数の中で呼ぶだけなので、宣言が後ろでもよい)
 
   // V4 Menu Generation Hook
   const v4Generation = useV4MenuGeneration({
@@ -1699,209 +1807,7 @@ export default function WeeklyMenuPage() {
     };
   }, []);
   
-  // 生成中状態をDBから復元し、ポーリングを再開
-  useEffect(() => {
-    // 既にポーリング中なら何もしない (再生成の監視は別のチャンネルで持つので、そちらも見る。#1657)
-    if (realtimeChannelRef.current || regenerateChannelRef.current) return;
-    // 既に生成中状態なら何もしない（重複防止）
-    if (isGenerating || generatingMeal) return;
-    // 既にチェック中なら何もしない（重複API呼び出し防止）
-    if (isCheckingPendingRef.current) return;
-    // #120: restoreGeneration が完了するまで待機（二重起動防止）
-    if (isRestoringRef.current) return;
-
-    const checkPendingRequests = async () => {
-      // チェック開始をマーク
-      isCheckingPendingRef.current = true;
-      
-      try {
-        const targetDate = formatLocalDate(weekStart);
-        console.log('🔍 checkPendingRequests called with targetDate:', targetDate);
-        
-        // 0. まずスタックしたリクエストを自動クリーンアップ（生存信号から 20 分進んでいない processing/pending。queued は cron の順番待ちなので触らない。#1494）
-        try {
-          const cleanupRes = await fetch('/api/ai/menu/weekly/cleanup', { method: 'POST' });
-          if (cleanupRes.ok) {
-            const cleanupData = await cleanupRes.json();
-            if (cleanupData.cleaned > 0) {
-              console.log('🧹 自動クリーンアップ完了:', cleanupData.cleaned, '件のスタックしたリクエストを停止');
-            }
-          } else if (!cleanupRes.ok) {
-            // #77: 5xx エラー時もユーザーに通知
-            console.error('自動クリーンアップ API エラー:', cleanupRes.status);
-            if (cleanupRes.status >= 500) {
-              setSuccessMessage({ title: 'エラー', message: 'サーバーに一時的な問題が発生しました。しばらく待ってから再読み込みしてください。', type: 'error' });
-            }
-          }
-        } catch (e) {
-          console.warn('自動クリーンアップに失敗:', e);
-        }
-        
-        // 1. 週間献立の生成中リクエストをDBで確認
-        try {
-          const weeklyRes = await fetch(`/api/ai/menu/weekly/pending?date=${targetDate}`);
-          console.log('🔍 weeklyRes status:', weeklyRes.status);
-          // #77: pending API 5xx をユーザー可視エラーに昇格
-          if (weeklyRes.status >= 500) {
-            console.error('weekly pending API エラー:', weeklyRes.status);
-            setSuccessMessage({ title: 'エラー', message: '献立生成状況の確認中にエラーが発生しました。ページを再読み込みしてください。', type: 'error' });
-          }
-          if (weeklyRes.ok) {
-            const data = await weeklyRes.json();
-            console.log('🔍 weeklyRes data:', data);
-            const { hasPending, requestId, status, startDate: pendingStartDate, ultimateMode: pendingUltimateMode } = data;
-            if (hasPending && requestId) {
-              console.log('📦 週間献立の生成中リクエストを復元:', requestId, status, 'startDate:', pendingStartDate);
-
-              // 週は切り替えない。生成中の行の確認 (pending/route.ts) は、行の start_date が date (表示中の週の初日 = targetDate) と
-              // 違うときは hasPending: false を返す (他の週の生成中は復元しない)。ここに来るのは start_date が targetDate と同じ行か、
-              // start_date の無い行だけなので、表示中の週 (targetDate) で監視する
-              // (#1609。以前は start_date が違えば週を切り替える分岐があったが、サーバーがその行を返さないので通らなかった)
-              // 究極モードの生成かは、pending の ultimateMode (行の generated_data.ultimateMode の判定) で決める (#1597)。
-              // 真偽値の true のときだけ究極モード (印の無い古い行・値の無い応答は通常の生成)
-              const pendingIsUltimateMode = isUltimateModeWeeklyMenuRequest(pendingUltimateMode);
-              // 生成中にし、最初の進捗が届くまでの間も段 (究極 / 通常) を合わせる (#1609。進捗が null だとカードが一瞬通常の段になる)。
-              // すでに進捗があるときは上書きしない (#1629)
-              resumePendingGeneration(pendingIsUltimateMode);
-              subscribeToRequestStatus(targetDate, requestId, pendingIsUltimateMode);
-              return; // 週間生成中なら他はスキップ
-            } else {
-              console.log('🔍 No pending weekly request found');
-            }
-          }
-        } catch (e) {
-          console.error('Failed to check pending weekly requests:', e);
-        }
-        
-        // 2. 単一食事の生成中リクエストをDBで確認
-        try {
-          const singleRes = await fetch(`/api/ai/menu/meal/pending?date=${targetDate}`);
-          if (singleRes.ok) {
-            const { hasPending, requests } = await singleRes.json();
-            if (hasPending && requests.length > 0) {
-              const latestRequest = requests[0];
-              // 日付から dayIndex を計算
-              const targetDayDate = latestRequest.targetDate;
-              const dayIdx = weekDates.findIndex(d => d.dateStr === targetDayDate);
-              
-              if (dayIdx !== -1) {
-                // mode === 'regenerate' の場合は既存食事の再生成
-                if (latestRequest.mode === 'regenerate' && latestRequest.targetMealId) {
-                  setRegeneratingMealId(latestRequest.targetMealId);
-                  setIsRegenerating(true);
-                  setSelectedDayIndex(dayIdx);
-                  subscribeToRegenerateStatus(latestRequest.requestId, targetDate);
-                } else {
-                  // mode === 'single' の場合は新規追加
-                  setGeneratingMeal({ dayIndex: dayIdx, mealType: latestRequest.targetMealType as MealType });
-                  setSelectedDayIndex(dayIdx);
-                  // 1 食の生成 (mode='single') に究極モードは無い (#1597)
-                  subscribeToRequestStatus(targetDate, latestRequest.requestId, false);
-                }
-                return; // DBで見つかったらlocalStorageはスキップ
-              }
-            }
-          }
-        } catch (e) {
-          console.error('Failed to check pending single meal requests:', e);
-        }
-        
-        // 3. localStorageからも復元を試みる（後方互換性のため、DBで見つからなかった場合のみ）
-        // ただし、requestIdがある場合はまずステータスを確認してから復元する
-        const storedWeekly = localStorage.getItem('weeklyMenuGenerating');
-        if (storedWeekly) {
-          try {
-            const { weekStartDate, timestamp, requestId } = JSON.parse(storedWeekly);
-            const elapsed = Date.now() - timestamp;
-            // 5分以内かつ同じ週の場合のみ
-            if (elapsed < 5 * 60 * 1000 && weekStartDate === targetDate) {
-              if (requestId) {
-                // ステータスAPIで確認してから復元
-                const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
-                if (statusRes.ok) {
-                  const { status, error_message } = await statusRes.json();
-                  if (status === 'queued' || status === 'pending' || status === 'processing') {
-                    console.log('📦 週間献立をlocalStorageから復元:', requestId, 'status:', status);
-                    setIsGenerating(true);
-                    // weeklyMenuGenerating は旧来の週の生成 (/api/ai/menu/weekly/request) の印で、究極モードは無い (#1597)
-                    subscribeToRequestStatus(targetDate, requestId, false);
-                    return;
-                  } else if (status === 'failed') {
-                    // 失敗の場合はエラーモーダルを表示してlocalStorageをクリア
-                    console.log('❌ 週間献立の生成失敗を復元:', requestId);
-                    localStorage.removeItem('weeklyMenuGenerating');
-                    dispatchAiGen({
-                      type: 'GEN_FAIL',
-                      payload: { error: weeklyMenuRequestErrorMessageForDisplay(error_message) || '献立の生成に失敗しました。もう一度お試しください。', requestId },
-                    });
-                  } else {
-                    // completed の場合はlocalStorageをクリア
-                    console.log('🗑️ 週間献立のlocalStorageをクリア（status:', status, ')');
-                    localStorage.removeItem('weeklyMenuGenerating');
-                  }
-                } else {
-                  localStorage.removeItem('weeklyMenuGenerating');
-                }
-              } else {
-                localStorage.removeItem('weeklyMenuGenerating');
-              }
-            } else {
-              localStorage.removeItem('weeklyMenuGenerating');
-            }
-          } catch {
-            localStorage.removeItem('weeklyMenuGenerating');
-          }
-        }
-        
-        const storedSingle = localStorage.getItem('singleMealGenerating');
-        if (storedSingle) {
-          try {
-            const { dayIndex, mealType, dayDate, initialCount, timestamp, requestId } = JSON.parse(storedSingle);
-            const elapsed = Date.now() - timestamp;
-            // 2分以内なら確認
-            if (elapsed < 2 * 60 * 1000) {
-              if (requestId) {
-                // ステータスAPIで確認してから復元
-                const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
-                if (statusRes.ok) {
-                  const { status } = await statusRes.json();
-                  if (status === 'pending' || status === 'processing') {
-                    console.log('📦 単一食事をlocalStorageから復元:', requestId, 'status:', status);
-                    setGeneratingMeal({ dayIndex, mealType });
-                    setSelectedDayIndex(dayIndex);
-                    // 1 食の生成に究極モードは無い (#1597)
-                    subscribeToRequestStatus(targetDate, requestId, false);
-                  } else {
-                    // completed または failed の場合はlocalStorageをクリア
-                    console.log('🗑️ 単一食事のlocalStorageをクリア（status:', status, ')');
-                    localStorage.removeItem('singleMealGenerating');
-                  }
-                } else {
-                  localStorage.removeItem('singleMealGenerating');
-                }
-              } else {
-                // requestIdがない場合は旧方式でポーリング（古いコードの互換性）
-                setGeneratingMeal({ dayIndex, mealType });
-                setSelectedDayIndex(dayIndex);
-                // レガシーポーリングは廃止（requestIdがある場合のみRealtime監視）
-                console.warn('No requestId found in localStorage, skipping...');
-              }
-            } else {
-              localStorage.removeItem('singleMealGenerating');
-            }
-          } catch {
-            localStorage.removeItem('singleMealGenerating');
-          }
-        }
-      } finally {
-        // チェック完了をマーク（どのパスを通っても必ず実行）
-        isCheckingPendingRef.current = false;
-      }
-    };
-    
-    checkPendingRequests();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [weekStart, weekDates, isGenerating, generatingMeal, aiConsultationRefetchRound]);  // subscribeToRequestStatus / subscribeToRegenerateStatus はファイル後方で定義されるため前方参照エラーになる。両関数は useCallback で安定参照のため再実行は発生しない。aiConsultationRefetchRound: AI 相談の成功のあと (AI 相談が始めた献立の生成を見つけて監視する。#2195 V1)
+  // 生成中の依頼の確認 (checkPendingRequests) とその effect は、取り直し (refetchAfterAiConsultation) の直前 (#2206 G1)
   
   
   // 復元用フラグ（購読開始時に使用）→ uiFlagReducer 管理
@@ -2156,151 +2062,22 @@ export default function WeeklyMenuPage() {
     };
   }, [activeModal, catalogQuery]);
 
-  // Fetch Plan & Check for pending generation requests
-  useEffect(() => {
-    // weekStartDay の設定が確定するまで待機（二重フェッチ防止）
-    if (!weekStartDayLoaded) return;
-
-    const CACHE_TTL = 5 * 60 * 1000; // 5分間キャッシュ有効
-
-    // 週データを取得する共通関数
-    const fetchWeekData = async (weekStartDate: Date): Promise<WeekCacheData> => {
-      const targetDate = formatLocalDate(weekStartDate);
-      const endDate = addDaysStr(targetDate, 6);
-      const res = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
-      if (res.ok) {
-        const { dailyMeals, shoppingList: shoppingListData } = await res.json();
-        if (dailyMeals && dailyMeals.length > 0) {
-          return { plan: { days: dailyMeals }, shoppingList: shoppingListData?.items || [] };
-        }
-      }
-      return { plan: null, shoppingList: [] };
-    };
-
-    // 前後の週をバックグラウンドでプリフェッチ
-    // キャッシュには、読み始める前に取った書き込み口で書く (#2201 U1。読み始めたあとに AI 相談の取り直しがキャッシュを捨てた・
-    // その週をあとから読み直したときは書かない: 捨てる前に読んだ献立をキャッシュに戻すと、その週へ移ったときに AI 相談の前の献立を出す)
-    const prefetchAdjacentWeeks = async (currentWeekStart: Date) => {
-      const prevWeekStart = new Date(currentWeekStart);
-      prevWeekStart.setDate(currentWeekStart.getDate() - 7);
-      const nextWeekStart = new Date(currentWeekStart);
-      nextWeekStart.setDate(currentWeekStart.getDate() + 7);
-
-      const prevKey = formatLocalDate(prevWeekStart);
-      const nextKey = formatLocalDate(nextWeekStart);
-      const now = Date.now();
-
-      // 前の週をプリフェッチ
-      const prevCache = weekDataCache.current.get(prevKey);
-      if (!prevCache || (now - prevCache.fetchedAt > CACHE_TTL)) {
-        const writePrevWeekCache = weekDataCache.current.beginWrite(prevKey);
-        fetchWeekData(prevWeekStart).then(data => {
-          writePrevWeekCache(data);
-        }).catch(() => {});
-      }
-
-      // 次の週をプリフェッチ
-      const nextCache = weekDataCache.current.get(nextKey);
-      if (!nextCache || (now - nextCache.fetchedAt > CACHE_TTL)) {
-        const writeNextWeekCache = weekDataCache.current.beginWrite(nextKey);
-        fetchWeekData(nextWeekStart).then(data => {
-          writeNextWeekCache(data);
-        }).catch(() => {});
-      }
-    };
-
-    const fetchPlan = async () => {
-      const targetDateStr = formatLocalDate(weekStart);
-      const now = Date.now();
-
-      // この週の取得を始める (#2201 U1。読み直し refreshMealPlan と同じ流れ・同じ週の鍵。古い応答を置かない)
-      const order = planFetchStream.begin(null, targetDateStr);
-
-      // キャッシュをチェック
-      const cached = weekDataCache.current.get(targetDateStr);
-      if (cached && (now - cached.fetchedAt < CACHE_TTL)) {
-        // キャッシュヒット - 即座に反映 (いま始めた取得なので、この週で置いたどの応答よりも新しい。キャッシュは、この週で最後に
-        // 書き込み口を取った読み取り・書き込みのもの: あとから書き込み口を取ったら、そのときにキャッシュを捨てている。createWeekDataCache)
-        order.place(() => {
-          setCurrentPlan(cached.plan);
-          if (cached.shoppingList.length > 0) setShoppingList(cached.shoppingList);
-          if (cached.plan) autoExpandNextMeal(cached.plan, weekDates);
-        });
-        // バックグラウンドで前後の週をプリフェッチ
-        prefetchAdjacentWeeks(weekStart);
-        return;
-      }
-
-      // キャッシュミス - APIから取得
-      setLoading(true);
-      // この読み込みが、この週の献立 (失敗の空を含む) を置いたか。読み込み中の表示は、置いたときだけ終わりに下ろす (#2201 U1。
-      // 置かなかったときは、この週のもっと新しい応答を置いた取得が下ろす。planFetchStream のコメント)
-      let placedThisWeek = false;
-      // キャッシュの書き込み口は読み始める前に取る (#2201 U1。応答を待つあいだに AI 相談の取り直しがキャッシュを捨てた・この週を
-      // あとから読み直したときは、この応答をキャッシュに書かない。書くと、画面には置かなかった AI 相談の前の献立を、この週へ戻ったときに
-      // キャッシュから出す)
-      const writeWeekCache = weekDataCache.current.beginWrite(targetDateStr);
-      try {
-        const data = await fetchWeekData(weekStart);
-        // キャッシュに保存
-        writeWeekCache(data);
-        // 応答を待つあいだに週を移った: この週の献立を置かない (#2201 U1)
-        if (weekStartKeyRef.current !== targetDateStr) return;
-
-        // この週のあとに始めた取得 (読み直し refreshMealPlan など) の応答をもう置いていれば置かない (その読み直しが失敗していれば、
-        // この応答を置く)
-        placedThisWeek = order.place(() => {
-          setCurrentPlan(data.plan);
-          if (data.shoppingList.length > 0) setShoppingList(data.shoppingList);
-          if (data.plan) autoExpandNextMeal(data.plan, weekDates);
-        }) === 'placed';
-
-        // DBで生成中のリクエストがあるか確認
-        const pendingRes = await fetch(`/api/ai/menu/weekly/pending?date=${targetDateStr}`);
-        if (pendingRes.ok) {
-          const { hasPending, requestId, ultimateMode: pendingUltimateMode } = await pendingRes.json();
-          if (hasPending && requestId) {
-            // 生成中状態を復元してポーリング開始
-            // 究極モードの生成かは、pending の ultimateMode (行の generated_data.ultimateMode の判定) で決める (#1597)
-            const pendingIsUltimateMode = isUltimateModeWeeklyMenuRequest(pendingUltimateMode);
-            // 生成中にし、最初の進捗が届くまでの間も段 (究極 / 通常) を合わせる (#1609。進捗が null だとカードが一瞬通常の段になる)。
-            // すでに進捗があるとき (生成中のリロード・キャッシュが切れたあとに同じ週へ戻ったとき) は上書きしない (#1629)
-            resumePendingGeneration(pendingIsUltimateMode);
-            subscribeToRequestStatus(targetDateStr, requestId, pendingIsUltimateMode);
-          }
-        }
-
-        // バックグラウンドで前後の週をプリフェッチ
-        prefetchAdjacentWeeks(weekStart);
-      } catch (e) {
-        console.error("Failed to fetch meal plan", e);
-        if (weekStartKeyRef.current === targetDateStr && order.place(() => setCurrentPlan(null)) === 'placed') placedThisWeek = true;
-      } finally {
-        // 週を移っていれば、移った先の週の読み込みが読み込み中の表示を下ろす。この週の献立を置かなかった読み込みも下ろさない
-        if (weekStartKeyRef.current === targetDateStr && placedThisWeek) setLoading(false);
-      }
-    };
-    fetchPlan();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [weekStart, weekStartDayLoaded]);  // autoExpandNextMeal / weekDates / subscribeToRequestStatus を除外: 追加すると不要な再フェッチが発生するため
+  // 週の読み込み (fetchPlan) とその effect は receiver の宣言のあと (receiver.read で読む。#2206 G1)
   
   // Fetch servings config and radar chart nutrients from user profile
   // (AI 相談の成功のあと (refetchAfterAiConsultation) にも呼ぶ。AI 相談で家族の人数 (family_size) が変わると、
   // 人数の設定 (servings_config) の無い人の既定の人数が変わるため。#2195 V1)
-  // 応答を置くのは最後に始めた読み込みだけ (settingsFetchStream。開いたときの読み込みと取り直しの応答が逆の順に届いても、続けて来た
-  // 取り直しの応答が逆の順に届いても、古い人数で新しい人数を戻さない。#2201 U1)。
-  // refetchTicket (AI 相談の成功の取り直しの札) があれば、応答を待つあいだに人数の設定のモーダル・書き込みが始まっていたら置かない
-  // (モーダルで変えている人数・保存した人数を、その前に読んだ値で戻さない。#2201 U2)。
-  // 読み込み中の印は、最後に始めた読み込みが終わったときに下ろす (先に始めた読み込みが、あとの読み込みの途中で下ろさない)
-  const settingsFetchStream = useAiConsultationFetchStream();
-  const fetchUserSettings = useCallback(async (refetchTicket: AiConsultationFetchTicket | null = null) => {
-    const order = settingsFetchStream.begin(refetchTicket);
-    setIsLoadingServingsConfig(true);
+  // 応答を置くのは、もう置いたどの読み取りよりあとに始めた読み取りだけ (KEY_SETTINGS の place。開いたときの読み込みと取り直しの応答が
+  // 逆の順に届いても、続けて来た取り直しの応答が逆の順に届いても、古い人数で新しい人数を戻さない。#2201 U1・#2206 G1)。
+  // 取り直しの応答を待つあいだに人数の設定のモーダル・書き込みが始まっていたら置かない (place が番兵・書き込みの印を見る。#2201 U2)。
+  // 読み込み中の印 (servingsConfigStore の isLoadingServingsConfig) は receiver.isLoading(KEY_SETTINGS) から写す
+  // (開いたときの読み込みが立て、人数を置いたとき・最後に立てた読み込みが終わったときに下りる。取り直しは立てない)
+  const fetchUserSettings = useCallback(async (read: AiConsultationRead) => {
     try {
       const res = await fetch('/api/profile');
       if (res.ok) {
         const profile = await res.json();
-        order.place(() => {
+        read.place(KEY_SETTINGS, () => {
           // Servings config
           if (profile.servings_config) {
             setServingsConfig(profile.servings_config);
@@ -2323,13 +2100,9 @@ export default function WeeklyMenuPage() {
       }
     } catch (e) {
       console.error('Failed to fetch user settings:', e);
-    } finally {
-      if (order.isLatest()) setIsLoadingServingsConfig(false);
     }
-  }, [settingsFetchStream, setIsLoadingServingsConfig, setServingsConfig, setRadarChartNutrients]);
-  useEffect(() => {
-    void fetchUserSettings();
-  }, [fetchUserSettings]);
+  }, [setServingsConfig, setRadarChartNutrients]);
+  // 開いたときに読む effect は receiver の宣言のあと (依存の配列に receiver を書く。#2206 G1)
   
   // フォールバックポーリング用の参照
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -2351,12 +2124,6 @@ export default function WeeklyMenuPage() {
   // 写真の解析 (写真から入力) の結果を待つ監視 1 回分の印 (#2047)。アンマウントで active が false になる
   // (次の解析の開始でも下ろすが、解析は一度に 1 つ (analyzePhotoWithAI の先頭で止める) なので、待っているあいだに次の解析は始まらない)
   const photoResultWatchRef = useRef<{ active: boolean } | null>(null);
-  // いま画面に出している週の初日。写真の解析の結果を待ち終えたとき、待っているあいだに週が変わっていたら、
-  // 解析を頼んだ週の献立を画面に置かない (キャッシュにだけ置く) ために見る (#2047)
-  const displayedWeekStartRef = useRef(weekStart);
-  useEffect(() => {
-    displayedWeekStartRef.current = weekStart;
-  }, [weekStart]);
 
   // V4生成のRealtimeが切断した場合のフォールバックポーリング用の参照
   const v4PollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -2443,8 +2210,9 @@ export default function WeeklyMenuPage() {
       message: 'この画面での進捗表示を停止しました。バックグラウンドの処理が完了している場合、後で献立に反映されることがあります。',
     });
 
-    // サーバー側にも中止を通知（ベストエフォート）
+    // サーバー側にも中止を通知（ベストエフォート）。送信の間は書き込みの窓を開ける (#2206 G1。W-32)
     if (cancelRequestId) {
+      const endWrite = receiver.beginWrite();
       try {
         await fetch('/api/ai/menu/weekly/status', {
           method: 'POST',
@@ -2453,8 +2221,12 @@ export default function WeeklyMenuPage() {
         });
       } catch (e) {
         console.error('Failed to notify server of cancellation:', e);
+      } finally {
+        endWrite();
       }
     }
+    // receiver (AI 相談の取り直しの受け手) は下で宣言する。参照は受け手の一生で変わらないので依存に入れない (宣言の前に依存の配列で読まない)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cleanupRealtime, cleanupPolling, setIsGenerating, setGenerationProgress, setGeneratingMeal, setSuccessMessage, setShowConfirmCancelGeneration]);
 
   // ポーリングで進捗を取得
@@ -2499,25 +2271,10 @@ export default function WeeklyMenuPage() {
         
         if (data.status === 'completed') {
           console.log('✅ Polling: Generation completed');
-          const endDate = addDaysStr(targetDate, 6);
-          // キャッシュの書き込み口は読み始める前に取る (#2201 U1。weekDataCache)
-          const writeWeekCache = weekDataCache.current.beginWrite(targetDate);
-          const planRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
+          // 生成した週を読み直して置く (ページの読み取りの place。#2206 G1。読む間に監視が終わっていたら置かない)
+          await reloadWeekAfterCompletion(targetDate, () => watch.active);
           // 献立を読む間に監視が終わっていたら (Realtime が同じ完了を先に処理した・次の監視が始まった)、何も置かない (#1657)
           if (!watch.active) return;
-          if (planRes.ok) {
-            const { dailyMeals, shoppingList: shoppingListData } = await planRes.json();
-            if (!watch.active) return;
-            if (dailyMeals && dailyMeals.length > 0) {
-              const newPlan = { days: dailyMeals };
-              const newShoppingList = shoppingListData?.items || [];
-              setCurrentPlan(newPlan);
-              if (newShoppingList.length > 0) setShoppingList(newShoppingList);
-              updateCalendarMealDatesFromDailyMeals(dailyMeals);
-              // キャッシュも更新
-              writeWeekCache({ plan: newPlan, shoppingList: newShoppingList });
-            }
-          }
           setIsGenerating(false);
           setGeneratingMeal(null);
           setGenerationProgress(null);
@@ -2551,7 +2308,9 @@ export default function WeeklyMenuPage() {
     poll();
     // 3秒ごとにポーリング
     pollingIntervalRef.current = setInterval(poll, 3000);
-  }, [cleanupPolling, cleanupRealtime, updateCalendarMealDatesFromDailyMeals]);
+    // reloadWeekAfterCompletion は receiver の宣言のあとで定義する (受け手の読み取り。参照するものは描画をまたいで変わらない)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cleanupPolling, cleanupRealtime]);
 
   // Realtime で生成完了を監視（常にポーリングも並行実行）
   // ultimateMode: 監視する生成が究極モードか (#1597)。進捗の段 (究極 / 通常) をこれで決める。呼び出し元が次のどれかを渡す:
@@ -2613,28 +2372,12 @@ export default function WeeklyMenuPage() {
             }
             
             if (newStatus === 'completed') {
-              // 完了したら献立を再取得
+              // 完了したら献立を再取得 (生成した週を読み直して置く。ページの読み取りの place。#2206 G1)
               console.log('✅ Generation completed, fetching meal plan...');
               try {
-                const endDate = addDaysStr(targetDate, 6);
-                // キャッシュの書き込み口は読み始める前に取る (#2201 U1。weekDataCache)
-                const writeWeekCache = weekDataCache.current.beginWrite(targetDate);
-                const planRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
+                await reloadWeekAfterCompletion(targetDate, () => watch.active);
                 // 献立を読む間に、ポーリングが同じ完了を先に処理した (印を下ろした)・次の監視が始まったときは、何も置かない (#1657)
                 if (!watch.active) return;
-                if (planRes.ok) {
-                  const { dailyMeals, shoppingList: shoppingListData } = await planRes.json();
-                  if (!watch.active) return;
-                  if (dailyMeals && dailyMeals.length > 0) {
-                    const newPlan = { days: dailyMeals };
-                    const newShoppingList = shoppingListData?.items || [];
-                    setCurrentPlan(newPlan);
-                    if (newShoppingList.length > 0) setShoppingList(newShoppingList);
-                    updateCalendarMealDatesFromDailyMeals(dailyMeals);
-                    // キャッシュも更新（リアルタイム反映）
-                    writeWeekCache({ plan: newPlan, shoppingList: newShoppingList });
-                  }
-                }
               } catch (fetchErr) {
                 console.error('❌ Failed to fetch meal plan:', fetchErr);
               }
@@ -2696,7 +2439,9 @@ export default function WeeklyMenuPage() {
         startPolling(targetDate, requestId, ultimateMode, watch);
       }
     }, 5000);
-  }, [cleanupRealtime, cleanupPolling, startPolling, updateCalendarMealDatesFromDailyMeals]);
+    // reloadWeekAfterCompletion は receiver の宣言のあとで定義する (受け手の読み取り。参照するものは描画をまたいで変わらない)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cleanupRealtime, cleanupPolling, startPolling]);
 
   // ポーリングのクリーンアップ（アンマウント時）
   useEffect(() => {
@@ -2706,36 +2451,241 @@ export default function WeeklyMenuPage() {
   }, [cleanupPolling]);
   
   // Fetch Pantry
-  // 応答を置くのは最後に始めた読み込みだけ (pantryFetchStream。開いたときの読み込みと取り直しの応答が逆の順に届いても、続けて来た
-  // 取り直しの応答が逆の順に届いても、古い一覧で新しい一覧を戻さない。#2201 U1)。
-  // refetchTicket (AI 相談の成功の取り直しの札) があれば、応答を待つあいだに冷蔵庫の書き込み・モーダルが始まっていたら置かない
-  // (削除した食材を戻す・足した食材を消すことをしない。#2201 U2)
-  const pantryFetchStream = useAiConsultationFetchStream();
-  const fetchPantry = useCallback(async (refetchTicket: AiConsultationFetchTicket | null = null) => {
-    const order = pantryFetchStream.begin(refetchTicket);
+  // 応答を置くのは、もう置いたどの読み取りよりあとに始めた読み取りだけ (KEY_PANTRY の place。開いたときの読み込みと取り直しの応答が
+  // 逆の順に届いても、続けて来た取り直しの応答が逆の順に届いても、古い一覧で新しい一覧を戻さない。#2201 U1・#2206 G1)。
+  // 取り直しの応答を待つあいだに冷蔵庫の書き込み・モーダルが始まっていたら置かない (place が番兵・書き込みの印を見る。
+  // 削除した食材を戻す・足した食材を消すことをしない。#2201 U2)
+  const fetchPantry = useCallback(async (read: AiConsultationRead) => {
     try {
       const res = await fetch('/api/pantry');
       if (res.ok) {
         const data = await res.json();
-        order.place(() => usePantryStore.getState().setFridgeItems(data.items || []));
+        read.place(KEY_PANTRY, () => usePantryStore.getState().setFridgeItems(data.items || []));
       }
     } catch (e) {
       console.error("Failed to fetch pantry:", e);
     }
-  }, [pantryFetchStream]);
+  }, []);
+
+  // 生成中状態をDBから復元し、ポーリングを再開
+  /**
+   * 生成中の依頼の確認 (前の effect の中の同名の関数を useCallback に出したもの。中身は前の字面のまま。#2206 G1)。
+   * 生成の監視の入口で、読み取りの経路の外 (番兵 P1 の境 B-1)。先頭の 4 つのガードは前の effect の先頭と同じ字面。
+   * 週が変わったとき・生成中の印が変わったとき (下の effect) と、AI 相談の成功の取り直し (refetchAfterAiConsultation。AI 相談が
+   * 始めた献立の生成を見つけて監視する。#2195 V1) から呼ぶ。取り直しの番兵を見ない (進み具合の表示を止めない。§6.6)
+   */
+  const checkPendingRequests = useCallback(async (targetDate: string) => {
+    // 既にポーリング中なら何もしない (再生成の監視は別のチャンネルで持つので、そちらも見る。#1657)
+    if (realtimeChannelRef.current || regenerateChannelRef.current) return;
+    // 既に生成中状態なら何もしない（重複防止）
+    if (isGenerating || generatingMeal) return;
+    // 既にチェック中なら何もしない（重複API呼び出し防止）
+    if (isCheckingPendingRef.current) return;
+    // #120: restoreGeneration が完了するまで待機（二重起動防止）
+    if (isRestoringRef.current) return;
+
+    // チェック開始をマーク
+    isCheckingPendingRef.current = true;
+    
+    try {
+      console.log('🔍 checkPendingRequests called with targetDate:', targetDate);
+      
+      // 0. まずスタックしたリクエストを自動クリーンアップ（生存信号から 20 分進んでいない processing/pending。queued は cron の順番待ちなので触らない。#1494）
+      try {
+        const cleanupRes = await fetch('/api/ai/menu/weekly/cleanup', { method: 'POST' });
+        if (cleanupRes.ok) {
+          const cleanupData = await cleanupRes.json();
+          if (cleanupData.cleaned > 0) {
+            console.log('🧹 自動クリーンアップ完了:', cleanupData.cleaned, '件のスタックしたリクエストを停止');
+          }
+        } else if (!cleanupRes.ok) {
+          // #77: 5xx エラー時もユーザーに通知
+          console.error('自動クリーンアップ API エラー:', cleanupRes.status);
+          if (cleanupRes.status >= 500) {
+            setSuccessMessage({ title: 'エラー', message: 'サーバーに一時的な問題が発生しました。しばらく待ってから再読み込みしてください。', type: 'error' });
+          }
+        }
+      } catch (e) {
+        console.warn('自動クリーンアップに失敗:', e);
+      }
+      
+      // 1. 週間献立の生成中リクエストをDBで確認
+      try {
+        const weeklyRes = await fetch(`/api/ai/menu/weekly/pending?date=${targetDate}`);
+        console.log('🔍 weeklyRes status:', weeklyRes.status);
+        // #77: pending API 5xx をユーザー可視エラーに昇格
+        if (weeklyRes.status >= 500) {
+          console.error('weekly pending API エラー:', weeklyRes.status);
+          setSuccessMessage({ title: 'エラー', message: '献立生成状況の確認中にエラーが発生しました。ページを再読み込みしてください。', type: 'error' });
+        }
+        if (weeklyRes.ok) {
+          const data = await weeklyRes.json();
+          console.log('🔍 weeklyRes data:', data);
+          const { hasPending, requestId, status, startDate: pendingStartDate, ultimateMode: pendingUltimateMode } = data;
+          if (hasPending && requestId) {
+            console.log('📦 週間献立の生成中リクエストを復元:', requestId, status, 'startDate:', pendingStartDate);
+
+            // 週は切り替えない。生成中の行の確認 (pending/route.ts) は、行の start_date が date (表示中の週の初日 = targetDate) と
+            // 違うときは hasPending: false を返す (他の週の生成中は復元しない)。ここに来るのは start_date が targetDate と同じ行か、
+            // start_date の無い行だけなので、表示中の週 (targetDate) で監視する
+            // (#1609。以前は start_date が違えば週を切り替える分岐があったが、サーバーがその行を返さないので通らなかった)
+            // 究極モードの生成かは、pending の ultimateMode (行の generated_data.ultimateMode の判定) で決める (#1597)。
+            // 真偽値の true のときだけ究極モード (印の無い古い行・値の無い応答は通常の生成)
+            const pendingIsUltimateMode = isUltimateModeWeeklyMenuRequest(pendingUltimateMode);
+            // 生成中にし、最初の進捗が届くまでの間も段 (究極 / 通常) を合わせる (#1609。進捗が null だとカードが一瞬通常の段になる)。
+            // すでに進捗があるときは上書きしない (#1629)
+            resumePendingGeneration(pendingIsUltimateMode);
+            subscribeToRequestStatus(targetDate, requestId, pendingIsUltimateMode);
+            return; // 週間生成中なら他はスキップ
+          } else {
+            console.log('🔍 No pending weekly request found');
+          }
+        }
+      } catch (e) {
+        console.error('Failed to check pending weekly requests:', e);
+      }
+      
+      // 2. 単一食事の生成中リクエストをDBで確認
+      try {
+        const singleRes = await fetch(`/api/ai/menu/meal/pending?date=${targetDate}`);
+        if (singleRes.ok) {
+          const { hasPending, requests } = await singleRes.json();
+          if (hasPending && requests.length > 0) {
+            const latestRequest = requests[0];
+            // 日付から dayIndex を計算
+            const targetDayDate = latestRequest.targetDate;
+            const dayIdx = weekDatesRef.current.findIndex(d => d.dateStr === targetDayDate);
+            
+            if (dayIdx !== -1) {
+              // mode === 'regenerate' の場合は既存食事の再生成
+              if (latestRequest.mode === 'regenerate' && latestRequest.targetMealId) {
+                setRegeneratingMealId(latestRequest.targetMealId);
+                setIsRegenerating(true);
+                setSelectedDayIndex(dayIdx);
+                subscribeToRegenerateStatus(latestRequest.requestId, targetDate);
+              } else {
+                // mode === 'single' の場合は新規追加
+                setGeneratingMeal({ dayIndex: dayIdx, mealType: latestRequest.targetMealType as MealType });
+                setSelectedDayIndex(dayIdx);
+                // 1 食の生成 (mode='single') に究極モードは無い (#1597)
+                subscribeToRequestStatus(targetDate, latestRequest.requestId, false);
+              }
+              return; // DBで見つかったらlocalStorageはスキップ
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Failed to check pending single meal requests:', e);
+      }
+      
+      // 3. localStorageからも復元を試みる（後方互換性のため、DBで見つからなかった場合のみ）
+      // ただし、requestIdがある場合はまずステータスを確認してから復元する
+      const storedWeekly = localStorage.getItem('weeklyMenuGenerating');
+      if (storedWeekly) {
+        try {
+          const { weekStartDate, timestamp, requestId } = JSON.parse(storedWeekly);
+          const elapsed = Date.now() - timestamp;
+          // 5分以内かつ同じ週の場合のみ
+          if (elapsed < 5 * 60 * 1000 && weekStartDate === targetDate) {
+            if (requestId) {
+              // ステータスAPIで確認してから復元
+              const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
+              if (statusRes.ok) {
+                const { status, error_message } = await statusRes.json();
+                if (status === 'queued' || status === 'pending' || status === 'processing') {
+                  console.log('📦 週間献立をlocalStorageから復元:', requestId, 'status:', status);
+                  setIsGenerating(true);
+                  // weeklyMenuGenerating は旧来の週の生成 (/api/ai/menu/weekly/request) の印で、究極モードは無い (#1597)
+                  subscribeToRequestStatus(targetDate, requestId, false);
+                  return;
+                } else if (status === 'failed') {
+                  // 失敗の場合はエラーモーダルを表示してlocalStorageをクリア
+                  console.log('❌ 週間献立の生成失敗を復元:', requestId);
+                  localStorage.removeItem('weeklyMenuGenerating');
+                  dispatchAiGen({
+                    type: 'GEN_FAIL',
+                    payload: { error: weeklyMenuRequestErrorMessageForDisplay(error_message) || '献立の生成に失敗しました。もう一度お試しください。', requestId },
+                  });
+                } else {
+                  // completed の場合はlocalStorageをクリア
+                  console.log('🗑️ 週間献立のlocalStorageをクリア（status:', status, ')');
+                  localStorage.removeItem('weeklyMenuGenerating');
+                }
+              } else {
+                localStorage.removeItem('weeklyMenuGenerating');
+              }
+            } else {
+              localStorage.removeItem('weeklyMenuGenerating');
+            }
+          } else {
+            localStorage.removeItem('weeklyMenuGenerating');
+          }
+        } catch {
+          localStorage.removeItem('weeklyMenuGenerating');
+        }
+      }
+      
+      const storedSingle = localStorage.getItem('singleMealGenerating');
+      if (storedSingle) {
+        try {
+          const { dayIndex, mealType, dayDate, initialCount, timestamp, requestId } = JSON.parse(storedSingle);
+          const elapsed = Date.now() - timestamp;
+          // 2分以内なら確認
+          if (elapsed < 2 * 60 * 1000) {
+            if (requestId) {
+              // ステータスAPIで確認してから復元
+              const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
+              if (statusRes.ok) {
+                const { status } = await statusRes.json();
+                if (status === 'pending' || status === 'processing') {
+                  console.log('📦 単一食事をlocalStorageから復元:', requestId, 'status:', status);
+                  setGeneratingMeal({ dayIndex, mealType });
+                  setSelectedDayIndex(dayIndex);
+                  // 1 食の生成に究極モードは無い (#1597)
+                  subscribeToRequestStatus(targetDate, requestId, false);
+                } else {
+                  // completed または failed の場合はlocalStorageをクリア
+                  console.log('🗑️ 単一食事のlocalStorageをクリア（status:', status, ')');
+                  localStorage.removeItem('singleMealGenerating');
+                }
+              } else {
+                localStorage.removeItem('singleMealGenerating');
+              }
+            } else {
+              // requestIdがない場合は旧方式でポーリング（古いコードの互換性）
+              setGeneratingMeal({ dayIndex, mealType });
+              setSelectedDayIndex(dayIndex);
+              // レガシーポーリングは廃止（requestIdがある場合のみRealtime監視）
+              console.warn('No requestId found in localStorage, skipping...');
+            }
+          } else {
+            localStorage.removeItem('singleMealGenerating');
+          }
+        } catch {
+          localStorage.removeItem('singleMealGenerating');
+        }
+      }
+    } finally {
+      // チェック完了をマーク（どのパスを通っても必ず実行）
+      isCheckingPendingRef.current = false;
+    }
+    // subscribeToRequestStatus / subscribeToRegenerateStatus はファイル後方で定義されるため、前の effect と同じく依存に入れない (前方参照)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isGenerating, generatingMeal]);
   useEffect(() => {
-    void fetchPantry();
-  }, [fetchPantry]);
+    void checkPendingRequests(formatLocalDate(weekStart));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weekStart, weekDates, isGenerating, generatingMeal]);  // 前の依存から aiConsultationRefetchRound を外したもの。checkPendingRequests は isGenerating・generatingMeal で作り直す
 
   // AI 相談の提案の実行で献立・買い物リスト・冷蔵庫・家族の人数・自分の名前が変わったら、ページを開いたときに読むもののうち
-  // AI 相談で変わりうるものを取り直す (#2195 V1)。
-  //   - 表示中の週の献立と買い物リスト (refreshMealPlan)・冷蔵庫 (fetchPantry)・人数の設定 (fetchUserSettings)
-  //   - 月のカレンダーの献立のある日: 取得済みの範囲を捨ててから回数を増やし、表示中の週の前後と表示中の月を読み直す
-  //     (読んだ範囲は答えで置き換える。ほかの範囲は次にその週・月を開いたときに読み直す)
-  //   - 生成中の依頼: 回数を増やして、生成中の依頼の確認 (checkPendingRequests) をもう一度走らせる。AI 相談が始めた
+  // AI 相談で変わりうるものを取り直す (#2195 V1)。データは全部同じ read (取り直しの読み取り) で読む (#2206 G1)。
+  //   - 表示中の週の献立と買い物リスト (readDisplayedWeek)・冷蔵庫 (fetchPantry)・人数の設定 (fetchUserSettings)
+  //   - 月のカレンダーの献立のある日: 取得済みの月を捨ててから、表示中の週の前後 (weekWindowOf) と表示中の月 (monthWindowOf) に
+  //     かかる月を読み直す (読んだ月は答えで置き換える。ほかの月は次にその週・月を開いたときに読み直す)
+  //   - 生成中の依頼: 生成中の依頼の確認 (checkPendingRequests) をもう一度走らせる (読み取りではない。番兵で止めない)。AI 相談が始めた
   //     献立の生成 (generate_day_menu・generate_week_menu・generate_single_meal) は依頼を受けた時点 (status: processing) で
   //     成功を知らせるので、ここで取り直してもまだ献立は無い。生成が終わったときの取り直しは、開始日に関係なく、
-  //     useAiConsultationDataRefetch がその依頼 (通知の result.requestId) を終わるまで見張り、終わったらこの関数をもう一度呼ぶ
+  //     useAiConsultationReceiver がその依頼 (通知の result.requestId) を終わるまで見張り、終わったらこの関数をもう一度呼ぶ
   //     (src/lib/ai/consultation-generation-watch.ts)。生成中の表示 (進捗の帯) を出すのは今までどおり checkPendingRequests が
   //     見つけた依頼だけ (GET /api/ai/menu/weekly/pending が返すのは、開始日が表示中の週の初日の依頼。#1609)
   //   - 家族の一覧と名前 (loadFamilyData): 家族の切り替えに出す名前は、display_name の無いメンバー (自分を含む) なら
@@ -2744,23 +2694,170 @@ export default function WeeklyMenuPage() {
   //     src/lib/ai/consultation-refetch-coverage.ts の '/menus/weekly' の mountReadsNotRefetched の familyMenu)
   // 別の週の献立も変わりうる (1 週間の献立の作成など) ので、週のキャッシュは捨てて、次にその週を開いたときに取り直させる
   // (捨てる前に読み始めた週の読み込み・前後の週の先読みの応答は、あとから届いてもキャッシュに書かない。weekDataCache の discard)。
-  // モーダル・入力の部品が出ている間は取り直さない (useAiConsultationDataRefetch)
-  // 献立・買い物リストの書き込み (楽観的な更新から応答まで。pendingWrites) の間に来た成功は捨てずに、全部終わったあとに 1 回取り直す
-  // (#2201 U2)。モーダル・入力の部品で止めた成功も、閉じたあとに 1 回取り直す。
-  // 取り直しの応答を置く場所 (献立と買い物リスト・冷蔵庫・人数の設定・家族・月のカレンダーの印) は、どれも札 (ticket) を自分の取得の流れ
-  // (useAiConsultationFetchStream) の begin に渡し、流れの place で置く: 古い応答 (あとに始めた取得がある) を置かず、応答を待つあいだに
-  // 始めた書き込み・開いたモーダルがあれば置かない (札の deferIfHeld。置かなかったぶん 1 回取り直す)
-  const refetchAfterAiConsultation = useCallback((ticket: AiConsultationFetchTicket) => {
+  // モーダル・入力の部品が出ている間・献立・買い物リストの書き込み (receiver.beginWrite の窓) の間に来た成功は捨てずに、外れたあとに
+  // 1 回取り直す。応答を置く直前にも番兵・書き込みの印を見て、当たれば置かずに 1 回取り直す (receiver の place。#2201 U2)
+  const refetchAfterAiConsultation = useCallback(async (read: AiConsultationRead) => {
     weekDataCache.current.discard();
-    fetchedRangesRef.current.clear();
-    aiConsultationRefetchTicketRef.current = ticket;
-    void refreshMealPlan(ticket);
-    void fetchPantry(ticket);
-    void fetchUserSettings(ticket);
-    void loadFamilyData('refetch', ticket);
-    setAiConsultationRefetchRound((round) => round + 1);
-  }, [refreshMealPlan, fetchPantry, fetchUserSettings, loadFamilyData]);
-  useAiConsultationDataRefetch(refetchAfterAiConsultation, { writeInFlightRef: pendingWrites });
+    fetchedMonthsRef.current.clear();
+    // AI 相談が始めた生成を見つけて進み具合を出す (読み取りではない。番兵で止めない。§6.6)
+    void checkPendingRequests(weekStartKeyRef.current);
+    await Promise.all([
+      readDisplayedWeek(read, WEEK_PLACEMENT_REREAD),
+      fetchPantry(read),
+      fetchUserSettings(read),
+      loadFamilyData(read),
+      fetchAndCacheMealDates(read, ...weekWindowOf(weekStartRef.current)),
+      fetchAndCacheMealDates(read, ...monthWindowOf(displayMonthRef.current)),
+    ]);
+  }, [readDisplayedWeek, fetchPantry, fetchUserSettings, loadFamilyData, fetchAndCacheMealDates, checkPendingRequests]);
+  // 最初の描画から全画面のスピナー (前の initialUiFlagState.loading の true。表示中の週の献立が置かれるか、最初の fetchPlan が終わるまで)
+  const receiver = useAiConsultationReceiver(refetchAfterAiConsultation, { initialLoadingKeys: [KEY_WEEK_LOADING] });
+  const loading = receiver.isLoading(KEY_WEEK_LOADING); // uiFlag.loading の週の読み込みの用途を置き換える
+
+  // 開いたときの 3 つの読み込み (人数の設定・冷蔵庫・家族)。receiver は一生同じ参照なので、開いたときに 1 回だけ走る
+  useEffect(() => {
+    void receiver.read({ loadingKeys: [KEY_SETTINGS] }, fetchUserSettings);
+  }, [receiver, fetchUserSettings]);
+  useEffect(() => {
+    void receiver.read({}, fetchPantry);
+  }, [receiver, fetchPantry]);
+  useEffect(() => {
+    void receiver.read({}, loadFamilyData);
+  }, [receiver, loadFamilyData]);
+  // 人数の設定の読み込み中の印は store (servingsConfigStore の isLoadingServingsConfig) に写す (人数の設定のモーダルが読む)
+  const isLoadingSettings = receiver.isLoading(KEY_SETTINGS);
+  useEffect(() => {
+    setIsLoadingServingsConfig(isLoadingSettings);
+  }, [isLoadingSettings, setIsLoadingServingsConfig]);
+
+  // 週が変わるタイミングで前後2週間 (週の窓) の月のカレンダーの印を読む (取得済みの月は読まない)
+  useEffect(() => {
+    void receiver.read({}, (read) => fetchAndCacheMealDates(read, ...weekWindowOf(weekStart)));
+  }, [receiver, weekStart, fetchAndCacheMealDates]);
+  // displayMonth が変わったときも追加で読む（月移動時。表示月の前後 1 週間を含む月の窓）
+  useEffect(() => {
+    void receiver.read({}, (read) => fetchAndCacheMealDates(read, ...monthWindowOf(displayMonth)));
+  }, [receiver, displayMonth, fetchAndCacheMealDates]);
+
+  /**
+   * 表示中の週を読み直す (#2206 G1 R2)。前の refreshMealPlan (流れの begin(札, 週) と place の中の setLoading(false)) の置き換えで、
+   * 名前と 6 か所の呼び出しの字面 (`refreshMealPlan();`) は変えない:
+   *   1. v4 の生成の完了 (useV4MenuGeneration の onGenerationComplete)
+   *   2. restoreGeneration の「すでに完了している場合」(status API が completed)
+   *   3. restoreGeneration の進捗の追跡 (v4Generation.subscribeToProgress) の completed
+   *   4. v4 のポーリングの完了 (handleV4Generate の setInterval の completed。v4Watch の確かめのあと)
+   *   5. 生成完了のダイアログの背景の onClick (refreshOnDismiss)
+   *   6. 生成完了のダイアログの onDismiss (GenerationResultDialogContent。onRetry が無く refreshOnDismiss のとき)
+   * 取り直しの経路からは呼ばない (refetchAfterAiConsultation は readDisplayedWeek(read, WEEK_PLACEMENT_REREAD) を直に呼ぶ)。
+   * ページの読み取り ('mount') なので番兵を見ず、始めた時点のどの読み取りより新しい世代で plan:<週> に置く (R-7: 先に始めた読み込み・
+   * 取り直しの古い応答で戻されず、より新しい読み取りの応答は戻さない)。週は読み始めた時点の表示中の週 (weekStartKeyRef) で、mount だけの
+   * effect (restoreGeneration) の古い閉包から呼ばれても今の週を読む。失敗では何も置かない (前の refreshMealPlan と同じ)。
+   * 表示中の週の献立を置けば全画面のスピナーも下ろす (releaseWeekLoadingIfShown。前の place の中の setLoading(false))。
+   * 監視の印 (isActive) は取らない (前の refreshMealPlan も取らない。印を持つ監視の完了は reloadWeekAfterCompletion)
+   */
+  const refreshMealPlan = useCallback(
+    () => receiver.read({}, (read) => readDisplayedWeek(read, WEEK_PLACEMENT_REREAD)),
+    [receiver, readDisplayedWeek],
+  );
+
+  /**
+   * 前後の週をバックグラウンドで先読みして控え (weekDataCache) に書く (画面には置かない)。
+   * 控えには、読み始める前に取った書き込み口で書く (#2201 U1。読み始めたあとに AI 相談の取り直しが控えを捨てた・その週を
+   * あとから読み直したときは書かない: 捨てる前に読んだ献立を控えに戻すと、その週へ移ったときに AI 相談の前の献立を出す)。
+   * 読めなかった (非 ok) 週は控えに書かない (#2206 G1。空の週として控えると、その週へ移ったときに献立を出さない。S-18)
+   */
+  const prefetchAdjacentWeeks = useCallback((currentWeekStartKey: string) => {
+    const now = Date.now();
+    for (const weekStartKey of [
+      addDaysStr(currentWeekStartKey, -ADJACENT_WEEK_OFFSET_DAYS),
+      addDaysStr(currentWeekStartKey, ADJACENT_WEEK_OFFSET_DAYS),
+    ]) {
+      const cached = weekDataCache.current.get(weekStartKey);
+      if (cached && now - cached.fetchedAt <= CACHE_TTL) continue;
+      const writeAdjacentWeekCache = weekDataCache.current.beginWrite(weekStartKey);
+      fetchWeekData(weekStartKey).then((week) => {
+        if (week !== null) writeAdjacentWeekCache(weekCacheDataOf(week));
+      }).catch(() => {});
+    }
+  }, []);
+
+  /**
+   * 週の読み込み (weekStart が変わったとき)。控えに当たれば同期で置く。全画面のスピナー (KEY_WEEK_LOADING) は、表示中の週の
+   * 献立を置いたとき (releaseWeekLoadingIfShown) か、この読み取りの終わりで下りる (控えに当たったときは同期で置いて下ろす。S-18)
+   */
+  const fetchPlan = useCallback(async () => {
+    const targetDateStr = weekStartKeyRef.current;
+    await receiver.read({ loadingKeys: [KEY_WEEK_LOADING] }, async (read) => {
+      const cached = weekDataCache.current.get(targetDateStr);
+      if (cached && Date.now() - cached.fetchedAt < CACHE_TTL) {
+        // キャッシュヒット - 即座に反映 (控えは、この週で最後に書き込み口を取った読み取り・書き込みのもの: あとから書き込み口を
+        // 取ったら、そのときに控えを捨てている。createWeekDataCache)
+        const placed = read.place(planKey(targetDateStr), () => {
+          if (weekStartKeyRef.current !== targetDateStr) return;
+          setCurrentPlan(cached.plan);
+          // 買い物リストは控えから置かない (#2206 G1 R2。控えの買い物リストは先読み・読み込みの時点の写しで、そのあとの
+          // 追加・チェック・削除は控えに書かないので、置くと今の一覧を古い一覧で戻す。置くのは GET の応答 (applyWeekResponse) と
+          // 書き込みの関数だけ。S-23)
+          if (cached.plan) autoExpandNextMealRef.current(cached.plan, weekDatesRef.current);
+        });
+        releaseWeekLoadingIfShown(read, targetDateStr, placed);
+      } else {
+        // キャッシュミス - APIから取得。読めなければ (非 ok・通信の失敗) この週の献立を空にする (開いたとき・週を移ったとき)
+        if ((await readDisplayedWeek(read, WEEK_PLACEMENT_WEEK_READ)) === null) placeWeekReadFailure(read, targetDateStr);
+        // 応答を待つあいだに週を移った: 前の週の生成中の行を確かめず、先読みもしない (前と同じ。移った先の週の読み込みが受け持つ)
+        if (weekStartKeyRef.current !== targetDateStr) return;
+        // DBで生成中のリクエストがあるか確認 (入り直しの経路 2 つの 1 つ。#1629。checkPendingRequests は呼ばない)。
+        // resumePendingGeneration・subscribeToRequestStatus は生成の監視の入口なので place に通さない (§6.6。番兵 P1 の境 B-2・B-3)
+        try {
+          const pendingRes = await fetch(`/api/ai/menu/weekly/pending?date=${targetDateStr}`);
+          if (pendingRes.ok) {
+            const { hasPending, requestId, ultimateMode: pendingUltimateMode } = await pendingRes.json();
+            if (hasPending && requestId) {
+              // 生成中状態を復元してポーリング開始
+              // 究極モードの生成かは、pending の ultimateMode (行の generated_data.ultimateMode の判定) で決める (#1597)
+              const pendingIsUltimateMode = isUltimateModeWeeklyMenuRequest(pendingUltimateMode);
+              // 生成中にし、最初の進捗が届くまでの間も段 (究極 / 通常) を合わせる (#1609。進捗が null だとカードが一瞬通常の段になる)。
+              // すでに進捗があるとき (生成中のリロード・キャッシュが切れたあとに同じ週へ戻ったとき) は上書きしない (#1629)
+              resumePendingGeneration(pendingIsUltimateMode);
+              subscribeToRequestStatus(targetDateStr, requestId, pendingIsUltimateMode);
+            }
+          }
+        } catch (e) {
+          console.error("Failed to check pending weekly request", e);
+        }
+      }
+      // バックグラウンドで前後の週をプリフェッチ (先読みは fetchWeekData が null を返したら控えに書かない)
+      prefetchAdjacentWeeks(targetDateStr);
+    });
+  }, [receiver, readDisplayedWeek, placeWeekReadFailure, releaseWeekLoadingIfShown, prefetchAdjacentWeeks, resumePendingGeneration, subscribeToRequestStatus, setCurrentPlan]);
+  // Fetch Plan & Check for pending generation requests
+  useEffect(() => {
+    // weekStartDay の設定が確定するまで待機（二重フェッチ防止）
+    if (!weekStartDayLoaded) return;
+    void fetchPlan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [weekStart, weekStartDayLoaded]);  // fetchPlan は読み始めた時点の週 (weekStartKeyRef) を読む。依存に入れると、参照が変わるたびに読み直す
+
+  /**
+   * 生成の完了 (ポーリング startPolling・Realtime subscribeToRequestStatus・再生成 finishRegenerate・改善 finishImprove) のあとの置き換え:
+   * ページの読み取りで生成した週を読み、applyWeekResponse で置く (WEEK_PLACEMENT_COMPLETION)。weekStartKey は生成した週 (targetDate・
+   * weekStartDate・改善の weekDates[0])。写真の解析の結果は待ちが明けてから別に置く (analyzePhotoWithAI)。
+   * 通信の失敗は投げる (呼ぶ側の今の catch が受ける)
+   */
+  const reloadWeekAfterCompletion = useCallback(
+    (weekStartKey: string, isActive: () => boolean) =>
+      receiver.read({}, async (read) => {
+        const writeWeekCache = weekDataCache.current.beginWrite(weekStartKey);
+        const week = await fetchWeekData(weekStartKey);
+        if (!isActive() || week === null) return; // 監視が終わっていたら置かない (#1657 の印はそのまま)
+        applyWeekResponse(read, weekStartKey, week, writeWeekCache, WEEK_PLACEMENT_COMPLETION);
+      }),
+    [receiver, applyWeekResponse],
+  );
+
+  /** 今の献立の写し (完了の切り替えの待ちが明けたときに、押した描画でなく今の献立から値を決める。#2206 G1) */
+  const currentPlanRef = useRef(currentPlan);
+  currentPlanRef.current = currentPlan;
 
   // Initialize selected day to today
   useEffect(() => {
@@ -3047,11 +3144,12 @@ export default function WeeklyMenuPage() {
   // --- Handlers ---
   
   const handleUpdateMeal = async (dayId: string, mealId: string | null, updates: Partial<PlannedMeal>) => {
-    if (!currentPlan || !mealId) return;
+    if (!currentPlanRef.current || !mealId) return;
     // 楽観的UI更新（失敗時にロールバックするため、変える項目の元の値を保持）。今の献立のこの食事にだけ当てる (#2201 U2。
-    // 完了の切り替えは 250ms 待ってからここに来るので、その間に置いた取り直しの応答を、この描画の献立の写しで戻さない)
-    const previousMeal = currentPlan.days?.find(day => day.id === dayId)?.meals?.find(meal => meal.id === mealId);
-    const endWrite = pendingWrites.begin();
+    // 完了の切り替えは 250ms 待ってからここに来るので、その間に置いた取り直しの応答を、この描画の献立の写しで戻さない)。
+    // 元の値は呼ばれた時点の今の献立 (currentPlanRef) から取る (#2206 G1。押した描画の写しでなく、待ちの間に置いた献立の値)
+    const previousMeal = currentPlanRef.current.days?.find(day => day.id === dayId)?.meals?.find(meal => meal.id === mealId);
+    const endWrite = receiver.beginWrite();
     updatePlanMeal(dayId, mealId, updates);
     try {
       const res = await fetch(`/api/meal-plans/meals/${mealId}`, {
@@ -3090,14 +3188,18 @@ export default function WeeklyMenuPage() {
       const timer = setTimeout(() => {
         toggleDebounceTimerRef.current.delete(mealId);
         resolve();
-      }, 250);
+      }, MEAL_TOGGLE_DEBOUNCE_MS);
       toggleDebounceTimerRef.current.set(mealId, timer);
     });
 
     if (pendingToggleWeeklyRef.current.has(mealId)) return;
+    // 送る値は、待ちが明けた時点の今の献立 (currentPlanRef) のこの食事から決める (#2206 G1。待ちの間に AI 相談の取り直しが
+    // 同じ食事の完了を変えて置いていたら、その値から反転する。押した描画の写しの値から決めない。S-12)
+    const currentMeal = currentPlanRef.current?.days?.find((d) => d.id === dayId)?.meals?.find((m) => m.id === mealId);
+    if (!currentMeal) return;
     pendingToggleWeeklyRef.current.add(mealId);
-    const newCompleted = !meal.isCompleted;
-    await handleUpdateMeal(dayId, meal.id, { isCompleted: newCompleted });
+    const newCompleted = !currentMeal.isCompleted;
+    await handleUpdateMeal(dayId, currentMeal.id, { isCompleted: newCompleted });
     pendingToggleWeeklyRef.current.delete(mealId);
   };
 
@@ -3111,7 +3213,7 @@ export default function WeeklyMenuPage() {
     if (!newFridgeName) return;
     setIsSavingFridgeItem(true);
     // 冷蔵庫の書き込み (#2201 U2。書き込みの前に読んだ取り直しの応答で、足した・変えた食材を戻さない)
-    const endWrite = pendingWrites.begin();
+    const endWrite = receiver.beginWrite();
     try {
       if (editingFridgeItemId) {
         const res = await fetch(`/api/pantry/${editingFridgeItemId}`, {
@@ -3161,7 +3263,7 @@ export default function WeeklyMenuPage() {
 
   const deletePantryItem = async (id: string) => {
     // 冷蔵庫の書き込み (#2201 U2。削除の前に読んだ取り直しの応答で、削除した食材を戻さない)
-    const endWrite = pendingWrites.begin();
+    const endWrite = receiver.beginWrite();
     try {
       await fetch(`/api/pantry/${id}`, { method: 'DELETE' });
       usePantryStore.getState().removeFridgeItem(id);
@@ -3185,7 +3287,7 @@ export default function WeeklyMenuPage() {
   const handleFridgePhotoSelected = async (file: File) => {
     setIsAnalyzingFridgePhoto(true);
     // 冷蔵庫の書き込み (#2201 U2。保存の前に読んだ取り直しの応答で、写真から足した食材を消さない)
-    const endWrite = pendingWrites.begin();
+    const endWrite = receiver.beginWrite();
     try {
       // 「同意しない」なら写真を AI に送らない
       if ((await ensureAiConsent()) === "declined") return;
@@ -3225,12 +3327,15 @@ export default function WeeklyMenuPage() {
         const data = await saveRes.json().catch(() => ({}));
         throw new Error(data.error || '保存に失敗しました');
       }
-      // from-photo のレスポンスは snake_case のため、camelCase の一覧を取り直す
-      const listRes = await fetch('/api/pantry');
-      if (listRes.ok) {
+      // from-photo のレスポンスは snake_case のため、camelCase の一覧を取り直す。ページの読み取りで読み、KEY_PANTRY に置く
+      // (開いたときの冷蔵庫の読み込みなど、保存の前に始めた読み取りの古い応答で、足した食材を消さない。#2206 G1。S-32)。非 ok は何も置かない・
+      // 通信の失敗は投げて外側の catch の知らせへ (前と同じ。fetchPantry は失敗を握るので使わない)
+      await receiver.read({}, async (read) => {
+        const listRes = await fetch('/api/pantry');
+        if (!listRes.ok) return;
         const { items } = await listRes.json();
-        usePantryStore.getState().setFridgeItems(items || []);
-      }
+        read.place(KEY_PANTRY, () => usePantryStore.getState().setFridgeItems(items || []));
+      });
     } catch (e: any) {
       alert(e?.message || '写真からの追加に失敗しました');
     } finally {
@@ -3244,7 +3349,7 @@ export default function WeeklyMenuPage() {
     const { newShoppingName, newShoppingAmount, newShoppingCategory } = useFormDraftStore.getState();
     if (!newShoppingName || !currentPlan) return;
     // 買い物リストの書き込み (#2201 U2。追加の前に読んだ取り直しの応答で、足した品目を消さない)
-    const endWrite = pendingWrites.begin();
+    const endWrite = receiver.beginWrite();
     try {
       const res = await fetch('/api/shopping-list', {
         method: 'POST',
@@ -3273,7 +3378,7 @@ export default function WeeklyMenuPage() {
 
   // チェックボックスのトグル（楽観的更新）
   const toggleShoppingItem = (id: string, currentChecked: boolean) => {
-    const endWrite = pendingWrites.begin();
+    const endWrite = receiver.beginWrite();
     // 即座にUIを更新
     setShoppingList(useShoppingStore.getState().shoppingList.map(i => i.id === id ? { ...i, isChecked: !currentChecked } : i));
 
@@ -3297,7 +3402,7 @@ export default function WeeklyMenuPage() {
   const deleteShoppingItem = async (id: string) => {
     // 楽観的UI更新
     const previousList = useShoppingStore.getState().shoppingList;
-    const endWrite = pendingWrites.begin();
+    const endWrite = receiver.beginWrite();
     setShoppingList(previousList.filter(i => i.id !== id));
     try {
       const res = await fetch(`/api/shopping-list/${id}`, { method: 'DELETE' });
@@ -3322,7 +3427,7 @@ export default function WeeklyMenuPage() {
     const itemIds = shoppingList.map(i => i.id);
 
     // 楽観的UI更新
-    const endWrite = pendingWrites.begin();
+    const endWrite = receiver.beginWrite();
     setShoppingList([]);
     setShowConfirmDeleteAllShopping(false);
 
@@ -3363,6 +3468,30 @@ export default function WeeklyMenuPage() {
       shoppingListPollingRef.current = null;
     }
   }, []);
+
+  /**
+   * 買い物リストの再生成の完了のあとの読み直し (#2206 G1 R5)。前の subscribeToShoppingListRequest のポーリングと Realtime の完了の
+   * GET /api/shopping-list と setShoppingList・setActiveShoppingList の置き換えを、ページの読み取りの place に通す
+   * (再生成を待つあいだに始まった取り直しの古い応答 (再生成の前の一覧) が、完了のあとに届いても置かれない。S-31)。
+   * isActive は監視の印 (shoppingListWatch.active。#1657)。読んだあとに監視が終わっていたら置かない (前と同じ)。
+   * 非 ok・一覧が無い応答 (shoppingList か items が無い) は何も置かない (前と同じ)。通信の失敗・本文の読み出しの失敗は投げる
+   * (receiver.read がそのまま返し、呼ぶ側の catch が受ける: ポーリングは次の tick で読み直し、Realtime は console.error のあと
+   * 完了の知らせへ進む。前と同じ)
+   */
+  const readRegeneratedShoppingList = useCallback(
+    async (read: AiConsultationRead, isActive: () => boolean): Promise<void> => {
+      const listRes = await fetch(`/api/shopping-list`);
+      if (!isActive() || !listRes.ok) return;
+      const body = (await listRes.json()) as { shoppingList?: ShoppingList | null };
+      if (!isActive()) return;
+      const list = body.shoppingList;
+      if (!list?.items) return;
+      const items: ShoppingListItem[] = list.items;
+      read.place(KEY_ACTIVE_SHOPPING_LIST, () => setActiveShoppingList(list));
+      read.place(KEY_SHOPPING_LIST, () => setShoppingList(items));
+    },
+    [setShoppingList, setActiveShoppingList],
+  );
 
   const subscribeToShoppingListRequest = useCallback((requestId: string) => {
     cleanupShoppingListSubscription();
@@ -3417,16 +3546,9 @@ export default function WeeklyMenuPage() {
         
         if (data.status === 'completed') {
           console.log('✅ Shopping list regeneration completed (polling)');
-          const listRes = await fetch(`/api/shopping-list`);
+          // 一覧の読み直しはページの読み取りの place で置く (#2206 G1 R5。S-31)
+          await receiver.read({}, (read) => readRegeneratedShoppingList(read, () => shoppingListWatch.active));
           if (!shoppingListWatch.active) return;
-          if (listRes.ok) {
-            const { shoppingList: sl } = await listRes.json();
-            if (!shoppingListWatch.active) return;
-            if (sl?.items) {
-              setShoppingList(sl.items);
-              setActiveShoppingList(sl);
-            }
-          }
           setSuccessMessage({
             title: '買い物リストを更新しました ✓',
             message: data.result?.stats
@@ -3496,17 +3618,10 @@ export default function WeeklyMenuPage() {
               setShoppingListTotalServings(newData.result.stats.totalServings);
             }
             try {
-              const listRes = await fetch(`/api/shopping-list`);
+              // 一覧の読み直しはページの読み取りの place で置く (#2206 G1 R5。S-31)
+              await receiver.read({}, (read) => readRegeneratedShoppingList(read, () => shoppingListWatch.active));
               // 一覧を読む間に、ポーリングが同じ終わりを先に処理した (印を下ろした)・次の監視が始まったときは、何も置かない (#1657)
               if (!shoppingListWatch.active) return;
-              if (listRes.ok) {
-                const { shoppingList: sl } = await listRes.json();
-                if (!shoppingListWatch.active) return;
-                if (sl?.items) {
-                  setShoppingList(sl.items);
-                  setActiveShoppingList(sl);
-                }
-              }
             } catch (fetchErr) {
               console.error('❌ Failed to fetch shopping list:', fetchErr);
             }
@@ -3558,7 +3673,7 @@ export default function WeeklyMenuPage() {
       });
     
     shoppingListChannelRef.current = channel;
-  }, [cleanupShoppingListSubscription, setShoppingList, setSuccessMessage]);
+  }, [cleanupShoppingListSubscription, setShoppingList, setSuccessMessage, receiver, readRegeneratedShoppingList]);
 
   // 復元後に購読を開始
   useEffect(() => {
@@ -3683,6 +3798,8 @@ export default function WeeklyMenuPage() {
       return;
     }
     
+    // 送信の間は書き込みの窓を開ける (#2206 G1。W-45。完了の待ちは窓の外の監視 subscribeToShoppingListRequest)
+    const endWrite = receiver.beginWrite();
     try {
       const res = await aiFetch(`/api/shopping-list/regenerate`, {
         method: 'POST',
@@ -3732,6 +3849,8 @@ export default function WeeklyMenuPage() {
       setIsRegeneratingShoppingList(false);
       setShoppingListProgress(null);
       localStorage.removeItem('shoppingListRegenerating');
+    } finally {
+      endWrite();
     }
   };
 
@@ -3744,7 +3863,7 @@ export default function WeeklyMenuPage() {
     const newQuantity = item.quantityVariants[nextIndex]?.display || item.quantity;
     
     // 即座にUIを更新（楽観的更新）
-    const endWrite = pendingWrites.begin();
+    const endWrite = receiver.beginWrite();
     setShoppingList(useShoppingStore.getState().shoppingList.map(i =>
       i.id === itemId
         ? { ...i, selectedVariantIndex: nextIndex, quantity: newQuantity }
@@ -3781,6 +3900,8 @@ export default function WeeklyMenuPage() {
     const prev = isFavorite;
     setIsFavorite(!prev);
     setIsFavoriteLoading(true);
+    // ♥ の DELETE・POST は書き込みの窓の中 (#2206 G1。W-47・W-48。窓は押した時点の楽観的な表示のあと、finally の最後に閉じる)
+    const endWrite = receiver.beginWrite();
     try {
       if (prev) {
         if (!favoriteId) { setIsFavorite(prev); return; }
@@ -3813,6 +3934,7 @@ export default function WeeklyMenuPage() {
       if (isCurrentSession()) setIsFavorite(prev);
     } finally {
       if (isCurrentSession()) setIsFavoriteLoading(false);
+      endWrite();
     }
   };
 
@@ -3821,7 +3943,7 @@ export default function WeeklyMenuPage() {
   const addRecipeToShoppingList = async () => {
     if (!selectedRecipeData || !currentPlan) return;
     // 買い物リストの書き込み (#2201 U2。追加の前に読んだ取り直しの応答で、足した品目を消さない)。終わったら (失敗でも) 印を下ろす
-    const endWrite = pendingWrites.begin();
+    const endWrite = receiver.beginWrite();
     const result = await addRecipeIngredientsToShoppingList({
       recipeData: selectedRecipeData,
       shoppingListId: activeShoppingList?.id,
@@ -3844,6 +3966,9 @@ export default function WeeklyMenuPage() {
     // 「同意しない」なら献立の生成を依頼しない (好み・アレルギーなどを AI に送らない)
     if ((await ensureAiConsent()) === "declined") return;
     const weekStartDate = formatLocalDate(weekStart);
+    // 書き込みの窓はモーダルを閉じる前に開け、依頼 (POST) の応答まで閉じない (#2206 G1。W-49。モバイルの読み込み直しが、
+    // モーダルを閉じた瞬間に読み込み直して送ったばかりの POST を取り消さない)
+    const endWrite = receiver.beginWrite();
     setIsGenerating(true);
     setActiveModal(null); // モーダルを閉じて一覧画面に戻る
 
@@ -3898,6 +4023,8 @@ export default function WeeklyMenuPage() {
       alert(error.message || "エラーが発生しました");
       setIsGenerating(false);
       localStorage.removeItem('weeklyMenuGenerating');
+    } finally {
+      endWrite();
     }
   };
   
@@ -3928,16 +4055,23 @@ export default function WeeklyMenuPage() {
         if (c === 'ヘルシーに') preferences.healthy = true;
       });
       
-      const res = await aiFetch('/api/ai/menu/meal/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          dayDate,
-          mealType: addMealKey,
-          preferences,
-          note: aiChatInput
-        })
-      });
+      // 送信の間だけ書き込みの窓を開ける (#2206 G1。W-50。生成の待ち・監視は窓の外)
+      const endWrite = receiver.beginWrite();
+      let res: Response;
+      try {
+        res = await aiFetch('/api/ai/menu/meal/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            dayDate,
+            mealType: addMealKey,
+            preferences,
+            note: aiChatInput
+          })
+        });
+      } finally {
+        endWrite();
+      }
 
       // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さない
       if (await isAiConsentRequiredResponse(res)) {
@@ -4013,7 +4147,7 @@ export default function WeeklyMenuPage() {
     };
     const catalogProduct = mode === 'buy' || mode === 'out' ? selectedCatalogProduct : null;
     // 献立の書き込み (#2201 U2。追加の前に読んだ取り直しの応答で、足した食事を消さない)
-    const endWrite = pendingWrites.begin();
+    const endWrite = receiver.beginWrite();
     
     try {
       const res = await fetch('/api/meal-plans/meals', {
@@ -4034,29 +4168,13 @@ export default function WeeklyMenuPage() {
         const created = await res.json().catch(() => null);
         const newMealId: string | undefined = created?.meal?.id;
 
-        // Refresh data
-        const targetDate = formatLocalDate(weekStart);
-        const endDate = addDaysStr(targetDate, 6);
-        // キャッシュの書き込み口は読み始める前に取る (#2201 U1。weekDataCache)
-        const writeWeekCache = weekDataCache.current.beginWrite(targetDate);
-        const refreshRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
-        let createdMeal: PlannedMeal | undefined;
-        if (refreshRes.ok) {
-          const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
-          if (dailyMeals && dailyMeals.length > 0) {
-            const newPlan = { days: dailyMeals };
-            const newShoppingList = shoppingListData?.items || [];
-            setCurrentPlan(newPlan);
-            updateCalendarMealDatesFromDailyMeals(dailyMeals);
-            // キャッシュも更新
-            writeWeekCache({ plan: newPlan, shoppingList: newShoppingList });
-            if (newMealId) {
-              createdMeal = newPlan.days
-                .flatMap((d: { meals?: PlannedMeal[] }) => d.meals || [])
-                .find((m: PlannedMeal) => m.id === newMealId);
-            }
-          }
-        }
+        // Refresh data: 表示中の週をページの読み取りで読み直して置く (#2206 G1。先に始めた読み込み・取り直しの古い応答で戻されない)
+        /** 追加のあとに読み直した週 (読めなければ null)。作った食事はこの応答から取る (UX2-32) */
+        let addedWeek: MealPlansWeekResponse | null = null;
+        await receiver.read({}, async (read) => {
+          addedWeek = await readDisplayedWeek(read, WEEK_PLACEMENT_AFTER_ADD);
+        });
+        const createdMeal = newMealId ? plannedMealOf(addedWeek, newMealId) : undefined;
         setSelectedCatalogProduct(null);
         setCatalogQuery('');
         setCatalogResults([]);
@@ -4117,17 +4235,24 @@ export default function WeeklyMenuPage() {
         return;
       }
       
-      const res = await aiFetch('/api/ai/menu/meal/regenerate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mealId: regeneratingMeal.id,
-          dayDate: day.dayDate,
-          mealType: regeneratingMeal.mealType,
-          preferences,
-          note: aiChatInput
-        })
-      });
+      // 送信の間だけ書き込みの窓を開ける (#2206 G1。W-52。再生成の待ち・監視は窓の外)
+      const endWrite = receiver.beginWrite();
+      let res: Response;
+      try {
+        res = await aiFetch('/api/ai/menu/meal/regenerate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mealId: regeneratingMeal.id,
+            dayDate: day.dayDate,
+            mealType: regeneratingMeal.mealType,
+            preferences,
+            note: aiChatInput
+          })
+        });
+      } finally {
+        endWrite();
+      }
 
       // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さない
       if (await isAiConsentRequiredResponse(res)) {
@@ -4229,25 +4354,10 @@ export default function WeeklyMenuPage() {
         // 完了したら献立を再取得
         console.log('✅ Regeneration completed, fetching meal plan...');
         try {
-          const weekEndDate = addDaysStr(weekStartDate, 6);
-          // キャッシュの書き込み口は読み始める前に取る (#2201 U1。weekDataCache)
-          const writeWeekCache = weekDataCache.current.beginWrite(weekStartDate);
-          const planRes = await fetch(`/api/meal-plans?startDate=${weekStartDate}&endDate=${weekEndDate}`);
-          // 献立を読む間に次の再生成の監視が始まっていたら、この監視の結果 (前の週の献立・再生成中の表示の片づけ) は置かない (#1657)
+          // 再生成した週を読み直して置く (ページの読み取りの place。#2206 G1。読む間に監視が終わっていたら置かない)
+          await reloadWeekAfterCompletion(weekStartDate, () => regenerateWatch.active);
+          // 献立を読む間に次の再生成の監視が始まっていたら、この監視の結果 (再生成中の表示の片づけ) は置かない (#1657)
           if (!regenerateWatch.active) return;
-          if (planRes.ok) {
-            const { dailyMeals, shoppingList: shoppingListData } = await planRes.json();
-            if (!regenerateWatch.active) return;
-            if (dailyMeals && dailyMeals.length > 0) {
-              const newPlan = { days: dailyMeals };
-              const newShoppingList = shoppingListData?.items || [];
-              setCurrentPlan(newPlan);
-              if (newShoppingList.length > 0) setShoppingList(newShoppingList);
-              updateCalendarMealDatesFromDailyMeals(dailyMeals);
-              // キャッシュも更新
-              writeWeekCache({ plan: newPlan, shoppingList: newShoppingList });
-            }
-          }
         } catch (e) {
           console.error('❌ Failed to fetch meal plan after regenerate:', e);
         }
@@ -4357,7 +4467,7 @@ export default function WeeklyMenuPage() {
       });
 
     regenerateChannelRef.current = channel;
-  }, [cleanupRegenerateRealtime, updateCalendarMealDatesFromDailyMeals]);
+  }, [cleanupRegenerateRealtime, reloadWeekAfterCompletion]);
 
   // Edit meal (legacy - keep for simple edits)
   const openEditMeal = (meal: PlannedMeal) => {
@@ -4383,7 +4493,7 @@ export default function WeeklyMenuPage() {
           : m
       )
     }));
-    const endWrite = pendingWrites.begin();
+    const endWrite = receiver.beginWrite();
     setCurrentPlan({ ...currentPlan, days: updatedDays });
     setActiveModal(null);
     setEditingMeal(null);
@@ -4437,7 +4547,7 @@ export default function WeeklyMenuPage() {
     
     setIsDeleting(true);
     // 献立の書き込み (#2201 U2。削除の前に読んだ取り直しの応答で、消した食事・月のカレンダーの印を戻さない)
-    const endWrite = pendingWrites.begin();
+    const endWrite = receiver.beginWrite();
     try {
       const res = await fetch(`/api/meal-plans/meals/${deletingMeal.id}`, {
         method: 'DELETE',
@@ -4448,23 +4558,8 @@ export default function WeeklyMenuPage() {
         setExpandedMealId(null);
         setActiveModal(null);
         setDeletingMeal(null);
-        // データを再取得
-        const targetDate = formatLocalDate(weekStart);
-        const endDate = addDaysStr(targetDate, 6);
-        // キャッシュの書き込み口は読み始める前に取る (#2201 U1。weekDataCache)
-        const writeWeekCache = weekDataCache.current.beginWrite(targetDate);
-        const refreshRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
-        if (refreshRes.ok) {
-          const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
-          const newPlan = dailyMeals && dailyMeals.length > 0 ? { days: dailyMeals } : null;
-          const newShoppingList = shoppingListData?.items || [];
-          setCurrentPlan(newPlan);
-          if (dailyMeals && dailyMeals.length > 0) {
-            syncCalendarMealDatesFromDailyMeals(dailyMeals);
-          }
-          // キャッシュも更新
-          writeWeekCache({ plan: newPlan, shoppingList: newShoppingList });
-        }
+        // データを再取得 (ページの読み取り。献立の無くなった日の月のカレンダーの印も消す。#2206 G1。S-26)
+        await receiver.read({}, (read) => readDisplayedWeek(read, WEEK_PLACEMENT_AFTER_REMOVE));
       } else {
         alert('削除に失敗しました');
       }
@@ -4531,7 +4626,7 @@ export default function WeeklyMenuPage() {
     const totalCal = validDishes.reduce((sum, d) => sum + (d.calories_kcal ?? d.cal ?? 0), 0);
     const dishName = validDishes.map(d => d.name).join('、');
     // 献立の書き込み (#2201 U2。変更の前に読んだ取り直しの応答で、変えた食事を戻さない)
-    const endWrite = pendingWrites.begin();
+    const endWrite = receiver.beginWrite();
 
     try {
       const patchRes = await fetch(`/api/meal-plans/meals/${manualEditMeal.id}`, {
@@ -4554,21 +4649,8 @@ export default function WeeklyMenuPage() {
         return;
       }
 
-      const targetDate = formatLocalDate(weekStart);
-      const endDate = addDaysStr(targetDate, 6);
-      // キャッシュの書き込み口は読み始める前に取る (#2201 U1。weekDataCache)
-      const writeWeekCache = weekDataCache.current.beginWrite(targetDate);
-      const refreshRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
-      if (refreshRes.ok) {
-        const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
-        const newPlan = dailyMeals && dailyMeals.length > 0 ? { days: dailyMeals } : null;
-        const newShoppingList = shoppingListData?.items || [];
-        setCurrentPlan(newPlan);
-        if (dailyMeals && dailyMeals.length > 0) {
-          syncCalendarMealDatesFromDailyMeals(dailyMeals);
-        }
-        writeWeekCache({ plan: newPlan, shoppingList: newShoppingList });
-      }
+      // 表示中の週をページの読み取りで読み直して置く (#2206 G1。献立の無くなった日の月のカレンダーの印も消す)
+      await receiver.read({}, (read) => readDisplayedWeek(read, WEEK_PLACEMENT_AFTER_REMOVE));
 
       setActiveModal(null);
       setManualEditMeal(null);
@@ -4670,15 +4752,22 @@ export default function WeeklyMenuPage() {
       const baselineWeek = await fetchTargetWeek().catch(() => null);
       const baseline = photoResultBaseline(findMealInWeek(baselineWeek, mealId) ?? photoEditMeal);
 
-      const res = await aiFetch('/api/ai/analyze-meal-photo', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          images: imageDataArray,
-          mealId,
-          mealType: photoEditMeal.mealType,
-        })
-      });
+      // 書き込みの窓は解析を頼む POST の間だけ (#2206 G1。W-56。結果の待ち waitForMealPhotoResult は窓の外)
+      const endWrite = receiver.beginWrite();
+      let res: Response;
+      try {
+        res = await aiFetch('/api/ai/analyze-meal-photo', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            images: imageDataArray,
+            mealId,
+            mealType: photoEditMeal.mealType,
+          })
+        });
+      } finally {
+        endWrite();
+      }
 
       // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さない (写真は残す)
       if (await isAiConsentRequiredResponse(res)) {
@@ -4707,19 +4796,15 @@ export default function WeeklyMenuPage() {
         if (outcome.status === 'cancelled' || !photoResultWatch.active) return;
         photoResultWatchRef.current = null;
 
-        if (outcome.week) {
-          const { dailyMeals, shoppingList: shoppingListData } = outcome.week;
-          if (dailyMeals && dailyMeals.length > 0) {
-            const newPlan = { days: dailyMeals };
-            const newShoppingList = shoppingListData?.items || [];
-            // キャッシュは解析を頼んだ週に置く。画面に出すのは、いまもその週を出しているときだけ
-            weekCacheWriters.get(outcome.week)?.({ plan: newPlan, shoppingList: newShoppingList });
-            if (formatLocalDate(displayedWeekStartRef.current) === targetDate) {
-              setCurrentPlan(newPlan);
-              if (newShoppingList.length > 0) setShoppingList(newShoppingList);
-              updateCalendarMealDatesFromDailyMeals(dailyMeals);
-            }
-          }
+        const week = outcome.week;
+        const writeWeekCache = week ? weekCacheWriters.get(week) : undefined;
+        if (week && writeWeekCache) {
+          // 待ちが明けてから読み取りを始める (待っている間の取り直しが置いた献立より新しい世代で置く。待ちを読み取りに含めると、
+          // 待ちの間の取り直しに追い越されて結果を置けない。#2206 G1。S-27)。キャッシュは解析を頼んだ週に、画面はいまもその週を
+          // 出しているときだけ (applyWeekResponse)
+          await receiver.read({}, (read) => {
+            applyWeekResponse(read, targetDate, week, writeWeekCache, WEEK_PLACEMENT_COMPLETION);
+          });
         }
 
         // 写真から入力のモーダルが、まだ解析を頼んだ回のものなら閉じる (開き直したモーダルは、同じ献立でも閉じない)。
@@ -4838,7 +4923,7 @@ export default function WeeklyMenuPage() {
 
     setIsGeneratingMealImage(true);
     // 献立の書き込み (#2201 U2。画像の保存の前に読んだ取り直しの応答で、保存した画像を戻さない)
-    const endWrite = pendingWrites.begin();
+    const endWrite = receiver.beginWrite();
 
     try {
       // 説明文と参考画像を Google の画像生成に送る前に、未同意なら同意画面を出す (「同意しない」なら生成しない)
@@ -4904,7 +4989,7 @@ export default function WeeklyMenuPage() {
 
       setCurrentPlan(updatedPlan);
       // 置くのは読み取りの応答ではなく、今の献立に保存した画像を当てたもの: 書き込み口はここで取って書く (#2201 U1。weekDataCache)。
-      // この書き込みの間 (pendingWrites) は AI 相談の取り直しがキャッシュを捨てない。始める前に始まった取り直しは、応答を置かずに
+      // この書き込みの間 (receiver.beginWrite の窓) は AI 相談の取り直しがキャッシュを捨てない。始める前に始まった取り直しは、応答を置かずに
       // 書き込みのあとに取り直す (キャッシュも捨て直す)
       weekDataCache.current.beginWrite(targetDate)({ plan: updatedPlan, shoppingList });
       setManualEditMeal(
@@ -4973,16 +5058,23 @@ export default function WeeklyMenuPage() {
         mealType,
       }));
 
-      const requestRes = await aiFetch('/api/ai/menu/v4/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          targetSlots,
-          resolveExistingMeals: true,
-          note: userComment,
-          constraints: {},
-        }),
-      });
+      // 送信の間だけ書き込みの窓を開ける (#2206 G1。W-59。改善の待ち・監視は窓の外)
+      const endWrite = receiver.beginWrite();
+      let requestRes: Response;
+      try {
+        requestRes = await aiFetch('/api/ai/menu/v4/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            targetSlots,
+            resolveExistingMeals: true,
+            note: userComment,
+            constraints: {},
+          }),
+        });
+      } finally {
+        endWrite();
+      }
 
       // 同意が必要で止められた: 同意画面 (AiConsentRequiredHost) が案内するので、エラーは出さない
       if (await isAiConsentRequiredResponse(requestRes)) {
@@ -5064,26 +5156,13 @@ export default function WeeklyMenuPage() {
           }
 
           const startStr = weekDates[0]?.dateStr;
-          const endStr = weekDates[weekDates.length - 1]?.dateStr;
-          if (startStr && endStr) {
+          if (startStr) {
             try {
-              // キャッシュの書き込み口は読み始める前に取る (#2201 U1。weekDataCache)
-              const writeWeekCache = weekDataCache.current.beginWrite(startStr);
-              const refreshRes = await fetch(`/api/meal-plans/weekly?startDate=${startStr}&endDate=${endStr}`);
+              // 改善した週を読み直して置く (ページの読み取りの place。#2206 G1。GET /api/meal-plans を読む。前は無い route の
+              // GET /api/meal-plans/weekly を読んで 404 になり、改善した献立を置けていなかった)
+              await reloadWeekAfterCompletion(startStr, () => improveWatch.active);
               // 献立を読む間に次の改善の開始・中止で印が下りていたら、この改善の週の献立は置かない (#1657)
               if (!improveWatch.active) return;
-              if (refreshRes.ok) {
-                const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
-                if (!improveWatch.active) return;
-                if (dailyMeals && dailyMeals.length > 0) {
-                  const newPlan = { days: dailyMeals };
-                  const newShoppingList = shoppingListData?.items || [];
-                  setCurrentPlan(newPlan);
-                  if (newShoppingList.length > 0) setShoppingList(newShoppingList);
-                  updateCalendarMealDatesFromDailyMeals(dailyMeals);
-                  writeWeekCache({ plan: newPlan, shoppingList: newShoppingList });
-                }
-              }
             } catch (e) {
               console.error('❌ Failed to fetch meal plan after improve:', e);
             }
@@ -5173,7 +5252,7 @@ export default function WeeklyMenuPage() {
   const reorderMeal = async (mealId: string, direction: 'up' | 'down') => {
     if (!currentDay) return;
     // 献立の書き込み (#2201 U2。並べ替えの前に読んだ取り直しの応答で、並べ替えた順を戻さない)
-    const endWrite = pendingWrites.begin();
+    const endWrite = receiver.beginWrite();
     
     try {
       const res = await fetch('/api/meal-plans/meals/reorder', {
@@ -5189,22 +5268,8 @@ export default function WeeklyMenuPage() {
       const data = await res.json();
       
       if (res.ok && data.success) {
-        // 献立を再取得
-        const targetDate = formatLocalDate(weekStart);
-        const endDate = addDaysStr(targetDate, 6);
-        // キャッシュの書き込み口は読み始める前に取る (#2201 U1。weekDataCache)
-        const writeWeekCache = weekDataCache.current.beginWrite(targetDate);
-        const refreshRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
-        if (refreshRes.ok) {
-          const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
-          if (dailyMeals && dailyMeals.length > 0) {
-            const newPlan = { days: dailyMeals };
-            const newShoppingList = shoppingListData?.items || [];
-            setCurrentPlan(newPlan);
-            // キャッシュも更新
-            writeWeekCache({ plan: newPlan, shoppingList: newShoppingList });
-          }
-        }
+        // 献立を再取得 (ページの読み取り。#2206 G1)
+        await receiver.read({}, (read) => readDisplayedWeek(read, WEEK_PLACEMENT_AFTER_REORDER));
       } else if (data.message) {
         // 移動できない場合のメッセージ（静かに無視）
         console.log(data.message);
@@ -6247,7 +6312,7 @@ export default function WeeklyMenuPage() {
               // 適用: 表示を変え、全ての週の家族の献立の cache を捨てて取り直し、家族の一覧 (共有の印・退出した人) も読み直す (T-2・T-25)
               setView(next);
               familyMenu.reload();
-              void loadFamilyData();
+              void receiver.read({}, loadFamilyData);
             }}
           />
         </div>
@@ -6701,7 +6766,7 @@ export default function WeeklyMenuPage() {
                 onGenerate={async (cfg) => {
                   if (cfg) {
                     // 人数の設定の書き込み (#2201 U2。保存の前に読んだ取り直しの応答で、保存した人数を戻さない)
-                    const endWrite = pendingWrites.begin();
+                    const endWrite = receiver.beginWrite();
                     try {
                       await fetch('/api/profile', {
                         method: 'POST',
@@ -6742,7 +6807,7 @@ export default function WeeklyMenuPage() {
                   const currentServingsConfig = useServingsConfigStore.getState().servingsConfig;
                   if (!currentServingsConfig) return;
                   // 人数の設定の書き込み (#2201 U2。保存の前に読んだ取り直しの応答で、保存した人数を戻さない)
-                  const endWrite = pendingWrites.begin();
+                  const endWrite = receiver.beginWrite();
                   try {
                     const res = await fetch('/api/profile', {
                       method: 'POST',
@@ -7034,7 +7099,7 @@ export default function WeeklyMenuPage() {
           }
           dispatchNutrition({ type: 'RADAR_SAVING_START' });
           // レーダーの栄養素の書き込み (#2201 U2。保存の前に読んだ取り直しの応答で、保存した栄養素を戻さない)
-          const endWrite = pendingWrites.begin();
+          const endWrite = receiver.beginWrite();
           try {
             const res = await fetch('/api/profile', {
               method: 'POST',
