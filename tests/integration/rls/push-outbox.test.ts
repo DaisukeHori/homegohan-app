@@ -1083,10 +1083,10 @@ async function claimReceiptsOldestFirst(workerId: string, sentOrder: string[]): 
 /** seedReceiptsOutOfPhysicalOrder が作る行の数 (最も古い行を表の末尾へ移したとき、並びの食い違いが出る 2 行より多くする) */
 const OUT_OF_ORDER_RECEIPT_ROWS = 3;
 /**
- * 最も古い行を書き直して表の末尾へ移すのを試す回数の上限。書き直した版の置き場は DB が決める (同じページの空き・空きのある前のページ) ので、
- * 1 回で末尾に来ないことがある。来るまで書き直し直し、この回数でも来なければ前提を作れなかったとして赤にする
+ * 物理的な並びを sent_at の順と食い違わせる書き直しを試す回数の上限。書き直した版の置き場は DB が決める (同じページの空いた番号・空きのある
+ * 前のページ) ので、1 回で狙った並びにならないことがある。なるまで書き直し直し、この回数でもならなければ前提を作れなかったとして赤にする
  */
-const PHYSICAL_MOVE_MAX_ATTEMPTS = 5;
+const PHYSICAL_MOVE_MAX_ATTEMPTS = 10;
 
 /** 行の物理的な位置 (ctid。PostgREST は '(ページ,ページの中の番号)' の文字列で返す) */
 async function physicalPositions(ids: string[]): Promise<Map<string, [number, number]>> {
@@ -1114,7 +1114,9 @@ function isPhysicallyLast(positions: Map<string, [number, number]>, lastId: stri
 
 /**
  * 送った (sent) 行を OUT_OF_ORDER_RECEIPT_ROWS 個作り、sent_at を 2000 年の古い順にしたうえで、CI で赤になったときの形を作る:
- * 最も古い行だけを書き直し、行の版を表の末尾へ移す (sent_at は変えない)。末尾に来たことは ctid で確かめる (DB 任せにしない。#2235 I6)。
+ * sent_at の最も古い行が、自分の行のうち物理的に最も後ろにある (sent_at は変えない)。並びは ctid で確かめる (DB 任せにしない。#2235 I6)。
+ * 書き直した版は、ページの空いた番号 (前の it が消した行の跡) に入って前へ来ることが多い (2026-11-04 に 256 の結合テストの枠で実測:
+ * 最も古い行を書き直すだけでは 5 回とも末尾に来なかった) ので、最も古い行より後ろにあるほかの行を書き直して前へ寄せる。
  * 行の id を sent_at の古い順に返す
  */
 async function seedReceiptsOutOfPhysicalOrder(label: string, workerId: string): Promise<string[]> {
@@ -1127,12 +1129,19 @@ async function seedReceiptsOutOfPhysicalOrder(label: string, workerId: string): 
   }
   for (const id of ids) await updateRows([id], { sent_at: oldTimestamp() });
   const [oldestId] = ids;
-  let movedToEnd = false;
-  for (let attempt = 1; attempt <= PHYSICAL_MOVE_MAX_ATTEMPTS && !movedToEnd; attempt++) {
-    await updateRows([oldestId], { updated_at: new Date().toISOString() });
-    movedToEnd = isPhysicallyLast(await physicalPositions(ids), oldestId);
+  const history: string[] = [];
+  let positions = await physicalPositions(ids);
+  for (let attempt = 1; attempt <= PHYSICAL_MOVE_MAX_ATTEMPTS && !isPhysicallyLast(positions, oldestId); attempt++) {
+    history.push(ids.map((id) => `${id === oldestId ? '最古' : '他'}(${positions.get(id)?.join(',')})`).join(' '));
+    const oldest = positions.get(oldestId);
+    const behind = ids.filter((id) => id !== oldestId && oldest !== undefined && !isPhysicallyAfter(oldest, positions.get(id) ?? oldest));
+    await updateRows(behind, { updated_at: new Date().toISOString() });
+    positions = await physicalPositions(ids);
   }
-  expect(movedToEnd, `前提: sent_at の最も古い行が、自分の行のうち物理的に最も後ろにある (${PHYSICAL_MOVE_MAX_ATTEMPTS} 回まで書き直した)`).toBe(true);
+  expect(
+    isPhysicallyLast(positions, oldestId),
+    `前提: sent_at の最も古い行が、自分の行のうち物理的に最も後ろにある (${PHYSICAL_MOVE_MAX_ATTEMPTS} 回まで書き直した。ctid の推移: ${history.join(' → ')})`,
+  ).toBe(true);
   return ids;
 }
 
