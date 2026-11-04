@@ -281,13 +281,16 @@ describe('AIAdvisorSheet — 時間切れのときの入力欄 (#1049 F7-18)', (
     expect(screen.getByTestId('ai-timeout-reload')).toBeTruthy();
     expect(alertSpy).not.toHaveBeenCalled();
 
-    // もう一度取り直して返答が届いていれば、導線は消える
+    // もう一度取り直して返答が届いていれば、導線は消える。届いていた送信のまま (『届いていません』の Alert を出さず、
+    // 入力欄に送った文を戻さない。#2227 H1 の R1 の指摘: 1 回目で当てた保存行を除いて探し、取り違えていた)
     serverMessages = SAVED_MESSAGES;
     await act(async () => {
       fireEvent.press(screen.getByTestId('ai-timeout-reload'));
     });
     await waitFor(() => expect(screen.getByText(SAVED_REPLY)).toBeTruthy());
     expect(screen.queryByTestId('ai-timeout-notice')).toBeNull();
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(inputValue()).toBe('');
   });
 
   it('届いていたと分かっても、入力欄を書き換えていれば消さない', async () => {

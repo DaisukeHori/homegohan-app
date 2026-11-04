@@ -19,6 +19,7 @@ import {
   replyToSentMessageOf,
   restoreInputAfterTimeout,
   timedOutSendNoticeOf,
+  timedOutSendReloadOf,
   timeoutReloadOutcomeOf,
   type TimedOutSend,
 } from '../../src/lib/ai-chat-timeout';
@@ -77,6 +78,44 @@ describe('timeoutReloadOutcomeOf (#1049 F7-18)', () => {
     expect(timeoutReloadOutcomeOf(SENT, [...OLD, { id: 'm3', role: 'user', content: ` ${SENT.text}\n` }])).toBe(
       'delivered-no-reply',
     );
+  });
+});
+
+describe('timedOutSendReloadOf (#2227 H1)', () => {
+  const SAVED = { id: 'm3', role: 'user', content: SENT.text };
+  const REPLY = { id: 'm4', role: 'assistant', content: '返答です' };
+
+  it('保存行の id が分かっていなければ本文の一致で探し、除く id (前の送信に当てた行) は除く', () => {
+    expect(timedOutSendReloadOf(SENT, [...OLD, SAVED, REPLY], [])).toEqual({ outcome: 'replied', savedUser: SAVED, reply: REPLY });
+    expect(timedOutSendReloadOf(SENT, [...OLD, SAVED], [])).toEqual({ outcome: 'delivered-no-reply', savedUser: SAVED, reply: null });
+    expect(timedOutSendReloadOf(SENT, [...OLD, SAVED, REPLY], ['m3'])).toEqual({ outcome: 'not-delivered', savedUser: null, reply: null });
+  });
+
+  it('保存行の id が分かっていれば、その行がこの送信に当てた行として除く id に入っていても、その id で送った文と返答を探す', () => {
+    // 直す前: 1 回目の取り直しで当てた行 (m3) を 2 回目は除いて探し、届いていた送信を not-delivered にしていた
+    const known: TimedOutSend = { ...SENT, delivered: true, savedUserMessageId: 'm3' };
+    expect(timedOutSendReloadOf(known, [...OLD, SAVED, REPLY], ['m3'])).toEqual({ outcome: 'replied', savedUser: SAVED, reply: REPLY });
+    expect(timedOutSendReloadOf(known, [...OLD, SAVED], ['m3'])).toEqual({
+      outcome: 'delivered-no-reply',
+      savedUser: SAVED,
+      reply: null,
+    });
+  });
+
+  it('保存行の id で探すときは、後ろに同じ文の別の行があっても、その id の行のすぐ後ろの返答だけを見る', () => {
+    const known: TimedOutSend = { ...SENT, delivered: true, savedUserMessageId: 'm3' };
+    const later = { id: 'm5', role: 'user', content: SENT.text };
+    const laterReply = { id: 'm6', role: 'assistant', content: '後の返答です' };
+    expect(timedOutSendReloadOf(known, [...OLD, SAVED, later, laterReply], ['m3'])).toEqual({
+      outcome: 'delivered-no-reply',
+      savedUser: SAVED,
+      reply: null,
+    });
+  });
+
+  it('id の行が会話に無ければ本文の一致に戻る (その id 自身は除かない)', () => {
+    const known: TimedOutSend = { ...SENT, delivered: true, savedUserMessageId: 'gone' };
+    expect(timedOutSendReloadOf(known, [...OLD, SAVED, REPLY], ['gone'])).toEqual({ outcome: 'replied', savedUser: SAVED, reply: REPLY });
   });
 });
 
@@ -159,7 +198,8 @@ describe('相談画面が共通の扱いを使う (#1049 F7-18。写さない)',
   it.each(['src/components/ai/AIAdvisorSheet.tsx'])('%s', (file) => {
     const source = fs.readFileSync(path.join(__dirname, '../..', file), 'utf8');
     for (const name of [
-      'timeoutReloadOutcomeOf',
+      // 取り直しの結果は timedOutSendReloadOf (本文の一致は timeoutReloadOutcomeOf。#2227 H1 で保存行の id でも探す) で決める
+      'timedOutSendReloadOf',
       'restoreInputAfterTimeout',
       'clearInputIfDelivered',
       'TIMEOUT_NOTICE_MESSAGE',

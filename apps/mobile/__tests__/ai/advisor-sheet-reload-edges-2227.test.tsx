@@ -8,6 +8,10 @@
  *      (Web は 10 秒)。取り直しのあとの提案の記録の直読みにも上限が無かった
  *   3. 応答を受ける前の時間切れで送った文が見つからないと、『届いていませんでした』と言い切った (Web は『確かめられませんでした』)
  *   4. 送信中・取り直しの最中に別の相談へ切り替えると、前の相談の会話と送った文を今の画面に書いた
+ *   5. (R1 の指摘) 届いているが返答がまだ無いと分かったあと「最新の会話を読み込む」をもう一度押すと、1 回目でこの送信に当てた
+ *      保存行を除いて探し、届いていた送信を『届いていません』と取り違えた (入力欄に送った文を戻し、Alert を出した)
+ *   6. (R1 の指摘) 本文を流している最中に相談を切り替えると、前の相談の返答の断片が今の画面に流れ、finalData が来ても消えずに残った。
+ *      時間切れで終わると、今の相談の画面に前の相談の「最新の会話を読み込む」が残った
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Alert } from 'react-native';
@@ -47,13 +51,17 @@ import React from 'react';
 import { AIAdvisorSheet } from '../../src/components/ai/AIAdvisorSheet';
 import {
   AI_CHAT_RELOAD_TIMEOUT_MS,
+  PREVIOUS_REQUEST_EXECUTED_MESSAGE,
   REPLY_FAILED_MESSAGE,
   TIMEOUT_DELIVERED_NO_REPLY_MESSAGE,
   TIMEOUT_DELIVERY_UNCONFIRMED_MESSAGE,
   TIMEOUT_DELIVERY_UNCONFIRMED_TITLE,
   TIMEOUT_NOT_DELIVERED_MESSAGE,
 } from '../../src/lib/ai-chat-timeout';
-import { resetAiConsultationDataChangedListenersForTests } from '../../src/lib/ai-consultation-data-changed';
+import {
+  resetAiConsultationDataChangedListenersForTests,
+  subscribeAiConsultationDataChanged,
+} from '../../src/lib/ai-consultation-data-changed';
 
 const SESSION = { id: 'session-1', title: 'AI相談', messageCount: 2, status: 'active' };
 const OTHER_SESSION = { id: 'session-2', title: '別の相談', messageCount: 1, status: 'closed' };
@@ -138,6 +146,38 @@ function streamsLines(lines: unknown[]) {
     },
     text: async () => '',
   };
+}
+
+/**
+ * 本文の行 (SSE の data) を順に流す、受け付けられた応答。gate のある行は、gate が解けるまで読み取りを返さない
+ * (流れの途中で相談を切り替えるため)
+ */
+function streamsGatedLines(steps: { line: unknown; gate?: Promise<void> }[]) {
+  let index = 0;
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      getReader: () => ({
+        read: async () => {
+          if (index >= steps.length) return { done: true, value: undefined };
+          const step = steps[index++];
+          if (step.gate) await step.gate;
+          return { done: false, value: encoder.encode(`data: ${JSON.stringify(step.line)}\n\n`) };
+        },
+        cancel: async () => undefined,
+      }),
+    },
+    text: async () => '',
+  };
+}
+
+function gate(): { promise: Promise<void>; release: () => void } {
+  let release: () => void = () => {};
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
 }
 
 const SERVER_ERROR_ONLY_LINE = { error: 'サーバーでエラーが発生しました', code: 'INTERNAL_ERROR' };
@@ -348,5 +388,188 @@ describe('#2227 H1 送信中・取り直しの最中に別の相談へ切り替�
     expect(screen.getByText('別の相談の返答です')).toBeTruthy();
     expect(screen.queryByText(SAVED_REPLY)).toBeNull();
     expect(screen.queryByText(SENT_TEXT)).toBeNull();
+  });
+});
+
+describe('#2227 H1 (R1) 届いているが返答がまだ無いと分かったあと、もう一度「最新の会話を読み込む」を押した', () => {
+  const EXECUTED_LOGS = { data: [{ status: 'executed' }], error: null };
+
+  async function pressReload() {
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('ai-timeout-reload'));
+    });
+  }
+
+  it('時間切れのあと: 2 回目で返答が届いていれば、届いていた送信として会話と前の依頼の一文を出す (Alert も入力欄の戻しもしない)', async () => {
+    await openSheet();
+    const changed = jest.fn();
+    subscribeAiConsultationDataChanged(changed);
+    fetchMock.mockRejectedValueOnce(abortError());
+    await send();
+    await waitFor(() => expect(screen.getByTestId('ai-timeout-notice')).toBeTruthy());
+
+    serverMessages = [...OLD_MESSAGES, SAVED_USER];
+    await pressReload();
+    await waitFor(() => expect(screen.getByText(TIMEOUT_DELIVERED_NO_REPLY_MESSAGE)).toBeTruthy());
+    expect(inputValue()).toBe('');
+
+    serverMessages = SAVED_MESSAGES;
+    mockEq.mockResolvedValue(EXECUTED_LOGS);
+    await pressReload();
+
+    await waitFor(() => expect(screen.getByText(SAVED_REPLY)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeTruthy());
+    expect(changed).toHaveBeenCalled();
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(inputValue()).toBe('');
+    expect(screen.queryByTestId('ai-timeout-notice')).toBeNull();
+    expect(screen.getAllByText(SENT_TEXT)).toHaveLength(1);
+  });
+
+  it('時間切れのあと: 2 回目もまだ返答が無ければ、返答を待つ案内のまま (『届いていません』にしない)', async () => {
+    await openSheet();
+    fetchMock.mockRejectedValueOnce(abortError());
+    await send();
+    await waitFor(() => expect(screen.getByTestId('ai-timeout-notice')).toBeTruthy());
+
+    serverMessages = [...OLD_MESSAGES, SAVED_USER];
+    await pressReload();
+    await waitFor(() => expect(screen.getByText(TIMEOUT_DELIVERED_NO_REPLY_MESSAGE)).toBeTruthy());
+    await pressReload();
+
+    // 取り直しの GET (上限つき) が 2 回目まで済んだ
+    await waitFor(() => expect(mockGet.mock.calls.filter((call) => call[1] !== undefined)).toHaveLength(2));
+    await waitFor(() => expect(screen.getByTestId('ai-timeout-reload')).toBeTruthy());
+    expect(screen.getByText(TIMEOUT_DELIVERED_NO_REPLY_MESSAGE)).toBeTruthy();
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(inputValue()).toBe('');
+  });
+
+  it('応答が途中で切れたあと: 取り直しで返答がまだ無く、押した取り直しで返答が届いていれば、届いていた送信として出す', async () => {
+    await openSheet();
+    fetchMock.mockImplementationOnce(async () => {
+      serverMessages = [...OLD_MESSAGES, SAVED_USER];
+      return streamsLines([]);
+    });
+    await send();
+    await waitFor(() => expect(screen.getByText(TIMEOUT_DELIVERED_NO_REPLY_MESSAGE)).toBeTruthy());
+
+    serverMessages = SAVED_MESSAGES;
+    mockEq.mockResolvedValue(EXECUTED_LOGS);
+    await pressReload();
+
+    await waitFor(() => expect(screen.getByText(SAVED_REPLY)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeTruthy());
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(inputValue()).toBe('');
+    expect(screen.queryByTestId('ai-timeout-notice')).toBeNull();
+  });
+});
+
+describe('#2227 H1 (R1) 本文を流している最中に別の相談へ切り替えた', () => {
+  const PARTIAL = '鶏むね肉の照り';
+  const FINAL_LINE = {
+    userMessage: { id: SAVED_USER.id, content: SENT_TEXT, createdAt: SAVED_USER.createdAt },
+    aiMessage: { id: 'm4', content: SAVED_REPLY, createdAt: '2026-11-01T00:00:01.000Z' },
+    actionExecuted: false,
+    actionResult: null,
+  };
+
+  async function selectSessionById(id: string, shownText: string) {
+    fireEvent.press(screen.getByTestId('ai-toggle-sessions'));
+    await act(async () => {
+      fireEvent.press(screen.getByTestId(`ai-session-${id}`));
+    });
+    await waitFor(() => expect(screen.getByText(shownText)).toBeTruthy());
+  }
+
+  async function flush() {
+    for (let i = 0; i < 5; i += 1) {
+      await act(async () => {
+        await Promise.resolve();
+      });
+    }
+  }
+
+  it('切り替えたら前の相談の断片を消し、続きの断片も finalData も今の画面に出さない', async () => {
+    await openSheet();
+    const more = gate();
+    const final = gate();
+    fetchMock.mockResolvedValueOnce(
+      streamsGatedLines([
+        { line: { choices: [{ delta: { content: PARTIAL } }] } },
+        { line: { choices: [{ delta: { content: 'り焼き' } }] }, gate: more.promise },
+        { line: FINAL_LINE, gate: final.promise },
+      ]),
+    );
+    await send();
+    await waitFor(() => expect(screen.getByText(PARTIAL)).toBeTruthy());
+
+    await selectSessionById(OTHER_SESSION.id, '別の相談の返答です');
+    expect(screen.queryByText(PARTIAL)).toBeNull();
+
+    await act(async () => {
+      more.release();
+    });
+    await flush();
+    expect(screen.queryByText(`${PARTIAL}り焼き`)).toBeNull();
+
+    await act(async () => {
+      final.release();
+    });
+    await flush();
+    expect(screen.getByText('別の相談の返答です')).toBeTruthy();
+    expect(screen.queryByText(PARTIAL)).toBeNull();
+    expect(screen.queryByText(`${PARTIAL}り焼き`)).toBeNull();
+    expect(screen.queryByText(SAVED_REPLY)).toBeNull();
+    expect(screen.queryByText(SENT_TEXT)).toBeNull();
+  });
+
+  it('切り替えて戻ったあとに finalData が来ても、送った文と返答を 2 つ並べず、断片も残さない', async () => {
+    await openSheet();
+    const final = gate();
+    fetchMock.mockImplementationOnce(async () => {
+      // サーバーは AI に問い合わせる前に送った文を保存する
+      serverMessages = [...OLD_MESSAGES, SAVED_USER];
+      return streamsGatedLines([
+        { line: { choices: [{ delta: { content: PARTIAL } }] } },
+        { line: FINAL_LINE, gate: final.promise },
+      ]);
+    });
+    await send();
+    await waitFor(() => expect(screen.getByText(PARTIAL)).toBeTruthy());
+
+    await selectSessionById(OTHER_SESSION.id, '別の相談の返答です');
+    await selectSessionById(SESSION.id, '野菜を足しましょう');
+    expect(screen.getAllByText(SENT_TEXT)).toHaveLength(1);
+    expect(screen.queryByText(PARTIAL)).toBeNull();
+
+    await act(async () => {
+      final.release();
+    });
+    await waitFor(() => expect(screen.getByText(SAVED_REPLY)).toBeTruthy());
+    expect(screen.getAllByText(SENT_TEXT)).toHaveLength(1);
+    expect(screen.getAllByText(SAVED_REPLY)).toHaveLength(1);
+    expect(screen.queryByText(PARTIAL)).toBeNull();
+  });
+
+  it('切り替えたあとに時間切れで終わっても、今の相談の画面に前の相談の「最新の会話を読み込む」を出さない', async () => {
+    await openSheet();
+    const response = gate();
+    fetchMock.mockImplementationOnce(async () => {
+      await response.promise;
+      throw abortError();
+    });
+    await send();
+
+    await selectSessionById(OTHER_SESSION.id, '別の相談の返答です');
+    await act(async () => {
+      response.release();
+    });
+    await flush();
+
+    expect(screen.queryByTestId('ai-timeout-notice')).toBeNull();
+    expect(inputValue()).toBe('');
+    expect(alertSpy).not.toHaveBeenCalled();
   });
 });

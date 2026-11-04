@@ -15,6 +15,7 @@ import {
   replyHasProposalOf,
   replyProposalExecutableOf,
   replyToSentMessageOf,
+  replyToUserMessageIdOf,
   resolveUnconfirmedSends,
   sentMessageIndexOf,
   sentMessageReloadOutcomeOf,
@@ -50,10 +51,12 @@ export const AI_CHAT_STREAM_TIMEOUT_MS = 26_000;
  * 両方の画面とも、次のように扱う。
  *   1. 時間切れになったら、失敗として終わらせず、案内 (TIMEOUT_NOTICE_MESSAGE) と取り直しのボタン (TIMEOUT_RELOAD_LABEL) を出す。
  *      送った文は入力欄に戻す (restoreInputAfterTimeout。入力欄に別の文が入っていれば、それを消さない)。
- *   2. 取り直したら、サーバーの会話に送った文があるか (= 届いていたか) を timeoutReloadOutcomeOf で見分ける。
+ *   2. 取り直したら、サーバーの会話に送った文があるか (= 届いていたか) を timedOutSendReloadOf (本文の一致は timeoutReloadOutcomeOf)
+ *      で見分ける。
  *      - 届いていて返答もある ('replied'): 会話を出し、案内を消す。
  *      - 届いているが返答がまだ無い ('delivered-no-reply'): 会話を出し、返答の作成が続いていることがある旨の案内
- *        (TIMEOUT_DELIVERED_NO_REPLY_MESSAGE) と取り直しのボタンを残す。
+ *        (TIMEOUT_DELIVERED_NO_REPLY_MESSAGE) と取り直しのボタンを残す。見つけた保存行の id を持ち (savedUserMessageId)、
+ *        もう一度押したときはその id で送った文と返答を探す (#2227 H1)。
  *      - 届いていない ('not-delivered'): 案内を消し、もう一度送るように知らせる (TIMEOUT_NOT_DELIVERED_MESSAGE)。
  *   3. 届いていたとき ('replied' と 'delivered-no-reply') は、入力欄に戻した文を消す (clearInputIfDelivered)。
  *      そのまま送ると、同じ相談がサーバーに二重に届く (AI の回数も二重に数えられる)ため。
@@ -118,6 +121,13 @@ export type TimedOutSend = {
   userSaveMayBeLate?: boolean;
   /** サーバーが失敗を知らせた (SSE で error だけの行が来た。#2227 H1)。返答は来ないので、取り直しで返答が無ければ失敗の文を出す */
   serverFailed?: boolean;
+  /**
+   * 取り直しで見つけた、送った文の保存行の id (届いているが返答がまだ無いと分かったときに持つ。#2227 H1)。
+   * 次の「最新の会話を読み込む」では、本文の一致でなくこの id で送った文と返答を探す (timedOutSendReloadOf。Web の
+   * recheckDeliveredNoReplyLater と同じ)。本文の一致で探すと、この行はもうこの送信に当てた行 (画面の claimedSavedUserIds) に
+   * 入っているので除かれ、届いていた送信を『届いていません』と取り違えた
+   */
+  savedUserMessageId?: string;
 };
 
 /** 「最新の会話を読み込む」の上に出す案内 (届いていた → 返答がまだ無い / 途中で切れた / 時間切れ) */
@@ -137,6 +147,42 @@ export type TimeoutReloadOutcome = "replied" | "delivered-no-reply" | "not-deliv
  */
 export function timeoutReloadOutcomeOf(sent: TimedOutSend, loaded: readonly ReloadedMessage[]): TimeoutReloadOutcome {
   return sentMessageReloadOutcomeOf(sent, loaded);
+}
+
+/** 取り直した会話での、時間切れになった送信の結果と、送った文の保存行・その返答 (無ければ null) */
+export type TimedOutSendReload<T extends ReloadedMessage> = {
+  outcome: TimeoutReloadOutcome;
+  savedUser: T | null;
+  reply: T | null;
+};
+
+/**
+ * 取り直した会話 (loaded) で、時間切れになった送信 (sent) の結果・送った文の保存行・返答を決める (#2227 H1)。
+ *   - 前の取り直しで保存行の id が分かっている (sent.savedUserMessageId) ときは、その id の user の行と、そのすぐ後ろの返答
+ *     (replyToUserMessageIdOf) で決める。この行はもうこの送信に当てた行なので、excludedIds に入っていても除かない
+ *   - 分かっていない (または id の行が会話に無い) ときは、本文の一致 (sentMessageIndexOf。いちばん後ろ) で探す。
+ *     excludedIds (確かめられなかった前の送信に当てた行) は除く。ただし sent.savedUserMessageId は除かない
+ */
+export function timedOutSendReloadOf<T extends ReloadedMessage>(
+  sent: TimedOutSend,
+  loaded: readonly T[],
+  excludedIds: readonly string[],
+): TimedOutSendReload<T> {
+  const savedId = sent.savedUserMessageId;
+  if (savedId !== undefined) {
+    const savedUser = loaded.find((message) => message.role === "user" && message.id === savedId) ?? null;
+    if (savedUser) {
+      const reply = replyToUserMessageIdOf(savedId, loaded);
+      return { outcome: reply ? "replied" : "delivered-no-reply", savedUser, reply };
+    }
+  }
+  const sentByText: TimedOutSend = {
+    ...sent,
+    knownMessageIds: [...sent.knownMessageIds, ...excludedIds.filter((id) => id !== savedId)],
+  };
+  const outcome = timeoutReloadOutcomeOf(sentByText, loaded);
+  if (outcome === "not-delivered") return { outcome, savedUser: null, reply: null };
+  return { outcome, savedUser: loaded[sentMessageIndexOf(sentByText, loaded)], reply: replyToSentMessageOf(sentByText, loaded) };
 }
 
 /*
@@ -173,6 +219,7 @@ export {
   replyHasProposalOf,
   replyProposalExecutableOf,
   replyToSentMessageOf,
+  replyToUserMessageIdOf,
   resolveUnconfirmedSends,
   sentMessageIndexOf,
   settleWithin,

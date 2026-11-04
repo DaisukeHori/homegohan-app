@@ -48,13 +48,11 @@ import {
   previousRequestRecheckPlanOf,
   replyHasProposalOf,
   replyProposalExecutableOf,
-  replyToSentMessageOf,
   resolveUnconfirmedSends,
   restoreInputAfterTimeout,
   settleWithin,
-  sentMessageIndexOf,
   timedOutSendNoticeOf,
-  timeoutReloadOutcomeOf,
+  timedOutSendReloadOf,
   type PreviousRequestActionRead,
   type PreviousRequestNoteState,
   type SentText,
@@ -172,7 +170,7 @@ type PreviousRequestNote = { notes: Message[]; recheck: { replyId: string; reply
 const NO_PREVIOUS_REQUEST_NOTE: PreviousRequestNote = { notes: [], recheck: null };
 
 /**
- * 応答 (finalData) を受け取れずに取り直した会話 (loaded) で、送った文 (sent) への AI の返答の提案の記録を読み、足す一文・
+ * 応答 (finalData) を受け取れずに取り直した会話で、送った文への AI の返答 (reply。timedOutSendReloadOf が探したもの) の提案の記録を読み、足す一文・
  * 知らせるか・読み直すかを共有の previousRequestNotePlanOf で決める (Web の AIChatBubble の placeReloadedReply と同じ決まり。
  * #2206 G2。以前はこのシートに判定の写しがあり、Web にだけ足した 2 つの決まりが無かった)。
  *   - 実行できていれば、実行できた一文を足し、データを出すタブの WebView に知らせる (notifyAiConsultationDataChanged)
@@ -184,9 +182,7 @@ const NO_PREVIOUS_REQUEST_NOTE: PreviousRequestNote = { notes: [], recheck: null
  *     読めないと実行できたかが分からない)
  *   - 返答が無い・行が無いなら空 (時間切れの取り直しと、応答を受け取れなかったときの取り直しの両方で使う)
  */
-async function previousRequestNoteAfterReload(sent: SentText, loaded: readonly Message[]): Promise<PreviousRequestNote> {
-  const reply = replyToSentMessageOf(sent, loaded);
-  if (!reply) return NO_PREVIOUS_REQUEST_NOTE;
+async function previousRequestNoteAfterReload(reply: Message): Promise<PreviousRequestNote> {
   const read = await replyActionStateOf(reply.id);
   const replyHasProposal = replyHasProposalOf(reply);
   const plan = previousRequestNotePlanOf({
@@ -318,7 +314,10 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   // (会話・入力欄) に書かない (#2227 H1。Web の AIChatBubble の currentSessionIdRef と同じ)。state ではなく ref で今の値を見る
   // 切り替えた時点で ref も変える (描画を待つと、切り替えの直後に返った取り直し・応答が古い値を見る)
   const currentSessionIdRef = useRef<string | null>(null);
+  // 切り替えたら、流れの途中の本文 (streamingContent) も消す (#2227 H1。前の相談の返答の断片を今の画面に残さない。
+  // 前の相談の送信の続きの断片は handleSseLine が今の画面に流さない)
   function showSessionId(sessionId: string | null) {
+    if (currentSessionIdRef.current !== sessionId) setStreamingContent(null);
     currentSessionIdRef.current = sessionId;
     setCurrentSessionId(sessionId);
   }
@@ -527,23 +526,26 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
    * 応答を受ける前に終わった送信 (userSaveMayBeLate) は、送った文の保存が取り直しより後になりうるので『届いていません』と
    * 言い切らない (#2227 H1。Web と同じ)。サーバーが失敗を知らせた送信 (serverFailed) で返答が無ければ、返答は来ないので
    * 『返答を作っているところかもしれません』の案内を出さずに失敗の文を出す (#2227 H1。Web と同じ)。
-   * 送った文の保存行は、確かめられなかった前の送信に当てた行を除いて探す (#2227 H1)。
+   * 送った文の保存行は、確かめられなかった前の送信に当てた行を除いて探す (#2227 H1)。届いているが返答がまだ無いと分かったら、
+   * 保存行の id を TimedOutSend に持たせ (savedUserMessageId)、次の「最新の会話を読み込む」ではその id で送った文と返答を探す
+   * (#2227 H1。本文の一致で探すと、この送信に当てた行として除かれ、届いていた送信を『届いていません』と取り違えた。timedOutSendReloadOf)。
    * 取り直しの最中に別の相談に切り替えていたら、会話・入力欄・案内は変えない (#2227 H1。前の相談の会話を今の画面に書かない。
    * データの更新の知らせ・前の依頼の読み直しは続ける)
    */
   async function showReloadedConversation(sent: TimedOutSend, loaded: Message[]) {
+    // 保存行の id が分かっている送信 (届いているが返答がまだ無かった送信の 2 回目以降の取り直し) は、その行をもうこの送信に
+    // 当てている (確かめられなかった前の送信はこの行を当てない) ので、今回の送信の一致を前の送信から守らなくてよい
+    const knowsSavedRow = sent.savedUserMessageId !== undefined;
     const claimedIds = settleUnconfirmedSends({
       sessionId: sent.sessionId,
       loaded,
-      current: sent,
-      currentAccepted: sent.userSaveMayBeLate !== true,
+      current: knowsSavedRow ? null : sent,
+      currentAccepted: !knowsSavedRow && sent.userSaveMayBeLate !== true,
       forgetRemaining: false,
     });
-    const sentText: SentText = { text: sent.text, knownMessageIds: [...sent.knownMessageIds, ...claimedIds] };
-    const outcome = timeoutReloadOutcomeOf({ ...sent, knownMessageIds: sentText.knownMessageIds }, loaded);
-    if (outcome !== "not-delivered") claimSavedUserMessageId(loaded[sentMessageIndexOf(sentText, loaded)]?.id);
-    const previousRequest =
-      outcome === "replied" ? await previousRequestNoteAfterReload(sentText, loaded) : NO_PREVIOUS_REQUEST_NOTE;
+    const { outcome, savedUser, reply } = timedOutSendReloadOf(sent, loaded, claimedIds);
+    if (savedUser) claimSavedUserMessageId(savedUser.id);
+    const previousRequest = reply ? await previousRequestNoteAfterReload(reply) : NO_PREVIOUS_REQUEST_NOTE;
     if (previousRequest.recheck) {
       recheckPreviousRequestLater(previousRequest.recheck.replyId, previousRequest.recheck.replyHasProposal);
     }
@@ -566,7 +568,11 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       Alert.alert("エラー", REPLY_FAILED_MESSAGE);
       return;
     }
-    setTimedOutSend(outcome === "replied" ? null : { ...sent, delivered: true });
+    setTimedOutSend(
+      outcome === "replied"
+        ? null
+        : { ...sent, delivered: true, savedUserMessageId: savedUser?.id ?? sent.savedUserMessageId },
+    );
   }
 
   /**
@@ -824,7 +830,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         const chunk = parsed?.choices?.[0]?.delta?.content;
         if (typeof chunk === "string" && chunk) {
           accumulated += chunk;
-          setStreamingContent(accumulated);
+          // 送信の最中に別の相談に切り替えていたら、前の相談の返答の断片を今の画面に流さない (#2227 H1)
+          if (currentSessionIdRef.current === sessionId) setStreamingContent(accumulated);
           return;
         }
 
@@ -837,12 +844,13 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         if (parsed?.aiMessage) {
           finalHandled = true;
           claimSavedUserMessageId(parsed.userMessage?.id);
+          // 流れの途中の本文は、相談を切り替えていても消す (送信は 1 つずつなので、出ている断片はこの送信のもの。#2227 H1)
+          setStreamingContent(null);
           // 送信の最中に別の相談に切り替えていたら、前の相談の会話を今の画面に書かない (#2227 H1)。自動実行の知らせは続ける
           if (currentSessionIdRef.current !== sessionId) {
             if (consultationAutoActionOutcomeOf(parsed)?.outcome.kind === "executed") notifyAiConsultationDataChanged();
             return;
           }
-          setStreamingContent(null);
           const aiMsg: Message = {
             id: parsed.aiMessage.id ?? `ai-${Date.now()}`,
             role: "assistant",
@@ -856,8 +864,10 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
           const outcomeMessages: Message[] = autoAction ? [autoActionOutcomeMessageOf(autoAction.outcome, aiMsg.id)] : [];
           const savedUserMessage = parsed.userMessage;
           setMessages((prev) => {
+            // 送信の最中に相談を切り替えて戻ってくると、開き直した会話に送った文 (と返答) の保存行がもう入っていることがある。
+            // 同じ id の行は除いてから足す (同じ送った文・返答を 2 つ並べない。#2227 H1)
             const withoutOptimistic = prev.filter(
-              (m) => !m.id.startsWith("local-")
+              (m) => !m.id.startsWith("local-") && m.id !== savedUserMessage?.id && m.id !== aiMsg.id
             );
             const userMsg: Message = savedUserMessage
               ? {
@@ -977,7 +987,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
           setInputText((current) => restoreInputAfterTimeout(current, trimmed));
         }
         if (sessionId) {
-          setTimedOutSend({
+          const timedOut: TimedOutSend = {
             sessionId,
             text: trimmed,
             knownMessageIds,
@@ -986,7 +996,12 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
             // 応答を受ける前に終わった: 送った文の保存が取り直しより後になりうる (#2227 H1。Web の userSaveMayBeLate)
             userSaveMayBeLate: !responseAccepted,
             serverFailed,
-          });
+          };
+          // 送信の最中に別の相談に切り替えていたら、今の相談の画面に前の相談の「最新の会話を読み込む」を出さない (#2227 H1。
+          // 押しても前の相談の会話は今の画面に書かないので、案内が消えずに残った)。確かめられなかった送信として覚え、
+          // 前の相談を開き直したときに保存行を探す (届いていて入力欄が送った文のままなら消す)
+          if (currentSessionIdRef.current === sessionId) setTimedOutSend(timedOut);
+          else rememberUnconfirmedSend(timedOut);
         } else {
           Alert.alert("タイムアウト", TIMEOUT_NOTICE_MESSAGE);
         }
