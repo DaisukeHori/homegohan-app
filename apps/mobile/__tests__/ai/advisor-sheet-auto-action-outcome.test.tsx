@@ -45,6 +45,7 @@ jest.mock('expo-linear-gradient', () => ({
 import React from 'react';
 import { AI_CONSULTATION_ACTION_FAILED_FALLBACK_MESSAGE } from '@homegohan/shared';
 import { AIAdvisorSheet } from '../../src/components/ai/AIAdvisorSheet';
+import { AI_CHAT_RELOAD_TIMEOUT_MS } from '../../src/lib/ai-chat-timeout';
 import {
   resetAiConsultationDataChangedListenersForTests,
   subscribeAiConsultationDataChanged,
@@ -167,8 +168,8 @@ describe('AIAdvisorSheet — 自動実行の結果 (#2189 W2)', () => {
     expect(texts.indexOf(SENT_TEXT)).toBeLessThan(texts.indexOf(AI_REPLY));
     expect(dataChanged).toHaveBeenCalledTimes(1);
     expect(alertSpy).not.toHaveBeenCalled();
-    // 取り直しはしない (finalData で会話を確定させた)
-    expect(mockGet).not.toHaveBeenCalledWith(MESSAGES_PATH);
+    // 取り直しはしない (finalData で会話を確定させた)。取り直しの GET は上限の指定つきで呼ぶ (#2227 H1) ので、引数によらず数える
+    expect(mockGet.mock.calls.filter(([requestPath]) => requestPath === MESSAGES_PATH)).toEqual([]);
   });
 
   it.each([
@@ -221,7 +222,8 @@ describe('AIAdvisorSheet — 自動実行の結果 (#2189 W2)', () => {
     });
 
     await waitFor(() => expect(screen.getByText(AI_REPLY)).toBeTruthy());
-    expect(mockGet).toHaveBeenCalledWith(MESSAGES_PATH);
+    // 取り直しの GET は Web と同じ上限で打ち切る (#2227 H1)
+    expect(mockGet).toHaveBeenCalledWith(MESSAGES_PATH, { timeoutMs: AI_CHAT_RELOAD_TIMEOUT_MS });
     expect(dataChanged).not.toHaveBeenCalled();
   });
 });

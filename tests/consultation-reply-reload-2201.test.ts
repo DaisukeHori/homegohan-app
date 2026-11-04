@@ -31,6 +31,7 @@ import {
   previousRequestNoteTextOf,
   previousRequestRecheckPlanOf,
   replyHasProposalOf,
+  replyProposalExecutableOf,
   replyToSentMessageOf,
   replyToUserMessageIdOf,
   sentMessageIndexOf,
@@ -234,28 +235,51 @@ describe('#2206 G2 取り直した返答の一文・知らせるか・読み直�
   const NOTHING_PLAN: PreviousRequestNotePlan = { state: 'none', noteState: null, notifyDataChanged: false, recheck: false };
   const RECHECK_ONLY_PLAN: PreviousRequestNotePlan = { state: 'none', noteState: null, notifyDataChanged: false, recheck: true };
 
-  it.each<[PreviousRequestActionState, boolean, boolean, PreviousRequestNotePlan]>([
-    ['executed', false, false, EXECUTED_PLAN],
-    ['executed', false, true, EXECUTED_PLAN],
-    ['executed', true, false, EXECUTED_PLAN],
-    ['executed', true, true, EXECUTED_PLAN],
-    ['running', false, false, RUNNING_PLAN],
-    ['running', false, true, RUNNING_PLAN],
-    ['running', true, false, RUNNING_PLAN],
-    ['running', true, true, RUNNING_PLAN],
-    ['notExecuted', false, false, NOT_EXECUTED_PLAN],
-    ['notExecuted', false, true, NOT_EXECUTED_PLAN],
-    ['notExecuted', true, false, NOT_EXECUTED_PLAN],
-    ['notExecuted', true, true, NOT_EXECUTED_PLAN],
-    // 行が無い・断った・読めない
-    ['none', false, false, NOTHING_PLAN],
+  // 行がある状態 (executed・running・notExecuted) は、読めなかったか・提案があるか・GET が「実行する」を出すとしたかによらない
+  const ALL_FLAGS: Array<[boolean, boolean, boolean]> = [
+    [false, false, false],
+    [false, false, true],
+    [false, true, false],
+    [false, true, true],
+    [true, false, false],
+    [true, false, true],
+    [true, true, false],
+    [true, true, true],
+  ];
+  it.each<[PreviousRequestActionState, PreviousRequestNotePlan]>([
+    ['executed', EXECUTED_PLAN],
+    ['running', RUNNING_PLAN],
+    ['notExecuted', NOT_EXECUTED_PLAN],
+  ])('状態 %s は残りの印によらない', (actionState, expected) => {
+    for (const [readFailed, replyHasProposal, replyProposalExecutable] of ALL_FLAGS) {
+      expect(previousRequestNotePlanOf({ actionState, readFailed, replyHasProposal, replyProposalExecutable })).toEqual(expected);
+    }
+  });
+
+  it.each<[boolean, boolean, boolean, PreviousRequestNotePlan]>([
+    // 行が無い・断った (読めた) で提案も無い
+    [false, false, false, NOTHING_PLAN],
+    [false, false, true, NOTHING_PLAN],
     // 返答を保存してから行を作るまでの間に取り直しが当たった: 実行中の印と同じく一文を出して読み直す
-    ['none', false, true, RUNNING_PLAN],
+    // (記録を読めたなら GET の「実行する」は見ない)
+    [false, true, false, RUNNING_PLAN],
+    [false, true, true, RUNNING_PLAN],
     // 提案が無く記録を読めない: 一文は出さずに 1 回だけ読み直す (GET は実行できた提案を出さない)
-    ['none', true, false, RECHECK_ONLY_PLAN],
-    ['none', true, true, RUNNING_PLAN],
-  ])('状態 %s・読めなかった %s・提案がある %s', (actionState, readFailed, replyHasProposal, expected) => {
-    expect(previousRequestNotePlanOf({ actionState, readFailed, replyHasProposal })).toEqual(expected);
+    [true, false, false, RECHECK_ONLY_PLAN],
+    [true, false, true, RECHECK_ONLY_PLAN],
+    // 記録を読めず、GET は「実行する」を出さないとした (実行中の印・失敗・行が無いのどれか): 実行中の印と同じ
+    [true, true, false, RUNNING_PLAN],
+    // #2227 H1: 記録を読めず、GET は「実行する」を出すとした (GET が読んだ行は pending): 実行していない
+    [true, true, true, NOT_EXECUTED_PLAN],
+  ])('状態 none・読めなかった %s・提案がある %s・GET が実行できるとした %s', (readFailed, replyHasProposal, replyProposalExecutable, expected) => {
+    expect(previousRequestNotePlanOf({ actionState: 'none', readFailed, replyHasProposal, replyProposalExecutable })).toEqual(expected);
+  });
+
+  it('#2227 H1 GET が「実行する」を出すとしたかは proposedActionExecutable が true のときだけ', () => {
+    expect(replyProposalExecutableOf({ proposedActionExecutable: true })).toBe(true);
+    expect(replyProposalExecutableOf({ proposedActionExecutable: false })).toBe(false);
+    expect(replyProposalExecutableOf({ proposedActionExecutable: 'true' })).toBe(false);
+    expect(replyProposalExecutableOf({})).toBe(false);
   });
 
   it('返答に提案があるかは会話の GET の proposedActions で読む (null・無い → 無い)', () => {
@@ -266,13 +290,24 @@ describe('#2206 G2 取り直した返答の一文・知らせるか・読み直�
 });
 
 describe('#2206 G2 読み直しの結果の当て方 (previousRequestRecheckPlanOf・messagesAfterPreviousRequestRecheck)', () => {
-  it.each<[PreviousRequestActionState, PreviousRequestRecheckPlan]>([
-    ['executed', { noteState: 'executed', addNoteIfMissing: true, notifyDataChanged: true }],
-    ['notExecuted', { noteState: 'notExecuted', addNoteIfMissing: false, notifyDataChanged: false }],
-    ['running', { noteState: null, addNoteIfMissing: false, notifyDataChanged: false }],
-    ['none', { noteState: null, addNoteIfMissing: false, notifyDataChanged: false }],
-  ])('読み直した状態 %s', (state, expected) => {
-    expect(previousRequestRecheckPlanOf(state)).toEqual(expected);
+  const EXECUTED_RECHECK: PreviousRequestRecheckPlan = { noteState: 'executed', addNoteIfMissing: true, notifyDataChanged: true };
+  const NOT_EXECUTED_RECHECK: PreviousRequestRecheckPlan = { noteState: 'notExecuted', addNoteIfMissing: false, notifyDataChanged: false };
+  const NOTHING_RECHECK: PreviousRequestRecheckPlan = { noteState: null, addNoteIfMissing: false, notifyDataChanged: false };
+  it.each<[PreviousRequestActionState, boolean, boolean, PreviousRequestRecheckPlan]>([
+    ['executed', false, false, EXECUTED_RECHECK],
+    ['executed', false, true, EXECUTED_RECHECK],
+    ['notExecuted', false, false, NOT_EXECUTED_RECHECK],
+    ['notExecuted', false, true, NOT_EXECUTED_RECHECK],
+    ['running', false, false, NOTHING_RECHECK],
+    ['running', false, true, NOTHING_RECHECK],
+    ['none', false, false, NOTHING_RECHECK],
+    // #2227 H1: 読めたのに行がまだ無く、返答に提案がある (サーバーは行を作れずに実行しなかった): 実行していない
+    ['none', false, true, NOT_EXECUTED_RECHECK],
+    // 読めなかった: 行が無いとは言えないので何もしない
+    ['none', true, false, NOTHING_RECHECK],
+    ['none', true, true, NOTHING_RECHECK],
+  ])('読み直した状態 %s・読めなかった %s・提案がある %s', (state, readFailed, replyHasProposal, expected) => {
+    expect(previousRequestRecheckPlanOf({ state, readFailed }, replyHasProposal)).toEqual(expected);
   });
 
   type Row = { id: string; content: string; updated?: boolean };
@@ -287,7 +322,12 @@ describe('#2206 G2 読み直しの結果の当て方 (previousRequestRecheckPlan
   });
   const updateReply = (m: Row): Row => ({ ...m, updated: true });
   const apply = (messages: Row[], state: PreviousRequestActionState) =>
-    messagesAfterPreviousRequestRecheck(messages, { replyId: REPLY_ID, plan: previousRequestRecheckPlanOf(state), noteOf, updateReply });
+    messagesAfterPreviousRequestRecheck(messages, {
+      replyId: REPLY_ID,
+      plan: previousRequestRecheckPlanOf({ state, readFailed: false }, false),
+      noteOf,
+      updateReply,
+    });
 
   it('実行できた: 実行中の一文を置き換え、返答に updateReply を当てる', () => {
     expect(apply([user, reply, runningNote, later], 'executed')).toEqual([
@@ -324,7 +364,11 @@ describe('#2206 G2 読み直しの結果の当て方 (previousRequestRecheckPlan
   it('updateReply を渡さなければ返答はそのまま (モバイル)', () => {
     const messages = [user, reply, runningNote];
     expect(
-      messagesAfterPreviousRequestRecheck(messages, { replyId: REPLY_ID, plan: previousRequestRecheckPlanOf('executed'), noteOf }),
+      messagesAfterPreviousRequestRecheck(messages, {
+        replyId: REPLY_ID,
+        plan: previousRequestRecheckPlanOf({ state: 'executed', readFailed: false }, false),
+        noteOf,
+      }),
     ).toEqual([user, reply, noteOf('executed')]);
   });
 });

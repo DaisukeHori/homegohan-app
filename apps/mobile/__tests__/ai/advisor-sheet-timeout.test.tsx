@@ -51,9 +51,12 @@ jest.mock('expo-linear-gradient', () => ({
 import React from 'react';
 import { AIAdvisorSheet } from '../../src/components/ai/AIAdvisorSheet';
 import {
+  AI_CHAT_RELOAD_TIMEOUT_MS,
   AI_CHAT_STREAM_TIMEOUT_MS,
   TIMEOUT_DELIVERED_NO_REPLY_MESSAGE,
   TIMEOUT_NOTICE_MESSAGE,
+  TIMEOUT_DELIVERY_UNCONFIRMED_MESSAGE,
+  TIMEOUT_DELIVERY_UNCONFIRMED_TITLE,
   TIMEOUT_NOT_DELIVERED_MESSAGE,
 } from '../../src/lib/ai-chat-timeout';
 
@@ -183,7 +186,8 @@ describe('AIAdvisorSheet — 送信が時間切れになったあとの取り直
     });
 
     await waitFor(() => expect(screen.getByText(SAVED_REPLY)).toBeTruthy());
-    expect(mockGet).toHaveBeenCalledWith(MESSAGES_PATH);
+    // 取り直しの GET は Web と同じ上限で打ち切る (#2227 H1。/api/ai/ の下の既定の 120 秒を待たない)
+    expect(mockGet).toHaveBeenCalledWith(MESSAGES_PATH, { timeoutMs: AI_CHAT_RELOAD_TIMEOUT_MS });
     expect(screen.getByText(SENT_TEXT)).toBeTruthy();
     expect(screen.queryByTestId('ai-timeout-notice')).toBeNull();
     expect(alertSpy).not.toHaveBeenCalled();
@@ -277,13 +281,16 @@ describe('AIAdvisorSheet — 時間切れのときの入力欄 (#1049 F7-18)', (
     expect(screen.getByTestId('ai-timeout-reload')).toBeTruthy();
     expect(alertSpy).not.toHaveBeenCalled();
 
-    // もう一度取り直して返答が届いていれば、導線は消える
+    // もう一度取り直して返答が届いていれば、導線は消える。届いていた送信のまま (『届いていません』の Alert を出さず、
+    // 入力欄に送った文を戻さない。#2227 H1 の R1 の指摘: 1 回目で当てた保存行を除いて探し、取り違えていた)
     serverMessages = SAVED_MESSAGES;
     await act(async () => {
       fireEvent.press(screen.getByTestId('ai-timeout-reload'));
     });
     await waitFor(() => expect(screen.getByText(SAVED_REPLY)).toBeTruthy());
     expect(screen.queryByTestId('ai-timeout-notice')).toBeNull();
+    expect(alertSpy).not.toHaveBeenCalled();
+    expect(inputValue()).toBe('');
   });
 
   it('届いていたと分かっても、入力欄を書き換えていれば消さない', async () => {
@@ -300,7 +307,7 @@ describe('AIAdvisorSheet — 時間切れのときの入力欄 (#1049 F7-18)', (
     expect(inputValue()).toBe(`${SENT_TEXT} ささみは?`);
   });
 
-  it('取り直しても届いていなければ、導線を消し、入力欄の文を残して、もう一度送るように知らせる', async () => {
+  it('取り直しても届いていなければ、導線を消し、入力欄の文を残して、もう一度送るように知らせる (応答を受ける前の時間切れなので、届いていないとは言い切らない。#2227 H1)', async () => {
     await openSheet();
     await sendAndTimeOut();
 
@@ -309,7 +316,12 @@ describe('AIAdvisorSheet — 時間切れのときの入力欄 (#1049 F7-18)', (
       fireEvent.press(screen.getByTestId('ai-timeout-reload'));
     });
 
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('送信できませんでした', TIMEOUT_NOT_DELIVERED_MESSAGE));
+    // 応答を受ける前に時間切れになった送信は、保存が取り直しより後になりうる (Web の『確かめられませんでした』と同じ)。
+    // 『届いていませんでした』と言い切る文は、受け付けられた送信だけ (apps/mobile/__tests__/ai/advisor-sheet-reload-edges-2227.test.tsx)
+    await waitFor(() =>
+      expect(alertSpy).toHaveBeenCalledWith(TIMEOUT_DELIVERY_UNCONFIRMED_TITLE, TIMEOUT_DELIVERY_UNCONFIRMED_MESSAGE),
+    );
+    expect(alertSpy).not.toHaveBeenCalledWith('送信できませんでした', TIMEOUT_NOT_DELIVERED_MESSAGE);
     expect(screen.queryByTestId('ai-timeout-notice')).toBeNull();
     expect(inputValue()).toBe(SENT_TEXT);
   });
