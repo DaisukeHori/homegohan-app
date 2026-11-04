@@ -48,7 +48,7 @@ import {
   previousRequestRecheckPlanOf,
   replyHasProposalOf,
   replyProposalExecutableOf,
-  resolveUnconfirmedSendRows,
+  resolveUnconfirmedSends,
   restoreInputAfterTimeout,
   settleWithin,
   timedOutSendNoticeOf,
@@ -57,6 +57,7 @@ import {
   type PreviousRequestNoteState,
   type SentText,
   type TimedOutSend,
+  type UnconfirmedSend,
 } from "../../lib/ai-chat-timeout";
 import { notifyAiConsultationDataChanged } from "../../lib/ai-consultation-data-changed";
 import { supabase } from "../../lib/supabase";
@@ -94,12 +95,6 @@ type Session = {
   messageCount: number;
   status?: string;
 };
-
-/**
- * 応答を最後まで受け取れなかった送信 (時間切れ・通信の切断・流れが途中で切れた。#2227 H1)。seq はこのシートの中で送信ごとに 1 つずつ
- * 増える番号で、送信の見分けと、古い順に並べるのに使う (同じ文を続けて送っても、別の送信として扱う)
- */
-type PendingSend = TimedOutSend & { seq: number };
 
 // ============================================================
 // Constants
@@ -171,8 +166,6 @@ async function replyActionStateWithoutLimitOf(messageId: string): Promise<Previo
  * 返答に提案があったか。読み直しで行がまだ無いときの扱いに使う。#2227 H1)
  */
 type PreviousRequestNote = { notes: Message[]; recheck: { replyId: string; replyHasProposal: boolean } | null };
-
-const NO_PREVIOUS_REQUEST_NOTE: PreviousRequestNote = { notes: [], recheck: null };
 
 /**
  * 応答 (finalData) を受け取れずに取り直した会話で、送った文への AI の返答 (reply。timedOutSendReloadOf が探したもの) の提案の記録を読み、足す一文・
@@ -310,38 +303,57 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [dayMenuModalVisible, setDayMenuModalVisible] = useState(false);
   const [isClosingSession, setIsClosingSession] = useState(false);
-  // 送信が時間切れになった送信。あるあいだ「最新の会話を読み込む」を出す (#1049 F7-18。扱いは src/lib/ai-chat-timeout.ts)。
-  // 案内は出すだけの入れ物で、届いたかを確かめていない送信の記録は pendingSendsRef が持つ (#2227 H1。案内を外す・書き換えるときに
-  // 記録を気にしなくてよい)。書き換えは showTimedOutSend だけが行う (await をまたぐ処理が今の案内を timedOutSendRef で見る)
-  const [timedOutSend, setTimedOutSend] = useState<PendingSend | null>(null);
-  const timedOutSendRef = useRef<PendingSend | null>(null);
+  // 応答を最後まで受け取れなかった送信 (時間切れ・通信の切断・流れが途中で切れた) の案内。あるあいだ「最新の会話を読み込む」を出す
+  // (#1049 F7-18。扱いは src/lib/ai-chat-timeout.ts)。案内は出すだけで、届いたかを確かめていない送信は unconfirmedSendsRef が持つ
+  // (#2227 H1)。入れ物の送信と案内の送信は同じもの (送信の見分けはもの自体で行う。同じ文を続けて送っても別の送信になる)
+  const [timedOutSend, setTimedOutSend] = useState<TimedOutSend | null>(null);
   const [reloadingAfterTimeout, setReloadingAfterTimeout] = useState(false);
 
   const scrollRef = useRef<ScrollViewInstance>(null);
-  // 今出している相談の id。取り直し・送信の応答は await をまたぐので、その間に相談を切り替えたら、前の相談の会話・送った文を今の画面
-  // (会話・入力欄) に書かない (#2227 H1。Web の AIChatBubble の currentSessionIdRef と同じ)。state ではなく ref で今の値を見る
-  // 切り替えた時点で ref も変える (描画を待つと、切り替えの直後に返った取り直し・応答が古い値を見る)
+  // 今出している相談の id。送信の応答は await をまたぐので、その間に別の相談へ切り替えたら、前の相談の返答・送った文を今の画面
+  // (会話・入力欄・案内) に書かない (#2227 H1。Web の AIChatBubble の currentSessionIdRef と同じ)。state ではなく ref で今の値を見る
+  // (切り替えた時点で ref も変える。描画を待つと、切り替えの直後に返った応答が古い値を見る)
   const currentSessionIdRef = useRef<string | null>(null);
-  // 切り替えたら、流れの途中の本文 (streamingContent) も消す (#2227 H1。前の相談の返答の断片を今の画面に残さない。
-  // 前の相談の送信の続きの断片は handleSseLine が今の画面に流さない)
+  // 最新の画面の操作の番号 (#2227 H1)。相談を出す (showSessionId)・シートを開き直す (initSession)・送る (sendMessage) たびに 1 つ進める。
+  // 会話の取り直し (応答を受け取れなかったあとの取り直しと「最新の会話を読み込む」) は始めたときの番号を持ち、返ったときに番号が
+  // 進んでいれば、会話・入力欄・案内を書かない (screenStillShows)。取り直した会話は GET を始めた時点の写しで、そのあと出し直した画面の
+  // ほうが新しい。届いたかの確かめも、出し直したときの読み込み (loadMessages) が入れ物の送信で済ませる
+  const viewGenRef = useRef(0);
+  // 送信中か・「最新の会話を読み込む」の取り直しの最中か (#2227 H1)。送信と取り直しは重ねない (Web は取り直しを送信の中で待つので、
+  // 重ならない)。重ねると、取り直しの最中に送った次の送信とその返答を、あとから返った取り直しの古い会話が画面から消した。
+  // ボタンを止める描画を待たずに今の値を見るため ref でも持つ (同じ描画のうちの 2 度目の押下も止める)
+  const sendingRef = useRef(false);
+  const reloadingRef = useRef(false);
+  // 届いたかを確かめられなかった送信と、送信に当てた送った文の保存行の id (#2227 H1。Web の AIChatBubble と同じ入れ物と決まり。
+  // 共有の resolveUnconfirmedSends)。応答を受け取れずに終わった送信は、その場で積む (registerUnconfirmedSend)。後の取り直しで
+  // 保存行が見つかったら外し、入力欄が戻した文のままなら消す (そのまま送ると同じ相談に二重に届く)。今回の送信の保存行を探すときは、
+  // 前の送信に当てた行を除く (同じ文を続けて送ったときに、前の送信の保存行を今回の送信と取り違えない)
+  const unconfirmedSendsRef = useRef<UnconfirmedSend[]>([]);
+  const claimedSavedUserIdsRef = useRef<string[]>([]);
+
+  /** 画面の操作を 1 つ始める (最新の画面の操作の番号を進める。#2227 H1) */
+  function startViewOperation() {
+    viewGenRef.current += 1;
+  }
+
+  // 出す相談を変える (画面の操作)。切り替えたら、流れの途中の本文 (streamingContent) も消す (#2227 H1。前の相談の返答の断片を
+  // 今の画面に残さない。前の相談の送信の続きの断片は handleSseLine が今の画面に流さない)
   function showSessionId(sessionId: string | null) {
+    startViewOperation();
     if (currentSessionIdRef.current !== sessionId) setStreamingContent(null);
     currentSessionIdRef.current = sessionId;
     setCurrentSessionId(sessionId);
   }
-  // 入力欄に送った文を戻した (戻すはずだった) 送信のうち、入力欄の始末がまだのもの (#2227 H1。Web の AIChatBubble が
-  // 入力欄に戻すときに覚えるのと同じ)。入力欄に戻すその場で積む (registerPendingSend)。後の取り直しで保存行が見つかったら、
-  // 入力欄が戻した文のままなら消す (settlePendingSends。そのまま送ると同じ相談に二重に届く)。
-  //   - delivered が偽: 届いたかまだ分からない (後の取り直しで保存行を探す。決まりは共有の resolveUnconfirmedSendRows)
-  //   - delivered が真: 届いていたと分かったが、別の相談を出していて入力欄の文を消せていない (その相談を出したときに消す)
-  const pendingSendsRef = useRef<PendingSend[]>([]);
-  // 送信の番号 (PendingSend の seq) の最後の値
-  const lastSendSeqRef = useRef(0);
-  // 届いていたと分かった送信 (seq) と、その送信に当てた送った文の保存行の id (#2227 H1)。ある送信の取り直しの最中に、別の取り直しが
-  // その送信の保存行を先に当てたとき、後から返った取り直しはこの行で送った文と返答を探す (『届いていません』と取り違えない)
-  const savedRowOfSendRef = useRef<Map<number, string>>(new Map());
-  // 送信に当てた送った文の保存行の id (同じ文を続けて送ったときに、前の送信の保存行を今回の送信と取り違えない)
-  const claimedSavedUserIdsRef = useRef<string[]>([]);
+
+  /**
+   * 相談 (sessionId) の会話の取り直しを今始めるとき、その結果を画面 (会話・入力欄・案内) に書いてよいかを返す関数 (#2227 H1)。
+   * 書いてよいのは、始めたときにその相談を出していて、そのあと画面の操作 (相談の切り替え・新しい相談・開き直し・送信) が無いときだけ
+   */
+  function screenStillShows(sessionId: string): () => boolean {
+    const startedAt = viewGenRef.current;
+    const showing = currentSessionIdRef.current === sessionId;
+    return () => showing && viewGenRef.current === startedAt;
+  }
   // 前の依頼の記録が実行中の印のままだったときの、読み直しの予約 (#2201 U3)。シートを外すときに取り消す
   const previousRequestRecheckTimersRef = useRef<Set<ReturnType<typeof setTimeout>>>(new Set());
 
@@ -408,6 +420,12 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   }, [messages.length, streamingContent, sending, timedOutSend]);
 
   async function initSession() {
+    // 開き直しも画面の操作 (#2227 H1。前の画面で始めた取り直しの結果を、開き直した画面に書かない)。前の画面の案内も外す
+    // (案内の送信は、開き直した会話の読み込みが確かめる。外さないと、読み込みがこの送信に当てた保存行を、あとで押した
+    // 「最新の会話を読み込む」が前の送信の行として除いて探し、届いていた送信を『届いていません』と取り違える。
+    // 相談の切り替え・新しい相談と同じ)
+    startViewOperation();
+    setTimedOutSend(null);
     try {
       const api = getApi();
       const res = await api.get<{ sessions: Session[] }>(
@@ -442,7 +460,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   /**
    * 相談のメッセージをサーバーから取る。取れなければ null (画面をどうするかは呼び出し側が決める)。
    * 応答を受け取れなかったあとの取り直し (reload) は、Web と同じ上限 (AI_CHAT_RELOAD_TIMEOUT_MS) で打ち切る (#2227 H1。
-   * 取り直しは送信中に待つので、/api/ai/ の下の GET の既定 (120 秒) のままだと、GET が詰まると『送信中』で入力欄が止まった)
+   * 取り直しのあいだは送信と入力欄が止まるので、/api/ai/ の下の GET の既定 (120 秒) のままだと、GET が詰まると最大 120 秒入力が止まった)
    */
   async function fetchMessages(sessionId: string, options: { reload: boolean }): Promise<Message[] | null> {
     try {
@@ -458,6 +476,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   }
 
   async function loadMessages(sessionId: string) {
+    // この読み込みで確かめるのは、読み込みを始める前に積んであった送信だけ (#2227 H1。読み込みの最中に終わった送信は、GET の写しより
+    // 後に保存されうるので、写しに無くても忘れない。その送信は自分の取り直しで確かめる)
+    const settleable = [...unconfirmedSendsRef.current];
     const loaded = await fetchMessages(sessionId, { reload: false });
     if (loaded && loaded.length > 0) {
       setMessages(loaded);
@@ -466,7 +487,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     }
     // 確かめられなかった前の送信が届いていたら、入力欄に戻した文を消す (#2227 H1)。開き直した会話は以後の送信の
     // 「送る前に出ていた行」に入るので、見つからなかった送信は忘れる
-    if (loaded) settlePendingSends({ sessionId, loaded, current: null, currentAccepted: false, forgetRemaining: true });
+    if (loaded) {
+      settleUnconfirmedSends({ sessionId, loaded, among: settleable, current: null, currentAccepted: false, forgetRemaining: true });
+    }
   }
 
   /** 送った文の保存行 (id) をその送信に当てた印を付ける (確かめられなかった前の送信がこの行を自分のものとして当てないように) */
@@ -475,148 +498,122 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     claimedSavedUserIdsRef.current = [...claimedSavedUserIdsRef.current, id];
   }
 
-  /** 次の送信の番号 (PendingSend の seq) */
-  function nextSendSeq(): number {
-    lastSendSeqRef.current += 1;
-    return lastSendSeqRef.current;
+  /**
+   * 応答を受け取れずに終わった送信を、届いたかを確かめられなかった送信として積む (#2227 H1)。今の画面がその相談でなくても積む
+   * (その相談を出したときの読み込みが確かめる)。もう積んであれば何もしない
+   */
+  function registerUnconfirmedSend(send: TimedOutSend) {
+    if (unconfirmedSendsRef.current.includes(send)) return;
+    unconfirmedSendsRef.current = [...unconfirmedSendsRef.current, send];
   }
 
   /**
-   * 時間切れの案内 (timedOutSend) を出す・外す (#2227 H1)。案内は出すだけの入れ物なので、外すときに送信を覚える必要は無い
-   * (届いたかを確かめていない送信は、入力欄に戻したときに registerPendingSend で積んである)
+   * 取り直した相談 (sessionId) の会話 (loaded) で、確かめられなかった送信の保存行を探す (#2227 H1。Web の AIChatBubble の
+   * settleUnconfirmedSends と同じ決まり。共有の resolveUnconfirmedSends が古い送信から順に当てる)。
+   * 探すのは among に入っている送信だけ (取り直しの GET を始める前に積んであった送信。取り直している送信は呼び出し側が探すので除く)。
+   * 見つかった送信は入れ物から外し、今の相談がその相談なら、入力欄が戻した文のままなら消す。相談を開き直したとき (forgetRemaining) は、
+   * 見つからなかった送信を忘れる。戻り値は送信に当てた保存行の id (今回の送信を探すときに除く)
    */
-  function showTimedOutSend(next: PendingSend | null) {
-    timedOutSendRef.current = next;
-    setTimedOutSend(next);
-  }
-
-  /**
-   * 送った文を入力欄に戻した (別の相談を出していて戻さなかったときも) 送信を、届いたかを確かめられなかった送信として積む (#2227 H1。
-   * Web の AIChatBubble の restoreInputIfSameSession と同じく、入力欄に戻すその場で積む)。もう積んであれば何もしない
-   */
-  function registerPendingSend(send: PendingSend) {
-    if (pendingSendsRef.current.some((pending) => pending.seq === send.seq)) return;
-    pendingSendsRef.current = [...pendingSendsRef.current, { ...send, delivered: false }];
-  }
-
-  /**
-   * 取り直した相談 (sessionId) の会話 (loaded) で、確かめられなかった送信の保存行を探す (#2227 H1。共有の resolveUnconfirmedSendRows。
-   * Web の AIChatBubble と同じ決まり)。古い送信から順に当てる。beforeSeq を渡したら、その番号より前に始めた送信だけを探す
-   * (取り直している送信 (beforeSeq の送信) は呼び出し側が探す。その後に始めた送信に、取り直している送信の保存行を当てない)。
-   * 届いていた送信は、今の相談がその相談なら入力欄が戻した文のままなら消して外し、別の相談を出していれば、届いていた印を付けて
-   * 残す (その相談を出して取り直したときに消す)。相談を開き直したとき (forgetRemaining) は、見つからなかった送信を忘れる。
-   * 戻り値は送信に当てた保存行の id (今回の送信を探すときに knownMessageIds に足して除く)
-   */
-  function settlePendingSends(params: {
+  function settleUnconfirmedSends(params: {
     sessionId: string;
     loaded: readonly Message[];
+    among: readonly UnconfirmedSend[];
     current: SentText | null;
     currentAccepted: boolean;
     forgetRemaining: boolean;
-    beforeSeq?: number;
   }): string[] {
-    const { sessionId, beforeSeq } = params;
-    const pending = pendingSendsRef.current;
-    const candidates = pending
-      .filter((send) => !send.delivered && send.sessionId === sessionId && (beforeSeq === undefined || send.seq < beforeSeq))
-      .sort((a, b) => a.seq - b.seq);
-    const resolution = resolveUnconfirmedSendRows({
-      sessionId,
+    const among = new Set(params.among);
+    const resolution = resolveUnconfirmedSends({
+      sessionId: params.sessionId,
       loaded: params.loaded,
-      unconfirmed: candidates,
+      unconfirmed: unconfirmedSendsRef.current.filter((send) => among.has(send)),
       previousClaimedIds: claimedSavedUserIdsRef.current,
       current: params.current,
       currentAccepted: params.currentAccepted,
     });
-    claimedSavedUserIdsRef.current = resolution.claimedIds;
-    const savedRowOf = new Map<number, string>(
-      resolution.resolved.map(({ send, savedMessageId }): [number, string] => [send.seq, savedMessageId]),
-    );
-    savedRowOf.forEach((savedMessageId, seq) => savedRowOfSendRef.current.set(seq, savedMessageId));
-    const showingSession = currentSessionIdRef.current === sessionId;
-    const next: PendingSend[] = [];
-    for (const send of pending) {
-      const savedMessageId = savedRowOf.get(send.seq);
-      const settled: PendingSend = savedMessageId === undefined ? send : { ...send, delivered: true, savedUserMessageId: savedMessageId };
-      if (settled.sessionId !== sessionId) {
-        next.push(settled);
-      } else if (settled.delivered) {
-        if (showingSession) setInputText((current) => clearInputIfDelivered(current, settled.text));
-        else next.push(settled);
-      } else if (!params.forgetRemaining) {
-        next.push(settled);
-      }
+    const settled = new Set<UnconfirmedSend>(resolution.resolved);
+    if (params.forgetRemaining) {
+      for (const send of resolution.remaining) if (send.sessionId === params.sessionId) settled.add(send);
     }
-    pendingSendsRef.current = next;
+    unconfirmedSendsRef.current = unconfirmedSendsRef.current.filter((send) => !settled.has(send));
+    claimedSavedUserIdsRef.current = resolution.claimedIds;
+    if (currentSessionIdRef.current === params.sessionId) {
+      for (const send of resolution.resolved) setInputText((current) => clearInputIfDelivered(current, send.text));
+    }
     return resolution.claimedIds;
   }
 
   /**
    * 送信が時間切れになったあと、相談のメッセージを取り直す (#1049 F7-18。扱いは src/lib/ai-chat-timeout.ts)。
+   * 取り直しのあいだは、送信・入力欄・クイック質問・新しい相談・相談の切り替え・アーカイブを止める (#2227 H1。送信と同じ扱い。
+   * Web と同じく、取り直しと送信は重ならない)。待つ上限は、GET と記録の直読みでそれぞれ AI_CHAT_RELOAD_TIMEOUT_MS。
+   * 取り直しの最中にシートを開き直したら (止められない画面の操作)、結果は画面に書かない (screenStillShows。案内の送信は、開き直した
+   * 会話の読み込みが確かめる)。
    * 取れなければ、今の表示と案内をそのまま残す (今の会話を消さない。届いたかを確かめていない送信は入れ物に積んだまま)。
-   * 送った文が届いていたら、入力欄に戻した文を消す (二重に送らないため)。返答がまだ無ければ案内を残す。
-   * 届いていなければ、案内を消して、入力欄の文をもう一度送るように知らせる。
-   * 返答の提案がサーバーで自動で実行されていたら、短い一文を足してタブに知らせる (#2195 V3)。実行中の印のまま (行がまだ無いのに
-   * 提案があるときも含む) なら、頼み直しを勧めない一文を足し、少し待って 1 回だけ読み直す (#2201 U3・#2206 G2。
-   * previousRequestNoteAfterReload。記録を読めなかったときも 1 回だけ読み直す)
+   * 書き方は showReloadedConversation
    */
   async function reloadAfterTimeout() {
-    // 押したときの案内 (描画の値ではなく今の値。#2227 H1)
-    const sent = timedOutSendRef.current;
-    if (!sent || reloadingAfterTimeout) return;
+    const sent = timedOutSend;
+    if (!sent || sendingRef.current || reloadingRef.current) return;
+    reloadingRef.current = true;
     setReloadingAfterTimeout(true);
     try {
+      const isFresh = screenStillShows(sent.sessionId);
+      const among = unconfirmedSendsRef.current.filter((send) => send !== sent);
       const loaded = await fetchMessages(sent.sessionId, { reload: true });
+      if (!isFresh()) {
+        if (loaded) void notifyReplyOutcomeOfStaleReload(sent, loaded);
+        return;
+      }
       if (loaded === null) {
         Alert.alert("エラー", TIMEOUT_RELOAD_FAILED_MESSAGE);
         return;
       }
-      await showReloadedConversation(sent, loaded);
+      await showReloadedConversation(sent, loaded, isFresh, among);
     } finally {
+      reloadingRef.current = false;
       setReloadingAfterTimeout(false);
     }
   }
 
   /**
-   * 取り直した会話 (loaded) を出し、送った文 (sentAtStart) が届いていたか・返答があるかで、入力欄と案内を決める
+   * 取り直した会話 (loaded) を出し、送った文 (sent) が届いていたか・返答があるかで、入力欄と案内を決める
    * (時間切れのあとの「最新の会話を読み込む」と、応答を受け取れなかったあとの取り直しで共有する。#2206 G2)。
-   * 届いていなければ、確かめられなかった送信として積み (もう積んであればそのまま)、入力欄に送った文を戻し (入力欄に別の文があれば残す)、
-   * もう一度送るように知らせる。応答を受ける前に終わった送信 (userSaveMayBeLate) は、送った文の保存が取り直しより後になりうるので
-   * 『届いていません』と言い切らない (#2227 H1。Web と同じ)。サーバーが失敗を知らせた送信 (serverFailed) で返答が無ければ、返答は
-   * 来ないので『返答を作っているところかもしれません』の案内を出さずに失敗の文を出す (#2227 H1。Web と同じ)。
-   * 送った文の保存行は、確かめられなかった前の送信に当てた行を除いて探す (#2227 H1)。届いていたと分かったら、保存行の id を
-   * この送信に当て (savedRowOfSendRef)、返答がまだ無ければ案内の送信に持たせる (savedUserMessageId)。次の「最新の会話を読み込む」・
-   * この取り直しの最中に別の取り直しが保存行を先に当てたときの、後から返ったこの取り直しは、その id で送った文と返答を探す
-   * (#2227 H1。本文の一致で探すと、この送信に当てた行として除かれ、届いていた送信を『届いていません』と取り違えた。timedOutSendReloadOf)。
-   * 取り直しの最中に別の相談に切り替えていたら、会話・入力欄・案内は変えない (#2227 H1。前の相談の会話を今の画面に書かない。
-   * データの更新の知らせ・前の依頼の読み直しは続ける)。入力欄に戻した文は、入れ物に残した届いていた印で、その相談を出したときに消す。
-   * 案内は、この送信の案内のときだけ外し、届いているが返答がまだ無いときは、後に始めた送信の案内を書き換えない
-   * (後の送信の案内は、その送信の確かめに使う。#2227 H1)
+   * 呼ぶのは、取り直しの結果を画面に書いてよいとき (screenStillShows が真) だけ。このときは、取り直しと送信が重ならず、相談も
+   * 切り替わっていないので、今の画面の会話・入力欄・案内はこの送信のものとしてそのまま書く (#2227 H1)。
+   *   - 届いていない: 会話を出し、案内を消し、入力欄に送った文を戻し (入力欄に別の文があれば残す)、もう一度送るように知らせる。
+   *     送信は入れ物に積んだまま (後の取り直しで届いていたら入力欄の文を消す)。応答を受ける前に終わった送信 (userSaveMayBeLate) は、
+   *     送った文の保存が取り直しより後になりうるので『届いていません』と言い切らない (#2227 H1。Web と同じ)
+   *   - 届いていた: 保存行をこの送信に当て、入れ物から外し、入力欄に戻した文を消す (二重に送らないため)。返答がまだ無ければ案内に
+   *     保存行の id を持たせる (savedUserMessageId。次の「最新の会話を読み込む」はその id で送った文と返答を探す。Web の
+   *     recheckDeliveredNoReplyLater と同じ)。サーバーが失敗を知らせた送信 (serverFailed) で返答が無ければ、返答は来ないので
+   *     失敗の文を出す (#2227 H1。Web と同じ)。返答があれば案内を消し、返答の提案がサーバーで自動で実行されていたら短い一文を足して
+   *     タブに知らせる (#2195 V3)。実行中の印のまま (行がまだ無いのに提案があるときも含む) なら、頼み直しを勧めない一文を足し、
+   *     少し待って 1 回だけ読み直す (#2201 U3・#2206 G2。previousRequestNoteAfterReload。記録を読めなかったときも 1 回だけ読み直す)。
+   *     会話と一文は記録を読んでから出すので、そのあいだに画面の操作があれば書かない
+   * 送った文の保存行は、確かめられなかった前の送信 (among) に当てた行を除いて探す (#2227 H1)
    */
-  async function showReloadedConversation(sentAtStart: PendingSend, loaded: Message[]) {
-    const knownSavedRow = sentAtStart.savedUserMessageId ?? savedRowOfSendRef.current.get(sentAtStart.seq);
-    const sent: PendingSend =
-      knownSavedRow === undefined ? sentAtStart : { ...sentAtStart, delivered: true, savedUserMessageId: knownSavedRow };
-    // 保存行の id が分かっている送信は、その行をもうこの送信に当てている (確かめられなかった前の送信はこの行を当てない) ので、
-    // 今回の送信の一致を前の送信から守らなくてよい
-    const knowsSavedRow = knownSavedRow !== undefined;
-    const claimedIds = settlePendingSends({
+  async function showReloadedConversation(
+    sent: TimedOutSend,
+    loaded: Message[],
+    isFresh: () => boolean,
+    among: readonly UnconfirmedSend[],
+  ) {
+    // 保存行の id が分かっている送信 (前の取り直しで届いていたと分かった) は、その id で探すので、前の送信から守らなくてよい
+    const knowsSavedRow = sent.savedUserMessageId !== undefined;
+    const claimedIds = settleUnconfirmedSends({
       sessionId: sent.sessionId,
       loaded,
+      among,
       current: knowsSavedRow ? null : sent,
       currentAccepted: !knowsSavedRow && sent.userSaveMayBeLate !== true,
       forgetRemaining: false,
-      beforeSeq: sent.seq,
     });
     const reloaded = timedOutSendReloadOf(sent, loaded, claimedIds);
-    // 保存行の id が分かっている送信は届いている (この取り直しの会話が、行を見つけた取り直しより前に読んだものでも『届いていません』にしない)
-    const outcome = knowsSavedRow && reloaded.outcome === "not-delivered" ? "delivered-no-reply" : reloaded.outcome;
-    const savedUserMessageId = reloaded.savedUser?.id ?? knownSavedRow;
-    if (outcome === "not-delivered" || savedUserMessageId === undefined) {
-      registerPendingSend(sent);
-      if (currentSessionIdRef.current !== sent.sessionId) return;
-      setMessages(loaded.length > 0 ? loaded : [WELCOME_MESSAGE]);
-      if (timedOutSendRef.current?.seq === sent.seq) showTimedOutSend(null);
+    const shownConversation = loaded.length > 0 ? loaded : [WELCOME_MESSAGE];
+    if (reloaded.outcome === "not-delivered" || reloaded.savedUser === null) {
+      setMessages(shownConversation);
+      setTimedOutSend(null);
       setInputText((current) => restoreInputAfterTimeout(current, sent.text));
       if (sent.userSaveMayBeLate) {
         Alert.alert(TIMEOUT_DELIVERY_UNCONFIRMED_TITLE, TIMEOUT_DELIVERY_UNCONFIRMED_MESSAGE);
@@ -625,63 +622,81 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       }
       return;
     }
-    // 届いていた: 保存行をこの送信に当て、入れ物の行に届いていた印を付ける (下の await の間に走る別の取り直しが、この送信を探さず、
-    // この行を別の送信に当てないように)
+    // 届いていた: 保存行をこの送信に当て、入れ物から外し、入力欄に戻した文を消す。入力欄は下の記録の読み取りを待たずに消す
+    // (読み取りのあいだに開き直されると、開き直しの読み込みは入れ物から外したこの送信を確かめないので、届いていた文が残る)
+    const savedUserMessageId = reloaded.savedUser.id;
     claimSavedUserMessageId(savedUserMessageId);
-    savedRowOfSendRef.current.set(sent.seq, savedUserMessageId);
-    pendingSendsRef.current = pendingSendsRef.current.map((pending) =>
-      pending.seq === sent.seq ? { ...pending, delivered: true, savedUserMessageId } : pending,
-    );
-    const previousRequest = reloaded.reply ? await previousRequestNoteAfterReload(reloaded.reply) : NO_PREVIOUS_REQUEST_NOTE;
+    unconfirmedSendsRef.current = unconfirmedSendsRef.current.filter((send) => send !== sent);
+    setInputText((current) => clearInputIfDelivered(current, sent.text));
+    if (reloaded.reply === null) {
+      setMessages(shownConversation);
+      if (sent.serverFailed) {
+        setTimedOutSend(null);
+        Alert.alert("エラー", REPLY_FAILED_MESSAGE);
+        return;
+      }
+      setTimedOutSend({ ...sent, delivered: true, savedUserMessageId });
+      return;
+    }
+    const previousRequest = await previousRequestNoteAfterReload(reloaded.reply);
     if (previousRequest.recheck) {
       recheckPreviousRequestLater(previousRequest.recheck.replyId, previousRequest.recheck.replyHasProposal);
     }
-    if (currentSessionIdRef.current !== sent.sessionId) return;
-    // 入力欄の始末をするので、入れ物から外す
-    pendingSendsRef.current = pendingSendsRef.current.filter((pending) => pending.seq !== sent.seq);
-    setMessages(loaded.length > 0 ? [...loaded, ...previousRequest.notes] : [WELCOME_MESSAGE]);
-    setInputText((current) => clearInputIfDelivered(current, sent.text));
-    const notice = timedOutSendRef.current;
-    if (outcome === "delivered-no-reply" && sent.serverFailed) {
-      if (notice?.seq === sent.seq) showTimedOutSend(null);
-      Alert.alert("エラー", REPLY_FAILED_MESSAGE);
-      return;
+    // 記録を読むあいだに画面の操作 (開き直し・送信の中の取り直しなら相談の切り替えも) があれば、会話と案内は書かない
+    if (!isFresh()) return;
+    setMessages([...shownConversation, ...previousRequest.notes]);
+    setTimedOutSend(null);
+  }
+
+  /**
+   * 画面に書かない (取り直しの最中に画面の操作があった) 取り直しでも、送った文への返答の提案がサーバーで自動で実行されていれば、
+   * データを出すタブに知らせる (#2227 H1。実行中の印のままなら、少し待って 1 回だけ読み直す。どちらも今の会話・入力欄・案内には
+   * 書かない。読み直しの一文は、その返答が出ている会話にだけ書く)。入れ物は触らない (送信は積んであるか、出し直したときの読み込みが
+   * 確かめた)。保存行は前の送信に当てた行を除かずに探す (同じ文の別の送信の返答を選んでも、その返答の記録を読んで知らせるだけ)
+   */
+  async function notifyReplyOutcomeOfStaleReload(sent: TimedOutSend, loaded: readonly Message[]) {
+    const { reply } = timedOutSendReloadOf(sent, loaded, []);
+    if (!reply) return;
+    const previousRequest = await previousRequestNoteAfterReload(reply);
+    if (previousRequest.recheck) {
+      recheckPreviousRequestLater(previousRequest.recheck.replyId, previousRequest.recheck.replyHasProposal);
     }
-    if (outcome === "replied") {
-      if (notice?.seq === sent.seq) showTimedOutSend(null);
-      return;
-    }
-    if (notice === null || notice.seq <= sent.seq) showTimedOutSend({ ...sent, delivered: true, savedUserMessageId });
   }
 
   /**
    * 応答 (finalData) を受け取れなかったあと (finalData が無いまま流れが終わった・受け付けたあとの例外)、会話を取り直す
    * (#2206 G2。Web の resolveIncompleteReply と揃える)。以前は、流れてきた本文があればそれだけを返答として出し
    * (自動実行の一文もタブの読み込み直しも出なかった)、受け付けたあとの例外では Alert を出して送った文を消していた。
-   * 取り直せなければ、送った文を入力欄に戻し、「最新の会話を読み込む」と途中で切れた旨の案内を出す (時間切れと同じ導線)
+   * 送信は呼ぶ前に入れ物に積んである (registerUnconfirmedSend)。取り直しは送信の中で待つ (送信中のあいだ「最新の会話を読み込む」は
+   * 出ない)。始めたときに別の相談を出していた・取り直しの最中に相談を切り替えた・開き直したときは、結果を画面に書かない (#2227 H1。
+   * screenStillShows。その相談を出したときの読み込みが、入れ物の送信を確かめる)。
+   * 取り直せなければ、送った文を入力欄に戻し、「最新の会話を読み込む」と途中で切れた旨の案内を出す (時間切れと同じ導線)。
+   * サーバーが失敗を知らせていた (serverFailed) ときは返答は来ないので、取り直しの導線ではなく失敗の文を出す (#2227 H1。Web と同じ)
    */
-  async function reloadAfterIncompleteReply(sent: PendingSend) {
+  async function reloadAfterIncompleteReply(sent: TimedOutSend) {
+    const isFresh = screenStillShows(sent.sessionId);
+    const among = unconfirmedSendsRef.current.filter((send) => send !== sent);
     const loaded = await fetchMessages(sent.sessionId, { reload: true });
+    if (!isFresh()) {
+      if (loaded) void notifyReplyOutcomeOfStaleReload(sent, loaded);
+      return;
+    }
     if (loaded === null) {
-      // 届いたかは分からないので、確かめられなかった送信として積む (#2227 H1。後の取り直しで届いていたら入力欄の文を消す)。
-      // 取り直しの最中に別の相談に切り替えていたら、入力欄と案内は変えない (#2227 H1)。
-      // サーバーが失敗を知らせていた (serverFailed) ときは返答は来ないので、取り直しの導線ではなく失敗の文を出す (#2227 H1。Web と同じ)
-      registerPendingSend(sent);
-      if (currentSessionIdRef.current !== sent.sessionId) return;
       setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
       setInputText((current) => restoreInputAfterTimeout(current, sent.text));
       if (sent.serverFailed) {
         Alert.alert("エラー", REPLY_FAILED_MESSAGE);
         return;
       }
-      // いま終わった送信がいちばん後に始めた送信なので、案内はこの送信のものにする
-      showTimedOutSend(sent);
+      setTimedOutSend(sent);
       return;
     }
-    await showReloadedConversation(sent, loaded);
+    await showReloadedConversation(sent, loaded, isFresh, among);
   }
 
   async function createNewSession() {
+    // 取り直しの最中は始めない (#2227 H1。ボタンも止めている。同じ描画のうちの 2 度目の押下を止める)
+    if (reloadingRef.current) return;
     try {
       const api = getApi();
       const createRes = await api.post<{
@@ -690,8 +705,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       }>("/api/ai/consultation/sessions", { title: "AI相談" });
       showSessionId(createRes.session.id);
       setMessages([WELCOME_MESSAGE]);
-      // 案内を外すだけ (#2227 H1。確かめていない送信は、入力欄に戻したときに積んである。作成を待つ間に終わった送信も同じ)
-      showTimedOutSend(null);
+      // 案内を外すだけ (#2227 H1。確かめていない送信は入れ物に積んである。作成を待つ間に終わった送信も同じ)
+      setTimedOutSend(null);
       setShowSessionList(false);
       // セッション一覧を更新
       const res = await api.get<{ sessions: Session[] }>(
@@ -704,10 +719,11 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   }
 
   async function selectSession(sessionId: string) {
+    // 取り直しの最中は切り替えない (#2227 H1。相談の行も止めている)
+    if (reloadingRef.current) return;
     showSessionId(sessionId);
-    // 案内を外すだけ (#2227 H1。確かめていない送信は、入力欄に戻したときに積んである。開き直した相談の取り直しで、届いていたら
-    // 入力欄の文を消す)
-    showTimedOutSend(null);
+    // 案内を外すだけ (#2227 H1。確かめていない送信は入れ物に積んである。開き直した相談の読み込みで、届いていたら入力欄の文を消す)
+    setTimedOutSend(null);
     setShowSessionList(false);
     await loadMessages(sessionId);
   }
@@ -725,7 +741,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   }
 
   async function archiveSession() {
-    if (!currentSessionId || isClosingSession) return;
+    // 取り直しの最中はしない (#2227 H1。アーカイブのあとに新しい相談を始めるので、新しい相談と同じく止める)
+    if (!currentSessionId || isClosingSession || reloadingRef.current) return;
 
     // クライアント側で既に closed か確認
     const currentSession = sessions.find((s) => s.id === currentSessionId);
@@ -817,19 +834,22 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
   async function sendMessage(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || sending) return;
+    // 送信中・「最新の会話を読み込む」の取り直しの最中は送らない (#2227 H1。送信ボタン・入力欄・クイック質問も止めている。
+    // ref で見るのは、同じ描画のうちの 2 度目の押下も止めるため)
+    if (!trimmed || sendingRef.current || reloadingRef.current) return;
+    sendingRef.current = true;
+    // 送信も画面の操作 (#2227 H1)。取り直しの最中は送れないので、ふだんはこれで古くなる取り直しは無い (重ねて守る)
+    startViewOperation();
 
     // 時間切れのあとの取り直しで、送った文が届いたかを見分けるため、送る前に出ていたサーバーのメッセージの id を持つ
     const knownMessageIds = messages.filter((m) => m.id !== WELCOME_MESSAGE.id && !m.id.startsWith("local-")).map((m) => m.id);
-    // この送信の番号 (応答を最後まで受け取れなかったときに、確かめられなかった送信・案内の送信として見分ける。#2227 H1)
-    const seq = nextSendSeq();
 
     setSending(true);
     setInputText("");
     setStreamingContent(null);
-    // 「最新の会話を読み込む」で確かめる前に次を送ったら、前の送信の案内を外す (#2227 H1。前の送信は、入力欄に戻したときに
-    // 確かめられなかった送信として積んであるので、同じ文を送り直しても前の送信の保存行を今回の送信と取り違えない)
-    showTimedOutSend(null);
+    // 「最新の会話を読み込む」で確かめる前に次を送ったら、前の送信の案内を外す (#2227 H1。前の送信は入れ物に積んであるので、
+    // 同じ文を送り直しても前の送信の保存行を今回の送信と取り違えない)
+    setTimedOutSend(null);
 
     const optimistic: Message = {
       id: `local-${Date.now()}`,
@@ -856,6 +876,21 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     // サーバーが失敗を知らせた (SSE で userMessage の無い error だけの行が来た) か。返答は来ないので、取り直しで返答が無ければ
     // 失敗の文を出す (#2227 H1。Web の serverFailed と同じ)。以前はこの行を読み捨て、『返答を作っているところかもしれません』を出し続けた
     let serverFailed = false;
+    // 応答 (finalData) を受け取れなかったあとの取り直し (finalData の欠け・受け付けたあとの例外で 1 つを使う)。送信は先に、確かめられ
+    // なかった送信として積む (#2227 H1。取り直しの最中に相談を切り替えた・開き直したときは、その相談を出したときの読み込みが確かめる)
+    const reloadIncompleteSend = async (sendSessionId: string) => {
+      const incomplete: TimedOutSend = {
+        sessionId: sendSessionId,
+        text: trimmed,
+        knownMessageIds,
+        delivered: false,
+        interrupted: true,
+        userSaveMayBeLate: false,
+        serverFailed,
+      };
+      registerUnconfirmedSend(incomplete);
+      await reloadAfterIncompleteReply(incomplete);
+    };
     try {
       if (!sessionId) {
         const api = getApi();
@@ -929,7 +964,10 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
           claimSavedUserMessageId(parsed.userMessage?.id);
           // 流れの途中の本文は、相談を切り替えていても消す (送信は 1 つずつなので、出ている断片はこの送信のもの。#2227 H1)
           setStreamingContent(null);
-          // 送信の最中に別の相談に切り替えていたら、前の相談の会話を今の画面に書かない (#2227 H1)。自動実行の知らせは続ける
+          // 送信の最中に別の相談に切り替えていたら、前の相談の会話を今の画面に書かない (#2227 H1)。自動実行の知らせは続ける。
+          // 送信の応答は、取り直しと違って番号 (screenStillShows) では見ない: 会話の写しで画面を置き換えず、この送信の保存行と返答を
+          // id で足すだけなので、同じ相談を出し直した画面 (切り替えて戻った・開き直した) に書いても新しい行を消さない。送信は 1 つずつで、
+          // 取り直しとも重ならないので、出し直した同じ相談の画面ではこの送信がいちばん新しい操作になる
           if (currentSessionIdRef.current !== sessionId) {
             if (consultationAutoActionOutcomeOf(parsed)?.outcome.kind === "executed") notifyAiConsultationDataChanged();
             return;
@@ -1012,16 +1050,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         // 自動実行の一文もタブの読み込み直しも出ない)。返答の提案がサーバーで自動で実行されていたら、finalData の結果の一文の
         // 代わりに短い一文を足し、タブに知らせる (#2195 V3)。実行中の印のままなら、頼み直しを勧めない一文を足し、少し待って
         // 1 回だけ読み直す (#2201 U3。previousRequestNoteAfterReload)
-        await reloadAfterIncompleteReply({
-          seq,
-          sessionId,
-          text: trimmed,
-          knownMessageIds,
-          delivered: false,
-          interrupted: true,
-          userSaveMayBeLate: false,
-          serverFailed,
-        });
+        await reloadIncompleteSend(sessionId);
       }
     } catch (e: any) {
       setStreamingContent(null);
@@ -1031,16 +1060,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       // 受け付けたあとの例外 (時間切れを除く。本文の読み取りの失敗など): サーバーでは返答の保存と自動実行が済んでいることがあるので、
       // 失敗の Alert を出さずに会話を取り直す (#2206 G2。Web と同じ。以前は Alert を出して送った文を消していた)
       if (responseAccepted && sessionId && e?.name !== "AbortError") {
-        await reloadAfterIncompleteReply({
-          seq,
-          sessionId,
-          text: trimmed,
-          knownMessageIds,
-          delivered: false,
-          interrupted: true,
-          userSaveMayBeLate: false,
-          serverFailed,
-        });
+        await reloadIncompleteSend(sessionId);
         return;
       }
       // 同意が必要で止められた (T15 / #1154): 送らなかったので、メッセージを消して入力を戻す。
@@ -1067,10 +1087,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         // 待ちを打ち切っただけで、サーバーでは返答の保存が続いていることがある (#1049 F7-18)。
         // 失敗として終わらせず、会話を取り直す導線 (TIMEOUT_RELOAD_LABEL) を出し、送った文を入力欄に戻す
         // (届いていたかは取り直しで分かる。届いていたら、戻した文はそこで消す)。送信の最中に別の相談に切り替えていたら、
-        // 今の相談の入力欄には戻さない (#2227 H1)
+        // 今の相談の入力欄に戻さず、案内も出さない (#2227 H1。送信の応答なので、同じ相談を出し直した画面には書く。finalData と同じ)
         if (sessionId) {
-          const timedOut: PendingSend = {
-            seq,
+          const timedOut: TimedOutSend = {
             sessionId,
             text: trimmed,
             knownMessageIds,
@@ -1080,13 +1099,13 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
             userSaveMayBeLate: !responseAccepted,
             serverFailed,
           };
-          // 入力欄に戻すその場で、確かめられなかった送信として積む (#2227 H1。この後に案内を外しても書き換えても、後の取り直しで
-          // 届いていたと分かれば入力欄の文を消す)
-          registerPendingSend(timedOut);
+          // 確かめられなかった送信として、今の画面がこの相談でなくても積む (#2227 H1。後の取り直し・その相談を出したときの読み込みで
+          // 届いていたと分かれば、入力欄の文を消す)
+          registerUnconfirmedSend(timedOut);
           if (currentSessionIdRef.current === sessionId) {
             setInputText((current) => restoreInputAfterTimeout(current, trimmed));
+            setTimedOutSend(timedOut);
           }
-          showTimedOutSend(timedOut);
         } else {
           setInputText((current) => restoreInputAfterTimeout(current, trimmed));
           Alert.alert("タイムアウト", TIMEOUT_NOTICE_MESSAGE);
@@ -1098,6 +1117,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       setMessages((prev) => prev.filter((m) => !m.id.startsWith("local-")));
     } finally {
       if (streamTimeoutId !== null) clearTimeout(streamTimeoutId);
+      sendingRef.current = false;
       setSending(false);
     }
   }
@@ -1108,6 +1128,9 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
   // typing indicator を表示するか: 送信中かつストリームがまだ来ていない
   const showTypingIndicator = sending && streamingContent === null;
+  // 送信・入力・クイック質問を止めるか (#2227 H1。「最新の会話を読み込む」の取り直しの最中も送信中と同じく止める。取り直しと
+  // 送信を重ねない)
+  const inputLocked = sending || reloadingAfterTimeout;
 
   return (
     <>
@@ -1149,6 +1172,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
                     onPress={archiveSession}
                     disabled={
                       isClosingSession ||
+                      reloadingAfterTimeout ||
                       !currentSessionId ||
                       sessions.find((s) => s.id === currentSessionId)
                         ?.status === "closed"
@@ -1188,9 +1212,11 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
                   style={styles.body}
                   contentContainerStyle={styles.bodyContent}
                 >
+                  {/* 新しい相談・相談の切り替えは、「最新の会話を読み込む」の取り直しの最中は止める (#2227 H1。送信中は止めない) */}
                   <Pressable
                     testID="ai-new-session"
                     onPress={createNewSession}
+                    disabled={reloadingAfterTimeout}
                     style={styles.newSessionBtn}
                   >
                     <MessageCircle size={16} color={colors.accent} />
@@ -1203,6 +1229,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
                       key={s.id}
                       testID={`ai-session-${s.id}`}
                       onPress={() => selectSession(s.id)}
+                      disabled={reloadingAfterTimeout}
                       style={[
                         styles.sessionRow,
                         currentSessionId === s.id && styles.sessionRowActive,
@@ -1284,6 +1311,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
                           key={i}
                           testID={`ai-quick-${i}`}
                           onPress={() => sendMessage(q)}
+                          disabled={inputLocked}
                           style={styles.quickChip}
                         >
                           <Text style={styles.quickChipText}>{q}</Text>
@@ -1317,15 +1345,15 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
                   placeholderTextColor={colors.textMuted}
                   multiline
                   maxLength={1000}
-                  editable={!sending}
+                  editable={!inputLocked}
                 />
                 <Pressable
                   testID="ai-send-btn"
                   onPress={() => sendMessage(inputText)}
-                  disabled={!inputText.trim() || sending}
+                  disabled={!inputText.trim() || inputLocked}
                   style={[
                     styles.sendButton,
-                    (!inputText.trim() || sending) && styles.sendButtonDisabled,
+                    (!inputText.trim() || inputLocked) && styles.sendButtonDisabled,
                   ]}
                 >
                   {sending ? (

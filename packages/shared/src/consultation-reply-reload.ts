@@ -29,7 +29,7 @@
  *     少し待って 1 回だけ読み直す (#2206 G2。実行できていれば一文を足して知らせる)
  *   - 取り直し (GET) とそのあとの記録の直読みは CONSULTATION_REPLY_RELOAD_TIMEOUT_MS で打ち切る (#2227 H1。Web とモバイルで同じ)
  *   - 届いたかを確かめられなかった送信は画面が覚え、後の取り直しで保存行が見つかったら入力欄に戻した文を消し、今回の送信の
- *     保存行を探すときはその行を除く (resolveUnconfirmedSends。送信ごとに当てた行も返すのは resolveUnconfirmedSendRows。#2227 H1)
+ *     保存行を探すときはその行を除く (resolveUnconfirmedSends。#2227 H1)
  *   - この決まりは previousRequestNotePlanOf (取り直したとき) と previousRequestRecheckPlanOf・
  *     messagesAfterPreviousRequestRecheck (読み直したとき) の 1 か所で決め、Web とモバイルの画面はその結果を描くだけにする
  *     (#2206 G2。以前は画面ごとに判定を写していて、Web にだけ足した決まりがモバイルに無かった)
@@ -256,6 +256,8 @@ export type UnconfirmedSendsResolution = {
  *   - 今回の送信 (current) がサーバーに受け付けられていた (currentAccepted。サーバーは応答を返す前に送った文を保存するので、
  *     今回の保存行は必ずある) ときは、今回の送信の一致 (sentMessageIndexOf。いちばん後ろ) を前の送信に当てない
  *   - 当てた保存行の id は claimedIds に足す。前から当てていた id (previousClaimedIds) も残す
+ *   - resolved・remaining には、渡した送信をそのもの (同じ参照) のまま入れる (画面は入れ物の送信をもの自体で見分ける。
+ *     モバイルの AIAdvisorSheet は、案内の送信と入れ物の送信を同じもので持つ)
  */
 export function resolveUnconfirmedSends(params: {
   sessionId: string;
@@ -265,41 +267,14 @@ export function resolveUnconfirmedSends(params: {
   current: SentText | null;
   currentAccepted: boolean;
 }): UnconfirmedSendsResolution {
-  const rows = resolveUnconfirmedSendRows(params);
-  return { resolved: rows.resolved.map((row) => row.send), remaining: rows.remaining, claimedIds: rows.claimedIds };
-}
-
-/** resolveUnconfirmedSendRows の結果 (resolveUnconfirmedSends の結果に、見つかった送信ごとの保存行の id を足したもの) */
-export type UnconfirmedSendRowsResolution<S extends UnconfirmedSend> = {
-  /** 保存行が見つかった (届いていた) 送信と、その送信に当てた保存行の id (渡した順) */
-  resolved: { send: S; savedMessageId: string }[];
-  /** まだ保存行が見つからない送信 (渡したものをそのまま返す) */
-  remaining: S[];
-  /** resolveUnconfirmedSends の claimedIds と同じ */
-  claimedIds: string[];
-};
-
-/**
- * resolveUnconfirmedSends と同じ決まりで当て、見つかった送信ごとに当てた保存行の id も返す (#2227 H1)。
- * 送信ごとに当てた行を覚える画面が使う (モバイルの AIAdvisorSheet。ある送信の取り直しの最中に、別の取り直しがその送信の保存行を
- * 先に当てたとき、後から返った取り直しはその行で送った文と返答を探す)。送信に画面の項目 (識別の番号など) を足して渡してよい
- */
-export function resolveUnconfirmedSendRows<S extends UnconfirmedSend>(params: {
-  sessionId: string;
-  loaded: readonly ReloadedMessage[];
-  unconfirmed: readonly S[];
-  previousClaimedIds: readonly string[];
-  current: SentText | null;
-  currentAccepted: boolean;
-}): UnconfirmedSendRowsResolution<S> {
   const { sessionId, loaded, unconfirmed, previousClaimedIds, current, currentAccepted } = params;
   const claimed = new Set(previousClaimedIds);
   const reservedId =
     current && currentAccepted
       ? (loaded[sentMessageIndexOf({ text: current.text, knownMessageIds: [...current.knownMessageIds, ...claimed] }, loaded)]?.id ?? null)
       : null;
-  const resolved: { send: S; savedMessageId: string }[] = [];
-  const remaining: S[] = [];
+  const resolved: UnconfirmedSend[] = [];
+  const remaining: UnconfirmedSend[] = [];
   for (const send of unconfirmed) {
     if (send.sessionId !== sessionId) {
       remaining.push(send);
@@ -316,7 +291,7 @@ export function resolveUnconfirmedSendRows<S extends UnconfirmedSend>(params: {
     );
     if (saved) {
       claimed.add(saved.id);
-      resolved.push({ send, savedMessageId: saved.id });
+      resolved.push(send);
     } else {
       remaining.push(send);
     }
