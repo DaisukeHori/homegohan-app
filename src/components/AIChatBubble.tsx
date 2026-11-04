@@ -16,7 +16,7 @@ import { useAiConsent } from "@/hooks/useAiConsent";
 import { AiConsentRequiredError, aiFetch, handleStoredAiConsentFailure, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import { aiDailyLimitMessageOfResponse } from "@/lib/ai/daily-limit-client";
 import { aiSummarySkippedNote } from "@/lib/ai/consent-config";
-import { todayLocal, addDaysToDate } from "@/lib/date-utils";
+import { todayLocal, addDaysToDate, formatDateJa } from "@/lib/date-utils";
 // AI 応答を HTML にして dangerouslySetInnerHTML へ渡すときは、必ずこの関数を通す (#1169)
 import { parseMarkdown } from "@/lib/markdown-lite";
 // AI 相談の緊急停止中 (503 + AI_CHAT_DISABLED) にサーバーが返すやさしい文面を、そのまま画面に出す (#1148)
@@ -1512,9 +1512,9 @@ export default function AIChatBubble() {
     // 未同意なら同意画面を出す (「同意しない」なら生成しない)
     if ((await ensureAiConsent()) === 'declined') return;
 
-    // 日付をフォーマット
-    const dateObj = new Date(selectedDate);
-    const formattedDate = `${dateObj.getMonth() + 1}月${dateObj.getDate()}日`;
+    // 日付をフォーマット (#2235 I3。選んだ暦日 (YYYY-MM-DD) の年月日を formatDateJa で読む。以前の new Date(selectedDate) は
+    // UTC の 0 時の瞬間を端末のローカル時刻 (getMonth / getDate) で読んでいたので、端末が UTC より西だと前の日になった)
+    const formattedDate = formatDateJa(selectedDate);
 
     // 開始メッセージをチャットに追加
     setMessages(prev => [...prev, {

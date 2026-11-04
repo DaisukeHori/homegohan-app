@@ -1,8 +1,10 @@
 // @vitest-environment node
 /**
- * #2235 I3 端末の暦で日付を読み違える 2 つの形の棚卸しの表と、その見張り。
+ * #2235 I3 端末の暦で日付を読み違える 3 つの形の棚卸しの表と、その見張り。
  *   1 つめ: 「端末のローカル時刻で日をずらす」形 (`x.setDate(x.getDate() ± n)`)。表は DATE_SHIFT_SITES (D-1〜D-3)
  *   2 つめ: 「YYYY-MM-DD の暦日を new Date() に渡す」形 (`new Date(dateStr)`)。表は DATE_PARSE_SITES (D-4〜D-6。下の説明)
+ *   3 つめ: 「今の時刻 (引数なしの new Date()) を端末の暦 (getDay / getDate / getMonth / getFullYear) で読む」形。
+ *           表は NOW_DEVICE_CALENDAR_SITES (D-7〜D-9。下の説明)
  *
  * 1 つめの形 (`x.setDate(x.getDate() ± n)`):
  *
@@ -11,7 +13,9 @@
  *     日付にしていた画面は、端末のタイムゾーンが日本でないと今日そのものが JST とずれた。I3 で直した /health の週間カレンダー・
  *     /health/streaks の 7 日・ホームの useHomeData・買い物リストの範囲はこれ (今は todayLocal / addDaysToDate の暦の計算)
  *   - 元が端末の 0 時の Date (parseLocalDate・週の始まり): 端末が JST より東 (UTC+10 など) だと端末の 0 時が JST の前の日なので、
- *     いつも 1 日戻る (例: Australia/Sydney で JST の今日 2026-11-05 から「明日」を作ると 2026-11-05)
+ *     いつも 1 日戻る (例: Australia/Sydney で JST の今日 2026-11-05 から「明日」を作ると 2026-11-05)。
+ *     AI 相談の 1 日分の献立の明日と日付の欄の上限 (src/components/AIChatBubble.tsx) はこれで、I8 (#2243) が addDaysToDate の
+ *     暦の計算に直した (表に行を置かないので、この形が戻ると D-1 で赤になる)
  * I3 の時点で製品コードに残る同じ形の箇所を、下の DATE_SHIFT_SITES に 1 ファイル 1 行で判定つきで載せる (表が正本)。
  *
  *   D-1 製品コードで、この形を書くファイルは、どれも DATE_SHIFT_SITES に行がある (新しく書いたら、行を足して判定を書く)
@@ -31,9 +35,10 @@
  * new Date('2026-11-05') は UTC の 0 時 (JST の 9 時) の瞬間になる。それを端末のローカル時刻 (getFullYear / getMonth / getDate / getDay、
  * timeZone を付けない toLocaleDateString) で読むと、端末が UTC より西 (America/Los_Angeles など) では前の日 (2026-11-04) になる。
  * I3 で直したホームの週間統計の曜日 (useHomeData の getDayOfWeek) はこれで、/meals/new の保存先の日付・体重の 7 日間の推移の日、
- * 健康の画面 (血液検査・健診の一覧と詳細・分析・目標の期限)・食事の詳細の日付も同じ形だった (今は、ホームの曜日は calendarDaysEndingAt
- * (暦の計算)、ほかは parseLocalDate (年月日を端末の 0 時の Date にする) か formatDateJa で読む。ホームは
- * tests/week-days-jst-2235.test.tsx、ほかは tests/calendar-date-display-jst-2235.test.tsx が描いて確かめる)。
+ * 健康の画面 (血液検査・健診の一覧と詳細・分析・目標の期限)・食事の詳細の日付・AI 相談の 1 日分の献立を作るときのチャットの文
+ * (「○月○日の献立を作成中...」と生成の依頼の note) も同じ形だった (今は、ホームの曜日は calendarDaysEndingAt (暦の計算)、
+ * ほかは parseLocalDate (年月日を端末の 0 時の Date にする) か formatDateJa で読む。ホームは tests/week-days-jst-2235.test.tsx、
+ * AI 相談は tests/ai-chat-bubble-locks-dates-2235.test.tsx、ほかは tests/calendar-date-display-jst-2235.test.tsx が描いて確かめる)。
  * 製品コードで、暦日らしい名前 (最後の名前が …date / …Date / …Str) の値を new Date() に 1 つだけ渡す箇所を、下の DATE_PARSE_SITES に
  * 「ファイル → 渡す値 → 判定」で載せる (表が正本)。
  *
@@ -49,6 +54,34 @@
  *     読めるかの確かめだけ。暦で読まない)・supabase/functions/calculate-segment-stats の `new Date(periodStart)` など
  *     (Edge Functions は UTC で動き、getTime の差と getUTC* で読む)・週の計算の Date の写し (`new Date(start)`・`new Date(base)` など)
  *   - 時刻を付けて端末のローカル時刻として読む形 (`new Date(day + 'T00:00:00')` など)・Date.UTC で作る形: 端末のタイムゾーンに左右されない
+ *   - 名前が暦日らしくない値の残り (I3 の時点): 瞬間の ISO を端末か JST の時刻で表示する箇所 (運営・サポートの画面の日時・
+ *     src/lib/admin/format-datetime.ts・請求書の期間 (Stripe の unix 秒を toISOString にした瞬間) など)・保存した時刻との差
+ *     (src/components/ProfileReminderBanner.tsx)。どれも暦日の文字列ではない
+ *
+ * 3 つめの形 (今の時刻を端末の暦で読む):
+ * new Date() の getDay / getDate / getMonth / getFullYear は、端末のタイムゾーンの暦で答える。端末が日本でないと、JST の今日
+ * (todayLocal / formatLocalDate) と日・曜日が違う。JST の日付と組むと食い違う。I3 で直した /menus/weekly の「今日の栄養」の見出し
+ * (src/app/(main)/menus/weekly/_components/modals/StatsModal.tsx) はこれで、日付を JST の今日 (formatLocalDate(today)) で、曜日を
+ * 端末の暦 (today.getDay()) で読んでいたので、America/Los_Angeles で JST の 2026-11-05 (木) 10:00 に開くと「11月5日（水）の栄養」、
+ * Pacific/Kiritimati で JST の 20:00 に開くと「11月5日（金）の栄養」になった (今は親 (menus/weekly/page.tsx) が 1 回だけ読んだ
+ * JST の今日 (todayStr) を受け取り、日付と曜日をその暦日から読む。親はその同じ todayStr で今日の栄養を引く。
+ * tests/calendar-date-display-jst-2235.test.tsx が描いて確かめる)。
+ * 製品コードで、今の時刻を入れた変数 (`const x = new Date()`・行の頭の `x = new Date()`) を端末の暦の getter で読む箇所と、
+ * `new Date().getFullYear()` のように直接読む箇所を、下の NOW_DEVICE_CALENDAR_SITES に「ファイル → 読む変数 → 判定」で載せる (表が正本)。
+ *
+ *   D-7 製品コードで、この形を書く (ファイル, 読む変数) は、どれも NOW_DEVICE_CALENDAR_SITES に行がある (新しく書いたら、行を足して判定を書く)
+ *   D-8 (ファイル, 読む変数) ごとのこの形の数は、行に書いた数以下
+ *   D-9 I3 で直した (ファイル, 読んでいた変数) (FIXED_NOW_READ_IN_I3) には、この形が 1 つも無い (元の形に戻っていない)
+ *
+ * 限界 (見張りであって証明ではない): 変数はファイルの中の名前だけで追う (スコープは区別しない)。コメントを除いた本文を数える。
+ * 拾わないもの・ほかの書き方の I3 の時点の判定:
+ *   - 関数の引数の既定値 (`date: Date = new Date()`。packages/shared の formatLocalDate・monthLocal など): Asia/Tokyo を
+ *     指定して読む (formatLocalDate) か不正な値の確かめで、端末の暦の getter では読まない
+ *   - `new Date(Date.now())`・`useState(() => new Date())`・`useMemo(() => new Date())` などで作った今の時刻: I3 の時点で製品コードに無い
+ *     (useState の初期値で今の時刻を使う 1 か所 (super-admin の料金の変更の日時) は toISOString の文字列で、端末の暦の getter では読まない)
+ *   - 時刻 (getHours) の時間帯で決める箇所 (ホームの挨拶と今の食事の区分・/meals/new の食事の区分の既定・/menus/weekly の次の食事の
+ *     自動展開): 暦日を作らない (日付は JST の今日、朝・昼・夜は端末の時刻)。時間帯をどちらの時刻で決めるかは暦日の食い違いではない
+ *     別の判断なので、I3 では変えない (以前から)
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -66,12 +99,7 @@ type DateShiftVerdict =
    * 週の格子 (端末の 0 時の週の始まりを setDate でずらし、formatLocalDate で dateStr にする)。JST より東の端末では、表示の日 (getDate) と
    * dateStr が 1 日ずれる。週の格子ごとの作り直しになるので I3 の範囲の外 (別の Issue の候補)
    */
-  | 'week-grid'
-  /**
-   * 起きる。並行の枝が触っているファイルなので I3 では直さず、その枝の着地の後に回す (どの枝か・直し方は行の note)。
-   * 直し方の基本は todayLocal() からの暦の計算 addDaysToDate(todayLocal(), n)
-   */
-  | 'deferred-parallel-branch';
+  | 'week-grid';
 
 interface DateShiftSite {
   /** この形の数の上限 (I3 の時点の数) */
@@ -83,14 +111,6 @@ interface DateShiftSite {
 
 /** 製品コードでこの形を書くファイル (リポジトリの根からの相対パス) */
 const DATE_SHIFT_SITES: Readonly<Record<string, DateShiftSite>> = {
-  'src/components/AIChatBubble.tsx': {
-    maxCount: 2,
-    verdict: 'deferred-parallel-branch',
-    note:
-      '1 日分の献立の既定の日 (明日 = parseLocalDate(todayLocal()) + 1 日) と日付の欄の上限 (+14 日) を formatLocalDate で読む。' +
-      'Australia/Sydney で JST の今日 2026-11-05 のとき、明日 = 2026-11-05 (今日と同じ)・上限 = 2026-11-18 (+13 日)。' +
-      'I3 の時点でこのファイルを触る並行の枝は fix/g-1104e-i8 (i1 は着地済み。i8 はこの 2 か所を addDaysToDate の暦の計算にする変更を含む)',
-  },
   'src/app/(main)/meals/new/page.tsx': {
     maxCount: 3,
     verdict: 'week-grid',
@@ -203,12 +223,7 @@ type DateParseVerdict =
    */
   | 'instant-diff'
   /** 渡す値が暦日でなく瞬間 (toISOString の文字列)。同じ端末の暦で作った瞬間を同じ端末の暦で読むので、食い違いは起きない */
-  | 'instant'
-  /**
-   * 起きる。並行の枝が触っているファイルなので I3 では直さず、その枝の着地の後に回す (どの枝かは行の note)。
-   * 直し方は I3 のほかの箇所と同じく、parseLocalDate / formatDateJa で年月日を読む
-   */
-  | 'deferred-parallel-branch';
+  | 'instant';
 
 interface DateParseSite {
   /** この形の数の上限 (I3 の時点の数) */
@@ -220,16 +235,6 @@ interface DateParseSite {
 
 /** 製品コードでこの形を書く (ファイル (リポジトリの根からの相対パス) → new Date() に渡す値 → 判定) */
 const DATE_PARSE_SITES: Readonly<Record<string, Readonly<Record<string, DateParseSite>>>> = {
-  'src/components/AIChatBubble.tsx': {
-    selectedDate: {
-      maxCount: 1,
-      verdict: 'deferred-parallel-branch',
-      note:
-        '1 日分の献立を作るときのチャットの文 (「○月○日の献立を作成中...」) を getMonth / getDate で作る。' +
-        'America/Los_Angeles で 2026-11-05 を選ぶと「11月4日」になる。' +
-        'I3 の時点でこのファイルを触る並行の枝は fix/g-1104e-i8 (i1 は着地済み)。i8 の着地の後に直す',
-    },
-  },
   'src/app/(main)/meals/new/page.tsx': {
     startDate: { maxCount: 1, verdict: 'date-object', note: 'getWeekDates の週の始まり (Date) の写し' },
     date: { maxCount: 1, verdict: 'date-object', note: 'getWeekStart に渡す Date の写し' },
@@ -318,6 +323,7 @@ const FIXED_PARSE_IN_I3: readonly (readonly [file: string, arg: string])[] = [
   ['src/app/(main)/health/insights/page.tsx', 'dateStr'],
   ['src/app/(main)/health/goals/page.tsx', 'goal.target_date'],
   ['src/app/(main)/meals/[id]/page.tsx', 'meal.dayDate'],
+  ['src/components/AIChatBubble.tsx', 'selectedDate'],
 ];
 
 /** 暦日らしい名前の値を 1 つだけ new Date() に渡す形 (1 つめの組が渡す値。末尾の ! は外す) */
@@ -336,6 +342,109 @@ function scanDateParses(): Map<string, Map<string, number>> {
   for (const root of SCAN_ROOTS) {
     for (const file of listProductionFiles(path.join(ROOT, root))) {
       const counts = countDateParses(fs.readFileSync(file, 'utf8'));
+      if (counts.size > 0) found.set(rel(file), counts);
+    }
+  }
+  return found;
+}
+
+/** 判定 (3 つめの形) */
+type NowReadVerdict =
+  /** 今の時刻を端末の暦でずらし、瞬間 (toISOString・期間の起点) として使う (1 つめの表の 'instant' と同じ箇所)。暦日にしない */
+  | 'instant'
+  /** 週の格子 (端末の今日の週の始まり)。1 つめの表の 'week-grid' と同じ根 (格子と一緒に直す。I3 の範囲の外) */
+  | 'week-grid'
+  /**
+   * 端末の暦の今日・年を、同じ端末の暦の日付とだけ組む (JST の日付と組まない)。または画面の飾り (著作権表示の年)。
+   * 食い違いは起きない
+   */
+  | 'device-calendar';
+
+interface NowReadSite {
+  /** この形の数の上限 (I3 の時点の数) */
+  readonly maxCount: number;
+  readonly verdict: NowReadVerdict;
+  /** 何を読んでいるか */
+  readonly note: string;
+}
+
+/** `new Date().getFullYear()` のように、今の時刻を変数に入れずに直接読む形の表のキー */
+const DIRECT_NOW_READ = 'new Date()';
+
+/** 製品コードでこの形を書く (ファイル (リポジトリの根からの相対パス) → 読む変数 (直接読む形は DIRECT_NOW_READ) → 判定) */
+const NOW_DEVICE_CALENDAR_SITES: Readonly<Record<string, Readonly<Record<string, NowReadSite>>>> = {
+  'src/app/(main)/settings/page.tsx': {
+    [DIRECT_NOW_READ]: { maxCount: 1, verdict: 'device-calendar', note: '画面下の著作権表示の年 (© 2026)。日付の判定に使わない' },
+  },
+  'src/app/(main)/menus/weekly/_state/reducers/weekViewReducer.ts': {
+    d: { maxCount: 2, verdict: 'week-grid', note: 'getDefaultWeekStart (端末の今日の週の月曜の 0 時)。1 つめの表の同じファイルの行と同じ箇所' },
+  },
+  'src/components/ai-assistant/V4GenerateModal.tsx': {
+    now: {
+      maxCount: 3,
+      verdict: 'device-calendar',
+      note:
+        'getDeviceTodayStr (このモーダルの今日 = 選べる日付の下限と「1日だけ」の初期値)。以前から端末の暦で決めていて、' +
+        '#1433 で初期値もそれにそろえた (同じ関数の注記)。I3 では変えない',
+    },
+  },
+  'lib/slot-builder.ts': {
+    now: {
+      maxCount: 3,
+      verdict: 'device-calendar',
+      note:
+        'getTodayStr (献立の生成の対象を作る関数の startDate の既定)。呼び出し元 (Web とモバイルの V4GenerateModal) はどれも ' +
+        'startDate を渡すので既定は使われず、使われてもモーダルの今日 (端末の暦) と同じ',
+    },
+  },
+  'src/app/api/support/users/[id]/route.ts': {
+    thirtyDaysAgo: { maxCount: 1, verdict: 'instant', note: '最近の AI セッションを数える期間の起点 (30 日前の今の時刻。toISOString で絞る)' },
+  },
+  'src/lib/admin/user-ban.ts': {
+    unbanDate: { maxCount: 1, verdict: 'instant', note: '一時凍結の解除の時刻 (toISOString で保存)' },
+  },
+};
+
+/** I3 で直した (ファイル, 読んでいた変数)。この形が 1 つも無いこと (D-9) */
+const FIXED_NOW_READ_IN_I3: readonly (readonly [file: string, name: string])[] = [
+  ['src/app/(main)/menus/weekly/_components/modals/StatsModal.tsx', 'today'],
+];
+
+/** 端末の暦で年・月・日・曜日を読む Date の getter */
+const DEVICE_CALENDAR_GETTERS = '(?:getDay|getDate|getMonth|getFullYear)';
+
+/**
+ * 今の時刻 (引数なしの new Date()) を入れる変数 (1 つめの組)。const / let / var の宣言と、行の頭の代入。
+ * 関数の引数の既定値 (`(date: Date = new Date())`) は、行の頭でも宣言でもないので拾わない
+ */
+const NOW_BINDING_PATTERN = /(?:\b(?:const|let|var)\s+|^[ \t]*)([A-Za-z_$][\w$]*)\s*(?::\s*Date(?:\s*\|\s*null)?\s*)?=\s*new Date\(\s*\)/gm;
+
+/** 今の時刻を変数に入れずに、端末の暦の getter で直接読む形 */
+const NOW_DIRECT_READ_PATTERN = new RegExp(`new Date\\(\\s*\\)\\s*\\.\\s*${DEVICE_CALENDAR_GETTERS}\\(\\)`, 'g');
+
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** 本文の、この形の読む変数ごとの数 (直接読む形は DIRECT_NOW_READ) */
+function countNowReads(text: string): Map<string, number> {
+  const body = stripComments(text);
+  const counts = new Map<string, number>();
+  const direct = (body.match(NOW_DIRECT_READ_PATTERN) ?? []).length;
+  if (direct > 0) counts.set(DIRECT_NOW_READ, direct);
+  const names = new Set([...body.matchAll(NOW_BINDING_PATTERN)].map((match) => match[1]));
+  for (const name of names) {
+    // 名前の前が識別子の文字か . (別のオブジェクトのプロパティ) なら、その変数ではない
+    const reads = body.match(new RegExp(`(?<![\\w$.])${escapeRegExp(name)}\\s*\\.\\s*${DEVICE_CALENDAR_GETTERS}\\(\\)`, 'g')) ?? [];
+    if (reads.length > 0) counts.set(name, reads.length);
+  }
+  return counts;
+}
+
+/** 製品コードの、この形を書くファイル → 読む変数 → 数 */
+function scanNowReads(): Map<string, Map<string, number>> {
+  const found = new Map<string, Map<string, number>>();
+  for (const root of SCAN_ROOTS) {
+    for (const file of listProductionFiles(path.join(ROOT, root))) {
+      const counts = countNowReads(fs.readFileSync(file, 'utf8'));
       if (counts.size > 0) found.set(rel(file), counts);
     }
   }
@@ -415,6 +524,59 @@ describe('YYYY-MM-DD の暦日を new Date() に渡す形の棚卸し (#2235 I3)
     for (const [file, arg] of FIXED_PARSE_IN_I3) {
       expect(fs.existsSync(path.join(ROOT, file)), file).toBe(true);
       expect(found.get(file)?.get(arg) ?? 0, `${file}: ${arg}`).toBe(0);
+    }
+  });
+});
+
+describe('今の時刻を端末の暦で読む形の棚卸し (#2235 I3)', () => {
+  const found = scanNowReads();
+  const entries = [...found.entries()].flatMap(([file, counts]) => [...counts.entries()].map(([name, count]) => ({ file, name, count })));
+
+  it('検出器は、今の時刻を入れた変数と直接読む形を数え、コメントの中・引数の既定値・ほかの Date・時刻 (getHours)・プロパティは数えない', () => {
+    const counts = countNowReads(
+      [
+        'const today = new Date();',
+        '{formatDateJa(formatLocalDate(today))}（{dayNames[today.getDay()]}）の栄養',
+        'let unbanDate: Date | null = null;',
+        '  unbanDate = new Date();',
+        'unbanDate.setDate(unbanDate.getDate() + 1);',
+        '&copy; {new Date().getFullYear()} ほめゴハン',
+      ].join('\n'),
+    );
+    expect(Object.fromEntries(counts)).toEqual({ today: 1, unbanDate: 1, [DIRECT_NOW_READ]: 1 });
+    expect(
+      countNowReads(
+        [
+          '// const a = new Date(); a.getDay();',
+          '/* new Date().getMonth() */',
+          'export function formatLocalDate(date: Date = new Date()) { return date.getDate(); }',
+          'const b = parseLocalDate(day); b.getDay();',
+          'const c = new Date(dateStr); c.getDate();',
+          'const hour = new Date().getHours();',
+          'const now = new Date(); const t = now.getTime(); other.now.getDay();',
+        ].join('\n'),
+      ).size,
+    ).toBe(0);
+  });
+
+  it('D-7 この形を書く製品コードの (ファイル, 読む変数) は、どれも表に行がある', () => {
+    const unlisted = entries
+      .filter(({ file, name }) => NOW_DEVICE_CALENDAR_SITES[file]?.[name] === undefined)
+      .map(({ file, name }) => `${file}: ${name}`);
+    expect(unlisted).toEqual([]);
+  });
+
+  it('D-8 (ファイル, 読む変数) ごとのこの形の数は、表に書いた数以下', () => {
+    const over = entries
+      .filter(({ file, name, count }) => NOW_DEVICE_CALENDAR_SITES[file]?.[name] !== undefined && count > NOW_DEVICE_CALENDAR_SITES[file][name].maxCount)
+      .map(({ file, name, count }) => `${file}: ${name} ${count} > ${NOW_DEVICE_CALENDAR_SITES[file][name].maxCount}`);
+    expect(over).toEqual([]);
+  });
+
+  it('D-9 I3 で直した (ファイル, 読んでいた変数) には、この形が無い', () => {
+    for (const [file, name] of FIXED_NOW_READ_IN_I3) {
+      expect(fs.existsSync(path.join(ROOT, file)), file).toBe(true);
+      expect(found.get(file)?.get(name) ?? 0, `${file}: ${name}`).toBe(0);
     }
   });
 });

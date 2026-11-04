@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import { motion } from "framer-motion";
 import FocusTrap from "focus-trap-react";
 import { BarChart3, X, ChefHat, Flame, Sparkles, Heart, RefreshCw } from "lucide-react";
-import { formatLocalDate, formatDateJa } from "@homegohan/shared";
+import { formatDateJa, parseLocalDate, WEEKDAY_LABELS_JA } from "@homegohan/shared";
 import { useDialogA11y } from "@/components/common/useDialogA11y";
 
 const NutritionRadarChart = dynamic(
@@ -67,6 +67,11 @@ interface StatsModalProps {
   weekDates: WeekDate[];
   weeklySummaryTab: 'today' | 'week';
   radarChartNutrients: string[];
+  /**
+   * JST の今日 (YYYY-MM-DD)。todayNutrition / todayMealCount を引いた日と同じ値を親が渡す (#2235 I3。時計は親が 1 回だけ読む)。
+   * 「今日の栄養」の見出しの日付と曜日は、どちらもこの暦日から読む
+   */
+  todayStr: string;
   todayNutrition: Nutrition;
   todayMealCount: number;
   weekNutrition: WeekNutrition;
@@ -86,6 +91,7 @@ export function StatsModal({
   weekDates,
   weeklySummaryTab,
   radarChartNutrients,
+  todayStr,
   todayNutrition,
   todayMealCount,
   weekNutrition,
@@ -99,8 +105,9 @@ export function StatsModal({
   onChangeTab,
   onOpenNutritionDetail,
 }: StatsModalProps) {
-  const today = new Date();
-  const dayNames = ['日', '月', '火', '水', '木', '金', '土'];
+  // 「今日の栄養」の見出しの曜日は、日付と同じ暦日 (todayStr) から読む (#2235 I3。以前は日付を JST の今日で、曜日を端末の暦
+  // (new Date().getDay()) で読んでいたので、端末のタイムゾーンが日本でないと曜日が日付と合わなかった)
+  const todayWeekday = WEEKDAY_LABELS_JA[parseLocalDate(todayStr).getDay()];
 
   // #1052 (体系的 a11y)
   const titleId = useId();
@@ -200,7 +207,7 @@ export function StatsModal({
               {/* 今日の日付 */}
               <div className="flex items-center justify-between mb-3">
                 <p style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>
-                  {formatDateJa(formatLocalDate(today))}（{dayNames[today.getDay()]}）の栄養
+                  {formatDateJa(todayStr)}（{todayWeekday}）の栄養
                 </p>
                 <span className="px-2 py-0.5 rounded-full text-xs" style={{ background: colors.accentLight, color: colors.accent }}>
                   {todayMealCount}食分

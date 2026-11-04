@@ -6629,8 +6629,9 @@ export default function WeeklyMenuPage() {
                 weekDates={weekDates}
                 weeklySummaryTab={weeklySummaryTab}
                 radarChartNutrients={radarChartNutrients}
-                todayNutrition={getDayTotalNutrition(currentPlan?.days?.find(d => d.dayDate === formatLocalDate(new Date())))}
-                todayMealCount={currentPlan?.days?.find(d => d.dayDate === formatLocalDate(new Date()))?.meals?.length || 0}
+                todayStr={todayStr}
+                todayNutrition={getDayTotalNutrition(currentPlan?.days?.find(d => d.dayDate === todayStr))}
+                todayMealCount={currentPlan?.days?.find(d => d.dayDate === todayStr)?.meals?.length || 0}
                 weekNutrition={getWeekTotalNutrition()}
                 isLoadingFeedback={isLoadingFeedback}
                 isLoadingHint={isLoadingHint}

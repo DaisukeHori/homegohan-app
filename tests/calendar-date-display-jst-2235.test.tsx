@@ -13,6 +13,12 @@
  * 今は parseLocalDate (年月日を端末のローカル時刻の 0 時の Date にする) / formatDateJa で、その文字列の年月日を読む。
  * 同じ形の全域の表と見張りは tests/date-shift-inventory-2235.test.ts (DATE_PARSE_SITES・D-4〜D-6)。
  *
+ * もう 1 つの形 (直す前): /menus/weekly の「今日の栄養」の見出し (StatsModal) は、日付を JST の今日 (formatLocalDate(new Date())) で、
+ * 曜日を端末の暦 (new Date().getDay()) で読んでいた。端末のタイムゾーンが日本でないと、曜日が日付と合わなかった
+ * (America/Los_Angeles で JST の 11-05 (木) の朝に「11月5日（水）の栄養」、JST の 11-06 (金) 0 時に「11月6日（木）の栄養」)。
+ * 今は親 (menus/weekly/page.tsx) が時計を 1 回だけ読んだ JST の今日 (todayStr。今日の栄養を引く日と同じ) を渡し、日付と曜日を
+ * その暦日から読む。同じ形の全域の表と見張りは tests/date-shift-inventory-2235.test.ts (NOW_DEVICE_CALENDAR_SITES・D-7〜D-9)。
+ *
  * ここでは、時計を JST 2026-11-05 (木) 10:00 (America/Los_Angeles ではまだ 11-04 の夕方、Pacific/Kiritimati では 11-05 の午後) に止め、
  * 実行環境のタイムゾーン (UTC・JST・JST より西 (UTC-8)・東 (UTC+14)) を変えて各画面を描き、出す日付・曜日を確かめる。
  * 表示の文字は、画面が出す文字と同じ組み立て (年・月・日の数) で、期待する暦日から直接書く (直した後の関数で期待値を作らない)。
@@ -43,6 +49,8 @@ vi.mock('next/link', async () => {
   };
 });
 vi.mock('next/image', () => ({ default: () => null }));
+// StatsModal のレーダーチャート (next/dynamic で読む) は描かない (見出しの文字だけを確かめる。ほかの画面は next/dynamic を使わない)
+vi.mock('next/dynamic', () => ({ default: () => () => null }));
 vi.mock('@/hooks/useAiConsent', () => ({
   useAiConsent: () => ({ ensureAiConsent: async () => 'consented', consentModal: null }),
 }));
@@ -120,6 +128,7 @@ const { default: CheckupDetailClient } = await import('@/app/(main)/health/check
 const { default: HealthInsightsPage } = await import('@/app/(main)/health/insights/page');
 const { default: HealthGoalsPage } = await import('@/app/(main)/health/goals/page');
 const { default: MealDetailPage } = await import('@/app/(main)/meals/[id]/page');
+const { StatsModal } = await import('@/app/(main)/menus/weekly/_components/modals/StatsModal');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -426,6 +435,61 @@ describe('YYYY-MM-DD の暦日を、実行環境のタイムゾーンに依ら�
         expect(text()).toContain('11月5日(木)');
         expect(text()).not.toContain(PREVIOUS_DAY_MONTH_DAY);
       });
+    });
+  }
+});
+
+/**
+ * 「今日の栄養」の見出しを確かめる時刻と、そのときの JST の今日 (親が渡す todayStr) と見出しの文字。
+ * 親は todayStr を formatLocalDate(new Date()) (JST) で作る。見出しの文字は期待する暦日から直接書く
+ */
+const STATS_TODAY_CASES = [
+  // JST 2026-11-05 (木) 10:00 (America/Los_Angeles では 11-04 (水) 17:00)
+  { at: CLOCK_AT, todayStr: SHOWN_DAY, heading: '11月5日（木）の栄養' },
+  // JST の日付が変わる直前: JST 2026-11-05 (木) 23:59:59 (Pacific/Kiritimati ではもう 11-06 (金) 04:59)
+  { at: '2026-11-05T14:59:59.000Z', todayStr: SHOWN_DAY, heading: '11月5日（木）の栄養' },
+  // JST の日付が変わった直後: JST 2026-11-06 (金) 0:00 (UTC ではまだ 11-05 (木) 15:00、America/Los_Angeles では 11-05 (木) 7:00)
+  { at: '2026-11-05T15:00:00.000Z', todayStr: '2026-11-06', heading: '11月6日（金）の栄養' },
+] as const;
+
+/** StatsModal を「今日」のタブで描く (今日の栄養の見出しだけを確かめるので、ほかの値は空) */
+function statsModalElement(todayStr: string) {
+  return createElement(StatsModal, {
+    stats: { cookRate: 0, avgCal: 0, cookCount: 0, buyCount: 0, outCount: 0 },
+    weekDates: [],
+    weeklySummaryTab: 'today',
+    radarChartNutrients: [],
+    todayStr,
+    todayNutrition: {},
+    todayMealCount: 0,
+    weekNutrition: { daysWithMeals: 0, averages: { caloriesKcal: 0, proteinG: 0, fatG: 0, carbsG: 0, fiberG: 0, sodiumG: 0 } },
+    isLoadingFeedback: false,
+    isLoadingHint: false,
+    praiseComment: null,
+    nutritionFeedback: null,
+    nutritionTip: null,
+    aiHint: null,
+    onClose: () => undefined,
+    onChangeTab: () => undefined,
+    onOpenNutritionDetail: () => undefined,
+  });
+}
+
+/** 「今日の栄養」の見出しの文字 */
+function statsTodayHeadingText(): string | undefined {
+  return [...container.querySelectorAll('p')].map((p) => p.textContent ?? '').find((t) => t.endsWith('の栄養'));
+}
+
+describe('/menus/weekly の「今日の栄養」の見出し: 日付と曜日を同じ JST の今日から読む (#2235 I3)', () => {
+  for (const timeZone of RUNTIME_TIME_ZONES) {
+    describe(`実行環境のタイムゾーン ${timeZone}`, () => {
+      for (const c of STATS_TODAY_CASES) {
+        it(`${c.at}: ${c.heading}`, async () => {
+          vi.setSystemTime(new Date(c.at));
+          await renderIn(timeZone, statsModalElement(c.todayStr));
+          expect(statsTodayHeadingText()).toBe(c.heading);
+        });
+      }
     });
   }
 });
