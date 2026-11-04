@@ -9,6 +9,14 @@
  * 関数) で GET の応答を直に置く呼び出しを見ない (経路に入れるのは配線。描画のテストの S-31・S-32 の it が確かめる)。P2 は beginWrite の変数がその関数の
  * finally 節か .finally(…) で呼ばれることまでを見て、窓が書き込みを囲むか (早い return の前に endWrite を呼んでいないか) は見ない。
  * .then でつないだ書き込みは数える (旧 7 と違う)。受け手の外のファイルの関数の中の送信は数えない (§9.1)
+ * そのほかの限界 (いずれも今の受け手 21 ファイルに当たる書き方は 0 件):
+ *   - P1 が置く呼び出しに数えるのは識別子の setX(…)・dispatchX(…)・router.replace / push(…)・<store>.getState().setX(…) だけで、
+ *     変数に受けた store のメンバーの setter (const store = useXStore(); store.setItems(…)) は数えない
+ *   - P1 の読み取りの経路は識別子の呼び出し (名前(…)) だけをたどり、関数を参照で渡す書き方 (.then(handleX)・.map(loadOne)) は
+ *     経路に入らない
+ *   - P2 が書き込みに数えるのは GET でない fetch / aiFetch・Supabase の insert / update / upsert / delete・rpc だけで、
+ *     supabase.storage の upload / remove・functions.invoke・auth.updateUser は数えない
+ *   - READ_ONLY_SENDS (と WRITE_WINDOW_EXEMPTIONS の url) は送り先の前方一致で見る (行の url で始まる送り先は全部当たる)
  *
  * 設計書の正本は docs/design/cross/26-ai-consultation-refetch-receivers.md (§6.10・§7.7・§9.1〜§9.3)。
  * 受け手は全部この hook に移した (§16 の段 F。旧の hook src/hooks/useAiConsultationDataRefetch.ts と旧の番兵は消した):
