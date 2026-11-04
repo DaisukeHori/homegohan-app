@@ -174,7 +174,7 @@ type PreviousRequestNote = { notes: Message[]; recheck: { replyId: string; reply
  *   - 実行できていれば、実行できた一文を足し、データを出すタブの WebView に知らせる (notifyAiConsultationDataChanged)
  *   - 実行中の印のまま、または記録の行がまだ無い・読めないのに返答に提案がある (サーバーは返答を保存してから行を作る) なら、
  *     結果をまだ確かめられないと伝える一文 (頼み直しを勧めない) を足し、読み直す返答 (recheck) を返す (呼び出し側が
- *     recheckPreviousRequestLater で 1 回読み直す)
+ *     recheckPreviousRequestLater で 1 回読み直す)。ただし、記録を読めず GET が「実行する」を出すとした (pending) ときは、実行していない一文を出す (#2227 H1)
  *   - 実行を待つ・失敗した行なら、実行していない一文を足す
  *   - 提案が無く記録を読めなかったときは、一文を足さずに読み直す返答 (recheck) を返す (GET は実行できた提案を出さないので、
  *     読めないと実行できたかが分からない)
@@ -516,9 +516,10 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   }
 
   /**
-   * 取り直した相談 (sessionId) の会話 (loaded) で、確かめられなかった送信の保存行を探す (#2227 H1。Web の AIChatBubble の
-   * settleUnconfirmedSends と同じ決まり。共有の resolveUnconfirmedSends が古い送信から順に当てる)。
-   * 探すのは among に入っている送信だけ (取り直しの GET を始める前に積んであった送信。取り直している送信は呼び出し側が探すので除く)。
+   * 取り直した相談 (sessionId) の会話 (loaded) で、確かめられなかった送信の保存行を探す (#2227 H1。共有の resolveUnconfirmedSends が
+   * 古い送信から順に当てる)。探すのは among に入っている送信だけ (取り直しの GET を始める前に積んであった送信。取り直している送信は
+   * 呼び出し側が探すので除く)。忘れる範囲 (GET の前の写し) は Web の settleUnconfirmedSends と同じ。保存行を探す範囲は、Web は
+   * 呼んだ時点の入れ物の全部、このシートは among (写し) の中だけ (写しの外の送信は次の読み込みで当てる)。
    * 見つかった送信は入れ物から外し、今の相談がその相談なら、入力欄が戻した文のままなら消す。相談を開き直したとき (forgetRemaining) は、
    * 見つからなかった送信を忘れる。戻り値は送信に当てた保存行の id (今回の送信を探すときに除く)
    */

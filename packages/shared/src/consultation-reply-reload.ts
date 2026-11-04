@@ -49,7 +49,7 @@ export const PREVIOUS_REQUEST_ACTION_LOG_STATUS = {
   running: 'approved',
   /** 実行を待つ (自動実行がやり直せる失敗をした・今日の上限や同意で止めた。実行していない) */
   pending: 'pending',
-  /** 失敗し、やり直せない (実行していない) */
+  /** 失敗した (やり直せない。種類によっては途中まで書いた可能性がある — AI_ACTION_TYPES_NOT_RETRYABLE_AFTER_FAILURE) */
   failed: 'failed',
 } as const;
 
@@ -66,9 +66,11 @@ export const PREVIOUS_REQUEST_EXECUTED_MESSAGE = '前の依頼は実行されま
 export const PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE = '前の依頼の結果をまだ確かめられません。しばらくしてから相談を開き直してください。';
 
 /**
- * 応答を受け取れずに取り直した会話で、送った文への返答の提案の記録が実行を待つ (pending)・失敗した (failed) 行だけのときに
- * 足す一文 (#2206 G2)。対象は実行を待つ行か、完了しなかった (失敗した) 行。失敗した行には途中まで書いた可能性がある種類
- * (AI_ACTION_TYPES_NOT_RETRYABLE_AFTER_FAILURE) も含む。頼み直しは勧めない (実行を待つ提案はカードの「実行する」から実行できる)
+ * 応答を受け取れずに取り直した会話で、送った文への返答の提案が実行されていないときに足す一文 (#2206 G2)。足すのは、
+ * 記録が実行を待つ (pending)・失敗した (failed) 行だけのとき、記録を読めず GET が「実行する」を出すとした (pending) とき
+ * (#2227 H1)、読み直しても行が無く返答に提案があるとき (サーバーが行を作れずに実行しなかった。#2227 H1)。失敗した行には
+ * 途中まで書いた可能性がある種類 (AI_ACTION_TYPES_NOT_RETRYABLE_AFTER_FAILURE) も含む。頼み直しは勧めない
+ * (実行を待つ提案はカードの「実行する」から実行できる)
  */
 export const PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE = '前の依頼は実行できませんでした';
 

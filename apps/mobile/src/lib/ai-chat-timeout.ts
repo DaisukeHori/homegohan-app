@@ -194,6 +194,7 @@ export function timedOutSendReloadOf<T extends ReloadedMessage>(
  * 実行を待つ・失敗した行なら、実行していない一文 (PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE) を足す (読み直しで分かったときも
  * 一文を置き換える。#2206 G2)。
  * 記録の行がまだ無い・読めないのに返答に提案があるときは、実行中の印と同じく扱う (サーバーは返答を保存してから行を作る)。
+ * ただし、記録を読めず GET が「実行する」を出すとした (pending) ときは、実行していない一文を出す (#2227 H1)。
  * 提案が無く記録を読めないときは何も足さず (実行したと言い切れない)、少し待って 1 回だけ読み直す (#2206 G2)。
  * 決まりと見分け方は Web と共有 (packages/shared/src/consultation-reply-reload.ts の previousRequestNotePlanOf・
  * previousRequestRecheckPlanOf・messagesAfterPreviousRequestRecheck)。ここはモバイルの既存の名前で読み直すだけ。

@@ -224,8 +224,9 @@ type ProfileWriteResult = { data: Partial<DbUserProfile> | null; error: { code?:
 
 /**
  * PUT・POST の書き込みが返した行 (書いた後の行) から完成度を計算し直し、変わっていれば profile_completeness を書く (#2201 U4)。
- * 返すのは応答に返す行 (書けたときは新しい完成度を入れた行)。行が無い・計算し直しに失敗したときは、渡した行のまま返し
- * (欄の書き込みそのものは成功として扱う)、失敗はログに残す (完成度は次の書き込みで直る)
+ * 返すのは応答に返す行 (書けたときは新しい完成度を入れた行)。行が無いとき・一度も書けずに失敗したときは、渡した行のまま返す。
+ * 一度書けた後に失敗したときは、完成度を最後に分かった DB の値にした行を返す (syncProfileCompletenessOfRow。#2227 H4)。
+ * 欄の書き込みそのものは成功として扱い、失敗はログに残す (完成度は次の書き込みで直る)
  */
 async function syncProfileCompletenessOfWrite(
   supabase: Awaited<ReturnType<typeof createClient>>,
