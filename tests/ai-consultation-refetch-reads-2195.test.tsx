@@ -1343,33 +1343,36 @@ const REFETCH_FAILURES = ['http', 'network'] as const;
 const refetchFailureLabel = (failure: (typeof REFETCH_FAILURES)[number]) =>
   failure === 'http' ? '500・Supabase の error' : '通信の失敗 (fetch の reject)';
 
-// 移す前のページの期待 (取り直しが開いたときの読み込みの役を引き継ぐ)。新しい受け手の hook へ移したページは下の #2206 G1 の describe
-describe('開いたときの読み込みの最中に届いた成功の取り直しが失敗したら、開いたときに失敗したのと同じ画面を出す (失敗を隠さない。#2201 U1)', () => {
-  const FAILURES = REFETCH_FAILURES;
-  // 開いたときの読み込みのうち取り直さないものがあるページは、開いたときの失敗と同じ画面にならない (取り直さない読み込みは読める)
-  for (const c of CASES.filter((x) => x.mountReadsNotRefetched === undefined && !RECEIVER_MIGRATED_PAGES.has(x.page))) {
-    for (const failure of FAILURES) {
-      it(`${c.page}: ${refetchFailureLabel(failure)}`, async () => {
-        setServer(c.full);
-        await renderOnly(c);
-        const opened = screenSignature(container);
-        await freshRoot();
-        server.failure = failure;
-        await renderOnly(c);
-        server.failure = null;
-        const failedOpen = screenSignature(container);
-        expect(failedOpen, `${c.page} の開いたときの失敗の画面が、読めたときと同じ (検査が空振りしている)`).not.toBe(opened);
-        await freshRoot();
+// 移す前のページの期待 (取り直しが開いたときの読み込みの役を引き継ぐ)。新しい受け手の hook へ移したページは下の #2206 G1 の describe。移す前のページが無くなったら describe を置かない (空の describe は vitest が失敗にする)
+// 開いたときの読み込みのうち取り直さないものがあるページは、開いたときの失敗と同じ画面にならない (取り直さない読み込みは読める)
+const LEGACY_CASES = CASES.filter((x) => x.mountReadsNotRefetched === undefined && !RECEIVER_MIGRATED_PAGES.has(x.page));
+if (LEGACY_CASES.length > 0) {
+  describe('開いたときの読み込みの最中に届いた成功の取り直しが失敗したら、開いたときに失敗したのと同じ画面を出す (失敗を隠さない。#2201 U1)', () => {
+    const FAILURES = REFETCH_FAILURES;
+    for (const c of LEGACY_CASES) {
+      for (const failure of FAILURES) {
+        it(`${c.page}: ${refetchFailureLabel(failure)}`, async () => {
+          setServer(c.full);
+          await renderOnly(c);
+          const opened = screenSignature(container);
+          await freshRoot();
+          server.failure = failure;
+          await renderOnly(c);
+          server.failure = null;
+          const failedOpen = screenSignature(container);
+          expect(failedOpen, `${c.page} の開いたときの失敗の画面が、読めたときと同じ (検査が空振りしている)`).not.toBe(opened);
+          await freshRoot();
 
-        const releaseMount = await openWhileAiConsultationSucceeds(c, failure);
-        expect(screenSignature(container), `${c.page} の取り直しの失敗を隠した (開いたときに失敗したのと違う画面)`).toBe(failedOpen);
-        // 先に始めた開いたときの読み込みの応答 (読めた) が後から届いても置かない (最後に始めた取得の応答だけを置く)
-        await releaseMount();
-        expect(screenSignature(container)).toBe(failedOpen);
-      });
+          const releaseMount = await openWhileAiConsultationSucceeds(c, failure);
+          expect(screenSignature(container), `${c.page} の取り直しの失敗を隠した (開いたときに失敗したのと違う画面)`).toBe(failedOpen);
+          // 先に始めた開いたときの読み込みの応答 (読めた) が後から届いても置かない (最後に始めた取得の応答だけを置く)
+          await releaseMount();
+          expect(screenSignature(container)).toBe(failedOpen);
+        });
+      }
     }
-  }
-});
+  });
+}
 
 // 新しい受け手の hook へ移したページの期待 (#2206 G1 S-2。取り直しは開いたときの読み込みの役を引き継がず、失敗では何も置かない。
 // 開いたときの読み込みは、取り直しに追い越されても自分の応答を置く)。移したページが無い間は describe を置かない
