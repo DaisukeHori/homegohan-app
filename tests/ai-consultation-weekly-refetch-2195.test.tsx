@@ -1743,11 +1743,22 @@ async function renderWithShoppingRegenerationInProgress(): Promise<{ complete: (
   };
 }
 
-/** act の中で、応答の続き (fetch → res.json() → place) を流しきる (描画は act の終わりまで流さない) */
-async function drainTasks() {
-  for (let i = 0; i < SETTLE_TASKS; i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 0));
+/** 閉じたモーダルが消える (閉じるアニメーションが終わる) まで待つ上限 (ミリ秒) と、確かめる間 */
+const DIALOG_EXIT_WAIT_MAX_MS = 2000;
+const DIALOG_EXIT_POLL_MS = 50;
+
+/** 完了の知らせ (成功のモーダル) を閉じ、消えるまで待つ */
+async function dismissSuccessDialog() {
+  const ok = container.querySelector<HTMLButtonElement>('[role="dialog"] button');
+  if (!ok) throw new Error('完了の知らせが出ていない');
+  await clickButton(ok);
+  for (let waited = 0; document.querySelector('[role="dialog"]') !== null && waited < DIALOG_EXIT_WAIT_MAX_MS; waited += DIALOG_EXIT_POLL_MS) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, DIALOG_EXIT_POLL_MS));
+    });
   }
+  expect(document.querySelector('[role="dialog"]'), '完了の知らせが閉じていない').toBeNull();
+  await settle();
 }
 
 const shoppingItemNames = () => useShoppingStore.getState().shoppingList.map((item) => item.itemName);
@@ -1948,15 +1959,18 @@ describe('献立表 (/menus/weekly) の受け手の縁 (#2206 G1)', () => {
     server.shoppingListHold = null;
     expect(callsTo('/api/shopping-list'), '完了の監視が一覧を読み直していない (検査の前提が崩れた)').toBe(1);
 
-    // 完了の監視が再生成した一覧を置き、そのあとに取り直しの応答 (再生成の前の一覧) が届く。完了の知らせ (モーダル) は描画される前に
-    // 届けて、モーダルで取り直しの応答を止めずに置き方を見る (同じ act の中で、描画を流さずに応答を順に届ける)
+    // 完了の監視が再生成した一覧を置く
     await act(async () => {
       listRead.release();
-      await drainTasks();
-      expect(shoppingItemNames(), '完了の監視が再生成した一覧を置いていない (検査が空振りしている)').toEqual([AFTER_ITEM.itemName]);
-      expect(document.querySelector('[role="dialog"]'), '完了の知らせが先に描かれた (検査の前提が崩れた)').toBeNull();
+    });
+    await settle();
+    expect(shoppingItemNames(), '完了の監視が再生成した一覧を置いていない (検査が空振りしている)').toEqual([AFTER_ITEM.itemName]);
+    // 完了の知らせ (モーダル) を閉じる (開いている間は取り直しの応答を置かずに止めるので、閉じてから置き方を見る)
+    await dismissSuccessDialog();
+
+    // 再生成を待つあいだに始まった取り直しの応答 (再生成の前の一覧) が、そのあとに届く
+    await act(async () => {
       refetch.release();
-      await drainTasks();
     });
     await settle();
     expect(shoppingItemNames(), '取り直しの古い応答で、再生成した一覧を再生成の前の一覧に戻した').toEqual([AFTER_ITEM.itemName]);
