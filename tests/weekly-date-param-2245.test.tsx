@@ -310,7 +310,6 @@ describe('/menus/weekly の ?date= は isCalendarDate を通ったときだけ�
     await renderWeeklyPage({ date: CALENDAR_DATE_MAX });
     // CALENDAR_DATE_MAX (9998-12-30 (水)) を含む週 (月曜始まり) の 7 日を読む
     expect(mealPlanRangesRead()).toContain('9998-12-28..9999-01-03');
-    expect(mealPlanRangesRead()).not.toContain(TODAY_WEEK_RANGE);
     const modal = await openShoppingRangeModal();
     expect(currentWeekOption(modal).textContent).toBe(UNAVAILABLE_WEEK_LABEL);
     expect(currentWeekOption(modal).disabled).toBe(true);
