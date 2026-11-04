@@ -1,5 +1,5 @@
 /**
- * #2195 V1 ホーム (/home) のデータ (useHomeData) の取り直し (refetch。ホームは AI 相談の成功でこれを呼ぶ) が、
+ * #2195 V1 ホーム (/home) のデータ (useHomeData) の取り直し (AI 相談の成功のあとに useHomeData の中の hook が始める) が、
  * サーバーで無くなったものを前の値のまま残さないこと
  *
  * 問題 (直す前):
@@ -15,7 +15,9 @@
  * 今日のアドバイスの帯は前のアドバイスを残す (以前は成功のたびに LLM を 1 回呼び、上限に数えない枠の安全弁
  * 'nutrition_advice_auto' を 1 回使い、安全弁に達すると帯を消していた)。分析できなくなったとき (analysis: null) は帯も消す。
  *
- * ホームのページの配線 (useAiConsultationDataRefetch(refetch)) は tests/ai-consultation-data-refetch-2195.test.tsx が確かめる。
+ * #2206 G1 段 D: 取り直しの受け手は useHomeData (中で useAiConsultationReceiver を呼ぶ。ページは hook を呼ばない)。この検査は
+ * 取り直しを AI 相談の成功の通知 (AI_CONSULTATION_DATA_CHANGED_EVENT) で起こす。useHomeData の配線は
+ * tests/ai-consultation-data-refetch-2195.test.tsx が確かめる。
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
 import { act } from 'react';
@@ -47,6 +49,11 @@ const supabaseMock = vi.hoisted(() => ({
   tableRejects: false,
   /** ページが auth.onAuthStateChange に渡した関数 (ログインの状態の変化を起こす。#2201 U1。event は supabase-js の AuthChangeEvent) */
   authStateListener: null as null | ((event: string) => void),
+  /**
+   * auth.getSession を呼んだ数 (ホームのデータの読み取り (readHomeData) は 1 回の読み取りで 1 回ログインを確かめる。取り直しの数を数える。
+   * #2206 G1: 取り直しは useHomeData の中の hook が始めるので、検査は読み取りの数で数える)
+   */
+  sessionReads: 0,
 }));
 vi.mock('@/lib/supabase/client', () => {
   const EMPTY_RESULT = { data: null, error: null, count: 0 };
@@ -82,7 +89,10 @@ vi.mock('@/lib/supabase/client', () => {
   return {
     createClient: () => ({
       auth: {
-        getSession: async () => ({ data: { session: { user } }, error: null }),
+        getSession: async () => {
+          supabaseMock.sessionReads += 1;
+          return { data: { session: { user } }, error: null };
+        },
         getUser: async () => ({ data: { user }, error: null }),
         refreshSession: async () => ({ data: { session: { user } }, error: null }),
         onAuthStateChange: (listener: (event: string) => void) => {
@@ -149,7 +159,6 @@ vi.mock('framer-motion', async () => {
 });
 
 const { useHomeData, HOME_NUTRITION_ANALYSIS_WITH_AI_URL, HOME_NUTRITION_ANALYSIS_WITHOUT_AI_URL } = await import('@/hooks/useHomeData');
-const { useAiConsultationDataRefetch } = await import('@/hooks/useAiConsultationDataRefetch');
 const { default: HomePage } = await import('@/app/(main)/home/page');
 const { AI_CONSULTATION_DATA_CHANGED_EVENT } = await import('@/lib/ai/consultation-data-refetch');
 const { AI_CONSULTATION_GENERATION_STATUS_PATH, AI_CONSULTATION_GENERATION_WATCH_INTERVAL_MS } = await import('@/lib/ai/consultation-generation-watch');
@@ -223,11 +232,9 @@ const BEST_MEAL_ROW = {
 
 let container: HTMLDivElement;
 let root: Root;
-let latestRefetch: (() => Promise<void>) | null;
 
 function HomeDataProbe() {
-  const { bestMealThisWeek, suggestion, nutritionAnalysis, refetch } = useHomeData();
-  latestRefetch = refetch;
+  const { bestMealThisWeek, suggestion, nutritionAnalysis } = useHomeData();
   return (
     <div>
       <p data-testid="best-meal">{bestMealThisWeek?.dishName ?? ''}</p>
@@ -246,7 +253,7 @@ beforeEach(() => {
   supabaseMock.tableHoldFor = null;
   supabaseMock.tableRejects = false;
   supabaseMock.authStateListener = null;
-  latestRefetch = null;
+  supabaseMock.sessionReads = 0;
   nutritionAnalysisBody = undefined;
   // 栄養の分析は nutritionAnalysisBody を返す。お知らせ・パフォーマンスの分析 (fetch) は、この検査では何も返さない
   vi.stubGlobal(
@@ -290,10 +297,15 @@ async function renderHome() {
   await settle();
 }
 
-/** 取り直し (AI 相談の成功のあとにホームが呼ぶ refetch) を呼んで流しきる */
+/** AI 相談の成功を知らせる (useHomeData の中の hook が取り直しを始める。#2206 G1) */
+function dispatchAiConsultationSucceeded() {
+  window.dispatchEvent(new CustomEvent(AI_CONSULTATION_DATA_CHANGED_EVENT, { detail: { actionType: 'update_meal', result: {} } }));
+}
+
+/** 取り直し (AI 相談の成功の通知で useHomeData が始める) を起こして流しきる */
 async function refetchHome() {
   await act(async () => {
-    await latestRefetch?.();
+    dispatchAiConsultationSucceeded();
   });
   await settle();
 }
@@ -309,10 +321,7 @@ describe('useHomeData の取り直しは、サーバーで無くなったもの�
 
     // AI 相談の delete_meal のあと、ホームが取り直す
     supabaseMock.tableResults.planned_meals = { data: [], error: null };
-    await act(async () => {
-      await latestRefetch?.();
-    });
-    await settle();
+    await refetchHome();
     expect(bestMealText()).toBe('');
   });
 
@@ -325,10 +334,7 @@ describe('useHomeData の取り直しは、サーバーで無くなったもの�
 
     const NEXT_DISH = '豚汁';
     supabaseMock.tableResults.planned_meals = { data: [{ ...BEST_MEAL_ROW, id: 'meal-next', dish_name: NEXT_DISH }], error: null };
-    await act(async () => {
-      await latestRefetch?.();
-    });
-    await settle();
+    await refetchHome();
     expect(bestMealText()).toBe(NEXT_DISH);
   });
 
@@ -345,11 +351,7 @@ describe('useHomeData の取り直しは、サーバーで無くなったもの�
         releaseFirst = resolve;
       }),
     };
-    let firstRefetch: Promise<void> | undefined;
-    await act(async () => {
-      firstRefetch = latestRefetch?.();
-    });
-    await settle();
+    await refetchHome();
     supabaseMock.tableHoldFor = null;
 
     // 2 回目の取り直し (AI 相談で当てはまる食事が別の食事に変わった) は先に届く
@@ -360,7 +362,6 @@ describe('useHomeData の取り直しは、サーバーで無くなったもの�
 
     await act(async () => {
       releaseFirst();
-      await firstRefetch;
     });
     await settle();
     expect(bestMealText(), '先の取り直しの古い応答が、ベストごはんを戻した').toBe(NEXT_DISH);
@@ -441,9 +442,7 @@ describe('useHomeData: 続けて来た 2 回の成功の取り直しの栄養の
   let holdAnalyses: boolean;
 
   function HomeNutritionProbe() {
-    const { nutritionAnalysis, suggestion, refetch, aiConsultationWrites } = useHomeData();
-    // ホームのページと同じく、通知のたびに hook が渡す札を refetch に渡す
-    useAiConsultationDataRefetch((ticket) => refetch(ticket), { writeInFlightRef: aiConsultationWrites });
+    const { nutritionAnalysis, suggestion } = useHomeData();
     return (
       <div>
         <p data-testid="advice-banner">{suggestion ?? ''}</p>
@@ -503,7 +502,8 @@ describe('useHomeData: 続けて来た 2 回の成功の取り直しの栄養の
     nutritionAnalysisBody = analysisResponse(SECOND_ADVICE, SECOND_SCORE);
     await notifyAiConsultationSucceeded();
     expect(heldAnalyses, '2 回の取り直しの栄養の分析を止められていない (検査が空振りしている)').toHaveLength(2);
-    expect(analysisLoadingText()).toBe('true');
+    // 取り直しは読み込み中の印を立てない (#2206 G1 §6.4)
+    expect(analysisLoadingText()).toBe('false');
     return { first: heldAnalyses[0], second: heldAnalyses[1] };
   }
 
@@ -521,16 +521,18 @@ describe('useHomeData: 続けて来た 2 回の成功の取り直しの栄養の
     expect(analysisLoadingText()).toBe('false');
   });
 
-  it('先の取り直しの分析が先に届いても置かず、読み込み中の印も下ろさない (あとの取り直しの分析が届いたら置いて下ろす)', async () => {
+  it('先の取り直しの『分析できない』が先に届いたら置き (点数を空にして、今日のアドバイスの帯の AI のアドバイスを消す)、あとの取り直しの分析で点数を置き換える (帯は戻らない。読み込み中の印は立たない)', async () => {
     const { first, second } = await startTwoRefetches();
+    // 先の取り直しの応答は、その鍵にまだ新しい読み取りが置いていないので置く (#2206 G1 §10.2・S-3。2 回の取り直しを順に流したときと同じ)
     await release(first);
-    expect(analysisScoreText(), '先の取り直しの古い分析を置いた').toBe(String(ANALYSIS_SCORE));
-    expect(adviceBannerText(), '先の取り直しの古い分析 (分析できない) が、今日のアドバイスの帯を消した').toBe(ADVICE_BEFORE);
-    expect(analysisLoadingText(), '先の取り直しの応答が、あとの取り直しの途中で読み込み中の印を下ろした').toBe('true');
+    expect(analysisScoreText()).toBe('0');
+    expect(adviceBannerText()).toBe('');
+    expect(analysisLoadingText()).toBe('false');
 
+    // あとの取り直しは AI を読まないので、点数だけを置き、アドバイス・帯は戻らない (次のページの読み取りで戻る)
     await release(second);
     expect(analysisScoreText()).toBe(String(SECOND_SCORE));
-    expect(adviceBannerText()).toBe(ADVICE_BEFORE);
+    expect(adviceBannerText()).toBe('');
     expect(analysisLoadingText()).toBe('false');
   });
 });
@@ -692,17 +694,9 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
   it('食事の完了の切り替えの応答を待つあいだに来た成功では取り直さず (楽観的な表示を戻さない)、終わったら 1 回取り直す (#2201 U2)', async () => {
     /** 完了の切り替えの待ち (useHomeData の toggleMealCompletion の 250ms) より長い待ち */
     const TOGGLE_DEBOUNCE_WAIT_MS = 300;
-    let refetchCalls = 0;
     let toggle: ((mealId: string, currentStatus: boolean) => Promise<void>) | null = null;
     function HomeToggleProbe() {
-      const { todayPlan, toggleMealCompletion, refetch, aiConsultationWrites } = useHomeData();
-      useAiConsultationDataRefetch(
-        () => {
-          refetchCalls += 1;
-          return refetch();
-        },
-        { writeInFlightRef: aiConsultationWrites },
-      );
+      const { todayPlan, toggleMealCompletion } = useHomeData();
       toggle = toggleMealCompletion;
       return <p data-testid="today-completed">{String(todayPlan?.meals[0]?.isCompleted)}</p>;
     }
@@ -713,6 +707,9 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
     });
     await settle();
     expect(completedText()).toBe('true');
+    // 取り直しの数 = 開いたあとのホームのデータの読み取りの数 (読み取りごとにログインを 1 回確かめる。#2206 G1)
+    const sessionReadsAtMount = supabaseMock.sessionReads;
+    const refetchCalls = () => supabaseMock.sessionReads - sessionReadsAtMount;
 
     const rpc = (() => {
       let release: () => void = () => undefined;
@@ -732,7 +729,7 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
     // 書き込みの前の献立 (完了済み) のまま読む取り直しが走ると、楽観的な表示が戻る
     await notifyAiConsultationSucceeded();
     await notifyAiConsultationSucceeded();
-    expect(refetchCalls).toBe(0);
+    expect(refetchCalls()).toBe(0);
     expect(completedText()).toBe('false');
 
     // サーバーが完了を外し終えた
@@ -745,25 +742,16 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
       await toggling;
     });
     await settle();
-    expect(refetchCalls, '止めた成功のぶん 1 回取り直していない').toBe(1);
+    expect(refetchCalls(), '止めた成功のぶん 1 回取り直していない').toBe(1);
     expect(completedText()).toBe('false');
   });
 
   it('取り直しの応答を待つあいだに始めた完了の切り替えを、切り替えの前に読んだ今日の献立で戻さず、終わったら 1 回取り直す (#2201 U1 + U2)', async () => {
     /** 完了の切り替えの待ち (useHomeData の toggleMealCompletion の 250ms) より長い待ち */
     const TOGGLE_DEBOUNCE_WAIT_MS = 300;
-    let refetchCalls = 0;
     let toggle: ((mealId: string, currentStatus: boolean) => Promise<void>) | null = null;
     function HomeToggleProbe() {
-      const { todayPlan, toggleMealCompletion, refetch, aiConsultationWrites } = useHomeData();
-      // ホームのページと同じく、hook が渡す札を refetch に渡す
-      useAiConsultationDataRefetch(
-        (ticket) => {
-          refetchCalls += 1;
-          return refetch(ticket);
-        },
-        { writeInFlightRef: aiConsultationWrites },
-      );
+      const { todayPlan, toggleMealCompletion } = useHomeData();
       toggle = toggleMealCompletion;
       return <p data-testid="today-completed">{String(todayPlan?.meals[0]?.isCompleted)}</p>;
     }
@@ -781,13 +769,16 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
     });
     await settle();
     expect(completedText()).toBe('true');
+    // 取り直しの数 = 開いたあとのホームのデータの読み取りの数 (読み取りごとにログインを 1 回確かめる。#2206 G1)
+    const sessionReadsAtMount = supabaseMock.sessionReads;
+    const refetchCalls = () => supabaseMock.sessionReads - sessionReadsAtMount;
 
     // 取り直しの表の読み取りを止める (その間はページに今日の献立が出ていて、完了を切り替えられる)
     const refetchRead = holdOf();
     supabaseMock.tableHold = refetchRead.promise;
     await notifyAiConsultationSucceeded();
     supabaseMock.tableHold = null;
-    expect(refetchCalls).toBe(1);
+    expect(refetchCalls()).toBe(1);
 
     // 応答を待つあいだに完了を外す (RPC の応答は止める)
     const rpc = holdOf();
@@ -805,7 +796,7 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
     });
     await settle();
     expect(completedText(), '切り替えの前に読んだ取り直しの応答が、楽観的な表示を戻した').toBe('false');
-    expect(refetchCalls, '切り替えの途中に取り直した').toBe(1);
+    expect(refetchCalls(), '切り替えの途中に取り直した').toBe(1);
 
     // サーバーが完了を外し終えた: 置かなかった応答のぶん 1 回取り直す
     supabaseMock.tableResults = {
@@ -817,7 +808,7 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
       await toggling;
     });
     await settle();
-    expect(refetchCalls, '置かなかった応答のぶん取り直していない').toBe(2);
+    expect(refetchCalls(), '置かなかった応答のぶん取り直していない').toBe(2);
     expect(completedText()).toBe('false');
   });
 
@@ -826,18 +817,13 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
     const SAVED_FEELING = 'rest';
     const PRESSED_FEELING = 'active';
     const activityLogTable = (feeling: string) => ({ data: [{ user_id: 'user-1', date: TODAY, feeling }], error: null });
-    let refetchCalls: number;
+    /** 描画して開いたときの読み込みを終えた時点の、ホームのデータの読み取りの数 (取り直しの数を数える起点。#2206 G1) */
+    let sessionReadsAtRender: number;
+    /** 取り直しの数 (読み取りごとにログインを 1 回確かめる) */
+    const refetchCalls = () => supabaseMock.sessionReads - sessionReadsAtRender;
     let updateActivity: ((level: string) => Promise<void>) | null;
     function HomeActivityProbe() {
-      const { activityLevel, updateActivityLevel, refetch, aiConsultationWrites } = useHomeData();
-      // ホームのページと同じく、hook が渡す札を refetch に渡し、書き込みの印を渡す
-      useAiConsultationDataRefetch(
-        (ticket) => {
-          refetchCalls += 1;
-          return refetch(ticket);
-        },
-        { writeInFlightRef: aiConsultationWrites },
-      );
+      const { activityLevel, updateActivityLevel } = useHomeData();
       updateActivity = updateActivityLevel;
       return <p data-testid="activity-level">{activityLevel ?? ''}</p>;
     }
@@ -851,7 +837,7 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
     };
 
     beforeEach(() => {
-      refetchCalls = 0;
+      sessionReadsAtRender = 0;
       updateActivity = null;
     });
 
@@ -862,6 +848,7 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
       });
       await settle();
       expect(activityText(), '保存済みの気分・活動量を出していない (検査の前提が崩れた)').toBe(SAVED_FEELING);
+      sessionReadsAtRender = supabaseMock.sessionReads;
     }
 
     /**
@@ -898,11 +885,11 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
       // 保存の前の値 (rest) のまま読む取り直しが走ると、押した値が戻る
       await notifyAiConsultationSucceeded();
       await notifyAiConsultationSucceeded();
-      expect(refetchCalls, '保存の途中に取り直した').toBe(0);
+      expect(refetchCalls(), '保存の途中に取り直した').toBe(0);
       expect(activityText()).toBe(PRESSED_FEELING);
 
       await finishUpsert(upsert, pressed);
-      expect(refetchCalls, '止めた成功のぶん 1 回取り直していない').toBe(1);
+      expect(refetchCalls(), '止めた成功のぶん 1 回取り直していない').toBe(1);
       expect(activityText()).toBe(PRESSED_FEELING);
     });
 
@@ -915,7 +902,7 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
       supabaseMock.tableHold = refetchRead.promise;
       await notifyAiConsultationSucceeded();
       supabaseMock.tableHold = null;
-      expect(refetchCalls).toBe(1);
+      expect(refetchCalls()).toBe(1);
 
       // 応答を待つあいだに押す (upsert の応答は止める)
       const upsert = holdOf();
@@ -927,24 +914,24 @@ describe('ホーム (/home) を描画して、AI 相談の成功の取り直し�
       });
       await settle();
       expect(activityText(), '押す前に読んだ取り直しの応答が、押した値を戻した').toBe(PRESSED_FEELING);
-      expect(refetchCalls, '保存の途中に取り直した').toBe(1);
+      expect(refetchCalls(), '保存の途中に取り直した').toBe(1);
 
       // サーバーが押した値を保存し終えた: 置かなかった応答のぶん 1 回取り直す
       await finishUpsert(upsert, pressed);
-      expect(refetchCalls, '置かなかった応答のぶん取り直していない').toBe(2);
+      expect(refetchCalls(), '置かなかった応答のぶん取り直していない').toBe(2);
       expect(activityText()).toBe(PRESSED_FEELING);
     });
   });
 });
 
 describe('useHomeData: 開いたときの読み込みの最中に始まった取り直し (#2201 U1)', () => {
-  it('取り直しの読み取りが投げても、読み込み中の表示のまま止まらない (開いたときの読み込みの応答が後から届いても)', async () => {
-    let refetch: (() => Promise<void>) | null = null;
+  it('取り直しの読み取りが投げても、開いたときの読み込みの応答が届いたら読み込み中の表示を下ろす (止まらない)', async () => {
     function HomeLoadingProbe() {
       const home = useHomeData();
-      refetch = home.refetch;
       return <p data-testid="home-loading">{String(home.loading)}</p>;
     }
+    // 取り直しの失敗は hook が握って console.warn に出す (#2206 G1。ページは今の表示を残す)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const loadingText = () => container.querySelector('[data-testid="home-loading"]')?.textContent;
 
     // 開いたときの読み込みの表の読み取りを止める
@@ -965,31 +952,29 @@ describe('useHomeData: 開いたときの読み込みの最中に始まった取
     // その間に AI 相談の成功の取り直しが始まり、表の読み取りが投げる
     supabaseMock.tableHold = null;
     supabaseMock.tableRejects = true;
-    let refetchError: unknown = null;
-    await act(async () => {
-      await refetch!().catch((error: unknown) => {
-        refetchError = error;
-      });
-    });
+    await refetchHome();
     supabaseMock.tableRejects = false;
-    expect(refetchError, '取り直しの読み取りが投げていない (検査が空振りしている)').not.toBeNull();
-    expect(loadingText(), '取り直しが投げたあと読み込み中の表示のまま').toBe('false');
+    expect(
+      warn.mock.calls.some(([message]) => String(message).includes('refetch failed')),
+      '取り直しの読み取りが投げていない (検査が空振りしている)',
+    ).toBe(true);
+    // 投げた取り直しは開いたときの読み込みの役を引き継がない (読み込み中の印は立てた開いたときの読み込みが下ろす。§6.4・S-2)
+    expect(loadingText(), '投げた取り直しが、開いたときの読み込みの途中で読み込み中の表示を下ろした').toBe('true');
 
-    // 先に始めた開いたときの読み込みの応答が後から届いても、読み込み中の表示に戻らない
+    // 先に始めた開いたときの読み込みの応答が届くと、その読み込みが置いて読み込み中の表示を下ろす
     await act(async () => {
       mountHold.release();
     });
     await settle();
-    expect(loadingText()).toBe('false');
+    expect(loadingText(), '開いたときの読み込みが終わったのに読み込み中の表示のまま').toBe('false');
+    warn.mockRestore();
   });
 
-  it('開いたときの読み込みがもう AI つきの栄養の分析を読み始めていれば、その役を引き継いだ取り直しは AI を付けずに読み (AI つきを 2 回読まない)、開いたときの分析が届いたら今日のアドバイスの帯を出す (#2201 U1 + U4・#2206 G3)', async () => {
+  it('開いたときの読み込みがもう AI つきの栄養の分析を読み始めていれば、その読み込みの最中に来た取り直しは AI を付けずに読み (AI つきを 2 回読まない)、開いたときの分析が届いたら今日のアドバイスの帯を出す (#2201 U1 + U4・#2206 G3・G1)', async () => {
     const ADVICE = '夕食のタンパク質が不足しています';
     nutritionAnalysisBody = analysisResponse(ADVICE);
-    let refetch: (() => Promise<void>) | null = null;
     function HomeMountProbe() {
       const home = useHomeData();
-      refetch = home.refetch;
       return (
         <div>
           <p data-testid="home-loading">{String(home.loading)}</p>
@@ -1019,17 +1004,14 @@ describe('useHomeData: 開いたときの読み込みの最中に始まった取
     expect(loadingText(), '開いたときの読み込みを止められていない (検査が空振りしている)').toBe('true');
     expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '開いたときの栄養の分析を始めていない (検査が空振りしている)').toBe(1);
 
-    // その間に AI 相談の成功の取り直しが始まる: 開いたときの読み込みの役を引き継ぐ。AI つきの読み取りはもう始まっているので AI を付けない
+    // その間に AI 相談の成功の取り直しが始まる: 取り直しはいつも AI を付けない。主のデータを読み終えたら全画面の読み込み中の表示を下ろす
     holdFetches = false;
-    await act(async () => {
-      await refetch!();
-    });
-    await settle();
+    await refetchHome();
     expect(loadingText()).toBe('false');
-    expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '引き継いだ取り直しが AI つきの栄養の分析をもう 1 回読んだ (LLM と安全弁を余分に使う)').toBe(1);
-    expect(fetchCallsTo(NUTRITION_ANALYSIS_WITHOUT_AI_URL), '引き継いだ取り直しが点数を読み直していない').toBe(1);
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '取り直しが AI つきの栄養の分析をもう 1 回読んだ (LLM と安全弁を余分に使う)').toBe(1);
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_WITHOUT_AI_URL), '取り直しが点数を読み直していない').toBe(1);
 
-    // 先に始めた開いたときの AI つきの分析の応答が後から届くと、そのアドバイスを帯に出す (AI の部分の鍵は取り直しが始めていない)
+    // 先に始めた開いたときの AI つきの分析の応答が後から届くと、そのアドバイスを帯に出す (AI の部分の鍵に取り直しは置いていない)
     await act(async () => {
       for (const release of heldMountFetches) release();
     });
@@ -1039,13 +1021,11 @@ describe('useHomeData: 開いたときの読み込みの最中に始まった取
     expect(fetchCallsTo(NUTRITION_ANALYSIS_URL)).toBe(1);
   });
 
-  it('開いたときの読み込みがまだ AI つきの栄養の分析を読み始めていなければ、その役を引き継いだ取り直しが AI つきで 1 回だけ読み、今日のアドバイスの帯を出す (#2201 U1 + U4・#2206 G3)', async () => {
+  it('開いたときの読み込みがまだ AI つきの栄養の分析を読み始めていなくても、取り直しは AI を付けずに読み (取り直しのあとの AI つきの数は 0・AI 無しは 1)、追い越された開いたときの読み込みがあとで AI つきで 1 回だけ読んで帯を出す (#2201 U4・#2206 G1)', async () => {
     const ADVICE = '夕食のタンパク質が不足しています';
     nutritionAnalysisBody = analysisResponse(ADVICE);
-    let refetch: (() => Promise<void>) | null = null;
     function HomeMountProbe() {
       const home = useHomeData();
-      refetch = home.refetch;
       return (
         <div>
           <p data-testid="home-loading">{String(home.loading)}</p>
@@ -1069,20 +1049,18 @@ describe('useHomeData: 開いたときの読み込みの最中に始まった取
     expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '開いたときの読み込みが栄養の分析を読み始めた (検査の前提が崩れた)').toBe(0);
 
     supabaseMock.tableHold = null;
-    await act(async () => {
-      await refetch!();
-    });
-    await settle();
-    expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '引き継いだ取り直しが AI つきで読まなかった (アドバイスと帯がどこにも無い)').toBe(1);
-    expect(fetchCallsTo(NUTRITION_ANALYSIS_WITHOUT_AI_URL)).toBe(0);
-    expect(adviceBannerText()).toBe(ADVICE);
+    await refetchHome();
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '取り直しが AI つきで読んだ (LLM と安全弁を余分に使う)').toBe(0);
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_WITHOUT_AI_URL), '取り直しが点数を読み直していない').toBe(1);
+    expect(adviceBannerText(), '取り直しが AI のアドバイスを帯に出した (AI を読んでいないのに)').toBe('');
 
-    // 追い越された開いたときの読み込みの応答が後から届いても、栄養の分析を読み始めない
+    // 追い越された開いたときの読み込みの応答が後から届くと、その読み込みが自分で AI つきの分析を 1 回だけ読み、帯を出す
     await act(async () => {
       releaseMount();
     });
     await settle();
-    expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '追い越された開いたときの読み込みが AI つきの栄養の分析を読んだ').toBe(1);
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '追い越された開いたときの読み込みが AI つきの栄養の分析を読まなかった (アドバイスと帯がどこにも無い)').toBe(1);
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_WITHOUT_AI_URL)).toBe(1);
     expect(adviceBannerText()).toBe(ADVICE);
     expect(loadingText()).toBe('false');
   });
@@ -1102,13 +1080,26 @@ describe('useHomeData: 開いたときの AI つきの栄養の分析の応答�
   let holdAiAnalyses: boolean;
   /** POST /api/ai/nutrition-analysis (献立の変更の実行) の数 */
   let executeCalls: number;
+  /** パフォーマンスの分析の API (GET /api/performance/analyze?date=…) */
+  const PERFORMANCE_ANALYZE_PATH = '/api/performance/analyze';
+  /** サーバーの失敗 (5xx) */
+  const SERVER_ERROR_STATUS = 500;
+  /** パフォーマンスの分析の API が返す理由 (eligibilityReason。開いたときの分析を置いたかを見る) */
+  const PERFORMANCE_REASON_AT_MOUNT = '7日分のデータが揃うと分析が始まります';
+
+  /** true の間に始めた AI を付けない栄養の分析の読み取り (取り直し) は 500 で失敗する (#2206 G1 S-28) */
+  let failAnalysesWithoutAi: boolean;
+  /** true の間に始めたパフォーマンスの分析 (GET /api/performance/analyze) の読み取りは応答を止める */
+  let holdPerformance: boolean;
+  /** 止めたパフォーマンスの分析の応答 (始めた順) */
+  let heldPerformance: (() => void)[];
+  /** true の間に始めたパフォーマンスの分析の読み取りは 500 で失敗する */
+  let failPerformance: boolean;
 
   let home: ReturnType<typeof useHomeData> | null;
   function HomeAnalysisProbe() {
     const data = useHomeData();
     home = data;
-    // ホームのページと同じく、通知のたびに hook が渡す札を refetch に渡す
-    useAiConsultationDataRefetch((ticket) => data.refetch(ticket), { writeInFlightRef: data.aiConsultationWrites });
     return (
       <div>
         <p data-testid="home-loading">{String(data.loading)}</p>
@@ -1117,6 +1108,10 @@ describe('useHomeData: 開いたときの AI つきの栄養の分析の応答�
         <p data-testid="analysis-advice">{data.nutritionAnalysis.advice ?? ''}</p>
         <p data-testid="analysis-suggestion">{data.nutritionAnalysis.suggestion?.currentIssue ?? ''}</p>
         <p data-testid="analysis-loading">{String(data.nutritionAnalysis.loading)}</p>
+        <p data-testid="ai-skipped">{data.nutritionAnalysis.aiSkipped ?? ''}</p>
+        <p data-testid="performance-eligibility">{data.performanceAnalysis.eligibilityReason ?? ''}</p>
+        <p data-testid="performance-loading">{String(data.performanceAnalysis.loading)}</p>
+        <p data-testid="today-checkin">{data.performanceAnalysis.todayCheckin?.note ?? ''}</p>
       </div>
     );
   }
@@ -1133,12 +1128,26 @@ describe('useHomeData: 開いたときの AI つきの栄養の分析の応答�
     heldAiAnalyses = [];
     holdAiAnalyses = false;
     executeCalls = 0;
+    failAnalysesWithoutAi = false;
+    holdPerformance = false;
+    heldPerformance = [];
+    failPerformance = false;
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: unknown, init?: { method?: string }) => {
         if ((init?.method ?? 'GET').toUpperCase() === 'POST' && String(input) === '/api/ai/nutrition-analysis') {
           executeCalls += 1;
           return { ok: true, status: OK_STATUS, json: async () => ({ success: true }) };
+        }
+        if (String(input).startsWith(PERFORMANCE_ANALYZE_PATH)) {
+          // 答えは読み取りを始めたときのもの
+          const failed = failPerformance;
+          if (holdPerformance) await new Promise<void>((resolve) => heldPerformance.push(resolve));
+          if (failed) return { ok: false, status: SERVER_ERROR_STATUS, json: async () => ({}) };
+          return { ok: true, status: OK_STATUS, json: async () => ({ eligible: false, eligibilityReason: PERFORMANCE_REASON_AT_MOUNT }) };
+        }
+        if (failAnalysesWithoutAi && String(input) === NUTRITION_ANALYSIS_WITHOUT_AI_URL) {
+          return { ok: false, status: SERVER_ERROR_STATUS, json: async () => ({}) };
         }
         // 答えは読み取りを始めたときのもの (止めたあとに答えを変えても、止めた読み取りは前の答えを返す)
         const body = nutritionAnalysisAnswer(input);
@@ -1193,7 +1202,7 @@ describe('useHomeData: 開いたときの AI つきの栄養の分析の応答�
     expect(textOf('analysis-loading')).toBe('false');
   });
 
-  it('取り直しの応答を待つあいだに献立の変更の実行 (AI つきの読み込み) が追い越しても、古い取り直しは栄養の分析を読み始めず、変更のあとのアドバイスを置く', async () => {
+  it('取り直しの応答を待つあいだに献立の変更の実行 (AI つきの読み込み) が追い越しても、古い取り直しの分析 (AI 無し) は、変更のあとの分析より先に届けば置かれ、あとの分析で置き換わる。変更のあとのアドバイスを置く', async () => {
     nutritionAnalysisBody = analysisWithSuggestion(ADVICE);
     await act(async () => {
       root.render(<HomeAnalysisProbe />);
@@ -1210,11 +1219,7 @@ describe('useHomeData: 開いたときの AI つきの栄養の分析の応答�
       return { promise, release };
     })();
     supabaseMock.tableHold = refetchHold.promise;
-    let refetching: Promise<void> | undefined;
-    await act(async () => {
-      refetching = home!.refetch();
-    });
-    await settle();
+    await notifyAiConsultationSucceeded();
     supabaseMock.tableHold = null;
 
     // その間に献立の変更を実行する: 変更のあとの読み込み (AI つき) の栄養の分析の応答は LLM を待つ (止める)
@@ -1227,13 +1232,17 @@ describe('useHomeData: 開いたときの AI つきの栄養の分析の応答�
     expect(executeCalls, '献立の変更を実行していない (検査が空振りしている)').toBe(1);
     expect(heldAiAnalyses, '変更のあとの AI つきの栄養の分析を止められていない (検査が空振りしている)').toHaveLength(1);
 
-    // 追い越された取り直しの表の読み取りが届く
+    // 追い越された取り直しの表の読み取りが届く。取り直しは栄養の分析を読み始めるが AI は読まない (#2206 G1。読み始めるのは、
+    // 古い取り直しと、それが献立の変更の送信の窓に止められて流し直した 1 回の取り直しの 2 つ)
     await act(async () => {
       refetchHold.release();
-      await refetching;
     });
     await settle();
-    expect(fetchCallsTo(NUTRITION_ANALYSIS_WITHOUT_AI_URL), '追い越された取り直しが、変更のあとの読み取りより後に栄養の分析を読み始めた').toBe(0);
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '取り直しが AI つきの栄養の分析を読んだ').toBe(2);
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_WITHOUT_AI_URL), '取り直しが栄養の分析を読み始めていない').toBe(2);
+    // AI を付けない分析の点数は、変更のあとの AI つきの分析より先に届いて置かれる (アドバイスはまだ前のまま)
+    expect(textOf('analysis-score')).toBe(String(SCORE_AFTER));
+    expect(textOf('analysis-advice')).toBe(ADVICE);
 
     await releaseAiAnalysis(0);
     expect(textOf('analysis-advice'), '献立の変更のあとのアドバイスを置かなかった').toBe(ADVICE_AFTER);
@@ -1282,6 +1291,74 @@ describe('useHomeData: 開いたときの AI つきの栄養の分析の応答�
     expect(textOf('analysis-suggestion')).toBe('');
     expect(textOf('analysis-score')).toBe('0');
   });
+
+  it('開いたときの栄養の分析の応答待ちに来た取り直しの栄養の分析が失敗しても、開いたときの点数とアドバイスを置き、分析の読み込み中の印を下ろす (同意の知らせは消す)', async () => {
+    // 開いたときの分析は同意が無くて AI を省いた (consent_required)
+    nutritionAnalysisBody = { ...analysisWithSuggestion(ADVICE), advice: null, suggestion: null, aiSkipped: AI_CONSENT_REQUIRED_CODE };
+    await act(async () => {
+      root.render(<HomeAnalysisProbe />);
+    });
+    await settle();
+    expect(textOf('ai-skipped'), '開いたときの同意の知らせを置いていない (検査の前提が崩れた)').toBe('consent_required');
+
+    // チャットで同意した。ログインの状態の変化の読み込み (ページの読み取り・AI つき) の栄養の分析の応答を止める
+    nutritionAnalysisBody = analysisWithSuggestion(ADVICE);
+    holdAiAnalyses = true;
+    expect(supabaseMock.authStateListener, 'ログインの状態の変化を受け取る関数が無い (検査の前提が崩れた)').not.toBeNull();
+    await act(async () => {
+      supabaseMock.authStateListener!('USER_UPDATED');
+    });
+    await settle();
+    expect(heldAiAnalyses, '開いたとき (ページの読み取り) の AI つきの栄養の分析を止められていない (検査が空振りしている)').toHaveLength(1);
+    expect(textOf('analysis-loading'), '分析の読み込み中の印が立っていない (検査の前提が崩れた)').toBe('true');
+
+    // その応答待ちに AI 相談が成功し、取り直しの栄養の分析 (AI を付けない) が 500 で失敗する
+    failAnalysesWithoutAi = true;
+    await notifyAiConsultationSucceeded();
+    expect(fetchCallsTo(NUTRITION_ANALYSIS_WITHOUT_AI_URL), '取り直しが栄養の分析を読んでいない (検査が空振りしている)').toBe(1);
+    // 取り直しの失敗でも同意の知らせは消す (点数の鍵と読み込み中の印に触れない別の鍵。#2206 G3・G1 §6.2)
+    expect(textOf('ai-skipped'), '取り直しの失敗で同意の知らせを消さなかった').toBe('');
+    expect(textOf('analysis-loading'), '取り直しの失敗が、開いたときの分析の読み込み中の印を下ろした').toBe('true');
+
+    // 開いたときの分析の応答が届く: 取り直しは点数の鍵に置いていないので、開いたときの点数とアドバイスを置き、印を下ろす
+    await releaseAiAnalysis(0);
+    expect(textOf('analysis-score'), '取り直しの失敗で、開いたときの分析の応答を捨てた (空のまま残る)').toBe(String(ANALYSIS_SCORE));
+    expect(textOf('analysis-advice')).toBe(ADVICE);
+    expect(textOf('advice-banner')).toBe(ADVICE);
+    expect(textOf('analysis-loading')).toBe('false');
+  });
+
+  it('開いたときのパフォーマンスの分析の応答待ちに来た取り直しの分析が 5xx でも、開いたときの分析を置く (今日のチェックインは取り直しが読んだ値)', async () => {
+    const CHECKIN_AT_MOUNT = { id: 'checkin-1', note: '開いたときのチェックイン' };
+    const CHECKIN_AT_REFETCH = { id: 'checkin-1', note: '取り直しのときのチェックイン' };
+    supabaseMock.tableResults = { user_performance_checkins: { data: [CHECKIN_AT_MOUNT], error: null } };
+    nutritionAnalysisBody = analysisResponse(ADVICE);
+    // 開いたときのパフォーマンスの分析の応答を止める
+    holdPerformance = true;
+    await act(async () => {
+      root.render(<HomeAnalysisProbe />);
+    });
+    await settle();
+    expect(heldPerformance, '開いたときのパフォーマンスの分析を止められていない (検査が空振りしている)').toHaveLength(1);
+    expect(textOf('performance-loading'), 'パフォーマンスの分析の読み込み中の印が立っていない (検査の前提が崩れた)').toBe('true');
+
+    // その応答待ちに AI 相談が成功し、取り直しの今日のチェックインは読めるが、7 日の分析 (/api/performance/analyze) が 5xx
+    holdPerformance = false;
+    failPerformance = true;
+    supabaseMock.tableResults = { user_performance_checkins: { data: [CHECKIN_AT_REFETCH], error: null } };
+    await notifyAiConsultationSucceeded();
+    expect(textOf('today-checkin'), '取り直しが読んだ今日のチェックインを置いていない').toBe(CHECKIN_AT_REFETCH.note);
+    expect(textOf('performance-loading'), '取り直しの分析の失敗が、開いたときの分析の読み込み中の印を下ろした').toBe('true');
+
+    // 開いたときの分析の応答が届く: 取り直しは分析の鍵に置いていないので置ける。チェックインは取り直しの値 (より新しい) を残す
+    await act(async () => {
+      for (const release of heldPerformance) release();
+    });
+    await settle();
+    expect(textOf('performance-eligibility'), '取り直しの分析の失敗で、開いたときの分析の応答を捨てた (空のまま残る)').toBe(PERFORMANCE_REASON_AT_MOUNT);
+    expect(textOf('today-checkin'), '開いたときの古いチェックインで、取り直しのチェックインを戻した').toBe(CHECKIN_AT_REFETCH.note);
+    expect(textOf('performance-loading')).toBe('false');
+  });
 });
 
 describe('useHomeData: 取り直しの読み取りの失敗では、記録の集計の今の表示を残す (#2201 U1)', () => {
@@ -1313,10 +1390,8 @@ describe('useHomeData: 取り直しの読み取りの失敗では、記録の集
     user_performance_checkins: { data: [{ id: 'checkin-1', checkin_date: TODAY }], error: null },
   };
 
-  let refetch: (() => Promise<void>) | null;
   function HomeSummaryProbe() {
     const data = useHomeData();
-    refetch = data.refetch;
     const { healthSummary } = data;
     return (
       <dl>
@@ -1342,7 +1417,6 @@ describe('useHomeData: 取り直しの読み取りの失敗では、記録の集
     Object.fromEntries([...container.querySelectorAll('[data-testid]')].map((el) => [el.getAttribute('data-testid'), el.textContent]));
 
   beforeEach(() => {
-    refetch = null;
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
@@ -1379,10 +1453,7 @@ describe('useHomeData: 取り直しの読み取りの失敗では、記録の集
     supabaseMock.tableResults = Object.fromEntries(
       Object.keys(TABLES).map((table) => [table, table === 'shopping_lists' ? TABLES.shopping_lists : READ_FAILURE]),
     );
-    await act(async () => {
-      await refetch!();
-    });
-    await settle();
+    await refetchHome();
     expect(summaryShown(), '取り直しの読み取りの失敗で、前の表示を空・0 で上書きした').toEqual(before);
   });
 
@@ -1457,8 +1528,6 @@ describe('useHomeData: /home のお知らせ・同意の知らせ・今日のア
   function HomeG3Probe() {
     const data = useHomeData();
     home = data;
-    // ホームのページと同じく、通知のたびに hook が渡す札を refetch に渡す
-    useAiConsultationDataRefetch((ticket) => data.refetch(ticket), { writeInFlightRef: data.aiConsultationWrites });
     return (
       <div>
         <p data-testid="home-loading">{String(data.loading)}</p>
@@ -1674,7 +1743,7 @@ describe('useHomeData: /home のお知らせ・同意の知らせ・今日のア
       expect(fetchCallsTo(NUTRITION_ANALYSIS_URL)).toBe(4);
     });
 
-    it('ログインの状態の変化の読み込みが AI つきの読み取りを始めたあとに来た取り直し (その読み込みの役を引き継ぐ) は、AI を付けずに読む', async () => {
+    it('ログインの状態の変化の読み込みが AI つきの読み取りを始めたあとに来た取り直しは、AI を付けずに読む', async () => {
       nutritionAnalysisBody = analysisResponse(ADVICE);
       await renderProbe();
       expect(fetchCallsTo(NUTRITION_ANALYSIS_URL)).toBe(1);
@@ -1687,7 +1756,7 @@ describe('useHomeData: /home のお知らせ・同意の知らせ・今日のア
 
       holdGetFetches = false;
       await notifyAiConsultationSucceeded();
-      expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '引き継いだ取り直しが AI つきの栄養の分析をもう 1 回読んだ').toBe(2);
+      expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '取り直しが AI つきの栄養の分析をもう 1 回読んだ').toBe(2);
       expect(fetchCallsTo(NUTRITION_ANALYSIS_WITHOUT_AI_URL)).toBe(1);
       expect(textOf('home-loading')).toBe('false');
 
