@@ -15,11 +15,7 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
 import { readSignedInUser } from '@/lib/auth/signed-in-user';
-import {
-  applyFamilyMemberNames,
-  fetchFamilyMemberNamesResult,
-  keepShownFamilyMemberNames,
-} from '@/lib/membership/family-member-names';
+import { applyFamilyMemberNames, fetchFamilyMemberNamesResult } from '@/lib/membership/family-member-names';
 import { membershipErrorMessageOfBody } from '@/lib/errors/membership-errors';
 import { familyRoleLabel } from '@/lib/membership/role-labels';
 import { withMembershipStateNote, type MembershipStateAfterNetworkFailure } from '@/lib/membership/leave-state';
@@ -28,11 +24,7 @@ import {
   withShareSettingsUnconfirmedNote,
   type FamilyShareSettings,
 } from '@/lib/membership/share-settings-state';
-import {
-  useAiConsultationDataRefetch,
-  useAiConsultationLoading,
-  type AiConsultationFetchTicket,
-} from '@/hooks/useAiConsultationDataRefetch';
+import { useAiConsultationReceiver, type AiConsultationRead } from '@/hooks/useAiConsultationReceiver';
 
 /** 除名・共有設定の通信そのものが失敗した (fetch が reject した) ときの文 */
 const NETWORK_FAILURE_MESSAGE = '通信エラーが発生しました';
@@ -99,8 +91,8 @@ function formatJstDateTime(iso: string): string {
   return new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
 }
 
-/** 開いたとき・「再試行」の読み込み (失敗は「読み込めませんでした」) か、AI 相談の成功の取り直し (失敗では今の表示を残す) か */
-type FamilyReadMode = 'mount' | 'refetch';
+/** 読み込みの置き場所の鍵 (メンバー・自分の id と役割・family_id・同意の記録・失敗の表示・別の画面への移動を 1 つの鍵で置く。#2206 G1 §9 #5) */
+const KEY_MEMBER = 'member';
 
 export default function FamilyMemberDetailPage() {
   // パスの値は useParams で読む。props の params は Next 15 から Promise で、Next 14 では use(params) が例外になった (#1275)。
@@ -109,9 +101,6 @@ export default function FamilyMemberDetailPage() {
   const router = useRouter();
   const supabase = createClient();
 
-  // 開いたとき・「再試行」の読み込み中の表示。開いたときの読み込み中に始まった AI 相談の成功の読み直しは、その読み込みの役
-  // (失敗の表示・読み込み中の表示を下ろす) を引き継ぐ (#2201 U1。useAiConsultationLoading)
-  const { loading, setLoading, refetchReadMode, settleLoading } = useAiConsultationLoading();
   const [member, setMember] = useState<FamilyMember | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [currentRole, setCurrentRole] = useState<string | null>(null);
@@ -126,24 +115,30 @@ export default function FamilyMemberDetailPage() {
   // 読み込めなかったときの文。あるあいだは画面の代わりにこの文と「再試行」を出す (#2073 S3。以前は自分のプロフィールを読めないと
   // 家族に入っていないとして家族の作成の画面へ移し、問い合わせが例外を投げると読み込み中の表示のまま止まっていた)
   const [loadError, setLoadError] = useState<string | null>(null);
-  // AI 相談の成功の読み直し (#2195 V1) の応答を待っているか。待つあいだは共有の設定の切り替えと除名のボタンを止める
-  const [aiRefetching, setAiRefetching] = useState(false);
-  // 共有の設定・除名の書き込みか、AI 相談の成功の読み直しの応答を待っているか (#2195 V1)。待つあいだは、ほかの書き込みと
-  // 読み直しを始めない: 読み直しの応答があとから届いて、先に済んだ書き込みの結果 (共有の設定) を書き込む前の値で上書きしないため。
-  // ref は再描画の前に続けて起きたとき (ボタンがまだ止まっていない) の守り (家族のメンバーの画面の writeInFlightRef と同じ)
+  /**
+   * 別の画面へ移っているか (#2206 G1 §6.8)。移る読み取りが読み込み中の表示を出していたときだけ立てる (移るまで読み込み中の表示のまま。
+   * 取り直し (読み込み中の表示を出していない) が移すときは、今の画面のまま移る)
+   */
+  const [redirecting, setRedirecting] = useState(false);
+  /**
+   * receiver.isLoading の写し。readMember は receiver より先に宣言する (receiver の引数) ので ref で引く。
+   * place の apply の中で呼ぶと、その鍵を下ろす前の値を返す (hook は apply が戻ってから印を下ろす)
+   */
+  const isLoadingRef = useRef<(key: string) => boolean>(() => false);
+  // 共有の設定・除名の書き込みの応答を待っているか。待つあいだは、ほかの書き込みを始めない (二重押しの守り)。
+  // ref は再描画の前に続けて起きたとき (ボタンがまだ止まっていない) の守り。AI 相談の成功の取り直しとの重なりは、書き込みの窓
+  // (receiver.beginWrite) が受け持つ (窓の間は取り直さず、終わったら 1 回取り直す。読み直しの応答があとから届いて、先に済んだ
+  // 書き込みの結果 (共有の設定) を書き込む前の値で上書きしない。#2206 G1)
   const busyRef = useRef(false);
 
   // メンバーと自分の役割を読む。画面を開いたとき・「再試行」・AI 相談の成功 (#2195 V1) のあとに呼ぶ。
-  // 読み込み中の表示 (loading) は呼び出し側が決める (AI 相談の成功のあとは、画面を残したまま読み直す)。
-  // 戻り値は、別の画面へ移ったか (移るときは、移るまで読み込み中の表示のままにする。これまでどおり)。
-  // mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込めなかったとき (エラー・通信の失敗) は「読み込めませんでした」に
-  // 置き換えずに今の表示を残し、名前の API を読めなかったときは今出している名前を残す。
-  // 応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ
-  const readMember = useCallback(async (ticket: AiConsultationFetchTicket, mode: FamilyReadMode): Promise<{ redirecting: boolean }> => {
+  // 応答は全部を読んでから最後に 1 回だけ置く (自分の id・family_id も最後の apply の中。順序・番兵の判断は read.place の中。#2206 G1)。
+  // read.mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込めなかったとき (エラー・通信の失敗) は何も置かずに今の表示を残し、
+  // 名前の API か子供の同意の記録を読めなかったときも何も置かない (出ている名前・同意カードを残す)
+  const readMember = useCallback(async (read: AiConsultationRead): Promise<void> => {
     /** 読み込めなかった: 開いたとき・「再試行」は「読み込めませんでした」を出し、取り直しは今の表示を残す */
-    const loadFailed = (): { redirecting: boolean } => {
-      if (mode === 'mount' && ticket.isLatest()) setLoadError(MEMBER_DETAIL_LOAD_ERROR);
-      return { redirecting: false };
+    const loadFailed = () => {
+      if (read.mode === 'mount') read.place(KEY_MEMBER, () => setLoadError(MEMBER_DETAIL_LOAD_ERROR));
     };
     try {
       // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
@@ -152,12 +147,16 @@ export default function FamilyMemberDetailPage() {
       const signedIn = await readSignedInUser(supabase);
       if (signedIn.kind === 'load-failed') return loadFailed();
       if (signedIn.kind === 'signed-out') {
-        router.push(`/login?next=${encodeURIComponent(`/family/members/${memberId}`)}`);
-        return { redirecting: true };
+        // 移動も置く (古い応答では移らない。#2206 G1)
+        read.place(KEY_MEMBER, () => {
+          if (isLoadingRef.current(KEY_MEMBER)) setRedirecting(true);
+          router.push(`/login?next=${encodeURIComponent(`/family/members/${memberId}`)}`);
+        });
+        return;
       }
       const { user } = signedIn;
-      // 応答を置くのは最後に始めた取得だけ (ログインの確かめの応答も。#2201 U1)
-      if (ticket.isLatest()) setCurrentUserId(user.id);
+      // 自分の id・family_id はここでは置かない (最後の apply でまとめて置く。途中で置くと、その時点で KEY_MEMBER の読み込み中の印が下りて
+      // 移るときに redirecting が立たず、置いた世代も進む。#2206 G1 §6.2)
 
       const { data: profile, error: profileError } = await supabase
         .from('user_profiles')
@@ -170,16 +169,19 @@ export default function FamilyMemberDetailPage() {
         return loadFailed();
       }
       if (!profile?.family_id) {
-        router.replace('/family/setup');
-        return { redirecting: true };
+        read.place(KEY_MEMBER, () => {
+          if (isLoadingRef.current(KEY_MEMBER)) setRedirecting(true);
+          router.replace('/family/setup');
+        });
+        return;
       }
-      if (ticket.isLatest()) setFamilyId(profile.family_id);
+      const familyIdRead: string = profile.family_id;
 
       const { data: memberData, error: memberError } = await supabase
         .from('family_members')
         .select('id, role, display_name, user_id, child_profile, birth_date, share_meals, share_health, share_menu, joined_at')
         .eq('id', memberId)
-        .eq('family_id', profile.family_id)
+        .eq('family_id', familyIdRead)
         // 今のメンバーの行だけを開く (#2086 V10。脱退・除名した行は消えずに status が left / removed で残るので、
         // 絞らないと古い URL から脱退済み・除名済みの人を今のメンバーのように見せていた。無ければ「見つかりません」。#2093 W10)
         .eq('status', 'active')
@@ -189,12 +191,15 @@ export default function FamilyMemberDetailPage() {
         // 読み込めなかった (行が無いのとは別。「再試行」を出す。#2080 U3)
         return loadFailed();
       }
-      if (!ticket.isLatest()) return { redirecting: false };
       if (!memberData) {
         // 行が無い (PGRST116)・RLS で見えない・今のメンバーでない (脱退・除名した行。#2086 V10)
-        setError(MEMBER_NOT_FOUND_MESSAGE);
-        setLoadError(null);
-        return { redirecting: false };
+        read.place(KEY_MEMBER, () => {
+          setCurrentUserId(user.id);
+          setFamilyId(familyIdRead);
+          setError(MEMBER_NOT_FOUND_MESSAGE);
+          setLoadError(null);
+        });
+        return;
       }
 
       // 画面に出す名前 (display_name が無ければ本人のプロフィールの今の名前) は API で決める (#1584)
@@ -202,9 +207,10 @@ export default function FamilyMemberDetailPage() {
 
       // #1173: 子供なら保護者の同意の記録 (最新の 1 行) を読む。読めなければカードを出さない
       // (子供でないときの consent は描かない。カードは member.role === 'child' のときだけ出す)。
-      // ただし取り直しで読めなかったときは、今出しているカードを残す (#2201 U1。失敗を「同意の行が無い」と同じに扱って消さない)
+      // ただし取り直しで読めなかったときは何も置かない (出ているカードを残す。#2201 U1。失敗を「同意の行が無い」と同じに扱って消さない)
       let consentRecord: ParentalConsentRecord | null = null;
-      let keepShownConsent = false;
+      /** 子供の同意の記録を読めなかったか */
+      let consentReadFailed = false;
       if (memberData.role === 'child') {
         const { data: consentData, error: consentError } = await orderListBy(
           supabase
@@ -216,7 +222,7 @@ export default function FamilyMemberDetailPage() {
           .limit(1)
           .maybeSingle();
         consentRecord = (consentData as ParentalConsentRecord | null) ?? null;
-        keepShownConsent = mode === 'refetch' && Boolean(consentError);
+        consentReadFailed = Boolean(consentError);
       }
 
       // 現在ユーザーのロールを、自分の active な行から取得する (#2080 U2。脱退・除名した行は消えずに status が left / removed で残り、
@@ -226,36 +232,34 @@ export default function FamilyMemberDetailPage() {
       const { data: myMember, error: myMemberError } = await supabase
         .from('family_members')
         .select('role')
-        .eq('family_id', profile.family_id)
+        .eq('family_id', familyIdRead)
         .eq('user_id', user.id)
         .eq('status', 'active')
         .maybeSingle();
       if (myMemberError) return loadFailed();
-      if (!ticket.isLatest()) return { redirecting: false };
+      // 取り直しで名前の API か同意の記録を読めなかった: 何も置かない (出ている名前・同意カードを残す。「名前未設定」に落とさない #2201 U1。
+      // 読めた部分に今の表示を当てて同じ鍵に置くと、先に始めた開いたときの応答が古いとして捨てられる。#2206 G1 §6.2)
+      if (read.mode === 'refetch' && (!namesResult.ok || consentReadFailed)) return;
 
       // 全部読めてから出す (取り直しの途中で読めなかったときに、一部だけ新しい表示にしない)
       const rows = [memberData as FamilyMember];
-      setMember((shown) => {
-        // 取り直しで名前の API を読めなかった: 今出している名前を残す (#2201 U1。「名前未設定」に落とさない)
-        const names = namesResult.ok
-          ? namesResult.names
-          : mode === 'refetch' && shown !== null
-            ? keepShownFamilyMemberNames(rows, [shown])
-            : new Map<string, string>();
-        return applyFamilyMemberNames(rows, names)[0];
+      read.place(KEY_MEMBER, () => {
+        setCurrentUserId(user.id);
+        setFamilyId(familyIdRead);
+        setMember(applyFamilyMemberNames(rows, namesResult.ok ? namesResult.names : new Map<string, string>())[0]);
+        setShareMeals(memberData.share_meals);
+        setShareHealth(memberData.share_health);
+        setShareMenu(memberData.share_menu);
+        // ページの読み取りで同意の記録を読めなかったときは、これまでどおり null (カードを出さない)
+        if (memberData.role === 'child') setConsent(consentRecord);
+        setCurrentRole(myMember?.role ?? null);
+        setError(null);
+        setLoadError(null);
       });
-      setShareMeals(memberData.share_meals);
-      setShareHealth(memberData.share_health);
-      setShareMenu(memberData.share_menu);
-      if (memberData.role === 'child' && !keepShownConsent) setConsent(consentRecord);
-      setCurrentRole(myMember?.role ?? null);
-      setError(null);
-      setLoadError(null);
-      return { redirecting: false };
     } catch (loadFailure) {
       // 問い合わせが例外を投げた (以前は try / catch が無く、読み込み中の表示のまま止まり、未処理の reject になっていた)
       console.error('[family/members/[id]] load error:', loadFailure);
-      return loadFailed();
+      loadFailed();
     }
   }, [supabase, router, memberId]);
 
@@ -263,33 +267,19 @@ export default function FamilyMemberDetailPage() {
   // 名前の API が当てたプロフィールの今の名前 (user_profiles.nickname) で、自分の詳細を開いているとき AI 相談の
   // update_profile_preferences が書く自分の nickname が出る。家族を抜けていた・ログアウトしていたときは、開いたときと同じ扱い
   // (readMember が決める)。読み直しの失敗では今の表示を残す (#2201 U1)。
-  // 書き込みの応答を待つあいだは読み直さず、読み直しの応答を待つあいだは書き込みを止める (busyRef)。書き込みの応答を待つあいだ・
-  // 前の読み直しの応答を待つあいだに来た成功は捨てずに、終わったあとに 1 回読み直す (#2201 U2。useAiConsultationDataRefetch の writeInFlightRef)。
-  // 開いたとき・「再試行」の読み込み中に来た成功は、その読み込みの役を引き継ぐ: 失敗は「読み込めませんでした」を出し、
-  // 終わったら読み込み中の表示を下ろす (先に始めた読み込みは応答を置かず、読み込み中の表示も下ろさないため。#2201 U1)
-  const refetchAfterAiConsultation = async (ticket: AiConsultationFetchTicket) => {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    setAiRefetching(true);
-    try {
-      const { redirecting } = await readMember(ticket, refetchReadMode());
-      if (!redirecting) settleLoading(ticket);
-    } finally {
-      busyRef.current = false;
-      setAiRefetching(false);
-      notifyWriteSettled();
-    }
-  };
-  const { beginFetch, notifyWriteSettled } = useAiConsultationDataRefetch(refetchAfterAiConsultation, {
-    writeInFlightRef: busyRef,
-  });
+  // 書き込み (共有の設定・除名) の窓の間は取り直さず、終わったあとに 1 回取り直す。取り直しを始めたあとに書き込みが始まったら、
+  // その取り直しの応答は置かずにもう 1 回取り直す (#2206 G1。窓は receiver.beginWrite)。
+  // 開いたとき・「再試行」の読み込み中に来た成功は、その読み込みの役を引き継がない (開いたときの読み込みが自分の応答を置き、
+  // 自分の読み込み中の表示を下ろす。#2206 G1)。最初の描画から読み込み中の表示を出す (initialLoadingKeys)
+  const receiver = useAiConsultationReceiver(readMember, { initialLoadingKeys: [KEY_MEMBER] });
+  isLoadingRef.current = receiver.isLoading;
+  // 移っている間も読み込み中の表示 (これまでどおり)
+  const loading = receiver.isLoading(KEY_MEMBER) || redirecting;
 
-  const loadPage = useCallback(async () => {
-    setLoading(true);
-    const ticket = beginFetch();
-    const { redirecting } = await readMember(ticket, 'mount');
-    if (!redirecting) settleLoading(ticket);
-  }, [readMember, beginFetch, setLoading, settleLoading]);
+  const loadPage = useCallback(
+    () => receiver.read({ loadingKeys: [KEY_MEMBER] }, readMember),
+    [receiver, readMember],
+  );
 
   useEffect(() => {
     void loadPage();
@@ -312,6 +302,8 @@ export default function FamilyMemberDetailPage() {
 
     busyRef.current = true;
     setSavingShare(true);
+    // 書き込みの窓 (通信エラーのあとの読み直しまで)。窓の間は AI 相談の成功の取り直しを止める (#2206 G1)
+    const endWrite = receiver.beginWrite();
     try {
       const res = await fetch('/api/family/members/me/share', {
         method: 'PATCH',
@@ -340,7 +332,7 @@ export default function FamilyMemberDetailPage() {
     } finally {
       busyRef.current = false;
       setSavingShare(false);
-      notifyWriteSettled();
+      endWrite();
     }
   };
 
@@ -351,6 +343,8 @@ export default function FamilyMemberDetailPage() {
 
     busyRef.current = true;
     setActionLoading(true);
+    // 書き込みの窓 (通信エラーのあとの確かめまで)。窓の間は AI 相談の成功の取り直しを止める (#2206 G1)
+    const endWrite = receiver.beginWrite();
     try {
       const res = await fetch(`/api/family/members/${member.id}/remove`, {
         method: 'POST',
@@ -379,7 +373,7 @@ export default function FamilyMemberDetailPage() {
     } finally {
       busyRef.current = false;
       setActionLoading(false);
-      notifyWriteSettled();
+      endWrite();
     }
   };
 
@@ -578,7 +572,7 @@ export default function FamilyMemberDetailPage() {
                   role="switch"
                   aria-checked={shareMeals}
                   onClick={() => handleShareUpdate('share_meals', !shareMeals)}
-                  disabled={savingShare || aiRefetching}
+                  disabled={savingShare}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${
                     shareMeals ? 'bg-green-500' : 'bg-gray-200'
                   }`}
@@ -600,7 +594,7 @@ export default function FamilyMemberDetailPage() {
                   role="switch"
                   aria-checked={shareHealth}
                   onClick={() => handleShareUpdate('share_health', !shareHealth)}
-                  disabled={savingShare || aiRefetching}
+                  disabled={savingShare}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${
                     shareHealth ? 'bg-green-500' : 'bg-gray-200'
                   }`}
@@ -622,7 +616,7 @@ export default function FamilyMemberDetailPage() {
                   role="switch"
                   aria-checked={shareMenu}
                   onClick={() => handleShareUpdate('share_menu', !shareMenu)}
-                  disabled={savingShare || aiRefetching}
+                  disabled={savingShare}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 ${
                     shareMenu ? 'bg-green-500' : 'bg-gray-200'
                   }`}
@@ -661,7 +655,7 @@ export default function FamilyMemberDetailPage() {
             {member.role !== 'representative' && (
               <button
                 onClick={handleRemove}
-                disabled={actionLoading || aiRefetching}
+                disabled={actionLoading}
                 className="w-full rounded-2xl bg-white border border-red-100 shadow-sm p-4 flex items-center gap-3 hover:bg-red-50 transition-colors text-left disabled:opacity-50"
               >
                 <span className="text-2xl">🚫</span>

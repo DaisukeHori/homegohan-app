@@ -1,21 +1,13 @@
 'use client';
 
 // (設計書 03-ui-spec.md §3.2, 12.2)
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { loginPathWithNext, readSignedInUser } from '@/lib/auth/signed-in-user';
-import {
-  applyFamilyMemberNames,
-  fetchFamilyMemberNamesResult,
-  keepShownFamilyMemberNames,
-} from '@/lib/membership/family-member-names';
+import { applyFamilyMemberNames, fetchFamilyMemberNamesResult } from '@/lib/membership/family-member-names';
 import { familyRoleLabel } from '@/lib/membership/role-labels';
-import {
-  useAiConsultationDataRefetch,
-  useAiConsultationLoading,
-  type AiConsultationFetchTicket,
-} from '@/hooks/useAiConsultationDataRefetch';
+import { useAiConsultationReceiver, type AiConsultationRead } from '@/hooks/useAiConsultationReceiver';
 
 /**
  * 自分のプロフィールを読み込めなかった・問い合わせが例外を投げたときの文 (#2073 S3)。家族に入っていない (家族の作成の画面へ移す) と
@@ -54,34 +46,38 @@ interface FamilyGroup {
   status: string;
 }
 
-/** 開いたとき・「再試行」の読み込み (失敗は「読み込めませんでした」) か、AI 相談の成功の取り直し (失敗では今の表示を残す) か */
-type FamilyReadMode = 'mount' | 'refetch';
+/** 読み込みの置き場所の鍵 (群・一覧と名前・失敗の表示・別の画面への移動を 1 つの鍵で置く。#2206 G1 §9 #3) */
+const KEY_DASHBOARD = 'dashboard';
 
 export default function FamilyDashboardPage() {
   const router = useRouter();
   const supabase = createClient();
 
-  // 開いたとき・「再試行」の読み込み中の表示。開いたときの読み込み中に始まった AI 相談の成功の読み直しは、その読み込みの役
-  // (失敗の表示・読み込み中の表示を下ろす) を引き継ぐ (#2201 U1。useAiConsultationLoading)
-  const { loading, setLoading, refetchReadMode, settleLoading } = useAiConsultationLoading();
   const [familyGroup, setFamilyGroup] = useState<FamilyGroup | null>(null);
   const [members, setMembers] = useState<FamilyMember[]>([]);
   const [error, setError] = useState<string | null>(null);
   // 読み込めなかったときの文。あるあいだは画面の代わりにこの文と「再試行」を出す (#2073 S3。以前は自分のプロフィールを読めないと
   // 家族に入っていないとして家族の作成の画面へ移し、try / catch が無く、問い合わせが例外を投げると読み込み中の表示のまま止まり、未処理の reject になっていた)
   const [loadError, setLoadError] = useState<string | null>(null);
+  /**
+   * 別の画面へ移っているか (#2206 G1 §6.8)。移る読み取りが読み込み中の表示を出していたときだけ立てる (移るまで読み込み中の表示のまま。
+   * 取り直し (読み込み中の表示を出していない) が移すときは、今の画面のまま移る)
+   */
+  const [redirecting, setRedirecting] = useState(false);
+  /**
+   * receiver.isLoading の写し。readDashboard は receiver より先に宣言する (receiver の引数) ので ref で引く。
+   * place の apply の中で呼ぶと、その鍵を下ろす前の値を返す (hook は apply が戻ってから印を下ろす)
+   */
+  const isLoadingRef = useRef<(key: string) => boolean>(() => false);
 
   // 家族グループとメンバーを読む。画面を開いたとき・「再試行」・AI 相談の成功 (#2195 V1) のあとに呼ぶ。
-  // 読み込み中の表示 (loading) は呼び出し側が決める (AI 相談の成功のあとは、画面を残したまま読み直す)。
-  // 戻り値は、別の画面へ移ったか (移るときは、移るまで読み込み中の表示のままにする。これまでどおり)。
-  // mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込めなかったとき (エラー・通信の失敗) は「読み込めませんでした」に
-  // 置き換えずに今の表示を残し、名前の API を読めなかったときは今出している名前を残す。
-  // 応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ (開いたときの読み込みと取り直しが 2 本並んでも、古い応答で上書きしない)
-  const readDashboard = useCallback(async (ticket: AiConsultationFetchTicket, mode: FamilyReadMode): Promise<{ redirecting: boolean }> => {
+  // 応答は全部を読んでから最後に 1 回だけ置く (順序・番兵の判断は read.place の中。#2206 G1)。
+  // read.mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込めなかったとき (エラー・通信の失敗) は何も置かずに今の表示を残し、
+  // 名前の API を読めなかったときも何も置かない (出ている群・一覧・名前を残す。「名前未設定」に落とさない)
+  const readDashboard = useCallback(async (read: AiConsultationRead): Promise<void> => {
     /** 読み込めなかった: 開いたとき・「再試行」は「読み込めませんでした」を出し、取り直しは今の表示を残す */
-    const loadFailed = (): { redirecting: boolean } => {
-      if (mode === 'mount' && ticket.isLatest()) setLoadError(FAMILY_DASHBOARD_LOAD_ERROR);
-      return { redirecting: false };
+    const loadFailed = () => {
+      if (read.mode === 'mount') read.place(KEY_DASHBOARD, () => setLoadError(FAMILY_DASHBOARD_LOAD_ERROR));
     };
     try {
       // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
@@ -90,8 +86,12 @@ export default function FamilyDashboardPage() {
       const signedIn = await readSignedInUser(supabase);
       if (signedIn.kind === 'load-failed') return loadFailed();
       if (signedIn.kind === 'signed-out') {
-        router.push(loginPathWithNext(FAMILY_DASHBOARD_PATH));
-        return { redirecting: true };
+        // 移動も置く (古い応答では移らない。#2206 G1)
+        read.place(KEY_DASHBOARD, () => {
+          if (isLoadingRef.current(KEY_DASHBOARD)) setRedirecting(true);
+          router.push(loginPathWithNext(FAMILY_DASHBOARD_PATH));
+        });
+        return;
       }
       const { user } = signedIn;
 
@@ -107,9 +107,12 @@ export default function FamilyDashboardPage() {
         return loadFailed();
       }
       if (!profile?.family_id) {
-        // 家族グループ未参加 → setup へ
-        router.replace('/family/setup');
-        return { redirecting: true };
+        // 家族グループ未参加 → setup へ (古い応答では移らない。#2206 G1)
+        read.place(KEY_DASHBOARD, () => {
+          if (isLoadingRef.current(KEY_DASHBOARD)) setRedirecting(true);
+          router.replace('/family/setup');
+        });
+        return;
       }
 
       // family_groups を取得
@@ -123,12 +126,13 @@ export default function FamilyDashboardPage() {
         // 読み込めなかった (行が無いのとは別。「再試行」を出す。#2080 U3)
         return loadFailed();
       }
-      if (!ticket.isLatest()) return { redirecting: false };
       if (!group) {
         // 行が無い (PGRST116) か、RLS で見えない (これまでどおり)
-        setError(FAMILY_GROUP_NOT_FOUND_MESSAGE);
-        setLoadError(null);
-        return { redirecting: false };
+        read.place(KEY_DASHBOARD, () => {
+          setError(FAMILY_GROUP_NOT_FOUND_MESSAGE);
+          setLoadError(null);
+        });
+        return;
       }
 
       // family_members を取得
@@ -145,43 +149,38 @@ export default function FamilyDashboardPage() {
 
       // 画面に出す名前 (display_name が無ければ本人のプロフィールの今の名前) は API で決める (#1584)
       const namesResult = await fetchFamilyMemberNamesResult();
-      if (!ticket.isLatest()) return { redirecting: false };
+      // 取り直しで名前の API を読めなかった: 何も置かない (出ている群・一覧・名前を残す。「名前未設定」に落とさない #2201 U1。
+      // 読めた一覧に今の名前を当てて同じ鍵に置くと、先に始めた開いたときの名前つきの応答が古いとして捨てられる。#2206 G1 §6.2)
+      if (!namesResult.ok && read.mode === 'refetch') return;
       const rows = (membersData ?? []) as FamilyMember[];
       // 全部読めてから出す
-      setFamilyGroup(group as FamilyGroup);
-      setMembers((shown) =>
-        applyFamilyMemberNames(
-          rows,
-          // 取り直しで名前の API を読めなかった: 今出している名前を残す (#2201 U1。「名前未設定」に落とさない)
-          namesResult.ok ? namesResult.names : mode === 'refetch' ? keepShownFamilyMemberNames(rows, shown) : new Map(),
-        ),
-      );
-      setError(null);
-      setLoadError(null);
-      return { redirecting: false };
+      read.place(KEY_DASHBOARD, () => {
+        setFamilyGroup(group as FamilyGroup);
+        setMembers(applyFamilyMemberNames(rows, namesResult.ok ? namesResult.names : new Map()));
+        setError(null);
+        setLoadError(null);
+      });
     } catch (loadFailure) {
       console.error('[family/dashboard] load error:', loadFailure);
-      return loadFailed();
+      loadFailed();
     }
   }, [supabase, router]);
 
   // AI 相談の提案の実行が成功したら (#2195 V1)、読み込み中の表示を出さずに読み直す。メンバーの名前は、display_name の無いメンバー
   // (自分を含む) に名前の API がプロフィールの今の名前 (user_profiles.nickname) を当てたもので、AI 相談の update_profile_preferences は
   // 自分の nickname を書く。家族を抜けていた・ログアウトしていたときは、開いたときと同じ扱い (readDashboard が決める。
-  // この画面に書き込みの操作は無い)。読み直しの失敗では「読み込めませんでした」に置き換えずに今の表示を残す (#2201 U1)
-  // 開いたとき・「再試行」の読み込みの途中に始まった読み直しは、その読み込みの役を引き継ぐ (先に始めた読み込みは応答を置かず、
-  // 読み込み中の表示も下ろさない): 失敗は「読み込めませんでした」を出し、終わったら読み込み中の表示を下ろす
-  const { beginFetch } = useAiConsultationDataRefetch(async (ticket) => {
-    const { redirecting } = await readDashboard(ticket, refetchReadMode());
-    if (!redirecting) settleLoading(ticket);
-  });
+  // この画面に書き込みの操作は無い)。読み直しの失敗では今の表示を残す (#2201 U1)。
+  // 開いたとき・「再試行」の読み込みの途中に始まった読み直しは、その読み込みの役を引き継がない (開いたときの読み込みが自分の応答を置き、
+  // 自分の読み込み中の表示を下ろす。#2206 G1)。最初の描画から読み込み中の表示を出す (initialLoadingKeys)
+  const receiver = useAiConsultationReceiver(readDashboard, { initialLoadingKeys: [KEY_DASHBOARD] });
+  isLoadingRef.current = receiver.isLoading;
+  // 移っている間も読み込み中の表示 (これまでどおり)
+  const loading = receiver.isLoading(KEY_DASHBOARD) || redirecting;
 
-  const loadDashboard = useCallback(async () => {
-    setLoading(true);
-    const ticket = beginFetch();
-    const { redirecting } = await readDashboard(ticket, 'mount');
-    if (!redirecting) settleLoading(ticket);
-  }, [readDashboard, beginFetch, setLoading, settleLoading]);
+  const loadDashboard = useCallback(
+    () => receiver.read({ loadingKeys: [KEY_DASHBOARD] }, readDashboard),
+    [receiver, readDashboard],
+  );
 
   useEffect(() => {
     void loadDashboard();
