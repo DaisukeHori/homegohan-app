@@ -21,9 +21,10 @@
  * Supabase クライアントはモック。route 全体の結果は tests/integration/operator/admin-finance-detail.test.ts で、
  * 実 DB を使って検証する。
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { AuthError, ForbiddenError } from '../src/lib/auth/errors';
+import { JST_EXPORT_FILENAME_BOUNDARIES } from './helpers/jst-export-filename-boundaries';
 import { TEST_TIME_ZONES, withTimeZoneAsync } from './helpers/time-zones';
 import { JST_1010_BOUNDARY_TIMES, satisfiesRangeFilters, type RangeFilter } from './helpers/timestamptz';
 
@@ -472,5 +473,28 @@ describe('POST /api/admin/finance/exports — 本文の形が違うときは 400
     const res = await POST(postRequest({ export_type: 'nps', from: '2026-02-30' }));
     expect(res.status).toBe(403);
     expect(mocks.chains).toHaveLength(0);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ファイル名の日付 (#2245 K3)
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('POST /api/admin/finance/exports — ファイル名の日付は JST の今日 (#2245 K3)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it.each(
+    (['revenue', 'invoices', 'subscriptions', 'nps'] as const).flatMap((exportType) => TEST_TIME_ZONES.map((tz) => [exportType, tz] as const)),
+  )('%s (TZ=%s): JST の 0:00〜8:59 は UTC の前日ではなく JST の今日の日付', async (exportType, tz) => {
+    actAs('admin');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    for (const { now, jstToday } of JST_EXPORT_FILENAME_BOUNDARIES) {
+      vi.setSystemTime(new Date(now));
+      const res = await withTimeZoneAsync(tz, () => POST(postRequest({ export_type: exportType })));
+      expect(res.status, now).toBe(200);
+      expect(res.headers.get('Content-Disposition'), now).toBe(`attachment; filename="${exportType}_${jstToday}.csv"`);
+    }
   });
 });

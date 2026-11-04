@@ -15,7 +15,7 @@
 
 import { MEMBERSHIP_SETTINGS_PATH } from '@homegohan/shared';
 import { ACCOUNT_DELETE_API_PATH, ACCOUNT_EXPORT_API_PATH } from '@/lib/auth/frozen';
-// 保存するファイル名は、API が Content-Disposition に付ける名前と同じ関数で作る (UTC の日付。tests/account-export.test.ts が固定)
+// 保存するファイル名は、API が Content-Disposition に付ける名前と同じ関数で作る (JST の今日の日付。#2245 K3。tests/account-export.test.ts が固定)
 import { buildExportFilename } from '@/lib/account-export';
 import { broadcastSignOut, clearUserScopedLocalStorage } from '@/lib/user-storage';
 import { notifyNativeSignOut } from '@/lib/native-auth-bridge';

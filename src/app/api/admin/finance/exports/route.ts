@@ -21,7 +21,7 @@ import { internalError } from '@/lib/api/errors';
 import { AUTH_CODES_UNAUTHENTICATED_AND_OP_PERMISSION_DENIED, authFailureNested, invalidJsonNested, operatorForbiddenMessageOf } from '@/lib/api/error-responses';
 import { readJsonBody } from '@/lib/http-params';
 import { ExportRequestSchema } from '@/lib/admin/finance-schemas';
-import { jstOptionalDayRangeTimestamps } from '@/lib/jst-day-ranges';
+import { jstOptionalDayRangeTimestamps, jstToday } from '@/lib/jst-day-ranges';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { LIST_ORDERS, orderListBy } from '@/lib/api/list-order';
@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
       const { data } = await dbQuery;
       const headers = ['date', 'total_mrr_jpy', 'total_arr_jpy', 'personal_active_users', 'org_active_orgs', 'new_signups', 'cancellations', 'computed_at'];
       csvContent = toCsv(headers, (data ?? []) as Record<string, unknown>[]);
-      filename = `revenue_${new Date().toISOString().slice(0, 10)}.csv`;
+      filename = `revenue_${jstToday()}.csv`;
     } else if (req.export_type === 'invoices') {
       // 受けた日時の新しい順。同じ日時は id の順 (#2139 T1)
       let dbQuery = orderListBy(
@@ -140,7 +140,7 @@ export async function POST(request: NextRequest) {
       const { data } = await dbQuery;
       const headers = ['id', 'event_type', 'processing_status', 'received_at', 'processed_at', 'error_message'];
       csvContent = toCsv(headers, (data ?? []) as Record<string, unknown>[]);
-      filename = `invoices_${new Date().toISOString().slice(0, 10)}.csv`;
+      filename = `invoices_${jstToday()}.csv`;
     } else if (req.export_type === 'subscriptions') {
       // 作った日時の新しい順。同じ日時は id の順 (#2139 T1)
       let dbQuery = orderListBy(
@@ -154,7 +154,7 @@ export async function POST(request: NextRequest) {
       const { data } = await dbQuery;
       const headers = ['id', 'user_id', 'plan_key', 'status', 'starts_at', 'current_period_start', 'current_period_end', 'cancelled_at', 'created_at'];
       csvContent = toCsv(headers, (data ?? []) as Record<string, unknown>[]);
-      filename = `subscriptions_${new Date().toISOString().slice(0, 10)}.csv`;
+      filename = `subscriptions_${jstToday()}.csv`;
     } else if (req.export_type === 'nps') {
       // 送った日時の新しい順。同じ日時は id の順 (#2139 T1)
       let dbQuery = orderListBy(
@@ -166,7 +166,7 @@ export async function POST(request: NextRequest) {
       const { data } = await dbQuery;
       const headers = ['id', 'user_id', 'score', 'comment', 'plan_key', 'sent_at', 'responded_at'];
       csvContent = toCsv(headers, (data ?? []) as Record<string, unknown>[]);
-      filename = `nps_${new Date().toISOString().slice(0, 10)}.csv`;
+      filename = `nps_${jstToday()}.csv`;
     }
 
     // 監査ログ記録 (破壊的操作ではないが export はログ対象とする)

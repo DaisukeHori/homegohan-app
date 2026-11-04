@@ -14,12 +14,14 @@
  *    - GET  /api/meal-plans (既定の今週 = 月曜〜日曜)
  *    - POST /api/health/records/quick (前日の記録)
  *    - GET  /api/health/streaks (週間の記録の開始日・連続が途切れたかの判定)
+ * 7. GET /api/export/meals のファイル名の日付を、UTC の暦日から JST の今日にした (#2245 K3)
  * 書き方そのもの (ローカル時刻で動かした Date を暦日の文字列にする) が戻らないことは tests/jst-today-source-scan.test.ts の規則 J が見る。
  */
 import { NextRequest } from 'next/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { argsOf, createRecordingSupabase, queriesOf, type RecordedQuery, type Responder } from './helpers/recording-supabase';
+import { JST_EXPORT_FILENAME_BOUNDARIES } from './helpers/jst-export-filename-boundaries';
 import { TEST_TIME_ZONES, withTimeZoneAsync } from './helpers/time-zones';
 
 const USER_ID = 'user-1';
@@ -384,5 +386,17 @@ describe('2. 実行環境のタイムゾーンによらず、同じ暦日で DB 
       const res = await getStreaks(new NextRequest('http://localhost/api/health/streaks'));
       expect((await res.json()).streak.current_streak).toBe(0);
     });
+  });
+});
+
+describe('7. GET /api/export/meals のファイル名の日付は JST の今日 (#2245 K3)', () => {
+  it.each(TEST_TIME_ZONES)('TZ=%s でも、JST の 0:00〜8:59 は UTC の前日ではなく JST の今日の日付', async (tz) => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    for (const { now, jstToday } of JST_EXPORT_FILENAME_BOUNDARIES) {
+      vi.setSystemTime(new Date(now));
+      const res = await withTimeZoneAsync(tz, () => exportMeals(new Request('http://localhost/api/export/meals')));
+      expect(res.status, now).toBe(200);
+      expect(res.headers.get('Content-Disposition'), now).toBe(`attachment; filename="homegohan-meals-${jstToday}.csv"`);
+    }
   });
 });
