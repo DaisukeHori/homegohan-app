@@ -30,6 +30,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * reads に記録の口があれば、読んだ表 (select を呼んだとき。鍵は tests/helpers/ai-refetch-read-recorder.ts の selectReadKey) と
  * DB の関数 ('rpc:<名前>') を記録する (受け手の読み取りの検査)
  */
+/** モックの Supabase がログイン済みとして返す利用者の id (ホームの読み取りが確かめる利用者。#2227 H3) */
+const MOCK_AUTH_USER_ID = vi.hoisted(() => 'user-1');
+/** onAuthStateChange の第 2 引数 (session) のうち、ホームが見る欄だけ */
+type AuthSessionArg = { user: { id: string } } | null;
+/** ホームが読んだ利用者と同じ人の session (タブを前に戻したときの SIGNED_IN。#2227 H3) */
+const SAME_USER_SESSION: AuthSessionArg = { user: { id: MOCK_AUTH_USER_ID } };
+/** ホームが読んだ利用者と別の人の session (別の人のログイン。#2227 H3) */
+const OTHER_USER_SESSION: AuthSessionArg = { user: { id: 'user-2' } };
 const supabaseMock = vi.hoisted(() => ({
   /** error が null でない答えは読み取りの失敗 (supabase-js は通信の失敗でも投げずに { data: null, error } を返す。#2201 U1) */
   tableResults: {} as Record<string, { data: unknown; error: unknown; count?: number | null }>,
@@ -48,7 +56,7 @@ const supabaseMock = vi.hoisted(() => ({
   /** true の間に始めた表の読み取りは reject する (#2201 U1。読み取りが投げたとき) */
   tableRejects: false,
   /** ページが auth.onAuthStateChange に渡した関数 (ログインの状態の変化を起こす。#2201 U1。event は supabase-js の AuthChangeEvent) */
-  authStateListener: null as null | ((event: string) => void),
+  authStateListener: null as null | ((event: string, session?: AuthSessionArg) => void),
   /**
    * auth.getSession を呼んだ数 (ホームのデータの読み取り (readHomeData) は 1 回の読み取りで 1 回ログインを確かめる。取り直しの数を数える。
    * #2206 G1: 取り直しは useHomeData の中の hook が始めるので、検査は読み取りの数で数える)
@@ -85,7 +93,7 @@ vi.mock('@/lib/supabase/client', () => {
         };
       },
     });
-  const user = { id: 'user-1', user_metadata: {} };
+  const user = { id: MOCK_AUTH_USER_ID, user_metadata: {} };
   return {
     createClient: () => ({
       auth: {
@@ -95,7 +103,7 @@ vi.mock('@/lib/supabase/client', () => {
         },
         getUser: async () => ({ data: { user }, error: null }),
         refreshSession: async () => ({ data: { session: { user } }, error: null }),
-        onAuthStateChange: (listener: (event: string) => void) => {
+        onAuthStateChange: (listener: (event: string, session?: AuthSessionArg) => void) => {
           supabaseMock.authStateListener = listener;
           return { data: { subscription: { unsubscribe: () => undefined } } };
         },
@@ -1470,7 +1478,7 @@ describe('useHomeData: 取り直しの読み取りの失敗では、記録の集
     );
     expect(supabaseMock.authStateListener, 'ログインの状態の変化を受け取る関数が無い (検査の前提が崩れた)').not.toBeNull();
     await act(async () => {
-      supabaseMock.authStateListener!('SIGNED_IN');
+      supabaseMock.authStateListener!('SIGNED_IN', OTHER_USER_SESSION);
     });
     await settle();
     expect(summaryShown()).toMatchObject({
@@ -1575,10 +1583,10 @@ describe('useHomeData: /home のお知らせ・同意の知らせ・今日のア
     await settle();
   }
 
-  async function changeAuthState(event: string) {
+  async function changeAuthState(event: string, session?: AuthSessionArg) {
     expect(supabaseMock.authStateListener, 'ログインの状態の変化を受け取る関数が無い (検査の前提が崩れた)').not.toBeNull();
     await act(async () => {
-      supabaseMock.authStateListener!(event);
+      supabaseMock.authStateListener!(event, session);
     });
     await settle();
   }
@@ -1598,7 +1606,7 @@ describe('useHomeData: /home のお知らせ・同意の知らせ・今日のア
       expect(fetchCallsTo(ANNOUNCEMENTS_URL), '取り直しがお知らせを読んでいない (検査が空振りしている)').toBe(2);
       expect(textOf('announcement'), '閉じたお知らせを AI 相談の成功の取り直しが戻した').toBe('');
 
-      await changeAuthState('SIGNED_IN');
+      await changeAuthState('SIGNED_IN', OTHER_USER_SESSION);
       expect(textOf('announcement'), '閉じたお知らせをログインの状態の変化の読み込みが戻した').toBe('');
     });
 
@@ -1719,14 +1727,14 @@ describe('useHomeData: /home のお知らせ・同意の知らせ・今日のア
       await settle();
       const activityText = textOf('advice-banner');
 
-      await changeAuthState('SIGNED_IN');
+      await changeAuthState('SIGNED_IN', OTHER_USER_SESSION);
       expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), 'ログインの状態の変化で読み直していない (検査が空振りしている)').toBe(2);
       expect(textOf('advice-banner'), '帯に出ていた活動量の文を、古い帯の値を見た AI のアドバイスで上書きした').toBe(activityText);
     });
   });
 
   describe('AI つきの栄養の分析を余分に読まない', () => {
-    it('ログインの状態の変化のうち INITIAL_SESSION・TOKEN_REFRESHED では読み直さない (SIGNED_IN・SIGNED_OUT・USER_UPDATED では読み直す)', async () => {
+    it('ログインの状態の変化のうち INITIAL_SESSION・TOKEN_REFRESHED では読み直さない (別の人の SIGNED_IN・SIGNED_OUT・USER_UPDATED では読み直す)', async () => {
       nutritionAnalysisBody = analysisResponse(ADVICE);
       await renderProbe();
       expect(fetchCallsTo(NUTRITION_ANALYSIS_URL)).toBe(1);
@@ -1735,12 +1743,32 @@ describe('useHomeData: /home のお知らせ・同意の知らせ・今日のア
       await changeAuthState('TOKEN_REFRESHED');
       expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), 'トークンの更新・購読の始めで AI つきの栄養の分析を読み直した').toBe(1);
 
-      await changeAuthState('SIGNED_IN');
+      await changeAuthState('SIGNED_IN', OTHER_USER_SESSION);
       expect(fetchCallsTo(NUTRITION_ANALYSIS_URL)).toBe(2);
       await changeAuthState('USER_UPDATED');
       expect(fetchCallsTo(NUTRITION_ANALYSIS_URL)).toBe(3);
       await changeAuthState('SIGNED_OUT');
       expect(fetchCallsTo(NUTRITION_ANALYSIS_URL)).toBe(4);
+    });
+
+    // #2227 H3: supabase-js はタブを前に戻したときにも同じ人の SIGNED_IN を出すことがある。読み直すたびに AI つきの栄養の分析を読み、
+    // 安全弁 nutrition_advice_auto を使っていた
+    it('前回読んだ利用者と同じ人の SIGNED_IN (タブを前に戻したとき) では読み直さない', async () => {
+      nutritionAnalysisBody = analysisResponse(ADVICE);
+      await renderProbe();
+      expect(fetchCallsTo(NUTRITION_ANALYSIS_URL)).toBe(1);
+      const sessionReadsBefore = supabaseMock.sessionReads;
+
+      await changeAuthState('SIGNED_IN', SAME_USER_SESSION);
+      await changeAuthState('SIGNED_IN', SAME_USER_SESSION);
+      expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '同じ人の SIGNED_IN で AI つきの栄養の分析を読み直した').toBe(1);
+      expect(supabaseMock.sessionReads, '同じ人の SIGNED_IN でホームのデータを読み直した').toBe(sessionReadsBefore);
+
+      // 対照: SIGNED_OUT と別の人の SIGNED_IN は今までどおり読み直す (絞ったのは同じ人の SIGNED_IN だけ)
+      await changeAuthState('SIGNED_OUT');
+      expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), 'ログアウトで読み直していない (検査が空振りしている)').toBe(2);
+      await changeAuthState('SIGNED_IN', OTHER_USER_SESSION);
+      expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), '別の人の SIGNED_IN で読み直していない').toBe(3);
     });
 
     it('ログインの状態の変化の読み込みが AI つきの読み取りを始めたあとに来た取り直しは、AI を付けずに読む', async () => {
@@ -1750,7 +1778,7 @@ describe('useHomeData: /home のお知らせ・同意の知らせ・今日のア
 
       // ログインの状態の変化の読み込みの、栄養の分析・お知らせの応答を止める (読み込み中の表示のまま)
       holdGetFetches = true;
-      await changeAuthState('SIGNED_IN');
+      await changeAuthState('SIGNED_IN', OTHER_USER_SESSION);
       expect(textOf('home-loading'), 'ログインの状態の変化の読み込みを止められていない (検査が空振りしている)').toBe('true');
       expect(fetchCallsTo(NUTRITION_ANALYSIS_URL), 'ログインの状態の変化の読み込みが AI つきの読み取りを始めていない (検査の前提が崩れた)').toBe(2);
 

@@ -226,6 +226,8 @@ describe('/health/graphs: 1 つの応答を読めなくても (本文の壊れ�
   const MONTH_WEIGHT = 65;
   const WEEK_WEIGHT = 70.4;
   const NO_DATA = 'データがありません';
+  /** 記録か健診を読めなかったページの読み取りの知らせ (#2227 H3) */
+  const LOAD_FAILED = '記録を読み込めませんでした';
   const WEEK_LABEL = '1週間';
   const WEIGHT_GOAL = { id: 'goal-g5', goal_type: 'weight', target_value: 60 };
 
@@ -244,6 +246,7 @@ describe('/health/graphs: 1 つの応答を読めなくても (本文の壊れ�
     expect(server.requests, '目標を読んでいない (検査が空振りしている)').toContain(GOALS);
     expect(container.textContent, '目標の本文が壊れて、読めた記録の線を出さなかった').toContain(shownWeight(MONTH_WEIGHT));
     expect(container.textContent).not.toContain(NO_DATA);
+    expect(container.textContent, '目標だけを読めなかったのに、記録を読み込めなかったと知らせた').not.toContain(LOAD_FAILED);
   });
 
   it('期間を切り替えたときに目標の本文が壊れていても、前の期間の線を残さず新しい期間の線を出す', async () => {
@@ -257,14 +260,15 @@ describe('/health/graphs: 1 つの応答を読めなくても (本文の壊れ�
     expect(container.textContent, '前の期間の線が新しい見出しの下に残った').not.toContain(shownWeight(MONTH_WEIGHT));
   });
 
-  it('期間を切り替えたときに記録の本文が壊れていると、前の期間の線を残さない (読めなかった記録は無いものとして出す)', async () => {
+  it('期間を切り替えたときに記録の本文が壊れていると、前の期間の線を残さず読み込めなかったと知らせる (#2227 H3: 記録が無いのと区別する)', async () => {
     await mount(<HealthGraphsPage />);
     expect(container.textContent).toContain(shownWeight(MONTH_WEIGHT));
 
     server.fetchHandlers.set(RECORDS, broken());
     await click(buttonContaining(WEEK_LABEL), WEEK_LABEL);
     expect(container.textContent, '記録の本文が壊れて、前の期間の線が新しい見出しの下に残った').not.toContain(shownWeight(MONTH_WEIGHT));
-    expect(container.textContent).toContain(NO_DATA);
+    expect(container.textContent, '読めなかった記録を「データがありません」として出した').not.toContain(NO_DATA);
+    expect(container.textContent).toContain(LOAD_FAILED);
   });
 
   it('取り直しで記録の本文が壊れていると、今の線を残す (記録を読めなかった取り直しと同じ)', async () => {
@@ -294,7 +298,7 @@ describe('/health/graphs: 1 つの応答を読めなくても (本文の壊れ�
     expect(container.textContent, '前の期間の線が新しい見出しの下に残った').not.toContain(shownWeight(MONTH_WEIGHT));
   });
 
-  it('期間を切り替えたときに記録の取得が通信の失敗で投げると、前の期間の線を残さない (読めなかった記録は無いものとして出す)', async () => {
+  it('期間を切り替えたときに記録の取得が通信の失敗で投げると、前の期間の線を残さず読み込めなかったと知らせる (#2227 H3)', async () => {
     await mount(<HealthGraphsPage />);
     expect(container.textContent).toContain(shownWeight(MONTH_WEIGHT));
 
@@ -303,7 +307,8 @@ describe('/health/graphs: 1 つの応答を読めなくても (本文の壊れ�
     await click(buttonContaining(WEEK_LABEL), WEEK_LABEL);
     expect(server.requests, '記録を読みに行っていない (検査が空振りしている)').toContain(RECORDS);
     expect(container.textContent, '記録の通信の失敗で、前の期間の線が新しい見出しの下に残った').not.toContain(shownWeight(MONTH_WEIGHT));
-    expect(container.textContent).toContain(NO_DATA);
+    expect(container.textContent, '読めなかった記録を「データがありません」として出した').not.toContain(NO_DATA);
+    expect(container.textContent).toContain(LOAD_FAILED);
   });
 
   it('取り直しで記録の取得が通信の失敗で投げると、今の線を残す', async () => {
@@ -316,6 +321,108 @@ describe('/health/graphs: 1 つの応答を読めなくても (本文の壊れ�
     expect(server.requests, '取り直していない (検査が空振りしている)').toContain(RECORDS);
     expect(container.textContent, '取り直しの記録の通信の失敗で、今の線を消した').toContain(shownWeight(MONTH_WEIGHT));
     expect(container.textContent).not.toContain(NO_DATA);
+  });
+});
+
+describe('/health/graphs: 開いたときに記録か健診を読めなければ、空のグラフでなく読み込めなかったと知らせる (#2227 H3)', () => {
+  const RECORDS = 'GET /api/health/records';
+  const CHECKUPS = 'GET /api/health/checkups';
+  const GOALS = 'GET /api/health/goals';
+  const MONTH_WEIGHT = 65;
+  const RELOADED_WEIGHT = 66.2;
+  const NO_DATA = 'データがありません';
+  const LOAD_FAILED = '記録を読み込めませんでした';
+  const RELOAD_LABEL = '再読み込み';
+  const WEIGHT_GOAL = { id: 'goal-h3', goal_type: 'weight', target_value: 60 };
+  /** 目標との比較のカードの文 (最新の値が無いときに出すと、目標の値そのものを「あと」として出す) */
+  const TARGET_COMPARISON = '目標まであと';
+
+  const shownWeight = (weight: number) => weight.toFixed(1);
+  const recordsOf = (weight: number) => json({ records: [{ record_date: TODAY, weight }] });
+
+  beforeEach(() => {
+    server.fetchHandlers.set(RECORDS, recordsOf(MONTH_WEIGHT));
+    server.fetchHandlers.set(CHECKUPS, json({ checkups: [] }));
+    server.fetchHandlers.set(GOALS, json({ goals: [WEIGHT_GOAL] }));
+  });
+
+  /** 読めなかった応答の形 (通信の失敗・非 2xx・本文の壊れ) × 読めなかった読み取り (記録・健診) */
+  const FAILURES: ReadonlyArray<{ name: string; respond: () => () => Response }> = [
+    { name: '通信の失敗', respond: rejected },
+    { name: '500', respond: failed },
+    { name: '本文の壊れ', respond: broken },
+  ];
+  const UNREAD_TARGETS: ReadonlyArray<{ name: string; request: string }> = [
+    { name: '記録', request: RECORDS },
+    { name: '健診', request: CHECKUPS },
+  ];
+
+  for (const target of UNREAD_TARGETS) {
+    for (const failure of FAILURES) {
+      it(`開いたときに${target.name}を読めない (${failure.name}) と、「データがありません」でなく読み込めなかったと知らせ、再読み込みのボタンを出す`, async () => {
+        server.fetchHandlers.set(target.request, failure.respond());
+        await mount(<HealthGraphsPage />);
+        expect(server.requests, `${target.name}を読みに行っていない (検査が空振りしている)`).toContain(target.request);
+        expect(container.textContent, '読めなかった記録を「データがありません」として出した (記録が無いのと区別がつかない)').not.toContain(NO_DATA);
+        expect(container.textContent).toContain(LOAD_FAILED);
+        expect(container.querySelector('[role="alert"]')?.textContent, '知らせが role="alert" で読み上げられない').toContain(LOAD_FAILED);
+        expect(buttonContaining(RELOAD_LABEL), '再読み込みのボタンが無い').toBeDefined();
+        expect(container.textContent, '最新の値が無いのに目標との比較を出した').not.toContain(TARGET_COMPARISON);
+      });
+    }
+  }
+
+  it('再読み込みのボタンで読み直し、読めたら知らせを消して記録の線を出す', async () => {
+    server.fetchHandlers.set(RECORDS, failed());
+    await mount(<HealthGraphsPage />);
+    expect(container.textContent).toContain(LOAD_FAILED);
+
+    server.fetchHandlers.set(RECORDS, recordsOf(RELOADED_WEIGHT));
+    server.requests = [];
+    await click(buttonContaining(RELOAD_LABEL), RELOAD_LABEL);
+    expect(server.requests, '再読み込みのボタンで記録を読み直していない').toContain(RECORDS);
+    expect(container.textContent, '読み直せたのに、読み込めなかった知らせが残った').not.toContain(LOAD_FAILED);
+    expect(container.textContent).toContain(shownWeight(RELOADED_WEIGHT));
+  });
+
+  it('再読み込みでもまた読めなければ、知らせを出したまま (空のグラフにしない)', async () => {
+    server.fetchHandlers.set(RECORDS, failed());
+    await mount(<HealthGraphsPage />);
+    server.requests = [];
+    await click(buttonContaining(RELOAD_LABEL), RELOAD_LABEL);
+    expect(server.requests, '再読み込みのボタンで記録を読み直していない (検査が空振りしている)').toContain(RECORDS);
+    expect(container.textContent).toContain(LOAD_FAILED);
+    expect(container.textContent).not.toContain(NO_DATA);
+  });
+
+  it('知らせを出しているときに取り直しが記録を読めたら、知らせを消して線を出す', async () => {
+    server.fetchHandlers.set(RECORDS, failed());
+    await mount(<HealthGraphsPage />);
+    expect(container.textContent).toContain(LOAD_FAILED);
+
+    server.fetchHandlers.set(RECORDS, recordsOf(RELOADED_WEIGHT));
+    server.requests = [];
+    await notifyAiConsultationSucceeded();
+    expect(server.requests, '取り直していない (検査が空振りしている)').toContain(RECORDS);
+    expect(container.textContent, '取り直しで読めたのに、読み込めなかった知らせが残った').not.toContain(LOAD_FAILED);
+    expect(container.textContent).toContain(shownWeight(RELOADED_WEIGHT));
+  });
+
+  it('知らせを出しているときの取り直しも記録を読めなければ、知らせを残す (取り直しの失敗は今の表示を残す)', async () => {
+    server.fetchHandlers.set(RECORDS, failed());
+    await mount(<HealthGraphsPage />);
+    server.requests = [];
+    await notifyAiConsultationSucceeded();
+    expect(server.requests, '取り直していない (検査が空振りしている)').toContain(RECORDS);
+    expect(container.textContent).toContain(LOAD_FAILED);
+  });
+
+  it('記録が本当に無い (読めて 0 件) ときは、これまでどおり「データがありません」を出す (読み込めなかった知らせは出さない)', async () => {
+    server.fetchHandlers.set(RECORDS, json({ records: [] }));
+    await mount(<HealthGraphsPage />);
+    expect(server.requests).toContain(RECORDS);
+    expect(container.textContent).toContain(NO_DATA);
+    expect(container.textContent).not.toContain(LOAD_FAILED);
   });
 });
 

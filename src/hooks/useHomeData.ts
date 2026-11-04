@@ -1,10 +1,10 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import { useState, useEffect, useRef } from "react";
-import type { AuthChangeEvent } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import { LIST_ORDERS, orderListBy } from "@/lib/api/list-order";
 import { toAnnouncement, toPlannedMeal } from "@/lib/converter";
 import { resolveDisplayName } from "@/lib/user-display";
+import { shouldRefetchHomeOnAuthChange, type HomeLastReadAuthUserId } from "@/lib/home-auth-refetch";
 import { formatLocalDate, pantryExpiringSoonUntil, PLANNED_MEALS_SET_COMPLETED_RPC, plannedMealsSetCompletedArgs } from "@homegohan/shared";
 import type { Tables } from "@homegohan/shared";
 import type { Announcement, PlannedMeal, PantryItem, Badge } from "@/types/domain";
@@ -163,13 +163,6 @@ interface SuggestionBand {
   source: SuggestionBandSource;
 }
 
-/**
- * ホームのデータを読み直すログインの状態の変化 (supabase.auth.onAuthStateChange の event。#2206 G3)。
- * INITIAL_SESSION (購読を始めたときに 1 回。開いたときの読み込みと重なる)・TOKEN_REFRESHED (トークンの更新。ログインしている人は
- * 変わらない) では読み直さない (読み直すたびに AI つきの栄養の分析を読み、LLM と上限に数えない枠の安全弁 nutrition_advice_auto を使う)
- */
-const HOME_REFETCH_AUTH_EVENTS: ReadonlySet<AuthChangeEvent> = new Set<AuthChangeEvent>(['SIGNED_IN', 'SIGNED_OUT', 'USER_UPDATED']);
-
 /** 今日の献立の集計の空の値 (開いたときの値。取り直しで今日の献立が無くなったときもこれに戻す。#2195 V1) */
 const EMPTY_DAILY_SUMMARY: DailySummary = {
   totalCalories: 0,
@@ -190,6 +183,11 @@ export const useHomeData = () => {
   const [announcement, setAnnouncement] = useState<Announcement | null>(null);
   // × で閉じたお知らせの id (#2206 G3)。取り直し (AI 相談の成功のたび)・ログインの状態の変化の読み込みで、同じお知らせを置き直さない
   const dismissedAnnouncementIdsRef = useRef<Set<string>>(new Set());
+  /**
+   * 前回のホームの読み取りが確かめた利用者の id (#2227 H3)。ログインの状態の変化の SIGNED_IN で、同じ利用者なら読み直さないために使う
+   * (タブを前に戻したときの SIGNED_IN で AI つきの栄養の分析を読み直さない)
+   */
+  const lastReadAuthUserIdRef = useRef<HomeLastReadAuthUserId>(undefined);
   const [activityLevel, setActivityLevel] = useState<string | null>(null);
   // 今日のアドバイスの帯 (文と出所。#2206 G3)
   const [suggestionBand, setSuggestionBand] = useState<SuggestionBand | null>(null);
@@ -321,6 +319,9 @@ export const useHomeData = () => {
   const readHomeData = async (read: AiConsultationRead, startAnalyses: StartHomeAnalyses) => {
     // 1. ユーザー情報取得
     const authUser = await resolveAuthUser();
+    // 確かめた利用者を覚える (#2227 H3)。取り直しでログインを確かめられなかったときは覚えた値を変えない (今の表示を残すのと同じ)
+    if (authUser) lastReadAuthUserIdRef.current = authUser.id;
+    else if (read.mode === 'mount') lastReadAuthUserIdRef.current = null;
     
     if (authUser) {
       const { data: profile, error: profileError } = await supabase
@@ -960,7 +961,8 @@ export const useHomeData = () => {
   const loading = receiver.isLoading(KEY_HOME_LOADING);
 
   /**
-   * ページの読み取り: 開いたとき・ログインの状態の変化 (HOME_REFETCH_AUTH_EVENTS の 3 つだけ。#2206 G3)・完了の切り替えの巻き戻し・
+   * ページの読み取り: 開いたとき・ログインの状態の変化 (HOME_REFETCH_AUTH_EVENTS の 3 つだけ。#2206 G3。SIGNED_IN は前回読んだ利用者と
+   * 違うときだけ。#2227 H3)・完了の切り替えの巻き戻し・
    * 献立の変更の実行のあと。全画面の読み込み中の表示を主のデータの読み取りの終わりまで出す。
    * 分析は分析ごとに別のページの読み取りで始める (AI つき。読み込み中の印は分析の鍵で、分析を置くか分析の読み取りが終わるまで)。
    * 返す Promise は分析を待たない
@@ -1228,10 +1230,10 @@ export const useHomeData = () => {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((event) => {
-      // SIGNED_IN・SIGNED_OUT・USER_UPDATED (HOME_REFETCH_AUTH_EVENTS) で読み直す (INITIAL_SESSION・TOKEN_REFRESHED では読まない。
-      // SIGNED_IN はタブを前に戻したときにも出ることがある。#2206 G3)
-      if (HOME_REFETCH_AUTH_EVENTS.has(event)) void fetchHomeData();
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      // ログインしている人が変わったときだけ読み直す (INITIAL_SESSION・TOKEN_REFRESHED では読まない。#2206 G3)。
+      // SIGNED_IN はタブを前に戻したときにも同じ人で来ることがあるので、前回読んだ利用者と違うときだけ読み直す (#2227 H3)
+      if (shouldRefetchHomeOnAuthChange(event, session?.user.id, lastReadAuthUserIdRef.current)) void fetchHomeData();
     });
 
     return () => {

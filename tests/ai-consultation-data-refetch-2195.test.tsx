@@ -563,7 +563,16 @@ describe('ページが AI 相談の成功で取り直す (#2195 V1)', () => {
     const responses: Record<string, unknown> = {
       [GOALS_URL]: { goals: [{ goal_type: 'weight', target_value: 60 }] },
     };
-    const { callsTo } = installFetchMock(responses);
+    const { fetchMock, callsTo } = installFetchMock(responses);
+    // 記録と健診は読めて 0 件 (道に日付が付くので道の頭で答える)。読めないと目標との比較の欄を出さない (#2227 H3)
+    const READ_OK_EMPTY: ReadonlyArray<{ prefix: string; body: unknown }> = [
+      { prefix: '/api/health/records?', body: { records: [] } },
+      { prefix: '/api/health/checkups?', body: { checkups: [] } },
+    ];
+    vi.stubGlobal('fetch', async (input: unknown) => {
+      const empty = READ_OK_EMPTY.find(({ prefix }) => String(input).startsWith(prefix));
+      return empty ? Response.json(empty.body) : fetchMock(input);
+    });
     await act(async () => {
       root.render(<HealthGraphsPage />);
     });
