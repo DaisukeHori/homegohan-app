@@ -13,7 +13,10 @@ import {
   type BiologicalSex, type MetricStatus,
 } from '@/lib/health-blood-test-reference';
 import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
-import { useAiConsultationDataRefetch, type AiConsultationFetchTicket } from '@/hooks/useAiConsultationDataRefetch';
+import { useAiConsultationReceiver, type AiConsultationRead } from '@/hooks/useAiConsultationReceiver';
+
+/** 基準値を選ぶ性別の置き場所の鍵 (#2206 G1) */
+const KEY_SEX = 'sex';
 
 const colors = {
   bg: '#FAF9F7',
@@ -103,13 +106,14 @@ export default function CheckupDetailClient({ id }: Props) {
 
   // 基準値を選ぶ性別 (プロフィールの gender) を読む。応答が届けばその値 (無ければ未設定) に置き換え、読めなかったとき
   // (応答が ok でない・通信の失敗) は今の値のまま
-  const fetchSex = useCallback(async (ticket: AiConsultationFetchTicket) => {
+  const fetchSex = useCallback(async (read: AiConsultationRead) => {
     try {
       const res = await fetch('/api/profile', { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
-        // 応答を置くのは最後に始めた取得だけ (開いたときの読み込みと取り直しが重なっても古い応答で上書きしない。#2201 U1)
-        if (ticket.isLatest()) setSex(data?.gender ?? null);
+        // 応答は read.place の中で置く (順序・番兵・書き込みの印の判断は hook。開いたときの読み込みと取り直しが重なっても
+        // 古い応答で上書きしない。#2206 G1)
+        read.place(KEY_SEX, () => setSex(data?.gender ?? null));
       }
     } catch (error) {
       console.error('Failed to fetch profile for reference ranges:', error);
@@ -118,14 +122,17 @@ export default function CheckupDetailClient({ id }: Props) {
 
   // AI 相談の提案の実行が成功したら (#2195 V1)、性別を読み直して基準値と判定を出し直す (AI 相談の update_profile_preferences は
   // gender を書く)。健康診断の結果 (health_checkups) は AI 相談が書かない表なので読み直さない。削除の確認が出ている間も
-  // 読み直してよい (確認の中身は性別に依らない)
-  const { beginFetch } = useAiConsultationDataRefetch(fetchSex);
+  // 読み直してよい (確認の中身は性別に依らない)。ページの読み込み中の表示 (loading) は健康診断の読み込みで、この受け手の鍵ではない
+  const receiver = useAiConsultationReceiver(fetchSex);
 
+  // receiver の参照は一生同じなので、この effect は開いたときの 1 回だけ走る
   useEffect(() => {
-    void fetchSex(beginFetch());
-  }, [fetchSex, beginFetch]);
+    void receiver.read({}, fetchSex);
+  }, [receiver, fetchSex]);
 
   const handleDelete = async () => {
+    // 削除の送信は書き込みの窓の中 (応答を待つ間に来た取り直しは置かず、終わったら 1 回取り直す。#2206 G1)
+    const endWrite = receiver.beginWrite();
     setDeleting(true);
     setDeleteError(null);
     try {
@@ -142,6 +149,8 @@ export default function CheckupDetailClient({ id }: Props) {
     } catch (error) {
       console.error('Failed to delete:', error);
       setDeleteError('削除に失敗しました。もう一度お試しください。');
+    } finally {
+      endWrite();
     }
     setDeleting(false);
   };

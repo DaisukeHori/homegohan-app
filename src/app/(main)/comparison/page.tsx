@@ -1,10 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import type { ComparisonResponse, MetricRankingSummary, ComparisonHighlight } from "@/types/comparison";
-import { useAiConsultationRefetchKey, useAiConsultationRefetchRun } from "@/hooks/useAiConsultationDataRefetch";
+import { useAiConsultationReceiver, type AiConsultationRead } from "@/hooks/useAiConsultationReceiver";
+
+type ComparisonPeriodType = 'weekly' | 'monthly';
+/** 開いたときの期間 (useState の初期値と、最初の描画から読み込み中にする鍵の両方に使う。#2206 G1) */
+const INITIAL_PERIOD_TYPE: ComparisonPeriodType = 'weekly';
+/** 期間ごとの順位の置き場所の鍵 (#2206 G1。対象を替えて出す表示なので期間を鍵に含める) */
+const rankingsKey = (period: ComparisonPeriodType) => `rankings:${period}`;
 
 // メトリクスアイコンマッピング
 const METRIC_ICONS: Record<string, string> = {
@@ -32,52 +38,60 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 export default function ComparisonPage() {
   const [data, setData] = useState<ComparisonResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [periodType, setPeriodType] = useState<'weekly' | 'monthly'>('weekly');
+  const [periodType, setPeriodType] = useState<ComparisonPeriodType>(INITIAL_PERIOD_TYPE);
   const [selectedMetric, setSelectedMetric] = useState<string | null>(null);
-  // AI 相談の提案の実行で記録が変わったら、下の取得をもう一度走らせる (#2195 V1)
-  // 番兵 (モーダル・入力の部品) で止めた通知は、外れたときに 1 回取り直す (#2201 U2)
-  const { refetchKey: aiConsultationRefetchKey } = useAiConsultationRefetchKey();
-  // その回が AI 相談の成功の取り直しで走ったか (#2201 U1)。開いたとき・期間の切り替えの読み込み中に来た成功の回は、その読み込みの役を
-  // 引き継ぐ (取り直しの扱いにしない。失敗で前の期間の順位を残さない)
-  const takeAiConsultationRefetchRun = useAiConsultationRefetchRun(aiConsultationRefetchKey, loading);
+  /** いま出している期間 (描画のたびに写す)。届いた応答の期間がもう今の期間でなければ置かない (#2206 G1) */
+  const periodTypeRef = useRef(periodType);
+  periodTypeRef.current = periodType;
+
+  /**
+   * その期間の順位を読む。開いたとき・期間の切り替え・AI 相談の成功の取り直しで呼ぶ (#2206 G1)。
+   * 応答は read.place の中で置き、置く直前にいまもその期間を出しているかを見る (別の期間へ移ったあとに届いた応答を出さない)。
+   * 失敗 (通信の失敗・非 2xx): ページの読み取り ('mount') はデータを空にして「取得に失敗しました」の表示にする (直前の期間の
+   * 内容を残さない)。取り直し ('refetch') は今の表示を残す (#2201 U1)。
+   * signal は開いたとき・期間の切り替えの読み取りだけが渡す (期間を切り替えたとき・ページを離れたときに前のリクエストを中断する。
+   * #1228)。中断した読み取りの応答・失敗は置かず、エラー扱いにもしない
+   */
+  const readRankings = useCallback(async (read: AiConsultationRead, period: ComparisonPeriodType, signal?: AbortSignal) => {
+    try {
+      const res = await fetch(`/api/comparison/rankings?periodType=${period}`, { signal });
+      if (!res.ok) throw new Error('Failed');
+      const result = await res.json();
+      // 中断済みのリクエストの応答は、fetch が中断を返さなかった場合も含めて必ず捨てる
+      if (signal?.aborted) return;
+      read.place(rankingsKey(period), () => {
+        if (periodTypeRef.current === period) setData(result);
+      });
+    } catch (e) {
+      // abort() による AbortError は期間切替・離脱に伴う正常動作なので、エラー扱いにせず何もしない
+      if (signal?.aborted) return;
+      console.error(e);
+      if (read.mode !== 'mount') return;
+      // 失敗時に直前の期間のデータを残すと、別期間の内容が現在のタブの下に表示されてしまうため、
+      // データを空にして「取得に失敗しました」の表示に切り替える
+      read.place(rankingsKey(period), () => {
+        if (periodTypeRef.current === period) setData(null);
+      });
+    }
+  }, []);
+
+  // AI 相談の提案の実行で記録が変わったら、表示中の期間の順位を取り直す (#2195 V1)。番兵 (モーダル・入力の部品) で止めた通知は、
+  // 外れたときに 1 回取り直す (#2201 U2。判断は hook)。取り直しは期間の切り替えで中断しない (鍵と ref で古い期間を置かない)。
+  // 最初の描画から読み込み中 (今までの loading の初期値 true)
+  const receiver = useAiConsultationReceiver((read) => readRankings(read, periodTypeRef.current), {
+    initialLoadingKeys: [rankingsKey(INITIAL_PERIOD_TYPE)],
+  });
+  // スピナーは表示中の期間の鍵 (古い期間の読み取りの終わり・置いたことでは、今の期間の鍵は下りない)
+  const loading = receiver.isLoading(rankingsKey(periodType));
 
   useEffect(() => {
-    // 取り直しでは読み込み中の表示を出さず、失敗 (通信の失敗・非 2xx) では今の表示を残す (#2201 U1)。
-    // 期間の切り替えで走った回は、これまでどおり失敗でデータを空にする (別期間の内容を残さない)
-    const isRefetch = takeAiConsultationRefetchRun();
     // 期間を切り替えたとき (またはページを離れたとき) に前のリクエストを中断する (#1228)。
     // 中断しないと、先に発行した週間の応答が後から届いて月間の表示を上書きしたり、
-    // 古い応答の finally でスピナーが消えたりする。
+    // 古い応答で読み込み中の表示が消えたりする。
     const controller = new AbortController();
-    const { signal } = controller;
-
-    const fetchData = async () => {
-      if (!isRefetch) setLoading(true);
-      try {
-        const res = await fetch(`/api/comparison/rankings?periodType=${periodType}`, { signal });
-        if (!res.ok) throw new Error('Failed');
-        const result = await res.json();
-        // 中断済みのリクエストの応答は、fetch が中断を返さなかった場合も含めて必ず捨てる
-        if (signal.aborted) return;
-        setData(result);
-      } catch (e) {
-        // abort() による AbortError は期間切替・離脱に伴う正常動作なので、エラー扱いにせず何もしない
-        if (signal.aborted) return;
-        console.error(e);
-        if (isRefetch) return;
-        // 失敗時に直前の期間のデータを残すと、別期間の内容が現在のタブの下に表示されてしまうため、
-        // データを空にして「取得に失敗しました」の表示に切り替える
-        setData(null);
-      } finally {
-        // 中断された古いリクエストが、新しいリクエストの実行中にスピナーを消してしまわないようにする
-        if (!signal.aborted) setLoading(false);
-      }
-    };
-    fetchData();
-
+    void receiver.read({ loadingKeys: [rankingsKey(periodType)] }, (read) => readRankings(read, periodType, controller.signal));
     return () => controller.abort();
-  }, [periodType, aiConsultationRefetchKey, takeAiConsultationRefetchRun]);
+  }, [periodType, receiver, readRankings]);
 
   return (
     <div className="min-h-screen bg-gray-50 pb-24">
