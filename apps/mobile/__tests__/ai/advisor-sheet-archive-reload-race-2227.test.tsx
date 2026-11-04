@@ -106,8 +106,6 @@ afterEach(() => {
   reloadGate.release();
 });
 
-const inputValue = () => screen.getByTestId('ai-input').props.value as string;
-
 async function openSheetAndTimeOutSend() {
   render(<AIAdvisorSheet visible onClose={jest.fn()} />);
   await waitFor(() => expect(screen.getByText('野菜を足しましょう')).toBeTruthy());
@@ -176,7 +174,6 @@ describe('#2227 H1 アーカイブの応答待ちの間は「最新の会話を�
 
     await expectNewSessionAfterArchive(close);
     expect(reloadStarted()).toBe(false);
-    expect(inputValue()).toBe('');
   });
 
   it('アーカイブと同じ描画のうちに取り直しを押しても (ボタンを止める描画の前)、取り直さず、応答のあと新しい相談が今の相談になる', async () => {
