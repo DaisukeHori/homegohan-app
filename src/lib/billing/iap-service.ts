@@ -136,6 +136,6 @@ export async function lazyResyncStoreSubscription(
     await syncStoreSubscriber(deps, userId, IAP_LAZY_RESYNC_SOURCE);
   } catch (error) {
     // 取り直せなくても、いまの行で要約を返す (次の読み取りでまた試す)
-    logger.warn('ストアの契約の遅延の再同期に失敗しました', { user_id: userId, code: error instanceof BillingRpcError ? error.code : error instanceof IapError ? error.code : 'unknown' });
+    logger.withUser(userId).warn('ストアの契約の遅延の再同期に失敗しました', { user_id: userId, code: error instanceof BillingRpcError ? error.code : error instanceof IapError ? error.code : 'unknown' });
   }
 }

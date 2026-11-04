@@ -58,7 +58,9 @@ export function billingErrorResponse(routeName: string, error: unknown, ctx: { u
 export function iapErrorResponse(routeName: string, error: unknown, ctx: { userId?: string } = {}): NextResponse | null {
   if (error instanceof IapError) {
     // 422 (対応の行が無い商品) と 409 (別の契約と衝突) は運営の対応が要るので、コードだけを構造化ログに残す (§13.3 の運営の処置)
-    createLogger(routeName).warn('アプリ内課金の同期を止めました', { code: error.code, user_id: ctx.userId ?? null });
+    // 利用者が分かるときは .withUser で app_logs の user_id 列に入れる (#2245 K5。internalError と同じ形)
+    const logger = createLogger(routeName);
+    (ctx.userId ? logger.withUser(ctx.userId) : logger).warn('アプリ内課金の同期を止めました', { code: error.code, user_id: ctx.userId ?? null });
     return NextResponse.json(
       { error: { code: error.code, message: IAP_ERROR_MESSAGES[error.code] } },
       { status: IAP_ERROR_HTTP_STATUS[error.code], headers: NO_STORE },
