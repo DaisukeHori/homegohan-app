@@ -19,8 +19,9 @@
  *     を足し、PREVIOUS_REQUEST_RECHECK_DELAY_MS だけ待ってから 1 回だけ記録を読み直す。実行できた行になっていれば一文を
  *     PREVIOUS_REQUEST_EXECUTED_MESSAGE に置き換えて、データを出す画面に知らせる (#2201 U3)。実行を待つ・失敗した行になって
  *     いれば、一文を PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE に置き換える (#2206 G2。以前は『実行中か実行済み』のまま残った)
- *   - 実行を待つ (pending)・失敗した (failed) 行だけなら、実行していない一文 (PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE) を足す
- *     (#2206 G2。読み直しで分かったときと同じ文)
+ *   - 実行を待つ (pending)・完了しなかった (失敗した failed) 行だけなら、一文 (PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE) を足す
+ *     (#2206 G2。読み直しで分かったときと同じ文。失敗した行には途中まで書いた可能性がある種類
+ *     (src/lib/ai/consultation-action-lifecycle.ts の AI_ACTION_TYPES_NOT_RETRYABLE_AFTER_FAILURE) も含む)
  *   - 行がまだ無い・記録を読めないのに返答に提案がある (GET が提案を返した) ときは、実行中の印と同じく扱う (#2206 G2。
  *     サーバーは返答を保存してから行を作るので、その間に取り直しが当たると行がまだ無い)
  *   - それ以外 (行が無い・断った・記録を読めない) は何も足さない (実行したと言い切れない)。記録を読めなかったときは、
@@ -61,7 +62,8 @@ export const PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE = '前の依頼の結果をま
 
 /**
  * 応答を受け取れずに取り直した会話で、送った文への返答の提案の記録が実行を待つ (pending)・失敗した (failed) 行だけのときに
- * 足す一文 (#2206 G2)。実行していないことは確か。頼み直しは勧めない (実行を待つ提案はカードの「実行する」から実行できる)
+ * 足す一文 (#2206 G2)。対象は実行を待つ行か、完了しなかった (失敗した) 行。失敗した行には途中まで書いた可能性がある種類
+ * (AI_ACTION_TYPES_NOT_RETRYABLE_AFTER_FAILURE) も含む。頼み直しは勧めない (実行を待つ提案はカードの「実行する」から実行できる)
  */
 export const PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE = '前の依頼は実行できませんでした';
 

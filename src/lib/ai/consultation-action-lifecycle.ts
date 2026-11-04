@@ -12,7 +12,8 @@
  *   - 成功したら executed。今日の上限で止めたら pending のまま (明日もう一度実行できる。同意が無くて止めたときと同じ)
  *   - 失敗したら pending のまま残し、残したボタンで本当にやり直せるようにする。ただし、途中まで書いてから失敗しうる種類
  *     (AI_ACTION_TYPES_NOT_RETRYABLE_AFTER_FAILURE) と、対応していない種類と、やり直しても直らない失敗 (実行の結果の
- *     notRetryable。権限・検査・空の入力。#2195 V2) は failed にし、画面は「実行する」を出さずに
+ *     notRetryable。権限・検査・空の入力。#2195 V2。AI が作った値の誤り (22P02・22007・22008・23503。
+ *     src/lib/ai/consultation-action-executor.ts の POSTGRES_AI_VALUE_ERROR_CODES) も含む) は failed にし、画面は「実行する」を出さずに
  *     「もう一度頼んでください」の案内を出す (AI_PROPOSED_ACTION_NOT_EXECUTABLE_GUIDE)
  *   - 実行している間は approved (実行中の印)。pending から approved への書き換えを条件つきの 1 文で行い、書けた 1 本だけが
  *     実行する (2 つの画面から同時に押しても二重に実行しない)。実行が終わったら上の決まりの状態に書き換える

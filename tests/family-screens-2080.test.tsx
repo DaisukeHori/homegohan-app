@@ -107,7 +107,6 @@ vi.mock('next/link', () => ({
 vi.mock('@/lib/membership/family-member-names', () => ({
   fetchFamilyMemberNames: async () => new Map<string, string>(),
   fetchFamilyMemberNamesResult: async () => ({ ok: true, names: new Map<string, string>() }),
-  keepShownFamilyMemberNames: () => new Map<string, string>(),
   applyFamilyMemberNames: <T,>(members: T[]) => members,
 }));
 

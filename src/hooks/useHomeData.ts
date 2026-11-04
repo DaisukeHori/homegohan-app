@@ -1229,7 +1229,8 @@ export const useHomeData = () => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event) => {
-      // ログインしている人が変わったときだけ読み直す (INITIAL_SESSION・TOKEN_REFRESHED では読まない。#2206 G3)
+      // SIGNED_IN・SIGNED_OUT・USER_UPDATED (HOME_REFETCH_AUTH_EVENTS) で読み直す (INITIAL_SESSION・TOKEN_REFRESHED では読まない。
+      // SIGNED_IN はタブを前に戻したときにも出ることがある。#2206 G3)
       if (HOME_REFETCH_AUTH_EVENTS.has(event)) void fetchHomeData();
     });
 
