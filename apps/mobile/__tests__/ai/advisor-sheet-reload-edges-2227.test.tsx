@@ -467,7 +467,11 @@ describe('#2227 H1 (R1) 届いているが返答がまだ無いと分かった�
 });
 
 describe('#2227 H1 (R1) 本文を流している最中に別の相談へ切り替えた', () => {
-  const PARTIAL = '鶏むね肉の照り';
+  // 流れの途中の吹き出しは本文の後ろにカーソル (▌) を足すので、断片は部分一致 (exact: false) で探す。返答 (SAVED_REPLY) に
+  // 含まれない文にする
+  const PARTIAL = 'まず下ごしらえ';
+  const PARTIAL_MORE = 'から始めます';
+  const partialShown = (text: string) => screen.queryByText(text, { exact: false }) !== null;
   const FINAL_LINE = {
     userMessage: { id: SAVED_USER.id, content: SENT_TEXT, createdAt: SAVED_USER.createdAt },
     aiMessage: { id: 'm4', content: SAVED_REPLY, createdAt: '2026-11-01T00:00:01.000Z' },
@@ -498,29 +502,29 @@ describe('#2227 H1 (R1) 本文を流している最中に別の相談へ切り�
     fetchMock.mockResolvedValueOnce(
       streamsGatedLines([
         { line: { choices: [{ delta: { content: PARTIAL } }] } },
-        { line: { choices: [{ delta: { content: 'り焼き' } }] }, gate: more.promise },
+        { line: { choices: [{ delta: { content: PARTIAL_MORE } }] }, gate: more.promise },
         { line: FINAL_LINE, gate: final.promise },
       ]),
     );
     await send();
-    await waitFor(() => expect(screen.getByText(PARTIAL)).toBeTruthy());
+    await waitFor(() => expect(partialShown(PARTIAL)).toBe(true));
 
     await selectSessionById(OTHER_SESSION.id, '別の相談の返答です');
-    expect(screen.queryByText(PARTIAL)).toBeNull();
+    expect(partialShown(PARTIAL)).toBe(false);
 
     await act(async () => {
       more.release();
     });
     await flush();
-    expect(screen.queryByText(`${PARTIAL}り焼き`)).toBeNull();
+    expect(partialShown(PARTIAL_MORE)).toBe(false);
 
     await act(async () => {
       final.release();
     });
     await flush();
     expect(screen.getByText('別の相談の返答です')).toBeTruthy();
-    expect(screen.queryByText(PARTIAL)).toBeNull();
-    expect(screen.queryByText(`${PARTIAL}り焼き`)).toBeNull();
+    expect(partialShown(PARTIAL)).toBe(false);
+    expect(partialShown(PARTIAL_MORE)).toBe(false);
     expect(screen.queryByText(SAVED_REPLY)).toBeNull();
     expect(screen.queryByText(SENT_TEXT)).toBeNull();
   });
@@ -537,12 +541,12 @@ describe('#2227 H1 (R1) 本文を流している最中に別の相談へ切り�
       ]);
     });
     await send();
-    await waitFor(() => expect(screen.getByText(PARTIAL)).toBeTruthy());
+    await waitFor(() => expect(partialShown(PARTIAL)).toBe(true));
 
     await selectSessionById(OTHER_SESSION.id, '別の相談の返答です');
     await selectSessionById(SESSION.id, '野菜を足しましょう');
     expect(screen.getAllByText(SENT_TEXT)).toHaveLength(1);
-    expect(screen.queryByText(PARTIAL)).toBeNull();
+    expect(partialShown(PARTIAL)).toBe(false);
 
     await act(async () => {
       final.release();
@@ -550,7 +554,7 @@ describe('#2227 H1 (R1) 本文を流している最中に別の相談へ切り�
     await waitFor(() => expect(screen.getByText(SAVED_REPLY)).toBeTruthy());
     expect(screen.getAllByText(SENT_TEXT)).toHaveLength(1);
     expect(screen.getAllByText(SAVED_REPLY)).toHaveLength(1);
-    expect(screen.queryByText(PARTIAL)).toBeNull();
+    expect(partialShown(PARTIAL)).toBe(false);
   });
 
   it('切り替えたあとに時間切れで終わっても、今の相談の画面に前の相談の「最新の会話を読み込む」を出さない', async () => {
