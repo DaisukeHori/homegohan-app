@@ -20,8 +20,11 @@
  * このファイルはブラウザでだけ使う (サーバーの依存を import しない)。
  */
 import {
+  CONSULTATION_REPLY_FAILED_MESSAGE,
+  CONSULTATION_REPLY_RELOAD_TIMEOUT_MS,
   PREVIOUS_REQUEST_ACTION_LOG_STATUS,
   previousRequestActionStateOf,
+  settleWithin,
   type PreviousRequestActionRead,
 } from '@homegohan/shared';
 
@@ -48,16 +51,17 @@ export const AI_CHAT_INTERRUPTED_RELOAD_FAILED_MESSAGE =
   '応答を最後まで受け取れませんでした。返答はサーバーで続いていることがあります。少し待ってから相談を開き直し、返答が無ければもう一度送ってください。';
 
 /**
- * 応答を受け取れなかったときの文 (サーバーが失敗を知らせた・受け付けられなかった。返答は来ないので、頼み直してもらう。以前からの文)
+ * 応答を受け取れなかったときの文 (サーバーが失敗を知らせた・受け付けられなかった。返答は来ないので、頼み直してもらう。以前からの文。
+ * #2227 H1 でモバイルと共有にした: packages/shared の CONSULTATION_REPLY_FAILED_MESSAGE)
  */
-export const AI_CHAT_REPLY_FAILED_MESSAGE = '応答に失敗しました。再試行してください。';
+export const AI_CHAT_REPLY_FAILED_MESSAGE = CONSULTATION_REPLY_FAILED_MESSAGE;
 
 /**
- * 会話の取り直し (GET) を待つ上限 (ミリ秒。#2206 G2)。以前は上限が無く、GET が返らないと送信中のまま入力が止まった。
- * 会話の GET はメッセージと提案の記録を読むだけなので、ふだんは 1 秒もかからない。送信の待ち (AI_CHAT_SEND_TIMEOUT_MS) より短く、
- * 通信が遅い端末でも返る長さにする
+ * 会話の取り直し (GET) と、そのあとの提案の記録の直読み (readReplyActionStateOf) を待つ上限 (ミリ秒。#2206 G2・#2227 H1)。
+ * 以前は上限が無く、GET が返らないと送信中のまま入力が止まった。値と根拠は packages/shared の CONSULTATION_REPLY_RELOAD_TIMEOUT_MS
+ * (#2227 H1 でモバイルと共有にした)
  */
-export const AI_CHAT_RELOAD_TIMEOUT_MS = 10_000;
+export const AI_CHAT_RELOAD_TIMEOUT_MS = CONSULTATION_REPLY_RELOAD_TIMEOUT_MS;
 
 /** 取り直したら、送った文は届いていたが、返答がまだ無かったとき (頼み直すと二重に届くので、開き直してもらう) */
 export const AI_CHAT_DELIVERED_NO_REPLY_MESSAGE =
@@ -109,9 +113,16 @@ const isReplyActionLogRow = (row: unknown): row is ReplyActionLogRow => typeof r
 /**
  * 返答 (messageId) に付いた提案の記録 (ai_action_logs) の状態を読む。
  * 読むのは自分の相談の行だけ (行の安全は RLS の「自分の相談の行」の決まりが守る。モバイルの AIAdvisorSheet と同じ読み方)。
- * 読めなければ none と readFailed (実行したと言い切れない。画面は共有の previousRequestNotePlanOf に渡し、1 回だけ読み直す)
+ * 読めなければ none と readFailed (実行したと言い切れない。画面は共有の previousRequestNotePlanOf に渡し、1 回だけ読み直す)。
+ * AI_CHAT_RELOAD_TIMEOUT_MS までに読めなければ、読めなかったときと同じにする (#2227 H1。以前は上限が無く、読み取りが返らないと
+ * 取り直しが終わらず、送信中のまま入力が止まった。会話の GET には上限があった)
  */
-export async function readReplyActionStateOf(messageId: string): Promise<ReplyActionState> {
+export function readReplyActionStateOf(messageId: string): Promise<ReplyActionState> {
+  return settleWithin(readReplyActionStateWithoutLimitOf(messageId), AI_CHAT_RELOAD_TIMEOUT_MS, UNREADABLE_REPLY_ACTION_STATE);
+}
+
+/** readReplyActionStateOf の読み取りの本体 (待ちの上限は付けない) */
+async function readReplyActionStateWithoutLimitOf(messageId: string): Promise<ReplyActionState> {
   try {
     const { data, error } = await createClient()
       .from('ai_action_logs')

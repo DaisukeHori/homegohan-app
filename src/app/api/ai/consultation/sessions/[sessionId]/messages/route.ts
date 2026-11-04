@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { getFastLLMClient, getFastLLMModel } from '@/lib/ai/fast-llm';
 import { NextResponse } from 'next/server';
+import { waitUntil } from '@vercel/functions';
 import OpenAI from 'openai';
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
@@ -142,6 +143,30 @@ function proposedActionFieldsOf(
 }
 
 const MESSAGES_POST_ROUTE_NAME = 'POST /api/ai/consultation/sessions/[sessionId]/messages';
+
+/**
+ * 送信の応答の流れ (SSE) の処理 (AI の返答の受け取り・保存・提案の自動実行・相談の更新) が終わるまで、Vercel の関数を止めさせない
+ * (#2227 H1)。戻り値の関数を呼ぶと止めてよくなる (流れの finally で必ず呼ぶ)。
+ *
+ * 画面が時間切れで切断しても、返答の保存と自動実行は続ける (#2206 G2)。ただし Vercel の文書は、切断のあとの処理は保証せず、
+ * 必ず終えたい処理 (DB への書き込みなど) は waitUntil か after に載せるよう求める
+ * (https://vercel.com/docs/functions/functions-api-reference の Cancel requests: "In a serverless environment, the execution
+ * context can be reclaimed at any time after cancellation. If you have work that must complete ... wrap it in waitUntil or after")。
+ * 載せないと、切断のあとに保存と実行が途中で切れ、開き直したとき返答が無い・提案の記録が実行中の印のまま残りうる。
+ * Vercel の外 (ローカル・テスト) では waitUntil は何もしない (@vercel/functions の getContext が空を返す。src/lib/db-logger.ts と同じ)
+ */
+function keepFunctionAliveUntilStreamSettles(): () => void {
+  let settle: () => void = () => {};
+  const settled = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  try {
+    waitUntil(settled);
+  } catch {
+    // waitUntil が使えない環境でも、返答の保存と自動実行そのものは続ける
+  }
+  return settle;
+}
 
 async function executeAndFinalizeAction(
   supabase: any,
@@ -1280,6 +1305,8 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
 
       const stream = new ReadableStream({
         async start(controller) {
+          // 返答の保存と自動実行が終わるまで関数を止めさせない (#2227 H1)。finally で止めてよくする
+          const streamSettled = keepFunctionAliveUntilStreamSettles();
           let aiContent = '';
           // AI の返答を保存できたか (保存したあとの例外では、失敗の行を足さない。#2206 G2)。catch で見るので try の外で持つ
           let aiReplySaved = false;
@@ -1294,8 +1321,20 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
            */
           const sendEvent = (payload: unknown): void => {
             if (clientGone) return;
+            // 送る文にできない (BigInt・循環参照など) のは送出の失敗ではないので、切断として扱わずにログに残す (#2227 H1。以前は
+            // 文にする例外も送出の失敗と同じに捨て、原因がどこにも残らなかった)。その 1 件だけ送らない (画面は finalData が欠けたとき
+            // と同じく会話を取り直す)
+            let line: string;
             try {
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+              line = `data: ${JSON.stringify(payload)}\n\n`;
+            } catch (stringifyError) {
+              createLogger(MESSAGES_POST_ROUTE_NAME, generateRequestId())
+                .withUser(user.id)
+                .error('相談の応答の SSE を文にできませんでした', toLoggableError(stringifyError), { session_id: params.sessionId });
+              return;
+            }
+            try {
+              controller.enqueue(encoder.encode(line));
             } catch {
               clientGone = true;
             }
@@ -1498,6 +1537,7 @@ export async function POST(request: Request, props: { params: Promise<{ sessionI
             } catch {
               /* 流れはもう閉じている */
             }
+            streamSettled();
           }
         },
       });

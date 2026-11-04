@@ -1,4 +1,6 @@
 import {
+  CONSULTATION_REPLY_FAILED_MESSAGE,
+  CONSULTATION_REPLY_RELOAD_TIMEOUT_MS,
   PREVIOUS_REQUEST_ACTION_LOG_STATUS,
   PREVIOUS_REQUEST_EXECUTED_MESSAGE,
   PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE,
@@ -11,13 +13,20 @@ import {
   previousRequestNoteTextOf,
   previousRequestRecheckPlanOf,
   replyHasProposalOf,
+  replyProposalExecutableOf,
   replyToSentMessageOf,
+  resolveUnconfirmedSends,
+  sentMessageIndexOf,
   sentMessageReloadOutcomeOf,
+  settleWithin,
+  clearInputIfDelivered as sharedClearInputIfDelivered,
+  restoreInputAfterUndelivered,
   type PreviousRequestActionRead,
   type PreviousRequestActionState,
   type PreviousRequestNoteState,
   type ReloadedMessage,
   type SentText,
+  type UnconfirmedSend,
 } from "@homegohan/shared";
 
 /**
@@ -69,6 +78,26 @@ export const TIMEOUT_DELIVERED_NO_REPLY_MESSAGE =
   "相談はサーバーに届いています。返答を作っているところかもしれません。少し待ってから、もう一度「最新の会話を読み込む」を押してください。";
 /** 取り直したら、送った文が届いていなかったとき */
 export const TIMEOUT_NOT_DELIVERED_MESSAGE = "相談はサーバーに届いていませんでした。入力欄の文を、もう一度送ってください。";
+/**
+ * 応答を受ける前に時間切れ・通信の切断で終わり、取り直した会話に送った文が無かったとき (#2227 H1。Web の
+ * AI_CHAT_DELIVERY_UNCONFIRMED_MESSAGE と同じ考え)。サーバーは送った文を AI に問い合わせる前に保存するが、同意・上限の確かめが
+ * 遅いと保存が取り直しより後になりうるので、『届いていません』とは言い切らない。入力欄に戻した文は残す
+ */
+export const TIMEOUT_DELIVERY_UNCONFIRMED_MESSAGE =
+  "相談がサーバーに届いたかを確かめられませんでした。少し待ってから相談を開き直し、送った文が無ければ、入力欄の文をもう一度送ってください。";
+/** TIMEOUT_DELIVERY_UNCONFIRMED_MESSAGE の Alert の見出し (『送信できませんでした』と言い切らない) */
+export const TIMEOUT_DELIVERY_UNCONFIRMED_TITLE = "送信を確かめられませんでした";
+/**
+ * サーバーが失敗を知らせた (SSE で error だけの行が来た) のに、取り直しても返答が無かったとき (#2227 H1。返答は来ないので、
+ * 頼み直してもらう。Web の AI_CHAT_REPLY_FAILED_MESSAGE と同じ文)
+ */
+export const REPLY_FAILED_MESSAGE = CONSULTATION_REPLY_FAILED_MESSAGE;
+/**
+ * 応答を受け取れなかったあとの会話の取り直し (GET) と、提案の記録の直読みを待つ上限 (ミリ秒。#2227 H1。Web と共有の値)。
+ * 取り直しは送信中 (入力欄が止まっている間) に待つ。/api/ai/ の下の GET の既定 (src/lib/api.ts の SLOW_API_TIMEOUT_MS = 120 秒)
+ * のままだと、GET が詰まると最大 120 秒『送信中』で入力欄が止まった
+ */
+export const AI_CHAT_RELOAD_TIMEOUT_MS = CONSULTATION_REPLY_RELOAD_TIMEOUT_MS;
 
 /** 時間切れになった送信。取り直しで、送った文がサーバーに届いていたかを見分けるために持つ */
 export type TimedOutSend = {
@@ -82,6 +111,13 @@ export type TimedOutSend = {
   delivered: boolean;
   /** 時間切れでなく、応答が途中で切れた (finalData が無い・受け付けたあとの例外。#2206 G2)。案内の文を切り替える */
   interrupted?: boolean;
+  /**
+   * 応答を受ける前に終わった (時間切れ・通信の切断。#2227 H1。Web の userSaveMayBeLate)。サーバーが送った文を保存するのが
+   * 取り直しより後になりうるので、送った文が見つからなくても『届いていません』と言い切らない
+   */
+  userSaveMayBeLate?: boolean;
+  /** サーバーが失敗を知らせた (SSE で error だけの行が来た。#2227 H1)。返答は来ないので、取り直しで返答が無ければ失敗の文を出す */
+  serverFailed?: boolean;
 };
 
 /** 「最新の会話を読み込む」の上に出す案内 (届いていた → 返答がまだ無い / 途中で切れた / 時間切れ) */
@@ -135,12 +171,17 @@ export {
   previousRequestNoteTextOf,
   previousRequestRecheckPlanOf,
   replyHasProposalOf,
+  replyProposalExecutableOf,
   replyToSentMessageOf,
+  resolveUnconfirmedSends,
+  sentMessageIndexOf,
+  settleWithin,
   type PreviousRequestActionRead,
   type PreviousRequestActionState,
   type PreviousRequestNoteState,
   type ReloadedMessage,
   type SentText,
+  type UnconfirmedSend,
 };
 
 /** 提案の記録の行 (status を持つもの) に、実行できた行があるか。配列でない・status が無い行は数えない */
@@ -148,12 +189,18 @@ export function hasExecutedActionLog(rows: unknown): boolean {
   return previousRequestActionStateOf(rows) === "executed";
 }
 
-/** 時間切れになったときの入力欄。空なら送った文を戻す。別の文が入っていれば (待っている間に書いた文)、それを残す */
+/**
+ * 時間切れになったときの入力欄。空なら送った文を戻す。別の文が入っていれば (待っている間に書いた文)、それを残す
+ * (#2227 H1 から Web と共有の restoreInputAfterUndelivered を読み直すだけ)
+ */
 export function restoreInputAfterTimeout(currentInput: string, sentText: string): string {
-  return currentInput.trim() ? currentInput : sentText;
+  return restoreInputAfterUndelivered(currentInput, sentText);
 }
 
-/** 届いていたと分かったときの入力欄。戻した文のまま (書き換えていない) なら消す (二重に送らないため)。書き換えていれば残す */
+/**
+ * 届いていたと分かったときの入力欄。戻した文のまま (書き換えていない) なら消す (二重に送らないため)。書き換えていれば残す
+ * (#2227 H1 から Web と共有の clearInputIfDelivered を読み直すだけ)
+ */
 export function clearInputIfDelivered(currentInput: string, sentText: string): string {
-  return currentInput.trim() === sentText ? "" : currentInput;
+  return sharedClearInputIfDelivered(currentInput, sentText);
 }

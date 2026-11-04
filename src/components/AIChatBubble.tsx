@@ -97,19 +97,24 @@ import { CONSULTATION_ACTION_LABELS, type ConsultationActionType } from "@homego
 // 送信の応答 (finalData) を受け取れなかったあとに会話を取り直して、前の依頼の結果を出す (#2201 U3。モバイルの #2195 V3 と共有の決まり)
 import {
   PREVIOUS_REQUEST_RECHECK_DELAY_MS,
+  clearInputIfDelivered,
   messagesAfterPreviousRequestRecheck,
   previousRequestNoteIdOf,
   previousRequestNotePlanOf,
   previousRequestNoteTextOf,
   previousRequestRecheckPlanOf,
   replyHasProposalOf,
+  replyProposalExecutableOf,
   replyToSentMessageOf,
   replyToUserMessageIdOf,
+  resolveUnconfirmedSends,
+  restoreInputAfterUndelivered,
   sentMessageIndexOf,
   sentMessageReloadOutcomeOf,
   type PreviousRequestActionState,
   type PreviousRequestNoteState,
   type SentText,
+  type UnconfirmedSend,
 } from "@homegohan/shared";
 import {
   AI_CHAT_DELIVERED_NO_REPLY_MESSAGE,
@@ -262,7 +267,9 @@ const UNCONFIRMED_CARD_FIELDS: Pick<Message, 'proposedActionExecutable' | 'propo
  *     食い違う)
  *   - 実行中の印 (running。行がまだ無い・読めないのに提案があるときも含む): GET の理由によらず『確かめられませんでした』のカード
  *     (#2206 G2。GET を読んだときは行が無く『もう一度 AI に頼んでください』でも、頼み直しを勧めない)
- *   - 実行を待つ・失敗した (notExecuted): 記録の行から GET と同じ決まりで作る (GET を読んだ後に行が変わっていても合わせる)
+ *   - 実行を待つ・失敗した (notExecuted): 記録の行から GET と同じ決まりで作る (GET を読んだ後に行が変わっていても合わせる)。
+ *     記録の行を読めなかった (statuses が空。記録の直読みだけが失敗し、GET が実行を待つとしたとき。#2227 H1) は GET を写す
+ *     (以前は実行中の印として扱い、「実行する」が隠れた)
  *   - それ以外: GET が返した「実行する」を出すか・出さない理由を写す
  */
 function proposedActionFieldsOfLoaded(
@@ -272,7 +279,9 @@ function proposedActionFieldsOfLoaded(
 ): Pick<Message, 'proposedActions' | 'proposedActionExecutable' | 'proposedActionNotExecutableReason'> {
   if (!reply.proposedActions || state === 'executed') return { proposedActions: null };
   if (state === 'running') return { proposedActions: reply.proposedActions, ...UNCONFIRMED_CARD_FIELDS };
-  if (state === 'notExecuted') return { proposedActions: reply.proposedActions, ...proposedActionCardFieldsOfStatuses(statuses) };
+  if (state === 'notExecuted' && statuses.length > 0) {
+    return { proposedActions: reply.proposedActions, ...proposedActionCardFieldsOfStatuses(statuses) };
+  }
   const reason = reply.proposedActionNotExecutableReason;
   return {
     proposedActions: reply.proposedActions,
@@ -529,6 +538,54 @@ export default function AIChatBubble() {
   useEffect(() => {
     currentSessionIdRef.current = currentSessionId;
   }, [currentSessionId]);
+  // 届いたかを確かめられなかった送信 (取り直せなかった・送った文が見つからなかった) と、送信に当てた送った文の保存行の id (#2227 H1)。
+  // 後の取り直しで前の送信の保存行が見つかったら、入力欄に戻した文を消し (届いていたのにそのまま送ると二重に届く)、今回の送信の
+  // 保存行を探すときはそれを除く (同じ文を続けて送ったときに、前の送信の保存行を今回の送信と取り違えない)。決まりは共有の
+  // resolveUnconfirmedSends (モバイルの AIAdvisorSheet と同じ)
+  const unconfirmedSendsRef = useRef<UnconfirmedSend[]>([]);
+  const claimedSavedUserIdsRef = useRef<string[]>([]);
+
+  /** 送った文の保存行 (id) をその送信に当てた印を付ける (確かめられなかった前の送信がこの行を自分のものとして当てないように) */
+  const claimSavedUserMessageId = useCallback((id: unknown) => {
+    if (typeof id !== 'string' || claimedSavedUserIdsRef.current.includes(id)) return;
+    claimedSavedUserIdsRef.current = [...claimedSavedUserIdsRef.current, id];
+  }, []);
+
+  /**
+   * 取り直した相談 (sessionId) の会話 (loaded) で、確かめられなかった前の送信の保存行を探す (#2227 H1)。
+   * 見つかった送信は、入力欄が戻した文のままなら消す (モバイルの clearInputIfDelivered と同じ決まり。今の相談のときだけ)。
+   * 相談を開き直したとき (forgetRemaining) は、見つからなかった送信を忘れる (開き直した会話は以後の送信の「送る前に出ていた行」に
+   * 入るので、見つからない送信は届いていない)。
+   * current は今回の送信 (取り直しの途中のもの。無ければ null)、currentAccepted は今回の送信をサーバーが受け付けたか。
+   * 戻り値は送信に当てた保存行の id (今回の送信を探すときに knownMessageIds に足して除く)
+   */
+  const settleUnconfirmedSends = useCallback(
+    (params: {
+      sessionId: string;
+      loaded: readonly LoadedMessage[];
+      current: SentText | null;
+      currentAccepted: boolean;
+      forgetRemaining: boolean;
+    }): string[] => {
+      const resolution = resolveUnconfirmedSends({
+        sessionId: params.sessionId,
+        loaded: params.loaded,
+        unconfirmed: unconfirmedSendsRef.current,
+        previousClaimedIds: claimedSavedUserIdsRef.current,
+        current: params.current,
+        currentAccepted: params.currentAccepted,
+      });
+      unconfirmedSendsRef.current = params.forgetRemaining
+        ? resolution.remaining.filter(send => send.sessionId !== params.sessionId)
+        : resolution.remaining;
+      claimedSavedUserIdsRef.current = resolution.claimedIds;
+      if (currentSessionIdRef.current === params.sessionId) {
+        for (const send of resolution.resolved) setInputText(current => clearInputIfDelivered(current, send.text));
+      }
+      return resolution.claimedIds;
+    },
+    [],
+  );
 
   // クライアントサイドでのみレンダリング
   useEffect(() => {
@@ -633,13 +690,16 @@ export default function AIChatBubble() {
           ...m,
           isImportant: m.isImportant || false,
         })));
+        // 確かめられなかった前の送信が届いていたら、入力欄に戻した文を消す (#2227 H1)
+        const loaded = loadedMessagesOf(data);
+        if (loaded) settleUnconfirmedSends({ sessionId, loaded, current: null, currentAccepted: false, forgetRemaining: true });
       }
     } catch (e) {
       console.error('Failed to fetch messages:', e);
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [settleUnconfirmedSends]);
 
   // チャットを開く
   // Bug-6: 隣接 UI からの誤クリックでチャットが意図せず開くのを防ぐため、
@@ -766,13 +826,16 @@ export default function AIChatBubble() {
    *     記録を読めずに一文を出さなかったとき)、返答の提案のカードを外し (開き直したときの GET と同じ)、データの更新を知らせる
    *   - 実行を待つ・失敗した行になっていれば: 実行中の一文を『前の依頼は実行できませんでした』に置き換え、カードを今の行に合わせる
    *     (#2206 G2。以前は『実行中か実行済み』のまま残った)。実行中の一文が無ければ何もしない
+   *   - 読めたのに行がまだ無く、返答に提案がある (replyHasProposal) ときも実行を待つ・失敗と同じ (サーバーは行を作れなかったら
+   *     実行しない。#2227 H1。カードは GET と同じ『もう一度 AI に頼んでください』になる)
    *   - まだ実行中の印のまま・行が無い・読めないときは何もしない (一文とカードはそのまま。頼み直しを勧めない)
    * 別の相談に切り替えていても知らせる (データは変わっている)。一文とカードは今の会話に無ければ触らない
    */
-  const recheckPreviousRequestLater = (replyId: string) =>
+  const recheckPreviousRequestLater = (replyId: string, replyHasProposal: boolean) =>
     scheduleRecheck(async () => {
-      const { state, actionType, result, statuses } = await readReplyActionStateOf(replyId);
-      const plan = previousRequestRecheckPlanOf(state);
+      const actionState = await readReplyActionStateOf(replyId);
+      const { actionType, result, statuses } = actionState;
+      const plan = previousRequestRecheckPlanOf(actionState, replyHasProposal);
       setMessages(prev =>
         messagesAfterPreviousRequestRecheck(prev, {
           replyId,
@@ -807,10 +870,12 @@ export default function AIChatBubble() {
   }) => {
     const { reply, placeholderId, savedUser } = params;
     const actionState = await readReplyActionStateOf(reply.id);
+    const replyHasProposal = replyHasProposalOf(reply);
     const plan = previousRequestNotePlanOf({
       actionState: actionState.state,
       readFailed: actionState.readFailed,
-      replyHasProposal: replyHasProposalOf(reply),
+      replyHasProposal,
+      replyProposalExecutable: replyProposalExecutableOf(reply),
     });
     const notes = plan.noteState ? [previousRequestNoteOf(plan.noteState, reply.id)] : [];
     setMessages(prev => prev.flatMap(m => {
@@ -836,7 +901,7 @@ export default function AIChatBubble() {
       // finalData を受け取れた経路 (showAutoActionOutcome) と同じ detail (献立の生成なら、取り直す側が生成の完了まで見張る)
       window.dispatchEvent(new CustomEvent('mealPlanUpdated', { detail: { actionType: actionState.actionType, result: actionState.result } }));
     }
-    if (plan.recheck) recheckPreviousRequestLater(reply.id);
+    if (plan.recheck) recheckPreviousRequestLater(reply.id, replyHasProposal);
   };
 
   /**
@@ -853,6 +918,8 @@ export default function AIChatBubble() {
     scheduleRecheck(async () => {
       const loaded = await reloadConversationAfterIncompleteReply(params.sessionId);
       if (!loaded) return;
+      // 確かめられなかった前の送信が届いていたら、入力欄に戻した文を消す (#2227 H1)
+      settleUnconfirmedSends({ sessionId: params.sessionId, loaded, current: null, currentAccepted: false, forgetRemaining: false });
       const reply = replyToUserMessageIdOf(params.savedUserMessageId, loaded);
       if (!reply) return;
       await placeReloadedReply({ reply, placeholderId: params.placeholderId });
@@ -871,7 +938,10 @@ export default function AIChatBubble() {
    *   - 流れてきた本文の断片は残さない (#2206 G2。以前は時間切れでないときに断片を完全な返答のように残していた (#126 の決め)。
    *     断片だけでは切れたことが分からず、サーバーでは返答と自動実行が済んでいることがある)
    *   - 返答がある: 楽観的に出した 2 件を、保存された送った文と返答に置き換え、前の依頼の一文を足す (placeReloadedReply)
-   * 送った文を入力欄に戻すのは、取り直しの最中に相談を切り替えていないときだけ (#2206 G2。別の相談の入力欄に戻さない)
+   * 送った文を入力欄に戻すのは、取り直しの最中に相談を切り替えていないときだけ (#2206 G2。別の相談の入力欄に戻さない)。
+   * 取り直せない・届いていない・確かめられないときは、送信を「確かめられなかった送信」として覚え、後の取り直しで保存行が
+   * 見つかったら入力欄に戻した文を消す (#2227 H1。settleUnconfirmedSends)。送った文の保存行は、確かめられなかった前の送信に
+   * 当てた行を除いて探す (同じ文を続けて送ったときに、前の送信の保存行を今回の送信と取り違えない。#2227 H1)
    */
   const resolveIncompleteReply = async (params: {
     sessionId: string;
@@ -890,6 +960,7 @@ export default function AIChatBubble() {
     const { sessionId, sentText, knownMessageIds, tempUserMsgId, tempAiMsgId, timedOut, serverFailed, userSaveMayBeLate, restoreInput } =
       params;
     const restoreInputIfSameSession = () => {
+      unconfirmedSendsRef.current = [...unconfirmedSendsRef.current, { sessionId, text: sentText, knownMessageIds }];
       if (currentSessionIdRef.current === sessionId) restoreInput();
     };
     const setTempAiContent = (content: string) =>
@@ -909,7 +980,15 @@ export default function AIChatBubble() {
       return;
     }
 
-    const sent: SentText = { text: sentText, knownMessageIds };
+    // 確かめられなかった前の送信の保存行を先に当て、今回の送信を探すときはそれを除く (#2227 H1)
+    const claimedIds = settleUnconfirmedSends({
+      sessionId,
+      loaded,
+      current: { text: sentText, knownMessageIds },
+      currentAccepted: !userSaveMayBeLate,
+      forgetRemaining: false,
+    });
+    const sent: SentText = { text: sentText, knownMessageIds: [...knownMessageIds, ...claimedIds] };
     const outcome = sentMessageReloadOutcomeOf(sent, loaded);
     if (outcome === 'not-delivered') {
       setTempAiContent(userSaveMayBeLate ? AI_CHAT_DELIVERY_UNCONFIRMED_MESSAGE : AI_CHAT_NOT_DELIVERED_MESSAGE);
@@ -917,6 +996,7 @@ export default function AIChatBubble() {
       return;
     }
     const savedUser = loaded[sentMessageIndexOf(sent, loaded)];
+    claimSavedUserMessageId(savedUser.id);
     const reply = replyToSentMessageOf(sent, loaded);
     if (!reply) {
       setMessages(prev => prev.map(m => {
@@ -1013,7 +1093,7 @@ export default function AIChatBubble() {
         serverFailed,
         // 応答を受ける前に終わった (時間切れ・通信の切断) ときは、送った文の保存が取り直しより後になりうる (#2206 G2)
         userSaveMayBeLate: !responseAccepted,
-        restoreInput: () => setInputText(current => (current.trim() ? current : userMessage)),
+        restoreInput: () => setInputText(current => restoreInputAfterUndelivered(current, userMessage)),
       });
 
     try {
@@ -1111,8 +1191,14 @@ export default function AIChatBubble() {
 
       // ストリーム完了後：メッセージを最終状態に更新
       if (finalData) {
-        // #126: コンテキスト切替後に空応答になるケースをフォールバック表示
-        const resolvedContent = accumulatedContent || finalData.aiMessage.content || '';
+        claimSavedUserMessageId(finalData.userMessage.id);
+        // #126: コンテキスト切替後に空応答になるケースをフォールバック表示。
+        // サーバーが失敗を知らせた finalData (error つき。本文を途中まで流したあとの失敗など) は、流れてきた本文の断片ではなく
+        // サーバーが保存した失敗の文を出す (#2227 H1。以前は断片を完全な返答のように出し、失敗だと分からなかった。開き直すと
+        // 失敗の文に変わった。モバイルは以前から finalData の本文を出す)
+        const resolvedContent = finalData.error
+          ? finalData.aiMessage.content || AI_CHAT_REPLY_FAILED_MESSAGE
+          : accumulatedContent || finalData.aiMessage.content || '';
         const displayContent = resolvedContent.trim()
           ? resolvedContent
           : '応答の取得中にコンテキストが切り替わりました。もう一度お試しください。';
