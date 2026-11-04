@@ -803,11 +803,12 @@ describe('受け手の配線 (#2195 V1)', () => {
     },
     {
       // 受け手は useHomeData (#2206 G1 段 D。home/page.tsx は hook を呼ばない)。取り直し (refetchHome) は同じ取り直しの読み取りで
-      // 分析を AI を付けずに読み始め、ページの読み取り (fetchHomeData) は全画面の読み込み中の鍵を立てて主のデータを読む
+      // 分析を AI を付けずに読み始め、ページの読み取り (fetchHomeData) は全画面の読み込み中の鍵を立てて主のデータを読む。
+      // 分析はその読み取りの今日 (readHomeData が始めに 1 回読んだ JST の今日) で読む (#2245 K2)
       page: 'ホーム (/home): useHomeData の refetchHome と fetchHomeData',
       file: 'src/hooks/useHomeData.ts',
       wiring:
-        /const refetchHome = \(read: AiConsultationRead\) =>\s*readHomeData\(read, \(refetchRead, userId\) => \{\s*void fetchNutritionAnalysis\(refetchRead, \{ analysisWithoutAi: true \}\);\s*void fetchPerformanceAnalysis\(userId, refetchRead\);\s*\}\);[\s\S]*?const receiver = useAiConsultationReceiver\(refetchHome, \{ initialLoadingKeys: \[KEY_HOME_LOADING\] \}\);[\s\S]*?const fetchHomeData = \(\) =>\s*receiver\.read\(\{ loadingKeys: \[KEY_HOME_LOADING\] \}, \(read\) =>\s*readHomeData\(read,/,
+        /const refetchHome = \(read: AiConsultationRead\) =>\s*readHomeData\(read, \(refetchRead, userId, today\) => \{\s*void fetchNutritionAnalysis\(refetchRead, \{ analysisWithoutAi: true \}\);\s*void fetchPerformanceAnalysis\(userId, refetchRead, today\);\s*\}\);[\s\S]*?const receiver = useAiConsultationReceiver\(refetchHome, \{ initialLoadingKeys: \[KEY_HOME_LOADING\] \}\);[\s\S]*?const fetchHomeData = \(\) =>\s*receiver\.read\(\{ loadingKeys: \[KEY_HOME_LOADING\] \}, \(read\) =>\s*readHomeData\(read,/,
     },
     {
       page: '献立表 (/menus/weekly): 週のキャッシュ (捨てる前に読み始めた応答も書かない discard。#2201 U1) と取得済みの月を捨て、生成中の依頼を確かめ、表示中の週・冷蔵庫・人数の設定・家族の一覧と名前・月のカレンダーの印を同じ取り直しの読み取りで読む (#2206 G1)',
