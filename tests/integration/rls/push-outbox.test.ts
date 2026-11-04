@@ -20,8 +20,8 @@
  * 段 B (worker) の部品: createOutboxStore().loadEligibility (src/lib/push/outbox-store.ts) が、送る条件の材料
  * (user_profiles と notification_preferences) を実 DB から読み、notification_preferences の行が無い利用者に既定を入れる。
  *
- * claim_push_outbox / claim_push_receipts は表の全体から古い順に取るので、このテストの行は next_attempt_at / sent_at を
- * 2000 年にして先頭に来るようにし、取る件数を自分の行の数にする。行は利用者の削除 (CASCADE) で片付ける。
+ * claim_push_outbox / claim_push_receipts は表の全体から古い順に取るので、このテストの行は next_attempt_at / sent_at を 2000 年にして
+ * 先頭に来るようにする。戻りの並びは古い順を約束しないので比べない (古い順は上限 1 で確かめる。#2227 H5)。行は利用者の削除 (CASCADE) で片付ける。
  *
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
  *   npx vitest run --config vitest.integration.config.ts tests/integration/rls/push-outbox.test.ts
