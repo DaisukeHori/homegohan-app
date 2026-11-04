@@ -6643,7 +6643,8 @@ export default function WeeklyMenuPage() {
                 onChangeTab={setWeeklySummaryTab}
                 onOpenNutritionDetail={() => {
                   setActiveModal(null);
-                  const todayIdx = weekDates.findIndex(d => d.dateStr === formatLocalDate(new Date()));
+                  // 見出しに出した今日 (todayStr) の詳細を開く (#2235 I3。時計を読み直すと、開いたまま 0 時をまたいだときに見出しと別の日になる)
+                  const todayIdx = weekDates.findIndex(d => d.dateStr === todayStr);
                   if (todayIdx >= 0) {
                     setSelectedDayIndex(todayIdx);
                   }

@@ -64,7 +64,7 @@
  * (src/app/(main)/menus/weekly/_components/modals/StatsModal.tsx) はこれで、日付を JST の今日 (formatLocalDate(today)) で、曜日を
  * 端末の暦 (today.getDay()) で読んでいたので、America/Los_Angeles で JST の 2026-11-05 (木) 10:00 に開くと「11月5日（水）の栄養」、
  * Pacific/Kiritimati で JST の 20:00 に開くと「11月5日（金）の栄養」になった (今は親 (menus/weekly/page.tsx) が 1 回だけ読んだ
- * JST の今日 (todayStr) を受け取り、日付と曜日をその暦日から読む。親はその同じ todayStr で今日の栄養を引く。
+ * JST の今日 (todayStr) を受け取り、日付と曜日をその暦日から読む。親はその同じ todayStr で今日の栄養を引き、栄養の詳細を開く日を決める。
  * tests/calendar-date-display-jst-2235.test.tsx が描いて確かめる)。
  * 製品コードで、今の時刻を入れた変数 (`const x = new Date()`・行の頭の `x = new Date()`) を端末の暦の getter で読む箇所と、
  * `new Date().getFullYear()` のように直接読む箇所を、下の NOW_DEVICE_CALENDAR_SITES に「ファイル → 読む変数 → 判定」で載せる (表が正本)。
