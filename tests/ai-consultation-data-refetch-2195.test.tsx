@@ -1626,10 +1626,10 @@ describe('受け手の配線 (#2195 V1)', () => {
     {
       page: '健康 (/health): fetchData と、出している選んだ日のパネルの記録',
       file: 'src/app/(main)/health/page.tsx',
-      hookImport: HOOK_IMPORT,
-      // 取り直しの読み方は refetchReadMode (開いたときの読み込み中に始まった取り直しは 'mount'。#2201 U1)。
-      // 選んだ日のパネルの読み直しは、日を選んだときの読み取りと同じ取得の流れ (selectedDateFetchStream) で置く (#2201 U1)
-      wiring: /await Promise\.all\(\[fetchData\(ticket, refetchReadMode\(\)\), reloadSelectedDate\(\)\]\);\s*\}, \[fetchData, refetchReadMode, selectedDateFetchStream\]\);[\s\S]*?useAiConsultationDataRefetch\(refetchAfterAiConsultation\);/,
+      hookImport: /from "@\/hooks\/useAiConsultationReceiver";/,
+      // 取り直しは開いたときに読むもの (fetchData) と、出している選んだ日のパネルの記録 (日を選んだときと同じ readSelectedDateRecord) を
+      // 同じ read で読む。開いたときの読み込みは画面全体の読み込み中の鍵を立てる (最初の描画からも立てる。#2206 G1 §9 #12)
+      wiring: /await Promise\.all\(\[fetchData\(read\), date === null \? undefined : readSelectedDateRecord\(read, date\)\]\);\s*\}, \[fetchData, readSelectedDateRecord\]\);[\s\S]*?const receiver = useAiConsultationReceiver\(refetchAfterAiConsultation, \{ initialLoadingKeys: HEALTH_PAGE_LOADING_KEYS \}\);[\s\S]*?void receiver\.read\(\{ loadingKeys: HEALTH_PAGE_LOADING_KEYS \}, fetchData\);/,
     },
   ];
 
@@ -1710,7 +1710,7 @@ describe('受け手のページのモーダルは role="dialog" を持つ (#2195
 
   it.each(RECEIVER_PAGES)('$file', ({ file, overlays }) => {
     const source = readRepoFile(file);
-    expect(source, '受け手のページではない').toMatch(/useAiConsultation(DataRefetch|RefetchKey)\(/);
+    expect(source, '受け手のページではない').toMatch(/useAiConsultation(DataRefetch|RefetchKey|Receiver)\(/);
     let checked = 0;
     for (let at = source.indexOf(OVERLAY); at !== -1; at = source.indexOf(OVERLAY, at + OVERLAY.length)) {
       const start = source.lastIndexOf(OPEN_PRESENCE, at);

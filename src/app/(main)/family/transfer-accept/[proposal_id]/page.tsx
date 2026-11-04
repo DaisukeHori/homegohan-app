@@ -8,11 +8,7 @@ import { createClient } from '@/lib/supabase/client';
 import { normalizeProfileName } from '@/lib/profile-name';
 import { transferProposalStatusMessage } from '@/lib/membership/transfer-proposal-status';
 import { readSignedInUser } from '@/lib/auth/signed-in-user';
-import {
-  useAiConsultationDataRefetch,
-  useAiConsultationLoading,
-  type AiConsultationFetchTicket,
-} from '@/hooks/useAiConsultationDataRefetch';
+import { useAiConsultationReceiver, type AiConsultationRead } from '@/hooks/useAiConsultationReceiver';
 
 /** 提案が無い (または RLS で見えない) ときの文 */
 const PROPOSAL_NOT_FOUND_MESSAGE = '譲渡提案が見つかりません';
@@ -49,8 +45,8 @@ interface TransferProposal {
   expires_at: string;
 }
 
-/** 開いたとき・「再試行」・承諾 / 拒否の通信エラーのあとの読み込み (失敗は「読み込めませんでした」) か、AI 相談の成功の取り直し (失敗では今の表示を残す) か */
-type ProposalReadMode = 'mount' | 'refetch';
+/** 読み込みの置き場所の鍵 (提案・提案者・家族名・自分の id・失敗の表示・ログインへの移動を 1 つの鍵で置く。#2206 G1 §9 #6) */
+const KEY_PROPOSAL = 'proposal';
 
 export default function FamilyTransferAcceptPage() {
   // パスの値は useParams で読む。props の params は Next 15 から Promise で、Next 14 では use(params) が例外になった (#1275)。
@@ -59,9 +55,6 @@ export default function FamilyTransferAcceptPage() {
   const router = useRouter();
   const supabase = createClient();
 
-  // 開いたとき・「再試行」の読み込み中の表示。開いたときの読み込み中に始まった AI 相談の成功の読み直しは、その読み込みの役
-  // (失敗の表示・読み込み中の表示を下ろす) を引き継ぐ (#2201 U1。useAiConsultationLoading)
-  const { loading, setLoading, refetchReadMode, settleLoading } = useAiConsultationLoading();
   const [proposal, setProposal] = useState<TransferProposal | null>(null);
   const [fromName, setFromName] = useState<string | null>(null);
   const [familyName, setFamilyName] = useState<string | null>(null);
@@ -75,23 +68,29 @@ export default function FamilyTransferAcceptPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<'accept' | 'decline' | null>(null);
   const [result, setResult] = useState<'accepted' | 'declined' | null>(null);
-  // AI 相談の成功の読み直し (#2195 V1) の応答を待っているか。待つあいだは承諾・拒否のボタンを止める
-  const [aiRefetching, setAiRefetching] = useState(false);
-  // 承諾・拒否の書き込みか、AI 相談の成功の読み直しの応答を待っているか (#2195 V1)。待つあいだは、ほかの書き込みと読み直しを始めない:
-  // 読み直しの応答があとから届いて、承諾・拒否の通信エラーのあとの読み直し (今の状態) を書き込む前の提案で上書きしないため。
-  // ref は再描画の前に続けて起きたとき (ボタンがまだ止まっていない) の守り
+  /**
+   * ログインの画面へ移っているか (#2206 G1 §6.8)。移る読み取りが読み込み中の表示を出していたときだけ立てる (移るまで読み込み中の表示のまま。
+   * 取り直し (読み込み中の表示を出していない) が移すときは、今の画面のまま移る)
+   */
+  const [redirecting, setRedirecting] = useState(false);
+  /**
+   * receiver.isLoading の写し。fetchProposal は receiver より先に宣言する (receiver の引数) ので ref で引く。
+   * place の apply の中で呼ぶと、その鍵を下ろす前の値を返す (hook は apply が戻ってから印を下ろす)
+   */
+  const isLoadingRef = useRef<(key: string) => boolean>(() => false);
+  // 承諾・拒否の書き込み (通信エラーのあとの読み直しまで) の応答を待っているか。待つあいだは、ほかの書き込みを始めない (二重押しの守り)。
+  // ref は再描画の前に続けて起きたとき (ボタンがまだ止まっていない) の守り。AI 相談の成功の取り直しとの重なりは、書き込みの窓
+  // (receiver.beginWrite) が受け持つ (窓の間は取り直さず、終わったら 1 回取り直す。読み直しの応答があとから届いて、承諾・拒否の
+  // 通信エラーのあとの読み直し (今の状態) を書き込む前の提案で上書きしない。#2206 G1)
   const busyRef = useRef(false);
 
   // 提案・提案者・家族名を読む。画面を開いたとき・「再試行」・承諾 / 拒否の通信エラーのあと・AI 相談の成功 (#2195 V1) のあとに呼ぶ。
-  // 読み込み中の表示 (loading) は呼び出し側が決める (承諾 / 拒否と AI 相談の成功のあとの読み直しは、提案の表示を残したまま読み直す)。
-  // 戻り値は、ログインの画面へ移ったか (移るときは、移るまで読み込み中の表示のままにする。これまでどおり)。
-  // mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込めなかったときは「読み込めませんでした」に置き換えずに今の表示を残す。
-  // 応答を置くのは最後に始めた取得 (ticket.isLatest()) だけ
-  const fetchProposal = useCallback(async (ticket: AiConsultationFetchTicket, mode: ProposalReadMode): Promise<{ redirecting: boolean }> => {
+  // 応答は全部を読んでから最後に 1 回だけ置く (自分の id も最後の apply の中。順序・番兵の判断は read.place の中。#2206 G1)。
+  // read.mode が 'refetch' (AI 相談の成功の取り直し。#2201 U1) なら、読み込めなかったときは何も置かずに今の表示を残す
+  const fetchProposal = useCallback(async (read: AiConsultationRead): Promise<void> => {
     /** 読み込めなかった: 開いたとき・「再試行」・承諾 / 拒否の通信エラーのあとは「読み込めませんでした」を出し、取り直しは今の表示を残す */
-    const loadFailed = (): { redirecting: boolean } => {
-      if (mode === 'mount' && ticket.isLatest()) setLoadError(PROPOSAL_LOAD_ERROR);
-      return { redirecting: false };
+    const loadFailed = () => {
+      if (read.mode === 'mount') read.place(KEY_PROPOSAL, () => setLoadError(PROPOSAL_LOAD_ERROR));
     };
     try {
       // getUser は通信の失敗を投げずに { user: null, error } で返す。ログインの画面へ移すのはログインしていないときだけにし、
@@ -101,12 +100,16 @@ export default function FamilyTransferAcceptPage() {
       const signedIn = await readSignedInUser(supabase);
       if (signedIn.kind === 'load-failed') return loadFailed();
       if (signedIn.kind === 'signed-out') {
-        router.push(`/login?next=/family/transfer-accept/${proposal_id}`);
-        return { redirecting: true };
+        // 移動も置く (古い応答では移らない。#2206 G1)
+        read.place(KEY_PROPOSAL, () => {
+          if (isLoadingRef.current(KEY_PROPOSAL)) setRedirecting(true);
+          router.push(`/login?next=/family/transfer-accept/${proposal_id}`);
+        });
+        return;
       }
       const { user } = signedIn;
-      // 応答を置くのは最後に始めた取得だけ (ログインの確かめの応答も。#2201 U1)
-      if (ticket.isLatest()) setCurrentUserId(user.id);
+      // 自分の id はここでは置かない (最後の apply でまとめて置く。途中で置くと、その時点で KEY_PROPOSAL の読み込み中の印が下り、
+      // 置いた世代も進む。#2206 G1 §6.2)
 
       const { data: proposalData, error: proposalError } = await supabase
         .from('ownership_transfer_proposals')
@@ -118,12 +121,14 @@ export default function FamilyTransferAcceptPage() {
         // 読み込めなかった (提案が無いのとは別。「譲渡提案が見つかりません」と見せない)
         return loadFailed();
       }
-      if (!ticket.isLatest()) return { redirecting: false };
       if (!proposalData) {
         // 行が無い (PGRST116) か、RLS で見えない
-        setNotFound(true);
-        setLoadError(null);
-        return { redirecting: false };
+        read.place(KEY_PROPOSAL, () => {
+          setCurrentUserId(user.id);
+          setNotFound(true);
+          setLoadError(null);
+        });
+        return;
       }
 
       // 提案者情報
@@ -150,52 +155,38 @@ export default function FamilyTransferAcceptPage() {
         nextFamilyName = group?.name ?? '家族グループ';
       }
 
-      if (!ticket.isLatest()) return { redirecting: false };
       // 3 つとも読めてから出す (一部だけ読めた状態で承諾・拒否を出さない)
-      setProposal(proposalData as TransferProposal);
-      setFromName(normalizeProfileName(fromProfile?.nickname) ?? '代表者');
-      setFamilyName(nextFamilyName);
-      setNotFound(false);
-      setLoadError(null);
-      return { redirecting: false };
+      read.place(KEY_PROPOSAL, () => {
+        setCurrentUserId(user.id);
+        setProposal(proposalData as TransferProposal);
+        setFromName(normalizeProfileName(fromProfile?.nickname) ?? '代表者');
+        setFamilyName(nextFamilyName);
+        setNotFound(false);
+        setLoadError(null);
+      });
     } catch (fetchError) {
       // 問い合わせが例外を投げた (以前は try / catch が無く、読み込み中の表示のまま止まり、未処理の reject になっていた)
       console.error('[family/transfer-accept] failed to fetch ownership transfer proposal:', fetchError);
-      return loadFailed();
+      loadFailed();
     }
   }, [supabase, router, proposal_id]);
 
   // AI 相談の提案の実行が成功したら (#2195 V1)、読み込み中の表示を出さずに提案を読み直す。提案者の名前は、申し出た本人が開いたときは
   // 自分のプロフィールの名前 (user_profiles.nickname) で、AI 相談の update_profile_preferences が書く。
   // ログアウトしていたときは、開いたときと同じ扱い (fetchProposal が決める)。読み直しの失敗では今の表示を残す (#2201 U1)。
-  // 承諾・拒否の応答を待つあいだは読み直さず、読み直しの応答を待つあいだは承諾・拒否を止める (busyRef)。
-  // 承諾・拒否の応答を待つあいだ・前の読み直しの応答を待つあいだに来た成功は捨てずに、終わったあとに 1 回読み直す
-  // (#2201 U2。useAiConsultationDataRefetch の writeInFlightRef)。
-  // 開いたとき・「再試行」の読み込み中に来た成功は、その読み込みの役を引き継ぐ: 失敗は「読み込めませんでした」を出し、
-  // 終わったら読み込み中の表示を下ろす (先に始めた読み込みは応答を置かず、読み込み中の表示も下ろさないため。#2201 U1)
-  const refetchAfterAiConsultation = async (ticket: AiConsultationFetchTicket) => {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    setAiRefetching(true);
-    try {
-      const { redirecting } = await fetchProposal(ticket, refetchReadMode());
-      if (!redirecting) settleLoading(ticket);
-    } finally {
-      busyRef.current = false;
-      setAiRefetching(false);
-      notifyWriteSettled();
-    }
-  };
-  const { beginFetch, notifyWriteSettled } = useAiConsultationDataRefetch(refetchAfterAiConsultation, {
-    writeInFlightRef: busyRef,
-  });
+  // 承諾・拒否の窓の間は取り直さず、終わったあとに 1 回取り直す。取り直しを始めたあとに承諾・拒否が始まったら、
+  // その取り直しの応答は置かずにもう 1 回取り直す (#2206 G1。窓は receiver.beginWrite)。
+  // 開いたとき・「再試行」の読み込み中に来た成功は、その読み込みの役を引き継がない (開いたときの読み込みが自分の応答を置き、
+  // 自分の読み込み中の表示を下ろす。#2206 G1)。最初の描画から読み込み中の表示を出す (initialLoadingKeys)
+  const receiver = useAiConsultationReceiver(fetchProposal, { initialLoadingKeys: [KEY_PROPOSAL] });
+  isLoadingRef.current = receiver.isLoading;
+  // ログインの画面へ移っている間も読み込み中の表示 (これまでどおり)
+  const loading = receiver.isLoading(KEY_PROPOSAL) || redirecting;
 
-  const loadPage = useCallback(async () => {
-    setLoading(true);
-    const ticket = beginFetch();
-    const { redirecting } = await fetchProposal(ticket, 'mount');
-    if (!redirecting) settleLoading(ticket);
-  }, [fetchProposal, beginFetch, setLoading, settleLoading]);
+  const loadPage = useCallback(
+    () => receiver.read({ loadingKeys: [KEY_PROPOSAL] }, fetchProposal),
+    [receiver, fetchProposal],
+  );
 
   useEffect(() => {
     void loadPage();
@@ -214,6 +205,8 @@ export default function FamilyTransferAcceptPage() {
     busyRef.current = true;
     setActionLoading('accept');
     setError(null);
+    // 書き込みの窓 (通信エラーのあとの読み直しまで)。窓の間は AI 相談の成功の取り直しを止める (#2206 G1)
+    const endWrite = receiver.beginWrite();
     try {
       const res = await fetch(`/api/family/representative-transfer/${proposal_id}/accept`, {
         method: 'POST',
@@ -229,11 +222,11 @@ export default function FamilyTransferAcceptPage() {
       // サーバーが承諾を済ませてから応答が切れたこともあるので、提案を読み直して今の状態を見せる (#2064。組織の承諾の画面と同じ形。
       // 読み直さないと、承諾済みの提案に承諾・拒否のボタンが残り、もう一度押すと失敗の文が出ていた)。
       // 読み直しの応答を待つあいだもボタンを止めたままにする (actionLoading を戻さない)。読み直しが失敗したら「読み込めませんでした」を出す
-      await fetchProposal(beginFetch(), 'mount');
+      await receiver.read({}, fetchProposal);
     } finally {
       busyRef.current = false;
       setActionLoading(null);
-      notifyWriteSettled();
+      endWrite();
     }
   };
 
@@ -243,6 +236,8 @@ export default function FamilyTransferAcceptPage() {
     busyRef.current = true;
     setActionLoading('decline');
     setError(null);
+    // 書き込みの窓 (通信エラーのあとの読み直しまで)。窓の間は AI 相談の成功の取り直しを止める (#2206 G1)
+    const endWrite = receiver.beginWrite();
     try {
       const res = await fetch(`/api/family/representative-transfer/${proposal_id}/decline`, {
         method: 'POST',
@@ -256,11 +251,11 @@ export default function FamilyTransferAcceptPage() {
     } catch {
       setError(NETWORK_FAILURE_MESSAGE);
       // サーバーが拒否を済ませてから応答が切れたこともあるので、提案を読み直す (承諾の通信エラーと同じ)
-      await fetchProposal(beginFetch(), 'mount');
+      await receiver.read({}, fetchProposal);
     } finally {
       busyRef.current = false;
       setActionLoading(null);
-      notifyWriteSettled();
+      endWrite();
     }
   };
 
@@ -419,14 +414,14 @@ export default function FamilyTransferAcceptPage() {
           <div className="space-y-3">
             <button
               onClick={handleAccept}
-              disabled={!!actionLoading || aiRefetching}
+              disabled={!!actionLoading}
               className="w-full rounded-full bg-green-500 py-4 text-white font-bold text-base hover:bg-green-600 transition-colors disabled:opacity-50"
             >
               {actionLoading === 'accept' ? '承諾中…' : '承諾する (代表者になる)'}
             </button>
             <button
               onClick={handleDecline}
-              disabled={!!actionLoading || aiRefetching}
+              disabled={!!actionLoading}
               className="w-full rounded-full bg-gray-100 py-4 text-gray-700 font-bold text-base hover:bg-gray-200 transition-colors disabled:opacity-50"
             >
               {actionLoading === 'decline' ? '拒否中…' : '拒否する'}
