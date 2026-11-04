@@ -11,7 +11,7 @@ import {
   BLOOD_METRIC_DEFS, evaluateStatus, formatRangeText, getRangeForSex, getStatusLabel,
   type BiologicalSex,
 } from "@/lib/health-blood-test-reference";
-import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
+import { STATUS_COLOR_TOKENS, parseLocalDate } from "@homegohan/shared";
 import { useAiConsultationReceiver, type AiConsultationRead } from "@/hooks/useAiConsultationReceiver";
 
 /** 基準値を選ぶ性別の置き場所の鍵 (#2206 G1) */
@@ -62,7 +62,9 @@ const METRIC_KEYS: NumericMetricKey[] = [
 ];
 
 function formatDate(dateStr: string): string {
-  const d = new Date(dateStr);
+  // 検査日 (test_date) は YYYY-MM-DD の暦日。その文字列の年月日を端末のローカル時刻の 0 時の Date にしてから読む (#2235 I3。
+  // new Date(dateStr) は UTC の 0 時なので、端末のローカル時刻の getFullYear / getMonth / getDate で読むと UTC より西では前の日になる)
+  const d = parseLocalDate(dateStr);
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
 }
 

@@ -8,7 +8,7 @@ import {
   Moon, Scale, Activity, CheckCircle2, X, ChevronRight,
   Bell, BellOff, Utensils, Stethoscope, Target
 } from 'lucide-react';
-import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
+import { STATUS_COLOR_TOKENS, parseLocalDate } from '@homegohan/shared';
 import { isGeneratedInsightType, type GeneratedInsightType } from '@/lib/health-insight-rows';
 
 const colors = {
@@ -121,7 +121,9 @@ export default function HealthInsightsPage() {
   };
 
   const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
+    // 分析の日 (analysis_date) は YYYY-MM-DD の暦日。その文字列の年月日を端末のローカル時刻の 0 時の Date にしてから表示する (#2235 I3。
+    // new Date(dateStr) は UTC の 0 時なので、端末のタイムゾーンで toLocaleDateString にすると UTC より西では前の日になる)
+    const date = parseLocalDate(dateStr);
     return date.toLocaleDateString('ja-JP', { month: 'long', day: 'numeric' });
   };
 

@@ -1,6 +1,10 @@
 // @vitest-environment node
 /**
- * #2235 I3 「端末のローカル時刻で日をずらす」形 (`x.setDate(x.getDate() ± n)`) の棚卸しの表と、その見張り。
+ * #2235 I3 端末の暦で日付を読み違える 2 つの形の棚卸しの表と、その見張り。
+ *   1 つめ: 「端末のローカル時刻で日をずらす」形 (`x.setDate(x.getDate() ± n)`)。表は DATE_SHIFT_SITES (D-1〜D-3)
+ *   2 つめ: 「YYYY-MM-DD の暦日を new Date() に渡す」形 (`new Date(dateStr)`)。表は DATE_PARSE_SITES (D-4〜D-6。下の説明)
+ *
+ * 1 つめの形 (`x.setDate(x.getDate() ± n)`):
  *
  * この形は端末の暦で日をずらすので、ずらした Date を JST の暦日 (formatLocalDate (Asia/Tokyo)) にすると、ずらす元によって食い違う。
  *   - 元が今の時刻 (new Date()): 端末の夏時間の切り替えの日に 23 / 25 時間しか進まず、JST の日付が 1 日ずれうる。端末の暦 (getDate など) で
@@ -22,6 +26,28 @@
  *     #1433 で「1日だけ」の初期値もそれにそろえた (同じ関数の注記)。この形 (setDate でずらす) ではない。I3 では変えない
  *   - 週の格子の週の始まりや月の 1 日 (端末の 0 時の Date) を formatLocalDate で読む箇所 (menus/weekly/page.tsx の monthRangeOf・
  *     shoppingRangeDates の「表示中の週」の始まり など): 下の 'week-grid' と同じ根。範囲と格子がそろうよう、格子と一緒に直す
+ *
+ * 2 つめの形 (`new Date(<暦日らしい名前>)`):
+ * new Date('2026-11-05') は UTC の 0 時 (JST の 9 時) の瞬間になる。それを端末のローカル時刻 (getFullYear / getMonth / getDate / getDay、
+ * timeZone を付けない toLocaleDateString) で読むと、端末が UTC より西 (America/Los_Angeles など) では前の日 (2026-11-04) になる。
+ * I3 で直したホームの週間統計の曜日 (useHomeData の getDayOfWeek) はこれで、/meals/new の保存先の日付・体重の 7 日間の推移の日、
+ * 健康の画面 (血液検査・健診の一覧と詳細・分析・目標の期限)・食事の詳細の日付も同じ形だった (今は parseLocalDate (年月日を端末の
+ * 0 時の Date にする) か formatDateJa で読む。tests/calendar-date-display-jst-2235.test.tsx が描いて確かめる)。
+ * 製品コードで、暦日らしい名前 (最後の名前が …date / …Date / …Str) の値を new Date() に 1 つだけ渡す箇所を、下の DATE_PARSE_SITES に
+ * 「ファイル → 渡す値 → 判定」で載せる (表が正本)。
+ *
+ *   D-4 製品コードで、この形を書く (ファイル, 渡す値) は、どれも DATE_PARSE_SITES に行がある (新しく書いたら、行を足して判定を書く)
+ *   D-5 (ファイル, 渡す値) ごとのこの形の数は、行に書いた数以下
+ *   D-6 I3 で直した (ファイル, 渡す値) (FIXED_PARSE_IN_I3) には、この形が 1 つも無い (元の形に戻っていない)
+ *
+ * 限界 (見張りであって証明ではない): 値の型は見ず、名前だけで拾う。コメントを除いた本文を数える。
+ * 名前で拾わないもの・ほかの書き方の I3 の時点の判定:
+ *   - 瞬間 (timestamptz の ISO。…_at・…At・iso など) を端末のタイムゾーンで表示する形 (`new Date(created_at).toLocaleDateString('ja-JP')`):
+ *     暦日の文字列ではない (瞬間を端末の暦日で見せる別の型)。この形ではない
+ *   - 名前が暦日らしくない値: apps/mobile/src/components/ai/AIDayMenuModal.tsx の `new Date(value)` (YYYY-MM-DD の入力が日付として
+ *     読めるかの確かめだけ。暦で読まない)・supabase/functions/calculate-segment-stats の `new Date(periodStart)` など
+ *     (Edge Functions は UTC で動き、getTime の差と getUTC* で読む)・週の計算の Date の写し (`new Date(start)`・`new Date(base)` など)
+ *   - 時刻を付けて端末のローカル時刻として読む形 (`new Date(day + 'T00:00:00')` など)・Date.UTC で作る形: 端末のタイムゾーンに左右されない
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -160,6 +186,156 @@ function scanDateShifts(): Map<string, number> {
   return counts;
 }
 
+/** 判定 (2 つめの形) */
+type DateParseVerdict =
+  /** 渡す値が Date (Date の写し)。文字列を読まない。食い違いは起きない */
+  | 'date-object'
+  /**
+   * 文字列を UTC の 0 時として読み、UTC (getUTCMonth / getUTCDay) か JST (formatLocalDate (Asia/Tokyo)。UTC の 0 時は JST の 9 時) で
+   * 暦日に戻す。端末のタイムゾーンに左右されない
+   */
+  | 'utc-or-jst-read'
+  /**
+   * 時刻の差 (getTime の引き算) か、日付として読めるかの確かめだけ。暦で読まない。
+   * 2 つとも UTC の 0 時どうしの差は整数の日数、今の時刻との差は 9 時間以内の違いしか生まない (月の数・並べ替えなどに使うだけ)
+   */
+  | 'instant-diff'
+  /** 渡す値が暦日でなく瞬間 (toISOString の文字列)。同じ端末の暦で作った瞬間を同じ端末の暦で読むので、食い違いは起きない */
+  | 'instant'
+  /**
+   * 起きる。並行の枝 fix/g-1104e-i1・i8 が触っているファイルなので I3 では直さず、着地の後に回す
+   * (直し方: I3 のほかの箇所と同じく parseLocalDate / formatDateJa で年月日を読む)
+   */
+  | 'deferred-after-i1';
+
+interface DateParseSite {
+  /** この形の数の上限 (I3 の時点の数) */
+  readonly maxCount: number;
+  readonly verdict: DateParseVerdict;
+  /** 何を読んでいるか */
+  readonly note: string;
+}
+
+/** 製品コードでこの形を書く (ファイル (リポジトリの根からの相対パス) → new Date() に渡す値 → 判定) */
+const DATE_PARSE_SITES: Readonly<Record<string, Readonly<Record<string, DateParseSite>>>> = {
+  'src/components/AIChatBubble.tsx': {
+    selectedDate: {
+      maxCount: 1,
+      verdict: 'deferred-after-i1',
+      note:
+        '1 日分の献立を作るときのチャットの文 (「○月○日の献立を作成中...」) を getMonth / getDate で作る。' +
+        'America/Los_Angeles で 2026-11-05 を選ぶと「11月4日」になる',
+    },
+  },
+  'src/app/(main)/meals/new/page.tsx': {
+    startDate: { maxCount: 1, verdict: 'date-object', note: 'getWeekDates の週の始まり (Date) の写し' },
+    date: { maxCount: 1, verdict: 'date-object', note: 'getWeekStart に渡す Date の写し' },
+  },
+  'src/app/(main)/menus/weekly/page.tsx': {
+    startDate: { maxCount: 1, verdict: 'date-object', note: 'getWeekDates の週の始まり (Date) の写し' },
+    date: { maxCount: 2, verdict: 'date-object', note: 'getWeekStart・isDateInWeek に渡す Date の写し' },
+    weekStartDate: { maxCount: 1, verdict: 'date-object', note: 'isDateInWeek の週の始まり (Date) の写し' },
+  },
+  'src/app/api/ai/menu/v4/generate/route.ts': {
+    startDate: { maxCount: 1, verdict: 'utc-or-jst-read', note: '献立の期間の始まりの月を getUTCMonth で読む' },
+  },
+  'src/app/api/ai/menu/v5/generate/route.ts': {
+    startDate: { maxCount: 1, verdict: 'utc-or-jst-read', note: '献立の期間の始まりの月を getUTCMonth で読む' },
+  },
+  'src/app/onboarding/questions/page.tsx': {
+    'computedAnswers.target_date': {
+      maxCount: 1,
+      verdict: 'instant-diff',
+      note: '目標の日までの月の数 (今の時刻との getTime の差 ÷ 30 日) で体重の変え方の速さを決める',
+    },
+  },
+  'src/components/ai-assistant/V4GenerateModal.tsx': {
+    startStr: { maxCount: 1, verdict: 'instant-diff', note: 'daysBetween (2 つの暦日の UTC の 0 時の差の日数)' },
+    endStr: { maxCount: 1, verdict: 'instant-diff', note: 'daysBetween (2 つの暦日の UTC の 0 時の差の日数)' },
+  },
+  'src/components/nutrition/nutrition-target-planner.tsx': {
+    isoDate: {
+      maxCount: 1,
+      verdict: 'instant',
+      note: '目標体重の到達予想日 (packages/shared/src/nutrition-planner.ts が端末の暦でずらして toISOString で返す瞬間) の表示',
+    },
+  },
+  'src/hooks/useHomeData.ts': {
+    'a.day_date': { maxCount: 1, verdict: 'instant-diff', note: '連続自炊の日を新しい順に並べる (getTime の差)' },
+    'b.day_date': { maxCount: 1, verdict: 'instant-diff', note: '連続自炊の日を新しい順に並べる (getTime の差)' },
+  },
+  'lib/seasonal-events.ts': {
+    startDate: { maxCount: 1, verdict: 'date-object', note: 'getDoyoUshiDays の 7 月 19 日 (Date) の写し' },
+  },
+  'packages/core/src/utils/week-utils.ts': {
+    date: { maxCount: 3, verdict: 'date-object', note: '週の計算の道具に渡す Date の写し' },
+    weekStartDate: { maxCount: 1, verdict: 'date-object', note: 'isDateInWeek の週の始まり (Date) の写し' },
+    weekEndDate: { maxCount: 1, verdict: 'date-object', note: 'isDateInWeek の週の終わり (Date) の写し' },
+  },
+  'packages/shared/src/date-utils.ts': {
+    date: { maxCount: 1, verdict: 'date-object', note: 'addDays に渡す Date の写し' },
+  },
+  'packages/shared/src/nutrition-planner.ts': {
+    baseDate: { maxCount: 1, verdict: 'date-object', note: '到達予想日の起点 (Date) の写し' },
+  },
+  'apps/mobile/src/components/menu/V4GenerateModal.tsx': {
+    startStr: { maxCount: 1, verdict: 'instant-diff', note: 'daysBetween (2 つの暦日の UTC の 0 時の差の日数)' },
+    endStr: { maxCount: 1, verdict: 'instant-diff', note: 'daysBetween (2 つの暦日の UTC の 0 時の差の日数)' },
+  },
+  'apps/mobile/app/health/blood-tests.tsx': {
+    dateStr: { maxCount: 1, verdict: 'utc-or-jst-read', note: '検査日を formatLocalDate (Asia/Tokyo) で YYYY-MM-DD に戻して表示する' },
+  },
+  'apps/mobile/app/onboarding/questions.tsx': {
+    'ans.target_date': {
+      maxCount: 2,
+      verdict: 'instant-diff',
+      note: '目標の日までの月の数 (今の時刻との getTime の差) で体重の変え方の速さを決める',
+    },
+  },
+  'supabase/functions/generate-menu-v4/context-utils.ts': {
+    'params.targetDate': { maxCount: 1, verdict: 'instant-diff', note: '献立の日どうしの日数の差 (UTC の 0 時どうし)' },
+    'menu.date': { maxCount: 1, verdict: 'instant-diff', note: '献立の日どうしの日数の差 (UTC の 0 時どうし)' },
+  },
+  'supabase/functions/regenerate-shopping-list-v2/index.ts': {
+    dateStr: { maxCount: 1, verdict: 'utc-or-jst-read', note: 'getDayOfWeek (曜日を getUTCDay で読む)' },
+  },
+};
+
+/** I3 で直した (ファイル, new Date() に渡していた値)。この形が 1 つも無いこと (D-6)。どれも parseLocalDate / formatDateJa で読む */
+const FIXED_PARSE_IN_I3: readonly (readonly [file: string, arg: string])[] = [
+  ['src/hooks/useHomeData.ts', 'dateStr'],
+  ['src/app/(main)/meals/new/page.tsx', 'selectedDate'],
+  ['src/app/(main)/meals/new/page.tsx', 'h.record_date'],
+  ['src/app/(main)/health/blood-tests/page.tsx', 'dateStr'],
+  ['src/app/(main)/health/checkups/page.tsx', 'dateStr'],
+  ['src/app/(main)/health/checkups/[id]/CheckupDetailClient.tsx', 'dateStr'],
+  ['src/app/(main)/health/insights/page.tsx', 'dateStr'],
+  ['src/app/(main)/health/goals/page.tsx', 'goal.target_date'],
+  ['src/app/(main)/meals/[id]/page.tsx', 'meal.dayDate'],
+];
+
+/** 暦日らしい名前の値を 1 つだけ new Date() に渡す形 (1 つめの組が渡す値。末尾の ! は外す) */
+const DATE_PARSE_PATTERN = /new Date\(\s*((?:[A-Za-z_$][\w$]*\??\.)*[A-Za-z_$]?[\w$]*(?:date|Date|Str))\s*!?\s*\)/g;
+
+/** 本文の、この形の渡す値ごとの数 */
+function countDateParses(text: string): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const match of stripComments(text).matchAll(DATE_PARSE_PATTERN)) counts.set(match[1], (counts.get(match[1]) ?? 0) + 1);
+  return counts;
+}
+
+/** 製品コードの、この形を書くファイル → 渡す値 → 数 */
+function scanDateParses(): Map<string, Map<string, number>> {
+  const found = new Map<string, Map<string, number>>();
+  for (const root of SCAN_ROOTS) {
+    for (const file of listProductionFiles(path.join(ROOT, root))) {
+      const counts = countDateParses(fs.readFileSync(file, 'utf8'));
+      if (counts.size > 0) found.set(rel(file), counts);
+    }
+  }
+  return found;
+}
+
 describe('端末のローカル時刻で日をずらす形の棚卸し (#2235 I3)', () => {
   const found = scanDateShifts();
 
@@ -185,6 +361,54 @@ describe('端末のローカル時刻で日をずらす形の棚卸し (#2235 I3
     for (const file of FIXED_IN_I3) {
       expect(fs.existsSync(path.join(ROOT, file)), file).toBe(true);
       expect(found.get(file) ?? 0, file).toBe(0);
+    }
+  });
+});
+
+describe('YYYY-MM-DD の暦日を new Date() に渡す形の棚卸し (#2235 I3)', () => {
+  const found = scanDateParses();
+  const entries = [...found.entries()].flatMap(([file, counts]) => [...counts.entries()].map(([arg, count]) => ({ file, arg, count })));
+
+  it('検出器は、暦日らしい名前を 1 つ渡す形を渡す値ごとに数え、コメントの中・瞬間・引数なし・時刻つきの文字列は数えない', () => {
+    const counts = countDateParses(
+      [
+        '{new Date(selectedDate).getMonth() + 1}月{new Date(selectedDate).getDate()}日',
+        "date: new Date(h.record_date).getDate() + '日',",
+        'const d = new Date( dateStr );',
+        "期限: {new Date(goal.target_date!).toLocaleDateString('ja-JP')}",
+      ].join('\n'),
+    );
+    expect(Object.fromEntries(counts)).toEqual({ selectedDate: 2, 'h.record_date': 1, dateStr: 1, 'goal.target_date': 1 });
+    expect(
+      countDateParses(
+        [
+          '// new Date(dateStr)',
+          '/* new Date(selectedDate) */',
+          "new Date(created_at).toLocaleDateString('ja-JP')",
+          'new Date()',
+          'new Date(`${dateStr}T00:00:00`)',
+          'parseLocalDate(dateStr)',
+        ].join('\n'),
+      ).size,
+    ).toBe(0);
+  });
+
+  it('D-4 この形を書く製品コードの (ファイル, 渡す値) は、どれも表に行がある', () => {
+    const unlisted = entries.filter(({ file, arg }) => DATE_PARSE_SITES[file]?.[arg] === undefined).map(({ file, arg }) => `${file}: ${arg}`);
+    expect(unlisted).toEqual([]);
+  });
+
+  it('D-5 (ファイル, 渡す値) ごとのこの形の数は、表に書いた数以下', () => {
+    const over = entries
+      .filter(({ file, arg, count }) => DATE_PARSE_SITES[file]?.[arg] !== undefined && count > DATE_PARSE_SITES[file][arg].maxCount)
+      .map(({ file, arg, count }) => `${file}: ${arg} ${count} > ${DATE_PARSE_SITES[file][arg].maxCount}`);
+    expect(over).toEqual([]);
+  });
+
+  it('D-6 I3 で直した (ファイル, 渡していた値) には、この形が無い', () => {
+    for (const [file, arg] of FIXED_PARSE_IN_I3) {
+      expect(fs.existsSync(path.join(ROOT, file)), file).toBe(true);
+      expect(found.get(file)?.get(arg) ?? 0, `${file}: ${arg}`).toBe(0);
     }
   });
 });

@@ -313,7 +313,9 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
   const modeConfig = MODE_CONFIG[meal.mode];
   const ModeIcon = modeConfig.icon;
 
-  const formattedDate = new Date(meal.dayDate).toLocaleDateString('ja-JP', {
+  // 食べた日 (dayDate = user_daily_meals.day_date) は YYYY-MM-DD の暦日。下の曜日 (dow) と同じく parseLocalDate で読む (#2235 I3。
+  // new Date(dayDate) は UTC の 0 時なので、端末のタイムゾーンで toLocaleDateString にすると UTC より西では前の日・前の曜日になる)
+  const formattedDate = parseLocalDate(meal.dayDate).toLocaleDateString('ja-JP', {
     month: 'long',
     day: 'numeric',
     weekday: 'short',
