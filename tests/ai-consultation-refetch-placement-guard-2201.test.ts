@@ -128,21 +128,30 @@ const DELEGATED_RECEIVERS: ReadonlyArray<{ file: string; marker: string; refetch
 
 /**
  * 検査が何も数えずに緑になるのを防ぐ下限 (2026-11-04 の実数: 数える印を渡す受け手 6 (/pantry・/menus/weekly・/home・/meals/[id]・
- * /health/goals・栄養目標の再設定)・取り直しが印を立てる受け手 4。受け手を減らしてこれを割ったら、実数を数え直して下げる)
+ * /health/goals・栄養目標の再設定)・取り直しが印を立てる受け手 4。受け手を減らしてこれを割ったら、実数を数え直して下げる)。
+ * #2206 G1 段 A で 0 にした (§17 G-1): 受け手を段 B〜E で新しい hook (useAiConsultationReceiver) へ並行して移す間に、枝ごとに
+ * 違う実数を書いて取り込みで衝突しないよう、ヘッダの「受け手を減らしてこれを割ったら下げる」を先取りした。移した受け手の空振りは
+ * 新しい番兵 tests/ai-consultation-receiver-placement-guard-2206.test.ts の P6 (RECEIVER_EXPECTATIONS) が受け持つ。段 F でファイルごと消す
  */
-const MIN_COUNTED_MARKER_RECEIVERS = 6;
+const MIN_COUNTED_MARKER_RECEIVERS = 0;
 
 /**
  * 規則 5 が見た取り直しの経路の取得 (await のあとに何かをする関数) の数の下限 (検査が何もたどらずに緑になるのを防ぐ。
- * 2026-11-04 の実数。取り直しの経路を減らしてこれを割ったら、実数を数え直して下げる)
+ * 2026-11-04 の実数 46。取り直しの経路を減らしてこれを割ったら、実数を数え直して下げる)。
+ * #2206 G1 段 A で 0 にした (§17 G-1): 受け手を段 B〜E で新しい hook (useAiConsultationReceiver) へ並行して移す間に、枝ごとに
+ * 違う実数を書いて取り込みで衝突しないよう、ヘッダの「受け手を減らしてこれを割ったら下げる」を先取りした。移した受け手の空振りは
+ * 新しい番兵 tests/ai-consultation-receiver-placement-guard-2206.test.ts の P6 (RECEIVER_EXPECTATIONS) が受け持つ。段 F でファイルごと消す
  */
-const MIN_REFETCH_PATH_FETCHERS = 46;
+const MIN_REFETCH_PATH_FETCHERS = 0;
 
 /**
  * 規則 6 が見た取り直しの経路の Supabase の読み取り (data / count を分割代入で受け取るところ) の数の下限 (検査が空振りして緑になるのを
- * 防ぐ。2026-11-04 の実数。取り直しの経路を減らしてこれを割ったら、実数を数え直して下げる)
+ * 防ぐ。2026-11-04 の実数 38。取り直しの経路を減らしてこれを割ったら、実数を数え直して下げる)。
+ * #2206 G1 段 A で 0 にした (§17 G-1): 受け手を段 B〜E で新しい hook (useAiConsultationReceiver) へ並行して移す間に、枝ごとに
+ * 違う実数を書いて取り込みで衝突しないよう、ヘッダの「受け手を減らしてこれを割ったら下げる」を先取りした。移した受け手の空振りは
+ * 新しい番兵 tests/ai-consultation-receiver-placement-guard-2206.test.ts の P6 (RECEIVER_EXPECTATIONS) が受け持つ。段 F でファイルごと消す
  */
-const MIN_REFETCH_PATH_SUPABASE_READS = 38;
+const MIN_REFETCH_PATH_SUPABASE_READS = 0;
 /** Supabase の問い合わせを始めるメソッド (supabase.from(...)・supabase.rpc(...)) */
 const SUPABASE_QUERY_METHODS: ReadonlySet<string> = new Set(['from', 'rpc']);
 /** X.from(...) のうち Supabase の問い合わせでないもの (Array.from) の X */
@@ -184,15 +193,21 @@ const OPTIMISTIC_WRITE_EXEMPTIONS: ReadonlyArray<{ file: string; fn: string; rea
 
 /**
  * 規則 7 が見た楽観的な更新 (取り直しが応答を置く setter を呼んでから書き込みを await する関数) の数の下限 (検査が空振りして緑になるのを防ぐ。
- * 2026-11-04 の実数。楽観的な更新を減らしてこれを割ったら、実数を数え直して下げる)
+ * 2026-11-04 の実数 8。楽観的な更新を減らしてこれを割ったら、実数を数え直して下げる)。
+ * #2206 G1 段 A で 0 にした (§17 G-1): 受け手を段 B〜E で新しい hook (useAiConsultationReceiver) へ並行して移す間に、枝ごとに
+ * 違う実数を書いて取り込みで衝突しないよう、ヘッダの「受け手を減らしてこれを割ったら下げる」を先取りした。移した受け手の空振りは
+ * 新しい番兵 tests/ai-consultation-receiver-placement-guard-2206.test.ts の P6 (RECEIVER_EXPECTATIONS) が受け持つ。段 F でファイルごと消す
  */
-const MIN_OPTIMISTIC_WRITE_FUNCTIONS = 8;
+const MIN_OPTIMISTIC_WRITE_FUNCTIONS = 0;
 
 /**
  * 規則 8 が見た、取り直しが捨てる入れ物の数の下限 (検査が空振りして緑になるのを防ぐ。2026-11-04 の実数: 献立表の月のカレンダーの
- * 取得済みの範囲 fetchedRangesRef。入れ物を減らしてこれを割ったら、実数を数え直して下げる)
+ * 取得済みの範囲 fetchedRangesRef。入れ物を減らしてこれを割ったら、実数を数え直して下げる)。
+ * #2206 G1 段 A で 0 にした (§17 G-1): 受け手を段 B〜E で新しい hook (useAiConsultationReceiver) へ並行して移す間に、枝ごとに
+ * 違う実数を書いて取り込みで衝突しないよう、ヘッダの「受け手を減らしてこれを割ったら下げる」を先取りした。移した受け手の空振りは
+ * 新しい番兵 tests/ai-consultation-receiver-placement-guard-2206.test.ts の P6 (RECEIVER_EXPECTATIONS) が受け持つ。段 F でファイルごと消す
  */
-const MIN_REFETCH_DISCARDED_CONTAINERS = 1;
+const MIN_REFETCH_DISCARDED_CONTAINERS = 0;
 
 interface ReceiverSource {
   file: string;

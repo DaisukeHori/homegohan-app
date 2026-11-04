@@ -111,6 +111,7 @@ const {
   useAiConsultationRefetchKey,
   useAiConsultationRefetchRun,
 } = await import('@/hooks/useAiConsultationDataRefetch');
+const { AI_CONSULTATION_WRITES_ATTRIBUTE } = await import('@/hooks/useAiConsultationReceiver');
 const { default: MainLayout } = await import('@/app/(main)/MainLayout');
 const { default: ComparisonPage } = await import('@/app/(main)/comparison/page');
 const { default: PantryPage } = await import('@/app/(main)/pantry/page');
@@ -254,20 +255,43 @@ describe('isAiConsultationRefetchBlocked — 入力の部品・開いている�
   });
 });
 
-describe('モバイルの読み込み直しの番兵と同じ並び (#2195 V1)', () => {
-  it('Web の並びは、モバイルの AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR から input の type="file" を外しただけ', () => {
+describe('モバイルの読み込み直しの番兵と同じ並び (#2195 V1・#2206 G1)', () => {
+  /** モバイルの定数の名前 (並びの中でテンプレートの式として書く。#2206 G1) */
+  const MOBILE_WRITES_ATTRIBUTE_CONSTANT = 'AI_CONSULTATION_WRITES_ATTRIBUTE';
+
+  it('モバイルの止める要素は、Web の番兵の並び + input の type="file" + html[data-ai-consultation-writes]。属性の名前はモバイルの定数と同じ', () => {
     // モバイルのファイルは react-native を読み込むので、vitest では文字列として読んで並びを取り出す
     const mobileSource = readRepoFile('apps/mobile/src/lib/webViewBridge.ts');
+    const attribute = new RegExp(`export const ${MOBILE_WRITES_ATTRIBUTE_CONSTANT} = '([^']*)';`).exec(mobileSource);
+    expect(attribute, `モバイルの ${MOBILE_WRITES_ATTRIBUTE_CONSTANT} の定義が見つからない`).not.toBeNull();
+    // Web の受け手が html に付ける属性の名前と、モバイルが止める要素として見る属性の名前は同じ
+    expect(attribute![1]).toBe(AI_CONSULTATION_WRITES_ATTRIBUTE);
+    expect(AI_CONSULTATION_WRITES_ATTRIBUTE).toBe('data-ai-consultation-writes');
+
     const block = /export const AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR = \[([\s\S]*?)\]\.join\(', '\);/.exec(mobileSource);
     expect(block, 'モバイルの AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR の定義が見つからない').not.toBeNull();
-    const mobileParts = Array.from(block![1].matchAll(/'([^']*)'/g), (m) => m[1]);
+    // 文字列 ('…') と、定数を埋めたテンプレート (`html[${…}]`) の両方を並びの部品として読む
+    const mobileParts = Array.from(block![1].matchAll(/'([^']*)'|`([^`]*)`/g), (m) =>
+      m[1] ?? m[2].replaceAll(`\${${MOBILE_WRITES_ATTRIBUTE_CONSTANT}}`, attribute![1]),
+    );
     expect(mobileParts.length).toBeGreaterThan(0);
 
     const webParts = AI_CONSULTATION_REFETCH_BLOCKING_SELECTOR.split(', ');
     const MOBILE_INPUT_PART = 'input:not([type="hidden"])';
     const WEB_INPUT_PART = 'input:not([type="hidden"]):not([type="file"])';
+    /** Web の書き込みの印 (モバイルだけが見る。Web の番兵は hook の書き込みの数で判断し、この属性を数えない) */
+    const MOBILE_WRITES_PART = `html[${AI_CONSULTATION_WRITES_ATTRIBUTE}]`;
     expect(mobileParts).toContain(MOBILE_INPUT_PART);
-    expect(webParts).toEqual(mobileParts.map((part) => (part === MOBILE_INPUT_PART ? WEB_INPUT_PART : part)));
+    expect(mobileParts).toContain(MOBILE_WRITES_PART);
+    expect(webParts).not.toContain(MOBILE_WRITES_PART);
+    expect(webParts).toEqual(
+      mobileParts.filter((part) => part !== MOBILE_WRITES_PART).map((part) => (part === MOBILE_INPUT_PART ? WEB_INPUT_PART : part)),
+    );
+
+    // 印が外れたことをモバイルの見張り (MutationObserver の attributeFilter) が受け取れる
+    const observed = /export const AI_CONSULTATION_DEFERRED_RELOAD_OBSERVED_ATTRIBUTES = \[([\s\S]*?)\] as const;/.exec(mobileSource);
+    expect(observed, 'モバイルの AI_CONSULTATION_DEFERRED_RELOAD_OBSERVED_ATTRIBUTES の定義が見つからない').not.toBeNull();
+    expect(observed![1].split(',').map((part) => part.trim())).toContain(MOBILE_WRITES_ATTRIBUTE_CONSTANT);
   });
 });
 
@@ -1554,52 +1578,86 @@ describe('ページが AI 相談の成功で取り直す (#2195 V1)', () => {
  * tests/ai-consultation-weekly-refetch-2195.test.tsx が献立表を描画して確かめる
  */
 describe('受け手の配線 (#2195 V1)', () => {
+  /** 旧の hook (src/hooks/useAiConsultationDataRefetch.ts) の import。段 F で消す (#2206 G1 §17 G-5) */
   const HOOK_IMPORT = /from "@\/hooks\/useAiConsultationDataRefetch";/;
-  const WIRING: ReadonlyArray<{ page: string; file: string; wiring: RegExp }> = [
-    {
-      page: '献立表 (/menus/weekly): 表示中の週・冷蔵庫・人数の設定・家族の一覧と名前を取り直し、週のキャッシュ (捨てる前に読み始めた応答も書かない discard。#2201 U1) と取得済みの範囲を捨ててから回数を増やす (どれにも取り直しの札を渡す。#2201 U2)',
-      file: 'src/app/(main)/menus/weekly/page.tsx',
-      wiring:
-        /const refetchAfterAiConsultation = useCallback\(\(ticket: AiConsultationFetchTicket\) => \{\s*weekDataCache\.current\.discard\(\);\s*fetchedRangesRef\.current\.clear\(\);\s*aiConsultationRefetchTicketRef\.current = ticket;\s*void refreshMealPlan\(ticket\);\s*void fetchPantry\(ticket\);\s*void fetchUserSettings\(ticket\);\s*void loadFamilyData\('refetch', ticket\);\s*setAiConsultationRefetchRound\(\(round\) => round \+ 1\);\s*\}, \[refreshMealPlan, fetchPantry, fetchUserSettings, loadFamilyData\]\);\s*useAiConsultationDataRefetch\(refetchAfterAiConsultation, \{ writeInFlightRef: pendingWrites \}\);/,
-    },
-    {
-      page: 'ホーム (/home): useHomeData の refetch',
-      file: 'src/app/(main)/home/page.tsx',
-      wiring: /refetch,\s*aiConsultationWrites,\s*\} = useHomeData\(\);[\s\S]*?useAiConsultationDataRefetch\(refetch, \{ writeInFlightRef: aiConsultationWrites \}\);/,
-    },
+  /**
+   * 配線の行。hookImport は、そのページが hook をどこから import するか (移行前は旧の HOOK_IMPORT。移行した段は新しい hook の import に替える)。
+   * 行は受け手の段 (#2206 G1 §16) ごとの配列に分ける。各段は自分の段の配列の行だけを書き換える (並行する段の取り込みで同じ行を触らない)
+   */
+  interface WiringRow {
+    readonly page: string;
+    readonly file: string;
+    readonly hookImport: RegExp;
+    readonly wiring: RegExp;
+  }
+
+  // 段 B
+  const WIRING_STAGE_B: readonly WiringRow[] = [
     {
       page: '比較 (/comparison): 取得の useEffect の依存に数を足す',
       file: 'src/app/(main)/comparison/page.tsx',
+      hookImport: HOOK_IMPORT,
       wiring: /const \{ refetchKey: aiConsultationRefetchKey \} = useAiConsultationRefetchKey\(\);[\s\S]*?\}, \[periodType, aiConsultationRefetchKey, takeAiConsultationRefetchRun\]\);/,
     },
     {
       page: '冷蔵庫 (/pantry): fetchItems',
       file: 'src/app/(main)/pantry/page.tsx',
+      hookImport: HOOK_IMPORT,
       // 取り直しの読み方は refetchReadMode (開いたときの読み込み中に始まった取り直しは 'mount'。#2201 U1 + U2)
       wiring: /useAiConsultationDataRefetch\(\s*\(ticket\) => fetchItems\(ticket, refetchReadMode\(\)\),\s*\{ writeInFlightRef: pendingWrites \},\s*\);/,
     },
     {
-      page: '健康 (/health): fetchData と、出している選んだ日のパネルの記録',
-      file: 'src/app/(main)/health/page.tsx',
-      // 取り直しの読み方は refetchReadMode (開いたときの読み込み中に始まった取り直しは 'mount'。#2201 U1)。
-      // 選んだ日のパネルの読み直しは、日を選んだときの読み取りと同じ取得の流れ (selectedDateFetchStream) で置く (#2201 U1)
-      wiring: /await Promise\.all\(\[fetchData\(ticket, refetchReadMode\(\)\), reloadSelectedDate\(\)\]\);\s*\}, \[fetchData, refetchReadMode, selectedDateFetchStream\]\);[\s\S]*?useAiConsultationDataRefetch\(refetchAfterAiConsultation\);/,
-    },
-    {
       page: '健康目標 (/health/goals): fetchGoals',
       file: 'src/app/(main)/health/goals/page.tsx',
+      hookImport: HOOK_IMPORT,
       wiring: /useAiConsultationDataRefetch\(\s*\(ticket\) => fetchGoals\(ticket, refetchReadMode\(\)\),\s*\{ writeInFlightRef: pendingWrites \},\s*\);/,
     },
     {
       // 依存の profileReloadKey は、開いたときの読み込みに失敗したあとの「再読み込み」の数 (#2206 G5)
       page: 'マイページ (/profile): 取得の useEffect の依存に数を足す',
       file: 'src/app/(main)/profile/page.tsx',
+      hookImport: HOOK_IMPORT,
       wiring: /const \{ refetchKey: aiConsultationRefetchKey, refetchTicket: aiConsultationRefetchTicket \} = useAiConsultationRefetchKey\(\);[\s\S]*?useEffect\(\(\) => \{[\s\S]*?const getData = async \(\) => \{[\s\S]*?void getData\(\);[\s\S]*?\}, \[aiConsultationRefetchKey, profileReloadKey, takeAiConsultationRefetchRun, aiConsultationRefetchTicket\]\);/,
     },
   ];
-  it.each(WIRING)('$page', ({ file, wiring }) => {
+
+  // 段 C
+  const WIRING_STAGE_C: readonly WiringRow[] = [
+    {
+      page: '健康 (/health): fetchData と、出している選んだ日のパネルの記録',
+      file: 'src/app/(main)/health/page.tsx',
+      hookImport: HOOK_IMPORT,
+      // 取り直しの読み方は refetchReadMode (開いたときの読み込み中に始まった取り直しは 'mount'。#2201 U1)。
+      // 選んだ日のパネルの読み直しは、日を選んだときの読み取りと同じ取得の流れ (selectedDateFetchStream) で置く (#2201 U1)
+      wiring: /await Promise\.all\(\[fetchData\(ticket, refetchReadMode\(\)\), reloadSelectedDate\(\)\]\);\s*\}, \[fetchData, refetchReadMode, selectedDateFetchStream\]\);[\s\S]*?useAiConsultationDataRefetch\(refetchAfterAiConsultation\);/,
+    },
+  ];
+
+  // 段 D
+  const WIRING_STAGE_D: readonly WiringRow[] = [
+    {
+      page: 'ホーム (/home): useHomeData の refetch',
+      file: 'src/app/(main)/home/page.tsx',
+      hookImport: HOOK_IMPORT,
+      wiring: /refetch,\s*aiConsultationWrites,\s*\} = useHomeData\(\);[\s\S]*?useAiConsultationDataRefetch\(refetch, \{ writeInFlightRef: aiConsultationWrites \}\);/,
+    },
+  ];
+
+  // 段 E
+  const WIRING_STAGE_E: readonly WiringRow[] = [
+    {
+      page: '献立表 (/menus/weekly): 表示中の週・冷蔵庫・人数の設定・家族の一覧と名前を取り直し、週のキャッシュ (捨てる前に読み始めた応答も書かない discard。#2201 U1) と取得済みの範囲を捨ててから回数を増やす (どれにも取り直しの札を渡す。#2201 U2)',
+      file: 'src/app/(main)/menus/weekly/page.tsx',
+      hookImport: HOOK_IMPORT,
+      wiring:
+        /const refetchAfterAiConsultation = useCallback\(\(ticket: AiConsultationFetchTicket\) => \{\s*weekDataCache\.current\.discard\(\);\s*fetchedRangesRef\.current\.clear\(\);\s*aiConsultationRefetchTicketRef\.current = ticket;\s*void refreshMealPlan\(ticket\);\s*void fetchPantry\(ticket\);\s*void fetchUserSettings\(ticket\);\s*void loadFamilyData\('refetch', ticket\);\s*setAiConsultationRefetchRound\(\(round\) => round \+ 1\);\s*\}, \[refreshMealPlan, fetchPantry, fetchUserSettings, loadFamilyData\]\);\s*useAiConsultationDataRefetch\(refetchAfterAiConsultation, \{ writeInFlightRef: pendingWrites \}\);/,
+    },
+  ];
+
+  const WIRING: readonly WiringRow[] = [...WIRING_STAGE_B, ...WIRING_STAGE_C, ...WIRING_STAGE_D, ...WIRING_STAGE_E];
+  it.each(WIRING)('$page', ({ file, hookImport, wiring }) => {
     const source = readRepoFile(file);
-    expect(source).toMatch(HOOK_IMPORT);
+    expect(source).toMatch(hookImport);
     expect(source).toMatch(wiring);
   });
 

@@ -525,10 +525,19 @@ true;
 export const AI_CONSULTATION_RELOADABLE_PATHS: readonly string[] = ['/home', '/menus/weekly', '/comparison', '/profile'];
 
 /**
+ * Web の受け手 (src/hooks/useAiConsultationReceiver.ts の AI_CONSULTATION_WRITES_ATTRIBUTE) が、書き込みが 1 つでも進んでいる間
+ * document.documentElement に付ける属性 (#2206 G1)。モバイルは src を import できないので同じ文字列を書く
+ * (一致は tests/ai-consultation-data-refetch-2195.test.tsx が確かめる)。この属性がある間は読み込み直さない
+ * (送ったばかりの POST を読み込み直しで取り消さない)。外れたら、ほかの止める要素と同じく 1 回読み込み直す
+ */
+export const AI_CONSULTATION_WRITES_ATTRIBUTE = 'data-ai-consultation-writes';
+
+/**
  * これに当たる要素がページにある間は、AI_CONSULTATION_RELOADABLE_PATHS のページでも読み込み直さない (#2189 W2)。
  * 入力の部品 (hidden を除く input・textarea・select・編集できる要素) と、開いているモーダル (role="dialog"・aria-modal・
  * 開いた <dialog>)。Web をネイティブアプリの中で開いているときは、Web の AI 相談の吹き出し (src/components/AIChatBubble.tsx) は
- * 何も描かない (isNativeApp なら null を返す) ので、ふだんの表示でこれに当たる要素は無い
+ * 何も描かない (isNativeApp なら null を返す) ので、ふだんの表示でこれに当たる要素は無い。
+ * 加えて、Web の受け手の書き込みが進んでいる間の html[data-ai-consultation-writes] (AI_CONSULTATION_WRITES_ATTRIBUTE。#2206 G1)
  */
 export const AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR = [
   'input:not([type="hidden"])',
@@ -538,6 +547,7 @@ export const AI_CONSULTATION_RELOAD_BLOCKING_SELECTOR = [
   '[role="dialog"]',
   '[aria-modal="true"]',
   'dialog[open]',
+  `html[${AI_CONSULTATION_WRITES_ATTRIBUTE}]`,
 ].join(', ');
 
 /**
@@ -568,9 +578,17 @@ export const AI_CONSULTATION_DEFERRED_RELOAD_WATCH_KEY = '__homegohanAiConsultat
 /**
  * 読み込み直しを止めたページで見張る属性 (#2201 U2)。どれかが変わると、止めている要素 (aiConsultationReloadBlockingSelectorOf) の
  * 当たり外れが変わりうる: モーダルの role・aria-modal・open、編集できる要素の contenteditable、input の type、
- * ページごとに足す要素 (.fixed.inset-0 などの class)
+ * ページごとに足す要素 (.fixed.inset-0 などの class)、Web の受け手の書き込みの印 (AI_CONSULTATION_WRITES_ATTRIBUTE。#2206 G1)
  */
-export const AI_CONSULTATION_DEFERRED_RELOAD_OBSERVED_ATTRIBUTES = ['role', 'aria-modal', 'open', 'contenteditable', 'type', 'class'] as const;
+export const AI_CONSULTATION_DEFERRED_RELOAD_OBSERVED_ATTRIBUTES = [
+  'role',
+  'aria-modal',
+  'open',
+  'contenteditable',
+  'type',
+  'class',
+  AI_CONSULTATION_WRITES_ATTRIBUTE,
+] as const;
 
 /**
  * 今開いているページを読み込み直すスクリプト (AI 相談の提案の実行でデータが変わったとき。#2189 W2)。
