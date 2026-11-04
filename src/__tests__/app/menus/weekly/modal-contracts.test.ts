@@ -85,7 +85,7 @@ describe('モーダル契約テスト: store seed → 描画 assert (#1031 受�
     ]);
 
     renderComponent(
-      h(FridgeModal, { onClose: noop, onOpenAddFridge: noop, onDeleteItem: noop })
+      h(FridgeModal, { todayStr: '2026-07-01', onClose: noop, onOpenAddFridge: noop, onDeleteItem: noop })
     );
 
     expect(container.textContent).toContain('にんじん');
@@ -94,7 +94,7 @@ describe('モーダル契約テスト: store seed → 描画 assert (#1031 受�
 
   it('FridgeModal: fridgeItems が空なら「冷蔵庫は空です」を表示する (0件の契約も検証)', () => {
     renderComponent(
-      h(FridgeModal, { onClose: noop, onOpenAddFridge: noop, onDeleteItem: noop })
+      h(FridgeModal, { todayStr: '2026-07-01', onClose: noop, onOpenAddFridge: noop, onDeleteItem: noop })
     );
     expect(container.textContent).toContain('冷蔵庫は空です');
   });

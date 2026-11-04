@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { formatLocalDate, todayLocal, parseLocalDate, addDays, daysUntilLocal, formatExpiry, formatDateJa, todayCalendarDate, formatCalendarDate } from './date-utils';
+import { formatLocalDate, todayLocal, parseLocalDate, addDays, daysUntilLocal, daysUntilFrom, formatExpiry, formatDateJa, todayCalendarDate, formatCalendarDate } from './date-utils';
 
 describe('formatLocalDate', () => {
   it('UTC の真夜中直前 (23:59 JST = 14:59 UTC) を JST 当日として返す', () => {
@@ -160,6 +160,32 @@ describe('daysUntilLocal (#1053)', () => {
     // JST 2026-07-08 06:00 = UTC 2026-07-07 21:00。UTC 基準の new Date() 比較だと前日扱いになりうる境界。
     vi.setSystemTime(new Date('2026-07-07T21:00:00Z'));
     expect(daysUntilLocal('2026-07-08', 'Asia/Tokyo')).toBe(0);
+  });
+});
+
+describe('daysUntilFrom (#2245 K2)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('渡した今日から数え、時計を読まない (時計が 0 時をまたいだ後の日でも、渡した今日の残日数を返す)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-04T15:00:01Z')); // JST 2026-11-05 00:00:01
+    expect(daysUntilFrom('2026-11-05', '2026-11-04')).toBe(1);
+    expect(daysUntilFrom('2026-11-04', '2026-11-04')).toBe(0);
+    expect(daysUntilFrom('2026-11-01', '2026-11-04')).toBe(-3);
+  });
+
+  it('空の期限は null', () => {
+    expect(daysUntilFrom(null, '2026-11-04')).toBeNull();
+    expect(daysUntilFrom(undefined, '2026-11-04')).toBeNull();
+    expect(daysUntilFrom('', '2026-11-04')).toBeNull();
+  });
+
+  it('daysUntilLocal は JST の今日を渡した daysUntilFrom と同じ', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-07T21:00:00Z')); // JST 2026-07-08 06:00
+    expect(daysUntilLocal('2026-07-11')).toBe(daysUntilFrom('2026-07-11', '2026-07-08'));
   });
 });
 

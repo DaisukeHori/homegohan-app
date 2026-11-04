@@ -4,7 +4,7 @@ import React, { useId, useRef } from "react";
 import { motion } from "framer-motion";
 import FocusTrap from "focus-trap-react";
 import { Refrigerator, X, Trash2, Plus, Camera, Pencil, RefreshCw } from "lucide-react";
-import { daysUntilLocal, formatExpiry, PANTRY_EXPIRING_SOON_DAYS } from "@homegohan/shared";
+import { daysUntilFrom, formatExpiry, PANTRY_EXPIRING_SOON_DAYS } from "@homegohan/shared";
 import type { PantryItem } from "@/types/domain";
 import { usePantryStore } from "../../_state";
 import { useDialogA11y } from "@/components/common/useDialogA11y";
@@ -30,7 +30,15 @@ const colors = {
   dangerLight: '#FDECEC',
 };
 
+/** 期限の無い食材の並びの日数 (期限のある食材の残日数より大きくして、一覧の最後に置く) */
+const NO_EXPIRY_SORT_DAYS = 999;
+
 interface FridgeModalProps {
+  /**
+   * 献立表の描画の今日 (JST の暦日。親 page.tsx の todayStr。#2245 K2)。期限までの日数・並び順・色はこの 1 つの今日から数える
+   * (このモーダルの中で行ごとに時計を読み直すと、0 時をまたいだときに親の「早めに使い切り」の帯や冷蔵庫のボタンの色と別の日から数えうる)
+   */
+  todayStr: string;
   onClose: () => void;
   onOpenAddFridge: () => void;
   onDeleteItem: (id: string) => void;
@@ -42,6 +50,7 @@ interface FridgeModalProps {
 }
 
 export function FridgeModal({
+  todayStr,
   onClose,
   onOpenAddFridge,
   onDeleteItem,
@@ -98,8 +107,9 @@ export function FridgeModal({
         {fridgeItems.length === 0 ? (
           <p className="text-center py-8" style={{ color: colors.textMuted }}>冷蔵庫は空です</p>
         ) : (
-          fridgeItems.sort((a, b) => (daysUntilLocal(a.expirationDate) ?? 999) - (daysUntilLocal(b.expirationDate) ?? 999)).map(item => {
-            const daysLeft = daysUntilLocal(item.expirationDate);
+          // 並べるのは写し (store の配列をその場で並べ替えない)。期限の無い食材は最後
+          [...fridgeItems].sort((a, b) => (daysUntilFrom(a.expirationDate, todayStr) ?? NO_EXPIRY_SORT_DAYS) - (daysUntilFrom(b.expirationDate, todayStr) ?? NO_EXPIRY_SORT_DAYS)).map(item => {
+            const daysLeft = daysUntilFrom(item.expirationDate, todayStr);
             return (
               // UX2-18: 既存 E2E (store-selector-sync.spec.ts) が
               // `ancestor::div[contains(@class,'rounded')]` / `locator("button").last()` で

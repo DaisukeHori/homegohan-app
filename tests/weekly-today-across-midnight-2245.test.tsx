@@ -8,11 +8,14 @@
  *   - 今日のフィードバックを読む effect (栄養分析の今日のタブ) は、その場で時計を読み、日付が変わっても読み直さなかった
  *     (開いたまま 0 時をまたいで描き直すと、見出しの今日は新しい日なのに、フィードバックは前の日のまま)
  *   - 献立の改善のモーダル (ImproveMealModal) は、「今日」の印と過去の日の判断で時計を別々に読み、親の見出しの今日とも別に読んでいた
+ *   - 冷蔵庫のモーダル (FridgeModal) は、並べ替えの比較と行ごとに時計を読み直し、親の「早めに使い切り」の帯 (描画の今日から数える) と
+ *     別の日から期限までの日数を数えうった (同じ描画の中で 0 時をまたぐと、帯は「明日まで」、モーダルは同じ食材を「今日まで」と出す)
  *
  * 直したあと:
  *   - 描画ごとに 1 回だけ今日 (todayStr) を読み、見出し・今日の印・空欄の数・期限までの日数・その描画の effect はどれもこの値を使う
  *   - 今日のフィードバックの effect は todayStr を依存に持ち、描き直しで今日が変わったら新しい今日のフィードバックを読む
  *   - 献立の改善のモーダルは、親の描画の今日 (todayStr) を受け取り、印と過去の日の判断をその今日で行う
+ *   - 冷蔵庫のモーダルは、親の描画の今日 (todayStr) を受け取り、期限までの日数・並び順・色をその今日から数える (daysUntilFrom)
  *
  * 描画の途中で 0 時をまたぐのは、@homegohan/shared の今日を読む関数 (todayLocal・今の時刻の formatLocalDate) を包み、
  * 「次に今日を読んだら時計を 0 時の後へ進める」形で作る (vi.setSystemTime)。
@@ -22,6 +25,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PantryItem } from '@/types/domain';
 
 /** 開いたときの時計 (JST 2026-11-04 (水) 23:59:00。実行環境は UTC で、端末の暦でも 2026-11-04 (水)) */
 const BEFORE_MIDNIGHT = '2026-11-04T14:59:00.000Z';
@@ -125,6 +129,8 @@ vi.mock('@/lib/supabase/client', () => {
 
 const { default: WeeklyMenuPage } = await import('@/app/(main)/menus/weekly/page');
 const { ImproveMealModal } = await import('@/app/(main)/menus/weekly/_components/modals/ImproveMealModal');
+const { FridgeModal } = await import('@/app/(main)/menus/weekly/_components/modals/FridgeModal');
+const { usePantryStore } = await import('@/app/(main)/menus/weekly/_state');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -145,6 +151,29 @@ const DAYS_FROM_DAY_AFTER_TO_WEEK_END = 4;
 const FEEDBACK_PATH = '/api/ai/nutrition/feedback';
 
 let fetchCalls: { path: string; method: string; range: string | null; date: string | null }[];
+
+/** 冷蔵庫の食材 (期限は 0 時の前の今日 11-04 から数えて 期限の日・明日・3 日後・期限なし)。並び順の正解は期限の近い順で、期限なしは最後 */
+const FRIDGE_ITEM_BASE = {
+  userId: '22450000-0000-4000-8000-0000000000b1',
+  addedAt: '2026-11-01',
+  createdAt: '2026-11-01T00:00:00.000Z',
+  updatedAt: '2026-11-01T00:00:00.000Z',
+};
+const FRIDGE_ITEMS: readonly PantryItem[] = [
+  { ...FRIDGE_ITEM_BASE, id: 'pantry-egg', name: 'たまご', amount: '6個', category: 'other', expirationDate: '2026-11-07' },
+  { ...FRIDGE_ITEM_BASE, id: 'pantry-none', name: 'にんじん', amount: '2本', category: 'vegetable', expirationDate: null },
+  { ...FRIDGE_ITEM_BASE, id: 'pantry-milk', name: '牛乳', amount: '1本', category: 'other', expirationDate: DAY_AFTER },
+  { ...FRIDGE_ITEM_BASE, id: 'pantry-tofu', name: 'とうふ', amount: '1丁', category: 'other', expirationDate: DAY_BEFORE },
+];
+/** 親の今日 11-04 から数えた冷蔵庫の一覧 (並び順・期限の表示)。0 時の後の時計 11-05 から数えると、とうふ=期限切れ・牛乳=今日まで・たまご=あと2日になる */
+const FRIDGE_ROWS_FROM_DAY_BEFORE = [
+  ['とうふ', '今日まで'],
+  ['牛乳', '明日まで'],
+  ['たまご', 'あと3日'],
+  ['にんじん', ''],
+];
+/** /api/pantry が返す食材 (検査ごとに入れる。既定は空) */
+let pantryItems: readonly PantryItem[];
 
 function jsonResponse(body: unknown, status = 200) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };
@@ -212,7 +241,7 @@ function installFakeServer() {
       case '/api/ai/menu/weekly/cleanup':
         return jsonResponse({ cleaned: 0 });
       case '/api/pantry':
-        return jsonResponse({ items: [] });
+        return jsonResponse({ items: pantryItems });
       case '/api/profile':
         return jsonResponse({ family_size: 2, servings_config: null, radar_chart_nutrients: null });
       case '/api/shopping-list':
@@ -230,6 +259,8 @@ beforeEach(() => {
   process.env.TZ = 'UTC';
   vi.setSystemTime(new Date(BEFORE_MIDNIGHT));
   clockCross.crossTo = null;
+  pantryItems = [];
+  usePantryStore.getState().setFridgeItems([]);
   navigation.searchParams = new URLSearchParams();
   localStorage.clear();
   installFakeServer();
@@ -368,5 +399,48 @@ describe('献立の改善のモーダルは、親の描画の今日 1 つで「�
     const todayBadges = [...document.body.querySelectorAll('span')].filter((span) => span.textContent === '今日');
     expect(todayBadges, '親の今日の日に「今日」の印が無い').toHaveLength(1);
     expect(document.body.textContent ?? '', '親の今日の日を過去の日として扱った').not.toContain('この日は過去のため');
+  });
+});
+
+/** 期限の表示 (formatExpiry が返す文) */
+const EXPIRY_LABEL_PATTERN = /^(期限切れ|今日まで|明日まで|あと\d+日)$/;
+
+/** 冷蔵庫のモーダルの一覧 (上からの順に [食材の名前, 期限の表示]。期限の無い食材は '') */
+function fridgeModalRows(): string[][] {
+  return [...document.body.querySelectorAll<HTMLElement>('[data-testid="fridge-item"]')].map((row) => {
+    const texts = [...row.querySelectorAll('span')].map((span) => span.textContent ?? '');
+    return [texts[0] ?? '', texts.find((text) => EXPIRY_LABEL_PATTERN.test(text)) ?? ''];
+  });
+}
+
+describe('冷蔵庫のモーダルは、親の描画の今日 1 つで期限までの日数と並び順を決める (#2245 K2)', () => {
+  it('親が 0 時の前に今日 (11-04) を読み、モーダルを描く前に 0 時をまたいでも、親の今日から数える (モーダルの中で時計を読み直さない)', async () => {
+    usePantryStore.getState().setFridgeItems([...FRIDGE_ITEMS]);
+    vi.setSystemTime(new Date(AFTER_MIDNIGHT));
+    await act(async () => {
+      root.render(
+        <FridgeModal todayStr={DAY_BEFORE} onClose={() => undefined} onOpenAddFridge={() => undefined} onDeleteItem={() => undefined} />,
+      );
+    });
+    expect(fridgeModalRows(), '期限までの日数・並び順が、親の今日 (11-04) でなく時計 (11-05) から数えられた').toEqual(FRIDGE_ROWS_FROM_DAY_BEFORE);
+    // 並べ替えは写しに対して行い、store の配列の順を変えない
+    expect(usePantryStore.getState().fridgeItems.map((item) => item.id)).toEqual(FRIDGE_ITEMS.map((item) => item.id));
+  });
+
+  it('献立表の描画の途中で 0 時をまたいでも、「早めに使い切り」の帯と冷蔵庫のモーダルは同じ今日から数える', async () => {
+    pantryItems = FRIDGE_ITEMS;
+    await renderWeeklyPage();
+    await act(async () => {
+      requireElement(container.querySelector<HTMLButtonElement>('button[aria-label="冷蔵庫を確認"]'), '冷蔵庫のボタン').click();
+    });
+    await settle();
+    expect(fridgeModalRows(), '開いたときの冷蔵庫の一覧 (検査の前提)').toEqual(FRIDGE_ROWS_FROM_DAY_BEFORE);
+
+    // 次の描画で、親が最初に今日を読んだあとに 0 時をまたぐ (モーダルはその後に描かれる)
+    clockCross.crossTo = AFTER_MIDNIGHT;
+    await rerenderWeeklyPage();
+    expect(clockCross.crossTo, '描画が今日を読んでいない (検査が空振りしている)').toBeNull();
+    expect(container.textContent ?? '', '親の「早めに使い切り」の帯が親の今日 (11-04) から数えていない (検査の前提)').toContain('牛乳(明日まで)');
+    expect(fridgeModalRows(), '冷蔵庫のモーダルが、親の帯と別の今日 (0 時の後の時計) から数えた').toEqual(FRIDGE_ROWS_FROM_DAY_BEFORE);
   });
 });

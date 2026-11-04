@@ -37,7 +37,7 @@ import { useAiConsultationReceiver, type AiConsultationPlaceResult, type AiConsu
 import { BASE_MEAL_TYPES, EXTRA_MEAL_TYPES } from "@/lib/slot-builder";
 import { useNutritionFeedbackWatch } from "@/hooks/useNutritionFeedbackWatch";
 import { notifyMenuGenerated } from "@/lib/local-notification";
-import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, isCalendarDate, addDays, formatExpiry, formatDateJa, isUltimateModeWeeklyMenuRequest, PANTRY_EXPIRING_SOON_DAYS } from "@homegohan/shared";
+import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, isCalendarDate, addDays, daysUntilFrom, formatExpiry, formatDateJa, isUltimateModeWeeklyMenuRequest, PANTRY_EXPIRING_SOON_DAYS } from "@homegohan/shared";
 // isUltimateModeWeeklyMenuRequest (究極モードの生成かの判定) は、Web とモバイルで同じ基準にするため @homegohan/shared に置く (#1609)
 import { MOCK_MENU_RESPONSE, HANDSON_TOUR_CONSTANTS } from "@homegohan/handson-tour-shared";
 import remarkGfm from "remark-gfm";
@@ -409,14 +409,6 @@ const getDayLabels = (weekStartDay: WeekStartDay = 'monday'): string[] => {
   return weekStartDay === 'sunday'
     ? ['日', '月', '火', '水', '木', '金', '土']
     : ['月', '火', '水', '木', '金', '土', '日'];
-};
-
-/** 期限 (dateStr) まで今日 (today。描画の今日 todayStr を渡す。#2245 K2) から何日か */
-const getDaysUntil = (dateStr: string | null | undefined, today: string): number | null => {
-  if (!dateStr) return null;
-  const target = parseLocalDate(dateStr);
-  const now = parseLocalDate(today);
-  return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 };
 
 // Get calendar grid days for a month
@@ -5301,9 +5293,9 @@ export default function WeeklyMenuPage() {
   
   // 期限切れと期限間近 (今日から PANTRY_EXPIRING_SOON_DAYS 日後の期限まで。全画面共通の日数 #1602) の食材
   const expiringItems = fridgeItems.filter(i => {
-    const days = getDaysUntil(i.expirationDate, todayStr);
+    const days = daysUntilFrom(i.expirationDate, todayStr);
     return days !== null && days <= PANTRY_EXPIRING_SOON_DAYS;
-  }).sort((a, b) => (getDaysUntil(a.expirationDate, todayStr) || 0) - (getDaysUntil(b.expirationDate, todayStr) || 0));
+  }).sort((a, b) => (daysUntilFrom(a.expirationDate, todayStr) || 0) - (daysUntilFrom(b.expirationDate, todayStr) || 0));
 
   // 空欄・これからの献立の数は、見出しと同じ描画の今日 todayStr から数える (#2245 K2。関数ごとに時計を読み直さない)
   const countEmptySlots = () => {
@@ -6043,9 +6035,9 @@ export default function WeeklyMenuPage() {
               onClick={() => setActiveModal('fridge')}
               aria-label="冷蔵庫を確認"
               className="w-[34px] h-[34px] rounded-full flex items-center justify-center relative"
-              style={{ background: expiringItems.some(i => getDaysUntil(i.expirationDate, todayStr)! <= 1) ? colors.dangerLight : colors.bg }}
+              style={{ background: expiringItems.some(i => daysUntilFrom(i.expirationDate, todayStr)! <= 1) ? colors.dangerLight : colors.bg }}
             >
-              <Refrigerator size={16} color={expiringItems.some(i => getDaysUntil(i.expirationDate, todayStr)! <= 1) ? colors.danger : colors.textLight} aria-hidden="true" />
+              <Refrigerator size={16} color={expiringItems.some(i => daysUntilFrom(i.expirationDate, todayStr)! <= 1) ? colors.danger : colors.textLight} aria-hidden="true" />
               {/* #1119: 件数バッジの数字は 11px。2 桁でも丸からはみ出さないよう、固定の 16px 円ではなく最小 18px の丸み付き枠にする */}
               {expiringItems.length > 0 && (
                 <div className="absolute -top-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 rounded-full flex items-center justify-center" style={{ background: colors.warning }}>
@@ -6352,11 +6344,11 @@ export default function WeeklyMenuPage() {
       )}
 
       {/* Expiring Items Alert */}
-      {expiringItems.filter(i => getDaysUntil(i.expirationDate, todayStr)! <= 2).length > 0 && (
+      {expiringItems.filter(i => daysUntilFrom(i.expirationDate, todayStr)! <= 2).length > 0 && (
         <div className="mx-3 mt-2 px-3 py-2 rounded-[10px] flex items-center gap-2" style={{ background: colors.warningLight }}>
           <AlertTriangle size={14} color={colors.warning} />
           <span style={{ fontSize: 11, color: colors.text }}>
-            <strong>早めに使い切り:</strong> {expiringItems.filter(i => getDaysUntil(i.expirationDate, todayStr)! <= 2).map(i => `${i.name}(${formatExpiry(getDaysUntil(i.expirationDate, todayStr))})`).join(', ')}
+            <strong>早めに使い切り:</strong> {expiringItems.filter(i => daysUntilFrom(i.expirationDate, todayStr)! <= 2).map(i => `${i.name}(${formatExpiry(daysUntilFrom(i.expirationDate, todayStr))})`).join(', ')}
           </span>
         </div>
       )}
@@ -6683,6 +6675,7 @@ export default function WeeklyMenuPage() {
             {/* Fridge Modal */}
             {activeModal === 'fridge' && (
               <FridgeModal
+                todayStr={todayStr}
                 onClose={() => setActiveModal(null)}
                 onOpenAddFridge={() => { useFormDraftStore.getState().resetFridgeForm(); setActiveModal('addFridge'); }}
                 onDeleteItem={deletePantryItem}

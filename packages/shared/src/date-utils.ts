@@ -60,16 +60,28 @@ export function addDays(date: Date, days: number): Date {
   return result;
 }
 
+/** 1 日のミリ秒 (暦日の差を日数にする) */
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
 /**
  * 現地時刻（デフォルト Asia/Tokyo）の「今日」から dateStr (YYYY-MM-DD) までの残日数。
  * `new Date(dateStr)` の UTC 解釈によるタイムゾーンずれを避けるため parseLocalDate/todayLocal を使用する。
  * 過去日は負の値、当日は 0 を返す。
  */
 export function daysUntilLocal(dateStr: string | null | undefined, timeZone = 'Asia/Tokyo'): number | null {
+  return daysUntilFrom(dateStr, todayLocal(timeZone));
+}
+
+/**
+ * 今日 (today。YYYY-MM-DD の暦日) から dateStr (YYYY-MM-DD) までの残日数。時計を読まない (#2245 K2)。
+ * 1 回の描画・読み取りの中で今日を 1 回だけ読み、その今日を渡して使う (行ごとに時計を読み直すと、0 時をまたいだときに
+ * 同じ描画の中の見出し・ほかの行と別の日から数えうる)。過去日は負の値、当日は 0、dateStr が空なら null。
+ */
+export function daysUntilFrom(dateStr: string | null | undefined, today: string): number | null {
   if (!dateStr) return null;
   const target = parseLocalDate(dateStr);
-  const now = parseLocalDate(todayLocal(timeZone));
-  return Math.ceil((target.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+  const now = parseLocalDate(today);
+  return Math.ceil((target.getTime() - now.getTime()) / MS_PER_DAY);
 }
 
 /** YYYY-MM-DD の形 (ゼロ埋め) */
