@@ -630,6 +630,7 @@ sequenceDiagram
 - `supabase/functions/_shared/llm-usage.ts`: 既存ファイルに `organization_id` / `family_group_id` 列追加
 - `supabase/functions/knowledge-gpt/`: 既存 — ユーザーの JWT で直接呼ばれたときだけ `consumeEdgeAiUsage` で上限を判定する (service role で呼ぶ AI 相談の経路は、Next.js が数え済み)
 - `supabase/functions/food-recognition/`: 既存 — context guard を追加
+- AI 相談の成功のあとの取り直しの受け手の契約は `docs/design/cross/26-ai-consultation-refetch-receivers.md` (#2206 G1)
 
 ## 14. 未解決事項
 
