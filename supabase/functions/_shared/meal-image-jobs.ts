@@ -5,6 +5,7 @@ import {
   MEAL_IMAGE_JOB_ACTIVE_STATUSES,
   insertMealImageJobRecords,
   markEnqueueFailedDishesInMeal,
+  runMealImageEnqueueAftercare,
   summarizeMealImageJobOutcomes,
   type EnqueueMealImageJobsResult,
   type MealImageJobSeed,
@@ -23,6 +24,7 @@ export interface EnqueueMealImageJobsParams {
 
 /**
  * 料理画像のジョブを積む (service role)。行ごとに insert し、積めた・重複・失敗を数えて返す。例外は投げない (#1505)。
+ * 行を積み始めたあとの後始末 (ログ・印) は runMealImageEnqueueAftercare で囲み、投げても結果を返す (#2227 H4)。
  * 積み方は Next.js の lib/meal-image-jobs.ts と同じ (共通の部分は ./meal-image.ts の insertMealImageJobRecords)。
  * 以前は 1 回の upsert (onConflict: 'idempotency_key') で、冪等キーの一意な索引が部分索引のため 42P10 で必ず失敗し、
  * エラーも見ていなかったので、献立の生成 (generate-menu-v4 / v5 の saveMealToDb) の料理画像のジョブが 1 行も積まれていなかった。
@@ -56,19 +58,26 @@ export async function enqueueMealImageJobs(params: EnqueueMealImageJobsParams): 
         .maybeSingle(),
   );
 
+  // ここから先 (行を積み始めたあと) は例外を投げない (積めた料理まで呼び出し側が 'enqueue_failed' にしないように。#2227 H4)
+  const result = summarizeMealImageJobOutcomes(outcomes);
   const failures: Array<{ dishIndex: number; subjectHash: string }> = [];
   for (const outcome of outcomes) {
-    if (outcome.kind !== "failed") continue;
-    failures.push({ dishIndex: outcome.dishIndex, subjectHash: outcome.subjectHash });
-    console.warn("[meal-image-jobs] Failed to enqueue meal image job", {
-      plannedMealId: params.plannedMealId,
-      dishIndex: outcome.dishIndex,
-      code: outcome.code,
-      error: outcome.message,
-    });
+    if (outcome.kind === "failed") failures.push({ dishIndex: outcome.dishIndex, subjectHash: outcome.subjectHash });
   }
+  if (failures.length === 0) return result;
 
-  if (failures.length > 0) {
+  await runMealImageEnqueueAftercare("logging the failed rows", () => {
+    for (const outcome of outcomes) {
+      if (outcome.kind !== "failed") continue;
+      console.warn("[meal-image-jobs] Failed to enqueue meal image job", {
+        plannedMealId: params.plannedMealId,
+        dishIndex: outcome.dishIndex,
+        code: outcome.code,
+        error: outcome.message,
+      });
+    }
+  });
+  await runMealImageEnqueueAftercare("marking the dishes whose jobs were not enqueued", async () => {
     // 読んだときの updated_at の行にだけ書く (ワーカーと同時でも、そのあいだに書かれた料理の画像を巻き戻さない。#1532)
     const marked = await markEnqueueFailedDishesInMeal({
       failures,
@@ -83,9 +92,9 @@ export async function enqueueMealImageJobs(params: EnqueueMealImageJobsParams): 
         error: marked.message,
       });
     }
-  }
+  });
 
-  return summarizeMealImageJobOutcomes(outcomes);
+  return result;
 }
 
 /**

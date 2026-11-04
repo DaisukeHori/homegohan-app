@@ -76,6 +76,8 @@ const PENDING_DISH = { name: '筑前煮', role: 'main', image_source: 'generated
  * 同じ行 (画像を待つ料理) を返すので、その行の値になる (書いた後の値を返すことは tests/meal-image-enqueue-threw-response-2206.test.ts)
  */
 const MEAL_AFTER_MARK = { dishes: [PENDING_DISH], updated_at: SAVED_AT };
+/** 積み込みの例外のあと、読み直せなかったときに応答の行へ見送りの印を重ねる料理 (ジョブ JOB の料理。#2227 H4) */
+const JOB_FAILURES = [{ dishIndex: JOB.dishIndex, subjectHash: SUBJECT_HASH }];
 const ENQUEUED_ONE = { inserted: 1, duplicates: 0, duplicatesProcessing: 0, failed: 0 };
 const ENQUEUED_NONE = { inserted: 0, duplicates: 0, duplicatesProcessing: 0, failed: 1 };
 
@@ -144,7 +146,7 @@ describe('enqueueMealImageJobsAfterSave (#2201 U4)', () => {
 
     const { outcome, queries } = await run();
 
-    expect(outcome).toEqual({ status: 'enqueue_threw', mealAfterMark: MEAL_AFTER_MARK });
+    expect(outcome).toEqual({ status: 'enqueue_threw', mealAfterMark: MEAL_AFTER_MARK, failuresToOverlay: JOB_FAILURES });
     expect(h.refundAiUsage).toHaveBeenCalledTimes(1);
     expect(h.refundAiUsage).toHaveBeenCalledWith(USER_ID, 'meal_image_auto', AI_USAGE_ALLOWED);
     expect(h.triggerMealImageJobProcessing).not.toHaveBeenCalled();
@@ -164,7 +166,7 @@ describe('enqueueMealImageJobsAfterSave (#2201 U4)', () => {
 
     const { outcome, queries } = await run();
 
-    expect(outcome).toEqual({ status: 'enqueue_threw', mealAfterMark: MEAL_AFTER_MARK });
+    expect(outcome).toEqual({ status: 'enqueue_threw', mealAfterMark: MEAL_AFTER_MARK, failuresToOverlay: JOB_FAILURES });
     expect(h.enqueueMealImageJobs).not.toHaveBeenCalled();
     expect(h.refundAiUsage).toHaveBeenCalledTimes(1);
     expect(enqueueFailedMarks(queries)).toHaveLength(1);
@@ -175,7 +177,7 @@ describe('enqueueMealImageJobsAfterSave (#2201 U4)', () => {
 
     const { outcome, queries } = await run(null);
 
-    expect(outcome).toEqual({ status: 'enqueue_threw', mealAfterMark: MEAL_AFTER_MARK });
+    expect(outcome).toEqual({ status: 'enqueue_threw', mealAfterMark: MEAL_AFTER_MARK, failuresToOverlay: JOB_FAILURES });
     expect(h.refundAiUsage).not.toHaveBeenCalled();
     expect(enqueueFailedMarks(queries)).toHaveLength(1);
   });

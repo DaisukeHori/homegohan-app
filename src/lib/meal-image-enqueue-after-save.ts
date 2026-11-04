@@ -17,6 +17,12 @@
  *   - 積み込みの例外のときは、印を書いた後の献立の料理 (dishes) と updated_at を読み直して結果 (mealAfterMark) に入れる。
  *     呼び出し側は応答の行にそれを重ねる (withMealAfterEnqueueThrew)。重ねないと、DB では料理が見送りの状態なのに、応答は
  *     書き直す前の行 ('pending') のままで、画面は次の読み込みまで「生成中」を出していた (#2206 G4)
+ *   - 印の書き込みが失敗した (error) ときは、読み直した行の料理に見送りの印を重ねて返す (#2227 H4)。ジョブが無いので、
+ *     DB の 'pending' のまま返すと画面は「生成中」に残る (画像はできない)
+ *   - 読み直しに失敗したときは、印を書けた・印の書き込みが失敗したなら、応答の行の料理に見送りの印を重ねる
+ *     (failuresToOverlay。#2227 H4)。updated_at は分からないので重ねない
+ *   - 積み込みの例外を受けるのは、行を 1 つも積む前に失敗したときだけ (enqueueMealImageJobs は積み始めたあとは投げない。
+ *     runMealImageEnqueueAftercare。#2227 H4)。なので、ここでは全部のジョブの料理を印の対象にし、1 回を戻してよい
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
@@ -25,8 +31,11 @@ import { createLogger } from '@/lib/db-logger';
 import {
   ENQUEUE_FAILED_MEAL_COLUMNS,
   countMealImageJobsToProcess,
+  isCatalogProductMeal,
+  markDishImagesEnqueueFailed,
   markEnqueueFailedDishesInMeal,
   type EnqueueMealImageJobsResult,
+  type MealImageDish,
   type MealImageJobSeed,
 } from '@/lib/meal-image';
 import { enqueueMealImageJobs, triggerMealImageJobProcessing } from '@/lib/meal-image-jobs';
@@ -58,8 +67,11 @@ export interface EnqueueMealImageJobsAfterSaveParams {
   logContext?: Readonly<Record<string, unknown>>;
 }
 
-/** 積み込みの例外のあと、印を書いた後の献立から読み直す列 (応答の行に重ねる。#2206 G4) */
-export const MEAL_AFTER_ENQUEUE_THREW_COLUMNS = 'dishes, updated_at';
+/**
+ * 積み込みの例外のあと、印を書いた後の献立から読み直す列 (応答の行に重ねる。#2206 G4)。
+ * 印の書き込みが失敗したときに読み直した料理へ印を重ねるので、商品の献立か (isCatalogProductMeal) を見る列も読む (#2227 H4)
+ */
+export const MEAL_AFTER_ENQUEUE_THREW_COLUMNS = ENQUEUE_FAILED_MEAL_COLUMNS;
 
 /** 積み込みの例外のあと、印を書いた後の献立の料理と updated_at (読み直せなかったときは null) */
 export interface MealAfterEnqueueThrew {
@@ -67,20 +79,63 @@ export interface MealAfterEnqueueThrew {
   updated_at: unknown;
 }
 
+/** ジョブを積めなかった料理 (見送りの印の対象) */
+export interface EnqueueFailedDish {
+  dishIndex: number;
+  subjectHash: string;
+}
+
 export type EnqueueMealImageJobsAfterSaveOutcome =
   | { status: 'enqueued'; enqueued: EnqueueMealImageJobsResult; triggered: boolean }
-  | { status: 'enqueue_threw'; mealAfterMark: MealAfterEnqueueThrew | null };
+  | {
+      status: 'enqueue_threw';
+      mealAfterMark: MealAfterEnqueueThrew | null;
+      /**
+       * 読み直せなかった (mealAfterMark が null) ときに、応答の行の料理へ見送りの印を重ねる料理 (#2227 H4)。
+       * 印を書けた・印の書き込みが失敗したときはジョブの料理全部。献立が無い・変える料理が無かったときは空
+       */
+      failuresToOverlay: ReadonlyArray<EnqueueFailedDish>;
+    };
+
+/** 料理の配列 (どれもオブジェクト) なら MealImageDish の配列として返す。違えば null (印を重ねない) */
+function asMealImageDishes(value: unknown): MealImageDish[] | null {
+  if (!Array.isArray(value)) return null;
+  const dishes: MealImageDish[] = [];
+  for (const dish of value) {
+    if (dish === null || typeof dish !== 'object' || Array.isArray(dish)) return null;
+    dishes.push({ ...dish });
+  }
+  return dishes;
+}
+
+/** 料理に見送りの印を重ねる (markDishImagesEnqueueFailed と同じ決まり)。重ねる料理が無ければ渡した値のまま */
+function overlayEnqueueFailedMarks(
+  dishes: unknown,
+  failures: ReadonlyArray<EnqueueFailedDish>,
+  meal: { catalog_product_id?: unknown; source_type?: unknown },
+): unknown {
+  if (failures.length === 0) return dishes;
+  const parsed = asMealImageDishes(dishes);
+  if (!parsed) return dishes;
+  const marked = markDishImagesEnqueueFailed(parsed, failures, { mealIsCatalog: isCatalogProductMeal(meal) });
+  return marked.changed ? marked.dishes : dishes;
+}
 
 /**
  * 応答に返す献立の行に、積み込みの例外のあとの料理 (見送りの状態の印を書いた後の dishes) を重ねる (#2206 G4)。
  * updated_at は、行がその列を持つとき (select() の全列や updated_at を選んだ行) だけ重ねる。
- * 積めたとき・読み直せなかったとき (outcome が null を含む) は行のまま返す
+ * 読み直せなかったときは、応答の行の料理に見送りの印を重ねる (failuresToOverlay。updated_at は変えない。#2227 H4)。
+ * 積めたとき (outcome が null を含む) は行のまま返す
  */
 export function withMealAfterEnqueueThrew<Meal extends Record<string, unknown>>(
   meal: Meal,
   outcome: EnqueueMealImageJobsAfterSaveOutcome | null,
 ): Meal {
-  if (outcome?.status !== 'enqueue_threw' || !outcome.mealAfterMark) return meal;
+  if (outcome?.status !== 'enqueue_threw') return meal;
+  if (!outcome.mealAfterMark) {
+    const overlaid = overlayEnqueueFailedMarks(meal.dishes, outcome.failuresToOverlay, meal);
+    return overlaid === meal.dishes ? meal : { ...meal, dishes: overlaid };
+  }
   const { dishes, updated_at: updatedAt } = outcome.mealAfterMark;
   return 'updated_at' in meal ? { ...meal, dishes, updated_at: updatedAt } : { ...meal, dishes };
 }
@@ -110,8 +165,9 @@ export async function enqueueMealImageJobsAfterSave(
     // ジョブを積めていないので、AI へは何も送っていない。数えた 1 回を戻す
     if (params.usage?.allowed) await refundAiUsage(params.userId, 'meal_image_auto', params.usage);
     // 'pending' のまま残すと、処理するジョブが無いので「料理画像を生成中です」のまま残る。見送りの状態にする
+    const failures: EnqueueFailedDish[] = params.jobSeeds.map((seed) => ({ dishIndex: seed.dishIndex, subjectHash: seed.subjectHash }));
     const marked = await markEnqueueFailedDishesInMeal({
-      failures: params.jobSeeds.map((seed) => ({ dishIndex: seed.dishIndex, subjectHash: seed.subjectHash })),
+      failures,
       mealId: params.plannedMealId,
       db: params.userDb,
       loadMeal: () => params.userDb.from('planned_meals').select(ENQUEUE_FAILED_MEAL_COLUMNS).eq('id', params.plannedMealId).maybeSingle(),
@@ -121,7 +177,14 @@ export async function enqueueMealImageJobsAfterSave(
         .withUser(params.userId)
         .warn('Failed to mark dishes whose meal image jobs were not enqueued', { ...context, error: marked.message });
     }
-    return { status: 'enqueue_threw', mealAfterMark: await readMealAfterMark(params, context) };
+    // 印を書けなかった (error) ときは、DB の料理は 'pending' のまま。応答には印を重ねる (ジョブが無く画像はできない。#2227 H4)
+    const markFailed = marked.status === 'error';
+    const failuresToOverlay = marked.status === 'updated' || markFailed ? failures : [];
+    return {
+      status: 'enqueue_threw',
+      mealAfterMark: await readMealAfterMark(params, context, markFailed ? failures : []),
+      failuresToOverlay,
+    };
   }
 
   // 積めた行と、同じ料理の待ちのジョブがあるときだけ処理を起こす (書き込みの失敗だけなら空振りの呼び出しを出さない。#1532)
@@ -141,12 +204,14 @@ export async function enqueueMealImageJobsAfterSave(
 
 /**
  * 積み込みの例外のあと、印を書いた後の献立の料理と updated_at を読み直す (応答の行に重ねるため。#2206 G4)。
- * 印の書き込みが失敗した・献立が消えたときも、読めた今の行を返す (応答は DB の今の値に合わせる)。
- * 読めなかったときは null (応答は保存した行のまま。ログに残す)
+ * 献立が消えたときも、読めた今の行を返す (応答は DB の今の値に合わせる)。
+ * 印の書き込みが失敗したときは、読めた行の料理に見送りの印を重ねる (overlayFailures。updated_at は DB の値のまま。#2227 H4)。
+ * 読めなかったときは null (呼び出し側が応答の行に印を重ねる。ログに残す)
  */
 async function readMealAfterMark(
   params: EnqueueMealImageJobsAfterSaveParams,
   context: Readonly<Record<string, unknown>>,
+  overlayFailures: ReadonlyArray<EnqueueFailedDish>,
 ): Promise<MealAfterEnqueueThrew | null> {
   try {
     const { data, error } = await params.userDb
@@ -157,7 +222,7 @@ async function readMealAfterMark(
     if (error) throw error;
     if (!data) return null;
     const row: Record<string, unknown> = data;
-    return { dishes: row.dishes, updated_at: row.updated_at };
+    return { dishes: overlayEnqueueFailedMarks(row.dishes, overlayFailures, row), updated_at: row.updated_at };
   } catch (readError) {
     createLogger(ENQUEUE_AFTER_SAVE_LOG_NAME)
       .withUser(params.userId)
