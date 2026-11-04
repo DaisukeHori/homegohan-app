@@ -266,14 +266,14 @@ export async function logStreamingUsage(
   ジョブの無い料理を保存済みの献立の上で `image_status: 'failed'` + `image_error: 'enqueue_failed'` にする (献立の保存は成功のまま)。
   処理の起動 (`triggerMealImageJobProcessing`) の例外はログに残すだけで戻さない (積んだジョブは定期の処理が拾う)。
   AI 相談の update_meal と料理を保存する 4 つの route (`POST /api/meals`・`PATCH /api/meals/[id]`・`POST /api/meal-plans/meals`・
-  `PATCH /api/meal-plans/meals/[id]`) は、積み込みと処理の起動を `src/lib/meal-image-enqueue-after-save.ts` の `enqueueMealImageJobsAfterSave` で行う
+  `PATCH /api/meal-plans/meals/[id]`) は、積み込みと処理の起動を `src/lib/meal-image-enqueue-after-save.ts` の `enqueueMealImageJobsAfterSave` で行い、積み込みの例外のときは印を書いた後の料理 (`dishes`・`updated_at`) を読み直して応答の行に重ねる (`withMealAfterEnqueueThrew`。#2206 G4)
 - 料理画像のジョブの積み方 (#1505): Next.js (`lib/meal-image-jobs.ts`) と Edge Function (`supabase/functions/_shared/meal-image-jobs.ts`。
   献立の生成 `generate-menu-v5` / `generate-menu-v4` の `saveMealToDb`) は、同じ積み方 (`supabase/functions/_shared/meal-image.ts` の
   `buildMealImageJobRecords` / `insertMealImageJobRecords`) を使う。料理を保存したあとにジョブの書き込みが失敗した料理 (23505 以外のエラー・例外) は、
   保存済みの献立の上で `image_status: 'failed'` + `image_error: 'enqueue_failed'` にする (同じ料理で、画像が無く待ち・更新待ちの、
   `image_source` が `generated_ai` か未設定の料理だけ。写真・商品・手の画像の料理と、商品の献立の画像の項目の無い古い商品の料理は変えない。
   書くのは料理だけで、献立のカバーには触れない)。
-  重複 (23505) の料理は待ちのまま (待ち・処理中のジョブが画像を作る)。`saveMealToDb` が処理 (`process-meal-image-jobs`) を起こすのは、積めた行か重複の行があるときだけ。
+  重複 (23505) の料理は待ちのまま (待ち・処理中のジョブが画像を作る)。`saveMealToDb` が処理 (`process-meal-image-jobs`) を起こすのは、積めた行か重複の行があるときだけ。`saveMealToDb` の積み込みと処理の起動は `supabase/functions/_shared/save-meal.ts` の `enqueueSavedMealImageJobs` で行い、積み込み全体の例外 (`enqueueMealImageJobs` が投げた) のときは、ジョブの料理を `markEnqueueFailedDishesInMeal` で `image_status: 'failed'` + `image_error: 'enqueue_failed'` にする (献立の生成は料理画像の回数を数えていないので、数え戻しは無い)。処理の起動 (`triggerMealImageJobProcessing`) の例外はログに残すだけ (#2206 G4)。
   待ったままの料理の積み直し (`scripts/requeue-pending-meal-images.ts`) は、保存し直しが積まない料理 (商品の献立の古い商品の料理・
   カバーが料理ごとの画像を持たない写真・商品・手の画像の料理のものである献立の料理) を、同じ共通の判定 (`asCatalogMealDish`・
   `isMealCoverHeldByImagelessPreservedDish`) で積まない。経路・本番で確かめること・積み直しの手順は `docs/operations/meal-image-pipeline.md`
