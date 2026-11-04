@@ -324,6 +324,10 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   // ボタンを止める描画を待たずに今の値を見るため ref でも持つ (同じ描画のうちの 2 度目の押下も止める)
   const sendingRef = useRef(false);
   const reloadingRef = useRef(false);
+  // アーカイブの /close の応答待ちの最中か (#2227 H1 の整合ゲートの指摘)。アーカイブは応答のあと新しい相談を始める (createNewSession)
+  // が、その入口は取り直しの最中なら黙って戻るので、応答待ちの間に「最新の会話を読み込む」を始めさせない。isClosingSession と同じ値を
+  // ref でも持つのは、ボタンを止める描画を待たずに今の値を見るため (アーカイブと同じ描画のうちの取り直しの押下も止める)
+  const closingSessionRef = useRef(false);
   // 届いたかを確かめられなかった送信と、送信に当てた送った文の保存行の id (#2227 H1。Web の AIChatBubble と同じ入れ物と決まり。
   // 共有の resolveUnconfirmedSends)。応答を受け取れずに終わった送信は、その場で積む (registerUnconfirmedSend)。後の取り直しで
   // 保存行が見つかったら外し、入力欄が戻した文のままなら消す (そのまま送ると同じ相談に二重に届く)。今回の送信の保存行を探すときは、
@@ -546,7 +550,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   /**
    * 送信が時間切れになったあと、相談のメッセージを取り直す (#1049 F7-18。扱いは src/lib/ai-chat-timeout.ts)。
    * 取り直しのあいだは、送信・入力欄・クイック質問・新しい相談・相談の切り替え・アーカイブを止める (#2227 H1。送信と同じ扱い。
-   * Web と同じく、取り直しと送信は重ならない)。待つ上限は、GET と記録の直読みでそれぞれ AI_CHAT_RELOAD_TIMEOUT_MS。
+   * Web と同じく、取り直しと送信は重ならない)。アーカイブの応答待ちの最中は始めない (#2227 H1 の整合ゲートの指摘。アーカイブが
+   * 応答のあとに呼ぶ createNewSession が、取り直しの最中だと黙って戻り、閉じた相談が今の相談のまま残る)。待つ上限は、GET と記録の直読みでそれぞれ AI_CHAT_RELOAD_TIMEOUT_MS。
    * 取り直しの最中にシートを開き直したら (止められない画面の操作)、結果は画面に書かない (screenStillShows。案内の送信は、開き直した
    * 会話の読み込みが確かめる)。
    * 取れなければ、今の表示と案内をそのまま残す (今の会話を消さない。届いたかを確かめていない送信は入れ物に積んだまま)。
@@ -554,7 +559,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
    */
   async function reloadAfterTimeout() {
     const sent = timedOutSend;
-    if (!sent || sendingRef.current || reloadingRef.current) return;
+    if (!sent || sendingRef.current || reloadingRef.current || closingSessionRef.current) return;
     reloadingRef.current = true;
     setReloadingAfterTimeout(true);
     try {
@@ -742,7 +747,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
 
   async function archiveSession() {
     // 取り直しの最中はしない (#2227 H1。アーカイブのあとに新しい相談を始めるので、新しい相談と同じく止める)
-    if (!currentSessionId || isClosingSession || reloadingRef.current) return;
+    if (!currentSessionId || isClosingSession || closingSessionRef.current || reloadingRef.current) return;
 
     // クライアント側で既に closed か確認
     const currentSession = sessions.find((s) => s.id === currentSessionId);
@@ -751,6 +756,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
       return;
     }
 
+    closingSessionRef.current = true;
     setIsClosingSession(true);
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -828,6 +834,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
     } catch {
       Alert.alert("エラー", "セッションのアーカイブに失敗しました。");
     } finally {
+      closingSessionRef.current = false;
       setIsClosingSession(false);
     }
   }
@@ -1131,6 +1138,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   // 送信・入力・クイック質問を止めるか (#2227 H1。「最新の会話を読み込む」の取り直しの最中も送信中と同じく止める。取り直しと
   // 送信を重ねない)
   const inputLocked = sending || reloadingAfterTimeout;
+  // 「最新の会話を読み込む」を押せないとき: 取り直しの最中・アーカイブの応答待ちの最中 (#2227 H1 の整合ゲートの指摘)
+  const reloadDisabled = reloadingAfterTimeout || isClosingSession;
 
   return (
     <>
@@ -1281,7 +1290,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
                     </View>
                   )}
 
-                  {/* 送信が時間切れになったときの、取り直しの導線 (#1049 F7-18) */}
+                  {/* 送信が時間切れになったときの、取り直しの導線 (#1049 F7-18)。アーカイブの応答待ちの最中は押せない (#2227 H1 の
+                      整合ゲートの指摘。reloadAfterTimeout の入口でも止めている) */}
                   {timedOutSend != null && timedOutSend.sessionId === currentSessionId && !sending && (
                     <View testID="ai-timeout-notice" style={styles.timeoutNotice}>
                       <Text style={styles.timeoutNoticeText}>
@@ -1291,8 +1301,8 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
                         testID="ai-timeout-reload"
                         accessibilityRole="button"
                         onPress={reloadAfterTimeout}
-                        disabled={reloadingAfterTimeout}
-                        style={[styles.timeoutReloadBtn, reloadingAfterTimeout && styles.sendButtonDisabled]}
+                        disabled={reloadDisabled}
+                        style={[styles.timeoutReloadBtn, reloadDisabled && styles.sendButtonDisabled]}
                       >
                         {reloadingAfterTimeout ? (
                           <ActivityIndicator size="small" color={colors.accent} />
