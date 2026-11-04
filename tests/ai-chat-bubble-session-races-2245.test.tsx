@@ -443,6 +443,66 @@ describe('#2245 K1 2 相談を閉じる応答待ちの間は『1日献立変更�
   });
 });
 
+describe('#2245 K1 2 同じ型: 相談を閉じる応答待ちの間は、提案の「実行する」も止める', () => {
+  const PROPOSAL_MESSAGE_ID = 'proposal-1';
+  const executeKey = `POST /api/ai/consultation/actions/${PROPOSAL_MESSAGE_ID}/execute`;
+  const PROPOSAL_MESSAGES = [
+    {
+      id: PROPOSAL_MESSAGE_ID,
+      role: 'assistant',
+      content: MAIN_REPLY_TEXT,
+      proposedActions: { type: 'add_pantry_item', params: { name: '卵' } },
+      createdAt: '2026-11-01T00:00:00.000Z',
+    },
+  ];
+
+  function executeButton(): HTMLButtonElement {
+    const button = buttonWithText('実行する');
+    expect(button).toBeDefined();
+    return button!;
+  }
+
+  beforeEach(() => {
+    handlers[messagesKey(SESSION_ID)] = async () => json(200, { messages: PROPOSAL_MESSAGES });
+    handlers[executeKey] = async () => json(200, { success: true, actionType: 'add_pantry_item', result: {} });
+  });
+
+  it('描画の側: 閉じる応答待ちの間はボタンが止まる', async () => {
+    await openChat();
+    expect(executeButton().disabled).toBe(false);
+    hold(closeKey(SESSION_ID));
+    await clickClose();
+
+    expect(executeButton().disabled).toBe(true);
+  });
+
+  it('入口の側: 閉じると同じ描画のうちに押しても、実行の API を呼ばない', async () => {
+    await openChat();
+    const close = hold(closeKey(SESSION_ID));
+    await act(async () => {
+      closeButton().click();
+      executeButton().click();
+    });
+    await waitFor(() => requestCount(closeKey(SESSION_ID)) === 1);
+    await settle();
+    expect(requestCount(executeKey)).toBe(0);
+
+    await act(async () => {
+      close.resolve(json(200, { summary: null }));
+    });
+    await waitFor(() => text().includes(WELCOME_TEXT));
+    expect(requestCount(executeKey)).toBe(0);
+  });
+
+  it('対照: 閉じていない間は実行する', async () => {
+    await openChat();
+    await act(async () => {
+      executeButton().click();
+    });
+    await waitFor(() => requestCount(executeKey) === 1);
+  });
+});
+
 describe('#2245 K1 3 『相談を終了』の失敗を知らせる', () => {
   async function closeWith(response: () => Promise<Response>) {
     await openChat();

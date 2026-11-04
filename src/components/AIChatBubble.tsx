@@ -395,6 +395,12 @@ const DAY_MENU_DEFAULT_OFFSET_DAYS = 1;
 /** 1 日分の献立の日付の欄で選べる最後の日を、JST の今日から何日後にするか (欄の下の『今日から2週間先まで選択できます』) */
 const DAY_MENU_MAX_OFFSET_DAYS = 14;
 
+/** 止めている「1日献立変更」のボタンの不透明度 (#2245 K1 で式を名前にしただけ。値は以前のまま) */
+const LOCKED_QUICK_ACTION_OPACITY = 0.5;
+
+/** 押せない・処理中の「作成する」「実行する」のボタンの不透明度 (#2245 K1 で式を名前にしただけ。値は以前のまま) */
+const BUSY_BUTTON_OPACITY = 0.7;
+
 /**
  * JST の暦日 day (YYYY-MM-DD) を offsetDays 日ずらした暦日 (#2235 I8)。暦の計算 (addDaysToDate) だけで求めるので、端末の
  * タイムゾーンに左右されない (以前は端末の 0 時の Date を setDate でずらしてから JST の日付にしていて、端末が JST より東だと
@@ -1344,10 +1350,15 @@ export default function AIChatBubble() {
 
   // アクション実行
   const executeAction = async (actionId: string, messageId: string) => {
+    // 相談を閉じる (/close) の応答待ちの間は実行しない (#2245 K1。1日献立変更と同じ。実行の結果の一文が閉じる側の新しい相談の画面の
+    // 置き換えで消え、実行したかが見えなくなる。ボタンも止めている。ref で見るのは、閉じると同じ描画のうちの押下も止めるため)
+    if (closingSessionRef.current) return;
     setExecutingActionId(messageId);
     try {
       // 提案の実行は、サーバーで献立の生成などの AI の処理を始めることがある。未同意なら同意画面を出す (「同意しない」なら実行しない)
       if ((await ensureAiConsent()) === 'declined') return;
+      // 同意の確認を待つ間に相談を閉じ始めた: 実行しない (#2245 K1。上と同じ)
+      if (closingSessionRef.current) return;
 
       // まずアクションログを取得
       const res = await aiFetch(`/api/ai/consultation/actions/${messageId}/execute`, {
@@ -2039,9 +2050,9 @@ export default function AIChatBubble() {
                               <div className="flex gap-2">
                                 <button
                                   onClick={() => executeAction(msg.proposedActions!.type, msg.id)}
-                                  disabled={executingActionId === msg.id}
+                                  disabled={executingActionId === msg.id || isClosingSession}
                                   className="flex-1 py-2 rounded-lg flex items-center justify-center gap-1"
-                                  style={{ background: colors.success, opacity: executingActionId === msg.id ? 0.7 : 1 }}
+                                  style={{ background: colors.success, opacity: (executingActionId === msg.id || isClosingSession) ? BUSY_BUTTON_OPACITY : 1 }}
                                 >
                                   {executingActionId === msg.id ? (
                                     <Loader2 size={14} color="#fff" className="animate-spin" />
@@ -2097,7 +2108,7 @@ export default function AIChatBubble() {
                   onClick={openDayMenuModal}
                   disabled={dayMenuButtonLocked}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border whitespace-nowrap hover:bg-gray-50 transition-colors"
-                  style={{ borderColor: colors.primary, opacity: dayMenuButtonLocked ? 0.5 : 1 }}
+                  style={{ borderColor: colors.primary, opacity: dayMenuButtonLocked ? LOCKED_QUICK_ACTION_OPACITY : 1 }}
                 >
                   <CalendarDays size={14} color={colors.primary} />
                   <span style={{ fontSize: 12, color: colors.primary, fontWeight: 500 }}>
@@ -2230,7 +2241,7 @@ export default function AIChatBubble() {
                   onClick={generateDayMenu}
                   disabled={!dayMenuCreatable}
                   className="flex-1 py-3 rounded-xl flex items-center justify-center gap-2"
-                  style={{ background: colors.primary, color: '#fff', fontSize: 14, fontWeight: 500, opacity: dayMenuCreatable ? 1 : 0.7 }}
+                  style={{ background: colors.primary, color: '#fff', fontSize: 14, fontWeight: 500, opacity: dayMenuCreatable ? 1 : BUSY_BUTTON_OPACITY }}
                 >
                   {isGeneratingDayMenu ? (
                     <Loader2 size={16} className="animate-spin" />
