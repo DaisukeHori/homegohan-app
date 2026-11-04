@@ -185,9 +185,20 @@ export const useHomeData = () => {
   const dismissedAnnouncementIdsRef = useRef<Set<string>>(new Set());
   /**
    * 前回のホームの読み取りが確かめた利用者の id (#2227 H3)。ログインの状態の変化の SIGNED_IN で、同じ利用者なら読み直さないために使う
-   * (タブを前に戻したときの SIGNED_IN で AI つきの栄養の分析を読み直さない)
+   * (タブを前に戻したときの SIGNED_IN で AI つきの栄養の分析を読み直さない)。
+   * 書くのは place の apply の中だけ (#2235 I2): 主のデータ (今日の献立・集計) を置けたとき (プロフィールも読めたとき) と、
+   * 開いたときの読み込みがログインしていないと置いたとき。読み取りが失敗した・止めた・追い越されたときは前の値のまま
+   * (覚えるのを読む前にすると、開いたときの読み込みの失敗のあとの同じ人の SIGNED_IN・止めた取り直しのあとの別の人の SIGNED_IN で読み直さない)
    */
   const lastReadAuthUserIdRef = useRef<HomeLastReadAuthUserId>(undefined);
+  /**
+   * readHomeData が自分で supabase.auth.setSession (syncSessionFromServer) を呼んでいる数 (#2235 I2)。auth-js の setSession は、渡した
+   * access token が有効なら戻る前に SIGNED_IN を出す (その読み取りが確かめる利用者の知らせ)。この間の SIGNED_IN は読み直しに数えない
+   * (同じ読み取りが続けて読むので、読み直すと AI つきの栄養の分析を 2 回読む)。読み取りが重なりうるので真偽ではなく数で持つ。
+   * (今の /api/auth/session-sync は本文にトークンを入れない (#165) ので、setSession はトークンが無くて知らせを出さない。同期がトークンを
+   * 返すようになっても 2 回読まないための守り)
+   */
+  const ownSessionSyncsRef = useRef(0);
   const [activityLevel, setActivityLevel] = useState<string | null>(null);
   // 今日のアドバイスの帯 (文と出所。#2206 G3)
   const [suggestionBand, setSuggestionBand] = useState<SuggestionBand | null>(null);
@@ -263,12 +274,17 @@ export const useHomeData = () => {
     }
 
     const syncData = await syncResponse.json();
-    const synced = await supabase.auth.setSession({
-      access_token: syncData.accessToken,
-      refresh_token: syncData.refreshToken,
-    });
-
-    return synced.data.session?.user ?? null;
+    // setSession が出す SIGNED_IN は、この読み取りの同期の知らせ (読み直さない。#2235 I2)
+    ownSessionSyncsRef.current += 1;
+    try {
+      const synced = await supabase.auth.setSession({
+        access_token: syncData.accessToken,
+        refresh_token: syncData.refreshToken,
+      });
+      return synced.data.session?.user ?? null;
+    } finally {
+      ownSessionSyncsRef.current -= 1;
+    }
   };
 
   const resolveAuthUserOnce = async () => {
@@ -319,9 +335,7 @@ export const useHomeData = () => {
   const readHomeData = async (read: AiConsultationRead, startAnalyses: StartHomeAnalyses) => {
     // 1. ユーザー情報取得
     const authUser = await resolveAuthUser();
-    // 確かめた利用者を覚える (#2227 H3)。取り直しでログインを確かめられなかったときは覚えた値を変えない (今の表示を残すのと同じ)
-    if (authUser) lastReadAuthUserIdRef.current = authUser.id;
-    else if (read.mode === 'mount') lastReadAuthUserIdRef.current = null;
+    // 確かめた利用者は、ここでは覚えない (主のデータを置けたときに place の apply の中で覚える。#2227 H3・#2235 I2)
     
     if (authUser) {
       const { data: profile, error: profileError } = await supabase
@@ -408,6 +422,9 @@ export const useHomeData = () => {
             setTodayPlan(null);
             setDailySummary(EMPTY_DAILY_SUMMARY);
           }
+          // 主のデータを置けた: 読んだ利用者を覚える (#2227 H3・#2235 I2)。プロフィールを読めなかったときは覚えない
+          // (開いたときは名前を代わりの値で置いている。同じ人の SIGNED_IN で読み直す側に寄せる)
+          if (!profileError) lastReadAuthUserIdRef.current = authUser.id;
         });
       }
 
@@ -429,8 +446,12 @@ export const useHomeData = () => {
       // (分析は鍵が分かれているので、古い応答は place が置かない。#2206 G1)
       startAnalyses(read, authUser.id);
     } else if (read.mode === 'mount') {
-      // 取り直しでログインを確かめられなかったときは、今の表示を残す (#2201 U1。ログアウトはログインの状態の変化の読み込みが反映する)
-      read.place(KEY_USER, () => setUser(null));
+      // 取り直しでログインを確かめられなかったときは、今の表示を残す (#2201 U1。ログアウトはログインの状態の変化の読み込みが反映する)。
+      // ログインしていないと置けたときに覚える (#2227 H3・#2235 I2。追い越されたときは前の値のまま。取り直しは覚えた値を変えない)
+      read.place(KEY_USER, () => {
+        setUser(null);
+        lastReadAuthUserIdRef.current = null;
+      });
     }
 
     // 11. Announcements (ログインを確かめられなくても読む)
@@ -1233,7 +1254,10 @@ export const useHomeData = () => {
     } = supabase.auth.onAuthStateChange((event, session) => {
       // ログインしている人が変わったときだけ読み直す (INITIAL_SESSION・TOKEN_REFRESHED では読まない。#2206 G3)。
       // SIGNED_IN はタブを前に戻したときにも同じ人で来ることがあるので、前回読んだ利用者と違うときだけ読み直す (#2227 H3)
-      if (shouldRefetchHomeOnAuthChange(event, session?.user.id, lastReadAuthUserIdRef.current)) void fetchHomeData();
+      // ホームの読み取りが自分で setSession している間の SIGNED_IN は、その読み取りの同期の知らせなので読み直さない (#2235 I2)
+      if (shouldRefetchHomeOnAuthChange(event, session?.user.id, lastReadAuthUserIdRef.current, ownSessionSyncsRef.current > 0)) {
+        void fetchHomeData();
+      }
     });
 
     return () => {
