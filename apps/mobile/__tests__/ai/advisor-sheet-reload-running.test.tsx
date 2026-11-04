@@ -47,14 +47,6 @@ jest.mock('expo-router', () => ({
 
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
-// 読み直しまでの待ちを短くする (本物は PREVIOUS_REQUEST_RECHECK_DELAY_MS)
-jest.mock('@homegohan/shared', () => ({
-  ...jest.requireActual('@homegohan/shared'),
-  PREVIOUS_REQUEST_RECHECK_DELAY_MS: 30,
-}));
-/** 読み直しの待ち (上の jest.mock の値と同じ) より十分長い待ち */
-const LONGER_THAN_RECHECK_MS = 200;
-
 jest.mock('expo-linear-gradient', () => ({
   LinearGradient: ({ children }: { children?: React.ReactNode }) => children,
 }));
@@ -64,6 +56,7 @@ import { AIAdvisorSheet } from '../../src/components/ai/AIAdvisorSheet';
 import {
   PREVIOUS_REQUEST_EXECUTED_MESSAGE,
   PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE,
+  PREVIOUS_REQUEST_RECHECK_DELAY_MS,
   PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE,
 } from '../../src/lib/ai-chat-timeout';
 import {
@@ -126,8 +119,56 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // holdRecheck で偽にした setTimeout を戻す (部品を外す後始末のあとに走るので、外すときの取り消しも偽のタイマーに効く)
+  jest.useRealTimers();
   resetAiConsultationDataChangedListenersForTests();
 });
+
+/** holdRecheck で偽にしない時計の API (偽にするのは setTimeout と clearTimeout だけ。Web の X1 #2207 の holdRecheck と同じ) */
+const REAL_TIMER_APIS = [
+  'Date',
+  'hrtime',
+  'nextTick',
+  'performance',
+  'queueMicrotask',
+  'requestAnimationFrame',
+  'cancelAnimationFrame',
+  'requestIdleCallback',
+  'cancelIdleCallback',
+  'setImmediate',
+  'clearImmediate',
+  'setInterval',
+  'clearInterval',
+] as const;
+
+/**
+ * 部品の setTimeout の予約 (読み直しの予約など) を jest の偽のタイマーにして、releaseRecheck で進めるまで動かさない。
+ * 『結果をまだ確かめられません』の一文は、読み直しで実行できていれば置き換わって消える途中の表示なので、実時間の短い読み直し
+ * (以前はこのファイルで PREVIOUS_REQUEST_RECHECK_DELAY_MS を jest.mock で 30ms にしていた) と競って見に行くと、CI の混雑で
+ * 描画が少し止まっただけで、見る前に消えて待ちが切れる (PR #2212 の CI の Mobile Tests run 41747791211 で 1 件)。
+ * 読み直しの待ちは本物の PREVIOUS_REQUEST_RECHECK_DELAY_MS のまま偽の時刻で止めるので、RNTL の waitFor が偽の時刻を
+ * 少しずつ進めても (1 回の間隔は既定の 50ms) 読み直しには届かない。シートを開いたあと、送る前に呼ぶ
+ */
+function holdRecheck() {
+  jest.useFakeTimers({ doNotFake: [...REAL_TIMER_APIS] });
+}
+
+/** holdRecheck で止めた読み直しの予約を動かす (偽の時刻を読み直しの待ち PREVIOUS_REQUEST_RECHECK_DELAY_MS だけ進める) */
+async function releaseRecheck() {
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(PREVIOUS_REQUEST_RECHECK_DELAY_MS);
+  });
+}
+
+/**
+ * 読み直しの待ちがもう 1 回ぶん過ぎるまで偽の時刻を進める (読み直しで何も起きないこと・2 回目の読み直しが無いこと・
+ * 外したあとに読み直さないことを確かめるとき)
+ */
+async function waitPastRecheck() {
+  await act(async () => {
+    await jest.advanceTimersByTimeAsync(PREVIOUS_REQUEST_RECHECK_DELAY_MS);
+  });
+}
 
 async function openSheet() {
   render(<AIAdvisorSheet visible onClose={jest.fn()} />);
@@ -200,23 +241,21 @@ const SAVED_MESSAGES_WITH_PROPOSAL = [
   },
 ];
 
-async function waitPastRecheck() {
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, LONGER_THAN_RECHECK_MS));
-  });
-}
-
 describe('AIAdvisorSheet — 時間切れの後の取り直しで、記録が実行中の印のまま (#2201 U3)', () => {
   it('結果をまだ確かめられない一文を返答のすぐ後に出し、読み直して実行できていれば置き換えて 1 回知らせる', async () => {
     actionLogsReads(APPROVED, EXECUTED);
     await openSheet();
+    holdRecheck();
     await sendTimeOutAndReload(SAVED_MESSAGES);
 
     await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeTruthy());
     let texts = renderedTexts();
     expect(texts.indexOf(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBe(texts.indexOf(SAVED_REPLY) + 1);
     expect(dataChanged).not.toHaveBeenCalled();
+    // 読み直しは止めてある (まだ 1 回目の読み取りだけ)
+    expect(mockEq).toHaveBeenCalledTimes(1);
 
+    await releaseRecheck();
     await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeTruthy());
     expect(screen.queryByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeNull();
     texts = renderedTexts();
@@ -234,9 +273,12 @@ describe('AIAdvisorSheet — 時間切れの後の取り直しで、記録が実
   ])('読み直しで %s なら、一文はそのまま・知らせない (読み直しは 1 回だけ)', async (_label, recheck) => {
     actionLogsReads(APPROVED, recheck);
     await openSheet();
+    holdRecheck();
     await sendTimeOutAndReload(SAVED_MESSAGES);
 
     await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeTruthy());
+    expect(mockEq).toHaveBeenCalledTimes(1);
+    await releaseRecheck();
     await waitFor(() => expect(mockEq).toHaveBeenCalledTimes(2));
     await waitPastRecheck();
     expect(screen.getByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeTruthy();
@@ -251,9 +293,12 @@ describe('AIAdvisorSheet — 時間切れの後の取り直しで、記録が実
   ])('読み直しで %s 行になっていれば、一文を『実行できませんでした』に置き換え、知らせない (#2206 G2)', async (_label, recheck) => {
     actionLogsReads(APPROVED, recheck);
     await openSheet();
+    holdRecheck();
     await sendTimeOutAndReload(SAVED_MESSAGES);
 
     await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeTruthy());
+    expect(mockEq).toHaveBeenCalledTimes(1);
+    await releaseRecheck();
     await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_NOT_EXECUTED_MESSAGE)).toBeTruthy());
     expect(screen.queryByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeNull();
     const texts = renderedTexts();
@@ -266,8 +311,10 @@ describe('AIAdvisorSheet — 時間切れの後の取り直しで、記録が実
   it('シートを外したら、読み直さない', async () => {
     actionLogsReads(APPROVED, EXECUTED);
     await openSheet();
+    holdRecheck();
     await sendTimeOutAndReload(SAVED_MESSAGES);
     await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeTruthy());
+    expect(mockEq).toHaveBeenCalledTimes(1);
 
     screen.unmount();
     await waitPastRecheck();
@@ -280,9 +327,12 @@ describe('AIAdvisorSheet — 応答の本文を読めなかったときの取り
   it('一文を出し、読み直して実行できていれば置き換えて 1 回知らせる', async () => {
     actionLogsReads(APPROVED, EXECUTED);
     await openSheet();
+    holdRecheck();
     await sendWithUnreadableBody(SAVED_MESSAGES);
 
     await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeTruthy());
+    expect(mockEq).toHaveBeenCalledTimes(1);
+    await releaseRecheck();
     await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeTruthy());
     expect(screen.queryByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeNull();
     expect(dataChanged).toHaveBeenCalledTimes(1);
@@ -299,13 +349,16 @@ describe('AIAdvisorSheet — 記録の行がまだ無い・読めないのに返
     async (_label, sendAndReload) => {
       actionLogsReads(NO_ROW_YET, EXECUTED);
       await openSheet();
+      holdRecheck();
       await sendAndReload(SAVED_MESSAGES_WITH_PROPOSAL);
 
       await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeTruthy());
       let texts = renderedTexts();
       expect(texts.indexOf(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBe(texts.indexOf(SAVED_REPLY) + 1);
       expect(dataChanged).not.toHaveBeenCalled();
+      expect(mockEq).toHaveBeenCalledTimes(1);
 
+      await releaseRecheck();
       await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeTruthy());
       expect(screen.queryByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeNull();
       texts = renderedTexts();
@@ -322,9 +375,12 @@ describe('AIAdvisorSheet — 記録の行がまだ無い・読めないのに返
   ])('記録の読み取りが %s ときも、返答に提案があれば実行中の印と同じく一文を出して 1 回だけ読み直す', async (_label, firstRead) => {
     actionLogsReads(firstRead, EXECUTED);
     await openSheet();
+    holdRecheck();
     await sendTimeOutAndReload(SAVED_MESSAGES_WITH_PROPOSAL);
 
     await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeTruthy());
+    expect(mockEq).toHaveBeenCalledTimes(1);
+    await releaseRecheck();
     await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeTruthy());
     expect(screen.queryByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeNull();
     expect(dataChanged).toHaveBeenCalledTimes(1);
@@ -339,12 +395,15 @@ describe('AIAdvisorSheet — 提案の無い返答で記録を読めなかった
   ])('読み取りが %s なら、一文を出さずに 1 回だけ読み直し、実行できていれば返答のすぐ後に一文を足して知らせる', async (_label, firstRead) => {
     actionLogsReads(firstRead, EXECUTED);
     await openSheet();
+    holdRecheck();
     await sendTimeOutAndReload(SAVED_MESSAGES);
 
     await waitFor(() => expect(screen.getByText(SAVED_REPLY)).toBeTruthy());
+    await waitFor(() => expect(mockEq).toHaveBeenCalledTimes(1));
     expect(screen.queryByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeNull();
     expect(screen.queryByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeNull();
 
+    await releaseRecheck();
     await waitFor(() => expect(screen.getByText(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBeTruthy());
     const texts = renderedTexts();
     expect(texts.indexOf(PREVIOUS_REQUEST_EXECUTED_MESSAGE)).toBe(texts.indexOf(SAVED_REPLY) + 1);
@@ -358,8 +417,11 @@ describe('AIAdvisorSheet — 提案の無い返答で記録を読めなかった
   it('読み直しでも読めなければ、何も足さず知らせない (読み直しは 1 回だけ)', async () => {
     actionLogsReads(READ_ERROR);
     await openSheet();
+    holdRecheck();
     await sendTimeOutAndReload(SAVED_MESSAGES);
 
+    await waitFor(() => expect(mockEq).toHaveBeenCalledTimes(1));
+    await releaseRecheck();
     await waitFor(() => expect(mockEq).toHaveBeenCalledTimes(2));
     await waitPastRecheck();
     expect(screen.queryByText(PREVIOUS_REQUEST_UNCONFIRMED_MESSAGE)).toBeNull();
@@ -371,6 +433,7 @@ describe('AIAdvisorSheet — 提案の無い返答で記録を読めなかった
   it('読めて行が無ければ (提案の無い返答)、何も足さず読み直さない (上の対照)', async () => {
     actionLogsReads(NO_ROW_YET, EXECUTED);
     await openSheet();
+    holdRecheck();
     await sendTimeOutAndReload(SAVED_MESSAGES);
 
     await waitFor(() => expect(screen.getByText(SAVED_REPLY)).toBeTruthy());
