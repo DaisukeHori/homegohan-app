@@ -58,7 +58,7 @@ export interface ShoppingRangeBasis {
  * 選択肢 type の範囲の始まりと終わり。
  * 今日から数える範囲は、now の JST の今日から addDaysToDate (暦の計算) でずらす。端末のローカル時刻で日をずらしてから
  * JST の日付にすると (new Date + setDate + formatLocalDate)、端末の夏時間の切り替えの日に 23 / 25 時間しか進まず、JST の日付が 1 日ずれうる。
- * 「指定」(custom) は今日だけ (この関数を入れる前の calculateDateRange の default と同じ)。
+ * custom (範囲を選ぶ欄には無い選択肢) は今日だけ (この関数を入れる前の calculateDateRange の default と同じ)。
  */
 export function shoppingRangeDates(type: ShoppingRangeType, basis: ShoppingRangeBasis): ShoppingRangeDates {
   const today = formatLocalDate(basis.now);
