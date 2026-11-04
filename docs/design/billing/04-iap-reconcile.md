@@ -1008,7 +1008,7 @@ export async function reconcileStoreSubscriptions(deps: IapReconcileDeps, settin
       if (rejectedCode !== null) {
         // 別の live 行との衝突・対応の無い商品 (billing/03 §13.3・S15 の運営の処置)。この利用者は飛ばす (候補に残り、印で次の回は後ろに回る)
         summary.rejected[rejectedCode] = (summary.rejected[rejectedCode] ?? 0) + 1;
-        logger.warn('ストアの購読の取り直しを写せませんでした (運営の処置が要ります)', { user_id: candidate.user_id, code: rejectedCode });
+        logger.withUser(candidate.user_id).warn('ストアの購読の取り直しを写せませんでした (運営の処置が要ります)', { user_id: candidate.user_id, code: rejectedCode });
         continue;
       }
       // BILL_UNKNOWN_PLAN・BILL_UNKNOWN_IAP_STATUS の BillingRpcError は source other → user (internal)。warn の error_code にコードが残る
@@ -1025,7 +1025,7 @@ export async function reconcileStoreSubscriptions(deps: IapReconcileDeps, settin
         break;
       }
       summary.failed[failure.kind] = (summary.failed[failure.kind] ?? 0) + 1;
-      logger.warn('ストアの購読を取り直せませんでした', {
+      logger.withUser(candidate.user_id).warn('ストアの購読を取り直せませんでした', {
         user_id: candidate.user_id,
         kind: failure.kind,
         scope: failure.scope,

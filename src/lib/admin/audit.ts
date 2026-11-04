@@ -24,7 +24,7 @@
  *    本人の client では action_type が 'system.' で始まる行と、actor_email_snapshot / actor_role_snapshot /
  *    impersonated_by を入れた行は書けない (#1736。system.* は service_role / SECURITY DEFINER が actor_id NULL で書く予約の名前)。
  *  - 閲覧の記録は fail-open。記録に失敗しても例外は投げず、閲覧そのものは止めない。
- *    失敗は db-logger 経由で app_logs に error として残す。
+ *    失敗は db-logger 経由で app_logs に error として残す (操作した運営者 actorId を user_id 列に入れる。#2245 K5)。
  *    返金のように「記録できないなら実行しない」操作は、戻り値の ok を見て呼び出し側で止めること。
  *  - action_type の命名は `admin.<対象>.<操作>` (docs/design/operator/07-audit-monitoring.md §4)。
  *  - 一覧・検索 (#1326) は「1 回の検索 = 1 行」で記録し、details は buildListViewDetails() で作る
@@ -111,7 +111,9 @@ function extractUserAgent(headers: Pick<Headers, 'get'> | null | undefined): str
 
 function logAuditFailure(params: RecordAdminAuditParams, error: Error, errorCode?: string): void {
   try {
-    createLogger(params.routeName ?? DEFAULT_ROUTE_NAME).error(
+    // 操作した運営者は withUser で app_logs の user_id 列に入れる (metadata の actor_id にだけ渡すと user_id 列で絞ったときに
+    // 出てこない。#2245 K5。uuid でない値は db-logger が NULL にする)
+    createLogger(params.routeName ?? DEFAULT_ROUTE_NAME).withUser(params.actorId).error(
       '監査ログ (admin_audit_logs) への記録に失敗しました',
       error,
       {

@@ -178,7 +178,7 @@ export async function POST(request: Request) {
           }
         }
       } catch (rlError) {
-        createLogger('api/meals').warn('Image rate-limit check failed; skipping image generation', {
+        createLogger('api/meals').withUser(user.id).warn('Image rate-limit check failed; skipping image generation', {
           userId: user.id,
           error: rlError instanceof Error ? rlError.message : String(rlError),
         });

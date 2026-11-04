@@ -39,7 +39,13 @@ vi.mock('@/lib/db-logger', () => ({
     info: vi.fn(),
     warn: vi.fn(),
     error: (...args: unknown[]) => mockLoggerError(routeName, ...args),
-    withUser: vi.fn(),
+    // 監査ログの記録の失敗は withUser(運営者) のロガーで出す (#2245 K5)。同じ記録先に残す
+    withUser: () => ({
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: (...args: unknown[]) => mockLoggerError(routeName, ...args),
+    }),
   }),
   generateRequestId: () => 'req_test',
 }));

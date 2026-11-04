@@ -1132,7 +1132,8 @@ describe('GET /api/super-admin/logs: 閲覧の監査 (#1708)', () => {
     expect(crashed.res.status).toBe(200);
     expect(indexes(crashed.json)).toEqual([3, 2, 1]);
 
-    expect(logError).toHaveBeenCalledWith(
+    // 操作した運営者を app_logs の user_id 列に入れる (logAuditFailure は withUser(actorId) のロガーで出す。#2245 K5)
+    expect(logUserError).toHaveBeenCalledWith(
       '監査ログ (admin_audit_logs) への記録に失敗しました',
       expect.any(Error),
       expect.objectContaining({ action_type: 'super_admin.app_logs.list' }),

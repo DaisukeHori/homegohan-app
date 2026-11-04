@@ -168,7 +168,11 @@ interface EnqueueJobsParams {
   usage?: AiUsageResult | null;
 }
 
-/** ログの名前 (ロガーは使うときに作る。import のときに作ると、ロガーを差し替えるテストの初期化の順に依存する) */
+/**
+ * ログの名前 (ロガーは使うときに作る。import のときに作ると、ロガーを差し替えるテストの初期化の順に依存する)。
+ * 利用者のログは .withUser(params.userId) で作る (app_logs の user_id 列に入れる。userId を metadata にだけ渡すと
+ * user_id 列が空のまま残り、運営が user_id 列で絞ったときに出てこない。#2245 K5。src/lib/meal-image-enqueue-after-save.ts と同じ形)
+ */
 const ENQUEUE_LOG_NAME = 'lib/meal-image-jobs';
 
 /** 積み込みの後始末が投げたときに app_logs へ残すログの文 (#2235 I5。諦めた後始末は metadata の step) */
@@ -188,7 +192,7 @@ export const MEAL_IMAGE_ENQUEUE_AFTERCARE_STEPS = Object.freeze({
  */
 function logAftercareFailure(params: EnqueueJobsParams): (failure: MealImageEnqueueAftercareFailure) => void {
   return ({ label, error }) => {
-    createLogger(ENQUEUE_LOG_NAME).error(MEAL_IMAGE_ENQUEUE_AFTERCARE_FAILED_LOG_MESSAGE, error, {
+    createLogger(ENQUEUE_LOG_NAME).withUser(params.userId).error(MEAL_IMAGE_ENQUEUE_AFTERCARE_FAILED_LOG_MESSAGE, error, {
       userId: params.userId,
       plannedMealId: params.plannedMealId,
       step: label,
@@ -261,7 +265,7 @@ export async function enqueueMealImageJobs(params: EnqueueJobsParams): Promise<E
 
   if (failures.length > 0) {
     await runMealImageEnqueueAftercare(MEAL_IMAGE_ENQUEUE_AFTERCARE_STEPS.logFailedRows, () => {
-      const logger = createLogger(ENQUEUE_LOG_NAME);
+      const logger = createLogger(ENQUEUE_LOG_NAME).withUser(params.userId);
       for (const outcome of outcomes) {
         if (outcome.kind !== 'failed') continue;
         logger.warn('Failed to enqueue meal image job', {
@@ -282,7 +286,7 @@ export async function enqueueMealImageJobs(params: EnqueueJobsParams): Promise<E
         loadMeal: () => params.supabase.from('planned_meals').select(ENQUEUE_FAILED_MEAL_COLUMNS).eq('id', params.plannedMealId).maybeSingle(),
       });
       if (marked.status === 'error') {
-        createLogger(ENQUEUE_LOG_NAME).warn('Failed to mark dishes whose meal image jobs were not enqueued', {
+        createLogger(ENQUEUE_LOG_NAME).withUser(params.userId).warn('Failed to mark dishes whose meal image jobs were not enqueued', {
           userId: params.userId,
           plannedMealId: params.plannedMealId,
           error: marked.message,

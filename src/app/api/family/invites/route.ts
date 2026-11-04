@@ -128,7 +128,7 @@ export async function POST(request: Request) {
   // 行が無い (PGRST116) のは「家族に入っていない」と同じ扱い。それ以外の失敗は 403 にせず 500 で返す
   if (inviterProfileError && inviterProfileError.code !== 'PGRST116') {
     const logger = createLogger('POST /api/family/invites', generateRequestId());
-    logger.error('招待者のプロフィール取得に失敗', inviterProfileError, { userId: user.id });
+    logger.withUser(user.id).error('招待者のプロフィール取得に失敗', inviterProfileError, { userId: user.id });
     return NextResponse.json(
       { error: { code: MembershipErrorCode.RPC_FAILED, message: 'プロフィールの取得に失敗しました' } },
       { status: 500 },

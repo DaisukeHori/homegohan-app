@@ -337,7 +337,11 @@ describe('POST /api/family/invites: 招待者のプロフィールの読み取�
 
     expect(res.status).toBe(500);
     expect(json.error.code).toBe('RPC_FAILED');
-    expect(mockRouteLogError).toHaveBeenCalledTimes(1);
+    // 招待者 (ログイン中の利用者) つきで記録する (app_logs の user_id 列に入る。#2245 K5)
+    expect(mockWithUser).toHaveBeenCalledWith(user.id);
+    expect(mockLogError).toHaveBeenCalledTimes(1);
+    expect(mockLogError).toHaveBeenCalledWith('招待者のプロフィール取得に失敗', expect.objectContaining({ code: '42703' }), { userId: user.id });
+    expect(mockRouteLogError).not.toHaveBeenCalled();
     expect(mockCheckRateLimit).not.toHaveBeenCalled();
     expect(mockRpc).not.toHaveBeenCalled();
     expect(mockSendEmail).not.toHaveBeenCalled();
@@ -352,6 +356,7 @@ describe('POST /api/family/invites: 招待者のプロフィールの読み取�
     expect(res.status).toBe(403);
     expect(json.error.code).toBe('NOT_FAMILY_ADULT');
     expect(mockRouteLogError).not.toHaveBeenCalled();
+    expect(mockLogError).not.toHaveBeenCalled();
     expect(mockRpc).not.toHaveBeenCalled();
   });
 

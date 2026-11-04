@@ -161,6 +161,11 @@ export interface PushOutboxCleanupResult { expired: number; sent: number; dead: 
 export interface PushOutboxLogger {
   info(message: string, meta?: Record<string, unknown>): void;
   warn(message: string, meta?: Record<string, unknown>): void;
+  /**
+   * 利用者の行のログ (app_logs の user_id 列に入れる。createLogger(...).withUser と同じ。#2245 K5)。
+   * user_id を meta にだけ渡すと user_id 列が空のまま残り、運営が user_id 列で絞ったときに出てこない
+   */
+  withUser(userId: string): Pick<PushOutboxLogger, 'warn'>;
 }
 export interface PushOutboxWorkerDeps {
   store: PushOutboxStore;
@@ -283,7 +288,7 @@ async function recordFailure(
   if (outcome === 'dead') {
     summary.dead += 1;
     summary.dead_codes[failure.code] = (summary.dead_codes[failure.code] ?? 0) + 1;
-    deps.log.warn('Push 通知を届けられませんでした', {
+    deps.log.withUser(row.user_id).warn('Push 通知を届けられませんでした', {
       kind: row.kind, user_id: row.user_id, token: maskPushToken(row.expo_push_token),
       error_code: failure.code, status_code: failure.statusCode, attempts: row.attempts + 1,
     });
@@ -295,7 +300,7 @@ function notSent(code: string): PushTransportFailure {
 async function removeToken(deps: PushOutboxWorkerDeps, summary: PushOutboxRunSummary, row: RowRef): Promise<void> {
   if (await deps.store.deleteToken(row.push_token_id)) {
     summary.tokens_removed += 1;
-    deps.log.warn('端末の行を消しました (DeviceNotRegistered)', { user_id: row.user_id, token: maskPushToken(row.expo_push_token) });
+    deps.log.withUser(row.user_id).warn('端末の行を消しました (DeviceNotRegistered)', { user_id: row.user_id, token: maskPushToken(row.expo_push_token) });
   }
 }
 
@@ -398,7 +403,7 @@ async function checkReceipts(deps: PushOutboxWorkerDeps, options: PushOutboxRunO
     const code = receipt.details?.error ?? PUSH_OUTBOX_ERROR_CODES.TICKET_ERROR;
     await deps.store.recordReceipt(row.id, options.workerId, 'error', code);
     summary.receipts_error += 1;
-    deps.log.warn('Push 通知の receipt がエラーでした', { receipt_error: code, user_id: row.user_id, token: maskPushToken(row.expo_push_token) });
+    deps.log.withUser(row.user_id).warn('Push 通知の receipt がエラーでした', { receipt_error: code, user_id: row.user_id, token: maskPushToken(row.expo_push_token) });
     if (code === EXPO_DEVICE_NOT_REGISTERED) await removeToken(deps, summary, { ...row, kind: '', attempts: 0 });
   }
 }

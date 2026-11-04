@@ -252,7 +252,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
           }
         }
       } catch (rlError) {
-        createLogger('api/meals/[id]').warn('Image rate-limit check failed; skipping image generation', {
+        createLogger('api/meals/[id]').withUser(user.id).warn('Image rate-limit check failed; skipping image generation', {
           userId: user.id,
           plannedMealId: params.id,
           error: rlError instanceof Error ? rlError.message : String(rlError),
