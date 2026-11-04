@@ -554,8 +554,11 @@ export default function AIChatBubble() {
   /**
    * 取り直した相談 (sessionId) の会話 (loaded) で、確かめられなかった前の送信の保存行を探す (#2227 H1)。
    * 見つかった送信は、入力欄が戻した文のままなら消す (モバイルの clearInputIfDelivered と同じ決まり。今の相談のときだけ)。
-   * 相談を開き直したとき (forgetRemaining) は、見つからなかった送信を忘れる (開き直した会話は以後の送信の「送る前に出ていた行」に
-   * 入るので、見つからない送信は届いていない)。
+   * 相談を開き直したとき (forgettable) は、forgettable に入っている送信のうち見つからなかったものを忘れる (開き直した会話は以後の
+   * 送信の「送る前に出ていた行」に入るので、見つからない送信は届いていない)。忘れてよいのは、開き直しの GET を始める前に積んであった
+   * 送信だけ (#2235 I1。GET を待つ間に終わった取り直しが積んだ送信は、保存が GET の写しより後になりうるので、写しに無くても忘れない。
+   * 以前は呼んだ時点の入れ物をまるごと見て、その相談の残りを忘れていた。モバイルの AIAdvisorSheet の loadMessages と同じ写し)。
+   * 保存行を探すのは呼んだ時点の入れ物の全部 (写しに保存行があれば届いていたので、GET を待つ間に積まれた送信も当ててよい)。
    * current は今回の送信 (取り直しの途中のもの。無ければ null)、currentAccepted は今回の送信をサーバーが受け付けたか。
    * 戻り値は送信に当てた保存行の id (今回の送信を探すときに knownMessageIds に足して除く)
    */
@@ -565,7 +568,8 @@ export default function AIChatBubble() {
       loaded: readonly LoadedMessage[];
       current: SentText | null;
       currentAccepted: boolean;
-      forgetRemaining: boolean;
+      /** 見つからなければ忘れる送信 (開き直しの GET を始める前の入れ物の写し)。忘れない読み込みは空 */
+      forgettable: readonly UnconfirmedSend[];
     }): string[] => {
       const resolution = resolveUnconfirmedSends({
         sessionId: params.sessionId,
@@ -575,9 +579,10 @@ export default function AIChatBubble() {
         current: params.current,
         currentAccepted: params.currentAccepted,
       });
-      unconfirmedSendsRef.current = params.forgetRemaining
-        ? resolution.remaining.filter(send => send.sessionId !== params.sessionId)
-        : resolution.remaining;
+      const forgettable = new Set(params.forgettable);
+      unconfirmedSendsRef.current = resolution.remaining.filter(
+        send => !(send.sessionId === params.sessionId && forgettable.has(send)),
+      );
       claimedSavedUserIdsRef.current = resolution.claimedIds;
       if (currentSessionIdRef.current === params.sessionId) {
         for (const send of resolution.resolved) setInputText(current => clearInputIfDelivered(current, send.text));
@@ -682,6 +687,9 @@ export default function AIChatBubble() {
   // メッセージ取得
   const fetchMessages = useCallback(async (sessionId: string) => {
     setIsLoading(true);
+    // この読み込みで忘れてよいのは、読み込みを始める前に積んであった送信だけ (#2235 I1。読み込みの最中に終わった取り直しが積んだ
+    // 送信は、GET の写しより後に保存されうるので、写しに無くても忘れない。モバイルの AIAdvisorSheet の loadMessages と同じ)
+    const forgettable = [...unconfirmedSendsRef.current];
     try {
       const res = await fetch(`/api/ai/consultation/sessions/${sessionId}/messages`);
       if (res.ok) {
@@ -692,7 +700,7 @@ export default function AIChatBubble() {
         })));
         // 確かめられなかった前の送信が届いていたら、入力欄に戻した文を消す (#2227 H1)
         const loaded = loadedMessagesOf(data);
-        if (loaded) settleUnconfirmedSends({ sessionId, loaded, current: null, currentAccepted: false, forgetRemaining: true });
+        if (loaded) settleUnconfirmedSends({ sessionId, loaded, current: null, currentAccepted: false, forgettable });
       }
     } catch (e) {
       console.error('Failed to fetch messages:', e);
@@ -919,7 +927,7 @@ export default function AIChatBubble() {
       const loaded = await reloadConversationAfterIncompleteReply(params.sessionId);
       if (!loaded) return;
       // 確かめられなかった前の送信が届いていたら、入力欄に戻した文を消す (#2227 H1)
-      settleUnconfirmedSends({ sessionId: params.sessionId, loaded, current: null, currentAccepted: false, forgetRemaining: false });
+      settleUnconfirmedSends({ sessionId: params.sessionId, loaded, current: null, currentAccepted: false, forgettable: [] });
       const reply = replyToUserMessageIdOf(params.savedUserMessageId, loaded);
       if (!reply) return;
       await placeReloadedReply({ reply, placeholderId: params.placeholderId });
@@ -986,7 +994,7 @@ export default function AIChatBubble() {
       loaded,
       current: { text: sentText, knownMessageIds },
       currentAccepted: !userSaveMayBeLate,
-      forgetRemaining: false,
+      forgettable: [],
     });
     const sent: SentText = { text: sentText, knownMessageIds: [...knownMessageIds, ...claimedIds] };
     const outcome = sentMessageReloadOutcomeOf(sent, loaded);
