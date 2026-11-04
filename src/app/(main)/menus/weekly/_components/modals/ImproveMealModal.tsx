@@ -5,7 +5,7 @@ import { RefreshCw, X, Sparkles, Check } from "lucide-react";
 import type { PlannedMeal, DishDetail } from "@/types/domain";
 import { MEAL_EMOJIS, MEAL_LABELS, type MealType } from "@homegohan/shared";
 import { BASE_MEAL_TYPES } from "@/lib/slot-builder";
-import { todayLocal, formatDateJa } from "@/lib/date-utils";
+import { formatDateJa } from "@/lib/date-utils";
 import { BottomSheet } from "@/components/common/BottomSheet";
 
 const colors = {
@@ -38,6 +38,11 @@ interface ImproveMealModalProps {
   isImprovingMeal: boolean;
   selectedDayIndex: number;
   weekDates: WeekDate[];
+  /**
+   * 献立表の描画の今日 (JST の暦日。親 page.tsx の todayStr。#2245 K2)。「今日」の印と「過去の日」の判断はこの 1 つの今日で行う
+   * (このモーダルの中で時計を読み直すと、0 時をまたいだときに見出しの今日・印・過去の判断が別の日になりうる)
+   */
+  todayStr: string;
   improveMealTargets: MealType[];
   improveNextDay: boolean;
   nutritionFeedback: string | null;
@@ -54,6 +59,7 @@ export function ImproveMealModal({
   isImprovingMeal,
   selectedDayIndex,
   weekDates,
+  todayStr,
   improveMealTargets,
   improveNextDay,
   nutritionFeedback,
@@ -114,7 +120,7 @@ export function ImproveMealModal({
                     <p style={{ fontSize: 12, color: colors.textLight }}>対象日</p>
                     <p style={{ fontSize: 16, fontWeight: 600, color: colors.text }}>
                       {weekDates[selectedDayIndex]?.dateStr && formatDateJa(weekDates[selectedDayIndex].dateStr)}（{weekDates[selectedDayIndex]?.dayOfWeek}）
-                      {weekDates[selectedDayIndex]?.dateStr === todayLocal() && (
+                      {weekDates[selectedDayIndex]?.dateStr === todayStr && (
                         <span className="ml-2 text-xs px-2 py-0.5 rounded-full" style={{ background: colors.accentLight, color: colors.accent }}>今日</span>
                       )}
                     </p>
@@ -141,7 +147,6 @@ export function ImproveMealModal({
                     {(() => {
                       const targetDateStr = weekDates[selectedDayIndex]?.dateStr;
                       const targetDay = currentPlanDays?.find((d: MealPlanDay) => d.dayDate === targetDateStr);
-                      const todayStr = todayLocal();
                       const isPast = targetDateStr && targetDateStr < todayStr;
 
                       if (isPast) {

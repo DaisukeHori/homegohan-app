@@ -7,10 +7,12 @@
  *     見出しは新しい日を「今日」とする (前の日を「過去」と出す) ように食い違った
  *   - 今日のフィードバックを読む effect (栄養分析の今日のタブ) は、その場で時計を読み、日付が変わっても読み直さなかった
  *     (開いたまま 0 時をまたいで描き直すと、見出しの今日は新しい日なのに、フィードバックは前の日のまま)
+ *   - 献立の改善のモーダル (ImproveMealModal) は、「今日」の印と過去の日の判断で時計を別々に読み、親の見出しの今日とも別に読んでいた
  *
  * 直したあと:
  *   - 描画ごとに 1 回だけ今日 (todayStr) を読み、見出し・今日の印・空欄の数・期限までの日数・その描画の effect はどれもこの値を使う
  *   - 今日のフィードバックの effect は todayStr を依存に持ち、描き直しで今日が変わったら新しい今日のフィードバックを読む
+ *   - 献立の改善のモーダルは、親の描画の今日 (todayStr) を受け取り、印と過去の日の判断をその今日で行う
  *
  * 描画の途中で 0 時をまたぐのは、@homegohan/shared の今日を読む関数 (todayLocal・今の時刻の formatLocalDate) を包み、
  * 「次に今日を読んだら時計を 0 時の後へ進める」形で作る (vi.setSystemTime)。
@@ -122,6 +124,7 @@ vi.mock('@/lib/supabase/client', () => {
 });
 
 const { default: WeeklyMenuPage } = await import('@/app/(main)/menus/weekly/page');
+const { ImproveMealModal } = await import('@/app/(main)/menus/weekly/_components/modals/ImproveMealModal');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -331,5 +334,39 @@ describe('栄養分析の今日のタブのフィードバックは、見出し�
     vi.setSystemTime(new Date(AFTER_MIDNIGHT));
     await rerenderWeeklyPage();
     expect(feedbackDatesRead(), '0 時をまたいで描き直したのに、新しい今日のフィードバックを読んでいない').toEqual([DAY_BEFORE, DAY_AFTER]);
+  });
+});
+
+describe('献立の改善のモーダルは、親の描画の今日 1 つで「今日」の印と過去の日を決める (#2245 K2)', () => {
+  /** 親の描画が 0 時の前に今日 (11-04) を読み、モーダルを描く前に 0 時をまたいだ */
+  async function renderImproveModalAfterParentRead() {
+    vi.setSystemTime(new Date(AFTER_MIDNIGHT));
+    await act(async () => {
+      root.render(
+        <ImproveMealModal
+          showImproveMealModal
+          isImprovingMeal={false}
+          selectedDayIndex={0}
+          weekDates={[{ date: new Date(2026, 10, 4), dateStr: DAY_BEFORE, dayOfWeek: '水' }]}
+          todayStr={DAY_BEFORE}
+          improveMealTargets={[]}
+          improveNextDay={false}
+          nutritionFeedback={null}
+          currentPlanDays={[]}
+          onClose={() => undefined}
+          onToggleMealTarget={() => undefined}
+          onSelectAllDay={() => undefined}
+          onSelectNextDay={() => undefined}
+          onImprove={() => undefined}
+        />,
+      );
+    });
+  }
+
+  it('親が今日とした日に「今日」の印を出し、過去の日として扱わない (モーダルの中で時計を読み直さない)', async () => {
+    await renderImproveModalAfterParentRead();
+    const todayBadges = [...document.body.querySelectorAll('span')].filter((span) => span.textContent === '今日');
+    expect(todayBadges, '親の今日の日に「今日」の印が無い').toHaveLength(1);
+    expect(document.body.textContent ?? '', '親の今日の日を過去の日として扱った').not.toContain('この日は過去のため');
   });
 });

@@ -7097,6 +7097,7 @@ export default function WeeklyMenuPage() {
         isImprovingMeal={isImprovingMeal}
         selectedDayIndex={selectedDayIndex}
         weekDates={weekDates}
+        todayStr={todayStr}
         improveMealTargets={improveMealTargets}
         improveNextDay={improveNextDay}
         nutritionFeedback={nutritionFeedback}
